@@ -29,5 +29,6 @@
 | "批量写" / "都写了" / "写N篇" | spawn-batch-writer |
 | "发布" / "发到小红书" | publish-content |
 | "风格校准" / "设置风格" | style-calibration |
+| "自动化" / "定时" / "pipeline" | manage-pipeline |
 | Feedback on content quality | memory-distill |
 | "状态" / "进度" | autocrew_status tool |

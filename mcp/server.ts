@@ -12,6 +12,7 @@ import { topicCreateSchema, executeTopicCreate } from "../src/tools/topic-create
 import { contentSaveSchema, executeContentSave } from "../src/tools/content-save.js";
 import { statusSchema, executeStatus } from "../src/tools/status.js";
 import { assetSchema, executeAsset } from "../src/tools/asset.js";
+import { pipelineSchema, executePipeline } from "../src/tools/pipeline.js";
 
 function getDataDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "~";
@@ -96,6 +97,25 @@ export const tools = [
     },
     execute: (params: Record<string, unknown>) =>
       executeAsset({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_pipeline",
+    description:
+      "Manage automated content pipelines. Actions: 'create' (from template or custom), 'list', 'get' (by id), 'enable'/'disable', 'delete', 'templates' (show presets: daily-research, weekly-content, daily-publish, full-pipeline).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "list", "get", "enable", "disable", "delete", "templates"] },
+        id: { type: "string" },
+        name: { type: "string" },
+        description: { type: "string" },
+        schedule: { type: "string" },
+        template: { type: "string" },
+      },
+      required: ["action"],
+    },
+    execute: (params: Record<string, unknown>) =>
+      executePipeline({ ...params, _dataDir: dataDir }),
   },
 ];
 

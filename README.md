@@ -27,10 +27,13 @@ claude plugin install autocrew
 | Skill | Description |
 |-------|-------------|
 | `research` | Competitor analysis and topic discovery |
+| `topic-ideas` | Interactive brainstorming from a seed idea |
 | `spawn-planner` | Batch topic planning for a content calendar |
 | `write-script` | Write platform-optimized content (XHS, Douyin, WeChat) |
-| `spawn-writer` | Batch content production from saved topics |
-| `publish-content` | Pre-publish checks and publishing pipeline |
+| `spawn-writer` | Single content writing orchestrator |
+| `spawn-batch-writer` | Batch content production from saved topics |
+| `publish-content` | Pre-publish checks + browser automation (XHS, Douyin, WeChat Video, WeChat MP) |
+| `manage-pipeline` | Set up automated pipelines (cron schedules) |
 | `memory-distill` | Learn from user feedback to improve over time |
 | `style-calibration` | Analyze and match user's brand voice |
 
@@ -41,6 +44,7 @@ claude plugin install autocrew
 | `autocrew_topic` | Create/list content topics |
 | `autocrew_content` | Save/list/get/update content drafts |
 | `autocrew_asset` | Manage assets (covers, B-Roll, videos, subtitles) and version history |
+| `autocrew_pipeline` | Create/manage automated pipelines (cron schedules, templates) |
 | `autocrew_status` | Pipeline status overview |
 
 ## Data Storage
@@ -75,6 +79,8 @@ openclaw crew contents             # List content drafts (with asset/version cou
 openclaw crew assets <content-id>  # List assets for a content project
 openclaw crew versions <content-id># Show version history
 openclaw crew open <content-id>    # Show project directory path
+openclaw crew pipelines            # List configured pipelines
+openclaw crew templates            # Show preset pipeline templates
 ```
 
 ## Quick Start

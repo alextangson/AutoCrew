@@ -8,6 +8,7 @@ import { topicCreateSchema, executeTopicCreate } from "./src/tools/topic-create.
 import { contentSaveSchema, executeContentSave } from "./src/tools/content-save.js";
 import { statusSchema, executeStatus } from "./src/tools/status.js";
 import { assetSchema, executeAsset } from "./src/tools/asset.js";
+import { pipelineSchema, executePipeline } from "./src/tools/pipeline.js";
 
 function getDataDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "~";
@@ -89,6 +90,21 @@ const autocrewPlugin = {
         },
       }),
       { names: ["autocrew_asset"] },
+    );
+
+    // --- Tool: autocrew_pipeline ---
+    api.registerTool(
+      () => ({
+        name: "autocrew_pipeline",
+        label: "AutoCrew Pipeline",
+        description:
+          "Manage automated content pipelines (cron schedules). Actions: create, list, get, enable, disable, delete, templates. Use template='daily-research'/'weekly-content'/'daily-publish'/'full-pipeline' for presets.",
+        parameters: pipelineSchema,
+        async execute(_id: string, params: Record<string, unknown>) {
+          return executePipeline({ ...params, _dataDir: dataDir });
+        },
+      }),
+      { names: ["autocrew_pipeline"] },
     );
 
     // --- CLI: openclaw crew ---
@@ -186,6 +202,39 @@ const autocrewPlugin = {
             console.log(`  meta.json   — metadata + asset index`);
             console.log(`  assets/     — media files (covers, B-Roll, etc.)`);
             console.log(`  versions/   — version history (v1.md, v2.md, ...)`);
+          });
+
+        crew
+          .command("pipelines")
+          .description("List configured pipelines")
+          .action(async () => {
+            const result = await executePipeline({ action: "list", _dataDir: dataDir });
+            const pipelines = (result as any).pipelines || [];
+            if (pipelines.length === 0) {
+              console.log("No pipelines configured. Use 'autocrew_pipeline' tool to create one.");
+              return;
+            }
+            for (const p of pipelines) {
+              const status = p.enabled ? "✅ enabled" : "⏸ disabled";
+              console.log(`[${p.id}] ${p.name} (${status})`);
+              console.log(`  schedule: ${p.schedule}`);
+              console.log(`  steps: ${p.steps.map((s: any) => s.skill).join(" → ")}`);
+              console.log();
+            }
+          });
+
+        crew
+          .command("templates")
+          .description("Show preset pipeline templates")
+          .action(async () => {
+            const result = await executePipeline({ action: "templates", _dataDir: dataDir });
+            const templates = (result as any).templates || [];
+            for (const t of templates) {
+              console.log(`[${t.template}] ${t.name}`);
+              console.log(`  ${t.description}`);
+              console.log(`  schedule: ${t.schedule} | steps: ${t.steps}`);
+              console.log();
+            }
           });
       },
       { commands: ["crew"] },
