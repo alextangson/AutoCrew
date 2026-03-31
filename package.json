@@ -1,0 +1,37 @@
+{
+  "name": "autocrew",
+  "version": "0.1.0",
+  "description": "AI content operations crew — automated research, writing, and publishing pipeline.",
+  "type": "module",
+  "license": "MIT",
+  "author": "alextangson",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alextangson/AutoCrew.git"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "claude-code",
+    "claude-code-plugin",
+    "ai-agent",
+    "content-ops",
+    "automation"
+  ],
+  "peerDependencies": {
+    "openclaw": ">=2026.3.2"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

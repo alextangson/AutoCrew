@@ -1,0 +1,20 @@
+{
+  "id": "autocrew",
+  "name": "AutoCrew",
+  "description": "AI content operations crew — research, write, and publish on autopilot.",
+  "skills": ["./skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "tikhub_token": {
+        "type": "string",
+        "description": "TikHub API token for competitor research (api.tikhub.dev)"
+      },
+      "data_dir": {
+        "type": "string",
+        "description": "Local data directory (default: ~/.autocrew)"
+      }
+    }
+  }
+}

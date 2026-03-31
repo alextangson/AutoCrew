@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.js
+*.d.ts
+*.js.map
+!mcp/server.ts
+!index.ts
+.DS_Store
