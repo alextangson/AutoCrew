@@ -11,6 +11,7 @@
 import { topicCreateSchema, executeTopicCreate } from "../src/tools/topic-create.js";
 import { contentSaveSchema, executeContentSave } from "../src/tools/content-save.js";
 import { statusSchema, executeStatus } from "../src/tools/status.js";
+import { assetSchema, executeAsset } from "../src/tools/asset.js";
 
 function getDataDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "~";
@@ -75,6 +76,26 @@ export const tools = [
     },
     execute: (params: Record<string, unknown>) =>
       executeStatus({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_asset",
+    description:
+      "Manage content project assets (covers, B-Roll, images, videos, subtitles) and version history. Actions: 'add' (filename + asset_type + optional source_path), 'list', 'remove' (filename), 'versions' (list version history), 'get_version' (version number), 'revert' (version number).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["add", "list", "remove", "versions", "get_version", "revert"] },
+        content_id: { type: "string" },
+        filename: { type: "string" },
+        asset_type: { type: "string", enum: ["cover", "broll", "image", "video", "audio", "subtitle", "other"] },
+        description: { type: "string" },
+        source_path: { type: "string" },
+        version: { type: "number" },
+      },
+      required: ["action", "content_id"],
+    },
+    execute: (params: Record<string, unknown>) =>
+      executeAsset({ ...params, _dataDir: dataDir }),
   },
 ];
 

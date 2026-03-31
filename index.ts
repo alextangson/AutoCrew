@@ -7,6 +7,7 @@
 import { topicCreateSchema, executeTopicCreate } from "./src/tools/topic-create.js";
 import { contentSaveSchema, executeContentSave } from "./src/tools/content-save.js";
 import { statusSchema, executeStatus } from "./src/tools/status.js";
+import { assetSchema, executeAsset } from "./src/tools/asset.js";
 
 function getDataDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "~";
@@ -75,6 +76,21 @@ const autocrewPlugin = {
       { names: ["autocrew_status"] },
     );
 
+    // --- Tool: autocrew_asset ---
+    api.registerTool(
+      () => ({
+        name: "autocrew_asset",
+        label: "AutoCrew Asset",
+        description:
+          "Manage content project assets (covers, B-Roll, images, videos, subtitles) and version history. Actions: add, list, remove, versions, get_version, revert.",
+        parameters: assetSchema,
+        async execute(_id: string, params: Record<string, unknown>) {
+          return executeAsset({ ...params, _dataDir: dataDir });
+        },
+      }),
+      { names: ["autocrew_asset"] },
+    );
+
     // --- CLI: openclaw crew ---
     api.registerCli(
       ({ program }: any) => {
@@ -120,11 +136,56 @@ const autocrewPlugin = {
               return;
             }
             for (const c of contents) {
+              const assetCount = c.assets?.length || 0;
+              const versionCount = c.versions?.length || 0;
               console.log(`[${c.id}] ${c.title} (${c.status})`);
-              console.log(`  platform: ${c.platform || "unset"}`);
-              console.log(`  ${c.body?.length || 0} chars`);
+              console.log(`  platform: ${c.platform || "unset"} | ${c.body?.length || 0} chars | ${assetCount} assets | v${versionCount}`);
               console.log();
             }
+          });
+
+        crew
+          .command("assets <content-id>")
+          .description("List assets for a content project")
+          .action(async (contentId: string) => {
+            const { listAssets } = await import("./src/storage/local-store.js");
+            const assets = await listAssets(contentId, dataDir);
+            if (assets.length === 0) {
+              console.log(`No assets for ${contentId}.`);
+              return;
+            }
+            console.log(`Assets for ${contentId}:`);
+            for (const a of assets) {
+              console.log(`  [${a.type}] ${a.filename}${a.description ? ` — ${a.description}` : ""}`);
+            }
+          });
+
+        crew
+          .command("versions <content-id>")
+          .description("Show version history for a content project")
+          .action(async (contentId: string) => {
+            const { listVersions } = await import("./src/storage/local-store.js");
+            const versions = await listVersions(contentId, dataDir);
+            if (versions.length === 0) {
+              console.log(`No versions for ${contentId}.`);
+              return;
+            }
+            console.log(`Versions for ${contentId}:`);
+            for (const v of versions) {
+              console.log(`  v${v.version} — ${v.note || "no note"} (${v.savedAt})`);
+            }
+          });
+
+        crew
+          .command("open <content-id>")
+          .description("Show the file path of a content project directory")
+          .action(async (contentId: string) => {
+            const projPath = `${dataDir}/contents/${contentId}`;
+            console.log(`Content project: ${projPath}`);
+            console.log(`  draft.md    — current readable draft`);
+            console.log(`  meta.json   — metadata + asset index`);
+            console.log(`  assets/     — media files (covers, B-Roll, etc.)`);
+            console.log(`  versions/   — version history (v1.md, v2.md, ...)`);
           });
       },
       { commands: ["crew"] },

@@ -40,6 +40,7 @@ claude plugin install autocrew
 |------|-------------|
 | `autocrew_topic` | Create/list content topics |
 | `autocrew_content` | Save/list/get/update content drafts |
+| `autocrew_asset` | Manage assets (covers, B-Roll, videos, subtitles) and version history |
 | `autocrew_status` | Pipeline status overview |
 
 ## Data Storage
@@ -48,18 +49,32 @@ All data is stored locally at `~/.autocrew/`:
 
 ```
 ~/.autocrew/
-├── topics/          # Topic ideas (JSON files)
-├── contents/        # Content drafts (JSON files)
-├── MEMORY.md        # Learned preferences
-└── STYLE.md         # Brand voice profile
+├── topics/                      # Topic ideas (JSON files)
+├── contents/
+│   └── content-xxx/             # Each content is a project directory
+│       ├── meta.json            # Metadata, asset index, version index
+│       ├── draft.md             # Current body as readable markdown
+│       ├── assets/              # Media files
+│       │   ├── cover.jpg        # Cover image
+│       │   ├── broll-01.mp4     # B-Roll clips
+│       │   └── subtitle.srt     # Subtitles
+│       └── versions/            # Version history
+│           ├── v1.md            # Initial draft
+│           ├── v2.md            # After first edit
+│           └── v3.md            # After revert/rewrite
+├── MEMORY.md                    # Learned preferences
+└── STYLE.md                     # Brand voice profile
 ```
 
 ## CLI (OpenClaw only)
 
 ```bash
-openclaw crew status     # Pipeline overview
-openclaw crew topics     # List saved topics
-openclaw crew contents   # List content drafts
+openclaw crew status               # Pipeline overview
+openclaw crew topics               # List saved topics
+openclaw crew contents             # List content drafts (with asset/version counts)
+openclaw crew assets <content-id>  # List assets for a content project
+openclaw crew versions <content-id># Show version history
+openclaw crew open <content-id>    # Show project directory path
 ```
 
 ## Quick Start
