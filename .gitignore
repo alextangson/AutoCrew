@@ -6,3 +6,5 @@ dist/
 !mcp/server.ts
 !index.ts
 .DS_Store
+# Never commit Pro API keys
+.pro
