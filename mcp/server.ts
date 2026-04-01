@@ -9,10 +9,21 @@
  *   Or run standalone: node --loader ts-node/esm mcp/server.ts
  */
 import { topicCreateSchema, executeTopicCreate } from "../src/tools/topic-create.js";
+import { researchSchema, executeResearch } from "../src/tools/research.js";
 import { contentSaveSchema, executeContentSave } from "../src/tools/content-save.js";
 import { statusSchema, executeStatus } from "../src/tools/status.js";
 import { assetSchema, executeAsset } from "../src/tools/asset.js";
 import { pipelineSchema, executePipeline } from "../src/tools/pipeline.js";
+import { publishSchema, executePublish } from "../src/tools/publish.js";
+import { humanizeSchema, executeHumanize } from "../src/tools/humanize.js";
+import { rewriteSchema, executeRewrite } from "../src/tools/rewrite.js";
+import { coverReviewSchema, executeCoverReview } from "../src/tools/cover-review.js";
+import { memorySchema, executeMemory } from "../src/tools/memory.js";
+import { reviewSchema, executeReview } from "../src/tools/review.js";
+import { prePublishSchema, executePrePublish } from "../src/tools/pre-publish.js";
+import { executeInit } from "../src/tools/init.js";
+import { getProStatus } from "../src/modules/pro/gate.js";
+import { loadProfile, detectMissingInfo } from "../src/modules/profile/creator-profile.js";
 
 function getDataDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "~";
@@ -46,20 +57,59 @@ export const tools = [
       executeTopicCreate({ ...params, _dataDir: dataDir }),
   },
   {
+    name: "autocrew_research",
+    description:
+      "Topic discovery with multiple modes: browser-first (Pro), API fallback, free (web search + viral scoring), or manual. " +
+      "action='discover' generates/saves topics, action='session_status' inspects browser login readiness.",
+    inputSchema: researchSchema,
+    execute: (params: Record<string, unknown>) =>
+      executeResearch({ ...params, _dataDir: dataDir }),
+  },
+  {
     name: "autocrew_content",
     description:
-      "Save, list, get, or update content drafts. action='save' needs title+body, 'list' shows all, 'get'/'update' need id.",
+      "Manage content lifecycle. Actions: 'save' (title+body), 'list', 'get' (id), 'update' (id+fields), " +
+      "'transition' (id+target_status, validated state machine), 'create_variant' (topicId+platform), " +
+      "'siblings' (id), 'allowed_transitions' (id).",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["save", "list", "get", "update"] },
-        id: { type: "string" },
+        action: {
+          type: "string",
+          enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions"],
+        },
+        id: { type: "string", description: "Content id" },
         title: { type: "string" },
         body: { type: "string" },
-        platform: { type: "string" },
+        platform: { type: "string", description: "xhs, douyin, wechat_video, wechat_mp, bilibili" },
         topicId: { type: "string" },
-        status: { type: "string", enum: ["draft", "review", "approved", "published"] },
+        status: {
+          type: "string",
+          enum: [
+            "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
+            "approved", "cover_pending", "publish_ready", "publishing", "published", "archived",
+            "draft", "review",
+          ],
+        },
+        target_status: {
+          type: "string",
+          enum: [
+            "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
+            "approved", "cover_pending", "publish_ready", "publishing", "published", "archived",
+          ],
+          description: "Target status for 'transition' action",
+        },
         tags: { type: "array", items: { type: "string" } },
+        hashtags: { type: "array", items: { type: "string" }, description: "Platform-specific hashtags" },
+        siblings: { type: "array", items: { type: "string" }, description: "Sibling content IDs" },
+        publish_url: { type: "string", description: "Published URL on target platform" },
+        performance_data: {
+          type: "object",
+          additionalProperties: { type: "number" },
+          description: "Performance metrics: views, likes, comments, shares, etc.",
+        },
+        force: { type: "boolean", description: "Force transition bypassing validation" },
+        diff_note: { type: "string", description: "Note for revision diff tracking" },
       },
       required: ["action"],
     },
@@ -116,6 +166,97 @@ export const tools = [
     },
     execute: (params: Record<string, unknown>) =>
       executePipeline({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_publish",
+    description:
+      "Run publishing flows. Currently supports action='wechat_mp_draft' for WeChat MP draft publishing.",
+    inputSchema: publishSchema,
+    execute: (params: Record<string, unknown>) =>
+      executePublish({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_humanize",
+    description:
+      "Run the Chinese de-AI pass. Supports action='humanize_zh' for raw text or saved drafts.",
+    inputSchema: humanizeSchema,
+    execute: (params: Record<string, unknown>) =>
+      executeHumanize({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_rewrite",
+    description:
+      "Create platform-native rewrites. Supports action='adapt_platform' for single platform, " +
+      "action='batch_adapt' for multiple platforms with auto title/hashtag and sibling linking.",
+    inputSchema: rewriteSchema,
+    execute: (params: Record<string, unknown>) =>
+      executeRewrite({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_cover_review",
+    description:
+      "Manage Xiaohongshu cover review state. Supports creating A/B/C candidates, reading review state, and approving one label.",
+    inputSchema: coverReviewSchema,
+    execute: (params: Record<string, unknown>) =>
+      executeCoverReview({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_memory",
+    description:
+      "Capture user feedback into MEMORY.md or read current memory. Supports action='capture_feedback' and action='get_memory'.",
+    inputSchema: memorySchema,
+    execute: (params: Record<string, unknown>) =>
+      executeMemory({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_review",
+    description:
+      "Content review: sensitive word scan + de-AI check + quality scoring. " +
+      "Actions: 'full_review' (all checks), 'scan_only' (sensitive words), " +
+      "'quality_score' (score only), 'auto_fix' (apply fixes and save).",
+    inputSchema: reviewSchema,
+    execute: (params: Record<string, unknown>) =>
+      executeReview({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_pre_publish",
+    description:
+      "Pre-publish checklist gate. Runs 6 checks (content review, cover review, hashtags, title, platform, body length) " +
+      "before allowing publish. Action: 'check'.",
+    inputSchema: prePublishSchema,
+    execute: (params: Record<string, unknown>) =>
+      executePrePublish({ ...params, _dataDir: dataDir }),
+  },
+  {
+    name: "autocrew_init",
+    description:
+      "Initialize the AutoCrew data directory (~/.autocrew/) and creator profile. Safe to run multiple times.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    execute: (_params: Record<string, unknown>) => executeInit({ dataDir }),
+  },
+  {
+    name: "autocrew_pro_status",
+    description:
+      "Check AutoCrew Pro status: whether Pro is active, profile completeness, and missing info.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    execute: async (_params: Record<string, unknown>) => {
+      const proStatus = await getProStatus(dataDir);
+      const profile = await loadProfile(dataDir);
+      const missing = profile ? detectMissingInfo(profile) : ["profile_not_initialized"];
+      return {
+        ok: true,
+        isPro: proStatus.isPro,
+        profileExists: profile !== null,
+        missingInfo: missing,
+        styleCalibrated: profile?.styleCalibrated ?? false,
+      };
+    },
   },
 ];
 

@@ -10,9 +10,12 @@ description: |
 
 ## Steps
 
-1. Read `~/.autocrew/STYLE.md` — absorb brand voice, personality, boundaries.
-   Read `~/.autocrew/MEMORY.md` — check for writing preferences, past feedback, audience persona.
-   If neither exists, proceed with sensible defaults and note that style calibration is recommended.
+1. **Load style & memory context:**
+
+   a. Read `~/.autocrew/STYLE.md` — absorb brand voice, personality, boundaries.
+   b. Read `~/.autocrew/MEMORY.md` — check for writing preferences, past feedback, audience persona.
+   c. Read `~/.autocrew/creator-profile.json` — check `styleCalibrated`, `platforms`, `writingRules`.
+   d. If none exist, proceed with sensible defaults and note that style calibration is recommended.
 
 2. If a topic was specified, load its details via `autocrew_topic` action="list" and find the matching topic.
 
@@ -40,19 +43,26 @@ description: |
    c. **CTA** — 1-2 sentences guiding a specific action (save/comment/follow).
    Must connect to the content's value — "收藏这条，下次用得上" beats "觉得有用就点赞".
 
-   d. **Title** — ONE best title.
-   - Use `web_search` to find 2-3 trending keywords on the target platform.
-   - Embed 1 trending keyword naturally.
-   - Create curiosity gap or promise a specific outcome.
-   - 15-25 characters. Can include emoji if it adds value.
+   d. **Title** — generate platform-optimized title variants using `title-hashtag.ts`:
+   - Call `generateForPlatform(baseTopic, platform)` to get 3-5 title variants.
+   - Pick the best variant as the primary title.
+   - If `web_search` is available, also search 2-3 trending keywords and embed 1 naturally.
+   - Title: 15-25 characters. Can include emoji if it adds value.
+
+   e. **Hashtags** — generate platform-specific hashtags:
+   - Call `generateHashtags(topic, platform, tags)` from `title-hashtag.ts`.
+   - Append hashtags to the body (for platforms that use inline hashtags like XHS/Douyin).
+   - Save hashtags separately in the `hashtags` field for structured access.
 
 4. **Self-review before saving** (fix any failure, don't just check):
    - [ ] 800+ characters total?
    - [ ] Contains at least 2 concrete examples or scenarios (not vague claims)?
    - [ ] Has a non-obvious insight or twist?
-   - [ ] Tone matches style profile (if available)?
+   - [ ] Tone matches STYLE.md profile (if available)?
    - [ ] No generic greetings, no essay-style paragraphs?
    - [ ] Body is plain text with blank-line separators (no markdown headers)?
+   - [ ] Title within platform character limit?
+   - [ ] Hashtags generated and relevant?
 
 5. **Save via tool:**
    ```json
@@ -63,13 +73,35 @@ description: |
      "platform": "xiaohongshu",
      "topicId": "topic-xxx (if based on a topic)",
      "tags": ["tag1", "tag2"],
+     "hashtags": ["#标签1", "#标签2"],
      "status": "draft"
    }
    ```
 
-6. **Output to user:**
-   Show the complete draft in chat, then:
+6. **Auto-review (if style calibrated):**
+   - Check `creator-profile.json` → if `styleCalibrated: true`, automatically run:
+     ```json
+     { "action": "full_review", "content_id": "<saved-id>", "platform": "<platform>" }
+     ```
+   - Show the review summary to the user.
+   - If review passes → tell user "审核通过，可以直接发布或做平台改写".
+   - If review fails → show fixes, ask user whether to auto-fix or manually adjust.
+
+7. **Output to user:**
+   Show the complete draft in chat, including:
+   - Title (with alternative variants from title-hashtag)
+   - Full body text
+   - Hashtags
+   - Review result (if auto-review ran)
+   Then:
    > 已保存为草稿。要修改的话直接说，或者确认后我帮你标记为待发布。
+
+8. **If adaptation is needed:**
+   - Do not just trim one draft for another platform.
+   - Use `platform-rewrite` / `autocrew_rewrite` to create the first platform-native version.
+
+9. **Before final delivery:**
+   - Run `humanizer-zh` / `autocrew_humanize` as the last pass when the text sounds generic, too smooth, or too essay-like.
 
 ## Platform-Specific Adjustments
 
@@ -79,6 +111,16 @@ description: |
 | douyin | Script format | [Scene] + [Voiceover] + [Text overlay], hook in 3s |
 | wechat_mp | 1500-3000 | Subheadings every 300-500 chars, more structured |
 | wechat_video | 300-800 | Educational tone, include text summary |
+| bilibili | 500-2000 | 年轻化表达，可以用梗，【】标注类型 |
+
+## Title & Hashtag Integration
+
+The `title-hashtag.ts` module provides:
+- `generateTitleVariants(topic, platform)` → 3-5 title variants with style labels
+- `generateHashtags(topic, platform, tags)` → deduplicated, platform-limited hashtags
+- `generateForPlatform(topic, platform)` → titles + hashtags + tips in one call
+
+Always use these for structured title/hashtag generation. The AI agent refines the output — these are starting points, not final answers.
 
 ## Error Handling
 
@@ -87,7 +129,10 @@ description: |
 | Style/Memory files missing | Write with sensible defaults. Suggest running style-calibration. |
 | Topic not found | Ask user for topic details directly. |
 | Save fails | Output the content in chat so user can copy it. Retry save once. |
+| Review fails to run | Save the draft anyway. Note that review was skipped. |
+| title-hashtag returns empty | Fall back to manual title + basic hashtags from tags. |
 
 ## Changelog
 
+- 2026-04-01: v2 — Integrated STYLE.md + title-hashtag.ts + auto-review after save. Added hashtags field, bilibili platform notes.
 - 2026-03-31: v1 — Adapted from Qingmo write-script.md + _writing-style.md. Removed backend API curl dependency. Uses autocrew_content tool. Merged writing style rules inline.

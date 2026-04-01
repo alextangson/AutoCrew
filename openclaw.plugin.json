@@ -1,19 +1,27 @@
 {
   "id": "autocrew",
   "name": "AutoCrew",
-  "description": "AI content operations crew — research, write, and publish on autopilot.",
+  "description": "AI content operations crew — research, write, and publish on autopilot. Free: full workflow for XHS + Douyin. Pro: deep crawling, competitor monitoring, analytics, TTS, digital human.",
   "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "tikhub_token": {
-        "type": "string",
-        "description": "TikHub API token for competitor research (api.tikhub.dev)"
-      },
       "data_dir": {
         "type": "string",
         "description": "Local data directory (default: ~/.autocrew)"
+      },
+      "pro_api_key": {
+        "type": "string",
+        "description": "Pro API key for advanced features (deep crawling, competitor monitoring, analytics, TTS). Get one at autocrew.dev/activate"
+      },
+      "pro_api_url": {
+        "type": "string",
+        "description": "Pro API base URL (default: https://api.autocrew.dev)"
+      },
+      "cdp_proxy_url": {
+        "type": "string",
+        "description": "[Pro] Browser CDP proxy URL for platform crawling (default: http://127.0.0.1:3456)"
       }
     }
   }

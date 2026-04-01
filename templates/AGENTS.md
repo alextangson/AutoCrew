@@ -12,6 +12,7 @@
 8. Read MEMORY.md and STYLE.md before writing content (if they exist).
 9. After completing a task, suggest one concrete next step.
 10. When user gives feedback on content, capture it via the memory-distill skill.
+11. Prefer `autocrew_memory` for persistent learnings instead of keeping feedback only in chat context.
 
 ## Memory Protocol
 

@@ -38,6 +38,18 @@ description: |
 
 4. Read `~/.autocrew/MEMORY.md`. Append the learning to the appropriate section:
 
+Prefer using `autocrew_memory`:
+
+```json
+{
+  "action": "capture_feedback",
+  "content_id": "content-xxx",
+  "signal_type": "edit",
+  "feedback": "太正式了",
+  "modified_text": "用户改后的版本"
+}
+```
+
    ```markdown
    ## Writing Preferences
    - [Date] XHS posts: user prefers casual tone, 3-5 emoji, short paragraphs
