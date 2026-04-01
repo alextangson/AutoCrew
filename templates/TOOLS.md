@@ -12,9 +12,9 @@ These tools are automatically available when AutoCrew is installed.
 | `autocrew_content` | Content draft CRUD + status transitions. Actions: `save`, `list`, `get`, `update`, `transition`, `list_siblings`, `create_variant` |
 | `autocrew_humanize` | Chinese de-AI pass. Actions: `humanize_zh` |
 | `autocrew_rewrite` | Platform-native rewrites. Actions: `adapt_platform` (single), `batch_adapt` (multi-platform + auto title/hashtag + siblings) |
-| `autocrew_review` | Content review: sensitive words + quality + de-AI check. Actions: `full_review`, `sensitive_words`, `quality_check`, `fix_suggestions` |
+| `autocrew_review` | Content review: sensitive words + quality + de-AI check. Actions: `full_review`, `scan_only`, `quality_score`, `auto_fix` |
 | `autocrew_pre_publish` | Pre-publish gate: 6 checks before allowing publish. Actions: `check` |
-| `autocrew_cover_review` | Xiaohongshu A/B/C cover review. Actions: `create_candidates`, `get_review`, `approve` |
+| `autocrew_cover_review` | Generate, review, and approve cover images via Gemini. Actions: `create_candidates`, `get`, `approve`, `generate_ratios` (Pro: 16:9 + 4:3) |
 | `autocrew_asset` | Manage assets and version history. Actions: `add`, `list`, `remove`, `versions`, `get_version`, `revert` |
 | `autocrew_pipeline` | Automated pipeline management. Actions: `create`, `list`, `get`, `enable`, `disable`, `delete`, `templates` |
 | `autocrew_publish` | Publish to platforms. Actions: `wechat_mp_draft` (more coming in Pro) |

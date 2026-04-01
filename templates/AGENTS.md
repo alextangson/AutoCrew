@@ -47,7 +47,7 @@
 | "改写" / "适配" / "发到XX平台" | platform-rewrite |
 | "去AI味" / "润色" | humanizer-zh |
 | "审核" / "检查" / "敏感词" | content-review |
-| "封面" / "生成封面" | xhs-cover-review |
+| "封面" / "生成封面" / "做个封面" | cover-generator |
 | "发布前检查" | pre-publish |
 | "发布" / "发到小红书" | publish-content |
 | "自动化" / "定时" / "pipeline" | manage-pipeline |

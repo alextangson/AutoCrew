@@ -36,14 +36,17 @@ const autocrewPlugin = {
     type: "object" as const,
     additionalProperties: false,
     properties: {
-      tikhub_token: { type: "string" as const },
       data_dir: { type: "string" as const },
+      pro_api_key: { type: "string" as const },
+      pro_api_url: { type: "string" as const },
       cdp_proxy_url: { type: "string" as const },
+      gemini_api_key: { type: "string" as const },
+      gemini_model: { type: "string" as const },
     },
   },
 
-  register(api: any) {
-    const dataDir = getDataDir();
+  register(api: any, config?: Record<string, any>) {
+    const dataDir = config?.data_dir || getDataDir();
 
     // --- Tool: autocrew_topic ---
     api.registerTool(
@@ -190,10 +193,15 @@ const autocrewPlugin = {
         name: "autocrew_cover_review",
         label: "AutoCrew Cover Review",
         description:
-          "Manage Xiaohongshu cover candidate review. Supports creating A/B/C candidates, reading review state, and approving one variant.",
+          "Generate, review, and approve cover images. Actions: create_candidates (generate 3 style variants via Gemini), get (view review), approve (pick one), generate_ratios (Pro: 16:9 + 4:3).",
         parameters: coverReviewSchema,
         async execute(_id: string, params: Record<string, unknown>) {
-          return executeCoverReview({ ...params, _dataDir: dataDir });
+          return executeCoverReview({
+            ...params,
+            _dataDir: dataDir,
+            _geminiApiKey: config?.gemini_api_key || process.env.GEMINI_API_KEY,
+            _geminiModel: config?.gemini_model || "auto",
+          });
         },
       }),
       { names: ["autocrew_cover_review"] },
@@ -245,6 +253,45 @@ const autocrewPlugin = {
         },
       }),
       { names: ["autocrew_pre_publish"] },
+    );
+
+    // --- Tool: autocrew_init ---
+    api.registerTool(
+      () => ({
+        name: "autocrew_init",
+        label: "AutoCrew Init",
+        description:
+          "Initialize the AutoCrew data directory (~/.autocrew/) and creator profile. Safe to run multiple times.",
+        parameters: { type: "object" as const, properties: {} },
+        async execute(_id: string, _params: Record<string, unknown>) {
+          return executeInit({ dataDir });
+        },
+      }),
+      { names: ["autocrew_init"] },
+    );
+
+    // --- Tool: autocrew_pro_status ---
+    api.registerTool(
+      () => ({
+        name: "autocrew_pro_status",
+        label: "AutoCrew Pro Status",
+        description:
+          "Check AutoCrew Pro status: whether Pro is active, profile completeness, and missing info.",
+        parameters: { type: "object" as const, properties: {} },
+        async execute(_id: string, _params: Record<string, unknown>) {
+          const proStatus = await getProStatus(dataDir);
+          const profile = await loadProfile(dataDir);
+          const missing = profile ? detectMissingInfo(profile) : ["profile_not_initialized"];
+          return {
+            ok: true,
+            isPro: proStatus.isPro,
+            profileExists: profile !== null,
+            missingInfo: missing,
+            styleCalibrated: profile?.styleCalibrated ?? false,
+          };
+        },
+      }),
+      { names: ["autocrew_pro_status"] },
     );
 
     // --- CLI: openclaw crew ---
