@@ -33,7 +33,7 @@ const PATTERN_TO_RULE: Record<string, string> = {
   break_long_paragraphs: "长段落拆分为短段落，每段不超过 3-4 行",
   remove_ai_phrases: "删除 AI 味套话（值得一提、综上所述、赋能、闭环等）",
   add_colloquial_tone: "适当加入口语化表达（说白了、讲真、你想啊）",
-  reduce_we_pronoun: "减少"我们"开头，多用"你"拉近距离",
+  reduce_we_pronoun: '减少"我们"开头，多用"你"拉近距离',
   shorten_content: "精简内容，删除冗余信息",
   add_emoji: "适当使用 emoji 增加可读性",
   casualize_tone: "用口语化词汇替代书面语（因此→所以，然而→但是）",
