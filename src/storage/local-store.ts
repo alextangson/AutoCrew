@@ -76,14 +76,33 @@ export interface Content {
 
 export interface CoverVariant {
   label: "a" | "b" | "c";
+  /** Full image generation prompt used */
+  imagePrompt?: string;
+  /** Visual style: cinematic, minimalist, bold-impact */
+  style?: string;
+  /** Chinese title text on the cover (2-8 chars) */
+  titleText?: string;
+  /** Generated image paths by aspect ratio */
+  imagePaths: {
+    "3:4"?: string;
+    "16:9"?: string;
+    "4:3"?: string;
+  };
+  /** Model used for generation */
+  model?: string;
+  /** Whether personal IP reference photos were used */
+  hasPersonalIP?: boolean;
+  /** Layout description */
+  layoutHint?: string;
+  /** Design reasoning (for display) */
+  designReason?: string;
+  // Legacy fields (kept for backward compat)
   titleMain?: string;
   titleSub?: string;
   titleLayout?: string;
   stopTrigger?: string;
-  designReason?: string;
   keyMoment?: string;
   hookText?: string;
-  imagePrompt?: string;
   renderPrompt?: string;
   seedreamPrompt?: string;
   prototypeId?: string;
@@ -93,13 +112,15 @@ export interface CoverVariant {
 }
 
 export interface CoverReview {
-  platform: "xiaohongshu";
+  platform: string;
   status: "review_pending" | "approved" | "publish_ready";
   stopReason?: string;
   coverHook?: string;
   variants: CoverVariant[];
   approvedLabel?: "a" | "b" | "c";
   approvedImagePath?: string;
+  createdAt?: string;
+}
   approvedAt?: string;
   notes?: string;
   createdAt: string;

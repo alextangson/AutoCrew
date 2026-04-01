@@ -22,6 +22,14 @@
       "cdp_proxy_url": {
         "type": "string",
         "description": "[Pro] Browser CDP proxy URL for platform crawling (default: http://127.0.0.1:3456)"
+      },
+      "gemini_api_key": {
+        "type": "string",
+        "description": "Gemini API key for cover image generation. Free at aistudio.google.com/apikey"
+      },
+      "gemini_model": {
+        "type": "string",
+        "description": "Image generation model: 'auto' (default, tries gemini-native then imagen-4), 'gemini-native', or 'imagen-4'"
       }
     }
   }
