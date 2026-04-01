@@ -119,12 +119,10 @@ export interface CoverReview {
   variants: CoverVariant[];
   approvedLabel?: "a" | "b" | "c";
   approvedImagePath?: string;
-  createdAt?: string;
-}
   approvedAt?: string;
   notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 function getDataDir(customDir?: string): string {
