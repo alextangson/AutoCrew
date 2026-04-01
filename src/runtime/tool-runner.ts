@@ -15,6 +15,7 @@ import {
   resolveGeminiModel,
 } from "./context.js";
 import { type EventBus, createEvent } from "./events.js";
+import { loadProfile, detectMissingInfo } from "../modules/profile/creator-profile.js";
 
 // --- Types ---
 
@@ -37,6 +38,8 @@ export interface ToolDefinition {
   proActions?: string[];
   /** If true, inject _geminiApiKey and _geminiModel into params */
   needsGemini?: boolean;
+  /** If true, this tool is exempt from onboarding gate (e.g. init, pro_status) */
+  skipOnboardingGate?: boolean;
 }
 
 export interface ToolRunnerOptions {
@@ -46,6 +49,71 @@ export interface ToolRunnerOptions {
 }
 
 // --- Built-in Middleware ---
+
+/** Tools exempt from onboarding gate */
+const ONBOARDING_EXEMPT_TOOLS = new Set([
+  "autocrew_init",
+  "autocrew_pro_status",
+  "autocrew_status",
+  "autocrew_memory",
+]);
+
+/** Block non-exempt tools if profile is incomplete or style not calibrated */
+const onboardingGateMiddleware: Middleware = async (ctx, toolName, _params, next) => {
+  // Skip for exempt tools
+  if (ONBOARDING_EXEMPT_TOOLS.has(toolName)) return next();
+
+  try {
+    const profile = await loadProfile(ctx.dataDir);
+    if (!profile) {
+      return {
+        ok: false,
+        error: "onboarding_required",
+        message: "⚠️ 首次使用 AutoCrew，需要先完成初始设置。",
+        action_required: "请先调用 autocrew_init 初始化数据目录，然后通过对话收集用户的行业、平台、受众信息，保存到 creator-profile.json。完成后再调用 autocrew_pro_status 确认。",
+        steps: [
+          "1. 调用 autocrew_init 初始化",
+          "2. 询问用户：你的行业/领域是什么？",
+          "3. 询问用户：你主要在哪些平台发内容？（小红书/抖音/公众号/视频号）",
+          "4. 询问用户：你的目标受众是谁？",
+          "5. 通过风格校准确定写作风格（正式vs口语、专业vs大白话等）",
+          "6. 生成 STYLE.md 并更新 creator-profile.json",
+          "7. 完成后再执行用户的原始请求",
+        ],
+      };
+    }
+
+    const missing = detectMissingInfo(profile);
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error: "profile_incomplete",
+        message: `⚠️ 创作者档案不完整，缺少：${missing.join("、")}`,
+        action_required: `请通过对话补充以下信息：${missing.join("、")}。更新 creator-profile.json 后再继续。`,
+        missing,
+      };
+    }
+
+    if (!profile.styleCalibrated) {
+      return {
+        ok: false,
+        error: "style_not_calibrated",
+        message: "⚠️ 还没有完成风格校准。写出来的内容可能不符合你的品牌调性。",
+        action_required: "请先进行风格校准：通过 A/B 选择题确定写作风格偏好，生成 STYLE.md，然后更新 creator-profile.json 的 styleCalibrated 为 true。",
+        steps: [
+          "1. 询问用户的风格偏好（正式vs口语、专业vs大白话、长文vs短文、情感vs干货）",
+          "2. 根据回答生成 ~/.autocrew/STYLE.md",
+          "3. 更新 creator-profile.json: styleCalibrated = true",
+          "4. 完成后再执行用户的原始请求",
+        ],
+      };
+    }
+  } catch {
+    // If profile check fails, let the tool proceed (don't block on errors)
+  }
+
+  return next();
+};
 
 /** Inject _dataDir into every tool call */
 const dataDirMiddleware: Middleware = async (ctx, _tool, params, next) => {
@@ -133,6 +201,7 @@ export class ToolRunner {
     this.eventBus = options.eventBus;
     this.middleware = [
       dataDirMiddleware,
+      onboardingGateMiddleware,
       errorBoundaryMiddleware,
       auditMiddleware,
       workspaceTrackingMiddleware,

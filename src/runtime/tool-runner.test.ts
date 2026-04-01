@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ToolRunner, type ToolDefinition } from "../runtime/tool-runner.js";
 import { createContext } from "../runtime/context.js";
 import { EventBus } from "../runtime/events.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+let testDir: string;
 
 function makeTool(name: string, result: Record<string, unknown> = { ok: true }): ToolDefinition {
   return {
@@ -13,12 +18,30 @@ function makeTool(name: string, result: Record<string, unknown> = { ok: true }):
   };
 }
 
+/** Create a complete profile so onboarding gate doesn't block */
+async function seedProfile(dir: string) {
+  const profileDir = path.join(dir, "profiles");
+  await fs.mkdir(profileDir, { recursive: true });
+  const profile = {
+    industry: "tech",
+    platforms: ["xhs"],
+    audiencePersona: { name: "test", age: "25-35", job: "dev" },
+    styleCalibrated: true,
+    writingRules: [],
+    competitorAccounts: [],
+    performanceHistory: [],
+  };
+  await fs.writeFile(path.join(dir, "creator-profile.json"), JSON.stringify(profile));
+}
+
 describe("ToolRunner", () => {
   let runner: ToolRunner;
   let eventBus: EventBus;
 
-  beforeEach(() => {
-    const ctx = createContext({ data_dir: "/tmp/test-autocrew" });
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-runner-test-"));
+    await seedProfile(testDir);
+    const ctx = createContext({ data_dir: testDir });
     eventBus = new EventBus();
     runner = new ToolRunner({ ctx, eventBus });
   });
@@ -47,7 +70,7 @@ describe("ToolRunner", () => {
     runner.register(tool);
     await runner.execute("test_tool", {});
     const passedParams = (tool.execute as any).mock.calls[0][0];
-    expect(passedParams._dataDir).toBe("/tmp/test-autocrew");
+    expect(passedParams._dataDir).toBe(testDir);
   });
 
   it("catches errors and returns error result", async () => {
@@ -125,5 +148,57 @@ describe("ToolRunner", () => {
     await runner.execute("normal_tool", {});
     const passedParams = (tool.execute as any).mock.calls[0][0];
     expect("_geminiApiKey" in passedParams).toBe(false);
+  });
+
+  it("onboarding gate blocks tools when no profile exists", async () => {
+    // Create a runner with empty dataDir (no profile)
+    const emptyDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-empty-"));
+    const emptyCtx = createContext({ data_dir: emptyDir });
+    const emptyRunner = new ToolRunner({ ctx: emptyCtx, eventBus });
+
+    emptyRunner.register(makeTool("autocrew_content", { ok: true }));
+    const result = await emptyRunner.execute("autocrew_content", {});
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("onboarding_required");
+
+    await fs.rm(emptyDir, { recursive: true, force: true });
+  });
+
+  it("onboarding gate allows exempt tools without profile", async () => {
+    const emptyDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-empty-"));
+    const emptyCtx = createContext({ data_dir: emptyDir });
+    const emptyRunner = new ToolRunner({ ctx: emptyCtx, eventBus });
+
+    emptyRunner.register(makeTool("autocrew_init", { ok: true, dataDir: emptyDir }));
+    const result = await emptyRunner.execute("autocrew_init", {});
+    expect(result.ok).toBe(true);
+
+    await fs.rm(emptyDir, { recursive: true, force: true });
+  });
+
+  it("onboarding gate blocks when style not calibrated", async () => {
+    const uncalDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-uncal-"));
+    const profile = {
+      industry: "tech",
+      platforms: ["xhs"],
+      audiencePersona: { name: "test", age: "25-35", job: "dev" },
+      styleCalibrated: false,
+      writingRules: [],
+      competitorAccounts: [],
+      performanceHistory: [],
+    };
+    await fs.writeFile(path.join(uncalDir, "creator-profile.json"), JSON.stringify(profile));
+
+    const uncalCtx = createContext({ data_dir: uncalDir });
+    const uncalRunner = new ToolRunner({ ctx: uncalCtx, eventBus });
+    uncalRunner.register(makeTool("autocrew_content", { ok: true }));
+
+    const result = await uncalRunner.execute("autocrew_content", {});
+    expect(result.ok).toBe(false);
+    // styleCalibrated:false is detected as missing info by detectMissingInfo,
+    // so profile_incomplete fires before style_not_calibrated
+    expect(["profile_incomplete", "style_not_calibrated"]).toContain(result.error);
+
+    await fs.rm(uncalDir, { recursive: true, force: true });
   });
 });
