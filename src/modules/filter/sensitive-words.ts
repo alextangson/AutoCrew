@@ -48,6 +48,12 @@ interface BuiltinData {
 
 let _builtinCache: BuiltinData | null = null;
 
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
+const _require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 async function loadBuiltin(): Promise<BuiltinData> {
   if (_builtinCache) return _builtinCache;
   const filePath = path.resolve(__dirname, "../../data/sensitive-words-builtin.json");

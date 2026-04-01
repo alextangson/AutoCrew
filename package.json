@@ -29,9 +29,16 @@
   "dependencies": {
     "@sinclair/typebox": "0.34.48"
   },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
     ]
+  },
+  "devDependencies": {
+    "vitest": "^4.1.2"
   }
 }
