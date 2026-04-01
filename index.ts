@@ -1,8 +1,10 @@
 /**
  * AutoCrew — OpenClaw plugin entry point.
  *
- * Registers tools and CLI subcommands into the OpenClaw Gateway.
- * Tools core logic lives in src/tools/ (shared with Claude Code MCP entry).
+ * Architecture:
+ * - Runtime layer (ToolRunner + EventBus + Hooks) handles middleware, state, events
+ * - Tools are registered once via ToolRunner, then bridged to OpenClaw API
+ * - CLI commands call ToolRunner.execute() for consistent middleware behavior
  */
 import { topicCreateSchema, executeTopicCreate } from "./src/tools/topic-create.js";
 import { researchSchema, executeResearch } from "./src/tools/research.js";
@@ -21,11 +23,160 @@ import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
 import { loadProfile, detectMissingInfo } from "./src/modules/profile/creator-profile.js";
+import { createContext, type PluginConfig } from "./src/runtime/context.js";
+import { ToolRunner } from "./src/runtime/tool-runner.js";
+import { EventBus } from "./src/runtime/events.js";
+import { HookManager } from "./src/runtime/hooks.js";
 
-function getDataDir(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return `${home}/.autocrew`;
+// --- Tool Registry ---
+
+function registerAllTools(runner: ToolRunner): void {
+  runner.register({
+    name: "autocrew_topic",
+    label: "AutoCrew Topic",
+    description: "Create or list content topics. Actions: create, list.",
+    parameters: topicCreateSchema,
+    execute: executeTopicCreate,
+  });
+
+  runner.register({
+    name: "autocrew_research",
+    label: "AutoCrew Research",
+    description:
+      "Topic discovery with multiple modes: browser-first (Pro), API fallback, free (web search + viral scoring), or manual. " +
+      "Supports action='discover' to generate/save topics and action='session_status' to inspect browser login readiness.",
+    parameters: researchSchema,
+    execute: executeResearch,
+  });
+
+  runner.register({
+    name: "autocrew_content",
+    label: "AutoCrew Content",
+    description:
+      "Manage content lifecycle: save drafts, list/get/update content, transition status, manage siblings and variants. " +
+      "Actions: save, list, get, update, transition, list_siblings, create_variant.",
+    parameters: contentSaveSchema,
+    execute: executeContentSave,
+  });
+
+  runner.register({
+    name: "autocrew_status",
+    label: "AutoCrew Status",
+    description: "Show pipeline status: topic count, content count, status breakdown.",
+    parameters: statusSchema,
+    execute: executeStatus,
+  });
+
+  runner.register({
+    name: "autocrew_asset",
+    label: "AutoCrew Asset",
+    description:
+      "Manage content project assets (covers, B-Roll, images, videos, subtitles) and version history. Actions: add, list, remove, versions, get_version, revert.",
+    parameters: assetSchema,
+    execute: executeAsset,
+  });
+
+  runner.register({
+    name: "autocrew_pipeline",
+    label: "AutoCrew Pipeline",
+    description:
+      "Manage automated content pipelines. Actions: create, list, get, enable, disable, delete, templates.",
+    parameters: pipelineSchema,
+    execute: executePipeline,
+  });
+
+  runner.register({
+    name: "autocrew_publish",
+    label: "AutoCrew Publish",
+    description:
+      "Run proven publishing flows. Currently supports action='wechat_mp_draft' to generate images, produce a cover, and push a WeChat MP article into the draft box.",
+    parameters: publishSchema,
+    execute: executePublish,
+  });
+
+  runner.register({
+    name: "autocrew_humanize",
+    label: "AutoCrew Humanize",
+    description: "Run the Chinese de-AI pass on content text. Removes AI-sounding patterns and corporate buzzwords.",
+    parameters: humanizeSchema,
+    execute: executeHumanize,
+  });
+
+  runner.register({
+    name: "autocrew_rewrite",
+    label: "AutoCrew Rewrite",
+    description:
+      "Create platform-native rewrites. Actions: adapt_platform (single platform), batch_adapt (multi-platform + auto title/hashtag + sibling linking).",
+    parameters: rewriteSchema,
+    execute: executeRewrite,
+  });
+
+  runner.register({
+    name: "autocrew_cover_review",
+    label: "AutoCrew Cover Review",
+    description:
+      "Generate, review, and approve cover images via Gemini. Actions: create_candidates (generate 3 style variants), get (view review), approve (pick one), generate_ratios (Pro: 16:9 + 4:3).",
+    parameters: coverReviewSchema,
+    execute: executeCoverReview,
+    needsGemini: true,
+  });
+
+  runner.register({
+    name: "autocrew_memory",
+    label: "AutoCrew Memory",
+    description:
+      "Capture user feedback into MEMORY.md or read current memory. Supports action='capture_feedback' and action='get_memory'.",
+    parameters: memorySchema,
+    execute: executeMemory,
+  });
+
+  runner.register({
+    name: "autocrew_review",
+    label: "AutoCrew Review",
+    description:
+      "Content review: sensitive words scan + quality score + de-AI check. Actions: full_review, scan_only, quality_score, auto_fix.",
+    parameters: reviewSchema,
+    execute: executeReview,
+  });
+
+  runner.register({
+    name: "autocrew_pre_publish",
+    label: "AutoCrew Pre-Publish",
+    description: "Pre-publish gate: 6 checks before allowing publish. Actions: check.",
+    parameters: prePublishSchema,
+    execute: executePrePublish,
+  });
+
+  runner.register({
+    name: "autocrew_init",
+    label: "AutoCrew Init",
+    description: "Initialize the AutoCrew data directory (~/.autocrew/) and creator profile. Safe to run multiple times.",
+    parameters: { type: "object" as const, properties: {} },
+    execute: async (params) => executeInit({ dataDir: params._dataDir as string }),
+  });
+
+  runner.register({
+    name: "autocrew_pro_status",
+    label: "AutoCrew Pro Status",
+    description: "Check AutoCrew Pro status: whether Pro is active, profile completeness, and missing info.",
+    parameters: { type: "object" as const, properties: {} },
+    execute: async (params) => {
+      const dir = params._dataDir as string;
+      const proStatus = await getProStatus(dir);
+      const profile = await loadProfile(dir);
+      const missing = profile ? detectMissingInfo(profile) : ["profile_not_initialized"];
+      return {
+        ok: true,
+        isPro: proStatus.isPro,
+        profileExists: profile !== null,
+        missingInfo: missing,
+        styleCalibrated: profile?.styleCalibrated ?? false,
+      };
+    },
+  });
 }
+
+// --- OpenClaw Plugin ---
 
 const autocrewPlugin = {
   id: "autocrew",
@@ -45,254 +196,34 @@ const autocrewPlugin = {
     },
   },
 
-  register(api: any, config?: Record<string, any>) {
-    const dataDir = config?.data_dir || getDataDir();
+  register(api: any, config?: PluginConfig) {
+    // --- Runtime Layer ---
+    const ctx = createContext(config);
+    const eventBus = new EventBus();
+    const hookManager = new HookManager();
+    const runner = new ToolRunner({ ctx, eventBus });
 
-    // --- Tool: autocrew_topic ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_topic",
-        label: "AutoCrew Topic",
-        description:
-          "Create or list content topics. Use action='create' with title/description/tags to save a topic idea, or action='list' to show all saved topics.",
-        parameters: topicCreateSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeTopicCreate({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_topic"] },
-    );
+    // Register all tools
+    registerAllTools(runner);
 
-    // --- Tool: autocrew_research ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_research",
-        label: "AutoCrew Research",
-        description:
-          "Topic discovery with multiple modes: browser-first (Pro), API fallback, free (web search + viral scoring), or manual. " +
-          "Supports action='discover' to generate/save topics and action='session_status' to inspect browser login readiness.",
-        parameters: researchSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeResearch({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_research"] },
-    );
+    // Initialize hooks (async, fire-and-forget)
+    hookManager.init(eventBus, runner, ctx.dataDir).catch(() => {});
 
-    // --- Tool: autocrew_content ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_content",
-        label: "AutoCrew Content",
-        description:
-          "Manage content lifecycle. Actions: 'save' (title+body), 'list', 'get' (id), 'update' (id+fields), " +
-          "'transition' (id+target_status, validated state machine), 'create_variant' (topicId+platform), " +
-          "'siblings' (id), 'allowed_transitions' (id).",
-        parameters: contentSaveSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeContentSave({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_content"] },
-    );
-
-    // --- Tool: autocrew_status ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_status",
-        label: "AutoCrew Status",
-        description:
-          "Show AutoCrew pipeline status: topic count, content count, content status breakdown.",
-        parameters: statusSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeStatus({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_status"] },
-    );
-
-    // --- Tool: autocrew_asset ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_asset",
-        label: "AutoCrew Asset",
-        description:
-          "Manage content project assets (covers, B-Roll, images, videos, subtitles) and version history. Actions: add, list, remove, versions, get_version, revert.",
-        parameters: assetSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeAsset({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_asset"] },
-    );
-
-    // --- Tool: autocrew_pipeline ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_pipeline",
-        label: "AutoCrew Pipeline",
-        description:
-          "Manage automated content pipelines (cron schedules). Actions: create, list, get, enable, disable, delete, templates. Use template='daily-research'/'weekly-content'/'daily-publish'/'full-pipeline' for presets.",
-        parameters: pipelineSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executePipeline({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_pipeline"] },
-    );
-
-    // --- Tool: autocrew_publish ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_publish",
-        label: "AutoCrew Publish",
-        description:
-          "Run proven publishing flows. Currently supports action='wechat_mp_draft' to generate images, produce a cover, and push a WeChat MP article into the draft box.",
-        parameters: publishSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executePublish({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_publish"] },
-    );
-
-    // --- Tool: autocrew_humanize ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_humanize",
-        label: "AutoCrew Humanize",
-        description:
-          "Run the Chinese de-AI pass. Supports action='humanize_zh' for raw text or an existing content draft.",
-        parameters: humanizeSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeHumanize({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_humanize"] },
-    );
-
-    // --- Tool: autocrew_rewrite ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_rewrite",
-        label: "AutoCrew Rewrite",
-        description:
-          "Adapt source drafts into platform-native versions. Supports action='adapt_platform' for single platform, " +
-          "action='batch_adapt' for multiple platforms at once with auto title/hashtag generation and sibling linking.",
-        parameters: rewriteSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeRewrite({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_rewrite"] },
-    );
-
-    // --- Tool: autocrew_cover_review ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_cover_review",
-        label: "AutoCrew Cover Review",
-        description:
-          "Generate, review, and approve cover images. Actions: create_candidates (generate 3 style variants via Gemini), get (view review), approve (pick one), generate_ratios (Pro: 16:9 + 4:3).",
-        parameters: coverReviewSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeCoverReview({
-            ...params,
-            _dataDir: dataDir,
-            _geminiApiKey: config?.gemini_api_key || process.env.GEMINI_API_KEY,
-            _geminiModel: config?.gemini_model || "auto",
-          });
-        },
-      }),
-      { names: ["autocrew_cover_review"] },
-    );
-
-    // --- Tool: autocrew_memory ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_memory",
-        label: "AutoCrew Memory",
-        description:
-          "Capture user feedback into MEMORY.md or read current memory. Supports action='capture_feedback' and action='get_memory'.",
-        parameters: memorySchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeMemory({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_memory"] },
-    );
-
-    // --- Tool: autocrew_review ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_review",
-        label: "AutoCrew Review",
-        description:
-          "Content review: sensitive word scan + de-AI check + quality scoring. " +
-          "Actions: 'full_review' (all checks), 'scan_only' (sensitive words), " +
-          "'quality_score' (score only), 'auto_fix' (apply fixes and save).",
-        parameters: reviewSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executeReview({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_review"] },
-    );
-
-    // --- Tool: autocrew_pre_publish ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_pre_publish",
-        label: "AutoCrew Pre-Publish",
-        description:
-          "Pre-publish checklist gate. Runs 6 checks (content review, cover review, hashtags, title, platform, body length) " +
-          "before allowing publish. Action: 'check'.",
-        parameters: prePublishSchema,
-        async execute(_id: string, params: Record<string, unknown>) {
-          return executePrePublish({ ...params, _dataDir: dataDir });
-        },
-      }),
-      { names: ["autocrew_pre_publish"] },
-    );
-
-    // --- Tool: autocrew_init ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_init",
-        label: "AutoCrew Init",
-        description:
-          "Initialize the AutoCrew data directory (~/.autocrew/) and creator profile. Safe to run multiple times.",
-        parameters: { type: "object" as const, properties: {} },
-        async execute(_id: string, _params: Record<string, unknown>) {
-          return executeInit({ dataDir });
-        },
-      }),
-      { names: ["autocrew_init"] },
-    );
-
-    // --- Tool: autocrew_pro_status ---
-    api.registerTool(
-      () => ({
-        name: "autocrew_pro_status",
-        label: "AutoCrew Pro Status",
-        description:
-          "Check AutoCrew Pro status: whether Pro is active, profile completeness, and missing info.",
-        parameters: { type: "object" as const, properties: {} },
-        async execute(_id: string, _params: Record<string, unknown>) {
-          const proStatus = await getProStatus(dataDir);
-          const profile = await loadProfile(dataDir);
-          const missing = profile ? detectMissingInfo(profile) : ["profile_not_initialized"];
-          return {
-            ok: true,
-            isPro: proStatus.isPro,
-            profileExists: profile !== null,
-            missingInfo: missing,
-            styleCalibrated: profile?.styleCalibrated ?? false,
-          };
-        },
-      }),
-      { names: ["autocrew_pro_status"] },
-    );
+    // --- Bridge: ToolRunner → OpenClaw API ---
+    for (const def of runner.getTools()) {
+      api.registerTool(
+        () => ({
+          name: def.name,
+          label: def.label,
+          description: def.description,
+          parameters: def.parameters,
+          async execute(_id: string, params: Record<string, unknown>) {
+            return runner.execute(def.name, params);
+          },
+        }),
+        { names: [def.name] },
+      );
+    }
 
     // --- CLI: openclaw crew ---
     api.registerCli(
@@ -303,28 +234,40 @@ const autocrewPlugin = {
           .command("status")
           .description("Show pipeline status")
           .action(async () => {
-            const result = await executeStatus({ _dataDir: dataDir });
+            const result = await runner.execute("autocrew_status", {});
             console.log(`AutoCrew v${result.version}`);
-            console.log(`Data: ${dataDir}`);
+            console.log(`Data: ${ctx.dataDir}`);
             console.log(`Topics: ${result.topics}`);
-            console.log(`Contents: ${result.contents} (draft:${result.contentsByStatus.draft} review:${result.contentsByStatus.review} approved:${result.contentsByStatus.approved} published:${result.contentsByStatus.published})`);
+            console.log(`Contents: ${result.contents} (draft:${(result.contentsByStatus as any)?.draft ?? 0} review:${(result.contentsByStatus as any)?.review ?? 0} approved:${(result.contentsByStatus as any)?.approved ?? 0} published:${(result.contentsByStatus as any)?.published ?? 0})`);
           });
 
         crew
           .command("topics")
           .description("List saved topics")
           .action(async () => {
-            const { listTopics } = await import("./src/storage/local-store.js");
-            const topics = await listTopics(dataDir);
+            const result = await runner.execute("autocrew_topic", { action: "list" });
+            const topics = (result.topics || []) as any[];
             if (topics.length === 0) {
-              console.log("No topics yet. Ask your agent to research some!");
+              console.log("No topics yet. Use 'autocrew_topic' tool or 'openclaw crew research' to create some.");
               return;
             }
             for (const t of topics) {
-              console.log(`[${t.id}] ${t.title}`);
-              console.log(`  ${t.description}`);
-              console.log(`  tags: ${t.tags.join(", ")}`);
-              console.log();
+              console.log(`[${t.id}] ${t.title} (${t.platform || "general"}) — score: ${t.viralScore ?? "?"}`);
+            }
+          });
+
+        crew
+          .command("contents")
+          .description("List content items")
+          .action(async () => {
+            const result = await runner.execute("autocrew_content", { action: "list" });
+            const items = (result.items || []) as any[];
+            if (items.length === 0) {
+              console.log("No content yet. Use 'autocrew_content' tool to save drafts.");
+              return;
+            }
+            for (const c of items) {
+              console.log(`[${c.id}] ${c.title} — ${c.status} (${c.platform || "general"})`);
             }
           });
 
@@ -336,13 +279,12 @@ const autocrewPlugin = {
           .option("--platform <platform>", "Target platform", "xiaohongshu")
           .option("--count <count>", "Number of topics", "3")
           .action(async (options: Record<string, unknown>) => {
-            const result = await executeResearch({
+            const result = await runner.execute("autocrew_research", {
               action: "discover",
               keyword: options.keyword,
               industry: options.industry,
               platform: options.platform,
               topic_count: Number(options.count || 3),
-              _dataDir: dataDir,
             });
 
             if (!result.ok) {
@@ -351,51 +293,10 @@ const autocrewPlugin = {
               return;
             }
 
-            console.log(`Research completed for ${result.platform}.`);
-            console.log(`  keyword: ${result.keyword}`);
-            console.log(`  sources: ${(result.sourcesUsed || []).join(", ")}`);
-            console.log(`  saved: ${result.savedCount}`);
-          });
-
-        crew
-          .command("sessions")
-          .description("Show browser-first session readiness for supported platforms")
-          .option("--platform <platform>", "Optional single platform filter")
-          .action(async (options: Record<string, unknown>) => {
-            const result = await executeResearch({
-              action: "session_status",
-              platform: options.platform,
-              _dataDir: dataDir,
-            });
-
-            if (!result.ok) {
-              console.error(`Session check failed: ${result.error || "unknown error"}`);
-              process.exitCode = 1;
-              return;
-            }
-
-            for (const session of result.sessions || []) {
-              const status = session.loggedIn ? "logged-in" : "not-logged-in";
-              console.log(`[${session.platform}] ${status}${session.note ? ` — ${session.note}` : ""}`);
-            }
-          });
-
-        crew
-          .command("contents")
-          .description("List saved content drafts")
-          .action(async () => {
-            const { listContents } = await import("./src/storage/local-store.js");
-            const contents = await listContents(dataDir);
-            if (contents.length === 0) {
-              console.log("No content yet. Ask your agent to write some!");
-              return;
-            }
-            for (const c of contents) {
-              const assetCount = c.assets?.length || 0;
-              const versionCount = c.versions?.length || 0;
-              console.log(`[${c.id}] ${c.title} (${c.status})`);
-              console.log(`  platform: ${c.platform || "unset"} | ${c.body?.length || 0} chars | ${assetCount} assets | v${versionCount}`);
-              console.log();
+            console.log(`Research complete. Mode: ${result.mode}`);
+            const topics = (result.topics || []) as any[];
+            for (const t of topics) {
+              console.log(`  [${t.id}] ${t.title} — score: ${t.viralScore ?? "?"}`);
             }
           });
 
@@ -403,29 +304,27 @@ const autocrewPlugin = {
           .command("assets <content-id>")
           .description("List assets for a content project")
           .action(async (contentId: string) => {
-            const { listAssets } = await import("./src/storage/local-store.js");
-            const assets = await listAssets(contentId, dataDir);
+            const result = await runner.execute("autocrew_asset", { action: "list", content_id: contentId });
+            const assets = (result.assets || []) as any[];
             if (assets.length === 0) {
               console.log(`No assets for ${contentId}.`);
               return;
             }
-            console.log(`Assets for ${contentId}:`);
             for (const a of assets) {
-              console.log(`  [${a.type}] ${a.filename}${a.description ? ` — ${a.description}` : ""}`);
+              console.log(`  [${a.type}] ${a.filename} (${a.role || "general"})`);
             }
           });
 
         crew
           .command("versions <content-id>")
-          .description("Show version history for a content project")
+          .description("List version history for a content project")
           .action(async (contentId: string) => {
-            const { listVersions } = await import("./src/storage/local-store.js");
-            const versions = await listVersions(contentId, dataDir);
+            const result = await runner.execute("autocrew_asset", { action: "versions", content_id: contentId });
+            const versions = (result.versions || []) as any[];
             if (versions.length === 0) {
               console.log(`No versions for ${contentId}.`);
               return;
             }
-            console.log(`Versions for ${contentId}:`);
             for (const v of versions) {
               console.log(`  v${v.version} — ${v.note || "no note"} (${v.savedAt})`);
             }
@@ -435,7 +334,7 @@ const autocrewPlugin = {
           .command("open <content-id>")
           .description("Show the file path of a content project directory")
           .action(async (contentId: string) => {
-            const projPath = `${dataDir}/contents/${contentId}`;
+            const projPath = `${ctx.dataDir}/contents/${contentId}`;
             console.log(`Content project: ${projPath}`);
             console.log(`  draft.md    — current readable draft`);
             console.log(`  meta.json   — metadata + asset index`);
@@ -447,180 +346,116 @@ const autocrewPlugin = {
           .command("pipelines")
           .description("List configured pipelines")
           .action(async () => {
-            const result = await executePipeline({ action: "list", _dataDir: dataDir });
-            const pipelines = (result as any).pipelines || [];
+            const result = await runner.execute("autocrew_pipeline", { action: "list" });
+            const pipelines = (result.pipelines || []) as any[];
             if (pipelines.length === 0) {
               console.log("No pipelines configured. Use 'autocrew_pipeline' tool to create one.");
               return;
             }
             for (const p of pipelines) {
-              const status = p.enabled ? "✅ enabled" : "⏸ disabled";
-              console.log(`[${p.id}] ${p.name} (${status})`);
-              console.log(`  schedule: ${p.schedule}`);
-              console.log(`  steps: ${p.steps.map((s: any) => s.skill).join(" → ")}`);
-              console.log();
+              console.log(`  [${p.id}] ${p.name} — ${p.enabled ? "enabled" : "disabled"} (${p.schedule || "manual"})`);
             }
           });
 
         crew
           .command("templates")
-          .description("Show preset pipeline templates")
+          .description("List available pipeline templates")
           .action(async () => {
-            const result = await executePipeline({ action: "templates", _dataDir: dataDir });
-            const templates = (result as any).templates || [];
+            const result = await runner.execute("autocrew_pipeline", { action: "templates" });
+            const templates = (result.templates || []) as any[];
             for (const t of templates) {
-              console.log(`[${t.template}] ${t.name}`);
-              console.log(`  ${t.description}`);
-              console.log(`  schedule: ${t.schedule} | steps: ${t.steps}`);
-              console.log();
-            }
-          });
-
-        crew
-          .command("wechat-mp-draft <article-path>")
-          .description("Generate images/cover and push a WeChat MP article into the draft box")
-          .option("--theme <theme>", "WeChat formatting theme", "newspaper")
-          .option("--dry-run", "Generate assets and print the publish command without pushing")
-          .option("--skip-images", "Skip image generation when image files already exist")
-          .option("--author <author>", "Author used by the publish script", "Lawrence")
-          .action(async (articlePath: string, options: Record<string, unknown>) => {
-            const result = await executePublish({
-              action: "wechat_mp_draft",
-              article_path: articlePath,
-              theme: options.theme,
-              dry_run: Boolean(options.dryRun),
-              skip_images: Boolean(options.skipImages),
-              author: options.author,
-              _dataDir: dataDir,
-            });
-
-            if (!result.ok) {
-              console.error(`Publish failed: ${result.error || "unknown error"}`);
-              if (result.stderr) {
-                console.error(result.stderr);
-              }
-              process.exitCode = 1;
-              return;
-            }
-
-            console.log("WeChat MP draft flow completed.");
-            console.log(`  article: ${result.articlePath}`);
-            console.log(`  cover: ${result.coverPath}`);
-            console.log(`  images: ${result.generatedImages.length}`);
-            if (result.command) {
-              console.log(`  command: ${result.command}`);
+              console.log(`  [${t.id}] ${t.name}`);
+              console.log(`    ${t.description}`);
             }
           });
 
         crew
           .command("humanize <content-id>")
-          .description("Run the Chinese de-AI pass on a saved draft and write the result back")
+          .description("Run Chinese de-AI pass on a content draft")
           .action(async (contentId: string) => {
-            const result = await executeHumanize({
-              action: "humanize_zh",
-              content_id: contentId,
-              save_back: true,
-              _dataDir: dataDir,
-            });
-
+            const result = await runner.execute("autocrew_humanize", { content_id: contentId });
             if (!result.ok) {
               console.error(`Humanize failed: ${result.error || "unknown error"}`);
               process.exitCode = 1;
               return;
             }
-
-            console.log(result.summary);
-            for (const change of result.changes || []) {
-              console.log(`  - ${change}`);
+            console.log(`De-AI pass complete. Changes: ${result.changeCount || 0}`);
+            if ((result.changes as any[])?.length > 0) {
+              for (const c of result.changes as string[]) {
+                console.log(`  • ${c}`);
+              }
             }
           });
 
         crew
           .command("adapt <content-id> <platform>")
-          .description("Create a platform-native rewrite from an existing draft and save it as a new draft")
+          .description("Create a platform-native rewrite")
           .action(async (contentId: string, platform: string) => {
-            const result = await executeRewrite({
+            const result = await runner.execute("autocrew_rewrite", {
               action: "adapt_platform",
               content_id: contentId,
               target_platform: platform,
-              save_as_draft: true,
-              _dataDir: dataDir,
             });
-
             if (!result.ok) {
               console.error(`Adapt failed: ${result.error || "unknown error"}`);
               process.exitCode = 1;
               return;
             }
-
-            console.log(`Adapted for ${result.platform}.`);
-            console.log(`  title: ${result.title}`);
-            if (result.content?.id) {
-              console.log(`  saved: ${result.content.id}`);
-            }
-            for (const note of result.notes || []) {
-              console.log(`  - ${note}`);
-            }
+            console.log(`Platform rewrite complete → ${platform}`);
+            console.log(`  New content: ${result.newContentId || result.id || "(saved)"}`);
           });
 
         crew
           .command("cover-review <content-id>")
-          .description("Create Xiaohongshu A/B/C cover review candidates for an existing draft")
+          .description("Generate A/B/C cover candidates for a content")
           .action(async (contentId: string) => {
-            const result = await executeCoverReview({
+            const result = await runner.execute("autocrew_cover_review", {
               action: "create_candidates",
               content_id: contentId,
-              _dataDir: dataDir,
             });
-
             if (!result.ok) {
-              console.error(`Cover review failed: ${result.error || "unknown error"}`);
+              console.error(`Cover generation failed: ${result.error || "unknown error"}`);
+              if (result.hint) console.log(`Hint: ${result.hint}`);
               process.exitCode = 1;
               return;
             }
-
-            console.log(`Cover review ready for ${contentId}.`);
-            console.log(`  status: ${result.review.status}`);
-            for (const variant of result.review.variants || []) {
-              console.log(`  [${variant.label}] ${variant.prototypeName || "unknown prototype"} — ${variant.hookText || ""}`);
+            console.log(`Generated ${result.generated || 0} cover candidates.`);
+            const review = result.review as any;
+            if (review?.variants) {
+              for (const v of review.variants) {
+                console.log(`  [${v.label.toUpperCase()}] ${v.style} — ${v.titleText || ""}`);
+                if (v.imagePaths?.["3:4"]) console.log(`    → ${v.imagePaths["3:4"]}`);
+              }
             }
           });
 
         crew
           .command("approve-cover <content-id> <label>")
-          .description("Approve one Xiaohongshu cover candidate and advance the draft to publish-ready")
+          .description("Approve a cover variant (a, b, or c)")
           .action(async (contentId: string, label: string) => {
-            const result = await executeCoverReview({
+            const result = await runner.execute("autocrew_cover_review", {
               action: "approve",
               content_id: contentId,
               label,
-              _dataDir: dataDir,
             });
-
             if (!result.ok) {
               console.error(`Approve failed: ${result.error || "unknown error"}`);
               process.exitCode = 1;
               return;
             }
-
-            console.log(`Approved cover ${result.review.approvedLabel} for ${contentId}.`);
-            console.log(`  status: ${result.review.status}`);
-            if (result.review.approvedImagePath) {
-              console.log(`  cover: ${result.review.approvedImagePath}`);
-            }
+            console.log(`Cover ${label.toUpperCase()} approved for ${contentId}.`);
           });
 
         crew
           .command("review <content-id>")
-          .description("Run full content review: sensitive words + de-AI check + quality score")
+          .description("Run full content review (sensitive words + quality + de-AI)")
           .option("--platform <platform>", "Target platform for platform-specific checks")
           .action(async (contentId: string, options: Record<string, unknown>) => {
-            const result = await executeReview({
+            const result = await runner.execute("autocrew_review", {
               action: "full_review",
               content_id: contentId,
               platform: options.platform,
-              _dataDir: dataDir,
-            });
+            }) as any;
 
             if (!result.ok) {
               console.error(`Review failed: ${result.error || "unknown error"}`);
@@ -642,11 +477,10 @@ const autocrewPlugin = {
           .description("Auto-fix sensitive words + de-AI and save back to draft")
           .option("--platform <platform>", "Target platform for platform-specific checks")
           .action(async (contentId: string, options: Record<string, unknown>) => {
-            const result = await executeReview({
+            const result = await runner.execute("autocrew_review", {
               action: "auto_fix",
               content_id: contentId,
               platform: options.platform,
-              _dataDir: dataDir,
             });
 
             if (!result.ok) {
@@ -665,10 +499,9 @@ const autocrewPlugin = {
           .command("pre-publish <content-id>")
           .description("Run pre-publish checklist: 6 checks before allowing publish")
           .action(async (contentId: string) => {
-            const result = await executePrePublish({
+            const result = await runner.execute("autocrew_pre_publish", {
               action: "check",
               content_id: contentId,
-              _dataDir: dataDir,
             }) as any;
 
             if (!result.ok) {
@@ -687,13 +520,12 @@ const autocrewPlugin = {
           .option("--feedback <feedback>", "Freeform feedback text")
           .option("--modified-text <text>", "User-edited final text for edit signals")
           .action(async (contentId: string, options: Record<string, unknown>) => {
-            const result = await executeMemory({
+            const result = await runner.execute("autocrew_memory", {
               action: "capture_feedback",
               content_id: contentId,
               signal_type: options.signal,
               feedback: options.feedback,
               modified_text: options.modifiedText,
-              _dataDir: dataDir,
             });
 
             if (!result.ok) {
@@ -710,10 +542,7 @@ const autocrewPlugin = {
           .command("memory")
           .description("Show current AutoCrew MEMORY.md")
           .action(async () => {
-            const result = await executeMemory({
-              action: "get_memory",
-              _dataDir: dataDir,
-            });
+            const result = await runner.execute("autocrew_memory", { action: "get_memory" });
 
             if (!result.ok) {
               console.error(`Read memory failed: ${result.error || "unknown error"}`);
@@ -724,22 +553,19 @@ const autocrewPlugin = {
             console.log(result.content);
           });
 
-        // --- New commands: init, upgrade, profile ---
-
         crew
           .command("init")
           .description("Initialize ~/.autocrew/ data directory and creator profile")
           .action(async () => {
-            const result = await executeInit({ dataDir });
+            const result = await runner.execute("autocrew_init", {});
             if (result.alreadyExisted) {
               console.log(`AutoCrew already initialized at ${result.dataDir}`);
             } else {
               console.log(`AutoCrew initialized at ${result.dataDir}`);
             }
-            console.log(`  Created: ${result.created.length} items`);
+            console.log(`  Created: ${(result.created as any[])?.length ?? 0} items`);
 
-            // Check profile completeness
-            const profile = await loadProfile(dataDir);
+            const profile = await loadProfile(ctx.dataDir);
             if (profile) {
               const missing = detectMissingInfo(profile);
               if (missing.length > 0) {
@@ -757,10 +583,9 @@ const autocrewPlugin = {
           .option("--key <key>", "Pro API key")
           .action(async (options: Record<string, unknown>) => {
             if (options.key) {
-              // Save and verify the key
-              await saveProKey(options.key as string, dataDir);
+              await saveProKey(options.key as string, ctx.dataDir);
               console.log("Pro API key saved. Verifying...");
-              const result = await verifyKey({ dataDir });
+              const result = await verifyKey({ dataDir: ctx.dataDir });
               if (result.ok && result.data?.valid) {
                 console.log(`Pro activated! Plan: ${result.data.plan}`);
                 if (result.data.expiresAt) {
@@ -774,11 +599,10 @@ const autocrewPlugin = {
                 console.log("Key saved locally but could not be verified. Check your network or key.");
               }
             } else {
-              // Show current status
-              const status = await getProStatus(dataDir);
+              const status = await getProStatus(ctx.dataDir);
               if (status.isPro) {
                 console.log("AutoCrew Pro is active.");
-                const result = await verifyKey({ dataDir });
+                const result = await verifyKey({ dataDir: ctx.dataDir });
                 if (result.ok && result.data) {
                   console.log(`  Plan: ${result.data.plan}`);
                   if (result.data.usage) {
@@ -798,7 +622,7 @@ const autocrewPlugin = {
           .command("profile")
           .description("Show creator profile")
           .action(async () => {
-            const profile = await loadProfile(dataDir);
+            const profile = await loadProfile(ctx.dataDir);
             if (!profile) {
               console.log("No creator profile yet. Run 'openclaw crew init' first.");
               return;
@@ -818,6 +642,36 @@ const autocrewPlugin = {
             const missing = detectMissingInfo(profile);
             if (missing.length > 0) {
               console.log(`\nMissing: ${missing.join(", ")}`);
+            }
+          });
+
+        // --- Debug commands ---
+        crew
+          .command("audit")
+          .description("Show recent tool execution audit log")
+          .action(() => {
+            if (ctx.audit.length === 0) {
+              console.log("No audit entries yet.");
+              return;
+            }
+            for (const entry of ctx.audit.slice(-20)) {
+              const status = entry.ok ? "✓" : "✗";
+              console.log(`  ${status} ${entry.tool}${entry.action ? `:${entry.action}` : ""} — ${entry.durationMs}ms (${entry.timestamp})`);
+              if (entry.error) console.log(`    Error: ${entry.error}`);
+            }
+          });
+
+        crew
+          .command("events")
+          .description("Show recent event history")
+          .action(() => {
+            const history = eventBus.getHistory(20);
+            if (history.length === 0) {
+              console.log("No events yet.");
+              return;
+            }
+            for (const e of history) {
+              console.log(`  ${e.type} — ${JSON.stringify(e.data)} (${e.timestamp})`);
             }
           });
       },

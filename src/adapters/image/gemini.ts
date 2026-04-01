@@ -9,6 +9,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { withRetry, checkFetchResponse } from "../../utils/retry.js";
 
 // --- Types ---
 
@@ -90,18 +91,21 @@ async function generateNative(options: GeminiImageOptions): Promise<GeminiImageR
 
   const url = `${GEMINI_API_BASE}/models/${MODEL_NATIVE}:generateContent?key=${apiKey}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    return { ok: false, imagePath: "", model: MODEL_NATIVE, error: `Gemini API ${res.status}: ${errText}` };
+  let json: any;
+  try {
+    json = await withRetry(async () => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      checkFetchResponse(res, "Gemini Native");
+      return res.json();
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, imagePath: "", model: MODEL_NATIVE, error: message };
   }
-
-  const json = (await res.json()) as any;
 
   // Extract image from response
   const candidates = json.candidates || [];
@@ -140,18 +144,21 @@ async function generateImagen(options: GeminiImageOptions): Promise<GeminiImageR
 
   const url = `${GEMINI_API_BASE}/models/${MODEL_IMAGEN}:predict?key=${apiKey}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    return { ok: false, imagePath: "", model: MODEL_IMAGEN, error: `Imagen API ${res.status}: ${errText}` };
+  let json: any;
+  try {
+    json = await withRetry(async () => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      checkFetchResponse(res, "Imagen 4");
+      return res.json();
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, imagePath: "", model: MODEL_IMAGEN, error: message };
   }
-
-  const json = (await res.json()) as any;
   const predictions = json.predictions || [];
 
   if (predictions.length > 0 && predictions[0].bytesBase64Encoded) {
