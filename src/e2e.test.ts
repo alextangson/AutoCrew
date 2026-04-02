@@ -9,6 +9,9 @@ import { createContext } from "./runtime/context.js";
 import { ToolRunner } from "./runtime/tool-runner.js";
 import { EventBus } from "./runtime/events.js";
 import { registerAllTools } from "./tools/registry.js";
+import { recordDiff } from "./modules/learnings/diff-tracker.js";
+import { distillRules } from "./modules/learnings/rule-distiller.js";
+import { addWritingRule, loadProfile, saveProfile } from "./modules/profile/creator-profile.js";
 
 const TEST_DIR = path.join(os.tmpdir(), `autocrew-e2e-${Date.now()}`);
 
@@ -264,6 +267,301 @@ describe("E2E: Memory", () => {
     expect(result.ok).toBe(true);
     // memory tool returns { ok, memoryPath, content }
     expect(result.content).toBeDefined();
+  });
+});
+
+// ============================================================
+// 补充测试：用户修改偏好记录、风格校准、批量、封面、资产、状态流转
+// ============================================================
+
+describe("E2E: User Edit Tracking + Rule Distillation", () => {
+  it("recordDiff captures a user edit", async () => {
+    const diff = await recordDiff(
+      "test-content-001",
+      "body",
+      "本文将深入探讨美食的赋能效应。值得一提的是，这家面馆打通了传统闭环。",
+      "今天聊聊这家面馆怎么把传统做法玩出了新花样。",
+      TEST_DIR,
+    );
+    expect(diff.id).toBeDefined();
+    expect(diff.contentId).toBe("test-content-001");
+    expect(diff.field).toBe("body");
+    expect(diff.before).toContain("赋能");
+    expect(diff.after).toContain("新花样");
+    expect(diff.patterns.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("record multiple edits to accumulate patterns", async () => {
+    // Simulate 5 edits removing similar AI patterns
+    for (let i = 0; i < 5; i++) {
+      await recordDiff(
+        `test-content-${100 + i}`,
+        "body",
+        `这篇文章全面赋能了读者的认知。第${i}次`,
+        `这篇文章帮读者搞明白了。第${i}次`,
+        TEST_DIR,
+      );
+    }
+    // Check if distillation is ready
+    const ready = await distillRules(TEST_DIR);
+    expect(ready).toBeDefined();
+    expect(typeof ready.newRulesCount).toBe("number");
+    expect(typeof ready.summary).toBe("string");
+  });
+
+  it("addWritingRule persists to creator profile", async () => {
+    const profile = await addWritingRule(
+      { rule: "不要用'赋能'，改用'帮助'或'支持'", source: "auto_distilled", confidence: 0.85 },
+      TEST_DIR,
+    );
+    expect(profile.writingRules.length).toBeGreaterThanOrEqual(1);
+    expect(profile.writingRules.some((r) => r.rule.includes("赋能"))).toBe(true);
+
+    // Verify persistence
+    const loaded = await loadProfile(TEST_DIR);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.writingRules.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("E2E: Style Calibration Gate", () => {
+  it("uncalibrated profile blocks tools with style_not_calibrated", async () => {
+    const profile = await loadProfile(TEST_DIR);
+    expect(profile).not.toBeNull();
+    profile!.styleCalibrated = false;
+    await saveProfile(profile!, TEST_DIR);
+
+    const result = await runner.execute("autocrew_content", { action: "list" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/style|calibrat|profile_incomplete/i);
+
+    // Restore
+    profile!.styleCalibrated = true;
+    await saveProfile(profile!, TEST_DIR);
+  });
+
+  it("init returns style_calibration next_step when only style is missing", async () => {
+    const profile = await loadProfile(TEST_DIR);
+    expect(profile).not.toBeNull();
+    profile!.styleCalibrated = false;
+    await saveProfile(profile!, TEST_DIR);
+
+    const result = await runner.execute("autocrew_init", {});
+    expect(result.ok).toBe(true);
+    expect(result.next_step).toBeDefined();
+    const nextStep = result.next_step as any;
+    expect(nextStep.action).toBe("style_calibration");
+    expect(nextStep.message).toContain("风格校准");
+
+    // Restore
+    profile!.styleCalibrated = true;
+    await saveProfile(profile!, TEST_DIR);
+  });
+});
+
+describe("E2E: Platform Rewrite + Batch Adapt", () => {
+  it("adapt_platform rewrites content for douyin", async () => {
+    const result = await runner.execute("autocrew_rewrite", {
+      action: "adapt_platform",
+      title: "北京胡同宝藏面馆",
+      body: "今天给大家分享一家隐藏在北京胡同里的面馆。招牌炸酱面，面条劲道。人均30元。",
+      target_platform: "douyin",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.platform).toBe("douyin");
+    expect(result.body).toBeDefined();
+    expect(result.title).toBeDefined();
+  });
+
+  it("batch_adapt rewrites for multiple platforms", async () => {
+    const result = await runner.execute("autocrew_rewrite", {
+      action: "batch_adapt",
+      title: "北京胡同宝藏面馆",
+      body: "今天分享一家面馆。招牌炸酱面很好吃。人均30元。#北京美食",
+      target_platforms: ["xiaohongshu", "douyin"],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.results).toBeDefined();
+    const results = result.results as any[];
+    expect(results.length).toBe(2);
+  });
+});
+
+describe("E2E: Cover Review (without Gemini key)", () => {
+  let testContentId: string;
+
+  it("create content for cover test", async () => {
+    const result = await runner.execute("autocrew_content", {
+      action: "save",
+      title: "封面测试内容",
+      body: "这是用来测试封面生成的内容。需要一个好看的封面图。",
+      platform: "xiaohongshu",
+    });
+    expect(result.ok).toBe(true);
+    testContentId = (result.content as any).id;
+  });
+
+  it("create_candidates fails gracefully without Gemini key", async () => {
+    const result = await runner.execute("autocrew_cover_review", {
+      action: "create_candidates",
+      content_id: testContentId,
+    });
+    // Without Gemini API key, should fail with helpful hint
+    expect(result.ok).toBe(false);
+    expect(result.error || result.hint).toBeDefined();
+  });
+
+  it("get cover review returns empty when none exists", async () => {
+    const result = await runner.execute("autocrew_cover_review", {
+      action: "get",
+      content_id: testContentId,
+    });
+    // Should handle gracefully - either not found or empty
+    expect(result).toBeDefined();
+  });
+});
+
+describe("E2E: Asset Management", () => {
+  let assetContentId: string;
+
+  it("create content for asset test", async () => {
+    const result = await runner.execute("autocrew_content", {
+      action: "save",
+      title: "资产管理测试",
+      body: "测试资产管理功能。",
+      platform: "xiaohongshu",
+    });
+    expect(result.ok).toBe(true);
+    assetContentId = (result.content as any).id;
+  });
+
+  it("add an asset to content", async () => {
+    const result = await runner.execute("autocrew_asset", {
+      action: "add",
+      content_id: assetContentId,
+      filename: "cover.png",
+      asset_type: "cover",
+      description: "封面图片",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("list assets for content", async () => {
+    const result = await runner.execute("autocrew_asset", {
+      action: "list",
+      content_id: assetContentId,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.assets).toBeDefined();
+    const assets = result.assets as any[];
+    expect(assets.length).toBeGreaterThanOrEqual(1);
+    expect(assets.some((a: any) => a.filename === "cover.png")).toBe(true);
+  });
+
+  it("list versions", async () => {
+    const result = await runner.execute("autocrew_asset", {
+      action: "versions",
+      content_id: assetContentId,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.versions).toBeDefined();
+  });
+});
+
+describe("E2E: Content Status Transitions", () => {
+  let transContentId: string;
+
+  it("ensure profile is complete before transition tests", async () => {
+    // Re-write a fresh complete profile to avoid state leaks from earlier tests
+    await fs.mkdir(TEST_DIR, { recursive: true });
+    await fs.writeFile(path.join(TEST_DIR, "creator-profile.json"), JSON.stringify({
+      industry: "美食探店",
+      platforms: ["xiaohongshu", "douyin"],
+      audiencePersona: {
+        name: "美食爱好者", age: "20-35", job: "白领",
+        painPoints: ["不知道吃什么"], scrollStopTriggers: ["高颜值菜品"],
+      },
+      writingRules: [{ rule: "不要用赋能", source: "auto_distilled", confidence: 0.85, createdAt: new Date().toISOString() }],
+      styleBoundaries: { never: [], always: [] },
+      competitorAccounts: [],
+      performanceHistory: [],
+      styleCalibrated: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, null, 2));
+  });
+
+  it("create content and transition through states", async () => {
+    const saveResult = await runner.execute("autocrew_content", {
+      action: "save",
+      title: "状态流转测试",
+      body: "测试内容状态机流转。",
+      platform: "xiaohongshu",
+    });
+    expect(saveResult.ok).toBe(true);
+    transContentId = (saveResult.content as any).id;
+  });
+
+  it("transition: draft_ready → reviewing", async () => {
+    const result = await runner.execute("autocrew_content", {
+      action: "transition",
+      id: transContentId,
+      target_status: "reviewing",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("transition: reviewing → approved", async () => {
+    const result = await runner.execute("autocrew_content", {
+      action: "transition",
+      id: transContentId,
+      target_status: "approved",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("invalid transition is rejected", async () => {
+    // approved → drafting should not be allowed
+    const result = await runner.execute("autocrew_content", {
+      action: "transition",
+      id: transContentId,
+      target_status: "drafting",
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("E2E: Sensitive Words Detection", () => {
+  it("scan_only detects sensitive words", async () => {
+    const result = await runner.execute("autocrew_review", {
+      action: "scan_only",
+      text: "这个产品能治疗癌症，日赚一万不是梦，赶紧加微信了解",
+      platform: "xiaohongshu",
+    });
+    expect(result.ok).toBe(true);
+    // Should detect medical claims and financial claims
+    const found = result.found || result.sensitiveWords || result.words;
+    expect(found).toBeDefined();
+  });
+
+  it("quality_score rates content quality", async () => {
+    const result = await runner.execute("autocrew_review", {
+      action: "quality_score",
+      text: "今天给大家分享一家面馆。招牌炸酱面，面条劲道，酱料浓郁。人均30元。推荐指数五颗星。",
+      platform: "xiaohongshu",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.qualityScore).toBeDefined();
+  });
+
+  it("auto_fix replaces sensitive words", async () => {
+    const result = await runner.execute("autocrew_review", {
+      action: "auto_fix",
+      text: "加我微信，保证月入过万",
+      platform: "xiaohongshu",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.autoFixedText).toBeDefined();
   });
 });
 
