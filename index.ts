@@ -11,7 +11,7 @@ import { researchSchema, executeResearch } from "./src/tools/research.js";
 import { contentSaveSchema, executeContentSave } from "./src/tools/content-save.js";
 import { statusSchema, executeStatus } from "./src/tools/status.js";
 import { assetSchema, executeAsset } from "./src/tools/asset.js";
-import { pipelineSchema, executePipeline } from "./src/tools/pipeline.js";
+import { pipelineSchema, createPipelineExecutor } from "./src/tools/pipeline.js";
 import { publishSchema, executePublish } from "./src/tools/publish.js";
 import { humanizeSchema, executeHumanize } from "./src/tools/humanize.js";
 import { rewriteSchema, executeRewrite } from "./src/tools/rewrite.js";
@@ -80,9 +80,9 @@ function registerAllTools(runner: ToolRunner): void {
     name: "autocrew_pipeline",
     label: "AutoCrew Pipeline",
     description:
-      "Manage automated content pipelines. Actions: create, list, get, enable, disable, delete, templates.",
+      "Workflow orchestration for content pipelines. Actions: create (from template), start, status, approve (paused step), cancel, list, templates.",
     parameters: pipelineSchema,
-    execute: executePipeline,
+    execute: createPipelineExecutor(runner),
   });
 
   runner.register({

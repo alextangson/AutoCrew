@@ -1,213 +1,168 @@
 import { Type } from "@sinclair/typebox";
-import path from "node:path";
-import fs from "node:fs/promises";
+import { WorkflowEngine } from "../runtime/workflow-engine.js";
+import { getTemplates, getTemplate } from "../modules/workflow/templates.js";
+import type { ToolRunner } from "../runtime/tool-runner.js";
 
 /**
- * autocrew_pipeline — manage automated content pipelines (cron schedules).
+ * autocrew_pipeline — workflow orchestration for content pipelines.
  *
- * In OpenClaw: registers actual cron jobs via Gateway API.
- * In Claude Code: saves pipeline definitions locally for manual/external cron execution.
+ * Manages stateful multi-step workflows with approval gates,
+ * parameter interpolation, and persistent state.
  */
 
-export interface PipelineDefinition {
-  id: string;
-  name: string;
-  description: string;
-  schedule: string; // cron expression
-  steps: PipelineStep[];
-  enabled: boolean;
-  createdAt: string;
-  lastRunAt?: string;
-}
-
-export interface PipelineStep {
-  skill: string;
-  params: Record<string, unknown>;
-}
-
 export const pipelineSchema = Type.Object({
-  action: Type.Unsafe<"create" | "list" | "get" | "enable" | "disable" | "delete" | "templates">({
+  action: Type.Unsafe<"create" | "start" | "status" | "approve" | "cancel" | "list" | "templates">({
     type: "string",
-    enum: ["create", "list", "get", "enable", "disable", "delete", "templates"],
+    enum: ["create", "start", "status", "approve", "cancel", "list", "templates"],
     description:
-      "Action: 'create' a pipeline, 'list' all, 'get' by id, 'enable'/'disable' toggle, 'delete' remove, 'templates' show preset pipeline templates.",
+      "Action: 'create' workflow from template, 'start' a workflow, 'status' check progress, 'approve' a paused step, 'cancel' a workflow, 'list' all workflows, 'templates' list available templates.",
   }),
-  id: Type.Optional(Type.String({ description: "Pipeline id (for get/enable/disable/delete)" })),
-  name: Type.Optional(Type.String({ description: "Pipeline name (for create)" })),
-  description: Type.Optional(Type.String({ description: "Pipeline description (for create)" })),
-  schedule: Type.Optional(
-    Type.String({ description: "Cron expression, e.g. '0 9 * * 1' = every Monday 9am (for create)" }),
-  ),
+  id: Type.Optional(Type.String({ description: "Workflow instance id (for start/status/approve/cancel)" })),
   template: Type.Optional(
-    Type.String({ description: "Preset template name: 'daily-research', 'weekly-content', 'daily-publish'" }),
+    Type.String({ description: "Template id: 'xiaohongshu_full', 'quick_publish'" }),
+  ),
+  params: Type.Optional(
+    Type.Record(Type.String(), Type.Unknown(), {
+      description: "Initial parameters for the workflow (e.g. content_id for quick_publish)",
+    }),
   ),
 });
 
-function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
+/** Singleton engine per dataDir — avoids re-creating on every call */
+const engines = new Map<string, WorkflowEngine>();
+
+function getEngine(toolRunner: ToolRunner, dataDir: string): WorkflowEngine {
+  let engine = engines.get(dataDir);
+  if (!engine) {
+    engine = new WorkflowEngine(toolRunner, dataDir);
+    // Register all built-in templates
+    for (const tpl of getTemplates()) {
+      engine.registerDefinition(tpl);
+    }
+    engines.set(dataDir, engine);
+  }
+  return engine;
 }
 
-async function pipelinesDir(dataDir?: string): Promise<string> {
-  const dir = path.join(getDataDir(dataDir), "pipelines");
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
-}
+/**
+ * Create the pipeline executor. Needs a ToolRunner reference for workflow step execution.
+ */
+export function createPipelineExecutor(toolRunner: ToolRunner) {
+  return async function executePipeline(params: Record<string, unknown>) {
+    const action = params.action as string;
+    const dataDir = params._dataDir as string;
 
-// --- Templates ---
-
-const PIPELINE_TEMPLATES: Record<string, Omit<PipelineDefinition, "id" | "createdAt" | "enabled">> = {
-  "daily-research": {
-    name: "每日选题调研",
-    description: "每天早上 9 点自动调研 3 个选题，保存到本地。",
-    schedule: "0 9 * * *",
-    steps: [
-      { skill: "spawn-planner", params: { topic_count: 3, direction: "auto" } },
-    ],
-  },
-  "weekly-content": {
-    name: "每周内容生产",
-    description: "每周一早上 10 点，从已有选题中批量写 5 篇稿子。",
-    schedule: "0 10 * * 1",
-    steps: [
-      { skill: "spawn-batch-writer", params: { batch_count: 5 } },
-    ],
-  },
-  "daily-publish": {
-    name: "每日定时发布",
-    description: "每天下午 6 点，发布一篇已审核的内容。",
-    schedule: "0 18 * * *",
-    steps: [
-      { skill: "publish-content", params: { count: 1, status_filter: "approved" } },
-    ],
-  },
-  "full-pipeline": {
-    name: "全自动内容流水线",
-    description: "周一调研选题 → 周二批量写稿 → 周三到周五每天发布一篇。",
-    schedule: "0 9 * * 1",
-    steps: [
-      { skill: "spawn-planner", params: { topic_count: 5, direction: "auto" } },
-      { skill: "spawn-batch-writer", params: { batch_count: 5 } },
-      { skill: "publish-content", params: { count: 1, status_filter: "approved" } },
-    ],
-  },
-};
-
-export async function executePipeline(params: Record<string, unknown>) {
-  const action = params.action as string;
-  const dataDir = (params._dataDir as string) || undefined;
-
-  // --- Templates ---
-  if (action === "templates") {
-    const templates = Object.entries(PIPELINE_TEMPLATES).map(([key, t]) => ({
-      template: key,
-      name: t.name,
-      description: t.description,
-      schedule: t.schedule,
-      steps: t.steps.map((s) => s.skill).join(" → "),
-    }));
-    return { ok: true, templates };
-  }
-
-  // --- List ---
-  if (action === "list") {
-    const dir = await pipelinesDir(dataDir);
-    const files = await fs.readdir(dir);
-    const pipelines: PipelineDefinition[] = [];
-    for (const f of files) {
-      if (!f.endsWith(".json")) continue;
-      const raw = await fs.readFile(path.join(dir, f), "utf-8");
-      pipelines.push(JSON.parse(raw));
+    if (!dataDir) {
+      return { ok: false, error: "No _dataDir provided" };
     }
-    return { ok: true, pipelines };
-  }
 
-  // --- Get ---
-  if (action === "get") {
-    const id = params.id as string;
-    if (!id) return { ok: false, error: "id is required" };
-    const dir = await pipelinesDir(dataDir);
-    try {
-      const raw = await fs.readFile(path.join(dir, `${id}.json`), "utf-8");
-      return { ok: true, pipeline: JSON.parse(raw) };
-    } catch {
-      return { ok: false, error: `Pipeline ${id} not found` };
+    const engine = getEngine(toolRunner, dataDir);
+
+    // --- Templates ---
+    if (action === "templates") {
+      const templates = getTemplates().map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        steps: t.steps.map((s) => `${s.name} (${s.tool})${s.requiresApproval ? " ⏸" : ""}`),
+      }));
+      return { ok: true, templates };
     }
-  }
 
-  // --- Create ---
-  if (action === "create") {
-    const template = params.template as string | undefined;
-    let def: Omit<PipelineDefinition, "id" | "createdAt" | "enabled">;
-
-    if (template && PIPELINE_TEMPLATES[template]) {
-      def = { ...PIPELINE_TEMPLATES[template] };
-      // Allow overrides
-      if (params.name) def.name = params.name as string;
-      if (params.description) def.description = params.description as string;
-      if (params.schedule) def.schedule = params.schedule as string;
-    } else {
-      const name = params.name as string;
-      const schedule = params.schedule as string;
-      if (!name || !schedule) {
-        return { ok: false, error: "name and schedule are required (or use template)" };
-      }
-      def = {
-        name,
-        description: (params.description as string) || "",
-        schedule,
-        steps: [],
+    // --- List ---
+    if (action === "list") {
+      const instances = await engine.list();
+      return {
+        ok: true,
+        workflows: instances.map((i) => ({
+          id: i.id,
+          definitionId: i.definitionId,
+          status: i.status,
+          currentStepIndex: i.currentStepIndex,
+          createdAt: i.createdAt,
+          error: i.error,
+        })),
       };
     }
 
-    const id = `pipeline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const pipeline: PipelineDefinition = {
-      ...def,
-      id,
-      enabled: true,
-      createdAt: new Date().toISOString(),
-    };
-
-    const dir = await pipelinesDir(dataDir);
-    await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(pipeline, null, 2), "utf-8");
-
-    return {
-      ok: true,
-      pipeline,
-      hint: "Pipeline saved locally. In OpenClaw, use 'openclaw cron add' to register with the Gateway for automatic execution.",
-    };
-  }
-
-  // --- Enable / Disable ---
-  if (action === "enable" || action === "disable") {
-    const id = params.id as string;
-    if (!id) return { ok: false, error: "id is required" };
-    const dir = await pipelinesDir(dataDir);
-    const filePath = path.join(dir, `${id}.json`);
-    try {
-      const raw = await fs.readFile(filePath, "utf-8");
-      const pipeline: PipelineDefinition = JSON.parse(raw);
-      pipeline.enabled = action === "enable";
-      await fs.writeFile(filePath, JSON.stringify(pipeline, null, 2), "utf-8");
-      return { ok: true, pipeline };
-    } catch {
-      return { ok: false, error: `Pipeline ${id} not found` };
+    // --- Create ---
+    if (action === "create") {
+      const templateId = params.template as string;
+      if (!templateId) {
+        return { ok: false, error: "template is required for create" };
+      }
+      const tpl = getTemplate(templateId);
+      if (!tpl) {
+        return { ok: false, error: `Unknown template: ${templateId}. Use action='templates' to see available ones.` };
+      }
+      try {
+        const instance = await engine.create(templateId, params.params as Record<string, unknown>);
+        return {
+          ok: true,
+          workflow: instance,
+          hint: `Workflow created. Use action='start' with id='${instance.id}' to begin execution.`,
+        };
+      } catch (err: unknown) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
     }
-  }
 
-  // --- Delete ---
-  if (action === "delete") {
-    const id = params.id as string;
-    if (!id) return { ok: false, error: "id is required" };
-    const dir = await pipelinesDir(dataDir);
-    try {
-      await fs.unlink(path.join(dir, `${id}.json`));
-      return { ok: true, message: `Pipeline ${id} deleted` };
-    } catch {
-      return { ok: false, error: `Pipeline ${id} not found` };
+    // --- Start ---
+    if (action === "start") {
+      const id = params.id as string;
+      if (!id) return { ok: false, error: "id is required" };
+      try {
+        const instance = await engine.start(id);
+        return { ok: true, workflow: instance };
+      } catch (err: unknown) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
     }
-  }
 
-  return { ok: false, error: `Unknown action: ${action}` };
+    // --- Status ---
+    if (action === "status") {
+      const id = params.id as string;
+      if (!id) return { ok: false, error: "id is required" };
+      const instance = await engine.getStatus(id);
+      if (!instance) {
+        return { ok: false, error: `Workflow ${id} not found` };
+      }
+      const def = getTemplate(instance.definitionId);
+      const currentStep = def?.steps[instance.currentStepIndex];
+      return {
+        ok: true,
+        workflow: instance,
+        currentStep: currentStep
+          ? { name: currentStep.name, tool: currentStep.tool, requiresApproval: currentStep.requiresApproval }
+          : null,
+        totalSteps: def?.steps.length ?? 0,
+      };
+    }
+
+    // --- Approve ---
+    if (action === "approve") {
+      const id = params.id as string;
+      if (!id) return { ok: false, error: "id is required" };
+      try {
+        const instance = await engine.approve(id);
+        return { ok: true, workflow: instance };
+      } catch (err: unknown) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    // --- Cancel ---
+    if (action === "cancel") {
+      const id = params.id as string;
+      if (!id) return { ok: false, error: "id is required" };
+      try {
+        const instance = await engine.cancel(id);
+        return { ok: true, workflow: instance };
+      } catch (err: unknown) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    return { ok: false, error: `Unknown action: ${action}` };
+  };
 }

@@ -13,7 +13,7 @@ import { researchSchema, executeResearch } from "../src/tools/research.js";
 import { contentSaveSchema, executeContentSave } from "../src/tools/content-save.js";
 import { statusSchema, executeStatus } from "../src/tools/status.js";
 import { assetSchema, executeAsset } from "../src/tools/asset.js";
-import { pipelineSchema, executePipeline } from "../src/tools/pipeline.js";
+import { pipelineSchema, createPipelineExecutor } from "../src/tools/pipeline.js";
 import { publishSchema, executePublish } from "../src/tools/publish.js";
 import { humanizeSchema, executeHumanize } from "../src/tools/humanize.js";
 import { rewriteSchema, executeRewrite } from "../src/tools/rewrite.js";
@@ -42,7 +42,7 @@ runner.register({ name: "autocrew_research", label: "AutoCrew Research", descrip
 runner.register({ name: "autocrew_content", label: "AutoCrew Content", description: "Content lifecycle. Actions: save, list, get, update, transition, create_variant, siblings.", parameters: contentSaveSchema, execute: executeContentSave });
 runner.register({ name: "autocrew_status", label: "AutoCrew Status", description: "Pipeline status dashboard.", parameters: statusSchema, execute: executeStatus });
 runner.register({ name: "autocrew_asset", label: "AutoCrew Asset", description: "Content asset + version management. Actions: add, list, remove, versions, get_version, revert.", parameters: assetSchema, execute: executeAsset });
-runner.register({ name: "autocrew_pipeline", label: "AutoCrew Pipeline", description: "Automated pipeline management. Actions: create, list, get, enable, disable, delete, templates.", parameters: pipelineSchema, execute: executePipeline });
+runner.register({ name: "autocrew_pipeline", label: "AutoCrew Pipeline", description: "Workflow orchestration for content pipelines. Actions: create, start, status, approve, cancel, list, templates.", parameters: pipelineSchema, execute: createPipelineExecutor(runner) });
 runner.register({ name: "autocrew_publish", label: "AutoCrew Publish", description: "Publishing flows. Actions: wechat_mp_draft.", parameters: publishSchema, execute: executePublish });
 runner.register({ name: "autocrew_humanize", label: "AutoCrew Humanize", description: "Chinese de-AI pass. Actions: humanize_zh.", parameters: humanizeSchema, execute: executeHumanize });
 runner.register({ name: "autocrew_rewrite", label: "AutoCrew Rewrite", description: "Platform-native rewrites. Actions: adapt_platform, batch_adapt.", parameters: rewriteSchema, execute: executeRewrite });
