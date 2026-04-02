@@ -40,7 +40,7 @@ export async function executeMemory(params: Record<string, unknown>) {
       const content = await fs.readFile(memoryPath, "utf-8");
       return { ok: true, memoryPath, content };
     } catch {
-      return { ok: false, error: "MEMORY.md not found" };
+      return { ok: true, memoryPath, content: "", note: "MEMORY.md 尚未创建。使用 capture_feedback 记录反馈后会自动生成。" };
     }
   }
 
