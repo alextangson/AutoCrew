@@ -127,7 +127,6 @@ async function runCommand(
 async function generateImage(
   prompt: string,
   outputPath: string,
-  *,
   size: string,
   imageGeneratorScript: string,
   imageApiKey?: string,
