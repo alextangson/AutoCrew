@@ -13,6 +13,7 @@ import {
   recordAudit,
   resolveGeminiKey,
   resolveGeminiModel,
+  resolveGatewayUrl,
 } from "./context.js";
 import { type EventBus, createEvent } from "./events.js";
 import { loadProfile, detectMissingInfo } from "../modules/profile/creator-profile.js";
@@ -118,6 +119,7 @@ const onboardingGateMiddleware: Middleware = async (ctx, toolName, _params, next
 /** Inject _dataDir into every tool call */
 const dataDirMiddleware: Middleware = async (ctx, _tool, params, next) => {
   params._dataDir = ctx.dataDir;
+  params._gatewayUrl = resolveGatewayUrl(ctx);
   return next();
 };
 

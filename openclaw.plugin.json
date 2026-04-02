@@ -19,9 +19,9 @@
         "type": "string",
         "description": "Pro API base URL (default: https://api.autocrew.dev)"
       },
-      "cdp_proxy_url": {
+      "gateway_url": {
         "type": "string",
-        "description": "[Pro] Browser CDP proxy URL for platform crawling (default: http://127.0.0.1:3456)"
+        "description": "OpenClaw Gateway URL for Chrome Relay browser control (default: http://127.0.0.1:18789)"
       },
       "gemini_api_key": {
         "type": "string",

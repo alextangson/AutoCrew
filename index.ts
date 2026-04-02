@@ -190,7 +190,7 @@ const autocrewPlugin = {
       data_dir: { type: "string" as const },
       pro_api_key: { type: "string" as const },
       pro_api_url: { type: "string" as const },
-      cdp_proxy_url: { type: "string" as const },
+      gateway_url: { type: "string" as const },
       gemini_api_key: { type: "string" as const },
       gemini_model: { type: "string" as const },
     },
@@ -677,6 +677,22 @@ const autocrewPlugin = {
       },
       { commands: ["crew"] },
     );
+
+    // --- System Prompt Injection ---
+    if (typeof api.on === "function") {
+      api.on("before_prompt_build", (event: any) => {
+        event.appendSystemContext = `
+<autocrew_instructions>
+你现在已加载 AutoCrew 插件。在帮助用户创作内容时，遵循以下规则：
+
+1. **先拆解再执行**：收到复杂请求时（如"帮我写一篇小红书"），先调用 autocrew_pipeline templates 展示完整步骤，用户确认后再逐步执行。
+2. **文件优先**：所有内容产出必须通过 autocrew_content save 保存到 ~/.autocrew/，不要只输出到聊天里。用户需要在下次会话中找到之前的产出。
+3. **完成后汇报**：每步完成后说明做了什么、结果是什么、下一步是什么。不要只说"完成了"。
+4. **使用已有工具**：优先使用 autocrew_* 系列工具完成任务，而不是手动操作文件。工具链：研究(autocrew_research) → 创建选题(autocrew_topic) → 写稿(autocrew_content save) → 去AI化(autocrew_humanize) → 审核(autocrew_review) → 封面(autocrew_cover_review) → 预发布检查(autocrew_pre_publish) → 发布(autocrew_publish)。
+5. **风格校准**：写内容前检查 ~/.autocrew/STYLE.md，确保产出符合用户的写作风格。
+</autocrew_instructions>`;
+      });
+    }
   },
 };
 

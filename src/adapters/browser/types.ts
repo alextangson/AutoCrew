@@ -19,7 +19,7 @@ export interface ResearchItem {
   author?: string;
   metrics?: Record<string, number | string>;
   platform: BrowserPlatform;
-  source: "browser_cdp" | "api_provider" | "manual";
+  source: "browser_cdp" | "browser_relay" | "api_provider" | "manual";
 }
 
 export interface BrowserResearchQuery {

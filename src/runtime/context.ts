@@ -14,7 +14,7 @@ export interface PluginConfig {
   data_dir?: string;
   pro_api_key?: string;
   pro_api_url?: string;
-  cdp_proxy_url?: string;
+  gateway_url?: string;
   gemini_api_key?: string;
   gemini_model?: string;
   [key: string]: unknown;
@@ -119,4 +119,11 @@ export function resolveGeminiKey(ctx: ToolContext): string | undefined {
  */
 export function resolveGeminiModel(ctx: ToolContext): string {
   return (ctx.config.gemini_model as string) || "auto";
+}
+
+/**
+ * Resolve the OpenClaw Gateway URL from config or environment.
+ */
+export function resolveGatewayUrl(ctx: ToolContext): string {
+  return (ctx.config.gateway_url as string) || process.env.AUTOCREW_GATEWAY_URL || "http://127.0.0.1:18789";
 }
