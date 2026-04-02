@@ -8,3 +8,4 @@ dist/
 .DS_Store
 # Never commit Pro API keys
 .pro
+web/node_modules/
