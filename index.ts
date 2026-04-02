@@ -9,7 +9,7 @@
 import { registerAllTools } from "./src/tools/registry.js";
 import { saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
-import { loadProfile } from "./src/modules/profile/creator-profile.js";
+import { loadProfile, detectMissingInfo } from "./src/modules/profile/creator-profile.js";
 import { createContext, type PluginConfig } from "./src/runtime/context.js";
 import { ToolRunner } from "./src/runtime/tool-runner.js";
 import { EventBus } from "./src/runtime/events.js";

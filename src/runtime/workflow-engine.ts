@@ -339,6 +339,7 @@ export class WorkflowEngine {
       // Store result
       instance.stepResults[step.id] = result;
       instance.updatedAt = new Date().toISOString();
+      await this.persistInstance(instance); // Persist result before advancing
 
       if (result.ok === false) {
         instance.status = "failed";

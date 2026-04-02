@@ -95,8 +95,12 @@ export class GatewayClient {
       return { ok: false, error: `Gateway returned ${res.status}: ${text}` };
     }
 
-    const data = await res.json();
-    return { ok: true, ...data };
+    try {
+      const data = await res.json();
+      return { ok: true, ...data };
+    } catch {
+      return { ok: false, error: "Gateway returned non-JSON response" };
+    }
   }
 
   /** Navigate to a URL and return a snapshot */
