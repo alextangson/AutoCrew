@@ -4,25 +4,25 @@ description: |
   Learn from user feedback to improve future content. Activate when user approves, rejects, edits, or gives feedback on topics or content drafts. Also runs periodically to consolidate learnings.
 ---
 
-# Memory Distill
+# 记忆蒸馏
 
-> Utility skill. Captures user preferences and writing feedback into persistent memory.
+> 工具型技能。将用户偏好和写作反馈沉淀到持久记忆中。
 
-## Memory Architecture
+## 记忆架构
 
 - **L1 — ~/.autocrew/MEMORY.md** (≤120 lines): Working memory. Brand profile, audience, account status, writing preferences summary.
 - **L2 — ~/.autocrew/memory/**: Detailed logs and digests. Referenced on demand.
 
-## When to Activate
+## 触发时机
 
 - User approves or rejects a topic
 - User edits a draft significantly
 - User gives explicit feedback ("太正式了", "多用emoji", "短一点")
 - User shares performance data ("这条笔记1000赞")
 
-## Steps
+## 流程
 
-### Feedback Capture
+### 反馈捕捉
 
 1. Identify the feedback signal:
    - Approval: user says "好" / "可以" / "就这个" → positive signal
@@ -63,27 +63,27 @@ Prefer using `autocrew_memory`:
    - [Date] "AI工具真香清单" got 1000 likes on XHS — list format + "真香" hook works
    ```
 
-### Capacity Check
+### 容量检查
 
 If MEMORY.md exceeds 150 lines:
 1. Identify entries that can be consolidated (similar learnings → one summary)
 2. Move detailed case studies to `~/.autocrew/memory/archive-{date}.md`
 3. Replace with a one-line summary in MEMORY.md
 
-## Guidelines
+## 原则
 
 - Be specific — actionable preferences, not vague observations
 - Don't overwrite previous learnings, accumulate them
 - Date every entry for tracking evolution
 - Consolidate when file gets long, don't let it grow unbounded
 
-## Error Handling
+## 错误处理
 
-| Failure | Action |
-|---------|--------|
-| MEMORY.md doesn't exist | Create it with initial structure |
-| File write fails | Log error, continue without saving |
+| 故障 | 处理 |
+|------|------|
+| MEMORY.md 不存在 | 创建初始结构 |
+| 文件写入失败 | 记录错误，继续运行 |
 
-## Changelog
+## 变更日志
 
 - 2026-03-31: v1 — Adapted from Qingmo memory-distill.md v3. Simplified to two-layer architecture (no LanceDB dependency). File-based storage only.

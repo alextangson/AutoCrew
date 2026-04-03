@@ -5,7 +5,7 @@ description: |
   Trigger: 二创, 改写, remix, 换个角度写
 ---
 
-# Remix Content
+# 内容二创
 
 用不同角度重写已有内容。确保原创度 >70%，不是换词洗稿，而是重新思考。
 

@@ -4,15 +4,15 @@ description: |
   平台 native 改写 skill。把一个母稿改成不同平台的版本，强调"重写而不是裁剪"。支持单平台和多平台一键改写，自动生成各平台标题和 hashtag。
 ---
 
-# Platform Rewrite
+# 平台改写
 
-## Purpose
+## 目标
 
-Turn one source draft into platform-native versions. Rewrite, don't trim.
+把一篇母稿改写成各平台原生版本。重写，不是裁剪。
 
-Supported platforms: 小红书 · 抖音 · 公众号 · 视频号 · B站
+支持平台：小红书 · 抖音 · 公众号 · 视频号 · B站
 
-## Rules
+## 规则
 
 1. Never call a simple trim "adaptation".
 2. Start from the strongest single angle in the source draft.
@@ -20,7 +20,7 @@ Supported platforms: 小红书 · 抖音 · 公众号 · 视频号 · B站
 4. If the user asks for multiple platforms, use the **batch flow** (Step 2 below).
 5. Run `humanizer-zh` before final delivery.
 
-## Step 1 — Single Platform Rewrite
+## 第一步 — 单平台改写
 
 From an existing draft:
 
@@ -58,7 +58,7 @@ After rewrite completes:
 
 3. **Show output** to user: adapted title, body, hashtags, and notes.
 
-## Step 2 — Multi-Platform Batch Rewrite
+## 第二步 — 多平台批量改写
 
 When user says "帮我改成所有平台" or specifies 2+ platforms:
 
@@ -90,7 +90,7 @@ When user says "帮我改成所有平台" or specifies 2+ platforms:
    | 抖音 | ... | 600 | 5 | content-yyy |
    | ... | ... | ... | ... | ... |
 
-## Step 3 — Post-Rewrite Review (Optional)
+## 第三步 — 改写后审核（可选）
 
 If `creator-profile.json` has `styleCalibrated: true`:
 
@@ -98,7 +98,7 @@ If `creator-profile.json` has `styleCalibrated: true`:
 - Flag any version that fails review.
 - Offer to auto-fix or let user decide.
 
-## Output
+## 输出
 
 Always tell the user:
 
@@ -109,16 +109,16 @@ Always tell the user:
 - What still needs manual polish
 - Sibling relationships (if batch)
 
-## Error Handling
+## 错误处理
 
-| Failure | Action |
-|---------|--------|
-| Source content not found | Ask user for content_id or raw text. |
-| Unsupported platform | List supported platforms, ask user to pick. |
-| title-hashtag returns empty | Fall back to original title + basic hashtags from tags. |
-| Save fails | Output adapted text in chat so user can copy. Retry once. |
+| 故障 | 处理 |
+|------|------|
+| 源内容未找到 | 向用户索要 content_id 或原始文本 |
+| 不支持的平台 | 列出支持平台，让用户选择 |
+| title-hashtag 返回空 | 回退到原始标题 + tags 基础标签 |
+| 保存失败 | 在聊天中输出改写文本让用户复制，重试一次 |
 
-## Changelog
+## 变更日志
 
 - 2026-04-01: v2 — Added multi-platform batch flow, title-hashtag integration, sibling linking, optional post-rewrite review.
 - 2026-03-31: v1 — Initial single-platform rewrite skill.

@@ -10,7 +10,7 @@ description: |
 > 独立的受众深度分析技能。基于马斯洛需求层次模型，系统拆解受众的痛点、痒点、爽点。
 > 产出可直接用于选题的洞察，不是笼统的人口统计报告。
 
-## Step 1: 加载上下文
+## 第一步：加载上下文
 
 静默读取 `~/.autocrew/creator-profile.json`，提取：
 - `industry` — 行业/领域
@@ -31,7 +31,7 @@ description: |
 
 ---
 
-## Step 2: 痛点分析（Pain Points — 未被说出的挫败感）
+## 第二步：痛点分析（Pain Points — 未被说出的挫败感）
 
 > 痛点不是抽象的"焦虑"或"困惑"，是具体场景下的具体挫败。
 
@@ -63,7 +63,7 @@ description: |
 
 ---
 
-## Step 3: 痒点分析（Itch Points — 身份转变渴望）
+## 第三步：痒点分析（Itch Points — 身份转变渴望）
 
 > 痒点是"我想成为那样的人"的渴望。不是需求，是欲望。
 
@@ -93,7 +93,7 @@ description: |
 
 ---
 
-## Step 4: 爽点分析（Delight Points — 3 种类型）
+## 第四步：爽点分析（Delight Points — 3 种类型）
 
 > 爽点让受众看完内容后有"爽了"的感觉。分 3 种类型：
 
@@ -139,7 +139,7 @@ description: |
 
 ---
 
-## Step 5: 马斯洛五层矩阵
+## 第五步：马斯洛五层矩阵
 
 > 将受众放到马斯洛需求层次上，找到每一层的内容切入角度。
 
@@ -160,7 +160,7 @@ description: |
 
 ---
 
-## Step 6: 产出 3 个选题
+## 第六步：产出 3 个选题
 
 > 目标：分析不是终点，选题才是。
 
@@ -189,7 +189,7 @@ description: |
 
 ---
 
-## Step 7: 写入 creator-profile.json
+## 第七步：写入 creator-profile.json
 
 更新 `audiencePersona` 字段，加入深度分析数据：
 
@@ -230,7 +230,7 @@ description: |
 - `autocrew_topic` — 保存选题到选题库（`create` action）
 - 文件系统读写 — 读取和更新 `creator-profile.json`
 
-## 与其他 Skill 的关系
+## 关联技能
 
 - **setup** — `/setup` 的 Phase 0.5 做基础受众画像，本技能做深度分析
 - **topic-ideas** — 本技能产出的选题存入同一个选题库

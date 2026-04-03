@@ -5,7 +5,7 @@ description: |
   Trigger: 去AI, humanize, 去味, 改口语
 ---
 
-# Humanizer ZH
+# 中文去AI味
 
 完稿后最后一道工序。扫描 10 种中文 AI 写作模式，逐条改写，注入灵魂。
 

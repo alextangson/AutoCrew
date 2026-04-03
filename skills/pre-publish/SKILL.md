@@ -4,19 +4,19 @@ description: |
   发布前检查清单 skill。在内容发布前自动检查所有前置条件是否满足，输出 checklist 状态。只有全部通过才允许发布。
 ---
 
-# Pre-Publish Checklist
+# 发布前检查
 
-> Gate skill. 在发布前拦截，确保内容质量和完整性。
+> 门控技能。在发布前拦截，确保内容质量和完整性。
 
-## When to Activate
+## 触发时机
 
 - User says "发布", "推送", "publish", "上线"
 - User runs `autocrew_publish`
 - Agent is about to transition content to `publishing` status
 
-## Checklist Items
+## 检查项
 
-Run the following checks on the target content. Each item pass/fail:
+对目标内容运行以下检查，每项 pass/fail：
 
 ### 1. Content Review — 审核通过
 
@@ -69,7 +69,7 @@ Check title against platform rules from `title-hashtag.ts`:
 - ✅ Pass: body length ≥ platform minimum
 - ❌ Fail: too short
 
-## Execution Flow
+## 执行流程
 
 ```
 1. Load content via autocrew_content action="get"
@@ -79,8 +79,9 @@ Check title against platform rules from `title-hashtag.ts`:
 5. If ANY fail → block publish, show what needs fixing
 ```
 
-## Output Format
+## 输出格式
 
+<output_template lang="zh-CN">
 ```
 📋 发布前检查 — content-xxx (小红书)
 
@@ -93,9 +94,11 @@ Check title against platform rules from `title-hashtag.ts`:
 
 🟢 全部通过，可以发布！
 ```
+</output_template>
 
 Or if something fails:
 
+<output_template lang="zh-CN">
 ```
 📋 发布前检查 — content-yyy (抖音)
 
@@ -108,10 +111,11 @@ Or if something fails:
 
 🔴 2 项未通过，请先修复再发布。
 ```
+</output_template>
 
-## Auto-Fix Offer
+## 自动修复建议
 
-When checks fail, offer specific actions:
+检查失败时，提供具体修复方案：
 
 | Failed Check | Suggested Action |
 |-------------|-----------------|
@@ -122,7 +126,7 @@ When checks fail, offer specific actions:
 | No platform | Ask user which platform |
 | Body too short | Suggest expanding with more examples/data points |
 
-## Integration with Publish
+## 与发布流程的集成
 
 If all checks pass and user confirms:
 
@@ -133,6 +137,6 @@ If all checks pass and user confirms:
 
 2. Then proceed with the actual publish action (e.g. `autocrew_publish`).
 
-## Changelog
+## 变更日志
 
 - 2026-04-01: v1 — Initial pre-publish checklist with 6 checks, auto-fix suggestions, and publish gate.

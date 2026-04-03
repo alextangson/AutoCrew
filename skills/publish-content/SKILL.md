@@ -4,11 +4,11 @@ description: |
   Publish approved content to social media platforms. Activate when user asks to publish, post, or distribute content. Trigger: "发布" / "发到小红书" / "帮我发" / "发布这篇". Supports Xiaohongshu, Douyin, WeChat Video, WeChat MP (公众号).
 ---
 
-# Publish Content
+# 发布内容
 
-> Utility skill. Dual-mode: copy-paste formatting (universal) + browser automation (OpenClaw with MCP Browser).
+> 工具型技能。双模式：复制粘贴格式化（通用）+ 浏览器自动化（OpenClaw MCP Browser）。
 
-## Capabilities
+## 功能矩阵
 
 | Feature | OpenClaw | Claude Code |
 |---------|----------|-------------|
@@ -17,7 +17,7 @@ description: |
 | Browser automation publish | ✅ (MCP Browser) | ❌ (manual) |
 | Status tracking | ✅ | ✅ |
 
-## CRITICAL RULES (Browser Automation)
+## 关键规则（浏览器自动化）
 
 1. **Navigate by URL**, not by clicking menus (menus are unreliable in accessibility tree).
 2. **Wait 5 seconds** after each navigation for page to load.
@@ -26,7 +26,7 @@ description: |
 5. **Truncate content** to platform limits silently. Add "…" if truncated.
 6. **Respond in Simplified Chinese** for all user-facing messages.
 
-## Platform Routes
+## 平台路由
 
 | Platform | Upload/Create URL | Login Detection |
 |----------|------------------|-----------------|
@@ -35,7 +35,7 @@ description: |
 | wechat_video | `https://channels.weixin.qq.com/platform/post/create` | URL redirects to `/login.html` |
 | wechat_mp | `https://mp.weixin.qq.com/` | URL contains `/login` or no cookie |
 
-## Platform Limits
+## 平台限制
 
 | Platform | Title limit | Body limit | Tags |
 |----------|------------|-----------|------|
@@ -46,14 +46,14 @@ description: |
 
 ---
 
-## Step 0: Identify content to publish
+## 第零步：确定要发布的内容
 
 1. List content: `autocrew_content` action="list"
 2. Filter for status="approved" (or "draft" if user explicitly asks)
 3. IF no content → tell user to write some first.
 4. Load the content project: `autocrew_asset` action="list" content_id=xxx to check for cover/video assets.
 
-## Step 1: Pre-publish validation
+## 第一步：发布前校验
 
 Check content against platform limits. Auto-truncate with "…" if over limit.
 
@@ -65,18 +65,19 @@ Check required assets:
 
 IF missing required assets → ask user to provide them, or use `autocrew_asset` action="add" to register.
 
-## Step 2: Route by mode
+## 第二步：路由到模式
 
 - IF browser automation available (OpenClaw MCP Browser) AND user wants auto-publish → go to **Browser Automation Steps**
 - ELSE → go to **Copy-Paste Mode**
 
 ---
 
-## Copy-Paste Mode (Universal)
+## 复制粘贴模式（通用）
 
-Format content for manual publishing. Output in chat for user to copy.
+格式化内容供用户手动发布，在聊天中输出。
 
-### Xiaohongshu format:
+### 小红书格式：
+<output_template lang="zh-CN">
 ```
 📋 小红书发布内容：
 
@@ -90,8 +91,10 @@ Format content for manual publishing. Output in chat for user to copy.
 📎 封面：{cover asset path or "需要手动上传"}
 🔗 发布地址：https://creator.xiaohongshu.com/publish/publish
 ```
+</output_template>
 
-### Douyin format:
+### 抖音格式：
+<output_template lang="zh-CN">
 ```
 📋 抖音发布内容：
 
@@ -103,8 +106,10 @@ Format content for manual publishing. Output in chat for user to copy.
 📎 封面：{cover asset path or "使用自动封面"}
 🔗 发布地址：https://creator.douyin.com/creator-micro/content/upload
 ```
+</output_template>
 
-### WeChat Video format:
+### 视频号格式：
+<output_template lang="zh-CN">
 ```
 📋 视频号发布内容：
 
@@ -117,8 +122,10 @@ Format content for manual publishing. Output in chat for user to copy.
 📎 视频：{video asset path}
 🔗 发布地址：https://channels.weixin.qq.com/platform/post/create
 ```
+</output_template>
 
-### WeChat MP (公众号) format:
+### 公众号格式：
+<output_template lang="zh-CN">
 ```
 📋 公众号发布内容：
 
@@ -129,6 +136,7 @@ Format content for manual publishing. Output in chat for user to copy.
 📎 封面：{cover asset path or "需要手动上传"}
 🔗 发布地址：https://mp.weixin.qq.com/
 ```
+</output_template>
 
 After outputting, update status:
 ```json
@@ -137,9 +145,9 @@ After outputting, update status:
 
 ---
 
-## Browser Automation Steps (OpenClaw Only)
+## 浏览器自动化流程（仅 OpenClaw）
 
-### Common: Navigate and check login
+### 通用：导航并检查登录
 
 ```json
 {"action": "navigate", "targetUrl": "<platform create URL>"}
@@ -152,7 +160,7 @@ Wait 5 seconds. Take snapshot.
 
 ---
 
-### Steps (Douyin)
+### 抖音步骤
 
 > URL: `https://creator.douyin.com/creator-micro/content/upload`
 > After video upload, auto-redirects to `/content/publish`
@@ -249,7 +257,7 @@ Wait 5s. Verify success (redirect to content management or success message).
 
 ---
 
-### Steps (Xiaohongshu)
+### 小红书步骤
 
 > URL: `https://creator.xiaohongshu.com/publish/publish`
 > Tabs: 上传视频 / 上传图文 / 写长文 (tabs NOT in accessibility tree, use JS click)
@@ -310,7 +318,7 @@ Tags — append `#tag1 #tag2` to body, or find tag input and Enter each tag.
 
 ---
 
-### Steps (WeChat Video)
+### 视频号步骤
 
 > URL: `https://channels.weixin.qq.com/platform/post/create`
 
@@ -353,7 +361,7 @@ Tags — append `#tag1 #tag2` to body, or find tag input and Enter each tag.
 
 ---
 
-### Steps (WeChat MP 公众号)
+### 公众号步骤
 
 > URL: `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77`
 > This is the "图文消息" editor. Navigate via: 内容与互动 → 图文消息 → 写新图文
@@ -441,7 +449,7 @@ For direct publish:
 
 ---
 
-## Common: Update Status
+## 通用：更新状态
 
 After publish (success or failure), update content status:
 
@@ -458,35 +466,35 @@ or
 ❌ 发布失败：{error_message}。请检查账号状态后重试。
 ```
 
-## Selector Adaptation Strategy
+## 选择器适配策略
 
-DOM selectors are based on page structures observed in early 2026. **Pages will change.**
+DOM 选择器基于 2026 年初观察到的页面结构。**页面会变。**
 
-When a selector returns `not_found`:
-1. Use `browser snapshot` to see current page structure
-2. Identify the correct element by role, placeholder, or nearby labels
-3. Adapt the selector
-4. Core pattern stays the same: evaluate → find element → fill/click
+当选择器返回 `not_found` 时：
+1. 用 `browser snapshot` 查看当前页面结构
+2. 通过 role、placeholder 或相邻标签定位正确元素
+3. 适配选择器
+4. 核心模式不变：evaluate → 找元素 → 填写/点击
 
-Key hints:
+关键提示：
 - **Douyin**: Title placeholder "填写作品标题". Publish button "发布".
 - **Xiaohongshu**: Title placeholder contains "标题". Publish button "发布" or "发布笔记".
 - **WeChat Video**: One main text area (创作描述). Publish button "发表".
 - **WeChat MP**: Title input `#title`. Body in iframe or contenteditable. Save "保存", publish "群发".
 
-## Error Handling
+## 错误处理
 
-| Failure | Action |
-|---------|--------|
-| Login expired (redirect) | Tell user to log in manually. |
-| Upload timeout (>120s) | Report failure, suggest retry. |
-| CAPTCHA/verification popup | Report failure, suggest manual login. |
-| Form validation error | Read error from DOM, report to user. |
-| Content too long | Truncate to limit + "…", proceed. |
-| `setInputFiles` fails | Try all `input[type=file]` on page. |
-| Publish button not found | Use snapshot to find correct button. |
-| Browser not available | Fall back to copy-paste mode. |
+| 故障 | 处理 |
+|------|------|
+| 登录过期（重定向） | 告诉用户手动登录 |
+| 上传超时（>120s） | 报告失败，建议重试 |
+| 验证码弹窗 | 报告失败，建议手动登录 |
+| 表单校验错误 | 从 DOM 读取错误信息，报告给用户 |
+| 内容过长 | 截断到限制 + "…"，继续 |
+| `setInputFiles` 失败 | 尝试页面上所有 `input[type=file]` |
+| 找不到发布按钮 | 用 snapshot 找到正确按钮 |
+| 浏览器不可用 | 回退到复制粘贴模式 |
 
-## Changelog
+## 变更日志
 
 - 2026-03-31: v1 — Adapted from Qingmo publish-content.md v2. Added WeChat MP (公众号) support. Dual-mode: copy-paste + browser automation. Removed backend API dependency. Assets loaded from local project directory.

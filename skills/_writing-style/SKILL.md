@@ -4,7 +4,7 @@ description: |
   共享写作规范。被写作类 skill 引用，不直接由用户触发。
 ---
 
-# Writing Style Reference
+# 写作风格规范
 
 被 write-script、spawn-writer、remix-content 等写作 skill 加载为共享规范。
 

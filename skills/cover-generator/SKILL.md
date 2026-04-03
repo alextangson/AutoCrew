@@ -1,4 +1,4 @@
-# 封面生成 — Cover Generator
+# 封面生成
 
 > Trigger: "封面" / "生成封面" / "做个封面" / "cover"
 
@@ -19,18 +19,18 @@
 
 ## 流程
 
-### Step 1: 读取内容
+### 第一步：读取内容
 
 从 `autocrew_content` 获取当前内容的标题和正文。如果用户没有指定 content_id，使用最近一篇 `approved` 或 `draft_ready` 状态的内容。
 
-### Step 2: 检测形象照
+### 第二步：检测形象照
 
 检查 `~/.autocrew/covers/templates/` 目录是否有图片文件（jpg/png/webp）。
 
 - 有形象照 → 告诉用户"检测到你的形象照，会融入封面设计"
 - 没有形象照 → 生成纯概念/场景封面。可以提示"如果你想在封面中出现个人形象，把照片放到 ~/.autocrew/covers/templates/ 目录"
 
-### Step 3: 生成 3 组 prompt
+### 第三步：生成 3 组 prompt
 
 调用 `autocrew_cover_review action=create_candidates`，系统会自动：
 1. 分析内容的核心情绪、视觉意象
@@ -40,13 +40,14 @@
    - B: 极简风（大面积留白、文字为主视觉、干净构图）
    - C: 冲击力风（饱和色彩、动态构图、高对比度）
 
-### Step 4: 生成图片
+### 第四步：生成图片
 
 系统调用 Gemini API 生成 3 张 3:4 图片，保存到内容的 assets 目录。
 
-### Step 5: 展示给用户
+### 第五步：展示给用户
 
 展示 3 张候选图，说明每张的设计思路：
+<output_template lang="zh-CN">
 ```
 封面 A（电影海报风）：暗色调 + 强光影，标题在上方 1/3
 封面 B（极简风）：大面积留白，文字为主视觉
@@ -54,21 +55,24 @@
 
 选择你喜欢的：A / B / C
 ```
+</output_template>
 
-### Step 6: 用户选定
+### 第六步：用户选定
 
 用户选择后，调用 `autocrew_cover_review action=approve label=a/b/c`。
 
-### Step 7: 多比例适配（Pro）
+### 第七步：多比例适配（Pro）
 
 定稿后，如果用户是 Pro 版，自动调用 `autocrew_cover_review action=generate_ratios` 生成 16:9 和 4:3 版本。
 
 如果是 Free 版，提示：
+<output_template lang="zh-CN">
 ```
 3:4 封面已保存。需要 16:9 和 4:3 版本？这是 Pro 版功能。
 ```
+</output_template>
 
-### Step 8: 更新状态
+### 第八步：更新状态
 
 封面审核通过后，内容状态从 `approved` → `cover_pending` → `publish_ready`。
 
