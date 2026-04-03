@@ -355,6 +355,54 @@ Borrowed from film editing. A technique for ensuring content has consistent ener
 
 Apply the clock test to every video script before production. If you can't identify the bang moment at each clock position, the script needs work.
 
+### Clock-Based Script Template
+
+When writing or reviewing a script, map it to the clock. Every script should specify what happens at each position.
+
+**Short-form (30-60s) script clock:**
+
+| Clock | Time (60s) | Role | Bang Type | Example |
+|-------|-----------|------|-----------|---------|
+| 12:00 | 0-3s | **Hook** — Stop the scroll. The viewer decides to stay or leave. | Pattern break, bold claim, visual shock, direct question | "Everyone is using AI wrong. Here's proof." |
+| 3:00 | 15s | **Escalation** — Raise the stakes. Deepen the hook's promise. | Data reveal, unexpected twist, "but here's the thing" | "I tracked 50 companies. 90% wasted their budget on the same mistake." |
+| 6:00 | 30s | **Core payload** — Deliver the main value. This is why the viewer stayed. | Framework, method, insight, emotional climax | "The fix is 3 steps: [concrete method]" |
+| 9:00 | 45s | **Resolution + push** — Land the message. Drive action. | Call-to-action, cliffhanger for part 2, emotional callback, reframe | "Save this. You'll need it when your boss asks about AI next quarter." |
+
+**Long-form (5-10min) script clock:**
+
+| Clock | Time (10min) | Role | Bang Type |
+|-------|-------------|------|-----------|
+| 12:00 | 0:00-0:30 | **Cold open** — Hook without preamble. No "hey guys." Jump into the most compelling moment. | Dramatic statement, mid-story teaser, provocative question |
+| 3:00 | 2:30 | **First payoff** — Deliver on the hook's promise early. Reward the viewer for staying. | First key insight, "aha" moment, surprising data |
+| 6:00 | 5:00 | **Pivot or escalation** — Shift perspective. Introduce complexity. Prevent mid-video sag. | Contrarian take, "but what nobody talks about is...", new angle |
+| 9:00 | 7:30 | **Climax** — The strongest insight or most emotional moment. Everything builds to this. | Core thesis, transformation moment, biggest reveal |
+| Close | 9:30-10:00 | **Landing** — Reframe everything. Leave the viewer changed. | Callback to the hook, future vision, actionable takeaway |
+
+### Bang Moment Types
+
+Use this menu when filling clock positions. Each bang moment should be one of:
+
+- **Data bomb** — A specific number that reframes the topic ("90% of AI projects fail in the first year")
+- **Contrarian flip** — Challenge what the viewer assumed ("The problem isn't that AI is too expensive. It's that it's too cheap.")
+- **Story beat** — A personal narrative turning point ("That's when the client called and said they were cancelling.")
+- **Visual demonstration** — Show, don't tell. Before/after, screen recording, live demo.
+- **Emotional spike** — Vulnerability, humor, frustration, triumph. Real feeling, not performed.
+- **Framework reveal** — Introduce a mental model that restructures how the viewer thinks ("I call this the Clock Theory...")
+- **Audience mirror** — Describe the viewer's exact situation so precisely they feel seen ("You're probably sitting here thinking: should I even bother?")
+
+### Clock Audit Checklist
+
+When reviewing a script or finished video, run the clock audit:
+
+- [ ] **12:00 (Hook)** — Does the first 3 seconds stop the scroll? Would YOU stop for this?
+- [ ] **3:00 (Escalation)** — Does the energy rise or flatten here? Is there a reason to keep watching?
+- [ ] **6:00 (Payload/Pivot)** — Is the core value being delivered? Or is this still setup?
+- [ ] **9:00 (Climax/Push)** — Is this the strongest moment? Does it earn a save/share/follow?
+- [ ] **No dead zones** — Is there any 15-second stretch with no new information, no energy change, no visual shift?
+- [ ] **HKRR alignment** — Does the chosen HKRR element dominate every clock position? (Short-form: one element. Long-form: primary element with supporting elements.)
+
+If any checkbox fails, rewrite that section before production. A script that passes the clock audit has a dramatically higher chance of algorithmic survival.
+
 ### What "Bad Content" Looks Like
 
 Three patterns that AutoCrew must never produce:
