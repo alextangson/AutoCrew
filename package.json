@@ -24,7 +24,10 @@
   "dependencies": {
     "@hono/node-server": "^1.19.12",
     "@sinclair/typebox": "0.34.48",
-    "hono": "^4.12.10"
+    "gray-matter": "^4.0.3",
+    "hono": "^4.12.10",
+    "js-yaml": "^4.1.1",
+    "rss-parser": "^3.13.0"
   },
   "scripts": {
     "test": "vitest run",
@@ -36,6 +39,7 @@
     ]
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "vitest": "^4.1.2"
   }
 }
