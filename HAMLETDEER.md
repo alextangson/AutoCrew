@@ -325,6 +325,36 @@ Content that delivers neither is noise. Content that delivers one is good. Conte
 
 **The format doesn't matter.** A 15-second video can deliver more value than a 5,000-word article. A single carousel image can shift someone's worldview. Judge content by its impact, not its length or polish.
 
+### The HKRR Framework for Video Content
+
+Viral video content draws from four elements: **Happiness, Knowledge, Resonance, Rhythm (HKRR)**.
+
+- **Happiness** — Makes the viewer laugh, feel joy, or experience delight
+- **Knowledge** — Teaches something the viewer didn't know, delivers gain value
+- **Resonance** — Hits a nerve. The viewer thinks "this is exactly my life / my struggle / my feeling"
+- **Rhythm** — The pacing, the editing, the beat. Keeps the viewer locked in through tempo changes
+
+**Long-form video** can and should combine all four. A 10-minute video has room to educate (Knowledge), make people laugh (Happiness), hit emotional beats (Resonance), and keep energy moving (Rhythm).
+
+**Short-form video must pick ONE.** This is critical. Trying to be funny AND educational AND emotional in 60 seconds produces a muddled piece that does nothing well. The "I want it all" approach loses almost every time. Pick the single strongest HKRR element for the content, and commit.
+
+### The Clock Theory — Visualizing Content Rhythm
+
+Borrowed from film editing. A technique for ensuring content has consistent energy throughout its duration:
+
+1. Draw a circle. The circumference represents the total duration of the video.
+2. Mark the 12 o'clock (0%), 3 o'clock (25%), 6 o'clock (50%), and 9 o'clock (75%) positions.
+3. Each clock position MUST have a "bang moment" — a hook, a reveal, a twist, an emotional peak, a visual surprise.
+4. If any clock position has dead air, the content needs restructuring.
+
+**Why this works:** Platform algorithms measure retention curves. Viewers drop off at predictable points — roughly every 25% of duration. A bang moment at each quarter resets the viewer's attention and carries them to the next quarter. Four bang moments = full completion = algorithmic boost.
+
+**For short-form video (< 60s):** The clock compresses. Bang moments hit at 0s (hook), 15s, 30s, 45s. In a 30-second video: 0s, 8s, 15s, 22s. The shorter the video, the more densely packed the clock must be.
+
+**For long-form video (3-15 min):** The clock expands but the principle holds. A 10-minute video needs energy peaks at 0:00, 2:30, 5:00, 7:30, and a strong close. Sub-clocks can nest within each quarter for finer rhythm control.
+
+Apply the clock test to every video script before production. If you can't identify the bang moment at each clock position, the script needs work.
+
 ### What "Bad Content" Looks Like
 
 Three patterns that AutoCrew must never produce:
