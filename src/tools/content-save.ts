@@ -150,13 +150,22 @@ export async function executeContentSave(params: Record<string, unknown>) {
     hashtags: (params.hashtags as string[]) || [],
   }, dataDir);
 
-  const contentDir = `~/.autocrew/contents/${content.id}`;
+  const homeDir = process.env.HOME ?? "~";
+  const contentDir = `${homeDir}/.autocrew/contents/${content.id}`;
   return {
     ok: true,
     content,
     filePath: `${contentDir}/draft.md`,
     projectDir: contentDir,
-    openCommand: `open ${contentDir}`,
-    hint: `IMPORTANT: Tell the user where the file is saved. Say: "📄 内容已保存到：${contentDir}/draft.md — 执行 open ${contentDir} 可打开文件夹"`,
+    openCommand: `open "${contentDir}"`,
+    message: [
+      `📄 内容已保存为本地文件（不是数据库）：`,
+      `   草稿：${contentDir}/draft.md`,
+      `   元数据：${contentDir}/meta.json`,
+      `   版本：${contentDir}/versions/`,
+      ``,
+      `打开文件夹：open "${contentDir}"`,
+      `查看草稿：cat "${contentDir}/draft.md"`,
+    ].join("\n"),
   };
 }
