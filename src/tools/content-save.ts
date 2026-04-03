@@ -1,4 +1,7 @@
 import { Type } from "@sinclair/typebox";
+import fs from "node:fs/promises";
+import path from "node:path";
+import yaml from "js-yaml";
 import {
   saveContent,
   listContents,
@@ -11,6 +14,12 @@ import {
   normalizeLegacyStatus,
 } from "../storage/local-store.js";
 import type { ContentStatus } from "../storage/local-store.js";
+import {
+  slugify,
+  stagePath,
+  initPipeline,
+  type ProjectMeta,
+} from "../storage/pipeline-store.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
@@ -140,32 +149,74 @@ export async function executeContentSave(params: Record<string, unknown>) {
   }
 
   const rawStatus = (params.status as string) || "draft_ready";
+  const platform = (params.platform as string) || undefined;
+
+  // 1. Save to old contents/ system (backward compat)
   const content = await saveContent({
     title,
     body,
-    platform: (params.platform as string) || undefined,
+    platform,
     topicId: (params.topicId as string) || undefined,
     status: normalizeLegacyStatus(rawStatus),
     tags: (params.tags as string[]) || [],
     hashtags: (params.hashtags as string[]) || [],
   }, dataDir);
 
-  const homeDir = process.env.HOME ?? "~";
-  const contentDir = `${homeDir}/.autocrew/contents/${content.id}`;
+  // 2. Also create project in new pipeline/drafting/ structure
+  const effectiveDataDir = dataDir || path.join(process.env.HOME ?? "~", ".autocrew");
+  await initPipeline(effectiveDataDir);
+
+  const projectName = slugify(title);
+  const draftingDir = stagePath("drafting", effectiveDataDir);
+  const projectDir = path.join(draftingDir, projectName);
+  await fs.mkdir(path.join(projectDir, "references"), { recursive: true });
+
+  const now = new Date().toISOString();
+  const meta: ProjectMeta = {
+    title,
+    domain: "",
+    format: platform || "article",
+    createdAt: now,
+    sourceTopic: "",
+    intelRefs: [],
+    versions: [{ file: "draft-v1.md", createdAt: now, note: "initial draft" }],
+    current: "draft-v1.md",
+    history: [{ stage: "drafting", entered: now }],
+    platforms: platform ? [{ format: platform, status: "drafting" }] : [],
+  };
+
+  await fs.writeFile(
+    path.join(projectDir, "meta.yaml"),
+    yaml.dump(meta, { lineWidth: -1 }),
+    "utf-8",
+  );
+  await fs.writeFile(
+    path.join(projectDir, "draft-v1.md"),
+    body,
+    "utf-8",
+  );
+  await fs.writeFile(
+    path.join(projectDir, "draft.md"),
+    `# ${title}\n\n${body}\n`,
+    "utf-8",
+  );
+
   return {
     ok: true,
     content,
-    filePath: `${contentDir}/draft.md`,
-    projectDir: contentDir,
-    openCommand: `open "${contentDir}"`,
+    filePath: `${projectDir}/draft.md`,
+    projectDir,
+    pipelinePath: projectDir,
+    legacyDir: `${effectiveDataDir}/contents/${content.id}`,
+    openCommand: `open "${projectDir}"`,
     message: [
-      `📄 内容已保存为本地文件（不是数据库）：`,
-      `   草稿：${contentDir}/draft.md`,
-      `   元数据：${contentDir}/meta.json`,
-      `   版本：${contentDir}/versions/`,
+      `📄 内容已保存到 pipeline：`,
+      `   草稿：${projectDir}/draft.md`,
+      `   元数据：${projectDir}/meta.yaml`,
+      `   版本：${projectDir}/draft-v1.md`,
       ``,
-      `打开文件夹：open "${contentDir}"`,
-      `查看草稿：cat "${contentDir}/draft.md"`,
+      `打开文件夹：open "${projectDir}"`,
+      `查看草稿：cat "${projectDir}/draft.md"`,
     ].join("\n"),
   };
 }

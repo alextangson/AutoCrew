@@ -23,7 +23,6 @@ const SUBDIRS = [
   "sensitive-words",
   "covers/templates",
   "competitors",
-  "pipelines",
   "memory",
 ];
 
