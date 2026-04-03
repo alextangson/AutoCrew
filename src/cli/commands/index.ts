@@ -76,4 +76,5 @@ export const commands: CommandDef[] = [
   advanceCmd,
   trashCmd,
   restoreCmd,
+  migrateCmd,
 ];
