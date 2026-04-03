@@ -71,6 +71,10 @@ export interface CreatorProfile {
   competitorAccounts: CompetitorAccount[];
   /** Historical performance data points */
   performanceHistory: PerformanceEntry[];
+  /** Natural language description of how this creator writes (from calibration) */
+  expressionPersona: string;
+  /** Additional audience personas (from calibration Phase 0.5) */
+  secondaryPersonas: AudiencePersona[];
   /** Whether style calibration has been completed */
   styleCalibrated: boolean;
   /** Profile creation timestamp */
@@ -98,6 +102,8 @@ function emptyProfile(): CreatorProfile {
     styleBoundaries: { never: [], always: [] },
     competitorAccounts: [],
     performanceHistory: [],
+    expressionPersona: "",
+    secondaryPersonas: [],
     styleCalibrated: false,
     createdAt: now,
     updatedAt: now,

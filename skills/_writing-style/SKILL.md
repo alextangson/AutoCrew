@@ -1,62 +1,68 @@
 ---
 name: _writing-style
 description: |
-  Shared writing style reference for all content creation skills. Not a standalone skill — loaded by write-script and spawn-writer as a reference.
+  共享写作规范。被写作类 skill 引用，不直接由用户触发。
 ---
 
 # Writing Style Reference
 
-Shared style rules for all content creation. Loaded by writer skills as reference.
+被 write-script、spawn-writer、remix-content 等写作 skill 加载为共享规范。
 
-## Hook (write ONE — the strongest angle for this topic)
+## Hook（只写一个 — 选最强的角度）
 
-| Type | When to use |
-|------|-------------|
-| Pain point | Audience has an obvious unresolved frustration |
-| Suspense | Topic has a counterintuitive truth or surprising data |
-| Ideal state | Topic sells a desirable outcome |
-| Emotional resonance | Topic touches identity, belonging, or aspiration |
-| Contrast | Clear gap between common belief and reality |
+| 类型 | 什么时候用 |
+|------|-----------|
+| 痛点 | 受众有明显未解决的挫败感 |
+| 悬念 | 话题存在反直觉的事实或惊人数据 |
+| 理想态 | 话题卖一个令人向往的结果 |
+| 情感共鸣 | 触及身份认同、归属感或理想自我 |
+| 反差 | 普遍认知与现实之间有明显落差 |
 
-Pick the ONE type that hits hardest. Write 1-3 sentences.
+选命中最狠的那一个类型。写 1-3 句。
 
-NEVER open with "哈喽大家好", "你有没有想过", or any generic greeting/question.
+**禁止**以下列方式开头：
+- "哈喽大家好"
+- "你有没有想过"
+- 任何泛泛的问候或提问
 
-## Body Structure
+## 正文结构
 
-Build the body as a chain of **information points** (5-8 total).
+正文由 **信息点链** 组成（5-8 个）。
 
-Each point follows: **claim → why it's true → concrete example or scenario**.
+每个信息点遵循：**论点 → 为什么成立 → 具体例子或场景**。
 
-Rules:
-- Each point: 80-150 characters. Total body: 800-1500 characters.
-- Points build progressively — don't front-load the best stuff.
-- Include 1-2 expectation-breaking twists.
-- Include 1-2 interaction hooks (questions, "你猜怎么着", comment prompts).
-- NO essay-style paragraphs. Short sentences. One idea per sentence.
+规则：
+- 每个信息点：80-150 字。正文总量：800-1500 字。
+- 信息点渐进排列 — 不要把最好的放在最前面。
+- 包含 1-2 个打破预期的转折。
+- 包含 1-2 个互动钩子（提问、"你猜怎么着"、评论区引导）。
+- **不写散文段落**。短句。一句一个意思。
 
-## Ending CTA
+## 结尾 CTA
 
-- 1-2 sentences guiding a specific action (save/comment/follow).
-- Must connect to the content's value — "收藏这条，下次用得上" beats "觉得有用就点赞".
-- Use the brand's voice from STYLE.md.
+- 1-2 句引导具体行动（收藏/评论/关注）。
+- 必须与内容价值挂钩 — "收藏这条，下次用得上" 好过 "觉得有用就点赞"。
+- 使用品牌 STYLE.md 中的语气。
 
-## Title (write ONE — the best)
+## 标题（只写一个 — 最好的那个）
 
-Before writing, use `web_search` to find 2-3 trending keywords on the target platform.
+写标题前用 `web_search` 查目标平台 2-3 个热搜关键词。
 
-Title rules:
-- Embed 1 trending keyword naturally.
-- Create curiosity gap or promise a specific outcome.
-- 15-25 characters. Can include emoji if it adds value.
-- No clickbait — must deliver on the promise.
+标题规则：
+- 自然嵌入 1 个热搜关键词。
+- 制造好奇缺口或承诺一个具体结果。
+- 15-25 字。可以加 emoji（如果确实加分的话）。
+- 不做标题党 — 内容必须兑现承诺。
 
-## Output Format
+## 语气规则
 
-When saving:
-- `title`: The single best title (no emoji in title field).
-- `body`: Full script as plain text. Use blank lines between sections. Do NOT use markdown headers.
+- **去 AI 味**：短句、口语化、像人说话。
+- **温暖非正式**：不端着，但有分寸。
+- **专家但接地气**：有干货，但不掉书袋。
+- **情绪优先于逻辑**：先打动，再说服。
 
-## Changelog
+## 输出格式
 
-- 2026-03-31: v1 — Adapted from Qingmo _writing-style.md v2. Standalone reference for AutoCrew.
+保存时：
+- `title`：唯一最优标题（title 字段不带 emoji）。
+- `body`：完整脚本纯文本。段落之间空行分隔。不使用 Markdown 标题。

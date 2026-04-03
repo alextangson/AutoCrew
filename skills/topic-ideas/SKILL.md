@@ -1,69 +1,103 @@
 ---
 name: topic-ideas
 description: |
-  Interactive topic brainstorming from a seed idea. Activate when user gives a rough idea and wants to explore angles. Trigger: "帮我想" / "想选题" / "这个方向怎么样" / "灵感" / seed idea + "怎么做内容".
+  互动式选题头脑风暴。用户给出种子想法，生成5个选题方向。
+  Trigger: 帮我想选题, 想选题, 灵感, 这个方向怎么样
 ---
 
 # Topic Ideas
 
-> Interactive brainstorming when user gives a seed idea. NOT for systematic research — use research skill for that.
+互动式选题头脑风暴。用户给出一个种子想法，输出 5 个经过质量门检验的选题方向。
 
-## Inputs
+## 输入
 
-| Parameter | Source | Required | Description |
-|-----------|--------|----------|-------------|
-| seed_idea | User message | No | A rough idea, observation, or direction |
-| count | User message | No | Number of topic directions (default: 5) |
+| 参数 | 来源 | 必填 | 说明 |
+|------|------|------|------|
+| seed_idea | 用户消息 | 否 | 粗略的想法、观察或方向 |
+| count | 用户消息 | 否 | 选题数量（默认 5） |
 
-## Steps
+## 流程
 
-1. Read `~/.autocrew/MEMORY.md` for brand context, target audience, and persona section.
-   Read `~/.autocrew/STYLE.md` for platform and tone preferences.
+### 1. 加载上下文
 
-   IF no audience persona exists THEN ask user:
-   > 我需要先了解你的内容是给谁看的。描述一个你最想影响的人——他是干什么的、多大年纪、为什么会关注你？
+读取 `~/.autocrew/MEMORY.md` 获取品牌背景、目标受众、人设。
+读取 `~/.autocrew/STYLE.md` 获取平台和语气偏好。
+读取 `creator-profile.json` 获取创作者画像（如有）。
 
-   Generate persona, confirm with user, then continue.
+如果没有受众人设，先问用户：
+> 我需要先了解你的内容是给谁看的。描述一个你最想影响的人 — 他是干什么的、多大年纪、为什么会关注你？
 
-2. IF user only gave a vague request (e.g. "帮我想选题") THEN decompose into 3-4 **audience-side tensions** before brainstorming.
+生成人设，确认后继续。
 
-   A tension = what the audience BELIEVES vs what's ACTUALLY TRUE, stated in the audience's language.
-   - Bad (creator perspective): "AI执行力强但判断力弱"
-   - Good (audience perspective): "觉得买了AI工具就能省人力，实际上要花更多时间想清楚让AI干嘛"
+### 2. 张力拆解（模糊请求时）
 
-   Present tensions, ask user which one hits hardest, THEN brainstorm from that tension.
+如果用户只给了模糊请求（如 "帮我想选题"），先拆解为 3-4 个**受众侧张力**。
 
-   IF user gave a specific seed (a story, an observation, a frustration) THEN skip to step 3.
+张力 = 受众**相信的** vs **实际上是真的**，用受众的语言表述。
 
-3. Generate 5 topics. For EACH topic, before writing it, simulate the persona:
+- 差（创作者视角）："AI执行力强但判断力弱"
+- 好（受众视角）："觉得买了AI工具就能省人力，实际上要花更多时间想清楚让AI干嘛"
 
-   > [Persona name], [age], [job]. 他刷到这条，会停下来吗？他能在3秒内理解标题在说什么吗？
+**翻译规则**：创作者的知识必须翻译成受众听得懂的话。行业术语 → 日常语言。
 
-   If the answer is no → rewrite. NEVER use terms the persona wouldn't understand.
+展示张力，问用户哪个最戳，然后从那个张力出发做头脑风暴。
 
-   Each topic MUST include:
+如果用户给了具体种子（一个故事、一个观察、一个吐槽），跳到第 3 步。
 
-   **Title** (≤20 chars): Specific, scroll-stopping. Must pass: "Would [persona] stop scrolling for this?"
-   **Angle**: The non-obvious insight or twist. One sentence.
-   **Hook direction**: How the first 3 seconds would work.
-   **Why it works**: What tension it resolves for the audience.
+### 3. 生成选题
 
-4. **Quality gate** — each topic must pass ALL:
-   - [ ] Persona scroll-stop test: would they actually stop?
-   - [ ] So-what test: does it offer something the audience can't easily find?
-   - [ ] Impostor test: could a generic account post this, or does it need YOUR perspective?
+生成 5 个选题。每个选题写之前，模拟人设：
 
-5. Present topics to user. Ask which ones resonate.
+> [人设名], [年龄], [职业]。他刷到这条，会停下来吗？他能在3秒内理解标题在说什么吗？
 
-6. For approved topics, save using `autocrew_topic` tool:
-   ```json
-   { "action": "create", "title": "...", "description": "angle + hook direction + why it works", "tags": [...], "source": "brainstorm" }
-   ```
+如果答案是否 → 重写。**绝不使用人设听不懂的术语**。
 
-## Translation Rule
+每个选题必须包含：
 
-ALL topic titles and descriptions MUST be in the audience's language. If the user's audience speaks Chinese, write in Chinese. Never mix English jargon unless the audience actually uses it.
+- **标题**（≤20 字）：具体、能让人停下来刷。
+- **Hook 方向**：前 3 秒怎么抓住人。
+- **角度**（内部用）：非显而易见的洞察或转折。一句话。
+- **证据**（受众可读）：支撑这个角度的具体事实/数据/案例。
+- **人设心理**：这个选题击中了受众的什么心理？解决了什么张力？
 
-## Changelog
+### 4. 四道质量门
 
-- 2026-03-31: v1 — Adapted from Qingmo topic-ideas.md v3. Removed backend API dependency. Persona loaded from ~/.autocrew/MEMORY.md.
+每个选题必须全部通过：
+
+- [ ] **人设测试**：人设能在 3 秒内理解标题吗？
+- [ ] **停刷测试**：在 100 条内容中，他会为这条停下来吗？
+- [ ] **So-what 测试**：标题是否制造了悬念？读完标题会想"然后呢"？
+- [ ] **冒牌货测试**：一个没做过这件事的人也能写这个选题吗？如果能 → 不够独特，重来。
+
+没通过的选题淘汰，补新的。
+
+### 5. 反模式清单
+
+以下选题类型直接淘汰：
+
+- **术语标题**：用行业黑话当标题（受众看不懂）
+- **工具测评格式**："{工具名}测评" — 太无聊
+- **论文式标题**：读起来像学术摘要
+- **说教语气**：居高临下、教育口吻
+
+### 6. 展示与确认
+
+展示选题给用户。问哪些有感觉。
+
+### 7. 保存
+
+用户确认的选题，通过 `autocrew_topic` 工具保存：
+
+```json
+{
+  "action": "create",
+  "title": "...",
+  "description": "角度 + hook方向 + 为什么有效 + 证据",
+  "tags": [...],
+  "source": "brainstorm"
+}
+```
+
+## 翻译规则
+
+所有选题标题和描述必须用受众的语言。如果受众说中文，就写中文。不要夹杂英文术语，除非受众日常确实在用。
