@@ -1,7 +1,7 @@
 {
   "name": "autocrew",
   "version": "0.1.0",
-  "description": "AI content operations crew — automated research, writing, and publishing pipeline.",
+  "description": "AI content operations crew — automated research, writing, and publishing pipeline for Chinese social media.",
   "type": "module",
   "license": "MIT",
   "author": "alextangson",
@@ -10,8 +10,17 @@
     "url": "https://github.com/alextangson/AutoCrew.git"
   },
   "bin": {
-    "autocrew": "./bin/autocrew.ts"
+    "autocrew": "./bin/autocrew.mjs"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "adapters/",
+    "skills/",
+    "templates/",
+    "HAMLETDEER.md",
+    "openclaw.plugin.json"
+  ],
   "keywords": [
     "cli",
     "ai-agent",
@@ -19,6 +28,7 @@
     "automation",
     "chinese-social-media",
     "claude-code",
+    "openclaw",
     "mcp"
   ],
   "dependencies": {
@@ -27,11 +37,13 @@
     "gray-matter": "^4.0.3",
     "hono": "^4.12.10",
     "js-yaml": "^4.1.1",
-    "rss-parser": "^3.13.0"
+    "rss-parser": "^3.13.0",
+    "tsx": "^4.19.0"
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm test"
   },
   "openclaw": {
     "extensions": [
