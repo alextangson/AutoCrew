@@ -18,6 +18,13 @@ import {
   decayTopicScores,
   topicToMarkdown,
   parseTopicFile,
+  startProject,
+  advanceProject,
+  addDraftVersion,
+  trashProject,
+  restoreProject,
+  getProjectMeta,
+  listProjects,
   type IntelItem,
   type TopicCandidate,
 } from "../storage/pipeline-store.js";
@@ -34,7 +41,41 @@ afterEach(async () => {
   await fs.rm(testDir, { recursive: true, force: true });
 });
 
-// ─── Pipeline Init ──────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function makeIntel(overrides: Partial<IntelItem> = {}): IntelItem {
+  return {
+    title: "AI内容创作新趋势",
+    domain: "ai-content",
+    source: "web_search",
+    collectedAt: new Date().toISOString(),
+    relevance: 85,
+    tags: ["AI", "内容创作"],
+    expiresAfter: 7,
+    summary: "AI正在改变内容创作流程",
+    keyPoints: ["效率提升3倍", "质量可控"],
+    topicPotential: "可做系列教程选题",
+    ...overrides,
+  };
+}
+
+function makeTopic(overrides: Partial<TopicCandidate> = {}): TopicCandidate {
+  return {
+    title: "AI写作工具评测",
+    domain: "ai-content",
+    score: { heat: 80, differentiation: 70, audienceFit: 90, overall: 80 },
+    formats: ["video", "article"],
+    suggestedPlatforms: ["小红书", "B站"],
+    createdAt: new Date().toISOString(),
+    intelRefs: ["2024-01-15-ai-content-trend.md"],
+    angles: ["横向对比", "实操演示"],
+    audienceResonance: "目标用户对AI工具有强烈兴趣",
+    references: ["https://example.com/ai-tools"],
+    ...overrides,
+  };
+}
+
+// ─── Task 2: Pipeline Init ──────────────────────────────────────────────────
 
 describe("Pipeline Init", () => {
   it("pipelinePath returns correct path", () => {
@@ -91,25 +132,7 @@ describe("slugify", () => {
   });
 });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function makeIntel(overrides: Partial<IntelItem> = {}): IntelItem {
-  return {
-    title: "AI内容创作新趋势",
-    domain: "ai-content",
-    source: "web_search",
-    collectedAt: new Date().toISOString(),
-    relevance: 85,
-    tags: ["AI", "内容创作"],
-    expiresAfter: 7,
-    summary: "AI正在改变内容创作流程",
-    keyPoints: ["效率提升3倍", "质量可控"],
-    topicPotential: "可做系列教程选题",
-    ...overrides,
-  };
-}
-
-// ─── Intel Storage ──────────────────────────────────────────────────────────
+// ─── Task 3: Intel Storage ──────────────────────────────────────────────────
 
 describe("Intel Storage", () => {
   it("saves intel as markdown with correct frontmatter", async () => {
@@ -186,25 +209,7 @@ describe("Intel Storage", () => {
   });
 });
 
-// ─── Topic Helpers ──────────────────────────────────────────────────────────
-
-function makeTopic(overrides: Partial<TopicCandidate> = {}): TopicCandidate {
-  return {
-    title: "AI写作工具评测",
-    domain: "ai-content",
-    score: { heat: 80, differentiation: 70, audienceFit: 90, overall: 80 },
-    formats: ["video", "article"],
-    suggestedPlatforms: ["小红书", "B站"],
-    createdAt: new Date().toISOString(),
-    intelRefs: ["2024-01-15-ai-content-trend.md"],
-    angles: ["横向对比", "实操演示"],
-    audienceResonance: "目标用户对AI工具有强烈兴趣",
-    references: ["https://example.com/ai-tools"],
-    ...overrides,
-  };
-}
-
-// ─── Topic Pool ─────────────────────────────────────────────────────────────
+// ─── Task 4: Topic Pool ─────────────────────────────────────────────────────
 
 describe("Topic Pool", () => {
   it("saves topic with frontmatter scores", async () => {
@@ -237,11 +242,13 @@ describe("Topic Pool", () => {
   });
 
   it("decays and trashes old low-score topics", async () => {
+    // 20 days old, score 30 → decay = (20-14)*2 = 12 → 18 → trash
     const old = makeTopic({
       title: "旧选题",
       createdAt: new Date(Date.now() - 20 * 86400000).toISOString(),
       score: { heat: 30, differentiation: 30, audienceFit: 30, overall: 30 },
     });
+    // Fresh topic, should not decay
     const fresh = makeTopic({
       title: "新选题",
       createdAt: new Date().toISOString(),
@@ -267,5 +274,90 @@ describe("Topic Pool", () => {
     expect(parsed.title).toBe(topic.title);
     expect(parsed.score).toEqual(topic.score);
     expect(parsed.audienceResonance).toBe(topic.audienceResonance);
+  });
+});
+
+// ─── Task 5: Project Lifecycle ──────────────────────────────────────────────
+
+describe("Project Lifecycle", () => {
+  it("starts project from topic", async () => {
+    const topic = makeTopic({ title: "测试项目选题" });
+    await saveTopic(topic, testDir);
+
+    const projectDir = await startProject("测试项目选题", testDir);
+    expect(projectDir).toContain("drafting");
+
+    // Topic file should be removed
+    const topics = await listTopics(undefined, testDir);
+    expect(topics.length).toBe(0);
+
+    // Project dir should contain meta.yaml, draft-v1.md, draft.md, references/
+    const files = await fs.readdir(projectDir);
+    expect(files).toContain("meta.yaml");
+    expect(files).toContain("draft-v1.md");
+    expect(files).toContain("draft.md");
+    expect(files).toContain("references");
+  });
+
+  it("advances project from drafting to production", async () => {
+    await saveTopic(makeTopic({ title: "推进测试" }), testDir);
+    await startProject("推进测试", testDir);
+
+    const projectName = slugify("推进测试");
+    const newDir = await advanceProject(projectName, testDir);
+    expect(newDir).toContain("production");
+
+    const meta = await getProjectMeta(projectName, testDir);
+    expect(meta).not.toBeNull();
+    expect(meta!.history.length).toBe(2);
+    expect(meta!.history[1].stage).toBe("production");
+  });
+
+  it("adds draft versions", async () => {
+    await saveTopic(makeTopic({ title: "版本测试" }), testDir);
+    await startProject("版本测试", testDir);
+
+    const projectName = slugify("版本测试");
+    await addDraftVersion(projectName, "# V2 内容", "second draft", testDir);
+
+    const meta = await getProjectMeta(projectName, testDir);
+    expect(meta!.versions.length).toBe(2);
+    expect(meta!.current).toBe("draft-v2.md");
+
+    const found = await import("node:fs/promises").then((f) =>
+      f.readFile(
+        path.join(stagePath("drafting", testDir), projectName, "draft.md"),
+        "utf-8",
+      ),
+    );
+    expect(found).toBe("# V2 内容");
+  });
+
+  it("trashes and restores project", async () => {
+    await saveTopic(makeTopic({ title: "回收测试" }), testDir);
+    await startProject("回收测试", testDir);
+
+    const projectName = slugify("回收测试");
+    await trashProject(projectName, testDir);
+
+    // Should be in trash
+    const trashProjects = await listProjects("trash", testDir);
+    expect(trashProjects).toContain(projectName);
+
+    // Restore
+    const restoredDir = await restoreProject(projectName, testDir);
+    expect(restoredDir).toContain("drafting");
+
+    const meta = await getProjectMeta(projectName, testDir);
+    expect(meta!.history.filter((h) => h.stage === "trash").length).toBe(1);
+    expect(meta!.history.at(-1)!.stage).toBe("drafting");
+  });
+
+  it("listProjects returns project names in stage", async () => {
+    await saveTopic(makeTopic({ title: "项目A" }), testDir);
+    await startProject("项目a", testDir);
+
+    const projects = await listProjects("drafting", testDir);
+    expect(projects.length).toBeGreaterThan(0);
   });
 });

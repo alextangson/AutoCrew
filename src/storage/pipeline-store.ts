@@ -157,6 +157,7 @@ ${item.topicPotential}
 export function parseIntelFile(content: string): IntelItem {
   const { data, content: body } = matter(content);
 
+  // Extract key points from body
   const keyPointsMatch = body.match(/## 关键信息\n\n([\s\S]*?)(?:\n## |$)/);
   const keyPoints = keyPointsMatch
     ? keyPointsMatch[1]
@@ -166,9 +167,11 @@ export function parseIntelFile(content: string): IntelItem {
         .map((l) => l.slice(2))
     : [];
 
+  // Extract summary
   const summaryMatch = body.match(/## 摘要\n\n([\s\S]*?)(?:\n## |$)/);
   const summary = summaryMatch ? summaryMatch[1].trim() : "";
 
+  // Extract topic potential
   const potentialMatch = body.match(/## 选题潜力\n\n([\s\S]*?)$/);
   const topicPotential = potentialMatch ? potentialMatch[1].trim() : "";
 
@@ -205,12 +208,13 @@ export async function saveIntel(
     const files = await fs.readdir(domainDir);
     const existing = files.find((f) => f.endsWith(`-${slug}.md`));
     if (existing) {
+      // Overwrite existing
       const existingPath = path.join(domainDir, existing);
       await fs.writeFile(existingPath, intelToMarkdown(item), "utf-8");
       return existingPath;
     }
   } catch {
-    // directory may not exist yet
+    // directory may not exist yet, that's fine
   }
 
   await fs.writeFile(filePath, intelToMarkdown(item), "utf-8");
@@ -454,4 +458,210 @@ export async function decayTopicScores(
   }
 
   return { decayed, trashed };
+}
+
+// ─── Project Lifecycle ──────────────────────────────────────────────────────
+
+export async function readMeta(dir: string): Promise<ProjectMeta> {
+  const content = await fs.readFile(path.join(dir, "meta.yaml"), "utf-8");
+  return yaml.load(content) as ProjectMeta;
+}
+
+export async function writeMeta(dir: string, meta: ProjectMeta): Promise<void> {
+  await fs.writeFile(
+    path.join(dir, "meta.yaml"),
+    yaml.dump(meta, { lineWidth: -1 }),
+    "utf-8",
+  );
+}
+
+export async function findProject(
+  name: string,
+  dataDir?: string,
+): Promise<{ dir: string; stage: PipelineStage } | null> {
+  for (const stage of PIPELINE_STAGES) {
+    if (stage === "intel" || stage === "topics") continue;
+    const dir = path.join(stagePath(stage, dataDir), name);
+    try {
+      const stat = await fs.stat(dir);
+      if (stat.isDirectory()) return { dir, stage };
+    } catch {
+      // not here
+    }
+  }
+  return null;
+}
+
+export async function startProject(
+  topicSlug: string,
+  dataDir?: string,
+): Promise<string> {
+  await initPipeline(dataDir);
+  const topicsDir = stagePath("topics", dataDir);
+
+  // Find the topic file
+  const files = await fs.readdir(topicsDir);
+  const topicFile = files.find(
+    (f) => f.endsWith(".md") && f.includes(topicSlug),
+  );
+  if (!topicFile) throw new Error(`Topic not found: ${topicSlug}`);
+
+  const content = await fs.readFile(
+    path.join(topicsDir, topicFile),
+    "utf-8",
+  );
+  const topic = parseTopicFile(content);
+  const projectName = slugify(topic.title);
+
+  const projectDir = path.join(stagePath("drafting", dataDir), projectName);
+  await fs.mkdir(projectDir, { recursive: true });
+  await fs.mkdir(path.join(projectDir, "references"), { recursive: true });
+
+  const now = new Date().toISOString();
+
+  const meta: ProjectMeta = {
+    title: topic.title,
+    domain: topic.domain,
+    format: topic.formats[0] ?? "article",
+    createdAt: now,
+    sourceTopic: topicFile,
+    intelRefs: topic.intelRefs,
+    versions: [{ file: "draft-v1.md", createdAt: now, note: "initial draft" }],
+    current: "draft-v1.md",
+    history: [{ stage: "drafting", entered: now }],
+    platforms: [],
+  };
+
+  await writeMeta(projectDir, meta);
+  await fs.writeFile(
+    path.join(projectDir, "draft-v1.md"),
+    `# ${topic.title}\n\n`,
+    "utf-8",
+  );
+  await fs.writeFile(
+    path.join(projectDir, "draft.md"),
+    `# ${topic.title}\n\n`,
+    "utf-8",
+  );
+
+  // Remove topic file
+  await fs.unlink(path.join(topicsDir, topicFile));
+
+  return projectDir;
+}
+
+const STAGE_ORDER: PipelineStage[] = ["drafting", "production", "published"];
+
+export async function advanceProject(
+  name: string,
+  dataDir?: string,
+): Promise<string> {
+  const found = await findProject(name, dataDir);
+  if (!found) throw new Error(`Project not found: ${name}`);
+
+  const currentIdx = STAGE_ORDER.indexOf(found.stage);
+  if (currentIdx === -1 || currentIdx >= STAGE_ORDER.length - 1) {
+    throw new Error(`Cannot advance from stage: ${found.stage}`);
+  }
+
+  const nextStage = STAGE_ORDER[currentIdx + 1];
+  const newDir = path.join(stagePath(nextStage, dataDir), name);
+
+  await fs.rename(found.dir, newDir);
+
+  const meta = await readMeta(newDir);
+  meta.history.push({ stage: nextStage, entered: new Date().toISOString() });
+  await writeMeta(newDir, meta);
+
+  return newDir;
+}
+
+export async function addDraftVersion(
+  name: string,
+  content: string,
+  note: string,
+  dataDir?: string,
+): Promise<string> {
+  const found = await findProject(name, dataDir);
+  if (!found) throw new Error(`Project not found: ${name}`);
+
+  const meta = await readMeta(found.dir);
+  const versionNum = meta.versions.length + 1;
+  const filename = `draft-v${versionNum}.md`;
+
+  await fs.writeFile(path.join(found.dir, filename), content, "utf-8");
+  // Update draft.md to latest content
+  await fs.writeFile(path.join(found.dir, "draft.md"), content, "utf-8");
+
+  meta.versions.push({
+    file: filename,
+    createdAt: new Date().toISOString(),
+    note,
+  });
+  meta.current = filename;
+  await writeMeta(found.dir, meta);
+
+  return path.join(found.dir, filename);
+}
+
+export async function trashProject(
+  name: string,
+  dataDir?: string,
+): Promise<void> {
+  const found = await findProject(name, dataDir);
+  if (!found) throw new Error(`Project not found: ${name}`);
+
+  const trashDir = path.join(stagePath("trash", dataDir), name);
+  await fs.rename(found.dir, trashDir);
+
+  const meta = await readMeta(trashDir);
+  meta.history.push({ stage: "trash", entered: new Date().toISOString() });
+  await writeMeta(trashDir, meta);
+}
+
+export async function restoreProject(
+  name: string,
+  dataDir?: string,
+): Promise<string> {
+  const trashDir = path.join(stagePath("trash", dataDir), name);
+  const meta = await readMeta(trashDir);
+
+  // Find the previous stage (the one before trash)
+  const previousEntry = meta.history
+    .filter((h) => h.stage !== "trash")
+    .at(-1);
+  const restoreStage = previousEntry?.stage ?? "drafting";
+
+  const newDir = path.join(stagePath(restoreStage, dataDir), name);
+  await fs.rename(trashDir, newDir);
+
+  meta.history.push({
+    stage: restoreStage,
+    entered: new Date().toISOString(),
+  });
+  await writeMeta(newDir, meta);
+
+  return newDir;
+}
+
+export async function getProjectMeta(
+  name: string,
+  dataDir?: string,
+): Promise<ProjectMeta | null> {
+  const found = await findProject(name, dataDir);
+  if (!found) return null;
+  return readMeta(found.dir);
+}
+
+export async function listProjects(
+  stage: PipelineStage,
+  dataDir?: string,
+): Promise<string[]> {
+  const dir = stagePath(stage, dataDir);
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
 }
