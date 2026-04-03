@@ -39,6 +39,21 @@ export interface PerformanceEntry {
   recordedAt: string;
 }
 
+export interface CreatorPersona {
+  /** Creator personality type: thought_leader, storyteller, analyst, curator, entertainer */
+  type: string;
+  /** One-line unique angle — what makes this creator different */
+  uniqueAngle: string;
+  /** Content goals: growth, monetization, branding, community */
+  contentGoals: string[];
+  /** Core expertise areas */
+  expertise: string[];
+  /** Why audience follows this creator (not competitors) */
+  audienceResonance: string;
+  /** Creator's blind spots or growth areas */
+  growthAreas: string[];
+}
+
 export interface CreatorProfile {
   /** User's content industry/niche */
   industry: string;
@@ -46,6 +61,8 @@ export interface CreatorProfile {
   platforms: string[];
   /** Target audience persona */
   audiencePersona: AudiencePersona | null;
+  /** Creator personality profile (from calibration) */
+  creatorPersona: CreatorPersona | null;
   /** Auto-distilled + user-explicit writing rules */
   writingRules: WritingRule[];
   /** Style boundaries */
@@ -76,6 +93,7 @@ function emptyProfile(): CreatorProfile {
     industry: "",
     platforms: [],
     audiencePersona: null,
+    creatorPersona: null,
     writingRules: [],
     styleBoundaries: { never: [], always: [] },
     competitorAccounts: [],
