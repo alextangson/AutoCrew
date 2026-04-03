@@ -403,6 +403,35 @@ When reviewing a script or finished video, run the clock audit:
 
 If any checkbox fails, rewrite that section before production. A script that passes the clock audit has a dramatically higher chance of algorithmic survival.
 
+### Micro-Retention Techniques (完播率微操)
+
+The Clock Theory handles macro rhythm — bang moments at 25% intervals. These micro-techniques handle the spaces BETWEEN bang moments, preventing drop-off within each quarter.
+
+**1. Open Loop (开放循环)**
+Raise a question or promise early, delay the answer. The viewer's brain cannot leave an unanswered question.
+- "后面我会告诉你为什么这招最管用"
+- "等下看到第三点你就明白了"
+- Place at least one open loop in the first 25% that resolves in the last 25%.
+
+**2. Curiosity Gap (信息缺口)**
+Every 30 seconds (or every 2-3 paragraphs in text), create a micro-moment of "what's next?"
+- Transition with tension, not summary: "但这还不是最离谱的" instead of "接下来我们看"
+- End paragraphs with forward momentum, never with closure.
+
+**3. Visual Anchor (视觉锚点)**
+In text content: insert a standalone high-density sentence between paragraphs — a quote, a stat, a one-liner that stops the scroll.
+In video: a text overlay, a visual cut, a change in framing.
+- "说白了：AI不是来替你干活的，是来替你做决定的。"
+- These anchors also become the screenshot/share moments.
+
+**4. Rhythm Break (断裂感)**
+Long paragraphs build inertia. A sudden ultra-short sentence snaps attention back.
+- Three sentences of explanation, then: "错。"
+- Build context, then: "但这不重要。"
+- The break itself IS the retention device. Use sparingly — max 2-3 per piece.
+
+**Application rule:** Every script must use at least 2 of these 4 techniques. Annotate which technique is used and where in the script.
+
 ### What "Bad Content" Looks Like
 
 Three patterns that AutoCrew must never produce:
