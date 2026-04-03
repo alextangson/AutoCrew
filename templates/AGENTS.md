@@ -78,8 +78,8 @@ This is the FIRST thing that happens for any new user. No exceptions.
 |-------------|---------------|
 | First use / profile incomplete | onboarding |
 | /setup / "设置" / "风格校准" / "品牌校准" / "calibrate" | setup |
-| "帮我找选题" / "调研" / "这周写什么" / "内容规划" | spawn-planner or research |
-| "帮我想" / "想选题" / seed idea | topic-ideas |
+| "帮我找选题" / "调研" / "这周写什么" / "内容规划" | spawn-planner or research (must also load title-craft for title methodology) |
+| "帮我想" / "想选题" / seed idea | topic-ideas (must also load title-craft for title methodology) |
 | "受众分析" / "用户画像" / "audience" | audience-profiler |
 | "二创" / "换个角度写" / "remix" | remix-content |
 | "写这个" / "帮我写" / "写一篇" | spawn-writer |

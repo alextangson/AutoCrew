@@ -53,18 +53,25 @@ Two research paths:
    { "action": "list" }
    ```
 
-4. **Generate topics** — Based on accumulated intel + creator profile, generate topic candidates. For each topic:
-   - Title: ≤20 characters, specific angle
-   - Score: heat (话题热度) + differentiation (差异化) + audience_fit (受众匹配)
-   - Angles: 2-3 切入角度建议
+4. **Generate topics** — Before generating, load `skills/title-craft/SKILL.md` for title methodology. Select 1-2 title types from the 8 types that best match the topic angle.
+
+   **HARD RULE: Titles MUST be ≤20 Chinese characters. Count every character including punctuation. Titles over 20 chars are REJECTED — rewrite until they fit.** This is a platform constraint (Xiaohongshu hard limit), not a suggestion.
+
+   For each topic:
+   - Title: ≤20 characters, apply title-craft methodology (emotional resonance, precision lens, pattern breaker, etc.)
+   - Title type label: which of the 8 types was used
+   - Score: heat + differentiation + audience_fit
+   - Angles: 2-3 specific entry points
    - Intel refs: which intel items informed this topic
    - Suggested platforms and formats
 
 5. **Quality gate** — each topic must pass:
+   - [ ] **Title ≤20 chars** (count again before saving — if over, rewrite)
    - [ ] Has a specific, non-obvious angle (not "AI工具推荐" but "AI工具用了3个月，这5个我删了")
    - [ ] References concrete intel data points
    - [ ] Answers "why now" — what makes this timely
    - [ ] Doesn't violate style boundaries (never list)
+   - [ ] Title passes the title-craft quality checklist (targeting, emotion, value, curiosity, credibility)
 
 6. **Save topics** — Save to pipeline topic pool. Topics are Markdown files with frontmatter scores.
 
