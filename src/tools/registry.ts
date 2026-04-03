@@ -16,6 +16,8 @@ import { coverReviewSchema, executeCoverReview } from "./cover-review.js";
 import { memorySchema, executeMemory } from "./memory.js";
 import { reviewSchema, executeReview } from "./review.js";
 import { prePublishSchema, executePrePublish } from "./pre-publish.js";
+import { intelSchema, executeIntel } from "./intel.js";
+import { pipelineOpsSchema, executePipelineOps } from "./pipeline-ops.js";
 import { executeInit } from "./init.js";
 import { getProStatus } from "../modules/pro/gate.js";
 import { loadProfile, detectMissingInfo } from "../modules/profile/creator-profile.js";
@@ -136,6 +138,24 @@ export function registerAllTools(runner: ToolRunner): void {
     description: "Pre-publish gate: 6 checks before allowing publish. Actions: check.",
     parameters: prePublishSchema,
     execute: executePrePublish,
+  });
+
+  runner.register({
+    name: "autocrew_intel",
+    label: "AutoCrew Intel",
+    description:
+      "Intelligence collection pipeline. Actions: pull (collect intel from web/RSS/trends), list (show saved intel), clean (archive expired).",
+    parameters: intelSchema,
+    execute: executeIntel,
+  });
+
+  runner.register({
+    name: "autocrew_pipeline_ops",
+    label: "AutoCrew Pipeline Ops",
+    description:
+      "Content pipeline lifecycle management. Actions: status (stage counts), start (topic→project), advance (next stage), version (add draft), trash, restore.",
+    parameters: pipelineOpsSchema,
+    execute: executePipelineOps,
   });
 
   runner.register({

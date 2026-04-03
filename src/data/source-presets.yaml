@@ -1,0 +1,54 @@
+presets:
+  科技:
+    trends:
+      - { source: hackernews, min_score: 100 }
+      - { source: producthunt }
+      - { source: github_trending }
+      - { source: twitter_trending, region: US }
+      - { source: google_trends }
+      - { source: zhihu_hot }
+    rss_suggestions:
+      - { url: "https://36kr.com/feed", domain: 科技 }
+      - { url: "https://sspai.com/feed", domain: 效率工具 }
+  AI:
+    trends:
+      - { source: hackernews, min_score: 100 }
+      - { source: producthunt }
+      - { source: github_trending }
+      - { source: arxiv, categories: ["cs.AI", "cs.CL"] }
+      - { source: reddit, subreddits: [ChatGPT, LocalLLaMA, MachineLearning] }
+      - { source: twitter_trending, region: US }
+    rss_suggestions: []
+  美妆:
+    trends:
+      - { source: douyin_hot }
+      - { source: weibo_hot }
+      - { source: google_trends }
+    rss_suggestions: []
+  职场:
+    trends:
+      - { source: zhihu_hot }
+      - { source: weibo_hot }
+      - { source: twitter_trending }
+      - { source: google_trends }
+    rss_suggestions:
+      - { url: "https://36kr.com/feed", domain: 商业 }
+  教育:
+    trends:
+      - { source: zhihu_hot }
+      - { source: bilibili_hot }
+      - { source: google_trends }
+    rss_suggestions: []
+  美食:
+    trends:
+      - { source: douyin_hot }
+      - { source: weibo_hot }
+      - { source: google_trends }
+    rss_suggestions: []
+  _default:
+    trends:
+      - { source: weibo_hot }
+      - { source: douyin_hot }
+      - { source: google_trends }
+      - { source: twitter_trending }
+    rss_suggestions: []
