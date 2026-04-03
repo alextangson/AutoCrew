@@ -61,6 +61,21 @@ export const contentSaveSchema = Type.Object({
   performance_data: Type.Optional(Type.Record(Type.String(), Type.Number(), { description: "Performance metrics: views, likes, comments, shares, etc." })),
   force: Type.Optional(Type.Boolean({ description: "Force transition even if not in allowed transitions" })),
   diff_note: Type.Optional(Type.String({ description: "Note for revision diff tracking" })),
+  hypothesis: Type.Optional(Type.String({ description: "Traffic hypothesis: what this content tests and expected outcome" })),
+  experiment_type: Type.Optional(Type.Unsafe<string>({
+    type: "string",
+    enum: ["title_test", "hook_test", "format_test", "angle_test"],
+    description: "Type of experiment this content represents",
+  })),
+  control_ref: Type.Optional(Type.String({ description: "Content ID this is being A/B tested against" })),
+  content_pillar: Type.Optional(Type.String({ description: "Which content pillar this belongs to" })),
+  comment_triggers: Type.Optional(Type.Array(
+    Type.Object({
+      type: Type.Unsafe<string>({ type: "string", enum: ["controversy", "unanswered_question", "quote_hook"] }),
+      position: Type.String(),
+    }),
+    { description: "Comment engineering trigger points" },
+  )),
 });
 
 export async function executeContentSave(params: Record<string, unknown>) {
@@ -201,6 +216,11 @@ export async function executeContentSave(params: Record<string, unknown>) {
     current: "draft-v1.md",
     history: [{ stage: "drafting", entered: now }],
     platforms: platform ? [{ format: platform, status: "drafting" }] : [],
+    hypothesis: (params.hypothesis as string) || undefined,
+    experimentType: (params.experiment_type as ProjectMeta["experimentType"]) || undefined,
+    controlRef: (params.control_ref as string) || undefined,
+    contentPillar: (params.content_pillar as string) || undefined,
+    commentTriggers: (params.comment_triggers as ProjectMeta["commentTriggers"]) || undefined,
   };
 
   await fs.writeFile(
