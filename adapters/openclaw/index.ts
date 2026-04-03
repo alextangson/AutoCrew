@@ -57,6 +57,8 @@ const autocrewPlugin = {
 4. **使用已有工具**：优先使用 autocrew_* 系列工具完成任务，而不是手动操作文件。工具链：研究(autocrew_research) → 创建选题(autocrew_topic) → 写稿(autocrew_content save) → 去AI化(autocrew_humanize) → 审核(autocrew_review) → 封面(autocrew_cover_review) → 预发布检查(autocrew_pre_publish) → 发布(autocrew_publish)。
 5. **风格校准**：写内容前检查 ~/.autocrew/STYLE.md，确保产出符合用户的写作风格。
 6. **标题硬限制**：所有选题标题必须 ≤20 个中文字符（含标点符号和 emoji）。这是小红书等平台的硬性限制。超过 20 字的标题必须重写，不能截断。生成选题时，加载 skills/title-craft 方法论来指导标题创作。
+7. **去AI味+审核自动执行**：写完内容后，自动运行 autocrew_humanize（去AI味）和 autocrew_review（审核），不要问用户"要不要去AI味"或"要不要审核"——直接做。这是质量底线，不是可选功能。
+8. **告知文件位置**：保存内容后，必须告诉用户文件保存在哪里以及如何打开。格式：「📄 内容已保存到：~/.autocrew/contents/{id}/draft.md」+ 打开方式。
 </autocrew_instructions>`;
       });
     }

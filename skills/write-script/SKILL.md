@@ -86,30 +86,35 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
    }
    ```
 
-6. **Auto-review (if style calibrated):**
-   - Check `creator-profile.json` → if `styleCalibrated: true`, automatically run:
+6. **Auto-humanize (MANDATORY — runs silently):**
+   - After saving, ALWAYS run `autocrew_humanize` on the content. This is not optional.
+   - Do NOT ask the user "要去AI味吗?" — just do it. De-AI is a quality baseline, not a feature.
+   - Update the saved content with the humanized version.
+
+7. **Auto-review (MANDATORY — runs silently):**
+   - After humanizing, ALWAYS run content review:
      ```json
      { "action": "full_review", "content_id": "<saved-id>", "platform": "<platform>" }
      ```
-   - Show the review summary to the user.
-   - If review passes → tell user "审核通过，可以直接发布或做平台改写".
-   - If review fails → show fixes, ask user whether to auto-fix or manually adjust.
+   - If review passes → proceed to output.
+   - If review finds issues → auto-fix what can be fixed, then proceed to output.
+   - Do NOT ask the user "要审核吗?" — just do it.
 
-7. **Output to user:**
+8. **Output to user:**
    Show the complete draft in chat, including:
    - Title (with alternative variants from title-hashtag)
    - Full body text
    - Hashtags
-   - Review result (if auto-review ran)
+   - Review result summary (pass/issues found)
+   - **File location**: Tell the user exactly where the file is saved and how to open it:
+     > 📄 内容已保存到：`~/.autocrew/contents/{content-id}/draft.md`
+     > 打开方式：在终端执行 `open ~/.autocrew/contents/{content-id}/` 或用 Obsidian 打开 `~/.autocrew/` 文件夹
    Then:
-   > 已保存为草稿。要修改的话直接说，或者确认后我帮你标记为待发布。
+   > 要修改的话直接说，或者确认后我帮你标记为待发布。
 
-8. **If adaptation is needed:**
+9. **If adaptation is needed:**
    - Do not just trim one draft for another platform.
    - Use `platform-rewrite` / `autocrew_rewrite` to create the first platform-native version.
-
-9. **Before final delivery:**
-   - Run `humanizer-zh` / `autocrew_humanize` as the last pass when the text sounds generic, too smooth, or too essay-like.
 
 ## Platform-Specific Adjustments
 
