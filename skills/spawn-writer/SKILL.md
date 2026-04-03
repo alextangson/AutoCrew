@@ -24,7 +24,9 @@ description: |
    - IF user gives a new topic directly → use that as title/description
    - IF platform not specified → check `~/.autocrew/MEMORY.md` for default platform, or ask user
 
-2. **Guardrail for scope.**
+2. **Title generation.** Generate 3-5 title variants using different types from `skills/title-craft/SKILL.md`. Present all variants with type labels for user to choose. Respect platform character limits.
+
+3. **Guardrail for scope.**
    Do NOT use this skill for light edits: 改标题, 缩短, 精简, 润色, 生成摘要, 标签建议.
    Those should be handled directly in conversation.
 

@@ -71,11 +71,12 @@ const PLATFORM_RULES: Record<string, PlatformRules> = {
   douyin: {
     name: "douyin",
     displayName: "抖音",
-    maxTitleLength: 30,
-    titleLengthRange: [8, 25],
+    maxTitleLength: 300, // Full caption field; visible ~55 chars before fold
+    titleLengthRange: [15, 55],
     maxHashtags: 5,
     hashtagPrefix: "#",
     titleTips: [
+      "标题和描述是同一字段，前 55 字可见，后面需展开",
       "前 3 秒决定完播率，标题要制造悬念",
       "用「没想到」「居然」等反转词",
       "数字型标题点击率高",
@@ -90,7 +91,7 @@ const PLATFORM_RULES: Record<string, PlatformRules> = {
     name: "wechat_mp",
     displayName: "微信公众号",
     maxTitleLength: 64,
-    titleLengthRange: [15, 40],
+    titleLengthRange: [20, 30],
     maxHashtags: 3,
     hashtagPrefix: "#",
     titleTips: [
@@ -123,11 +124,11 @@ const PLATFORM_RULES: Record<string, PlatformRules> = {
     name: "bilibili",
     displayName: "B站",
     maxTitleLength: 80,
-    titleLengthRange: [15, 50],
+    titleLengthRange: [12, 24],
     maxHashtags: 5,
     hashtagPrefix: "#",
     titleTips: [
-      "B站标题可以更长更详细",
+      "系统限制 80 字，但移动端只显示 20-24 中文字",
       "用【】标注视频类型（如【干货】【避坑】）",
       "年轻化表达，可以用梗",
       "副标题补充信息量",
@@ -136,6 +137,71 @@ const PLATFORM_RULES: Record<string, PlatformRules> = {
       "干货", "教程", "测评", "避坑",
       "知识区", "科技", "生活", "学习",
     ],
+  },
+  toutiao: {
+    name: "toutiao",
+    displayName: "今日头条",
+    maxTitleLength: 30,
+    titleLengthRange: [15, 30],
+    maxHashtags: 5,
+    hashtagPrefix: "#",
+    titleTips: [
+      "标题最少 5 字，最多 30 字",
+      "两段式标题（主题+价值点）表现最好",
+      "视频标题建议 26-30 字",
+      "直接点明价值，不要含糊",
+    ],
+    hotHashtagPatterns: [
+      "干货", "涨知识", "实用", "经验",
+      "职场", "创业", "生活", "科技",
+    ],
+  },
+  youtube: {
+    name: "youtube",
+    displayName: "YouTube",
+    maxTitleLength: 100,
+    titleLengthRange: [30, 70],
+    maxHashtags: 15,
+    hashtagPrefix: "#",
+    titleTips: [
+      "搜索结果只显示约 60 字，YouTube 界面约 70 字",
+      "前置关键词有利于 SEO",
+      "中英双语受众可混合使用",
+      "避免全大写",
+    ],
+    hotHashtagPatterns: [
+      "tutorial", "howto", "review", "tips",
+    ],
+  },
+  twitter: {
+    name: "twitter",
+    displayName: "Twitter/X",
+    maxTitleLength: 280, // Whole tweet, no separate title
+    titleLengthRange: [60, 140],
+    maxHashtags: 3,
+    hashtagPrefix: "#",
+    titleTips: [
+      "没有独立标题，第一行就是标题",
+      "简短有力，留空间给讨论",
+      "Emoji 算 2 个字符",
+      "URL 固定算 23 字符",
+    ],
+    hotHashtagPatterns: [],
+  },
+  instagram: {
+    name: "instagram",
+    displayName: "Instagram",
+    maxTitleLength: 2200, // Whole caption
+    titleLengthRange: [60, 125],
+    maxHashtags: 30,
+    hashtagPrefix: "#",
+    titleTips: [
+      "第一行就是标题，125 字后被折叠",
+      "Reels 只显示前 55-60 字",
+      "Emoji 文化浓厚",
+      "Hashtag 放评论区也可以",
+    ],
+    hotHashtagPatterns: [],
   },
 };
 

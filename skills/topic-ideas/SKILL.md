@@ -46,6 +46,8 @@ description: |
 
 ### 3. 生成选题
 
+**Before generating, review the title methodology in `skills/title-craft/SKILL.md`.** Select 1-2 title types (from the 8 types) that best match the topic angle and target audience. Use the quality checklist to validate each title.
+
 生成 5 个选题。每个选题写之前，模拟人设：
 
 > [人设名], [年龄], [职业]。他刷到这条，会停下来吗？他能在3秒内理解标题在说什么吗？

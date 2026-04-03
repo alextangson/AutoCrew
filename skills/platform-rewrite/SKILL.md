@@ -14,6 +14,7 @@ description: |
 
 ## 规则
 
+0. **When adapting titles across platforms, do NOT just truncate. Re-craft using `skills/title-craft/SKILL.md` methodology fitted to the target platform's character limits and audience behavior.**
 1. Never call a simple trim "adaptation".
 2. Start from the strongest single angle in the source draft.
 3. Generate the first structured platform version via `autocrew_rewrite`.
