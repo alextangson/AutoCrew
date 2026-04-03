@@ -13,7 +13,13 @@ import {
   archiveExpiredIntel,
   intelToMarkdown,
   parseIntelFile,
+  saveTopic,
+  listTopics,
+  decayTopicScores,
+  topicToMarkdown,
+  parseTopicFile,
   type IntelItem,
+  type TopicCandidate,
 } from "../storage/pipeline-store.js";
 
 let testDir: string;
@@ -177,5 +183,89 @@ describe("Intel Storage", () => {
     expect(parsed.title).toBe(item.title);
     expect(parsed.keyPoints).toEqual(item.keyPoints);
     expect(parsed.topicPotential).toBe(item.topicPotential);
+  });
+});
+
+// ─── Topic Helpers ──────────────────────────────────────────────────────────
+
+function makeTopic(overrides: Partial<TopicCandidate> = {}): TopicCandidate {
+  return {
+    title: "AI写作工具评测",
+    domain: "ai-content",
+    score: { heat: 80, differentiation: 70, audienceFit: 90, overall: 80 },
+    formats: ["video", "article"],
+    suggestedPlatforms: ["小红书", "B站"],
+    createdAt: new Date().toISOString(),
+    intelRefs: ["2024-01-15-ai-content-trend.md"],
+    angles: ["横向对比", "实操演示"],
+    audienceResonance: "目标用户对AI工具有强烈兴趣",
+    references: ["https://example.com/ai-tools"],
+    ...overrides,
+  };
+}
+
+// ─── Topic Pool ─────────────────────────────────────────────────────────────
+
+describe("Topic Pool", () => {
+  it("saves topic with frontmatter scores", async () => {
+    const topic = makeTopic();
+    const filePath = await saveTopic(topic, testDir);
+    expect(filePath.endsWith(".md")).toBe(true);
+
+    const content = await fs.readFile(filePath, "utf-8");
+    const parsed = parseTopicFile(content);
+    expect(parsed.title).toBe(topic.title);
+    expect(parsed.score.overall).toBe(80);
+    expect(parsed.score.heat).toBe(80);
+    expect(parsed.angles).toEqual(topic.angles);
+  });
+
+  it("lists topics sorted by overall score desc", async () => {
+    await saveTopic(
+      makeTopic({ title: "低分选题", score: { heat: 30, differentiation: 30, audienceFit: 30, overall: 30 } }),
+      testDir,
+    );
+    await saveTopic(
+      makeTopic({ title: "高分选题", score: { heat: 90, differentiation: 90, audienceFit: 90, overall: 90 } }),
+      testDir,
+    );
+
+    const topics = await listTopics(undefined, testDir);
+    expect(topics.length).toBe(2);
+    expect(topics[0].title).toBe("高分选题");
+    expect(topics[1].title).toBe("低分选题");
+  });
+
+  it("decays and trashes old low-score topics", async () => {
+    const old = makeTopic({
+      title: "旧选题",
+      createdAt: new Date(Date.now() - 20 * 86400000).toISOString(),
+      score: { heat: 30, differentiation: 30, audienceFit: 30, overall: 30 },
+    });
+    const fresh = makeTopic({
+      title: "新选题",
+      createdAt: new Date().toISOString(),
+      score: { heat: 80, differentiation: 80, audienceFit: 80, overall: 80 },
+    });
+
+    await saveTopic(old, testDir);
+    await saveTopic(fresh, testDir);
+
+    const result = await decayTopicScores(testDir);
+    expect(result.decayed).toBe(1);
+    expect(result.trashed).toBe(1);
+
+    const remaining = await listTopics(undefined, testDir);
+    expect(remaining.length).toBe(1);
+    expect(remaining[0].title).toBe("新选题");
+  });
+
+  it("roundtrips topic through markdown", () => {
+    const topic = makeTopic();
+    const md = topicToMarkdown(topic);
+    const parsed = parseTopicFile(md);
+    expect(parsed.title).toBe(topic.title);
+    expect(parsed.score).toEqual(topic.score);
+    expect(parsed.audienceResonance).toBe(topic.audienceResonance);
   });
 });

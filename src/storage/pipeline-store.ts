@@ -294,3 +294,164 @@ export async function archiveExpiredIntel(
 
   return { archived };
 }
+
+// ─── Topic Pool ─────────────────────────────────────────────────────────────
+
+export function topicToMarkdown(topic: TopicCandidate): string {
+  const frontmatter: Record<string, unknown> = {
+    title: topic.title,
+    domain: topic.domain,
+    score_heat: topic.score.heat,
+    score_differentiation: topic.score.differentiation,
+    score_audience_fit: topic.score.audienceFit,
+    score_overall: topic.score.overall,
+    formats: topic.formats,
+    suggested_platforms: topic.suggestedPlatforms,
+    created_at: topic.createdAt,
+    intel_refs: topic.intelRefs,
+    references: topic.references,
+  };
+
+  const yamlStr = yaml.dump(frontmatter, { lineWidth: -1 }).trimEnd();
+
+  const body = `# ${topic.title}
+
+## 切入角度
+
+${topic.angles.map((a) => `- ${a}`).join("\n")}
+
+## 目标受众共鸣点
+
+${topic.audienceResonance}
+
+## 参考素材
+
+${topic.references.map((r) => `- ${r}`).join("\n")}
+`;
+
+  return `---\n${yamlStr}\n---\n\n${body}`;
+}
+
+export function parseTopicFile(content: string): TopicCandidate {
+  const { data, content: body } = matter(content);
+
+  const anglesMatch = body.match(/## 切入角度\n\n([\s\S]*?)(?:\n## |$)/);
+  const angles = anglesMatch
+    ? anglesMatch[1]
+        .trim()
+        .split("\n")
+        .filter((l) => l.startsWith("- "))
+        .map((l) => l.slice(2))
+    : [];
+
+  const resonanceMatch = body.match(
+    /## 目标受众共鸣点\n\n([\s\S]*?)(?:\n## |$)/,
+  );
+  const audienceResonance = resonanceMatch ? resonanceMatch[1].trim() : "";
+
+  return {
+    title: data.title,
+    domain: data.domain,
+    score: {
+      heat: data.score_heat,
+      differentiation: data.score_differentiation,
+      audienceFit: data.score_audience_fit,
+      overall: data.score_overall,
+    },
+    formats: data.formats ?? [],
+    suggestedPlatforms: data.suggested_platforms ?? [],
+    createdAt: data.created_at,
+    intelRefs: data.intel_refs ?? [],
+    angles,
+    audienceResonance,
+    references: data.references ?? [],
+  };
+}
+
+export async function saveTopic(
+  topic: TopicCandidate,
+  dataDir?: string,
+): Promise<string> {
+  await initPipeline(dataDir);
+  const topicsDir = stagePath("topics", dataDir);
+  const filename = `${slugify(topic.domain)}-${slugify(topic.title)}.md`;
+  const filePath = path.join(topicsDir, filename);
+  await fs.writeFile(filePath, topicToMarkdown(topic), "utf-8");
+  return filePath;
+}
+
+export async function listTopics(
+  domain?: string,
+  dataDir?: string,
+): Promise<TopicCandidate[]> {
+  const topicsDir = stagePath("topics", dataDir);
+  const items: TopicCandidate[] = [];
+
+  let files: string[];
+  try {
+    files = await fs.readdir(topicsDir);
+  } catch {
+    return [];
+  }
+
+  for (const f of files) {
+    if (!f.endsWith(".md")) continue;
+    const content = await fs.readFile(path.join(topicsDir, f), "utf-8");
+    const topic = parseTopicFile(content);
+    if (domain && topic.domain !== domain) continue;
+    items.push(topic);
+  }
+
+  items.sort((a, b) => b.score.overall - a.score.overall);
+  return items;
+}
+
+export async function decayTopicScores(
+  dataDir?: string,
+): Promise<{ decayed: number; trashed: number }> {
+  const topicsDir = stagePath("topics", dataDir);
+  const trashDir = stagePath("trash", dataDir);
+  await fs.mkdir(trashDir, { recursive: true });
+
+  let decayed = 0;
+  let trashed = 0;
+
+  let files: string[];
+  try {
+    files = await fs.readdir(topicsDir);
+  } catch {
+    return { decayed: 0, trashed: 0 };
+  }
+
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const DECAY_AFTER_DAYS = 14;
+  const DECAY_PER_DAY = 2;
+  const TRASH_THRESHOLD = 20;
+
+  for (const f of files) {
+    if (!f.endsWith(".md")) continue;
+    const filePath = path.join(topicsDir, f);
+    const content = await fs.readFile(filePath, "utf-8");
+    const topic = parseTopicFile(content);
+    const createdMs = new Date(topic.createdAt).getTime();
+    const ageDays = (now - createdMs) / DAY_MS;
+
+    if (ageDays <= DECAY_AFTER_DAYS) continue;
+
+    const decayDays = ageDays - DECAY_AFTER_DAYS;
+    const decayAmount = Math.floor(decayDays) * DECAY_PER_DAY;
+
+    topic.score.overall = Math.max(0, topic.score.overall - decayAmount);
+    decayed++;
+
+    if (topic.score.overall < TRASH_THRESHOLD) {
+      await fs.rename(filePath, path.join(trashDir, f));
+      trashed++;
+    } else {
+      await fs.writeFile(filePath, topicToMarkdown(topic), "utf-8");
+    }
+  }
+
+  return { decayed, trashed };
+}
