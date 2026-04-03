@@ -8,13 +8,13 @@
 
 ## 前置条件
 
-- 用户已配置 `gemini_api_key`（在 openclaw.plugin.json 或环境变量 `GEMINI_API_KEY`）
+- 用户已配置 `gemini_api_key`（环境变量 `GEMINI_API_KEY` 或插件设置）
 - 当前有一篇处于 `approved` 或更早状态的内容
 
 如果没有 Gemini API key，提示用户：
 ```
 封面生成需要 Gemini API key。免费获取：https://aistudio.google.com/apikey
-配置方式：在 OpenClaw 插件设置中填入 gemini_api_key
+配置方式：设置环境变量 GEMINI_API_KEY 或在插件设置中填入 gemini_api_key
 ```
 
 ## 流程

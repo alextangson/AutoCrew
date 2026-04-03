@@ -9,23 +9,18 @@
     "type": "git",
     "url": "https://github.com/alextangson/AutoCrew.git"
   },
+  "bin": {
+    "autocrew": "./bin/autocrew.ts"
+  },
   "keywords": [
-    "openclaw",
-    "openclaw-plugin",
-    "claude-code",
-    "claude-code-plugin",
+    "cli",
     "ai-agent",
     "content-ops",
-    "automation"
+    "automation",
+    "chinese-social-media",
+    "claude-code",
+    "mcp"
   ],
-  "peerDependencies": {
-    "openclaw": ">=2026.3.2"
-  },
-  "peerDependenciesMeta": {
-    "openclaw": {
-      "optional": true
-    }
-  },
   "dependencies": {
     "@hono/node-server": "^1.19.12",
     "@sinclair/typebox": "0.34.48",
@@ -37,7 +32,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./adapters/openclaw/index.ts"
     ]
   },
   "devDependencies": {
