@@ -311,9 +311,14 @@ export async function updateContent(id: string, updates: Partial<Content>, dataD
       );
     }
 
+    // Strip undefined values so they don't overwrite existing fields via spread
+    const cleanUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([, v]) => v !== undefined),
+    );
+
     const updated: Content = {
       ...existing,
-      ...updates,
+      ...cleanUpdates,
       id: existing.id,
       assets: updates.assets || existing.assets || [],
       versions: existing.versions,
