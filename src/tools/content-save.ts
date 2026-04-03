@@ -150,5 +150,13 @@ export async function executeContentSave(params: Record<string, unknown>) {
     hashtags: (params.hashtags as string[]) || [],
   }, dataDir);
 
-  return { ok: true, content };
+  const contentDir = `~/.autocrew/contents/${content.id}`;
+  return {
+    ok: true,
+    content,
+    filePath: `${contentDir}/draft.md`,
+    projectDir: contentDir,
+    openCommand: `open ${contentDir}`,
+    hint: `IMPORTANT: Tell the user where the file is saved. Say: "📄 内容已保存到：${contentDir}/draft.md — 执行 open ${contentDir} 可打开文件夹"`,
+  };
 }
