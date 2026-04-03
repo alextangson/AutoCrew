@@ -146,7 +146,7 @@ export async function initPipeline(dataDir?: string): Promise<void> {
   await fs.mkdir(path.join(stagePath("intel", dataDir), "_archive"), {
     recursive: true,
   });
-  await fs.mkdir(path.join(stagePath("intel", dataDir), "teardowns"), {
+  await fs.mkdir(path.join(stagePath("intel", dataDir), "_teardowns"), {
     recursive: true,
   });
 }

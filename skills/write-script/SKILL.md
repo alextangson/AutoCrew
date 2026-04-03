@@ -45,7 +45,7 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
 
 5. **Check for relevant teardowns:**
 
-   Search `~/.autocrew/data/pipeline/intel/teardowns/` for teardown reports related to this topic. If found, use them as reference for what works in this space.
+   Search `~/.autocrew/data/pipeline/intel/_teardowns/` for teardown reports related to this topic. If found, use them as reference for what works in this space.
 
 6. **Write the script:**
 
