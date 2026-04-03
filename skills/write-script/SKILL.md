@@ -8,6 +8,14 @@ description: |
 
 > Executor skill. Single responsibility: generate one complete original script and save it.
 
+## Prerequisites
+
+Before writing, load these reference documents:
+- `HAMLETDEER.md` — Content philosophy, HKRR framework, Clock Theory
+- `skills/title-craft/SKILL.md` — Title methodology (8 types + quality checklist)
+
+For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script to clock positions (12/3/6/9) and ensure every position has a bang moment. Short-form video: pick ONE HKRR element and commit. Long-form: combine all four.
+
 ## Steps
 
 1. **Load style & memory context:**
