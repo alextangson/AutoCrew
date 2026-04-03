@@ -3,7 +3,7 @@ import { getOption } from "./index.js";
 
 export const cmd: CommandDef = {
   name: "intel",
-  description: "Manage the intel pipeline — pull signals, list saved intel, clean expired items",
+  description: "Manage inspiration sources — pull signals, list saved items, clean expired",
   usage: "autocrew intel pull [--source X] | autocrew intel list [--domain X] | autocrew intel clean",
   action: async (args, runner) => {
     const subcommand = args[0];

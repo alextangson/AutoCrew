@@ -26,8 +26,8 @@ invokable: true
    ```
    📋 内容管线看板
 
-   📥 情报库    12 条（3 条今日新增）
-   💡 选题池    8 个选题
+   📥 灵感源    12 条（3 条今日新增）
+   💡 选题库    8 个选题
    ✏️  创作中    2 个项目
      → AI编程-cursor对比
      → 职场效率-AI工具清单
@@ -39,7 +39,7 @@ invokable: true
    ```
 
 3. **Offer actions** based on status:
-   - If topics pool is low: "选题池快空了，要拉取新情报吗？"
+   - If topics pool is low: "选题库快空了，要更新灵感源吗？"
    - If drafting has items: "要继续写 {project_name} 吗？"
    - If production has items: "有项目可以推进到待发布阶段"
 

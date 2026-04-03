@@ -1,19 +1,20 @@
 ---
 name: intel-pull
 description: |
-  Pull latest intel from all configured sources (RSS, web search, trends, competitors). Activate when user asks for latest news, updates, intel refresh, or "有什么新消息".
+  Pull latest intel from all configured sources (RSS, web search, trends, competitors). Activate when user asks for latest news, updates, inspiration refresh, or "有什么新消息".
 triggers:
   - "最新资讯"
-  - "拉取情报"
+  - "拉取灵感"
   - "有什么新消息"
-  - "更新情报"
+  - "更新灵感源"
+  - "灵感源"
   - "intel pull"
 invokable: true
 ---
 
-# 情报拉取
+# 灵感源更新
 
-> Executor skill. Fetches latest intel from all configured sources and archives to local intel library.
+> Executor skill. Fetches latest intel from all configured sources and archives to local inspiration library.
 
 ## Steps
 
@@ -36,7 +37,7 @@ invokable: true
 
 3. **Display results** — Format as:
    ```
-   📥 情报更新完成
+   📥 灵感源更新完成
    - Web Search: X 条
    - RSS: X 条
    - 热榜趋势: X 条
@@ -52,7 +53,7 @@ invokable: true
 
 4. **Follow up** — Ask:
    ```
-   需要从这些情报中提炼选题吗？
+   需要从这些灵感中提炼选题吗？
    ```
    If yes, call `autocrew_intel` with `action: "list"` to get full intel, then use LLM to generate TopicCandidates and save via `autocrew_topic`.
 

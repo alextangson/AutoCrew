@@ -70,8 +70,8 @@ Two research paths:
 
 7. **Output summary:**
    ```
-   📥 情报采集完成（Web Search: X, RSS: X, 趋势: X, 竞品: X）
-   💡 从情报中提炼了 {count} 个选题：
+   📥 灵感源采集完成（Web Search: X, RSS: X, 趋势: X, 竞品: X）
+   💡 从灵感源中提炼了 {count} 个选题：
 
    1. {title_1} (综合分: 83)
       切入角度: {angle}

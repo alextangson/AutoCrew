@@ -142,9 +142,9 @@ export function registerAllTools(runner: ToolRunner): void {
 
   runner.register({
     name: "autocrew_intel",
-    label: "AutoCrew Intel",
+    label: "AutoCrew 灵感源",
     description:
-      "Intelligence collection pipeline. Actions: pull (collect intel from web/RSS/trends), list (show saved intel), clean (archive expired).",
+      "Inspiration source pipeline. Actions: pull (collect from web/RSS/trends), list (show saved inspiration), clean (archive expired).",
     parameters: intelSchema,
     execute: executeIntel,
   });

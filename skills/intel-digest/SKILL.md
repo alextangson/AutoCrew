@@ -1,16 +1,17 @@
 ---
 name: intel-digest
 description: |
-  Summarize recent intel into a digestible briefing. Activate when user asks for intel summary, weekly digest, domain overview, or "本周洞察".
+  Summarize recent intel into a digestible briefing. Activate when user asks for inspiration summary, weekly digest, domain overview, or "本周洞察".
 triggers:
-  - "情报摘要"
+  - "灵感摘要"
   - "本周洞察"
   - "领域总结"
+  - "灵感源总结"
   - "intel digest"
 invokable: true
 ---
 
-# 情报摘要
+# 灵感源摘要
 
 > Executor skill. Reads accumulated intel and produces a structured briefing.
 
@@ -33,11 +34,11 @@ invokable: true
 
 3. **Output briefing** — Format as:
    ```
-   📊 情报摘要 (最近 7 天)
+   📊 灵感源摘要 (最近 7 天)
 
    ## AI编程 (12 条情报)
 
-   **核心趋势**
+   **核心灵感**
    1. Agent 模式成为各家 IDE 标配 — Cursor, Windsurf, Claude Code 均已支持
    2. 本地化部署需求上升 — Ollama 下载量创新高
 
