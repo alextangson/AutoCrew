@@ -69,6 +69,26 @@ export interface PlatformStatus {
   status: string;
 }
 
+export interface PerformanceData {
+  views?: number;
+  completionRate?: number;
+  likes?: number;
+  saves?: number;
+  comments?: number;
+  shares?: number;
+  topComments?: string[];
+  collectedAt?: string;
+}
+
+export interface PerformanceLearning {
+  contentId: string;
+  rating: "viral" | "on_target" | "below_expectation";
+  coreAttribution: "strong_title" | "good_hook" | "right_topic" | "timing" | "luck";
+  hypothesisResult: "confirmed" | "rejected" | "inconclusive";
+  learning: string;
+  createdAt: string;
+}
+
 export interface StageEntry {
   stage: PipelineStage;
   entered: string;
@@ -85,6 +105,14 @@ export interface ProjectMeta {
   current: string;
   history: StageEntry[];
   platforms: PlatformStatus[];
+  hypothesis?: string;
+  experimentType?: "title_test" | "hook_test" | "format_test" | "angle_test";
+  controlRef?: string;
+  hypothesisResult?: "confirmed" | "rejected" | "inconclusive";
+  performanceData?: PerformanceData;
+  performanceLearnings?: PerformanceLearning[];
+  contentPillar?: string;
+  commentTriggers?: Array<{ type: "controversy" | "unanswered_question" | "quote_hook"; position: string }>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
