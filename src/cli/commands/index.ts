@@ -42,6 +42,12 @@ import { cmd as upgradeCmd } from "./upgrade.js";
 import { cmd as profileCmd } from "./profile.js";
 import { cmd as auditCmd } from "./audit.js";
 import { cmd as eventsCmd } from "./events.js";
+import { cmd as intelCmd } from "./intel.js";
+import { cmd as startCmd } from "./start.js";
+import { cmd as advanceCmd } from "./advance.js";
+import { cmd as trashCmd } from "./trash.js";
+import { cmd as restoreCmd } from "./restore.js";
+import { cmd as migrateCmd } from "./migrate.js";
 
 export const commands: CommandDef[] = [
   statusCmd,
@@ -65,4 +71,9 @@ export const commands: CommandDef[] = [
   profileCmd,
   auditCmd,
   eventsCmd,
+  intelCmd,
+  startCmd,
+  advanceCmd,
+  trashCmd,
+  restoreCmd,
 ];
