@@ -7,6 +7,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { initProfile, detectMissingInfo } from "../modules/profile/creator-profile.js";
+import { initPipeline } from "../storage/pipeline-store.js";
 
 function getDataDir(customDir?: string): string {
   if (customDir) return customDir;
@@ -61,6 +62,9 @@ export async function executeInit(options?: { dataDir?: string }): Promise<InitR
       // Already exists — fine
     }
   }
+
+  // Initialize pipeline directory structure (idempotent)
+  await initPipeline(dataDir);
 
   // Initialize creator-profile.json (no-op if exists)
   const profile = await initProfile(dataDir);
