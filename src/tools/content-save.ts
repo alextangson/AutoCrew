@@ -18,8 +18,10 @@ import {
   slugify,
   stagePath,
   initPipeline,
+  addDraftVersion,
   type ProjectMeta,
 } from "../storage/pipeline-store.js";
+import { executeHumanize } from "./humanize.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
@@ -93,6 +95,22 @@ export async function executeContentSave(params: Record<string, unknown>) {
       performanceData: params.performance_data as Record<string, number> | undefined,
     }, dataDir);
     if (!updated) return { ok: false, error: `Content ${id} not found` };
+
+    // Also version in pipeline storage if body changed
+    if (params.body && updated.title) {
+      try {
+        const projectName = slugify(updated.title);
+        await addDraftVersion(
+          projectName,
+          params.body as string,
+          (params.diff_note as string) || "Edit via update",
+          dataDir ? path.join(dataDir, "data") : undefined,
+        );
+      } catch {
+        // Pipeline project may not exist for legacy content — that's OK
+      }
+    }
+
     return { ok: true, content: updated };
   }
 
@@ -201,9 +219,24 @@ export async function executeContentSave(params: Record<string, unknown>) {
     "utf-8",
   );
 
+  // Auto-humanize (tool-level enforcement — LLM cannot skip this)
+  let humanizeResult: Record<string, unknown> | null = null;
+  try {
+    humanizeResult = await executeHumanize({
+      action: "humanize_zh",
+      content_id: content.id,
+      save_back: true,
+      _dataDir: dataDir,
+    }) as Record<string, unknown>;
+  } catch {
+    // Humanize failure should not block save
+  }
+
   return {
     ok: true,
     content,
+    humanized: humanizeResult?.ok ?? false,
+    humanizeChanges: (humanizeResult as any)?.changeCount ?? 0,
     filePath: `${projectDir}/draft.md`,
     projectDir,
     pipelinePath: projectDir,
@@ -214,6 +247,7 @@ export async function executeContentSave(params: Record<string, unknown>) {
       `   草稿：${projectDir}/draft.md`,
       `   元数据：${projectDir}/meta.yaml`,
       `   版本：${projectDir}/draft-v1.md`,
+      `   自动去AI味：${humanizeResult?.ok ? "✅ 已处理" : "⚠️ 跳过"}`,
       ``,
       `打开文件夹：open "${projectDir}"`,
       `查看草稿：cat "${projectDir}/draft.md"`,
