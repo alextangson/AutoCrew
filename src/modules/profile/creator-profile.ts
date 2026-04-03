@@ -54,6 +54,15 @@ export interface CreatorPersona {
   growthAreas: string[];
 }
 
+export interface ContentPillar {
+  name: string;
+  targetPersona: string;
+  valueProposition: string;
+  contentRatio: number;
+  toneGuide: string;
+  exampleAngles: string[];
+}
+
 export interface CreatorProfile {
   /** User's content industry/niche */
   industry: string;
@@ -75,6 +84,8 @@ export interface CreatorProfile {
   expressionPersona: string;
   /** Additional audience personas (from calibration Phase 0.5) */
   secondaryPersonas: AudiencePersona[];
+  /** Content pillars defining the creator's content strategy */
+  contentPillars?: ContentPillar[];
   /** Whether style calibration has been completed */
   styleCalibrated: boolean;
   /** Profile creation timestamp */

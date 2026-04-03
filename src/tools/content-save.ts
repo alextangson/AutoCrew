@@ -18,8 +18,10 @@ import {
   slugify,
   stagePath,
   initPipeline,
+  addDraftVersion,
   type ProjectMeta,
 } from "../storage/pipeline-store.js";
+import { executeHumanize } from "./humanize.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
@@ -59,6 +61,21 @@ export const contentSaveSchema = Type.Object({
   performance_data: Type.Optional(Type.Record(Type.String(), Type.Number(), { description: "Performance metrics: views, likes, comments, shares, etc." })),
   force: Type.Optional(Type.Boolean({ description: "Force transition even if not in allowed transitions" })),
   diff_note: Type.Optional(Type.String({ description: "Note for revision diff tracking" })),
+  hypothesis: Type.Optional(Type.String({ description: "Traffic hypothesis: what this content tests and expected outcome" })),
+  experiment_type: Type.Optional(Type.Unsafe<string>({
+    type: "string",
+    enum: ["title_test", "hook_test", "format_test", "angle_test"],
+    description: "Type of experiment this content represents",
+  })),
+  control_ref: Type.Optional(Type.String({ description: "Content ID this is being A/B tested against" })),
+  content_pillar: Type.Optional(Type.String({ description: "Which content pillar this belongs to" })),
+  comment_triggers: Type.Optional(Type.Array(
+    Type.Object({
+      type: Type.Unsafe<string>({ type: "string", enum: ["controversy", "unanswered_question", "quote_hook"] }),
+      position: Type.String(),
+    }),
+    { description: "Comment engineering trigger points" },
+  )),
 });
 
 export async function executeContentSave(params: Record<string, unknown>) {
@@ -93,6 +110,22 @@ export async function executeContentSave(params: Record<string, unknown>) {
       performanceData: params.performance_data as Record<string, number> | undefined,
     }, dataDir);
     if (!updated) return { ok: false, error: `Content ${id} not found` };
+
+    // Also version in pipeline storage if body changed
+    if (params.body && updated.title) {
+      try {
+        const projectName = slugify(updated.title);
+        await addDraftVersion(
+          projectName,
+          params.body as string,
+          (params.diff_note as string) || "Edit via update",
+          dataDir ? path.join(dataDir, "data") : undefined,
+        );
+      } catch {
+        // Pipeline project may not exist for legacy content — that's OK
+      }
+    }
+
     return { ok: true, content: updated };
   }
 
@@ -183,6 +216,11 @@ export async function executeContentSave(params: Record<string, unknown>) {
     current: "draft-v1.md",
     history: [{ stage: "drafting", entered: now }],
     platforms: platform ? [{ format: platform, status: "drafting" }] : [],
+    hypothesis: (params.hypothesis as string) || undefined,
+    experimentType: (params.experiment_type as ProjectMeta["experimentType"]) || undefined,
+    controlRef: (params.control_ref as string) || undefined,
+    contentPillar: (params.content_pillar as string) || undefined,
+    commentTriggers: (params.comment_triggers as ProjectMeta["commentTriggers"]) || undefined,
   };
 
   await fs.writeFile(
@@ -201,9 +239,24 @@ export async function executeContentSave(params: Record<string, unknown>) {
     "utf-8",
   );
 
+  // Auto-humanize (tool-level enforcement — LLM cannot skip this)
+  let humanizeResult: Record<string, unknown> | null = null;
+  try {
+    humanizeResult = await executeHumanize({
+      action: "humanize_zh",
+      content_id: content.id,
+      save_back: true,
+      _dataDir: dataDir,
+    }) as Record<string, unknown>;
+  } catch {
+    // Humanize failure should not block save
+  }
+
   return {
     ok: true,
     content,
+    humanized: humanizeResult?.ok ?? false,
+    humanizeChanges: (humanizeResult as any)?.changeCount ?? 0,
     filePath: `${projectDir}/draft.md`,
     projectDir,
     pipelinePath: projectDir,
@@ -214,6 +267,7 @@ export async function executeContentSave(params: Record<string, unknown>) {
       `   草稿：${projectDir}/draft.md`,
       `   元数据：${projectDir}/meta.yaml`,
       `   版本：${projectDir}/draft-v1.md`,
+      `   自动去AI味：${humanizeResult?.ok ? "✅ 已处理" : "⚠️ 跳过"}`,
       ``,
       `打开文件夹：open "${projectDir}"`,
       `查看草稿：cat "${projectDir}/draft.md"`,
