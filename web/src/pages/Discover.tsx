@@ -26,7 +26,9 @@ export default function Discover() {
   const createMut = useMutation({
     mutationFn: (topicId: string) => createContentFromTopic(topicId),
     onSuccess: (data) => {
-      navigate(`/content/${(data as { id: string }).id}`);
+      const res = data as { content?: { id: string }; id?: string };
+      const id = res.content?.id ?? res.id;
+      if (id) navigate(`/content/${id}`);
     },
   });
 

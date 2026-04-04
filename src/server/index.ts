@@ -75,11 +75,41 @@ export function createApp(deps: ServerDeps): Hono {
     }
   });
 
+  app.post("/api/contents", async (c) => {
+    try {
+      const body = await c.req.json();
+
+      // If topicId provided, fetch topic title first
+      let title = body.title || "新内容";
+      if (body.topicId) {
+        try {
+          const topicResult = await runner.execute("autocrew_topic", { action: "list" });
+          const topics = (topicResult as { topics?: { id: string; title: string }[] }).topics ?? [];
+          const topic = topics.find((t) => t.id === body.topicId);
+          if (topic) title = topic.title;
+        } catch {
+          // Use default title if topic lookup fails
+        }
+      }
+
+      const result = await runner.execute("autocrew_content", {
+        action: "save",
+        title,
+        body: body.body || `# ${title}\n\n（稿件待编辑）`,
+        topicId: body.topicId,
+        status: "draft",
+      });
+      return c.json(result, 201);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
   app.get("/api/contents/:id", async (c) => {
     try {
       const result = await runner.execute("autocrew_content", {
         action: "get",
-        content_id: c.req.param("id"),
+        id: c.req.param("id"),
       });
       return c.json(result);
     } catch (err) {
