@@ -1,3 +1,5 @@
+// ── Video pipeline timeline types ────────────────────────────────────
+
 export type VideoPreset = "knowledge-explainer" | "tutorial";
 export type AspectRatio = "9:16" | "16:9" | "3:4" | "1:1" | "4:3";
 export type SubtitleTemplate =
@@ -62,4 +64,20 @@ export interface Timeline {
     visual: VisualSegment[];
     subtitle: SubtitleTrack;
   };
+}
+
+// ── Compositor-level types (used by provider interfaces) ────────────
+
+export interface TimelineClip {
+  id: string;
+  type: "video" | "audio" | "text" | "image";
+  start: number;
+  duration: number;
+  assetId?: string;
+}
+
+export interface TimelineTrack {
+  id: string;
+  type: "video" | "audio" | "text";
+  clips: TimelineClip[];
 }
