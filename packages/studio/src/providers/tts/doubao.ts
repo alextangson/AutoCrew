@@ -48,7 +48,7 @@ export class DoubaoTTS {
     const body = {
       app: {
         appid: this.config.appId,
-        token: "access_token",
+        token: this.config.accessToken,
         cluster: this.config.cluster ?? "volcano_tts",
       },
       user: { uid: "autocrew" },

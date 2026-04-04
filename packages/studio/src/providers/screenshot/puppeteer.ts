@@ -15,29 +15,33 @@ export interface Viewport {
 }
 
 export class PuppeteerScreenshot {
-  async capture(
-    html: string,
-    viewport: Viewport,
-    outputPath: string
-  ): Promise<ScreenshotResult> {
-    const browser = await puppeteer.launch({ headless: true });
+  private browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+
+  private async getBrowser() {
+    if (!this.browser) {
+      this.browser = await puppeteer.launch({ headless: true });
+    }
+    return this.browser;
+  }
+
+  async capture(html: string, viewport: Viewport, outputPath: string): Promise<ScreenshotResult> {
+    const browser = await this.getBrowser();
+    const page = await browser.newPage();
     try {
-      const page = await browser.newPage();
       await page.setViewport(viewport);
       await page.setContent(html, { waitUntil: "networkidle0" });
-
       await mkdir(dirname(outputPath), { recursive: true });
       await page.screenshot({ path: outputPath, type: "png" });
-      await page.close();
-
-      return {
-        path: outputPath,
-        width: viewport.width,
-        height: viewport.height,
-        format: "png",
-      };
+      return { path: outputPath, width: viewport.width, height: viewport.height, format: "png" };
     } finally {
-      await browser.close();
+      await page.close();
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
     }
   }
 }

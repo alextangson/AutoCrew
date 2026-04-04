@@ -22,6 +22,8 @@ export interface ComposeResult {
 }
 
 export class FFmpegCompositor {
+  // TODO: Use complexFilter to position segments at their startSec offsets.
+  // Currently all inputs start at t=0, ignoring startSec values.
   async compose(input: ComposeInput, outputPath: string): Promise<ComposeResult> {
     await mkdir(dirname(outputPath), { recursive: true });
 

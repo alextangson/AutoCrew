@@ -1,39 +1,6 @@
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
-
-interface TTSSegment {
-  id: string;
-  text: string;
-  estimatedDuration: number;
-  start: number;
-  asset: string | null;
-  status: string;
-}
-
-interface VisualSegment {
-  id: string;
-  layer: number;
-  type: "broll" | "card";
-  template?: string;
-  data?: Record<string, unknown>;
-  linkedTts: string[];
-  asset: string | null;
-  status: string;
-  [key: string]: unknown;
-}
-
-interface Timeline {
-  version: "2.0";
-  contentId: string;
-  preset: string;
-  aspectRatio: string;
-  subtitle: { template: string; position: string };
-  tracks: {
-    tts: TTSSegment[];
-    visual: VisualSegment[];
-    subtitle: { asset: string | null; status: string };
-  };
-}
+import type { Timeline } from "../types/timeline.js";
 
 export interface RenderOptions {
   timeline: Timeline;
@@ -74,6 +41,10 @@ const DIMENSIONS: Record<string, { width: number; height: number }> = {
   "4:3": { width: 1440, height: 1080 },
 };
 
+/**
+ * Render a timeline by generating TTS audio and card screenshots, then exporting.
+ * NOTE: Mutates the input timeline object (updates asset paths and durations in place).
+ */
 export async function renderTimeline(
   opts: RenderOptions,
 ): Promise<{ path: string; format: string }> {

@@ -2,39 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DraftBuilder } from "./draft.js";
 import type { DraftContent } from "./types.js";
-
-// Use inline types to avoid cross-package dependency for now
-interface TTSSegment {
-  id: string;
-  text: string;
-  estimatedDuration: number;
-  start: number;
-  asset: string | null;
-  status: string;
-}
-
-interface VisualSegment {
-  id: string;
-  layer: number;
-  type: "broll" | "card";
-  linkedTts: string[];
-  asset: string | null;
-  status: string;
-  [key: string]: unknown;
-}
-
-interface Timeline {
-  version: "2.0";
-  contentId: string;
-  preset: string;
-  aspectRatio: string;
-  subtitle: { template: string; position: string };
-  tracks: {
-    tts: TTSSegment[];
-    visual: VisualSegment[];
-    subtitle: { asset: string | null; status: string };
-  };
-}
+import type { Timeline, TTSSegment } from "../../../types/timeline.js";
 
 const DIMENSIONS: Record<string, { width: number; height: number }> = {
   "9:16": { width: 1080, height: 1920 },
