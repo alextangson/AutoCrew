@@ -93,6 +93,13 @@ export async function confirmAllSegments(contentId: string) {
   });
 }
 
+export async function createContentFromTopic(topicId: string) {
+  return request<{ id: string }>('/contents', {
+    method: 'POST',
+    body: JSON.stringify({ topicId }),
+  });
+}
+
 import { useEffect, useRef } from 'react';
 
 export function useEventStream(onEvent: (event: Record<string, unknown>) => void) {
