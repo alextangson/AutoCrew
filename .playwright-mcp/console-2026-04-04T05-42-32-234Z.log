@@ -1,0 +1,6 @@
+[      82ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=b8442850:14336
+[   39804ms] [ERROR] Failed to load resource: net::ERR_FAILED @ http://localhost:5173/api/topics/:0
+[   58540ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[   59635ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=b8442850:14336
+[   65731ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[   67903ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=b8442850:14336

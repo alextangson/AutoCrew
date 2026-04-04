@@ -1,0 +1,61 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]: AutoCrew
+    - navigation [ref=e6]:
+      - link "发现" [ref=e7] [cursor=pointer]:
+        - /url: /
+      - link "内容" [ref=e8] [cursor=pointer]:
+        - /url: /content
+      - link "发布" [ref=e9] [cursor=pointer]:
+        - /url: /publish
+    - generic [ref=e10]:
+      - button "Cmd+K" [ref=e11]
+      - link "设置" [ref=e12] [cursor=pointer]:
+        - /url: /settings
+  - main [ref=e13]:
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - heading "发现" [level=1] [ref=e16]
+        - button "刷新选题" [ref=e17] [cursor=pointer]
+      - generic [ref=e18]: 热门选题
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]: AI 编程工具的界面革命：为什么 Cursor 3、Claude Code 和 Context 长得都一样？
+          - generic [ref=e23]: 用户洞察 - 发现多个产品设计语言统一的现象
+          - button "开始创作" [ref=e25] [cursor=pointer]
+        - generic [ref=e26]:
+          - generic [ref=e27]: 一个人搭系统：我是怎么用 AI 替代 5 个岗位的
+          - generic [ref=e29]: "web_search: 独立开发者 AI 工具 2026"
+          - button "开始创作" [ref=e31] [cursor=pointer]
+        - generic [ref=e32]:
+          - generic [ref=e33]: AI Agent 不是聊天机器人：2026 年企业怎么用 Agent 省掉 3 个岗位
+          - generic [ref=e35]: "web_search: AI Agent 2026 企业应用"
+          - button "开始创作" [ref=e37] [cursor=pointer]
+        - generic [ref=e38]:
+          - generic [ref=e39]: 2026 AI 困局：CEO 们都在栽的 9 个坑
+          - generic [ref=e41]: 36氪 + 腾讯云 + 一介布衣深度复盘
+          - button "开始创作" [ref=e43] [cursor=pointer]
+        - generic [ref=e44]:
+          - generic [ref=e45]: 为什么所有人都在买 AI 工具，但没人问"适不适合自己"？
+          - generic [ref=e47]: "insight: AI 焦虑 + 用户访谈"
+          - button "开始创作" [ref=e49] [cursor=pointer]
+        - generic [ref=e50]:
+          - generic [ref=e51]: 一个人 + AI，我是怎么在 6 个月内从 0 到月入 10 万的
+          - generic [ref=e53]: "research: 需要找真实 OPC 案例"
+          - button "开始创作" [ref=e55] [cursor=pointer]
+        - generic [ref=e56]:
+          - generic [ref=e57]: 90% 的企业 AI 落地都死在第一步：不是技术不行，是落地逻辑错了
+          - generic [ref=e59]: "web_search: 知乎专栏 + 搜狐 + 腾讯云"
+          - button "开始创作" [ref=e61] [cursor=pointer]
+        - generic [ref=e62]:
+          - generic [ref=e63]: 探店美食API候选2
+          - generic [ref=e65]: api_provider:xiaohongshu
+          - button "开始创作" [ref=e67] [cursor=pointer]
+        - generic [ref=e68]:
+          - generic [ref=e69]: 探店美食API候选3
+          - generic [ref=e71]: api_provider:xiaohongshu
+          - button "开始创作" [ref=e73] [cursor=pointer]
+        - generic [ref=e74]:
+          - generic [ref=e75]: 探店美食API候选1
+          - generic [ref=e77]: api_provider:xiaohongshu
+          - button "开始创作" [ref=e79] [cursor=pointer]

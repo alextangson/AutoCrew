@@ -1,0 +1,8 @@
+[      59ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=0daaa11b:14336
+[     229ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/contents/:0
+[    1393ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/contents/:0
+[  103574ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/contents/:0
+[  104755ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/api/contents/:0
+[  484782ms] [ERROR] WebSocket connection to 'ws://localhost:5173/?token=MT3qnKuecpLC' failed:  @ http://localhost:5173/@vite/client:840
+[  484787ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[  487156ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=b8442850:14336
