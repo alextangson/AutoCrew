@@ -9,3 +9,5 @@ dist/
 # Never commit Pro API keys
 .pro
 web/node_modules/
+.playwright-mcp/
+*.png
