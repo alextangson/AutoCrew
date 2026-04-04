@@ -34,37 +34,6 @@ export async function fetchTopics() {
   return request<unknown[]>('/topics');
 }
 
-export async function fetchWorkflows() {
-  return request<unknown[]>('/workflows');
-}
-
-export async function fetchWorkflowTemplates() {
-  return request<unknown[]>('/workflows/templates');
-}
-
-export async function createWorkflow(templateId: string, params?: Record<string, unknown>) {
-  return request<unknown>('/workflows', {
-    method: 'POST',
-    body: JSON.stringify({ templateId, ...params }),
-  });
-}
-
-export async function startWorkflow(id: string) {
-  return request<unknown>(`/workflows/${id}/start`, { method: 'POST' });
-}
-
-export async function approveWorkflow(id: string) {
-  return request<unknown>(`/workflows/${id}/approve`, { method: 'POST' });
-}
-
-export async function cancelWorkflow(id: string) {
-  return request<unknown>(`/workflows/${id}/cancel`, { method: 'POST' });
-}
-
-export async function fetchWorkflowStatus(id: string) {
-  return request<unknown>(`/workflows/${id}`);
-}
-
 export async function fetchStatus() {
   return request<unknown>('/status');
 }
