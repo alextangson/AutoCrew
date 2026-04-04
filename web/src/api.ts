@@ -100,6 +100,13 @@ export async function createContentFromTopic(topicId: string) {
   });
 }
 
+export async function updateContentStatus(id: string, status: string) {
+  return request<unknown>(`/contents/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
 import { useEffect, useRef } from 'react';
 
 export function useEventStream(onEvent: (event: Record<string, unknown>) => void) {

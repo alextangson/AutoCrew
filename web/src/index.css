@@ -384,3 +384,126 @@ tr:hover {
   letter-spacing: 0.5px;
   margin-bottom: 12px;
 }
+
+/* Board */
+.board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.view-toggle button {
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.view-toggle button.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.kanban-column {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 200px;
+}
+
+.kanban-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.kanban-column-title {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kanban-column-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.kanban-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.content-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+
+.content-card:hover {
+  border-color: var(--text-muted);
+  transform: translateY(-1px);
+}
+
+.content-card-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.content-card-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.format-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+}
+
+.format-tag.done {
+  background: rgba(63, 185, 80, 0.12);
+  color: var(--green);
+}
+
+.format-tag.active {
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--blue);
+}
+
+.format-tag.failed {
+  background: rgba(248, 81, 73, 0.12);
+  color: var(--red);
+}
