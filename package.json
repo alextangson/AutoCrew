@@ -9,6 +9,9 @@
     "type": "git",
     "url": "https://github.com/alextangson/AutoCrew.git"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "autocrew": "./bin/autocrew.mjs"
   },
