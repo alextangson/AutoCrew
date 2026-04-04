@@ -18,6 +18,7 @@ import { reviewSchema, executeReview } from "./review.js";
 import { prePublishSchema, executePrePublish } from "./pre-publish.js";
 import { intelSchema, executeIntel } from "./intel.js";
 import { pipelineOpsSchema, executePipelineOps } from "./pipeline-ops.js";
+import { timelineSchema, executeTimeline } from "./timeline.js";
 import { executeInit } from "./init.js";
 import { getProStatus } from "../modules/pro/gate.js";
 import { loadProfile, detectMissingInfo } from "../modules/profile/creator-profile.js";
@@ -156,6 +157,15 @@ export function registerAllTools(runner: ToolRunner): void {
       "Content pipeline lifecycle management. Actions: status (stage counts), start (topic→project), advance (next stage), version (add draft), trash, restore.",
     parameters: pipelineOpsSchema,
     execute: executePipelineOps,
+  });
+
+  runner.register({
+    name: "autocrew_timeline",
+    label: "AutoCrew Timeline",
+    description:
+      "Generate and manage video timelines. Actions: generate (parse marked script into timeline.json), get (retrieve timeline), update_segment (update segment status/asset), confirm_all (confirm all ready segments).",
+    parameters: timelineSchema,
+    execute: executeTimeline,
   });
 
   runner.register({
