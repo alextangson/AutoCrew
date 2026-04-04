@@ -3,6 +3,7 @@ const BASE = '/api';
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
     ...options,
   });
   if (!res.ok) {
@@ -23,15 +24,18 @@ export async function executeTool(name: string, params: Record<string, unknown>)
 }
 
 export async function fetchContents() {
-  return request<unknown[]>('/contents');
+  const res = await request<{ ok: boolean; contents: unknown[] }>('/contents');
+  return res.contents ?? [];
 }
 
 export async function fetchContent(id: string) {
-  return request<unknown>(`/contents/${id}`);
+  const res = await request<{ ok: boolean; content: unknown }>(`/contents/${id}`);
+  return res.content ?? res;
 }
 
 export async function fetchTopics() {
-  return request<unknown[]>('/topics');
+  const res = await request<{ ok: boolean; topics: unknown[] }>('/topics');
+  return res.topics ?? [];
 }
 
 export async function fetchStatus() {
