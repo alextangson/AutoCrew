@@ -3,6 +3,7 @@ import Dashboard from './pages/Dashboard';
 import Workflows from './pages/Workflows';
 import Contents from './pages/Contents';
 import Research from './pages/Research';
+import AssetPanel from './pages/AssetPanel';
 
 const navItems = [
   { to: '/', label: '仪表盘' },
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/contents" element={<Contents />} />
           <Route path="/research" element={<Research />} />
+          <Route path="/contents/:contentId/assets" element={<AssetPanel />} />
         </Routes>
       </main>
     </div>

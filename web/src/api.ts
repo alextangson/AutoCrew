@@ -69,6 +69,30 @@ export async function fetchStatus() {
   return request<unknown>('/status');
 }
 
+export async function getTimeline(contentId: string) {
+  return request<{ ok: boolean; timeline: any }>(`/contents/${contentId}/timeline`);
+}
+
+export async function generateTimeline(contentId: string, preset: string, aspectRatio: string) {
+  return request<{ ok: boolean; timeline: any }>(`/contents/${contentId}/timeline`, {
+    method: 'POST',
+    body: JSON.stringify({ preset, aspectRatio }),
+  });
+}
+
+export async function updateSegment(contentId: string, segmentId: string, updates: { status?: string; assetPath?: string }) {
+  return request<{ ok: boolean }>(`/contents/${contentId}/timeline/segments/${segmentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function confirmAllSegments(contentId: string) {
+  return request<{ ok: boolean }>(`/contents/${contentId}/timeline/confirm-all`, {
+    method: 'POST',
+  });
+}
+
 import { useEffect, useRef } from 'react';
 
 export function useEventStream(onEvent: (event: Record<string, unknown>) => void) {
