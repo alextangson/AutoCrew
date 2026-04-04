@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchContent, getTimeline, generateTimeline, confirmAllSegments,
   updateSegment, updateSegmentText, exportJianying, renderVideo,
+  updateContentBody,
 } from '../api';
 import FormatSidebar from '../components/FormatSidebar';
 import ScriptEditor from '../components/ScriptEditor';
@@ -63,13 +64,35 @@ export default function Editor() {
   const [preset, setPreset] = useState('knowledge-explainer');
   const [localEdits, setLocalEdits] = useState<Record<string, string>>({});
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [draftBody, setDraftBody] = useState<string | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const { data: content } = useQuery<ContentItem>({
     queryKey: ['content', contentId],
     queryFn: () => fetchContent(contentId!) as Promise<ContentItem>,
     enabled: !!contentId,
   });
+
+  // Initialize draft body from content when loaded
+  const draftInitialized = useRef(false);
+  if (content?.body && draftBody === null && !draftInitialized.current) {
+    draftInitialized.current = true;
+    setDraftBody(content.body);
+  }
+
+  const handleDraftChange = useCallback((text: string) => {
+    setDraftBody(text);
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => {
+      if (contentId) {
+        setDraftSaving(true);
+        updateContentBody(contentId, text)
+          .finally(() => setDraftSaving(false));
+      }
+    }, 1000);
+  }, [contentId]);
 
   const { data: timelineData } = useQuery({
     queryKey: ['timeline', contentId],
@@ -223,16 +246,43 @@ export default function Editor() {
         />
 
         {!timeline ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ textAlign: 'center' }}>
-              <p className="muted" style={{ marginBottom: '16px' }}>尚未生成时间轴</p>
-              <button
-                className="btn btn-primary"
-                onClick={() => generateMut.mutate()}
-                disabled={generateMut.isPending}
-              >
-                {generateMut.isPending ? '生成中...' : '生成内容'}
-              </button>
+          <div className="script-panel" style={{ flex: 1 }}>
+            <div className="script-panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>文案编辑</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                {draftSaving ? '保存中...' : '自动保存'}
+              </span>
+            </div>
+            <div className="script-content" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <textarea
+                className="draft-editor"
+                value={draftBody ?? ''}
+                onChange={(e) => handleDraftChange(e.target.value)}
+                placeholder="在这里写文案...&#10;&#10;写完后点击下方「生成时间轴」按钮，将文案拆分为视频段落。"
+                style={{
+                  flex: 1,
+                  width: '100%',
+                  resize: 'none',
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  color: 'var(--text)',
+                  fontFamily: 'inherit',
+                  fontSize: '0.9rem',
+                  lineHeight: '1.8',
+                  padding: '16px',
+                  minHeight: '300px',
+                }}
+              />
+              <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => generateMut.mutate()}
+                  disabled={generateMut.isPending || !draftBody || draftBody.trim() === '' || draftBody.includes('（稿件待编辑）')}
+                >
+                  {generateMut.isPending ? '生成中...' : '生成时间轴'}
+                </button>
+              </div>
             </div>
           </div>
         ) : (

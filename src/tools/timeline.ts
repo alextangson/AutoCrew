@@ -182,6 +182,17 @@ export async function executeTimeline(
     }
 
     await saveTimeline(dataDir, contentId, timeline);
+
+    // Sync text edits back to draft.md so regenerating timeline won't lose changes
+    if (newText !== undefined) {
+      const draftText = timeline.tracks.tts.map((s) => s.text).join("\n\n");
+      await writeFile(
+        join(contentDir(dataDir, contentId), "draft.md"),
+        draftText,
+        "utf-8",
+      );
+    }
+
     return { ok: true, content_id: contentId, segment_id: segmentId };
   }
 

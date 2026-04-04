@@ -73,6 +73,13 @@ export async function createContentFromTopic(topicId: string) {
   });
 }
 
+export async function updateContentBody(id: string, body: string) {
+  return request<{ ok: boolean }>(`/contents/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ body }),
+  });
+}
+
 export async function updateContentStatus(id: string, status: string) {
   return request<unknown>(`/contents/${id}/status`, {
     method: 'PATCH',

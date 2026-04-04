@@ -117,6 +117,22 @@ export function createApp(deps: ServerDeps): Hono {
     }
   });
 
+  app.patch("/api/contents/:id", async (c) => {
+    try {
+      const body = await c.req.json();
+      const result = await runner.execute("autocrew_content", {
+        action: "update",
+        id: c.req.param("id"),
+        title: body.title,
+        body: body.body,
+        status: body.status,
+      });
+      return c.json(result);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
   // --- Timeline API ---
   app.get("/api/contents/:id/timeline", async (c) => {
     try {
