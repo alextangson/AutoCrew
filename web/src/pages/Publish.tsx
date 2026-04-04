@@ -9,7 +9,50 @@ interface ContentItem {
   platform?: string;
 }
 
+interface PublishPlatform {
+  name: string;
+  status: string;
+}
+
+interface PublishFormat {
+  type: string;
+  platforms: PublishPlatform[];
+}
+
+interface PublishItem {
+  id: string;
+  title: string;
+  tab: string;
+  formats: PublishFormat[];
+}
+
 const TABS = ['待发布', '已发布', '失败'];
+
+function buildPublishItems(contents: ContentItem[]): PublishItem[] {
+  return contents
+    .filter((c) => c.status === 'ready' || c.status === 'published' || c.status === 'failed')
+    .map((c) => {
+      const isPublished = c.status === 'published';
+      const isFailed = c.status === 'failed';
+      const tab = isFailed ? '失败' : isPublished ? '已发布' : '待发布';
+
+      return {
+        id: c.id,
+        title: c.title,
+        tab,
+        formats: [
+          {
+            type: '短视频',
+            platforms: [
+              { name: '抖音', status: isPublished ? '已发布' : isFailed ? '失败' : '待发布' },
+              { name: '快手', status: '待发布' },
+              { name: '视频号', status: '待发布' },
+            ],
+          },
+        ],
+      };
+    });
+}
 
 export default function Publish() {
   const [activeTab, setActiveTab] = useState('待发布');
@@ -19,22 +62,8 @@ export default function Publish() {
     queryFn: fetchContents as () => Promise<ContentItem[]>,
   });
 
-  const publishItems = (contents as ContentItem[])
-    .filter((c) => c.status === 'ready' || c.status === 'published')
-    .map((c) => ({
-      id: c.id,
-      title: c.title,
-      formats: [
-        {
-          type: '短视频',
-          platforms: [
-            { name: '抖音', status: c.status === 'published' ? '已发布' : '待发布' },
-            { name: '快手', status: '待发布' },
-            { name: '视频号', status: '待发布' },
-          ],
-        },
-      ],
-    }));
+  const allItems = buildPublishItems(contents as ContentItem[]);
+  const filtered = allItems.filter((item) => item.tab === activeTab);
 
   return (
     <div className="page">
@@ -47,15 +76,15 @@ export default function Publish() {
             className={`publish-tab${activeTab === tab ? ' active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab}
+            {tab} ({allItems.filter((i) => i.tab === tab).length})
           </button>
         ))}
       </div>
 
-      {publishItems.length === 0 ? (
-        <p className="muted">暂无可发布内容</p>
+      {filtered.length === 0 ? (
+        <p className="muted">暂无{activeTab}内容</p>
       ) : (
-        publishItems.map((item) => (
+        filtered.map((item) => (
           <div key={item.id} className="publish-item">
             <div className="publish-item-title">{item.title}</div>
             {item.formats.map((fmt) => (

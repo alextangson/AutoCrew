@@ -80,6 +80,25 @@ export async function updateContentStatus(id: string, status: string) {
   });
 }
 
+export async function updateSegmentText(contentId: string, segmentId: string, text: string) {
+  return request<{ ok: boolean }>(`/contents/${contentId}/timeline/segments/${segmentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function exportJianying(contentId: string) {
+  return request<{ ok: boolean; path?: string; error?: string }>(`/contents/${contentId}/export/jianying`, {
+    method: 'POST',
+  });
+}
+
+export async function renderVideo(contentId: string) {
+  return request<{ ok: boolean; path?: string; message?: string; error?: string }>(`/contents/${contentId}/render`, {
+    method: 'POST',
+  });
+}
+
 import { useEffect, useRef } from 'react';
 
 export function useEventStream(onEvent: (event: Record<string, unknown>) => void) {

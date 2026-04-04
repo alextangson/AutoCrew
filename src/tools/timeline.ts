@@ -154,10 +154,13 @@ export async function executeTimeline(
     // Search across all track arrays
     let found = false;
 
+    const newText = params.text as string | undefined;
+
     for (const seg of timeline.tracks.tts) {
       if (seg.id === segmentId) {
         if (newStatus) seg.status = newStatus;
         if (assetPath !== undefined) seg.asset = assetPath;
+        if (newText !== undefined) seg.text = newText;
         found = true;
         break;
       }

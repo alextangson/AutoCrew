@@ -155,6 +155,7 @@ export function createApp(deps: ServerDeps): Hono {
         segment_id: c.req.param("segId"),
         status: body.status,
         asset_path: body.assetPath,
+        text: body.text,
       });
       if (!result.ok) return c.json(result, 400);
       return c.json(result);
@@ -310,6 +311,38 @@ export function createApp(deps: ServerDeps): Hono {
         id: c.req.param("id"),
       });
       return c.json(result);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
+  // --- Studio Export/Render ---
+  app.post("/api/contents/:id/export/jianying", async (c) => {
+    try {
+      const contentId = c.req.param("id");
+      const timelineResult = await runner.execute("autocrew_timeline", {
+        action: "get",
+        content_id: contentId,
+      });
+      if (!timelineResult.ok) {
+        return c.json({ ok: false, error: "Timeline not found" }, 404);
+      }
+
+      const { join } = await import("node:path");
+      const { JianyingExporter } = await import("../../packages/studio/src/providers/compositor/jianying/exporter.js");
+      const exporter = new JianyingExporter();
+      const homeDir = process.env.HOME || "~";
+      const outputDir = join(homeDir, ".autocrew", "contents", contentId, "export");
+      const result = await exporter.export(timelineResult.timeline, outputDir);
+      return c.json({ ok: true, path: result.path, format: result.format });
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
+  app.post("/api/contents/:id/render", async (c) => {
+    try {
+      return c.json({ ok: false, error: "视频渲染需要配置豆包 TTS。请先在设置页填入 API Key。" }, 400);
     } catch (err) {
       return c.json({ ok: false, error: String(err) }, 500);
     }

@@ -10,10 +10,11 @@ interface Visual {
 interface Props {
   visual: Visual | null;
   ttsText: string | null;
+  ttsAsset?: string | null;
   onRegenerate: () => void;
 }
 
-export default function PreviewPanel({ visual, ttsText, onRegenerate }: Props) {
+export default function PreviewPanel({ visual, ttsText, ttsAsset, onRegenerate }: Props) {
   return (
     <div className="preview-panel">
       <div className="preview-area">
@@ -52,6 +53,13 @@ export default function PreviewPanel({ visual, ttsText, onRegenerate }: Props) {
         <div className="audio-player">
           <div className="audio-label">配音</div>
           <div className="audio-text">"{ttsText}"</div>
+          {ttsAsset ? (
+            <audio controls src={ttsAsset} style={{ width: '100%', marginTop: '8px' }} />
+          ) : (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+              尚未生成音频
+            </div>
+          )}
         </div>
       )}
     </div>

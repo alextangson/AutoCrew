@@ -1,7 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchContent, getTimeline, generateTimeline, confirmAllSegments, updateSegment } from '../api';
+import {
+  fetchContent, getTimeline, generateTimeline, confirmAllSegments,
+  updateSegment, updateSegmentText, exportJianying, renderVideo,
+} from '../api';
 import FormatSidebar from '../components/FormatSidebar';
 import ScriptEditor from '../components/ScriptEditor';
 import PreviewPanel from '../components/PreviewPanel';
@@ -18,6 +21,7 @@ interface TtsSegment {
   text: string;
   estimatedDuration: number;
   status: string;
+  asset: string | null;
 }
 
 interface VisualSegment {
@@ -57,6 +61,9 @@ export default function Editor() {
   const [voice, setVoice] = useState('BV700_V2_streaming');
   const [aspectRatio, setAspectRatio] = useState('9:16');
   const [preset, setPreset] = useState('knowledge-explainer');
+  const [localEdits, setLocalEdits] = useState<Record<string, string>>({});
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const { data: content } = useQuery<ContentItem>({
     queryKey: ['content', contentId],
@@ -83,6 +90,36 @@ export default function Editor() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['timeline', contentId] }),
   });
 
+  const exportMut = useMutation({
+    mutationFn: () => exportJianying(contentId!),
+    onSuccess: (data) => {
+      const res = data as { ok: boolean; path?: string; error?: string };
+      if (res.ok) {
+        setStatusMsg(`已导出到 ${res.path}`);
+      } else {
+        setStatusMsg(`导出失败: ${res.error}`);
+      }
+      setTimeout(() => setStatusMsg(null), 5000);
+    },
+    onError: (err) => {
+      setStatusMsg(`导出失败: ${(err as Error).message}`);
+      setTimeout(() => setStatusMsg(null), 5000);
+    },
+  });
+
+  const renderMut = useMutation({
+    mutationFn: () => renderVideo(contentId!),
+    onSuccess: (data) => {
+      const res = data as { ok: boolean; message?: string; error?: string };
+      setStatusMsg(res.ok ? (res.message || '生成完成') : `失败: ${res.error}`);
+      setTimeout(() => setStatusMsg(null), 5000);
+    },
+    onError: (err) => {
+      setStatusMsg(`失败: ${(err as Error).message}`);
+      setTimeout(() => setStatusMsg(null), 5000);
+    },
+  });
+
   const paragraphs = useMemo(() => {
     if (!timeline) return [];
     return timeline.tracks.tts.map((seg) => {
@@ -93,18 +130,22 @@ export default function Editor() {
           ? (visual.template || '卡片')
           : `B-roll${visual.prompt ? ': ' + visual.prompt : ''}`;
       }
-      return { id: seg.id, text: seg.text, visualTag };
+      return {
+        id: seg.id,
+        text: localEdits[seg.id] ?? seg.text,
+        visualTag,
+      };
     });
-  }, [timeline]);
+  }, [timeline, localEdits]);
 
   const activeVisual = useMemo(() => {
     if (!timeline || !activeParaId) return null;
     return timeline.tracks.visual.find((v) => v.linkedTts.includes(activeParaId)) ?? null;
   }, [timeline, activeParaId]);
 
-  const activeTtsText = useMemo(() => {
+  const activeTts = useMemo(() => {
     if (!timeline || !activeParaId) return null;
-    return timeline.tracks.tts.find((s) => s.id === activeParaId)?.text ?? null;
+    return timeline.tracks.tts.find((s) => s.id === activeParaId) ?? null;
   }, [timeline, activeParaId]);
 
   const readyCount = timeline
@@ -117,9 +158,19 @@ export default function Editor() {
     status: f.id === 'video' && timeline ? 'ready' : f.status,
   }));
 
-  function handleParaChange(_id: string, _text: string) {
-    // Local edit — future: sync back to backend
-  }
+  const handleParaChange = useCallback((id: string, text: string) => {
+    setLocalEdits((prev) => ({ ...prev, [id]: text }));
+
+    // Debounce save: 1 second after last keystroke
+    if (saveTimers.current[id]) clearTimeout(saveTimers.current[id]);
+    saveTimers.current[id] = setTimeout(() => {
+      if (contentId) {
+        updateSegmentText(contentId, id, text).catch(() => {
+          // Silent fail for now
+        });
+      }
+    }, 1000);
+  }, [contentId]);
 
   function handleRegenerate() {
     if (activeVisual && contentId) {
@@ -145,6 +196,18 @@ export default function Editor() {
           <button className="btn btn-sm btn-primary">发布</button>
         </div>
       </div>
+
+      {statusMsg && (
+        <div style={{
+          padding: '8px 20px',
+          fontSize: '0.8rem',
+          background: 'rgba(88, 166, 255, 0.08)',
+          borderBottom: '1px solid var(--border)',
+          color: 'var(--text)',
+        }}>
+          {statusMsg}
+        </div>
+      )}
 
       <div className="editor-body">
         <FormatSidebar
@@ -182,7 +245,8 @@ export default function Editor() {
             />
             <PreviewPanel
               visual={activeVisual}
-              ttsText={activeTtsText}
+              ttsText={activeTts?.text ?? null}
+              ttsAsset={activeTts?.asset ?? null}
               onRegenerate={handleRegenerate}
             />
           </>
@@ -198,10 +262,22 @@ export default function Editor() {
               onClick={() => confirmMut.mutate()}
               disabled={confirmMut.isPending}
             >
-              全部确认
+              {confirmMut.isPending ? '确认中...' : '全部确认'}
             </button>
-            <button className="btn btn-sm">导出剪映</button>
-            <button className="btn btn-sm btn-primary">生成视频</button>
+            <button
+              className="btn btn-sm"
+              onClick={() => exportMut.mutate()}
+              disabled={exportMut.isPending}
+            >
+              {exportMut.isPending ? '导出中...' : '导出剪映'}
+            </button>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => renderMut.mutate()}
+              disabled={renderMut.isPending}
+            >
+              {renderMut.isPending ? '生成中...' : '生成视频'}
+            </button>
           </div>
         </div>
       )}
