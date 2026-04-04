@@ -1,42 +1,48 @@
 import { Routes, Route, NavLink } from 'react-router-dom';
-import Dashboard from './pages/Dashboard';
-import Workflows from './pages/Workflows';
-import Contents from './pages/Contents';
-import Research from './pages/Research';
-import AssetPanel from './pages/AssetPanel';
+import Discover from './pages/Discover';
+import ContentBoard from './pages/ContentBoard';
+import Editor from './pages/Editor';
+import Publish from './pages/Publish';
+import Settings from './pages/Settings';
+import CommandPalette from './components/CommandPalette';
 
 const navItems = [
-  { to: '/', label: '仪表盘' },
-  { to: '/workflows', label: '工作流' },
-  { to: '/contents', label: '内容管理' },
-  { to: '/research', label: '选题研究' },
+  { to: '/', label: '发现' },
+  { to: '/content', label: '内容' },
+  { to: '/publish', label: '发布' },
 ];
 
 export default function App() {
   return (
-    <div className="layout">
-      <aside className="sidebar">
-        <div className="sidebar-brand">AutoCrew</div>
-        <nav>
+    <div className="app">
+      <header className="topbar">
+        <span className="topbar-brand">AutoCrew</span>
+        <nav className="topbar-nav">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === '/'}
-              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+              className={({ isActive }) => `topbar-link${isActive ? ' active' : ''}`}
             >
               {item.label}
             </NavLink>
           ))}
         </nav>
-      </aside>
-      <main className="main-content">
+        <div className="topbar-right">
+          <CommandPalette />
+          <NavLink to="/settings" className={({ isActive }) => `topbar-link${isActive ? ' active' : ''}`}>
+            设置
+          </NavLink>
+        </div>
+      </header>
+      <main className="app-main">
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/workflows" element={<Workflows />} />
-          <Route path="/contents" element={<Contents />} />
-          <Route path="/research" element={<Research />} />
-          <Route path="/contents/:contentId/assets" element={<AssetPanel />} />
+          <Route path="/" element={<Discover />} />
+          <Route path="/content" element={<ContentBoard />} />
+          <Route path="/content/:contentId" element={<Editor />} />
+          <Route path="/publish" element={<Publish />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
     </div>
