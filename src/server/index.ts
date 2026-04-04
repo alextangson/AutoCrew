@@ -87,6 +87,79 @@ export function createApp(deps: ServerDeps): Hono {
     }
   });
 
+  // --- Timeline API ---
+  app.get("/api/contents/:id/timeline", async (c) => {
+    try {
+      const result = await runner.execute("autocrew_timeline", {
+        action: "get",
+        content_id: c.req.param("id"),
+      });
+      if (!result.ok) return c.json(result, 404);
+      return c.json(result);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
+  app.post("/api/contents/:id/timeline", async (c) => {
+    try {
+      const body = await c.req.json();
+      const result = await runner.execute("autocrew_timeline", {
+        action: "generate",
+        content_id: c.req.param("id"),
+        preset: body.preset || "knowledge-explainer",
+        aspect_ratio: body.aspectRatio || "9:16",
+      });
+      return c.json(result);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
+  app.patch("/api/contents/:id/timeline/segments/:segId", async (c) => {
+    try {
+      const body = await c.req.json();
+      const result = await runner.execute("autocrew_timeline", {
+        action: "update_segment",
+        content_id: c.req.param("id"),
+        segment_id: c.req.param("segId"),
+        status: body.status,
+        asset_path: body.assetPath,
+      });
+      if (!result.ok) return c.json(result, 400);
+      return c.json(result);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
+  app.post("/api/contents/:id/timeline/confirm-all", async (c) => {
+    try {
+      const result = await runner.execute("autocrew_timeline", {
+        action: "confirm_all",
+        content_id: c.req.param("id"),
+      });
+      return c.json(result);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
+  // --- Card Preview ---
+  app.get("/api/cards/preview", async (c) => {
+    try {
+      const template = c.req.query("template");
+      const data = JSON.parse(c.req.query("data") || "{}");
+      const aspectRatio = c.req.query("aspectRatio") || "9:16";
+
+      const { renderCard } = await import("../modules/cards/template-engine.js");
+      const html = renderCard(template as any, data, { aspectRatio: aspectRatio as any });
+      return c.html(html);
+    } catch (err) {
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
   app.get("/api/topics", async (c) => {
     try {
       const result = await runner.execute("autocrew_topic", { action: "list" });
