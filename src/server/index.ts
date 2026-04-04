@@ -146,14 +146,49 @@ export function createApp(deps: ServerDeps): Hono {
   });
 
   // --- Card Preview ---
-  app.get("/api/cards/preview", async (c) => {
-    try {
-      const template = c.req.query("template");
-      const data = JSON.parse(c.req.query("data") || "{}");
-      const aspectRatio = c.req.query("aspectRatio") || "9:16";
+  const VALID_CARD_TEMPLATES = new Set([
+    "comparison-table",
+    "key-points",
+    "flow-chart",
+    "data-chart",
+  ]);
+  const VALID_ASPECT_RATIOS = new Set(["9:16", "16:9", "3:4", "1:1", "4:3"]);
 
+  app.get("/api/cards/preview", async (c) => {
+    const template = c.req.query("template");
+    if (!template || !VALID_CARD_TEMPLATES.has(template)) {
+      return c.json(
+        {
+          ok: false,
+          error: `Invalid template. Must be one of: ${[...VALID_CARD_TEMPLATES].join(", ")}`,
+        },
+        400,
+      );
+    }
+
+    const aspectRatio = c.req.query("aspectRatio") || "9:16";
+    if (!VALID_ASPECT_RATIOS.has(aspectRatio)) {
+      return c.json(
+        {
+          ok: false,
+          error: `Invalid aspectRatio. Must be one of: ${[...VALID_ASPECT_RATIOS].join(", ")}`,
+        },
+        400,
+      );
+    }
+
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(c.req.query("data") || "{}");
+    } catch {
+      return c.json({ ok: false, error: "Invalid JSON in data parameter" }, 400);
+    }
+
+    try {
       const { renderCard } = await import("../modules/cards/template-engine.js");
-      const html = renderCard(template as any, data, { aspectRatio: aspectRatio as any });
+      const html = renderCard(template as any, data, {
+        aspectRatio: aspectRatio as any,
+      });
       return c.html(html);
     } catch (err) {
       return c.json({ ok: false, error: String(err) }, 500);

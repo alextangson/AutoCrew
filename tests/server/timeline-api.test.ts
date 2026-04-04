@@ -212,7 +212,7 @@ describe("Card Preview API route", () => {
     });
 
     const res = await app.request(`/api/cards/preview?${params}`);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
 
     const body = await res.json();
     expect(body.ok).toBe(false);

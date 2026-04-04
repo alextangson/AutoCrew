@@ -17,19 +17,35 @@ import type { AspectRatio, Timeline } from "../../src/types/timeline.js";
 
 function makeTimeline(): Timeline {
   return {
-    id: "tl-1",
-    name: "Test Timeline",
-    duration: 30,
+    version: "2.0",
+    contentId: "test-123",
+    preset: "knowledge-explainer",
     aspectRatio: "16:9",
-    tracks: [
-      {
-        id: "track-1",
-        type: "video",
-        clips: [
-          { id: "clip-1", type: "video", start: 0, duration: 10, assetId: "a1" },
-        ],
-      },
-    ],
+    subtitle: { template: "modern-outline", position: "bottom" },
+    tracks: {
+      tts: [
+        {
+          id: "tts-001",
+          text: "Test segment",
+          estimatedDuration: 3.0,
+          start: 0,
+          asset: null,
+          status: "confirmed",
+        },
+      ],
+      visual: [
+        {
+          id: "vis-001",
+          layer: 0,
+          type: "broll",
+          prompt: "test visual",
+          linkedTts: ["tts-001"],
+          asset: "/tmp/test.mp4",
+          status: "confirmed",
+        },
+      ],
+      subtitle: { asset: null, status: "pending" },
+    },
   };
 }
 
@@ -161,9 +177,13 @@ describe("CompositorProvider", () => {
     return {
       name: "mock-compositor",
       async compose(timeline: Timeline, assets: AssetMap): Promise<VideoFile> {
+        const totalDuration = timeline.tracks.tts.reduce(
+          (sum, s) => sum + s.estimatedDuration,
+          0,
+        );
         return {
-          path: `/tmp/output-${timeline.id}.mp4`,
-          duration: timeline.duration,
+          path: `/tmp/output-${timeline.contentId}.mp4`,
+          duration: totalDuration,
           format: "mp4",
         };
       },
@@ -173,7 +193,7 @@ describe("CompositorProvider", () => {
         format: ExportFormat,
       ): Promise<ProjectFile> {
         return {
-          path: `/tmp/project-${timeline.id}.${format}`,
+          path: `/tmp/project-${timeline.contentId}.${format}`,
           format,
         };
       },
@@ -190,8 +210,8 @@ describe("CompositorProvider", () => {
 
     const result = await compositor.compose(timeline, assets);
 
-    expect(result.path).toContain("tl-1");
-    expect(result.duration).toBe(30);
+    expect(result.path).toContain("test-123");
+    expect(result.duration).toBe(3);
     expect(result.format).toBe("mp4");
   });
 

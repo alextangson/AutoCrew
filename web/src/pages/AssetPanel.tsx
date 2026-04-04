@@ -21,38 +21,42 @@ interface VisualSegment {
   status: string;
   asset: string | null;
   opacity?: number;
+  linkedTts: string[];
 }
 
-interface Segment {
-  tts: TtsSegment;
-  visual?: VisualSegment;
+interface TimelineTracks {
+  tts: TtsSegment[];
+  visual: VisualSegment[];
+  subtitle: { asset: string | null; status: string };
 }
 
 interface Timeline {
-  preset?: string;
-  aspectRatio?: string;
-  segments?: Segment[];
+  version: string;
+  contentId: string;
+  preset: string;
+  aspectRatio: string;
+  tracks: TimelineTracks;
 }
 
 const PRESETS = [
-  { value: 'talking-head', label: 'Talking Head' },
-  { value: 'cinematic', label: 'Cinematic B-Roll' },
-  { value: 'card-overlay', label: 'Card Overlay' },
-  { value: 'mixed', label: 'Mixed' },
+  { value: 'knowledge-explainer', label: '知识讲解' },
+  { value: 'tutorial', label: '教程' },
 ];
 
 const ASPECT_RATIOS = [
-  { value: '9:16', label: '9:16 (竖屏)' },
-  { value: '16:9', label: '16:9 (横屏)' },
-  { value: '1:1', label: '1:1 (方形)' },
+  { value: '9:16', label: '9:16 竖屏 (抖音/快手)' },
+  { value: '16:9', label: '16:9 横屏 (B站/YouTube)' },
+  { value: '3:4', label: '3:4 小红书' },
+  { value: '1:1', label: '1:1 正方形 (朋友圈)' },
+  { value: '4:3', label: '4:3 视频号' },
 ];
 
 export default function AssetPanel() {
   const { contentId } = useParams<{ contentId: string }>();
   const queryClient = useQueryClient();
 
-  const [activeSegmentIndex, setActiveSegmentIndex] = useState<number>(0);
-  const [preset, setPreset] = useState('mixed');
+  const [activeTtsId, setActiveTtsId] = useState<string | null>(null);
+  const [preset, setPreset] = useState('knowledge-explainer');
   const [aspectRatio, setAspectRatio] = useState('9:16');
 
   const { data, isLoading, isError, error } = useQuery({
@@ -63,7 +67,7 @@ export default function AssetPanel() {
   });
 
   const timeline: Timeline | null = data?.timeline ?? null;
-  const hasTimeline = timeline && Array.isArray(timeline.segments) && timeline.segments.length > 0;
+  const hasTimeline = timeline && timeline.tracks && timeline.tracks.tts.length > 0;
 
   const generateMut = useMutation({
     mutationFn: () => generateTimeline(contentId!, preset, aspectRatio),
@@ -81,6 +85,10 @@ export default function AssetPanel() {
 
   if (!contentId) {
     return <div style={{ padding: '24px' }}>缺少内容 ID</div>;
+  }
+
+  function findVisualForTts(ttsId: string): VisualSegment | undefined {
+    return timeline?.tracks.visual.find((v) => v.linkedTts.includes(ttsId));
   }
 
   // Styles
@@ -139,7 +147,7 @@ export default function AssetPanel() {
     fontWeight: 500,
   };
 
-  // No timeline state — show generate form
+  // No timeline — show generate form
   if (!hasTimeline && !isLoading) {
     const formStyle: React.CSSProperties = {
       maxWidth: '400px',
@@ -150,9 +158,7 @@ export default function AssetPanel() {
       backgroundColor: '#fff',
     };
 
-    const fieldStyle: React.CSSProperties = {
-      marginBottom: '16px',
-    };
+    const fieldStyle: React.CSSProperties = { marginBottom: '16px' };
 
     const labelStyle: React.CSSProperties = {
       display: 'block',
@@ -192,7 +198,7 @@ export default function AssetPanel() {
           </div>
         )}
         <div style={formStyle}>
-          <h3 style={{ margin: '0 0 20px', fontSize: '16px' }}>生成视频时间线</h3>
+          <h3 style={{ margin: '0 0 20px', fontSize: '16px' }}>生成视频时间轴</h3>
           <div style={fieldStyle}>
             <label style={labelStyle}>预设风格</label>
             <select style={selectStyle} value={preset} onChange={(e) => setPreset(e.target.value)}>
@@ -214,14 +220,13 @@ export default function AssetPanel() {
             onClick={() => generateMut.mutate()}
             disabled={generateMut.isPending}
           >
-            {generateMut.isPending ? '生成中...' : '生成时间线'}
+            {generateMut.isPending ? '生成中...' : '生成时间轴'}
           </button>
         </div>
       </div>
     );
   }
 
-  // Loading state
   if (isLoading) {
     return (
       <div style={{ padding: '24px' }}>
@@ -232,20 +237,19 @@ export default function AssetPanel() {
   }
 
   // Timeline loaded — split view
-  const segments: Segment[] = timeline?.segments ?? [];
-  const activeSegment = segments[activeSegmentIndex] ?? null;
-
-  const totalDuration = segments.reduce((sum, s) => sum + (s.tts?.estimatedDuration ?? 0), 0);
+  const ttsSegments = timeline!.tracks.tts;
+  const activeVisual = activeTtsId ? findVisualForTts(activeTtsId) : undefined;
+  const totalDuration = ttsSegments.reduce((sum, s) => sum + s.estimatedDuration, 0);
 
   return (
     <div style={pageStyle}>
       <div style={topBarStyle}>
         <div>
-          <strong>预设:</strong> {timeline?.preset || '-'}
+          <strong>预设:</strong> {timeline!.preset}
           {' | '}
-          <strong>比例:</strong> {timeline?.aspectRatio || '-'}
+          <strong>比例:</strong> {timeline!.aspectRatio}
           {' | '}
-          <strong>段落:</strong> {segments.length}
+          <strong>段落:</strong> {ttsSegments.length}
           {' | '}
           <strong>总时长:</strong> {totalDuration.toFixed(1)}s
         </div>
@@ -253,20 +257,20 @@ export default function AssetPanel() {
 
       <div style={splitStyle}>
         <div style={leftPanelStyle}>
-          {segments.map((seg, i) => (
+          {ttsSegments.map((tts) => (
             <SegmentCard
-              key={seg.tts.id}
-              tts={seg.tts}
-              visual={seg.visual}
-              isActive={i === activeSegmentIndex}
-              onClick={() => setActiveSegmentIndex(i)}
+              key={tts.id}
+              tts={tts}
+              visual={findVisualForTts(tts.id)}
+              isActive={activeTtsId === tts.id}
+              onClick={() => setActiveTtsId(tts.id)}
             />
           ))}
         </div>
         <div style={rightPanelStyle}>
           <VisualPreview
             contentId={contentId}
-            visual={activeSegment?.visual ?? null}
+            visual={activeVisual ?? null}
             onRefresh={handleRefresh}
           />
         </div>
