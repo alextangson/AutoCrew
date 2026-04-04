@@ -1,13 +1,20 @@
 {
   "name": "autocrew",
   "version": "0.1.0",
-  "description": "AI content operations crew — automated research, writing, and publishing pipeline for Chinese social media.",
+  "description": "One-person content studio powered by AI — from trending topics to published posts",
   "type": "module",
   "license": "MIT",
   "author": "alextangson",
   "repository": {
     "type": "git",
     "url": "https://github.com/alextangson/AutoCrew.git"
+  },
+  "homepage": "https://github.com/alextangson/AutoCrew#readme",
+  "bugs": {
+    "url": "https://github.com/alextangson/AutoCrew/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "workspaces": [
     "packages/*"
@@ -21,17 +28,24 @@
     "adapters/",
     "skills/",
     "templates/",
+    "LICENSE",
+    "README.md",
+    "README_CN.md",
     "HAMLETDEER.md",
     "openclaw.plugin.json"
   ],
   "keywords": [
     "cli",
     "ai-agent",
+    "content-creation",
     "content-ops",
     "automation",
+    "social-media",
+    "xiaohongshu",
+    "douyin",
     "chinese-social-media",
+    "ai-writing",
     "claude-code",
-    "openclaw",
     "mcp"
   ],
   "dependencies": {

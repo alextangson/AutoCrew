@@ -5,6 +5,17 @@
   "type": "module",
   "license": "MIT",
   "main": "src/index.ts",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alextangson/AutoCrew.git",
+    "directory": "packages/studio"
+  },
   "dependencies": {
     "fluent-ffmpeg": "^2.1.3",
     "puppeteer": "^24.0.0"
