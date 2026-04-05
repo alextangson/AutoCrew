@@ -158,15 +158,26 @@ export async function saveProfile(profile: CreatorProfile, dataDir?: string): Pr
 }
 
 /**
- * Initialize a new empty profile. No-op if one already exists.
+ * Initialize a new empty profile. No-op if the file already exists on disk.
  * Returns the profile (existing or newly created).
+ *
+ * IMPORTANT: We check file existence, not parsability. If the file exists but
+ * can't be parsed, we return an empty in-memory profile but do NOT overwrite
+ * the file — protecting user data from being clobbered by a re-init.
  */
 export async function initProfile(dataDir?: string): Promise<CreatorProfile> {
-  const existing = await loadProfile(dataDir);
-  if (existing) return existing;
-  const profile = emptyProfile();
-  await saveProfile(profile, dataDir);
-  return profile;
+  const filePath = path.join(getDataDir(dataDir), PROFILE_FILE);
+  try {
+    await fs.access(filePath);
+    // File exists — try to load it, but never overwrite
+    const existing = await loadProfile(dataDir);
+    return existing ?? emptyProfile();
+  } catch {
+    // File does not exist — safe to create
+    const profile = emptyProfile();
+    await saveProfile(profile, dataDir);
+    return profile;
+  }
 }
 
 /**
