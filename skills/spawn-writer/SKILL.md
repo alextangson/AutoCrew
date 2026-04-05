@@ -38,7 +38,9 @@ description: |
    IF user adjusts → update parameters.
 
 4. Execute the write-script workflow:
-   - Follow all steps in the `write-script` skill
+   - Follow all steps in the `write-script` skill **including Step 5.5 (research → references)**.
+     Do not skip research for "simple" topics — the references folder must have ≥3 relevant
+     source files before writing begins. A draft without references is a bug.
    - Save the result using `autocrew_content` tool
    - Link to topic_id if available
 
@@ -47,6 +49,14 @@ description: |
    > 1. 直接用 — 我帮你标记为待发布
    > 2. 改一改 — 告诉我哪里要调整
    > 3. 重写 — 换个角度再来一版
+
+6. **Handle revisions via `write-script` Step 11.**
+   If the user picks option 2 or 3, or gives any revision feedback in the same conversation,
+   you MUST follow `write-script` Step 11 — rewrite the full body and persist it via
+   `autocrew_content` with `action: "update"` (passing the original `content_id` and a
+   `diff_note`). Revisions that only appear in the chat window are a bug: the `draft.md`
+   in the pipeline must always reflect the latest version. Keep the `content_id` from
+   Step 4's save result in working memory for this purpose.
 
 ## Error Handling
 

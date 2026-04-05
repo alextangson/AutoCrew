@@ -47,6 +47,88 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
 
    Search `~/.autocrew/data/pipeline/intel/_teardowns/` for teardown reports related to this topic. If found, use them as reference for what works in this space.
 
+5.5. **⚠️ MANDATORY — Topic-specific research → populate `references/` BEFORE writing:**
+
+   **Why this exists:** Writing from LLM memory alone produces generic, unverifiable content
+   indistinguishable from a random chat response. Every claim, case study, name, and data
+   point in a draft must trace back to a real source. This step is non-negotiable.
+
+   **Step-by-step:**
+
+   a. Compute the project slug early: `projectSlug = slugify(topic_title)`.
+      References will live at `~/.autocrew/data/pipeline/drafting/{projectSlug}/references/`.
+      mkdir it if needed (the save step will reuse the same dir).
+
+   b. **Query the existing intel library first** (fast, free):
+      ```json
+      { "action": "list" }
+      ```
+      via `autocrew_intel`. Scan the returned items for any whose title/summary matches
+      this topic's keywords or angle. If 3+ strong matches exist, you may skip step (c).
+
+   c. **Pull fresh intel targeted at this topic** (only if the library is thin):
+      ```json
+      { "action": "pull", "keywords": ["<keyword 1>", "<keyword 2>", "<keyword 3>"] }
+      ```
+      Derive 3-5 keywords from the topic title/angle — specific phrases, not generic.
+      Example: topic "vibe-coding 重新定义能力边界" → keywords like
+      `["vibe-coding 案例", "非程序员 AI 工具 产品", "Cursor 文科生", "GitHub 趋势 独立开发者"]`.
+      Avoid over-broad terms like "AI" alone.
+
+   d. If `web_search` is available, run 2-4 additional targeted queries to find primary
+      sources the intel collectors missed: news articles, product pages, creator interviews,
+      concrete numbers. Prefer named examples over anonymous anecdotes.
+
+   e. **Write each source as a reference file** into the project's `references/` folder.
+      Use the `Write` tool. Filename: `{short-slug}.md`. Format (strict):
+      ```markdown
+      ---
+      source: <url or intel ref>
+      title: <original title>
+      collected: <ISO timestamp>
+      relevance: <1-10, how directly this informs the draft>
+      ---
+
+      ## 要点
+      - <3-6 bullet points of the most useful facts/quotes/data>
+
+      ## 可引用
+      - <specific sentences, names, numbers you might cite verbatim>
+
+      ## 角度
+      - <what angle of the topic this source unlocks>
+      ```
+
+   f. **Minimum bar to proceed — both quantity AND angle coverage:**
+
+      **Quantity:** at least **6 reference files** with `relevance ≥ 6`. Fewer than 6
+      means you'll run out of fresh material by the middle of the draft and fall back to
+      LLM-memory filler.
+
+      **Angle coverage (all 4 categories must have ≥1 reference):**
+      1. **具体案例/人物** — named individual or company with a traceable story
+         (e.g., "腾讯文科生用 Cursor 3 个月做了约饭小程序")
+      2. **数据/数字** — concrete numbers from a report, dashboard, or study
+         (not "很多人", but "2000+ 员工在用" / "3000 万投资" / "涨薪 30%")
+      3. **反面/争议观点** — a dissenting view, failure case, or counter-evidence
+         (prevents the draft from becoming one-sided cheerleading)
+      4. **趋势/背景** — market context, timeline, or "why now" signal
+         (answers why this topic is worth writing about today, not last year)
+
+      Think of it as 2+2+1+1 = 6 minimum. More is better. Duplicates in the same
+      category do NOT count toward the other categories.
+
+      If you cannot hit BOTH bars (6+ total AND all 4 angles covered), stop and tell
+      the user honestly:
+      > 我目前找到 N 条相关信息源，覆盖角度：{已覆盖的角度}。缺少：{缺失的角度}。
+      > 不够支撑一篇有分量的文案。要不要我再调研一轮、换个切入角度、还是你直接补充几个你知道的案例？
+
+      Do NOT proceed to writing on thin research. "写出来再说" is the failure mode
+      this step exists to prevent.
+
+   g. Record the reference filenames in working memory — Step 6 will cite them, and
+      Step 8 will record them in `meta.yaml` via the save params.
+
 6. **Write the script:**
 
    a. **Hook** — pick the ONE strongest type for this topic:
@@ -67,6 +149,10 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
    - Write like you're talking to ONE person sitting across from you, not lecturing to a crowd.
    - Vary sentence length deliberately: 3-4 short sentences, then one longer one. Then a one-word sentence. "真的。"
    - Each claim needs: why it's true + concrete example (named, specific, verifiable when possible).
+   - **Ground every factual claim in a reference file** from Step 5.5. If you cite a company,
+     number, name, or case study, it MUST come from one of the `references/*.md` files you
+     collected — not from LLM memory. If a claim has no reference backing, either find one
+     now or cut the claim. "我编的例子" is a bug, not a feature.
    - Total body: 800-1500 characters (text) or platform-specific limit.
 
    **Anti-patterns (NEVER do these):**
@@ -138,6 +224,12 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
 7. **Self-review before saving** (fix any failure, don't just check):
    - [ ] 800+ characters total?
    - [ ] Contains at least 2 concrete examples or scenarios (not vague claims)?
+   - [ ] **Every named entity/number/case in the draft traces back to a file in `references/`?**
+   - [ ] **Reference angle coverage used in the draft** — the draft actually cites at least
+         one reference from EACH of the 4 angle categories collected in Step 5.5.f
+         (具体案例/人物, 数据/数字, 反面/争议观点, 趋势/背景). Collecting 6 references but
+         only drawing from the "案例" bucket produces a single-sided draft — fix by
+         weaving in at least one sentence grounded in each missing bucket.
    - [ ] Has a non-obvious insight or twist?
    - [ ] Tone matches STYLE.md profile (if available)?
    - [ ] No generic greetings, no essay-style paragraphs?
@@ -196,7 +288,52 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
     Then:
     > 要修改的话直接说，或者确认后我帮你标记为待发布。
 
-11. **If adaptation is needed:**
+    **⚠️ IMPORTANT — Remember the `content_id` from the save result.** You will need it
+    for any subsequent revision in this conversation.
+
+11. **Handling revisions (MANDATORY — 不可只在聊天框里改):**
+
+    When the user requests modifications to a saved draft ("改一改", "换个角度", "这里调整一下",
+    "第二段重写", etc.), you MUST persist the revised content back to the pipeline. Never show
+    a rewritten version in chat only — the draft file must stay in sync.
+
+    Steps for every revision:
+
+    a. Rewrite the full body (or title) incorporating the user's feedback. Re-check against
+       the Step 7 self-review list — a revision is still a draft, same standards apply.
+
+    b. Call `autocrew_content` with `action: "update"`:
+       ```json
+       {
+         "action": "update",
+         "id": "<content-id from the original save>",
+         "title": "<updated title if changed, else original>",
+         "body": "<full revised body — not a diff, the complete new text>",
+         "diff_note": "<one-line summary of what changed and why, e.g. '换成悬念式开头，加 vibe-coding 具体案例'>"
+       }
+       ```
+       The storage layer will archive the previous `draft.md` into an immutable
+       `draft-v{N}.md` snapshot, then replace `draft.md` with your new body, and append
+       the snapshot entry to `meta.yaml` → `versions`. After this:
+       - `draft.md` always holds the newest revision
+       - `draft-v1.md`, `draft-v2.md`, ... are frozen historical states (never modified)
+
+    b.5. **If the user's revision changes the angle or adds new claims** (new companies,
+         new data, new cases), go back to Step 5.5 and add more reference files BEFORE
+         rewriting. New claims still need backing. Don't smuggle new unverified material in
+         under the label "minor tweak".
+
+    c. Confirm to the user that the new version is saved, and show the updated content.
+       Example:
+       > 已更新到 v2（`~/.autocrew/data/pipeline/drafting/{project}/draft.md`）。改动：{diff_note}
+
+    d. If the revision is substantial (new angle, new hook, new structure), re-run
+       `full_review` from Step 9 on the updated content before confirming.
+
+    **Never do:** paste the revised content in chat without calling `update`. If you catch
+    yourself about to show "这是修改后的版本..." without a tool call, stop and save first.
+
+12. **If adaptation is needed:**
     - Do not just trim one draft for another platform.
     - Use `platform-rewrite` / `autocrew_rewrite` to create the first platform-native version.
 
