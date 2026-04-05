@@ -112,12 +112,13 @@ describe("Pipeline Integration — full flow", () => {
 
     const files = await fs.readdir(projectDir);
     expect(files).toContain("meta.yaml");
-    expect(files).toContain("draft-v1.md");
     expect(files).toContain("draft.md");
+    // No draft-v*.md exists on initial create — only after revisions replace draft.md
+    expect(files.filter((f) => f.startsWith("draft-v"))).toHaveLength(0);
 
     const projectName = slugify("高分选题");
 
-    // 5. Add draft version → meta.yaml updated with v2
+    // 5. Add draft version → original content archived to draft-v1.md, draft.md updated
     await addDraftVersion(
       projectName,
       "# 高分选题\n\n第二版内容",
@@ -127,9 +128,10 @@ describe("Pipeline Integration — full flow", () => {
 
     let meta = await getProjectMeta(projectName, testDir);
     expect(meta).not.toBeNull();
-    expect(meta!.versions.length).toBe(2);
-    expect(meta!.current).toBe("draft-v2.md");
-    expect(meta!.versions[1].note).toBe("improved draft");
+    expect(meta!.versions.length).toBe(1);
+    expect(meta!.versions[0].file).toBe("draft-v1.md");
+    expect(meta!.current).toBe("draft.md");
+    expect(meta!.versions[0].note).toBe("improved draft");
 
     // 6. Advance: drafting → production → published
     await advanceProject(projectName, testDir);
@@ -183,8 +185,8 @@ describe("Pipeline Integration — trash and restore", () => {
     // Verify state is preserved
     const meta = await getProjectMeta(projectName, testDir);
     expect(meta).not.toBeNull();
-    expect(meta!.versions.length).toBe(2);
-    expect(meta!.current).toBe("draft-v2.md");
+    expect(meta!.versions.length).toBe(1);
+    expect(meta!.current).toBe("draft.md");
     expect(meta!.title).toBe("回收还原测试");
 
     // History should show: drafting → trash → drafting

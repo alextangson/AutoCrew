@@ -205,6 +205,9 @@ export async function executeContentSave(params: Record<string, unknown>) {
   await fs.mkdir(path.join(projectDir, "references"), { recursive: true });
 
   const now = new Date().toISOString();
+  // Semantics: draft.md = live current working file (always latest),
+  // draft-v{N}.md = immutable snapshots of content that has been REPLACED by a revision.
+  // On initial save there are no snapshots yet — only draft.md exists.
   const meta: ProjectMeta = {
     title,
     domain: "",
@@ -212,8 +215,8 @@ export async function executeContentSave(params: Record<string, unknown>) {
     createdAt: now,
     sourceTopic: "",
     intelRefs: [],
-    versions: [{ file: "draft-v1.md", createdAt: now, note: "initial draft" }],
-    current: "draft-v1.md",
+    versions: [],
+    current: "draft.md",
     history: [{ stage: "drafting", entered: now }],
     platforms: platform ? [{ format: platform, status: "drafting" }] : [],
     hypothesis: (params.hypothesis as string) || undefined,
@@ -229,13 +232,8 @@ export async function executeContentSave(params: Record<string, unknown>) {
     "utf-8",
   );
   await fs.writeFile(
-    path.join(projectDir, "draft-v1.md"),
-    body,
-    "utf-8",
-  );
-  await fs.writeFile(
     path.join(projectDir, "draft.md"),
-    `# ${title}\n\n${body}\n`,
+    body,
     "utf-8",
   );
 
@@ -264,9 +262,9 @@ export async function executeContentSave(params: Record<string, unknown>) {
     openCommand: `open "${projectDir}"`,
     message: [
       `📄 内容已保存到 pipeline：`,
-      `   草稿：${projectDir}/draft.md`,
+      `   草稿：${projectDir}/draft.md (当前活动文件)`,
       `   元数据：${projectDir}/meta.yaml`,
-      `   版本：${projectDir}/draft-v1.md`,
+      `   历史快照：修改后会在 ${projectDir}/draft-v{N}.md 生成`,
       `   自动去AI味：${humanizeResult?.ok ? "✅ 已处理" : "⚠️ 跳过"}`,
       ``,
       `打开文件夹：open "${projectDir}"`,

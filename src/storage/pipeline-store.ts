@@ -550,6 +550,9 @@ export async function startProject(
 
   const now = new Date().toISOString();
 
+  // Semantics: draft.md = live current working file (always latest),
+  // draft-v{N}.md = immutable snapshots of content that has been REPLACED by a revision.
+  // On initial create there are no snapshots yet — only draft.md exists.
   const meta: ProjectMeta = {
     title: topic.title,
     domain: topic.domain,
@@ -557,18 +560,13 @@ export async function startProject(
     createdAt: now,
     sourceTopic: topicFile,
     intelRefs: topic.intelRefs,
-    versions: [{ file: "draft-v1.md", createdAt: now, note: "initial draft" }],
-    current: "draft-v1.md",
+    versions: [],
+    current: "draft.md",
     history: [{ stage: "drafting", entered: now }],
     platforms: [],
   };
 
   await writeMeta(projectDir, meta);
-  await fs.writeFile(
-    path.join(projectDir, "draft-v1.md"),
-    `# ${topic.title}\n\n`,
-    "utf-8",
-  );
   await fs.writeFile(
     path.join(projectDir, "draft.md"),
     `# ${topic.title}\n\n`,
@@ -617,22 +615,42 @@ export async function addDraftVersion(
   if (!found) throw new Error(`Project not found: ${name}`);
 
   const meta = await readMeta(found.dir);
+  const draftPath = path.join(found.dir, "draft.md");
+
+  // Archive the PREVIOUS live draft.md into an immutable snapshot
+  // before overwriting it with the new revision. This is the core invariant:
+  //   draft.md       = always the latest live working file
+  //   draft-v{N}.md  = frozen historical states that have been replaced
+  let oldContent = "";
+  try {
+    oldContent = await fs.readFile(draftPath, "utf-8");
+  } catch {
+    // No previous draft.md — treat as empty. Shouldn't happen in normal flow.
+  }
+
   const versionNum = meta.versions.length + 1;
-  const filename = `draft-v${versionNum}.md`;
+  const archiveFilename = `draft-v${versionNum}.md`;
 
-  await fs.writeFile(path.join(found.dir, filename), content, "utf-8");
-  // Update draft.md to latest content
-  await fs.writeFile(path.join(found.dir, "draft.md"), content, "utf-8");
+  // Snapshot the OLD content (only if there is old content to preserve)
+  if (oldContent.length > 0) {
+    await fs.writeFile(
+      path.join(found.dir, archiveFilename),
+      oldContent,
+      "utf-8",
+    );
+    meta.versions.push({
+      file: archiveFilename,
+      createdAt: new Date().toISOString(),
+      note,
+    });
+  }
 
-  meta.versions.push({
-    file: filename,
-    createdAt: new Date().toISOString(),
-    note,
-  });
-  meta.current = filename;
+  // Write the new content as the live draft
+  await fs.writeFile(draftPath, content, "utf-8");
+  meta.current = "draft.md";
   await writeMeta(found.dir, meta);
 
-  return path.join(found.dir, filename);
+  return draftPath;
 }
 
 export async function trashProject(

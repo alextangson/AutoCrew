@@ -291,12 +291,13 @@ describe("Project Lifecycle", () => {
     const topics = await listTopics(undefined, testDir);
     expect(topics.length).toBe(0);
 
-    // Project dir should contain meta.yaml, draft-v1.md, draft.md, references/
+    // Project dir should contain meta.yaml, draft.md (live), references/.
+    // No draft-v*.md exists yet — snapshots are created only when revisions replace draft.md.
     const files = await fs.readdir(projectDir);
     expect(files).toContain("meta.yaml");
-    expect(files).toContain("draft-v1.md");
     expect(files).toContain("draft.md");
     expect(files).toContain("references");
+    expect(files.filter((f) => f.startsWith("draft-v"))).toHaveLength(0);
   });
 
   it("advances project from drafting to production", async () => {
@@ -318,19 +319,37 @@ describe("Project Lifecycle", () => {
     await startProject("版本测试", testDir);
 
     const projectName = slugify("版本测试");
+    const projectDir = path.join(stagePath("drafting", testDir), projectName);
+
+    // Capture the initial live content before revising
+    const fsp = await import("node:fs/promises");
+    const originalContent = await fsp.readFile(
+      path.join(projectDir, "draft.md"),
+      "utf-8",
+    );
+
     await addDraftVersion(projectName, "# V2 内容", "second draft", testDir);
 
     const meta = await getProjectMeta(projectName, testDir);
-    expect(meta!.versions.length).toBe(2);
-    expect(meta!.current).toBe("draft-v2.md");
+    // One snapshot should have been created (archiving the original)
+    expect(meta!.versions.length).toBe(1);
+    expect(meta!.versions[0].file).toBe("draft-v1.md");
+    expect(meta!.versions[0].note).toBe("second draft");
+    expect(meta!.current).toBe("draft.md");
 
-    const found = await import("node:fs/promises").then((f) =>
-      f.readFile(
-        path.join(stagePath("drafting", testDir), projectName, "draft.md"),
-        "utf-8",
-      ),
+    // draft.md is now the new content
+    const liveContent = await fsp.readFile(
+      path.join(projectDir, "draft.md"),
+      "utf-8",
     );
-    expect(found).toBe("# V2 内容");
+    expect(liveContent).toBe("# V2 内容");
+
+    // draft-v1.md holds the frozen original
+    const archivedContent = await fsp.readFile(
+      path.join(projectDir, "draft-v1.md"),
+      "utf-8",
+    );
+    expect(archivedContent).toBe(originalContent);
   });
 
   it("trashes and restores project", async () => {
