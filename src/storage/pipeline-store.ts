@@ -421,21 +421,33 @@ export async function regenerateWikiIndex(
   dataDir?: string,
 ): Promise<void> {
   const pages = await listWikiPages(dataDir);
-  const grouped: Record<string, WikiPage[]> = {};
+  const grouped: Record<string, WikiPage[]> = { entity: [], concept: [], comparison: [] };
   for (const page of pages) {
-    if (!grouped[page.type]) grouped[page.type] = [];
-    grouped[page.type].push(page);
+    (grouped[page.type] ??= []).push(page);
   }
-  let md = "# Wiki Index\n\n";
-  for (const [type, items] of Object.entries(grouped).sort()) {
-    md += `## ${type}\n\n`;
-    for (const item of items.sort((a, b) => a.title.localeCompare(b.title))) {
-      md += `- [[${slugify(item.title)}]] ${item.title}\n`;
+
+  const headings: Record<string, string> = {
+    entity: "Entities",
+    concept: "Concepts",
+    comparison: "Comparisons",
+  };
+
+  const lines = ["# AutoCrew Knowledge Wiki", ""];
+  for (const [type, heading] of Object.entries(headings)) {
+    const group = grouped[type] ?? [];
+    if (group.length === 0) continue;
+    lines.push(`## ${heading}`);
+    for (const page of group.sort((a, b) => a.title.localeCompare(b.title))) {
+      const slug = slugify(page.title);
+      const bodyLines = page.body.split("\n").filter((l) => !l.startsWith("#") && l.trim());
+      const summary = bodyLines[0]?.slice(0, 60) ?? "";
+      lines.push(`- [${page.title}](${slug}.md) — ${summary}`);
     }
-    md += "\n";
+    lines.push("");
   }
+
   const wikiDir = stagePath("wiki", dataDir);
-  await fs.writeFile(path.join(wikiDir, "index.md"), md, "utf-8");
+  await fs.writeFile(path.join(wikiDir, "index.md"), lines.join("\n"), "utf-8");
 }
 
 export async function appendWikiLog(

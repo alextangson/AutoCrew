@@ -447,13 +447,13 @@ describe("Wiki Storage", () => {
 
     const indexPath = path.join(stagePath("wiki", testDir), "index.md");
     const content = await fs.readFile(indexPath, "utf-8");
-    expect(content).toContain("# Wiki Index");
-    expect(content).toContain("## comparison");
-    expect(content).toContain("## concept");
-    expect(content).toContain("## entity");
-    expect(content).toContain("Claude AI");
-    expect(content).toContain("LLM Basics");
-    expect(content).toContain("Claude vs GPT");
+    expect(content).toContain("# AutoCrew Knowledge Wiki");
+    expect(content).toContain("## Entities");
+    expect(content).toContain("## Concepts");
+    expect(content).toContain("## Comparisons");
+    expect(content).toContain("[Claude AI]");
+    expect(content).toContain("[LLM Basics]");
+    expect(content).toContain("[Claude vs GPT]");
   });
 
   it("appends to log.md", async () => {
