@@ -25,8 +25,14 @@ import {
   restoreProject,
   getProjectMeta,
   listProjects,
+  saveWikiPage,
+  getWikiPage,
+  listWikiPages,
+  regenerateWikiIndex,
+  appendWikiLog,
   type IntelItem,
   type TopicCandidate,
+  type WikiPage,
 } from "../storage/pipeline-store.js";
 
 let testDir: string;
@@ -103,6 +109,12 @@ describe("Pipeline Init", () => {
     const archive = await fs.stat(path.join(intelDir, "_archive"));
     expect(sources.isDirectory()).toBe(true);
     expect(archive.isDirectory()).toBe(true);
+  });
+
+  it("creates wiki directory", async () => {
+    await initPipeline(testDir);
+    const stat = await fs.stat(stagePath("wiki", testDir));
+    expect(stat.isDirectory()).toBe(true);
   });
 
   it("initPipeline is idempotent", async () => {
@@ -378,5 +390,81 @@ describe("Project Lifecycle", () => {
 
     const projects = await listProjects("drafting", testDir);
     expect(projects.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Wiki Storage ──────────────────────────────────────────────────────────
+
+function makeWikiPage(overrides: Partial<WikiPage> = {}): WikiPage {
+  return {
+    type: "entity",
+    title: "Claude AI",
+    aliases: ["Claude", "Anthropic Claude"],
+    related: ["anthropic", "llm"],
+    sources: ["intel/2024-01-15-claude.md"],
+    created: "2026-04-05T00:00:00.000Z",
+    updated: "2026-04-05T00:00:00.000Z",
+    body: "Claude is an AI assistant made by Anthropic.",
+    ...overrides,
+  };
+}
+
+describe("Wiki Storage", () => {
+  it("saves and reads a wiki page", async () => {
+    const page = makeWikiPage();
+    const filePath = await saveWikiPage(page, testDir);
+    expect(filePath).toContain("wiki");
+    expect(filePath.endsWith(".md")).toBe(true);
+
+    const slug = "claude-ai";
+    const loaded = await getWikiPage(slug, testDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.title).toBe(page.title);
+    expect(loaded!.type).toBe(page.type);
+    expect(loaded!.aliases).toEqual(page.aliases);
+    expect(loaded!.related).toEqual(page.related);
+    expect(loaded!.sources).toEqual(page.sources);
+    expect(loaded!.body).toBe(page.body);
+  });
+
+  it("lists all wiki pages", async () => {
+    await saveWikiPage(makeWikiPage({ title: "Claude AI" }), testDir);
+    await saveWikiPage(
+      makeWikiPage({ title: "GPT-4", type: "comparison" }),
+      testDir,
+    );
+
+    const pages = await listWikiPages(testDir);
+    expect(pages.length).toBe(2);
+  });
+
+  it("generates index.md grouped by type", async () => {
+    await saveWikiPage(makeWikiPage({ title: "Claude AI", type: "entity" }), testDir);
+    await saveWikiPage(makeWikiPage({ title: "LLM Basics", type: "concept" }), testDir);
+    await saveWikiPage(makeWikiPage({ title: "Claude vs GPT", type: "comparison" }), testDir);
+
+    await regenerateWikiIndex(testDir);
+
+    const indexPath = path.join(stagePath("wiki", testDir), "index.md");
+    const content = await fs.readFile(indexPath, "utf-8");
+    expect(content).toContain("# Wiki Index");
+    expect(content).toContain("## comparison");
+    expect(content).toContain("## concept");
+    expect(content).toContain("## entity");
+    expect(content).toContain("Claude AI");
+    expect(content).toContain("LLM Basics");
+    expect(content).toContain("Claude vs GPT");
+  });
+
+  it("appends to log.md", async () => {
+    await appendWikiLog("create", "Created page: Claude AI", testDir);
+    await appendWikiLog("update", "Updated page: Claude AI", testDir);
+
+    const logPath = path.join(stagePath("wiki", testDir), "log.md");
+    const content = await fs.readFile(logPath, "utf-8");
+    const lines = content.trim().split("\n");
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toContain("[create]");
+    expect(lines[1]).toContain("[update]");
   });
 });

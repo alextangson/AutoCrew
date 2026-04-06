@@ -8,6 +8,7 @@ import yaml from "js-yaml";
 export const PIPELINE_STAGES = [
   "intel",
   "topics",
+  "wiki",
   "drafting",
   "production",
   "published",
@@ -36,6 +37,17 @@ export interface IntelItem {
   summary: string;
   keyPoints: string[];
   topicPotential: string;
+}
+
+export interface WikiPage {
+  type: "entity" | "concept" | "comparison";
+  title: string;
+  aliases: string[];
+  related: string[];
+  sources: string[];
+  created: string;
+  updated: string;
+  body: string;
 }
 
 export interface TopicScore {
@@ -330,6 +342,119 @@ export async function archiveExpiredIntel(
   return { archived };
 }
 
+// ─── Wiki Storage ──────────────────────────────────────────────────────────
+
+export function wikiPageToMarkdown(page: WikiPage): string {
+  const frontmatter: Record<string, unknown> = {
+    type: page.type,
+    title: page.title,
+    aliases: page.aliases,
+    related: page.related,
+    sources: page.sources,
+    created: page.created,
+    updated: page.updated,
+  };
+  const yamlStr = yaml.dump(frontmatter, { lineWidth: -1 }).trimEnd();
+  return `---\n${yamlStr}\n---\n\n${page.body}`;
+}
+
+export function parseWikiPage(content: string): WikiPage {
+  const { data, content: body } = matter(content);
+  return {
+    type: data.type,
+    title: data.title,
+    aliases: data.aliases ?? [],
+    related: data.related ?? [],
+    sources: data.sources ?? [],
+    created: data.created,
+    updated: data.updated,
+    body: body.trim(),
+  };
+}
+
+export async function saveWikiPage(
+  page: WikiPage,
+  dataDir?: string,
+): Promise<string> {
+  await initPipeline(dataDir);
+  const wikiDir = stagePath("wiki", dataDir);
+  const slug = slugify(page.title);
+  const filePath = path.join(wikiDir, `${slug}.md`);
+  await fs.writeFile(filePath, wikiPageToMarkdown(page), "utf-8");
+  return filePath;
+}
+
+export async function getWikiPage(
+  slug: string,
+  dataDir?: string,
+): Promise<WikiPage | null> {
+  const wikiDir = stagePath("wiki", dataDir);
+  const filePath = path.join(wikiDir, `${slug}.md`);
+  try {
+    const content = await fs.readFile(filePath, "utf-8");
+    return parseWikiPage(content);
+  } catch {
+    return null;
+  }
+}
+
+export async function listWikiPages(
+  dataDir?: string,
+): Promise<WikiPage[]> {
+  const wikiDir = stagePath("wiki", dataDir);
+  const pages: WikiPage[] = [];
+  let files: string[];
+  try {
+    files = await fs.readdir(wikiDir);
+  } catch {
+    return [];
+  }
+  for (const f of files) {
+    if (!f.endsWith(".md") || f === "index.md" || f === "log.md") continue;
+    const content = await fs.readFile(path.join(wikiDir, f), "utf-8");
+    pages.push(parseWikiPage(content));
+  }
+  return pages;
+}
+
+export async function regenerateWikiIndex(
+  dataDir?: string,
+): Promise<void> {
+  const pages = await listWikiPages(dataDir);
+  const grouped: Record<string, WikiPage[]> = {};
+  for (const page of pages) {
+    if (!grouped[page.type]) grouped[page.type] = [];
+    grouped[page.type].push(page);
+  }
+  let md = "# Wiki Index\n\n";
+  for (const [type, items] of Object.entries(grouped).sort()) {
+    md += `## ${type}\n\n`;
+    for (const item of items.sort((a, b) => a.title.localeCompare(b.title))) {
+      md += `- [[${slugify(item.title)}]] ${item.title}\n`;
+    }
+    md += "\n";
+  }
+  const wikiDir = stagePath("wiki", dataDir);
+  await fs.writeFile(path.join(wikiDir, "index.md"), md, "utf-8");
+}
+
+export async function appendWikiLog(
+  operation: string,
+  description: string,
+  dataDir?: string,
+): Promise<void> {
+  await initPipeline(dataDir);
+  const wikiDir = stagePath("wiki", dataDir);
+  const logPath = path.join(wikiDir, "log.md");
+  const timestamp = new Date().toISOString();
+  const entry = `- ${timestamp} [${operation}] ${description}\n`;
+  try {
+    await fs.appendFile(logPath, entry, "utf-8");
+  } catch {
+    await fs.writeFile(logPath, entry, "utf-8");
+  }
+}
+
 // ─── Topic Pool ─────────────────────────────────────────────────────────────
 
 export function topicToMarkdown(topic: TopicCandidate): string {
@@ -511,7 +636,7 @@ export async function findProject(
   dataDir?: string,
 ): Promise<{ dir: string; stage: PipelineStage } | null> {
   for (const stage of PIPELINE_STAGES) {
-    if (stage === "intel" || stage === "topics") continue;
+    if (stage === "intel" || stage === "topics" || stage === "wiki") continue;
     const dir = path.join(stagePath(stage, dataDir), name);
     try {
       const stat = await fs.stat(dir);
