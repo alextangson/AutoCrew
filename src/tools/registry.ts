@@ -145,7 +145,8 @@ export function registerAllTools(runner: ToolRunner): void {
     name: "autocrew_intel",
     label: "AutoCrew 灵感源",
     description:
-      "Inspiration source pipeline. Actions: pull (collect from web/RSS/trends), list (show saved inspiration), clean (archive expired).",
+      "Inspiration source pipeline. Actions: pull (collect from web/RSS/trends), " +
+      "list (show saved), clean (archive expired), ingest (manually add url/text/memory).",
     parameters: intelSchema,
     execute: executeIntel,
   });
