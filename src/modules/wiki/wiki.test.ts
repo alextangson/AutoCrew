@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   initPipeline,
   saveIntel,
+  listIntel,
   saveWikiPage,
   getWikiPage,
   listWikiPages,
@@ -148,5 +149,65 @@ describe("Wiki Integration", () => {
     expect(indexContent).toContain("## Concepts");
     expect(indexContent).toContain("[Cursor]");
     expect(indexContent).toContain("[Vibe Coding]");
+  });
+});
+
+describe("Teardown → Wiki Integration", () => {
+  it("teardown intel flows into wiki pipeline", async () => {
+    await initPipeline(testDir);
+
+    // Simulate a video teardown result being ingested as intel
+    const teardownIntel: IntelItem = {
+      title: "拆解: vibe-coding教程视频分析",
+      domain: "content-strategy",
+      source: "manual",
+      collectedAt: new Date().toISOString(),
+      relevance: 90,
+      tags: ["teardown", "video", "vibe-coding"],
+      expiresAfter: 365,
+      summary: "对标账号的vibe-coding教程视频拆解。传播学：信息不对称设计精妙。心理学：认知负荷控制好。内容结构：承诺-兑现完美匹配。视听语言：HKRR主导K维度。",
+      keyPoints: [
+        "开场3秒用反常识钩子",
+        "信息密度曲线合理",
+        "HKRR纯粹K维度",
+        "框架效应：frame成能力边界变化",
+      ],
+      topicPotential: "可借鉴：反常识开场+承诺兑现+纯粹K维度",
+    };
+
+    await saveIntel(teardownIntel, testDir);
+
+    // Verify it's in the intel library
+    const items = await listIntel("content-strategy", testDir);
+    expect(items.length).toBe(1);
+    expect(items[0].tags).toContain("teardown");
+    expect(items[0].tags).toContain("video");
+
+    // Simulate wiki page creation from teardown intel
+    const today = new Date().toISOString().slice(0, 10);
+    const wikiPage: WikiPage = {
+      type: "concept",
+      title: "Vibe Coding Teardown Insights",
+      aliases: ["vibe coding analysis"],
+      related: [],
+      sources: [`content-strategy/${today}-chai-jie-vibe-coding-jiao-cheng-shi-pin-fen-xi.md`],
+      created: today,
+      updated: today,
+      body: "# Vibe Coding Teardown Insights\n\n从对标视频拆解中提取：反常识开场+承诺兑现是有效公式。",
+    };
+    await saveWikiPage(wikiPage, testDir);
+
+    // Verify wiki page references the teardown
+    const loaded = await getWikiPage("vibe-coding-teardown-insights", testDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.sources[0]).toContain("content-strategy");
+
+    // Verify it shows up in index
+    await regenerateWikiIndex(testDir);
+    const indexContent = await fs.readFile(
+      path.join(stagePath("wiki", testDir), "index.md"),
+      "utf-8",
+    );
+    expect(indexContent).toContain("[Vibe Coding Teardown Insights]");
   });
 });
