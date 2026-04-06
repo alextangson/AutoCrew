@@ -63,6 +63,10 @@ export async function executeIntel(params: Record<string, unknown>) {
         totalSaved: result.totalSaved,
         bySource: result.bySource,
         errors: result.errors.length > 0 ? result.errors.slice(0, 10) : undefined,
+        _triggerSync: result.totalSaved > 0,
+        _syncHint: result.totalSaved > 0
+          ? "新增情报已入库。请运行 knowledge-sync 同步知识库。"
+          : undefined,
       };
     }
 
@@ -116,7 +120,7 @@ export async function executeIntel(params: Record<string, unknown>) {
           topicPotential: "",
         };
         const filePath = await saveIntel(item, dataDir);
-        return { ok: true, action: "ingest", mode: "text", saved: true, filePath };
+        return { ok: true, action: "ingest", mode: "text", saved: true, filePath, _triggerSync: true, _syncHint: "新素材已入库。请运行 knowledge-sync 同步知识库。" };
       }
 
       if (url) {
@@ -140,7 +144,7 @@ export async function executeIntel(params: Record<string, unknown>) {
           topicPotential: "",
         };
         const filePath = await saveIntel(item, dataDir);
-        return { ok: true, action: "ingest", mode: "url", saved: true, filePath };
+        return { ok: true, action: "ingest", mode: "url", saved: true, filePath, _triggerSync: true, _syncHint: "新素材已入库。请运行 knowledge-sync 同步知识库。" };
       }
 
       if (memoryPaths && memoryPaths.length > 0) {
@@ -184,7 +188,7 @@ export async function executeIntel(params: Record<string, unknown>) {
           }
         }
 
-        return { ok: true, action: "ingest", mode: "memory", scanned, extracted, skipped, savedPaths };
+        return { ok: true, action: "ingest", mode: "memory", scanned, extracted, skipped, savedPaths, _triggerSync: extracted > 0, _syncHint: extracted > 0 ? "新素材已入库。请运行 knowledge-sync 同步知识库。" : undefined };
       }
 
       return { ok: false, error: "ingest requires url, text, or memory_paths" };
