@@ -55,6 +55,22 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
 
    **Step-by-step:**
 
+   a.0. **Query wiki knowledge base (if wiki exists):**
+      1. Check if `~/.autocrew/data/pipeline/wiki/index.md` exists. If not, skip to step a.
+      2. Read `index.md` and find wiki pages whose title, aliases, or summary
+         match the current topic's keywords or angle (fuzzy match, not exact).
+      3. Read matched pages (max 5, prioritize by number of sources — more sources
+         = more synthesized = more valuable).
+      4. For each matched wiki page, write it as a reference file into the project's
+         `references/` folder:
+         - Filename: `wiki-{page-slug}.md`
+         - Format: same as other reference files, but with `source: wiki/{page-slug}.md`
+         - Set `relevance: 8` (synthesized knowledge is higher value than raw intel)
+      5. Wiki-sourced references count toward the 6-reference minimum and can satisfy
+         multiple angle-coverage categories (wiki pages are cross-source syntheses).
+      6. If wiki already provides 4+ solid references, the subsequent intel queries
+         (steps b-d) can be lighter — focus on filling angle gaps rather than full research.
+
    a. Compute the project slug early: `projectSlug = slugify(topic_title)`.
       References will live at `~/.autocrew/data/pipeline/drafting/{projectSlug}/references/`.
       mkdir it if needed (the save step will reuse the same dir).
