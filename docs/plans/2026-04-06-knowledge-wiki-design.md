@@ -147,11 +147,15 @@ Extends the existing intel tool for user-initiated single-source ingestion.
 }
 ```
 
-- `url` and `text` are mutually exclusive (one required)
-- `domain` optional — LLM infers if not provided
-- `tags` optional
+Three input modes (mutually exclusive — one required):
+- `url` — fetch and extract a web page
+- `text` — directly ingest provided content
+- `memory_paths` — harvest domain knowledge from local AI tool memory files
 
-**Flow:**
+`domain` optional — LLM infers if not provided.
+`tags` optional.
+
+**Flow (URL / text mode):**
 
 ```
 1. Acquire content:
@@ -166,6 +170,40 @@ Extends the existing intel tool for user-initiated single-source ingestion.
 4. Auto-trigger knowledge-sync
 5. Return: title, domain, wiki pages created/updated
 ```
+
+**Flow (memory mode):**
+
+```json
+{
+  "action": "ingest",
+  "memory_paths": ["~/.claude/projects/-Users-jiaxintang-AutoCrew/memory/"],
+  "domain": "auto"
+}
+```
+
+```
+1. Glob *.md files from each specified memory path
+2. Read each file, classify content:
+   - Domain knowledge / industry insight → extract as IntelItem
+   - Preferences / config / session-specific → skip
+   Filter criteria: does this file contain facts, judgments, or patterns
+   about a DOMAIN (not about the tool or workflow)?
+3. For each valuable file → generate IntelItem:
+   - source: "memory"
+   - title: derived from memory file name/content
+   - domain: auto-inferred from content or user-specified
+   - relevance: LLM-assessed 1-100
+4. Deduplicate against existing intel library (title + domain match)
+5. Call saveIntel() for each new item
+6. Auto-trigger knowledge-sync
+7. Return: {scanned: N, extracted: M, skipped: K, wiki pages updated: [...]}
+```
+
+**Privacy constraints for memory mode:**
+- NEVER auto-scan. Only triggered by explicit user request ("把我的 memory 导入知识库")
+- User specifies which project paths to scan — no wildcard all-projects sweep
+- One-time harvest, not continuous sync. User re-runs when they want fresh extraction.
+- Memory files containing credentials, tokens, or personal identifiers are always skipped.
 
 ### 3. write-script Step 5.5 Integration
 
@@ -194,11 +232,13 @@ a.0. Query wiki knowledge base:
 ## Data Flow Diagram
 
 ```
-User drops URL ──→ autocrew_intel ingest ──→ saveIntel() ──→ intel library
-                                                │
+User drops URL ──────→ autocrew_intel ingest ──→ saveIntel() ──→ intel library
+User pastes text ────→ autocrew_intel ingest ──→ saveIntel() ──→ intel library
+User says "导入memory" → autocrew_intel ingest ──→ saveIntel() ──→ intel library
+                           (memory_paths mode)          │
 autocrew_intel pull ──→ collectors ──→ saveIntel() ──→ intel library
-                                                │
-                                    ┌───────────┘
+                                                        │
+                                    ┌───────────────────┘
                                     ▼
                              knowledge-sync
                                     │
