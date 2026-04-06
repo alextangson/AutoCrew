@@ -142,6 +142,57 @@ describe("addCompetitor", () => {
   });
 });
 
+describe("videoCrawler and omniConfig", () => {
+  it("saves and loads videoCrawler and omniConfig", async () => {
+    const profile = await initProfile(testDir);
+    const full: CreatorProfile = {
+      ...profile,
+      videoCrawler: { type: "mediacrawl", command: "python3 /opt/mediacrawl/main.py" },
+      omniConfig: {
+        baseUrl: "https://api.xiaomimimo.com/v1",
+        model: "mimo-v2-omni",
+        apiKey: "sk-test-key-123",
+      },
+    };
+    await saveProfile(full, testDir);
+    const loaded = await loadProfile(testDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.videoCrawler).toEqual({ type: "mediacrawl", command: "python3 /opt/mediacrawl/main.py" });
+    expect(loaded!.omniConfig).toEqual({
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      model: "mimo-v2-omni",
+      apiKey: "sk-test-key-123",
+    });
+  });
+
+  it("loads profile without video config (backward compatible)", async () => {
+    // Write a minimal JSON file without the new fields
+    const filePath = path.join(testDir, "creator-profile.json");
+    const legacy = {
+      industry: "科技",
+      platforms: ["xhs"],
+      audiencePersona: null,
+      creatorPersona: null,
+      writingRules: [],
+      styleBoundaries: { never: [], always: [] },
+      competitorAccounts: [],
+      performanceHistory: [],
+      expressionPersona: "",
+      secondaryPersonas: [],
+      styleCalibrated: false,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+    };
+    await fs.writeFile(filePath, JSON.stringify(legacy, null, 2), "utf-8");
+
+    const loaded = await loadProfile(testDir);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.industry).toBe("科技");
+    expect(loaded!.videoCrawler).toBeUndefined();
+    expect(loaded!.omniConfig).toBeUndefined();
+  });
+});
+
 describe("detectMissingInfo", () => {
   it("reports all missing fields on empty profile", async () => {
     const profile = await initProfile(testDir);

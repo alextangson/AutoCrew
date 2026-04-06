@@ -63,6 +63,21 @@ export interface ContentPillar {
   exampleAngles: string[];
 }
 
+export interface VideoCrawlerConfig {
+  type: "mediacrawl" | "playwright" | "manual";
+  /** Command to run for mediacrawl mode, e.g. "python3 /path/to/main.py" */
+  command?: string;
+}
+
+export interface OmniConfig {
+  /** API base URL, default "https://api.xiaomimimo.com/v1" */
+  baseUrl: string;
+  /** Model ID, default "mimo-v2-omni" */
+  model: string;
+  /** API key */
+  apiKey: string;
+}
+
 export interface CreatorProfile {
   /** User's content industry/niche */
   industry: string;
@@ -86,6 +101,10 @@ export interface CreatorProfile {
   secondaryPersonas: AudiencePersona[];
   /** Content pillars defining the creator's content strategy */
   contentPillars?: ContentPillar[];
+  /** Video crawler configuration for teardown video acquisition */
+  videoCrawler?: VideoCrawlerConfig;
+  /** Omni model configuration for multimodal video analysis */
+  omniConfig?: OmniConfig;
   /** Whether style calibration has been completed */
   styleCalibrated: boolean;
   /** Profile creation timestamp */
