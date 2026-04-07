@@ -258,7 +258,14 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
    - [ ] Content pillar specified (if pillars configured)?
    - [ ] Hashtags generated and relevant?
 
-8. **Save via tool:**
+8. **Save via `autocrew_content` tool — THE ONLY ALLOWED WAY TO SAVE:**
+
+   ⚠️ **CRITICAL — 绝对禁止用 Write 工具直接写 draft.md 文件。**
+   `autocrew_content` save action 会同时创建 `draft.md`、`meta.yaml`、pipeline 项目结构、
+   运行去AI味处理。用 Write 工具直接写文件会导致 meta.yaml 缺失、版本记录丢失、pipeline
+   状态机断裂。如果你脑子里有一个"我先用 Write 写到文件，然后再..."的想法 — 停下来，
+   那个想法是错的。唯一正确的路径是调用 `autocrew_content`。
+
    ```json
    {
      "action": "save",
@@ -277,6 +284,21 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
    ```
 
    Note: Auto-humanize runs automatically inside the save tool. You do NOT need to call humanize separately.
+
+8.5. **⚠️ Post-save verification (MANDATORY):**
+
+   After `autocrew_content` returns, verify these fields exist in the response:
+   - `ok: true` — save succeeded
+   - `filePath` — draft.md 路径
+   - `projectDir` — pipeline 项目目录
+
+   If ANY of these are missing or `ok: false`:
+   - Do NOT proceed to output.
+   - Do NOT fall back to Write tool.
+   - Show the error to the user and ask them to retry.
+
+   If save succeeded, do a quick sanity check — the response should contain `pipelinePath`.
+   If it does, the pipeline project is properly initialized with meta.yaml and draft.md.
 
 9. **Auto-review (MANDATORY — runs silently):**
    - After saving, ALWAYS run content review:

@@ -250,6 +250,16 @@ export async function executeContentSave(params: Record<string, unknown>) {
     // Humanize failure should not block save
   }
 
+  // Verify pipeline integrity — both draft.md and meta.yaml must exist
+  let pipelineVerified = false;
+  try {
+    await fs.access(path.join(projectDir, "draft.md"));
+    await fs.access(path.join(projectDir, "meta.yaml"));
+    pipelineVerified = true;
+  } catch {
+    pipelineVerified = false;
+  }
+
   return {
     ok: true,
     content,
@@ -258,12 +268,14 @@ export async function executeContentSave(params: Record<string, unknown>) {
     filePath: `${projectDir}/draft.md`,
     projectDir,
     pipelinePath: projectDir,
+    pipelineVerified,
     legacyDir: `${effectiveDataDir}/contents/${content.id}`,
     openCommand: `open "${projectDir}"`,
     message: [
       `📄 内容已保存到 pipeline：`,
       `   草稿：${projectDir}/draft.md (当前活动文件)`,
       `   元数据：${projectDir}/meta.yaml`,
+      `   Pipeline 完整性：${pipelineVerified ? "✅ 已验证" : "❌ 异常 — meta.yaml 或 draft.md 缺失"}`,
       `   历史快照：修改后会在 ${projectDir}/draft-v{N}.md 生成`,
       `   自动去AI味：${humanizeResult?.ok ? "✅ 已处理" : "⚠️ 跳过"}`,
       ``,

@@ -41,7 +41,8 @@ description: |
    - Follow all steps in the `write-script` skill **including Step 5.5 (research → references)**.
      Do not skip research for "simple" topics — the references folder must have ≥3 relevant
      source files before writing begins. A draft without references is a bug.
-   - Save the result using `autocrew_content` tool
+   - Save the result using `autocrew_content` tool — **绝对禁止用 Write 工具直接写 draft.md**。
+     只有 `autocrew_content` save action 才能正确创建 meta.yaml + pipeline 结构 + 版本记录。
    - Link to topic_id if available
 
 5. Present the draft to user and offer next steps:
