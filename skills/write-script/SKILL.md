@@ -145,118 +145,260 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
    g. Record the reference filenames in working memory — Step 6 will cite them, and
       Step 8 will record them in `meta.yaml` via the save params.
 
-6. **Write the script:**
+6. **⚠️ 创作分两个阶段执行。不可跳过 Phase A 直接写正文。**
 
-   a. **Hook** — pick the ONE strongest type for this topic:
+   **为什么分两阶段**：一口气从头写到尾会产出逻辑混乱、节奏平淡的流水账。
+   先搭骨架（结构）再填肉（正文），确保每一段都有存在的理由。
 
-   | Type | When to use | Example pattern |
-   |------|-------------|-----------------|
-   | Pain point | Audience has an obvious unresolved frustration | "XX最大的问题不是YY，而是ZZ" |
-   | Suspense | Topic has a counterintuitive truth or surprising data | "我花了X万测试，结果发现…" |
-   | Ideal state | Topic sells a desirable outcome | "X个月后，我再也不用YY了" |
-   | Emotional resonance | Topic touches identity, belonging, or aspiration | "每个做XX的人都经历过这一刻" |
-   | Contrast | Clear gap between common belief and reality | "别人XX，你却在YY" |
+   ---
 
-   Write 1-3 sentences. NEVER open with "哈喽大家好", "你有没有想过", or any generic greeting.
+   ## Phase A — 搭结构骨架（先想清楚再动笔）
 
-   b. **Body** — the core content. NOT a list of points. A conversation.
+   在写任何正文之前，必须先完成以下 5 个决策。输出为结构化的骨架文档，
+   展示给用户确认后才进入 Phase B。
 
-   **Writing rules (non-negotiable):**
-   - Write like you're talking to ONE person sitting across from you, not lecturing to a crowd.
-   - Vary sentence length deliberately: 3-4 short sentences, then one longer one. Then a one-word sentence. "真的。"
-   - Each claim needs: why it's true + concrete example (named, specific, verifiable when possible).
-   - **Ground every factual claim in a reference file** from Step 5.5. If you cite a company,
-     number, name, or case study, it MUST come from one of the `references/*.md` files you
-     collected — not from LLM memory. If a claim has no reference backing, either find one
-     now or cut the claim. "我编的例子" is a bug, not a feature.
-   - Total body: 800-1500 characters (text) or platform-specific limit.
+   **A1. 核心观点（一句话）**
 
-   **Anti-patterns (NEVER do these):**
-   - ❌ "总而言之" / "综上所述" / "值得一提的是" — essay transitions that kill conversational tone
-   - ❌ "首先…其次…最后…" — numbered structure that screams AI/lecture
-   - ❌ Balanced "一方面…另一方面…" hedging — pick a side
-   - ❌ Lists of exactly 5 items — AI signature pattern
-   - ❌ Every paragraph same length — real people write unevenly
-   - ❌ Generic examples ("某个企业", "一家公司") — name it or don't use it
+   用一句话说清楚这篇内容的核心主张。不是主题，是观点。
 
-   **Must-include elements:**
-   - 1-2 expectation-breaking twists (contrarian flip, data bomb)
-   - 1-2 interaction hooks (questions, "你猜怎么着", comment prompts)
-   - HKRR annotation: for each section, note which HKRR element is active (in your planning, not in output)
+   | ❌ 不是这样（主题） | ✅ 而是这样（观点） |
+   |---|---|
+   | "聊聊 vibe-coding" | "vibe-coding 重新定义的不是会不会写代码，是会不会想清楚问题" |
+   | "AI 工具推荐" | "90% 的人用 AI 工具亏钱，因为他们把 AI 当员工而不是当合伙人" |
+   | "创业经验分享" | "创业最大的坑不是没钱，是你以为自己想清楚了其实没有" |
 
-   **Micro-retention techniques (use at least 2):**
-   - **Open Loop**: raise a question early, resolve it later — "后面告诉你为什么"
-   - **Curiosity Gap**: end paragraphs with forward momentum — "但这还不是最离谱的"
-   - **Visual Anchor**: standalone one-liner between paragraphs — a quotable insight
-   - **Rhythm Break**: sudden short sentence after buildup — "错。" / "但这不重要。"
+   这个观点必须满足：
+   - 有立场（不是两边讨好的"一方面...另一方面..."）
+   - 有反直觉成分（读者看到会想"真的吗？"）
+   - 能用 references 里的具体案例支撑
 
-   c. **Comment triggers (MANDATORY — annotate 1-2):**
+   **A2. 论证结构（观点的骨架）**
 
-   After writing the body, identify and annotate comment trigger points:
+   确定论证链条：核心观点要通过什么逻辑路径让读者信服？
 
-   | Type | What it does | Example |
-   |------|-------------|---------|
-   | Controversy plant | Leave a debatable opinion | "我知道很多人不同意，但我觉得XX根本没用" |
-   | Unanswered question | Raise but don't fully answer | "至于为什么大厂不这么做？评论区聊" |
-   | Quote hook | One sentence worth screenshotting | "AI不是来替你干活的，是来替你做决定的" |
+   ```
+   核心观点: {一句话}
+     │
+     ├── 误区/共识切入: 大多数人以为___（读者的当前认知）
+     │
+     ├── 真相揭示: 但实际上___（反转，用数据或案例支撑）
+     │     └── 证据: {来自 references/ 的具体案例/数据}
+     │
+     ├── 深入解释: 为什么会这样？因为___（给出底层逻辑）
+     │     └── 证据: {来自 references/ 的第二个案例}
+     │
+     └── 行动指引: 所以你应该___（给读者一个可执行的 takeaway）
+   ```
 
-   Record as: `commentTriggers: [{ type: "controversy", position: "paragraph 3" }]`
+   论证结构不是唯一形式。以下几种都可以，选最适合这个观点的：
+   - **误区→真相→行动**（适合反直觉观点）
+   - **故事→提炼→框架**（适合经验分享）
+   - **现象→归因→预判**（适合趋势分析）
+   - **问题→拆解→方案**（适合教程类）
 
-   d. **CTA** — 1-2 sentences guiding a specific action (save/comment/follow).
-   Must connect to the content's value — "收藏这条，下次用得上" beats "觉得有用就点赞".
+   **A3. Clock Theory 节点规划（4 个 bang moment）**
 
-   e. **Title — generate 3-5 candidates using title formulas:**
+   ⚠️ **Clock Theory 是创作骨架，不是事后审计。** 先定 4 个 bang moment，
+   然后围绕这 4 个点展开写。
 
-   | Formula | Pattern | Example |
-   |---------|---------|---------|
-   | Number + Result | 数字+具体结果 | "用了3个月AI，我把团队从12人砍到3人" |
-   | Contrarian | 反直觉声明 | "AI写的代码比人快10倍，但我劝你别用" |
-   | Identity + Pain | 身份标签+痛点 | "传统老板看过来：这3种AI项目100%是坑" |
-   | Curiosity Gap | 悬念缺口 | "花了20万做AI系统，结果…" |
-   | Contrast | 对比结构 | "别人用AI赚钱，你用AI亏钱，差在哪？" |
-   | Resonance Question | 共鸣提问 | "为什么你学了那么多AI课，还是不会用？" |
+   | 时钟位 | 内容功能 | 你的 bang moment | Bang 类型 | 来自哪个 reference |
+   |--------|---------|-----------------|-----------|-------------------|
+   | 12:00 (0%) | Hook — 3 秒决生死 | {具体写什么} | {数据炸弹/反转/故事/共鸣} | {ref} |
+   | 3:00 (25%) | Escalation — 兑现 hook 的承诺 | {具体写什么} | {类型} | {ref} |
+   | 6:00 (50%) | Payload — 核心价值交付 | {具体写什么} | {类型} | {ref} |
+   | 9:00 (75%) | Climax — 最强一击 | {具体写什么} | {类型} | {ref} |
 
-   Rules:
-   - Generate 3-5 candidates, annotate which formula each uses.
-   - Also call `generateForPlatform(baseTopic, platform)` from title-hashtag.ts for additional variants.
-   - Pick the best as primary. 15-25 characters. Can include emoji if it adds value.
-   - If `web_search` is available, search 2-3 trending keywords and embed 1 naturally.
+   每个 bang moment 必须具体到"写什么内容"，不能是"在这里放一个反转"这种空话。
+   如果想不出 bang moment，说明这个论点不够强 — 回 A2 调整论证结构。
 
-   f. **Hashtags** — generate platform-specific hashtags:
-   - Call `generateHashtags(topic, platform, tags)` from `title-hashtag.ts`.
-   - Append hashtags to the body (for platforms that use inline hashtags like XHS/Douyin).
-   - Save hashtags separately in the `hashtags` field.
+   **A4. HKRR 选择**
 
-   g. **Clock mapping (video content):**
-   Before finalizing, map the script to clock positions:
+   短视频（<60s）：只选 1 个维度，全力打透。
+   长内容（图文/长视频）：选 1 个主导 + 1 个辅助。
 
-   | Clock | Content section | Bang moment type | HKRR element |
-   |-------|----------------|-----------------|-------------|
-   | 12:00 | [your hook] | [e.g., pattern break] | [e.g., Resonance] |
-   | 3:00 | [paragraph X] | [e.g., data bomb] | [e.g., Knowledge] |
-   | 6:00 | [paragraph Y] | [e.g., framework reveal] | [e.g., Knowledge] |
-   | 9:00 | [CTA section] | [e.g., audience mirror] | [e.g., Resonance] |
+   ```
+   主导维度: {H/K/R/R}
+   理由: {为什么这个主题用这个维度最有效}
+   辅助维度: {H/K/R/R 或 无}
+   ```
 
-7. **Self-review before saving** (fix any failure, don't just check):
-   - [ ] 800+ characters total?
-   - [ ] Contains at least 2 concrete examples or scenarios (not vague claims)?
-   - [ ] **Every named entity/number/case in the draft traces back to a file in `references/`?**
-   - [ ] **Reference angle coverage used in the draft** — the draft actually cites at least
-         one reference from EACH of the 4 angle categories collected in Step 5.5.f
-         (具体案例/人物, 数据/数字, 反面/争议观点, 趋势/背景). Collecting 6 references but
-         only drawing from the "案例" bucket produces a single-sided draft — fix by
-         weaving in at least one sentence grounded in each missing bucket.
-   - [ ] Has a non-obvious insight or twist?
-   - [ ] Tone matches STYLE.md profile (if available)?
-   - [ ] No generic greetings, no essay-style paragraphs?
-   - [ ] No anti-pattern violations (总而言之, 首先其次最后, balanced hedging)?
-   - [ ] Body is plain text with blank-line separators (no markdown headers)?
-   - [ ] Title within platform character limit? Uses a title formula?
-   - [ ] At least 1 comment trigger annotated?
-   - [ ] At least 2 micro-retention techniques used?
-   - [ ] Hypothesis stated?
-   - [ ] Content pillar specified (if pillars configured)?
-   - [ ] Hashtags generated and relevant?
+   **A5. 微操技巧预埋**
+
+   从 4 种微操技巧中选 2-3 种，标注在骨架的具体位置：
+
+   | 技巧 | 埋在哪里 | 具体怎么用 |
+   |------|---------|-----------|
+   | Open Loop | {位置，如"hook 之后"} | {具体的悬念句} |
+   | Curiosity Gap | {位置} | {具体的过渡句} |
+   | Visual Anchor | {位置} | {具体的金句} |
+   | Rhythm Break | {位置} | {具体的短句} |
+
+   ---
+
+   **输出骨架给用户确认：**
+
+   ```
+   📐 内容骨架：
+
+   核心观点：{A1}
+   论证结构：{A2 的链条}
+   HKRR：主打 {A4}
+
+   Clock 节点：
+   🕛 12:00 Hook: {内容}
+   🕐 3:00 Escalation: {内容}
+   🕕 6:00 Payload: {内容}
+   🕘 9:00 Climax: {内容}
+
+   微操预埋：{A5 的技巧和位置}
+
+   这个结构 OK 吗？确认后开始写正文。
+   ```
+
+   **等待用户确认。** 用户说 OK → 进入 Phase B。
+   用户说要调整 → 修改骨架后再次确认。
+
+   ---
+
+   ## Phase B — 基于骨架填充正文
+
+   ⚠️ **每一段正文必须服务于 Phase A 确定的骨架。** 如果写着写着偏离了
+   论证结构或错过了 clock 节点，停下来对照骨架修正，不要硬写下去。
+
+   **B1. Hook（12:00 位 bang moment）**
+
+   写 1-3 句。从 A3 已经确定的 hook bang moment 展开。
+
+   | Hook 类型 | 模式 |
+   |-----------|------|
+   | Pain point | "XX最大的问题不是YY，而是ZZ" |
+   | Suspense | "我花了X万测试，结果发现…" |
+   | Contrast | "别人XX，你却在YY" |
+   | Identity | "每个做XX的人都经历过这一刻" |
+
+   ❌ 绝对禁止："哈喽大家好" / "你有没有想过" / 任何通用问候
+
+   **坏 hook vs 好 hook 对比：**
+   ```
+   ❌ 坏："今天聊聊 vibe-coding，这是一个很火的概念。"
+         → 没有观点、没有冲突、没有理由继续看
+
+   ✅ 好："我不会写代码。但我用 3 周时间，做了一个智能分类平台——
+         自动识别图片、分类、智能推荐。不是外包给程序员做的，
+         是她自己用 AI 工具一个人搞定的。"
+         → 有具体案例、有反直觉（不会代码但做出了产品）、有悬念（怎么做到的）
+   ```
+
+   **B2. Body（3:00 → 6:00 → 9:00 的论证展开）**
+
+   沿着 A2 的论证链条，依次写每个段落。每个段落对照 A3 的 clock 节点。
+
+   **写作规则（不可违反）：**
+   - 像对面坐着一个人在聊天，不是在台上讲课
+   - 句长刻意变化：3-4 个短句，然后一个长句。然后一个词的句子。"真的。"
+   - 每个事实性主张必须有 references/ 里的具体案例或数据支撑
+   - 总字数：800-1500 字（图文）或平台限制
+
+   **每写完一个 clock 区间，对照骨架检查：**
+   - 这个段落对应骨架里的哪个论证环节？
+   - 这个位置的 bang moment 放了吗？放对了吗？
+   - 微操技巧在预定位置用了吗？
+
+   **反面模式（绝对禁止）：**
+   - ❌ "总而言之" / "综上所述" / "值得一提的是" — 论文过渡词
+   - ❌ "首先…其次…最后…" — 流水账结构
+   - ❌ "一方面…另一方面…" — 两边讨好
+   - ❌ 5 条 list — AI 签名
+   - ❌ 每段等长 — 真人写东西参差不齐
+   - ❌ 虚构案例（"某公司"、"一位朋友"）— 有名有姓或别用
+
+   **坏 body vs 好 body 对比：**
+   ```
+   ❌ 坏："vibe-coding 是一种新的编程方式。首先，它让非程序员
+         也能做产品。其次，它降低了开发成本。最后，它提高了效率。
+         总而言之，vibe-coding 是一个值得关注的趋势。"
+         → 首先其次最后结构、总而言之结尾、零案例、零感情、
+           像维基百科不像人在说话
+
+   ✅ 好："她用 3 周时间，搭了一个智能分类平台——自动识别图片、
+         分类、智能推荐。
+
+         不是外包给程序员做的。是她自己用 AI 工具一个人搞定的。
+
+         这个项目帮她拿下了知名互联网公司的高级设计师 offer，
+         薪资涨了 30%。5 家面试，每一家都因为这个项目让她脱颖而出。
+
+         这不是个例。腾讯有个文科生产品策划，零代码经验，用 Cursor
+         花 3 个月做了个约饭小程序，2000+ 员工在用。
+
+         这些人的共同点：他们不是程序员，但他们用 AI 重新定义了
+         '一个人能做什么'。"
+         → 有名有姓的案例、有数据（30%、5家、2000+）、
+           短段落节奏、像人在讲故事不是写论文
+   ```
+
+   **B3. Comment triggers（评论触发）**
+
+   在正文中自然嵌入 1-2 个评论触发点（不是单独加在最后）：
+
+   | 类型 | 做法 | 例子 |
+   |------|------|------|
+   | 争议埋点 | 故意留一个可辩论的观点 | "AI 不会让你变成超人，它只是放大你已经有的东西。" |
+   | 未答问题 | 提出但不完全回答 | "至于为什么大厂不这么做？评论区聊" |
+   | 金句钩子 | 一句值得截图的话 | "想到了，就能做出来。这才是真正的能力边界变化。" |
+
+   标注：`commentTriggers: [{ type: "controversy", position: "paragraph N" }]`
+
+   **B4. CTA**
+
+   1-2 句收尾。连接内容价值："收藏这条，下次用得上" > "觉得有用就点赞"。
+
+   **B5. Title（3-5 个候选）**
+
+   | 公式 | 模式 | 例子 |
+   |------|------|------|
+   | Number + Result | 数字+结果 | "用了3个月AI，我把团队从12人砍到3人" |
+   | Contrarian | 反直觉 | "AI写的代码比人快10倍，但我劝你别用" |
+   | Identity + Pain | 身份+痛点 | "传统老板看过来：这3种AI项目100%是坑" |
+   | Curiosity Gap | 悬念 | "花了20万做AI系统，结果…" |
+   | Contrast | 对比 | "别人用AI赚钱，你用AI亏钱，差在哪？" |
+
+   15-25 字。标注每个候选用了什么公式。
+
+   **B6. Hashtags**
+
+   调用 `generateHashtags(topic, platform, tags)` 生成平台专用标签。
+
+   ---
+
+7. **Self-review — 对照骨架做最终检查**（发现问题直接改，不是打勾就行）
+
+   **结构检查：**
+   - [ ] 核心观点在正文中有没有被清晰表达？读者看完能一句话复述吗？
+   - [ ] 论证链条完整吗？有没有跳步或断裂？
+   - [ ] 4 个 clock 节点的 bang moment 都存在且有力？
+   - [ ] HKRR 主导维度一致？没有维度冲突？
+
+   **质量检查：**
+   - [ ] 800+ 字？
+   - [ ] ≥2 个有名有姓的具体案例？（来自 references/）
+   - [ ] **每个案例/数据都能追溯到 references/ 文件？**
+   - [ ] **4 个角度（案例/数据/反面观点/趋势）都在正文中引用了？**
+   - [ ] ≥1 个反直觉洞察或反转？
+   - [ ] ≥2 个微操技巧已使用（open loop/curiosity gap/visual anchor/rhythm break）？
+   - [ ] ≥1 个评论触发点？
+
+   **反面模式检查：**
+   - [ ] 无"总而言之/综上所述/首先其次最后/一方面另一方面"？
+   - [ ] 无等长段落？
+   - [ ] 无虚构案例？
+   - [ ] 语气像人说话不像论文？
+
+   **元数据检查：**
+   - [ ] 标题 ≤25 字 + 使用了标题公式？
+   - [ ] 假说（hypothesis）已填写？
+   - [ ] 内容支柱（content pillar）已指定？
+   - [ ] Hashtags 已生成？
 
 8. **Save via `autocrew_content` tool — THE ONLY ALLOWED WAY TO SAVE:**
 
