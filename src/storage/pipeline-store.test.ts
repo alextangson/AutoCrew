@@ -317,6 +317,9 @@ describe("Project Lifecycle", () => {
     await startProject("推进测试", testDir);
 
     const projectName = slugify("推进测试");
+    // Write substantial draft content — gate requires ≥100 chars to advance
+    const draftPath = path.join(stagePath("drafting", testDir), projectName, "draft.md");
+    await fs.writeFile(draftPath, "# 推进测试\n\n这是一篇关于AI编程工具的深度分析文章，包含多个具体案例和数据支撑。Cursor在2024年估值达到26亿美元，Claude Code用户突破百万。完整草稿内容用于测试从drafting推进到production的前置条件验证，确保pipeline状态机的gate检查正常工作。", "utf-8");
     const newDir = await advanceProject(projectName, testDir);
     expect(newDir).toContain("production");
 

@@ -119,9 +119,10 @@ describe("Pipeline Integration — full flow", () => {
     const projectName = slugify("高分选题");
 
     // 5. Add draft version → original content archived to draft-v1.md, draft.md updated
+    // Content must be ≥100 chars to pass the drafting→production gate
     await addDraftVersion(
       projectName,
-      "# 高分选题\n\n第二版内容",
+      "# 高分选题\n\n这是一篇经过深度调研的内容，包含具体案例分析、数据支撑和可操作的建议。第二版在第一版基础上增加了更多具体的AI工具评测数据和用户反馈，覆盖了Cursor、Claude Code、Windsurf三款主流AI编程工具的横向对比。",
       "improved draft",
       testDir,
     );

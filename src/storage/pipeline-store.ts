@@ -721,6 +721,7 @@ const STAGE_ORDER: PipelineStage[] = ["drafting", "production", "published"];
 export async function advanceProject(
   name: string,
   dataDir?: string,
+  opts?: { force?: boolean },
 ): Promise<string> {
   const found = await findProject(name, dataDir);
   if (!found) throw new Error(`Project not found: ${name}`);
@@ -731,6 +732,42 @@ export async function advanceProject(
   }
 
   const nextStage = STAGE_ORDER[currentIdx + 1];
+
+  // Gate checks — prevent premature advancement unless forced
+  if (!opts?.force) {
+    if (found.stage === "drafting" && nextStage === "production") {
+      // drafting → production requires: draft.md must exist and have content
+      const draftPath = path.join(found.dir, "draft.md");
+      try {
+        const draftContent = await fs.readFile(draftPath, "utf-8");
+        if (draftContent.trim().length < 100) {
+          throw new Error(
+            "Cannot advance to production: draft.md is too short (< 100 chars). " +
+            "Complete the draft before advancing. Use force: true to override.",
+          );
+        }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new Error(
+            "Cannot advance to production: draft.md does not exist. " +
+            "Save a draft via autocrew_content before advancing.",
+          );
+        }
+        throw e;
+      }
+
+      // meta.yaml must exist
+      try {
+        await fs.access(path.join(found.dir, "meta.yaml"));
+      } catch {
+        throw new Error(
+          "Cannot advance to production: meta.yaml is missing. " +
+          "This project was not created through the proper pipeline.",
+        );
+      }
+    }
+  }
+
   const newDir = path.join(stagePath(nextStage, dataDir), name);
 
   await fs.rename(found.dir, newDir);
