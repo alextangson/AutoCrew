@@ -8,6 +8,60 @@ description: |
 
 > Executor skill. Single responsibility: generate one complete original script and save it.
 
+## THE OPERATING SYSTEM — Read This Before Anything Else
+
+These 5 principles override every other instruction in this file. When a specific rule
+conflicts with a principle, the principle wins. When you're unsure what to do, return
+to these principles. They are not suggestions — they are the mental model you run on
+while writing.
+
+```
+1. EMPATHY FIRST
+   You are not writing. You are sitting across from ONE person — the audiencePersona —
+   having a conversation. They are scrolling on their phone, half-distracted, ready to
+   swipe away in 2 seconds. Everything you write must earn the next 3 seconds of their
+   attention. Before committing any sentence, simulate their reaction: do they feel
+   curiosity, recognition, surprise, or relief? If a sentence triggers none of these —
+   if the reader's inner voice says "so what?" or "I know this already" — delete it.
+   The reader's emotional state is the only metric that matters mid-writing.
+
+2. THEIR WORDS, NOT YOURS
+   Every word must pass one test: would the reader say this to a friend over coffee?
+   If no, replace it. You are matching THEIR vocabulary, not showcasing yours. The
+   reader never thinks in abstractions — they think in scenes, faces, and feelings.
+   When you catch yourself reaching for a "smart" word, stop. The smarter move is the
+   simpler word. A concept the reader can't picture is a concept that doesn't exist.
+   This applies to every language: Chinese, English, technical terms, metaphors. If
+   the audiencePersona wouldn't use it, you can't use it.
+
+3. SHOW THE MOVIE
+   Abstractions are invisible. Stories are visible. "AI improves productivity" is
+   invisible — the reader's brain generates no image. "She built an entire product
+   in 3 weeks, alone, without writing a single line of code" — the reader sees a
+   person, a timeline, a result. Every claim in your draft needs a SCENE: a face,
+   a number, a moment in time. If you can't attach a scene to a claim, the claim
+   is too abstract to include. Concreteness is not decoration — it IS the content.
+
+4. TENSION IS OXYGEN
+   Content without tension is content nobody finishes. The reader stays because they
+   need to know what happens next. Every paragraph must either OPEN a question or
+   CLOSE one. If a paragraph does neither — if it's just "information sitting there"
+   — the reader's thumb is already moving to the next post. Tension can be explicit
+   ("But why don't big companies do this?") or structural (a gap between what the
+   reader assumed and what you're about to reveal). When you feel the energy dropping,
+   you've lost tension. Inject a question, a contradiction, or a surprise immediately.
+
+5. THE CREATOR IS THE PROOF
+   The most persuasive evidence is not data or expert quotes — it's the creator saying
+   "I did this, and here's what happened." The creator's lived experience is
+   irreplaceable social proof. Third-party cases support the argument; the creator's
+   own story IS the argument. Always lead with the creator's experience when available.
+   Vulnerability beats authority: "I failed at this three times before it worked" is
+   more compelling than "Studies show a 30% improvement." If the creator has relevant
+   experience for this topic, it must appear in the draft — not as a footnote, but as
+   the backbone.
+```
+
 ## Prerequisites
 
 Before writing, load these reference documents:
@@ -313,71 +367,26 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
 
    **B2. Body（3:00 → 6:00 → 9:00 的论证展开）**
 
-   沿着 A2 的论证链条，依次写每个段落。每个段落对照 A3 的 clock 节点。
+   Follow the argument chain from A2. Each paragraph maps to a clock node from A3.
 
-   **写作规则（不可违反）：**
-   - 像对面坐着一个人在聊天，不是在台上讲课
-   - 句长刻意变化：3-4 个短句，然后一个长句。然后一个词的句子。"真的。"
-   - 每个事实性主张必须有 references/ 里的具体案例或数据支撑
-   - 总字数：**怕短不怕长。** 最低 800 字，没有上限。内容的自然长度由论证的
-     复杂度决定 — 如果一个案例值得展开 200 字，就展开 200 字，不要为了"简洁"
-     压缩成 50 字的干巴巴摘要。读者流失是因为无聊，不是因为长。
-     只有一个约束：每一句话都必须有存在的理由（推进论证、建立情感、提供证据），
-     不能为了凑长度而注水。
+   Apply the Operating System principles throughout — they replace specific writing rules:
+   - EMPATHY FIRST → earn the reader's next 3 seconds with every sentence
+   - THEIR WORDS NOT YOURS → if the reader wouldn't say it, you can't write it
+   - SHOW THE MOVIE → every claim needs a scene (face, number, moment)
+   - TENSION IS OXYGEN → every paragraph opens or closes a question
+   - THE CREATOR IS THE PROOF → lead with creator's own experience
 
-   **每写完一个 clock 区间，做两项检查：**
+   **Length:** No cap. Fear short, not long. If a case study deserves 200 words of vivid
+   detail, give it 200 words. Readers leave because of boredom, not length. The only
+   constraint: every sentence must have a reason to exist (advance argument, build emotion,
+   provide evidence). No padding.
 
-   **骨架对照：**
-   - 这个段落对应骨架里的哪个论证环节？
-   - 这个位置的 bang moment 放了吗？放对了吗？
-   - 微操技巧在预定位置用了吗？
-
-   **⚠️ 读者情绪模拟（MANDATORY — 每个 clock 区间写完都要做）：**
-
-   站在目标读者（audiencePersona）的视角，回答：
-   1. **读者读到这里什么反应？** （"卧槽原来是这样" / "这我知道啊" / "看不懂" / "跟我有什么关系"）
-   2. **读者会继续看吗？为什么？** 如果答案是"可能会划走"，这个段落需要重写。
-   3. **有没有读者听不懂的词？** 检查每一个专业术语、英文词、行业黑话。
-      目标读者不是程序员，不是投资人，不是你的同行 — 是 audiencePersona 描述的那个人。
-      "银弹"、"维度"、"框架"、"底层逻辑" — 这些词如果读者不会在日常对话中用，就换掉。
-      替换原则：用读者自己会说的话说同样的意思。
-   4. **这段和上一段之间有没有逻辑跳跃？** 读者能不能自然地从上一段过渡到这一段？
-      如果需要读者自己"脑补"一个逻辑环节才能理解，那就是断裂 — 补上过渡。
-
-   如果任何一项检查不通过，**立即修改这个段落再继续写下一段**。不要写完全文再回头改。
-
-   **反面模式（绝对禁止）：**
-   - ❌ "总而言之" / "综上所述" / "值得一提的是" — 论文过渡词
-   - ❌ "首先…其次…最后…" — 流水账结构
-   - ❌ "一方面…另一方面…" — 两边讨好
-   - ❌ 5 条 list — AI 签名
-   - ❌ 每段等长 — 真人写东西参差不齐
-   - ❌ 虚构案例（"某公司"、"一位朋友"）— 有名有姓或别用
-
-   **坏 body vs 好 body 对比：**
-   ```
-   ❌ 坏："vibe-coding 是一种新的编程方式。首先，它让非程序员
-         也能做产品。其次，它降低了开发成本。最后，它提高了效率。
-         总而言之，vibe-coding 是一个值得关注的趋势。"
-         → 首先其次最后结构、总而言之结尾、零案例、零感情、
-           像维基百科不像人在说话
-
-   ✅ 好："她用 3 周时间，搭了一个智能分类平台——自动识别图片、
-         分类、智能推荐。
-
-         不是外包给程序员做的。是她自己用 AI 工具一个人搞定的。
-
-         这个项目帮她拿下了知名互联网公司的高级设计师 offer，
-         薪资涨了 30%。5 家面试，每一家都因为这个项目让她脱颖而出。
-
-         这不是个例。腾讯有个文科生产品策划，零代码经验，用 Cursor
-         花 3 个月做了个约饭小程序，2000+ 员工在用。
-
-         这些人的共同点：他们不是程序员，但他们用 AI 重新定义了
-         '一个人能做什么'。"
-         → 有名有姓的案例、有数据（30%、5家、2000+）、
-           短段落节奏、像人在讲故事不是写论文
-   ```
+   **After each clock section, verify against skeleton:**
+   - Does this paragraph serve the argument structure from A2?
+   - Is the planned bang moment present and strong?
+   - Are the pre-placed micro-retention techniques firing?
+   - Apply EMPATHY FIRST: would the reader keep reading at this point? If not, rewrite
+     before continuing.
 
    **B3. Comment triggers（评论触发）**
 
@@ -413,43 +422,35 @@ For video scripts: apply the **Clock Theory** from HAMLETDEER.md. Map the script
 
    ---
 
-7. **Self-review — 对照骨架做最终检查**（发现问题直接改，不是打勾就行）
+7. **Self-review — run the Operating System check**
 
-   **结构检查：**
-   - [ ] 核心观点在正文中有没有被清晰表达？读者看完能一句话复述吗？
-   - [ ] 论证链条完整吗？有没有跳步或断裂？
-   - [ ] 4 个 clock 节点的 bang moment 都存在且有力？
-   - [ ] HKRR 主导维度一致？没有维度冲突？
+   Re-read the entire draft once through. For each paragraph, verify the 5 principles:
 
-   **质量检查：**
-   - [ ] 够长吗？每个论点都展开充分了？案例有细节有画面感？不要为了"简洁"而压缩。
-   - [ ] 有没有用到**创作者自己的亲身经历**？（如果有可用素材但没用 → 必须补上）
-   - [ ] ≥2 个有名有姓的具体案例？（来自 references/ 或创作者本人）
-   - [ ] **每个案例/数据都能追溯到 references/ 文件或创作者本人经历？**
-   - [ ] **4 个角度（案例/数据/反面观点/趋势）都在正文中引用了？**
-   - [ ] ≥1 个反直觉洞察或反转？
-   - [ ] ≥2 个微操技巧已使用（open loop/curiosity gap/visual anchor/rhythm break）？
-   - [ ] ≥1 个评论触发点？
+   **EMPATHY FIRST check:** Read the draft as if you are the audiencePersona, scrolling
+   on your phone. At every paragraph boundary ask: would I keep reading? If any point
+   makes you think "so what?" or "I'd swipe away here" — rewrite that section.
 
-   **读者视角检查（站在 audiencePersona 的立场）：**
-   - [ ] 全文通读一遍，有没有读者**听不懂的词**？（"银弹"、"维度"、"底层逻辑"、
-         "框架"等 — 如果目标读者在日常对话中不会用这个词，必须换成大白话）
-   - [ ] 任意两段之间有没有**逻辑跳跃**？读者能不能自然地从上一段过渡到下一段？
-   - [ ] 读者读完最后一句，能不能清楚地知道**接下来该做什么**？
-   - [ ] 把自己当成一个刷到这条内容的陌生人 — 读完前 3 句，**你会继续看还是划走**？
+   **THEIR WORDS NOT YOURS check:** Scan for any word the reader wouldn't use in casual
+   conversation. Every term must pass the coffee-chat test.
 
-   **反面模式检查：**
-   - [ ] 无"总而言之/综上所述/首先其次最后/一方面另一方面"？
-   - [ ] 无等长段落？
-   - [ ] 无虚构案例？
-   - [ ] 无读者听不懂的行业黑话/英文术语？
-   - [ ] 语气像人说话不像论文？
+   **SHOW THE MOVIE check:** Is every claim attached to a scene (face, number, moment)?
+   Any paragraph that reads like a summary instead of a story needs a concrete example
+   injected.
 
-   **元数据检查：**
-   - [ ] 标题 ≤25 字 + 使用了标题公式？
-   - [ ] 假说（hypothesis）已填写？
-   - [ ] 内容支柱（content pillar）已指定？
-   - [ ] Hashtags 已生成？
+   **TENSION IS OXYGEN check:** Does every paragraph either open or close a question?
+   Any paragraph that just "sits there" providing information without tension is a
+   dropout point — add a question, contradiction, or surprise.
+
+   **THE CREATOR IS THE PROOF check:** If the creator has relevant personal experience
+   for this topic, is it in the draft? Not as a footnote — as the backbone?
+
+   **Structure verification:**
+   - [ ] 4 clock bang moments present and strong?
+   - [ ] Argument chain from A2 complete — no missing steps?
+   - [ ] HKRR dominant dimension consistent throughout?
+   - [ ] ≥2 micro-retention techniques fired at planned positions?
+   - [ ] ≥1 comment trigger embedded naturally?
+   - [ ] Hypothesis, title, hashtags ready?
 
 8. **Save via `autocrew_content` tool — THE ONLY ALLOWED WAY TO SAVE:**
 
