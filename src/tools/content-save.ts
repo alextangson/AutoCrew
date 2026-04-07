@@ -181,6 +181,41 @@ export async function executeContentSave(params: Record<string, unknown>) {
     return { ok: false, error: "title and body are required for save" };
   }
 
+  // ─── Methodology compliance gate ────────────────────────────────────
+  // Enforce HAMLETDEER.md principles at the code level.
+  // LLM skill instructions are advisory; this gate is mandatory.
+  const complianceWarnings: string[] = [];
+
+  // Check 1: Body must be substantial (not a stub)
+  if (body.trim().length < 200) {
+    complianceWarnings.push("草稿过短（< 200字），可能缺少完整论述");
+  }
+
+  // Check 2: Anti-pattern detection (HAMLETDEER.md forbidden patterns)
+  const antiPatterns = [
+    { pattern: /总而言之|综上所述|值得一提的是/, label: "essay transitions" },
+    { pattern: /首先[，,].{0,50}其次[，,].{0,50}最后/, label: "首先其次最后 structure" },
+    { pattern: /一方面[，,].{0,100}另一方面/, label: "balanced hedging" },
+  ];
+  for (const { pattern, label } of antiPatterns) {
+    if (pattern.test(body)) {
+      complianceWarnings.push(`检测到 HAMLETDEER 禁用模式: ${label}`);
+    }
+  }
+
+  // Check 3: Hypothesis must be provided (HAMLETDEER.md requirement)
+  if (!params.hypothesis) {
+    complianceWarnings.push("缺少流量假说（hypothesis）— HAMLETDEER.md 要求每篇内容必须有假说");
+  }
+
+  // Check 4: Comment triggers should exist
+  if (!params.comment_triggers || (params.comment_triggers as unknown[]).length === 0) {
+    complianceWarnings.push("缺少评论触发点（comment_triggers）— 建议至少设置 1 个");
+  }
+
+  // Don't block save, but return warnings prominently so the LLM self-corrects
+  // ─── End methodology compliance gate ────────────────────────────────
+
   const rawStatus = (params.status as string) || "draft_ready";
   const platform = (params.platform as string) || undefined;
 
@@ -269,6 +304,8 @@ export async function executeContentSave(params: Record<string, unknown>) {
     projectDir,
     pipelinePath: projectDir,
     pipelineVerified,
+    complianceWarnings: complianceWarnings.length > 0 ? complianceWarnings : undefined,
+    methodologyCompliant: complianceWarnings.length === 0,
     legacyDir: `${effectiveDataDir}/contents/${content.id}`,
     openCommand: `open "${projectDir}"`,
     message: [
@@ -276,6 +313,10 @@ export async function executeContentSave(params: Record<string, unknown>) {
       `   草稿：${projectDir}/draft.md (当前活动文件)`,
       `   元数据：${projectDir}/meta.yaml`,
       `   Pipeline 完整性：${pipelineVerified ? "✅ 已验证" : "❌ 异常 — meta.yaml 或 draft.md 缺失"}`,
+      `   方法论合规：${complianceWarnings.length === 0 ? "✅ 通过" : `⚠️ ${complianceWarnings.length} 个问题`}`,
+      ...(complianceWarnings.length > 0
+        ? [`   ⚠️ HAMLETDEER 合规问题（建议修改后重新保存）：`, ...complianceWarnings.map((w) => `      - ${w}`)]
+        : []),
       `   历史快照：修改后会在 ${projectDir}/draft-v{N}.md 生成`,
       `   自动去AI味：${humanizeResult?.ok ? "✅ 已处理" : "⚠️ 跳过"}`,
       ``,
