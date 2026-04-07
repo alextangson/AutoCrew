@@ -665,21 +665,87 @@ export async function startProject(
   dataDir?: string,
 ): Promise<string> {
   await initPipeline(dataDir);
-  const topicsDir = stagePath("topics", dataDir);
+  const pipelineTopicsDir = stagePath("topics", dataDir);
 
-  // Find the topic file
-  const files = await fs.readdir(topicsDir);
-  const topicFile = files.find(
-    (f) => f.endsWith(".md") && f.includes(topicSlug),
-  );
-  if (!topicFile) throw new Error(`Topic not found: ${topicSlug}`);
+  // Strategy 1: Find in pipeline topics (markdown files in pipeline/topics/)
+  let topicTitle = "";
+  let topicDomain = "";
+  let topicFormats: string[] = [];
+  let topicIntelRefs: string[] = [];
+  let topicFile = "";
 
-  const content = await fs.readFile(
-    path.join(topicsDir, topicFile),
-    "utf-8",
-  );
-  const topic = parseTopicFile(content);
-  const projectName = slugify(topic.title);
+  try {
+    const files = await fs.readdir(pipelineTopicsDir);
+    const found = files.find(
+      (f) => f.endsWith(".md") && f.includes(topicSlug),
+    );
+    if (found) {
+      topicFile = found;
+      const content = await fs.readFile(
+        path.join(pipelineTopicsDir, found),
+        "utf-8",
+      );
+      const topic = parseTopicFile(content);
+      topicTitle = topic.title;
+      topicDomain = topic.domain;
+      topicFormats = topic.formats;
+      topicIntelRefs = topic.intelRefs;
+    }
+  } catch {
+    // Pipeline topics dir may not exist
+  }
+
+  // Strategy 2: Fallback to legacy local-store topics (JSON files in topics/)
+  if (!topicTitle) {
+    const effectiveDataDir = dataDir || path.join(process.env.HOME ?? ".", ".autocrew");
+    const legacyTopicsDir = path.join(effectiveDataDir, "topics");
+    try {
+      const files = await fs.readdir(legacyTopicsDir);
+      for (const f of files) {
+        if (!f.endsWith(".json")) continue;
+        // Match by ID (topic-xxx) or by slug in filename
+        if (f.includes(topicSlug) || f === `${topicSlug}.json`) {
+          const raw = JSON.parse(
+            await fs.readFile(path.join(legacyTopicsDir, f), "utf-8"),
+          );
+          topicTitle = raw.title || topicSlug;
+          topicDomain = raw.domain || "";
+          topicFormats = raw.formats || [];
+          topicIntelRefs = [];
+          topicFile = f;
+          break;
+        }
+      }
+      // If still not found, try matching topic title against the slug
+      if (!topicTitle) {
+        for (const f of files) {
+          if (!f.endsWith(".json")) continue;
+          const raw = JSON.parse(
+            await fs.readFile(path.join(legacyTopicsDir, f), "utf-8"),
+          );
+          if (raw.title && slugify(raw.title).includes(topicSlug)) {
+            topicTitle = raw.title;
+            topicDomain = raw.domain || "";
+            topicFormats = raw.formats || [];
+            topicIntelRefs = [];
+            topicFile = f;
+            break;
+          }
+        }
+      }
+    } catch {
+      // Legacy topics dir may not exist
+    }
+  }
+
+  if (!topicTitle) {
+    throw new Error(
+      `Topic not found: "${topicSlug}". Searched in pipeline/topics/ (markdown) ` +
+      `and topics/ (JSON). Use autocrew_topic action="list" to see available topics.`,
+    );
+  }
+
+  const projectName = slugify(topicTitle);
 
   const projectDir = path.join(stagePath("drafting", dataDir), projectName);
   await fs.mkdir(projectDir, { recursive: true });
@@ -691,12 +757,12 @@ export async function startProject(
   // draft-v{N}.md = immutable snapshots of content that has been REPLACED by a revision.
   // On initial create there are no snapshots yet — only draft.md exists.
   const meta: ProjectMeta = {
-    title: topic.title,
-    domain: topic.domain,
-    format: topic.formats[0] ?? "article",
+    title: topicTitle,
+    domain: topicDomain,
+    format: topicFormats[0] ?? "article",
     createdAt: now,
     sourceTopic: topicFile,
-    intelRefs: topic.intelRefs,
+    intelRefs: topicIntelRefs,
     versions: [],
     current: "draft.md",
     history: [{ stage: "drafting", entered: now }],
@@ -706,12 +772,18 @@ export async function startProject(
   await writeMeta(projectDir, meta);
   await fs.writeFile(
     path.join(projectDir, "draft.md"),
-    `# ${topic.title}\n\n`,
+    `# ${topicTitle}\n\n`,
     "utf-8",
   );
 
-  // Remove topic file
-  await fs.unlink(path.join(topicsDir, topicFile));
+  // Remove topic file from pipeline topics (if it came from there)
+  if (topicFile.endsWith(".md")) {
+    try {
+      await fs.unlink(path.join(pipelineTopicsDir, topicFile));
+    } catch {
+      // May not exist in pipeline topics dir
+    }
+  }
 
   return projectDir;
 }
