@@ -181,6 +181,66 @@ describe("E2E: Topic Management", () => {
   });
 });
 
+describe("E2E: Topic → Start → Content (cross-system)", () => {
+  it("topic created via autocrew_topic can be started via pipeline_ops", async () => {
+    // Create topic via local-store (autocrew_topic)
+    const topicResult = await runner.execute("autocrew_topic", {
+      action: "create",
+      title: "端到端测试选题",
+      description: "测试从 topic 到 project 的完整流程",
+      tags: ["test"],
+    });
+    expect(topicResult.ok).toBe(true);
+    const topicId = (topicResult.topic as any).id;
+    expect(topicId).toBeDefined();
+
+    // Start project via pipeline-store (should find the legacy topic)
+    const startResult = await runner.execute("autocrew_pipeline_ops", {
+      action: "start",
+      project: topicId,
+    });
+    expect(startResult.ok).toBe(true);
+    expect(startResult.projectDir).toBeDefined();
+    // Should return next step guidance
+    expect(startResult.nextStep).toBeDefined();
+    expect((startResult.nextStep as string)).toContain("autocrew_content");
+  });
+
+  it("content list returns both legacy contents and pipeline projects", async () => {
+    const result = await runner.execute("autocrew_content", { action: "list" });
+    expect(result.ok).toBe(true);
+    // Should have legacy contents from earlier tests
+    expect(result.contents).toBeDefined();
+    // Should have pipeline projects from start test above
+    expect(result.pipelineProjects).toBeDefined();
+    const projects = result.pipelineProjects as any[];
+    expect(projects.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("research auto mode does not return placeholder topics", async () => {
+    const result = await runner.execute("autocrew_research", {
+      action: "discover",
+      keyword: "测试关键词",
+      mode: "auto",
+      topic_count: 3,
+      save_topics: false,
+    });
+    // Should either return real results or a proper error — never fake placeholders
+    if (result.ok) {
+      const topics = (result.topics || []) as any[];
+      for (const t of topics) {
+        // No topic should contain "API 候选" placeholder text
+        expect(t.title).not.toContain("API 候选");
+        expect(t.title).not.toContain("候选");
+      }
+    } else {
+      // Error is acceptable — it means no source worked, but at least it's honest
+      expect(result.error).toBeDefined();
+      expect(result.suggestion).toBeDefined();
+    }
+  });
+});
+
 describe("E2E: Pipeline & Workflow", () => {
   let workflowId: string;
 
