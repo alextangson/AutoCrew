@@ -100,6 +100,7 @@ import { cmd as trashCmd } from "./trash.js";
 import { cmd as restoreCmd } from "./restore.js";
 import { cmd as migrateCmd } from "./migrate.js";
 import { cmd as draftCmd } from "./draft.js";
+import { cmd as renderCmd } from "./render.js";
 
 export const commands: CommandDef[] = [
   statusCmd,
@@ -130,4 +131,5 @@ export const commands: CommandDef[] = [
   restoreCmd,
   migrateCmd,
   draftCmd,
+  renderCmd,
 ];
