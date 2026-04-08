@@ -21,6 +21,57 @@ export function getOption(args: string[], flag: string): string | undefined {
   return idx !== -1 && args[idx + 1] ? args[idx + 1] : undefined;
 }
 
+/**
+ * Resolve a project identifier to draft text.
+ * Supports: legacy content ID, pipeline project slug, or --file path.
+ * Returns { text, title, source } or null if not found.
+ */
+export async function resolveProjectText(
+  idOrSlug: string,
+  args: string[],
+): Promise<{ text: string; title: string; source: string } | null> {
+  const filePath = getOption(args, "--file");
+
+  // --file flag: read directly from file path
+  if (filePath) {
+    const fs = await import("node:fs/promises");
+    try {
+      const text = await fs.readFile(filePath, "utf-8");
+      const titleMatch = text.match(/^#\s+(.+)/m);
+      return { text, title: titleMatch?.[1]?.trim() || filePath, source: `file:${filePath}` };
+    } catch {
+      return null;
+    }
+  }
+
+  if (!idOrSlug) return null;
+
+  // Try legacy content ID first
+  try {
+    const { getContent } = await import("../../storage/local-store.js");
+    const content = await getContent(idOrSlug);
+    if (content) {
+      return { text: content.body, title: content.title, source: `content:${content.id}` };
+    }
+  } catch { /* ignore */ }
+
+  // Try pipeline project slug
+  try {
+    const { findProject } = await import("../../storage/pipeline-store.js");
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const found = await findProject(idOrSlug);
+    if (found) {
+      const draftPath = path.join(found.dir, "draft.md");
+      const text = await fs.readFile(draftPath, "utf-8");
+      const titleMatch = text.match(/^#\s+(.+)/m);
+      return { text, title: titleMatch?.[1]?.trim() || idOrSlug, source: `pipeline:${idOrSlug}` };
+    }
+  } catch { /* ignore */ }
+
+  return null;
+}
+
 import { cmd as statusCmd } from "./status.js";
 import { cmd as topicsCmd } from "./topics.js";
 import { cmd as contentsCmd } from "./contents.js";
