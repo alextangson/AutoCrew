@@ -47,8 +47,12 @@ export function registerAllTools(runner: ToolRunner): void {
     name: "autocrew_content",
     label: "AutoCrew Content",
     description:
-      "Manage content lifecycle: save drafts, list/get/update content, transition status, manage siblings and variants. " +
-      "Actions: save, list, get, update, transition, list_siblings, create_variant.",
+      "Content creation and lifecycle management. THIS IS THE PRIMARY CONTENT CREATION TOOL. " +
+      "To create content: use action='save' with title and body (the full draft text). " +
+      "The tool handles pipeline project creation, version tracking, and auto-humanization. " +
+      "Workflow: 1) Research with autocrew_intel, 2) Write the full draft body, " +
+      "3) Save with autocrew_content action='save' (title, body, platform, hypothesis, tags). " +
+      "Other actions: list, get, update, transition, create_variant, siblings, allowed_transitions.",
     parameters: contentSaveSchema,
     execute: executeContentSave,
   });
@@ -145,8 +149,10 @@ export function registerAllTools(runner: ToolRunner): void {
     name: "autocrew_intel",
     label: "AutoCrew 灵感源",
     description:
-      "Inspiration source pipeline. Actions: pull (collect from web/RSS/trends), " +
-      "list (show saved), clean (archive expired), ingest (manually add url/text/memory).",
+      "Content research and inspiration pipeline. Use this BEFORE writing content to gather real data, " +
+      "case studies, and trends. Actions: pull (collect from web search/RSS/trends — primary research tool), " +
+      "list (show saved intel), clean (archive expired), ingest (manually add url/text/memory sources). " +
+      "Research results feed into the knowledge wiki and are referenced during content creation.",
     parameters: intelSchema,
     execute: executeIntel,
   });
@@ -155,7 +161,9 @@ export function registerAllTools(runner: ToolRunner): void {
     name: "autocrew_pipeline_ops",
     label: "AutoCrew Pipeline Ops",
     description:
-      "Content pipeline lifecycle management. Actions: status (stage counts), start (topic→project), advance (next stage), version (add draft), trash, restore.",
+      "Content pipeline lifecycle management. Actions: status (stage counts), start (topic→project — creates project structure, NOT content), " +
+      "advance (next stage — requires draft.md with ≥100 chars), version (add draft revision), trash, restore. " +
+      "NOTE: 'start' only creates the project folder. To create actual content, use autocrew_content action='save' with the full draft body.",
     parameters: pipelineOpsSchema,
     execute: executePipelineOps,
   });

@@ -62,7 +62,16 @@ export async function executePipelineOps(params: Record<string, unknown>) {
         return { ok: false, error: "Missing 'project' — provide a topic slug to start from." };
       }
       const dir = await startProject(project, dataDir);
-      return { ok: true, action: "start", projectDir: dir };
+      return {
+        ok: true,
+        action: "start",
+        projectDir: dir,
+        nextStep:
+          "Project structure created with empty draft.md. " +
+          "NEXT: Write the content draft and save it using autocrew_content action='save' " +
+          "with title and body. The save action handles pipeline integration, version tracking, " +
+          "and auto-humanization. Do NOT use the Write tool to edit draft.md directly.",
+      };
     }
 
     case "advance": {
