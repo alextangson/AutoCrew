@@ -7,13 +7,12 @@ export interface TikHubResearchQuery {
 }
 
 export async function researchWithTikHub(
-  query: TikHubResearchQuery,
+  _query: TikHubResearchQuery,
 ): Promise<ResearchItem[]> {
-  const limit = query.limit || 5;
-  return Array.from({ length: limit }).map((_, index) => ({
-    title: `${query.keyword} API 候选 ${index + 1}`,
-    summary: "TikHub fallback placeholder. Replace with a real provider call only when browser-first mode is unavailable.",
-    platform: query.platform,
-    source: "api_provider",
-  }));
+  // TikHub adapter is not implemented — return empty to trigger proper fallback.
+  // Previously returned fake placeholder items ("API 候选 1/2/3") which polluted
+  // the topic pool with useless entries. Empty array forces research.ts to fall
+  // through to free engine or return an actionable error with suggestion to use
+  // autocrew_intel pull instead.
+  return [];
 }

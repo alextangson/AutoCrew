@@ -2,21 +2,49 @@ import type { CommandDef } from "./index.js";
 
 export const cmd: CommandDef = {
   name: "versions",
-  description: "List version history for a content project",
-  usage: "autocrew versions <content-id>",
+  description: "List version history for a content project (draft versions + asset versions)",
+  usage: "autocrew versions <project-slug-or-content-id>",
   action: async (args, runner) => {
-    const contentId = args[0];
-    if (!contentId) {
-      console.error("Usage: autocrew versions <content-id>");
+    const id = args[0];
+    if (!id) {
+      console.error("Usage: autocrew versions <project-slug-or-content-id>");
       process.exitCode = 1;
       return;
     }
-    const result = await runner.execute("autocrew_asset", { action: "versions", content_id: contentId });
+
+    // Try pipeline project first (draft versions from meta.yaml)
+    try {
+      const pipelineResult = await runner.execute("autocrew_pipeline_ops", {
+        action: "status",
+      });
+      // Search for project in pipeline stages
+      const { getProjectMeta } = await import("../../storage/pipeline-store.js");
+      const meta = await getProjectMeta(id);
+      if (meta) {
+        console.log(`Draft versions for "${meta.title}":`);
+        console.log(`  Current: ${meta.current}`);
+        if (meta.versions.length === 0) {
+          console.log("  No revision history yet (initial draft only).");
+        } else {
+          for (const v of meta.versions) {
+            console.log(`  ${v.file} — ${v.note} (${v.createdAt})`);
+          }
+        }
+        console.log(`  Stage: ${meta.history.at(-1)?.stage ?? "unknown"}`);
+        return;
+      }
+    } catch {
+      // Pipeline store may not be available
+    }
+
+    // Fallback to asset versions (legacy)
+    const result = await runner.execute("autocrew_asset", { action: "versions", content_id: id });
     const versions = (result.versions || []) as any[];
     if (versions.length === 0) {
-      console.log(`No versions for ${contentId}.`);
+      console.log(`No versions found for "${id}". Check the project slug or content ID.`);
       return;
     }
+    console.log(`Asset versions for ${id}:`);
     for (const v of versions) {
       console.log(`  v${v.version} — ${v.note || "no note"} (${v.savedAt})`);
     }
