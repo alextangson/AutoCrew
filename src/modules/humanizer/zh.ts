@@ -55,9 +55,10 @@ function breakLongClauses(text: string): { text: string; count: number } {
     const chineseLength = (trimmed.match(/[\u4e00-\u9fff]/g) || []).length;
     if (chineseLength <= 40) return line;
 
-    const replaced = line
-      .replace(/，(?=[^，。！？]{10,})/, "。")
-      .replace(/；(?=[^；。！？]{8,})/, "。");
+    // Use /g flag to apply ALL breaks in one pass (convergence guarantee)
+    let replaced = line;
+    replaced = replaced.replace(/，(?=[^，。！？]{10,})/g, "。");
+    replaced = replaced.replace(/；(?=[^；。！？]{8,})/g, "。");
     if (replaced !== line) {
       count += 1;
       return replaced;
@@ -108,20 +109,10 @@ function reduceWeOpenings(text: string): { text: string; count: number } {
   return { text: nextLines.join("\n"), count: changed };
 }
 
-function addRhythmPhraseIfNeeded(text: string): { text: string; count: number } {
-  if (/说白了|你想啊|问题来了/.test(text)) {
-    return { text, count: 0 };
-  }
-
-  const paragraphs = text.split(/\n{2,}/);
-  if (paragraphs.length < 2) {
-    return { text, count: 0 };
-  }
-
-  const next = [...paragraphs];
-  next.splice(1, 0, "说白了，这件事拼的不是工具数量，而是表达和执行。");
-  return { text: next.join("\n\n"), count: 1 };
-}
+// addRhythmPhraseIfNeeded removed.
+// Previously inserted a hardcoded sentence ("说白了，这件事拼的不是工具数量，而是表达和执行。")
+// that was unrelated to the actual content. Humanizer should only do
+// substitution and deletion — never insert new content.
 
 export function humanizeZh(options: HumanizeZhOptions): HumanizeZhResult {
   const originalText = options.text || "";
@@ -154,11 +145,7 @@ export function humanizeZh(options: HumanizeZhOptions): HumanizeZhResult {
     changes.push(`减少“我们”开头句子 × ${weOpenings.count}`);
   }
 
-  const rhythm = addRhythmPhraseIfNeeded(humanizedText);
-  if (rhythm.count > 0) {
-    humanizedText = rhythm.text;
-    changes.push("补入 1 处口语化节奏句");
-  }
+  // No content insertion — humanizer only substitutes and deletes.
 
   humanizedText = normalizeWhitespace(humanizedText);
   return {

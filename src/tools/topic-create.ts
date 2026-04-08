@@ -1,5 +1,10 @@
 import { Type } from "@sinclair/typebox";
-import { saveTopic, listTopics } from "../storage/local-store.js";
+import { saveTopic as legacySaveTopic, listTopics as legacyListTopics } from "../storage/local-store.js";
+import {
+  saveTopic as pipelineSaveTopic,
+  listTopics as pipelineListTopics,
+  type TopicCandidate,
+} from "../storage/pipeline-store.js";
 
 /**
  * Core tool logic — platform-agnostic.
@@ -23,14 +28,22 @@ export async function executeTopicCreate(params: Record<string, unknown>) {
   const dataDir = (params._dataDir as string) || undefined;
 
   if (action === "list") {
-    const topics = await listTopics(dataDir);
-    if (topics.length === 0) {
+    // List from both stores, deduplicate by title
+    const legacyTopics = await legacyListTopics(dataDir);
+    const pipelineTopics = await pipelineListTopics(undefined, dataDir);
+
+    const combined = [
+      ...legacyTopics.map((t) => ({ ...t, _store: "legacy" })),
+      ...pipelineTopics.map((t) => ({ title: t.title, domain: t.domain, tags: t.tags || [], score: t.score, _store: "pipeline" })),
+    ];
+
+    if (combined.length === 0) {
       return { ok: true, message: "No topics yet.", topics: [] };
     }
-    return { ok: true, topics };
+    return { ok: true, topics: combined };
   }
 
-  // create
+  // create — write to BOTH stores for compatibility
   const title = params.title as string;
   const description = params.description as string;
   const tags = (params.tags as string[]) || [];
@@ -39,12 +52,29 @@ export async function executeTopicCreate(params: Record<string, unknown>) {
     return { ok: false, error: "title and description are required for create" };
   }
 
-  const topic = await saveTopic({
+  // Save to legacy store (for backward compat)
+  const legacyTopic = await legacySaveTopic({
     title,
     description,
     tags,
     source: (params.source as string) || undefined,
   }, dataDir);
 
-  return { ok: true, topic };
+  // Also save to pipeline store (so start command finds it)
+  const now = new Date().toISOString();
+  const pipelineTopic: TopicCandidate = {
+    title,
+    domain: tags[0] || "general",
+    score: { heat: 50, differentiation: 50, audienceFit: 50, overall: 50 },
+    formats: [],
+    suggestedPlatforms: [],
+    createdAt: now,
+    intelRefs: [],
+    angles: [description],
+    audienceResonance: "",
+    references: [],
+  };
+  await pipelineSaveTopic(pipelineTopic, dataDir);
+
+  return { ok: true, topic: legacyTopic, pipelineSynced: true };
 }
