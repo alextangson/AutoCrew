@@ -250,13 +250,21 @@ export async function executeReview(params: Record<string, unknown>) {
   const fixes: string[] = [];
   if (sensitiveWords.hitCount > 0) {
     fixes.push(`修复 ${sensitiveWords.hitCount} 个敏感词`);
-    for (const hit of sensitiveWords.hits.slice(0, 5)) {
+    for (const hit of sensitiveWords.hits.slice(0, 10)) {
       const fix = hit.suggestion ? `"${hit.word}" → "${hit.suggestion}"` : `删除"${hit.word}"`;
-      fixes.push(`  - ${fix} (${hit.category})`);
+      // Show surrounding context for each hit
+      const pos = hit.positions[0];
+      const contextStart = Math.max(0, pos - 10);
+      const contextEnd = Math.min(fullText.length, pos + hit.word.length + 10);
+      const context = fullText.slice(contextStart, contextEnd).replace(/\n/g, " ");
+      fixes.push(`  - ${fix} (${hit.category}) — "...${context}..."`);
     }
   }
   if (aiCheck.hasAiTraces) {
     fixes.push(`去 AI 味：${aiCheck.changeCount} 处需要修改`);
+    for (const change of aiCheck.changes.slice(0, 5)) {
+      fixes.push(`  - ${change}`);
+    }
   }
   for (const note of qualityScore.notes) {
     fixes.push(note);
