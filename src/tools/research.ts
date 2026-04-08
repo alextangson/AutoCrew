@@ -235,13 +235,26 @@ async function runDiscovery(params: Record<string, unknown>) {
   }
 
   if (items.length === 0) {
-    items = Array.from({ length: topicCount }).map((_, index) => ({
-      title: `${keyword} 选题方向 ${index + 1}`,
-      summary: "手动降级模式生成，请后续结合真实平台反馈再筛一次。",
+    // All sources failed. Instead of returning useless placeholders,
+    // tell the caller to use the intel pipeline which has working
+    // web search + RSS + trends collectors.
+    return {
+      ok: false,
+      mode: "failed",
       platform,
-      source: "manual",
-    }));
-    sourcesUsed.push("manual");
+      keyword,
+      industry: industry || null,
+      sourcesUsed,
+      error:
+        "所有调研源都未返回结果（browser/API/free engine）。" +
+        "建议使用 autocrew_intel action='pull' 进行内容调研，" +
+        "它支持 web search + RSS + 趋势热榜，不依赖浏览器登录态。",
+      suggestion: {
+        tool: "autocrew_intel",
+        action: "pull",
+        keywords: [keyword],
+      },
+    };
   }
 
   const topics = items.slice(0, topicCount).map((item) => ({

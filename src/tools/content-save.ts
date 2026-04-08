@@ -84,7 +84,30 @@ export async function executeContentSave(params: Record<string, unknown>) {
 
   if (action === "list") {
     const contents = await listContents(dataDir);
-    return { ok: true, contents };
+
+    // Also list pipeline drafting projects (these may not exist in legacy contents/)
+    const pipelineProjects: Array<{ slug: string; title: string; stage: string; current: string }> = [];
+    try {
+      const { listProjects, getProjectMeta, stagePath } = await import("../storage/pipeline-store.js");
+      for (const stage of ["drafting", "production", "published"] as const) {
+        const slugs = await listProjects(stage, dataDir);
+        for (const slug of slugs) {
+          const meta = await getProjectMeta(slug, dataDir);
+          if (meta) {
+            pipelineProjects.push({
+              slug,
+              title: meta.title,
+              stage,
+              current: meta.current,
+            });
+          }
+        }
+      }
+    } catch {
+      // Pipeline store may not be initialized
+    }
+
+    return { ok: true, contents, pipelineProjects };
   }
 
   if (action === "get") {
