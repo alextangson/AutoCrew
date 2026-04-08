@@ -31,14 +31,17 @@ const ALL_STATUSES = [
 ] as const;
 
 export const contentSaveSchema = Type.Object({
-  action: Type.Unsafe<"save" | "list" | "get" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions">({
+  action: Type.Unsafe<"save" | "list" | "get" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "draft">({
     type: "string",
-    enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions"],
+    enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions", "draft"],
     description:
-      "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
-      "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
-      "'siblings' list sibling content, 'allowed_transitions' show valid next statuses.",
+      "Action: 'draft' GENERATE a content draft (provide topic_title + platform, returns writing context + instructions), " +
+      "'save' persist content, 'list' all, 'get' by id, 'update' existing, " +
+      "'transition' change status, 'create_variant' platform variant, " +
+      "'siblings' list siblings, 'allowed_transitions' valid next statuses.",
   }),
+  topic_title: Type.Optional(Type.String({ description: "Topic title for draft action — what to write about" })),
+  topic_description: Type.Optional(Type.String({ description: "Topic description/angle for draft action" })),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   title: Type.Optional(Type.String({ description: "Content title" })),
   body: Type.Optional(Type.String({ description: "Content body (markdown)" })),
@@ -78,9 +81,124 @@ export const contentSaveSchema = Type.Object({
   )),
 });
 
+async function executeDraft(params: Record<string, unknown>) {
+  const dataDir = (params._dataDir as string) || undefined;
+  const topicTitle = (params.topic_title as string) || (params.title as string) || "";
+  const topicDescription = (params.topic_description as string) || "";
+  const platform = (params.platform as string) || "xiaohongshu";
+
+  if (!topicTitle) {
+    return { ok: false, error: "topic_title is required for draft action. What should the content be about?" };
+  }
+
+  const effectiveDataDir = dataDir || path.join(process.env.HOME ?? "~", ".autocrew");
+
+  // Load creator context
+  let style = "";
+  let profile: Record<string, unknown> = {};
+  let methodology = "";
+
+  try {
+    style = await fs.readFile(path.join(effectiveDataDir, "STYLE.md"), "utf-8");
+  } catch { /* no style file */ }
+
+  try {
+    const raw = await fs.readFile(path.join(effectiveDataDir, "creator-profile.json"), "utf-8");
+    profile = JSON.parse(raw);
+  } catch { /* no profile */ }
+
+  try {
+    // Load HAMLETDEER methodology summary (not the full 562 lines — key principles only)
+    const full = await fs.readFile(path.join(effectiveDataDir, "..", "AutoCrew", "HAMLETDEER.md"), "utf-8");
+    // Extract the HKRR + Clock Theory sections
+    const hkrrMatch = full.match(/### The HKRR Framework[\s\S]*?(?=###\s|---)/);
+    const clockMatch = full.match(/### The Clock Theory[\s\S]*?(?=###\s|---)/);
+    methodology = [hkrrMatch?.[0] || "", clockMatch?.[0] || ""].filter(Boolean).join("\n\n");
+  } catch {
+    // HAMLETDEER not found at expected path — use embedded summary
+    methodology = `HKRR Framework: H(Happiness), K(Knowledge), R(Resonance), R(Rhythm). Short-form: pick ONE. Long-form: combine all.
+Clock Theory: Bang moments at 12:00(hook), 3:00(escalation), 6:00(payload), 9:00(climax). Every position must have energy.`;
+  }
+
+  // Load wiki knowledge if available
+  let wikiContext = "";
+  try {
+    const { listWikiPages, slugify: wikiSlugify } = await import("../storage/pipeline-store.js");
+    const pages = await listWikiPages(dataDir);
+    const relevant = pages.filter((p) =>
+      topicTitle.toLowerCase().includes(p.title.toLowerCase()) ||
+      p.aliases.some((a) => topicTitle.toLowerCase().includes(a.toLowerCase())),
+    );
+    if (relevant.length > 0) {
+      wikiContext = relevant.map((p) => `## Wiki: ${p.title}\n${p.body}`).join("\n\n");
+    }
+  } catch { /* wiki not available */ }
+
+  return {
+    ok: true,
+    action: "draft",
+    topic: { title: topicTitle, description: topicDescription, platform },
+    creatorContext: {
+      industry: profile.industry || "",
+      platforms: profile.platforms || [],
+      expressionPersona: profile.expressionPersona || "",
+      styleBoundaries: profile.styleBoundaries || { never: [], always: [] },
+      audiencePersona: profile.audiencePersona || null,
+    },
+    style: style || "(no style file — write in natural conversational Chinese)",
+    methodology,
+    wikiContext: wikiContext || "(no wiki knowledge available yet)",
+    writingInstructions: `
+You are now writing a content draft for Chinese social media. Follow these instructions EXACTLY.
+
+## THE OPERATING SYSTEM — 5 Principles (override everything else)
+
+1. EMPATHY FIRST — You are sitting across from ONE person (the audiencePersona). They are scrolling, half-distracted. Every sentence must earn their next 3 seconds. If a sentence triggers no curiosity, recognition, surprise, or relief — delete it.
+
+2. THEIR WORDS, NOT YOURS — Every word must pass: would the reader say this to a friend over coffee? If no, replace it. No jargon, no abstractions, no "smart" words the reader wouldn't use.
+
+3. SHOW THE MOVIE — Abstractions are invisible. Stories are visible. Every claim needs a scene: a face, a number, a moment. "She built a product in 3 weeks, alone" > "AI improves efficiency."
+
+4. TENSION IS OXYGEN — Every paragraph must either OPEN a question or CLOSE one. No paragraph should just "sit there" as information. When energy drops, inject a question, contradiction, or surprise.
+
+5. THE CREATOR IS THE PROOF — The creator's own experience is the strongest evidence. Lead with "I did X" before "Company Y did Z." Vulnerability > authority.
+
+## TWO-PHASE CREATION
+
+PHASE A — Build the skeleton FIRST (do not write prose yet):
+- A1: Core thesis in ONE sentence (an opinion, not a topic)
+- A2: Argument structure (thesis → evidence → twist → action)
+- A3: Clock Theory — plan 4 bang moments (12:00 hook, 3:00 escalation, 6:00 payload, 9:00 climax)
+- A4: HKRR — choose dominant dimension
+- A5: Place 2-3 micro-retention techniques
+
+Present the skeleton to the user. Wait for confirmation. Then:
+
+PHASE B — Write the full draft based on the skeleton.
+- Fear short, not long. Every case study deserves full detail.
+- After each clock section, simulate the reader's reaction.
+- Ground every factual claim in real sources.
+
+## AFTER WRITING
+
+Call autocrew_content action="save" with the full body text, title, platform, and hypothesis.
+Do NOT use the Write tool to create draft.md directly.
+`,
+    nextAction: {
+      tool: "autocrew_content",
+      action: "save",
+      description: "After generating the draft, save it with action='save' providing title, body, platform, hypothesis.",
+    },
+  };
+}
+
 export async function executeContentSave(params: Record<string, unknown>) {
   const action = (params.action as string) || "save";
   const dataDir = (params._dataDir as string) || undefined;
+
+  if (action === "draft") {
+    return executeDraft(params);
+  }
 
   if (action === "list") {
     const contents = await listContents(dataDir);

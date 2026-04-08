@@ -181,6 +181,49 @@ describe("E2E: Topic Management", () => {
   });
 });
 
+describe("E2E: Draft Action (content generation)", () => {
+  it("draft returns writing context and instructions for a topic", async () => {
+    const result = await runner.execute("autocrew_content", {
+      action: "draft",
+      topic_title: "vibe-coding 实践者的真实工作流",
+      platform: "xiaohongshu",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.action).toBe("draft");
+
+    // Should return topic info
+    expect((result.topic as any).title).toBe("vibe-coding 实践者的真实工作流");
+    expect((result.topic as any).platform).toBe("xiaohongshu");
+
+    // Should return creator context
+    expect(result.creatorContext).toBeDefined();
+
+    // Should return writing instructions with Operating System principles
+    const instructions = result.writingInstructions as string;
+    expect(instructions).toContain("EMPATHY FIRST");
+    expect(instructions).toContain("THEIR WORDS, NOT YOURS");
+    expect(instructions).toContain("SHOW THE MOVIE");
+    expect(instructions).toContain("TENSION IS OXYGEN");
+    expect(instructions).toContain("THE CREATOR IS THE PROOF");
+    expect(instructions).toContain("TWO-PHASE CREATION");
+    expect(instructions).toContain("PHASE A");
+    expect(instructions).toContain("PHASE B");
+
+    // Should return next action guidance
+    expect((result.nextAction as any).tool).toBe("autocrew_content");
+    expect((result.nextAction as any).action).toBe("save");
+  });
+
+  it("draft fails without topic_title", async () => {
+    const result = await runner.execute("autocrew_content", {
+      action: "draft",
+      platform: "xiaohongshu",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("topic_title");
+  });
+});
+
 describe("E2E: Topic → Start → Content (cross-system)", () => {
   it("topic created via autocrew_topic can be started via pipeline_ops", async () => {
     // Create topic via local-store (autocrew_topic)

@@ -47,11 +47,11 @@ export function registerAllTools(runner: ToolRunner): void {
     name: "autocrew_content",
     label: "AutoCrew Content",
     description:
-      "Content creation and lifecycle management. THIS IS THE PRIMARY CONTENT CREATION TOOL. " +
-      "To create content: use action='save' with title and body (the full draft text). " +
-      "The tool handles pipeline project creation, version tracking, and auto-humanization. " +
-      "Workflow: 1) Research with autocrew_intel, 2) Write the full draft body, " +
-      "3) Save with autocrew_content action='save' (title, body, platform, hypothesis, tags). " +
+      "Content creation and lifecycle management. " +
+      "CONTENT CREATION WORKFLOW: " +
+      "Step 1: action='draft' with topic_title + platform → returns creator style, methodology, writing instructions, and wiki knowledge. " +
+      "Step 2: Generate the draft body following the returned instructions (two-phase: skeleton first, then prose). " +
+      "Step 3: action='save' with title + body + platform + hypothesis → persists to pipeline with version tracking + auto-humanization. " +
       "Other actions: list, get, update, transition, create_variant, siblings, allowed_transitions.",
     parameters: contentSaveSchema,
     execute: executeContentSave,
