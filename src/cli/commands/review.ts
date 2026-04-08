@@ -36,7 +36,26 @@ export const cmd: CommandDef = {
         return;
       }
 
-      console.log(`Auto-fix complete for "${resolved.title}" (${resolved.source})`);
+      // Write fixed text back to source file
+      const fixedText = (result.autoFixedText || result.fixedText || "") as string;
+      if (fixedText && resolved.source.startsWith("file:")) {
+        const fs = await import("node:fs/promises");
+        const filePath = resolved.source.replace("file:", "");
+        await fs.writeFile(filePath, fixedText, "utf-8");
+        console.log(`Auto-fix complete for "${resolved.title}" — saved back to ${filePath}`);
+      } else if (fixedText && resolved.source.startsWith("pipeline:")) {
+        const fs = await import("node:fs/promises");
+        const { findProject } = await import("../../storage/pipeline-store.js");
+        const slug = resolved.source.replace("pipeline:", "");
+        const found = await findProject(slug);
+        if (found) {
+          const path = await import("node:path");
+          await fs.writeFile(path.join(found.dir, "draft.md"), fixedText, "utf-8");
+          console.log(`Auto-fix complete for "${resolved.title}" — saved back to draft.md`);
+        }
+      } else {
+        console.log(`Auto-fix complete for "${resolved.title}" (${resolved.source})`);
+      }
       console.log(`  Sensitive words fixed: ${result.sensitiveWordsFixed || 0}`);
       console.log(`  AI traces fixed: ${result.aiFixesApplied || 0}`);
       return;
