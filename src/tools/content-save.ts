@@ -88,10 +88,12 @@ export async function executeContentSave(params: Record<string, unknown>) {
     // Also list pipeline drafting projects (these may not exist in legacy contents/)
     const pipelineProjects: Array<{ slug: string; title: string; stage: string; current: string }> = [];
     try {
-      const { listProjects, getProjectMeta, stagePath } = await import("../storage/pipeline-store.js");
+      const { listProjects, getProjectMeta, syncUntrackedChanges } = await import("../storage/pipeline-store.js");
       for (const stage of ["drafting", "production", "published"] as const) {
         const slugs = await listProjects(stage, dataDir);
         for (const slug of slugs) {
+          // Auto-detect manual edits before reading meta
+          try { await syncUntrackedChanges(slug, dataDir); } catch { /* ignore */ }
           const meta = await getProjectMeta(slug, dataDir);
           if (meta) {
             pipelineProjects.push({

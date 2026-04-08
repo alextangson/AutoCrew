@@ -948,6 +948,106 @@ export async function getProjectMeta(
   return readMeta(found.dir);
 }
 
+/**
+ * Detect if draft.md has been modified outside of AutoCrew tools
+ * (e.g., manually edited, copied in). If so, auto-register the change
+ * into meta.yaml so version tracking stays accurate.
+ *
+ * Returns true if an untracked change was detected and registered.
+ */
+export async function syncUntrackedChanges(
+  name: string,
+  dataDir?: string,
+): Promise<{ synced: boolean; reason?: string }> {
+  const found = await findProject(name, dataDir);
+  if (!found) return { synced: false, reason: "project not found" };
+
+  const draftPath = path.join(found.dir, "draft.md");
+  const metaPath = path.join(found.dir, "meta.yaml");
+
+  // Check if draft.md exists
+  let draftStat;
+  try {
+    draftStat = await fs.stat(draftPath);
+  } catch {
+    return { synced: false, reason: "draft.md not found" };
+  }
+
+  // Check if meta.yaml exists — if not, create one from draft.md
+  let meta: ProjectMeta;
+  try {
+    meta = await readMeta(found.dir);
+  } catch {
+    // meta.yaml missing — create from scratch based on draft.md
+    const draftContent = await fs.readFile(draftPath, "utf-8");
+    const titleMatch = draftContent.match(/^#\s+(.+)/m);
+    const now = new Date().toISOString();
+    meta = {
+      title: titleMatch?.[1]?.trim() || name,
+      domain: "",
+      format: "article",
+      createdAt: now,
+      sourceTopic: "",
+      intelRefs: [],
+      versions: [],
+      current: "draft.md",
+      history: [{ stage: found.stage, entered: now }],
+      platforms: [],
+    };
+    await writeMeta(found.dir, meta);
+    return { synced: true, reason: "meta.yaml created from existing draft.md" };
+  }
+
+  // Compare draft.md mtime against meta.yaml's updatedAt or last version timestamp
+  const draftMtime = draftStat.mtime;
+  const lastKnownTime = meta.versions.length > 0
+    ? new Date(meta.versions[meta.versions.length - 1].createdAt)
+    : meta.createdAt
+      ? new Date(meta.createdAt)
+      : new Date(0);
+
+  // If draft.md is newer than the last tracked version by more than 5 seconds,
+  // there was an untracked edit
+  if (draftMtime.getTime() - lastKnownTime.getTime() > 1000) {
+    // Read current draft content and register as a new version
+    const draftContent = await fs.readFile(draftPath, "utf-8");
+
+    // Only register if draft has substantial content
+    if (draftContent.trim().length < 10) {
+      return { synced: false, reason: "draft.md is too short to register" };
+    }
+
+    // Archive the current state if there's something to archive
+    const versionNum = meta.versions.length + 1;
+    const archiveFilename = `draft-v${versionNum}.md`;
+
+    // If this is the first version and draft has content, just register it
+    // (no need to archive — there's nothing to archive from)
+    if (meta.versions.length > 0) {
+      // There's existing version history — this is a new edit on top
+      // Archive current to draft-vN.md before we record the new state
+      // (but we don't overwrite draft.md — the user already wrote it)
+      await fs.writeFile(
+        path.join(found.dir, archiveFilename),
+        draftContent,
+        "utf-8",
+      );
+    }
+
+    meta.versions.push({
+      file: meta.versions.length > 0 ? archiveFilename : "draft.md",
+      createdAt: draftMtime.toISOString(),
+      note: "detected external edit",
+    });
+    meta.current = "draft.md";
+    await writeMeta(found.dir, meta);
+
+    return { synced: true, reason: `registered external edit as version ${versionNum}` };
+  }
+
+  return { synced: false, reason: "draft.md is up to date with meta.yaml" };
+}
+
 export async function listProjects(
   stage: PipelineStage,
   dataDir?: string,

@@ -14,11 +14,14 @@ export const cmd: CommandDef = {
 
     // Try pipeline project first (draft versions from meta.yaml)
     try {
-      const pipelineResult = await runner.execute("autocrew_pipeline_ops", {
-        action: "status",
-      });
-      // Search for project in pipeline stages
-      const { getProjectMeta } = await import("../../storage/pipeline-store.js");
+      const { getProjectMeta, syncUntrackedChanges } = await import("../../storage/pipeline-store.js");
+
+      // Auto-detect manual edits to draft.md before reading versions
+      const syncResult = await syncUntrackedChanges(id);
+      if (syncResult.synced) {
+        console.log(`  (detected external edit: ${syncResult.reason})`);
+      }
+
       const meta = await getProjectMeta(id);
       if (meta) {
         console.log(`Draft versions for "${meta.title}":`);

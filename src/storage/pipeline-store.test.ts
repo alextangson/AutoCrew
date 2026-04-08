@@ -30,6 +30,7 @@ import {
   listWikiPages,
   regenerateWikiIndex,
   appendWikiLog,
+  syncUntrackedChanges,
   type IntelItem,
   type TopicCandidate,
   type WikiPage,
@@ -469,5 +470,68 @@ describe("Wiki Storage", () => {
     expect(lines.length).toBe(2);
     expect(lines[0]).toContain("[create]");
     expect(lines[1]).toContain("[update]");
+  });
+});
+
+// ─── Untracked Changes Detection ────────────────────────────────────────────
+
+describe("syncUntrackedChanges", () => {
+  it("detects manually edited draft.md and registers version", async () => {
+    await saveTopic(makeTopic({ title: "手动编辑测试" }), testDir);
+    await startProject("手动编辑测试", testDir);
+
+    const projectName = slugify("手动编辑测试");
+    const projectDir = path.join(stagePath("drafting", testDir), projectName);
+
+    // Simulate a manual edit: write new content to draft.md directly
+    // Wait >1s so mtime exceeds the 1-second detection threshold
+    await new Promise((r) => setTimeout(r, 1200));
+    await fs.writeFile(
+      path.join(projectDir, "draft.md"),
+      "# 手动编辑测试\n\n这是手动编辑的内容，不是通过 autocrew 工具写入的。包含足够长的文本来触发版本检测。",
+      "utf-8",
+    );
+
+    // Sync should detect the change
+    const result = await syncUntrackedChanges(projectName, testDir);
+    expect(result.synced).toBe(true);
+    expect(result.reason).toContain("external edit");
+
+    // Meta should now have a version entry
+    const meta = await getProjectMeta(projectName, testDir);
+    expect(meta!.versions.length).toBe(1);
+    expect(meta!.versions[0].note).toBe("detected external edit");
+  });
+
+  it("creates meta.yaml when only draft.md exists", async () => {
+    await initPipeline(testDir);
+    const projectDir = path.join(stagePath("drafting", testDir), "orphan-project");
+    await fs.mkdir(projectDir, { recursive: true });
+
+    // Write draft.md without meta.yaml (simulates manual file copy)
+    await fs.writeFile(
+      path.join(projectDir, "draft.md"),
+      "# 孤儿项目\n\n这个项目的 draft.md 是手动复制进来的，没有 meta.yaml。",
+      "utf-8",
+    );
+
+    const result = await syncUntrackedChanges("orphan-project", testDir);
+    expect(result.synced).toBe(true);
+    expect(result.reason).toContain("meta.yaml created");
+
+    // meta.yaml should now exist
+    const meta = await getProjectMeta("orphan-project", testDir);
+    expect(meta).not.toBeNull();
+    expect(meta!.title).toBe("孤儿项目");
+  });
+
+  it("skips when draft.md has not changed", async () => {
+    await saveTopic(makeTopic({ title: "无变更测试" }), testDir);
+    await startProject("无变更测试", testDir);
+
+    const projectName = slugify("无变更测试");
+    const result = await syncUntrackedChanges(projectName, testDir);
+    expect(result.synced).toBe(false);
+    expect(result.reason).toContain("up to date");
   });
 });
