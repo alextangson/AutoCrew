@@ -212,9 +212,13 @@ export async function executeReview(params: Record<string, unknown>) {
     const scanResult = await scanText(fullText, platform, dataDir);
     let fixedText = scanResult.autoFixedText || fullText;
 
-    // 2. Humanizer pass
+    // 2. Humanizer pass (substitution + deletion only, never insertion)
     const humanResult = humanizeZh({ text: fixedText });
     fixedText = humanResult.humanizedText;
+
+    // 3. Safety guard — strip any hardcoded phrases that old humanizer versions
+    // may have inserted. This is a belt-and-suspenders defense.
+    fixedText = fixedText.replace(/\n*说白了，这件事拼的不是工具数量，而是表达和执行。\n*/g, "\n\n");
 
     // Save back if content_id provided
     if (contentId) {
