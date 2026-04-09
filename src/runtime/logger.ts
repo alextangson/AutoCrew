@@ -53,3 +53,32 @@ export class SessionLogger {
     await this.append("tool-io.jsonl", entry);
   }
 }
+
+/** List all session log directories, newest first */
+export async function listLogSessions(dataDir: string): Promise<string[]> {
+  const logsDir = path.join(dataDir, "logs");
+  try {
+    const entries = await fs.readdir(logsDir);
+    return entries.sort().reverse();
+  } catch {
+    return [];
+  }
+}
+
+/** Delete session logs older than N days */
+export async function cleanOldLogs(dataDir: string, maxAgeDays: number): Promise<number> {
+  const logsDir = path.join(dataDir, "logs");
+  const cutoff = Date.now() - maxAgeDays * 86400000;
+  let deleted = 0;
+  try {
+    const entries = await fs.readdir(logsDir);
+    for (const entry of entries) {
+      const stat = await fs.stat(path.join(logsDir, entry));
+      if (stat.mtimeMs < cutoff) {
+        await fs.rm(path.join(logsDir, entry), { recursive: true });
+        deleted++;
+      }
+    }
+  } catch { /* logs dir may not exist */ }
+  return deleted;
+}
