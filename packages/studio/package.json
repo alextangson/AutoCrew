@@ -1,6 +1,6 @@
 {
   "name": "autocrew-studio",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Video production studio for AutoCrew — TTS, screenshots, composition, and Jianying export.",
   "type": "module",
   "license": "MIT",
