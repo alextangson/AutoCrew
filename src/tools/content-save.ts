@@ -149,39 +149,21 @@ Clock Theory: Bang moments at 12:00(hook), 3:00(escalation), 6:00(payload), 9:00
     methodology,
     wikiContext: wikiContext || "(no wiki knowledge available yet)",
     writingInstructions: `
-You are now writing a content draft for Chinese social media. Follow these instructions EXACTLY.
+## Writing Instructions
 
-## THE OPERATING SYSTEM — 5 Principles (override everything else)
+Think through these questions before writing:
 
-1. EMPATHY FIRST — You are sitting across from ONE person (the audiencePersona). They are scrolling, half-distracted. Every sentence must earn their next 3 seconds. If a sentence triggers no curiosity, recognition, surprise, or relief — delete it.
+1. WHO is reading this? (Reference the audiencePersona above)
+2. WHAT is the ONE opinion this content argues? (Not a topic — an opinion)
+3. WHY would a reader stop scrolling for this? (The hook)
+4. WHAT evidence makes this believable? (Creator's own experience > external data)
 
-2. THEIR WORDS, NOT YOURS — Every word must pass: would the reader say this to a friend over coffee? If no, replace it. No jargon, no abstractions, no "smart" words the reader wouldn't use.
+Then:
+- Build a skeleton FIRST (thesis → evidence → twist → action). Present it for confirmation.
+- Write the full draft only after skeleton is confirmed.
+- Every paragraph must either open a question or close one. No "information-only" paragraphs.
 
-3. SHOW THE MOVIE — Abstractions are invisible. Stories are visible. Every claim needs a scene: a face, a number, a moment. "She built a product in 3 weeks, alone" > "AI improves efficiency."
-
-4. TENSION IS OXYGEN — Every paragraph must either OPEN a question or CLOSE one. No paragraph should just "sit there" as information. When energy drops, inject a question, contradiction, or surprise.
-
-5. THE CREATOR IS THE PROOF — The creator's own experience is the strongest evidence. Lead with "I did X" before "Company Y did Z." Vulnerability > authority.
-
-## TWO-PHASE CREATION
-
-PHASE A — Build the skeleton FIRST (do not write prose yet):
-- A1: Core thesis in ONE sentence (an opinion, not a topic)
-- A2: Argument structure (thesis → evidence → twist → action)
-- A3: Clock Theory — plan 4 bang moments (12:00 hook, 3:00 escalation, 6:00 payload, 9:00 climax)
-- A4: HKRR — choose dominant dimension
-- A5: Place 2-3 micro-retention techniques
-
-Present the skeleton to the user. Wait for confirmation. Then:
-
-PHASE B — Write the full draft based on the skeleton.
-- Fear short, not long. Every case study deserves full detail.
-- After each clock section, simulate the reader's reaction.
-- Ground every factual claim in real sources.
-
-## AFTER WRITING
-
-Call autocrew_content action="save" with the full body text, title, platform, and hypothesis.
+Save via autocrew_content action="save" with title, body, platform, and hypothesis.
 Do NOT use the Write tool to create draft.md directly.
 `,
     nextAction: {

@@ -198,16 +198,13 @@ describe("E2E: Draft Action (content generation)", () => {
     // Should return creator context
     expect(result.creatorContext).toBeDefined();
 
-    // Should return writing instructions with Operating System principles
+    // Should return writing instructions with thinking-oriented prompts
     const instructions = result.writingInstructions as string;
-    expect(instructions).toContain("EMPATHY FIRST");
-    expect(instructions).toContain("THEIR WORDS, NOT YOURS");
-    expect(instructions).toContain("SHOW THE MOVIE");
-    expect(instructions).toContain("TENSION IS OXYGEN");
-    expect(instructions).toContain("THE CREATOR IS THE PROOF");
-    expect(instructions).toContain("TWO-PHASE CREATION");
-    expect(instructions).toContain("PHASE A");
-    expect(instructions).toContain("PHASE B");
+    expect(instructions).toContain("Writing Instructions");
+    expect(instructions).toContain("WHO is reading this");
+    expect(instructions).toContain("ONE opinion");
+    expect(instructions).toContain("skeleton FIRST");
+    expect(instructions).toContain("autocrew_content");
 
     // Should return next action guidance
     expect((result.nextAction as any).tool).toBe("autocrew_content");
