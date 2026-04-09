@@ -33,26 +33,13 @@ Onboarding is enforced by the tool system. If a tool returns `error: "onboarding
 
 ## Skill Routing
 
-| User intent | Skill to load |
-|-------------|---------------|
+| User intent | Skill |
+|-------------|-------|
 | First use / profile incomplete | onboarding |
-| /setup / "设置" / "风格校准" / "品牌校准" / "calibrate" | setup |
-| "帮我找选题" / "调研" / "这周写什么" / "内容规划" | spawn-planner or research (must also load title-craft for title methodology) |
-| "帮我想" / "想选题" / seed idea | topic-ideas (must also load title-craft for title methodology) |
-| "受众分析" / "用户画像" / "audience" | audience-profiler |
-| "二创" / "换个角度写" / "remix" | remix-content |
-| "写这个" / "帮我写" / "写一篇" | spawn-writer |
-| "批量写" / "都写了" / "写N篇" | spawn-batch-writer |
-| "改写" / "适配" / "发到XX平台" | platform-rewrite |
-| "去AI味" / "润色" | humanizer-zh |
-| "审核" / "检查" / "敏感词" | content-review |
-| "封面" / "生成封面" / "做个封面" | cover-generator |
-| "发布前检查" | pre-publish |
-| "发布" / "发到小红书" | publish-content |
-| "自动化" / "定时" / "pipeline" | manage-pipeline |
+| "设置" / "风格校准" / "calibrate" | setup |
+| "帮我写" / "写一篇" / "写这个" | spawn-writer (loads write-script + title-craft) |
+| "批量写" / "都写了" | spawn-batch-writer |
+| "帮我找选题" / "调研" / "内容规划" | spawn-planner or research (loads title-craft) |
 | User gives feedback on content | memory-distill |
-| "状态" / "进度" | autocrew_status tool |
-| "对标" / "监控" / competitor URL | [Pro] competitor-monitor |
-| Video/note URL + "分析/拆解" | [Pro] video-analysis |
-| Video/note URL (no analysis intent) | [Pro] extract-video-script |
-| "数据" / "分析报告" | [Pro] analytics-report |
+
+For other intents (封面, 发布, 审核, 去AI味, 改写, 状态, 对标, 数据), use the corresponding autocrew_* tool directly — the tool names are self-explanatory.
