@@ -53,17 +53,16 @@ export async function renderTimeline(
   const assetsDir = join(outputDir, "assets");
   await mkdir(assetsDir, { recursive: true });
 
-  // 1. Generate TTS audio (parallel)
-  const ttsPromises = timeline.tracks.tts
-    .filter((seg) => seg.status === "confirmed" && !seg.asset)
-    .map(async (seg) => {
-      const outPath = join(assetsDir, `${seg.id}.mp3`);
-      const result = await tts.generate(seg.text, voice, outPath);
-      seg.asset = result.path;
-      seg.estimatedDuration = result.duration;
-    });
+  // 1. Generate TTS audio (sequential — most TTS providers have concurrency limits)
+  const ttsSegments = timeline.tracks.tts
+    .filter((seg) => seg.status === "confirmed" && !seg.asset);
 
-  await Promise.all(ttsPromises);
+  for (const seg of ttsSegments) {
+    const outPath = join(assetsDir, `${seg.id}.mp3`);
+    const result = await tts.generate(seg.text, voice, outPath);
+    seg.asset = result.path;
+    seg.estimatedDuration = result.duration;
+  }
 
   // 2. Screenshot card visuals (parallel)
   const dim = DIMENSIONS[timeline.aspectRatio] ?? DIMENSIONS["9:16"];
