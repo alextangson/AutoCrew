@@ -12,6 +12,17 @@ const TEMPLATES: WorkflowDefinition[] = [
     id: "xiaohongshu_full",
     name: "小红书一键发布",
     description: "从选题调研到发布的完整小红书内容流水线。包含 AI 写作、去 AI 痕迹、敏感词审查、封面设计等全流程。",
+    restatement: {
+      intervalSteps: 3,
+      context: [
+        "## Restatement — 质量提醒",
+        "- 标题必须 ≤20 中文字符",
+        "- 风格必须符合 STYLE.md",
+        "- 每段必须制造或解决张力，不能只是罗列信息",
+        "- 保持创作者第一人称视角",
+        "- 不要使用 AI 套话：值得一提的是、综上所述、首先其次最后",
+      ].join("\n"),
+    },
     steps: [
       {
         id: "research",
@@ -70,6 +81,15 @@ const TEMPLATES: WorkflowDefinition[] = [
     id: "quick_publish",
     name: "快速发布",
     description: "已有内容的快速发布流程。去 AI 痕迹 → 审查 → 平台适配 → 封面 → 发布。",
+    restatement: {
+      intervalSteps: 3,
+      context: [
+        "## Restatement — 质量提醒",
+        "- 风格必须符合 STYLE.md",
+        "- 不要使用 AI 套话",
+        "- 发布前确保封面和内容匹配",
+      ].join("\n"),
+    },
     steps: [
       {
         id: "humanize",
