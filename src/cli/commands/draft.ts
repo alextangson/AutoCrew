@@ -6,7 +6,10 @@ export const cmd: CommandDef = {
   description: "Generate a content draft from a topic (loads style + methodology + wiki)",
   usage: "autocrew draft <topic-title> [--platform <platform>]",
   action: async (args, runner) => {
-    const topicTitle = args.filter((a) => !a.startsWith("--")).join(" ");
+    const flagsWithValues = ["--platform"];
+    const topicTitle = args
+      .filter((a, i) => !a.startsWith("--") && !flagsWithValues.includes(args[i - 1]))
+      .join(" ");
     if (!topicTitle) {
       console.error("Usage: autocrew draft <topic-title> [--platform <platform>]");
       console.error("Example: autocrew draft 'vibe-coding 实践者的真实工作流' --platform xiaohongshu");

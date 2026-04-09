@@ -5,7 +5,7 @@ export const cmd: CommandDef = {
   name: "render",
   description: "Render a video timeline (TTS + screenshots + Jianying export)",
   usage: "autocrew render <project-slug> [--voice <voiceId>] [--ratio <9:16|16:9>]",
-  action: async (args, runner) => {
+  action: async (args, _runner, ctx) => {
     const slug = args[0];
     if (!slug) {
       console.error("Usage: autocrew render <project-slug> [--voice <voiceId>] [--ratio <9:16|16:9>]");
@@ -42,12 +42,9 @@ export const cmd: CommandDef = {
       }
 
       // Try to load studio
-      let renderTimeline: any;
-      let loadConfig: any;
+      let studio: any;
       try {
-        const studio = await import("autocrew-studio");
-        renderTimeline = studio.renderTimeline;
-        loadConfig = studio.loadConfig;
+        studio = await import("autocrew-studio");
       } catch {
         console.error("autocrew-studio is not installed. Install it with:");
         console.error("  npm install autocrew-studio");
@@ -55,17 +52,34 @@ export const cmd: CommandDef = {
         return;
       }
 
-      const config = loadConfig();
+      const config = await studio.loadConfig(ctx.dataDir);
       const outputDir = path.join(found.dir, "render");
+
+      // Instantiate providers from config
+      const tts = new studio.DoubaoTTS(config.tts.doubao || {});
+      const screenshot = new studio.PuppeteerScreenshot();
+
+      let exporter: { export(t: any, d: string): Promise<{ path: string; format: string }> };
+      if (config.compositor.provider === "ffmpeg") {
+        const compositor = new studio.FFmpegCompositor();
+        exporter = {
+          async export(t: any, outDir: string) {
+            const result = await compositor.compose(t, path.join(outDir, "output.mp4"));
+            return { path: result.path, format: result.format };
+          },
+        };
+      } else {
+        exporter = new studio.JianyingExporter();
+      }
 
       console.log(`Rendering timeline for "${slug}" (${ratio}, voice: ${voice})...`);
 
-      const result = await renderTimeline({
+      const result = await studio.renderTimeline({
         timeline,
         outputDir,
-        tts: config.tts,
-        screenshot: config.screenshot,
-        exporter: config.exporter,
+        tts,
+        screenshot,
+        exporter,
         voice: { voiceId: voice },
       });
 
