@@ -172,6 +172,39 @@ const auditMiddleware: Middleware = async (ctx, toolName, params, next) => {
   return result;
 };
 
+/** Persist tool IO to disk via SessionLogger */
+const persistentLogMiddleware: Middleware = async (ctx, toolName, params, next) => {
+  const start = Date.now();
+  const { _dataDir, _gatewayUrl, _geminiApiKey, _geminiModel, ...loggedInput } = params;
+  let result: ToolResult;
+  try {
+    result = await next();
+  } catch (err) {
+    if (ctx.logger) {
+      await ctx.logger.toolIO({
+        tool: toolName,
+        action: loggedInput.action as string | undefined,
+        input: loggedInput,
+        output: { ok: false, error: err instanceof Error ? err.message : String(err) },
+        durationMs: Date.now() - start,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    throw err;
+  }
+  if (ctx.logger) {
+    await ctx.logger.toolIO({
+      tool: toolName,
+      action: loggedInput.action as string | undefined,
+      input: loggedInput,
+      output: result,
+      durationMs: Date.now() - start,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return result;
+};
+
 /** Update workspace state based on tool results */
 const workspaceTrackingMiddleware: Middleware = async (ctx, toolName, params, next) => {
   const result = await next();
@@ -206,6 +239,7 @@ export class ToolRunner {
       onboardingGateMiddleware,
       errorBoundaryMiddleware,
       auditMiddleware,
+      persistentLogMiddleware,
       workspaceTrackingMiddleware,
       ...(options.middleware || []),
     ];

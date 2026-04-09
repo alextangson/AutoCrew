@@ -7,6 +7,7 @@
  * - Audit trail for debugging
  */
 import path from "node:path";
+import type { SessionLogger } from "./logger.js";
 
 // --- Types ---
 
@@ -51,6 +52,8 @@ export interface ToolContext {
   workspace: WorkspaceState;
   /** Audit log for this session */
   audit: AuditEntry[];
+  /** Persistent session logger (writes to ~/.autocrew/logs/) */
+  logger?: SessionLogger;
 }
 
 // --- Factory ---
@@ -70,13 +73,14 @@ function resolveDataDir(config?: PluginConfig): string {
 /**
  * Create a new ToolContext. Called once per plugin registration or MCP session.
  */
-export function createContext(config?: PluginConfig): ToolContext {
+export function createContext(config?: PluginConfig, logger?: SessionLogger): ToolContext {
   const ctx: ToolContext = {
     sessionId: generateSessionId(),
     dataDir: resolveDataDir(config),
     config: config || {},
     workspace: {},
     audit: [],
+    logger,
   };
   _activeContext = ctx;
   return ctx;
