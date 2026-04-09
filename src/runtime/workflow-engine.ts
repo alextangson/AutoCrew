@@ -35,6 +35,13 @@ export interface WorkflowDefinition {
   name: string;
   description: string;
   steps: WorkflowStep[];
+  /** Optional: inject restatement context every N steps to combat attention decay */
+  restatement?: {
+    /** Inject restatement every N steps */
+    intervalSteps: number;
+    /** The context string to restate (key rules, current goal, quality constraints) */
+    context: string;
+  };
 }
 
 export type WorkflowStatus = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
@@ -350,6 +357,19 @@ export class WorkflowEngine {
 
       // Advance
       instance.currentStepIndex++;
+
+      // Restatement injection — combat attention decay in long workflows
+      if (def.restatement && instance.currentStepIndex > 0 && instance.currentStepIndex % def.restatement.intervalSteps === 0) {
+        const restateKey = `_restatement_after_${step.id}`;
+        instance.stepResults[restateKey] = {
+          type: "restatement",
+          context: def.restatement.context,
+          afterStep: step.id,
+          stepIndex: instance.currentStepIndex,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
       await this.persistInstance(instance);
     }
 

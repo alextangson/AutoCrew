@@ -452,4 +452,73 @@ describe("WorkflowEngine", () => {
   it("throws when starting a nonexistent workflow", async () => {
     await expect(engine.start("nonexistent")).rejects.toThrow("not found");
   });
+
+  describe("restatement", () => {
+    it("injects restatement context every N steps", async () => {
+      runner.register({
+        name: "echo_tool",
+        label: "Echo",
+        description: "always succeeds",
+        parameters: {},
+        execute: vi.fn(async () => ({ ok: true, value: "done" })),
+      });
+
+      const def: WorkflowDefinition = {
+        id: "restate-test",
+        name: "Restatement Test",
+        description: "Tests restatement injection",
+        steps: Array.from({ length: 6 }, (_, i) => ({
+          id: `step-${i}`,
+          name: `Step ${i}`,
+          tool: "echo_tool",
+          params: {},
+        })),
+        restatement: {
+          intervalSteps: 3,
+          context: "IMPORTANT: Follow quality rules.",
+        },
+      };
+
+      engine.registerDefinition(def);
+      const instance = await engine.create("restate-test");
+      const result = await engine.start(instance.id);
+
+      expect(result.status).toBe("completed");
+      // After step index 3 (steps 0,1,2 done), restatement should fire
+      expect(result.stepResults["_restatement_after_step-2"]).toBeDefined();
+      expect((result.stepResults["_restatement_after_step-2"] as any).context).toBe("IMPORTANT: Follow quality rules.");
+      // After step index 6 (steps 3,4,5 done), another restatement
+      expect(result.stepResults["_restatement_after_step-5"]).toBeDefined();
+    });
+
+    it("does not inject restatement when not configured", async () => {
+      runner.register({
+        name: "echo_tool2",
+        label: "Echo2",
+        description: "always succeeds",
+        parameters: {},
+        execute: vi.fn(async () => ({ ok: true, value: "done" })),
+      });
+
+      const def: WorkflowDefinition = {
+        id: "no-restate",
+        name: "No Restatement",
+        description: "No restatement configured",
+        steps: Array.from({ length: 4 }, (_, i) => ({
+          id: `s-${i}`,
+          name: `Step ${i}`,
+          tool: "echo_tool2",
+          params: {},
+        })),
+      };
+
+      engine.registerDefinition(def);
+      const instance = await engine.create("no-restate");
+      const result = await engine.start(instance.id);
+
+      expect(result.status).toBe("completed");
+      const restateKeys = Object.keys(result.stepResults).filter(k => k.startsWith("_restatement_"));
+      expect(restateKeys).toHaveLength(0);
+    });
+  });
 });
