@@ -14,9 +14,10 @@ describe("DoubaoTTS", () => {
 
   beforeEach(() => {
     tts = new DoubaoTTS({
+      apiKey: "test-api-key",
       appId: "test-app",
-      accessToken: "test-token",
       voiceType: "BV700_V2_streaming",
+      cluster: "volcano_icl",
     });
     vi.clearAllMocks();
   });
@@ -59,7 +60,7 @@ describe("DoubaoTTS", () => {
     await tts.generate("测试", { voiceId: "BV700_V2_streaming" }, "/tmp/out.mp3");
 
     const headers = mockFetch.mock.calls[0][1].headers;
-    expect(headers["Authorization"]).toBe("Bearer;test-token");
+    expect(headers["x-api-key"]).toBe("test-api-key");
   });
 
   it("throws on API error", async () => {

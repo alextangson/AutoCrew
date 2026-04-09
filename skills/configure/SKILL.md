@@ -130,15 +130,73 @@ Save to `services.json → videoCrawler`.
 ```
 TTS 用于为视频脚本自动生成配音。
 
-1. MiMo TTS（推荐，和视频分析同一个平台）
-2. ElevenLabs
-3. Azure Speech
+1. 豆包语音（推荐，火山引擎，支持声音复刻）
+   开通地址：https://console.volcengine.com/speech/service/8
+   
+2. MiMo TTS（和视频分析同一个平台）
+3. ElevenLabs
 4. 自定义
 
-请选择并输入 API Key：
+你选哪个？
 ```
 
-Save to `services.json → tts`.
+**If 豆包语音 (recommended):**
+
+Step-by-step setup:
+```
+1. 登录火山引擎控制台：https://console.volcengine.com
+2. 进入「豆包语音」→「语音合成」
+3. 创建 API Key（在"我的密钥"页面）
+4. 选择或训练一个音色：
+   - 内置音色：BV700_V2_streaming（灿灿 2.0）、BV405_streaming（微晴）等
+   - 声音复刻：上传音频训练自定义音色（获取 voice_type ID）
+5. 确认 cluster：
+   - 声音复刻：volcano_icl
+   - 标准音色：volcano_tts
+```
+
+Ask user for:
+- API Key (from 豆包语音控制台"我的密钥")
+- Voice Type ID (内置或复刻的音色 ID)
+- Cluster: `volcano_icl` (复刻) or `volcano_tts` (标准)
+- App ID (optional, 控制台应用管理页面)
+
+Save to `services.json → tts`:
+```json
+{
+  "tts": {
+    "provider": "doubao",
+    "apiKey": "<用户的 API Key>",
+    "voiceType": "<音色 ID>",
+    "cluster": "volcano_icl",
+    "appId": "<可选>"
+  }
+}
+```
+
+Also save to `~/.autocrew/studio.config.json` (for autocrew-studio):
+```json
+{
+  "tts": {
+    "provider": "doubao",
+    "doubao": {
+      "apiKey": "<用户的 API Key>",
+      "voiceType": "<音色 ID>",
+      "cluster": "volcano_icl"
+    }
+  }
+}
+```
+
+**Validation:** Send a test TTS request:
+```
+POST https://openspeech.bytedance.com/api/v1/tts
+Header: x-api-key: <apiKey>
+Body: { "app": { "cluster": "<cluster>" }, "user": { "uid": "test" },
+        "audio": { "voice_type": "<voiceType>", "encoding": "mp3" },
+        "request": { "reqid": "<uuid>", "text": "测试语音", "operation": "query" } }
+```
+If response `code: 3000` → success. Otherwise show error and let user retry.
 
 ### Module: 发布平台 (platforms)
 

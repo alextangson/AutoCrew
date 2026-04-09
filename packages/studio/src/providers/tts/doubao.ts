@@ -45,11 +45,12 @@ export class DoubaoTTS {
   }
 
   async generate(text: string, voice: VoiceConfig, outputPath: string): Promise<AudioAsset> {
+    const cluster = this.config.cluster ?? "volcano_icl";
     const body = {
       app: {
-        appid: this.config.appId,
-        token: this.config.accessToken,
-        cluster: this.config.cluster ?? "volcano_tts",
+        // appid is optional for x-api-key auth, include if configured
+        ...(this.config.appId ? { appid: this.config.appId } : {}),
+        cluster,
       },
       user: { uid: "autocrew" },
       audio: {
@@ -62,15 +63,15 @@ export class DoubaoTTS {
         reqid: randomUUID(),
         text,
         operation: "query",
-        text_type: "plain",
       },
     };
 
+    // Auth: x-api-key header (豆包语音控制台 API Key)
     const res = await fetch(TTS_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer;${this.config.accessToken}`,
+        "x-api-key": this.config.apiKey ?? this.config.accessToken,
       },
       body: JSON.stringify(body),
     });

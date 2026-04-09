@@ -2,9 +2,15 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface DoubaoConfig {
-  appId: string;
-  accessToken: string;
+  /** x-api-key from 豆包语音控制台 (preferred auth method) */
+  apiKey?: string;
+  /** App ID (optional, for legacy appid+token auth) */
+  appId?: string;
+  /** Access token (legacy auth, use apiKey instead) */
+  accessToken?: string;
+  /** Voice type ID, e.g. "S_9yYqs9VU1" for cloned voice or "BV700_V2_streaming" for built-in */
   voiceType: string;
+  /** TTS cluster: "volcano_icl" for voice cloning, "volcano_tts" for standard voices */
   cluster?: string;
 }
 
