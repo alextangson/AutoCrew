@@ -14,6 +14,8 @@ import { outcomeKey } from "../flywheel/outcome-schema.js";
 export interface QualityBaseline {
   /** Number of data points used to build baseline */
   sampleSize: number;
+  /** matched 条目数（能对应到 AutoCrew 稿件、用于 trait 切分的子集） */
+  traitSampleSize: number;
   /** Average performance metrics */
   avgMetrics: Record<string, number>;
   /** Characteristics of top-performing content */
@@ -122,6 +124,12 @@ function getPerformanceScore(entry: PerformanceEntry): number {
   );
 }
 
+/** 本地日期 YYYY-MM-DD（非 UTC：Asia/Shanghai 早 8 点前 toISOString 会记成昨天） */
+function localDateStamp(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 /**
  * Outcome store 是唯一真实来源；为空时 fallback 到 legacy profile.performanceHistory。
  * 多个 metricDate 快照只取每个作品最新一份，避免重复计权。
@@ -225,9 +233,14 @@ export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> 
     loadPerformanceHistory(dataDir),
   ]);
 
+  // traits 切分只在 matched 条目上做（见 splitTopBottom 注释）
+  const contentIds = new Set(contents.map((c) => c.id));
+  const matched = performanceHistory.filter((e) => contentIds.has(e.contentId));
+
   if (performanceHistory.length < 3) {
     return {
       sampleSize: performanceHistory.length,
+      traitSampleSize: matched.length,
       avgMetrics: {},
       topContentTraits: analyzeTraits([]),
       lowContentTraits: analyzeTraits([]),
@@ -241,9 +254,6 @@ export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> 
   // avgMetrics / sampleSize 在全量（含历史回灌）上计算 —— day-1 价值所在
   const avgMetrics = computeAvgMetrics(performanceHistory);
 
-  // traits 切分只在 matched 条目上做（见 splitTopBottom 注释）
-  const contentIds = new Set(contents.map((c) => c.id));
-  const matched = performanceHistory.filter((e) => contentIds.has(e.contentId));
   const { topContents, bottomContents } = splitTopBottom(matched, contents);
 
   const topTraits = analyzeTraits(topContents);
@@ -256,6 +266,7 @@ export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> 
 
   return {
     sampleSize: performanceHistory.length,
+    traitSampleSize: matched.length,
     avgMetrics,
     topContentTraits: topTraits,
     lowContentTraits: bottomTraits,
@@ -283,11 +294,13 @@ export async function compareToBaseline(
 
   const baseline = await buildBaseline(dataDir);
 
-  if (baseline.sampleSize < 3) {
+  // traitSampleSize 也要 ≥3：纯历史回灌（day-1）sampleSize 过 3 但 trait 档位全空，
+  // 拿零值 traits 对比会对每篇草稿捏造 "0 字（爆款平均）→ poor"
+  if (baseline.sampleSize < 3 || baseline.traitSampleSize < 3) {
     return {
       matchScore: 50,
       comparisons: [],
-      summary: "数据不足，无法对比。发布更多内容并回填数据后再试。",
+      summary: `已有 ${baseline.sampleSize} 条表现数据，但能对应到 AutoCrew 稿件的不足 3 条。发布后用 confirm_published 打标，积累 3 条即可对比。`,
     };
   }
 
@@ -358,10 +371,6 @@ export async function trackPerformance(
     return { ok: false, contentId, metrics, error: `内容 ${contentId} 不存在` };
   }
 
-  // metricDate 用本地日期而非 UTC（Asia/Shanghai 早 8 点前 toISOString 会记成昨天）
-  const now = new Date();
-  const metricDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-
   // 单一写入路径：写穿 outcome store（profile.performanceHistory 降级为只读 legacy）
   const write = await recordOutcome(
     {
@@ -369,7 +378,7 @@ export async function trackPerformance(
       platform: content.platform || "unknown",
       platformTitle: content.title,
       publishedAt: content.publishedAt,
-      metricDate,
+      metricDate: localDateStamp(),
       metrics,
       source: "paste",
     },

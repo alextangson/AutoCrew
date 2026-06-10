@@ -159,4 +159,21 @@ describe("buildBaseline with mixed historical + matched data", () => {
     expect(lengthComp?.status).not.toBe("poor");
     expect(r.comparisons.every((c) => c.status === "poor")).toBe(false);
   });
+
+  it("compareToBaseline returns insufficient-data when no entries match AutoCrew contents", async () => {
+    // day-1 状态：纯历史回灌，0 条 matched —— sampleSize 过 3 但 trait 档位全空
+    for (let i = 0; i < 10; i++) {
+      await seedOutcome(null, `历史作品${i}`, 5000 + i * 100, "2026-06-08");
+    }
+    const draft = await saveContent(
+      { title: "新草稿", body: "随便写点正文。\n\n第二段内容。", platform: "douyin", status: "draft_ready", tags: [] },
+      testDir,
+    );
+
+    const r = await compareToBaseline(draft.id, testDir);
+    expect(r.matchScore).toBe(50);
+    expect(r.comparisons).toHaveLength(0);
+    expect(r.summary).toContain("打标");
+    expect(JSON.stringify(r)).not.toContain("0 字");
+  });
 });
