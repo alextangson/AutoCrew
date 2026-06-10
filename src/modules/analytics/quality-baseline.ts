@@ -7,7 +7,9 @@
  * 3. Provide data-backed writing suggestions
  */
 import { listContents, type Content } from "../../storage/local-store.js";
-import { loadProfile, addPerformanceEntry, type PerformanceEntry } from "../profile/creator-profile.js";
+import { loadProfile, type PerformanceEntry } from "../profile/creator-profile.js";
+import { listOutcomes, recordOutcome } from "../flywheel/outcome-store.js";
+import { outcomeKey } from "../flywheel/outcome-schema.js";
 
 export interface QualityBaseline {
   /** Number of data points used to build baseline */
@@ -126,7 +128,26 @@ export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> 
     loadProfile(dataDir),
   ]);
 
-  const performanceHistory = profile?.performanceHistory || [];
+  // Outcome store 是唯一真实来源；为空时 fallback 到 legacy profile.performanceHistory。
+  // 多个 metricDate 快照只取每个作品最新一份，避免重复计权。
+  const outcomes = await listOutcomes(dataDir);
+  const latestByItem = new Map<string, (typeof outcomes)[number]>();
+  for (const o of outcomes) {
+    const itemKey = outcomeKey({ ...o, metricDate: "" });
+    const prev = latestByItem.get(itemKey);
+    if (!prev || o.metricDate > prev.metricDate) latestByItem.set(itemKey, o);
+  }
+  const fromOutcomes: PerformanceEntry[] = Array.from(latestByItem.values()).map((o) => ({
+    contentId: o.contentId ?? `hist:${o.platform}:${o.platformTitle}`,
+    platform: o.platform,
+    metrics: Object.fromEntries(
+      Object.entries(o.metrics).filter(([, v]) => typeof v === "number"),
+    ) as Record<string, number>,
+    recordedAt: o.recordedAt,
+  }));
+
+  const performanceHistory =
+    fromOutcomes.length > 0 ? fromOutcomes : profile?.performanceHistory || [];
 
   if (performanceHistory.length < 3) {
     return {
@@ -294,11 +315,22 @@ export async function trackPerformance(
     return { ok: false, contentId, metrics };
   }
 
-  // Save to profile
-  await addPerformanceEntry(
-    { contentId, platform: content.platform || "unknown", metrics },
+  // 单一写入路径：写穿 outcome store（profile.performanceHistory 降级为只读 legacy）
+  const write = await recordOutcome(
+    {
+      contentId,
+      platform: content.platform || "unknown",
+      platformTitle: content.title,
+      publishedAt: content.publishedAt,
+      metricDate: new Date().toISOString().slice(0, 10),
+      metrics,
+      source: "paste",
+    },
     dataDir,
   );
+  if (!write.ok) {
+    return { ok: false, contentId, metrics };
+  }
 
   // Quick comparison
   const baseline = await buildBaseline(dataDir);
