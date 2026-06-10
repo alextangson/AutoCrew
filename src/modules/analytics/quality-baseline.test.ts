@@ -67,6 +67,26 @@ describe("buildBaseline from outcome store", () => {
     expect(baseline.insights[0]).not.toContain("数据还不够多");
   });
 
+  it("averages a metric only over entries that carry it (no zero-dilution across platforms)", async () => {
+    // 真实场景：小红书导出没有完播率列，视频号有——缺失平台不得把均值拖向 0
+    await recordOutcome(
+      { contentId: null, platform: "wechat_video", platformTitle: "视频A", publishedAt: "2026-06-01T10:00:00.000Z", metricDate: "2026-06-08", metrics: { views: 500, completionRate: 6 }, source: "csv" },
+      testDir,
+    );
+    await recordOutcome(
+      { contentId: null, platform: "wechat_video", platformTitle: "视频B", publishedAt: "2026-06-01T10:00:00.000Z", metricDate: "2026-06-08", metrics: { views: 300, completionRate: 4 }, source: "csv" },
+      testDir,
+    );
+    await recordOutcome(
+      { contentId: null, platform: "xiaohongshu", platformTitle: "笔记无完播率", publishedAt: "2026-06-01T10:00:00.000Z", metricDate: "2026-06-08", metrics: { views: 1000 }, source: "csv" },
+      testDir,
+    );
+
+    const baseline = await buildBaseline(testDir);
+    expect(baseline.avgMetrics.views).toBe(600); // 三条都有 views
+    expect(baseline.avgMetrics.completionRate).toBe(5); // 只在有完播率的 2 条上平均，不是 (6+4+0)/3≈3
+  });
+
   it("falls back to legacy profile.performanceHistory when outcome store empty", async () => {
     for (const [id, views] of [["a", 100], ["b", 200], ["c", 300]] as const) {
       await addPerformanceEntry({ contentId: id, platform: "douyin", metrics: { views } }, testDir);

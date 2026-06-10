@@ -157,7 +157,11 @@ function computeAvgMetrics(history: PerformanceEntry[]): Record<string, number> 
     }
   }
   for (const key of metricKeys) {
-    const values = history.map(e => e.metrics[key] || 0);
+    // 只在"携带该指标"的条目上平均——缺失该列的平台（如小红书无完播率）不得把均值拖向 0
+    const values = history
+      .map((e) => e.metrics[key])
+      .filter((v): v is number => typeof v === "number");
+    if (values.length === 0) continue;
     avgMetrics[key] = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
   }
   return avgMetrics;

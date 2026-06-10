@@ -96,16 +96,17 @@ export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
     follows: ["粉丝增量", "涨粉量"],
   },
   wechat_video: {
-    title: ["内容", "标题", "动态内容"],
+    // 2026-06-10 按"视频号助手 → 动态数据明细"真实导出校准
+    title: ["视频描述", "内容", "标题", "动态内容"],
     publishedAt: ["发布时间"],
     metricDate: ["数据日期", "统计日期"],
     views: ["播放量", "播放次数"],
     completionRate: ["完播率"],
-    likes: ["喜欢数", "点赞数"],
-    comments: ["评论数"],
-    shares: ["分享数", "转发数"],
+    likes: ["喜欢", "喜欢数", "点赞数"],
+    comments: ["评论量", "评论数"],
+    shares: ["分享量", "分享数", "转发数"],
     favorites: ["收藏数"],
-    follows: ["新增关注数", "净增关注"],
+    follows: ["关注量", "新增关注数", "净增关注"],
   },
   xiaohongshu: {
     title: ["笔记标题", "标题"],
