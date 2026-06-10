@@ -1380,6 +1380,8 @@ git commit -m "refactor: quality-baseline reads outcome store — single write p
 - Create: `src/tools/flywheel.ts`
 - Test: `src/tools/flywheel.test.ts`
 - Modify: `index.ts`（import 区 ~22 行后 + 注册区任一 `runner.register` 块后）
+- Modify: `src/storage/local-store.ts`（评审决议：把私有 `getDataDir` 加 export——消除第三份复制）
+- Modify: `src/modules/flywheel/outcome-store.ts`（删除本地 getDataDir 复制，改 import 共享版）
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1465,6 +1467,7 @@ describe("executeFlywheel", () => {
     expect(r.ok).toBe(true);
     expect(r.data.totalOutcomes).toBe(3);
     expect(r.data.baselineInsights.length).toBeGreaterThan(0);
+    expect(r.data.traitSampleSize).toBe(0); // 三条均为 historical，无打标条目
   });
 });
 ```
@@ -1514,15 +1517,12 @@ export const flywheelSchema = Type.Object({
   ),
 });
 
-function resolveDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
+// 评审决议：不再复制 dataDir 解析——local-store.getDataDir 加 export，此处与 outcome-store 共用
+import { getDataDir } from "../storage/local-store.js";
 
 export async function executeFlywheel(params: Record<string, unknown>) {
   const action = params.action as string;
-  const dataDir = resolveDataDir((params._dataDir as string) || undefined);
+  const dataDir = getDataDir((params._dataDir as string) || undefined);
 
   if (action === "import_csv") {
     const platform = params.platform as string | undefined;
@@ -1573,6 +1573,7 @@ export async function executeFlywheel(params: Record<string, unknown>) {
         historical: outcomes.filter((o) => o.contentId === null).length,
         needsReview: outcomes.filter((o) => o.needsReview),
         baselineSampleSize: baseline.sampleSize,
+        traitSampleSize: baseline.traitSampleSize,
         baselineInsights: baseline.insights,
       },
     };
