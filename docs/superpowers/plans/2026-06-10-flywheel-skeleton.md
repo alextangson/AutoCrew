@@ -1338,6 +1338,28 @@ import { outcomeKey } from "../flywheel/outcome-schema.js";
 
 同时删掉文件头的 `addPerformanceEntry` import（保留 `loadProfile` 和 `type PerformanceEntry`）。
 
+- [ ] **Step 3.5（评审修订，随本任务落地）：混合数据防护与错误透出**
+
+(a) **Critical**：top/bottom traits 切分只能在"contentId 能解析到真实 content"的条目上做——历史条目（hist: 伪 id）落在任一档位都会把该档位变成全零 traits，insight 生成器拿真实 traits 对比零值会产出捏造建议（"你表现好的内容平均 0 字，精简内容可能效果更好"），并让 compareToBaseline 对每篇草稿报 poor。修复：
+- `const contentIds = new Set(contents.map((c) => c.id));`
+- traits 切分（scored → topIds/bottomIds → topContents/bottomContents）只在 `performanceHistory.filter((e) => contentIds.has(e.contentId))` 上进行，且该子集 ≥3 条才做 traits 分析，否则保持零值 traits 且**不生成对比型 insight**；
+- 三条 trait 对比 insight 在 topContents 或 bottomContents 为空时一律跳过；
+- avgMetrics / sampleSize 仍在全量（含历史）上计算——day-1 回灌的主要价值在此，纯历史数据集退化为"正确的 avgMetrics + 通用 insight"是优雅降级。
+- 测试：10 条历史（高播放）+ 3 条 matched → insights 不含"平均 0 字"类捏造；compareToBaseline 不因空 traits 全面报 poor。
+
+(b) **Important**：`getPerformanceScore` 补 favorites（CSV 导入的收藏字段映射到 favorites，不是 saves）：`+ (m.favorites || 0) * 4`，saves 保留兼容 paste 路径。**completionRate（口播主 reward signal）的计权明确推迟到赛道包计划**（KOUBO_REWARD 接线时一并做），在此记录防丢失。
+
+(c) **Important**：`trackPerformance` 失败必须透出原因——`PerformanceTrackingResult` 加 `error?: string`，not-found 与 recordOutcome 拒收分别填充。测试：completionRate 200 → ok:false 且 error 含"完播率"。
+
+(d) **Minor**：metricDate 用本地日期而非 UTC（Asia/Shanghai 早 8 点前 toISOString 会记成昨天，同 Task 5 时区修订的精神）：
+
+```typescript
+const now = new Date();
+const metricDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+```
+
+(e) buildBaseline 抽出私有 helper `loadPerformanceHistory(dataDir?)`（listOutcomes → latest-per-item → 映射 → legacy fallback），使各函数回到 <50 行。
+
 - [ ] **Step 4: Run full suite to verify pass and no regression**
 
 Run: `npx vitest run`
