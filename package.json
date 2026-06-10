@@ -35,7 +35,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.ts\" \"mcp/**/*.ts\" index.ts",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "build:desktop": "tsx scripts/build-desktop.mts",
+    "app": "npm run build:desktop && electron desktop/dist/main.cjs"
   },
   "openclaw": {
     "extensions": [
@@ -45,6 +47,8 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/node": "^25.9.2",
+    "electron": "^42.4.0",
+    "esbuild": "^0.28.0",
     "eslint": "^9.0.0",
     "prettier": "^3.5.0",
     "tsx": "^4.22.4",

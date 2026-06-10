@@ -22,12 +22,17 @@
   "include": [
     "index.ts",
     "src/**/*.ts",
-    "mcp/**/*.ts"
+    "mcp/**/*.ts",
+    "desktop/main.ts",
+    "desktop/preload.ts",
+    "scripts/**/*.mts"
   ],
   "exclude": [
     "node_modules",
     "dist",
     "extension",
+    "desktop/renderer",
+    "desktop/dist",
     "**/*.test.ts"
   ]
 }
