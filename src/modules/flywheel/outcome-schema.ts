@@ -9,6 +9,8 @@ export interface OutcomeMetrics {
   views?: number;
   /** 完播率，百分比 0-100 */
   completionRate?: number;
+  /** 5 秒完播率，百分比 0-100（抖音独有，对钩子质量更敏感） */
+  completion5s?: number;
   likes?: number;
   comments?: number;
   shares?: number;
@@ -42,11 +44,6 @@ export interface OutcomeValidation {
   reasons: string[];
 }
 
-/** 口播赛道 reward signal（赛道包抽取后改从包读，接口保持此形状） */
-export const KOUBO_REWARD = {
-  primary: "completionRate",
-  secondary: ["favorites", "follows"],
-} as const satisfies { primary: keyof OutcomeMetrics; secondary: readonly (keyof OutcomeMetrics)[] };
 
 export function normalizeTitle(title: string): string {
   return title
@@ -79,8 +76,15 @@ export function validateOutcome(input: {
   if (hasIllegalNegative) {
     reasons.push("存在负数指标");
   }
-  if (m.completionRate !== undefined && (m.completionRate < 0 || m.completionRate > 100)) {
-    reasons.push(`完播率 ${m.completionRate} 超出 0-100`);
+  const RATE_METRICS: Array<["completionRate" | "completion5s", string]> = [
+    ["completionRate", "完播率"],
+    ["completion5s", "5s完播率"],
+  ];
+  for (const [key, label] of RATE_METRICS) {
+    const v = m[key];
+    if (v !== undefined && (v < 0 || v > 100)) {
+      reasons.push(`${label} ${v} 超出 0-100`);
+    }
   }
   if (input.publishedAt) {
     const pubDate = input.publishedAt.slice(0, 10);
@@ -98,8 +102,11 @@ export function validateOutcome(input: {
   if (m.views === 0 && engagement > 0) {
     review.push("播放为 0 但有互动，疑似读错字段");
   }
-  if (m.completionRate !== undefined && m.completionRate > 0 && m.completionRate < 1) {
-    review.push(`完播率 ${m.completionRate} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
+  for (const [key, label] of RATE_METRICS) {
+    const v = m[key];
+    if (v !== undefined && v > 0 && v < 1) {
+      review.push(`${label} ${v} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
+    }
   }
   return { ok: true, needsReview: review.length > 0, reasons: review };
 }

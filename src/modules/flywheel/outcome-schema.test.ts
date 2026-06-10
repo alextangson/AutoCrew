@@ -3,7 +3,6 @@ import {
   validateOutcome,
   outcomeKey,
   normalizeTitle,
-  KOUBO_REWARD,
   type OutcomeMetrics,
 } from "./outcome-schema.js";
 
@@ -147,8 +146,24 @@ describe("outcomeKey", () => {
   });
 });
 
-describe("KOUBO_REWARD", () => {
-  it("primary signal is completion rate (口播赛道)", () => {
-    expect(KOUBO_REWARD.primary).toBe("completionRate");
+describe("completion5s", () => {
+  const base = { publishedAt: "2026-06-01T10:00:00.000Z", metricDate: "2026-06-08" };
+
+  it("accepts valid completion5s", () => {
+    const v = validateOutcome({ ...base, metrics: { views: 100, completion5s: 35.4 } });
+    expect(v.ok).toBe(true);
+    expect(v.needsReview).toBe(false);
+  });
+
+  it("rejects completion5s outside 0-100", () => {
+    const v = validateOutcome({ ...base, metrics: { completion5s: 135 } });
+    expect(v.ok).toBe(false);
+    expect(v.reasons.join()).toContain("5s完播率");
+  });
+
+  it("flags ratio-form completion5s as needsReview", () => {
+    const v = validateOutcome({ ...base, metrics: { views: 100, completion5s: 0.35 } });
+    expect(v.ok).toBe(true);
+    expect(v.needsReview).toBe(true);
   });
 });
