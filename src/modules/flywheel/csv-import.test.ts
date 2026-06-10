@@ -182,3 +182,32 @@ describe("PLATFORM_MAPPINGS", () => {
     expect(Object.keys(PLATFORM_MAPPINGS).sort()).toEqual(["douyin", "wechat_video", "xiaohongshu"]);
   });
 });
+
+describe("completionRateAsRatio（抖音作品列表导出为小数比例）", () => {
+  it("converts ratio completion rates to percentages without flagging needsReview", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-ratio-test-"));
+    try {
+      const CSV = `作品名称,发布时间,播放量,完播率\n口播A,2026-03-30 17:05:00,3376,0.018947\n口播B,2026-03-29 16:56:42,1419,0.027832`;
+      const report = await importPerformanceCsv("douyin", CSV, "2026-06-10", dir);
+      expect(report.imported).toBe(2);
+      expect(report.needsReview).toHaveLength(0); // 已按映射声明转换，不再触发小数比例启发
+      const outcomes = await listOutcomes(dir);
+      const a = outcomes.find((o) => o.platformTitle === "口播A");
+      expect(a?.metrics.completionRate).toBe(1.89); // 0.018947 → 1.89%
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves percentage-form values untouched even with the flag on", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-ratio-test2-"));
+    try {
+      const CSV = `作品名称,发布时间,播放量,完播率\n口播C,2026-03-30 17:05:00,3376,32.5%`;
+      await importPerformanceCsv("douyin", CSV, "2026-06-10", dir);
+      const outcomes = await listOutcomes(dir);
+      expect(outcomes[0]?.metrics.completionRate).toBe(32.5); // 已是百分比（>1），不重复转换
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
