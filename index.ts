@@ -22,6 +22,7 @@ import { prePublishSchema, executePrePublish } from "./src/tools/pre-publish.js"
 import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
 import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
 import { generateSchema, executeGenerate } from "./src/tools/generate.js";
+import { styleSchema, executeStyle } from "./src/tools/style.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -179,6 +180,15 @@ function registerAllTools(runner: ToolRunner): void {
       "In-process script generation via the configured model provider (thin loop + koubo track pack). Action: script.",
     parameters: generateSchema,
     execute: (p) => executeGenerate(p),
+  });
+
+  runner.register({
+    name: "autocrew_style",
+    label: "AutoCrew Style",
+    description:
+      "LLM-driven style learning: distill new writing rules from EditDiffs, or absorb viral sample texts. Actions: distill (consume edits, recommend 3+ edits before calling), absorb_samples (1-5 texts).",
+    parameters: styleSchema,
+    execute: (p) => executeStyle(p),
   });
 
   runner.register({
