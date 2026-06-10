@@ -300,6 +300,48 @@ completion5s 项，跨平台 top/bottom 对比会偏低估抖音——重导是�
 
 ---
 
+## 八、风格学习 dogfood
+
+### 完整闭环（蒸馏路径）
+
+1. **写 3+ 稿并修改**：每次用 `autocrew_content action=update id=<稿件id> body=<新稿>` 提交修改，系统自动记录 before/after diff（`autocrew_content` update 路径已接通 `recordDiff`）。
+
+2. **触发蒸馏**：
+   ```
+   autocrew_style action=distill
+   ```
+   蒸馏读取自上次蒸馏以来的新 diff（≥3 条时建议调用，`shouldDistillStyle` 语义），用 fastModel 提炼语义新偏好写入 profile，每轮上限 3 条。
+
+3. **查看新规则**：
+   ```
+   autocrew_status
+   ```
+   学习报告里可以看到已积累的 WritingRule（source=auto_distilled，含置信度）。
+
+4. **下一稿自动注入**：
+   ```
+   autocrew_generate action=script topic=<选题> platform=<平台>
+   ```
+   script-prompt 已读取 `profile.writingRules`，零接线——新蒸馏出的规则在下一次 generate 里自动生效。
+
+5. **规则不对就让 agent 改 profile**：直接告诉 agent 删掉某条规则，或让它编辑 `~/.autocrew/creator-profile.json` 的 `writingRules` 数组。profile 可随时手工编辑。
+
+### absorb_samples 路径（粘贴爆款）
+
+```
+autocrew_style action=absorb_samples samples=["爆款全文1", "爆款全文2"]
+```
+
+粘贴 1-5 条你认可的爆款文本，LLM 从用词癖好/句子节奏/招牌短语中提炼规则，直接写入 profile。不依赖 diff 历史，适合冷启动或快速注入外部风格参考。
+
+### 注意事项
+
+- **2026-06-11 前的旧版修订快照不参与蒸馏**：`local-store` 历史写入 `learnings/edits/` 的 `bodySnapshot` 格式快照（含 `fromStatus`/`timestamp` 字段、缺 `before`/`after`）已被 `listDiffs` 的防御性过滤拦下，不会被蒸馏误读。只有通过 `content-save update` 写入的标准 `EditDiff`（含 `before`/`after`/`createdAt`）才参与蒸馏。
+- **蒸馏是显式触发**，没有后台定时——需要你或 agent 主动调用。判断时机：`shouldDistillStyle` 语义（新 diff ≥ 3）。
+- **evidence 不入 profile**：蒸馏时模型提供的证据引用只出现在 summary 展示，不写入 `WritingRule` schema（YAGNI）。
+
+---
+
 ## 九、扩展通道 dogfood（v1 主通道预演）
 
 > 对应 PRD §6 主读数通道 MVP：Chrome 扩展读抖音创作者中心，经 native messaging 进同一导入管线。零重登、无 CDP、真实 profile。
@@ -354,45 +396,3 @@ autocrew_flywheel action=report
 | 通知「native host 未安装」| manifest 不存在或路径错 | 重跑 `npx tsx scripts/install-native-host.mts <扩展ID>` |
 | host 启动失败（`brew upgrade node` 后）| launch.sh 烘焙的是安装时的 node 绝对路径 | 重跑安装脚本（重新烘焙新路径） |
 | 通知「内容脚本注入失败」| activeTab 权限需要用户最近与页面交互 | 刷新作品列表页后再点扩展按钮 |
-
----
-
-## 八、风格学习 dogfood
-
-### 完整闭环（蒸馏路径）
-
-1. **写 3+ 稿并修改**：每次用 `autocrew_content action=update id=<稿件id> body=<新稿>` 提交修改，系统自动记录 before/after diff（`autocrew_content` update 路径已接通 `recordDiff`）。
-
-2. **触发蒸馏**：
-   ```
-   autocrew_style action=distill
-   ```
-   蒸馏读取自上次蒸馏以来的新 diff（≥3 条时建议调用，`shouldDistillStyle` 语义），用 fastModel 提炼语义新偏好写入 profile，每轮上限 3 条。
-
-3. **查看新规则**：
-   ```
-   autocrew_status
-   ```
-   学习报告里可以看到已积累的 WritingRule（source=auto_distilled，含置信度）。
-
-4. **下一稿自动注入**：
-   ```
-   autocrew_generate action=script topic=<选题> platform=<平台>
-   ```
-   script-prompt 已读取 `profile.writingRules`，零接线——新蒸馏出的规则在下一次 generate 里自动生效。
-
-5. **规则不对就让 agent 改 profile**：直接告诉 agent 删掉某条规则，或让它编辑 `~/.autocrew/creator-profile.json` 的 `writingRules` 数组。profile 可随时手工编辑。
-
-### absorb_samples 路径（粘贴爆款）
-
-```
-autocrew_style action=absorb_samples samples=["爆款全文1", "爆款全文2"]
-```
-
-粘贴 1-5 条你认可的爆款文本，LLM 从用词癖好/句子节奏/招牌短语中提炼规则，直接写入 profile。不依赖 diff 历史，适合冷启动或快速注入外部风格参考。
-
-### 注意事项
-
-- **2026-06-11 前的旧版修订快照不参与蒸馏**：`local-store` 历史写入 `learnings/edits/` 的 `bodySnapshot` 格式快照（含 `fromStatus`/`timestamp` 字段、缺 `before`/`after`）已被 `listDiffs` 的防御性过滤拦下，不会被蒸馏误读。只有通过 `content-save update` 写入的标准 `EditDiff`（含 `before`/`after`/`createdAt`）才参与蒸馏。
-- **蒸馏是显式触发**，没有后台定时——需要你或 agent 主动调用。判断时机：`shouldDistillStyle` 语义（新 diff ≥ 3）。
-- **evidence 不入 profile**：蒸馏时模型提供的证据引用只出现在 summary 展示，不写入 `WritingRule` schema（YAGNI）。
