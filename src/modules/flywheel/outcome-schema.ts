@@ -98,6 +98,9 @@ export function validateOutcome(input: {
   if (m.views === 0 && engagement > 0) {
     review.push("播放为 0 但有互动，疑似读错字段");
   }
+  if (m.completionRate !== undefined && m.completionRate > 0 && m.completionRate < 1) {
+    review.push(`完播率 ${m.completionRate} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
+  }
   return { ok: true, needsReview: review.length > 0, reasons: review };
 }
 

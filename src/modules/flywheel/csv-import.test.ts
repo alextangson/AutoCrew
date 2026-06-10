@@ -142,6 +142,39 @@ describe("importPerformanceCsv", () => {
     expect(forTitle).toHaveLength(1);
     expect(forTitle[0].contentId).toBe(c.id);
   });
+
+  it("normalizes 数据日期 column without timezone shift (2026/6/8 → 2026-06-08)", async () => {
+    const CSV = `作品名称,发布时间,播放量,完播率,数据日期\n护肤A,2026-06-01 10:00,1000,30%,2026/6/8`;
+    await importPerformanceCsv("douyin", CSV, "2026-06-01", testDir);
+    const outcomes = await listOutcomes(testDir);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0].metricDate).toBe("2026-06-08");
+  });
+
+  it("normalizes datetime 数据日期 without timezone shift (2026-06-08 02:00 → 2026-06-08)", async () => {
+    const CSV = `作品名称,发布时间,播放量,完播率,数据日期\n护肤B,2026-06-01 10:00,1000,30%,2026-06-08 02:00`;
+    await importPerformanceCsv("douyin", CSV, "2026-06-01", testDir);
+    const outcomes = await listOutcomes(testDir);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0].metricDate).toBe("2026-06-08");
+  });
+
+  it("matched import supersedes historical twin across different metricDates", async () => {
+    const WEEK1 = `作品名称,发布时间,播放量,完播率\n护肤周报,2026-06-01 10:00,1000,30%`;
+    const WEEK2 = `作品名称,发布时间,播放量,完播率\n护肤周报,2026-06-01 10:00,2000,35%`;
+    await importPerformanceCsv("douyin", WEEK1, "2026-06-08", testDir); // 未匹配 → historical
+    const c = await saveContent(
+      { title: "护肤周报", body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    const second = await importPerformanceCsv("douyin", WEEK2, "2026-06-15", testDir); // 匹配，不同数据日期
+    expect(second.matched).toBe(1);
+    const outcomes = await listOutcomes(testDir);
+    const forTitle = outcomes.filter((o) => o.platformTitle === "护肤周报");
+    expect(forTitle.length).toBeGreaterThan(0);
+    expect(forTitle.every((o) => o.contentId === c.id)).toBe(true);
+  });
 });
 
 describe("PLATFORM_MAPPINGS", () => {

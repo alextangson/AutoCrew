@@ -136,11 +136,34 @@ function parsePublishTime(raw: string | undefined): string | null {
   return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 
-/** "2026/6/8"、"2026-06-08 12:00" → "2026-06-08"；缺失或解析失败用 defaultDate（schema 强制 YYYY-MM-DD） */
+/** "2026/6/8"、"2026-06-08 12:00" → "2026-06-08"；缺失或解析失败用 defaultDate（schema 强制 YYYY-MM-DD）。
+ *  不经 Date 往返——本地时区（Asia/Shanghai）会把 "2026-6-8" 偏成前一天（评审实证）。 */
 function normalizeMetricDate(raw: string | undefined, defaultDate: string): string {
   if (!raw) return defaultDate;
-  const t = Date.parse(raw.replace(/\//g, "-"));
-  return Number.isNaN(t) ? defaultDate : new Date(t).toISOString().slice(0, 10);
+  const d = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(raw.trim());
+  if (!d) return defaultDate;
+  return `${d[1]}-${d[2].padStart(2, "0")}-${d[3].padStart(2, "0")}`;
+}
+
+function rowToOutcomeInput(
+  row: Record<string, string>,
+  mapping: CsvColumnMapping,
+  defaultMetricDate: string,
+): { title: string; publishedAt: string | null; metricDate: string; metrics: OutcomeMetrics } {
+  return {
+    title: pick(row, mapping.title) || "(无标题)",
+    publishedAt: parsePublishTime(pick(row, mapping.publishedAt)),
+    metricDate: normalizeMetricDate(pick(row, mapping.metricDate), defaultMetricDate),
+    metrics: {
+      views: parseMetricNumber(pick(row, mapping.views)),
+      completionRate: parseMetricNumber(pick(row, mapping.completionRate)),
+      likes: parseMetricNumber(pick(row, mapping.likes)),
+      comments: parseMetricNumber(pick(row, mapping.comments)),
+      shares: parseMetricNumber(pick(row, mapping.shares)),
+      favorites: parseMetricNumber(pick(row, mapping.favorites)),
+      follows: parseMetricNumber(pick(row, mapping.follows)),
+    },
+  };
 }
 
 export interface ImportReport {
@@ -176,20 +199,11 @@ export async function importPerformanceCsv(
   };
 
   for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const title = pick(row, mapping.title) || "(无标题)";
-    const publishedAt = parsePublishTime(pick(row, mapping.publishedAt));
-    const metricDate = normalizeMetricDate(pick(row, mapping.metricDate), defaultMetricDate);
-
-    const metrics: OutcomeMetrics = {
-      views: parseMetricNumber(pick(row, mapping.views)),
-      completionRate: parseMetricNumber(pick(row, mapping.completionRate)),
-      likes: parseMetricNumber(pick(row, mapping.likes)),
-      comments: parseMetricNumber(pick(row, mapping.comments)),
-      shares: parseMetricNumber(pick(row, mapping.shares)),
-      favorites: parseMetricNumber(pick(row, mapping.favorites)),
-      follows: parseMetricNumber(pick(row, mapping.follows)),
-    };
+    const { title, publishedAt, metricDate, metrics } = rowToOutcomeInput(
+      rows[i],
+      mapping,
+      defaultMetricDate,
+    );
 
     const draft = await matchDraft(platform, title, publishedAt, dataDir);
     const result = await recordOutcome(

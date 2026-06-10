@@ -49,12 +49,17 @@ export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome
     byKey.set(outcomeKey(o), o);
   }
   const deduped = Array.from(byKey.values());
-  // 对账：同一平台条目（标题@发布日期 + 数据日期相同）已有打标（contentId 非空）版本时，
-  // 丢弃历史（contentId 为空）版本——confirm_published 后重导入同一 CSV 不双计。
+  // 对账：同一平台条目（标题@发布日期）存在任何打标（contentId 非空）版本时，
+  // 丢弃该条目的全部历史（contentId 为空）版本——跨数据日期也不双计（评审修订：
+  // 否则 confirm_published 前的周一快照与之后的周二快照会被 baseline 当成两个作品）。
   const matchedTitleKeys = new Set(
-    deduped.filter((o) => o.contentId !== null).map((o) => outcomeKey({ ...o, contentId: null })),
+    deduped
+      .filter((o) => o.contentId !== null)
+      .map((o) => outcomeKey({ ...o, contentId: null, metricDate: "" })),
   );
-  return deduped.filter((o) => o.contentId !== null || !matchedTitleKeys.has(outcomeKey(o)));
+  return deduped.filter(
+    (o) => o.contentId !== null || !matchedTitleKeys.has(outcomeKey({ ...o, metricDate: "" })),
+  );
 }
 
 export async function getOutcomesForContent(

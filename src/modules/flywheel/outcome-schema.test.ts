@@ -97,6 +97,13 @@ describe("validateOutcome", () => {
     const v = validateOutcome({ ...base, metrics: { views: -5 } });
     expect(v.ok).toBe(false);
   });
+
+  it("flags raw-ratio completionRate (0-1) as needsReview, not rejection", () => {
+    const v = validateOutcome({ ...base, metrics: { views: 100, completionRate: 0.32 } });
+    expect(v.ok).toBe(true);
+    expect(v.needsReview).toBe(true);
+    expect(v.reasons.join()).toContain("小数比例");
+  });
 });
 
 describe("outcomeKey", () => {
