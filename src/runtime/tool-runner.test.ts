@@ -176,6 +176,20 @@ describe("ToolRunner", () => {
     await fs.rm(emptyDir, { recursive: true, force: true });
   });
 
+  it("pre-publish gate blocks publishing nonexistent content (real checker)", async () => {
+    const tool = makeTool("autocrew_publish");
+    runner.register(tool);
+
+    const result = await runner.execute("autocrew_publish", {
+      action: "clipboard",
+      content_id: "does-not-exist",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("pre_publish_check_failed");
+    expect((tool.execute as any)).not.toHaveBeenCalled();
+  });
+
   it("onboarding gate blocks when style not calibrated", async () => {
     const uncalDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-uncal-"));
     const profile = {

@@ -22,6 +22,7 @@ export const publishSchema = Type.Object({
   wechat_publish_script: Type.Optional(Type.String({ description: "Override path to the WeChat publish.py script." })),
   hashtags: Type.Optional(Type.Array(Type.String(), { description: "Hashtags for the content. Overrides content hashtags if provided." })),
   publish_url: Type.Optional(Type.String({ description: "The URL where content was published (for confirm_published action)." })),
+  force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
 });
 
 function resolveDataDir(customDir?: string): string {

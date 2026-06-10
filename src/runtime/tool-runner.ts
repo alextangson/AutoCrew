@@ -16,6 +16,7 @@ import {
 } from "./context.js";
 import { type EventBus, createEvent } from "./events.js";
 import { loadProfile, detectMissingInfo } from "../modules/profile/creator-profile.js";
+import { executePrePublish } from "../tools/pre-publish.js";
 
 // --- Types ---
 
@@ -115,6 +116,61 @@ const onboardingGateMiddleware: Middleware = async (ctx, toolName, _params, next
   return next();
 };
 
+/** Publish actions that don't put content out (no gate needed) */
+const PUBLISH_GATE_EXEMPT_ACTIONS = new Set(["confirm_published"]);
+
+/**
+ * Block autocrew_publish unless the pre-publish checklist passes.
+ *
+ * PRD v3 §10: blocking checks must be synchronous ToolRunner middleware —
+ * EventBus/hooks are fire-and-forget and cannot block. Fails closed: if the
+ * checker errors, publishing is blocked. Bypass with force=true.
+ */
+const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next) => {
+  if (toolName !== "autocrew_publish") return next();
+  if (PUBLISH_GATE_EXEMPT_ACTIONS.has(params.action as string)) return next();
+  if (params.force === true) return next();
+
+  // Unmanaged content (wechat_mp_draft via article_path) has no checklist to run
+  const contentId = params.content_id as string | undefined;
+  if (!contentId) return next();
+
+  try {
+    const check = await executePrePublish({
+      action: "check",
+      content_id: contentId,
+      _dataDir: ctx.dataDir,
+    });
+    if (!("allPassed" in check)) {
+      return {
+        ok: false,
+        error: "pre_publish_check_failed",
+        message: `⚠️ 发布前检查无法完成：${check.error}`,
+        action_required: "修复后重试，或传 force=true 强制发布。",
+      };
+    }
+    if (!check.allPassed) {
+      return {
+        ok: false,
+        error: "pre_publish_check_failed",
+        message: check.summary,
+        checks: check.checks,
+        failCount: check.failCount,
+        action_required: "修复未通过项后重试，或传 force=true 强制发布。",
+      };
+    }
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: "pre_publish_check_failed",
+      message: `⚠️ 发布前检查执行出错：${err instanceof Error ? err.message : String(err)}`,
+      action_required: "修复检查错误后重试，或传 force=true 强制发布。",
+    };
+  }
+
+  return next();
+};
+
 /** Inject _dataDir into every tool call */
 const dataDirMiddleware: Middleware = async (ctx, _tool, params, next) => {
   params._dataDir = ctx.dataDir;
@@ -202,6 +258,7 @@ export class ToolRunner {
     this.middleware = [
       dataDirMiddleware,
       onboardingGateMiddleware,
+      prePublishGateMiddleware,
       errorBoundaryMiddleware,
       auditMiddleware,
       workspaceTrackingMiddleware,

@@ -4,11 +4,13 @@
  * Inspired by Claude Code's hook system. Hooks are deterministic callbacks
  * that fire at specific points in the tool execution lifecycle.
  *
+ * Hooks are observation-only (PRD v3 §10): the event layer is fire-and-forget,
+ * so hooks can never block tool execution. Blocking checks (publish gate,
+ * compliance gate) belong in the ToolRunner middleware chain.
+ *
  * Built-in hooks handle AutoCrew workflow automation:
  * - content:save → auto scan sensitive words
  * - content:update → auto record diff
- * - cover:approve → auto generate multi-ratio (Pro)
- * - publish → enforce pre-publish check
  *
  * Users can add custom hooks via ~/.autocrew/hooks.json
  */
@@ -16,7 +18,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { type EventBus, type AutoCrewEvent, type AutoCrewEventType } from "./events.js";
 import { type ToolRunner } from "./tool-runner.js";
-import { generateEditFeedback } from "../modules/learnings/visible-learning.js";
 
 // --- Types ---
 
@@ -66,32 +67,6 @@ function builtinHooks(): HookDefinition[] {
           // Diff tracking is already handled inside the content-save tool
           // This hook is a placeholder for future enhancements
           void event;
-        },
-      },
-    },
-    {
-      name: "enforce-pre-publish",
-      event: "tool:pre_execute",
-      matcher: { tool: "autocrew_publish" },
-      handler: {
-        type: "function",
-        fn: async (event, runner) => {
-          const contentId = event.data.contentId as string;
-          if (!contentId) return;
-          // Check for --force flag
-          const force = event.data.force as boolean;
-          if (force) return;
-
-          const check = await runner.execute("autocrew_pre_publish", {
-            action: "check",
-            content_id: contentId,
-          });
-          if (check.ok === false || check.passed === false) {
-            throw new Error(
-              `Pre-publish check failed for ${contentId}. ` +
-              `Use force=true to bypass. Details: ${check.summary || check.error || "unknown"}`
-            );
-          }
         },
       },
     },
