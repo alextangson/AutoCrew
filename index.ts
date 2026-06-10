@@ -20,6 +20,7 @@ import { memorySchema, executeMemory } from "./src/tools/memory.js";
 import { reviewSchema, executeReview } from "./src/tools/review.js";
 import { prePublishSchema, executePrePublish } from "./src/tools/pre-publish.js";
 import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
+import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -156,6 +157,16 @@ function registerAllTools(runner: ToolRunner): void {
       "Actions: overview, calendar, pending, batch_review, batch_transition.",
     parameters: dashboardSchema,
     execute: executeDashboard,
+  });
+
+  runner.register({
+    name: "autocrew_flywheel",
+    label: "AutoCrew Flywheel",
+    description:
+      "Performance loop: import platform CSV exports (back-catalog + weekly backfill), record manual metrics, " +
+      "and report loop status with baseline insights. Actions: import_csv, record, report.",
+    parameters: flywheelSchema,
+    execute: executeFlywheel,
   });
 
   runner.register({

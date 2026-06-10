@@ -125,7 +125,7 @@ export interface CoverReview {
   updatedAt?: string;
 }
 
-function getDataDir(customDir?: string): string {
+export function getDataDir(customDir?: string): string {
   if (customDir) return customDir;
   const home = process.env.HOME || process.env.USERPROFILE || "~";
   return path.join(home, ".autocrew");

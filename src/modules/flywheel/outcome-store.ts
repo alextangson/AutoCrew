@@ -7,15 +7,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { validateOutcome, outcomeKey, normalizeTitle, type PerformanceOutcome } from "./outcome-schema.js";
-import { listContents, type Content } from "../../storage/local-store.js";
+import { listContents, getDataDir, type Content } from "../../storage/local-store.js";
 
 const OUTCOMES_FILE = "outcomes.jsonl";
-
-function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
 
 function outcomesPath(dataDir?: string): string {
   return path.join(getDataDir(dataDir), OUTCOMES_FILE);

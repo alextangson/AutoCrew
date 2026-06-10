@@ -1,0 +1,108 @@
+/**
+ * autocrew_flywheel — 性能闭环工具（PRD v3 §6/§7.2c 的 dogfood 入口）。
+ * actions:
+ *   import_csv — 导入平台创作者中心导出的 CSV（历史回灌 + 周常回填共用）
+ *   record    — 手动回填单条数据（结构化粘贴兜底）
+ *   report    — 闭环状态：条数、待人工确认、baseline 洞察
+ */
+import fs from "node:fs/promises";
+import path from "node:path";
+import { Type } from "@sinclair/typebox";
+import { importPerformanceCsv } from "../modules/flywheel/csv-import.js";
+import { listOutcomes } from "../modules/flywheel/outcome-store.js";
+import { buildBaseline, trackPerformance } from "../modules/analytics/quality-baseline.js";
+import { getDataDir } from "../storage/local-store.js";
+
+export const flywheelSchema = Type.Object({
+  action: Type.Unsafe<"import_csv" | "record" | "report">({
+    type: "string",
+    enum: ["import_csv", "record", "report"],
+    description:
+      "Flywheel action. 'import_csv' to ingest platform CSV export, 'record' for manual metrics entry, 'report' for loop status.",
+  }),
+  platform: Type.Optional(
+    Type.String({ description: "Platform key for import_csv: douyin | wechat_video | xiaohongshu." }),
+  ),
+  csv_path: Type.Optional(Type.String({ description: "Path to the exported CSV file (for import_csv)." })),
+  metric_date: Type.Optional(
+    Type.String({ description: "YYYY-MM-DD the metrics refer to. Defaults to today." }),
+  ),
+  content_id: Type.Optional(Type.String({ description: "AutoCrew content id (for record)." })),
+  metrics: Type.Optional(
+    Type.Record(Type.String(), Type.Number(), {
+      description: "Metrics for record action, e.g. {\"views\":800,\"completionRate\":41}.",
+    }),
+  ),
+});
+
+function localToday(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+async function runImportCsv(params: Record<string, unknown>, dataDir: string) {
+  const platform = params.platform as string | undefined;
+  const csvPath = params.csv_path as string | undefined;
+  if (!platform || !csvPath) {
+    return { ok: false, error: "import_csv 需要 platform 和 csv_path" };
+  }
+  let csvText: string;
+  try {
+    csvText = await fs.readFile(path.resolve(csvPath), "utf-8");
+  } catch {
+    return { ok: false, error: `读不到 CSV 文件：${csvPath}` };
+  }
+  const metricDate = (params.metric_date as string) || localToday();
+  try {
+    return { ok: true, data: await importPerformanceCsv(platform, csvText, metricDate, dataDir) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function runReport(dataDir: string) {
+  const outcomes = await listOutcomes(dataDir);
+  const baseline = await buildBaseline(dataDir);
+  const byPlatform: Record<string, number> = {};
+  for (const o of outcomes) {
+    byPlatform[o.platform] = (byPlatform[o.platform] || 0) + 1;
+  }
+  return {
+    ok: true,
+    data: {
+      totalOutcomes: outcomes.length,
+      byPlatform,
+      matched: outcomes.filter((o) => o.contentId !== null).length,
+      historical: outcomes.filter((o) => o.contentId === null).length,
+      needsReview: outcomes.filter((o) => o.needsReview),
+      baselineSampleSize: baseline.sampleSize,
+      traitSampleSize: baseline.traitSampleSize,
+      baselineInsights: baseline.insights,
+    },
+  };
+}
+
+export async function executeFlywheel(params: Record<string, unknown>) {
+  const action = params.action as string;
+  const dataDir = getDataDir((params._dataDir as string) || undefined);
+
+  if (action === "import_csv") {
+    return runImportCsv(params, dataDir);
+  }
+
+  if (action === "record") {
+    const contentId = params.content_id as string | undefined;
+    const metrics = params.metrics as Record<string, number> | undefined;
+    if (!contentId || !metrics) {
+      return { ok: false, error: "record 需要 content_id 和 metrics" };
+    }
+    const result = await trackPerformance(contentId, metrics, dataDir);
+    return result.ok ? { ok: true, data: result } : { ok: false, error: result.error || "回填失败" };
+  }
+
+  if (action === "report") {
+    return runReport(dataDir);
+  }
+
+  return { ok: false, error: `Unknown action: ${action}` };
+}
