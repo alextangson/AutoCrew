@@ -59,6 +59,15 @@ describe("recordOutcome", () => {
     expect(await listOutcomes(testDir)).toHaveLength(2);
   });
 
+  it("survives a corrupt journal line: valid records still readable", async () => {
+    await recordOutcome(baseInput, testDir);
+    await recordOutcome({ ...baseInput, contentId: "c2", platformTitle: "另一篇" }, testDir);
+    // 模拟 append 中途崩溃留下的截断行
+    await fs.appendFile(path.join(testDir, "outcomes.jsonl"), '{"contentId":"c-trunc', "utf-8");
+    const all = await listOutcomes(testDir);
+    expect(all).toHaveLength(2);
+  });
+
   it("flags view-count spike vs platform median as needsReview", async () => {
     // 5 条普通数据建立中位数 ~1000
     for (let i = 0; i < 5; i++) {
@@ -74,6 +83,22 @@ describe("recordOutcome", () => {
     expect(spike.ok).toBe(true);
     expect(spike.outcome?.needsReview).toBe(true);
     expect(spike.outcome?.reviewReasons.join()).toContain("中位数");
+  });
+
+  it("does not flag views below the 20x median threshold", async () => {
+    // 5 条普通数据建立中位数 ~1000
+    for (let i = 0; i < 5; i++) {
+      await recordOutcome(
+        { ...baseInput, contentId: `c${i}`, metricDate: "2026-06-08", metrics: { views: 1000 + i } },
+        testDir,
+      );
+    }
+    const high = await recordOutcome(
+      { ...baseInput, contentId: "c-high", metrics: { views: 15000 } },
+      testDir,
+    );
+    expect(high.ok).toBe(true);
+    expect(high.outcome?.needsReview).toBe(false);
   });
 });
 

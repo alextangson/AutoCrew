@@ -6,13 +6,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import {
-  validateOutcome,
-  outcomeKey,
-  type PerformanceOutcome,
-  type OutcomeMetrics,
-  type OutcomeSource,
-} from "./outcome-schema.js";
+import { validateOutcome, outcomeKey, type PerformanceOutcome } from "./outcome-schema.js";
 
 const OUTCOMES_FILE = "outcomes.jsonl";
 
@@ -27,15 +21,23 @@ function outcomesPath(dataDir?: string): string {
 }
 
 async function readJournal(dataDir?: string): Promise<PerformanceOutcome[]> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(outcomesPath(dataDir), "utf-8");
-    return raw
-      .split("\n")
-      .filter((line) => line.trim())
-      .map((line) => JSON.parse(line) as PerformanceOutcome);
-  } catch {
-    return [];
+    raw = await fs.readFile(outcomesPath(dataDir), "utf-8");
+  } catch (err) {
+    if ((err as { code?: string }).code === "ENOENT") return [];
+    throw err;
   }
+  const outcomes: PerformanceOutcome[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      outcomes.push(JSON.parse(line) as PerformanceOutcome);
+    } catch {
+      // 跳过损坏行：单行损坏不应清空整个读视图
+    }
+  }
+  return outcomes;
 }
 
 /** latest-wins：同幂等键只保留 journal 中最后一条 */
@@ -63,15 +65,7 @@ export interface RecordResult {
 }
 
 export async function recordOutcome(
-  input: {
-    contentId: string | null;
-    platform: string;
-    platformTitle: string;
-    publishedAt: string | null;
-    metricDate: string;
-    metrics: OutcomeMetrics;
-    source: OutcomeSource;
-  },
+  input: Omit<PerformanceOutcome, "recordedAt" | "needsReview" | "reviewReasons">,
   dataDir?: string,
 ): Promise<RecordResult> {
   const validation = validateOutcome(input);
@@ -87,7 +81,7 @@ export async function recordOutcome(
   const reviewReasons = [...validation.reasons];
   let needsReview = validation.needsReview;
   const peers = existing
-    .filter((o) => o.platform === input.platform && typeof o.metrics.views === "number")
+    .filter((o) => o.platform === input.platform)
     .flatMap((o) => (typeof o.metrics.views === "number" ? [o.metrics.views] : []))
     .sort((a, b) => a - b);
   if (peers.length >= 5 && typeof input.metrics.views === "number") {
