@@ -131,4 +131,38 @@ describe("runLoop", () => {
     expect(r.finalMessage).toBe("ok");
     expect(n).toBe(2);
   });
+
+  it("malformed completion (empty choices) throws with context", async () => {
+    const impl = (async () =>
+      new Response(JSON.stringify({ choices: [], usage: { total_tokens: 10 } }), { status: 200 })) as typeof fetch;
+    await expect(
+      runLoop(CFG, { model: "m", systemPrompt: "s", userMessage: "u", fetchImpl: impl }),
+    ).rejects.toThrow(/malformed/);
+  });
+
+  it("error-shaped 200 surfaces the provider error message", async () => {
+    const impl = (async () =>
+      new Response(JSON.stringify({ error: { message: "quota exceeded" } }), { status: 200 })) as typeof fetch;
+    await expect(
+      runLoop(CFG, { model: "m", systemPrompt: "s", userMessage: "u", fetchImpl: impl }),
+    ).rejects.toThrow(/quota exceeded/);
+  });
+
+  it("non-JSON 200 body throws invalid JSON error", async () => {
+    const impl = (async () => new Response("<html>", { status: 200 })) as typeof fetch;
+    await expect(
+      runLoop(CFG, { model: "m", systemPrompt: "s", userMessage: "u", fetchImpl: impl }),
+    ).rejects.toThrow(/invalid JSON/);
+  });
+
+  it("non-numeric usage cannot poison totalTokens", async () => {
+    const body = {
+      choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { total_tokens: "abc" },
+    };
+    const impl = (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch;
+    const r = await runLoop(CFG, { model: "m", systemPrompt: "s", userMessage: "u", fetchImpl: impl });
+    expect(Number.isFinite(r.totalTokens)).toBe(true);
+    expect(r.totalTokens).toBe(0);
+  });
 });

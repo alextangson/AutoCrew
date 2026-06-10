@@ -93,7 +93,25 @@ async function callModel(
     captured = res;
   });
 
-  return (await (captured as unknown as Response).json()) as CompletionResponse;
+  return parseCompletion(captured as unknown as Response);
+}
+
+/** 200 ≠ 可信：中转/网关可能回 HTML、空 choices 或 error-shaped body（薄云中转路线下是"何时"不是"是否"）。 */
+async function parseCompletion(res: Response): Promise<CompletionResponse> {
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error("engine loop: invalid JSON response");
+  }
+  const completion = data as CompletionResponse;
+  if (!completion.choices?.[0]?.message) {
+    const providerErr = (data as { error?: { message?: string } }).error?.message;
+    throw new Error(
+      `engine loop: malformed completion response${providerErr ? `（provider: ${providerErr}）` : ""}`,
+    );
+  }
+  return completion;
 }
 
 async function executeToolCalls(
@@ -144,7 +162,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
 
     const data = await callModel(config, opts.model, messages, tools, fetchImpl);
     turns++;
-    totalTokens += data.usage?.total_tokens ?? 0;
+    totalTokens += Number(data.usage?.total_tokens) || 0;
 
     const assistantMsg = data.choices[0].message;
     messages.push({ role: "assistant", content: assistantMsg.content, tool_calls: assistantMsg.tool_calls });

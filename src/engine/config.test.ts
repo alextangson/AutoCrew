@@ -62,4 +62,9 @@ describe("loadEngineConfig", () => {
     await fs.writeFile(path.join(testDir, "engine.json"), "{broken");
     await expect(loadEngineConfig(testDir)).rejects.toThrow(/engine\.json 解析失败/);
   });
+
+  it("throws when engine.json is literal null", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), "null");
+    await expect(loadEngineConfig(testDir)).rejects.toThrow(/不是 JSON 对象/);
+  });
 });

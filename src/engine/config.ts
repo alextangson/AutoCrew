@@ -22,15 +22,26 @@ const DEFAULTS = {
   fastModel: "deepseek-v4-flash",
 };
 
+function parseEngineJson(raw: string, filePath: string): Partial<EngineConfig> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`engine.json 解析失败（${filePath}）：${(err as Error).message}`);
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error(`engine.json 解析失败（${filePath}）：不是 JSON 对象`);
+  }
+  return parsed as Partial<EngineConfig>;
+}
+
 export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> {
   let fromFile: Partial<EngineConfig> = {};
   const filePath = path.join(getDataDir(dataDir), "engine.json");
   try {
-    fromFile = JSON.parse(await fs.readFile(filePath, "utf-8")) as Partial<EngineConfig>;
+    fromFile = parseEngineJson(await fs.readFile(filePath, "utf-8"), filePath);
   } catch (err) {
-    if ((err as { code?: string }).code !== "ENOENT") {
-      throw new Error(`engine.json 解析失败（${filePath}）：${(err as Error).message}`);
-    }
+    if ((err as { code?: string }).code !== "ENOENT") throw err;
   }
   const apiKey = fromFile.apiKey ?? process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
