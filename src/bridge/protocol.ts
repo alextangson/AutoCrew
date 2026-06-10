@@ -35,12 +35,21 @@ export function encodeFrame(msg: unknown): Buffer {
 /**
  * 增量解码器：feed(chunk) 返回完整消息数组（处理半包/粘包）。
  * 非法长度（>10 MB）或非法 JSON → 抛带上下文错误。
+ *
+ * 错误致命性契约：任何 feed() 抛错即视为帧流损坏——调用方必须丢弃本解码器并
+ * 终止连接（进程退出由 Chrome 重启），不得捕获后继续 feed。内部 poisoned 标志
+ * 强制此契约：抛错后任何后续 feed() 一律抛"连接已损坏"。
+ * 同一次 feed() 中先解出的消息也随抛错丢失——帧边界已不可信，半批投递更危险。
  */
 export function createFrameDecoder(): { feed(chunk: Buffer): unknown[] } {
   let buf = Buffer.alloc(0);
+  let poisoned = false;
 
   return {
     feed(chunk: Buffer): unknown[] {
+      if (poisoned) {
+        throw new Error("帧流连接已损坏（此前 feed 已抛错）：丢弃本解码器并终止连接");
+      }
       buf = Buffer.concat([buf, chunk]);
       const results: unknown[] = [];
 
@@ -48,6 +57,7 @@ export function createFrameDecoder(): { feed(chunk: Buffer): unknown[] } {
         const bodyLen = buf.readUInt32LE(0);
 
         if (bodyLen > MAX_FRAME_BYTES) {
+          poisoned = true;
           throw new Error(
             `帧大小 ${bodyLen} 字节超过 ${MAX_FRAME_BYTES} 字节上限，拒绝解码（防内存炸）`,
           );
@@ -62,6 +72,7 @@ export function createFrameDecoder(): { feed(chunk: Buffer): unknown[] } {
         try {
           parsed = JSON.parse(body);
         } catch (e) {
+          poisoned = true;
           throw new Error(`JSON 解析失败：${String(e)}（body 前 80 字符：${body.slice(0, 80)}）`);
         }
 

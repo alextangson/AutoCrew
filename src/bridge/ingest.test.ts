@@ -37,9 +37,10 @@ describe("rowsToCsvText", () => {
     expect(csv).toContain('"say ""hi"""');
   });
 
-  it("quotes fields that contain newlines", () => {
+  it("sanitizes newlines to single space (parseCsv 不支持换行内嵌字段)", () => {
     const csv = rowsToCsvText([{ x: "line1\nline2" }]);
-    expect(csv).toContain('"line1\nline2"');
+    expect(csv).toContain("line1 line2");
+    expect(csv).not.toContain("line1\nline2");
   });
 
   it("returns empty string for empty rows array", () => {
@@ -56,8 +57,7 @@ describe("rowsToCsvText", () => {
     expect(back[0]).toMatchObject({ 标题: "测试视频", 播放量: "12345", 完播率: "0.35" });
   });
 
-  it("round-trips values with commas and quotes (parseCsv 不支持嵌入换行，不测换行往返)", () => {
-    // parseCsv 明确声明"不支持换行内嵌字段"——只验证逗号与双引号的往返
+  it("round-trips values with commas and quotes", () => {
     const rows = [{ a: 'say "hi", ok', b: "normal,value", c: 'with ""quotes""' }];
     const csv = rowsToCsvText(rows);
     const back = parseCsv(csv);
@@ -65,6 +65,32 @@ describe("rowsToCsvText", () => {
     expect(back[0]["a"]).toBe('say "hi", ok');
     expect(back[0]["b"]).toBe("normal,value");
     expect(back[0]["c"]).toBe('with ""quotes""');
+  });
+
+  it("row with embedded \\n and \\r\\n survives parseCsv intact — no row tearing", () => {
+    // DOM innerText 会带换行；不清洗的话首列撕裂 → 误导性 rejected（指向选择器校准），
+    // 非首列撕裂 → 表头错位静默腐蚀 journal
+    const rows = [
+      {
+        作品名称: "标题第一行\n标题第二行",
+        播放量: "12345",
+        完播率: "0.35\r\n后缀",
+        点赞量: "500",
+      },
+    ];
+    const back = parseCsv(rowsToCsvText(rows));
+    expect(back).toHaveLength(1); // 行没有被撕裂
+    expect(back[0]["作品名称"]).toBe("标题第一行 标题第二行");
+    expect(back[0]["播放量"]).toBe("12345");
+    expect(back[0]["完播率"]).toBe("0.35 后缀");
+    expect(back[0]["点赞量"]).toBe("500"); // 所有指标列对齐无错位
+  });
+
+  it("sanitizes bare \\r too (转义检查只看 \\n 会漏)", () => {
+    const back = parseCsv(rowsToCsvText([{ a: "left\rright", b: "ok" }]));
+    expect(back).toHaveLength(1);
+    expect(back[0]["a"]).toBe("left right");
+    expect(back[0]["b"]).toBe("ok");
   });
 
   it("round-trips Chinese header names and emoji values", () => {

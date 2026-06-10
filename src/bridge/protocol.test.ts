@@ -35,6 +35,17 @@ describe("encodeFrame + createFrameDecoder round-trip", () => {
     expect(dec.feed(combined)).toEqual([m1, m2]);
   });
 
+  it("decodes a frame fed byte-at-a-time (长度前缀本身跨 chunk 撕裂)", () => {
+    const msg = { type: "ingest_rows", platform: "douyin", rows: [{ 作品名称: "测试" }] };
+    const full = encodeFrame(msg);
+    const dec = createFrameDecoder();
+    const results: unknown[] = [];
+    for (let i = 0; i < full.length; i++) {
+      results.push(...dec.feed(full.subarray(i, i + 1)));
+    }
+    expect(results).toEqual([msg]);
+  });
+
   it("rejects a frame whose declared length exceeds 10 MB", () => {
     // build a fake header declaring 11 MB
     const tooLarge = 11 * 1024 * 1024;
@@ -51,6 +62,25 @@ describe("encodeFrame + createFrameDecoder round-trip", () => {
     bad.copy(frame, 4);
     const dec = createFrameDecoder();
     expect(() => dec.feed(frame)).toThrow(/JSON/i);
+  });
+
+  it("is poisoned after bad-JSON throw — subsequent feed() throws connection-fatal error", () => {
+    const bad = Buffer.from("not-json");
+    const frame = Buffer.alloc(4 + bad.length);
+    frame.writeUInt32LE(bad.length, 0);
+    bad.copy(frame, 4);
+    const dec = createFrameDecoder();
+    expect(() => dec.feed(frame)).toThrow(/JSON/i);
+    // 即使后续 chunk 是合法帧，也必须拒绝——帧流已损坏，禁止捕获后继续 feed
+    expect(() => dec.feed(encodeFrame({ type: "ping" }))).toThrow(/已损坏/);
+  });
+
+  it("is poisoned after oversized-frame throw too", () => {
+    const buf = Buffer.alloc(4);
+    buf.writeUInt32LE(11 * 1024 * 1024, 0);
+    const dec = createFrameDecoder();
+    expect(() => dec.feed(buf)).toThrow(/超过/);
+    expect(() => dec.feed(encodeFrame({ type: "ping" }))).toThrow(/已损坏/);
   });
 });
 
