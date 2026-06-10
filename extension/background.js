@@ -12,7 +12,7 @@
  *   - service worker 可能在消息处理完前进入休眠；此处每个操作都
  *     在一个 async 函数中同步完成，不依赖长连接或 keepAlive。
  *   - content script 在扩展安装前已加载的页面上不存在；
- *     sendMessage 失败时给出明确提示（重新加载页面）。
+ *     sendMessage 失败时用 chrome.scripting 注入一次并重试（自愈）。
  *   - sendNativeMessage 是一次性调用，符合 ≤1-in-flight 合约。
  * =========================================================
  */
@@ -30,22 +30,47 @@ let _notifCounter = 0;
 
 function notify(title, message) {
   _notifCounter++;
-  chrome.notifications.create("autocrew-" + _notifCounter, {
-    type: "basic",
-    iconUrl: "icons/icon48.png",
-    title: title,
-    message: message,
-  });
+  chrome.notifications.create(
+    "autocrew-" + _notifCounter,
+    {
+      type: "basic",
+      iconUrl: "icons/icon48.png",
+      title: title,
+      message: message,
+    },
+    function () {
+      // 通知是唯一反馈通道——创建失败必须在 SW console 留痕
+      if (chrome.runtime.lastError) {
+        console.error("notifications.create 失败:", chrome.runtime.lastError.message);
+      }
+    }
+  );
 }
 
 // =============================================================
 // 主流程
 // =============================================================
 
+/**
+ * 进行中守卫：同一时刻只允许一次导入流程（≤1-in-flight）。
+ * 注：SW 被回收会重置此标志——它是 UX 防抖，不是正确性契约
+ * （native host 侧消息本身幂等）。
+ */
+let inFlight = false;
+
 chrome.action.onClicked.addListener(function (tab) {
-  handleClick(tab).catch(function (err) {
-    notify("AutoCrew 错误", String(err));
-  });
+  if (inFlight) {
+    notify("AutoCrew：正在导入中", "上一次导入尚未完成，请稍候再点。");
+    return;
+  }
+  inFlight = true;
+  handleClick(tab)
+    .catch(function (err) {
+      notify("AutoCrew 错误", String(err));
+    })
+    .finally(function () {
+      inFlight = false;
+    });
 });
 
 async function handleClick(tab) {
@@ -59,16 +84,25 @@ async function handleClick(tab) {
   }
 
   // 2. 向 content script 请求抽取行数据
+  //    页面在扩展安装/重载前已打开 → content script 不存在 →
+  //    自愈：用 chrome.scripting 注入一次后重试（activeTab 授权下合法）
   let extractResult;
   try {
     extractResult = await sendMessageToTab(tab.id, { cmd: "extract" });
-  } catch (err) {
-    // content script 不存在（页面在扩展安装前加载）
-    notify(
-      "AutoCrew：内容脚本未就绪",
-      "请刷新页面（F5）后再试。如问题持续，检查 DevTools → Console。"
-    );
-    return;
+  } catch (firstErr) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content-douyin.js"],
+      });
+      extractResult = await sendMessageToTab(tab.id, { cmd: "extract" });
+    } catch (injectErr) {
+      notify(
+        "AutoCrew：内容脚本注入失败",
+        String(injectErr) + "（请刷新页面后再试）"
+      );
+      return;
+    }
   }
 
   if (!extractResult || typeof extractResult !== "object") {

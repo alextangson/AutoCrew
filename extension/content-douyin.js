@@ -90,19 +90,18 @@ function extractRows() {
     const nonEmpty = Array.from(cells).filter((td) => td.innerText.trim() !== "");
     if (nonEmpty.length < 2) continue;
 
+    // 键集必须逐行一致：ingest 用首行键集做 CSV 表头，
+    // 任何一行缺键都会让该列整批丢失。空单元格/缺失单元格也赋 ""
+    //（下游 pick() 把 "" 视为缺失，语义安全，表头保持统一）。
     const rowObj = {};
     SELECTOR_CONFIG.COLUMNS.forEach((fieldName, colIndex) => {
       if (fieldName === null) return; // 跳过此列
       const cell = cells[colIndex];
-      if (!cell) return;
-      const text = cell.innerText.trim();
-      if (text !== "") {
-        rowObj[fieldName] = text;
-      }
+      rowObj[fieldName] = cell ? cell.innerText.trim() : "";
     });
 
-    // 行对象至少要有作品名称或发布时间，否则可能是合计行
-    if (Object.keys(rowObj).length > 0) {
+    // 行必须有作品名称或发布时间，否则视为合计/汇总行跳过
+    if (rowObj["作品名称"] || rowObj["发布时间"]) {
       result.push(rowObj);
     }
   }
