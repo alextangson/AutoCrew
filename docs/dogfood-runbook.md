@@ -287,7 +287,7 @@ export DEEPSEEK_API_KEY=sk-你的密钥
 处理建议：
 
 1. **改稿后重新生成**：调整选题措辞，重新调用 `autocrew_generate`，新稿以新 contentId 存入。
-2. **人工调整**：用 `autocrew_content action=update content_id=<id>` 修改 body，然后用 `autocrew_review action=scan_only` 复核。
+2. **人工调整**：用 `autocrew_content action=update id=<稿件id>` 修改 body，然后用 `autocrew_review action=scan_only` 复核。
 3. **查词来源**：violations 中的词来自 `~/.autocrew/sensitive-words.json`（用户自定义）和内置违禁词库。如果命中词在你的赛道是正常用法，可以加入用户自定义白名单（v1.5 计划项）。
 
 ---
@@ -304,7 +304,7 @@ completion5s 项，跨平台 top/bottom 对比会偏低估抖音——重导是�
 
 ### 完整闭环（蒸馏路径）
 
-1. **写 3+ 稿并修改**：每次用 `autocrew_content action=update content_id=<id> body=<新稿>` 提交修改，系统自动记录 before/after diff（`autocrew_content` update 路径已接通 `recordDiff`）。
+1. **写 3+ 稿并修改**：每次用 `autocrew_content action=update id=<稿件id> body=<新稿>` 提交修改，系统自动记录 before/after diff（`autocrew_content` update 路径已接通 `recordDiff`）。
 
 2. **触发蒸馏**：
    ```
