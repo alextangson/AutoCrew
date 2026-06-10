@@ -1,13 +1,31 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AutoCrew</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h1>AutoCrew</h1>
+  <div id="app">
+    <nav id="sidebar">
+      <div class="logo">AutoCrew</div>
+      <ul>
+        <li><a href="#" class="nav-link active" data-screen="report">报告</a></li>
+        <li><a href="#" class="nav-link" data-screen="generate">生成</a></li>
+        <li><a href="#" class="nav-link" data-screen="drafts">稿件</a></li>
+        <li><a href="#" class="nav-link" data-screen="style">风格</a></li>
+      </ul>
+    </nav>
+    <main id="content">
+      <section id="screen-report" class="screen active"></section>
+      <section id="screen-generate" class="screen"></section>
+      <section id="screen-drafts" class="screen"></section>
+      <section id="screen-style" class="screen"></section>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
 </body>
 </html>

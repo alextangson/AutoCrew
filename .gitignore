@@ -7,6 +7,8 @@ dist/
 !index.ts
 # extension/ is source JS (no build step) — must track
 !extension/*.js
+# desktop/renderer/ is source JS (no build step) — must track
+!desktop/renderer/*.js
 .DS_Store
 # Never commit Pro API keys
 .pro
