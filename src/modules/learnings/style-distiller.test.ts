@@ -76,9 +76,7 @@ function makeRunLoop(
   ruleBatches: Array<Array<{ rule: string; evidence: string; confidence: number }>>,
   execResults: string[] = [],
 ): (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> {
-  let callCount = 0;
   return async (_cfg, opts) => {
-    callCount++;
     const submitTool = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_rules");
     if (!submitTool) throw new Error("submit_rules tool not found in opts");
 
@@ -94,7 +92,6 @@ function makeRunLoop(
       stopReason: "no_tool_calls",
     } satisfies LoopResult;
   };
-  // expose callCount for 'no new diff' test — via closure in special variant below
 }
 
 /**
@@ -173,11 +170,8 @@ describe("distillStyleRules", () => {
       const submitTool = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_rules");
       if (!submitTool) throw new Error("submit_rules tool not found");
 
-      // First call: out-of-range confidence (raw value before clamp would be wrong — so pass >1.0)
-      // Actually per plan: confidence clamp [0,1]; but self-correction means reject & require retry.
-      // The tool should return an error for values clearly out-of-range so model can self-correct.
+      // First call rejected (out-of-range confidence), second call valid — self-correction channel
       execResults.push(await submitTool.execute({ rules: badRules }));
-      // Second call: valid
       execResults.push(await submitTool.execute({ rules: GOOD_RULES }));
 
       return {
@@ -213,15 +207,43 @@ describe("distillStyleRules", () => {
     expect(profile!.writingRules).toHaveLength(2);
   });
 
+  // 3b. Evidence attribution: duplicate dropped mid-array must not shift evidences (I1)
+  it("evidence attribution: [dup, 新A, 新B] → summary pairs each new rule with its own evidence", async () => {
+    await recordDiff("c1", "body", "before", "after", testDir);
+    const dupRule = "已有规则：保持简短";
+    await addWritingRule({ rule: dupRule, source: "user_explicit", confidence: 1 }, testDir);
+
+    const submitted = [
+      { rule: dupRule, evidence: "重复证据", confidence: 0.9 },
+      { rule: "新规则A：开头用提问", evidence: "证据A：before陈述 after提问", confidence: 0.8 },
+      { rule: "新规则B：结尾留钩子", evidence: "证据B：after新增悬念句", confidence: 0.7 },
+    ];
+    const runLoopImpl = makeRunLoop([submitted]);
+    const result = await distillStyleRules(testDir, { runLoopImpl });
+
+    expect(result.skippedDuplicates).toBe(1);
+    expect(result.newRules).toHaveLength(2);
+    expect(result.summary).toContain("新规则A：开头用提问（依据：证据A：before陈述 after提问）");
+    expect(result.summary).toContain("新规则B：结尾留钩子（依据：证据B：after新增悬念句）");
+    expect(result.summary).not.toContain("重复证据");
+  });
+
+  // 2b. NaN confidence must be rejected at the trust boundary (I2)
+  it("confidence NaN → execute returns 自纠 error", async () => {
+    await recordDiff("c1", "body", "before", "after", testDir);
+
+    const execResults: string[] = [];
+    const nanRules = [{ rule: "测试规则", evidence: "证据", confidence: NaN }];
+    const runLoopImpl = makeRunLoop([nanRules, GOOD_RULES], execResults);
+    const result = await distillStyleRules(testDir, { runLoopImpl });
+
+    expect(execResults[0]).toContain("请修正");
+    expect(result.newRules).toHaveLength(2);
+  });
+
   // 4. No new diffs → model not called, state unchanged
   it("no new diffs → model not called (callCount=0), state unchanged", async () => {
-    // Write state with timestamp in the future so all existing diffs are "old"
-    const futureTs = new Date(Date.now() + 60000).toISOString();
-    await writeDistillState(futureTs);
-
-    // Record a diff but it's older than lastDistilledAt (we can't easily control createdAt,
-    // so instead we write state AFTER recording the diff but use future timestamp)
-    // Actually: record diffs first, then set lastDistilledAt to future
+    // Record a diff, then set lastDistilledAt in the future so it counts as already distilled
     await recordDiff("c1", "body", "before", "after", testDir);
     await writeDistillState(new Date(Date.now() + 60000).toISOString());
 

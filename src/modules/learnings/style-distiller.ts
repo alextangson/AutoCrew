@@ -79,16 +79,18 @@ function validateRules(args: Record<string, unknown>): SubmitValidation {
     if (typeof r.evidence !== "string") {
       return { ok: false, error: "Error: evidence 字段应为字符串，请修正后重新调用 submit_rules" };
     }
-    if (typeof r.confidence !== "number") {
-      return { ok: false, error: "Error: confidence 字段应为数值，请修正后重新调用 submit_rules" };
+    // Number.isFinite rejects non-numbers AND NaN/Infinity — typeof NaN === "number" would slip through
+    if (!Number.isFinite(r.confidence)) {
+      return { ok: false, error: "Error: confidence 字段应为有限数值，请修正后重新调用 submit_rules" };
     }
-    if (r.confidence < 0 || r.confidence > 1) {
+    const confidence = r.confidence as number;
+    if (confidence < 0 || confidence > 1) {
       return {
         ok: false,
-        error: `Error: confidence 应在 [0,1] 范围内（收到 ${r.confidence}），请修正后重新调用 submit_rules`,
+        error: `Error: confidence 应在 [0,1] 范围内（收到 ${confidence}），请修正后重新调用 submit_rules`,
       };
     }
-    out.push({ rule: r.rule.trim(), evidence: String(r.evidence), confidence: r.confidence });
+    out.push({ rule: r.rule.trim(), evidence: r.evidence, confidence });
   }
   return { ok: true, rules: out };
 }
@@ -203,10 +205,11 @@ async function persistRules(
   return { newRules, skipped };
 }
 
-function buildSummary(newRules: WritingRule[], evidences: string[]): string {
+/** Evidence keyed by rule text — positional alignment breaks when duplicates are skipped mid-array. */
+function buildSummary(newRules: WritingRule[], evidenceByRule: Map<string, string>): string {
   if (newRules.length === 0) return "🎯 本轮未发现新风格偏好";
   const lines = newRules
-    .map((r, i) => `${r.rule}（依据：${evidences[i] ?? ""}）`)
+    .map((r) => `${r.rule}（依据：${evidenceByRule.get(r.rule) ?? ""}）`)
     .join("；");
   return `🎯 学到 ${newRules.length} 条新偏好：${lines}`;
 }
@@ -255,12 +258,12 @@ export async function distillStyleRules(
   const latestTs = newDiffs.reduce((max, d) => (d.createdAt > max ? d.createdAt : max), "");
   await writeState({ lastDistilledAt: latestTs }, dataDir);
 
-  const evidences = captured.rules.slice(0, newRules.length).map((r) => r.evidence);
+  const evidenceByRule = new Map(captured.rules.map((r) => [r.rule, r.evidence]));
   return {
     newRules,
     skippedDuplicates: skipped,
     diffsAnalyzed: newDiffs.length,
-    summary: buildSummary(newRules, evidences),
+    summary: buildSummary(newRules, evidenceByRule),
   };
 }
 
@@ -296,12 +299,12 @@ export async function analyzeStyleSamples(
   }
 
   const { newRules, skipped } = await persistRules(captured.rules, dataDir);
-  const evidences = captured.rules.slice(0, newRules.length).map((r) => r.evidence);
+  const evidenceByRule = new Map(captured.rules.map((r) => [r.rule, r.evidence]));
   return {
     newRules,
     skippedDuplicates: skipped,
     diffsAnalyzed: samples.length,
-    summary: buildSummary(newRules, evidences),
+    summary: buildSummary(newRules, evidenceByRule),
   };
 }
 
