@@ -833,8 +833,46 @@ git commit -m "feat: CSV parser handling BOM/quotes/CRLF and Chinese metric form
 ### Task 5: 平台列名映射 + 导入编排
 
 **Files:**
-- Modify: `src/modules/flywheel/csv-import.ts`（追加映射与 importPerformanceCsv）
-- Test: `src/modules/flywheel/csv-import.test.ts`（追加 describe 块）
+- Modify: `src/modules/flywheel/csv-import.ts`（追加映射与 importPerformanceCsv；Step 0 加固 parseMetricNumber）
+- Modify: `src/modules/flywheel/outcome-schema.ts`（Step 0：负数检查豁免 follows）
+- Test: `src/modules/flywheel/csv-import.test.ts` + `src/modules/flywheel/outcome-schema.test.ts`
+
+- [ ] **Step 0（评审新增，随本任务落地）：解析与校验加固**
+
+(a) `parseMetricNumber` 防垃圾前缀——"1.2亿"→1.2、"2026-06-01 10:00"→2026 这类"貌似合理的错误数字"是全管线唯一能静默入库的坏数据路径。替换实现：
+
+```typescript
+/** "1.2万"→12000, "3.4w"→34000, "1.2亿"→120000000, "12.3%"→12.3, "1,234"→1234；非完整数字 token → undefined */
+export function parseMetricNumber(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const s = raw.trim().replace(/,/g, "");
+  if (!s || s === "-") return undefined;
+  const yi = /^(-?\d+(?:\.\d+)?)\s*亿$/.exec(s);
+  if (yi) return Math.round(parseFloat(yi[1]) * 100000000);
+  const wan = /^(-?\d+(?:\.\d+)?)\s*[万w]$/i.exec(s);
+  if (wan) return Math.round(parseFloat(wan[1]) * 10000);
+  const pct = /^(-?\d+(?:\.\d+)?)\s*%$/.exec(s);
+  if (pct) return parseFloat(pct[1]);
+  if (!/^-?\d+(?:\.\d+)?$/.test(s)) return undefined;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+```
+
+测试追加（csv-import.test.ts 的 parseMetricNumber describe）："1.2亿"→120000000；"1.2.3万"→undefined；"2026-06-01 10:00"→undefined；".万"→undefined；"0"→0；"-5"→-5。
+
+(b) `validateOutcome`（outcome-schema.ts）：粉丝增量可合法为负（掉粉日），负数检查豁免 `follows`，把 `values.some((v) => v < 0)` 的检查改为：
+
+```typescript
+  const hasIllegalNegative = Object.entries(m).some(
+    ([k, v]) => typeof v === "number" && v < 0 && k !== "follows",
+  );
+  if (hasIllegalNegative) {
+    reasons.push("存在负数指标");
+  }
+```
+
+测试追加（outcome-schema.test.ts）：`{follows: -12, views: 100}` → ok:true；`{views: -5}` 仍拒收。
 
 - [ ] **Step 1: Write the failing test（追加到 csv-import.test.ts 末尾）**
 
