@@ -874,6 +874,16 @@ export function parseMetricNumber(raw: string | undefined): number | undefined {
 
 测试追加（outcome-schema.test.ts）：`{follows: -12, views: 100}` → ok:true；`{views: -5}` 仍拒收。
 
+(c) `validateOutcome` 增加小数比例完播率启发——0.325 这种原始比例值落在合法区间内但是 100 倍失真（主 reward signal），必须转人工。在 needsReview 段追加：
+
+```typescript
+  if (m.completionRate !== undefined && m.completionRate > 0 && m.completionRate < 1) {
+    review.push(`完播率 ${m.completionRate} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
+  }
+```
+
+测试追加：`{views: 100, completionRate: 0.32}` → ok:true 且 needsReview:true。
+
 - [ ] **Step 1: Write the failing test（追加到 csv-import.test.ts 末尾）**
 
 ```typescript
@@ -1024,11 +1034,13 @@ function parsePublishTime(raw: string | undefined): string | null {
   return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 
-/** "2026/6/8"、"2026-06-08 12:00" → "2026-06-08"；缺失或解析失败用 defaultDate（schema 强制 YYYY-MM-DD） */
+/** "2026/6/8"、"2026-06-08 12:00" → "2026-06-08"；缺失或解析失败用 defaultDate（schema 强制 YYYY-MM-DD）。
+ *  不经 Date 往返——本地时区（Asia/Shanghai）会把 "2026-6-8" 偏成前一天（评审实证）。 */
 function normalizeMetricDate(raw: string | undefined, defaultDate: string): string {
   if (!raw) return defaultDate;
-  const t = Date.parse(raw.replace(/\//g, "-"));
-  return Number.isNaN(t) ? defaultDate : new Date(t).toISOString().slice(0, 10);
+  const d = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(raw.trim());
+  if (!d) return defaultDate;
+  return `${d[1]}-${d[2].padStart(2, "0")}-${d[3].padStart(2, "0")}`;
 }
 
 export interface ImportReport {
@@ -1119,12 +1131,17 @@ export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome
     byKey.set(outcomeKey(o), o);
   }
   const deduped = Array.from(byKey.values());
-  // 对账：同一平台条目（标题@发布日期 + 数据日期相同）已有打标（contentId 非空）版本时，
-  // 丢弃历史（contentId 为空）版本——confirm_published 后重导入同一 CSV 不双计。
+  // 对账：同一平台条目（标题@发布日期）存在任何打标（contentId 非空）版本时，
+  // 丢弃该条目的全部历史（contentId 为空）版本——跨数据日期也不双计（评审修订：
+  // 否则 confirm_published 前的周一快照与之后的周二快照会被 baseline 当成两个作品）。
   const matchedTitleKeys = new Set(
-    deduped.filter((o) => o.contentId !== null).map((o) => outcomeKey({ ...o, contentId: null })),
+    deduped
+      .filter((o) => o.contentId !== null)
+      .map((o) => outcomeKey({ ...o, contentId: null, metricDate: "" })),
   );
-  return deduped.filter((o) => o.contentId !== null || !matchedTitleKeys.has(outcomeKey(o)));
+  return deduped.filter(
+    (o) => o.contentId !== null || !matchedTitleKeys.has(outcomeKey({ ...o, metricDate: "" })),
+  );
 }
 ```
 
