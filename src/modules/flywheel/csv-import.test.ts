@@ -183,7 +183,7 @@ describe("PLATFORM_MAPPINGS", () => {
   });
 });
 
-describe("completionRateAsRatio（抖音作品列表导出为小数比例）", () => {
+describe("ratioMetrics（抖音作品列表导出为小数比例）", () => {
   it("converts ratio completion rates to percentages without flagging needsReview", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-ratio-test-"));
     try {
@@ -206,6 +206,23 @@ describe("completionRateAsRatio（抖音作品列表导出为小数比例）", (
       await importPerformanceCsv("douyin", CSV, "2026-06-10", dir);
       const outcomes = await listOutcomes(dir);
       expect(outcomes[0]?.metrics.completionRate).toBe(32.5); // 已是百分比（>1），不重复转换
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("completion5s ingestion (douyin 作品列表)", () => {
+  it("ingests 5s完播率 as ratio-converted completion5s", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-c5s-test-"));
+    try {
+      const CSV = `作品名称,发布时间,播放量,完播率,5s完播率\n口播D,2026-03-30 17:05:00,3376,0.018947,0.373904`;
+      const report = await importPerformanceCsv("douyin", CSV, "2026-06-10", dir);
+      expect(report.imported).toBe(1);
+      expect(report.needsReview).toHaveLength(0);
+      const o = (await listOutcomes(dir))[0];
+      expect(o.metrics.completionRate).toBe(1.89);
+      expect(o.metrics.completion5s).toBe(37.39);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

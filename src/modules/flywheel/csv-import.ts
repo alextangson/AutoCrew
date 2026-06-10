@@ -75,8 +75,9 @@ export interface CsvColumnMapping {
   metricDate?: string[];
   views: string[];
   completionRate?: string[];
-  /** 平台把完播率导出为 0-1 小数比例（如抖音作品列表 0.0245 = 2.45%）时声明，导入按 ×100 转换 */
-  completionRateAsRatio?: boolean;
+  completion5s?: string[];
+  /** 平台把这些指标导出为 0-1 小数比例时声明（实战确认后），导入按 ×100 转换；>1 视为已是百分比 */
+  ratioMetrics?: Array<"completionRate" | "completion5s">;
   likes?: string[];
   comments?: string[];
   shares?: string[];
@@ -91,8 +92,9 @@ export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
     metricDate: ["数据日期", "统计日期"],
     views: ["播放量", "播放次数"],
     completionRate: ["完播率"],
-    // 2026-06-10 实战确认：抖音"作品列表"导出的完播率是 0-1 小数比例
-    completionRateAsRatio: true,
+    completion5s: ["5s完播率"],
+    // 2026-06-10 实战确认：抖音"作品列表"导出的完播率与 5s完播率都是 0-1 小数比例
+    ratioMetrics: ["completionRate", "completion5s"],
     likes: ["点赞量", "点赞数"],
     comments: ["评论量", "评论数"],
     shares: ["分享量", "转发量"],
@@ -150,29 +152,38 @@ function normalizeMetricDate(raw: string | undefined, defaultDate: string): stri
   return `${d[1]}-${d[2].padStart(2, "0")}-${d[3].padStart(2, "0")}`;
 }
 
+function applyRatioConversion(metrics: OutcomeMetrics, ratioMetrics: Array<"completionRate" | "completion5s"> | undefined): void {
+  if (!ratioMetrics) return;
+  for (const key of ratioMetrics) {
+    const v = metrics[key];
+    // 平台声明为小数比例时 ×100；>1 的值视为已是百分比（如 "32.5%" 解析结果），不重复转换
+    if (v !== undefined && v <= 1) {
+      metrics[key] = Math.round(v * 10000) / 100;
+    }
+  }
+}
+
 function rowToOutcomeInput(
   row: Record<string, string>,
   mapping: CsvColumnMapping,
   defaultMetricDate: string,
 ): { title: string; publishedAt: string | null; metricDate: string; metrics: OutcomeMetrics } {
-  let completionRate = parseMetricNumber(pick(row, mapping.completionRate));
-  // 平台声明为小数比例时 ×100；>1 的值视为已是百分比（如 "32.5%" 解析结果），不重复转换
-  if (mapping.completionRateAsRatio && completionRate !== undefined && completionRate <= 1) {
-    completionRate = Math.round(completionRate * 10000) / 100;
-  }
+  const metrics: OutcomeMetrics = {
+    views: parseMetricNumber(pick(row, mapping.views)),
+    completionRate: parseMetricNumber(pick(row, mapping.completionRate)),
+    completion5s: parseMetricNumber(pick(row, mapping.completion5s)),
+    likes: parseMetricNumber(pick(row, mapping.likes)),
+    comments: parseMetricNumber(pick(row, mapping.comments)),
+    shares: parseMetricNumber(pick(row, mapping.shares)),
+    favorites: parseMetricNumber(pick(row, mapping.favorites)),
+    follows: parseMetricNumber(pick(row, mapping.follows)),
+  };
+  applyRatioConversion(metrics, mapping.ratioMetrics);
   return {
     title: pick(row, mapping.title) || "(无标题)",
     publishedAt: parsePublishTime(pick(row, mapping.publishedAt)),
     metricDate: normalizeMetricDate(pick(row, mapping.metricDate), defaultMetricDate),
-    metrics: {
-      views: parseMetricNumber(pick(row, mapping.views)),
-      completionRate,
-      likes: parseMetricNumber(pick(row, mapping.likes)),
-      comments: parseMetricNumber(pick(row, mapping.comments)),
-      shares: parseMetricNumber(pick(row, mapping.shares)),
-      favorites: parseMetricNumber(pick(row, mapping.favorites)),
-      follows: parseMetricNumber(pick(row, mapping.follows)),
-    },
+    metrics,
   };
 }
 
