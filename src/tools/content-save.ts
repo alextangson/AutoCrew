@@ -10,6 +10,7 @@ import {
   getAllowedTransitions,
   normalizeLegacyStatus,
 } from "../storage/local-store.js";
+import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import type { ContentStatus } from "../storage/local-store.js";
 
 const ALL_STATUSES = [
@@ -52,9 +53,10 @@ export const contentSaveSchema = Type.Object({
   diff_note: Type.Optional(Type.String({ description: "Note for revision diff tracking" })),
 });
 
-export async function executeContentSave(params: Record<string, unknown>) {
+export async function executeContentSave(params: Record<string, unknown>, deps?: { recordDiffImpl?: typeof recordDiff }) {
   const action = (params.action as string) || "save";
   const dataDir = (params._dataDir as string) || undefined;
+  const recordDiffImpl = deps?.recordDiffImpl || recordDiff;
 
   if (action === "list") {
     const contents = await listContents(dataDir);
@@ -72,9 +74,16 @@ export async function executeContentSave(params: Record<string, unknown>) {
   if (action === "update") {
     const id = params.id as string;
     if (!id) return { ok: false, error: "id is required for update" };
+
+    // Get old content before update to check for body changes
+    const oldContent = await getContent(id, dataDir);
+    if (!oldContent) return { ok: false, error: `Content ${id} not found` };
+    const oldBody = oldContent.body;
+    const newBody = params.body as string | undefined;
+
     const updated = await updateContent(id, {
       title: params.title as string | undefined,
-      body: params.body as string | undefined,
+      body: newBody,
       platform: params.platform as string | undefined,
       status: params.status ? normalizeLegacyStatus(params.status as string) : undefined,
       tags: params.tags as string[] | undefined,
@@ -84,6 +93,21 @@ export async function executeContentSave(params: Record<string, unknown>) {
       performanceData: params.performance_data as Record<string, number> | undefined,
     }, dataDir);
     if (!updated) return { ok: false, error: `Content ${id} not found` };
+
+    // Record diff if body changed
+    if (newBody && newBody !== oldBody) {
+      try {
+        await recordDiffImpl(id, "body", oldBody, newBody, dataDir);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: true,
+          content: updated,
+          warning: `diff 记录失败：${errorMsg}，稿件已正常保存`,
+        };
+      }
+    }
+
     return { ok: true, content: updated };
   }
 

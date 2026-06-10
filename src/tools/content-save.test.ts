@@ -1,0 +1,204 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { executeContentSave } from "./content-save.js";
+import { recordDiff, listDiffs } from "../modules/learnings/diff-tracker.js";
+
+let testDir: string;
+
+beforeEach(async () => {
+  testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-content-save-test-"));
+});
+
+afterEach(async () => {
+  await fs.rm(testDir, { recursive: true, force: true });
+});
+
+describe("executeContentSave", () => {
+  describe("update with body change", () => {
+    it("should record a diff when body is updated", async () => {
+      // Create initial content
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "Test",
+        body: "Original body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      const contentId = (createRes.content as any).id;
+
+      // Update with different body
+      const updateRes = await executeContentSave({
+        action: "update",
+        id: contentId,
+        body: "Updated body",
+        _dataDir: testDir,
+      });
+      expect(updateRes.ok).toBe(true);
+
+      // Verify diff was recorded
+      const diffs = await listDiffs({ contentId }, testDir);
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].field).toBe("body");
+      expect(diffs[0].before).toBe("Original body");
+      expect(diffs[0].after).toBe("Updated body");
+    });
+
+    it("should not record a diff when body doesn't change", async () => {
+      // Create initial content
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "Test",
+        body: "Original body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      const contentId = (createRes.content as any).id;
+
+      // Update without changing body (update title only)
+      const updateRes = await executeContentSave({
+        action: "update",
+        id: contentId,
+        title: "New Title",
+        _dataDir: testDir,
+      });
+      expect(updateRes.ok).toBe(true);
+
+      // Verify no diff was recorded
+      const diffs = await listDiffs({ contentId }, testDir);
+      expect(diffs).toHaveLength(0);
+    });
+
+    it("should include warning in result when recordDiff fails", async () => {
+      // Create initial content
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "Test",
+        body: "Original body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      const contentId = (createRes.content as any).id;
+
+      // Make learnings dir unwritable to simulate recordDiff failure
+      const learningsDir = path.join(testDir, "learnings");
+      await fs.mkdir(learningsDir, { recursive: true });
+      await fs.chmod(learningsDir, 0o444);
+
+      try {
+        // Update with different body
+        const updateRes = await executeContentSave({
+          action: "update",
+          id: contentId,
+          body: "Updated body",
+          _dataDir: testDir,
+        });
+
+        // Save should still succeed
+        expect(updateRes.ok).toBe(true);
+        // But should have a warning about diff recording
+        expect((updateRes as any).warning).toBeTruthy();
+        expect((updateRes as any).warning).toMatch(/diff.*失败|recording.*failed/i);
+
+        // Verify content was still updated
+        const getRes = await executeContentSave({
+          action: "get",
+          id: contentId,
+          _dataDir: testDir,
+        });
+        expect((getRes.content as any).body).toBe("Updated body");
+      } finally {
+        // Restore permissions for cleanup
+        await fs.chmod(learningsDir, 0o755);
+      }
+    });
+
+    it("should handle recordDiff failure with deps injection", async () => {
+      // Create initial content
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "Test",
+        body: "Original body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      const contentId = (createRes.content as any).id;
+
+      // Mock recordDiff to throw
+      const failingRecordDiff = vi.fn().mockRejectedValue(new Error("Simulated recordDiff failure"));
+
+      // Update with different body using mocked recordDiff
+      const updateRes = await executeContentSave(
+        {
+          action: "update",
+          id: contentId,
+          body: "Updated body",
+          _dataDir: testDir,
+        },
+        { recordDiffImpl: failingRecordDiff }
+      );
+
+      // Save should still succeed
+      expect(updateRes.ok).toBe(true);
+      // Should have a warning
+      expect((updateRes as any).warning).toBeTruthy();
+
+      // Verify content was still updated
+      const getRes = await executeContentSave({
+        action: "get",
+        id: contentId,
+        _dataDir: testDir,
+      });
+      expect((getRes.content as any).body).toBe("Updated body");
+    });
+  });
+
+  describe("create", () => {
+    it("should not record a diff when creating new content", async () => {
+      const res = await executeContentSave({
+        action: "save",
+        title: "New Content",
+        body: "New body",
+        _dataDir: testDir,
+      });
+      expect(res.ok).toBe(true);
+
+      const contentId = (res.content as any).id;
+      const diffs = await listDiffs({ contentId }, testDir);
+      expect(diffs).toHaveLength(0);
+    });
+  });
+
+  describe("other actions", () => {
+    it("should not record diffs for list, get, or siblings actions", async () => {
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "Test",
+        body: "Body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      const contentId = (createRes.content as any).id;
+
+      // Test list (should not try to record diffs)
+      const listRes = await executeContentSave({
+        action: "list",
+        _dataDir: testDir,
+      });
+      expect(listRes.ok).toBe(true);
+
+      // Test get (should not try to record diffs)
+      const getRes = await executeContentSave({
+        action: "get",
+        id: contentId,
+        _dataDir: testDir,
+      });
+      expect(getRes.ok).toBe(true);
+
+      // No diffs should have been recorded
+      const diffs = await listDiffs({ contentId }, testDir);
+      expect(diffs).toHaveLength(0);
+    });
+  });
+});
