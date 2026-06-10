@@ -17,12 +17,12 @@ description: |
    c. Read `~/.autocrew/creator-profile.json` — check `styleCalibrated`, `platforms`, `writingRules`.
    d. If none exist, proceed with sensible defaults and note that style calibration is recommended.
 
-2. **Research-Augmented Preparation (RAW Engine):**
+2. **Research-Augmented Preparation:**
 
    Before writing, gather research context to inject real data:
 
    a. Use `web_search` to find 3-5 high-quality articles on the same topic
-   b. The RAW engine (`src/modules/writing/raw-engine.ts`) will:
+   b. From the research results:
       - Extract data points, statistics, and concrete examples
       - Detect structural patterns (listicle, how-to, myth-busting)
       - Generate a content outline with hook type, sections, and CTA
