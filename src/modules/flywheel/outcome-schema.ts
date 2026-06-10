@@ -46,7 +46,7 @@ export interface OutcomeValidation {
 export const KOUBO_REWARD = {
   primary: "completionRate",
   secondary: ["favorites", "follows"],
-} as const;
+} as const satisfies { primary: keyof OutcomeMetrics; secondary: readonly (keyof OutcomeMetrics)[] };
 
 export function normalizeTitle(title: string): string {
   return title
@@ -59,12 +59,19 @@ export function validateOutcome(input: {
   publishedAt: string | null;
   metricDate: string;
 }): OutcomeValidation {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.metricDate)) {
+    return { ok: false, needsReview: false, reasons: [`数据日期 ${input.metricDate} 不是 YYYY-MM-DD 格式`] };
+  }
+
   const reasons: string[] = [];
   const m = input.metrics;
   const values = Object.values(m).filter((v): v is number => typeof v === "number");
 
   if (values.length === 0) {
     return { ok: false, needsReview: false, reasons: ["没有任何指标值"] };
+  }
+  if (values.some((v) => !Number.isFinite(v))) {
+    reasons.push("存在非有限数值（NaN/Infinity）");
   }
   if (values.some((v) => v < 0)) {
     reasons.push("存在负数指标");
@@ -99,8 +106,9 @@ export function outcomeKey(o: {
   publishedAt: string | null;
   metricDate: string;
 }): string {
+  const norm = normalizeTitle(o.platformTitle) || o.platformTitle;
   const item = o.contentId
     ? o.contentId
-    : `${normalizeTitle(o.platformTitle)}@${o.publishedAt ? o.publishedAt.slice(0, 10) : "unknown"}`;
+    : `${norm}@${o.publishedAt ? o.publishedAt.slice(0, 10) : "unknown"}`;
   return `${o.platform}:${item}:${o.metricDate}`;
 }

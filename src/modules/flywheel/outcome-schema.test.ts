@@ -63,6 +63,32 @@ describe("validateOutcome", () => {
     const v = validateOutcome({ ...base, publishedAt: null });
     expect(v.ok).toBe(true);
   });
+
+  it("rejects metricDate not in YYYY-MM-DD format", () => {
+    const v = validateOutcome({ ...base, metricDate: "2026/06/08" });
+    expect(v.ok).toBe(false);
+    expect(v.reasons.join()).toContain("格式");
+  });
+
+  it("rejects NaN metric values", () => {
+    const v = validateOutcome({ ...base, metrics: { views: NaN } });
+    expect(v.ok).toBe(false);
+  });
+
+  it("rejects Infinity metric values", () => {
+    const v = validateOutcome({ ...base, metrics: { completionRate: Infinity } });
+    expect(v.ok).toBe(false);
+  });
+
+  it("accepts boundary completionRate 0 and 100", () => {
+    expect(validateOutcome({ ...base, metrics: { completionRate: 0 } }).ok).toBe(true);
+    expect(validateOutcome({ ...base, metrics: { completionRate: 100 } }).ok).toBe(true);
+  });
+
+  it("accepts metricDate equal to publish date (same-day)", () => {
+    const v = validateOutcome({ ...base, metricDate: "2026-06-01" });
+    expect(v.ok).toBe(true);
+  });
 });
 
 describe("outcomeKey", () => {
@@ -91,6 +117,18 @@ describe("outcomeKey", () => {
   it("same content same metricDate yields same key (idempotency basis)", () => {
     const a = { contentId: "c1", platform: "douyin", platformTitle: "x", publishedAt: null, metricDate: "2026-06-08" };
     expect(outcomeKey(a)).toBe(outcomeKey({ ...a }));
+  });
+
+  it("pure-emoji title does not produce an empty item segment", () => {
+    const key = outcomeKey({
+      contentId: null,
+      platform: "douyin",
+      platformTitle: "🔥🔥",
+      publishedAt: "2026-06-01T10:00:00.000Z",
+      metricDate: "2026-06-08",
+    });
+    expect(key).not.toContain("douyin:@");
+    expect(key).toContain("🔥🔥");
   });
 });
 
