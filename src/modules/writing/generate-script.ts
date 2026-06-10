@@ -151,6 +151,8 @@ async function finalizeScript(
   const scanResult = await scanText(humanizedText, req.platform, dataDir);
   const violations = scanResult.hits.map((h) => h.word);
 
+  const cleanHashtags = hashtags.map((t) => t.trim()).filter(Boolean);
+
   const content = await saveContent(
     {
       title,
@@ -158,7 +160,7 @@ async function finalizeScript(
       platform: req.platform,
       status: "draft_ready",
       tags: [],
-      hashtags,
+      hashtags: cleanHashtags,
     },
     dataDir,
   );
@@ -167,7 +169,7 @@ async function finalizeScript(
     contentId: content.id,
     title,
     body: humanizedText,
-    hashtags,
+    hashtags: cleanHashtags,
     violations,
     tokensUsed,
   };

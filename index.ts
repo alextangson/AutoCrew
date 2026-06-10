@@ -21,6 +21,7 @@ import { reviewSchema, executeReview } from "./src/tools/review.js";
 import { prePublishSchema, executePrePublish } from "./src/tools/pre-publish.js";
 import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
 import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
+import { generateSchema, executeGenerate } from "./src/tools/generate.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -169,6 +170,15 @@ function registerAllTools(runner: ToolRunner): void {
       "and report loop status with baseline insights. Actions: import_csv, record, report.",
     parameters: flywheelSchema,
     execute: executeFlywheel,
+  });
+
+  runner.register({
+    name: "autocrew_generate",
+    label: "AutoCrew Generate",
+    description:
+      "In-process script generation via the configured model provider (thin loop + koubo track pack). Action: script.",
+    parameters: generateSchema,
+    execute: (p) => executeGenerate(p),
   });
 
   runner.register({

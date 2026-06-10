@@ -209,6 +209,89 @@ autocrew_flywheel action=record content_id=<稿件id> metric_date=<原始日期>
 - **视频号标题=完整描述含话题标签**（"…… #ai #人工智能"）。历史条目无影响；将来已发布稿匹配时注意：发布到平台时若加了很多标签，标题相似度可能降到模糊阈值以下——确保 confirm_published，让时间窗兜底。
 - **均值稀释 bug 修复**：小红书无完播率列，旧逻辑把缺失当 0 计入全局均值（报 2%，真实 5%）——`computeAvgMetrics` 改为只在携带该指标的条目上平均（含回归测试）。
 
+---
+
+## 七、进程内生成 dogfood
+
+### 怎么跑
+
+**方式 A：通过 MCP 工具（推荐）**
+
+```
+autocrew_generate action=script topic=AI时代普通人最该练的一个技能 platform=douyin
+```
+
+支持的平台：`douyin` | `xiaohongshu` | `wechat_mp` | `wechat_video` | `bilibili`
+
+可选参数 `research=...`：传入调研材料文本，注入 prompt 作为上下文。
+
+**方式 B：直接跑冒烟脚本（消耗真实 API 配额）**
+
+```bash
+DEEPSEEK_API_KEY=sk-... npx tsx scripts/smoke-generate.mts
+```
+
+脚本跑完后打印 title / body / hashtags / violations / tokensUsed，并显示 contentId（稿件已存入 `~/.autocrew/`）。
+
+---
+
+### engine.json 配置示例
+
+进程内生成需要配置 model provider。配置优先级：`~/.autocrew/engine.json` > 环境变量。
+
+```json
+// ~/.autocrew/engine.json
+{
+  "apiKey": "sk-你的密钥",
+  "baseUrl": "https://api.deepseek.com",
+  "strongModel": "deepseek-chat",
+  "fastModel": "deepseek-chat"
+}
+```
+
+**key 永不入仓库**——`engine.json` 在用户数据目录，不在项目目录，无需 `.gitignore`。
+
+没有 `engine.json` 时，走环境变量：
+
+```bash
+export DEEPSEEK_API_KEY=sk-你的密钥
+# baseUrl 默认 https://api.deepseek.com，可用 DEEPSEEK_BASE_URL 覆盖
+```
+
+未配置时工具会返回可执行的中文提示，告知如何设置。
+
+---
+
+### 双路对比试验（§12 学习代理指标）
+
+同一选题分别用两条路各写一稿：
+
+| 路径 | 调用方式 | 模型 |
+|---|---|---|
+| 宿主（write-script skill） | 在宿主 agent 中运行 write-script skill | 宿主 Claude |
+| 引擎（进程内） | `autocrew_generate action=script topic=...` | engine.json 配置的模型（DeepSeek 等） |
+
+记录哪稿**人工编辑量更小**——字数差、改动段落数、主观评估均可。这是两件事的直接证据：
+
+1. **§12 学习代理指标**：生成稿的人工编辑量是否在随 profile/pack 迭代而下降？
+2. **模型路由质量**：国产模型（进程内）vs 宿主 Claude，哪条路在口播赛道更贴近创作者风格？
+
+建议每 3-5 篇做一次对比，把结论记进 `~/.autocrew/MEMORY.md`（用 `autocrew_memory action=capture_feedback` 或直接编辑）。
+
+---
+
+### violations 非空时的处理
+
+生成不阻断存稿——即使 violations 非空，稿件已经保存到 `~/.autocrew/`。violations 是透出信号，不是错误。
+
+处理建议：
+
+1. **改稿后重新生成**：调整选题措辞，重新调用 `autocrew_generate`，新稿以新 contentId 存入。
+2. **人工调整**：用 `autocrew_content action=update content_id=<id>` 修改 body，然后用 `autocrew_review action=scan_only` 复核。
+3. **查词来源**：violations 中的词来自 `~/.autocrew/sensitive-words.json`（用户自定义）和内置违禁词库。如果命中词在你的赛道是正常用法，可以加入用户自定义白名单（v1.5 计划项）。
+
+---
+
 ### 待办：重导抖音 CSV 补 completion5s
 
 赛道包落地后 schema 新收 5s完播率。用同一份『作品列表』导出重跑一次 import_csv（幂等覆盖），

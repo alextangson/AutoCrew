@@ -263,4 +263,17 @@ describe("generateScript", () => {
     expect(saved!.title).toBe("第二稿标题");
     expect(saved!.hashtags).toEqual(["#第二稿"]);
   });
+
+  // 10. Whitespace/empty hashtags are filtered out (Step 0 rider)
+  it("whitespace/empty hashtags are stripped before saving", async () => {
+    const payloadWithBlanks = { ...GOOD_PAYLOAD, hashtags: ["#a", "  ", "#b", ""] };
+    const runLoopImpl = makeRunLoop([payloadWithBlanks], 150);
+
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+
+    expect(result.hashtags).toEqual(["#a", "#b"]);
+
+    const saved = await getContent(result.contentId, testDir);
+    expect(saved!.hashtags).toEqual(["#a", "#b"]);
+  });
 });
