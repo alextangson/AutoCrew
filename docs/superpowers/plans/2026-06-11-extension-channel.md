@@ -62,8 +62,8 @@ Commit: `feat: native-messaging bridge protocol + ingest — extension rows reus
 
 **Files:** `src/bridge/native-host.ts`、`scripts/install-native-host.mts`
 
-1. native-host.ts：stdin 流 → createFrameDecoder → 每消息 parseBridgeMessage + handleBridgeMessage → encodeFrame 写 stdout；顶层 try/catch 把错误编码为 BridgeResponse 而非进程崩溃；**所有日志走 stderr**（stdout 是协议通道）。入口薄（<50 行），不另写测试（逻辑已在 T1 测毕）——在文件头声明此分工。
-2. install-native-host.mts：参数=扩展 ID；生成 `~/.autocrew/bridge/launch.sh`（`#!/bin/bash\nexec npx tsx <repo绝对路径>/src/bridge/native-host.ts`，chmod +x）；写 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.autocrew.bridge.json`（name/description/path=launch.sh/type:"stdio"/allowed_origins:["chrome-extension://<ID>/"]）；幂等可重跑；打印验证步骤。无测试（一次性安装脚本，dogfood 验证），头注释声明。
+1. native-host.ts：stdin 流 → createFrameDecoder → 每消息 parseBridgeMessage + handleBridgeMessage → encodeFrame 写 stdout；**错误分两级（评审修订）**：解码器抛错 = 帧流不可恢复（长度前缀流无法重新同步）→ stderr 记录 + 进程退出（Chrome 会按需重启 host）；消息级错误（parseBridgeMessage/handleBridgeMessage）→ 编码为 BridgeResponse 回复，进程继续。**所有日志走 stderr**（stdout 是协议通道）。入口薄（<50 行），不另写测试（逻辑已在 T1 测毕）——在文件头声明此分工。
+2. install-native-host.mts：参数=扩展 ID；生成 `~/.autocrew/bridge/launch.sh`——**绝对路径烘焙（评审修订）**：Chrome 从 Dock 启动时继承 launchd 的 PATH（无 homebrew），`npx` 不可用；`tsx` 必须进 devDependencies，wrapper 写成 `exec "<process.execPath>" "<repo>/node_modules/.bin/tsx" "<repo>/src/bridge/native-host.ts"`（安装时解析），fs.chmodSync 0o755；写 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.autocrew.bridge.json`（name/description/path=launch.sh/type:"stdio"/allowed_origins:["chrome-extension://<ID>/"]）；幂等可重跑；打印验证步骤。无测试（一次性安装脚本，dogfood 验证），头注释声明。
 
 Commit: `feat: native host entry + installer — stdio loop, stderr-only logging`
 

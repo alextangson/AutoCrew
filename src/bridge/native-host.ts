@@ -9,6 +9,10 @@
  * - MESSAGE ERROR (parseBridgeMessage or handleBridgeMessage): encode as BridgeResponse,
  *   write to stdout, continue processing.
  *
+ * Responses are serialized in request order via a promise queue — BridgeResponse
+ * carries no correlation id, so out-of-order replies would break clients. The queue
+ * also keeps journal writes sequential.
+ *
  * All diagnostics to stderr only — stdout is the protocol channel.
  * Logic fully tested in T1 (protocol.ts, ingest.ts); this entry is thin (<50 lines per fn).
  */
@@ -20,17 +24,23 @@ import type { BridgeResponse } from "./protocol.js";
 
 const decoder = createFrameDecoder();
 
+// Promise queue: each message is handled (and its response written) strictly
+// after the previous one completes — request order = response order.
+let queue: Promise<void> = Promise.resolve();
+
 process.stdin.on("data", (chunk: Buffer) => {
   try {
     // DECODER-FATAL: any feed() throw means frame stream is poisoned.
     const messages = decoder.feed(chunk);
 
-    // MESSAGE-LEVEL: each message is handled independently; errors become BridgeResponse.
+    // MESSAGE-LEVEL: errors become BridgeResponse inside handleMessage.
     for (const raw of messages) {
-      handleMessage(raw).catch((e) => {
-        // Should not happen (handleMessage wraps all errors), but log to stderr if it does.
-        console.error("Internal error:", String(e));
-      });
+      queue = queue
+        .then(() => handleMessage(raw))
+        .catch((e) => {
+          // Should not happen (handleMessage wraps all errors), but log if it does.
+          console.error("Internal error:", String(e));
+        });
     }
   } catch (e) {
     // Decoder fatal: log to stderr and exit.
@@ -50,6 +60,11 @@ async function handleMessage(raw: unknown): Promise<void> {
     process.stdout.write(encodeFrame(response));
   }
 }
+
+// Chrome closed the pipe (extension disconnected): EPIPE on stdout / stdin end
+// are normal shutdown, not errors — exit clean so Chrome can restart us later.
+process.stdout.on("error", () => process.exit(0));
+process.stdin.on("end", () => process.exit(0));
 
 process.stdin.on("error", (e) => {
   console.error("stdin error:", String(e));
