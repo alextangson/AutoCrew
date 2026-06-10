@@ -6,7 +6,25 @@ description: |
 
 # Publish Content
 
-> Utility skill. Dual-mode: copy-paste formatting (universal) + browser automation (OpenClaw with MCP Browser).
+> Utility skill. Dual-mode: clipboard-first (Free) + browser automation (Pro/OpenClaw with MCP Browser).
+
+## Tier Routing
+
+| Tier | Flow | How it works |
+|------|------|-------------|
+| Free | Clipboard-first | `autocrew_publish` action="clipboard" → format → user copies → opens platform → pastes → `autocrew_publish` action="confirm_published" |
+| Pro | Browser CDP | OpenClaw MCP Browser automates the full publish flow end-to-end |
+
+**Default: always use clipboard flow.** Only use browser automation when MCP Browser is explicitly available and user opts in.
+
+## Clipboard Flow (Free — Default)
+
+1. `autocrew_publish` action="clipboard" content_id="xxx"
+   → Returns `ClipboardOutput`: formattedTitle, formattedBody, copyText, publishUrl, tips
+2. Present the formatted content to user with copy instructions
+3. User copies text, opens publishUrl, pastes, and publishes manually
+4. `autocrew_publish` action="confirm_published" content_id="xxx" publish_url="<optional url>"
+   → Marks content as published with timestamp
 
 ## Capabilities
 
@@ -72,9 +90,9 @@ IF missing required assets → ask user to provide them, or use `autocrew_asset`
 
 ---
 
-## Copy-Paste Mode (Universal)
+## Copy-Paste Mode (Universal — uses clipboard tool)
 
-Format content for manual publishing. Output in chat for user to copy.
+Format content via `autocrew_publish` action="clipboard" content_id="xxx". The tool returns a `ClipboardOutput` object with platform-optimized text. Present it to the user like this:
 
 ### Xiaohongshu format:
 ```
@@ -130,9 +148,9 @@ Format content for manual publishing. Output in chat for user to copy.
 🔗 发布地址：https://mp.weixin.qq.com/
 ```
 
-After outputting, update status:
+After user confirms they published, update status:
 ```json
-{ "action": "update", "id": "content-xxx", "status": "published" }
+{ "action": "confirm_published", "content_id": "content-xxx", "publish_url": "<optional platform url>" }
 ```
 
 ---
@@ -489,4 +507,5 @@ Key hints:
 
 ## Changelog
 
+- 2026-04-01: v2 — Added clipboard-first publishing flow (Free tier default). New actions: `clipboard`, `confirm_published`. Added bilibili platform. Tier routing: Free=clipboard, Pro=browser CDP.
 - 2026-03-31: v1 — Adapted from Qingmo publish-content.md v2. Added WeChat MP (公众号) support. Dual-mode: copy-paste + browser automation. Removed backend API dependency. Assets loaded from local project directory.

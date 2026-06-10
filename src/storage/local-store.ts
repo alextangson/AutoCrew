@@ -245,16 +245,17 @@ export async function listContents(dataDir?: string): Promise<Content[]> {
       const raw = await fs.readFile(metaPath, "utf-8");
       contents.push(JSON.parse(raw));
     } catch {
-      // Legacy flat JSON file support
+      // Legacy flat JSON file support (DEPRECATED — will be removed in v0.3.0)
       if (entry.name.endsWith(".json")) {
         try {
+          console.warn(`[autocrew] DEPRECATED: Legacy flat file "${entry.name}" detected. Run migration to project-directory format.`);
           const raw = await fs.readFile(path.join(dir, entry.name), "utf-8");
           contents.push(JSON.parse(raw));
         } catch { /* skip */ }
       }
     }
   }
-  // Also read any legacy flat .json files at the contents/ level
+  // Also read any legacy flat .json files at the contents/ level (DEPRECATED — will be removed in v0.3.0)
   for (const entry of entries) {
     if (entry.isDirectory() || !entry.name.endsWith(".json")) continue;
     try {
@@ -274,9 +275,10 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
     const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
     return JSON.parse(raw);
   } catch {
-    // Legacy flat file fallback
+    // Legacy flat file fallback (DEPRECATED — will be removed in v0.3.0)
     const legacyPath = path.join(getDataDir(dataDir), "contents", `${id}.json`);
     try {
+      console.warn(`[autocrew] DEPRECATED: Reading legacy flat file for content "${id}". Run migration to project-directory format.`);
       const raw = await fs.readFile(legacyPath, "utf-8");
       return JSON.parse(raw);
     } catch {

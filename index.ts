@@ -19,6 +19,7 @@ import { coverReviewSchema, executeCoverReview } from "./src/tools/cover-review.
 import { memorySchema, executeMemory } from "./src/tools/memory.js";
 import { reviewSchema, executeReview } from "./src/tools/review.js";
 import { prePublishSchema, executePrePublish } from "./src/tools/pre-publish.js";
+import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -62,7 +63,7 @@ function registerAllTools(runner: ToolRunner): void {
   runner.register({
     name: "autocrew_status",
     label: "AutoCrew Status",
-    description: "Show pipeline status: topic count, content count, status breakdown.",
+    description: "Pipeline status, quality baseline, performance tracking, learning report. Actions: overview, baseline, compare, track_performance, learning_report.",
     parameters: statusSchema,
     execute: executeStatus,
   });
@@ -145,6 +146,16 @@ function registerAllTools(runner: ToolRunner): void {
     description: "Pre-publish gate: 6 checks before allowing publish. Actions: check.",
     parameters: prePublishSchema,
     execute: executePrePublish,
+  });
+
+  runner.register({
+    name: "autocrew_dashboard",
+    label: "AutoCrew Dashboard",
+    description:
+      "Content pipeline dashboard: overview stats, calendar view, pending actions, batch operations. " +
+      "Actions: overview, calendar, pending, batch_review, batch_transition.",
+    parameters: dashboardSchema,
+    execute: executeDashboard,
   });
 
   runner.register({
@@ -642,6 +653,138 @@ const autocrewPlugin = {
             const missing = detectMissingInfo(profile);
             if (missing.length > 0) {
               console.log(`\nMissing: ${missing.join(", ")}`);
+            }
+          });
+
+        crew
+          .command("baseline")
+          .description("Show quality baseline from historical performance data")
+          .action(async () => {
+            const result = await runner.execute("autocrew_status", { action: "baseline" }) as any;
+            if (!result.ok) {
+              console.error(`Baseline failed: ${result.error}`);
+              process.exitCode = 1;
+              return;
+            }
+            console.log(`\n📈 质量基线 (${result.sampleSize} 条数据)\n`);
+            if (result.insights?.length > 0) {
+              for (const insight of result.insights) {
+                console.log(`  ${insight}`);
+              }
+            }
+            if (result.avgMetrics && Object.keys(result.avgMetrics).length > 0) {
+              console.log(`\n平均指标:`);
+              for (const [key, val] of Object.entries(result.avgMetrics)) {
+                console.log(`  ${key}: ${val}`);
+              }
+            }
+          });
+
+        crew
+          .command("track <content-id>")
+          .description("Record performance metrics for a published content")
+          .requiredOption("--views <views>", "View count")
+          .option("--likes <likes>", "Like count", "0")
+          .option("--comments <comments>", "Comment count", "0")
+          .option("--shares <shares>", "Share count", "0")
+          .option("--saves <saves>", "Save/collect count", "0")
+          .action(async (contentId: string, options: Record<string, unknown>) => {
+            const metrics = {
+              views: Number(options.views || 0),
+              likes: Number(options.likes || 0),
+              comments: Number(options.comments || 0),
+              shares: Number(options.shares || 0),
+              saves: Number(options.saves || 0),
+            };
+            const result = await runner.execute("autocrew_status", {
+              action: "track_performance",
+              content_id: contentId,
+              metrics,
+            }) as any;
+            if (!result.ok) {
+              console.error(`Track failed: ${result.error}`);
+              process.exitCode = 1;
+              return;
+            }
+            console.log(`已记录 ${contentId} 的表现数据。`);
+            if (result.comparison) {
+              console.log(`  ${result.comparison}`);
+            }
+          });
+
+        crew
+          .command("learning")
+          .description("Show learning progress report")
+          .action(async () => {
+            const result = await runner.execute("autocrew_status", { action: "learning_report" }) as any;
+            if (!result.ok) {
+              console.error(`Report failed: ${result.error}`);
+              process.exitCode = 1;
+              return;
+            }
+            console.log(result.report);
+          });
+
+        crew
+          .command("dashboard")
+          .description("Show content pipeline dashboard")
+          .option("--days <days>", "Look-back period in days", "7")
+          .action(async (options: Record<string, unknown>) => {
+            const result = await runner.execute("autocrew_dashboard", {
+              action: "overview",
+              days: Number(options.days || 7),
+            }) as any;
+
+            if (!result.ok) {
+              console.error(`Dashboard failed: ${result.error || "unknown error"}`);
+              process.exitCode = 1;
+              return;
+            }
+
+            console.log(`\n📊 AutoCrew Dashboard (${result.period})`);
+            console.log(`─────────────────────────────`);
+            console.log(`选题: ${result.totals.topics}  内容: ${result.totals.contents}  已发布: ${result.totals.published}`);
+            console.log(`\n近期活动:`);
+            console.log(`  新选题: ${result.recentActivity.newTopics}  新内容: ${result.recentActivity.newContents}  发布: ${result.recentActivity.publishedThisPeriod}`);
+
+            const pa = result.pendingActions;
+            if (pa.total > 0) {
+              console.log(`\n⏳ 待处理 (${pa.total}):`);
+              if (pa.needsReview > 0) console.log(`  待审核: ${pa.needsReview}`);
+              if (pa.needsPublish > 0) console.log(`  待发布: ${pa.needsPublish}`);
+              if (pa.inRevision > 0) console.log(`  修改中: ${pa.inRevision}`);
+              if (pa.needsCover > 0) console.log(`  待封面: ${pa.needsCover}`);
+            } else {
+              console.log(`\n✅ 没有待处理事项`);
+            }
+
+            const statuses = result.byStatus as Record<string, number>;
+            if (Object.keys(statuses).length > 0) {
+              console.log(`\n状态分布:`);
+              for (const [status, count] of Object.entries(statuses)) {
+                console.log(`  ${status}: ${count}`);
+              }
+            }
+          });
+
+        crew
+          .command("pending")
+          .description("Show pending action items")
+          .action(async () => {
+            const result = await runner.execute("autocrew_dashboard", { action: "pending" }) as any;
+            if (!result.ok) {
+              console.error(`Failed: ${result.error}`);
+              process.exitCode = 1;
+              return;
+            }
+            if (result.count === 0) {
+              console.log("没有待处理事项。");
+              return;
+            }
+            console.log(`⏳ ${result.count} 项待处理:\n`);
+            for (const item of result.items) {
+              console.log(`  [${item.id}] ${item.title} — ${item.status} (${item.platform || "general"})`);
+              console.log(`    → ${item.suggestedAction}`);
             }
           });
 

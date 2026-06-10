@@ -4,7 +4,7 @@
  * When a pattern appears 5+ times in user edits, it gets distilled into a
  * WritingRule and written to creator-profile.json.
  *
- * PRD §7: "累积 5+ 次同类修改后，自动提炼为规则"
+ * PRD §7: "累积 3+ 次同类修改后，自动提炼为规则"
  */
 import { getPatternFrequency } from "./diff-tracker.js";
 import {
@@ -25,7 +25,7 @@ export interface DistillResult {
 }
 
 /** Minimum occurrences before a pattern becomes a rule */
-const DISTILL_THRESHOLD = 5;
+const DISTILL_THRESHOLD = 3;
 
 /** Map pattern IDs to human-readable rule descriptions */
 const PATTERN_TO_RULE: Record<string, string> = {
@@ -73,7 +73,7 @@ export async function distillRules(dataDir?: string): Promise<DistillResult> {
       );
       const addedRule = rule.writingRules[rule.writingRules.length - 1];
       newRules.push(addedRule);
-    } else if (count >= 3) {
+    } else if (count >= 2) {
       // Emerging pattern — close to threshold
       emerging.push({
         pattern,

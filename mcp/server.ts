@@ -21,6 +21,7 @@ import { coverReviewSchema, executeCoverReview } from "../src/tools/cover-review
 import { memorySchema, executeMemory } from "../src/tools/memory.js";
 import { reviewSchema, executeReview } from "../src/tools/review.js";
 import { prePublishSchema, executePrePublish } from "../src/tools/pre-publish.js";
+import { dashboardSchema, executeDashboard } from "../src/tools/dashboard.js";
 import { executeInit } from "../src/tools/init.js";
 import { getProStatus } from "../src/modules/pro/gate.js";
 import { loadProfile, detectMissingInfo } from "../src/modules/profile/creator-profile.js";
@@ -40,7 +41,7 @@ const hookManager = new HookManager();
 runner.register({ name: "autocrew_topic", label: "AutoCrew Topic", description: "Create or list content topics. Actions: create, list.", parameters: topicCreateSchema, execute: executeTopicCreate });
 runner.register({ name: "autocrew_research", label: "AutoCrew Research", description: "Topic discovery. Actions: discover, session_status.", parameters: researchSchema, execute: executeResearch });
 runner.register({ name: "autocrew_content", label: "AutoCrew Content", description: "Content lifecycle. Actions: save, list, get, update, transition, create_variant, siblings.", parameters: contentSaveSchema, execute: executeContentSave });
-runner.register({ name: "autocrew_status", label: "AutoCrew Status", description: "Pipeline status dashboard.", parameters: statusSchema, execute: executeStatus });
+runner.register({ name: "autocrew_status", label: "AutoCrew Status", description: "Pipeline status, quality baseline, performance tracking, learning report. Actions: overview, baseline, compare, track_performance, learning_report.", parameters: statusSchema, execute: executeStatus });
 runner.register({ name: "autocrew_asset", label: "AutoCrew Asset", description: "Content asset + version management. Actions: add, list, remove, versions, get_version, revert.", parameters: assetSchema, execute: executeAsset });
 runner.register({ name: "autocrew_pipeline", label: "AutoCrew Pipeline", description: "Automated pipeline management. Actions: create, list, get, enable, disable, delete, templates.", parameters: pipelineSchema, execute: executePipeline });
 runner.register({ name: "autocrew_publish", label: "AutoCrew Publish", description: "Publishing flows. Actions: wechat_mp_draft.", parameters: publishSchema, execute: executePublish });
@@ -50,6 +51,7 @@ runner.register({ name: "autocrew_cover_review", label: "AutoCrew Cover Review",
 runner.register({ name: "autocrew_memory", label: "AutoCrew Memory", description: "Feedback capture to MEMORY.md. Actions: capture_feedback, get_memory.", parameters: memorySchema, execute: executeMemory });
 runner.register({ name: "autocrew_review", label: "AutoCrew Review", description: "Content review: sensitive words + quality + de-AI. Actions: full_review, scan_only, quality_score, auto_fix.", parameters: reviewSchema, execute: executeReview });
 runner.register({ name: "autocrew_pre_publish", label: "AutoCrew Pre-Publish", description: "Pre-publish gate: 6 checks. Actions: check.", parameters: prePublishSchema, execute: executePrePublish });
+runner.register({ name: "autocrew_dashboard", label: "AutoCrew Dashboard", description: "Content pipeline dashboard: overview, calendar, pending, batch ops.", parameters: dashboardSchema, execute: executeDashboard });
 runner.register({ name: "autocrew_init", label: "AutoCrew Init", description: "Initialize ~/.autocrew/ and creator profile.", parameters: { type: "object" as const, properties: {} }, execute: async (params) => executeInit({ dataDir: params._dataDir as string }) });
 runner.register({
   name: "autocrew_pro_status", label: "AutoCrew Pro Status", description: "Check Pro status + profile completeness.",

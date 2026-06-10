@@ -17,9 +17,29 @@ description: |
    c. Read `~/.autocrew/creator-profile.json` — check `styleCalibrated`, `platforms`, `writingRules`.
    d. If none exist, proceed with sensible defaults and note that style calibration is recommended.
 
-2. If a topic was specified, load its details via `autocrew_topic` action="list" and find the matching topic.
+2. **Research-Augmented Preparation (RAW Engine):**
 
-3. **Write the script:**
+   Before writing, gather research context to inject real data:
+
+   a. Use `web_search` to find 3-5 high-quality articles on the same topic
+   b. The RAW engine (`src/modules/writing/raw-engine.ts`) will:
+      - Extract data points, statistics, and concrete examples
+      - Detect structural patterns (listicle, how-to, myth-busting)
+      - Generate a content outline with hook type, sections, and CTA
+   c. Present the outline to the user for confirmation:
+      > 基于调研，我建议这样的结构：
+      > - Hook: {type} — {draft}
+      > - 要点 1-N: {key points with supporting data}
+      > - CTA: {style}
+      > 确认开始写？还是调整大纲？
+   d. User confirms → proceed to writing with research context injected
+   e. User adjusts → update outline and re-confirm
+
+   **Key principle:** Never write from nothing. Always have at least 2-3 real data points or examples.
+
+3. If a topic was specified, load its details via `autocrew_topic` action="list" and find the matching topic.
+
+4. **Write the script:**
 
    a. **Hook** — pick the ONE strongest type for this topic:
 
@@ -54,7 +74,7 @@ description: |
    - Append hashtags to the body (for platforms that use inline hashtags like XHS/Douyin).
    - Save hashtags separately in the `hashtags` field for structured access.
 
-4. **Self-review before saving** (fix any failure, don't just check):
+5. **Self-review before saving** (fix any failure, don't just check):
    - [ ] 800+ characters total?
    - [ ] Contains at least 2 concrete examples or scenarios (not vague claims)?
    - [ ] Has a non-obvious insight or twist?
@@ -63,8 +83,10 @@ description: |
    - [ ] Body is plain text with blank-line separators (no markdown headers)?
    - [ ] Title within platform character limit?
    - [ ] Hashtags generated and relevant?
+   - [ ] Contains at least 2 data points from research?
+   - [ ] Outline structure was followed?
 
-5. **Save via tool:**
+6. **Save via tool:**
    ```json
    {
      "action": "save",
@@ -78,7 +100,7 @@ description: |
    }
    ```
 
-6. **Auto-review (if style calibrated):**
+7. **Auto-review (if style calibrated):**
    - Check `creator-profile.json` → if `styleCalibrated: true`, automatically run:
      ```json
      { "action": "full_review", "content_id": "<saved-id>", "platform": "<platform>" }
@@ -87,7 +109,7 @@ description: |
    - If review passes → tell user "审核通过，可以直接发布或做平台改写".
    - If review fails → show fixes, ask user whether to auto-fix or manually adjust.
 
-7. **Output to user:**
+8. **Output to user:**
    Show the complete draft in chat, including:
    - Title (with alternative variants from title-hashtag)
    - Full body text
@@ -96,11 +118,11 @@ description: |
    Then:
    > 已保存为草稿。要修改的话直接说，或者确认后我帮你标记为待发布。
 
-8. **If adaptation is needed:**
+9. **If adaptation is needed:**
    - Do not just trim one draft for another platform.
    - Use `platform-rewrite` / `autocrew_rewrite` to create the first platform-native version.
 
-9. **Before final delivery:**
+10. **Before final delivery:**
    - Run `humanizer-zh` / `autocrew_humanize` as the last pass when the text sounds generic, too smooth, or too essay-like.
 
 ## Platform-Specific Adjustments
@@ -134,5 +156,6 @@ Always use these for structured title/hashtag generation. The AI agent refines t
 
 ## Changelog
 
+- 2026-04-01: v3 — Added RAW Engine integration (Research-Augmented Writing). Step 2 now gathers research context before writing.
 - 2026-04-01: v2 — Integrated STYLE.md + title-hashtag.ts + auto-review after save. Added hashtags field, bilibili platform notes.
 - 2026-03-31: v1 — Adapted from Qingmo write-script.md + _writing-style.md. Removed backend API curl dependency. Uses autocrew_content tool. Merged writing style rules inline.

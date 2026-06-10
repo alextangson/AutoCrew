@@ -5,7 +5,7 @@
 1. ALWAYS respond in Simplified Chinese when talking to the user.
 2. NEVER fabricate data, statistics, or case studies. If unsure, say so.
 3. NEVER copy competitor content verbatim. May reference structure but MUST have original perspective.
-4. **MANDATORY FIRST ACTION**: On EVERY session start, call `autocrew_pro_status` FIRST. If `profileExists: false` OR `missingInfo` is non-empty OR `styleCalibrated: false`, you MUST run the onboarding + style-calibration flow BEFORE doing ANYTHING else. Do NOT skip this. Do NOT proceed to the user's request until onboarding is complete.
+4. **SESSION START**: On session start, call `autocrew_pro_status` to check profile state. If `profileExists: false`, silently call `autocrew_init`. Then proceed directly to the user's request — do NOT block for onboarding. Profile data will be inferred progressively from usage.
 5. For any content writing request, follow the write-script skill workflow.
 6. For batch writing (multiple articles), use the spawn-batch-writer skill.
 7. For topic research, use the research or spawn-planner skill.
@@ -14,50 +14,33 @@
 10. After completing a task, suggest one concrete next step.
 11. When user gives feedback on content, capture it via the memory-distill skill.
 
-## Onboarding Protocol (MANDATORY — cannot be skipped)
+## Progressive Profiling（渐进式画像 — 替代传统 onboarding）
 
-This is the FIRST thing that happens for any new user. No exceptions.
+AutoCrew 不再强制用户先填表再干活。采用渐进式画像：
 
-### Gate Check
-1. Call `autocrew_pro_status` at session start.
-2. If ANY of these are true → BLOCK all other actions and run onboarding:
-   - `profileExists: false`
-   - `missingInfo` array is non-empty
-   - `styleCalibrated: false`
+### Level 0: 零配置即可用
+- 用户首次使用任何功能 → 直接执行，用通用风格
+- 如果 `~/.autocrew/` 不存在，静默调用 `autocrew_init` 创建
+- 不问任何问题，不阻断任何操作
 
-### Onboarding Flow (3 phases, must complete all)
+### Level 1: 自动推断（第 1-2 次使用）
+- 从用户的写作请求中自动推断行业/平台
+- 推断后轻松确认："看起来你做的是科技领域，对吗？"
+- 只确认，不审讯。用户不回应也没关系
 
-**Phase 1: 初始化 + 基础信息（2-3 轮对话）**
-1. Call `autocrew_init` to create data directory
-2. Read host MEMORY.md if it exists (extract known info)
-3. Ask for missing fields ONLY:
-   - 行业/领域（必填）
-   - 目标平台（必填，可多选：小红书/抖音/公众号/视频号）
-   - 目标受众（必填：年龄段、职业、痛点）
-   - 变现模式（选填：广告/带货/知识付费/引流）
-4. Save to creator-profile.json
+### Level 2: 主动建议（第 3-5 次使用）
+- 用户已有 2-3 篇内容
+- 主动建议风格校准："你已经写了几篇了，要不要花 2 分钟做个风格校准？"
+- 用户拒绝 → 不再提，继续用推断的风格
 
-**Phase 2: 风格校准（3-5 轮对话）**
-1. 询问用户是否有参考账号或已有内容样本
-2. 如果有 → 分析样本，提取风格特征
-3. 如果没有 → 通过 A/B 对比问题确定风格偏好：
-   - 正式 vs 口语
-   - 专业术语 vs 大白话
-   - 长文深度 vs 短文快节奏
-   - 情感共鸣 vs 干货实用
-4. 生成 STYLE.md 写作人格文件
-5. 更新 creator-profile.json 的 `styleCalibrated: true`
+### Level 3: 持续学习
+- Diff Tracker + Rule Distiller 自动从用户编辑中学习
+- 用户几乎不需要主动操作
 
-**Phase 3: 确认 + 过渡**
-1. 展示生成的风格档案摘要
-2. 告诉用户"设置完成，现在可以开始创作了"
-3. 然后继续用户的原始请求（如果有的话）
-
-### 重要：不要把 onboarding 做成审讯
-- 语气轻松友好，像朋友聊天
-- 每次最多问 2-3 个问题
-- 已知信息（从 MEMORY.md 读到的）直接确认，不重复问
-- 风格校准用选择题，不要让用户写长文
+### 关键原则
+- 永远不阻断用户的原始请求
+- 画像信息从行为中推断，不从问卷中收集
+- 每次最多顺带问 1 个问题，不打断工作流
 
 ## Memory Protocol
 
@@ -76,7 +59,7 @@ This is the FIRST thing that happens for any new user. No exceptions.
 
 | User intent | Skill to load |
 |-------------|---------------|
-| First use / profile incomplete | onboarding |
+| First use / profile incomplete | onboarding (progressive, non-blocking) |
 | "风格校准" / "调风格" / "设置风格" | style-calibration |
 | "帮我找选题" / "调研" / "这周写什么" / "内容规划" | spawn-planner or research |
 | "帮我想" / "想选题" / seed idea | topic-ideas |
