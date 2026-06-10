@@ -6,7 +6,8 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { validateOutcome, outcomeKey, type PerformanceOutcome } from "./outcome-schema.js";
+import { validateOutcome, outcomeKey, normalizeTitle, type PerformanceOutcome } from "./outcome-schema.js";
+import { listContents, type Content } from "../../storage/local-store.js";
 
 const OUTCOMES_FILE = "outcomes.jsonl";
 
@@ -103,4 +104,62 @@ export async function recordOutcome(
   await fs.mkdir(dir, { recursive: true });
   await fs.appendFile(outcomesPath(dataDir), JSON.stringify(outcome) + "\n", "utf-8");
   return { ok: true, outcome, replaced };
+}
+
+/** bigram Dice 系数，0-1 */
+export function diceSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const bigrams = (s: string) => {
+    const set = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) {
+      const bg = s.slice(i, i + 2);
+      set.set(bg, (set.get(bg) || 0) + 1);
+    }
+    return set;
+  };
+  const aB = bigrams(a);
+  const bB = bigrams(b);
+  let overlap = 0;
+  for (const [bg, count] of aB) {
+    overlap += Math.min(count, bB.get(bg) || 0);
+  }
+  return (2 * overlap) / (a.length - 1 + b.length - 1);
+}
+
+const FUZZY_THRESHOLD = 0.6;
+const STRICT_THRESHOLD = 0.8;
+const TIME_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * draft↔outcome 双因子匹配（PRD §6 verify）：
+ * 归一化标题精确命中 → 直接匹配；
+ * 模糊命中（dice ≥ 0.6）→ 需发布时间窗 ±48h 佐证；双方任一缺发布时间则要求 dice ≥ 0.8。
+ */
+export async function matchDraft(
+  platform: string,
+  platformTitle: string,
+  publishedAt: string | null,
+  dataDir?: string,
+): Promise<Content | null> {
+  const contents = await listContents(dataDir);
+  const candidates = contents.filter(
+    (c) => c.status === "published" && c.platform === platform,
+  );
+  const target = normalizeTitle(platformTitle);
+
+  let best: { content: Content; score: number } | null = null;
+  for (const c of candidates) {
+    const score = diceSimilarity(normalizeTitle(c.title), target);
+    if (score === 1) return c;
+    if (!best || score > best.score) best = { content: c, score };
+  }
+  if (!best || best.score < FUZZY_THRESHOLD) return null;
+
+  const draftTime = best.content.publishedAt ? Date.parse(best.content.publishedAt) : null;
+  const itemTime = publishedAt ? Date.parse(publishedAt) : null;
+  if (draftTime !== null && itemTime !== null) {
+    return Math.abs(draftTime - itemTime) <= TIME_WINDOW_MS ? best.content : null;
+  }
+  return best.score >= STRICT_THRESHOLD ? best.content : null;
 }

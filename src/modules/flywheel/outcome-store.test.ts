@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { recordOutcome, listOutcomes, getOutcomesForContent } from "./outcome-store.js";
+import { recordOutcome, listOutcomes, getOutcomesForContent, matchDraft, diceSimilarity } from "./outcome-store.js";
+import { saveContent, updateContent } from "../../storage/local-store.js";
 
 let testDir: string;
 
@@ -59,15 +60,6 @@ describe("recordOutcome", () => {
     expect(await listOutcomes(testDir)).toHaveLength(2);
   });
 
-  it("survives a corrupt journal line: valid records still readable", async () => {
-    await recordOutcome(baseInput, testDir);
-    await recordOutcome({ ...baseInput, contentId: "c2", platformTitle: "另一篇" }, testDir);
-    // 模拟 append 中途崩溃留下的截断行
-    await fs.appendFile(path.join(testDir, "outcomes.jsonl"), '{"contentId":"c-trunc', "utf-8");
-    const all = await listOutcomes(testDir);
-    expect(all).toHaveLength(2);
-  });
-
   it("flags view-count spike vs platform median as needsReview", async () => {
     // 5 条普通数据建立中位数 ~1000
     for (let i = 0; i < 5; i++) {
@@ -102,6 +94,17 @@ describe("recordOutcome", () => {
   });
 });
 
+describe("listOutcomes", () => {
+  it("survives a corrupt journal line: valid records still readable", async () => {
+    await recordOutcome(baseInput, testDir);
+    await recordOutcome({ ...baseInput, contentId: "c2", platformTitle: "另一篇" }, testDir);
+    // 模拟 append 中途崩溃留下的截断行
+    await fs.appendFile(path.join(testDir, "outcomes.jsonl"), '{"contentId":"c-trunc', "utf-8");
+    const all = await listOutcomes(testDir);
+    expect(all).toHaveLength(2);
+  });
+});
+
 describe("getOutcomesForContent", () => {
   it("returns only outcomes linked to the content id", async () => {
     await recordOutcome(baseInput, testDir);
@@ -109,5 +112,58 @@ describe("getOutcomesForContent", () => {
     const got = await getOutcomesForContent("c1", testDir);
     expect(got).toHaveLength(1);
     expect(got[0].contentId).toBe("c1");
+  });
+});
+
+describe("diceSimilarity", () => {
+  it("identical strings = 1", () => {
+    expect(diceSimilarity("护肤技巧分享", "护肤技巧分享")).toBe(1);
+  });
+  it("unrelated strings ≈ 0", () => {
+    expect(diceSimilarity("护肤技巧分享", "汽车保养指南")).toBeLessThan(0.2);
+  });
+  it("minor truncation stays high", () => {
+    expect(diceSimilarity("5个护肤技巧让你皮肤变好", "5个护肤技巧让你皮肤变")).toBeGreaterThan(0.8);
+  });
+});
+
+describe("matchDraft", () => {
+  async function publishContent(title: string, publishedAt: string) {
+    const c = await saveContent(
+      { title, body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    await updateContent(c.id, { publishedAt }, testDir);
+    return c;
+  }
+
+  it("matches by exact normalized title", async () => {
+    const c = await publishContent("5个护肤技巧！", "2026-06-01T10:00:00.000Z");
+    const hit = await matchDraft("douyin", "5个护肤技巧", null, testDir);
+    expect(hit?.id).toBe(c.id);
+  });
+
+  it("matches fuzzy title within 48h publish window", async () => {
+    const c = await publishContent("5个护肤技巧让你皮肤变好", "2026-06-01T10:00:00.000Z");
+    const hit = await matchDraft("douyin", "5个护肤技巧让你皮肤变好了", "2026-06-02T09:00:00.000Z", testDir);
+    expect(hit?.id).toBe(c.id);
+  });
+
+  it("rejects fuzzy match outside 48h window", async () => {
+    await publishContent("5个护肤技巧让你皮肤变好", "2026-06-01T10:00:00.000Z");
+    const hit = await matchDraft("douyin", "5个护肤技巧让你皮肤变好了", "2026-06-20T09:00:00.000Z", testDir);
+    expect(hit).toBeNull();
+  });
+
+  it("returns null for unknown title (historical item)", async () => {
+    await publishContent("完全无关的标题", "2026-06-01T10:00:00.000Z");
+    const hit = await matchDraft("douyin", "AutoCrew 诞生前的老视频", null, testDir);
+    expect(hit).toBeNull();
+  });
+
+  it("does not match drafts of another platform", async () => {
+    await publishContent("跨平台同标题", "2026-06-01T10:00:00.000Z");
+    const hit = await matchDraft("xiaohongshu", "跨平台同标题", null, testDir);
+    expect(hit).toBeNull();
   });
 });
