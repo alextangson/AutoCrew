@@ -192,6 +192,20 @@ describe("generateScript", () => {
     expect(saved).not.toBeNull();
   });
 
+  // 4b. 标题里的违禁词不得漏报（终审修复：扫描口径与 review.ts 的 title\n\nbody 对齐）
+  it("violations: sensitive word in TITLE only → still reported", async () => {
+    const violatingPayload = {
+      ...GOOD_PAYLOAD,
+      title: "教你翻墙看世界",
+      body: "这是一段完全干净的正文，讲 AI 学习方法。",
+    };
+
+    const runLoopImpl = makeRunLoop([violatingPayload], 180);
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+
+    expect(result.violations.some((v) => v.includes("翻墙"))).toBe(true);
+  });
+
   // 5. Engine unconfigured → rejects with config error
   it("engine unconfigured: no engine.json, no env → rejects with actionable error", async () => {
     // Remove engine.json from testDir

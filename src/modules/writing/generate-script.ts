@@ -148,7 +148,8 @@ async function finalizeScript(
   const assembled = `${hook}\n\n${bodyText}\n\n${cta}`;
   const { humanizedText } = humanizeZh({ text: assembled });
 
-  const scanResult = await scanText(humanizedText, req.platform, dataDir);
+  // 标题一并扫描——与 review.ts 的 `title\n\nbody` 口径对齐，标题里的违禁词不得漏报
+  const scanResult = await scanText(`${title}\n\n${humanizedText}`, req.platform, dataDir);
   const violations = scanResult.hits.map((h) => h.word);
 
   const cleanHashtags = hashtags.map((t) => t.trim()).filter(Boolean);
