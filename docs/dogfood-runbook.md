@@ -397,3 +397,119 @@ autocrew_flywheel action=report
 | 通知「native host 未安装」| manifest 不存在或路径错 | 重跑 `npx tsx scripts/install-native-host.mts <扩展ID>` |
 | host 启动失败（`brew upgrade node` 后）| launch.sh 烘焙的是安装时的 node 绝对路径 | 重跑安装脚本（重新烘焙新路径） |
 | 通知「内容脚本注入失败」| activeTab 权限需要用户最近与页面交互 | 刷新作品列表页后再点扩展按钮 |
+
+---
+
+## 十、桌面壳 dogfood
+
+> 对应 PRD §5 桌面应用外壳 MVP：Electron + 本地 web UI，把生成/稿件/回流报告/风格四能力装进非技术用户可用的界面。**OpenClaw 宿主依赖归零**——UI 经 IPC 直调进程内函数。
+
+### 启动
+
+首次（安装依赖）：
+
+```bash
+npm install
+npm run app
+```
+
+之后每次：
+
+```bash
+npm run app
+```
+
+`npm run app` 内置 `build:desktop`（esbuild 打包 main/preload → `desktop/dist/*.cjs`）再启动 Electron——构建+加载冒烟已内嵌，无需单独跑构建步骤。
+
+### 首屏：回流报告
+
+窗口打开后默认展示**报告屏**，数据与 `autocrew_flywheel action=report` 同源：
+
+- **作品数**：works.matched（AutoCrew 稿）+ works.historical（仅历史数据）
+- **平均播放**：avgMetrics.views
+- **平均完播率**：avgMetrics.completionRate（仅在携带该指标的平台条目上平均）
+- **打标进度**：traitSampleSize / 3（达到 3 才有 top/bottom 特征对比）
+- insights 列表 + needsReview 待核条目
+
+首屏是当前飞轮状态的一眼概览——确认基线已建立后再进入生成流程。
+
+### 全流程演示
+
+#### 第 1 步：生成一稿
+
+点左侧导航「生成」进入生成屏：
+
+1. 填写**选题**（topic），选择**平台**（douyin / xiaohongshu / wechat_mp / wechat_video / bilibili）
+2. 可选填 research（调研材料文本）
+3. 点「生成稿件」
+
+**引擎 key 配置**（首次必做）：
+
+方式 A：写配置文件（推荐，永久生效）：
+
+```json
+// ~/.autocrew/engine.json
+{
+  "apiKey": "sk-你的密钥",
+  "baseUrl": "https://api.deepseek.com",
+  "strongModel": "deepseek-chat",
+  "fastModel": "deepseek-chat"
+}
+```
+
+方式 B：环境变量（当次会话生效）：
+
+```bash
+DEEPSEEK_API_KEY=sk-你的密钥 npm run app
+```
+
+UI 配置页是 v1.5——v1 阶段用以上两种方式配置后重启 app。
+
+生成成功后页面展示 title / body / hashtags / tokensUsed；violations 非空时红色警示显示。
+
+#### 第 2 步：复制发布文案
+
+点左侧导航「稿件」进入稿件屏：
+
+1. 点击刚生成的稿件进入详情
+2. 点「复制发布文案」→ 文案已进剪贴板，可直接粘贴到平台发布页
+
+#### 第 3 步：手动发布
+
+在平台后台粘贴文案，手动发布。
+
+#### 第 4 步：确认已发布
+
+回到桌面壳稿件屏，点「确认已发布」：
+
+1. 可选填 publish_url（发布链接）
+2. 点确认 → 稿件状态更新为 published，打上 publishedAt 时间戳
+
+**不能跳过**：这一步是 CSV 导入时做 draft 匹配的依据，跳过则平台回流数据无法自动打标到该稿（见第二章）。
+
+#### 第 5 步：风格蒸馏 / 吸收
+
+点左侧导航「风格」进入风格屏：
+
+- **从编辑中学习**：点「蒸馏」按钮，系统从 ≥3 条 before/after diff 提炼规则写入 profile，结果展示 summary
+- **粘贴爆款吸收**：在文本框粘贴 1-5 条爆款全文（每行一条），点「吸收」，LLM 从用词癖好/句节奏/招牌短语中提炼规则直接写入 profile
+
+新规则在下一次「生成」时自动生效。
+
+### 已知边界（v1 范围）
+
+| 边界 | 状态 |
+|---|---|
+| 未打包、未签名、无自动更新 | 发布期工作（§9 分发预算已计）|
+| UI 美化（字体/配色/布局）| v1.5 计划项 |
+| 引擎 key 的 UI 配置页 | v1.5 计划项；v1 用 engine.json / 环境变量 |
+| 扩展安装向导集成至桌面壳 | v1.5 计划项；v1 手动流程见第九章 |
+
+### 故障排查
+
+| 现象 | 原因 | 修复 |
+|---|---|---|
+| 窗口白屏 | 渲染层加载失败 | 看终端报错（`npm run app` 的输出）；常见原因：`desktop/dist/` 构建产物缺失，重跑 `npm run build:desktop` |
+| 生成失败，提示 DEEPSEEK_API_KEY | 引擎 key 未配置 | 按上方「引擎 key 配置」步骤配置后重启 app |
+| 报告屏空白/无数据 | 飞轮基线未建立 | 先按第一章完成历史回灌，再开窗口 |
+| 「复制发布文案」无反应 | 浏览器安全策略限制 `navigator.clipboard` | Electron 环境下应正常工作；若仍无反应重启 app |

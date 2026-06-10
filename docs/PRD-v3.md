@@ -316,7 +316,7 @@ AutoCrew 是一个**本地优先的桌面应用**。内核是**双层架构：�
 
 ## 14. 待定 / Open Questions
 
-1. **桌面外壳选型**：Tauri（轻、Rust，但引擎是 TS/Node 需 sidecar）vs Electron（单运行时、包大）——倾向 Electron 换 v1 速度，实施计划阶段定。
+1. ~~桌面外壳选型~~ → **已裁决**（2026-06-11，见 docs/superpowers/plans/2026-06-11-desktop-shell.md）：Electron——引擎 TS/Node 同进程直调，Tauri 需 sidecar 两层序列化；包大代价 v1 接受（§9 分发预算已计）。
 2. ~~内嵌浏览器 vs 系统浏览器~~ → **已裁决**（Chrome 136 封死默认 profile CDP）：扩展 + native messaging 主 / 专用 profile CDP 辅 / CSV 底，见 §6。
 3. ~~Model provider~~ → **已裁决**（39 元定价的算术，见 §9）：国产模型 + 薄云中转，强弱模型分层路由。
 4. ~~薄 loop 自研 vs Claude Agent SDK~~ → **已裁决**（2026-06-10 spike 实测，见 [DECISION-engine.md](superpowers/plans/DECISION-engine.md)）：自研薄 loop。决定性因素：SDK 捆绑 265MB Claude Code 二进制（消费级桌面包不可接受）+ 仅说 Anthropic 协议（与国产多厂商路由冲突）；DeepSeek 双档 tool-use 实测通过一票否决项。
