@@ -3,6 +3,7 @@
  * 包是数据不是代码——换赛道/调参改包文件，引擎与打分逻辑不动。
  */
 import type { OutcomeMetrics } from "../flywheel/outcome-schema.js";
+import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 
 export type MetricKey = keyof OutcomeMetrics;
 
@@ -27,7 +28,7 @@ export interface TrackPack {
   /** 成功指标：default 兜底，byPlatform 按平台覆盖 */
   reward: {
     default: PlatformReward;
-    byPlatform?: Record<string, PlatformReward>;
+    byPlatform?: Partial<Record<ClipboardPlatform, PlatformReward>>;
   };
   hooks: HookPattern[];
   /** 结构骨架：每段是给编剧（人或模型）的规则句 */
@@ -37,7 +38,7 @@ export interface TrackPack {
     cta: string[];
   };
   selfReview: string[];
-  platformAdjustments: Record<string, { chars: string; style: string }>;
+  platformAdjustments: Partial<Record<ClipboardPlatform, { chars: string; style: string }>>;
   /** 合规口径引用（具体过滤复用 humanizer/sensitive-words，包只声明口径） */
   complianceNote: string;
 }

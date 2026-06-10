@@ -2,6 +2,8 @@
  * 口播（知识类）赛道包 v1 — 内容抽取自 skills/write-script/SKILL.md 的口播 playbook，
  * reward 权重来自 2026-06-10 dogfood 发现（抖音 5s完播率更敏感；小红书无完播列）。
  * 权重是起始值：调参改这里，不改打分代码。
+ * 调参注意：(a) views 项在 ~28000 播放时反超 35 分的 completion5s 项（当前数据峰值 8287，留意未来爆款）；
+ * (b) 知识类高收藏率下 favorites 贡献可能超过 completion5s——primary 是报表强调口径，不等于得分主导。
  */
 import type { TrackPack } from "./pack-schema.js";
 

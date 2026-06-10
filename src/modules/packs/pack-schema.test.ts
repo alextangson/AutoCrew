@@ -35,6 +35,16 @@ describe("koubo pack shape", () => {
     }
   });
 
+  it("every declared weight is a positive finite number (调参面保护)", () => {
+    const all = [KOUBO_PACK.reward.default, ...Object.values(KOUBO_PACK.reward.byPlatform ?? {})];
+    for (const r of all) {
+      for (const [key, w] of Object.entries(r.weights)) {
+        expect(Number.isFinite(w), `${key} 权重非有限数`).toBe(true);
+        expect(w, `${key} 权重必须为正`).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("xiaohongshu reward does not depend on completion metrics (平台无此列)", () => {
     const xhs = KOUBO_PACK.reward.byPlatform?.xiaohongshu;
     expect(xhs).toBeDefined();
