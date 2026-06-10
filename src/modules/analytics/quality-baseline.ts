@@ -8,8 +8,7 @@
  */
 import { listContents, type Content } from "../../storage/local-store.js";
 import { loadProfile, type PerformanceEntry } from "../profile/creator-profile.js";
-import { listOutcomes, recordOutcome } from "../flywheel/outcome-store.js";
-import { outcomeKey } from "../flywheel/outcome-schema.js";
+import { listLatestOutcomes, recordOutcome } from "../flywheel/outcome-store.js";
 
 export interface QualityBaseline {
   /** Number of data points used to build baseline */
@@ -125,24 +124,18 @@ function getPerformanceScore(entry: PerformanceEntry): number {
 }
 
 /** 本地日期 YYYY-MM-DD（非 UTC：Asia/Shanghai 早 8 点前 toISOString 会记成昨天） */
-function localDateStamp(): string {
+export function localDateStamp(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 /**
  * Outcome store 是唯一真实来源；为空时 fallback 到 legacy profile.performanceHistory。
- * 多个 metricDate 快照只取每个作品最新一份，避免重复计权。
+ * 作品视角（listLatestOutcomes）：多个 metricDate 快照只取每个作品最新一份，避免重复计权。
  */
 async function loadPerformanceHistory(dataDir?: string): Promise<PerformanceEntry[]> {
-  const outcomes = await listOutcomes(dataDir);
-  const latestByItem = new Map<string, (typeof outcomes)[number]>();
-  for (const o of outcomes) {
-    const itemKey = outcomeKey({ ...o, metricDate: "" });
-    const prev = latestByItem.get(itemKey);
-    if (!prev || o.metricDate > prev.metricDate) latestByItem.set(itemKey, o);
-  }
-  const fromOutcomes: PerformanceEntry[] = Array.from(latestByItem.values()).map((o) => ({
+  const latest = await listLatestOutcomes(dataDir);
+  const fromOutcomes: PerformanceEntry[] = latest.map((o) => ({
     contentId: o.contentId ?? `hist:${o.platform}:${o.platformTitle}`,
     platform: o.platform,
     metrics: Object.fromEntries(
@@ -190,6 +183,29 @@ function splitTopBottom(
     topContents: contents.filter(c => topIds.has(c.id)),
     bottomContents: contents.filter(c => bottomIds.has(c.id)),
   };
+}
+
+const METRIC_LABELS: Array<{ key: string; label: string; suffix: string }> = [
+  { key: "views", label: "平均播放", suffix: "" },
+  { key: "completionRate", label: "平均完播率", suffix: "%" },
+  { key: "likes", label: "平均点赞", suffix: "" },
+  { key: "comments", label: "平均评论", suffix: "" },
+  { key: "shares", label: "平均分享", suffix: "" },
+  { key: "favorites", label: "平均收藏", suffix: "" },
+  { key: "follows", label: "平均涨粉", suffix: "" },
+];
+
+/**
+ * Day-1 形状（历史回灌后、confirm_published 打标前）的 avgMetrics 级 insight。
+ * 没有它，runbook 的 day-1 检查点（insights 非空且有实质内容）永远过不了，
+ * 且通用的"数据还不够多"会被误读成列名映射失败。
+ */
+function dayOneInsight(sampleSize: number, avgMetrics: Record<string, number>): string | null {
+  const parts = METRIC_LABELS.filter(({ key }) => avgMetrics[key] !== undefined).map(
+    ({ key, label, suffix }) => `${label} ${avgMetrics[key]}${suffix}`,
+  );
+  if (parts.length === 0) return null;
+  return `基于 ${sampleSize} 条历史数据：${parts.join("，")}。用 confirm_published 打标 3 条后解锁爆款特征对比。`;
 }
 
 /** 对比型 insight 只在两个档位都有真实 content 时生成，避免拿真实 traits 对比零值 */
@@ -258,11 +274,12 @@ export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> 
 
   const topTraits = analyzeTraits(topContents);
   const bottomTraits = analyzeTraits(bottomContents);
-  const insights = generateInsights(
-    topTraits,
-    bottomTraits,
-    topContents.length > 0 && bottomContents.length > 0,
-  );
+  // matched < 3：trait 切分不可用 → 给 avgMetrics 级 day-1 结论，而不是误导性的"数据还不够多"
+  const insights =
+    matched.length < 3
+      ? [dayOneInsight(performanceHistory.length, avgMetrics) ??
+         "数据还不够多，暂时没有明显的模式差异。继续积累数据。"]
+      : generateInsights(topTraits, bottomTraits, topContents.length > 0 && bottomContents.length > 0);
 
   return {
     sampleSize: performanceHistory.length,
@@ -364,6 +381,8 @@ export async function trackPerformance(
   metrics: Record<string, number>,
   dataDir?: string,
   metricDate?: string,
+  /** 平台上显示的标题；补录 CSV 未匹配行时传 CSV 原标题，使历史条目被对账替代（默认草稿标题） */
+  platformTitle?: string,
 ): Promise<PerformanceTrackingResult> {
   const contents = await listContents(dataDir);
   const content = contents.find(c => c.id === contentId);
@@ -377,7 +396,7 @@ export async function trackPerformance(
     {
       contentId,
       platform: content.platform || "unknown",
-      platformTitle: content.title,
+      platformTitle: platformTitle ?? content.title,
       publishedAt: content.publishedAt,
       metricDate: metricDate ?? localDateStamp(),
       metrics,

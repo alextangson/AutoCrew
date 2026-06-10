@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { recordOutcome, listOutcomes, getOutcomesForContent, matchDraft, diceSimilarity } from "./outcome-store.js";
+import {
+  recordOutcome,
+  listOutcomes,
+  listLatestOutcomes,
+  getOutcomesForContent,
+  matchDraft,
+  diceSimilarity,
+} from "./outcome-store.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
 
 let testDir: string;
@@ -105,6 +112,38 @@ describe("listOutcomes", () => {
   });
 });
 
+describe("listLatestOutcomes", () => {
+  it("keeps only the latest snapshot per work; listOutcomes keeps all snapshots", async () => {
+    await recordOutcome(baseInput, testDir); // 2026-06-08, views 1000
+    await recordOutcome(
+      { ...baseInput, metricDate: "2026-06-09", metrics: { views: 1800, completionRate: 36 } },
+      testDir,
+    );
+    await recordOutcome(
+      { ...baseInput, contentId: "c2", platformTitle: "另一篇", metrics: { views: 500 } },
+      testDir,
+    );
+
+    expect(await listOutcomes(testDir)).toHaveLength(3); // 快照数
+    const latest = await listLatestOutcomes(testDir);
+    expect(latest).toHaveLength(2); // 作品数
+    const c1 = latest.find((o) => o.contentId === "c1");
+    expect(c1?.metricDate).toBe("2026-06-09");
+    expect(c1?.metrics.views).toBe(1800);
+  });
+
+  it("treats historical entries (null contentId) as distinct works by title", async () => {
+    await recordOutcome({ ...baseInput, contentId: null, platformTitle: "老视频甲" }, testDir);
+    await recordOutcome({ ...baseInput, contentId: null, platformTitle: "老视频乙" }, testDir);
+    await recordOutcome(
+      { ...baseInput, contentId: null, platformTitle: "老视频甲", metricDate: "2026-06-09" },
+      testDir,
+    );
+    const latest = await listLatestOutcomes(testDir);
+    expect(latest).toHaveLength(2);
+  });
+});
+
 describe("getOutcomesForContent", () => {
   it("returns only outcomes linked to the content id", async () => {
     await recordOutcome(baseInput, testDir);
@@ -196,6 +235,16 @@ describe("matchDraft", () => {
   it("treats unparseable draft publish time as missing — strict tier, not silent window failure", async () => {
     const c = await publishContent("5个护肤技巧让你皮肤变好", "not-a-date");
     const hit = await matchDraft("douyin", "5个护肤技巧让你皮肤变", "2026-06-02T09:00:00.000Z", testDir);
+    expect(hit?.id).toBe(c.id);
+  });
+
+  it("matches a draft saved with platform alias 'xhs' against a xiaohongshu import", async () => {
+    const c = await saveContent(
+      { title: "小红书笔记标题", body: "正文", platform: "xhs", status: "published", tags: [] },
+      testDir,
+    );
+    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    const hit = await matchDraft("xiaohongshu", "小红书笔记标题", null, testDir);
     expect(hit?.id).toBe(c.id);
   });
 });

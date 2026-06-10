@@ -56,6 +56,22 @@ export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome
   );
 }
 
+/**
+ * 作品视角：每个作品（幂等键去掉 metricDate）只保留最新数据日期的快照。
+ * 周常重复导入会让快照数（listOutcomes）按周增长，作品数不变——
+ * report 的可靠性核对（matched == 本周发布数）必须看这个视图。
+ */
+export async function listLatestOutcomes(dataDir?: string): Promise<PerformanceOutcome[]> {
+  const outcomes = await listOutcomes(dataDir);
+  const latestByItem = new Map<string, PerformanceOutcome>();
+  for (const o of outcomes) {
+    const itemKey = outcomeKey({ ...o, metricDate: "" });
+    const prev = latestByItem.get(itemKey);
+    if (!prev || o.metricDate > prev.metricDate) latestByItem.set(itemKey, o);
+  }
+  return Array.from(latestByItem.values());
+}
+
 export async function getOutcomesForContent(
   contentId: string,
   dataDir?: string,
@@ -136,6 +152,10 @@ const FUZZY_THRESHOLD = 0.6;
 const STRICT_THRESHOLD = 0.8;
 const TIME_WINDOW_MS = 48 * 60 * 60 * 1000;
 
+/** 其他工具接受的平台别名（如 "xhs"）在匹配前归一化，避免悄悄永不匹配 */
+const PLATFORM_ALIASES: Record<string, string> = { xhs: "xiaohongshu" };
+const normPlatform = (p: string) => PLATFORM_ALIASES[p] ?? p;
+
 /**
  * draft↔outcome 双因子匹配（PRD §6 verify）：
  * 归一化标题精确命中 → 直接匹配；
@@ -148,8 +168,9 @@ export async function matchDraft(
   dataDir?: string,
 ): Promise<Content | null> {
   const contents = await listContents(dataDir);
+  const targetPlatform = normPlatform(platform);
   const candidates = contents.filter(
-    (c) => c.status === "published" && c.platform === platform,
+    (c) => c.status === "published" && c.platform && normPlatform(c.platform) === targetPlatform,
   );
   const target = normalizeTitle(platformTitle);
   if (!target) return null; // 标题归一化后为空：没有匹配依据

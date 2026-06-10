@@ -54,6 +54,19 @@ describe("buildBaseline from outcome store", () => {
     expect(baseline.avgMetrics.views).toBe(Math.round((1500 + 2000 + 3000) / 3));
   });
 
+  it("emits an avgMetrics-level day-1 insight when history exists but nothing is matched", async () => {
+    // day-1 形状：纯历史回灌，sampleSize 过 3 但 traitSampleSize = 0
+    for (let i = 0; i < 10; i++) {
+      await seedOutcome(null, `历史作品${i}`, 5000 + i * 100, "2026-06-08");
+    }
+    const baseline = await buildBaseline(testDir);
+    expect(baseline.sampleSize).toBe(10);
+    expect(baseline.traitSampleSize).toBe(0);
+    expect(baseline.insights[0]).toContain("平均播放");
+    expect(baseline.insights[0]).toContain("打标");
+    expect(baseline.insights[0]).not.toContain("数据还不够多");
+  });
+
   it("falls back to legacy profile.performanceHistory when outcome store empty", async () => {
     for (const [id, views] of [["a", 100], ["b", 200], ["c", 300]] as const) {
       await addPerformanceEntry({ contentId: id, platform: "douyin", metrics: { views } }, testDir);

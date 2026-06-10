@@ -45,13 +45,7 @@ autocrew_flywheel action=import_csv platform=xiaohongshu csv_path=~/Downloads/�
 
 ### 3. 校准列名映射（首次必做）
 
-导入完成后马上运行：
-
-```
-autocrew_flywheel action=report
-```
-
-如果 `imported=0` 或所有指标字段全空，说明列名没对上。排查步骤：
+导入后先看 import_csv 自己的返回：`imported=0` 或 `rejected` 占多数，就是列名没对上（`imported` 是导入返回里的字段，不在 report 里）。指标是否真的落库，再用 report 复核。排查步骤：
 
 1. 打开 CSV，看真实的表头行（第 1 行）
 2. 找到 `src/modules/flywheel/csv-import.ts` 中 `PLATFORM_MAPPINGS.<platform>` 对应的字段别名数组
@@ -59,7 +53,7 @@ autocrew_flywheel action=report
 
 **视频号和小红书的列名映射是按公开资料写的默认值，第一次导入大概率需要按真实表头校准。** 抖音相对稳定，但导出格式改版时也要重校。
 
-**标题列没映射上的症状**：report 显示的总条数远小于 CSV 行数，所有条目的 `platformTitle` 都是 `(无标题)` 且互相覆盖（同一平台同一 metricDate 只保留最后一条）。
+**标题列没映射上的症状**：所有条目的 `platformTitle` 都是 `(无标题)`——看到这个就查标题列映射。（只有当多行的发布日期也撞在一起时才会互相覆盖、导致条数缩水，所以条数正常不代表标题列没问题。）
 
 ### 4. 确认基线建立
 
@@ -68,9 +62,10 @@ autocrew_flywheel action=report
 ```
 
 检查点：
-- `baselineSampleSize ≥ 3` — 基线计算最低要求，达不到时 insights 只会提示"数据还不够多"
-- `baselineInsights` 非空且有实质内容（不只是"数据还不够多"）
-- `historical` 数字与你的 CSV 行数大致对应
+- `baselineSampleSize ≥ 3` — 基线计算最低要求，达不到时 insights 只会提示数据不足
+- `avgMetrics` 有数 — 平均播放、平均完播率等不为空
+- `baselineInsights` 含「平均播放」级的 avgMetrics 结论（`traitSampleSize` 仍为 0 是正常的，见下）
+- `works.historical` 数字与你的 CSV 作品数大致对应
 
 **注意 traitSampleSize 的含义**：这个数字是"能对应到 AutoCrew 稿件的条目数"，历史回灌后它通常是 0。这是正常的——历史数据只抬高 `baselineSampleSize`（用于 avgMetrics 计算），`traitSampleSize` 要靠后续每周循环中的 `confirm_published` 积累。`traitSampleSize < 3` 时，insights 是 avgMetrics 级别的通用结论；达到 3 条以上才有 top/bottom 30% 的真正 trait 对比。
 
@@ -106,7 +101,8 @@ autocrew_flywheel action=report
 
 逐项核对：
 
-- `matched` 应等于本周发布数。不等 → 查 `historical`，用 record 手动补录缺失的打标（见下方"手动补录"）
+- **看 `works.matched`（作品数），不看 `totalOutcomes`**——totalOutcomes 是快照数，每周重复导入下按周增长是正常的，不是数据重复。`works.matched` 的本周增量应等于本周发布数
+- 增量不对 → 查 `works.historical` 里有没有本周的稿（说明标题匹配失败）。首选修正原因后重导入（幂等安全）；确需手动补录见下方"手动补录"
 - `needsReview` 非空 → 逐条人工确认
 
 **needsReview 的已知限制**：v1 没有"已确认"状态，`mark_reviewed` 是 v1.5 的计划项。爆款视频每周导入都会被暴涨检测重新标记——同一条重复出现在 needsReview 里是预期行为，确认过就继续忽略。
@@ -115,10 +111,16 @@ autocrew_flywheel action=report
 
 ## 三、手动补录（record）
 
-CSV 导入对不上时，或需要回填历史日期，用 record：
+**首选不是 record**：CSV 导入对不上时，先修正原因（校准列名、修复损坏行）后重新导入——幂等覆盖，重导安全。record 留给确实没有 CSV 来源的数据（如平台不支持导出的指标）和打标修复。
 
 ```
 autocrew_flywheel action=record content_id=<稿件id> metrics={"views":8000,"completionRate":41,"likes":320}
+```
+
+**补录 CSV 未匹配行时必须带 platform_title**：如果某行 CSV 已经作为 historical 导入（标题匹配失败），再用 record 补录时必须传 `platform_title=<CSV 里的原标题>`，否则 record 条目按草稿标题落库、与历史条目对不上账，该作品会被双计：
+
+```
+autocrew_flywheel action=record content_id=<稿件id> platform_title=<CSV 里的原标题> metrics={"views":8000}
 ```
 
 **补录历史日期务必带 metric_date**：
@@ -159,7 +161,7 @@ autocrew_flywheel action=record content_id=<稿件id> metric_date=<原始日期>
 
 ### 可靠性层（工具能不能用）
 
-- 本周 `matched` / 本周发布数 ≥ 80%？
+- 本周 `works.matched` 增量 / 本周发布数 ≥ 80%？（作品数口径，不是 totalOutcomes 快照数）
 - 每次导入的 `rejected` 数量在减少？列名校准次数在下降？
 - `needsReview` 里非重复的新异常是否可解释？
 

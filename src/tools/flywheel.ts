@@ -10,8 +10,8 @@ import os from "node:os";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { importPerformanceCsv } from "../modules/flywheel/csv-import.js";
-import { listOutcomes } from "../modules/flywheel/outcome-store.js";
-import { buildBaseline, trackPerformance } from "../modules/analytics/quality-baseline.js";
+import { listOutcomes, listLatestOutcomes } from "../modules/flywheel/outcome-store.js";
+import { buildBaseline, trackPerformance, localDateStamp } from "../modules/analytics/quality-baseline.js";
 import { getDataDir } from "../storage/local-store.js";
 
 export const flywheelSchema = Type.Object({
@@ -37,12 +37,12 @@ export const flywheelSchema = Type.Object({
       description: "Metrics for record action, e.g. {\"views\":800,\"completionRate\":41}.",
     }),
   ),
+  platform_title: Type.Optional(
+    Type.String({
+      description: "平台上显示的标题，补录 CSV 未匹配行时填写，使历史条目被正确替代（record 用，默认草稿标题）。",
+    }),
+  ),
 });
-
-function localToday(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
 
 /** `~/` 展开到 homedir（runbook day-1 命令用 ~ 路径；path.resolve 不展开 ~）。导出仅为单测。 */
 export function expandPath(p: string): string {
@@ -61,7 +61,7 @@ async function runImportCsv(params: Record<string, unknown>, dataDir: string) {
   } catch {
     return { ok: false, error: `读不到 CSV 文件：${csvPath}` };
   }
-  const metricDate = (params.metric_date as string) || localToday();
+  const metricDate = (params.metric_date as string) || localDateStamp();
   try {
     return { ok: true, data: await importPerformanceCsv(platform, csvText, metricDate, dataDir) };
   } catch (err) {
@@ -70,20 +70,25 @@ async function runImportCsv(params: Record<string, unknown>, dataDir: string) {
 }
 
 async function runReport(dataDir: string) {
-  const outcomes = await listOutcomes(dataDir);
+  const outcomes = await listOutcomes(dataDir); // 快照视角（一行 = 某作品某数据日期）
+  const works = await listLatestOutcomes(dataDir); // 作品视角（每作品最新快照）
   const baseline = await buildBaseline(dataDir);
   const byPlatform: Record<string, number> = {};
-  for (const o of outcomes) {
-    byPlatform[o.platform] = (byPlatform[o.platform] || 0) + 1;
+  for (const w of works) {
+    byPlatform[w.platform] = (byPlatform[w.platform] || 0) + 1;
   }
   return {
     ok: true,
     data: {
-      totalOutcomes: outcomes.length,
+      totalOutcomes: outcomes.length, // 快照数，周常重复导入下按周增长——可靠性核对看 works
+      works: {
+        total: works.length,
+        matched: works.filter((w) => w.contentId !== null).length,
+        historical: works.filter((w) => w.contentId === null).length,
+      },
       byPlatform,
-      matched: outcomes.filter((o) => o.contentId !== null).length,
-      historical: outcomes.filter((o) => o.contentId === null).length,
       needsReview: outcomes.filter((o) => o.needsReview),
+      avgMetrics: baseline.avgMetrics,
       baselineSampleSize: baseline.sampleSize,
       traitSampleSize: baseline.traitSampleSize,
       baselineInsights: baseline.insights,
@@ -114,7 +119,13 @@ export async function executeFlywheel(params: Record<string, unknown>) {
     if (dropped.length > 0) {
       return { ok: false, error: `这些指标不是数字：${dropped.join("、")}（请传数值，如 41 而不是 "41%"）` };
     }
-    const result = await trackPerformance(contentId, numeric, dataDir, params.metric_date as string | undefined);
+    const result = await trackPerformance(
+      contentId,
+      numeric,
+      dataDir,
+      params.metric_date as string | undefined,
+      params.platform_title as string | undefined,
+    );
     return result.ok ? { ok: true, data: result } : { ok: false, error: result.error || "回填失败" };
   }
 
