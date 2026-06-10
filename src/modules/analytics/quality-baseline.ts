@@ -9,6 +9,7 @@
 import { listContents, type Content } from "../../storage/local-store.js";
 import { loadProfile, type PerformanceEntry } from "../profile/creator-profile.js";
 import { listLatestOutcomes, recordOutcome } from "../flywheel/outcome-store.js";
+import { getPack, DEFAULT_PACK_ID, type TrackPack, type PlatformReward } from "../packs/index.js";
 
 export interface QualityBaseline {
   /** Number of data points used to build baseline */
@@ -108,19 +109,16 @@ function analyzeTraits(contents: Content[]): ContentTraits {
   };
 }
 
-function getPerformanceScore(entry: PerformanceEntry): number {
-  const m = entry.metrics;
-  // Weighted score: likes * 2 + comments * 3 + shares * 5 + saves/favorites * 4 + views * 0.01
-  // favorites = CSV 导入的收藏字段；saves 保留兼容 paste 路径。
-  // completionRate（口播主 reward signal）的计权推迟到赛道包计划（KOUBO_REWARD 接线时一并做）。
-  return (
-    (m.likes || 0) * 2 +
-    (m.comments || 0) * 3 +
-    (m.shares || 0) * 5 +
-    (m.saves || 0) * 4 +
-    (m.favorites || 0) * 4 +
-    (m.views || 0) * 0.01
-  );
+/** 按赛道包逐平台权重打分：score = Σ weights[k] × metrics[k]（未知平台用 default 兜底） */
+export function getPerformanceScore(entry: PerformanceEntry, pack: TrackPack): number {
+  const byPlatform = pack.reward.byPlatform as Partial<Record<string, PlatformReward>> | undefined;
+  const reward = byPlatform?.[entry.platform] ?? pack.reward.default;
+  let score = 0;
+  for (const [key, weight] of Object.entries(reward.weights)) {
+    const v = entry.metrics[key];
+    if (typeof v === "number" && typeof weight === "number") score += v * weight;
+  }
+  return score;
 }
 
 /** 本地日期 YYYY-MM-DD（非 UTC：Asia/Shanghai 早 8 点前 toISOString 会记成昨天） */
@@ -177,8 +175,9 @@ function splitTopBottom(
   contents: Content[],
 ): { topContents: Content[]; bottomContents: Content[] } {
   if (matched.length < 3) return { topContents: [], bottomContents: [] };
+  const pack = getPack(DEFAULT_PACK_ID);
   const scored = matched
-    .map(e => ({ entry: e, score: getPerformanceScore(e) }))
+    .map(e => ({ entry: e, score: getPerformanceScore(e, pack) }))
     .sort((a, b) => b.score - a.score);
   const topCount = Math.max(1, Math.floor(scored.length * 0.3));
   const topIds = new Set(scored.slice(0, topCount).map(s => s.entry.contentId));

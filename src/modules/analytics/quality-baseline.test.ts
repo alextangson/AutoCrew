@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { buildBaseline, compareToBaseline, trackPerformance } from "./quality-baseline.js";
+import { buildBaseline, compareToBaseline, trackPerformance, getPerformanceScore } from "./quality-baseline.js";
 import { recordOutcome, listOutcomes } from "../flywheel/outcome-store.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
 import { addPerformanceEntry } from "../profile/creator-profile.js";
+import { getPack } from "../packs/index.js";
 
 let testDir: string;
 
@@ -208,5 +209,36 @@ describe("buildBaseline with mixed historical + matched data", () => {
     expect(r.comparisons).toHaveLength(0);
     expect(r.summary).toContain("打标");
     expect(JSON.stringify(r)).not.toContain("0 字");
+  });
+});
+
+describe("pack-weighted performance scoring", () => {
+  const pack = getPack("koubo");
+
+  it("douyin entry scores by completion5s-led weights", () => {
+    const score = getPerformanceScore(
+      { contentId: "a", platform: "douyin", metrics: { completion5s: 37.39, completionRate: 1.89, views: 3376, favorites: 95 }, recordedAt: "x" },
+      pack,
+    );
+    // 8×37.39 + 15×1.89 + 0.01×3376 + 4×95 = 299.12 + 28.35 + 33.76 + 380 = 741.23
+    expect(score).toBeCloseTo(741.23, 1);
+  });
+
+  it("xiaohongshu entry scores without completion metrics", () => {
+    const score = getPerformanceScore(
+      { contentId: "b", platform: "xiaohongshu", metrics: { views: 1985, favorites: 99, follows: 27 }, recordedAt: "x" },
+      pack,
+    );
+    // 0.02×1985 + 6×99 + 10×27 = 39.7 + 594 + 270 = 903.7
+    expect(score).toBeCloseTo(903.7, 1);
+  });
+
+  it("unknown platform falls back to default weights", () => {
+    const score = getPerformanceScore(
+      { contentId: "c", platform: "bilibili", metrics: { completionRate: 10, views: 100 }, recordedAt: "x" },
+      pack,
+    );
+    // default: 15×10 + 0.01×100 = 151
+    expect(score).toBeCloseTo(151, 1);
   });
 });
