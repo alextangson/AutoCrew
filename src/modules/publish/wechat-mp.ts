@@ -127,10 +127,11 @@ async function runCommand(
 async function generateImage(
   prompt: string,
   outputPath: string,
-  *,
-  size: string,
-  imageGeneratorScript: string,
-  imageApiKey?: string,
+  {
+    size,
+    imageGeneratorScript,
+    imageApiKey,
+  }: { size: string; imageGeneratorScript: string; imageApiKey?: string },
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const cwd = path.dirname(outputPath);
   await fs.mkdir(cwd, { recursive: true });
