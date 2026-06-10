@@ -3,6 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { executeStyle } from "./style.js";
+import { distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 
 // ─── Mock factories ────────────────────────────────────────────────────────────
@@ -196,17 +197,30 @@ describe("executeStyle", () => {
 
   // 12. distill with other error types (non-Error thrown)
   it("distill: non-Error thrown object → stringified", async () => {
-    const badImpl = async () => {
+    const badImpl: typeof distillStyleRules = async () => {
       throw "raw string error";
     };
 
     const res = await executeStyle(
       { action: "distill" },
-      { distillImpl: badImpl as any },
+      { distillImpl: badImpl },
     );
 
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error).toContain("raw string error");
+  });
+
+  // 13. absorb_samples with non-string entry (number)
+  it("absorb_samples with non-string sample [42] → error mentions index", async () => {
+    const res = await executeStyle(
+      { action: "absorb_samples", samples: [42] },
+      { analyzeImpl: makeAnalyzeImpl(GOOD_DISTILL_RESULT) },
+    );
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("samples[0]");
+    expect(res.error).toContain("非空");
   });
 });

@@ -3,7 +3,10 @@
  *
  * Stores diffs in ~/.autocrew/learnings/edits/ as JSON files.
  * Each diff captures: contentId, field changed, before/after text, timestamp.
- * These diffs feed into the Rule Distiller for pattern recognition.
+ * These diffs feed into the LLM style distiller (style-distiller.ts) as training
+ * signal for WritingRule generation.
+ *
+ * detectPatterns / getPatternFrequency：仅供即时反馈（不再产规则——规则唯一来源是 LLM 蒸馏）
  */
 import fs from "node:fs/promises";
 import path from "node:path";

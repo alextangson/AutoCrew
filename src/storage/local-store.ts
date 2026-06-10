@@ -547,7 +547,11 @@ export interface TransitionResult {
  *
  * Auto-trigger rules:
  * - draft_ready → reviewing: fires automatically (caller should run content-review)
- * - revision: records diff to learnings directory
+ *
+ * Note: opts.diffNote is accepted but no longer consumed here — the ad-hoc snapshot
+ * write (learnings/edits) that used it is retired; content-save's recordDiff wiring
+ * now owns the revision-edit cycle.  The param is kept because review.ts:283 passes it
+ * and removing it would be a breaking API change with no immediate gain.
  */
 export async function transitionStatus(
   contentId: string,
@@ -574,28 +578,8 @@ export async function transitionStatus(
   const now = new Date().toISOString();
   const updates: Partial<Content> = { status: targetStatus };
 
-  // Auto-trigger: revision → record diff to learnings
-  let autoTriggered: string | undefined;
-  if (targetStatus === "revision") {
-    const learningsDir = path.join(getDataDir(dataDir), "learnings", "edits");
-    await ensureDir(learningsDir);
-    const diffEntry = {
-      contentId,
-      fromStatus: currentStatus,
-      timestamp: now,
-      note: opts?.diffNote || "User entered revision",
-      bodySnapshot: content.body?.slice(0, 500),
-    };
-    const diffFile = `${contentId}-${Date.now()}.json`;
-    await fs.writeFile(
-      path.join(learningsDir, diffFile),
-      JSON.stringify(diffEntry, null, 2),
-      "utf-8",
-    );
-    autoTriggered = `Diff recorded to learnings/edits/${diffFile}`;
-  }
-
   // Auto-trigger: draft_ready → reviewing (signal to caller)
+  let autoTriggered: string | undefined;
   if (targetStatus === "draft_ready") {
     autoTriggered = "draft_ready reached — auto-transition to reviewing recommended (run content-review)";
   }

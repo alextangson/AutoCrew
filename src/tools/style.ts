@@ -44,6 +44,26 @@ export interface StyleDeps {
   analyzeImpl?: typeof analyzeStyleSamples;
 }
 
+// ─── Validation helpers ───────────────────────────────────────────────────────
+
+function validateSamples(
+  samplesRaw: unknown,
+): { ok: true; samples: string[] } | { ok: false; error: string } {
+  if (!Array.isArray(samplesRaw)) {
+    return { ok: false, error: "缺少必填参数 samples：请提供 1-5 条爆款样本数组" };
+  }
+  if (samplesRaw.length < 1 || samplesRaw.length > 5) {
+    return { ok: false, error: `samples 应包含 1-5 条数据（收到 ${samplesRaw.length} 条）` };
+  }
+  for (let i = 0; i < samplesRaw.length; i++) {
+    const s = samplesRaw[i];
+    if (typeof s !== "string" || s.trim() === "") {
+      return { ok: false, error: `samples[${i}] 应为非空字符串` };
+    }
+  }
+  return { ok: true, samples: (samplesRaw as string[]).map((s) => s.trim()) };
+}
+
 // ─── Core execute ─────────────────────────────────────────────────────────────
 
 export async function executeStyle(
@@ -51,62 +71,26 @@ export async function executeStyle(
   deps: StyleDeps = {},
 ): Promise<StyleResult> {
   const action = params.action as string;
+  const dataDir = (params._dataDir as string) || undefined;
 
   if (action === "distill") {
     const distillFn = deps.distillImpl ?? distillStyleRules;
-    const dataDir = (params._dataDir as string) || undefined;
-
     try {
-      const result = await distillFn(dataDir);
-      return { ok: true, data: result };
+      return { ok: true, data: await distillFn(dataDir) };
     } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
   if (action === "absorb_samples") {
-    const samplesRaw = params.samples as unknown;
+    const validated = validateSamples(params.samples);
+    if (!validated.ok) return validated;
 
-    // Runtime validation: samples required
-    if (!Array.isArray(samplesRaw)) {
-      return { ok: false, error: "缺少必填参数 samples：请提供 1-5 条爆款样本数组" };
-    }
-
-    // Validate 1-5 entries
-    if (samplesRaw.length < 1 || samplesRaw.length > 5) {
-      return {
-        ok: false,
-        error: `samples 应包含 1-5 条数据（收到 ${samplesRaw.length} 条）`,
-      };
-    }
-
-    // Validate each is non-empty string
-    for (let i = 0; i < samplesRaw.length; i++) {
-      const s = samplesRaw[i];
-      if (typeof s !== "string" || s.trim() === "") {
-        return {
-          ok: false,
-          error: `samples[${i}] 应为非空字符串`,
-        };
-      }
-    }
-
-    // All validated — forward to analyzeStyleSamples
-    const samples = (samplesRaw as string[]).map((s) => s.trim());
     const analyzeFn = deps.analyzeImpl ?? analyzeStyleSamples;
-    const dataDir = (params._dataDir as string) || undefined;
-
     try {
-      const result = await analyzeFn(samples, dataDir);
-      return { ok: true, data: result };
+      return { ok: true, data: await analyzeFn(validated.samples, dataDir) };
     } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 

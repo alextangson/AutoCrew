@@ -39,6 +39,9 @@ export interface EditFeedback {
 /**
  * Generate instant feedback after a user edit.
  * Called after diff-tracker records a diff.
+ *
+ * 定位：初步观察（零延迟 UX）——用正则即时识别编辑模式，展示给用户看。
+ * 这里的 patterns 不产生 WritingRule；规则的唯一来源是 LLM 蒸馏（autocrew_style action=distill）。
  */
 export function generateEditFeedback(before: string, after: string): EditFeedback {
   const patterns = detectPatterns(before, after);
