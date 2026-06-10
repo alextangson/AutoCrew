@@ -6,6 +6,7 @@
  *   report    — 闭环状态：条数、待人工确认、baseline 洞察
  */
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { importPerformanceCsv } from "../modules/flywheel/csv-import.js";
@@ -25,7 +26,10 @@ export const flywheelSchema = Type.Object({
   ),
   csv_path: Type.Optional(Type.String({ description: "Path to the exported CSV file (for import_csv)." })),
   metric_date: Type.Optional(
-    Type.String({ description: "YYYY-MM-DD the metrics refer to. Defaults to today." }),
+    Type.String({
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+      description: "YYYY-MM-DD the metrics refer to (import_csv and record). Defaults to today.",
+    }),
   ),
   content_id: Type.Optional(Type.String({ description: "AutoCrew content id (for record)." })),
   metrics: Type.Optional(
@@ -40,6 +44,11 @@ function localToday(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+/** `~/` 展开到 homedir（runbook day-1 命令用 ~ 路径；path.resolve 不展开 ~）。导出仅为单测。 */
+export function expandPath(p: string): string {
+  return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : path.resolve(p);
+}
+
 async function runImportCsv(params: Record<string, unknown>, dataDir: string) {
   const platform = params.platform as string | undefined;
   const csvPath = params.csv_path as string | undefined;
@@ -48,7 +57,7 @@ async function runImportCsv(params: Record<string, unknown>, dataDir: string) {
   }
   let csvText: string;
   try {
-    csvText = await fs.readFile(path.resolve(csvPath), "utf-8");
+    csvText = await fs.readFile(expandPath(csvPath), "utf-8");
   } catch {
     return { ok: false, error: `读不到 CSV 文件：${csvPath}` };
   }
@@ -92,11 +101,20 @@ export async function executeFlywheel(params: Record<string, unknown>) {
 
   if (action === "record") {
     const contentId = params.content_id as string | undefined;
-    const metrics = params.metrics as Record<string, number> | undefined;
+    const metrics = params.metrics as Record<string, unknown> | undefined;
     if (!contentId || !metrics) {
       return { ok: false, error: "record 需要 content_id 和 metrics" };
     }
-    const result = await trackPerformance(contentId, metrics, dataDir);
+    const numeric: Record<string, number> = {};
+    const dropped: string[] = [];
+    for (const [k, v] of Object.entries(metrics)) {
+      if (typeof v === "number") numeric[k] = v;
+      else dropped.push(k);
+    }
+    if (dropped.length > 0) {
+      return { ok: false, error: `这些指标不是数字：${dropped.join("、")}（请传数值，如 41 而不是 "41%"）` };
+    }
+    const result = await trackPerformance(contentId, numeric, dataDir, params.metric_date as string | undefined);
     return result.ok ? { ok: true, data: result } : { ok: false, error: result.error || "回填失败" };
   }
 

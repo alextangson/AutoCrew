@@ -363,6 +363,7 @@ export async function trackPerformance(
   contentId: string,
   metrics: Record<string, number>,
   dataDir?: string,
+  metricDate?: string,
 ): Promise<PerformanceTrackingResult> {
   const contents = await listContents(dataDir);
   const content = contents.find(c => c.id === contentId);
@@ -378,7 +379,7 @@ export async function trackPerformance(
       platform: content.platform || "unknown",
       platformTitle: content.title,
       publishedAt: content.publishedAt,
-      metricDate: localDateStamp(),
+      metricDate: metricDate ?? localDateStamp(),
       metrics,
       source: "paste",
     },

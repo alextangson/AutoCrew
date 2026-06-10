@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { executeFlywheel } from "./flywheel.js";
+import { executeFlywheel, expandPath } from "./flywheel.js";
 import { saveContent, updateContent } from "../storage/local-store.js";
 import { listOutcomes } from "../modules/flywheel/outcome-store.js";
 
@@ -62,6 +62,55 @@ describe("executeFlywheel", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("record: honors metric_date for backfill", async () => {
+    const c = await saveContent(
+      { title: "口播稿B", body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    const r = (await executeFlywheel({
+      action: "record",
+      content_id: c.id,
+      metrics: { views: 500 },
+      metric_date: "2026-06-05",
+      _dataDir: testDir,
+    })) as { ok: boolean };
+    expect(r.ok).toBe(true);
+    const outcomes = await listOutcomes(testDir);
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0].metricDate).toBe("2026-06-05");
+  });
+
+  it("record: rejects non-numeric metric values with a helpful error", async () => {
+    const c = await saveContent(
+      { title: "口播稿C", body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    const r = (await executeFlywheel({
+      action: "record",
+      content_id: c.id,
+      metrics: { views: 800, completionRate: "41%" as unknown as number },
+      _dataDir: testDir,
+    })) as { ok: boolean; error?: string };
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("completionRate");
+    expect(await listOutcomes(testDir)).toHaveLength(0);
+  });
+
+  it("record: passes through outcome validator errors", async () => {
+    const c = await saveContent(
+      { title: "口播稿D", body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    const r = (await executeFlywheel({
+      action: "record",
+      content_id: c.id,
+      metrics: { completionRate: 200 },
+      _dataDir: testDir,
+    })) as { ok: boolean; error?: string };
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("完播率");
+  });
+
   it("report: returns counts, needsReview and baseline insights", async () => {
     const csvPath = path.join(testDir, "douyin.csv");
     await fs.writeFile(
@@ -79,5 +128,15 @@ describe("executeFlywheel", () => {
     expect(r.data.totalOutcomes).toBe(3);
     expect(r.data.baselineInsights.length).toBeGreaterThan(0);
     expect(r.data.traitSampleSize).toBe(0); // 三条均为 historical，无打标条目
+  });
+});
+
+describe("expandPath", () => {
+  it("expands ~/ to the home directory", () => {
+    expect(expandPath("~/x.csv")).toBe(path.join(os.homedir(), "x.csv"));
+  });
+
+  it("leaves absolute paths unchanged", () => {
+    expect(expandPath("/abs/x.csv")).toBe("/abs/x.csv");
   });
 });
