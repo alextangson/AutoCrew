@@ -147,17 +147,22 @@ export async function matchDraft(
     (c) => c.status === "published" && c.platform === platform,
   );
   const target = normalizeTitle(platformTitle);
+  if (!target) return null; // 标题归一化后为空：没有匹配依据
 
   let best: { content: Content; score: number } | null = null;
   for (const c of candidates) {
-    const score = diceSimilarity(normalizeTitle(c.title), target);
-    if (score === 1) return c;
+    const normalized = normalizeTitle(c.title);
+    if (normalized === target) return c;
+    const score = diceSimilarity(normalized, target);
     if (!best || score > best.score) best = { content: c, score };
   }
   if (!best || best.score < FUZZY_THRESHOLD) return null;
 
-  const draftTime = best.content.publishedAt ? Date.parse(best.content.publishedAt) : null;
-  const itemTime = publishedAt ? Date.parse(publishedAt) : null;
+  // 不可解析的时间视同缺失，落入 strict 分支而非永远 fail 时间窗
+  const draftTimeRaw = best.content.publishedAt ? Date.parse(best.content.publishedAt) : NaN;
+  const itemTimeRaw = publishedAt ? Date.parse(publishedAt) : NaN;
+  const draftTime = Number.isNaN(draftTimeRaw) ? null : draftTimeRaw;
+  const itemTime = Number.isNaN(itemTimeRaw) ? null : itemTimeRaw;
   if (draftTime !== null && itemTime !== null) {
     return Math.abs(draftTime - itemTime) <= TIME_WINDOW_MS ? best.content : null;
   }

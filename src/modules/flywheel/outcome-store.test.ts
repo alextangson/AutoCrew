@@ -166,4 +166,36 @@ describe("matchDraft", () => {
     const hit = await matchDraft("xiaohongshu", "跨平台同标题", null, testDir);
     expect(hit).toBeNull();
   });
+
+  it("returns null when the title normalizes to empty (no matching basis)", async () => {
+    // 双方标题归一化后都为空（纯符号/emoji）→ 不能凭空判定精确命中
+    await publishContent("！！！", "2026-01-01T10:00:00.000Z");
+    const hit = await matchDraft("douyin", "🔥🔥🔥", null, testDir);
+    expect(hit).toBeNull();
+  });
+
+  it("rejects mid-range fuzzy score (0.6-0.8) when item publish time is missing", async () => {
+    // 自校验：分数确实落在 [0.6, 0.8) 区间，否则该测试覆盖的不是 strict 分支
+    const score = diceSimilarity("5个护肤技巧让你皮肤变好", "护肤技巧让皮肤变好哦呀");
+    expect(score).toBeGreaterThanOrEqual(0.6);
+    expect(score).toBeLessThan(0.8);
+    await publishContent("5个护肤技巧让你皮肤变好", "2026-06-01T10:00:00.000Z");
+    const hit = await matchDraft("douyin", "护肤技巧让皮肤变好哦呀", null, testDir);
+    expect(hit).toBeNull();
+  });
+
+  it("matches via strict tier (>=0.8) when item publish time is missing", async () => {
+    // 自校验：分数确实 ≥ 0.8
+    const score = diceSimilarity("5个护肤技巧让你皮肤变好", "5个护肤技巧让你皮肤变");
+    expect(score).toBeGreaterThanOrEqual(0.8);
+    const c = await publishContent("5个护肤技巧让你皮肤变好", "2026-06-01T10:00:00.000Z");
+    const hit = await matchDraft("douyin", "5个护肤技巧让你皮肤变", null, testDir);
+    expect(hit?.id).toBe(c.id);
+  });
+
+  it("treats unparseable draft publish time as missing — strict tier, not silent window failure", async () => {
+    const c = await publishContent("5个护肤技巧让你皮肤变好", "not-a-date");
+    const hit = await matchDraft("douyin", "5个护肤技巧让你皮肤变", "2026-06-02T09:00:00.000Z", testDir);
+    expect(hit?.id).toBe(c.id);
+  });
 });
