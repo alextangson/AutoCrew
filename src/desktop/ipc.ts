@@ -33,22 +33,13 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
+import type { IpcChannel } from "./channels.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
+// Channel list lives in channels.ts (dependency-free so the sandboxed preload
+// can bundle it without dragging in the engine). Re-exported for consumers.
 
-export const IPC_CHANNELS = [
-  "flywheel:report",
-  "generate:script",
-  "style:distill",
-  "style:absorb",
-  "style:rules",
-  "content:list",
-  "content:get",
-  "publish:clipboard",
-  "publish:confirm",
-] as const;
-
-export type IpcChannel = (typeof IPC_CHANNELS)[number];
+export { IPC_CHANNELS, type IpcChannel } from "./channels.js";
 
 /** Every handler: receives payload, returns {ok, data?, error?}. Never throws. */
 export type IpcHandler = (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;

@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import path from "path";
 import { IPC_CHANNELS, buildIpcHandlers } from "../src/desktop/ipc.js";
 
-// __dirname is available in the bundled CJS output via esbuild's banner inject
+// __dirname comes from Node's CJS module wrapper in the bundled output
 declare const __dirname: string;
 
 const handlers = buildIpcHandlers();

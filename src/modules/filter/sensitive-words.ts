@@ -45,21 +45,15 @@ interface BuiltinData {
 }
 
 // --- Loader ---
+// Built-in list is statically imported so bundlers (esbuild) inline it —
+// a runtime path resolve breaks once the module is bundled away from src/.
 
-let _builtinCache: BuiltinData | null = null;
+import builtinDataJson from "../../data/sensitive-words-builtin.json";
 
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
-
-const _require = createRequire(import.meta.url);
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const builtinData = builtinDataJson as BuiltinData;
 
 async function loadBuiltin(): Promise<BuiltinData> {
-  if (_builtinCache) return _builtinCache;
-  const filePath = path.resolve(__dirname, "../../data/sensitive-words-builtin.json");
-  const raw = await fs.readFile(filePath, "utf-8");
-  _builtinCache = JSON.parse(raw) as BuiltinData;
-  return _builtinCache;
+  return builtinData;
 }
 
 async function loadCustomWords(dataDir?: string): Promise<string[]> {
@@ -206,7 +200,7 @@ function buildSummary(hits: ScanHit[]): string {
   return `⚠️ 检测到 ${hits.length} 个敏感词（${parts.join("、")}）${fixNote}`;
 }
 
-/** Reset the built-in cache (for testing) */
+/** No-op since the built-in list became a static import; kept for test API stability */
 export function _resetCache(): void {
-  _builtinCache = null;
+  // built-in data is a module-level constant now — nothing to reset
 }
