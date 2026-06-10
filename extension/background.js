@@ -11,8 +11,9 @@
  * MV3 注意事项：
  *   - service worker 可能在消息处理完前进入休眠；此处每个操作都
  *     在一个 async 函数中同步完成，不依赖长连接或 keepAlive。
- *   - content script 在扩展安装前已加载的页面上不存在；
- *     sendMessage 失败时用 chrome.scripting 注入一次并重试（自愈）。
+ *   - content script 在扩展安装/重载前已打开的页面上不存在；
+ *     sendMessage 失败时注入一次并重试。Chrome 为每次 executeScript
+ *     建立全新 isolated world，注入后 listener 正常注册，重试成功。
  *   - sendNativeMessage 是一次性调用，符合 ≤1-in-flight 合约。
  * =========================================================
  */

@@ -300,6 +300,63 @@ completion5s 项，跨平台 top/bottom 对比会偏低估抖音——重导是�
 
 ---
 
+## 九、扩展通道 dogfood（v1 主通道预演）
+
+> 对应 PRD §6 主读数通道 MVP：Chrome 扩展读抖音创作者中心，经 native messaging 进同一导入管线。零重登、无 CDP、真实 profile。
+
+### 安装（一次性）
+
+1. 打开 `chrome://extensions` → 右上角打开**开发者模式**
+2. 点**「加载已解压的扩展程序」** → 选 `<repo>/extension/` 目录
+3. 复制扩展 ID（32 个 a-p 字母，例如 `abcdefghijklmnopabcdefghijklmnop`）
+4. 在项目根目录运行安装脚本（将 node 绝对路径烘焙进 launch.sh，幂等可重跑）：
+
+```bash
+npx tsx scripts/install-native-host.mts <扩展ID>
+```
+
+脚本打印验证步骤；完成后 native host manifest 写入
+`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.autocrew.bridge.json`。
+
+### 使用
+
+1. 打开**抖音创作者中心的作品列表页**（`creator.douyin.com`）
+2. 点工具栏扩展按钮（AutoCrew 图标）
+3. 等通知出现，格式：**「导入 N 条（匹配 M / 历史 H / 拒收 R）」**
+4. 用 report 复核：
+
+```
+autocrew_flywheel action=report
+```
+
+### 首次必校准 SELECTOR_CONFIG
+
+扩展读页面 DOM，选择器随抖音后台版本变化。首次使用前按症状校准
+`extension/content-douyin.js` 顶部的 `SELECTOR_CONFIG`，改完到
+`chrome://extensions` 点扩展的**刷新**按钮再试。
+
+| 症状 | 原因 | 排查方法 |
+|---|---|---|
+| 通知报 0 行（rowCount=0）| `ROW_SELECTOR` 未命中表格行 | DevTools Elements 面板找真实表格行容器，更新 `ROW_SELECTOR`（如 `.semi-table-row`） |
+| `rejected` 全军覆没 | `COLUMNS` 列序与页面实际列序不符 | DevTools 逐列数列标题，与 `COLUMNS` 数组对照；页面列序**可能与导出 xlsx 不同！** |
+| 指标全为空/0 | 某列 `null` 却含数据，或列序偏移 | 在 DevTools Console 运行 `document.querySelectorAll("table tbody tr")[0].querySelectorAll("td")` 数列数 |
+
+### 红线提醒
+
+- **每周用户主动点一次**——无自动轮询、无后台定时
+- 与 CSV 导出走同一管线，幂等覆盖，混用安全（同 content_id+date 重复导入不产生重复条目）
+- 扩展**只读页面**，绝不写 DOM、绝不自动导航
+
+### 故障排查
+
+| 现象 | 原因 | 修复 |
+|---|---|---|
+| 通知「native host 未安装」| manifest 不存在或路径错 | 重跑 `npx tsx scripts/install-native-host.mts <扩展ID>` |
+| host 启动失败（`brew upgrade node` 后）| launch.sh 烘焙的是安装时的 node 绝对路径 | 重跑安装脚本（重新烘焙新路径） |
+| 通知「内容脚本注入失败」| activeTab 权限需要用户最近与页面交互 | 刷新作品列表页后再点扩展按钮 |
+
+---
+
 ## 八、风格学习 dogfood
 
 ### 完整闭环（蒸馏路径）

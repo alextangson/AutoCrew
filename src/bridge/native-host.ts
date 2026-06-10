@@ -64,7 +64,7 @@ async function handleMessage(raw: unknown): Promise<void> {
 // Chrome closed the pipe (extension disconnected): EPIPE on stdout / stdin end
 // are normal shutdown, not errors — exit clean so Chrome can restart us later.
 process.stdout.on("error", () => process.exit(0));
-process.stdin.on("end", () => process.exit(0));
+process.stdin.on("end", () => { void queue.then(() => process.exit(0)); });
 
 process.stdin.on("error", (e) => {
   console.error("stdin error:", String(e));
