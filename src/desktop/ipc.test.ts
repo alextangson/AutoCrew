@@ -12,6 +12,7 @@ import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   IPC_CHANNELS,
+  CHANNEL_ACTIONS,
   buildIpcHandlers,
   wrapExecute,
   type IpcChannel,
@@ -84,6 +85,38 @@ describe("wrapExecute — action injection", () => {
     await handler({ samples: ["a"] });
     expect(spy).toHaveBeenCalledWith({ action: "absorb_samples", samples: ["a"] });
   });
+
+  it("payload cannot override the injected action — channel whitelist holds", async () => {
+    const spy = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    const handler = wrapExecute(spy, "list");
+    await handler({ action: "update", id: "x", body: "mutated" });
+    expect(spy).toHaveBeenCalledWith({ action: "list", id: "x", body: "mutated" });
+  });
+});
+
+// ── 2b. Channel→action table (single source for buildIpcHandlers) ─────────────
+
+describe("CHANNEL_ACTIONS — channel→action bindings", () => {
+  const EXPECTED_BINDINGS: [keyof typeof CHANNEL_ACTIONS, string][] = [
+    ["flywheel:report", "report"],
+    ["generate:script", "script"],
+    ["style:distill", "distill"],
+    ["style:absorb", "absorb_samples"],
+    ["content:list", "list"],
+    ["content:get", "get"],
+    ["publish:clipboard", "clipboard"],
+    ["publish:confirm", "confirm_published"],
+  ];
+
+  it.each(EXPECTED_BINDINGS)("%s → action=%s", (channel, action) => {
+    expect(CHANNEL_ACTIONS[channel]).toBe(action);
+  });
+
+  it("covers exactly the 8 execute-backed channels (style:rules excluded)", () => {
+    expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
+      IPC_CHANNELS.filter((ch) => ch !== "style:rules").sort(),
+    );
+  });
 });
 
 // ── 3. deps injection replaces the whole handler ─────────────────────────────
@@ -111,34 +144,12 @@ describe("buildIpcHandlers — deps injection", () => {
 // ── 4. Error guard: non-object payload → {ok:false} ──────────────────────────
 
 describe("handler — non-object payload guard", () => {
-  const channels: IpcChannel[] = [
-    "flywheel:report",
-    "generate:script",
-    "style:distill",
-    "style:absorb",
-    "content:list",
-    "content:get",
-    "publish:clipboard",
-    "publish:confirm",
-  ];
-
-  const handlers = buildIpcHandlers();
-
-  it.each(channels)("%s: null payload → {ok:false}", async (ch) => {
-    // Handlers take Record<string,unknown> but we test the runtime guard by
-    // injecting a mock that receives whatever the outer handler passes through.
-    // The guard fires BEFORE calling the inner fn when payload is non-object.
-    const mockExec = vi.fn().mockResolvedValue({ ok: true });
-    const guardedHandlers = buildIpcHandlers(
-      Object.fromEntries(
-        IPC_CHANNELS.map((c) => [c, mockExec]),
-      ) as Partial<Record<IpcChannel, typeof mockExec>>,
-    );
-    // We pass the raw null through a wrapper — the guard lives in wrapExecute
-    const wrappedGuard = wrapExecute(mockExec, "any-action");
-    const result = await wrappedGuard(null as unknown as Record<string, unknown>);
+  it("null payload → {ok:false} without calling the execute fn", async () => {
+    const spy = vi.fn().mockResolvedValue({ ok: true });
+    const h = wrapExecute(spy, "report");
+    const result = await h(null as unknown as Record<string, unknown>);
     expect(result).toEqual({ ok: false, error: expect.any(String) });
-    expect(mockExec).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("string payload → {ok:false}", async () => {
@@ -147,6 +158,12 @@ describe("handler — non-object payload guard", () => {
     const result = await h("bad" as unknown as Record<string, unknown>);
     expect(result).toEqual({ ok: false, error: expect.any(String) });
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("style:rules: non-object payload → {ok:false}", async () => {
+    const handlers = buildIpcHandlers();
+    const result = await handlers["style:rules"](null as unknown as Record<string, unknown>);
+    expect(result).toEqual({ ok: false, error: expect.any(String) });
   });
 });
 
