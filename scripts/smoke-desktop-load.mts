@@ -42,7 +42,7 @@ try {
   // Sandboxed preload cannot require node builtins — plain-node require above
   // would not catch the engine sneaking back into the preload bundle.
   const preloadSrc = readFileSync(path.join(root, "desktop", "dist", "preload.cjs"), "utf-8");
-  if (/require\(["'](?:node:)?(?!electron)[a-z_/]+["']\)/.test(preloadSrc)) {
+  if (/require\(["'](?:node:)?(?!electron)[a-z0-9_/-]+["']\)/.test(preloadSrc)) {
     console.error("smoke: preload.cjs requires a non-electron module — sandboxed preload will fail");
     process.exit(1);
   }
