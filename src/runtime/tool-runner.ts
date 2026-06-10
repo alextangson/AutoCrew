@@ -51,18 +51,12 @@ export interface ToolRunnerOptions {
 
 // --- Built-in Middleware ---
 
-/** Tools exempt from onboarding gate */
-const ONBOARDING_EXEMPT_TOOLS = new Set([
-  "autocrew_init",
-  "autocrew_pro_status",
-  "autocrew_status",
-  "autocrew_memory",
-]);
-
 /** Block non-exempt tools if profile is incomplete or style not calibrated */
-const onboardingGateMiddleware: Middleware = async (ctx, toolName, _params, next) => {
-  // Skip for exempt tools
-  if (ONBOARDING_EXEMPT_TOOLS.has(toolName)) return next();
+const createOnboardingGateMiddleware = (
+  getTool: (name: string) => ToolDefinition | undefined,
+): Middleware => async (ctx, toolName, _params, next) => {
+  // Skip for tools registered with skipOnboardingGate (e.g. init, pro_status)
+  if (getTool(toolName)?.skipOnboardingGate) return next();
 
   try {
     const profile = await loadProfile(ctx.dataDir);
@@ -257,7 +251,7 @@ export class ToolRunner {
     this.eventBus = options.eventBus;
     this.middleware = [
       dataDirMiddleware,
-      onboardingGateMiddleware,
+      createOnboardingGateMiddleware((name) => this.tools.get(name)),
       prePublishGateMiddleware,
       errorBoundaryMiddleware,
       auditMiddleware,
