@@ -108,7 +108,7 @@ function buildTopicDescription(
 }
 
 function buildTopicTags(industry: string, platform: BrowserPlatform): string[] {
-  const tags = [platform];
+  const tags: string[] = [platform];
   if (industry) {
     tags.push(industry);
   }

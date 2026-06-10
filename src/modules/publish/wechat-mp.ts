@@ -33,7 +33,7 @@ export interface WechatMpDraftOptions {
   wechatPublishScript?: string;
 }
 
-export interface WechatMpDraftResult {
+export type WechatMpDraftResult = {
   ok: boolean;
   articlePath: string;
   publishInput: string;

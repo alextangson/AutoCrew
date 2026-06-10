@@ -40,7 +40,7 @@ export async function executeStatus(params: Record<string, unknown>) {
     if (!contentId) return { ok: false, error: "content_id is required for track_performance" };
     if (!metrics) return { ok: false, error: "metrics is required for track_performance" };
     const result = await trackPerformance(contentId, metrics, dataDir);
-    return { ok: true, action: "track_performance", ...result };
+    return { action: "track_performance", ...result };
   }
 
   if (action === "learning_report") {

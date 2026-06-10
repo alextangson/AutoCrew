@@ -157,8 +157,8 @@ class WebAccessProxyClient {
     if (!response.ok) {
       throw new Error(`Failed to open tab for ${url}`);
     }
-    const data = await response.json();
-    return data.id || data.targetId || data.tabId;
+    const data = (await response.json()) as { id?: string; targetId?: string; tabId?: string };
+    return (data.id || data.targetId || data.tabId) as string;
   }
 
   async eval(tabId: string, expression: string): Promise<unknown> {

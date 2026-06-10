@@ -2,7 +2,7 @@ export interface HumanizeZhOptions {
   text: string;
 }
 
-export interface HumanizeZhResult {
+export type HumanizeZhResult = {
   ok: boolean;
   originalText: string;
   humanizedText: string;

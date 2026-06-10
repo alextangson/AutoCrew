@@ -19,7 +19,7 @@ export interface DistillMemoryOptions {
   dataDir?: string;
 }
 
-export interface DistillMemoryResult {
+export type DistillMemoryResult = {
   ok: boolean;
   section: string;
   learning: string;

@@ -26,7 +26,7 @@ const SUBDIRS = [
   "memory",
 ];
 
-export interface InitResult {
+export type InitResult = {
   ok: boolean;
   dataDir: string;
   created: string[];

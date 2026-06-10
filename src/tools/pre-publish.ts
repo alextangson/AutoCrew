@@ -23,7 +23,7 @@ export interface CheckItem {
   fix?: string;
 }
 
-export interface PrePublishResult {
+export type PrePublishResult = {
   ok: boolean;
   contentId: string;
   platform: string;

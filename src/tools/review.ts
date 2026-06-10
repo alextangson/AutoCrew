@@ -26,7 +26,7 @@ export interface QualityScore {
   notes: string[];
 }
 
-export interface ReviewReport {
+export type ReviewReport = {
   ok: boolean;
   /** Did the content pass all checks? */
   passed: boolean;
