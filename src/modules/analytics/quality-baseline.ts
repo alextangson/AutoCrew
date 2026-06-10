@@ -192,6 +192,7 @@ function splitTopBottom(
 const METRIC_LABELS: Array<{ key: string; label: string; suffix: string }> = [
   { key: "views", label: "平均播放", suffix: "" },
   { key: "completionRate", label: "平均完播率", suffix: "%" },
+  { key: "completion5s", label: "平均5s完播率", suffix: "%" },
   { key: "likes", label: "平均点赞", suffix: "" },
   { key: "comments", label: "平均评论", suffix: "" },
   { key: "shares", label: "平均分享", suffix: "" },
