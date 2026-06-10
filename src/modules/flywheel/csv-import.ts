@@ -9,7 +9,7 @@ import type { OutcomeMetrics, PerformanceOutcome } from "./outcome-schema.js";
 
 /** 极简 CSV 解析：BOM/CRLF/引号字段/转义引号。平台导出不含换行内嵌字段，不支持也不需要。 */
 export function parseCsv(text: string): Record<string, string>[] {
-  const clean = text.replace(/^﻿/, "");
+  const clean = text.replace(/^\uFEFF/, "");
   const lines = clean.split(/\r?\n/).filter((l) => l.trim() !== "");
   if (lines.length < 2) return [];
 
