@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { buildBaseline, trackPerformance } from "./quality-baseline.js";
+import { buildBaseline, compareToBaseline, trackPerformance } from "./quality-baseline.js";
 import { recordOutcome, listOutcomes } from "../flywheel/outcome-store.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
 import { addPerformanceEntry } from "../profile/creator-profile.js";
@@ -79,5 +79,84 @@ describe("trackPerformance writes through outcome store", () => {
     expect(outcomes).toHaveLength(1);
     expect(outcomes[0].contentId).toBe(c.id);
     expect(outcomes[0].source).toBe("paste");
+  });
+
+  it("surfaces the rejection reason when metrics are invalid", async () => {
+    const c = await saveContent(
+      {
+        title: "数据有误的稿子",
+        body: "正文",
+        platform: "douyin",
+        status: "published",
+        publishedAt: "2026-06-01T10:00:00.000Z",
+        tags: [],
+      },
+      testDir,
+    );
+
+    const r = await trackPerformance(c.id, { completionRate: 200 }, testDir);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("完播率");
+  });
+});
+
+// 10 条历史回灌（高播放、无对应 content）+ 3 条 matched（真实 content、播放较低）。
+// 这是 week-1 的典型数据形状：历史条目会占满 top 档位，修复前 traits 切分会拿
+// 真实 traits 对比全零档位，捏造"平均 0 字"类建议。
+async function seedMixedData(): Promise<{ topBody: string }> {
+  for (let i = 0; i < 10; i++) {
+    await seedOutcome(null, `历史作品${i}`, 5000 + i * 100, "2026-06-08");
+  }
+  const bodies = [
+    "这是第一篇正文。\n\n讲了三个要点，篇幅适中。\n\n记得点赞关注。",
+    "这是第二篇正文，内容稍长一点。\n\n也讲了几个要点。\n\n欢迎评论留言。",
+    "这是第三篇正文。\n\n干货比较多，讲得也细。\n\n喜欢的话收藏一下。",
+  ];
+  for (let i = 0; i < 3; i++) {
+    const c = await saveContent(
+      {
+        title: `匹配稿${i}`,
+        body: bodies[i],
+        platform: "douyin",
+        status: "published",
+        publishedAt: "2026-06-01T10:00:00.000Z",
+        tags: [],
+      },
+      testDir,
+    );
+    await seedOutcome(c.id, `匹配稿${i}`, 800 + i * 200, "2026-06-08");
+  }
+  return { topBody: bodies[2] }; // 匹配稿2 views 最高 → top 档位
+}
+
+describe("buildBaseline with mixed historical + matched data", () => {
+  it("does not fabricate comparative insights from zero-trait historical bands", async () => {
+    await seedMixedData();
+
+    const baseline = await buildBaseline(testDir);
+    // avgMetrics / sampleSize 在全量（含历史）上计算
+    expect(baseline.sampleSize).toBe(13);
+    expect(baseline.avgMetrics.views).toBe(Math.round(57500 / 13));
+    // traits 来自真实 matched contents，不是全零档位
+    expect(baseline.topContentTraits.avgLength).toBeGreaterThan(0);
+    expect(baseline.lowContentTraits.avgLength).toBeGreaterThan(0);
+    // 不得出现"平均 0 字"类捏造对比
+    for (const insight of baseline.insights) {
+      expect(insight).not.toMatch(/平均 0 字/);
+    }
+  });
+
+  it("compareToBaseline does not report all-poor against fabricated zero traits", async () => {
+    const { topBody } = await seedMixedData();
+    const draft = await saveContent(
+      { title: "新草稿", body: topBody, platform: "douyin", status: "draft_ready", tags: [] },
+      testDir,
+    );
+
+    const r = await compareToBaseline(draft.id, testDir);
+    const lengthComp = r.comparisons.find((c) => c.dimension === "内容长度");
+    expect(String(lengthComp?.baseline)).not.toMatch(/^0 字/);
+    expect(lengthComp?.status).not.toBe("poor");
+    expect(r.comparisons.every((c) => c.status === "poor")).toBe(false);
   });
 });

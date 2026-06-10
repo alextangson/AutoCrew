@@ -54,6 +54,8 @@ export interface PerformanceTrackingResult {
   metrics: Record<string, number>;
   /** How this content compares to baseline */
   comparison?: string;
+  /** Why tracking failed (content not found / outcome store rejection) */
+  error?: string;
 }
 
 // --- Helpers ---
@@ -107,29 +109,24 @@ function analyzeTraits(contents: Content[]): ContentTraits {
 
 function getPerformanceScore(entry: PerformanceEntry): number {
   const m = entry.metrics;
-  // Weighted score: likes * 2 + comments * 3 + shares * 5 + saves * 4 + views * 0.01
+  // Weighted score: likes * 2 + comments * 3 + shares * 5 + saves/favorites * 4 + views * 0.01
+  // favorites = CSV 导入的收藏字段；saves 保留兼容 paste 路径。
+  // completionRate（口播主 reward signal）的计权推迟到赛道包计划（KOUBO_REWARD 接线时一并做）。
   return (
     (m.likes || 0) * 2 +
     (m.comments || 0) * 3 +
     (m.shares || 0) * 5 +
     (m.saves || 0) * 4 +
+    (m.favorites || 0) * 4 +
     (m.views || 0) * 0.01
   );
 }
 
-// --- Main Functions ---
-
 /**
- * Build a quality baseline from historical performance data.
+ * Outcome store 是唯一真实来源；为空时 fallback 到 legacy profile.performanceHistory。
+ * 多个 metricDate 快照只取每个作品最新一份，避免重复计权。
  */
-export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> {
-  const [contents, profile] = await Promise.all([
-    listContents(dataDir),
-    loadProfile(dataDir),
-  ]);
-
-  // Outcome store 是唯一真实来源；为空时 fallback 到 legacy profile.performanceHistory。
-  // 多个 metricDate 快照只取每个作品最新一份，避免重复计权。
+async function loadPerformanceHistory(dataDir?: string): Promise<PerformanceEntry[]> {
   const outcomes = await listOutcomes(dataDir);
   const latestByItem = new Map<string, (typeof outcomes)[number]>();
   for (const o of outcomes) {
@@ -145,9 +142,88 @@ export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> 
     ) as Record<string, number>,
     recordedAt: o.recordedAt,
   }));
+  if (fromOutcomes.length > 0) return fromOutcomes;
+  const profile = await loadProfile(dataDir);
+  return profile?.performanceHistory || [];
+}
 
-  const performanceHistory =
-    fromOutcomes.length > 0 ? fromOutcomes : profile?.performanceHistory || [];
+function computeAvgMetrics(history: PerformanceEntry[]): Record<string, number> {
+  const avgMetrics: Record<string, number> = {};
+  const metricKeys = new Set<string>();
+  for (const entry of history) {
+    for (const key of Object.keys(entry.metrics)) {
+      metricKeys.add(key);
+    }
+  }
+  for (const key of metricKeys) {
+    const values = history.map(e => e.metrics[key] || 0);
+    avgMetrics[key] = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+  }
+  return avgMetrics;
+}
+
+/**
+ * top/bottom 30% 切分。只在 matched 条目（contentId 能解析到真实 content）上做：
+ * 历史条目（hist: 伪 id）落在任一档位都会把该档位变成全零 traits，产出捏造的对比建议。
+ * matched 不足 3 条时不切分（返回空 → 零值 traits → 跳过对比型 insight）。
+ */
+function splitTopBottom(
+  matched: PerformanceEntry[],
+  contents: Content[],
+): { topContents: Content[]; bottomContents: Content[] } {
+  if (matched.length < 3) return { topContents: [], bottomContents: [] };
+  const scored = matched
+    .map(e => ({ entry: e, score: getPerformanceScore(e) }))
+    .sort((a, b) => b.score - a.score);
+  const topCount = Math.max(1, Math.floor(scored.length * 0.3));
+  const topIds = new Set(scored.slice(0, topCount).map(s => s.entry.contentId));
+  const bottomIds = new Set(scored.slice(-topCount).map(s => s.entry.contentId));
+  return {
+    topContents: contents.filter(c => topIds.has(c.id)),
+    bottomContents: contents.filter(c => bottomIds.has(c.id)),
+  };
+}
+
+/** 对比型 insight 只在两个档位都有真实 content 时生成，避免拿真实 traits 对比零值 */
+function generateInsights(
+  topTraits: ContentTraits,
+  bottomTraits: ContentTraits,
+  hasBothBands: boolean,
+): string[] {
+  const insights: string[] = [];
+
+  if (hasBothBands) {
+    if (topTraits.avgLength > bottomTraits.avgLength * 1.3) {
+      insights.push(`你表现好的内容平均 ${topTraits.avgLength} 字，比表现差的长 ${Math.round(((topTraits.avgLength / Math.max(bottomTraits.avgLength, 1)) - 1) * 100)}%。长内容可能更适合你。`);
+    } else if (bottomTraits.avgLength > topTraits.avgLength * 1.3) {
+      insights.push(`你表现好的内容平均 ${topTraits.avgLength} 字，比表现差的短。精简内容可能效果更好。`);
+    }
+
+    if (topTraits.hasCTA > bottomTraits.hasCTA + 20) {
+      insights.push(`表现好的内容 ${topTraits.hasCTA}% 有明确 CTA，表现差的只有 ${bottomTraits.hasCTA}%。记得加 CTA。`);
+    }
+
+    if (topTraits.avgEmojiCount > bottomTraits.avgEmojiCount + 2) {
+      insights.push(`表现好的内容平均用 ${topTraits.avgEmojiCount} 个 emoji，适当使用 emoji 有帮助。`);
+    }
+  }
+
+  if (insights.length === 0) {
+    insights.push("数据还不够多，暂时没有明显的模式差异。继续积累数据。");
+  }
+  return insights;
+}
+
+// --- Main Functions ---
+
+/**
+ * Build a quality baseline from historical performance data.
+ */
+export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> {
+  const [contents, performanceHistory] = await Promise.all([
+    listContents(dataDir),
+    loadPerformanceHistory(dataDir),
+  ]);
 
   if (performanceHistory.length < 3) {
     return {
@@ -162,54 +238,21 @@ export async function buildBaseline(dataDir?: string): Promise<QualityBaseline> 
     };
   }
 
-  // Calculate average metrics
-  const avgMetrics: Record<string, number> = {};
-  const metricKeys = new Set<string>();
-  for (const entry of performanceHistory) {
-    for (const key of Object.keys(entry.metrics)) {
-      metricKeys.add(key);
-    }
-  }
-  for (const key of metricKeys) {
-    const values = performanceHistory.map(e => e.metrics[key] || 0);
-    avgMetrics[key] = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
-  }
+  // avgMetrics / sampleSize 在全量（含历史回灌）上计算 —— day-1 价值所在
+  const avgMetrics = computeAvgMetrics(performanceHistory);
 
-  // Split into top and bottom performers
-  const scored = performanceHistory
-    .map(e => ({ entry: e, score: getPerformanceScore(e) }))
-    .sort((a, b) => b.score - a.score);
-
-  const topCount = Math.max(1, Math.floor(scored.length * 0.3));
-  const topIds = new Set(scored.slice(0, topCount).map(s => s.entry.contentId));
-  const bottomIds = new Set(scored.slice(-topCount).map(s => s.entry.contentId));
-
-  const topContents = contents.filter(c => topIds.has(c.id));
-  const bottomContents = contents.filter(c => bottomIds.has(c.id));
+  // traits 切分只在 matched 条目上做（见 splitTopBottom 注释）
+  const contentIds = new Set(contents.map((c) => c.id));
+  const matched = performanceHistory.filter((e) => contentIds.has(e.contentId));
+  const { topContents, bottomContents } = splitTopBottom(matched, contents);
 
   const topTraits = analyzeTraits(topContents);
   const bottomTraits = analyzeTraits(bottomContents);
-
-  // Generate insights
-  const insights: string[] = [];
-
-  if (topTraits.avgLength > bottomTraits.avgLength * 1.3) {
-    insights.push(`你表现好的内容平均 ${topTraits.avgLength} 字，比表现差的长 ${Math.round(((topTraits.avgLength / Math.max(bottomTraits.avgLength, 1)) - 1) * 100)}%。长内容可能更适合你。`);
-  } else if (bottomTraits.avgLength > topTraits.avgLength * 1.3) {
-    insights.push(`你表现好的内容平均 ${topTraits.avgLength} 字，比表现差的短。精简内容可能效果更好。`);
-  }
-
-  if (topTraits.hasCTA > bottomTraits.hasCTA + 20) {
-    insights.push(`表现好的内容 ${topTraits.hasCTA}% 有明确 CTA，表现差的只有 ${bottomTraits.hasCTA}%。记得加 CTA。`);
-  }
-
-  if (topTraits.avgEmojiCount > bottomTraits.avgEmojiCount + 2) {
-    insights.push(`表现好的内容平均用 ${topTraits.avgEmojiCount} 个 emoji，适当使用 emoji 有帮助。`);
-  }
-
-  if (insights.length === 0) {
-    insights.push("数据还不够多，暂时没有明显的模式差异。继续积累数据。");
-  }
+  const insights = generateInsights(
+    topTraits,
+    bottomTraits,
+    topContents.length > 0 && bottomContents.length > 0,
+  );
 
   return {
     sampleSize: performanceHistory.length,
@@ -312,8 +355,12 @@ export async function trackPerformance(
   const content = contents.find(c => c.id === contentId);
 
   if (!content) {
-    return { ok: false, contentId, metrics };
+    return { ok: false, contentId, metrics, error: `内容 ${contentId} 不存在` };
   }
+
+  // metricDate 用本地日期而非 UTC（Asia/Shanghai 早 8 点前 toISOString 会记成昨天）
+  const now = new Date();
+  const metricDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
   // 单一写入路径：写穿 outcome store（profile.performanceHistory 降级为只读 legacy）
   const write = await recordOutcome(
@@ -322,14 +369,14 @@ export async function trackPerformance(
       platform: content.platform || "unknown",
       platformTitle: content.title,
       publishedAt: content.publishedAt,
-      metricDate: new Date().toISOString().slice(0, 10),
+      metricDate,
       metrics,
       source: "paste",
     },
     dataDir,
   );
   if (!write.ok) {
-    return { ok: false, contentId, metrics };
+    return { ok: false, contentId, metrics, error: write.error };
   }
 
   // Quick comparison
