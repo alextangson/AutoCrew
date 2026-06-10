@@ -212,6 +212,20 @@ describe("ratioMetrics（抖音作品列表导出为小数比例）", () => {
   });
 });
 
+describe("ratioMetrics boundary", () => {
+  it("ratio 1.0 means 100% completion under the mapping declaration", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-ratio-boundary-"));
+    try {
+      const CSV = `作品名称,发布时间,播放量,完播率\n超短视频,2026-03-30 17:05:00,100,1`;
+      await importPerformanceCsv("douyin", CSV, "2026-06-10", dir);
+      const o = (await listOutcomes(dir))[0];
+      expect(o.metrics.completionRate).toBe(100); // 比例声明下 1 = 100%，不是 1%
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("completion5s ingestion (douyin 作品列表)", () => {
   it("ingests 5s完播率 as ratio-converted completion5s", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-c5s-test-"));

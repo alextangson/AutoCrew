@@ -41,27 +41,10 @@ description: |
 
 4. **Write the script:**
 
-   a. **Hook** — pick the ONE strongest type for this topic:
-
-   | Type | When to use |
-   |------|-------------|
-   | Pain point | Audience has an obvious unresolved frustration |
-   | Suspense | Topic has a counterintuitive truth or surprising data |
-   | Ideal state | Topic sells a desirable outcome |
-   | Emotional resonance | Topic touches identity, belonging, or aspiration |
-   | Contrast | Clear gap between common belief and reality |
-
-   Write 1-3 sentences. NEVER open with "哈喽大家好", "你有没有想过", or any generic greeting.
-
-   b. **Body** — 5-8 information points. Each point: **claim → why it's true → concrete example**.
-   - Each point: 80-150 characters. Total body: 800-1500 characters.
-   - Points build progressively — don't front-load the best stuff.
-   - Include 1-2 expectation-breaking twists.
-   - Include 1-2 interaction hooks (questions, "你猜怎么着", comment prompts).
-   - NO essay-style paragraphs. Short sentences. One idea per sentence.
-
-   c. **CTA** — 1-2 sentences guiding a specific action (save/comment/follow).
-   Must connect to the content's value — "收藏这条，下次用得上" beats "觉得有用就点赞".
+   a-c. **Hook / Body / CTA** — 钩子库、结构骨架、平台调整全部以
+   `src/modules/packs/koubo.ts`（知识口播赛道包）为唯一来源：先读取该文件，
+   从 `hooks` 选 ONE 最强钩子类型，按 `structure.hook` / `structure.body` /
+   `structure.cta` 的规则执行。
 
    d. **Title** — generate platform-optimized title variants using `title-hashtag.ts`:
    - Call `generateForPlatform(baseTopic, platform)` to get 3-5 title variants.
@@ -75,16 +58,7 @@ description: |
    - Save hashtags separately in the `hashtags` field for structured access.
 
 5. **Self-review before saving** (fix any failure, don't just check):
-   - [ ] 800+ characters total?
-   - [ ] Contains at least 2 concrete examples or scenarios (not vague claims)?
-   - [ ] Has a non-obvious insight or twist?
-   - [ ] Tone matches STYLE.md profile (if available)?
-   - [ ] No generic greetings, no essay-style paragraphs?
-   - [ ] Body is plain text with blank-line separators (no markdown headers)?
-   - [ ] Title within platform character limit?
-   - [ ] Hashtags generated and relevant?
-   - [ ] Contains at least 2 data points from research?
-   - [ ] Outline structure was followed?
+   按赛道包的 selfReview 清单逐项修正（不是只检查）—— 读 src/modules/packs/koubo.ts 的 selfReview 数组。
 
 6. **Save via tool:**
    ```json
@@ -127,13 +101,7 @@ description: |
 
 ## Platform-Specific Adjustments
 
-| Platform | Chars | Style notes |
-|----------|-------|-------------|
-| xiaohongshu | 300-1000 | Emoji-rich, casual, hashtags at end (5-15) |
-| douyin | Script format | [Scene] + [Voiceover] + [Text overlay], hook in 3s |
-| wechat_mp | 1500-3000 | Subheadings every 300-500 chars, more structured |
-| wechat_video | 300-800 | Educational tone, include text summary |
-| bilibili | 500-2000 | 年轻化表达，可以用梗，【】标注类型 |
+以赛道包的 platformAdjustments 为准（src/modules/packs/koubo.ts）。
 
 ## Title & Hashtag Integration
 
@@ -159,3 +127,4 @@ Always use these for structured title/hashtag generation. The AI agent refines t
 - 2026-04-01: v3 — Added RAW Engine integration (Research-Augmented Writing). Step 2 now gathers research context before writing.
 - 2026-04-01: v2 — Integrated STYLE.md + title-hashtag.ts + auto-review after save. Added hashtags field, bilibili platform notes.
 - 2026-03-31: v1 — Adapted from Qingmo write-script.md + _writing-style.md. Removed backend API curl dependency. Uses autocrew_content tool. Merged writing style rules inline.
+- 2026-06-10: v4 — playbook 抽入 koubo 赛道包（声明式），SKILL 只保留流程编排。

@@ -111,7 +111,7 @@ function analyzeTraits(contents: Content[]): ContentTraits {
 
 /** 按赛道包逐平台权重打分：score = Σ weights[k] × metrics[k]（未知平台用 default 兜底） */
 export function getPerformanceScore(entry: PerformanceEntry, pack: TrackPack): number {
-  const byPlatform = pack.reward.byPlatform as Partial<Record<string, PlatformReward>> | undefined;
+  const byPlatform: Partial<Record<string, PlatformReward>> | undefined = pack.reward.byPlatform;
   const reward = byPlatform?.[entry.platform] ?? pack.reward.default;
   let score = 0;
   for (const [key, weight] of Object.entries(reward.weights)) {
@@ -169,6 +169,7 @@ function computeAvgMetrics(history: PerformanceEntry[]): Record<string, number> 
  * top/bottom 30% 切分。只在 matched 条目（contentId 能解析到真实 content）上做：
  * 历史条目（hist: 伪 id）落在任一档位都会把该档位变成全零 traits，产出捏造的对比建议。
  * matched 不足 3 条时不切分（返回空 → 零值 traits → 跳过对比型 insight）。
+ * 跨平台条目在各自平台的权重尺度上打分后混排——分数表达"相对该平台 reward 函数的表现"，档位按平台倾斜是有意设计。
  */
 function splitTopBottom(
   matched: PerformanceEntry[],
