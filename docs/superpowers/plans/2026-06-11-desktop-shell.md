@@ -75,7 +75,7 @@ Commit: `feat: electron shell — window, whitelisted IPC, esbuild bundling`
 2. app.js（每屏一个 init 函数 + 一个轻量 `h()` DOM helper，禁 innerHTML 注入用户数据——XSS 基线）：
    - **报告屏（首屏）**：load 时 `autocrew.flywheelReport()` → 指标卡（作品数/平均播放/平均完播率/打标进度 traitSampleSize/3）+ insights 列表 + needsReview 列表（含确认提示语）+ byPlatform 简单条形（纯 CSS div 宽度，不引图表库）。
    - **生成屏**：topic 输入框 + platform 下拉（5 平台）+ research 可选多行 → `autocrew.generateScript({topic, platform, research})` → 生成中状态（按钮禁用 + 文案）→ 成功：展示 title/body/hashtags/tokensUsed + violations 红色警示（非空时）+「去稿件屏发布」引导；失败：error 原文展示（引擎未配置的提示要原样可读——含 DEEPSEEK_API_KEY 指引）。
-   - **稿件屏**：`autocrew.contentList()` → 列表（标题/平台/状态/时间，按时间倒序）→ 点击 → 详情（body 全文 + hashtags）+ 两个动作：「复制发布文案」（`autocrew.publishClipboard({id})` → 结果写剪贴板 `navigator.clipboard.writeText` + 提示）和「确认已发布」（输入 publish_url 可选 → `autocrew.publishConfirm({id, publish_url})` → 状态刷新）。
+   - **稿件屏**：`autocrew.contentList()` → 列表（标题/平台/状态/时间，按时间倒序）→ 点击 → 详情（body 全文 + hashtags）+ 两个动作：「复制发布文案」（`autocrew.publishClipboard({content_id})` → 结果写剪贴板 `navigator.clipboard.writeText` + 提示）和「确认已发布」（输入 publish_url 可选 → `autocrew.publishConfirm({content_id, publish_url})` → 状态刷新）。
    - **风格屏**：profile 的 writingRules 列表（经 `autocrew.contentGet`? 不——**Task 1 需补一个 `style:rules` 通道**读 loadProfile 的 writingRules/styleBoundaries；本计划修订：IPC_CHANNELS 共 9 个）+「从编辑中学习」按钮（styleDistill → summary 展示）+ 爆款吸收 textarea（1-5 条，每行一条 → styleAbsorb({samples})）。
 3. 交互基线：每个按钮有 loading/disabled 态；所有 `{ok:false}` 走统一 toast（顶部红条 5s）；空态文案（无稿件/无规则/无数据时引导动作）。
 4. 验证：`node --check desktop/renderer/app.js`；评审即门（与 extension/ 同姿势）；GUI 实机冒烟留 dogfood。
