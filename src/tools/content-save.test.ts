@@ -68,6 +68,66 @@ describe("executeContentSave", () => {
       // Verify no diff was recorded
       const diffs = await listDiffs({ contentId }, testDir);
       expect(diffs).toHaveLength(0);
+
+      // Title-only update must NOT destroy the body (undefined-key regression)
+      const getRes = await executeContentSave({
+        action: "get",
+        id: contentId,
+        _dataDir: testDir,
+      });
+      expect((getRes.content as any).title).toBe("New Title");
+      expect((getRes.content as any).body).toBe("Original body");
+    });
+
+    it("should preserve title when updating body only", async () => {
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "Keep Me",
+        body: "Original body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      const contentId = (createRes.content as any).id;
+
+      const updateRes = await executeContentSave({
+        action: "update",
+        id: contentId,
+        body: "Updated body",
+        _dataDir: testDir,
+      });
+      expect(updateRes.ok).toBe(true);
+
+      const getRes = await executeContentSave({
+        action: "get",
+        id: contentId,
+        _dataDir: testDir,
+      });
+      expect((getRes.content as any).title).toBe("Keep Me");
+      expect((getRes.content as any).body).toBe("Updated body");
+    });
+
+    it("should thread diff_note into the recorded diff's changeType", async () => {
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "Test",
+        body: "Original body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      const contentId = (createRes.content as any).id;
+
+      const updateRes = await executeContentSave({
+        action: "update",
+        id: contentId,
+        body: "Updated body",
+        diff_note: "去掉AI腔，口语化",
+        _dataDir: testDir,
+      });
+      expect(updateRes.ok).toBe(true);
+
+      const diffs = await listDiffs({ contentId }, testDir);
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].changeType).toBe("去掉AI腔，口语化");
     });
 
     it("should include warning in result when recordDiff fails", async () => {

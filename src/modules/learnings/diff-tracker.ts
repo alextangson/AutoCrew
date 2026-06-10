@@ -42,6 +42,7 @@ async function editsDir(dataDir?: string): Promise<string> {
 
 /**
  * Record a content edit diff.
+ * `note` (e.g. the user's diff_note) is stored into `changeType`.
  */
 export async function recordDiff(
   contentId: string,
@@ -49,6 +50,7 @@ export async function recordDiff(
   before: string,
   after: string,
   dataDir?: string,
+  note?: string,
 ): Promise<EditDiff> {
   const dir = await editsDir(dataDir);
   const id = `diff-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -60,6 +62,7 @@ export async function recordDiff(
     field,
     before: before.slice(0, 2000),
     after: after.slice(0, 2000),
+    ...(note ? { changeType: note } : {}),
     patterns,
     createdAt: new Date().toISOString(),
   };
@@ -89,6 +92,13 @@ export async function listDiffs(
     try {
       const raw = await fs.readFile(path.join(dir, f), "utf-8");
       const diff: EditDiff = JSON.parse(raw);
+      // Defensive: the same dir holds ad-hoc transition snapshots (local-store
+      // revision trigger) that lack createdAt/before/after — skip non-EditDiff shapes
+      if (
+        typeof diff.createdAt !== "string" ||
+        typeof diff.before !== "string" ||
+        typeof diff.after !== "string"
+      ) continue;
       if (opts?.contentId && diff.contentId !== opts.contentId) continue;
       diffs.push(diff);
     } catch {

@@ -84,6 +84,13 @@ describe("recordDiff", () => {
     const diffs = await listDiffs(undefined, testDir);
     expect(diffs.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("stores note into changeType when provided", async () => {
+    const diff = await recordDiff("content-004", "body", "原文", "改后", testDir, "去掉套话");
+    expect(diff.changeType).toBe("去掉套话");
+    const diffs = await listDiffs({ contentId: "content-004" }, testDir);
+    expect(diffs[0].changeType).toBe("去掉套话");
+  });
 });
 
 describe("listDiffs", () => {
@@ -105,6 +112,27 @@ describe("listDiffs", () => {
     const diffs = await listDiffs({ contentId: "c1" }, testDir);
     expect(diffs.length).toBe(1);
     expect(diffs[0].contentId).toBe("c1");
+  });
+
+  it("skips ad-hoc transition entries lacking createdAt/before/after without crashing", async () => {
+    // transitionStatus writes this shape into the same dir (local-store.ts revision trigger)
+    const editsDir = path.join(testDir, "learnings", "edits");
+    await fs.mkdir(editsDir, { recursive: true });
+    const adHoc = {
+      contentId: "c1",
+      fromStatus: "reviewing",
+      timestamp: new Date().toISOString(),
+      note: "User entered revision",
+      bodySnapshot: "正文快照",
+    };
+    await fs.writeFile(path.join(editsDir, "c1-12345.json"), JSON.stringify(adHoc, null, 2), "utf-8");
+
+    await recordDiff("c1", "body", "原文", "改后", testDir);
+
+    const diffs = await listDiffs(undefined, testDir);
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0].before).toBe("原文");
+    expect(diffs[0].after).toBe("改后");
   });
 });
 

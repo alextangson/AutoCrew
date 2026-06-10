@@ -11,7 +11,7 @@ import {
   normalizeLegacyStatus,
 } from "../storage/local-store.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
-import type { ContentStatus } from "../storage/local-store.js";
+import type { Content } from "../storage/local-store.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
@@ -53,6 +53,27 @@ export const contentSaveSchema = Type.Object({
   diff_note: Type.Optional(Type.String({ description: "Note for revision diff tracking" })),
 });
 
+/**
+ * Build the updates object including ONLY fields actually provided.
+ * Explicit undefined keys would otherwise survive local-store's
+ * `{...existing, ...updates}` spread and destroy existing values.
+ */
+function buildContentUpdates(params: Record<string, unknown>): Partial<Content> {
+  const updates: Partial<Content> = {};
+  if (params.title !== undefined) updates.title = params.title as string;
+  if (params.body !== undefined) updates.body = params.body as string;
+  if (params.platform !== undefined) updates.platform = params.platform as string;
+  if (params.status) updates.status = normalizeLegacyStatus(params.status as string);
+  if (params.tags !== undefined) updates.tags = params.tags as string[];
+  if (params.hashtags !== undefined) updates.hashtags = params.hashtags as string[];
+  if (params.siblings !== undefined) updates.siblings = params.siblings as string[];
+  if (params.publish_url !== undefined) updates.publishUrl = params.publish_url as string;
+  if (params.performance_data !== undefined) {
+    updates.performanceData = params.performance_data as Record<string, number>;
+  }
+  return updates;
+}
+
 export async function executeContentSave(params: Record<string, unknown>, deps?: { recordDiffImpl?: typeof recordDiff }) {
   const action = (params.action as string) || "save";
   const dataDir = (params._dataDir as string) || undefined;
@@ -81,23 +102,13 @@ export async function executeContentSave(params: Record<string, unknown>, deps?:
     const oldBody = oldContent.body;
     const newBody = params.body as string | undefined;
 
-    const updated = await updateContent(id, {
-      title: params.title as string | undefined,
-      body: newBody,
-      platform: params.platform as string | undefined,
-      status: params.status ? normalizeLegacyStatus(params.status as string) : undefined,
-      tags: params.tags as string[] | undefined,
-      hashtags: params.hashtags as string[] | undefined,
-      siblings: params.siblings as string[] | undefined,
-      publishUrl: params.publish_url as string | undefined,
-      performanceData: params.performance_data as Record<string, number> | undefined,
-    }, dataDir);
+    const updated = await updateContent(id, buildContentUpdates(params), dataDir);
     if (!updated) return { ok: false, error: `Content ${id} not found` };
 
     // Record diff if body changed
     if (newBody && newBody !== oldBody) {
       try {
-        await recordDiffImpl(id, "body", oldBody, newBody, dataDir);
+        await recordDiffImpl(id, "body", oldBody, newBody, dataDir, params.diff_note as string | undefined);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         return {
