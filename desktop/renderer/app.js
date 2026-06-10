@@ -73,6 +73,19 @@ document.querySelectorAll(".nav-link").forEach(link => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Wrap an IPC invoke: a rejected invoke (main process crash mid-call) becomes
+ * the standard {ok:false} shape so it flows into the toast path instead of
+ * leaving a button disabled forever.
+ */
+async function safeInvoke(fn, payload) {
+  try {
+    return await fn(payload);
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 function setLoading(btn, loading, label) {
   btn.disabled = loading;
   btn.textContent = loading ? (label || "处理中...") : btn.dataset.label;
@@ -115,7 +128,7 @@ async function initReport() {
   const loading = h("p", { class: "muted" }, "加载中...");
   el.appendChild(loading);
 
-  const res = await window.autocrew.flywheelReport();
+  const res = await safeInvoke(window.autocrew.flywheelReport);
   el.removeChild(loading);
 
   if (!res.ok) {
@@ -130,21 +143,23 @@ async function initReport() {
   // Metric cards
   const grid = h("div", { class: "metric-grid" });
 
+  // completionRate is already percent-scaled 0-100 (e.g. {"completionRate":41}) — no *100
   const completionRate = d.avgMetrics && d.avgMetrics.completionRate !== undefined
-    ? (d.avgMetrics.completionRate * 100).toFixed(1) + "%"
+    ? d.avgMetrics.completionRate + "%"
     : "—";
   const avgViews = d.avgMetrics && d.avgMetrics.views !== undefined
     ? Math.round(d.avgMetrics.views).toLocaleString("zh-CN")
     : "—";
-  const traitPct = d.traitSampleSize !== undefined
-    ? Math.round((d.traitSampleSize / 3) * 100) + "%"
+  // traitSampleSize is unbounded — show n/3, unlocked marker at >=3 (no percent artifact)
+  const traitProgress = d.traitSampleSize !== undefined
+    ? d.traitSampleSize + "/3" + (d.traitSampleSize >= 3 ? " ✓ 已解锁" : "")
     : "—";
 
   const cards = [
     ["作品数", d.works ? String(d.works.total) : "0"],
     ["平均播放", avgViews],
     ["平均完播率", completionRate],
-    ["打标进度", traitPct],
+    ["打标进度", traitProgress],
   ];
 
   for (const [label, value] of cards) {
@@ -283,7 +298,7 @@ function initGenerate() {
     const payload = { topic, platform };
     if (research) payload.research = research;
 
-    const res = await window.autocrew.generateScript(payload);
+    const res = await safeInvoke(window.autocrew.generateScript, payload);
     setLoading(genBtn, false);
 
     if (!res.ok) {
@@ -358,7 +373,7 @@ async function initDrafts() {
   const loading = h("p", { class: "muted" }, "加载中...");
   el.appendChild(loading);
 
-  const res = await window.autocrew.contentList();
+  const res = await safeInvoke(window.autocrew.contentList);
   el.removeChild(loading);
 
   if (!res.ok) {
@@ -404,7 +419,7 @@ async function renderDraftDetail(contentId, detailDiv, screenEl) {
   detailDiv.innerHTML = "";
   detailDiv.classList.remove("hidden");
 
-  const res = await window.autocrew.contentGet({ id: contentId });
+  const res = await safeInvoke(window.autocrew.contentGet, { id: contentId });
   if (!res.ok) {
     showToast(res.error || "加载稿件失败");
     return;
@@ -447,7 +462,7 @@ async function renderDraftDetail(contentId, detailDiv, screenEl) {
 
   copyBtn.addEventListener("click", async () => {
     setLoading(copyBtn, true, "复制中...");
-    const r = await window.autocrew.publishClipboard({ content_id: contentId });
+    const r = await safeInvoke(window.autocrew.publishClipboard, { content_id: contentId });
     setLoading(copyBtn, false);
     if (!r.ok) {
       showToast(r.error || "复制失败");
@@ -481,7 +496,7 @@ async function renderDraftDetail(contentId, detailDiv, screenEl) {
     const payload = { content_id: contentId };
     const url = urlInput.value.trim();
     if (url) payload.publish_url = url;
-    const r = await window.autocrew.publishConfirm(payload);
+    const r = await safeInvoke(window.autocrew.publishConfirm, payload);
     setLoading(confirmBtn, false);
     if (!r.ok) {
       showToast(r.error || "确认发布失败");
@@ -524,7 +539,7 @@ function initStyle() {
   distillBtn.addEventListener("click", async () => {
     setLoading(distillBtn, true, "提炼中...");
     distillResult.innerHTML = "";
-    const res = await window.autocrew.styleDistill();
+    const res = await safeInvoke(window.autocrew.styleDistill);
     setLoading(distillBtn, false);
     if (!res.ok) {
       showToast(res.error || "风格提炼失败");
@@ -571,7 +586,7 @@ function initStyle() {
 
     setLoading(absorbBtn, true, "吸收中...");
     absorbResult.innerHTML = "";
-    const res = await window.autocrew.styleAbsorb({ samples: lines });
+    const res = await safeInvoke(window.autocrew.styleAbsorb, { samples: lines });
     setLoading(absorbBtn, false);
 
     if (!res.ok) {
@@ -593,7 +608,7 @@ async function loadStyleRules(container) {
   const loading = h("p", { class: "muted" }, "加载中...");
   container.appendChild(loading);
 
-  const res = await window.autocrew.styleRules();
+  const res = await safeInvoke(window.autocrew.styleRules);
   container.removeChild(loading);
 
   if (!res.ok) {
@@ -617,7 +632,11 @@ async function loadStyleRules(container) {
   if (rules.length > 0) {
     const list = h("ul", { class: "rules-list" });
     for (const rule of rules) {
-      list.appendChild(h("li", {}, typeof rule === "string" ? rule : JSON.stringify(rule)));
+      // WritingRule objects: {rule, source, confidence, createdAt}
+      const text = rule && typeof rule === "object" ? (rule.rule || "") : String(rule);
+      const sourceSuffix = rule && rule.source === "auto_distilled" ? "（自动提炼）"
+        : rule && rule.source === "user_explicit" ? "（手动）" : "";
+      list.appendChild(h("li", {}, text + sourceSuffix));
     }
     container.appendChild(list);
   }
