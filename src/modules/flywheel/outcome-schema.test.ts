@@ -89,6 +89,14 @@ describe("validateOutcome", () => {
     const v = validateOutcome({ ...base, metricDate: "2026-06-01" });
     expect(v.ok).toBe(true);
   });
+  it("accepts negative follows (粉丝掉粉合法)", () => {
+    const v = validateOutcome({ ...base, metrics: { follows: -12, views: 100 } });
+    expect(v.ok).toBe(true);
+  });
+  it("still rejects other negative metrics like views", () => {
+    const v = validateOutcome({ ...base, metrics: { views: -5 } });
+    expect(v.ok).toBe(false);
+  });
 });
 
 describe("outcomeKey", () => {

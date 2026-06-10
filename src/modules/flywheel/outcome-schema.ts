@@ -73,7 +73,10 @@ export function validateOutcome(input: {
   if (values.some((v) => !Number.isFinite(v))) {
     reasons.push("存在非有限数值（NaN/Infinity）");
   }
-  if (values.some((v) => v < 0)) {
+  const hasIllegalNegative = Object.entries(m).some(
+    ([k, v]) => typeof v === "number" && v < 0 && k !== "follows",
+  );
+  if (hasIllegalNegative) {
     reasons.push("存在负数指标");
   }
   if (m.completionRate !== undefined && (m.completionRate < 0 || m.completionRate > 100)) {

@@ -48,7 +48,13 @@ export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome
   for (const o of journal) {
     byKey.set(outcomeKey(o), o);
   }
-  return Array.from(byKey.values());
+  const deduped = Array.from(byKey.values());
+  // 对账：同一平台条目（标题@发布日期 + 数据日期相同）已有打标（contentId 非空）版本时，
+  // 丢弃历史（contentId 为空）版本——confirm_published 后重导入同一 CSV 不双计。
+  const matchedTitleKeys = new Set(
+    deduped.filter((o) => o.contentId !== null).map((o) => outcomeKey({ ...o, contentId: null })),
+  );
+  return deduped.filter((o) => o.contentId !== null || !matchedTitleKeys.has(outcomeKey(o)));
 }
 
 export async function getOutcomesForContent(

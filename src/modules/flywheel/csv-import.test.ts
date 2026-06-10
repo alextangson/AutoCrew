@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { parseCsv, parseMetricNumber } from "./csv-import.js";
+import { parseCsv, parseMetricNumber, importPerformanceCsv, PLATFORM_MAPPINGS } from "./csv-import.js";
+import { saveContent, updateContent } from "../../storage/local-store.js";
+import { listOutcomes } from "./outcome-store.js";
 
 describe("parseCsv", () => {
   it("parses headers and rows", () => {
@@ -50,5 +52,100 @@ describe("parseMetricNumber", () => {
     expect(parseMetricNumber("")).toBeUndefined();
     expect(parseMetricNumber("-")).toBeUndefined();
     expect(parseMetricNumber(undefined)).toBeUndefined();
+  });
+  it("parses 亿 suffix", () => {
+    expect(parseMetricNumber("1.2亿")).toBe(120000000);
+  });
+  it("returns undefined for malformed number like 1.2.3万", () => {
+    expect(parseMetricNumber("1.2.3万")).toBeUndefined();
+  });
+  it("returns undefined for datetime string like 2026-06-01 10:00", () => {
+    expect(parseMetricNumber("2026-06-01 10:00")).toBeUndefined();
+  });
+  it("returns undefined for .万", () => {
+    expect(parseMetricNumber(".万")).toBeUndefined();
+  });
+  it("parses zero", () => {
+    expect(parseMetricNumber("0")).toBe(0);
+  });
+  it("parses negative numbers", () => {
+    expect(parseMetricNumber("-5")).toBe(-5);
+  });
+});
+
+let testDir: string;
+
+beforeEach(async () => {
+  testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-csv-test-"));
+});
+
+afterEach(async () => {
+  await fs.rm(testDir, { recursive: true, force: true });
+});
+
+const DOUYIN_CSV = `﻿作品名称,发布时间,播放量,完播率,点赞量,评论量,分享量,收藏量,粉丝增量
+5个护肤技巧,2026-06-01 10:00,1.2万,32.5%,300,45,20,80,15
+AutoCrew 之前的老视频,2025-12-01 09:00,5000,28%,100,10,5,30,3
+坏数据行,2026-06-01 10:00,-,-,-,-,-,-,-`;
+
+describe("importPerformanceCsv", () => {
+  it("imports rows, matches drafts, marks historical, rejects empty", async () => {
+    const c = await saveContent(
+      { title: "5个护肤技巧", body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    await updateContent(c.id, { publishedAt: "2026-06-01T10:30:00.000Z" }, testDir);
+
+    const report = await importPerformanceCsv("douyin", DOUYIN_CSV, "2026-06-08", testDir);
+
+    expect(report.total).toBe(3);
+    expect(report.imported).toBe(2);
+    expect(report.matched).toBe(1);
+    expect(report.historical).toBe(1);
+    expect(report.rejected).toHaveLength(1);
+
+    const outcomes = await listOutcomes(testDir);
+    expect(outcomes).toHaveLength(2);
+    const matched = outcomes.find((o) => o.contentId === c.id);
+    expect(matched?.metrics.views).toBe(12000);
+    expect(matched?.metrics.completionRate).toBe(32.5);
+    expect(matched?.metrics.follows).toBe(15);
+    const historical = outcomes.find((o) => o.contentId === null);
+    expect(historical?.platformTitle).toBe("AutoCrew 之前的老视频");
+  });
+
+  it("re-import of same file replaces instead of duplicating (idempotent)", async () => {
+    await importPerformanceCsv("douyin", DOUYIN_CSV, "2026-06-08", testDir);
+    const second = await importPerformanceCsv("douyin", DOUYIN_CSV, "2026-06-08", testDir);
+    expect(second.replaced).toBe(2);
+    expect(await listOutcomes(testDir)).toHaveLength(2);
+  });
+
+  it("errors on unknown platform", async () => {
+    await expect(importPerformanceCsv("bilibili", DOUYIN_CSV, "2026-06-08", testDir)).rejects.toThrow(
+      /没有.*映射/,
+    );
+  });
+
+  it("re-import after confirm_published supersedes the historical entry (no double count)", async () => {
+    const CSV = `作品名称,发布时间,播放量,完播率\n护肤新稿,2026-06-01 10:00,1000,30%`;
+    await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir); // 未匹配 → historical
+    const c = await saveContent(
+      { title: "护肤新稿", body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    const second = await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir); // 匹配 → contentId 键
+    expect(second.matched).toBe(1);
+    const outcomes = await listOutcomes(testDir);
+    const forTitle = outcomes.filter((o) => o.platformTitle === "护肤新稿");
+    expect(forTitle).toHaveLength(1);
+    expect(forTitle[0].contentId).toBe(c.id);
+  });
+});
+
+describe("PLATFORM_MAPPINGS", () => {
+  it("covers the three v1 platforms", () => {
+    expect(Object.keys(PLATFORM_MAPPINGS).sort()).toEqual(["douyin", "wechat_video", "xiaohongshu"]);
   });
 });
