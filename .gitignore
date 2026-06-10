@@ -5,6 +5,8 @@ dist/
 *.js.map
 !mcp/server.ts
 !index.ts
+# extension/ is source JS (no build step) — must track
+!extension/*.js
 .DS_Store
 # Never commit Pro API keys
 .pro

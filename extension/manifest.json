@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "AutoCrew Douyin Reader",
+  "version": "0.1.0",
+  "description": "从抖音创作者中心作品列表页读取数据，经 native messaging 喂进 AutoCrew 导入管线。只读，用户触发。",
+  "action": {
+    "default_title": "AutoCrew: 导入当前页数据",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://creator.douyin.com/*"],
+      "js": ["content-douyin.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "nativeMessaging",
+    "activeTab",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
