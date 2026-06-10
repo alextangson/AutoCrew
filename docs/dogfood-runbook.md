@@ -382,6 +382,7 @@ autocrew_flywheel action=report
 | 通知报 0 行（rowCount=0）| `ROW_SELECTOR` 未命中表格行 | DevTools Elements 面板找真实表格行容器，更新 `ROW_SELECTOR`（如 `.semi-table-row`） |
 | `rejected` 全军覆没 | `COLUMNS` 列序与页面实际列序不符 | DevTools 逐列数列标题，与 `COLUMNS` 数组对照；页面列序**可能与导出 xlsx 不同！** |
 | 指标全为空/0 | 某列 `null` 却含数据，或列序偏移 | 在 DevTools Console 运行 `document.querySelectorAll("table tbody tr")[0].querySelectorAll("td")` 数列数 |
+| 完播率与页面显示差 100 倍 | 页面显示低于 1% 的百分比（如 "0.85%"）被比例转换误放大为 85 | 导入后用 report 比对同一作品的完播率与页面显示值；确认误放大后用 record 带正确百分比覆盖（幂等） |
 
 ### 红线提醒
 

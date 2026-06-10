@@ -13,7 +13,8 @@
  *     在一个 async 函数中同步完成，不依赖长连接或 keepAlive。
  *   - content script 在扩展安装/重载前已打开的页面上不存在；
  *     sendMessage 失败时注入一次并重试。Chrome 为每次 executeScript
- *     建立全新 isolated world，注入后 listener 正常注册，重试成功。
+ *     注入扩展共享的 isolated world：listener 缺席时注入后正常注册，重试成功；
+ *     若脚本仍存活，重注入因 const 重声明在解析期失败（被捕获），原 listener 继续服务。
  *   - sendNativeMessage 是一次性调用，符合 ≤1-in-flight 合约。
  * =========================================================
  */
@@ -163,13 +164,14 @@ async function handleClick(tab) {
 
   const d = response.data || {};
   const total = d.total || rowCount;
+  const imported = d.imported !== undefined ? d.imported : total;
   const matched = d.matched !== undefined ? d.matched : "?";
   const historical = d.historical !== undefined ? d.historical : "?";
   const rejected = d.rejected ? d.rejected.length : 0;
 
   notify(
     "AutoCrew：导入完成",
-    "导入 " + total + " 条（匹配 " + matched + " / 历史 " + historical + " / 拒收 " + rejected + "）"
+    "导入 " + imported + " 条（共 " + total + " 行，匹配 " + matched + " / 历史 " + historical + " / 拒收 " + rejected + "）"
   );
 }
 
