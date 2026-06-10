@@ -986,6 +986,13 @@ function parsePublishTime(raw: string | undefined): string | null {
   return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 
+/** "2026/6/8"、"2026-06-08 12:00" → "2026-06-08"；缺失或解析失败用 defaultDate（schema 强制 YYYY-MM-DD） */
+function normalizeMetricDate(raw: string | undefined, defaultDate: string): string {
+  if (!raw) return defaultDate;
+  const t = Date.parse(raw.replace(/\//g, "-"));
+  return Number.isNaN(t) ? defaultDate : new Date(t).toISOString().slice(0, 10);
+}
+
 export interface ImportReport {
   total: number;
   imported: number;
@@ -1022,7 +1029,7 @@ export async function importPerformanceCsv(
     const row = rows[i];
     const title = pick(row, mapping.title) || "(无标题)";
     const publishedAt = parsePublishTime(pick(row, mapping.publishedAt));
-    const metricDate = pick(row, mapping.metricDate)?.slice(0, 10) || defaultMetricDate;
+    const metricDate = normalizeMetricDate(pick(row, mapping.metricDate), defaultMetricDate);
 
     const metrics: OutcomeMetrics = {
       views: parseMetricNumber(pick(row, mapping.views)),
@@ -1058,13 +1065,58 @@ export async function importPerformanceCsv(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run src/modules/flywheel/csv-import.test.ts`
-Expected: PASS（13 tests）
+Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: 对账（评审新增）——confirm_published 后重导入不得双计**
+
+问题：某行首次导入时未匹配（historical，title 键），之后该稿 confirm_published，再次导入同一 CSV 会以 contentId 键写入新条目——两个键并存，listOutcomes 双计同一平台条目。
+
+修改 `src/modules/flywheel/outcome-store.ts` 的 `listOutcomes`，latest-wins 去重后丢弃"已有同 title 键打标版本"的历史条目：
+
+```typescript
+export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome[]> {
+  const journal = await readJournal(dataDir);
+  const byKey = new Map<string, PerformanceOutcome>();
+  for (const o of journal) {
+    byKey.set(outcomeKey(o), o);
+  }
+  const deduped = Array.from(byKey.values());
+  // 对账：同一平台条目（标题@发布日期 + 数据日期相同）已有打标（contentId 非空）版本时，
+  // 丢弃历史（contentId 为空）版本——confirm_published 后重导入同一 CSV 不双计。
+  const matchedTitleKeys = new Set(
+    deduped.filter((o) => o.contentId !== null).map((o) => outcomeKey({ ...o, contentId: null })),
+  );
+  return deduped.filter((o) => o.contentId !== null || !matchedTitleKeys.has(outcomeKey(o)));
+}
+```
+
+测试（追加到 csv-import.test.ts 的 importPerformanceCsv describe 块）：
+
+```typescript
+  it("re-import after confirm_published supersedes the historical entry (no double count)", async () => {
+    const CSV = `作品名称,发布时间,播放量,完播率\n护肤新稿,2026-06-01 10:00,1000,30%`;
+    await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir); // 未匹配 → historical
+    const c = await saveContent(
+      { title: "护肤新稿", body: "正文", platform: "douyin", status: "published", tags: [] },
+      testDir,
+    );
+    await updateContent(c.id, { publishedAt: "2026-06-01T10:00:00.000Z" }, testDir);
+    const second = await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir); // 匹配 → contentId 键
+    expect(second.matched).toBe(1);
+    const outcomes = await listOutcomes(testDir);
+    const forTitle = outcomes.filter((o) => o.platformTitle === "护肤新稿");
+    expect(forTitle).toHaveLength(1);
+    expect(forTitle[0].contentId).toBe(c.id);
+  });
+```
+
+运行 store 测试 + csv 测试确认全部通过。
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/modules/flywheel/csv-import.ts src/modules/flywheel/csv-import.test.ts
-git commit -m "feat: platform CSV import — column mapping as data, draft matching, import report"
+git add src/modules/flywheel/csv-import.ts src/modules/flywheel/csv-import.test.ts src/modules/flywheel/outcome-store.ts
+git commit -m "feat: platform CSV import — column mapping as data, draft matching, reconciliation"
 ```
 
 ---
