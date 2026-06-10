@@ -43,17 +43,21 @@ afterEach(async () => {
   }
 });
 
-/** Build a fake runLoopImpl that calls submit_script with the given payloads in order. */
+/**
+ * Build a fake runLoopImpl that calls submit_script with the given payloads in order.
+ * Each execute return value is pushed into execResults (for asserting error guidance).
+ */
 function makeRunLoop(
   payloads: Array<Record<string, unknown>>,
   tokens = 150,
+  execResults: string[] = [],
 ): (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> {
   return async (_cfg, opts) => {
     const submitTool = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_script");
     if (!submitTool) throw new Error("submit_script tool not found in opts");
 
     for (const payload of payloads) {
-      await submitTool.execute(payload);
+      execResults.push(await submitTool.execute(payload));
     }
 
     return {
@@ -198,5 +202,65 @@ describe("generateScript", () => {
     await expect(generateScript(TEST_REQ, testDir, { runLoopImpl })).rejects.toThrow(
       /DEEPSEEK_API_KEY|engine\.json/,
     );
+  });
+
+  // 6. Type validation: hashtags passed as string → array error, model retries with array
+  it("type validation: hashtags as string → 字符串数组 error, retry with array succeeds", async () => {
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop(
+      [{ ...GOOD_PAYLOAD, hashtags: "#AI赚钱" }, GOOD_PAYLOAD],
+      150,
+      execResults,
+    );
+
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+
+    expect(execResults[0]).toContain("字段 hashtags 应为字符串数组");
+    expect(execResults[0]).toContain("submit_script");
+    expect(execResults[1]).toBe("已收到脚本");
+    expect(result.hashtags).toEqual(GOOD_PAYLOAD.hashtags);
+
+    const saved = await getContent(result.contentId, testDir);
+    expect(saved!.hashtags).toEqual(GOOD_PAYLOAD.hashtags);
+  });
+
+  // 7. Type validation: title passed as number → string error
+  it("type validation: title as number → 应为字符串 error, retry succeeds", async () => {
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop([{ ...GOOD_PAYLOAD, title: 42 }, GOOD_PAYLOAD], 150, execResults);
+
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+
+    expect(execResults[0]).toContain("字段 title 应为字符串");
+    expect(execResults[0]).toContain("submit_script");
+    expect(result.title).toBe(GOOD_PAYLOAD.title);
+  });
+
+  // 8. Whitespace-only field is rejected as missing (trim before emptiness check)
+  it("whitespace-only title → 缺少字段 error, retry succeeds", async () => {
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop([{ ...GOOD_PAYLOAD, title: "   " }, GOOD_PAYLOAD], 150, execResults);
+
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+
+    expect(execResults[0]).toContain("缺少字段 title");
+    expect(result.title).toBe(GOOD_PAYLOAD.title);
+  });
+
+  // 9. Double valid submit: last submission wins
+  it("two valid submissions → second payload persisted (last-wins)", async () => {
+    const secondPayload = { ...GOOD_PAYLOAD, title: "第二稿标题", hashtags: ["#第二稿"] };
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop([GOOD_PAYLOAD, secondPayload], 150, execResults);
+
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+
+    expect(execResults).toEqual(["已收到脚本", "已收到脚本"]);
+    expect(result.title).toBe("第二稿标题");
+    expect(result.hashtags).toEqual(["#第二稿"]);
+
+    const saved = await getContent(result.contentId, testDir);
+    expect(saved!.title).toBe("第二稿标题");
+    expect(saved!.hashtags).toEqual(["#第二稿"]);
   });
 });

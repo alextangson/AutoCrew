@@ -11,7 +11,6 @@
 import { loadEngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool, LoopResult } from "../../engine/loop.js";
-import type { EngineConfig } from "../../engine/config.js";
 import { getPack, DEFAULT_PACK_ID } from "../packs/index.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { buildScriptPrompts } from "./script-prompt.js";
@@ -41,7 +40,42 @@ interface SubmitPayload {
   hashtags: string[];
 }
 
-const REQUIRED_FIELDS: (keyof SubmitPayload)[] = ["title", "hook", "body", "cta", "hashtags"];
+const TEXT_FIELDS = ["title", "hook", "body", "cta"] as const;
+const REQUIRED_FIELDS: (keyof SubmitPayload)[] = [...TEXT_FIELDS, "hashtags"];
+
+function missingField(field: string): string {
+  return `Error: 缺少字段 ${field}，请补全后重新调用 submit_script`;
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === "string");
+}
+
+type SubmitValidation = { ok: true; payload: SubmitPayload } | { ok: false; error: string };
+
+/** LLM 输出是不可信边界：缺失/空之外还必须校验类型，否则坏数据存进稿件后才爆。 */
+function validateSubmitArgs(args: Record<string, unknown>): SubmitValidation {
+  const text: Record<string, string> = {};
+  for (const field of TEXT_FIELDS) {
+    const val = args[field];
+    if (val === undefined || val === null) return { ok: false, error: missingField(field) };
+    if (typeof val !== "string") {
+      return { ok: false, error: `Error: 字段 ${field} 应为字符串，请修正后重新调用 submit_script` };
+    }
+    if (val.trim() === "") return { ok: false, error: missingField(field) };
+    text[field] = val;
+  }
+  const hashtags = args.hashtags;
+  if (hashtags === undefined || hashtags === null) return { ok: false, error: missingField("hashtags") };
+  if (!isStringArray(hashtags)) {
+    return { ok: false, error: "Error: 字段 hashtags 应为字符串数组，请修正后重新调用 submit_script" };
+  }
+  if (hashtags.length === 0) return { ok: false, error: missingField("hashtags") };
+  return {
+    ok: true,
+    payload: { title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags },
+  };
+}
 
 /** Build the submit_script LoopTool; the captured variable is mutated on success. */
 function buildSubmitTool(captured: { payload: SubmitPayload | null }): LoopTool {
@@ -60,18 +94,10 @@ function buildSubmitTool(captured: { payload: SubmitPayload | null }): LoopTool 
       required: REQUIRED_FIELDS,
     },
     execute(args) {
-      for (const field of REQUIRED_FIELDS) {
-        const val = args[field];
-        const empty =
-          val === undefined ||
-          val === null ||
-          val === "" ||
-          (Array.isArray(val) && val.length === 0);
-        if (empty) {
-          return `Error: 缺少字段 ${field}，请补全后重新调用 submit_script`;
-        }
-      }
-      captured.payload = args as unknown as SubmitPayload;
+      const result = validateSubmitArgs(args);
+      if (!result.ok) return result.error;
+      // Last valid submission wins — a corrected resubmission replaces the earlier capture.
+      captured.payload = result.payload;
       return "已收到脚本";
     },
   };
@@ -94,7 +120,7 @@ export async function generateScript(
   const submitTool = buildSubmitTool(captured);
 
   const loopFn = deps?.runLoopImpl ?? runLoop;
-  const result: LoopResult = await loopFn(config as EngineConfig, {
+  const result: LoopResult = await loopFn(config, {
     model: config.strongModel,
     systemPrompt: system,
     userMessage: user,
@@ -108,7 +134,17 @@ export async function generateScript(
     );
   }
 
-  const { title, hook, body: bodyText, cta, hashtags } = captured.payload;
+  return finalizeScript(captured.payload, req, result.totalTokens, dataDir);
+}
+
+/** 后处理：组装 → humanize → 违禁词扫描 → 存稿（draft_ready，同现有写作流）。 */
+async function finalizeScript(
+  payload: SubmitPayload,
+  req: ScriptRequest,
+  tokensUsed: number,
+  dataDir?: string,
+): Promise<GeneratedScript> {
+  const { title, hook, body: bodyText, cta, hashtags } = payload;
   const assembled = `${hook}\n\n${bodyText}\n\n${cta}`;
   const { humanizedText } = humanizeZh({ text: assembled });
 
@@ -133,6 +169,6 @@ export async function generateScript(
     body: humanizedText,
     hashtags,
     violations,
-    tokensUsed: result.totalTokens,
+    tokensUsed,
   };
 }
