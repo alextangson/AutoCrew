@@ -44,6 +44,23 @@ export interface OutcomeValidation {
   reasons: string[];
 }
 
+const RATE_METRICS = [
+  ["completionRate", "完播率"],
+  ["completion5s", "5s完播率"],
+] as const;
+
+/** 完播类指标检查：超出 0-100 拒收，(0,1) 疑似小数比例转人工 */
+function rateMetricIssues(m: OutcomeMetrics): { rejects: string[]; reviews: string[] } {
+  const rejects: string[] = [];
+  const reviews: string[] = [];
+  for (const [key, label] of RATE_METRICS) {
+    const v = m[key];
+    if (v === undefined) continue;
+    if (v < 0 || v > 100) rejects.push(`${label} ${v} 超出 0-100`);
+    else if (v > 0 && v < 1) reviews.push(`${label} ${v} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
+  }
+  return { rejects, reviews };
+}
 
 export function normalizeTitle(title: string): string {
   return title
@@ -76,16 +93,8 @@ export function validateOutcome(input: {
   if (hasIllegalNegative) {
     reasons.push("存在负数指标");
   }
-  const RATE_METRICS: Array<["completionRate" | "completion5s", string]> = [
-    ["completionRate", "完播率"],
-    ["completion5s", "5s完播率"],
-  ];
-  for (const [key, label] of RATE_METRICS) {
-    const v = m[key];
-    if (v !== undefined && (v < 0 || v > 100)) {
-      reasons.push(`${label} ${v} 超出 0-100`);
-    }
-  }
+  const rate = rateMetricIssues(m);
+  reasons.push(...rate.rejects);
   if (input.publishedAt) {
     const pubDate = input.publishedAt.slice(0, 10);
     if (input.metricDate < pubDate) {
@@ -102,12 +111,7 @@ export function validateOutcome(input: {
   if (m.views === 0 && engagement > 0) {
     review.push("播放为 0 但有互动，疑似读错字段");
   }
-  for (const [key, label] of RATE_METRICS) {
-    const v = m[key];
-    if (v !== undefined && v > 0 && v < 1) {
-      review.push(`${label} ${v} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
-    }
-  }
+  review.push(...rate.reviews);
   return { ok: true, needsReview: review.length > 0, reasons: review };
 }
 
