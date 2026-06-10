@@ -24,11 +24,13 @@ const DEFAULTS = {
 
 export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> {
   let fromFile: Partial<EngineConfig> = {};
+  const filePath = path.join(getDataDir(dataDir), "engine.json");
   try {
-    const raw = await fs.readFile(path.join(getDataDir(dataDir), "engine.json"), "utf-8");
-    fromFile = JSON.parse(raw) as Partial<EngineConfig>;
-  } catch {
-    // 没有 engine.json 是正常的（用 env）
+    fromFile = JSON.parse(await fs.readFile(filePath, "utf-8")) as Partial<EngineConfig>;
+  } catch (err) {
+    if ((err as { code?: string }).code !== "ENOENT") {
+      throw new Error(`engine.json 解析失败（${filePath}）：${(err as Error).message}`);
+    }
   }
   const apiKey = fromFile.apiKey ?? process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {

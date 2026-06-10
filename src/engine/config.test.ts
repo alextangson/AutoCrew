@@ -57,4 +57,9 @@ describe("loadEngineConfig", () => {
   it("throws actionable error when no key anywhere", async () => {
     await expect(loadEngineConfig(testDir)).rejects.toThrow(/DEEPSEEK_API_KEY|engine\.json/);
   });
+
+  it("throws a pointing error when engine.json is malformed", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), "{broken");
+    await expect(loadEngineConfig(testDir)).rejects.toThrow(/engine\.json 解析失败/);
+  });
 });
