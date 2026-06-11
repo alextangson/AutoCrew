@@ -8,6 +8,8 @@
  *
  * 并发安全：同一 conversationId 的 appendTurn（read-modify-write）通过
  * module-level queue 串行化，避免两条并发 turn 互相覆盖消息对。
+ * 注意：历史读取在写队列之外——同会话两条并发 turn 各自看到回合前的历史；
+ * 落盘完整性由队列保证，renderer 侧约定 busy 时禁发（chatBusy 已做）。
  */
 import { runChatTurn, type ChatHistoryMessage, type ChatProgressEvent } from "./chat-router.js";
 import {
@@ -25,10 +27,13 @@ function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   const prev = writeQueues.get(key) ?? Promise.resolve();
   const next = prev.then(task, task);
   writeQueues.set(key, next);
-  // Clean up map entry once this chain link settles (avoids unbounded growth)
-  next.finally(() => {
+  // Clean up map entry once this chain link settles (avoids unbounded growth).
+  // then(cleanup, cleanup) — NOT finally(): finally() would create a new promise
+  // that re-rejects with next's reason and is never handled (unhandledRejection).
+  const cleanup = () => {
     if (writeQueues.get(key) === next) writeQueues.delete(key);
-  });
+  };
+  next.then(cleanup, cleanup);
   return next;
 }
 
@@ -68,6 +73,7 @@ export async function runPersistedChatTurn(params: {
   const persist = async () => {
     const convId = conversationId ?? (await createConversation(message, dataDir)).id;
     const meta = await appendTurn(convId, { content: message }, { content: reply, cards }, dataDir);
+    if (!meta) console.warn("[chat-persist] 会话在回合中被删除，本轮未落盘：" + convId);
     return {
       ...result,
       data: { ...(result.data as Record<string, unknown>), conversationId: meta ? convId : null },

@@ -125,4 +125,42 @@ describe("runPersistedChatTurn", () => {
     expect(conv!.messages).toHaveLength(6); // 2 initial + 2+2 from concurrent
     expect(conv!.meta.turns).toBe(3);
   });
+
+  it("rejecting persist propagates to caller, drains queue, no unhandledRejection", async () => {
+    const meta = await createConversation("故障会话", dir);
+    const convDir = path.join(dir, "conversations", meta.id);
+
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      // 让 appendTurn 的原子写失败：会话目录只读 → 临时文件写不进
+      await fs.chmod(convDir, 0o500);
+      await expect(
+        runPersistedChatTurn({
+          message: "写不进",
+          conversationId: meta.id,
+          dataDir: dir,
+          runTurn: okTurn("ok"),
+        }),
+      ).rejects.toThrow();
+      await fs.chmod(convDir, 0o700);
+
+      // 队列已排空 —— 同会话后续 turn 正常工作
+      const res = await runPersistedChatTurn({
+        message: "恢复",
+        conversationId: meta.id,
+        dataDir: dir,
+        runTurn: okTurn("好"),
+      });
+      expect(res.ok).toBe(true);
+
+      // 给 unhandledRejection 一个 tick 的机会触发，再断言没发生
+      await new Promise((r) => setTimeout(r, 10));
+      expect(rejections).toEqual([]);
+    } finally {
+      await fs.chmod(convDir, 0o700).catch(() => {});
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });
