@@ -10,7 +10,11 @@ function appendChatMessage(role, text) {
   const stream = document.getElementById("chat-stream");
   const msg = h("div", { class: "chat-msg chat-" + role });
   const bubble = h("div", { class: "chat-bubble" });
-  bubble.textContent = text;
+  if (role === "assistant" && typeof renderMarkdown === "function") {
+    bubble.appendChild(renderMarkdown(text));
+  } else {
+    bubble.textContent = text;
+  }
   msg.appendChild(bubble);
   stream.appendChild(msg);
   stream.scrollTop = stream.scrollHeight;

@@ -597,3 +597,28 @@ label {
   cursor: pointer;
   color: var(--muted);
 }
+
+/* ── Markdown in chat bubbles ───────────────────────────────────────────────── */
+
+.md-p { margin: 0; }
+.md-p + .md-p, .md-list + .md-p, .md-p + .md-list { margin-top: 6px; }
+.md-h { font-weight: 700; margin: 6px 0 2px; }
+.md-h1 { font-size: 16px; }
+.md-h2 { font-size: 15px; }
+.md-h3 { font-size: 14px; }
+.md-list { margin: 4px 0 4px 18px; }
+.md-code {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.md-pre {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 4px 0;
+}
