@@ -41,11 +41,22 @@ describe("rankCandidates", () => {
   it("scores industry-token hits above non-hits", () => {
     const now = Date.now();
     const items: RadarItem[] = [
-      { title: "AI 编程助手大更新", link: "l1", source: "36氪", publishedAt: new Date(now).toISOString() },
       { title: "城市露营装备清单", link: "l2", source: "36氪", publishedAt: new Date(now).toISOString() },
+      { title: "AI技术全新突破", link: "l1", source: "36氪", publishedAt: new Date(now - 3600_000).toISOString() },
     ];
     const ranked = rankCandidates(items, "AI技术/科技博主", 10);
-    expect(ranked[0].title).toBe("AI 编程助手大更新");
+    expect(ranked[0].title).toBe("AI技术全新突破"); // 关键词 ×3 必须赢过更新鲜的非命中项
+  });
+
+  it("matches ASCII runs inside fused CJK-ASCII industry strings", () => {
+    const now = new Date().toISOString();
+    const items: RadarItem[] = [
+      // 非命中项放第一位：排除稳定排序的假通过路径（与上一用例同款防护）
+      { title: "城市露营装备清单", link: "l2", source: "36氪", publishedAt: now },
+      { title: "OpenAI 发布新模型", link: "l1", source: "36氪", publishedAt: now },
+    ];
+    const ranked = rankCandidates(items, "AI技术博主", 10);
+    expect(ranked[0].title).toBe("OpenAI 发布新模型");
   });
 
   it("caps at limit and prefers recent items on tie", () => {

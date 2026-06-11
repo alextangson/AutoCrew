@@ -68,7 +68,10 @@ export function parseRssItems(xml: string): Array<Omit<RadarItem, "source">> {
 
 /** 确定性候选排序：定位 token 命中 ×3 + 新鲜度（<24h +2, <72h +1） */
 export function rankCandidates(items: RadarItem[], industry: string, limit: number): RadarItem[] {
-  const tokens = industry.split(/[/\s,，、|]+/).map((t) => t.trim()).filter((t) => t.length >= 2);
+  const baseTokens = industry.split(/[/\s,，、|]+/).map((t) => t.trim()).filter((t) => t.length >= 2);
+  // 中英混写定位（如 "AI技术博主"）：ASCII 串单独成 token，否则永远匹配不上英文标题里的 "AI"/"GPT"
+  const asciiTokens = (industry.match(/[A-Za-z0-9]{2,}/g) ?? []);
+  const tokens = [...new Set([...baseTokens, ...asciiTokens])];
   const now = Date.now();
   const scored = items.map((item) => {
     let score = 0;

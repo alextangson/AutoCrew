@@ -55,7 +55,13 @@ app.whenReady().then(() => {
   createWindow();
 
   // 选题雷达：启动 fire-and-forget 刷新（PRD §7.1——定期抓取归外层调度，v1=启动时）
-  void refreshTopicRadar().catch(() => {});
+  void refreshTopicRadar()
+    .then((r) => {
+      if (r.failedSources.length > 0) console.warn("[topic-radar] 部分源失败：", r.failedSources.join(", "));
+    })
+    .catch((err) => {
+      console.error("[topic-radar] 启动刷新失败：", err instanceof Error ? err.message : err);
+    });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
