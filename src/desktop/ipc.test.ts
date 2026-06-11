@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 10 channels.
+ * IPC contract + handler registry tests — all 17 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -48,10 +48,14 @@ describe("IPC_CHANNELS", () => {
     "settings:get",
     "settings:set",
     "style:update_rule",
+    "onboarding:status",
+    "onboarding:init",
+    "flywheel:import_csv",
+    "dialog:pick_file",
   ];
 
-  it("has exactly 13 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(13);
+  it("has exactly 17 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(17);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -110,13 +114,14 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     ["content:get", "get"],
     ["publish:clipboard", "clipboard"],
     ["publish:confirm", "confirm_published"],
+    ["flywheel:import_csv", "import_csv"],
   ];
 
   it.each(EXPECTED_BINDINGS)("%s → action=%s", (channel, action) => {
     expect(CHANNEL_ACTIONS[channel]).toBe(action);
   });
 
-  it("covers exactly the 8 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule excluded)", () => {
+  it("covers exactly the 9 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -124,7 +129,10 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "chat:turn" &&
           ch !== "settings:get" &&
           ch !== "settings:set" &&
-          ch !== "style:update_rule",
+          ch !== "style:update_rule" &&
+          ch !== "onboarding:status" &&
+          ch !== "onboarding:init" &&
+          ch !== "dialog:pick_file",
       ).sort(),
     );
   });
@@ -324,5 +332,15 @@ describe("style:update_rule handler", () => {
     const handlers = buildIpcHandlers();
     expect((await handlers["style:update_rule"]({ index: -1 })).ok).toBe(false);
     expect((await handlers["style:update_rule"]({ index: 0 })).ok).toBe(false);
+  });
+});
+
+// ── 10. dialog:pick_file default handler ─────────────────────────────────────
+
+describe("dialog:pick_file default handler", () => {
+  it("fails outside the Electron main process（main.ts 用 deps 覆盖真实现）", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["dialog:pick_file"]({});
+    expect(res.ok).toBe(false);
   });
 });

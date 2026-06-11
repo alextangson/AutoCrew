@@ -30,6 +30,10 @@
  *   settings:get       {}
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
  *   style:update_rule  { index, rule?, disabled? }
+ *   onboarding:status  {}
+ *   onboarding:init    { industry?, platforms? }
+ *   flywheel:import_csv { platform, csv_path, metric_date? }
+ *   dialog:pick_file   {}
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -37,6 +41,7 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { loadProfile, updateWritingRule } from "../modules/profile/creator-profile.js";
+import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
 import { getEngineSettings, setEngineSettings } from "./settings.js";
 import type { IpcChannel } from "./channels.js";
@@ -66,6 +71,7 @@ export const CHANNEL_ACTIONS = {
   "content:get": "get",
   "publish:clipboard": "clipboard",
   "publish:confirm": "confirm_published",
+  "flywheel:import_csv": "import_csv",
 } as const satisfies Partial<Record<IpcChannel, string>>;
 
 // ── wrapExecute ───────────────────────────────────────────────────────────────
@@ -163,6 +169,12 @@ async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise
   }
 }
 
+// ── dialog:pick_file — 默认 stub；desktop/main.ts 用 deps 覆盖真实现 ─────────
+
+async function dialogUnavailableHandler(): Promise<Record<string, unknown>> {
+  return { ok: false, error: "文件选择仅在桌面主进程可用" };
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -185,6 +197,10 @@ export function buildIpcHandlers(
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
     "style:update_rule": styleUpdateRuleHandler,
+    "onboarding:status": getOnboardingStatus,
+    "onboarding:init": completeOnboardingInit,
+    "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),
+    "dialog:pick_file": dialogUnavailableHandler,
   };
 
   if (!deps) return defaults;
