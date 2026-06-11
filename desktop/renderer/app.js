@@ -154,7 +154,7 @@ async function initDrafts() {
   if (!res.ok) {
     showToast(res.error || "加载稿件失败");
     el.appendChild(h("p", { class: "empty-state" },
-      "无法加载稿件。请先在「生成」屏创建内容。"));
+      "无法加载稿件。在左侧对话里说「帮我写……」创建内容。"));
     return;
   }
 
@@ -163,7 +163,7 @@ async function initDrafts() {
 
   if (contents.length === 0) {
     el.appendChild(h("p", { class: "empty-state" },
-      "暂无稿件。前往「生成」屏创建第一篇内容。"));
+      "暂无稿件。在左侧对话里说「帮我写……」创建第一篇内容。"));
     return;
   }
 
