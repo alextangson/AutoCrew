@@ -15,8 +15,7 @@
   --accent: #0066cc;
   --danger: #cc2200;
   --success: #1a7f37;
-  --nav-w: 160px;
-  --radius: 6px;
+--radius: 6px;
   --gap: 16px;
 }
 
@@ -253,13 +252,6 @@ hr {
 
 /* ── Forms ───────────────────────────────────────────────────────────────────── */
 
-.form-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-width: 600px;
-}
-
 label {
   font-size: 13px;
   font-weight: 500;
@@ -281,11 +273,6 @@ label {
 .input-full:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.12);
-}
-
-.textarea-research {
-  height: 100px;
-  resize: vertical;
 }
 
 .textarea-absorb {
@@ -326,19 +313,6 @@ label {
   cursor: not-allowed;
 }
 
-.link-btn {
-  display: inline-block;
-  margin-top: 12px;
-  color: var(--accent);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.link-btn:hover {
-  text-decoration: underline;
-}
-
 /* ── Result cards ────────────────────────────────────────────────────────────── */
 
 .result-card {
@@ -358,20 +332,6 @@ label {
   margin-bottom: 6px;
 }
 
-.result-title {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.result-body {
-  white-space: pre-wrap;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.7;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
 .tag-wrap {
   display: flex;
   flex-wrap: wrap;
@@ -388,42 +348,6 @@ label {
 }
 
 /* ── Error / Warning boxes ───────────────────────────────────────────────────── */
-
-.error-box {
-  background: #fff0ee;
-  border: 1px solid #f5c6c2;
-  border-radius: var(--radius);
-  padding: 14px;
-  margin-top: 12px;
-  color: var(--danger);
-}
-
-.violations-box {
-  background: #fff8e1;
-  border: 1px solid #ffd54f;
-  border-radius: var(--radius);
-  padding: 14px;
-  margin-top: 12px;
-  color: #7a5c00;
-}
-
-.violations-box ul {
-  padding-left: 18px;
-  margin-top: 6px;
-}
-
-.violations-box li {
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.error-pre {
-  white-space: pre-wrap;
-  font-family: "SF Mono", "Consolas", monospace;
-  font-size: 12px;
-  margin-top: 8px;
-  line-height: 1.6;
-}
 
 /* ── Drafts ──────────────────────────────────────────────────────────────────── */
 
