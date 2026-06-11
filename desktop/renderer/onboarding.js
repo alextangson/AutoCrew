@@ -4,6 +4,9 @@
  * 依赖 dom.js / cards.js / chat.js。
  */
 
+let onboardingImportedPlatform = null;
+let onboardingFinished = false;
+
 async function bootOnboarding() {
   const res = await safeInvoke(window.autocrew.onboardingStatus);
   if (!res.ok || (res.data && res.data.onboarded)) {
@@ -63,6 +66,7 @@ function onboardingStepImport() {
       return;
     }
     showToast("导入成功");
+    onboardingImportedPlatform = select.value;
     appendChatMessage("assistant", "数据进来了。最后一步：让我学学你的写法。");
     onboardingStepStyle();
   });
@@ -111,7 +115,10 @@ function onboardingStepStyle() {
 }
 
 async function finishOnboarding(skippedAll) {
-  const init = await safeInvoke(window.autocrew.onboardingInit, {});
+  if (onboardingFinished) return;
+  onboardingFinished = true;
+  const init = await safeInvoke(window.autocrew.onboardingInit,
+    onboardingImportedPlatform ? { platforms: [onboardingImportedPlatform] } : {});
   if (!init.ok) {
     showToast(init.error || "初始化失败");
   }
