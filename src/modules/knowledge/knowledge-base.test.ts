@@ -38,6 +38,20 @@ describe("retrieveKnowledge", () => {
     expect(result).not.toBeNull();
     expect(result!.length).toBeLessThanOrEqual(700); // 500 正文 + 头部格式余量
   });
+
+  it("matches pure-Chinese topics via CJK bigrams (no word segmentation)", async () => {
+    const result = await retrieveKnowledge("大语言模型工具调用怎么做", testDir);
+    expect(result).not.toBeNull();
+    expect(result).toContain("工具调用循环");
+    expect(result).not.toContain("红烧肉");
+  });
+
+  it("generic bigram noise alone does not qualify a file", async () => {
+    await fs.writeFile(path.join(testDir, "knowledge", "noise.md"), "怎么说呢，就这样吧。");
+    const result = await retrieveKnowledge("写作怎么提升节奏感", testDir);
+    // noise.md 只命中「怎么」1 个 bigram（score 1 < 3），不入选
+    expect(result === null || !result.includes("怎么说呢")).toBe(true);
+  });
 });
 
 describe("knowledgeStatus", () => {

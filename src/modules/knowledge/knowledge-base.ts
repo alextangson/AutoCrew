@@ -26,6 +26,15 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length >= 2);
 }
 
+/** 中文无分词：CJK 连写段切重叠二字组，配合整 token 双轨计分 */
+function cjkBigrams(text: string): string[] {
+  const grams: string[] = [];
+  for (const run of text.match(/[一-鿿]{2,}/g) ?? []) {
+    for (let i = 0; i + 2 <= run.length; i++) grams.push(run.slice(i, i + 2));
+  }
+  return [...new Set(grams)];
+}
+
 export async function knowledgeStatus(dataDir?: string): Promise<{ dir: string; count: number }> {
   const dir = knowledgeDir(dataDir);
   try {
@@ -49,11 +58,14 @@ export async function retrieveKnowledge(
     return null;
   }
   if (names.length === 0) return null;
+  if (names.length > 50) console.warn("[knowledge] 文件数 " + names.length + "，全量读取可能变慢——知识库正式版再上索引");
 
   const topicTokens = tokenize(topic);
-  if (topicTokens.length === 0) return null;
+  const topicBigrams = cjkBigrams(topic);
+  if (topicTokens.length === 0 && topicBigrams.length === 0) return null;
 
   const scored: Array<{ name: string; content: string; score: number }> = [];
+  // 顺序读且无法短路：计分需全文。当前十位数文件量级下是刻意的简单实现。
   for (const name of names) {
     let content: string;
     try {
@@ -64,9 +76,12 @@ export async function retrieveKnowledge(
     const haystack = (name + "\n" + content).toLowerCase();
     let score = 0;
     for (const tok of topicTokens) {
-      if (haystack.includes(tok)) score += 1;
+      if (haystack.includes(tok)) score += 3;
     }
-    if (score > 0) scored.push({ name, content, score });
+    for (const gram of topicBigrams) {
+      if (haystack.includes(gram)) score += 1;
+    }
+    if (score >= 3) scored.push({ name, content, score });
   }
   if (scored.length === 0) return null;
 
