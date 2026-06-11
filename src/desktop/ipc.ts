@@ -35,17 +35,21 @@
  *   flywheel:import_csv { platform, csv_path, metric_date? }
  *   dialog:pick_file   {}
  *   knowledge:status   {}
+ *   radar:status       {}
+ *   radar:refresh      {}
+ *   profile:update     { industry }
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
-import { loadProfile, updateWritingRule } from "../modules/profile/creator-profile.js";
+import { loadProfile, updateWritingRule, updateProfile } from "../modules/profile/creator-profile.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
 import { getEngineSettings, setEngineSettings } from "./settings.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
+import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
 import type { IpcChannel } from "./channels.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -200,6 +204,24 @@ async function knowledgeStatusHandler(payload: Record<string, unknown>): Promise
   }
 }
 
+// ── profile:update — 侦察员面板：定位编辑（只许 industry 单字段，YAGNI） ──────
+
+async function profileUpdateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const industry = payload.industry;
+  if (typeof industry !== "string" || industry.trim() === "") {
+    return { ok: false, error: "需要非空 industry" };
+  }
+  try {
+    const profile = await updateProfile({ industry: industry.trim() }, (payload._dataDir as string) || undefined);
+    return { ok: true, data: { industry: profile.industry } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -227,6 +249,9 @@ export function buildIpcHandlers(
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),
     "dialog:pick_file": dialogUnavailableHandler,
     "knowledge:status": knowledgeStatusHandler,
+    "radar:status": getRadarStatus,
+    "radar:refresh": (payload) => doRadarRefresh(payload),
+    "profile:update": profileUpdateHandler,
   };
 
   if (!deps) return defaults;

@@ -53,10 +53,13 @@ describe("IPC_CHANNELS", () => {
     "flywheel:import_csv",
     "dialog:pick_file",
     "knowledge:status",
+    "radar:status",
+    "radar:refresh",
+    "profile:update",
   ];
 
-  it("has exactly 18 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(18);
+  it("has exactly 21 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(21);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -122,7 +125,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS[channel]).toBe(action);
   });
 
-  it("covers exactly the 9 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status excluded)", () => {
+  it("covers exactly the 9 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -134,7 +137,10 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&
           ch !== "dialog:pick_file" &&
-          ch !== "knowledge:status",
+          ch !== "knowledge:status" &&
+          ch !== "radar:status" &&
+          ch !== "radar:refresh" &&
+          ch !== "profile:update",
       ).sort(),
     );
   });
@@ -370,5 +376,31 @@ describe("chat:turn progress forwarding", () => {
     );
     expect(res.ok).toBe(false); // testDir 无 engine.json → needsSetup，不应有任何事件
     expect(events).toEqual([]);
+  });
+});
+
+// ── 13. profile:update handler ────────────────────────────────────────────────
+
+describe("profile:update handler", () => {
+  it("updates industry only and preserves platforms", async () => {
+    const handlers = buildIpcHandlers();
+    await handlers["onboarding:init"]({ _dataDir: testDir, industry: "旧定位", platforms: ["douyin", "xiaohongshu"] });
+    const res = await handlers["profile:update"]({ _dataDir: testDir, industry: "新定位" });
+    expect(res.ok).toBe(true);
+    expect((res.data as Record<string, unknown>).industry).toBe("新定位");
+
+    const status = await handlers["onboarding:status"]({ _dataDir: testDir });
+    expect((status.data as Record<string, unknown>).industry).toBe("新定位");
+    // platforms 不被覆盖（直接读 profile 文件验证）
+    const fs2 = await import("node:fs/promises");
+    const path2 = await import("node:path");
+    const profile = JSON.parse(await fs2.readFile(path2.join(testDir, "creator-profile.json"), "utf-8"));
+    expect(profile.platforms).toEqual(["douyin", "xiaohongshu"]);
+  });
+
+  it("rejects empty or missing industry", async () => {
+    const handlers = buildIpcHandlers();
+    expect((await handlers["profile:update"]({ _dataDir: testDir, industry: "  " })).ok).toBe(false);
+    expect((await handlers["profile:update"]({ _dataDir: testDir })).ok).toBe(false);
   });
 });
