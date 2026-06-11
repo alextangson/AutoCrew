@@ -38,6 +38,13 @@
  *   radar:status       {}
  *   radar:refresh      {}
  *   profile:update     { industry }
+ *   content:update     { id, title?, body?, status?, hashtags? }
+ *   content:transition { id, target_status }
+ *   content:allowed_transitions { id }
+ *   content:versions   { id }
+ *   content:revert     { id, version }
+ *   draft:rewrite_selection { body, selection, instruction }
+ *   style:record_edit  { content_id?, before, after }
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -50,6 +57,9 @@ import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
 import { getEngineSettings, setEngineSettings } from "./settings.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
+import { listVersions, revertToVersion } from "../storage/local-store.js";
+import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
+import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import type { IpcChannel } from "./channels.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -79,6 +89,9 @@ export const CHANNEL_ACTIONS = {
   "publish:clipboard": "clipboard",
   "publish:confirm": "confirm_published",
   "flywheel:import_csv": "import_csv",
+  "content:update": "update",
+  "content:transition": "transition",
+  "content:allowed_transitions": "allowed_transitions",
 } as const satisfies Partial<Record<IpcChannel, string>>;
 
 // ── wrapExecute ───────────────────────────────────────────────────────────────
@@ -222,6 +235,78 @@ async function profileUpdateHandler(payload: Record<string, unknown>): Promise<R
   }
 }
 
+// ── 工作台（S2.7）：版本/回滚/选区改写/编辑信号 ───────────────────────────────
+
+async function contentVersionsHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  try {
+    const versions = await listVersions(id, (payload._dataDir as string) || undefined);
+    return { ok: true, data: { versions } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function contentRevertHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const id = payload.id;
+  const version = payload.version;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
+    return { ok: false, error: "需要合法 version（正整数）" };
+  }
+  try {
+    const content = await revertToVersion(id, version, (payload._dataDir as string) || undefined);
+    if (!content) return { ok: false, error: "回滚失败：稿件或版本不存在" };
+    return { ok: true, data: { content } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function rewriteSelectionHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  return rewriteSelection(
+    {
+      body: String(payload.body ?? ""),
+      selection: String(payload.selection ?? ""),
+      instruction: String(payload.instruction ?? ""),
+    },
+    (payload._dataDir as string) || undefined,
+  );
+}
+
+async function styleRecordEditHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const before = payload.before;
+  const after = payload.after;
+  if (typeof before !== "string" || !before || typeof after !== "string" || !after) {
+    return { ok: false, error: "需要 before 与 after" };
+  }
+  try {
+    await recordDiff(
+      String(payload.content_id ?? "workbench"),
+      "body",
+      before,
+      after,
+      (payload._dataDir as string) || undefined,
+    );
+    return { ok: true, data: {} };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -252,6 +337,13 @@ export function buildIpcHandlers(
     "radar:status": getRadarStatus,
     "radar:refresh": (payload) => doRadarRefresh(payload),
     "profile:update": profileUpdateHandler,
+    "content:update": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:update"]),
+    "content:transition": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:transition"]),
+    "content:allowed_transitions": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:allowed_transitions"]),
+    "content:versions": contentVersionsHandler,
+    "content:revert": contentRevertHandler,
+    "draft:rewrite_selection": rewriteSelectionHandler,
+    "style:record_edit": styleRecordEditHandler,
   };
 
   if (!deps) return defaults;

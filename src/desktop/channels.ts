@@ -28,6 +28,13 @@ export const IPC_CHANNELS = [
   "radar:status",
   "radar:refresh",
   "profile:update",
+  "content:update",
+  "content:transition",
+  "content:allowed_transitions",
+  "content:versions",
+  "content:revert",
+  "draft:rewrite_selection",
+  "style:record_edit",
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];
@@ -39,12 +46,14 @@ export const CHAT_PROGRESS_EVENT = "chat:progress";
  * Converts an IPC channel name to a camelCase method name.
  * e.g. "flywheel:report" → "flywheelReport"
  *
- * All 21 methods exposed on window.autocrew:
+ * All 28 methods exposed on window.autocrew:
  *   flywheelReport / generateScript / styleDistill / styleAbsorb / styleRules /
  *   contentList / contentGet / publishClipboard / publishConfirm / chatTurn /
  *   settingsGet / settingsSet / styleUpdateRule /
  *   onboardingStatus / onboardingInit / flywheelImportCsv / dialogPickFile /
- *   knowledgeStatus / radarStatus / radarRefresh / profileUpdate
+ *   knowledgeStatus / radarStatus / radarRefresh / profileUpdate /
+ *   contentUpdate / contentTransition / contentAllowedTransitions /
+ *   contentVersions / contentRevert / draftRewriteSelection / styleRecordEdit
  */
 export function chToMethod(ch: string): string {
   const [ns, action] = ch.split(":");

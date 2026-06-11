@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 21 channels.
+ * IPC contract + handler registry tests — all 28 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -31,7 +31,7 @@ afterEach(async () => {
   await fs.rm(testDir, { recursive: true, force: true });
 });
 
-// ── 1. Contract: all 10 channels present ─────────────────────────────────────
+// ── 1. Contract: all 28 channels present ─────────────────────────────────────
 
 describe("IPC_CHANNELS", () => {
   const EXPECTED: IpcChannel[] = [
@@ -56,10 +56,17 @@ describe("IPC_CHANNELS", () => {
     "radar:status",
     "radar:refresh",
     "profile:update",
+    "content:update",
+    "content:transition",
+    "content:allowed_transitions",
+    "content:versions",
+    "content:revert",
+    "draft:rewrite_selection",
+    "style:record_edit",
   ];
 
-  it("has exactly 21 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(21);
+  it("has exactly 28 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(28);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -125,7 +132,19 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS[channel]).toBe(action);
   });
 
-  it("covers exactly the 9 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update excluded)", () => {
+  it("content:update → action=update", () => {
+    expect(CHANNEL_ACTIONS["content:update"]).toBe("update");
+  });
+
+  it("content:transition → action=transition", () => {
+    expect(CHANNEL_ACTIONS["content:transition"]).toBe("transition");
+  });
+
+  it("content:allowed_transitions → action=allowed_transitions", () => {
+    expect(CHANNEL_ACTIONS["content:allowed_transitions"]).toBe("allowed_transitions");
+  });
+
+  it("covers exactly the 12 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -140,7 +159,11 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "knowledge:status" &&
           ch !== "radar:status" &&
           ch !== "radar:refresh" &&
-          ch !== "profile:update",
+          ch !== "profile:update" &&
+          ch !== "content:versions" &&
+          ch !== "content:revert" &&
+          ch !== "draft:rewrite_selection" &&
+          ch !== "style:record_edit",
       ).sort(),
     );
   });
@@ -402,5 +425,54 @@ describe("profile:update handler", () => {
     const handlers = buildIpcHandlers();
     expect((await handlers["profile:update"]({ _dataDir: testDir, industry: "  " })).ok).toBe(false);
     expect((await handlers["profile:update"]({ _dataDir: testDir })).ok).toBe(false);
+  });
+});
+
+// ── 14. content versions / revert handlers ────────────────────────────────────
+
+describe("content versions / revert handlers", () => {
+  it("lists versions and reverts after an update", async () => {
+    const handlers = buildIpcHandlers();
+    const saved = await handlers["content:list"]({ _dataDir: testDir }); // 触发目录初始化
+    void saved;
+    // 直接经 update 路径覆盖：先用 content-save 的 save action 建一篇
+    const { executeContentSave } = await import("../tools/content-save.js");
+    const made = await executeContentSave({
+      action: "save", title: "T", body: "v1 正文", platform: "douyin", status: "draft_ready", _dataDir: testDir,
+    } as never);
+    const id = ((made as Record<string, unknown>).content as Record<string, unknown>).id as string;
+
+    await handlers["content:update"]({ _dataDir: testDir, id, body: "v2 正文" });
+    const versions = await handlers["content:versions"]({ _dataDir: testDir, id });
+    expect(versions.ok).toBe(true);
+    expect(((versions.data as Record<string, unknown>).versions as unknown[]).length).toBe(2);
+
+    const reverted = await handlers["content:revert"]({ _dataDir: testDir, id, version: 1 });
+    expect(reverted.ok).toBe(true);
+    const got = await handlers["content:get"]({ _dataDir: testDir, id });
+    expect(((got as Record<string, unknown>).content as Record<string, unknown>).body).toBe("v1 正文");
+  });
+
+  it("revert validates params", async () => {
+    const handlers = buildIpcHandlers();
+    expect((await handlers["content:revert"]({ _dataDir: testDir })).ok).toBe(false);
+    expect((await handlers["content:revert"]({ _dataDir: testDir, id: "x" })).ok).toBe(false);
+  });
+});
+
+// ── 15. style:record_edit handler ─────────────────────────────────────────────
+
+describe("style:record_edit handler", () => {
+  it("records an accepted rewrite as edit signal", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["style:record_edit"]({
+      _dataDir: testDir, content_id: "c1", before: "原句子", after: "新句子",
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("validates before/after presence", async () => {
+    const handlers = buildIpcHandlers();
+    expect((await handlers["style:record_edit"]({ _dataDir: testDir, before: "x" })).ok).toBe(false);
   });
 });
