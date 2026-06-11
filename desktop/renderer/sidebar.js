@@ -35,6 +35,7 @@ async function refreshConversationList() {
     const delBtn = h("button", { class: "btn-mini conv-del", title: "删除任务" }, "✕");
     delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
+      if (chatBusy) { showToast("正在干活，稍等片刻再删除任务"); return; }
       if (!confirm("删除任务「" + conv.title + "」？聊天记录将一并删除。")) return;
       const r = await safeInvoke(window.autocrew.conversationsDelete, { id: conv.id });
       if (!r.ok) { showToast(r.error || "删除失败"); return; }

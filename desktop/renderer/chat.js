@@ -37,7 +37,18 @@ function appendCardToStream(cardEl) {
 
 function appendChatCards(cards) {
   if (!cards) return;
-  for (const card of cards) appendCardToStream(renderCard(card));
+  for (const card of cards) {
+    let el;
+    try {
+      el = renderCard(card);
+    } catch {
+      // 持久化卡片可能畸形（历史回放）：降级为 JSON 展示，不中断整条回放
+      const pre = h("pre", { class: "card-body" });
+      pre.textContent = JSON.stringify(card.data, null, 2);
+      el = h("div", { class: "chat-card" }, pre);
+    }
+    appendCardToStream(el);
+  }
 }
 
 function exitHeroMode() {
@@ -46,6 +57,7 @@ function exitHeroMode() {
 
 /** 新任务：清流、回 hero 空态。首条消息发出才建会话（零仪式感）。 */
 function newTask() {
+  if (chatBusy) { showToast("正在干活，稍等片刻再开新任务"); return; }
   activeConversationId = null;
   document.getElementById("chat-stream").innerHTML = "";
   document.getElementById("main-area").classList.add("hero-mode");
@@ -108,7 +120,7 @@ async function sendChat(text) {
       btn.addEventListener("click", () => openDrawer("settings"));
       msg.appendChild(btn);
     } else {
-      appendChatMessage("assistant", "出错了：" + (res.error || "未知错误") + "。可以直接重发，或到右侧「设置」检查引擎配置。");
+      appendChatMessage("assistant", "出错了：" + (res.error || "未知错误") + "。可以直接重发，或到侧边栏「设置」检查引擎配置。");
     }
     return;
   }
@@ -178,22 +190,27 @@ if (window.autocrew && typeof window.autocrew.onChatProgress === "function") {
   window.autocrew.onChatProgress(handleChatProgress);
 }
 
-/** Hero 上下文 chip：赛道 + 知识库状态（只读，点击开对应抽屉） */
+/** Hero 上下文 chip：赛道 + 知识库状态（只读，点击开对应抽屉）。
+ *  先并发取数再一次性写 DOM：并发调用不重复出 chip。 */
 async function renderHeroChips() {
   const wrap = document.getElementById("hero-chips");
   if (!wrap) return;
-  wrap.innerHTML = "";
-  const status = await safeInvoke(window.autocrew.onboardingStatus);
+  const [status, kb] = await Promise.all([
+    safeInvoke(window.autocrew.onboardingStatus),
+    safeInvoke(window.autocrew.knowledgeStatus),
+  ]);
+
   const industry = status.ok && status.data && status.data.industry ? status.data.industry : null;
   const indChip = h("button", { class: "hero-chip", title: "点击打开侦察员面板调整定位" },
     "赛道：" + (industry || "未设置"));
   indChip.addEventListener("click", () => openDrawer("scout"));
-  wrap.appendChild(indChip);
 
-  const kb = await safeInvoke(window.autocrew.knowledgeStatus);
   const kbReady = kb.ok && kb.data && kb.data.count > 0;
   const kbChip = h("button", { class: "hero-chip", title: "知识库详情在设置中查看" },
     "知识库：" + (kbReady ? "已就绪" : "未导入"));
   kbChip.addEventListener("click", () => openDrawer("settings"));
+
+  wrap.innerHTML = "";
+  wrap.appendChild(indChip);
   wrap.appendChild(kbChip);
 }

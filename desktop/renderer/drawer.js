@@ -52,6 +52,7 @@ function initDrawer() {
   document.getElementById("drawer-close").addEventListener("click", closeDrawer);
   document.getElementById("drawer-mask").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
-    if (e.isComposing || e.key !== "Escape") return; closeDrawer();
+    if (e.isComposing || e.key !== "Escape") return;
+    closeDrawer();
   });
 }
