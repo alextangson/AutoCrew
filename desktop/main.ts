@@ -1,9 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import path from "path";
 import { IPC_CHANNELS, buildIpcHandlers } from "../src/desktop/ipc.js";
+import { sanitizePayload, createPickedFileRegistry } from "../src/desktop/ipc-guard.js";
 
 // __dirname comes from Node's CJS module wrapper in the bundled output
 declare const __dirname: string;
+
+// csv_path 白名单：只有 dialog:pick_file 真实返回过的路径才能进 import_csv
+const pickedFiles = createPickedFileRegistry();
 
 const handlers = buildIpcHandlers({
   // 真实现只活在主进程 — ipc.ts 保持纯净可测（计划锁定决定）
@@ -14,6 +18,7 @@ const handlers = buildIpcHandlers({
       filters: [{ name: "CSV", extensions: ["csv"] }],
     });
     if (res.canceled || res.filePaths.length === 0) return { ok: true, data: { path: null } };
+    pickedFiles.record(res.filePaths[0]);
     return { ok: true, data: { path: res.filePaths[0] } };
   },
 });
@@ -33,10 +38,16 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+// 纵深防御（终审 2026-06-11）：转交前剥掉 `_` 前缀键（_dataDir seam），
+// import_csv 的 csv_path 必须命中用户选过的文件白名单。
 for (const ch of IPC_CHANNELS) {
-  ipcMain.handle(ch, (_event, payload: Record<string, unknown>) =>
-    handlers[ch](payload),
-  );
+  ipcMain.handle(ch, (_event, payload: unknown) => {
+    const clean = sanitizePayload(payload) as Record<string, unknown>;
+    if (ch === "flywheel:import_csv" && !pickedFiles.isAllowed(clean?.csv_path)) {
+      return { ok: false, error: "csv_path 必须是通过文件选择对话框选中的文件" };
+    }
+    return handlers[ch](clean);
+  });
 }
 
 app.whenReady().then(() => {
