@@ -107,6 +107,23 @@ async function assertCsvWhitelistWired(tmpDir: string): Promise<void> {
   );
 }
 
+/** 媒体路径白名单（S2.9）：未经 dialog:pick_media 的路径必须被 main 层守卫拒绝——
+ *  library:add 的 paths 与 library:update 的 path（重定位）两个入口都收口。 */
+async function assertMediaWhitelistWired(): Promise<void> {
+  const addDenied = await invoke("library:add", { paths: ["/tmp/not-picked.mp4"] });
+  assert(
+    addDenied.ok === false && typeof addDenied.error === "string" && addDenied.error.includes("素材路径必须来自文件选择对话框"),
+    "library:add rejects un-picked media path",
+    addDenied,
+  );
+  const updateDenied = await invoke("library:update", { id: "asset-1-x", path: "/tmp/not-picked.mp4" });
+  assert(
+    updateDenied.ok === false && typeof updateDenied.error === "string" && updateDenied.error.includes("重新定位的路径必须来自文件选择对话框"),
+    "library:update rejects un-picked relocate path",
+    updateDenied,
+  );
+}
+
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), "autocrew-smoke-"));
 try {
   for (const artifact of ["main.cjs", "preload.cjs"]) {
@@ -126,6 +143,7 @@ try {
   assert(registrations.size === 40, `all 40 IPC channels registered (got ${registrations.size})`);
   await assertSanitizeWired(tmpDir);
   await assertCsvWhitelistWired(tmpDir);
+  await assertMediaWhitelistWired();
 
   // dialog:pick_media deps 接线：stub 取消时返回空 paths 数组
   pickTarget = null;

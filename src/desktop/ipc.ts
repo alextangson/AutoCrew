@@ -70,7 +70,7 @@ import { listConversations, getConversation, deleteConversation } from "../stora
 import { getEngineSettings, setEngineSettings } from "./settings.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
-import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset } from "../storage/local-store.js";
+import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent } from "../storage/local-store.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import type { IpcChannel } from "./channels.js";
@@ -495,6 +495,13 @@ async function contentAssetAddHandler(payload: Record<string, unknown>): Promise
       return { ok: false, error: "原文件已移动或删除，请先在素材库重新定位" };
     }
     const filename = nodePath.basename(asset.path);
+    // 同名拒绝：addContentAsset 复制无排他且 meta 不去重——同名二次挂接会覆盖字节
+    // 并双登记，detach 时一次删两条（评审 fix 2026-06-11）
+    const content = await getContent(contentId, dataDir);
+    if (!content) return { ok: false, error: "稿件不存在" };
+    if (content.assets.some((a) => a.filename === filename)) {
+      return { ok: false, error: "同名素材已挂接：" + filename };
+    }
     const result = await addContentAsset(
       contentId,
       {

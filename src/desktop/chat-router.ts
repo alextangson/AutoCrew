@@ -351,6 +351,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           if (results.length === 0) {
             return JSON.stringify({ ok: true, total: 0, note: "素材库为空或无匹配——可在侧边栏「素材库」导入" });
           }
+          // path 仅进卡片/渲染层与本地会话 JSON，不进模型上下文（compact JSON 才进）
           sink.push({ type: "assets", data: { query, assets: results.slice(0, 20) } });
           return JSON.stringify({
             ok: true,

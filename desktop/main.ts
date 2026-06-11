@@ -4,6 +4,7 @@ import { IPC_CHANNELS, buildIpcHandlers, type IpcHandlerContext } from "../src/d
 import { CHAT_PROGRESS_EVENT } from "../src/desktop/channels.js";
 import { sanitizePayload, createPickedFileRegistry } from "../src/desktop/ipc-guard.js";
 import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
+import { MEDIA_EXTENSIONS } from "../src/storage/library-store.js";
 
 // __dirname comes from Node's CJS module wrapper in the bundled output
 declare const __dirname: string;
@@ -30,7 +31,7 @@ const handlers = buildIpcHandlers({
     const res = await dialog.showOpenDialog(win, {
       properties: ["openFile", "multiSelections"],
       filters: [
-        { name: "媒体文件", extensions: ["mp4", "mov", "m4v", "avi", "mkv", "webm", "flv", "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "tiff", "svg", "mp3", "wav", "m4a", "aac", "flac", "ogg"] },
+        { name: "媒体文件", extensions: [...MEDIA_EXTENSIONS.video, ...MEDIA_EXTENSIONS.image, ...MEDIA_EXTENSIONS.audio] },
         { name: "全部文件", extensions: ["*"] },
       ],
     });

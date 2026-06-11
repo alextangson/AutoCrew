@@ -60,6 +60,13 @@ const VIDEO_EXTS = new Set(["mp4", "mov", "m4v", "avi", "mkv", "webm", "flv"]);
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "tiff", "svg"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg"]);
 
+/** 单一事实源：main.ts 的 dialog:pick_media 过滤器从这里取，避免双份扩展名清单漂移 */
+export const MEDIA_EXTENSIONS = {
+  video: [...VIDEO_EXTS],
+  image: [...IMAGE_EXTS],
+  audio: [...AUDIO_EXTS],
+} as const;
+
 export function detectType(filePath: string): { type: LibraryAssetType; ext: string } {
   const ext = path.extname(filePath).replace(/^\./, "").toLowerCase();
   if (VIDEO_EXTS.has(ext)) return { type: "video", ext };

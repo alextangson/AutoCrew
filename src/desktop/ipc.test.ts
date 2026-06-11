@@ -653,4 +653,46 @@ describe("content asset attach", () => {
     expect((await handlers["content:asset_remove"]({ content_id: "content-1-x", filename: "../meta.json", _dataDir: testDir })).ok).toBe(false);
     expect((await handlers["content:asset_add"]({ content_id: "../../etc", library_id: "asset-1-x", _dataDir: testDir })).ok).toBe(false);
   });
+
+  it("rejects re-attaching the same library asset (filename collision)", async () => {
+    const handlers = buildIpcHandlers();
+    const src = path.join(testDir, "dup.png");
+    await fs.writeFile(src, "bytes", "utf-8");
+    const { added } = await libAddAssets([src], null, testDir);
+    const content = await saveContent(
+      { title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      testDir,
+    );
+    const first = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
+    expect(first.ok).toBe(true);
+    const second = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
+    expect(second.ok).toBe(false);
+    expect(String(second.error)).toContain("同名素材已挂接");
+  });
+
+  it("rejects attaching two different library files sharing a basename", async () => {
+    const handlers = buildIpcHandlers();
+    const dirA = path.join(testDir, "a");
+    const dirB = path.join(testDir, "b");
+    await fs.mkdir(dirA);
+    await fs.mkdir(dirB);
+    const srcA = path.join(dirA, "cover.png");
+    const srcB = path.join(dirB, "cover.png");
+    await fs.writeFile(srcA, "bytes-A", "utf-8");
+    await fs.writeFile(srcB, "bytes-B", "utf-8");
+    const { added } = await libAddAssets([srcA, srcB], null, testDir);
+    expect(added).toHaveLength(2);
+    const content = await saveContent(
+      { title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      testDir,
+    );
+    const first = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
+    expect(first.ok).toBe(true);
+    const second = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[1].id, _dataDir: testDir });
+    expect(second.ok).toBe(false);
+    expect(String(second.error)).toContain("同名素材已挂接");
+    // 第一份字节未被第二次挂接覆盖
+    const copied = await fs.readFile(path.join(testDir, "contents", content.id, "assets", "cover.png"), "utf-8");
+    expect(copied).toBe("bytes-A");
+  });
 });
