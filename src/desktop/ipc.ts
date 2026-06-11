@@ -48,6 +48,15 @@
  *   conversations:list   {}
  *   conversations:get    { id }
  *   conversations:delete { id }
+ *   library:list         { folder_id? }
+ *   library:add          { paths: string[], folder_id? }
+ *   library:update       { id, name?, tags?, description?, folder_id?, path? }
+ *   library:remove       { id }
+ *   library:folder_create { name }
+ *   library:folder_remove { id }
+ *   dialog:pick_media    {}
+ *   content:asset_add    { content_id, library_id }
+ *   content:asset_remove { content_id, filename }
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -61,10 +70,21 @@ import { listConversations, getConversation, deleteConversation } from "../stora
 import { getEngineSettings, setEngineSettings } from "./settings.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
-import { listVersions, revertToVersion } from "../storage/local-store.js";
+import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset } from "../storage/local-store.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import type { IpcChannel } from "./channels.js";
+import {
+  listLibrary,
+  addAssets as addLibraryAssets,
+  updateAsset as updateLibraryAsset,
+  removeAsset as removeLibraryAsset,
+  createFolder as createLibraryFolder,
+  removeFolder as removeLibraryFolder,
+  getAsset as getLibraryAsset,
+} from "../storage/library-store.js";
+import nodePath from "node:path";
+import { access as fsAccess } from "node:fs/promises";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 // Channel list lives in channels.ts (dependency-free so the sandboxed preload
@@ -356,6 +376,166 @@ async function conversationsDeleteHandler(payload: Record<string, unknown>): Pro
   }
 }
 
+// ── library:* / content:asset_* — 素材库（S2.9 引用式媒体仓库） ───────────────
+
+const CONTENT_ID_RE = /^content-\d+-[a-z0-9]+$/;
+
+function guardPayload(payload: Record<string, unknown>): { ok: false; error: string } | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  return null;
+}
+
+async function libraryListHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  try {
+    return { ok: true, data: await listLibrary((payload._dataDir as string) || undefined) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function libraryAddHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const paths = payload.paths;
+  if (!Array.isArray(paths) || paths.length === 0 || !paths.every((p) => typeof p === "string" && p)) {
+    return { ok: false, error: "需要非空 paths 数组" };
+  }
+  const folderId = typeof payload.folder_id === "string" && payload.folder_id ? payload.folder_id : null;
+  try {
+    const result = await addLibraryAssets(paths as string[], folderId, (payload._dataDir as string) || undefined);
+    return { ok: true, data: result };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function libraryUpdateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  const patch: { name?: string; tags?: string[]; description?: string; folderId?: string | null; path?: string } = {};
+  if (typeof payload.name === "string") patch.name = payload.name;
+  if (Array.isArray(payload.tags)) patch.tags = (payload.tags as unknown[]).map(String);
+  if (typeof payload.description === "string") patch.description = payload.description;
+  if (payload.folder_id !== undefined) patch.folderId = typeof payload.folder_id === "string" && payload.folder_id ? payload.folder_id : null;
+  if (typeof payload.path === "string") patch.path = payload.path;
+  if (Object.keys(patch).length === 0) return { ok: false, error: "至少提供一个可更新字段" };
+  try {
+    const asset = await updateLibraryAsset(id, patch, (payload._dataDir as string) || undefined);
+    if (!asset) return { ok: false, error: "素材不存在或重定位目标不可读" };
+    return { ok: true, data: { asset } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function libraryRemoveHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  try {
+    const removed = await removeLibraryAsset(id, (payload._dataDir as string) || undefined);
+    if (!removed) return { ok: false, error: "素材不存在" };
+    return { ok: true, data: {} };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function libraryFolderCreateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const name = payload.name;
+  if (typeof name !== "string" || !name.trim()) return { ok: false, error: "需要非空 name" };
+  try {
+    return { ok: true, data: { folder: await createLibraryFolder(name, (payload._dataDir as string) || undefined) } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function libraryFolderRemoveHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  try {
+    const removed = await removeLibraryFolder(id, (payload._dataDir as string) || undefined);
+    if (!removed) return { ok: false, error: "文件夹不存在" };
+    return { ok: true, data: {} };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function dialogPickMediaUnavailableHandler(): Promise<Record<string, unknown>> {
+  return { ok: false, error: "文件选择仅在桌面主进程可用" };
+}
+
+async function contentAssetAddHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const contentId = payload.content_id;
+  const libraryId = payload.library_id;
+  if (typeof contentId !== "string" || !CONTENT_ID_RE.test(contentId)) return { ok: false, error: "需要合法 content_id" };
+  if (typeof libraryId !== "string" || !libraryId) return { ok: false, error: "需要 library_id" };
+  const dataDir = (payload._dataDir as string) || undefined;
+  try {
+    const asset = await getLibraryAsset(libraryId, dataDir);
+    if (!asset) return { ok: false, error: "素材不存在" };
+    try {
+      await fsAccess(asset.path);
+    } catch {
+      return { ok: false, error: "原文件已移动或删除，请先在素材库重新定位" };
+    }
+    const filename = nodePath.basename(asset.path);
+    const result = await addContentAsset(
+      contentId,
+      {
+        filename,
+        type: asset.type,
+        description: asset.name !== filename ? asset.name : undefined,
+        sourcePath: asset.path,
+      },
+      dataDir,
+    );
+    if (!result.ok) return { ok: false, error: result.error || "挂接失败" };
+    return { ok: true, data: { asset: result.asset } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function contentAssetRemoveHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const contentId = payload.content_id;
+  const filename = payload.filename;
+  if (typeof contentId !== "string" || !CONTENT_ID_RE.test(contentId)) return { ok: false, error: "需要合法 content_id" };
+  if (
+    typeof filename !== "string" ||
+    !filename ||
+    filename.includes("/") ||
+    filename.includes("\\") ||
+    filename.includes("..")
+  ) {
+    return { ok: false, error: "需要合法 filename" };
+  }
+  try {
+    const removed = await removeContentAsset(contentId, filename, (payload._dataDir as string) || undefined);
+    if (!removed) return { ok: false, error: "挂接素材不存在" };
+    return { ok: true, data: {} };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -396,6 +576,15 @@ export function buildIpcHandlers(
     "conversations:list": conversationsListHandler,
     "conversations:get": conversationsGetHandler,
     "conversations:delete": conversationsDeleteHandler,
+    "library:list": libraryListHandler,
+    "library:add": libraryAddHandler,
+    "library:update": libraryUpdateHandler,
+    "library:remove": libraryRemoveHandler,
+    "library:folder_create": libraryFolderCreateHandler,
+    "library:folder_remove": libraryFolderRemoveHandler,
+    "dialog:pick_media": dialogPickMediaUnavailableHandler,
+    "content:asset_add": contentAssetAddHandler,
+    "content:asset_remove": contentAssetRemoveHandler,
   };
 
   if (!deps) return defaults;

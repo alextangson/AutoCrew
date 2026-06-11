@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 31 channels.
+ * IPC contract + handler registry tests — all 40 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -19,6 +19,8 @@ import {
 } from "./ipc.js";
 import { recordOutcome } from "../modules/flywheel/outcome-store.js";
 import { createConversation, appendTurn } from "../storage/conversation-store.js";
+import { addAssets as libAddAssets } from "../storage/library-store.js";
+import { saveContent } from "../storage/local-store.js";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -67,10 +69,19 @@ describe("IPC_CHANNELS", () => {
     "conversations:list",
     "conversations:get",
     "conversations:delete",
+    "library:list",
+    "library:add",
+    "library:update",
+    "library:remove",
+    "library:folder_create",
+    "library:folder_remove",
+    "dialog:pick_media",
+    "content:asset_add",
+    "content:asset_remove",
   ];
 
-  it("has exactly 31 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(31);
+  it("has exactly 40 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(40);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -148,7 +159,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS["content:allowed_transitions"]).toBe("allowed_transitions");
   });
 
-  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit, conversations:list, conversations:get, conversations:delete excluded)", () => {
+  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit, conversations:list, conversations:get, conversations:delete, library:list, library:add, library:update, library:remove, library:folder_create, library:folder_remove, dialog:pick_media, content:asset_add, content:asset_remove excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -170,7 +181,16 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "style:record_edit" &&
           ch !== "conversations:list" &&
           ch !== "conversations:get" &&
-          ch !== "conversations:delete",
+          ch !== "conversations:delete" &&
+          ch !== "library:list" &&
+          ch !== "library:add" &&
+          ch !== "library:update" &&
+          ch !== "library:remove" &&
+          ch !== "library:folder_create" &&
+          ch !== "library:folder_remove" &&
+          ch !== "dialog:pick_media" &&
+          ch !== "content:asset_add" &&
+          ch !== "content:asset_remove",
       ).sort(),
     );
   });
@@ -535,5 +555,102 @@ describe("conversations handlers", () => {
     const res = await handlers["chat:turn"]({ message: "hi", conversation_id: "conv-1-gone", _dataDir: testDir });
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain("会话不存在"); // id 到达 runPersistedChatTurn 的查找，零网络
+  });
+});
+
+// ── 14. library:* / content:asset_* handlers ────────────────────────────────
+
+describe("library handlers", () => {
+  async function seedFile(name: string): Promise<string> {
+    const p = path.join(testDir, name);
+    await fs.writeFile(p, "0123456789", "utf-8");
+    return p;
+  }
+
+  it("add → list roundtrip with missing flag", async () => {
+    const handlers = buildIpcHandlers();
+    const p = await seedFile("clip.mp4");
+    const add = await handlers["library:add"]({ paths: [p], _dataDir: testDir });
+    expect(add.ok).toBe(true);
+    const list = await handlers["library:list"]({ _dataDir: testDir });
+    const assets = (list.data as { assets: Array<Record<string, unknown>> }).assets;
+    expect(assets).toHaveLength(1);
+    expect(assets[0].missing).toBe(false);
+  });
+
+  it("add guards: missing/empty paths → error", async () => {
+    const handlers = buildIpcHandlers();
+    expect((await handlers["library:add"]({ _dataDir: testDir })).ok).toBe(false);
+    expect((await handlers["library:add"]({ paths: [], _dataDir: testDir })).ok).toBe(false);
+  });
+
+  it("update renames and edits tags; unknown id errors", async () => {
+    const handlers = buildIpcHandlers();
+    const p = await seedFile("a.png");
+    const { added } = await libAddAssets([p], null, testDir);
+    const res = await handlers["library:update"]({ id: added[0].id, name: "封面A", tags: ["封面"], _dataDir: testDir });
+    expect(res.ok).toBe(true);
+    expect((res.data as { asset: { name: string } }).asset.name).toBe("封面A");
+    expect((await handlers["library:update"]({ id: "asset-1-gone", name: "x", _dataDir: testDir })).ok).toBe(false);
+    expect((await handlers["library:update"]({ id: added[0].id, _dataDir: testDir })).ok).toBe(false); // 空 patch
+  });
+
+  it("remove deletes record only; folder create/remove works", async () => {
+    const handlers = buildIpcHandlers();
+    const p = await seedFile("b.mp3");
+    const { added } = await libAddAssets([p], null, testDir);
+    expect((await handlers["library:remove"]({ id: added[0].id, _dataDir: testDir })).ok).toBe(true);
+    await expect(fs.access(p)).resolves.toBeUndefined();
+    const fc = await handlers["library:folder_create"]({ name: "素材夹", _dataDir: testDir });
+    expect(fc.ok).toBe(true);
+    const fid = (fc.data as { folder: { id: string } }).folder.id;
+    expect((await handlers["library:folder_remove"]({ id: fid, _dataDir: testDir })).ok).toBe(true);
+    expect((await handlers["library:folder_remove"]({ id: fid, _dataDir: testDir })).ok).toBe(false);
+  });
+
+  it("dialog:pick_media default stub errors (real impl lives in main.ts)", async () => {
+    const handlers = buildIpcHandlers();
+    expect((await handlers["dialog:pick_media"]({})).ok).toBe(false);
+  });
+});
+
+describe("content asset attach", () => {
+  it("attaches a library asset by copy and detaches it", async () => {
+    const handlers = buildIpcHandlers();
+    const src = path.join(testDir, "cover.png");
+    await fs.writeFile(src, "img-bytes", "utf-8");
+    const { added } = await libAddAssets([src], null, testDir);
+    const content = await saveContent(
+      { title: "测试稿", body: "正文", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      testDir,
+    );
+    const res = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
+    expect(res.ok).toBe(true);
+    const copied = path.join(testDir, "contents", content.id, "assets", "cover.png");
+    await expect(fs.access(copied)).resolves.toBeUndefined();
+    const rm = await handlers["content:asset_remove"]({ content_id: content.id, filename: "cover.png", _dataDir: testDir });
+    expect(rm.ok).toBe(true);
+    await expect(fs.access(src)).resolves.toBeUndefined(); // 库内原文件不受影响
+  });
+
+  it("attach fails when the original file is missing", async () => {
+    const handlers = buildIpcHandlers();
+    const src = path.join(testDir, "gone.mp4");
+    await fs.writeFile(src, "x", "utf-8");
+    const { added } = await libAddAssets([src], null, testDir);
+    await fs.unlink(src);
+    const content = await saveContent(
+      { title: "稿", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      testDir,
+    );
+    const res = await handlers["content:asset_add"]({ content_id: content.id, library_id: added[0].id, _dataDir: testDir });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("重新定位");
+  });
+
+  it("rejects traversal filename on detach and bad ids", async () => {
+    const handlers = buildIpcHandlers();
+    expect((await handlers["content:asset_remove"]({ content_id: "content-1-x", filename: "../meta.json", _dataDir: testDir })).ok).toBe(false);
+    expect((await handlers["content:asset_add"]({ content_id: "../../etc", library_id: "asset-1-x", _dataDir: testDir })).ok).toBe(false);
   });
 });
