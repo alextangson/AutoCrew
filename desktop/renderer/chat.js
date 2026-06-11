@@ -75,13 +75,16 @@ function initChat() {
   const sendBtn = document.getElementById("chat-send");
 
   function submit() {
+    if (chatBusy) return; // busy 时不取走输入，避免静默丢失
     const v = input.value;
+    if (!v.trim()) return;
     input.value = "";
     sendChat(v);
   }
 
   sendBtn.addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
+    if (e.isComposing) return; // 中文输入法组合中——Enter 是选词，不是发送
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
