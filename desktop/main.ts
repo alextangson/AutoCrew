@@ -8,7 +8,8 @@ declare const __dirname: string;
 const handlers = buildIpcHandlers({
   // 真实现只活在主进程 — ipc.ts 保持纯净可测（计划锁定决定）
   "dialog:pick_file": async () => {
-    const res = await dialog.showOpenDialog({
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const res = await dialog.showOpenDialog(win, {
       properties: ["openFile"],
       filters: [{ name: "CSV", extensions: ["csv"] }],
     });
