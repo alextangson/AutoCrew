@@ -77,6 +77,47 @@ describe("buildChatTools", () => {
     expect(sink[0].type).toBe("style");
   });
 
+  it("strips model-injected underscore keys (e.g. _dataDir) from tool args", async () => {
+    const sink: ChatCard[] = [];
+    const generate = vi.fn(async () => ({
+      ok: true,
+      data: { contentId: "c1", title: "T", body: "B", hashtags: [], violations: [], tokensUsed: 1 },
+    }));
+    const tools = buildChatTools(sink, testDir, { generate });
+    await tools.find((t) => t.name === "generate_script")!.execute({
+      topic: "t", platform: "douyin", _dataDir: "/tmp/evil",
+    });
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ _dataDir: testDir }));
+    expect(generate).not.toHaveBeenCalledWith(expect.objectContaining({ _dataDir: "/tmp/evil" }));
+  });
+
+  it("strips _dataDir entirely when no dataDir is configured", async () => {
+    const sink: ChatCard[] = [];
+    const generate = vi.fn(async () => ({ ok: false, error: "x" }));
+    const tools = buildChatTools(sink, undefined, { generate });
+    await tools.find((t) => t.name === "generate_script")!.execute({
+      topic: "t", platform: "douyin", _dataDir: "/tmp/evil",
+    });
+    const callArg = generate.mock.calls[0][0] as Record<string, unknown>;
+    expect("_dataDir" in callArg).toBe(false);
+  });
+
+  it("adapt_platform normalizes the flat rewrite result into a generate-shaped draft card", async () => {
+    const sink: ChatCard[] = [];
+    const rewrite = vi.fn(async () => ({
+      ok: true, platform: "xiaohongshu", title: "新标题", body: "新正文",
+      notes: [], titleVariants: [], hashtags: ["#tag"],
+      content: { id: "c2", title: "新标题" },
+    }));
+    const tools = buildChatTools(sink, testDir, { rewrite });
+    const out = await tools.find((t) => t.name === "adapt_platform")!.execute({
+      content_id: "c1", target_platform: "xiaohongshu",
+    });
+    expect(sink[0].type).toBe("draft");
+    expect(sink[0].data).toMatchObject({ contentId: "c2", title: "新标题", platform: "xiaohongshu" });
+    expect(JSON.parse(out as string)).toMatchObject({ ok: true, contentId: "c2" });
+  });
+
   it("tool failure returns ok:false JSON to the model without pushing a card", async () => {
     const sink: ChatCard[] = [];
     const generate = vi.fn(async () => ({ ok: false, error: "缺少必填参数 topic：请提供脚本选题" }));

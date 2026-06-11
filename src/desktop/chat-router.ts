@@ -62,6 +62,10 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
+  /** 模型 args 来自 tool_call，剥掉内部保留键（_ 前缀），防 _dataDir 注入 */
+  const sanitize = (args: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("_")));
+
   const fail = (error: unknown) => JSON.stringify({ ok: false, error: String(error ?? "未知错误") });
 
   return [
@@ -78,7 +82,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["topic", "platform"],
       },
       execute: async (args) => {
-        const res = await d.generate({ ...args, ...dirParams, action: "script" });
+        const res = await d.generate({ ...sanitize(args), ...dirParams, action: "script" });
         if (!res.ok) return fail(res.error);
         const data = res.data as Record<string, unknown>;
         sink.push({ type: "draft", data });
@@ -102,11 +106,21 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["content_id", "target_platform"],
       },
       execute: async (args) => {
-        const res = await d.rewrite({ ...args, ...dirParams, action: "adapt_platform", save_as_draft: true });
-        if (!res.ok) return fail(res.error);
-        const data = (res.data ?? res) as Record<string, unknown>;
+        const res = await d.rewrite({ ...sanitize(args), ...dirParams, action: "adapt_platform", save_as_draft: true });
+        if (!res.ok) return fail(res.error ?? (res as Record<string, unknown>).notes);
+        // rewrite 返回扁平结构（无 data 包络），新稿 id 在 content.id —— 归一成 generate 同形的 draft 卡
+        const flat = res as Record<string, unknown>;
+        const saved = flat.content as Record<string, unknown> | undefined;
+        const data = {
+          contentId: saved?.id,
+          title: flat.title,
+          body: flat.body,
+          hashtags: flat.hashtags ?? [],
+          violations: [],
+          platform: flat.platform,
+        };
         sink.push({ type: "draft", data });
-        return JSON.stringify({ ok: true, title: data.title, platform: args.target_platform });
+        return JSON.stringify({ ok: true, contentId: saved?.id, title: flat.title, platform: flat.platform });
       },
     },
     {
@@ -146,7 +160,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["id"],
       },
       execute: async (args) => {
-        const res = await d.content({ ...args, ...dirParams, action: "get" });
+        const res = await d.content({ ...sanitize(args), ...dirParams, action: "get" });
         if (!res.ok) return fail(res.error);
         const content = res.content as Record<string, unknown>;
         sink.push({ type: "draft", data: content });
@@ -164,8 +178,9 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["samples"],
       },
       execute: async (args) => {
-        const res = await d.style({ ...args, ...dirParams, action: "absorb_samples" });
+        const res = await d.style({ ...sanitize(args), ...dirParams, action: "absorb_samples" });
         if (!res.ok) return fail(res.error);
+        // 防御性回退：executeStyle 的 ok 路径总有 data，?? res 仅兜底异常形状
         const data = (res.data ?? res) as Record<string, unknown>;
         sink.push({ type: "style", data });
         return JSON.stringify({ ok: true, summary: data.summary ?? data.message ?? "已更新风格规则" });
@@ -200,7 +215,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["content_id"],
       },
       execute: async (args) => {
-        const res = await d.publish({ ...args, ...dirParams, action: "clipboard" });
+        const res = await d.publish({ ...sanitize(args), ...dirParams, action: "clipboard" });
         if (!res.ok) return fail(res.error);
         const data = res.data as Record<string, unknown>;
         sink.push({ type: "publish", data: { ...data, contentId: args.content_id } });
@@ -219,7 +234,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["content_id"],
       },
       execute: async (args) => {
-        const res = await d.publish({ ...args, ...dirParams, action: "confirm_published" });
+        const res = await d.publish({ ...sanitize(args), ...dirParams, action: "confirm_published" });
         if (!res.ok) return fail(res.error);
         sink.push({ type: "published", data: { contentId: args.content_id } });
         return JSON.stringify({ ok: true, contentId: args.content_id });
