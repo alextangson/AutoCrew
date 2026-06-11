@@ -8,24 +8,35 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="app">
-    <nav id="sidebar">
+  <div id="layout">
+    <section id="chat-pane">
       <div class="logo">AutoCrew</div>
-      <ul>
-        <li><a href="#" class="nav-link active" data-screen="report">报告</a></li>
-        <li><a href="#" class="nav-link" data-screen="generate">生成</a></li>
-        <li><a href="#" class="nav-link" data-screen="drafts">稿件</a></li>
-        <li><a href="#" class="nav-link" data-screen="style">风格</a></li>
-      </ul>
-    </nav>
-    <main id="content">
-      <section id="screen-report" class="screen active"></section>
-      <section id="screen-generate" class="screen"></section>
-      <section id="screen-drafts" class="screen"></section>
-      <section id="screen-style" class="screen"></section>
-    </main>
+      <div id="chat-stream"></div>
+      <div id="chat-input-row">
+        <textarea id="chat-input" rows="2"
+          placeholder="告诉我你想做什么，例如：帮我写一条关于 Excel 快捷键的抖音口播"></textarea>
+        <button id="chat-send" class="btn-primary">发送</button>
+      </div>
+    </section>
+    <section id="workspace">
+      <nav id="workspace-tabs">
+        <button class="ws-tab active" data-panel="report">回流报告</button>
+        <button class="ws-tab" data-panel="drafts">稿件</button>
+        <button class="ws-tab" data-panel="style">风格</button>
+        <button class="ws-tab" data-panel="settings">设置</button>
+      </nav>
+      <section id="panel-report" class="panel active"></section>
+      <section id="panel-drafts" class="panel"></section>
+      <section id="panel-style" class="panel"></section>
+      <section id="panel-settings" class="panel"></section>
+    </section>
   </div>
   <div id="toast" class="toast hidden"></div>
+  <script src="dom.js"></script>
+  <script src="cards.js"></script>
+  <script src="chat.js"></script>
+  <script src="settings.js"></script>
+  <script src="onboarding.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

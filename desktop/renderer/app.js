@@ -1,127 +1,37 @@
 /**
- * AutoCrew Desktop Renderer — four screens, zero frameworks.
- * window.autocrew is exposed by preload.ts via contextBridge.
- * No innerHTML with user data — all user content via textContent or h().
+ * AutoCrew Desktop Renderer — 工作区面板（PRD §7.3：卡片的展开态）。
+ * 对话驱动在 chat.js；本文件管 report/drafts/style/settings 四个面板。
+ * window.autocrew 由 preload.ts 经 contextBridge 暴露。
  */
 
-// ── DOM helper ────────────────────────────────────────────────────────────────
+// ── Workspace panels ─────────────────────────────────────────────────────────
 
-/**
- * h(tag, attrs?, ...children) — minimal DOM builder.
- * attrs: plain object of attribute key→value (class, id, type, etc.)
- * children: strings (→ text nodes) or Element nodes.
- */
-function h(tag, attrsOrChild, ...rest) {
-  const el = document.createElement(tag);
-  let children = rest;
-
-  if (attrsOrChild !== null && attrsOrChild !== undefined) {
-    if (typeof attrsOrChild === "string" || attrsOrChild instanceof Node) {
-      children = [attrsOrChild, ...rest];
-    } else if (typeof attrsOrChild === "object" && !Array.isArray(attrsOrChild)) {
-      for (const [k, v] of Object.entries(attrsOrChild)) {
-        if (k === "class") el.className = v;
-        else if (k === "style") el.style.cssText = v;
-        else el.setAttribute(k, v);
-      }
-    }
-  }
-
-  for (const child of children) {
-    if (child === null || child === undefined) continue;
-    if (typeof child === "string" || typeof child === "number") {
-      el.appendChild(document.createTextNode(String(child)));
-    } else if (child instanceof Node) {
-      el.appendChild(child);
-    }
-  }
-  return el;
+function switchPanel(name) {
+  document.querySelectorAll(".panel").forEach(s => s.classList.remove("active"));
+  document.querySelectorAll(".ws-tab").forEach(l => l.classList.remove("active"));
+  document.getElementById("panel-" + name).classList.add("active");
+  document.querySelector('[data-panel="' + name + '"]').classList.add("active");
+  refreshActivePanel();
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-
-let toastTimer = null;
-
-function showToast(msg) {
-  const toast = document.getElementById("toast");
-  toast.textContent = msg;
-  toast.classList.remove("hidden");
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.add("hidden"), 5000);
-}
-
-// ── Nav / screen switching ────────────────────────────────────────────────────
-
-function switchScreen(name) {
-  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
-  document.querySelectorAll(".nav-link").forEach(l => l.classList.remove("active"));
-  document.getElementById("screen-" + name).classList.add("active");
-  document.querySelector('[data-screen="' + name + '"]').classList.add("active");
-
+function refreshActivePanel() {
+  const active = document.querySelector(".ws-tab.active");
+  if (!active) return;
+  const name = active.dataset.panel;
   if (name === "report") initReport();
-  if (name === "generate") initGenerate();
   if (name === "drafts") initDrafts();
   if (name === "style") initStyle();
+  if (name === "settings" && typeof initSettings === "function") initSettings();
 }
 
-document.querySelectorAll(".nav-link").forEach(link => {
-  link.addEventListener("click", e => {
-    e.preventDefault();
-    switchScreen(link.dataset.screen);
-  });
+document.querySelectorAll(".ws-tab").forEach(tab => {
+  tab.addEventListener("click", () => switchPanel(tab.dataset.panel));
 });
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Wrap an IPC invoke: a rejected invoke (main process crash mid-call) becomes
- * the standard {ok:false} shape so it flows into the toast path instead of
- * leaving a button disabled forever.
- */
-async function safeInvoke(fn, payload) {
-  try {
-    return await fn(payload);
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-}
-
-function setLoading(btn, loading, label) {
-  btn.disabled = loading;
-  btn.textContent = loading ? (label || "处理中...") : btn.dataset.label;
-}
-
-function fmtDate(iso) {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
-}
-
-function platformLabel(p) {
-  const m = {
-    douyin: "抖音", xiaohongshu: "小红书", wechat_mp: "微信公众号",
-    wechat_video: "视频号", bilibili: "B站",
-  };
-  return m[p] || p || "—";
-}
-
-function statusLabel(s) {
-  const m = {
-    draft_ready: "草稿就绪", drafting: "草稿中", reviewing: "审核中",
-    approved: "已审批", publish_ready: "待发布", published: "已发布",
-    archived: "已归档", topic_saved: "选题已存", cover_pending: "等待封面",
-    publishing: "发布中", revision: "修改中",
-  };
-  return m[s] || s || "—";
-}
 
 // ── Report screen ─────────────────────────────────────────────────────────────
 
 async function initReport() {
-  const el = document.getElementById("screen-report");
+  const el = document.getElementById("panel-report");
   el.innerHTML = "";
   el.appendChild(h("h2", {}, "回流报告"));
 
@@ -228,145 +138,10 @@ async function initReport() {
   }
 }
 
-// ── Generate screen ───────────────────────────────────────────────────────────
-
-let generateInitialized = false;
-
-function initGenerate() {
-  if (generateInitialized) return;
-  generateInitialized = true;
-
-  const el = document.getElementById("screen-generate");
-  el.innerHTML = "";
-  el.appendChild(h("h2", {}, "生成脚本"));
-
-  const form = h("div", { class: "form-section" });
-
-  // Topic
-  const topicLabel = h("label", {}, "主题");
-  const topicInput = h("input", { type: "text", placeholder: "例：职场新人如何快速上手 Excel", class: "input-full" });
-  form.appendChild(topicLabel);
-  form.appendChild(topicInput);
-
-  // Platform
-  const platformLabel2 = h("label", {}, "平台");
-  const platformSelect = h("select", { class: "input-full" });
-  const platforms = [
-    ["douyin", "抖音"], ["xiaohongshu", "小红书"],
-    ["wechat_video", "视频号"], ["wechat_mp", "微信公众号"], ["bilibili", "B站"],
-  ];
-  for (const [val, label] of platforms) {
-    const opt = h("option", { value: val }, label);
-    platformSelect.appendChild(opt);
-  }
-  form.appendChild(platformLabel2);
-  form.appendChild(platformSelect);
-
-  // Research
-  const researchLabel = h("label", {}, "参考素材（可选）");
-  const researchArea = h("textarea", {
-    placeholder: "粘贴相关资料、数据或竞品文案……",
-    class: "input-full textarea-research",
-  });
-  form.appendChild(researchLabel);
-  form.appendChild(researchArea);
-
-  // Button
-  const genBtn = h("button", { class: "btn-primary" }, "生成");
-  genBtn.dataset.label = "生成";
-  form.appendChild(genBtn);
-
-  el.appendChild(form);
-
-  // Result area
-  const resultArea = h("div", { id: "generate-result" });
-  el.appendChild(resultArea);
-
-  genBtn.addEventListener("click", async () => {
-    const topic = topicInput.value.trim();
-    const platform = platformSelect.value;
-    const research = researchArea.value.trim();
-
-    if (!topic) {
-      showToast("请填写主题");
-      return;
-    }
-
-    setLoading(genBtn, true, "生成中...");
-    resultArea.innerHTML = "";
-
-    const payload = { topic, platform };
-    if (research) payload.research = research;
-
-    const res = await safeInvoke(window.autocrew.generateScript, payload);
-    setLoading(genBtn, false);
-
-    if (!res.ok) {
-      showToast("生成失败");
-      const errBox = h("div", { class: "error-box" });
-      errBox.appendChild(h("strong", {}, "生成失败"));
-      errBox.appendChild(h("pre", { class: "error-pre" }, res.error || "未知错误"));
-      resultArea.appendChild(errBox);
-      return;
-    }
-
-    const d = res.data;
-
-    // Violations warning
-    if (d.violations && d.violations.length > 0) {
-      const warn = h("div", { class: "violations-box" });
-      warn.appendChild(h("strong", {}, "风格违规警告"));
-      const vList = h("ul", {});
-      for (const v of d.violations) {
-        vList.appendChild(h("li", {}, v));
-      }
-      warn.appendChild(vList);
-      resultArea.appendChild(warn);
-    }
-
-    // Title
-    resultArea.appendChild(h("div", { class: "result-card" },
-      h("div", { class: "result-label" }, "标题"),
-      h("div", { class: "result-title" }, d.title || ""),
-    ));
-
-    // Body
-    const bodyCard = h("div", { class: "result-card" });
-    bodyCard.appendChild(h("div", { class: "result-label" }, "正文"));
-    const bodyPre = h("pre", { class: "result-body" });
-    bodyPre.textContent = d.body || "";
-    bodyCard.appendChild(bodyPre);
-    resultArea.appendChild(bodyCard);
-
-    // Hashtags
-    if (d.hashtags && d.hashtags.length > 0) {
-      const tagRow = h("div", { class: "result-card" });
-      tagRow.appendChild(h("div", { class: "result-label" }, "话题标签"));
-      const tagWrap = h("div", { class: "tag-wrap" });
-      for (const tag of d.hashtags) {
-        tagWrap.appendChild(h("span", { class: "tag" }, tag));
-      }
-      tagRow.appendChild(tagWrap);
-      resultArea.appendChild(tagRow);
-    }
-
-    // Tokens
-    resultArea.appendChild(h("p", { class: "muted" }, "消耗 tokens：" + (d.tokensUsed || 0)));
-
-    // Nav link to drafts
-    const navLink = h("a", { href: "#", class: "link-btn" }, "去稿件屏查看 →");
-    navLink.addEventListener("click", e => {
-      e.preventDefault();
-      switchScreen("drafts");
-    });
-    resultArea.appendChild(navLink);
-  });
-}
-
 // ── Drafts screen ─────────────────────────────────────────────────────────────
 
 async function initDrafts() {
-  const el = document.getElementById("screen-drafts");
+  const el = document.getElementById("panel-drafts");
   el.innerHTML = "";
   el.appendChild(h("h2", {}, "稿件"));
 
@@ -514,17 +289,21 @@ async function renderDraftDetail(contentId, detailDiv, screenEl) {
 let styleInitialized = false;
 
 function initStyle() {
-  if (styleInitialized) return;
+  const rulesSection = document.getElementById("style-rules-section");
+  if (styleInitialized && rulesSection) {
+    loadStyleRules(rulesSection);
+    return;
+  }
   styleInitialized = true;
 
-  const el = document.getElementById("screen-style");
+  const el = document.getElementById("panel-style");
   el.innerHTML = "";
   el.appendChild(h("h2", {}, "风格"));
 
   // Rules section (loaded async)
-  const rulesSection = h("div", { id: "style-rules-section" });
-  el.appendChild(rulesSection);
-  loadStyleRules(rulesSection);
+  const rulesSectionEl = h("div", { id: "style-rules-section" });
+  el.appendChild(rulesSectionEl);
+  loadStyleRules(rulesSectionEl);
 
   el.appendChild(h("hr", {}));
 
@@ -552,7 +331,7 @@ function initStyle() {
       h("p", {}, summary),
     ));
     // Reload rules after distill
-    loadStyleRules(rulesSection);
+    loadStyleRules(rulesSectionEl);
   });
 
   el.appendChild(h("hr", {}));
@@ -597,7 +376,7 @@ function initStyle() {
     const msg = data.summary || data.message || "已更新风格规则";
     absorbResult.appendChild(h("p", { class: "success-msg" }, msg));
     // Reload rules
-    loadStyleRules(rulesSection);
+    loadStyleRules(rulesSectionEl);
   });
 }
 
@@ -665,4 +444,6 @@ async function loadStyleRules(container) {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
+initChat();
 initReport();
+bootChatWelcome();
