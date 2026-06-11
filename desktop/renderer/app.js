@@ -410,13 +410,44 @@ async function loadStyleRules(container) {
 
   if (rules.length > 0) {
     const list = h("ul", { class: "rules-list" });
-    for (const rule of rules) {
-      // WritingRule objects: {rule, source, confidence, createdAt}
-      const text = rule && typeof rule === "object" ? (rule.rule || "") : String(rule);
-      const sourceSuffix = rule && rule.source === "auto_distilled" ? "（自动提炼）"
-        : rule && rule.source === "user_explicit" ? "（手动）" : "";
-      list.appendChild(h("li", {}, text + sourceSuffix));
-    }
+    rules.forEach((rule, i) => {
+      const isObj = rule && typeof rule === "object";
+      const ruleText = isObj ? (rule.rule || "") : String(rule);
+      const sourceSuffix = isObj && rule.source === "auto_distilled" ? "（自动提炼）"
+        : isObj && rule.source === "user_explicit" ? "（手动）" : "";
+      const disabled = isObj && rule.disabled === true;
+
+      const row = h("li", { class: disabled ? "rule-row rule-disabled" : "rule-row" });
+      const textSpan = h("span", { class: "rule-text" }, ruleText + sourceSuffix);
+      row.appendChild(textSpan);
+
+      const toggleBtn = h("button", { class: "btn-mini" }, disabled ? "启用" : "停用");
+      toggleBtn.addEventListener("click", async () => {
+        const r = await safeInvoke(window.autocrew.styleUpdateRule, { index: i, disabled: !disabled });
+        if (!r.ok) { showToast(r.error || "更新失败"); return; }
+        loadStyleRules(container);
+      });
+      row.appendChild(toggleBtn);
+
+      const editBtn = h("button", { class: "btn-mini" }, "编辑");
+      editBtn.addEventListener("click", () => {
+        const input = h("input", { type: "text", class: "input-full" });
+        input.value = ruleText;
+        const saveBtn = h("button", { class: "btn-mini" }, "保存");
+        saveBtn.addEventListener("click", async () => {
+          const r = await safeInvoke(window.autocrew.styleUpdateRule, { index: i, rule: input.value });
+          if (!r.ok) { showToast(r.error || "保存失败"); return; }
+          loadStyleRules(container);
+        });
+        row.innerHTML = "";
+        row.appendChild(input);
+        row.appendChild(saveBtn);
+        input.focus();
+      });
+      row.appendChild(editBtn);
+
+      list.appendChild(row);
+    });
     container.appendChild(list);
   }
 
