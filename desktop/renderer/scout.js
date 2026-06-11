@@ -71,7 +71,7 @@ async function initScout() {
         showToast(r.error || "扫榜失败");
         return;
       }
-      const failed = (r.data.failedSources || []).length
+      const failed = ((r.data && r.data.failedSources) || []).length
         ? "（" + r.data.failedSources.join("/") + " 没拉到）"
         : "";
       showToast("扫到 " + r.data.itemCount + " 条" + failed);

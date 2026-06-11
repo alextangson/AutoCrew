@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 18 channels.
+ * IPC contract + handler registry tests — all 21 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
