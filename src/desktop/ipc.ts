@@ -121,11 +121,15 @@ async function chatTurnHandler(payload: Record<string, unknown>): Promise<Record
         .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
         .slice(-12)
     : [];
-  return runChatTurn({
-    message: message.trim(),
-    history,
-    dataDir: (payload._dataDir as string) || undefined,
-  });
+  try {
+    return await runChatTurn({
+      message: message.trim(),
+      history,
+      dataDir: (payload._dataDir as string) || undefined,
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
