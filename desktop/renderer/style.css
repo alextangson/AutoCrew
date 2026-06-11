@@ -1,4 +1,4 @@
-/* AutoCrew Desktop — clean minimal, system fonts, readable first */
+/* AutoCrew Desktop — 暖纸工作室 + 角色色块 (DESIGN.md v1) */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -6,34 +6,112 @@
   padding: 0;
 }
 
+/* ── 色彩 Token ──────────────────────────────────────────────────────────────── */
+
 :root {
-  --bg: #f5f5f5;
-  --surface: #ffffff;
-  --border: #e0e0e0;
-  --text: #1a1a1a;
-  --muted: #666;
-  --accent: #0066cc;
-  --danger: #cc2200;
-  --success: #1a7f37;
---radius: 6px;
+  /* 基底（暖调） */
+  --bg: #F4F2EC;
+  --surface: #FAF9F5;
+  --card: #FFFFFF;
+  --border: #E8E5DC;
+  --text: #3D3929;
+  --muted: #9C9784;
+  --accent: #3D3929;
+  --accent-text: #FAF9F5;
+  --success: #0F6E56;
+  --danger: #A32D2D;
+  --radius: 8px;
+  --radius-card: 12px;
   --gap: 16px;
+
+  /* 角色色系 */
+  --crew-scout-bg: #E1F5EE;  --crew-scout: #1D9E75;  --crew-scout-strong: #0F6E56;
+  --crew-writer-bg: #EEEDFE; --crew-writer: #7F77DD; --crew-writer-strong: #534AB7;
+  --crew-review-bg: #FAEEDA; --crew-review: #EF9F27; --crew-review-strong: #854F0B;
+  --crew-analyst-bg: #E6F1FB;--crew-analyst: #378ADD;--crew-analyst-strong: #185FA5;
 }
 
+/* ── 基础 ─────────────────────────────────────────────────────────────────────── */
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
-               "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
+  line-height: 1.7;
   color: var(--text);
   background: var(--bg);
   min-height: 100vh;
 }
 
-/* ── Layout: chat pane + workspace ──────────────────────────────────────────── */
+/* ── 动效 ─────────────────────────────────────────────────────────────────────── */
+
+@keyframes fadeInCard {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── 团队栏（顶部常驻，跨双栏） ─────────────────────────────────────────────── */
+
+#crew-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.crew-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+  transition: opacity 160ms ease-out;
+}
+
+.crew-chip:hover { opacity: 0.8; }
+
+.crew-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.crew-chip-scout  { background: var(--crew-scout-bg);  color: var(--crew-scout-strong); }
+.crew-chip-writer { background: var(--crew-writer-bg); color: var(--crew-writer-strong); }
+.crew-chip-review { background: var(--crew-review-bg); color: var(--crew-review-strong); }
+.crew-chip-analyst{ background: var(--crew-analyst-bg);color: var(--crew-analyst-strong); }
+
+.crew-chip-scout  .crew-badge { background: var(--crew-scout-strong);  color: var(--crew-scout-bg); }
+.crew-chip-writer .crew-badge { background: var(--crew-writer-strong); color: var(--crew-writer-bg); }
+.crew-chip-review .crew-badge { background: var(--crew-review-strong); color: var(--crew-review-bg); }
+.crew-chip-analyst .crew-badge{ background: var(--crew-analyst-strong);color: var(--crew-analyst-bg); }
+
+/* ── 整体布局 ──────────────────────────────────────────────────────────────────── */
+
+#app-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
 
 #layout {
   display: flex;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
 }
+
+/* ── 对话区（左栏） ───────────────────────────────────────────────────────────── */
 
 #chat-pane {
   width: 44%;
@@ -45,10 +123,13 @@ body {
 }
 
 .logo {
+  font-family: Georgia, "Songti SC", "STSong", serif;
   font-weight: 700;
   font-size: 16px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--border);
+  color: var(--text);
+  letter-spacing: 0.02em;
 }
 
 #chat-stream {
@@ -74,13 +155,24 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font: inherit;
+  color: var(--text);
+  background: var(--card);
+  outline: none;
+  transition: border-color 160ms ease-out;
 }
+
+#chat-input:focus {
+  border-color: var(--text);
+}
+
+/* ── 工作区（右栏） ───────────────────────────────────────────────────────────── */
 
 #workspace {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--bg);
 }
 
 #workspace-tabs {
@@ -92,20 +184,39 @@ body {
 }
 
 .ws-tab {
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--radius) var(--radius) 0 0;
-  background: var(--bg);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--muted);
-  padding: 8px 16px;
+  padding: 8px 14px;
   cursor: pointer;
   font: inherit;
+  font-size: 14px;
+  position: relative;
+  transition: color 160ms ease-out;
+}
+
+.ws-tab::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 2px;
+  background: transparent;
+  transition: background 160ms ease-out;
 }
 
 .ws-tab.active {
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
   font-weight: 600;
+}
+
+.ws-tab.active::after {
+  background: var(--text);
+}
+
+.ws-tab:hover:not(.active) {
+  color: var(--text);
 }
 
 .panel {
@@ -119,20 +230,24 @@ body {
   display: block;
 }
 
+/* ── 标题 ─────────────────────────────────────────────────────────────────────── */
+
 h2 {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 600;
   margin-bottom: 20px;
+  color: var(--text);
 }
 
 h3 {
   font-size: 15px;
   font-weight: 600;
   margin: 20px 0 10px;
+  color: var(--text);
 }
 
 h4 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   margin: 12px 0 6px;
   color: var(--muted);
@@ -146,7 +261,7 @@ hr {
   margin: 20px 0;
 }
 
-/* ── Metric cards ────────────────────────────────────────────────────────────── */
+/* ── 指标卡 ───────────────────────────────────────────────────────────────────── */
 
 .metric-grid {
   display: grid;
@@ -156,17 +271,17 @@ hr {
 }
 
 .metric-card {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   padding: 16px;
   text-align: center;
 }
 
 .metric-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--accent);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
   line-height: 1.2;
 }
 
@@ -181,7 +296,7 @@ hr {
   margin-bottom: 12px;
 }
 
-/* ── Platform bars ───────────────────────────────────────────────────────────── */
+/* ── 平台条形图 ───────────────────────────────────────────────────────────────── */
 
 .platform-bars {
   display: flex;
@@ -204,16 +319,16 @@ hr {
 
 .bar-track {
   flex: 1;
-  height: 10px;
+  height: 8px;
   background: var(--border);
-  border-radius: 5px;
+  border-radius: 4px;
   overflow: hidden;
 }
 
 .bar-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 5px;
+  border-radius: 4px;
   min-width: 2px;
   transition: width 0.3s ease;
 }
@@ -225,7 +340,7 @@ hr {
   text-align: right;
 }
 
-/* ── Lists ───────────────────────────────────────────────────────────────────── */
+/* ── 列表 ─────────────────────────────────────────────────────────────────────── */
 
 .insight-list, .review-list, .rules-list {
   padding-left: 20px;
@@ -250,7 +365,7 @@ hr {
   color: var(--success);
 }
 
-/* ── Forms ───────────────────────────────────────────────────────────────────── */
+/* ── 表单 ─────────────────────────────────────────────────────────────────────── */
 
 label {
   font-size: 13px;
@@ -266,13 +381,13 @@ label {
   font-size: 14px;
   font-family: inherit;
   color: var(--text);
-  background: var(--surface);
+  background: var(--card);
   outline: none;
+  transition: border-color 160ms ease-out;
 }
 
 .input-full:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.12);
+  border-color: var(--text);
 }
 
 .textarea-absorb {
@@ -280,32 +395,32 @@ label {
   resize: vertical;
 }
 
-/* ── Buttons ─────────────────────────────────────────────────────────────────── */
+/* ── 按钮 ─────────────────────────────────────────────────────────────────────── */
 
 .btn-primary, .btn-secondary {
   padding: 8px 18px;
   border-radius: var(--radius);
   font-size: 14px;
   font-family: inherit;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   border: none;
-  transition: opacity 0.1s;
+  transition: opacity 160ms ease-out;
 }
 
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
 }
 
 .btn-secondary {
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--text);
 }
 
 .btn-primary:hover:not(:disabled), .btn-secondary:hover:not(:disabled) {
-  opacity: 0.85;
+  opacity: 0.8;
 }
 
 .btn-primary:disabled, .btn-secondary:disabled {
@@ -313,12 +428,12 @@ label {
   cursor: not-allowed;
 }
 
-/* ── Result cards ────────────────────────────────────────────────────────────── */
+/* ── 结果卡 ───────────────────────────────────────────────────────────────────── */
 
 .result-card {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   padding: 14px;
   margin-top: 12px;
 }
@@ -340,16 +455,14 @@ label {
 }
 
 .tag {
-  background: #e8f0fe;
-  color: #0050aa;
+  background: var(--crew-writer-bg);
+  color: var(--crew-writer-strong);
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 12px;
 }
 
-/* ── Error / Warning boxes ───────────────────────────────────────────────────── */
-
-/* ── Drafts ──────────────────────────────────────────────────────────────────── */
+/* ── 稿件 ─────────────────────────────────────────────────────────────────────── */
 
 .draft-list {
   display: flex;
@@ -359,20 +472,21 @@ label {
 }
 
 .draft-row {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   padding: 12px 14px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  transition: background 0.1s;
+  transition: border-color 160ms ease-out, background 160ms ease-out;
 }
 
 .draft-row:hover {
-  background: #f0f6ff;
+  border-color: #D9D5C9;
+  background: var(--surface);
 }
 
 .draft-title {
@@ -390,9 +504,9 @@ label {
 }
 
 .draft-detail {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   padding: 20px;
 }
 
@@ -453,7 +567,7 @@ label {
   display: none;
 }
 
-/* ── Misc ────────────────────────────────────────────────────────────────────── */
+/* ── 杂项 ─────────────────────────────────────────────────────────────────────── */
 
 .muted {
   color: var(--muted);
@@ -477,10 +591,7 @@ label {
   display: none !important;
 }
 
-/* select: native appearance kept — a data: URI arrow icon would violate the
-   strict CSP (default-src 'self'); not worth widening the policy for cosmetics. */
-
-/* ── Chat messages & cards ──────────────────────────────────────────────────── */
+/* ── 对话气泡 & 卡片 ──────────────────────────────────────────────────────────── */
 
 .chat-msg {
   display: flex;
@@ -493,27 +604,90 @@ label {
 .chat-bubble {
   max-width: 85%;
   padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px 10px 10px 2px;
+  background: var(--card);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .chat-user .chat-bubble {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
+  border: none;
+  border-radius: 10px 10px 2px 10px;
 }
 
 .chat-card {
   max-width: 92%;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 12px;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  animation: fadeInCard 200ms ease-out both;
 }
+
+/* ── 角色卡片（左缘条变体） ─────────────────────────────────────────────────── */
+
+.card-crew {
+  border-left-width: 3px;
+  border-left-style: solid;
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+}
+
+.card-crew-scout  { border-left-color: var(--crew-scout-strong); }
+.card-crew-writer { border-left-color: var(--crew-writer-strong); }
+.card-crew-review { border-left-color: var(--crew-review-strong); }
+.card-crew-analyst{ border-left-color: var(--crew-analyst-strong); }
+
+/* ── 署名行 ───────────────────────────────────────────────────────────────────── */
+
+.card-byline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.byline-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.byline-badge-scout  { background: var(--crew-scout-bg);  color: var(--crew-scout-strong); }
+.byline-badge-writer { background: var(--crew-writer-bg); color: var(--crew-writer-strong); }
+.byline-badge-review { background: var(--crew-review-bg); color: var(--crew-review-strong); }
+.byline-badge-analyst{ background: var(--crew-analyst-bg);color: var(--crew-analyst-strong); }
+
+.byline-role {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.byline-role-scout  { color: var(--crew-scout-strong); }
+.byline-role-writer { color: var(--crew-writer-strong); }
+.byline-role-review { color: var(--crew-review-strong); }
+.byline-role-analyst{ color: var(--crew-analyst-strong); }
+
+.byline-kicker {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── 旧 card-kicker / card-title（保留，兼容无角色场景） ────────────────────── */
 
 .card-kicker {
   font-size: 12px;
@@ -526,6 +700,8 @@ label {
   font-weight: 600;
   font-size: 15px;
 }
+
+/* ── 卡片内容区 ───────────────────────────────────────────────────────────────── */
 
 .card-body {
   max-height: 220px;
@@ -566,14 +742,26 @@ label {
   font-size: 18px;
 }
 
+/* ── mini 按钮 ────────────────────────────────────────────────────────────────── */
+
 .btn-mini {
-  font-size: 12px;
-  padding: 2px 8px;
+  font-size: 11px;
+  padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 999px;
   background: var(--surface);
+  color: var(--text);
   cursor: pointer;
+  font-family: inherit;
+  transition: border-color 160ms ease-out, background 160ms ease-out;
 }
+
+.btn-mini:hover {
+  border-color: #D9D5C9;
+  background: var(--card);
+}
+
+/* ── 规则行 ───────────────────────────────────────────────────────────────────── */
 
 .rule-row {
   display: flex;
@@ -585,6 +773,8 @@ label {
   text-decoration: line-through;
   color: var(--muted);
 }
+
+/* ── 开发者区 ─────────────────────────────────────────────────────────────────── */
 
 .dev-zone {
   border: 1px solid var(--border);
@@ -598,7 +788,7 @@ label {
   color: var(--muted);
 }
 
-/* ── Markdown in chat bubbles ───────────────────────────────────────────────── */
+/* ── Markdown ─────────────────────────────────────────────────────────────────── */
 
 .md-p { margin: 0; }
 .md-p + .md-p, .md-list + .md-p, .md-p + .md-list { margin-top: 6px; }
@@ -608,20 +798,22 @@ label {
 .md-h3 { font-size: 14px; }
 .md-list { margin: 4px 0 4px 18px; }
 .md-code {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.05);
   border-radius: 3px;
   padding: 1px 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
 .md-pre {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.05);
   border-radius: var(--radius);
   padding: 8px 10px;
   overflow-x: auto;
   font-size: 12px;
   margin: 4px 0;
 }
+
+/* ── 选题列表 ─────────────────────────────────────────────────────────────────── */
 
 .topic-item {
   display: flex;

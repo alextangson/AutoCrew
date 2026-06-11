@@ -20,16 +20,44 @@ function renderCard(card) {
   }
 }
 
-function cardShell(kicker, title) {
-  const el = h("div", { class: "chat-card" });
-  el.appendChild(h("div", { class: "card-kicker" }, kicker));
+// 角色 → 徽字 / 名称映射（常量，XSS 安全）
+const CREW_META = {
+  scout:   { badge: "侦", name: "选题侦察员" },
+  writer:  { badge: "编", name: "编剧" },
+  review:  { badge: "审", name: "合规审核员" },
+  analyst: { badge: "析", name: "数据分析师" },
+};
+
+/**
+ * cardShell(kicker, title, role?)
+ * role: "scout" | "writer" | "review" | "analyst" | undefined
+ * 有 role 时：加左缘条 class + 渲染署名行（徽 + 角色名 + kicker 右移）
+ * 无 role 时：退回旧行为（card-kicker 行 + 可选 card-title 行）
+ */
+function cardShell(kicker, title, role) {
+  const cls = role
+    ? "chat-card card-crew card-crew-" + role
+    : "chat-card";
+  const el = h("div", { class: cls });
+
+  if (role && CREW_META[role]) {
+    const meta = CREW_META[role];
+    const byline = h("div", { class: "card-byline" });
+    byline.appendChild(h("span", { class: "byline-badge byline-badge-" + role }, meta.badge));
+    byline.appendChild(h("span", { class: "byline-role byline-role-" + role }, meta.name));
+    if (kicker) byline.appendChild(h("span", { class: "byline-kicker" }, kicker));
+    el.appendChild(byline);
+  } else {
+    el.appendChild(h("div", { class: "card-kicker" }, kicker));
+  }
+
   if (title) el.appendChild(h("div", { class: "card-title" }, title));
   return el;
 }
 
 function renderDraftCard(d) {
   const id = d.contentId || d.id; // get_draft 推原始 Content（主键 id），其余统一 contentId
-  const el = cardShell("稿件" + (d.platform ? " · " + platformLabel(d.platform) : ""), d.title || "（无标题）");
+  const el = cardShell("稿件" + (d.platform ? " · " + platformLabel(d.platform) : ""), d.title || "（无标题）", "writer");
   if (d.violations && d.violations.length > 0) {
     const warn = h("div", { class: "card-warn" });
     warn.appendChild(h("strong", {}, "风格违规警告"));
@@ -60,7 +88,7 @@ function renderDraftCard(d) {
 }
 
 function renderReportCard(d) {
-  const el = cardShell("回流报告", null);
+  const el = cardShell("回流报告", null, "analyst");
   const row = h("div", { class: "card-metric-row" });
   const completionRate = d.avgMetrics && d.avgMetrics.completionRate !== undefined
     ? d.avgMetrics.completionRate + "%" : "—";
@@ -93,7 +121,7 @@ function renderReportCard(d) {
 
 function renderDraftsListCard(d) {
   const contents = d.contents || [];
-  const el = cardShell("稿件列表", contents.length + " 篇");
+  const el = cardShell("稿件列表", contents.length + " 篇", "writer");
   const ul = h("ul", { class: "insight-list" });
   for (const c of contents.slice(0, 8)) {
     ul.appendChild(h("li", {},
@@ -109,7 +137,7 @@ function renderDraftsListCard(d) {
 }
 
 function renderStyleCard(d) {
-  const el = cardShell("风格", null);
+  const el = cardShell("风格", null, "writer");
   if (d.rule) {
     el.appendChild(h("p", {}, "已记住偏好：" + d.rule));
   } else {
@@ -125,7 +153,7 @@ function renderStyleCard(d) {
 
 /** 发布确认门 — 内嵌对话流的人类确认（PRD §7.3：不弹模态） */
 function renderPublishCard(d) {
-  const el = cardShell("发布", "文案已排版，复制后到平台粘贴");
+  const el = cardShell("发布", "文案已排版，复制后到平台粘贴", "review");
   const body = h("pre", { class: "card-body" });
   body.textContent = d.copyText || "";
   el.appendChild(body);
@@ -166,13 +194,13 @@ function renderPublishCard(d) {
 }
 
 function renderPublishedCard(d) {
-  const el = cardShell("发布", null);
+  const el = cardShell("发布", null, "review");
   el.appendChild(h("p", { class: "success-msg" }, "稿件 " + (d.contentId || "") + " 已标记为已发布"));
   return el;
 }
 
 function renderTopicCard(d) {
-  const el = cardShell(d.industry ? "选题雷达 · " + d.industry : "选题雷达", "今日候选选题");
+  const el = cardShell(d.industry ? "选题雷达 · " + d.industry : "选题雷达", "今日候选选题", "scout");
   const list = h("ol", { class: "md-list topic-list" });
   const candidates = d.candidates || [];
   for (const c of candidates.slice(0, 10)) {

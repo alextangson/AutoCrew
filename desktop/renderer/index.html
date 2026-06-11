@@ -8,13 +8,28 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div id="app-wrap">
+  <div id="crew-bar">
+    <div class="crew-chip crew-chip-scout" title="选题侦察员 — 雷达扫描赛道热点，每日推送候选选题">
+      <span class="crew-badge">侦</span>选题侦察员
+    </div>
+    <div class="crew-chip crew-chip-writer" title="编剧 — 根据选题和风格档案撰写口播稿件">
+      <span class="crew-badge">编</span>编剧
+    </div>
+    <div class="crew-chip crew-chip-review" title="合规审核员 — 检查稿件风格合规并排版发布文案">
+      <span class="crew-badge">审</span>合规审核员
+    </div>
+    <div class="crew-chip crew-chip-analyst" title="数据分析师 — 分析回流数据，生成 playbook 报告">
+      <span class="crew-badge">析</span>数据分析师
+    </div>
+  </div>
   <div id="layout">
     <section id="chat-pane">
-      <div class="logo">AutoCrew</div>
+      <div class="logo">AutoCrew · 编辑部</div>
       <div id="chat-stream"></div>
       <div id="chat-input-row">
         <textarea id="chat-input" rows="2"
-          placeholder="告诉我你想做什么，例如：帮我写一条关于 Excel 快捷键的抖音口播"></textarea>
+          placeholder="告诉团队你想做什么…"></textarea>
         <button id="chat-send" class="btn-primary">发送</button>
       </div>
     </section>
@@ -30,6 +45,7 @@
       <section id="panel-style" class="panel"></section>
       <section id="panel-settings" class="panel"></section>
     </section>
+  </div>
   </div>
   <div id="toast" class="toast hidden"></div>
   <script src="dom.js"></script>

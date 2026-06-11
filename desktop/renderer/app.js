@@ -33,7 +33,7 @@ document.querySelectorAll(".ws-tab").forEach(tab => {
 async function initReport() {
   const el = document.getElementById("panel-report");
   el.innerHTML = "";
-  el.appendChild(h("h2", {}, "回流报告"));
+  el.appendChild(h("h2", {}, "数据分析师 · 回流报告"));
 
   const loading = h("p", { class: "muted" }, "加载中...");
   el.appendChild(loading);
@@ -298,7 +298,7 @@ function initStyle() {
 
   const el = document.getElementById("panel-style");
   el.innerHTML = "";
-  el.appendChild(h("h2", {}, "风格"));
+  el.appendChild(h("h2", {}, "编剧 · 风格档案"));
 
   // Rules section (loaded async)
   const rulesSectionEl = h("div", { id: "style-rules-section" });

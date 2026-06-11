@@ -14,7 +14,7 @@ async function bootOnboarding() {
     return;
   }
   appendChatMessage("assistant",
-    "你好，我是你的数字编剧。第一次见面，花 2 分钟让我认识你——每一步都可以跳过，之后随时在对话里补。");
+    "你好，我是你的编辑部。第一次见面，花 2 分钟让我认识你——每一步都可以跳过，之后随时在对话里补。");
   onboardingStepTrack();
 }
 

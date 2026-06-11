@@ -99,5 +99,5 @@ function initChat() {
 /** Phase C 的 onboarding.js 会接管为首跑流程；日常 = 一句欢迎 */
 function bootChatWelcome() {
   appendChatMessage("assistant",
-    "我是你的数字编剧。直接说需求，比如：帮我写一条关于 Excel 快捷键的抖音口播。");
+    "编辑部就位。直接说需求，比如：帮我写一条关于 Excel 快捷键的抖音口播。");
 }
