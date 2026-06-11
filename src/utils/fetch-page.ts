@@ -9,6 +9,8 @@ export interface PageText {
   title: string | null;
   text: string;
   truncated: boolean;
+  /** 前 1000 字符中替换符（�）超阈值 — 编码声明与实际不符（如 GBK declared-utf8），提示用户换链接 */
+  garbled?: boolean;
 }
 
 export interface FetchPageOptions {
@@ -34,6 +36,8 @@ export function htmlToText(html: string): { title: string | null; text: string }
     html
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script\b[\s\S]*$/gi, " ")
+      .replace(/<style\b[\s\S]*$/gi, " ")
       .replace(/<\/(p|div|h[1-6]|li|br|tr)>/gi, "\n")
       .replace(/<[^>]+>/g, " "),
   )
@@ -72,5 +76,12 @@ export async function fetchPageText(url: string, opts: FetchPageOptions = {}): P
   const { title, text } = htmlToText(html);
   const maxChars = opts.maxChars ?? 8_000;
   const truncated = text.length > maxChars;
-  return { title, text: truncated ? text.slice(0, maxChars) : text, truncated };
+  const sample = text.slice(0, 1_000);
+  const garbled = (sample.match(/�/g)?.length ?? 0) > 10;
+  return {
+    title,
+    text: truncated ? text.slice(0, maxChars) : text,
+    truncated,
+    ...(garbled ? { garbled: true } : {}),
+  };
 }

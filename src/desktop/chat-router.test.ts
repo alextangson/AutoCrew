@@ -142,6 +142,16 @@ describe("buildChatTools", () => {
     expect(sink).toHaveLength(0);
   });
 
+  it("read_url marks truncated when router-level 4000 cap applies", async () => {
+    const sink: ChatCard[] = [];
+    const fetchPage = vi.fn(async () => ({ title: "长文", text: "字".repeat(5000), truncated: false }));
+    const tools = buildChatTools(sink, testDir, { fetchPage });
+    const out = await tools.find((t) => t.name === "read_url")!.execute({ url: "https://example.com/long" });
+    const parsed = JSON.parse(out as string);
+    expect(parsed.truncated).toBe(true);
+    expect((parsed.text as string).length).toBe(4000);
+  });
+
   it("read_url failure returns ok:false", async () => {
     const sink: ChatCard[] = [];
     const fetchPage = vi.fn(async () => { throw new Error("仅支持 http/https 链接"); });

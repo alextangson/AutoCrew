@@ -184,11 +184,15 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         if (!url) return fail("缺少 url");
         try {
           const page = await d.fetchPage(url);
+          const text = page.text.slice(0, 4_000); // 进对话上下文的预算上限
+          // NOTE: 多次 read_url 会累积吃 runLoop 的 maxTotalTokens(20000) 预算，
+          // 超限时 loop 以 stopReason=max_tokens 静默截停——预算策略 v1.5 再调。
           return JSON.stringify({
             ok: true,
             title: page.title,
-            truncated: page.truncated,
-            text: page.text.slice(0, 4_000), // 进对话上下文的预算上限
+            truncated: page.truncated || page.text.length > 4_000,
+            text,
+            ...(page.garbled ? { garbled: true } : {}),
           });
         } catch (err) {
           return fail(err instanceof Error ? err.message : err);

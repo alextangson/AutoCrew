@@ -26,10 +26,29 @@ describe("fetchPageText", () => {
     expect(page.text).not.toContain("<p>");
   });
 
+  it("drops content after an unclosed script tag", async () => {
+    const fetchImpl = (async () =>
+      htmlResponse("<body><p>正文在前。</p><script>evil_payload(1)")) as typeof fetch;
+    const page = await fetchPageText("https://example.com/c", { fetchImpl });
+    expect(page.text).toContain("正文在前");
+    expect(page.text).not.toContain("evil_payload");
+  });
+
   it("caps text length", async () => {
     const fetchImpl = (async () => htmlResponse("<body>" + "长".repeat(20000) + "</body>")) as typeof fetch;
     const page = await fetchPageText("https://example.com/b", { fetchImpl, maxChars: 500 });
     expect(page.text.length).toBeLessThanOrEqual(500);
     expect(page.truncated).toBe(true);
+  });
+
+  it("flags garbled pages and leaves clean pages unflagged", async () => {
+    const garbledImpl = (async () =>
+      htmlResponse("<body>" + "�".repeat(50) + "正文</body>")) as typeof fetch;
+    const garbledPage = await fetchPageText("https://example.com/g", { fetchImpl: garbledImpl });
+    expect(garbledPage.garbled).toBe(true);
+
+    const cleanImpl = (async () => htmlResponse("<body>正常正文</body>")) as typeof fetch;
+    const cleanPage = await fetchPageText("https://example.com/ok", { fetchImpl: cleanImpl });
+    expect(cleanPage.garbled).toBeUndefined();
   });
 });
