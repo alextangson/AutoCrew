@@ -89,9 +89,10 @@ function renderStructure(pack: TrackPack): string {
 function renderProfile(profile: CreatorProfile): string {
   const parts: string[] = [];
 
-  if (profile.writingRules.length > 0) {
+  const activeRules = profile.writingRules.filter((r) => !r.disabled);
+  if (activeRules.length > 0) {
     parts.push("## 个人写作规则");
-    for (const rule of profile.writingRules) {
+    for (const rule of activeRules) {
       parts.push(`- ${rule.rule}`);
     }
     parts.push("");

@@ -147,4 +147,28 @@ describe("buildScriptPrompts", () => {
     expect(result.user).toContain("基于常识");
     expect(result.user).toContain("避免编造数据");
   });
+
+  it("system prompt skips disabled writing rules and includes enabled ones", () => {
+    const profile: CreatorProfile = {
+      industry: "AI教育",
+      platforms: ["douyin"],
+      audiencePersona: null,
+      writingRules: [
+        { rule: "启用的规则", source: "user_explicit", confidence: 1, createdAt: "2026-01-01T00:00:00Z" },
+        { rule: "停用的规则", source: "user_explicit", confidence: 1, createdAt: "2026-01-01T00:00:00Z", disabled: true },
+      ],
+      styleBoundaries: { never: [], always: [] },
+      competitorAccounts: [],
+      performanceHistory: [],
+      styleCalibrated: false,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+
+    const req: ScriptRequest = { topic: "AI技能", platform: "douyin" };
+    const result = buildScriptPrompts(KOUBO_PACK, profile, req);
+
+    expect(result.system).toContain("启用的规则");
+    expect(result.system).not.toContain("停用的规则");
+  });
 });

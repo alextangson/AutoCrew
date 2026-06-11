@@ -27,14 +27,18 @@
  *   publish:clipboard  { content_id, hashtags? }
  *   publish:confirm    { content_id, publish_url? }
  *   chat:turn          { message, history? }
+ *   settings:get       {}
+ *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
+ *   style:update_rule  { index, rule?, disabled? }
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
-import { loadProfile } from "../modules/profile/creator-profile.js";
+import { loadProfile, updateWritingRule } from "../modules/profile/creator-profile.js";
 import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
+import { getEngineSettings, setEngineSettings } from "./settings.js";
 import type { IpcChannel } from "./channels.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -132,6 +136,30 @@ async function chatTurnHandler(payload: Record<string, unknown>): Promise<Record
   }
 }
 
+// ── style:update_rule — 个性化中心：编辑/停用规则 ─────────────────────────────
+
+async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const index = payload.index;
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+    return { ok: false, error: "需要合法的规则 index（非负整数）" };
+  }
+  const patch: { rule?: string; disabled?: boolean } = {};
+  if (typeof payload.rule === "string") patch.rule = payload.rule;
+  if (typeof payload.disabled === "boolean") patch.disabled = payload.disabled;
+  if (patch.rule === undefined && patch.disabled === undefined) {
+    return { ok: false, error: "rule 或 disabled 至少提供一个" };
+  }
+  try {
+    const profile = await updateWritingRule(index, patch, (payload._dataDir as string) || undefined);
+    return { ok: true, data: { rules: profile.writingRules, boundaries: profile.styleBoundaries } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -151,6 +179,9 @@ export function buildIpcHandlers(
     "publish:clipboard": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:clipboard"]),
     "publish:confirm": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
     "chat:turn": chatTurnHandler,
+    "settings:get": getEngineSettings,
+    "settings:set": setEngineSettings,
+    "style:update_rule": styleUpdateRuleHandler,
   };
 
   if (!deps) return defaults;

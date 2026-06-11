@@ -45,10 +45,13 @@ describe("IPC_CHANNELS", () => {
     "publish:clipboard",
     "publish:confirm",
     "chat:turn",
+    "settings:get",
+    "settings:set",
+    "style:update_rule",
   ];
 
-  it("has exactly 10 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(10);
+  it("has exactly 13 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(13);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -113,9 +116,16 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS[channel]).toBe(action);
   });
 
-  it("covers exactly the 8 execute-backed channels (style:rules & chat:turn excluded)", () => {
+  it("covers exactly the 8 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
-      IPC_CHANNELS.filter((ch) => ch !== "style:rules" && ch !== "chat:turn").sort(),
+      IPC_CHANNELS.filter(
+        (ch) =>
+          ch !== "style:rules" &&
+          ch !== "chat:turn" &&
+          ch !== "settings:get" &&
+          ch !== "settings:set" &&
+          ch !== "style:update_rule",
+      ).sort(),
     );
   });
 });
@@ -304,5 +314,15 @@ describe("chat:turn handler", () => {
     const res = await handlers["chat:turn"]({ message: "你好" });
     expect(res.ok).toBe(true);
     expect(spy).toHaveBeenCalled();
+  });
+});
+
+// ── 9. style:update_rule handler ─────────────────────────────────────────────
+
+describe("style:update_rule handler", () => {
+  it("validates index and patch presence", async () => {
+    const handlers = buildIpcHandlers();
+    expect((await handlers["style:update_rule"]({ index: -1 })).ok).toBe(false);
+    expect((await handlers["style:update_rule"]({ index: 0 })).ok).toBe(false);
   });
 });

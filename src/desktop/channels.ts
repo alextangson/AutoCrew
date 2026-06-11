@@ -17,6 +17,9 @@ export const IPC_CHANNELS = [
   "publish:clipboard",
   "publish:confirm",
   "chat:turn",
+  "settings:get",
+  "settings:set",
+  "style:update_rule",
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];
@@ -25,9 +28,10 @@ export type IpcChannel = (typeof IPC_CHANNELS)[number];
  * Converts an IPC channel name to a camelCase method name.
  * e.g. "flywheel:report" → "flywheelReport"
  *
- * All 10 methods exposed on window.autocrew:
+ * All 13 methods exposed on window.autocrew:
  *   flywheelReport / generateScript / styleDistill / styleAbsorb / styleRules /
- *   contentList / contentGet / publishClipboard / publishConfirm / chatTurn
+ *   contentList / contentGet / publishClipboard / publishConfirm / chatTurn /
+ *   settingsGet / settingsSet / styleUpdateRule
  */
 export function chToMethod(ch: string): string {
   const [ns, action] = ch.split(":");
