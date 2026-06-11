@@ -126,6 +126,12 @@ try {
   assert(registrations.size === 18, `all 18 IPC channels registered (got ${registrations.size})`);
   await assertSanitizeWired(tmpDir);
   await assertCsvWhitelistWired(tmpDir);
+
+  // chat:progress 推送接线：main.cjs 与 preload.cjs 均含事件名常量（防静默删除）
+  const mainSrc = readFileSync(path.join(root, "desktop", "dist", "main.cjs"), "utf-8");
+  assert(mainSrc.includes("chat:progress"), "main.cjs contains chat:progress push wiring");
+  assert(preloadSrc.includes("chat:progress"), "preload.cjs contains chat:progress push listener");
+
   process.exit(0);
 } catch (err) {
   console.error("smoke: desktop bundle failed:");

@@ -357,3 +357,18 @@ describe("knowledge:status handler", () => {
     expect((res.data as Record<string, unknown>).count).toBe(0);
   });
 });
+
+// ── 12. chat:turn progress forwarding ────────────────────────────────────────
+
+describe("chat:turn progress forwarding", () => {
+  it("accepts a ctx second argument and stays silent on the needsSetup path", async () => {
+    const handlers = buildIpcHandlers();
+    const events: unknown[] = [];
+    const res = await handlers["chat:turn"](
+      { message: "你好", _dataDir: testDir },
+      { onProgress: (e: unknown) => events.push(e) },
+    );
+    expect(res.ok).toBe(false); // testDir 无 engine.json → needsSetup，不应有任何事件
+    expect(events).toEqual([]);
+  });
+});

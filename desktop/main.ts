@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import path from "path";
-import { IPC_CHANNELS, buildIpcHandlers } from "../src/desktop/ipc.js";
+import { IPC_CHANNELS, buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js";
+import { CHAT_PROGRESS_EVENT } from "../src/desktop/channels.js";
 import { sanitizePayload, createPickedFileRegistry } from "../src/desktop/ipc-guard.js";
 import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
 
@@ -42,12 +43,21 @@ function createWindow(): BrowserWindow {
 // 纵深防御（终审 2026-06-11）：转交前剥掉 `_` 前缀键（_dataDir seam），
 // import_csv 的 csv_path 必须命中用户选过的文件白名单。
 for (const ch of IPC_CHANNELS) {
-  ipcMain.handle(ch, (_event, payload: unknown) => {
+  ipcMain.handle(ch, (event, payload: unknown) => {
     const clean = sanitizePayload(payload) as Record<string, unknown>;
     if (ch === "flywheel:import_csv" && !pickedFiles.isAllowed(clean?.csv_path)) {
       return { ok: false, error: "csv_path 必须是通过文件选择对话框选中的文件" };
     }
-    return handlers[ch](clean);
+    const ctx: IpcHandlerContext = {
+      onProgress: (e) => {
+        try {
+          event.sender.send(CHAT_PROGRESS_EVENT, e);
+        } catch {
+          /* 窗口已销毁 */
+        }
+      },
+    };
+    return handlers[ch](clean, ctx);
   });
 }
 

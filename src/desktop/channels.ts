@@ -29,6 +29,9 @@ export const IPC_CHANNELS = [
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];
 
+/** 主进程 → renderer 推送事件名（preload 白名单监听；不走 invoke）。 */
+export const CHAT_PROGRESS_EVENT = "chat:progress";
+
 /**
  * Converts an IPC channel name to a camelCase method name.
  * e.g. "flywheel:report" → "flywheelReport"

@@ -54,8 +54,9 @@ import type { IpcChannel } from "./channels.js";
 
 export { IPC_CHANNELS, type IpcChannel } from "./channels.js";
 
-/** Every handler: receives payload, returns {ok, data?, error?}. Never throws. */
-export type IpcHandler = (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+/** 每个 handler：收 payload（+可选 ctx），返回 {ok,...}，永不 throw。ctx 由 main.ts 注入（推送等主进程能力）。 */
+export type IpcHandlerContext = { onProgress?: (e: Record<string, unknown>) => void };
+export type IpcHandler = (payload: Record<string, unknown>, ctx?: IpcHandlerContext) => Promise<Record<string, unknown>>;
 
 type ExecuteFn = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -120,7 +121,7 @@ async function styleRulesHandler(payload: Record<string, unknown>): Promise<Reco
 
 // ── chat:turn — Agent 态对话入口 ──────────────────────────────────────────────
 
-async function chatTurnHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
@@ -138,6 +139,15 @@ async function chatTurnHandler(payload: Record<string, unknown>): Promise<Record
       message: message.trim(),
       history,
       dataDir: (payload._dataDir as string) || undefined,
+      onEvent: ctx?.onProgress
+        ? (e) => {
+            try {
+              ctx.onProgress!(e as unknown as Record<string, unknown>);
+            } catch {
+              /* 推送失败（窗口已关）不影响生成 */
+            }
+          }
+        : undefined,
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
