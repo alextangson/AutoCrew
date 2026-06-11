@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import path from "path";
 import { IPC_CHANNELS, buildIpcHandlers } from "../src/desktop/ipc.js";
 import { sanitizePayload, createPickedFileRegistry } from "../src/desktop/ipc-guard.js";
+import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
 
 // __dirname comes from Node's CJS module wrapper in the bundled output
 declare const __dirname: string;
@@ -52,6 +53,9 @@ for (const ch of IPC_CHANNELS) {
 
 app.whenReady().then(() => {
   createWindow();
+
+  // 选题雷达：启动 fire-and-forget 刷新（PRD §7.1——定期抓取归外层调度，v1=启动时）
+  void refreshTopicRadar().catch(() => {});
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

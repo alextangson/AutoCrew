@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "sources": [
+    { "id": "36kr", "name": "36氪", "type": "rss", "url": "https://36kr.com/feed", "tracks": ["科技", "AI", "创投"] },
+    { "id": "ifanr", "name": "爱范儿", "type": "rss", "url": "https://www.ifanr.com/feed", "tracks": ["科技", "AI", "数码"] }
+  ]
+}
