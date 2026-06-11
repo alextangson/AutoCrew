@@ -54,6 +54,14 @@ Chrome 扩展（extension/ 已有雏形参照）+ native messaging + 账号绑�
 - LLM 风格建模替换 8 正则（§7.2a）：独立于壳，可与 S2/S3 并行排。
 - ~~IPC 边界硬化~~：✅ 已完成（`4faefc1`，chip 任务独立落地：main.ts 剥 `_` 前缀键 + import_csv 路径白名单）。
 
+### Sprint 1 终审 backlog（2026-06-11，全部非阻塞）
+1. **选题卡接 read_url 闭环**（产品价值最高）：「就这个写」prompt 带候选 link，模型先读正文做 research 再写——选题→阅读→写作全自动。归 S2 或 L2 拟稿一起做。
+2. refreshTopicRadar 加 in-flight promise 去重（消启动+TTL 双刷新与缓存撕裂窗口，5 行）；原子写（temp+rename）做全仓 util 统一上。
+3. decodeEntities 两处复制（fetch-page/topic-radar），第三个消费者出现时抽 src/utils/html.ts。
+4. read_url 外带（exfiltration）姿态重估——触发条件：热榜源可配置/云端下发上线时。
+5. read_url 累积 token 预算策略（码内 NOTE 已标 v1.5）；description 补 garbled 处置语义。
+6. topic-sources.json「编译进包/云端下发切换」决策在码内补一句注释落点。
+
 ## 四、明确不做 / 后置
 - 对标视频全量 ASR 拉片：先用 read_url 轻版（平台页文案/字幕）验证「对标驱动写作」的真实使用率，再裁决是否上转写。
 - 自建爬虫 / 登录态抓第三方数据：红线（§6），热榜只碰公开源。
