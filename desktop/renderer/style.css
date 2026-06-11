@@ -327,7 +327,7 @@ hr {
 
 .bar-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--success);
   border-radius: 4px;
   min-width: 2px;
   transition: width 0.3s ease;
@@ -455,8 +455,9 @@ label {
 }
 
 .tag {
-  background: var(--crew-writer-bg);
-  color: var(--crew-writer-strong);
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
   padding: 3px 8px;
   border-radius: 4px;
   font-size: 12px;
