@@ -475,5 +475,6 @@ describe("style:record_edit handler", () => {
   it("validates before/after presence", async () => {
     const handlers = buildIpcHandlers();
     expect((await handlers["style:record_edit"]({ _dataDir: testDir, before: "x" })).ok).toBe(false);
+    expect((await handlers["style:record_edit"]({ _dataDir: testDir, before: "x", after: "" })).ok).toBe(false);
   });
 });
