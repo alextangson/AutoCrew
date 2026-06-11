@@ -509,6 +509,7 @@ UI 配置页是 v1.5——v1 阶段用以上两种方式配置后重启 app。
 
 | 现象 | 原因 | 修复 |
 |---|---|---|
+| 反复弹「找不到用于储存 Electron Key 的钥匙串」| 用 `HOME=/tmp/...` 隔离环境启动的测试实例——macOS 按 `$HOME/Library/Keychains` 找钥匙串，HOME 一改就找不到 | 弹窗点**取消**（别点「还原为默认」）；测试/CI 启动一律加 `--use-mock-keychain` 旗标（CDP 冒烟脚本已强制） |
 | `npm run app` 卡住不出窗口（首次）| Electron 二进制（~100MB）postinstall 从 GitHub 下载，国内拉不动（2026-06-11 实战确认）| `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js` 补装后重试；全新 `npm install` 前先 export 该镜像变量 |
 | 窗口白屏 | 渲染层加载失败 | 看终端报错（`npm run app` 的输出）；常见原因：`desktop/dist/` 构建产物缺失，重跑 `npm run build:desktop` |
 | 生成失败，提示 DEEPSEEK_API_KEY | 引擎 key 未配置 | 按上方「引擎 key 配置」步骤配置后重启 app |
