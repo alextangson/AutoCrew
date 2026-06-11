@@ -43,7 +43,7 @@ async function sendChat(text) {
   const sendBtn = document.getElementById("chat-send");
   sendBtn.disabled = true;
   appendChatMessage("user", message);
-  const thinking = appendChatMessage("assistant", "…");
+  const thinking = appendChatMessage("assistant", "正在干活…（写稿约需 30-60 秒）");
 
   const res = await safeInvoke(window.autocrew.chatTurn, {
     message,
@@ -62,7 +62,7 @@ async function sendChat(text) {
       btn.addEventListener("click", () => switchPanel("settings"));
       msg.appendChild(btn);
     } else {
-      appendChatMessage("assistant", "出错了：" + (res.error || "未知错误"));
+      appendChatMessage("assistant", "出错了：" + (res.error || "未知错误") + "。可以直接重发，或到右侧「设置」检查引擎配置。");
     }
     return;
   }

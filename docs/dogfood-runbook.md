@@ -526,3 +526,10 @@ UI 配置页是 v1.5——v1 阶段用以上两种方式配置后重启 app。
 - **首跑**：自动进 Day-1 onboarding（赛道 → CSV 导入 → 风格校准 → playbook 报告），每步可跳过，聊天输入框全程可用。
 - **引擎配置**：「设置」面板 → 开发者区（折叠）→ API key / Base URL / 模型档位，落盘 `~/.autocrew/engine.json`（自动 chmod 0600；终端用户版本此区隐藏——§9 薄云中转上线后退役）。原 env / engine.json 手工方式仍兼容；key 在 UI 中永远只显示掩码。
 - **通道清单**：17 条 IPC（见 `src/desktop/channels.ts`）；`dialog:pick_file` 仅主进程可用；`chat:turn` 的工具 args 经 sanitize 剥 `_` 前缀键（防模型注入 `_dataDir`）。
+
+### Sprint 1 新增（2026-06-11）
+
+- **对话支持 markdown**：助手回复的粗体/列表/标题/代码正常渲染（链接/HTML 按纯文本显示——安全纪律）。
+- **读链接**：对话里给 http(s) 链接 +「照这个风格写」/「参考这篇写」，read_url 工具自动读正文。
+- **选题雷达**：问「写什么」「帮我找选题」「最近热点」→ 按你的定位从公开热榜（36氪/爱范儿，启动时后台刷新，6h TTL）出候选选题卡，点「就这个写」直接进生成。源清单在 `src/data/topic-sources.json`。
+- **知识库**：把 .md/.txt 干货文档放进 `~/.autocrew/knowledge/`，生成时按选题自动检索注入（中英文双轨匹配；设置页可看文件计数）。

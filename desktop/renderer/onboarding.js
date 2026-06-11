@@ -54,7 +54,11 @@ function onboardingStepImport() {
   pickBtn.dataset.label = "选择 CSV 文件";
   pickBtn.addEventListener("click", async () => {
     const picked = await safeInvoke(window.autocrew.dialogPickFile);
-    if (!picked.ok || !picked.data || !picked.data.path) return;
+    if (!picked.ok) {
+      showToast(picked.error || "文件选择不可用");
+      return;
+    }
+    if (!picked.data || !picked.data.path) return; // 用户取消，静默
     setLoading(pickBtn, true, "导入中...");
     const r = await safeInvoke(window.autocrew.flywheelImportCsv, {
       platform: select.value,
