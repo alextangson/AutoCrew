@@ -13,6 +13,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ["dist/", "node_modules/", "**/*.test.ts", "desktop/dist/", "desktop/renderer/", "extension/", "spikes/"],
+    ignores: ["dist/", "node_modules/", "**/*.test.ts", "desktop/dist/", "desktop/renderer/", "extension/", "spikes/", ".worktrees/"],
   },
 );

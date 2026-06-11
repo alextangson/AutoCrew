@@ -46,7 +46,7 @@ export function extractCoverTitle(title: string, customTitle?: string): string {
   }
 
   // Remove common filler patterns
-  let cleaned = title
+  const cleaned = title
     .replace(/[【】《》「」『』""'']/g, "")
     .replace(/[!！?？。，,.:：;；\s]+/g, " ")
     .trim();
@@ -55,7 +55,7 @@ export function extractCoverTitle(title: string, customTitle?: string): string {
   if (cleaned.length <= 8) return cleaned;
 
   // Try to find a punchy segment: split by common delimiters
-  const segments = cleaned.split(/[，,：:！!？?|｜—\-\/、]/);
+  const segments = cleaned.split(/[，,：:！!？?|｜—\-/、]/);
   const best = segments
     .map((s) => s.trim())
     .filter((s) => s.length >= 2 && s.length <= 8)

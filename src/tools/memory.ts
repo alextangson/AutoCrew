@@ -51,7 +51,7 @@ export async function executeMemory(params: Record<string, unknown>) {
   const signalType = (params.signal_type as any) || "general";
   let contentTitle: string | undefined;
   let originalText = (params.original_text as string) || undefined;
-  let modifiedText = (params.modified_text as string) || undefined;
+  const modifiedText = (params.modified_text as string) || undefined;
   let platform = (params.platform as string) || undefined;
 
   const contentId = params.content_id as string | undefined;
