@@ -116,7 +116,7 @@ function renderProgressBubble() {
   if (!bubble) return;
   bubble.textContent = "";
   const list = h("div", { class: "chat-progress" });
-  progressSteps.forEach((step, i) => {
+  progressSteps.forEach((step) => {
     const row = h("div", { class: step.done ? "progress-step progress-done" : "progress-step progress-active" });
     if (step.role && CREW_BADGE[step.role]) {
       row.appendChild(h("span", { class: "progress-badge byline-badge byline-badge-" + step.role }, CREW_BADGE[step.role]));
