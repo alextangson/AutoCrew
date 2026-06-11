@@ -3,7 +3,7 @@ import { IPC_CHANNELS, CHAT_PROGRESS_EVENT, chToMethod } from "../src/desktop/ch
 
 // Imports channels.ts (dependency-free), NOT ipc.ts — the sandboxed preload
 // cannot require node builtins, so the engine must stay out of this bundle.
-// chToMethod exposes the 18 window.autocrew invoke methods (see channels.ts docs),
+// chToMethod exposes the 31 window.autocrew invoke methods (see channels.ts docs),
 // plus onChatProgress — the only push listener (fixed event name whitelist).
 
 const autocrew = Object.fromEntries(

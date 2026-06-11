@@ -512,7 +512,7 @@ describe("conversations handlers", () => {
     expect(noId.ok).toBe(false);
   });
 
-  it("delete removes; unknown id errors; guards bad payload", async () => {
+  it("delete removes; unknown id errors; list guards bad payload", async () => {
     const handlers = buildIpcHandlers();
     const a = await createConversation("会话C", testDir);
     const del = await handlers["conversations:delete"]({ id: a.id, _dataDir: testDir });
@@ -528,5 +528,12 @@ describe("conversations handlers", () => {
     const handlers = buildIpcHandlers({ "chat:turn": spy });
     const res = await handlers["chat:turn"]({ message: "hi", conversation_id: "conv-1-abc" });
     expect(res.echo).toBe("conv-1-abc");
+  });
+
+  it("chat:turn default handler maps conversation_id to the store lookup", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["chat:turn"]({ message: "hi", conversation_id: "conv-1-gone", _dataDir: testDir });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("会话不存在"); // id 到达 runPersistedChatTurn 的查找，零网络
   });
 });
