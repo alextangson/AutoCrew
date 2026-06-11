@@ -11,6 +11,7 @@ function renderCard(card) {
     case "style": return renderStyleCard(card.data);
     case "publish": return renderPublishCard(card.data);
     case "published": return renderPublishedCard(card.data);
+    case "topic": return renderTopicCard(card.data);
     default: {
       const pre = h("pre", { class: "card-body" });
       pre.textContent = JSON.stringify(card.data, null, 2);
@@ -167,5 +168,23 @@ function renderPublishCard(d) {
 function renderPublishedCard(d) {
   const el = cardShell("发布", null);
   el.appendChild(h("p", { class: "success-msg" }, "稿件 " + (d.contentId || "") + " 已标记为已发布"));
+  return el;
+}
+
+function renderTopicCard(d) {
+  const el = cardShell("选题雷达 · " + (d.industry || ""), "今日候选选题");
+  const list = h("ol", { class: "md-list topic-list" });
+  const candidates = d.candidates || [];
+  for (const c of candidates.slice(0, 10)) {
+    const li = h("li", { class: "topic-item" });
+    li.appendChild(h("span", {}, c.title + "（" + (c.source || "?") + "）"));
+    const writeBtn = h("button", { class: "btn-mini" }, "就这个写");
+    writeBtn.addEventListener("click", () => {
+      sendChat("用选题《" + c.title + "》给我写一条口播");
+    });
+    li.appendChild(writeBtn);
+    list.appendChild(li);
+  }
+  el.appendChild(list);
   return el;
 }

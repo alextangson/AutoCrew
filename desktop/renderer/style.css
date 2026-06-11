@@ -622,3 +622,11 @@ label {
   font-size: 12px;
   margin: 4px 0;
 }
+
+.topic-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}

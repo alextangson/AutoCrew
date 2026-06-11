@@ -159,6 +159,35 @@ describe("buildChatTools", () => {
     const out = await tools.find((t) => t.name === "read_url")!.execute({ url: "file:///x" });
     expect(JSON.parse(out as string)).toMatchObject({ ok: false });
   });
+
+  it("find_topics pushes a topic card and returns compact candidates", async () => {
+    const sink: ChatCard[] = [];
+    const topics = vi.fn(async () => [
+      { title: "OpenAI 新模型", link: "https://a.com/1", source: "36氪", publishedAt: "2026-06-11T01:00:00Z" },
+      { title: "AI 编程趋势", link: "https://a.com/2", source: "爱范儿", publishedAt: "2026-06-11T02:00:00Z" },
+    ]);
+    const tools = buildChatTools(sink, testDir, { topics });
+
+    const out = await tools.find((t) => t.name === "find_topics")!.execute({});
+
+    const parsed = JSON.parse(out as string);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.candidates).toHaveLength(2);
+    expect(parsed.candidates[0]).toMatchObject({ title: "OpenAI 新模型", source: "36氪" });
+    expect(parsed.candidates[0].link).toBeUndefined(); // link 不进对话上下文（token 纪律）
+    expect(sink).toHaveLength(1);
+    expect(sink[0].type).toBe("topic");
+    expect((sink[0].data.candidates as unknown[]).length).toBe(2);
+  });
+
+  it("find_topics with empty radar returns ok:false guidance", async () => {
+    const sink: ChatCard[] = [];
+    const topics = vi.fn(async () => []);
+    const tools = buildChatTools(sink, testDir, { topics });
+    const out = await tools.find((t) => t.name === "find_topics")!.execute({});
+    expect(JSON.parse(out as string)).toMatchObject({ ok: false });
+    expect(sink).toHaveLength(0);
+  });
 });
 
 describe("runChatTurn", () => {
