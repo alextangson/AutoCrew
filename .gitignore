@@ -13,3 +13,4 @@ dist/
 .DS_Store
 # Never commit Pro API keys
 .pro
+.worktrees/
