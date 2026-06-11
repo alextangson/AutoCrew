@@ -96,6 +96,61 @@ async function renderWorkbench(contentId, container) {
     container.appendChild(timeline);
   }
 
+  // ── 素材（S2.9：从素材库挂接 = 复制进项目快照） ──
+  const assets = c.assets || [];
+  container.appendChild(h("h4", {}, "素材（" + assets.length + "）"));
+  const assetList = h("div", { class: "wb-assets" });
+  for (const a of assets) {
+    const row = h("div", { class: "wb-asset-row" });
+    row.appendChild(h("span", {}, (typeof LIB_TYPE_ICON !== "undefined" && LIB_TYPE_ICON[a.type] ? LIB_TYPE_ICON[a.type] : "📄") + " " + a.filename));
+    row.appendChild(h("span", { class: "muted" }, a.type + (a.description ? " · " + a.description : "")));
+    const rmBtn = h("button", { class: "btn-mini" }, "移除");
+    rmBtn.addEventListener("click", async () => {
+      if (!confirm("移除挂接素材「" + a.filename + "」？项目内副本将被删除（素材库不受影响）。")) return;
+      const r = await safeInvoke(window.autocrew.contentAssetRemove, { content_id: contentId, filename: a.filename });
+      if (!r.ok) { showToast(r.error || "移除失败"); return; }
+      renderWorkbench(contentId, container);
+    });
+    row.appendChild(rmBtn);
+    assetList.appendChild(row);
+  }
+  container.appendChild(assetList);
+  const attachBtn = h("button", { class: "btn-secondary" }, "从素材库挂接");
+  const pickerSlot = h("div", {});
+  attachBtn.addEventListener("click", () => renderAttachPicker(contentId, container, pickerSlot));
+  container.appendChild(attachBtn);
+  container.appendChild(pickerSlot);
+
   // ── 发布操作（沿用既有逻辑） ──
   if (typeof renderPublishActions === "function") renderPublishActions(c, container);
+}
+
+/** 挂接选择器：内联列出库内可用素材（missing 隐藏），>500MB 复制前确认 */
+async function renderAttachPicker(contentId, container, slot) {
+  if (slot.childNodes.length > 0) { slot.innerHTML = ""; return; } // 再点收起
+  const res = await safeInvoke(window.autocrew.libraryList);
+  if (!res.ok) { showToast(res.error || "素材库加载失败"); return; }
+  const usable = ((res.data && res.data.assets) || []).filter((a) => !a.missing);
+  const box = h("div", { class: "wb-attach-picker" });
+  if (usable.length === 0) {
+    box.appendChild(h("p", { class: "muted" }, "素材库暂无可用素材——先到侧边栏「素材库」导入。"));
+  }
+  for (const a of usable) {
+    const row = h("div", { class: "wb-asset-row" });
+    row.appendChild(h("span", {}, (typeof LIB_TYPE_ICON !== "undefined" && LIB_TYPE_ICON[a.type] ? LIB_TYPE_ICON[a.type] : "📄") + " " + a.name));
+    row.appendChild(h("span", { class: "muted" }, libFmtSize(a.size)));
+    const btn = h("button", { class: "btn-mini" }, "挂接");
+    btn.addEventListener("click", async () => {
+      if (a.size > 500 * 1024 * 1024 &&
+          !confirm("该素材 " + libFmtSize(a.size) + "，挂接会把文件复制进项目目录。继续？")) return;
+      btn.disabled = true;
+      const r = await safeInvoke(window.autocrew.contentAssetAdd, { content_id: contentId, library_id: a.id });
+      if (!r.ok) { btn.disabled = false; showToast(r.error || "挂接失败"); return; }
+      showToast("已挂接「" + a.name + "」");
+      renderWorkbench(contentId, container);
+    });
+    row.appendChild(btn);
+    box.appendChild(row);
+  }
+  slot.appendChild(box);
 }
