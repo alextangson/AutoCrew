@@ -12,6 +12,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { getDataDir } from "./local-store.js";
+import { writeJsonAtomic, readJson } from "./json-atomic.js";
 
 export interface ConversationMeta {
   id: string;
@@ -49,31 +50,6 @@ async function conversationsRoot(dataDir?: string): Promise<string> {
   const root = path.join(getDataDir(dataDir), "conversations");
   await fs.mkdir(root, { recursive: true });
   return root;
-}
-
-/** temp + rename 原子写（同目录，rename 不跨设备） */
-async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const rnd = Math.random().toString(36).slice(2, 6);
-  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${rnd}`;
-  try {
-    await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf-8");
-    await fs.rename(tmp, filePath);
-  } catch (err) {
-    try {
-      await fs.unlink(tmp);
-    } catch {
-      // best-effort cleanup, ignore unlink errors
-    }
-    throw err;
-  }
-}
-
-async function readJson<T>(filePath: string): Promise<T | null> {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf-8")) as T;
-  } catch {
-    return null;
-  }
 }
 
 /** 路径穿越守卫：仅当 id 合法时返回目录路径，否则返回 null */
