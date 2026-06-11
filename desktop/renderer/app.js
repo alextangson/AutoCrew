@@ -22,6 +22,7 @@ function refreshActivePanel() {
   if (name === "drafts") initDrafts();
   if (name === "style") initStyle();
   if (name === "settings" && typeof initSettings === "function") initSettings();
+  if (name === "scout" && typeof initScout === "function") initScout();
 }
 
 document.querySelectorAll(".ws-tab").forEach(tab => {
@@ -472,6 +473,20 @@ async function loadStyleRules(container) {
     container.appendChild(aList);
   }
 }
+
+// ── 团队栏 chip 路由（S2.6：每个员工有工作档案） ─────────────────────────────
+
+document.querySelectorAll(".crew-chip").forEach((chip) => {
+  const role = ["scout", "writer", "review", "analyst"].find((r) => chip.classList.contains("crew-chip-" + r));
+  if (!role) return;
+  chip.style.cursor = "pointer";
+  chip.addEventListener("click", () => {
+    if (role === "scout") switchPanel("scout");
+    else if (role === "writer") switchPanel("style");
+    else if (role === "analyst") switchPanel("report");
+    else if (role === "review") appendReviewerCard();
+  });
+});
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 

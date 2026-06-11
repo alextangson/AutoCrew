@@ -216,3 +216,24 @@ function renderTopicCard(d) {
   el.appendChild(list);
   return el;
 }
+
+/** 审核员工作档案卡（S2.6）——合规是 always-on，不造假配置，卡片只做说明 */
+function appendReviewerCard() {
+  const el = cardShell("工作档案", "合规审核员", "review");
+  el.appendChild(h("p", {}, "每篇稿件发布前自动过 6 项检查，全程无需配置："));
+  const ul = h("ul", { class: "md-list" });
+  for (const item of [
+    "违禁词 / 极限词过滤（全程 always-on）",
+    "内容完整审核",
+    "封面要求（小红书/抖音必查）",
+    "话题标签 ≥ 1",
+    "标题符合平台字数规范",
+    "正文字数达标",
+  ]) {
+    ul.appendChild(h("li", {}, item));
+  }
+  el.appendChild(ul);
+  el.appendChild(h("p", { class: "muted" },
+    "口径声明：过滤目标是「符合平台规则」，不是绕过审核或 AI 标识（合规红线）。"));
+  appendCardToStream(el);
+}
