@@ -178,50 +178,43 @@ async function initDrafts() {
   const listDiv = h("div", { class: "draft-list" });
   const detailDiv = h("div", { id: "draft-detail", class: "draft-detail hidden" });
 
-  for (const c of sorted) {
-    const row = h("div", { class: "draft-row" });
-    row.appendChild(h("span", { class: "draft-title" }, c.title || "（无标题）"));
-    row.appendChild(h("span", { class: "draft-meta" },
-      platformLabel(c.platform) + " · " + statusLabel(c.status) + " · " + fmtDate(c.updatedAt || c.createdAt)));
-    row.addEventListener("click", () => renderDraftDetail(c.id, detailDiv, el));
-    listDiv.appendChild(row);
+  // 按状态分组（11 态 pipeline 揭幕）
+  const GROUPS = [
+    ["draft",     ["topic_saved", "drafting", "draft_ready", "revision"]],
+    ["review",    ["reviewing", "cover_pending"]],
+    ["ready",     ["approved", "publish_ready", "publishing"]],
+    ["published", ["published"]],
+    ["other",     ["archived"]],
+  ];
+  const GROUP_LABELS = {
+    draft: "草稿", review: "审核中", ready: "待发布", published: "已发布", other: "归档",
+  };
+
+  for (const [g, statuses] of GROUPS) {
+    const items = sorted.filter(c => statuses.includes(c.status));
+    if (items.length === 0) continue;
+    listDiv.appendChild(h("h4", { class: "wb-group" },
+      GROUP_LABELS[g] + "（" + items.length + "）"));
+    for (const c of items) {
+      const row = h("div", { class: "draft-row" });
+      row.appendChild(h("span", { class: "draft-title" }, c.title || "（无标题）"));
+      row.appendChild(h("span", { class: "draft-meta" },
+        platformLabel(c.platform) + " · " + statusLabel(c.status) + " · " + fmtDate(c.updatedAt || c.createdAt)));
+      row.addEventListener("click", () => renderDraftDetail(c.id, detailDiv));
+      listDiv.appendChild(row);
+    }
   }
 
   el.appendChild(listDiv);
   el.appendChild(detailDiv);
 }
 
-async function renderDraftDetail(contentId, detailDiv, screenEl) {
-  detailDiv.innerHTML = "";
-  detailDiv.classList.remove("hidden");
+async function renderDraftDetail(contentId, detailDiv) {
+  await renderWorkbench(contentId, detailDiv);
+}
 
-  const res = await safeInvoke(window.autocrew.contentGet, { id: contentId });
-  if (!res.ok) {
-    showToast(res.error || "加载稿件失败");
-    return;
-  }
-
-  const c = res.content;
-
-  detailDiv.appendChild(h("h3", {}, c.title || "（无标题）"));
-
-  const metaLine = h("p", { class: "muted" },
-    platformLabel(c.platform) + " · " + statusLabel(c.status));
-  detailDiv.appendChild(metaLine);
-
-  // Body
-  const bodyPre = h("pre", { class: "detail-body" });
-  bodyPre.textContent = c.body || "";
-  detailDiv.appendChild(bodyPre);
-
-  // Hashtags
-  if (c.hashtags && c.hashtags.length > 0) {
-    const tagWrap = h("div", { class: "tag-wrap" });
-    for (const tag of c.hashtags) {
-      tagWrap.appendChild(h("span", { class: "tag" }, tag));
-    }
-    detailDiv.appendChild(tagWrap);
-  }
+function renderPublishActions(c, detailDiv) {
+  const contentId = c.id;
 
   detailDiv.appendChild(h("hr", {}));
 
@@ -278,7 +271,6 @@ async function renderDraftDetail(contentId, detailDiv, screenEl) {
       showToast(r.error || "确认发布失败");
       return;
     }
-    metaLine.textContent = platformLabel(c.platform) + " · 已发布";
     confirmSection.remove();
     const doneMsg = h("p", { class: "success-msg" }, "已标记为已发布");
     detailDiv.appendChild(doneMsg);

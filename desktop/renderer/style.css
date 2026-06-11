@@ -853,3 +853,68 @@ label {
 .progress-active {
   color: var(--text);
 }
+
+/* ── 稿件工作台（S2.7） ─────────────────────────────────────────────────────── */
+
+.wb-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+  flex-wrap: wrap;
+}
+
+.wb-status {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.wb-editor {
+  width: 100%;
+  min-height: 260px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  font: inherit;
+  line-height: 1.8;
+  resize: vertical;
+}
+
+.wb-editor:focus {
+  outline: none;
+  border-color: var(--text);
+}
+
+.wb-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 16px;
+}
+
+.wb-version {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.wb-version-tag {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.wb-group {
+  margin: 14px 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
