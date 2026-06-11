@@ -64,7 +64,7 @@ async function sendChat(text) {
   }
 
   chatHistory.push({ role: "user", content: message });
-  chatHistory.push({ role: "assistant", content: res.data.reply });
+  chatHistory.push({ role: "assistant", content: res.data.reply || "" });
   appendChatCards(res.data.cards);
   appendChatMessage("assistant", res.data.reply);
   refreshActivePanel();
