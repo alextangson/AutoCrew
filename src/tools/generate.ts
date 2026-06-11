@@ -8,6 +8,7 @@ import { Type } from "@sinclair/typebox";
 import { generateScript } from "../modules/writing/generate-script.js";
 import type { GeneratedScript, ScriptRequest } from "../modules/writing/generate-script.js";
 import type { ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
+import { retrieveKnowledge } from "../modules/knowledge/knowledge-base.js";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -100,14 +101,19 @@ export async function executeGenerate(
     };
   }
 
+  const dataDir = (params._dataDir as string) || undefined;
+  const knowledge = await retrieveKnowledge(topic.trim(), dataDir);
+  const researchParts = [params.research as string | undefined, knowledge].filter(
+    (s): s is string => Boolean(s),
+  );
+
   const req: ScriptRequest = {
     topic: topic.trim(),
     platform: platformRaw,
-    research: params.research as string | undefined,
+    research: researchParts.length > 0 ? researchParts.join("\n\n") : undefined,
   };
 
   const generateFn = deps.generateScriptImpl ?? generateScript;
-  const dataDir = (params._dataDir as string) || undefined;
 
   try {
     const result = await generateFn(req, dataDir);

@@ -1,6 +1,9 @@
 /**
  * generate.test.ts — autocrew_generate 工具单测，全 mock，零网络
  */
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { executeGenerate } from "./generate.js";
 import type { GeneratedScript } from "../modules/writing/generate-script.js";
@@ -142,5 +145,31 @@ describe("executeGenerate", () => {
 
     expect(capturedReq).not.toBeNull();
     expect((capturedReq as Record<string, unknown>).research).toBe("参考资料...");
+  });
+});
+
+describe("knowledge injection", () => {
+  it("appends knowledge excerpts to research when knowledge dir matches topic", async () => {
+    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-gen-knowledge-"));
+    await fs.mkdir(path.join(testDir, "knowledge"), { recursive: true });
+    await fs.writeFile(path.join(testDir, "knowledge", "agent.md"), "工具调用循环是 Agent 的核心。");
+
+    let capturedReq: Record<string, unknown> | null = null;
+    const generateScriptImpl = async (req: Record<string, unknown>) => {
+      capturedReq = req;
+      return { contentId: "c1", title: "t", body: "b", hashtags: [], violations: [], tokensUsed: 1 };
+    };
+
+    await executeGenerate(
+      { action: "script", topic: "Agent 工具调用", platform: "douyin", research: "用户给的资料", _dataDir: testDir },
+      { generateScriptImpl } as never,
+    );
+
+    expect(capturedReq).not.toBeNull();
+    const research = String((capturedReq as { research?: string }).research);
+    expect(research).toContain("用户给的资料");
+    expect(research).toContain("知识库参考");
+    expect(research).toContain("工具调用循环");
+    await fs.rm(testDir, { recursive: true, force: true });
   });
 });

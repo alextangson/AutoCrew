@@ -70,6 +70,16 @@ async function initSettings() {
     });
     dev.appendChild(saveBtn);
     el.appendChild(dev);
+
+    // 知识库入口（PRD §7.1 轻量没入式知识库）
+    const kb = await safeInvoke(window.autocrew.knowledgeStatus);
+    if (kb.ok && kb.data) {
+      const kbBox = h("div", { class: "dev-zone" });
+      kbBox.appendChild(h("h3", {}, "知识库"));
+      kbBox.appendChild(h("p", { class: "muted" },
+        "把你的笔记/干货文档（.md / .txt）放进 " + kb.data.dir + "，生成时自动检索注入。当前 " + kb.data.count + " 个文件。"));
+      el.appendChild(kbBox);
+    }
   } finally {
     settingsInflight = false;
   }

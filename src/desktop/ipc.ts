@@ -34,6 +34,7 @@
  *   onboarding:init    { industry?, platforms? }
  *   flywheel:import_csv { platform, csv_path, metric_date? }
  *   dialog:pick_file   {}
+ *   knowledge:status   {}
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -44,6 +45,7 @@ import { loadProfile, updateWritingRule } from "../modules/profile/creator-profi
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
 import { getEngineSettings, setEngineSettings } from "./settings.js";
+import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import type { IpcChannel } from "./channels.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -175,6 +177,19 @@ async function dialogUnavailableHandler(): Promise<Record<string, unknown>> {
   return { ok: false, error: "文件选择仅在桌面主进程可用" };
 }
 
+// ── knowledge:status — 知识库入口状态（设置页展示） ──────────────────────────
+
+async function knowledgeStatusHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    return { ok: true, data: await knowledgeStatus((payload._dataDir as string) || undefined) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -201,6 +216,7 @@ export function buildIpcHandlers(
     "onboarding:init": completeOnboardingInit,
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),
     "dialog:pick_file": dialogUnavailableHandler,
+    "knowledge:status": knowledgeStatusHandler,
   };
 
   if (!deps) return defaults;

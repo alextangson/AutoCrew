@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 17 channels.
+ * IPC contract + handler registry tests — all 18 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -52,10 +52,11 @@ describe("IPC_CHANNELS", () => {
     "onboarding:init",
     "flywheel:import_csv",
     "dialog:pick_file",
+    "knowledge:status",
   ];
 
-  it("has exactly 17 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(17);
+  it("has exactly 18 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(18);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -121,7 +122,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS[channel]).toBe(action);
   });
 
-  it("covers exactly the 9 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file excluded)", () => {
+  it("covers exactly the 9 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -132,7 +133,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "style:update_rule" &&
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&
-          ch !== "dialog:pick_file",
+          ch !== "dialog:pick_file" &&
+          ch !== "knowledge:status",
       ).sort(),
     );
   });
@@ -342,5 +344,16 @@ describe("dialog:pick_file default handler", () => {
     const handlers = buildIpcHandlers();
     const res = await handlers["dialog:pick_file"]({});
     expect(res.ok).toBe(false);
+  });
+});
+
+// ── 11. knowledge:status handler ─────────────────────────────────────────────
+
+describe("knowledge:status handler", () => {
+  it("returns dir and count", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["knowledge:status"]({ _dataDir: testDir });
+    expect(res.ok).toBe(true);
+    expect((res.data as Record<string, unknown>).count).toBe(0);
   });
 });
