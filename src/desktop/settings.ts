@@ -75,6 +75,7 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
     const { filePath, fromFile } = await readEngineJson(dataDir);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify({ ...fromFile, ...updates }, null, 2) + "\n", { mode: 0o600 });
+    await fs.chmod(filePath, 0o600);
     return getEngineSettings({ _dataDir: dataDir });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

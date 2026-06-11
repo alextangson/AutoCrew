@@ -43,7 +43,7 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   } catch (err) {
     if ((err as { code?: string }).code !== "ENOENT") throw err;
   }
-  const apiKey = fromFile.apiKey ?? process.env.DEEPSEEK_API_KEY;
+  const apiKey = fromFile.apiKey ?? (process.env.DEEPSEEK_API_KEY || undefined);
   if (!apiKey) {
     throw new Error(
       "引擎未配置 model provider：设置环境变量 DEEPSEEK_API_KEY，或在 ~/.autocrew/engine.json 写入 {\"apiKey\": \"...\"}",
@@ -51,7 +51,7 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   }
   return {
     apiKey,
-    baseUrl: fromFile.baseUrl ?? process.env.DEEPSEEK_BASE_URL ?? ENGINE_DEFAULTS.baseUrl,
+    baseUrl: fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl,
     strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
     fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
   };

@@ -40,6 +40,16 @@ describe("getEngineSettings", () => {
     expect(d.apiKeyMasked).toBe("sk-v…1234");
     expect(JSON.stringify(res)).not.toContain("veryverysecret");
   });
+
+  it("reads key from env when no file, masks it, source=env", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-envsecretkey9876");
+    const res = await getEngineSettings({ _dataDir: testDir });
+    const d = res.data as Record<string, unknown>;
+    expect(d.configured).toBe(true);
+    expect(d.source).toBe("env");
+    expect(d.apiKeyMasked).toBe("sk-e…9876");
+    expect(JSON.stringify(res)).not.toContain("envsecretkey");
+  });
 });
 
 describe("setEngineSettings", () => {
@@ -60,5 +70,13 @@ describe("setEngineSettings", () => {
   it("rejects empty api_key", async () => {
     const res = await setEngineSettings({ _dataDir: testDir, api_key: "   " });
     expect(res.ok).toBe(false);
+  });
+
+  it("tightens permissions to 0600 even when file pre-exists with looser mode", async () => {
+    const filePath = path.join(testDir, "engine.json");
+    await fs.writeFile(filePath, JSON.stringify({ apiKey: "sk-old" }), { mode: 0o644 });
+    await setEngineSettings({ _dataDir: testDir, api_key: "sk-new12345678" });
+    const mode = (await fs.stat(filePath)).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 });
