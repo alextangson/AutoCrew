@@ -525,7 +525,7 @@ UI 配置页是 v1.5——v1 阶段用以上两种方式配置后重启 app。
 - **风格纠偏**：对话里直接说（「太 AI 味」「口语一点」）→ 自动记为永久规则；右侧「风格」面板可编辑/停用每条规则。
 - **首跑**：自动进 Day-1 onboarding（赛道 → CSV 导入 → 风格校准 → playbook 报告），每步可跳过，聊天输入框全程可用。
 - **引擎配置**：「设置」面板 → 开发者区（折叠）→ API key / Base URL / 模型档位，落盘 `~/.autocrew/engine.json`（自动 chmod 0600；终端用户版本此区隐藏——§9 薄云中转上线后退役）。原 env / engine.json 手工方式仍兼容；key 在 UI 中永远只显示掩码。
-- **通道清单**：17 条 IPC（见 `src/desktop/channels.ts`）；`dialog:pick_file` 仅主进程可用；`chat:turn` 的工具 args 经 sanitize 剥 `_` 前缀键（防模型注入 `_dataDir`）。
+- **通道清单**：18 条 IPC（见 `src/desktop/channels.ts`）；`dialog:pick_file` 仅主进程可用；`chat:turn` 的工具 args 经 sanitize 剥 `_` 前缀键（防模型注入 `_dataDir`）。
 
 ### Sprint 1 新增（2026-06-11）
 
