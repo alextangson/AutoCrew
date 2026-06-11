@@ -436,7 +436,7 @@ async function loadStyleRules(container) {
         const saveBtn = h("button", { class: "btn-mini" }, "保存");
         saveBtn.addEventListener("click", async () => {
           const r = await safeInvoke(window.autocrew.styleUpdateRule, { index: i, rule: input.value });
-          if (!r.ok) { showToast(r.error || "保存失败"); return; }
+          if (!r.ok) { showToast(r.error || "保存失败"); loadStyleRules(container); return; }
           loadStyleRules(container);
         });
         row.innerHTML = "";
