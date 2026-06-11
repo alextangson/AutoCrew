@@ -53,9 +53,19 @@ async function conversationsRoot(dataDir?: string): Promise<string> {
 
 /** temp + rename 原子写（同目录，rename 不跨设备） */
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf-8");
-  await fs.rename(tmp, filePath);
+  const rnd = Math.random().toString(36).slice(2, 6);
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${rnd}`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf-8");
+    await fs.rename(tmp, filePath);
+  } catch (err) {
+    try {
+      await fs.unlink(tmp);
+    } catch {
+      // best-effort cleanup, ignore unlink errors
+    }
+    throw err;
+  }
 }
 
 async function readJson<T>(filePath: string): Promise<T | null> {
@@ -64,6 +74,12 @@ async function readJson<T>(filePath: string): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+/** 路径穿越守卫：仅当 id 合法时返回目录路径，否则返回 null */
+function safeConvDir(root: string, id: string): string | null {
+  if (!ID_RE.test(id)) return null;
+  return path.join(root, id);
 }
 
 export async function createConversation(
@@ -82,8 +98,9 @@ export async function createConversation(
   };
   const convDir = path.join(root, id);
   await fs.mkdir(convDir, { recursive: true });
-  await writeJsonAtomic(path.join(convDir, "meta.json"), meta);
+  // messages.json 先写，meta.json 作提交记录——crash 期间不会出现有 meta 无 messages 的半残会话
   await writeJsonAtomic(path.join(convDir, "messages.json"), []);
+  await writeJsonAtomic(path.join(convDir, "meta.json"), meta);
   return meta;
 }
 
@@ -91,11 +108,66 @@ export async function getConversation(
   id: string,
   dataDir?: string,
 ): Promise<Conversation | null> {
-  if (!ID_RE.test(id)) return null;
   const root = await conversationsRoot(dataDir);
-  const convDir = path.join(root, id);
+  const convDir = safeConvDir(root, id);
+  if (!convDir) return null;
   const meta = await readJson<ConversationMeta>(path.join(convDir, "meta.json"));
   const messages = await readJson<ConversationMessage[]>(path.join(convDir, "messages.json"));
   if (!meta || typeof meta.id !== "string" || !Array.isArray(messages)) return null;
   return { meta, messages };
+}
+
+export async function appendTurn(
+  id: string,
+  user: { content: string },
+  assistant: { content: string; cards?: Record<string, unknown>[] },
+  dataDir?: string,
+): Promise<ConversationMeta | null> {
+  const existing = await getConversation(id, dataDir);
+  if (!existing) return null;
+  const root = await conversationsRoot(dataDir);
+  const convDir = safeConvDir(root, id);
+  if (!convDir) return null;
+  const now = new Date().toISOString();
+  const messages = existing.messages;
+  messages.push({ role: "user", content: user.content, ts: now });
+  messages.push({
+    role: "assistant",
+    content: assistant.content,
+    ...(assistant.cards && assistant.cards.length > 0 ? { cards: assistant.cards } : {}),
+    ts: now,
+  });
+  const meta: ConversationMeta = { ...existing.meta, turns: existing.meta.turns + 1, updatedAt: now };
+  await writeJsonAtomic(path.join(convDir, "messages.json"), messages);
+  await writeJsonAtomic(path.join(convDir, "meta.json"), meta);
+  return meta;
+}
+
+export async function listConversations(dataDir?: string): Promise<ConversationMeta[]> {
+  const root = await conversationsRoot(dataDir);
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  const metas: ConversationMeta[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const meta = await readJson<ConversationMeta>(path.join(root, e.name, "meta.json"));
+    if (!meta || typeof meta.id !== "string" || typeof meta.updatedAt !== "string") {
+      console.warn(`[conversation-store] 跳过损坏会话：${e.name}`);
+      continue;
+    }
+    metas.push(meta);
+  }
+  return metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function deleteConversation(id: string, dataDir?: string): Promise<boolean> {
+  const root = await conversationsRoot(dataDir);
+  const convDir = safeConvDir(root, id);
+  if (!convDir) return false;
+  try {
+    await fs.access(convDir);
+  } catch {
+    return false;
+  }
+  await fs.rm(convDir, { recursive: true, force: true });
+  return true;
 }
