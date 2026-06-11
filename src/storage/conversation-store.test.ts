@@ -117,6 +117,20 @@ describe("listConversations", () => {
     expect(list.map((m) => m.id)).toEqual([b.id, a.id]);
   });
 
+  it("updatedAt bump reorders list — older conv sorts first after appendTurn", async () => {
+    const a = await createConversation("旧会话", dir);
+    await new Promise((r) => setTimeout(r, 5));
+    const b = await createConversation("新会话", dir);
+    // b was created later → b should sort first now
+    const before = await listConversations(dir);
+    expect(before.map((m) => m.id)).toEqual([b.id, a.id]);
+    // append to a — its updatedAt should now be newer than b's createdAt
+    await new Promise((r) => setTimeout(r, 5));
+    await appendTurn(a.id, { content: "续问" }, { content: "续答" }, dir);
+    const after = await listConversations(dir);
+    expect(after.map((m) => m.id)).toEqual([a.id, b.id]);
+  });
+
   it("returns [] when nothing exists", async () => {
     expect(await listConversations(dir)).toEqual([]);
   });
