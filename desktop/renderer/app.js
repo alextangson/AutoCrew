@@ -477,4 +477,4 @@ async function loadStyleRules(container) {
 
 initChat();
 initReport();
-bootChatWelcome();
+bootOnboarding();
