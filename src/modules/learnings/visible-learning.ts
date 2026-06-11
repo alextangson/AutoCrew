@@ -1,10 +1,13 @@
 /**
  * Visible Learning Loop — make the learning system transparent to users.
  *
- * Three components:
+ * Two components:
  * 1. Instant Feedback: After each edit, tell user what was learned
  * 2. Learning Report: After N contents, summarize learned rules
- * 3. Rule Injection: Before writing, show which rules are being applied
+ *
+ * Rule injection into writing prompts lives in writing/script-prompt.ts
+ * (renderProfile), which injects ALL profile.writingRules ungated —
+ * confidence 不参与任何门控（见 docs/superpowers/plans/2026-06-10-llm-style.md）.
  *
  * This module generates human-readable messages, not raw data.
  */
@@ -151,52 +154,6 @@ export async function generateLearningReport(dataDir?: string): Promise<Learning
     topPatterns,
     report: parts.join("\n"),
   };
-}
-
-// --- 3. Rule Injection ---
-
-export interface RuleInjection {
-  /** Rules being applied */
-  rules: WritingRule[];
-  /** Human-readable message for the user */
-  message: string;
-  /** Prompt text to inject into the writing LLM */
-  promptInjection: string;
-}
-
-/**
- * Prepare rule injection for a writing session.
- * Called before write-script generates content.
- */
-export async function prepareRuleInjection(dataDir?: string): Promise<RuleInjection> {
-  const profile = await loadProfile(dataDir);
-  const rules = profile?.writingRules || [];
-
-  if (rules.length === 0) {
-    return {
-      rules: [],
-      message: "",
-      promptInjection: "",
-    };
-  }
-
-  // Sort by confidence, take top rules
-  const activeRules = rules
-    .filter(r => r.confidence >= 0.5)
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 10);
-
-  const message = `这篇我会应用你的 ${activeRules.length} 条写作偏好：\n${activeRules.map(r => `  - ${r.rule}`).join("\n")}`;
-
-  const promptInjection = [
-    "## 用户写作规则（必须严格遵守）",
-    "",
-    ...activeRules.map(r => `- ${r.rule}`),
-    "",
-    "以上规则来自用户的历史编辑偏好，优先级高于默认写作风格。",
-  ].join("\n");
-
-  return { rules: activeRules, message, promptInjection };
 }
 
 /**
