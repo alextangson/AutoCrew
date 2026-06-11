@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 28 channels.
+ * IPC contract + handler registry tests — all 31 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -18,6 +18,7 @@ import {
   type IpcChannel,
 } from "./ipc.js";
 import { recordOutcome } from "../modules/flywheel/outcome-store.js";
+import { createConversation, appendTurn } from "../storage/conversation-store.js";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,10 +64,13 @@ describe("IPC_CHANNELS", () => {
     "content:revert",
     "draft:rewrite_selection",
     "style:record_edit",
+    "conversations:list",
+    "conversations:get",
+    "conversations:delete",
   ];
 
-  it("has exactly 28 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(28);
+  it("has exactly 31 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(31);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -144,7 +148,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS["content:allowed_transitions"]).toBe("allowed_transitions");
   });
 
-  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit excluded)", () => {
+  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit, conversations:list, conversations:get, conversations:delete excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -163,7 +167,10 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "content:versions" &&
           ch !== "content:revert" &&
           ch !== "draft:rewrite_selection" &&
-          ch !== "style:record_edit",
+          ch !== "style:record_edit" &&
+          ch !== "conversations:list" &&
+          ch !== "conversations:get" &&
+          ch !== "conversations:delete",
       ).sort(),
     );
   });
@@ -476,5 +483,50 @@ describe("style:record_edit handler", () => {
     const handlers = buildIpcHandlers();
     expect((await handlers["style:record_edit"]({ _dataDir: testDir, before: "x" })).ok).toBe(false);
     expect((await handlers["style:record_edit"]({ _dataDir: testDir, before: "x", after: "" })).ok).toBe(false);
+  });
+});
+
+// ── 13. conversations:* handlers ─────────────────────────────────────────────
+
+describe("conversations handlers", () => {
+  it("list returns persisted conversations newest-first", async () => {
+    const handlers = buildIpcHandlers();
+    const a = await createConversation("会话A", testDir);
+    await appendTurn(a.id, { content: "会话A" }, { content: "好" }, testDir);
+    const res = await handlers["conversations:list"]({ _dataDir: testDir });
+    expect(res.ok).toBe(true);
+    const convs = (res.data as { conversations: Array<{ id: string }> }).conversations;
+    expect(convs[0].id).toBe(a.id);
+  });
+
+  it("get returns full messages; missing id errors", async () => {
+    const handlers = buildIpcHandlers();
+    const a = await createConversation("会话B", testDir);
+    await appendTurn(a.id, { content: "会话B" }, { content: "回", cards: [{ type: "draft", data: {} }] }, testDir);
+    const res = await handlers["conversations:get"]({ id: a.id, _dataDir: testDir });
+    expect(res.ok).toBe(true);
+    expect((res.data as { messages: unknown[] }).messages).toHaveLength(2);
+    const miss = await handlers["conversations:get"]({ id: "conv-1-gone", _dataDir: testDir });
+    expect(miss.ok).toBe(false);
+    const noId = await handlers["conversations:get"]({ _dataDir: testDir });
+    expect(noId.ok).toBe(false);
+  });
+
+  it("delete removes; unknown id errors; guards bad payload", async () => {
+    const handlers = buildIpcHandlers();
+    const a = await createConversation("会话C", testDir);
+    const del = await handlers["conversations:delete"]({ id: a.id, _dataDir: testDir });
+    expect(del.ok).toBe(true);
+    const again = await handlers["conversations:delete"]({ id: a.id, _dataDir: testDir });
+    expect(again.ok).toBe(false);
+    const bad = await handlers["conversations:list"](null as unknown as Record<string, unknown>);
+    expect(bad.ok).toBe(false);
+  });
+
+  it("chat:turn forwards conversation_id (deps spy sees it untouched)", async () => {
+    const spy = vi.fn(async (p: Record<string, unknown>) => ({ ok: true, echo: p.conversation_id }));
+    const handlers = buildIpcHandlers({ "chat:turn": spy });
+    const res = await handlers["chat:turn"]({ message: "hi", conversation_id: "conv-1-abc" });
+    expect(res.echo).toBe("conv-1-abc");
   });
 });

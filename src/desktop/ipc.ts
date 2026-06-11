@@ -26,7 +26,7 @@
  *   content:get        { id }
  *   publish:clipboard  { content_id, hashtags? }
  *   publish:confirm    { content_id, publish_url? }
- *   chat:turn          { message, history? }
+ *   chat:turn          { conversation_id?, message }
  *   settings:get       {}
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
  *   style:update_rule  { index, rule?, disabled? }
@@ -45,6 +45,9 @@
  *   content:revert     { id, version }
  *   draft:rewrite_selection { body, selection, instruction }
  *   style:record_edit  { content_id?, before, after }    (field 固定 body)
+ *   conversations:list   {}
+ *   conversations:get    { id }
+ *   conversations:delete { id }
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -53,7 +56,8 @@ import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { loadProfile, updateWritingRule, updateProfile } from "../modules/profile/creator-profile.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
-import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
+import { runPersistedChatTurn } from "./chat-persist.js";
+import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
 import { getEngineSettings, setEngineSettings } from "./settings.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
@@ -146,25 +150,26 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
   if (typeof message !== "string" || message.trim() === "") {
     return { ok: false, error: "chat:turn 需要非空 message" };
   }
-  const history = Array.isArray(payload.history)
-    ? (payload.history as ChatHistoryMessage[])
-        .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-        .slice(-12)
-    : [];
+  const conversationId =
+    typeof payload.conversation_id === "string" && payload.conversation_id !== ""
+      ? payload.conversation_id
+      : undefined;
   try {
-    return await runChatTurn({
+    return await runPersistedChatTurn({
       message: message.trim(),
-      history,
+      ...(conversationId ? { conversationId } : {}),
       dataDir: (payload._dataDir as string) || undefined,
-      onEvent: ctx?.onProgress
-        ? (e) => {
-            try {
-              ctx.onProgress!(e as unknown as Record<string, unknown>);
-            } catch {
-              /* 推送失败（窗口已关）不影响生成 */
-            }
+      ...(ctx?.onProgress
+        ? {
+            onEvent: (e: unknown) => {
+              try {
+                ctx.onProgress!(e as Record<string, unknown>);
+              } catch {
+                /* 推送失败（窗口已关）不影响生成 */
+              }
+            },
           }
-        : undefined,
+        : {}),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -308,6 +313,49 @@ async function styleRecordEditHandler(payload: Record<string, unknown>): Promise
   }
 }
 
+// ── conversations:* — 任务历史（S2.8 对话持久化） ────────────────────────────
+
+async function conversationsListHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    return { ok: true, data: { conversations: await listConversations((payload._dataDir as string) || undefined) } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function conversationsGetHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  try {
+    const conv = await getConversation(id, (payload._dataDir as string) || undefined);
+    if (!conv) return { ok: false, error: "会话不存在或已损坏" };
+    return { ok: true, data: { meta: conv.meta, messages: conv.messages } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function conversationsDeleteHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  try {
+    const removed = await deleteConversation(id, (payload._dataDir as string) || undefined);
+    if (!removed) return { ok: false, error: "会话不存在" };
+    return { ok: true, data: {} };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -345,6 +393,9 @@ export function buildIpcHandlers(
     "content:revert": contentRevertHandler,
     "draft:rewrite_selection": rewriteSelectionHandler,
     "style:record_edit": styleRecordEditHandler,
+    "conversations:list": conversationsListHandler,
+    "conversations:get": conversationsGetHandler,
+    "conversations:delete": conversationsDeleteHandler,
   };
 
   if (!deps) return defaults;
