@@ -75,8 +75,7 @@ async function initScout() {
         ? "（" + r.data.failedSources.join("/") + " 没拉到）"
         : "";
       showToast("扫到 " + r.data.itemCount + " 条" + failed);
-      scoutInflight = false;
-      initScout();
+      queueMicrotask(initScout);
     });
     srcBox.appendChild(refreshBtn);
     el.appendChild(srcBox);

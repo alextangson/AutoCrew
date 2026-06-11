@@ -479,7 +479,6 @@ async function loadStyleRules(container) {
 document.querySelectorAll(".crew-chip").forEach((chip) => {
   const role = ["scout", "writer", "review", "analyst"].find((r) => chip.classList.contains("crew-chip-" + r));
   if (!role) return;
-  chip.style.cursor = "pointer";
   chip.addEventListener("click", () => {
     if (role === "scout") switchPanel("scout");
     else if (role === "writer") switchPanel("style");

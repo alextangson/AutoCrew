@@ -69,11 +69,11 @@ body {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
-  cursor: default;
+  cursor: pointer;
   transition: opacity 160ms ease-out;
 }
 
-.crew-chip:hover { opacity: 0.8; }
+.crew-chip:hover { filter: brightness(0.96); }
 
 .crew-badge {
   display: inline-flex;
@@ -181,6 +181,7 @@ body {
   padding: 10px 16px 0;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  overflow-x: auto;
 }
 
 .ws-tab {
@@ -851,12 +852,4 @@ label {
 
 .progress-active {
   color: var(--text);
-}
-
-.crew-chip {
-  cursor: pointer;
-}
-
-.crew-chip:hover {
-  filter: brightness(0.96);
 }
