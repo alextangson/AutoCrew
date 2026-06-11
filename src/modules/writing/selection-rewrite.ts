@@ -1,6 +1,7 @@
 /**
  * 选区改写（S2.7 框选→改写）— 单轮 LLM 无工具，带风格规则与全文上下文。
  * strongModel（核心生成档）；上下文截断防爆预算。
+ * 注意：body 上下文从头部截断（CONTEXT_BUDGET）——选区在长稿后部时，上下文可能不含选区周边文本；选区本身完整传入不受截断影响。
  */
 import { loadEngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";

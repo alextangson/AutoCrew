@@ -44,7 +44,7 @@
  *   content:versions   { id }
  *   content:revert     { id, version }
  *   draft:rewrite_selection { body, selection, instruction }
- *   style:record_edit  { content_id?, before, after }
+ *   style:record_edit  { content_id?, before, after }    (field 固定 body)
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -294,6 +294,7 @@ async function styleRecordEditHandler(payload: Record<string, unknown>): Promise
     return { ok: false, error: "需要 before 与 after" };
   }
   try {
+    // field 固定为 "body"（v1 工作台只改正文；title 编辑信号需求出现再扩 payload）
     await recordDiff(
       String(payload.content_id ?? "workbench"),
       "body",

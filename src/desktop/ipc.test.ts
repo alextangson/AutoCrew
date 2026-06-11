@@ -144,7 +144,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS["content:allowed_transitions"]).toBe("allowed_transitions");
   });
 
-  it("covers exactly the 12 execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit excluded)", () => {
+  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -457,6 +457,7 @@ describe("content versions / revert handlers", () => {
     const handlers = buildIpcHandlers();
     expect((await handlers["content:revert"]({ _dataDir: testDir })).ok).toBe(false);
     expect((await handlers["content:revert"]({ _dataDir: testDir, id: "x" })).ok).toBe(false);
+    expect((await handlers["content:revert"]({ _dataDir: testDir, id: "nonexistent", version: 1 })).ok).toBe(false);
   });
 });
 
