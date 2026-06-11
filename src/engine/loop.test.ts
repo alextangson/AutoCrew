@@ -167,6 +167,49 @@ describe("runLoop", () => {
   });
 });
 
+describe("runLoop onEvent", () => {
+  it("emits tool_start and tool_end around tool execution, and survives a throwing callback", async () => {
+    let call = 0;
+    const fetchImpl = (async () => {
+      call++;
+      if (call === 1) {
+        return new Response(JSON.stringify({
+          choices: [{ message: { role: "assistant", content: null, tool_calls: [
+            { id: "t1", type: "function", function: { name: "echo", arguments: "{}" } },
+          ] }, finish_reason: "tool_calls" }],
+          usage: { total_tokens: 5 },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        choices: [{ message: { role: "assistant", content: "done" }, finish_reason: "stop" }],
+        usage: { total_tokens: 5 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    const events: Array<Record<string, unknown>> = [];
+    const result = await runLoop(
+      { apiKey: "k", baseUrl: "https://fake.local", strongModel: "s", fastModel: "f" },
+      {
+        model: "f",
+        systemPrompt: "sys",
+        userMessage: "go",
+        tools: [{ name: "echo", description: "", parameters: { type: "object", properties: {} }, execute: () => "ok" }],
+        fetchImpl,
+        onEvent: (e) => {
+          events.push(e as unknown as Record<string, unknown>);
+          throw new Error("callback boom"); // 回调异常不得破坏 loop
+        },
+      },
+    );
+
+    expect(result.finalMessage).toBe("done");
+    expect(events).toEqual([
+      { type: "tool_start", tool: "echo" },
+      { type: "tool_end", tool: "echo" },
+    ]);
+  });
+});
+
 describe("runLoop history", () => {
   it("injects history messages between system and current user message", async () => {
     let capturedBody: Record<string, unknown> = {};

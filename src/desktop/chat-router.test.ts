@@ -190,6 +190,40 @@ describe("buildChatTools", () => {
   });
 });
 
+describe("runChatTurn onEvent", () => {
+  it("runChatTurn maps tool events to crew roles and forwards them", async () => {
+    const calls: number[] = [];
+    const fetchImpl = (async () => {
+      calls.push(1);
+      if (calls.length === 1) {
+        return jsonResponse(assistantTurn(null, [
+          { id: "t1", type: "function", function: { name: "generate_script", arguments: JSON.stringify({ topic: "x", platform: "douyin" }) } },
+        ]));
+      }
+      return jsonResponse(assistantTurn("好了"));
+    }) as typeof fetch;
+    const generate = vi.fn(async () => ({
+      ok: true,
+      data: { contentId: "c1", title: "t", body: "b", hashtags: [], violations: [], tokensUsed: 1 },
+    }));
+
+    const events: Array<Record<string, unknown>> = [];
+    const res = await runChatTurn({
+      message: "写一条",
+      dataDir: testDir,
+      deps: { generate },
+      fetchImpl,
+      onEvent: (e) => events.push(e as unknown as Record<string, unknown>),
+    });
+
+    expect(res.ok).toBe(true);
+    expect(events).toEqual([
+      { phase: "start", tool: "generate_script", role: "writer", label: "编剧正在写稿" },
+      { phase: "end", tool: "generate_script", role: "writer", label: "编剧正在写稿" },
+    ]);
+  });
+});
+
 describe("runChatTurn", () => {
   it("returns needsSetup when no engine config exists", async () => {
     vi.stubEnv("DEEPSEEK_API_KEY", "");

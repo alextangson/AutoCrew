@@ -16,6 +16,11 @@ export interface LoopTool {
   execute: (args: Record<string, unknown>) => Promise<string> | string;
 }
 
+export interface LoopEvent {
+  type: "tool_start" | "tool_end";
+  tool: string;
+}
+
 export interface LoopOptions {
   model: string;
   systemPrompt: string;
@@ -29,6 +34,8 @@ export interface LoopOptions {
   maxTotalTokens?: number;
   /** 测试注入；默认 globalThis.fetch */
   fetchImpl?: typeof fetch;
+  /** 工具执行进度回调（UI 状态流）。回调异常被吞——观测层不得破坏执行层。 */
+  onEvent?: (e: LoopEvent) => void;
 }
 
 export interface LoopResult {
@@ -120,10 +127,20 @@ async function executeToolCalls(
   toolCalls: ToolCall[],
   toolMap: Map<string, LoopTool>,
   messages: Message[],
+  onEvent?: (e: LoopEvent) => void,
 ): Promise<number> {
   let count = 0;
   for (const tc of toolCalls) {
     count++;
+    const emit = (type: LoopEvent["type"]) => {
+      if (!onEvent) return;
+      try {
+        onEvent({ type, tool: tc.function.name });
+      } catch {
+        /* 观测层异常不破坏执行层 */
+      }
+    };
+    emit("tool_start");
     let result: string;
     try {
       const args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
@@ -132,6 +149,7 @@ async function executeToolCalls(
     } catch (err) {
       result = `Error: ${(err as Error).message}`;
     }
+    emit("tool_end");
     messages.push({ role: "tool", tool_call_id: tc.id, name: tc.function.name, content: result });
   }
   return count;
@@ -176,7 +194,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
       break;
     }
 
-    toolCallCount += await executeToolCalls(toolCalls, toolMap, messages);
+    toolCallCount += await executeToolCalls(toolCalls, toolMap, messages, opts.onEvent);
 
     if (turns >= maxTurns) {
       stopReason = "max_turns";

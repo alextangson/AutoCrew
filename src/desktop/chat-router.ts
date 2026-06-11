@@ -7,7 +7,7 @@
  * 引擎未配置 → {ok:false, needsSetup:true}，renderer 引导去设置页。
  */
 import { loadEngineConfig } from "../engine/config.js";
-import { runLoop, type LoopTool } from "../engine/loop.js";
+import { runLoop, type LoopTool, type LoopEvent } from "../engine/loop.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeRewrite } from "../tools/rewrite.js";
 import { executeFlywheel } from "../tools/flywheel.js";
@@ -22,6 +22,28 @@ export interface ChatCard {
   type: "draft" | "report" | "drafts_list" | "style" | "publish" | "published" | "topic";
   data: Record<string, unknown>;
 }
+
+export interface ChatProgressEvent {
+  phase: "start" | "end";
+  tool: string;
+  role: "scout" | "writer" | "review" | "analyst" | null;
+  label: string;
+}
+
+/** 工具 → 角色/人话状态（UI 状态流署名；与 cards.js 的 CREW_META 角色键一致） */
+const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label: string }> = {
+  find_topics: { role: "scout", label: "侦察员正在扫热榜" },
+  read_url: { role: "scout", label: "侦察员正在读参考资料" },
+  generate_script: { role: "writer", label: "编剧正在写稿" },
+  adapt_platform: { role: "writer", label: "编剧正在适配平台版本" },
+  absorb_style: { role: "writer", label: "编剧正在研究你的风格" },
+  add_style_rule: { role: "writer", label: "编剧记下一条偏好" },
+  list_drafts: { role: "writer", label: "编剧在翻稿件" },
+  get_draft: { role: "writer", label: "编剧在查稿件" },
+  publish_clipboard: { role: "review", label: "审核员正在排版检查" },
+  confirm_published: { role: "review", label: "审核员盖章归档" },
+  flywheel_report: { role: "analyst", label: "分析师正在拉数据" },
+};
 
 export interface ChatHistoryMessage {
   role: "user" | "assistant";
@@ -314,6 +336,7 @@ export async function runChatTurn(params: {
   dataDir?: string;
   deps?: ChatToolDeps;
   fetchImpl?: typeof fetch;
+  onEvent?: (e: ChatProgressEvent) => void;
 }): Promise<Record<string, unknown>> {
   let config;
   try {
@@ -334,6 +357,12 @@ export async function runChatTurn(params: {
       tools,
       maxTurns: 6,
       ...(params.fetchImpl !== undefined ? { fetchImpl: params.fetchImpl } : {}),
+      onEvent: params.onEvent
+        ? (e: LoopEvent) => {
+            const meta = CREW_TOOL_STATUS[e.tool] ?? { role: null, label: "正在处理" };
+            params.onEvent!({ phase: e.type === "tool_start" ? "start" : "end", tool: e.tool, role: meta.role, label: meta.label });
+          }
+        : undefined,
     });
     return {
       ok: true,
