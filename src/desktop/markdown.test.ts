@@ -1,5 +1,5 @@
 /**
- * markdown.js 纯解析器测试 — renderer 零构建文件经 createRequire 加载
+ * markdown.cjs 纯解析器测试 — renderer 零构建文件经 createRequire 加载
  * （文件尾的 module.exports 守卫只在 node 环境生效，浏览器全局不受影响）。
  */
 import { createRequire } from "node:module";
@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { parseMarkdown } = require("../../desktop/renderer/markdown.js") as {
+const { parseMarkdown } = require("../../desktop/renderer/markdown.cjs") as {
   parseMarkdown: (text: string) => Array<Record<string, unknown>>;
 };
 
@@ -41,5 +41,12 @@ describe("parseMarkdown blocks", () => {
     const ast = parseMarkdown("半个**粗体没闭合");
     const spans = (ast[0] as { spans: Array<{ text: string }> }).spans;
     expect(spans.map((s) => s.text).join("")).toBe("半个**粗体没闭合");
+  });
+
+  it("triple-asterisk falls back to plain text (not garbled bold)", () => {
+    const ast = parseMarkdown("这是***强调***内容");
+    const spans = (ast[0] as { spans: Array<{ style: string; text: string }> }).spans;
+    expect(spans.map((s) => s.text).join("")).toBe("这是***强调***内容");
+    expect(spans.every((s) => s.style === "plain")).toBe(true);
   });
 });

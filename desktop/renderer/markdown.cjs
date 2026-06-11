@@ -10,7 +10,15 @@ function parseInline(text) {
   let i = 0;
   const flush = () => { if (buf) { spans.push({ style: "plain", text: buf }); buf = ""; } };
   while (i < text.length) {
-    if (text.startsWith("**", i)) {
+    // *** 不支持组合粗斜：三星前瞻让其整体走纯文本回退（LLM 常输出 ***强调***）
+    if (text.startsWith("***", i)) {
+      let j = i;
+      while (j < text.length && text[j] === "*") j++;
+      buf += text.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (text.startsWith("**", i) && text[i + 2] !== "*") {
       const end = text.indexOf("**", i + 2);
       if (end > i + 2) { flush(); spans.push({ style: "bold", text: text.slice(i + 2, end) }); i = end + 2; continue; }
     }
