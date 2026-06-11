@@ -1,33 +1,9 @@
 /**
- * AutoCrew Desktop Renderer — 工作区面板（PRD §7.3：卡片的展开态）。
- * 对话驱动在 chat.js；本文件管 report/drafts/style/settings 四个面板。
+ * AutoCrew Desktop Renderer — 抽屉面板渲染（S2.8）。
+ * 抽屉容器逻辑在 drawer.js；左侧边栏在 sidebar.js；对话驱动在 chat.js。
+ * 本文件负责 report / drafts / style 三个面板的内容渲染（initReport / initDrafts / initStyle）。
  * window.autocrew 由 preload.ts 经 contextBridge 暴露。
  */
-
-// ── Workspace panels ─────────────────────────────────────────────────────────
-
-function switchPanel(name) {
-  document.querySelectorAll(".panel").forEach(s => s.classList.remove("active"));
-  document.querySelectorAll(".ws-tab").forEach(l => l.classList.remove("active"));
-  document.getElementById("panel-" + name).classList.add("active");
-  document.querySelector('[data-panel="' + name + '"]').classList.add("active");
-  refreshActivePanel();
-}
-
-function refreshActivePanel() {
-  const active = document.querySelector(".ws-tab.active");
-  if (!active) return;
-  const name = active.dataset.panel;
-  if (name === "report") initReport();
-  if (name === "drafts") initDrafts();
-  if (name === "style") initStyle();
-  if (name === "settings" && typeof initSettings === "function") initSettings();
-  if (name === "scout" && typeof initScout === "function") initScout();
-}
-
-document.querySelectorAll(".ws-tab").forEach(tab => {
-  tab.addEventListener("click", () => switchPanel(tab.dataset.panel));
-});
 
 // ── Report screen ─────────────────────────────────────────────────────────────
 
@@ -466,21 +442,10 @@ async function loadStyleRules(container) {
   }
 }
 
-// ── 团队栏 chip 路由（S2.6：每个员工有工作档案） ─────────────────────────────
-
-document.querySelectorAll(".crew-chip").forEach((chip) => {
-  const role = ["scout", "writer", "review", "analyst"].find((r) => chip.classList.contains("crew-chip-" + r));
-  if (!role) return;
-  chip.addEventListener("click", () => {
-    if (role === "scout") switchPanel("scout");
-    else if (role === "writer") switchPanel("style");
-    else if (role === "analyst") switchPanel("report");
-    else if (role === "review") appendReviewerCard();
-  });
-});
-
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 initChat();
-initReport();
+initDrawer();
+initSidebar();
 bootOnboarding();
+renderHeroChips();

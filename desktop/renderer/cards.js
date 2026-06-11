@@ -76,7 +76,7 @@ function renderDraftCard(d) {
   }
   const actions = h("div", { class: "card-actions" });
   const openBtn = h("button", { class: "btn-mini" }, "在工作区打开");
-  openBtn.addEventListener("click", () => switchPanel("drafts"));
+  openBtn.addEventListener("click", () => openDrawer("drafts"));
   actions.appendChild(openBtn);
   const publishBtn = h("button", { class: "btn-mini" }, "排版发布文案");
   publishBtn.addEventListener("click", () => {
@@ -113,7 +113,7 @@ function renderReportCard(d) {
   }
   const actions = h("div", { class: "card-actions" });
   const openBtn = h("button", { class: "btn-mini" }, "查看完整报告");
-  openBtn.addEventListener("click", () => switchPanel("report"));
+  openBtn.addEventListener("click", () => openDrawer("report"));
   actions.appendChild(openBtn);
   el.appendChild(actions);
   return el;
@@ -130,7 +130,7 @@ function renderDraftsListCard(d) {
   el.appendChild(ul);
   const actions = h("div", { class: "card-actions" });
   const openBtn = h("button", { class: "btn-mini" }, "在工作区打开");
-  openBtn.addEventListener("click", () => switchPanel("drafts"));
+  openBtn.addEventListener("click", () => openDrawer("drafts"));
   actions.appendChild(openBtn);
   el.appendChild(actions);
   return el;
@@ -145,7 +145,7 @@ function renderStyleCard(d) {
   }
   const actions = h("div", { class: "card-actions" });
   const openBtn = h("button", { class: "btn-mini" }, "管理风格规则");
-  openBtn.addEventListener("click", () => switchPanel("style"));
+  openBtn.addEventListener("click", () => openDrawer("style"));
   actions.appendChild(openBtn);
   el.appendChild(actions);
   return el;
