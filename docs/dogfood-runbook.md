@@ -579,11 +579,11 @@ S2.8 把 IA 重构为 Accio Work 式三件套：**左侧边栏 + 中央 hero/会
 所有任务（会话）存储于 `~/.autocrew/conversations/`，每个任务一个目录：
 
 ```
-~/.autocrew/conversations/<uuid>/
+~/.autocrew/conversations/<conv-时间戳-随机串>/
   meta.json      # 元信息（id, title, createdAt, updatedAt, turns 数）
   messages.json  # 完整消息列表（含卡片数据，原样回放）
 ```
 
-- **删除任务** = 删除该 `<uuid>/` 目录整体（UI 侧边栏 hover ✕ 已处理）。
+- **删除任务** = 删除该会话目录整体（UI 侧边栏 hover ✕ 已处理）。
 - 会话写入是原子操作（temp-rename 模式），重启或崩溃不会产生半写文件。
 - `messages.json` 中的卡片数据仅用于回放渲染，不进 LLM 上下文（只取最近 12 条纯文本作 history）。
