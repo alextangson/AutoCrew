@@ -10,8 +10,7 @@ let onboardingFinished = false;
 async function bootOnboarding() {
   const res = await safeInvoke(window.autocrew.onboardingStatus);
   if (!res.ok || (res.data && res.data.onboarded)) {
-    bootChatWelcome();
-    return;
+    return; // 老用户：hero 空态即欢迎（S2.8）
   }
   appendChatMessage("assistant",
     "你好，我是你的编辑部。第一次见面，花 2 分钟让我认识你——每一步都可以跳过，之后随时在对话里补。");
@@ -140,7 +139,7 @@ async function finishOnboarding(skippedAll) {
   const rules = await safeInvoke(window.autocrew.styleRules);
   const ruleCount = rules.ok && rules.data && rules.data.rules ? rules.data.rules.length : 0;
   appendChatMessage("assistant",
-    (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（右侧「风格」可改可停用）。" : "") +
+    (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（侧边栏数字员工 → 编剧 可改可停用）。" : "") +
     "搞定，开工吧。直接说选题，我来写。");
-  refreshActivePanel();
+  refreshActiveDrawer();
 }

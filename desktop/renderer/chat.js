@@ -1,9 +1,9 @@
 /**
- * Chat stream — PRD §7.3 驱动层。history 截到最近 12 条（风格/档案上下文
- * 由引擎自己注入，对话历史只承担会话连续性）。依赖 dom.js + cards.js。
+ * Chat stream — PRD §7.3 驱动层。会话连续性由 conversation_id 承担（S2.8 主进程持久化），
+ * renderer 不再持有 history。依赖 dom.js + cards.js。
  */
 
-const chatHistory = [];
+let activeConversationId = null;
 let chatBusy = false;
 
 const CREW_BADGE = { scout: "侦", writer: "编", review: "审", analyst: "析" };
@@ -11,6 +11,7 @@ let progressSteps = [];
 let activeThinking = null;
 
 function appendChatMessage(role, text) {
+  exitHeroMode();
   const stream = document.getElementById("chat-stream");
   const msg = h("div", { class: "chat-msg chat-" + role });
   const bubble = h("div", { class: "chat-bubble" });
@@ -26,6 +27,7 @@ function appendChatMessage(role, text) {
 }
 
 function appendCardToStream(cardEl) {
+  exitHeroMode();
   const stream = document.getElementById("chat-stream");
   const wrap = h("div", { class: "chat-msg chat-assistant" });
   wrap.appendChild(cardEl);
@@ -36,6 +38,44 @@ function appendCardToStream(cardEl) {
 function appendChatCards(cards) {
   if (!cards) return;
   for (const card of cards) appendCardToStream(renderCard(card));
+}
+
+function exitHeroMode() {
+  document.getElementById("main-area").classList.remove("hero-mode");
+}
+
+/** 新任务：清流、回 hero 空态。首条消息发出才建会话（零仪式感）。 */
+function newTask() {
+  activeConversationId = null;
+  document.getElementById("chat-stream").innerHTML = "";
+  document.getElementById("main-area").classList.add("hero-mode");
+  if (typeof refreshConversationList === "function") refreshConversationList();
+  renderHeroChips();
+  document.getElementById("chat-input").focus();
+}
+
+/** 任务历史回放：文字 + 卡片按发送时顺序重渲染（卡片在回复文字前，与实时一致） */
+async function loadConversation(id) {
+  if (chatBusy) { showToast("正在干活，稍等片刻再切换任务"); return; }
+  const res = await safeInvoke(window.autocrew.conversationsGet, { id });
+  if (!res.ok) {
+    showToast(res.error || "无法打开该任务");
+    if (typeof refreshConversationList === "function") refreshConversationList();
+    return;
+  }
+  activeConversationId = id;
+  document.getElementById("chat-stream").innerHTML = "";
+  exitHeroMode();
+  const messages = (res.data && res.data.messages) || [];
+  for (const m of messages) {
+    if (m.role === "assistant") {
+      appendChatCards(m.cards);
+      appendChatMessage("assistant", m.content);
+    } else {
+      appendChatMessage("user", m.content);
+    }
+  }
+  if (typeof refreshConversationList === "function") refreshConversationList();
 }
 
 async function sendChat(text) {
@@ -51,10 +91,9 @@ async function sendChat(text) {
   const thinking = appendChatMessage("assistant", "正在干活…（写稿约需 30-60 秒）");
   activeThinking = thinking;
 
-  const res = await safeInvoke(window.autocrew.chatTurn, {
-    message,
-    history: chatHistory.slice(-12),
-  });
+  const payload = { message };
+  if (activeConversationId) payload.conversation_id = activeConversationId;
+  const res = await safeInvoke(window.autocrew.chatTurn, payload);
 
   thinking.remove();
   activeThinking = null;
@@ -64,9 +103,9 @@ async function sendChat(text) {
   if (!res.ok) {
     if (res.needsSetup) {
       const msg = appendChatMessage("assistant",
-        "引擎还没配置 model provider。打开右侧「设置」，在开发者区填入 API key 即可开聊。");
+        "引擎还没配置 model provider。打开侧边栏「设置」，在开发者区填入 API key 即可开聊。");
       const btn = h("button", { class: "btn-mini" }, "打开设置");
-      btn.addEventListener("click", () => switchPanel("settings"));
+      btn.addEventListener("click", () => openDrawer("settings"));
       msg.appendChild(btn);
     } else {
       appendChatMessage("assistant", "出错了：" + (res.error || "未知错误") + "。可以直接重发，或到右侧「设置」检查引擎配置。");
@@ -74,11 +113,11 @@ async function sendChat(text) {
     return;
   }
 
-  chatHistory.push({ role: "user", content: message });
-  chatHistory.push({ role: "assistant", content: res.data.reply || "" });
+  if (res.data.conversationId) activeConversationId = res.data.conversationId;
   appendChatCards(res.data.cards);
   appendChatMessage("assistant", res.data.reply);
-  refreshActivePanel();
+  refreshActiveDrawer();
+  if (typeof refreshConversationList === "function") refreshConversationList();
 }
 
 function initChat() {
@@ -101,12 +140,6 @@ function initChat() {
       submit();
     }
   });
-}
-
-/** Phase C 的 onboarding.js 会接管为首跑流程；日常 = 一句欢迎 */
-function bootChatWelcome() {
-  appendChatMessage("assistant",
-    "编辑部就位。直接说需求，比如：帮我写一条关于 Excel 快捷键的抖音口播。");
 }
 
 /** 状态时间线：完成步 ✓ 累积，当前步带角色徽（PRD §7.3 可见工作流） */
@@ -143,4 +176,24 @@ function handleChatProgress(e) {
 
 if (window.autocrew && typeof window.autocrew.onChatProgress === "function") {
   window.autocrew.onChatProgress(handleChatProgress);
+}
+
+/** Hero 上下文 chip：赛道 + 知识库状态（只读，点击开对应抽屉） */
+async function renderHeroChips() {
+  const wrap = document.getElementById("hero-chips");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const status = await safeInvoke(window.autocrew.onboardingStatus);
+  const industry = status.ok && status.data && status.data.industry ? status.data.industry : null;
+  const indChip = h("button", { class: "hero-chip", title: "点击打开侦察员面板调整定位" },
+    "赛道：" + (industry || "未设置"));
+  indChip.addEventListener("click", () => openDrawer("scout"));
+  wrap.appendChild(indChip);
+
+  const kb = await safeInvoke(window.autocrew.knowledgeStatus);
+  const kbReady = kb.ok && kb.data && kb.data.count > 0;
+  const kbChip = h("button", { class: "hero-chip", title: "知识库详情在设置中查看" },
+    "知识库：" + (kbReady ? "已就绪" : "未导入"));
+  kbChip.addEventListener("click", () => openDrawer("settings"));
+  wrap.appendChild(kbChip);
 }

@@ -29,8 +29,8 @@ async function refreshConversationList() {
       class: "conv-row" + (conv.id === activeConversationId ? " conv-active" : ""),
       title: conv.title,
     });
+    row.addEventListener("click", () => loadConversation(conv.id));
     const titleSpan = h("span", { class: "conv-title" }, conv.title);
-    titleSpan.addEventListener("click", () => loadConversation(conv.id));
     row.appendChild(titleSpan);
     const delBtn = h("button", { class: "btn-mini conv-del", title: "删除任务" }, "✕");
     delBtn.addEventListener("click", async (e) => {

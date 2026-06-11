@@ -14,7 +14,7 @@ const DRAWER_TITLES = {
 let activeDrawerPanel = null;
 
 function openDrawer(name) {
-  if (!DRAWER_TITLES[name]) return;
+  if (!Object.hasOwn(DRAWER_TITLES, name)) return;
   activeDrawerPanel = name;
   document.getElementById("drawer-title").textContent = DRAWER_TITLES[name];
   document.querySelectorAll("#drawer-body .panel").forEach((p) => p.classList.remove("active"));
@@ -27,6 +27,7 @@ function openDrawer(name) {
 }
 
 function closeDrawer() {
+  if (document.activeElement && document.getElementById("drawer").contains(document.activeElement)) document.activeElement.blur();
   activeDrawerPanel = null;
   const drawer = document.getElementById("drawer");
   drawer.classList.add("drawer-closed");
@@ -51,6 +52,6 @@ function initDrawer() {
   document.getElementById("drawer-close").addEventListener("click", closeDrawer);
   document.getElementById("drawer-mask").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDrawer();
+    if (e.isComposing || e.key !== "Escape") return; closeDrawer();
   });
 }
