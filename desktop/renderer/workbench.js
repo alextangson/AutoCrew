@@ -27,8 +27,13 @@ async function renderWorkbench(contentId, container) {
   for (const target of targets) {
     const btn = h("button", { class: "btn-mini" }, "→ " + statusLabel(target));
     btn.addEventListener("click", async () => {
+      if (editor.value !== c.body) {
+        showToast("有未保存的改动——先点保存，或撤销修改后再操作");
+        return;
+      }
+      btn.disabled = true;
       const r = await safeInvoke(window.autocrew.contentTransition, { id: contentId, target_status: target });
-      if (!r.ok) { showToast(r.error || "流转失败"); return; }
+      if (!r.ok) { btn.disabled = false; showToast(r.error || "流转失败"); return; }
       showToast("已流转到「" + statusLabel(target) + "」");
       renderWorkbench(contentId, container);
     });
@@ -37,7 +42,7 @@ async function renderWorkbench(contentId, container) {
   container.appendChild(statusRow);
 
   // ── 可编辑正文 ──
-  const editor = h("textarea", { class: "wb-editor", id: "wb-editor" });
+  const editor = h("textarea", { class: "wb-editor" });
   editor.value = c.body || "";
   container.appendChild(editor);
   if (typeof attachSelectionToolbar === "function") attachSelectionToolbar(editor, c, container);
@@ -74,8 +79,13 @@ async function renderWorkbench(contentId, container) {
       if (v.version !== versions.length) {
         const revertBtn = h("button", { class: "btn-mini" }, "回滚到此版");
         revertBtn.addEventListener("click", async () => {
+          if (editor.value !== c.body) {
+            showToast("有未保存的改动——先点保存，或撤销修改后再操作");
+            return;
+          }
+          revertBtn.disabled = true;
           const r = await safeInvoke(window.autocrew.contentRevert, { id: contentId, version: v.version });
-          if (!r.ok) { showToast(r.error || "回滚失败"); return; }
+          if (!r.ok) { revertBtn.disabled = false; showToast(r.error || "回滚失败"); return; }
           showToast("已回滚到 v" + v.version + "（新版本快照已生成）");
           renderWorkbench(contentId, container);
         });
