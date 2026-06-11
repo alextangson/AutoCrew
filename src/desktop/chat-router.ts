@@ -17,9 +17,10 @@ import { executePublish } from "../tools/publish.js";
 import { addWritingRule, loadProfile, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
+import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
 
 export interface ChatCard {
-  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "published" | "topic";
+  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "published" | "topic" | "assets";
   data: Record<string, unknown>;
 }
 
@@ -44,6 +45,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   publish_clipboard: { role: "review", label: "审核员正在排版检查" },
   confirm_published: { role: "review", label: "审核员盖章归档" },
   flywheel_report: { role: "analyst", label: "分析师正在拉数据" },
+  search_assets: { role: "writer", label: "编剧在翻素材库" },
 };
 
 export interface ChatHistoryMessage {
@@ -64,6 +66,7 @@ export interface ChatToolDeps {
   addRule?: (rule: Omit<WritingRule, "createdAt">, dataDir?: string) => Promise<CreatorProfile>;
   fetchPage?: (url: string) => Promise<PageText>;
   topics?: (industry: string) => Promise<RadarItem[]>;
+  libSearch?: (query: string, type?: LibraryAssetType) => Promise<LibraryAssetView[]>;
 }
 
 const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文短视频创作者从选题到发布跑通全流程。
@@ -90,6 +93,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     addRule: deps?.addRule ?? addWritingRule,
     fetchPage: deps?.fetchPage ?? ((url: string) => fetchPageText(url)),
     topics: deps?.topics ?? (async (industry: string) => getTopicCandidates(industry, dataDir)),
+    libSearch: deps?.libSearch ?? ((q: string, t?: LibraryAssetType) => searchAssets(q, t, dataDir)),
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
@@ -326,6 +330,36 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         if (!res.ok) return fail(res.error);
         sink.push({ type: "published", data: { contentId: args.content_id } });
         return JSON.stringify({ ok: true, contentId: args.content_id });
+      },
+    },
+    {
+      name: "search_assets",
+      description: "在素材库中按关键词（名称/标签）检索媒体素材（视频/图片/音频）。用户问「我有什么素材」「找个 b-roll/封面」时调用。只读。",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "关键词；留空列出全部" },
+          type: { type: "string", enum: ["video", "image", "audio", "other"], description: "可选类型过滤" },
+        },
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        const query = String(a.query ?? "");
+        const typeFilter = a.type === "video" || a.type === "image" || a.type === "audio" || a.type === "other" ? (a.type as LibraryAssetType) : undefined;
+        try {
+          const results = await d.libSearch(query, typeFilter);
+          if (results.length === 0) {
+            return JSON.stringify({ ok: true, total: 0, note: "素材库为空或无匹配——可在侧边栏「素材库」导入" });
+          }
+          sink.push({ type: "assets", data: { query, assets: results.slice(0, 20) } });
+          return JSON.stringify({
+            ok: true,
+            total: results.length,
+            assets: results.slice(0, 10).map((r) => ({ name: r.name, type: r.type, tags: r.tags, missing: r.missing })),
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
       },
     },
   ];

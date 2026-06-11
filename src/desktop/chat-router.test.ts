@@ -278,3 +278,43 @@ describe("runChatTurn", () => {
     expect(firstMessages.slice(0, 4).map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
   });
 });
+
+describe("search_assets tool", () => {
+  it("returns compact results and pushes an assets card", async () => {
+    const sink: ChatCard[] = [];
+    const tools = buildChatTools(sink, undefined, {
+      libSearch: async () => [
+        { id: "asset-1-a", name: "Excel钩子.mp4", path: "/x/a.mp4", type: "video", ext: "mp4", size: 10, folderId: null, tags: ["钩子"], addedAt: "2026-06-11T00:00:00.000Z", missing: false },
+      ],
+    });
+    const tool = tools.find((t) => t.name === "search_assets")!;
+    const out = JSON.parse(await tool.execute({ query: "excel" }));
+    expect(out.ok).toBe(true);
+    expect(out.total).toBe(1);
+    expect(out.assets[0]).toMatchObject({ name: "Excel钩子.mp4", type: "video", missing: false });
+    expect(sink).toHaveLength(1);
+    expect(sink[0].type).toBe("assets");
+  });
+
+  it("empty library returns note without a card", async () => {
+    const sink: ChatCard[] = [];
+    const tools = buildChatTools(sink, undefined, { libSearch: async () => [] });
+    const tool = tools.find((t) => t.name === "search_assets")!;
+    const out = JSON.parse(await tool.execute({ query: "啥都没有" }));
+    expect(out.ok).toBe(true);
+    expect(out.total).toBe(0);
+    expect(sink).toHaveLength(0);
+  });
+
+  it("passes missing flag through", async () => {
+    const sink: ChatCard[] = [];
+    const tools = buildChatTools(sink, undefined, {
+      libSearch: async () => [
+        { id: "asset-1-b", name: "丢了.png", path: "/x/b.png", type: "image", ext: "png", size: 1, folderId: null, tags: [], addedAt: "2026-06-11T00:00:00.000Z", missing: true },
+      ],
+    });
+    const tool = tools.find((t) => t.name === "search_assets")!;
+    const out = JSON.parse(await tool.execute({}));
+    expect(out.assets[0].missing).toBe(true);
+  });
+});
