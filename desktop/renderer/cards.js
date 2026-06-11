@@ -172,7 +172,7 @@ function renderPublishedCard(d) {
 }
 
 function renderTopicCard(d) {
-  const el = cardShell("选题雷达 · " + (d.industry || ""), "今日候选选题");
+  const el = cardShell(d.industry ? "选题雷达 · " + d.industry : "选题雷达", "今日候选选题");
   const list = h("ol", { class: "md-list topic-list" });
   const candidates = d.candidates || [];
   for (const c of candidates.slice(0, 10)) {
