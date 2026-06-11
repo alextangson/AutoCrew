@@ -6,6 +6,10 @@
 const chatHistory = [];
 let chatBusy = false;
 
+const CREW_BADGE = { scout: "侦", writer: "编", review: "审", analyst: "析" };
+let progressSteps = [];
+let activeThinking = null;
+
 function appendChatMessage(role, text) {
   const stream = document.getElementById("chat-stream");
   const msg = h("div", { class: "chat-msg chat-" + role });
@@ -43,7 +47,9 @@ async function sendChat(text) {
   const sendBtn = document.getElementById("chat-send");
   sendBtn.disabled = true;
   appendChatMessage("user", message);
+  progressSteps = [];
   const thinking = appendChatMessage("assistant", "正在干活…（写稿约需 30-60 秒）");
+  activeThinking = thinking;
 
   const res = await safeInvoke(window.autocrew.chatTurn, {
     message,
@@ -51,6 +57,7 @@ async function sendChat(text) {
   });
 
   thinking.remove();
+  activeThinking = null;
   chatBusy = false;
   sendBtn.disabled = false;
 
@@ -100,4 +107,40 @@ function initChat() {
 function bootChatWelcome() {
   appendChatMessage("assistant",
     "编辑部就位。直接说需求，比如：帮我写一条关于 Excel 快捷键的抖音口播。");
+}
+
+/** 状态时间线：完成步 ✓ 累积，当前步带角色徽（PRD §7.3 可见工作流） */
+function renderProgressBubble() {
+  if (!activeThinking) return;
+  const bubble = activeThinking.querySelector(".chat-bubble");
+  if (!bubble) return;
+  bubble.textContent = "";
+  const list = h("div", { class: "chat-progress" });
+  progressSteps.forEach((step, i) => {
+    const row = h("div", { class: step.done ? "progress-step progress-done" : "progress-step progress-active" });
+    if (step.role && CREW_BADGE[step.role]) {
+      row.appendChild(h("span", { class: "progress-badge byline-badge byline-badge-" + step.role }, CREW_BADGE[step.role]));
+    }
+    row.appendChild(h("span", {}, step.label + (step.done ? " ✓" : "…")));
+    list.appendChild(row);
+  });
+  if (progressSteps.length === 0) {
+    list.appendChild(h("div", { class: "progress-step progress-active" }, "正在干活…（写稿约需 30-60 秒）"));
+  }
+  bubble.appendChild(list);
+}
+
+function handleChatProgress(e) {
+  if (!activeThinking || !e || typeof e.label !== "string") return;
+  if (e.phase === "start") {
+    progressSteps.push({ role: e.role, label: e.label, done: false });
+  } else if (e.phase === "end") {
+    const open = [...progressSteps].reverse().find((s) => !s.done && s.label === e.label);
+    if (open) open.done = true;
+  }
+  renderProgressBubble();
+}
+
+if (window.autocrew && typeof window.autocrew.onChatProgress === "function") {
+  window.autocrew.onChatProgress(handleChatProgress);
 }

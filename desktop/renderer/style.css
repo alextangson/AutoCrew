@@ -823,3 +823,32 @@ label {
   gap: 8px;
   padding: 2px 0;
 }
+
+/* ── Chat progress timeline（状态流气泡） ───────────────────────────────────── */
+
+.chat-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.progress-step .progress-badge {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}
+
+.progress-done {
+  color: var(--muted);
+}
+
+.progress-active {
+  color: var(--text);
+}
