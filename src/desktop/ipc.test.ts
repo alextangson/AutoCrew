@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 9 channels.
+ * IPC contract + handler registry tests — all 10 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -31,7 +31,7 @@ afterEach(async () => {
   await fs.rm(testDir, { recursive: true, force: true });
 });
 
-// ── 1. Contract: all 9 channels present ──────────────────────────────────────
+// ── 1. Contract: all 10 channels present ─────────────────────────────────────
 
 describe("IPC_CHANNELS", () => {
   const EXPECTED: IpcChannel[] = [
@@ -44,10 +44,11 @@ describe("IPC_CHANNELS", () => {
     "content:get",
     "publish:clipboard",
     "publish:confirm",
+    "chat:turn",
   ];
 
-  it("has exactly 9 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(9);
+  it("has exactly 10 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(10);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -112,9 +113,9 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS[channel]).toBe(action);
   });
 
-  it("covers exactly the 8 execute-backed channels (style:rules excluded)", () => {
+  it("covers exactly the 8 execute-backed channels (style:rules & chat:turn excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
-      IPC_CHANNELS.filter((ch) => ch !== "style:rules").sort(),
+      IPC_CHANNELS.filter((ch) => ch !== "style:rules" && ch !== "chat:turn").sort(),
     );
   });
 });
@@ -278,5 +279,30 @@ describe("style:rules", () => {
     const handlers = buildIpcHandlers({ "style:rules": mockRules });
     await handlers["style:rules"]({ _dataDir: testDir });
     expect(mockRules).toHaveBeenCalled();
+  });
+});
+
+// ── 8. chat:turn handler ──────────────────────────────────────────────────────
+
+describe("chat:turn handler", () => {
+  it("rejects empty message", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["chat:turn"]({ message: "   " });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("message");
+  });
+
+  it("rejects non-object payload", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["chat:turn"](null as unknown as Record<string, unknown>);
+    expect(res.ok).toBe(false);
+  });
+
+  it("deps override replaces the handler (renderer contract)", async () => {
+    const spy = vi.fn(async () => ({ ok: true, data: { reply: "hi", cards: [], tokensUsed: 1 } }));
+    const handlers = buildIpcHandlers({ "chat:turn": spy });
+    const res = await handlers["chat:turn"]({ message: "你好" });
+    expect(res.ok).toBe(true);
+    expect(spy).toHaveBeenCalled();
   });
 });

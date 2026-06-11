@@ -26,6 +26,7 @@
  *   content:get        { id }
  *   publish:clipboard  { content_id, hashtags? }
  *   publish:confirm    { content_id, publish_url? }
+ *   chat:turn          { message, history? }
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -33,6 +34,7 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
+import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
 import type { IpcChannel } from "./channels.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -104,6 +106,28 @@ async function styleRulesHandler(payload: Record<string, unknown>): Promise<Reco
   }
 }
 
+// ── chat:turn — Agent 态对话入口 ──────────────────────────────────────────────
+
+async function chatTurnHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const message = payload.message;
+  if (typeof message !== "string" || message.trim() === "") {
+    return { ok: false, error: "chat:turn 需要非空 message" };
+  }
+  const history = Array.isArray(payload.history)
+    ? (payload.history as ChatHistoryMessage[])
+        .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+        .slice(-12)
+    : [];
+  return runChatTurn({
+    message: message.trim(),
+    history,
+    dataDir: (payload._dataDir as string) || undefined,
+  });
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -122,6 +146,7 @@ export function buildIpcHandlers(
     "content:get": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:get"]),
     "publish:clipboard": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:clipboard"]),
     "publish:confirm": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
+    "chat:turn": chatTurnHandler,
   };
 
   if (!deps) return defaults;
