@@ -15,6 +15,7 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { addWritingRule, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
+import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 
 export interface ChatCard {
   type: "draft" | "report" | "drafts_list" | "style" | "publish" | "published";
@@ -37,6 +38,7 @@ export interface ChatToolDeps {
   content?: ExecuteFn;
   publish?: ExecuteFn;
   addRule?: (rule: Omit<WritingRule, "createdAt">, dataDir?: string) => Promise<CreatorProfile>;
+  fetchPage?: (url: string) => Promise<PageText>;
 }
 
 const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文短视频创作者从选题到发布跑通全流程。
@@ -45,8 +47,9 @@ const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文
 1. 永远用工具完成实际工作（生成、查数据、记风格、发布），不要口头承诺。
 2. 工具结果会以卡片形式直接呈现给用户——你的文字回复只做一句简短引导或下一步建议，不要复述卡片内容。
 3. 用户给出风格反馈（如"太 AI 味""口语一点"）时，调用 add_style_rule 记录为永久偏好，并告诉用户已记住。
-4. 缺少必要信息（选题、平台）时先问清，一次只问一个问题。
-5. 始终用中文，语气像靠谱的同事：简短、直接、不客套。`;
+4. 用户给链接（对标文章、资料）时，先调用 read_url 读取内容，再基于内容写作或吸收风格——不要凭空假装读过。
+5. 缺少必要信息（选题、平台）时先问清，一次只问一个问题。
+6. 始终用中文，语气像靠谱的同事：简短、直接、不客套。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
 
@@ -59,6 +62,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     content: deps?.content ?? (executeContentSave as ExecuteFn),
     publish: deps?.publish ?? (executePublish as ExecuteFn),
     addRule: deps?.addRule ?? addWritingRule,
+    fetchPage: deps?.fetchPage ?? ((url: string) => fetchPageText(url)),
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
@@ -165,6 +169,30 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         const content = res.content as Record<string, unknown>;
         sink.push({ type: "draft", data: content });
         return JSON.stringify({ ok: true, id: content.id, title: content.title, status: content.status });
+      },
+    },
+    {
+      name: "read_url",
+      description: "读取一个网页链接的正文（对标文章/资料），内容可用于写作 research 或风格吸收。",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "http/https 链接" } },
+        required: ["url"],
+      },
+      execute: async (args) => {
+        const url = String(sanitize(args).url ?? "").trim();
+        if (!url) return fail("缺少 url");
+        try {
+          const page = await d.fetchPage(url);
+          return JSON.stringify({
+            ok: true,
+            title: page.title,
+            truncated: page.truncated,
+            text: page.text.slice(0, 4_000), // 进对话上下文的预算上限
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
       },
     },
     {

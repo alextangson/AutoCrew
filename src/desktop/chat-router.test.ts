@@ -127,6 +127,28 @@ describe("buildChatTools", () => {
     expect(JSON.parse(out as string)).toMatchObject({ ok: false });
     expect(sink).toHaveLength(0);
   });
+
+  it("read_url returns page text to the model and pushes no card", async () => {
+    const sink: ChatCard[] = [];
+    const fetchPage = vi.fn(async () => ({ title: "对标文章", text: "正文内容……", truncated: false }));
+    const tools = buildChatTools(sink, testDir, { fetchPage });
+
+    const out = await tools.find((t) => t.name === "read_url")!.execute({ url: "https://example.com/x" });
+
+    expect(fetchPage).toHaveBeenCalledWith("https://example.com/x");
+    const parsed = JSON.parse(out as string);
+    expect(parsed).toMatchObject({ ok: true, title: "对标文章" });
+    expect(parsed.text).toContain("正文内容");
+    expect(sink).toHaveLength(0);
+  });
+
+  it("read_url failure returns ok:false", async () => {
+    const sink: ChatCard[] = [];
+    const fetchPage = vi.fn(async () => { throw new Error("仅支持 http/https 链接"); });
+    const tools = buildChatTools(sink, testDir, { fetchPage });
+    const out = await tools.find((t) => t.name === "read_url")!.execute({ url: "file:///x" });
+    expect(JSON.parse(out as string)).toMatchObject({ ok: false });
+  });
 });
 
 describe("runChatTurn", () => {
