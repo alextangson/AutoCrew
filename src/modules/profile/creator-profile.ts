@@ -177,6 +177,10 @@ export async function addWritingRule(rule: Omit<WritingRule, "createdAt">, dataD
 
 /**
  * Edit or toggle a writing rule by index (个性化中心：可编辑、可停用).
+ *
+ * 注：直接 mutate loadProfile 返回对象后经 updateProfile 整组落盘——与 addWritingRule
+ * 的 saveProfile-direct 模式不同但等价（updateProfile 对 writingRules 是整体替换语义，
+ * 单线程无 yield 点，无并发窗口）。
  */
 export async function updateWritingRule(
   index: number,

@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { generateEditFeedback } from "../learnings/visible-learning.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { generateEditFeedback, prepareRuleInjection } from "../learnings/visible-learning.js";
+import { addWritingRule, updateWritingRule } from "../profile/creator-profile.js";
 
 describe("generateEditFeedback", () => {
   it("detects remove_progression_words and generates feedback", () => {
@@ -32,5 +36,29 @@ describe("generateEditFeedback", () => {
     const feedback = generateEditFeedback(before, after);
     expect(feedback.hasPatterns).toBe(true);
     expect(feedback.patterns.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("prepareRuleInjection", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-visible-learning-test-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  it("skips disabled rules", async () => {
+    await addWritingRule({ rule: "启用的规则", source: "user_explicit", confidence: 1 }, testDir);
+    await addWritingRule({ rule: "停用的规则", source: "user_explicit", confidence: 1 }, testDir);
+    await updateWritingRule(1, { disabled: true }, testDir);
+
+    const injection = await prepareRuleInjection(testDir);
+
+    expect(injection.promptInjection).toContain("启用的规则");
+    expect(injection.promptInjection).not.toContain("停用的规则");
+    expect(injection.rules).toHaveLength(1);
   });
 });

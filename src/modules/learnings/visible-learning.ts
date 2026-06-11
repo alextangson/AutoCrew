@@ -180,9 +180,9 @@ export async function prepareRuleInjection(dataDir?: string): Promise<RuleInject
     };
   }
 
-  // Sort by confidence, take top rules
+  // Sort by confidence, take top rules (disabled rules never injected — PRD §7.3)
   const activeRules = rules
-    .filter(r => r.confidence >= 0.5)
+    .filter(r => !r.disabled && r.confidence >= 0.5)
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 10);
 

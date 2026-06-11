@@ -138,6 +138,9 @@ async function chatTurnHandler(payload: Record<string, unknown>): Promise<Record
 
 // ── style:update_rule — 个性化中心：编辑/停用规则 ─────────────────────────────
 
+// NOTE: index 寻址。单面板使用安全；若对话中 add_style_rule 与面板编辑并发，
+// index 可能漂移（越界会报错，移位会改错条目）。稳定 rule ID 是正解，推迟到
+// 数据模型演进；renderer 侧通过每次操作后整列表刷新缓解。
 async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
