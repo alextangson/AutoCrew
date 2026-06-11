@@ -16,7 +16,7 @@ export interface EngineConfig {
   fastModel: string;
 }
 
-const DEFAULTS = {
+export const ENGINE_DEFAULTS = {
   baseUrl: "https://api.deepseek.com",
   strongModel: "deepseek-v4-pro",
   fastModel: "deepseek-v4-flash",
@@ -51,8 +51,8 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   }
   return {
     apiKey,
-    baseUrl: fromFile.baseUrl ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULTS.baseUrl,
-    strongModel: fromFile.strongModel ?? DEFAULTS.strongModel,
-    fastModel: fromFile.fastModel ?? DEFAULTS.fastModel,
+    baseUrl: fromFile.baseUrl ?? process.env.DEEPSEEK_BASE_URL ?? ENGINE_DEFAULTS.baseUrl,
+    strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
+    fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
   };
 }
