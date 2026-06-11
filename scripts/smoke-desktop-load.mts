@@ -123,9 +123,18 @@ try {
   }
   console.log("smoke: preload.cjs requires only electron");
 
-  assert(registrations.size === 31, `all 31 IPC channels registered (got ${registrations.size})`);
+  assert(registrations.size === 40, `all 40 IPC channels registered (got ${registrations.size})`);
   await assertSanitizeWired(tmpDir);
   await assertCsvWhitelistWired(tmpDir);
+
+  // dialog:pick_media deps 接线：stub 取消时返回空 paths 数组
+  pickTarget = null;
+  const pickMediaResult = await invoke("dialog:pick_media", {});
+  assert(
+    pickMediaResult.ok === true && Array.isArray((pickMediaResult.data as { paths?: unknown } | undefined)?.paths),
+    "dialog:pick_media returns {ok:true, data:{paths:[]}} when canceled",
+    pickMediaResult,
+  );
 
   // chat:progress 推送接线：main.cjs 与 preload.cjs 均含事件名常量（防静默删除）
   const mainSrc = readFileSync(path.join(root, "desktop", "dist", "main.cjs"), "utf-8");

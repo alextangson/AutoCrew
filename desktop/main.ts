@@ -10,6 +10,8 @@ declare const __dirname: string;
 
 // csv_path 白名单：只有 dialog:pick_file 真实返回过的路径才能进 import_csv
 const pickedFiles = createPickedFileRegistry();
+// 媒体路径白名单：只有 dialog:pick_media 真实返回过的路径才能进 library:add / library:update path
+const pickedMedia = createPickedFileRegistry();
 
 const handlers = buildIpcHandlers({
   // 真实现只活在主进程 — ipc.ts 保持纯净可测（计划锁定决定）
@@ -22,6 +24,19 @@ const handlers = buildIpcHandlers({
     if (res.canceled || res.filePaths.length === 0) return { ok: true, data: { path: null } };
     pickedFiles.record(res.filePaths[0]);
     return { ok: true, data: { path: res.filePaths[0] } };
+  },
+  "dialog:pick_media": async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "媒体文件", extensions: ["mp4", "mov", "m4v", "avi", "mkv", "webm", "flv", "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "tiff", "svg", "mp3", "wav", "m4a", "aac", "flac", "ogg"] },
+        { name: "全部文件", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || res.filePaths.length === 0) return { ok: true, data: { paths: [] } };
+    for (const p of res.filePaths) pickedMedia.record(p);
+    return { ok: true, data: { paths: res.filePaths } };
   },
 });
 
@@ -47,6 +62,17 @@ for (const ch of IPC_CHANNELS) {
     const clean = sanitizePayload(payload) as Record<string, unknown>;
     if (ch === "flywheel:import_csv" && !pickedFiles.isAllowed(clean?.csv_path)) {
       return { ok: false, error: "csv_path 必须是通过文件选择对话框选中的文件" };
+    }
+    if (ch === "library:add") {
+      const paths = Array.isArray(clean?.paths) ? (clean.paths as unknown[]) : [];
+      if (paths.length === 0 || !paths.every((p) => pickedMedia.isAllowed(p))) {
+        return { ok: false, error: "素材路径必须来自文件选择对话框" };
+      }
+    }
+    if (ch === "library:update" && clean?.path !== undefined) {
+      if (!pickedMedia.isAllowed(clean.path)) {
+        return { ok: false, error: "重新定位的路径必须来自文件选择对话框" };
+      }
     }
     const ctx: IpcHandlerContext = {
       onProgress: (e) => {
