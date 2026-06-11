@@ -166,3 +166,38 @@ describe("runLoop", () => {
     expect(r.totalTokens).toBe(0);
   });
 });
+
+describe("runLoop history", () => {
+  it("injects history messages between system and current user message", async () => {
+    let capturedBody: Record<string, unknown> = {};
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { total_tokens: 5 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    await runLoop(
+      CFG,
+      {
+        model: "f",
+        systemPrompt: "sys",
+        userMessage: "现在这条",
+        history: [
+          { role: "user", content: "上一条用户" },
+          { role: "assistant", content: "上一条回复" },
+        ],
+        fetchImpl,
+      },
+    );
+
+    const messages = capturedBody.messages as Array<{ role: string; content: string }>;
+    expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(messages[1].content).toBe("上一条用户");
+    expect(messages[3].content).toBe("现在这条");
+  });
+});

@@ -8,6 +8,7 @@ import {
   saveProfile,
   updateProfile,
   addWritingRule,
+  updateWritingRule,
   addCompetitor,
   detectMissingInfo,
   type CreatorProfile,
@@ -174,5 +175,25 @@ describe("detectMissingInfo", () => {
     expect(missing).not.toContain("platforms");
     expect(missing).toContain("audience");
     expect(missing).toContain("style");
+  });
+});
+
+describe("updateWritingRule", () => {
+  it("edits rule text and toggles disabled", async () => {
+    await addWritingRule({ rule: "原规则", source: "user_explicit", confidence: 1 }, testDir);
+    let profile = await updateWritingRule(0, { rule: "新规则" }, testDir);
+    expect(profile.writingRules[0].rule).toBe("新规则");
+
+    profile = await updateWritingRule(0, { disabled: true }, testDir);
+    expect(profile.writingRules[0].disabled).toBe(true);
+
+    profile = await updateWritingRule(0, { disabled: false }, testDir);
+    expect(profile.writingRules[0].disabled).toBe(false);
+  });
+
+  it("throws on bad index and empty rule text", async () => {
+    await addWritingRule({ rule: "x", source: "user_explicit", confidence: 1 }, testDir);
+    await expect(updateWritingRule(99, { disabled: true }, testDir)).rejects.toThrow("规则不存在");
+    await expect(updateWritingRule(0, { rule: "  " }, testDir)).rejects.toThrow("不能为空");
   });
 });

@@ -1,11 +1,22 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import path from "path";
 import { IPC_CHANNELS, buildIpcHandlers } from "../src/desktop/ipc.js";
 
 // __dirname comes from Node's CJS module wrapper in the bundled output
 declare const __dirname: string;
 
-const handlers = buildIpcHandlers();
+const handlers = buildIpcHandlers({
+  // 真实现只活在主进程 — ipc.ts 保持纯净可测（计划锁定决定）
+  "dialog:pick_file": async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openFile"],
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+    });
+    if (res.canceled || res.filePaths.length === 0) return { ok: true, data: { path: null } };
+    return { ok: true, data: { path: res.filePaths[0] } };
+  },
+});
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({

@@ -16,7 +16,7 @@ export interface EngineConfig {
   fastModel: string;
 }
 
-const DEFAULTS = {
+export const ENGINE_DEFAULTS = {
   baseUrl: "https://api.deepseek.com",
   strongModel: "deepseek-v4-pro",
   fastModel: "deepseek-v4-flash",
@@ -43,7 +43,7 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   } catch (err) {
     if ((err as { code?: string }).code !== "ENOENT") throw err;
   }
-  const apiKey = fromFile.apiKey ?? process.env.DEEPSEEK_API_KEY;
+  const apiKey = fromFile.apiKey ?? (process.env.DEEPSEEK_API_KEY || undefined);
   if (!apiKey) {
     throw new Error(
       "引擎未配置 model provider：设置环境变量 DEEPSEEK_API_KEY，或在 ~/.autocrew/engine.json 写入 {\"apiKey\": \"...\"}",
@@ -51,8 +51,8 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   }
   return {
     apiKey,
-    baseUrl: fromFile.baseUrl ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULTS.baseUrl,
-    strongModel: fromFile.strongModel ?? DEFAULTS.strongModel,
-    fastModel: fromFile.fastModel ?? DEFAULTS.fastModel,
+    baseUrl: fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl,
+    strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
+    fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
   };
 }

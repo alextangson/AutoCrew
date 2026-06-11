@@ -21,6 +21,8 @@ export interface LoopOptions {
   systemPrompt: string;
   userMessage: string;
   tools?: LoopTool[];
+  /** 多轮对话历史（system 之后、本轮 userMessage 之前注入；调用方负责截断） */
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
   /** 默认 6 */
   maxTurns?: number;
   /** 默认 20000 */
@@ -146,6 +148,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
 
   const messages: Message[] = [
     { role: "system", content: opts.systemPrompt },
+    ...(opts.history ?? []).map((m): Message => ({ role: m.role, content: m.content })),
     { role: "user", content: opts.userMessage },
   ];
 

@@ -14,6 +14,8 @@ export interface WritingRule {
   source: "auto_distilled" | "user_explicit";
   /** 0-1, higher = more confident */
   confidence: number;
+  /** true = 用户停用，生成时跳过（个性化中心可切换） */
+  disabled?: boolean;
   createdAt: string;
 }
 
@@ -171,6 +173,31 @@ export async function addWritingRule(rule: Omit<WritingRule, "createdAt">, dataD
   }
   await saveProfile(profile, dataDir);
   return profile;
+}
+
+/**
+ * Edit or toggle a writing rule by index (个性化中心：可编辑、可停用).
+ *
+ * 注：直接 mutate loadProfile 返回对象后经 updateProfile 整组落盘——与 addWritingRule
+ * 的 saveProfile-direct 模式不同但等价（updateProfile 对 writingRules 是整体替换语义，
+ * 单线程无 yield 点，无并发窗口）。
+ */
+export async function updateWritingRule(
+  index: number,
+  patch: { rule?: string; disabled?: boolean },
+  dataDir?: string,
+): Promise<CreatorProfile> {
+  const profile = await loadProfile(dataDir);
+  if (!profile) throw new Error("尚无创作者档案");
+  const target = profile.writingRules[index];
+  if (!target) throw new Error(`规则不存在：index ${index}`);
+  if (patch.rule !== undefined) {
+    const text = patch.rule.trim();
+    if (text === "") throw new Error("规则内容不能为空");
+    target.rule = text;
+  }
+  if (patch.disabled !== undefined) target.disabled = patch.disabled;
+  return updateProfile({ writingRules: profile.writingRules }, dataDir);
 }
 
 /**

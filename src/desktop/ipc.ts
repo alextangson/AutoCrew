@@ -26,13 +26,24 @@
  *   content:get        { id }
  *   publish:clipboard  { content_id, hashtags? }
  *   publish:confirm    { content_id, publish_url? }
+ *   chat:turn          { message, history? }
+ *   settings:get       {}
+ *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
+ *   style:update_rule  { index, rule?, disabled? }
+ *   onboarding:status  {}
+ *   onboarding:init    { industry?, platforms? }
+ *   flywheel:import_csv { platform, csv_path, metric_date? }
+ *   dialog:pick_file   {}
  */
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
-import { loadProfile } from "../modules/profile/creator-profile.js";
+import { loadProfile, updateWritingRule } from "../modules/profile/creator-profile.js";
+import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
+import { runChatTurn, type ChatHistoryMessage } from "./chat-router.js";
+import { getEngineSettings, setEngineSettings } from "./settings.js";
 import type { IpcChannel } from "./channels.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -60,6 +71,7 @@ export const CHANNEL_ACTIONS = {
   "content:get": "get",
   "publish:clipboard": "clipboard",
   "publish:confirm": "confirm_published",
+  "flywheel:import_csv": "import_csv",
 } as const satisfies Partial<Record<IpcChannel, string>>;
 
 // ── wrapExecute ───────────────────────────────────────────────────────────────
@@ -104,6 +116,65 @@ async function styleRulesHandler(payload: Record<string, unknown>): Promise<Reco
   }
 }
 
+// ── chat:turn — Agent 态对话入口 ──────────────────────────────────────────────
+
+async function chatTurnHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const message = payload.message;
+  if (typeof message !== "string" || message.trim() === "") {
+    return { ok: false, error: "chat:turn 需要非空 message" };
+  }
+  const history = Array.isArray(payload.history)
+    ? (payload.history as ChatHistoryMessage[])
+        .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+        .slice(-12)
+    : [];
+  try {
+    return await runChatTurn({
+      message: message.trim(),
+      history,
+      dataDir: (payload._dataDir as string) || undefined,
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── style:update_rule — 个性化中心：编辑/停用规则 ─────────────────────────────
+
+// NOTE: index 寻址。单面板使用安全；若对话中 add_style_rule 与面板编辑并发，
+// index 可能漂移（越界会报错，移位会改错条目）。稳定 rule ID 是正解，推迟到
+// 数据模型演进；renderer 侧通过每次操作后整列表刷新缓解。
+async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const index = payload.index;
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+    return { ok: false, error: "需要合法的规则 index（非负整数）" };
+  }
+  const patch: { rule?: string; disabled?: boolean } = {};
+  if (typeof payload.rule === "string") patch.rule = payload.rule;
+  if (typeof payload.disabled === "boolean") patch.disabled = payload.disabled;
+  if (patch.rule === undefined && patch.disabled === undefined) {
+    return { ok: false, error: "rule 或 disabled 至少提供一个" };
+  }
+  try {
+    const profile = await updateWritingRule(index, patch, (payload._dataDir as string) || undefined);
+    return { ok: true, data: { rules: profile.writingRules, boundaries: profile.styleBoundaries } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── dialog:pick_file — 默认 stub；desktop/main.ts 用 deps 覆盖真实现 ─────────
+
+async function dialogUnavailableHandler(): Promise<Record<string, unknown>> {
+  return { ok: false, error: "文件选择仅在桌面主进程可用" };
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -122,6 +193,14 @@ export function buildIpcHandlers(
     "content:get": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:get"]),
     "publish:clipboard": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:clipboard"]),
     "publish:confirm": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
+    "chat:turn": chatTurnHandler,
+    "settings:get": getEngineSettings,
+    "settings:set": setEngineSettings,
+    "style:update_rule": styleUpdateRuleHandler,
+    "onboarding:status": getOnboardingStatus,
+    "onboarding:init": completeOnboardingInit,
+    "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),
+    "dialog:pick_file": dialogUnavailableHandler,
   };
 
   if (!deps) return defaults;
