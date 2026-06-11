@@ -14,3 +14,5 @@ dist/
 # Never commit Pro API keys
 .pro
 .worktrees/
+# CodeGraph local index (machine-local, rebuild with `codegraph init .`)
+.codegraph/
