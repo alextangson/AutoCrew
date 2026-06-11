@@ -9,6 +9,10 @@ import {
   removeFolder,
   addAssets,
   listLibrary,
+  updateAsset,
+  removeAsset,
+  getAsset,
+  searchAssets,
 } from "./library-store.js";
 
 let dir: string;
@@ -113,5 +117,79 @@ describe("addAssets / listLibrary", () => {
     await fs.writeFile(path.join(dir, "library", "assets", "asset-1-bad.json"), "{ nope", "utf-8");
     const view = await listLibrary(dir);
     expect(view.assets.map((a) => a.id)).toEqual([added[0].id]);
+  });
+});
+
+describe("updateAsset", () => {
+  it("patches name/tags/description/folderId", async () => {
+    const p = await makeFile("raw.mp4");
+    const f = await createFolder("精选", dir);
+    const { added } = await addAssets([p], null, dir);
+    const updated = await updateAsset(added[0].id, { name: "开场", tags: ["钩子", "excel"], folderId: f.id }, dir);
+    expect(updated).toMatchObject({ name: "开场", tags: ["钩子", "excel"], folderId: f.id });
+    const view = await listLibrary(dir);
+    expect(view.assets[0].name).toBe("开场");
+  });
+
+  it("relocate updates path/size/ext/type and clears missing", async () => {
+    const p = await makeFile("old.mp4", "12345");
+    const { added } = await addAssets([p], null, dir);
+    await fs.unlink(p);
+    expect((await listLibrary(dir)).assets[0].missing).toBe(true);
+    const p2 = await makeFile("new.png", "1234567");
+    const updated = await updateAsset(added[0].id, { path: p2 }, dir);
+    expect(updated).toMatchObject({ path: p2, size: 7, ext: "png", type: "image" });
+    expect((await listLibrary(dir)).assets[0].missing).toBe(false);
+  });
+
+  it("relocate to a nonexistent file returns null (record unchanged)", async () => {
+    const p = await makeFile("keep.mp4");
+    const { added } = await addAssets([p], null, dir);
+    expect(await updateAsset(added[0].id, { path: path.join(mediaDir, "ghost.mp4") }, dir)).toBeNull();
+    expect((await listLibrary(dir)).assets[0].path).toBe(p);
+  });
+
+  it("unknown/invalid id returns null", async () => {
+    expect(await updateAsset("asset-1-gone", { name: "x" }, dir)).toBeNull();
+    expect(await updateAsset("../escape", { name: "x" }, dir)).toBeNull();
+  });
+});
+
+describe("removeAsset / getAsset", () => {
+  it("removes the record but never the original file", async () => {
+    const p = await makeFile("precious.mp4");
+    const { added } = await addAssets([p], null, dir);
+    expect(await removeAsset(added[0].id, dir)).toBe(true);
+    expect((await listLibrary(dir)).assets).toEqual([]);
+    await expect(fs.access(p)).resolves.toBeUndefined(); // 原文件还在
+  });
+
+  it("getAsset returns record or null", async () => {
+    const p = await makeFile("g.png");
+    const { added } = await addAssets([p], null, dir);
+    expect((await getAsset(added[0].id, dir))!.path).toBe(p);
+    expect(await getAsset("asset-1-none", dir)).toBeNull();
+  });
+});
+
+describe("searchAssets", () => {
+  it("matches name and tags case-insensitively, optional type filter, passes missing through", async () => {
+    const p1 = await makeFile("Excel钩子.mp4");
+    const p2 = await makeFile("风景.png");
+    const { added } = await addAssets([p1, p2], null, dir);
+    await updateAsset(added[1].id, { tags: ["excel", "封面"] }, dir);
+    const byName = await searchAssets("excel", undefined, dir);
+    expect(byName.map((a) => a.name).sort()).toEqual(["Excel钩子.mp4", "风景.png"]);
+    const onlyVideo = await searchAssets("excel", "video", dir);
+    expect(onlyVideo.map((a) => a.name)).toEqual(["Excel钩子.mp4"]);
+    await fs.unlink(p1);
+    const after = await searchAssets("钩子", undefined, dir);
+    expect(after[0].missing).toBe(true);
+  });
+
+  it("empty query returns all", async () => {
+    const p = await makeFile("solo.mp3");
+    await addAssets([p], null, dir);
+    expect(await searchAssets("", undefined, dir)).toHaveLength(1);
   });
 });

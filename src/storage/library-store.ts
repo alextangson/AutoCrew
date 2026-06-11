@@ -193,3 +193,75 @@ export async function listLibrary(dataDir?: string): Promise<LibraryView> {
   assets.sort((a, b) => b.addedAt.localeCompare(a.addedAt));
   return { folders, assets };
 }
+
+export async function getAsset(id: string, dataDir?: string): Promise<LibraryAsset | null> {
+  const root = await libraryRoot(dataDir);
+  const p = safeAssetPath(root, id);
+  if (!p) return null;
+  const record = await readJson<LibraryAsset>(p);
+  if (!record || typeof record.id !== "string" || typeof record.path !== "string") return null;
+  return record;
+}
+
+export async function updateAsset(
+  id: string,
+  patch: { name?: string; tags?: string[]; description?: string; folderId?: string | null; path?: string },
+  dataDir?: string,
+): Promise<LibraryAsset | null> {
+  const root = await libraryRoot(dataDir);
+  const existing = await getAsset(id, dataDir);
+  if (!existing) return null;
+  const next: LibraryAsset = { ...existing };
+  if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name.trim();
+  if (Array.isArray(patch.tags)) next.tags = patch.tags.map((t) => String(t).trim()).filter(Boolean);
+  if (typeof patch.description === "string") next.description = patch.description;
+  if (patch.folderId !== undefined) {
+    const folders = await loadFolders(root);
+    next.folderId = patch.folderId !== null && folders.some((f) => f.id === patch.folderId) ? patch.folderId : null;
+  }
+  if (typeof patch.path === "string") {
+    const abs = path.resolve(patch.path);
+    try {
+      const st = await fs.stat(abs);
+      if (!st.isFile()) return null;
+      next.path = abs;
+      next.size = st.size;
+      const dt = detectType(abs);
+      next.type = dt.type;
+      next.ext = dt.ext;
+    } catch {
+      return null; // 重定位目标不存在：不动原记录
+    }
+  }
+  const file = safeAssetPath(root, id);
+  if (!file) return null;
+  await writeJsonAtomic(file, next);
+  return next;
+}
+
+export async function removeAsset(id: string, dataDir?: string): Promise<boolean> {
+  // 只删记录，永不碰 record.path 指向的原文件（引用模式安全底线）
+  const root = await libraryRoot(dataDir);
+  const p = safeAssetPath(root, id);
+  if (!p) return false;
+  try {
+    await fs.unlink(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function searchAssets(
+  query: string,
+  type?: LibraryAssetType,
+  dataDir?: string,
+): Promise<LibraryAssetView[]> {
+  const view = await listLibrary(dataDir);
+  const q = query.trim().toLowerCase();
+  return view.assets.filter(
+    (a) =>
+      (type === undefined || a.type === type) &&
+      (q === "" || a.name.toLowerCase().includes(q) || a.tags.some((t) => t.toLowerCase().includes(q))),
+  );
+}
