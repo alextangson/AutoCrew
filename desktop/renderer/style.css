@@ -918,3 +918,57 @@ label {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* ── 框选改写（S2.7） ───────────────────────────────────────────────────────── */
+
+.sel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  animation: fadeInCard 160ms ease-out;
+}
+
+.sel-custom {
+  flex: 1;
+  min-width: 160px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.pending-edit {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--crew-writer);
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pe-before {
+  text-decoration: line-through;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
+.pe-after {
+  background: var(--crew-scout-bg);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
