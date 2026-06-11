@@ -9,6 +9,7 @@ const DRAWER_TITLES = {
   style: "编剧 · 风格档案",
   settings: "设置",
   scout: "选题侦察员",
+  library: "素材库",
 };
 
 let activeDrawerPanel = null;
@@ -41,6 +42,7 @@ function refreshDrawerPanel(name) {
   if (name === "style") initStyle();
   if (name === "settings" && typeof initSettings === "function") initSettings();
   if (name === "scout" && typeof initScout === "function") initScout();
+  if (name === "library" && typeof initLibrary === "function") initLibrary();
 }
 
 /** 抽屉开着才刷新（对话回合后调用，原 refreshActivePanel 语义） */

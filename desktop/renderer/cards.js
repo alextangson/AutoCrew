@@ -12,6 +12,7 @@ function renderCard(card) {
     case "publish": return renderPublishCard(card.data);
     case "published": return renderPublishedCard(card.data);
     case "topic": return renderTopicCard(card.data);
+    case "assets": return renderAssetsCard(card.data);
     default: {
       const pre = h("pre", { class: "card-body" });
       pre.textContent = JSON.stringify(card.data, null, 2);
@@ -214,6 +215,25 @@ function renderTopicCard(d) {
     list.appendChild(li);
   }
   el.appendChild(list);
+  return el;
+}
+
+function renderAssetsCard(d) {
+  const assets = d.assets || [];
+  const el = cardShell("素材库" + (d.query ? " · 「" + d.query + "」" : ""), assets.length + " 条素材", "writer");
+  const ul = h("ul", { class: "insight-list" });
+  for (const a of assets.slice(0, 8)) {
+    ul.appendChild(h("li", {},
+      (LIB_TYPE_ICON[a.type] || "📄") + " " + a.name +
+      ((a.tags || []).length ? " · " + a.tags.join("/") : "") +
+      (a.missing ? "（文件丢失）" : "")));
+  }
+  el.appendChild(ul);
+  const actions = h("div", { class: "card-actions" });
+  const openBtn = h("button", { class: "btn-mini" }, "打开素材库");
+  openBtn.addEventListener("click", () => openDrawer("library"));
+  actions.appendChild(openBtn);
+  el.appendChild(actions);
   return el;
 }
 

@@ -69,4 +69,6 @@ function initSidebar() {
   document.getElementById("open-settings").addEventListener("click", () => openDrawer("settings"));
   renderCrewList();
   refreshConversationList();
+  const libSection = document.getElementById("sidebar-library");
+  if (libSection) libSection.addEventListener("click", () => openDrawer("library"));
 }
