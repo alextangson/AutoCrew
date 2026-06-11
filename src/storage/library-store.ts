@@ -86,11 +86,12 @@ function safeAssetPath(root: string, id: string): string | null {
   return path.join(root, "assets", `${id}.json`);
 }
 
-/** 记录形状校验：缺 addedAt/tags 的半残记录会炸 sort 与 search，一律跳过 */
+/** 记录形状校验：缺 name/addedAt/tags 的半残记录会炸 sort 与 search，一律跳过 */
 function isValidAssetRecord(record: LibraryAsset | null): record is LibraryAsset {
   return (
     record !== null &&
     typeof record.id === "string" &&
+    typeof record.name === "string" &&
     typeof record.path === "string" &&
     typeof record.addedAt === "string" &&
     Array.isArray(record.tags)

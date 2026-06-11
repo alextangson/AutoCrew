@@ -146,9 +146,15 @@ describe("addAssets / listLibrary", () => {
       JSON.stringify({ id: "asset-1-partial", path: "/x" }),
       "utf-8",
     );
+    await fs.writeFile(
+      path.join(dir, "library", "assets", "asset-2-noname.json"),
+      JSON.stringify({ id: "asset-2-noname", path: "/y", addedAt: "2026-06-11T00:00:00.000Z", tags: [] }),
+      "utf-8",
+    );
     const view = await listLibrary(dir);
     expect(view.assets.map((a) => a.id)).toEqual([added[0].id]);
     await expect(searchAssets("good", undefined, dir)).resolves.toHaveLength(1);
+    await expect(searchAssets("任意词", undefined, dir)).resolves.toEqual([]);
   });
 
   it("lists assets sorted by addedAt desc", async () => {
