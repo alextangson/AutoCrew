@@ -11,6 +11,10 @@
  *   assets/<id>.json    — 每素材一文件（原子写；损坏跳过 + warn）
  *
  * missing 为 list 时计算值（fs.access），不持久化。
+ *
+ * 写操作假定单一串行调用方（单抽屉面板经 IPC）；在引入第二个写入方
+ * （如未来有写能力的 chat 工具）之前必须加写队列（参照 chat-persist
+ * 的逐键 promise 链）。
  */
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -82,7 +86,35 @@ function safeAssetPath(root: string, id: string): string | null {
   return path.join(root, "assets", `${id}.json`);
 }
 
+/** 记录形状校验：缺 addedAt/tags 的半残记录会炸 sort 与 search，一律跳过 */
+function isValidAssetRecord(record: LibraryAsset | null): record is LibraryAsset {
+  return (
+    record !== null &&
+    typeof record.id === "string" &&
+    typeof record.path === "string" &&
+    typeof record.addedAt === "string" &&
+    Array.isArray(record.tags)
+  );
+}
+
+/** 读全部素材记录（损坏/半残跳过 + warn）；不算 missing——纯磁盘视图 */
+async function loadAssetRecords(root: string): Promise<LibraryAsset[]> {
+  const entries = await fs.readdir(path.join(root, "assets"));
+  const records: LibraryAsset[] = [];
+  for (const e of entries) {
+    if (!e.endsWith(".json")) continue;
+    const record = await readJson<LibraryAsset>(path.join(root, "assets", e));
+    if (!isValidAssetRecord(record)) {
+      console.warn(`[library-store] 跳过损坏素材：${e}`);
+      continue;
+    }
+    records.push(record);
+  }
+  return records;
+}
+
 export async function createFolder(name: string, dataDir?: string): Promise<LibraryFolder> {
+  if (!name.trim()) throw new Error("文件夹名称不能为空");
   const root = await libraryRoot(dataDir);
   const folders = await loadFolders(root);
   const folder: LibraryFolder = {
@@ -100,19 +132,49 @@ export async function removeFolder(id: string, dataDir?: string): Promise<boolea
   const root = await libraryRoot(dataDir);
   const folders = await loadFolders(root);
   if (!folders.some((f) => f.id === id)) return false;
-  await writeJsonAtomic(path.join(root, "folders.json"), folders.filter((f) => f.id !== id));
-  // 文件夹内素材回根（逐个改写；本地规模数百条，顺序 IO 足够）
-  const view = await listLibrary(dataDir);
-  for (const a of view.assets) {
-    if (a.folderId === id) {
-      const p = safeAssetPath(root, a.id);
-      if (p) {
-        const { missing: _missing, ...record } = a;
-        await writeJsonAtomic(p, { ...record, folderId: null });
-      }
+  // 先素材回根、最后才写 folders.json——中途崩溃不留悬空 folderId
+  // （逐个改写；本地规模数百条，顺序 IO 足够）
+  const records = await loadAssetRecords(root);
+  for (const record of records) {
+    if (record.folderId === id) {
+      const p = safeAssetPath(root, record.id);
+      if (p) await writeJsonAtomic(p, { ...record, folderId: null });
     }
   }
+  await writeJsonAtomic(path.join(root, "folders.json"), folders.filter((f) => f.id !== id));
   return true;
+}
+
+/** 单文件导入：源不可读/非普通文件/记录写不出 → null（调用方记 skipped） */
+async function importOne(
+  root: string,
+  abs: string,
+  targetFolder: string | null,
+): Promise<LibraryAsset | null> {
+  let size = 0;
+  try {
+    const st = await fs.stat(abs);
+    if (!st.isFile()) return null;
+    size = st.size;
+  } catch {
+    return null;
+  }
+  const { type, ext } = detectType(abs);
+  const asset: LibraryAsset = {
+    id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: path.basename(abs),
+    path: abs,
+    type,
+    ext,
+    size,
+    folderId: targetFolder,
+    tags: [],
+    addedAt: new Date().toISOString(),
+  };
+  const p = safeAssetPath(root, asset.id);
+  if (!p) return null;
+  await writeJsonAtomic(p, asset);
+  return asset;
 }
 
 export async function addAssets(
@@ -123,8 +185,8 @@ export async function addAssets(
   const root = await libraryRoot(dataDir);
   const folders = await loadFolders(root);
   const targetFolder = folderId && folders.some((f) => f.id === folderId) ? folderId : null;
-  const existing = await listLibrary(dataDir);
-  const knownPaths = new Set(existing.assets.map((a) => path.resolve(a.path)));
+  const records = await loadAssetRecords(root);
+  const knownPaths = new Set(records.map((a) => path.resolve(a.path)));
 
   const added: LibraryAsset[] = [];
   const skipped: string[] = [];
@@ -134,36 +196,11 @@ export async function addAssets(
       skipped.push(raw);
       continue;
     }
-    let size = 0;
-    try {
-      const st = await fs.stat(abs);
-      if (!st.isFile()) {
-        skipped.push(raw);
-        continue;
-      }
-      size = st.size;
-    } catch {
+    const asset = await importOne(root, abs, targetFolder);
+    if (!asset) {
       skipped.push(raw);
       continue;
     }
-    const { type, ext } = detectType(abs);
-    const asset: LibraryAsset = {
-      id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: path.basename(abs),
-      path: abs,
-      type,
-      ext,
-      size,
-      folderId: targetFolder,
-      tags: [],
-      addedAt: new Date().toISOString(),
-    };
-    const p = safeAssetPath(root, asset.id);
-    if (!p) {
-      skipped.push(raw);
-      continue;
-    }
-    await writeJsonAtomic(p, asset);
     knownPaths.add(abs);
     added.push(asset);
   }
@@ -173,15 +210,9 @@ export async function addAssets(
 export async function listLibrary(dataDir?: string): Promise<LibraryView> {
   const root = await libraryRoot(dataDir);
   const folders = await loadFolders(root);
-  const entries = await fs.readdir(path.join(root, "assets"));
+  const records = await loadAssetRecords(root);
   const assets: LibraryAssetView[] = [];
-  for (const e of entries) {
-    if (!e.endsWith(".json")) continue;
-    const record = await readJson<LibraryAsset>(path.join(root, "assets", e));
-    if (!record || typeof record.id !== "string" || typeof record.path !== "string") {
-      console.warn(`[library-store] 跳过损坏素材：${e}`);
-      continue;
-    }
+  for (const record of records) {
     let missing = false;
     try {
       await fs.access(record.path);
@@ -199,8 +230,7 @@ export async function getAsset(id: string, dataDir?: string): Promise<LibraryAss
   const p = safeAssetPath(root, id);
   if (!p) return null;
   const record = await readJson<LibraryAsset>(p);
-  if (!record || typeof record.id !== "string" || typeof record.path !== "string") return null;
-  return record;
+  return isValidAssetRecord(record) ? record : null;
 }
 
 export async function updateAsset(

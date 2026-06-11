@@ -67,6 +67,25 @@ describe("folders", () => {
     expect(await removeFolder("folder-1-gone", dir)).toBe(false);
     expect(await removeFolder("../etc", dir)).toBe(false);
   });
+
+  it("removeFolder leaves assets of other folders untouched", async () => {
+    const f1 = await createFolder("甲", dir);
+    const f2 = await createFolder("乙", dir);
+    const p1 = await makeFile("in-f1.png");
+    const p2 = await makeFile("in-f2.png");
+    await addAssets([p1], f1.id, dir);
+    await addAssets([p2], f2.id, dir);
+    expect(await removeFolder(f1.id, dir)).toBe(true);
+    const view = await listLibrary(dir);
+    const inF1 = view.assets.find((a) => a.name === "in-f1.png")!;
+    const inF2 = view.assets.find((a) => a.name === "in-f2.png")!;
+    expect(inF1.folderId).toBeNull();
+    expect(inF2.folderId).toBe(f2.id);
+  });
+
+  it("createFolder rejects blank name", async () => {
+    await expect(createFolder("   ", dir)).rejects.toThrow("文件夹名称不能为空");
+  });
 });
 
 describe("addAssets / listLibrary", () => {
@@ -117,6 +136,29 @@ describe("addAssets / listLibrary", () => {
     await fs.writeFile(path.join(dir, "library", "assets", "asset-1-bad.json"), "{ nope", "utf-8");
     const view = await listLibrary(dir);
     expect(view.assets.map((a) => a.id)).toEqual([added[0].id]);
+  });
+
+  it("skips partial record missing addedAt/tags, keeps the rest", async () => {
+    const p = await makeFile("good.png");
+    const { added } = await addAssets([p], null, dir);
+    await fs.writeFile(
+      path.join(dir, "library", "assets", "asset-1-partial.json"),
+      JSON.stringify({ id: "asset-1-partial", path: "/x" }),
+      "utf-8",
+    );
+    const view = await listLibrary(dir);
+    expect(view.assets.map((a) => a.id)).toEqual([added[0].id]);
+    await expect(searchAssets("good", undefined, dir)).resolves.toHaveLength(1);
+  });
+
+  it("lists assets sorted by addedAt desc", async () => {
+    const p1 = await makeFile("first.png");
+    await addAssets([p1], null, dir);
+    await new Promise((r) => setTimeout(r, 5));
+    const p2 = await makeFile("second.png");
+    await addAssets([p2], null, dir);
+    const view = await listLibrary(dir);
+    expect(view.assets.map((a) => a.name)).toEqual(["second.png", "first.png"]);
   });
 });
 
