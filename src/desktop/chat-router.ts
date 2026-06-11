@@ -25,6 +25,7 @@ export interface ChatCard {
 
 export interface ChatProgressEvent {
   phase: "start" | "end";
+  /** 原始工具名（来自模型 tool_call，模型可控字符串）。渲染层不得直接展示——展示一律用 label。 */
   tool: string;
   role: "scout" | "writer" | "review" | "analyst" | null;
   label: string;

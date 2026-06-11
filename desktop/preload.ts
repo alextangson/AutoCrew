@@ -15,7 +15,9 @@ const autocrew = Object.fromEntries(
 ) as Record<string, unknown>;
 
 autocrew.onChatProgress = (cb: (e: Record<string, unknown>) => void) => {
-  ipcRenderer.on(CHAT_PROGRESS_EVENT, (_event, data: Record<string, unknown>) => cb(data));
+  const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => cb(data);
+  ipcRenderer.on(CHAT_PROGRESS_EVENT, handler);
+  return () => ipcRenderer.removeListener(CHAT_PROGRESS_EVENT, handler);
 };
 
 contextBridge.exposeInMainWorld("autocrew", autocrew);
