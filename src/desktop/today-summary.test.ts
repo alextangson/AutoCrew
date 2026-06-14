@@ -45,6 +45,16 @@ describe("buildTodaySummary", () => {
     expect(r.pipeline).toMatchObject({ draft: 2, review: 1, ready: 1, published: 1 });
   });
 
+  it("counts legacy 'draft'/'review' statuses (pre-migration on-disk content)", async () => {
+    const r = await buildTodaySummary(undefined, deps({
+      listContents: async () => [
+        content({ id: "content-1-legacy-d", status: "draft" as never }),
+        content({ id: "content-1-legacy-r", status: "review" as never }),
+      ],
+    }));
+    expect(r.pipeline).toMatchObject({ draft: 1, review: 1 });
+  });
+
   it("flags the oldest stale draft beyond STALE_DAYS", async () => {
     const r = await buildTodaySummary(undefined, deps({
       listContents: async () => [

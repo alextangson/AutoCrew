@@ -6,7 +6,7 @@
  */
 import { loadProfile } from "../modules/profile/creator-profile.js";
 import { getCachedTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
-import { listContents, type Content, type ContentStatus } from "../storage/local-store.js";
+import { listContents, normalizeLegacyStatus, type Content, type ContentStatus } from "../storage/local-store.js";
 import { buildBaseline } from "../modules/analytics/quality-baseline.js";
 
 const STALE_DAYS = 2;
@@ -82,7 +82,9 @@ export async function buildTodaySummary(
   let staleBest: { id: string; title: string; days: number } | null = null;
   const published: Content[] = [];
   for (const c of contents) {
-    const b = bucketOf(c.status);
+    // listContents 读盘不规整化——旧稿磁盘上仍可能带 legacy "draft"/"review"，先归一再分桶
+    const status = normalizeLegacyStatus(c.status);
+    const b = bucketOf(status);
     if (b) pipeline[b] += 1;
     if (b === "draft") {
       const days = Math.floor((deps.now() - new Date(c.updatedAt).getTime()) / 86_400_000);
@@ -90,7 +92,7 @@ export async function buildTodaySummary(
         staleBest = { id: c.id, title: c.title, days };
       }
     }
-    if (c.status === "published") published.push(c);
+    if (status === "published") published.push(c);
   }
   pipeline.stale = staleBest;
 
