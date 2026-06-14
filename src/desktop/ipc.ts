@@ -57,7 +57,9 @@
  *   dialog:pick_media    {}
  *   content:asset_add    { content_id, library_id }
  *   content:asset_remove { content_id, filename }
+ *   today:summary       {}
  */
+import { buildTodaySummary } from "./today-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeStyle } from "../tools/style.js";
@@ -543,6 +545,19 @@ async function contentAssetRemoveHandler(payload: Record<string, unknown>): Prom
   }
 }
 
+// ── today:summary — 今日工作台聚合（S3.0） ──────────────────────────────────
+
+async function todaySummaryHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    return { ok: true, data: await buildTodaySummary((payload._dataDir as string) || undefined) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -592,6 +607,7 @@ export function buildIpcHandlers(
     "dialog:pick_media": dialogPickMediaUnavailableHandler,
     "content:asset_add": contentAssetAddHandler,
     "content:asset_remove": contentAssetRemoveHandler,
+    "today:summary": todaySummaryHandler,
   };
 
   if (!deps) return defaults;

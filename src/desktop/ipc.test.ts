@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 40 channels.
+ * IPC contract + handler registry tests — all 41 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -78,10 +78,11 @@ describe("IPC_CHANNELS", () => {
     "dialog:pick_media",
     "content:asset_add",
     "content:asset_remove",
+    "today:summary",
   ];
 
-  it("has exactly 40 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(40);
+  it("has exactly 41 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(41);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -159,7 +160,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS["content:allowed_transitions"]).toBe("allowed_transitions");
   });
 
-  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit, conversations:list, conversations:get, conversations:delete, library:list, library:add, library:update, library:remove, library:folder_create, library:folder_remove, dialog:pick_media, content:asset_add, content:asset_remove excluded)", () => {
+  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit, conversations:list, conversations:get, conversations:delete, library:list, library:add, library:update, library:remove, library:folder_create, library:folder_remove, dialog:pick_media, content:asset_add, content:asset_remove, today:summary excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -190,7 +191,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "library:folder_remove" &&
           ch !== "dialog:pick_media" &&
           ch !== "content:asset_add" &&
-          ch !== "content:asset_remove",
+          ch !== "content:asset_remove" &&
+          ch !== "today:summary",
       ).sort(),
     );
   });
@@ -694,5 +696,37 @@ describe("content asset attach", () => {
     // 第一份字节未被第二次挂接覆盖
     const copied = await fs.readFile(path.join(testDir, "contents", content.id, "assets", "cover.png"), "utf-8");
     expect(copied).toBe("bytes-A");
+  });
+});
+
+// ── 15. today:summary handler ────────────────────────────────────────────────
+
+describe("today:summary handler", () => {
+  it("returns ok with the summary shape on an empty project", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["today:summary"]({ _dataDir: testDir });
+    expect(res.ok).toBe(true);
+    const d = res.data as Record<string, unknown>;
+    expect(d).toHaveProperty("industry");
+    expect(d).toHaveProperty("radar");
+    expect(d).toHaveProperty("pipeline");
+    expect(d).toHaveProperty("lastOutcome");
+  });
+
+  it("counts a seeded draft in the pipeline", async () => {
+    const handlers = buildIpcHandlers();
+    await saveContent(
+      { title: "稿A", body: "b", status: "draft_ready", tags: [], topicId: undefined, platform: "douyin" },
+      testDir,
+    );
+    const res = await handlers["today:summary"]({ _dataDir: testDir });
+    const pipeline = (res.data as { pipeline: { draft: number } }).pipeline;
+    expect(pipeline.draft).toBeGreaterThanOrEqual(1);
+  });
+
+  it("guards a non-object payload", async () => {
+    const handlers = buildIpcHandlers();
+    const res = await handlers["today:summary"](null as unknown as Record<string, unknown>);
+    expect(res.ok).toBe(false);
   });
 });
