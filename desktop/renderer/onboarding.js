@@ -141,5 +141,5 @@ async function finishOnboarding(skippedAll) {
   appendChatMessage("assistant",
     (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（侧边栏数字员工 → 编剧 可改可停用）。" : "") +
     "搞定，开工吧。直接说选题，我来写。");
-  refreshActiveDrawer();
+  refreshActiveView();
 }

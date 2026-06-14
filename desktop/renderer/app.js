@@ -1,6 +1,6 @@
 /**
- * AutoCrew Desktop Renderer — 抽屉面板渲染（S2.8）。
- * 抽屉容器逻辑在 drawer.js；左侧边栏在 sidebar.js；对话驱动在 chat.js。
+ * AutoCrew Desktop Renderer — 目的页面板渲染（S3.0）。
+ * 中央视图切换在 views.js；左侧边栏在 sidebar.js；对话驱动在 chat.js；今日首屏在 today.js。
  * 本文件负责 report / drafts / style 三个面板的内容渲染（initReport / initDrafts / initStyle）。
  * window.autocrew 由 preload.ts 经 contextBridge 暴露。
  */
@@ -445,7 +445,7 @@ async function loadStyleRules(container) {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 initChat();
-initDrawer();
+initViews();
 initSidebar();
 bootOnboarding();
-renderHeroChips();
+switchView("today");

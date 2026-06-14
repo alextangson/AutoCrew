@@ -140,7 +140,7 @@ try {
   }
   console.log("smoke: preload.cjs requires only electron");
 
-  assert(registrations.size === 40, `all 40 IPC channels registered (got ${registrations.size})`);
+  assert(registrations.size === 41, `all 41 IPC channels registered (got ${registrations.size})`);
   await assertSanitizeWired(tmpDir);
   await assertCsvWhitelistWired(tmpDir);
   await assertMediaWhitelistWired();

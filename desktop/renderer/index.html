@@ -13,67 +13,51 @@
     <aside id="sidebar">
       <div class="logo">AutoCrew · 编辑部</div>
       <button id="new-task" class="btn-primary sidebar-new-task">＋ 新任务</button>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">任务历史</div>
-        <div id="conversation-list"></div>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">数字员工</div>
-        <div id="crew-list"></div>
-      </div>
-      <div class="sidebar-section">
-        <button class="sidebar-item" id="sidebar-library">📁 素材库</button>
-      </div>
-      <div class="sidebar-section">
-        <div class="sidebar-heading">即将上线</div>
-        <div class="sidebar-item disabled" title="敬请期待">定时任务</div>
-        <div class="sidebar-item disabled" title="敬请期待">插件</div>
-        <div class="sidebar-item disabled" title="敬请期待">消息渠道</div>
-        <div class="sidebar-item disabled" title="敬请期待">团队</div>
-      </div>
+      <nav id="sidebar-nav">
+        <button class="nav-item active" data-view="today"><i class="nav-ico">⌂</i>今日</button>
+        <button class="nav-item" data-view="scout"><i class="nav-ico">侦</i>选题</button>
+        <button class="nav-item" data-view="drafts"><i class="nav-ico">编</i>内容</button>
+        <button class="nav-item" data-view="report"><i class="nav-ico">析</i>数据</button>
+        <button class="nav-item" data-view="library"><i class="nav-ico">▤</i>素材</button>
+      </nav>
       <div id="sidebar-footer">
-        <button class="sidebar-item" id="open-settings">设置</button>
+        <button class="nav-item" data-view="settings"><i class="nav-ico">⚙</i>设置</button>
         <div class="sidebar-user" title="账号与积分将随产品账号体系上线">本地版</div>
       </div>
     </aside>
-    <section id="main-area" class="hero-mode">
-      <div id="hero-block">
-        <div class="hero-title">编辑部就位</div>
-        <p class="hero-sub">直接说需求，比如：帮我写一条关于 Excel 快捷键的抖音口播。</p>
-        <div id="hero-chips"></div>
-      </div>
-      <div id="chat-stream"></div>
-      <div id="chat-input-row">
-        <textarea id="chat-input" rows="2" placeholder="告诉团队你想做什么…"></textarea>
-        <button id="chat-send" class="btn-primary">发送</button>
-      </div>
+    <section id="main-area">
+      <section id="view-today" class="view"></section>
+      <section id="view-conversation" class="view hidden">
+        <div id="chat-stream"></div>
+        <div id="chat-input-row">
+          <textarea id="chat-input" rows="2" placeholder="继续这个任务…"></textarea>
+          <button id="chat-send" class="btn-primary">发送</button>
+        </div>
+      </section>
+      <section id="view-destination" class="view hidden">
+        <header id="dest-header"><span id="dest-title"></span></header>
+        <div id="dest-body">
+          <section id="panel-report" class="panel"></section>
+          <section id="panel-drafts" class="panel"></section>
+          <section id="panel-style" class="panel"></section>
+          <section id="panel-settings" class="panel"></section>
+          <section id="panel-scout" class="panel"></section>
+          <section id="panel-library" class="panel"></section>
+        </div>
+      </section>
     </section>
-    <div id="drawer-mask" class="hidden"></div>
-    <aside id="drawer" class="drawer-closed" aria-hidden="true">
-      <header id="drawer-header">
-        <span id="drawer-title"></span>
-        <button id="drawer-close" class="btn-mini" title="关闭">✕</button>
-      </header>
-      <div id="drawer-body">
-        <section id="panel-report" class="panel"></section>
-        <section id="panel-drafts" class="panel"></section>
-        <section id="panel-style" class="panel"></section>
-        <section id="panel-settings" class="panel"></section>
-        <section id="panel-scout" class="panel"></section>
-        <section id="panel-library" class="panel"></section>
-      </div>
-    </aside>
   </div>
   <div id="toast" class="toast hidden"></div>
   </div>
   <script src="dom.js"></script>
   <script src="markdown.cjs"></script>
-  <script src="drawer.js"></script>
+  <script src="views.js"></script>
   <script src="cards.js"></script>
-  <script src="library.js"></script>
   <script src="selection.js"></script>
   <script src="workbench.js"></script>
+  <script src="library.js"></script>
   <script src="chat.js"></script>
+  <script src="today.js"></script>
   <script src="sidebar.js"></script>
   <script src="scout.js"></script>
   <script src="settings.js"></script>
