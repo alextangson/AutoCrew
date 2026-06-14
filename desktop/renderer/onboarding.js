@@ -139,7 +139,7 @@ async function finishOnboarding(skippedAll) {
   const rules = await safeInvoke(window.autocrew.styleRules);
   const ruleCount = rules.ok && rules.data && rules.data.rules ? rules.data.rules.length : 0;
   appendChatMessage("assistant",
-    (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（侧边栏数字员工 → 编剧 可改可停用）。" : "") +
+    (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（点首屏顶部的编剧头像可改可停用）。" : "") +
     "搞定，开工吧。直接说选题，我来写。");
   refreshActiveView();
 }
