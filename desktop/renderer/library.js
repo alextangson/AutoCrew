@@ -2,7 +2,7 @@
  * 素材库面板（S2.9）— 引用式媒体仓库：导入/文件夹/标签/搜索/失效重定位。
  * 「库是索引，项目是快照」：删除只删记录；挂接复制在 workbench.js。
  * 注意：Electron renderer 无 window.prompt——文本输入一律行内编辑。
- * 依赖 dom.js / drawer.js。
+ * 依赖 dom.js / views.js。
  */
 
 let libCache = { folders: [], assets: [] };

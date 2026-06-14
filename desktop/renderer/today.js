@@ -16,8 +16,8 @@ function todayFmtViews(n) {
   return n.toLocaleString("zh-CN");
 }
 
-async function renderToday() {
-  const el = document.getElementById("view-today");
+/** 构建今日首屏静态骨架，返回 await 后仍需写入的卡片引用。 */
+function buildTodayShell(el) {
   el.innerHTML = "";
   const wrap = h("div", { class: "today-wrap" });
   el.appendChild(wrap);
@@ -56,7 +56,13 @@ async function renderToday() {
   const bar = h("div", { class: "today-cmd" });
   const input = h("textarea", { class: "today-cmd-input", rows: "1", placeholder: "直接说需求，比如：帮我写一条关于 Excel 快捷键的抖音口播…" });
   const sendBtn = h("button", { class: "btn-primary" }, "发送");
-  const submit = () => { const v = input.value.trim(); if (!v) return; input.value = ""; sendChat(v); };
+  const submit = () => {
+    if (chatBusy) { showToast("正在干活，稍等片刻"); return; }
+    const v = input.value.trim();
+    if (!v) return;
+    input.value = "";
+    sendChat(v);
+  };
   sendBtn.addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
@@ -66,15 +72,29 @@ async function renderToday() {
   bar.appendChild(sendBtn);
   wrap.appendChild(bar);
 
-  refreshRecentTasks();
+  return { sub, radarCard, pipeCard, dataCard };
+}
 
-  const res = await safeInvoke(window.autocrew.todaySummary);
-  if (!res.ok) { sub.textContent = "数据加载失败"; return; }
-  const d = res.data || {};
-  sub.textContent = (d.industry || "未设置赛道") + " · " + new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
-  renderRadarCard(radarCard, d.radar || { topics: [] });
-  renderPipeCard(pipeCard, d.pipeline || {});
-  renderDataCard(dataCard, d.lastOutcome);
+// 重入守卫：renderToday 同步清空 #view-today 后才 await today:summary，
+// 重叠调用（连点导航 / 扫榜后再切）会互相抹掉对方 DOM。串行化——后到者在前一次释放前直接放弃。
+let todayRendering = false;
+
+async function renderToday() {
+  if (todayRendering) return;
+  todayRendering = true;
+  try {
+    const { sub, radarCard, pipeCard, dataCard } = buildTodayShell(document.getElementById("view-today"));
+    refreshRecentTasks();
+    const res = await safeInvoke(window.autocrew.todaySummary);
+    if (!res.ok) { sub.textContent = "数据加载失败"; return; }
+    const d = res.data || {};
+    sub.textContent = (d.industry || "未设置赛道") + " · " + new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
+    renderRadarCard(radarCard, d.radar || { topics: [] });
+    renderPipeCard(pipeCard, d.pipeline || {});
+    renderDataCard(dataCard, d.lastOutcome);
+  } finally {
+    todayRendering = false;
+  }
 }
 
 function renderRadarCard(card, radar) {
