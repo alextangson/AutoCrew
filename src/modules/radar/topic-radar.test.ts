@@ -8,6 +8,7 @@ import {
   refreshTopicRadar,
   loadTopicCache,
   getTopicCandidates,
+  getCachedTopicCandidates,
   type RadarItem,
 } from "./topic-radar.js";
 
@@ -104,5 +105,47 @@ describe("refreshTopicRadar + cache + getTopicCandidates", () => {
     const candidates = await getTopicCandidates("科技", testDir, fetchImpl);
     expect(fetchImpl).toHaveBeenCalled();
     expect(candidates.length).toBeGreaterThan(0);
+  });
+});
+
+describe("getCachedTopicCandidates", () => {
+  let dir: string;
+  beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-radarcache-")); });
+  afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
+
+  async function seedCache(items: Array<{ title: string; link: string; source: string; publishedAt: string }>) {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "topic-radar.json"),
+      JSON.stringify({ fetchedAt: "2026-06-14T00:00:00.000Z", items }), "utf-8");
+  }
+
+  it("ranks cached items by industry without any network call", async () => {
+    const fetchSpy = vi.fn();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      await seedCache([
+        { title: "AI 大模型推理成本下降", link: "http://a", source: "36氪", publishedAt: "2026-06-14T00:00:00.000Z" },
+        { title: "今日午餐吃什么", link: "http://b", source: "x", publishedAt: "2026-06-14T00:00:00.000Z" },
+      ]);
+      const res = await getCachedTopicCandidates("AI 技术", dir, 10);
+      expect(res.length).toBeGreaterThan(0);
+      expect(res[0].title).toContain("AI");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("returns [] when no cache exists (no network)", async () => {
+    const fetchSpy = vi.fn();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      expect(await getCachedTopicCandidates("AI 技术", dir, 10)).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

@@ -140,6 +140,17 @@ export async function refreshTopicRadar(
   return { ok: items.length > 0, itemCount: items.length, failedSources };
 }
 
+/** 首屏只读：仅读缓存并排序，绝不触发网络刷新（缓存空→[]）。getTopicCandidates 的同步姊妹。 */
+export async function getCachedTopicCandidates(
+  industry: string,
+  dataDir?: string,
+  limit = 10,
+): Promise<RadarItem[]> {
+  const cache = await loadTopicCache(dataDir);
+  if (!cache) return [];
+  return rankCandidates(cache.items, industry, limit);
+}
+
 /** 工具侧入口：新鲜缓存直读；缺失/过期则刷新后排序。 */
 export async function getTopicCandidates(
   industry: string,
