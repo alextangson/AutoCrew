@@ -58,7 +58,7 @@ function refreshDestination(view) {
   if (view === "settings" && typeof initSettings === "function") initSettings();
 }
 
-/** 对话回合后刷新当前目的页（原 refreshActiveDrawer 语义） */
+/** 对话回合后刷新当前目的页（仅当目的页处于活动态时） */
 function refreshActiveView() {
   if (DEST_PANEL[activeView]) refreshDestination(activeView);
 }

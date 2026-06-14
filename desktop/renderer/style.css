@@ -927,3 +927,34 @@ label {
 .wb-assets { margin-bottom: 8px; }
 .wb-asset-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
 .wb-attach-picker { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 8px; max-height: 220px; overflow-y: auto; }
+
+/* ── 今日工作台（S3.0）──────────────────────────────────────────────────── */
+.today-wrap { max-width: 720px; margin: 0 auto; width: 100%; padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; }
+.today-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.today-greeting { font-size: 20px; font-weight: 600; }
+.today-sub { font-size: 13px; margin-top: 2px; }
+.today-presence { display: flex; gap: 6px; flex-shrink: 0; }
+.presence-av { width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; cursor: pointer; }
+.today-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface); }
+.today-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.today-topics { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.today-topic { display: flex; align-items: center; gap: 10px; }
+.today-topic-main { flex: 1; min-width: 0; font-size: 14px; }
+.today-topic-src { font-size: 12px; flex-shrink: 0; }
+.pipe-counts { display: flex; gap: 8px; margin-top: 10px; }
+.pipe-count { flex: 1; text-align: center; }
+.pipe-num { font-size: 22px; font-weight: 600; }
+.pipe-stale { margin-top: 10px; font-size: 12px; color: var(--crew-review-strong); }
+.data-title { font-size: 12px; margin-top: 4px; }
+.data-big { font-size: 22px; font-weight: 600; margin-top: 6px; }
+.data-delta { font-size: 12px; margin-top: 2px; }
+.data-up { color: var(--success); }
+.data-down { color: var(--danger); }
+.recent-head { display: flex; align-items: center; justify-content: space-between; }
+.recent-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.recent-item { display: block; width: 100%; text-align: left; border: none; background: none; cursor: pointer; padding: 6px 8px; border-radius: 8px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-item:hover { background: rgba(0,0,0,0.05); }
+.recent-empty { font-size: 13px; padding: 6px 8px; }
+.alltask-row { display: flex; align-items: center; gap: 8px; }
+.today-cmd { display: flex; gap: 10px; align-items: flex-end; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+.today-cmd-input { flex: 1; border: none; resize: none; background: none; font: inherit; outline: none; color: var(--text); }
