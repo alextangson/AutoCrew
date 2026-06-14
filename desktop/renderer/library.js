@@ -187,6 +187,11 @@ function libInlineEdit(row, main, a, field) {
   const cancelBtn = h("button", { class: "btn-mini" }, "取消");
   cancelBtn.addEventListener("click", () => libReload());
   main.innerHTML = "";
+  input.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    if (e.key === "Enter") saveBtn.click();
+    if (e.key === "Escape") cancelBtn.click();
+  });
   main.appendChild(input);
   main.appendChild(saveBtn);
   main.appendChild(cancelBtn);
