@@ -24,6 +24,39 @@ function dashOpenContent(contentId) {
   setTimeout(() => openInBoard(contentId, null), 60);
 }
 
+/** 任务动态带（IA v4.2,runId 聚合）:进行中实时步进 + 最近完成。只由真实事件驱动,无 run 不渲染。 */
+function renderRunStrip(container, state) {
+  container.innerHTML = "";
+  const order = state.runOrder || [];
+  if (order.length === 0) { container.classList.add("hidden"); return; }
+  const running = order.filter((id) => state.runs[id].status === "running");
+  const done = order.filter((id) => state.runs[id].status === "done").slice(-2);
+  const show = [...running, ...done];
+  if (show.length === 0) { container.classList.add("hidden"); return; }
+  container.classList.remove("hidden");
+  for (const runId of show) {
+    const run = state.runs[runId];
+    const card = h("div", { class: "dash-run" + (run.status === "done" ? " dash-run-done" : "") });
+    const head = h("div", { class: "dash-run-head" });
+    head.appendChild(h("span", { class: "dash-run-status" }, run.status === "done" ? "✓ 完成" : "● 进行中"));
+    if (run.status === "done" && run.doneLabel) head.appendChild(h("span", { class: "muted" }, run.doneLabel));
+    card.appendChild(head);
+    const steps = h("div", { class: "dash-run-steps" });
+    for (const s of run.steps.slice(-4)) {
+      steps.appendChild(h("span", { class: "dash-run-step" + (s.done ? " dash-run-step-done" : "") },
+        (s.done ? "✓ " : "… ") + s.label));
+    }
+    if (run.steps.length > 0) card.appendChild(steps);
+    container.appendChild(card);
+  }
+}
+
+// 模块级单一订阅:dashboard 全量重绘不累积订阅,回调只碰任务带容器
+EngineStore.subscribe((state) => {
+  const strip = document.getElementById("dash-runs");
+  if (strip) renderRunStrip(strip, state);
+});
+
 async function renderDashboard() {
   const view = document.getElementById("view-dashboard");
   if (!view) return;
@@ -51,6 +84,11 @@ async function renderDashboard() {
     view.appendChild(h("p", { class: "muted dash-firstrun" },
       "第一次来。下面每张卡的空态都是一个起点——从「校准你的声音」开始最划算，全程可跳过。"));
   }
+
+  // 任务动态带:只由真实 run 事件驱动,空时隐藏（假活性红线 §7.4）
+  const runStrip = h("div", { id: "dash-runs", class: "dash-runs hidden" });
+  view.appendChild(runStrip);
+  renderRunStrip(runStrip, EngineStore.state);
 
   const grid = h("div", { class: "dash-grid" });
   view.appendChild(grid);

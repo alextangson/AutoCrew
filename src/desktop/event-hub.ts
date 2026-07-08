@@ -13,11 +13,13 @@ export type EngineEventRole = "scout" | "writer" | "review" | "analyst" | "publi
 export interface EngineEvent {
   ts: string;
   role: EngineEventRole;
-  /** 事件类型标识（work / transition / adoption / publish_receipt / …），过滤用 */
+  /** 事件类型标识（work / transition / adoption / publish_receipt / run_done / …），过滤用 */
   kind: string;
   /** 人话一行——工作日志的唯一展示字段 */
   label: string;
   contentId?: string;
+  /** 任务归属（IA v4.2 任务动态带）：同一 chat turn / 调度批次的事件共享一个 runId，前端按此聚合成任务卡 */
+  runId?: string;
 }
 
 type Broadcast = (e: EngineEvent) => void;

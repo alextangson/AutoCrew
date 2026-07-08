@@ -10,12 +10,27 @@ const EngineStore = (() => {
     events: [],
     /** role -> { label, since }（真实工具执行中） */
     busy: {},
+    /** runId -> { steps: [{label, role, done}], status: running|done, doneLabel, startedAt }（任务动态带,IA v4.2） */
+    runs: {},
+    /** 插入顺序（尾部最新），渲染任务带用 */
+    runOrder: [],
   };
   const subs = new Set();
   function notify() {
     for (const fn of subs) {
       try { fn(state); } catch (e) { console.error("[store] 订阅者异常", e); }
     }
+  }
+  function ensureRun(runId) {
+    if (!state.runs[runId]) {
+      state.runs[runId] = { steps: [], status: "running", doneLabel: "", startedAt: Date.now() };
+      state.runOrder.push(runId);
+      // 只留最近 8 个 run——任务带是动态,不是档案（历史去 events）
+      while (state.runOrder.length > 8) {
+        delete state.runs[state.runOrder.shift()];
+      }
+    }
+    return state.runs[runId];
   }
   return {
     state,
@@ -25,6 +40,23 @@ const EngineStore = (() => {
       if (!e || !e.label) return;
       state.events.push(e);
       if (state.events.length > 100) state.events.shift();
+      // run 完成信号（引擎事件流）
+      if (e.kind === "run_done" && e.runId && state.runs[e.runId]) {
+        state.runs[e.runId].status = "done";
+        state.runs[e.runId].doneLabel = e.label;
+      }
+      notify();
+    },
+    runStep(runId, role, label, phase) {
+      if (!runId || !label) return;
+      const run = ensureRun(runId);
+      if (phase === "start") {
+        run.steps.push({ label, role: role || null, done: false });
+      } else {
+        for (let i = run.steps.length - 1; i >= 0; i--) {
+          if (run.steps[i].label === label && !run.steps[i].done) { run.steps[i].done = true; break; }
+        }
+      }
       notify();
     },
     setBusy(role, label) { if (!role) return; state.busy[role] = { label, since: Date.now() }; notify(); },
@@ -42,6 +74,7 @@ const EngineStore = (() => {
       if (!e) return;
       if (e.phase === "start") EngineStore.setBusy(e.role, e.label);
       if (e.phase === "end") EngineStore.clearBusy(e.role);
+      if (e.runId) EngineStore.runStep(e.runId, e.role, e.label, e.phase);
     });
   }
 })();

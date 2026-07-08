@@ -13,6 +13,20 @@ async function initSettings() {
     el.innerHTML = "";
     el.appendChild(h("h2", {}, "设置"));
 
+    // 低频对象管理收编入口（IA v4.2 §7:菜单收敛,风格档案=校准中心、选题雷达=情报源,归设置）
+    const zones = h("div", { class: "settings-zones" });
+    for (const [label, view, desc] of [
+      ["校准中心", "style", "声音内核规则:可看、可改、可停用"],
+      ["情报源", "scout", "雷达源清单与扫榜状态(命中定位自动入灵感库)"],
+    ]) {
+      const zone = h("button", { class: "settings-zone" });
+      zone.appendChild(h("span", { class: "settings-zone-title" }, label));
+      zone.appendChild(h("span", { class: "muted settings-zone-desc" }, desc));
+      zone.addEventListener("click", () => switchView(view));
+      zones.appendChild(zone);
+    }
+    el.appendChild(zones);
+
     const res = await safeInvoke(window.autocrew.settingsGet);
     if (!res.ok) {
       showToast(res.error || "读取设置失败");

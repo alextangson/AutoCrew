@@ -39,6 +39,8 @@ export interface ChatProgressEvent {
   tool: string;
   role: "scout" | "writer" | "review" | "analyst" | null;
   label: string;
+  /** 任务归属（chatTurnHandler 注入，同 turn 事件共享）——前端任务带按此聚合 */
+  runId?: string;
 }
 
 /** 工具 → 角色/人话状态（UI 状态流署名；与 cards.js 的 CREW_META 角色键一致） */
@@ -95,7 +97,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 7. 用户问「写什么」「找选题」「最近热点」时调用 find_topics，然后从候选里挑 3 个最适合该创作者定位的，用一两句话说明各自为什么值得写。
 8. 用户想找海外/国外/英文圈选题（或问某英文话题最近动态）时调用 find_overseas_topics，需要一个关键词；同样从候选里挑几个最契合定位的推荐。
 9. 用户说「记下来」「存进灵感库」，或对话中聊出一个值得写的想法、用户看中某条候选时，调用 save_topic 落进灵感库——reason 必填，一句话说清为什么值得写（命中定位/对标爆款/读者追问）。存完不要顺手开写，等用户发话。
-10. 推送公众号草稿箱是写操作：调用 push_wechat_draft 只会弹出确认卡，由用户亲手点「推送」执行——你不要宣称已推送，只说「已备好，等你确认」。`;
+10. 推送公众号草稿箱是写操作：调用 push_wechat_draft 只会弹出确认卡，由用户亲手点「推送」执行——你不要宣称已推送，只说「已备好，等你确认」。
+11. 用户贴对标文章链接（「拆解一下」「看看人家怎么写的」）时：先 read_url 读原文，拆出钩子（前 3 句怎么抓人）、结构（骨架几段、各段干什么）、CTA（结尾怎么引导），用一两句话讲给用户；值得借鉴的角度用 save_topic 入库，description 写拆解要点，reason 写「对标拆解 · <账号/来源>」。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
 

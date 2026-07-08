@@ -166,9 +166,45 @@ async function sendChat(text) {
   if (typeof refreshRecentTasks === "function") refreshRecentTasks();
 }
 
+/** 会话历史（IA v4.2 §C4,任务=会话）:右栏头部下拉,点击回放 */
+function initChatHistory() {
+  const head = document.getElementById("chat-head");
+  if (!head) return;
+  const btn = h("button", { class: "btn-mini chat-history-btn" }, "历史");
+  const panel = h("div", { class: "chat-history-panel hidden" });
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!panel.classList.contains("hidden")) { panel.classList.add("hidden"); return; }
+    panel.innerHTML = "";
+    panel.appendChild(h("p", { class: "muted" }, "加载中…"));
+    panel.classList.remove("hidden");
+    const res = await safeInvoke(window.autocrew.conversationsList, {});
+    panel.innerHTML = "";
+    const convs = (res.ok && res.data && res.data.conversations) || [];
+    if (convs.length === 0) {
+      panel.appendChild(h("p", { class: "muted" }, "还没有历史任务。"));
+      return;
+    }
+    for (const c of convs.slice(0, 15)) {
+      const row = h("div", { class: "chat-history-row" });
+      row.appendChild(h("span", { class: "chat-history-title" }, c.title || "（无标题）"));
+      row.appendChild(h("span", { class: "muted chat-history-meta" }, (c.turns || 0) + " 轮"));
+      row.addEventListener("click", () => {
+        panel.classList.add("hidden");
+        loadConversation(c.id);
+      });
+      panel.appendChild(row);
+    }
+  });
+  document.addEventListener("click", () => panel.classList.add("hidden"));
+  head.appendChild(btn);
+  head.appendChild(panel);
+}
+
 function initChat() {
   const input = document.getElementById("chat-input");
   const sendBtn = document.getElementById("chat-send");
+  initChatHistory();
 
   function submit() {
     if (chatBusy) return; // busy 时不取走输入，避免静默丢失

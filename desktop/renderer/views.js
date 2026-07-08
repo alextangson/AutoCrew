@@ -37,6 +37,18 @@ function switchView(view) {
     if (typeof renderBoard === "function") renderBoard();
     return;
   }
+  if (view === "trash") {
+    // 回收站活在看板容器里（软删除语义与看板同域）。菜单直达时看板可能从未渲染,
+    // 先铺看板骨架再进回收站,否则 renderTrash 找不到挂载点静默失败
+    activeView = "board";
+    showViewEl("view-board");
+    if (typeof renderBoard === "function") {
+      Promise.resolve(renderBoard()).then(() => {
+        if (typeof renderTrash === "function") renderTrash();
+      });
+    }
+    return;
+  }
   if (view === "conversation") return; // 对话常驻右栏,不再抢主区
   if (!DEST_PANEL[view]) return;
   activeView = view;

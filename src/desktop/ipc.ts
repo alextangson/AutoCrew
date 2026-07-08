@@ -193,17 +193,20 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
           platform: String((rawCtx as Record<string, unknown>).platform ?? ""),
         }
       : undefined;
+  // 任务动态带（IA v4.2）:每个 chat turn = 一个 run,事件按 runId 聚合成任务卡
+  const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const dataDir = (payload._dataDir as string) || undefined;
   try {
-    return await runPersistedChatTurn({
+    const result = await runPersistedChatTurn({
       message: message.trim(),
       ...(conversationId ? { conversationId } : {}),
       ...(viewContext ? { viewContext } : {}),
-      dataDir: (payload._dataDir as string) || undefined,
+      dataDir,
       ...(ctx?.onProgress
         ? {
             onEvent: (e: unknown) => {
               try {
-                ctx.onProgress!(e as Record<string, unknown>);
+                ctx.onProgress!({ ...(e as Record<string, unknown>), runId });
               } catch {
                 /* 推送失败（窗口已关）不影响生成 */
               }
@@ -211,6 +214,18 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
           }
         : {}),
     });
+    // run 完成信号——只在本 turn 真用过工具时发（纯闲聊不进任务带,不造假活性）
+    if (result.ok !== false) {
+      const data = result.data as { cards?: unknown[] } | undefined;
+      const cardCount = Array.isArray(data?.cards) ? data.cards.length : 0;
+      if (cardCount > 0) {
+        void emitEngineEvent(
+          { role: "system", kind: "run_done", runId, label: `任务完成 · 产出 ${cardCount} 张卡片` },
+          dataDir,
+        );
+      }
+    }
+    return result;
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

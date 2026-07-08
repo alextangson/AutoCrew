@@ -112,9 +112,14 @@ const server = http.createServer(async (req, res) => {
     const ctx: IpcHandlerContext = {
       onProgress: (e) => {
         broadcast("chat", e);
-        const pe = e as { phase?: string; role?: string | null; label?: string };
+        const pe = e as { phase?: string; role?: string | null; label?: string; runId?: string };
         if (pe.phase === "start") {
-          void emitEngineEvent({ role: (pe.role as EngineEventRole) || "system", kind: "work", label: pe.label || "工作中" });
+          void emitEngineEvent({
+            role: (pe.role as EngineEventRole) || "system",
+            kind: "work",
+            label: pe.label || "工作中",
+            ...(pe.runId ? { runId: pe.runId } : {}),
+          });
         }
       },
     };

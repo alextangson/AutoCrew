@@ -67,6 +67,28 @@ async function renderWorkbench(contentId, container) {
   container.appendChild(editor);
   if (typeof attachSelectionToolbar === "function") attachSelectionToolbar(editor, c, container);
 
+  // 素材缺口块（IA v4.2 §7 轻版）:解析写手在正文标注的配图/素材缺口,一键去素材库补
+  // 标记语法与 koubo gate 的 [IMAGE: prompt] 对齐,兼容 [缺图:xx]/[缺案例:xx]/[缺数据:xx]
+  const gapMatches = (c.body || "").match(/\[(?:IMAGE|缺图|缺案例|缺数据|缺引用)[:：][^\]]*\]/g) || [];
+  if (gapMatches.length > 0) {
+    const gapBox = h("div", { class: "wb-gaps" });
+    gapBox.appendChild(h("div", { class: "wb-gaps-head" }, "素材缺口（" + gapMatches.length + "）——直接影响「轻改即用」"));
+    for (const g of gapMatches.slice(0, 8)) {
+      const desc = g.replace(/^\[(?:IMAGE|缺图|缺案例|缺数据|缺引用)[:：]\s*/, "").replace(/\]$/, "").trim();
+      const kind = (g.match(/^\[(IMAGE|缺图|缺案例|缺数据|缺引用)/) || [])[1] || "素材";
+      const row = h("div", { class: "wb-gap-row" });
+      row.appendChild(h("span", { class: "wb-gap-desc" }, (kind === "IMAGE" ? "配图" : kind) + "：" + desc));
+      const goBtn = h("button", { class: "btn-mini" }, "去素材库搜");
+      goBtn.addEventListener("click", () => {
+        if (typeof libFilter === "object") libFilter.q = desc.slice(0, 12);
+        switchView("library");
+      });
+      row.appendChild(goBtn);
+      gapBox.appendChild(row);
+    }
+    container.appendChild(gapBox);
+  }
+
   const actions = h("div", { class: "card-actions" });
   const saveBtn = h("button", { class: "btn-primary" }, "保存（存为新版本）");
   saveBtn.dataset.label = "保存（存为新版本）";

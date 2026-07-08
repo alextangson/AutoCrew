@@ -1172,3 +1172,28 @@ label {
 .wb-review-run { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; margin-bottom: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
 .card-rules-applied { font-size: 11px; margin: 2px 0 6px; }
 .wb-reason-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 0; font-size: 12px; }
+.dash-runs { max-width: 1080px; margin: 0 auto 12px; display: flex; flex-direction: column; gap: 8px; }
+.dash-run { border: 1px solid var(--border); border-left: 3px solid var(--text); border-radius: 0 8px 8px 0; background: var(--card); padding: 8px 12px; }
+.dash-run-done { border-left-color: var(--success); opacity: 0.85; }
+.dash-run-head { display: flex; gap: 10px; align-items: baseline; font-size: 12px; }
+.dash-run-status { font-family: var(--font-mono); font-size: 11px; }
+.dash-run-done .dash-run-status { color: var(--success); }
+.dash-run-steps { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.dash-run-step { font-size: 11px; color: var(--muted); }
+.dash-run-step-done { color: var(--text); }
+#chat-head { display: flex; align-items: center; justify-content: space-between; position: relative; }
+.chat-history-panel { position: absolute; top: 100%; right: 0; z-index: 30; width: 260px; max-height: 320px; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 6px; box-shadow: none; }
+.chat-history-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.chat-history-row:hover { background: var(--surface); }
+.chat-history-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.chat-history-meta { font-size: 10px; flex-shrink: 0; }
+.wb-gaps { border: 1px solid var(--border); border-left: 3px solid var(--crew-writer, #7F77DD); border-radius: 0 8px 8px 0; background: var(--card); padding: 8px 12px; margin-top: 10px; }
+.wb-gaps-head { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.wb-gap-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.wb-gap-desc { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-card { animation: none; } /* 首页全量重绘不重放进场动画（fade-in 语义属于对话流新卡片） */
+.settings-zones { display: flex; gap: 10px; margin: 4px 0 14px; }
+.settings-zone { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.settings-zone:hover { border-color: #D9D5C9; background: var(--surface); }
+.settings-zone-title { font-size: 13px; font-weight: 600; }
+.settings-zone-desc { font-size: 11px; }
