@@ -66,8 +66,15 @@ export function parseRssItems(xml: string): Array<Omit<RadarItem, "source">> {
   return items;
 }
 
-/** 确定性候选排序：定位 token 命中 ×3 + 新鲜度（<24h +2, <72h +1） */
-export function rankCandidates(items: RadarItem[], industry: string, limit: number): RadarItem[] {
+export interface ScoredRadarItem {
+  item: RadarItem;
+  score: number;
+  /** 命中的定位 token（入库理由的原料；空 = 纯新鲜度上位，未命中定位） */
+  matchedTokens: string[];
+}
+
+/** 确定性候选排序（带评分明细）：定位 token 命中 ×3 + 新鲜度（<24h +2, <72h +1） */
+export function rankCandidatesScored(items: RadarItem[], industry: string, limit: number): ScoredRadarItem[] {
   const baseTokens = industry.split(/[/\s,，、|]+/).map((t) => t.trim()).filter((t) => t.length >= 2);
   // 中英混写定位（如 "AI技术博主"）：ASCII 串单独成 token，否则永远匹配不上英文标题里的 "AI"/"GPT"
   const asciiTokens = (industry.match(/[A-Za-z0-9]{2,}/g) ?? []);
@@ -75,19 +82,27 @@ export function rankCandidates(items: RadarItem[], industry: string, limit: numb
   const now = Date.now();
   const scored = items.map((item) => {
     let score = 0;
+    const matchedTokens: string[] = [];
     for (const tok of tokens) {
-      if (item.title.toLowerCase().includes(tok.toLowerCase())) score += 3;
+      if (item.title.toLowerCase().includes(tok.toLowerCase())) {
+        score += 3;
+        matchedTokens.push(tok);
+      }
     }
     const ageH = (now - new Date(item.publishedAt).getTime()) / 3600_000;
     if (ageH < 24) score += 2;
     else if (ageH < 72) score += 1;
-    return { item, score };
+    return { item, score, matchedTokens };
   });
   scored.sort(
     (a, b) => b.score - a.score ||
       new Date(b.item.publishedAt).getTime() - new Date(a.item.publishedAt).getTime(),
   );
-  return scored.slice(0, limit).map((s) => s.item);
+  return scored.slice(0, limit);
+}
+
+export function rankCandidates(items: RadarItem[], industry: string, limit: number): RadarItem[] {
+  return rankCandidatesScored(items, industry, limit).map((s) => s.item);
 }
 
 function cachePath(dataDir?: string): string {

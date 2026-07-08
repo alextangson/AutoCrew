@@ -12,6 +12,7 @@ function renderCard(card) {
     case "publish": return renderPublishCard(card.data);
     case "published": return renderPublishedCard(card.data);
     case "topic": return renderTopicCard(card.data);
+    case "topic_saved": return renderTopicSavedCard(card.data);
     case "assets": return renderAssetsCard(card.data);
     default: {
       const pre = h("pre", { class: "card-body" });
@@ -204,17 +205,51 @@ function renderTopicCard(d) {
   const el = cardShell(d.industry ? "选题雷达 · " + d.industry : "选题雷达", "今日候选选题", "scout");
   const list = h("ol", { class: "md-list topic-list" });
   const candidates = d.candidates || [];
+  const sourceTag = d.industry && d.industry.indexOf("海外") === 0 ? "overseas:" : "radar:";
   for (const c of candidates.slice(0, 10)) {
     const li = h("li", { class: "topic-item" });
     li.appendChild(h("span", {}, c.title + "（" + (c.source || "?") + "）"));
+    // 落库是确定性动作,直走 topic:create,零 token（IA v4.2 §A2）
+    const saveCandidate = () => safeInvoke(window.autocrew.topicCreate, {
+      title: c.title,
+      reason: "从候选看中 · " + (c.source || "雷达"),
+      source: sourceTag + (c.source || "unknown"),
+      link: c.link || undefined,
+    });
+    const saveBtn = h("button", { class: "btn-mini" }, "存灵感库");
+    saveBtn.addEventListener("click", async () => {
+      const r = await saveCandidate();
+      if (!r.ok) { showToast(r.error || "入库失败"); return; }
+      showToast("已存入灵感库");
+      if (typeof refreshActiveView === "function") refreshActiveView();
+    });
+    li.appendChild(saveBtn);
     const writeBtn = h("button", { class: "btn-mini" }, "就这个写");
-    writeBtn.addEventListener("click", () => {
-      sendChat("用选题《" + c.title + "》给我写一条口播");
+    writeBtn.addEventListener("click", async () => {
+      // 单一入口池:开写的选题同时入库,不许绕过灵感库（IA v4.2 §4）
+      await saveCandidate();
+      sendChat("用选题《" + c.title + "》给我写一条口播" + (c.link ? "。参考链接：" + c.link + "（先用 read_url 读原文再写）" : ""));
     });
     li.appendChild(writeBtn);
     list.appendChild(li);
   }
   el.appendChild(list);
+  return el;
+}
+
+/** save_topic 工具的回执卡（IA v4.2 §A2）——对话里的想法落库确认 */
+function renderTopicSavedCard(d) {
+  const el = cardShell("灵感库", "已入库", "scout");
+  el.appendChild(h("p", { class: "topic-saved-title" }, "💡 " + (d.title || "")));
+  if (d.reason) el.appendChild(h("p", { class: "muted" }, d.reason));
+  const actions = h("div", { class: "card-actions" });
+  const openBtn = h("button", { class: "btn-mini" }, "去看板");
+  openBtn.addEventListener("click", () => {
+    switchView("board");
+    if (typeof refreshActiveView === "function") refreshActiveView();
+  });
+  actions.appendChild(openBtn);
+  el.appendChild(actions);
   return el;
 }
 

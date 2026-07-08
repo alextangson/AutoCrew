@@ -7,6 +7,10 @@ export interface Topic {
   description: string;
   tags: string[];
   source?: string;
+  /** 入库理由——「为什么值得你写」（IA v4.2 §4：无理由的灵感库 = RSS 收件箱） */
+  reason?: string;
+  /** 证据链接（雷达原文/对标文章），派活时随 brief 下发 */
+  link?: string;
   createdAt: string;
   /** 软删除时间戳(回收站语义,qingmo 设计细节);null/缺省 = 活跃 */
   deletedAt?: string | null;

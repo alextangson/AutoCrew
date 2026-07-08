@@ -265,7 +265,17 @@ function openMatrix(atomKey) {
       const gen = h("button", { class: "btn-mini" }, "生成");
       gen.addEventListener("click", () => {
         if (typeof sendChat === "function") {
-          sendChat("用选题《" + atomTitle(atom) + "》写一篇" + platformLabel(p) + "原生版本");
+          // 派活接缝（IA v4.2 §4）：brief 携带 Topic 全量上下文,灵感库的增值信息不许在派活瞬间蒸发
+          let brief = "用选题《" + atomTitle(atom) + "》写一篇" + platformLabel(p) + "原生版本";
+          const t = atom.topic;
+          if (t) {
+            const ctx = [];
+            if (t.reason) ctx.push("入库理由：" + t.reason);
+            if (t.description && t.description !== atomTitle(atom)) ctx.push("背景：" + t.description);
+            if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写，不要凭标题脑补）");
+            if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
+          }
+          sendChat(brief);
           showToast("已派给总编辑——看右边对话和顶部日志");
         }
       });
@@ -273,13 +283,20 @@ function openMatrix(atomKey) {
     }
     grid.appendChild(cell);
   }
+  wrap.appendChild(grid);
+
+  // 出海席位默认折叠（IA v4.2 §1）：裁决 F 的诚实呈现保留,但不日常占据视觉
+  const enFold = h("details", { class: "matrix-en-fold" });
+  enFold.appendChild(h("summary", { class: "muted" }, "出海席位（未开通，排队中）"));
+  const enGrid = h("div", { class: "matrix-grid" });
   for (const p of MATRIX_EN) {
     const cell = h("div", { class: "matrix-cell matrix-cell-locked" });
     cell.appendChild(h("div", { class: "matrix-platform" }, platformLabel(p)));
     cell.appendChild(h("div", { class: "matrix-locked" }, "席位未开通"));
-    grid.appendChild(cell);
+    enGrid.appendChild(cell);
   }
-  wrap.appendChild(grid);
+  enFold.appendChild(enGrid);
+  wrap.appendChild(enFold);
   boardMain.appendChild(wrap);
 }
 

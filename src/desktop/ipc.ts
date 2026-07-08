@@ -74,7 +74,7 @@ import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
-import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, listTopics, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
+import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, listTopics, saveTopic, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import type { IpcChannel } from "./channels.js";
@@ -600,6 +600,7 @@ export function buildIpcHandlers(
     "content:delete": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:delete"]),
     "content:restore": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:restore"]),
     "topics:list": topicsListHandler,
+    "topic:create": topicCreateHandler,
     "topic:delete": topicDeleteHandler,
     "topic:restore": topicRestoreHandler,
     "trash:list": trashListHandler,
@@ -658,6 +659,28 @@ async function eventsRecentHandler(payload: Record<string, unknown>): Promise<Re
 async function topicsListHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   try {
     return { ok: true, topics: await listTopics((payload._dataDir as string) || undefined) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 手动/对话入库（IA v4.2 §A2）——「＋新想法」与候选卡按钮的落库通道 */
+async function topicCreateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  if (!title) return { ok: false, error: "title is required" };
+  try {
+    const topic = await saveTopic(
+      {
+        title,
+        description: typeof payload.description === "string" && payload.description ? payload.description : title,
+        tags: Array.isArray(payload.tags) ? (payload.tags as string[]) : [],
+        source: typeof payload.source === "string" && payload.source ? payload.source : "manual",
+        ...(typeof payload.reason === "string" && payload.reason ? { reason: payload.reason } : {}),
+        ...(typeof payload.link === "string" && payload.link ? { link: payload.link } : {}),
+      },
+      (payload._dataDir as string) || undefined,
+    );
+    return { ok: true, topic };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

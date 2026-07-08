@@ -3,6 +3,7 @@
  * 源 url 不外露给 renderer（无展示需求即不出境）。
  */
 import { loadTopicCache, refreshTopicRadar } from "../modules/radar/topic-radar.js";
+import { intakeRadarTopics } from "../modules/radar/radar-intake.js";
 import sourcesJson from "../data/topic-sources.json";
 
 interface RadarSourceMeta {
@@ -44,11 +45,20 @@ export async function doRadarRefresh(
     return { ok: false, error: "Invalid payload: expected object" };
   }
   try {
-    const result = await refreshTopicRadar((payload._dataDir as string) || undefined, fetchImpl ?? globalThis.fetch);
+    const dataDir = (payload._dataDir as string) || undefined;
+    const result = await refreshTopicRadar(dataDir, fetchImpl ?? globalThis.fetch);
     if (!result.ok) {
       return { ok: false, error: "全部热榜源拉取失败（网络或源不可用），稍后再试" };
     }
-    return { ok: true, data: { itemCount: result.itemCount, failedSources: result.failedSources } };
+    // 刷新后立即入库（IA v4.2 §A1）——intake 尽力而为，失败不拖垮扫榜本身
+    let intakeCount = 0;
+    try {
+      intakeCount = (await intakeRadarTopics(dataDir)).saved.length;
+    } catch { /* best-effort */ }
+    return {
+      ok: true,
+      data: { itemCount: result.itemCount, failedSources: result.failedSources, intakeCount },
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

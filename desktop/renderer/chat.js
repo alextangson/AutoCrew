@@ -54,14 +54,47 @@ function appendChatCards(cards) {
 /** 对话常驻右栏,始终可见——不再需要切视图 */
 function exitHeroMode() {}
 
-/** 新想法：清空对话流,聚焦输入,主区回看板。首条消息发出才建会话（零仪式感）。 */
+/**
+ * 新想法（IA v4.2 §A2 语义修正）：想法直落灵感卡,不再只是清空对话。
+ * 对话流插入「记想法」卡:输入一句话回车/点存 → topic:create 落库;想聊天仍用下方输入框（双通道）。
+ */
 function newTask() {
   if (chatBusy) { showToast("正在干活，稍等片刻再开新任务"); return; }
   activeConversationId = null;
   document.getElementById("chat-stream").innerHTML = "";
   switchView("board");
-  const input = document.getElementById("chat-input");
-  if (input) input.focus();
+  appendCardToStream(buildIdeaCaptureCard());
+  const ideaInput = document.getElementById("idea-capture-input");
+  if (ideaInput) ideaInput.focus();
+}
+
+/** 「记想法」卡:一句话直落灵感库（确定性动作,零 token） */
+function buildIdeaCaptureCard() {
+  const el = cardShell("灵感库", "记一个想法", "scout");
+  const row = h("div", { class: "idea-capture-row" });
+  const input = h("input", {
+    id: "idea-capture-input",
+    class: "idea-capture-input",
+    type: "text",
+    placeholder: "一句话记下想法，回车存入灵感库…",
+  });
+  const save = async () => {
+    const title = input.value.trim();
+    if (!title) return;
+    const r = await safeInvoke(window.autocrew.topicCreate, { title, reason: "随手记的想法", source: "manual" });
+    if (!r.ok) { showToast(r.error || "入库失败"); return; }
+    input.value = "";
+    showToast("已存入灵感库");
+    if (typeof refreshActiveView === "function") refreshActiveView();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } });
+  const btn = h("button", { class: "btn-mini" }, "存入");
+  btn.addEventListener("click", () => void save());
+  row.appendChild(input);
+  row.appendChild(btn);
+  el.appendChild(row);
+  el.appendChild(h("p", { class: "muted idea-capture-hint" }, "想展开讨论就直接在下方对话框说。"));
+  return el;
 }
 
 /** 任务历史回放：文字 + 卡片按发送时顺序重渲染（卡片在回复文字前，与实时一致） */

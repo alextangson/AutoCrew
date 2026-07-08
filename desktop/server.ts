@@ -16,6 +16,8 @@ import { IPC_CHANNELS, chToMethod } from "../src/desktop/channels.js";
 import { buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js";
 import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
+import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
+import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
@@ -134,4 +136,22 @@ server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
   console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${TOKEN}\x1b[0m\n`);
   console.log("  (token 已内嵌进页面,收藏首次带 token 的链接即可)\n");
+
+  // 选题雷达:启动 fire-and-forget 刷新 → 命中定位的候选自动入灵感库(IA v4.2 §A1)。
+  // 此前该启动链只活在弃用的 Electron 壳(main.ts:112),server 化时遗漏,此处收编。
+  void refreshTopicRadar()
+    .then(async (r) => {
+      if (r.failedSources.length > 0) console.warn("[topic-radar] 部分源失败:", r.failedSources.join(", "));
+      const intake = await intakeRadarTopics();
+      if (intake.saved.length > 0) {
+        void emitEngineEvent({
+          role: "scout",
+          kind: "work",
+          label: `雷达入库 ${intake.saved.length} 条灵感:${intake.saved.map((t) => t.title).join("｜").slice(0, 80)}`,
+        });
+      }
+    })
+    .catch((err) => {
+      console.error("[topic-radar] 启动刷新失败:", err instanceof Error ? err.message : err);
+    });
 });

@@ -1126,3 +1126,13 @@ label {
 .trash-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--border); }
 .trash-kind { font-family: var(--font-mono); font-size: 10px; border: 1px solid var(--border); padding: 1px 7px; flex-shrink: 0; }
 .trash-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+
+/* ── IA v4.2:灵感入水管（记想法卡 / 入库回执 / 出海席位折叠）───────────────── */
+.matrix-en-fold { margin-top: 14px; }
+.matrix-en-fold summary { cursor: pointer; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; padding: 4px 0; }
+.matrix-en-fold[open] summary { margin-bottom: 8px; }
+.idea-capture-row { display: flex; gap: 8px; margin-top: 6px; }
+.idea-capture-input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; background: var(--card); color: var(--text); }
+.idea-capture-input:focus { outline: none; border-color: var(--text); }
+.idea-capture-hint { font-size: 11px; margin-top: 8px; }
+.topic-saved-title { font-size: 14px; font-weight: 500; margin: 4px 0; }

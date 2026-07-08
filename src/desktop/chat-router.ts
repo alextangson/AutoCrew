@@ -19,9 +19,10 @@ import { addWritingRule, loadProfile, type CreatorProfile, type WritingRule } fr
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
+import { saveTopic, type Topic } from "../storage/local-store.js";
 
 export interface ChatCard {
-  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "published" | "topic" | "assets";
+  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "published" | "topic" | "topic_saved" | "assets";
   data: Record<string, unknown>;
 }
 
@@ -70,6 +71,7 @@ export interface ChatToolDeps {
   fetchPage?: (url: string) => Promise<PageText>;
   topics?: (industry: string) => Promise<RadarItem[]>;
   libSearch?: (query: string, type?: LibraryAssetType) => Promise<LibraryAssetView[]>;
+  saveTopicImpl?: typeof saveTopic;
 }
 
 const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文短视频创作者从选题到发布跑通全流程。
@@ -82,7 +84,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文
 5. 缺少必要信息（选题、平台）时先问清，一次只问一个问题。
 6. 始终用中文，语气像靠谱的同事：简短、直接、不客套。
 7. 用户问「写什么」「找选题」「最近热点」时调用 find_topics，然后从候选里挑 3 个最适合该创作者定位的，用一两句话说明各自为什么值得写。
-8. 用户想找海外/国外/英文圈选题（或问某英文话题最近动态）时调用 find_overseas_topics，需要一个关键词；同样从候选里挑几个最契合定位的推荐。`;
+8. 用户想找海外/国外/英文圈选题（或问某英文话题最近动态）时调用 find_overseas_topics，需要一个关键词；同样从候选里挑几个最契合定位的推荐。
+9. 用户说「记下来」「存进灵感库」，或对话中聊出一个值得写的想法、用户看中某条候选时，调用 save_topic 落进灵感库——reason 必填，一句话说清为什么值得写（命中定位/对标爆款/读者追问）。存完不要顺手开写，等用户发话。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
 
@@ -105,6 +108,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     fetchPage: deps?.fetchPage ?? ((url: string) => fetchPageText(url)),
     topics: deps?.topics ?? (async (industry: string) => getTopicCandidates(industry, dataDir)),
     libSearch: deps?.libSearch ?? ((q: string, t?: LibraryAssetType) => searchAssets(q, t, dataDir)),
+    saveTopicImpl: deps?.saveTopicImpl ?? saveTopic,
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
@@ -170,6 +174,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           title: c.title,
           source: sourceDomain(String(c.source ?? "")),
           viralScore: c.viralScore,
+          // 证据链接透传:候选卡「存灵感库」按钮与派活 brief 都要它（IA v4.2 §A2/§4）
+          link: typeof c.link === "string" ? c.link : typeof c.url === "string" ? c.url : undefined,
         }));
         sink.push({ type: "topic", data: { industry: "海外 · " + String(a.keyword ?? ""), candidates: mapped } });
         return JSON.stringify({
@@ -177,6 +183,45 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           keyword: a.keyword,
           candidates: mapped.map((m) => ({ title: m.title, source: m.source, score: m.viralScore })),
         });
+      },
+    },
+    {
+      name: "save_topic",
+      description:
+        "把想法/选题存入灵感库（看板第一列）。用户说「记下这个想法」「存进灵感库」，或对话中冒出值得写的选题、用户看中某条候选时调用。只入库不开写。",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "选题标题，一句话" },
+          reason: { type: "string", description: "为什么值得写——命中定位/对标爆款/读者追问等，一句话" },
+          description: { type: "string", description: "补充描述（可选）" },
+          link: { type: "string", description: "证据链接（可选，来自候选或 read_url）" },
+          source: { type: "string", description: "来源：chat | radar:<源名> | overseas:<源名>，默认 chat" },
+        },
+        required: ["title", "reason"],
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        const title = String(a.title ?? "").trim();
+        if (!title) return fail("title 不能为空");
+        let topic: Topic;
+        try {
+          topic = await d.saveTopicImpl(
+            {
+              title,
+              description: typeof a.description === "string" && a.description ? a.description : title,
+              tags: [],
+              source: typeof a.source === "string" && a.source ? a.source : "chat",
+              reason: String(a.reason ?? ""),
+              ...(typeof a.link === "string" && a.link ? { link: a.link } : {}),
+            },
+            dataDir,
+          );
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+        sink.push({ type: "topic_saved", data: { id: topic.id, title: topic.title, reason: topic.reason ?? "", source: topic.source ?? "chat" } });
+        return JSON.stringify({ ok: true, id: topic.id, title: topic.title });
       },
     },
     {

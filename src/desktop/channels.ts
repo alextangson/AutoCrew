@@ -52,6 +52,7 @@ export const IPC_CHANNELS = [
   "today:summary",
   "events:recent",
   "topics:list",
+  "topic:create",
   "topic:delete",
   "topic:restore",
   "content:delete",
@@ -83,7 +84,7 @@ export const ENGINE_EVENT = "engine:event";
  *   libraryList / libraryAdd / libraryUpdate / libraryRemove /
  *   libraryFolderCreate / libraryFolderRemove / dialogPickMedia /
  *   contentAssetAdd / contentAssetRemove / contentAdoption / todaySummary / eventsRecent /
- *   topicsList / topicDelete / topicRestore / contentDelete / contentRestore / trashList
+ *   topicsList / topicCreate / topicDelete / topicRestore / contentDelete / contentRestore / trashList
  */
 export function chToMethod(ch: string): string {
   const [ns, action] = ch.split(":");
