@@ -11,10 +11,13 @@
 import { loadEngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool, LoopResult } from "../../engine/loop.js";
-import { getPack, DEFAULT_PACK_ID } from "../packs/index.js";
+import { getPack, getPackForPlatform } from "../packs/index.js";
+import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { buildScriptPrompts } from "./script-prompt.js";
 import type { ScriptRequest } from "./script-prompt.js";
+import { runQualityGate, formatGateFeedback } from "./quality-gate.js";
+import type { GateFailure } from "./quality-gate.js";
 import { humanizeZh } from "../humanizer/zh.js";
 import { scanText } from "../filter/sensitive-words.js";
 import { saveContent } from "../../storage/local-store.js";
@@ -29,6 +32,8 @@ export interface GeneratedScript {
   hashtags: string[];
   /** 违禁词命中（不阻断存稿，透出给上层） */
   violations: string[];
+  /** Quality Gate 未过项（空 = 全过或包无 gate）；修复轮耗尽后的残余 FAIL 透出，不静默 */
+  gateFailures: string[];
   tokensUsed: number;
 }
 
@@ -77,19 +82,30 @@ function validateSubmitArgs(args: Record<string, unknown>): SubmitValidation {
   };
 }
 
-/** Build the submit_script LoopTool; the captured variable is mutated on success. */
-function buildSubmitTool(captured: { payload: SubmitPayload | null }): LoopTool {
+interface Captured {
+  payload: SubmitPayload | null;
+  gateFailures: GateFailure[];
+}
+
+/**
+ * Build the submit_script LoopTool; the captured variable is mutated on success.
+ * 有 gate 时：字段校验通过后跑 Quality Gate，FAIL 且修复轮未耗尽 → 返回修复指令
+ * 打回（复用模型自纠通道）；每稿都先落 captured——loop 提前终止时最后一稿仍可用，
+ * 残余 FAIL 经 gateFailures 透出（禁止静默失败）。
+ */
+function buildSubmitTool(captured: Captured, gate?: QualityGateSpec): LoopTool {
+  let repairRounds = 0;
   return {
     name: "submit_script",
-    description: "提交最终口播脚本。所有字段必填。",
+    description: "提交最终成稿。所有字段必填。",
     parameters: {
       type: "object",
       properties: {
-        title: { type: "string", description: "脚本标题" },
+        title: { type: "string", description: "标题" },
         hook: { type: "string", description: "开篇钩子" },
         body: { type: "string", description: "正文内容" },
-        cta: { type: "string", description: "行动号召结尾" },
-        hashtags: { type: "array", items: { type: "string" }, description: "话题标签列表" },
+        cta: { type: "string", description: "行动号召/引导语结尾" },
+        hashtags: { type: "array", items: { type: "string" }, description: "话题标签/关键词列表" },
       },
       required: REQUIRED_FIELDS,
     },
@@ -98,6 +114,14 @@ function buildSubmitTool(captured: { payload: SubmitPayload | null }): LoopTool 
       if (!result.ok) return result.error;
       // Last valid submission wins — a corrected resubmission replaces the earlier capture.
       captured.payload = result.payload;
+      if (gate) {
+        const failures = runQualityGate(gate, result.payload);
+        captured.gateFailures = failures;
+        if (failures.length > 0 && repairRounds < (gate.maxRepairRounds ?? 2)) {
+          repairRounds += 1;
+          return formatGateFeedback(failures);
+        }
+      }
       return "已收到脚本";
     },
   };
@@ -110,14 +134,15 @@ export async function generateScript(
 ): Promise<GeneratedScript> {
   const [config, pack, profile] = await Promise.all([
     loadEngineConfig(dataDir),
-    Promise.resolve(getPack(DEFAULT_PACK_ID)),
+    Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
   ]);
 
   const { system, user } = buildScriptPrompts(pack, profile, req);
 
-  const captured: { payload: SubmitPayload | null } = { payload: null };
-  const submitTool = buildSubmitTool(captured);
+  const captured: Captured = { payload: null, gateFailures: [] };
+  const gate = pack.qualityGate;
+  const submitTool = buildSubmitTool(captured, gate);
 
   const loopFn = deps?.runLoopImpl ?? runLoop;
   const result: LoopResult = await loopFn(config, {
@@ -125,7 +150,9 @@ export async function generateScript(
     systemPrompt: system,
     userMessage: user,
     tools: [submitTool],
-    maxTurns: 4,
+    // Gate 修复轮需要额外回合与 token 预算（5000+ 字长文 × 最多 1+N 稿）
+    maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
+    maxTotalTokens: gate ? 80000 : undefined,
   });
 
   if (!captured.payload) {
@@ -134,7 +161,7 @@ export async function generateScript(
     );
   }
 
-  return finalizeScript(captured.payload, req, result.totalTokens, dataDir);
+  return finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, dataDir);
 }
 
 /** 后处理：组装 → humanize → 违禁词扫描 → 存稿（draft_ready，同现有写作流）。 */
@@ -142,6 +169,7 @@ async function finalizeScript(
   payload: SubmitPayload,
   req: ScriptRequest,
   tokensUsed: number,
+  gateFailures: GateFailure[],
   dataDir?: string,
 ): Promise<GeneratedScript> {
   const { title, hook, body: bodyText, cta, hashtags } = payload;
@@ -172,6 +200,7 @@ async function finalizeScript(
     body: humanizedText,
     hashtags: cleanHashtags,
     violations,
+    gateFailures: gateFailures.map((f) => f.detail),
     tokensUsed,
   };
 }

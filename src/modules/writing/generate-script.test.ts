@@ -291,3 +291,81 @@ describe("generateScript", () => {
     expect(saved!.hashtags).toEqual(["#a", "#b"]);
   });
 });
+
+// ─── Quality Gate（公众号图文包，PRD-v4 §4.3）─────────────────────────────────
+
+function articlePayload(bodyOverride?: string): Record<string, unknown> {
+  const data = "增长 40%，营收 3 亿元，用户 5000 万人，历时 6 个月，客单价 199 元。";
+  const body =
+    bodyOverride ??
+    [data, "[IMAGE: 增长曲线图]", "字".repeat(5200), "[IMAGE: 对比表格]", "[IMAGE: 流程示意]", "[IMAGE: 案例配图]"].join(
+      "\n",
+    );
+  return {
+    title: "一篇深度长文",
+    hook: "你有没有算过一笔账",
+    body,
+    cta: "转发给需要的人",
+    hashtags: ["AI", "创业"],
+  };
+}
+
+const WECHAT_REQ = { topic: "AI 变现", platform: "wechat_mp" as const };
+
+describe("generateScript × quality gate (wechat_mp)", () => {
+  it("wechat_mp 路由到图文包：prompt 含写手角色与硬门禁，budget 提升", async () => {
+    let seenOpts: LoopOptions | undefined;
+    const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      seenOpts = opts;
+      const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
+      await tool.execute(articlePayload());
+      return { finalMessage: "ok", turns: 2, totalTokens: 9000, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    const res = await generateScript(WECHAT_REQ, testDir, { runLoopImpl });
+    expect(seenOpts!.systemPrompt).toContain("公众号");
+    expect(seenOpts!.systemPrompt).toContain("质量硬门禁");
+    expect(seenOpts!.maxTurns).toBe(8);
+    expect(seenOpts!.maxTotalTokens).toBe(80000);
+    expect(res.gateFailures).toEqual([]);
+  });
+
+  it("Gate FAIL → 修复指令打回；修正稿通过后 gateFailures 为空", async () => {
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop([articlePayload("太短的正文"), articlePayload()], 300, execResults);
+    const res = await generateScript(WECHAT_REQ, testDir, { runLoopImpl });
+    expect(execResults[0]).toContain("QUALITY GATE 未通过");
+    expect(execResults[1]).toBe("已收到脚本");
+    expect(res.gateFailures).toEqual([]);
+  });
+
+  it("修复轮耗尽（默认 2）→ 第 3 稿照收，未过项透出且稿件仍落库", async () => {
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop(
+      [articlePayload("还是太短"), articlePayload("还是太短"), articlePayload("还是太短")],
+      300,
+      execResults,
+    );
+    const res = await generateScript(WECHAT_REQ, testDir, { runLoopImpl });
+    expect(execResults[0]).toContain("QUALITY GATE 未通过");
+    expect(execResults[1]).toContain("QUALITY GATE 未通过");
+    expect(execResults[2]).toBe("已收到脚本");
+    expect(res.gateFailures.length).toBeGreaterThan(0);
+    const saved = await getContent(res.contentId, testDir);
+    expect(saved).not.toBeNull();
+  });
+
+  it("douyin 不受影响：口播包、无 gate、预算不变", async () => {
+    let seenOpts: LoopOptions | undefined;
+    const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      seenOpts = opts;
+      const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
+      await tool.execute(GOOD_PAYLOAD);
+      return { finalMessage: "ok", turns: 2, totalTokens: 200, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    const res = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+    expect(seenOpts!.systemPrompt).toContain("口播");
+    expect(seenOpts!.systemPrompt).not.toContain("质量硬门禁");
+    expect(seenOpts!.maxTurns).toBe(4);
+    expect(res.gateFailures).toEqual([]);
+  });
+});
