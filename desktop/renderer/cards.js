@@ -13,6 +13,7 @@ function renderCard(card) {
     case "published": return renderPublishedCard(card.data);
     case "topic": return renderTopicCard(card.data);
     case "topic_saved": return renderTopicSavedCard(card.data);
+    case "publish_confirm": return renderPublishConfirmCard(card.data);
     case "assets": return renderAssetsCard(card.data);
     default: {
       const pre = h("pre", { class: "card-body" });
@@ -234,6 +235,78 @@ function renderTopicCard(d) {
     list.appendChild(li);
   }
   el.appendChild(list);
+  return el;
+}
+
+/**
+ * 发布失败的原地续跑块（IA v4.2 §C3）：缺什么 → 去哪补 → 补完重试同一稿,不丢上下文。
+ * cards.js 与 app.js 共用。configHint 按错误文案启发式判断是否是配置类问题。
+ */
+function buildWechatRetryBlock(contentId, errorText, retryFn) {
+  const wrap = h("div", { class: "publish-retry" });
+  wrap.appendChild(h("p", { class: "publish-retry-msg" }, "⚠️ 推送失败：" + (errorText || "未知错误")));
+  const configHint = /publish\.json|key|secret|appid|token|脚本|配置|凭据|credential/i.test(errorText || "");
+  if (configHint) {
+    wrap.appendChild(h("p", { class: "muted" }, "看起来是发布配置缺失或失效。去设置里补齐，回来点重试——还是这一稿，不用重来。"));
+  }
+  const actions = h("div", { class: "card-actions" });
+  if (configHint) {
+    const cfgBtn = h("button", { class: "btn-mini" }, "去设置");
+    cfgBtn.addEventListener("click", () => switchView("settings"));
+    actions.appendChild(cfgBtn);
+  }
+  const retryBtn = h("button", { class: "btn-mini" }, "重试推送");
+  retryBtn.addEventListener("click", async () => {
+    retryBtn.disabled = true;
+    retryBtn.textContent = "推送中…";
+    await retryFn();
+    retryBtn.disabled = false;
+    retryBtn.textContent = "重试推送";
+  });
+  actions.appendChild(retryBtn);
+  wrap.appendChild(actions);
+  return wrap;
+}
+
+/** push_wechat_draft 的确认门卡（IA v4.2 §C3）:模型只备稿,推送由用户亲手点——不可逆动作出模型控制 */
+function renderPublishConfirmCard(d) {
+  const el = cardShell("发布确认", d.target || "公众号草稿箱", "review");
+  el.appendChild(h("p", {}, "《" + (d.title || d.contentId || "") + "》准备推入" + (d.target || "草稿箱") + "。确认推送？"));
+  const status = h("div", { class: "publish-confirm-status" });
+  const actions = h("div", { class: "card-actions" });
+  const pushBtn = h("button", { class: "btn-mini btn-mini-primary" }, "推送");
+  const cancelBtn = h("button", { class: "btn-mini" }, "取消");
+  const doPush = async () => {
+    pushBtn.disabled = true;
+    cancelBtn.disabled = true;
+    pushBtn.textContent = "推送中…";
+    status.textContent = "";
+    const r = await safeInvoke(window.autocrew.publishWechatDraft, { content_id: d.contentId });
+    if (!r.ok) {
+      pushBtn.textContent = "推送";
+      pushBtn.disabled = false;
+      cancelBtn.disabled = false;
+      status.innerHTML = "";
+      const errText = r.violations && r.violations.length > 0
+        ? "审核员阻断：命中违禁词「" + r.violations.join("、") + "」，修改后重试"
+        : (r.error || "未知错误");
+      status.appendChild(buildWechatRetryBlock(d.contentId, errText, doPush));
+      return;
+    }
+    actions.remove();
+    status.textContent = "✅ 已推草稿箱 · 配图 " + (r.imageCount || 0) + " 张 · " + (r.nextStep || "去公众号后台点发表");
+    showToast("公众号草稿已推送");
+    if (typeof refreshActiveView === "function") refreshActiveView();
+  };
+  pushBtn.addEventListener("click", () => void doPush());
+  cancelBtn.addEventListener("click", () => {
+    actions.remove();
+    status.textContent = "已取消，稿件原地未动。";
+  });
+  actions.appendChild(pushBtn);
+  actions.appendChild(cancelBtn);
+  el.appendChild(actions);
+  el.appendChild(status);
   return el;
 }
 

@@ -22,8 +22,15 @@ import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../s
 import { saveTopic, type Topic } from "../storage/local-store.js";
 
 export interface ChatCard {
-  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "published" | "topic" | "topic_saved" | "assets";
+  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets";
   data: Record<string, unknown>;
+}
+
+/** §C1 上下文感知：renderer 报告用户正看着哪篇稿（只进模型上下文，不进持久历史） */
+export interface ChatViewContext {
+  contentId: string;
+  contentTitle?: string;
+  platform?: string;
 }
 
 export interface ChatProgressEvent {
@@ -38,6 +45,8 @@ export interface ChatProgressEvent {
 const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label: string }> = {
   find_topics: { role: "scout", label: "侦察员正在扫热榜" },
   find_overseas_topics: { role: "scout", label: "侦察员正在扫海外源" },
+  save_topic: { role: "scout", label: "侦察员把想法记进灵感库" },
+  push_wechat_draft: { role: "review", label: "审核员备好确认卡" },
   read_url: { role: "scout", label: "侦察员正在读参考资料" },
   generate_script: { role: "writer", label: "编剧正在写稿" },
   adapt_platform: { role: "writer", label: "编剧正在适配平台版本" },
@@ -74,7 +83,7 @@ export interface ChatToolDeps {
   saveTopicImpl?: typeof saveTopic;
 }
 
-const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文短视频创作者从选题到发布跑通全流程。
+const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字员工团队（情报、文案、审核、发布、分析），帮创作者把「想法→成稿→发布→回流」整条链跑成默认值。你的职责：接需求派活、报进展、把关不可逆动作、答数据与状态问题。
 
 规则：
 1. 永远用工具完成实际工作（生成、查数据、记风格、发布），不要口头承诺。
@@ -85,7 +94,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文
 6. 始终用中文，语气像靠谱的同事：简短、直接、不客套。
 7. 用户问「写什么」「找选题」「最近热点」时调用 find_topics，然后从候选里挑 3 个最适合该创作者定位的，用一两句话说明各自为什么值得写。
 8. 用户想找海外/国外/英文圈选题（或问某英文话题最近动态）时调用 find_overseas_topics，需要一个关键词；同样从候选里挑几个最契合定位的推荐。
-9. 用户说「记下来」「存进灵感库」，或对话中聊出一个值得写的想法、用户看中某条候选时，调用 save_topic 落进灵感库——reason 必填，一句话说清为什么值得写（命中定位/对标爆款/读者追问）。存完不要顺手开写，等用户发话。`;
+9. 用户说「记下来」「存进灵感库」，或对话中聊出一个值得写的想法、用户看中某条候选时，调用 save_topic 落进灵感库——reason 必填，一句话说清为什么值得写（命中定位/对标爆款/读者追问）。存完不要顺手开写，等用户发话。
+10. 推送公众号草稿箱是写操作：调用 push_wechat_draft 只会弹出确认卡，由用户亲手点「推送」执行——你不要宣称已推送，只说「已备好，等你确认」。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
 
@@ -406,6 +416,29 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
       },
     },
     {
+      name: "push_wechat_draft",
+      description:
+        "把公众号稿件推入公众号草稿箱（写操作）。本工具只向用户弹出确认卡，不直接执行——用户点「推送」才真正推。用户要求发公众号/推草稿箱时调用。",
+      parameters: {
+        type: "object",
+        properties: {
+          content_id: { type: "string", description: "稿件 id" },
+          title: { type: "string", description: "稿件标题（展示在确认卡上）" },
+        },
+        required: ["content_id"],
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        // 确认门（IA v4.2 §C3 / v3 红线:每次提交显式确认）:工具不执行,只出内嵌确认卡;
+        // 用户点击后由 renderer 直连 publish:wechat_draft 通道执行,不再经过模型。
+        sink.push({
+          type: "publish_confirm",
+          data: { contentId: String(a.content_id ?? ""), title: String(a.title ?? ""), target: "公众号草稿箱" },
+        });
+        return JSON.stringify({ ok: true, pending_user_confirmation: true, note: "确认卡已弹出,等用户亲手点「推送」——不要宣称已推送" });
+      },
+    },
+    {
       name: "confirm_published",
       description: "用户确认已在平台发布后，把稿件标记为已发布。",
       parameters: {
@@ -461,6 +494,7 @@ export async function runChatTurn(params: {
   message: string;
   history?: ChatHistoryMessage[];
   dataDir?: string;
+  viewContext?: ChatViewContext;
   deps?: ChatToolDeps;
   fetchImpl?: typeof fetch;
   onEvent?: (e: ChatProgressEvent) => void;
@@ -475,11 +509,30 @@ export async function runChatTurn(params: {
   const cards: ChatCard[] = [];
   const tools = buildChatTools(cards, params.dataDir, params.deps);
 
+  // 定位摘要进 system（§C1）:总编辑说话像「你的总编辑」。只注入定位,不注入全量风格——
+  // 总编辑不写稿,写手席才吃声音内核（PRD-v4 §4.3 上下文隔离）。profile 低频变化,不破前缀缓存。
+  let systemPrompt = SYSTEM_PROMPT;
+  try {
+    const profile = await loadProfile(params.dataDir);
+    if (profile?.industry) {
+      const persona = profile.audiencePersona;
+      systemPrompt +=
+        `\n\n创作者定位：${profile.industry}` +
+        (persona?.name ? `；受众：${persona.name}${persona.painPoints?.length ? `（痛点：${persona.painPoints.slice(0, 3).join("、")}）` : ""}` : "");
+    }
+  } catch { /* 无档案照常对话 */ }
+
+  // 视图上下文拼进本轮 userMessage（§C1）:只发模型,不进持久历史（chat-persist 存原文）
+  const ctx = params.viewContext;
+  const userMessage = ctx?.contentId
+    ? `【当前上下文】用户正打开稿件《${ctx.contentTitle || "无标题"}》（id: ${ctx.contentId}${ctx.platform ? `，平台: ${ctx.platform}` : ""}）——「这篇」「开头」等指代默认指它，可用 get_draft 读全文。\n\n${params.message}`
+    : params.message;
+
   try {
     const result = await runLoop(config, {
       model: config.fastModel,
-      systemPrompt: SYSTEM_PROMPT,
-      userMessage: params.message,
+      systemPrompt,
+      userMessage,
       history: params.history ?? [],
       tools,
       maxTurns: 6,

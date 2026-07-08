@@ -320,6 +320,77 @@ describe("runChatTurn", () => {
   });
 });
 
+describe("context awareness + intake tools (IA v4.2 C1/A2/C3)", () => {
+  it("viewContext prefixes the model userMessage; positioning enters system prompt", async () => {
+    await fs.writeFile(
+      path.join(testDir, "creator-profile.json"),
+      JSON.stringify({
+        industry: "AI 效率工具",
+        platforms: ["wechat_mp"],
+        audiencePersona: { name: "效率控上班族", painPoints: ["会用但不精"] },
+        writingRules: [], styleBoundaries: { never: [], always: [] },
+        competitorAccounts: [], performanceHistory: [], styleCalibrated: true,
+        createdAt: "2026-01-01", updatedAt: "2026-01-01",
+      }),
+    );
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return jsonResponse(assistantTurn("好的"));
+    }) as typeof fetch;
+
+    const res = await runChatTurn({
+      message: "开头改口语一点",
+      dataDir: testDir,
+      viewContext: { contentId: "content-42", contentTitle: "AI 写作趋势", platform: "wechat_mp" },
+      fetchImpl,
+    });
+
+    expect(res.ok).toBe(true);
+    const messages = calls[0].messages as Array<{ role: string; content: string }>;
+    expect(messages[0].role).toBe("system");
+    expect(messages[0].content).toContain("创作者定位：AI 效率工具");
+    expect(messages[0].content).toContain("效率控上班族");
+    const lastUser = messages[messages.length - 1];
+    expect(lastUser.content).toContain("content-42");
+    expect(lastUser.content).toContain("AI 写作趋势");
+    expect(lastUser.content).toContain("开头改口语一点");
+  });
+
+  it("save_topic persists via saveTopicImpl and pushes a topic_saved card", async () => {
+    const sink: ChatCard[] = [];
+    const saveTopicImpl = vi.fn(async (t: Record<string, unknown>) => ({
+      ...t, id: "topic-1", createdAt: "2026-01-01",
+    })) as never;
+    const tools = buildChatTools(sink, testDir, { saveTopicImpl });
+
+    const tool = tools.find((t) => t.name === "save_topic");
+    const out = await tool!.execute({ title: "AI 眼镜实测", reason: "命中定位", link: "https://x.example/1" });
+
+    expect(saveTopicImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "AI 眼镜实测", reason: "命中定位", link: "https://x.example/1", source: "chat" }),
+      testDir,
+    );
+    expect(JSON.parse(out as string)).toMatchObject({ ok: true, id: "topic-1" });
+    expect(sink[0].type).toBe("topic_saved");
+  });
+
+  it("push_wechat_draft only emits a confirm card — publish is NOT called (§C3 confirm gate)", async () => {
+    const sink: ChatCard[] = [];
+    const publish = vi.fn();
+    const tools = buildChatTools(sink, testDir, { publish: publish as never });
+
+    const tool = tools.find((t) => t.name === "push_wechat_draft");
+    const out = await tool!.execute({ content_id: "c7", title: "标题" });
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(sink).toHaveLength(1);
+    expect(sink[0].type).toBe("publish_confirm");
+    expect(sink[0].data).toMatchObject({ contentId: "c7", target: "公众号草稿箱" });
+    expect(JSON.parse(out as string)).toMatchObject({ ok: true, pending_user_confirmation: true });
+  });
+});
+
 describe("search_assets tool", () => {
   it("returns compact results and pushes an assets card", async () => {
     const sink: ChatCard[] = [];

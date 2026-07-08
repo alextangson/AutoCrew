@@ -11,7 +11,7 @@
  * 注意：历史读取在写队列之外——同会话两条并发 turn 各自看到回合前的历史；
  * 落盘完整性由队列保证，renderer 侧约定 busy 时禁发（chatBusy 已做）。
  */
-import { runChatTurn, type ChatHistoryMessage, type ChatProgressEvent } from "./chat-router.js";
+import { runChatTurn, type ChatHistoryMessage, type ChatProgressEvent, type ChatViewContext } from "./chat-router.js";
 import {
   createConversation,
   getConversation,
@@ -41,6 +41,8 @@ export async function runPersistedChatTurn(params: {
   message: string;
   conversationId?: string;
   dataDir?: string;
+  /** §C1 上下文只发给模型,不进持久历史（回放显示原文） */
+  viewContext?: ChatViewContext;
   onEvent?: (e: ChatProgressEvent) => void;
   runTurn?: typeof runChatTurn;
 }): Promise<Record<string, unknown>> {
@@ -60,6 +62,7 @@ export async function runPersistedChatTurn(params: {
     message,
     history,
     dataDir,
+    ...(params.viewContext ? { viewContext: params.viewContext } : {}),
     ...(params.onEvent ? { onEvent: params.onEvent } : {}),
   });
   if (!result.ok) return result;

@@ -182,10 +182,21 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     typeof payload.conversation_id === "string" && payload.conversation_id !== ""
       ? payload.conversation_id
       : undefined;
+  // 上下文感知（IA v4.2 §C1）：renderer 报告用户正看着哪篇稿
+  const rawCtx = payload.context;
+  const viewContext =
+    rawCtx && typeof rawCtx === "object" && !Array.isArray(rawCtx) && typeof (rawCtx as Record<string, unknown>).content_id === "string"
+      ? {
+          contentId: (rawCtx as Record<string, unknown>).content_id as string,
+          contentTitle: String((rawCtx as Record<string, unknown>).content_title ?? ""),
+          platform: String((rawCtx as Record<string, unknown>).platform ?? ""),
+        }
+      : undefined;
   try {
     return await runPersistedChatTurn({
       message: message.trim(),
       ...(conversationId ? { conversationId } : {}),
+      ...(viewContext ? { viewContext } : {}),
       dataDir: (payload._dataDir as string) || undefined,
       ...(ctx?.onProgress
         ? {

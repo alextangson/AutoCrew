@@ -136,6 +136,9 @@ async function sendChat(text) {
 
   const payload = { message };
   if (activeConversationId) payload.conversation_id = activeConversationId;
+  // 上下文感知（IA v4.2 §C1）:正在看的稿件随消息上行,「开头改口语点」不用再说明是哪篇
+  const wb = window.__wbOpenContent;
+  if (wb && wb.id) payload.context = { content_id: wb.id, content_title: wb.title, platform: wb.platform };
   const res = await safeInvoke(window.autocrew.chatTurn, payload);
 
   thinking.remove();

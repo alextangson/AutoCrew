@@ -16,6 +16,8 @@ async function renderWorkbench(contentId, container) {
     return;
   }
   const c = res.content;
+  // 总编辑上下文感知（IA v4.2 §C1）：记录正打开的稿件,随 chat:turn 上行
+  window.__wbOpenContent = { id: c.id, title: c.title || "", platform: c.platform || "" };
 
   // ── 标题 + 状态行 ──
   container.appendChild(h("h3", {}, c.title || "（无标题）"));

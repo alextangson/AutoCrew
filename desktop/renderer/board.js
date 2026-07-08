@@ -157,6 +157,7 @@ async function trashAtom(atom) {
 async function renderBoard() {
   const view = document.getElementById("view-board");
   if (!view) return;
+  window.__wbOpenContent = null; // 回看板 = 离开单稿上下文（§C1）
   view.innerHTML = "";
 
   const worklog = h("div", { class: "board-worklog", id: "board-worklog" });
