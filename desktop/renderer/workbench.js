@@ -113,6 +113,9 @@ async function renderWorkbench(contentId, container) {
   }
 
   const actions = h("div", { class: "card-actions" });
+  // V5.2:「为什么这么改」——可选一句话,直接进 diff 记录,是风格蒸馏的最高置信信号
+  const saveNote = h("input", { class: "wb-reason-input", type: "text",
+    placeholder: "为什么这么改?(可选,一句话——教团队学你)" });
   const saveBtn = h("button", { class: "btn-primary" }, "保存（存为新版本）");
   saveBtn.dataset.label = "保存（存为新版本）";
   saveBtn.addEventListener("click", async () => {
@@ -122,6 +125,7 @@ async function renderWorkbench(contentId, container) {
     // 标题可改(V5.0):清空视为不改,保留原标题
     const newTitle = titleInput.value.trim();
     if (newTitle && newTitle !== (c.title || "")) payload.title = newTitle;
+    if (saveNote.value.trim()) payload.diff_note = saveNote.value.trim().slice(0, 200);
     const r = await safeInvoke(window.autocrew.contentUpdate, payload);
     setLoading(saveBtn, false);
     if (!r.ok) { showToast(r.error || "保存失败"); return; }
@@ -134,6 +138,7 @@ async function renderWorkbench(contentId, container) {
     showToast(msg);
     renderWorkbench(contentId, container);
   });
+  actions.appendChild(saveNote);
   actions.appendChild(saveBtn);
   container.appendChild(actions);
 

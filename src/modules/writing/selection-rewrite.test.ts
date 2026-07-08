@@ -72,3 +72,41 @@ describe("rewriteSelection", () => {
     await fs.rm(emptyDir, { recursive: true, force: true });
   });
 });
+
+describe("上下文开窗（V5.2:选区为中心,不再头部截断）", () => {
+  it("长稿后部的选区:上下文包含选区周边而非只有开头", async () => {
+    let captured: Record<string, unknown> = {};
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return completion("改好了。");
+    }) as typeof fetch;
+
+    const head = "开头段落。".repeat(400); // 2000 字开头
+    const before = "选区之前的邻居句。";
+    const target = "深处待改的句子。";
+    const after = "选区之后的邻居句。";
+    const body = head + before + target + after + "结尾。".repeat(500);
+
+    const res = await rewriteSelection(
+      { body, selection: target, instruction: "更狠一点" },
+      testDir,
+      fetchImpl,
+    );
+    expect(res.ok).toBe(true);
+    const messages = captured.messages as Array<{ role: string; content: string }>;
+    const user = messages.find((m) => m.role === "user")!.content;
+    expect(user).toContain(before); // 选区前邻居在窗口内
+    expect(user).toContain(after);  // 选区后邻居在窗口内
+    expect(user).toContain("…");    // 截断有标注
+  });
+
+  it("选区不在 body 里(编辑竞态) → 回退头部截断,不炸", async () => {
+    const fetchImpl = (async () => completion("兜底改写。")) as typeof fetch;
+    const res = await rewriteSelection(
+      { body: "很长的正文。".repeat(1000), selection: "凭空的选区", instruction: "改" },
+      testDir,
+      fetchImpl,
+    );
+    expect(res.ok).toBe(true);
+  });
+});
