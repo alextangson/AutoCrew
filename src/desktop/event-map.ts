@@ -82,6 +82,28 @@ export const CHANNEL_EVENT_MAP: Partial<Record<IpcChannel, Mapper>> = {
     };
   },
 
+  "content:delete": ({ payload, result }) => {
+    if (result.ok !== true) return null;
+    return { role: "system", kind: "trash", label: `你把${contentTitle(result)}移入了回收站`, contentId: (payload.id as string) || undefined };
+  },
+
+  "content:restore": ({ payload, result }) => {
+    if (result.ok !== true) return null;
+    return { role: "system", kind: "trash", label: `你从回收站恢复了${contentTitle(result)}`, contentId: (payload.id as string) || undefined };
+  },
+
+  "topic:delete": ({ result }) => {
+    if (result.ok !== true) return null;
+    const t = result.topic as { title?: string } | undefined;
+    return { role: "system", kind: "trash", label: `你把选题「${t?.title ?? ""}」移入了回收站` };
+  },
+
+  "topic:restore": ({ result }) => {
+    if (result.ok !== true) return null;
+    const t = result.topic as { title?: string } | undefined;
+    return { role: "system", kind: "trash", label: `你从回收站恢复了选题「${t?.title ?? ""}」` };
+  },
+
   "radar:refresh": ({ result }) => {
     if (result.ok !== true) return null;
     const d = result.data as { topics?: unknown[] } | undefined;

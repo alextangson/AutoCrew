@@ -1,17 +1,23 @@
 /**
- * 看板 = 主区首页（PRD-v4 §7.3 IA v3）。每张卡 = 一个内容原子(sibling 闭包)，
- * 平台变体挂在卡身上；列 = 管线阶段。点卡/变体 → 主区就地展开工作台。
+ * 看板 = 主区首页(IA v4.1,qingmo 设计细节原生重实现)。
+ * 列:灵感库(Topic 卡)→ 在写 → 待审 → 待发布 → 已发布。卡 = 观点/idea(内容原子)。
+ * 点卡 → 平台矩阵(全域:有稿进编辑器,无稿一键让总编辑生成,英文平台按裁决 F 显示未开通)。
+ * 拖拽换列 = content:transition;每卡可删 → 回收站(软删除,可恢复)。
  * 顶部工作日志接引擎真实事件流(EngineStore)。
  */
 
 const BOARD_COLUMNS = [
-  { key: "writing", label: "在写", statuses: ["topic_saved", "drafting", "draft_ready", "revision"] },
-  { key: "review", label: "待审", statuses: ["reviewing", "cover_pending"] },
-  { key: "ready", label: "待发布", statuses: ["approved", "publish_ready", "publishing"] },
-  { key: "published", label: "已发布", statuses: ["published"] },
+  { key: "idea", label: "灵感库", type: "topic", statuses: [] },
+  { key: "writing", label: "在写", type: "content", statuses: ["topic_saved", "drafting", "draft_ready", "revision"] },
+  { key: "review", label: "待审", type: "content", statuses: ["reviewing", "cover_pending"] },
+  { key: "ready", label: "待发布", type: "content", statuses: ["approved", "publish_ready", "publishing"] },
+  { key: "published", label: "已发布", type: "content", statuses: ["published"] },
 ];
 const STATUS_COLUMN = {};
 BOARD_COLUMNS.forEach((c, i) => c.statuses.forEach((s) => (STATUS_COLUMN[s] = i)));
+/** 拖到某列 = 流转到该列代表状态(状态机校验,非法 toast 拒绝) */
+const DROP_TARGET_STATUS = { writing: "draft_ready", review: "reviewing", ready: "publish_ready", published: "published" };
+
 const VARIANT_STATUS = {
   topic_saved: "选题", drafting: "写中", draft_ready: "草稿", revision: "修订",
   reviewing: "待审", cover_pending: "待封面", approved: "已过审",
@@ -19,24 +25,51 @@ const VARIANT_STATUS = {
 };
 const BOARD_GLYPH = { scout: "侦", writer: "编", review: "审", analyst: "析", publisher: "发", system: "·" };
 
-/** sibling 闭包分组：每个 group = 一个内容原子的所有平台成员 */
-function groupAtoms(contents) {
-  const byId = new Map(contents.map((c) => [c.id, c]));
-  const seen = new Set();
+/** 全域平台矩阵(创始人定位:全域自媒体营销获客)。cn = 可生成;en = 席位未开通(PRD 裁决 F 排队) */
+const MATRIX_CN = ["wechat_mp", "douyin", "xiaohongshu", "wechat_video", "bilibili"];
+const MATRIX_EN = ["twitter", "instagram", "reddit"];
+
+let boardAtoms = []; // [{ key, topic|null, members: Content[] }] 最近一次渲染的数据
+
+/** 原子分组:topicId 优先(真脊椎),siblings 闭包兜底,孤稿自成原子 */
+function groupBoardAtoms(topics, contents) {
   const atoms = [];
+  const byTopic = new Map();
+  const claimed = new Set();
+
   for (const c of contents) {
-    if (seen.has(c.id)) continue;
+    if (c.topicId) {
+      if (!byTopic.has(c.topicId)) byTopic.set(c.topicId, []);
+      byTopic.get(c.topicId).push(c);
+      claimed.add(c.id);
+    }
+  }
+  const topicById = new Map(topics.map((t) => [t.id, t]));
+  for (const [topicId, members] of byTopic) {
+    atoms.push({ key: "t-" + topicId, topic: topicById.get(topicId) || null, members });
+  }
+
+  // siblings 闭包(无 topicId 的旧数据)
+  const byId = new Map(contents.map((c) => [c.id, c]));
+  for (const c of contents) {
+    if (claimed.has(c.id)) continue;
     const members = [];
     const stack = [c.id];
     while (stack.length) {
       const id = stack.pop();
-      if (seen.has(id) || !byId.has(id)) continue;
-      seen.add(id);
+      if (claimed.has(id) || !byId.has(id)) continue;
+      claimed.add(id);
       const m = byId.get(id);
+      if (m.topicId) continue;
       members.push(m);
-      for (const s of m.siblings || []) if (!seen.has(s)) stack.push(s);
+      for (const s of m.siblings || []) if (!claimed.has(s)) stack.push(s);
     }
-    atoms.push(members);
+    if (members.length) atoms.push({ key: "c-" + members[0].id, topic: null, members });
+  }
+
+  // 纯灵感:还没有任何稿的选题
+  for (const t of topics) {
+    if (!byTopic.has(t.id)) atoms.push({ key: "t-" + t.id, topic: t, members: [] });
   }
   return atoms;
 }
@@ -44,38 +77,82 @@ function groupAtoms(contents) {
 function colRank(status) {
   return STATUS_COLUMN[status] === undefined ? -1 : STATUS_COLUMN[status];
 }
-
+function atomRep(atom) {
+  return [...atom.members].sort((a, b) => colRank(b.status) - colRank(a.status))[0] || null;
+}
+function atomTitle(atom) {
+  const rep = atomRep(atom);
+  return (atom.topic && atom.topic.title) || (rep && rep.title) || "（无标题）";
+}
 function daysSince(iso) {
   if (!iso) return 0;
-  const d = (Date.now() - new Date(iso).getTime()) / 86400000;
-  return Math.floor(d);
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
 
-function renderAtomCard(members) {
-  // 代表 = 阶段最靠后的成员，决定卡片落哪列与标题
-  const rep = [...members].sort((a, b) => colRank(b.status) - colRank(a.status))[0];
+// ── 卡片 ─────────────────────────────────────────────────────────────────────
+
+function renderAtomCard(atom) {
+  const rep = atomRep(atom);
   const card = h("div", { class: "atom-card" });
-  card.appendChild(h("div", { class: "atom-title" }, rep.title || "（无标题）"));
-  if (members.length > 1) {
-    card.appendChild(h("div", { class: "atom-sub" }, "1 母题 · " + members.length + " 平台变体"));
+
+  const head = h("div", { class: "atom-head" });
+  head.appendChild(h("div", { class: "atom-title" }, atomTitle(atom)));
+  const del = h("button", { class: "atom-del", title: "移入回收站" }, "×");
+  del.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await trashAtom(atom);
+  });
+  head.appendChild(del);
+  card.appendChild(head);
+
+  if (atom.topic && !rep) {
+    if (atom.topic.source) card.appendChild(h("div", { class: "atom-sub" }, atom.topic.source));
+  } else if (atom.members.length > 1) {
+    card.appendChild(h("div", { class: "atom-sub" }, "1 母题 · " + atom.members.length + " 平台变体"));
   }
-  const chips = h("div", { class: "atom-chips" });
-  for (const m of members) {
-    const isPub = m.status === "published";
-    const chip = h("button", { class: "atom-chip" + (isPub ? " atom-chip-pub" : "") },
-      platformLabel(m.platform) + " " + (VARIANT_STATUS[m.status] || m.status));
-    chip.addEventListener("click", (e) => { e.stopPropagation(); openInBoard(m.id); });
-    chips.appendChild(chip);
+
+  if (rep) {
+    const chips = h("div", { class: "atom-chips" });
+    for (const m of atom.members) {
+      const isPub = m.status === "published";
+      const chip = h("button", { class: "atom-chip" + (isPub ? " atom-chip-pub" : "") },
+        platformLabel(m.platform) + " " + (VARIANT_STATUS[m.status] || m.status));
+      chip.addEventListener("click", (e) => { e.stopPropagation(); openInBoard(m.id, () => openMatrix(atom.key)); });
+      chips.appendChild(chip);
+    }
+    card.appendChild(chips);
+    const stale = daysSince(rep.updatedAt || rep.createdAt);
+    if (rep.status !== "published" && stale > 14) {
+      card.appendChild(h("div", { class: "atom-stale" }, "停 " + stale + " 天"));
+    }
+    // 拖拽换状态(qingmo 设计细节)
+    card.setAttribute("draggable", "true");
+    card.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/autocrew-content", rep.id);
+      e.dataTransfer.effectAllowed = "move";
+    });
   }
-  card.appendChild(chips);
-  // 停滞告警：非已发布且代表 >14 天没动
-  const stale = daysSince(rep.updatedAt || rep.createdAt);
-  if (rep.status !== "published" && stale > 14) {
-    card.appendChild(h("div", { class: "atom-stale" }, "停 " + stale + " 天"));
-  }
-  card.addEventListener("click", () => openInBoard(rep.id));
+
+  card.addEventListener("click", () => openMatrix(atom.key));
   return card;
 }
+
+async function trashAtom(atom) {
+  const rep = atomRep(atom);
+  if (!rep && atom.topic) {
+    const r = await safeInvoke(window.autocrew.topicDelete, { id: atom.topic.id });
+    if (!r.ok) { showToast(r.error || "删除失败"); return; }
+  } else {
+    for (const m of atom.members) {
+      const r = await safeInvoke(window.autocrew.contentDelete, { id: m.id });
+      if (!r.ok) { showToast(r.error || "删除失败"); return; }
+    }
+  }
+  showToast("已移入回收站（可从回收站恢复）");
+  renderBoard();
+}
+
+// ── 看板 ─────────────────────────────────────────────────────────────────────
 
 async function renderBoard() {
   const view = document.getElementById("view-board");
@@ -84,49 +161,184 @@ async function renderBoard() {
 
   const worklog = h("div", { class: "board-worklog", id: "board-worklog" });
   view.appendChild(worklog);
-
-  const boardMain = h("div", { class: "board-main", id: "board-main" });
-  view.appendChild(boardMain);
-
   renderWorklogInto(worklog, (typeof EngineStore !== "undefined" && EngineStore.state.events) || []);
   refreshBoardWorklog();
 
+  const boardMain = h("div", { class: "board-main", id: "board-main" });
+  view.appendChild(boardMain);
   boardMain.appendChild(h("p", { class: "muted board-loading" }, "加载内容管线…"));
-  const res = await safeInvoke(window.autocrew.contentList);
-  boardMain.innerHTML = "";
-  const contents = (res.ok && res.contents) || [];
-  const active = contents.filter((c) => c.status !== "archived");
-  if (active.length === 0) {
-    boardMain.appendChild(h("p", { class: "empty-state" },
-      "还没有内容。右边跟总编辑说一句「帮我写一篇关于…」，稿子会出现在这条管线上。"));
-    return;
-  }
 
-  const atoms = groupAtoms(active);
+  const [tRes, cRes] = await Promise.all([
+    safeInvoke(window.autocrew.topicsList),
+    safeInvoke(window.autocrew.contentList),
+  ]);
+  boardMain.innerHTML = "";
+
+  const topics = (tRes.ok && tRes.topics) || [];
+  const contents = ((cRes.ok && cRes.contents) || []).filter((c) => c.status !== "archived");
+  boardAtoms = groupBoardAtoms(topics, contents);
+
+  const bar = h("div", { class: "board-bar" });
+  bar.appendChild(h("span", { class: "card-kicker" }, "内容管线 · 卡片 = 一个想法"));
+  const trashBtn = h("button", { class: "btn-mini" }, "回收站");
+  trashBtn.addEventListener("click", renderTrash);
+  bar.appendChild(trashBtn);
+  boardMain.appendChild(bar);
+
   const cols = BOARD_COLUMNS.map(() => []);
-  for (const members of atoms) {
-    const rep = [...members].sort((a, b) => colRank(b.status) - colRank(a.status))[0];
-    const ci = Math.max(0, colRank(rep.status));
-    cols[ci].push(members);
+  for (const atom of boardAtoms) {
+    const rep = atomRep(atom);
+    const ci = rep ? Math.max(1, colRank(rep.status)) : 0;
+    cols[ci].push(atom);
   }
 
   const boardEl = h("div", { class: "kanban" });
   BOARD_COLUMNS.forEach((c, i) => {
-    const col = h("div", { class: "kanban-col" });
+    const col = h("div", { class: "kanban-col", "data-col": c.key });
     col.appendChild(h("div", { class: "kanban-col-head" }, c.label + " · " + cols[i].length));
-    for (const members of cols[i]) col.appendChild(renderAtomCard(members));
+    for (const atom of cols[i]) col.appendChild(renderAtomCard(atom));
+    if (i === 0 && cols[0].length === 0) {
+      col.appendChild(h("p", { class: "muted kanban-empty" }, "右边跟总编辑说一个想法，或让侦察员扫榜。"));
+    }
+    // 放置目标(内容卡拖入 → 流转)
+    if (DROP_TARGET_STATUS[c.key]) {
+      col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("kanban-col-over"); });
+      col.addEventListener("dragleave", () => col.classList.remove("kanban-col-over"));
+      col.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        col.classList.remove("kanban-col-over");
+        const contentId = e.dataTransfer.getData("text/autocrew-content");
+        if (!contentId) return;
+        const r = await safeInvoke(window.autocrew.contentTransition, { id: contentId, target_status: DROP_TARGET_STATUS[c.key] });
+        if (!r.ok) { showToast(r.error || "流转失败（状态机拒绝了这一步）"); return; }
+        renderBoard();
+      });
+    }
     boardEl.appendChild(col);
   });
   boardMain.appendChild(boardEl);
 }
 
-/** 主区就地展开工作台：看板 → 稿件编辑(带返回) */
-async function openInBoard(contentId) {
+// ── 平台矩阵(点 idea 卡进入):全域自媒体的操作面 ────────────────────────────
+
+function openMatrix(atomKey) {
+  const atom = boardAtoms.find((a) => a.key === atomKey);
+  if (!atom) { renderBoard(); return; }
+  const boardMain = document.getElementById("board-main");
+  if (!boardMain) return;
+  boardMain.innerHTML = "";
+
+  const back = h("button", { class: "btn-mini board-back" }, "← 看板");
+  back.addEventListener("click", renderBoard);
+  boardMain.appendChild(back);
+
+  const wrap = h("div", { class: "matrix-wrap" });
+  wrap.appendChild(h("div", { class: "matrix-title" }, atomTitle(atom)));
+  if (atom.topic && atom.topic.description) {
+    wrap.appendChild(h("div", { class: "muted matrix-desc" }, atom.topic.description));
+  }
+  wrap.appendChild(h("div", { class: "card-kicker matrix-kicker" }, "平台矩阵 · 有稿点开,无稿生成"));
+
+  const grid = h("div", { class: "matrix-grid" });
+  const byPlatform = new Map(atom.members.map((m) => [m.platform, m]));
+
+  for (const p of MATRIX_CN) {
+    const cell = h("div", { class: "matrix-cell" });
+    cell.appendChild(h("div", { class: "matrix-platform" }, platformLabel(p)));
+    const m = byPlatform.get(p);
+    if (m) {
+      const st = h("button", { class: "atom-chip" + (m.status === "published" ? " atom-chip-pub" : "") },
+        VARIANT_STATUS[m.status] || m.status);
+      st.addEventListener("click", () => openInBoard(m.id, () => openMatrix(atomKey)));
+      cell.appendChild(st);
+      const del = h("button", { class: "btn-mini matrix-del" }, "删除");
+      del.addEventListener("click", async () => {
+        const r = await safeInvoke(window.autocrew.contentDelete, { id: m.id });
+        if (!r.ok) { showToast(r.error || "删除失败"); return; }
+        showToast("已移入回收站");
+        renderBoard();
+      });
+      cell.appendChild(del);
+      cell.classList.add("matrix-cell-filled");
+      cell.addEventListener("click", (e) => { if (e.target === cell) openInBoard(m.id, () => openMatrix(atomKey)); });
+    } else {
+      const gen = h("button", { class: "btn-mini" }, "生成");
+      gen.addEventListener("click", () => {
+        if (typeof sendChat === "function") {
+          sendChat("用选题《" + atomTitle(atom) + "》写一篇" + platformLabel(p) + "原生版本");
+          showToast("已派给总编辑——看右边对话和顶部日志");
+        }
+      });
+      cell.appendChild(gen);
+    }
+    grid.appendChild(cell);
+  }
+  for (const p of MATRIX_EN) {
+    const cell = h("div", { class: "matrix-cell matrix-cell-locked" });
+    cell.appendChild(h("div", { class: "matrix-platform" }, platformLabel(p)));
+    cell.appendChild(h("div", { class: "matrix-locked" }, "席位未开通"));
+    grid.appendChild(cell);
+  }
+  wrap.appendChild(grid);
+  boardMain.appendChild(wrap);
+}
+
+// ── 回收站(qingmo 设计细节:已删选题 + 已删稿件,逐项恢复)────────────────────
+
+async function renderTrash() {
   const boardMain = document.getElementById("board-main");
   if (!boardMain) return;
   boardMain.innerHTML = "";
   const back = h("button", { class: "btn-mini board-back" }, "← 看板");
   back.addEventListener("click", renderBoard);
+  boardMain.appendChild(back);
+  boardMain.appendChild(h("div", { class: "matrix-title" }, "回收站"));
+
+  const res = await safeInvoke(window.autocrew.trashList);
+  if (!res.ok) { boardMain.appendChild(h("p", { class: "muted" }, res.error || "加载失败")); return; }
+  const topics = res.topics || [];
+  const contents = res.contents || [];
+  if (topics.length === 0 && contents.length === 0) {
+    boardMain.appendChild(h("p", { class: "empty-state" }, "回收站是空的。"));
+    return;
+  }
+  const list = h("div", { class: "trash-list" });
+  for (const t of topics) {
+    const row = h("div", { class: "trash-row" });
+    row.appendChild(h("span", { class: "trash-kind" }, "选题"));
+    row.appendChild(h("span", { class: "trash-title" }, t.title));
+    const btn = h("button", { class: "btn-mini" }, "恢复");
+    btn.addEventListener("click", async () => {
+      const r = await safeInvoke(window.autocrew.topicRestore, { id: t.id });
+      if (!r.ok) { showToast(r.error || "恢复失败"); return; }
+      renderTrash();
+    });
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+  for (const c of contents) {
+    const row = h("div", { class: "trash-row" });
+    row.appendChild(h("span", { class: "trash-kind" }, platformLabel(c.platform)));
+    row.appendChild(h("span", { class: "trash-title" }, c.title || "（无标题）"));
+    const btn = h("button", { class: "btn-mini" }, "恢复");
+    btn.addEventListener("click", async () => {
+      const r = await safeInvoke(window.autocrew.contentRestore, { id: c.id });
+      if (!r.ok) { showToast(r.error || "恢复失败"); return; }
+      renderTrash();
+    });
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+  boardMain.appendChild(list);
+}
+
+/** 主区就地展开工作台;backFn 决定「返回」去向(矩阵或看板) */
+async function openInBoard(contentId, backFn) {
+  const boardMain = document.getElementById("board-main");
+  if (!boardMain) return;
+  boardMain.innerHTML = "";
+  const back = h("button", { class: "btn-mini board-back" }, backFn ? "← 平台矩阵" : "← 看板");
+  back.addEventListener("click", backFn || renderBoard);
   boardMain.appendChild(back);
   const wb = h("div", { class: "board-workbench" });
   boardMain.appendChild(wb);
@@ -134,6 +346,7 @@ async function openInBoard(contentId) {
 }
 
 // ── 工作日志(引擎真实事件流) ─────────────────────────────────────────────────
+
 function renderWorklogInto(el, events) {
   if (!el) return;
   el.innerHTML = "";
@@ -161,7 +374,6 @@ async function refreshBoardWorklog() {
   if (res.ok) EngineStore.hydrateEvents(res.events || []);
 }
 
-// 订阅一次：事件流增量 → 刷新看板顶部日志(看板未挂载则安静跳过)
 if (typeof EngineStore !== "undefined") {
   EngineStore.subscribe((state) => {
     const el = document.getElementById("board-worklog");

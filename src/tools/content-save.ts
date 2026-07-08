@@ -11,6 +11,8 @@ import {
   normalizeLegacyStatus,
   recordAdoption,
   adoptionStats,
+  softDeleteContent,
+  restoreContent,
 } from "../storage/local-store.js";
 import type { AdoptionVerdict } from "../storage/local-store.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
@@ -26,9 +28,9 @@ const ALL_STATUSES = [
 ] as const;
 
 export const contentSaveSchema = Type.Object({
-  action: Type.Unsafe<"save" | "list" | "get" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption">({
+  action: Type.Unsafe<"save" | "list" | "get" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore">({
     type: "string",
-    enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption"],
+    enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore"],
     description:
       "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
       "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
@@ -154,6 +156,22 @@ export async function executeContentSave(
     return styleLearned
       ? { ok: true, content: updated, styleLearned }
       : { ok: true, content: updated };
+  }
+
+  if (action === "delete") {
+    const id = params.id as string;
+    if (!id) return { ok: false, error: "id is required for delete" };
+    const deleted = await softDeleteContent(id, dataDir);
+    if (!deleted) return { ok: false, error: `Content ${id} not found` };
+    return { ok: true, content: deleted };
+  }
+
+  if (action === "restore") {
+    const id = params.id as string;
+    if (!id) return { ok: false, error: "id is required for restore" };
+    const restored = await restoreContent(id, dataDir);
+    if (!restored) return { ok: false, error: `Content ${id} not found` };
+    return { ok: true, content: restored };
   }
 
   if (action === "adoption") {

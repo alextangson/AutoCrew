@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 44 channels.
+ * IPC contract + handler registry tests — all 50 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -82,10 +82,16 @@ describe("IPC_CHANNELS", () => {
     "content:adoption",
     "today:summary",
     "events:recent",
+    "topics:list",
+    "topic:delete",
+    "topic:restore",
+    "content:delete",
+    "content:restore",
+    "trash:list",
   ];
 
-  it("has exactly 44 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(44);
+  it("has exactly 50 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(50);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -147,6 +153,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     ["publish:wechat_draft", "wechat_mp_draft"],
     ["flywheel:import_csv", "import_csv"],
     ["content:adoption", "adoption"],
+    ["content:delete", "delete"],
+    ["content:restore", "restore"],
   ];
 
   it.each(EXPECTED_BINDINGS)("%s → action=%s", (channel, action) => {
@@ -198,7 +206,11 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "content:asset_add" &&
           ch !== "content:asset_remove" &&
           ch !== "today:summary" &&
-          ch !== "events:recent",
+          ch !== "events:recent" &&
+          ch !== "topics:list" &&
+          ch !== "topic:delete" &&
+          ch !== "topic:restore" &&
+          ch !== "trash:list",
       ).sort(),
     );
   });

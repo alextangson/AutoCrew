@@ -8,6 +8,8 @@ export interface Topic {
   tags: string[];
   source?: string;
   createdAt: string;
+  /** 软删除时间戳(回收站语义,qingmo 设计细节);null/缺省 = 活跃 */
+  deletedAt?: string | null;
 }
 
 export interface Asset {
@@ -78,6 +80,8 @@ export interface Content {
   performanceData: Record<string, number>;
   /** 采纳裁决（三键落库；未裁决 = 不参与采纳率分母） */
   adoption?: AdoptionRecord;
+  /** 软删除时间戳(回收站语义);null/缺省 = 活跃。默认读侧全部过滤 */
+  deletedAt?: string | null;
   assets: Asset[];
   versions: ContentVersion[];
   createdAt: string;
@@ -174,7 +178,7 @@ export async function listTopics(dataDir?: string): Promise<Topic[]> {
     const raw = await fs.readFile(path.join(dir, f), "utf-8");
     topics.push(JSON.parse(raw));
   }
-  return topics.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return topics.filter((t) => !t.deletedAt).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function getTopic(id: string, dataDir?: string): Promise<Topic | null> {
@@ -185,6 +189,28 @@ export async function getTopic(id: string, dataDir?: string): Promise<Topic | nu
   } catch {
     return null;
   }
+}
+
+async function writeTopic(topic: Topic, dataDir?: string): Promise<void> {
+  const dir = await topicsDir(dataDir);
+  await fs.writeFile(path.join(dir, `${topic.id}.json`), JSON.stringify(topic, null, 2), "utf-8");
+}
+
+/** 选题移入回收站(软删除,可恢复)。不存在 → null */
+export async function softDeleteTopic(id: string, dataDir?: string): Promise<Topic | null> {
+  const topic = await getTopic(id, dataDir);
+  if (!topic) return null;
+  topic.deletedAt = new Date().toISOString();
+  await writeTopic(topic, dataDir);
+  return topic;
+}
+
+export async function restoreTopic(id: string, dataDir?: string): Promise<Topic | null> {
+  const topic = await getTopic(id, dataDir);
+  if (!topic) return null;
+  topic.deletedAt = null;
+  await writeTopic(topic, dataDir);
+  return topic;
 }
 
 // --- Contents ---
@@ -288,8 +314,57 @@ export async function listContents(dataDir?: string): Promise<Content[]> {
     } catch { /* skip */ }
   }
   return contents
+    .filter((c) => !c.deletedAt)
     .map(withNormalizedStatus)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** 读全量含已删(回收站专用)。日常读侧一律走 listContents(已过滤) */
+async function listContentsRaw(dataDir?: string): Promise<Content[]> {
+  const dir = path.join(getDataDir(dataDir), "contents");
+  await ensureDir(dir);
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const contents: Content[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    try {
+      contents.push(JSON.parse(await fs.readFile(path.join(dir, entry.name, "meta.json"), "utf-8")));
+    } catch { /* skip */ }
+  }
+  return contents.map(withNormalizedStatus).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** 稿件移入回收站(软删除,可恢复)。不存在 → null */
+export async function softDeleteContent(id: string, dataDir?: string): Promise<Content | null> {
+  return updateContent(id, { deletedAt: new Date().toISOString() }, dataDir);
+}
+
+export async function restoreContent(id: string, dataDir?: string): Promise<Content | null> {
+  return updateContent(id, { deletedAt: null }, dataDir);
+}
+
+export interface TrashList {
+  topics: Topic[];
+  contents: Content[];
+}
+
+/** 回收站聚合(qingmo 设计细节:已删选题 + 已删稿件一屏,可逐项恢复) */
+export async function listTrash(dataDir?: string): Promise<TrashList> {
+  const dir = await topicsDir(dataDir);
+  const files = await fs.readdir(dir);
+  const topics: Topic[] = [];
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const t = JSON.parse(await fs.readFile(path.join(dir, f), "utf-8")) as Topic;
+      if (t.deletedAt) topics.push(t);
+    } catch { /* skip */ }
+  }
+  const contents = (await listContentsRaw(dataDir)).filter((c) => c.deletedAt);
+  return {
+    topics: topics.sort((a, b) => (b.deletedAt || "").localeCompare(a.deletedAt || "")),
+    contents,
+  };
 }
 
 export async function getContent(id: string, dataDir?: string): Promise<Content | null> {

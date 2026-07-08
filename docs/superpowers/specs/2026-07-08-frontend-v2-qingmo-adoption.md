@@ -1,7 +1,9 @@
-# 前端 v2:采用 qingmo 前端为 AutoCrew 前端本体(设计契约)
+# 前端 v2:提取 qingmo 设计细节,AutoCrew 原生实现(设计契约)
 
 > 日期:2026-07-08 · 依据:PRD-v4 §11(本地 server + 浏览器)+ 创始人批评「只换壳,没实现动态工作流」
-> 裁决待创始人 go:vanilla 渲染层停止投入,React 重建,组件与设计从 qingmoagent/frontend 移植。
+> 裁决(2026-07-08 创始人纠偏):**只取设计细节,不取代码**。qingmo 被放弃的根因 = 多租户账号隔离在
+> 内容分发上无解——那套前端绑着多租户 SaaS 架构,搬回来 = 把包袱拖回来。AutoCrew 保持本地单租户 +
+> 自有前端(现 vanilla,编辑部风),qingmo 仅作设计规格书:拖拽/回收站/灵感库列/平台矩阵/任务动态/编辑器细节,逐项原生重实现。
 
 ## 为什么(根因,不是感觉)
 
@@ -10,7 +12,7 @@
 pipeline 混合看板(第一列=选题库 Topic 卡,后列=Content 卡)、HTML5 拖拽换状态、每卡移入回收站+回收站弹窗恢复、
 inbox 数字员工工作台(feed 情报卡/自动工作历史/待决策/cron)、contents/[id] 编辑器(60vh+自动保存+选中浮层 AI 快改)、
 diff 全家桶(inline-diff/block-diff/pending-edit-card + diff-match-patch)、calibration 风格校准、assets/broll、records 复盘。
-**vanilla 重造这些 = 用更差的工具重新发明创始人自己的设计。** 停。
+**这些设计细节按规格逐项在 AutoCrew 原生实现——代码不搬(多租户/云依赖是已知弃因)。**
 
 ## 红线(继承,不重谈)
 

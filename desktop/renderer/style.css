@@ -1093,3 +1093,36 @@ label {
 /* 编辑器放大 + 居中窄栏(借鉴 qingmo：大编辑区 + 舒适行宽) */
 .board-workbench { max-width: 760px; margin: 0 auto; }
 .board-main .wb-editor { min-height: 62vh; line-height: 1.9; }
+
+/* ── 平台矩阵 / 回收站 / 拖拽(qingmo 设计细节原生实现)──────────────────── */
+.board-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.kanban-col-over { outline: 2px dashed var(--ink); outline-offset: -2px; }
+.kanban-empty { font-size: 12px; padding: 8px 2px; }
+.atom-head { display: flex; align-items: flex-start; gap: 6px; }
+.atom-head .atom-title { flex: 1; }
+.atom-del {
+  border: none; background: none; color: var(--muted); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+}
+.atom-del:hover { color: var(--hot); }
+
+.matrix-wrap { max-width: 720px; margin: 0 auto; }
+.matrix-title { font-family: var(--font-display); font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+.matrix-desc { margin-bottom: 12px; }
+.matrix-kicker { margin: 14px 0 10px; }
+.matrix-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.matrix-cell {
+  border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card);
+  padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 92px;
+}
+.matrix-cell-filled { cursor: pointer; }
+.matrix-cell-filled:hover { border-color: var(--ink); }
+.matrix-platform { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; color: var(--text); }
+.matrix-del { align-self: flex-start; }
+.matrix-cell-locked { opacity: 0.55; background: var(--bg); }
+.matrix-locked { font-family: var(--font-mono); font-size: 10px; color: var(--muted); letter-spacing: 0.08em; }
+
+.trash-list { max-width: 720px; margin: 12px auto 0; border-top: 1px solid var(--border); }
+.trash-row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--border); }
+.trash-kind { font-family: var(--font-mono); font-size: 10px; border: 1px solid var(--border); padding: 1px 7px; flex-shrink: 0; }
+.trash-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }

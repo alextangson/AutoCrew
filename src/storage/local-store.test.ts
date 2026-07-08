@@ -408,3 +408,50 @@ describe("adoption verdicts", () => {
     expect(stats.rate).toBeCloseTo(2 / 3);
   });
 });
+
+// ─── 软删除 / 回收站（qingmo 设计细节:可删、可恢复,读侧默认过滤） ────────────
+
+describe("soft delete + trash", () => {
+  let trashDir: string;
+  beforeEach(async () => {
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    trashDir = await fsp.mkdtemp(path.join(os.tmpdir(), "autocrew-trash-"));
+  });
+  afterEach(async () => {
+    const fsp = await import("node:fs/promises");
+    await fsp.rm(trashDir, { recursive: true, force: true });
+  });
+
+  it("content:删除后 listContents 不见、trash 可见、恢复后回来", async () => {
+    const { saveContent, softDeleteContent, restoreContent, listContents, listTrash } = await import("./local-store.js");
+    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, trashDir);
+    expect(await softDeleteContent(c.id, trashDir)).not.toBeNull();
+    expect((await listContents(trashDir)).find((x) => x.id === c.id)).toBeUndefined();
+    const trash = await listTrash(trashDir);
+    expect(trash.contents.map((x) => x.id)).toContain(c.id);
+    await restoreContent(c.id, trashDir);
+    expect((await listContents(trashDir)).find((x) => x.id === c.id)).toBeDefined();
+    expect((await listTrash(trashDir)).contents).toHaveLength(0);
+  });
+
+  it("topic:删除后 listTopics 不见、trash 可见、恢复后回来;不存在 → null", async () => {
+    const { saveTopic, softDeleteTopic, restoreTopic, listTopics, listTrash } = await import("./local-store.js");
+    const t = await saveTopic({ title: "想法", description: "d", tags: [] }, trashDir);
+    expect(await softDeleteTopic(t.id, trashDir)).not.toBeNull();
+    expect((await listTopics(trashDir)).find((x) => x.id === t.id)).toBeUndefined();
+    expect((await listTrash(trashDir)).topics.map((x) => x.id)).toContain(t.id);
+    await restoreTopic(t.id, trashDir);
+    expect((await listTopics(trashDir)).find((x) => x.id === t.id)).toBeDefined();
+    expect(await softDeleteTopic("topic-nope", trashDir)).toBeNull();
+  });
+
+  it("已删稿不进采纳率分母", async () => {
+    const { saveContent, recordAdoption, softDeleteContent, adoptionStats } = await import("./local-store.js");
+    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, trashDir);
+    await recordAdoption(c.id, "adopted", trashDir);
+    await softDeleteContent(c.id, trashDir);
+    expect((await adoptionStats(trashDir)).judged).toBe(0);
+  });
+});

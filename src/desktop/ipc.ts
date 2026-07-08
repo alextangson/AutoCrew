@@ -74,7 +74,7 @@ import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
-import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent } from "../storage/local-store.js";
+import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, listTopics, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import type { IpcChannel } from "./channels.js";
@@ -122,6 +122,8 @@ export const CHANNEL_ACTIONS = {
   "content:transition": "transition",
   "content:allowed_transitions": "allowed_transitions",
   "content:adoption": "adoption",
+  "content:delete": "delete",
+  "content:restore": "restore",
 } as const satisfies Partial<Record<IpcChannel, string>>;
 
 // ── wrapExecute ───────────────────────────────────────────────────────────────
@@ -597,6 +599,12 @@ export function buildIpcHandlers(
     "content:transition": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:transition"]),
     "content:allowed_transitions": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:allowed_transitions"]),
     "content:adoption": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:adoption"]),
+    "content:delete": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:delete"]),
+    "content:restore": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:restore"]),
+    "topics:list": topicsListHandler,
+    "topic:delete": topicDeleteHandler,
+    "topic:restore": topicRestoreHandler,
+    "trash:list": trashListHandler,
     "content:versions": contentVersionsHandler,
     "content:revert": contentRevertHandler,
     "draft:rewrite_selection": rewriteSelectionHandler,
@@ -645,4 +653,47 @@ async function eventsRecentHandler(payload: Record<string, unknown>): Promise<Re
   const dataDir = (payload._dataDir as string) || undefined;
   const limit = typeof payload.limit === "number" ? payload.limit : 50;
   return { ok: true, events: await readRecentEvents(dataDir, limit) };
+}
+
+// ── 灵感库 / 回收站（qingmo 设计细节:软删除 + 恢复） ─────────────────────────
+
+async function topicsListHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  try {
+    return { ok: true, topics: await listTopics((payload._dataDir as string) || undefined) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function topicDeleteHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const id = payload.id as string;
+  if (!id) return { ok: false, error: "id is required" };
+  try {
+    const topic = await softDeleteTopic(id, (payload._dataDir as string) || undefined);
+    if (!topic) return { ok: false, error: `Topic ${id} not found` };
+    return { ok: true, topic };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function topicRestoreHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const id = payload.id as string;
+  if (!id) return { ok: false, error: "id is required" };
+  try {
+    const topic = await restoreTopic(id, (payload._dataDir as string) || undefined);
+    if (!topic) return { ok: false, error: `Topic ${id} not found` };
+    return { ok: true, topic };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function trashListHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  try {
+    const trash = await listTrash((payload._dataDir as string) || undefined);
+    return { ok: true, topics: trash.topics, contents: trash.contents };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

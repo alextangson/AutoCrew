@@ -80,8 +80,9 @@ function fmtDate(iso) {
 
 function platformLabel(p) {
   const m = {
-    douyin: "抖音", xiaohongshu: "小红书", wechat_mp: "微信公众号",
+    douyin: "抖音", xiaohongshu: "小红书", wechat_mp: "公众号",
     wechat_video: "视频号", bilibili: "B站",
+    twitter: "Twitter", instagram: "Instagram", reddit: "Reddit",
   };
   return m[p] || p || "—";
 }

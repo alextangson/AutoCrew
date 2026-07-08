@@ -51,6 +51,12 @@ export const IPC_CHANNELS = [
   "content:adoption",
   "today:summary",
   "events:recent",
+  "topics:list",
+  "topic:delete",
+  "topic:restore",
+  "content:delete",
+  "content:restore",
+  "trash:list",
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];
@@ -65,7 +71,7 @@ export const ENGINE_EVENT = "engine:event";
  * Converts an IPC channel name to a camelCase method name.
  * e.g. "flywheel:report" → "flywheelReport"
  *
- * All 44 methods exposed on window.autocrew:
+ * All 50 methods exposed on window.autocrew:
  *   flywheelReport / generateScript / styleDistill / styleAbsorb / styleRules /
  *   contentList / contentGet / publishClipboard / publishConfirm / publishWechatDraft / chatTurn /
  *   settingsGet / settingsSet / styleUpdateRule /
@@ -76,7 +82,8 @@ export const ENGINE_EVENT = "engine:event";
  *   conversationsList / conversationsGet / conversationsDelete /
  *   libraryList / libraryAdd / libraryUpdate / libraryRemove /
  *   libraryFolderCreate / libraryFolderRemove / dialogPickMedia /
- *   contentAssetAdd / contentAssetRemove / contentAdoption / todaySummary / eventsRecent
+ *   contentAssetAdd / contentAssetRemove / contentAdoption / todaySummary / eventsRecent /
+ *   topicsList / topicDelete / topicRestore / contentDelete / contentRestore / trashList
  */
 export function chToMethod(ch: string): string {
   const [ns, action] = ch.split(":");
