@@ -69,7 +69,6 @@ function registerAllTools(runner: ToolRunner): void {
     description: "Pipeline status, quality baseline, performance tracking, learning report. Actions: overview, baseline, compare, track_performance, learning_report.",
     parameters: statusSchema,
     execute: executeStatus,
-    skipOnboardingGate: true,
   });
 
   runner.register({
@@ -133,7 +132,6 @@ function registerAllTools(runner: ToolRunner): void {
       "Capture user feedback into MEMORY.md or read current memory. Supports action='capture_feedback' and action='get_memory'.",
     parameters: memorySchema,
     execute: executeMemory,
-    skipOnboardingGate: true,
   });
 
   runner.register({
@@ -197,7 +195,6 @@ function registerAllTools(runner: ToolRunner): void {
     description: "Initialize the AutoCrew data directory (~/.autocrew/) and creator profile. Safe to run multiple times.",
     parameters: { type: "object" as const, properties: {} },
     execute: async (params) => executeInit({ dataDir: params._dataDir as string }),
-    skipOnboardingGate: true,
   });
 
   runner.register({
@@ -218,7 +215,6 @@ function registerAllTools(runner: ToolRunner): void {
         styleCalibrated: profile?.styleCalibrated ?? false,
       };
     },
-    skipOnboardingGate: true,
   });
 }
 

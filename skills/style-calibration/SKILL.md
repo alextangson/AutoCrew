@@ -67,8 +67,26 @@ description: |
 ## Phase 3: 写作人格生成与保存
 
 > 目标：生成最终风格档案并持久化。
+> **唯一机器事实源 = `creator-profile.json`（IA v4.2 §B2）**：引擎生成只读 writingRules/styleBoundaries，
+> 不读 STYLE.md。先完成 3.1（结构化落库），STYLE.md（3.2）只是给人看的摘要，可选。
 
-### 3.1 生成 `~/.autocrew/STYLE.md`
+### 3.1 更新 `creator-profile.json`（主产出）
+
+通过 `autocrew_init` 确保数据目录存在，然后更新以下字段：
+
+- `industry` — 如果 Phase 0 中收集到了
+- `platforms` — 如果 Phase 0 中收集到了
+- `audiencePersona` — 从 Phase 0 的受众信息构建
+- `styleBoundaries.never` — 从 Phase 0 的风格禁区
+- `styleBoundaries.always` — 从风格分析中提取的必须保持的特征
+- `writingRules` — 从 Phase 1/2 提取的具体写作规则，source 设为 `"auto_distilled"`，
+  **scope 按 PRD-v4 §4.3 二分**：跨平台声音特征（用词癖好/口头禅/立场/禁忌）→ `"voice_core"`；
+  某平台专属的形式规范（长度/结构/格式）→ `"platform:<平台id>"`（如 `platform:wechat_mp`）
+- `styleCalibrated` — 设为 `true`
+
+使用 `autocrew_memory` tool 的 `capture_feedback` action 记录校准事件。
+
+### 3.2 生成 `~/.autocrew/STYLE.md`（可选的人类可读摘要，非机器事实源）
 
 ```markdown
 # Brand Voice Profile
@@ -99,20 +117,6 @@ description: |
 - Profile: [一句话概括]
 - Scroll-stop triggers: [什么让他们停下来]
 ```
-
-### 3.2 更新 `creator-profile.json`
-
-通过 `autocrew_init` 确保数据目录存在，然后更新以下字段：
-
-- `industry` — 如果 Phase 0 中收集到了
-- `platforms` — 如果 Phase 0 中收集到了
-- `audiencePersona` — 从 Phase 0 的受众信息构建
-- `styleBoundaries.never` — 从 Phase 0 的风格禁区
-- `styleBoundaries.always` — 从风格分析中提取的必须保持的特征
-- `writingRules` — 从 Phase 1/2 提取的具体写作规则，source 设为 `"auto_distilled"`
-- `styleCalibrated` — 设为 `true`
-
-使用 `autocrew_memory` tool 的 `capture_feedback` action 记录校准事件。
 
 ### 3.3 追加 MEMORY.md
 

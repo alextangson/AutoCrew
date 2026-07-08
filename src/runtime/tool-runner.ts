@@ -15,7 +15,6 @@ import {
   resolveGeminiModel,
 } from "./context.js";
 import { type EventBus, createEvent } from "./events.js";
-import { loadProfile, detectMissingInfo } from "../modules/profile/creator-profile.js";
 import { executePrePublish } from "../tools/pre-publish.js";
 
 // --- Types ---
@@ -39,8 +38,6 @@ export interface ToolDefinition {
   proActions?: string[];
   /** If true, inject _geminiApiKey and _geminiModel into params */
   needsGemini?: boolean;
-  /** If true, this tool is exempt from onboarding gate (e.g. init, pro_status) */
-  skipOnboardingGate?: boolean;
 }
 
 export interface ToolRunnerOptions {
@@ -51,64 +48,8 @@ export interface ToolRunnerOptions {
 
 // --- Built-in Middleware ---
 
-/** Block non-exempt tools if profile is incomplete or style not calibrated */
-const createOnboardingGateMiddleware = (
-  getTool: (name: string) => ToolDefinition | undefined,
-): Middleware => async (ctx, toolName, _params, next) => {
-  // Skip for tools registered with skipOnboardingGate (e.g. init, pro_status)
-  if (getTool(toolName)?.skipOnboardingGate) return next();
-
-  try {
-    const profile = await loadProfile(ctx.dataDir);
-    if (!profile) {
-      return {
-        ok: false,
-        error: "onboarding_required",
-        message: "⚠️ 首次使用 AutoCrew，需要先完成初始设置。",
-        action_required: "请先调用 autocrew_init 初始化数据目录，然后通过对话收集用户的行业、平台、受众信息，保存到 creator-profile.json。完成后再调用 autocrew_pro_status 确认。",
-        steps: [
-          "1. 调用 autocrew_init 初始化",
-          "2. 询问用户：你的行业/领域是什么？",
-          "3. 询问用户：你主要在哪些平台发内容？（小红书/抖音/公众号/视频号）",
-          "4. 询问用户：你的目标受众是谁？",
-          "5. 通过风格校准确定写作风格（正式vs口语、专业vs大白话等）",
-          "6. 生成 STYLE.md 并更新 creator-profile.json",
-          "7. 完成后再执行用户的原始请求",
-        ],
-      };
-    }
-
-    const missing = detectMissingInfo(profile);
-    if (missing.length > 0) {
-      return {
-        ok: false,
-        error: "profile_incomplete",
-        message: `⚠️ 创作者档案不完整，缺少：${missing.join("、")}`,
-        action_required: `请通过对话补充以下信息：${missing.join("、")}。更新 creator-profile.json 后再继续。`,
-        missing,
-      };
-    }
-
-    if (!profile.styleCalibrated) {
-      return {
-        ok: false,
-        error: "style_not_calibrated",
-        message: "⚠️ 还没有完成风格校准。写出来的内容可能不符合你的品牌调性。",
-        action_required: "请先进行风格校准：通过 A/B 选择题确定写作风格偏好，生成 STYLE.md，然后更新 creator-profile.json 的 styleCalibrated 为 true。",
-        steps: [
-          "1. 询问用户的风格偏好（正式vs口语、专业vs大白话、长文vs短文、情感vs干货）",
-          "2. 根据回答生成 ~/.autocrew/STYLE.md",
-          "3. 更新 creator-profile.json: styleCalibrated = true",
-          "4. 完成后再执行用户的原始请求",
-        ],
-      };
-    }
-  } catch {
-    // If profile check fails, let the tool proceed (don't block on errors)
-  }
-
-  return next();
-};
+// 注：onboarding gate 已删除（IA v4.2 §B3）。渐进画像由 skill 层（progressive-profiling）
+// 负责引导，工具执行永不因画像缺失阻断——「onboarding 永不阻断」红线（PRD-v3 §7.3）。
 
 /** Publish actions that don't put content out (no gate needed) */
 const PUBLISH_GATE_EXEMPT_ACTIONS = new Set(["confirm_published"]);
@@ -251,7 +192,6 @@ export class ToolRunner {
     this.eventBus = options.eventBus;
     this.middleware = [
       dataDirMiddleware,
-      createOnboardingGateMiddleware((name) => this.tools.get(name)),
       prePublishGateMiddleware,
       errorBoundaryMiddleware,
       auditMiddleware,

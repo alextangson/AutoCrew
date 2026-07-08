@@ -11,6 +11,7 @@ import {
   updateWritingRule,
   addCompetitor,
   detectMissingInfo,
+  rulesForPlatform,
   type CreatorProfile,
 } from "../profile/creator-profile.js";
 
@@ -114,6 +115,69 @@ describe("addWritingRule", () => {
       testDir,
     );
     expect(profile.writingRules).toHaveLength(2);
+  });
+});
+
+describe("rule scope routing (PRD-v4 §4.3)", () => {
+  it("promotes a rule to voice_core when the same text recurs from another platform", async () => {
+    await addWritingRule(
+      { rule: "开头不用问候语", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" },
+      testDir,
+    );
+    const profile = await addWritingRule(
+      { rule: "开头不用问候语", source: "auto_distilled", confidence: 0.8, scope: "platform:douyin" },
+      testDir,
+    );
+    expect(profile.writingRules).toHaveLength(1);
+    expect(profile.writingRules[0].scope).toBe("voice_core");
+  });
+
+  it("does not promote when the same platform corrects twice", async () => {
+    await addWritingRule(
+      { rule: "结尾加一句反问", source: "auto_distilled", confidence: 0.7, scope: "platform:wechat_mp" },
+      testDir,
+    );
+    const profile = await addWritingRule(
+      { rule: "结尾加一句反问", source: "auto_distilled", confidence: 0.7, scope: "platform:wechat_mp" },
+      testDir,
+    );
+    expect(profile.writingRules).toHaveLength(1);
+    expect(profile.writingRules[0].scope).toBe("platform:wechat_mp");
+  });
+
+  it("keeps voice_core scope when a platform-scoped duplicate arrives", async () => {
+    await addWritingRule({ rule: "多用短句", source: "user_explicit", confidence: 1 }, testDir);
+    const profile = await addWritingRule(
+      { rule: "多用短句", source: "auto_distilled", confidence: 0.6, scope: "platform:douyin" },
+      testDir,
+    );
+    expect(profile.writingRules).toHaveLength(1);
+    // undefined scope = voice_core：已是内核，不降级
+    expect(profile.writingRules[0].scope ?? "voice_core").toBe("voice_core");
+  });
+
+  it("rulesForPlatform injects voice_core + own platform, isolates other platforms", async () => {
+    await addWritingRule({ rule: "内核规则", source: "user_explicit", confidence: 1, scope: "voice_core" }, testDir);
+    await addWritingRule({ rule: "历史无scope规则", source: "user_explicit", confidence: 1 }, testDir);
+    await addWritingRule(
+      { rule: "公众号规则", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" },
+      testDir,
+    );
+    await addWritingRule(
+      { rule: "抖音规则", source: "auto_distilled", confidence: 0.8, scope: "platform:douyin" },
+      testDir,
+    );
+    const profile = (await loadProfile(testDir))!;
+
+    const wechatRules = rulesForPlatform(profile, "wechat_mp").map((r) => r.rule);
+    expect(wechatRules).toEqual(["内核规则", "历史无scope规则", "公众号规则"]);
+  });
+
+  it("rulesForPlatform excludes disabled rules", async () => {
+    await addWritingRule({ rule: "被停用的规则", source: "user_explicit", confidence: 1 }, testDir);
+    await updateWritingRule(0, { disabled: true }, testDir);
+    const profile = (await loadProfile(testDir))!;
+    expect(rulesForPlatform(profile, "wechat_mp")).toHaveLength(0);
   });
 });
 

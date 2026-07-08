@@ -141,10 +141,27 @@ AI 写内容的最大问题不是写不出来，而是写出来的东西"不像�
 ### Step 4: 生成风格档案
 
 > 目标：持久化风格档案，以后自动应用
+> **唯一机器事实源 = `creator-profile.json`（IA v4.2 §B2）**：引擎生成只读 writingRules/styleBoundaries，
+> 不读 STYLE.md。先做 4.1（结构化落库），4.2 的 STYLE.md 只是给人看的摘要，可选。
 
-#### 4.1 生成 `~/.autocrew/STYLE.md`
+#### 4.1 更新 `creator-profile.json`（主产出）
 
-调用 `autocrew_init` 确保目录存在，然后写入：
+通过 `autocrew_init` 更新以下字段：
+- `industry` — 从 Step 1 收集
+- `platforms` — 从 Step 1 收集
+- `audiencePersona` — 从 Step 1 构建
+- `styleBoundaries.never` — 从风格禁区
+- `styleBoundaries.always` — 从风格分析提取
+- `writingRules` — 从 Step 2/3 提取，source 设为 `"calibrated"`；
+  **scope 按 PRD-v4 §4.3 二分**：跨平台声音特征（用词癖好/口头禅/立场/禁忌）→ `"voice_core"`；
+  某平台专属形式规范（长度/结构/格式）→ `"platform:<平台id>"`（如 `platform:wechat_mp`）
+- `styleCalibrated` — 设为 `true`
+
+使用 `autocrew_memory` 的 `capture_feedback` 记录校准事件。
+
+#### 4.2 生成 `~/.autocrew/STYLE.md`（可选的人类可读摘要，非机器事实源）
+
+写入：
 
 ```markdown
 # Brand Voice Profile
@@ -176,19 +193,6 @@ AI 写内容的最大问题不是写不出来，而是写出来的东西"不像�
 - **Scroll-stop triggers**: [什么让他们停下来]
 ```
 
-#### 4.2 更新 `creator-profile.json`
-
-通过 `autocrew_init` 更新以下字段：
-- `industry` — 从 Step 1 收集
-- `platforms` — 从 Step 1 收集
-- `audiencePersona` — 从 Step 1 构建
-- `styleBoundaries.never` — 从风格禁区
-- `styleBoundaries.always` — 从风格分析提取
-- `writingRules` — 从 Step 2/3 提取，source 设为 `"calibrated"`
-- `styleCalibrated` — 设为 `true`
-
-使用 `autocrew_memory` 的 `capture_feedback` 记录校准事件。
-
 #### 4.3 追加 `~/.autocrew/MEMORY.md`
 
 将品牌上下文追加到 MEMORY.md：
@@ -202,7 +206,7 @@ AI 写内容的最大问题不是写不出来，而是写出来的东西"不像�
 ```
 ✅ 风格校准完成！
 
-你的写作人格已保存到 ~/.autocrew/STYLE.md
+你的写作人格已落进声音内核（creator-profile.json 的 writingRules）。
 以后用 AutoCrew 写内容会自动应用这个风格。
 
 要不要试一下？给我一个选题，我按你的风格写一篇看看。

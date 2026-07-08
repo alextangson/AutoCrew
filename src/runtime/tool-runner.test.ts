@@ -150,45 +150,15 @@ describe("ToolRunner", () => {
     expect("_geminiApiKey" in passedParams).toBe(false);
   });
 
-  it("onboarding gate blocks tools when no profile exists", async () => {
-    // Create a runner with empty dataDir (no profile)
+  it("executes tools without any profile — onboarding never blocks (IA v4.2 §B3)", async () => {
+    // Empty dataDir: no creator-profile.json at all
     const emptyDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-empty-"));
     const emptyCtx = createContext({ data_dir: emptyDir });
     const emptyRunner = new ToolRunner({ ctx: emptyCtx, eventBus });
 
     emptyRunner.register(makeTool("autocrew_content", { ok: true }));
     const result = await emptyRunner.execute("autocrew_content", {});
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("onboarding_required");
-
-    await fs.rm(emptyDir, { recursive: true, force: true });
-  });
-
-  it("onboarding gate allows tools with skipOnboardingGate without profile", async () => {
-    const emptyDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-empty-"));
-    const emptyCtx = createContext({ data_dir: emptyDir });
-    const emptyRunner = new ToolRunner({ ctx: emptyCtx, eventBus });
-
-    emptyRunner.register({
-      ...makeTool("autocrew_init", { ok: true, dataDir: emptyDir }),
-      skipOnboardingGate: true,
-    });
-    const result = await emptyRunner.execute("autocrew_init", {});
     expect(result.ok).toBe(true);
-
-    await fs.rm(emptyDir, { recursive: true, force: true });
-  });
-
-  it("onboarding gate blocks tools without skipOnboardingGate regardless of name", async () => {
-    const emptyDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-empty-"));
-    const emptyCtx = createContext({ data_dir: emptyDir });
-    const emptyRunner = new ToolRunner({ ctx: emptyCtx, eventBus });
-
-    // Formerly hardcoded-exempt name, registered without the flag: must be gated
-    emptyRunner.register(makeTool("autocrew_status", { ok: true }));
-    const result = await emptyRunner.execute("autocrew_status", {});
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("onboarding_required");
 
     await fs.rm(emptyDir, { recursive: true, force: true });
   });
@@ -207,12 +177,12 @@ describe("ToolRunner", () => {
     expect((tool.execute as any)).not.toHaveBeenCalled();
   });
 
-  it("onboarding gate blocks when style not calibrated", async () => {
+  it("executes tools with uncalibrated profile — onboarding never blocks (IA v4.2 §B3)", async () => {
     const uncalDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-uncal-"));
     const profile = {
-      industry: "tech",
-      platforms: ["xhs"],
-      audiencePersona: { name: "test", age: "25-35", job: "dev" },
+      industry: "",
+      platforms: [],
+      audiencePersona: null,
       styleCalibrated: false,
       writingRules: [],
       competitorAccounts: [],
@@ -225,10 +195,7 @@ describe("ToolRunner", () => {
     uncalRunner.register(makeTool("autocrew_content", { ok: true }));
 
     const result = await uncalRunner.execute("autocrew_content", {});
-    expect(result.ok).toBe(false);
-    // styleCalibrated:false is detected as missing info by detectMissingInfo,
-    // so profile_incomplete fires before style_not_calibrated
-    expect(["profile_incomplete", "style_not_calibrated"]).toContain(result.error);
+    expect(result.ok).toBe(true);
 
     await fs.rm(uncalDir, { recursive: true, force: true });
   });

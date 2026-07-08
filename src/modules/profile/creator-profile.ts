@@ -8,12 +8,22 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+/**
+ * 规则作用域（PRD-v4 §4.3 声音内核/平台包分层）：
+ * "voice_core" = 跨平台声音内核（用词癖好、口头禅、立场、禁忌）；
+ * "platform:<id>" = 平台包专属（结构、长度、格式规范）。
+ * 缺省视为 voice_core（历史规则兼容，无需迁移）。
+ */
+export type RuleScope = "voice_core" | `platform:${string}`;
+
 export interface WritingRule {
   rule: string;
-  /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly */
-  source: "auto_distilled" | "user_explicit";
+  /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly,
+   *  "calibrated" = produced by the calibration skills (A/B-verified during onboarding) */
+  source: "auto_distilled" | "user_explicit" | "calibrated";
   /** 0-1, higher = more confident */
   confidence: number;
+  scope?: RuleScope;
   /** true = 用户停用，生成时跳过（个性化中心可切换） */
   disabled?: boolean;
   createdAt: string;
@@ -164,15 +174,35 @@ export async function updateProfile(
 
 /**
  * Add a writing rule (deduplicates by rule text).
+ *
+ * 升格路由（PRD-v4 §4.3）：同一规则文本以另一个平台 scope 再次出现
+ * （= 同一模式在 ≥2 个平台被纠正）→ 升格进声音内核（scope 改 voice_core）。
  */
 export async function addWritingRule(rule: Omit<WritingRule, "createdAt">, dataDir?: string): Promise<CreatorProfile> {
   const profile = (await loadProfile(dataDir)) || emptyProfile();
-  const exists = profile.writingRules.some((r) => r.rule === rule.rule);
-  if (!exists) {
+  const existing = profile.writingRules.find((r) => r.rule === rule.rule);
+  if (existing) {
+    const existingScope = existing.scope ?? "voice_core";
+    const incomingScope = rule.scope ?? "voice_core";
+    if (existingScope !== "voice_core" && incomingScope !== existingScope) {
+      existing.scope = "voice_core";
+    }
+  } else {
     profile.writingRules.push({ ...rule, createdAt: new Date().toISOString() });
   }
   await saveProfile(profile, dataDir);
   return profile;
+}
+
+/**
+ * 生成时注入的规则 = 声音内核 + 当前平台包，其余平台的规则隔离在外（PRD-v4 §4.3）。
+ */
+export function rulesForPlatform(profile: CreatorProfile, platform: string): WritingRule[] {
+  return profile.writingRules.filter((r) => {
+    if (r.disabled) return false;
+    const scope = r.scope ?? "voice_core";
+    return scope === "voice_core" || scope === `platform:${platform}`;
+  });
 }
 
 /**

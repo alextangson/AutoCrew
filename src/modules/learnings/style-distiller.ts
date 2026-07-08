@@ -14,7 +14,7 @@ import { getDataDir } from "../../storage/local-store.js";
 import { listDiffs } from "./diff-tracker.js";
 import type { EditDiff } from "./diff-tracker.js";
 import { loadProfile, addWritingRule } from "../profile/creator-profile.js";
-import type { WritingRule } from "../profile/creator-profile.js";
+import type { WritingRule, RuleScope } from "../profile/creator-profile.js";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -57,6 +57,8 @@ interface RuleInput {
   rule: string;
   evidence: string;
   confidence: number;
+  /** 纠正路由（PRD-v4 §4.3）：省略 = voice_core */
+  scope?: RuleScope;
 }
 
 type SubmitValidation =
@@ -90,7 +92,20 @@ function validateRules(args: Record<string, unknown>): SubmitValidation {
         error: `Error: confidence 应在 [0,1] 范围内（收到 ${confidence}），请修正后重新调用 submit_rules`,
       };
     }
-    out.push({ rule: r.rule.trim(), evidence: r.evidence, confidence });
+    if (r.scope !== undefined) {
+      if (typeof r.scope !== "string" || (r.scope !== "voice_core" && !r.scope.startsWith("platform:"))) {
+        return {
+          ok: false,
+          error: `Error: scope 应为 "voice_core" 或 "platform:<平台id>"（收到 ${String(r.scope)}），请修正后重新调用 submit_rules`,
+        };
+      }
+    }
+    out.push({
+      rule: r.rule.trim(),
+      evidence: r.evidence,
+      confidence,
+      ...(r.scope !== undefined ? { scope: r.scope as RuleScope } : {}),
+    });
   }
   return { ok: true, rules: out };
 }
@@ -110,6 +125,11 @@ function buildSubmitTool(captured: { rules: RuleInput[] | null }): LoopTool {
               rule: { type: "string", description: "中文祈使句，具体可执行" },
               evidence: { type: "string", description: "引自 diff 的具体证据" },
               confidence: { type: "number", description: "0-1 模型把握度" },
+              scope: {
+                type: "string",
+                description:
+                  "规则作用域：证据只来自单一已知平台时填 platform:<平台id>（如 platform:wechat_mp）；跨平台声音特征（用词癖好/口头禅/立场/禁忌）或平台未知时填 voice_core 或省略",
+              },
             },
             required: ["rule", "evidence", "confidence"],
           },
@@ -135,6 +155,8 @@ function buildDiffSystemPrompt(): string {
     "提炼最多 3 条新的写作偏好规则。",
     "要求：中文祈使句；具体可执行；",
     "不与现有规则语义重复；每条附 evidence（引自 diff 的具体片段）和 confidence（0-1）。",
+    "每条规则标注 scope：证据只来自单一已知平台且属于该平台的形式规范（长度/结构/格式/标签惯例）→ platform:<平台id>；",
+    "属于跨平台的声音特征（用词癖好/口头禅/立场/禁忌），或证据横跨多个平台，或平台未知 → voice_core。",
     "完成后调用 submit_rules 提交。",
   ].join("\n");
 }
@@ -157,7 +179,7 @@ function buildDiffUserMessage(diffs: EditDiff[], existingRules: WritingRule[]): 
   const diffsText = diffs
     .map(
       (d, i) =>
-        `【diff ${i + 1}】\nbefore：${d.before.slice(0, 400)}\nafter：${d.after.slice(0, 400)}`,
+        `【diff ${i + 1}｜平台：${d.platform ?? "未知"}】\nbefore：${d.before.slice(0, 400)}\nafter：${d.after.slice(0, 400)}`,
     )
     .join("\n\n");
   return `现有规则：\n${rulesText}\n\n编辑记录：\n${diffsText}`;
@@ -179,6 +201,7 @@ function buildSamplesUserMessage(samples: string[], existingRules: WritingRule[]
 async function persistRules(
   rules: RuleInput[],
   dataDir?: string,
+  forceScope?: RuleScope,
 ): Promise<{ newRules: WritingRule[]; skipped: number }> {
   const profile = await loadProfile(dataDir);
   const existingTexts = new Set((profile?.writingRules ?? []).map((r) => r.rule));
@@ -187,12 +210,18 @@ async function persistRules(
   let skipped = 0;
 
   for (const r of rules) {
+    const scope = forceScope ?? r.scope;
     if (existingTexts.has(r.rule)) {
+      // 仍走 addWritingRule：同文本跨平台重现会触发升格路由（§4.3），不是简单跳过
+      await addWritingRule(
+        { rule: r.rule, source: "auto_distilled", confidence: r.confidence, ...(scope ? { scope } : {}) },
+        dataDir,
+      );
       skipped++;
       continue;
     }
     const written = await addWritingRule(
-      { rule: r.rule, source: "auto_distilled", confidence: r.confidence },
+      { rule: r.rule, source: "auto_distilled", confidence: r.confidence, ...(scope ? { scope } : {}) },
       dataDir,
     );
     const added = written.writingRules.find((w) => w.rule === r.rule);
@@ -298,7 +327,8 @@ export async function analyzeStyleSamples(
     throw new Error("样本分析失败：模型未调用 submit_rules 工具提交规则");
   }
 
-  const { newRules, skipped } = await persistRules(captured.rules, dataDir);
+  // 校准样本产出 = 声音内核种子（PRD-v4 §4.3：代表作蒸馏的是"你的声音"，非平台规范）
+  const { newRules, skipped } = await persistRules(captured.rules, dataDir, "voice_core");
   const evidenceByRule = new Map(captured.rules.map((r) => [r.rule, r.evidence]));
   return {
     newRules,

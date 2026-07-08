@@ -327,14 +327,12 @@ async function styleRecordEditHandler(payload: Record<string, unknown>): Promise
     return { ok: false, error: "需要 before 与 after" };
   }
   try {
+    const dataDir = (payload._dataDir as string) || undefined;
+    const contentId = String(payload.content_id ?? "workbench");
+    // 纠正路由需要平台归属（PRD-v4 §4.3）——按 content_id 反查，查不到不阻断记录
+    const content = await getContent(contentId, dataDir).catch(() => null);
     // field 固定为 "body"（v1 工作台只改正文；title 编辑信号需求出现再扩 payload）
-    await recordDiff(
-      String(payload.content_id ?? "workbench"),
-      "body",
-      before,
-      after,
-      (payload._dataDir as string) || undefined,
-    );
+    await recordDiff(contentId, "body", before, after, dataDir, undefined, content?.platform);
     return { ok: true, data: {} };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

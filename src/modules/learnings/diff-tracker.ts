@@ -15,6 +15,8 @@ export interface EditDiff {
   id: string;
   contentId: string;
   field: "body" | "title" | "hashtags" | "other";
+  /** 纠正发生的平台（纠正路由二分类的输入，PRD-v4 §4.3）。缺省 = 平台未知 */
+  platform?: string;
   before: string;
   after: string;
   /** What specifically changed — short description */
@@ -54,6 +56,7 @@ export async function recordDiff(
   after: string,
   dataDir?: string,
   note?: string,
+  platform?: string,
 ): Promise<EditDiff> {
   const dir = await editsDir(dataDir);
   const id = `diff-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -63,6 +66,7 @@ export async function recordDiff(
     id,
     contentId,
     field,
+    ...(platform ? { platform } : {}),
     before: before.slice(0, 2000),
     after: after.slice(0, 2000),
     ...(note ? { changeType: note } : {}),

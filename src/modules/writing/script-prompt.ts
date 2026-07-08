@@ -6,6 +6,7 @@
  */
 import type { TrackPack, StructureMode, QualityGateSpec } from "../packs/pack-schema.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
+import { rulesForPlatform } from "../profile/creator-profile.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 
 export interface ScriptRequest {
@@ -58,7 +59,7 @@ function buildSystemPrompt(pack: TrackPack, profile: CreatorProfile | null, plat
     parts.push("");
   }
 
-  const profileSection = profile ? renderProfile(profile) : "";
+  const profileSection = profile ? renderProfile(profile, platform) : "";
   if (profileSection) parts.push(profileSection);
 
   // Compliance
@@ -116,10 +117,11 @@ function renderStructure(pack: TrackPack): string {
   return parts.join("\n");
 }
 
-function renderProfile(profile: CreatorProfile): string {
+function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform): string {
   const parts: string[] = [];
 
-  const activeRules = profile.writingRules.filter((r) => !r.disabled);
+  // 声音内核 + 当前平台包，其余平台的规则不进上下文（PRD-v4 §4.3 隔离）
+  const activeRules = rulesForPlatform(profile, platform);
   if (activeRules.length > 0) {
     parts.push("## 个人写作规则");
     for (const rule of activeRules) {

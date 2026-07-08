@@ -73,7 +73,7 @@ async function readDistillState(): Promise<{ lastDistilledAt?: string }> {
  * Each execute return value is pushed into execResults.
  */
 function makeRunLoop(
-  ruleBatches: Array<Array<{ rule: string; evidence: string; confidence: number }>>,
+  ruleBatches: Array<Array<{ rule: string; evidence: string; confidence: number; scope?: string }>>,
   execResults: string[] = [],
 ): (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> {
   return async (_cfg, opts) => {
@@ -334,5 +334,43 @@ describe("analyzeStyleSamples", () => {
     await expect(analyzeStyleSamples([], testDir, { runLoopImpl })).rejects.toThrow(
       /samples|样本/i,
     );
+  });
+
+  // 10. Calibration samples always land as voice_core, even if the model tags a platform
+  it("forces voice_core scope on sample-derived rules (§4.3: 校准样本 = 声音内核种子)", async () => {
+    const scoped = [
+      { rule: "标题带数字", evidence: "样本1标题", confidence: 0.9, scope: "platform:wechat_mp" },
+    ];
+    const runLoopImpl = makeRunLoop([scoped]);
+    await analyzeStyleSamples(["样本正文"], testDir, { runLoopImpl });
+
+    const profile = JSON.parse(await fs.readFile(path.join(testDir, "creator-profile.json"), "utf-8"));
+    expect(profile.writingRules[0].scope).toBe("voice_core");
+  });
+});
+
+describe("scope routing through distillStyleRules", () => {
+  it("persists the scope submitted by the model (纠正记入发生平台)", async () => {
+    await recordDiff("c1", "body", "旧正文", "新正文", testDir, undefined, "wechat_mp");
+
+    const scoped = [
+      { rule: "公众号正文空行分段", evidence: "diff1", confidence: 0.8, scope: "platform:wechat_mp" },
+    ];
+    const runLoopImpl = makeRunLoop([scoped]);
+    const result = await distillStyleRules(testDir, { runLoopImpl });
+
+    expect(result.newRules).toHaveLength(1);
+    expect(result.newRules[0].scope).toBe("platform:wechat_mp");
+  });
+
+  it("rejects malformed scope via submit_rules self-correction", async () => {
+    await recordDiff("c1", "body", "旧", "新", testDir);
+
+    const bad = [{ rule: "规则", evidence: "e", confidence: 0.5, scope: "wechat_mp" }];
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop([bad, GOOD_RULES], execResults);
+    await distillStyleRules(testDir, { runLoopImpl });
+
+    expect(execResults[0]).toContain("scope");
   });
 });
