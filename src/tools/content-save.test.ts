@@ -214,6 +214,89 @@ describe("executeContentSave", () => {
     });
   });
 
+  describe("auto style distill on update", () => {
+    const fakeResult = {
+      newRules: [{ rule: "多用口语", source: "auto_distilled", confidence: 0.8 }],
+      skippedDuplicates: 0,
+      diffsAnalyzed: 3,
+      summary: "🎯 学到 1 条新偏好：多用口语",
+    };
+
+    async function seedContent(): Promise<string> {
+      const createRes = await executeContentSave({
+        action: "save",
+        title: "T",
+        body: "Original body",
+        _dataDir: testDir,
+      });
+      expect(createRes.ok).toBe(true);
+      return (createRes.content as any).id;
+    }
+
+    it("auto-distills and returns styleLearned when enough diffs accumulated", async () => {
+      const contentId = await seedContent();
+      const shouldDistillImpl = vi.fn().mockResolvedValue(true);
+      const distillImpl = vi.fn().mockResolvedValue(fakeResult);
+
+      const updateRes = await executeContentSave(
+        { action: "update", id: contentId, body: "Updated body", _dataDir: testDir },
+        { shouldDistillImpl, distillImpl },
+      );
+
+      expect(updateRes.ok).toBe(true);
+      expect(shouldDistillImpl).toHaveBeenCalledWith(testDir);
+      expect(distillImpl).toHaveBeenCalledWith(testDir);
+      expect((updateRes as any).styleLearned).toEqual(fakeResult);
+    });
+
+    it("does not distill when not enough diffs accumulated", async () => {
+      const contentId = await seedContent();
+      const shouldDistillImpl = vi.fn().mockResolvedValue(false);
+      const distillImpl = vi.fn();
+
+      const updateRes = await executeContentSave(
+        { action: "update", id: contentId, body: "Updated body", _dataDir: testDir },
+        { shouldDistillImpl, distillImpl },
+      );
+
+      expect(updateRes.ok).toBe(true);
+      expect(distillImpl).not.toHaveBeenCalled();
+      expect((updateRes as any).styleLearned).toBeUndefined();
+    });
+
+    it("keeps the save successful when distill throws", async () => {
+      const contentId = await seedContent();
+      const shouldDistillImpl = vi.fn().mockResolvedValue(true);
+      const distillImpl = vi.fn().mockRejectedValue(new Error("no model provider"));
+
+      const updateRes = await executeContentSave(
+        { action: "update", id: contentId, body: "Updated body", _dataDir: testDir },
+        { shouldDistillImpl, distillImpl },
+      );
+
+      expect(updateRes.ok).toBe(true);
+      expect((updateRes as any).styleLearned).toBeUndefined();
+
+      const getRes = await executeContentSave({ action: "get", id: contentId, _dataDir: testDir });
+      expect((getRes.content as any).body).toBe("Updated body");
+    });
+
+    it("does not distill when body is unchanged", async () => {
+      const contentId = await seedContent();
+      const shouldDistillImpl = vi.fn().mockResolvedValue(true);
+      const distillImpl = vi.fn();
+
+      const updateRes = await executeContentSave(
+        { action: "update", id: contentId, title: "New title", _dataDir: testDir },
+        { shouldDistillImpl, distillImpl },
+      );
+
+      expect(updateRes.ok).toBe(true);
+      expect(shouldDistillImpl).not.toHaveBeenCalled();
+      expect(distillImpl).not.toHaveBeenCalled();
+    });
+  });
+
   describe("create", () => {
     it("should not record a diff when creating new content", async () => {
       const res = await executeContentSave({

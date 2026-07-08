@@ -268,6 +268,56 @@ describe("Status Transitions", () => {
   });
 });
 
+// --- Legacy status normalization on read (S2.7 pre-dogfood hardening) ---
+
+/** Write a meta.json straight to disk with an arbitrary (possibly legacy) status. */
+async function seedLegacyContent(id: string, status: string): Promise<void> {
+  const projDir = path.join(testDir, "contents", id);
+  await fs.mkdir(projDir, { recursive: true });
+  const meta = {
+    id,
+    title: `legacy ${status}`,
+    body: "body",
+    status,
+    tags: [],
+    siblings: [],
+    hashtags: [],
+    publishedAt: null,
+    publishUrl: null,
+    performanceData: {},
+    assets: [],
+    versions: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await fs.writeFile(path.join(projDir, "meta.json"), JSON.stringify(meta, null, 2), "utf-8");
+}
+
+describe("Legacy status normalization on read", () => {
+  it("listContents normalizes legacy 'draft'/'review' to new status names", async () => {
+    await seedLegacyContent("legacy-draft", "draft");
+    await seedLegacyContent("legacy-review", "review");
+
+    const contents = await listContents(testDir);
+    const byId = Object.fromEntries(contents.map((c) => [c.id, c]));
+
+    expect(byId["legacy-draft"].status).toBe("draft_ready");
+    expect(byId["legacy-review"].status).toBe("reviewing");
+  });
+
+  it("listContents leaves non-legacy statuses untouched", async () => {
+    await seedLegacyContent("modern", "publish_ready");
+    const contents = await listContents(testDir);
+    expect(contents.find((c) => c.id === "modern")!.status).toBe("publish_ready");
+  });
+
+  it("getContent normalizes legacy status on single read", async () => {
+    await seedLegacyContent("legacy-one", "review");
+    const content = await getContent("legacy-one", testDir);
+    expect(content!.status).toBe("reviewing");
+  });
+});
+
 // --- Platform Variants + Siblings ---
 
 describe("Platform Variants & Siblings", () => {

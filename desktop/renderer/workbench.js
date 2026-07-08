@@ -53,14 +53,16 @@ async function renderWorkbench(contentId, container) {
   saveBtn.addEventListener("click", async () => {
     if (editor.value === c.body) { showToast("没有改动"); return; }
     setLoading(saveBtn, true, "保存中...");
-    const before = c.body;
     const r = await safeInvoke(window.autocrew.contentUpdate, { id: contentId, body: editor.value });
     setLoading(saveBtn, false);
     if (!r.ok) { showToast(r.error || "保存失败"); return; }
-    // 手动编辑也是风格学习信号
-    void safeInvoke(window.autocrew.styleRecordEdit, { content_id: contentId, before, after: editor.value });
+    // contentUpdate 内部已记录编辑 diff 并在攒够时自动蒸馏风格规则（styleLearned）
     const vCount = r.content && r.content.versions ? r.content.versions.length : "?";
-    showToast("已存为 v" + vCount);
+    let msg = "已存为 v" + vCount;
+    if (r.styleLearned && r.styleLearned.newRules && r.styleLearned.newRules.length > 0) {
+      msg += " · " + r.styleLearned.summary;
+    }
+    showToast(msg);
     renderWorkbench(contentId, container);
   });
   actions.appendChild(saveBtn);

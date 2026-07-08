@@ -11,6 +11,8 @@ import {
   normalizeLegacyStatus,
 } from "../storage/local-store.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
+import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
+import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 import type { Content } from "../storage/local-store.js";
 
 const ALL_STATUSES = [
@@ -74,10 +76,19 @@ function buildContentUpdates(params: Record<string, unknown>): Partial<Content> 
   return updates;
 }
 
-export async function executeContentSave(params: Record<string, unknown>, deps?: { recordDiffImpl?: typeof recordDiff }) {
+export async function executeContentSave(
+  params: Record<string, unknown>,
+  deps?: {
+    recordDiffImpl?: typeof recordDiff;
+    shouldDistillImpl?: typeof shouldDistillStyle;
+    distillImpl?: typeof distillStyleRules;
+  },
+) {
   const action = (params.action as string) || "save";
   const dataDir = (params._dataDir as string) || undefined;
   const recordDiffImpl = deps?.recordDiffImpl || recordDiff;
+  const shouldDistillImpl = deps?.shouldDistillImpl || shouldDistillStyle;
+  const distillImpl = deps?.distillImpl || distillStyleRules;
 
   if (action === "list") {
     const contents = await listContents(dataDir);
@@ -106,6 +117,7 @@ export async function executeContentSave(params: Record<string, unknown>, deps?:
     if (!updated) return { ok: false, error: `Content ${id} not found` };
 
     // Record diff if body changed
+    let styleLearned: StyleDistillResult | undefined;
     if (newBody && newBody !== oldBody) {
       try {
         await recordDiffImpl(id, "body", oldBody, newBody, dataDir, params.diff_note as string | undefined);
@@ -117,9 +129,22 @@ export async function executeContentSave(params: Record<string, unknown>, deps?:
           warning: `diff 记录失败：${errorMsg}，稿件已正常保存`,
         };
       }
+
+      // Auto-distill style rules once enough edits accumulate. Best-effort:
+      // a missing model provider or any distill error must never fail the save —
+      // the user's edit is already persisted.
+      try {
+        if (await shouldDistillImpl(dataDir)) {
+          styleLearned = await distillImpl(dataDir);
+        }
+      } catch {
+        /* distill is best-effort; the edit is saved regardless */
+      }
     }
 
-    return { ok: true, content: updated };
+    return styleLearned
+      ? { ok: true, content: updated, styleLearned }
+      : { ok: true, content: updated };
   }
 
   if (action === "transition") {

@@ -233,6 +233,17 @@ export async function saveContent(
   return full;
 }
 
+/**
+ * Normalize a content's status at the read boundary so no downstream consumer
+ * ever sees a legacy value. Write paths already normalize (content-save.ts), but
+ * pre-S2.7 drafts on disk can still carry "draft"/"review"; normalizing here means
+ * every list/get reader (renderer panels, dashboard, flywheel, baselines) is covered
+ * in one place. normalizeLegacyStatus is idempotent, so new statuses pass through.
+ */
+function withNormalizedStatus(c: Content): Content {
+  return { ...c, status: normalizeLegacyStatus(c.status) };
+}
+
 export async function listContents(dataDir?: string): Promise<Content[]> {
   const dir = path.join(getDataDir(dataDir), "contents");
   await ensureDir(dir);
@@ -266,21 +277,23 @@ export async function listContents(dataDir?: string): Promise<Content[]> {
       }
     } catch { /* skip */ }
   }
-  return contents.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return contents
+    .map(withNormalizedStatus)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function getContent(id: string, dataDir?: string): Promise<Content | null> {
   const projDir = path.join(getDataDir(dataDir), "contents", id);
   try {
     const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
-    return JSON.parse(raw);
+    return withNormalizedStatus(JSON.parse(raw));
   } catch {
     // Legacy flat file fallback (DEPRECATED — will be removed in v0.3.0)
     const legacyPath = path.join(getDataDir(dataDir), "contents", `${id}.json`);
     try {
       console.warn(`[autocrew] DEPRECATED: Reading legacy flat file for content "${id}". Run migration to project-directory format.`);
       const raw = await fs.readFile(legacyPath, "utf-8");
-      return JSON.parse(raw);
+      return withNormalizedStatus(JSON.parse(raw));
     } catch {
       return null;
     }
