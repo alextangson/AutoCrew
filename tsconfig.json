@@ -25,6 +25,7 @@
     "mcp/**/*.ts",
     "desktop/main.ts",
     "desktop/preload.ts",
+    "desktop/server.ts",
     "scripts/**/*.mts"
   ],
   "exclude": [

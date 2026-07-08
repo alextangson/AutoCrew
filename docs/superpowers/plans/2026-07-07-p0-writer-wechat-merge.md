@@ -164,3 +164,21 @@ pack-schema 扩展字段按 0-2 定：结构模式轮换表、Quality Gate 阈�
 | E2E 验证 | CDP 全链演练：队列 → 审稿直达 → 轻改采纳 → 回今日，工作日志实时流出「你裁决了《…》：轻改采纳（采纳率 100%）」，落盘与推送双通道均验证 |
 
 二期余量：目的页收编为二级对象管理、点员工头像=过滤（当前仍是切视图，§7.3-3 完全体）、雷达/pipeline 组件并入 store 订阅。三期：总监 L2 循环接入（硬前提：文案转正）。
+
+### 2026-07-08 交付形态迁移 — Electron 窗口 → 本地 server + 浏览器 dashboard（PRD-v4 §11）
+
+创始人裁决:app 形态限制太死(改前端要重建重启、单窗、包重),要 Polsia 式浏览器 dashboard。落地:
+
+| 件 | 落点 |
+|---|---|
+| 本地 server | `desktop/server.ts`:Node 原生 http(零新依赖),复用 `buildIpcHandlers()`;IPC 通道 → `POST /api/invoke`,event-hub → SSE `/api/events` |
+| 安全 | 绑 127.0.0.1 + 启动 token(header/query)+ Host 白名单(防 DNS-rebinding);无 token 403、伪造 Host 403 均已验证 |
+| 前端传输层 | `desktop/renderer/transport.js`:fetch + EventSource 复刻 preload 的 `window.autocrew` 表面;`config.js`(server 动态生成)注入 token + 通道表 |
+| 脚本 | `npm run serve` = tsx desktop/server.ts |
+| 引擎 | 一行未动(本就 electron-free);Electron `main.ts` 保留但降级为「以后可选的壳」 |
+
+**红线**:server 永远本地,绝不上云(上云=护城河消失,PRD-v4 §11 写死)。
+
+E2E 验证(真实 Chrome,非 Electron):`http://127.0.0.1:4317/` 渲染出创始人真实 `~/.autocrew` 数据(待审队列 5 篇真稿、雷达真热点、94 天草稿告警);config/transport/markdown 全 200,SSE ready 帧通且 token 保护;TSC 干净,vitest 730/730。
+
+**注**:本次只迁移「交付形态」(Electron→浏览器),IA 仍是旧五页导航。三栏(内容流|大工作台|总编辑对话)重构是下一步——已出 mockup 并经创始人认可方向。

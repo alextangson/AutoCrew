@@ -37,7 +37,8 @@
     "format": "prettier --write \"src/**/*.ts\" \"mcp/**/*.ts\" index.ts",
     "check": "npm run typecheck && npm run lint && npm test",
     "build:desktop": "tsx scripts/build-desktop.mts && tsx scripts/smoke-desktop-load.mts",
-    "app": "npm run build:desktop && electron desktop/dist/main.cjs"
+    "app": "npm run build:desktop && electron desktop/dist/main.cjs",
+    "serve": "tsx desktop/server.ts"
   },
   "openclaw": {
     "extensions": [
