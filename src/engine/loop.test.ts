@@ -284,7 +284,9 @@ describe("anthropic protocol", () => {
     expect(calls[0].headers["x-api-key"]).toBe("sk-ant-test");
     expect(calls[0].headers["anthropic-version"]).toBe("2023-06-01");
     expect(calls[0].body.system).toBe("你是编辑部");
-    expect(calls[0].body.max_tokens).toBe(16000);
+    expect(calls[0].body.max_tokens).toBe(16000); // 公众号包要 5000-6000 字,不能砍太狠
+    expect(calls[0].body.stream).toBe(true); // 流式:避 Cloudflare 边缘超时
+    expect(calls[0].body.thinking).toBeUndefined(); // 不禁 thinking——禁了会在此 relay 挂死(dogfood 教训)
     const tools = calls[0].body.tools as Array<{ name: string; input_schema: unknown }>;
     expect(tools[0].name).toBe("echo");
     expect(tools[0].input_schema).toEqual({ type: "object", properties: {} });
@@ -327,5 +329,130 @@ describe("anthropic protocol", () => {
     await expect(
       runLoop(ACFG, { model: "claude-x", systemPrompt: "s", userMessage: "u", fetchImpl: impl }),
     ).rejects.toThrow(/invalid model/);
+  });
+});
+
+// ── SSE 流式解析（Cloudflare 524 根治,dogfood 驱动）───────────────────────────
+describe("streaming (SSE)", () => {
+  /** 把 SSE 文本切成任意大小的 chunk 喂进 ReadableStream,验证跨 chunk line-buffering */
+  function sseResponse(sse: string, chunkSize = 7): Response {
+    const bytes = new TextEncoder().encode(sse);
+    let i = 0;
+    const stream = new ReadableStream({
+      pull(ctrl) {
+        if (i >= bytes.length) { ctrl.close(); return; }
+        ctrl.enqueue(bytes.slice(i, i + chunkSize));
+        i += chunkSize;
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }
+  const ev = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+  const ACFG: EngineConfig = { apiKey: "sk-ant", baseUrl: "https://relay/claude", strongModel: "c", fastModel: "c", protocol: "anthropic" };
+  const OCFG: EngineConfig = { apiKey: "sk", baseUrl: "https://relay", strongModel: "m", fastModel: "m", protocol: "openai" };
+
+  it("anthropic text stream: deltas accumulate, thinking ignored, tokens summed", async () => {
+    const sse =
+      ev("message_start", { message: { usage: { input_tokens: 20 } } }) +
+      ev("content_block_start", { index: 0, content_block: { type: "thinking" } }) +
+      ev("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "想一下" } }) +
+      ev("content_block_start", { index: 1, content_block: { type: "text" } }) +
+      ev("content_block_delta", { index: 1, delta: { type: "text_delta", text: "本地部署" } }) +
+      ev("content_block_delta", { index: 1, delta: { type: "text_delta", text: "AI 的主权" } }) +
+      ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 80 } }) +
+      ev("message_stop", {});
+    const impl = (async () => sseResponse(sse)) as typeof fetch;
+    const r = await runLoop(ACFG, { model: "c", systemPrompt: "s", userMessage: "u", fetchImpl: impl });
+    expect(r.finalMessage).toBe("本地部署AI 的主权"); // thinking 不进正文
+    expect(r.totalTokens).toBe(100);
+  });
+
+  it("anthropic tool_use stream: partial_json split across events reassembles", async () => {
+    const calls: unknown[] = [];
+    const tool: LoopTool = {
+      name: "submit", description: "d",
+      parameters: { type: "object", properties: { title: { type: "string" } }, required: ["title"] },
+      execute: (a) => { calls.push(a); return "ok"; },
+    };
+    const turn1 =
+      ev("message_start", { message: { usage: { input_tokens: 5 } } }) +
+      ev("content_block_start", { index: 0, content_block: { type: "tool_use", id: "t1", name: "submit" } }) +
+      ev("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: '{"title":"本地' } }) +
+      ev("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: 'AI"}' } }) +
+      ev("message_delta", { delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } }) +
+      ev("message_stop", {});
+    const turn2 =
+      ev("message_start", { message: { usage: { input_tokens: 8 } } }) +
+      ev("content_block_start", { index: 0, content_block: { type: "text" } }) +
+      ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "完成" } }) +
+      ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } }) +
+      ev("message_stop", {});
+    let n = 0;
+    const impl = (async () => sseResponse([turn1, turn2][n++]))  as typeof fetch;
+    const r = await runLoop(ACFG, { model: "c", systemPrompt: "s", userMessage: "u", tools: [tool], fetchImpl: impl });
+    expect(calls).toEqual([{ title: "本地AI" }]); // 跨 event 的 partial_json 正确拼回
+    expect(r.finalMessage).toBe("完成");
+  });
+
+  it("mid-stream termination retries the whole call and succeeds (dogfood: relay 掐断长流)", async () => {
+    const good =
+      ev("message_start", { message: { usage: { input_tokens: 5 } } }) +
+      ev("content_block_start", { index: 0, content_block: { type: "text" } }) +
+      ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "重试成功" } }) +
+      ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } }) +
+      ev("message_stop", {});
+    let n = 0;
+    const impl = (async () => {
+      n++;
+      if (n === 1) throw new TypeError("terminated"); // 第一次:relay 中途掐断
+      return sseResponse(good);
+    }) as typeof fetch;
+    const r = await runLoop(ACFG, { model: "c", systemPrompt: "s", userMessage: "u", fetchImpl: impl });
+    expect(n).toBe(2); // 重发整轮
+    expect(r.finalMessage).toBe("重试成功");
+  });
+
+  it("idle timeout aborts a hung stream and retries (relay 无响应/中途卡死)", async () => {
+    const good =
+      ev("message_start", { message: { usage: { input_tokens: 5 } } }) +
+      ev("content_block_start", { index: 0, content_block: { type: "text" } }) +
+      ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "空闲后重试成功" } }) +
+      ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } }) +
+      ev("message_stop", {});
+    let n = 0;
+    const impl = (async (_url: unknown, init?: { signal?: AbortSignal }) => {
+      n++;
+      if (n === 1) {
+        // 第一次:发一点字节后挂起（pull 永不 resolve,直到 abort 时 reject）——模拟 undici 信号中止读取
+        const signal = init?.signal;
+        const stream = new ReadableStream({
+          start(ctrl) { ctrl.enqueue(new TextEncoder().encode("event: ping\ndata: {}\n\n")); },
+          pull() {
+            return new Promise((_, reject) => {
+              if (!signal) return; // 无信号则永挂（测试保底靠 vitest 超时,不该走到）
+              signal.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted")), { once: true });
+            });
+          },
+        });
+        return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      return sseResponse(good);
+    }) as typeof fetch;
+    const r = await runLoop(ACFG, { model: "c", systemPrompt: "s", userMessage: "u", fetchImpl: impl, idleTimeoutMs: 60 });
+    expect(n).toBe(2); // 挂起被中止 → 重发整轮
+    expect(r.finalMessage).toBe("空闲后重试成功");
+  });
+
+  it("openai text stream: delta.content accumulates, usage from final chunk", async () => {
+    const sse =
+      "data: " + JSON.stringify({ choices: [{ delta: { content: "你好" } }] }) + "\n\n" +
+      "data: " + JSON.stringify({ choices: [{ delta: { content: "世界" }, finish_reason: "stop" }] }) + "\n\n" +
+      "data: " + JSON.stringify({ choices: [], usage: { total_tokens: 42 } }) + "\n\n" +
+      "data: [DONE]\n\n";
+    const impl = (async () => sseResponse(sse)) as typeof fetch;
+    const r = await runLoop(OCFG, { model: "m", systemPrompt: "s", userMessage: "u", fetchImpl: impl });
+    expect(r.finalMessage).toBe("你好世界");
+    expect(r.totalTokens).toBe(42);
   });
 });

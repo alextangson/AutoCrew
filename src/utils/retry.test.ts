@@ -56,6 +56,18 @@ describe("withRetry", () => {
     );
     expect(result).toBe("recovered");
   });
+
+  it("retries undici stream terminations (terminated / other side closed / ECONNRESET)", async () => {
+    for (const msg of ["terminated", "other side closed", "ECONNRESET", "UND_ERR_SOCKET"]) {
+      let attempt = 0;
+      const result = await withRetry(
+        async () => { attempt++; if (attempt < 2) throw new Error(msg); return "ok"; },
+        { maxRetries: 2, baseDelayMs: 1 },
+      );
+      expect(result, msg).toBe("ok");
+      expect(attempt, msg).toBe(2);
+    }
+  });
 });
 
 describe("checkFetchResponse", () => {
@@ -72,6 +84,13 @@ describe("checkFetchResponse", () => {
   it("throws RetryableError for 503", () => {
     const res = { ok: false, status: 503 } as Response;
     expect(() => checkFetchResponse(res, "test")).toThrow(RetryableError);
+  });
+
+  it("throws RetryableError for Cloudflare 524/520/522 (relay 边缘超时,dogfood 实测)", () => {
+    for (const status of [408, 504, 520, 522, 524]) {
+      const res = { ok: false, status } as Response;
+      expect(() => checkFetchResponse(res, "test"), `HTTP ${status}`).toThrow(RetryableError);
+    }
   });
 
   it("throws regular Error for 400", () => {

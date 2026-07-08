@@ -1,8 +1,11 @@
 /**
  * Retry utility — exponential backoff for external API calls.
  *
- * Retries on network errors and 429/500/502/503 status codes.
+ * Retries on network errors and transient upstream status codes.
  * Does NOT retry on 400/401/403/404 (client errors).
+ *
+ * 524/520/522/408 = Cloudflare 边缘瞬时超时（relay 在 CF 后面时长文生成常触发）。
+ * dogfood 实测:公众号长文单次调用曾 524 直接终止——加入重试集。
  */
 
 export interface RetryOptions {
@@ -11,7 +14,7 @@ export interface RetryOptions {
   maxDelayMs?: number;
 }
 
-const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504, 520, 522, 524]);
 
 export class RetryableError extends Error {
   constructor(
@@ -26,8 +29,14 @@ export class RetryableError extends Error {
 function isRetryable(err: unknown): boolean {
   if (err instanceof RetryableError) return true;
   if (err instanceof TypeError && err.message.includes("fetch")) return true; // Network error
-  if (err instanceof Error && err.message.includes("ECONNREFUSED")) return true;
-  if (err instanceof Error && err.message.includes("ETIMEDOUT")) return true;
+  // 每轮硬超时中止（AbortSignal.timeout）:relay 挂起,中止后应重试整轮
+  if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) return true;
+  if (err instanceof Error) {
+    const m = err.message;
+    // undici 流式连接被中途掐断（relay 长流时会发生,dogfood 实测）+ 空闲超时中止 + 常见网络瞬时错误
+    if (m === "terminated" || m.includes("other side closed") || m.includes("UND_ERR")) return true;
+    if (m.includes("idle timeout") || m.includes("aborted") || m.includes("ECONNREFUSED") || m.includes("ECONNRESET") || m.includes("ETIMEDOUT") || m.includes("EPIPE")) return true;
+  }
   return false;
 }
 
