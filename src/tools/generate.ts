@@ -56,6 +56,8 @@ type GenerateSuccess = {
     body: string;
     hashtags: string[];
     violations: string[];
+    /** IA v4.2 §B5：本稿注入的个人规则数，draft 卡标注「越用越像你」 */
+    rulesApplied: number;
     tokensUsed: number;
   };
 };
@@ -125,6 +127,7 @@ export async function executeGenerate(
         body: result.body,
         hashtags: result.hashtags,
         violations: result.violations,
+        rulesApplied: result.rulesApplied ?? 0,
         tokensUsed: result.tokensUsed,
       },
     };

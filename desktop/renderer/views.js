@@ -1,7 +1,6 @@
 /**
- * 中央视图切换（IA v3）：看板(主区首页) + 目的页(次级,菜单进入)。
+ * 中央视图切换（IA v4.2）：Dashboard(经营层首页) → 看板(生产层一级视图) → 目的页(菜单进入)。
  * 对话不再是一个「视图」——它常驻右栏 #chat-zone,始终可见。
- * 目的页(数据/选题/素材/风格/设置)从顶栏「菜单」进入,在主区替换看板显示。
  */
 
 const DEST_TITLES = {
@@ -13,7 +12,7 @@ const DEST_PANEL = {
   library: "panel-library", style: "panel-style", settings: "panel-settings",
 };
 
-let activeView = "board";
+let activeView = "dashboard";
 
 function showViewEl(id) {
   for (const v of document.querySelectorAll("#main-area > .view")) v.classList.add("hidden");
@@ -24,9 +23,15 @@ function showViewEl(id) {
 /** 无左侧导航——保留空函数,兼容历史调用点 */
 function setNavActive() {}
 
-/** view ∈ board | conversation(no-op) | scout|drafts|report|library|style|settings */
+/** view ∈ dashboard(首页) | board | conversation(no-op) | scout|drafts|report|library|style|settings */
 function switchView(view) {
-  if (view === "today" || view === "board") {
+  if (view === "dashboard" || view === "today") {
+    activeView = "dashboard";
+    showViewEl("view-dashboard");
+    if (typeof renderDashboard === "function") renderDashboard();
+    return;
+  }
+  if (view === "board") {
     activeView = "board";
     showViewEl("view-board");
     if (typeof renderBoard === "function") renderBoard();
@@ -51,8 +56,9 @@ function refreshDestination(view) {
   if (view === "settings" && typeof initSettings === "function") initSettings();
 }
 
-/** 对话回合后刷新当前主区(看板 or 活动目的页) */
+/** 对话回合后刷新当前主区(dashboard / 看板 / 活动目的页) */
 function refreshActiveView() {
+  if (activeView === "dashboard") { if (typeof renderDashboard === "function") renderDashboard(); return; }
   if (activeView === "board") { if (typeof renderBoard === "function") renderBoard(); return; }
   if (DEST_PANEL[activeView]) refreshDestination(activeView);
 }
@@ -68,5 +74,9 @@ function initViews() {
     }
   }
   const back = document.getElementById("dest-back");
-  if (back) back.addEventListener("click", () => switchView("board"));
+  if (back) back.addEventListener("click", () => switchView("dashboard"));
+  const logo = document.getElementById("logo-home");
+  if (logo) logo.addEventListener("click", () => switchView("dashboard"));
+  const navBoard = document.getElementById("nav-board");
+  if (navBoard) navBoard.addEventListener("click", () => switchView("board"));
 }

@@ -21,6 +21,7 @@ import type { GateFailure } from "./quality-gate.js";
 import { humanizeZh } from "../humanizer/zh.js";
 import { scanText } from "../filter/sensitive-words.js";
 import { saveContent } from "../../storage/local-store.js";
+import { rulesForPlatform } from "../profile/creator-profile.js";
 
 export type { ScriptRequest };
 
@@ -34,6 +35,8 @@ export interface GeneratedScript {
   violations: string[];
   /** Quality Gate 未过项（空 = 全过或包无 gate）；修复轮耗尽后的残余 FAIL 透出，不静默 */
   gateFailures: string[];
+  /** 本稿注入的个人写作规则数（声音内核+当前平台包——IA v4.2 §B5「越用越像你」可感知） */
+  rulesApplied: number;
   tokensUsed: number;
 }
 
@@ -161,7 +164,8 @@ export async function generateScript(
     );
   }
 
-  return finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, dataDir);
+  const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
+  return finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, dataDir);
 }
 
 /** 后处理：组装 → humanize → 违禁词扫描 → 存稿（draft_ready，同现有写作流）。 */
@@ -170,6 +174,7 @@ async function finalizeScript(
   req: ScriptRequest,
   tokensUsed: number,
   gateFailures: GateFailure[],
+  rulesApplied: number,
   dataDir?: string,
 ): Promise<GeneratedScript> {
   const { title, hook, body: bodyText, cta, hashtags } = payload;
@@ -201,6 +206,7 @@ async function finalizeScript(
     hashtags: cleanHashtags,
     violations,
     gateFailures: gateFailures.map((f) => f.detail),
+    rulesApplied,
     tokensUsed,
   };
 }

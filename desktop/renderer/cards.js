@@ -61,6 +61,11 @@ function cardShell(kicker, title, role) {
 function renderDraftCard(d) {
   const id = d.contentId || d.id; // get_draft 推原始 Content（主键 id），其余统一 contentId
   const el = cardShell("稿件" + (d.platform ? " · " + platformLabel(d.platform) : ""), d.title || "（无标题）", "writer");
+  // 飞轮可见（IA v4.2 §B5）:「越用越像你」必须可感知
+  if (typeof d.rulesApplied === "number" && d.rulesApplied > 0) {
+    el.appendChild(h("p", { class: "muted card-rules-applied" },
+      "✦ 本稿应用了你的 " + d.rulesApplied + " 条写作规则（声音内核 + 平台包）"));
+  }
   if (d.violations && d.violations.length > 0) {
     const warn = h("div", { class: "card-warn" });
     warn.appendChild(h("strong", {}, "风格违规警告"));

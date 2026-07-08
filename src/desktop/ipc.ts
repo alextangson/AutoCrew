@@ -60,6 +60,7 @@
  *   today:summary       {}
  */
 import { buildTodaySummary } from "./today-summary.js";
+import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeStyle } from "../tools/style.js";
@@ -573,6 +574,18 @@ async function todaySummaryHandler(payload: Record<string, unknown>): Promise<Re
   }
 }
 
+/** Dashboard 经营层首屏（IA v4.2 §2）——一次调用返回第一批组件全部数据 */
+async function dashboardSummaryHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    return { ok: true, data: await buildDashboardSummary((payload._dataDir as string) || undefined) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -632,6 +645,7 @@ export function buildIpcHandlers(
     "content:asset_add": contentAssetAddHandler,
     "content:asset_remove": contentAssetRemoveHandler,
     "today:summary": todaySummaryHandler,
+    "dashboard:summary": dashboardSummaryHandler,
     "events:recent": eventsRecentHandler,
   };
 

@@ -1140,3 +1140,35 @@ label {
 .publish-retry-msg { font-size: 13px; margin: 0 0 4px; }
 .publish-confirm-status { margin-top: 8px; font-size: 13px; }
 .btn-mini-primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+/* ── IA v4.2:Dashboard 经营层首页 ──────────────────────────────────────────── */
+#view-dashboard { padding: 20px 24px; overflow-y: auto; }
+.dash-head { display: flex; align-items: baseline; justify-content: space-between; max-width: 1080px; margin: 0 auto 4px; }
+.dash-greet { font-family: Georgia, "Songti SC", "STSong", serif; font-size: 21px; font-weight: 600; margin: 0; }
+.dash-firstrun { max-width: 1080px; margin: 0 auto 12px; }
+.dash-error { max-width: 1080px; margin: 24px auto; }
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; max-width: 1080px; margin: 14px auto 0; align-items: start; }
+.dash-card { margin: 0; }
+.dash-queue { margin-top: 6px; }
+.dash-queue-row { display: flex; align-items: center; gap: 8px; padding: 7px 2px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.dash-queue-row:last-child { border-bottom: none; }
+.dash-queue-row:hover { background: var(--surface); }
+.dash-queue-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.dash-queue-meta { font-size: 11px; flex-shrink: 0; }
+.dash-pri { font-family: var(--font-mono); font-size: 10px; padding: 1px 7px; border-radius: 999px; flex-shrink: 0; border: 1px solid var(--border); color: var(--muted); }
+.dash-pri-overdue { border-color: var(--danger); color: var(--danger); }
+.dash-pri-window { border-color: #854F0B; color: #854F0B; background: #FAEEDA; }
+.dash-hint { font-size: 11px; margin-top: 8px; }
+.dash-insp { margin-top: 6px; }
+.dash-insp-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--border); }
+.dash-insp-row:last-child { border-bottom: none; }
+.dash-insp-body { flex: 1; min-width: 0; }
+.dash-insp-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-insp-reason { font-size: 11px; margin-top: 1px; }
+.dash-pipe { display: flex; gap: 8px; margin-top: 8px; }
+.dash-pipe-cell { flex: 1; text-align: center; padding: 8px 4px; background: var(--surface); border-radius: 8px; }
+.dash-pipe-n { font-size: 22px; font-weight: 600; }
+.dash-pipe-label { font-size: 11px; margin-top: 2px; }
+.wb-review-run { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; margin-bottom: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.card-rules-applied { font-size: 11px; margin: 2px 0 6px; }
+.wb-reason-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 0; font-size: 12px; }

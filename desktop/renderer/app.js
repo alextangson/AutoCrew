@@ -482,6 +482,7 @@ async function loadStyleRules(container) {
 
 initChat();
 initViews();
+window.__reviewQueue = null;
 initSidebar();
 bootOnboarding();
-switchView("board");
+switchView("dashboard"); // IA v4.2：经营层首页,看板降一级视图

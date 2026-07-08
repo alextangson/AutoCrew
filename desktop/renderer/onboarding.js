@@ -18,11 +18,11 @@ async function bootOnboarding() {
 }
 
 function onboardingStepTrack() {
-  const card = cardShell("第 1 步 / 共 3 步", "你的赛道");
-  card.appendChild(h("p", {}, "v1 专注知识口播——讲干货、讲经验、讲认知的口播短视频。"));
+  const card = cardShell("第 1 步 / 共 3 步", "你的主链");
+  card.appendChild(h("p", {}, "默认从公众号图文起步（全链最完整：写稿→审→一键推草稿箱），口播短视频作为第二席位随后开。"));
   const actions = h("div", { class: "card-actions" });
 
-  const okBtn = h("button", { class: "btn-primary" }, "对，我做知识口播");
+  const okBtn = h("button", { class: "btn-primary" }, "好，公众号起步");
   okBtn.addEventListener("click", () => {
     okBtn.disabled = true;
     onboardingStepImport();
@@ -84,8 +84,8 @@ function onboardingStepImport() {
 }
 
 function onboardingStepStyle() {
-  const card = cardShell("第 3 步 / 共 3 步", "风格校准");
-  card.appendChild(h("p", {}, "粘贴 1-5 条你写过、自己最满意的文案（每行一条），我从真实历史里学你的风格。"));
+  const card = cardShell("第 3 步 / 共 3 步", "校准你的声音");
+  card.appendChild(h("p", {}, "粘贴 1-5 篇你写过、自己最满意的文章或文案（每行一条），我从真实作品里学你的声音内核——之后每次你改稿，它都会更像你。"));
   const area = h("textarea", { class: "input-full textarea-absorb", placeholder: "第一条\n第二条\n..." });
   card.appendChild(area);
 
@@ -139,7 +139,27 @@ async function finishOnboarding(skippedAll) {
   const rules = await safeInvoke(window.autocrew.styleRules);
   const ruleCount = rules.ok && rules.data && rules.data.rules ? rules.data.rules.length : 0;
   appendChatMessage("assistant",
-    (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（点首屏顶部的编剧头像可改可停用）。" : "") +
-    "搞定，开工吧。直接说选题，我来写。");
+    (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（工作台的声音内核卡可改可停用）。" : "") +
+    "搞定，开工吧。");
+  // 首稿陪跑（IA v4.2 §3）:校准完成后总编辑主动发起第一篇——一次任务流,不做 wizard 页
+  const escort = cardShell("首稿陪跑", "写你的第一篇公众号稿", "writer");
+  escort.appendChild(h("p", {}, "从灵感库挑一条，或直接给我一个选题——我按你刚校准的声音写一篇公众号稿，你审改后一键推草稿箱，整条链走一遍。"));
+  const escortActions = h("div", { class: "card-actions" });
+  const goBtn = h("button", { class: "btn-primary" }, "从灵感库挑一条开写");
+  goBtn.addEventListener("click", async () => {
+    const topics = await safeInvoke(window.autocrew.topicsList, {});
+    const first = topics.ok && topics.topics && topics.topics[0];
+    if (first) {
+      let brief = "用选题《" + first.title + "》写一篇公众号原生版本";
+      if (first.reason) brief += "。选题上下文——入库理由：" + first.reason;
+      if (first.link) brief += "；参考链接：" + first.link + "（先用 read_url 读原文再写）";
+      sendChat(brief);
+    } else {
+      sendChat("帮我找几个适合我定位的公众号选题");
+    }
+  });
+  escortActions.appendChild(goBtn);
+  escort.appendChild(escortActions);
+  appendCardToStream(escort);
   refreshActiveView();
 }

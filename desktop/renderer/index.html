@@ -10,8 +10,9 @@
 <body>
   <div id="app-wrap">
     <header id="topbar">
-      <span class="logo">AutoCrew · 编辑部</span>
+      <span class="logo" id="logo-home" title="回工作台">AutoCrew · 编辑部</span>
       <div class="topbar-actions">
+        <button id="nav-board" class="btn-secondary">看板</button>
         <button id="new-task" class="btn-primary">＋ 新想法</button>
         <div class="menu-wrap">
           <button id="menu-btn" class="btn-secondary">菜单</button>
@@ -28,7 +29,8 @@
 
     <div id="body-zone">
       <section id="main-area">
-        <section id="view-board" class="view"></section>
+        <section id="view-dashboard" class="view"></section>
+        <section id="view-board" class="view hidden"></section>
         <section id="view-destination" class="view hidden">
           <header id="dest-header">
             <button id="dest-back" class="btn-mini">← 看板</button>
@@ -67,6 +69,7 @@
   <script src="selection.js"></script>
   <script src="workbench.js"></script>
   <script src="board.js"></script>
+  <script src="dashboard.js"></script>
   <script src="library.js"></script>
   <script src="chat.js"></script>
   <script src="today.js"></script>

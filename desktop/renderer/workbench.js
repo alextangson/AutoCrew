@@ -19,6 +19,24 @@ async function renderWorkbench(contentId, container) {
   // 总编辑上下文感知（IA v4.2 §C1）：记录正打开的稿件,随 chat:turn 上行
   window.__wbOpenContent = { id: c.id, title: c.title || "", platform: c.platform || "" };
 
+  // 连续审稿模式（IA v4.2 §2）:从 dashboard 待审队列进来时,审完一篇一键下一篇
+  const queue = window.__reviewQueue;
+  if (Array.isArray(queue) && queue.includes(contentId)) {
+    const idx = queue.indexOf(contentId);
+    const bar = h("div", { class: "wb-review-run" });
+    bar.appendChild(h("span", { class: "muted" }, "连续审稿 " + (idx + 1) + "/" + queue.length));
+    if (idx + 1 < queue.length) {
+      const nextBtn = h("button", { class: "btn-mini" }, "下一篇 →");
+      nextBtn.addEventListener("click", () => renderWorkbench(queue[idx + 1], container));
+      bar.appendChild(nextBtn);
+    } else {
+      const doneBtn = h("button", { class: "btn-mini" }, "审完了,回工作台");
+      doneBtn.addEventListener("click", () => { window.__reviewQueue = null; switchView("dashboard"); });
+      bar.appendChild(doneBtn);
+    }
+    container.appendChild(bar);
+  }
+
   // ── 标题 + 状态行 ──
   container.appendChild(h("h3", {}, c.title || "（无标题）"));
   const statusRow = h("div", { class: "wb-status-row" });
@@ -74,20 +92,37 @@ async function renderWorkbench(contentId, container) {
   const adoptRow = h("div", { class: "wb-adopt-row" });
   adoptRow.appendChild(h("span", { class: "muted" }, "采纳裁决："));
   const ADOPT_LABELS = { adopted: "采纳", light_edit: "轻改采纳", rewritten: "重写" };
+  const submitAdoption = async (verdict, label, reason) => {
+    const payload = { id: contentId, verdict };
+    if (reason) payload.reason = reason;
+    const r = await safeInvoke(window.autocrew.contentAdoption, payload);
+    if (!r.ok) { showToast(r.error || "记录失败"); return; }
+    let msg = "已记录：" + label;
+    if (r.stats && r.stats.rate !== null && r.stats.judged > 0) {
+      msg += " · 采纳率 " + Math.round(r.stats.rate * 100) + "%（" + (r.stats.adopted + r.stats.lightEdit) + "/" + r.stats.judged + "）";
+    }
+    showToast(msg);
+    renderWorkbench(contentId, container);
+  };
   for (const verdict of Object.keys(ADOPT_LABELS)) {
     const label = ADOPT_LABELS[verdict];
     const isCurrent = c.adoption && c.adoption.verdict === verdict;
     const btn = h("button", { class: isCurrent ? "btn-mini wb-adopt-current" : "btn-mini" }, isCurrent ? "✓ " + label : label);
     btn.addEventListener("click", async () => {
       btn.disabled = true;
-      const r = await safeInvoke(window.autocrew.contentAdoption, { id: contentId, verdict });
-      if (!r.ok) { btn.disabled = false; showToast(r.error || "记录失败"); return; }
-      let msg = "已记录：" + label;
-      if (r.stats && r.stats.rate !== null && r.stats.judged > 0) {
-        msg += " · 采纳率 " + Math.round(r.stats.rate * 100) + "%（" + (r.stats.adopted + r.stats.lightEdit) + "/" + r.stats.judged + "）";
+      if (verdict !== "rewritten") { await submitAdoption(verdict, label); return; }
+      // §B6 重写原因 chip:最强负信号的一次点击标注——可选,跳过不拦（§10-B 低摩擦裁决不变）
+      const chipRow = h("div", { class: "wb-reason-row" });
+      chipRow.appendChild(h("span", { class: "muted" }, "哪里不行？（可跳过）"));
+      for (const [val, txt] of [["style_mismatch", "风格不像"], ["factual_error", "事实错"], ["structure_bad", "结构差"]]) {
+        const chip = h("button", { class: "btn-mini" }, txt);
+        chip.addEventListener("click", () => submitAdoption("rewritten", label + "·" + txt, val));
+        chipRow.appendChild(chip);
       }
-      showToast(msg);
-      renderWorkbench(contentId, container);
+      const skip = h("button", { class: "btn-mini" }, "跳过");
+      skip.addEventListener("click", () => submitAdoption("rewritten", label));
+      chipRow.appendChild(skip);
+      adoptRow.after(chipRow);
     });
     adoptRow.appendChild(btn);
   }

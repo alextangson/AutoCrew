@@ -59,8 +59,13 @@ export function normalizeLegacyStatus(s: string): ContentStatus {
 /** 采纳裁决（PRD-v4 §8 北极星读数）：口径 = 主观判定，light_edit =「轻改即用」，rewritten =「推倒重写」（裁决 B） */
 export type AdoptionVerdict = "adopted" | "light_edit" | "rewritten";
 
+/** 重写原因 chip（IA v4.2 §B6）——最强负信号的一次点击标注，可选，喂纠正路由 */
+export type RewriteReason = "style_mismatch" | "factual_error" | "structure_bad";
+
 export interface AdoptionRecord {
   verdict: AdoptionVerdict;
+  /** 仅 rewritten 时可选携带（§10-B 低摩擦裁决不变：一次点击，可跳过） */
+  reason?: RewriteReason;
   recordedAt: string;
 }
 
@@ -451,8 +456,15 @@ export async function recordAdoption(
   id: string,
   verdict: AdoptionVerdict,
   dataDir?: string,
+  reason?: RewriteReason,
 ): Promise<Content | null> {
-  return updateContent(id, { adoption: { verdict, recordedAt: new Date().toISOString() } }, dataDir);
+  return updateContent(id, {
+    adoption: {
+      verdict,
+      ...(verdict === "rewritten" && reason ? { reason } : {}),
+      recordedAt: new Date().toISOString(),
+    },
+  }, dataDir);
 }
 
 export interface AdoptionStats {

@@ -50,6 +50,7 @@ export const IPC_CHANNELS = [
   "content:asset_remove",
   "content:adoption",
   "today:summary",
+  "dashboard:summary",
   "events:recent",
   "topics:list",
   "topic:create",

@@ -64,6 +64,11 @@ export const contentSaveSchema = Type.Object({
     enum: ["adopted", "light_edit", "rewritten"],
     description: "Adoption verdict for 'adoption' action: adopted 直接采纳 | light_edit 轻改采纳 | rewritten 推倒重写.",
   })),
+  reason: Type.Optional(Type.Unsafe<string>({
+    type: "string",
+    enum: ["style_mismatch", "factual_error", "structure_bad"],
+    description: "Optional rewrite reason chip for verdict=rewritten (IA v4.2 §B6): style_mismatch 风格不像 | factual_error 事实错 | structure_bad 结构差.",
+  })),
 });
 
 /**
@@ -181,7 +186,13 @@ export async function executeContentSave(
     if (verdict !== "adopted" && verdict !== "light_edit" && verdict !== "rewritten") {
       return { ok: false, error: "verdict must be one of: adopted | light_edit | rewritten" };
     }
-    const updated = await recordAdoption(id, verdict, dataDir);
+    // §B6 重写原因 chip（可选,仅 rewritten）:非法值静默忽略,不阻断裁决落库
+    const rawReason = params.reason as string | undefined;
+    const reason =
+      rawReason === "style_mismatch" || rawReason === "factual_error" || rawReason === "structure_bad"
+        ? rawReason
+        : undefined;
+    const updated = await recordAdoption(id, verdict, dataDir, reason);
     if (!updated) return { ok: false, error: `Content ${id} not found` };
     // 附带全局采纳率：UI toast 直接可见北极星读数（白盒资格线的一部分）
     const stats = await adoptionStats(dataDir);
