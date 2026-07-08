@@ -296,8 +296,9 @@ function buildAnthropicRequest(config: EngineConfig, model: string, messages: Me
   }
 
   // stream:true — 见 buildOpenAiRequest 说明（Cloudflare 边缘超时根治）。
-  // max_tokens 16000:公众号包要 5000-6000 字,包进 submit_script 工具 JSON 后需 ~12000 token
-  // （dogfood 教训:砍到 8000 会截断触发质量门修复循环）。
+  // max_tokens 16000:按最大整稿输出留余量——历史公众号包 5000-6000 字包进 submit_script
+  // 工具 JSON 需 ~12000 token（dogfood 教训:砍到 8000 会截断触发质量门修复循环）。
+  // 现默认 1500-2000 字,但这是上限不是目标,流式下留余量零成本,不随字数裁决下调。
   // 注:不设 thinking:disabled——实测该 relay 上「thinking 禁用 + 自由工具选择」会挂死无首字节;
   //    thinking 默认反而能正常流式生成（只是长,靠流式+空闲超时+重试兜住）。
   const body: Record<string, unknown> = { model, max_tokens: 16000, system, messages: out, stream: true };

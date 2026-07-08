@@ -15,12 +15,12 @@ describe("wechat article pack", () => {
     expect(getPackForPlatform("bilibili")).toBe(KOUBO_PACK);
   });
 
-  it("Quality Gate 阈值 = article-derivation 硬门禁（5000/5/4 + 反模式）", () => {
+  it("Quality Gate 阈值 = 1500-2000 字裁决的等比缩放（1500/3/2 + 反模式）", () => {
     const g = WECHAT_ARTICLE_PACK.qualityGate;
     expect(g).toBeDefined();
-    expect(g!.minChars).toBe(5000);
-    expect(g!.minDataPoints).toBe(5);
-    expect(g!.minImageTags).toBe(4);
+    expect(g!.minChars).toBe(1500);
+    expect(g!.minDataPoints).toBe(3);
+    expect(g!.minImageTags).toBe(2);
     expect(g!.bannedHookPatterns!.length).toBeGreaterThanOrEqual(5);
     for (const p of g!.bannedHookPatterns!) {
       expect(() => new RegExp(p), `非法正则: ${p}`).not.toThrow();
