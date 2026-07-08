@@ -575,19 +575,23 @@ export async function approveCoverVariant(
 
 // --- Content Status Machine ---
 
-/** Valid state transitions: from → allowed targets */
+/**
+ * Valid state transitions: from → allowed targets.
+ * 前向推进 + 显式回退（创始人反馈：状态卡住不能退回）。回退边刻意收敛为
+ * 「退一步」语义,不做任意跳转——保持管线可读,又允许纠错。
+ */
 const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   topic_saved: ["drafting"],
-  drafting: ["draft_ready"],
-  draft_ready: ["reviewing"],
-  reviewing: ["revision", "approved"],
+  drafting: ["draft_ready", "topic_saved"],
+  draft_ready: ["reviewing", "drafting"],
+  reviewing: ["revision", "approved", "draft_ready"],
   revision: ["reviewing", "approved", "draft_ready"],
-  approved: ["cover_pending", "publish_ready"],
-  cover_pending: ["publish_ready"],
-  publish_ready: ["publishing"],
-  publishing: ["published"],
-  published: ["archived"],
-  archived: [],
+  approved: ["cover_pending", "publish_ready", "reviewing"],
+  cover_pending: ["publish_ready", "approved"],
+  publish_ready: ["publishing", "approved"],
+  publishing: ["published", "publish_ready"],
+  published: ["archived", "publish_ready"],
+  archived: ["draft_ready"],
 };
 
 export interface TransitionResult {

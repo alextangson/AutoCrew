@@ -1089,3 +1089,7 @@ label {
 .atom-chip:hover { border-color: var(--ink); }
 .atom-chip-pub { color: var(--success); border-color: var(--success); }
 .atom-stale { margin-top: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--hot); }
+
+/* 编辑器放大 + 居中窄栏(借鉴 qingmo：大编辑区 + 舒适行宽) */
+.board-workbench { max-width: 760px; margin: 0 auto; }
+.board-main .wb-editor { min-height: 62vh; line-height: 1.9; }
