@@ -13,7 +13,7 @@ import { loadEngineConfig } from "../../engine/config.js";
 import { getDataDir } from "../../storage/local-store.js";
 import { listDiffs } from "./diff-tracker.js";
 import type { EditDiff } from "./diff-tracker.js";
-import { loadProfile, addWritingRule } from "../profile/creator-profile.js";
+import { updateProfile, loadProfile, addWritingRule } from "../profile/creator-profile.js";
 import type { WritingRule, RuleScope } from "../profile/creator-profile.js";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -329,6 +329,11 @@ export async function analyzeStyleSamples(
 
   // 校准样本产出 = 声音内核种子（PRD-v4 §4.3：代表作蒸馏的是"你的声音"，非平台规范）
   const { newRules, skipped } = await persistRules(captured.rules, dataDir, "voice_core");
+  // V5.1:代表作吸收成功 = 声音校准完成。此前 styleCalibrated 全库无写入路径,
+  // "已校准"态不可达,dashboard 校准卡永远停在未完成。
+  if (newRules.length > 0 || skipped > 0) {
+    await updateProfile({ styleCalibrated: true }, dataDir);
+  }
   const evidenceByRule = new Map(captured.rules.map((r) => [r.rule, r.evidence]));
   return {
     newRules,

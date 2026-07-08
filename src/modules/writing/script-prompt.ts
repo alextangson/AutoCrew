@@ -6,7 +6,7 @@
  */
 import type { TrackPack, StructureMode, QualityGateSpec } from "../packs/pack-schema.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
-import { rulesForPlatform } from "../profile/creator-profile.js";
+import { rulesForPlatform, personaSummary } from "../profile/creator-profile.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 
 export interface ScriptRequest {
@@ -119,6 +119,17 @@ function renderStructure(pack: TrackPack): string {
 
 function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform): string {
   const parts: string[] = [];
+
+  // 受众画像(V5.1):写手必须知道写给谁——core 层全量,邻近/意外一行带过
+  const audience = personaSummary(profile.audiencePersona, { allTiers: true });
+  if (audience) {
+    parts.push("## 目标受众");
+    parts.push(audience);
+    const triggers = profile.audiencePersona?.core?.scrollStopTriggers ?? [];
+    if (triggers.length > 0) parts.push(`核心受众的停留触发:${triggers.join("、")}`);
+    parts.push("写作时以核心受众为主要对话对象:开头要打中 TA 的处境,论证密度按 TA 的认知水平校准。");
+    parts.push("");
+  }
 
   // 声音内核 + 当前平台包，其余平台的规则不进上下文（PRD-v4 §4.3 隔离）
   const activeRules = rulesForPlatform(profile, platform);

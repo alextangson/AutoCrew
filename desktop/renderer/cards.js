@@ -15,6 +15,8 @@ function renderCard(card) {
     case "topic_saved": return renderTopicSavedCard(card.data);
     case "publish_confirm": return renderPublishConfirmCard(card.data);
     case "assets": return renderAssetsCard(card.data);
+    case "persona": return renderPersonaCard(card.data);
+    case "audience_review": return renderAudienceReviewCard(card.data);
     default: {
       const pre = h("pre", { class: "card-body" });
       pre.textContent = JSON.stringify(card.data, null, 2);
@@ -369,4 +371,55 @@ function appendReviewerCard() {
   el.appendChild(h("p", { class: "muted" },
     "口径声明：过滤目标是「符合平台规则」，不是绕过审核或 AI 标识（合规红线）。"));
   appendCardToStream(el);
+}
+
+/** 受众画像卡（V5.1）——三层画像:提案态提示"待你确认",校准态盖章 */
+function renderPersonaCard(data) {
+  const p = (data && data.persona) || {};
+  const calibrated = Boolean(data && data.calibrated);
+  const el = cardShell(calibrated ? "受众画像 · 已校准" : "受众画像 · 提案(待你确认)", null, "analyst");
+  const TIERS = [["core", "核心受众"], ["adjacent", "邻近受众"], ["surprise", "意外受众"]];
+  for (const [key, label] of TIERS) {
+    const t = p[key];
+    if (!t || !t.name) continue;
+    const box = h("div", { class: "persona-tier" });
+    const head = [t.name, t.age, t.job].filter(Boolean).join(" · ");
+    box.appendChild(h("div", { class: "persona-tier-head" }, label + "：" + head));
+    if (t.coreAnxiety) box.appendChild(h("p", { class: "persona-anxiety" }, "「" + t.coreAnxiety + "」"));
+    if (t.painPoints && t.painPoints.length) {
+      box.appendChild(h("p", { class: "muted" }, "痛点：" + t.painPoints.join("、")));
+    }
+    if (t.scrollStopTriggers && t.scrollStopTriggers.length) {
+      box.appendChild(h("p", { class: "muted" }, "停留触发：" + t.scrollStopTriggers.join("、")));
+    }
+    el.appendChild(box);
+  }
+  if (data && data.basis) el.appendChild(h("p", { class: "muted" }, "依据：" + data.basis));
+  if (!calibrated) {
+    el.appendChild(h("p", { class: "muted" }, "在对话里直接说哪层不准、怎么改；确认后我会存档，此后选题、写作、审稿都按它来。"));
+  }
+  return el;
+}
+
+/** 受众停留审结果卡（V5.1）——逐层判定 + 划走位置 + 修改建议 */
+function renderAudienceReviewCard(data) {
+  const el = cardShell("受众停留审", null, "review");
+  const verdicts = (data && data.verdicts) || [];
+  for (const v of verdicts) {
+    const row = h("div", { class: "stay-row" });
+    row.appendChild(h("span", { class: v.wouldStop ? "stay-yes" : "stay-no" }, v.wouldStop ? "✓ 停留" : "✗ 划走"));
+    row.appendChild(h("span", { class: "stay-name" }, v.name || v.tier));
+    row.appendChild(h("span", { class: "muted" }, v.why || ""));
+    el.appendChild(row);
+    for (const loc of v.losesAt || []) {
+      el.appendChild(h("p", { class: "stay-loses muted" }, "划走点：「" + loc + "」"));
+    }
+  }
+  const suggestions = (data && data.suggestions) || [];
+  if (suggestions.length) {
+    el.appendChild(h("div", { class: "persona-tier-head" }, "怎么改"));
+    for (const s of suggestions) el.appendChild(h("p", { class: "stay-suggest" }, "· " + s));
+  }
+  if (data && data.personaUsed) el.appendChild(h("p", { class: "muted" }, "审稿标准：" + data.personaUsed));
+  return el;
 }

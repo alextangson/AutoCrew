@@ -30,12 +30,77 @@ export interface WritingRule {
   createdAt: string;
 }
 
-export interface AudiencePersona {
+/**
+ * 受众画像单层（IA v5 V5.1）——core=核心受众,adjacent=邻近受众,surprise=意外受众。
+ * 三层结构继承 v2 Phase 0.5 设计与老 muse 系统的存量数据形状。
+ */
+export interface PersonaTier {
   name: string;
   age?: string;
   job?: string;
-  painPoints: string[];
+  /** 核心焦虑一句话——受众停留审与选题评分的判断锚 */
+  coreAnxiety?: string;
+  /** 短语痛点(2-4 个),供选题匹配用(长句匹配不上,必须是短语) */
+  painPoints?: string[];
+  /** 什么内容能让 TA 停下滑动 */
   scrollStopTriggers?: string[];
+}
+
+export interface AudiencePersona {
+  core: PersonaTier;
+  adjacent?: PersonaTier;
+  surprise?: PersonaTier;
+  /** 与用户完成校准的时间;缺省=提案态,未经用户确认 */
+  calibratedAt?: string;
+}
+
+/**
+ * 归一化画像形状:历史扁平记录({name,painPoints,...})升格为 {core:{...}};
+ * 老 muse 遗产数据(core.coreAnxiety 为字符串)原样通过。坏形状返回 null(读侧防御)。
+ */
+export function normalizeAudiencePersona(raw: unknown): AudiencePersona | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const tierOf = (v: unknown): PersonaTier | undefined => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+    const t = v as Record<string, unknown>;
+    if (typeof t.name !== "string" || !t.name.trim()) return undefined;
+    return {
+      name: t.name,
+      ...(typeof t.age === "string" ? { age: t.age } : {}),
+      ...(typeof t.job === "string" ? { job: t.job } : {}),
+      ...(typeof t.coreAnxiety === "string" ? { coreAnxiety: t.coreAnxiety } : {}),
+      ...(Array.isArray(t.painPoints) ? { painPoints: t.painPoints.filter((p): p is string => typeof p === "string") } : {}),
+      ...(Array.isArray(t.scrollStopTriggers) ? { scrollStopTriggers: t.scrollStopTriggers.filter((p): p is string => typeof p === "string") } : {}),
+    };
+  };
+  const core = tierOf(obj.core);
+  if (core) {
+    return {
+      core,
+      ...(tierOf(obj.adjacent) ? { adjacent: tierOf(obj.adjacent) } : {}),
+      ...(tierOf(obj.surprise) ? { surprise: tierOf(obj.surprise) } : {}),
+      ...(typeof obj.calibratedAt === "string" ? { calibratedAt: obj.calibratedAt } : {}),
+    };
+  }
+  // 历史扁平形状:{name, painPoints, ...} → 升格为 core 层
+  const flat = tierOf(obj);
+  return flat ? { core: flat } : null;
+}
+
+/** 画像一行话渲染(prompt/评审共用的唯一口径)。tiers 缺省只渲染 core。 */
+export function personaSummary(persona: AudiencePersona | null | undefined, opts?: { allTiers?: boolean }): string {
+  if (!persona?.core) return "";
+  const one = (label: string, t?: PersonaTier): string => {
+    if (!t) return "";
+    const bits = [t.age, t.job].filter(Boolean).join("·");
+    const anxiety = t.coreAnxiety || (t.painPoints ?? []).slice(0, 3).join("、");
+    return `${label}${t.name}${bits ? `(${bits})` : ""}${anxiety ? `:${anxiety}` : ""}`;
+  };
+  if (!opts?.allTiers) return one("", persona.core);
+  return [one("核心受众=", persona.core), one("邻近受众=", persona.adjacent), one("意外受众=", persona.surprise)]
+    .filter(Boolean)
+    .join(";");
 }
 
 export interface CompetitorAccount {
@@ -114,7 +179,10 @@ export async function loadProfile(dataDir?: string): Promise<CreatorProfile | nu
   const filePath = path.join(getDataDir(dataDir), PROFILE_FILE);
   try {
     const raw = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(raw) as CreatorProfile;
+    const profile = JSON.parse(raw) as CreatorProfile;
+    // 读侧归一(V5.1):历史扁平画像/老 muse 遗产形状 → 三层结构;坏形状置 null 而非带病传播
+    profile.audiencePersona = normalizeAudiencePersona(profile.audiencePersona);
+    return profile;
   } catch {
     return null;
   }

@@ -167,7 +167,10 @@ export function scoreCandidate(
     }
     // Audience match
     if (profile.audiencePersona) {
-      const painPoints = profile.audiencePersona.painPoints || [];
+      // V5.1 三层画像:全层短语痛点参与匹配(coreAnxiety 是长句,匹配不上,不参与)
+      const p = profile.audiencePersona;
+      const painPoints = [p.core, p.adjacent, p.surprise]
+        .flatMap((t) => t?.painPoints ?? []);
       for (const pain of painPoints) {
         if (candidate.title.includes(pain) || candidate.description.includes(pain)) {
           profileFit += 5;

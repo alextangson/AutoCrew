@@ -73,7 +73,7 @@ async function seed(dataDir: string): Promise<void> {
   await saveProfile({
     industry: "AI 效率工具",
     platforms: ["wechat_mp"],
-    audiencePersona: { name: "效率控", painPoints: ["工具太多"] },
+    audiencePersona: { core: { name: "效率控", painPoints: ["工具太多"] } },
     writingRules: [
       { rule: "短句为主", source: "user_explicit", confidence: 1, createdAt: now },
       { rule: "开头不问候", source: "auto_distilled", confidence: 0.9, scope: "voice_core", createdAt: now },

@@ -261,3 +261,63 @@ describe("updateWritingRule", () => {
     await expect(updateWritingRule(0, { rule: "  " }, testDir)).rejects.toThrow("不能为空");
   });
 });
+
+// ─── V5.1 受众画像:三层结构 + 归一化 + 渲染口径 ───────────────────────────────
+
+describe("normalizeAudiencePersona / personaSummary (V5.1)", () => {
+  it("历史扁平形状升格为 core 层;老 muse 嵌套形状原样通过", async () => {
+    const { normalizeAudiencePersona } = await import("./creator-profile.js");
+    const flat = normalizeAudiencePersona({ name: "效率控", painPoints: ["工具太多"], age: "30" });
+    expect(flat!.core.name).toBe("效率控");
+    expect(flat!.core.painPoints).toEqual(["工具太多"]);
+
+    const muse = normalizeAudiencePersona({
+      core: { name: "小林", age: "28", job: "连续创业者", coreAnxiety: "别人用AI在降维打击我" },
+      adjacent: { name: "晓雯", job: "产品经理" },
+      surprise: { name: "老张" },
+      calibratedAt: "2026-07-08T00:00:00.000Z",
+    });
+    expect(muse!.core.coreAnxiety).toContain("降维打击");
+    expect(muse!.adjacent!.name).toBe("晓雯");
+    expect(muse!.calibratedAt).toBe("2026-07-08T00:00:00.000Z");
+  });
+
+  it("坏形状返回 null(读侧防御);loadProfile 读盘时自动归一", async () => {
+    const { normalizeAudiencePersona, saveProfile, loadProfile } = await import("./creator-profile.js");
+    expect(normalizeAudiencePersona(null)).toBeNull();
+    expect(normalizeAudiencePersona("小林")).toBeNull();
+    expect(normalizeAudiencePersona({ core: { age: "28" } })).toBeNull(); // 缺 name
+
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "autocrew-persona-norm-"));
+    try {
+      const now = new Date().toISOString();
+      await saveProfile({
+        industry: "AI", platforms: [], writingRules: [],
+        audiencePersona: { name: "扁平遗产", painPoints: ["p1"] } as never,
+        styleBoundaries: { never: [], always: [] }, competitorAccounts: [],
+        performanceHistory: [], styleCalibrated: false, createdAt: now, updatedAt: now,
+      }, dir);
+      const loaded = await loadProfile(dir);
+      expect(loaded!.audiencePersona!.core.name).toBe("扁平遗产");
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("personaSummary:core 一行;allTiers 三层拼接;空画像空串", async () => {
+    const { personaSummary } = await import("./creator-profile.js");
+    expect(personaSummary(null)).toBe("");
+    const p = {
+      core: { name: "小林", age: "28", job: "创业者", coreAnxiety: "不知道从哪切入" },
+      adjacent: { name: "晓雯", painPoints: ["没技术背景"] },
+    };
+    expect(personaSummary(p)).toBe("小林(28·创业者):不知道从哪切入");
+    const all = personaSummary(p, { allTiers: true });
+    expect(all).toContain("核心受众=小林");
+    expect(all).toContain("邻近受众=晓雯");
+    expect(all).toContain("没技术背景");
+  });
+});

@@ -26,7 +26,7 @@ import { styleSchema, executeStyle } from "./src/tools/style.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
-import { loadProfile, detectMissingInfo } from "./src/modules/profile/creator-profile.js";
+import { personaSummary, loadProfile, detectMissingInfo } from "./src/modules/profile/creator-profile.js";
 import { createContext, type PluginConfig } from "./src/runtime/context.js";
 import { ToolRunner } from "./src/runtime/tool-runner.js";
 import { EventBus } from "./src/runtime/events.js";
@@ -673,7 +673,7 @@ const autocrewPlugin = {
             console.log(`Platforms: ${profile.platforms.length > 0 ? profile.platforms.join(", ") : "(not set)"}`);
             console.log(`Style calibrated: ${profile.styleCalibrated ? "yes" : "no"}`);
             if (profile.audiencePersona) {
-              console.log(`Audience: ${profile.audiencePersona.name} (${profile.audiencePersona.age || "?"}, ${profile.audiencePersona.job || "?"})`);
+              console.log(`Audience: ${personaSummary(profile.audiencePersona, { allTiers: true })}${profile.audiencePersona.calibratedAt ? "" : " (未校准)"}`);
             } else {
               console.log(`Audience: (not set)`);
             }

@@ -1266,3 +1266,14 @@ label {
 .seat-chip-en.seat-chip-on { opacity: 1; }
 .style-seat-row { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; }
 .style-seat-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* V5.1:受众画像卡 + 停留审卡 */
+.persona-tier { margin: 8px 0; padding: 8px 10px; border-left: 2px solid var(--border); }
+.persona-tier-head { font-weight: 700; margin-bottom: 4px; }
+.persona-anxiety { margin: 2px 0; font-style: italic; }
+.stay-row { display: flex; gap: 8px; align-items: baseline; margin: 6px 0 2px; flex-wrap: wrap; }
+.stay-yes { color: var(--ok, #2e7d32); font-weight: 700; }
+.stay-no { color: var(--danger, #c62828); font-weight: 700; }
+.stay-name { font-weight: 700; }
+.stay-loses { margin: 0 0 0 24px; }
+.stay-suggest { margin: 2px 0; }

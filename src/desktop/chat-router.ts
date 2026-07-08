@@ -15,7 +15,9 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { executeResearch } from "../tools/research.js";
-import { addWritingRule, loadProfile, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
+import { addWritingRule, loadProfile, personaSummary, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
+import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
+import { reviewAudienceStay } from "../modules/review/audience-review.js";
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
@@ -26,7 +28,7 @@ import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 export interface ChatCard {
-  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets";
+  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets" | "persona" | "audience_review";
   data: Record<string, unknown>;
 }
 
@@ -65,6 +67,9 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   confirm_published: { role: "review", label: "审核员盖章归档" },
   flywheel_report: { role: "analyst", label: "分析师正在拉数据" },
   search_assets: { role: "writer", label: "编剧在翻素材库" },
+  generate_persona: { role: "analyst", label: "分析师在推导受众画像" },
+  save_persona: { role: "analyst", label: "分析师把校准后的画像归档" },
+  audience_review: { role: "review", label: "审核员代入受众画像审稿" },
 };
 
 export interface ChatHistoryMessage {
@@ -105,7 +110,9 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 9. 用户说「记下来」「存进灵感库」，或对话中聊出一个值得写的想法、用户看中某条候选时，调用 save_topic 落进灵感库——reason 必填，一句话说清为什么值得写（命中定位/对标爆款/读者追问）。存完不要顺手开写，等用户发话。
 10. 推送公众号草稿箱是写操作：调用 push_wechat_draft 只会弹出确认卡，由用户亲手点「推送」执行——你不要宣称已推送，只说「已备好，等你确认」。
 11. 用户贴对标文章链接（「拆解一下」「看看人家怎么写的」）时：先 read_url 读原文，拆出钩子（前 3 句怎么抓人）、结构（骨架几段、各段干什么）、CTA（结尾怎么引导），用一两句话讲给用户；值得借鉴的角度用 save_topic 入库，description 写拆解要点，reason 写「对标拆解 · <账号/来源>」。
-12. 用户想加信息源/订阅某媒体/看海外内容时，调用 manage_radar_sources。加 RSS 前先 read_url 验证链接确实是 feed（内容含 <rss 或 <feed）；用户只给了网站名时，先试常见路径（/feed、/rss）验证，验证不过就说清并建议在设置·情报源里手动处理。海外源（HN/GitHub 等）用 toggle 开关即可。`;
+12. 用户想加信息源/订阅某媒体/看海外内容时，调用 manage_radar_sources。加 RSS 前先 read_url 验证链接确实是 feed（内容含 <rss 或 <feed）；用户只给了网站名时，先试常见路径（/feed、/rss）验证，验证不过就说清并建议在设置·情报源里手动处理。海外源（HN/GitHub 等）用 toggle 开关即可。
+13. 受众画像是选题、写作、审稿共用的标准。用户要「校准受众/画像」或画像缺失、未校准时：generate_persona 出提案 → 带用户逐层过（名字/焦虑/痛点准不准）→ 用户认可后 save_persona 落库。未经用户确认绝不保存；画像未校准时主动提一句（一次就好，别唠叨）。
+14. 用户问「这篇受众会怎么看」「能留住人吗」或要求审稿时，调用 audience_review（稿件 id 在上下文里）。讲结果时按层说人话：谁会停、谁会划走、卡在哪句——引导用户框选那一段直接改。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -432,6 +439,85 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
       },
     },
     {
+      name: "generate_persona",
+      description:
+        "生成三层受众画像提案(core 核心/adjacent 邻近/surprise 意外)。用户要校准受众、问「我的读者是谁」、或画像缺失/未校准需要建立时调用。提案必须与用户逐层确认或修正——不要自行保存,确认后调用 save_persona。",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        try {
+          const { proposal, basis } = await generateAudiencePersonaProposal(dataDir);
+          sink.push({ type: "persona", data: { persona: proposal, basis, calibrated: false } });
+          return JSON.stringify({
+            ok: true,
+            proposal,
+            basis,
+            note: "画像卡已展示。带用户逐层过一遍(名字/焦虑/痛点准不准),收集修正;用户明确认可后调用 save_persona 保存最终版。",
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
+      name: "save_persona",
+      description:
+        "保存用户确认后的受众画像(打校准章,此后作为选题过滤/写作/受众停留审的标准)。只在用户对画像明确认可或给出修正并同意后调用,传入最终三层画像。",
+      parameters: {
+        type: "object",
+        properties: {
+          core: { type: "object", description: "核心受众 {name,age,job,coreAnxiety,painPoints[],scrollStopTriggers[]}" },
+          adjacent: { type: "object", description: "邻近受众,同形状(可省)" },
+          surprise: { type: "object", description: "意外受众,同形状(可省)" },
+        },
+        required: ["core"],
+      },
+      execute: async (args) => {
+        try {
+          const profile = await savePersonaCalibrated(sanitize(args), dataDir);
+          sink.push({ type: "persona", data: { persona: profile.audiencePersona, calibrated: true } });
+          return JSON.stringify({
+            ok: true,
+            summary: personaSummary(profile.audiencePersona, { allTiers: true }),
+            note: "画像已校准落库。选题过滤、写作、受众停留审从现在起都以它为准。",
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
+      name: "audience_review",
+      description:
+        "受众停留审:代入已校准的受众画像审一篇稿——每层受众会不会停下来读完、在哪里会划走、怎么改。用户说「审一下」「受众会怎么看」「这篇能留住人吗」时调用;用户正看着的稿件 id 在上下文里。",
+      parameters: {
+        type: "object",
+        properties: { content_id: { type: "string", description: "稿件 id" } },
+        required: ["content_id"],
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        const res = await d.content({ id: a.content_id, ...dirParams, action: "get" });
+        if (!res.ok) return fail(res.error);
+        const content = res.content as { title?: string; body?: string; platform?: string };
+        try {
+          const result = await reviewAudienceStay(
+            { title: String(content.title ?? ""), body: String(content.body ?? ""), platform: content.platform },
+            dataDir,
+          );
+          sink.push({ type: "audience_review", data: { contentId: a.content_id, ...result } });
+          return JSON.stringify({
+            ok: true,
+            coreStops: result.coreStops,
+            verdicts: result.verdicts,
+            suggestions: result.suggestions,
+            note: "结果卡已展示;把不通过层的原因讲给用户,建议按 losesAt 定位到原文改。",
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
       name: "publish_clipboard",
       description: "把稿件排版成发布文案（用户复制后到平台粘贴发布）。",
       parameters: {
@@ -600,10 +686,14 @@ export async function runChatTurn(params: {
   try {
     const profile = await loadProfile(params.dataDir);
     if (profile?.industry) {
-      const persona = profile.audiencePersona;
+      // V5.1:画像三层结构,personaSummary 是唯一渲染口径
+      const audience = personaSummary(profile.audiencePersona);
       systemPrompt +=
         `\n\n创作者定位：${profile.industry}` +
-        (persona?.name ? `；受众：${persona.name}${persona.painPoints?.length ? `（痛点：${persona.painPoints.slice(0, 3).join("、")}）` : ""}` : "");
+        (audience ? `；核心受众：${audience}` : "") +
+        (profile.audiencePersona && !profile.audiencePersona.calibratedAt
+          ? "（画像未校准,建议提醒用户完成校准）"
+          : "");
     }
     // 席位注入（IA v4.2）:派活、一稿多发只围绕用户开通的平台,不撒网到没开的席位
     if (profile?.platforms?.length) {

@@ -12,7 +12,7 @@ import type { ScoredRadarItem } from "./topic-radar.js";
 import { judgeRelevance } from "./relevance.js";
 import { saveTopic, listTopics, listTrash } from "../../storage/local-store.js";
 import type { Topic } from "../../storage/local-store.js";
-import { loadProfile } from "../profile/creator-profile.js";
+import { loadProfile, personaSummary } from "../profile/creator-profile.js";
 
 const INTAKE_LIMIT = 3;
 const CANDIDATE_POOL = 20;
@@ -50,7 +50,7 @@ export async function intakeRadarTopics(
   // 粗筛:确定性排序取池（免费）;终筛:LLM 语义评分（主路）
   const pool = rankCandidatesScored(cache.items, industry, CANDIDATE_POOL);
   const judge = deps?.judge ?? judgeRelevance;
-  const audience = profile?.audiencePersona?.name ?? "";
+  const audience = personaSummary(profile?.audiencePersona);
   const verdicts = await judge(industry, audience, pool.map((s) => ({ title: s.item.title, source: s.item.source })), dataDir);
 
   let qualified: Array<{ item: ScoredRadarItem["item"]; reason: string }>;
