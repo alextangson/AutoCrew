@@ -97,3 +97,24 @@ describe("protocol auto-detect", () => {
     }
   });
 });
+
+describe("multi-workspace engine.json fallback", () => {
+  it("falls back to the default workspace's engine.json when the sub-workspace has none", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-cfg-ws-"));
+    const saved = process.env.AUTOCREW_DATA_DIR;
+    process.env.AUTOCREW_DATA_DIR = home;
+    try {
+      await fs.writeFile(path.join(home, "engine.json"), JSON.stringify({ apiKey: "sk-shared", baseUrl: "https://relay.example" }));
+      const sub = path.join(home, "workspaces", "ws-muse");
+      await fs.mkdir(sub, { recursive: true });
+
+      const cfg = await loadEngineConfig(sub); // 子工作区无 engine.json → 回退默认
+      expect(cfg.apiKey).toBe("sk-shared");
+      expect(cfg.baseUrl).toBe("https://relay.example");
+    } finally {
+      if (saved === undefined) delete process.env.AUTOCREW_DATA_DIR;
+      else process.env.AUTOCREW_DATA_DIR = saved;
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+});

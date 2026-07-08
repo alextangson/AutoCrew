@@ -16,6 +16,7 @@ import { IPC_CHANNELS, chToMethod } from "../src/desktop/channels.js";
 import { buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js";
 import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
+import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
@@ -117,6 +118,11 @@ const server = http.createServer(async (req, res) => {
     // 契约校验（channel-contracts 是通道形状的单一事实源）:必填缺失在边界拒,不进 handler
     const contractError = validatePayload(channel, clean);
     if (contractError) { res.writeHead(200, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ ok: false, error: contractError })); return; }
+    // 多工作区:active 的 dataDir 由 server 端从注册表解析注入（sanitize 已剥前端伪造,此处注入可信）
+    try {
+      const wsDir = await activeWorkspaceDataDir();
+      if (wsDir) clean._dataDir = wsDir;
+    } catch { /* 注册表异常 → 默认工作区,不阻断 */ }
     const ctx: IpcHandlerContext = {
       onProgress: (e) => {
         broadcast("chat", e);

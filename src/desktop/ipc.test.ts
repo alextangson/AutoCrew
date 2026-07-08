@@ -91,8 +91,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 54 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(54);
+  it("has exactly 57 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(57);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -210,6 +210,9 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "today:summary" &&
           ch !== "dashboard:summary" &&
           ch !== "events:recent" &&
+          ch !== "workspace:list" &&
+          ch !== "workspace:create" &&
+          ch !== "workspace:switch" &&
           ch !== "topics:list" &&
           ch !== "topic:create" &&
           ch !== "topic:delete" &&

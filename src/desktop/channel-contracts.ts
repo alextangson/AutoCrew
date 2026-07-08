@@ -68,6 +68,9 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "today:summary": [],
   "dashboard:summary": [],
   "events:recent": [],
+  "workspace:list": [],
+  "workspace:create": ["name"],
+  "workspace:switch": ["id"],
 } as const;
 
 /**

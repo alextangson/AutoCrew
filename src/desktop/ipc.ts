@@ -63,6 +63,7 @@ import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
 import { startGenerateScript } from "../modules/writing/generate-script.js";
+import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
@@ -694,6 +695,9 @@ export function buildIpcHandlers(
     "today:summary": todaySummaryHandler,
     "dashboard:summary": dashboardSummaryHandler,
     "events:recent": eventsRecentHandler,
+    "workspace:list": workspaceListHandler,
+    "workspace:create": workspaceCreateHandler,
+    "workspace:switch": workspaceSwitchHandler,
   };
 
   // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。
@@ -716,6 +720,34 @@ export function buildIpcHandlers(
 
   if (!deps) return defaults;
   return { ...defaults, ...deps };
+}
+
+// ── workspace:* — 多工作区（一人多 IP,dataDir 只由 server 端从注册表解析） ────
+
+async function workspaceListHandler(): Promise<Record<string, unknown>> {
+  try {
+    return { ok: true, data: await listWorkspaces() };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function workspaceCreateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  try {
+    const ws = await createWorkspace(String(payload.name ?? ""));
+    return { ok: true, workspace: { id: ws.id, name: ws.name } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function workspaceSwitchHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  try {
+    const ws = await switchWorkspace(String(payload.id ?? ""));
+    return { ok: true, workspace: { id: ws.id, name: ws.name } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // ── events:recent — 工作日志回放（P1 一期） ───────────────────────────────────

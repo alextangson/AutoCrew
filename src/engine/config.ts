@@ -49,6 +49,18 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
     fromFile = parseEngineJson(await fs.readFile(filePath, "utf-8"), filePath);
   } catch (err) {
     if ((err as { code?: string }).code !== "ENOENT") throw err;
+    // 多工作区:子工作区（<default>/workspaces/ 下,即注册表创建的）没有自己的 engine.json 时
+    // 回退默认工作区——同一个人,key 不用配两遍。判据收紧到 workspaces/ 前缀:
+    // 任意外部 dataDir（MCP 调用方/测试临时目录）不得静默回退偷读用户真实 key。
+    const workspacesRoot = path.join(getDataDir(), "workspaces") + path.sep;
+    if (getDataDir(dataDir).startsWith(workspacesRoot)) {
+      const defaultPath = path.join(getDataDir(), "engine.json");
+      try {
+        fromFile = parseEngineJson(await fs.readFile(defaultPath, "utf-8"), defaultPath);
+      } catch (fallbackErr) {
+        if ((fallbackErr as { code?: string }).code !== "ENOENT") throw fallbackErr;
+      }
+    }
   }
   const apiKey = fromFile.apiKey ?? (process.env.DEEPSEEK_API_KEY || undefined);
   if (!apiKey) {
