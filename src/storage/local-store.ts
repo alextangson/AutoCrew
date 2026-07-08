@@ -152,6 +152,8 @@ export interface CoverReview {
 
 export function getDataDir(customDir?: string): string {
   if (customDir) return customDir;
+  // 工作区可重定向：冒烟/测试用隔离目录，多工作区切换的地基（IA v4.2 工程线）
+  if (process.env.AUTOCREW_DATA_DIR) return process.env.AUTOCREW_DATA_DIR;
   const home = process.env.HOME || process.env.USERPROFILE || "~";
   return path.join(home, ".autocrew");
 }

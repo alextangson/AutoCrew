@@ -38,7 +38,8 @@
     "check": "npm run typecheck && npm run lint && npm test",
     "build:desktop": "tsx scripts/build-desktop.mts && tsx scripts/smoke-desktop-load.mts",
     "app": "npm run build:desktop && electron desktop/dist/main.cjs",
-    "serve": "tsx desktop/server.ts"
+    "serve": "tsx desktop/server.ts",
+    "smoke": "tsx scripts/smoke-e2e.mts"
   },
   "openclaw": {
     "extensions": [

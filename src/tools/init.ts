@@ -7,12 +7,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { initProfile } from "../modules/profile/creator-profile.js";
+import { getDataDir } from "../storage/local-store.js";
 
-function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
 
 const SUBDIRS = [
   "topics",

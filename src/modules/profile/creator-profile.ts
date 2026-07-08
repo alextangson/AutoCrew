@@ -7,6 +7,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "../../storage/local-store.js";
 
 /**
  * 规则作用域（PRD-v4 §4.3 声音内核/平台包分层）：
@@ -76,11 +77,6 @@ export interface CreatorProfile {
 
 const PROFILE_FILE = "creator-profile.json";
 
-function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
 
 function emptyProfile(): CreatorProfile {
   const now = new Date().toISOString();

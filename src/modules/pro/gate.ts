@@ -6,6 +6,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "../../storage/local-store.js";
 
 export interface ProStatus {
   isPro: boolean;
@@ -16,11 +17,6 @@ export interface ProStatus {
 
 const PRO_FILE = ".pro";
 
-function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
 
 export async function readProKey(dataDir?: string): Promise<string | null> {
   const filePath = path.join(getDataDir(dataDir), PRO_FILE);

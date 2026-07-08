@@ -10,6 +10,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "../../storage/local-store.js";
 
 export interface EditDiff {
   id: string;
@@ -33,11 +34,6 @@ export interface DiffAnalysis {
   summary: string;
 }
 
-function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
 
 async function editsDir(dataDir?: string): Promise<string> {
   const dir = path.join(getDataDir(dataDir), "learnings", "edits");

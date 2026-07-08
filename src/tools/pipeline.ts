@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { getDataDir } from "../storage/local-store.js";
 
 /**
  * autocrew_pipeline — manage automated content pipelines (cron schedules).
@@ -43,11 +44,6 @@ export const pipelineSchema = Type.Object({
   ),
 });
 
-function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
 
 async function pipelinesDir(dataDir?: string): Promise<string> {
   const dir = path.join(getDataDir(dataDir), "pipelines");

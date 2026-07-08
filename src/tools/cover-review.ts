@@ -20,6 +20,7 @@ import {
 import { buildCoverPrompts, type CoverPromptSet } from "../modules/cover/prompt-builder.js";
 import { generateImage, listReferencePhotos, type GeminiModel } from "../adapters/image/gemini.js";
 import { generateMultiRatio } from "../modules/cover/ratio-adapter.js";
+import { getDataDir as resolveDataDir } from "../storage/local-store.js";
 
 type CoverLabel = "a" | "b" | "c";
 
@@ -47,9 +48,7 @@ export const coverReviewSchema = Type.Object({
 });
 
 function getDataDir(params: Record<string, unknown>): string {
-  if (params._dataDir) return params._dataDir as string;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
+  return resolveDataDir((params._dataDir as string) || undefined);
 }
 
 function getGeminiApiKey(params: Record<string, unknown>): string | null {
