@@ -20,7 +20,8 @@ const DIRECT_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string; note: s
   { pattern: /助力/g, replacement: "帮", note: "把“助力”改成具体动作词" },
   { pattern: /打通/g, replacement: "连接", note: "把“打通”改成更具体表达" },
   { pattern: /闭环/g, replacement: "跑通", note: "把“闭环”改成更口语化表达" },
-  { pattern: /深度/g, replacement: "", note: "删除空泛形容词“深度”" },
+  // 只删套话组合，不裸删“深度”——否则“深度学习/深度智联”这类术语被静默肢解
+  { pattern: /深度(?=分析|解读|剖析|洞察|融合)/g, replacement: "", note: "删除空泛形容词“深度”" },
   { pattern: /全方位/g, replacement: "", note: "删除空泛形容词“全方位”" },
   { pattern: /多维度/g, replacement: "", note: "删除空泛形容词“多维度”" },
 ];
@@ -46,26 +47,11 @@ function replaceWithTracking(
   return { text: nextText, count };
 }
 
-function breakLongClauses(text: string): { text: string; count: number } {
-  const lines = text.split("\n");
-  let count = 0;
-  const nextLines = lines.map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return line;
-    const chineseLength = (trimmed.match(/[\u4e00-\u9fff]/g) || []).length;
-    if (chineseLength <= 40) return line;
-
-    const replaced = line
-      .replace(/，(?=[^，。！？]{10,})/, "。")
-      .replace(/；(?=[^；。！？]{8,})/, "。");
-    if (replaced !== line) {
-      count += 1;
-      return replaced;
-    }
-    return line;
-  });
-  return { text: nextLines.join("\n"), count };
-}
+// 2026-07-08 dogfood 裁撤记录（真实成稿受损的证据在 SESSION-9 交接）:
+// - breakLongClauses（逗号→句号硬切长句）:正则不懂语法,切出「创业者找我的时候。十有八九」
+//   这类病句,一篇稿三处;短句节奏由 pack 与风格规则在生成时约束,后处理只会帮倒忙。
+// - addRhythmPhraseIfNeeded（缺“说白了”就插一句固定话）:给所有文章盖同一个指纹,
+//   且插入的内容与选题无关——与 humanizer 的目标（自然口吻）背道而驰。
 
 function simplifyProgressionPhrases(text: string): { text: string; count: number } {
   let count = 0;
@@ -108,21 +94,6 @@ function reduceWeOpenings(text: string): { text: string; count: number } {
   return { text: nextLines.join("\n"), count: changed };
 }
 
-function addRhythmPhraseIfNeeded(text: string): { text: string; count: number } {
-  if (/说白了|你想啊|问题来了/.test(text)) {
-    return { text, count: 0 };
-  }
-
-  const paragraphs = text.split(/\n{2,}/);
-  if (paragraphs.length < 2) {
-    return { text, count: 0 };
-  }
-
-  const next = [...paragraphs];
-  next.splice(1, 0, "说白了，这件事拼的不是工具数量，而是表达和执行。");
-  return { text: next.join("\n\n"), count: 1 };
-}
-
 export function humanizeZh(options: HumanizeZhOptions): HumanizeZhResult {
   const originalText = options.text || "";
   let humanizedText = originalText;
@@ -142,22 +113,10 @@ export function humanizeZh(options: HumanizeZhOptions): HumanizeZhResult {
     changes.push(`打散“首先/其次/最后”顺序词 × ${progression.count}`);
   }
 
-  const longClauses = breakLongClauses(humanizedText);
-  if (longClauses.count > 0) {
-    humanizedText = longClauses.text;
-    changes.push(`拆开过长句子 × ${longClauses.count}`);
-  }
-
   const weOpenings = reduceWeOpenings(humanizedText);
   if (weOpenings.count > 0) {
     humanizedText = weOpenings.text;
     changes.push(`减少“我们”开头句子 × ${weOpenings.count}`);
-  }
-
-  const rhythm = addRhythmPhraseIfNeeded(humanizedText);
-  if (rhythm.count > 0) {
-    humanizedText = rhythm.text;
-    changes.push("补入 1 处口语化节奏句");
   }
 
   humanizedText = normalizeWhitespace(humanizedText);

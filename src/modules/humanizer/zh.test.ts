@@ -41,6 +41,25 @@ describe("humanizeZh", () => {
     expect(result.humanizedText).not.toContain("多维度");
   });
 
+  it("术语保护：深度学习/深度智联不被肢解（2026-07-08 dogfood 回归）", () => {
+    const result = humanizeZh({ text: "深度学习模型的部署，深度智联发布了新品。" });
+    expect(result.humanizedText).toContain("深度学习");
+    expect(result.humanizedText).toContain("深度智联");
+  });
+
+  it("不插固定节奏句：多段落文本缺“说白了”也不得注入模板句（2026-07-08 dogfood 回归）", () => {
+    const text = "第一段讲一个生意。\n\n第二段讲它为什么成立。\n\n第三段给判断。";
+    const result = humanizeZh({ text });
+    expect(result.humanizedText).not.toContain("拼的不是工具数量");
+    expect(result.humanizedText).toBe(text);
+  });
+
+  it("不硬切长句：40+ 字长句的逗号不被改成句号（2026-07-08 dogfood 回归）", () => {
+    const text = "创业者找我的时候，十有八九会说他们已经用人工智能省下了一大笔外包费用，而且只用了三天时间就把原型跑起来了。";
+    const result = humanizeZh({ text });
+    expect(result.humanizedText).toBe(text);
+  });
+
   it("returns original text unchanged when no AI patterns found", () => {
     const clean = "今天天气不错，出去走走吧。";
     const result = humanizeZh({ text: clean });
