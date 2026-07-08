@@ -26,7 +26,7 @@ export interface TopicCache {
   items: RadarItem[];
 }
 
-interface RadarSource {
+export interface RadarSource {
   id: string;
   name: string;
   type: string;
@@ -35,6 +35,7 @@ interface RadarSource {
 }
 
 const CACHE_FILE = "topic-radar.json";
+const SOURCES_FILE = "radar-sources.json";
 const CACHE_TTL_MS = 6 * 3600_000;
 const FETCH_TIMEOUT_MS = 12_000;
 
@@ -109,6 +110,41 @@ function cachePath(dataDir?: string): string {
   return path.join(getDataDir(dataDir), CACHE_FILE);
 }
 
+// ── 用户级源配置（IA v4.2 §A1「源清单可配置」）────────────────────────────────
+// <dataDir>/radar-sources.json 存在即完全接管（含删除内置源的自由）;不存在用内置默认。
+
+function sourcesPath(dataDir?: string): string {
+  return path.join(getDataDir(dataDir), SOURCES_FILE);
+}
+
+export async function loadRadarSources(dataDir?: string): Promise<RadarSource[]> {
+  try {
+    const raw = JSON.parse(await fs.readFile(sourcesPath(dataDir), "utf-8")) as { sources?: RadarSource[] };
+    if (Array.isArray(raw.sources)) return raw.sources.filter((s) => s && typeof s.url === "string");
+  } catch { /* 无用户配置 → 内置 */ }
+  return (sourcesJson as { sources: RadarSource[] }).sources;
+}
+
+/** 校验并保存用户源清单。返回规范化后的清单;校验失败抛错（边界:用户输入）。 */
+export async function saveRadarSources(sources: RadarSource[], dataDir?: string): Promise<RadarSource[]> {
+  const clean: RadarSource[] = [];
+  const seen = new Set<string>();
+  for (const s of sources) {
+    const name = String(s.name ?? "").trim();
+    const url = String(s.url ?? "").trim();
+    if (!name) throw new Error("源名称不能为空");
+    if (!/^https?:\/\//i.test(url)) throw new Error(`「${name}」的 URL 必须以 http(s):// 开头`);
+    const id = s.id && String(s.id).trim() ? String(s.id).trim() : `src-${Date.now()}-${clean.length}`;
+    if (seen.has(url)) continue; // 同 URL 去重
+    seen.add(url);
+    clean.push({ id, name, type: "rss", url, tracks: Array.isArray(s.tracks) ? s.tracks : [] });
+  }
+  const dir = getDataDir(dataDir);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(sourcesPath(dataDir), JSON.stringify({ version: 1, sources: clean }, null, 2) + "\n", "utf-8");
+  return clean;
+}
+
 export async function loadTopicCache(dataDir?: string): Promise<TopicCache | null> {
   try {
     return JSON.parse(await fs.readFile(cachePath(dataDir), "utf-8")) as TopicCache;
@@ -121,7 +157,8 @@ export async function refreshTopicRadar(
   dataDir?: string,
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<{ ok: boolean; itemCount: number; failedSources: string[] }> {
-  const sources = (sourcesJson as { sources: RadarSource[] }).sources;
+  const sources = await loadRadarSources(dataDir);
+  if (sources.length === 0) return { ok: false, itemCount: 0, failedSources: [] };
   const items: RadarItem[] = [];
   const failedSources: string[] = [];
 

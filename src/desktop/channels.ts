@@ -29,6 +29,7 @@ export const IPC_CHANNELS = [
   "knowledge:status",
   "radar:status",
   "radar:refresh",
+  "radar:sources_set",
   "profile:update",
   "content:update",
   "content:transition",

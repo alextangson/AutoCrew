@@ -43,16 +43,69 @@ async function initScout() {
     box.appendChild(saveBtn);
     el.appendChild(box);
 
-    // 热榜源 + 缓存状态
+    // 情报源管理（IA v4.2 §A1「源清单可配置」）:增删 RSS 源,保存即接管
     const radar = await safeInvoke(window.autocrew.radarStatus);
     const srcBox = h("div", { class: "dev-zone" });
-    srcBox.appendChild(h("h3", {}, "盯着的热榜源"));
+    srcBox.appendChild(h("h3", {}, "情报源（RSS）"));
+    srcBox.appendChild(h("p", { class: "muted" },
+      "雷达从这些源拉候选,命中你定位的自动进灵感库。贴垂直媒体的 RSS 链接——源越垂直,灵感越准。"));
     if (radar.ok && radar.data) {
-      const list = h("ul", { class: "rules-list" });
-      for (const s of radar.data.sources || []) {
-        list.appendChild(h("li", {}, s.name + "（" + (s.tracks || []).join("/") + "）"));
-      }
+      let sources = (radar.data.sources || []).map((s) => ({ ...s }));
+
+      const list = h("div", { class: "src-list" });
+      const renderList = () => {
+        list.innerHTML = "";
+        if (sources.length === 0) {
+          list.appendChild(h("p", { class: "muted" }, "没有源了——雷达会停摆,加一个吧。"));
+        }
+        sources.forEach((s, i) => {
+          const row = h("div", { class: "src-row" });
+          const body = h("div", { class: "src-row-body" });
+          body.appendChild(h("div", { class: "src-row-name" }, s.name));
+          body.appendChild(h("div", { class: "muted src-row-url" }, s.url));
+          row.appendChild(body);
+          const delBtn = h("button", { class: "btn-mini" }, "移除");
+          delBtn.addEventListener("click", async () => {
+            const next = sources.filter((_, j) => j !== i);
+            const r = await safeInvoke(window.autocrew.radarSourcesSet, { sources: next });
+            if (!r.ok) { showToast(r.error || "保存失败"); return; }
+            sources = r.data.sources;
+            showToast("已移除「" + s.name + "」");
+            renderList();
+          });
+          row.appendChild(delBtn);
+          list.appendChild(row);
+        });
+      };
+      renderList();
       srcBox.appendChild(list);
+
+      // 添加行
+      const addRow = h("div", { class: "src-add-row" });
+      const nameInput = h("input", { type: "text", class: "src-add-name", placeholder: "源名称,如：机器之心" });
+      const urlInput = h("input", { type: "text", class: "src-add-url", placeholder: "RSS 链接,https://…/feed" });
+      const addBtn = h("button", { class: "btn-mini btn-mini-primary" }, "添加");
+      addBtn.addEventListener("click", async () => {
+        const name = nameInput.value.trim();
+        const url = urlInput.value.trim();
+        if (!name || !url) { showToast("名称和 RSS 链接都要填"); return; }
+        addBtn.disabled = true;
+        const r = await safeInvoke(window.autocrew.radarSourcesSet, {
+          sources: [...sources, { id: "", name, url, type: "rss", tracks: [] }],
+        });
+        addBtn.disabled = false;
+        if (!r.ok) { showToast(r.error || "保存失败"); return; }
+        sources = r.data.sources;
+        nameInput.value = "";
+        urlInput.value = "";
+        showToast("已添加「" + name + "」——点立即扫榜验证能不能拉到");
+        renderList();
+      });
+      addRow.appendChild(nameInput);
+      addRow.appendChild(urlInput);
+      addRow.appendChild(addBtn);
+      srcBox.appendChild(addRow);
+
       const fetched = radar.data.fetchedAt
         ? "上次扫榜 " + fmtDate(radar.data.fetchedAt) + " · " + radar.data.itemCount + " 条在库"
         : "还没扫过榜（启动时自动扫，或点下面立即扫）";

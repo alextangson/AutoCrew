@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
+import { getRadarStatus, doRadarRefresh, setRadarSources } from "./radar-status.js";
 
 let testDir: string;
 
@@ -25,9 +25,27 @@ describe("getRadarStatus", () => {
     expect(sources.length).toBeGreaterThanOrEqual(2);
     expect(sources[0]).toHaveProperty("name");
     expect(sources[0]).toHaveProperty("tracks");
-    expect(sources[0]).not.toHaveProperty("url"); // url 不进 renderer（无展示需求不外露）
+    expect(sources[0]).toHaveProperty("url"); // IA v4.2 §A1:源管理 UI 要编辑 url,出境（本地单用户）
     expect(d.fetchedAt).toBeNull();
     expect(d.itemCount).toBe(0);
+  });
+
+  it("setRadarSources persists a user list that getRadarStatus then returns", async () => {
+    const set = await setRadarSources({
+      _dataDir: testDir,
+      sources: [{ id: "", name: "量子位", type: "rss", url: "https://www.qbitai.com/feed", tracks: [] }],
+    });
+    expect(set.ok).toBe(true);
+
+    const res = await getRadarStatus({ _dataDir: testDir });
+    const sources = (res.data as Record<string, unknown>).sources as Array<Record<string, unknown>>;
+    expect(sources).toHaveLength(1);
+    expect(sources[0].name).toBe("量子位");
+  });
+
+  it("setRadarSources rejects a non-array payload", async () => {
+    const res = await setRadarSources({ _dataDir: testDir, sources: "not-array" });
+    expect(res.ok).toBe(false);
   });
 
   it("returns cache stats after a refresh", async () => {

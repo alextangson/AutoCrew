@@ -74,7 +74,7 @@ import { getEngineSettings, setEngineSettings } from "./settings.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
-import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
+import { getRadarStatus, doRadarRefresh, setRadarSources } from "./radar-status.js";
 import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, listTopics, saveTopic, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
@@ -640,6 +640,7 @@ export function buildIpcHandlers(
     "knowledge:status": knowledgeStatusHandler,
     "radar:status": getRadarStatus,
     "radar:refresh": (payload) => doRadarRefresh(payload),
+    "radar:sources_set": setRadarSources,
     "profile:update": profileUpdateHandler,
     "content:update": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:update"]),
     "content:transition": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:transition"]),

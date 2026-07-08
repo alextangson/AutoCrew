@@ -1213,3 +1213,13 @@ label {
 .wb-backfill-input:focus { outline: none; border-color: var(--text); }
 .style-pos-row { display: flex; gap: 8px; align-items: center; margin: 4px 0 14px; }
 .style-pos-input { flex: 0 1 320px; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; background: var(--card); color: var(--text); }
+.src-list { margin: 8px 0; }
+.src-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--border); }
+.src-row:last-child { border-bottom: none; }
+.src-row-body { flex: 1; min-width: 0; }
+.src-row-name { font-size: 13px; font-weight: 500; }
+.src-row-url { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-add-row { display: flex; gap: 8px; margin: 10px 0; }
+.src-add-name { flex: 0 0 140px; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; background: var(--card); color: var(--text); }
+.src-add-url { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; background: var(--card); color: var(--text); }
+.src-add-name:focus, .src-add-url:focus { outline: none; border-color: var(--text); }

@@ -91,8 +91,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 53 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(53);
+  it("has exactly 54 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(54);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -189,6 +189,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "knowledge:status" &&
           ch !== "radar:status" &&
           ch !== "radar:refresh" &&
+          ch !== "radar:sources_set" &&
           ch !== "profile:update" &&
           ch !== "content:versions" &&
           ch !== "content:revert" &&

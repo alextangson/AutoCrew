@@ -149,3 +149,56 @@ describe("getCachedTopicCandidates", () => {
     }
   });
 });
+
+describe("user-configurable sources (IA v4.2 §A1)", () => {
+  it("loadRadarSources falls back to built-ins without a user file", async () => {
+    const { loadRadarSources } = await import("./topic-radar.js");
+    const sources = await loadRadarSources(testDir);
+    expect(sources.length).toBeGreaterThan(0);
+    expect(sources.some((s) => s.name === "36氪")).toBe(true);
+  });
+
+  it("saveRadarSources persists and fully takes over (built-ins gone)", async () => {
+    const { loadRadarSources, saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources(
+      [{ id: "", name: "量子位", type: "rss", url: "https://www.qbitai.com/feed", tracks: [] }],
+      testDir,
+    );
+    const sources = await loadRadarSources(testDir);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].name).toBe("量子位");
+    expect(sources[0].id).toBeTruthy(); // 自动生成 id
+  });
+
+  it("saveRadarSources rejects bad urls and empty names; dedupes by url", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await expect(saveRadarSources([{ id: "", name: "x", type: "rss", url: "ftp://bad", tracks: [] }], testDir))
+      .rejects.toThrow(/http/);
+    await expect(saveRadarSources([{ id: "", name: "", type: "rss", url: "https://a.com/f", tracks: [] }], testDir))
+      .rejects.toThrow(/名称/);
+    const saved = await saveRadarSources(
+      [
+        { id: "", name: "A", type: "rss", url: "https://same.com/feed", tracks: [] },
+        { id: "", name: "B", type: "rss", url: "https://same.com/feed", tracks: [] },
+      ],
+      testDir,
+    );
+    expect(saved).toHaveLength(1);
+  });
+
+  it("refreshTopicRadar pulls from the user-configured source list", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources(
+      [{ id: "", name: "自定义源", type: "rss", url: "https://custom.example/feed", tracks: [] }],
+      testDir,
+    );
+    const seen = [];
+    const fetchImpl = (async (url) => {
+      seen.push(String(url));
+      return new Response(RSS, { status: 200 });
+    });
+    const result = await refreshTopicRadar(testDir, fetchImpl);
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual(["https://custom.example/feed"]); // 只打用户的源,内置不再出现
+  });
+});
