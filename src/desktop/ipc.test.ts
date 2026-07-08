@@ -51,6 +51,8 @@ describe("IPC_CHANNELS", () => {
     "chat:turn",
     "settings:get",
     "settings:set",
+    "settings:search_get",
+    "settings:search_set",
     "style:update_rule",
     "onboarding:status",
     "onboarding:init",
@@ -91,8 +93,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 57 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(57);
+  it("has exactly 59 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(59);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -182,6 +184,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "chat:turn" &&
           ch !== "settings:get" &&
           ch !== "settings:set" &&
+          ch !== "settings:search_get" &&
+          ch !== "settings:search_set" &&
           ch !== "style:update_rule" &&
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&

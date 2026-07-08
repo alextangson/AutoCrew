@@ -18,6 +18,7 @@ import { executeResearch } from "../tools/research.js";
 import { addWritingRule, loadProfile, personaSummary, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
 import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
 import { reviewAudienceStay } from "../modules/review/audience-review.js";
+import { scoutInspiration } from "../modules/research/scout-search.js";
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
@@ -70,6 +71,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   generate_persona: { role: "analyst", label: "分析师在推导受众画像" },
   save_persona: { role: "analyst", label: "分析师把校准后的画像归档" },
   audience_review: { role: "review", label: "审核员代入受众画像审稿" },
+  scout_inspiration: { role: "scout", label: "侦查员出去搜灵感了" },
 };
 
 export interface ChatHistoryMessage {
@@ -112,7 +114,9 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 11. 用户贴对标文章链接（「拆解一下」「看看人家怎么写的」）时：先 read_url 读原文，拆出钩子（前 3 句怎么抓人）、结构（骨架几段、各段干什么）、CTA（结尾怎么引导），用一两句话讲给用户；值得借鉴的角度用 save_topic 入库，description 写拆解要点，reason 写「对标拆解 · <账号/来源>」。
 12. 用户想加信息源/订阅某媒体/看海外内容时，调用 manage_radar_sources。加 RSS 前先 read_url 验证链接确实是 feed（内容含 <rss 或 <feed）；用户只给了网站名时，先试常见路径（/feed、/rss）验证，验证不过就说清并建议在设置·情报源里手动处理。海外源（HN/GitHub 等）用 toggle 开关即可。
 13. 受众画像是选题、写作、审稿共用的标准。用户要「校准受众/画像」或画像缺失、未校准时：generate_persona 出提案 → 带用户逐层过（名字/焦虑/痛点准不准）→ 用户认可后 save_persona 落库。未经用户确认绝不保存；画像未校准时主动提一句（一次就好，别唠叨）。
-14. 用户问「这篇受众会怎么看」「能留住人吗」或要求审稿时，调用 audience_review（稿件 id 在上下文里）。讲结果时按层说人话：谁会停、谁会划走、卡在哪句——引导用户框选那一段直接改。`;
+14. 用户问「这篇受众会怎么看」「能留住人吗」或要求审稿时，调用 audience_review（稿件 id 在上下文里）。讲结果时按层说人话：谁会停、谁会划走、卡在哪句——引导用户框选那一段直接改。
+15. 用户要「主动搜/去找找/全网搜一下 X」或想按定位补充灵感时，调用 scout_inspiration（可带 query，不带则按定位+画像自动生成搜索词）。搜索未配置时把报错原样告诉用户（去设置配 key），不要假装搜过。
+16. 用户粘贴一大段自己写过的文案时，先问一句用途：是「学我的风格」（→ absorb_style）还是「里面有想法要入灵感库」（→ 提炼观点后 save_topic，reason 注明来自用户旧文）；两者都要就都做。不要不问就默认其一。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -436,6 +440,43 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         }
         sink.push({ type: "style", data: { rule: text, message: "已记住该偏好" } });
         return JSON.stringify({ ok: true, rule: text });
+      },
+    },
+    {
+      name: "scout_inspiration",
+      description:
+        "侦查员主动搜集:网页搜索 → 按定位/画像做相关性过滤 → 入灵感库。用户说「搜一下 X」「去找找最近有什么可写的」时调用;query 可选,不传则按定位+核心画像痛点自动生成搜索词。",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string", description: "搜索词(可选)" } },
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        try {
+          const r = await scoutInspiration({ query: typeof a.query === "string" ? a.query : undefined }, dataDir);
+          if (r.saved.length > 0) {
+            sink.push({
+              type: "topic",
+              data: {
+                industry: "侦查搜集 · " + r.queriesUsed.join(" / "),
+                candidates: r.saved.map((t) => ({ title: t.title, source: t.source ?? "search", link: t.link })),
+              },
+            });
+          }
+          return JSON.stringify({
+            ok: true,
+            queriesUsed: r.queriesUsed,
+            found: r.found,
+            saved: r.saved.map((t) => ({ id: t.id, title: t.title })),
+            skippedDuplicates: r.skippedDuplicates,
+            filter: r.filter,
+            note: r.saved.length > 0
+              ? "已入灵感库(看板第一列)。向用户报告搜到什么、为什么值得写。"
+              : "没有达标候选(宁缺勿滥)。告诉用户搜了什么词、可以换词再试。",
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
       },
     },
     {

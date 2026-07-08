@@ -27,6 +27,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "chat:turn": ["message"],
   "settings:get": [],
   "settings:set": [],
+  "settings:search_get": [],
+  "settings:search_set": ["provider", "api_key"],
   "style:update_rule": ["index"],
   "onboarding:status": [],
   "onboarding:init": [],

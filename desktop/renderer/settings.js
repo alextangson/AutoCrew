@@ -85,6 +85,41 @@ async function initSettings() {
     dev.appendChild(saveBtn);
     el.appendChild(dev);
 
+    // 搜索 API（V5.3:侦查员主动搜集的能力底座——配好后对话里就能「搜一下 X」）
+    const searchRes = await safeInvoke(window.autocrew.settingsSearchGet);
+    const sd = (searchRes.ok && searchRes.data) || { configured: false };
+    const searchZone = h("details", { class: "dev-zone" });
+    searchZone.appendChild(h("summary", {}, "搜索 API（侦查员主动搜集）" + (sd.configured ? " · 已配置" : " · 未配置")));
+    searchZone.appendChild(h("p", { class: "muted" },
+      sd.configured
+        ? "当前:" + sd.provider + " · " + (sd.apiKeyMasked || "") + "。配置存本地 search.json,不入库。"
+        : "配一个搜索 provider 的 key,总编辑就能派侦查员按你的定位全网搜灵感。推荐:博查(中文) / Tavily(英文)。"));
+    const spLabel = h("label", {}, "Provider");
+    const spSelect = h("select", { class: "input-full" });
+    for (const [val, txt] of [["bocha", "博查 bocha(中文优先)"], ["tavily", "Tavily(英文圈)"]]) {
+      const opt = h("option", { value: val }, txt);
+      if (sd.provider === val) opt.selected = true;
+      spSelect.appendChild(opt);
+    }
+    const skLabel = h("label", {}, "API Key");
+    const skInput = h("input", { type: "password", class: "input-full", placeholder: sd.apiKeyMasked || "sk-..." });
+    for (const node of [spLabel, spSelect, skLabel, skInput]) searchZone.appendChild(node);
+    const searchSave = h("button", { class: "btn-primary" }, "保存搜索配置");
+    searchSave.dataset.label = "保存搜索配置";
+    searchSave.addEventListener("click", async () => {
+      if (!skInput.value.trim()) { showToast("请填入 API key"); return; }
+      setLoading(searchSave, true, "保存中...");
+      const r = await safeInvoke(window.autocrew.settingsSearchSet, {
+        provider: spSelect.value, api_key: skInput.value.trim(),
+      });
+      setLoading(searchSave, false);
+      if (!r.ok) { showToast(r.error || "保存失败"); return; }
+      showToast("搜索能力已就绪——对话里试试「搜一下最近的行业动态」");
+      initSettings();
+    });
+    searchZone.appendChild(searchSave);
+    el.appendChild(searchZone);
+
     // 知识库入口（PRD §7.1 轻量没入式知识库）
     const kb = await safeInvoke(window.autocrew.knowledgeStatus);
     if (kb.ok && kb.data) {

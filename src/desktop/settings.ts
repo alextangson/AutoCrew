@@ -48,6 +48,49 @@ export async function getEngineSettings(payload: Record<string, unknown>): Promi
   }
 }
 
+/** 搜索 provider 配置读(V5.3):key 掩码返回,renderer 拿不到原文 */
+export async function getSearchSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    const { loadSearchConfig } = await import("../modules/research/search-provider.js");
+    const cfg = await loadSearchConfig((payload._dataDir as string) || undefined);
+    return {
+      ok: true,
+      data: cfg
+        ? { configured: true, provider: cfg.provider, apiKeyMasked: maskKey(cfg.apiKey), baseUrl: cfg.baseUrl ?? null }
+        : { configured: false, provider: null, apiKeyMasked: null, baseUrl: null },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 搜索 provider 配置写(V5.3):写 <dataDir>/search.json(600 权限) */
+export async function setSearchSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const provider = payload.provider;
+  if (provider !== "bocha" && provider !== "tavily") {
+    return { ok: false, error: "provider 必须是 bocha 或 tavily" };
+  }
+  const apiKey = payload.api_key;
+  if (typeof apiKey !== "string" || apiKey.trim() === "") {
+    return { ok: false, error: "api_key 必须是非空字符串" };
+  }
+  const baseUrl = typeof payload.base_url === "string" && payload.base_url.trim() ? payload.base_url.trim() : undefined;
+  try {
+    const dataDir = (payload._dataDir as string) || undefined;
+    const { saveSearchConfig } = await import("../modules/research/search-provider.js");
+    await saveSearchConfig({ provider, apiKey: apiKey.trim(), ...(baseUrl ? { baseUrl } : {}) }, dataDir);
+    return getSearchSettings({ _dataDir: dataDir });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function setEngineSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };

@@ -20,6 +20,8 @@ export const IPC_CHANNELS = [
   "chat:turn",
   "settings:get",
   "settings:set",
+  "settings:search_get",
+  "settings:search_set",
   "style:update_rule",
   "onboarding:status",
   "onboarding:init",
