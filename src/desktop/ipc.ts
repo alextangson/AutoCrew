@@ -185,6 +185,7 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
         topic: String(payload.topic ?? ""),
         platform: payload.platform as never,
         research: typeof payload.research === "string" ? payload.research : undefined,
+        topicId: typeof payload.topic_id === "string" && payload.topic_id ? payload.topic_id : undefined,
       },
       dataDir,
       { onEvent: (e) => void emitEngineEvent(e, dataDir).catch(() => {}) },

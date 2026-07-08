@@ -16,6 +16,8 @@ export interface ScriptRequest {
   research?: string;
   /** 显式指定赛道包；缺省按平台路由（wechat_mp → 公众号图文，其余 → 口播） */
   packId?: string;
+  /** 灵感库血缘（V5.4c）:选题来自灵感库时携带——归因、过期保护、平台矩阵都靠它 */
+  topicId?: string;
 }
 
 export function buildScriptPrompts(

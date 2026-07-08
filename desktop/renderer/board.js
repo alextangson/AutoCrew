@@ -257,6 +257,41 @@ function openMatrix(atomKey) {
   if (atom.topic && atom.topic.description) {
     wrap.appendChild(h("div", { class: "muted matrix-desc" }, atom.topic.description));
   }
+  // 灵感详情(V5.4c 创始人裁决:点开要看得出这个灵感是什么,甚至能看原始内容)
+  if (atom.topic) {
+    const t = atom.topic;
+    const detail = h("div", { class: "matrix-topic-detail" });
+    if (t.reason) detail.appendChild(h("p", { class: "muted" }, "为什么值得写：" + t.reason));
+    const metaBits = [];
+    if (t.source) metaBits.push("来源：" + t.source);
+    if (t.createdAt) {
+      const ageDays = (Date.now() - new Date(t.createdAt).getTime()) / 86400000;
+      if (atom.members.length === 0 && isFinite(ageDays)) {
+        const left = Math.max(0, Math.ceil(3 - ageDays));
+        metaBits.push(left > 0 ? "未选用灵感保留 3 天 · 还剩 " + left + " 天" : "已到期,即将自动移入回收站");
+      }
+    }
+    if (metaBits.length) detail.appendChild(h("p", { class: "muted" }, metaBits.join(" · ")));
+    if (t.link) {
+      const row = h("p", {});
+      const a = h("a", { href: t.link, target: "_blank", rel: "noreferrer" }, "查看原始内容 ↗");
+      row.appendChild(a);
+      const digBtn = h("button", { class: "btn-mini matrix-dig" }, "派总编辑读原文拆解");
+      digBtn.addEventListener("click", () => {
+        if (typeof sendChat === "function") {
+          sendChat("拆解一下这篇参考：" + t.link + "（选题《" + t.title + "》,灵感库编号 " + t.id + "）");
+          showToast("已派给总编辑——看右侧对话");
+        }
+      });
+      row.appendChild(digBtn);
+      detail.appendChild(row);
+    }
+    wrap.appendChild(detail);
+  }
+  // 流转补充(V5.4c 创始人裁决,可选不强制):开写前补一句"想写的方向"
+  const directionInput = h("input", { class: "matrix-direction", type: "text",
+    placeholder: "你想写的方向/角度(可选,派活时带给写手)" });
+  if (atom.topic) wrap.appendChild(directionInput);
   wrap.appendChild(h("div", { class: "card-kicker matrix-kicker" }, "平台矩阵 · 有稿点开,无稿生成"));
 
   const byPlatform = new Map(atom.members.map((m) => [m.platform, m]));
@@ -268,9 +303,12 @@ function openMatrix(atomKey) {
     const t = atom.topic;
     if (t) {
       const ctx = [];
+      ctx.push("灵感库编号：" + t.id + "（开写时带上 topic_id,血缘别断）");
       if (t.reason) ctx.push("入库理由：" + t.reason);
       if (t.description && t.description !== atomTitle(atom)) ctx.push("背景：" + t.description);
       if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写，不要凭标题脑补）");
+      const direction = (typeof directionInput !== "undefined" && directionInput.value || "").trim();
+      if (direction) ctx.push("创作者想写的方向：" + direction + "（这是最高优先级的角度指引）");
       if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
     }
     sendChat(brief);

@@ -5,6 +5,7 @@ import { getContent, updateContent } from "../storage/local-store.js";
 import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../modules/publish/wechat-config.js";
 import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
+import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
 
 export const publishSchema = Type.Object({
@@ -55,6 +56,12 @@ export async function executePublish(
     }
     const platform = (content.platform || "xiaohongshu") as ClipboardPlatform;
     const hashtags = (params.hashtags as string[] | undefined) || content.hashtags || [];
+    // V5.4b:视频平台有发布件 → 发的是发布件(平台标题+发布文案,已含标签),不是口播稿截断
+    if (content.videoKit?.caption && VIDEO_PLATFORMS.has(platform)) {
+      const kit = content.videoKit;
+      const output = formatForClipboard(platform, kit.postTitle || content.title, kit.caption, []);
+      return { ok: true, data: { ...output, fromVideoKit: true } };
+    }
     const output = formatForClipboard(platform, content.title, content.body, hashtags);
     return { ok: true, data: output };
   }

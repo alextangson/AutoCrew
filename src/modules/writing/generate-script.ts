@@ -145,6 +145,8 @@ async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<
       status: "drafting",
       tags: [],
       hashtags: [],
+      // 血缘(V5.4c):从占位稿起就带上灵感来源,转正时 updateContent 不触碰该字段
+      ...(req.topicId ? { topicId: req.topicId } : {}),
     },
     dataDir,
   );

@@ -18,6 +18,7 @@ import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
+import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
@@ -165,6 +166,16 @@ try {
   }
 } catch (err) {
   console.error("[reconcile] 孤儿稿清理失败:", err instanceof Error ? err.message : err);
+}
+
+// 灵感库过期清理(V5.4c 创始人裁决):3 天未选用自动入回收站;有稿件血缘的永不清理
+try {
+  const swept = await expireStaleTopics();
+  if (swept.total > 0) {
+    console.log(`  [expiry] ${swept.total} 条超过 3 天未选用的灵感已移入回收站(可恢复)`);
+  }
+} catch (err) {
+  console.error("[expiry] 灵感库清理失败:", err instanceof Error ? err.message : err);
 }
 
 server.listen(PORT, HOST, () => {

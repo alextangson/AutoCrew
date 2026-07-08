@@ -197,6 +197,7 @@ async function renderDashboard() {
       writeBtn.addEventListener("click", () => {
         let brief = "用选题《" + t.title + "》写一篇" + platformLabel(seat) + "原生版本";
         const ctx = [];
+        if (t.id) ctx.push("灵感库编号：" + t.id + "（开写时带上 topic_id）");
         if (t.reason) ctx.push("入库理由：" + t.reason);
         if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写）");
         if (ctx.length) brief += "。选题上下文——" + ctx.join("；");

@@ -88,7 +88,8 @@ export async function intakeRadarTopics(
     const topic = await saveTopic(
       {
         title: q.item.title,
-        description: `雷达候选（自动入库）：${q.item.title}`,
+        // 源摘要优先(V5.4c:灵感要"看得出是什么"),无摘要的源才退回占位描述
+        description: q.item.description || `雷达候选（自动入库）：${q.item.title}`,
         tags: ["radar"],
         source: `radar:${q.item.source}`,
         reason: q.reason,

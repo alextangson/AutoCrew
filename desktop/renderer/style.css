@@ -550,6 +550,7 @@ label {
 .card-crew-writer { border-left-color: var(--crew-writer-strong); }
 .card-crew-review { border-left-color: var(--crew-review-strong); }
 .card-crew-analyst{ border-left-color: var(--crew-analyst-strong); }
+.card-crew-publisher{ border-left-color: var(--crew-publisher-strong, #6a4fb3); }
 
 /* ── 署名行 ───────────────────────────────────────────────────────────────────── */
 
@@ -578,6 +579,7 @@ label {
 .byline-badge-writer { color: var(--crew-writer-strong); }
 .byline-badge-review { color: var(--crew-review-strong); }
 .byline-badge-analyst{ color: var(--crew-analyst-strong); }
+.byline-badge-publisher{ color: var(--crew-publisher-strong, #6a4fb3); }
 
 .byline-role {
   font-size: 12px;
@@ -1277,3 +1279,18 @@ label {
 .stay-name { font-weight: 700; }
 .stay-loses { margin: 0 0 0 24px; }
 .stay-suggest { margin: 2px 0; }
+
+/* V5.4b:视频发布件卡 */
+.vk-shot { display: flex; gap: 8px; align-items: baseline; margin: 4px 0 0; }
+.vk-shot-no { font-family: var(--font-mono); font-size: 11px; color: var(--ink); min-width: 16px; }
+.vk-shot-type { font-weight: 700; white-space: nowrap; }
+.vk-shot-line { margin: 0 0 4px 24px; }
+
+/* V5.4c:灵感详情 + 方向补充 */
+.matrix-topic-detail { margin: 6px 0 8px; padding: 8px 10px; border-left: 2px solid var(--border); }
+.matrix-topic-detail p { margin: 2px 0; }
+.matrix-dig { margin-left: 10px; }
+.matrix-direction {
+  width: 100%; border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 6px 10px; font: inherit; font-size: 13px; background: var(--card); margin: 2px 0 10px;
+}

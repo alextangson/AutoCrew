@@ -19,6 +19,7 @@ import { addWritingRule, loadProfile, personaSummary, type CreatorProfile, type 
 import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
 import { reviewAudienceStay } from "../modules/review/audience-review.js";
 import { scoutInspiration } from "../modules/research/scout-search.js";
+import { prepareVideoKit } from "../modules/publish/video-kit.js";
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
@@ -29,7 +30,7 @@ import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 export interface ChatCard {
-  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets" | "persona" | "audience_review";
+  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit";
   data: Record<string, unknown>;
 }
 
@@ -44,7 +45,7 @@ export interface ChatProgressEvent {
   phase: "start" | "end";
   /** 原始工具名（来自模型 tool_call，模型可控字符串）。渲染层不得直接展示——展示一律用 label。 */
   tool: string;
-  role: "scout" | "writer" | "review" | "analyst" | null;
+  role: "scout" | "writer" | "review" | "analyst" | "publisher" | null;
   label: string;
   /** 任务归属（chatTurnHandler 注入，同 turn 事件共享）——前端任务带按此聚合 */
   runId?: string;
@@ -72,6 +73,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   save_persona: { role: "analyst", label: "分析师把校准后的画像归档" },
   audience_review: { role: "review", label: "审核员代入受众画像审稿" },
   scout_inspiration: { role: "scout", label: "侦查员出去搜灵感了" },
+  prepare_video_kit: { role: "publisher", label: "发布员在备发布件" },
 };
 
 export interface ChatHistoryMessage {
@@ -116,7 +118,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 13. 受众画像是选题、写作、审稿共用的标准。用户要「校准受众/画像」或画像缺失、未校准时：generate_persona 出提案 → 带用户逐层过（名字/焦虑/痛点准不准）→ 用户认可后 save_persona 落库。未经用户确认绝不保存；画像未校准时主动提一句（一次就好，别唠叨）。
 14. 用户问「这篇受众会怎么看」「能留住人吗」或要求审稿时，调用 audience_review（稿件 id 在上下文里）。讲结果时按层说人话：谁会停、谁会划走、卡在哪句——引导用户框选那一段直接改。
 15. 用户要「主动搜/去找找/全网搜一下 X」或想按定位补充灵感时，调用 scout_inspiration（可带 query，不带则按定位+画像自动生成搜索词）。搜索未配置时把报错原样告诉用户（去设置配 key），不要假装搜过。
-16. 用户粘贴一大段自己写过的文案时，先问一句用途：是「学我的风格」（→ absorb_style）还是「里面有想法要入灵感库」（→ 提炼观点后 save_topic，reason 注明来自用户旧文）；两者都要就都做。不要不问就默认其一。`;
+16. 用户粘贴一大段自己写过的文案时，先问一句用途：是「学我的风格」（→ absorb_style）还是「里面有想法要入灵感库」（→ 提炼观点后 save_topic，reason 注明来自用户旧文）；两者都要就都做。不要不问就默认其一。
+17. 视频稿（抖音/视频号/小红书/B站）要发布时，先调用 prepare_video_kit 备发布件：平台发布文案+分镜表+竖版封面。口播稿是「读的」，发布件才是「发的」——不要把口播稿当发布文案。备好后引导用户看卡片，粘贴发布走 publish_clipboard。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -268,13 +271,14 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     {
       name: "generate_script",
       description:
-        "开写一篇稿件（后台任务）。调用立即返回占位稿——写作在后台进行（长文约 1-3 分钟）,完成后看板卡片自动转正、任务带显示进度。需要明确的选题和目标平台。",
+        "开写一篇稿件（后台任务）。调用立即返回占位稿——写作在后台进行（长文约 1-3 分钟）,完成后看板卡片自动转正、任务带显示进度。需要明确的选题和目标平台。选题来自灵感库时必须带 topic_id（灵感库编号,形如 topic-xxx——brief/候选卡里都有）,血缘断了归因和灵感保护就断了。",
       parameters: {
         type: "object",
         properties: {
           topic: { type: "string", description: "脚本选题" },
           platform: { type: "string", enum: PLATFORM_ENUM, description: "目标平台" },
           research: { type: "string", description: "参考素材（可选）" },
+          topic_id: { type: "string", description: "灵感库编号（选题来自灵感库时必带）" },
         },
         required: ["topic", "platform"],
       },
@@ -283,7 +287,12 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         try {
           // 后台化（契约 P1 完全体）:任务生命周期与本次对话请求解耦——对话立即回,写作照跑
           const started = await d.startGenerate(
-            { topic: String(a.topic ?? ""), platform: a.platform as never, research: typeof a.research === "string" ? a.research : undefined },
+            {
+              topic: String(a.topic ?? ""),
+              platform: a.platform as never,
+              research: typeof a.research === "string" ? a.research : undefined,
+              topicId: typeof a.topic_id === "string" && a.topic_id ? a.topic_id : undefined,
+            },
             dataDir,
           );
           return JSON.stringify({
@@ -552,6 +561,41 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
             verdicts: result.verdicts,
             suggestions: result.suggestions,
             note: "结果卡已展示;把不通过层的原因讲给用户,建议按 losesAt 定位到原文改。",
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
+      name: "prepare_video_kit",
+      description:
+        "为视频稿备发布件:平台发布文案(不是口播稿摘要)+分镜表+竖版封面。用户要发视频稿、或问「怎么发/帮我准备发布」时调用;稿件须是视频平台(抖音/视频号/小红书/B站)。",
+      parameters: {
+        type: "object",
+        properties: {
+          content_id: { type: "string", description: "稿件 id" },
+          generate_cover: { type: "boolean", description: "是否生成封面图(需生图中转已配置),默认 true" },
+        },
+        required: ["content_id"],
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        try {
+          const r = await prepareVideoKit(
+            String(a.content_id ?? ""),
+            { generateCover: a.generate_cover !== false },
+            dataDir,
+          );
+          sink.push({ type: "video_kit", data: { contentId: a.content_id, ...r.kit, coverError: r.coverError ?? null } });
+          return JSON.stringify({
+            ok: true,
+            caption: r.kit.caption.slice(0, 120),
+            shots: r.kit.storyboard.length,
+            coverText: r.kit.coverText,
+            cover: r.kit.coverPath ?? null,
+            coverError: r.coverError ?? null,
+            note: "发布件卡已展示。提醒用户:口播稿照着读,发布时用卡里的文案;粘贴发布走 publish_clipboard(会自动取发布件文案)。",
           });
         } catch (err) {
           return fail(err instanceof Error ? err.message : err);

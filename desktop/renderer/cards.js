@@ -17,6 +17,7 @@ function renderCard(card) {
     case "assets": return renderAssetsCard(card.data);
     case "persona": return renderPersonaCard(card.data);
     case "audience_review": return renderAudienceReviewCard(card.data);
+    case "video_kit": return renderVideoKitCard(card.data);
     default: {
       const pre = h("pre", { class: "card-body" });
       pre.textContent = JSON.stringify(card.data, null, 2);
@@ -31,6 +32,7 @@ const CREW_META = {
   writer:  { badge: "编", name: "编剧" },
   review:  { badge: "审", name: "合规审核员" },
   analyst: { badge: "析", name: "数据分析师" },
+  publisher: { badge: "发", name: "发布员" },
 };
 
 /**
@@ -421,5 +423,39 @@ function renderAudienceReviewCard(data) {
     for (const s of suggestions) el.appendChild(h("p", { class: "stay-suggest" }, "· " + s));
   }
   if (data && data.personaUsed) el.appendChild(h("p", { class: "muted" }, "审稿标准：" + data.personaUsed));
+  return el;
+}
+
+/** 视频发布件卡（V5.4b）——发布文案 + 分镜表 + 封面方案 */
+function renderVideoKitCard(data) {
+  const el = cardShell("视频发布件 · " + platformLabel(data.platform), null, "publisher");
+  if (data.postTitle) el.appendChild(h("div", { class: "card-title" }, "发布标题：" + data.postTitle));
+  el.appendChild(h("div", { class: "persona-tier-head" }, "发布文案（发的用这个,不是口播稿）"));
+  const cap = h("pre", { class: "card-body" });
+  cap.textContent = data.caption || "";
+  el.appendChild(cap);
+  const copyBtn = h("button", { class: "btn-mini" }, "复制文案");
+  copyBtn.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(data.caption || ""); showToast("已复制发布文案"); }
+    catch { showToast("剪贴板写入失败，请手动复制"); }
+  });
+  el.appendChild(copyBtn);
+
+  const shots = data.storyboard || [];
+  if (shots.length) {
+    el.appendChild(h("div", { class: "persona-tier-head" }, "分镜（" + shots.length + " 镜）"));
+    for (let i = 0; i < shots.length; i++) {
+      const s = shots[i];
+      const row = h("div", { class: "vk-shot" });
+      row.appendChild(h("span", { class: "vk-shot-no" }, String(i + 1)));
+      row.appendChild(h("span", { class: "vk-shot-type" }, s.shot || ""));
+      row.appendChild(h("span", {}, s.visual || ""));
+      el.appendChild(row);
+      if (s.line) el.appendChild(h("p", { class: "muted vk-shot-line" }, "口播：" + s.line + (s.overlay ? " · 字幕：" + s.overlay : "")));
+    }
+  }
+  el.appendChild(h("div", { class: "persona-tier-head" }, "封面"));
+  el.appendChild(h("p", {}, "大字：「" + (data.coverText || "") + "」" + (data.coverPath ? " · 封面图已生成（稿件目录 " + data.coverPath + "）" : "")));
+  if (data.coverError) el.appendChild(h("p", { class: "muted" }, "封面未生成：" + data.coverError));
   return el;
 }

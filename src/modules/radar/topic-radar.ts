@@ -20,6 +20,8 @@ export interface RadarItem {
   link: string;
   source: string;
   publishedAt: string;
+  /** 源摘要(RSS description 去标签截断)——灵感卡"看得出是什么"的原料(V5.4c) */
+  description?: string;
 }
 
 export interface TopicCache {
@@ -80,7 +82,17 @@ export function parseRssItems(xml: string): Array<Omit<RadarItem, "source">> {
     if (!title || !link) continue;
     const pub = field(m[0], "pubDate");
     const ts = pub ? new Date(pub) : new Date();
-    items.push({ title, link, publishedAt: isNaN(ts.getTime()) ? new Date().toISOString() : ts.toISOString() });
+    // 摘要:去 HTML 标签、压空白、截 240——灵感库里"看得出这个灵感是什么"靠它
+    const rawDesc = field(m[0], "description");
+    const description = rawDesc
+      ? rawDesc.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240)
+      : "";
+    items.push({
+      title,
+      link,
+      publishedAt: isNaN(ts.getTime()) ? new Date().toISOString() : ts.toISOString(),
+      ...(description ? { description } : {}),
+    });
   }
   return items;
 }

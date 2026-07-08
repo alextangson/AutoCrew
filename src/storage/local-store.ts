@@ -62,6 +62,35 @@ export type AdoptionVerdict = "adopted" | "light_edit" | "rewritten";
 /** 重写原因 chip（IA v4.2 §B6）——最强负信号的一次点击标注，可选，喂纠正路由 */
 export type RewriteReason = "style_mismatch" | "factual_error" | "structure_bad";
 
+/** 分镜行（V5.4b）:一镜一行,给拍摄/剪辑用 */
+export interface StoryboardShot {
+  /** 景别/机位,如「近景怼脸」「中景+屏幕」 */
+  shot: string;
+  /** 画面内容 */
+  visual: string;
+  /** 对应口播句(节选) */
+  line: string;
+  /** 字幕/贴纸/转场提示(可空) */
+  overlay?: string;
+}
+
+/** 视频发布件（V5.4b）:平台原生发布物料,与口播稿分离存储 */
+export interface VideoKit {
+  platform: string;
+  /** 平台发布标题(按平台字数纪律:小红书 ≤20 字等)——创始人 2026-07-08 裁决:发布配套要齐 */
+  postTitle: string;
+  /** 平台发布文案(含话题标签,可直接粘贴) */
+  caption: string;
+  storyboard: StoryboardShot[];
+  /** 封面大字(≤8字) */
+  coverText: string;
+  /** 封面生图 prompt(竖版) */
+  coverPrompt: string;
+  /** 已生成的封面图路径(相对稿件目录;未生成则缺省) */
+  coverPath?: string;
+  generatedAt: string;
+}
+
 export interface AdoptionRecord {
   verdict: AdoptionVerdict;
   /** 仅 rewritten 时可选携带（§10-B 低摩擦裁决不变：一次点击，可跳过） */
@@ -91,6 +120,8 @@ export interface Content {
   performanceData: Record<string, number>;
   /** 采纳裁决（三键落库；未裁决 = 不参与采纳率分母） */
   adoption?: AdoptionRecord;
+  /** 视频发布件（IA v5 V5.4b）:发布文案/分镜/封面——口播稿是"读的",发布件是"发的" */
+  videoKit?: VideoKit;
   /** 最近一次生成/处理失败的原因（防呆:失败留痕,成功后清空）。UI 据此显示中断徽章与重试 */
   lastError?: string | null;
   /** 软删除时间戳(回收站语义);null/缺省 = 活跃。默认读侧全部过滤 */
