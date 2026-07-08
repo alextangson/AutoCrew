@@ -91,8 +91,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 52 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(52);
+  it("has exactly 53 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(53);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {

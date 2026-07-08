@@ -206,6 +206,15 @@ async function renderDashboard() {
     }
     inspCard.appendChild(list);
   }
+  // 情报源健康度一行（数据现成:radar:status;账号现状等第二批,这行不越界——只报已有真数据）
+  safeInvoke(window.autocrew.radarStatus, {}).then((r) => {
+    if (!r.ok || !r.data) return;
+    const srcs = r.data.sources || [];
+    const fetchedAt = r.data.fetchedAt;
+    const ageH = fetchedAt ? Math.floor((Date.now() - new Date(fetchedAt).getTime()) / 3600000) : null;
+    inspCard.appendChild(h("p", { class: "muted dash-hint" },
+      "情报源 " + srcs.length + " 个" + (ageH !== null ? " · " + (ageH < 1 ? "刚刚" : ageH + " 小时前") + "更新" : " · 未扫过榜")));
+  });
   grid.appendChild(inspCard);
 
   // ── 5. 管线摘要（朴素版）──

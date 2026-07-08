@@ -145,6 +145,12 @@ async function finishOnboarding(skippedAll) {
   const escort = cardShell("首稿陪跑", "写你的第一篇公众号稿", "writer");
   escort.appendChild(h("p", {}, "从灵感库挑一条，或直接给我一个选题——我按你刚校准的声音写一篇公众号稿，你审改后一键推草稿箱，整条链走一遍。"));
   const escortActions = h("div", { class: "card-actions" });
+  // A5 历史资产:代表作里未写尽的角度也是灵感源——总编辑有 read 上下文和 save_topic,一句话完成
+  const mineBtn = h("button", { class: "btn-mini" }, "先从我的代表作挖角度");
+  mineBtn.addEventListener("click", () => {
+    sendChat("从我刚才贴的代表作里，挖 3 个我还没写尽的角度，各配一句为什么值得写，存进灵感库");
+  });
+  escortActions.appendChild(mineBtn);
   const goBtn = h("button", { class: "btn-primary" }, "从灵感库挑一条开写");
   goBtn.addEventListener("click", async () => {
     const topics = await safeInvoke(window.autocrew.topicsList, {});

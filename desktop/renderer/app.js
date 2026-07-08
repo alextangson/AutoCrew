@@ -303,7 +303,26 @@ function initStyle() {
 
   const el = document.getElementById("panel-style");
   el.innerHTML = "";
-  el.appendChild(h("h2", {}, "编剧 · 风格档案"));
+  el.appendChild(h("h2", {}, "校准中心 · 声音内核"));
+
+  // 定位档案（B4）:定位是灵感过滤器的灵魂,可看可改
+  const posRow = h("div", { class: "style-pos-row" });
+  const posLabel = h("span", { class: "muted" }, "定位：");
+  const posInput = h("input", { type: "text", class: "style-pos-input", placeholder: "如：AI 效率工具" });
+  const posBtn = h("button", { class: "btn-mini" }, "保存");
+  posBtn.addEventListener("click", async () => {
+    const industry = posInput.value.trim();
+    if (!industry) { showToast("定位不能为空"); return; }
+    const r = await safeInvoke(window.autocrew.profileUpdate, { industry });
+    showToast(r.ok ? "定位已更新——雷达入库过滤即刻生效" : (r.error || "保存失败"));
+  });
+  posRow.appendChild(posLabel);
+  posRow.appendChild(posInput);
+  posRow.appendChild(posBtn);
+  el.appendChild(posRow);
+  safeInvoke(window.autocrew.dashboardSummary, {}).then((r) => {
+    if (r.ok && r.data && r.data.calibration && r.data.calibration.industry) posInput.value = r.data.calibration.industry;
+  });
 
   // Rules section (loaded async)
   const rulesSectionEl = h("div", { id: "style-rules-section" });

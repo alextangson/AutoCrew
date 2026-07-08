@@ -126,6 +126,16 @@ function renderAtomCard(atom) {
     if (broken) {
       card.appendChild(h("div", { class: "atom-error" }, "⚠ 生成中断,点开可重试"));
     }
+    // 待发窗口标注（IA v4.2 §7 轻版）:待发稿 + 该平台超 3 天没发 = 该发了
+    const READY_SET = ["approved", "publish_ready", "publishing"];
+    if (READY_SET.includes(rep.status) && rep.platform && typeof window.__lastPubByPlatform === "object") {
+      const last = window.__lastPubByPlatform[rep.platform];
+      const gapDays = last ? (Date.now() - last) / 86400000 : Infinity;
+      if (gapDays > 3) {
+        card.appendChild(h("div", { class: "atom-window" },
+          "▲ 该发了" + (isFinite(gapDays) ? "（" + platformLabel(rep.platform) + " 已 " + Math.floor(gapDays) + " 天未更）" : "（" + platformLabel(rep.platform) + " 还没发过）")));
+      }
+    }
     const stale = daysSince(rep.updatedAt || rep.createdAt);
     if (rep.status !== "published" && stale > 14) {
       card.appendChild(h("div", { class: "atom-stale" }, "停 " + stale + " 天"));
@@ -183,6 +193,14 @@ async function renderBoard() {
   const topics = (tRes.ok && tRes.topics) || [];
   const contents = ((cRes.ok && cRes.contents) || []).filter((c) => c.status !== "archived");
   boardAtoms = groupBoardAtoms(topics, contents);
+  // 平台最近发布时间——待发窗口标注的数据源（§7 轻版）
+  window.__lastPubByPlatform = {};
+  for (const c of contents) {
+    if (c.status === "published" && c.platform && c.publishedAt) {
+      const ts = new Date(c.publishedAt).getTime();
+      if (ts > (window.__lastPubByPlatform[c.platform] || 0)) window.__lastPubByPlatform[c.platform] = ts;
+    }
+  }
 
   const bar = h("div", { class: "board-bar" });
   bar.appendChild(h("span", { class: "card-kicker" }, "内容管线 · 卡片 = 一个想法"));

@@ -164,6 +164,53 @@ async function renderWorkbench(contentId, container) {
   }
   container.appendChild(adoptRow);
 
+  // ── 回流数据录入（IA v4.2 §2 回填链最后一环:待办卡点进来,这里就是落数据的地方） ──
+  if (c.status === "published") {
+    const bfBox = h("div", { class: "wb-backfill" });
+    const filled = c.performanceData && Object.keys(c.performanceData).length > 0;
+    bfBox.appendChild(h("h4", {}, filled ? "回流数据（已回填）" : "回流数据（发布后回来填,飞轮等着它）"));
+    if (filled) {
+      bfBox.appendChild(h("p", { class: "muted" },
+        Object.entries(c.performanceData).map(([k, v]) => k + " " + v).join(" · ")));
+    }
+    const row = h("div", { class: "wb-backfill-row" });
+    const inputs = {};
+    for (const [key, label] of [["views", "阅读/播放"], ["likes", "点赞"], ["comments", "评论"]]) {
+      const inp = h("input", { type: "number", class: "wb-backfill-input", placeholder: label });
+      if (filled && c.performanceData[key] !== undefined) inp.value = c.performanceData[key];
+      inputs[key] = inp;
+      row.appendChild(inp);
+    }
+    const recBtn = h("button", { class: "btn-mini btn-mini-primary" }, filled ? "更新数据" : "记录回流");
+    recBtn.addEventListener("click", async () => {
+      const metrics = {};
+      for (const [k, inp] of Object.entries(inputs)) {
+        if (inp.value !== "") metrics[k] = Number(inp.value);
+      }
+      if (Object.keys(metrics).length === 0) { showToast("至少填一个数字"); return; }
+      recBtn.disabled = true;
+      const r = await safeInvoke(window.autocrew.flywheelRecord, { content_id: contentId, metrics });
+      recBtn.disabled = false;
+      if (!r.ok) { showToast(r.error || "回填失败"); return; }
+      // 归因反馈（v3 §7.2c「这条数据教会了我什么」的轻版）:对比个人基线一句话
+      let attribution = "已回填 ✓ 数据分析师归档";
+      try {
+        const rep = await safeInvoke(window.autocrew.flywheelReport, {});
+        const avg = rep.ok && rep.data && rep.data.avgMetrics;
+        if (avg && metrics.views !== undefined && avg.views) {
+          const delta = Math.round(((metrics.views - avg.views) / avg.views) * 100);
+          attribution += " · 阅读 " + (delta >= 0 ? "高于" : "低于") + "你的平均 " + Math.abs(delta) + "%";
+        }
+      } catch { /* 归因可缺省 */ }
+      showToast(attribution);
+      renderWorkbench(contentId, container);
+      if (typeof refreshActiveView === "function") refreshActiveView();
+    });
+    row.appendChild(recBtn);
+    bfBox.appendChild(row);
+    container.appendChild(bfBox);
+  }
+
   // ── 版本时间线 ──
   const vres = await safeInvoke(window.autocrew.contentVersions, { id: contentId });
   if (vres.ok && vres.data && (vres.data.versions || []).length > 0) {

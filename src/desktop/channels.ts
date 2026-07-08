@@ -24,6 +24,7 @@ export const IPC_CHANNELS = [
   "onboarding:status",
   "onboarding:init",
   "flywheel:import_csv",
+  "flywheel:record",
   "dialog:pick_file",
   "knowledge:status",
   "radar:status",

@@ -1203,3 +1203,11 @@ label {
 .wb-error { border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: 0 8px 8px 0; background: var(--card); padding: 8px 12px; margin-bottom: 10px; }
 .wb-error-msg { font-size: 12px; margin: 0 0 6px; }
 .chat-elapsed { font-size: 10px; margin-top: 3px; padding-left: 4px; }
+.atom-window { font-family: var(--font-mono); font-size: 10px; color: #854F0B; margin-top: 4px; }
+.wb-backfill { border: 1px solid var(--border); border-left: 3px solid var(--crew-analyst, #378ADD); border-radius: 0 8px 8px 0; background: var(--card); padding: 8px 12px; margin: 10px 0; }
+.wb-backfill h4 { margin: 0 0 6px; font-size: 13px; }
+.wb-backfill-row { display: flex; gap: 8px; align-items: center; }
+.wb-backfill-input { width: 110px; border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 8px; font-size: 13px; background: var(--card); color: var(--text); }
+.wb-backfill-input:focus { outline: none; border-color: var(--text); }
+.style-pos-row { display: flex; gap: 8px; align-items: center; margin: 4px 0 14px; }
+.style-pos-input { flex: 0 1 320px; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; background: var(--card); color: var(--text); }
