@@ -88,9 +88,10 @@ const PLATFORM_CATALOG = [
   { id: "xiaohongshu", label: "小红书", group: "cn", gen: true },
   { id: "wechat_video", label: "视频号", group: "cn", gen: true },
   { id: "bilibili", label: "B站", group: "cn", gen: true },
-  { id: "twitter", label: "Twitter", group: "en", gen: false },
+  { id: "toutiao", label: "头条", group: "cn", gen: true },
+  { id: "twitter", label: "X (Twitter)", group: "en", gen: true },
+  { id: "reddit", label: "Reddit", group: "en", gen: true },
   { id: "instagram", label: "Instagram", group: "en", gen: false },
-  { id: "reddit", label: "Reddit", group: "en", gen: false },
 ];
 const PLATFORM_BY_ID = Object.fromEntries(PLATFORM_CATALOG.map((p) => [p.id, p]));
 

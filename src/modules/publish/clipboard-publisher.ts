@@ -5,7 +5,15 @@
  * emoji placement, hashtag positioning, and platform-specific structure.
  */
 
-export type ClipboardPlatform = "xiaohongshu" | "douyin" | "wechat_mp" | "wechat_video" | "bilibili";
+export type ClipboardPlatform =
+  | "xiaohongshu"
+  | "douyin"
+  | "wechat_mp"
+  | "wechat_video"
+  | "bilibili"
+  | "twitter"
+  | "reddit"
+  | "toutiao";
 
 export interface ClipboardOutput {
   platform: ClipboardPlatform;
@@ -27,6 +35,9 @@ const PUBLISH_URLS: Record<ClipboardPlatform, string> = {
   wechat_mp: "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit",
   wechat_video: "https://channels.weixin.qq.com/platform/post/create",
   bilibili: "https://member.bilibili.com/platform/upload/text/edit",
+  twitter: "https://x.com/compose/post",
+  reddit: "https://www.reddit.com/submit",
+  toutiao: "https://mp.toutiao.com/profile_v4/graphic/publish",
 };
 
 function formatForXiaohongshu(title: string, body: string, hashtags: string[]): ClipboardOutput {
@@ -145,6 +156,88 @@ function formatForBilibili(title: string, body: string, hashtags: string[]): Cli
   };
 }
 
+/** X 帖长权重:CJK 计 2 单位、其余计 1,上限 280(X 官方口径的近似,超限自动分楼) */
+function xUnits(text: string): number {
+  let units = 0;
+  for (const ch of text) units += /[一-鿿　-〿＀-￯]/.test(ch) ? 2 : 1;
+  return units;
+}
+
+function formatForTwitter(title: string, body: string, hashtags: string[]): ClipboardOutput {
+  // X 无独立标题:标题即首行钩子。超 280 单位自动按段落分楼(thread),编号前缀
+  const hashtagStr = hashtags.slice(0, 2).map((h) => (h.startsWith("#") ? h : `#${h}`)).join(" ");
+  const full = [title, body].filter(Boolean).join("\n\n") + (hashtagStr ? `\n\n${hashtagStr}` : "");
+  let formattedBody: string;
+  if (xUnits(full) <= 280) {
+    formattedBody = full;
+  } else {
+    const paras = [title, ...body.split(/\n{2,}/)].filter((p) => p.trim());
+    const posts: string[] = [];
+    let cur = "";
+    for (const p of paras) {
+      const candidate = cur ? `${cur}\n\n${p}` : p;
+      if (cur && xUnits(candidate) > 252) { // 留 ~28 单位给「n/」编号与空白
+        posts.push(cur);
+        cur = p;
+      } else {
+        cur = candidate;
+      }
+    }
+    if (cur) posts.push(cur);
+    formattedBody = posts
+      .map((p, i) => `${i + 1}/ ${p}${i === posts.length - 1 && hashtagStr ? `\n\n${hashtagStr}` : ""}`)
+      .join("\n\n─── 下一楼 ───\n\n");
+  }
+  return {
+    platform: "twitter",
+    formattedTitle: title,
+    formattedBody,
+    copyText: formattedBody,
+    publishUrl: PUBLISH_URLS.twitter,
+    tips: [
+      "首行就是钩子:时间线只展示前两行",
+      "单帖上限 280 单位(中文按 2 计,约 140 字);超限已按「1/ 2/」分楼,逐楼回复自己发",
+      "Hashtag 最多 1-2 个,多了降触达",
+      "配图/图表能显著提升转发",
+    ],
+  };
+}
+
+function formatForReddit(title: string, body: string, _hashtags: string[]): ClipboardOutput {
+  // Reddit:无 hashtag 文化;标题决定生死;正文 markdown 原样
+  return {
+    platform: "reddit",
+    formattedTitle: title,
+    formattedBody: body,
+    copyText: `${title}\n\n${body}`,
+    publishUrl: PUBLISH_URLS.reddit,
+    tips: [
+      "先选对 subreddit,读它的置顶规则(很多社区禁自我推广)",
+      "标题即全部:具体、诚实、不标题党——Reddit 反感营销腔",
+      "正文支持 markdown;分享经验/数据/教训比观点更受欢迎",
+      "发布后头 1 小时留在评论区回复,能显著影响热度",
+      "无 hashtag 文化,已忽略话题标签",
+    ],
+  };
+}
+
+function formatForToutiao(title: string, body: string, _hashtags: string[]): ClipboardOutput {
+  // 头条:信息流分发,标题即推荐权重;正文段落短
+  return {
+    platform: "toutiao",
+    formattedTitle: title,
+    formattedBody: body,
+    copyText: `${title}\n\n${body}`,
+    publishUrl: PUBLISH_URLS.toutiao,
+    tips: [
+      "标题 20-30 字,带具体数字/冲突/悬念(信息流靠标题拿推荐)",
+      "正文 1000-2000 字,每段 2-3 行,小标题分节",
+      "至少 2 张配图(首图决定信息流卡片)",
+      "文末引导关注;避免外链(影响推荐)",
+    ],
+  };
+}
+
 /**
  * Format content for clipboard publishing on a specific platform.
  */
@@ -160,6 +253,9 @@ export function formatForClipboard(
     case "wechat_mp": return formatForWechatMp(title, body, hashtags);
     case "wechat_video": return formatForWechatVideo(title, body, hashtags);
     case "bilibili": return formatForBilibili(title, body, hashtags);
+    case "twitter": return formatForTwitter(title, body, hashtags);
+    case "reddit": return formatForReddit(title, body, hashtags);
+    case "toutiao": return formatForToutiao(title, body, hashtags);
     default: return formatForXiaohongshu(title, body, hashtags);
   }
 }
