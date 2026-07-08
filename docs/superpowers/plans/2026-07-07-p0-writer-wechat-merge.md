@@ -118,3 +118,23 @@
 ### 0-5 对阶段 1 的修正
 
 pack-schema 扩展字段按 0-2 定：结构模式轮换表、Quality Gate 阈值组、配图规则、封面 prompt 模板。**阶段 1 的核心工程 = 把「一次生成」改成「生成 → Gate 自检 → 修复循环」**（带轮次预算上限，符合 v3 §5 短时 loop 原语）；prompt 内容本身从 muse-social 三个 SKILL 平移，不重新发明。
+
+---
+
+## 进度记录
+
+### 2026-07-08 阶段 1 完成（5/5）
+
+| 任务 | 状态 | 落点 |
+|---|---|---|
+| 1. pack-schema 平台维度扩展 | ✅ `73cf3eb` | QualityGateSpec / StructureMode / writerRole / coverPromptTemplate，口播包零改动 |
+| 2. 公众号平台包 | ✅ `73cf3eb` | packs/wechat-article.ts（article-derivation 平移：5000/5/4 阈值、四结构模式、2.35:1 封面模板）；wechat_mp 自动路由 |
+| 3. Gate 自检循环 | ✅ `73cf3eb` | 生成 → 硬门禁 → FAIL 打回修复（默认 2 轮），骑 submit_script 自纠通道；修复轮耗尽残余 FAIL 经 gateFailures 透出不静默。单平台上下文隔离天然满足（每次生成 = 全新短时 loop × 单包） |
+| 4. 声音内核 v0 | ✅ 零代码 | **复用既有 absorb 流程**：style:absorb → analyzeStyleSamples → creator-profile writingRules，生成管线本就注入 profile。声音内核=profile（跨平台共享），平台语法=pack——§4.3 两层拆分架构上已满足。**待创始人操作**：从 muse-social 7 篇历史稿中挑 3-5 篇最像自己的，贴进「编剧 · 风格档案」面板点「吸收爆款风格」 |
+| 5. 采纳三键 + 落库 | ✅ `f39728e` | 工作台 采纳/轻改采纳/重写 三键；content:adoption 通道（IPC 42）；未裁决不进分母、rate 无裁决时 null 不显假 0%；toast 直出当前采纳率 |
+
+顺手收编：前 session 未提交的两个完整功能已落地——海外选题雷达（`d317ae0`，五免费源）与编辑即学习接线（`5a4fcee`，contentUpdate 自动记 diff + 攒够自动蒸馏）。后者恰是「纠正即训练」的另一半输入源。
+
+验证口径：TSC 干净，vitest 712/712 全过（store/IPC/gate/pack 层全覆盖）；workbench 三键按钮为 renderer 层，未跑 Electron 冒烟，下次启动 app 时人工点验。
+
+下一步 = 阶段 2（公众号发布链收编：wechat-mp.ts 去桥化 + 审核员进链 + 发布回执卡）。
