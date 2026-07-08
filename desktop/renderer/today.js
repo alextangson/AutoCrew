@@ -10,6 +10,9 @@ const TODAY_CREW = [
   { role: "analyst", badge: "析", name: "数据分析师", view: "report" },
 ];
 
+const TODAY_ROLE_GLYPH = { scout: "侦", writer: "编", review: "审", analyst: "析", publisher: "发", system: "·" };
+const QUEUE_STATUSES = { draft_ready: "草稿就绪", reviewing: "待审", revision: "修订中" };
+
 function todayFmtViews(n) {
   if (typeof n !== "number") return "—";
   if (n >= 10000) return (n / 10000).toFixed(1) + " 万";
@@ -30,7 +33,10 @@ function buildTodayShell(el) {
   header.appendChild(hLeft);
   const presence = h("div", { class: "today-presence" });
   for (const c of TODAY_CREW) {
-    const av = h("span", { class: "presence-av byline-badge byline-badge-" + c.role, title: c.name }, c.badge);
+    const av = h("span", {
+      class: "presence-av byline-badge byline-badge-" + c.role,
+      "data-role": c.role, "data-name": c.name, title: c.name,
+    }, c.badge);
     av.addEventListener("click", () => {
       if (c.view) switchView(c.view);
       else { switchView("conversation"); if (typeof appendReviewerCard === "function") appendReviewerCard(); }
@@ -40,8 +46,16 @@ function buildTodayShell(el) {
   header.appendChild(presence);
   wrap.appendChild(header);
 
+  // 工作日志条（P1 一期）：引擎真实事件流的读模型——只显示真实发生过的事
+  const worklog = h("div", { class: "today-worklog", id: "today-worklog" });
+  wrap.appendChild(worklog);
+
   const radarCard = h("div", { class: "today-card", id: "today-radar" }, h("p", { class: "muted" }, "侦察员扫榜中…"));
   wrap.appendChild(radarCard);
+
+  // 待审队列（P1 一期）：日常操作的核心组件，审稿不离开今日
+  const queueCard = h("div", { class: "today-card", id: "today-queue" });
+  wrap.appendChild(queueCard);
 
   const row = h("div", { class: "today-row" });
   const pipeCard = h("div", { class: "today-card today-card-half", id: "today-pipe" });
@@ -85,6 +99,8 @@ async function renderToday() {
   try {
     const { sub, radarCard, pipeCard, dataCard } = buildTodayShell(document.getElementById("view-today"));
     refreshRecentTasks();
+    refreshWorklog();
+    refreshQueue();
     const res = await safeInvoke(window.autocrew.todaySummary);
     if (!res.ok) { sub.textContent = "数据加载失败"; return; }
     const d = res.data || {};
@@ -162,6 +178,84 @@ function renderDataCard(card, o) {
   card.appendChild(h("div", { class: "muted" }, "播放 " + todayFmtViews(o.views)));
   card.style.cursor = "pointer";
   card.onclick = () => switchView("report");
+}
+
+/** 工作日志回放：启动/切回今日时读事件尾部，之后由 engine:event 推送增量 */
+async function refreshWorklog() {
+  if (typeof EngineStore === "undefined" || !window.autocrew.eventsRecent) return;
+  const res = await safeInvoke(window.autocrew.eventsRecent, { limit: 30 });
+  if (res.ok) EngineStore.hydrateEvents(res.events || []);
+}
+
+function updateWorklogDom(state) {
+  const el = document.getElementById("today-worklog");
+  if (!el) return;
+  el.innerHTML = "";
+  const events = state.events.slice(-8);
+  if (events.length === 0) {
+    el.appendChild(h("div", { class: "worklog-line worklog-idle" }, "> 编辑部就绪，等待第一个任务"));
+    return;
+  }
+  for (const e of events) {
+    const line = h("div", { class: "worklog-line" });
+    const t = new Date(e.ts);
+    const hh = String(t.getHours()).padStart(2, "0");
+    const mm = String(t.getMinutes()).padStart(2, "0");
+    line.appendChild(h("span", { class: "worklog-time" }, hh + ":" + mm));
+    line.appendChild(h("span", { class: "worklog-glyph" }, TODAY_ROLE_GLYPH[e.role] || "·"));
+    line.appendChild(h("span", { class: "worklog-label" }, e.label));
+    el.appendChild(line);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+/** presence 忙闲由真实工具执行事件驱动（chat:progress phase start/end），不做假活性 */
+function updatePresenceDom(state) {
+  for (const av of document.querySelectorAll(".presence-av")) {
+    const role = av.getAttribute("data-role");
+    const busy = role && state.busy[role];
+    av.classList.toggle("presence-busy", Boolean(busy));
+    av.title = busy ? busy.label : av.getAttribute("data-name") || "";
+  }
+}
+
+/** 待审队列：draft_ready / reviewing / revision 的稿子在首屏等你审 */
+async function refreshQueue() {
+  const card = document.getElementById("today-queue");
+  if (!card) return;
+  card.innerHTML = "";
+  card.appendChild(h("div", { class: "card-kicker" }, "待审队列"));
+  const res = await safeInvoke(window.autocrew.contentList);
+  const contents = (res.ok && res.contents) || [];
+  const queue = contents.filter((c) => QUEUE_STATUSES[c.status]);
+  if (queue.length === 0) {
+    card.appendChild(h("p", { class: "muted" }, "队列空——让编剧写一篇，成稿会在这里等你审。"));
+    return;
+  }
+  const list = h("div", { class: "queue-list" });
+  for (const c of queue.slice(0, 5)) {
+    const row = h("div", { class: "queue-row" });
+    row.appendChild(h("span", { class: "queue-title" }, c.title || "（无标题）"));
+    row.appendChild(h("span", { class: "queue-status" }, QUEUE_STATUSES[c.status]));
+    const openBtn = h("button", { class: "btn-mini" }, "审稿");
+    const openWorkbench = () => { window.__openDraftId = c.id; switchView("drafts"); };
+    openBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openWorkbench(); });
+    row.addEventListener("click", openWorkbench);
+    row.appendChild(openBtn);
+    list.appendChild(row);
+  }
+  card.appendChild(list);
+  if (queue.length > 5) {
+    card.appendChild(h("div", { class: "muted" }, "还有 " + (queue.length - 5) + " 篇在队列里"));
+  }
+}
+
+// 订阅一次：事件/忙闲变化 → 增量更新工作日志与 presence（今日未挂载时安静跳过）
+if (typeof EngineStore !== "undefined") {
+  EngineStore.subscribe((state) => {
+    updateWorklogDom(state);
+    updatePresenceDom(state);
+  });
 }
 
 async function refreshRecentTasks() {

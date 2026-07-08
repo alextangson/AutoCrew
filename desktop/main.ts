@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import path from "path";
 import { IPC_CHANNELS, buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js";
-import { CHAT_PROGRESS_EVENT } from "../src/desktop/channels.js";
+import { CHAT_PROGRESS_EVENT, ENGINE_EVENT } from "../src/desktop/channels.js";
+import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { sanitizePayload, createPickedFileRegistry } from "../src/desktop/ipc-guard.js";
 import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
 import { MEDIA_EXTENSIONS } from "../src/storage/library-store.js";
@@ -82,6 +83,15 @@ for (const ch of IPC_CHANNELS) {
         } catch {
           /* 窗口已销毁 */
         }
+        // 工作日志桥（P1 一期）：工具开工线是真实事件；end 由 presence 消费，不重复记日志
+        const pe = e as { phase?: string; role?: string | null; label?: string };
+        if (pe.phase === "start") {
+          void emitEngineEvent({
+            role: (pe.role as EngineEventRole) || "system",
+            kind: "work",
+            label: pe.label || "工作中",
+          });
+        }
       },
     };
     return handlers[ch](clean, ctx);
@@ -89,6 +99,13 @@ for (const ch of IPC_CHANNELS) {
 }
 
 app.whenReady().then(() => {
+  // 事件总线广播：推给所有窗口（单窗应用；窗口销毁的 send 失败在 hub 内吞掉）
+  initEventHub((e) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send(ENGINE_EVENT, e);
+    }
+  });
+
   createWindow();
 
   // 选题雷达：启动 fire-and-forget 刷新（PRD §7.1——定期抓取归外层调度，v1=启动时）

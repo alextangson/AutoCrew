@@ -70,6 +70,8 @@ import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
 import { getEngineSettings, setEngineSettings } from "./settings.js";
+import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
+import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh } from "./radar-status.js";
 import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent } from "../storage/local-store.js";
@@ -612,8 +614,35 @@ export function buildIpcHandlers(
     "content:asset_add": contentAssetAddHandler,
     "content:asset_remove": contentAssetRemoveHandler,
     "today:summary": todaySummaryHandler,
+    "events:recent": eventsRecentHandler,
   };
+
+  // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。
+  // 观测层：映射/落盘失败全部吞掉，绝不影响执行层的返回值。
+  for (const ch of Object.keys(CHANNEL_EVENT_MAP) as IpcChannel[]) {
+    const mapper = CHANNEL_EVENT_MAP[ch];
+    const inner = defaults[ch];
+    if (!mapper || !inner) continue;
+    defaults[ch] = async (payload, ctx) => {
+      const result = await inner(payload, ctx);
+      try {
+        const mapped = mapper({ payload, result });
+        if (mapped) void emitEngineEvent(mapped, (payload._dataDir as string) || undefined);
+      } catch {
+        /* 观测层吞错 */
+      }
+      return result;
+    };
+  }
 
   if (!deps) return defaults;
   return { ...defaults, ...deps };
+}
+
+// ── events:recent — 工作日志回放（P1 一期） ───────────────────────────────────
+
+async function eventsRecentHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const dataDir = (payload._dataDir as string) || undefined;
+  const limit = typeof payload.limit === "number" ? payload.limit : 50;
+  return { ok: true, events: await readRecentEvents(dataDir, limit) };
 }

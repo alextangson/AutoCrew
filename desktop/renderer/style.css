@@ -985,3 +985,35 @@ label {
 
 /* ── 公众号发布回执（P0 阶段 2） ─────────────────────────────────────────── */
 .wx-receipt { margin: 8px 0; min-height: 1.2em; font-family: var(--font-mono); font-size: 12px; }
+
+/* ── 工作日志条 / 待审队列 / presence 忙态（P1 一期：事件流读模型） ────────── */
+.today-worklog {
+  background: var(--ink);
+  color: #D8D5CB;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.9;
+  padding: 10px 14px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+.worklog-line { display: flex; gap: 10px; overflow: hidden; white-space: nowrap; }
+.worklog-idle { color: #8A877D; }
+.worklog-time { color: #8A877D; flex-shrink: 0; }
+.worklog-glyph { color: #F8F7F2; flex-shrink: 0; }
+.worklog-label { overflow: hidden; text-overflow: ellipsis; }
+
+@keyframes presencePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.presence-av.presence-busy {
+  background: var(--ink);
+  color: var(--accent-text);
+  border-color: var(--ink);
+  animation: presencePulse 1.6s ease-in-out infinite;
+}
+
+.queue-list { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid var(--border); }
+.queue-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.queue-row:hover { background: rgba(0, 0, 0, 0.03); }
+.queue-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.queue-status { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; border: 1px solid var(--border); padding: 1px 8px; flex-shrink: 0; }

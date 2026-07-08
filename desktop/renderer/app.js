@@ -183,6 +183,14 @@ async function initDrafts() {
 
   el.appendChild(listDiv);
   el.appendChild(detailDiv);
+
+  // 今日待审队列直达（P1 一期）：带着稿件 id 进来就直接开工作台
+  if (window.__openDraftId) {
+    const pending = window.__openDraftId;
+    window.__openDraftId = null;
+    detailDiv.classList.remove("hidden");
+    renderDraftDetail(pending, detailDiv);
+  }
 }
 
 async function renderDraftDetail(contentId, detailDiv) {

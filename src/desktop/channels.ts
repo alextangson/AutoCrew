@@ -50,6 +50,7 @@ export const IPC_CHANNELS = [
   "content:asset_remove",
   "content:adoption",
   "today:summary",
+  "events:recent",
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];
@@ -57,11 +58,14 @@ export type IpcChannel = (typeof IPC_CHANNELS)[number];
 /** 主进程 → renderer 推送事件名（preload 白名单监听；不走 invoke）。 */
 export const CHAT_PROGRESS_EVENT = "chat:progress";
 
+/** 引擎事件推送（P1 一期：工作日志/presence 的实时通道；回放走 events:recent）。 */
+export const ENGINE_EVENT = "engine:event";
+
 /**
  * Converts an IPC channel name to a camelCase method name.
  * e.g. "flywheel:report" → "flywheelReport"
  *
- * All 43 methods exposed on window.autocrew:
+ * All 44 methods exposed on window.autocrew:
  *   flywheelReport / generateScript / styleDistill / styleAbsorb / styleRules /
  *   contentList / contentGet / publishClipboard / publishConfirm / publishWechatDraft / chatTurn /
  *   settingsGet / settingsSet / styleUpdateRule /
@@ -72,7 +76,7 @@ export const CHAT_PROGRESS_EVENT = "chat:progress";
  *   conversationsList / conversationsGet / conversationsDelete /
  *   libraryList / libraryAdd / libraryUpdate / libraryRemove /
  *   libraryFolderCreate / libraryFolderRemove / dialogPickMedia /
- *   contentAssetAdd / contentAssetRemove / contentAdoption / todaySummary
+ *   contentAssetAdd / contentAssetRemove / contentAdoption / todaySummary / eventsRecent
  */
 export function chToMethod(ch: string): string {
   const [ns, action] = ch.split(":");
