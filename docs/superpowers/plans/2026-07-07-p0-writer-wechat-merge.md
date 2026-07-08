@@ -74,3 +74,47 @@
 2. **公众号 API**：草稿箱/素材接口需认证公众号，配额与 key 管理待阶段 0 确认
 3. **数据回填通道**：公众号后台导出 vs datacube API（认证号可用）——验证后并入数据分析师，不阻塞 P0 验收
 4. **生图依赖**：seedream 脚本的 provider/key 状况；生图失败时的封面兜底路径是否仍然有效
+
+---
+
+## 附录 · 阶段 0 盘点结果（2026-07-07 当日完成）
+
+### 0-1 活版本裁定
+
+- **活版本 = `~/.openclaw/workspace-muse-social`**（mtime 2026-07-07 凌晨，带 AGENTS/MEMORY/HEARTBEAT/.learnings 全套运行态）；`~/.openclaw/workspace/workspace-muse-social` 是 2026-04-05 的旧拷贝，**忽略**。
+- 两个发布脚本是**调用关系不是分叉**：`wechat_publish.py`（147 行）是编排层（扫 `[IMAGE:]` 标签 → seedream 生图 → 封面 → 调推送），真正的 MP API 推送在 `~/.openclaw/xiaohu-wechat-format/scripts/publish.py`（474 行，key 读 skill 目录 config.json）。AutoCrew 的 `wechat-mp.ts` 桥的正是同样两个依赖——**它已经是 wechat_publish.py 的 TS 等价物**，P0 不需要移植编排层，只需去桥化配置。
+
+### 0-2 质量差距点名（qingmoagent/muse-social vs 本体 script-prompt.ts）
+
+1. **Quality Gate 硬门禁（最大差距）**：article-derivation 有 5 项 PASS/FAIL 强制自检循环——字数 ≥5000、数据/案例密度（≥3 案例 + ≥5 数据引用）、配图标记 ≥4、**Hook 反模式黑名单**（禁"随着…""近年来…""众所周知…"等 5 种开头）、humanizer 处理数确认；任一 FAIL → 修复重检，全 PASS 才进排版。本体 generate-script 是**一次生成即提交，无自检循环**。
+2. **衍生深度硬指标**：结构模式强制轮换表（thesis-driven / phenomenon autopsy / tension-based）+ 独家内容 >40% + 信息增量 ≥3 处。本体 pack 只有结构规则，无量化深度要求。
+3. **学习环路已是 LLM 版**：social-writing 第一步 = 读 learnings.md Distilled Rules 并「作为硬约束逐条应用」；style-calibration → edit-feedback → memory-distill 三技能环（基线捕获 → 结构化纠正记录「改了什么/意味着什么/下次怎么用」→ 重复反馈蒸馏为持久规则）。**这就是 PRD §7.2a 要用 LLM 替换 8 正则的现成实现蓝本，也是 §4.3 纠正路由的种子。**
+4. **流程顺序**：social-writing 是「定一个核心角度 → 先写最强钩子 → 围绕钩子成稿」，且**选题弱时主动顶回并提更强角度**；本体是一把出全稿。
+5. **发布前第二道门**：`draft_quality_check.py` exit 1 → 禁止推送——与 PRD「禁止静默失败」同精神，本体发布链没有这道门。
+6. **封面 prompt 模板**（2.35:1 Notion 插画风、8 字标题区、高对比配色）成品可直接进公众号包。
+
+### 0-3 资产处置清单
+
+| 资产 | 处置 | 去向 |
+|---|---|---|
+| article-derivation 衍生规则 + Quality Gate | **直接移植** | 公众号包（packs/）+ 生成管线自检循环 |
+| social-writing 流程（规则硬约束 / hook-first / 弱选题顶回） | **直接移植** | generate-script 流程改造 |
+| style-calibration / edit-feedback / memory-distill 三环 | **移植为蓝本** | modules/learnings 替换正则蒸馏（§7.2a） |
+| humanizer-zh SKILL | 本体已有 TS 版 | diff 校准即可 |
+| wechat_publish.py（编排层） | **弃用**（wechat-mp.ts 已等价），仅保留 `[IMAGE:]` 标签协议 | — |
+| xiaohu publish.py（MP API 推送） | **暂留外部依赖**，路径/主题入本地配置 | wechat-mp.ts 去桥化 |
+| draft_quality_check.py | **移植** | 发布链推送前硬门禁 |
+| generate_article_images.py | 与 wechat-mp.ts 生图循环重复 | 合并取一 |
+| 封面 prompt 模板 | **直接移植** | 公众号包字段 |
+| qingmoagent refinement.py（760 行被动纠偏 + 「已记住 X」确认交互） | **概念移植**（采纳三键 + 可见确认 UX），代码不搬（FastAPI 依赖） | 阶段 3 白盒可视 |
+| 飞书 Bitable 选题状态流 | 不迁移 | local-store 状态机替代 |
+| wechat-auto-draft SKILL（261 行） | 待核对（疑与 article-derivation 推送段重叠） | 阶段 1 顺手确认 |
+
+### 0-4 安全项（立即处理）
+
+- `wechat_publish.py` 第 25 行**硬编码了火山方舟 ARK API key**（blueprint 三月就点名过）。该 key 需**轮换**并全部走配置——wechat-mp.ts 已支持 `AUTOCREW_IMAGE_API_KEY`/`ARK_API_KEY` env 读取，通道现成。article-derivation 的读法（`.secrets/business_credentials.json`）是正确姿势。
+- 公众号 app_id/app_secret 在 xiaohu skill 目录 config.json——收编时入 AutoCrew 本地配置（设置页开发者区）。
+
+### 0-5 对阶段 1 的修正
+
+pack-schema 扩展字段按 0-2 定：结构模式轮换表、Quality Gate 阈值组、配图规则、封面 prompt 模板。**阶段 1 的核心工程 = 把「一次生成」改成「生成 → Gate 自检 → 修复循环」**（带轮次预算上限，符合 v3 §5 短时 loop 原语）；prompt 内容本身从 muse-social 三个 SKILL 平移，不重新发明。
