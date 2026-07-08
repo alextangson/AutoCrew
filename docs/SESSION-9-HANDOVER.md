@@ -44,6 +44,25 @@ Dogfood 抓到并当场修掉的产品 bug：
 3. SESSION-8 §5 的排期项前提未变（第二批 Dashboard 组件、目标卡、发布日历、B 级发布），不要偷跑。
 4. **前端 React 化**（frontend v2 契约 A 期）仍排在公众号链 P0 验收后。
 
+## 4.5 IA v5 启动(同日第三段,创始人 /goal 全量指令)
+
+契约:`docs/superpowers/specs/2026-07-08-ia-v5-full-newsroom.md`(北极星四问/员工编制/六主线/分期)。
+**已落地**(每段独立提交,843 单测/smoke 全绿):
+- **V5.0** 编辑器保命:标题可编辑、重写原因自由输入(reasonNote 新字段)、框选发现性提示(`32c8f70`)
+- **V5.1** 受众画像系统:三层画像类型+归一化(存量 muse 数据形状终于被消费)、generate/save_persona
+  校准流(chat 承载,未确认不落库)、受众停留审(审核员新维度,advisory)、写手 prompt 注入画像、
+  styleCalibrated 可达(`b50d4d0`)
+- **V5.2** 编辑引擎:选区上下文中心开窗(修头部截断缺陷)、保存带"为什么改"进 diff_note(`8c6aa9c`)
+- **V5.3** 情报进水:搜索 provider 抽象(bocha/tavily,search.json 0600)、scout_inspiration 侦查员
+  工具(定位+画像推导搜索词→语义过滤→入库)、设置页搜索区、新通道 settings:search_get/set(`dfa4094`)
+- **V5.4a** 图文平台:X/Reddit/头条三包+剪贴板链(X 自动分楼 CJK×2 口径)+逐平台风控评审文档;
+  X 真实生成验收 29s 双楼干净(`dc5d926`)
+
+**未做**(契约已排期):V5.4b 视频三平台发布件+分镜(要动 pack-schema,单独做);V5.5 React 前端
+A-D 期(编辑器/看板/校准 UI 终局载体)+Dashboard 四问重排;V5.6 设置中心收口。
+**等创始人**:搜索 API key(配置在设置页即可用);X/Reddit 开发者凭据+persona 语言裁决
+(风控评审文档 §2/§3);头条/视频预填是否值得做(先用一周剪贴板)。
+
 ## 5. 惯例提醒（继承 SESSION-8，仍然有效）
 
 - 改前端必先 `npm run smoke`；写完自己开浏览器 dogfood 再交付。
