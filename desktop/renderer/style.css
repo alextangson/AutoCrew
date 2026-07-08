@@ -942,3 +942,7 @@ label {
 .alltask-row { display: flex; align-items: center; gap: 8px; }
 .today-cmd { display: flex; gap: 10px; align-items: flex-end; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
 .today-cmd-input { flex: 1; border: none; resize: none; background: none; font: inherit; outline: none; color: var(--text); }
+
+/* 采纳裁决三键（PRD-v4 §8 北极星读数） */
+.wb-adopt-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+.wb-adopt-current { font-weight: 600; border-color: currentColor; }

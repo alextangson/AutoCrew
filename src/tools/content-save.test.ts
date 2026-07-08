@@ -345,3 +345,59 @@ describe("executeContentSave", () => {
     });
   });
 });
+
+// ─── adoption action（采纳三键 → 北极星读数，PRD-v4 §8） ──────────────────────
+
+describe("executeContentSave adoption", () => {
+  let adoptDir: string;
+  beforeEach(async () => {
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    adoptDir = await fsp.mkdtemp(path.join(os.tmpdir(), "autocrew-adopt-tool-"));
+  });
+  afterEach(async () => {
+    const fsp = await import("node:fs/promises");
+    await fsp.rm(adoptDir, { recursive: true, force: true });
+  });
+
+  async function mkContent(): Promise<string> {
+    const { saveContent } = await import("../storage/local-store.js");
+    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
+    return c.id;
+  }
+
+  it("happy path：落裁决并附带全局采纳率（toast 白盒读数）", async () => {
+    const { executeContentSave } = await import("./content-save.js");
+    const id = await mkContent();
+    const r = (await executeContentSave({ action: "adoption", id, verdict: "light_edit", _dataDir: adoptDir })) as Record<string, unknown>;
+    expect(r.ok).toBe(true);
+    const content = r.content as { adoption?: { verdict: string } };
+    expect(content.adoption?.verdict).toBe("light_edit");
+    const stats = r.stats as { judged: number; adopted: number; lightEdit: number; rate: number | null };
+    expect(stats.judged).toBe(1);
+    expect(stats.lightEdit).toBe(1);
+    expect(stats.rate).toBe(1);
+  });
+
+  it("verdict 非法或缺失 → 明确报错，不落库", async () => {
+    const { executeContentSave } = await import("./content-save.js");
+    const { getContent } = await import("../storage/local-store.js");
+    const id = await mkContent();
+    const bad = (await executeContentSave({ action: "adoption", id, verdict: "meh", _dataDir: adoptDir })) as Record<string, unknown>;
+    expect(bad.ok).toBe(false);
+    expect(String(bad.error)).toContain("verdict");
+    const missing = (await executeContentSave({ action: "adoption", id, _dataDir: adoptDir })) as Record<string, unknown>;
+    expect(missing.ok).toBe(false);
+    const persisted = await getContent(id, adoptDir);
+    expect(persisted?.adoption).toBeUndefined();
+  });
+
+  it("id 缺失 / 不存在 → 报错", async () => {
+    const { executeContentSave } = await import("./content-save.js");
+    const noId = (await executeContentSave({ action: "adoption", verdict: "adopted", _dataDir: adoptDir })) as Record<string, unknown>;
+    expect(noId.ok).toBe(false);
+    const gone = (await executeContentSave({ action: "adoption", id: "content-nope", verdict: "adopted", _dataDir: adoptDir })) as Record<string, unknown>;
+    expect(gone.ok).toBe(false);
+  });
+});

@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 41 channels.
+ * IPC contract + handler registry tests — all 42 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -78,11 +78,12 @@ describe("IPC_CHANNELS", () => {
     "dialog:pick_media",
     "content:asset_add",
     "content:asset_remove",
+    "content:adoption",
     "today:summary",
   ];
 
-  it("has exactly 41 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(41);
+  it("has exactly 42 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(42);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {

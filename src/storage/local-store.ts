@@ -50,6 +50,14 @@ export function normalizeLegacyStatus(s: string): ContentStatus {
   return s as ContentStatus;
 }
 
+/** 采纳裁决（PRD-v4 §8 北极星读数）：口径 = 主观判定，light_edit =「轻改即用」，rewritten =「推倒重写」（裁决 B） */
+export type AdoptionVerdict = "adopted" | "light_edit" | "rewritten";
+
+export interface AdoptionRecord {
+  verdict: AdoptionVerdict;
+  recordedAt: string;
+}
+
 export interface Content {
   id: string;
   title: string;
@@ -68,6 +76,8 @@ export interface Content {
   publishUrl: string | null;
   /** Platform performance metrics (views, likes, comments, shares, etc.) */
   performanceData: Record<string, number>;
+  /** 采纳裁决（三键落库；未裁决 = 不参与采纳率分母） */
+  adoption?: AdoptionRecord;
   assets: Asset[];
   versions: ContentVersion[];
   createdAt: string;
@@ -356,6 +366,40 @@ export async function updateContent(id: string, updates: Partial<Content>, dataD
 }
 
 // --- Assets ---
+
+/** 采纳裁决三键落库（PRD-v4 §8：北极星「采纳率」的读数来源）。重复裁决 = 覆盖（改判允许） */
+export async function recordAdoption(
+  id: string,
+  verdict: AdoptionVerdict,
+  dataDir?: string,
+): Promise<Content | null> {
+  return updateContent(id, { adoption: { verdict, recordedAt: new Date().toISOString() } }, dataDir);
+}
+
+export interface AdoptionStats {
+  /** 已裁决稿数（分母） */
+  judged: number;
+  adopted: number;
+  lightEdit: number;
+  rewritten: number;
+  /** 采纳率 = (采纳 + 轻改) / 已裁决；无裁决时 null（不显示假 0%） */
+  rate: number | null;
+}
+
+export async function adoptionStats(dataDir?: string): Promise<AdoptionStats> {
+  const contents = await listContents(dataDir);
+  const judged = contents.filter((c) => c.adoption);
+  const count = (v: AdoptionVerdict) => judged.filter((c) => c.adoption?.verdict === v).length;
+  const adopted = count("adopted");
+  const lightEdit = count("light_edit");
+  return {
+    judged: judged.length,
+    adopted,
+    lightEdit,
+    rewritten: count("rewritten"),
+    rate: judged.length === 0 ? null : (adopted + lightEdit) / judged.length,
+  };
+}
 
 export async function addAsset(
   contentId: string,

@@ -352,3 +352,59 @@ describe("Platform Variants & Siblings", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+// ─── 采纳裁决（PRD-v4 §8 三键落库） ─────────────────────────────────────────────
+
+describe("adoption verdicts", () => {
+  let adoptDir: string;
+  beforeEach(async () => {
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    adoptDir = await fsp.mkdtemp(path.join(os.tmpdir(), "autocrew-adoption-"));
+  });
+  afterEach(async () => {
+    const fsp = await import("node:fs/promises");
+    await fsp.rm(adoptDir, { recursive: true, force: true });
+  });
+
+  it("recordAdoption 落库、可改判覆盖、重启可读回", async () => {
+    const { saveContent, recordAdoption, getContent } = await import("./local-store.js");
+    const c = await saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
+    const updated = await recordAdoption(c.id, "light_edit", adoptDir);
+    expect(updated?.adoption?.verdict).toBe("light_edit");
+    const again = await recordAdoption(c.id, "adopted", adoptDir);
+    expect(again?.adoption?.verdict).toBe("adopted");
+    const persisted = await getContent(c.id, adoptDir);
+    expect(persisted?.adoption?.verdict).toBe("adopted");
+    expect(persisted?.adoption?.recordedAt).toBeTruthy();
+  });
+
+  it("recordAdoption 不存在的稿 → null", async () => {
+    const { recordAdoption } = await import("./local-store.js");
+    expect(await recordAdoption("content-nope", "adopted", adoptDir)).toBeNull();
+  });
+
+  it("adoptionStats：未裁决不进分母，rate=(采纳+轻改)/已裁决；无裁决 → rate null 而非假 0%", async () => {
+    const { saveContent, recordAdoption, adoptionStats } = await import("./local-store.js");
+    const empty = await adoptionStats(adoptDir);
+    expect(empty.judged).toBe(0);
+    expect(empty.rate).toBeNull();
+
+    const mk = () => saveContent({ title: "t", body: "b", status: "draft_ready", tags: [], hashtags: [] }, adoptDir);
+    const a = await mk();
+    const b = await mk();
+    const c = await mk();
+    await mk(); // 第 4 篇不裁决——不得进分母
+    await recordAdoption(a.id, "adopted", adoptDir);
+    await recordAdoption(b.id, "light_edit", adoptDir);
+    await recordAdoption(c.id, "rewritten", adoptDir);
+
+    const stats = await adoptionStats(adoptDir);
+    expect(stats.judged).toBe(3);
+    expect(stats.adopted).toBe(1);
+    expect(stats.lightEdit).toBe(1);
+    expect(stats.rewritten).toBe(1);
+    expect(stats.rate).toBeCloseTo(2 / 3);
+  });
+});

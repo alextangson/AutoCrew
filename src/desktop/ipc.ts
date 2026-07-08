@@ -118,6 +118,7 @@ export const CHANNEL_ACTIONS = {
   "content:update": "update",
   "content:transition": "transition",
   "content:allowed_transitions": "allowed_transitions",
+  "content:adoption": "adoption",
 } as const satisfies Partial<Record<IpcChannel, string>>;
 
 // ── wrapExecute ───────────────────────────────────────────────────────────────
@@ -591,6 +592,7 @@ export function buildIpcHandlers(
     "content:update": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:update"]),
     "content:transition": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:transition"]),
     "content:allowed_transitions": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:allowed_transitions"]),
+    "content:adoption": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:adoption"]),
     "content:versions": contentVersionsHandler,
     "content:revert": contentRevertHandler,
     "draft:rewrite_selection": rewriteSelectionHandler,

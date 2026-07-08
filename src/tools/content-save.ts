@@ -9,7 +9,10 @@ import {
   listSiblings,
   getAllowedTransitions,
   normalizeLegacyStatus,
+  recordAdoption,
+  adoptionStats,
 } from "../storage/local-store.js";
+import type { AdoptionVerdict } from "../storage/local-store.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
@@ -23,13 +26,14 @@ const ALL_STATUSES = [
 ] as const;
 
 export const contentSaveSchema = Type.Object({
-  action: Type.Unsafe<"save" | "list" | "get" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions">({
+  action: Type.Unsafe<"save" | "list" | "get" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption">({
     type: "string",
-    enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions"],
+    enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption"],
     description:
       "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
       "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
-      "'siblings' list sibling content, 'allowed_transitions' show valid next statuses.",
+      "'siblings' list sibling content, 'allowed_transitions' show valid next statuses, " +
+      "'adoption' record adoption verdict (采纳率北极星读数).",
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   title: Type.Optional(Type.String({ description: "Content title" })),
@@ -53,6 +57,11 @@ export const contentSaveSchema = Type.Object({
   performance_data: Type.Optional(Type.Record(Type.String(), Type.Number(), { description: "Performance metrics: views, likes, comments, shares, etc." })),
   force: Type.Optional(Type.Boolean({ description: "Force transition even if not in allowed transitions" })),
   diff_note: Type.Optional(Type.String({ description: "Note for revision diff tracking" })),
+  verdict: Type.Optional(Type.Unsafe<AdoptionVerdict>({
+    type: "string",
+    enum: ["adopted", "light_edit", "rewritten"],
+    description: "Adoption verdict for 'adoption' action: adopted 直接采纳 | light_edit 轻改采纳 | rewritten 推倒重写.",
+  })),
 });
 
 /**
@@ -145,6 +154,20 @@ export async function executeContentSave(
     return styleLearned
       ? { ok: true, content: updated, styleLearned }
       : { ok: true, content: updated };
+  }
+
+  if (action === "adoption") {
+    const id = params.id as string;
+    if (!id) return { ok: false, error: "id is required for adoption" };
+    const verdict = params.verdict as AdoptionVerdict | undefined;
+    if (verdict !== "adopted" && verdict !== "light_edit" && verdict !== "rewritten") {
+      return { ok: false, error: "verdict must be one of: adopted | light_edit | rewritten" };
+    }
+    const updated = await recordAdoption(id, verdict, dataDir);
+    if (!updated) return { ok: false, error: `Content ${id} not found` };
+    // 附带全局采纳率：UI toast 直接可见北极星读数（白盒资格线的一部分）
+    const stats = await adoptionStats(dataDir);
+    return { ok: true, content: updated, stats };
   }
 
   if (action === "transition") {

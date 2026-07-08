@@ -47,6 +47,7 @@ export const IPC_CHANNELS = [
   "dialog:pick_media",
   "content:asset_add",
   "content:asset_remove",
+  "content:adoption",
   "today:summary",
 ] as const;
 
@@ -59,7 +60,7 @@ export const CHAT_PROGRESS_EVENT = "chat:progress";
  * Converts an IPC channel name to a camelCase method name.
  * e.g. "flywheel:report" → "flywheelReport"
  *
- * All 41 methods exposed on window.autocrew:
+ * All 42 methods exposed on window.autocrew:
  *   flywheelReport / generateScript / styleDistill / styleAbsorb / styleRules /
  *   contentList / contentGet / publishClipboard / publishConfirm / chatTurn /
  *   settingsGet / settingsSet / styleUpdateRule /
@@ -70,7 +71,7 @@ export const CHAT_PROGRESS_EVENT = "chat:progress";
  *   conversationsList / conversationsGet / conversationsDelete /
  *   libraryList / libraryAdd / libraryUpdate / libraryRemove /
  *   libraryFolderCreate / libraryFolderRemove / dialogPickMedia /
- *   contentAssetAdd / contentAssetRemove / todaySummary
+ *   contentAssetAdd / contentAssetRemove / contentAdoption / todaySummary
  */
 export function chToMethod(ch: string): string {
   const [ns, action] = ch.split(":");

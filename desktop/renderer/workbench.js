@@ -68,6 +68,29 @@ async function renderWorkbench(contentId, container) {
   actions.appendChild(saveBtn);
   container.appendChild(actions);
 
+  // ── 采纳裁决三键（PRD-v4 §8：北极星「采纳率」的读数来源） ──
+  const adoptRow = h("div", { class: "wb-adopt-row" });
+  adoptRow.appendChild(h("span", { class: "muted" }, "采纳裁决："));
+  const ADOPT_LABELS = { adopted: "采纳", light_edit: "轻改采纳", rewritten: "重写" };
+  for (const verdict of Object.keys(ADOPT_LABELS)) {
+    const label = ADOPT_LABELS[verdict];
+    const isCurrent = c.adoption && c.adoption.verdict === verdict;
+    const btn = h("button", { class: isCurrent ? "btn-mini wb-adopt-current" : "btn-mini" }, isCurrent ? "✓ " + label : label);
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const r = await safeInvoke(window.autocrew.contentAdoption, { id: contentId, verdict });
+      if (!r.ok) { btn.disabled = false; showToast(r.error || "记录失败"); return; }
+      let msg = "已记录：" + label;
+      if (r.stats && r.stats.rate !== null && r.stats.judged > 0) {
+        msg += " · 采纳率 " + Math.round(r.stats.rate * 100) + "%（" + (r.stats.adopted + r.stats.lightEdit) + "/" + r.stats.judged + "）";
+      }
+      showToast(msg);
+      renderWorkbench(contentId, container);
+    });
+    adoptRow.appendChild(btn);
+  }
+  container.appendChild(adoptRow);
+
   // ── 版本时间线 ──
   const vres = await safeInvoke(window.autocrew.contentVersions, { id: contentId });
   if (vres.ok && vres.data && (vres.data.versions || []).length > 0) {
