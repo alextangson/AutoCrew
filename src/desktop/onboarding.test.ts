@@ -26,10 +26,11 @@ describe("onboarding", () => {
     expect(init.ok).toBe(true);
     const d = init.data as Record<string, unknown>;
     expect(d.industry).toBe("知识口播");
-    expect(d.platforms).toEqual(["douyin"]);
+    expect(d.platforms).toEqual(["wechat_mp"]); // v4 P0 默认公众号（原 douyin）
 
     const status = await getOnboardingStatus({ _dataDir: testDir });
     expect((status.data as Record<string, unknown>).onboarded).toBe(true);
+    expect((status.data as Record<string, unknown>).platforms).toEqual(["wechat_mp"]); // status 也返回席位
   });
 
   it("init accepts explicit industry and platforms", async () => {

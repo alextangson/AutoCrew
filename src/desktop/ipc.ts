@@ -314,13 +314,22 @@ async function profileUpdateHandler(payload: Record<string, unknown>): Promise<R
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
-  const industry = payload.industry;
-  if (typeof industry !== "string" || industry.trim() === "") {
-    return { ok: false, error: "需要非空 industry" };
+  // industry 与 platforms 均可选，至少给一个（席位编辑不必带定位，反之亦然）
+  const updates: { industry?: string; platforms?: string[] } = {};
+  if (typeof payload.industry === "string" && payload.industry.trim() !== "") {
+    updates.industry = payload.industry.trim();
+  }
+  if (Array.isArray(payload.platforms)) {
+    updates.platforms = (payload.platforms as unknown[]).filter(
+      (p): p is string => typeof p === "string" && p.trim() !== "",
+    );
+  }
+  if (updates.industry === undefined && updates.platforms === undefined) {
+    return { ok: false, error: "需要 industry 或 platforms 至少其一" };
   }
   try {
-    const profile = await updateProfile({ industry: industry.trim() }, (payload._dataDir as string) || undefined);
-    return { ok: true, data: { industry: profile.industry } };
+    const profile = await updateProfile(updates, (payload._dataDir as string) || undefined);
+    return { ok: true, data: { industry: profile.industry, platforms: profile.platforms } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

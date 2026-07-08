@@ -108,6 +108,10 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 12. 用户想加信息源/订阅某媒体/看海外内容时，调用 manage_radar_sources。加 RSS 前先 read_url 验证链接确实是 feed（内容含 <rss 或 <feed）；用户只给了网站名时，先试常见路径（/feed、/rss）验证，验证不过就说清并建议在设置·情报源里手动处理。海外源（HN/GitHub 等）用 toggle 开关即可。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
+const PLATFORM_LABELS: Record<string, string> = {
+  wechat_mp: "公众号", douyin: "抖音", xiaohongshu: "小红书", wechat_video: "视频号",
+  bilibili: "B站", twitter: "Twitter", instagram: "Instagram", reddit: "Reddit",
+};
 
 /** "web_search: https://github.com/x/y" → "github.com" (clean source label for cards) */
 function sourceDomain(s: string): string {
@@ -600,6 +604,11 @@ export async function runChatTurn(params: {
       systemPrompt +=
         `\n\n创作者定位：${profile.industry}` +
         (persona?.name ? `；受众：${persona.name}${persona.painPoints?.length ? `（痛点：${persona.painPoints.slice(0, 3).join("、")}）` : ""}` : "");
+    }
+    // 席位注入（IA v4.2）:派活、一稿多发只围绕用户开通的平台,不撒网到没开的席位
+    if (profile?.platforms?.length) {
+      const seats = profile.platforms.map((p) => PLATFORM_LABELS[p] ?? p).join("、");
+      systemPrompt += `\n创作者的平台席位：${seats}。派活与一稿多发只在这些平台里给建议,不要推荐用户没开通的平台;用户明确要求新平台时先建议去开通席位。`;
     }
   } catch { /* 无档案照常对话 */ }
 

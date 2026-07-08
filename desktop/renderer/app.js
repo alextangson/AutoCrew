@@ -324,6 +324,33 @@ function initStyle() {
     if (r.ok && r.data && r.data.calibration && r.data.calibration.industry) posInput.value = r.data.calibration.industry;
   });
 
+  // 平台席位（IA v4.2）:写稿/派活/发布只围绕这些平台。和定位放一起——都是「你是谁」
+  const seatRow = h("div", { class: "style-seat-row" });
+  seatRow.appendChild(h("span", { class: "muted" }, "席位："));
+  const seatWrap = h("div", { class: "style-seat-wrap" });
+  const paintSeats = (seats) => {
+    seatWrap.innerHTML = "";
+    for (const c of PLATFORM_CATALOG) {
+      const on = seats.includes(c.id);
+      const chip = h("button", {
+        class: "seat-chip seat-chip-sm" + (on ? " seat-chip-on" : "") + (c.group === "en" ? " seat-chip-en" : ""),
+      }, (on ? "✓ " : "") + c.label);
+      chip.addEventListener("click", async () => {
+        const next = on ? seats.filter((x) => x !== c.id) : [...seats, c.id];
+        if (next.length === 0) { showToast("至少保留一个平台席位"); return; }
+        const r = await safeInvoke(window.autocrew.profileUpdate, { platforms: next });
+        if (!r.ok) { showToast(r.error || "保存失败"); return; }
+        if (typeof refreshSeats === "function") await refreshSeats();
+        showToast("席位已更新——写稿矩阵即刻生效");
+        paintSeats(next);
+      });
+      seatWrap.appendChild(chip);
+    }
+  };
+  paintSeats(userSeats());
+  seatRow.appendChild(seatWrap);
+  el.appendChild(seatRow);
+
   // Rules section (loaded async)
   const rulesSectionEl = h("div", { id: "style-rules-section" });
   el.appendChild(rulesSectionEl);
@@ -514,5 +541,16 @@ window.__reviewQueue = null;
   });
 })();
 initSidebar();
-bootOnboarding();
-switchView("dashboard"); // IA v4.2：经营层首页,看板降一级视图
+
+/** 席位水合（IA v4.2）:首屏渲染前拉一次 profile.platforms 进 window.__seats,
+ *  矩阵/派活/校准都读它。profile 更新后调 refreshSeats() 重取。 */
+async function refreshSeats() {
+  const s = await safeInvoke(window.autocrew.onboardingStatus, {});
+  window.__seats = (s.ok && s.data && Array.isArray(s.data.platforms)) ? s.data.platforms : [];
+}
+
+(async () => {
+  await refreshSeats();
+  bootOnboarding();
+  switchView("dashboard"); // IA v4.2：经营层首页,看板降一级视图
+})();

@@ -78,13 +78,33 @@ function fmtDate(iso) {
   }
 }
 
+/**
+ * 平台目录——单一事实源（IA v4.2:平台全集 = 能力目录,profile.platforms = 用户席位）。
+ * group: cn 可生成 | en 席位未开通(裁决 F 排队); gen: 是否已支持原生生成。
+ */
+const PLATFORM_CATALOG = [
+  { id: "wechat_mp", label: "公众号", group: "cn", gen: true },
+  { id: "douyin", label: "抖音", group: "cn", gen: true },
+  { id: "xiaohongshu", label: "小红书", group: "cn", gen: true },
+  { id: "wechat_video", label: "视频号", group: "cn", gen: true },
+  { id: "bilibili", label: "B站", group: "cn", gen: true },
+  { id: "twitter", label: "Twitter", group: "en", gen: false },
+  { id: "instagram", label: "Instagram", group: "en", gen: false },
+  { id: "reddit", label: "Reddit", group: "en", gen: false },
+];
+const PLATFORM_BY_ID = Object.fromEntries(PLATFORM_CATALOG.map((p) => [p.id, p]));
+
 function platformLabel(p) {
-  const m = {
-    douyin: "抖音", xiaohongshu: "小红书", wechat_mp: "公众号",
-    wechat_video: "视频号", bilibili: "B站",
-    twitter: "Twitter", instagram: "Instagram", reddit: "Reddit",
-  };
-  return m[p] || p || "—";
+  return (PLATFORM_BY_ID[p] && PLATFORM_BY_ID[p].label) || p || "—";
+}
+
+/** 当前用户席位（app 启动缓存,profile.platforms;空 → 默认公众号 P0）。第一席位 = 派活默认平台。 */
+function userSeats() {
+  const s = (window.__seats && window.__seats.length) ? window.__seats : ["wechat_mp"];
+  return s.filter((id) => PLATFORM_BY_ID[id]); // 防脏数据
+}
+function defaultSeat() {
+  return userSeats()[0] || "wechat_mp";
 }
 
 function statusLabel(s) {

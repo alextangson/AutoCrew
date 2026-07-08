@@ -17,22 +17,38 @@ async function bootOnboarding() {
   onboardingStepTrack();
 }
 
+// 首跑勾选的席位（默认公众号——全链最完整:写稿→审→一键推草稿箱）
+let onboardingSeats = ["wechat_mp"];
+
 function onboardingStepTrack() {
-  const card = cardShell("第 1 步 / 共 3 步", "你的主链");
-  card.appendChild(h("p", {}, "默认从公众号图文起步（全链最完整：写稿→审→一键推草稿箱），口播短视频作为第二席位随后开。"));
+  const card = cardShell("第 1 步 / 共 3 步", "你做哪些平台？");
+  card.appendChild(h("p", {}, "勾选你要运营的平台——写稿、封面、发布都只围绕这几个平台展开，之后随时能加。公众号全链最完整（一键推草稿箱），建议先勾它。"));
+
+  const grid = h("div", { class: "seat-pick-grid" });
+  const paint = () => {
+    grid.innerHTML = "";
+    for (const c of PLATFORM_CATALOG) {
+      const on = onboardingSeats.includes(c.id);
+      const chip = h("button", {
+        class: "seat-chip" + (on ? " seat-chip-on" : "") + (c.group === "en" ? " seat-chip-en" : ""),
+      }, (on ? "✓ " : "") + c.label + (c.group === "en" ? "（暂未开写）" : ""));
+      chip.addEventListener("click", () => {
+        onboardingSeats = on ? onboardingSeats.filter((x) => x !== c.id) : [...onboardingSeats, c.id];
+        paint();
+      });
+      grid.appendChild(chip);
+    }
+  };
+  paint();
+  card.appendChild(grid);
+
   const actions = h("div", { class: "card-actions" });
-
-  const okBtn = h("button", { class: "btn-primary" }, "好，公众号起步");
-  okBtn.addEventListener("click", () => {
-    okBtn.disabled = true;
-    onboardingStepImport();
-  });
+  const okBtn = h("button", { class: "btn-primary" }, "就这些，继续");
+  okBtn.addEventListener("click", () => { okBtn.disabled = true; onboardingStepImport(); });
   actions.appendChild(okBtn);
-
   const skipAllBtn = h("button", { class: "btn-mini" }, "全部跳过，直接开始");
   skipAllBtn.addEventListener("click", () => finishOnboarding(true));
   actions.appendChild(skipAllBtn);
-
   card.appendChild(actions);
   appendCardToStream(card);
 }
@@ -120,11 +136,13 @@ function onboardingStepStyle() {
 async function finishOnboarding(skippedAll) {
   if (onboardingFinished) return;
   onboardingFinished = true;
-  const init = await safeInvoke(window.autocrew.onboardingInit,
-    onboardingImportedPlatform ? { platforms: [onboardingImportedPlatform] } : {});
+  // 席位 = 首跑勾选 ∪ 导入过 CSV 的平台;跳过全部则默认公众号（onboardingSeats 初值）
+  const seats = [...new Set([...onboardingSeats, ...(onboardingImportedPlatform ? [onboardingImportedPlatform] : [])])];
+  const init = await safeInvoke(window.autocrew.onboardingInit, { platforms: seats });
   if (!init.ok) {
     showToast(init.error || "初始化失败");
   }
+  if (typeof refreshSeats === "function") await refreshSeats(); // 席位即刻对矩阵/派活生效
   if (skippedAll) {
     appendChatMessage("assistant",
       "好，直接开始。说需求就行，比如：帮我写一条关于 Excel 快捷键的抖音口播。数据和风格之后随时补。");
@@ -142,8 +160,10 @@ async function finishOnboarding(skippedAll) {
     (ruleCount > 0 ? "我已经记下 " + ruleCount + " 条你的写作规则（工作台的声音内核卡可改可停用）。" : "") +
     "搞定，开工吧。");
   // 首稿陪跑（IA v4.2 §3）:校准完成后总编辑主动发起第一篇——一次任务流,不做 wizard 页
-  const escort = cardShell("首稿陪跑", "写你的第一篇公众号稿", "writer");
-  escort.appendChild(h("p", {}, "从灵感库挑一条，或直接给我一个选题——我按你刚校准的声音写一篇公众号稿，你审改后一键推草稿箱，整条链走一遍。"));
+  const seat = typeof defaultSeat === "function" ? defaultSeat() : "wechat_mp";
+  const seatLabel = platformLabel(seat);
+  const escort = cardShell("首稿陪跑", "写你的第一篇" + seatLabel + "稿", "writer");
+  escort.appendChild(h("p", {}, "从灵感库挑一条，或直接给我一个选题——我按你刚校准的声音写一篇" + seatLabel + "稿，你审改后发布，整条链走一遍。"));
   const escortActions = h("div", { class: "card-actions" });
   // A5 历史资产:代表作里未写尽的角度也是灵感源——总编辑有 read 上下文和 save_topic,一句话完成
   const mineBtn = h("button", { class: "btn-mini" }, "先从我的代表作挖角度");
@@ -156,12 +176,12 @@ async function finishOnboarding(skippedAll) {
     const topics = await safeInvoke(window.autocrew.topicsList, {});
     const first = topics.ok && topics.topics && topics.topics[0];
     if (first) {
-      let brief = "用选题《" + first.title + "》写一篇公众号原生版本";
+      let brief = "用选题《" + first.title + "》写一篇" + seatLabel + "原生版本";
       if (first.reason) brief += "。选题上下文——入库理由：" + first.reason;
       if (first.link) brief += "；参考链接：" + first.link + "（先用 read_url 读原文再写）";
       sendChat(brief);
     } else {
-      sendChat("帮我找几个适合我定位的公众号选题");
+      sendChat("帮我找几个适合我定位的" + seatLabel + "选题");
     }
   });
   escortActions.appendChild(goBtn);

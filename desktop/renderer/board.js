@@ -25,10 +25,6 @@ const VARIANT_STATUS = {
 };
 const BOARD_GLYPH = { scout: "侦", writer: "编", review: "审", analyst: "析", publisher: "发", system: "·" };
 
-/** 全域平台矩阵(创始人定位:全域自媒体营销获客)。cn = 可生成;en = 席位未开通(PRD 裁决 F 排队) */
-const MATRIX_CN = ["wechat_mp", "douyin", "xiaohongshu", "wechat_video", "bilibili"];
-const MATRIX_EN = ["twitter", "instagram", "reddit"];
-
 let boardAtoms = []; // [{ key, topic|null, members: Content[] }] 最近一次渲染的数据
 
 /** 原子分组:topicId 优先(真脊椎),siblings 闭包兜底,孤稿自成原子 */
@@ -263,10 +259,24 @@ function openMatrix(atomKey) {
   }
   wrap.appendChild(h("div", { class: "card-kicker matrix-kicker" }, "平台矩阵 · 有稿点开,无稿生成"));
 
-  const grid = h("div", { class: "matrix-grid" });
   const byPlatform = new Map(atom.members.map((m) => [m.platform, m]));
-
-  for (const p of MATRIX_CN) {
+  const seats = userSeats();
+  // 派活 brief（IA v4.2 §4）:携带 Topic 全量上下文,灵感库增值不许在派活瞬间蒸发
+  const dispatch = (p) => {
+    if (typeof sendChat !== "function") return;
+    let brief = "用选题《" + atomTitle(atom) + "》写一篇" + platformLabel(p) + "原生版本";
+    const t = atom.topic;
+    if (t) {
+      const ctx = [];
+      if (t.reason) ctx.push("入库理由：" + t.reason);
+      if (t.description && t.description !== atomTitle(atom)) ctx.push("背景：" + t.description);
+      if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写，不要凭标题脑补）");
+      if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
+    }
+    sendChat(brief);
+    showToast("已派给总编辑——看右边对话和顶部日志");
+  };
+  const seatCell = (p) => {
     const cell = h("div", { class: "matrix-cell" });
     cell.appendChild(h("div", { class: "matrix-platform" }, platformLabel(p)));
     const m = byPlatform.get(p);
@@ -287,35 +297,49 @@ function openMatrix(atomKey) {
       cell.addEventListener("click", (e) => { if (e.target === cell) openInBoard(m.id, () => openMatrix(atomKey)); });
     } else {
       const gen = h("button", { class: "btn-mini" }, "生成");
-      gen.addEventListener("click", () => {
-        if (typeof sendChat === "function") {
-          // 派活接缝（IA v4.2 §4）：brief 携带 Topic 全量上下文,灵感库的增值信息不许在派活瞬间蒸发
-          let brief = "用选题《" + atomTitle(atom) + "》写一篇" + platformLabel(p) + "原生版本";
-          const t = atom.topic;
-          if (t) {
-            const ctx = [];
-            if (t.reason) ctx.push("入库理由：" + t.reason);
-            if (t.description && t.description !== atomTitle(atom)) ctx.push("背景：" + t.description);
-            if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写，不要凭标题脑补）");
-            if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
-          }
-          sendChat(brief);
-          showToast("已派给总编辑——看右边对话和顶部日志");
-        }
-      });
+      gen.addEventListener("click", () => dispatch(p));
       cell.appendChild(gen);
     }
-    grid.appendChild(cell);
-  }
+    return cell;
+  };
+
+  // 主矩阵 = 用户席位 ∪ 已有稿件的平台（历史稿不因未开席而藏起来）,按目录顺序
+  const shown = PLATFORM_CATALOG.filter((c) => seats.includes(c.id) || byPlatform.has(c.id));
+  const grid = h("div", { class: "matrix-grid" });
+  for (const c of shown) grid.appendChild(seatCell(c.id));
   wrap.appendChild(grid);
 
-  // 出海席位默认折叠（IA v4.2 §1）：裁决 F 的诚实呈现保留,但不日常占据视觉
+  // 开通更多平台（CN 未开席）:一键入席即出现在主矩阵——按用户习惯,只在需要时展开
+  const moreCn = PLATFORM_CATALOG.filter((c) => c.group === "cn" && !seats.includes(c.id) && !byPlatform.has(c.id));
+  if (moreCn.length) {
+    const fold = h("details", { class: "matrix-en-fold" });
+    fold.appendChild(h("summary", { class: "muted" }, "＋ 开通更多平台（" + moreCn.length + "）"));
+    const g = h("div", { class: "matrix-grid" });
+    for (const c of moreCn) {
+      const cell = h("div", { class: "matrix-cell" });
+      cell.appendChild(h("div", { class: "matrix-platform" }, c.label));
+      const open = h("button", { class: "btn-mini" }, "开通");
+      open.addEventListener("click", async () => {
+        const r = await safeInvoke(window.autocrew.profileUpdate, { platforms: [...seats, c.id] });
+        if (!r.ok) { showToast(r.error || "开通失败"); return; }
+        await refreshSeats();
+        showToast("已开通「" + c.label + "」席位");
+        openMatrix(atomKey); // 重渲染:它现在是主矩阵里的席位
+      });
+      cell.appendChild(open);
+      g.appendChild(cell);
+    }
+    fold.appendChild(g);
+    wrap.appendChild(fold);
+  }
+
+  // 出海席位（裁决 F 诚实呈现,默认折叠不占视觉）
   const enFold = h("details", { class: "matrix-en-fold" });
   enFold.appendChild(h("summary", { class: "muted" }, "出海席位（未开通，排队中）"));
   const enGrid = h("div", { class: "matrix-grid" });
-  for (const p of MATRIX_EN) {
+  for (const c of PLATFORM_CATALOG.filter((x) => x.group === "en")) {
     const cell = h("div", { class: "matrix-cell matrix-cell-locked" });
-    cell.appendChild(h("div", { class: "matrix-platform" }, platformLabel(p)));
+    cell.appendChild(h("div", { class: "matrix-platform" }, c.label));
     cell.appendChild(h("div", { class: "matrix-locked" }, "席位未开通"));
     enGrid.appendChild(cell);
   }

@@ -191,9 +191,11 @@ async function renderDashboard() {
       body.appendChild(h("div", { class: "dash-insp-title" }, t.title));
       if (t.reason) body.appendChild(h("div", { class: "muted dash-insp-reason" }, t.reason));
       row.appendChild(body);
+      // 派活默认平台 = 你的第一席位（IA v4.2:不再硬编码公众号）
+      const seat = typeof defaultSeat === "function" ? defaultSeat() : "wechat_mp";
       const writeBtn = h("button", { class: "btn-mini" }, "开写");
       writeBtn.addEventListener("click", () => {
-        let brief = "用选题《" + t.title + "》写一篇公众号原生版本";
+        let brief = "用选题《" + t.title + "》写一篇" + platformLabel(seat) + "原生版本";
         const ctx = [];
         if (t.reason) ctx.push("入库理由：" + t.reason);
         if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写）");

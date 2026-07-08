@@ -1,7 +1,7 @@
 /**
  * Day-1 onboarding 状态（PRD §7.3 / §7.1 热启动）。
  * onboarded 判据 = profile 存在且 industry 非空。永不阻断：跳过路径
- * 直接以默认值初始化（知识口播 / 抖音），之后随时在对话或设置里补。
+ * 直接以默认值初始化（默认公众号席位），之后随时在对话或设置里补。
  */
 import { loadProfile, initProfile, updateProfile } from "../modules/profile/creator-profile.js";
 
@@ -17,6 +17,8 @@ export async function getOnboardingStatus(payload: Record<string, unknown>): Pro
         onboarded: Boolean(profile && profile.industry),
         styleCalibrated: profile?.styleCalibrated ?? false,
         industry: profile?.industry || null,
+        // 用户席位（IA v4.2:平台全集是能力目录,platforms 是用户勾选的席位）
+        platforms: profile?.platforms ?? [],
       },
     };
   } catch (err) {
@@ -33,7 +35,7 @@ export async function completeOnboardingInit(payload: Record<string, unknown>): 
   const platformsRaw = Array.isArray(payload.platforms)
     ? (payload.platforms as unknown[]).filter((p): p is string => typeof p === "string" && p.trim() !== "")
     : [];
-  const platforms = platformsRaw.length > 0 ? platformsRaw : ["douyin"];
+  const platforms = platformsRaw.length > 0 ? platformsRaw : ["wechat_mp"]; // v4 P0 = 公众号
   try {
     const dataDir = (payload._dataDir as string) || undefined;
     await initProfile(dataDir);

@@ -475,10 +475,24 @@ describe("profile:update handler", () => {
     expect(profile.platforms).toEqual(["douyin", "xiaohongshu"]);
   });
 
-  it("rejects empty or missing industry", async () => {
+  it("updates platforms only and preserves industry (席位编辑不必带定位)", async () => {
     const handlers = buildIpcHandlers();
-    expect((await handlers["profile:update"]({ _dataDir: testDir, industry: "  " })).ok).toBe(false);
+    await handlers["onboarding:init"]({ _dataDir: testDir, industry: "定位不动", platforms: ["wechat_mp"] });
+    const res = await handlers["profile:update"]({ _dataDir: testDir, platforms: ["wechat_mp", "douyin"] });
+    expect(res.ok).toBe(true);
+    expect((res.data as Record<string, unknown>).platforms).toEqual(["wechat_mp", "douyin"]);
+
+    const status = await handlers["onboarding:status"]({ _dataDir: testDir });
+    expect((status.data as Record<string, unknown>).industry).toBe("定位不动"); // 定位不被覆盖
+    expect((status.data as Record<string, unknown>).platforms).toEqual(["wechat_mp", "douyin"]);
+  });
+
+  it("rejects when neither industry nor platforms provided", async () => {
+    const handlers = buildIpcHandlers();
     expect((await handlers["profile:update"]({ _dataDir: testDir })).ok).toBe(false);
+    // 空 industry 但带 platforms → 通过（platforms 独立生效）
+    await handlers["onboarding:init"]({ _dataDir: testDir, industry: "x", platforms: ["wechat_mp"] });
+    expect((await handlers["profile:update"]({ _dataDir: testDir, platforms: ["douyin"] })).ok).toBe(true);
   });
 });
 
