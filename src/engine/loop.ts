@@ -79,10 +79,35 @@ async function callModel(
   tools: LoopTool[],
   fetchImpl: typeof fetch,
 ): Promise<CompletionResponse> {
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-  };
+  const anthropic = config.protocol === "anthropic";
+  const req = anthropic
+    ? buildAnthropicRequest(config, model, messages, tools)
+    : buildOpenAiRequest(config, model, messages, tools);
+
+  let captured: Response | null = null;
+  await withRetry(async () => {
+    const res = await fetchImpl(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+    });
+    checkFetchResponse(res, "engine loop");
+    captured = res;
+  });
+
+  return anthropic
+    ? parseAnthropic(captured as unknown as Response)
+    : parseCompletion(captured as unknown as Response);
+}
+
+interface WireRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+}
+
+function buildOpenAiRequest(config: EngineConfig, model: string, messages: Message[], tools: LoopTool[]): WireRequest {
+  const body: Record<string, unknown> = { model, messages };
   if (tools.length > 0) {
     body.tools = tools.map((t) => ({
       type: "function",
@@ -90,19 +115,111 @@ async function callModel(
     }));
     body.tool_choice = "auto";
   }
+  return {
+    url: `${config.baseUrl}/chat/completions`,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+    body,
+  };
+}
 
-  let captured: Response | null = null;
-  await withRetry(async () => {
-    const res = await fetchImpl(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify(body),
-    });
-    checkFetchResponse(res, "engine loop");
-    captured = res;
-  });
+/**
+ * Anthropic Messages 协议(Claude 系中转,2026-07-08 实测创始人通道)。
+ * 内部 Message[] → system 顶字段 + user/assistant 消息;工具结果按协议要求
+ * 以 tool_result 块紧跟在 assistant tool_use 之后——连续多条 tool 消息合并进
+ * 同一条 user 消息。thinking 块在解析侧忽略。
+ */
+function buildAnthropicRequest(config: EngineConfig, model: string, messages: Message[], tools: LoopTool[]): WireRequest {
+  let system = "";
+  const out: Array<{ role: "user" | "assistant"; content: unknown }> = [];
+  for (const m of messages) {
+    if (m.role === "system") {
+      system = m.content ?? "";
+      continue;
+    }
+    if (m.role === "tool") {
+      const block = { type: "tool_result", tool_use_id: m.tool_call_id ?? "", content: m.content ?? "" };
+      const last = out[out.length - 1];
+      const lastBlocks = last && last.role === "user" && Array.isArray(last.content) ? (last.content as Array<{ type?: string }>) : null;
+      if (lastBlocks && lastBlocks[0]?.type === "tool_result") {
+        lastBlocks.push(block);
+      } else {
+        out.push({ role: "user", content: [block] });
+      }
+      continue;
+    }
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      const blocks: unknown[] = [];
+      if (m.content) blocks.push({ type: "text", text: m.content });
+      for (const tc of m.tool_calls) {
+        let input: Record<string, unknown> = {};
+        try {
+          input = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
+        } catch {
+          /* 模型产出的坏 JSON:保底空对象,让下一轮自纠 */
+        }
+        blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+      }
+      out.push({ role: "assistant", content: blocks });
+      continue;
+    }
+    out.push({ role: m.role as "user" | "assistant", content: m.content ?? "" });
+  }
 
-  return parseCompletion(captured as unknown as Response);
+  const body: Record<string, unknown> = { model, max_tokens: 16000, system, messages: out };
+  if (tools.length > 0) {
+    body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+  }
+  return {
+    url: `${config.baseUrl}/v1/messages`,
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body,
+  };
+}
+
+/** Anthropic 响应 → 内部 CompletionResponse 形状(runLoop 零改动)。 */
+async function parseAnthropic(res: Response): Promise<CompletionResponse> {
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error("engine loop: invalid JSON response");
+  }
+  const d = data as {
+    content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
+    stop_reason?: string;
+    usage?: { input_tokens?: number; output_tokens?: number };
+    error?: { message?: string };
+  };
+  if (!Array.isArray(d.content)) {
+    throw new Error(
+      `engine loop: malformed anthropic response${d.error?.message ? `（provider: ${d.error.message}）` : ""}`,
+    );
+  }
+  const text = d.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+  const toolCalls: ToolCall[] = d.content
+    .filter((b) => b.type === "tool_use")
+    .map((b) => ({
+      id: b.id ?? "",
+      type: "function" as const,
+      function: { name: b.name ?? "", arguments: JSON.stringify(b.input ?? {}) },
+    }));
+  return {
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: text,
+          ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+        },
+        finish_reason: d.stop_reason ?? "end_turn",
+      },
+    ],
+    usage: { total_tokens: (d.usage?.input_tokens ?? 0) + (d.usage?.output_tokens ?? 0) },
+  };
 }
 
 /** 200 ≠ 可信：中转/网关可能回 HTML、空 choices 或 error-shaped body（薄云中转路线下是"何时"不是"是否"）。 */

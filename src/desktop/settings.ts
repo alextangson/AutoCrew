@@ -53,7 +53,7 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
     return { ok: false, error: "Invalid payload: expected object" };
   }
   const updates: Partial<EngineConfig> = {};
-  const fields: Array<[keyof EngineConfig, string]> = [
+  const fields: Array<["apiKey" | "baseUrl" | "strongModel" | "fastModel", string]> = [
     ["apiKey", "api_key"],
     ["baseUrl", "base_url"],
     ["strongModel", "strong_model"],
@@ -66,6 +66,13 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
       return { ok: false, error: `${source} 必须是非空字符串` };
     }
     updates[target] = v.trim();
+  }
+  // protocol 单独收(枚举校验,不走裸 string 路径);缺省由 loadEngineConfig 自动识别
+  if (payload.protocol !== undefined) {
+    if (payload.protocol !== "openai" && payload.protocol !== "anthropic") {
+      return { ok: false, error: "protocol 必须是 openai 或 anthropic" };
+    }
+    updates.protocol = payload.protocol;
   }
   if (Object.keys(updates).length === 0) {
     return { ok: false, error: "没有可写入的字段（api_key / base_url / strong_model / fast_model）" };

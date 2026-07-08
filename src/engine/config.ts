@@ -14,6 +14,13 @@ export interface EngineConfig {
   strongModel: string;
   /** 过滤/排版/打标（后续计划消费） */
   fastModel: string;
+  /**
+   * 上游协议:openai = /chat/completions(缺省);anthropic = /v1/messages
+   * (Claude 系中转,创始人实际付费通道 2026-07-08)。loadEngineConfig 必解析;
+   * 自动识别:sk-ant 前缀 key 或 baseUrl 含 claude/anthropic → anthropic。
+   * 可选字段:手工构造的 config(测试/注入)缺省视为 openai。
+   */
+  protocol?: "openai" | "anthropic";
 }
 
 export const ENGINE_DEFAULTS = {
@@ -49,10 +56,18 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
       "引擎未配置 model provider：设置环境变量 DEEPSEEK_API_KEY，或在 ~/.autocrew/engine.json 写入 {\"apiKey\": \"...\"}",
     );
   }
+  const baseUrl = fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl;
+  const protocol =
+    fromFile.protocol === "anthropic" || fromFile.protocol === "openai"
+      ? fromFile.protocol
+      : apiKey.startsWith("sk-ant") || /claude|anthropic/i.test(baseUrl)
+        ? "anthropic"
+        : "openai";
   return {
     apiKey,
-    baseUrl: fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl,
+    baseUrl,
     strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
     fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
+    protocol,
   };
 }

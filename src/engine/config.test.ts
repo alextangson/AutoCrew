@@ -68,3 +68,32 @@ describe("loadEngineConfig", () => {
     await expect(loadEngineConfig(testDir)).rejects.toThrow(/不是 JSON 对象/);
   });
 });
+
+// ─── 协议自动识别（Claude 系中转）────────────────────────────────────────────
+
+describe("protocol auto-detect", () => {
+  it("sk-ant key → anthropic;claude 域名 → anthropic;显式 protocol 覆盖;普通 → openai", async () => {
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "autocrew-proto-"));
+    try {
+      const write = (obj: Record<string, unknown>) =>
+        fsp.writeFile(path.join(dir, "engine.json"), JSON.stringify(obj));
+
+      await write({ apiKey: "sk-ant-xxx", baseUrl: "https://relay.example.com" });
+      expect((await loadEngineConfig(dir)).protocol).toBe("anthropic");
+
+      await write({ apiKey: "sk-plain", baseUrl: "https://code.newcli.com/claude/aws" });
+      expect((await loadEngineConfig(dir)).protocol).toBe("anthropic");
+
+      await write({ apiKey: "sk-ant-xxx", baseUrl: "https://x.com", protocol: "openai" });
+      expect((await loadEngineConfig(dir)).protocol).toBe("openai");
+
+      await write({ apiKey: "sk-plain", baseUrl: "https://api.deepseek.com" });
+      expect((await loadEngineConfig(dir)).protocol).toBe("openai");
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});

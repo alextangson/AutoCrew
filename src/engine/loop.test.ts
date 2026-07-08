@@ -244,3 +244,88 @@ describe("runLoop history", () => {
     expect(messages[3].content).toBe("现在这条");
   });
 });
+
+// ─── Anthropic 协议适配（Claude 系中转,2026-07-08）────────────────────────────
+
+describe("anthropic protocol", () => {
+  const ACFG: EngineConfig = {
+    apiKey: "sk-ant-test", baseUrl: "https://relay.fake/claude", strongModel: "claude-x", fastModel: "claude-x",
+    protocol: "anthropic",
+  };
+
+  function mockAnthropicFetch(
+    responses: Array<Record<string, unknown>>,
+    calls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }> = [],
+  ) {
+    let i = 0;
+    const impl = (async (url: unknown, init?: { headers?: Record<string, string>; body?: string }) => {
+      calls.push({
+        url: String(url),
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        body: JSON.parse(init?.body ?? "{}") as Record<string, unknown>,
+      });
+      const body = responses[Math.min(i, responses.length - 1)];
+      i++;
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as typeof fetch;
+    return { impl, calls };
+  }
+
+  it("请求打 /v1/messages,带 x-api-key/anthropic-version,tools 映射为 input_schema,system 提顶", async () => {
+    const { impl, calls } = mockAnthropicFetch([
+      { content: [{ type: "text", text: "好的" }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 } },
+    ]);
+    const tool: LoopTool = { name: "echo", description: "回声", parameters: { type: "object", properties: {} }, execute: () => "ok" };
+    const result = await runLoop(ACFG, { model: "claude-x", systemPrompt: "你是编辑部", userMessage: "在吗", tools: [tool], fetchImpl: impl });
+
+    expect(result.finalMessage).toBe("好的");
+    expect(result.totalTokens).toBe(15);
+    expect(calls[0].url).toBe("https://relay.fake/claude/v1/messages");
+    expect(calls[0].headers["x-api-key"]).toBe("sk-ant-test");
+    expect(calls[0].headers["anthropic-version"]).toBe("2023-06-01");
+    expect(calls[0].body.system).toBe("你是编辑部");
+    expect(calls[0].body.max_tokens).toBe(16000);
+    const tools = calls[0].body.tools as Array<{ name: string; input_schema: unknown }>;
+    expect(tools[0].name).toBe("echo");
+    expect(tools[0].input_schema).toEqual({ type: "object", properties: {} });
+  });
+
+  it("tool_use 往返:thinking 块忽略,工具执行,tool_result 以块紧跟在下一条 user 消息", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const tool: LoopTool = {
+      name: "lookup", description: "查", parameters: { type: "object", properties: {} },
+      execute: (args) => { seen.push(args); return "查到了:42"; },
+    };
+    const { impl, calls } = mockAnthropicFetch([
+      {
+        content: [
+          { type: "thinking", thinking: "..." },
+          { type: "tool_use", id: "tu-1", name: "lookup", input: { q: "answer" } },
+        ],
+        stop_reason: "tool_use", usage: { input_tokens: 20, output_tokens: 10 },
+      },
+      { content: [{ type: "text", text: "答案是 42" }], stop_reason: "end_turn", usage: { input_tokens: 30, output_tokens: 8 } },
+    ]);
+    const result = await runLoop(ACFG, { model: "claude-x", systemPrompt: "s", userMessage: "问", tools: [tool], fetchImpl: impl });
+
+    expect(seen).toEqual([{ q: "answer" }]);
+    expect(result.finalMessage).toBe("答案是 42");
+    expect(result.toolCallCount).toBe(1);
+
+    const secondMsgs = calls[1].body.messages as Array<{ role: string; content: unknown }>;
+    const asst = secondMsgs.find((m) => m.role === "assistant" && Array.isArray(m.content));
+    expect(asst).toBeDefined();
+    const useBlock = (asst!.content as Array<{ type: string; id?: string; input?: unknown }>).find((b) => b.type === "tool_use");
+    expect(useBlock).toMatchObject({ id: "tu-1", input: { q: "answer" } });
+    const resultMsg = secondMsgs[secondMsgs.length - 1];
+    expect(resultMsg.role).toBe("user");
+    expect(resultMsg.content).toEqual([{ type: "tool_result", tool_use_id: "tu-1", content: "查到了:42" }]);
+  });
+
+  it("上游 error 形状 → 报错带 provider 信息", async () => {
+    const { impl } = mockAnthropicFetch([{ error: { message: "invalid model" } }]);
+    await expect(
+      runLoop(ACFG, { model: "claude-x", systemPrompt: "s", userMessage: "u", fetchImpl: impl }),
+    ).rejects.toThrow(/invalid model/);
+  });
+});
