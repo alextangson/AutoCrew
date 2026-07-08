@@ -14,6 +14,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { IPC_CHANNELS } from "../src/desktop/channels.js";
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -140,7 +141,11 @@ try {
   }
   console.log("smoke: preload.cjs requires only electron");
 
-  assert(registrations.size === 41, `all 41 IPC channels registered (got ${registrations.size})`);
+  // 通道数从合同单源取——不再手写死数字（41 时代的断言曾在 42/43 时腐烂）
+  assert(
+    registrations.size === IPC_CHANNELS.length,
+    `all ${IPC_CHANNELS.length} IPC channels registered (got ${registrations.size})`,
+  );
   await assertSanitizeWired(tmpDir);
   await assertCsvWhitelistWired(tmpDir);
   await assertMediaWhitelistWired();
