@@ -40,26 +40,24 @@ function assistantTurn(content: string | null, toolCalls?: unknown[]) {
 }
 
 describe("buildChatTools", () => {
-  it("generate_script pushes a draft card and returns compact JSON to the model", async () => {
+  it("generate_script starts a background run and returns pending immediately (契约 P1 后台化)", async () => {
     const sink: ChatCard[] = [];
-    const generate = vi.fn(async () => ({
-      ok: true,
-      data: { contentId: "c1", title: "T", body: "B", hashtags: ["#a"], violations: [], tokensUsed: 5 },
+    const startGenerate = vi.fn(async () => ({
+      contentId: "c1", runId: "run-bg-1", completion: Promise.resolve(),
     }));
-    const tools = buildChatTools(sink, testDir, { generate });
+    const tools = buildChatTools(sink, testDir, { startGenerate });
 
     const tool = tools.find((t) => t.name === "generate_script");
     expect(tool).toBeDefined();
     const out = await tool!.execute({ topic: "Excel 快捷键", platform: "douyin" });
 
-    expect(generate).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "script", topic: "Excel 快捷键", platform: "douyin", _dataDir: testDir }),
+    expect(startGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: "Excel 快捷键", platform: "douyin" }),
+      testDir,
     );
-    expect(JSON.parse(out as string)).toMatchObject({ ok: true, contentId: "c1", title: "T" });
-    expect((out as string).includes("B")).toBe(false); // 正文不进对话上下文
-    expect(sink).toHaveLength(1);
-    expect(sink[0].type).toBe("draft");
-    expect(sink[0].data.contentId).toBe("c1");
+    const parsed = JSON.parse(out as string);
+    expect(parsed).toMatchObject({ ok: true, pending: true, contentId: "c1" });
+    expect(sink).toHaveLength(0); // 成稿没出来,不推 draft 卡——占位卡在看板,进度在任务带
   });
 
   it("add_style_rule records a user_explicit rule and pushes a style card", async () => {
@@ -79,26 +77,23 @@ describe("buildChatTools", () => {
 
   it("strips model-injected underscore keys (e.g. _dataDir) from tool args", async () => {
     const sink: ChatCard[] = [];
-    const generate = vi.fn(async () => ({
-      ok: true,
-      data: { contentId: "c1", title: "T", body: "B", hashtags: [], violations: [], tokensUsed: 1 },
-    }));
-    const tools = buildChatTools(sink, testDir, { generate });
-    await tools.find((t) => t.name === "generate_script")!.execute({
-      topic: "t", platform: "douyin", _dataDir: "/tmp/evil",
+    const rewrite = vi.fn(async () => ({ ok: false, error: "x" }));
+    const tools = buildChatTools(sink, testDir, { rewrite });
+    await tools.find((t) => t.name === "adapt_platform")!.execute({
+      content_id: "c1", target_platform: "xiaohongshu", _dataDir: "/tmp/evil",
     });
-    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ _dataDir: testDir }));
-    expect(generate).not.toHaveBeenCalledWith(expect.objectContaining({ _dataDir: "/tmp/evil" }));
+    expect(rewrite).toHaveBeenCalledWith(expect.objectContaining({ _dataDir: testDir }));
+    expect(rewrite).not.toHaveBeenCalledWith(expect.objectContaining({ _dataDir: "/tmp/evil" }));
   });
 
   it("strips _dataDir entirely when no dataDir is configured", async () => {
     const sink: ChatCard[] = [];
-    const generate = vi.fn(async () => ({ ok: false, error: "x" }));
-    const tools = buildChatTools(sink, undefined, { generate });
-    await tools.find((t) => t.name === "generate_script")!.execute({
-      topic: "t", platform: "douyin", _dataDir: "/tmp/evil",
+    const rewrite = vi.fn(async () => ({ ok: false, error: "x" }));
+    const tools = buildChatTools(sink, undefined, { rewrite });
+    await tools.find((t) => t.name === "adapt_platform")!.execute({
+      content_id: "c1", target_platform: "xiaohongshu", _dataDir: "/tmp/evil",
     });
-    const callArg = generate.mock.calls[0][0] as Record<string, unknown>;
+    const callArg = rewrite.mock.calls[0][0] as Record<string, unknown>;
     expect("_dataDir" in callArg).toBe(false);
   });
 
@@ -120,10 +115,10 @@ describe("buildChatTools", () => {
 
   it("tool failure returns ok:false JSON to the model without pushing a card", async () => {
     const sink: ChatCard[] = [];
-    const generate = vi.fn(async () => ({ ok: false, error: "缺少必填参数 topic：请提供脚本选题" }));
-    const tools = buildChatTools(sink, testDir, { generate });
+    const startGenerate = vi.fn(async () => { throw new Error("占位稿创建失败：磁盘只读"); });
+    const tools = buildChatTools(sink, testDir, { startGenerate });
 
-    const out = await tools.find((t) => t.name === "generate_script")!.execute({ platform: "douyin" });
+    const out = await tools.find((t) => t.name === "generate_script")!.execute({ topic: "t", platform: "douyin" });
     expect(JSON.parse(out as string)).toMatchObject({ ok: false });
     expect(sink).toHaveLength(0);
   });
@@ -296,24 +291,23 @@ describe("runChatTurn", () => {
       return jsonResponse(assistantTurn("已生成，看卡片。"));
     }) as typeof fetch;
 
-    const generate = vi.fn(async () => ({
-      ok: true,
-      data: { contentId: "c9", title: "标题", body: "正文", hashtags: [], violations: [], tokensUsed: 3 },
+    const startGenerate = vi.fn(async () => ({
+      contentId: "c9", runId: "run-bg-9", completion: Promise.resolve(),
     }));
 
     const res = await runChatTurn({
       message: "帮我写一条 Excel 的抖音口播",
       history: [{ role: "user", content: "之前的话" }, { role: "assistant", content: "之前的回复" }],
       dataDir: testDir,
-      deps: { generate },
+      deps: { startGenerate },
       fetchImpl,
     });
 
     expect(res.ok).toBe(true);
     const data = res.data as { reply: string; cards: ChatCard[] };
     expect(data.reply).toBe("已生成，看卡片。");
-    expect(data.cards).toHaveLength(1);
-    expect(data.cards[0].type).toBe("draft");
+    expect(startGenerate).toHaveBeenCalledOnce(); // 后台启动,不再有 draft 卡
+    expect(data.cards).toHaveLength(0);
     // history 注入（system + 2 history + user = 前 4 条）
     const firstMessages = calls[0].messages as Array<{ role: string }>;
     expect(firstMessages.slice(0, 4).map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);

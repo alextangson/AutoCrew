@@ -40,10 +40,17 @@ const EngineStore = (() => {
       if (!e || !e.label) return;
       state.events.push(e);
       if (state.events.length > 100) state.events.shift();
+      // 后台任务（生成后台化）:work+runId 开卡步进——chat 立即返回后,持续感由任务带承担
+      if (e.kind === "work" && e.runId) {
+        const run = ensureRun(e.runId);
+        run.steps.push({ label: e.label, role: e.role || null, done: false });
+      }
       // run 收尾信号（引擎事件流）:done / failed 都要闭合,任务带不许悬空
-      if ((e.kind === "run_done" || e.kind === "run_failed") && e.runId && state.runs[e.runId]) {
-        state.runs[e.runId].status = e.kind === "run_done" ? "done" : "failed";
-        state.runs[e.runId].doneLabel = e.label;
+      if ((e.kind === "run_done" || e.kind === "run_failed") && e.runId) {
+        const run = ensureRun(e.runId);
+        run.status = e.kind === "run_done" ? "done" : "failed";
+        run.doneLabel = e.label;
+        run.steps.forEach((s) => { s.done = true; });
       }
       notify();
     },

@@ -62,7 +62,7 @@
 import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
-import { executeGenerate } from "../tools/generate.js";
+import { startGenerateScript } from "../modules/writing/generate-script.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
@@ -110,7 +110,6 @@ type ExecuteFn = (params: Record<string, unknown>) => Promise<Record<string, unk
  */
 export const CHANNEL_ACTIONS = {
   "flywheel:report": "report",
-  "generate:script": "script",
   "style:distill": "distill",
   "style:absorb": "absorb_samples",
   "content:list": "list",
@@ -165,6 +164,29 @@ async function styleRulesHandler(payload: Record<string, unknown>): Promise<Reco
         boundaries: profile?.styleBoundaries ?? { never: [], always: [] },
       },
     };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── generate:script — 后台化写稿（契约 P1:任务生命周期与 HTTP 请求解耦） ─────
+
+async function generateBackgroundHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const dataDir = (payload._dataDir as string) || undefined;
+  try {
+    const started = await startGenerateScript(
+      {
+        topic: String(payload.topic ?? ""),
+        platform: payload.platform as never,
+        research: typeof payload.research === "string" ? payload.research : undefined,
+      },
+      dataDir,
+      { onEvent: (e) => void emitEngineEvent(e, dataDir).catch(() => {}) },
+    );
+    return { ok: true, pending: true, contentId: started.contentId, runId: started.runId };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -619,7 +641,7 @@ export function buildIpcHandlers(
 ): Record<IpcChannel, IpcHandler> {
   const defaults: Record<IpcChannel, IpcHandler> = {
     "flywheel:report": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:report"]),
-    "generate:script": wrapExecute(executeGenerate as ExecuteFn, CHANNEL_ACTIONS["generate:script"]),
+    "generate:script": generateBackgroundHandler,
     "style:distill": wrapExecute(executeStyle as ExecuteFn, CHANNEL_ACTIONS["style:distill"]),
     "style:absorb": wrapExecute(executeStyle as ExecuteFn, CHANNEL_ACTIONS["style:absorb"]),
     "style:rules": styleRulesHandler,

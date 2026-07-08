@@ -21,6 +21,8 @@ import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
 import { saveTopic, type Topic } from "../storage/local-store.js";
 import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
+import { startGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
+import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 export interface ChatCard {
@@ -86,6 +88,7 @@ export interface ChatToolDeps {
   topics?: (industry: string) => Promise<RadarItem[]>;
   libSearch?: (query: string, type?: LibraryAssetType) => Promise<LibraryAssetView[]>;
   saveTopicImpl?: typeof saveTopic;
+  startGenerate?: (req: ScriptRequest, dataDir?: string) => Promise<StartedGeneration>;
 }
 
 const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字员工团队（情报、文案、审核、发布、分析），帮创作者把「想法→成稿→发布→回流」整条链跑成默认值。你的职责：接需求派活、报进展、把关不可逆动作、答数据与状态问题。
@@ -126,6 +129,12 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     topics: deps?.topics ?? (async (industry: string) => getTopicCandidates(industry, dataDir)),
     libSearch: deps?.libSearch ?? ((q: string, t?: LibraryAssetType) => searchAssets(q, t, dataDir)),
     saveTopicImpl: deps?.saveTopicImpl ?? saveTopic,
+    startGenerate:
+      deps?.startGenerate ??
+      ((req, dd) =>
+        startGenerateScript(req, dd, {
+          onEvent: (e) => void emitEngineEvent(e, dd).catch(() => {}),
+        })),
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
@@ -243,7 +252,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     },
     {
       name: "generate_script",
-      description: "生成口播脚本并自动存为稿件。需要明确的选题和目标平台。",
+      description:
+        "开写一篇稿件（后台任务）。调用立即返回占位稿——写作在后台进行（长文约 1-3 分钟）,完成后看板卡片自动转正、任务带显示进度。需要明确的选题和目标平台。",
       parameters: {
         type: "object",
         properties: {
@@ -254,23 +264,27 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["topic", "platform"],
       },
       execute: async (args) => {
-        const res = await d.generate({ ...sanitize(args), ...dirParams, action: "script" });
-        if (!res.ok) {
-          // 防呆:写稿中断必须进工作日志——「没动静」不许无痕（占位稿的 lastError 由 generate 层落）
+        const a = sanitize(args);
+        try {
+          // 后台化（契约 P1 完全体）:任务生命周期与本次对话请求解耦——对话立即回,写作照跑
+          const started = await d.startGenerate(
+            { topic: String(a.topic ?? ""), platform: a.platform as never, research: typeof a.research === "string" ? a.research : undefined },
+            dataDir,
+          );
+          return JSON.stringify({
+            ok: true,
+            pending: true,
+            contentId: started.contentId,
+            note: "写作已在后台开始（约 1-3 分钟）。占位卡已在看板「在写」列,写完自动转正并出现在任务带——告诉用户去看板看,不要编造成稿内容。",
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
           void emitEngineEvent(
-            { role: "writer", kind: "run_failed", label: `编剧写稿中断：${String(res.error ?? "未知错误").slice(0, 60)}` },
+            { role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}` },
             dataDir,
           ).catch(() => {});
-          return fail(res.error);
+          return fail(msg);
         }
-        const data = res.data as Record<string, unknown>;
-        sink.push({ type: "draft", data });
-        return JSON.stringify({
-          ok: true,
-          contentId: data.contentId,
-          title: data.title,
-          violations: Array.isArray(data.violations) ? data.violations.length : 0,
-        });
       },
     },
     {

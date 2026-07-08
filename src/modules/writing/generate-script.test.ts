@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { generateScript } from "./generate-script.js";
+import { generateScript, startGenerateScript } from "./generate-script.js";
 import type { GeneratedScript } from "./generate-script.js";
 import { getContent, listContents } from "../../storage/local-store.js";
 import type { LoopResult, LoopTool, LoopOptions } from "../../engine/loop.js";
@@ -396,5 +396,45 @@ describe("generateScript × quality gate (wechat_mp)", () => {
     expect(seenOpts!.systemPrompt).not.toContain("质量硬门禁");
     expect(seenOpts!.maxTurns).toBe(4);
     expect(res.gateFailures).toEqual([]);
+  });
+});
+
+describe("startGenerateScript — 后台化（契约 P1 完全体）", () => {
+  it("returns the placeholder immediately, before the loop finishes", async () => {
+    let releaseLoop;
+    const gate = new Promise((r) => { releaseLoop = r; });
+    const runLoopImpl = async (_cfg, opts) => {
+      await gate; // loop 挂起——占位必须先返回
+      const submitTool = (opts.tools ?? []).find((t) => t.name === "submit_script");
+      await submitTool.execute(GOOD_PAYLOAD);
+      return { finalMessage: "ok", turns: 2, totalTokens: 100, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    const events = [];
+    const started = await startGenerateScript(TEST_REQ, testDir, { runLoopImpl, onEvent: (e) => events.push(e) });
+
+    // 立即拿到占位:loop 还没跑完
+    expect(started.contentId).toMatch(/^content-/);
+    const placeholder = await getContent(started.contentId, testDir);
+    expect(placeholder.status).toBe("drafting");
+    expect(events.map((e) => e.kind)).toEqual(["work"]);
+
+    releaseLoop();
+    await started.completion;
+
+    const promoted = await getContent(started.contentId, testDir);
+    expect(promoted.status).toBe("draft_ready"); // 后台完成 → 占位原地转正
+    expect(events.map((e) => e.kind)).toEqual(["work", "run_done"]);
+    expect(events[1].runId).toBe(started.runId);
+  });
+
+  it("background failure marks lastError and emits run_failed — never throws to caller", async () => {
+    const runLoopImpl = async () => { throw new Error("relay 断流"); };
+    const events = [];
+    const started = await startGenerateScript(TEST_REQ, testDir, { runLoopImpl, onEvent: (e) => events.push(e) });
+    await started.completion; // 不 reject
+
+    const placeholder = await getContent(started.contentId, testDir);
+    expect(placeholder.lastError).toContain("relay 断流");
+    expect(events.map((e) => e.kind)).toEqual(["work", "run_failed"]);
   });
 });

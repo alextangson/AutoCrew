@@ -502,6 +502,17 @@ async function loadStyleRules(container) {
 initChat();
 initViews();
 window.__reviewQueue = null;
+// 后台任务收尾自动刷新（生成后台化）:占位稿转正/中断,看板与首页即时可见,不用手刷
+(() => {
+  let lastSettled = 0;
+  EngineStore.subscribe((state) => {
+    const settled = state.events.filter((e) => e.kind === "run_done" || e.kind === "run_failed").length;
+    if (settled > lastSettled) {
+      lastSettled = settled;
+      if (typeof refreshActiveView === "function") refreshActiveView();
+    }
+  });
+})();
 initSidebar();
 bootOnboarding();
 switchView("dashboard"); // IA v4.2：经营层首页,看板降一级视图

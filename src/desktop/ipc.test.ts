@@ -144,7 +144,6 @@ describe("wrapExecute — action injection", () => {
 describe("CHANNEL_ACTIONS — channel→action bindings", () => {
   const EXPECTED_BINDINGS: [keyof typeof CHANNEL_ACTIONS, string][] = [
     ["flywheel:report", "report"],
-    ["generate:script", "script"],
     ["style:distill", "distill"],
     ["style:absorb", "absorb_samples"],
     ["content:list", "list"],
@@ -179,6 +178,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
       IPC_CHANNELS.filter(
         (ch) =>
           ch !== "style:rules" &&
+          ch !== "generate:script" &&
           ch !== "chat:turn" &&
           ch !== "settings:get" &&
           ch !== "settings:set" &&

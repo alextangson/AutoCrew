@@ -130,21 +130,8 @@ function buildSubmitTool(captured: Captured, gate?: QualityGateSpec): LoopTool {
   };
 }
 
-export async function generateScript(
-  req: ScriptRequest,
-  dataDir?: string,
-  deps?: { runLoopImpl?: typeof runLoop },
-): Promise<GeneratedScript> {
-  const [config, pack, profile] = await Promise.all([
-    loadEngineConfig(dataDir),
-    Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
-    loadProfile(dataDir),
-  ]);
-
-  const { system, user } = buildScriptPrompts(pack, profile, req);
-
-  // 防呆 P1（IA v4.2 失败边界）:分钟级长任务先落占位稿——中途死不许蒸发。
-  // 占位卡立刻出现在看板「在写」列;HTTP 断开/页面刷新都不影响它的存在。
+/** 占位稿先行（防呆 P1）:分钟级长任务先落盘——中途死不许蒸发,刷新/断连不影响它的存在 */
+async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
   const placeholder = await saveContent(
     {
       title: `［生成中］${req.topic.slice(0, 40)}`,
@@ -156,7 +143,23 @@ export async function generateScript(
     },
     dataDir,
   );
+  return placeholder.id;
+}
 
+/** 执行体:loop → 占位稿转正;失败标〔生成中断〕+ lastError 后原样抛出 */
+async function runGeneration(
+  placeholderId: string,
+  req: ScriptRequest,
+  dataDir?: string,
+  deps?: { runLoopImpl?: typeof runLoop },
+): Promise<GeneratedScript> {
+  const [config, pack, profile] = await Promise.all([
+    loadEngineConfig(dataDir),
+    Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
+    loadProfile(dataDir),
+  ]);
+
+  const { system, user } = buildScriptPrompts(pack, profile, req);
   const captured: Captured = { payload: null, gateFailures: [] };
   const gate = pack.qualityGate;
   const submitTool = buildSubmitTool(captured, gate);
@@ -180,19 +183,72 @@ export async function generateScript(
     }
 
     const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
-    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, placeholder.id, dataDir);
+    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, placeholderId, dataDir);
   } catch (err) {
     // 失败留痕:占位稿标注中断原因（best-effort,不吞原错误）——UI 显示徽章与重试入口
     const msg = err instanceof Error ? err.message : String(err);
     try {
       await updateContent(
-        placeholder.id,
+        placeholderId,
         { title: `［生成中断］${req.topic.slice(0, 40)}`, lastError: msg },
         dataDir,
       );
     } catch { /* 留痕失败不掩盖原错误 */ }
     throw err;
   }
+}
+
+/** 同步版（MCP 外部 agent 与测试用:调用方要等成稿） */
+export async function generateScript(
+  req: ScriptRequest,
+  dataDir?: string,
+  deps?: { runLoopImpl?: typeof runLoop },
+): Promise<GeneratedScript> {
+  const placeholderId = await createPlaceholder(req, dataDir);
+  return runGeneration(placeholderId, req, dataDir, deps);
+}
+
+export interface BackgroundGenEvent {
+  role: "writer" | "system";
+  kind: "work" | "run_done" | "run_failed";
+  label: string;
+  contentId?: string;
+  runId: string;
+}
+
+export interface StartedGeneration {
+  contentId: string;
+  runId: string;
+  /** 后台执行句柄——生产忽略,测试 await 用（fire-and-forget 的可测性口子） */
+  completion: Promise<void>;
+}
+
+/**
+ * 后台化入口（契约 P1 工程项完全体）:提交即返回占位稿 id,生成在进程后台跑,
+ * HTTP 请求/页面刷新与任务生命周期彻底解耦。进度经 onEvent 回调外发
+ * （调用方注入 emitEngineEvent——modules 层不依赖 desktop 层）。
+ */
+export function startGenerateScript(
+  req: ScriptRequest,
+  dataDir?: string,
+  deps?: { runLoopImpl?: typeof runLoop; onEvent?: (e: BackgroundGenEvent) => void },
+): Promise<StartedGeneration> {
+  const runId = `run-bg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const emit = (e: BackgroundGenEvent) => { try { deps?.onEvent?.(e); } catch { /* 观测层吞错 */ } };
+
+  return createPlaceholder(req, dataDir).then((contentId) => {
+    const completion = (async () => {
+      emit({ role: "writer", kind: "work", label: `编剧开写《${req.topic.slice(0, 24)}》`, contentId, runId });
+      try {
+        const result = await runGeneration(contentId, req, dataDir, deps);
+        emit({ role: "system", kind: "run_done", label: `《${result.title.slice(0, 24)}》写完,待审改`, contentId, runId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}`, contentId, runId });
+      }
+    })();
+    return { contentId, runId, completion };
+  });
 }
 
 /** 后处理：组装 → humanize → 违禁词扫描 → 占位稿转正（draft_ready，同现有写作流）。 */
