@@ -14,6 +14,7 @@ import { executeFlywheel } from "../tools/flywheel.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
+import { executeResearch } from "../tools/research.js";
 import { addWritingRule, loadProfile, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
@@ -35,6 +36,7 @@ export interface ChatProgressEvent {
 /** 工具 → 角色/人话状态（UI 状态流署名；与 cards.js 的 CREW_META 角色键一致） */
 const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label: string }> = {
   find_topics: { role: "scout", label: "侦察员正在扫热榜" },
+  find_overseas_topics: { role: "scout", label: "侦察员正在扫海外源" },
   read_url: { role: "scout", label: "侦察员正在读参考资料" },
   generate_script: { role: "writer", label: "编剧正在写稿" },
   adapt_platform: { role: "writer", label: "编剧正在适配平台版本" },
@@ -63,6 +65,7 @@ export interface ChatToolDeps {
   style?: ExecuteFn;
   content?: ExecuteFn;
   publish?: ExecuteFn;
+  research?: ExecuteFn;
   addRule?: (rule: Omit<WritingRule, "createdAt">, dataDir?: string) => Promise<CreatorProfile>;
   fetchPage?: (url: string) => Promise<PageText>;
   topics?: (industry: string) => Promise<RadarItem[]>;
@@ -78,9 +81,16 @@ const SYSTEM_PROMPT = `你是 AutoCrew，用户的数字编剧员工，帮中文
 4. 用户给链接（对标文章、资料）时，先调用 read_url 读取内容，再基于内容写作或吸收风格——不要凭空假装读过。
 5. 缺少必要信息（选题、平台）时先问清，一次只问一个问题。
 6. 始终用中文，语气像靠谱的同事：简短、直接、不客套。
-7. 用户问「写什么」「找选题」「最近热点」时调用 find_topics，然后从候选里挑 3 个最适合该创作者定位的，用一两句话说明各自为什么值得写。`;
+7. 用户问「写什么」「找选题」「最近热点」时调用 find_topics，然后从候选里挑 3 个最适合该创作者定位的，用一两句话说明各自为什么值得写。
+8. 用户想找海外/国外/英文圈选题（或问某英文话题最近动态）时调用 find_overseas_topics，需要一个关键词；同样从候选里挑几个最契合定位的推荐。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
+
+/** "web_search: https://github.com/x/y" → "github.com" (clean source label for cards) */
+function sourceDomain(s: string): string {
+  const m = s.match(/https?:\/\/([^/\s]+)/);
+  return m ? m[1].replace(/^www\./, "") : "海外";
+}
 
 export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatToolDeps): LoopTool[] {
   const d = {
@@ -90,6 +100,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     style: deps?.style ?? (executeStyle as ExecuteFn),
     content: deps?.content ?? (executeContentSave as ExecuteFn),
     publish: deps?.publish ?? (executePublish as ExecuteFn),
+    research: deps?.research ?? (executeResearch as ExecuteFn),
     addRule: deps?.addRule ?? addWritingRule,
     fetchPage: deps?.fetchPage ?? ((url: string) => fetchPageText(url)),
     topics: deps?.topics ?? (async (industry: string) => getTopicCandidates(industry, dataDir)),
@@ -130,6 +141,41 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           ok: true,
           industry,
           candidates: candidates.map((c) => ({ title: c.title, source: c.source })),
+        });
+      },
+    },
+    {
+      name: "find_overseas_topics",
+      description:
+        "海外选题：按关键词从 autocrew 自带的公开海外源（HackerNews/ProductHunt/GitHub/arXiv/HuggingFace）抓取并按热度排序候选。用户想找海外/国外/英文圈选题，或问某英文话题最近有什么时调用。需要一个关键词。",
+      parameters: {
+        type: "object",
+        properties: {
+          keyword: { type: "string", description: "搜索关键词，英文更佳，如 'AI agent'" },
+          sources: {
+            type: "array",
+            items: { type: "string" },
+            description: "可选源子集：hackernews|producthunt|github|arxiv|huggingface，默认全部",
+          },
+        },
+        required: ["keyword"],
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        const res = await d.research({ ...a, ...dirParams, action: "discover", mode: "overseas", save_topics: false });
+        if (!res.ok) return fail(res.error);
+        const candidates = (res.candidates ?? []) as Array<Record<string, unknown>>;
+        if (candidates.length === 0) return fail("海外源暂时没抓到候选，换个关键词再试");
+        const mapped = candidates.map((c) => ({
+          title: c.title,
+          source: sourceDomain(String(c.source ?? "")),
+          viralScore: c.viralScore,
+        }));
+        sink.push({ type: "topic", data: { industry: "海外 · " + String(a.keyword ?? ""), candidates: mapped } });
+        return JSON.stringify({
+          ok: true,
+          keyword: a.keyword,
+          candidates: mapped.map((m) => ({ title: m.title, source: m.source, score: m.viralScore })),
         });
       },
     },

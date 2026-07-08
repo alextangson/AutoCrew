@@ -188,6 +188,47 @@ describe("buildChatTools", () => {
     expect(JSON.parse(out as string)).toMatchObject({ ok: false });
     expect(sink).toHaveLength(0);
   });
+
+  it("find_overseas_topics calls research overseas (no auto-save) and pushes a topic card", async () => {
+    const sink: ChatCard[] = [];
+    const research = vi.fn(async () => ({
+      ok: true,
+      mode: "overseas",
+      candidates: [
+        { title: "openai/gpt", description: "GPT models", source: "web_search: https://github.com/openai/gpt", viralScore: 73 },
+        { title: "Norway bans AI", description: "…", source: "web_search: https://news.ycombinator.com/item?id=1", viralScore: 68 },
+      ],
+    }));
+    const tools = buildChatTools(sink, testDir, { research });
+
+    const out = await tools.find((t) => t.name === "find_overseas_topics")!.execute({ keyword: "AI agent" });
+
+    expect(research).toHaveBeenCalledTimes(1);
+    expect(research.mock.calls[0][0]).toMatchObject({
+      action: "discover",
+      mode: "overseas",
+      keyword: "AI agent",
+      save_topics: false,
+    });
+
+    const parsed = JSON.parse(out as string);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.candidates).toHaveLength(2);
+    expect(parsed.candidates[0].source).toBe("github.com"); // cleaned from "web_search: https://…"
+
+    expect(sink).toHaveLength(1);
+    expect(sink[0].type).toBe("topic");
+    expect((sink[0].data.candidates as unknown[]).length).toBe(2);
+  });
+
+  it("find_overseas_topics returns ok:false when no candidates", async () => {
+    const sink: ChatCard[] = [];
+    const research = vi.fn(async () => ({ ok: true, candidates: [] }));
+    const tools = buildChatTools(sink, testDir, { research });
+    const out = await tools.find((t) => t.name === "find_overseas_topics")!.execute({ keyword: "AI" });
+    expect(JSON.parse(out as string)).toMatchObject({ ok: false });
+    expect(sink).toHaveLength(0);
+  });
 });
 
 describe("runChatTurn onEvent", () => {

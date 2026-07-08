@@ -5,9 +5,25 @@ import { saveTopic } from "../storage/local-store.js";
 import { browserCdpAdapter } from "../adapters/browser/browser-cdp.js";
 import { researchWithTikHub } from "../adapters/research/tikhub.js";
 import { runFreeResearch, type SearchResult } from "../modules/research/free-engine.js";
+import { fetchFromSources, ALL_SOURCES } from "../modules/research/sources/registry.js";
+import type { SourceItem } from "../modules/research/sources/types.js";
 import type { BrowserPlatform, ResearchItem } from "../adapters/browser/types.js";
 
-type ResearchMode = "auto" | "browser_first" | "api_fallback" | "free" | "manual";
+type ResearchMode = "auto" | "browser_first" | "api_fallback" | "free" | "manual" | "overseas";
+
+export interface ResearchDeps {
+  /** Injectable overseas multi-source fetcher (defaults to the source registry). */
+  overseasFetch?: (sources: string[], keyword: string, limit: number) => Promise<SourceItem[]>;
+}
+
+/** Resolve the `sources` param to valid source keys, defaulting to all. */
+function parseSources(raw: unknown): string[] {
+  let list: string[] | null = null;
+  if (Array.isArray(raw)) list = raw.map((s) => String(s).trim());
+  else if (typeof raw === "string" && raw.trim()) list = raw.split(",").map((s) => s.trim());
+  const valid = (list ?? []).filter((s) => ALL_SOURCES.includes(s));
+  return valid.length > 0 ? valid : [...ALL_SOURCES];
+}
 
 export const researchSchema = Type.Object({
   action: Type.Unsafe<"discover" | "session_status">({
@@ -29,8 +45,16 @@ export const researchSchema = Type.Object({
   mode: Type.Optional(
     Type.Unsafe<ResearchMode>({
       type: "string",
-      enum: ["auto", "browser_first", "api_fallback", "free", "manual"],
-      description: "Execution mode. 'free' uses web search + viral scoring (no browser/API needed). Default: auto.",
+      enum: ["auto", "browser_first", "api_fallback", "free", "manual", "overseas"],
+      description:
+        "Execution mode. 'free' uses caller-provided web search results + viral scoring. " +
+        "'overseas' pulls海外 topics from autocrew's own public sources (HackerNews/ProductHunt/GitHub/arXiv/HuggingFace, no key needed). Default: auto.",
+    }),
+  ),
+  sources: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Overseas source keys for mode='overseas': hackernews | producthunt | github | arxiv | huggingface. Default: all.",
     }),
   ),
   search_results: Type.Optional(
@@ -121,7 +145,7 @@ function buildTopicTags(industry: string, platform: BrowserPlatform): string[] {
   return Array.from(new Set(tags));
 }
 
-async function runDiscovery(params: Record<string, unknown>) {
+async function runDiscovery(params: Record<string, unknown>, deps?: ResearchDeps) {
   const dataDir = (params._dataDir as string) || undefined;
   const memory = await readMemoryContext(dataDir);
   const industry = ((params.industry as string) || memory.industry || "").trim();
@@ -130,6 +154,46 @@ async function runDiscovery(params: Record<string, unknown>) {
   const topicCount = Number(params.topic_count || 3);
   const saveTopics = params.save_topics !== false;
   const mode = (params.mode as ResearchMode) || "auto";
+
+  // --- Overseas mode: autocrew's own public intel sources (HackerNews, …) ---
+  // Mirrors sentinel's fetch→score→dedup structure but self-contained (no openclaw).
+  if (mode === "overseas") {
+    const sources = parseSources(params.sources);
+    const overseasFetch = deps?.overseasFetch ?? fetchFromSources;
+    const sourceItems = await overseasFetch(sources, keyword, topicCount * 3);
+    const searchResults: SearchResult[] = sourceItems.map((it) => ({
+      title: it.title,
+      snippet: it.summary ?? it.title,
+      url: it.url,
+      ...(it.heat !== undefined ? { heat: it.heat } : {}),
+    }));
+
+    const freeResult = await runFreeResearch({ keyword, searchResults, topicCount, dataDir });
+    const topics = freeResult.candidates.map((c) => ({
+      title: c.title,
+      description: c.description,
+      tags: c.tags,
+      source: c.source,
+    }));
+
+    const saved = [];
+    if (saveTopics) {
+      for (const topic of topics) saved.push(await saveTopic(topic, dataDir));
+    }
+
+    return {
+      ok: true,
+      mode: "overseas",
+      keyword,
+      industry: freeResult.industry,
+      competitors: memory.competitors,
+      sourcesUsed: sources,
+      topics: saveTopics ? saved : topics,
+      savedCount: saveTopics ? saved.length : 0,
+      summary: freeResult.summary,
+      candidates: freeResult.candidates,
+    };
+  }
 
   let items: ResearchItem[] = [];
   const sourcesUsed: string[] = [];
@@ -292,10 +356,10 @@ async function getSessionStatuses(params: Record<string, unknown>) {
   };
 }
 
-export async function executeResearch(params: Record<string, unknown>) {
+export async function executeResearch(params: Record<string, unknown>, deps?: ResearchDeps) {
   const action = (params.action as string) || "discover";
   if (action === "discover") {
-    return runDiscovery(params);
+    return runDiscovery(params, deps);
   }
   if (action === "session_status") {
     return getSessionStatuses(params);

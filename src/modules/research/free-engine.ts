@@ -42,6 +42,8 @@ export interface SearchResult {
   title: string;
   snippet: string;
   url: string;
+  /** Optional real engagement signal (e.g. HN points) — feeds viral scoring as true heat. */
+  heat?: number;
 }
 
 /**
@@ -89,7 +91,7 @@ export function buildSearchQueries(
  * - Profile fit: alignment with user's industry, audience, writing rules
  */
 export function scoreCandidate(
-  candidate: { title: string; description: string; tags: string[] },
+  candidate: { title: string; description: string; tags: string[]; heat?: number },
   profile: CreatorProfile | null,
   keyword: string,
 ): { viralScore: number; breakdown: TopicCandidate["scoreBreakdown"]; reasoning: string } {
@@ -146,6 +148,13 @@ export function scoreCandidate(
   if (/\d+[%％万亿]/.test(candidate.description)) {
     topicHeat += 5;
     reasons.push("描述引用了数据");
+  }
+  // Real heat signal (e.g. HN points) — true engagement beats text guesswork.
+  // Absent → fall through to the text-based signals above (graceful degradation).
+  if (typeof candidate.heat === "number" && candidate.heat > 0) {
+    const h = candidate.heat;
+    topicHeat += h >= 200 ? 18 : h >= 50 ? 12 : h >= 10 ? 6 : 3;
+    reasons.push(`真实热度 ${h}`);
   }
   topicHeat = clamp(topicHeat, 0, 33);
 
@@ -250,15 +259,16 @@ export async function processSearchResults(
 
   // Convert to candidates and score
   let candidates: TopicCandidate[] = unique.map((r) => {
-    // Extract a concise title (≤20 chars)
-    let title = r.title.replace(/[-_|—–].*$/, "").trim();
-    if (title.length > 20) title = title.slice(0, 20);
+    // Strip " - Publisher" style suffixes (space-delimited separator) so hyphenated
+    // terms like GPT-5 survive, then clamp to a readable length on a word boundary.
+    const cleaned = r.title.replace(/\s+[-|—–]\s+.*$/, "").trim();
+    const title = clampTitle(cleaned, 40);
 
     // Extract tags from snippet
     const tags = extractTags(r.snippet, keyword);
 
     const { viralScore, breakdown, reasoning } = scoreCandidate(
-      { title, description: r.snippet, tags },
+      { title, description: r.snippet, tags, ...(r.heat !== undefined ? { heat: r.heat } : {}) },
       profile,
       keyword,
     );
@@ -333,6 +343,14 @@ export async function runFreeResearch(opts: {
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
+}
+
+/** Clamp a title to `max` chars; latin text cuts at a word boundary, CJK hard-cuts. */
+function clampTitle(raw: string, max: number): string {
+  if (raw.length <= max) return raw;
+  const head = raw.slice(0, max);
+  const lastSpace = head.lastIndexOf(" ");
+  return lastSpace > max / 2 ? head.slice(0, lastSpace) : head;
 }
 
 function extractTags(text: string, keyword: string): string[] {
