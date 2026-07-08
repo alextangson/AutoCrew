@@ -261,6 +261,12 @@ describe("Status Transitions", () => {
     expect(allowed.length).toBeGreaterThan(0);
   });
 
+  it("approved does NOT offer cover_pending — 封面设计师未转正,不暴露死角状态（§7.4）", () => {
+    const allowed = getAllowedTransitions("approved");
+    expect(allowed).not.toContain("cover_pending");
+    expect(allowed).toContain("publish_ready"); // 直通发布(公众号发布时自动配封面)
+  });
+
   it("normalizeLegacyStatus maps old status names", () => {
     expect(normalizeLegacyStatus("draft")).toBe("draft_ready");
     expect(normalizeLegacyStatus("review")).toBe("reviewing");

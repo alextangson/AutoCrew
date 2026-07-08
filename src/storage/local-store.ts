@@ -681,7 +681,11 @@ const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   draft_ready: ["reviewing", "drafting"],
   reviewing: ["revision", "approved", "draft_ready"],
   revision: ["reviewing", "approved", "draft_ready"],
-  approved: ["cover_pending", "publish_ready", "reviewing"],
+  // cover_pending 移出 approved 的出口:封面设计师是 P1.5 才转正的员工（PRD-v4 §4.2），
+  // 现无 UI/通道,把它作为可达状态暴露 = 展示未转正员工（§7.4 红线）+ 掉进无工具死角。
+  // 公众号发布链在发布时自动配封面（wechat-mp.ts）,P0 不需要此状态。
+  // 保留 enum 与下面的出口给历史数据兜底;封面设计师转正时把 cover_pending 加回这里。
+  approved: ["publish_ready", "reviewing"],
   cover_pending: ["publish_ready", "approved"],
   publish_ready: ["publishing", "approved"],
   publishing: ["published", "publish_ready"],
