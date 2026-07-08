@@ -1,7 +1,12 @@
 {
-  "version": 1,
+  "version": 2,
   "sources": [
-    { "id": "36kr", "name": "36氪", "type": "rss", "url": "https://36kr.com/feed", "tracks": ["科技", "AI", "创投"] },
-    { "id": "ifanr", "name": "爱范儿", "type": "rss", "url": "https://www.ifanr.com/feed", "tracks": ["科技", "AI", "数码"] }
+    { "id": "36kr", "kind": "rss", "name": "36氪", "enabled": true, "config": { "url": "https://36kr.com/feed" } },
+    { "id": "ifanr", "kind": "rss", "name": "爱范儿", "enabled": true, "config": { "url": "https://www.ifanr.com/feed" } },
+    { "id": "hackernews", "kind": "hackernews", "name": "Hacker News", "enabled": false, "config": {} },
+    { "id": "producthunt", "kind": "producthunt", "name": "Product Hunt", "enabled": false, "config": {} },
+    { "id": "github", "kind": "github", "name": "GitHub Trending", "enabled": false, "config": {} },
+    { "id": "arxiv", "kind": "arxiv", "name": "arXiv", "enabled": false, "config": {} },
+    { "id": "huggingface", "kind": "huggingface", "name": "Hugging Face", "enabled": false, "config": {} }
   ]
 }

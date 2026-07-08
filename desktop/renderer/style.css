@@ -1223,3 +1223,5 @@ label {
 .src-add-name { flex: 0 0 140px; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; background: var(--card); color: var(--text); }
 .src-add-url { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; background: var(--card); color: var(--text); }
 .src-add-name:focus, .src-add-url:focus { outline: none; border-color: var(--text); }
+.src-kind { font-family: var(--font-mono); font-size: 10px; border: 1px solid var(--border); padding: 1px 7px; flex-shrink: 0; color: var(--muted); }
+.src-row-off { opacity: 0.55; }

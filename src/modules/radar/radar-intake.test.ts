@@ -114,3 +114,36 @@ describe("intakeRadarTopics", () => {
     expect(result.saved).toHaveLength(0);
   });
 });
+
+describe("LLM semantic filter (unified intel layer)", () => {
+  it("uses LLM verdicts as primary filter — works for positioning words absent from titles", async () => {
+    await saveProfile(profileWith("职场成长"), testDir); // 标题里不会出现的定位
+    await seedCache([
+      { title: "大厂裁员潮下的自救指南", link: "https://a.example/1" },
+      { title: "楼市周报", link: "https://a.example/2" },
+    ]);
+    const judge = async (positioning, _aud, candidates) => {
+      expect(positioning).toBe("职场成长");
+      expect(candidates).toHaveLength(2);
+      return [
+        { index: 0, score: 9, reason: "裁员潮正是职场成长受众的核心焦虑" },
+        { index: 1, score: 2, reason: "" },
+      ];
+    };
+    const result = await intakeRadarTopics(testDir, { judge });
+
+    expect(result.filter).toBe("llm");
+    expect(result.saved).toHaveLength(1);
+    expect(result.saved[0].title).toBe("大厂裁员潮下的自救指南");
+    expect(result.saved[0].reason).toContain("核心焦虑"); // LLM 理由直接上卡
+  });
+
+  it("falls back to keyword filter when judge returns null (engine unavailable)", async () => {
+    await saveProfile(profileWith("AI"), testDir);
+    await seedCache([{ title: "AI 编程新品", link: "https://a.example/1" }]);
+    const result = await intakeRadarTopics(testDir, { judge: async () => null });
+    expect(result.filter).toBe("keyword");
+    expect(result.saved).toHaveLength(1);
+    expect(result.saved[0].reason).toContain("命中定位");
+  });
+});

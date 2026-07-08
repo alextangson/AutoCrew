@@ -20,6 +20,7 @@ import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
 import { saveTopic, type Topic } from "../storage/local-store.js";
+import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 export interface ChatCard {
@@ -49,6 +50,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   find_topics: { role: "scout", label: "侦察员正在扫热榜" },
   find_overseas_topics: { role: "scout", label: "侦察员正在扫海外源" },
   save_topic: { role: "scout", label: "侦察员把想法记进灵感库" },
+  manage_radar_sources: { role: "scout", label: "侦察员在整理情报源" },
   push_wechat_draft: { role: "review", label: "审核员备好确认卡" },
   read_url: { role: "scout", label: "侦察员正在读参考资料" },
   generate_script: { role: "writer", label: "编剧正在写稿" },
@@ -99,7 +101,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 8. 用户想找海外/国外/英文圈选题（或问某英文话题最近动态）时调用 find_overseas_topics，需要一个关键词；同样从候选里挑几个最契合定位的推荐。
 9. 用户说「记下来」「存进灵感库」，或对话中聊出一个值得写的想法、用户看中某条候选时，调用 save_topic 落进灵感库——reason 必填，一句话说清为什么值得写（命中定位/对标爆款/读者追问）。存完不要顺手开写，等用户发话。
 10. 推送公众号草稿箱是写操作：调用 push_wechat_draft 只会弹出确认卡，由用户亲手点「推送」执行——你不要宣称已推送，只说「已备好，等你确认」。
-11. 用户贴对标文章链接（「拆解一下」「看看人家怎么写的」）时：先 read_url 读原文，拆出钩子（前 3 句怎么抓人）、结构（骨架几段、各段干什么）、CTA（结尾怎么引导），用一两句话讲给用户；值得借鉴的角度用 save_topic 入库，description 写拆解要点，reason 写「对标拆解 · <账号/来源>」。`;
+11. 用户贴对标文章链接（「拆解一下」「看看人家怎么写的」）时：先 read_url 读原文，拆出钩子（前 3 句怎么抓人）、结构（骨架几段、各段干什么）、CTA（结尾怎么引导），用一两句话讲给用户；值得借鉴的角度用 save_topic 入库，description 写拆解要点，reason 写「对标拆解 · <账号/来源>」。
+12. 用户想加信息源/订阅某媒体/看海外内容时，调用 manage_radar_sources。加 RSS 前先 read_url 验证链接确实是 feed（内容含 <rss 或 <feed）；用户只给了网站名时，先试常见路径（/feed、/rss）验证，验证不过就说清并建议在设置·情报源里手动处理。海外源（HN/GitHub 等）用 toggle 开关即可。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili"];
 
@@ -424,6 +427,59 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         const data = res.data as Record<string, unknown>;
         sink.push({ type: "publish", data: { ...data, contentId: args.content_id } });
         return JSON.stringify({ ok: true, contentId: args.content_id });
+      },
+    },
+    {
+      name: "manage_radar_sources",
+      description:
+        "查看/添加/开关情报源。用户想配置信息源、订阅某媒体、打开海外源时调用。add_rss 前必须先用 read_url 验证链接是 RSS/Atom feed。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list", "add_rss", "toggle"], description: "list 查看 | add_rss 加 RSS 源 | toggle 开关某源" },
+          name: { type: "string", description: "add_rss:源名称" },
+          url: { type: "string", description: "add_rss:RSS 链接（先 read_url 验证过）" },
+          source_id: { type: "string", description: "toggle:源 id（从 list 结果里取）" },
+          enabled: { type: "boolean", description: "toggle:开或关" },
+        },
+        required: ["action"],
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
+        try {
+          const current = await loadRadarSources(dataDir);
+          if (a.action === "list") {
+            return JSON.stringify({
+              ok: true,
+              sources: current.map((s) => ({ id: s.id, kind: s.kind, name: s.name, enabled: s.enabled, url: s.config.url })),
+            });
+          }
+          if (a.action === "add_rss") {
+            const name = String(a.name ?? "").trim();
+            const url = String(a.url ?? "").trim();
+            if (!name || !url) return fail("add_rss 需要 name 和 url");
+            const saved = await saveRadarSources(
+              [...current, { id: "", kind: "rss", name, enabled: true, config: { url } }],
+              dataDir,
+            );
+            sink.push({ type: "style", data: { rule: `情报源 +「${name}」`, message: "已加入,下次扫榜生效" } });
+            return JSON.stringify({ ok: true, total: saved.length });
+          }
+          if (a.action === "toggle") {
+            const id = String(a.source_id ?? "");
+            const target = current.find((s) => s.id === id);
+            if (!target) return fail(`没有 id 为 ${id} 的源——先 list 查看`);
+            const saved = await saveRadarSources(
+              current.map((s) => (s.id === id ? { ...s, enabled: a.enabled !== false } : s)),
+              dataDir,
+            );
+            sink.push({ type: "style", data: { rule: `情报源「${target.name}」${a.enabled !== false ? "已启用" : "已停用"}`, message: "下次扫榜生效" } });
+            return JSON.stringify({ ok: true, total: saved.length });
+          }
+          return fail(`未知 action:${String(a.action)}`);
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
       },
     },
     {

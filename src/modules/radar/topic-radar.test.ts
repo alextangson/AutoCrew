@@ -202,3 +202,64 @@ describe("user-configurable sources (IA v4.2 §A1)", () => {
     expect(seen).toEqual(["https://custom.example/feed"]); // 只打用户的源,内置不再出现
   });
 });
+
+describe("unified intel layer v2 (adapter kinds + migration)", () => {
+  it("migrates v1 user file (type+url) to v2 shape on load", async () => {
+    await fs.writeFile(path.join(testDir, "radar-sources.json"), JSON.stringify({
+      version: 1,
+      sources: [{ id: "qb", name: "量子位", type: "rss", url: "https://www.qbitai.com/feed", tracks: [] }],
+    }));
+    const { loadRadarSources } = await import("./topic-radar.js");
+    const sources = await loadRadarSources(testDir);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].kind).toBe("rss");
+    expect(sources[0].enabled).toBe(true);
+    expect(sources[0].config.url).toBe("https://www.qbitai.com/feed");
+  });
+
+  it("built-in defaults include disabled overseas adapters", async () => {
+    const { loadRadarSources, OVERSEAS_KINDS } = await import("./topic-radar.js");
+    const sources = await loadRadarSources(testDir);
+    for (const kind of OVERSEAS_KINDS) {
+      const s = sources.find((x) => x.kind === kind);
+      expect(s, kind).toBeDefined();
+      expect(s!.enabled).toBe(false);
+    }
+  });
+
+  it("scan pulls enabled overseas adapters with keyword derived from positioning", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    const { saveProfile } = await import("../profile/creator-profile.js");
+    const now = new Date().toISOString();
+    await saveProfile({
+      industry: "AI 效率工具", platforms: [], audiencePersona: null, writingRules: [],
+      styleBoundaries: { never: [], always: [] }, competitorAccounts: [], performanceHistory: [],
+      styleCalibrated: true, createdAt: now, updatedAt: now,
+    }, testDir);
+    await saveRadarSources([
+      { id: "hn", kind: "hackernews", name: "Hacker News", enabled: true, config: {} },
+      { id: "off", kind: "github", name: "GitHub", enabled: false, config: {} },
+    ], testDir);
+
+    const calls = [];
+    const overseasFetch = async (kind, keyword) => {
+      calls.push({ kind, keyword });
+      return [{ title: "HN item", url: "https://hn.example/1" }];
+    };
+    const result = await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch });
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([{ kind: "hackernews", keyword: "AI" }]); // enabled 才扫;keyword 从定位派生;disabled 不扫
+    const cache = await loadTopicCache(testDir);
+    expect(cache.items.some((i) => i.title === "HN item")).toBe(true);
+  });
+
+  it("overseas source without any derivable keyword lands in failedSources, not silence", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "hn", kind: "hackernews", name: "Hacker News", enabled: true, config: {} },
+    ], testDir); // 无 profile → 无定位 → 无 ASCII 词
+    const result = await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: async () => [] });
+    expect(result.failedSources).toContain("Hacker News");
+  });
+});

@@ -52,28 +52,44 @@ async function initScout() {
     if (radar.ok && radar.data) {
       let sources = (radar.data.sources || []).map((s) => ({ ...s }));
 
+      const KIND_LABEL = {
+        rss: "RSS", hackernews: "海外·HN", producthunt: "海外·PH",
+        github: "海外·GitHub", arxiv: "海外·arXiv", huggingface: "海外·HF",
+      };
       const list = h("div", { class: "src-list" });
+      const persist = async (next) => {
+        const r = await safeInvoke(window.autocrew.radarSourcesSet, { sources: next });
+        if (!r.ok) { showToast(r.error || "保存失败"); return false; }
+        sources = r.data.sources;
+        return true;
+      };
       const renderList = () => {
         list.innerHTML = "";
         if (sources.length === 0) {
           list.appendChild(h("p", { class: "muted" }, "没有源了——雷达会停摆,加一个吧。"));
         }
         sources.forEach((s, i) => {
-          const row = h("div", { class: "src-row" });
+          const row = h("div", { class: "src-row" + (s.enabled === false ? " src-row-off" : "") });
+          row.appendChild(h("span", { class: "src-kind" }, KIND_LABEL[s.kind] || s.kind));
           const body = h("div", { class: "src-row-body" });
           body.appendChild(h("div", { class: "src-row-name" }, s.name));
-          body.appendChild(h("div", { class: "muted src-row-url" }, s.url));
+          body.appendChild(h("div", { class: "muted src-row-url" },
+            s.kind === "rss" ? (s.config && s.config.url) || "" : "按你的定位自动检索" + ((s.config && s.config.keyword) ? "（关键词:" + s.config.keyword + "）" : "")));
           row.appendChild(body);
-          const delBtn = h("button", { class: "btn-mini" }, "移除");
-          delBtn.addEventListener("click", async () => {
-            const next = sources.filter((_, j) => j !== i);
-            const r = await safeInvoke(window.autocrew.radarSourcesSet, { sources: next });
-            if (!r.ok) { showToast(r.error || "保存失败"); return; }
-            sources = r.data.sources;
-            showToast("已移除「" + s.name + "」");
-            renderList();
+          const toggleBtn = h("button", { class: "btn-mini" }, s.enabled === false ? "启用" : "停用");
+          toggleBtn.addEventListener("click", async () => {
+            const next = sources.map((x, j) => (j === i ? { ...x, enabled: x.enabled === false } : x));
+            if (await persist(next)) { showToast((s.enabled === false ? "已启用" : "已停用") + "「" + s.name + "」——下次扫榜生效"); renderList(); }
           });
-          row.appendChild(delBtn);
+          row.appendChild(toggleBtn);
+          if (s.kind === "rss") {
+            const delBtn = h("button", { class: "btn-mini" }, "移除");
+            delBtn.addEventListener("click", async () => {
+              const next = sources.filter((_, j) => j !== i);
+              if (await persist(next)) { showToast("已移除「" + s.name + "」"); renderList(); }
+            });
+            row.appendChild(delBtn);
+          }
           list.appendChild(row);
         });
       };
@@ -90,12 +106,9 @@ async function initScout() {
         const url = urlInput.value.trim();
         if (!name || !url) { showToast("名称和 RSS 链接都要填"); return; }
         addBtn.disabled = true;
-        const r = await safeInvoke(window.autocrew.radarSourcesSet, {
-          sources: [...sources, { id: "", name, url, type: "rss", tracks: [] }],
-        });
+        const okSave = await persist([...sources, { id: "", kind: "rss", name, enabled: true, config: { url } }]);
         addBtn.disabled = false;
-        if (!r.ok) { showToast(r.error || "保存失败"); return; }
-        sources = r.data.sources;
+        if (!okSave) return;
         nameInput.value = "";
         urlInput.value = "";
         showToast("已添加「" + name + "」——点立即扫榜验证能不能拉到");

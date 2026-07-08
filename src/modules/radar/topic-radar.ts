@@ -12,6 +12,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
+import { loadProfile } from "../profile/creator-profile.js";
 import sourcesJson from "../../data/topic-sources.json";
 
 export interface RadarItem {
@@ -26,12 +27,29 @@ export interface TopicCache {
   items: RadarItem[];
 }
 
+/**
+ * 统一情报源（IA v4.2 工程线:单一 SourceAdapter 抽象,国内 RSS 与海外 API 同一张注册表）。
+ * kind=rss 需要 config.url;海外 kind 走 research/sources 的 adapter,config.keyword
+ * 可选（缺省从定位派生 ASCII 词,如「AI 技术」→ "AI"）。enabled=false 的源不参与扫描。
+ */
+export type RadarSourceKind = "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface";
+export const OVERSEAS_KINDS: RadarSourceKind[] = ["hackernews", "producthunt", "github", "arxiv", "huggingface"];
+
 export interface RadarSource {
+  id: string;
+  kind: RadarSourceKind;
+  name: string;
+  enabled: boolean;
+  config: { url?: string; keyword?: string };
+}
+
+/** v1 形状（type:"rss"+url 顶层）——用户文件与老内置格式,读取时自动升格 */
+interface RadarSourceV1 {
   id: string;
   name: string;
   type: string;
   url: string;
-  tracks: string[];
+  tracks?: string[];
 }
 
 const CACHE_FILE = "topic-radar.json";
@@ -117,31 +135,54 @@ function sourcesPath(dataDir?: string): string {
   return path.join(getDataDir(dataDir), SOURCES_FILE);
 }
 
-export async function loadRadarSources(dataDir?: string): Promise<RadarSource[]> {
-  try {
-    const raw = JSON.parse(await fs.readFile(sourcesPath(dataDir), "utf-8")) as { sources?: RadarSource[] };
-    if (Array.isArray(raw.sources)) return raw.sources.filter((s) => s && typeof s.url === "string");
-  } catch { /* 无用户配置 → 内置 */ }
-  return (sourcesJson as { sources: RadarSource[] }).sources;
+/** v1 条目（type+url 顶层）→ v2;已是 v2 原样回。名称校验留给 saveRadarSources 的显式分支 */
+function upgradeSource(raw: Record<string, unknown>): RadarSource | null {
+  if (typeof raw.kind === "string") {
+    const s = raw as unknown as RadarSource;
+    return { id: s.id || "", kind: s.kind, name: String(s.name ?? ""), enabled: s.enabled !== false, config: s.config ?? {} };
+  }
+  const v1 = raw as unknown as RadarSourceV1;
+  if (typeof v1.url !== "string") return null;
+  return { id: v1.id || "", kind: "rss", name: String(v1.name ?? ""), enabled: true, config: { url: v1.url } };
 }
 
-/** 校验并保存用户源清单。返回规范化后的清单;校验失败抛错（边界:用户输入）。 */
+export async function loadRadarSources(dataDir?: string): Promise<RadarSource[]> {
+  try {
+    const raw = JSON.parse(await fs.readFile(sourcesPath(dataDir), "utf-8")) as { sources?: Array<Record<string, unknown>> };
+    if (Array.isArray(raw.sources)) {
+      return raw.sources.map(upgradeSource).filter((s): s is RadarSource => s !== null);
+    }
+  } catch { /* 无用户配置 → 内置 */ }
+  return ((sourcesJson as { sources: Array<Record<string, unknown>> }).sources)
+    .map(upgradeSource)
+    .filter((s): s is RadarSource => s !== null);
+}
+
+/** 校验并保存用户源清单（落盘恒为 v2）。校验失败抛错（边界:用户输入）。 */
 export async function saveRadarSources(sources: RadarSource[], dataDir?: string): Promise<RadarSource[]> {
   const clean: RadarSource[] = [];
-  const seen = new Set<string>();
-  for (const s of sources) {
-    const name = String(s.name ?? "").trim();
-    const url = String(s.url ?? "").trim();
+  const seenKey = new Set<string>();
+  for (const raw of sources) {
+    const upgraded = upgradeSource(raw as unknown as Record<string, unknown>);
+    if (!upgraded) throw new Error("源条目缺少必要字段（name/kind 或 url）");
+    const name = upgraded.name.trim();
     if (!name) throw new Error("源名称不能为空");
-    if (!/^https?:\/\//i.test(url)) throw new Error(`「${name}」的 URL 必须以 http(s):// 开头`);
-    const id = s.id && String(s.id).trim() ? String(s.id).trim() : `src-${Date.now()}-${clean.length}`;
-    if (seen.has(url)) continue; // 同 URL 去重
-    seen.add(url);
-    clean.push({ id, name, type: "rss", url, tracks: Array.isArray(s.tracks) ? s.tracks : [] });
+    if (upgraded.kind === "rss") {
+      const url = String(upgraded.config.url ?? "").trim();
+      if (!/^https?:\/\//i.test(url)) throw new Error(`「${name}」的 RSS URL 必须以 http(s):// 开头`);
+      upgraded.config.url = url;
+    } else if (!OVERSEAS_KINDS.includes(upgraded.kind)) {
+      throw new Error(`「${name}」的类型未知：${upgraded.kind}`);
+    }
+    const key = upgraded.kind === "rss" ? `rss:${upgraded.config.url}` : upgraded.kind;
+    if (seenKey.has(key)) continue; // 同 URL / 同海外源去重
+    seenKey.add(key);
+    const id = upgraded.id && upgraded.id.trim() ? upgraded.id.trim() : `src-${Date.now()}-${clean.length}`;
+    clean.push({ ...upgraded, id, name });
   }
   const dir = getDataDir(dataDir);
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(sourcesPath(dataDir), JSON.stringify({ version: 1, sources: clean }, null, 2) + "\n", "utf-8");
+  await fs.writeFile(sourcesPath(dataDir), JSON.stringify({ version: 2, sources: clean }, null, 2) + "\n", "utf-8");
   return clean;
 }
 
@@ -153,32 +194,65 @@ export async function loadTopicCache(dataDir?: string): Promise<TopicCache | nul
   }
 }
 
+/** 海外源的检索词：显式 config.keyword > 定位里的 ASCII 词（「AI 技术」→ "AI"）> 无（跳过并报失败） */
+function overseasKeyword(src: RadarSource, industry: string): string {
+  const explicit = String(src.config.keyword ?? "").trim();
+  if (explicit) return explicit;
+  const ascii = industry.match(/[A-Za-z0-9][A-Za-z0-9 .-]{1,30}/g);
+  return ascii ? ascii[0].trim() : "";
+}
+
 export async function refreshTopicRadar(
   dataDir?: string,
   fetchImpl: typeof fetch = globalThis.fetch,
+  deps?: { overseasFetch?: (kind: string, keyword: string, limit: number) => Promise<Array<{ title: string; url: string }>> },
 ): Promise<{ ok: boolean; itemCount: number; failedSources: string[] }> {
-  const sources = await loadRadarSources(dataDir);
+  const sources = (await loadRadarSources(dataDir)).filter((s) => s.enabled);
   if (sources.length === 0) return { ok: false, itemCount: 0, failedSources: [] };
+
+  let industry = "";
+  try {
+    industry = (await loadProfile(dataDir))?.industry ?? "";
+  } catch { /* 无定位 → 海外源需要显式 keyword */ }
+
+  const overseasFetch =
+    deps?.overseasFetch ??
+    (async (kind: string, keyword: string, limit: number) => {
+      const { fetchFromSources } = await import("../research/sources/registry.js");
+      return fetchFromSources([kind], keyword, limit);
+    });
+
   const items: RadarItem[] = [];
   const failedSources: string[] = [];
+  const scannedAt = new Date().toISOString();
 
   await Promise.all(
     sources.map(async (src) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
       try {
-        const res = await fetchImpl(src.url, {
-          signal: controller.signal,
-          headers: { "user-agent": "Mozilla/5.0 AutoCrew/1.0" },
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        for (const item of parseRssItems(await res.text())) {
-          items.push({ ...item, source: src.name });
+        if (src.kind === "rss") {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+          try {
+            const res = await fetchImpl(src.config.url!, {
+              signal: controller.signal,
+              headers: { "user-agent": "Mozilla/5.0 AutoCrew/1.0" },
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            for (const item of parseRssItems(await res.text())) {
+              items.push({ ...item, source: src.name });
+            }
+          } finally {
+            clearTimeout(timer);
+          }
+        } else {
+          const keyword = overseasKeyword(src, industry);
+          if (!keyword) throw new Error("no keyword");
+          for (const it of await overseasFetch(src.kind, keyword, 10)) {
+            items.push({ title: it.title, link: it.url, source: src.name, publishedAt: scannedAt });
+          }
         }
       } catch {
         failedSources.push(src.name); // 单源失败不拖垮整体——禁止静默返回空（§6），失败名单上报
-      } finally {
-        clearTimeout(timer);
       }
     }),
   );
