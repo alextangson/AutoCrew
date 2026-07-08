@@ -89,6 +89,8 @@ export interface Content {
   performanceData: Record<string, number>;
   /** 采纳裁决（三键落库；未裁决 = 不参与采纳率分母） */
   adoption?: AdoptionRecord;
+  /** 最近一次生成/处理失败的原因（防呆:失败留痕,成功后清空）。UI 据此显示中断徽章与重试 */
+  lastError?: string | null;
   /** 软删除时间戳(回收站语义);null/缺省 = 活跃。默认读侧全部过滤 */
   deletedAt?: string | null;
   assets: Asset[];

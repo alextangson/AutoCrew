@@ -30,16 +30,18 @@ function renderRunStrip(container, state) {
   const order = state.runOrder || [];
   if (order.length === 0) { container.classList.add("hidden"); return; }
   const running = order.filter((id) => state.runs[id].status === "running");
-  const done = order.filter((id) => state.runs[id].status === "done").slice(-2);
-  const show = [...running, ...done];
+  const settled = order.filter((id) => state.runs[id].status !== "running").slice(-2);
+  const show = [...running, ...settled];
   if (show.length === 0) { container.classList.add("hidden"); return; }
   container.classList.remove("hidden");
   for (const runId of show) {
     const run = state.runs[runId];
-    const card = h("div", { class: "dash-run" + (run.status === "done" ? " dash-run-done" : "") });
+    const cls = run.status === "done" ? " dash-run-done" : run.status === "failed" ? " dash-run-failed" : "";
+    const card = h("div", { class: "dash-run" + cls });
     const head = h("div", { class: "dash-run-head" });
-    head.appendChild(h("span", { class: "dash-run-status" }, run.status === "done" ? "✓ 完成" : "● 进行中"));
-    if (run.status === "done" && run.doneLabel) head.appendChild(h("span", { class: "muted" }, run.doneLabel));
+    head.appendChild(h("span", { class: "dash-run-status" },
+      run.status === "done" ? "✓ 完成" : run.status === "failed" ? "✕ 中断" : "● 进行中"));
+    if (run.status !== "running" && run.doneLabel) head.appendChild(h("span", { class: "muted" }, run.doneLabel));
     card.appendChild(head);
     const steps = h("div", { class: "dash-run-steps" });
     for (const s of run.steps.slice(-4)) {

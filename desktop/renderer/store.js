@@ -40,9 +40,9 @@ const EngineStore = (() => {
       if (!e || !e.label) return;
       state.events.push(e);
       if (state.events.length > 100) state.events.shift();
-      // run 完成信号（引擎事件流）
-      if (e.kind === "run_done" && e.runId && state.runs[e.runId]) {
-        state.runs[e.runId].status = "done";
+      // run 收尾信号（引擎事件流）:done / failed 都要闭合,任务带不许悬空
+      if ((e.kind === "run_done" || e.kind === "run_failed") && e.runId && state.runs[e.runId]) {
+        state.runs[e.runId].status = e.kind === "run_done" ? "done" : "failed";
         state.runs[e.runId].doneLabel = e.label;
       }
       notify();

@@ -37,6 +37,20 @@ async function renderWorkbench(contentId, container) {
     container.appendChild(bar);
   }
 
+  // 防呆 P5:上次生成/处理中断的稿,顶部警示 + 原地重试（占位稿转正失败不许静默）
+  if (c.lastError) {
+    const errBox = h("div", { class: "wb-error" });
+    errBox.appendChild(h("p", { class: "wb-error-msg" }, "⚠️ 上次生成中断：" + String(c.lastError).slice(0, 120)));
+    const retryBtn = h("button", { class: "btn-mini" }, "重新生成这篇");
+    retryBtn.addEventListener("click", () => {
+      const cleanTitle = (c.title || "").replace(/^［生成中断］|^［生成中］/, "");
+      sendChat("用选题《" + cleanTitle + "》重新写一篇" + platformLabel(c.platform || "wechat_mp") + "原生版本");
+      showToast("已派给总编辑重写——看右侧对话");
+    });
+    errBox.appendChild(retryBtn);
+    container.appendChild(errBox);
+  }
+
   // ── 标题 + 状态行 ──
   container.appendChild(h("h3", {}, c.title || "（无标题）"));
   const statusRow = h("div", { class: "wb-status-row" });

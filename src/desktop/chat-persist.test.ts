@@ -92,6 +92,35 @@ describe("runPersistedChatTurn", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("failure on an EXISTING conversation persists the pair with a failure note (防呆:失败留痕)", async () => {
+    const meta = await createConversation("失败留痕", dir);
+    await appendTurn(meta.id, { content: "初始" }, { content: "初始回" }, dir);
+
+    const failTurn = vi.fn(async () => ({ ok: false, error: "relay 断流" })) as unknown as typeof runChatTurn;
+    const res = await runPersistedChatTurn({
+      message: "写一篇长文",
+      conversationId: meta.id,
+      dataDir: dir,
+      runTurn: failTurn,
+    });
+
+    expect(res.ok).toBe(false);
+    const conv = await getConversation(meta.id, dir);
+    expect(conv!.messages).toHaveLength(4); // 失败轮也成对落盘
+    expect(conv!.messages[2].content).toBe("写一篇长文");
+    expect(conv!.messages[3].content).toContain("本轮执行失败");
+    expect(conv!.messages[3].content).toContain("relay 断流");
+  });
+
+  it("needsSetup failure does NOT persist a failure note (配置态不是任务失败)", async () => {
+    const meta = await createConversation("配置态", dir);
+    await appendTurn(meta.id, { content: "a" }, { content: "b" }, dir);
+    const setupTurn = vi.fn(async () => ({ ok: false, needsSetup: true, error: "no key" })) as unknown as typeof runChatTurn;
+    await runPersistedChatTurn({ message: "hi", conversationId: meta.id, dataDir: dir, runTurn: setupTurn });
+    const conv = await getConversation(meta.id, dir);
+    expect(conv!.messages).toHaveLength(2);
+  });
+
   it("appends to an existing conversation and echoes its id", async () => {
     const meta = await createConversation("续聊", dir);
     await appendTurn(meta.id, { content: "续聊" }, { content: "好" }, dir);

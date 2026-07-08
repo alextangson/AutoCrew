@@ -172,6 +172,35 @@ describe("generateScript", () => {
     );
   });
 
+  // 3b. 防呆 P1:中途死不许蒸发——失败时占位稿留在盘上,带中断标题与 lastError
+  it("failure leaves a placeholder draft with lastError (write-half-then-vanish is dead)", async () => {
+    const runLoopImpl: (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> = async () => {
+      throw new Error("relay 断流：ECONNRESET");
+    };
+
+    await expect(generateScript(TEST_REQ, testDir, { runLoopImpl })).rejects.toThrow("ECONNRESET");
+
+    const all = await listContents(testDir);
+    expect(all).toHaveLength(1);
+    const placeholder = all[0];
+    expect(placeholder.status).toBe("drafting");
+    expect(placeholder.title).toContain("［生成中断］");
+    expect(placeholder.lastError).toContain("ECONNRESET");
+  });
+
+  // 3c. 防呆 P1:成功 = 占位稿原地转正（同一 id,不留孤儿占位）,lastError 清空
+  it("success promotes the placeholder in place — one content, no orphan", async () => {
+    const runLoopImpl = makeRunLoop([GOOD_PAYLOAD], 200);
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+
+    const all = await listContents(testDir);
+    expect(all).toHaveLength(1);
+    expect(all[0].id).toBe(result.contentId);
+    expect(all[0].status).toBe("draft_ready");
+    expect(all[0].title).toBe(GOOD_PAYLOAD.title);
+    expect(all[0].lastError ?? null).toBeNull();
+  });
+
   // 4. Violations: payload body containing a real sensitive word — draft still saved
   it("violations: sensitive word in body → violations non-empty, draft still saved", async () => {
     // "翻墙" is a real word from the political category in sensitive-words-builtin.json

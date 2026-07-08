@@ -1197,3 +1197,9 @@ label {
 .settings-zone:hover { border-color: #D9D5C9; background: var(--surface); }
 .settings-zone-title { font-size: 13px; font-weight: 600; }
 .settings-zone-desc { font-size: 11px; }
+.atom-error { font-family: var(--font-mono); font-size: 10px; color: var(--danger); margin-top: 4px; }
+.dash-run-failed { border-left-color: var(--danger); }
+.dash-run-failed .dash-run-status { color: var(--danger); }
+.wb-error { border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: 0 8px 8px 0; background: var(--card); padding: 8px 12px; margin-bottom: 10px; }
+.wb-error-msg { font-size: 12px; margin: 0 0 6px; }
+.chat-elapsed { font-size: 10px; margin-top: 3px; padding-left: 4px; }

@@ -20,7 +20,7 @@ import { runQualityGate, formatGateFeedback } from "./quality-gate.js";
 import type { GateFailure } from "./quality-gate.js";
 import { humanizeZh } from "../humanizer/zh.js";
 import { scanText } from "../filter/sensitive-words.js";
-import { saveContent } from "../../storage/local-store.js";
+import { saveContent, updateContent } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
 
 export type { ScriptRequest };
@@ -143,38 +143,66 @@ export async function generateScript(
 
   const { system, user } = buildScriptPrompts(pack, profile, req);
 
+  // 防呆 P1（IA v4.2 失败边界）:分钟级长任务先落占位稿——中途死不许蒸发。
+  // 占位卡立刻出现在看板「在写」列;HTTP 断开/页面刷新都不影响它的存在。
+  const placeholder = await saveContent(
+    {
+      title: `［生成中］${req.topic.slice(0, 40)}`,
+      body: "",
+      platform: req.platform,
+      status: "drafting",
+      tags: [],
+      hashtags: [],
+    },
+    dataDir,
+  );
+
   const captured: Captured = { payload: null, gateFailures: [] };
   const gate = pack.qualityGate;
   const submitTool = buildSubmitTool(captured, gate);
 
-  const loopFn = deps?.runLoopImpl ?? runLoop;
-  const result: LoopResult = await loopFn(config, {
-    model: config.strongModel,
-    systemPrompt: system,
-    userMessage: user,
-    tools: [submitTool],
-    // Gate 修复轮需要额外回合与 token 预算（5000+ 字长文 × 最多 1+N 稿）
-    maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
-    maxTotalTokens: gate ? 80000 : undefined,
-  });
+  try {
+    const loopFn = deps?.runLoopImpl ?? runLoop;
+    const result: LoopResult = await loopFn(config, {
+      model: config.strongModel,
+      systemPrompt: system,
+      userMessage: user,
+      tools: [submitTool],
+      // Gate 修复轮需要额外回合与 token 预算（5000+ 字长文 × 最多 1+N 稿）
+      maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
+      maxTotalTokens: gate ? 80000 : undefined,
+    });
 
-  if (!captured.payload) {
-    throw new Error(
-      `脚本生成失败：模型未调用 submit_script 工具提交脚本（loop 状态：${result.stopReason}，turns=${result.turns}）`,
-    );
+    if (!captured.payload) {
+      throw new Error(
+        `脚本生成失败：模型未调用 submit_script 工具提交脚本（loop 状态：${result.stopReason}，turns=${result.turns}）`,
+      );
+    }
+
+    const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
+    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, placeholder.id, dataDir);
+  } catch (err) {
+    // 失败留痕:占位稿标注中断原因（best-effort,不吞原错误）——UI 显示徽章与重试入口
+    const msg = err instanceof Error ? err.message : String(err);
+    try {
+      await updateContent(
+        placeholder.id,
+        { title: `［生成中断］${req.topic.slice(0, 40)}`, lastError: msg },
+        dataDir,
+      );
+    } catch { /* 留痕失败不掩盖原错误 */ }
+    throw err;
   }
-
-  const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
-  return finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, dataDir);
 }
 
-/** 后处理：组装 → humanize → 违禁词扫描 → 存稿（draft_ready，同现有写作流）。 */
+/** 后处理：组装 → humanize → 违禁词扫描 → 占位稿转正（draft_ready，同现有写作流）。 */
 async function finalizeScript(
   payload: SubmitPayload,
   req: ScriptRequest,
   tokensUsed: number,
   gateFailures: GateFailure[],
   rulesApplied: number,
+  placeholderId: string,
   dataDir?: string,
 ): Promise<GeneratedScript> {
   const { title, hook, body: bodyText, cta, hashtags } = payload;
@@ -187,17 +215,21 @@ async function finalizeScript(
 
   const cleanHashtags = hashtags.map((t) => t.trim()).filter(Boolean);
 
-  const content = await saveContent(
+  // 占位稿转正（P1）:同一个 id 从 drafting 占位变成成品,清掉历史失败痕
+  const content = await updateContent(
+    placeholderId,
     {
       title,
       body: humanizedText,
-      platform: req.platform,
       status: "draft_ready",
-      tags: [],
       hashtags: cleanHashtags,
+      lastError: null,
     },
     dataDir,
   );
+  if (!content) {
+    throw new Error(`占位稿丢失（${placeholderId}）：生成完成但无法转正,稿件内容未保存`);
+  }
 
   return {
     contentId: content.id,

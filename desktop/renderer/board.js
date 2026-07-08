@@ -121,6 +121,11 @@ function renderAtomCard(atom) {
       chips.appendChild(chip);
     }
     card.appendChild(chips);
+    // 防呆 P5:生成中断的稿必须在看板可见——占位卡 + 中断徽章,「写一半没了」到此为止
+    const broken = atom.members.find((m) => m.lastError);
+    if (broken) {
+      card.appendChild(h("div", { class: "atom-error" }, "⚠ 生成中断,点开可重试"));
+    }
     const stale = daysSince(rep.updatedAt || rep.createdAt);
     if (rep.status !== "published" && stale > 14) {
       card.appendChild(h("div", { class: "atom-stale" }, "停 " + stale + " 天"));

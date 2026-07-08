@@ -20,6 +20,7 @@ import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
 import { saveTopic, type Topic } from "../storage/local-store.js";
+import { emitEngineEvent } from "./event-hub.js";
 
 export interface ChatCard {
   type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets";
@@ -251,7 +252,14 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
       },
       execute: async (args) => {
         const res = await d.generate({ ...sanitize(args), ...dirParams, action: "script" });
-        if (!res.ok) return fail(res.error);
+        if (!res.ok) {
+          // 防呆:写稿中断必须进工作日志——「没动静」不许无痕（占位稿的 lastError 由 generate 层落）
+          void emitEngineEvent(
+            { role: "writer", kind: "run_failed", label: `编剧写稿中断：${String(res.error ?? "未知错误").slice(0, 60)}` },
+            dataDir,
+          ).catch(() => {});
+          return fail(res.error);
+        }
         const data = res.data as Record<string, unknown>;
         sink.push({ type: "draft", data });
         return JSON.stringify({

@@ -131,20 +131,33 @@ async function sendChat(text) {
   sendBtn.disabled = true;
   appendChatMessage("user", message);
   progressSteps = [];
-  const thinking = appendChatMessage("assistant", "正在干活…（写稿约需 30-60 秒）");
+  const thinking = appendChatMessage("assistant", "正在干活…");
   activeThinking = thinking;
+  // 防呆 P4:已用时长可见——用户能区分「还在写长文」和「已经死了」,不至于焦虑刷新
+  const startedAt = Date.now();
+  const elapsed = h("div", { class: "chat-elapsed muted" }, "");
+  thinking.appendChild(elapsed);
+  const timer = setInterval(() => {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    elapsed.textContent = "已进行 " + (s >= 60 ? Math.floor(s / 60) + " 分 " + (s % 60) + " 秒" : s + " 秒") + "（写长文约 1-3 分钟）";
+  }, 1000);
 
-  const payload = { message };
-  if (activeConversationId) payload.conversation_id = activeConversationId;
-  // 上下文感知（IA v4.2 §C1）:正在看的稿件随消息上行,「开头改口语点」不用再说明是哪篇
-  const wb = window.__wbOpenContent;
-  if (wb && wb.id) payload.context = { content_id: wb.id, content_title: wb.title, platform: wb.platform };
-  const res = await safeInvoke(window.autocrew.chatTurn, payload);
-
-  thinking.remove();
-  activeThinking = null;
-  chatBusy = false;
-  sendBtn.disabled = false;
+  let res;
+  try {
+    const payload = { message };
+    if (activeConversationId) payload.conversation_id = activeConversationId;
+    // 上下文感知（IA v4.2 §C1）:正在看的稿件随消息上行,「开头改口语点」不用再说明是哪篇
+    const wb = window.__wbOpenContent;
+    if (wb && wb.id) payload.context = { content_id: wb.id, content_title: wb.title, platform: wb.platform };
+    res = await safeInvoke(window.autocrew.chatTurn, payload);
+  } finally {
+    // busy 复位放 finally:任何一步 DOM/传输异常都不许把输入框永久锁死
+    clearInterval(timer);
+    thinking.remove();
+    activeThinking = null;
+    chatBusy = false;
+    sendBtn.disabled = false;
+  }
 
   if (!res.ok) {
     if (res.needsSetup) {

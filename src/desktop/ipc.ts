@@ -214,7 +214,7 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
           }
         : {}),
     });
-    // run 完成信号——只在本 turn 真用过工具时发（纯闲聊不进任务带,不造假活性）
+    // run 收尾:成功有产出发 run_done;失败发 run_failed——任务带上的 run 不许悬空「进行中」
     if (result.ok !== false) {
       const data = result.data as { cards?: unknown[] } | undefined;
       const cardCount = Array.isArray(data?.cards) ? data.cards.length : 0;
@@ -224,10 +224,17 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
           dataDir,
         );
       }
+    } else {
+      void emitEngineEvent(
+        { role: "system", kind: "run_failed", runId, label: `任务中断：${String((result as { error?: unknown }).error ?? "未知错误").slice(0, 60)}` },
+        dataDir,
+      );
     }
     return result;
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    const msg = err instanceof Error ? err.message : String(err);
+    void emitEngineEvent({ role: "system", kind: "run_failed", runId, label: `任务中断：${msg.slice(0, 60)}` }, dataDir);
+    return { ok: false, error: msg };
   }
 }
 

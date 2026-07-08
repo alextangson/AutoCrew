@@ -97,7 +97,11 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     res.write("event: ready\ndata: {}\n\n");
     sseClients.add(res);
-    req.on("close", () => sseClients.delete(res));
+    // 防呆 P3:心跳帧——长生成期间无事件,空闲连接可能被浏览器/中间层静默掐断
+    const heartbeat = setInterval(() => {
+      try { res.write(": ping\n\n"); } catch { /* 已断,close 会清理 */ }
+    }, 30_000);
+    req.on("close", () => { clearInterval(heartbeat); sseClients.delete(res); });
     return;
   }
 
@@ -136,6 +140,10 @@ const server = http.createServer(async (req, res) => {
 
   await serveStatic(res, p);
 });
+
+// 防呆 P3:写长文是分钟级任务——本地单用户 server 不许因超时掐断慢请求
+server.requestTimeout = 0;
+server.timeout = 0;
 
 server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");

@@ -65,7 +65,17 @@ export async function runPersistedChatTurn(params: {
     ...(params.viewContext ? { viewContext: params.viewContext } : {}),
     ...(params.onEvent ? { onEvent: params.onEvent } : {}),
   });
-  if (!result.ok) return result;
+  if (!result.ok) {
+    // 防呆:失败轮也留痕（仅已有会话——首轮失败仍不建空壳,needsSetup 是配置态不是任务失败）。
+    // 否则用户消息随失败蒸发,刷新后像什么都没发生过——这正是「写一半就没了」的体验根源之一。
+    if (conversationId && !result.needsSetup) {
+      const failNote = `⚠️ 本轮执行失败：${String(result.error ?? "未知错误")}。你的消息已保留,可以直接重发。`;
+      await enqueue(conversationId, () =>
+        appendTurn(conversationId, { content: message }, { content: failNote, cards: [] }, dataDir),
+      ).catch(() => { /* 留痕失败不改变返回 */ });
+    }
+    return result;
+  }
 
   const data = result.data as { reply?: unknown; cards?: unknown } | undefined;
   const reply = typeof data?.reply === "string" ? data.reply : "";
