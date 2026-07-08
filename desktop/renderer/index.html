@@ -9,45 +9,53 @@
 </head>
 <body>
   <div id="app-wrap">
-  <div id="layout">
-    <aside id="sidebar">
-      <div class="logo">AutoCrew · 编辑部</div>
-      <button id="new-task" class="btn-primary sidebar-new-task">＋ 新任务</button>
-      <nav id="sidebar-nav">
-        <button class="nav-item active" data-view="today"><i class="nav-ico">⌂</i>今日</button>
-        <button class="nav-item" data-view="scout"><i class="nav-ico">侦</i>选题</button>
-        <button class="nav-item" data-view="drafts"><i class="nav-ico">编</i>内容</button>
-        <button class="nav-item" data-view="report"><i class="nav-ico">析</i>数据</button>
-        <button class="nav-item" data-view="library"><i class="nav-ico">▤</i>素材</button>
-      </nav>
-      <div id="sidebar-footer">
-        <button class="nav-item" data-view="settings"><i class="nav-ico">⚙</i>设置</button>
-        <div class="sidebar-user" title="账号与积分将随产品账号体系上线">本地版</div>
+    <header id="topbar">
+      <span class="logo">AutoCrew · 编辑部</span>
+      <div class="topbar-actions">
+        <button id="new-task" class="btn-primary">＋ 新想法</button>
+        <div class="menu-wrap">
+          <button id="menu-btn" class="btn-secondary">菜单</button>
+          <div id="menu-drop" class="menu-drop hidden">
+            <button class="menu-item" data-view="report">数据回流</button>
+            <button class="menu-item" data-view="scout">选题雷达</button>
+            <button class="menu-item" data-view="library">素材库</button>
+            <button class="menu-item" data-view="style">风格档案</button>
+            <button class="menu-item" data-view="settings">设置</button>
+          </div>
+        </div>
       </div>
-    </aside>
-    <section id="main-area">
-      <section id="view-today" class="view"></section>
-      <section id="view-conversation" class="view hidden">
+    </header>
+
+    <div id="body-zone">
+      <section id="main-area">
+        <section id="view-board" class="view"></section>
+        <section id="view-destination" class="view hidden">
+          <header id="dest-header">
+            <button id="dest-back" class="btn-mini">← 看板</button>
+            <span id="dest-title"></span>
+          </header>
+          <div id="dest-body">
+            <section id="panel-report" class="panel"></section>
+            <section id="panel-drafts" class="panel"></section>
+            <section id="panel-style" class="panel"></section>
+            <section id="panel-settings" class="panel"></section>
+            <section id="panel-scout" class="panel"></section>
+            <section id="panel-library" class="panel"></section>
+          </div>
+        </section>
+      </section>
+
+      <aside id="chat-zone">
+        <div id="chat-head"><span>总编辑</span></div>
         <div id="chat-stream"></div>
         <div id="chat-input-row">
-          <textarea id="chat-input" rows="2" placeholder="继续这个任务…"></textarea>
+          <textarea id="chat-input" rows="2" placeholder="有想法就说 / 让总编辑干活…"></textarea>
           <button id="chat-send" class="btn-primary">发送</button>
         </div>
-      </section>
-      <section id="view-destination" class="view hidden">
-        <header id="dest-header"><span id="dest-title"></span></header>
-        <div id="dest-body">
-          <section id="panel-report" class="panel"></section>
-          <section id="panel-drafts" class="panel"></section>
-          <section id="panel-style" class="panel"></section>
-          <section id="panel-settings" class="panel"></section>
-          <section id="panel-scout" class="panel"></section>
-          <section id="panel-library" class="panel"></section>
-        </div>
-      </section>
-    </section>
-  </div>
-  <div id="toast" class="toast hidden"></div>
+      </aside>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
   </div>
   <script src="config.js"></script>
   <script src="transport.js"></script>
@@ -58,6 +66,7 @@
   <script src="cards.js"></script>
   <script src="selection.js"></script>
   <script src="workbench.js"></script>
+  <script src="board.js"></script>
   <script src="library.js"></script>
   <script src="chat.js"></script>
   <script src="today.js"></script>

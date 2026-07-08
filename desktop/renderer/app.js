@@ -483,4 +483,4 @@ initChat();
 initViews();
 initSidebar();
 bootOnboarding();
-switchView("today");
+switchView("board");

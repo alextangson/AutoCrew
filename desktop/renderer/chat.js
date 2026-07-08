@@ -51,16 +51,17 @@ function appendChatCards(cards) {
   }
 }
 
-function exitHeroMode() {
-  switchView("conversation");
-}
+/** 对话常驻右栏,始终可见——不再需要切视图 */
+function exitHeroMode() {}
 
-/** 新任务：清流、回今日首屏。首条消息发出才建会话（零仪式感）。 */
+/** 新想法：清空对话流,聚焦输入,主区回看板。首条消息发出才建会话（零仪式感）。 */
 function newTask() {
   if (chatBusy) { showToast("正在干活，稍等片刻再开新任务"); return; }
   activeConversationId = null;
   document.getElementById("chat-stream").innerHTML = "";
-  switchView("today");
+  switchView("board");
+  const input = document.getElementById("chat-input");
+  if (input) input.focus();
 }
 
 /** 任务历史回放：文字 + 卡片按发送时顺序重渲染（卡片在回复文字前，与实时一致） */
@@ -95,7 +96,6 @@ async function sendChat(text) {
   chatBusy = true;
   const sendBtn = document.getElementById("chat-send");
   sendBtn.disabled = true;
-  switchView("conversation");
   appendChatMessage("user", message);
   progressSteps = [];
   const thinking = appendChatMessage("assistant", "正在干活…（写稿约需 30-60 秒）");
@@ -113,12 +113,12 @@ async function sendChat(text) {
   if (!res.ok) {
     if (res.needsSetup) {
       const msg = appendChatMessage("assistant",
-        "引擎还没配置 model provider。打开侧边栏「设置」，在开发者区填入 API key 即可开聊。");
+        "引擎还没配置 model provider。点右上角「菜单 → 设置」，在开发者区填入 API key 即可开聊。");
       const btn = h("button", { class: "btn-mini" }, "打开设置");
       btn.addEventListener("click", () => switchView("settings"));
       msg.appendChild(btn);
     } else {
-      appendChatMessage("assistant", "出错了：" + (res.error || "未知错误") + "。可以直接重发，或到侧边栏「设置」检查引擎配置。");
+      appendChatMessage("assistant", "出错了：" + (res.error || "未知错误") + "。可以直接重发，或到「菜单 → 设置」检查引擎配置。");
     }
     return;
   }

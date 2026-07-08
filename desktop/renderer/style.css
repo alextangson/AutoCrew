@@ -1017,3 +1017,75 @@ label {
 .queue-row:hover { background: rgba(0, 0, 0, 0.03); }
 .queue-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .queue-status { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; border: 1px solid var(--border); padding: 1px 8px; flex-shrink: 0; }
+
+/* ══ IA v3：顶栏 + 两栏(主区看板 | 总编辑对话)══════════════════════════════ */
+
+#topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 18px; border-bottom: 1px solid var(--border);
+  background: var(--bg); flex-shrink: 0;
+}
+#topbar .logo { border-bottom: none; padding: 0; font-size: 17px; }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.menu-wrap { position: relative; }
+.menu-drop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  min-width: 140px; display: flex; flex-direction: column;
+}
+.menu-drop.hidden { display: none; }
+.menu-item {
+  text-align: left; padding: 9px 12px; background: none; border: none;
+  border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px;
+  font-family: inherit; color: var(--text);
+}
+.menu-item:last-child { border-bottom: none; }
+.menu-item:hover { background: var(--surface); }
+
+#body-zone { display: flex; flex: 1; min-height: 0; }
+
+#chat-zone {
+  width: 340px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--border); background: var(--bg); min-height: 0;
+}
+#chat-head {
+  padding: 12px 14px; border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em; color: var(--text-secondary);
+}
+
+/* 目的页返回条 */
+#dest-header { display: flex; align-items: center; gap: 12px; }
+
+/* ── 看板(内容原子 × 管线阶段)────────────────────────────────────────────── */
+#main-area > #view-board { overflow: hidden; }
+.board-worklog {
+  background: var(--ink); color: #D8D5CB; font-family: var(--font-mono);
+  font-size: 11px; line-height: 1.9; padding: 8px 16px; max-height: 116px; overflow-y: auto; flex-shrink: 0;
+}
+.board-main { flex: 1; min-height: 0; overflow: auto; padding: 18px; }
+.board-loading { padding: 8px 0; }
+.board-back { margin-bottom: 14px; }
+
+.kanban { display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; padding-bottom: 8px; }
+.kanban-col { flex: 1; min-width: 196px; display: flex; flex-direction: column; gap: 8px; }
+.kanban-col-head {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--muted);
+  padding: 0 2px 6px; border-bottom: 1px solid var(--border); margin-bottom: 2px;
+}
+
+.atom-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card);
+  padding: 10px 11px; cursor: pointer; transition: border-color 160ms ease-out;
+}
+.atom-card:hover { border-color: var(--ink); }
+.atom-title { font-size: 14px; line-height: 1.4; margin-bottom: 6px; }
+.atom-sub { font-family: var(--font-mono); font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+.atom-chips { display: flex; flex-direction: column; gap: 4px; }
+.atom-chip {
+  text-align: left; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.03em;
+  border: 1px solid var(--border); background: none; border-radius: var(--radius);
+  padding: 2px 7px; cursor: pointer; color: var(--text);
+}
+.atom-chip:hover { border-color: var(--ink); }
+.atom-chip-pub { color: var(--success); border-color: var(--success); }
+.atom-stale { margin-top: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--hot); }
