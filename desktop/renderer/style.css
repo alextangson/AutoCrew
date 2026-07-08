@@ -1143,11 +1143,13 @@ label {
 
 /* ── IA v4.2:Dashboard 经营层首页 ──────────────────────────────────────────── */
 #view-dashboard { padding: 20px 24px; overflow-y: auto; }
-.dash-head { display: flex; align-items: baseline; justify-content: space-between; max-width: 1080px; margin: 0 auto 4px; }
+.dash-head { display: flex; align-items: baseline; justify-content: space-between; width: 100%; max-width: 1080px; margin: 0 auto 4px; box-sizing: border-box; }
 .dash-greet { font-family: Georgia, "Songti SC", "STSong", serif; font-size: 21px; font-weight: 600; margin: 0; }
-.dash-firstrun { max-width: 1080px; margin: 0 auto 12px; }
+.dash-firstrun { width: 100%; max-width: 1080px; margin: 0 auto 12px; box-sizing: border-box; }
 .dash-error { max-width: 1080px; margin: 24px auto; }
-.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; max-width: 1080px; margin: 14px auto 0; align-items: start; }
+/* width:100% 锁回容器宽度——否则 flex column 里的横向 auto margin 会让 auto-fit 网格按最大内容膨胀,
+   顶破主区挤到常驻对话栏底下（1280px 下实测第三列被裁）。宽屏时 max-width+auto 仍居中。 */
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; width: 100%; max-width: 1080px; margin: 14px auto 0; align-items: start; box-sizing: border-box; }
 .dash-card { margin: 0; }
 .dash-queue { margin-top: 6px; }
 .dash-queue-row { display: flex; align-items: center; gap: 8px; padding: 7px 2px; border-bottom: 1px solid var(--border); cursor: pointer; }
