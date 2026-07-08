@@ -22,6 +22,8 @@ export const publishSchema = Type.Object({
   image_size: Type.Optional(Type.String({ description: "Image ratio for generated images. Default: 16:9." })),
   image_generator_script: Type.Optional(Type.String({ description: "Override path to the image generation script." })),
   image_api_key: Type.Optional(Type.String({ description: "Override image generation API key." })),
+  image_base_url: Type.Optional(Type.String({ description: "OpenAI-compatible relay base URL for image generation (must pair with the api key)." })),
+  image_model: Type.Optional(Type.String({ description: "Image model id, e.g. gpt-image-2 for relays. Default: script's built-in (doubao-seedream)." })),
   wechat_publish_script: Type.Optional(Type.String({ description: "Override path to the WeChat publish.py script." })),
   hashtags: Type.Optional(Type.Array(Type.String(), { description: "Hashtags for the content. Overrides content hashtags if provided." })),
   publish_url: Type.Optional(Type.String({ description: "The URL where content was published (for confirm_published action)." })),
@@ -128,6 +130,8 @@ export async function executePublish(
     imageSize: (params.image_size as string) || "16:9",
     imageGeneratorScript: (params.image_generator_script as string) || cfg.imageGeneratorScript,
     imageApiKey: (params.image_api_key as string) || cfg.imageApiKey,
+    imageBaseUrl: (params.image_base_url as string) || cfg.imageBaseUrl,
+    imageModel: (params.image_model as string) || cfg.imageModel,
     wechatPublishScript: (params.wechat_publish_script as string) || cfg.wechatPublishScript,
   });
 

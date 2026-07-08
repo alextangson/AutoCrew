@@ -11,6 +11,10 @@ export interface WechatMpPublishConfig {
   imageGeneratorScript?: string;
   wechatPublishScript?: string;
   imageApiKey?: string;
+  /** 生图端点(OpenAI 兼容中转,如 xiaojiu)。缺省=脚本默认(火山 ARK 直连) */
+  imageBaseUrl?: string;
+  /** 生图模型 id(如 gpt-image-2)。缺省=脚本默认(doubao-seedream) */
+  imageModel?: string;
   author?: string;
   theme?: string;
 }

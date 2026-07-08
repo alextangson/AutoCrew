@@ -2,6 +2,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { generateImageViaRelay } from "./image-gen.js";
 
 const DEFAULT_IMAGE_GENERATOR_SCRIPT = path.join(
   os.homedir(),
@@ -30,6 +31,9 @@ export interface WechatMpDraftOptions {
   imageSize?: string;
   imageGeneratorScript?: string;
   imageApiKey?: string;
+  /** 生图端点(OpenAI 兼容中转)。不传=脚本默认(火山 ARK)——key 与端点必须配对,否则 401 */
+  imageBaseUrl?: string;
+  imageModel?: string;
   wechatPublishScript?: string;
 }
 
@@ -56,6 +60,14 @@ function resolveWechatPublishScript(customPath?: string): string {
 
 function resolveImageApiKey(customKey?: string): string | undefined {
   return customKey || process.env.AUTOCREW_IMAGE_API_KEY || process.env.ARK_API_KEY || undefined;
+}
+
+function resolveImageBaseUrl(custom?: string): string | undefined {
+  return custom || process.env.AUTOCREW_IMAGE_BASE_URL || undefined;
+}
+
+function resolveImageModel(custom?: string): string | undefined {
+  return custom || process.env.AUTOCREW_IMAGE_MODEL || undefined;
 }
 
 function escapeRegExp(value: string): string {
@@ -131,10 +143,30 @@ async function generateImage(
     size,
     imageGeneratorScript,
     imageApiKey,
-  }: { size: string; imageGeneratorScript: string; imageApiKey?: string },
+    imageBaseUrl,
+    imageModel,
+  }: { size: string; imageGeneratorScript: string; imageApiKey?: string; imageBaseUrl?: string; imageModel?: string },
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const cwd = path.dirname(outputPath);
   await fs.mkdir(cwd, { recursive: true });
+
+  // 中转模式(imageBaseUrl 已配)→ 原生 HTTP 生图(PRD-v4 §9 去桥化):超时自己掌控,
+  // 不受外部脚本 30s 死线误杀。未配中转 → 维持外部脚本(火山 ARK 直连),行为零变化。
+  if (imageBaseUrl && imageApiKey) {
+    try {
+      const png = await generateImageViaRelay({
+        baseUrl: imageBaseUrl,
+        apiKey: imageApiKey,
+        model: imageModel || "gpt-image-2",
+        prompt,
+        size,
+      });
+      await fs.writeFile(outputPath, png);
+      return { ok: true, stdout: `native relay: ${outputPath}`, stderr: "" };
+    } catch (err) {
+      return { ok: false, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
+    }
+  }
 
   const args = [
     "run",
@@ -149,6 +181,12 @@ async function generateImage(
 
   if (imageApiKey) {
     args.push("--api-key", imageApiKey);
+  }
+  if (imageBaseUrl) {
+    args.push("--base-url", imageBaseUrl);
+  }
+  if (imageModel) {
+    args.push("--model", imageModel);
   }
 
   const result = await runCommand("uv", args, cwd);
@@ -178,6 +216,8 @@ export async function publishWechatMpDraft(
   const imageGeneratorScript = resolveImageGeneratorScript(options.imageGeneratorScript);
   const wechatPublishScript = resolveWechatPublishScript(options.wechatPublishScript);
   const imageApiKey = resolveImageApiKey(options.imageApiKey);
+  const imageBaseUrl = resolveImageBaseUrl(options.imageBaseUrl);
+  const imageModel = resolveImageModel(options.imageModel);
 
   const articleDir = path.dirname(articlePath);
   const imagesDir = path.join(articleDir, "images");
@@ -205,6 +245,8 @@ export async function publishWechatMpDraft(
         size: options.imageSize || "16:9",
         imageGeneratorScript,
         imageApiKey,
+        imageBaseUrl,
+        imageModel,
       });
       if (!imageResult.ok) {
         return {
@@ -237,6 +279,8 @@ export async function publishWechatMpDraft(
       size: options.imageSize || "16:9",
       imageGeneratorScript,
       imageApiKey,
+      imageBaseUrl,
+      imageModel,
     });
     if (!fallbackResult.ok) {
       return {
