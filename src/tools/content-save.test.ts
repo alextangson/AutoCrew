@@ -380,6 +380,26 @@ describe("executeContentSave adoption", () => {
     expect(stats.rate).toBe(1);
   });
 
+  it("V5.0 自由文本原因:rewritten + reason_note 落库(截断 200);非 rewritten 忽略", async () => {
+    const { executeContentSave } = await import("./content-save.js");
+    const id = await mkContent();
+    const long = "这段太软了,论证不够狠。".repeat(30);
+    const r = (await executeContentSave({
+      action: "adoption", id, verdict: "rewritten", reason_note: long, _dataDir: adoptDir,
+    })) as Record<string, unknown>;
+    expect(r.ok).toBe(true);
+    const content = r.content as { adoption?: { verdict: string; reasonNote?: string } };
+    expect(content.adoption?.reasonNote).toBeDefined();
+    expect(content.adoption!.reasonNote!.length).toBe(200);
+
+    const id2 = await mkContent();
+    const r2 = (await executeContentSave({
+      action: "adoption", id: id2, verdict: "adopted", reason_note: "不该带原因", _dataDir: adoptDir,
+    })) as Record<string, unknown>;
+    const c2 = r2.content as { adoption?: { reasonNote?: string } };
+    expect(c2.adoption?.reasonNote).toBeUndefined();
+  });
+
   it("verdict 非法或缺失 → 明确报错，不落库", async () => {
     const { executeContentSave } = await import("./content-save.js");
     const { getContent } = await import("../storage/local-store.js");

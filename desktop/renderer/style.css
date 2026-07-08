@@ -788,6 +788,36 @@ label {
   color: var(--ink);
 }
 
+/* V5.0:标题可编辑——视觉上仍像标题,悬停/聚焦才露出输入形态 */
+.wb-title-input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  font-family: var(--font-serif, inherit);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+  padding: 4px 6px;
+  margin: 6px 0 2px;
+}
+.wb-title-input:hover { border-color: var(--border); }
+.wb-title-input:focus { outline: none; border-color: var(--ink); background: var(--card); }
+
+/* V5.0:重写原因自由输入 */
+.wb-reason-input {
+  flex: 1;
+  min-width: 180px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  background: var(--card);
+}
+
+.wb-hint { font-size: 12px; margin: 4px 0 0; }
+
 .wb-editor {
   width: 100%;
   min-height: 260px;

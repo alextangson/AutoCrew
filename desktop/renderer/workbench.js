@@ -51,8 +51,12 @@ async function renderWorkbench(contentId, container) {
     container.appendChild(errBox);
   }
 
-  // ── 标题 + 状态行 ──
-  container.appendChild(h("h3", {}, c.title || "（无标题）"));
+  // ── 标题（可编辑,V5.0）+ 状态行 ──
+  const titleInput = h("input", { class: "wb-title-input", type: "text", placeholder: "标题" });
+  titleInput.value = c.title || "";
+  container.appendChild(titleInput);
+  // 脏检查=标题+正文;titleInput/editor 在渲染期声明,点击回调运行时闭包可见
+  const isDirty = () => editor.value !== c.body || titleInput.value.trim() !== (c.title || "");
   const statusRow = h("div", { class: "wb-status-row" });
   statusRow.appendChild(h("span", { class: "wb-status" }, statusLabel(c.status)));
   const allowed = await safeInvoke(window.autocrew.contentAllowedTransitions, { id: contentId });
@@ -61,7 +65,7 @@ async function renderWorkbench(contentId, container) {
   for (const target of targets) {
     const btn = h("button", { class: "btn-mini" }, "→ " + statusLabel(target));
     btn.addEventListener("click", async () => {
-      if (editor.value !== c.body) {
+      if (isDirty()) {
         showToast("有未保存的改动——先点保存，或撤销修改后再操作");
         return;
       }
@@ -79,7 +83,12 @@ async function renderWorkbench(contentId, container) {
   const editor = h("textarea", { class: "wb-editor" });
   editor.value = c.body || "";
   container.appendChild(editor);
-  if (typeof attachSelectionToolbar === "function") attachSelectionToolbar(editor, c, container);
+  if (typeof attachSelectionToolbar === "function") {
+    attachSelectionToolbar(editor, c, container);
+    // 发现性(V5.0):框选改写是最强的"听得懂人话"能力,不能靠用户碰运气发现
+    container.appendChild(h("p", { class: "wb-hint muted" },
+      "✎ 选中正文任意一段 → 浮出改写工具条,可直接输入修改要求(如「这段太软了,换个比喻」),AI 只改选中那一段"));
+  }
 
   // 素材缺口块（IA v4.2 §7 轻版）:解析写手在正文标注的配图/素材缺口,一键去素材库补
   // 标记语法与 koubo gate 的 [IMAGE: prompt] 对齐,兼容 [缺图:xx]/[缺案例:xx]/[缺数据:xx]
@@ -107,9 +116,13 @@ async function renderWorkbench(contentId, container) {
   const saveBtn = h("button", { class: "btn-primary" }, "保存（存为新版本）");
   saveBtn.dataset.label = "保存（存为新版本）";
   saveBtn.addEventListener("click", async () => {
-    if (editor.value === c.body) { showToast("没有改动"); return; }
+    if (!isDirty()) { showToast("没有改动"); return; }
     setLoading(saveBtn, true, "保存中...");
-    const r = await safeInvoke(window.autocrew.contentUpdate, { id: contentId, body: editor.value });
+    const payload = { id: contentId, body: editor.value };
+    // 标题可改(V5.0):清空视为不改,保留原标题
+    const newTitle = titleInput.value.trim();
+    if (newTitle && newTitle !== (c.title || "")) payload.title = newTitle;
+    const r = await safeInvoke(window.autocrew.contentUpdate, payload);
     setLoading(saveBtn, false);
     if (!r.ok) { showToast(r.error || "保存失败"); return; }
     // contentUpdate 内部已记录编辑 diff 并在攒够时自动蒸馏风格规则（styleLearned）
@@ -155,6 +168,21 @@ async function renderWorkbench(contentId, container) {
         chip.addEventListener("click", () => submitAdoption("rewritten", label + "·" + txt, val));
         chipRow.appendChild(chip);
       }
+      // V5.0:不只选择题——用自己的话说哪里不行,是风格蒸馏最值钱的负信号
+      const noteInput = h("input", { class: "wb-reason-input", type: "text",
+        placeholder: "或用你的话说哪里不行,回车记录" });
+      noteInput.addEventListener("keydown", (e) => {
+        const note = noteInput.value.trim();
+        if (e.key === "Enter" && note) {
+          const payload = { id: contentId, verdict: "rewritten", reason_note: note };
+          safeInvoke(window.autocrew.contentAdoption, payload).then((r) => {
+            if (!r.ok) { showToast(r.error || "记录失败"); return; }
+            showToast("已记录：" + label + "·" + note.slice(0, 20));
+            renderWorkbench(contentId, container);
+          });
+        }
+      });
+      chipRow.appendChild(noteInput);
       const skip = h("button", { class: "btn-mini" }, "跳过");
       skip.addEventListener("click", () => submitAdoption("rewritten", label));
       chipRow.appendChild(skip);
@@ -224,7 +252,7 @@ async function renderWorkbench(contentId, container) {
       if (v.version !== versions.length) {
         const revertBtn = h("button", { class: "btn-mini" }, "回滚到此版");
         revertBtn.addEventListener("click", async () => {
-          if (editor.value !== c.body) {
+          if (isDirty()) {
             showToast("有未保存的改动——先点保存，或撤销修改后再操作");
             return;
           }

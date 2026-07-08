@@ -66,6 +66,8 @@ export interface AdoptionRecord {
   verdict: AdoptionVerdict;
   /** 仅 rewritten 时可选携带（§10-B 低摩擦裁决不变：一次点击，可跳过） */
   reason?: RewriteReason;
+  /** 自由文本原因（IA v5 V5.0:「哪里不行」不只选择题）——风格蒸馏的高价值负信号,与 chip 归类字段分开 */
+  reasonNote?: string;
   recordedAt: string;
 }
 
@@ -461,11 +463,13 @@ export async function recordAdoption(
   verdict: AdoptionVerdict,
   dataDir?: string,
   reason?: RewriteReason,
+  reasonNote?: string,
 ): Promise<Content | null> {
   return updateContent(id, {
     adoption: {
       verdict,
       ...(verdict === "rewritten" && reason ? { reason } : {}),
+      ...(verdict === "rewritten" && reasonNote ? { reasonNote } : {}),
       recordedAt: new Date().toISOString(),
     },
   }, dataDir);
