@@ -130,11 +130,16 @@ function buildSubmitTool(captured: Captured, gate?: QualityGateSpec): LoopTool {
   };
 }
 
+/** 生成占位稿标题哨兵——区分「生成占位稿」与手工存的 drafting 稿(content-save 允许)。
+ *  renderer(board/workbench.js)按同字面量正则识别,改动需同步。 */
+export const GENERATING_TITLE_PREFIX = "［生成中］";
+export const INTERRUPTED_TITLE_PREFIX = "［生成中断］";
+
 /** 占位稿先行（防呆 P1）:分钟级长任务先落盘——中途死不许蒸发,刷新/断连不影响它的存在 */
 async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
   const placeholder = await saveContent(
     {
-      title: `［生成中］${req.topic.slice(0, 40)}`,
+      title: `${GENERATING_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
       body: "",
       platform: req.platform,
       status: "drafting",
@@ -171,7 +176,7 @@ async function runGeneration(
       systemPrompt: system,
       userMessage: user,
       tools: [submitTool],
-      // Gate 修复轮需要额外回合与 token 预算（5000+ 字长文 × 最多 1+N 稿）
+      // Gate 修复轮需要额外回合与 token 预算（整稿 × 最多 1+N 稿）
       maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
       maxTotalTokens: gate ? 80000 : undefined,
     });
@@ -190,7 +195,7 @@ async function runGeneration(
     try {
       await updateContent(
         placeholderId,
-        { title: `［生成中断］${req.topic.slice(0, 40)}`, lastError: msg },
+        { title: `${INTERRUPTED_TITLE_PREFIX}${req.topic.slice(0, 40)}`, lastError: msg },
         dataDir,
       );
     } catch { /* 留痕失败不掩盖原错误 */ }

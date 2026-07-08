@@ -17,6 +17,7 @@ import { buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js"
 import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
+import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
@@ -154,6 +155,17 @@ const server = http.createServer(async (req, res) => {
 // 防呆 P3:写长文是分钟级任务——本地单用户 server 不许因超时掐断慢请求
 server.requestTimeout = 0;
 server.timeout = 0;
+
+// 先清孤儿再开门(SESSION-8 §3.1):上次崩溃遗留的「生成中」占位稿在接收任何
+// 新请求前标记为中断——listen 前执行,与本进程的新生成零竞态;失败不阻断启动。
+try {
+  const reconciled = await reconcileOrphanDrafts();
+  if (reconciled.total > 0) {
+    console.log(`  [reconcile] ${reconciled.total} 篇中断的「生成中」稿已标记,看板点开可重试`);
+  }
+} catch (err) {
+  console.error("[reconcile] 孤儿稿清理失败:", err instanceof Error ? err.message : err);
+}
 
 server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
