@@ -138,3 +138,16 @@ pack-schema 扩展字段按 0-2 定：结构模式轮换表、Quality Gate 阈�
 验证口径：TSC 干净，vitest 712/712 全过（store/IPC/gate/pack 层全覆盖）；workbench 三键按钮为 renderer 层，未跑 Electron 冒烟，下次启动 app 时人工点验。
 
 下一步 = 阶段 2（公众号发布链收编：wechat-mp.ts 去桥化 + 审核员进链 + 发布回执卡）。
+
+### 2026-07-08 阶段 2 完成（3/3 + 1 顺手修复）
+
+| 任务 | 状态 | 落点 |
+|---|---|---|
+| 1. wechat-mp.ts 去桥化 | ✅ | `<dataDir>/publish.json` 的 wechatMp 段（脚本路径/生图 key/author/theme）；优先级：调用参数 > publish.json > env > 内置默认。设置页 UI 字段未做（env/json 已可配，UI 补充排 P1 指挥台改造时一起） |
+| 2. 审核员进链（发布门） | ✅ | executePublish 推送前 scanText 同步阻断；force 放行但违规照样透出（warning + violations）——最终决定权在人，系统保持透明 |
+| 3. 发布回执卡 | ✅ | 新 `publish:wechat_draft` 通道（IPC 43）；工作台 wechat_mp 稿新增「推送公众号草稿箱」按钮 + 回执区（成功：配图数 + 下一步指引；阻断：违禁词明细） |
+| 顺手修复 | ✅ | **draft.md 过期 bug**：updateContent 只改 store 不重写 draft.md，原实现会把工作台编辑前的旧稿推上去。现发布时一律从 store 新鲜落盘 |
+
+验证：TSC 干净，vitest 721/721（发布门/事实源/配置注入/参数优先级全覆盖）；渲染层按钮未跑 Electron 冒烟。
+
+**P0 余量**：阶段 3 验收演练（需创始人配好 publish.json/engine.json 后真跑一篇：选题→生成→审→推草稿箱→三键裁决）；声音内核种子化操作（创始人 10 分钟）；并行轨 B 级风控评审文档未启动。

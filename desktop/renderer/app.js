@@ -194,6 +194,33 @@ function renderPublishActions(c, detailDiv) {
 
   detailDiv.appendChild(h("hr", {}));
 
+  // 公众号 A 级发布（P0 阶段 2）：推草稿箱，审核员发布门在后端同步阻断
+  if (c.platform === "wechat_mp") {
+    const wxRow = h("div", { class: "action-row" });
+    const wxBtn = h("button", { class: "btn-primary" }, "推送公众号草稿箱");
+    wxBtn.dataset.label = "推送公众号草稿箱";
+    wxRow.appendChild(wxBtn);
+    detailDiv.appendChild(wxRow);
+    const wxReceipt = h("div", { class: "wx-receipt" });
+    detailDiv.appendChild(wxReceipt);
+    wxBtn.addEventListener("click", async () => {
+      wxReceipt.textContent = "";
+      setLoading(wxBtn, true, "配图生成 + 推送中（可能需要几分钟）...");
+      const r = await safeInvoke(window.autocrew.publishWechatDraft, { content_id: contentId });
+      setLoading(wxBtn, false);
+      if (!r.ok) {
+        if (r.violations && r.violations.length > 0) {
+          wxReceipt.textContent = "⛔ 审核员阻断：命中违禁词「" + r.violations.join("、") + "」，修改后重试";
+        } else {
+          wxReceipt.textContent = "推送失败：" + (r.error || "未知错误");
+        }
+        return;
+      }
+      wxReceipt.textContent = "✅ 已推草稿箱 · 配图 " + (r.imageCount || 0) + " 张 · " + (r.nextStep || "");
+      showToast("公众号草稿已推送");
+    });
+  }
+
   // Actions row
   const actions = h("div", { class: "action-row" });
 

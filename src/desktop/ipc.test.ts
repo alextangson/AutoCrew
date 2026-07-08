@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 42 channels.
+ * IPC contract + handler registry tests — all 43 channels.
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -47,6 +47,7 @@ describe("IPC_CHANNELS", () => {
     "content:get",
     "publish:clipboard",
     "publish:confirm",
+    "publish:wechat_draft",
     "chat:turn",
     "settings:get",
     "settings:set",
@@ -82,8 +83,8 @@ describe("IPC_CHANNELS", () => {
     "today:summary",
   ];
 
-  it("has exactly 42 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(42);
+  it("has exactly 43 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(43);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -142,7 +143,9 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     ["content:get", "get"],
     ["publish:clipboard", "clipboard"],
     ["publish:confirm", "confirm_published"],
+    ["publish:wechat_draft", "wechat_mp_draft"],
     ["flywheel:import_csv", "import_csv"],
+    ["content:adoption", "adoption"],
   ];
 
   it.each(EXPECTED_BINDINGS)("%s → action=%s", (channel, action) => {

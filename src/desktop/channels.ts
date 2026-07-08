@@ -16,6 +16,7 @@ export const IPC_CHANNELS = [
   "content:get",
   "publish:clipboard",
   "publish:confirm",
+  "publish:wechat_draft",
   "chat:turn",
   "settings:get",
   "settings:set",
@@ -60,9 +61,9 @@ export const CHAT_PROGRESS_EVENT = "chat:progress";
  * Converts an IPC channel name to a camelCase method name.
  * e.g. "flywheel:report" → "flywheelReport"
  *
- * All 42 methods exposed on window.autocrew:
+ * All 43 methods exposed on window.autocrew:
  *   flywheelReport / generateScript / styleDistill / styleAbsorb / styleRules /
- *   contentList / contentGet / publishClipboard / publishConfirm / chatTurn /
+ *   contentList / contentGet / publishClipboard / publishConfirm / publishWechatDraft / chatTurn /
  *   settingsGet / settingsSet / styleUpdateRule /
  *   onboardingStatus / onboardingInit / flywheelImportCsv / dialogPickFile /
  *   knowledgeStatus / radarStatus / radarRefresh / profileUpdate /

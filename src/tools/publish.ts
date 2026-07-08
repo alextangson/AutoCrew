@@ -1,8 +1,11 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
 import { getContent, updateContent } from "../storage/local-store.js";
 import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
+import { loadWechatMpConfig } from "../modules/publish/wechat-config.js";
 import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
+import { scanText } from "../modules/filter/sensitive-words.js";
 
 export const publishSchema = Type.Object({
   action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "confirm_published">({
@@ -31,27 +34,10 @@ function resolveDataDir(customDir?: string): string {
   return path.join(home, ".autocrew");
 }
 
-async function resolveArticlePath(params: Record<string, unknown>): Promise<string | null> {
-  const articlePath = params.article_path as string | undefined;
-  if (articlePath) {
-    return path.resolve(articlePath);
-  }
-
-  const contentId = params.content_id as string | undefined;
-  if (!contentId) {
-    return null;
-  }
-
-  const dataDir = resolveDataDir((params._dataDir as string) || undefined);
-  const content = await getContent(contentId, dataDir);
-  if (!content) {
-    return null;
-  }
-
-  return path.join(dataDir, "contents", content.id, "draft.md");
-}
-
-export async function executePublish(params: Record<string, unknown>) {
+export async function executePublish(
+  params: Record<string, unknown>,
+  deps?: { publishImpl?: typeof publishWechatMpDraft },
+) {
   const action = params.action as string;
   const dataDir = resolveDataDir((params._dataDir as string) || undefined);
 
@@ -92,25 +78,61 @@ export async function executePublish(params: Record<string, unknown>) {
     return { ok: true, data: { id: contentId, status: "published", publishedAt: updated.publishedAt } };
   }
 
-  // --- wechat_mp_draft: existing WeChat MP draft flow ---
+  // --- wechat_mp_draft: A 级发布（P0 阶段 2）——store 为事实源 + 审核员发布门 ---
   if (action !== "wechat_mp_draft") {
     return { ok: false, error: `Unknown action: ${action}` };
   }
 
-  const articlePath = await resolveArticlePath(params);
-  if (!articlePath) {
+  const publishImpl = deps?.publishImpl ?? publishWechatMpDraft;
+  const contentId = params.content_id as string | undefined;
+  let articlePath: string;
+  let gateText: string;
+
+  if (contentId) {
+    const content = await getContent(contentId, dataDir);
+    if (!content) return { ok: false, error: `Content not found: ${contentId}` };
+    // 发布时从 store 新鲜落盘 draft.md——工作台编辑只更新 store，旧 draft.md 不得被推送
+    articlePath = path.join(dataDir, "contents", content.id, "draft.md");
+    await fs.writeFile(articlePath, `# ${content.title}\n\n${content.body}\n`, "utf-8");
+    gateText = `${content.title}\n\n${content.body}`;
+  } else if (params.article_path) {
+    articlePath = path.resolve(params.article_path as string);
+    try {
+      gateText = await fs.readFile(articlePath, "utf-8");
+    } catch {
+      return { ok: false, error: `Article not found: ${articlePath}` };
+    }
+  } else {
     return { ok: false, error: "article_path or content_id is required" };
   }
 
-  return publishWechatMpDraft({
+  // 审核员发布门（同步阻断）：违禁词未清零禁止推送；force 放行但违规照样透出——
+  // 最终决定权在人，系统保持透明（禁止静默）
+  const scan = await scanText(gateText, "wechat_mp", dataDir);
+  const violations = scan.hits.map((h) => h.word);
+  if (violations.length > 0 && !params.force) {
+    return {
+      ok: false,
+      violations,
+      error: `审核员阻断推送：命中违禁词「${violations.join("、")}」。修改后重试（或 force 强制推送，不建议）`,
+    };
+  }
+
+  const cfg = await loadWechatMpConfig(dataDir);
+  const result = await publishImpl({
     articlePath,
-    theme: (params.theme as string) || "newspaper",
+    theme: (params.theme as string) || cfg.theme || "newspaper",
     dryRun: Boolean(params.dry_run),
     skipImages: Boolean(params.skip_images),
-    author: (params.author as string) || "Lawrence",
+    author: (params.author as string) || cfg.author || "Lawrence",
     imageSize: (params.image_size as string) || "16:9",
-    imageGeneratorScript: (params.image_generator_script as string) || undefined,
-    imageApiKey: (params.image_api_key as string) || undefined,
-    wechatPublishScript: (params.wechat_publish_script as string) || undefined,
+    imageGeneratorScript: (params.image_generator_script as string) || cfg.imageGeneratorScript,
+    imageApiKey: (params.image_api_key as string) || cfg.imageApiKey,
+    wechatPublishScript: (params.wechat_publish_script as string) || cfg.wechatPublishScript,
   });
+
+  const receipt = result.ok
+    ? { ...result, nextStep: "到公众号后台「草稿箱」检查排版后点击发表，发表后回到工作台点「确认已发布」" }
+    : result;
+  return violations.length > 0 ? { ...receipt, violations, warning: "force 推送：违禁词未清零" } : receipt;
 }
