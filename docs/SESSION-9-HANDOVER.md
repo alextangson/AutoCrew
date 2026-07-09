@@ -91,8 +91,14 @@ Dogfood 抓到并当场修掉的产品 bug：
   保留倒计时/方向输入/席位格生成带血缘)+ 编辑器完整体验(衬线标题可改/60vh 正文/**框选浮层
   4 快捷+自由指令 → diff 待定卡 → 采纳回喂校准**/保存带"为什么改"/localStorage 暂存防丢/
   采纳裁决 chips+自由文本/状态流转脏检查/版本回滚/发布动作/回填录入)。smoke /v2 段真流程走查:
-  工作台→看板五列→编辑器。**C 期待做**:任务卡 runId 聚合/校准中心/素材/复盘页迁移+设置收口(P6);
-  **D 期**删 vanilla。token/常量两份手动同步(tokens.css↔style.css,lib.ts↔dom.js/board.js),D 期归一。
+  工作台→看板五列→编辑器。
+- **C 期+设置收口已落地**(`03791de`):任务卡 runId 聚合(useSyncExternalStore 平移 store.js)/
+  校准中心(定位/席位/画像行/规则可改可停用/蒸馏/爆款吸收)/数据回流页/**设置中心一页收口**
+  (引擎/搜索/发布 publish.json 可视化——新通道 settings:publish_get/set,共 **61 通道**/情报源
+  开关+手动扫/工作区管理/知识库)。仅素材库留 vanilla(文件对话框依赖),顶栏跳旧版。
+  smoke /v2 全程走查:工作台→看板→编辑器→校准中心→设置(五区断言)。
+  **D 期待做**:素材库迁移(文件选择改 <input type=file> 或路径输入)+删 vanilla+/v2 接管 /。
+  token/常量两份手动同步(tokens.css↔style.css,lib.ts↔dom.js/board.js),D 期归一。
 **等创始人**:搜索 API key(配置在设置页即可用);X/Reddit 开发者凭据+persona 语言裁决
 (风控评审文档 §2/§3)。~~头条/视频预填~~已裁决延后。
 
