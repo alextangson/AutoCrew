@@ -110,6 +110,24 @@
 .bf-input { width: 110px; }
 
 .sel-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; border: 1px solid var(--ink); border-radius: var(--radius-card); background: var(--card); padding: 6px 8px; margin: 6px 0; }
+.sel-float { position: absolute; z-index: 5; margin: 0; width: max-content; max-width: min(560px, 96%); box-shadow: 0 2px 10px rgba(22, 21, 15, 0.14); }
+.ed-body-wrap { position: relative; }
+.ed-mode { display: flex; gap: 6px; margin: 2px 0 4px; }
+.ed-mode button { font-size: 11px; padding: 2px 8px; }
+.ed-mode button.on { border-color: var(--ink); font-weight: 700; }
+.md-preview { min-height: 60vh; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 14px 18px; line-height: 1.9; overflow-wrap: break-word; }
+.md-preview h1, .md-preview h2, .md-preview h3 { font-family: var(--font-display); margin: 14px 0 6px; }
+.md-preview h1 { font-size: 20px; } .md-preview h2 { font-size: 17px; } .md-preview h3 { font-size: 15px; }
+.md-preview p { margin: 8px 0; }
+.md-preview ul, .md-preview ol { padding-left: 22px; margin: 8px 0; }
+.md-preview blockquote { border-left: 2px solid var(--border); padding-left: 10px; color: var(--muted); margin: 8px 0; }
+.md-preview code { font-family: var(--font-mono); font-size: 12px; background: var(--surface); padding: 1px 4px; }
+.md-preview pre { background: var(--surface); border: 1px solid var(--border); padding: 8px 10px; overflow-x: auto; margin: 8px 0; }
+.md-preview pre code { background: none; padding: 0; }
+.md-preview img { max-width: 100%; }
+.md-preview table { border-collapse: collapse; margin: 8px 0; }
+.md-preview th, .md-preview td { border: 1px solid var(--border); padding: 4px 8px; }
+.md-preview hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 .sel-input { flex: 1; min-width: 200px; font-size: 12px; }
 .pending-edit { border: 1px solid var(--border); border-left: 2px solid var(--ink); border-radius: var(--radius-card); background: var(--card); padding: 8px 10px; margin: 6px 0; }
 .pe-before { white-space: pre-wrap; font: inherit; font-size: 13px; background: #F9ECEC; text-decoration: line-through; padding: 6px 8px; margin: 6px 0; }

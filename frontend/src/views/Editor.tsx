@@ -5,17 +5,15 @@
  * 版本/diff 仍以显式保存为界——一次保存=一次完整编辑意图,蒸馏信号不碎片化。
  */
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+// 中文写作常见的「**小标题。**正文」在 CommonMark 里闭合失败（标点+汉字紧邻），此插件修正
+import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
+import { SelectionBar } from "./SelectionBar";
 import { platformLabel, VARIANT_STATUS, VIDEO_PLATFORMS, type Content } from "../lib";
-
-const QUICK_ACTIONS: Array<[string, string]> = [
-  ["重写", "换一种写法重写这段,保持信息量"],
-  ["扩写", "扩写这段,补充细节与论证"],
-  ["缩写", "压缩这段,只留核心"],
-  ["口语化", "改得更口语化,像说话"],
-];
 
 interface PendingEdit {
   before: string;
@@ -32,7 +30,7 @@ export function Editor(props: { id: string; back: () => void }) {
   const [allowed, setAllowed] = useState<string[]>([]);
   const [versions, setVersions] = useState<Array<{ version: number; note?: string; savedAt: string }>>([]);
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
-  const [instruction, setInstruction] = useState("");
+  const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [rewriting, setRewriting] = useState(false);
   const [pending, setPending] = useState<PendingEdit | null>(null);
   const [clip, setClip] = useState<{ copyText: string; publishUrl: string; fromVideoKit?: boolean } | null>(null);
@@ -121,7 +119,6 @@ export function Editor(props: { id: string; back: () => void }) {
     const after = ((r as { data?: { rewritten?: string } }).data?.rewritten ?? "").trim();
     if (!after) return toast("模型没有返回改写结果,再试一次");
     setPending({ before, after, start: sel.start, end: sel.end });
-    setInstruction("");
   };
 
   const adoptPending = async () => {
@@ -198,25 +195,10 @@ export function Editor(props: { id: string; back: () => void }) {
 
       <input className="ed-title serif" value={title} placeholder="标题" onChange={(e) => setTitle(e.target.value)} />
 
-      {sel && !pending && (
-        <div className="sel-bar">
-          <span className="mono muted">选中 {sel.end - sel.start} 字</span>
-          {QUICK_ACTIONS.map(([label, inst]) => (
-            <button key={label} disabled={rewriting} onClick={() => void rewrite(inst)}>{label}</button>
-          ))}
-          <input
-            className="sel-input"
-            placeholder="或输入修改要求,回车发送(如:这段太软了,换个比喻)"
-            value={instruction}
-            disabled={rewriting}
-            onChange={(e) => setInstruction(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && instruction.trim()) void rewrite(instruction.trim());
-            }}
-          />
-          {rewriting && <span className="muted">改写中…</span>}
-        </div>
-      )}
+      <div className="ed-mode mono">
+        <button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")}>编辑</button>
+        <button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")}>预览</button>
+      </div>
 
       {pending && (
         <div className="pending-edit">
@@ -230,8 +212,21 @@ export function Editor(props: { id: string; back: () => void }) {
         </div>
       )}
 
-      <textarea ref={taRef} className="ed-body" value={body} onChange={(e) => setBody(e.target.value)} onSelect={onSelect} onKeyUp={onSelect} onMouseUp={onSelect} />
-      <p className="muted ed-hint">✎ 选中任意一段 → 出现改写工具条,AI 只改那一段(自由输入修改要求也行)</p>
+      {mode === "edit" ? (
+        <div className="ed-body-wrap">
+          <textarea ref={taRef} className="ed-body" value={body} onChange={(e) => setBody(e.target.value)} onSelect={onSelect} onKeyUp={onSelect} onMouseUp={onSelect} />
+          {sel && !pending && (
+            <SelectionBar ta={taRef.current} sel={sel} rewriting={rewriting} onRewrite={(inst) => void rewrite(inst)} />
+          )}
+        </div>
+      ) : (
+        <div className="md-preview">
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{body}</ReactMarkdown>
+        </div>
+      )}
+      {mode === "edit" && (
+        <p className="muted ed-hint">✎ 选中任意一段 → 改写工具条浮现在选区旁,AI 只改那一段(自由输入修改要求也行)</p>
+      )}
 
       <div className="ed-save-row">
         <input className="sel-input" placeholder="为什么这么改?(可选,一句话——教团队学你)" value={note} onChange={(e) => setNote(e.target.value)} />
