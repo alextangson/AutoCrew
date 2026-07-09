@@ -76,3 +76,16 @@ FE 改动:`npm run fe:build && npm run smoke`;测试 `npx vitest run`;类型 `np
 2. 封面全链路真跑一次:选比例生成 → 提意见重做 → 选用 → 比例适配;顺带看中转是否吃 /images/edits(不吃会降级并明说)。
 3. 字数裁定确认(公众号 1500-2000 维持?)、首个 /goal、一周后第一份周复盘——同一期清单。
 频道现 79 个;`desktop/server.ts` 仍留给你的 server-token 线一起提交。
+
+---
+
+# 三期附录(同日,创始人 UX 走查裁决,commits d651f3e + 940da79)
+
+全页面以用户身份走查(1440px 截图留档)后一次修缮,创始人四点全落:
+- **看板重排**:灵感库从 1/5 宽窄列独立成 380px 高密度面板(标题两行 clamp+来源·天龄副行+独立滚动),管线余四列;来源标签人话化(`sourceLabel`:radar:X→雷达·X、x:@n→X·@n)。smoke 断言同步(灵感面板+四列)。
+- **数据回流充实**:8 项均值全量 tile 墙(此前只挑 4 个)+ 作品表现明细表(flywheel report 新增 `works.items`——每作品最新快照取 20,MCP 同吃)+ 洞察文案去工具名(confirm_published→「在编辑器点『我已发布,确认』」)。
+- **中英混杂清扫**:版本备注后端改中文生成(初稿/第 N 版/回滚到 vN,存量英文显示层兜底映射)、工作台 kicker(按任务聚合/今日前 N)、工作日志(模型 n 次·工具 m 次·tokens)、设置区标题(引擎 · 模型服务 等,文件名挪进说明)。
+- **交互丝滑**:全局 0.15s hover 过渡、行 hover 反馈、:focus-visible 焦点环、页标题统一 20px serif、编辑器操作行标签对齐(.ed-label)、校准「定位」改双行 textarea;聊天区总编辑回复渲染 markdown(裸 ** 不再示人);顶栏删「v2 预览」徽标与死掉的「旧版 ↗」。
+- **工作日志角色补全**:relevance→侦查员、audience-review→审核员、video-kit→发布员、style-distiller/selection-rewrite→编剧(此前显示"引擎")。
+
+验证:978 单测全绿、tsc/fe:build/smoke 过、服务已重启、浏览器复走截图确认(灵感面板 44 条可读、回流页 9 tile+17 行明细、聊天加粗渲染、顶栏干净)。
