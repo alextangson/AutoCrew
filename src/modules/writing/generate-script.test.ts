@@ -327,7 +327,8 @@ function articlePayload(bodyOverride?: string): Record<string, unknown> {
   const data = "增长 40%，营收 3 亿元，用户 5000 万人，历时 6 个月，客单价 199 元。";
   const body =
     bodyOverride ??
-    [data, "[IMAGE: 增长曲线图]", "字".repeat(5200), "[IMAGE: 对比表格]", "[IMAGE: 流程示意]", "[IMAGE: 案例配图]"].join(
+    // 1700 字落在图文包 gate 的 [1500, 2000] 区间内（maxChars 上限自创始人字数裁定）
+    [data, "[IMAGE: 增长曲线图]", "字".repeat(1700), "[IMAGE: 对比表格]", "[IMAGE: 流程示意]", "[IMAGE: 案例配图]"].join(
       "\n",
     );
   return {
@@ -381,6 +382,38 @@ describe("generateScript × quality gate (wechat_mp)", () => {
     expect(res.gateFailures.length).toBeGreaterThan(0);
     const saved = await getContent(res.contentId, testDir);
     expect(saved).not.toBeNull();
+  });
+
+  it("超长文章（>2000 字）→ max_chars 打回，压缩稿通过", async () => {
+    const longBody = [
+      "增长 40%，营收 3 亿元，用户 5000 万人，历时 6 个月，客单价 199 元。",
+      "[IMAGE: 增长曲线图]",
+      "字".repeat(2600),
+      "[IMAGE: 对比表格]",
+    ].join("\n");
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop([articlePayload(longBody), articlePayload()], 300, execResults);
+    const res = await generateScript(WECHAT_REQ, testDir, { runLoopImpl });
+    expect(execResults[0]).toContain("QUALITY GATE 未通过");
+    expect(execResults[0]).toContain("2000");
+    expect(execResults[1]).toBe("已收到脚本");
+    expect(res.gateFailures).toEqual([]);
+  });
+
+  it("xiaohongshu 口播包：平台 maxChars=1000 生效——超长发布文案被打回压缩", async () => {
+    const execResults: string[] = [];
+    const runLoopImpl = makeRunLoop(
+      [{ ...GOOD_PAYLOAD, body: "字".repeat(1200) }, { ...GOOD_PAYLOAD, body: "字".repeat(600) }],
+      200,
+      execResults,
+    );
+    const res = await generateScript({ topic: "AI 变现", platform: "xiaohongshu" as const }, testDir, {
+      runLoopImpl,
+    });
+    expect(execResults[0]).toContain("QUALITY GATE 未通过");
+    expect(execResults[0]).toContain("1000");
+    expect(execResults[1]).toBe("已收到脚本");
+    expect(res.gateFailures).toEqual([]);
   });
 
   it("douyin 不受影响：口播包、无 gate、预算不变", async () => {

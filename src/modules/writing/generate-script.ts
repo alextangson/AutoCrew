@@ -16,7 +16,7 @@ import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { buildScriptPrompts } from "./script-prompt.js";
 import type { ScriptRequest } from "./script-prompt.js";
-import { runQualityGate, formatGateFeedback } from "./quality-gate.js";
+import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./quality-gate.js";
 import type { GateFailure } from "./quality-gate.js";
 import { humanizeZh } from "../humanizer/zh.js";
 import { scanText } from "../filter/sensitive-words.js";
@@ -168,7 +168,7 @@ async function runGeneration(
 
   const { system, user } = buildScriptPrompts(pack, profile, req);
   const captured: Captured = { payload: null, gateFailures: [] };
-  const gate = pack.qualityGate;
+  const gate = resolveQualityGate(pack, req.platform);
   const submitTool = buildSubmitTool(captured, gate);
 
   try {

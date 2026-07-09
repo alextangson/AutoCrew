@@ -68,11 +68,11 @@ export const KOUBO_PACK: TrackPack = {
     "遵循了确认过的大纲结构？",
   ],
   platformAdjustments: {
-    xiaohongshu: { chars: "300-1000", style: "emoji 丰富、口语化，话题标签置尾（5-15 个）" },
+    xiaohongshu: { chars: "300-1000", style: "emoji 丰富、口语化，话题标签置尾（5-15 个）", maxChars: 1000 },
     douyin: { chars: "脚本格式", style: "[画面] + [口播] + [字幕条]，3 秒内出钩子" },
-    wechat_mp: { chars: "1500-3000", style: "每 300-500 字一个小标题，结构感更强" },
-    wechat_video: { chars: "300-800", style: "教育向语气，附文字总结" },
-    bilibili: { chars: "500-2000", style: "年轻化表达，可以用梗，【】标注类型" },
+    wechat_mp: { chars: "1500-3000", style: "每 300-500 字一个小标题，结构感更强", maxChars: 3000 },
+    wechat_video: { chars: "300-800", style: "教育向语气，附文字总结", maxChars: 800 },
+    bilibili: { chars: "500-2000", style: "年轻化表达，可以用梗，【】标注类型", maxChars: 2000 },
   },
   complianceNote: "合规口径=「符合平台规则的自然口吻」（PRD §6 红线 5）：always-on humanizer/zh + sensitive-words 过滤，绝不表述为绕过检测/标识。",
 };

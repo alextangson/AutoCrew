@@ -29,6 +29,8 @@ export interface HookPattern {
 export interface QualityGateSpec {
   /** 全文（hook+body+cta）最少中文字符数 */
   minChars?: number;
+  /** 全文最多中文字符数（发布文案硬顶，创始人裁定短文案平台 ≤1000）；超限打回压缩 */
+  maxChars?: number;
   /** 最少数据引用处数（数字+量纲/百分比，正则口径见 quality-gate.ts） */
   minDataPoints?: number;
   /** 正文最少 [IMAGE: prompt] 配图标记数 */
@@ -63,7 +65,8 @@ export interface TrackPack {
     cta: string[];
   };
   selfReview: string[];
-  platformAdjustments: Partial<Record<ClipboardPlatform, { chars: string; style: string }>>;
+  /** maxChars：该平台的字数硬顶（比包级 qualityGate.maxChars 更具体，覆盖之） */
+  platformAdjustments: Partial<Record<ClipboardPlatform, { chars: string; style: string; maxChars?: number }>>;
   /** 合规口径引用（具体过滤复用 humanizer/sensitive-words，包只声明口径） */
   complianceNote: string;
   /** 编剧角色一句话（system prompt 开头）；缺省 = 口播编剧 */

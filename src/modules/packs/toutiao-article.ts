@@ -57,6 +57,7 @@ export const TOUTIAO_ARTICLE_PACK: TrackPack = {
   },
   qualityGate: {
     minChars: 1000,
+    maxChars: 1800,
     minDataPoints: 2,
     minImageTags: 2,
     bannedHookPatterns: ["^随着", "^近年来", "^在.{1,12}(领域|行业)", "^众所周知", "^不可否认"],

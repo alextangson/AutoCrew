@@ -3,7 +3,8 @@
  * 移植自 muse-social article-derivation 的 5 项硬检查中可判定的 4 项）。
  * 纯函数、零 I/O：FAIL 项由 generate-script 经 submit_script 工具反馈给模型修复。
  */
-import type { QualityGateSpec } from "../packs/pack-schema.js";
+import type { QualityGateSpec, TrackPack } from "../packs/pack-schema.js";
+import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 
 export interface GateInput {
   hook: string;
@@ -12,8 +13,21 @@ export interface GateInput {
 }
 
 export interface GateFailure {
-  check: "min_chars" | "min_data_points" | "min_image_tags" | "banned_hook";
+  check: "min_chars" | "max_chars" | "min_data_points" | "min_image_tags" | "banned_hook";
   detail: string;
+}
+
+/**
+ * 有效门禁 = 包级 qualityGate + 平台 maxChars 覆盖（平台上限比包默认更具体）。
+ * 两者皆无 → undefined，不跑 gate。
+ */
+export function resolveQualityGate(
+  pack: TrackPack,
+  platform: ClipboardPlatform,
+): QualityGateSpec | undefined {
+  const platformMax = pack.platformAdjustments[platform]?.maxChars;
+  if (platformMax === undefined) return pack.qualityGate;
+  return { ...pack.qualityGate, maxChars: platformMax };
 }
 
 const CJK_RE = /[一-鿿]/g;
@@ -32,6 +46,16 @@ export function runQualityGate(spec: QualityGateSpec, input: GateInput): GateFai
       failures.push({
         check: "min_chars",
         detail: `中文字符 ${chars} < ${spec.minChars}：补充案例、数据、行业对比或方法论框架，不要注水`,
+      });
+    }
+  }
+
+  if (spec.maxChars !== undefined) {
+    const chars = (fullText.match(CJK_RE) ?? []).length;
+    if (chars > spec.maxChars) {
+      failures.push({
+        check: "max_chars",
+        detail: `中文字符 ${chars} > ${spec.maxChars}：压缩到上限内——删次要案例与重复论证，保住核心论点和结构`,
       });
     }
   }

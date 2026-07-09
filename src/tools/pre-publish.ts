@@ -7,7 +7,7 @@
  * 3. Hashtags exist
  * 4. Title within platform length range
  * 5. Platform is set
- * 6. Body length meets platform minimum
+ * 6. Body length within platform range (min, and max where the platform caps copy)
  */
 import { Type } from "@sinclair/typebox";
 import { getContent, getCoverReview, transitionStatus, normalizeLegacyStatus } from "../storage/local-store.js";
@@ -43,6 +43,15 @@ const PLATFORM_MIN_BODY: Record<string, number> = {
   wechat_mp: 800,
   wechat_video: 100,
   bilibili: 200,
+};
+
+/** 发布文案上限（创始人裁定：短文案平台 ≤1000）。douyin 不设——body 是口播脚本，发布文案在 videoKit 里另有 ≤300 约束 */
+const PLATFORM_MAX_BODY: Record<string, number> = {
+  xiaohongshu: 1000,
+  xhs: 1000,
+  wechat_video: 800,
+  bilibili: 2000,
+  wechat_mp: 3000,
 };
 
 // --- Platforms that require cover review ---
@@ -176,14 +185,26 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // --- Check 6: Body length ---
   const bodyLen = (content.body || "").length;
   const minBody = PLATFORM_MIN_BODY[platform] || 100;
-  if (bodyLen >= minBody) {
-    checks.push({ name: "正文字数", status: "pass", detail: `${bodyLen} 字 (≥${minBody})` });
-  } else {
+  const maxBody = PLATFORM_MAX_BODY[platform];
+  if (bodyLen < minBody) {
     checks.push({
       name: "正文字数",
       status: "fail",
       detail: `${bodyLen} 字 (不足 ${minBody})`,
       fix: "扩充正文，增加案例或数据",
+    });
+  } else if (maxBody !== undefined && bodyLen > maxBody) {
+    checks.push({
+      name: "正文字数",
+      status: "fail",
+      detail: `${bodyLen} 字 (超出 ${maxBody} 上限)`,
+      fix: "编辑器里选段用「缩写」压缩，或 autocrew_rewrite 精简正文",
+    });
+  } else {
+    checks.push({
+      name: "正文字数",
+      status: "pass",
+      detail: `${bodyLen} 字 (≥${minBody}${maxBody !== undefined ? `，≤${maxBody}` : ""})`,
     });
   }
 

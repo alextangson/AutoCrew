@@ -2,7 +2,9 @@
  * quality-gate.test.ts — 纯函数门禁的判定口径测试（P0 附录 0-2 阈值语义）
  */
 import { describe, it, expect } from "vitest";
-import { runQualityGate, formatGateFeedback } from "./quality-gate.js";
+import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./quality-gate.js";
+import { KOUBO_PACK } from "../packs/koubo.js";
+import { WECHAT_ARTICLE_PACK } from "../packs/wechat-article.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 
 const SPEC: QualityGateSpec = {
@@ -28,6 +30,25 @@ describe("runQualityGate", () => {
     expect(failures[0].check).toBe("min_chars");
     expect(failures[0].detail).toContain("30");
     expect(failures[0].detail).toContain("50");
+  });
+
+  it("字数超限 → max_chars FAIL，detail 带双方计数", () => {
+    const failures = runQualityGate({ maxChars: 100 }, { hook: "", body: cjk(150), cta: "" });
+    expect(failures).toHaveLength(1);
+    expect(failures[0].check).toBe("max_chars");
+    expect(failures[0].detail).toContain("150");
+    expect(failures[0].detail).toContain("100");
+  });
+
+  it("恰好等于 maxChars 上限 → 不 FAIL（≤ 语义）", () => {
+    expect(runQualityGate({ maxChars: 100 }, { hook: "", body: cjk(100), cta: "" })).toEqual([]);
+  });
+
+  it("min 与 max 同时配置：区间内通过，区间外各自报对应 FAIL", () => {
+    const spec: QualityGateSpec = { minChars: 50, maxChars: 100 };
+    expect(runQualityGate(spec, { hook: "", body: cjk(80), cta: "" })).toEqual([]);
+    expect(runQualityGate(spec, { hook: "", body: cjk(30), cta: "" })[0].check).toBe("min_chars");
+    expect(runQualityGate(spec, { hook: "", body: cjk(120), cta: "" })[0].check).toBe("max_chars");
   });
 
   it("数据引用只认「数字+量纲」：裸数字与型号数字不计", () => {
@@ -73,6 +94,24 @@ describe("runQualityGate", () => {
 
   it("空 spec → 永不 FAIL", () => {
     expect(runQualityGate({}, { hook: "随着", body: "", cta: "" })).toEqual([]);
+  });
+});
+
+describe("resolveQualityGate", () => {
+  it("平台 maxChars 落在无包级 gate 的包上（口播×小红书 → 仅 maxChars 的 gate）", () => {
+    expect(resolveQualityGate(KOUBO_PACK, "xiaohongshu")).toEqual({ maxChars: 1000 });
+    expect(resolveQualityGate(KOUBO_PACK, "wechat_video")).toEqual({ maxChars: 800 });
+  });
+
+  it("平台无 maxChars → 原样返回包级 gate（口播×抖音无 gate → undefined）", () => {
+    expect(resolveQualityGate(KOUBO_PACK, "douyin")).toBeUndefined();
+  });
+
+  it("包级 gate 保留（图文包×公众号：minChars/maxChars 都来自包级）", () => {
+    const gate = resolveQualityGate(WECHAT_ARTICLE_PACK, "wechat_mp");
+    expect(gate?.minChars).toBe(1500);
+    expect(gate?.maxChars).toBe(2000);
+    expect(gate?.minImageTags).toBe(2);
   });
 });
 

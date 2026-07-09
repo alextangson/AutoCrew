@@ -7,6 +7,7 @@
 import type { TrackPack, StructureMode, QualityGateSpec } from "../packs/pack-schema.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
 import { rulesForPlatform, personaSummary } from "../profile/creator-profile.js";
+import { resolveQualityGate } from "./quality-gate.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 
 export interface ScriptRequest {
@@ -50,7 +51,8 @@ function buildSystemPrompt(pack: TrackPack, profile: CreatorProfile | null, plat
 
   parts.push(renderStructure(pack));
 
-  if (pack.qualityGate) parts.push(renderQualityGate(pack.qualityGate));
+  const gate = resolveQualityGate(pack, platform);
+  if (gate) parts.push(renderQualityGate(gate));
 
   // Platform adjustments
   const platformAdj = pack.platformAdjustments[platform];
@@ -90,6 +92,7 @@ function renderStructureModes(modes: StructureMode[]): string {
 function renderQualityGate(gate: QualityGateSpec): string {
   const parts: string[] = ["## 质量硬门禁（提交即校验，未达标会被打回重写）"];
   if (gate.minChars !== undefined) parts.push(`- 全文中文字符 ≥ ${gate.minChars}`);
+  if (gate.maxChars !== undefined) parts.push(`- 全文中文字符 ≤ ${gate.maxChars}（发布文案硬顶，超限打回压缩）`);
   if (gate.minDataPoints !== undefined) {
     parts.push(`- 数据引用（数字+百分比/时间/金额等量纲）≥ ${gate.minDataPoints} 处`);
   }

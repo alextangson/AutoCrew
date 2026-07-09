@@ -68,6 +68,7 @@ export const WECHAT_ARTICLE_PACK: TrackPack = {
   },
   qualityGate: {
     minChars: 1500,
+    maxChars: 2000,
     minDataPoints: 3,
     minImageTags: 2,
     bannedHookPatterns: ["^随着", "^近年来", "^在.{1,12}(领域|行业)", "^众所周知", "^不可否认"],
