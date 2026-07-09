@@ -97,8 +97,11 @@ Dogfood 抓到并当场修掉的产品 bug：
   (引擎/搜索/发布 publish.json 可视化——新通道 settings:publish_get/set,共 **61 通道**/情报源
   开关+手动扫/工作区管理/知识库)。仅素材库留 vanilla(文件对话框依赖),顶栏跳旧版。
   smoke /v2 全程走查:工作台→看板→编辑器→校准中心→设置(五区断言)。
-  **D 期待做**:素材库迁移(文件选择改 <input type=file> 或路径输入)+删 vanilla+/v2 接管 /。
-  token/常量两份手动同步(tokens.css↔style.css,lib.ts↔dom.js/board.js),D 期归一。
+- **/v2 功能补全**(`efb5497`):素材库(路径粘贴导入——Electron 文件对话框在浏览器模式本来就坏,
+  这是升级不是平移)/对话历史加载+切换(卡片可回放)/编辑器素材挂接区/顶栏＋新想法。
+  **/v2 已无缺口,vanilla 不再被任何功能依赖。**
+  **D 期最后一刀(等创始人试用 /v2 后拍板)**:删 desktop/renderer + /v2 接管 / + smoke 的 vanilla
+  段改写为 React 段。届时 token/常量双份同步(tokens.css↔style.css,lib.ts↔dom.js)一并消失。
 **等创始人**:搜索 API key(配置在设置页即可用);X/Reddit 开发者凭据+persona 语言裁决
 (风控评审文档 §2/§3)。~~头条/视频预填~~已裁决延后。
 
