@@ -56,6 +56,8 @@ describe("IPC_CHANNELS", () => {
     "settings:publish_get",
     "settings:publish_set",
     "style:update_rule",
+    "persona:generate",
+    "persona:save",
     "onboarding:status",
     "onboarding:init",
     "flywheel:import_csv",
@@ -95,8 +97,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 61 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(61);
+  it("has exactly 63 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(63);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -191,6 +193,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "settings:publish_get" &&
           ch !== "settings:publish_set" &&
           ch !== "style:update_rule" &&
+          ch !== "persona:generate" &&
+          ch !== "persona:save" &&
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&
           ch !== "dialog:pick_file" &&

@@ -25,6 +25,8 @@ export const IPC_CHANNELS = [
   "settings:publish_get",
   "settings:publish_set",
   "style:update_rule",
+  "persona:generate",
+  "persona:save",
   "onboarding:status",
   "onboarding:init",
   "flywheel:import_csv",

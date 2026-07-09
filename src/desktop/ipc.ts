@@ -72,6 +72,7 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { loadProfile, updateWritingRule, updateProfile, personaSummary } from "../modules/profile/creator-profile.js";
+import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
@@ -168,10 +169,46 @@ async function styleRulesHandler(payload: Record<string, unknown>): Promise<Reco
         rules: profile?.writingRules ?? [],
         boundaries: profile?.styleBoundaries ?? { never: [], always: [] },
         // V5.5:校准中心要展示画像状态(画像=审稿标准,不可见就不可信)
+        // V5.6:tiers 全量透出——画像面板要能看全三层、能改、能确认
         persona: {
           summary: personaSummary(profile?.audiencePersona, { allTiers: true }),
           calibrated: Boolean(profile?.audiencePersona?.calibratedAt),
+          tiers: profile?.audiencePersona ?? null,
         },
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── persona:* — 受众画像一等 GUI 入口(V5.6:确认环节从聊天流搬进校准中心) ─────
+
+async function personaGenerateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    const dataDir = (payload._dataDir as string) || undefined;
+    const { proposal, basis } = await generateAudiencePersonaProposal(dataDir);
+    return { ok: true, data: { proposal, basis } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function personaSaveHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    const dataDir = (payload._dataDir as string) || undefined;
+    const profile = await savePersonaCalibrated(payload.persona, dataDir);
+    return {
+      ok: true,
+      data: {
+        persona: profile.audiencePersona,
+        summary: personaSummary(profile.audiencePersona, { allTiers: true }),
       },
     };
   } catch (err) {
@@ -678,6 +715,8 @@ export function buildIpcHandlers(
     "settings:publish_get": getPublishSettings,
     "settings:publish_set": setPublishSettings,
     "style:update_rule": styleUpdateRuleHandler,
+    "persona:generate": personaGenerateHandler,
+    "persona:save": personaSaveHandler,
     "onboarding:status": getOnboardingStatus,
     "onboarding:init": completeOnboardingInit,
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),

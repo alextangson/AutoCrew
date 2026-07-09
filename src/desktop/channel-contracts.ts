@@ -32,6 +32,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "settings:publish_get": [],
   "settings:publish_set": [],
   "style:update_rule": ["index"],
+  "persona:generate": [],
+  "persona:save": ["persona"],
   "onboarding:status": [],
   "onboarding:init": [],
   "flywheel:import_csv": ["platform", "csv_path"],

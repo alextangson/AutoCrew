@@ -29,6 +29,11 @@ function contentTitle(result: Record<string, unknown>): string {
 }
 
 export const CHANNEL_EVENT_MAP: Partial<Record<IpcChannel, Mapper>> = {
+  "persona:save": ({ result }) => {
+    if (result.ok !== true) return null;
+    return { role: "analyst", kind: "persona", label: "受众画像已确认——审稿标准即刻生效" };
+  },
+
   "content:transition": ({ payload, result }) => {
     if (result.ok !== true) return null;
     const target = String(payload.target_status ?? "");
