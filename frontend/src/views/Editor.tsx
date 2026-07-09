@@ -10,7 +10,7 @@ import remarkGfm from "remark-gfm";
 // 中文写作常见的「**小标题。**正文」在 CommonMark 里闭合失败（标点+汉字紧邻），此插件修正
 import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke } from "../transport";
-import { toast } from "../ui";
+import { toast, confirmDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { SelectionBar } from "./SelectionBar";
 import { CoverPanel } from "./CoverPanel";
@@ -165,7 +165,12 @@ export function Editor(props: { id: string; back: () => void }) {
   };
 
   const pushWechat = async () => {
-    if (!window.confirm("推送到公众号草稿箱?(会生成配图并调用发布脚本,最后群发仍由你在公众号后台确认)")) return;
+    const yes = await confirmDialog({
+      title: "推送到公众号草稿箱?",
+      body: "会生成文章配图并调用发布脚本,约 2 分钟;只进草稿箱,最后群发仍由你在公众号后台确认。",
+      confirmLabel: "推送",
+    });
+    if (!yes) return;
     toast("推送中——生成配图约 2 分钟,完成后看提示");
     const r = await invoke("publish:wechat_draft", { content_id: props.id });
     if (!r.ok) return toast(r.error ?? "推送失败");
@@ -442,7 +447,13 @@ function AssetsSection(props: {
           <span className="muted mono">{a.type}{a.description ? " · " + a.description : ""}</span>
           <button
             onClick={async () => {
-              if (!window.confirm(`移除挂接素材「${a.filename}」?(项目内副本删除,素材库不受影响)`)) return;
+              const yes = await confirmDialog({
+                title: `移除挂接素材「${a.filename}」?`,
+                body: "删除稿件项目内的副本,素材库原件不受影响。",
+                confirmLabel: "移除",
+                danger: true,
+              });
+              if (!yes) return;
               const r = await invoke("content:asset_remove", { content_id: props.contentId, filename: a.filename });
               toast(r.ok ? "已移除" : (r.error ?? "移除失败"));
               if (r.ok) void props.reload();

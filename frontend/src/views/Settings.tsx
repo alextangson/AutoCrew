@@ -1,20 +1,20 @@
 /**
- * 设置中心(V5.6/P6 收口):引擎/搜索/发布(publish.json 可视化)/情报源/工作区/知识库,
- * 一页收口。所有 key 掩码显示,原文永不出 server。
+ * 设置中心(V5.6.3 重构):七区全展开卡片 + 状态徽标一眼可扫——之前折叠 details
+ * 要点七次才见全貌。所有 key 掩码显示,原文永不出 server;留空的字段保持现状。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
-import { toast } from "../ui";
+import { toast, openDialog } from "../ui";
 
-function Section(props: { title: string; hint?: string; children: React.ReactNode }) {
+function Section(props: { title: string; status?: string; on?: boolean; children: React.ReactNode }) {
   return (
-    <details className="set-zone">
-      <summary>
-        {props.title}
-        {props.hint && <span className="muted"> · {props.hint}</span>}
-      </summary>
-      <div className="set-body">{props.children}</div>
-    </details>
+    <section className="set-zone">
+      <div className="set-head">
+        <h3 className="serif set-title">{props.title}</h3>
+        {props.status && <span className={"chip" + (props.on ? " chip-pub" : "")}>{props.status}</span>}
+      </div>
+      {props.children}
+    </section>
   );
 }
 
@@ -29,6 +29,18 @@ function Field(props: { label: string; value: string; onChange: (v: string) => v
         onChange={(e) => props.onChange(e.target.value)}
       />
     </label>
+  );
+}
+
+/** 保存行:按钮 + 「留空保持现状」契约说明(占位符即当前值) */
+function SaveRow(props: { label: string; onSave: () => void }) {
+  return (
+    <div className="set-save">
+      <button className="primary" onClick={props.onSave}>
+        {props.label}
+      </button>
+      <span className="muted mono">留空的字段保持现状(浅字即当前值)</span>
+    </div>
   );
 }
 
@@ -101,22 +113,31 @@ export function Settings() {
     toast("源清单已保存——手动扫榜后生效");
   };
 
+  const coverStatus = cover
+    ? cover.provider === "relay"
+      ? cover.relay.configured
+        ? `中转 ${cover.relay.model ?? ""}`
+        : "中转未配置"
+      : cover.gemini.configured
+        ? `Gemini ${cover.gemini.apiKeyMasked ?? ""}`
+        : "Gemini 未配置"
+    : "";
+  const coverOn = cover ? (cover.provider === "relay" ? cover.relay.configured : cover.gemini.configured) : false;
+
   return (
     <div className="settings">
       <h2 className="serif">设置</h2>
 
-      <Section title="引擎 · 模型服务" hint={engine?.configured ? `已配置 ${engine.apiKeyMasked ?? ""}` : "未配置"}>
+      <Section title="引擎 · 模型服务" status={engine?.configured ? `已配置 ${engine.apiKeyMasked ?? ""}` : "未配置"} on={engine?.configured}>
         <p className="muted">写稿、审稿、画像、复盘都吃这条通道(存 engine.json)。当前:{engine?.baseUrl ?? "—"} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}</p>
         <Field label="API Key" password value={eForm.api_key} placeholder={engine?.apiKeyMasked ?? "sk-..."} onChange={(v) => setEForm((f) => ({ ...f, api_key: v }))} />
         <Field label="Base URL" value={eForm.base_url} placeholder={engine?.baseUrl ?? ""} onChange={(v) => setEForm((f) => ({ ...f, base_url: v }))} />
         <Field label="强模型" value={eForm.strong_model} placeholder={engine?.strongModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, strong_model: v }))} />
         <Field label="快模型" value={eForm.fast_model} placeholder={engine?.fastModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, fast_model: v }))} />
-        <button className="primary" onClick={() => void submit("settings:set", eForm, () => setEForm({ api_key: "", base_url: "", strong_model: "", fast_model: "" }))}>
-          保存引擎配置
-        </button>
+        <SaveRow label="保存引擎配置" onSave={() => void submit("settings:set", eForm, () => setEForm({ api_key: "", base_url: "", strong_model: "", fast_model: "" }))} />
       </Section>
 
-      <Section title="搜索 · 侦查员外网搜集" hint={search?.configured ? `已配置 ${search.provider}` : "未配置"}>
+      <Section title="搜索 · 侦查员外网搜集" status={search?.configured ? `已配置 ${search.provider}` : "未配置"} on={search?.configured}>
         <p className="muted">配好后总编辑就能派侦查员按定位全网搜灵感。推荐:博查(中文)/Tavily(英文)。</p>
         <label className="set-field">
           <span className="mono muted">Provider</span>
@@ -126,43 +147,30 @@ export function Settings() {
           </select>
         </label>
         <Field label="API Key" password value={sForm.api_key} placeholder={search?.apiKeyMasked ?? "sk-..."} onChange={(v) => setSForm((f) => ({ ...f, api_key: v }))} />
-        <button
-          className="primary"
-          onClick={() => {
-            if (!sForm.api_key.trim()) return toast("请填入 API key");
-            void submit("settings:search_set", sForm, () => setSForm((f) => ({ ...f, api_key: "" })));
-          }}
-        >
-          保存搜索配置
-        </button>
+        <div className="set-save">
+          <button
+            className="primary"
+            onClick={() => {
+              if (!sForm.api_key.trim()) return toast("请填入 API key");
+              void submit("settings:search_set", sForm, () => setSForm((f) => ({ ...f, api_key: "" })));
+            }}
+          >
+            保存搜索配置
+          </button>
+        </div>
       </Section>
 
-      <Section title="发布 · 公众号与生图" hint={pub?.imageConfigured ? `生图已配置 ${pub.imageApiKeyMasked ?? ""}` : "生图未配置"}>
+      <Section title="发布 · 公众号与生图" status={pub?.imageConfigured ? `生图已配置 ${pub.imageApiKeyMasked ?? ""}` : "生图未配置"} on={pub?.imageConfigured}>
         <p className="muted">公众号推草稿、文章配图与封面生成都走这条中转(存 publish.json);key 与端点必须配对(否则 401)。</p>
         <Field label="生图 Key" password value={pForm.image_api_key} placeholder={pub?.imageApiKeyMasked ?? "sk-..."} onChange={(v) => setPForm((f) => ({ ...f, image_api_key: v }))} />
         <Field label="生图端点" value={pForm.image_base_url} placeholder={pub?.imageBaseUrl ?? "https://api.xiaojiu.one/v1"} onChange={(v) => setPForm((f) => ({ ...f, image_base_url: v }))} />
         <Field label="生图模型" value={pForm.image_model} placeholder={pub?.imageModel ?? "gpt-image-2"} onChange={(v) => setPForm((f) => ({ ...f, image_model: v }))} />
         <Field label="排版主题" value={pForm.theme} placeholder={pub?.theme ?? "newspaper"} onChange={(v) => setPForm((f) => ({ ...f, theme: v }))} />
         <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
-        <button className="primary" onClick={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "" }))}>
-          保存发布配置
-        </button>
+        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "" }))} />
       </Section>
 
-      <Section
-        title="封面生成 · 生图通道"
-        hint={
-          cover
-            ? cover.provider === "relay"
-              ? cover.relay.configured
-                ? `中转 ${cover.relay.model ?? ""}`
-                : "中转未配置"
-              : cover.gemini.configured
-                ? `Gemini ${cover.gemini.apiKeyMasked ?? ""}`
-                : "Gemini 未配置"
-            : ""
-        }
-      >
+      <Section title="封面生成 · 生图通道" status={coverStatus} on={coverOn}>
         <p className="muted">
           默认走中转 image2——复用上面「发布」区的生图 Key/端点(公众号配图同一条,不用另配)。
           形象照放 ~/.autocrew/covers/templates/(jpg/png)自动带上做人物一致性;中转若不支持
@@ -187,17 +195,13 @@ export function Settings() {
             <option value="imagen-4">imagen-4</option>
           </select>
         </label>
-        <button
-          className="primary"
-          onClick={() =>
-            void submit("settings:cover_set", cForm, () => setCForm({ provider: "", relay_model: "", gemini_api_key: "", gemini_model: "" }))
-          }
-        >
-          保存封面配置
-        </button>
+        <SaveRow
+          label="保存封面配置"
+          onSave={() => void submit("settings:cover_set", cForm, () => setCForm({ provider: "", relay_model: "", gemini_api_key: "", gemini_model: "" }))}
+        />
       </Section>
 
-      <Section title="情报源" hint={`${sources.length} 个`}>
+      <Section title="情报源" status={`${sources.filter((s) => s.enabled !== false).length}/${sources.length} 开启`} on={sources.some((s) => s.enabled !== false)}>
         <p className="muted">雷达订阅清单,命中定位语义筛才入灵感库。开关即改,手动扫榜生效。</p>
         {sources.map((s, i) => (
           <div key={s.id ?? s.name ?? i} className="row">
@@ -207,18 +211,20 @@ export function Settings() {
             <button onClick={() => void toggleSource(i)}>{s.enabled === false ? "启用" : "停用"}</button>
           </div>
         ))}
-        <button
-          onClick={async () => {
-            toast("扫榜中…");
-            const r = await invoke("radar:refresh");
-            toast(r.ok ? "扫榜完成——命中定位的候选已入灵感库" : (r.error ?? "扫榜失败"));
-          }}
-        >
-          手动扫一轮
-        </button>
+        <div className="set-save">
+          <button
+            onClick={async () => {
+              toast("扫榜中…");
+              const r = await invoke("radar:refresh");
+              toast(r.ok ? "扫榜完成——命中定位的候选已入灵感库" : (r.error ?? "扫榜失败"));
+            }}
+          >
+            手动扫一轮
+          </button>
+        </div>
       </Section>
 
-      <Section title="工作区" hint={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""}>
+      <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>
         <p className="muted">一人多 IP:每个工作区是独立编辑部(定位/灵感/稿件/画像全隔离)。</p>
         {ws?.workspaces.map((w) => (
           <div key={w.id} className="row">
@@ -238,21 +244,28 @@ export function Settings() {
             )}
           </div>
         ))}
-        <button
-          onClick={async () => {
-            const name = window.prompt("新工作区名称(如:Muse 公众号)");
-            if (!name?.trim()) return;
-            const r = await invoke("workspace:create", { name: name.trim() });
-            if (!r.ok) return toast(r.error ?? "创建失败");
-            toast("已创建并切换——刷新加载");
-            window.location.reload();
-          }}
-        >
-          ＋新建工作区
-        </button>
+        <div className="set-save">
+          <button
+            onClick={async () => {
+              const v = await openDialog({
+                title: "新建工作区",
+                body: "每个工作区是独立编辑部——定位、灵感、稿件、画像全部隔离。创建后自动切换过去。",
+                fields: [{ key: "name", label: "名称", placeholder: "如:Muse 公众号", required: true }],
+                confirmLabel: "创建并切换",
+              });
+              if (!v) return;
+              const r = await invoke("workspace:create", { name: v.name.trim() });
+              if (!r.ok) return toast(r.error ?? "创建失败");
+              toast("已创建并切换——刷新加载");
+              window.location.reload();
+            }}
+          >
+            ＋新建工作区
+          </button>
+        </div>
       </Section>
 
-      <Section title="知识库" hint={kb ? `${kb.count} 个文件` : ""}>
+      <Section title="知识库" status={kb ? `${kb.count} 个文件` : ""} on={(kb?.count ?? 0) > 0}>
         <p className="muted">把你的笔记/干货文档(.md/.txt)放进 {kb?.dir ?? "…"},生成时自动检索注入。</p>
       </Section>
     </div>

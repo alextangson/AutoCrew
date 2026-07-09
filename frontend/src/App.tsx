@@ -12,7 +12,7 @@ import { ReportView } from "./views/Report";
 import { Library } from "./views/Library";
 import { Logs } from "./views/Logs";
 import { ChatDock } from "./chat/ChatDock";
-import { ToastHost, toast } from "./ui";
+import { ToastHost, DialogHost, toast, openDialog } from "./ui";
 import { invoke } from "./transport";
 
 export type Route =
@@ -50,13 +50,20 @@ export function App() {
             </button>
           ))}
           <button
-            onClick={() => {
-              const title = window.prompt("新想法(一句话选题)");
-              if (!title?.trim()) return;
-              const reason = window.prompt("为什么值得写?(可选)") ?? "";
-              void invoke("topic:create", { title: title.trim(), ...(reason.trim() ? { reason: reason.trim() } : {}) }).then((r) => {
-                toast(r.ok ? "已落进灵感库(看板第一列)" : ((r as { error?: string }).error ?? "入库失败"));
+            className="nav-cta"
+            onClick={async () => {
+              const v = await openDialog({
+                title: "新想法",
+                body: "落进灵感库(看板第一列),之后随时可以派人开写。",
+                fields: [
+                  { key: "title", label: "选题", placeholder: "一句话说清写什么,如:Claude Code 的 10 个隐藏用法", required: true, multiline: true },
+                  { key: "reason", label: "为什么值得写", placeholder: "如:后台好多人在问 / 热点窗口期" },
+                ],
+                confirmLabel: "落进灵感库",
               });
+              if (!v) return;
+              const r = await invoke("topic:create", { title: v.title.trim(), ...(v.reason.trim() ? { reason: v.reason.trim() } : {}) });
+              toast(r.ok ? "已落进灵感库(看板第一列)" : ((r as { error?: string }).error ?? "入库失败"));
             }}
           >
             ＋新想法
@@ -79,6 +86,7 @@ export function App() {
         </aside>
       </div>
       <ToastHost />
+      <DialogHost />
     </div>
   );
 }

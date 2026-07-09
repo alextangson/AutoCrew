@@ -4,6 +4,9 @@
  * 它回了什么、耗时与错误;团队技能:skills/<name>/SKILL.md 全文(员工工作手册)。
  */
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke, subscribeEvents } from "../transport";
 import { toast } from "../ui";
 
@@ -56,6 +59,24 @@ const AGENT_LABEL: Record<string, string> = {
 const fmtTime = (iso: string) => `${iso.slice(5, 10)} ${iso.slice(11, 19)}`;
 const fmtDur = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`);
 
+/** SKILL.md 头部 frontmatter:description 抽出来当简介,正文走 markdown 渲染 */
+function splitSkillDoc(raw: string): { intro: string; body: string } {
+  const m = raw.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!m) return { intro: "", body: raw };
+  let intro = "";
+  let inDesc = false;
+  for (const line of m[1].split("\n")) {
+    const kv = line.match(/^([A-Za-z_-]+):\s*(.*)$/);
+    if (kv) {
+      inDesc = kv[1] === "description";
+      if (inDesc && kv[2] && !/^[|>]-?$/.test(kv[2])) intro = kv[2].trim();
+    } else if (inDesc && /^\s+\S/.test(line)) {
+      intro = (intro ? intro + " " : "") + line.trim();
+    }
+  }
+  return { intro, body: raw.slice(m[0].length) };
+}
+
 export function Logs() {
   const [tab, setTab] = useState<"runs" | "skills">("runs");
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -72,7 +93,10 @@ export function Logs() {
   useEffect(() => {
     void loadRuns();
     void invoke("skills:list").then((r) => {
-      if (r.ok) setSkills((r as unknown as { data: { skills: SkillDoc[] } }).data.skills);
+      if (!r.ok) return;
+      const list = (r as unknown as { data: { skills: SkillDoc[] } }).data.skills;
+      setSkills(list);
+      setSkillId((cur) => cur ?? list[0]?.id ?? null);
     });
     const off = subscribeEvents((e) => {
       const kind = (e.data as { kind?: string }).kind;
@@ -143,25 +167,35 @@ export function Logs() {
       )}
 
       {tab === "skills" && (
-        <div className="skills-grid">
-          <div>
-            {skills.map((s) => (
-              <button key={s.id} className={"skill-item" + (skillId === s.id ? " nav-on" : "")} onClick={() => setSkillId(s.id)}>
-                {s.title}
-              </button>
-            ))}
+        <>
+          <p className="muted">每份技能是一个员工的工作手册——写稿、审稿、封面、发布的行为都由它定;直接改 skills/ 下的源文件即可调教。</p>
+          <div className="skills-grid">
+            <div className="skill-pane">
+              {skills.map((s) => (
+                <button key={s.id} className={"skill-item" + (skillId === s.id ? " skill-on" : "")} onClick={() => setSkillId(s.id)}>
+                  <span className="skill-name">{s.title}</span>
+                  <span className="skill-id mono muted">{s.id}</span>
+                </button>
+              ))}
+            </div>
+            {skill &&
+              (() => {
+                const { intro, body } = splitSkillDoc(skill.content);
+                return (
+                  <div>
+                    <div className="skill-head">
+                      <h3 className="serif">{skill.title}</h3>
+                      <span className="mono muted">skills/{skill.id}/SKILL.md</span>
+                    </div>
+                    {intro && <p className="muted skill-intro">{intro}</p>}
+                    <div className="md-preview skill-doc-md">
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{body}</ReactMarkdown>
+                    </div>
+                  </div>
+                );
+              })()}
           </div>
-          <div>
-            {skill ? (
-              <>
-                <div className="mono muted">skills/{skill.id}/SKILL.md</div>
-                <pre className="log-pre skill-doc">{skill.content}</pre>
-              </>
-            ) : (
-              <p className="muted">左边挑一个技能看全文——这是对应员工的工作手册,改它就是调教员工。</p>
-            )}
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
-import { toast } from "../ui";
+import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { PLATFORM_CATALOG } from "../lib";
 
@@ -196,9 +196,14 @@ export function Calibration() {
           <span className="row-title">{r.rule}</span>
           <span className="muted mono">{r.scope && r.scope !== "voice_core" ? r.scope.replace("platform:", "") : "内核"}</span>
           <button
-            onClick={() => {
-              const next = window.prompt("修改规则(清空取消)", r.rule);
-              if (next && next.trim()) void updateRule(i, { rule: next.trim() });
+            onClick={async () => {
+              const v = await openDialog({
+                title: "修改写作规则",
+                body: "改完立即生效——之后的写稿和审稿都按新规则执行。",
+                fields: [{ key: "rule", label: "规则内容", initial: r.rule, required: true, multiline: true }],
+                confirmLabel: "保存",
+              });
+              if (v && v.rule.trim() !== r.rule) void updateRule(i, { rule: v.rule.trim() });
             }}
           >
             改

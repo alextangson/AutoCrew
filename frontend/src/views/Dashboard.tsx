@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
-import { toast } from "../ui";
+import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { useRuns } from "../runs";
 import type { Route } from "../App";
@@ -206,10 +206,17 @@ function GoalCard({ nav }: { nav: (r: Route) => void }) {
   }, []);
 
   const editGoal = async () => {
-    const statement = window.prompt("目标(一句话,如:3 个月公众号做到 1 万粉)", goal?.statement ?? "");
-    if (!statement?.trim()) return;
-    const horizon = window.prompt("期限(可选,如 2026-09-30 / 3 个月)", goal?.horizon ?? "") ?? "";
-    const r = await invoke("goal:set", { statement: statement.trim(), ...(horizon.trim() ? { horizon: horizon.trim() } : {}) });
+    const v = await openDialog({
+      title: goal ? "调整北极星目标" : "设定北极星目标",
+      body: "设定后,选题评分、写作方向和周/月复盘都会围绕它对齐。",
+      fields: [
+        { key: "statement", label: "目标(一句话)", initial: goal?.statement, placeholder: "如:3 个月公众号做到 1 万粉", required: true, multiline: true },
+        { key: "horizon", label: "期限", initial: goal?.horizon, placeholder: "如 2026-09-30,或「3 个月」" },
+      ],
+      confirmLabel: goal ? "保存调整" : "设定目标",
+    });
+    if (!v) return;
+    const r = await invoke("goal:set", { statement: v.statement.trim(), ...(v.horizon.trim() ? { horizon: v.horizon.trim() } : {}) });
     toast(r.ok ? "目标已设——选题、写作、复盘即刻围绕它对齐" : (r.error ?? "保存失败"));
     if (r.ok) void load();
   };

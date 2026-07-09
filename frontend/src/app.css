@@ -12,6 +12,8 @@
 .topnav button { border-color: transparent; background: transparent; }
 .topnav button:hover { border-color: var(--border); }
 .topnav .nav-on { border-color: var(--ink); font-weight: 700; }
+.topnav .nav-cta { border-color: var(--border); background: var(--card); margin-left: 8px; }
+.topnav .nav-cta:hover { border-color: var(--ink); }
 
 .body { display: flex; flex: 1; min-height: 0; }
 .main { flex: 1; overflow-y: auto; padding: 18px 22px; }
@@ -160,6 +162,29 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
   border-radius: var(--radius-card); font-size: 12px; z-index: 99; max-width: 70vw;
 }
 
+/* V5.6.3 弹窗(替代原生 prompt/confirm):报纸风——顶部粗墨线,衬线标题 */
+.dlg-overlay {
+  position: fixed; inset: 0; background: rgba(22, 21, 15, 0.32); z-index: 90;
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 16vh;
+}
+.dlg {
+  width: min(480px, 92vw); background: var(--card);
+  border: 1px solid var(--ink); border-top: 3px solid var(--ink); border-radius: var(--radius-card);
+  padding: 16px 18px 14px; box-shadow: 0 10px 34px rgba(22, 21, 15, 0.22);
+  animation: dlg-in 0.15s ease-out;
+}
+@keyframes dlg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.dlg-title { font-size: 17px; font-weight: 700; }
+.dlg-body { font-size: 13px; margin: 4px 0 2px; }
+.dlg-field { display: block; margin: 12px 0 0; }
+.dlg-field > span { display: block; margin-bottom: 4px; }
+.dlg-field input, .dlg-field textarea { width: 100%; resize: vertical; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.dlg-actions button { padding: 5px 14px; }
+.btn-danger { background: var(--danger); color: var(--accent-text); border-color: var(--danger); }
+.btn-danger:hover { border-color: var(--danger); opacity: 0.9; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* C 期:校准中心/设置/任务卡 */
 .calib h2, .settings h2 { margin-bottom: 8px; }
 .cover-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
@@ -178,12 +203,16 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .pt-wide { width: 100%; margin: 4px 0; }
 .calib-h3 { margin: 16px 0 4px; font-size: 14px; }
 .rule-off { opacity: 0.45; }
-.set-zone { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); margin: 10px 0; padding: 8px 12px; }
-.set-zone summary { cursor: pointer; font-weight: 700; }
-.set-body { padding: 8px 0 4px; }
-.set-field { display: flex; gap: 8px; align-items: baseline; margin: 6px 0; }
-.set-field span { min-width: 76px; }
+/* V5.6.3 设置重构:七区全展开卡片,状态徽标一眼可扫,不再点七次才见全貌 */
+.settings { max-width: 720px; }
+.set-zone { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); margin: 12px 0; padding: 12px 14px; }
+.set-head { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; }
+.set-title { font-size: 15px; font-weight: 700; }
+.set-head .chip { margin-left: auto; border: 1px solid var(--border); white-space: nowrap; }
+.set-field { display: flex; gap: 8px; align-items: baseline; margin: 8px 0; }
+.set-field span { min-width: 96px; }
 .set-field input, .set-field select { flex: 1; }
+.set-save { display: flex; gap: 10px; align-items: baseline; margin-top: 10px; }
 .runcard { border-left: 2px solid var(--border); padding: 4px 8px; margin: 6px 0; }
 .runcard-done { border-left-color: var(--success); }
 .runcard-failed { border-left-color: var(--danger); }
@@ -208,10 +237,20 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .log-step summary { cursor: pointer; font-size: 13px; }
 .log-pre { font-family: var(--font-mono); font-size: 12px; background: var(--surface); border: 1px solid var(--border); padding: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; margin: 4px 0 8px; }
 .log-bad { color: var(--danger); }
-.skills-grid { display: grid; grid-template-columns: 240px 1fr; gap: 12px; align-items: start; }
-.skill-item { display: block; width: 100%; text-align: left; margin: 4px 0; }
-.skill-item.nav-on { border-color: var(--ink); font-weight: 700; }
-.skill-doc { max-height: 70vh; }
+/* V5.6.3 团队技能:左侧手册目录(行式) + 右侧 markdown 渲染,不再裸 pre */
+.skills-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; align-items: start; }
+.skill-pane { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-card); padding: 4px; max-height: 74vh; overflow-y: auto; }
+.skill-item { display: block; width: 100%; text-align: left; border: none; background: none; border-radius: 0; padding: 7px 9px; border-bottom: 1px dashed var(--border); }
+.skill-item:last-child { border-bottom: none; }
+.skill-item:hover { background: var(--card); }
+.skill-item.skill-on { background: var(--card); box-shadow: inset 2px 0 0 var(--ink); font-weight: 700; }
+.skill-name { display: block; font-size: 13px; line-height: 1.5; }
+.skill-id { display: block; font-size: 10px; font-weight: 400; }
+.skill-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+.skill-head h3 { font-size: 16px; }
+.skill-intro { font-size: 13px; margin: 2px 0 8px; }
+.skill-doc-md { min-height: auto; max-height: 72vh; overflow-y: auto; padding: 12px 16px; }
+.skill-doc-md h1 { font-size: 17px; } .skill-doc-md h2 { font-size: 15px; } .skill-doc-md h3 { font-size: 14px; }
 
 /* D 期前收口:会话历史/素材库 */
 .chat-head { display: flex; align-items: center; gap: 8px; }

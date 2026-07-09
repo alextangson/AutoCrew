@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "../transport";
-import { toast } from "../ui";
+import { toast, openDialog, confirmDialog } from "../ui";
 
 interface LibAsset {
   id: string;
@@ -91,9 +91,13 @@ export function Library() {
         <input className="sel-input" placeholder="搜名称/标签/描述" value={q} onChange={(e) => setQ(e.target.value)} />
         <button
           onClick={async () => {
-            const name = window.prompt("新文件夹名称");
-            if (!name?.trim()) return;
-            const r = await invoke("library:folder_create", { name: name.trim() });
+            const v = await openDialog({
+              title: "新建文件夹",
+              fields: [{ key: "name", label: "名称", placeholder: "如:B-roll 素材", required: true }],
+              confirmLabel: "创建",
+            });
+            if (!v) return;
+            const r = await invoke("library:folder_create", { name: v.name.trim() });
             toast(r.ok ? "已建文件夹" : (r.error ?? "创建失败"));
             if (r.ok) void load();
           }}
@@ -103,7 +107,13 @@ export function Library() {
         {folderId && (
           <button
             onClick={async () => {
-              if (!window.confirm("删除该文件夹?(素材回到根目录,文件不动)")) return;
+              const yes = await confirmDialog({
+                title: `删除文件夹「${folders.find((f) => f.id === folderId)?.name ?? ""}」?`,
+                body: "夹内素材回到根目录,原文件不动。",
+                confirmLabel: "删除",
+                danger: true,
+              });
+              if (!yes) return;
               const r = await invoke("library:folder_remove", { id: folderId });
               toast(r.ok ? "已删文件夹" : (r.error ?? "删除失败"));
               if (r.ok) setFolderId("");
@@ -136,9 +146,13 @@ export function Library() {
           <span className="muted mono">{fmtSize(a.size)}{(a.tags ?? []).length ? " · " + (a.tags ?? []).join(",") : ""}</span>
           <button
             onClick={async () => {
-              const name = window.prompt("重命名(清空取消)", a.name);
-              if (!name?.trim() || name.trim() === a.name) return;
-              const r = await invoke("library:update", { id: a.id, name: name.trim() });
+              const v = await openDialog({
+                title: "重命名素材",
+                fields: [{ key: "name", label: "名称", initial: a.name, required: true }],
+                confirmLabel: "保存",
+              });
+              if (!v || v.name.trim() === a.name) return;
+              const r = await invoke("library:update", { id: a.id, name: v.name.trim() });
               toast(r.ok ? "已改名" : (r.error ?? "改名失败"));
               if (r.ok) void load();
             }}
@@ -160,7 +174,13 @@ export function Library() {
           </select>
           <button
             onClick={async () => {
-              if (!window.confirm(`移除「${a.name}」?(只移除索引,原文件不动)`)) return;
+              const yes = await confirmDialog({
+                title: `移除「${a.name}」?`,
+                body: "只移除素材库索引,磁盘上的原文件不动。",
+                confirmLabel: "移除",
+                danger: true,
+              });
+              if (!yes) return;
               const r = await invoke("library:remove", { id: a.id });
               toast(r.ok ? "已移除" : (r.error ?? "移除失败"));
               if (r.ok) void load();

@@ -145,6 +145,19 @@ const PAGE_CHECKS = `(async () => {
   ok(t.includes("＋新会话"), "会话控件");
   collide("dashboard");
 
+  // 1.5) 弹窗系统(V5.6.3,替代原生 prompt/confirm):新想法弹窗开合 + 必填校验
+  const ideaBtn = [...document.querySelectorAll(".topnav button")].find(b => (b.textContent || "").includes("新想法"));
+  if (ideaBtn) {
+    ideaBtn.click(); await sleep(300);
+    ok(!!document.querySelector(".dlg"), "新想法弹窗弹出");
+    const dlgOk = document.querySelector(".dlg-actions button.primary");
+    ok(!!dlgOk && dlgOk.disabled, "必填为空时确认键禁用");
+    const dlgCancel = [...document.querySelectorAll(".dlg-actions button")].find(b => (b.textContent || "").trim() === "取消");
+    if (dlgCancel) dlgCancel.click();
+    await sleep(300);
+    ok(!document.querySelector(".dlg"), "弹窗取消即关");
+  } else fails.push("＋新想法按钮缺失");
+
   // 2) 看板:灵感面板+管线四列 → 回收站往返 → 编辑器(V5.6.2 重排)
   if (await navTo("看板")) {
     ok(!!document.querySelector(".kanban"), "看板渲染");
@@ -188,6 +201,18 @@ const PAGE_CHECKS = `(async () => {
     const t3 = document.body.textContent || "";
     for (const key of ["引擎 · 模型服务", "搜索 · 侦查员外网搜集", "发布 · 公众号与生图", "封面生成 · 生图通道", "情报源", "工作区", "知识库"]) {
       ok(t3.includes(key), "设置区:" + key);
+    }
+  }
+
+  // 4.5) 工作日志:团队技能手册 markdown 渲染(V5.6.3)
+  if (await navTo("工作日志")) {
+    const skillsTab = [...document.querySelectorAll(".board-bar button")].find(b => (b.textContent || "").includes("团队技能"));
+    ok(!!skillsTab, "团队技能 tab");
+    if (skillsTab) {
+      skillsTab.click(); await sleep(500);
+      ok(document.querySelectorAll(".skill-item").length >= 10, "技能清单", "实际 " + document.querySelectorAll(".skill-item").length);
+      ok(!!document.querySelector(".skill-doc-md"), "手册 markdown 渲染(自动选中第一份)");
+      collide("skills");
     }
   }
 
