@@ -22,6 +22,8 @@ export const IPC_CHANNELS = [
   "settings:set",
   "settings:search_get",
   "settings:search_set",
+  "settings:publish_get",
+  "settings:publish_set",
   "style:update_rule",
   "onboarding:status",
   "onboarding:init",

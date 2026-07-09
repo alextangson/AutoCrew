@@ -3,8 +3,9 @@
  * 数据同源 dashboard:summary 单通道;行动跳转 A 期先回 vanilla(看板/工作台未迁移)。
  */
 import { useEffect, useState } from "react";
-import { invoke, subscribeEvents } from "../transport";
+import { invoke } from "../transport";
 import { useChatSend } from "../chat/ChatDock";
+import { useRuns } from "../runs";
 import type { Route } from "../App";
 
 interface Summary {
@@ -52,7 +53,7 @@ function Card(props: { title: string; kicker?: string; children: React.ReactNode
 export function Dashboard({ nav }: { nav: (r: Route) => void }) {
   const [d, setD] = useState<Summary | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [runLines, setRunLines] = useState<string[]>([]);
+  const { runs, runOrder } = useRuns();
   const send = useChatSend();
 
   const load = () => {
@@ -62,16 +63,6 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
     });
   };
   useEffect(load, []);
-  // 任务动态:engine 事件滚动窗(A 期轻版——真实事件行,不聚合 runId;B 期上任务卡)
-  useEffect(
-    () =>
-      subscribeEvents((e) => {
-        if (e.kind !== "engine") return;
-        const label = typeof e.data.label === "string" ? e.data.label : "";
-        if (label) setRunLines((prev) => [...prev.slice(-3), label]);
-      }),
-    [],
-  );
 
   if (err) return <p className="muted pad">工作台数据加载失败：{err}</p>;
   if (!d) return <p className="muted pad">载入中…</p>;
@@ -123,11 +114,22 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
       </Zone>
 
       <Zone q="团队在干什么">
-        <Card title="任务动态" kicker="真实事件">
-          {runLines.length === 0 ? (
+        <Card title="任务动态" kicker="runId 聚合">
+          {runOrder.length === 0 ? (
             <p className="muted">编辑部待命中——派活、搜灵感、审稿的进度都在这里。</p>
           ) : (
-            runLines.map((l, i) => <p key={i} className="run-line">{l}</p>)
+            [...runOrder].reverse().slice(0, 3).map((id) => {
+              const run = runs[id];
+              return (
+                <div key={id} className={"runcard" + (run.status === "failed" ? " runcard-failed" : run.status === "done" ? " runcard-done" : "")}>
+                  <span className="mono pri">{run.status === "done" ? "✓ 完成" : run.status === "failed" ? "✕ 中断" : "● 进行中"}</span>
+                  {run.doneLabel && <span className="muted"> {run.doneLabel}</span>}
+                  {run.steps.slice(-3).map((st, i) => (
+                    <p key={i} className="run-line muted">{st.done ? "✓" : "…"} {st.label}</p>
+                  ))}
+                </div>
+              );
+            })
           )}
         </Card>
         <Card title="情报与派活">

@@ -31,6 +31,8 @@
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
  *   settings:search_get {}
  *   settings:search_set { provider, api_key, base_url? }
+ *   settings:publish_get {}
+ *   settings:publish_set { image_api_key?, image_base_url?, image_model?, theme?, author? }
  *   style:update_rule  { index, rule?, disabled? }
  *   onboarding:status  {}
  *   onboarding:init    { industry?, platforms? }
@@ -73,7 +75,7 @@ import { loadProfile, updateWritingRule, updateProfile, personaSummary } from ".
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
-import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings } from "./settings.js";
+import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings, getPublishSettings, setPublishSettings } from "./settings.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
@@ -673,6 +675,8 @@ export function buildIpcHandlers(
     "settings:set": setEngineSettings,
     "settings:search_get": getSearchSettings,
     "settings:search_set": setSearchSettings,
+    "settings:publish_get": getPublishSettings,
+    "settings:publish_set": setPublishSettings,
     "style:update_rule": styleUpdateRuleHandler,
     "onboarding:status": getOnboardingStatus,
     "onboarding:init": completeOnboardingInit,

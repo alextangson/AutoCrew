@@ -326,6 +326,25 @@ async function main(): Promise<number> {
         if (!document.querySelector(".ed-body")) fails.push("v2 编辑器正文缺失");
         if (!document.querySelector(".ed-title")) fails.push("v2 编辑器标题输入缺失");
         if (!(document.body.textContent || "").includes("采纳裁决")) fails.push("v2 采纳裁决行缺失");
+        // C 期:校准中心 + 设置
+        const navTo = async (label) => {
+          const b = [...document.querySelectorAll(".topnav button")].find(x => x.textContent.trim() === label);
+          if (!b) { fails.push("v2 导航缺失:" + label); return false; }
+          b.click();
+          await new Promise(r => setTimeout(r, 700));
+          return true;
+        };
+        if (await navTo("校准中心")) {
+          const t2 = document.body.textContent || "";
+          if (!t2.includes("写作规则")) fails.push("v2 校准中心规则区缺失");
+          if (!t2.includes("受众")) fails.push("v2 校准中心受众行缺失");
+        }
+        if (await navTo("设置")) {
+          const t3 = document.body.textContent || "";
+          for (const key of ["引擎", "搜索 API", "发布(publish.json)", "情报源", "工作区"]) {
+            if (!t3.includes(key)) fails.push("v2 设置缺区:" + key);
+          }
+        }
         return { fails }; })()`,
       awaitPromise: true, returnByValue: true,
     }, sessionId)) as { result?: { value?: { fails?: string[] } }; exceptionDetails?: { text?: string } };

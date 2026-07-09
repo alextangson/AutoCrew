@@ -122,3 +122,17 @@
   background: var(--ink); color: var(--accent-text); padding: 8px 14px;
   border-radius: var(--radius-card); font-size: 12px; z-index: 99; max-width: 70vw;
 }
+
+/* C 期:校准中心/设置/任务卡 */
+.calib h2, .settings h2 { margin-bottom: 8px; }
+.calib-h3 { margin: 16px 0 4px; font-size: 14px; }
+.rule-off { opacity: 0.45; }
+.set-zone { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); margin: 10px 0; padding: 8px 12px; }
+.set-zone summary { cursor: pointer; font-weight: 700; }
+.set-body { padding: 8px 0 4px; }
+.set-field { display: flex; gap: 8px; align-items: baseline; margin: 6px 0; }
+.set-field span { min-width: 76px; }
+.set-field input, .set-field select { flex: 1; }
+.runcard { border-left: 2px solid var(--border); padding: 4px 8px; margin: 6px 0; }
+.runcard-done { border-left-color: var(--success); }
+.runcard-failed { border-left-color: var(--danger); }

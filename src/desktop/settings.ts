@@ -91,6 +91,71 @@ export async function setSearchSettings(payload: Record<string, unknown>): Promi
   }
 }
 
+/** 发布配置读(V5.6 设置收口):publish.json 可视化,key 掩码 */
+export async function getPublishSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    const { loadWechatMpConfig } = await import("../modules/publish/wechat-config.js");
+    const cfg = await loadWechatMpConfig((payload._dataDir as string) || undefined);
+    return {
+      ok: true,
+      data: {
+        imageConfigured: Boolean(cfg.imageApiKey),
+        imageApiKeyMasked: cfg.imageApiKey ? maskKey(cfg.imageApiKey) : null,
+        imageBaseUrl: cfg.imageBaseUrl ?? null,
+        imageModel: cfg.imageModel ?? null,
+        theme: cfg.theme ?? null,
+        author: cfg.author ?? null,
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 发布配置写:merge 进 <dataDir>/publish.json 的 wechatMp 段(600 权限,key 不回显) */
+export async function setPublishSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const updates: Record<string, string> = {};
+  const fields: Array<[string, string]> = [
+    ["imageApiKey", "image_api_key"],
+    ["imageBaseUrl", "image_base_url"],
+    ["imageModel", "image_model"],
+    ["theme", "theme"],
+    ["author", "author"],
+  ];
+  for (const [target, source] of fields) {
+    const v = payload[source];
+    if (v === undefined) continue;
+    if (typeof v !== "string" || v.trim() === "") {
+      return { ok: false, error: `${source} 必须是非空字符串` };
+    }
+    updates[target] = v.trim();
+  }
+  if (Object.keys(updates).length === 0) {
+    return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author）" };
+  }
+  try {
+    const dataDir = (payload._dataDir as string) || undefined;
+    const { getDataDir } = await import("../storage/local-store.js");
+    const filePath = path.join(getDataDir(dataDir), "publish.json");
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(await fs.readFile(filePath, "utf-8")) as Record<string, unknown>;
+    } catch { /* 首次 */ }
+    const wechatMp = { ...((existing.wechatMp as Record<string, unknown>) ?? {}), ...updates };
+    await fs.writeFile(filePath, JSON.stringify({ ...existing, wechatMp }, null, 2) + "\n", { mode: 0o600 });
+    await fs.chmod(filePath, 0o600);
+    return getPublishSettings({ _dataDir: dataDir });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function setEngineSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
