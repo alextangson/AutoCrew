@@ -112,6 +112,7 @@ export async function reviewAudienceStay(
     userMessage: `受众画像:\n${tiers}\n\n待审稿件${input.platform ? `(${input.platform})` : ""}:\n标题:${input.title}\n\n${input.body.slice(0, 6000)}`,
     tools: [buildSubmitTool(captured)],
     maxTurns: 3,
+    logMeta: { agent: "review" },
   });
 
   if (!captured.result) {

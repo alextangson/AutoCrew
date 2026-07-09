@@ -140,6 +140,7 @@ export async function prepareVideoKit(
     userMessage: `口播稿标题:${content.title}\n\n口播稿正文:\n${content.body.slice(0, 5000)}\n\n话题标签候选:${(content.hashtags ?? []).join("、") || "(无)"}`,
     tools: [buildSubmitKitTool(captured, platform)],
     maxTurns: 3,
+    logMeta: { agent: "publisher" },
   });
   if (!captured.kit) {
     throw new Error("发布件生成失败:模型未调用 submit_video_kit 提交");

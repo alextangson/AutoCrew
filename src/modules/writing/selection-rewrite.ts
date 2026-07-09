@@ -66,6 +66,7 @@ export async function rewriteSelection(
       systemPrompt: system,
       userMessage: user,
       maxTurns: 1,
+      logMeta: { agent: "writer" },
       ...(fetchImpl ? { fetchImpl } : {}),
     });
     const rewritten = result.finalMessage.trim();

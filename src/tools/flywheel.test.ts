@@ -149,14 +149,24 @@ describe("executeFlywheel", () => {
       ok: boolean;
       data: {
         totalOutcomes: number;
-        works: { total: number; matched: number; historical: number };
+        works: {
+          total: number;
+          matched: number;
+          historical: number;
+          items: Array<{ title: string; platform: string; metricDate: string; metrics: Record<string, number> }>;
+        };
         byPlatform: Record<string, number>;
         avgMetrics: Record<string, number>;
       };
     };
     expect(r.ok).toBe(true);
     expect(r.data.totalOutcomes).toBe(6); // 快照数随每周导入增长
-    expect(r.data.works).toEqual({ total: 3, matched: 0, historical: 3 }); // 作品数不变
+    expect(r.data.works).toMatchObject({ total: 3, matched: 0, historical: 3 }); // 作品数不变
+    // 作品明细(V5.6.2 数据回流页):每作品一条,取最新快照,携带标题/平台/日期/指标
+    expect(r.data.works.items).toHaveLength(3);
+    expect(r.data.works.items.every((it) => it.metricDate === "2026-06-15")).toBe(true);
+    expect(r.data.works.items[0]).toMatchObject({ platform: "douyin" });
+    expect(typeof r.data.works.items[0].metrics.views).toBe("number");
     expect(r.data.byPlatform).toEqual({ douyin: 3 }); // 按作品计，不按快照
     expect(r.data.avgMetrics.views).toBe(2000); // report 直接暴露 avgMetrics
   });

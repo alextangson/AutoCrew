@@ -85,6 +85,11 @@ async function runReport(dataDir: string) {
         total: works.length,
         matched: works.filter((w) => w.contentId !== null).length,
         historical: works.filter((w) => w.contentId === null).length,
+        // 作品明细(V5.6.2 数据回流页):最新数据日期倒序取 20,GUI 明细表与 MCP 同吃
+        items: [...works]
+          .sort((a, b) => (a.metricDate < b.metricDate ? 1 : -1))
+          .slice(0, 20)
+          .map((w) => ({ title: w.platformTitle, platform: w.platform, metricDate: w.metricDate, metrics: w.metrics })),
       },
       byPlatform,
       needsReview: outcomes.filter((o) => o.needsReview),

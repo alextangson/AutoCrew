@@ -210,7 +210,7 @@ function dayOneInsight(sampleSize: number, avgMetrics: Record<string, number>): 
     ({ key, label, suffix }) => `${label} ${avgMetrics[key]}${suffix}`,
   );
   if (parts.length === 0) return null;
-  return `基于 ${sampleSize} 条历史数据：${parts.join("，")}。用 confirm_published 打标 3 条后解锁爆款特征对比。`;
+  return `基于 ${sampleSize} 条历史数据：${parts.join("，")}。在编辑器点「我已发布,确认」打标 3 条后解锁爆款特征对比。`;
 }
 
 /** 对比型 insight 只在两个档位都有真实 content 时生成，避免拿真实 traits 对比零值 */
@@ -322,7 +322,7 @@ export async function compareToBaseline(
     return {
       matchScore: 50,
       comparisons: [],
-      summary: `已有 ${baseline.sampleSize} 条表现数据，但能对应到 AutoCrew 稿件的不足 3 条。发布后用 confirm_published 打标，积累 3 条即可对比。`,
+      summary: `已有 ${baseline.sampleSize} 条表现数据，但能对应到 AutoCrew 稿件的不足 3 条。发布后在编辑器点「我已发布,确认」打标，积累 3 条即可对比。`,
     };
   }
 

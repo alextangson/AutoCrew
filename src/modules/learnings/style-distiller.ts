@@ -275,6 +275,7 @@ export async function distillStyleRules(
     userMessage: buildDiffUserMessage(newDiffs, existingRules),
     tools: [submitTool],
     maxTurns: 3,
+    logMeta: { agent: "writer" },
   });
 
   if (!captured.rules) {
@@ -321,6 +322,7 @@ export async function analyzeStyleSamples(
     userMessage: buildSamplesUserMessage(samples, existingRules),
     tools: [submitTool],
     maxTurns: 3,
+    logMeta: { agent: "writer" },
   });
 
   if (!captured.rules) {

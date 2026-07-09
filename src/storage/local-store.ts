@@ -308,7 +308,7 @@ export async function saveContent(
     publishUrl: content.publishUrl ?? null,
     performanceData: content.performanceData ?? {},
     assets: [],
-    versions: [{ version: 1, body: content.body, note: "Initial draft", savedAt: now }],
+    versions: [{ version: 1, body: content.body, note: "初稿", savedAt: now }],
     createdAt: now,
     updatedAt: now,
   };
@@ -453,7 +453,7 @@ export async function updateContent(id: string, updates: Partial<Content>, dataD
       const versionEntry: ContentVersion = {
         version: nextVersion,
         body: updates.body,
-        note: (updates as any)._versionNote || `Edit v${nextVersion}`,
+        note: (updates as any)._versionNote || `第 ${nextVersion} 版`,
         savedAt: now,
       };
       existing.versions = [...(existing.versions || []), versionEntry];
@@ -628,7 +628,7 @@ export async function getVersion(contentId: string, version: number, dataDir?: s
 export async function revertToVersion(contentId: string, version: number, dataDir?: string): Promise<Content | null> {
   const body = await getVersion(contentId, version, dataDir);
   if (!body) return null;
-  return updateContent(contentId, { body, _versionNote: `Reverted to v${version}` } as any, dataDir);
+  return updateContent(contentId, { body, _versionNote: `回滚到 v${version}` } as any, dataDir);
 }
 
 // --- Cover review ---

@@ -101,6 +101,7 @@ export async function judgeRelevance(
       userMessage: `创作者定位:${positioning}${audience ? `\n受众:${audience}` : ""}${goal ? `\n创作者目标:${goal}(能推进目标的选题优先)` : ""}\n\n候选:\n${list}`,
       tools: [submitTool],
       maxTurns: 3,
+      logMeta: { agent: "scout" },
     });
   } catch {
     return null; // 调用失败 → 回退,不断链
