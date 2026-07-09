@@ -47,8 +47,12 @@ export function Settings() {
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
   const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; author: string | null } | null>(null);
   const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "" });
-  const [cover, setCover] = useState<{ configured: boolean; apiKeyMasked: string | null; source: string; model: string } | null>(null);
-  const [cForm, setCForm] = useState({ gemini_api_key: "", gemini_model: "" });
+  const [cover, setCover] = useState<{
+    provider: string;
+    relay: { configured: boolean; model: string | null };
+    gemini: { configured: boolean; apiKeyMasked: string | null; source: string; model: string };
+  } | null>(null);
+  const [cForm, setCForm] = useState({ provider: "", relay_model: "", gemini_api_key: "", gemini_model: "" });
   const [sources, setSources] = useState<RadarSource[]>([]);
   const [kb, setKb] = useState<{ dir: string; count: number } | null>(null);
   const [ws, setWs] = useState<{ active: string; workspaces: Array<{ id: string; name: string }> } | null>(null);
@@ -145,22 +149,50 @@ export function Settings() {
         </button>
       </Section>
 
-      <Section title="封面生成(Gemini)" hint={cover?.configured ? `已配置 ${cover.apiKeyMasked ?? ""}` : "未配置"}>
+      <Section
+        title="封面生成"
+        hint={
+          cover
+            ? cover.provider === "relay"
+              ? cover.relay.configured
+                ? `中转 ${cover.relay.model ?? ""}`
+                : "中转未配置"
+              : cover.gemini.configured
+                ? `Gemini ${cover.gemini.apiKeyMasked ?? ""}`
+                : "Gemini 未配置"
+            : ""
+        }
+      >
         <p className="muted">
-          编辑器里的封面设计师走这里(3 候选/提意见重做/平台比例)。形象照放 ~/.autocrew/covers/templates/(jpg/png),
-          生图自动带上做人物一致性——注意:照片会随生图请求发给 Google API。
+          默认走中转 image2——复用上面「发布」区的生图 Key/端点(公众号配图同一条,不用另配)。
+          形象照放 ~/.autocrew/covers/templates/(jpg/png)自动带上做人物一致性;中转若不支持
+          /images/edits 会自动降级无人物并明说。Gemini 保留为可选。
         </p>
-        <Field label="Gemini Key" password value={cForm.gemini_api_key} placeholder={cover?.apiKeyMasked ?? "AIza..."} onChange={(v) => setCForm((f) => ({ ...f, gemini_api_key: v }))} />
         <label className="set-field">
-          <span className="mono muted">模型</span>
+          <span className="mono muted">生图通道</span>
+          <select value={cForm.provider} onChange={(e) => setCForm((f) => ({ ...f, provider: e.target.value }))}>
+            <option value="">不改(当前 {cover?.provider === "gemini" ? "Gemini" : "中转 image2"})</option>
+            <option value="relay">中转 image2(推荐,复用发布区凭证)</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </label>
+        <Field label="中转模型" value={cForm.relay_model} placeholder={cover?.relay.model ?? "gpt-image-2"} onChange={(v) => setCForm((f) => ({ ...f, relay_model: v }))} />
+        <Field label="Gemini Key" password value={cForm.gemini_api_key} placeholder={cover?.gemini.apiKeyMasked ?? "AIza...(切 Gemini 才需要)"} onChange={(v) => setCForm((f) => ({ ...f, gemini_api_key: v }))} />
+        <label className="set-field">
+          <span className="mono muted">Gemini 模型</span>
           <select value={cForm.gemini_model} onChange={(e) => setCForm((f) => ({ ...f, gemini_model: e.target.value }))}>
-            <option value="">不改(当前 {cover?.model ?? "auto"})</option>
+            <option value="">不改(当前 {cover?.gemini.model ?? "auto"})</option>
             <option value="auto">auto(native 优先)</option>
             <option value="gemini-native">gemini-native(支持形象照)</option>
             <option value="imagen-4">imagen-4</option>
           </select>
         </label>
-        <button className="primary" onClick={() => void submit("settings:cover_set", cForm, () => setCForm({ gemini_api_key: "", gemini_model: "" }))}>
+        <button
+          className="primary"
+          onClick={() =>
+            void submit("settings:cover_set", cForm, () => setCForm({ provider: "", relay_model: "", gemini_api_key: "", gemini_model: "" }))
+          }
+        >
           保存封面配置
         </button>
       </Section>

@@ -1,8 +1,11 @@
 /**
- * image-gen.test.ts — 原生中转生图（PRD-v4 §9 去桥化第一步）
+ * image-gen.test.ts — 原生中转生图（PRD-v4 §9 去桥化第一步;V5.6.1 +edits 参考图）
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { generateImageViaRelay, resolveRelaySize } from "./image-gen.js";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { generateImageViaRelay, editImageViaRelay, RelayEditUnsupportedError, resolveRelaySize } from "./image-gen.js";
 
 const REQ = {
   baseUrl: "https://relay.example/v1",
@@ -101,5 +104,66 @@ describe("generateImageViaRelay", () => {
     const err = await promise;
 
     expect((err as Error).message).toMatch(/empty image data/);
+  });
+});
+
+describe("editImageViaRelay(V5.6.1 参考图/人物一致性)", () => {
+  let dir: string;
+  let refPath: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-imageedit-"));
+    refPath = path.join(dir, "me.png");
+    await fs.writeFile(refPath, Buffer.from("ref-photo-bytes"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const EDIT_REQ = { ...REQ, size: "3:4", referenceImagePaths: [] as string[] };
+
+  it("multipart 走 /images/edits:字段与参考图齐全,key 只在 header", async () => {
+    const png = Buffer.from("edit-png-bytes");
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [{ b64_json: png.toString("base64") }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const buf = await editImageViaRelay({ ...EDIT_REQ, referenceImagePaths: [refPath] });
+
+    expect(buf.equals(png)).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://relay.example/v1/images/edits");
+    const form = init.body as FormData;
+    expect(form.get("model")).toBe("gpt-image-2");
+    expect(form.get("size")).toBe("1024x1536");
+    expect(form.get("quality")).toBe("high");
+    const image = form.get("image[]") as File;
+    expect(image?.name).toBe("me.png");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-test");
+    expect(form.get("api_key")).toBeNull();
+  });
+
+  it("4xx → RelayEditUnsupportedError,不重试(调用方降级 generations)", async () => {
+    const fetchMock = vi.fn(async () => new Response("no such endpoint", { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(editImageViaRelay({ ...EDIT_REQ, referenceImagePaths: [refPath] })).rejects.toThrow(RelayEditUnsupportedError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("5xx 重试一次后抛普通错误(非 Unsupported)——空参考图列表,退避走纯 fake-timer", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => new Response("busy", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // 空 refs 绕开真实 fs 读取:fake timers 与线程池 IO 混用会让 4s 退避推进不确定
+    const promise = editImageViaRelay({ ...EDIT_REQ, referenceImagePaths: [] }).catch((e: Error) => e);
+    await vi.advanceTimersByTimeAsync(4_000);
+    const err = await promise;
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(RelayEditUnsupportedError);
+    expect((err as Error).message).toMatch(/参考图生图失败/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

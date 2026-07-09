@@ -16,17 +16,23 @@ vi.mock("../adapters/image/gemini.js", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../adapters/image/gemini.js")>();
   return { ...orig, generateImage: vi.fn() };
 });
+vi.mock("../adapters/image/relay-cover.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../adapters/image/relay-cover.js")>();
+  return { ...orig, generateCoverViaRelay: vi.fn() };
+});
 vi.mock("../modules/cover/wide-crop.js", () => ({ generateWideCover: vi.fn() }));
 
 import { executeCoverReview } from "./cover-review.js";
 import { designCoverPlan, reviseCoverDesign, type CoverDesign } from "../modules/cover/designer.js";
 import { generateImage } from "../adapters/image/gemini.js";
+import { generateCoverViaRelay } from "../adapters/image/relay-cover.js";
 import { generateWideCover } from "../modules/cover/wide-crop.js";
 import { saveContent, getContent, getCoverReview } from "../storage/local-store.js";
 
 const planMock = vi.mocked(designCoverPlan);
 const reviseMock = vi.mocked(reviseCoverDesign);
 const genMock = vi.mocked(generateImage);
+const relayMock = vi.mocked(generateCoverViaRelay);
 const wideMock = vi.mocked(generateWideCover);
 
 let dir: string;
@@ -48,6 +54,7 @@ beforeEach(async () => {
   planMock.mockReset();
   reviseMock.mockReset();
   genMock.mockReset();
+  relayMock.mockReset();
   wideMock.mockReset();
   planMock.mockResolvedValue({ designs: [design("A"), design("B"), design("C")], tokensUsed: 100 });
   genMock.mockImplementation(async (opts) => {
@@ -56,7 +63,24 @@ beforeEach(async () => {
     await fs.writeFile(p, Buffer.from("png-bytes"));
     return { ok: true, imagePath: p, model: "mock-model" };
   });
+  relayMock.mockImplementation(async (opts) => {
+    const p = `${opts.outputPath}.png`;
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, Buffer.from("relay-png"));
+    return { ok: true, imagePath: p, model: "gpt-image-2" };
+  });
+  // 存量用例走 gemini 分支(V5.6.1 默认 provider 改为 relay,这里显式锁定)
+  await fs.writeFile(path.join(dir, "cover.json"), JSON.stringify({ provider: "gemini" }), "utf-8");
 });
+
+async function switchToRelay(): Promise<void> {
+  await fs.writeFile(path.join(dir, "cover.json"), JSON.stringify({ provider: "relay" }), "utf-8");
+  await fs.writeFile(
+    path.join(dir, "publish.json"),
+    JSON.stringify({ wechatMp: { imageApiKey: "sk-relay", imageBaseUrl: "https://relay.test/v1", imageModel: "gpt-image-2" } }),
+    "utf-8",
+  );
+}
 
 afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
@@ -174,6 +198,96 @@ describe("revise(反馈重做闭环)", () => {
   });
 });
 
+describe("relay provider(V5.6.1 中转 image2)", () => {
+  it("create_candidates 走中转:targetAspect 3:4,relay 凭证来自 publish.json,不碰 gemini", async () => {
+    await switchToRelay();
+    const id = await seedContent();
+    const r = (await executeCoverReview({ action: "create_candidates", content_id: id, _dataDir: dir })) as {
+      ok: boolean;
+      provider: string;
+      review: { variants: unknown[] };
+    };
+    expect(r.ok).toBe(true);
+    expect(r.provider).toBe("relay");
+    expect(r.review.variants).toHaveLength(3);
+    expect(genMock).not.toHaveBeenCalled();
+    const call = relayMock.mock.calls[0][0];
+    expect(call.targetAspect).toBe("3:4");
+    expect(call.relay).toMatchObject({ apiKey: "sk-relay", baseUrl: "https://relay.test/v1", model: "gpt-image-2" });
+  });
+
+  it("参考图降级 warning 透出,hasPersonalIP 如实置 false", async () => {
+    await switchToRelay();
+    await fs.mkdir(path.join(dir, "covers", "templates"), { recursive: true });
+    await fs.writeFile(path.join(dir, "covers", "templates", "me.jpg"), Buffer.from("photo"));
+    relayMock.mockImplementation(async (opts) => {
+      const p = `${opts.outputPath}.png`;
+      await fs.mkdir(path.dirname(p), { recursive: true });
+      await fs.writeFile(p, Buffer.from("relay-png"));
+      return { ok: true, imagePath: p, model: "gpt-image-2", warning: "中转不支持参考图(/images/edits),本次未带人物形象" };
+    });
+    const id = await seedContent();
+    const r = (await executeCoverReview({ action: "create_candidates", content_id: id, _dataDir: dir })) as {
+      ok: boolean;
+      warnings?: string[];
+      review: { variants: Array<{ hasPersonalIP?: boolean }> };
+    };
+    expect(r.ok).toBe(true);
+    expect(r.warnings!.some((w) => w.includes("未带人物"))).toBe(true);
+    expect(r.review.variants.every((v) => v.hasPersonalIP === false)).toBe(true);
+  });
+
+  it("relay 选中但未配置 → 明确报错指向 设置·发布", async () => {
+    await fs.writeFile(path.join(dir, "cover.json"), JSON.stringify({ provider: "relay" }), "utf-8");
+    const id = await seedContent();
+    const r = (await executeCoverReview({ action: "create_candidates", content_id: id, _dataDir: dir })) as {
+      ok: boolean;
+      error: string;
+      hint?: string;
+    };
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("中转");
+    expect(r.hint).toContain("设置·发布");
+  });
+
+  it("横屏主比例(V5.6.1):ratio=16:9 → 候选按 16:9 出,primaryRatio 落库,approve 取横屏成图", async () => {
+    await switchToRelay();
+    const id = await seedContent("draft_ready", "bilibili");
+    const r = (await executeCoverReview({ action: "create_candidates", content_id: id, ratio: "16:9", _dataDir: dir })) as {
+      ok: boolean;
+      review: { primaryRatio?: string; variants: Array<{ label: string; imagePaths: Record<string, string> }> };
+    };
+    expect(r.ok).toBe(true);
+    expect(r.review.primaryRatio).toBe("16:9");
+    expect(relayMock.mock.calls[0][0].targetAspect).toBe("16:9");
+    const a = r.review.variants.find((v) => v.label === "a")!;
+    expect(a.imagePaths["16:9"]).toContain("-16x9");
+
+    await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
+    const review = await getCoverReview(id, dir);
+    expect(review!.approvedImagePath).toBe(review!.variants.find((v) => v.label === "a")!.imagePaths["16:9"]);
+  });
+
+  it("platform_ratios 2.35:1 走中转直出(不经 21:9 桥/wide-crop)", async () => {
+    await switchToRelay();
+    const id = await seedContent("draft_ready", "wechat_mp");
+    await executeCoverReview({ action: "create_candidates", content_id: id, _dataDir: dir });
+    await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
+    relayMock.mockClear();
+
+    const r = (await executeCoverReview({ action: "platform_ratios", content_id: id, _dataDir: dir })) as {
+      ok: boolean;
+      paths: Record<string, string>;
+    };
+    expect(r.ok).toBe(true);
+    expect(r.paths["2.35:1"]).toContain("235x1");
+    expect(wideMock).not.toHaveBeenCalled();
+    expect(relayMock.mock.calls[0][0].targetAspect).toBe("2.35:1");
+    const review = await getCoverReview(id, dir);
+    expect(review!.variants.find((v) => v.label === "a")!.imagePaths["2.35:1"]).toContain("235x1");
+  });
+});
+
 describe("platform_ratios", () => {
   it("公众号默认出 2.35:1,存进选用方案 imagePaths", async () => {
     const id = await seedContent("draft_ready", "wechat_mp");
@@ -198,6 +312,52 @@ describe("platform_ratios", () => {
     const r = (await executeCoverReview({ action: "platform_ratios", content_id: id, _dataDir: dir, _geminiApiKey: "k" })) as { ok: boolean; error: string };
     expect(r.ok).toBe(false);
     expect(r.error).toContain("approve");
+  });
+
+  it("16:9/4:3 适配不再过 Pro 门:gemini 原生比例直出,同 prompt 重渲染", async () => {
+    const id = await seedContent("draft_ready", "bilibili");
+    await createCandidates(id);
+    await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
+    genMock.mockClear();
+
+    const r = (await executeCoverReview({
+      action: "platform_ratios",
+      content_id: id,
+      ratios: ["16:9", "4:3"],
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; paths: Record<string, string>; upgradeHint?: string };
+    expect(r.ok).toBe(true);
+    expect(r.upgradeHint).toBeUndefined();
+    expect(r.paths["16:9"]).toContain("-16x9");
+    expect(r.paths["4:3"]).toContain("-4x3");
+    expect(genMock.mock.calls.map((c) => c[0].aspectRatio)).toEqual(["16:9", "4:3"]);
+  });
+
+  it("legacy generate_ratios 委托新链路(MCP 兼容,免 Pro)", async () => {
+    const id = await seedContent();
+    await createCandidates(id);
+    await executeCoverReview({ action: "approve", content_id: id, label: "b", _dataDir: dir });
+    const r = (await executeCoverReview({ action: "generate_ratios", content_id: id, _dataDir: dir, _geminiApiKey: "k" })) as {
+      ok: boolean;
+      paths: Record<string, string>;
+      upgradeHint?: string;
+    };
+    expect(r.ok).toBe(true);
+    expect(r.upgradeHint).toBeUndefined();
+    expect(Object.keys(r.paths).sort()).toEqual(["16:9", "4:3"]);
+  });
+
+  it("请求里剔除主比例:只请求 primary → 明确报错", async () => {
+    const id = await seedContent();
+    await createCandidates(id);
+    await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
+    const r = (await executeCoverReview({ action: "platform_ratios", content_id: id, ratios: ["3:4"], _dataDir: dir, _geminiApiKey: "k" })) as {
+      ok: boolean;
+      error: string;
+    };
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("主比例");
   });
 
   it("裁切降级 warning 透出", async () => {

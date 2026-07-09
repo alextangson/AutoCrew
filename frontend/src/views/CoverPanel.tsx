@@ -21,7 +21,22 @@ interface CoverReview {
   variants: CoverVariant[];
   approvedLabel?: string;
   updatedAt?: string;
+  /** 候选主比例(生成入口选定);缺省 3:4 */
+  primaryRatio?: string;
 }
+
+const PRIMARY_OPTIONS: Array<[string, string]> = [
+  ["3:4", "3:4 竖屏(小红书/视频号/抖音)"],
+  ["16:9", "16:9 横屏(B站/抖音PC)"],
+  ["4:3", "4:3 横屏"],
+];
+
+const RATIO_LABEL: Record<string, string> = {
+  "2.35:1": "公众号横版 2.35:1",
+  "16:9": "16:9 横屏",
+  "4:3": "4:3 横屏",
+  "3:4": "3:4 竖屏",
+};
 
 const assetUrl = (contentId: string, filePath?: string): string => {
   if (!filePath) return "";
@@ -32,6 +47,7 @@ const assetUrl = (contentId: string, filePath?: string): string => {
 export function CoverPanel(props: { contentId: string; platform: string }) {
   const [review, setReview] = useState<CoverReview | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [ratio, setRatio] = useState("3:4");
   const [customTitle, setCustomTitle] = useState("");
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [ratioBusy, setRatioBusy] = useState(false);
@@ -74,7 +90,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
   };
 
   const create = async () => {
-    const payload: Record<string, unknown> = { content_id: props.contentId };
+    const payload: Record<string, unknown> = { content_id: props.contentId, ratio };
     if (customTitle.trim()) payload.custom_title = customTitle.trim();
     const r = await invoke("cover:create", payload);
     if (!r.ok) {
@@ -119,11 +135,22 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
   };
 
   const approved = review?.variants.find((v) => v.label === review.approvedLabel);
+  const primary = review?.primaryRatio ?? "3:4";
+  const primaryCss = primary.replace(":", " / ");
+  // 适配比例 = 主比例之外的(同方案重渲染保风格统一);2.35:1 只对公众号露出
+  const adaptRatios = ["2.35:1", "16:9", "4:3", "3:4"].filter(
+    (r) => r !== primary && (r !== "2.35:1" || props.platform === "wechat_mp"),
+  );
 
   return (
     <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
       <div className="row-actions" style={{ alignItems: "baseline" }}>
         <span className="mono muted">封面(设计师)：</span>
+        <select value={ratio} disabled={generating} onChange={(e) => setRatio(e.target.value)}>
+          {PRIMARY_OPTIONS.map(([v, label]) => (
+            <option key={v} value={v}>{label}</option>
+          ))}
+        </select>
         <input
           className="sel-input"
           style={{ maxWidth: 220 }}
@@ -140,10 +167,15 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
         <div className="cover-grid">
           {review.variants.map((v) => (
             <div key={v.label} className={"cover-card" + (review.approvedLabel === v.label ? " cover-card-on" : "")}>
-              {v.imagePaths["3:4"] ? (
-                <img className="cover-img" src={assetUrl(props.contentId, v.imagePaths["3:4"])} alt={v.titleText ?? v.label} />
+              {v.imagePaths[primary] ? (
+                <img
+                  className="cover-img"
+                  style={{ aspectRatio: primaryCss }}
+                  src={assetUrl(props.contentId, v.imagePaths[primary])}
+                  alt={v.titleText ?? v.label}
+                />
               ) : (
-                <div className="cover-img cover-missing muted">无图</div>
+                <div className="cover-img cover-missing muted" style={{ aspectRatio: primaryCss }}>无图</div>
               )}
               <div>
                 <b className="serif">{v.titleText ?? ""}</b>{" "}
@@ -175,17 +207,26 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
 
       {approved && (
         <div className="cover-ratio-strip">
-          <span className="mono muted">平台比例：</span>
-          {props.platform === "wechat_mp" && (
-            <button disabled={ratioBusy} onClick={() => void ratios(["2.35:1"])}>
-              {approved.imagePaths["2.35:1"] ? "重出公众号横版 2.35:1" : "出公众号横版 2.35:1"}
+          <span className="mono muted">比例适配(同方案重渲染,风格统一)：</span>
+          {adaptRatios.map((r) => (
+            <button key={r} disabled={ratioBusy} onClick={() => void ratios([r])}>
+              {approved.imagePaths[r] ? `重出 ${RATIO_LABEL[r]}` : `出 ${RATIO_LABEL[r]}`}
             </button>
-          )}
-          <button disabled={ratioBusy} onClick={() => void ratios(["16:9", "4:3"])}>16:9 + 4:3(Pro)</button>
+          ))}
           {ratioBusy && <span className="muted">生成中…</span>}
-          {approved.imagePaths["2.35:1"] && (
-            <img className="cover-banner" src={assetUrl(props.contentId, approved.imagePaths["2.35:1"])} alt="公众号横版 2.35:1" />
-          )}
+          <div className="cover-adapt-thumbs">
+            {adaptRatios
+              .filter((r) => approved.imagePaths[r])
+              .map((r) => (
+                <img
+                  key={r}
+                  className="cover-thumb"
+                  style={{ aspectRatio: r.replace(":", " / ") }}
+                  src={assetUrl(props.contentId, approved.imagePaths[r])}
+                  alt={RATIO_LABEL[r]}
+                />
+              ))}
+          </div>
         </div>
       )}
     </div>

@@ -11,6 +11,10 @@ import { loadEngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { loadProfile, personaSummary } from "../profile/creator-profile.js";
+import { ORIENTATION_TEXT } from "../../adapters/image/relay-cover.js";
+
+/** 候选主比例(V5.6.1 横屏封面:B站/抖音PC 收 16:9/4:3) */
+export type PrimaryAspect = "3:4" | "16:9" | "4:3";
 
 export interface CoverDesign {
   label: "A" | "B" | "C";
@@ -30,15 +34,20 @@ export interface CoverPlanInput {
   platform?: string;
   hasReferencePhotos: boolean;
   customTitle?: string;
+  /** 候选主比例;缺省 3:4 竖屏 */
+  targetAspect?: PrimaryAspect;
 }
 
-const HARD_RULES =
-  "硬性规则(每个方案的 imagePrompt 都必须包含,一条不许漏):\n" +
-  '- 开头写明 "Vertical 3:4 portrait orientation cover image"\n' +
-  "- 电影感照片写实(cinematic photo-realism);禁止卡通/插画/3D 渲染风\n" +
-  '- 画面必须包含中文大字标题:把 titleText 原文写进 prompt,如 the Chinese text "XX" as a prominent visual element\n' +
-  "- 标题排版:加粗无衬线、超大字号、高对比;文字区域压深色渐变叠层(dark gradient overlay)保证可读\n" +
-  "- 禁止水印/logo/URL;禁止白色或浅色纯色背景;文字必须清晰、正确、不变形";
+function hardRules(aspect: PrimaryAspect): string {
+  return (
+    "硬性规则(每个方案的 imagePrompt 都必须包含,一条不许漏):\n" +
+    `- 开头写明 "${ORIENTATION_TEXT[aspect]}"\n` +
+    "- 电影感照片写实(cinematic photo-realism);禁止卡通/插画/3D 渲染风\n" +
+    '- 画面必须包含中文大字标题:把 titleText 原文写进 prompt,如 the Chinese text "XX" as a prominent visual element\n' +
+    "- 标题排版:加粗无衬线、超大字号、高对比;文字区域压深色渐变叠层(dark gradient overlay)保证可读\n" +
+    "- 禁止水印/logo/URL;禁止白色或浅色纯色背景;文字必须清晰、正确、不变形"
+  );
+}
 
 /** titleText 口径:2-8 个可见字符且必须含汉字(允许数字做视觉焦点) */
 function titleProblem(titleText: unknown): string | null {
@@ -118,18 +127,23 @@ function buildPlanTool(captured: { designs: CoverDesign[] | null }): LoopTool {
   };
 }
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(aspect: PrimaryAspect): string {
+  const composition =
+    aspect === "3:4"
+      ? "构图策略(竖版):人物主题——人物中下方、标题上方留呼吸空间;观点/概念——强视觉隐喻居中,标题居中偏上;" +
+        "事件——最具张力的瞬间,标题上方压暗色遮罩。"
+      : "构图策略(横版,B站/抖音PC 场景):主体偏画面一侧(约 1/3 处),中文大字占另一侧或压上方横带;" +
+        "留出安全边距(横屏封面四角常被平台 UI 遮挡);人物主题用中近景而非全身。";
   return (
-    "你是资深封面视觉设计师,为中文自媒体(小红书/视频号/抖音/公众号)设计点击率导向的封面。" +
+    "你是资深封面视觉设计师,为中文自媒体(小红书/视频号/抖音/B站/公众号)设计点击率导向的封面。" +
     "你产出「设计方案」而不是直接生图:给图像模型的英文 imagePrompt + 封面中文大字 titleText" +
     "(2-8 个字,短促有力、制造好奇或冲突,不是内容摘要;主题里有关键数字就把数字放大成焦点) + " +
     "版式说明 layoutHint + 设计理由 designReason(1-2 句中文,说清为什么能停住滑动)。\n\n" +
-    HARD_RULES +
+    hardRules(aspect) +
     "\n\n方法:先判断内容的主题类型(人物/观点/事件/干货)与情绪,再给 3 个差异化方案:\n" +
     "A 电影海报感(戏剧光影、明暗对比) / B 极简编辑风(大留白、文字主导) / C 高冲击(饱和撞色、动感构图)。\n" +
-    "构图策略:人物主题——人物中下方、标题上方留呼吸空间;观点/概念——强视觉隐喻居中,标题居中偏上;" +
-    "事件——最具张力的瞬间,标题上方压暗色遮罩。\n" +
-    "imagePrompt 用英文写全:构图、主体、光线、色彩、中文标题文字内容与位置、以及上面全部禁止项。\n" +
+    composition +
+    "\nimagePrompt 用英文写全:构图、主体、光线、色彩、中文标题文字内容与位置、以及上面全部禁止项。\n" +
     "有创作者形象照时,人物方案要写 feature the person from the reference photo, maintaining their likeness;" +
     "没有形象照就不要虚构具体真人长相。\n" +
     "完成后调用 submit_cover_plan 提交,不要把方案写在普通回复里。"
@@ -154,13 +168,15 @@ export async function designCoverPlan(
   const [config, audience] = await Promise.all([loadEngineConfig(dataDir), audienceLine(dataDir)]);
   const captured = { designs: null as CoverDesign[] | null };
   const loopFn = deps?.runLoopImpl ?? runLoop;
+  const aspect = input.targetAspect ?? "3:4";
 
   const result = await loopFn(config, {
     model: config.strongModel,
-    systemPrompt: buildSystemPrompt(),
+    systemPrompt: buildSystemPrompt(aspect),
     userMessage:
       `内容标题:${input.title}\n` +
       `平台:${input.platform ?? "未指定"}\n` +
+      `封面比例:${aspect}${aspect === "3:4" ? "(竖屏)" : "(横屏)"}\n` +
       `正文(节选):${input.body.slice(0, 600)}\n` +
       (input.customTitle ? `用户指定封面大字:${input.customTitle}(必须使用)\n` : "") +
       (input.hasReferencePhotos ? "已提供创作者形象照(人物方案使用参考人物)\n" : "无形象照\n") +
@@ -202,7 +218,7 @@ function buildRevisionTool(captured: { design: CoverDesign | null }, label: "A" 
 }
 
 export async function reviseCoverDesign(
-  input: { previous: CoverDesign; feedback: string; title: string; hasReferencePhotos: boolean },
+  input: { previous: CoverDesign; feedback: string; title: string; hasReferencePhotos: boolean; targetAspect?: PrimaryAspect },
   dataDir?: string,
   deps?: { runLoopImpl?: typeof runLoop },
 ): Promise<CoverDesign> {
@@ -213,7 +229,7 @@ export async function reviseCoverDesign(
   await loopFn(config, {
     model: config.strongModel,
     systemPrompt:
-      buildSystemPrompt() +
+      buildSystemPrompt(input.targetAspect ?? "3:4") +
       "\n\n当前任务是修订:保留原方案的主题与可用元素,严格按用户反馈修改;" +
       "输出完整新方案并调用 submit_cover_revision 提交(不是 submit_cover_plan)。",
     userMessage:

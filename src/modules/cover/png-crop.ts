@@ -148,3 +148,23 @@ export function cropPngVerticalCenter(buf: Buffer, targetAspect: number): Buffer
   const top = Math.floor((height - targetHeight) / 2);
   return encodePng(width, targetHeight, channels, rows.slice(top, top + targetHeight));
 }
+
+/**
+ * 居中裁切到任意目标宽高比:目标比原图宽 → 裁行;目标比原图窄 → 裁列。
+ * 场景(V5.6.1):中转只有 1024x1536/1536x1024/1:1 固定尺寸,出图后精裁到
+ * 3:4 / 2.35:1 / 16:9 / 4:3。已达目标比例原样返回。
+ */
+export function cropPngCenterToAspect(buf: Buffer, targetAspect: number): Buffer {
+  const { width, height, channels, rows } = decodePng(buf);
+  const targetHeight = Math.round(width / targetAspect);
+  if (targetHeight === height) return buf;
+  if (targetHeight < height) {
+    const top = Math.floor((height - targetHeight) / 2);
+    return encodePng(width, targetHeight, channels, rows.slice(top, top + targetHeight));
+  }
+  const targetWidth = Math.round(height * targetAspect);
+  if (targetWidth >= width) return buf;
+  const left = Math.floor((width - targetWidth) / 2);
+  const cropped = rows.map((r) => Buffer.from(r.subarray(left * channels, (left + targetWidth) * channels)));
+  return encodePng(targetWidth, height, channels, cropped);
+}

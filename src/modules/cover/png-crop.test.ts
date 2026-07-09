@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import zlib from "node:zlib";
-import { encodePng, decodePng, cropPngVerticalCenter, PngUnsupportedError, crc32 } from "./png-crop.js";
+import { encodePng, decodePng, cropPngVerticalCenter, cropPngCenterToAspect, PngUnsupportedError, crc32 } from "./png-crop.js";
 
 function gradientRows(width: number, height: number, channels: number): Buffer[] {
   const rows: Buffer[] = [];
@@ -116,5 +116,38 @@ describe("cropPngVerticalCenter", () => {
   it("已达目标比例 → 原 buffer 原样返回", () => {
     const buf = encodePng(235, 100, 3, gradientRows(235, 100, 3));
     expect(cropPngVerticalCenter(buf, 2.35)).toBe(buf);
+  });
+});
+
+describe("cropPngCenterToAspect(任意方向)", () => {
+  it("目标更宽 → 裁行(与垂直裁同径)", () => {
+    const rows = gradientRows(160, 90, 3);
+    const out = decodePng(cropPngCenterToAspect(encodePng(160, 90, 3, rows), 2.35));
+    expect(out.width).toBe(160);
+    expect(out.height).toBe(Math.round(160 / 2.35));
+  });
+
+  it("目标更窄 → 裁列(宽度变,中间列保留;中转 3:2 → 4:3 场景)", () => {
+    const width = 15, height = 10, channels = 3;
+    const rows = gradientRows(width, height, channels);
+    const out = decodePng(cropPngCenterToAspect(encodePng(width, height, channels, rows), 4 / 3));
+    const targetWidth = Math.round(height * (4 / 3)); // 13
+    expect(out.height).toBe(height);
+    expect(out.width).toBe(targetWidth);
+    const left = Math.floor((width - targetWidth) / 2);
+    for (let y = 0; y < height; y++) {
+      expect(out.rows[y].equals(rows[y].subarray(left * channels, (left + targetWidth) * channels))).toBe(true);
+    }
+  });
+
+  it("2:3 竖图 → 3:4(中转封面主场景):1024x1536 → 1024x1365", () => {
+    const out = decodePng(cropPngCenterToAspect(encodePng(64, 96, 3, gradientRows(64, 96, 3)), 3 / 4));
+    expect(out.width).toBe(64);
+    expect(out.height).toBe(Math.round(64 / (3 / 4))); // 85
+  });
+
+  it("已达比例 → 原样返回", () => {
+    const buf = encodePng(40, 30, 3, gradientRows(40, 30, 3));
+    expect(cropPngCenterToAspect(buf, 4 / 3)).toBe(buf);
   });
 });

@@ -1,17 +1,22 @@
 /**
- * 封面频道 handlers(V5.6 封面设计师转正)。
+ * 封面频道 handlers(V5.6 封面设计师转正;V5.6.1 生图默认切中转 image2)。
  * create/revise 是分钟级生图任务 → 后台化:立即返回 runId,进度经引擎事件走 SSE
  * 任务动态;前端轮询 cover:get 取结果。get/approve/ratios 同步。
- * Gemini key 由 cover-settings 在 server 端解析注入(renderer 永远拿不到原文)。
+ * provider 解析在 server 端(cover.json + publish.json);gemini 分支注入 key
+ * (renderer 永远拿不到原文),relay 分支工具自行解析凭证。
  */
 import { executeCoverReview } from "../tools/cover-review.js";
-import { loadCoverSettings, saveCoverSettings, resolveCoverGemini, type CoverGeminiModel } from "./cover-settings.js";
+import {
+  loadCoverSettings,
+  saveCoverSettings,
+  resolveCoverProvider,
+  type CoverGeminiModel,
+  type CoverProvider,
+} from "../modules/cover/provider.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 type Payload = Record<string, unknown>;
 type HandlerResult = Record<string, unknown>;
-
-const KEY_HINT = "免费获取:https://aistudio.google.com/apikey → 设置页「封面生成(Gemini)」填入";
 
 function badPayload(payload: Payload): HandlerResult | null {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
@@ -22,6 +27,25 @@ function badPayload(payload: Payload): HandlerResult | null {
 
 function maskKey(key: string): string {
   return key.length <= 8 ? "****" : `${key.slice(0, 4)}…${key.slice(-4)}`;
+}
+
+/** provider 可用性检查 + gemini 分支的 key 注入参数 */
+async function providerInjection(
+  dataDir?: string,
+): Promise<{ inject: Record<string, unknown> } | { error: string; hint: string }> {
+  const resolved = await resolveCoverProvider(dataDir);
+  if (!resolved.ok) {
+    return {
+      error: resolved.provider === "relay" ? "中转生图未配置(封面生成需要)" : "未配置 Gemini Key(封面生成需要)",
+      hint: resolved.hint ?? "",
+    };
+  }
+  return {
+    inject:
+      resolved.provider === "gemini"
+        ? { _geminiApiKey: resolved.gemini.apiKey, _geminiModel: resolved.gemini.model }
+        : {},
+  };
 }
 
 export interface StartedCoverJob {
@@ -37,12 +61,9 @@ export async function startCoverJob(
   labels: { work: string; done: string },
 ): Promise<StartedCoverJob> {
   const dataDir = (payload._dataDir as string) || undefined;
-  const { apiKey, model } = await resolveCoverGemini(dataDir);
-  if (!apiKey) {
-    return {
-      response: { ok: false, error: "未配置 Gemini Key(封面生成需要)", hint: KEY_HINT },
-      completion: Promise.resolve(),
-    };
+  const prep = await providerInjection(dataDir);
+  if ("error" in prep) {
+    return { response: { ok: false, error: prep.error, hint: prep.hint }, completion: Promise.resolve() };
   }
   const contentId = String(payload.content_id ?? "");
   const runId = `run-cover-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -56,11 +77,14 @@ export async function startCoverJob(
         ...payload,
         action,
         _dataDir: dataDir,
-        _geminiApiKey: apiKey,
-        _geminiModel: model,
-      })) as { ok?: boolean; error?: string };
-      if (result.ok) emit("run_done", labels.done);
-      else emit("run_failed", `封面任务失败:${(result.error ?? "未知错误").slice(0, 60)}`);
+        ...prep.inject,
+      })) as { ok?: boolean; error?: string; warnings?: string[] };
+      if (result.ok) {
+        const warn = result.warnings?.length ? `(${result.warnings[0].slice(0, 40)})` : "";
+        emit("run_done", labels.done + warn);
+      } else {
+        emit("run_failed", `封面任务失败:${(result.error ?? "未知错误").slice(0, 60)}`);
+      }
     } catch (err) {
       emit("run_failed", `封面任务失败:${(err instanceof Error ? err.message : String(err)).slice(0, 60)}`);
     }
@@ -122,15 +146,14 @@ export async function coverRatiosHandler(payload: Payload): Promise<HandlerResul
   if (bad) return bad;
   try {
     const dataDir = (payload._dataDir as string) || undefined;
-    const { apiKey, model } = await resolveCoverGemini(dataDir);
-    if (!apiKey) return { ok: false, error: "未配置 Gemini Key(封面生成需要)", hint: KEY_HINT };
+    const prep = await providerInjection(dataDir);
+    if ("error" in prep) return { ok: false, error: prep.error, hint: prep.hint };
     return (await executeCoverReview({
       action: "platform_ratios",
       content_id: payload.content_id,
       ratios: payload.ratios,
       _dataDir: dataDir,
-      _geminiApiKey: apiKey,
-      _geminiModel: model,
+      ...prep.inject,
     })) as HandlerResult;
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -141,11 +164,19 @@ export async function coverSettingsGetHandler(payload: Payload): Promise<Handler
   const bad = badPayload(payload);
   if (bad) return bad;
   try {
-    const dataDir = (payload._dataDir as string) || undefined;
-    const { apiKey, model, source } = await resolveCoverGemini(dataDir);
+    const r = await resolveCoverProvider((payload._dataDir as string) || undefined);
     return {
       ok: true,
-      data: { configured: Boolean(apiKey), apiKeyMasked: apiKey ? maskKey(apiKey) : null, source, model },
+      data: {
+        provider: r.provider,
+        relay: { configured: r.relay !== null, model: r.relay?.model ?? null },
+        gemini: {
+          configured: r.gemini.apiKey !== null,
+          apiKeyMasked: r.gemini.apiKey ? maskKey(r.gemini.apiKey) : null,
+          source: r.gemini.source,
+          model: r.gemini.model,
+        },
+      },
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -155,7 +186,19 @@ export async function coverSettingsGetHandler(payload: Payload): Promise<Handler
 export async function coverSettingsSetHandler(payload: Payload): Promise<HandlerResult> {
   const bad = badPayload(payload);
   if (bad) return bad;
-  const updates: { geminiApiKey?: string; geminiModel?: CoverGeminiModel } = {};
+  const updates: { provider?: CoverProvider; relayModel?: string; geminiApiKey?: string; geminiModel?: CoverGeminiModel } = {};
+  if (payload.provider !== undefined) {
+    if (payload.provider !== "relay" && payload.provider !== "gemini") {
+      return { ok: false, error: "provider 必须是 relay(中转) 或 gemini" };
+    }
+    updates.provider = payload.provider;
+  }
+  if (payload.relay_model !== undefined) {
+    if (typeof payload.relay_model !== "string" || payload.relay_model.trim() === "") {
+      return { ok: false, error: "relay_model 必须是非空字符串" };
+    }
+    updates.relayModel = payload.relay_model.trim();
+  }
   if (payload.gemini_api_key !== undefined) {
     if (typeof payload.gemini_api_key !== "string" || payload.gemini_api_key.trim() === "") {
       return { ok: false, error: "gemini_api_key 必须是非空字符串" };
@@ -170,7 +213,7 @@ export async function coverSettingsSetHandler(payload: Payload): Promise<Handler
     updates.geminiModel = m;
   }
   if (Object.keys(updates).length === 0) {
-    return { ok: false, error: "没有可写入的字段(gemini_api_key / gemini_model)" };
+    return { ok: false, error: "没有可写入的字段(provider / relay_model / gemini_api_key / gemini_model)" };
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;

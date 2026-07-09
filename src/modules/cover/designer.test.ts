@@ -74,6 +74,19 @@ describe("designCoverPlan", () => {
     expect(captured[0].userMessage).toContain("形象照");
   });
 
+  it("横屏 16:9(V5.6.1):系统提示切横版方向词与横屏构图,用户消息带比例", async () => {
+    const captured: CapturedOpts[] = [];
+    await designCoverPlan(
+      { title: "t", body: "b", hasReferencePhotos: false, targetAspect: "16:9" },
+      dir,
+      { runLoopImpl: mockLoop("submit_cover_plan", [{ designs: [goodDesign("A"), goodDesign("B"), goodDesign("C")] }], [], captured) },
+    );
+    expect(captured[0].systemPrompt).toContain("16:9");
+    expect(captured[0].systemPrompt).toContain("横版");
+    expect(captured[0].systemPrompt).not.toContain("Vertical 3:4");
+    expect(captured[0].userMessage).toContain("16:9(横屏)");
+  });
+
   it("titleText 超长/无中文 → 工具打回自纠;修正后通过", async () => {
     const bad = { designs: [{ ...goodDesign("A"), titleText: "这个标题实在太长了" }, goodDesign("B"), goodDesign("C")] };
     const execResults: string[] = [];

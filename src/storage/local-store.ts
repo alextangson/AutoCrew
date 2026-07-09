@@ -175,6 +175,8 @@ export interface CoverVariant {
 
 export interface CoverReview {
   platform: string;
+  /** 候选生成时选定的主比例(V5.6.1:横屏封面——B站/抖音PC 收 16:9/4:3);缺省 3:4 */
+  primaryRatio?: "3:4" | "16:9" | "4:3";
   status: "review_pending" | "approved" | "publish_ready";
   stopReason?: string;
   coverHook?: string;
@@ -694,8 +696,14 @@ export async function approveCoverVariant(
     const now = new Date().toISOString();
     review.status = "publish_ready";
     review.approvedLabel = label;
-    // 修复存量 bug:create_candidates 只写 imagePaths["3:4"],旧字段 imagePath 从未赋值
-    review.approvedImagePath = selected.imagePaths?.["3:4"] ?? selected.imagePath;
+    // 修复存量 bug:create_candidates 只写 imagePaths,旧字段 imagePath 从未赋值。
+    // 主比例可选(V5.6.1 横屏封面),取主比例成图,再兜底其他比例
+    review.approvedImagePath =
+      selected.imagePaths?.[review.primaryRatio ?? "3:4"] ??
+      selected.imagePaths?.["3:4"] ??
+      selected.imagePaths?.["16:9"] ??
+      selected.imagePaths?.["4:3"] ??
+      selected.imagePath;
     review.approvedAt = now;
     review.updatedAt = now;
     // 修复存量 bug:选封面不许把已进发布链的稿件倒拨回 approved

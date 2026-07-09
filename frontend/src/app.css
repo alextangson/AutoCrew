@@ -151,7 +151,8 @@
 .cover-missing { display: flex; align-items: center; justify-content: center; }
 .cover-reason { font-size: 12px; }
 .cover-ratio-strip { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-.cover-banner { width: 100%; max-width: 470px; aspect-ratio: 2.35 / 1; object-fit: cover; border: 1px solid var(--border); }
+.cover-adapt-thumbs { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; margin-top: 6px; }
+.cover-thumb { max-width: 240px; object-fit: cover; border: 1px solid var(--border); }
 .persona-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 10px 12px; margin: 8px 0; }
 .persona-proposal { border-left: 2px solid var(--ink); }
 .pt-grid { display: flex; gap: 6px; margin: 4px 0; }
