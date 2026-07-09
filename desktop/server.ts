@@ -10,13 +10,14 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { IPC_CHANNELS, chToMethod } from "../src/desktop/channels.js";
+import { getDataDir } from "../src/storage/local-store.js";
 import { buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js";
 import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
+import { resolveServerToken } from "../src/desktop/server-token.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
@@ -25,7 +26,8 @@ import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
-const TOKEN = crypto.randomBytes(24).toString("hex");
+// 持久化 token（两台协作:主机常开、笔记本远程连——重启不变,远端书签一劳永逸）
+const TOKEN = resolveServerToken();
 // D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
 const FRONTEND_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "frontend", "dist");
 const CHANNELS = new Set<string>(IPC_CHANNELS);
@@ -58,7 +60,7 @@ const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".cjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
-  ".jpg": "image/jpeg", ".ico": "image/x-icon",
+  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon",
 };
 /** React 前端静态托管:SPA 回退到 index.html;dist 缺失给出构建指引而非裸 404 */
 async function serveApp(res: http.ServerResponse, rel: string): Promise<void> {
@@ -107,6 +109,33 @@ const server = http.createServer(async (req, res) => {
   if (p === "/config.js") {
     res.writeHead(200, { "Content-Type": MIME[".js"] });
     res.end(`window.__AUTOCREW = ${JSON.stringify({ token: TOKEN, channels: [...IPC_CHANNELS], methodMap: Object.fromEntries(IPC_CHANNELS.map((c) => [chToMethod(c), c])) })};`);
+    return;
+  }
+
+  // 生成资源(封面等)只读流式端点:invoke 走 JSON,图片字节走这里。
+  // 白名单校验 content_id/文件名,路径钉死在 contents/<id>/assets/covers 下;
+  // 文件名带修订号(-rN)所以 immutable 缓存安全。
+  if (p === "/api/asset") {
+    if (!tokenOk(req, url)) { res.writeHead(403).end(); return; }
+    const contentId = url.searchParams.get("content_id") || "";
+    const name = url.searchParams.get("name") || "";
+    const ext = path.extname(name).toLowerCase();
+    if (
+      !/^content-\d+-[a-z0-9]+$/.test(contentId) ||
+      !/^[A-Za-z0-9._-]+$/.test(name) ||
+      name.includes("..") ||
+      ![".png", ".jpg", ".jpeg", ".webp"].includes(ext)
+    ) {
+      res.writeHead(400).end("bad params");
+      return;
+    }
+    let base: string;
+    try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
+    const file = path.join(base, "contents", contentId, "assets", "covers", name);
+    if (!file.startsWith(path.join(base, "contents"))) { res.writeHead(403).end(); return; }
+    try { await fs.access(file); } catch { res.writeHead(404).end(); return; }
+    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable" });
+    createReadStream(file).pipe(res);
     return;
   }
 
@@ -196,7 +225,7 @@ try {
 server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
   console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${TOKEN}\x1b[0m\n`);
-  console.log("  (token 已内嵌进页面,收藏首次带 token 的链接即可)\n");
+  console.log("  (token 已固定,重启不变 —— 收藏一次即可;两台协作见 docs)\n");
 
   // 选题雷达:启动 fire-and-forget 刷新 → 命中定位的候选自动入灵感库(IA v4.2 §A1)。
   // 此前该启动链只活在弃用的 Electron 壳(main.ts:112),server 化时遗漏,此处收编。
