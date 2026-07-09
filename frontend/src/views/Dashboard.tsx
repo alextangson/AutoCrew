@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { useChatSend } from "../chat/ChatDock";
+import type { Route } from "../App";
 
 interface Summary {
   calibration: {
@@ -48,7 +49,7 @@ function Card(props: { title: string; kicker?: string; children: React.ReactNode
   );
 }
 
-export function Dashboard() {
+export function Dashboard({ nav }: { nav: (r: Route) => void }) {
   const [d, setD] = useState<Summary | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [runLines, setRunLines] = useState<string[]>([]);
@@ -82,13 +83,14 @@ export function Dashboard() {
   const todo = [rq.length ? `审稿 ${rq.length}` : "", bf.length ? `回数据 ${bf.length}` : ""].filter(Boolean).join(" · ");
   const hour = new Date().getHours();
   const greet = hour < 5 ? "夜深了" : hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
-  const gotoLegacy = () => { window.location.href = "/" + window.location.search; };
+  const openEditor = (id: string) => nav({ view: "editor", id });
+  const openBoard = () => nav({ view: "board" });
 
   return (
     <div className="dash">
       <div className="dash-head">
         <h2 className="serif">{greet}，编辑部已就位。</h2>
-        <button onClick={gotoLegacy}>进看板(旧版) ↗</button>
+        <button onClick={openBoard}>进看板 →</button>
       </div>
 
       <Zone q="今天该做什么" hint={todo || "没有排队的事"}>
@@ -97,7 +99,7 @@ export function Dashboard() {
             <p className="muted">没有待审稿——去「今日可写」挑一条开写？</p>
           ) : (
             rq.slice(0, 6).map((it) => (
-              <div key={it.id} className="row" onClick={gotoLegacy}>
+              <div key={it.id} className="row" onClick={() => openEditor(it.id)}>
                 <span className="mono pri">{PRI_LABEL[it.priority] ?? it.priority}</span>
                 <span className="row-title">{it.title || "（无标题）"}</span>
                 <span className="muted">{it.ageDays} 天</span>
@@ -110,7 +112,7 @@ export function Dashboard() {
             <p className="muted">没有等回填的稿子。</p>
           ) : (
             bf.slice(0, 5).map((t) => (
-              <div key={t.id} className="row" onClick={gotoLegacy}>
+              <div key={t.id} className="row" onClick={() => openEditor(t.id)}>
                 <span className="mono pri">{t.level === "overdue" ? "拖了" : "该回了"}</span>
                 <span className="row-title">{t.title}</span>
                 <span className="muted">发布 {t.daysSince} 天</span>
@@ -135,11 +137,11 @@ export function Dashboard() {
       </Zone>
 
       <Zone q="内容资产" hint={`灵感 ${p.idea} · 在写 ${p.writing} · 待审 ${p.review} · 待发 ${p.ready} · 已发 ${p.published}`}>
-        <Card title="管线" kicker="点数字进看板(旧版)">
+        <Card title="管线" kicker="点数字进看板">
           <div className="pipe">
             {([["灵感", p.idea], ["在写", p.writing], ["待审", p.review], ["待发", p.ready], ["已发", p.published]] as const).map(
               ([label, n]) => (
-                <div key={label} className="pipe-cell" onClick={gotoLegacy}>
+                <div key={label} className="pipe-cell" onClick={openBoard}>
                   <div className="pipe-n serif">{n}</div>
                   <div className="muted mono">{label}</div>
                 </div>

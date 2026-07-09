@@ -312,6 +312,20 @@ async function main(): Promise<number> {
         if (document.querySelectorAll(".zone").length !== 4) fails.push("v2 四问分区：实际 " + document.querySelectorAll(".zone").length);
         if (!t.includes("总编辑")) fails.push("v2 对话栏缺失");
         if (!t.includes("受众画像")) fails.push("v2 受众画像卡缺失");
+        // B 期动线:导航进看板 → 五列 → 点稿件 chip 进编辑器
+        const navBtn = [...document.querySelectorAll(".topnav button")].find(b => b.textContent.trim() === "看板");
+        if (!navBtn) { fails.push("v2 看板导航缺失"); return { fails }; }
+        navBtn.click();
+        await new Promise(r => setTimeout(r, 900));
+        if (!document.querySelector(".kanban")) fails.push("v2 看板未渲染");
+        if (document.querySelectorAll(".kcol").length !== 5) fails.push("v2 看板列数：实际 " + document.querySelectorAll(".kcol").length);
+        const chip = document.querySelector(".acard .chip");
+        if (!chip) { fails.push("v2 看板无稿件 chip(种子数据未显示)"); return { fails }; }
+        chip.click();
+        await new Promise(r => setTimeout(r, 900));
+        if (!document.querySelector(".ed-body")) fails.push("v2 编辑器正文缺失");
+        if (!document.querySelector(".ed-title")) fails.push("v2 编辑器标题输入缺失");
+        if (!(document.body.textContent || "").includes("采纳裁决")) fails.push("v2 采纳裁决行缺失");
         return { fails }; })()`,
       awaitPromise: true, returnByValue: true,
     }, sessionId)) as { result?: { value?: { fails?: string[] } }; exceptionDetails?: { text?: string } };
