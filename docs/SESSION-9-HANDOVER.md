@@ -87,9 +87,12 @@ Dogfood 抓到并当场修掉的产品 bug：
   **可用的总编辑对话栏**(会话延续+工具进度流+draft/topic/persona/停留审/发布件五类卡)。
   构建 `npm run fe:build`(50KB gzip);dev `npm run fe:dev`(代理 :4317)。smoke 增 /v2 段
   (dist 存在才校验:壳/四区/对话栏/画像卡/零 console 错)。
-  **B 期待做**:管线看板(拖拽/回收站/平台矩阵)+ 编辑器(60vh/自动保存/框选浮层/diff 全家桶),
-  设计规格参照 ~/projects/qingmoagent/frontend(只取设计不搬代码,弃因=多租户);C 期任务卡/
-  校准中心/素材/复盘;D 期删 vanilla。token 两份手动同步(tokens.css ↔ style.css),D 期归一。
+  **B 期已落地**(`c463228`):看板(原子分组/拖拽流转/回收站/中断徽章)+ 平台矩阵(灵感详情/
+  保留倒计时/方向输入/席位格生成带血缘)+ 编辑器完整体验(衬线标题可改/60vh 正文/**框选浮层
+  4 快捷+自由指令 → diff 待定卡 → 采纳回喂校准**/保存带"为什么改"/localStorage 暂存防丢/
+  采纳裁决 chips+自由文本/状态流转脏检查/版本回滚/发布动作/回填录入)。smoke /v2 段真流程走查:
+  工作台→看板五列→编辑器。**C 期待做**:任务卡 runId 聚合/校准中心/素材/复盘页迁移+设置收口(P6);
+  **D 期**删 vanilla。token/常量两份手动同步(tokens.css↔style.css,lib.ts↔dom.js/board.js),D 期归一。
 **等创始人**:搜索 API key(配置在设置页即可用);X/Reddit 开发者凭据+persona 语言裁决
 (风控评审文档 §2/§3)。~~头条/视频预填~~已裁决延后。
 
