@@ -36,8 +36,6 @@
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.ts\" \"mcp/**/*.ts\" index.ts",
     "check": "npm run typecheck && npm run lint && npm test",
-    "build:desktop": "tsx scripts/build-desktop.mts && tsx scripts/smoke-desktop-load.mts",
-    "app": "npm run build:desktop && electron desktop/dist/main.cjs",
     "serve": "tsx desktop/server.ts",
     "smoke": "tsx scripts/smoke-e2e.mts",
     "fe:build": "cd frontend && npm run build",
@@ -51,8 +49,6 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/node": "^25.9.2",
-    "electron": "^42.4.0",
-    "esbuild": "^0.28.0",
     "eslint": "^9.0.0",
     "prettier": "^3.5.0",
     "tsx": "^4.22.4",

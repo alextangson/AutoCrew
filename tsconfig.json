@@ -3,7 +3,9 @@
     "target": "ES2022",
     "module": "Node16",
     "moduleResolution": "Node16",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "./dist",
     "rootDir": ".",
     "strict": true,
@@ -23,8 +25,6 @@
     "index.ts",
     "src/**/*.ts",
     "mcp/**/*.ts",
-    "desktop/main.ts",
-    "desktop/preload.ts",
     "desktop/server.ts",
     "scripts/**/*.mts"
   ],
@@ -32,8 +32,7 @@
     "node_modules",
     "dist",
     "extension",
-    "desktop/renderer",
-    "desktop/dist",
-    "**/*.test.ts"
+    "**/*.test.ts",
+    "frontend"
   ]
 }

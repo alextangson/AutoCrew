@@ -26,8 +26,7 @@ import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
 const TOKEN = crypto.randomBytes(24).toString("hex");
-const RENDERER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "renderer");
-// V5.5 React 前端(frontend-v2 契约):迁移期挂 /v2 与 vanilla 并存,D 期清场后接管 /
+// D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
 const FRONTEND_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "frontend", "dist");
 const CHANNELS = new Set<string>(IPC_CHANNELS);
 
@@ -61,21 +60,8 @@ const MIME: Record<string, string> = {
   ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
   ".jpg": "image/jpeg", ".ico": "image/x-icon",
 };
-async function serveStatic(res: http.ServerResponse, rel: string): Promise<void> {
-  const clean = rel.replace(/\.\.+/g, "").replace(/^\/+/, "");
-  const file = path.join(RENDERER_DIR, clean || "index.html");
-  if (!file.startsWith(RENDERER_DIR)) { res.writeHead(403).end("forbidden"); return; }
-  try {
-    await fs.access(file);
-  } catch {
-    res.writeHead(404).end("not found"); return;
-  }
-  res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" });
-  createReadStream(file).pipe(res);
-}
-
-/** /v2 静态托管:SPA 回退到 index.html;dist 缺失给出构建指引而非裸 404 */
-async function serveV2(res: http.ServerResponse, rel: string): Promise<void> {
+/** React 前端静态托管:SPA 回退到 index.html;dist 缺失给出构建指引而非裸 404 */
+async function serveApp(res: http.ServerResponse, rel: string): Promise<void> {
   const clean = rel.replace(/\.\.+/g, "").replace(/^\/+/, "");
   let file = path.join(FRONTEND_DIST, clean || "index.html");
   if (!file.startsWith(FRONTEND_DIST)) { res.writeHead(403).end("forbidden"); return; }
@@ -87,7 +73,7 @@ async function serveV2(res: http.ServerResponse, rel: string): Promise<void> {
       await fs.access(file);
     } catch {
       res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" })
-        .end("v2 前端未构建：npm run fe:build 后刷新（或先用旧版 /）");
+        .end("前端未构建：先执行 npm run fe:build 再刷新");
       return;
     }
   }
@@ -111,9 +97,9 @@ const server = http.createServer(async (req, res) => {
 
   if (p === "/favicon.ico") { res.writeHead(204).end(); return; }
 
-  // React 前端(迁移期并存)
+  // React 前端:/ 为主,/v2 为书签兼容别名(D 期清场后同一份 dist)
   if (p === "/v2" || p.startsWith("/v2/")) {
-    await serveV2(res, p.replace(/^\/v2\/?/, ""));
+    await serveApp(res, p.replace(/^\/v2\/?/, ""));
     return;
   }
 
@@ -179,7 +165,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  await serveStatic(res, p);
+  await serveApp(res, p);
 });
 
 // 防呆 P3:写长文是分钟级任务——本地单用户 server 不许因超时掐断慢请求
