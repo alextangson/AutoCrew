@@ -1,0 +1,62 @@
+/* 编辑部风设计 token（与 desktop/renderer/style.css :root 同源,§7.3-4:
+   衬线做展示层/等宽做标签/近黑白/发丝线。D 期清场前两边手动保持同步。 */
+:root {
+  --bg: #F5F4EF;
+  --surface: #F5F4EF;
+  --card: #FFFFFF;
+  --border: #DCD9CF;
+  --ink: #16150F;
+  --text: #16150F;
+  --muted: #8B877B;
+  --accent: #16150F;
+  --accent-text: #F8F7F2;
+  --hot: #C63D00;
+  --success: #14523F;
+  --danger: #A32D2D;
+  --radius: 2px;
+  --radius-card: 2px;
+  --gap: 16px;
+
+  --font-display: Georgia, "Songti SC", "STSong", "Noto Serif SC", serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "PingFang SC", monospace;
+
+  --crew-scout: #35553F;
+  --crew-writer: #3E3A66;
+  --crew-review: #8A4B14;
+  --crew-analyst: #2E4A66;
+  --crew-publisher: #6a4fb3;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--bg);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+}
+button:hover { border-color: var(--ink); }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+input, textarea {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 6px 10px;
+}
+input:focus, textarea:focus { outline: none; border-color: var(--ink); }
+
+.muted { color: var(--muted); }
+.mono { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; }
+.serif { font-family: var(--font-display); }

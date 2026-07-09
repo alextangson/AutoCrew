@@ -1,0 +1,70 @@
+/* 壳布局 + Dashboard + 对话栏(A 期)。发丝线/近黑白,区分靠字不靠彩。 */
+
+.shell { display: flex; flex-direction: column; height: 100vh; }
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.brand { font-size: 16px; font-weight: 700; }
+.v2-badge { border: 1px solid var(--border); padding: 1px 6px; color: var(--muted); }
+.topnav { margin-left: auto; display: flex; gap: 6px; }
+.topnav button { border-color: transparent; background: transparent; }
+.topnav button:hover { border-color: var(--border); }
+.topnav .nav-on { border-color: var(--ink); font-weight: 700; }
+
+.body { display: flex; flex: 1; min-height: 0; }
+.main { flex: 1; overflow-y: auto; padding: 18px 22px; }
+.dock {
+  width: 360px; min-width: 300px; border-left: 1px solid var(--border);
+  background: var(--surface); display: flex; flex-direction: column;
+}
+
+/* Dashboard */
+.pad { padding: 18px; }
+.dash-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.dash-head h2 { font-size: 20px; }
+.zone { margin: 18px 0 6px; }
+.zone-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.zone-q { font-size: 15px; letter-spacing: 0.02em; }
+.zone-hint { font-size: 12px; }
+.zone-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--gap); }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 12px 14px; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.card-title { font-weight: 700; }
+
+.row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed var(--border); cursor: pointer; }
+.row:last-of-type { border-bottom: none; }
+.row-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pri { border: 1px solid var(--border); padding: 0 4px; font-size: 11px; }
+
+.pipe { display: flex; gap: 8px; }
+.pipe-cell { flex: 1; text-align: center; padding: 6px 0; cursor: pointer; }
+.pipe-cell:hover .pipe-n { text-decoration: underline; }
+.pipe-n { font-size: 22px; font-weight: 700; }
+
+.run-line { font-size: 12px; margin: 2px 0; }
+.persona-tier { margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--border); }
+
+/* Chat dock */
+.chat { display: flex; flex-direction: column; height: 100%; }
+.chat-head { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--muted); }
+.chat-body { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.msg { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px 10px; }
+.msg-user { background: var(--ink); color: var(--accent-text); align-self: flex-end; max-width: 90%; }
+.chat-input-row { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.chat-input-row textarea { flex: 1; resize: none; }
+
+/* Chat cards */
+.ccard { border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px 10px; margin-top: 8px; background: var(--card); color: var(--text); }
+.card-kicker { margin-bottom: 4px; }
+.ccard-title { font-weight: 700; margin: 2px 0; }
+.ccard-body { white-space: pre-wrap; font: inherit; font-size: 13px; max-height: 260px; overflow-y: auto; }
+.stay-yes { color: var(--success); font-weight: 700; }
+.stay-no { color: var(--danger); font-weight: 700; }
+
+@media (max-width: 900px) {
+  .body { flex-direction: column; }
+  .dock { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
+}

@@ -27,6 +27,8 @@ const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
 const TOKEN = crypto.randomBytes(24).toString("hex");
 const RENDERER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "renderer");
+// V5.5 React 前端(frontend-v2 契约):迁移期挂 /v2 与 vanilla 并存,D 期清场后接管 /
+const FRONTEND_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "frontend", "dist");
 const CHANNELS = new Set<string>(IPC_CHANNELS);
 
 const handlers = buildIpcHandlers();
@@ -72,6 +74,27 @@ async function serveStatic(res: http.ServerResponse, rel: string): Promise<void>
   createReadStream(file).pipe(res);
 }
 
+/** /v2 静态托管:SPA 回退到 index.html;dist 缺失给出构建指引而非裸 404 */
+async function serveV2(res: http.ServerResponse, rel: string): Promise<void> {
+  const clean = rel.replace(/\.\.+/g, "").replace(/^\/+/, "");
+  let file = path.join(FRONTEND_DIST, clean || "index.html");
+  if (!file.startsWith(FRONTEND_DIST)) { res.writeHead(403).end("forbidden"); return; }
+  try {
+    await fs.access(file);
+  } catch {
+    file = path.join(FRONTEND_DIST, "index.html");
+    try {
+      await fs.access(file);
+    } catch {
+      res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" })
+        .end("v2 前端未构建：npm run fe:build 后刷新（或先用旧版 /）");
+      return;
+    }
+  }
+  res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" });
+  createReadStream(file).pipe(res);
+}
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -87,6 +110,12 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
 
   if (p === "/favicon.ico") { res.writeHead(204).end(); return; }
+
+  // React 前端(迁移期并存)
+  if (p === "/v2" || p.startsWith("/v2/")) {
+    await serveV2(res, p.replace(/^\/v2\/?/, ""));
+    return;
+  }
 
   // 启动配置:token + 通道 → 前端 transport。同源、CSP 干净。
   if (p === "/config.js") {

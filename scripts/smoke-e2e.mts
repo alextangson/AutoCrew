@@ -297,6 +297,33 @@ async function main(): Promise<number> {
   await runChecks(1280, 860, false);  // 全量动线 + 布局（上次真 bug 的宽度）
   await runChecks(1680, 900, true);   // 宽屏布局回归
 
+  // V5.5b:/v2 React 壳(dist 存在才校验——未构建不算失败,构建了就必须能开)
+  try {
+    await fs.access(path.resolve(import.meta.dirname, "..", "frontend", "dist", "index.html"));
+    console.log("[smoke] /v2 dist 存在,校验 React 壳");
+    cdp.events.length = 0;
+    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/v2/?token=${token}` }, sessionId);
+    await cdp.waitEvent("Page.loadEventFired");
+    const v2 = (await cdp.send("Runtime.evaluate", {
+      expression: `(async () => { const fails = [];
+        await new Promise(r => setTimeout(r, 1500));
+        const t = document.body.textContent || "";
+        if (!document.querySelector(".shell")) fails.push("v2 壳未渲染");
+        if (document.querySelectorAll(".zone").length !== 4) fails.push("v2 四问分区：实际 " + document.querySelectorAll(".zone").length);
+        if (!t.includes("总编辑")) fails.push("v2 对话栏缺失");
+        if (!t.includes("受众画像")) fails.push("v2 受众画像卡缺失");
+        return { fails }; })()`,
+      awaitPromise: true, returnByValue: true,
+    }, sessionId)) as { result?: { value?: { fails?: string[] } }; exceptionDetails?: { text?: string } };
+    if (v2.exceptionDetails) fails.push(`v2 检查脚本异常：${v2.exceptionDetails.text ?? "unknown"}`);
+    for (const f of v2.result?.value?.fails ?? []) fails.push(f);
+    for (const e of cdp.events) {
+      if (e.method === "Runtime.exceptionThrown") {
+        consoleErrors.push("v2: " + String((e.params.exceptionDetails as Record<string, unknown>)?.text ?? "uncaught"));
+      }
+    }
+  } catch { /* dist 未构建:跳过 v2 校验 */ }
+
   if (consoleErrors.length) fails.push(`console 错误 ${consoleErrors.length} 条：${consoleErrors.slice(0, 3).join(" | ")}`);
 
   cdp.close();
