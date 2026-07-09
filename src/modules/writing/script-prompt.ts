@@ -6,7 +6,7 @@
  */
 import type { TrackPack, StructureMode, QualityGateSpec } from "../packs/pack-schema.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
-import { rulesForPlatform, personaSummary } from "../profile/creator-profile.js";
+import { rulesForPlatform, personaSummary, goalSummary } from "../profile/creator-profile.js";
 import { resolveQualityGate } from "./quality-gate.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 
@@ -133,6 +133,15 @@ function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform): st
     const triggers = profile.audiencePersona?.core?.scrollStopTriggers ?? [];
     if (triggers.length > 0) parts.push(`核心受众的停留触发:${triggers.join("、")}`);
     parts.push("写作时以核心受众为主要对话对象:开头要打中 TA 的处境,论证密度按 TA 的认知水平校准。");
+    parts.push("");
+  }
+
+  // 创作目标(V5.6 /goal):内容服务目标,但不生硬点名目标本身
+  const goal = goalSummary(profile.goal);
+  if (goal) {
+    parts.push("## 创作目标");
+    parts.push(goal);
+    parts.push("选角度与 CTA 时让内容服务这个目标,但不要在正文里生硬点名目标本身。");
     parts.push("");
   }
 

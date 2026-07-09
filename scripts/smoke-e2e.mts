@@ -3,7 +3,7 @@
  *
  * 起隔离 server（AUTOCREW_DATA_DIR=临时目录,绝不碰真实工作区）+ 系统 Chrome headless,
  * 原生 CDP（零新依赖:Node 内置 WebSocket）跑三类检查（D 期后被测对象 = React 前端）:
- *   1. 关键动线:工作台四问八卡/看板五列/回收站往返/编辑器(框选区+采纳+素材)/校准中心/设置六区/素材库/会话控件
+ *   1. 关键动线:工作台四问九卡(V5.6 +目标卡)/看板五列/回收站往返/编辑器(框选区+采纳+素材)/校准中心/设置六区/素材库/会话控件
  *   2. 布局碰撞:.main 内可见元素不得越进常驻对话栏 .dock（1280 与 1680 双视口）
  *   3. 零 console error / 未捕获异常
  * 前置:frontend/dist 必须已构建(npm run fe:build),缺失即失败。任一失败 → 非零退出码。提交前必跑。
@@ -133,11 +133,13 @@ const PAGE_CHECKS = `(async () => {
   // 1) 工作台(四问 IA)
   ok(!!document.querySelector(".shell"), "壳渲染");
   ok(document.querySelectorAll(".zone").length === 4, "四问分区", "实际 " + document.querySelectorAll(".zone").length);
-  ok(document.querySelectorAll(".card").length === 8, "工作台八卡", "实际 " + document.querySelectorAll(".card").length);
+  // V5.6:+目标卡(北极星) → 九卡
+  ok(document.querySelectorAll(".card").length === 9, "工作台九卡", "实际 " + document.querySelectorAll(".card").length);
   const t = document.body.textContent || "";
   ok(t.includes("编辑部已就位"), "问候行");
   ok(t.includes("待审队列"), "待审队列卡");
   ok(t.includes("受众画像"), "受众画像卡");
+  ok(t.includes("目标"), "目标卡");
   ok(t.includes("总编辑"), "对话栏");
   ok(t.includes("＋新想法"), "＋新想法入口");
   ok(t.includes("＋新会话"), "会话控件");

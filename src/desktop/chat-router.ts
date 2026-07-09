@@ -15,7 +15,8 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { executeResearch } from "../tools/research.js";
-import { addWritingRule, loadProfile, personaSummary, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
+import { addWritingRule, loadProfile, personaSummary, goalSummary, type CreatorProfile, type WritingRule } from "../modules/profile/creator-profile.js";
+import { getGoal, setGoal } from "../modules/profile/goal.js";
 import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
 import { reviewAudienceStay } from "../modules/review/audience-review.js";
 import { scoutInspiration } from "../modules/research/scout-search.js";
@@ -71,6 +72,8 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   search_assets: { role: "writer", label: "编剧在翻素材库" },
   generate_persona: { role: "analyst", label: "分析师在推导受众画像" },
   save_persona: { role: "analyst", label: "分析师把校准后的画像归档" },
+  set_goal: { role: "analyst", label: "分析师把目标记进档案" },
+  get_goal: { role: "analyst", label: "分析师在对照目标" },
   audience_review: { role: "review", label: "审核员代入受众画像审稿" },
   scout_inspiration: { role: "scout", label: "侦查员出去搜灵感了" },
   prepare_video_kit: { role: "publisher", label: "发布员在备发布件" },
@@ -119,7 +122,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 14. 用户问「这篇受众会怎么看」「能留住人吗」或要求审稿时，调用 audience_review（稿件 id 在上下文里）。讲结果时按层说人话：谁会停、谁会划走、卡在哪句——引导用户框选那一段直接改。
 15. 用户要「主动搜/去找找/全网搜一下 X」或想按定位补充灵感时，调用 scout_inspiration（可带 query，不带则按定位+画像自动生成搜索词）。搜索未配置时把报错原样告诉用户（去设置配 key），不要假装搜过。
 16. 用户粘贴一大段自己写过的文案时，先问一句用途：是「学我的风格」（→ absorb_style）还是「里面有想法要入灵感库」（→ 提炼观点后 save_topic，reason 注明来自用户旧文）；两者都要就都做。不要不问就默认其一。
-17. 视频稿（抖音/视频号/小红书/B站）要发布时，先调用 prepare_video_kit 备发布件：平台发布文案+分镜表+竖版封面。口播稿是「读的」，发布件才是「发的」——不要把口播稿当发布文案。备好后引导用户看卡片，粘贴发布走 publish_clipboard。`;
+17. 视频稿（抖音/视频号/小红书/B站）要发布时，先调用 prepare_video_kit 备发布件：平台发布文案+分镜表+竖版封面。口播稿是「读的」，发布件才是「发的」——不要把口播稿当发布文案。备好后引导用户看卡片，粘贴发布走 publish_clipboard。
+18. 用户说「/goal …」「我的目标是…」「这个季度要…」时调用 set_goal 记录（目标会注入选题、写作、复盘全链，旧目标自动留档）；问目标或要对照进展时用 get_goal。有目标后，选题推荐与建议围绕目标排优先级，明显偏航时提醒一句。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -536,6 +540,52 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
       },
     },
     {
+      name: "set_goal",
+      description:
+        "记录/更新创作者目标(北极星)。用户说「/goal …」「我的目标是…」「这个季度要…」时调用;目标会注入选题、写作、复盘全链,旧目标自动留档。",
+      parameters: {
+        type: "object",
+        properties: {
+          statement: { type: "string", description: "目标一句话,如「3 个月公众号做到 1 万粉」" },
+          horizon: { type: "string", description: "期限(可选),如 2026-09-30 / 3 个月" },
+          metrics: { type: "array", items: { type: "string" }, description: "关键指标(可选)" },
+        },
+        required: ["statement"],
+      },
+      execute: async (args) => {
+        try {
+          const goal = await setGoal(
+            {
+              statement: String(args.statement ?? ""),
+              horizon: typeof args.horizon === "string" ? args.horizon : undefined,
+              metrics: Array.isArray(args.metrics) ? args.metrics.filter((m): m is string => typeof m === "string") : undefined,
+            },
+            dataDir,
+          );
+          return JSON.stringify({ ok: true, goal, note: "目标已入档——选题、写作、复盘从现在起围绕它对齐。" });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
+      name: "get_goal",
+      description: "读取创作者当前目标。用户问「我的目标是什么」「进展怎么样」或你要围绕目标给建议时调用。",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        try {
+          const goal = await getGoal(dataDir);
+          return JSON.stringify({
+            ok: true,
+            goal,
+            note: goal ? "围绕这个目标给建议。" : "还没设目标——建议用户设一个(set_goal),全链会围绕它对齐。",
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
       name: "audience_review",
       description:
         "受众停留审:代入已校准的受众画像审一篇稿——每层受众会不会停下来读完、在哪里会划走、怎么改。用户说「审一下」「受众会怎么看」「这篇能留住人吗」时调用;用户正看着的稿件 id 在上下文里。",
@@ -786,6 +836,11 @@ export async function runChatTurn(params: {
     if (profile?.platforms?.length) {
       const seats = profile.platforms.map((p) => PLATFORM_LABELS[p] ?? p).join("、");
       systemPrompt += `\n创作者的平台席位：${seats}。派活与一稿多发只在这些平台里给建议,不要推荐用户没开通的平台;用户明确要求新平台时先建议去开通席位。`;
+    }
+    // 目标注入（V5.6 /goal）:总编辑对齐北极星,选题与建议围绕它排优先级
+    const goalLine = goalSummary(profile?.goal);
+    if (goalLine) {
+      systemPrompt += `\n创作者当前目标：${goalLine}。选题推荐、写作建议、数据解读都围绕它对齐;明显偏航时提醒一句。`;
     }
   } catch { /* 无档案照常对话 */ }
 

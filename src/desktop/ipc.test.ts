@@ -68,6 +68,11 @@ describe("IPC_CHANNELS", () => {
     "logs:list",
     "logs:get_run",
     "skills:list",
+    "goal:get",
+    "goal:set",
+    "retro:generate",
+    "retro:list",
+    "retro:get",
     "onboarding:status",
     "onboarding:init",
     "flywheel:import_csv",
@@ -107,8 +112,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 73 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(73);
+  it("has exactly 78 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(78);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -215,6 +220,11 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "logs:list" &&
           ch !== "logs:get_run" &&
           ch !== "skills:list" &&
+          ch !== "goal:get" &&
+          ch !== "goal:set" &&
+          ch !== "retro:generate" &&
+          ch !== "retro:list" &&
+          ch !== "retro:get" &&
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&
           ch !== "dialog:pick_file" &&

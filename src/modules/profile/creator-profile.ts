@@ -103,6 +103,27 @@ export function personaSummary(persona: AudiencePersona | null | undefined, opts
     .join(";");
 }
 
+/** 创作者目标(V5.6 /goal):北极星——注入选题/写作/复盘全链;旧目标留档供复盘对照 */
+export interface CreatorGoal {
+  statement: string;
+  /** 期限,如 "2026-09-30" / "3 个月" */
+  horizon?: string;
+  /** 关键指标,如 ["公众号 1 万粉", "周更 3 篇"] */
+  metrics?: string[];
+  setAt: string;
+  history?: Array<{ statement: string; setAt: string }>;
+}
+
+/** 目标一行话渲染(prompt/复盘共用口径) */
+export function goalSummary(goal: CreatorGoal | null | undefined): string {
+  if (!goal?.statement) return "";
+  return (
+    goal.statement +
+    (goal.horizon ? `(期限:${goal.horizon})` : "") +
+    (goal.metrics?.length ? `;关键指标:${goal.metrics.join("、")}` : "")
+  );
+}
+
 export interface CompetitorAccount {
   platform: string;
   profileUrl: string;
@@ -124,6 +145,8 @@ export interface CreatorProfile {
   platforms: string[];
   /** Target audience persona */
   audiencePersona: AudiencePersona | null;
+  /** 创作者目标(V5.6 /goal,可缺省——存量档案无此字段) */
+  goal?: CreatorGoal | null;
   /** Auto-distilled + user-explicit writing rules */
   writingRules: WritingRule[];
   /** Style boundaries */

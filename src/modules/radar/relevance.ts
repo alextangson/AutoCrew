@@ -10,6 +10,7 @@
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { loadEngineConfig } from "../../engine/config.js";
+import { loadProfile, goalSummary } from "../profile/creator-profile.js";
 
 export interface RelevanceVerdict {
   index: number;
@@ -79,6 +80,14 @@ export async function judgeRelevance(
   const submitTool = buildSubmitTool(captured, pool.length);
   const loopFn = deps?.runLoopImpl ?? runLoop;
 
+  // 目标注入(V5.6 /goal):能推进目标的选题优先——自含加载,零调用方改动
+  let goal = "";
+  try {
+    goal = goalSummary((await loadProfile(dataDir))?.goal);
+  } catch {
+    /* 无档案照常评分 */
+  }
+
   const list = pool.map((c, i) => `${i}. ${c.title}（${c.source}）`).join("\n");
   try {
     await loopFn(config, {
@@ -89,7 +98,7 @@ export async function judgeRelevance(
         "宁缺勿滥:只是泛热点、与定位无关的,给低分。score>=6 的必须附 reason(一句「为什么值得你写」,口吻写给创作者)。",
         "完成后调用 submit_relevance 提交全部评分。",
       ].join("\n"),
-      userMessage: `创作者定位:${positioning}${audience ? `\n受众:${audience}` : ""}\n\n候选:\n${list}`,
+      userMessage: `创作者定位:${positioning}${audience ? `\n受众:${audience}` : ""}${goal ? `\n创作者目标:${goal}(能推进目标的选题优先)` : ""}\n\n候选:\n${list}`,
       tools: [submitTool],
       maxTurns: 3,
     });

@@ -83,6 +83,7 @@ import {
   coverSettingsSetHandler,
 } from "./cover-handlers.js";
 import { logsListHandler, logsGetRunHandler, skillsListHandler } from "./log-handlers.js";
+import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler, retroGetHandler } from "./goal-retro-handlers.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
@@ -738,6 +739,11 @@ export function buildIpcHandlers(
     "logs:list": logsListHandler,
     "logs:get_run": logsGetRunHandler,
     "skills:list": skillsListHandler,
+    "goal:get": goalGetHandler,
+    "goal:set": goalSetHandler,
+    "retro:generate": retroGenerateHandler,
+    "retro:list": retroListHandler,
+    "retro:get": retroGetHandler,
     "onboarding:status": getOnboardingStatus,
     "onboarding:init": completeOnboardingInit,
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),

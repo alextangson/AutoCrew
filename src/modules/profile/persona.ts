@@ -21,6 +21,7 @@ import {
   loadProfile,
   updateProfile,
   normalizeAudiencePersona,
+  goalSummary,
   type AudiencePersona,
   type CreatorProfile,
 } from "./creator-profile.js";
@@ -133,9 +134,11 @@ function buildPersonaUserMessage(
   never: string[] | undefined,
   recentTitles: string,
   signals: PersonaSignals,
+  goal?: string,
 ): string {
   return (
     `创作者定位:${industry}\n` +
+    (goal ? `创作者目标:${goal}(画像要覆盖能帮 TA 达成目标的人群)\n` : "") +
     (rules ? `\n写作规则(反映其口吻与立场):\n${rules}\n` : "") +
     (never?.length ? `\n风格红线(never):${never.join("、")}\n` : "") +
     (recentTitles ? `\n近期稿件标题:\n${recentTitles}\n` : "") +
@@ -190,7 +193,7 @@ export async function generateAudiencePersonaProposal(
       "不要泛泛的「上班族」——要有名字、处境和真实焦虑。" +
       "若提供了已发内容表现/采纳信号:谁停留、谁收藏是比定位想象更硬的证据,画像要向数据修正;但样本小时只做微调,别过拟合单篇爆款。" +
       "完成后调用 submit_persona 提交。",
-    userMessage: buildPersonaUserMessage(industry, rules, boundaries?.never, recentTitles, signals),
+    userMessage: buildPersonaUserMessage(industry, rules, boundaries?.never, recentTitles, signals, goalSummary(profile?.goal)),
     tools: [submitTool],
     maxTurns: 3,
     logMeta: { agent: "audience-researcher" },

@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
+import { toast } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { useRuns } from "../runs";
 import type { Route } from "../App";
@@ -168,6 +169,7 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
       </Zone>
 
       <Zone q="数据与成长" hint="越用越像你,越用越懂你的读者">
+        <GoalCard nav={nav} />
         <Card title="声音内核" kicker={d.calibration.styleCalibrated ? "已校准" : "未校准"}>
           <p>
             写作规则 {d.calibration.activeRuleCount} 条,声音内核 {d.calibration.voiceCoreCount} 条。
@@ -184,5 +186,75 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
         </Card>
       </Zone>
     </div>
+  );
+}
+
+/** 目标卡(V5.6 /goal):北极星 + 周/月复盘一键生成 + 到期提醒。自带数据,不占 dashboard:summary。 */
+function GoalCard({ nav }: { nav: (r: Route) => void }) {
+  const [goal, setGoal] = useState<{ statement: string; horizon?: string; metrics?: string[]; setAt: string } | null>(null);
+  const [retros, setRetros] = useState<Array<{ file: string; mode: string; date: string }>>([]);
+  const [busy, setBusy] = useState<"weekly" | "monthly" | null>(null);
+
+  const load = async () => {
+    const [g, r] = await Promise.all([invoke("goal:get"), invoke("retro:list")]);
+    if (g.ok) setGoal((g as unknown as { data: { goal: typeof goal } }).data.goal);
+    if (r.ok) setRetros((r as unknown as { data: { retros: typeof retros } }).data.retros);
+  };
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const editGoal = async () => {
+    const statement = window.prompt("目标(一句话,如:3 个月公众号做到 1 万粉)", goal?.statement ?? "");
+    if (!statement?.trim()) return;
+    const horizon = window.prompt("期限(可选,如 2026-09-30 / 3 个月)", goal?.horizon ?? "") ?? "";
+    const r = await invoke("goal:set", { statement: statement.trim(), ...(horizon.trim() ? { horizon: horizon.trim() } : {}) });
+    toast(r.ok ? "目标已设——选题、写作、复盘即刻围绕它对齐" : (r.error ?? "保存失败"));
+    if (r.ok) void load();
+  };
+
+  const runRetro = async (mode: "weekly" | "monthly") => {
+    setBusy(mode);
+    toast("分析师在写复盘…约 1 分钟,别关页面");
+    const r = await invoke("retro:generate", { mode });
+    setBusy(null);
+    if (!r.ok) return toast(r.error ?? "复盘生成失败");
+    toast("复盘已生成——点「数据回流」看全文");
+    void load();
+  };
+
+  const lastWeekly = retros.find((r) => r.mode === "weekly");
+  const weeklyDue = !lastWeekly || Date.now() - new Date(lastWeekly.date).getTime() >= 7 * 86_400_000;
+
+  return (
+    <Card title="目标" kicker={goal ? "北极星" : "未设定"}>
+      {goal ? (
+        <>
+          <p>{goal.statement}</p>
+          <p className="muted">
+            {goal.horizon ? `期限:${goal.horizon}` : ""}
+            {(goal.metrics ?? []).length > 0 ? `${goal.horizon ? " · " : ""}指标:${goal.metrics!.join("、")}` : ""}
+          </p>
+        </>
+      ) : (
+        <p className="muted">还没有目标——设一个,选题、写作、复盘都会围绕它对齐(对话里说「/goal …」也行)。</p>
+      )}
+      <div className="row-actions">
+        <button className={goal ? "" : "primary"} onClick={() => void editGoal()}>{goal ? "调整目标" : "设定目标"}</button>
+        <button disabled={busy !== null} onClick={() => void runRetro("weekly")}>
+          {busy === "weekly" ? "生成中…" : `本周复盘${weeklyDue && goal ? " ⏰" : ""}`}
+        </button>
+        <button disabled={busy !== null} onClick={() => void runRetro("monthly")}>
+          {busy === "monthly" ? "生成中…" : "月度深盘"}
+        </button>
+      </div>
+      {retros.length > 0 && (
+        <p className="muted" style={{ cursor: "pointer" }} onClick={() => nav({ view: "report" })}>
+          最近复盘:{retros[0].date}({retros[0].mode === "weekly" ? "周" : "月"})——数据回流页看全文 →
+        </p>
+      )}
+      {goal && weeklyDue && <p className="muted">⏰ 该做本周复盘了——1 分钟出报告。</p>}
+    </Card>
   );
 }
