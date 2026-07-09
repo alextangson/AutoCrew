@@ -30,16 +30,17 @@
     "@sinclair/typebox": "0.34.48"
   },
   "scripts": {
+    "start": "npm run fe:build && npm run serve",
+    "serve": "tsx desktop/server.ts",
+    "fe:build": "cd frontend && npm run build",
+    "fe:dev": "cd frontend && npm run dev",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.ts\" \"mcp/**/*.ts\" index.ts",
     "check": "npm run typecheck && npm run lint && npm test",
-    "serve": "tsx desktop/server.ts",
-    "smoke": "tsx scripts/smoke-e2e.mts",
-    "fe:build": "cd frontend && npm run build",
-    "fe:dev": "cd frontend && npm run dev"
+    "smoke": "tsx scripts/smoke-e2e.mts"
   },
   "openclaw": {
     "extensions": [
