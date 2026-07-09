@@ -100,14 +100,18 @@ Dogfood 抓到并当场修掉的产品 bug：
 - **/v2 功能补全**(`efb5497`):素材库(路径粘贴导入——Electron 文件对话框在浏览器模式本来就坏,
   这是升级不是平移)/对话历史加载+切换(卡片可回放)/编辑器素材挂接区/顶栏＋新想法。
   **/v2 已无缺口,vanilla 不再被任何功能依赖。**
-  **D 期最后一刀(等创始人试用 /v2 后拍板)**:删 desktop/renderer + /v2 接管 / + smoke 的 vanilla
-  段改写为 React 段。届时 token/常量双份同步(tokens.css↔style.css,lib.ts↔dom.js)一并消失。
+- **D 期清场完成**(`d88ea6a`,创始人两次推闸后执行):**React 接管 /**(/v2 留书签别名),
+  删 desktop/renderer 全部 16 文件 + Electron 壳(main.ts/preload.ts/build 脚本/electron+esbuild 依赖);
+  smoke 整体改写为 React 主链走查(四问八卡/看板五列/回收站往返/编辑器/校准/设置六区/素材库/回流,
+  .dock 碰撞双视口,dist 缺失即失败)。对话回复按设计纯文本渲染(总编辑规则 2 一句引导,结构在卡片);
+  markdown.cjs 及其测试随 vanilla 退役(848 单测)。**vanilla 在 git 里一步可回**(d88ea6a 的父提交)。
+  **frontend-v2 契约 A/B/C/D 四期全部收官,前端唯一事实源 = frontend/。**
 **等创始人**:搜索 API key(配置在设置页即可用);X/Reddit 开发者凭据+persona 语言裁决
 (风控评审文档 §2/§3)。~~头条/视频预填~~已裁决延后。
 
 ## 5. 惯例提醒（继承 SESSION-8，仍然有效）
 
-- 改前端必先 `npm run smoke`(现含 /v2 段)；写完自己开浏览器 dogfood 再交付。
-- 起 server：`npx tsx desktop/server.ts`；单测 `npx vitest run`（851）；类型 `npx tsc --noEmit`；
+- 改前端必先 `npm run fe:build` + `npm run smoke`(React 主链走查)；写完自己开浏览器 dogfood 再交付。
+- 起 server：`npx tsx desktop/server.ts`；单测 `npx vitest run`（848）；类型 `npx tsc --noEmit`；
   React 前端改动后 `npm run fe:build` 再 smoke。
 - 禁止上云（PRD-v4 §11）。
