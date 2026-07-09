@@ -82,11 +82,20 @@ Dogfood 抓到并当场修掉的产品 bug：
 
 **未做**(契约已排期):V5.5 React 化 A-D 期(编辑器 diff 全家桶/平台矩阵完整体验的终局载体——
 四问 IA 已在 vanilla 铺好,React 期继承);V5.6 设置中心收口。
+- **V5.5b React A 期落地**(`5b85695`):`frontend/`(Vite+React),server 挂 **/v2** 与 vanilla 并存;
+  transport(invoke+单连接 SSE)/编辑部风 token/双区壳/四问 Dashboard(真数据+真事件行)/
+  **可用的总编辑对话栏**(会话延续+工具进度流+draft/topic/persona/停留审/发布件五类卡)。
+  构建 `npm run fe:build`(50KB gzip);dev `npm run fe:dev`(代理 :4317)。smoke 增 /v2 段
+  (dist 存在才校验:壳/四区/对话栏/画像卡/零 console 错)。
+  **B 期待做**:管线看板(拖拽/回收站/平台矩阵)+ 编辑器(60vh/自动保存/框选浮层/diff 全家桶),
+  设计规格参照 ~/projects/qingmoagent/frontend(只取设计不搬代码,弃因=多租户);C 期任务卡/
+  校准中心/素材/复盘;D 期删 vanilla。token 两份手动同步(tokens.css ↔ style.css),D 期归一。
 **等创始人**:搜索 API key(配置在设置页即可用);X/Reddit 开发者凭据+persona 语言裁决
 (风控评审文档 §2/§3)。~~头条/视频预填~~已裁决延后。
 
 ## 5. 惯例提醒（继承 SESSION-8，仍然有效）
 
-- 改前端必先 `npm run smoke`；写完自己开浏览器 dogfood 再交付。
-- 起 server：`npx tsx desktop/server.ts`；单测 `npx vitest run`（851）；类型 `npx tsc --noEmit`。
+- 改前端必先 `npm run smoke`(现含 /v2 段)；写完自己开浏览器 dogfood 再交付。
+- 起 server：`npx tsx desktop/server.ts`；单测 `npx vitest run`（851）；类型 `npx tsc --noEmit`；
+  React 前端改动后 `npm run fe:build` 再 smoke。
 - 禁止上云（PRD-v4 §11）。
