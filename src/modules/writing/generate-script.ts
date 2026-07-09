@@ -14,6 +14,7 @@ import type { LoopTool, LoopResult } from "../../engine/loop.js";
 import { getPack, getPackForPlatform } from "../packs/index.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
+import { recentContrastPairs } from "../learnings/diff-tracker.js";
 import { buildScriptPrompts } from "./script-prompt.js";
 import type { ScriptRequest } from "./script-prompt.js";
 import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./quality-gate.js";
@@ -161,13 +162,15 @@ async function runGeneration(
   deps?: { runLoopImpl?: typeof runLoop },
   runId?: string,
 ): Promise<GeneratedScript> {
-  const [config, pack, profile] = await Promise.all([
+  const [config, pack, profile, contrastPairs] = await Promise.all([
     loadEngineConfig(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
+    // 改稿对比对(V5.7 活人感):读取失败不阻断写稿——样例是增强,不是依赖
+    recentContrastPairs(3, dataDir).catch(() => []),
   ]);
 
-  const { system, user } = buildScriptPrompts(pack, profile, req);
+  const { system, user } = buildScriptPrompts(pack, profile, req, { contrastPairs });
   const captured: Captured = { payload: null, gateFailures: [] };
   const gate = resolveQualityGate(pack, req.platform);
   const submitTool = buildSubmitTool(captured, gate);

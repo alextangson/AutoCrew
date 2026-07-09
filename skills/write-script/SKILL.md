@@ -1,66 +1,51 @@
 ---
 name: write-script
 description: |
-  Write one complete content draft for Chinese social media. Activate when user asks to write a post, create content, draft an article, or produce copy. This is the executor — it does the actual writing.
+  为中文社媒写一篇完整原创稿。用户要写帖子、出内容、起草文章、产出文案时激活。这是执行者技能——真正动笔的那一个。
 ---
 
-# Write Script
+# 写稿（write-script）
 
-> Executor skill. Single responsibility: generate one complete original script and save it.
+> 执行者技能。单一职责：生成一篇完整原创稿并存库。
 
-## Steps
+## 步骤
 
-1. **Load style & memory context:**
+1. **加载风格与记忆上下文：**
 
-   a. Read `~/.autocrew/STYLE.md` — absorb brand voice, personality, boundaries.
-   b. Read `~/.autocrew/MEMORY.md` — check for writing preferences, past feedback, audience persona.
-   c. Read `~/.autocrew/creator-profile.json` — check `styleCalibrated`, `platforms`, `writingRules`.
-   d. If none exist, proceed with sensible defaults and note that style calibration is recommended.
+   a. 读 `~/.autocrew/STYLE.md` —— 吸收品牌声音、人格、边界。
+   b. 读 `~/.autocrew/creator-profile.json` —— 看 `styleCalibrated`、`platforms`、`writingRules`，以及 `voiceSamples`（创作者原文段落：成稿要像同一个人写的，学语感不抄句子）。
+   c. 都没有就用合理默认开写，并在产出时提示建议先做风格校准。
 
-2. **Research-Augmented Preparation:**
+2. **调研增强（先查再写）：**
 
-   Before writing, gather research context to inject real data:
-
-   a. Use `web_search` to find 3-5 high-quality articles on the same topic
-   b. From the research results:
-      - Extract data points, statistics, and concrete examples
-      - Detect structural patterns (listicle, how-to, myth-busting)
-      - Generate a content outline with hook type, sections, and CTA
-   c. Present the outline to the user for confirmation:
+   a. 用 `web_search` 找 3-5 篇同选题的高质量文章。
+   b. 从结果里抽数据点、统计数字、具体案例；识别常见结构；生成大纲（钩子类型、要点、CTA）。
+   c. 把大纲给用户确认：
       > 基于调研，我建议这样的结构：
-      > - Hook: {type} — {draft}
-      > - 要点 1-N: {key points with supporting data}
-      > - CTA: {style}
+      > - 钩子：{类型} — {草稿}
+      > - 要点 1-N：{要点+支撑数据}
+      > - CTA：{风格}
       > 确认开始写？还是调整大纲？
-   d. User confirms → proceed to writing with research context injected
-   e. User adjusts → update outline and re-confirm
+   d. 用户确认 → 带着调研上下文开写；用户调整 → 改大纲再确认。
 
-   **Key principle:** Never write from nothing. Always have at least 2-3 real data points or examples.
+   **核心原则：绝不凭空写。手里至少要有 2-3 个真实数据点或案例。**
 
-3. If a topic was specified, load its details via `autocrew_topic` action="list" and find the matching topic.
+3. 指定了选题时，经 `autocrew_topic` action="list" 拉取选题详情。
 
-4. **Write the script:**
+4. **写稿：**
 
-   a-c. **Hook / Body / CTA** — 钩子库、结构骨架、平台调整全部以
-   `src/modules/packs/koubo.ts`（知识口播赛道包）为唯一来源：先读取该文件，
-   从 `hooks` 选 ONE 最强钩子类型，按 `structure.hook` / `structure.body` /
-   `structure.cta` 的规则执行。
+   a-c. **钩子 / 正文 / CTA** —— 全部以 `src/modules/packs/koubo.ts`（知识口播赛道包）为唯一来源：先读该文件，从 `hooks` 选一种最强钩子，从 `structureModes` 选一种最贴合选题的结构模式，按 `structure` 的节奏与具体性规则执行（长短句交替、段落长短悬殊、禁止排比腔与套路互动语）。
 
-   d. **Title** — generate platform-optimized title variants using `title-hashtag.ts`:
-   - Call `generateForPlatform(baseTopic, platform)` to get 3-5 title variants.
-   - Pick the best variant as the primary title.
-   - If `web_search` is available, also search 2-3 trending keywords and embed 1 naturally.
-   - Title: 15-25 characters. Can include emoji if it adds value.
+   d. **标题** —— 用 `title-hashtag.ts` 生成平台化标题：
+   - 调 `generateForPlatform(baseTopic, platform)` 拿 3-5 个变体，选最好的做主标题。
+   - 有 `web_search` 就再搜 2-3 个平台热词，自然嵌入 1 个。
+   - 标题 15-25 字，有价值可带 emoji。
 
-   e. **Hashtags** — generate platform-specific hashtags:
-   - Call `generateHashtags(topic, platform, tags)` from `title-hashtag.ts`.
-   - Append hashtags to the body (for platforms that use inline hashtags like XHS/Douyin).
-   - Save hashtags separately in the `hashtags` field for structured access.
+   e. **话题标签** —— 调 `generateHashtags(topic, platform, tags)`；行内标签平台（小红书/抖音）把标签拼在正文尾，同时存进 `hashtags` 字段。
 
-5. **Self-review before saving** (fix any failure, don't just check):
-   按赛道包的 selfReview 清单逐项修正（不是只检查）—— 读 src/modules/packs/koubo.ts 的 selfReview 数组。
+5. **存库前自检**（逐项修正，不是只打勾）：按赛道包的 `selfReview` 清单执行——读 `src/modules/packs/koubo.ts` 的 selfReview 数组。
 
-6. **Save via tool:**
+6. **调工具保存：**
    ```json
    {
      "action": "save",
@@ -74,57 +59,53 @@ description: |
    }
    ```
 
-7. **Auto-review (if style calibrated):**
-   - Check `creator-profile.json` → if `styleCalibrated: true`, automatically run:
+7. **自动审稿（已校准时）：**
+   - 查 `creator-profile.json` → `styleCalibrated: true` 则自动执行：
      ```json
      { "action": "full_review", "content_id": "<saved-id>", "platform": "<platform>" }
      ```
-   - Show the review summary to the user.
-   - If review passes → tell user "审核通过，可以直接发布或做平台改写".
-   - If review fails → show fixes, ask user whether to auto-fix or manually adjust.
+   - 把审稿摘要给用户看。
+   - 过 → 告诉用户「审核通过，可以直接发布或做平台改写」。
+   - 不过 → 列出修正项，问用户自动修还是手动调。
 
-8. **Output to user:**
-   Show the complete draft in chat, including:
-   - Title (with alternative variants from title-hashtag)
-   - Full body text
-   - Hashtags
-   - Review result (if auto-review ran)
-   Then:
+8. **输出给用户：**
+   在会话里展示完整草稿：标题（含备选变体）、正文全文、话题标签、审稿结果（若跑了）。然后：
    > 已保存为草稿。要修改的话直接说，或者确认后我帮你标记为待发布。
 
-9. **If adaptation is needed:**
-   - Do not just trim one draft for another platform.
-   - Use `platform-rewrite` / `autocrew_rewrite` to create the first platform-native version.
+9. **需要适配其他平台时：**
+   - 不要把一稿裁剪凑合成另一平台。
+   - 用 `platform-rewrite` / `autocrew_rewrite` 做平台原生版。
 
-10. **Before final delivery:**
-   - Run `humanizer-zh` / `autocrew_humanize` as the last pass when the text sounds generic, too smooth, or too essay-like.
+10. **最终交付前：**
+   - 文本泛而平、太顺滑、议论文腔时，过一遍 `humanizer-zh` / `autocrew_humanize` 再交。
 
-## Platform-Specific Adjustments
+## 平台特化
 
-以赛道包的 platformAdjustments 为准（src/modules/packs/koubo.ts）。
+以赛道包的 `platformAdjustments` 为准（src/modules/packs/koubo.ts）。
 
-## Title & Hashtag Integration
+## 标题与标签模块
 
-The `title-hashtag.ts` module provides:
-- `generateTitleVariants(topic, platform)` → 3-5 title variants with style labels
-- `generateHashtags(topic, platform, tags)` → deduplicated, platform-limited hashtags
-- `generateForPlatform(topic, platform)` → titles + hashtags + tips in one call
+`title-hashtag.ts` 提供：
+- `generateTitleVariants(topic, platform)` → 3-5 个带风格标注的标题变体
+- `generateHashtags(topic, platform, tags)` → 去重、按平台限量的话题标签
+- `generateForPlatform(topic, platform)` → 标题+标签+提示一次拿全
 
-Always use these for structured title/hashtag generation. The AI agent refines the output — these are starting points, not final answers.
+标题/标签一律走这些函数做结构化生成。它们给的是起点，agent 负责精修——不是终稿。
 
-## Error Handling
+## 出错处理
 
-| Failure | Action |
-|---------|--------|
-| Style/Memory files missing | Write with sensible defaults. Suggest running style-calibration. |
-| Topic not found | Ask user for topic details directly. |
-| Save fails | Output the content in chat so user can copy it. Retry save once. |
-| Review fails to run | Save the draft anyway. Note that review was skipped. |
-| title-hashtag returns empty | Fall back to manual title + basic hashtags from tags. |
+| 情况 | 动作 |
+|------|------|
+| 风格文件缺失 | 用合理默认写，建议跑一次风格校准 |
+| 选题不存在 | 直接问用户选题细节 |
+| 保存失败 | 全文贴在会话里让用户可复制，再重试一次 |
+| 审稿跑不动 | 照存草稿，注明审稿跳过了 |
+| title-hashtag 返回空 | 退回手写标题 + 由 tags 出基础标签 |
 
 ## Changelog
 
+- 2026-07-09: v5 — 全文中文化（工具 JSON 保持英文）；删除对不存在的 ~/.autocrew/MEMORY.md 的引用；接入 voiceSamples 声音样本与 structureModes 结构模式；_writing-style 参考文档退役（与赛道包双源打架）。
+- 2026-06-10: v4 — playbook 抽入 koubo 赛道包（声明式），SKILL 只保留流程编排。
 - 2026-04-01: v3 — Added RAW Engine integration (Research-Augmented Writing). Step 2 now gathers research context before writing.
 - 2026-04-01: v2 — Integrated STYLE.md + title-hashtag.ts + auto-review after save. Added hashtags field, bilibili platform notes.
 - 2026-03-31: v1 — Adapted from Qingmo write-script.md + _writing-style.md. Removed backend API curl dependency. Uses autocrew_content tool. Merged writing style rules inline.
-- 2026-06-10: v4 — playbook 抽入 koubo 赛道包（声明式），SKILL 只保留流程编排。

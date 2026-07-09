@@ -7,6 +7,7 @@
 import type { TrackPack, StructureMode, QualityGateSpec } from "../packs/pack-schema.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
 import { rulesForPlatform, personaSummary, goalSummary } from "../profile/creator-profile.js";
+import type { ContrastPair } from "../learnings/diff-tracker.js";
 import { resolveQualityGate } from "./quality-gate.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 
@@ -21,17 +22,28 @@ export interface ScriptRequest {
   topicId?: string;
 }
 
+export interface ScriptPromptExtras {
+  /** 创始人亲手改稿的对比对(diff-tracker 提取)——教"改动方向" */
+  contrastPairs?: ContrastPair[];
+}
+
 export function buildScriptPrompts(
   pack: TrackPack,
   profile: CreatorProfile | null,
   req: ScriptRequest,
+  extras?: ScriptPromptExtras,
 ): { system: string; user: string } {
-  const system = buildSystemPrompt(pack, profile, req.platform);
+  const system = buildSystemPrompt(pack, profile, req.platform, extras);
   const user = buildUserPrompt(req);
   return { system, user };
 }
 
-function buildSystemPrompt(pack: TrackPack, profile: CreatorProfile | null, platform: ClipboardPlatform): string {
+function buildSystemPrompt(
+  pack: TrackPack,
+  profile: CreatorProfile | null,
+  platform: ClipboardPlatform,
+  extras?: ScriptPromptExtras,
+): string {
   const parts: string[] = [];
 
   // Role + pack name（包可覆盖：公众号图文写手 vs 口播编剧）
@@ -54,6 +66,15 @@ function buildSystemPrompt(pack: TrackPack, profile: CreatorProfile | null, plat
   const gate = resolveQualityGate(pack, platform);
   if (gate) parts.push(renderQualityGate(gate));
 
+  // 提交前自检(V5.7):此前 selfReview 只活在 MCP 技能路径,引擎写稿模型从没见过它
+  if (pack.selfReview.length > 0) {
+    parts.push("## 提交前自检(逐项过一遍,不达标先改再提交)");
+    for (const q of pack.selfReview) {
+      parts.push(`- ${q}`);
+    }
+    parts.push("");
+  }
+
   // Platform adjustments
   const platformAdj = pack.platformAdjustments[platform];
   if (platformAdj) {
@@ -63,7 +84,7 @@ function buildSystemPrompt(pack: TrackPack, profile: CreatorProfile | null, plat
     parts.push("");
   }
 
-  const profileSection = profile ? renderProfile(profile, platform) : "";
+  const profileSection = profile ? renderProfile(profile, platform, extras?.contrastPairs) : "";
   if (profileSection) parts.push(profileSection);
 
   // Compliance
@@ -122,7 +143,7 @@ function renderStructure(pack: TrackPack): string {
   return parts.join("\n");
 }
 
-function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform): string {
+function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform, contrastPairs?: ContrastPair[]): string {
   const parts: string[] = [];
 
   // 受众画像(V5.1):写手必须知道写给谁——core 层全量,邻近/意外一行带过
@@ -142,6 +163,27 @@ function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform): st
     parts.push("## 创作目标");
     parts.push(goal);
     parts.push("选角度与 CTA 时让内容服务这个目标,但不要在正文里生硬点名目标本身。");
+    parts.push("");
+  }
+
+  // 声音样本(V5.7 活人感):样例产生声音,规则只做兜底——这是模仿语感的第一素材
+  const samples = (profile.voiceSamples ?? []).filter((s) => s.trim() !== "");
+  if (samples.length > 0) {
+    parts.push("## 创作者声音样本");
+    parts.push("下面是创作者本人写的段落。成稿要像同一个人写的——学语感、节奏、用词习惯,不是学内容;禁止照抄或化用其中的句子:");
+    samples.forEach((s, i) => {
+      parts.push(`【样本 ${i + 1}】${s.slice(0, 300)}`);
+    });
+    parts.push("");
+  }
+
+  // 改稿方向(V5.7):创始人亲手改过的地方,教的是品味方向
+  if (contrastPairs && contrastPairs.length > 0) {
+    parts.push("## 改稿方向(创作者亲手改过的地方)");
+    parts.push("每组左边是被创作者删改的写法,右边是 TA 改成的样子。学改动方向,新稿不要再犯左边的毛病:");
+    for (const p of contrastPairs) {
+      parts.push(`- 改前:「${p.before}」→ 改后:「${p.after}」${p.note ? `(创作者备注:${p.note})` : ""}`);
+    }
     parts.push("");
   }
 

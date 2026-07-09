@@ -58,10 +58,10 @@ describe("logs:list / logs:get_run", () => {
 });
 
 describe("skills:list", () => {
-  it("读回仓库全部技能(≥19),含标题与全文", async () => {
+  it("读回仓库全部技能(≥18,V5.7 _writing-style 退役),含标题与全文", async () => {
     const r = (await skillsListHandler({})) as { ok: boolean; data: { skills: Array<{ id: string; title: string; content: string }> } };
     expect(r.ok).toBe(true);
-    expect(r.data.skills.length).toBeGreaterThanOrEqual(19);
+    expect(r.data.skills.length).toBeGreaterThanOrEqual(18);
     for (const s of r.data.skills) {
       expect(s.title.length).toBeGreaterThan(0);
       expect(s.content.length).toBeGreaterThan(0);

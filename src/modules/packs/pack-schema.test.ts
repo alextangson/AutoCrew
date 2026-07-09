@@ -24,7 +24,8 @@ describe("koubo pack shape", () => {
     expect(KOUBO_PACK.structure.hook.length).toBeGreaterThan(0);
     expect(KOUBO_PACK.structure.body.length).toBeGreaterThanOrEqual(4);
     expect(KOUBO_PACK.structure.cta.length).toBeGreaterThan(0);
-    expect(KOUBO_PACK.selfReview.length).toBeGreaterThanOrEqual(8);
+    // V5.7:自检从 10 条字数打勾收敛为 7 条功能性检验(活人感重写)
+    expect(KOUBO_PACK.selfReview.length).toBeGreaterThanOrEqual(7);
   });
 
   it("reward: default exists and every byPlatform entry names its primary inside its own weights", () => {

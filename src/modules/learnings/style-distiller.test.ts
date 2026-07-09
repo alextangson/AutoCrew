@@ -13,6 +13,8 @@ import {
   distillStyleRules,
   analyzeStyleSamples,
   shouldDistillStyle,
+  verifyVerbatimExcerpts,
+  fallbackExcerpts,
 } from "./style-distiller.js";
 import { recordDiff, listDiffs } from "./diff-tracker.js";
 import { loadProfile, addWritingRule } from "../profile/creator-profile.js";
@@ -346,6 +348,61 @@ describe("analyzeStyleSamples", () => {
 
     const profile = JSON.parse(await fs.readFile(path.join(testDir, "creator-profile.json"), "utf-8"));
     expect(profile.writingRules[0].scope).toBe("voice_core");
+  });
+});
+
+describe("voice excerpts (V5.7 声音样本)", () => {
+  const SAMPLE =
+    "创业者找我聊的时候,十有八九第一句话是问该买哪个课。我的答案从来只有一个:先别买,把你上周真实卡住的那个问题写下来。\n\n第二段讲方法论,这里的内容也足够长,超过二十个字没有问题。";
+
+  function makeRunLoopWithExcerpts(
+    rules: Array<{ rule: string; evidence: string; confidence: number }>,
+    excerpts: string[],
+  ): (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> {
+    return async (_cfg, opts) => {
+      const submitTool = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_rules");
+      if (!submitTool) throw new Error("submit_rules tool not found");
+      await submitTool.execute({ rules, excerpts });
+      return { finalMessage: "done", turns: 2, totalTokens: 100, toolCallCount: 1, stopReason: "no_tool_calls" } satisfies LoopResult;
+    };
+  }
+
+  it("persists verbatim excerpts, drops fabricated ones", async () => {
+    const verbatim = "先别买,把你上周真实卡住的那个问题写下来。";
+    const fabricated = "这一段是模型自己编的,样本里根本没有这句话,超过二十个字。";
+    const runLoopImpl = makeRunLoopWithExcerpts(GOOD_RULES, [verbatim, fabricated]);
+
+    const result = await analyzeStyleSamples([SAMPLE], testDir, { runLoopImpl });
+
+    const profile = await loadProfile(testDir);
+    expect(profile!.voiceSamples).toContain(verbatim);
+    expect(profile!.voiceSamples).not.toContain(fabricated);
+    expect(result.voiceSamplesSaved).toBeGreaterThan(0);
+    expect(result.summary).toContain("声音样本");
+  });
+
+  it("falls back to first paragraphs when model submits no usable excerpts", async () => {
+    const runLoopImpl = makeRunLoop([GOOD_RULES]);
+    await analyzeStyleSamples([SAMPLE], testDir, { runLoopImpl });
+
+    const profile = await loadProfile(testDir);
+    expect(profile!.voiceSamples!.length).toBeGreaterThan(0);
+    expect(profile!.voiceSamples![0]).toContain("创业者找我聊的时候");
+  });
+
+  it("verifyVerbatimExcerpts: tolerates whitespace differences, rejects short/foreign text", () => {
+    const samples = ["第一句话。第二句话继续继续继续继续继续继续。"];
+    const withNewline = "第一句话。\n第二句话继续继续继续继续继续继续。";
+    expect(verifyVerbatimExcerpts([withNewline], samples)).toEqual([withNewline]);
+    expect(verifyVerbatimExcerpts(["太短"], samples)).toEqual([]);
+    expect(verifyVerbatimExcerpts(["完全不在样本里的一段文字并且长度超过二十个字符啊"], samples)).toEqual([]);
+  });
+
+  it("fallbackExcerpts: takes first paragraph ≥20 chars, slices to 200", () => {
+    const long = "长".repeat(300);
+    const out = fallbackExcerpts([`短段。\n\n${long}`], 2);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toHaveLength(200);
   });
 });
 

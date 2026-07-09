@@ -10,6 +10,7 @@ import {
   addWritingRule,
   updateWritingRule,
   addCompetitor,
+  addVoiceSamples,
   detectMissingInfo,
   rulesForPlatform,
   type CreatorProfile,
@@ -319,5 +320,32 @@ describe("normalizeAudiencePersona / personaSummary (V5.1)", () => {
     expect(all).toContain("核心受众=小林");
     expect(all).toContain("邻近受众=晓雯");
     expect(all).toContain("没技术背景");
+  });
+});
+
+describe("addVoiceSamples (V5.7 声音样本)", () => {
+  it("appends trimmed samples, dedupes by text, skips empties", async () => {
+    await addVoiceSamples(["  第一段声音样本  ", "", "第二段"], testDir);
+    await addVoiceSamples(["第一段声音样本", "第三段"], testDir);
+
+    const profile = await loadProfile(testDir);
+    expect(profile!.voiceSamples).toEqual(["第一段声音样本", "第二段", "第三段"]);
+  });
+
+  it("caps at 5 keeping the most recent", async () => {
+    await addVoiceSamples(["s1", "s2", "s3", "s4", "s5"], testDir);
+    await addVoiceSamples(["s6", "s7"], testDir);
+
+    const profile = await loadProfile(testDir);
+    expect(profile!.voiceSamples).toEqual(["s3", "s4", "s5", "s6", "s7"]);
+  });
+
+  it("survives updateProfile merges (field preserved when not in updates)", async () => {
+    await addVoiceSamples(["保留我"], testDir);
+    await updateProfile({ industry: "AI 教育" }, testDir);
+
+    const profile = await loadProfile(testDir);
+    expect(profile!.industry).toBe("AI 教育");
+    expect(profile!.voiceSamples).toEqual(["保留我"]);
   });
 });

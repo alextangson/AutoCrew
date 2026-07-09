@@ -22,7 +22,7 @@ description: |
 1. Determine writing parameters.
    - IF user references a saved topic → extract topic_id, title, description
    - IF user gives a new topic directly → use that as title/description
-   - IF platform not specified → check `~/.autocrew/MEMORY.md` for default platform, or ask user
+   - IF platform not specified → check `platforms` in `~/.autocrew/creator-profile.json` for the default, or ask user
 
 2. **Guardrail for scope.**
    Do NOT use this skill for light edits: 改标题, 缩短, 精简, 润色, 生成摘要, 标签建议.

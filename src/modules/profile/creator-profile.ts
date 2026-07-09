@@ -149,6 +149,11 @@ export interface CreatorProfile {
   goal?: CreatorGoal | null;
   /** Auto-distilled + user-explicit writing rules */
   writingRules: WritingRule[];
+  /**
+   * 创作者原文段落(爆款吸收时逐字截取,V5.7 活人感)——写稿时作为声音样例注入。
+   * 规则产生合规,样例产生声音:这是模仿语感的第一素材,抽象规则只做兜底。
+   */
+  voiceSamples?: string[];
   /** Style boundaries */
   styleBoundaries: { never: string[]; always: string[] };
   /** Competitor accounts (Pro) */
@@ -277,6 +282,24 @@ export async function addWritingRule(rule: Omit<WritingRule, "createdAt">, dataD
   } else {
     profile.writingRules.push({ ...rule, createdAt: new Date().toISOString() });
   }
+  await saveProfile(profile, dataDir);
+  return profile;
+}
+
+/** 声音样本上限:再多注意力摊薄,且写稿 prompt 的 token 预算要留给调研材料 */
+const VOICE_SAMPLES_CAP = 5;
+
+/**
+ * 追加声音样本(逐字段落):按文本去重,超上限保留最新——最近的爆款最能代表当前声音。
+ */
+export async function addVoiceSamples(samples: string[], dataDir?: string): Promise<CreatorProfile> {
+  const profile = (await loadProfile(dataDir)) || emptyProfile();
+  const merged = [...(profile.voiceSamples ?? [])];
+  for (const s of samples) {
+    const text = s.trim();
+    if (text && !merged.includes(text)) merged.push(text);
+  }
+  profile.voiceSamples = merged.slice(-VOICE_SAMPLES_CAP);
   await saveProfile(profile, dataDir);
   return profile;
 }

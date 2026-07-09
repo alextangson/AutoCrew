@@ -114,6 +114,64 @@ export async function listDiffs(
   return diffs;
 }
 
+// ─── 对比对(V5.7 活人感):创始人亲手改过的 before/after 注入写稿 prompt ────────
+
+export interface ContrastPair {
+  /** 被改掉的写法(变更区 ± 上下文) */
+  before: string;
+  /** 改成的样子(同窗口) */
+  after: string;
+  /** 创作者改稿时留的"为什么改" */
+  note?: string;
+}
+
+const PAIR_CONTEXT = 40;
+const PAIR_SIDE_MAX = 160;
+/** 变更核心两侧都短于此 = 标点/错字修正,无风格信号 */
+const PAIR_MIN_CORE = 6;
+
+/** 掐掉公共前后缀,取变更核心 ± 上下文窗口——整篇 diff 直接注入太噪,改动点才是信号 */
+export function changedWindow(
+  before: string,
+  after: string,
+): { before: string; after: string; coreLen: number } {
+  let s = 0;
+  while (s < before.length && s < after.length && before[s] === after[s]) s++;
+  let eB = before.length;
+  let eA = after.length;
+  while (eB > s && eA > s && before[eB - 1] === after[eA - 1]) {
+    eB--;
+    eA--;
+  }
+  const from = Math.max(0, s - PAIR_CONTEXT);
+  const clip = (text: string, end: number) => {
+    const win = text.slice(from, Math.min(text.length, end + PAIR_CONTEXT));
+    return win.length > PAIR_SIDE_MAX ? win.slice(0, PAIR_SIDE_MAX) + "…" : win;
+  };
+  return { before: clip(before, eB), after: clip(after, eA), coreLen: Math.max(eB - s, eA - s) };
+}
+
+/**
+ * 最近的有效改稿对比对(正文编辑,按时间倒序):喂给写稿 prompt 学"改动方向"。
+ * 过滤标点级微调;整篇重写窗口自动截断到 PAIR_SIDE_MAX。
+ */
+export async function recentContrastPairs(limit = 3, dataDir?: string): Promise<ContrastPair[]> {
+  const diffs = await listDiffs(undefined, dataDir);
+  const pairs: ContrastPair[] = [];
+  for (const d of diffs) {
+    if (d.field !== "body" || d.before === d.after) continue;
+    const win = changedWindow(d.before, d.after);
+    if (win.coreLen < PAIR_MIN_CORE) continue;
+    pairs.push({
+      before: win.before,
+      after: win.after,
+      ...(d.changeType ? { note: d.changeType } : {}),
+    });
+    if (pairs.length >= limit) break;
+  }
+  return pairs;
+}
+
 /**
  * Analyze a before/after pair to detect common edit patterns.
  */

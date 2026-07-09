@@ -13,7 +13,7 @@ import { loadEngineConfig } from "../../engine/config.js";
 import { getDataDir } from "../../storage/local-store.js";
 import { listDiffs } from "./diff-tracker.js";
 import type { EditDiff } from "./diff-tracker.js";
-import { updateProfile, loadProfile, addWritingRule } from "../profile/creator-profile.js";
+import { updateProfile, loadProfile, addWritingRule, addVoiceSamples } from "../profile/creator-profile.js";
 import type { WritingRule, RuleScope } from "../profile/creator-profile.js";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -23,6 +23,8 @@ export interface StyleDistillResult {
   skippedDuplicates: number;
   /** distillStyleRules: diffs consumed; analyzeStyleSamples: samples consumed */
   diffsAnalyzed: number;
+  /** analyzeStyleSamples 专属:本轮存入的声音样本段数(V5.7 活人感) */
+  voiceSamplesSaved?: number;
   summary: string;
 }
 
@@ -110,7 +112,7 @@ function validateRules(args: Record<string, unknown>): SubmitValidation {
   return { ok: true, rules: out };
 }
 
-function buildSubmitTool(captured: { rules: RuleInput[] | null }): LoopTool {
+function buildSubmitTool(captured: { rules: RuleInput[] | null; excerpts?: string[] | null }): LoopTool {
   return {
     name: "submit_rules",
     description: "提交分析出的写作规则，每次最多 3 条。",
@@ -134,6 +136,12 @@ function buildSubmitTool(captured: { rules: RuleInput[] | null }): LoopTool {
             required: ["rule", "evidence", "confidence"],
           },
         },
+        excerpts: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "（仅爆款样本分析时）最能代表作者声音的原文段落 2-3 段，每段 60-200 字。必须一字不改地从样本里连续截取，禁止改写或拼接",
+        },
       },
       required: ["rules"],
     },
@@ -141,6 +149,11 @@ function buildSubmitTool(captured: { rules: RuleInput[] | null }): LoopTool {
       const result = validateRules(args);
       if (!result.ok) return result.error;
       captured.rules = result.rules.slice(0, 3);
+      if (Array.isArray(args.excerpts)) {
+        captured.excerpts = (args.excerpts as unknown[])
+          .filter((e): e is string => typeof e === "string" && e.trim() !== "")
+          .slice(0, 3);
+      }
       return "已收到规则";
     },
   };
@@ -167,7 +180,9 @@ function buildSamplesSystemPrompt(): string {
     "根据用户提供的爆款样本文本，",
     "提炼最多 3 条写作偏好规则（用词癖好/句子节奏/招牌短语）。",
     "要求：中文祈使句；具体可执行；每条附 evidence 和 confidence（0-1）。",
-    "完成后调用 submit_rules 提交。",
+    "同时在 excerpts 字段里挑 2-3 段最能代表作者声音的原文段落（每段 60-200 字）：",
+    "必须一字不改地从样本里连续截取——这些段落会作为声音样例直接喂给写手，改写过的没有用。",
+    "完成后调用 submit_rules 一并提交。",
   ].join("\n");
 }
 
@@ -194,6 +209,32 @@ function buildSamplesUserMessage(samples: string[], existingRules: WritingRule[]
     .map((s, i) => `【样本 ${i + 1}】\n${s.slice(0, 600)}`)
     .join("\n\n");
   return `现有规则：\n${rulesText}\n\n爆款样本：\n${samplesText}`;
+}
+
+// ─── Voice excerpts (V5.7 活人感) ─────────────────────────────────────────────
+
+/** 逐字校验:空白归一后仍须是某条样本的连续片段——模型改写过的段落一律丢弃 */
+export function verifyVerbatimExcerpts(excerpts: string[], samples: string[]): string[] {
+  const norm = (s: string) => s.replace(/\s+/g, "");
+  const normSamples = samples.map(norm);
+  return excerpts.filter((e) => {
+    const n = norm(e.trim());
+    return n.length >= 20 && n.length <= 400 && normSamples.some((s) => s.includes(n));
+  });
+}
+
+/** 兜底:模型没交出合格段落时,直接取各样本的首个自然段(爆款开头通常声音密度最高) */
+export function fallbackExcerpts(samples: string[], want: number): string[] {
+  const out: string[] = [];
+  for (const s of samples) {
+    if (out.length >= want) break;
+    const para = s
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .find((p) => p.length >= 20);
+    if (para) out.push(para.length > 200 ? para.slice(0, 200) : para);
+  }
+  return out;
 }
 
 // ─── Persist helpers ──────────────────────────────────────────────────────────
@@ -312,7 +353,7 @@ export async function analyzeStyleSamples(
   ]);
   const existingRules = profile?.writingRules ?? [];
 
-  const captured: { rules: RuleInput[] | null } = { rules: null };
+  const captured: { rules: RuleInput[] | null; excerpts?: string[] | null } = { rules: null, excerpts: null };
   const submitTool = buildSubmitTool(captured);
   const loopFn = deps?.runLoopImpl ?? runLoop;
 
@@ -336,12 +377,23 @@ export async function analyzeStyleSamples(
   if (newRules.length > 0 || skipped > 0) {
     await updateProfile({ styleCalibrated: true }, dataDir);
   }
+
+  // 声音样本(V5.7):逐字段落落库,写稿时注入。模型改写的丢弃,不足则取样本首段兜底
+  let excerpts = verifyVerbatimExcerpts(captured.excerpts ?? [], samples);
+  if (excerpts.length < 2) {
+    const fill = fallbackExcerpts(samples, 3 - excerpts.length).filter((f) => !excerpts.includes(f));
+    excerpts = [...excerpts, ...fill];
+  }
+  if (excerpts.length > 0) await addVoiceSamples(excerpts, dataDir);
+
   const evidenceByRule = new Map(captured.rules.map((r) => [r.rule, r.evidence]));
+  const base = buildSummary(newRules, evidenceByRule);
   return {
     newRules,
     skippedDuplicates: skipped,
     diffsAnalyzed: samples.length,
-    summary: buildSummary(newRules, evidenceByRule),
+    voiceSamplesSaved: excerpts.length,
+    summary: excerpts.length > 0 ? `${base}；存入 ${excerpts.length} 段声音样本(写稿时注入模仿)` : base,
   };
 }
 

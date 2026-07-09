@@ -148,6 +148,23 @@ describe("buildScriptPrompts", () => {
     expect(result.user).toContain("避免编造数据");
   });
 
+  it("system prompt renders koubo structureModes (V5.7 活人感重写)", () => {
+    const req: ScriptRequest = { topic: "AI技能", platform: "douyin" };
+    const result = buildScriptPrompts(KOUBO_PACK, null, req);
+    expect(result.system).toContain("结构模式");
+    expect(result.system).toContain("单点打穿");
+    expect(result.system).toContain("亲历复盘");
+  });
+
+  it("system prompt renders selfReview checklist (此前只活在 MCP 路径)", () => {
+    const req: ScriptRequest = { topic: "AI技能", platform: "douyin" };
+    const result = buildScriptPrompts(KOUBO_PACK, null, req);
+    expect(result.system).toContain("提交前自检");
+    for (const q of KOUBO_PACK.selfReview) {
+      expect(result.system).toContain(q);
+    }
+  });
+
   it("system prompt skips disabled writing rules and includes enabled ones", () => {
     const profile: CreatorProfile = {
       industry: "AI教育",
@@ -170,5 +187,47 @@ describe("buildScriptPrompts", () => {
 
     expect(result.system).toContain("启用的规则");
     expect(result.system).not.toContain("停用的规则");
+  });
+});
+
+describe("voice sections (V5.7 活人感)", () => {
+  const baseProfile: CreatorProfile = {
+    industry: "AI教育",
+    platforms: ["douyin"],
+    audiencePersona: null,
+    writingRules: [],
+    styleBoundaries: { never: [], always: [] },
+    competitorAccounts: [],
+    performanceHistory: [],
+    styleCalibrated: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  };
+  const req: ScriptRequest = { topic: "AI技能", platform: "douyin" };
+
+  it("renders voiceSamples with mimic-not-copy instruction", () => {
+    const profile = { ...baseProfile, voiceSamples: ["创业者找我聊的时候,十有八九先问买哪个课。"] };
+    const result = buildScriptPrompts(KOUBO_PACK, profile, req);
+
+    expect(result.system).toContain("创作者声音样本");
+    expect(result.system).toContain("创业者找我聊的时候");
+    expect(result.system).toContain("禁止照抄");
+  });
+
+  it("renders contrast pairs with before/after and note", () => {
+    const result = buildScriptPrompts(KOUBO_PACK, baseProfile, req, {
+      contrastPairs: [{ before: "赋能你的成长", after: "帮你把这事做成", note: "太营销腔" }],
+    });
+
+    expect(result.system).toContain("改稿方向");
+    expect(result.system).toContain("赋能你的成长");
+    expect(result.system).toContain("帮你把这事做成");
+    expect(result.system).toContain("太营销腔");
+  });
+
+  it("omits both sections when no samples or pairs exist", () => {
+    const result = buildScriptPrompts(KOUBO_PACK, baseProfile, req, { contrastPairs: [] });
+    expect(result.system).not.toContain("创作者声音样本");
+    expect(result.system).not.toContain("改稿方向");
   });
 });

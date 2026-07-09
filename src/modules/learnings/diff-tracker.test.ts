@@ -7,6 +7,8 @@ import {
   recordDiff,
   listDiffs,
   getPatternFrequency,
+  changedWindow,
+  recentContrastPairs,
 } from "../learnings/diff-tracker.js";
 
 let testDir: string;
@@ -168,5 +170,55 @@ describe("getPatternFrequency", () => {
 
     const freq = await getPatternFrequency(testDir);
     expect(freq[0].count).toBeGreaterThanOrEqual(freq[1]?.count ?? 0);
+  });
+});
+
+describe("changedWindow (V5.7 对比对)", () => {
+  it("extracts change core with context, trimming common prefix/suffix", () => {
+    const prefix = "前".repeat(100);
+    const suffix = "后".repeat(100);
+    const win = changedWindow(`${prefix}旧的写法在这里${suffix}`, `${prefix}新写法${suffix}`);
+
+    expect(win.before).toContain("旧的写法在这里");
+    expect(win.after).toContain("新写法");
+    // 窗口 = 核心 ± 40 上下文,不是整篇
+    expect(win.before.length).toBeLessThan(100);
+    expect(win.coreLen).toBe(7);
+  });
+
+  it("clips oversized windows with ellipsis", () => {
+    const core = "改".repeat(300);
+    const win = changedWindow(`开头${core}结尾`, "开头短结尾");
+    expect(win.before.length).toBeLessThanOrEqual(161);
+    expect(win.before.endsWith("…")).toBe(true);
+  });
+});
+
+describe("recentContrastPairs (V5.7 对比对)", () => {
+  it("returns body edits with note, skips typo-level and non-body diffs", async () => {
+    // 有效:整句改写(核心 > 6 字),带"为什么改"
+    await recordDiff("c1", "body", "这个方法非常好用而且很棒很棒", "说白了这招就是快", testDir, "太营销腔了");
+    // 无效:标点级微调(核心 < 6 字)
+    await recordDiff("c2", "body", "今天天气很好我们出门", "今天天气很好我们出行", testDir);
+    // 无效:标题编辑不进对比对
+    await recordDiff("c3", "title", "旧标题旧标题旧标题", "新标题完全不同的写法", testDir);
+
+    const pairs = await recentContrastPairs(3, testDir);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].before).toContain("非常好用");
+    expect(pairs[0].after).toContain("说白了");
+    expect(pairs[0].note).toBe("太营销腔了");
+  });
+
+  it("honors the limit", async () => {
+    for (let i = 0; i < 5; i++) {
+      await recordDiff(`c${i}`, "body", `第${i}版本的旧写法又长又空洞`, `第${i}版改成了有劲的短句`, testDir);
+    }
+    const pairs = await recentContrastPairs(3, testDir);
+    expect(pairs).toHaveLength(3);
+  });
+
+  it("returns empty array when no diffs exist", async () => {
+    expect(await recentContrastPairs(3, testDir)).toEqual([]);
   });
 });
