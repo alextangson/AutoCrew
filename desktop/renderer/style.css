@@ -1294,3 +1294,15 @@ label {
   width: 100%; border: 1px solid var(--border); border-radius: var(--radius);
   padding: 6px 10px; font: inherit; font-size: 13px; background: var(--card); margin: 2px 0 10px;
 }
+
+/* V5.5:Dashboard 四问分区 */
+.dash-zone { margin: 18px 0 6px; }
+.dash-zone-head { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.dash-zone-q { font-family: var(--font-serif, inherit); font-size: 15px; font-weight: 700; margin: 0; letter-spacing: 0.02em; }
+.dash-zone-hint { font-size: 12px; }
+.dash-idle { padding: 6px 2px; margin: 0 0 6px; }
+.dash-pipe-click { cursor: pointer; }
+.dash-pipe-click:hover .dash-pipe-n { color: var(--ink); text-decoration: underline; }
+
+.style-persona-row { display: flex; gap: 8px; align-items: baseline; margin: 8px 0; flex-wrap: wrap; }
+.style-persona-text { flex: 1; min-width: 200px; font-size: 13px; }

@@ -124,9 +124,11 @@ const PAGE_CHECKS = `(async () => {
 
   await sleep(1200);
   // 1) 首页
-  ok(document.querySelectorAll(".dash-card").length === 5, "首页五卡", "实际 " + document.querySelectorAll(".dash-card").length);
+  ok(document.querySelectorAll(".dash-zone").length === 4, "首页四问分区", "实际 " + document.querySelectorAll(".dash-zone").length);
+  ok(document.querySelectorAll(".dash-card").length === 7, "首页七卡(V5.5 四问 IA)", "实际 " + document.querySelectorAll(".dash-card").length);
   ok(/编辑部已就位/.test(document.getElementById("view-dashboard").textContent), "首页问候");
   ok((document.getElementById("view-dashboard").textContent || "").includes("待审队列"), "待审队列卡");
+  ok((document.getElementById("view-dashboard").textContent || "").includes("受众画像"), "受众画像卡");
   collide("dashboard");
 
   // 2) 看板

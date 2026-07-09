@@ -5,7 +5,7 @@
  * 灵感摘要（今日 top-3 可写 + 入库理由）。每个数据源独立降级——任一失败不拖垮整屏。
  * 红线：一切数字来自真实 store，无引擎事件不造活性（PRD-v4 §7.4）。
  */
-import { loadProfile } from "../modules/profile/creator-profile.js";
+import { loadProfile, personaSummary } from "../modules/profile/creator-profile.js";
 import { listContents, listTopics, normalizeLegacyStatus, type Content } from "../storage/local-store.js";
 
 const REVIEW_STATUSES = new Set(["reviewing", "cover_pending"]);
@@ -27,6 +27,8 @@ export interface DashboardSummary {
     activeRuleCount: number;
     voiceCoreCount: number;
     recentRules: Array<{ rule: string; createdAt: string }>;
+    /** 受众画像状态(V5.5 四问 IA「数据与成长」区):一行摘要 + 是否经用户校准 */
+    persona: { summary: string; calibrated: boolean };
   };
   reviewQueue: Array<{
     id: string; title: string; platform: string | null;
@@ -69,6 +71,10 @@ export async function buildDashboardSummary(dataDir?: string, now = Date.now()):
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
       .slice(0, RECENT_RULES_LIMIT)
       .map((r) => ({ rule: r.rule, createdAt: r.createdAt ?? "" })),
+    persona: {
+      summary: personaSummary(profile?.audiencePersona),
+      calibrated: Boolean(profile?.audiencePersona?.calibratedAt),
+    },
   };
 
   // ── 管线摘要 + 分组 ──

@@ -1,8 +1,11 @@
 /**
- * Dashboard 经营层首页（IA v4.2 §1/§2 第一批组件）。
- * 三主卡全功能（待审队列/回填待办/校准状态）+ 两摘要朴素卡（管线/灵感 top-3）。
- * 红线：全部数字来自 dashboard:summary 真实聚合,无引擎事件不造活性（§7.4）;
- * 空态即 onboarding（§3）——每张卡的空态就是引导入口,永不阻断。
+ * Dashboard 经营层首页（IA v5 §0 四问重排,2026-07-08 创始人「宏观零散」纠偏）。
+ * 信息架构 = 依次回答四个问题,而不是卡片平铺:
+ *   ① 今天该我做什么(行动区:待审/回填)
+ *   ② 团队正在干什么(任务带/情报源/派侦查)
+ *   ③ 内容资产什么状态(管线可下钻/今日可写)
+ *   ④ 数据与成长(声音内核/受众画像)
+ * 红线不变:全部数字来自真实聚合,无引擎事件不造活性（§7.4）;空态即 onboarding（§3）。
  */
 
 const REVIEW_PRIORITY_META = {
@@ -17,6 +20,19 @@ function dashCard(title, kicker, role) {
   return el;
 }
 
+/** 四问分区容器:问题即标题,区内再放卡（宏观叙事在区,细节在卡） */
+function dashZone(view, question, hint) {
+  const zone = h("section", { class: "dash-zone" });
+  const head = h("div", { class: "dash-zone-head" });
+  head.appendChild(h("h3", { class: "dash-zone-q" }, question));
+  if (hint) head.appendChild(h("span", { class: "muted dash-zone-hint" }, hint));
+  zone.appendChild(head);
+  const grid = h("div", { class: "dash-grid" });
+  zone.appendChild(grid);
+  view.appendChild(zone);
+  return { zone, grid };
+}
+
 /** 从 dashboard 打开某稿工作台：进看板视图再开（复用 board 的容器与返回逻辑） */
 function dashOpenContent(contentId) {
   switchView("board");
@@ -28,12 +44,13 @@ function dashOpenContent(contentId) {
 function renderRunStrip(container, state) {
   container.innerHTML = "";
   const order = state.runOrder || [];
-  if (order.length === 0) { container.classList.add("hidden"); return; }
   const running = order.filter((id) => state.runs[id].status === "running");
   const settled = order.filter((id) => state.runs[id].status !== "running").slice(-2);
   const show = [...running, ...settled];
-  if (show.length === 0) { container.classList.add("hidden"); return; }
-  container.classList.remove("hidden");
+  if (show.length === 0) {
+    container.appendChild(h("p", { class: "muted dash-idle" }, "编辑部待命中——派活、搜灵感、审稿都从这里看进度。"));
+    return;
+  }
   for (const runId of show) {
     const run = state.runs[runId];
     const cls = run.status === "done" ? " dash-run-done" : run.status === "failed" ? " dash-run-failed" : "";
@@ -84,30 +101,28 @@ async function renderDashboard() {
 
   if (d.isFirstRun) {
     view.appendChild(h("p", { class: "muted dash-firstrun" },
-      "第一次来。下面每张卡的空态都是一个起点——从「校准你的声音」开始最划算，全程可跳过。"));
+      "第一次来。下面每个区的空态都是一个起点——从「校准你的声音」开始最划算，全程可跳过。"));
   }
 
-  // 任务动态带:只由真实 run 事件驱动,空时隐藏（假活性红线 §7.4）
-  const runStrip = h("div", { id: "dash-runs", class: "dash-runs hidden" });
-  view.appendChild(runStrip);
-  renderRunStrip(runStrip, EngineStore.state);
-
-  const grid = h("div", { class: "dash-grid" });
-  view.appendChild(grid);
-
-  // ── 1. 待审队列（核心组件,§7.3-2）──
   const rq = d.reviewQueue || [];
+  const bf = d.backfillTodos || [];
+
+  // ══ ① 今天该我做什么 ═══════════════════════════════════════════════════════
+  const todoBits = [];
+  if (rq.length) todoBits.push("审稿 " + rq.length);
+  if (bf.length) todoBits.push("回数据 " + bf.length);
+  const z1 = dashZone(view, "今天该做什么", todoBits.length ? todoBits.join(" · ") : "没有排队的事");
+
   const queueCard = dashCard("待审队列", rq.length ? rq.length + " 篇等你过目" : "空", "review");
   if (rq.length === 0) {
-    queueCard.appendChild(h("p", { class: "muted" }, d.isFirstRun ? "还没有稿子。校准声音后,从灵感库派一篇试试。" : "没有待审稿——去灵感库挑一条开写？"));
+    queueCard.appendChild(h("p", { class: "muted" }, d.isFirstRun ? "还没有稿子。校准声音后,从灵感库派一篇试试。" : "没有待审稿——去下面「今日可写」挑一条开写？"));
   } else {
     const list = h("div", { class: "dash-queue" });
     for (const item of rq.slice(0, 6)) {
       const row = h("div", { class: "dash-queue-row" });
       const pri = REVIEW_PRIORITY_META[item.priority] || REVIEW_PRIORITY_META.fresh;
       row.appendChild(h("span", { class: "dash-pri " + pri.cls }, pri.label));
-      const title = h("span", { class: "dash-queue-title" }, item.title || "（无标题）");
-      row.appendChild(title);
+      row.appendChild(h("span", { class: "dash-queue-title" }, item.title || "（无标题）"));
       row.appendChild(h("span", { class: "muted dash-queue-meta" },
         (item.platform ? platformLabel(item.platform) + " · " : "") + item.ageDays + " 天"));
       row.addEventListener("click", () => dashOpenContent(item.id));
@@ -123,10 +138,8 @@ async function renderDashboard() {
     actions.appendChild(runBtn);
     queueCard.appendChild(actions);
   }
-  grid.appendChild(queueCard);
+  z1.grid.appendChild(queueCard);
 
-  // ── 2. 回填待办（v4 §7.3-2 三组件补齐:提醒 + 拖延告警）──
-  const bf = d.backfillTodos || [];
   const bfCard = dashCard("回填待办", bf.length ? bf.length + " 篇等数据" : "无", "analyst");
   if (bf.length === 0) {
     bfCard.appendChild(h("p", { class: "muted" }, "没有等回填的稿子。发布满 1 天的稿件会出现在这里提醒你回数据。"));
@@ -145,10 +158,92 @@ async function renderDashboard() {
     bfCard.appendChild(list);
     bfCard.appendChild(h("p", { class: "muted dash-hint" }, "点开稿件填数据,或在设置里用平台 CSV 批量导入。"));
   }
-  grid.appendChild(bfCard);
+  z1.grid.appendChild(bfCard);
 
-  // ── 3. 校准状态（飞轮可见面,§B5-3）──
+  // ══ ② 团队正在干什么 ═══════════════════════════════════════════════════════
+  const z2 = dashZone(view, "团队在干什么");
+  const runStrip = h("div", { id: "dash-runs", class: "dash-runs" });
+  z2.zone.insertBefore(runStrip, z2.grid);
+  renderRunStrip(runStrip, EngineStore.state);
+
+  const crewCard = dashCard("情报与派活", null, "scout");
+  const radarLine = h("p", { class: "muted" }, "情报源状态载入中…");
+  crewCard.appendChild(radarLine);
+  safeInvoke(window.autocrew.radarStatus, {}).then((r) => {
+    if (!r.ok || !r.data) { radarLine.textContent = "情报源状态不可用"; return; }
+    const srcs = r.data.sources || [];
+    const fetchedAt = r.data.fetchedAt;
+    const ageH = fetchedAt ? Math.floor((Date.now() - new Date(fetchedAt).getTime()) / 3600000) : null;
+    radarLine.textContent = "情报源 " + srcs.length + " 个" +
+      (ageH !== null ? " · " + (ageH < 1 ? "刚刚" : ageH + " 小时前") + "更新" : " · 未扫过榜") +
+      " · 命中定位自动入灵感库";
+  });
+  const crewActions = h("div", { class: "card-actions" });
+  const scoutBtn = h("button", { class: "btn-mini" }, "派侦查员搜灵感");
+  scoutBtn.addEventListener("click", () => {
+    sendChat("按我的定位和受众画像,主动搜一轮灵感入库");
+    showToast("侦查员已出发——看右侧对话与上方任务带");
+  });
+  crewActions.appendChild(scoutBtn);
+  const srcBtn = h("button", { class: "btn-mini" }, "管理情报源");
+  srcBtn.addEventListener("click", () => switchView("scout"));
+  crewActions.appendChild(srcBtn);
+  crewCard.appendChild(crewActions);
+  z2.grid.appendChild(crewCard);
+
+  // ══ ③ 内容资产什么状态 ═════════════════════════════════════════════════════
+  const p = d.pipeline;
+  const z3 = dashZone(view, "内容资产", "灵感 " + p.idea + " · 在写 " + p.writing + " · 待审 " + p.review + " · 待发 " + p.ready + " · 已发 " + p.published);
+
+  const pipeCard = dashCard("管线", "点数字直达看板", "system");
+  const stats = h("div", { class: "dash-pipe" });
+  for (const [label, n] of [["灵感", p.idea], ["在写", p.writing], ["待审", p.review], ["待发", p.ready], ["已发", p.published]]) {
+    const cell = h("div", { class: "dash-pipe-cell dash-pipe-click" });
+    cell.appendChild(h("div", { class: "dash-pipe-n" }, String(n)));
+    cell.appendChild(h("div", { class: "muted dash-pipe-label" }, label));
+    cell.addEventListener("click", () => switchView("board"));
+    stats.appendChild(cell);
+  }
+  pipeCard.appendChild(stats);
+  z3.grid.appendChild(pipeCard);
+
+  const insp = d.inspirations || [];
+  const inspCard = dashCard("今日可写", insp.length ? "灵感库 top " + insp.length : "灵感库空", "scout");
+  if (insp.length === 0) {
+    inspCard.appendChild(h("p", { class: "muted" }, "灵感库还是空的。雷达会自动送命中你定位的选题进来;也可以让上面的侦查员主动搜一轮。"));
+  } else {
+    const list = h("div", { class: "dash-insp" });
+    for (const t of insp) {
+      const row = h("div", { class: "dash-insp-row" });
+      const body = h("div", { class: "dash-insp-body" });
+      body.appendChild(h("div", { class: "dash-insp-title" }, t.title));
+      if (t.reason) body.appendChild(h("div", { class: "muted dash-insp-reason" }, t.reason));
+      row.appendChild(body);
+      // 派活默认平台 = 你的第一席位（IA v4.2:不再硬编码公众号）
+      const seat = typeof defaultSeat === "function" ? defaultSeat() : "wechat_mp";
+      const writeBtn = h("button", { class: "btn-mini" }, "开写");
+      writeBtn.addEventListener("click", () => {
+        let brief = "用选题《" + t.title + "》写一篇" + platformLabel(seat) + "原生版本";
+        const ctx = [];
+        if (t.id) ctx.push("灵感库编号：" + t.id + "（开写时带上 topic_id）");
+        if (t.reason) ctx.push("入库理由：" + t.reason);
+        if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写）");
+        if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
+        sendChat(brief);
+        showToast("已派给总编辑——看右侧对话");
+      });
+      row.appendChild(writeBtn);
+      list.appendChild(row);
+    }
+    inspCard.appendChild(list);
+    inspCard.appendChild(h("p", { class: "muted dash-hint" }, "未选用的灵感保留 3 天,自动清理进回收站——点开看板灵感卡可看详情与倒计时。"));
+  }
+  z3.grid.appendChild(inspCard);
+
+  // ══ ④ 数据与成长 ═══════════════════════════════════════════════════════════
   const cal = d.calibration;
+  const z4 = dashZone(view, "数据与成长", "越用越像你,越用越懂你的读者");
+
   const calCard = dashCard("声音内核", cal.styleCalibrated ? "已校准" : "未校准", "writer");
   if (!cal.styleCalibrated && cal.activeRuleCount === 0) {
     calCard.appendChild(h("p", { class: "muted" }, "还没学过你的声音——贴几篇你最满意的作品,10 分钟建立你的风格档案,之后每次纠正它都会更像你。"));
@@ -176,65 +271,27 @@ async function renderDashboard() {
     actions.appendChild(openBtn);
     calCard.appendChild(actions);
   }
-  grid.appendChild(calCard);
+  z4.grid.appendChild(calCard);
 
-  // ── 4. 灵感摘要（今日 top-3 可写 + 理由 + 一键开写,轻版选题裁决台）──
-  const insp = d.inspirations || [];
-  const inspCard = dashCard("今日可写", insp.length ? "灵感库 top " + insp.length : "灵感库空", "scout");
-  if (insp.length === 0) {
-    inspCard.appendChild(h("p", { class: "muted" }, "灵感库还是空的。雷达会自动送命中你定位的选题进来;也可以点顶栏「＋新想法」随手记。"));
+  // 受众画像卡(V5.5 四问 IA):画像是选题过滤/写作/停留审共用的标准,状态必须可见
+  const persona = cal.persona || { summary: "", calibrated: false };
+  const perCard = dashCard("受众画像", persona.calibrated ? "已校准" : persona.summary ? "待确认" : "未建立", "analyst");
+  if (!persona.summary) {
+    perCard.appendChild(h("p", { class: "muted" }, "还不知道你写给谁看。让分析师按你的定位推一版三层画像,你确认一次,之后选题过滤、写作、审稿都按它来。"));
   } else {
-    const list = h("div", { class: "dash-insp" });
-    for (const t of insp) {
-      const row = h("div", { class: "dash-insp-row" });
-      const body = h("div", { class: "dash-insp-body" });
-      body.appendChild(h("div", { class: "dash-insp-title" }, t.title));
-      if (t.reason) body.appendChild(h("div", { class: "muted dash-insp-reason" }, t.reason));
-      row.appendChild(body);
-      // 派活默认平台 = 你的第一席位（IA v4.2:不再硬编码公众号）
-      const seat = typeof defaultSeat === "function" ? defaultSeat() : "wechat_mp";
-      const writeBtn = h("button", { class: "btn-mini" }, "开写");
-      writeBtn.addEventListener("click", () => {
-        let brief = "用选题《" + t.title + "》写一篇" + platformLabel(seat) + "原生版本";
-        const ctx = [];
-        if (t.id) ctx.push("灵感库编号：" + t.id + "（开写时带上 topic_id）");
-        if (t.reason) ctx.push("入库理由：" + t.reason);
-        if (t.link) ctx.push("参考链接：" + t.link + "（先用 read_url 读原文再写）");
-        if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
-        sendChat(brief);
-        showToast("已派给总编辑——看右侧对话");
-      });
-      row.appendChild(writeBtn);
-      list.appendChild(row);
+    perCard.appendChild(h("p", {}, persona.summary));
+    if (!persona.calibrated) {
+      perCard.appendChild(h("p", { class: "muted" }, "画像还是提案态,未经你确认——确认后才会作为审稿标准。"));
     }
-    inspCard.appendChild(list);
   }
-  // 情报源健康度一行（数据现成:radar:status;账号现状等第二批,这行不越界——只报已有真数据）
-  safeInvoke(window.autocrew.radarStatus, {}).then((r) => {
-    if (!r.ok || !r.data) return;
-    const srcs = r.data.sources || [];
-    const fetchedAt = r.data.fetchedAt;
-    const ageH = fetchedAt ? Math.floor((Date.now() - new Date(fetchedAt).getTime()) / 3600000) : null;
-    inspCard.appendChild(h("p", { class: "muted dash-hint" },
-      "情报源 " + srcs.length + " 个" + (ageH !== null ? " · " + (ageH < 1 ? "刚刚" : ageH + " 小时前") + "更新" : " · 未扫过榜")));
+  const perActions = h("div", { class: "card-actions" });
+  const perBtn = h("button", { class: "btn-mini" + (persona.calibrated ? "" : " btn-mini-primary") },
+    persona.calibrated ? "重新校准画像" : "生成并校准画像");
+  perBtn.addEventListener("click", () => {
+    sendChat("校准受众画像");
+    showToast("看右侧对话——逐层确认或修正画像");
   });
-  grid.appendChild(inspCard);
-
-  // ── 5. 管线摘要（朴素版）──
-  const p = d.pipeline;
-  const pipeCard = dashCard("管线", "灵感到发布", "system");
-  const stats = h("div", { class: "dash-pipe" });
-  for (const [label, n] of [["灵感", p.idea], ["在写", p.writing], ["待审", p.review], ["待发", p.ready], ["已发", p.published]]) {
-    const cell = h("div", { class: "dash-pipe-cell" });
-    cell.appendChild(h("div", { class: "dash-pipe-n" }, String(n)));
-    cell.appendChild(h("div", { class: "muted dash-pipe-label" }, label));
-    stats.appendChild(cell);
-  }
-  pipeCard.appendChild(stats);
-  const pipeActions = h("div", { class: "card-actions" });
-  const goBoard = h("button", { class: "btn-mini" }, "进看板");
-  goBoard.addEventListener("click", () => switchView("board"));
-  pipeActions.appendChild(goBoard);
-  pipeCard.appendChild(pipeActions);
-  grid.appendChild(pipeCard);
+  perActions.appendChild(perBtn);
+  perCard.appendChild(perActions);
+  z4.grid.appendChild(perCard);
 }

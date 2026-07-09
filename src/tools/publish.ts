@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
-import { getContent, updateContent } from "../storage/local-store.js";
+import { getContent, updateContent, getDataDir } from "../storage/local-store.js";
 import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../modules/publish/wechat-config.js";
 import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
@@ -31,18 +31,14 @@ export const publishSchema = Type.Object({
   force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
 });
 
-function resolveDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
-}
-
 export async function executePublish(
   params: Record<string, unknown>,
   deps?: { publishImpl?: typeof publishWechatMpDraft },
 ) {
   const action = params.action as string;
-  const dataDir = resolveDataDir((params._dataDir as string) || undefined);
+  // getDataDir 统一解析(session-8 收编私有副本的第七处漏网):认 AUTOCREW_DATA_DIR 重定向,
+  // 否则隔离工作区/smoke 里 clipboard 会去真实 ~/.autocrew 找稿件
+  const dataDir = getDataDir((params._dataDir as string) || undefined);
 
   // --- clipboard: format content for manual copy-paste publishing ---
   if (action === "clipboard") {

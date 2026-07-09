@@ -351,6 +351,28 @@ function initStyle() {
   seatRow.appendChild(seatWrap);
   el.appendChild(seatRow);
 
+  // 受众画像（V5.5）:画像是选题过滤/写作/停留审共用的审核标准——状态必须可见可重校
+  const personaRow = h("div", { class: "style-persona-row" });
+  personaRow.appendChild(h("span", { class: "muted" }, "受众："));
+  const personaText = h("span", { class: "style-persona-text" }, "载入中…");
+  personaRow.appendChild(personaText);
+  const personaBtn = h("button", { class: "btn-mini" }, "校准画像");
+  personaBtn.addEventListener("click", () => {
+    sendChat("校准受众画像");
+    showToast("看右侧对话——逐层确认或修正画像");
+  });
+  personaRow.appendChild(personaBtn);
+  el.appendChild(personaRow);
+  safeInvoke(window.autocrew.styleRules, {}).then((r) => {
+    const p = r.ok && r.data && r.data.persona;
+    if (!p || !p.summary) {
+      personaText.textContent = "未建立——生成三层画像并确认一次,之后审稿都按它来";
+      return;
+    }
+    personaText.textContent = p.summary + (p.calibrated ? "" : "（提案态,待你确认）");
+    personaBtn.textContent = p.calibrated ? "重新校准" : "去确认画像";
+  });
+
   // Rules section (loaded async)
   const rulesSectionEl = h("div", { id: "style-rules-section" });
   el.appendChild(rulesSectionEl);
