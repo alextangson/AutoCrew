@@ -46,6 +46,10 @@ const AGENT_LABEL: Record<string, string> = {
   writer: "编剧",
   "cover-designer": "封面设计师",
   "audience-researcher": "受众研究员",
+  scout: "侦查员",
+  review: "审核员",
+  publisher: "发布员",
+  analyst: "分析师",
   mcp: "外部会话",
 };
 
@@ -106,23 +110,23 @@ export function Logs() {
               <div className="row" onClick={() => void openRun(r.runId)}>
                 <span className="mono pri">{fmtTime(r.startedAt)}</span>
                 <span className="row-title">
-                  {r.agents.map((a) => AGENT_LABEL[a] ?? a).join("+") || "引擎"} · LLM {r.llmCalls} · 工具 {r.toolCalls}
-                  {r.totalTokens > 0 ? ` · ${r.totalTokens} tok` : ""}
+                  {r.agents.map((a) => AGENT_LABEL[a] ?? a).join("+") || "引擎"} · 模型 {r.llmCalls} 次 · 工具 {r.toolCalls} 次
+                  {r.totalTokens > 0 ? ` · ${r.totalTokens.toLocaleString("zh-CN")} tokens` : ""}
                 </span>
                 <span className={"mono " + (r.errorCount > 0 ? "log-bad" : "muted")}>
                   {r.errorCount > 0 ? `✕ ${r.errorCount} 错` : "✓"}
                 </span>
-                <span className="muted mono">{r.runId.slice(0, 20)}</span>
+                <span className="muted mono log-id">{r.runId.slice(0, 20)}</span>
               </div>
               {selected === r.runId && (
                 <div className="log-run">
                   {records.map((rec) => (
                     <details key={`${rec.seq}-${rec.ts}`} className="log-step">
                       <summary>
-                        <span className="mono pri">{rec.kind === "llm" ? "LLM" : "工具"}</span>{" "}
+                        <span className="mono pri">{rec.kind === "llm" ? "模型" : "工具"}</span>{" "}
                         {rec.kind === "llm" ? rec.name : `${rec.name}${rec.action ? `·${rec.action}` : ""}`} · {fmtDur(rec.durationMs)} ·{" "}
                         {rec.ok ? "✓" : <span className="log-bad">✕ {rec.error ?? ""}</span>}
-                        {rec.tokens ? ` · ${rec.tokens} tok` : ""}
+                        {rec.tokens ? ` · ${rec.tokens.toLocaleString("zh-CN")} tokens` : ""}
                       </summary>
                       <div className="mono muted">输入{rec.truncated ? "(超长已截断)" : ""}</div>
                       <pre className="log-pre">{rec.input}</pre>

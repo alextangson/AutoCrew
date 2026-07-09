@@ -19,6 +19,14 @@ export function platformLabel(p: string | null | undefined): string {
   return PLATFORM_CATALOG.find((c) => c.id === p)?.label ?? p ?? "—";
 }
 
+/** 来源标签人话化(V5.6.2):radar:X → 雷达·X;x:@n → X·@n;其余原样 */
+export function sourceLabel(s: string | null | undefined): string {
+  if (!s) return "";
+  if (s.startsWith("radar:")) return "雷达·" + s.slice(6);
+  if (s.startsWith("x:")) return "X·" + s.slice(2);
+  return s;
+}
+
 export const BOARD_COLUMNS = [
   { key: "idea", label: "灵感库", statuses: [] as string[] },
   { key: "writing", label: "在写", statuses: ["topic_saved", "drafting", "draft_ready", "revision"] },

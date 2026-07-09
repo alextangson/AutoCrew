@@ -10,8 +10,16 @@ import { toast } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import {
   BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
-  platformLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
+  platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
 } from "../lib";
+
+/** 灵感行副标签:来源 + 天龄(3 天未选用会自动清,天龄是紧迫感) */
+function ideaAge(createdAt?: string): string {
+  if (!createdAt) return "";
+  const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
+  if (!isFinite(days) || days < 0) return "";
+  return days === 0 ? "今天" : `${days} 天前`;
+}
 
 interface TrashData {
   topics: Topic[];
@@ -112,16 +120,42 @@ export function Board(props: { openEditor: (id: string) => void }) {
     );
   }
 
-  // ── 列视图 ──
+  // ── 列视图:左灵感面板(独立滚动、行式高密度) + 右管线四列(V5.6.2 重排) ──
+  const ideaAtoms = cols[0];
   return (
     <div>
       <div className="board-bar">
         <span className="serif board-title">管线看板</span>
-        <span className="muted">拖卡换列 · 点卡进平台矩阵</span>
+        <span className="muted">点灵感/卡片进平台矩阵 · 拖卡换列</span>
         <button onClick={() => void openTrash()}>回收站</button>
       </div>
-      <div className="kanban">
-        {BOARD_COLUMNS.map((col, i) => (
+      <div className="board-split">
+        <div className="idea-pane">
+          <div className="kcol-head mono">
+            灵感库 <span className="muted">{ideaAtoms.length} · 3 天未选用自动清</span>
+          </div>
+          {ideaAtoms.length === 0 && <p className="muted">灵感库空——工作台「派侦查员搜灵感」,或顶栏「＋新想法」。</p>}
+          {ideaAtoms.map((atom) => (
+            <div key={atom.key} className="idea-row" onClick={() => setMode({ kind: "matrix", atomKey: atom.key })}>
+              <div className="idea-title">{atom.topic?.title ?? atomRep(atom)?.title ?? "（无标题）"}</div>
+              <div className="idea-sub mono muted">
+                {[sourceLabel(atom.topic?.source), ideaAge(atom.topic?.createdAt)].filter(Boolean).join(" · ")}
+              </div>
+              <button
+                className="acard-del"
+                title="移入回收站"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void trashAtom(atom);
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="kanban">
+          {BOARD_COLUMNS.map((col, i) => i === 0 ? null : (
           <div
             key={col.key}
             className={"kcol" + (dragOver === col.key && DROP_TARGET_STATUS[col.key] ? " kcol-over" : "")}
@@ -170,7 +204,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
                     </button>
                   </div>
                   {atom.topic && atom.members.length === 0 && atom.topic.source && (
-                    <div className="muted mono acard-sub">{atom.topic.source}</div>
+                    <div className="muted mono acard-sub">{sourceLabel(atom.topic.source)}</div>
                   )}
                   {atom.members.length > 0 && (
                     <div className="acard-chips">
@@ -194,6 +228,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
             })}
           </div>
         ))}
+        </div>
       </div>
     </div>
   );
@@ -245,7 +280,7 @@ function Matrix(props: {
           {t.description && <p className="muted">{t.description}</p>}
           {t.reason && <p>为什么值得写：{t.reason}</p>}
           <p className="muted mono">
-            {t.source && "来源 " + t.source}
+            {t.source && "来源 " + sourceLabel(t.source)}
             {retentionLeft !== null && (retentionLeft > 0 ? ` · 未选用保留 3 天,还剩 ${retentionLeft} 天` : " · 已到期,即将自动移入回收站")}
           </p>
           {t.link && (

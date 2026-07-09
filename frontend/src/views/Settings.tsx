@@ -105,8 +105,8 @@ export function Settings() {
     <div className="settings">
       <h2 className="serif">设置</h2>
 
-      <Section title="引擎(model provider)" hint={engine?.configured ? `已配置 ${engine.apiKeyMasked ?? ""}` : "未配置"}>
-        <p className="muted">当前:{engine?.baseUrl ?? "—"} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}</p>
+      <Section title="引擎 · 模型服务" hint={engine?.configured ? `已配置 ${engine.apiKeyMasked ?? ""}` : "未配置"}>
+        <p className="muted">写稿、审稿、画像、复盘都吃这条通道(存 engine.json)。当前:{engine?.baseUrl ?? "—"} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}</p>
         <Field label="API Key" password value={eForm.api_key} placeholder={engine?.apiKeyMasked ?? "sk-..."} onChange={(v) => setEForm((f) => ({ ...f, api_key: v }))} />
         <Field label="Base URL" value={eForm.base_url} placeholder={engine?.baseUrl ?? ""} onChange={(v) => setEForm((f) => ({ ...f, base_url: v }))} />
         <Field label="强模型" value={eForm.strong_model} placeholder={engine?.strongModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, strong_model: v }))} />
@@ -116,7 +116,7 @@ export function Settings() {
         </button>
       </Section>
 
-      <Section title="搜索 API(侦查员主动搜集)" hint={search?.configured ? `已配置 ${search.provider}` : "未配置"}>
+      <Section title="搜索 · 侦查员外网搜集" hint={search?.configured ? `已配置 ${search.provider}` : "未配置"}>
         <p className="muted">配好后总编辑就能派侦查员按定位全网搜灵感。推荐:博查(中文)/Tavily(英文)。</p>
         <label className="set-field">
           <span className="mono muted">Provider</span>
@@ -137,8 +137,8 @@ export function Settings() {
         </button>
       </Section>
 
-      <Section title="发布(publish.json)" hint={pub?.imageConfigured ? `生图已配置 ${pub.imageApiKeyMasked ?? ""}` : "生图未配置"}>
-        <p className="muted">公众号推草稿与视频封面的生图走这里;中转 key 与端点必须配对(否则 401)。</p>
+      <Section title="发布 · 公众号与生图" hint={pub?.imageConfigured ? `生图已配置 ${pub.imageApiKeyMasked ?? ""}` : "生图未配置"}>
+        <p className="muted">公众号推草稿、文章配图与封面生成都走这条中转(存 publish.json);key 与端点必须配对(否则 401)。</p>
         <Field label="生图 Key" password value={pForm.image_api_key} placeholder={pub?.imageApiKeyMasked ?? "sk-..."} onChange={(v) => setPForm((f) => ({ ...f, image_api_key: v }))} />
         <Field label="生图端点" value={pForm.image_base_url} placeholder={pub?.imageBaseUrl ?? "https://api.xiaojiu.one/v1"} onChange={(v) => setPForm((f) => ({ ...f, image_base_url: v }))} />
         <Field label="生图模型" value={pForm.image_model} placeholder={pub?.imageModel ?? "gpt-image-2"} onChange={(v) => setPForm((f) => ({ ...f, image_model: v }))} />
@@ -150,7 +150,7 @@ export function Settings() {
       </Section>
 
       <Section
-        title="封面生成"
+        title="封面生成 · 生图通道"
         hint={
           cover
             ? cover.provider === "relay"

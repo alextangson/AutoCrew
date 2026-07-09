@@ -1,6 +1,6 @@
 /**
- * 数据回流(C 期迁移,轻版):作品数/均值/基线洞察——flywheel:report 单通道。
- * V5.6:+复盘报告区(周/月,markdown 渲染)。
+ * 数据回流(V5.6.2 修缮):全量均值 tile 墙 + 作品表现明细 + 基线洞察 + 复盘报告。
+ * 数据同源 flywheel:report(works.items = 每作品最新快照);复盘 markdown 渲染与编辑器同栈。
  */
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -8,11 +8,48 @@ import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke } from "../transport";
 import { toast } from "../ui";
+import { platformLabel } from "../lib";
+
+interface WorkItem {
+  title: string;
+  platform: string;
+  metricDate: string;
+  metrics: Record<string, number>;
+}
 
 interface Report {
-  works?: { total: number };
+  works?: { total: number; matched?: number; historical?: number; items?: WorkItem[] };
   avgMetrics?: Record<string, number>;
   baselineInsights?: string[];
+  baselineSampleSize?: number;
+}
+
+/** 均值指标全量上墙(与 outcome-schema 对齐);率值带 %,量值取整千分位 */
+const METRIC_TILES: Array<[string, string, boolean]> = [
+  ["views", "平均播放/阅读", false],
+  ["completionRate", "平均完播率", true],
+  ["completion5s", "平均5s完播", true],
+  ["likes", "平均点赞", false],
+  ["comments", "平均评论", false],
+  ["shares", "平均分享", false],
+  ["favorites", "平均收藏", false],
+  ["follows", "平均涨粉", false],
+];
+
+const ROW_METRICS: Array<[string, string, boolean]> = [
+  ["views", "播放", false],
+  ["likes", "赞", false],
+  ["favorites", "藏", false],
+  ["comments", "评", false],
+  ["completionRate", "完播", true],
+];
+
+const fmtNum = (v: number): string => Math.round(v).toLocaleString("zh-CN");
+
+function metricsLine(m: Record<string, number>): string {
+  return ROW_METRICS.flatMap(([key, label, rate]) =>
+    typeof m[key] === "number" ? [`${label} ${rate ? `${m[key]}%` : fmtNum(m[key])}`] : [],
+  ).join(" · ");
 }
 
 export function ReportView() {
@@ -44,33 +81,57 @@ export function ReportView() {
   if (!d) return <p className="muted pad">载入中…</p>;
 
   const avg = d.avgMetrics ?? {};
-  const metrics: Array<[string, string]> = [
+  const items = d.works?.items ?? [];
+  const tiles: Array<[string, string]> = [
     ["作品数", String(d.works?.total ?? 0)],
-    ["平均播放/阅读", avg.views !== undefined ? Math.round(avg.views).toLocaleString("zh-CN") : "—"],
-    ["平均完播率", avg.completionRate !== undefined ? avg.completionRate + "%" : "—"],
-    ["平均点赞", avg.likes !== undefined ? String(Math.round(avg.likes)) : "—"],
+    ...METRIC_TILES.flatMap(([key, label, rate]): Array<[string, string]> =>
+      typeof avg[key] === "number" ? [[label, rate ? `${avg[key]}%` : fmtNum(avg[key])]] : [],
+    ),
   ];
 
   return (
-    <div>
-      <h2 className="serif">数据回流</h2>
-      <div className="pipe" style={{ maxWidth: 560, margin: "12px 0" }}>
-        {metrics.map(([label, value]) => (
-          <div key={label} className="pipe-cell">
+    <div className="report">
+      <div className="board-bar">
+        <h2 className="serif board-title" style={{ margin: 0 }}>数据回流</h2>
+        <span className="muted">发布后回填数据——选题评分、基线与复盘都以它为准</span>
+      </div>
+
+      <div className="stat-grid">
+        {tiles.map(([label, value]) => (
+          <div key={label} className="stat-tile">
             <div className="pipe-n serif">{value}</div>
             <div className="muted mono">{label}</div>
           </div>
         ))}
       </div>
+
+      {items.length > 0 && (
+        <div className="card report-card">
+          <div className="card-head">
+            <span className="card-title">作品表现</span>
+            <span className="mono muted">每篇取最新快照 · 近 {items.length} 篇</span>
+          </div>
+          {items.map((it, i) => (
+            <div key={i} className="row" style={{ cursor: "default" }}>
+              <span className="mono pri">{platformLabel(it.platform)}</span>
+              <span className="row-title" title={it.title}>{it.title}</span>
+              <span className="muted mono work-metrics">{metricsLine(it.metrics)}</span>
+              <span className="muted mono">{it.metricDate.slice(5)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {(d.baselineInsights ?? []).length > 0 && (
-        <div className="card" style={{ maxWidth: 560 }}>
+        <div className="card report-card">
           <div className="card-title">基线洞察</div>
           {(d.baselineInsights ?? []).map((ins, i) => (
             <p key={i} className="muted">· {ins}</p>
           ))}
         </div>
       )}
-      <div className="card" style={{ maxWidth: 720, marginTop: 12 }}>
+
+      <div className="card report-card">
         <div className="card-title">复盘报告</div>
         {retros.length === 0 && <p className="muted">还没有复盘——工作台「目标」卡一键生成周复盘/月度深盘。</p>}
         {retros.map((r) => (
@@ -88,6 +149,7 @@ export function ReportView() {
           </div>
         ))}
       </div>
+
       <p className="muted" style={{ marginTop: 10 }}>
         回填入口在编辑器(已发布稿)——数据回来,选题评分与基线才会越来越准。
       </p>

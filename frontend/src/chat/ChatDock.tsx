@@ -4,6 +4,9 @@
  * useChatSend:任意视图把 brief 派进对话(与 vanilla sendChat 同语义)。
  */
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke, subscribeEvents } from "../transport";
 import { ChatCard, type ChatCardShape } from "./cards";
 
@@ -141,7 +144,15 @@ export function ChatDock() {
         )}
         {msgs.map((m, i) => (
           <div key={i} className={m.role === "user" ? "msg msg-user" : "msg"}>
-            {m.text && <p>{m.text}</p>}
+            {m.text &&
+              (m.role === "user" ? (
+                <p>{m.text}</p>
+              ) : (
+                // 总编辑回复渲染 markdown(与编辑器预览同栈)——裸 ** 不再示人
+                <div className="chat-md">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{m.text}</ReactMarkdown>
+                </div>
+              ))}
             {(m.cards ?? []).map((c, j) => (
               <ChatCard key={j} card={c} />
             ))}

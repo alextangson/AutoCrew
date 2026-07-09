@@ -134,7 +134,13 @@ export function Calibration() {
 
       <div className="ed-section">
         <span className="mono muted">定位：</span>
-        <input className="sel-input" value={industry} placeholder="如：AI 技术,FDE 部署工程师" onChange={(e) => setIndustry(e.target.value)} />
+        <textarea
+          className="sel-input calib-industry"
+          rows={2}
+          value={industry}
+          placeholder="如：AI 技术,FDE 部署工程师——写全你的内容线,雷达筛选与画像都以它为锚"
+          onChange={(e) => setIndustry(e.target.value)}
+        />
         <button onClick={() => void saveIndustry()}>保存</button>
       </div>
 

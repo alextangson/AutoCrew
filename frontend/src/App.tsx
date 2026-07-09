@@ -43,7 +43,6 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <span className="brand serif">AutoCrew 编辑部</span>
-        <span className="mono v2-badge">v2 预览</span>
         <nav className="topnav">
           {NAV.map((n) => (
             <button key={n.view} className={active === n.view ? "nav-on" : ""} onClick={() => setRoute({ view: n.view } as Route)}>
@@ -61,9 +60,6 @@ export function App() {
             }}
           >
             ＋新想法
-          </button>
-          <button onClick={() => { window.location.href = "/" + window.location.search; }} title="旧版界面(D 期清场前保留)">
-            旧版 ↗
           </button>
         </nav>
       </header>

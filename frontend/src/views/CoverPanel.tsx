@@ -145,7 +145,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
   return (
     <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
       <div className="row-actions" style={{ alignItems: "baseline" }}>
-        <span className="mono muted">封面(设计师)：</span>
+        <span className="mono muted ed-label">封面(设计师)：</span>
         <select value={ratio} disabled={generating} onChange={(e) => setRatio(e.target.value)}>
           {PRIMARY_OPTIONS.map(([v, label]) => (
             <option key={v} value={v}>{label}</option>

@@ -23,6 +23,17 @@ interface PendingEdit {
   end: number;
 }
 
+/** 存量版本备注是英文自动串(V5.6.2 起后端已改中文)——显示层兜底汉化 */
+function versionNoteLabel(note?: string): string {
+  if (!note) return "";
+  if (note === "Initial draft") return "初稿";
+  const edit = note.match(/^Edit v(\d+)$/);
+  if (edit) return `第 ${edit[1]} 版`;
+  const revert = note.match(/^Reverted to v(\d+)$/);
+  if (revert) return `回滚到 v${revert[1]}`;
+  return note;
+}
+
 export function Editor(props: { id: string; back: () => void }) {
   const [c, setC] = useState<Content | null>(null);
   const [title, setTitle] = useState("");
@@ -237,14 +248,14 @@ export function Editor(props: { id: string; back: () => void }) {
       </div>
 
       <div className="ed-section">
-        <span className="mono muted">采纳裁决：</span>
+        <span className="mono muted ed-label">采纳裁决：</span>
         {ADOPT.map(([v, label]) => (
           <AdoptButton key={v} verdict={v} label={label} current={c.adoption?.verdict} submit={submitAdoption} />
         ))}
       </div>
 
       <div className="ed-section">
-        <span className="mono muted">发布：</span>
+        <span className="mono muted ed-label">发布：</span>
         <button onClick={() => void doClipboard()}>排版发布文案</button>
         {c.platform === "wechat_mp" && <button onClick={() => void pushWechat()}>推公众号草稿箱</button>}
         {isVideo && (
@@ -324,7 +335,7 @@ export function Editor(props: { id: string; back: () => void }) {
           {[...versions].reverse().slice(0, 8).map((v) => (
             <div key={v.version} className="row">
               <span className="mono pri">v{v.version}</span>
-              <span className="row-title muted">{v.note ?? ""}</span>
+              <span className="row-title muted">{versionNoteLabel(v.note)}</span>
               {v.version !== versions.length && (
                 <button
                   onClick={async () => {
@@ -412,7 +423,7 @@ function AssetsSection(props: {
   return (
     <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
       <div>
-        <span className="mono muted">素材（{props.assets.length}）：</span>
+        <span className="mono muted ed-label">素材（{props.assets.length}）：</span>
         <button onClick={() => void openPicker()}>{picking ? "收起" : "从素材库挂接"}</button>
         <button
           onClick={async () => {

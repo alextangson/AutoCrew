@@ -3,7 +3,7 @@
  *
  * 起隔离 server（AUTOCREW_DATA_DIR=临时目录,绝不碰真实工作区）+ 系统 Chrome headless,
  * 原生 CDP（零新依赖:Node 内置 WebSocket）跑三类检查（D 期后被测对象 = React 前端）:
- *   1. 关键动线:工作台四问九卡(V5.6 +目标卡)/看板五列/回收站往返/编辑器(框选区+采纳+素材)/校准中心/设置六区/素材库/会话控件
+ *   1. 关键动线:工作台四问九卡(V5.6 +目标卡)/看板(灵感面板+管线四列)/回收站往返/编辑器(框选区+采纳+素材)/校准中心/设置六区/素材库/会话控件
  *   2. 布局碰撞:.main 内可见元素不得越进常驻对话栏 .dock（1280 与 1680 双视口）
  *   3. 零 console error / 未捕获异常
  * 前置:frontend/dist 必须已构建(npm run fe:build),缺失即失败。任一失败 → 非零退出码。提交前必跑。
@@ -145,11 +145,13 @@ const PAGE_CHECKS = `(async () => {
   ok(t.includes("＋新会话"), "会话控件");
   collide("dashboard");
 
-  // 2) 看板:五列 → 回收站往返 → 编辑器
+  // 2) 看板:灵感面板+管线四列 → 回收站往返 → 编辑器(V5.6.2 重排)
   if (await navTo("看板")) {
     ok(!!document.querySelector(".kanban"), "看板渲染");
-    ok(document.querySelectorAll(".kcol").length === 5, "看板五列", "实际 " + document.querySelectorAll(".kcol").length);
-    ok(document.querySelectorAll(".acard").length >= 5, "看板原子卡(种子)", "实际 " + document.querySelectorAll(".acard").length);
+    ok(!!document.querySelector(".idea-pane"), "灵感面板");
+    ok(document.querySelectorAll(".kcol").length === 4, "管线四列", "实际 " + document.querySelectorAll(".kcol").length);
+    const boardItems = document.querySelectorAll(".acard").length + document.querySelectorAll(".idea-row").length;
+    ok(boardItems >= 5, "看板条目(种子)", "实际 " + boardItems);
     collide("board");
     const trashBtn = [...document.querySelectorAll(".board-bar button")].find(b => (b.textContent || "").includes("回收站"));
     ok(!!trashBtn, "回收站入口");
@@ -181,10 +183,10 @@ const PAGE_CHECKS = `(async () => {
     ok(t2.includes("爆款吸收"), "爆款吸收区");
   }
 
-  // 4) 设置(六区收口)
+  // 4) 设置(七区收口,V5.6.2 区标题汉化)
   if (await navTo("设置")) {
     const t3 = document.body.textContent || "";
-    for (const key of ["引擎", "搜索 API", "发布(publish.json)", "情报源", "工作区", "知识库"]) {
+    for (const key of ["引擎 · 模型服务", "搜索 · 侦查员外网搜集", "发布 · 公众号与生图", "封面生成 · 生图通道", "情报源", "工作区", "知识库"]) {
       ok(t3.includes(key), "设置区:" + key);
     }
   }

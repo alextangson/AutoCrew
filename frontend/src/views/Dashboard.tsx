@@ -115,7 +115,7 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
       </Zone>
 
       <Zone q="团队在干什么">
-        <Card title="任务动态" kicker="runId 聚合">
+        <Card title="任务动态" kicker="按任务聚合">
           {runOrder.length === 0 ? (
             <p className="muted">编辑部待命中——派活、搜灵感、审稿的进度都在这里。</p>
           ) : (
@@ -152,7 +152,7 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
             )}
           </div>
         </Card>
-        <Card title="今日可写" kicker={d.inspirations.length ? `top ${d.inspirations.length}` : "灵感库空"}>
+        <Card title="今日可写" kicker={d.inspirations.length ? `今日前 ${d.inspirations.length}` : "灵感库空"}>
           {d.inspirations.length === 0 ? (
             <p className="muted">灵感库还是空的——让侦查员搜一轮,或回旧版「＋新想法」。</p>
           ) : (
