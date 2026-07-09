@@ -70,13 +70,23 @@ Dogfood 抓到并当场修掉的产品 bug：
   雷达入库改存 RSS 源摘要(240 字,原先丢在抓取层);④**流转补充**——矩阵页可选"想写的方向"输入,
   派活 brief 作为最高优先级角度指引(可选不强制)。
 
-**未做**(契约已排期):V5.5 React 前端 A-D 期(编辑器/看板/校准 UI 终局载体)+Dashboard 四问重排;
-V5.6 设置中心收口。
+- **V5.5a** Dashboard 四问重排(`d3e3370`,vanilla 先行——创始人现场指令优先于 frontend-v2 的
+  vanilla 冻结):①今天该做什么(待审+回填,区标题汇总当日事)②团队在干什么(任务带+情报源健康度
+  +一键「派侦查员搜灵感」)③内容资产(管线可点进看板+今日可写+3天保留提示)④数据与成长
+  (声音内核+**受众画像卡**:摘要/提案态标注/校准 CTA)。校准中心同步加画像行(style:rules 带
+  persona)。smoke 断言更新为四区七卡。
+- **七平台真实验收全部通过**(创始人验收标准"跑通了再给"):公众号(草稿箱含图)、抖音(稿+发布件
+  +封面图)、X(29s 双楼)、小红书(52s+77s 发布件,标题 14≤20 字,9 镜)、视频号(45s+58s,10 镜)、
+  Reddit(62s,**自动切英文**+分享者姿态)、头条(82s,1634 字过 1000 硬门)。验收顺手抓到
+  publish.ts 第七处漏网的私有 resolveDataDir(不认 AUTOCREW_DATA_DIR)——已统一到 getDataDir。
+
+**未做**(契约已排期):V5.5 React 化 A-D 期(编辑器 diff 全家桶/平台矩阵完整体验的终局载体——
+四问 IA 已在 vanilla 铺好,React 期继承);V5.6 设置中心收口。
 **等创始人**:搜索 API key(配置在设置页即可用);X/Reddit 开发者凭据+persona 语言裁决
 (风控评审文档 §2/§3)。~~头条/视频预填~~已裁决延后。
 
 ## 5. 惯例提醒（继承 SESSION-8，仍然有效）
 
 - 改前端必先 `npm run smoke`；写完自己开浏览器 dogfood 再交付。
-- 起 server：`npx tsx desktop/server.ts`；单测 `npx vitest run`（812）；类型 `npx tsc --noEmit`。
+- 起 server：`npx tsx desktop/server.ts`；单测 `npx vitest run`（851）；类型 `npx tsc --noEmit`。
 - 禁止上云（PRD-v4 §11）。
