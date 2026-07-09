@@ -13,6 +13,7 @@ import { invoke } from "../transport";
 import { toast } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { SelectionBar } from "./SelectionBar";
+import { CoverPanel } from "./CoverPanel";
 import { platformLabel, VARIANT_STATUS, VIDEO_PLATFORMS, type Content } from "../lib";
 
 interface PendingEdit {
@@ -252,6 +253,8 @@ export function Editor(props: { id: string; back: () => void }) {
           </button>
         )}
       </div>
+
+      <CoverPanel contentId={props.id} platform={c.platform} />
 
       {clip && (
         <div className="pending-edit">

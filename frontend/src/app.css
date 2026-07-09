@@ -144,6 +144,14 @@
 
 /* C 期:校准中心/设置/任务卡 */
 .calib h2, .settings h2 { margin-bottom: 8px; }
+.cover-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
+.cover-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.cover-card-on { border-color: var(--ink); }
+.cover-img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border: 1px solid var(--border); }
+.cover-missing { display: flex; align-items: center; justify-content: center; }
+.cover-reason { font-size: 12px; }
+.cover-ratio-strip { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.cover-banner { width: 100%; max-width: 470px; aspect-ratio: 2.35 / 1; object-fit: cover; border: 1px solid var(--border); }
 .persona-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 10px 12px; margin: 8px 0; }
 .persona-proposal { border-left: 2px solid var(--ink); }
 .pt-grid { display: flex; gap: 6px; margin: 4px 0; }

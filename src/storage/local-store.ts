@@ -145,7 +145,11 @@ export interface CoverVariant {
     "3:4"?: string;
     "16:9"?: string;
     "4:3"?: string;
+    /** 公众号横版(21:9/16:9 原生出图后垂直裁切) */
+    "2.35:1"?: string;
   };
+  /** 修订轮次(反馈重做递增;文件名带 -rN 防浏览器缓存旧图) */
+  revision?: number;
   /** Model used for generation */
   model?: string;
   /** Whether personal IP reference photos were used */
@@ -179,6 +183,8 @@ export interface CoverReview {
   approvedImagePath?: string;
   approvedAt?: string;
   notes?: string;
+  /** 反馈重做历史(封面「纠正即训练」的原始记录) */
+  feedback?: Array<{ label: "a" | "b" | "c"; note: string; prevPrompt?: string; at: string }>;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -627,7 +633,7 @@ export async function revertToVersion(contentId: string, version: number, dataDi
 
 export async function saveCoverReview(
   contentId: string,
-  review: Omit<CoverReview, "createdAt" | "updatedAt">,
+  review: Omit<CoverReview, "updatedAt">,
   dataDir?: string,
 ): Promise<CoverReview | null> {
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
@@ -638,9 +644,10 @@ export async function saveCoverReview(
     const raw = await fs.readFile(metaPath, "utf-8");
     const content: Content = JSON.parse(raw);
     const now = new Date().toISOString();
+    // createdAt 保留首次值——反馈重做会反复保存,历史起点不许被覆盖
     const full: CoverReview = {
       ...review,
-      createdAt: now,
+      createdAt: review.createdAt ?? now,
       updatedAt: now,
     };
 
@@ -687,10 +694,15 @@ export async function approveCoverVariant(
     const now = new Date().toISOString();
     review.status = "publish_ready";
     review.approvedLabel = label;
-    review.approvedImagePath = selected.imagePath;
+    // 修复存量 bug:create_candidates 只写 imagePaths["3:4"],旧字段 imagePath 从未赋值
+    review.approvedImagePath = selected.imagePaths?.["3:4"] ?? selected.imagePath;
     review.approvedAt = now;
     review.updatedAt = now;
-    content.status = "approved";
+    // 修复存量 bug:选封面不许把已进发布链的稿件倒拨回 approved
+    const protectedStatuses: ContentStatus[] = ["publish_ready", "publishing", "published", "archived"];
+    if (!protectedStatuses.includes(content.status)) {
+      content.status = "approved";
+    }
     content.updatedAt = now;
 
     await Promise.all([

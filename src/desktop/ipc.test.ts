@@ -58,6 +58,13 @@ describe("IPC_CHANNELS", () => {
     "style:update_rule",
     "persona:generate",
     "persona:save",
+    "cover:create",
+    "cover:get",
+    "cover:approve",
+    "cover:revise",
+    "cover:ratios",
+    "settings:cover_get",
+    "settings:cover_set",
     "onboarding:status",
     "onboarding:init",
     "flywheel:import_csv",
@@ -97,8 +104,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 63 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(63);
+  it("has exactly 70 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(70);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -195,6 +202,13 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "style:update_rule" &&
           ch !== "persona:generate" &&
           ch !== "persona:save" &&
+          ch !== "cover:create" &&
+          ch !== "cover:get" &&
+          ch !== "cover:approve" &&
+          ch !== "cover:revise" &&
+          ch !== "cover:ratios" &&
+          ch !== "settings:cover_get" &&
+          ch !== "settings:cover_set" &&
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&
           ch !== "dialog:pick_file" &&

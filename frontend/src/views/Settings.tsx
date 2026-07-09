@@ -47,15 +47,18 @@ export function Settings() {
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
   const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; author: string | null } | null>(null);
   const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "" });
+  const [cover, setCover] = useState<{ configured: boolean; apiKeyMasked: string | null; source: string; model: string } | null>(null);
+  const [cForm, setCForm] = useState({ gemini_api_key: "", gemini_model: "" });
   const [sources, setSources] = useState<RadarSource[]>([]);
   const [kb, setKb] = useState<{ dir: string; count: number } | null>(null);
   const [ws, setWs] = useState<{ active: string; workspaces: Array<{ id: string; name: string }> } | null>(null);
 
   const load = async () => {
-    const [er, sr, pr, rr, kr, wr] = await Promise.all([
+    const [er, sr, pr, cr, rr, kr, wr] = await Promise.all([
       invoke("settings:get"),
       invoke("settings:search_get"),
       invoke("settings:publish_get"),
+      invoke("settings:cover_get"),
       invoke("radar:status"),
       invoke("knowledge:status"),
       invoke("workspace:list"),
@@ -63,6 +66,7 @@ export function Settings() {
     if (er.ok) setEngine((er as unknown as { data: typeof engine }).data);
     if (sr.ok) setSearch((sr as unknown as { data: typeof search }).data);
     if (pr.ok) setPub((pr as unknown as { data: typeof pub }).data);
+    if (cr.ok) setCover((cr as unknown as { data: typeof cover }).data);
     if (rr.ok) setSources((((rr as unknown as { data: { sources?: RadarSource[] } }).data ?? {}).sources ?? []));
     if (kr.ok) setKb((kr as unknown as { data: typeof kb }).data);
     if (wr.ok) {
@@ -138,6 +142,26 @@ export function Settings() {
         <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
         <button className="primary" onClick={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "" }))}>
           保存发布配置
+        </button>
+      </Section>
+
+      <Section title="封面生成(Gemini)" hint={cover?.configured ? `已配置 ${cover.apiKeyMasked ?? ""}` : "未配置"}>
+        <p className="muted">
+          编辑器里的封面设计师走这里(3 候选/提意见重做/平台比例)。形象照放 ~/.autocrew/covers/templates/(jpg/png),
+          生图自动带上做人物一致性——注意:照片会随生图请求发给 Google API。
+        </p>
+        <Field label="Gemini Key" password value={cForm.gemini_api_key} placeholder={cover?.apiKeyMasked ?? "AIza..."} onChange={(v) => setCForm((f) => ({ ...f, gemini_api_key: v }))} />
+        <label className="set-field">
+          <span className="mono muted">模型</span>
+          <select value={cForm.gemini_model} onChange={(e) => setCForm((f) => ({ ...f, gemini_model: e.target.value }))}>
+            <option value="">不改(当前 {cover?.model ?? "auto"})</option>
+            <option value="auto">auto(native 优先)</option>
+            <option value="gemini-native">gemini-native(支持形象照)</option>
+            <option value="imagen-4">imagen-4</option>
+          </select>
+        </label>
+        <button className="primary" onClick={() => void submit("settings:cover_set", cForm, () => setCForm({ gemini_api_key: "", gemini_model: "" }))}>
+          保存封面配置
         </button>
       </Section>
 

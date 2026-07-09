@@ -14,7 +14,7 @@ import { withRetry, checkFetchResponse } from "../../utils/retry.js";
 // --- Types ---
 
 export type GeminiModel = "gemini-native" | "imagen-4" | "auto";
-export type AspectRatio = "3:4" | "16:9" | "4:3" | "1:1";
+export type AspectRatio = "3:4" | "16:9" | "4:3" | "1:1" | "21:9";
 
 export interface GeminiImageOptions {
   prompt: string;

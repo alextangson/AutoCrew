@@ -73,6 +73,15 @@ import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { loadProfile, updateWritingRule, updateProfile, personaSummary } from "../modules/profile/creator-profile.js";
 import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
+import {
+  coverCreateHandler,
+  coverGetHandler,
+  coverApproveHandler,
+  coverReviseHandler,
+  coverRatiosHandler,
+  coverSettingsGetHandler,
+  coverSettingsSetHandler,
+} from "./cover-handlers.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
@@ -717,6 +726,13 @@ export function buildIpcHandlers(
     "style:update_rule": styleUpdateRuleHandler,
     "persona:generate": personaGenerateHandler,
     "persona:save": personaSaveHandler,
+    "cover:create": coverCreateHandler,
+    "cover:get": coverGetHandler,
+    "cover:approve": coverApproveHandler,
+    "cover:revise": coverReviseHandler,
+    "cover:ratios": coverRatiosHandler,
+    "settings:cover_get": coverSettingsGetHandler,
+    "settings:cover_set": coverSettingsSetHandler,
     "onboarding:status": getOnboardingStatus,
     "onboarding:init": completeOnboardingInit,
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),
