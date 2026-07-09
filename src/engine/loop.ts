@@ -4,6 +4,7 @@
  * 参考：spikes/thin-loop/loop.mts（形状参考，禁止 import）。
  */
 import { withRetry, checkFetchResponse } from "../utils/retry.js";
+import { createRunRecorder, type RunRecorder } from "../runtime/run-log.js";
 import type { EngineConfig } from "./config.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -38,6 +39,8 @@ export interface LoopOptions {
   idleTimeoutMs?: number;
   /** 工具执行进度回调（UI 状态流）。回调异常被吞——观测层不得破坏执行层。 */
   onEvent?: (e: LoopEvent) => void;
+  /** 运行日志归属(V5.6):runId 缺省自动生成 run-eng-…;config.dataDir 缺省不落日志 */
+  logMeta?: { runId?: string; agent?: string };
 }
 
 export interface LoopResult {
@@ -381,6 +384,7 @@ async function executeToolCalls(
   toolMap: Map<string, LoopTool>,
   messages: Message[],
   onEvent?: (e: LoopEvent) => void,
+  recorder?: RunRecorder,
 ): Promise<number> {
   let count = 0;
   for (const tc of toolCalls) {
@@ -394,6 +398,7 @@ async function executeToolCalls(
       }
     };
     emit("tool_start");
+    const tStart = Date.now();
     let result: string;
     try {
       const args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
@@ -403,6 +408,13 @@ async function executeToolCalls(
       result = `Error: ${(err as Error).message}`;
     }
     emit("tool_end");
+    recorder?.tool({
+      name: tc.function.name,
+      durationMs: Date.now() - tStart,
+      ok: !result.startsWith("Error"),
+      input: tc.function.arguments,
+      output: result,
+    });
     messages.push({ role: "tool", tool_call_id: tc.id, name: tc.function.name, content: result });
   }
   return count;
@@ -416,6 +428,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const tools = opts.tools ?? [];
   const toolMap = new Map(tools.map((t) => [t.name, t]));
+  const recorder = createRunRecorder(config.dataDir, opts.logMeta);
 
   const messages: Message[] = [
     { role: "system", content: opts.systemPrompt },
@@ -434,11 +447,33 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
       break;
     }
 
-    const data = await callModel(config, opts.model, messages, tools, fetchImpl, opts.idleTimeoutMs);
+    const tCall = Date.now();
+    let data: CompletionResponse;
+    try {
+      data = await callModel(config, opts.model, messages, tools, fetchImpl, opts.idleTimeoutMs);
+    } catch (err) {
+      recorder.llm({
+        model: opts.model,
+        durationMs: Date.now() - tCall,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        input: JSON.stringify(messages),
+        output: "",
+      });
+      throw err;
+    }
     turns++;
     totalTokens += Number(data.usage?.total_tokens) || 0;
 
     const assistantMsg = data.choices[0].message;
+    recorder.llm({
+      model: opts.model,
+      durationMs: Date.now() - tCall,
+      ok: true,
+      tokens: Number(data.usage?.total_tokens) || 0,
+      input: JSON.stringify(messages),
+      output: JSON.stringify(assistantMsg),
+    });
     messages.push({ role: "assistant", content: assistantMsg.content, tool_calls: assistantMsg.tool_calls });
 
     const toolCalls = assistantMsg.tool_calls;
@@ -447,7 +482,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
       break;
     }
 
-    toolCallCount += await executeToolCalls(toolCalls, toolMap, messages, opts.onEvent);
+    toolCallCount += await executeToolCalls(toolCalls, toolMap, messages, opts.onEvent, recorder);
 
     if (turns >= maxTurns) {
       stopReason = "max_turns";

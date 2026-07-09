@@ -21,6 +21,11 @@ export interface EngineConfig {
    * 可选字段:手工构造的 config(测试/注入)缺省视为 openai。
    */
   protocol?: "openai" | "anthropic";
+  /**
+   * 运行日志落点(V5.6 可观测性):loadEngineConfig 必填;
+   * 手工构造的 config(测试/注入)缺省 = 不落日志,引擎行为零变化。
+   */
+  dataDir?: string;
 }
 
 export const ENGINE_DEFAULTS = {
@@ -81,5 +86,6 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
     strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
     fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
     protocol,
+    dataDir: getDataDir(dataDir),
   };
 }

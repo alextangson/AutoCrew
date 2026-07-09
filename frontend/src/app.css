@@ -169,6 +169,18 @@
 .runcard-done { border-left-color: var(--success); }
 .runcard-failed { border-left-color: var(--danger); }
 
+/* V5.6:工作日志 */
+.board-bar .nav-on { border-color: var(--ink); font-weight: 700; }
+.log-run { margin: 4px 0 10px; border-left: 2px solid var(--border); padding-left: 10px; }
+.log-step { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 6px 8px; margin: 6px 0; }
+.log-step summary { cursor: pointer; font-size: 13px; }
+.log-pre { font-family: var(--font-mono); font-size: 12px; background: var(--surface); border: 1px solid var(--border); padding: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; margin: 4px 0 8px; }
+.log-bad { color: var(--danger); }
+.skills-grid { display: grid; grid-template-columns: 240px 1fr; gap: 12px; align-items: start; }
+.skill-item { display: block; width: 100%; text-align: left; margin: 4px 0; }
+.skill-item.nav-on { border-color: var(--ink); font-weight: 700; }
+.skill-doc { max-height: 70vh; }
+
 /* D 期前收口:会话历史/素材库 */
 .chat-head { display: flex; align-items: center; gap: 8px; }
 .chat-head-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }

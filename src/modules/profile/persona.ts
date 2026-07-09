@@ -193,6 +193,7 @@ export async function generateAudiencePersonaProposal(
     userMessage: buildPersonaUserMessage(industry, rules, boundaries?.never, recentTitles, signals),
     tools: [submitTool],
     maxTurns: 3,
+    logMeta: { agent: "audience-researcher" },
   });
 
   if (!captured.persona) {

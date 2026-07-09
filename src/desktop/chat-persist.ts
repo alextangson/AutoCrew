@@ -43,6 +43,8 @@ export async function runPersistedChatTurn(params: {
   dataDir?: string;
   /** §C1 上下文只发给模型,不进持久历史（回放显示原文） */
   viewContext?: ChatViewContext;
+  /** 任务动态/运行日志归属(chatTurnHandler 注入,透传到 runLoop logMeta) */
+  runId?: string;
   onEvent?: (e: ChatProgressEvent) => void;
   runTurn?: typeof runChatTurn;
 }): Promise<Record<string, unknown>> {
@@ -63,6 +65,7 @@ export async function runPersistedChatTurn(params: {
     history,
     dataDir,
     ...(params.viewContext ? { viewContext: params.viewContext } : {}),
+    ...(params.runId ? { runId: params.runId } : {}),
     ...(params.onEvent ? { onEvent: params.onEvent } : {}),
   });
   if (!result.ok) {

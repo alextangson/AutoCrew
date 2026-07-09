@@ -82,6 +82,7 @@ import {
   coverSettingsGetHandler,
   coverSettingsSetHandler,
 } from "./cover-handlers.js";
+import { logsListHandler, logsGetRunHandler, skillsListHandler } from "./log-handlers.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
@@ -282,6 +283,7 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
       ...(conversationId ? { conversationId } : {}),
       ...(viewContext ? { viewContext } : {}),
       dataDir,
+      runId,
       ...(ctx?.onProgress
         ? {
             onEvent: (e: unknown) => {
@@ -733,6 +735,9 @@ export function buildIpcHandlers(
     "cover:ratios": coverRatiosHandler,
     "settings:cover_get": coverSettingsGetHandler,
     "settings:cover_set": coverSettingsSetHandler,
+    "logs:list": logsListHandler,
+    "logs:get_run": logsGetRunHandler,
+    "skills:list": skillsListHandler,
     "onboarding:status": getOnboardingStatus,
     "onboarding:init": completeOnboardingInit,
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),

@@ -168,6 +168,7 @@ export async function designCoverPlan(
       "请给出 3 个封面设计方案。",
     tools: [buildPlanTool(captured)],
     maxTurns: 3,
+    logMeta: { agent: "cover-designer" },
   });
 
   if (!captured.designs) {
@@ -225,6 +226,7 @@ export async function reviseCoverDesign(
       `\n用户反馈(必须照办):${input.feedback}\n`,
     tools: [buildRevisionTool(captured, input.previous.label)],
     maxTurns: 3,
+    logMeta: { agent: "cover-designer" },
   });
 
   if (!captured.design) {

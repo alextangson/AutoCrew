@@ -159,6 +159,7 @@ async function runGeneration(
   req: ScriptRequest,
   dataDir?: string,
   deps?: { runLoopImpl?: typeof runLoop },
+  runId?: string,
 ): Promise<GeneratedScript> {
   const [config, pack, profile] = await Promise.all([
     loadEngineConfig(dataDir),
@@ -181,6 +182,7 @@ async function runGeneration(
       // Gate 修复轮需要额外回合与 token 预算（整稿 × 最多 1+N 稿）
       maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
       maxTotalTokens: gate ? 80000 : undefined,
+      logMeta: { ...(runId ? { runId } : {}), agent: "writer" },
     });
 
     if (!captured.payload) {
@@ -247,7 +249,7 @@ export function startGenerateScript(
     const completion = (async () => {
       emit({ role: "writer", kind: "work", label: `编剧开写《${req.topic.slice(0, 24)}》`, contentId, runId });
       try {
-        const result = await runGeneration(contentId, req, dataDir, deps);
+        const result = await runGeneration(contentId, req, dataDir, deps, runId);
         emit({ role: "system", kind: "run_done", label: `《${result.title.slice(0, 24)}》写完,待审改`, contentId, runId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

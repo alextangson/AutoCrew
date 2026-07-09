@@ -15,6 +15,7 @@ import {
   resolveGeminiModel,
 } from "./context.js";
 import { type EventBus, createEvent } from "./events.js";
+import { appendRunLog } from "./run-log.js";
 import { executePrePublish } from "../tools/pre-publish.js";
 
 // --- Types ---
@@ -131,7 +132,7 @@ const errorBoundaryMiddleware: Middleware = async (_ctx, toolName, _params, next
   }
 };
 
-/** Record audit trail */
+/** Record audit trail(内存)+ 运行日志落盘(V5.6:MCP 路径的可观测面,桌面路径埋在 runLoop) */
 const auditMiddleware: Middleware = async (ctx, toolName, params, next) => {
   const start = Date.now();
   let result: ToolResult;
@@ -147,6 +148,18 @@ const auditMiddleware: Middleware = async (ctx, toolName, params, next) => {
       error: err instanceof Error ? err.message : String(err),
     };
     recordAudit(ctx, entry);
+    void appendRunLog(ctx.dataDir, {
+      runId: ctx.sessionId,
+      kind: "tool",
+      agent: "mcp",
+      name: toolName,
+      action: entry.action,
+      durationMs: entry.durationMs,
+      ok: false,
+      error: entry.error,
+      input: JSON.stringify(params),
+      output: "",
+    });
     throw err;
   }
   const entry: AuditEntry = {
@@ -158,6 +171,18 @@ const auditMiddleware: Middleware = async (ctx, toolName, params, next) => {
     error: result.error as string | undefined,
   };
   recordAudit(ctx, entry);
+  void appendRunLog(ctx.dataDir, {
+    runId: ctx.sessionId,
+    kind: "tool",
+    agent: "mcp",
+    name: toolName,
+    action: entry.action,
+    durationMs: entry.durationMs,
+    ok: entry.ok,
+    error: entry.error,
+    input: JSON.stringify(params),
+    output: JSON.stringify(result ?? null),
+  });
   return result;
 };
 

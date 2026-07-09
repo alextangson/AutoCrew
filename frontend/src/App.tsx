@@ -10,6 +10,7 @@ import { Calibration } from "./views/Calibration";
 import { Settings } from "./views/Settings";
 import { ReportView } from "./views/Report";
 import { Library } from "./views/Library";
+import { Logs } from "./views/Logs";
 import { ChatDock } from "./chat/ChatDock";
 import { ToastHost, toast } from "./ui";
 import { invoke } from "./transport";
@@ -21,6 +22,7 @@ export type Route =
   | { view: "calibration" }
   | { view: "report" }
   | { view: "library" }
+  | { view: "logs" }
   | { view: "settings" };
 
 const NAV: Array<{ view: Route["view"]; label: string }> = [
@@ -28,6 +30,7 @@ const NAV: Array<{ view: Route["view"]; label: string }> = [
   { view: "board", label: "看板" },
   { view: "calibration", label: "校准中心" },
   { view: "report", label: "数据回流" },
+  { view: "logs", label: "工作日志" },
   { view: "library", label: "素材库" },
   { view: "settings", label: "设置" },
 ];
@@ -72,6 +75,7 @@ export function App() {
           {route.view === "calibration" && <Calibration />}
           {route.view === "report" && <ReportView />}
           {route.view === "library" && <Library />}
+          {route.view === "logs" && <Logs />}
           {route.view === "settings" && <Settings />}
         </main>
         <aside className="dock">

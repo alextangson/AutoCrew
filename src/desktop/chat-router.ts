@@ -753,6 +753,8 @@ export async function runChatTurn(params: {
   viewContext?: ChatViewContext;
   deps?: ChatToolDeps;
   fetchImpl?: typeof fetch;
+  /** 运行日志归属(V5.6):与任务动态卡同一 runId,工作日志视图按它聚合 */
+  runId?: string;
   onEvent?: (e: ChatProgressEvent) => void;
 }): Promise<Record<string, unknown>> {
   let config;
@@ -801,6 +803,7 @@ export async function runChatTurn(params: {
       history: params.history ?? [],
       tools,
       maxTurns: 6,
+      logMeta: { ...(params.runId ? { runId: params.runId } : {}), agent: "chief-editor" },
       ...(params.fetchImpl !== undefined ? { fetchImpl: params.fetchImpl } : {}),
       onEvent: params.onEvent
         ? (e: LoopEvent) => {

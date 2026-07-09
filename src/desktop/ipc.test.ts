@@ -65,6 +65,9 @@ describe("IPC_CHANNELS", () => {
     "cover:ratios",
     "settings:cover_get",
     "settings:cover_set",
+    "logs:list",
+    "logs:get_run",
+    "skills:list",
     "onboarding:status",
     "onboarding:init",
     "flywheel:import_csv",
@@ -104,8 +107,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 70 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(70);
+  it("has exactly 73 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(73);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -209,6 +212,9 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "cover:ratios" &&
           ch !== "settings:cover_get" &&
           ch !== "settings:cover_set" &&
+          ch !== "logs:list" &&
+          ch !== "logs:get_run" &&
+          ch !== "skills:list" &&
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&
           ch !== "dialog:pick_file" &&
