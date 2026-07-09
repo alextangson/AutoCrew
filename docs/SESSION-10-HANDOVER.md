@@ -52,3 +52,27 @@
 
 ## 惯例不变
 FE 改动:`npm run fe:build && npm run smoke`;测试 `npx vitest run`;类型 `npx tsc --noEmit`;服务 `npx tsx desktop/server.ts`(日常 `npm start`)。
+
+---
+
+# 二期附录(同日 2026-07-09,创始人追加裁决,commits 43c04a1 + 11046d5)
+
+## A · 封面生图切中转 image2 + 横屏主比例
+- **不再用 Gemini**:封面默认走 OpenAI 兼容中转的 `gpt-image-2`,**凭证复用 publish.json 的生图 Key/端点**(公众号配图同一条,实测已自动识别——设置页显示「中转 gpt-image-2」,零新配置)。Gemini 保留为可选 provider(`cover.json` 切换)。**之前"等创始人"清单里的 Gemini key + 照片发 Google 顾虑作废。**
+- **参考照片**走 `/images/edits` multipart(形象照目录不变);中转不支持该端点时自动降级无人物并在候选上明说(hasPersonalIP 如实)。**首次真跑时留意 warning——不支持的话降级即最终行为。**
+- **尺寸机制**:中转只有 1024x1536/1536x1024/1024x1024 → 取最近档后 png-crop 居中精裁(裁行/裁列都支持),3:4 / 2.35:1 / 16:9 / 4:3 全部精确。
+- **横屏主比例**(裁决:B站/抖音PC 收横屏):生成入口有比例选择(3:4 竖屏默认 / 16:9 / 4:3),三张候选按所选比例出,设计师提示词随比例切横版构图;**比例适配 = 同一设计方案(同 prompt/大字/形象照)重渲染 → 风格统一**。16:9/4:3 不再过 Pro 门(legacy MCP `generate_ratios` 委托新链路,同样免门;ratio-adapter 保留但已无生产消费方)。
+
+## B · 内容文件夹人机协同
+- 调研修正:每篇稿件本来就是 `contents/<id>/` 一个文件夹,且 **draft.md 每次存稿/改稿都会更新**(一直如此,已加回归测试锚定)——计划里的"镜像"项砍掉,不造已有的轮子。
+- 新增:选定封面自动复制到文件夹根 `封面.png`,比例适配复制 `封面-2.35x1.png / 封面-16x9.png / 封面-4x3.png`(拿了就走);编辑器素材区「打开稿件文件夹」按钮(content:open_folder,Finder 直达,已真机验证)。
+- 刻意不做:文件夹按标题命名/符号链接索引——id 锚定血缘、资源路由与安全白名单,标题会改。
+
+## 验证(二期)
+978 单测全过(+35:edits multipart/4xx 降级、裁列、relay 适配器、provider 解析、横屏主比例、封面副本、folder-open);tsc/fe:build/smoke 绿;服务已重启;浏览器实测:设置页 provider 区(显示中转已配)、生成入口比例选择、打开文件夹按钮 Finder 真开。
+
+## 等创始人(更新后)
+1. ~~Gemini key~~ 不需要了。形象照放 `~/.autocrew/covers/templates/`(走你自己的中转,不再发 Google)。
+2. 封面全链路真跑一次:选比例生成 → 提意见重做 → 选用 → 比例适配;顺带看中转是否吃 /images/edits(不吃会降级并明说)。
+3. 字数裁定确认(公众号 1500-2000 维持?)、首个 /goal、一周后第一份周复盘——同一期清单。
+频道现 79 个;`desktop/server.ts` 仍留给你的 server-token 线一起提交。
