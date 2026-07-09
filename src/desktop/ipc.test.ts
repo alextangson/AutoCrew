@@ -109,11 +109,12 @@ describe("IPC_CHANNELS", () => {
     "topic:restore",
     "content:delete",
     "content:restore",
+    "content:open_folder",
     "trash:list",
   ];
 
-  it("has exactly 78 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(78);
+  it("has exactly 79 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(79);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -225,6 +226,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "retro:generate" &&
           ch !== "retro:list" &&
           ch !== "retro:get" &&
+          ch !== "content:open_folder" &&
           ch !== "onboarding:status" &&
           ch !== "onboarding:init" &&
           ch !== "dialog:pick_file" &&

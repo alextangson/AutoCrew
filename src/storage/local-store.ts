@@ -717,6 +717,11 @@ export async function approveCoverVariant(
       fs.writeFile(reviewPath, JSON.stringify(review, null, 2), "utf-8"),
       fs.writeFile(metaPath, JSON.stringify(content, null, 2), "utf-8"),
     ]);
+    // 人机协同(V5.6.1):选定封面在文件夹根留一份「拿了就走」的副本(重选自动覆盖)
+    if (review.approvedImagePath) {
+      const ext = path.extname(review.approvedImagePath) || ".png";
+      await fs.copyFile(review.approvedImagePath, path.join(projDir, `封面${ext}`)).catch(() => {});
+    }
     return review;
   } catch {
     return null;

@@ -414,6 +414,16 @@ function AssetsSection(props: {
       <div>
         <span className="mono muted">素材（{props.assets.length}）：</span>
         <button onClick={() => void openPicker()}>{picking ? "收起" : "从素材库挂接"}</button>
+        <button
+          onClick={async () => {
+            const r = await invoke("content:open_folder", { id: props.contentId });
+            if (!r.ok) return toast((r as { error?: string }).error ?? "打开失败");
+            const d = r as { opened?: boolean; path?: string };
+            toast(d.opened ? "已在 Finder 打开——文案 draft.md、封面、素材都在里面" : `文件夹:${d.path ?? ""}`);
+          }}
+        >
+          打开稿件文件夹
+        </button>
       </div>
       {props.assets.map((a) => (
         <div key={a.filename} className="row">

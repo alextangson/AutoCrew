@@ -7,6 +7,7 @@
  * - approve: approve a selected variant
  * - generate_ratios: [Pro] generate 16:9 + 4:3 from approved cover
  */
+import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import {
@@ -423,6 +424,14 @@ async function platformRatios(params: Record<string, unknown>, contentId: string
   }
 
   await saveCoverReview(contentId, review, dataDir);
+
+  // 人机协同(V5.6.1):适配比例也在文件夹根留「拿了就走」副本(封面-16x9.png 等)
+  const projDir = path.join(dataDir, "contents", contentId);
+  for (const [ratio, p] of Object.entries(paths)) {
+    const suffix = ratio === "2.35:1" ? "235x1" : ratio.replace(":", "x");
+    await fs.copyFile(p, path.join(projDir, `封面-${suffix}${path.extname(p) || ".png"}`)).catch(() => {});
+  }
+
   return {
     ok: errors.length === 0,
     paths,

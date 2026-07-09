@@ -84,6 +84,7 @@ import {
 } from "./cover-handlers.js";
 import { logsListHandler, logsGetRunHandler, skillsListHandler } from "./log-handlers.js";
 import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler, retroGetHandler } from "./goal-retro-handlers.js";
+import { openContentFolder } from "./folder-open.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
@@ -188,6 +189,19 @@ async function styleRulesHandler(payload: Record<string, unknown>): Promise<Reco
         },
       },
     };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── content:open_folder — 人机协同:稿件文件夹 Finder 直达(V5.6.1) ─────────────
+
+async function contentOpenFolderHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    return (await openContentFolder(String(payload.id ?? ""), (payload._dataDir as string) || undefined)) as unknown as Record<string, unknown>;
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -760,6 +774,7 @@ export function buildIpcHandlers(
     "content:adoption": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:adoption"]),
     "content:delete": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:delete"]),
     "content:restore": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:restore"]),
+    "content:open_folder": contentOpenFolderHandler,
     "topics:list": topicsListHandler,
     "topic:create": topicCreateHandler,
     "topic:delete": topicDeleteHandler,

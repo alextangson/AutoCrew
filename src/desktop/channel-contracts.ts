@@ -65,6 +65,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "content:adoption": ["id", "verdict"],
   "content:delete": ["id"],
   "content:restore": ["id"],
+  "content:open_folder": ["id"],
   "topics:list": [],
   "topic:create": ["title"],
   "topic:delete": ["id"],

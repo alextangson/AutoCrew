@@ -84,6 +84,7 @@ export const IPC_CHANNELS = [
   "topic:restore",
   "content:delete",
   "content:restore",
+  "content:open_folder",
   "trash:list",
 ] as const;
 

@@ -162,6 +162,14 @@ describe("approve(存量 bug 修复)", () => {
     const content = await getContent(id, dir);
     expect(content!.status).toBe("approved");
   });
+
+  it("人机协同:选定封面复制到文件夹根 封面.png(拿了就走)", async () => {
+    const id = await seedContent();
+    await createCandidates(id);
+    await executeCoverReview({ action: "approve", content_id: id, label: "b", _dataDir: dir });
+    const copy = await fs.readFile(path.join(dir, "contents", id, "封面.png"));
+    expect(copy.equals(Buffer.from("png-bytes"))).toBe(true);
+  });
 });
 
 describe("revise(反馈重做闭环)", () => {
@@ -285,6 +293,8 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
     expect(relayMock.mock.calls[0][0].targetAspect).toBe("2.35:1");
     const review = await getCoverReview(id, dir);
     expect(review!.variants.find((v) => v.label === "a")!.imagePaths["2.35:1"]).toContain("235x1");
+    // 人机协同:适配比例在文件夹根留副本
+    await expect(fs.access(path.join(dir, "contents", id, "封面-235x1.png"))).resolves.toBeUndefined();
   });
 });
 
