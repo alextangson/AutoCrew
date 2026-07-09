@@ -29,6 +29,25 @@ export function ChatDock() {
   const [progress, setProgress] = useState<string[]>([]);
   const convRef = useRef<string | undefined>(undefined);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [convs, setConvs] = useState<Array<{ id: string; title: string; updatedAt: string }>>([]);
+
+  // 会话延续(D 期前缺口):启动加载最近会话(含卡片回放),历史可切换
+  const loadConversation = async (id: string) => {
+    const r = await invoke("conversations:get", { id });
+    if (!r.ok) return;
+    const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[] }> } }).data;
+    convRef.current = id;
+    setMsgs(d.messages.map((m) => ({ role: m.role, text: m.content, cards: m.cards ?? [] })));
+  };
+  useEffect(() => {
+    void invoke("conversations:list").then(async (r) => {
+      if (!r.ok) return;
+      const list = (r as unknown as { data: { conversations: Array<{ id: string; title: string; updatedAt: string }> } }).data.conversations ?? [];
+      setConvs(list);
+      if (list.length > 0) await loadConversation(list[0].id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const send = async (text: string) => {
     const message = text.trim();
@@ -48,7 +67,15 @@ export function ChatDock() {
       return;
     }
     const conv = r.conversation_id ?? (r as { data?: { conversation_id?: string } }).data?.conversation_id;
-    if (typeof conv === "string") convRef.current = conv;
+    if (typeof conv === "string") {
+      const isNew = convRef.current !== conv;
+      convRef.current = conv;
+      if (isNew) {
+        void invoke("conversations:list").then((lr) => {
+          if (lr.ok) setConvs((lr as unknown as { data: { conversations: typeof convs } }).data.conversations ?? []);
+        });
+      }
+    }
     const reply = typeof r.reply === "string" ? r.reply : "";
     const cards = Array.isArray(r.cards) ? (r.cards as ChatCardShape[]) : [];
     setMsgs((m) => [...m, { role: "assistant", text: reply, cards }]);
@@ -80,7 +107,32 @@ export function ChatDock() {
 
   return (
     <div className="chat">
-      <div className="chat-head mono">总编辑</div>
+      <div className="chat-head mono">
+        总编辑
+        <span className="chat-head-actions">
+          {convs.length > 0 && (
+            <select
+              value={convRef.current ?? ""}
+              onChange={(e) => {
+                if (e.target.value) void loadConversation(e.target.value);
+              }}
+            >
+              {convs.map((c) => (
+                <option key={c.id} value={c.id}>{c.title}</option>
+              ))}
+            </select>
+          )}
+          <button
+            title="开新会话"
+            onClick={() => {
+              convRef.current = undefined;
+              setMsgs([]);
+            }}
+          >
+            ＋新会话
+          </button>
+        </span>
+      </div>
       <div className="chat-body" ref={bodyRef}>
         {msgs.length === 0 && (
           <p className="muted">

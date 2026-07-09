@@ -318,6 +318,8 @@ export function Editor(props: { id: string; back: () => void }) {
         </div>
       )}
 
+      <AssetsSection contentId={props.id} assets={(c as unknown as { assets?: Array<{ filename: string; type: string; description?: string }> }).assets ?? []} reload={load} />
+
       {versions.length > 0 && (
         <div className="ed-versions">
           <div className="mono muted">版本（{versions.length}）</div>
@@ -388,5 +390,71 @@ function AdoptButton(props: {
         </span>
       )}
     </span>
+  );
+}
+
+
+function AssetsSection(props: {
+  contentId: string;
+  assets: Array<{ filename: string; type: string; description?: string }>;
+  reload: () => Promise<void>;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [lib, setLib] = useState<Array<{ id: string; name: string; missing?: boolean }>>([]);
+
+  const openPicker = async () => {
+    if (picking) return setPicking(false);
+    const r = await invoke("library:list");
+    if (!r.ok) return toast(r.error ?? "素材库加载失败");
+    const d = (r as unknown as { data: { assets?: typeof lib } }).data;
+    setLib((d.assets ?? []).filter((a) => !a.missing));
+    setPicking(true);
+  };
+
+  return (
+    <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
+      <div>
+        <span className="mono muted">素材（{props.assets.length}）：</span>
+        <button onClick={() => void openPicker()}>{picking ? "收起" : "从素材库挂接"}</button>
+      </div>
+      {props.assets.map((a) => (
+        <div key={a.filename} className="row">
+          <span className="row-title">{a.filename}</span>
+          <span className="muted mono">{a.type}{a.description ? " · " + a.description : ""}</span>
+          <button
+            onClick={async () => {
+              if (!window.confirm(`移除挂接素材「${a.filename}」?(项目内副本删除,素材库不受影响)`)) return;
+              const r = await invoke("content:asset_remove", { content_id: props.contentId, filename: a.filename });
+              toast(r.ok ? "已移除" : (r.error ?? "移除失败"));
+              if (r.ok) void props.reload();
+            }}
+          >
+            移除
+          </button>
+        </div>
+      ))}
+      {picking && (
+        <div className="pending-edit">
+          {lib.length === 0 && <p className="muted">素材库暂无可用素材——先到「素材库」粘路径导入。</p>}
+          {lib.map((a) => (
+            <div key={a.id} className="row">
+              <span className="row-title">{a.name}</span>
+              <button
+                onClick={async () => {
+                  const r = await invoke("content:asset_add", { content_id: props.contentId, library_id: a.id });
+                  toast(r.ok ? `已挂接「${a.name}」` : (r.error ?? "挂接失败"));
+                  if (r.ok) {
+                    setPicking(false);
+                    void props.reload();
+                  }
+                }}
+              >
+                挂接
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

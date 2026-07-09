@@ -9,8 +9,10 @@ import { Editor } from "./views/Editor";
 import { Calibration } from "./views/Calibration";
 import { Settings } from "./views/Settings";
 import { ReportView } from "./views/Report";
+import { Library } from "./views/Library";
 import { ChatDock } from "./chat/ChatDock";
-import { ToastHost } from "./ui";
+import { ToastHost, toast } from "./ui";
+import { invoke } from "./transport";
 
 export type Route =
   | { view: "dashboard" }
@@ -18,6 +20,7 @@ export type Route =
   | { view: "editor"; id: string }
   | { view: "calibration" }
   | { view: "report" }
+  | { view: "library" }
   | { view: "settings" };
 
 const NAV: Array<{ view: Route["view"]; label: string }> = [
@@ -25,6 +28,7 @@ const NAV: Array<{ view: Route["view"]; label: string }> = [
   { view: "board", label: "看板" },
   { view: "calibration", label: "校准中心" },
   { view: "report", label: "数据回流" },
+  { view: "library", label: "素材库" },
   { view: "settings", label: "设置" },
 ];
 
@@ -43,8 +47,20 @@ export function App() {
               {n.label}
             </button>
           ))}
-          <button onClick={() => { window.location.href = "/" + window.location.search; }} title="素材库等未迁移视图回旧版打开">
-            素材库(旧版) ↗
+          <button
+            onClick={() => {
+              const title = window.prompt("新想法(一句话选题)");
+              if (!title?.trim()) return;
+              const reason = window.prompt("为什么值得写?(可选)") ?? "";
+              void invoke("topic:create", { title: title.trim(), ...(reason.trim() ? { reason: reason.trim() } : {}) }).then((r) => {
+                toast(r.ok ? "已落进灵感库(看板第一列)" : ((r as { error?: string }).error ?? "入库失败"));
+              });
+            }}
+          >
+            ＋新想法
+          </button>
+          <button onClick={() => { window.location.href = "/" + window.location.search; }} title="旧版界面(D 期清场前保留)">
+            旧版 ↗
           </button>
         </nav>
       </header>
@@ -55,6 +71,7 @@ export function App() {
           {route.view === "editor" && <Editor id={route.id} back={() => setRoute({ view: "board" })} />}
           {route.view === "calibration" && <Calibration />}
           {route.view === "report" && <ReportView />}
+          {route.view === "library" && <Library />}
           {route.view === "settings" && <Settings />}
         </main>
         <aside className="dock">

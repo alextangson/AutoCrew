@@ -345,6 +345,11 @@ async function main(): Promise<number> {
             if (!t3.includes(key)) fails.push("v2 设置缺区:" + key);
           }
         }
+        if (await navTo("素材库")) {
+          const t4 = document.body.textContent || "";
+          if (!t4.includes("导入素材")) fails.push("v2 素材库导入区缺失");
+        }
+        if (!(document.body.textContent || "").includes("＋新想法")) fails.push("v2 ＋新想法入口缺失");
         return { fails }; })()`,
       awaitPromise: true, returnByValue: true,
     }, sessionId)) as { result?: { value?: { fails?: string[] } }; exceptionDetails?: { text?: string } };
