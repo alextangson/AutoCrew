@@ -1,0 +1,261 @@
+name: Claude Fix
+
+# Claude side of the Codex <-> Claude PR auto-fix loop.
+# Codex reviews PRs, posts structured YAML findings, and applies `needs-claude-fix`
+# when P0/P1 blocking issues remain. This workflow reacts to that label: Claude
+# fixes only the blocking findings on the PR head branch, verifies honestly,
+# replies to the review threads, and the label state machine is advanced
+# deterministically by workflow steps (never faked by the model).
+
+on:
+  pull_request:
+    types: [labeled]
+
+# One in-flight fix per PR; a newer fix request cancels the older one.
+concurrency:
+  group: claude-fix-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least privilege that still lets Claude update the PR branch, comment on the
+# PR / review threads, and manage labels. No `pull_request_target`, so fork PRs
+# never receive secrets.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+jobs:
+  claude-fix:
+    # Only for the `needs-claude-fix` label, and only when the PR head lives in
+    # this same repo (never expose secrets to a fork's branch).
+    if: >-
+      github.event.label.name == 'needs-claude-fix' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # --- Round-trip guard: at most 3 Claude rounds, then hand to humans. ---
+      - name: Enforce round limit
+        id: guard
+        uses: actions/github-script@v7
+        env:
+          MAX_ROUNDS: "3"
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const max = parseInt(process.env.MAX_ROUNDS, 10);
+            let rounds = 0;
+            try {
+              const events = await github.paginate(github.rest.issues.listEvents, {
+                owner, repo, issue_number, per_page: 100,
+              });
+              rounds = events.filter(
+                (e) => e.event === "labeled" && e.label && e.label.name === "needs-claude-fix"
+              ).length;
+            } catch (e) {
+              core.warning(`Could not count rounds, proceeding: ${e.message}`);
+            }
+            core.setOutput("rounds", String(rounds));
+            if (rounds > max) {
+              core.info(`Round ${rounds} exceeds limit ${max}; handing to needs-human-decision.`);
+              try {
+                await github.rest.issues.addLabels({owner, repo, issue_number, labels: ["needs-human-decision"]});
+              } catch (e) { core.warning(`addLabels: ${e.message}`); }
+              try {
+                await github.rest.issues.removeLabel({owner, repo, issue_number, name: "needs-claude-fix"});
+              } catch (e) { core.warning(`removeLabel: ${e.message}`); }
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body: `🚦 **Claude fix loop reached ${rounds} rounds (limit ${max}).**\n\nAdded \`needs-human-decision\` and stopped the automated loop. A human should review the remaining Codex findings.`,
+              });
+              core.setOutput("skip", "true");
+            } else {
+              core.setOutput("skip", "false");
+            }
+
+      - name: Checkout PR head branch
+        if: steps.guard.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Claude fix blocking findings
+        if: steps.guard.outputs.skip == 'false'
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO_FULL: ${{ github.repository }}
+          RESULT_FILE: ${{ runner.temp }}/claude-fix-result.json
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          # No --dangerously-skip-permissions. Tools are explicitly allowlisted;
+          # everything Claude needs it does via git/gh in Bash.
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Bash,Edit,Write,Read,Glob,Grep"
+          prompt: |
+            You are the automated **Claude fixer** in a Codex <-> Claude pull-request
+            review loop. Codex has reviewed PR #${{ github.event.pull_request.number }}
+            in ${{ github.repository }}, left a REQUEST_CHANGES review, and posted
+            structured findings. Your job is to fix ONLY the blocking findings, verify
+            honestly, push to the PR branch, reply to the review threads, and record a
+            machine-readable outcome. Never fake success.
+
+            Ground rules (these are hard boundaries):
+            - Blocking = severity P0 or P1 only. Fix exactly those. Do NOT touch P2/P3
+              and do NOT do unrelated refactoring, renames, or cleanup.
+            - Only ever update THIS PR's head branch (`${{ github.head_ref }}`). Never push to
+              main/master, never force-push, never rewrite history.
+            - Run the repo's REAL tests / lint / typecheck / build. Never fabricate or
+              guess a pass. If you didn't run it, say so.
+            - Do NOT resolve or close Codex's review threads — reply only; Codex re-reviews.
+
+            How to think about it:
+
+            1. Establish ground truth. The PR head SHA at trigger time is `${{ github.event.pull_request.head.sha }}`.
+               Confirm `git rev-parse HEAD` and that you are on branch `${{ github.head_ref }}`
+               (`gh`/`git` are available; GH_TOKEN is set).
+
+            2. Gather Codex's feedback. Use `gh api` to read: the PR reviews
+               (`/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews`), the inline review
+               comments (`/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments`), and issue
+               comments (`/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments`). Codex posts a
+               structured YAML findings block (fenced ```yaml). Parse it: each finding has
+               an id and a severity. Also note which inline review threads are unresolved.
+               If you cannot find any YAML findings, fall back to the REQUEST_CHANGES review
+               body and inline comments, treating clearly-blocking issues as P0/P1.
+
+            3. Scope the work. Build the list of P0/P1 findings. If that list is empty
+               (nothing actually blocking), treat this as "blocked" with reason
+               "no blocking P0/P1 findings found" rather than inventing changes.
+
+            4. Fix each blocking finding with the smallest correct change. Keep the diff
+               tight and coherent with the surrounding code.
+
+            5. Verify for real. Detect the repo's toolchain (package.json scripts,
+               Makefile, pyproject, go.mod, etc.) and run its existing tests, lint, and
+               typecheck/build. Capture the actual results. If a check legitimately does
+               not exist, note that; do not invent one.
+
+            6. If — and only if — every blocking finding is genuinely fixed and
+               verification actually passed:
+               - Configure a git identity if needed
+                 (`git config user.name "claude-fix[bot]"`,
+                  `git config user.email "claude-fix[bot]@users.noreply.github.com"`).
+               - Commit and push to the head branch:
+                 `git push origin HEAD:${{ github.head_ref }}`.
+               - Record each finding id -> the commit SHA that fixed it.
+
+            7. Reply to the corresponding review thread for each fixed finding using
+               `gh api` to POST a reply
+               (`/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/{comment_id}/replies`,
+               or a PR issue comment if the finding was not an inline thread). Each reply
+               must state: the finding id, the fix commit SHA, a one-line summary of the
+               change, and the REAL verification result. Do not resolve the thread.
+
+            8. Record the outcome. Write a JSON file to `${{ runner.temp }}/claude-fix-result.json` (this path is
+               outside the repo — do NOT commit it) with exactly this shape:
+               {
+                 "status": "fixed" | "blocked",
+                 "head_sha_before": "${{ github.event.pull_request.head.sha }}",
+                 "findings": [
+                   {"id": "...", "severity": "P0|P1", "commit": "<sha or null>", "verification": "<real result>"}
+                 ],
+                 "verification_summary": "<commands you ran and their real outcomes>",
+                 "blocking_reason": "<empty if fixed; otherwise the true reason>"
+               }
+               Use "status": "fixed" ONLY when all blocking findings are fixed, checks
+               really passed, and you pushed. Use "status": "blocked" when tests fail, a
+               fix isn't safe, permissions are insufficient, or requirements conflict —
+               and put the honest reason in blocking_reason. Also leave a PR comment
+               explaining the blocker. Do not pretend to have succeeded.
+
+      # --- Deterministic label state machine, driven by Claude's result file. ---
+      # This runs even if the Claude step failed, so a crash/timeout falls back to
+      # needs-human-decision instead of silently doing nothing.
+      - name: Advance label state
+        if: always() && steps.guard.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        env:
+          RESULT_FILE: ${{ runner.temp }}/claude-fix-result.json
+          HEAD_SHA_BEFORE: ${{ github.event.pull_request.head.sha }}
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+        with:
+          script: |
+            const fs = require("fs");
+            const {owner, repo} = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            let result = null;
+            try {
+              result = JSON.parse(fs.readFileSync(process.env.RESULT_FILE, "utf8"));
+            } catch (e) {
+              core.warning(`No/invalid result file: ${e.message}`);
+            }
+
+            // Did the PR branch actually move? (fake-success guard)
+            let pushed = false;
+            try {
+              const {data: pr} = await github.rest.pulls.get({owner, repo, pull_number: issue_number});
+              pushed = pr.head.sha !== process.env.HEAD_SHA_BEFORE;
+            } catch (e) {
+              core.warning(`pulls.get failed: ${e.message}`);
+            }
+
+            const claimedFixed = result && result.status === "fixed";
+            const success = claimedFixed && pushed && process.env.CLAUDE_OUTCOME === "success";
+
+            let reason = "";
+            if (claimedFixed && !pushed) {
+              reason = "Claude reported 'fixed' but no new commit was pushed to the PR branch.";
+            } else if (!result) {
+              reason = "Claude produced no result file (crashed, timed out, or hit the turn limit).";
+            } else if (result && result.status === "blocked") {
+              reason = result.blocking_reason || "Claude could not safely fix the blocking findings.";
+            } else if (process.env.CLAUDE_OUTCOME !== "success") {
+              reason = "The Claude fix step did not finish successfully.";
+            }
+
+            const add = async (labels) => {
+              try { await github.rest.issues.addLabels({owner, repo, issue_number, labels}); }
+              catch (e) { core.warning(`addLabels ${labels}: ${e.message}`); }
+            };
+            const remove = async (name) => {
+              try { await github.rest.issues.removeLabel({owner, repo, issue_number, name}); }
+              catch (e) { if (e.status !== 404) core.warning(`removeLabel ${name}: ${e.message}`); }
+            };
+            const comment = async (body) => {
+              await github.rest.issues.createComment({owner, repo, issue_number, body});
+            };
+
+            if (success) {
+              // Fixed: hand back to Codex for re-review.
+              await remove("needs-claude-fix");
+              await remove("codex-approved");
+              await add(["needs-codex-review"]);
+              const n = (result.findings || []).length;
+              await comment(
+                `✅ **Claude fixed ${n} blocking finding(s) and pushed to \`${context.payload.pull_request.head.ref}\`.**\n\n` +
+                `Verification:\n\`\`\`\n${(result.verification_summary || "(none reported)").slice(0, 4000)}\n\`\`\`\n\n` +
+                `Removed \`needs-claude-fix\` / \`codex-approved\`, added \`needs-codex-review\` for Codex re-review.`
+              );
+            } else {
+              // Blocked / failed: keep needs-claude-fix, escalate to humans.
+              await add(["needs-human-decision"]);
+              await comment(
+                `⚠️ **Claude could not complete the automated fix.**\n\n` +
+                `Reason: ${reason}\n\n` +
+                `Kept \`needs-claude-fix\` and added \`needs-human-decision\`. No success was faked; a human should look at the remaining Codex findings.`
+              );
+              core.setFailed(`claude-fix blocked: ${reason}`);
+            }
