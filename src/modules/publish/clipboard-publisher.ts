@@ -159,7 +159,7 @@ function formatForBilibili(title: string, body: string, hashtags: string[]): Cli
 /** X 帖长权重:CJK 计 2 单位、其余计 1,上限 280(X 官方口径的近似,超限自动分楼) */
 function xUnits(text: string): number {
   let units = 0;
-  for (const ch of text) units += /[一-鿿　-〿＀-￯]/.test(ch) ? 2 : 1;
+  for (const ch of text) units += /[一-鿿\u3000-〿＀-￯]/.test(ch) ? 2 : 1;
   return units;
 }
 

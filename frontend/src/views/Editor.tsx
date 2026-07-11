@@ -171,8 +171,15 @@ export function Editor(props: { id: string; back: () => void }) {
       confirmLabel: "推送",
     });
     if (!yes) return;
+    const approval = await invoke("publish:request_wechat", { content_id: props.id });
+    if (!approval.ok || typeof approval.approvalToken !== "string") {
+      return toast(approval.error ?? "发布前检查未通过");
+    }
     toast("推送中——生成配图约 2 分钟,完成后看提示");
-    const r = await invoke("publish:wechat_draft", { content_id: props.id });
+    const r = await invoke("publish:wechat_draft", {
+      content_id: props.id,
+      approval_token: approval.approvalToken,
+    });
     if (!r.ok) return toast(r.error ?? "推送失败");
     toast("已进草稿箱:" + ((r as { nextStep?: string }).nextStep ?? "去公众号后台检查"));
   };

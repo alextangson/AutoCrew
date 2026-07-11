@@ -276,6 +276,36 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
     expect(review!.approvedImagePath).toBe(review!.variants.find((v) => v.label === "a")!.imagePaths["16:9"]);
   });
 
+  it("公众号主比例 2.35:1(relay):ratio=2.35:1 → 候选按 2.35:1 出,primaryRatio 落库,不被强制回 3:4", async () => {
+    await switchToRelay();
+    const id = await seedContent("draft_ready", "wechat_mp");
+    const r = (await executeCoverReview({ action: "create_candidates", content_id: id, ratio: "2.35:1", _dataDir: dir })) as {
+      ok: boolean;
+      review: { primaryRatio?: string; variants: Array<{ label: string; imagePaths: Record<string, string> }> };
+    };
+    expect(r.ok).toBe(true);
+    expect(r.review.primaryRatio).toBe("2.35:1");
+    expect(relayMock.mock.calls[0][0].targetAspect).toBe("2.35:1");
+    expect(r.review.variants.find((v) => v.label === "a")!.imagePaths["2.35:1"]).toContain("2.35x1");
+  });
+
+  it("公众号主比例 2.35:1(gemini):走 wide-crop 桥,不误入原生 2.35:1 分支", async () => {
+    // beforeEach 默认 provider=gemini
+    const id = await seedContent("draft_ready", "wechat_mp");
+    wideMock.mockResolvedValue({ ok: true, path: path.join(dir, "cover-wide.png"), ratioUsed: "21:9", cropped: true });
+    const r = (await executeCoverReview({
+      action: "create_candidates",
+      content_id: id,
+      ratio: "2.35:1",
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; review: { primaryRatio?: string } };
+    expect(r.ok).toBe(true);
+    expect(r.review.primaryRatio).toBe("2.35:1");
+    expect(wideMock).toHaveBeenCalled();
+    expect(genMock).not.toHaveBeenCalled();
+  });
+
   it("platform_ratios 2.35:1 走中转直出(不经 21:9 桥/wide-crop)", async () => {
     await switchToRelay();
     const id = await seedContent("draft_ready", "wechat_mp");

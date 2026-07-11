@@ -4,7 +4,7 @@
  * Runs 6 checks before allowing content to be published:
  * 1. Content review passed
  * 2. Cover review passed (XHS/Douyin only)
- * 3. Hashtags exist
+ * 3. Hashtags exist where the platform uses them
  * 4. Title within platform length range
  * 5. Platform is set
  * 6. Body length within platform range (min, and max where the platform caps copy)
@@ -128,7 +128,9 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
 
   // --- Check 3: Hashtags ---
   const hashtags = content.hashtags || [];
-  if (hashtags.length >= 1) {
+  if (platform === "wechat_mp") {
+    checks.push({ name: "Hashtags", status: "skip", detail: "公众号文章无需话题标签" });
+  } else if (hashtags.length >= 1) {
     checks.push({ name: "Hashtags", status: "pass", detail: `${hashtags.length} 个标签` });
   } else {
     checks.push({

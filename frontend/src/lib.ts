@@ -121,3 +121,26 @@ export function atomRep(atom: Atom): Content | null {
 }
 
 export const VIDEO_PLATFORMS = new Set(["douyin", "wechat_video", "xiaohongshu", "bilibili"]);
+
+/**
+ * 平台 → 封面比例(首项 = 默认生成比例)。单一事实源:下拉与适配条都读这张表。
+ * 公众号超宽横幅 2.35:1;竖屏平台 3:4;横屏 16:9/4:3。未列平台回退全集(不误伤)。
+ */
+const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = {
+  wechat_mp: ["2.35:1"],
+  xiaohongshu: ["3:4"],
+  wechat_video: ["3:4"],
+  douyin: ["3:4", "16:9"],
+  bilibili: ["16:9", "4:3"],
+};
+
+export function coverRatiosForPlatform(platform: string | null | undefined): string[] {
+  return COVER_RATIOS_BY_PLATFORM[platform ?? ""] ?? ["3:4", "16:9", "4:3"];
+}
+
+export const COVER_RATIO_LABEL: Record<string, string> = {
+  "2.35:1": "2.35:1 公众号横幅",
+  "3:4": "3:4 竖屏",
+  "16:9": "16:9 横屏",
+  "4:3": "4:3 横屏",
+};

@@ -26,7 +26,7 @@ import { generateCoverViaRelay, adaptCoverPrompt, type CoverAspect } from "../ad
 import { resolveCoverProvider, GEMINI_HINT } from "../modules/cover/provider.js";
 import { getDataDir as resolveDataDir } from "../storage/local-store.js";
 
-type PrimaryRatio = "3:4" | "16:9" | "4:3";
+type PrimaryRatio = "3:4" | "16:9" | "4:3" | "2.35:1";
 
 type CoverLabel = "a" | "b" | "c";
 
@@ -48,13 +48,14 @@ export const coverReviewSchema = Type.Object({
     }),
   ),
   custom_title: Type.Optional(
-    Type.String({ description: "Override the auto-extracted cover title (2-8 Chinese chars)." }),
+    Type.String({ description: "Override the auto-extracted cover title (2-9 Chinese chars)." }),
   ),
   ratio: Type.Optional(
-    Type.Unsafe<"3:4" | "16:9" | "4:3">({
+    Type.Unsafe<"3:4" | "16:9" | "4:3" | "2.35:1">({
       type: "string",
-      enum: ["3:4", "16:9", "4:3"],
-      description: "Primary ratio for create_candidates: 3:4 vertical (default) or 16:9/4:3 landscape (bilibili, douyin PC).",
+      enum: ["3:4", "16:9", "4:3", "2.35:1"],
+      description:
+        "Primary ratio for create_candidates: 3:4 vertical (default); 16:9/4:3 landscape (bilibili, douyin PC); 2.35:1 ultra-wide banner (wechat_mp 公众号).",
     }),
   ),
   feedback: Type.Optional(Type.String({ description: "Revision feedback in Chinese (for revise action)." })),
@@ -189,8 +190,19 @@ async function renderCoverImage(
       ? { ok: true, imagePath: r.imagePath, model: r.model, ...(r.warning ? { warning: r.warning } : {}) }
       : { ok: false, error: r.error };
   }
+  // gemini 无 2.35:1 原生比例:走 21:9 → 居中裁的 wide-crop 桥(与 platformRatios 同一实现)
   if (targetAspect === "2.35:1") {
-    return { ok: false, error: "gemini 的 2.35:1 走 wide-crop 桥,不应到达此分支" };
+    const wide = await generateWideCover({
+      originalPrompt: imagePrompt,
+      apiKey: ctx.geminiKey ?? "",
+      model: ctx.geminiModel,
+      referenceImagePaths: refs.length > 0 ? refs : undefined,
+      outputDir: path.dirname(outputPath),
+      baseName: path.basename(outputPath),
+    });
+    return wide.ok
+      ? { ok: true, imagePath: wide.path, model: "gemini-wide", ...(wide.warning ? { warning: wide.warning } : {}) }
+      : { ok: false, error: wide.error ?? "wide-crop 生成失败" };
   }
   const result = await generateImage({
     prompt: adaptCoverPrompt(imagePrompt, targetAspect),
@@ -241,9 +253,11 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
 
   const existing = await getCoverReview(contentId, dataDir);
   const revision = maxRevision(existing) + 1;
-  // 主比例(V5.6.1 横屏封面):用户在生成入口选;缺省竖屏 3:4
-  const primaryRatio: PrimaryRatio =
-    params.ratio === "16:9" || params.ratio === "4:3" ? params.ratio : "3:4";
+  // 主比例:用户在生成入口按平台选;缺省竖屏 3:4。公众号超宽横幅 2.35:1 现为一等主比例(V5.6.5)。
+  const PRIMARY_RATIOS: PrimaryRatio[] = ["3:4", "16:9", "4:3", "2.35:1"];
+  const primaryRatio: PrimaryRatio = PRIMARY_RATIOS.includes(params.ratio as PrimaryRatio)
+    ? (params.ratio as PrimaryRatio)
+    : "3:4";
   const planInput = {
     title: content.title,
     body: content.body,

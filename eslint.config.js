@@ -13,6 +13,15 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ["dist/", "node_modules/", "**/*.test.ts", "frontend/", "extension/", "spikes/", ".worktrees/"],
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/*.test.ts",
+      "frontend/",
+      "extension/",
+      "spikes/",
+      ".worktrees/",
+      ".claude/worktrees/",
+    ],
   },
 );

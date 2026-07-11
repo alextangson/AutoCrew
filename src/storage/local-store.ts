@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 
 export interface Topic {
   id: string;
@@ -138,7 +139,7 @@ export interface CoverVariant {
   imagePrompt?: string;
   /** Visual style: cinematic, minimalist, bold-impact */
   style?: string;
-  /** Chinese title text on the cover (2-8 chars) */
+  /** Chinese title text on the cover (2-9 chars) */
   titleText?: string;
   /** Generated image paths by aspect ratio */
   imagePaths: {
@@ -175,8 +176,8 @@ export interface CoverVariant {
 
 export interface CoverReview {
   platform: string;
-  /** 候选生成时选定的主比例(V5.6.1:横屏封面——B站/抖音PC 收 16:9/4:3);缺省 3:4 */
-  primaryRatio?: "3:4" | "16:9" | "4:3";
+  /** 候选生成时选定的主比例(横屏 16:9/4:3 = B站/抖音PC;2.35:1 = 公众号超宽横幅);缺省 3:4 */
+  primaryRatio?: "3:4" | "16:9" | "4:3" | "2.35:1";
   status: "review_pending" | "approved" | "publish_ready";
   stopReason?: string;
   coverHook?: string;
@@ -236,6 +237,7 @@ export async function listTopics(dataDir?: string): Promise<Topic[]> {
 }
 
 export async function getTopic(id: string, dataDir?: string): Promise<Topic | null> {
+  if (!isTopicId(id)) return null;
   const dir = await topicsDir(dataDir);
   try {
     const raw = await fs.readFile(path.join(dir, `${id}.json`), "utf-8");
@@ -246,6 +248,7 @@ export async function getTopic(id: string, dataDir?: string): Promise<Topic | nu
 }
 
 async function writeTopic(topic: Topic, dataDir?: string): Promise<void> {
+  if (!isTopicId(topic.id)) throw new Error("Invalid topic id");
   const dir = await topicsDir(dataDir);
   await fs.writeFile(path.join(dir, `${topic.id}.json`), JSON.stringify(topic, null, 2), "utf-8");
 }
@@ -284,6 +287,7 @@ async function contentsDir(dataDir?: string): Promise<string> {
  *     versions/       — version history (v1.md, v2.md, ...)
  */
 async function contentProjectDir(id: string, dataDir?: string): Promise<string> {
+  if (!isContentId(id)) throw new Error("Invalid content id");
   const dir = path.join(getDataDir(dataDir), "contents", id);
   await ensureDir(dir);
   await ensureDir(path.join(dir, "assets"));
@@ -422,6 +426,7 @@ export async function listTrash(dataDir?: string): Promise<TrashList> {
 }
 
 export async function getContent(id: string, dataDir?: string): Promise<Content | null> {
+  if (!isContentId(id)) return null;
   const projDir = path.join(getDataDir(dataDir), "contents", id);
   try {
     const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
@@ -440,6 +445,7 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
 }
 
 export async function updateContent(id: string, updates: Partial<Content>, dataDir?: string): Promise<Content | null> {
+  if (!isContentId(id)) return null;
   const projDir = path.join(getDataDir(dataDir), "contents", id);
   const metaPath = path.join(projDir, "meta.json");
   try {
@@ -544,6 +550,8 @@ export async function addAsset(
   asset: { filename: string; type: Asset["type"]; description?: string; sourcePath?: string },
   dataDir?: string,
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
+  if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
+  if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   const metaPath = path.join(projDir, "meta.json");
 
@@ -576,6 +584,7 @@ export async function addAsset(
 }
 
 export async function listAssets(contentId: string, dataDir?: string): Promise<Asset[]> {
+  if (!isContentId(contentId)) return [];
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   try {
     const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
@@ -587,6 +596,7 @@ export async function listAssets(contentId: string, dataDir?: string): Promise<A
 }
 
 export async function removeAsset(contentId: string, filename: string, dataDir?: string): Promise<boolean> {
+  if (!isContentId(contentId) || !isSafeFilename(filename)) return false;
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   const metaPath = path.join(projDir, "meta.json");
   try {
@@ -606,6 +616,7 @@ export async function removeAsset(contentId: string, filename: string, dataDir?:
 // --- Versions ---
 
 export async function listVersions(contentId: string, dataDir?: string): Promise<ContentVersion[]> {
+  if (!isContentId(contentId)) return [];
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   try {
     const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
@@ -617,6 +628,7 @@ export async function listVersions(contentId: string, dataDir?: string): Promise
 }
 
 export async function getVersion(contentId: string, version: number, dataDir?: string): Promise<string | null> {
+  if (!isContentId(contentId) || !Number.isInteger(version) || version < 1) return null;
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   try {
     return await fs.readFile(path.join(projDir, "versions", `v${version}.md`), "utf-8");
@@ -638,6 +650,7 @@ export async function saveCoverReview(
   review: Omit<CoverReview, "updatedAt">,
   dataDir?: string,
 ): Promise<CoverReview | null> {
+  if (!isContentId(contentId)) return null;
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   const metaPath = path.join(projDir, "meta.json");
   const reviewPath = path.join(projDir, "cover-review.json");
@@ -663,6 +676,7 @@ export async function saveCoverReview(
 }
 
 export async function getCoverReview(contentId: string, dataDir?: string): Promise<CoverReview | null> {
+  if (!isContentId(contentId)) return null;
   const reviewPath = path.join(getDataDir(dataDir), "contents", contentId, "cover-review.json");
   try {
     const raw = await fs.readFile(reviewPath, "utf-8");
@@ -677,6 +691,7 @@ export async function approveCoverVariant(
   label: "a" | "b" | "c",
   dataDir?: string,
 ): Promise<CoverReview | null> {
+  if (!isContentId(contentId)) return null;
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   const reviewPath = path.join(projDir, "cover-review.json");
   const metaPath = path.join(projDir, "meta.json");

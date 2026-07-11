@@ -7,6 +7,7 @@
  * server 永远本地,绝不上云——上云=护城河消失。
  */
 import http from "node:http";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
@@ -18,6 +19,8 @@ import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
 import { resolveServerToken } from "../src/desktop/server-token.js";
+import { LocalSessionAuth } from "../src/desktop/server-auth.js";
+import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
@@ -26,8 +29,17 @@ import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
-// 持久化 token（两台协作:主机常开、笔记本远程连——重启不变,远端书签一劳永逸）
+// 持久 token 只留给显式 Authorization CLI；浏览器只看到本进程一次性启动 token。
 const TOKEN = resolveServerToken();
+const BROWSER_BOOT_TOKEN = randomBytes(32).toString("hex");
+const AUTH = new LocalSessionAuth(
+  BROWSER_BOOT_TOKEN,
+  new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]),
+  undefined,
+  undefined,
+  TOKEN,
+);
+const APPROVALS = new ApprovalGate();
 // D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
 const FRONTEND_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "frontend", "dist");
 const CHANNELS = new Set<string>(IPC_CHANNELS);
@@ -49,10 +61,26 @@ function hostAllowed(req: http.IncomingMessage): boolean {
   const host = (req.headers.host || "").split(":")[0];
   return host === "127.0.0.1" || host === "localhost";
 }
-function tokenOk(req: http.IncomingMessage, url: URL): boolean {
-  const header = req.headers["x-autocrew-token"];
-  const q = url.searchParams.get("token");
-  return header === TOKEN || q === TOKEN;
+function authorize(req: http.IncomingMessage): "session" | "bearer" | null {
+  return AUTH.authenticate({
+    authorization: req.headers.authorization,
+    cookie: req.headers.cookie,
+  });
+}
+
+function browserWriteAllowed(req: http.IncomingMessage, method: "session" | "bearer"): boolean {
+  return method === "bearer" || AUTH.originAllowed(req.headers.origin);
+}
+
+function setSecurityHeaders(res: http.ServerResponse): void {
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
 }
 
 // ── 静态资源 ──────────────────────────────────────────────────────────────────
@@ -86,13 +114,23 @@ async function serveApp(res: http.ServerResponse, rel: string): Promise<void> {
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (c) => { body += c; if (body.length > 8 * 1024 * 1024) req.destroy(); });
+    let tooLarge = false;
+    req.on("data", (c) => {
+      if (tooLarge) return;
+      body += c;
+      if (body.length > 8 * 1024 * 1024) {
+        tooLarge = true;
+        reject(new Error("payload too large"));
+        req.destroy();
+      }
+    });
     req.on("end", () => resolve(body));
     req.on("error", reject);
   });
 }
 
 const server = http.createServer(async (req, res) => {
+  setSecurityHeaders(res);
   if (!hostAllowed(req)) { res.writeHead(403).end("bad host"); return; }
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
   const p = url.pathname;
@@ -105,10 +143,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 启动配置:token + 通道 → 前端 transport。同源、CSP 干净。
+  // 启动配置只含公开契约。长期 token 绝不进入脚本响应，避免第三方页面
+  // 通过 <script src="http://127.0.0.1:4317/config.js"> 窃取。
   if (p === "/config.js") {
-    res.writeHead(200, { "Content-Type": MIME[".js"] });
-    res.end(`window.__AUTOCREW = ${JSON.stringify({ token: TOKEN, channels: [...IPC_CHANNELS], methodMap: Object.fromEntries(IPC_CHANNELS.map((c) => [chToMethod(c), c])) })};`);
+    res.writeHead(200, { "Content-Type": MIME[".js"], "Cache-Control": "no-store" });
+    // token:"" 暂留一个兼容字段；它不是凭证，旧前端拼到资源 URL 也不会获权。
+    res.end(`window.__AUTOCREW = ${JSON.stringify({ token: "", channels: [...IPC_CHANNELS], methodMap: Object.fromEntries(IPC_CHANNELS.map((c) => [chToMethod(c), c])) })};`);
+    return;
+  }
+
+  // 首次打开带 ?token=… 的本地 URL 后，前端把 boot token 换成短时 HttpOnly
+  // SameSite session cookie，再立即从地址栏移除 token。
+  if (p === "/api/session" && req.method === "POST") {
+    if (!AUTH.originAllowed(req.headers.origin)) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad origin" })); return; }
+    if (!(req.headers["content-type"] || "").includes("application/json")) {
+      res.writeHead(415).end(JSON.stringify({ ok: false, error: "application/json required" }));
+      return;
+    }
+    let parsed: { token?: string };
+    try { parsed = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end(JSON.stringify({ ok: false, error: "bad json" })); return; }
+    const issued = AUTH.issueSession(typeof parsed.token === "string" ? parsed.token : "");
+    if (!issued) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad token" })); return; }
+    res.writeHead(200, {
+      "Content-Type": MIME[".json"],
+      "Cache-Control": "no-store",
+      "Set-Cookie": AUTH.cookieHeader(issued.sessionId),
+    });
+    res.end(JSON.stringify({ ok: true, expiresAt: issued.expiresAt }));
     return;
   }
 
@@ -116,7 +177,7 @@ const server = http.createServer(async (req, res) => {
   // 白名单校验 content_id/文件名,路径钉死在 contents/<id>/assets/covers 下;
   // 文件名带修订号(-rN)所以 immutable 缓存安全。
   if (p === "/api/asset") {
-    if (!tokenOk(req, url)) { res.writeHead(403).end(); return; }
+    if (!authorize(req)) { res.writeHead(403).end(); return; }
     const contentId = url.searchParams.get("content_id") || "";
     const name = url.searchParams.get("name") || "";
     const ext = path.extname(name).toLowerCase();
@@ -141,7 +202,7 @@ const server = http.createServer(async (req, res) => {
 
   // SSE:引擎事件 + chat 进度实时流
   if (p === "/api/events") {
-    if (!tokenOk(req, url)) { res.writeHead(403).end(); return; }
+    if (!authorize(req)) { res.writeHead(403).end(); return; }
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     res.write("event: ready\ndata: {}\n\n");
     sseClients.add(res);
@@ -155,7 +216,13 @@ const server = http.createServer(async (req, res) => {
 
   // 统一调用端点:{channel, payload} → handler
   if (p === "/api/invoke" && req.method === "POST") {
-    if (!tokenOk(req, url)) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad token" })); return; }
+    const authMethod = authorize(req);
+    if (!authMethod) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "not authenticated" })); return; }
+    if (!browserWriteAllowed(req, authMethod)) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad origin" })); return; }
+    if (!(req.headers["content-type"] || "").includes("application/json")) {
+      res.writeHead(415).end(JSON.stringify({ ok: false, error: "application/json required" }));
+      return;
+    }
     let parsed: { channel?: string; payload?: Record<string, unknown> };
     try { parsed = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end(JSON.stringify({ ok: false, error: "bad json" })); return; }
     const channel = parsed.channel;
@@ -170,6 +237,8 @@ const server = http.createServer(async (req, res) => {
       if (wsDir) clean._dataDir = wsDir;
     } catch { /* 注册表异常 → 默认工作区,不阻断 */ }
     const ctx: IpcHandlerContext = {
+      requestApproval: (binding) => APPROVALS.issue(binding),
+      consumeApproval: (token, binding) => APPROVALS.consume(token, binding),
       onProgress: (e) => {
         broadcast("chat", e);
         const pe = e as { phase?: string; role?: string | null; label?: string; runId?: string };
@@ -224,8 +293,8 @@ try {
 
 server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
-  console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${TOKEN}\x1b[0m\n`);
-  console.log("  (token 已固定,重启不变 —— 收藏一次即可;两台协作见 docs)\n");
+  console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${BROWSER_BOOT_TOKEN}\x1b[0m\n`);
+  console.log("  (链接中的启动 token 仅本进程首次打开有效；认证后会从地址栏移除)\n");
 
   // 选题雷达:启动 fire-and-forget 刷新 → 命中定位的候选自动入灵感库(IA v4.2 §A1)。
   // 此前该启动链只活在弃用的 Electron 壳(main.ts:112),server 化时遗漏,此处收编。

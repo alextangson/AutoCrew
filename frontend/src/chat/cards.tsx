@@ -2,6 +2,9 @@
  * 对话卡片渲染(A 期精选集):draft/topic/persona/audience_review/video_kit,
  * 其余类型 JSON 兜底展示——先保真不保全,B/C 期逐类补齐交互。
  */
+import { useState } from "react";
+import { invoke } from "../transport";
+import { toast } from "../ui";
 
 type CardData = Record<string, unknown>;
 export interface ChatCardShape {
@@ -95,6 +98,37 @@ function VideoKitCard({ data }: { data: CardData }) {
   );
 }
 
+function PublishConfirmCard({ data }: { data: CardData }) {
+  const [busy, setBusy] = useState(false);
+  const contentId = str(data.contentId);
+  const push = async () => {
+    if (!contentId || busy) return;
+    setBusy(true);
+    const approval = await invoke("publish:request_wechat", { content_id: contentId });
+    if (!approval.ok || typeof approval.approvalToken !== "string") {
+      setBusy(false);
+      toast(approval.error ?? "发布前检查未通过");
+      return;
+    }
+    const result = await invoke("publish:wechat_draft", {
+      content_id: contentId,
+      approval_token: approval.approvalToken,
+    });
+    setBusy(false);
+    toast(result.ok ? "已推入公众号草稿箱" : (result.error ?? "推送失败"));
+  };
+  return (
+    <div className="ccard">
+      <Kicker>外部写操作 · 等你确认</Kicker>
+      <div className="ccard-title">{str(data.title) || "公众号稿件"}</div>
+      <p className="muted">目标：{str(data.target) || "公众号草稿箱"}。凭证仅对当前稿件版本生效，5 分钟后过期。</p>
+      <button className="primary" disabled={busy || !contentId} onClick={() => void push()}>
+        {busy ? "推送中…" : "确认并推送"}
+      </button>
+    </div>
+  );
+}
+
 export function ChatCard({ card }: { card: ChatCardShape }) {
   switch (card.type) {
     case "draft": return <DraftCard data={card.data} />;
@@ -102,6 +136,7 @@ export function ChatCard({ card }: { card: ChatCardShape }) {
     case "persona": return <PersonaCard data={card.data} />;
     case "audience_review": return <StayCard data={card.data} />;
     case "video_kit": return <VideoKitCard data={card.data} />;
+    case "publish_confirm": return <PublishConfirmCard data={card.data} />;
     default:
       return (
         <div className="ccard">

@@ -88,7 +88,7 @@ describe("designCoverPlan", () => {
   });
 
   it("titleText 超长/无中文 → 工具打回自纠;修正后通过", async () => {
-    const bad = { designs: [{ ...goodDesign("A"), titleText: "这个标题实在太长了" }, goodDesign("B"), goodDesign("C")] };
+    const bad = { designs: [{ ...goodDesign("A"), titleText: "这个标题实在太长了啊" }, goodDesign("B"), goodDesign("C")] };
     const execResults: string[] = [];
     const { designs } = await designCoverPlan(
       { title: "t", body: "b", hasReferencePhotos: false },
@@ -102,7 +102,7 @@ describe("designCoverPlan", () => {
       },
     );
     expect(execResults[0]).toContain("Error");
-    expect(execResults[0]).toContain("2-8");
+    expect(execResults[0]).toContain("2-9");
     expect(execResults[1]).toContain("已收到");
     expect(designs).toHaveLength(3);
   });

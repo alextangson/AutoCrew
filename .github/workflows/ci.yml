@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
       - name: Type check
         run: npx tsc --noEmit
 
@@ -32,3 +35,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Build frontend
+        run: npm run fe:build

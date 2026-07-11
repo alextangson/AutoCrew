@@ -71,6 +71,7 @@ import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-st
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
+import { executePrePublish } from "../tools/pre-publish.js";
 import { loadProfile, updateWritingRule, updateProfile, personaSummary } from "../modules/profile/creator-profile.js";
 import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
 import {
@@ -93,7 +94,9 @@ import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import { getRadarStatus, doRadarRefresh, setRadarSources } from "./radar-status.js";
-import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, listTopics, saveTopic, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
+import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
+import { isContentId, isSafeFilename } from "../storage/entity-id.js";
+import type { ApprovalBinding } from "./approval-gate.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import type { IpcChannel } from "./channels.js";
@@ -108,6 +111,17 @@ import {
 } from "../storage/library-store.js";
 import nodePath from "node:path";
 import { access as fsAccess } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  campaignCreateHandler,
+  campaignGetHandler,
+  campaignListHandler,
+  campaignPlanTeamHandler,
+  campaignRunReadyHandler,
+  campaignRetryTaskHandler,
+  campaignArtifactGetHandler,
+  campaignTransitionHandler,
+} from "./campaign-handlers.js";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 // Channel list lives in channels.ts (dependency-free so the sandboxed preload
@@ -116,7 +130,11 @@ import { access as fsAccess } from "node:fs/promises";
 export { IPC_CHANNELS, type IpcChannel } from "./channels.js";
 
 /** 每个 handler：收 payload（+可选 ctx），返回 {ok,...}，永不 throw。ctx 由 main.ts 注入（推送等主进程能力）。 */
-export type IpcHandlerContext = { onProgress?: (e: Record<string, unknown>) => void };
+export type IpcHandlerContext = {
+  onProgress?: (e: Record<string, unknown>) => void;
+  requestApproval?: (binding: ApprovalBinding) => { token: string; expiresAt: string };
+  consumeApproval?: (token: string, binding: ApprovalBinding) => { ok: true } | { ok: false; error: string };
+};
 export type IpcHandler = (payload: Record<string, unknown>, ctx?: IpcHandlerContext) => Promise<Record<string, unknown>>;
 
 type ExecuteFn = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -134,7 +152,6 @@ export const CHANNEL_ACTIONS = {
   "content:get": "get",
   "publish:clipboard": "clipboard",
   "publish:confirm": "confirm_published",
-  "publish:wechat_draft": "wechat_mp_draft",
   "flywheel:import_csv": "import_csv",
   "flywheel:record": "record",
   "content:update": "update",
@@ -239,6 +256,81 @@ async function personaSaveHandler(payload: Record<string, unknown>): Promise<Rec
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// ── publish:* — 服务端发布审批门（UI 确认不是安全边界）─────────────────────
+
+function approvalBinding(
+  contentId: string,
+  dataDir: string | undefined,
+  content: { title: string; body: string; platform?: string },
+): ApprovalBinding {
+  const contentFingerprint = createHash("sha256")
+    .update(JSON.stringify({ title: content.title, body: content.body, platform: content.platform ?? "" }))
+    .digest("hex");
+  return {
+    action: "wechat_mp_draft",
+    contentId,
+    workspaceDir: getDataDir(dataDir),
+    contentFingerprint,
+  };
+}
+
+async function requestWechatDraftApprovalHandler(
+  payload: Record<string, unknown>,
+  ctx?: IpcHandlerContext,
+): Promise<Record<string, unknown>> {
+  const contentId = typeof payload.content_id === "string" ? payload.content_id : "";
+  if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
+  if (!ctx?.requestApproval) return { ok: false, error: "发布审批服务不可用" };
+  const dataDir = (payload._dataDir as string) || undefined;
+
+  // 先验证目标平台，避免其他平台的稿件在被拒绝前被 preflight 推进状态。
+  const initial = await getContent(contentId, dataDir);
+  if (!initial) return { ok: false, error: `Content not found: ${contentId}` };
+  if (initial.platform !== "wechat_mp") return { ok: false, error: "只有公众号稿件可推送到公众号草稿箱" };
+
+  // 确认前先跑完整门禁；不合格的稿件不生成可执行凭证。
+  const preflight = await executePrePublish({ action: "check", content_id: contentId, _dataDir: dataDir });
+  if (!("allPassed" in preflight) || !preflight.allPassed) {
+    return {
+      ok: false,
+      error: "发布前检查未通过，请修复后重新确认",
+      ...(preflight && typeof preflight === "object" ? { preflight } : {}),
+    };
+  }
+
+  // preflight 可能把状态推进到 publish_ready，必须在其后读取版本绑定。
+  const content = await getContent(contentId, dataDir);
+  if (!content) return { ok: false, error: `Content not found: ${contentId}` };
+  const issued = ctx.requestApproval(approvalBinding(contentId, dataDir, content));
+  return { ok: true, approvalToken: issued.token, expiresAt: issued.expiresAt, preflight };
+}
+
+async function publishWechatDraftApprovedHandler(
+  payload: Record<string, unknown>,
+  ctx?: IpcHandlerContext,
+): Promise<Record<string, unknown>> {
+  const contentId = typeof payload.content_id === "string" ? payload.content_id : "";
+  const token = typeof payload.approval_token === "string" ? payload.approval_token : "";
+  if (!isContentId(contentId) || !token) return { ok: false, error: "需要合法 content_id 与 approval_token" };
+  if (!ctx?.consumeApproval) return { ok: false, error: "发布审批服务不可用" };
+  const dataDir = (payload._dataDir as string) || undefined;
+  const content = await getContent(contentId, dataDir);
+  if (!content) return { ok: false, error: `Content not found: ${contentId}` };
+
+  // TOCTOU 防线：执行前再次检查；凭证绑定标题/正文/平台指纹，确认后的编辑会失效。
+  const preflight = await executePrePublish({ action: "check", content_id: contentId, _dataDir: dataDir });
+  if (!("allPassed" in preflight) || !preflight.allPassed) {
+    return { ok: false, error: "发布前检查已失效，请修复后重新确认", preflight };
+  }
+  const current = await getContent(contentId, dataDir);
+  if (!current) return { ok: false, error: `Content not found: ${contentId}` };
+  const consumed = ctx.consumeApproval(token, approvalBinding(contentId, dataDir, current));
+  if (!consumed.ok) return consumed;
+
+  // HTTP 面只传最小白名单：禁止 renderer 覆盖脚本路径、密钥、force 或 article_path。
+  return executePublish({ action: "wechat_mp_draft", content_id: contentId, _dataDir: dataDir });
 }
 
 // ── generate:script — 后台化写稿（契约 P1:任务生命周期与 HTTP 请求解耦） ─────
@@ -524,8 +616,6 @@ async function conversationsDeleteHandler(payload: Record<string, unknown>): Pro
 
 // ── library:* / content:asset_* — 素材库（S2.9 引用式媒体仓库） ───────────────
 
-const CONTENT_ID_RE = /^content-\d+-[a-z0-9]+$/;
-
 function guardPayload(payload: Record<string, unknown>): { ok: false; error: string } | null {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
@@ -629,7 +719,7 @@ async function contentAssetAddHandler(payload: Record<string, unknown>): Promise
   if (bad) return bad;
   const contentId = payload.content_id;
   const libraryId = payload.library_id;
-  if (typeof contentId !== "string" || !CONTENT_ID_RE.test(contentId)) return { ok: false, error: "需要合法 content_id" };
+  if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
   if (typeof libraryId !== "string" || !libraryId) return { ok: false, error: "需要 library_id" };
   const dataDir = (payload._dataDir as string) || undefined;
   try {
@@ -670,14 +760,8 @@ async function contentAssetRemoveHandler(payload: Record<string, unknown>): Prom
   if (bad) return bad;
   const contentId = payload.content_id;
   const filename = payload.filename;
-  if (typeof contentId !== "string" || !CONTENT_ID_RE.test(contentId)) return { ok: false, error: "需要合法 content_id" };
-  if (
-    typeof filename !== "string" ||
-    !filename ||
-    filename.includes("/") ||
-    filename.includes("\\") ||
-    filename.includes("..")
-  ) {
+  if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
+  if (!isSafeFilename(filename)) {
     return { ok: false, error: "需要合法 filename" };
   }
   try {
@@ -732,7 +816,8 @@ export function buildIpcHandlers(
     "content:get": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:get"]),
     "publish:clipboard": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:clipboard"]),
     "publish:confirm": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
-    "publish:wechat_draft": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:wechat_draft"]),
+    "publish:request_wechat": requestWechatDraftApprovalHandler,
+    "publish:wechat_draft": publishWechatDraftApprovedHandler,
     "chat:turn": chatTurnHandler,
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
@@ -802,6 +887,14 @@ export function buildIpcHandlers(
     "workspace:list": workspaceListHandler,
     "workspace:create": workspaceCreateHandler,
     "workspace:switch": workspaceSwitchHandler,
+    "campaign:list": campaignListHandler,
+    "campaign:get": campaignGetHandler,
+    "campaign:create": campaignCreateHandler,
+    "campaign:plan_team": campaignPlanTeamHandler,
+    "campaign:transition": campaignTransitionHandler,
+    "campaign:run_ready": campaignRunReadyHandler,
+    "campaign:retry_task": campaignRetryTaskHandler,
+    "campaign:artifact_get": campaignArtifactGetHandler,
   };
 
   // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。

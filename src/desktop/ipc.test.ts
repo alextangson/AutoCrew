@@ -47,6 +47,7 @@ describe("IPC_CHANNELS", () => {
     "content:get",
     "publish:clipboard",
     "publish:confirm",
+    "publish:request_wechat",
     "publish:wechat_draft",
     "chat:turn",
     "settings:get",
@@ -103,6 +104,14 @@ describe("IPC_CHANNELS", () => {
     "content:adoption",
     "today:summary",
     "events:recent",
+    "campaign:list",
+    "campaign:get",
+    "campaign:create",
+    "campaign:plan_team",
+    "campaign:transition",
+    "campaign:run_ready",
+    "campaign:retry_task",
+    "campaign:artifact_get",
     "topics:list",
     "topic:create",
     "topic:delete",
@@ -113,8 +122,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 79 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(79);
+  it("has exactly 88 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(88);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -172,7 +181,6 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     ["content:get", "get"],
     ["publish:clipboard", "clipboard"],
     ["publish:confirm", "confirm_published"],
-    ["publish:wechat_draft", "wechat_mp_draft"],
     ["flywheel:import_csv", "import_csv"],
     ["content:adoption", "adoption"],
     ["content:delete", "delete"],
@@ -201,6 +209,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
         (ch) =>
           ch !== "style:rules" &&
           ch !== "generate:script" &&
+          ch !== "publish:request_wechat" &&
+          ch !== "publish:wechat_draft" &&
           ch !== "chat:turn" &&
           ch !== "settings:get" &&
           ch !== "settings:set" &&
@@ -257,6 +267,14 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "workspace:list" &&
           ch !== "workspace:create" &&
           ch !== "workspace:switch" &&
+          ch !== "campaign:list" &&
+          ch !== "campaign:get" &&
+          ch !== "campaign:create" &&
+          ch !== "campaign:plan_team" &&
+          ch !== "campaign:transition" &&
+          ch !== "campaign:run_ready" &&
+          ch !== "campaign:retry_task" &&
+          ch !== "campaign:artifact_get" &&
           ch !== "topics:list" &&
           ch !== "topic:create" &&
           ch !== "topic:delete" &&

@@ -22,6 +22,38 @@
   background: var(--surface); display: flex; flex-direction: column;
 }
 
+/* 增长项目：Campaign → Agent Team → Task graph */
+.campaign-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.campaign-create { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; margin-bottom: 14px; }
+.campaign-create label { display: flex; flex-direction: column; gap: 3px; }
+.campaign-create input, .campaign-create textarea, .campaign-create select { width: 100%; }
+.campaign-wide { grid-column: 1 / -1; }
+.channel-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.campaign-create-actions { display: flex; justify-content: flex-end; }
+.campaign-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 14px; align-items: start; }
+.campaign-list { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 0; }
+.campaign-item { display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: 9px 10px; background: var(--card); }
+.campaign-item-on { border-color: var(--ink); }
+.campaign-detail { min-width: 0; }
+.campaign-summary p { margin-top: 6px; }
+.campaign-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.campaign-section-title { font-size: 15px; margin: 16px 0 7px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+.agent-grid .card { display: flex; flex-direction: column; gap: 3px; }
+.campaign-task { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 6px; }
+.campaign-task > div { min-width: 0; }
+.campaign-run-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.campaign-run-grid .card { display: flex; flex-direction: column; gap: 4px; }
+.campaign-artifact { margin-top: 10px; }
+.campaign-artifact pre { white-space: pre-wrap; font: inherit; max-height: 520px; overflow-y: auto; }
+
+@media (max-width: 1100px) {
+  .campaign-create { grid-template-columns: 1fr; }
+  .campaign-wide { grid-column: auto; }
+  .campaign-layout { grid-template-columns: 1fr; }
+  .campaign-list { position: static; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+}
+
 /* Dashboard */
 .pad { padding: 18px; }
 .dash-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }

@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { saveProfile } from "../src/modules/profile/creator-profile.js";
 import { saveTopic, saveContent, updateContent } from "../src/storage/local-store.js";
+import { buildCampaignTeam, createCampaign } from "../src/storage/campaign-store.js";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 4390 + Math.floor(Math.random() * 100);
@@ -92,6 +93,17 @@ async function seed(dataDir: string): Promise<void> {
   await updateContent(c1.id, { status: "reviewing" }, dataDir);
   const c2 = await saveContent({ title: "已发冒烟稿", body: "正文", platform: "wechat_mp", status: "drafting", tags: [] }, dataDir);
   await updateContent(c2.id, { status: "published", publishedAt: new Date(Date.now() - 2 * 86400_000).toISOString() }, dataDir);
+  const campaign = await createCampaign({
+    name: "冒烟 SaaS 增长",
+    mode: "managed_growth",
+    brief: {
+      targetUrl: "https://smoke.example/",
+      goals: ["获得首批注册"],
+      channels: ["seo", "xiaohongshu"],
+      constraints: [],
+    },
+  }, dataDir);
+  await buildCampaignTeam(campaign.id, dataDir);
 }
 
 // ── 页面内检查脚本（Runtime.evaluate 执行,返回 {fails:[]}）——React 全链走查 ──
@@ -216,7 +228,17 @@ const PAGE_CHECKS = `(async () => {
     }
   }
 
-  // 5) 素材库 / 数据回流
+  // 5) 增长项目:Campaign → Agent Team → Task graph
+  if (await navTo("增长项目")) {
+    const growth = document.body.textContent || "";
+    ok(!!document.querySelector(".campaigns"), "增长项目页");
+    ok(growth.includes("冒烟 SaaS 增长"), "增长项目种子");
+    ok(document.querySelectorAll(".agent-grid .card").length >= 5, "Agent Team 组队");
+    ok(document.querySelectorAll(".campaign-task").length >= 4, "Campaign 任务图");
+    collide("campaigns");
+  }
+
+  // 6) 素材库 / 数据回流
   if (await navTo("素材库")) {
     ok((document.body.textContent || "").includes("导入素材"), "素材库导入区");
   }

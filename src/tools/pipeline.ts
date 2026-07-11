@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { getDataDir } from "../storage/local-store.js";
+import { isPipelineId } from "../storage/entity-id.js";
 
 /**
  * autocrew_pipeline — manage automated content pipelines (cron schedules).
@@ -123,6 +124,7 @@ export async function executePipeline(params: Record<string, unknown>) {
   if (action === "get") {
     const id = params.id as string;
     if (!id) return { ok: false, error: "id is required" };
+    if (!isPipelineId(id)) return { ok: false, error: "Invalid pipeline id" };
     const dir = await pipelinesDir(dataDir);
     try {
       const raw = await fs.readFile(path.join(dir, `${id}.json`), "utf-8");
@@ -179,6 +181,7 @@ export async function executePipeline(params: Record<string, unknown>) {
   if (action === "enable" || action === "disable") {
     const id = params.id as string;
     if (!id) return { ok: false, error: "id is required" };
+    if (!isPipelineId(id)) return { ok: false, error: "Invalid pipeline id" };
     const dir = await pipelinesDir(dataDir);
     const filePath = path.join(dir, `${id}.json`);
     try {
@@ -196,6 +199,7 @@ export async function executePipeline(params: Record<string, unknown>) {
   if (action === "delete") {
     const id = params.id as string;
     if (!id) return { ok: false, error: "id is required" };
+    if (!isPipelineId(id)) return { ok: false, error: "Invalid pipeline id" };
     const dir = await pipelinesDir(dataDir);
     try {
       await fs.unlink(path.join(dir, `${id}.json`));

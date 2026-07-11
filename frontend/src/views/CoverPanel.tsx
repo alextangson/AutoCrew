@@ -4,8 +4,9 @@
  * 此处轮询 cover:get 到结果(任务动态卡同时有 SSE 进度)。
  */
 import { useEffect, useRef, useState } from "react";
-import { invoke, getConfig } from "../transport";
+import { invoke } from "../transport";
 import { toast } from "../ui";
+import { coverRatiosForPlatform, COVER_RATIO_LABEL } from "../lib";
 
 interface CoverVariant {
   label: string;
@@ -25,29 +26,17 @@ interface CoverReview {
   primaryRatio?: string;
 }
 
-const PRIMARY_OPTIONS: Array<[string, string]> = [
-  ["3:4", "3:4 竖屏(小红书/视频号/抖音)"],
-  ["16:9", "16:9 横屏(B站/抖音PC)"],
-  ["4:3", "4:3 横屏"],
-];
-
-const RATIO_LABEL: Record<string, string> = {
-  "2.35:1": "公众号横版 2.35:1",
-  "16:9": "16:9 横屏",
-  "4:3": "4:3 横屏",
-  "3:4": "3:4 竖屏",
-};
-
 const assetUrl = (contentId: string, filePath?: string): string => {
   if (!filePath) return "";
   const name = filePath.split("/").pop() ?? "";
-  return `/api/asset?content_id=${encodeURIComponent(contentId)}&name=${encodeURIComponent(name)}&token=${encodeURIComponent(getConfig().token)}`;
+  return `/api/asset?content_id=${encodeURIComponent(contentId)}&name=${encodeURIComponent(name)}`;
 };
 
 export function CoverPanel(props: { contentId: string; platform: string }) {
+  const ratioOptions = coverRatiosForPlatform(props.platform);
   const [review, setReview] = useState<CoverReview | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [ratio, setRatio] = useState("3:4");
+  const [ratio, setRatio] = useState(ratioOptions[0]);
   const [customTitle, setCustomTitle] = useState("");
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [ratioBusy, setRatioBusy] = useState(false);
@@ -62,6 +51,11 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
     return () => stopPoll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.contentId]);
+
+  // 切换到别平台的稿件:主比例重置为该平台默认(公众号→2.35:1,小红书→3:4…)
+  useEffect(() => {
+    setRatio(coverRatiosForPlatform(props.platform)[0]);
+  }, [props.platform]);
 
   const stopPoll = () => {
     if (pollRef.current) {
@@ -135,20 +129,18 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
   };
 
   const approved = review?.variants.find((v) => v.label === review.approvedLabel);
-  const primary = review?.primaryRatio ?? "3:4";
+  const primary = review?.primaryRatio ?? ratioOptions[0];
   const primaryCss = primary.replace(":", " / ");
-  // 适配比例 = 主比例之外的(同方案重渲染保风格统一);2.35:1 只对公众号露出
-  const adaptRatios = ["2.35:1", "16:9", "4:3", "3:4"].filter(
-    (r) => r !== primary && (r !== "2.35:1" || props.platform === "wechat_mp"),
-  );
+  // 适配比例 = 该平台其余比例(主比例之外,同方案重渲染保风格统一);公众号只 2.35:1,适配条为空
+  const adaptRatios = ratioOptions.filter((r) => r !== primary);
 
   return (
     <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
       <div className="row-actions" style={{ alignItems: "baseline" }}>
         <span className="mono muted ed-label">封面(设计师)：</span>
         <select value={ratio} disabled={generating} onChange={(e) => setRatio(e.target.value)}>
-          {PRIMARY_OPTIONS.map(([v, label]) => (
-            <option key={v} value={v}>{label}</option>
+          {ratioOptions.map((v) => (
+            <option key={v} value={v}>{COVER_RATIO_LABEL[v] ?? v}</option>
           ))}
         </select>
         <input
@@ -210,7 +202,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
           <span className="mono muted">比例适配(同方案重渲染,风格统一)：</span>
           {adaptRatios.map((r) => (
             <button key={r} disabled={ratioBusy} onClick={() => void ratios([r])}>
-              {approved.imagePaths[r] ? `重出 ${RATIO_LABEL[r]}` : `出 ${RATIO_LABEL[r]}`}
+              {approved.imagePaths[r] ? `重出 ${COVER_RATIO_LABEL[r]}` : `出 ${COVER_RATIO_LABEL[r]}`}
             </button>
           ))}
           {ratioBusy && <span className="muted">生成中…</span>}
@@ -223,7 +215,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
                   className="cover-thumb"
                   style={{ aspectRatio: r.replace(":", " / ") }}
                   src={assetUrl(props.contentId, approved.imagePaths[r])}
-                  alt={RATIO_LABEL[r]}
+                  alt={COVER_RATIO_LABEL[r]}
                 />
               ))}
           </div>

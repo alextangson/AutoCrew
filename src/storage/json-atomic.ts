@@ -5,6 +5,22 @@
  */
 import fs from "node:fs/promises";
 
+export async function writeTextAtomic(filePath: string, content: string): Promise<void> {
+  const rnd = Math.random().toString(36).slice(2, 6);
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${rnd}`;
+  try {
+    await fs.writeFile(tmp, content, "utf-8");
+    await fs.rename(tmp, filePath);
+  } catch (err) {
+    try {
+      await fs.unlink(tmp);
+    } catch {
+      // best-effort cleanup
+    }
+    throw err;
+  }
+}
+
 export async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
   const rnd = Math.random().toString(36).slice(2, 6);
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${rnd}`;
