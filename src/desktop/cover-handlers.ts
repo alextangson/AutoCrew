@@ -14,6 +14,7 @@ import {
   type CoverProvider,
 } from "../modules/cover/provider.js";
 import { emitEngineEvent } from "./event-hub.js";
+import { coverRatiosForPlatform } from "../modules/cover/platform-ratios.js";
 
 type Payload = Record<string, unknown>;
 type HandlerResult = Record<string, unknown>;
@@ -57,7 +58,7 @@ export interface StartedCoverJob {
 /** 后台化生图任务:立即返回 runId,完成/失败经引擎事件透出(观测层吞错)。 */
 export async function startCoverJob(
   payload: Payload,
-  action: "create_candidates" | "revise",
+  action: "create_candidates" | "revise" | "platform_ratios",
   labels: { work: string; done: string },
 ): Promise<StartedCoverJob> {
   const dataDir = (payload._dataDir as string) || undefined;
@@ -130,19 +131,48 @@ export async function coverGetHandler(payload: Payload): Promise<HandlerResult> 
   }
 }
 
-export async function coverApproveHandler(payload: Payload): Promise<HandlerResult> {
+/**
+ * 选用即自动补齐平台比例(创始人裁决 2026-07-12:短视频封面同时要 3:4 与 4:3)。
+ * 只补选中那张——候选阶段不多花一分生图钱;缺啥补啥,已齐不动。
+ */
+export async function approveCoverJob(payload: Payload): Promise<StartedCoverJob> {
   const bad = badPayload(payload);
-  if (bad) return bad;
+  if (bad) return { response: bad, completion: Promise.resolve() };
+  const dataDir = (payload._dataDir as string) || undefined;
+  let result: {
+    ok?: boolean;
+    review?: { platform?: string; approvedLabel?: string; variants?: Array<{ label: string; imagePaths?: Record<string, string | undefined> }> };
+  };
   try {
-    return (await executeCoverReview({
+    result = (await executeCoverReview({
       action: "approve",
       content_id: payload.content_id,
       label: payload.label,
-      _dataDir: (payload._dataDir as string) || undefined,
-    })) as HandlerResult;
+      _dataDir: dataDir,
+    })) as typeof result;
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { response: { ok: false, error: err instanceof Error ? err.message : String(err) }, completion: Promise.resolve() };
   }
+  if (!result.ok) return { response: result as HandlerResult, completion: Promise.resolve() };
+
+  const review = result.review;
+  const approved = review?.variants?.find((v) => v.label === review?.approvedLabel);
+  const have = Object.keys(approved?.imagePaths ?? {});
+  const missing = coverRatiosForPlatform(review?.platform).filter((r) => !have.includes(r));
+  if (missing.length === 0) return { response: result as HandlerResult, completion: Promise.resolve() };
+
+  const job = await startCoverJob({ content_id: payload.content_id, ratios: missing, _dataDir: dataDir }, "platform_ratios", {
+    work: `按平台补齐封面比例(${missing.join("/")})…`,
+    done: `封面比例已补齐(${missing.join("/")})——稿件文件夹里直接拿`,
+  });
+  const response: HandlerResult = { ...(result as HandlerResult), autoRatios: missing };
+  if (job.response.ok) response.autoRatioRunId = job.response.runId;
+  return { response, completion: job.completion };
+}
+
+export async function coverApproveHandler(payload: Payload): Promise<HandlerResult> {
+  const job = await approveCoverJob(payload);
+  return job.response;
 }
 
 export async function coverRatiosHandler(payload: Payload): Promise<HandlerResult> {

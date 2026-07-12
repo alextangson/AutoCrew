@@ -14,6 +14,7 @@ import { executeCoverReview } from "../tools/cover-review.js";
 import { emitEngineEvent } from "./event-hub.js";
 import {
   startCoverJob,
+  approveCoverJob,
   coverCreateHandler,
   coverGetHandler,
   coverSettingsGetHandler,
@@ -175,5 +176,52 @@ describe("coverGetHandler", () => {
     const r = await coverGetHandler({ content_id: "content-1-a", _dataDir: dir });
     expect(r.ok).toBe(true);
     expect(execMock).toHaveBeenCalledWith(expect.objectContaining({ action: "get", content_id: "content-1-a" }));
+  });
+});
+
+describe("approveCoverJob(选用即自动补齐平台比例)", () => {
+  it("douyin 选用 3:4 → 后台自动出 4:3(平台表缺啥补啥),事件透出", async () => {
+    await seedRelay();
+    execMock.mockImplementation(async (params: Record<string, unknown>) => {
+      if (params.action === "approve") {
+        return {
+          ok: true,
+          review: {
+            platform: "douyin",
+            approvedLabel: "a",
+            primaryRatio: "3:4",
+            variants: [{ label: "a", imagePaths: { "3:4": "/x/a.png" } }],
+          },
+        } as never;
+      }
+      if (params.action === "platform_ratios") return { ok: true, paths: { "4:3": "/x/a-4x3.png" } } as never;
+      return { ok: false, error: "unexpected " + String(params.action) } as never;
+    });
+    const job = await approveCoverJob({ content_id: "content-1-a", label: "a", _dataDir: dir });
+    expect(job.response.ok).toBe(true);
+    expect(job.response.autoRatios).toEqual(["4:3"]);
+    await job.completion;
+    const ratioCall = execMock.mock.calls.find((c) => (c[0] as Record<string, unknown>).action === "platform_ratios")![0] as Record<string, unknown>;
+    expect(ratioCall.ratios).toEqual(["4:3"]);
+    const kinds = emitMock.mock.calls.map((c) => (c[0] as { kind: string }).kind);
+    expect(kinds).toContain("run_done");
+  });
+
+  it("比例已齐(公众号 2.35:1 主)→ 不再起后台任务", async () => {
+    await seedRelay();
+    execMock.mockImplementation(async (params: Record<string, unknown>) => {
+      if (params.action === "approve") {
+        return {
+          ok: true,
+          review: { platform: "wechat_mp", approvedLabel: "a", primaryRatio: "2.35:1", variants: [{ label: "a", imagePaths: { "2.35:1": "/x/a.png" } }] },
+        } as never;
+      }
+      return { ok: false } as never;
+    });
+    const job = await approveCoverJob({ content_id: "content-1-a", label: "a", _dataDir: dir });
+    expect(job.response.ok).toBe(true);
+    expect(job.response.autoRatios).toBeUndefined();
+    await job.completion;
+    expect(execMock.mock.calls.every((c) => (c[0] as Record<string, unknown>).action !== "platform_ratios")).toBe(true);
   });
 });
