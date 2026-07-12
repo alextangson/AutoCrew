@@ -58,6 +58,23 @@ export function ReportView() {
   const [retros, setRetros] = useState<Array<{ file: string; mode: string; date: string }>>([]);
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [retroMd, setRetroMd] = useState("");
+  const [impPlatform, setImpPlatform] = useState("wechat_mp");
+  const [importing, setImporting] = useState(false);
+
+  // 创作者中心导出 CSV → flywheel 导入管线(csv_text 直传;校验/对账/幂等在后端)
+  const importCsvFile = async (file: File | undefined) => {
+    if (!file) return;
+    setImporting(true);
+    const text = await file.text();
+    const r = await invoke("flywheel:import_csv", { platform: impPlatform, csv_text: text });
+    setImporting(false);
+    if (!r.ok) return toast(r.error ?? "导入失败");
+    const rep = (r as unknown as { data: { imported: number; matched: number; historical: number; needsReview: unknown[]; rejected: unknown[] } }).data;
+    toast(`导入 ${rep.imported} 条:匹配稿件 ${rep.matched} · 历史 ${rep.historical} · 待复核 ${rep.needsReview.length}${rep.rejected.length ? ` · 拒绝 ${rep.rejected.length}` : ""}`);
+    void invoke("flywheel:report").then((rr) => {
+      if (rr.ok) setD((rr as unknown as { data: Report }).data);
+    });
+  };
 
   useEffect(() => {
     void invoke("flywheel:report").then((r) => {
@@ -94,6 +111,27 @@ export function ReportView() {
       <div className="board-bar">
         <h2 className="serif board-title" style={{ margin: 0 }}>数据回流</h2>
         <span className="muted">发布后回填数据——选题评分、基线与复盘都以它为准</span>
+        <span style={{ marginLeft: "auto" }} className="row-actions">
+          <select value={impPlatform} onChange={(e) => setImpPlatform(e.target.value)}>
+            <option value="wechat_mp">公众号</option>
+            <option value="douyin">抖音</option>
+            <option value="xiaohongshu">小红书</option>
+            <option value="wechat_video">视频号</option>
+          </select>
+          <label className="chip" style={{ cursor: importing ? "wait" : "pointer" }}>
+            {importing ? "导入中…" : "导入创作者中心 CSV"}
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: "none" }}
+              disabled={importing}
+              onChange={(e) => {
+                void importCsvFile(e.target.files?.[0]);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
+        </span>
       </div>
 
       <div className="stat-grid">

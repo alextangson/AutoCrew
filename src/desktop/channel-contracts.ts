@@ -52,7 +52,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "retro:get": ["file"],
   "onboarding:status": [],
   "onboarding:init": [],
-  "flywheel:import_csv": ["platform", "csv_path"],
+  "flywheel:import_csv": ["platform"],
   "flywheel:record": ["content_id", "metrics"],
   "dialog:pick_file": [],
   "knowledge:status": [],

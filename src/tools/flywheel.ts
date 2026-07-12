@@ -22,9 +22,10 @@ export const flywheelSchema = Type.Object({
       "Flywheel action. 'import_csv' to ingest platform CSV export, 'record' for manual metrics entry, 'report' for loop status.",
   }),
   platform: Type.Optional(
-    Type.String({ description: "Platform key for import_csv: douyin | wechat_video | xiaohongshu." }),
+    Type.String({ description: "Platform key for import_csv: douyin | wechat_video | xiaohongshu | wechat_mp." }),
   ),
   csv_path: Type.Optional(Type.String({ description: "Path to the exported CSV file (for import_csv)." })),
+  csv_text: Type.Optional(Type.String({ description: "CSV content passed directly (alternative to csv_path; GUI file picker uses this)." })),
   metric_date: Type.Optional(
     Type.String({
       pattern: "^\\d{4}-\\d{2}-\\d{2}$",
@@ -52,14 +53,19 @@ export function expandPath(p: string): string {
 async function runImportCsv(params: Record<string, unknown>, dataDir: string) {
   const platform = params.platform as string | undefined;
   const csvPath = params.csv_path as string | undefined;
-  if (!platform || !csvPath) {
-    return { ok: false, error: "import_csv 需要 platform 和 csv_path" };
+  const csvTextParam = params.csv_text as string | undefined;
+  if (!platform || (!csvPath && !csvTextParam)) {
+    return { ok: false, error: "import_csv 需要 platform + csv_path 或 csv_text(GUI 文件选择走 csv_text 直传)" };
   }
   let csvText: string;
-  try {
-    csvText = await fs.readFile(expandPath(csvPath), "utf-8");
-  } catch {
-    return { ok: false, error: `读不到 CSV 文件：${csvPath}` };
+  if (csvTextParam !== undefined) {
+    csvText = csvTextParam;
+  } else {
+    try {
+      csvText = await fs.readFile(expandPath(csvPath as string), "utf-8");
+    } catch {
+      return { ok: false, error: `读不到 CSV 文件：${csvPath}` };
+    }
   }
   const metricDate = (params.metric_date as string) || localDateStamp();
   try {

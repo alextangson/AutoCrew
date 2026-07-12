@@ -114,6 +114,19 @@ export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
     favorites: ["收藏数"],
     follows: ["关注量", "新增关注数", "净增关注"],
   },
+  // 公众号「内容分析」后台导出。datacube 数据接口需微信认证(2026-07-12 实测 48001 无权限),
+  // CSV 导出是兜底主路。列名未经真实导出文件校准——首个真实文件对不上时,改这里的别名数组即可。
+  wechat_mp: {
+    title: ["标题", "图文标题", "内容标题", "文章标题"],
+    publishedAt: ["发表时间", "发布时间", "群发时间"],
+    metricDate: ["数据日期", "统计日期", "日期"],
+    views: ["图文页阅读次数", "阅读次数", "阅读量", "总阅读次数"],
+    likes: ["点赞次数", "点赞数", "喜欢次数"],
+    comments: ["留言次数", "留言数", "评论次数"],
+    shares: ["分享次数", "转发次数", "分享转发次数"],
+    favorites: ["收藏次数", "收藏数"],
+    follows: ["新增关注人数", "净增关注人数"],
+  },
   xiaohongshu: {
     title: ["笔记标题", "标题"],
     publishedAt: ["发布时间", "首次发布时间"],

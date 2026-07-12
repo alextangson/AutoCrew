@@ -178,8 +178,8 @@ describe("importPerformanceCsv", () => {
 });
 
 describe("PLATFORM_MAPPINGS", () => {
-  it("covers the three v1 platforms", () => {
-    expect(Object.keys(PLATFORM_MAPPINGS).sort()).toEqual(["douyin", "wechat_video", "xiaohongshu"]);
+  it("covers the four supported platforms", () => {
+    expect(Object.keys(PLATFORM_MAPPINGS).sort()).toEqual(["douyin", "wechat_mp", "wechat_video", "xiaohongshu"]);
   });
 });
 
@@ -240,5 +240,35 @@ describe("completion5s ingestion (douyin 作品列表)", () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("wechat_mp 公众号导出导入(datacube 48001 无权限时的兜底路线)", () => {
+  let mpDir: string;
+  beforeEach(async () => {
+    mpDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-mpcsv-"));
+  });
+  afterEach(async () => {
+    await fs.rm(mpDir, { recursive: true, force: true });
+  });
+
+  it("公众号内容分析导出列名 → 指标落库,标题精确匹配稿件", async () => {
+    const c = await saveContent(
+      { title: "AI 写码的账", body: "b", platform: "wechat_mp", status: "published" as never, tags: [], hashtags: [] },
+      mpDir,
+    );
+    const csv =
+      "标题,发表时间,图文页阅读次数,分享次数,收藏次数,留言次数\n" +
+      "AI 写码的账,2026-07-10 10:00,1234,56,7,8\n";
+    const report = await importPerformanceCsv("wechat_mp", csv, "2026-07-11", mpDir);
+    expect(report.imported).toBe(1);
+    expect(report.matched).toBe(1);
+    const outs = await listOutcomes(mpDir);
+    const o = outs.find((x) => x.platformTitle === "AI 写码的账")!;
+    expect(o.contentId).toBe(c.id);
+    expect(o.metrics.views).toBe(1234);
+    expect(o.metrics.shares).toBe(56);
+    expect(o.metrics.favorites).toBe(7);
+    expect(o.metrics.comments).toBe(8);
   });
 });

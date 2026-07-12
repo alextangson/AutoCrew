@@ -215,3 +215,23 @@ describe("expandPath", () => {
     expect(expandPath("/abs/x.csv")).toBe("/abs/x.csv");
   });
 });
+
+describe("import_csv via csv_text(GUI 文件选择直传,无落盘路径)", () => {
+  it("csv_text 直传 → 正常导入;两参都缺 → 报错点名 csv_text", async () => {
+    const r = (await executeFlywheel({
+      action: "import_csv",
+      platform: "wechat_mp",
+      csv_text: "标题,发表时间,图文页阅读次数\n某篇,2026-07-10 08:00,321\n",
+      metric_date: "2026-07-11",
+      _dataDir: testDir,
+    })) as { ok: boolean; data: { imported: number } };
+    expect(r.ok).toBe(true);
+    expect(r.data.imported).toBe(1);
+    const outs = await listOutcomes(testDir);
+    expect(outs.some((o) => o.platformTitle === "某篇" && o.metrics.views === 321)).toBe(true);
+
+    const bad = (await executeFlywheel({ action: "import_csv", platform: "douyin", _dataDir: testDir })) as { ok: boolean; error?: string };
+    expect(bad.ok).toBe(false);
+    expect(String(bad.error)).toContain("csv_text");
+  });
+});
