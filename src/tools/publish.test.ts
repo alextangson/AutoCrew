@@ -90,6 +90,21 @@ describe("executePublish wechat_mp_draft", () => {
     expect(publishImpl.mock.calls[0][0].coverPath).toBe(coverFile);
   });
 
+  it("公众号绑定流转:publish.json 的 appid/secret/留言开关 传给 publishImpl(给别人用的凭证链)", async () => {
+    const c = await mkContent("干净正文");
+    await fs.writeFile(
+      path.join(dir, "publish.json"),
+      JSON.stringify({ wechatMp: { wechatAppId: "wx1234567890abcdef", wechatAppSecret: "sec42", openComment: true } }),
+      "utf-8",
+    );
+    const publishImpl = mockPublish();
+    await executePublish({ action: "wechat_mp_draft", content_id: c.id, _dataDir: dir }, { publishImpl });
+    const opts = publishImpl.mock.calls[0][0];
+    expect(opts.wechatAppId).toBe("wx1234567890abcdef");
+    expect(opts.wechatAppSecret).toBe("sec42");
+    expect(opts.openComment).toBe(true);
+  });
+
   it("无选用封面 → coverPath 不传,脚本维持原兜底行为", async () => {
     const c = await mkContent("干净正文");
     const publishImpl = mockPublish();

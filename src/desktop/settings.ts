@@ -108,6 +108,10 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         imageModel: cfg.imageModel ?? null,
         theme: cfg.theme ?? null,
         author: cfg.author ?? null,
+        // 公众号绑定(给别人用的可视化配置):secret 永不回显,只回状态与掩码 appid
+        wechatConfigured: Boolean(cfg.wechatAppId && cfg.wechatAppSecret),
+        wechatAppIdMasked: cfg.wechatAppId ? maskKey(cfg.wechatAppId) : null,
+        openComment: cfg.openComment === true,
       },
     };
   } catch (err) {
@@ -120,13 +124,15 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
-  const updates: Record<string, string> = {};
+  const updates: Record<string, string | boolean> = {};
   const fields: Array<[string, string]> = [
     ["imageApiKey", "image_api_key"],
     ["imageBaseUrl", "image_base_url"],
     ["imageModel", "image_model"],
     ["theme", "theme"],
     ["author", "author"],
+    ["wechatAppId", "wechat_app_id"],
+    ["wechatAppSecret", "wechat_app_secret"],
   ];
   for (const [target, source] of fields) {
     const v = payload[source];
@@ -136,8 +142,15 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     }
     updates[target] = v.trim();
   }
+  // 留言开关是布尔:GUI 下拉传 "1"/"0"
+  if (payload.open_comment !== undefined) {
+    const v = payload.open_comment;
+    if (v === "1" || v === true) updates.openComment = true;
+    else if (v === "0" || v === false) updates.openComment = false;
+    else return { ok: false, error: 'open_comment 必须是 "1"(开) 或 "0"(关)' };
+  }
   if (Object.keys(updates).length === 0) {
-    return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author）" };
+    return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author / wechat_app_id / wechat_app_secret / open_comment）" };
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;

@@ -143,6 +143,9 @@ export async function executePublish(
   const result = await publishImpl({
     articlePath,
     coverPath: approvedCover,
+    wechatAppId: cfg.wechatAppId,
+    wechatAppSecret: cfg.wechatAppSecret,
+    openComment: cfg.openComment,
     theme: (params.theme as string) || cfg.theme || "newspaper",
     dryRun: Boolean(params.dry_run),
     skipImages: Boolean(params.skip_images),

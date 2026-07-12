@@ -10,6 +10,11 @@ import { getDataDir } from "../../storage/local-store.js";
 export interface WechatMpPublishConfig {
   imageGeneratorScript?: string;
   wechatPublishScript?: string;
+  /** 公众号凭证(设置页可视化绑定;经 env 传给发布脚本,脚本自身 config.json 退居兜底) */
+  wechatAppId?: string;
+  wechatAppSecret?: string;
+  /** 推草稿时默认打开留言(need_open_comment=1) */
+  openComment?: boolean;
   imageApiKey?: string;
   /** 生图端点(OpenAI 兼容中转,如 xiaojiu)。缺省=脚本默认(火山 ARK 直连) */
   imageBaseUrl?: string;

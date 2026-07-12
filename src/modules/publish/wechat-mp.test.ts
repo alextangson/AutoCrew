@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { publishWechatMpDraft } from "./wechat-mp.js";
+import { publishWechatMpDraft, wechatPublishEnv } from "./wechat-mp.js";
 
 let dir: string;
 
@@ -29,5 +29,19 @@ describe("publishWechatMpDraft coverPath", () => {
     expect(r.ok).toBe(true);
     expect(r.coverPath).toBe(coverPath);
     expect(String(r.command)).toContain(coverPath);
+  });
+});
+
+describe("wechatPublishEnv(凭证经 env 传给 publish.py,脚本 config.json 退居兜底)", () => {
+  it("appid+secret 齐全 → 注入 WECHAT_APP_ID/SECRET;openComment → WECHAT_OPEN_COMMENT=1", () => {
+    expect(wechatPublishEnv({ wechatAppId: "wx1", wechatAppSecret: "s1", openComment: true })).toEqual({
+      WECHAT_APP_ID: "wx1",
+      WECHAT_APP_SECRET: "s1",
+      WECHAT_OPEN_COMMENT: "1",
+    });
+  });
+  it("缺任一凭证 → 不注入半套;默认关留言 → 无 WECHAT_OPEN_COMMENT", () => {
+    expect(wechatPublishEnv({ wechatAppId: "wx1" })).toEqual({});
+    expect(wechatPublishEnv({})).toEqual({});
   });
 });

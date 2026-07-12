@@ -57,8 +57,8 @@ export function Settings() {
   const [eForm, setEForm] = useState({ api_key: "", base_url: "", strong_model: "", fast_model: "" });
   const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
-  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; author: string | null } | null>(null);
-  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "" });
+  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; author: string | null; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean } | null>(null);
+  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "" });
   const [cover, setCover] = useState<{
     provider: string;
     relay: { configured: boolean; model: string | null };
@@ -160,14 +160,32 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section title="发布 · 公众号与生图" status={pub?.imageConfigured ? `生图已配置 ${pub.imageApiKeyMasked ?? ""}` : "生图未配置"} on={pub?.imageConfigured}>
-        <p className="muted">公众号推草稿、文章配图与封面生成都走这条中转(存 publish.json);key 与端点必须配对(否则 401)。</p>
+      <Section
+        title="发布 · 公众号与生图"
+        status={pub ? `${pub.imageConfigured ? "生图 ✓" : "生图未配置"} · ${pub.wechatConfigured ? `公众号 ${pub.wechatAppIdMasked ?? "✓"}` : "公众号未绑定"}` : ""}
+        on={pub?.imageConfigured}
+      >
+        <p className="muted">
+          公众号推草稿、文章配图与封面生成都走这里(存 publish.json)。生图 key 与端点必须配对(否则 401);
+          公众号 AppID/AppSecret 在 mp.weixin.qq.com「设置与开发 · 开发接口管理」获取——绑定后推草稿用你自己的号,
+          未绑定时沿用发布脚本自带配置(兜底);原创声明与赞赏是官方接口不支持的,群发时手点。
+        </p>
         <Field label="生图 Key" password value={pForm.image_api_key} placeholder={pub?.imageApiKeyMasked ?? "sk-..."} onChange={(v) => setPForm((f) => ({ ...f, image_api_key: v }))} />
         <Field label="生图端点" value={pForm.image_base_url} placeholder={pub?.imageBaseUrl ?? "https://api.xiaojiu.one/v1"} onChange={(v) => setPForm((f) => ({ ...f, image_base_url: v }))} />
         <Field label="生图模型" value={pForm.image_model} placeholder={pub?.imageModel ?? "gpt-image-2"} onChange={(v) => setPForm((f) => ({ ...f, image_model: v }))} />
+        <Field label="公众号 AppID" value={pForm.wechat_app_id} placeholder={pub?.wechatAppIdMasked ?? "wx…"} onChange={(v) => setPForm((f) => ({ ...f, wechat_app_id: v }))} />
+        <Field label="公众号 AppSecret" password value={pForm.wechat_app_secret} placeholder={pub?.wechatConfigured ? "已保存(重填即覆盖)" : "后台生成后粘贴"} onChange={(v) => setPForm((f) => ({ ...f, wechat_app_secret: v }))} />
+        <label className="set-field">
+          <span className="mono muted">推草稿默认打开留言</span>
+          <select value={pForm.open_comment} onChange={(e) => setPForm((f) => ({ ...f, open_comment: e.target.value }))}>
+            <option value="">当前:{pub?.openComment ? "开" : "关"}(不改)</option>
+            <option value="1">开</option>
+            <option value="0">关</option>
+          </select>
+        </label>
         <Field label="排版主题" value={pForm.theme} placeholder={pub?.theme ?? "newspaper"} onChange={(v) => setPForm((f) => ({ ...f, theme: v }))} />
         <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
-        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "" }))} />
+        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "" }))} />
       </Section>
 
       <Section title="封面生成 · 生图通道" status={coverStatus} on={coverOn}>

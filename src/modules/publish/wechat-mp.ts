@@ -30,6 +30,11 @@ export interface WechatMpDraftOptions {
   author?: string;
   /** 显式封面(封面设计师选用图):给了就用,不再拿文中第一图/fallback 生成兜底 */
   coverPath?: string;
+  /** 公众号凭证(可视化绑定,经 env 传给 publish.py;缺省=脚本自身 config.json) */
+  wechatAppId?: string;
+  wechatAppSecret?: string;
+  /** 推草稿默认打开留言(need_open_comment=1) */
+  openComment?: boolean;
   imageSize?: string;
   imageGeneratorScript?: string;
   imageApiKey?: string;
@@ -50,6 +55,19 @@ export type WechatMpDraftResult = {
   stdout?: string;
   stderr?: string;
   error?: string;
+}
+
+/** 凭证/开关经环境变量传给 publish.py;半套凭证不注入(避免脚本进半配置态) */
+export function wechatPublishEnv(
+  opts: Pick<WechatMpDraftOptions, "wechatAppId" | "wechatAppSecret" | "openComment">,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (opts.wechatAppId && opts.wechatAppSecret) {
+    env.WECHAT_APP_ID = opts.wechatAppId;
+    env.WECHAT_APP_SECRET = opts.wechatAppSecret;
+  }
+  if (opts.openComment) env.WECHAT_OPEN_COMMENT = "1";
+  return env;
 }
 
 function resolveImageGeneratorScript(customPath?: string): string {
@@ -112,12 +130,13 @@ async function runCommand(
   command: string,
   args: string[],
   cwd?: string,
+  extraEnv?: Record<string, string>,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
     });
 
     let stdout = "";
@@ -347,7 +366,7 @@ export async function publishWechatMpDraft(
   ];
 
   const publishCwd = path.dirname(path.dirname(wechatPublishScript));
-  const publishResult = await runCommand("python3", publishArgs, publishCwd);
+  const publishResult = await runCommand("python3", publishArgs, publishCwd, wechatPublishEnv(options));
 
   if (publishInput === processedPath) {
     await fs.writeFile(articlePath, newContent, "utf-8");

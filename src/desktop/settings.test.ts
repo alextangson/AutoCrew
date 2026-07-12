@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getEngineSettings, setEngineSettings } from "./settings.js";
+import { getEngineSettings, setEngineSettings, getPublishSettings, setPublishSettings } from "./settings.js";
 
 let testDir: string;
 
@@ -78,5 +78,31 @@ describe("setEngineSettings", () => {
     await setEngineSettings({ _dataDir: testDir, api_key: "sk-new12345678" });
     const mode = (await fs.stat(filePath)).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+});
+
+describe("publish settings 公众号绑定(可视化配置)", () => {
+  it("写 appid/secret/留言开关 → 读回掩码与状态,secret 永不回显", async () => {
+    const w = await setPublishSettings({
+      wechat_app_id: "wx1234567890abcdef",
+      wechat_app_secret: "supersecretvalue42",
+      open_comment: "1",
+      _dataDir: testDir,
+    });
+    expect(w.ok).toBe(true);
+    const r = await getPublishSettings({ _dataDir: testDir });
+    const d = r.data as Record<string, unknown>;
+    expect(d.wechatConfigured).toBe(true);
+    expect(d.wechatAppIdMasked).toBe("wx12…cdef");
+    expect(d.openComment).toBe(true);
+    expect(JSON.stringify(r)).not.toContain("supersecretvalue");
+  });
+
+  it("未绑定时 wechatConfigured=false;open_comment 拒绝非法值", async () => {
+    const r = await getPublishSettings({ _dataDir: testDir });
+    const d = r.data as Record<string, unknown>;
+    expect(d.wechatConfigured).toBe(false);
+    const bad = await setPublishSettings({ open_comment: "maybe", _dataDir: testDir });
+    expect(bad.ok).toBe(false);
   });
 });
