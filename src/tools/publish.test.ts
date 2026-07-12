@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { executePublish } from "./publish.js";
-import { saveContent, updateContent } from "../storage/local-store.js";
+import { saveContent, updateContent, saveCoverReview, approveCoverVariant } from "../storage/local-store.js";
 import type { WechatMpDraftOptions, WechatMpDraftResult } from "../modules/publish/wechat-mp.js";
 
 let dir: string;
@@ -58,6 +58,43 @@ describe("executePublish wechat_mp_draft", () => {
     expect(String(r.nextStep)).toContain("草稿箱");
     const draftMd = await fs.readFile(path.join(dir, "contents", c.id, "draft.md"), "utf-8");
     expect(draftMd).toContain("编辑后的最新正文");
+  });
+
+  it("封面设计师接线:选用封面(approvedImagePath)传给 publishImpl,不再让脚本拿 img-01 兜底", async () => {
+    const c = await mkContent("干净正文,讲讲工具技巧");
+    const coverFile = path.join(dir, "contents", c.id, "assets", "covers", "cover-a-r2-2.35x1.png");
+    await fs.mkdir(path.dirname(coverFile), { recursive: true });
+    await fs.writeFile(coverFile, "png-bytes");
+    await saveCoverReview(
+      c.id,
+      {
+        platform: "wechat_mp",
+        primaryRatio: "2.35:1",
+        status: "review_pending",
+        variants: [
+          { label: "a", imagePaths: { "2.35:1": coverFile } },
+          { label: "b", imagePaths: {} },
+          { label: "c", imagePaths: {} },
+        ],
+      } as never,
+      dir,
+    );
+    await approveCoverVariant(c.id, "a", dir);
+
+    const publishImpl = mockPublish();
+    const r = (await executePublish(
+      { action: "wechat_mp_draft", content_id: c.id, _dataDir: dir },
+      { publishImpl },
+    )) as Record<string, unknown>;
+    expect(r.ok).toBe(true);
+    expect(publishImpl.mock.calls[0][0].coverPath).toBe(coverFile);
+  });
+
+  it("无选用封面 → coverPath 不传,脚本维持原兜底行为", async () => {
+    const c = await mkContent("干净正文");
+    const publishImpl = mockPublish();
+    await executePublish({ action: "wechat_mp_draft", content_id: c.id, _dataDir: dir }, { publishImpl });
+    expect(publishImpl.mock.calls[0][0].coverPath).toBeUndefined();
   });
 
   it("审核员发布门：违禁词阻断推送，publishImpl 不被调用", async () => {

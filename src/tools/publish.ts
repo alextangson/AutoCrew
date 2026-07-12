@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
-import { getContent, updateContent, getDataDir } from "../storage/local-store.js";
+import { getContent, updateContent, getDataDir, getCoverReview } from "../storage/local-store.js";
 import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../modules/publish/wechat-config.js";
 import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
@@ -123,9 +123,26 @@ export async function executePublish(
     };
   }
 
+  // 封面设计师接线:有选用封面(approvedImagePath,公众号即 2.35:1 精裁图)就推它,
+  // 不再让脚本拿"文中第一图"当封面——设计师转正了,活儿要上岗
+  let approvedCover: string | undefined;
+  if (contentId) {
+    const review = await getCoverReview(contentId, dataDir).catch(() => null);
+    const p = review?.approvedImagePath;
+    if (p) {
+      try {
+        await fs.access(p);
+        approvedCover = p;
+      } catch {
+        /* 选用图文件丢失 → 维持脚本兜底 */
+      }
+    }
+  }
+
   const cfg = await loadWechatMpConfig(dataDir);
   const result = await publishImpl({
     articlePath,
+    coverPath: approvedCover,
     theme: (params.theme as string) || cfg.theme || "newspaper",
     dryRun: Boolean(params.dry_run),
     skipImages: Boolean(params.skip_images),

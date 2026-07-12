@@ -94,52 +94,39 @@ function normalizeDesign(d: Record<string, unknown>, label: "A" | "B" | "C"): Co
   };
 }
 
-function buildPlanTool(captured: { designs: CoverDesign[] | null }): LoopTool {
+/**
+ * 平铺单方案提交,分三次调用(2026-07-12 实测裁决):嵌套 array-of-objects 参数会诱导
+ * 模型把数组字符串化,imagePrompt 内含英文引号时双重转义必然间歇性翻车(一次运行 4 连败,
+ * 烧光自纠回合后静默降级规则版)。平铺字段 = 单层转义,与 submit_cover_revision 同构——
+ * 该工具从未翻过车。字符串化容错救不了 parse 不动的字符串,结构性消灭嵌套才是解。
+ */
+function buildPlanTool(captured: { designs: Map<string, CoverDesign> }): LoopTool {
   return {
-    name: "submit_cover_plan",
-    description: "提交 3 个封面设计方案(A/B/C 各一)。",
+    name: "submit_cover_design",
+    description: "提交一个封面设计方案(A/B/C 中的一个)。分三次调用,每次只交一个方案;同 label 重复提交以最后一次为准。",
     parameters: {
       type: "object",
       properties: {
-        designs: {
-          type: "array",
-          minItems: 3,
-          maxItems: 3,
-          items: {
-            type: "object",
-            properties: {
-              label: { type: "string", enum: ["A", "B", "C"] },
-              style: { type: "string", description: "风格名,如 cinematic / minimalist / bold-impact" },
-              titleText: { type: "string", description: "封面中文大字,2-9 个字,短促有力" },
-              imagePrompt: { type: "string", description: "完整英文生图 prompt,含 3:4、标题文字与全部禁止项" },
-              layoutHint: { type: "string", description: "版式一句话(标题位置/主体位置/叠层)" },
-              designReason: { type: "string", description: "为什么能停住滑动,1-2 句中文" },
-            },
-            required: ["label", "style", "titleText", "imagePrompt", "layoutHint", "designReason"],
-          },
-        },
+        label: { type: "string", enum: ["A", "B", "C"] },
+        style: { type: "string", description: "风格名,如 cinematic / minimalist / bold-impact" },
+        titleText: { type: "string", description: "封面中文大字,2-9 个字,短促有力" },
+        imagePrompt: { type: "string", description: "完整英文生图 prompt,含比例、标题文字与全部禁止项" },
+        layoutHint: { type: "string", description: "版式一句话(标题位置/主体位置/叠层)" },
+        designReason: { type: "string", description: "为什么能停住滑动,1-2 句中文" },
       },
-      required: ["designs"],
+      required: ["label", "style", "titleText", "imagePrompt", "layoutHint", "designReason"],
     },
     execute(args) {
-      // 模型偶尔把数组序列化成 JSON 字符串传入——容错解析,不白白浪费一个自纠回合
-      let designs = args.designs;
-      if (typeof designs === "string") {
-        try { designs = JSON.parse(designs); } catch { /* 落到下面的数组校验报错 */ }
+      const label = args.label;
+      if (label !== "A" && label !== "B" && label !== "C") {
+        return "Error: label 必须是 A/B/C,请修正后重新调用 submit_cover_design";
       }
-      if (!Array.isArray(designs) || designs.length !== 3) {
-        return "Error: designs 必须是恰好 3 个方案的数组(直接传数组,不要传 JSON 字符串),请修正后重新调用 submit_cover_plan";
-      }
-      const labels: Array<"A" | "B" | "C"> = ["A", "B", "C"];
-      const normalized: CoverDesign[] = [];
-      for (let i = 0; i < 3; i++) {
-        const d = designs[i] as Record<string, unknown>;
-        const problem = designProblem(d);
-        if (problem) return `Error: 方案 ${labels[i]} ${problem},请修正后重新调用 submit_cover_plan`;
-        normalized.push(normalizeDesign(d, labels[i]));
-      }
-      captured.designs = normalized;
-      return "已收到 3 个设计方案";
+      const problem = designProblem(args);
+      if (problem) return `Error: 方案 ${label} ${problem},请修正后重新调用 submit_cover_design`;
+      captured.designs.set(label, normalizeDesign(args, label));
+      if (captured.designs.size === 3) return "已收齐 3 个设计方案(A/B/C)";
+      const missing = (["A", "B", "C"] as const).filter((l) => !captured.designs.has(l));
+      return `已收到方案 ${label},还差 ${missing.join("/")}——继续调用 submit_cover_design 提交剩余方案`;
     },
   };
 }
@@ -166,7 +153,7 @@ function buildSystemPrompt(aspect: PrimaryAspect): string {
     "\nimagePrompt 用英文写全:构图、主体、光线、色彩、中文标题文字内容与位置、以及上面全部禁止项。\n" +
     "有创作者形象照时,人物方案要写 feature the person from the reference photo, maintaining their likeness;" +
     "没有形象照就不要虚构具体真人长相。\n" +
-    "完成后调用 submit_cover_plan 提交,不要把方案写在普通回复里。"
+    "每个方案用 submit_cover_design 单独提交(共三次调用,A/B/C 各一次,字段平铺直传,不要把方案打包成数组或 JSON 字符串),不要把方案写在普通回复里。"
   );
 }
 
@@ -186,7 +173,7 @@ export async function designCoverPlan(
   deps?: { runLoopImpl?: typeof runLoop },
 ): Promise<{ designs: CoverDesign[]; tokensUsed: number }> {
   const [config, audience] = await Promise.all([loadEngineConfig(dataDir), audienceLine(dataDir)]);
-  const captured = { designs: null as CoverDesign[] | null };
+  const captured = { designs: new Map<string, CoverDesign>() };
   const loopFn = deps?.runLoopImpl ?? runLoop;
   const aspect = input.targetAspect ?? "3:4";
 
@@ -203,14 +190,17 @@ export async function designCoverPlan(
       audience +
       "请给出 3 个封面设计方案。",
     tools: [buildPlanTool(captured)],
-    maxTurns: 5,
+    // 三次提交 + 每方案留一次自纠余量
+    maxTurns: 6,
     logMeta: { agent: "cover-designer" },
   });
 
-  if (!captured.designs) {
-    throw new Error("封面设计失败:模型未调用 submit_cover_plan 提交方案");
+  if (captured.designs.size !== 3) {
+    const got = [...captured.designs.keys()].sort().join("/") || "无";
+    throw new Error(`封面设计失败:方案未收齐(已收 ${got})——模型未完成 submit_cover_design 提交`);
   }
-  return { designs: captured.designs, tokensUsed: result.totalTokens };
+  const designs = (["A", "B", "C"] as const).map((l) => captured.designs.get(l)!);
+  return { designs, tokensUsed: result.totalTokens };
 }
 
 function buildRevisionTool(captured: { design: CoverDesign | null }, label: "A" | "B" | "C"): LoopTool {

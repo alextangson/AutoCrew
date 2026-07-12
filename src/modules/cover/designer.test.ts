@@ -58,18 +58,29 @@ function mockLoop(
 }
 
 describe("designCoverPlan", () => {
-  it("提交 3 方案 → 返回 A/B/C,硬规则进 system prompt,内容进 user", async () => {
+  it("平铺分三次提交(杜绝嵌套 JSON 双重转义翻车)→ 收齐返回 A/B/C,硬规则进 system prompt", async () => {
     const captured: CapturedOpts[] = [];
+    const execResults: string[] = [];
     const { designs, tokensUsed } = await designCoverPlan(
       { title: "AI 写码的账怎么算", body: "正文……", platform: "wechat_mp", hasReferencePhotos: true },
       dir,
-      { runLoopImpl: mockLoop("submit_cover_plan", [{ designs: [goodDesign("A"), goodDesign("B"), goodDesign("C")] }], [], captured) },
+      {
+        runLoopImpl: mockLoop(
+          "submit_cover_design",
+          [goodDesign("A"), goodDesign("B"), goodDesign("C")],
+          execResults,
+          captured,
+        ),
+      },
     );
     expect(designs.map((d) => d.label)).toEqual(["A", "B", "C"]);
     expect(tokensUsed).toBe(321);
+    expect(execResults[0]).toContain("还差 B/C");
+    expect(execResults[2]).toContain("已收齐");
     expect(captured[0].systemPrompt).toContain("3:4");
     expect(captured[0].systemPrompt).toContain("水印");
     expect(captured[0].systemPrompt).toContain("暗色");
+    expect(captured[0].systemPrompt).toContain("submit_cover_design");
     expect(captured[0].userMessage).toContain("AI 写码的账怎么算");
     expect(captured[0].userMessage).toContain("形象照");
   });
@@ -79,7 +90,7 @@ describe("designCoverPlan", () => {
     await designCoverPlan(
       { title: "t", body: "b", hasReferencePhotos: false, targetAspect: "16:9" },
       dir,
-      { runLoopImpl: mockLoop("submit_cover_plan", [{ designs: [goodDesign("A"), goodDesign("B"), goodDesign("C")] }], [], captured) },
+      { runLoopImpl: mockLoop("submit_cover_design", [goodDesign("A"), goodDesign("B"), goodDesign("C")], [], captured) },
     );
     expect(captured[0].systemPrompt).toContain("16:9");
     expect(captured[0].systemPrompt).toContain("横版");
@@ -87,37 +98,41 @@ describe("designCoverPlan", () => {
     expect(captured[0].userMessage).toContain("16:9(横屏)");
   });
 
-  it("titleText 超长/无中文 → 工具打回自纠;修正后通过", async () => {
-    const bad = { designs: [{ ...goodDesign("A"), titleText: "这个标题实在太长了啊" }, goodDesign("B"), goodDesign("C")] };
+  it("titleText 超长/无中文 → 工具打回自纠;修正后通过;同 label 重交以最后一次为准", async () => {
     const execResults: string[] = [];
     const { designs } = await designCoverPlan(
       { title: "t", body: "b", hasReferencePhotos: false },
       dir,
       {
         runLoopImpl: mockLoop(
-          "submit_cover_plan",
-          [bad, { designs: [goodDesign("A"), goodDesign("B"), goodDesign("C")] }],
+          "submit_cover_design",
+          [
+            { ...goodDesign("A"), titleText: "这个标题实在太长了啊" },
+            goodDesign("A"),
+            goodDesign("B"),
+            goodDesign("C"),
+          ],
           execResults,
         ),
       },
     );
     expect(execResults[0]).toContain("Error");
     expect(execResults[0]).toContain("2-9");
-    expect(execResults[1]).toContain("已收到");
+    expect(execResults[1]).toContain("已收到方案 A");
     expect(designs).toHaveLength(3);
   });
 
-  it("imagePrompt 太短 → 打回;模型不提交 → 明确报错", async () => {
+  it("imagePrompt 太短 → 打回;方案未收齐 → 明确报错(带已收清单)", async () => {
     const execResults: string[] = [];
     await expect(
       designCoverPlan({ title: "t", body: "b", hasReferencePhotos: false }, dir, {
         runLoopImpl: mockLoop(
-          "submit_cover_plan",
-          [{ designs: [{ ...goodDesign("A"), imagePrompt: "too short" }, goodDesign("B"), goodDesign("C")] }],
+          "submit_cover_design",
+          [{ ...goodDesign("A"), imagePrompt: "too short" }, goodDesign("B")],
           execResults,
         ),
       }),
-    ).rejects.toThrow(/未调用 submit_cover_plan/);
+    ).rejects.toThrow(/方案未收齐/);
     expect(execResults[0]).toContain("80");
   });
 });

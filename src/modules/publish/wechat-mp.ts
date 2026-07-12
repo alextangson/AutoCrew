@@ -28,6 +28,8 @@ export interface WechatMpDraftOptions {
   dryRun?: boolean;
   skipImages?: boolean;
   author?: string;
+  /** 显式封面(封面设计师选用图):给了就用,不再拿文中第一图/fallback 生成兜底 */
+  coverPath?: string;
   imageSize?: string;
   imageGeneratorScript?: string;
   imageApiKey?: string;
@@ -227,7 +229,8 @@ export async function publishWechatMpDraft(
   const imageMatches = [...originalContent.matchAll(/\[IMAGE:\s*(.+?)\]/g)];
 
   let newContent = originalContent;
-  let coverPath = "";
+  // 封面设计师的选用封面优先;没有才落回"文中第一图 → fallback 生成"的老兜底
+  let coverPath = options.coverPath && (await fileExists(options.coverPath)) ? options.coverPath : "";
   const generatedImages: string[] = [];
 
   for (let index = 0; index < imageMatches.length; index += 1) {

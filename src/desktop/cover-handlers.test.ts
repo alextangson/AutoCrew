@@ -136,6 +136,30 @@ describe("startCoverJob(后台化)", () => {
     expect(done.label).toContain("未带人物");
   });
 
+  it("失败带 details → run_failed 透出第一条明细(修观测盲区:别只剩一句 All failed)", async () => {
+    await seedRelay();
+    execMock.mockResolvedValueOnce({
+      ok: false,
+      error: "All 3 cover generations failed",
+      details: ['A: 生图失败(已重试): HTTP 401: {"error":{"message":"Invalid API key"}}'],
+    } as never);
+    const job = await startCoverJob({ content_id: "content-1-a", _dataDir: dir }, "create_candidates", { work: "w", done: "d" });
+    await job.completion;
+    const last = emitMock.mock.calls.at(-1)![0] as { kind: string; label: string };
+    expect(last.kind).toBe("run_failed");
+    expect(last.label).toContain("HTTP 401");
+  });
+
+  it("designSource=rules → run_done 明示规则版兜底(静默降级要有声)", async () => {
+    await seedRelay();
+    execMock.mockResolvedValueOnce({ ok: true, designSource: "rules" } as never);
+    const job = await startCoverJob({ content_id: "content-1-a", _dataDir: dir }, "create_candidates", { work: "w", done: "封面候选已出" });
+    await job.completion;
+    const done = emitMock.mock.calls.at(-1)![0] as { kind: string; label: string };
+    expect(done.kind).toBe("run_done");
+    expect(done.label).toContain("规则版兜底");
+  });
+
   it("coverCreateHandler 只透出 response(无 completion 泄漏)", async () => {
     await seedRelay();
     execMock.mockResolvedValueOnce({ ok: true } as never);
