@@ -61,6 +61,20 @@ export function ReportView() {
   const [impPlatform, setImpPlatform] = useState("wechat_mp");
   const [importing, setImporting] = useState(false);
 
+  // 公众号后台一键拉数(chrome-cdp 登录态,只读低频;登录失效会给扫码指引)
+  const [pulling, setPulling] = useState(false);
+  const pullWechat = async () => {
+    setPulling(true);
+    const r = await invoke("flywheel:wechat_pull", {});
+    setPulling(false);
+    if (!r.ok) return toast(r.error ?? "拉取失败");
+    const rep = (r as unknown as { data: { imported: number; matched: number; historical: number } }).data;
+    toast(`公众号回填:入账 ${rep.imported} 条(匹配稿件 ${rep.matched} · 历史 ${rep.historical})`);
+    void invoke("flywheel:report").then((rr) => {
+      if (rr.ok) setD((rr as unknown as { data: Report }).data);
+    });
+  };
+
   // 创作者中心导出 CSV → flywheel 导入管线(csv_text 直传;校验/对账/幂等在后端)
   const importCsvFile = async (file: File | undefined) => {
     if (!file) return;
@@ -112,6 +126,9 @@ export function ReportView() {
         <h2 className="serif board-title" style={{ margin: 0 }}>数据回流</h2>
         <span className="muted">发布后回填数据——选题评分、基线与复盘都以它为准</span>
         <span style={{ marginLeft: "auto" }} className="row-actions">
+          <button className="chip" disabled={pulling} onClick={() => void pullWechat()}>
+            {pulling ? "拉取中…" : "从公众号后台拉取"}
+          </button>
           <select value={impPlatform} onChange={(e) => setImpPlatform(e.target.value)}>
             <option value="wechat_mp">公众号</option>
             <option value="douyin">抖音</option>

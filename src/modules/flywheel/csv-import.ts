@@ -121,7 +121,7 @@ export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
     publishedAt: ["发表时间", "发布时间", "群发时间"],
     metricDate: ["数据日期", "统计日期", "日期"],
     views: ["图文页阅读次数", "阅读次数", "阅读量", "总阅读次数"],
-    likes: ["点赞次数", "点赞数", "喜欢次数"],
+    likes: ["点赞次数", "点赞数", "喜欢次数", "在看次数"],
     comments: ["留言次数", "留言数", "评论次数"],
     shares: ["分享次数", "转发次数", "分享转发次数"],
     favorites: ["收藏次数", "收藏数"],

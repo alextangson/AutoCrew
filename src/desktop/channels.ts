@@ -47,6 +47,7 @@ export const IPC_CHANNELS = [
   "onboarding:init",
   "flywheel:import_csv",
   "flywheel:record",
+  "flywheel:wechat_pull",
   "dialog:pick_file",
   "knowledge:status",
   "radar:status",

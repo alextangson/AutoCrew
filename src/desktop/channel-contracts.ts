@@ -54,6 +54,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "onboarding:init": [],
   "flywheel:import_csv": ["platform"],
   "flywheel:record": ["content_id", "metrics"],
+  "flywheel:wechat_pull": [],
   "dialog:pick_file": [],
   "knowledge:status": [],
   "radar:status": [],
