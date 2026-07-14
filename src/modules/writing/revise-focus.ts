@@ -102,7 +102,7 @@ export async function reviseFocus(
 
   const scopeLine =
     focus.scope === "selection"
-      ? "范围：只改用户选中的这一段，其余不动。改完调 submit_revision 提交改写后的完整段落。"
+      ? "范围：只改用户选中的这一段，其余不动——但必须结合下面给的全文来改：让这一段和前后文连贯、并服务于整篇的核心问题，不要就句论句、也不要与全文重复或脱节。改完调 submit_revision 提交改写后的完整段落。"
       : "范围：修订整篇。改完调 submit_revision 提交完整标题和完整正文。";
   const systemPrompt = [
     "你是资深中文内容编辑，按用户反馈修改稿件。",
@@ -117,7 +117,7 @@ export async function reviseFocus(
 
   const userMessage =
     focus.scope === "selection"
-      ? `修改要求：${feedback}\n\n选中的段落：\n${focus.selection}\n\n（全文标题「${current.title}」，仅供理解语境）`
+      ? `修改要求：${feedback}\n\n【全文·仅供理解上下文，不要改动全文本身，只改下面「选中的段落」】\n标题：${current.title}\n正文：\n${current.body}\n\n【选中的段落·只改这一段，返回改写后的完整段落】\n${focus.selection}`
       : `修改要求：${feedback}\n\n原标题：${current.title}\n\n原正文：\n${current.body}`;
 
   await runLoopImpl(writer.config, {
