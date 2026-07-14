@@ -74,7 +74,19 @@ export function App() {
   return (
     <div className="shell">
       <header className="topbar">
-        <span className="brand serif">AutoCrew 编辑部</span>
+        <span
+          className="brand serif"
+          role="button"
+          tabIndex={0}
+          style={{ cursor: "pointer" }}
+          title="回到今日主页"
+          onClick={() => setRoute({ view: "dashboard" })}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && !e.nativeEvent.isComposing) setRoute({ view: "dashboard" });
+          }}
+        >
+          AutoCrew 编辑部
+        </span>
         <nav className="topnav">
           {PRIMARY_NAV.map((n) => (
             <button key={n.view} className={active === n.view ? "nav-on" : ""} onClick={() => setRoute({ view: n.view } as Route)}>
