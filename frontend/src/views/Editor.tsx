@@ -339,20 +339,6 @@ export function Editor(props: { id: string; back: () => void }) {
       </details>
 
       <details className="ed-tools">
-        <summary>封面设计</summary>
-        <CoverPanel contentId={props.id} platform={c.platform} />
-      </details>
-
-      <details
-        className="ed-tools"
-        open={articleImagesOpen}
-        onToggle={(event) => setArticleImagesOpen(event.currentTarget.open)}
-      >
-        <summary>正文配图 · {[...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length} 个位置</summary>
-        <ArticleImagesPanel contentId={props.id} dirty={dirty} />
-      </details>
-
-      <details className="ed-tools">
         <summary>发布与分发</summary>
         <div className="ed-section">
           <button onClick={() => void doClipboard()}>排版发布文案</button>
@@ -498,6 +484,21 @@ export function Editor(props: { id: string; back: () => void }) {
         </details>
       )}
       </aside>
+      </div>
+
+      <div className="ed-media">
+        <details className="ed-tools">
+          <summary>封面设计</summary>
+          <CoverPanel contentId={props.id} platform={c.platform} />
+        </details>
+        <details
+          className="ed-tools"
+          open={articleImagesOpen}
+          onToggle={(event) => setArticleImagesOpen(event.currentTarget.open)}
+        >
+          <summary>正文配图 · {[...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length} 个位置</summary>
+          <ArticleImagesPanel contentId={props.id} dirty={dirty} body={body} />
+        </details>
       </div>
     </div>
   );

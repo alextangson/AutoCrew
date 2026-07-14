@@ -33,7 +33,7 @@ const STATUS_LABEL: Record<ArticleImageEntry["status"], string> = {
   error: "失败",
 };
 
-export function ArticleImagesPanel(props: { contentId: string; dirty: boolean }) {
+export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; body: string }) {
   const [review, setReview] = useState<ArticleImageReview | null>(null);
   const [prompts, setPrompts] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
@@ -128,6 +128,15 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean })
   const ready = review.entries.filter((entry) => entry.status === "ready").length;
   const missing = review.entries.some((entry) => entry.status !== "ready");
 
+  // 位置提示:第 index 个 [IMAGE:] 标记前面那段正文的结尾,让你一眼看到这张插在哪
+  const markers = [...props.body.matchAll(/\[IMAGE:\s*(.+?)\]/g)];
+  const posHint = (index: number): string => {
+    const m = markers[index];
+    if (!m || m.index === undefined) return "";
+    const before = props.body.slice(0, m.index).replace(/\[IMAGE:[^\]]*\]/g, "").replace(/[\s#>*\-—·]+$/g, "");
+    return before.slice(-22).trim();
+  };
+
   return (
     <div className="article-images-panel">
       <div className="article-images-head">
@@ -143,7 +152,11 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean })
           <article key={entry.id} className="article-image-card">
             <div className="article-image-card-head">
               <strong>配图 {entry.index + 1}</strong>
-              {entry.section && <span className="muted">位于「{entry.section}」之后</span>}
+              {posHint(entry.index) || entry.section ? (
+                <span className="muted">接在「…{posHint(entry.index) || entry.section}」后面</span>
+              ) : (
+                <span className="muted">正文里没找到对应标记</span>
+              )}
               <span className={`chip article-image-status-${entry.status}`}>{STATUS_LABEL[entry.status]}</span>
             </div>
             {entry.imagePath ? (

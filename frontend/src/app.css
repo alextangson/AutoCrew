@@ -167,7 +167,8 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .ed-main { min-width: 0; }
 .ed-side { min-width: 0; display: flex; flex-direction: column; }
 .ed-side .ed-tools:first-child { border-top: none; padding-top: 0; }
-.ed-side .article-images-grid, .ed-side .cover-grid { grid-template-columns: 1fr; }
+/* 图片类面板(封面/正文配图)要宽,不进窄副栏——在编辑区下方整宽展示 */
+.ed-media { margin-top: 10px; }
 @media (max-width: 1180px) { .ed-grid { grid-template-columns: 1fr; } }
 .ed-title { width: 100%; font-size: 20px; font-weight: 700; border-color: transparent; background: transparent; margin: 8px 0 4px; }
 .ed-title:hover { border-color: var(--border); }
