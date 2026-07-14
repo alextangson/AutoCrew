@@ -11,6 +11,7 @@ import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
 import { parseChatTurnResponse } from "./response";
+import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
 interface Msg {
   role: "user" | "assistant";
@@ -49,6 +50,7 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [contextTitle, setContextTitle] = useState("");
+  const focus = useRevisionFocus();
 
   useEffect(() => {
     const id = props.contentContext?.contentId;
@@ -79,7 +81,7 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     setActiveConversationId(id);
     setMsgs(
       d.messages
-        .map((m) => ({ role: m.role, text: m.content, cards: m.cards ?? [] }))
+        .map((m) => ({ role: m.role, text: m.content, cards: (m.cards ?? []).filter((c) => c.type !== "revision_proposal") }))
         .filter((m) => m.text.trim() || (m.cards?.length ?? 0) > 0),
     );
   };
@@ -99,10 +101,16 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     setInput("");
     setBusy(true);
     setProgress([]);
+    const focusNow = getFocus();
+    const ctx = focusNow
+      ? { content_id: focusNow.contentId, revision_focus: { scope: focusNow.scope, ...(focusNow.selection ? { selection: focusNow.selection.text } : {}) } }
+      : props.contentContext
+        ? { content_id: props.contentContext.contentId }
+        : undefined;
     const r = await invoke("chat:turn", {
       message,
       ...(activeConversationId ? { conversation_id: activeConversationId } : {}),
-      ...(props.contentContext ? { context: { content_id: props.contentContext.contentId } } : {}),
+      ...(ctx ? { context: ctx } : {}),
     });
     setBusy(false);
     setProgress([]);
@@ -114,7 +122,29 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     if (parsed.conversationId) {
       setActiveConversationId(parsed.conversationId);
     }
-    setMsgs((m) => [...m, { role: "assistant", text: parsed.reply, cards: parsed.cards }]);
+    const proposalCard = parsed.cards.find((c) => c.type === "revision_proposal");
+    if (proposalCard) {
+      const pd = proposalCard.data as unknown as {
+        contentId: string;
+        scope: "selection" | "draft";
+        feedback?: string;
+        title?: string;
+        body?: string;
+        span?: string;
+      };
+      const f = getFocus();
+      setProposal({
+        contentId: pd.contentId,
+        scope: pd.scope,
+        ...(pd.feedback ? { feedback: pd.feedback } : {}),
+        ...(pd.title !== undefined ? { title: pd.title } : {}),
+        ...(pd.body !== undefined ? { body: pd.body } : {}),
+        ...(pd.span !== undefined ? { span: pd.span } : {}),
+        ...(f?.selection ? { selection: f.selection } : {}),
+      });
+    }
+    const visibleCards = parsed.cards.filter((c) => c.type !== "revision_proposal");
+    setMsgs((m) => [...m, { role: "assistant", text: parsed.reply, cards: visibleCards }]);
     void listConversations().then(setConvs);
     return { ok: true, ...(parsed.actionId ? { actionId: parsed.actionId } : {}) };
   };
@@ -202,10 +232,17 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
           </button>
         </span>
       </div>
-      {props.contentContext && (
-        <div className="chat-context" title={props.contentContext.contentId}>
-          当前稿件：{contextTitle || "正在读取…"} · 修改建议会保存为新版本
+      {focus ? (
+        <div className="chat-context revision-focus" title={focus.contentId}>
+          <span>正在改：{focus.scope === "selection" ? "选中这段" : "整篇"} · 说怎么改,不清楚我会反问,改完在编辑器收下</span>
+          <button className="focus-x" title="退出修改" onClick={() => clearFocus()}>×</button>
         </div>
+      ) : (
+        props.contentContext && (
+          <div className="chat-context" title={props.contentContext.contentId}>
+            当前稿件：{contextTitle || "正在读取…"} · 修改建议会保存为新版本
+          </div>
+        )
       )}
       <div className="chat-body" ref={bodyRef}>
         {msgs.length === 0 && (

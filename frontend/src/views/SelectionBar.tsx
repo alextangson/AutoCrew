@@ -6,20 +6,11 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { measureCaret } from "../caret";
 
-const QUICK_ACTIONS: Array<[string, string]> = [
-  ["重写", "换一种写法重写这段,保持信息量"],
-  ["扩写", "扩写这段,补充细节与论证"],
-  ["缩写", "压缩这段,只留核心"],
-  ["口语化", "改得更口语化,像说话"],
-];
-
 export function SelectionBar(props: {
   ta: HTMLTextAreaElement | null;
   sel: { start: number; end: number };
-  rewriting: boolean;
-  onRewrite: (instruction: string) => void;
+  onFocus: () => void;
 }) {
-  const [instruction, setInstruction] = useState("");
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
 
@@ -61,22 +52,8 @@ export function SelectionBar(props: {
       style={pos ? { top: pos.top, left: pos.left } : undefined}
     >
       <span className="mono muted">选中 {props.sel.end - props.sel.start} 字</span>
-      {QUICK_ACTIONS.map(([label, inst]) => (
-        <button key={label} disabled={props.rewriting} onClick={() => props.onRewrite(inst)}>
-          {label}
-        </button>
-      ))}
-      <input
-        className="sel-input"
-        placeholder="或输入修改要求,回车发送(如:这段太软了,换个比喻)"
-        value={instruction}
-        disabled={props.rewriting}
-        onChange={(e) => setInstruction(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && instruction.trim()) props.onRewrite(instruction.trim());
-        }}
-      />
-      {props.rewriting && <span className="muted">改写中…</span>}
+      <button className="primary" onClick={props.onFocus}>改这段 →</button>
+      <span className="muted">锁定这段,去右边总编辑说怎么改</span>
     </div>
   );
 }

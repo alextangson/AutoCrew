@@ -162,7 +162,14 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .mcell { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .mcell-filled { border-color: var(--ink); }
 
-.editor { max-width: 860px; }
+.editor { max-width: 1280px; margin-inline: auto; }
+.ed-grid { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 22px; align-items: start; }
+.ed-main { min-width: 0; }
+.ed-side { min-width: 0; display: flex; flex-direction: column; }
+.ed-side .ed-tools:first-child { border-top: none; padding-top: 0; }
+/* 图片类面板(封面/正文配图)要宽,不进窄副栏——在编辑区下方整宽展示 */
+.ed-media { margin-top: 10px; }
+@media (max-width: 1180px) { .ed-grid { grid-template-columns: 1fr; } }
 .ed-title { width: 100%; font-size: 20px; font-weight: 700; border-color: transparent; background: transparent; margin: 8px 0 4px; }
 .ed-title:hover { border-color: var(--border); }
 .ed-title:focus { border-color: var(--ink); background: var(--card); }
@@ -192,6 +199,10 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .diff-del { color: #8b2c2c; background: #fff0f0; }
 .diff-add { color: #21613b; background: #eefaf2; }
 .chat-context { margin: 0 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-card); background: #fff8df; font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.revision-focus { display: flex; align-items: center; gap: 8px; white-space: normal; border-color: var(--ink); }
+.revision-focus > span { flex: 1; }
+.focus-x { border: none; background: none; padding: 0 4px; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
+.focus-x:hover { color: var(--danger); }
 .bf-input { width: 110px; }
 
 .sel-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; border: 1px solid var(--ink); border-radius: var(--radius-card); background: var(--card); padding: 6px 8px; margin: 6px 0; }
@@ -251,6 +262,18 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .btn-danger:hover { border-color: var(--danger); opacity: 0.9; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* 首启引擎闸:居中报纸卡片,表单复用 .dlg-field / .primary,不另起设计 */
+.onboard { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.onboard-card {
+  width: min(440px, 92vw); background: var(--card); border-radius: var(--radius-card);
+  border: 1px solid var(--ink); border-top: 3px solid var(--ink);
+  padding: 28px 30px 24px; box-shadow: 0 10px 34px rgba(22, 21, 15, 0.12);
+}
+.onboard-brand { font-size: 22px; font-weight: 700; }
+.onboard-welcome { margin: 6px 0 4px; }
+.onboard-hint { margin-top: 10px; }
+.onboard-card .primary { width: 100%; margin-top: 18px; padding: 8px; }
+
 /* C 期:校准中心/设置/任务卡 */
 .calib h2, .settings h2 { margin-bottom: 8px; }
 .cover-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
@@ -287,7 +310,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .calib-h3 { margin: 16px 0 4px; font-size: 14px; }
 .rule-off { opacity: 0.45; }
 /* V5.6.3 设置重构:七区全展开卡片,状态徽标一眼可扫,不再点七次才见全貌 */
-.settings { max-width: 720px; }
+.settings { max-width: 720px; margin-inline: auto; }
 .set-zone { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); margin: 12px 0; padding: 12px 14px; }
 .set-head { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; }
 .set-title { font-size: 15px; font-weight: 700; }

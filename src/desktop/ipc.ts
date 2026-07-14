@@ -89,6 +89,9 @@ import {
   articleImagesGetHandler,
   articleImagesRegenerateHandler,
   articleImagesRemoveHandler,
+  articleImagesSuggestHandler,
+  articleImagesAddSlotHandler,
+  articleImagesRemoveSlotHandler,
 } from "./article-image-handlers.js";
 import { logsListHandler, logsGetRunHandler, skillsListHandler } from "./log-handlers.js";
 import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler, retroGetHandler } from "./goal-retro-handlers.js";
@@ -108,7 +111,7 @@ import {
   rescoreRadarTopics,
   setRadarSources,
 } from "./radar-status.js";
-import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
+import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, updateTopic, softDeleteTopic, restoreTopic, listTrash, updateContent } from "../storage/local-store.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
 import type { ApprovalBinding } from "./approval-gate.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
@@ -397,10 +400,20 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     const contentId = typeof input.content_id === "string" ? input.content_id : "";
     if (isContentId(contentId)) {
       const current = await getContent(contentId, dataDir);
+      const rf = input.revision_focus;
+      let revisionFocus: { scope: "selection" | "draft"; selection?: string } | undefined;
+      if (rf && typeof rf === "object" && !Array.isArray(rf)) {
+        const scope = (rf as Record<string, unknown>).scope;
+        const selection = (rf as Record<string, unknown>).selection;
+        if (scope === "draft") revisionFocus = { scope: "draft" };
+        else if (scope === "selection" && typeof selection === "string" && selection.trim())
+          revisionFocus = { scope: "selection", selection };
+      }
       viewContext = {
         contentId,
         contentTitle: String(input.content_title ?? current?.title ?? ""),
         platform: String(input.platform ?? current?.platform ?? ""),
+        ...(revisionFocus ? { revisionFocus } : {}),
       };
     }
   }
@@ -574,6 +587,30 @@ async function rewriteSelectionHandler(payload: Record<string, unknown>): Promis
     },
     (payload._dataDir as string) || undefined,
   );
+}
+
+/** 收下一版对话式修改：存新版本 + 采纳即学习闸门（有 before+feedback 才沉淀）。 */
+async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const contentId = typeof payload.content_id === "string" ? payload.content_id : "";
+  if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
+  const body = typeof payload.body === "string" ? payload.body : "";
+  if (!body.trim()) return { ok: false, error: "需要 body" };
+  const dataDir = (payload._dataDir as string) || undefined;
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : undefined;
+  const before = typeof payload.before === "string" ? payload.before : "";
+  const feedback = typeof payload.feedback === "string" ? payload.feedback.trim() : "";
+  try {
+    const note = feedback ? `收下修改：${feedback.replace(/\s+/g, " ").slice(0, 80)}` : "收下修改";
+    const updated = await updateContent(contentId, { body, ...(title ? { title } : {}), _versionNote: note }, dataDir);
+    if (!updated) return { ok: false, error: `稿件不存在：${contentId}` };
+    // 采纳即学习闸门：正文确有变化才把 before→after 喂给蒸馏管线（延迟学习，不确认不学）
+    if (before && before !== body) {
+      await recordDiff(contentId, "body", before, body, dataDir, feedback || undefined, updated.platform).catch(() => {});
+    }
+    return { ok: true, content: updated };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 async function styleRecordEditHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -849,6 +886,9 @@ export function buildIpcHandlers(
     "article_images:generate": articleImagesGenerateHandler,
     "article_images:regenerate": articleImagesRegenerateHandler,
     "article_images:remove": articleImagesRemoveHandler,
+    "article_images:suggest": articleImagesSuggestHandler,
+    "article_images:add_slot": articleImagesAddSlotHandler,
+    "article_images:remove_slot": articleImagesRemoveSlotHandler,
     "chat:turn": chatTurnHandler,
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
@@ -896,12 +936,14 @@ export function buildIpcHandlers(
     "content:open_folder": contentOpenFolderHandler,
     "topics:list": topicsListHandler,
     "topic:create": topicCreateHandler,
+    "topic:update": topicUpdateHandler,
     "topic:delete": topicDeleteHandler,
     "topic:restore": topicRestoreHandler,
     "trash:list": trashListHandler,
     "content:versions": contentVersionsHandler,
     "content:revert": contentRevertHandler,
     "draft:rewrite_selection": rewriteSelectionHandler,
+    "draft:adopt_revision": draftAdoptRevisionHandler,
     "style:record_edit": styleRecordEditHandler,
     "conversations:list": conversationsListHandler,
     "conversations:get": conversationsGetHandler,
@@ -1015,6 +1057,23 @@ async function topicCreateHandler(payload: Record<string, unknown>): Promise<Rec
       },
       (payload._dataDir as string) || undefined,
     );
+    return { ok: true, topic };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function topicUpdateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const id = payload.id as string;
+  if (!id) return { ok: false, error: "id is required" };
+  const updates: { title?: string; description?: string; reason?: string } = {};
+  if (typeof payload.title === "string" && payload.title.trim()) updates.title = payload.title.trim();
+  if (typeof payload.description === "string") updates.description = payload.description.trim();
+  if (typeof payload.reason === "string") updates.reason = payload.reason.trim();
+  if (Object.keys(updates).length === 0) return { ok: false, error: "没有可更新的字段" };
+  try {
+    const topic = await updateTopic(id, updates, (payload._dataDir as string) || undefined);
+    if (!topic) return { ok: false, error: `Topic ${id} not found` };
     return { ok: true, topic };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

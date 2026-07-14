@@ -128,8 +128,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 95 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(95);
+  it("has exactly 100 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(100);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -221,6 +221,9 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "article_images:generate" &&
           ch !== "article_images:regenerate" &&
           ch !== "article_images:remove" &&
+          ch !== "article_images:suggest" &&
+          ch !== "article_images:add_slot" &&
+          ch !== "article_images:remove_slot" &&
           ch !== "flywheel:wechat_pull" &&
           ch !== "chat:turn" &&
           ch !== "settings:get" &&
@@ -261,6 +264,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "content:versions" &&
           ch !== "content:revert" &&
           ch !== "draft:rewrite_selection" &&
+          ch !== "draft:adopt_revision" &&
           ch !== "style:record_edit" &&
           ch !== "conversations:list" &&
           ch !== "conversations:get" &&
@@ -290,6 +294,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "campaign:artifact_get" &&
           ch !== "topics:list" &&
           ch !== "topic:create" &&
+          ch !== "topic:update" &&
           ch !== "topic:delete" &&
           ch !== "topic:restore" &&
           ch !== "trash:list",

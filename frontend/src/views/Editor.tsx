@@ -13,17 +13,12 @@ import { invoke, subscribeEvents } from "../transport";
 import { toast, confirmDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { SelectionBar } from "./SelectionBar";
+import { setFocus, clearFocus, clearProposal, useRevisionProposal } from "../revision";
+import { applySpan } from "../apply-span";
 import { CoverPanel } from "./CoverPanel";
 import { ArticleImagesPanel } from "./ArticleImagesPanel";
 import { platformLabel, VARIANT_STATUS, VIDEO_PLATFORMS, type Content } from "../lib";
 import { compareVersions, isGenericVersionNote, type VersionLike } from "../version-diff";
-
-interface PendingEdit {
-  before: string;
-  after: string;
-  start: number;
-  end: number;
-}
 
 /** 存量版本备注是英文自动串(V5.6.2 起后端已改中文)——显示层兜底汉化 */
 function versionNoteLabel(note?: string): string {
@@ -47,8 +42,7 @@ export function Editor(props: { id: string; back: () => void }) {
   const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
-  const [rewriting, setRewriting] = useState(false);
-  const [pending, setPending] = useState<PendingEdit | null>(null);
+  const proposal = useRevisionProposal();
   const [articleImagesOpen, setArticleImagesOpen] = useState(true);
   const [clip, setClip] = useState<{ copyText: string; publishUrl: string; fromVideoKit?: boolean } | null>(null);
   const [metrics, setMetrics] = useState<{ views: string; likes: string; comments: string }>({ views: "", likes: "", comments: "" });
@@ -141,25 +135,45 @@ export function Editor(props: { id: string; back: () => void }) {
     setSel(selectionEnd > selectionStart ? { start: selectionStart, end: selectionEnd } : null);
   };
 
-  const rewrite = async (inst: string) => {
-    if (!sel || rewriting) return;
-    const before = body.slice(sel.start, sel.end);
-    setRewriting(true);
-    const r = await invoke("draft:rewrite_selection", { body, selection: before, instruction: inst });
-    setRewriting(false);
-    if (!r.ok) return toast(r.error ?? "改写失败");
-    const after = ((r as { data?: { rewritten?: string } }).data?.rewritten ?? "").trim();
-    if (!after) return toast("模型没有返回改写结果,再试一次");
-    setPending({ before, after, start: sel.start, end: sel.end });
+  const activeProposal = proposal && proposal.contentId === props.id ? proposal : null;
+
+  const startSelectionFocus = () => {
+    if (!sel) return;
+    const text = body.slice(sel.start, sel.end);
+    setFocus({ contentId: props.id, scope: "selection", selection: { start: sel.start, end: sel.end, text } });
+    setSel(null);
+    toast("已锁定这段——去右边总编辑说怎么改,改完在这儿收下");
   };
 
-  const adoptPending = async () => {
-    if (!pending) return;
-    setBody((b) => b.slice(0, pending.start) + pending.after + b.slice(pending.end));
-    void invoke("style:record_edit", { content_id: props.id, before: pending.before, after: pending.after });
-    setPending(null);
-    setSel(null);
-    toast("已替换选段(记入风格校准)——记得保存");
+  const startDraftFocus = () => {
+    setFocus({ contentId: props.id, scope: "draft" });
+    toast("已锁定整篇——去右边总编辑说怎么改,改完在这儿收下");
+  };
+
+  const adoptProposal = async () => {
+    if (!activeProposal) return;
+    let newBody = body;
+    let newTitle: string | undefined;
+    let before: string;
+    if (activeProposal.scope === "selection" && activeProposal.selection) {
+      before = activeProposal.selection.text;
+      newBody = applySpan(body, activeProposal.selection.start, activeProposal.selection.end, activeProposal.span ?? "");
+    } else {
+      before = c.body;
+      newBody = activeProposal.body ?? body;
+      newTitle = activeProposal.title;
+    }
+    const r = await invoke("draft:adopt_revision", {
+      content_id: props.id,
+      body: newBody,
+      ...(newTitle ? { title: newTitle } : {}),
+      before,
+      ...(activeProposal.feedback ? { feedback: activeProposal.feedback } : {}),
+    });
+    if (!r.ok) return toast((r as { error?: string }).error ?? "收下失败");
+    clearFocus();
+    toast("已收下并存为新版本");
+    void load();
   };
 
   const submitAdoption = async (verdict: string, reason?: string, reasonNote?: string) => {
@@ -234,6 +248,9 @@ export function Editor(props: { id: string; back: () => void }) {
         )}
       </div>
 
+      <div className="ed-grid">
+      <div className="ed-main">
+
       {c.lastError && (
         <div className="ed-error">
           ⚠️ 上次生成中断：{String(c.lastError).slice(0, 120)}{" "}
@@ -250,26 +267,45 @@ export function Editor(props: { id: string; back: () => void }) {
       <div className="ed-mode mono">
         <button className={mode === "edit" ? "on" : ""} onClick={() => setMode("edit")}>编辑</button>
         <button className={mode === "preview" ? "on" : ""} onClick={() => setMode("preview")}>预览</button>
+        {!activeProposal && (
+          <button style={{ marginLeft: "auto" }} onClick={startDraftFocus}>改这篇 →</button>
+        )}
       </div>
 
-      {pending && (
+      {activeProposal && (
         <div className="pending-edit">
-          <div className="mono muted">改写待定——采纳会替换选段并记入风格校准</div>
-          <pre className="pe-before">{pending.before}</pre>
-          <pre className="pe-after">{pending.after}</pre>
+          <div className="mono muted">
+            总编辑的修改提案{activeProposal.scope === "selection" ? "（这一段）" : "（整篇）"}——收下才落库,旧版进版本记录;不满意就在右边继续说
+          </div>
+          {activeProposal.scope === "selection" ? (
+            <>
+              <pre className="pe-before">{activeProposal.selection?.text}</pre>
+              <pre className="pe-after">{activeProposal.span}</pre>
+            </>
+          ) : (
+            <pre className="pe-after">{activeProposal.body}</pre>
+          )}
           <div className="row-actions">
-            <button className="primary" onClick={() => void adoptPending()}>采纳</button>
-            <button onClick={() => setPending(null)}>放弃</button>
+            <button className="primary" onClick={() => void adoptProposal()}>收下这版</button>
+            <button onClick={() => clearProposal()}>放弃这版</button>
+            <button onClick={() => clearFocus()}>退出修改</button>
           </div>
         </div>
       )}
 
       {mode === "edit" ? (
         <div className="ed-body-wrap">
-          <textarea ref={taRef} className="ed-body" value={body} onChange={(e) => setBody(e.target.value)} onSelect={onSelect} onKeyUp={onSelect} onMouseUp={onSelect} />
-          {sel && !pending && (
-            <SelectionBar ta={taRef.current} sel={sel} rewriting={rewriting} onRewrite={(inst) => void rewrite(inst)} />
-          )}
+          <textarea
+            ref={taRef}
+            className="ed-body"
+            value={body}
+            readOnly={activeProposal?.scope === "selection"}
+            onChange={(e) => setBody(e.target.value)}
+            onSelect={onSelect}
+            onKeyUp={onSelect}
+            onMouseUp={onSelect}
+          />
+          {sel && !activeProposal && <SelectionBar ta={taRef.current} sel={sel} onFocus={startSelectionFocus} />}
         </div>
       ) : (
         <div className="md-preview">
@@ -277,7 +313,7 @@ export function Editor(props: { id: string; back: () => void }) {
         </div>
       )}
       {mode === "edit" && (
-        <p className="muted ed-hint">✎ 选中任意一段 → 改写工具条浮现在选区旁,AI 只改那一段(自由输入修改要求也行)</p>
+        <p className="muted ed-hint">✎ 选中一段 →「改这段」锁定它、去右边总编辑来回磨;或右上「改这篇」整篇改。改完在这儿收下。</p>
       )}
 
       <div className="ed-save-row">
@@ -286,6 +322,9 @@ export function Editor(props: { id: string; back: () => void }) {
           保存(存为新版本){dirty ? " ●" : ""}
         </button>
       </div>
+      </div>
+
+      <aside className="ed-side">
 
       <details className="ed-tools">
         <summary>这篇稿子好不好用？{c.adoption?.verdict ? ` · ${ADOPT.find(([value]) => value === c.adoption?.verdict)?.[1] ?? "已反馈"}` : ""}</summary>
@@ -297,20 +336,6 @@ export function Editor(props: { id: string; back: () => void }) {
             <AdoptButton key={v} verdict={v} label={label} current={c.adoption?.verdict} submit={submitAdoption} />
           ))}
         </div>
-      </details>
-
-      <details className="ed-tools">
-        <summary>封面设计</summary>
-        <CoverPanel contentId={props.id} platform={c.platform} />
-      </details>
-
-      <details
-        className="ed-tools"
-        open={articleImagesOpen}
-        onToggle={(event) => setArticleImagesOpen(event.currentTarget.open)}
-      >
-        <summary>正文配图 · {[...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length} 个位置</summary>
-        <ArticleImagesPanel contentId={props.id} dirty={dirty} />
       </details>
 
       <details className="ed-tools">
@@ -458,6 +483,23 @@ export function Editor(props: { id: string; back: () => void }) {
           </div>
         </details>
       )}
+      </aside>
+      </div>
+
+      <div className="ed-media">
+        <details className="ed-tools">
+          <summary>封面设计</summary>
+          <CoverPanel contentId={props.id} platform={c.platform} />
+        </details>
+        <details
+          className="ed-tools"
+          open={articleImagesOpen}
+          onToggle={(event) => setArticleImagesOpen(event.currentTarget.open)}
+        >
+          <summary>正文配图 · {[...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length} 个位置</summary>
+          <ArticleImagesPanel contentId={props.id} dirty={dirty} body={body} />
+        </details>
+      </div>
     </div>
   );
 }
