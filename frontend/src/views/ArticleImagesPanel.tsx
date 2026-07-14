@@ -115,12 +115,52 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
     startPoll();
   };
 
+  const suggest = async () => {
+    if (props.dirty) return toast("正文有未保存改动——先保存,再让 AI 选位");
+    setBusy(true);
+    const result = await invoke("article_images:suggest", { content_id: props.contentId });
+    setBusy(false);
+    if (!result.ok) return toast((result as { error?: string }).error ?? "AI 选位失败");
+    const added = (result as { data?: { added?: number } }).data?.added ?? 0;
+    toast(`AI 选好 ${added} 处插图位置——已存为新版本`);
+    void load();
+  };
+
+  const addSlot = async () => {
+    if (props.dirty) return toast("正文有未保存改动——先保存,再加位");
+    const result = await invoke("article_images:add_slot", { content_id: props.contentId });
+    if (!result.ok) return toast((result as { error?: string }).error ?? "加位失败");
+    toast("已在正文末尾加一个插图位——可在正文里把标记移到合适段落");
+    void load();
+  };
+
+  const removeSlot = async (index: number) => {
+    if (props.dirty) return toast("正文有未保存改动——先保存,再删位");
+    const yes = await confirmDialog({
+      title: `删除插图位 ${index + 1}?`,
+      body: "从正文里移除这个 [IMAGE:] 标记(以及已生成的图),存为新版本。",
+      confirmLabel: "删除",
+      danger: true,
+    });
+    if (!yes) return;
+    const result = await invoke("article_images:remove_slot", { content_id: props.contentId, index });
+    if (!result.ok) return toast((result as { error?: string }).error ?? "删位失败");
+    toast("已删除该插图位");
+    void load();
+  };
+
   if (!review) return <p className="muted">正在读取正文插图位置…</p>;
   if (review.entries.length === 0) {
     return (
       <div className="article-images-empty">
         <p>正文里还没有插图位置。</p>
-        <p className="mono muted">在正文合适段落插入：[IMAGE: 具体场景、主体、构图、光线、色彩；不要文字和水印]</p>
+        <div className="row-actions">
+          <button className="primary" disabled={busy || props.dirty} onClick={() => void suggest()}>
+            {busy ? "AI 选位中…" : "让 AI 选插图位置"}
+          </button>
+          <button disabled={busy || props.dirty} onClick={() => void addSlot()}>＋手动加一个位置</button>
+        </div>
+        <p className="mono muted">或在正文里插入：[IMAGE: 具体场景、主体、构图、光线、色彩；不要文字和水印]</p>
       </div>
     );
   }
@@ -141,9 +181,13 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
     <div className="article-images-panel">
       <div className="article-images-head">
         <span className="mono muted">已准备 {ready}/{review.entries.length} · 发布时按正文顺序插入</span>
-        <button className="primary" disabled={busy || props.dirty || !missing} onClick={() => void begin()}>
-          {busy ? "生成中…" : missing ? "生成全部缺失配图" : "✓ 配图已齐"}
-        </button>
+        <div className="row-actions">
+          <button disabled={busy || props.dirty} onClick={() => void suggest()}>{busy ? "AI 选位中…" : "让 AI 选插图位置"}</button>
+          <button disabled={busy || props.dirty} onClick={() => void addSlot()}>＋加位</button>
+          <button className="primary" disabled={busy || props.dirty || !missing} onClick={() => void begin()}>
+            {busy ? "生成中…" : missing ? "生成全部缺失配图" : "✓ 配图已齐"}
+          </button>
+        </div>
       </div>
       {props.dirty && <div className="ed-error">正文有未保存改动。请先保存，配图位置和发布稿才不会错位。</div>}
 
@@ -198,6 +242,7 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
                   移除图片
                 </button>
               )}
+              <button disabled={busy || props.dirty} onClick={() => void removeSlot(entry.index)}>删除此位置</button>
             </div>
           </article>
         ))}
