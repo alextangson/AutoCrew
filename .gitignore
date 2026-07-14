@@ -16,3 +16,7 @@ dist/
 .worktrees/
 # CodeGraph local index (machine-local, rebuild with `codegraph init .`)
 .codegraph/
+# Vendored WeChat formatter: runtime config holds creds (real ones come via env). Ship the example only.
+vendor/wechat-format/config.json
+vendor/**/__pycache__/
+vendor/**/*.pyc

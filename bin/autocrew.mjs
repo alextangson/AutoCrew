@@ -326,6 +326,18 @@ switch (command) {
     break;
   }
   case "doctor": {
+    // 公众号发布依赖：脚本已收进仓库(vendor/wechat-format)，经 uv 运行。
+    const vendorWechat = path.join(ROOT, "vendor", "wechat-format");
+    const wechatScript = path.join(vendorWechat, "scripts", "publish.py");
+    const wechatConfig = path.join(vendorWechat, "config.json");
+    const wechatConfigExample = path.join(vendorWechat, "config.example.json");
+    // 缺 config.json 则从 example 兜底生成（脚本 import 期即读它；真实凭证走 env）。
+    let wechatConfigCreated = false;
+    if (!fs.existsSync(wechatConfig) && fs.existsSync(wechatConfigExample)) {
+      try { fs.copyFileSync(wechatConfigExample, wechatConfig); wechatConfigCreated = true; } catch {}
+    }
+    const uvOk = !spawnSync("uv", ["--version"], { stdio: "ignore" }).error;
+
     const checks = {
       node: process.version,
       server: await serverUp(),
@@ -334,9 +346,17 @@ switch (command) {
       dataDir: DATA_DIR,
       engineConfigured: fs.existsSync(path.join(DATA_DIR, "engine.json")),
       mcpServer: fs.existsSync(path.join(ROOT, "mcp", "server.ts")),
+      uv: uvOk,
+      wechatPublishScript: fs.existsSync(wechatScript),
+      wechatConfig: fs.existsSync(wechatConfig),
     };
-    printResult(checks, () => Object.entries(checks).map(([key, value]) => `${value ? "✓" : "✕"} ${key}: ${value}`).join("\n"));
-    if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured) process.exitCode = 1;
+    printResult(checks, () =>
+      Object.entries(checks).map(([key, value]) => `${value ? "✓" : "✕"} ${key}: ${value}`).join("\n")
+      + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
+      + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh"),
+    );
+    if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
+      || !checks.uv || !checks.wechatPublishScript) process.exitCode = 1;
     break;
   }
   case "help":

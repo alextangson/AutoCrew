@@ -1,7 +1,8 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { generateImageViaRelay } from "./image-gen.js";
 import { loadWechatMpConfig } from "./wechat-config.js";
 
@@ -15,13 +16,12 @@ const DEFAULT_IMAGE_GENERATOR_SCRIPT = path.join(
   "generate_image.py",
 );
 
-const DEFAULT_WECHAT_PUBLISH_SCRIPT = path.join(
-  os.homedir(),
-  ".openclaw",
-  "xiaohu-wechat-format",
-  "scripts",
-  "publish.py",
-);
+// 仓库根：src/modules/publish/wechat-mp.ts 上溯三级。发布脚本已收进仓库(vendor/wechat-format)，
+// 不再依赖 ~/.openclaw 下的外部拷贝——任意机器 git pull 即可发布。
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const VENDOR_WECHAT_DIR = path.join(REPO_ROOT, "vendor", "wechat-format");
+
+const DEFAULT_WECHAT_PUBLISH_SCRIPT = path.join(VENDOR_WECHAT_DIR, "scripts", "publish.py");
 
 export interface WechatMpDraftOptions {
   articlePath: string;
@@ -127,6 +127,21 @@ async function fileExists(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** 外部命令是否可执行——uv 缺失时给干净报错，而非 spawn ENOENT 抛栈。 */
+function commandExists(command: string): boolean {
+  return !spawnSync(command, ["--version"], { stdio: "ignore" }).error;
+}
+
+/** 发布脚本 import 期即读取同级 config.json；缺失时从 config.example.json 兜底生成。
+ *  真实凭证经 env 注入，占位文件不含敏感信息。 */
+async function ensureVendorConfig(publishScript: string): Promise<void> {
+  const vendorRoot = path.dirname(path.dirname(publishScript));
+  const configPath = path.join(vendorRoot, "config.json");
+  if (await fileExists(configPath)) return;
+  const examplePath = path.join(vendorRoot, "config.example.json");
+  if (await fileExists(examplePath)) await fs.copyFile(examplePath, configPath);
 }
 
 async function runCommand(
@@ -350,6 +365,20 @@ export async function publishWechatMpDraft(
     publishInput = processedPath;
   }
 
+  // 服务端 stdin 关闭：--yes 自动确认长标题/部分图失败，避免脚本 input() 卡死。
+  const scriptArgs = [
+    "--input",
+    publishInput,
+    "--cover",
+    coverPath,
+    "--theme",
+    options.theme || "newspaper",
+    "--author",
+    options.author || "Lawrence",
+    "--yes",
+  ];
+  const displayCommand = `uv run ${wechatPublishScript} ${scriptArgs.join(" ")}`;
+
   if (options.dryRun) {
     return {
       ok: true,
@@ -358,14 +387,16 @@ export async function publishWechatMpDraft(
       coverPath,
       imageCount: imageMatches.length,
       generatedImages,
-      command: `python3 ${wechatPublishScript} --input ${publishInput} --cover ${coverPath} --theme ${options.theme || "newspaper"} --author ${options.author || "Lawrence"}`,
+      command: displayCommand,
     };
   }
 
+  const cleanupProcessed = async () => {
+    if (publishInput === processedPath) await fs.rm(processedPath, { force: true });
+  };
+
   if (!(await fileExists(wechatPublishScript))) {
-    if (publishInput === processedPath) {
-      await fs.rm(processedPath, { force: true });
-    }
+    await cleanupProcessed();
     return {
       ok: false,
       articlePath,
@@ -377,20 +408,29 @@ export async function publishWechatMpDraft(
     };
   }
 
-  const publishArgs = [
-    wechatPublishScript,
-    "--input",
-    publishInput,
-    "--cover",
-    coverPath,
-    "--theme",
-    options.theme || "newspaper",
-    "--author",
-    options.author || "Lawrence",
-  ];
+  if (!commandExists("uv")) {
+    await cleanupProcessed();
+    return {
+      ok: false,
+      articlePath,
+      publishInput,
+      coverPath,
+      imageCount: imageMatches.length,
+      generatedImages,
+      error: "uv 未安装：公众号发布经 uv 运行 Python 脚本，请先安装 uv（autocrew doctor 可检查）。",
+    };
+  }
+
+  // 脚本 import 期即读 config.json，先兜底生成，避免首次发布崩在缺文件上。
+  await ensureVendorConfig(wechatPublishScript);
 
   const publishCwd = path.dirname(path.dirname(wechatPublishScript));
-  const publishResult = await runCommand("python3", publishArgs, publishCwd, wechatPublishEnv(options));
+  const publishResult = await runCommand(
+    "uv",
+    ["run", wechatPublishScript, ...scriptArgs],
+    publishCwd,
+    wechatPublishEnv(options),
+  );
 
   if (publishInput === processedPath) {
     await fs.writeFile(articlePath, newContent, "utf-8");
@@ -406,7 +446,7 @@ export async function publishWechatMpDraft(
     generatedImages,
     stdout: publishResult.stdout,
     stderr: publishResult.stderr,
-    command: `python3 ${publishArgs.join(" ")}`,
+    command: displayCommand,
     error: publishResult.code === 0 ? undefined : "WeChat draft publish failed",
   };
 }
