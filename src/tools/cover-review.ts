@@ -302,8 +302,25 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
   const warnings: string[] = [];
   // 3 张封面相互独立(不同 prompt/输出文件),并行出图——串行是纯浪费墙钟(3×→1×)。
   // 逐条结果按 specs 顺序回收,variants/errors 排序与串行版一致。
+  // _onVariant:每出完一张就回调(进度事件,消掉"卡死"体感);MCP/测试不传则无操作。
+  const onVariant =
+    typeof params._onVariant === "function"
+      ? (params._onVariant as (p: { done: number; total: number; label: string; ok: boolean }) => void)
+      : undefined;
+  const onPhase =
+    typeof params._onPhase === "function" ? (params._onPhase as (label: string) => void) : undefined;
+  let done = 0;
+  const total = specs.length;
+  // 设计(LLM)→出图 的交接点:并行出图前先报一声,别让这 ~90s 显得像卡死。
+  onPhase?.(`设计方案已定，${total} 张并行出图中…`);
   const generatedAll = await Promise.all(
-    specs.map((spec) => generateVariant(spec, revision, { ctx, assetsDir, ratio: primaryRatio })),
+    specs.map((spec) =>
+      generateVariant(spec, revision, { ctx, assetsDir, ratio: primaryRatio }).then((generated) => {
+        done += 1;
+        onVariant?.({ done, total, label: spec.label, ok: !("error" in generated) });
+        return generated;
+      }),
+    ),
   );
   for (const generated of generatedAll) {
     if ("error" in generated) {

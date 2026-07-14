@@ -72,12 +72,18 @@ export async function startCoverJob(
     void emitEngineEvent({ role: "publisher", kind, label, contentId, runId }, dataDir).catch(() => {});
 
   emit("work", labels.work);
+  // 进度事件:设计→出图交接报一声 + 每出完一张报 n/总,生成期不再是静默黑箱(消掉"卡死"体感)。
+  const onPhase = (label: string) => emit("work", label);
+  const onVariant = (p: { done: number; total: number; label: string; ok: boolean }) =>
+    emit("work", `封面 ${p.label.toUpperCase()} ${p.ok ? "已出" : "失败"}（${p.done}/${p.total}）`);
   const completion = (async () => {
     try {
       const result = (await executeCoverReview({
         ...payload,
         action,
         _dataDir: dataDir,
+        _onVariant: onVariant,
+        _onPhase: onPhase,
         ...prep.inject,
       })) as { ok?: boolean; error?: string; warnings?: string[]; details?: string[]; designSource?: string; generated?: number; failed?: number };
       if (result.ok) {
