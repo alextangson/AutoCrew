@@ -28,11 +28,12 @@ import { saveTopic, type Topic } from "../storage/local-store.js";
 import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
 import { startGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
 import { reviseDraft, type ReviseDraftResult } from "../modules/writing/draft-revision.js";
+import { reviseFocus, type ReviseFocus, type ReviseFocusResult } from "../modules/writing/revise-focus.js";
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 export interface ChatCard {
-  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit";
+  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit" | "revision_proposal";
   data: Record<string, unknown>;
 }
 
@@ -41,6 +42,8 @@ export interface ChatViewContext {
   contentId: string;
   contentTitle?: string;
   platform?: string;
+  /** 对话式修改的焦点：选中的一段或整篇。存在时修改意见走 revise_focus。 */
+  revisionFocus?: { scope: "selection" | "draft"; selection?: string };
 }
 
 export interface ChatProgressEvent {
@@ -79,6 +82,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   scout_inspiration: { role: "scout", label: "侦查员出去搜灵感了" },
   prepare_video_kit: { role: "publisher", label: "发布员在备发布件" },
   revise_draft: { role: "writer", label: "编剧正在按你的意见修改稿件" },
+  revise_focus: { role: "writer", label: "编剧正在改这段" },
 };
 
 export interface ChatHistoryMessage {
@@ -104,6 +108,7 @@ export interface ChatToolDeps {
   saveTopicImpl?: typeof saveTopic;
   startGenerate?: (req: ScriptRequest, dataDir?: string) => Promise<StartedGeneration>;
   reviseDraftImpl?: (contentId: string, instruction: string, dataDir?: string) => Promise<ReviseDraftResult>;
+  reviseFocusImpl?: (contentId: string, instruction: string, focus: ReviseFocus, dataDir?: string) => Promise<ReviseFocusResult>;
 }
 
 interface ChatEffects {
@@ -116,6 +121,7 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 1. 永远用工具完成实际工作（生成、查数据、记风格、发布），不要口头承诺。
 2. 工具结果会以卡片形式直接呈现给用户——你的文字回复只做一句简短引导或下一步建议，不要复述卡片内容。
 3. 用户针对当前稿件给修改反馈（如“这篇太 AI 味”“开头口语一点”“删掉第三段”）时，必须调用 revise_draft 修改并保存当前稿件，不能只口头答应；若反馈同时是长期偏好，再调用 add_style_rule 记录。只有与具体稿件无关的通用偏好才只调用 add_style_rule。
+3.5 但当存在「当前修改焦点」时（用户在编辑器选了一段或点了改整篇），修改意见一律改走 revise_focus（不是 revise_draft）：要求不明确先反问澄清一句、别硬改；revise_focus 返回问题时，把问题原样问用户、等回答；它的改动是提案不直接保存，改完提示用户在编辑器看红绿 diff、满意点「收下这版」。
 4. 用户给链接（对标文章、资料）时，先调用 read_url 读取内容，再基于内容写作或吸收风格——不要凭空假装读过。
 5. 缺少必要信息（选题、平台）时先问清，一次只问一个问题。
 6. 始终用中文，语气像靠谱的同事：简短、直接、不客套。
@@ -152,7 +158,7 @@ function visibleChatReply(raw: string, cards: ChatCard[], toolCallCount: number)
   return "这轮模型没有返回可显示内容，请重试一次。";
 }
 
-export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatToolDeps, effects?: ChatEffects): LoopTool[] {
+export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatToolDeps, effects?: ChatEffects, viewContext?: ChatViewContext): LoopTool[] {
   const d = {
     generate: deps?.generate ?? (executeGenerate as ExecuteFn),
     rewrite: deps?.rewrite ?? (executeRewrite as ExecuteFn),
@@ -173,6 +179,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           onEvent: (e) => void emitEngineEvent(e, dd).catch(() => {}),
         })),
     reviseDraftImpl: deps?.reviseDraftImpl ?? reviseDraft,
+    reviseFocusImpl: deps?.reviseFocusImpl ?? reviseFocus,
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
@@ -422,6 +429,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         const contentId = String(a.content_id ?? "");
         const instruction = String(a.instruction ?? "").trim();
         if (!contentId || !instruction) return fail("revise_draft 需要 content_id 和 instruction");
+        if (viewContext?.revisionFocus) return fail("当前有修改焦点——请改用 revise_focus(它出提案让用户收下),不要用 revise_draft 直接覆盖。");
         try {
           const result = await d.reviseDraftImpl(contentId, instruction, dataDir);
           const content = result.content;
@@ -444,6 +452,47 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
             version: content.versions?.length ?? 1,
             note: "已原地保存为新版本，稿件卡已更新。",
           });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
+      name: "revise_focus",
+      description:
+        "当「修改焦点」激活时（用户在编辑器选了一段或点了改整篇），按用户这轮意见改写焦点范围。要求不明确就先反问澄清、别硬改；改好的是提案、不直接保存——提示用户在编辑器看红绿 diff、满意点「收下这版」。",
+      parameters: {
+        type: "object",
+        properties: { instruction: { type: "string", description: "用户这轮的完整修改要求" } },
+        required: ["instruction"],
+      },
+      execute: async (args) => {
+        const focus = viewContext?.revisionFocus;
+        const contentId = viewContext?.contentId ?? "";
+        if (!focus || !contentId) return fail("当前没有修改焦点——请用户在编辑器里选段「改这段」或点「改这篇」");
+        const instruction = String(sanitize(args).instruction ?? "").trim();
+        if (!instruction) return fail("revise_focus 需要 instruction");
+        try {
+          const rf: ReviseFocus =
+            focus.scope === "selection" ? { scope: "selection", selection: focus.selection ?? "" } : { scope: "draft" };
+          const r = await d.reviseFocusImpl(contentId, instruction, rf, dataDir);
+          if (r.kind === "question") {
+            return JSON.stringify({ ok: true, kind: "question", question: r.question, note: "把这个问题原样问用户，等回答再改。" });
+          }
+          effects?.contentIds.add(contentId);
+          sink.push({
+            type: "revision_proposal",
+            data: {
+              contentId,
+              scope: focus.scope,
+              feedback: instruction,
+              ...(r.title !== undefined ? { title: r.title } : {}),
+              ...(r.body !== undefined ? { body: r.body } : {}),
+              ...(r.span !== undefined ? { span: r.span } : {}),
+              ...(focus.scope === "selection" ? { selection: focus.selection } : {}),
+            },
+          });
+          return JSON.stringify({ ok: true, kind: "revision", note: "改好一版提案，编辑器已出红绿 diff。提示用户满意点「收下这版」，要继续磨就再说。" });
         } catch (err) {
           return fail(err instanceof Error ? err.message : err);
         }
@@ -877,7 +926,7 @@ export async function runChatTurn(params: {
 
   const cards: ChatCard[] = [];
   const effects: ChatEffects = { contentIds: new Set<string>() };
-  const tools = buildChatTools(cards, params.dataDir, params.deps, effects);
+  const tools = buildChatTools(cards, params.dataDir, params.deps, effects, params.viewContext);
 
   // 定位摘要进 system（§C1）:总编辑说话像「你的总编辑」。只注入定位,不注入全量风格——
   // 总编辑不写稿,写手席才吃声音内核（PRD-v4 §4.3 上下文隔离）。profile 低频变化,不破前缀缓存。
