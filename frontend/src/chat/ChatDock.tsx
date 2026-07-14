@@ -289,7 +289,8 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
             : "跟总编辑说…修改某篇稿前请先在看板打开它"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            // 输入法合成中(拼音未上屏)时回车只上屏候选,不发送——isComposing 拦住。
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void send(input);
             }

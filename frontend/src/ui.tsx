@@ -112,7 +112,8 @@ export function DialogHost() {
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") return close(false);
-    if (e.key !== "Enter") return;
+    // 输入法合成中回车用于上屏候选,不触发提交。
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const inTextarea = e.target instanceof HTMLTextAreaElement;
     if (e.metaKey || e.ctrlKey || !inTextarea) {
       e.preventDefault();

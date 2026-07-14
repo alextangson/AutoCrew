@@ -247,7 +247,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
                 disabled={generating}
                 onChange={(e) => setFeedback((f) => ({ ...f, [v.label]: e.target.value }))}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") void revise(v.label);
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) void revise(v.label);
                 }}
               />
             </div>

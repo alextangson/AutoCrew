@@ -537,7 +537,7 @@ function AdoptButton(props: {
             value={noteText}
             onChange={(e) => setNoteText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && noteText.trim()) {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && noteText.trim()) {
                 setAsking(false);
                 void props.submit("rewritten", undefined, noteText.trim());
               }
