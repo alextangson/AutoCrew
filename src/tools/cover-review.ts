@@ -300,8 +300,12 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
   const variants: CoverVariant[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
-  for (const spec of specs) {
-    const generated = await generateVariant(spec, revision, { ctx, assetsDir, ratio: primaryRatio });
+  // 3 张封面相互独立(不同 prompt/输出文件),并行出图——串行是纯浪费墙钟(3×→1×)。
+  // 逐条结果按 specs 顺序回收,variants/errors 排序与串行版一致。
+  const generatedAll = await Promise.all(
+    specs.map((spec) => generateVariant(spec, revision, { ctx, assetsDir, ratio: primaryRatio })),
+  );
+  for (const generated of generatedAll) {
     if ("error" in generated) {
       errors.push(generated.error);
     } else {
