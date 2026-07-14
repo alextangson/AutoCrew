@@ -81,7 +81,7 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     setActiveConversationId(id);
     setMsgs(
       d.messages
-        .map((m) => ({ role: m.role, text: m.content, cards: m.cards ?? [] }))
+        .map((m) => ({ role: m.role, text: m.content, cards: (m.cards ?? []).filter((c) => c.type !== "revision_proposal") }))
         .filter((m) => m.text.trim() || (m.cards?.length ?? 0) > 0),
     );
   };
