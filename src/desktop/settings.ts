@@ -6,7 +6,13 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { ENGINE_DEFAULTS, type EngineConfig } from "../engine/config.js";
+import {
+  ENGINE_DEFAULTS,
+  ENGINE_ROUTE_PRESETS,
+  type EngineConfig,
+  type EngineRouteConfig,
+  type EngineRouteName,
+} from "../engine/config.js";
 import { getDataDir } from "../storage/local-store.js";
 
 function maskKey(key: string): string {
@@ -41,6 +47,13 @@ export async function getEngineSettings(payload: Record<string, unknown>): Promi
         baseUrl: fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl,
         strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
         fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
+        routes: {
+          writer: fromFile.routes?.writer ?? null,
+          analytics: fromFile.routes?.analytics ?? null,
+          scout: fromFile.routes?.scout ?? null,
+          codex: fromFile.routes?.codex ?? null,
+        },
+        routePresets: ENGINE_ROUTE_PRESETS,
       },
     };
   } catch (err) {
@@ -195,14 +208,49 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
     }
     updates.protocol = payload.protocol;
   }
-  if (Object.keys(updates).length === 0) {
-    return { ok: false, error: "没有可写入的字段（api_key / base_url / strong_model / fast_model）" };
-  }
   try {
     const dataDir = (payload._dataDir as string) || undefined;
     const { filePath, fromFile } = await readEngineJson(dataDir);
+    const routes = { ...(fromFile.routes ?? {}) };
+    const routeFields: Array<{
+      name: EngineRouteName;
+      baseField: string;
+      modelField: string;
+      protocol: "openai" | "anthropic";
+    }> = [
+      { name: "writer", baseField: "writer_base_url", modelField: "writer_model", protocol: "anthropic" },
+      { name: "analytics", baseField: "analytics_base_url", modelField: "analytics_model", protocol: "anthropic" },
+      { name: "scout", baseField: "scout_base_url", modelField: "scout_model", protocol: "anthropic" },
+      { name: "codex", baseField: "codex_base_url", modelField: "codex_model", protocol: "openai" },
+    ];
+    for (const spec of routeFields) {
+      const baseInput = payload[spec.baseField];
+      const modelInput = payload[spec.modelField];
+      if (baseInput === undefined && modelInput === undefined) continue;
+      if (baseInput !== undefined && (typeof baseInput !== "string" || !baseInput.trim())) {
+        return { ok: false, error: `${spec.baseField} 必须是非空字符串` };
+      }
+      if (modelInput !== undefined && (typeof modelInput !== "string" || !modelInput.trim())) {
+        return { ok: false, error: `${spec.modelField} 必须是非空字符串` };
+      }
+      const existing = routes[spec.name] as EngineRouteConfig | undefined;
+      const preset = ENGINE_ROUTE_PRESETS[spec.name];
+      routes[spec.name] = {
+        baseUrl: (typeof baseInput === "string" ? baseInput.trim() : existing?.baseUrl ?? preset.baseUrl).replace(/\/+$/, ""),
+        model: typeof modelInput === "string" ? modelInput.trim() : existing?.model ?? preset.model,
+        protocol: spec.protocol,
+        ...(spec.name === "codex" ? { models: ENGINE_ROUTE_PRESETS.codex.models } : {}),
+      };
+    }
+    if (Object.keys(updates).length === 0 && JSON.stringify(routes) === JSON.stringify(fromFile.routes ?? {})) {
+      return {
+        ok: false,
+        error:
+          "没有可写入的字段（api_key / base_url / strong_model / fast_model / writer_* / analytics_* / scout_* / codex_*）",
+      };
+    }
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify({ ...fromFile, ...updates }, null, 2) + "\n", { mode: 0o600 });
+    await fs.writeFile(filePath, JSON.stringify({ ...fromFile, ...updates, routes }, null, 2) + "\n", { mode: 0o600 });
     await fs.chmod(filePath, 0o600);
     return getEngineSettings({ _dataDir: dataDir });
   } catch (err) {

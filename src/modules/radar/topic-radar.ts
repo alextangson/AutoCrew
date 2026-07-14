@@ -22,6 +22,8 @@ export interface RadarItem {
   publishedAt: string;
   /** 源摘要(RSS description 去标签截断)——灵感卡"看得出是什么"的原料(V5.4c) */
   description?: string;
+  /** 源侧真实热度（stars/points 等），后续评分时可作为时效/热度证据。 */
+  heat?: number;
 }
 
 export interface TopicCache {
@@ -114,8 +116,16 @@ export function rankCandidatesScored(items: RadarItem[], industry: string, limit
   const scored = items.map((item) => {
     let score = 0;
     const matchedTokens: string[] = [];
+    const haystack = `${item.title} ${item.description ?? ""}`;
     for (const tok of tokens) {
-      if (item.title.toLowerCase().includes(tok.toLowerCase())) {
+      const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // ASCII 定位词按词边界匹配，避免把 Airbnb 里的 "Ai" 误判成 AI 命中。
+      const matched = /^[A-Za-z0-9]+$/.test(tok)
+        ? new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, "i").test(haystack) ||
+          // 全大写缩写允许嵌在产品名中（OpenAI/AIGC），但必须大小写精确，Airbnb 的 Ai 不算。
+          (tok === tok.toUpperCase() && haystack.includes(tok))
+        : haystack.toLowerCase().includes(tok.toLowerCase());
+      if (matched) {
         score += 3;
         matchedTokens.push(tok);
       }
@@ -217,7 +227,13 @@ function overseasKeyword(src: RadarSource, industry: string): string {
 export async function refreshTopicRadar(
   dataDir?: string,
   fetchImpl: typeof fetch = globalThis.fetch,
-  deps?: { overseasFetch?: (kind: string, keyword: string, limit: number) => Promise<Array<{ title: string; url: string }>> },
+  deps?: {
+    overseasFetch?: (
+      kind: string,
+      keyword: string,
+      limit: number,
+    ) => Promise<Array<{ title: string; url: string; summary?: string; heat?: number }>>;
+  },
 ): Promise<{ ok: boolean; itemCount: number; failedSources: string[] }> {
   const sources = (await loadRadarSources(dataDir)).filter((s) => s.enabled);
   if (sources.length === 0) return { ok: false, itemCount: 0, failedSources: [] };
@@ -260,7 +276,14 @@ export async function refreshTopicRadar(
           const keyword = overseasKeyword(src, industry);
           if (!keyword) throw new Error("no keyword");
           for (const it of await overseasFetch(src.kind, keyword, 10)) {
-            items.push({ title: it.title, link: it.url, source: src.name, publishedAt: scannedAt });
+            items.push({
+              title: it.title,
+              link: it.url,
+              source: src.name,
+              publishedAt: scannedAt,
+              ...(it.summary ? { description: it.summary } : {}),
+              ...(typeof it.heat === "number" ? { heat: it.heat } : {}),
+            });
           }
         }
       } catch {

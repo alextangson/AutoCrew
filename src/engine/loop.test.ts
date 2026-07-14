@@ -44,6 +44,12 @@ describe("runLoop", () => {
     expect((captured[0].messages as unknown[]).length).toBe(2); // system + user
   });
 
+  it("does not expose an empty assistant message as the final reply", async () => {
+    const { impl } = mockFetch([completion("   ")]);
+    const r = await runLoop(CFG, { model: "m", systemPrompt: "sys", userMessage: "写一段", fetchImpl: impl });
+    expect(r.finalMessage).toBe("(no content)");
+  });
+
   it("executes tool calls and feeds results back", async () => {
     const calls: unknown[] = [];
     const tool: LoopTool = {

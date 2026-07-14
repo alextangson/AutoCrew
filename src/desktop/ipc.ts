@@ -72,6 +72,7 @@ import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
 import { executePublish } from "../tools/publish.js";
 import { executePrePublish } from "../tools/pre-publish.js";
+import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { loadProfile, updateWritingRule, updateProfile, personaSummary } from "../modules/profile/creator-profile.js";
 import { generateAudiencePersonaProposal, savePersonaCalibrated } from "../modules/profile/persona.js";
 import {
@@ -83,6 +84,12 @@ import {
   coverSettingsGetHandler,
   coverSettingsSetHandler,
 } from "./cover-handlers.js";
+import {
+  articleImagesGenerateHandler,
+  articleImagesGetHandler,
+  articleImagesRegenerateHandler,
+  articleImagesRemoveHandler,
+} from "./article-image-handlers.js";
 import { logsListHandler, logsGetRunHandler, skillsListHandler } from "./log-handlers.js";
 import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler, retroGetHandler } from "./goal-retro-handlers.js";
 import { openContentFolder } from "./folder-open.js";
@@ -94,7 +101,13 @@ import { wechatPullHandler } from "./wechat-pull.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
-import { getRadarStatus, doRadarRefresh, setRadarSources } from "./radar-status.js";
+import {
+  getRadarStatus,
+  doRadarRefresh,
+  collectMoreRadarTopics,
+  rescoreRadarTopics,
+  setRadarSources,
+} from "./radar-status.js";
 import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, softDeleteTopic, restoreTopic, listTrash } from "../storage/local-store.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
 import type { ApprovalBinding } from "./approval-gate.js";
@@ -291,6 +304,9 @@ async function requestWechatDraftApprovalHandler(
   if (!initial) return { ok: false, error: `Content not found: ${contentId}` };
   if (initial.platform !== "wechat_mp") return { ok: false, error: "只有公众号稿件可推送到公众号草稿箱" };
 
+  const bodyImages = await preparedArticleImages(contentId, dataDir);
+  if (!bodyImages.ok) return bodyImages;
+
   // 确认前先跑完整门禁；不合格的稿件不生成可执行凭证。
   const preflight = await executePrePublish({ action: "check", content_id: contentId, _dataDir: dataDir });
   if (!("allPassed" in preflight) || !preflight.allPassed) {
@@ -372,19 +388,24 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     typeof payload.conversation_id === "string" && payload.conversation_id !== ""
       ? payload.conversation_id
       : undefined;
+  const dataDir = (payload._dataDir as string) || undefined;
   // 上下文感知（IA v4.2 §C1）：renderer 报告用户正看着哪篇稿
   const rawCtx = payload.context;
-  const viewContext =
-    rawCtx && typeof rawCtx === "object" && !Array.isArray(rawCtx) && typeof (rawCtx as Record<string, unknown>).content_id === "string"
-      ? {
-          contentId: (rawCtx as Record<string, unknown>).content_id as string,
-          contentTitle: String((rawCtx as Record<string, unknown>).content_title ?? ""),
-          platform: String((rawCtx as Record<string, unknown>).platform ?? ""),
-        }
-      : undefined;
+  let viewContext;
+  if (rawCtx && typeof rawCtx === "object" && !Array.isArray(rawCtx)) {
+    const input = rawCtx as Record<string, unknown>;
+    const contentId = typeof input.content_id === "string" ? input.content_id : "";
+    if (isContentId(contentId)) {
+      const current = await getContent(contentId, dataDir);
+      viewContext = {
+        contentId,
+        contentTitle: String(input.content_title ?? current?.title ?? ""),
+        platform: String(input.platform ?? current?.platform ?? ""),
+      };
+    }
+  }
   // 任务动态带（IA v4.2）:每个 chat turn = 一个 run,事件按 runId 聚合成任务卡
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const dataDir = (payload._dataDir as string) || undefined;
   try {
     const result = await runPersistedChatTurn({
       message: message.trim(),
@@ -406,14 +427,19 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     });
     // run 收尾:成功有产出发 run_done;失败发 run_failed——任务带上的 run 不许悬空「进行中」
     if (result.ok !== false) {
-      const data = result.data as { cards?: unknown[] } | undefined;
+      const data = result.data as { cards?: unknown[]; contentIds?: string[] } | undefined;
       const cardCount = Array.isArray(data?.cards) ? data.cards.length : 0;
-      if (cardCount > 0) {
-        void emitEngineEvent(
-          { role: "system", kind: "run_done", runId, label: `任务完成 · 产出 ${cardCount} 张卡片` },
-          dataDir,
-        );
-      }
+      const contentId = Array.isArray(data?.contentIds) ? data.contentIds[0] : undefined;
+      void emitEngineEvent(
+        {
+          role: "system",
+          kind: "run_done",
+          runId,
+          label: cardCount > 0 ? `任务完成 · 产出 ${cardCount} 张卡片` : "任务已受理",
+          ...(contentId ? { contentId } : {}),
+        },
+        dataDir,
+      );
     } else {
       void emitEngineEvent(
         { role: "system", kind: "run_failed", runId, label: `任务中断：${String((result as { error?: unknown }).error ?? "未知错误").slice(0, 60)}` },
@@ -819,6 +845,10 @@ export function buildIpcHandlers(
     "publish:confirm": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
     "publish:request_wechat": requestWechatDraftApprovalHandler,
     "publish:wechat_draft": publishWechatDraftApprovedHandler,
+    "article_images:get": articleImagesGetHandler,
+    "article_images:generate": articleImagesGenerateHandler,
+    "article_images:regenerate": articleImagesRegenerateHandler,
+    "article_images:remove": articleImagesRemoveHandler,
     "chat:turn": chatTurnHandler,
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
@@ -853,6 +883,8 @@ export function buildIpcHandlers(
     "knowledge:status": knowledgeStatusHandler,
     "radar:status": getRadarStatus,
     "radar:refresh": (payload) => doRadarRefresh(payload),
+    "radar:more": (payload) => collectMoreRadarTopics(payload),
+    "radar:rescore": (payload) => rescoreRadarTopics(payload),
     "radar:sources_set": setRadarSources,
     "profile:update": profileUpdateHandler,
     "content:update": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:update"]),

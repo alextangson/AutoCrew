@@ -25,16 +25,18 @@ afterEach(async () => {
 interface Captured {
   systemPrompt: string;
   userMessage: string;
+  model?: string;
+  baseUrl?: string;
 }
 
 const REPORT_MD = `# 周复盘\n\n## 本周产出\n写了两篇。\n\n## 数据表现\n数据不足。\n\n## 对照目标\n进展正常。\n\n## 下周建议\n- 回填数据\n- 继续写\n\n${"补".repeat(200)}`;
 
 function mockLoop(markdown: string | null, captured?: Captured[]): typeof runLoop {
   return (async (
-    _config: unknown,
-    opts: { systemPrompt: string; userMessage: string; tools: Array<{ name: string; execute: (a: Record<string, unknown>) => unknown }> },
+    config: { baseUrl?: string },
+    opts: { model?: string; systemPrompt: string; userMessage: string; tools: Array<{ name: string; execute: (a: Record<string, unknown>) => unknown }> },
   ) => {
-    captured?.push({ systemPrompt: opts.systemPrompt, userMessage: opts.userMessage });
+    captured?.push({ systemPrompt: opts.systemPrompt, userMessage: opts.userMessage, model: opts.model, baseUrl: config.baseUrl });
     if (markdown !== null) {
       const tool = opts.tools.find((t) => t.name === "submit_retro");
       if (tool) await tool.execute({ markdown });
@@ -62,6 +64,28 @@ async function seedFacts(): Promise<void> {
 }
 
 describe("generateRetro", () => {
+  it("uses the dedicated analytics route when configured", async () => {
+    await fs.writeFile(
+      path.join(dir, "engine.json"),
+      JSON.stringify({
+        apiKey: "sk-shared",
+        routes: {
+          analytics: {
+            baseUrl: "https://code.newcli.com/claude/ultra",
+            model: "claude-opus-4-8",
+            protocol: "anthropic",
+          },
+        },
+      }),
+    );
+    const captured: Captured[] = [];
+    await generateRetro("weekly", dir, { runLoopImpl: mockLoop(REPORT_MD, captured) });
+    expect(captured[0]).toMatchObject({
+      model: "claude-opus-4-8",
+      baseUrl: "https://code.newcli.com/claude/ultra",
+    });
+  });
+
   it("周复盘:事实(产出/数据/目标)进 prompt,报告落盘 reports/", async () => {
     await seedFacts();
     const captured: Captured[] = [];

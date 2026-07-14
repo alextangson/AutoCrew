@@ -33,4 +33,32 @@ describe("LocalSessionAuth", () => {
     expect(auth.originAllowed("http://localhost:4317")).toBe(true);
     expect(auth.originAllowed("https://attacker.example")).toBe(false);
   });
+
+  it("keeps a browser session valid across server restarts", () => {
+    const origins = new Set(["http://127.0.0.1:4317"]);
+    const firstProcess = new LocalSessionAuth(
+      "first-boot-token",
+      origins,
+      undefined,
+      undefined,
+      "persistent-server-token",
+    );
+    const issued = firstProcess.issueSession("first-boot-token")!;
+
+    const restartedProcess = new LocalSessionAuth(
+      "second-boot-token",
+      origins,
+      undefined,
+      undefined,
+      "persistent-server-token",
+    );
+    expect(restartedProcess.authenticate({ cookie: `${SESSION_COOKIE}=${issued.sessionId}` })).toBe("session");
+  });
+
+  it("invalidates browser sessions when the persistent server token is rotated", () => {
+    const firstProcess = new LocalSessionAuth("boot", new Set(), undefined, undefined, "old-server-token");
+    const issued = firstProcess.issueSession("boot")!;
+    const rotatedProcess = new LocalSessionAuth("next-boot", new Set(), undefined, undefined, "new-server-token");
+    expect(rotatedProcess.authenticate({ cookie: `${SESSION_COOKIE}=${issued.sessionId}` })).toBeNull();
+  });
 });

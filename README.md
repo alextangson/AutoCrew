@@ -30,6 +30,37 @@ AutoCrew：（发布前 6 项检查 → 自动发布）
 
 ## 安装
 
+### 一键启动（本地桌面版）
+
+首次在仓库目录执行：
+
+```bash
+npm install
+npm link
+autocrew
+```
+
+之后无论当前在哪个目录，输入 `autocrew` 都会后台启动并自动打开浏览器。常用管理命令：
+
+```bash
+autocrew status
+autocrew restart
+autocrew stop
+autocrew logs
+autocrew doctor
+
+# 内容能力也可以直接从 CLI 调用
+autocrew topics
+autocrew contents
+autocrew write --topic "AI 本地部署" --platform wechat_mp
+autocrew revise --content content-xxx --instruction "开头更直接"
+autocrew runs --json
+```
+
+写稿与数据复盘支持在设置页配置独立模型路由。`engine.json` 中的 `routes.writer` 与
+`routes.analytics` 可使用 Claude Ultra / Opus，`routes.codex` 可登记同一 Key 下的 Codex 模型；
+未配置任务路由时继续沿用主引擎。
+
 ### OpenClaw（推荐）
 
 ```bash
@@ -58,6 +89,11 @@ npm install
   }
 }
 ```
+
+也可以直接运行 `autocrew mcp` 启动 stdio MCP。MCP 与 OpenClaw 共用同一能力注册表，
+同时提供 Tools、`autocrew://profile|topics|contents` Resources 和常用工作流 Prompts。
+本地网页服务运行时还提供 `http://127.0.0.1:4317/mcp`，使用 `~/.autocrew/server-token`
+作为 Bearer Token；该端点主要供本机 Agent 客户端和开发调试使用。
 
 ### 初始化
 
@@ -90,6 +126,9 @@ AutoCrew：（4 阶段深度校准 → 生成写作人格 → 写入 STYLE.md）
 你：帮我找选题 / 这周写什么
 AutoCrew：（搜索热榜 + 风格过滤 + 爆款评分 → 推荐 3-5 个选题）
 ```
+
+雷达候选会先加工成中文选题，并按受众契合、材料支撑、差异化空间、时效价值组成 100 分制评分，
+同时附中文摘要和 3 个可写角度。看板支持「再找 5 条」继续从未看过的候选往后收集，也可对旧英文选题一键重评。
 
 Free 版使用公开搜索（知乎热榜、微博热搜、行业关键词）。Pro 版可直接爬取对标账号最新爆款。
 

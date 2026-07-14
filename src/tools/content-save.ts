@@ -13,12 +13,12 @@ import {
   adoptionStats,
   softDeleteContent,
   restoreContent,
+  type ContentUpdates,
 } from "../storage/local-store.js";
 import type { AdoptionVerdict } from "../storage/local-store.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
-import type { Content } from "../storage/local-store.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
@@ -79,8 +79,8 @@ export const contentSaveSchema = Type.Object({
  * Explicit undefined keys would otherwise survive local-store's
  * `{...existing, ...updates}` spread and destroy existing values.
  */
-function buildContentUpdates(params: Record<string, unknown>): Partial<Content> {
-  const updates: Partial<Content> = {};
+function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
+  const updates: ContentUpdates = {};
   if (params.title !== undefined) updates.title = params.title as string;
   if (params.body !== undefined) updates.body = params.body as string;
   if (params.platform !== undefined) updates.platform = params.platform as string;
@@ -91,6 +91,9 @@ function buildContentUpdates(params: Record<string, unknown>): Partial<Content> 
   if (params.publish_url !== undefined) updates.publishUrl = params.publish_url as string;
   if (params.performance_data !== undefined) {
     updates.performanceData = params.performance_data as Record<string, number>;
+  }
+  if (typeof params.diff_note === "string" && params.diff_note.trim()) {
+    updates._versionNote = params.diff_note.trim().slice(0, 200);
   }
   return updates;
 }

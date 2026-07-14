@@ -18,6 +18,9 @@
     "content-ops",
     "automation"
   ],
+  "bin": {
+    "autocrew": "./bin/autocrew.mjs"
+  },
   "peerDependencies": {
     "openclaw": ">=2026.3.2"
   },
@@ -30,7 +33,9 @@
     "@sinclair/typebox": "0.34.48"
   },
   "scripts": {
-    "start": "npm run fe:build && npm run serve",
+    "start": "node bin/autocrew.mjs start",
+    "stop": "node bin/autocrew.mjs stop",
+    "restart": "node bin/autocrew.mjs restart",
     "serve": "tsx desktop/server.ts",
     "fe:build": "cd frontend && npm run build",
     "fe:dev": "cd frontend && npm run dev",

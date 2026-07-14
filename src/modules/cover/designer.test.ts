@@ -20,14 +20,22 @@ afterEach(async () => {
 });
 
 const LONG_PROMPT =
-  "Vertical 3:4 portrait orientation cover image. Cinematic photo-realism, dramatic lighting, " +
-  'the Chinese text "封面大字" in bold sans-serif with dark gradient overlay. No watermarks.';
+  "Vertical 3:4 portrait orientation cover image. A handmade paper evidence scene with tactile labels, " +
+  'the Chinese text "封面大字" printed on a physical warning seal. No watermarks, no logos, no URLs.';
+
+const STYLE = { A: "纸上证物", B: "荒诞静物", C: "实体警示牌" } as const;
+const CONCEPT = { A: "把关键合同做成一件被扣留的证物", B: "把数据交换变成一台实体租金表", C: "把标题做成横跨现场的警示封条" } as const;
+const MEDIUM = { A: "documentary photography", B: "surreal still life", C: "cut-paper collage" } as const;
+const PALETTE = { A: "paper white and evidence red", B: "warm cream and cobalt", C: "high-key white and vermilion" } as const;
 
 const goodDesign = (label: "A" | "B" | "C"): Record<string, unknown> => ({
   label,
-  style: "cinematic",
+  style: STYLE[label],
+  creativeConcept: CONCEPT[label],
+  visualMedium: MEDIUM[label],
+  palette: PALETTE[label],
   titleText: "封面大字",
-  imagePrompt: LONG_PROMPT,
+  imagePrompt: `${LONG_PROMPT} Candidate ${label} uses ${MEDIUM[label]} and ${PALETTE[label]}.`,
   layoutHint: "标题上 1/3,主体中下",
   designReason: "冲突感标题+电影光影,能停住滑动",
 });
@@ -76,10 +84,11 @@ describe("designCoverPlan", () => {
     expect(designs.map((d) => d.label)).toEqual(["A", "B", "C"]);
     expect(tokensUsed).toBe(321);
     expect(execResults[0]).toContain("还差 B/C");
-    expect(execResults[2]).toContain("已收齐");
+    expect(execResults[2]).toContain("反模板差异校验");
     expect(captured[0].systemPrompt).toContain("3:4");
     expect(captured[0].systemPrompt).toContain("水印");
-    expect(captured[0].systemPrompt).toContain("暗色");
+    expect(captured[0].systemPrompt).toContain("陈词滥调");
+    expect(captured[0].systemPrompt).toContain("不能交 cinematic/minimalist/bold-impact");
     expect(captured[0].systemPrompt).toContain("submit_cover_design");
     expect(captured[0].userMessage).toContain("AI 写码的账怎么算");
     expect(captured[0].userMessage).toContain("形象照");
@@ -135,12 +144,47 @@ describe("designCoverPlan", () => {
     ).rejects.toThrow(/方案未收齐/);
     expect(execResults[0]).toContain("80");
   });
+
+  it("固定风格名会被打回,三张全是屏幕/服务器也无法过差异校验", async () => {
+    const execResults: string[] = [];
+    const generic = { ...goodDesign("A"), style: "cinematic" };
+    const cliché = (label: "A" | "B" | "C") => ({
+      ...goodDesign(label),
+      imagePrompt: `${LONG_PROMPT} A laptop screen beside a server rack with a glowing neural network, candidate ${label}.`,
+    });
+    const { designs } = await designCoverPlan(
+      { title: "数据正在喂模型", body: "合同被上传", hasReferencePhotos: false },
+      dir,
+      { runLoopImpl: mockLoop("submit_cover_design", [generic, cliché("A"), cliché("B"), cliché("C"), goodDesign("C")], execResults) },
+    );
+    expect(execResults[0]).toContain("模板名");
+    expect(execResults[3]).toContain("陈词滥调");
+    expect(designs).toHaveLength(3);
+  });
+
+  it("不会把 No server rooms 等否定约束误判成真的使用了科技陈词滥调", async () => {
+    const execResults: string[] = [];
+    const payloads = (["A", "B", "C"] as const).map((label) => ({
+      ...goodDesign(label),
+      imagePrompt: `${LONG_PROMPT} No screens, no server racks, no holograms, no neural network imagery.`,
+    }));
+    const { designs } = await designCoverPlan(
+      { title: "数据主权", body: "合同上传后无法撤回", hasReferencePhotos: false },
+      dir,
+      { runLoopImpl: mockLoop("submit_cover_design", payloads, execResults) },
+    );
+    expect(execResults[2]).toContain("反模板差异校验");
+    expect(designs).toHaveLength(3);
+  });
 });
 
 describe("reviseCoverDesign", () => {
   const previous: CoverDesign = {
     label: "B",
-    style: "minimalist",
+    style: "纸上证物",
+    creativeConcept: CONCEPT.B,
+    visualMedium: MEDIUM.B,
+    palette: PALETTE.B,
     imagePrompt: LONG_PROMPT,
     titleText: "旧的大字",
     layoutHint: "居中",
@@ -155,7 +199,16 @@ describe("reviseCoverDesign", () => {
       {
         runLoopImpl: mockLoop(
           "submit_cover_revision",
-          [{ style: "bold-impact", titleText: "狠的大字", imagePrompt: LONG_PROMPT, layoutHint: "居中偏上", designReason: "按反馈加强冲击" }],
+          [{
+            style: "撕毁的租金收据",
+            creativeConcept: "把旧收据撕开后露出数据流向",
+            visualMedium: "paper collage",
+            palette: "warm paper and warning red",
+            titleText: "狠的大字",
+            imagePrompt: LONG_PROMPT,
+            layoutHint: "居中偏上",
+            designReason: "按反馈加强冲击",
+          }],
           [],
           captured,
         ),

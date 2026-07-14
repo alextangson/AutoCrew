@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getRadarStatus, doRadarRefresh, setRadarSources } from "./radar-status.js";
+import {
+  getRadarStatus,
+  doRadarRefresh,
+  collectMoreRadarTopics,
+  rescoreRadarTopics,
+  setRadarSources,
+} from "./radar-status.js";
 
 let testDir: string;
 
@@ -70,5 +76,32 @@ describe("doRadarRefresh", () => {
     const d = res.data as Record<string, unknown>;
     expect(d.itemCount).toBe(1);
     expect(d.failedSources).toEqual(["爱范儿"]);
+  });
+});
+
+describe("continue collection / rescore handlers", () => {
+  it("collectMore passes the requested batch size and returns counts", async () => {
+    const intakeImpl = vi.fn(async (_dir, options) => ({
+      saved: Array.from({ length: options?.limit ?? 0 }, (_, i) => ({ id: `t${i}` })),
+      skippedDuplicates: 2,
+      qualified: 8,
+      filter: "llm" as const,
+    })) as unknown as typeof import("../modules/radar/radar-intake.js").intakeRadarTopics;
+    const refreshImpl = vi.fn(async () => ({ ok: true, itemCount: 50, failedSources: [] })) as unknown as typeof import("../modules/radar/topic-radar.js").refreshTopicRadar;
+    const res = await collectMoreRadarTopics(
+      { _dataDir: testDir, limit: 5, refresh: true },
+      globalThis.fetch,
+      { intakeImpl, refreshImpl },
+    );
+    expect(res.ok).toBe(true);
+    expect((res.data as Record<string, unknown>).savedCount).toBe(5);
+    expect(intakeImpl).toHaveBeenCalledWith(testDir, { limit: 5, poolSize: 24 });
+  });
+
+  it("rescore exposes updated count", async () => {
+    const rescoreImpl = vi.fn(async () => ({ updated: [{ id: "t1" }, { id: "t2" }], examined: 3 })) as unknown as typeof import("../modules/radar/radar-intake.js").rescoreExistingTopics;
+    const res = await rescoreRadarTopics({ _dataDir: testDir }, { rescoreImpl });
+    expect(res.ok).toBe(true);
+    expect(res.data).toMatchObject({ updatedCount: 2, examined: 3 });
   });
 });

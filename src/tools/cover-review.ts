@@ -2,7 +2,7 @@
  * Cover Review Tool — generate, review, and approve cover images.
  *
  * Actions:
- * - create_candidates: generate 3 style variants (A/B/C) as 3:4 images
+ * - create_candidates: generate 3 content-driven creative directions (A/B/C)
  * - get: retrieve existing cover review for a content
  * - approve: approve a selected variant
  * - generate_ratios: [Pro] generate 16:9 + 4:3 from approved cover
@@ -19,7 +19,7 @@ import {
   type CoverVariant,
 } from "../storage/local-store.js";
 import { buildCoverPrompts } from "../modules/cover/prompt-builder.js";
-import { designCoverPlan, reviseCoverDesign } from "../modules/cover/designer.js";
+import { designCoverPlan, reviseCoverDesign, type CoverDesign } from "../modules/cover/designer.js";
 import { generateWideCover } from "../modules/cover/wide-crop.js";
 import { generateImage, listReferencePhotos, type GeminiModel } from "../adapters/image/gemini.js";
 import { generateCoverViaRelay, adaptCoverPrompt, type CoverAspect } from "../adapters/image/relay-cover.js";
@@ -124,6 +124,9 @@ export async function executeCoverReview(params: Record<string, unknown>) {
 interface DesignSpec {
   label: "A" | "B" | "C";
   style: string;
+  creativeConcept: string;
+  visualMedium: string;
+  palette: string;
   imagePrompt: string;
   titleText: string;
   layoutHint: string;
@@ -233,12 +236,15 @@ async function generateVariant(
       label: spec.label.toLowerCase() as CoverLabel,
       imagePrompt: spec.imagePrompt,
       style: spec.style,
+      creativeConcept: spec.creativeConcept,
+      visualMedium: spec.visualMedium,
+      palette: spec.palette,
       titleText: spec.titleText,
       imagePaths: { [opts.ratio]: result.imagePath } as CoverVariant["imagePaths"],
       model: result.model,
       hasPersonalIP: refApplied,
       layoutHint: spec.layoutHint,
-      designReason: spec.designReason ?? `${spec.style} 风格 — ${spec.layoutHint.slice(0, 60)}`,
+      designReason: spec.designReason ?? `${spec.creativeConcept} · ${spec.layoutHint.slice(0, 60)}`,
       revision,
     },
     ...(result.warning ? { warning: `${spec.label}: ${result.warning}` } : {}),
@@ -269,12 +275,25 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
 
   // LLM 设计师优先;引擎不可用/未提交时降级规则版——封面不能因引擎故障全断
   let specs: DesignSpec[];
-  let designSource: "designer" | "rules" = "designer";
+  let designSource: "designer" | "hybrid" | "rules" = "designer";
   try {
     specs = (await designCoverPlan(planInput, dataDir)).designs;
-  } catch {
-    designSource = "rules";
-    specs = buildCoverPrompts(planInput);
+  } catch (err) {
+    const fallback = buildCoverPrompts(planInput);
+    const partial = err && typeof err === "object" && Array.isArray((err as { designs?: unknown }).designs)
+      ? (err as { designs: CoverDesign[] }).designs
+      : [];
+    if (partial.length > 0) {
+      const received = new Set(partial.map((design) => design.label));
+      specs = [
+        ...partial,
+        ...fallback.filter((spec) => !received.has(spec.label)),
+      ].sort((a, b) => a.label.localeCompare(b.label));
+      designSource = "hybrid";
+    } else {
+      designSource = "rules";
+      specs = fallback;
+    }
   }
 
   const assetsDir = path.join(dataDir, "contents", contentId, "assets", "covers");
@@ -294,6 +313,9 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
 
   const review: CoverReview = {
     platform: content.platform || "xhs",
+    designSource,
+    expectedVariantCount: specs.length,
+    ...(errors.length > 0 ? { generationErrors: errors } : {}),
     primaryRatio,
     status: "review_pending",
     variants,
@@ -332,7 +354,10 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
     {
       previous: {
         label: label.toUpperCase() as "A" | "B" | "C",
-        style: variant.style ?? "cinematic",
+        style: variant.style ?? "存量方案",
+        creativeConcept: variant.creativeConcept ?? variant.designReason ?? "沿用存量方案的核心画面",
+        visualMedium: variant.visualMedium ?? "legacy generated image",
+        palette: variant.palette ?? "沿用存量配色",
         imagePrompt: variant.imagePrompt,
         titleText: variant.titleText ?? "",
         layoutHint: variant.layoutHint ?? "",

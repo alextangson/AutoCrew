@@ -5,7 +5,7 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { loadEngineConfig } from "../../engine/config.js";
+import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { getContent, updateContent, getDataDir } from "../../storage/local-store.js";
@@ -128,8 +128,9 @@ export async function prepareVideoKit(
 
   const captured = { kit: null as Omit<VideoKit, "platform" | "generatedAt"> | null };
   const loopFn = deps?.runLoopImpl ?? runLoop;
-  const result = await loopFn(config, {
-    model: config.strongModel,
+  const writer = resolveEngineRoute(config, "writer", config.strongModel);
+  const result = await loopFn(writer.config, {
+    model: writer.model,
     systemPrompt:
       "你是短视频编导。给定一篇口播稿,产出发布件:平台发布文案(不是口播稿摘要,是让刷到的人停下的文案)、" +
       "分镜表(景别/画面/对应口播句/字幕提示,覆盖全稿)、竖版封面方案(大字 ≤8 字 + 生图 prompt)。" +

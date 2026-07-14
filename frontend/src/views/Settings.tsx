@@ -53,8 +53,29 @@ interface RadarSource {
 }
 
 export function Settings() {
-  const [engine, setEngine] = useState<{ configured: boolean; apiKeyMasked: string | null; baseUrl: string; strongModel: string; fastModel: string } | null>(null);
-  const [eForm, setEForm] = useState({ api_key: "", base_url: "", strong_model: "", fast_model: "" });
+  type RouteView = { baseUrl: string; model: string; protocol?: string; models?: string[] } | null;
+  const [engine, setEngine] = useState<{
+    configured: boolean;
+    apiKeyMasked: string | null;
+    baseUrl: string;
+    strongModel: string;
+    fastModel: string;
+    routes: { writer: RouteView; analytics: RouteView; scout: RouteView; codex: RouteView };
+  } | null>(null);
+  const [eForm, setEForm] = useState({
+    api_key: "",
+    base_url: "",
+    strong_model: "",
+    fast_model: "",
+    writer_base_url: "",
+    writer_model: "",
+    analytics_base_url: "",
+    analytics_model: "",
+    scout_base_url: "",
+    scout_model: "",
+    codex_base_url: "",
+    codex_model: "",
+  });
   const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
   const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; author: string | null; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean } | null>(null);
@@ -129,12 +150,37 @@ export function Settings() {
       <h2 className="serif">设置</h2>
 
       <Section title="引擎 · 模型服务" status={engine?.configured ? `已配置 ${engine.apiKeyMasked ?? ""}` : "未配置"} on={engine?.configured}>
-        <p className="muted">写稿、审稿、画像、复盘都吃这条通道(存 engine.json)。当前:{engine?.baseUrl ?? "—"} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}</p>
+        <p className="muted">总编辑与轻任务走主通道；写稿、复盘可单独走更强模型。所有路由共用同一个 API Key，不重复保存凭证。</p>
+        <p className="muted">主通道:{engine?.baseUrl ?? "—"} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}</p>
         <Field label="API Key" password value={eForm.api_key} placeholder={engine?.apiKeyMasked ?? "sk-..."} onChange={(v) => setEForm((f) => ({ ...f, api_key: v }))} />
         <Field label="Base URL" value={eForm.base_url} placeholder={engine?.baseUrl ?? ""} onChange={(v) => setEForm((f) => ({ ...f, base_url: v }))} />
         <Field label="强模型" value={eForm.strong_model} placeholder={engine?.strongModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, strong_model: v }))} />
         <Field label="快模型" value={eForm.fast_model} placeholder={engine?.fastModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, fast_model: v }))} />
-        <SaveRow label="保存引擎配置" onSave={() => void submit("settings:set", eForm, () => setEForm({ api_key: "", base_url: "", strong_model: "", fast_model: "" }))} />
+        <p className="mono muted">写稿专线 · Opus 4.8</p>
+        <Field label="写稿端点" value={eForm.writer_base_url} placeholder={engine?.routes?.writer?.baseUrl ?? "https://code.newcli.com/claude/ultra"} onChange={(v) => setEForm((f) => ({ ...f, writer_base_url: v }))} />
+        <Field label="写稿模型" value={eForm.writer_model} placeholder={engine?.routes?.writer?.model ?? "claude-opus-4-8"} onChange={(v) => setEForm((f) => ({ ...f, writer_model: v }))} />
+        <p className="mono muted">数据复盘专线 · Opus 4.8</p>
+        <Field label="复盘端点" value={eForm.analytics_base_url} placeholder={engine?.routes?.analytics?.baseUrl ?? "https://code.newcli.com/claude/ultra"} onChange={(v) => setEForm((f) => ({ ...f, analytics_base_url: v }))} />
+        <Field label="复盘模型" value={eForm.analytics_model} placeholder={engine?.routes?.analytics?.model ?? "claude-opus-4-8"} onChange={(v) => setEForm((f) => ({ ...f, analytics_model: v }))} />
+        <p className="mono muted">选题评分专线 · Sonnet 5</p>
+        <Field label="选题端点" value={eForm.scout_base_url} placeholder={engine?.routes?.scout?.baseUrl ?? "https://code.newcli.com/claude/ultra"} onChange={(v) => setEForm((f) => ({ ...f, scout_base_url: v }))} />
+        <Field label="选题模型" value={eForm.scout_model} placeholder={engine?.routes?.scout?.model ?? "claude-sonnet-5"} onChange={(v) => setEForm((f) => ({ ...f, scout_model: v }))} />
+        <p className="mono muted">Codex 备用通道 · 同 Key 可选 sol / terra / luna</p>
+        <Field label="Codex 端点" value={eForm.codex_base_url} placeholder={engine?.routes?.codex?.baseUrl ?? "https://code.newcli.com/codex/v1"} onChange={(v) => setEForm((f) => ({ ...f, codex_base_url: v }))} />
+        <Field label="Codex 默认模型" value={eForm.codex_model} placeholder={engine?.routes?.codex?.model ?? "gpt-5.6-sol"} onChange={(v) => setEForm((f) => ({ ...f, codex_model: v }))} />
+        <SaveRow
+          label="保存引擎与任务路由"
+          onSave={() =>
+            void submit("settings:set", eForm, () =>
+              setEForm({
+                api_key: "", base_url: "", strong_model: "", fast_model: "",
+                writer_base_url: "", writer_model: "", analytics_base_url: "", analytics_model: "",
+                scout_base_url: "", scout_model: "",
+                codex_base_url: "", codex_model: "",
+              }),
+            )
+          }
+        />
       </Section>
 
       <Section title="搜索 · 侦查员外网搜集" status={search?.configured ? `已配置 ${search.provider}` : "未配置"} on={search?.configured}>

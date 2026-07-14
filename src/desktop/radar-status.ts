@@ -3,7 +3,7 @@
  * 源清单用户级可配置（radar-sources.json），url 出境给管理 UI 编辑用（本地单用户）。
  */
 import { loadTopicCache, refreshTopicRadar, loadRadarSources, saveRadarSources, type RadarSource } from "../modules/radar/topic-radar.js";
-import { intakeRadarTopics } from "../modules/radar/radar-intake.js";
+import { intakeRadarTopics, rescoreExistingTopics } from "../modules/radar/radar-intake.js";
 
 export async function getRadarStatus(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
@@ -63,6 +63,56 @@ export async function doRadarRefresh(
       ok: true,
       data: { itemCount: result.itemCount, failedSources: result.failedSources, intakeCount },
     };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 看板「再找一批」：刷新源后只从从未看过的候选继续取，已删除项也不会回流。 */
+export async function collectMoreRadarTopics(
+  payload: Record<string, unknown>,
+  fetchImpl?: typeof fetch,
+  deps?: { refreshImpl?: typeof refreshTopicRadar; intakeImpl?: typeof intakeRadarTopics },
+): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const dataDir = (payload._dataDir as string) || undefined;
+  const limit = Math.max(1, Math.min(Number(payload.limit) || 5, 10));
+  try {
+    let refresh: Awaited<ReturnType<typeof refreshTopicRadar>> | null = null;
+    if (payload.refresh !== false) {
+      refresh = await (deps?.refreshImpl ?? refreshTopicRadar)(dataDir, fetchImpl ?? globalThis.fetch);
+    }
+    const intake = await (deps?.intakeImpl ?? intakeRadarTopics)(dataDir, { limit, poolSize: 24 });
+    return {
+      ok: true,
+      data: {
+        topics: intake.saved,
+        savedCount: intake.saved.length,
+        qualified: intake.qualified,
+        skippedDuplicates: intake.skippedDuplicates,
+        filter: intake.filter,
+        refreshedItems: refresh?.itemCount ?? null,
+        failedSources: refresh?.failedSources ?? [],
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 给当前英文/旧格式选题补中文标题、100 分制评分、摘要和可写角度。 */
+export async function rescoreRadarTopics(
+  payload: Record<string, unknown>,
+  deps?: { rescoreImpl?: typeof rescoreExistingTopics },
+): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    const result = await (deps?.rescoreImpl ?? rescoreExistingTopics)((payload._dataDir as string) || undefined);
+    return { ok: true, data: { topics: result.updated, updatedCount: result.updated.length, examined: result.examined } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

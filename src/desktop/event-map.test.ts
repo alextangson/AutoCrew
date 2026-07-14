@@ -47,4 +47,9 @@ describe("channel event map", () => {
     expect(map("radar:refresh", {}, { ok: true, data: { topics: [1, 2, 3] } })!.label).toContain("3 条");
     expect(map("radar:refresh", {}, { ok: true })!.label).toBe("侦察员扫榜完成");
   });
+
+  it("radar more/rescore：记录新增与重评数量", () => {
+    expect(map("radar:more", {}, { ok: true, data: { savedCount: 5 } })!.label).toContain("新增 5 条");
+    expect(map("radar:rescore", {}, { ok: true, data: { updatedCount: 12 } })!.label).toContain("12 条");
+  });
 });

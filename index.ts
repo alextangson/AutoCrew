@@ -31,10 +31,12 @@ import { createContext, type PluginConfig } from "./src/runtime/context.js";
 import { ToolRunner } from "./src/runtime/tool-runner.js";
 import { EventBus } from "./src/runtime/events.js";
 import { HookManager } from "./src/runtime/hooks.js";
+import { reviseDraft } from "./src/modules/writing/draft-revision.js";
 
 // --- Tool Registry ---
 
-function registerAllTools(runner: ToolRunner): void {
+/** 单一能力注册源：OpenClaw、CLI runner 与 MCP 必须全部从这里取能力。 */
+export function registerAutocrewCapabilities(runner: ToolRunner): void {
   runner.register({
     name: "autocrew_topic",
     label: "AutoCrew Topic",
@@ -119,7 +121,7 @@ function registerAllTools(runner: ToolRunner): void {
     name: "autocrew_cover_review",
     label: "AutoCrew Cover Review",
     description:
-      "Generate, review, and approve cover images via Gemini. Actions: create_candidates (generate 3 style variants), get (view review), approve (pick one), generate_ratios (Pro: 16:9 + 4:3).",
+      "Generate, review, and approve content-driven cover concepts. Actions: create_candidates (generate 3 genuinely different creative directions), get (view review), approve (pick one), generate_ratios (16:9 + 4:3).",
     parameters: coverReviewSchema,
     execute: executeCoverReview,
     needsGemini: true,
@@ -190,6 +192,33 @@ function registerAllTools(runner: ToolRunner): void {
   });
 
   runner.register({
+    name: "autocrew_revise",
+    label: "AutoCrew Revise",
+    description: "Revise an existing draft in place from explicit feedback and save it as a new version.",
+    parameters: {
+      type: "object" as const,
+      required: ["content_id", "instruction"],
+      properties: {
+        content_id: { type: "string" as const, description: "Existing AutoCrew content id." },
+        instruction: { type: "string" as const, description: "Concrete revision feedback." },
+      },
+    },
+    execute: async (params) => {
+      const contentId = String(params.content_id ?? "");
+      const instruction = String(params.instruction ?? "").trim();
+      if (!contentId || !instruction) return { ok: false, error: "content_id and instruction are required" };
+      const result = await reviseDraft(contentId, instruction, params._dataDir as string | undefined);
+      return {
+        ok: true,
+        contentId: result.content.id,
+        title: result.content.title,
+        version: result.content.versions.length,
+        tokensUsed: result.tokensUsed,
+      };
+    },
+  });
+
+  runner.register({
     name: "autocrew_init",
     label: "AutoCrew Init",
     description: "Initialize the AutoCrew data directory (~/.autocrew/) and creator profile. Safe to run multiple times.",
@@ -246,7 +275,7 @@ const autocrewPlugin = {
     const runner = new ToolRunner({ ctx, eventBus });
 
     // Register all tools
-    registerAllTools(runner);
+    registerAutocrewCapabilities(runner);
 
     // Initialize hooks (async, fire-and-forget)
     hookManager.init(eventBus, runner, ctx.dataDir).catch(() => {});

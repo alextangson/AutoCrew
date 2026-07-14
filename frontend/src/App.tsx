@@ -27,15 +27,18 @@ export type Route =
   | { view: "campaigns" }
   | { view: "settings" };
 
-const NAV: Array<{ view: Route["view"]; label: string }> = [
-  { view: "dashboard", label: "工作台" },
-  { view: "board", label: "看板" },
-  { view: "calibration", label: "校准中心" },
-  { view: "report", label: "数据回流" },
-  { view: "logs", label: "工作日志" },
-  { view: "campaigns", label: "增长项目" },
-  { view: "library", label: "素材库" },
+const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
+  { view: "dashboard", label: "今日" },
+  { view: "board", label: "内容" },
+  { view: "campaigns", label: "增长" },
   { view: "settings", label: "设置" },
+];
+
+const SECONDARY_NAV: Array<{ view: Route["view"]; label: string }> = [
+  { view: "calibration", label: "品牌校准" },
+  { view: "report", label: "数据回流" },
+  { view: "logs", label: "任务日志" },
+  { view: "library", label: "素材库" },
 ];
 
 export function App() {
@@ -47,11 +50,21 @@ export function App() {
       <header className="topbar">
         <span className="brand serif">AutoCrew 编辑部</span>
         <nav className="topnav">
-          {NAV.map((n) => (
+          {PRIMARY_NAV.map((n) => (
             <button key={n.view} className={active === n.view ? "nav-on" : ""} onClick={() => setRoute({ view: n.view } as Route)}>
               {n.label}
             </button>
           ))}
+          <details className="topnav-more">
+            <summary className={SECONDARY_NAV.some((n) => n.view === active) ? "nav-on" : ""}>更多</summary>
+            <div className="topnav-menu">
+              {SECONDARY_NAV.map((n) => (
+                <button key={n.view} className={active === n.view ? "nav-on" : ""} onClick={() => setRoute({ view: n.view } as Route)}>
+                  {n.label}
+                </button>
+              ))}
+            </div>
+          </details>
           <button
             className="nav-cta"
             onClick={async () => {
@@ -86,7 +99,7 @@ export function App() {
           {route.view === "settings" && <Settings />}
         </main>
         <aside className="dock">
-          <ChatDock />
+          <ChatDock contentContext={route.view === "editor" ? { contentId: route.id } : undefined} />
         </aside>
       </div>
       <ToastHost />

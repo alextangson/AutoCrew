@@ -30,6 +30,26 @@ describe("publishWechatMpDraft coverPath", () => {
     expect(r.coverPath).toBe(coverPath);
     expect(String(r.command)).toContain(coverPath);
   });
+
+  it("preparedImages → 复用稿件页已确认配图，不再调用生图链", async () => {
+    const articlePath = path.join(dir, "draft.md");
+    await fs.writeFile(articlePath, "# 标题\n\n[IMAGE: 正文中的第一张图]\n", "utf-8");
+    const coverPath = path.join(dir, "封面.png");
+    const preparedPath = path.join(dir, "approved-body-image.png");
+    await fs.writeFile(coverPath, "cover-bytes");
+    await fs.writeFile(preparedPath, "approved-image-bytes");
+
+    const r = await publishWechatMpDraft({
+      articlePath,
+      dryRun: true,
+      coverPath,
+      preparedImages: [preparedPath],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.imageCount).toBe(1);
+    expect(await fs.readFile(path.join(dir, "images", "img-01.png"), "utf-8")).toBe("approved-image-bytes");
+    expect(await fs.readFile(r.publishInput, "utf-8")).toContain("![正文中的第一张图](images/img-01.png)");
+  });
 });
 
 describe("wechatPublishEnv(凭证经 env 传给 publish.py,脚本 config.json 退居兜底)", () => {

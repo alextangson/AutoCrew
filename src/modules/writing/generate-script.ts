@@ -8,7 +8,7 @@
  * submit_script 工具的 execute 闭包捕获 payload；缺字段时返回错误消息让
  * 模型自纠，而不是抛出（保持 loop 继续）。
  */
-import { loadEngineConfig } from "../../engine/config.js";
+import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool, LoopResult } from "../../engine/loop.js";
 import { getPack, getPackForPlatform } from "../packs/index.js";
@@ -171,14 +171,15 @@ async function runGeneration(
   ]);
 
   const { system, user } = buildScriptPrompts(pack, profile, req, { contrastPairs });
+  const writer = resolveEngineRoute(config, "writer", config.strongModel);
   const captured: Captured = { payload: null, gateFailures: [] };
   const gate = resolveQualityGate(pack, req.platform);
   const submitTool = buildSubmitTool(captured, gate);
 
   try {
     const loopFn = deps?.runLoopImpl ?? runLoop;
-    const result: LoopResult = await loopFn(config, {
-      model: config.strongModel,
+    const result: LoopResult = await loopFn(writer.config, {
+      model: writer.model,
       systemPrompt: system,
       userMessage: user,
       tools: [submitTool],
@@ -292,6 +293,7 @@ async function finalizeScript(
       status: "draft_ready",
       hashtags: cleanHashtags,
       lastError: null,
+      _versionNote: "AI 完成初稿",
     },
     dataDir,
   );

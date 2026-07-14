@@ -10,7 +10,7 @@
 import { loadTopicCache, rankCandidatesScored } from "./topic-radar.js";
 import type { ScoredRadarItem } from "./topic-radar.js";
 import { judgeRelevance } from "./relevance.js";
-import { saveTopic, listTopics, listTrash } from "../../storage/local-store.js";
+import { saveTopic, listTopics, listTrash, updateTopic } from "../../storage/local-store.js";
 import type { Topic } from "../../storage/local-store.js";
 import { loadProfile, personaSummary } from "../profile/creator-profile.js";
 
@@ -37,7 +37,7 @@ function keywordReason(s: ScoredRadarItem): string {
 
 export async function intakeRadarTopics(
   dataDir?: string,
-  deps?: { judge?: typeof judgeRelevance },
+  options?: { judge?: typeof judgeRelevance; limit?: number; poolSize?: number },
 ): Promise<RadarIntakeResult> {
   const profile = await loadProfile(dataDir);
   const industry = profile?.industry?.trim() ?? "";
@@ -47,13 +47,33 @@ export async function intakeRadarTopics(
   const cache = await loadTopicCache(dataDir);
   if (!cache || cache.items.length === 0) return { saved: [], skippedDuplicates: 0, qualified: 0, filter: "keyword" };
 
-  // 粗筛:确定性排序取池（免费）;终筛:LLM 语义评分（主路）
-  const pool = rankCandidatesScored(cache.items, industry, CANDIDATE_POOL);
-  const judge = deps?.judge ?? judgeRelevance;
-  const audience = personaSummary(profile?.audiencePersona);
-  const verdicts = await judge(industry, audience, pool.map((s) => ({ title: s.item.title, source: s.item.source })), dataDir);
+  // 先排除看过/删过的条目再评分：否则每次「继续收集」都把同一批重复项送进模型，永远走不到后面的池。
+  const [active, trash] = await Promise.all([listTopics(dataDir), listTrash(dataDir)]);
+  const allTopics = [...active, ...trash.topics];
+  const seenTitles = new Set(allTopics.flatMap((t) => [t.title, t.originalTitle].filter((v): v is string => Boolean(v))));
+  const seenLinks = new Set(allTopics.map((t) => t.link).filter((l): l is string => Boolean(l)));
+  const unseen = cache.items.filter((item) => !seenTitles.has(item.title) && !seenLinks.has(item.link));
 
-  let qualified: Array<{ item: ScoredRadarItem["item"]; reason: string }>;
+  // 粗筛:确定性排序取池（免费）;终筛:LLM 四维评分+中文加工（主路）
+  const pool = rankCandidatesScored(unseen, industry, Math.max(1, Math.min(options?.poolSize ?? CANDIDATE_POOL, 24)));
+  const judge = options?.judge ?? judgeRelevance;
+  const audience = personaSummary(profile?.audiencePersona);
+  const verdicts = await judge(
+    industry,
+    audience,
+    pool.map((s) => ({ title: s.item.title, source: s.item.source, description: s.item.description })),
+    dataDir,
+  );
+
+  let qualified: Array<{
+    item: ScoredRadarItem["item"];
+    reason: string;
+    title: string;
+    description: string;
+    score?: number;
+    scoreBreakdown?: Topic["scoreBreakdown"];
+    angles?: string[];
+  }>;
   let filter: RadarIntakeResult["filter"];
   if (verdicts) {
     filter = "llm";
@@ -62,38 +82,55 @@ export async function intakeRadarTopics(
       .sort((a, b) => b.score - a.score)
       .map((v) => {
         const s = pool[v.index];
+        if (!s) return null;
         const why = v.reason || `相关度 ${v.score}/10`;
-        return { item: s.item, reason: `${why} · ${s.item.source} · ${ageHours(s.item.publishedAt)}h 前` };
-      });
+        return {
+          item: s.item,
+          title: v.titleZh || s.item.title,
+          description: v.summaryZh || s.item.description || `材料不足：写作前需先阅读原始链接并补充事实。`,
+          reason: `${why} · ${s.item.source} · ${ageHours(s.item.publishedAt)}h 前`,
+          score: v.totalScore,
+          scoreBreakdown: v.scoreBreakdown,
+          angles: v.angles,
+        };
+      })
+      .filter((v): v is NonNullable<typeof v> => v !== null);
   } else {
-    // 引擎不可用 → 关键词回退（只对标题里出现定位词的候选有效）
+    // 引擎不可用 → 只保留本身已有中文、且明确命中定位词的候选。
+    // 英文候选无法可靠翻译/补材料时宁可不入库，避免再次污染灵感库。
     filter = "keyword";
-    qualified = pool.filter((s) => s.matchedTokens.length > 0).map((s) => ({ item: s.item, reason: keywordReason(s) }));
+    qualified = pool
+      .filter((s) => s.matchedTokens.length > 0 && /[\u3400-\u9fff]/.test(s.item.title))
+      .map((s) => ({
+        item: s.item,
+        title: s.item.title,
+        description: s.item.description || `材料不足：写作前需先阅读原始链接并补充事实。`,
+        reason: keywordReason(s),
+        score: Math.min(69, 45 + s.score * 5),
+      }));
   }
-
-  const [active, trash] = await Promise.all([listTopics(dataDir), listTrash(dataDir)]);
-  const seenTitles = new Set([...active, ...trash.topics].map((t) => t.title));
-  const seenLinks = new Set(
-    [...active, ...trash.topics].map((t) => t.link).filter((l): l is string => Boolean(l)),
-  );
 
   const saved: Topic[] = [];
   let skippedDuplicates = 0;
+  const intakeLimit = Math.max(1, Math.min(options?.limit ?? INTAKE_LIMIT, 10));
   for (const q of qualified) {
-    if (saved.length >= INTAKE_LIMIT) break;
-    if (seenTitles.has(q.item.title) || seenLinks.has(q.item.link)) {
+    if (saved.length >= intakeLimit) break;
+    if (seenTitles.has(q.title) || seenTitles.has(q.item.title) || seenLinks.has(q.item.link)) {
       skippedDuplicates++;
       continue;
     }
     const topic = await saveTopic(
       {
-        title: q.item.title,
-        // 源摘要优先(V5.4c:灵感要"看得出是什么"),无摘要的源才退回占位描述
-        description: q.item.description || `雷达候选（自动入库）：${q.item.title}`,
+        title: q.title,
+        description: q.description,
         tags: ["radar"],
         source: `radar:${q.item.source}`,
         reason: q.reason,
         link: q.item.link,
+        ...(q.title !== q.item.title ? { originalTitle: q.item.title } : {}),
+        ...(typeof q.score === "number" ? { score: q.score, scoredAt: new Date().toISOString() } : {}),
+        ...(q.scoreBreakdown ? { scoreBreakdown: q.scoreBreakdown } : {}),
+        ...(q.angles?.length ? { angles: q.angles } : {}),
       },
       dataDir,
     );
@@ -103,4 +140,57 @@ export async function intakeRadarTopics(
   }
 
   return { saved, skippedDuplicates, qualified: qualified.length, filter };
+}
+
+/** 对已有雷达/搜索灵感补做中文化、四维评分与可写角度，不改变手工灵感。 */
+export async function rescoreExistingTopics(
+  dataDir?: string,
+  deps?: { judge?: typeof judgeRelevance },
+): Promise<{ updated: Topic[]; examined: number }> {
+  const [profile, topics] = await Promise.all([loadProfile(dataDir), listTopics(dataDir)]);
+  const industry = profile?.industry?.trim() ?? "";
+  if (!industry) throw new Error("先在校准中心填写定位，才能重评选题");
+  const candidates = topics
+    .filter((t) => t.source?.startsWith("radar:") || t.source?.startsWith("search:"))
+    .slice(0, 24);
+  if (candidates.length === 0) return { updated: [], examined: 0 };
+  const judge = deps?.judge ?? judgeRelevance;
+  const updated: Topic[] = [];
+  const BATCH_SIZE = 8;
+  for (let offset = 0; offset < candidates.length; offset += BATCH_SIZE) {
+    const batch = candidates.slice(offset, offset + BATCH_SIZE);
+    const verdicts = await judge(
+      industry,
+      personaSummary(profile?.audiencePersona),
+      batch.map((t) => ({
+        title: t.originalTitle || t.title,
+        source: t.source || "unknown",
+        description: t.description,
+      })),
+      dataDir,
+    );
+    if (!verdicts) continue;
+    for (const verdict of verdicts) {
+      const topic = batch[verdict.index];
+      if (!topic) continue;
+      const title = verdict.titleZh || topic.title;
+      const next = await updateTopic(
+        topic.id,
+        {
+          title,
+          ...(title !== topic.title && !topic.originalTitle ? { originalTitle: topic.title } : {}),
+          ...(verdict.summaryZh ? { description: verdict.summaryZh } : {}),
+          ...(verdict.reason ? { reason: verdict.reason } : {}),
+          score: verdict.totalScore,
+          ...(verdict.scoreBreakdown ? { scoreBreakdown: verdict.scoreBreakdown } : {}),
+          ...(verdict.angles?.length ? { angles: verdict.angles } : {}),
+          scoredAt: new Date().toISOString(),
+        },
+        dataDir,
+      );
+      if (next) updated.push(next);
+    }
+  }
+  if (updated.length === 0) throw new Error("选题重评模型暂时不可用，请稍后重试");
+  return { updated, examined: candidates.length };
 }

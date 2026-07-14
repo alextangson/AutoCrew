@@ -41,6 +41,13 @@ describe("runPersistedChatTurn", () => {
     expect(conv!.messages[1].cards).toHaveLength(1);
   });
 
+  it("never persists an empty assistant message", async () => {
+    const res = await runPersistedChatTurn({ message: "执行任务", dataDir: dir, runTurn: okTurn("   ") });
+    const id = (res.data as Record<string, unknown>).conversationId as string;
+    const conv = await getConversation(id, dir);
+    expect(conv!.messages[1].content).toContain("没有返回可显示说明");
+  });
+
   it("does NOT create a conversation when the turn fails", async () => {
     const failTurn = vi.fn(async () => ({ ok: false, error: "boom" })) as unknown as typeof runChatTurn;
     const res = await runPersistedChatTurn({ message: "hi", dataDir: dir, runTurn: failTurn });

@@ -14,6 +14,8 @@ export interface EngineConfig {
   strongModel: string;
   /** 过滤/排版/打标（后续计划消费） */
   fastModel: string;
+  /** 任务级模型路由；未配置的任务继续使用 strongModel/fastModel。 */
+  routes?: EngineRoutes;
   /**
    * 上游协议:openai = /chat/completions(缺省);anthropic = /v1/messages
    * (Claude 系中转,创始人实际付费通道 2026-07-08)。loadEngineConfig 必解析;
@@ -27,6 +29,47 @@ export interface EngineConfig {
    */
   dataDir?: string;
 }
+
+export type EngineRouteName = "writer" | "analytics" | "scout" | "codex";
+
+export interface EngineRouteConfig {
+  baseUrl: string;
+  model: string;
+  protocol?: "openai" | "anthropic";
+  /** 可选模型清单，供设置页和后续模型选择器展示。 */
+  models?: string[];
+}
+
+export interface EngineRoutes {
+  writer?: EngineRouteConfig;
+  analytics?: EngineRouteConfig;
+  scout?: EngineRouteConfig;
+  codex?: EngineRouteConfig;
+}
+
+export const ENGINE_ROUTE_PRESETS = {
+  writer: {
+    baseUrl: "https://code.newcli.com/claude/ultra",
+    model: "claude-opus-4-8",
+    protocol: "anthropic" as const,
+  },
+  analytics: {
+    baseUrl: "https://code.newcli.com/claude/ultra",
+    model: "claude-opus-4-8",
+    protocol: "anthropic" as const,
+  },
+  scout: {
+    baseUrl: "https://code.newcli.com/claude/ultra",
+    model: "claude-sonnet-5",
+    protocol: "anthropic" as const,
+  },
+  codex: {
+    baseUrl: "https://code.newcli.com/codex/v1",
+    model: "gpt-5.6-sol",
+    models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    protocol: "openai" as const,
+  },
+};
 
 export const ENGINE_DEFAULTS = {
   baseUrl: "https://api.deepseek.com",
@@ -45,6 +88,65 @@ function parseEngineJson(raw: string, filePath: string): Partial<EngineConfig> {
     throw new Error(`engine.json 解析失败（${filePath}）：不是 JSON 对象`);
   }
   return parsed as Partial<EngineConfig>;
+}
+
+function inferProtocol(
+  apiKey: string,
+  baseUrl: string,
+  explicit?: "openai" | "anthropic",
+): "openai" | "anthropic" {
+  if (explicit === "anthropic" || explicit === "openai") return explicit;
+  return apiKey.startsWith("sk-ant") || /claude|anthropic/i.test(baseUrl) ? "anthropic" : "openai";
+}
+
+function normalizeRoute(value: unknown): EngineRouteConfig | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const route = value as Partial<EngineRouteConfig>;
+  if (typeof route.baseUrl !== "string" || !route.baseUrl.trim()) return undefined;
+  if (typeof route.model !== "string" || !route.model.trim()) return undefined;
+  const models = Array.isArray(route.models)
+    ? route.models.filter((m): m is string => typeof m === "string" && Boolean(m.trim())).map((m) => m.trim())
+    : undefined;
+  return {
+    baseUrl: route.baseUrl.trim().replace(/\/+$/, ""),
+    model: route.model.trim(),
+    ...(route.protocol === "openai" || route.protocol === "anthropic" ? { protocol: route.protocol } : {}),
+    ...(models?.length ? { models } : {}),
+  };
+}
+
+function normalizeRoutes(value: unknown): EngineRoutes | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const input = value as Record<string, unknown>;
+  const routes: EngineRoutes = {
+    writer: normalizeRoute(input.writer),
+    analytics: normalizeRoute(input.analytics),
+    scout: normalizeRoute(input.scout),
+    codex: normalizeRoute(input.codex),
+  };
+  return routes.writer || routes.analytics || routes.scout || routes.codex ? routes : undefined;
+}
+
+/**
+ * 为指定任务选择独立端点/模型。路由共用主 API key，避免重复保存凭证；
+ * 未配置时原样返回主引擎，兼容已有工作区和测试注入。
+ */
+export function resolveEngineRoute(
+  config: EngineConfig,
+  name: EngineRouteName,
+  fallbackModel: string,
+): { config: EngineConfig; model: string } {
+  const route = config.routes?.[name];
+  if (!route) return { config, model: fallbackModel };
+  const baseUrl = route.baseUrl.replace(/\/+$/, "");
+  return {
+    config: {
+      ...config,
+      baseUrl,
+      protocol: inferProtocol(config.apiKey, baseUrl, route.protocol),
+    },
+    model: route.model,
+  };
 }
 
 export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> {
@@ -74,12 +176,8 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
     );
   }
   const baseUrl = fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl;
-  const protocol =
-    fromFile.protocol === "anthropic" || fromFile.protocol === "openai"
-      ? fromFile.protocol
-      : apiKey.startsWith("sk-ant") || /claude|anthropic/i.test(baseUrl)
-        ? "anthropic"
-        : "openai";
+  const protocol = inferProtocol(apiKey, baseUrl, fromFile.protocol);
+  const routes = normalizeRoutes(fromFile.routes);
   return {
     apiKey,
     baseUrl,
@@ -87,5 +185,6 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
     fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
     protocol,
     dataDir: getDataDir(dataDir),
+    ...(routes ? { routes } : {}),
   };
 }

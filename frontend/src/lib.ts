@@ -59,6 +59,16 @@ export interface Topic {
   reason?: string;
   source?: string;
   link?: string;
+  originalTitle?: string;
+  score?: number;
+  scoreBreakdown?: {
+    audienceFit: number;
+    materialRichness: number;
+    novelty: number;
+    timeliness: number;
+  };
+  angles?: string[];
+  scoredAt?: string;
   createdAt: string;
 }
 

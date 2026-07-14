@@ -67,6 +67,31 @@ describe("setEngineSettings", () => {
     expect(d.baseUrl).toBe("https://relay.example.com");
   });
 
+  it("saves Opus writer/analytics routes and Codex choices without duplicating the key", async () => {
+    await setEngineSettings({ _dataDir: testDir, api_key: "sk-one-key-for-all" });
+    const result = await setEngineSettings({
+      _dataDir: testDir,
+      writer_base_url: "https://code.newcli.com/claude/ultra",
+      writer_model: "claude-opus-4-8",
+      analytics_base_url: "https://code.newcli.com/claude/ultra",
+      analytics_model: "claude-opus-4-8",
+      scout_base_url: "https://code.newcli.com/claude/ultra",
+      scout_model: "claude-sonnet-5",
+      codex_base_url: "https://code.newcli.com/codex/v1",
+      codex_model: "gpt-5.6-sol",
+    });
+    expect(result.ok).toBe(true);
+    const raw = JSON.parse(await fs.readFile(path.join(testDir, "engine.json"), "utf-8"));
+    expect(raw.routes.writer).toMatchObject({ model: "claude-opus-4-8", protocol: "anthropic" });
+    expect(raw.routes.analytics).toMatchObject({ model: "claude-opus-4-8", protocol: "anthropic" });
+    expect(raw.routes.scout).toMatchObject({ model: "claude-sonnet-5", protocol: "anthropic" });
+    expect(raw.routes.codex.models).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(raw.routes.writer.apiKey).toBeUndefined();
+
+    const read = await getEngineSettings({ _dataDir: testDir });
+    expect(JSON.stringify(read)).not.toContain("one-key-for-all");
+  });
+
   it("rejects empty api_key", async () => {
     const res = await setEngineSettings({ _dataDir: testDir, api_key: "   " });
     expect(res.ok).toBe(false);

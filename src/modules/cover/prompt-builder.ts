@@ -2,23 +2,35 @@
  * Cover Prompt Builder — generates 3 differentiated cover prompt sets
  * from a content topic.
  *
- * Each set produces a different visual style while sharing the same
- * core subject matter and title text.
+ * This is the no-engine fallback. It deliberately rotates through a broader
+ * creative pool instead of reproducing the old cinematic/minimalist/bold trio.
  */
+import { ORIENTATION_TEXT } from "../../adapters/image/relay-cover.js";
 
 // --- Types ---
 
-export type CoverStyle = "cinematic" | "minimalist" | "bold-impact";
+export type CoverStyle =
+  | "documentary-evidence"
+  | "tactile-metaphor"
+  | "editorial-collage"
+  | "physical-typography"
+  | "surreal-still-life"
+  | "archival-dossier";
 
 export interface CoverPromptSet {
   label: "A" | "B" | "C";
   style: CoverStyle;
+  creativeConcept: string;
+  visualMedium: string;
+  palette: string;
   /** Full English image generation prompt */
   imagePrompt: string;
   /** Chinese title text for the cover (2-8 chars) */
   titleText: string;
   /** Layout description for reference */
   layoutHint: string;
+  /** Why this content-specific idea may earn the click */
+  designReason: string;
 }
 
 export interface PromptBuilderInput {
@@ -32,6 +44,7 @@ export interface PromptBuilderInput {
   hasReferencePhotos: boolean;
   /** Optional custom title override (user-specified cover title) */
   customTitle?: string;
+  targetAspect?: "3:4" | "2.35:1" | "16:9" | "4:3";
 }
 
 // --- Title extraction ---
@@ -41,7 +54,7 @@ export interface PromptBuilderInput {
  * Strips filler words and picks the most impactful segment.
  */
 export function extractCoverTitle(title: string, customTitle?: string): string {
-  if (customTitle && customTitle.length >= 2 && customTitle.length <= 8) {
+  if (customTitle && customTitle.length >= 2 && customTitle.length <= 9) {
     return customTitle;
   }
 
@@ -67,114 +80,110 @@ export function extractCoverTitle(title: string, customTitle?: string): string {
   return cleaned.slice(0, 6);
 }
 
-// --- Subject analysis ---
-
-type SubjectType = "person" | "concept" | "event";
-
-function analyzeSubject(title: string, body: string): SubjectType {
-  const text = title + " " + body.slice(0, 200);
-  const personKeywords = /我|你|他|她|创始人|CEO|老板|博主|达人|明星|网红|自己|个人|人物/;
-  const eventKeywords = /事件|新闻|发布|上线|爆|热|突发|刚刚|今天|昨天|最新/;
-
-  if (personKeywords.test(text)) return "person";
-  if (eventKeywords.test(text)) return "event";
-  return "concept";
+interface CreativeArchetype {
+  style: CoverStyle;
+  name: string;
+  concept: string;
+  medium: string;
+  palette: string;
+  scene: string;
+  layout: string;
+  titleTreatment: string;
 }
 
-// --- Mood analysis ---
+const CREATIVE_POOL: CreativeArchetype[] = [
+  {
+    style: "documentary-evidence",
+    name: "现场证物",
+    concept: "把正文里最具体的一件物品拍成能证明观点的证物，而不是抽象科技背景",
+    medium: "documentary editorial photography",
+    palette: "natural daylight, paper white, graphite and one evidence-red accent",
+    scene: "a real tabletop evidence scene built from one concrete object explicitly mentioned in the story, with human traces, annotations and believable imperfections",
+    layout: "asymmetric overhead crop; the evidence object owns one edge while the headline is integrated as an evidence label or stamped note",
+    titleTreatment: "printed on an evidence tag, stamped strip, or clipped annotation inside the scene",
+  },
+  {
+    style: "tactile-metaphor",
+    name: "触觉隐喻",
+    concept: "把文章的核心交换或冲突变成一个可以摸到的荒诞物件",
+    medium: "hand-built tactile still life photography",
+    palette: "warm material colors, soft shadows, one unexpected saturated object",
+    scene: "a surprising physical metaphor made from everyday materials, with no computer screen, no server rack and no hologram",
+    layout: "one oversized handmade object breaks the frame; the headline belongs to its packaging, warning label or receipt",
+    titleTreatment: "physically printed on the object, packaging, receipt or warning seal",
+  },
+  {
+    style: "editorial-collage",
+    name: "纸上拼贴",
+    concept: "用正文里的地点、数字、物件和一句判断做有编辑观点的手工拼贴",
+    medium: "hand-cut editorial paper collage and risograph texture",
+    palette: "high-key off-white paper, ink black, cobalt and vermilion accents",
+    scene: "layered torn paper fragments derived from the story's concrete details, visible tape, crop marks and tactile print texture",
+    layout: "rhythmic editorial grid with deliberate overlaps; avoid the default left-image-right-text split",
+    titleTreatment: "assembled from bold printed Chinese type strips woven into the collage",
+  },
+  {
+    style: "physical-typography",
+    name: "实体大字",
+    concept: "让标题成为场景中的真实物体，而不是后期压在背景上的一层字",
+    medium: "large-scale typographic installation photographed in a real environment",
+    palette: "bright ambient light, restrained environment, one strong material color",
+    scene: "the Chinese headline fabricated as tape, cardboard, projected shadow, road marking or hanging sign interacting with a story-specific place",
+    layout: "type creates depth and perspective across the frame; the environment remains simple and believable",
+    titleTreatment: "the exact Chinese headline is the physical installation itself",
+  },
+  {
+    style: "surreal-still-life",
+    name: "尺度错位",
+    concept: "把核心矛盾通过尺度错位变成一眼就懂、但现实中不可能发生的静物场景",
+    medium: "surreal studio still life with practical effects",
+    palette: "clean high-key studio field, crisp object colors, controlled hard shadow",
+    scene: "one impossible but instantly legible scale relationship between two concrete objects from the content, made to look physically photographed",
+    layout: "central or diagonal object tension with generous breathing room; no generic futuristic decoration",
+    titleTreatment: "set as a museum caption, measuring mark or product label that participates in the illusion",
+  },
+  {
+    style: "archival-dossier",
+    name: "档案解密",
+    concept: "把文章处理成一页刚被揭开的档案，突出事实链而不是情绪灯光",
+    medium: "archival dossier scan, contact sheet and annotated document design",
+    palette: "aged paper, carbon black, faded blue, selective fluorescent marker",
+    scene: "a dense but controlled dossier using a date, place, number or quote taken from the content, with redactions and handwritten connections",
+    layout: "modular document composition; the headline acts as the case-file title, not a floating overlay",
+    titleTreatment: "typed or stamped as the case-file heading with authentic print imperfections",
+  },
+];
 
-function analyzeMood(title: string, body: string): string {
-  const text = title + " " + body.slice(0, 200);
-
-  if (/危|险|警|崩|暴|怒|恐|慌|焦虑|失败/.test(text)) return "tense, dramatic";
-  if (/赚|钱|财|富|增长|暴涨|翻倍/.test(text)) return "ambitious, golden";
-  if (/美|好|幸福|温暖|治愈|舒适|放松/.test(text)) return "warm, soft";
-  if (/科技|AI|未来|数字|智能|技术/.test(text)) return "futuristic, cool-toned";
-  if (/干货|方法|技巧|攻略|教程|秘诀/.test(text)) return "clean, professional";
-  return "cinematic, atmospheric";
+function hashText(value: string): number {
+  let hash = 2166136261;
+  for (const ch of value) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619);
+  return hash >>> 0;
 }
 
-// --- Style templates ---
+function chooseArchetypes(input: PromptBuilderInput): CreativeArchetype[] {
+  const start = hashText(input.title + input.body.slice(0, 120)) % CREATIVE_POOL.length;
+  // 跨 2 取样能稳定覆盖照片/拼贴/实体字等不同媒介，不回到固定前三个。
+  return [0, 2, 4].map((offset) => CREATIVE_POOL[(start + offset) % CREATIVE_POOL.length]);
+}
 
-const STYLE_CONFIGS: Record<CoverStyle, {
-  styleDesc: string;
-  lightingDesc: string;
-  colorDesc: string;
-  layoutForPerson: string;
-  layoutForConcept: string;
-  layoutForEvent: string;
-}> = {
-  cinematic: {
-    styleDesc: "cinematic movie poster style, photorealistic, film grain texture",
-    lightingDesc: "dramatic chiaroscuro lighting with strong shadows and highlights, Rembrandt lighting",
-    colorDesc: "deep contrast, desaturated with selective color accent",
-    layoutForPerson: "person positioned in the lower 2/3 of the frame, looking slightly off-camera, title text in bold sans-serif at the top 1/3 with dark gradient overlay",
-    layoutForConcept: "strong visual metaphor centered in frame, title text overlaid at upper 1/3 with semi-transparent dark band",
-    layoutForEvent: "most dramatic moment frozen in time, title text at top with heavy dark vignette ensuring readability",
-  },
-  minimalist: {
-    styleDesc: "minimalist editorial style, clean composition, large negative space",
-    lightingDesc: "soft diffused studio lighting, even and clean",
-    colorDesc: "muted palette with one bold accent color, high-key or low-key depending on mood",
-    layoutForPerson: "person small in frame with vast negative space, title text large and dominant occupying 40% of frame",
-    layoutForConcept: "single iconic object or symbol centered, surrounded by clean space, title text as the primary visual element",
-    layoutForEvent: "abstract representation of the event, geometric shapes, title text centered and oversized",
-  },
-  "bold-impact": {
-    styleDesc: "bold high-impact visual, saturated colors, dynamic composition",
-    lightingDesc: "high-contrast dramatic lighting with neon or colored light accents",
-    colorDesc: "vibrant saturated colors, complementary color scheme, eye-catching",
-    layoutForPerson: "close-up or medium shot with intense expression, title text integrated into the composition with bold color block behind it",
-    layoutForConcept: "explosive or dynamic visual with motion blur or energy effects, title text large and bold with drop shadow",
-    layoutForEvent: "action-packed composition with diagonal lines and movement, title text at an angle or with perspective effect",
-  },
-};
-
-// --- Core prompt builder ---
-
-function buildImagePrompt(
-  titleText: string,
-  subject: SubjectType,
-  mood: string,
-  style: CoverStyle,
-  hasReferencePhotos: boolean,
-): string {
-  const config = STYLE_CONFIGS[style];
-  const layout = subject === "person"
-    ? config.layoutForPerson
-    : subject === "event"
-      ? config.layoutForEvent
-      : config.layoutForConcept;
-
-  const parts: string[] = [
-    // Core visual
-    `Vertical 3:4 portrait orientation cover image.`,
-    config.styleDesc + ".",
-    `Mood: ${mood}.`,
-    config.lightingDesc + ".",
-    config.colorDesc + ".",
-
-    // Layout
-    `Composition: ${layout}.`,
-
-    // Title text on image
-    `The image MUST include the Chinese text "${titleText}" as a prominent visual element.`,
-    `Text style: bold sans-serif font, large size, high contrast against background, clearly readable.`,
-    `Text must be sharp, correctly spelled, and not distorted.`,
-
-    // Reference photo handling
-    ...(hasReferencePhotos && subject === "person"
-      ? ["Feature the person from the reference photo as the main subject, maintaining their likeness."]
+function buildImagePrompt(input: PromptBuilderInput, titleText: string, archetype: CreativeArchetype): string {
+  const aspect = input.targetAspect ?? "3:4";
+  const context = `${input.title}. ${input.body.slice(0, 220)}`.replace(/\s+/g, " ");
+  return [
+    `${ORIENTATION_TEXT[aspect]}.`,
+    `Creative direction: ${archetype.scene}.`,
+    `Interpret these concrete Chinese story details rather than using generic AI imagery: ${context}.`,
+    `Visual medium: ${archetype.medium}.`,
+    `Palette and material: ${archetype.palette}.`,
+    `Composition: ${archetype.layout}.`,
+    `The image MUST include the exact Chinese text "${titleText}"; ${archetype.titleTreatment}.`,
+    "Chinese characters must be sharp, correctly spelled, readable at thumbnail size and naturally integrated into the scene.",
+    ...(input.hasReferencePhotos
+      ? ["If a person is included, feature the person from the reference photo and maintain their likeness; otherwise prefer story-specific objects."]
       : []),
-
-    // Prohibitions
-    "No watermarks, no logos, no URLs.",
-    "No white or light solid color backgrounds.",
-    "No cartoon or illustration style — photorealistic only.",
-    "No blurry, warped, or misspelled text.",
-  ];
-
-  return parts.join(" ");
+    "No watermarks, no logos, no URLs, no unrelated English decoration.",
+    "Avoid glowing keyboards, server rooms, blue-purple neural networks, holographic code, robot brains and generic split-screen technology imagery.",
+  ].join(" ");
 }
 
 // --- Public API ---
@@ -184,29 +193,19 @@ function buildImagePrompt(
  */
 export function buildCoverPrompts(input: PromptBuilderInput): CoverPromptSet[] {
   const titleText = extractCoverTitle(input.title, input.customTitle);
-  const subject = analyzeSubject(input.title, input.body);
-  const mood = analyzeMood(input.title, input.body);
-
-  const styles: Array<{ label: "A" | "B" | "C"; style: CoverStyle }> = [
-    { label: "A", style: "cinematic" },
-    { label: "B", style: "minimalist" },
-    { label: "C", style: "bold-impact" },
-  ];
-
-  return styles.map(({ label, style }) => {
-    const config = STYLE_CONFIGS[style];
-    const layout = subject === "person"
-      ? config.layoutForPerson
-      : subject === "event"
-        ? config.layoutForEvent
-        : config.layoutForConcept;
-
+  const archetypes = chooseArchetypes(input);
+  return archetypes.map((archetype, index) => {
+    const label = (["A", "B", "C"] as const)[index];
     return {
       label,
-      style,
-      imagePrompt: buildImagePrompt(titleText, subject, mood, style, input.hasReferencePhotos),
+      style: archetype.style,
+      creativeConcept: `${archetype.name}: ${archetype.concept}`,
+      visualMedium: archetype.medium,
+      palette: archetype.palette,
+      imagePrompt: buildImagePrompt(input, titleText, archetype),
       titleText,
-      layoutHint: layout,
+      layoutHint: archetype.layout,
+      designReason: `${archetype.name}不是通用科技背景，而是把本文的具体事实转成${archetype.concept}。`,
     };
   });
 }

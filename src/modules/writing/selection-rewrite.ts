@@ -5,7 +5,7 @@
  * 后部时上下文完全不含选区周边,改写会脱离语境。选区不在 body 里(极端编辑竞态)
  * 时回退头部截断。
  */
-import { loadEngineConfig } from "../../engine/config.js";
+import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import { loadProfile } from "../profile/creator-profile.js";
 
@@ -61,8 +61,9 @@ export async function rewriteSelection(
   const user = `全文（上下文）：\n${body}\n\n选中片段：\n${selection}\n\n修改要求：${instruction}`;
 
   try {
-    const result = await runLoop(config, {
-      model: config.strongModel,
+    const writer = resolveEngineRoute(config, "writer", config.strongModel);
+    const result = await runLoop(writer.config, {
+      model: writer.model,
       systemPrompt: system,
       userMessage: user,
       maxTurns: 1,

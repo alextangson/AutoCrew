@@ -58,9 +58,11 @@ describe("buildCoverPrompts", () => {
     expect(prompts.map((p) => p.label)).toEqual(["A", "B", "C"]);
   });
 
-  it("styles are cinematic, minimalist, bold-impact", () => {
+  it("does not fall back to the fixed cinematic/minimalist/bold-impact trio", () => {
     const prompts = buildCoverPrompts(baseInput);
-    expect(prompts.map((p) => p.style)).toEqual(["cinematic", "minimalist", "bold-impact"]);
+    expect(prompts.map((p) => p.style)).not.toEqual(["cinematic", "minimalist", "bold-impact"]);
+    expect(new Set(prompts.map((p) => p.creativeConcept)).size).toBe(3);
+    expect(new Set(prompts.map((p) => p.visualMedium)).size).toBeGreaterThanOrEqual(2);
   });
 
   it("all prompts contain the title text", () => {
@@ -82,7 +84,7 @@ describe("buildCoverPrompts", () => {
     const prompts = buildCoverPrompts(baseInput);
     for (const p of prompts) {
       expect(p.imagePrompt).toContain("No watermarks");
-      expect(p.imagePrompt).toContain("photorealistic");
+      expect(p.imagePrompt).toContain("Avoid glowing keyboards");
     }
   });
 
@@ -114,19 +116,18 @@ describe("buildCoverPrompts", () => {
     }
   });
 
-  it("detects person subject type", () => {
+  it("uses reference photos conditionally without forcing every concept into a portrait", () => {
     const input: PromptBuilderInput = {
       ...baseInput,
       title: "我如何从零到一",
       body: "我的个人经历分享",
-      hasReferencePhotos: false,
+      hasReferencePhotos: true,
     };
     const prompts = buildCoverPrompts(input);
-    // Person subject should use person layout
-    expect(prompts[0].layoutHint).toContain("person");
+    expect(prompts.some((p) => p.imagePrompt.includes("maintain their likeness"))).toBe(true);
   });
 
-  it("detects event subject type", () => {
+  it("passes concrete article context into every fallback prompt", () => {
     const input: PromptBuilderInput = {
       ...baseInput,
       title: "突发！新政策发布",
@@ -134,7 +135,7 @@ describe("buildCoverPrompts", () => {
       hasReferencePhotos: false,
     };
     const prompts = buildCoverPrompts(input);
-    expect(prompts[0].layoutHint).toContain("moment");
+    expect(prompts.every((p) => p.imagePrompt.includes("新政策发布"))).toBe(true);
   });
 
   it("uses custom title when provided", () => {

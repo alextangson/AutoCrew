@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { executeContentSave } from "./content-save.js";
 import { recordDiff, listDiffs } from "../modules/learnings/diff-tracker.js";
+import { getContent } from "../storage/local-store.js";
 
 let testDir: string;
 
@@ -124,6 +125,9 @@ describe("executeContentSave", () => {
         _dataDir: testDir,
       });
       expect(updateRes.ok).toBe(true);
+
+      const savedVersion = await getContent(contentId, testDir);
+      expect(savedVersion?.versions.at(-1)?.note).toBe("去掉AI腔，口语化");
 
       const diffs = await listDiffs({ contentId }, testDir);
       expect(diffs).toHaveLength(1);

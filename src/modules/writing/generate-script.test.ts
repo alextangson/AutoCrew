@@ -86,6 +86,38 @@ const TEST_REQ = {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("generateScript", () => {
+  it("uses the dedicated writer route when configured", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        apiKey: "sk-shared",
+        strongModel: "m-strong",
+        fastModel: "m-fast",
+        routes: {
+          writer: {
+            baseUrl: "https://code.newcli.com/claude/ultra",
+            model: "claude-opus-4-8",
+            protocol: "anthropic",
+          },
+        },
+      }),
+    );
+    let seenConfig: EngineConfig | undefined;
+    let seenModel = "";
+    const runLoopImpl = async (cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      seenConfig = cfg;
+      seenModel = opts.model;
+      const submitTool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
+      await submitTool.execute(GOOD_PAYLOAD);
+      return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    await generateScript(TEST_REQ, testDir, { runLoopImpl });
+    expect(seenModel).toBe("claude-opus-4-8");
+    expect(seenConfig?.baseUrl).toBe("https://code.newcli.com/claude/ultra");
+    expect(seenConfig?.protocol).toBe("anthropic");
+    expect(seenConfig?.apiKey).toBe("sk-shared");
+  });
+
   // 1. Happy path
   it("happy path: saves draft, returns correct fields, violations empty", async () => {
     const runLoopImpl = makeRunLoop([GOOD_PAYLOAD], 200);

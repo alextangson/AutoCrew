@@ -49,6 +49,10 @@ describe("IPC_CHANNELS", () => {
     "publish:confirm",
     "publish:request_wechat",
     "publish:wechat_draft",
+    "article_images:get",
+    "article_images:generate",
+    "article_images:regenerate",
+    "article_images:remove",
     "chat:turn",
     "settings:get",
     "settings:set",
@@ -81,6 +85,8 @@ describe("IPC_CHANNELS", () => {
     "knowledge:status",
     "radar:status",
     "radar:refresh",
+    "radar:more",
+    "radar:rescore",
     "profile:update",
     "content:update",
     "content:transition",
@@ -122,8 +128,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 89 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(89);
+  it("has exactly 95 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(95);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -211,6 +217,10 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "generate:script" &&
           ch !== "publish:request_wechat" &&
           ch !== "publish:wechat_draft" &&
+          ch !== "article_images:get" &&
+          ch !== "article_images:generate" &&
+          ch !== "article_images:regenerate" &&
+          ch !== "article_images:remove" &&
           ch !== "flywheel:wechat_pull" &&
           ch !== "chat:turn" &&
           ch !== "settings:get" &&
@@ -244,6 +254,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "knowledge:status" &&
           ch !== "radar:status" &&
           ch !== "radar:refresh" &&
+          ch !== "radar:more" &&
+          ch !== "radar:rescore" &&
           ch !== "radar:sources_set" &&
           ch !== "profile:update" &&
           ch !== "content:versions" &&

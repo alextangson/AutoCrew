@@ -5,7 +5,7 @@
  * 点原子→平台矩阵(灵感详情/方向补充/有稿点开/无稿生成)。
  */
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "../transport";
+import { invoke, subscribeEvents } from "../transport";
 import { toast } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import {
@@ -33,6 +33,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
   const [mode, setMode] = useState<{ kind: "columns" } | { kind: "matrix"; atomKey: string } | { kind: "trash" }>({ kind: "columns" });
   const [trash, setTrash] = useState<TrashData>({ topics: [], contents: [] });
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const [radarBusy, setRadarBusy] = useState<"more" | "rescore" | null>(null);
   const send = useChatSend();
 
   const load = async () => {
@@ -44,6 +45,21 @@ export function Board(props: { openEditor: (id: string) => void }) {
   };
   useEffect(() => {
     void load();
+  }, []);
+  useEffect(() => {
+    let timer: number | undefined;
+    const off = subscribeEvents((event) => {
+      if (event.kind !== "engine") return;
+      const kind = String(event.data.kind ?? "");
+      if (!event.data.contentId && !["radar", "trash", "transition", "run_done", "run_failed"].includes(kind)) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void load(), 180);
+    });
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      off();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const atoms = useMemo(() => groupAtoms(topics, contents), [topics, contents]);
@@ -76,6 +92,36 @@ export function Board(props: { openEditor: (id: string) => void }) {
     const d = ((r as Record<string, unknown>).data ?? r) as unknown as TrashData;
     setTrash({ topics: d.topics ?? [], contents: d.contents ?? [] });
     setMode({ kind: "trash" });
+  };
+
+  const collectMore = async () => {
+    setRadarBusy("more");
+    try {
+      const r = await invoke("radar:more", { limit: 5, refresh: true });
+      if (!r.ok) return toast(r.error ?? "继续收集失败");
+      const d = ((r as Record<string, unknown>).data ?? {}) as { savedCount?: number; failedSources?: string[] };
+      await load();
+      if ((d.savedCount ?? 0) > 0) {
+        toast(`新增 ${d.savedCount} 条中文高分选题`);
+      } else {
+        toast("这一批没有新的合格选题——可删除不喜欢的条目后再找，或在设置里开启更多情报源");
+      }
+    } finally {
+      setRadarBusy(null);
+    }
+  };
+
+  const rescore = async () => {
+    setRadarBusy("rescore");
+    try {
+      const r = await invoke("radar:rescore");
+      if (!r.ok) return toast(r.error ?? "重评失败");
+      const d = ((r as Record<string, unknown>).data ?? {}) as { updatedCount?: number };
+      await load();
+      toast(`已把 ${d.updatedCount ?? 0} 条旧选题补成中文标题、评分和可写角度`);
+    } finally {
+      setRadarBusy(null);
+    }
   };
 
   // ── 平台矩阵 ──
@@ -121,12 +167,18 @@ export function Board(props: { openEditor: (id: string) => void }) {
   }
 
   // ── 列视图:左灵感面板(独立滚动、行式高密度) + 右管线四列(V5.6.2 重排) ──
-  const ideaAtoms = cols[0];
+  const ideaAtoms = [...cols[0]].sort((a, b) => (b.topic?.score ?? -1) - (a.topic?.score ?? -1));
   return (
     <div>
       <div className="board-bar">
         <span className="serif board-title">管线看板</span>
         <span className="muted">点灵感/卡片进平台矩阵 · 拖卡换列</span>
+        <button disabled={radarBusy !== null} onClick={() => void collectMore()}>
+          {radarBusy === "more" ? "侦察员继续搜…" : "再找 5 条"}
+        </button>
+        <button disabled={radarBusy !== null} onClick={() => void rescore()}>
+          {radarBusy === "rescore" ? "选题总监重评中…" : "重评现有选题"}
+        </button>
         <button onClick={() => void openTrash()}>回收站</button>
       </div>
       <div className="board-split">
@@ -137,9 +189,14 @@ export function Board(props: { openEditor: (id: string) => void }) {
           {ideaAtoms.length === 0 && <p className="muted">灵感库空——工作台「派侦查员搜灵感」,或顶栏「＋新想法」。</p>}
           {ideaAtoms.map((atom) => (
             <div key={atom.key} className="idea-row" onClick={() => setMode({ kind: "matrix", atomKey: atom.key })}>
-              <div className="idea-title">{atom.topic?.title ?? atomRep(atom)?.title ?? "（无标题）"}</div>
+              <div className="idea-title">
+                {typeof atom.topic?.score === "number" && (
+                  <span className={"topic-score" + (atom.topic.score >= 80 ? " topic-score-high" : "")}>{atom.topic.score}</span>
+                )}
+                {atom.topic?.title ?? atomRep(atom)?.title ?? "（无标题）"}
+              </div>
               <div className="idea-sub mono muted">
-                {[sourceLabel(atom.topic?.source), ideaAge(atom.topic?.createdAt)].filter(Boolean).join(" · ")}
+                {[typeof atom.topic?.score === "number" ? "综合评分" : "待评分", sourceLabel(atom.topic?.source), ideaAge(atom.topic?.createdAt)].filter(Boolean).join(" · ")}
               </div>
               <button
                 className="acard-del"
@@ -239,7 +296,7 @@ function Matrix(props: {
   seats: string[];
   back: () => void;
   openEditor: (id: string) => void;
-  send: (msg: string) => void;
+  send: (msg: string) => Promise<{ ok: boolean; error?: string; actionId?: string }>;
   reload: () => Promise<void>;
 }) {
   const { atom, seats } = props;
@@ -254,19 +311,21 @@ function Matrix(props: {
     return isFinite(age) ? Math.max(0, Math.ceil(3 - age)) : null;
   })();
 
-  const dispatch = (platform: string) => {
+  const dispatch = async (platform: string) => {
     let brief = `用选题《${title}》写一篇${platformLabel(platform)}原生版本`;
     const ctx: string[] = [];
     if (t) {
       ctx.push(`灵感库编号：${t.id}（开写时带上 topic_id,血缘别断）`);
       if (t.reason) ctx.push("入库理由：" + t.reason);
       if (t.description && t.description !== title) ctx.push("背景：" + t.description);
+      if (typeof t.score === "number") ctx.push(`选题评分：${t.score}/100`);
+      if (t.angles?.length) ctx.push(`可写角度：${t.angles.join("；")}`);
       if (t.link) ctx.push(`参考链接：${t.link}（先用 read_url 读原文再写，不要凭标题脑补）`);
     }
     if (direction.trim()) ctx.push(`创作者想写的方向：${direction.trim()}（这是最高优先级的角度指引）`);
     if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
-    props.send(brief);
-    toast("已派给总编辑——看右侧对话");
+    const receipt = await props.send(brief);
+    toast(receipt.ok ? `已受理${receipt.actionId ? ` · ${receipt.actionId}` : ""}` : (receipt.error ?? "派活失败"));
   };
 
   return (
@@ -277,8 +336,28 @@ function Matrix(props: {
       </div>
       {t && (
         <div className="matrix-detail">
+          {typeof t.score === "number" && (
+            <div className="topic-score-panel">
+              <strong className="serif">综合评分 {t.score}/100</strong>
+              {t.scoreBreakdown && (
+                <div className="topic-score-grid mono">
+                  <span>受众契合 {t.scoreBreakdown.audienceFit}/30</span>
+                  <span>材料支撑 {t.scoreBreakdown.materialRichness}/25</span>
+                  <span>差异化 {t.scoreBreakdown.novelty}/25</span>
+                  <span>时效 {t.scoreBreakdown.timeliness}/20</span>
+                </div>
+              )}
+            </div>
+          )}
           {t.description && <p className="muted">{t.description}</p>}
           {t.reason && <p>为什么值得写：{t.reason}</p>}
+          {t.originalTitle && <p className="muted mono">原始标题：{t.originalTitle}</p>}
+          {t.angles && t.angles.length > 0 && (
+            <div className="topic-angles">
+              <strong>可以怎么写</strong>
+              <ol>{t.angles.map((angle, i) => <li key={i}>{angle}</li>)}</ol>
+            </div>
+          )}
           <p className="muted mono">
             {t.source && "来源 " + sourceLabel(t.source)}
             {retentionLeft !== null && (retentionLeft > 0 ? ` · 未选用保留 3 天,还剩 ${retentionLeft} 天` : " · 已到期,即将自动移入回收站")}
@@ -286,7 +365,9 @@ function Matrix(props: {
           {t.link && (
             <p>
               <a href={t.link} target="_blank" rel="noreferrer">查看原始内容 ↗</a>{" "}
-              <button onClick={() => { props.send(`拆解一下这篇参考：${t.link}（选题《${t.title}》,灵感库编号 ${t.id}）`); toast("已派给总编辑"); }}>
+              <button onClick={() => void props.send(`拆解一下这篇参考：${t.link}（选题《${t.title}》,灵感库编号 ${t.id}）`).then((receipt) => {
+                toast(receipt.ok ? `已受理${receipt.actionId ? ` · ${receipt.actionId}` : ""}` : (receipt.error ?? "派活失败"));
+              })}>
                 派总编辑读原文拆解
               </button>
             </p>
@@ -311,7 +392,7 @@ function Matrix(props: {
                   {VARIANT_STATUS[m.status] ?? m.status} →
                 </button>
               ) : c.gen ? (
-                <button onClick={() => dispatch(c.id)}>生成</button>
+                <button onClick={() => void dispatch(c.id)}>生成</button>
               ) : (
                 <span className="muted mono">席位未开通</span>
               )}

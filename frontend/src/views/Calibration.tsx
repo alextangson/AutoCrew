@@ -172,7 +172,9 @@ export function Calibration() {
         <button disabled={personaBusy} onClick={() => void generatePersona()}>
           {personaBusy ? "研究员生成中…(约半分钟)" : persona.tiers ? "重新生成提案" : "生成画像提案"}
         </button>
-        <button onClick={() => { send("校准受众画像"); toast("看右侧对话——逐层确认或修正"); }}>在对话里校准</button>
+        <button onClick={() => void send("校准受众画像").then((receipt) => {
+          toast(receipt.ok ? "已受理——看右侧对话逐层确认" : (receipt.error ?? "派活失败"));
+        })}>在对话里校准</button>
       </div>
       {proposal && (
         <div className="persona-card persona-proposal">

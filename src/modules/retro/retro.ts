@@ -7,7 +7,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { loadEngineConfig } from "../../engine/config.js";
+import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { listContents, getDataDir } from "../../storage/local-store.js";
@@ -125,8 +125,9 @@ export async function generateRetro(
   };
 
   const loopFn = deps?.runLoopImpl ?? runLoop;
-  const result = await loopFn(config, {
-    model: config.strongModel,
+  const analytics = resolveEngineRoute(config, "analytics", config.strongModel);
+  const result = await loopFn(analytics.config, {
+    model: analytics.model,
     systemPrompt: mode === "weekly" ? WEEKLY_PROMPT : MONTHLY_PROMPT,
     userMessage: `${facts.block}\n\n请生成${mode === "weekly" ? "周" : "月度"}复盘报告。`,
     tools: [submitTool],

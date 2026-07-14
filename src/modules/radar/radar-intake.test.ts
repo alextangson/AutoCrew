@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { intakeRadarTopics } from "./radar-intake.js";
+import { intakeRadarTopics, rescoreExistingTopics } from "./radar-intake.js";
 import type { TopicCache } from "./topic-radar.js";
 import { saveTopic, listTopics, softDeleteTopic } from "../../storage/local-store.js";
 import { saveProfile } from "../profile/creator-profile.js";
@@ -102,7 +102,8 @@ describe("intakeRadarTopics", () => {
 
     expect(result.saved).toHaveLength(1);
     expect(result.saved[0].title).toBe("AI 眼镜发布");
-    expect(result.skippedDuplicates).toBe(2);
+    // 已看过/删过的候选在送入评分前就排除，不再浪费本轮模型名额。
+    expect(result.skippedDuplicates).toBe(0);
     const active = await listTopics(testDir);
     expect(active.map((t) => t.id)).toContain(kept.id);
     expect(active).toHaveLength(2); // kept + fresh（trashed 不还魂）
@@ -116,6 +117,54 @@ describe("intakeRadarTopics", () => {
 });
 
 describe("LLM semantic filter (unified intel layer)", () => {
+  it("persists Chinese title, 100-point breakdown, summary and writing angles", async () => {
+    await saveProfile(profileWith("AI 效率工具"), testDir);
+    await seedCache([{ title: "Show HN: A visual debugger for AI agents", link: "https://a.example/1" }]);
+    const judge = async () => [
+      {
+        index: 0,
+        score: 8.4,
+        totalScore: 84,
+        scoreBreakdown: { audienceFit: 28, materialRichness: 18, novelty: 22, timeliness: 16 },
+        titleZh: "AI Agent 调试终于有可视化工具了",
+        summaryZh: "一款面向 AI Agent 的可视化调试工具发布，适合验证它能否降低排查循环与工具调用问题的成本。",
+        angles: ["实测安装和首个调试流程", "与日志排查方法对比", "哪些团队值得接入"],
+        reason: "正中 AI 工具用户的调试痛点",
+      },
+    ];
+    const result = await intakeRadarTopics(testDir, { judge });
+    expect(result.saved).toHaveLength(1);
+    expect(result.saved[0]).toMatchObject({
+      title: "AI Agent 调试终于有可视化工具了",
+      originalTitle: "Show HN: A visual debugger for AI agents",
+      score: 84,
+      scoreBreakdown: { materialRichness: 18 },
+    });
+    expect(result.saved[0].description).toContain("可视化调试工具");
+    expect(result.saved[0].angles).toHaveLength(3);
+  });
+
+  it("continue collection evaluates unseen candidates instead of returning the same batch", async () => {
+    await saveProfile(profileWith("AI"), testDir);
+    await seedCache([
+      { title: "AI 候选一", link: "https://a.example/1" },
+      { title: "AI 候选二", link: "https://a.example/2" },
+      { title: "AI 候选三", link: "https://a.example/3" },
+      { title: "AI 候选四", link: "https://a.example/4" },
+    ]);
+    const seenBatches: string[][] = [];
+    const judge = async (_positioning, _audience, candidates) => {
+      seenBatches.push(candidates.map((c) => c.title));
+      return candidates.map((_, index) => ({ index, score: 8, totalScore: 80, reason: "值得写" }));
+    };
+    const first = await intakeRadarTopics(testDir, { judge, limit: 2 });
+    const second = await intakeRadarTopics(testDir, { judge, limit: 2 });
+    expect(first.saved).toHaveLength(2);
+    expect(second.saved).toHaveLength(2);
+    expect(seenBatches[1]).not.toEqual(seenBatches[0]);
+    expect(new Set((await listTopics(testDir)).map((t) => t.link)).size).toBe(4);
+  });
+
   it("uses LLM verdicts as primary filter — works for positioning words absent from titles", async () => {
     await saveProfile(profileWith("职场成长"), testDir); // 标题里不会出现的定位
     await seedCache([
@@ -145,5 +194,48 @@ describe("LLM semantic filter (unified intel layer)", () => {
     expect(result.filter).toBe("keyword");
     expect(result.saved).toHaveLength(1);
     expect(result.saved[0].reason).toContain("命中定位");
+  });
+
+  it("does not auto-save English-only candidates when the scoring model is unavailable", async () => {
+    await saveProfile(profileWith("AI"), testDir);
+    await seedCache([{ title: "Show HN: AI workflow engine", link: "https://a.example/1" }]);
+    const result = await intakeRadarTopics(testDir, { judge: async () => null });
+    expect(result.saved).toHaveLength(0);
+  });
+});
+
+describe("rescoreExistingTopics", () => {
+  it("upgrades existing English radar topics in place", async () => {
+    await saveProfile(profileWith("AI 工具"), testDir);
+    const old = await saveTopic(
+      {
+        title: "A new observability tool for AI agents",
+        description: "Tracing agent tool calls",
+        tags: ["radar"],
+        source: "radar:Hacker News",
+        link: "https://a.example/old",
+      },
+      testDir,
+    );
+    const judge = async () => [
+      {
+        index: 0,
+        score: 8.1,
+        totalScore: 81,
+        scoreBreakdown: { audienceFit: 27, materialRichness: 18, novelty: 20, timeliness: 16 },
+        titleZh: "AI Agent 可观测性工具值不值得接入",
+        summaryZh: "新工具聚焦 Agent 工具调用链路追踪，可从接入成本、问题定位速度和数据完整性三个方面验证。",
+        angles: ["接入实测", "与普通日志对比", "适用团队判断"],
+        reason: "适合做真实接入验证",
+      },
+    ];
+    const result = await rescoreExistingTopics(testDir, { judge });
+    expect(result.updated).toHaveLength(1);
+    expect(result.updated[0].id).toBe(old.id);
+    expect(result.updated[0]).toMatchObject({
+      title: "AI Agent 可观测性工具值不值得接入",
+      originalTitle: "A new observability tool for AI agents",
+      score: 81,
+    });
   });
 });

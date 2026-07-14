@@ -81,8 +81,13 @@ export async function runPersistedChatTurn(params: {
   }
 
   const data = result.data as { reply?: unknown; cards?: unknown } | undefined;
-  const reply = typeof data?.reply === "string" ? data.reply : "";
   const cards = Array.isArray(data?.cards) ? (data.cards as Record<string, unknown>[]) : [];
+  const rawReply = typeof data?.reply === "string" ? data.reply.trim() : "";
+  // 持久层最后一道防线：历史中不再写入“有气泡、没内容”的 assistant 消息。
+  const reply = rawReply ||
+    (cards.length > 0
+      ? "任务已完成，结果见下方卡片。"
+      : "这轮任务已处理，但没有返回可显示说明。请在看板或工作日志查看状态。");
 
   // Serialize writes for existing conversations only (new conversations have no
   // prior concurrent writer — serialization only guards the read-modify-write path)

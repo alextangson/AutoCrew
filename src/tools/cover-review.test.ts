@@ -41,7 +41,10 @@ const LONG_PROMPT = "Vertical 3:4 portrait orientation cover image. Cinematic ph
 
 const design = (label: "A" | "B" | "C", extra?: Partial<CoverDesign>): CoverDesign => ({
   label,
-  style: "cinematic",
+  style: `本文创意-${label}`,
+  creativeConcept: `把本文证据转成方案 ${label} 的独有视觉点子`,
+  visualMedium: label === "B" ? "paper collage" : "documentary photography",
+  palette: label === "C" ? "high-key white and red" : "paper white and graphite",
   titleText: "封面大字",
   imagePrompt: LONG_PROMPT,
   layoutHint: "标题上 1/3",
@@ -101,23 +104,27 @@ async function createCandidates(contentId: string): Promise<Record<string, unkno
 describe("create_candidates", () => {
   it("设计师方案 → 3 张候选,r1 文件名,designSource=designer", async () => {
     const id = await seedContent();
-    const r = (await createCandidates(id)) as { ok: boolean; designSource: string; review: { variants: Array<{ imagePaths: Record<string, string>; revision?: number; designReason?: string }> } };
+    const r = (await createCandidates(id)) as { ok: boolean; designSource: string; review: { designSource?: string; variants: Array<{ imagePaths: Record<string, string>; revision?: number; designReason?: string; creativeConcept?: string }> } };
     expect(r.ok).toBe(true);
     expect(r.designSource).toBe("designer");
+    expect(r.review.designSource).toBe("designer");
     expect(r.review.variants).toHaveLength(3);
     for (const v of r.review.variants) {
       expect(v.revision).toBe(1);
       expect(v.imagePaths["3:4"]).toContain("-r1");
+      expect(v.creativeConcept).toBeTruthy();
     }
   });
 
   it("设计师失败 → 降级规则版(designSource=rules),候选照出", async () => {
     planMock.mockRejectedValueOnce(new Error("engine down"));
     const id = await seedContent();
-    const r = (await createCandidates(id)) as { ok: boolean; designSource: string; review: { variants: unknown[] } };
+    const r = (await createCandidates(id)) as { ok: boolean; designSource: string; review: { designSource?: string; variants: Array<{ creativeConcept?: string }> } };
     expect(r.ok).toBe(true);
     expect(r.designSource).toBe("rules");
+    expect(r.review.designSource).toBe("rules");
     expect(r.review.variants).toHaveLength(3);
+    expect(new Set(r.review.variants.map((v) => v.creativeConcept)).size).toBe(3);
   });
 
   it("重出候选 → revision 递增,createdAt 保留首次值", async () => {

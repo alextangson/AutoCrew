@@ -115,4 +115,14 @@ export const CHANNEL_EVENT_MAP: Partial<Record<IpcChannel, Mapper>> = {
     const n = Array.isArray(d?.topics) ? d.topics.length : undefined;
     return { role: "scout", kind: "radar", label: n !== undefined ? `侦察员扫榜完成：${n} 条候选` : "侦察员扫榜完成" };
   },
+  "radar:more": ({ result }) => {
+    if (result.ok !== true) return null;
+    const d = result.data as { savedCount?: number } | undefined;
+    return { role: "scout", kind: "radar", label: `侦察员继续收集：新增 ${d?.savedCount ?? 0} 条合格选题` };
+  },
+  "radar:rescore": ({ result }) => {
+    if (result.ok !== true) return null;
+    const d = result.data as { updatedCount?: number } | undefined;
+    return { role: "analyst", kind: "work", label: `选题总监重评完成：${d?.updatedCount ?? 0} 条` };
+  },
 };

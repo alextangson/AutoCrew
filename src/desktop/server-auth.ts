@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE = "autocrew_session";
 
@@ -41,13 +41,12 @@ export interface SessionHeaders {
  * third-party pages cannot steal the persistent token through a script tag.
  */
 export class LocalSessionAuth {
-  private readonly sessions = new Map<string, number>();
   private bootTokenAvailable = true;
 
   constructor(
     private readonly bootToken: string,
     private readonly allowedOrigins: ReadonlySet<string>,
-    private readonly ttlMs = 24 * 60 * 60 * 1000,
+    private readonly ttlMs = 30 * 24 * 60 * 60 * 1000,
     private readonly now: () => number = Date.now,
     private readonly automationToken = bootToken,
   ) {}
@@ -59,10 +58,12 @@ export class LocalSessionAuth {
   issueSession(token: string): { sessionId: string; expiresAt: string } | null {
     if (!this.bootTokenAvailable || !constantTimeEqual(token, this.bootToken)) return null;
     this.bootTokenAvailable = false;
-    this.sweepExpired();
-    const sessionId = randomBytes(32).toString("hex");
     const expires = this.now() + this.ttlMs;
-    this.sessions.set(sessionId, expires);
+    // 会话改成由持久 automation token 签名的短期凭证。服务重启时内存会清空，
+    // 但同一浏览器 cookie 仍可验证；显式轮换 server-token 则会立即让旧会话失效。
+    const payload = `${randomBytes(32).toString("hex")}.${expires}`;
+    const signature = this.sign(payload);
+    const sessionId = `${payload}.${signature}`;
     return { sessionId, expiresAt: new Date(expires).toISOString() };
   }
 
@@ -74,11 +75,13 @@ export class LocalSessionAuth {
 
     const sessionId = readCookie(headerValue(headers.cookie), SESSION_COOKIE);
     if (!sessionId) return null;
-    const expires = this.sessions.get(sessionId);
-    if (!expires || expires <= this.now()) {
-      this.sessions.delete(sessionId);
-      return null;
-    }
+    const parts = sessionId.split(".");
+    if (parts.length !== 3) return null;
+    const [nonce, expiresText, signature] = parts;
+    const payload = `${nonce}.${expiresText}`;
+    if (!constantTimeEqual(signature, this.sign(payload))) return null;
+    const expires = Number(expiresText);
+    if (!Number.isFinite(expires) || expires <= this.now()) return null;
     return "session";
   }
 
@@ -87,10 +90,7 @@ export class LocalSessionAuth {
     return `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
   }
 
-  private sweepExpired(): void {
-    const now = this.now();
-    for (const [id, expires] of this.sessions) {
-      if (expires <= now) this.sessions.delete(id);
-    }
+  private sign(payload: string): string {
+    return createHmac("sha256", this.automationToken).update(payload).digest("base64url");
   }
 }

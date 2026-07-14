@@ -75,6 +75,32 @@ describe("buildChatTools", () => {
     expect(sink[0].type).toBe("style");
   });
 
+  it("revise_draft updates the current content in place and returns the saved version", async () => {
+    const sink: ChatCard[] = [];
+    const reviseDraftImpl = vi.fn(async () => ({
+      content: {
+        id: "content-42",
+        title: "更直接的新标题",
+        body: "修改后的完整正文",
+        platform: "wechat_mp",
+        status: "draft_ready",
+        versions: [{ version: 1 }, { version: 2 }],
+      },
+      tokensUsed: 100,
+    })) as never;
+    const tools = buildChatTools(sink, testDir, { reviseDraftImpl });
+
+    const out = await tools.find((tool) => tool.name === "revise_draft")!.execute({
+      content_id: "content-42",
+      instruction: "开头更直接，删掉 AI 腔",
+    });
+
+    expect(reviseDraftImpl).toHaveBeenCalledWith("content-42", "开头更直接，删掉 AI 腔", testDir);
+    expect(JSON.parse(out as string)).toMatchObject({ ok: true, contentId: "content-42", version: 2 });
+    expect(sink).toHaveLength(1);
+    expect(sink[0]).toMatchObject({ type: "draft", data: { contentId: "content-42", version: 2 } });
+  });
+
   it("strips model-injected underscore keys (e.g. _dataDir) from tool args", async () => {
     const sink: ChatCard[] = [];
     const rewrite = vi.fn(async () => ({ ok: false, error: "x" }));
@@ -311,6 +337,13 @@ describe("runChatTurn", () => {
     // history 注入（system + 2 history + user = 前 4 条）
     const firstMessages = calls[0].messages as Array<{ role: string }>;
     expect(firstMessages.slice(0, 4).map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+  });
+
+  it("returns a visible fallback instead of a blank assistant reply", async () => {
+    const fetchImpl = (async () => jsonResponse(assistantTurn("   "))) as typeof fetch;
+    const res = await runChatTurn({ message: "你好", dataDir: testDir, fetchImpl });
+    expect(res.ok).toBe(true);
+    expect((res.data as { reply: string }).reply).toContain("没有返回可显示内容");
   });
 });
 

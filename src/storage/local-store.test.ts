@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   saveTopic,
+  updateTopic,
   listTopics,
   getTopic,
   saveContent,
@@ -66,6 +67,17 @@ describe("Topics", () => {
     expect(found).toBeNull();
   });
 
+  it("updateTopic enriches a topic without changing id/createdAt", async () => {
+    const saved = await saveTopic({ title: "Raw title", description: "d", tags: [] }, testDir);
+    const updated = await updateTopic(saved.id, {
+      title: "中文可写选题",
+      originalTitle: "Raw title",
+      score: 82,
+      angles: ["角度一"],
+    }, testDir);
+    expect(updated).toMatchObject({ id: saved.id, createdAt: saved.createdAt, title: "中文可写选题", score: 82 });
+  });
+
   it("listTopics returns empty array when no topics", async () => {
     const topics = await listTopics(testDir);
     expect(topics).toEqual([]);
@@ -107,10 +119,12 @@ describe("Content", () => {
 
   it("updateContent merges fields", async () => {
     const saved = await saveContent({ title: "Original", body: "body", tags: [], status: "draft_ready" }, testDir);
-    const updated = await updateContent(saved.id, { title: "Updated" }, testDir);
+    const updated = await updateContent(saved.id, { title: "Updated", _versionNote: "优化标题" }, testDir);
     expect(updated).not.toBeNull();
     expect(updated!.title).toBe("Updated");
     expect(updated!.body).toBe("body");
+    expect(updated!.versions).toHaveLength(2);
+    expect(updated!.versions[1]).toMatchObject({ title: "Updated", body: "body", note: "优化标题" });
   });
 
   it("updateContent creates a new version when body changes", async () => {
@@ -118,6 +132,7 @@ describe("Content", () => {
     await updateContent(saved.id, { body: "v2 body" }, testDir);
     const content = await getContent(saved.id, testDir);
     expect(content!.versions.length).toBeGreaterThanOrEqual(2);
+    expect(content!.versions[1].title).toBe("V");
   });
 
   it("updateContent returns null for nonexistent", async () => {

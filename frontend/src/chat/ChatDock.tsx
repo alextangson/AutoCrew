@@ -8,7 +8,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke, subscribeEvents } from "../transport";
+import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
+import { parseChatTurnResponse } from "./response";
 
 interface Msg {
   role: "user" | "assistant";
@@ -16,81 +18,136 @@ interface Msg {
   cards?: ChatCardShape[];
 }
 
-let sendImpl: (msg: string) => void = () => {
-  /* dock 未挂载时丢弃并提示 */
-};
+interface ConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
+export interface ChatDispatchReceipt {
+  ok: boolean;
+  actionId?: string;
+  error?: string;
+}
+
+let sendImpl: (msg: string) => Promise<ChatDispatchReceipt> = async () => ({
+  ok: false,
+  error: "总编辑还没准备好，请刷新页面后重试",
+});
 
 /** 视图层拿到"派活进对话"的入口(dock 挂载后生效) */
-export function useChatSend(): (msg: string) => void {
+export function useChatSend(): (msg: string) => Promise<ChatDispatchReceipt> {
   return (msg) => sendImpl(msg);
 }
 
-export function ChatDock() {
+export function ChatDock(props: { contentContext?: { contentId: string } }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string[]>([]);
-  const convRef = useRef<string | undefined>(undefined);
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const [convs, setConvs] = useState<Array<{ id: string; title: string; updatedAt: string }>>([]);
+  const [convs, setConvs] = useState<ConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
+  const [contextTitle, setContextTitle] = useState("");
+
+  useEffect(() => {
+    const id = props.contentContext?.contentId;
+    if (!id) {
+      setContextTitle("");
+      return;
+    }
+    let active = true;
+    void invoke("content:get", { id }).then((result) => {
+      if (!active) return;
+      const content = (result as unknown as { content?: { title?: string } }).content;
+      setContextTitle(result.ok ? (content?.title ?? id) : id);
+    });
+    return () => { active = false; };
+  }, [props.contentContext?.contentId]);
+
+  const listConversations = async (): Promise<ConversationSummary[]> => {
+    const r = await invoke("conversations:list");
+    if (!r.ok) return [];
+    return (r as unknown as { data: { conversations: ConversationSummary[] } }).data.conversations ?? [];
+  };
 
   // 会话延续(D 期前缺口):启动加载最近会话(含卡片回放),历史可切换
   const loadConversation = async (id: string) => {
     const r = await invoke("conversations:get", { id });
     if (!r.ok) return;
     const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[] }> } }).data;
-    convRef.current = id;
-    setMsgs(d.messages.map((m) => ({ role: m.role, text: m.content, cards: m.cards ?? [] })));
+    setActiveConversationId(id);
+    setMsgs(
+      d.messages
+        .map((m) => ({ role: m.role, text: m.content, cards: m.cards ?? [] }))
+        .filter((m) => m.text.trim() || (m.cards?.length ?? 0) > 0),
+    );
   };
   useEffect(() => {
-    void invoke("conversations:list").then(async (r) => {
-      if (!r.ok) return;
-      const list = (r as unknown as { data: { conversations: Array<{ id: string; title: string; updatedAt: string }> } }).data.conversations ?? [];
+    void listConversations().then(async (list) => {
       setConvs(list);
       if (list.length > 0) await loadConversation(list[0].id);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const send = async (text: string) => {
+  const send = async (text: string): Promise<ChatDispatchReceipt> => {
     const message = text.trim();
-    if (!message || busy) return;
+    if (!message) return { ok: false, error: "消息不能为空" };
+    if (busy) return { ok: false, error: "总编辑正在处理上一项任务，请等它受理后再派" };
     setMsgs((m) => [...m, { role: "user", text: message }]);
     setInput("");
     setBusy(true);
     setProgress([]);
     const r = await invoke("chat:turn", {
       message,
-      ...(convRef.current ? { conversation_id: convRef.current } : {}),
+      ...(activeConversationId ? { conversation_id: activeConversationId } : {}),
+      ...(props.contentContext ? { context: { content_id: props.contentContext.contentId } } : {}),
     });
     setBusy(false);
     setProgress([]);
     if (!r.ok) {
       setMsgs((m) => [...m, { role: "assistant", text: "出错了：" + (r.error ?? "未知错误") }]);
-      return;
+      return { ok: false, error: r.error ?? "未知错误" };
     }
-    const conv = r.conversation_id ?? (r as { data?: { conversation_id?: string } }).data?.conversation_id;
-    if (typeof conv === "string") {
-      const isNew = convRef.current !== conv;
-      convRef.current = conv;
-      if (isNew) {
-        void invoke("conversations:list").then((lr) => {
-          if (lr.ok) setConvs((lr as unknown as { data: { conversations: typeof convs } }).data.conversations ?? []);
-        });
-      }
+    const parsed = parseChatTurnResponse(r);
+    if (parsed.conversationId) {
+      setActiveConversationId(parsed.conversationId);
     }
-    const reply = typeof r.reply === "string" ? r.reply : "";
-    const cards = Array.isArray(r.cards) ? (r.cards as ChatCardShape[]) : [];
-    setMsgs((m) => [...m, { role: "assistant", text: reply, cards }]);
+    setMsgs((m) => [...m, { role: "assistant", text: parsed.reply, cards: parsed.cards }]);
+    void listConversations().then(setConvs);
+    return { ok: true, ...(parsed.actionId ? { actionId: parsed.actionId } : {}) };
+  };
+
+  const deleteActiveConversation = async () => {
+    if (!activeConversationId || busy) return;
+    const current = convs.find((c) => c.id === activeConversationId);
+    const yes = await confirmDialog({
+      title: "删除这段会话？",
+      body: `“${current?.title ?? "当前会话"}”的聊天记录会从本机删除，稿件和选题不会受影响。`,
+      confirmLabel: "删除会话",
+      danger: true,
+    });
+    if (!yes) return;
+    const r = await invoke("conversations:delete", { id: activeConversationId });
+    if (!r.ok) return toast(r.error ?? "删除失败");
+    const list = await listConversations();
+    setConvs(list);
+    if (list.length > 0) await loadConversation(list[0].id);
+    else {
+      setActiveConversationId(undefined);
+      setMsgs([]);
+    }
+    toast("会话已删除；稿件和选题仍保留");
   };
 
   useEffect(() => {
-    sendImpl = (msg) => void send(msg);
+    sendImpl = (msg) => send(msg);
     return () => {
-      sendImpl = () => {};
+      sendImpl = async () => ({ ok: false, error: "总编辑当前不可用" });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy]);
+  }, [busy, activeConversationId, props.contentContext?.contentId]);
 
   // 工具进度(chat SSE):in-flight 时滚动展示「侦察员正在扫热榜…」
   useEffect(
@@ -115,20 +172,29 @@ export function ChatDock() {
         <span className="chat-head-actions">
           {convs.length > 0 && (
             <select
-              value={convRef.current ?? ""}
+              aria-label="切换会话"
+              value={activeConversationId ?? ""}
+              disabled={busy}
               onChange={(e) => {
                 if (e.target.value) void loadConversation(e.target.value);
               }}
             >
+              {!activeConversationId && <option value="">新会话（尚未保存）</option>}
               {convs.map((c) => (
                 <option key={c.id} value={c.id}>{c.title}</option>
               ))}
             </select>
           )}
+          {activeConversationId && (
+            <button title="删除当前会话" disabled={busy} onClick={() => void deleteActiveConversation()}>
+              删除
+            </button>
+          )}
           <button
             title="开新会话"
+            disabled={busy}
             onClick={() => {
-              convRef.current = undefined;
+              setActiveConversationId(undefined);
               setMsgs([]);
             }}
           >
@@ -136,6 +202,11 @@ export function ChatDock() {
           </button>
         </span>
       </div>
+      {props.contentContext && (
+        <div className="chat-context" title={props.contentContext.contentId}>
+          当前稿件：{contextTitle || "正在读取…"} · 修改建议会保存为新版本
+        </div>
+      )}
       <div className="chat-body" ref={bodyRef}>
         {msgs.length === 0 && (
           <p className="muted">
@@ -176,7 +247,9 @@ export function ChatDock() {
         <textarea
           value={input}
           rows={2}
-          placeholder="跟总编辑说…(Enter 发送,Shift+Enter 换行)"
+          placeholder={props.contentContext
+            ? "说修改要求，如：开头更直接，删掉第三段（Enter 发送）"
+            : "跟总编辑说…修改某篇稿前请先在看板打开它"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

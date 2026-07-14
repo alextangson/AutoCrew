@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadEngineConfig } from "./config.js";
+import { loadEngineConfig, resolveEngineRoute } from "./config.js";
 
 let testDir: string;
 const ENV_KEYS = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"] as const;
@@ -52,6 +52,41 @@ describe("loadEngineConfig", () => {
     const c = await loadEngineConfig(testDir);
     expect(c.apiKey).toBe("sk-env");
     expect(c.strongModel).toBe("m-x");
+  });
+
+  it("loads task routes and shares the primary API key", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        apiKey: "sk-shared",
+        baseUrl: "https://relay.example.com",
+        strongModel: "main-strong",
+        fastModel: "main-fast",
+        routes: {
+          writer: {
+            baseUrl: "https://code.newcli.com/claude/ultra/",
+            model: "claude-opus-4-8",
+          },
+          scout: {
+            baseUrl: "https://code.newcli.com/claude/ultra/",
+            model: "claude-sonnet-5",
+          },
+          codex: {
+            baseUrl: "https://code.newcli.com/codex/v1/",
+            model: "gpt-5.6-sol",
+            models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+          },
+        },
+      }),
+    );
+    const config = await loadEngineConfig(testDir);
+    const writer = resolveEngineRoute(config, "writer", config.strongModel);
+    expect(writer.model).toBe("claude-opus-4-8");
+    expect(writer.config.baseUrl).toBe("https://code.newcli.com/claude/ultra");
+    expect(writer.config.protocol).toBe("anthropic");
+    expect(writer.config.apiKey).toBe("sk-shared");
+    expect(config.routes?.codex?.models).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(config.routes?.scout?.model).toBe("claude-sonnet-5");
   });
 
   it("throws actionable error when no key anywhere", async () => {

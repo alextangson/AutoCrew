@@ -174,6 +174,8 @@ const PAGE_CHECKS = `(async () => {
   if (await navTo("看板")) {
     ok(!!document.querySelector(".kanban"), "看板渲染");
     ok(!!document.querySelector(".idea-pane"), "灵感面板");
+    ok((document.body.textContent || "").includes("再找 5 条"), "继续收集选题入口");
+    ok((document.body.textContent || "").includes("重评现有选题"), "选题重评入口");
     ok(document.querySelectorAll(".kcol").length === 4, "管线四列", "实际 " + document.querySelectorAll(".kcol").length);
     const boardItems = document.querySelectorAll(".acard").length + document.querySelectorAll(".idea-row").length;
     ok(boardItems >= 5, "看板条目(种子)", "实际 " + boardItems);
@@ -213,6 +215,9 @@ const PAGE_CHECKS = `(async () => {
     const t3 = document.body.textContent || "";
     for (const key of ["引擎 · 模型服务", "搜索 · 侦查员外网搜集", "发布 · 公众号与生图", "封面生成 · 生图通道", "情报源", "工作区", "知识库"]) {
       ok(t3.includes(key), "设置区:" + key);
+    }
+    for (const key of ["写稿专线", "数据复盘专线", "选题评分专线", "Codex 备用通道"]) {
+      ok(t3.includes(key), "任务模型路由:" + key);
     }
   }
 

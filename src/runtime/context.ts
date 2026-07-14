@@ -63,6 +63,7 @@ function generateSessionId(): string {
 
 function resolveDataDir(config?: PluginConfig): string {
   if (config?.data_dir) return config.data_dir;
+  if (process.env.AUTOCREW_DATA_DIR) return process.env.AUTOCREW_DATA_DIR;
   const home = process.env.HOME || process.env.USERPROFILE || "~";
   return path.join(home, ".autocrew");
 }

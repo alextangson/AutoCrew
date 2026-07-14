@@ -52,10 +52,11 @@ const ASPECT_VALUE: Record<CoverAspect, number> = {
 
 export const ORIENTATION_TEXT: Record<CoverAspect, string> = {
   "3:4": "Vertical 3:4 portrait orientation cover image",
-  "2.35:1": "Ultra-wide 2.35:1 cinematic banner orientation cover image",
+  "2.35:1": "Ultra-wide 2.35:1 editorial banner orientation cover image",
   "16:9": "Horizontal 16:9 widescreen landscape orientation cover image",
   "4:3": "Horizontal 4:3 landscape orientation cover image",
 };
+const LEGACY_ORIENTATION_TEXT = ["Ultra-wide 2.35:1 cinematic banner orientation cover image"];
 
 /**
  * prompt 比例措辞适配:设计方案按主比例写就,适配其他比例时只换方向词——
@@ -64,7 +65,7 @@ export const ORIENTATION_TEXT: Record<CoverAspect, string> = {
 export function adaptCoverPrompt(prompt: string, aspect: CoverAspect): string {
   if (prompt.includes(ORIENTATION_TEXT[aspect])) return prompt;
   let out = prompt;
-  for (const text of Object.values(ORIENTATION_TEXT)) {
+  for (const text of [...Object.values(ORIENTATION_TEXT), ...LEGACY_ORIENTATION_TEXT]) {
     out = out.replace(new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), ORIENTATION_TEXT[aspect]);
   }
   return out.replace(/\b(3:4|16:9|4:3|2\.35:1)\b/g, aspect);

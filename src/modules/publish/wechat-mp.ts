@@ -3,6 +3,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { generateImageViaRelay } from "./image-gen.js";
+import { loadWechatMpConfig } from "./wechat-config.js";
 
 const DEFAULT_IMAGE_GENERATOR_SCRIPT = path.join(
   os.homedir(),
@@ -42,6 +43,8 @@ export interface WechatMpDraftOptions {
   imageBaseUrl?: string;
   imageModel?: string;
   wechatPublishScript?: string;
+  /** 稿件页已审核/生成的正文配图，按 [IMAGE:] 出现顺序复用。 */
+  preparedImages?: string[];
 }
 
 export type WechatMpDraftResult = {
@@ -218,6 +221,22 @@ async function generateImage(
   };
 }
 
+/** 稿件页正文配图工作区复用公众号生图配置，不触发发布。 */
+export async function generateWechatImageAsset(
+  prompt: string,
+  outputPath: string,
+  options: { dataDir?: string; size?: string } = {},
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  const cfg = await loadWechatMpConfig(options.dataDir);
+  return generateImage(prompt, outputPath, {
+    size: options.size || "16:9",
+    imageGeneratorScript: resolveImageGeneratorScript(cfg.imageGeneratorScript),
+    imageApiKey: resolveImageApiKey(cfg.imageApiKey),
+    imageBaseUrl: resolveImageBaseUrl(cfg.imageBaseUrl),
+    imageModel: resolveImageModel(cfg.imageModel),
+  });
+}
+
 export async function publishWechatMpDraft(
   options: WechatMpDraftOptions,
 ): Promise<WechatMpDraftResult> {
@@ -262,7 +281,12 @@ export async function publishWechatMpDraft(
     const relativePath = `images/${filename}`;
 
     const exists = await fileExists(imagePath);
-    if (!options.skipImages || !exists) {
+    const preparedPath = options.preparedImages?.[index];
+    if (preparedPath && (await fileExists(preparedPath))) {
+      if (path.resolve(preparedPath) !== path.resolve(imagePath)) {
+        await fs.copyFile(preparedPath, imagePath);
+      }
+    } else if (!options.skipImages || !exists) {
       const imageResult = await generateImage(prompt, imagePath, {
         size: options.imageSize || "16:9",
         imageGeneratorScript,

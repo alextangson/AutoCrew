@@ -23,7 +23,7 @@ export interface WideCoverResult {
 function adaptPromptForWide(prompt: string, ratio: AspectRatio): string {
   const desc =
     ratio === "21:9"
-      ? "Ultra-wide 21:9 cinematic banner orientation cover image"
+      ? "Ultra-wide 21:9 editorial banner orientation cover image"
       : "Horizontal 16:9 widescreen landscape orientation cover image";
   return prompt.replace(/Vertical 3:4 portrait orientation cover image/i, desc).replace(/3:4/g, ratio);
 }

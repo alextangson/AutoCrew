@@ -6,6 +6,7 @@ import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../modules/publish/wechat-config.js";
 import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
+import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
 
 export const publishSchema = Type.Object({
@@ -92,6 +93,7 @@ export async function executePublish(
   const contentId = params.content_id as string | undefined;
   let articlePath: string;
   let gateText: string;
+  let preparedImages: string[] | undefined;
 
   if (contentId) {
     const content = await getContent(contentId, dataDir);
@@ -100,6 +102,9 @@ export async function executePublish(
     articlePath = path.join(dataDir, "contents", content.id, "draft.md");
     await fs.writeFile(articlePath, `# ${content.title}\n\n${content.body}\n`, "utf-8");
     gateText = `${content.title}\n\n${content.body}`;
+    const bodyImages = await preparedArticleImages(contentId, dataDir);
+    if (!bodyImages.ok) return bodyImages;
+    preparedImages = bodyImages.paths;
   } else if (params.article_path) {
     articlePath = path.resolve(params.article_path as string);
     try {
@@ -156,6 +161,7 @@ export async function executePublish(
     imageBaseUrl: (params.image_base_url as string) || cfg.imageBaseUrl,
     imageModel: (params.image_model as string) || cfg.imageModel,
     wechatPublishScript: (params.wechat_publish_script as string) || cfg.wechatPublishScript,
+    preparedImages,
   });
 
   const receipt = result.ok

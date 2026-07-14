@@ -26,6 +26,7 @@ import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
+import { handleMcpRequest } from "../mcp/server.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
@@ -152,6 +153,51 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // MCP Streamable HTTP 基础端点：与 stdio 共用同一 JSON-RPC 处理器与 Capability Registry。
+  // 本地版沿用现有 Bearer/session 鉴权；商业远程部署可在此前置 OAuth 资源服务器。
+  if (p === "/mcp") {
+    const authMethod = authorize(req);
+    if (!authMethod) {
+      res.writeHead(401, { "Content-Type": MIME[".json"], "WWW-Authenticate": "Bearer" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null }));
+      return;
+    }
+    if (req.method === "GET") {
+      res.writeHead(405, { Allow: "POST, GET", "Cache-Control": "no-store" }).end();
+      return;
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405, { Allow: "POST, GET" }).end();
+      return;
+    }
+    if (!browserWriteAllowed(req, authMethod)) {
+      res.writeHead(403, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ error: "bad origin" }));
+      return;
+    }
+    if (!(req.headers["content-type"] || "").includes("application/json")) {
+      res.writeHead(415).end("application/json required");
+      return;
+    }
+    let request: Record<string, unknown>;
+    try { request = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end("bad json"); return; }
+    let mcpDataDir: string;
+    try { mcpDataDir = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { mcpDataDir = getDataDir(); }
+    const response = await handleMcpRequest(request, {
+      principal: { subject: "local-user", plan: "local" },
+    }, mcpDataDir);
+    if (!response) {
+      res.writeHead(202, { "Cache-Control": "no-store" }).end();
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": MIME[".json"],
+      "Cache-Control": "no-store",
+      "MCP-Protocol-Version": "2025-11-25",
+    });
+    res.end(JSON.stringify(response));
+    return;
+  }
+
   // 首次打开带 ?token=… 的本地 URL 后，前端把 boot token 换成短时 HttpOnly
   // SameSite session cookie，再立即从地址栏移除 token。
   if (p === "/api/session" && req.method === "POST") {
@@ -173,18 +219,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 生成资源(封面等)只读流式端点:invoke 走 JSON,图片字节走这里。
-  // 白名单校验 content_id/文件名,路径钉死在 contents/<id>/assets/covers 下;
+  // 生成资源(封面/正文配图)只读流式端点:invoke 走 JSON,图片字节走这里。
+  // 白名单校验 content_id/文件名/kind,路径钉死在对应 assets 子目录下;
   // 文件名带修订号(-rN)所以 immutable 缓存安全。
   if (p === "/api/asset") {
     if (!authorize(req)) { res.writeHead(403).end(); return; }
     const contentId = url.searchParams.get("content_id") || "";
     const name = url.searchParams.get("name") || "";
+    const kind = url.searchParams.get("kind") || "cover";
     const ext = path.extname(name).toLowerCase();
     if (
       !/^content-\d+-[a-z0-9]+$/.test(contentId) ||
       !/^[A-Za-z0-9._-]+$/.test(name) ||
       name.includes("..") ||
+      !["cover", "article"].includes(kind) ||
       ![".png", ".jpg", ".jpeg", ".webp"].includes(ext)
     ) {
       res.writeHead(400).end("bad params");
@@ -192,7 +240,8 @@ const server = http.createServer(async (req, res) => {
     }
     let base: string;
     try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
-    const file = path.join(base, "contents", contentId, "assets", "covers", name);
+    const assetFolder = kind === "article" ? "article-images" : "covers";
+    const file = path.join(base, "contents", contentId, "assets", assetFolder, name);
     if (!file.startsWith(path.join(base, "contents"))) { res.writeHead(403).end(); return; }
     try { await fs.access(file); } catch { res.writeHead(404).end(); return; }
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable" });

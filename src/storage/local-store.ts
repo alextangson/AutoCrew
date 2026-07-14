@@ -12,6 +12,19 @@ export interface Topic {
   reason?: string;
   /** 证据链接（雷达原文/对标文章），派活时随 brief 下发 */
   link?: string;
+  /** 海外源/项目的原始标题；title 保存加工后的中文可写选题。 */
+  originalTitle?: string;
+  /** 选题综合分 0-100。 */
+  score?: number;
+  scoreBreakdown?: {
+    audienceFit: number;
+    materialRichness: number;
+    novelty: number;
+    timeliness: number;
+  };
+  /** 可以直接派给写手展开的角度。 */
+  angles?: string[];
+  scoredAt?: string;
   createdAt: string;
   /** 软删除时间戳(回收站语义,qingmo 设计细节);null/缺省 = 活跃 */
   deletedAt?: string | null;
@@ -26,6 +39,8 @@ export interface Asset {
 
 export interface ContentVersion {
   version: number;
+  /** 该版本对应的标题；旧数据可能缺失。 */
+  title?: string;
   body: string;
   note?: string;
   savedAt: string;
@@ -137,8 +152,14 @@ export interface CoverVariant {
   label: "a" | "b" | "c";
   /** Full image generation prompt used */
   imagePrompt?: string;
-  /** Visual style: cinematic, minimalist, bold-impact */
+  /** Content-specific art direction, not a fixed template name */
   style?: string;
+  /** Unique visual idea/metaphor for this candidate */
+  creativeConcept?: string;
+  /** Production medium, e.g. documentary photo / paper collage */
+  visualMedium?: string;
+  /** Color and material direction */
+  palette?: string;
   /** Chinese title text on the cover (2-9 chars) */
   titleText?: string;
   /** Generated image paths by aspect ratio */
@@ -176,6 +197,11 @@ export interface CoverVariant {
 
 export interface CoverReview {
   platform: string;
+  /** Whether concepts came from the LLM art director or the rotating local fallback pool */
+  designSource?: "designer" | "hybrid" | "rules";
+  /** 候选目标数与逐张失败原因；部分成功也必须可见、可选。 */
+  expectedVariantCount?: number;
+  generationErrors?: string[];
   /** 候选生成时选定的主比例(横屏 16:9/4:3 = B站/抖音PC;2.35:1 = 公众号超宽横幅);缺省 3:4 */
   primaryRatio?: "3:4" | "16:9" | "4:3" | "2.35:1";
   status: "review_pending" | "approved" | "publish_ready";
@@ -253,6 +279,19 @@ async function writeTopic(topic: Topic, dataDir?: string): Promise<void> {
   await fs.writeFile(path.join(dir, `${topic.id}.json`), JSON.stringify(topic, null, 2), "utf-8");
 }
 
+/** 更新灵感加工结果（中文标题、评分、角度等）；id/createdAt 不允许被覆盖。 */
+export async function updateTopic(
+  id: string,
+  updates: Partial<Omit<Topic, "id" | "createdAt">>,
+  dataDir?: string,
+): Promise<Topic | null> {
+  const topic = await getTopic(id, dataDir);
+  if (!topic) return null;
+  const next: Topic = { ...topic, ...updates, id: topic.id, createdAt: topic.createdAt };
+  await writeTopic(next, dataDir);
+  return next;
+}
+
 /** 选题移入回收站(软删除,可恢复)。不存在 → null */
 export async function softDeleteTopic(id: string, dataDir?: string): Promise<Topic | null> {
   const topic = await getTopic(id, dataDir);
@@ -312,7 +351,7 @@ export async function saveContent(
     publishUrl: content.publishUrl ?? null,
     performanceData: content.performanceData ?? {},
     assets: [],
-    versions: [{ version: 1, body: content.body, note: "初稿", savedAt: now }],
+    versions: [{ version: 1, title: content.title, body: content.body, note: "初稿", savedAt: now }],
     createdAt: now,
     updatedAt: now,
   };
@@ -444,7 +483,9 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
   }
 }
 
-export async function updateContent(id: string, updates: Partial<Content>, dataDir?: string): Promise<Content | null> {
+export type ContentUpdates = Partial<Content> & { _versionNote?: string };
+
+export async function updateContent(id: string, updates: ContentUpdates, dataDir?: string): Promise<Content | null> {
   if (!isContentId(id)) return null;
   const projDir = path.join(getDataDir(dataDir), "contents", id);
   const metaPath = path.join(projDir, "meta.json");
@@ -453,20 +494,23 @@ export async function updateContent(id: string, updates: Partial<Content>, dataD
     const existing: Content = JSON.parse(raw);
     const now = new Date().toISOString();
 
-    // If body changed, create a new version
-    if (updates.body && updates.body !== existing.body) {
+    // 正文或标题变化都形成新版本；版本不再只记录 body，标题优化也可追溯。
+    const bodyChanged = updates.body !== undefined && updates.body !== existing.body;
+    const titleChanged = updates.title !== undefined && updates.title !== existing.title;
+    if (bodyChanged || titleChanged) {
       const nextVersion = (existing.versions?.length || 0) + 1;
       const versionEntry: ContentVersion = {
         version: nextVersion,
-        body: updates.body,
-        note: (updates as any)._versionNote || `第 ${nextVersion} 版`,
+        title: updates.title ?? existing.title,
+        body: updates.body ?? existing.body,
+        note: updates._versionNote || `第 ${nextVersion} 版`,
         savedAt: now,
       };
       existing.versions = [...(existing.versions || []), versionEntry];
       // Write version snapshot
       await fs.writeFile(
         path.join(projDir, "versions", `v${nextVersion}.md`),
-        updates.body,
+        versionEntry.body,
         "utf-8",
       );
     }
@@ -638,9 +682,17 @@ export async function getVersion(contentId: string, version: number, dataDir?: s
 }
 
 export async function revertToVersion(contentId: string, version: number, dataDir?: string): Promise<Content | null> {
-  const body = await getVersion(contentId, version, dataDir);
-  if (!body) return null;
-  return updateContent(contentId, { body, _versionNote: `回滚到 v${version}` } as any, dataDir);
+  const [body, versions] = await Promise.all([
+    getVersion(contentId, version, dataDir),
+    listVersions(contentId, dataDir),
+  ]);
+  if (body === null) return null;
+  const target = versions.find((item) => item.version === version);
+  return updateContent(
+    contentId,
+    { body, ...(target?.title ? { title: target.title } : {}), _versionNote: `回滚到 v${version}` },
+    dataDir,
+  );
 }
 
 // --- Cover review ---

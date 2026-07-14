@@ -490,7 +490,10 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
   }
 
   const finalMessage =
-    [...messages].reverse().find((m) => m.role === "assistant" && m.content != null)?.content ?? "(no content)";
+    [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim() !== "")
+      ?.content ?? "(no content)";
 
   return { finalMessage, turns, totalTokens, toolCallCount, stopReason };
 }

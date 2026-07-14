@@ -79,12 +79,17 @@ export async function startCoverJob(
         action,
         _dataDir: dataDir,
         ...prep.inject,
-      })) as { ok?: boolean; error?: string; warnings?: string[]; details?: string[]; designSource?: string };
+      })) as { ok?: boolean; error?: string; warnings?: string[]; details?: string[]; designSource?: string; generated?: number; failed?: number };
       if (result.ok) {
         const warn = result.warnings?.length ? `(${result.warnings[0].slice(0, 40)})` : "";
         // 静默降级要有声:LLM 设计师没跑成时,创始人得知道拿到的是规则版
-        const fallback = result.designSource === "rules" ? "(规则版兜底——LLM 设计师未跑成,详见运行日志)" : "";
-        emit("run_done", labels.done + warn + fallback);
+        const fallback = result.designSource === "rules"
+          ? "(规则版兜底——LLM 设计师未跑成,详见运行日志)"
+          : result.designSource === "hybrid"
+            ? "(已保留模型成功方案,缺位由本地创意补齐)"
+            : "";
+        const partial = result.failed ? `(生图 ${result.generated ?? 0}/3 成功,失败项可重试)` : "";
+        emit("run_done", labels.done + partial + warn + fallback);
       } else {
         // 观测盲区修复:全败时把第一条 per-variant 真实报错透进事件,别只剩一句 All failed
         const detail = result.details?.length ? `——${String(result.details[0]).slice(0, 160)}` : "";

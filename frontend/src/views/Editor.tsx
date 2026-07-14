@@ -9,12 +9,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 // 中文写作常见的「**小标题。**正文」在 CommonMark 里闭合失败（标点+汉字紧邻），此插件修正
 import remarkCjkFriendly from "remark-cjk-friendly";
-import { invoke } from "../transport";
+import { invoke, subscribeEvents } from "../transport";
 import { toast, confirmDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { SelectionBar } from "./SelectionBar";
 import { CoverPanel } from "./CoverPanel";
+import { ArticleImagesPanel } from "./ArticleImagesPanel";
 import { platformLabel, VARIANT_STATUS, VIDEO_PLATFORMS, type Content } from "../lib";
+import { compareVersions, isGenericVersionNote, type VersionLike } from "../version-diff";
 
 interface PendingEdit {
   before: string;
@@ -40,11 +42,14 @@ export function Editor(props: { id: string; back: () => void }) {
   const [body, setBody] = useState("");
   const [note, setNote] = useState("");
   const [allowed, setAllowed] = useState<string[]>([]);
-  const [versions, setVersions] = useState<Array<{ version: number; note?: string; savedAt: string }>>([]);
+  const [nextStatus, setNextStatus] = useState("");
+  const [versions, setVersions] = useState<VersionLike[]>([]);
+  const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [rewriting, setRewriting] = useState(false);
   const [pending, setPending] = useState<PendingEdit | null>(null);
+  const [articleImagesOpen, setArticleImagesOpen] = useState(true);
   const [clip, setClip] = useState<{ copyText: string; publishUrl: string; fromVideoKit?: boolean } | null>(null);
   const [metrics, setMetrics] = useState<{ views: string; likes: string; comments: string }>({ views: "", likes: "", comments: "" });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
@@ -77,11 +82,26 @@ export function Editor(props: { id: string; back: () => void }) {
       invoke("content:allowed_transitions", { id: props.id }),
       invoke("content:versions", { id: props.id }),
     ]);
-    setAllowed(((at as Record<string, unknown>).allowedTransitions ?? []) as string[]);
+    const transitions = ((at as Record<string, unknown>).allowedTransitions ?? []) as string[];
+    setAllowed(transitions);
+    setNextStatus((current) => transitions.includes(current) ? current : (transitions[0] ?? ""));
     setVersions((((vr as Record<string, unknown>).data ?? {}) as { versions?: typeof versions }).versions ?? []);
   };
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.id]);
+  useEffect(() => {
+    let timer: number | undefined;
+    const off = subscribeEvents((event) => {
+      if (event.kind !== "engine" || event.data.contentId !== props.id) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void load(), 180);
+    });
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      off();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.id]);
 
@@ -150,9 +170,9 @@ export function Editor(props: { id: string; back: () => void }) {
     if (!r.ok) return toast(r.error ?? "记录失败");
     const stats = (r as { stats?: { rate: number | null; judged: number; adopted: number; lightEdit: number } }).stats;
     toast(
-      "已记录裁决" +
+      "反馈已记录——团队会据此学习你的标准" +
         (stats && stats.rate !== null && stats.judged > 0
-          ? ` · 采纳率 ${Math.round(stats.rate * 100)}%（${stats.adopted + stats.lightEdit}/${stats.judged}）`
+          ? ` · 可用率 ${Math.round(stats.rate * 100)}%（${stats.adopted + stats.lightEdit}/${stats.judged}）`
           : ""),
     );
     void load();
@@ -167,7 +187,7 @@ export function Editor(props: { id: string; back: () => void }) {
   const pushWechat = async () => {
     const yes = await confirmDialog({
       title: "推送到公众号草稿箱?",
-      body: "会生成文章配图并调用发布脚本,约 2 分钟;只进草稿箱,最后群发仍由你在公众号后台确认。",
+      body: "会复用你在「正文配图」里已经确认的图片并调用发布脚本；只进草稿箱，最后群发仍由你在公众号后台确认。",
       confirmLabel: "推送",
     });
     if (!yes) return;
@@ -175,7 +195,7 @@ export function Editor(props: { id: string; back: () => void }) {
     if (!approval.ok || typeof approval.approvalToken !== "string") {
       return toast(approval.error ?? "发布前检查未通过");
     }
-    toast("推送中——生成配图约 2 分钟,完成后看提示");
+    toast("推送中——正在复用正文配图并排版,完成后看提示");
     const r = await invoke("publish:wechat_draft", {
       content_id: props.id,
       approval_token: approval.approvalToken,
@@ -184,34 +204,42 @@ export function Editor(props: { id: string; back: () => void }) {
     toast("已进草稿箱:" + ((r as { nextStep?: string }).nextStep ?? "去公众号后台检查"));
   };
 
-  const ADOPT: Array<[string, string]> = [["adopted", "采纳"], ["light_edit", "轻改采纳"], ["rewritten", "重写"]];
+  const ADOPT: Array<[string, string]> = [
+    ["adopted", "直接能用"],
+    ["light_edit", "小改后能用"],
+    ["rewritten", "基本要重写"],
+  ];
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
+  const transitionNext = async () => {
+    if (!nextStatus) return;
+    if (dirty) return toast("有未保存的改动——先保存或撤销再流转");
+    const r = await invoke("content:transition", { id: props.id, target_status: nextStatus });
+    if (!r.ok) return toast(r.error ?? "流转失败");
+    toast("已流转到「" + (VARIANT_STATUS[nextStatus] ?? nextStatus) + "」");
+    void load();
+  };
 
   return (
     <div className="editor">
       <div className="board-bar">
         <button onClick={props.back}>← 看板</button>
         <span className="mono muted">{platformLabel(c.platform)} · {VARIANT_STATUS[c.status] ?? c.status}</span>
-        {allowed.map((s) => (
-          <button
-            key={s}
-            onClick={async () => {
-              if (dirty) return toast("有未保存的改动——先保存或撤销再流转");
-              const r = await invoke("content:transition", { id: props.id, target_status: s });
-              if (!r.ok) return toast(r.error ?? "流转失败");
-              toast("已流转到「" + (VARIANT_STATUS[s] ?? s) + "」");
-              void load();
-            }}
-          >
-            → {VARIANT_STATUS[s] ?? s}
-          </button>
-        ))}
+        {allowed.length > 0 && (
+          <span className="ed-next-action">
+            <select value={nextStatus} onChange={(event) => setNextStatus(event.target.value)}>
+              {allowed.map((status) => <option key={status} value={status}>{VARIANT_STATUS[status] ?? status}</option>)}
+            </select>
+            <button onClick={() => void transitionNext()}>推进 →</button>
+          </span>
+        )}
       </div>
 
       {c.lastError && (
         <div className="ed-error">
           ⚠️ 上次生成中断：{String(c.lastError).slice(0, 120)}{" "}
-          <button onClick={() => { send(`用选题《${(c.title || "").replace(/^［生成中断］|^［生成中］/, "")}》重新写一篇${platformLabel(c.platform)}原生版本`); toast("已派给总编辑重写"); }}>
+          <button onClick={() => void send(`用选题《${(c.title || "").replace(/^［生成中断］|^［生成中］/, "")}》重新写一篇${platformLabel(c.platform)}原生版本`).then((receipt) => {
+            toast(receipt.ok ? "重写任务已受理" : (receipt.error ?? "派活失败"));
+          })}>
             重新生成
           </button>
         </div>
@@ -259,25 +287,46 @@ export function Editor(props: { id: string; back: () => void }) {
         </button>
       </div>
 
-      <div className="ed-section">
-        <span className="mono muted ed-label">采纳裁决：</span>
-        {ADOPT.map(([v, label]) => (
-          <AdoptButton key={v} verdict={v} label={label} current={c.adoption?.verdict} submit={submitAdoption} />
-        ))}
-      </div>
+      <details className="ed-tools">
+        <summary>这篇稿子好不好用？{c.adoption?.verdict ? ` · ${ADOPT.find(([value]) => value === c.adoption?.verdict)?.[1] ?? "已反馈"}` : ""}</summary>
+        <p className="muted adoption-guide">
+          成稿后选一次：它只会告诉编辑部这版是否达到你的标准，用来改进后续写作；不会自动改正文，也不会发布。
+        </p>
+        <div className="ed-section">
+          {ADOPT.map(([v, label]) => (
+            <AdoptButton key={v} verdict={v} label={label} current={c.adoption?.verdict} submit={submitAdoption} />
+          ))}
+        </div>
+      </details>
 
-      <div className="ed-section">
-        <span className="mono muted ed-label">发布：</span>
-        <button onClick={() => void doClipboard()}>排版发布文案</button>
-        {c.platform === "wechat_mp" && <button onClick={() => void pushWechat()}>推公众号草稿箱</button>}
-        {isVideo && (
-          <button onClick={() => { send(`给稿件 ${props.id} 备视频发布件(平台标题+发布文案+分镜+封面)`); toast("发布员开工——看右侧对话"); }}>
-            备视频发布件{c.videoKit ? "(已有,重新生成)" : ""}
-          </button>
-        )}
-      </div>
+      <details className="ed-tools">
+        <summary>封面设计</summary>
+        <CoverPanel contentId={props.id} platform={c.platform} />
+      </details>
 
-      <CoverPanel contentId={props.id} platform={c.platform} />
+      <details
+        className="ed-tools"
+        open={articleImagesOpen}
+        onToggle={(event) => setArticleImagesOpen(event.currentTarget.open)}
+      >
+        <summary>正文配图 · {[...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length} 个位置</summary>
+        <ArticleImagesPanel contentId={props.id} dirty={dirty} />
+      </details>
+
+      <details className="ed-tools">
+        <summary>发布与分发</summary>
+        <div className="ed-section">
+          <button onClick={() => void doClipboard()}>排版发布文案</button>
+          {c.platform === "wechat_mp" && <button onClick={() => void pushWechat()}>推公众号草稿箱</button>}
+          {isVideo && (
+            <button onClick={() => void send(`给稿件 ${props.id} 备视频发布件(平台标题+发布文案+分镜+封面)`).then((receipt) => {
+              toast(receipt.ok ? "发布件任务已受理——看右侧对话" : (receipt.error ?? "派活失败"));
+            })}>
+              备视频发布件{c.videoKit ? "(已有,重新生成)" : ""}
+            </button>
+          )}
+        </div>
+      </details>
 
       {clip && (
         <div className="pending-edit">
@@ -339,30 +388,75 @@ export function Editor(props: { id: string; back: () => void }) {
         </div>
       )}
 
-      <AssetsSection contentId={props.id} assets={(c as unknown as { assets?: Array<{ filename: string; type: string; description?: string }> }).assets ?? []} reload={load} />
+      <details className="ed-tools">
+        <summary>素材附件</summary>
+        <AssetsSection contentId={props.id} assets={(c as unknown as { assets?: Array<{ filename: string; type: string; description?: string }> }).assets ?? []} reload={load} />
+      </details>
 
       {versions.length > 0 && (
-        <div className="ed-versions">
-          <div className="mono muted">版本（{versions.length}）</div>
-          {[...versions].reverse().slice(0, 8).map((v) => (
-            <div key={v.version} className="row">
-              <span className="mono pri">v{v.version}</span>
-              <span className="row-title muted">{versionNoteLabel(v.note)}</span>
-              {v.version !== versions.length && (
-                <button
-                  onClick={async () => {
-                    if (dirty) return toast("有未保存的改动——先保存再回滚");
-                    const r = await invoke("content:revert", { id: props.id, version: v.version });
-                    toast(r.ok ? `已回滚到 v${v.version}(生成新版本快照)` : (r.error ?? "回滚失败"));
-                    if (r.ok) void load();
-                  }}
-                >
-                  回滚到此版
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
+        <details className="ed-tools ed-version-tools">
+          <summary>版本记录 · {versions.length} 版</summary>
+          <div className="ed-versions">
+          <div className="ed-version-head">
+            <strong>版本记录</strong>
+            <span className="mono muted">共 {versions.length} 版 · 每次保存都会记录修改说明</span>
+          </div>
+          {[...versions].reverse().slice(0, 8).map((v) => {
+            const previous = versions.find((item) => item.version === v.version - 1);
+            const diff = compareVersions(previous, v);
+            const note = isGenericVersionNote(v.note) ? diff.summary : versionNoteLabel(v.note);
+            const expanded = expandedVersion === v.version;
+            return (
+              <div key={v.version} className="ed-version-card">
+                <div className="ed-version-row">
+                  <span className="mono ed-version-number">v{v.version}</span>
+                  <div className="ed-version-main">
+                    <strong>{note}</strong>
+                    {!isGenericVersionNote(v.note) && <span className="muted">{diff.summary}</span>}
+                    <span className="mono muted">{new Date(v.savedAt).toLocaleString("zh-CN", { hour12: false })}</span>
+                  </div>
+                  {v.version > 1 && (
+                    <button onClick={() => setExpandedVersion(expanded ? null : v.version)}>
+                      {expanded ? "收起差异" : "查看差异"}
+                    </button>
+                  )}
+                  {v.version !== versions.length && (
+                    <button
+                      onClick={async () => {
+                        if (dirty) return toast("有未保存的改动——先保存再回滚");
+                        const r = await invoke("content:revert", { id: props.id, version: v.version });
+                        toast(r.ok ? `已回滚到 v${v.version}(生成新版本快照)` : (r.error ?? "回滚失败"));
+                        if (r.ok) void load();
+                      }}
+                    >
+                      回滚
+                    </button>
+                  )}
+                </div>
+                {expanded && (
+                  <div className="ed-version-diff">
+                    {diff.titleChanged && previous?.title && v.title && (
+                      <div><span className="diff-del">− {previous.title}</span><span className="diff-add">＋ {v.title}</span></div>
+                    )}
+                    {diff.removed.slice(0, 6).map((text, index) => (
+                      <p key={`del-${index}`} className="diff-del">− {text}</p>
+                    ))}
+                    {diff.added.slice(0, 6).map((text, index) => (
+                      <p key={`add-${index}`} className="diff-add">＋ {text}</p>
+                    ))}
+                    {!diff.titleChanged && diff.removed.length === 0 && diff.added.length === 0 && (
+                      <p className="muted">与上一版正文一致。</p>
+                    )}
+                    {(diff.removed.length > 6 || diff.added.length > 6) && (
+                      <p className="mono muted">仅展示前 6 处差异。</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          </div>
+        </details>
       )}
     </div>
   );
@@ -388,16 +482,16 @@ function AdoptButton(props: {
   return (
     <span className="adopt-rw">
       <button className={isCurrent ? "chip chip-pub" : ""} onClick={() => setAsking((a) => !a)}>
-        {isCurrent ? "✓ " : ""}重写
+        {isCurrent ? "✓ " : ""}{props.label}
       </button>
       {asking && (
         <span className="adopt-reasons">
-          {([["style_mismatch", "风格不像"], ["factual_error", "事实错"], ["structure_bad", "结构差"]] as const).map(([v, txt]) => (
+          {([["style_mismatch", "风格不像"], ["factual_error", "有事实错误"], ["structure_bad", "结构不好"]] as const).map(([v, txt]) => (
             <button key={v} onClick={() => { setAsking(false); void props.submit("rewritten", v); }}>{txt}</button>
           ))}
           <input
             className="sel-input"
-            placeholder="或用你的话说哪里不行,回车记录"
+            placeholder="或写一句主要问题，回车记录"
             value={noteText}
             onChange={(e) => setNoteText(e.target.value)}
             onKeyDown={(e) => {
@@ -407,7 +501,7 @@ function AdoptButton(props: {
               }
             }}
           />
-          <button onClick={() => { setAsking(false); void props.submit("rewritten"); }}>跳过</button>
+          <button onClick={() => { setAsking(false); void props.submit("rewritten"); }}>只记录结果</button>
         </span>
       )}
     </span>

@@ -13,6 +13,19 @@ export default tseslint.config(
     },
   },
   {
+    files: ["bin/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        AbortController: "readonly",
+        clearTimeout: "readonly",
+        console: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+      },
+    },
+  },
+  {
     ignores: [
       "**/dist/**",
       "**/node_modules/**",

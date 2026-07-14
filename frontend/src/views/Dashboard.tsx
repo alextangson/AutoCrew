@@ -56,6 +56,11 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
   const [err, setErr] = useState<string | null>(null);
   const { runs, runOrder } = useRuns();
   const send = useChatSend();
+  const dispatch = (message: string) => {
+    void send(message).then((receipt) => {
+      if (!receipt.ok) toast(receipt.error ?? "派活失败");
+    });
+  };
 
   const load = () => {
     invoke("dashboard:summary").then((r) => {
@@ -135,7 +140,7 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
         </Card>
         <Card title="情报与派活">
           <p className="muted">按定位与画像主动出击,命中语义筛才入灵感库。</p>
-          <button onClick={() => send("按我的定位和受众画像,主动搜一轮灵感入库")}>派侦查员搜灵感</button>
+          <button onClick={() => dispatch("按我的定位和受众画像,主动搜一轮灵感入库")}>派侦查员搜灵感</button>
         </Card>
       </Zone>
 
@@ -159,7 +164,7 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
             d.inspirations.map((t) => (
               <div key={t.id} className="row">
                 <span className="row-title">{t.title}</span>
-                <button onClick={() => send(`用选题《${t.title}》写一篇。灵感库编号：${t.id}（开写时带上 topic_id）${t.reason ? `；入库理由：${t.reason}` : ""}`)}>
+                <button onClick={() => dispatch(`用选题《${t.title}》写一篇。灵感库编号：${t.id}（开写时带上 topic_id）${t.reason ? `；入库理由：${t.reason}` : ""}`)}>
                   开写
                 </button>
               </div>
@@ -180,7 +185,7 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
         </Card>
         <Card title="受众画像" kicker={persona.calibrated ? "已校准" : persona.summary ? "待确认" : "未建立"}>
           {persona.summary ? <p>{persona.summary}</p> : <p className="muted">还不知道你写给谁看——生成三层画像并确认一次。</p>}
-          <button className={persona.calibrated ? "" : "primary"} onClick={() => send("校准受众画像")}>
+          <button className={persona.calibrated ? "" : "primary"} onClick={() => dispatch("校准受众画像")}>
             {persona.calibrated ? "重新校准画像" : "生成并校准画像"}
           </button>
         </Card>

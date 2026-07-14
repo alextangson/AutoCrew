@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   parseRssItems,
   rankCandidates,
+  rankCandidatesScored,
   refreshTopicRadar,
   loadTopicCache,
   getTopicCandidates,
@@ -58,6 +59,17 @@ describe("rankCandidates", () => {
     ];
     const ranked = rankCandidates(items, "AI技术博主", 10);
     expect(ranked[0].title).toBe("OpenAI 发布新模型");
+  });
+
+  it("does not treat AI inside Airbnb as an AI token hit", () => {
+    const now = new Date().toISOString();
+    const items: RadarItem[] = [
+      { title: "Airbnb 分享 Kubernetes Sidecar 架构", link: "l1", source: "InfoQ", publishedAt: now },
+      { title: "AI Agent 调试方法", link: "l2", source: "InfoQ", publishedAt: now },
+    ];
+    const ranked = rankCandidatesScored(items, "AI", 10);
+    expect(ranked.find((r) => r.item.link === "l1")?.matchedTokens).toEqual([]);
+    expect(ranked.find((r) => r.item.link === "l2")?.matchedTokens).toContain("AI");
   });
 
   it("caps at limit and prefers recent items on tie", () => {
