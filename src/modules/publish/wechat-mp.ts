@@ -144,6 +144,18 @@ async function ensureVendorConfig(publishScript: string): Promise<void> {
   if (await fileExists(examplePath)) await fs.copyFile(examplePath, configPath);
 }
 
+/** publish.py 把失败原因(errcode / IP 白名单提示等)print 到 stdout；提取出来透给用户，
+ *  不吞成通用「failed」——系统保持透明（禁止静默）。 */
+function extractPublishFailure(stdout: string, stderr: string): string {
+  const lines = `${stdout}\n${stderr}`
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const meaningful = lines.filter((line) => /错误|errcode|白名单|失败|未配置|→/.test(line));
+  const picked = (meaningful.length ? meaningful : lines).slice(-3).join("；");
+  return picked ? `公众号推送失败：${picked}` : "公众号推送失败（脚本无输出）";
+}
+
 async function runCommand(
   command: string,
   args: string[],
@@ -447,6 +459,8 @@ export async function publishWechatMpDraft(
     stdout: publishResult.stdout,
     stderr: publishResult.stderr,
     command: displayCommand,
-    error: publishResult.code === 0 ? undefined : "WeChat draft publish failed",
+    error: publishResult.code === 0
+      ? undefined
+      : extractPublishFailure(publishResult.stdout, publishResult.stderr),
   };
 }
