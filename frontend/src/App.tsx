@@ -2,7 +2,7 @@
  * 双区壳(frontend-v2 A/B/C 期):主区 + 总编辑常驻右栏。
  * 原生视图:工作台/看板/编辑器/校准中心/数据回流/设置;素材库回 vanilla(D 期前迁)。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dashboard } from "./views/Dashboard";
 import { Board } from "./views/Board";
 import { Editor } from "./views/Editor";
@@ -12,6 +12,7 @@ import { ReportView } from "./views/Report";
 import { Library } from "./views/Library";
 import { Logs } from "./views/Logs";
 import { Campaigns } from "./views/Campaigns";
+import { Onboarding } from "./views/Onboarding";
 import { ChatDock } from "./chat/ChatDock";
 import { ToastHost, DialogHost, toast, openDialog } from "./ui";
 import { invoke } from "./transport";
@@ -43,7 +44,32 @@ const SECONDARY_NAV: Array<{ view: Route["view"]; label: string }> = [
 
 export function App() {
   const [route, setRoute] = useState<Route>({ view: "dashboard" });
+  const [gate, setGate] = useState<"checking" | "onboarding" | "ready">("checking");
   const active = route.view === "editor" ? "board" : route.view;
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const r = await invoke("settings:get");
+      if (!alive) return;
+      const data = r.ok ? (r.data as { configured?: boolean } | undefined) : undefined;
+      setGate(data?.configured === false ? "onboarding" : "ready");
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (gate === "checking") {
+    return (
+      <div className="onboard">
+        <span className="mono muted">正在检查引擎配置…</span>
+      </div>
+    );
+  }
+  if (gate === "onboarding") {
+    return <Onboarding onDone={() => setGate("ready")} />;
+  }
 
   return (
     <div className="shell">

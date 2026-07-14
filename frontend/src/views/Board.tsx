@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
-import { toast } from "../ui";
+import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import {
   BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
@@ -328,11 +328,29 @@ function Matrix(props: {
     toast(receipt.ok ? `已受理${receipt.actionId ? ` · ${receipt.actionId}` : ""}` : (receipt.error ?? "派活失败"));
   };
 
+  const renameTopic = async () => {
+    if (!t) return;
+    const v = await openDialog({
+      title: "改选题标题",
+      body: "改的是灵感库这条选题的标题(看板卡片显示用);不改已写稿件的正文标题。",
+      fields: [{ key: "title", label: "标题", initial: t.title, required: true, multiline: true }],
+      confirmLabel: "保存",
+    });
+    if (!v) return;
+    const next = v.title.trim();
+    if (!next || next === t.title) return;
+    const r = await invoke("topic:update", { id: t.id, title: next });
+    if (!r.ok) return toast((r as { error?: string }).error ?? "改名失败");
+    toast("已更新选题标题");
+    void props.reload();
+  };
+
   return (
     <div>
       <div className="board-bar">
         <button onClick={props.back}>← 看板</button>
         <span className="serif board-title">{title}</span>
+        {t && <button onClick={() => void renameTopic()}>改标题</button>}
       </div>
       {t && (
         <div className="matrix-detail">
