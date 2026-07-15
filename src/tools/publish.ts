@@ -161,6 +161,7 @@ export async function executePublish(
     imageBaseUrl: (params.image_base_url as string) || cfg.imageBaseUrl,
     imageModel: (params.image_model as string) || cfg.imageModel,
     wechatPublishScript: (params.wechat_publish_script as string) || cfg.wechatPublishScript,
+    apiProxy: (params.api_proxy as string) || cfg.apiProxy,
     preparedImages,
   });
 

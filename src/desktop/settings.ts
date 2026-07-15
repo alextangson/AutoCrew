@@ -123,6 +123,8 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         theme: cfg.theme ?? null,
         themes: await listWechatThemes(),
         author: cfg.author ?? null,
+        // 代理串含账密,只回状态不回显
+        apiProxyConfigured: Boolean(cfg.apiProxy),
         // 公众号绑定(给别人用的可视化配置):secret 永不回显,只回状态与掩码 appid
         wechatConfigured: Boolean(cfg.wechatAppId && cfg.wechatAppSecret),
         wechatAppIdMasked: cfg.wechatAppId ? maskKey(cfg.wechatAppId) : null,
@@ -146,6 +148,7 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     ["imageModel", "image_model"],
     ["theme", "theme"],
     ["author", "author"],
+    ["apiProxy", "api_proxy"],
     ["wechatAppId", "wechat_app_id"],
     ["wechatAppSecret", "wechat_app_secret"],
   ];

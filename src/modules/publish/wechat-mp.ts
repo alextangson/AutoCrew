@@ -43,6 +43,8 @@ export interface WechatMpDraftOptions {
   imageBaseUrl?: string;
   imageModel?: string;
   wechatPublishScript?: string;
+  /** 公众号 API 走的 HTTP 代理(固定出口):经 HTTPS_PROXY 注入 publish.py 子进程。 */
+  apiProxy?: string;
   /** 稿件页已审核/生成的正文配图，按 [IMAGE:] 出现顺序复用。 */
   preparedImages?: string[];
 }
@@ -62,7 +64,7 @@ export type WechatMpDraftResult = {
 
 /** 凭证/开关经环境变量传给 publish.py;半套凭证不注入(避免脚本进半配置态) */
 export function wechatPublishEnv(
-  opts: Pick<WechatMpDraftOptions, "wechatAppId" | "wechatAppSecret" | "openComment">,
+  opts: Pick<WechatMpDraftOptions, "wechatAppId" | "wechatAppSecret" | "openComment" | "apiProxy">,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   if (opts.wechatAppId && opts.wechatAppSecret) {
@@ -70,6 +72,13 @@ export function wechatPublishEnv(
     env.WECHAT_APP_SECRET = opts.wechatAppSecret;
   }
   if (opts.openComment) env.WECHAT_OPEN_COMMENT = "1";
+  // 固定出口:publish.py 用 requests,认 *_PROXY 环境变量(优先小写)。大小写都设最稳。
+  if (opts.apiProxy) {
+    env.HTTPS_PROXY = opts.apiProxy;
+    env.HTTP_PROXY = opts.apiProxy;
+    env.https_proxy = opts.apiProxy;
+    env.http_proxy = opts.apiProxy;
+  }
   return env;
 }
 
