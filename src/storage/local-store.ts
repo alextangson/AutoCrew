@@ -812,9 +812,11 @@ const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   // 现无 UI/通道,把它作为可达状态暴露 = 展示未转正员工（§7.4 红线）+ 掉进无工具死角。
   // 公众号发布链在发布时自动配封面（wechat-mp.ts）,P0 不需要此状态。
   // 保留 enum 与下面的出口给历史数据兜底;封面设计师转正时把 cover_pending 加回这里。
-  approved: ["publish_ready", "reviewing"],
+  // 「已审核/待发布」可直接拖到「已发布」= 人工标记已发布(创始人在公众号后台手动发完，
+  // 回看板归位)。这不触发真实推送——推送是「推 →」/publish 工具的事,这里只落状态+publishedAt。
+  approved: ["publish_ready", "reviewing", "published"],
   cover_pending: ["publish_ready", "approved"],
-  publish_ready: ["publishing", "approved"],
+  publish_ready: ["publishing", "approved", "published"],
   publishing: ["published", "publish_ready"],
   published: ["archived", "publish_ready"],
   archived: ["draft_ready"],
