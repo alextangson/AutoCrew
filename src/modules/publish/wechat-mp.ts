@@ -230,6 +230,16 @@ async function generateImage(
     }
   }
 
+  // 没配中转 → 退回外部脚本;但它是 ~/.openclaw 外部依赖,别的机器/清理后会缺。缺就给明确指引,
+  // 而不是抛一句 uv/脚本报错——自包含的正路是配生图中转(原生 HTTP,不依赖外部脚本)。
+  if (!(await fileExists(imageGeneratorScript))) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: `生图未就绪:未配置生图中转,且生图脚本不存在(${imageGeneratorScript})。请在「设置→发布」填生图 Key/端点(OpenAI 兼容中转)——原生生图不依赖外部脚本。`,
+    };
+  }
+
   const args = [
     "run",
     imageGeneratorScript,
