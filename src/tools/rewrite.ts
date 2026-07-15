@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { getContent, saveContent, updateContent } from "../storage/local-store.js";
-import { adaptPlatformDraft, type SupportedPlatform } from "../modules/writing/platform-rewrite.js";
+import { type SupportedPlatform } from "../modules/writing/platform-rewrite.js";
+import { adaptPlatformLLM } from "../modules/writing/platform-adapt-llm.js";
 import { generateForPlatform } from "../modules/writing/title-hashtag.js";
 
 export const rewriteSchema = Type.Object({
@@ -68,7 +69,8 @@ async function adaptOne(
   platform: SupportedPlatform,
   opts: { saveAsDraft?: boolean; topicId?: string; siblingIds?: string[]; dataDir?: string },
 ) {
-  const adapted = adaptPlatformDraft({ title, body, tags, targetPlatform: platform });
+  // LLM 按平台腔调重写(X 偏观点、小红书体验流…);引擎不可用自动落回机械兜底。
+  const adapted = await adaptPlatformLLM(title, body, tags, platform, opts.dataDir);
 
   // Generate title variants + hashtags
   const titleResult = generateForPlatform(adapted.title, platform, { tags });
