@@ -45,6 +45,8 @@ export function Editor(props: { id: string; back: () => void }) {
   const proposal = useRevisionProposal();
   const [articleImagesOpen, setArticleImagesOpen] = useState(true);
   const [clip, setClip] = useState<{ copyText: string; publishUrl: string; fromVideoKit?: boolean } | null>(null);
+  const [digestText, setDigestText] = useState("");
+  const [digestBusy, setDigestBusy] = useState(false);
   const [metrics, setMetrics] = useState<{ views: string; likes: string; comments: string }>({ views: "", likes: "", comments: "" });
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const send = useChatSend();
@@ -57,6 +59,7 @@ export function Editor(props: { id: string; back: () => void }) {
     if (!r.ok) return toast(r.error ?? "加载稿件失败");
     const content = (r as unknown as { content: Content }).content;
     setC(content);
+    setDigestText(content.digest ?? "");
     // 本地暂存恢复:比 store 新才提示(防呆——刷新/崩溃不丢打了一半的字)
     let restored = false;
     try {
@@ -343,6 +346,41 @@ export function Editor(props: { id: string; back: () => void }) {
         <div className="ed-section">
           <button onClick={() => void doClipboard()}>排版发布文案</button>
           {c.platform === "wechat_mp" && <button onClick={() => void pushWechat()}>推公众号草稿箱</button>}
+          {c.platform === "wechat_mp" && (
+            <div className="ed-digest">
+              <span className="mono muted">公众号摘要(≤20 字·分享卡/列表标题下显示;留空微信自动截正文前 54 字)</span>
+              <input
+                className="sel-input"
+                maxLength={30}
+                value={digestText}
+                placeholder="一句钩子,≤20 字"
+                onChange={(e) => setDigestText(e.target.value)}
+              />
+              <div className="row-actions">
+                <span className="mono muted">{digestText.length}/20</span>
+                <button
+                  disabled={digestBusy}
+                  onClick={async () => {
+                    setDigestBusy(true);
+                    try {
+                      const r = await invoke("publish:digest", { content_id: props.id });
+                      if (!r.ok) { toast(r.error ?? "生成摘要失败"); return; }
+                      setDigestText(((r as { data?: { digest?: string } }).data?.digest) ?? "");
+                      toast("摘要已生成并保存");
+                    } finally { setDigestBusy(false); }
+                  }}
+                >{digestBusy ? "生成中…" : "AI 生成"}</button>
+                <button
+                  disabled={digestText.trim() === (c.digest ?? "")}
+                  onClick={async () => {
+                    const r = await invoke("publish:digest", { content_id: props.id, digest: digestText.trim() });
+                    toast(r.ok ? "摘要已保存" : (r.error ?? "保存失败"));
+                    if (r.ok) void load();
+                  }}
+                >保存</button>
+              </div>
+            </div>
+          )}
           {isVideo && (
             <button onClick={() => void send(`给稿件 ${props.id} 备视频发布件(平台标题+发布文案+分镜+封面)`).then((receipt) => {
               toast(receipt.ok ? "发布件任务已受理——看右侧对话" : (receipt.error ?? "派活失败"));

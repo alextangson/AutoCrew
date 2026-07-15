@@ -46,6 +46,7 @@ describe("IPC_CHANNELS", () => {
     "content:list",
     "content:get",
     "publish:clipboard",
+    "publish:digest",
     "publish:confirm",
     "publish:request_wechat",
     "publish:wechat_draft",
@@ -128,8 +129,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 100 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(100);
+  it("has exactly 101 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(101);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -186,6 +187,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     ["content:list", "list"],
     ["content:get", "get"],
     ["publish:clipboard", "clipboard"],
+    ["publish:digest", "digest"],
     ["publish:confirm", "confirm_published"],
     ["flywheel:import_csv", "import_csv"],
     ["content:adoption", "adoption"],

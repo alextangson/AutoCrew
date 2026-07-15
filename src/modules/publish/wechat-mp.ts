@@ -45,6 +45,8 @@ export interface WechatMpDraftOptions {
   wechatPublishScript?: string;
   /** 公众号 API 走的 HTTP 代理(固定出口):经 HTTPS_PROXY 注入 publish.py 子进程。 */
   apiProxy?: string;
+  /** 公众号摘要(≤20 字):经 --digest 传给 publish.py,写进草稿 digest 字段。 */
+  digest?: string;
   /** 稿件页已审核/生成的正文配图，按 [IMAGE:] 出现顺序复用。 */
   preparedImages?: string[];
 }
@@ -397,6 +399,7 @@ export async function publishWechatMpDraft(
     "--author",
     options.author || "Lawrence",
     "--yes",
+    ...(options.digest ? ["--digest", options.digest] : []),
   ];
   const displayCommand = `uv run ${wechatPublishScript} ${scriptArgs.join(" ")}`;
 

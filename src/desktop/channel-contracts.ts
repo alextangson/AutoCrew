@@ -22,6 +22,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "content:list": [],
   "content:get": ["id"],
   "publish:clipboard": ["content_id"],
+  "publish:digest": ["content_id"],
   "publish:confirm": ["content_id"],
   "publish:request_wechat": ["content_id"],
   "publish:wechat_draft": ["content_id", "approval_token"],

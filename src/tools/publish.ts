@@ -8,12 +8,13 @@ import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/c
 import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
 import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
+import { generateAndSaveDigest } from "../modules/publish/digest.js";
 
 export const publishSchema = Type.Object({
-  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "confirm_published">({
+  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "confirm_published" | "digest">({
     type: "string",
-    enum: ["wechat_mp_draft", "clipboard", "confirm_published"],
-    description: "Publish action. 'wechat_mp_draft' for WeChat MP, 'clipboard' for copy-paste publishing, 'confirm_published' to mark content as published.",
+    enum: ["wechat_mp_draft", "clipboard", "confirm_published", "digest"],
+    description: "Publish action. 'wechat_mp_draft' for WeChat MP, 'clipboard' for copy-paste, 'confirm_published' to mark published, 'digest' to generate+save a ≤20-char WeChat 摘要.",
   }),
   article_path: Type.Optional(Type.String({ description: "Absolute or relative path to the markdown article file." })),
   content_id: Type.Optional(Type.String({ description: "AutoCrew content id. If provided, draft.md will be used." })),
@@ -30,6 +31,7 @@ export const publishSchema = Type.Object({
   hashtags: Type.Optional(Type.Array(Type.String(), { description: "Hashtags for the content. Overrides content hashtags if provided." })),
   publish_url: Type.Optional(Type.String({ description: "The URL where content was published (for confirm_published action)." })),
   force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
+  digest: Type.Optional(Type.String({ description: "For 'digest' action: manual 摘要 to save (empty clears it). Omit to AI-generate." })),
 });
 
 export async function executePublish(
@@ -63,6 +65,24 @@ export async function executePublish(
     return { ok: true, data: output };
   }
 
+  // --- digest: 生成(默认) 或 手动保存(带 digest 参数) 一条 ≤20 字公众号摘要 ---
+  if (action === "digest") {
+    const contentId = params.content_id as string | undefined;
+    if (!contentId) return { ok: false, error: "content_id is required for digest action" };
+    const manual = typeof params.digest === "string" ? params.digest.trim().slice(0, 40) : undefined;
+    try {
+      if (manual !== undefined) {
+        const updated = await updateContent(contentId, { digest: manual }, dataDir);
+        if (!updated) return { ok: false, error: `Content not found: ${contentId}` };
+        return { ok: true, data: { digest: manual } };
+      }
+      const { digest } = await generateAndSaveDigest(contentId, dataDir);
+      return { ok: true, data: { digest } };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   // --- confirm_published: mark content as published after manual paste ---
   if (action === "confirm_published") {
     const contentId = params.content_id as string | undefined;
@@ -94,6 +114,7 @@ export async function executePublish(
   let articlePath: string;
   let gateText: string;
   let preparedImages: string[] | undefined;
+  let digest: string | undefined;
 
   if (contentId) {
     const content = await getContent(contentId, dataDir);
@@ -102,6 +123,7 @@ export async function executePublish(
     articlePath = path.join(dataDir, "contents", content.id, "draft.md");
     await fs.writeFile(articlePath, `# ${content.title}\n\n${content.body}\n`, "utf-8");
     gateText = `${content.title}\n\n${content.body}`;
+    digest = content.digest;
     const bodyImages = await preparedArticleImages(contentId, dataDir);
     if (!bodyImages.ok) return bodyImages;
     preparedImages = bodyImages.paths;
@@ -162,6 +184,7 @@ export async function executePublish(
     imageModel: (params.image_model as string) || cfg.imageModel,
     wechatPublishScript: (params.wechat_publish_script as string) || cfg.wechatPublishScript,
     apiProxy: (params.api_proxy as string) || cfg.apiProxy,
+    digest,
     preparedImages,
   });
 

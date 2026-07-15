@@ -15,6 +15,7 @@ export const IPC_CHANNELS = [
   "content:list",
   "content:get",
   "publish:clipboard",
+  "publish:digest",
   "publish:confirm",
   "publish:request_wechat",
   "publish:wechat_draft",

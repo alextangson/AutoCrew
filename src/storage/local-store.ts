@@ -120,6 +120,8 @@ export interface Content {
   id: string;
   title: string;
   body: string;
+  /** 公众号摘要(≤20 字钩子):发布时写进草稿 digest 字段,可在发布面板生成/编辑。 */
+  digest?: string;
   platform?: string;
   topicId?: string;
   status: ContentStatus;

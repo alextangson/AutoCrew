@@ -216,7 +216,7 @@ def replace_all_images(html, article_dir, token):
     return html, replaced, failed
 
 
-def push_draft(token, title, content, thumb_media_id, author="小互", source_url=""):
+def push_draft(token, title, content, thumb_media_id, author="小互", source_url="", digest=""):
     """推送文章到草稿箱"""
     url = f"https://api.weixin.qq.com/cgi-bin/draft/add?access_token={token}"
 
@@ -228,6 +228,7 @@ def push_draft(token, title, content, thumb_media_id, author="小互", source_ur
                 "content": content,
                 "content_source_url": source_url,
                 "thumb_media_id": thumb_media_id,
+                "digest": digest,
                 "need_open_comment": 1 if os.environ.get("WECHAT_OPEN_COMMENT") == "1" else 0,
                 "only_fans_can_comment": 0,
             }
@@ -302,6 +303,8 @@ def main():
                         help="作者名")
     parser.add_argument("--source-url", "-s", default="",
                         help="原文链接（content_source_url，公众号文末「阅读原文」按钮指向）")
+    parser.add_argument("--digest", default="",
+                        help="公众号摘要（≤20 字，显示在分享卡/列表标题下方）；空则微信自动截取正文前 54 字")
     parser.add_argument("--dry-run", action="store_true",
                         help="只做排版和图片上传，不推送草稿箱（用于测试）")
     parser.add_argument("--yes", "-y", action="store_true",
@@ -454,7 +457,7 @@ def main():
         return
 
     print(f"\n推送到草稿箱...")
-    media_id = push_draft(token, title, html, thumb_media_id, author, args.source_url)
+    media_id = push_draft(token, title, html, thumb_media_id, author, args.source_url, args.digest)
 
     if media_id:
         print(f"\n{'='*40}")

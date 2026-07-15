@@ -76,6 +76,7 @@ export interface Content {
   id: string;
   title: string;
   body: string;
+  digest?: string;
   platform: string;
   status: string;
   topicId?: string;
