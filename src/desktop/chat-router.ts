@@ -24,7 +24,7 @@ import { prepareVideoKit } from "../modules/publish/video-kit.js";
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
-import { saveTopic, type Topic } from "../storage/local-store.js";
+import { saveTopic, listSiblings, type Topic } from "../storage/local-store.js";
 import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
 import { startGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
 import { reviseDraft, type ReviseDraftResult } from "../modules/writing/draft-revision.js";
@@ -142,6 +142,11 @@ const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bi
 const PLATFORM_LABELS: Record<string, string> = {
   wechat_mp: "公众号", douyin: "抖音", xiaohongshu: "小红书", wechat_video: "视频号",
   bilibili: "B站", twitter: "X (Twitter)", instagram: "Instagram", reddit: "Reddit", toutiao: "头条",
+};
+
+/** 平台表达习惯:派生/改写到该平台时注入,让输出是平台原生腔调而非机械套原文结构。 */
+const PLATFORM_VOICE: Record<string, string> = {
+  twitter: "X/Twitter 偏观点输出:首行即钩子、短、金句密度高、少铺陈论证——一条立得住的判断胜过完整论述,长了拆 thread。",
 };
 
 /** "web_search: https://github.com/x/y" → "github.com" (clean source label for cards) */
@@ -957,8 +962,23 @@ export async function runChatTurn(params: {
 
   // 视图上下文拼进本轮 userMessage（§C1）:只发模型,不进持久历史（chat-persist 存原文）
   const ctx = params.viewContext;
+  // 兄弟稿注入:总编辑要能看到同主题的其他平台稿件,才能从已过审的那篇派生(不用再问用户要 id)。
+  let siblingLine = "";
+  if (ctx?.contentId) {
+    try {
+      const sibs = await listSiblings(ctx.contentId, params.dataDir);
+      if (sibs.length > 0) {
+        const list = sibs
+          .map((s) => `${(s.platform && PLATFORM_LABELS[s.platform]) || s.platform || "未分平台"}(id: ${s.id}，状态: ${s.status})`)
+          .join("；");
+        siblingLine = `\n本主题的其他平台稿件（同选题兄弟稿）：${list}。做一稿多发/派生时优先用 get_draft 读同主题「已过审(approved)」的那篇,从它的内容按目标平台的腔调重写(别机械套原文结构),别凭空另写。`;
+      }
+    } catch { /* 兄弟稿加载失败不阻断对话 */ }
+  }
+  // 当前平台腔调:让派生/改写贴平台表达习惯(如 X 偏观点),而非把长文照搬。
+  const voiceLine = ctx?.platform && PLATFORM_VOICE[ctx.platform] ? `\n当前平台腔调:${PLATFORM_VOICE[ctx.platform]}` : "";
   const userMessage = ctx?.contentId
-    ? `【当前上下文】用户正打开稿件《${ctx.contentTitle || "无标题"}》（id: ${ctx.contentId}${ctx.platform ? `，平台: ${ctx.platform}` : ""}）——「这篇」「开头」等指代默认指它，可用 get_draft 读全文。\n\n${params.message}`
+    ? `【当前上下文】用户正打开稿件《${ctx.contentTitle || "无标题"}》（id: ${ctx.contentId}${ctx.platform ? `，平台: ${ctx.platform}` : ""}）——「这篇」「开头」等指代默认指它，可用 get_draft 读全文。${siblingLine}${voiceLine}\n\n${params.message}`
     : params.message;
 
   try {
