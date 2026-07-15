@@ -339,9 +339,11 @@ switch (command) {
     const uvOk = !spawnSync("uv", ["--version"], { stdio: "ignore" }).error;
     // 生图就绪:配了中转(原生 HTTP 生图,自包含)→ 封面/正文图不依赖 ~/.openclaw 外部脚本。
     let imageRelay = false;
+    let apiProxySet = false;
     try {
       const pub = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "publish.json"), "utf-8")).wechatMp || {};
       imageRelay = Boolean(pub.imageBaseUrl && pub.imageApiKey);
+      apiProxySet = Boolean(pub.apiProxy);
     } catch {}
 
     const checks = {
@@ -361,7 +363,8 @@ switch (command) {
       Object.entries(checks).map(([key, value]) => `${value ? "✓" : "✕"} ${key}: ${value}`).join("\n")
       + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
       + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh")
-      + (imageRelay ? "" : "\n  → 生图(封面/正文图)建议配中转：设置→发布 填生图 Key/端点(OpenAI 兼容)，原生生图不依赖外部脚本"),
+      + (imageRelay ? "" : "\n  → 生图(封面/正文图)建议配中转：设置→发布 填生图 Key/端点(OpenAI 兼容)，原生生图不依赖外部脚本")
+      + (apiProxySet ? "\n  公众号 API 代理已配（固定出口 IP，动态 IP 变动免疫 40164）" : ""),
     );
     if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
       || !checks.uv || !checks.wechatPublishScript) process.exitCode = 1;
