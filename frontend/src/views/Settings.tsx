@@ -78,7 +78,7 @@ export function Settings() {
   });
   const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
-  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; author: string | null; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean } | null>(null);
+  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean } | null>(null);
   const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "" });
   const [cover, setCover] = useState<{
     provider: string;
@@ -229,7 +229,15 @@ export function Settings() {
             <option value="0">关</option>
           </select>
         </label>
-        <Field label="排版主题" value={pForm.theme} placeholder={pub?.theme ?? "newspaper"} onChange={(v) => setPForm((f) => ({ ...f, theme: v }))} />
+        <label className="set-field">
+          <span className="mono muted">排版主题</span>
+          <select value={pForm.theme} onChange={(e) => setPForm((f) => ({ ...f, theme: e.target.value }))}>
+            <option value="">当前:{pub?.theme ?? "newspaper"}(不改)</option>
+            {(pub?.themes ?? []).map((t) => (
+              <option key={t.id} value={t.id}>{t.name}（{t.id}）</option>
+            ))}
+          </select>
+        </label>
         <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
         <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "" }))} />
       </Section>

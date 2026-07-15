@@ -111,6 +111,7 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
   }
   try {
     const { loadWechatMpConfig } = await import("../modules/publish/wechat-config.js");
+    const { listWechatThemes } = await import("../modules/publish/wechat-themes.js");
     const cfg = await loadWechatMpConfig((payload._dataDir as string) || undefined);
     return {
       ok: true,
@@ -120,6 +121,7 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         imageBaseUrl: cfg.imageBaseUrl ?? null,
         imageModel: cfg.imageModel ?? null,
         theme: cfg.theme ?? null,
+        themes: await listWechatThemes(),
         author: cfg.author ?? null,
         // 公众号绑定(给别人用的可视化配置):secret 永不回显,只回状态与掩码 appid
         wechatConfigured: Boolean(cfg.wechatAppId && cfg.wechatAppSecret),
