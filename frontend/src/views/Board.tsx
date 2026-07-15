@@ -226,8 +226,10 @@ export function Board(props: { openEditor: (id: string) => void }) {
               setDragOver(null);
               const id = e.dataTransfer.getData("text/autocrew-content");
               if (!id || !DROP_TARGET_STATUS[col.key]) return;
-              const r = await invoke("content:transition", { id, target_status: DROP_TARGET_STATUS[col.key] });
-              if (!r.ok) return toast(r.error ?? "流转失败(状态机拒绝了这一步)");
+              // 看板是人工工具:force 直落目标状态,允许自由拖(前进/跳阶/回退),不受流水线单步状态机约束。
+              // 拖到「已发布」只标记状态(+publishedAt),不触发真实推送——推送仍走「推 →」。
+              const r = await invoke("content:transition", { id, target_status: DROP_TARGET_STATUS[col.key], force: true });
+              if (!r.ok) return toast(r.error ?? "流转失败");
               toast("已流转到「" + col.label + "」");
               void load();
             }}
