@@ -67,6 +67,14 @@ describe("getRadarStatus", () => {
 
 describe("doRadarRefresh", () => {
   it("refreshes and reports counts and failed sources", async () => {
+    // 固定两个 RSS 源,与「默认开哪些海外源」解耦——本用例只测 RSS 单源失败的容错
+    await setRadarSources({
+      _dataDir: testDir,
+      sources: [
+        { id: "36kr", name: "36氪", type: "rss", url: "https://36kr.com/feed", tracks: [] },
+        { id: "ifanr", name: "爱范儿", type: "rss", url: "https://www.ifanr.com/feed", tracks: [] },
+      ],
+    });
     const fetchImpl = vi.fn(async (url: unknown) => {
       if (String(url).includes("36kr")) return new Response(RSS, { status: 200 });
       throw new Error("down");

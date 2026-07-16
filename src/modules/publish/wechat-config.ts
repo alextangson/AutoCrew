@@ -24,6 +24,8 @@ export interface WechatMpPublishConfig {
   theme?: string;
   /** 公众号 API 走的 HTTP 代理(固定出口 IP 用);经 HTTPS_PROXY 传给 publish.py。含账密,不回显。 */
   apiProxy?: string;
+  /** 选题雷达 X 源的 twitterapi.io key(自带 key,不回显)。放这里复用既有第三方 key 存储袋。 */
+  xApiKey?: string;
 }
 
 export async function loadWechatMpConfig(dataDir?: string): Promise<WechatMpPublishConfig> {

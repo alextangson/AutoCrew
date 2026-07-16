@@ -119,6 +119,9 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         imageConfigured: Boolean(cfg.imageApiKey),
         imageApiKeyMasked: cfg.imageApiKey ? maskKey(cfg.imageApiKey) : null,
         imageBaseUrl: cfg.imageBaseUrl ?? null,
+        // 选题雷达 X 源 key:只回状态与掩码
+        xConfigured: Boolean(cfg.xApiKey),
+        xApiKeyMasked: cfg.xApiKey ? maskKey(cfg.xApiKey) : null,
         imageModel: cfg.imageModel ?? null,
         theme: cfg.theme ?? null,
         themes: await listWechatThemes(),
@@ -151,6 +154,7 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     ["apiProxy", "api_proxy"],
     ["wechatAppId", "wechat_app_id"],
     ["wechatAppSecret", "wechat_app_secret"],
+    ["xApiKey", "x_api_key"],
   ];
   for (const [target, source] of fields) {
     const v = payload[source];
@@ -168,7 +172,7 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     else return { ok: false, error: 'open_comment 必须是 "1"(开) 或 "0"(关)' };
   }
   if (Object.keys(updates).length === 0) {
-    return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author / wechat_app_id / wechat_app_secret / open_comment）" };
+    return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author / wechat_app_id / wechat_app_secret / x_api_key / open_comment）" };
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;

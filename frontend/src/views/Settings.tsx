@@ -78,8 +78,8 @@ export function Settings() {
   });
   const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
-  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean } | null>(null);
-  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "" });
+  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean; xConfigured: boolean; xApiKeyMasked: string | null } | null>(null);
+  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" });
   const [cover, setCover] = useState<{
     provider: string;
     relay: { configured: boolean; model: string | null };
@@ -240,7 +240,7 @@ export function Settings() {
         </label>
         <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
         <Field label="公众号 API 代理" value={pForm.api_proxy} placeholder={pub?.apiProxyConfigured ? "已配置(不回显)——填新值覆盖" : "http://user:pass@固定IP:端口(可选,锁定出口)"} onChange={(v) => setPForm((f) => ({ ...f, api_proxy: v }))} />
-        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "" }))} />
+        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" }))} />
       </Section>
 
       <Section title="封面生成 · 生图通道" status={coverStatus} on={coverOn}>
@@ -284,6 +284,9 @@ export function Settings() {
             <button onClick={() => void toggleSource(i)}>{s.enabled === false ? "启用" : "停用"}</button>
           </div>
         ))}
+        <Field label="X 源 Key" password value={pForm.x_api_key} placeholder={pub?.xApiKeyMasked ?? "twitterapi.io key——启用「X」源前先填"} onChange={(v) => setPForm((f) => ({ ...f, x_api_key: v }))} />
+        <p className="muted">X 源走 twitterapi.io(自带 key,注册送 $1 额度)。存 key 后再在上面把「X」启用。海外源需定位里含英文词(如 AI)才能派生检索词。</p>
+        <SaveRow label="保存 X Key" onSave={() => void submit("settings:publish_set", { x_api_key: pForm.x_api_key }, () => setPForm((f) => ({ ...f, x_api_key: "" })))} />
         <div className="set-save">
           <button
             onClick={async () => {

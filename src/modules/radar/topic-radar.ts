@@ -13,6 +13,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
 import { loadProfile } from "../profile/creator-profile.js";
+import { loadWechatMpConfig } from "../publish/wechat-config.js";
 import sourcesJson from "../../data/topic-sources.json";
 
 export interface RadarItem {
@@ -36,8 +37,8 @@ export interface TopicCache {
  * kind=rss 需要 config.url;海外 kind 走 research/sources 的 adapter,config.keyword
  * 可选（缺省从定位派生 ASCII 词,如「AI 技术」→ "AI"）。enabled=false 的源不参与扫描。
  */
-export type RadarSourceKind = "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface";
-export const OVERSEAS_KINDS: RadarSourceKind[] = ["hackernews", "producthunt", "github", "arxiv", "huggingface"];
+export type RadarSourceKind = "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface" | "x";
+export const OVERSEAS_KINDS: RadarSourceKind[] = ["hackernews", "producthunt", "github", "arxiv", "huggingface", "x"];
 
 export interface RadarSource {
   id: string;
@@ -106,13 +107,40 @@ export interface ScoredRadarItem {
   matchedTokens: string[];
 }
 
-/** 确定性候选排序（带评分明细）：定位 token 命中 ×3 + 新鲜度（<24h +2, <72h +1） */
+// 热度进排序:热度是「同源里被讨论最多的那条」这个相对概念,源间不可比(GitHub stars
+// 上千、HN points 上百),所以按源内 log 归一到 [0,1] 再加权。上限 3 分——与一次定位
+// 命中同量级,能把爆款顶到前面,但不盖过内容相关性(否则热但不相关的会霸榜)。
+const HEAT_WEIGHT = 3;
+
+/** 各源内部把 heat 做 log 归一,返回 item→[0,1] 的热度分位函数（无热度/源内独一条 → 中性档）。 */
+function buildHeatNorm(items: RadarItem[]): (item: RadarItem) => number {
+  const range = new Map<string, { min: number; max: number }>();
+  for (const it of items) {
+    if (typeof it.heat !== "number" || it.heat <= 0) continue;
+    const v = Math.log1p(it.heat);
+    const cur = range.get(it.source);
+    if (!cur) range.set(it.source, { min: v, max: v });
+    else {
+      cur.min = Math.min(cur.min, v);
+      cur.max = Math.max(cur.max, v);
+    }
+  }
+  return (item) => {
+    if (typeof item.heat !== "number" || item.heat <= 0) return 0;
+    const r = range.get(item.source);
+    if (!r || r.max === r.min) return 0.5; // 源内独一条,无从相对比较 → 中性半档:给信号但不霸榜
+    return (Math.log1p(item.heat) - r.min) / (r.max - r.min);
+  };
+}
+
+/** 确定性候选排序（带评分明细）：定位 token 命中 ×3 + 新鲜度（<24h +2, <72h +1）+ 源内热度（≤3） */
 export function rankCandidatesScored(items: RadarItem[], industry: string, limit: number): ScoredRadarItem[] {
   const baseTokens = industry.split(/[/\s,，、|]+/).map((t) => t.trim()).filter((t) => t.length >= 2);
   // 中英混写定位（如 "AI技术博主"）：ASCII 串单独成 token，否则永远匹配不上英文标题里的 "AI"/"GPT"
   const asciiTokens = (industry.match(/[A-Za-z0-9]{2,}/g) ?? []);
   const tokens = [...new Set([...baseTokens, ...asciiTokens])];
   const now = Date.now();
+  const heatNorm = buildHeatNorm(items);
   const scored = items.map((item) => {
     let score = 0;
     const matchedTokens: string[] = [];
@@ -133,6 +161,7 @@ export function rankCandidatesScored(items: RadarItem[], industry: string, limit
     const ageH = (now - new Date(item.publishedAt).getTime()) / 3600_000;
     if (ageH < 24) score += 2;
     else if (ageH < 72) score += 1;
+    score += heatNorm(item) * HEAT_WEIGHT;
     return { item, score, matchedTokens };
   });
   scored.sort(
@@ -243,11 +272,18 @@ export async function refreshTopicRadar(
     industry = (await loadProfile(dataDir))?.industry ?? "";
   } catch { /* 无定位 → 海外源需要显式 keyword */ }
 
+  // X 源的 twitterapi.io key(自带 key,存 publish.json)。无 key 时 X 源会抛错进 failedSources。
+  const xApiKey = (await loadWechatMpConfig(dataDir).catch(() => ({}) as { xApiKey?: string })).xApiKey;
+
   const overseasFetch =
     deps?.overseasFetch ??
+    // 单源直调 registry(不经 fetchFromSources 的吞异常隔离):X 配错 key 时错误上抛 → failedSources,
+    // 不静默返回空(§6)。HN/GitHub 等自身出错即返回 [],直调行为一致。
     (async (kind: string, keyword: string, limit: number) => {
-      const { fetchFromSources } = await import("../research/sources/registry.js");
-      return fetchFromSources([kind], keyword, limit);
+      const { SOURCE_REGISTRY } = await import("../research/sources/registry.js");
+      const fetcher = SOURCE_REGISTRY[kind];
+      if (!fetcher) return [];
+      return fetcher(keyword, limit, { xApiKey });
     });
 
   const items: RadarItem[] = [];

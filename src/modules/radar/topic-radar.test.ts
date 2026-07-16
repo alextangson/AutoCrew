@@ -83,10 +83,44 @@ describe("rankCandidates", () => {
     expect(ranked).toHaveLength(10);
     expect(ranked[0].title).toBe("科技新闻 0");
   });
+
+  it("lifts a high-heat item above a cold same-source one (同源同鲜同命中 → 热度决高下)", () => {
+    const now = new Date().toISOString();
+    const items: RadarItem[] = [
+      { title: "AI 冷门项目", link: "cold", source: "GitHub Trending", publishedAt: now, heat: 5 },
+      { title: "AI 爆款项目", link: "hot", source: "GitHub Trending", publishedAt: now, heat: 9000 },
+    ];
+    const ranked = rankCandidatesScored(items, "AI", 10);
+    expect(ranked[0].item.link).toBe("hot");
+    expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
+  });
+
+  it("judges heat in-source: HN 小 points 与 GitHub 大 stars 各按源内归一,不被绝对数字通吃", () => {
+    const now = new Date().toISOString();
+    const items: RadarItem[] = [
+      { title: "AI 低星仓库", link: "gh-low", source: "GitHub Trending", publishedAt: now, heat: 100 },
+      { title: "AI 万星仓库", link: "gh-high", source: "GitHub Trending", publishedAt: now, heat: 20000 },
+      { title: "AI 热议讨论", link: "hn-top", source: "Hacker News", publishedAt: now, heat: 800 },
+      { title: "AI 冷门讨论", link: "hn-low", source: "Hacker News", publishedAt: now, heat: 10 },
+    ];
+    const ranked = rankCandidatesScored(items, "AI", 10);
+    // 两个源各自的登顶项并列最高,而非 GitHub 靠 stars 数字大通吃
+    expect(["gh-high", "hn-top"]).toContain(ranked[0].item.link);
+    const ghHigh = ranked.find((r) => r.item.link === "gh-high")!.score;
+    const hnTop = ranked.find((r) => r.item.link === "hn-top")!.score;
+    expect(hnTop).toBe(ghHigh);
+    expect(ghHigh).toBeGreaterThan(ranked.find((r) => r.item.link === "gh-low")!.score);
+  });
 });
 
 describe("refreshTopicRadar + cache + getTopicCandidates", () => {
   it("fetches all sources, tolerates per-source failure, writes cache", async () => {
+    // 固定两个 RSS 源,与「默认开哪些海外源」解耦——本用例只测 RSS 单源失败的容错
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "36kr", kind: "rss", name: "36氪", enabled: true, config: { url: "https://36kr.com/feed" } },
+      { id: "ifanr", kind: "rss", name: "爱范儿", enabled: true, config: { url: "https://www.ifanr.com/feed" } },
+    ], testDir);
     const fetchImpl = vi.fn(async (url: unknown) => {
       if (String(url).includes("36kr")) return new Response(RSS, { status: 200 });
       throw new Error("network down");
@@ -229,14 +263,16 @@ describe("unified intel layer v2 (adapter kinds + migration)", () => {
     expect(sources[0].config.url).toBe("https://www.qbitai.com/feed");
   });
 
-  it("built-in defaults include disabled overseas adapters", async () => {
-    const { loadRadarSources, OVERSEAS_KINDS } = await import("./topic-radar.js");
+  it("built-in defaults ship high-signal overseas adapters on, research ones off", async () => {
+    const { loadRadarSources } = await import("./topic-radar.js");
     const sources = await loadRadarSources(testDir);
-    for (const kind of OVERSEAS_KINDS) {
-      const s = sources.find((x) => x.kind === kind);
-      expect(s, kind).toBeDefined();
-      expect(s!.enabled).toBe(false);
-    }
+    const enabledOf = (kind: string) => sources.find((x) => x.kind === kind)?.enabled;
+    // HN/GitHub 带真实热度、PH 给新品发布 → 默认开;arXiv/HF 是研究产物,选题张力低 → 默认关
+    expect(enabledOf("hackernews")).toBe(true);
+    expect(enabledOf("github")).toBe(true);
+    expect(enabledOf("producthunt")).toBe(true);
+    expect(enabledOf("arxiv")).toBe(false);
+    expect(enabledOf("huggingface")).toBe(false);
   });
 
   it("scan pulls enabled overseas adapters with keyword derived from positioning", async () => {

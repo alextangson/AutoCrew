@@ -19,5 +19,11 @@ export interface SourceItem {
   summary?: string;
 }
 
+/** 运行时传给 fetcher 的密钥等(如 x 源的 twitterapi.io key);不需要的源忽略。 */
+export interface FetchOptions {
+  /** twitterapi.io API key,仅 `x` 源使用(bring-your-own-key);其余源忽略。 */
+  xApiKey?: string;
+}
+
 /** A source fetcher pulls recent items for a keyword. */
-export type SourceFetcher = (keyword: string, limit: number) => Promise<SourceItem[]>;
+export type SourceFetcher = (keyword: string, limit: number, opts?: FetchOptions) => Promise<SourceItem[]>;
