@@ -17,7 +17,7 @@ export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
   github: (kw, lim) => fetchGitHub(kw, lim),
   arxiv: (kw, lim) => fetchArxiv(kw, lim),
   huggingface: (kw, lim) => fetchHuggingFace(kw, lim),
-  x: (kw, lim, opts) => fetchX(kw, lim, { apiKey: opts?.xApiKey ?? "" }),
+  x: (_kw, lim, opts) => fetchX(lim, { apiKey: opts?.xApiKey ?? "" }),
 };
 
 export const ALL_SOURCES = Object.keys(SOURCE_REGISTRY);

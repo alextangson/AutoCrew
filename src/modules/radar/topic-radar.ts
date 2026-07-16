@@ -309,8 +309,9 @@ export async function refreshTopicRadar(
             clearTimeout(timer);
           }
         } else {
+          // X 走关注清单模式,不靠关键词;其余海外源是搜索型,必须有检索词
           const keyword = overseasKeyword(src, industry);
-          if (!keyword) throw new Error("no keyword");
+          if (!keyword && src.kind !== "x") throw new Error("no keyword");
           for (const it of await overseasFetch(src.kind, keyword, 10)) {
             items.push({
               title: it.title,
