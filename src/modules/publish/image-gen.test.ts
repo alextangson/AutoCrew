@@ -63,7 +63,7 @@ describe("generateImageViaRelay", () => {
     expect(fetchMock.mock.calls[1][0]).toBe("https://cdn.example/img.png");
   });
 
-  it("首次 HTTP 错误 → 4s 退避后重试成功", async () => {
+  it("瞬时错误(429) → 退避后重试成功", async () => {
     vi.useFakeTimers();
     const png = Buffer.from("retry-png");
     const fetchMock = vi
@@ -73,37 +73,46 @@ describe("generateImageViaRelay", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const promise = generateImageViaRelay(REQ);
-    await vi.advanceTimersByTimeAsync(4_000);
+    await vi.advanceTimersByTimeAsync(5_000); // 首次退避 5s
     const buf = await promise;
 
     expect(buf.equals(png)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("两次都失败 → 抛出含真实原因的错误(禁止静默)", async () => {
+  it("瞬时错误(503/账号池空)持续到用尽重试 → 抛真实原因(禁止静默),共 4 次", async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn(async () => new Response("boom", { status: 500 }));
+    const fetchMock = vi.fn(async () => new Response("no available accounts", { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const promise = generateImageViaRelay(REQ).catch((e: Error) => e);
-    await vi.advanceTimersByTimeAsync(4_000);
+    await vi.advanceTimersByTimeAsync(35_000); // 5s+10s+20s 退避全推进
     const err = await promise;
 
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/生图失败.*HTTP 500/s);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((err as Error).message).toMatch(/已重试 4 次.*HTTP 503/s);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it("空 data(无 b64 也无 url)→ 报限流/排队人话错误", async () => {
+  it("4xx(400 坏请求)→ 快速失败,不空转重试", async () => {
+    const fetchMock = vi.fn(async () => new Response("bad prompt", { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateImageViaRelay(REQ)).rejects.toThrow(/不可重试|HTTP 400/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("空 data(无 b64 也无 url)→ 重试用尽后报限流/排队人话错误", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async () => jsonResponse({ data: [] }));
     vi.stubGlobal("fetch", fetchMock);
 
     const promise = generateImageViaRelay(REQ).catch((e: Error) => e);
-    await vi.advanceTimersByTimeAsync(4_000);
+    await vi.advanceTimersByTimeAsync(35_000);
     const err = await promise;
 
     expect((err as Error).message).toMatch(/empty image data/);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -151,19 +160,36 @@ describe("editImageViaRelay(V5.6.1 参考图/人物一致性)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("5xx 重试一次后抛普通错误(非 Unsupported)——空参考图列表,退避走纯 fake-timer", async () => {
+  it("5xx 退避重试用尽后抛普通错误(非 Unsupported)——空参考图列表,退避走纯 fake-timer", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async () => new Response("busy", { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    // 空 refs 绕开真实 fs 读取:fake timers 与线程池 IO 混用会让 4s 退避推进不确定
+    // 空 refs 绕开真实 fs 读取:fake timers 与线程池 IO 混用会让退避推进不确定
     const promise = editImageViaRelay({ ...EDIT_REQ, referenceImagePaths: [] }).catch((e: Error) => e);
-    await vi.advanceTimersByTimeAsync(4_000);
+    await vi.advanceTimersByTimeAsync(35_000);
     const err = await promise;
 
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(RelayEditUnsupportedError);
     expect((err as Error).message).toMatch(/参考图生图失败/);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("429 属限流 → 退避重试成功,不当作 Unsupported 降级", async () => {
+    vi.useFakeTimers();
+    const png = Buffer.from("edit-retry-png");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("rate", { status: 429 }))
+      .mockResolvedValueOnce(jsonResponse({ data: [{ b64_json: png.toString("base64") }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = editImageViaRelay({ ...EDIT_REQ, referenceImagePaths: [] });
+    await vi.advanceTimersByTimeAsync(5_000);
+    const buf = await promise;
+
+    expect(buf.equals(png)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

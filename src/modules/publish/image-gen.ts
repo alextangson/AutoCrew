@@ -43,6 +43,18 @@ export interface RelayImageRequest {
   timeoutMs?: number;
 }
 
+// 生图重试:中转(xiaojiu 等)上游/账号池抖动是常态——502「upstream unavailable」、503「no
+// available accounts」、429 限流、200 但排队空返,这些空窗常持续十几秒到几分钟。固定 4s×2 次全
+// 撞在同一个空窗上必挂,故对瞬时错误指数退避多试几次熬过去;4xx 客户端错(坏 prompt/key/尺寸)
+// 重试也没用,快速失败不空转。生图是后台任务,多等一会儿不卡 UI。
+const MAX_ATTEMPTS = 4;
+const isRetryableStatus = (status: number): boolean => status >= 500 || status === 429;
+/** 第 attempt 次尝试前的退避(attempt≥1):5s→10s→20s,封顶 30s。 */
+const retryBackoffMs = (attempt: number): number => Math.min(5_000 * 2 ** (attempt - 1), 30_000);
+
+/** 4xx 客户端错(非 429):重试无意义,抛出让调用方直接失败。 */
+export class RelayClientError extends Error {}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -70,15 +82,15 @@ async function extractImageBuffer(
   return { buf: null, reason: "empty image data(无 b64 也无 url;多半中转限流/排队未返回)" };
 }
 
-/** 调中转生一张图,返回 PNG 字节。2 次尝试、4s 退避;b64 与 url 两种响应形状都接。 */
+/** 调中转生一张图,返回 PNG 字节。瞬时错误指数退避重试,4xx 快速失败;b64/url 两种响应都接。 */
 export async function generateImageViaRelay(req: RelayImageRequest): Promise<Buffer> {
   const size = resolveRelaySize(req.size);
   const timeoutMs = req.timeoutMs ?? 120_000;
   const endpoint = `${req.baseUrl.replace(/\/+$/, "")}/images/generations`;
   let lastErr = "";
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 4_000));
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, retryBackoffMs(attempt)));
     try {
       const res = await fetchWithTimeout(
         endpoint,
@@ -91,14 +103,20 @@ export async function generateImageViaRelay(req: RelayImageRequest): Promise<Buf
         timeoutMs,
       );
       if (!res.ok) {
-        lastErr = `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`;
+        const body = (await res.text()).slice(0, 300);
+        // 4xx(非 429):坏 prompt/key/尺寸,重试无意义 → 直接失败
+        if (!isRetryableStatus(res.status)) {
+          throw new RelayClientError(`生图失败(HTTP ${res.status},不可重试): ${body}`);
+        }
+        lastErr = `HTTP ${res.status}: ${body}`; // 5xx/429 → 退避重试
         continue;
       }
       const payload = (await res.json()) as { data?: Array<{ b64_json?: string; url?: string }> };
       const { buf, reason } = await extractImageBuffer(payload);
       if (buf) return buf;
-      lastErr = reason;
+      lastErr = reason; // 空返(排队/限流)→ 重试
     } catch (err) {
+      if (err instanceof RelayClientError) throw err; // 不可重试,直接抛
       lastErr =
         err instanceof Error && err.name === "AbortError"
           ? `超时(${Math.round(timeoutMs / 1000)}s 无响应)`
@@ -107,7 +125,7 @@ export async function generateImageViaRelay(req: RelayImageRequest): Promise<Buf
             : String(err);
     }
   }
-  throw new Error(`生图失败(已重试): ${lastErr}`);
+  throw new Error(`生图失败(已重试 ${MAX_ATTEMPTS} 次): ${lastErr}`);
 }
 
 /** /images/edits 4xx——多为中转不支持该端点或不收参考图,调用方降级 generations */
@@ -127,8 +145,8 @@ const REF_MIME: Record<string, string> = {
 
 /**
  * 带参考图生图(/images/edits multipart,gpt-image 系)。
- * 4xx 抛 RelayEditUnsupportedError(不重试——端点不支持重试也没用);
- * 5xx/网络错误重试一次。
+ * 4xx(非 429)抛 RelayEditUnsupportedError(端点不支持/坏请求——调用方降级无参考图 generations);
+ * 5xx/429/排队空返/网络错 → 指数退避重试。
  */
 export async function editImageViaRelay(req: RelayEditRequest): Promise<Buffer> {
   const size = resolveRelaySize(req.size);
@@ -148,15 +166,16 @@ export async function editImageViaRelay(req: RelayEditRequest): Promise<Buffer> 
   }
 
   let lastErr = "";
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 4_000));
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, retryBackoffMs(attempt)));
     try {
       const res = await fetchWithTimeout(
         endpoint,
         { method: "POST", headers: { Authorization: `Bearer ${req.apiKey}` }, body: form },
         timeoutMs,
       );
-      if (res.status >= 400 && res.status < 500) {
+      // 4xx(非 429)= 端点不支持/坏请求,重试无用 → 交调用方降级;429 属限流,落到重试
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
         throw new RelayEditUnsupportedError(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
       }
       if (!res.ok) {
