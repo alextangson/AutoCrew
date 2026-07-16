@@ -356,7 +356,14 @@ async function publishWechatDraftApprovedHandler(
   if (!consumed.ok) return consumed;
 
   // HTTP 面只传最小白名单：禁止 renderer 覆盖脚本路径、密钥、force 或 article_path。
-  return executePublish({ action: "wechat_mp_draft", content_id: contentId, _dataDir: dataDir });
+  // theme 是纯排版主题名(publish.py --theme),无安全面,允许按篇覆盖全局默认。
+  const theme = typeof payload.theme === "string" && payload.theme.trim() ? payload.theme.trim() : undefined;
+  return executePublish({
+    action: "wechat_mp_draft",
+    content_id: contentId,
+    ...(theme ? { theme } : {}),
+    _dataDir: dataDir,
+  });
 }
 
 // ── generate:script — 后台化写稿（契约 P1:任务生命周期与 HTTP 请求解耦） ─────

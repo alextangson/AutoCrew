@@ -116,7 +116,7 @@ describe("designCoverPlan", () => {
         runLoopImpl: mockLoop(
           "submit_cover_design",
           [
-            { ...goodDesign("A"), titleText: "这个标题实在太长了啊" },
+            { ...goodDesign("A"), titleText: "这个标题实在是太长了完全放不进封面" },
             goodDesign("A"),
             goodDesign("B"),
             goodDesign("C"),
@@ -126,7 +126,7 @@ describe("designCoverPlan", () => {
       },
     );
     expect(execResults[0]).toContain("Error");
-    expect(execResults[0]).toContain("2-9");
+    expect(execResults[0]).toContain("2-12");
     expect(execResults[1]).toContain("已收到方案 A");
     expect(designs).toHaveLength(3);
   });

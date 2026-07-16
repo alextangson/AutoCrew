@@ -27,7 +27,7 @@ export interface CoverDesign {
   palette: string;
   /** 完整英文生图 prompt(含 3:4、标题文字、全部禁止项) */
   imagePrompt: string;
-  /** 封面中文大字(2-9 字) */
+  /** 封面中文大字(视觉宽度 2-12) */
   titleText: string;
   layoutHint: string;
   /** 为什么这个方案能停住滑动(GUI 卡片展示) */
@@ -61,7 +61,10 @@ function hardRules(aspect: PrimaryAspect): string {
     "硬性规则(每个方案的 imagePrompt 都必须包含,一条不许漏):\n" +
     `- 开头写明 "${ORIENTATION_TEXT[aspect]}"\n` +
     '- 画面必须包含中文大字标题:把 titleText 原文写进 prompt,如 the Chinese text "XX" as a prominent visual element\n' +
-    "- 中文标题必须清晰、正确、不变形且有足够对比;可以印在标签、封条、路牌、票据或实物上,不必都压暗色横条\n" +
+    "- 标题是第一视觉层级:占画面约 1/4-1/3 的面积、与其所在背景形成极高对比。读者刷公众号列表时封面只有拇指大——" +
+    "先过「三秒缩略图测试」(缩到 200px 宽仍能一眼读出标题和主体)再谈艺术;刻进木头、印在角落这类融入式处理默认不及格\n" +
+    "- 单一焦点:一个主视觉物件 + 最多 3 个支撑元素。铺满式陈列在小图上=什么都看不见;要敢留白\n" +
+    "- 画面里出现的数字/金额/专名必须与正文逐字一致,写 imagePrompt 时把数字原样照抄并复查一遍——封面数字写错=事故\n" +
     "- 禁止水印/logo/URL;不得照搬真实品牌 UI;不得出现与主题无关的装饰性英文"
   );
 }
@@ -76,14 +79,15 @@ function visualWidth(s: string): number {
   return w;
 }
 
-/** titleText 口径:必须含中文 + 视觉宽度 2-9(汉字 1、字母数字 0.5);允许中英混排与数字做焦点 */
+/** titleText 口径:必须含中文 + 视觉宽度 2-12(汉字 1、字母数字 0.5);允许中英混排与数字做焦点 */
 function titleProblem(titleText: unknown): string | null {
   if (typeof titleText !== "string") return "titleText 必须是字符串";
   const visible = titleText.replace(/\s/g, "");
   if (!/[一-鿿]/.test(visible)) return "titleText 必须含中文";
   const w = visualWidth(visible);
-  if (w < 2 || w > 9) {
-    return `titleText「${titleText}」视觉宽度须在 2-9(汉字算 1、字母数字算 0.5,当前 ${w});太长就精简或换纯中文短词`;
+  // 上限 12:爆款钩子常带数字与短句(「$908亿的位置还空着」≈11.5),9 会把好钩子逼成文艺短语
+  if (w < 2 || w > 12) {
+    return `titleText「${titleText}」视觉宽度须在 2-12(汉字算 1、字母数字算 0.5,当前 ${w});太长就精简或换纯中文短词`;
   }
   return null;
 }
@@ -174,7 +178,7 @@ function buildPlanTool(captured: { designs: Map<string, CoverDesign> }): LoopToo
         creativeConcept: { type: "string", description: "一句话说清这张图独有的视觉点子/隐喻" },
         visualMedium: { type: "string", description: "具体媒介,如 documentary photography / cut-paper collage / typographic installation" },
         palette: { type: "string", description: "主色、明暗与材质,须与另外两张拉开" },
-        titleText: { type: "string", description: "封面中文大字,2-9 个字,短促有力" },
+        titleText: { type: "string", description: "封面中文大字,视觉宽度 2-12(汉字 1、字母数字 0.5),必须是制造悬念/冲突/利益缺口的钩子" },
         imagePrompt: { type: "string", description: "完整英文生图 prompt,含比例、标题文字与全部禁止项" },
         layoutHint: { type: "string", description: "版式一句话(标题位置/主体位置/叠层)" },
         designReason: { type: "string", description: "为什么能停住滑动,1-2 句中文" },
@@ -213,14 +217,15 @@ function buildSystemPrompt(aspect: PrimaryAspect): string {
   return (
     "你是有杂志、广告与纪录片经验的创意总监,为中文自媒体设计既能停住滑动、又不落入 AI 模板感的封面。" +
     "你产出「设计方案」而不是直接生图:给图像模型的英文 imagePrompt + 封面中文大字 titleText" +
-    "(2-9 个字,短促有力、制造好奇或冲突,不是内容摘要;主题里有关键数字就把数字放大成焦点) + " +
+    "(视觉宽度 2-12,必须是钩子——制造悬念、冲突或利益缺口,让人不点开难受;「$908亿的位置还空着」能停住滑动," +
+    "「同一把铲子」这种文艺短语不能。主题里有关键数字就把数字放大成焦点) + " +
     "具体艺术指导 style + 创意点子 creativeConcept + 媒介 visualMedium + 色彩材质 palette + " +
     "版式说明 layoutHint + 设计理由 designReason(1-2 句中文,说清为什么这个点子只属于这篇内容)。\n\n" +
     hardRules(aspect) +
     "\n\n创作方法:\n" +
     "1. 先从正文提炼:一个具体证据/物件、一个核心矛盾、一个反常识判断、一个受众会代入的瞬间。\n" +
     "2. 再从以下创意引擎里按内容选择三个,不要固定映射给 A/B/C:纪实瞬间、证物/档案、荒诞静物、视觉隐喻、纸张拼贴、实体字装置、数据物理化、微缩场景、文化符号改造、人物环境肖像。\n" +
-    "3. 三张必须在主视觉、媒介、构图、明暗、标题修辞上真正分叉;至少一张无屏幕/无设备,至少一张使用亮调或天然留白。\n" +
+    "3. 三张必须在主视觉、媒介、构图、明暗、标题修辞上真正分叉;至少一张无屏幕/无设备;至少两张亮调高对比(信息流里暗沉低对比=隐身),暗调最多一张且标题必须极亮。\n" +
     "4. AI 题材默认禁用这些陈词滥调:发光键盘、服务器机房、蓝紫神经网络、全息代码、机器人脑、左右冷暖对半。只有正文的具体事实非用不可时才允许一张使用。\n" +
     "5. style 要像本方案的名字(例如「被海关扣下的合同」「喂料槽里的数据」「租金收据」),不能交 cinematic/minimalist/bold-impact。\n" +
     composition +

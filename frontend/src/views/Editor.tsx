@@ -48,6 +48,10 @@ export function Editor(props: { id: string; back: () => void }) {
   const [digestText, setDigestText] = useState("");
   const [digestBusy, setDigestBusy] = useState(false);
   const [metrics, setMetrics] = useState<{ views: string; likes: string; comments: string }>({ views: "", likes: "", comments: "" });
+  // 排版主题:按篇覆盖全局默认("" = 跟随设置页);列表来自 vendor 主题目录
+  const [themes, setThemes] = useState<Array<{ id: string; name: string }>>([]);
+  const [pubTheme, setPubTheme] = useState("");
+  const [defaultTheme, setDefaultTheme] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const send = useChatSend();
 
@@ -86,6 +90,13 @@ export function Editor(props: { id: string; back: () => void }) {
   };
   useEffect(() => {
     void load();
+    // 排版主题列表(推公众号草稿时可按篇选;失败静默——选择器不出现,推送走全局默认)
+    void invoke("settings:publish_get", {}).then((r) => {
+      if (!r.ok) return;
+      const d = (r as unknown as { data?: { themes?: Array<{ id: string; name: string }>; theme?: string | null } }).data;
+      setThemes(d?.themes ?? []);
+      setDefaultTheme(d?.theme ?? null);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.id]);
   useEffect(() => {
@@ -216,6 +227,7 @@ export function Editor(props: { id: string; back: () => void }) {
     const r = await invoke("publish:wechat_draft", {
       content_id: props.id,
       approval_token: approval.approvalToken,
+      ...(pubTheme ? { theme: pubTheme } : {}),
     });
     if (!r.ok) return toast(r.error ?? "推送失败");
     toast("已进草稿箱:" + ((r as { nextStep?: string }).nextStep ?? "去公众号后台检查"));
@@ -345,6 +357,17 @@ export function Editor(props: { id: string; back: () => void }) {
         <summary>发布与分发</summary>
         <div className="ed-section">
           <button onClick={() => void doClipboard()}>排版发布文案</button>
+          {c.platform === "wechat_mp" && themes.length > 0 && (
+            <div className="ed-digest">
+              <span className="mono muted">排版主题(推草稿时生效)</span>
+              <select className="sel-input" value={pubTheme} onChange={(e) => setPubTheme(e.target.value)}>
+                <option value="">跟随全局设置({defaultTheme || "newspaper"})</option>
+                {themes.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           {c.platform === "wechat_mp" && <button onClick={() => void pushWechat()}>推公众号草稿箱</button>}
           {c.platform === "wechat_mp" && (
             <div className="ed-digest">
