@@ -314,9 +314,14 @@ async function requestWechatDraftApprovalHandler(
   // 确认前先跑完整门禁；不合格的稿件不生成可执行凭证。
   const preflight = await executePrePublish({ action: "check", content_id: contentId, _dataDir: dataDir });
   if (!("allPassed" in preflight) || !preflight.allPassed) {
+    // 报出具体挂在哪一项——只说「检查未通过」用户不知道改什么,发布流程就成死胡同
+    const fails = ((preflight as { checks?: Array<{ name: string; status: string; detail: string }> }).checks ?? [])
+      .filter((c) => c.status === "fail")
+      .map((c) => `${c.name}: ${c.detail.replace(/\s+/g, " ").trim()}`)
+      .join("；");
     return {
       ok: false,
-      error: "发布前检查未通过，请修复后重新确认",
+      error: fails ? `发布前检查未通过——${fails.slice(0, 240)}` : "发布前检查未通过，请修复后重新确认",
       ...(preflight && typeof preflight === "object" ? { preflight } : {}),
     };
   }

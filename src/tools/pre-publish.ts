@@ -96,11 +96,22 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
       const score = reviewResult.qualityScore?.total ?? "?";
       checks.push({ name: "内容审核", status: "pass", detail: `通过 (质量 ${score}/100)` });
     } else {
+      // 报出具体拦路项——只说「敏感词 ✗ 1 个」用户不知道是哪个词、改哪里,发布就成死胡同。
+      const hits = (reviewResult.sensitiveWords?.hits ?? []) as Array<{ word: string; suggestion?: string }>;
+      const aiChanges = (reviewResult.aiCheck?.changes ?? []) as string[];
+      const parts: string[] = [];
+      if (hits.length > 0) {
+        parts.push(`敏感词:${hits.map((h) => `「${h.word}」${h.suggestion ? "" : "(无自动替换,需手动改)"}`).join("、")}`);
+      }
+      if (aiChanges.length > 0) parts.push(`AI 痕迹:${aiChanges.join("、")}`);
+      const manual = hits.some((h) => !h.suggestion);
       checks.push({
         name: "内容审核",
         status: "fail",
-        detail: reviewResult.summary || "未通过",
-        fix: "运行 autocrew_review action='auto_fix' 自动修复",
+        detail: parts.length > 0 ? parts.join("；") : reviewResult.summary || "未通过",
+        fix: manual
+          ? "无自动替换的敏感词请在编辑器里手动换词;其余可运行 autocrew_review action='auto_fix'"
+          : "运行 autocrew_review action='auto_fix' 自动修复",
       });
     }
   } catch {

@@ -54,6 +54,9 @@ function replaceWithTracking(
 //   且插入的内容与选题无关——与 humanizer 的目标（自然口吻）背道而驰。
 
 function simplifyProgressionPhrases(text: string): { text: string; count: number } {
+  // 只把「首先/其次」当模板列表痕迹删除。孤立的叙事「最后」不是列表(「每次浪潮,最后赚钱的
+  // 都不是淘金者」),不能计数——旧实现把「最后，」替换成「最后，」(no-op 却 +1),导致检测
+  // 永远报 1 处、auto_fix 永远修不掉,发布门禁成死循环;对「最后一个」还会错插逗号。
   let count = 0;
   let next = text.replace(/首先[，,]?/g, () => {
     count += 1;
@@ -62,10 +65,6 @@ function simplifyProgressionPhrases(text: string): { text: string; count: number
   next = next.replace(/其次[，,]?/g, () => {
     count += 1;
     return "";
-  });
-  next = next.replace(/最后[，,]?/g, () => {
-    count += 1;
-    return "最后，";
   });
   return { text: next, count };
 }

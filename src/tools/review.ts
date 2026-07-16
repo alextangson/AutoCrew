@@ -221,11 +221,15 @@ export async function executeReview(params: Record<string, unknown>) {
       await updateContent(contentId, { body: fixedText }, dataDir);
     }
 
+    // 无替换建议的敏感词修不了——必须如实报出来,否则调用方以为修好了、发布门禁却
+    // 继续拦,用户陷入「修了还是推不上去」的死循环。
+    const unfixedSensitiveWords = scanResult.hits.filter((h) => !h.suggestion).map((h) => h.word);
     return {
       ok: true,
       action,
       autoFixedText: fixedText,
       sensitiveWordsFixed: scanResult.hits.filter((h) => h.suggestion).length,
+      ...(unfixedSensitiveWords.length > 0 ? { unfixedSensitiveWords } : {}),
       aiFixesApplied: humanResult.changeCount,
       saved: !!contentId,
     };

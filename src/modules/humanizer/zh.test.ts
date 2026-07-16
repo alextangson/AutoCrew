@@ -22,6 +22,19 @@ describe("humanizeZh", () => {
     expect(result.humanizedText).not.toContain("闭环");
   });
 
+  it("孤立的叙事「最后」不算 AI 痕迹:不计数、不改动(否则检测/修复死循环卡发布门禁)", () => {
+    const result = humanizeZh({ text: "每一次技术浪潮，最后，赚钱的都不是淘金者。" });
+    expect(result.humanizedText).toBe("每一次技术浪潮，最后，赚钱的都不是淘金者。");
+    expect(result.changes.some((c) => c.includes("顺序词"))).toBe(false);
+  });
+
+  it("「首先/其次」模板列表仍被打散计数", () => {
+    const result = humanizeZh({ text: "首先，打开设置。其次，填入 key。最后，保存。" });
+    expect(result.humanizedText).not.toContain("首先");
+    expect(result.humanizedText).not.toContain("其次");
+    expect(result.changes.some((c) => c.includes("顺序词"))).toBe(true);
+  });
+
   it("removes summary openers", () => {
     const result = humanizeZh({ text: "综上所述，这是一个好方案。" });
     expect(result.humanizedText).not.toContain("综上所述");
