@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { getContent, getDataDir } from "../../storage/local-store.js";
 import { isContentId } from "../../storage/entity-id.js";
 import { generateWechatImageAsset } from "./wechat-mp.js";
+import { enrichBodyImagePrompt } from "./body-image-prompt.js";
 
 export type ArticleImageStatus = "missing" | "generating" | "ready" | "error";
 
@@ -174,7 +175,7 @@ export async function generateArticleImages(
     }, dataDir);
     const filename = `body-${String(target.index + 1).padStart(2, "0")}-r${revision}.png`;
     const outputPath = path.join(loc.assets, filename);
-    const result = await generateWechatImageAsset(prompt, outputPath, { dataDir, size: "16:9" });
+    const result = await generateWechatImageAsset(enrichBodyImagePrompt(prompt), outputPath, { dataDir, size: "16:9" });
     if (result.ok) {
       generated += 1;
       review = await updateEntry(review, target.index, {
