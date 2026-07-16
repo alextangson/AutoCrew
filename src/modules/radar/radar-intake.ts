@@ -17,6 +17,9 @@ import { loadProfile, personaSummary } from "../profile/creator-profile.js";
 const INTAKE_LIMIT = 3;
 const CANDIDATE_POOL = 20;
 const RELEVANCE_THRESHOLD = 7;
+// 关注型信源(X)在评判池里的保底名额——不被关键词粗筛挤掉,交给 LLM 判相关性。
+// 控在 2:judge 只评前 MAX_CANDIDATES(4) 条,留 2 给 X、2 给关键词命中项,兼顾两边。
+const X_POOL_RESERVE = 2;
 
 export interface RadarIntakeResult {
   saved: Topic[];
@@ -54,8 +57,16 @@ export async function intakeRadarTopics(
   const seenLinks = new Set(allTopics.map((t) => t.link).filter((l): l is string => Boolean(l)));
   const unseen = cache.items.filter((item) => !seenTitles.has(item.title) && !seenLinks.has(item.link));
 
-  // 粗筛:确定性排序取池（免费）;终筛:LLM 四维评分+中文加工（主路）
-  const pool = rankCandidatesScored(unseen, industry, Math.max(1, Math.min(options?.poolSize ?? CANDIDATE_POOL, 24)));
+  // 粗筛:确定性排序取池（免费）;终筛:LLM 四维评分+中文加工（主路）。
+  // X 是关注型信源——好观点不 keyword-stuff(karpathy「joined Anthropic」命中定位词=[]),
+  // 会被关键词粗筛埋在池外、LLM 根本看不到。故给 X 留固定名额:粗筛只是控池大小,真正的
+  // 相关性判断交给 LLM(它看得懂账号观点是否切题)。账号本身已是质量过滤,值得这个名额。
+  const poolSize = Math.max(1, Math.min(options?.poolSize ?? CANDIDATE_POOL, 24));
+  const ranked = rankCandidatesScored(unseen, industry, unseen.length);
+  // X 放池首:judge 内部只取前 MAX_CANDIDATES 条,放末尾会被切掉、白留名额。
+  const xReserved = ranked.filter((s) => s.item.source === "X").slice(0, X_POOL_RESERVE);
+  const rest = ranked.filter((s) => s.item.source !== "X").slice(0, poolSize - xReserved.length);
+  const pool = [...xReserved, ...rest];
   const judge = options?.judge ?? judgeRelevance;
   const audience = personaSummary(profile?.audiencePersona);
   const verdicts = await judge(

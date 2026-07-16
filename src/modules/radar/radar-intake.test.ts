@@ -74,6 +74,36 @@ describe("intakeRadarTopics", () => {
     expect(topics.some((t) => t.title === "楼市周报")).toBe(false);
   });
 
+  it("给 X 留评判池名额:不含关键词的关注观点仍能被 LLM 评到并入库", async () => {
+    await saveProfile(profileWith("AI 工具"), testDir);
+    // 25 条命中「AI」的非 X 新闻(撑爆池) + 2 条不含关键词的 X 观点(= X_POOL_RESERVE 名额)
+    const items = [
+      ...Array.from({ length: 25 }, (_, i) => ({ title: `AI 新闻 ${i}`, link: `https://n/${i}`, source: "Hacker News" })),
+      { title: "重写一切的时代来了", link: "https://x/1", source: "X" },
+      { title: "我加入了一家公司", link: "https://x/2", source: "X" },
+    ];
+    await fs.writeFile(
+      path.join(testDir, "topic-radar.json"),
+      JSON.stringify({ fetchedAt: new Date().toISOString(), items: items.map((it) => ({ ...it, publishedAt: new Date().toISOString() })) }),
+    );
+
+    let judged: string[] = [];
+    const judge = (async (_ind: string, _aud: string, cands: Array<{ title: string; source: string }>) => {
+      judged = cands.map((c) => c.title);
+      // 只给 X 项高分——非 X 一律低分,证明入库的 X 是靠名额进池、靠 LLM 判过的
+      return cands.map((c, index) => ({ index, score: c.source === "X" ? 9 : 3, reason: "t", titleZh: c.title }));
+    }) as typeof import("./relevance.js").judgeRelevance;
+
+    const result = await intakeRadarTopics(testDir, { judge });
+
+    // X 观点(命中定位词=空)确实进了评判池,没被关键词粗筛挡在池外
+    for (const t of ["重写一切的时代来了", "我加入了一家公司"]) {
+      expect(judged).toContain(t);
+    }
+    // 且被判高相关 → 入库
+    expect(result.saved.map((s) => s.title).sort()).toEqual(["我加入了一家公司", "重写一切的时代来了"].sort());
+  });
+
   it("does nothing without a positioning (no industry = no filter = no intake)", async () => {
     await seedCache([{ title: "AI 大新闻", link: "https://a.example/1" }]);
     const result = await intakeRadarTopics(testDir);

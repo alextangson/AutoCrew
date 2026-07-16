@@ -37,7 +37,9 @@ export interface TopicScoreBreakdown {
 }
 
 // 结构化评分字段较多；单批过大会导致模型长思考或漏调工具。8 条兼顾吞吐与交互时延。
-const MAX_CANDIDATES = 8;
+// 评判上限压到 4:实测这条模型/线路对「一次性提交多条含中文标题+摘要+角度的富评分」有可靠性墙,
+// 8 条常 narrate 到 maxTurns 也提交不了(→null→退化关键词)。4 条稳过。彻底解法见 two-stage(待办)。
+const MAX_CANDIDATES = 4;
 
 function buildSubmitTool(captured: { verdicts: RelevanceVerdict[] | null }, poolSize: number): LoopTool {
   return {
@@ -158,11 +160,11 @@ export async function judgeRelevance(
         "title_zh 要像创作者会真的发布的中文选题，保留关键产品/公司专名，但不能整句英文，也不能只是逐字翻译。",
         "summary_zh 与 angles 只能根据输入事实生成；证据不足就写清还需要查什么，禁止脑补功能、数据或结论。",
         "宁缺勿滥：泛热点、与受众无关、没有材料可展开的都应低分。",
-        "完成后调用 submit_relevance 提交全部评分。",
+        "直接调用 submit_relevance 一次性提交全部候选的评分——不要在工具之外先逐条输出分析文字，那会拖慢并常常导致没提交就结束。评分理由写进每条的 reason 字段即可。",
       ].join("\n"),
       userMessage: `创作者定位:${positioning}${audience ? `\n受众:${audience}` : ""}${goal ? `\n创作者目标:${goal}(能推进目标的选题优先)` : ""}\n\n候选:\n${list}`,
       tools: [submitTool],
-      maxTurns: 3,
+      maxTurns: 5,
       logMeta: { agent: "scout" },
     });
   } catch {
