@@ -24,7 +24,7 @@ import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
-import { refreshTopicRadar } from "../src/modules/radar/topic-radar.js";
+import { refreshTopicRadarIfStale } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
 import { handleMcpRequest } from "../mcp/server.js";
 
@@ -346,8 +346,8 @@ server.listen(PORT, HOST, () => {
   console.log("  (链接中的启动 token 仅本进程首次打开有效；认证后会从地址栏移除)\n");
 
   // 选题雷达:启动 fire-and-forget 刷新 → 命中定位的候选自动入灵感库(IA v4.2 §A1)。
-  // 此前该启动链只活在弃用的 Electron 壳(main.ts:112),server 化时遗漏,此处收编。
-  void refreshTopicRadar()
+  // TTL 门:缓存新鲜就跳过——X 等付费源按请求计费,每次重启无条件全量扫是白烧钱。
+  void refreshTopicRadarIfStale()
     .then(async (r) => {
       if (r.failedSources.length > 0) console.warn("[topic-radar] 部分源失败:", r.failedSources.join(", "));
       const intake = await intakeRadarTopics();

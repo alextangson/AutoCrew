@@ -2,7 +2,7 @@
  * 侦察员情报源的引擎侧（S2.6 → IA v4.2 §A1 可配置化）— 源清单读写 + 缓存状态 + 手动刷新。
  * 源清单用户级可配置（radar-sources.json），url 出境给管理 UI 编辑用（本地单用户）。
  */
-import { loadTopicCache, refreshTopicRadar, loadRadarSources, saveRadarSources, type RadarSource } from "../modules/radar/topic-radar.js";
+import { loadTopicCache, refreshTopicRadar, refreshTopicRadarIfStale, loadRadarSources, saveRadarSources, type RadarSource } from "../modules/radar/topic-radar.js";
 import { intakeRadarTopics, rescoreExistingTopics } from "../modules/radar/radar-intake.js";
 
 export async function getRadarStatus(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -82,7 +82,8 @@ export async function collectMoreRadarTopics(
   try {
     let refresh: Awaited<ReturnType<typeof refreshTopicRadar>> | null = null;
     if (payload.refresh !== false) {
-      refresh = await (deps?.refreshImpl ?? refreshTopicRadar)(dataDir, fetchImpl ?? globalThis.fetch);
+      // TTL 门:缓存新鲜就不打源(付费 X 按请求计费)——「再找一批」的增量本来就来自缓存里的未看候选
+      refresh = await (deps?.refreshImpl ?? refreshTopicRadarIfStale)(dataDir, fetchImpl ?? globalThis.fetch);
     }
     const intake = await (deps?.intakeImpl ?? intakeRadarTopics)(dataDir, { limit, poolSize: 24 });
     return {

@@ -154,6 +154,32 @@ describe("refreshTopicRadar + cache + getTopicCandidates", () => {
   });
 });
 
+describe("refreshTopicRadarIfStale (TTL 门:自动触发不烧付费源)", () => {
+  it("缓存新鲜 → 跳过,不打任何源", async () => {
+    const { refreshTopicRadarIfStale, refreshTopicRadar } = await import("./topic-radar.js");
+    const fetchImpl = vi.fn(async () => new Response(RSS, { status: 200 })) as unknown as typeof fetch;
+    await refreshTopicRadar(testDir, fetchImpl); // 先真刷一轮,缓存新鲜
+    fetchImpl.mockClear();
+
+    const r = await refreshTopicRadarIfStale(testDir, fetchImpl);
+    expect(r.skippedFresh).toBe(true);
+    expect(r.ok).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled(); // 一个源都没打
+  });
+
+  it("缓存过期 → 正常刷新", async () => {
+    const { refreshTopicRadarIfStale } = await import("./topic-radar.js");
+    await fs.writeFile(
+      path.join(testDir, "topic-radar.json"),
+      JSON.stringify({ fetchedAt: new Date(Date.now() - 7 * 3600_000).toISOString(), items: [] }), // 7h 前,超 6h TTL
+    );
+    const fetchImpl = vi.fn(async () => new Response(RSS, { status: 200 })) as unknown as typeof fetch;
+    const r = await refreshTopicRadarIfStale(testDir, fetchImpl);
+    expect(r.skippedFresh).toBe(false);
+    expect(fetchImpl).toHaveBeenCalled();
+  });
+});
+
 describe("getCachedTopicCandidates", () => {
   let dir: string;
   beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-radarcache-")); });

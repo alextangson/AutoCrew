@@ -104,6 +104,34 @@ describe("intakeRadarTopics", () => {
     expect(result.saved.map((s) => s.title).sort()).toEqual(["我加入了一家公司", "重写一切的时代来了"].sort());
   });
 
+  it("落选记忆:LLM 评过没过关的候选,下一轮不再回池重评", async () => {
+    await saveProfile(profileWith("AI 工具"), testDir);
+    await fs.writeFile(
+      path.join(testDir, "topic-radar.json"),
+      JSON.stringify({
+        fetchedAt: new Date().toISOString(),
+        items: [
+          { title: "AI 好选题", link: "https://n/1", source: "Hacker News", publishedAt: new Date().toISOString() },
+          { title: "AI 烂选题", link: "https://n/2", source: "Hacker News", publishedAt: new Date().toISOString() },
+        ],
+      }),
+    );
+    const judgedPerRound: string[][] = [];
+    const judge = (async (_i: string, _a: string, cands: Array<{ title: string }>) => {
+      judgedPerRound.push(cands.map((c) => c.title));
+      // 只让「好选题」过关;「烂选题」被评但不返回 → 落选
+      return cands
+        .map((c, index) => ({ index, score: c.title.includes("好") ? 9 : 0, reason: "t", titleZh: c.title }))
+        .filter((v) => v.score > 0);
+    }) as typeof import("./relevance.js").judgeRelevance;
+
+    await intakeRadarTopics(testDir, { judge }); // 第一轮:两条都被评
+    await intakeRadarTopics(testDir, { judge }); // 第二轮:烂选题应被落选记忆挡住
+
+    expect(judgedPerRound[0]).toContain("AI 烂选题");
+    expect(judgedPerRound[1] ?? []).not.toContain("AI 烂选题"); // 不再重评
+  });
+
   it("does nothing without a positioning (no industry = no filter = no intake)", async () => {
     await seedCache([{ title: "AI 大新闻", link: "https://a.example/1" }]);
     const result = await intakeRadarTopics(testDir);

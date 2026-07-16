@@ -338,6 +338,23 @@ export async function refreshTopicRadar(
   return { ok: items.length > 0, itemCount: items.length, failedSources };
 }
 
+/**
+ * TTL 门刷新:缓存仍新鲜(6h 内)直接跳过,不打任何源。
+ * 给「app 启动」「再找一批」这类自动/半自动触发用——X 等付费源按请求计费,无条件全量扫
+ * 是白烧钱(重启一次烧一轮)。「手动扫一轮」是用户明确意图,仍走无条件 refreshTopicRadar。
+ */
+export async function refreshTopicRadarIfStale(
+  dataDir?: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+  deps?: Parameters<typeof refreshTopicRadar>[2],
+): Promise<{ ok: boolean; itemCount: number; failedSources: string[]; skippedFresh: boolean }> {
+  const cache = await loadTopicCache(dataDir);
+  if (cache && Date.now() - new Date(cache.fetchedAt).getTime() <= CACHE_TTL_MS) {
+    return { ok: true, itemCount: cache.items.length, failedSources: [], skippedFresh: true };
+  }
+  return { ...(await refreshTopicRadar(dataDir, fetchImpl, deps)), skippedFresh: false };
+}
+
 /** 首屏只读：仅读缓存并排序，绝不触发网络刷新（缓存空→[]）。getTopicCandidates 的同步姊妹。 */
 export async function getCachedTopicCandidates(
   industry: string,
