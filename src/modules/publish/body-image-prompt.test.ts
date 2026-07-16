@@ -27,6 +27,20 @@ describe("enrichBodyImagePrompt", () => {
     expect(out).not.toContain("callouts");
   });
 
+  it("漏写「标签:」但画面是图表/结构 → 图解模式:渲染点名的中文字,不禁字(安全网)", () => {
+    const out = enrichBodyImagePrompt("四象限图，横轴是能否被AI替代、纵轴是需求增速，右上角高亮甜蜜点区域");
+    expect(out).toContain("四象限图");
+    expect(out).toContain("Render the Chinese words"); // 走图解模式
+    expect(out).not.toContain("no text, letters, numbers"); // 不误加禁字规则
+    expect(out).toContain("Swiss editorial illustration");
+  });
+
+  it("流程/节点类画面漏写标签也进图解模式,不被当无字氛围图", () => {
+    const out = enrichBodyImagePrompt("从想法到上线产品的工作流程示意图，节点部署、数据库、认证、监控留白");
+    expect(out).toContain("Render the Chinese words");
+    expect(out).not.toContain("no text, letters, numbers");
+  });
+
   it("两种模式都套同一 house-style 与反 AI-slop 约束", () => {
     for (const hint of ["纸质合同被红线圈住", "机制图。标签:输入、处理、输出"]) {
       const out = enrichBodyImagePrompt(hint);
