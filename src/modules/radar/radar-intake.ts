@@ -18,8 +18,8 @@ const INTAKE_LIMIT = 3;
 const CANDIDATE_POOL = 20;
 const RELEVANCE_THRESHOLD = 7;
 // 关注型信源(X)在评判池里的保底名额——不被关键词粗筛挤掉,交给 LLM 判相关性。
-// 控在 2:judge 只评前 MAX_CANDIDATES(4) 条,留 2 给 X、2 给关键词命中项,兼顾两边。
-const X_POOL_RESERVE = 2;
+// two-stage judge 的 Stage1 能覆盖 ~20 条,留 5 席给 X 足够;够格的才进 Stage2 精修入库。
+const X_POOL_RESERVE = 5;
 
 export interface RadarIntakeResult {
   saved: Topic[];
