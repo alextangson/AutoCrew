@@ -19,11 +19,11 @@ describe("三图文平台包注册与路由", () => {
     expect(getPackForPlatform("wechat_video")).toBe(KOUBO_PACK);
   });
 
-  it("头条包硬门:1000/2/2 + 反模式;X/Reddit 无硬门(短文自审)", () => {
+  it("头条包硬门:1000/2 + 反模式(配图不在写稿阶段);X/Reddit 无硬门(短文自审)", () => {
     const g = TOUTIAO_ARTICLE_PACK.qualityGate!;
     expect(g.minChars).toBe(1000);
     expect(g.minDataPoints).toBe(2);
-    expect(g.minImageTags).toBe(2);
+    expect(g.minImageTags).toBeUndefined();
     for (const p of g.bannedHookPatterns!) expect(() => new RegExp(p)).not.toThrow();
     expect(TWITTER_POST_PACK.qualityGate).toBeUndefined();
     expect(REDDIT_POST_PACK.qualityGate).toBeUndefined();

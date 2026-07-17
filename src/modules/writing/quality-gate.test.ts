@@ -111,7 +111,7 @@ describe("resolveQualityGate", () => {
     const gate = resolveQualityGate(WECHAT_ARTICLE_PACK, "wechat_mp");
     expect(gate?.minChars).toBe(1500);
     expect(gate?.maxChars).toBe(2000);
-    expect(gate?.minImageTags).toBe(2);
+    expect(gate?.minImageTags).toBeUndefined();
   });
 });
 

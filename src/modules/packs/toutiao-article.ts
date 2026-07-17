@@ -35,7 +35,6 @@ export const TOUTIAO_ARTICLE_PACK: TrackPack = {
       "1000-1800 字;每段 2-3 行,每 300 字左右一个小标题或呼吸点",
       "面向陌生读者:不预设背景知识,专业词第一次出现要用人话解释",
       "至少 2 处数据引用(数字/百分比/金额),至少 1 个具体案例",
-      "在数据对比、案例、概念示意处插入 [IMAGE: 具体画面prompt] 配图标记,全文至少 2 个",
       "观点句和事实句分开写;不堆形容词",
     ],
     cta: [
@@ -47,19 +46,17 @@ export const TOUTIAO_ARTICLE_PACK: TrackPack = {
     "标题单独刷到,会点吗?点进来 3 秒内知道为什么要读完吗?",
     "一个完全不懂这个领域的人能顺畅读完吗?",
     "有没有至少一处让人想评论反驳或补充的点?",
-    "配图标记是否落在最需要视觉的位置?",
   ],
   platformAdjustments: {
     toutiao: {
       chars: "1000-1800",
-      style: "信息流风格;短段落;小标题分节;面向陌生读者;[IMAGE:] 标记保留原样",
+      style: "信息流风格;短段落;小标题分节;面向陌生读者",
     },
   },
   qualityGate: {
     minChars: 1000,
     maxChars: 1800,
     minDataPoints: 2,
-    minImageTags: 2,
     bannedHookPatterns: ["^随着", "^近年来", "^在.{1,12}(领域|行业)", "^众所周知", "^不可否认"],
     maxRepairRounds: 2,
   },
