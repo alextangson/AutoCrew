@@ -36,6 +36,7 @@ Spike 结论以"Spike 结论"一节回写本文档后，进入 §5 迁移。
 | A2 | **PASS** | `!echo hacked`、`$HOME-literal` 等危险字面 key 经 `options.apiKey` 原样落 `x-api-key` 头、零求值（a2-key-safety.mts 三例全过）。codex #5 的求值风险在 pi-coding-agent 的配置解析器，本方案不经过它 |
 | A3 | **PASS（机制替换，见下）** | 环回观察器三场景全过（a3-watchdog.mts）：正常流零损耗；断流 1.9s 内 idle_kill + SDK 报错不挂死；并发一活一死互不误伤 |
 | A4 | **PASS** | 真实 newcli 中转（路径前缀 baseUrl）经观察器冒烟：200、流式文本、usage 完整（input/output/cacheRead/cacheWrite/totalTokens）、onPayload/onResponse 触发、观察器录到双向字节（a4-real-smoke.mts） |
+| A5 | **PASS**（阶段 2 补验） | 生产 `runLoop`（pi-ai 引擎）→ 观察器 → 真实 newcli，带工具往返：tool_use → tool_result → 终答含工具结果；`eager_input_streaming` 附加字段真 relay 接受（a5-e2e-smoke.mts，2026-07-18） |
 
 **A3 机制替换声明**：pi-ai 0.80.10 **没有** per-call fetch/transport 注入点（`StreamOptions` 无 fetch 字段；anthropic-messages/openai-completions 直接 `new Anthropic/OpenAI({baseURL})`，内部代理工具只接 codex-responses 与 bedrock 两路）。按字面，原 A3 表述该判失败；但门的四项**要求**全部由"进程内环回反向观察器"达成：SDK → `http://127.0.0.1:<port>/t/<token>/…` → 明文转发真实上游。per-call（token 路径段）✓ 并发隔离（per-exchange 计时）✓ 不碰 `globalThis.fetch` ✓ 字节级看门狗（含首字节等待）✓。观察器同时就是测试 fake 的注入点（测试把 baseUrl 指向 fake 中转即可，等价旧 fetchImpl）。观察器只做传输与计时，不解析不落盘。
 
@@ -82,7 +83,17 @@ Spike 结论以"Spike 结论"一节回写本文档后，进入 §5 迁移。
 
 ## §6 相关但解耦的小修（一起排期，独立提交）
 
-chat 的 `read_url` 多次调用吃爆 `maxTotalTokens(20000)` 预算（chat-router.ts:523 已知问题）：给大输出工具加单条结果截断（默认上限 8000 字符，工具定义处声明）。这是该痛点的直接解，不依赖本迁移。（承接 #10）
+~~chat 的 `read_url` 加单条结果截断~~ **实现期核实：已存在** —— chat-router.ts 的 read_url 早有 4000 字符单条截断（"进对话上下文的预算上限"），codex #10 的前提部分失真。残留问题是多次调用的**累积**预算消耗，代码注释已明确归入 v1.5 预算策略，本迁移不动。（#10 关闭）
+
+## 落地记录（2026-07-18）
+
+- 阶段 0（spike A1-A5）✅ / 阶段 1（引擎替换 + 1166 测试全绿×5 连跑）✅ commit `37beaaf` / 阶段 2（真实中转端到端冒烟）✅
+- 行为差异台账（相对旧引擎，均已在测试中声明）：
+  1. 坏 JSON 工具参数被 pi-ai partial-json **抢救**为尽力对象（旧：进 "Error:" 消息让模型自纠）—— 契约升级，loop.test.ts 有注释。
+  2. 非 SSE 的 200（HTML/error-shaped JSON）由观察器归一化为 **400 + 原 body 透传**：provider 错误信息保留、fail-fast 语义保留；合法的"非流式 JSON 200 成功响应"不再被接受（旧引擎兼容此形态，判断为测试遗产而非真实 relay 行为）。
+  3. anthropic 请求新增 prompt cache 字段（pi-ai 默认）：A4 实测中转接受且产生 cacheWrite —— 正向成本优化。
+  4. anthropic 工具定义附带 `eager_input_streaming` 字段：A5 实测中转接受。
+  5. usage 口径统一为 input+output（cache 不计入预算），openai 侧要求中转发 `prompt_tokens/completion_tokens` 拆分（include_usage 下标准行为）。
 
 ## §7 决策记录：为什么从 B 回退到 A
 
