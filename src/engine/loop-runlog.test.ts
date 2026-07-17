@@ -1,13 +1,14 @@
 /**
  * loop-runlog.test.ts — runLoop 运行日志埋点端到端:
  * config.dataDir 有 → llm/tool 记录落盘且 runId/agent 正确;无 → 零落盘零行为变化。
- * fetchImpl 注入 JSON 响应(非 SSE 路径),零网络。
+ * fetchImpl 注入 SSE 响应(观察器上游腿),零网络。
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { runLoop, type LoopTool } from "./loop.js";
+import { openaiSseResponse } from "./sse-fixtures.js";
 import { readRun, listRuns } from "../runtime/run-log.js";
 import type { EngineConfig } from "./config.js";
 
@@ -21,12 +22,10 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-const jsonResponse = (body: unknown) =>
-  new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
-
 function makeFetch(responses: unknown[]): typeof fetch {
   let i = 0;
-  return (async () => jsonResponse(responses[Math.min(i++, responses.length - 1)])) as unknown as typeof fetch;
+  return (async () =>
+    openaiSseResponse(responses[Math.min(i++, responses.length - 1)] as Parameters<typeof openaiSseResponse>[0])) as unknown as typeof fetch;
 }
 
 const toolCallTurn = {

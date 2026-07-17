@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runChatTurn, buildChatTools, type ChatCard } from "./chat-router.js";
+import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
 
 let testDir: string;
 
@@ -23,12 +24,8 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
+// pi-ai 迁移:fetchImpl 现喂观察器上游腿,必须说 SSE 方言(名字保留,减小 diff)
+const jsonResponse = (body: unknown): Response => openaiSseResponse(body as Parameters<typeof openaiSseResponse>[0]);
 
 function assistantTurn(content: string | null, toolCalls?: unknown[]) {
   return {
@@ -326,7 +323,7 @@ describe("runChatTurn", () => {
   it("runs tool calls and returns reply + cards", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-      calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      calls.push(JSON.parse(bodyText(init as { body?: unknown })) as Record<string, unknown>);
       if (calls.length === 1) {
         return jsonResponse(
           assistantTurn(null, [
@@ -389,7 +386,7 @@ describe("context awareness + intake tools (IA v4.2 C1/A2/C3)", () => {
     );
     const calls: Array<Record<string, unknown>> = [];
     const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-      calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      calls.push(JSON.parse(bodyText(init as { body?: unknown })) as Record<string, unknown>);
       return jsonResponse(assistantTurn("好的"));
     }) as typeof fetch;
 

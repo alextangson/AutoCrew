@@ -26,7 +26,7 @@ export class RetryableError extends Error {
   }
 }
 
-function isRetryable(err: unknown): boolean {
+export function isRetryable(err: unknown): boolean {
   if (err instanceof RetryableError) return true;
   if (err instanceof TypeError && err.message.includes("fetch")) return true; // Network error
   // 每轮硬超时中止（AbortSignal.timeout）:relay 挂起,中止后应重试整轮

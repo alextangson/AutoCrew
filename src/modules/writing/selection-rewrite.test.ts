@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { rewriteSelection } from "./selection-rewrite.js";
+import { openaiSseResponse, bodyText } from "../../engine/sse-fixtures.js";
 
 let testDir: string;
 
@@ -20,20 +21,18 @@ afterEach(async () => {
 });
 
 function completion(content: string): Response {
-  return new Response(
-    JSON.stringify({
-      choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
-      usage: { total_tokens: 20 },
-    }),
-    { status: 200, headers: { "content-type": "application/json" } },
-  );
+  // pi-ai 迁移:fetchImpl 现喂观察器上游腿,必须说 SSE 方言
+  return openaiSseResponse({
+    choices: [{ message: { content } }],
+    usage: { total_tokens: 20 },
+  });
 }
 
 describe("rewriteSelection", () => {
   it("sends selection + instruction + context to the model and returns rewritten text", async () => {
     let captured: Record<string, unknown> = {};
     const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-      captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      captured = JSON.parse(bodyText(init as { body?: unknown })) as Record<string, unknown>;
       return completion("改写后的句子。");
     }) as typeof fetch;
 
@@ -77,7 +76,7 @@ describe("上下文开窗（V5.2:选区为中心,不再头部截断）", () => {
   it("长稿后部的选区:上下文包含选区周边而非只有开头", async () => {
     let captured: Record<string, unknown> = {};
     const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-      captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      captured = JSON.parse(bodyText(init as { body?: unknown })) as Record<string, unknown>;
       return completion("改好了。");
     }) as typeof fetch;
 
