@@ -129,8 +129,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 101 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(101);
+  it("has exactly 102 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(102);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -226,6 +226,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "article_images:suggest" &&
           ch !== "article_images:add_slot" &&
           ch !== "article_images:remove_slot" &&
+          ch !== "article_images:upload" &&
           ch !== "flywheel:wechat_pull" &&
           ch !== "chat:turn" &&
           ch !== "settings:get" &&

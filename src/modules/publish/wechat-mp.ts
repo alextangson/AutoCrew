@@ -324,15 +324,18 @@ export async function publishWechatMpDraft(
     const prompt = match[1]?.trim();
     if (!prompt) continue;
 
-    const filename = `img-${String(index + 1).padStart(2, "0")}.png`;
+    const preparedPath = options.preparedImages?.[index];
+    const preparedReady = preparedPath ? await fileExists(preparedPath) : false;
+    // 上传图可能是 .jpg——扩展名必须跟着源文件走,发布脚本按扩展名映射 content-type
+    const ext = preparedReady ? path.extname(preparedPath!).toLowerCase() || ".png" : ".png";
+    const filename = `img-${String(index + 1).padStart(2, "0")}${ext}`;
     const imagePath = path.join(imagesDir, filename);
     const relativePath = `images/${filename}`;
 
     const exists = await fileExists(imagePath);
-    const preparedPath = options.preparedImages?.[index];
-    if (preparedPath && (await fileExists(preparedPath))) {
-      if (path.resolve(preparedPath) !== path.resolve(imagePath)) {
-        await fs.copyFile(preparedPath, imagePath);
+    if (preparedReady) {
+      if (path.resolve(preparedPath!) !== path.resolve(imagePath)) {
+        await fs.copyFile(preparedPath!, imagePath);
       }
     } else if (!options.skipImages || !exists) {
       const imageResult = await generateImage(prompt, imagePath, {

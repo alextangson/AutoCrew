@@ -24,6 +24,8 @@ export interface ArticleImageEntry {
   imagePath?: string;
   error?: string;
   updatedAt?: string;
+  /** 缺省视为 generated（历史条目无此字段）。 */
+  origin?: "generated" | "uploaded";
 }
 
 export interface ArticleImageReview {
@@ -181,6 +183,7 @@ export async function generateArticleImages(
       review = await updateEntry(review, target.index, {
         status: "ready",
         imagePath: outputPath,
+        origin: "generated",
         error: undefined,
         updatedAt: new Date().toISOString(),
       }, dataDir);
@@ -196,6 +199,51 @@ export async function generateArticleImages(
     }
   }
   return { ok: errors.length === 0, review, generated, failed: errors.length, ...(errors.length ? { errors } : {}) };
+}
+
+export const MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** 扩展名以字节魔数为准——文件名只是用户给的提示，不可信。 */
+function sniffImageExt(bytes: Buffer): "png" | "jpg" | null {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
+  return null;
+}
+
+/** 用户自有图片顶进一个插图位。只收 png/jpg：webp 会在公众号推送的内容类型映射里静默失败。 */
+export async function attachUploadedArticleImage(
+  contentId: string,
+  index: number,
+  bytes: Buffer,
+  dataDir?: string,
+): Promise<ArticleImageReview> {
+  const review = await getArticleImageReview(contentId, dataDir);
+  const entry = review.entries.find((candidate) => candidate.index === index);
+  if (!entry) throw new Error(`正文配图 ${index + 1} 不存在`);
+  // generateArticleImages 内存态整写 review——生成中放行上传会被静默覆写回去
+  if (entry.status === "generating") throw new Error(`配图 ${index + 1} 正在生成中，等它完成再上传`);
+  if (bytes.length === 0) throw new Error("图片内容为空");
+  if (bytes.length > MAX_UPLOAD_IMAGE_BYTES) throw new Error("图片超过 5MB 上限，请压缩后再传");
+  const ext = sniffImageExt(bytes);
+  if (!ext) throw new Error("仅支持 PNG/JPG 图片（按文件内容识别；webp 公众号推送不支持）");
+
+  const loc = locations(contentId, dataDir);
+  await fs.mkdir(loc.assets, { recursive: true });
+  if (entry.imagePath && path.resolve(entry.imagePath).startsWith(path.resolve(loc.assets) + path.sep)) {
+    await fs.rm(entry.imagePath, { force: true });
+  }
+  // revision 必须 +1:/api/asset 走 immutable 缓存,同名换内容会读到旧图
+  const revision = (entry.revision ?? 0) + 1;
+  const imagePath = path.join(loc.assets, `body-${String(index + 1).padStart(2, "0")}-r${revision}.${ext}`);
+  await fs.writeFile(imagePath, bytes);
+  return updateEntry(review, index, {
+    status: "ready",
+    imagePath,
+    revision,
+    origin: "uploaded",
+    error: undefined,
+    updatedAt: new Date().toISOString(),
+  }, dataDir);
 }
 
 export async function removeArticleImage(contentId: string, index: number, dataDir?: string): Promise<ArticleImageReview> {

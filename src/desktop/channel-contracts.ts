@@ -33,6 +33,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "article_images:suggest": ["content_id"],
   "article_images:add_slot": ["content_id"],
   "article_images:remove_slot": ["content_id", "index"],
+  "article_images:upload": ["content_id", "index", "data_base64"],
   "chat:turn": ["message"],
   "settings:get": [],
   "settings:set": [],

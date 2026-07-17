@@ -1,5 +1,6 @@
 /** 正文配图 IPC：生成是分钟级后台任务，读取/移除同步返回。 */
 import {
+  attachUploadedArticleImage,
   generateArticleImages,
   getArticleImageReview,
   removeArticleImage,
@@ -129,6 +130,27 @@ export async function articleImagesAddSlotHandler(payload: Payload): Promise<Han
     if (!updated) return { ok: false, error: "保存失败" };
     void emitEngineEvent({ role: "writer", kind: "work", label: "新增一个插图位", contentId: checked.contentId }, checked.dataDir).catch(() => {});
     return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** #5 上传：用户自有图片顶进一个插图位（字节走 data_base64，同步返回新 review）。 */
+export async function articleImagesUploadHandler(payload: Payload): Promise<HandlerResult> {
+  const checked = valid(payload);
+  if (!checked.ok) return checked;
+  const index = Number(payload.index);
+  if (!Number.isInteger(index) || index < 0) return { ok: false, error: "需要合法 index" };
+  const raw = typeof payload.data_base64 === "string" ? payload.data_base64 : "";
+  const b64 = raw.replace(/^data:[^;]*;base64,/, "");
+  if (!b64) return { ok: false, error: "需要 data_base64 图片内容" };
+  try {
+    const review = await attachUploadedArticleImage(checked.contentId, index, Buffer.from(b64, "base64"), checked.dataDir);
+    void emitEngineEvent(
+      { role: "publisher", kind: "work", label: `配图 ${index + 1} 已换成用户上传的图`, contentId: checked.contentId },
+      checked.dataDir,
+    ).catch(() => {});
+    return { ok: true, data: review };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

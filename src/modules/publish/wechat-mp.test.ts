@@ -50,6 +50,25 @@ describe("publishWechatMpDraft coverPath", () => {
     expect(await fs.readFile(path.join(dir, "images", "img-01.png"), "utf-8")).toBe("approved-image-bytes");
     expect(await fs.readFile(r.publishInput, "utf-8")).toContain("![正文中的第一张图](images/img-01.png)");
   });
+
+  it("preparedImages 为 .jpg（用户上传）→ 拷贝与正文引用都保留扩展名，content-type 才映射得对", async () => {
+    const articlePath = path.join(dir, "draft.md");
+    await fs.writeFile(articlePath, "# 标题\n\n[IMAGE: 用户自己传的图]\n", "utf-8");
+    const coverPath = path.join(dir, "封面.png");
+    const preparedPath = path.join(dir, "uploaded.jpg");
+    await fs.writeFile(coverPath, "cover-bytes");
+    await fs.writeFile(preparedPath, "jpeg-bytes");
+
+    const r = await publishWechatMpDraft({
+      articlePath,
+      dryRun: true,
+      coverPath,
+      preparedImages: [preparedPath],
+    });
+    expect(r.ok).toBe(true);
+    expect(await fs.readFile(path.join(dir, "images", "img-01.jpg"), "utf-8")).toBe("jpeg-bytes");
+    expect(await fs.readFile(r.publishInput, "utf-8")).toContain("![用户自己传的图](images/img-01.jpg)");
+  });
 });
 
 describe("wechatPublishEnv(凭证经 env 传给 publish.py,脚本 config.json 退居兜底)", () => {

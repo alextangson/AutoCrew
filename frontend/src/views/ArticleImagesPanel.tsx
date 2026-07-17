@@ -12,6 +12,7 @@ interface ArticleImageEntry {
   revision: number;
   imagePath?: string;
   error?: string;
+  origin?: "generated" | "uploaded";
 }
 
 interface ArticleImageReview {
@@ -33,13 +34,15 @@ const STATUS_LABEL: Record<ArticleImageEntry["status"], string> = {
   error: "失败",
 };
 
-export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; body: string }) {
+export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; body: string; platform?: string }) {
   const [review, setReview] = useState<ArticleImageReview | null>(null);
   const [prompts, setPrompts] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
   const activeRunRef = useRef<string | null>(null);
   const pollRef = useRef<number | null>(null);
   const startedStampRef = useRef<string | undefined>();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadIndexRef = useRef(0);
 
   const stopPoll = () => {
     if (pollRef.current) window.clearInterval(pollRef.current);
@@ -134,6 +137,28 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
     void load();
   };
 
+  const upload = async (index: number, file: File) => {
+    if (file.size > 5 * 1024 * 1024) return toast("图片超过 5MB 上限，请压缩后再传");
+    if (props.platform === "wechat_mp" && file.size > 1024 * 1024) {
+      toast("提醒：公众号正文图限 1MB，这张较大，推送时可能被拒——建议先压缩");
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error ?? new Error("读取文件失败"));
+      reader.readAsDataURL(file);
+    }).catch(() => "");
+    if (!dataUrl) return toast("读取文件失败，请重试");
+    const result = await invoke("article_images:upload", {
+      content_id: props.contentId,
+      index,
+      data_base64: dataUrl.replace(/^data:[^;]*;base64,/, ""),
+    });
+    if (!result.ok) return toast((result as { error?: string }).error ?? "上传失败");
+    toast(`配图 ${index + 1} 已换成你上传的图`);
+    void load();
+  };
+
   const removeSlot = async (index: number) => {
     if (props.dirty) return toast("正文有未保存改动——先保存,再删位");
     const yes = await confirmDialog({
@@ -190,6 +215,17 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
         </div>
       </div>
       {props.dirty && <div className="ed-error">正文有未保存改动。请先保存，配图位置和发布稿才不会错位。</div>}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void upload(uploadIndexRef.current, file);
+        }}
+      />
 
       <div className="article-images-grid">
         {review.entries.map((entry) => (
@@ -201,7 +237,9 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
               ) : (
                 <span className="muted">正文里没找到对应标记</span>
               )}
-              <span className={`chip article-image-status-${entry.status}`}>{STATUS_LABEL[entry.status]}</span>
+              <span className={`chip article-image-status-${entry.status}`}>
+                {entry.origin === "uploaded" && entry.status === "ready" ? "自己上传" : STATUS_LABEL[entry.status]}
+              </span>
             </div>
             {entry.imagePath ? (
               <img src={imageUrl(props.contentId, entry.imagePath)} alt={`正文配图 ${entry.index + 1}`} />
@@ -222,6 +260,15 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
             <div className="row-actions">
               <button disabled={busy || props.dirty} onClick={() => void begin(entry.index)}>
                 {entry.status === "ready" ? "按此提示重做" : "生成这一张"}
+              </button>
+              <button
+                disabled={busy || entry.status === "generating"}
+                onClick={() => {
+                  uploadIndexRef.current = entry.index;
+                  fileInputRef.current?.click();
+                }}
+              >
+                用自己的图
               </button>
               {entry.imagePath && (
                 <button

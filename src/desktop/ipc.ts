@@ -92,6 +92,7 @@ import {
   articleImagesSuggestHandler,
   articleImagesAddSlotHandler,
   articleImagesRemoveSlotHandler,
+  articleImagesUploadHandler,
 } from "./article-image-handlers.js";
 import { logsListHandler, logsGetRunHandler, skillsListHandler } from "./log-handlers.js";
 import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler, retroGetHandler } from "./goal-retro-handlers.js";
@@ -903,6 +904,7 @@ export function buildIpcHandlers(
     "article_images:suggest": articleImagesSuggestHandler,
     "article_images:add_slot": articleImagesAddSlotHandler,
     "article_images:remove_slot": articleImagesRemoveSlotHandler,
+    "article_images:upload": articleImagesUploadHandler,
     "chat:turn": chatTurnHandler,
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,

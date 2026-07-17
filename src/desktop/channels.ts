@@ -26,6 +26,7 @@ export const IPC_CHANNELS = [
   "article_images:suggest",
   "article_images:add_slot",
   "article_images:remove_slot",
+  "article_images:upload",
   "chat:turn",
   "settings:get",
   "settings:set",

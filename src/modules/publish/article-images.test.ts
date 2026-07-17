@@ -7,6 +7,7 @@ vi.mock("./wechat-mp.js", () => ({ generateWechatImageAsset: vi.fn() }));
 
 import { generateWechatImageAsset } from "./wechat-mp.js";
 import {
+  attachUploadedArticleImage,
   generateArticleImages,
   getArticleImageReview,
   parseArticleImageMarkers,
@@ -82,5 +83,60 @@ describe("article images workspace", () => {
     await updateContent(content.id, { body: content.body.replace("数据装进透明行李箱", "数据装进纸箱") }, dir);
     const reset = await getArticleImageReview(content.id, dir);
     expect(reset.entries.map((entry) => entry.status)).toEqual(["ready", "missing"]);
+  });
+});
+
+const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("png-body")]);
+const JPG_BYTES = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("jpg-body")]);
+
+describe("attachUploadedArticleImage", () => {
+  it("上传 jpg 顶进槽位：ready + origin=uploaded + revision+1，扩展名按魔数定", async () => {
+    const content = await seed();
+    const review = await attachUploadedArticleImage(content.id, 0, JPG_BYTES, dir);
+    const entry = review.entries[0];
+    expect(entry).toMatchObject({ status: "ready", origin: "uploaded", revision: 1 });
+    expect(entry.imagePath!.endsWith("body-01-r1.jpg")).toBe(true);
+    expect(await fs.readFile(entry.imagePath!)).toEqual(JPG_BYTES);
+    expect(review.entries[1].status).toBe("missing");
+  });
+
+  it("png 魔数 → .png；重复上传顶掉旧文件并 revision+1（immutable 缓存靠文件名失效）", async () => {
+    const content = await seed();
+    const first = await attachUploadedArticleImage(content.id, 0, PNG_BYTES, dir);
+    const firstPath = first.entries[0].imagePath!;
+    expect(firstPath.endsWith("body-01-r1.png")).toBe(true);
+    const second = await attachUploadedArticleImage(content.id, 0, JPG_BYTES, dir);
+    expect(second.entries[0].revision).toBe(2);
+    expect(second.entries[0].imagePath!.endsWith("body-01-r2.jpg")).toBe(true);
+    await expect(fs.access(firstPath)).rejects.toThrow();
+  });
+
+  it("拒收：槽位不存在 / 生成中 / 超 5MB / 非 png-jpg 字节", async () => {
+    const content = await seed();
+    await expect(attachUploadedArticleImage(content.id, 9, PNG_BYTES, dir)).rejects.toThrow(/不存在/);
+
+    // 把槽位 0 直接写成 generating——持久态才挡得住刷新后再传的场景
+    const metaPath = path.join(dir, "contents", content.id, "article-images.json");
+    const meta = JSON.parse(await fs.readFile(metaPath, "utf-8")) as { entries: Array<{ status: string }> };
+    meta.entries[0].status = "generating";
+    await fs.writeFile(metaPath, JSON.stringify(meta));
+    await expect(attachUploadedArticleImage(content.id, 0, PNG_BYTES, dir)).rejects.toThrow(/生成中/);
+
+    const huge = Buffer.concat([PNG_BYTES, Buffer.alloc(5 * 1024 * 1024)]);
+    await expect(attachUploadedArticleImage(content.id, 1, huge, dir)).rejects.toThrow(/上限/);
+    await expect(attachUploadedArticleImage(content.id, 1, Buffer.from("RIFFxxxxWEBPdata"), dir)).rejects.toThrow(/PNG\/JPG/);
+  });
+
+  it("正文他处改动后 reconcile 保留上传图与 origin；按提示重做后回到 AI 生成", async () => {
+    const content = await seed();
+    await attachUploadedArticleImage(content.id, 0, JPG_BYTES, dir);
+    await updateContent(content.id, { body: content.body.replace("第一段", "第一段(改)") }, dir);
+    const after = await getArticleImageReview(content.id, dir);
+    expect(after.entries[0]).toMatchObject({ status: "ready", origin: "uploaded" });
+
+    await generateArticleImages({ contentId: content.id, index: 0, prompt: "改成 AI 生成" }, dir);
+    const regen = await getArticleImageReview(content.id, dir);
+    expect(regen.entries[0].origin).toBe("generated");
+    expect(regen.entries[0].imagePath!.endsWith("body-01-r2.png")).toBe(true);
   });
 });
