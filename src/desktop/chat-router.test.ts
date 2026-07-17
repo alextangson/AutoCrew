@@ -101,6 +101,33 @@ describe("buildChatTools", () => {
     expect(sink[0]).toMatchObject({ type: "draft", data: { contentId: "content-42", version: 2 } });
   });
 
+  it("get_draft returns the full body to the model (上下文承诺「可用 get_draft 读全文」)", async () => {
+    const sink: ChatCard[] = [];
+    const content = vi.fn(async () => ({
+      ok: true,
+      content: {
+        id: "content-9",
+        title: "AI 转型难在哪",
+        body: "第一段：流程不在系统里。\n\n第二段：SOP 是假的。",
+        status: "draft_ready",
+        platform: "wechat_mp",
+      },
+    }));
+    const tools = buildChatTools(sink, testDir, { content });
+
+    const out = JSON.parse(
+      (await tools.find((t) => t.name === "get_draft")!.execute({ id: "content-9" })) as string,
+    );
+
+    expect(out).toMatchObject({
+      ok: true,
+      id: "content-9",
+      title: "AI 转型难在哪",
+      body: "第一段：流程不在系统里。\n\n第二段：SOP 是假的。",
+    });
+    expect(sink[0]).toMatchObject({ type: "draft" }); // 全文卡片照旧推给 UI
+  });
+
   it("strips model-injected underscore keys (e.g. _dataDir) from tool args", async () => {
     const sink: ChatCard[] = [];
     const rewrite = vi.fn(async () => ({ ok: false, error: "x" }));

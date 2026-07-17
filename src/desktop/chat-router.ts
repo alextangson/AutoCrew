@@ -3,7 +3,8 @@
  *
  * 每轮：loadEngineConfig → runLoop(fastModel, 工具集) → {reply, cards}。
  * 工具包装既有 execute*；执行成功向 sink 推一张结构化卡（呈现层直达
- * renderer），给模型只回紧凑 JSON（标题/ID/计数——正文不进对话上下文）。
+ * renderer），给模型只回紧凑 JSON（标题/ID/计数）。例外：get_draft 回全文
+ * 正文——总编辑要能读稿才能讨论；工具结果只活在本轮 loop，不进持久历史。
  * 引擎未配置 → {ok:false, needsSetup:true}，renderer 引导去设置页。
  */
 import { loadEngineConfig } from "../engine/config.js";
@@ -403,7 +404,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     },
     {
       name: "get_draft",
-      description: "按 id 查看单篇稿件详情。",
+      description: "按 id 读取单篇稿件详情，返回含完整正文——需要基于稿件内容讨论/提建议时先调它读全文。",
       parameters: {
         type: "object",
         properties: { id: { type: "string", description: "稿件 id" } },
@@ -414,7 +415,9 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         if (!res.ok) return fail(res.error);
         const content = res.content as Record<string, unknown>;
         sink.push({ type: "draft", data: content });
-        return JSON.stringify({ ok: true, id: content.id, title: content.title, status: content.status });
+        // 正文要回给模型：上下文注入承诺了「可用 get_draft 读全文」，总编辑靠它讨论标题/开头/观点。
+        // 工具结果只活在本轮 loop（chat-persist 只存用户消息+最终回复），不会长期膨胀对话历史。
+        return JSON.stringify({ ok: true, id: content.id, title: content.title, status: content.status, body: content.body });
       },
     },
     {
