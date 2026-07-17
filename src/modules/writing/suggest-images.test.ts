@@ -40,16 +40,42 @@ describe("suggestImagePositions", () => {
     expect(saved?.versions).toHaveLength(2);
   });
 
-  it("throws when the model adds no new markers", async () => {
+  it("zero additions is a valid outcome — no new version, sneaked prose edits discarded", async () => {
     const c = await saveContent(
       { title: "T", body: "只有一段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
       const submit = (opts.tools ?? []).find((t) => t.name === "submit_body")!;
-      await submit.execute({ body: "只有一段。" });
+      await submit.execute({ body: "只有一段，但被偷偷改了措辞。" });
       return done();
     };
-    await expect(suggestImagePositions(c.id, testDir, { runLoopImpl })).rejects.toThrow();
+    const r = await suggestImagePositions(c.id, testDir, { runLoopImpl });
+    expect(r.added).toBe(0);
+    const saved = await getContent(c.id, testDir);
+    expect(saved?.body).toBe("只有一段。");
+    expect(saved?.versions ?? []).toHaveLength(1);
+  });
+
+  it("throws when the model deletes existing markers", async () => {
+    const c = await saveContent(
+      { title: "T", body: "一段。\n\n[IMAGE: 已有图]\n\n二段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      testDir,
+    );
+    const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      const submit = (opts.tools ?? []).find((t) => t.name === "submit_body")!;
+      await submit.execute({ body: "一段。\n\n二段。" });
+      return done();
+    };
+    await expect(suggestImagePositions(c.id, testDir, { runLoopImpl })).rejects.toThrow(/删/);
+  });
+
+  it("throws when the model never submits", async () => {
+    const c = await saveContent(
+      { title: "T", body: "只有一段。", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      testDir,
+    );
+    const runLoopImpl = async (): Promise<LoopResult> => done();
+    await expect(suggestImagePositions(c.id, testDir, { runLoopImpl })).rejects.toThrow(/没有返回/);
   });
 });

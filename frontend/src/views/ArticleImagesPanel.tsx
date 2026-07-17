@@ -122,7 +122,7 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
     setBusy(false);
     if (!result.ok) return toast((result as { error?: string }).error ?? "AI 选位失败");
     const added = (result as { data?: { added?: number } }).data?.added ?? 0;
-    toast(`AI 选好 ${added} 处插图位置——已存为新版本`);
+    toast(added > 0 ? `AI 选好 ${added} 处插图位置——已存为新版本` : "AI 判断本文无需新增插图位置——正文未改动");
     void load();
   };
 

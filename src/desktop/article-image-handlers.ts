@@ -99,7 +99,12 @@ export async function articleImagesSuggestHandler(payload: Payload): Promise<Han
   try {
     const { added } = await suggestImagePositions(checked.contentId, checked.dataDir);
     void emitEngineEvent(
-      { role: "writer", kind: "run_done", label: `AI 选好插图位置：新增 ${added} 处`, contentId: checked.contentId },
+      {
+        role: "writer",
+        kind: "run_done",
+        label: added > 0 ? `AI 选好插图位置：新增 ${added} 处` : "AI 判断本文无需新增插图位置",
+        contentId: checked.contentId,
+      },
       checked.dataDir,
     ).catch(() => {});
     return { ok: true, data: { added } };
