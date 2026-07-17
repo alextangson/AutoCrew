@@ -23,7 +23,7 @@
 |---|--------|----------------|
 | A1 | 锁定 `@earendil-works/pi-ai` 版本 + TypeBox peer + Node 兼容矩阵，写死进 package.json | #21 |
 | A2 | key 程序化注入安全：直接构造 Model/provider 对象传入内存 key，验证 `!`、`$` 开头字面 key 不被求值 | #5 |
-| A3 | **自定义 fetch/transport 注入可行**（A 的最大单点验证项）：字节级 45s 看门狗、run-log 完整 LLM I/O、测试 fake 三件事都挂在这一个注入点上。pi-ai 若不支持 fetch 注入 → 兜底本地 fake HTTP server + 上层流事件看门狗，并重估语义损失 | #6 #14 |
+| A3 | **自定义 fetch/transport 注入可行且 per-call**（A 的最大单点验证项）：字节级 45s 看门狗、run-log 完整 LLM I/O（含失败响应与每次重试）、测试 fake 三件事都挂在这一个注入点上。必须 per-call 注入并通过并发隔离验证（多调用方并发时 watchdog/日志/fake 互不串扰），禁止改写 `globalThis.fetch`。**无软兜底**：注入不可行 = spike 失败 → 停下重议方案 | #6 #14 |
 | A4 | anthropic-messages + 自定义 baseUrl 真打 newcli 中转冒烟；compat 逐项核对：`max_tokens=16000`、thinking 忽略、流式 usage、中转特有路径 | #15 |
 
 Spike 结论以"Spike 结论"一节回写本文档后，进入 §5 迁移。
@@ -38,7 +38,7 @@ Spike 结论以"Spike 结论"一节回写本文档后，进入 §5 迁移。
 
 - **换掉**（约 300 行）：双协议请求构造、SSE 解析、usage 提取 → `models.stream(model, context)` 事件流。
 - **保留**：maxTurns / maxTotalTokens 预算状态机（回合边界检查、允许单轮超额）、stopReason 语义、history 注入、onEvent 转发、**工具由 loop 自己串行执行**（pi-ai 只解析出 tool call，不执行 —— 串行/预算/cards 语义天然不变）。
-- **保留 `withRetry`**：包装单次 `models.stream()` 调用，401 不重试 / 429 与 5xx 指数退避的现有语义逐字保留。重试全权归我们：若 A1 发现 pi-ai 有内建重试则显式关闭，避免双重重试；重试单位=单次 provider call，写工具在任何路径下不重复执行。
+- **保留 `withRetry`**：401 不重试 / 429 与 5xx 指数退避的现有语义逐字保留。重试全权归我们：若 A1 发现 pi-ai 有内建重试则显式关闭，避免双重重试。**重试事务边界**：重试单位 = 一次完整的流式消费（从发起 `models.stream()` 到事件流正常收尾），不是只包创建调用 —— 中途断流是该次尝试的可重试失败；每次尝试的增量内容缓存在 attempt 本地，流成功收尾后才提交消息与 tool call；写工具在任何路径下不重复执行。
 - **看门狗**：字节级 45s 空闲超时移到 A3 的 fetch 注入层；"任何字节续命、健康长文不误杀"语义不变。
 - **run-log**：数据源从手写 HTTP 层改为 A3 注入层捕获（含失败响应与每次重试），落盘格式不变。
 
@@ -48,10 +48,12 @@ Spike 结论以"Spike 结论"一节回写本文档后，进入 §5 迁移。
 
 `engine.json` 用户配置面**完全不变**。`loadEngineConfig` 后新增纯函数映射：EngineConfig → pi-ai Model 对象（`api: anthropic-messages | openai-completions`、自定义 baseUrl、内存 key、contextWindow/maxTokens 元数据）。routes（writer/analytics/scout/codex）逐条映射，语义不变。
 
+模型元数据来源（EngineConfig 本身没有这些字段）：内置元数据表覆盖预设与常用模型；未知模型走保守默认 `contextWindow=131072`、`maxTokens=16000`（后者与现 loop 固定值一致）。A4 顺带验证 pi-ai 是否用 contextWindow 做本地强制 —— 不得引入现在没有的本地截断行为。
+
 ## §4 测试
 
 - `loop.test.ts`（464 行）+ `loop-runlog.test.ts` **全部断言原样保留**：401 不重试、429 重试、HTML/畸形 200、非数字 usage、空回复、历史顺序、Anthropic tool_result、thinking 忽略、SSE 分块与中途断流。（承接 #16）
-- 注入方式：`fetchImpl` 改为经 A3 注入点喂给 pi-ai；A3 失败则兜底本地 fake HTTP server。断言本身一条不改 —— 测试是行为契约，不迁就实现。
+- 注入方式：`fetchImpl` 改为经 A3 的 per-call 注入点喂给 pi-ai（A3 是硬门：无注入即无方案 A，不存在"仅测试可用"的降级形态）。断言本身一条不改 —— 测试是行为契约，不迁就实现。
 - 每条实际 route 加真实中转 contract test（请求快照 + 冒烟）。
 
 ## §5 迁移顺序
@@ -74,3 +76,5 @@ chat 的 `read_url` 多次调用吃爆 `maxTotalTokens(20000)` 预算（chat-rou
 回退理由：codex 的修复方案把 B 的两大卖点结构性降级 —— 持久会话被修成可丢弃派生缓存（conversation-store 仍是唯一事实源），自动压缩被修成第二道防线（第一道是工具截断，现架构即可做）；而代价上涨（spike 6 点门、兼容 facade、会话生命周期状态机、正式适配层、双存储事务）。21 条发现中 14 条为 B 特有（双事实源、路径穿越、ResourceLoader 逃逸、重试重放写工具、上下文冻结、压缩语义等），A 全部规避；其余 7 条（#5 #6 #11 #14 #15 #16 #21）为"碰 pi-ai 即承接"，已全部融入本设计（见各节标注）。
 
 B 不被堵死：pi-ai 是 pi 栈地基，A 落地后若聊天真正需要会话树/压缩，再以独立提案重启 AgentSession 评审。
+
+**codex 二审记录**（同会话，tokens 764,490）：7 条承接项 5 PASS、2 FAIL（#6 #14 —— A3 软兜底被判伪降级）；新增 2 P1（重试须包完整流消费、fetch 注入须 per-call 且禁改 globalThis.fetch）+ 1 P2（模型元数据来源未定义）。初判 NO-GO；上述 5 点已全部修入 §0/§2/§3/§4，NO-GO 条件消除。
