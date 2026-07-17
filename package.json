@@ -30,6 +30,7 @@
     }
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.80.10",
     "@sinclair/typebox": "0.34.48"
   },
   "scripts": {

@@ -28,6 +28,21 @@
 
 Spike 结论以"Spike 结论"一节回写本文档后，进入 §5 迁移。
 
+## Spike 结论（2026-07-17，experiments/pi-spike/）
+
+| 门 | 判定 | 证据 |
+|----|------|------|
+| A1 | **PASS** | `@earendil-works/pi-ai@0.80.10` 精确锁定；Node 26.5 ≥ 要求的 22.19；typebox 1.1.38 是其直接依赖（无 peer 负担）；ESM 兼容 |
+| A2 | **PASS** | `!echo hacked`、`$HOME-literal` 等危险字面 key 经 `options.apiKey` 原样落 `x-api-key` 头、零求值（a2-key-safety.mts 三例全过）。codex #5 的求值风险在 pi-coding-agent 的配置解析器，本方案不经过它 |
+| A3 | **PASS（机制替换，见下）** | 环回观察器三场景全过（a3-watchdog.mts）：正常流零损耗；断流 1.9s 内 idle_kill + SDK 报错不挂死；并发一活一死互不误伤 |
+| A4 | **PASS** | 真实 newcli 中转（路径前缀 baseUrl）经观察器冒烟：200、流式文本、usage 完整（input/output/cacheRead/cacheWrite/totalTokens）、onPayload/onResponse 触发、观察器录到双向字节（a4-real-smoke.mts） |
+
+**A3 机制替换声明**：pi-ai 0.80.10 **没有** per-call fetch/transport 注入点（`StreamOptions` 无 fetch 字段；anthropic-messages/openai-completions 直接 `new Anthropic/OpenAI({baseURL})`，内部代理工具只接 codex-responses 与 bedrock 两路）。按字面，原 A3 表述该判失败；但门的四项**要求**全部由"进程内环回反向观察器"达成：SDK → `http://127.0.0.1:<port>/t/<token>/…` → 明文转发真实上游。per-call（token 路径段）✓ 并发隔离（per-exchange 计时）✓ 不碰 `globalThis.fetch` ✓ 字节级看门狗（含首字节等待）✓。观察器同时就是测试 fake 的注入点（测试把 baseUrl 指向 fake 中转即可，等价旧 fetchImpl）。观察器只做传输与计时，不解析不落盘。
+
+**run-log 范围修正**（利好）：核对 run-log.ts 真实字段（messages 进/出 JSON、tokens、错误串、16k 截断、脱敏）—— `onPayload`（请求侧）+ 最终 AssistantMessage/error 事件（响应侧）即可完整满足，**不需要**原始 HTTP I/O。codex #14 按"完整请求体+失败响应+每次重试"评估偏严；每次重试的记录由我们自己的 withRetry 落，天然覆盖。观察器只承担看门狗。
+
+**实现须知**（spike 学到的）：SDK 内建重试默认 2 次，必须显式 `maxRetries: 0`（避免双重重试）；pi-ai 错误走 `error` **事件**而非 throw，withRetry 按事件分类；URL 拼法与现 loop 相同（anthropic `+/v1/messages`、openai `+/chat/completions`），路径前缀 baseUrl 原生兼容。
+
 ## §1 依赖
 
 仅 `@earendil-works/pi-ai`（root entrypoint，core-only、side-effect free —— A1 复核"零 `~/.pi` 读写、零遥测"）。不引入 pi-coding-agent / pi-agent-core。版本升级永远是独立提交。
