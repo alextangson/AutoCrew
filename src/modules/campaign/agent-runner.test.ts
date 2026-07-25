@@ -62,7 +62,12 @@ describe("campaign agent runner", () => {
       fetchPageImpl: vi.fn().mockResolvedValue({ title: "Demo", text: "真实站点证据", truncated: false }),
       runLoopImpl: submittingLoop(captured),
     });
-    expect(output).toMatchObject({ title: "测试产物", kind: "research", tokensUsed: 123 });
+    expect(output).toMatchObject({
+      title: "测试产物",
+      kind: "research",
+      tokensUsed: 123,
+      runtime: "loop",
+    });
     expect(captured.userMessage).toContain("真实站点证据");
   });
 

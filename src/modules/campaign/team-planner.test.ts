@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Campaign } from "./domain.js";
 import { planCampaignTeam } from "./team-planner.js";
+import { createCampaignWorkflow } from "./workflow-engine.js";
 
 const campaign: Campaign = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: "campaign-1-demo",
   name: "独立站增长",
   mode: "managed_growth",
@@ -21,6 +22,7 @@ const campaign: Campaign = {
   artifacts: [],
   approvals: [],
   metrics: [],
+  workflow: createCampaignWorkflow("2026-07-11T00:00:00.000Z"),
   createdAt: "2026-07-11T00:00:00.000Z",
   updatedAt: "2026-07-11T00:00:00.000Z",
 };

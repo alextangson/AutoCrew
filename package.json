@@ -31,7 +31,9 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@sinclair/typebox": "0.34.48",
+    "typebox": "1.1.38",
     "undici": "^8.9.0"
   },
   "scripts": {

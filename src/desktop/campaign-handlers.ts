@@ -1,23 +1,29 @@
 import {
   PROMOTION_CHANNELS,
   allowedCampaignTransitions,
+  isCampaignAutonomyMode,
   isCampaignMode,
   isCampaignStatus,
   isPromotionChannel,
   type CampaignBrief,
+  type CampaignWorkflowPatchOperation,
   type PromotionChannel,
 } from "../modules/campaign/domain.js";
 import {
   buildCampaignTeam,
   createCampaign,
+  decideCampaignWorkflowPatch,
   getCampaign,
   listCampaigns,
+  proposeCampaignWorkflowPatch,
   retryCampaignTask,
   readCampaignArtifact,
+  setCampaignAutonomy,
   transitionCampaign,
 } from "../storage/campaign-store.js";
 import { isCampaignId } from "../storage/entity-id.js";
 import { runCampaignReadyTasks } from "../modules/campaign/scheduler.js";
+import { replanCampaign } from "../modules/campaign/replanner.js";
 
 type Payload = Record<string, unknown>;
 
@@ -92,7 +98,8 @@ export async function campaignCreateHandler(payload: Payload): Promise<Record<st
       channels: [...new Set(channels)],
       constraints: cleanStrings(payload.constraints, 30),
     };
-    const campaign = await createCampaign({ name, mode: payload.mode, brief }, dataDir(payload));
+    const autonomy = isCampaignAutonomyMode(payload.autonomy) ? payload.autonomy : "manual";
+    const campaign = await createCampaign({ name, mode: payload.mode, brief, autonomy }, dataDir(payload));
     return { ok: true, data: { campaign } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -150,6 +157,95 @@ export async function campaignRetryTaskHandler(payload: Payload): Promise<Record
     const campaign = await retryCampaignTask(payload.id, payload.task_id, dataDir(payload));
     if (!campaign) return { ok: false, error: "Campaign 或任务不存在" };
     return { ok: true, data: { campaign } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function campaignSetAutonomyHandler(payload: Payload): Promise<Record<string, unknown>> {
+  if (!isCampaignId(payload.id)) return { ok: false, error: "需要合法 campaign id" };
+  if (!isCampaignAutonomyMode(payload.autonomy)) {
+    return { ok: false, error: "autonomy 必须是 manual、supervised 或 managed" };
+  }
+  const intervalMinutes =
+    payload.interval_minutes === undefined
+      ? undefined
+      : typeof payload.interval_minutes === "number" &&
+          Number.isInteger(payload.interval_minutes) &&
+          payload.interval_minutes >= 15 &&
+          payload.interval_minutes <= 10_080
+        ? payload.interval_minutes
+        : null;
+  if (intervalMinutes === null) {
+    return { ok: false, error: "interval_minutes 必须是 15-10080 的整数" };
+  }
+  try {
+    const campaign = await setCampaignAutonomy(
+      payload.id,
+      payload.autonomy,
+      dataDir(payload),
+      intervalMinutes,
+    );
+    if (!campaign) return { ok: false, error: "Campaign 不存在或已损坏" };
+    return { ok: true, data: { campaign } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function campaignPatchProposeHandler(payload: Payload): Promise<Record<string, unknown>> {
+  if (!isCampaignId(payload.id)) return { ok: false, error: "需要合法 campaign id" };
+  if (
+    typeof payload.base_revision !== "number" ||
+    !Number.isInteger(payload.base_revision) ||
+    typeof payload.reason !== "string" ||
+    !Array.isArray(payload.operations)
+  ) {
+    return { ok: false, error: "需要 base_revision、reason 和 operations" };
+  }
+  try {
+    const result = await proposeCampaignWorkflowPatch(
+      payload.id,
+      {
+        baseRevision: payload.base_revision,
+        reason: payload.reason,
+        proposedBy: "human",
+        operations: payload.operations as CampaignWorkflowPatchOperation[],
+      },
+      dataDir(payload),
+    );
+    if (!result) return { ok: false, error: "Campaign 不存在或已损坏" };
+    return { ok: true, data: result };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function campaignPatchDecideHandler(payload: Payload): Promise<Record<string, unknown>> {
+  if (!isCampaignId(payload.id)) return { ok: false, error: "需要合法 campaign id" };
+  if (typeof payload.patch_id !== "string" || typeof payload.approved !== "boolean") {
+    return { ok: false, error: "需要 patch_id 和 approved" };
+  }
+  try {
+    const campaign = await decideCampaignWorkflowPatch(
+      payload.id,
+      payload.patch_id,
+      payload.approved,
+      typeof payload.note === "string" ? payload.note : "",
+      dataDir(payload),
+    );
+    if (!campaign) return { ok: false, error: "Campaign 不存在或已损坏" };
+    return { ok: true, data: { campaign } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function campaignReplanHandler(payload: Payload): Promise<Record<string, unknown>> {
+  if (!isCampaignId(payload.id)) return { ok: false, error: "需要合法 campaign id" };
+  try {
+    const result = await replanCampaign(payload.id, dataDir(payload));
+    return { ok: true, data: result };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

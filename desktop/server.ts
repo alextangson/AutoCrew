@@ -27,6 +27,7 @@ import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadarIfStale } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
+import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
 import { handleMcpRequest } from "../mcp/server.js";
 
 const HOST = "127.0.0.1";
@@ -319,6 +320,8 @@ const server = http.createServer(async (req, res) => {
 // 防呆 P3:写长文是分钟级任务——本地单用户 server 不许因超时掐断慢请求
 server.requestTimeout = 0;
 server.timeout = 0;
+let stopCampaignHost: (() => void) | undefined;
+server.on("close", () => stopCampaignHost?.());
 
 // 先清孤儿再开门(SESSION-8 §3.1):上次崩溃遗留的「生成中」占位稿在接收任何
 // 新请求前标记为中断——listen 前执行,与本进程的新生成零竞态;失败不阻断启动。
@@ -352,6 +355,20 @@ server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
   console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${BROWSER_BOOT_TOKEN}\x1b[0m\n`);
   console.log("  (链接中的启动 token 仅本进程首次打开有效；认证后会从地址栏移除)\n");
+
+  stopCampaignHost = startManagedCampaignHost({
+    resolveDataDir: async () => activeWorkspaceDataDir(),
+    onEvent: (event, dataDir) => {
+      void emitEngineEvent(
+        {
+          role: "system",
+          kind: event.phase === "cycle_failed" ? "run_failed" : "work",
+          label: event.label,
+        },
+        dataDir,
+      ).catch(() => {});
+    },
+  });
 
   // 选题雷达:启动 fire-and-forget 刷新 → 命中定位的候选自动入灵感库(IA v4.2 §A1)。
   // TTL 门:缓存新鲜就跳过——X 等付费源按请求计费,每次重启无条件全量扫是白烧钱。

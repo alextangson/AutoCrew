@@ -117,6 +117,10 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "campaign:run_ready": ["id"],
   "campaign:retry_task": ["id", "task_id"],
   "campaign:artifact_get": ["id", "artifact_id"],
+  "campaign:set_autonomy": ["id", "autonomy"],
+  "campaign:patch_propose": ["id", "base_revision", "reason", "operations"],
+  "campaign:patch_decide": ["id", "patch_id", "approved"],
+  "campaign:replan": ["id"],
   "doctor:inbox": [],
   // 灵感收件箱工作台（收件箱设计 §4）。id 之外的键全可选，深校验在 handler
   "inbox:list": [],

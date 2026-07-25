@@ -148,6 +148,10 @@ import {
   campaignRunReadyHandler,
   campaignRetryTaskHandler,
   campaignArtifactGetHandler,
+  campaignPatchDecideHandler,
+  campaignPatchProposeHandler,
+  campaignReplanHandler,
+  campaignSetAutonomyHandler,
   campaignTransitionHandler,
 } from "./campaign-handlers.js";
 
@@ -999,6 +1003,10 @@ export function buildIpcHandlers(
     "campaign:run_ready": campaignRunReadyHandler,
     "campaign:retry_task": campaignRetryTaskHandler,
     "campaign:artifact_get": campaignArtifactGetHandler,
+    "campaign:set_autonomy": campaignSetAutonomyHandler,
+    "campaign:patch_propose": campaignPatchProposeHandler,
+    "campaign:patch_decide": campaignPatchDecideHandler,
+    "campaign:replan": campaignReplanHandler,
     "doctor:inbox": (payload) => inboxDoctorHandler(payload),
     "inbox:list": inboxListHandler,
     "inbox:retry": inboxRetryHandler,

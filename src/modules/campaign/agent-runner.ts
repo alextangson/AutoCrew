@@ -1,5 +1,7 @@
 import { loadEngineConfig, type EngineConfig } from "../../engine/config.js";
 import { runLoop, type LoopTool } from "../../engine/loop.js";
+import { piAgentRuntime } from "../../agents/pi-runtime.js";
+import type { AgentRuntime } from "../../agents/runtime.js";
 import { getCampaign, readCampaignArtifact } from "../../storage/campaign-store.js";
 import { fetchPageText } from "../../utils/fetch-page.js";
 import { loadSearchConfig, searchWeb, type SearchConfig, type WebSearchResult } from "../research/search-provider.js";
@@ -10,15 +12,35 @@ export interface CampaignTaskOutput {
   markdown: string;
   kind: CampaignArtifactKind;
   tokensUsed: number;
+  runtime: AgentRuntime["kind"];
+  agentSessionId?: string;
 }
 
 interface RunnerDeps {
+  runtime?: AgentRuntime;
+  /** Compatibility seam for existing loop-specific tests and rollback. */
   runLoopImpl?: typeof runLoop;
   configLoader?: (dataDir?: string) => Promise<EngineConfig>;
   fetchPageImpl?: typeof fetchPageText;
   searchConfigLoader?: (dataDir?: string) => Promise<SearchConfig | null>;
   searchImpl?: typeof searchWeb;
   readArtifactImpl?: typeof readCampaignArtifact;
+}
+
+function resolveRuntime(deps: RunnerDeps): AgentRuntime {
+  if (deps.runtime) return deps.runtime;
+  if (deps.runLoopImpl) {
+    return {
+      kind: "loop",
+      async run(config, options) {
+        return {
+          ...(await deps.runLoopImpl!(config, options)),
+          runtime: "loop",
+        };
+      },
+    };
+  }
+  return piAgentRuntime;
 }
 
 export function sanitizeCampaignArtifact(markdown: string): string {
@@ -155,7 +177,7 @@ export async function executeCampaignAgentTask(
     },
   };
 
-  const result = await (deps.runLoopImpl ?? runLoop)(config, {
+  const result = await resolveRuntime(deps).run(config, {
     model: config.strongModel,
     systemPrompt: rolePrompt(task),
     userMessage: `${campaignContext(campaign)}\n\n任务说明:${task.description}\n\n可用证据:\n${evidence.slice(0, 30_000)}`,
@@ -174,5 +196,7 @@ export async function executeCampaignAgentTask(
     markdown,
     kind: artifactKind(task),
     tokensUsed: result.totalTokens,
+    runtime: result.runtime,
+    ...(result.sessionId ? { agentSessionId: result.sessionId } : {}),
   };
 }

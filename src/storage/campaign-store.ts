@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   canTransitionCampaign,
   type Campaign,
+  type CampaignAutonomyMode,
   type CampaignBrief,
   type CampaignAgent,
   type CampaignArtifactKind,
@@ -12,6 +13,16 @@ import {
   type CampaignTask,
 } from "../modules/campaign/domain.js";
 import { planCampaignTeam } from "../modules/campaign/team-planner.js";
+import {
+  createCampaignWorkflow,
+  decideCampaignWorkflowPatch as decideWorkflowPatch,
+  normalizeCampaignWorkflow,
+  proposeCampaignWorkflowPatch as proposeWorkflowPatch,
+  recordCampaignHostedCycle as recordHostedCycle,
+  recordTeamPlanned,
+  setCampaignAutonomy as updateCampaignAutonomy,
+  type CampaignWorkflowPatchDraft,
+} from "../modules/campaign/workflow-engine.js";
 import { getDataDir } from "./local-store.js";
 import { isCampaignId } from "./entity-id.js";
 import { readJson, writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
@@ -20,6 +31,7 @@ export interface CreateCampaignInput {
   name: string;
   mode: CampaignMode;
   brief: CampaignBrief;
+  autonomy?: CampaignAutonomyMode;
 }
 
 const mutationQueues = new Map<string, Promise<unknown>>();
@@ -46,20 +58,33 @@ async function campaignFile(id: string, dataDir?: string): Promise<string | null
   return path.join(await campaignsRoot(dataDir), id, "campaign.json");
 }
 
-function isCampaignRecord(value: Campaign | null): value is Campaign {
-  return (
-    value !== null &&
-    value.schemaVersion === 1 &&
-    isCampaignId(value.id) &&
-    typeof value.name === "string" &&
-    typeof value.createdAt === "string" &&
-    typeof value.updatedAt === "string" &&
-    Array.isArray(value.tasks) &&
-    Array.isArray(value.runs) &&
-    Array.isArray(value.artifacts) &&
-    Array.isArray(value.approvals) &&
-    Array.isArray(value.metrics)
-  );
+type StoredCampaign = Omit<Campaign, "schemaVersion" | "workflow"> & {
+  schemaVersion: 1 | 2;
+  workflow?: Partial<Campaign["workflow"]>;
+};
+
+function normalizeCampaignRecord(value: unknown): Campaign | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as StoredCampaign;
+  if (
+    (record.schemaVersion !== 1 && record.schemaVersion !== 2) ||
+    !isCampaignId(record.id) ||
+    typeof record.name !== "string" ||
+    typeof record.createdAt !== "string" ||
+    typeof record.updatedAt !== "string" ||
+    !Array.isArray(record.tasks) ||
+    !Array.isArray(record.runs) ||
+    !Array.isArray(record.artifacts) ||
+    !Array.isArray(record.approvals) ||
+    !Array.isArray(record.metrics)
+  ) {
+    return null;
+  }
+  return {
+    ...record,
+    schemaVersion: 2,
+    workflow: normalizeCampaignWorkflow(record.workflow, record.createdAt),
+  };
 }
 
 export async function createCampaign(input: CreateCampaignInput, dataDir?: string): Promise<Campaign> {
@@ -69,7 +94,7 @@ export async function createCampaign(input: CreateCampaignInput, dataDir?: strin
   const dir = path.join(root, id);
   await fs.mkdir(dir, { recursive: false });
   const campaign: Campaign = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     name: input.name,
     mode: input.mode,
@@ -81,6 +106,7 @@ export async function createCampaign(input: CreateCampaignInput, dataDir?: strin
     artifacts: [],
     approvals: [],
     metrics: [],
+    workflow: createCampaignWorkflow(now, input.autonomy),
     createdAt: now,
     updatedAt: now,
   };
@@ -91,8 +117,8 @@ export async function createCampaign(input: CreateCampaignInput, dataDir?: strin
 export async function getCampaign(id: string, dataDir?: string): Promise<Campaign | null> {
   const file = await campaignFile(id, dataDir);
   if (!file) return null;
-  const campaign = await readJson<Campaign>(file);
-  return isCampaignRecord(campaign) && campaign.id === id ? campaign : null;
+  const campaign = normalizeCampaignRecord(await readJson<unknown>(file));
+  return campaign?.id === id ? campaign : null;
 }
 
 export async function readCampaignArtifact(
@@ -117,8 +143,10 @@ export async function listCampaigns(dataDir?: string): Promise<Campaign[]> {
   const campaigns: Campaign[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !isCampaignId(entry.name)) continue;
-    const campaign = await readJson<Campaign>(path.join(root, entry.name, "campaign.json"));
-    if (isCampaignRecord(campaign) && campaign.id === entry.name) campaigns.push(campaign);
+    const campaign = normalizeCampaignRecord(
+      await readJson<unknown>(path.join(root, entry.name, "campaign.json")),
+    );
+    if (campaign?.id === entry.name) campaigns.push(campaign);
   }
   return campaigns.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -133,11 +161,11 @@ async function mutateCampaign(
   return enqueue(queueKey, async () => {
     const file = await campaignFile(id, dataDir);
     if (!file) return null;
-    const current = await readJson<Campaign>(file);
-    if (!isCampaignRecord(current) || current.id !== id) return null;
+    const current = normalizeCampaignRecord(await readJson<unknown>(file));
+    if (!current || current.id !== id) return null;
     const updated = await mutate(current);
     updated.id = current.id;
-    updated.schemaVersion = 1;
+    updated.schemaVersion = 2;
     updated.createdAt = current.createdAt;
     updated.updatedAt = new Date().toISOString();
     await writeJsonAtomic(file, updated);
@@ -214,7 +242,13 @@ function unlockDependentTasks(campaign: Campaign, now: string): void {
 export async function completeCampaignTask(
   campaignId: string,
   runId: string,
-  output: { title: string; markdown: string; kind: CampaignArtifactKind },
+  output: {
+    title: string;
+    markdown: string;
+    kind: CampaignArtifactKind;
+    runtime?: CampaignRun["runtime"];
+    agentSessionId?: string;
+  },
   dataDir?: string,
 ): Promise<Campaign | null> {
   return mutateCampaign(campaignId, dataDir, async (campaign) => {
@@ -239,6 +273,8 @@ export async function completeCampaignTask(
       createdAt: now,
     });
     run.status = "succeeded";
+    if (output.runtime) run.runtime = output.runtime;
+    if (output.agentSessionId) run.agentSessionId = output.agentSessionId;
     run.finishedAt = now;
     task.status = "completed";
     task.updatedAt = now;
@@ -273,7 +309,7 @@ export async function retryCampaignTask(
   taskId: string,
   dataDir?: string,
 ): Promise<Campaign | null> {
-  if (!/^task-v\d+-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(taskId)) return null;
+  if (!/^task-(?:v\d+|dyn-r\d+)-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(taskId)) return null;
   return mutateCampaign(campaignId, dataDir, (campaign) => {
     const task = campaign.tasks.find((item) => item.id === taskId);
     if (!task || task.status !== "failed") throw new Error("只有 failed 任务可以重试");
@@ -293,8 +329,59 @@ export async function buildCampaignTeam(id: string, dataDir?: string): Promise<C
       throw new Error(`Campaign ${campaign.status} 状态不可重新组队`);
     }
     const { team, tasks } = planCampaignTeam({ ...campaign, status: "planning" });
-    return { ...campaign, status: "ready", team, tasks };
+    return recordTeamPlanned({ ...campaign, status: "ready", team, tasks });
   });
+}
+
+export async function setCampaignAutonomy(
+  id: string,
+  autonomy: CampaignAutonomyMode,
+  dataDir?: string,
+  intervalMinutes?: number,
+): Promise<Campaign | null> {
+  return mutateCampaign(id, dataDir, (campaign) =>
+    updateCampaignAutonomy(
+      campaign,
+      autonomy,
+      new Date().toISOString(),
+      intervalMinutes ?? campaign.workflow.schedule.intervalMinutes,
+    ),
+  );
+}
+
+export async function recordCampaignHostedCycle(
+  id: string,
+  result: Parameters<typeof recordHostedCycle>[1],
+  dataDir?: string,
+  now = new Date().toISOString(),
+): Promise<Campaign | null> {
+  return mutateCampaign(id, dataDir, (campaign) => recordHostedCycle(campaign, result, now));
+}
+
+export async function proposeCampaignWorkflowPatch(
+  id: string,
+  draft: CampaignWorkflowPatchDraft,
+  dataDir?: string,
+): Promise<{ campaign: Campaign; patch: Campaign["workflow"]["patches"][number] } | null> {
+  let proposed: Campaign["workflow"]["patches"][number] | null = null;
+  const campaign = await mutateCampaign(id, dataDir, (current) => {
+    const result = proposeWorkflowPatch(current, draft);
+    proposed = result.patch;
+    return result.campaign;
+  });
+  return campaign && proposed ? { campaign, patch: proposed } : null;
+}
+
+export async function decideCampaignWorkflowPatch(
+  id: string,
+  patchId: string,
+  approved: boolean,
+  note = "",
+  dataDir?: string,
+): Promise<Campaign | null> {
+  return mutateCampaign(id, dataDir, (campaign) =>
+    decideWorkflowPatch(campaign, patchId, approved, note),
+  );
 }
 
 export async function transitionCampaign(
