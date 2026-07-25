@@ -5,15 +5,19 @@
  * emoji placement, hashtag positioning, and platform-specific structure.
  */
 
-export type ClipboardPlatform =
-  | "xiaohongshu"
-  | "douyin"
-  | "wechat_mp"
-  | "wechat_video"
-  | "bilibili"
-  | "twitter"
-  | "reddit"
-  | "toutiao";
+/** 输出平台枚举的唯一事实源——需要运行时校验平台值的模块从这里取，不各自抄一份 */
+export const CLIPBOARD_PLATFORMS = [
+  "xiaohongshu",
+  "douyin",
+  "wechat_mp",
+  "wechat_video",
+  "bilibili",
+  "twitter",
+  "reddit",
+  "toutiao",
+] as const;
+
+export type ClipboardPlatform = (typeof CLIPBOARD_PLATFORMS)[number];
 
 export interface ClipboardOutput {
   platform: ClipboardPlatform;

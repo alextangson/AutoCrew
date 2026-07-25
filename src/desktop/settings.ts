@@ -3,6 +3,10 @@
  * 读：engine.json + env 回退，key 永远掩码返回（renderer 拿不到原文）。
  * 写：merge 进 <dataDir>/engine.json。dogfood 期的默认路径；终端用户
  * 版本此区折叠隐藏，积分中转上线后整区退役（§9）。
+ *
+ * 两种落盘根，别混：本文件的 engine/search/publish 都走**工作区** <dataDir>
+ * （server 端从注册表解析后注入 _dataDir）；收件箱走**全局根** ~/.autocrew/，
+ * 不随工作区切换，因此单独放 settings-inbox.ts（下方原样转出，设置页从这里取）。
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -14,6 +18,15 @@ import {
   type EngineRouteName,
 } from "../engine/config.js";
 import { getDataDir } from "../storage/local-store.js";
+
+// 收件箱设置（全局根 ~/.autocrew/inbox.json，不随工作区）——设置面统一从 settings.ts 取
+export {
+  getInboxSettings,
+  setInboxSettings,
+  getInboxSettingsRaw,
+  onInboxSettingsChanged,
+  type InboxSettings,
+} from "./settings-inbox.js";
 
 function maskKey(key: string): string {
   return key.length <= 8 ? "****" : `${key.slice(0, 4)}…${key.slice(-4)}`;
