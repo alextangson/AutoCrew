@@ -161,3 +161,18 @@ describe("脱敏", () => {
     expect(out).toContain("http://***:***@proxy.example.com:7890");
   });
 });
+
+describe("命令消息（/ 开头）", () => {
+  it("/start 是命令不是随手记", () => {
+    expect(parseTelegramMessage({ text: "/start" })).toEqual({ kind: "command", command: "start" });
+  });
+  it("带参数的命令同样是命令", () => {
+    expect(parseTelegramMessage({ text: "/status now" })).toEqual({ kind: "command", command: "status" });
+  });
+  it("斜杠不在开头不算命令", () => {
+    expect(parseTelegramMessage({ text: "看看 a/b 测试怎么做" })).toEqual({
+      kind: "text",
+      text: "看看 a/b 测试怎么做",
+    });
+  });
+});

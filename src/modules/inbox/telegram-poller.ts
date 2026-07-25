@@ -41,6 +41,8 @@ const OFFSET_FILE = "tg-offset.json";
 
 export const INTAKE_RECEIPT = "已收到，消化中";
 export const UNSUPPORTED_RECEIPT = "v1 只吃链接和文字，这条先没收下";
+export const COMMAND_RECEIPT =
+  "这里不用命令——直接转发链接（可附一句备注）或随手一句话，我消化完会回执落到了哪。";
 
 /** 出现任一键即判为「带媒体」；其余无 text 的消息（进群、置顶等服务消息）静默放过 */
 const MEDIA_KEYS = [
@@ -80,6 +82,7 @@ export interface TgUpdate {
 export type ParsedMessage =
   | { kind: "url"; url: string; note?: string }
   | { kind: "text"; text: string }
+  | { kind: "command"; command: string }
   | { kind: "unsupported" }
   | { kind: "ignore" };
 
@@ -130,6 +133,10 @@ export function parseTelegramMessage(message: TgMessage): ParsedMessage {
   if (!text.trim()) {
     return MEDIA_KEYS.some((k) => message[k] !== undefined) ? { kind: "unsupported" } : { kind: "ignore" };
   }
+  // 每个 TG 用户的第一条消息永远是 /start——「/」开头一律当命令回引导语，
+  // 不入台账（否则首触即产生一条垃圾随手记）。命令面刻意为零，不做 /status 之类
+  const cmd = /^\/(\w+)/.exec(text.trim());
+  if (cmd) return { kind: "command", command: cmd[1] };
   const hit = findFirstHttpUrl(text, message.entities);
   if (!hit) return { kind: "text", text: text.trim() };
   const note = `${text.slice(0, hit.start)} ${text.slice(hit.end)}`.trim().replace(/\s+/g, " ");
@@ -345,6 +352,10 @@ class Poller implements TelegramPoller {
     if (parsed.kind === "ignore") return;
     if (parsed.kind === "unsupported") {
       if (chatId !== undefined) await this.receipt(chatId, UNSUPPORTED_RECEIPT);
+      return;
+    }
+    if (parsed.kind === "command") {
+      if (chatId !== undefined) await this.receipt(chatId, COMMAND_RECEIPT);
       return;
     }
     await this.intake(update.update_id, chatId, parsed);

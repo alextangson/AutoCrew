@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { listItems, type InboxItem } from "./inbox-store.js";
 import {
+  COMMAND_RECEIPT,
   INTAKE_RECEIPT,
   UNSUPPORTED_RECEIPT,
   createTelegramPoller,
@@ -501,3 +502,13 @@ describe("sendTelegramReceipt", () => {
     expect(fake.sent.length).toBe(1);
   });
 });
+
+  it("/start 回引导语、不入台账、offset 照常推进", async () => {
+    const poller = makePoller();
+    fake.push(update(905, "/start"));
+    poller.start();
+    await waitFor(async () => (await readOffset())?.offset === 906, "offset 推进");
+    expect(fake.sent).toEqual([{ chat_id: CHAT, text: COMMAND_RECEIPT }]);
+    expect(await listItems(dataDir)).toEqual([]);
+    expect(received).toEqual([]);
+  });
