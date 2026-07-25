@@ -71,7 +71,7 @@
 |---|---|---|---|
 | 其余（含公众号文章） | 加固版网页抓取（V1.0） | 见下「抓取加固」 | 反爬/空文 → failed/rejected |
 | x.com / twitter.com | twitterapi.io **tweet-by-id 端点**（V1.1，新能力——现有 `x.ts` 只有按账号拉时间线，**不能复用**，需新写请求/响应 schema/错误码/超时/fixture） | 文本、作者、赞转数 | 缺 key → blocked + 指引 |
-| douyin.com / v.douyin.com | TikHub video-detail（V1.1；`tikhub.ts` 现为 placeholder 假数据，**整体重写**：端点、响应 schema、错误码、限流退避、超时、fixture） | 文案、作者、赞评藏、发布时间；**ASR 转写不做** | 缺 key → blocked + 指引 |
+| douyin.com / v.douyin.com | **justoneapi**（V1.1，取代原定 TikHub，2026-07-25 创始人 key 实测通过）：`share-url-transfer/v1` 解析 v.douyin.com 短链 → `get-video-detail/v2` 取详情。响应为抖音原始结构，desc/author.nickname/create_time/statistics{digg,comment,collect,share} 实测齐全（play_count 恒 0，抖音公开面不给播放量）；token 走 query 参数；错误码 100→blocked、301→retryable、302/303 限流、601/602 余额→blocked；官方建议超时 120s。`tikhub.ts` stub 由 justoneapi adapter 取代 | 文案、作者、赞评藏、发布时间；**ASR 转写不做** | 缺 key → blocked + 指引 |
 
 **抓取加固（信任边界已变——URL 来自外部转发，不再是本机可信用户）**：
 - 新建 `fetchExternalPage()`（inbox 专用，不动 chat 路径的 `fetchPageText`，其「不拦私网」假设保留并注释）：
@@ -112,7 +112,7 @@
 
 ## 5. 边界与验收
 
-设计五问浓缩：状态机四态 + blocked 由配置事件唤醒；最坏输入见 §3.1/§3.2；防呆 = 白名单静默忽略 + 三库幂等 + 墓碑显式覆盖；失败可见 = 回执 + 视图双通道，绝不静默降级；命名不做 = 微信个人号 bot、公网 webhook、ASR、视频下载、拆解卡直出稿件、>24h 离线找回。
+设计五问浓缩：状态机四态 + blocked 由配置事件唤醒；最坏输入见 §3.1/§3.2；防呆 = 白名单静默忽略 + 三库幂等 + 墓碑显式覆盖 + 命令面为零（「/」开头一律回引导语不入台账，含每个用户必发的 /start）；失败可见 = 回执 + 视图双通道，绝不静默降级；命名不做 = 微信个人号 bot、公网 webhook、ASR、视频下载、拆解卡直出稿件、>24h 离线找回。
 
 验收用例（发布前逐条走，含 codex 补充的崩溃/并发面）：
 1. 转发 X/抖音链接（V1.0 **不特判**：走通用抓取，抓不到正文按判定落 rejected/failed，有测试锁死防提前加 blocked 特判；V1.1 上专用解析器后 → 卡/题落库回执，缺 key → blocked）。
@@ -133,7 +133,7 @@
 ## 7. 分期（按 codex 建议重切，风险前置）
 
 - **V1.0（最小闭环）**：TG worker（polling 纪律 + offset 纪律 + 状态机 + lease）＋加固网页抓取＋LLM 分流＋单条 intake 门重构＋拆解卡库＋script-prompt 单点注入＋收件箱视图（列表/重试/删除）＋doctor。**通用文章先通，X/抖音后上**。
-- **V1.1**：X tweet-by-id 解析器＋TikHub 抖音解析器（各带 fixture 与限流纪律）。
+- **V1.1**：X tweet-by-id 解析器＋justoneapi 抖音解析器（各带 fixture 与限流纪律；justoneapi 另有 user-profile-v3 / user-published-videos / video-search-v4 / hot-search-v1，直接覆盖 V2 对标监控与选题雷达抖音源的抓取面）。
 - **V1.5**：扩展右键（经本地 server HTTP）。
 - **V2（另写 spec）**：对标账号常驻监控 = 录入账号 → 定期拉新 → 自动进本管道（复用全部消化链，只加抓取源）。
 
