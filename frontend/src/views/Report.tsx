@@ -124,7 +124,7 @@ export function ReportView() {
     <div className="report">
       <div className="board-bar">
         <h2 className="serif board-title" style={{ margin: 0 }}>数据回流</h2>
-        <span className="muted">发布后回填数据——选题评分、基线与复盘都以它为准</span>
+        <span className="muted">发布后回填数据——支撑基线洞察、复盘与受众画像校准</span>
         <span style={{ marginLeft: "auto" }} className="row-actions">
           <button className="chip" disabled={pulling} onClick={() => void pullWechat()}>
             {pulling ? "拉取中…" : "从公众号后台拉取"}
@@ -206,7 +206,7 @@ export function ReportView() {
       </div>
 
       <p className="muted" style={{ marginTop: 10 }}>
-        回填入口在编辑器(已发布稿)——数据回来,选题评分与基线才会越来越准。
+        回填入口在编辑器(已发布稿)——数据支撑复盘与受众画像校准提案,确认后画像才会越来越准。
       </p>
     </div>
   );
