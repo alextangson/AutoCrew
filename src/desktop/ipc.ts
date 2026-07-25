@@ -112,6 +112,16 @@ import {
   rescoreRadarTopics,
   setRadarSources,
 } from "./radar-status.js";
+import { inboxDoctorHandler } from "./inbox-doctor.js";
+import {
+  inboxListHandler,
+  inboxRetryHandler,
+  inboxDeleteHandler,
+  inboxReingestHandler,
+  inboxStatusHandler,
+} from "./inbox-handlers.js";
+import { getInboxSettings, setInboxSettings } from "./settings-inbox.js";
+import { patternsListHandler, patternsUpdateHandler, patternsDeleteHandler } from "./pattern-handlers.js";
 import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, updateTopic, softDeleteTopic, restoreTopic, listTrash, updateContent } from "../storage/local-store.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
 import type { ApprovalBinding } from "./approval-gate.js";
@@ -381,6 +391,8 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
         platform: payload.platform as never,
         research: typeof payload.research === "string" ? payload.research : undefined,
         topicId: typeof payload.topic_id === "string" && payload.topic_id ? payload.topic_id : undefined,
+        // 缺省启用；只有显式 false 才关掉对标拆解卡注入（收件箱设计 §3.5）
+        ...(payload.use_patterns === false ? { usePatterns: false } : {}),
       },
       dataDir,
       { onEvent: (e) => void emitEngineEvent(e, dataDir).catch(() => {}) },
@@ -987,6 +999,17 @@ export function buildIpcHandlers(
     "campaign:run_ready": campaignRunReadyHandler,
     "campaign:retry_task": campaignRetryTaskHandler,
     "campaign:artifact_get": campaignArtifactGetHandler,
+    "doctor:inbox": (payload) => inboxDoctorHandler(payload),
+    "inbox:list": inboxListHandler,
+    "inbox:retry": inboxRetryHandler,
+    "inbox:delete": inboxDeleteHandler,
+    "inbox:reingest": inboxReingestHandler,
+    "inbox:settings_get": getInboxSettings,
+    "inbox:settings_set": setInboxSettings,
+    "inbox:status": inboxStatusHandler,
+    "patterns:list": patternsListHandler,
+    "patterns:update": patternsUpdateHandler,
+    "patterns:delete": patternsDeleteHandler,
   };
 
   // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。

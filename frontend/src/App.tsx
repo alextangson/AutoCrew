@@ -12,6 +12,7 @@ import { ReportView } from "./views/Report";
 import { Library } from "./views/Library";
 import { Logs } from "./views/Logs";
 import { Campaigns } from "./views/Campaigns";
+import { Inbox } from "./views/Inbox";
 import { Onboarding } from "./views/Onboarding";
 import { ChatDock } from "./chat/ChatDock";
 import { ToastHost, DialogHost, toast, openDialog } from "./ui";
@@ -26,6 +27,7 @@ export type Route =
   | { view: "library" }
   | { view: "logs" }
   | { view: "campaigns" }
+  | { view: "inbox" }
   | { view: "settings" };
 
 const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
@@ -36,6 +38,7 @@ const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
 ];
 
 const SECONDARY_NAV: Array<{ view: Route["view"]; label: string }> = [
+  { view: "inbox", label: "灵感收件箱" },
   { view: "calibration", label: "品牌校准" },
   { view: "report", label: "数据回流" },
   { view: "logs", label: "任务日志" },
@@ -134,6 +137,7 @@ export function App() {
           {route.view === "library" && <Library />}
           {route.view === "logs" && <Logs />}
           {route.view === "campaigns" && <Campaigns />}
+          {route.view === "inbox" && <Inbox nav={setRoute} />}
           {route.view === "settings" && <Settings />}
         </main>
         <aside className="dock">

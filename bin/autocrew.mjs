@@ -359,15 +359,24 @@ switch (command) {
       wechatConfig: fs.existsSync(wechatConfig),
       imageGenRelay: imageRelay,
     };
-    printResult(checks, () =>
+    // 灵感收件箱三项（spec §4）：心跳只存在于 server 进程内存，经 /api/invoke 读；
+    // 绝不带外调 Telegram getUpdates（会抢正式消费者的游标 → 真丢消息）。
+    const inbox = checks.server
+      ? await invokeChannel("doctor:inbox").then((r) => r.data).catch((err) => ({
+          text: `· inbox: 收件箱检查不可用（${err.message}）`,
+        }))
+      : { text: "· inbox: AutoCrew 未运行，收件箱状态未知（autocrew start 后重查）" };
+
+    printResult({ ...checks, inbox: inbox.checks ?? [] }, () =>
       Object.entries(checks).map(([key, value]) => `${value ? "✓" : "✕"} ${key}: ${value}`).join("\n")
+      + `\n${inbox.text}`
       + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
       + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh")
       + (imageRelay ? "" : "\n  → 生图(封面/正文图)建议配中转：设置→发布 填生图 Key/端点(OpenAI 兼容)，原生生图不依赖外部脚本")
       + (apiProxySet ? "\n  公众号 API 代理已配（固定出口 IP，动态 IP 变动免疫 40164）" : ""),
     );
     if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
-      || !checks.uv || !checks.wechatPublishScript) process.exitCode = 1;
+      || !checks.uv || !checks.wechatPublishScript || inbox.failed) process.exitCode = 1;
     break;
   }
   case "help":

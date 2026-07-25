@@ -312,6 +312,10 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           platform: { type: "string", enum: PLATFORM_ENUM, description: "目标平台" },
           research: { type: "string", description: "参考素材（可选）" },
           topic_id: { type: "string", description: "灵感库编号（选题来自灵感库时必带）" },
+          use_patterns: {
+            type: "boolean",
+            description: "是否借鉴对标拆解卡(默认 true;用户明说「别参考对标/别套模板」时传 false)",
+          },
         },
         required: ["topic", "platform"],
       },
@@ -325,6 +329,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
               platform: a.platform as never,
               research: typeof a.research === "string" ? a.research : undefined,
               topicId: typeof a.topic_id === "string" && a.topic_id ? a.topic_id : undefined,
+              // 缺省启用；只有显式 false 才关掉对标拆解卡注入（收件箱设计 §3.5）
+              ...(a.use_patterns === false ? { usePatterns: false } : {}),
             },
             dataDir,
           );

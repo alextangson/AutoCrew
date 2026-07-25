@@ -15,6 +15,7 @@ import type { IpcChannel } from "./channels.js";
 /** 每通道必填字段（string 键存在且非空/非 undefined 即过;深校验留给 handler） */
 export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "flywheel:report": [],
+  // 可选键 use_patterns（boolean）：false = 本次不注入对标拆解卡（收件箱设计 §3.5）
   "generate:script": ["topic", "platform"],
   "style:distill": [],
   "style:absorb": ["samples"],
@@ -116,6 +117,18 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "campaign:run_ready": ["id"],
   "campaign:retry_task": ["id", "task_id"],
   "campaign:artifact_get": ["id", "artifact_id"],
+  "doctor:inbox": [],
+  // 灵感收件箱工作台（收件箱设计 §4）。id 之外的键全可选，深校验在 handler
+  "inbox:list": [],
+  "inbox:retry": ["id"],
+  "inbox:delete": ["id"],
+  "inbox:reingest": ["id"],
+  "inbox:settings_get": [],
+  "inbox:settings_set": [],
+  "inbox:status": [],
+  "patterns:list": [],
+  "patterns:update": ["id"],
+  "patterns:delete": ["id"],
 } as const;
 
 /**

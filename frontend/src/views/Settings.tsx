@@ -89,9 +89,18 @@ export function Settings() {
   const [sources, setSources] = useState<RadarSource[]>([]);
   const [kb, setKb] = useState<{ dir: string; count: number } | null>(null);
   const [ws, setWs] = useState<{ active: string; workspaces: Array<{ id: string; name: string }> } | null>(null);
+  const [inbox, setInbox] = useState<{
+    configured: boolean;
+    botTokenMasked: string | null;
+    botId: string | null;
+    allowedUserIds: string[];
+    targetWorkspaceId: string;
+    proxyUrlMasked: string | null;
+  } | null>(null);
+  const [iForm, setIForm] = useState({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "" });
 
   const load = async () => {
-    const [er, sr, pr, cr, rr, kr, wr] = await Promise.all([
+    const [er, sr, pr, cr, rr, kr, wr, ir] = await Promise.all([
       invoke("settings:get"),
       invoke("settings:search_get"),
       invoke("settings:publish_get"),
@@ -99,7 +108,9 @@ export function Settings() {
       invoke("radar:status"),
       invoke("knowledge:status"),
       invoke("workspace:list"),
+      invoke("inbox:settings_get"),
     ]);
+    if (ir.ok) setInbox((ir as unknown as { data: typeof inbox }).data);
     if (er.ok) setEngine((er as unknown as { data: typeof engine }).data);
     if (sr.ok) setSearch((sr as unknown as { data: typeof search }).data);
     if (pr.ok) setPub((pr as unknown as { data: typeof pub }).data);
@@ -298,6 +309,59 @@ export function Settings() {
             手动扫一轮
           </button>
         </div>
+      </Section>
+
+      <Section
+        title="灵感收件箱 · Telegram bot"
+        status={inbox?.configured ? `已配对 ${inbox.botTokenMasked ?? ""}` : "未配置"}
+        on={inbox?.configured}
+      >
+        <p className="muted">
+          手机上刷到好内容,转发链接给自己的 bot,它异步消化成灵感或对标拆解卡。找 @BotFather 发 /newbot 建 bot 拿
+          token;user id 找 @userinfobot 要——**白名单外的消息一律静默忽略**,不回执也不入队。
+          消息固定落下面选的工作区,不跟随「当前工作区」切换。
+        </p>
+        <Field
+          label="Bot Token"
+          password
+          value={iForm.bot_token}
+          placeholder={inbox?.botTokenMasked ?? "123456:AA…(BotFather 给的那串)"}
+          onChange={(v) => setIForm((f) => ({ ...f, bot_token: v }))}
+        />
+        <Field
+          label="允许的 user id"
+          value={iForm.allowed_user_ids}
+          placeholder={inbox?.allowedUserIds.length ? inbox.allowedUserIds.join(", ") : "你自己的数字 id,多个用逗号分隔"}
+          onChange={(v) => setIForm((f) => ({ ...f, allowed_user_ids: v }))}
+        />
+        <label className="set-field">
+          <span className="mono muted">消息落哪个工作区</span>
+          <select value={iForm.target_workspace_id} onChange={(e) => setIForm((f) => ({ ...f, target_workspace_id: e.target.value }))}>
+            <option value="">
+              当前:{ws?.workspaces.find((w) => w.id === inbox?.targetWorkspaceId)?.name ?? inbox?.targetWorkspaceId ?? "default"}(不改)
+            </option>
+            {(ws?.workspaces ?? []).map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}（{w.id}）
+              </option>
+            ))}
+          </select>
+        </label>
+        <Field
+          label="代理地址"
+          value={iForm.proxy_url}
+          placeholder={inbox?.proxyUrlMasked ?? "http://127.0.0.1:7890(大陆网络必填;Node 不走系统代理)"}
+          onChange={(v) => setIForm((f) => ({ ...f, proxy_url: v }))}
+        />
+        <SaveRow
+          label="保存收件箱配置"
+          onSave={() =>
+            void submit("inbox:settings_set", iForm, () =>
+              setIForm({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "" }),
+            )
+          }
+        />
+        <p className="muted mono">保存即热重启轮询;换 bot 会重置消费游标,等外部条件的条目会被自动唤醒重试。</p>
       </Section>
 
       <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>

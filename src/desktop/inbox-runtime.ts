@@ -14,10 +14,11 @@
  */
 import { getDataDir } from "../storage/local-store.js";
 import { createDigestPipeline, type InboxUpdatedEvent } from "../modules/inbox/digest-pipeline.js";
-import { listItems, type InboxItem } from "../modules/inbox/inbox-store.js";
+import { getItem, listItems, updateItem, type InboxItem } from "../modules/inbox/inbox-store.js";
 import {
   getInboxWorker,
   resetInboxWorker,
+  MAX_ATTEMPTS,
   type InboxWorker,
   type ProcessResult,
 } from "../modules/inbox/inbox-worker.js";
@@ -199,6 +200,28 @@ export function startInboxRuntime(opts: InboxRuntimeOptions = {}): Promise<Inbox
 /** 外部条件变更（引擎配置、未来的解析器 key）→ 唤醒 blocked；runtime 未起时静默无事发生 */
 export function wakeInboxBlocked(reason: string): void {
   worker?.wakeBlocked(reason);
+}
+
+/**
+ * 人工重试一条 item（收件箱视图的「重试」按钮）。worker 实例是 runtime 私有的，
+ * 通道 handler 只能经这道薄门进来。
+ *
+ * **attempts 超限先清零**：`requestRetry` 会被 worker 的 claim 门挡下（failed 且
+ * attempts≥3 不再自动跑），不清零等于「点了没反应」——人工重试的语义就是重开额度。
+ * 终态（digested/rejected）的复活由调用方先改状态，这里不替它做决定。
+ *
+ * 返回 false = runtime 没起来（未配置/工作区缺失）。调用方必须照实说
+ * 「已排队，worker 起来后自动处理」，不许假装投递成功。
+ */
+export async function retryInboxItem(id: string): Promise<boolean> {
+  const active = worker;
+  const dataDir = status.dataDir;
+  if (!active || !dataDir) return false;
+  const item = await getItem(id, dataDir);
+  if (!item) return false;
+  if (item.attempts >= MAX_ATTEMPTS) await updateItem(id, { attempts: 0 }, dataDir);
+  active.requestRetry(id);
+  return true;
 }
 
 /** 停止运行时并退订配置变更；停机后状态恒为 stopped */

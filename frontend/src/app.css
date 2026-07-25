@@ -363,3 +363,31 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .chat-head-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 .chat-head-actions select { max-width: 150px; font-size: 11px; }
 .chat-head-actions button { font-size: 11px; padding: 2px 6px; }
+
+/* 灵感收件箱(收件箱设计 §4):状态条 + 分组卡 + 条目行;拆解卡列表复用 .card */
+.inbox { max-width: 900px; }
+.inbox-bar { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 8px 12px; margin-bottom: 10px; }
+.inbox-bar-bad { border-color: var(--danger); }
+.inbox-bad { color: var(--danger); font-size: 12px; margin: 3px 0; }
+.inbox-guide { margin-bottom: 10px; }
+.inbox-steps { margin: 6px 0 4px; padding-left: 20px; line-height: 1.8; font-size: 13px; }
+.inbox-steps li { margin: 4px 0; }
+.inbox-group { margin-bottom: 10px; }
+.inbox-item { padding: 7px 0; border-bottom: 1px dashed var(--border); }
+.inbox-item:last-child { border-bottom: none; }
+.inbox-item-head { display: flex; gap: 8px; align-items: baseline; }
+.inbox-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-item .row-actions button { font-size: 11px; padding: 2px 8px; }
+.inbox-note { font-size: 12px; margin: 3px 0; }
+.inbox-hidden { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.link-btn { border: none; background: none; padding: 0 4px; color: var(--ink); text-decoration: underline; font-size: 12px; }
+.link-btn:hover { border: none; color: var(--danger); }
+.pattern-card { margin-bottom: 10px; }
+.pattern-hook { margin: 4px 0; font-weight: 700; font-size: 13px; }
+.pattern-platforms { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; margin: 8px 0; }
+.pattern-platforms .chip { cursor: pointer; }
+.pattern-note-edit { margin-top: 8px; }
+.pattern-note-edit textarea { width: 100%; resize: vertical; margin-bottom: 6px; }
+.pattern-actions { align-items: baseline; }
+.pattern-note { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pattern-src { font-size: 11px; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

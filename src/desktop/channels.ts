@@ -109,6 +109,17 @@ export const IPC_CHANNELS = [
   "content:restore",
   "content:open_folder",
   "trash:list",
+  "doctor:inbox",
+  "inbox:list",
+  "inbox:retry",
+  "inbox:delete",
+  "inbox:reingest",
+  "inbox:settings_get",
+  "inbox:settings_set",
+  "inbox:status",
+  "patterns:list",
+  "patterns:update",
+  "patterns:delete",
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];

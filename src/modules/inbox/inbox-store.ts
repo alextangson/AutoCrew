@@ -48,6 +48,12 @@ export interface InboxItem {
   /** fetching 的 lease 起点；崩溃后靠它回收（§3.1） */
   claimedAt?: string;
   receiptStatus?: ReceiptStatus;
+  /**
+   * 创始人「从收件箱移除」的时间戳——**纯展示层**字段，与状态机正交。
+   * 台账永不物理删（§3.1），所以移除只是让 `inbox:list` 通道把它滤掉：
+   * 查重、追溯、启动补扫读的都还是全量，语义不变。清空即恢复。
+   */
+  hiddenAt?: string;
 }
 
 /** 新建 item：id/receivedAt/status/attempts 有默认值，其余按来源填 */

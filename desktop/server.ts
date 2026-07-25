@@ -343,7 +343,8 @@ try {
 
 // 灵感收件箱(spec §2.1):TG 长轮询 worker 是进程内全局单例。未配置/工作区缺失
 // 只登记可见状态、不启动;失败不阻断 server 启动(状态走 doctor 与设置页)。
-void startInboxRuntime()
+// onInboxEvent → SSE `inbox` 流:worker 每次写完台账推一条 {type,itemId},收件箱视图据此刷新。
+void startInboxRuntime({ onInboxEvent: (e) => broadcast("inbox", e) })
   .then((s) => console.log(`  [inbox] 收件箱 worker:${s.state}${s.detail ? ` —— ${s.detail}` : ""}`))
   .catch((err) => console.error("[inbox] 收件箱启动失败:", err instanceof Error ? err.message : err));
 

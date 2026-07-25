@@ -129,8 +129,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 102 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(102);
+  it("has exactly 113 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(113);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -300,7 +300,18 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "topic:update" &&
           ch !== "topic:delete" &&
           ch !== "topic:restore" &&
-          ch !== "trash:list",
+          ch !== "trash:list" &&
+          ch !== "doctor:inbox" &&
+          ch !== "inbox:list" &&
+          ch !== "inbox:retry" &&
+          ch !== "inbox:delete" &&
+          ch !== "inbox:reingest" &&
+          ch !== "inbox:settings_get" &&
+          ch !== "inbox:settings_set" &&
+          ch !== "inbox:status" &&
+          ch !== "patterns:list" &&
+          ch !== "patterns:update" &&
+          ch !== "patterns:delete",
       ).sort(),
     );
   });
