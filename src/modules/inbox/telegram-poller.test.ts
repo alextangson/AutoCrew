@@ -439,10 +439,15 @@ describe("入账与回执", () => {
     const poller = makePoller();
     fake.push(update(902, "https://example.com/x"));
     poller.start();
-    await waitFor(async () => (await listItems(dataDir))[0]?.receiptStatus === "failed", "回执标 failed");
-    expect(received.length).toBe(1);
-    expect(fake.sent.length).toBe(3); // 3 次重试都发了
-    expect((await readOffset())?.offset).toBe(903);
+    // 顺序是「发回执 → 标 receiptStatus → 交 worker → 推进 offset」，
+    // 等最后一步发生再断言，别拿 receiptStatus 当整批完成的信号（会读到时序快照）
+    await waitFor(() => received.length === 1, "交给 worker");
+    await waitFor(async () => (await readOffset())?.offset === 903, "offset 推进");
+    expect((await listItems(dataDir))[0]?.receiptStatus).toBe("failed");
+    // 全量并行负载下见过一次 3 缺 1（未复现出根因）：给第三发一个有界等待，
+    // 仍然精确断言 3——多发会在这里立刻暴露，少发超时报的是哪一步清清楚楚
+    await waitFor(() => fake.sent.length >= 3, "3 次重试都发了");
+    expect(fake.sent.length).toBe(3);
   });
 
   it("纯文字 → text item，无 url/note", async () => {
