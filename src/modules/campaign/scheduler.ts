@@ -33,7 +33,24 @@ export async function runCampaignReadyTasks(
   const initial = await getCampaign(campaignId, dataDir);
   if (!initial) throw new Error(`Campaign 不存在:${campaignId}`);
   if (initial.status !== "active") throw new Error("Campaign 必须先启动为 active");
-  const maxTasks = Math.max(1, Math.min(opts.maxTasks ?? 2, 10));
+  let consecutiveFailures = 0;
+  for (const run of [...initial.runs].reverse()) {
+    if (run.status === "failed") consecutiveFailures += 1;
+    else if (run.status === "succeeded") break;
+  }
+  if (consecutiveFailures >= initial.workflow.policy.maxConsecutiveFailures) {
+    throw new Error(
+      `连续失败已达安全上限:${initial.workflow.policy.maxConsecutiveFailures}，请检查后人工重试`,
+    );
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const runsToday = initial.runs.filter((run) => run.startedAt?.startsWith(today)).length;
+  const remainingRuns = Math.max(0, initial.workflow.policy.maxRunsPerDay - runsToday);
+  const maxTasks = Math.min(
+    Math.max(1, Math.min(opts.maxTasks ?? initial.workflow.policy.maxTasksPerCycle, 10)),
+    initial.workflow.policy.maxTasksPerCycle,
+    remainingRuns,
+  );
   const execute = deps.executeTask ?? executeCampaignAgentTask;
   const results: CampaignBatchResult["results"] = [];
 

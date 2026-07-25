@@ -119,6 +119,10 @@ describe("IPC_CHANNELS", () => {
     "campaign:run_ready",
     "campaign:retry_task",
     "campaign:artifact_get",
+    "campaign:set_autonomy",
+    "campaign:patch_propose",
+    "campaign:patch_decide",
+    "campaign:replan",
     "topics:list",
     "topic:create",
     "topic:delete",
@@ -129,8 +133,8 @@ describe("IPC_CHANNELS", () => {
     "trash:list",
   ];
 
-  it("has exactly 102 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(102);
+  it("has exactly 106 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(106);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -295,6 +299,10 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "campaign:run_ready" &&
           ch !== "campaign:retry_task" &&
           ch !== "campaign:artifact_get" &&
+          ch !== "campaign:set_autonomy" &&
+          ch !== "campaign:patch_propose" &&
+          ch !== "campaign:patch_decide" &&
+          ch !== "campaign:replan" &&
           ch !== "topics:list" &&
           ch !== "topic:create" &&
           ch !== "topic:update" &&

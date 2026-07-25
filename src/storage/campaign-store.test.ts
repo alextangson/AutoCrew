@@ -49,6 +49,24 @@ describe("campaign store", () => {
     await expect(fs.access(path.join(dataDir, "campaigns", created.id, "campaign.json"))).resolves.toBeUndefined();
   });
 
+  it("reads schema v1 campaigns through the dynamic-workflow migration", async () => {
+    const created = await seed();
+    const file = path.join(dataDir, "campaigns", created.id, "campaign.json");
+    const legacy = { ...created } as Partial<typeof created> & { schemaVersion: number };
+    legacy.schemaVersion = 1;
+    delete legacy.workflow;
+    await fs.writeFile(file, JSON.stringify(legacy), "utf-8");
+
+    const migrated = await getCampaign(created.id, dataDir);
+    expect(migrated?.schemaVersion).toBe(2);
+    expect(migrated?.workflow).toMatchObject({
+      revision: 0,
+      autonomy: "manual",
+      schedule: { intervalMinutes: 1440 },
+    });
+    expect(migrated?.workflow.events[0].summary).toContain("迁移");
+  });
+
   it("plans a team before allowing activation", async () => {
     const created = await seed();
     await expect(transitionCampaign(created.id, "active", dataDir)).rejects.toThrow(/Invalid campaign transition/);
@@ -74,9 +92,19 @@ describe("campaign store", () => {
     const afterAudit = await completeCampaignTask(
       created.id,
       audit!.run.id,
-      { title: "业务审计", markdown: "审计证据。".repeat(80), kind: "research" },
+      {
+        title: "业务审计",
+        markdown: "审计证据。".repeat(80),
+        kind: "research",
+        runtime: "pi-agent",
+        agentSessionId: "session-test-audit",
+      },
       dataDir,
     );
+    expect(afterAudit?.runs.find((run) => run.id === audit!.run.id)).toMatchObject({
+      runtime: "pi-agent",
+      agentSessionId: "session-test-audit",
+    });
     const auditArtifact = afterAudit!.artifacts[0];
     expect(await readCampaignArtifact(created.id, auditArtifact.id, dataDir)).toContain("审计证据");
 

@@ -50,6 +50,102 @@ export type GovernedAction =
   | "change_website"
   | "export_customer_data";
 
+/**
+ * Business mode and autonomy are deliberately separate. A personal campaign can
+ * be managed, while a customer-growth campaign can still be fully manual.
+ */
+export type CampaignAutonomyMode = "manual" | "supervised" | "managed";
+
+export interface CampaignWorkflowPolicy {
+  maxTasksPerCycle: number;
+  maxRunsPerDay: number;
+  maxPatchOperations: number;
+  maxReplansPerDay: number;
+  maxConsecutiveFailures: number;
+}
+
+export type CampaignHostedCycleStatus = "succeeded" | "idle" | "attention" | "failed";
+
+export interface CampaignWorkflowSchedule {
+  intervalMinutes: number;
+  nextRunAt?: string;
+  lastCycleAt?: string;
+  lastCycleStatus?: CampaignHostedCycleStatus;
+  lastCycleSummary?: string;
+}
+
+export type CampaignWorkflowPatchOperation =
+  | {
+      op: "add_task";
+      key: string;
+      title: string;
+      description: string;
+      assigneeRole: CampaignAgentRole;
+      channel?: PromotionChannel;
+      dependsOn: string[];
+      requiredApproval?: GovernedAction;
+    }
+  | {
+      op: "update_task";
+      taskId: string;
+      title?: string;
+      description?: string;
+      assigneeRole?: CampaignAgentRole;
+      channel?: PromotionChannel;
+      requiredApproval?: GovernedAction;
+    }
+  | {
+      op: "replace_dependencies";
+      taskId: string;
+      dependsOn: string[];
+    }
+  | {
+      op: "cancel_task";
+      taskId: string;
+      reason: string;
+    };
+
+export type CampaignWorkflowPatchStatus = "proposed" | "applied" | "rejected";
+
+export interface CampaignWorkflowPatch {
+  id: string;
+  baseRevision: number;
+  reason: string;
+  proposedBy: "human" | "agent" | "system";
+  operations: CampaignWorkflowPatchOperation[];
+  status: CampaignWorkflowPatchStatus;
+  requiresApproval: boolean;
+  createdAt: string;
+  decidedAt?: string;
+  decisionNote?: string;
+}
+
+export interface CampaignWorkflowEvent {
+  seq: number;
+  type:
+    | "campaign_created"
+    | "team_planned"
+    | "autonomy_changed"
+    | "host_schedule_changed"
+    | "host_cycle_completed"
+    | "patch_proposed"
+    | "patch_applied"
+    | "patch_rejected";
+  at: string;
+  actor: "human" | "agent" | "system";
+  summary: string;
+  patchId?: string;
+}
+
+export interface CampaignWorkflow {
+  revision: number;
+  autonomy: CampaignAutonomyMode;
+  policy: CampaignWorkflowPolicy;
+  schedule: CampaignWorkflowSchedule;
+  patches: CampaignWorkflowPatch[];
+  events: CampaignWorkflowEvent[];
+}
+
 export interface CampaignAgent {
   id: string;
   role: CampaignAgentRole;
@@ -104,6 +200,8 @@ export interface CampaignRun {
   agentId: string;
   status: CampaignRunStatus;
   attempt: number;
+  runtime?: "loop" | "pi-agent";
+  agentSessionId?: string;
   startedAt?: string;
   finishedAt?: string;
   error?: string;
@@ -156,7 +254,7 @@ export interface CampaignBrief {
 }
 
 export interface Campaign {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   name: string;
   mode: CampaignMode;
@@ -168,6 +266,7 @@ export interface Campaign {
   artifacts: CampaignArtifact[];
   approvals: CampaignApproval[];
   metrics: CampaignMetricSnapshot[];
+  workflow: CampaignWorkflow;
   createdAt: string;
   updatedAt: string;
 }
@@ -200,4 +299,8 @@ export function isCampaignStatus(value: unknown): value is CampaignStatus {
 
 export function isPromotionChannel(value: unknown): value is PromotionChannel {
   return typeof value === "string" && (PROMOTION_CHANNELS as readonly string[]).includes(value);
+}
+
+export function isCampaignAutonomyMode(value: unknown): value is CampaignAutonomyMode {
+  return value === "manual" || value === "supervised" || value === "managed";
 }

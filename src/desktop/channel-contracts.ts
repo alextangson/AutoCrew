@@ -116,6 +116,10 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "campaign:run_ready": ["id"],
   "campaign:retry_task": ["id", "task_id"],
   "campaign:artifact_get": ["id", "artifact_id"],
+  "campaign:set_autonomy": ["id", "autonomy"],
+  "campaign:patch_propose": ["id", "base_revision", "reason", "operations"],
+  "campaign:patch_decide": ["id", "patch_id", "approved"],
+  "campaign:replan": ["id"],
 } as const;
 
 /**
