@@ -45,6 +45,12 @@ export interface InboxWorkerDeps {
   setTimer?: (fn: () => void, ms: number) => TimerHandle;
   /** 台账写失败等自身故障的出口——不静默（默认 console.error） */
   onError?: (err: unknown, ctx: { phase: string; itemId?: string }) => void;
+  /**
+   * worker 每次成功写台账后的通知（claim / settle / wake 三处），SSE 视图刷新用。
+   * 在写盘**之后**触发——消费方按 itemId 重读永远读到已落定的状态，不是中间态。
+   * 监听者抛错走 onError，不影响处理。
+   */
+  onItemChanged?: (item: InboxItem) => void;
 }
 
 export interface InboxWorker {
@@ -244,6 +250,7 @@ class SerialInboxWorker implements InboxWorker {
       dataDir,
     );
     if (!claimed) return;
+    this.notifyChanged(claimed);
 
     let result: ProcessResult;
     try {
@@ -254,17 +261,28 @@ class SerialInboxWorker implements InboxWorker {
     }
     const settled = await updateItem(id, outcomePatch(result, prevAttempts), dataDir);
     if (settled?.status === "failed" && settled.retryable) this.scheduleRetry(settled);
+    this.notifyChanged(settled);
+  }
+
+  private notifyChanged(item: InboxItem | null): void {
+    if (!item || !this.deps.onItemChanged) return;
+    try {
+      this.deps.onItemChanged(item);
+    } catch (err) {
+      this.onError(err, { phase: "on_item_changed", itemId: item.id });
+    }
   }
 
   /** blocked → pending 显式落一行：台账里看得见「因为什么被唤醒」，视图也能立刻反映 */
   private async runWake(reason: string): Promise<void> {
     for (const item of await listItems(this.deps.dataDir)) {
       if (item.status !== "blocked") continue;
-      await updateItem(
+      const woken = await updateItem(
         item.id,
         { status: "pending", failReason: `外部条件已变更（${reason}），重新排队` },
         this.deps.dataDir,
       );
+      this.notifyChanged(woken);
       this.post({ kind: "item", id: item.id });
     }
   }

@@ -204,6 +204,27 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
   }
 }
 
+const engineSettingsListeners: Array<() => void> = [];
+
+/** 引擎配置保存成功后的通知（收件箱 runtime 用它唤醒 blocked 项）；返回退订函数 */
+export function onEngineSettingsChanged(cb: () => void): () => void {
+  engineSettingsListeners.push(cb);
+  return () => {
+    const at = engineSettingsListeners.indexOf(cb);
+    if (at >= 0) engineSettingsListeners.splice(at, 1);
+  };
+}
+
+function notifyEngineSettingsChanged(): void {
+  for (const cb of [...engineSettingsListeners]) {
+    try {
+      cb();
+    } catch {
+      // 监听者的异常不该让保存失败
+    }
+  }
+}
+
 export async function setEngineSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
@@ -274,6 +295,7 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify({ ...fromFile, ...updates, routes }, null, 2) + "\n", { mode: 0o600 });
     await fs.chmod(filePath, 0o600);
+    notifyEngineSettingsChanged();
     return getEngineSettings({ _dataDir: dataDir });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

@@ -23,6 +23,7 @@ import { LocalSessionAuth } from "../src/desktop/server-auth.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
+import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadarIfStale } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
@@ -339,6 +340,12 @@ try {
 } catch (err) {
   console.error("[expiry] 灵感库清理失败:", err instanceof Error ? err.message : err);
 }
+
+// 灵感收件箱(spec §2.1):TG 长轮询 worker 是进程内全局单例。未配置/工作区缺失
+// 只登记可见状态、不启动;失败不阻断 server 启动(状态走 doctor 与设置页)。
+void startInboxRuntime()
+  .then((s) => console.log(`  [inbox] 收件箱 worker:${s.state}${s.detail ? ` —— ${s.detail}` : ""}`))
+  .catch((err) => console.error("[inbox] 收件箱启动失败:", err instanceof Error ? err.message : err));
 
 server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");

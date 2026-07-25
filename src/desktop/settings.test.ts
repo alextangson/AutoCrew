@@ -270,3 +270,23 @@ describe("inbox settings(收件箱 · 全局根 inbox.json,不随工作区)", ()
     expect(await getInboxSettingsRaw(testDir)).toBeNull();
   });
 });
+
+describe("onEngineSettingsChanged(引擎配置保存钩子)", () => {
+  it("保存成功触发;校验失败不触发;退订后不触发;监听者抛错不影响保存", async () => {
+    const { onEngineSettingsChanged } = await import("./settings.js");
+    let fired = 0;
+    const off = onEngineSettingsChanged(() => {
+      fired += 1;
+      throw new Error("listener boom");
+    });
+    const ok = await setEngineSettings({ _dataDir: testDir, api_key: "sk-hook-test-1234" });
+    expect(ok.ok).toBe(true);
+    expect(fired).toBe(1);
+    const bad = await setEngineSettings({ _dataDir: testDir, api_key: "   " });
+    expect(bad.ok).toBe(false);
+    expect(fired).toBe(1);
+    off();
+    await setEngineSettings({ _dataDir: testDir, api_key: "sk-hook-test-5678" });
+    expect(fired).toBe(1);
+  });
+});

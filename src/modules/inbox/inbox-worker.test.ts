@@ -430,3 +430,38 @@ describe("lifecycle", () => {
     expect(await listItems(dataDir)).toEqual([]);
   });
 });
+
+describe("onItemChanged（SSE 视图刷新用的写账后通知）", () => {
+  it("claim 与 settle 各通知一次，末事件状态即台账终态", async () => {
+    const events: string[] = [];
+    const worker = makeWorker({ onItemChanged: (item) => events.push(item.status) });
+    worker.enqueue(await newItem({ id: "inbox-evt" }));
+    await worker.idle();
+    expect(events).toEqual(["fetching", "digested"]);
+    expect((await getItem("inbox-evt", dataDir))?.status).toBe("digested");
+  });
+
+  it("wake 的 blocked→pending 写账也通知；监听者每次都抛错也不影响消化", async () => {
+    const events: string[] = [];
+    const errPhases: string[] = [];
+    let ready = false;
+    const worker = makeWorker({
+      processItem: async () =>
+        ready ? { status: "digested" as const } : { status: "blocked" as const, errorCode: "engine_unavailable" },
+      onItemChanged: (item) => {
+        events.push(item.status);
+        throw new Error("listener boom");
+      },
+      onError: (_e, ctx) => errPhases.push(ctx.phase),
+    });
+    worker.enqueue(await newItem({ id: "inbox-wake-evt" }));
+    await worker.idle();
+    expect(events).toEqual(["fetching", "blocked"]);
+    ready = true;
+    worker.wakeBlocked("test");
+    await worker.idle();
+    expect(events).toEqual(["fetching", "blocked", "pending", "fetching", "digested"]);
+    expect((await getItem("inbox-wake-evt", dataDir))?.status).toBe("digested");
+    expect(errPhases.filter((p) => p === "on_item_changed")).toHaveLength(events.length);
+  });
+});
