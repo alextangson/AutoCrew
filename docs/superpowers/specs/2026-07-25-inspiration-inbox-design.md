@@ -90,7 +90,7 @@
 **过期裁决**：inbox 来源的灵感与雷达同权——3 天未用进回收站（不搞第二套过期制度）；「沉淀」由永久的 inbox 台账与拆解卡承担，收件箱视图可对过期项一键重新入库。
 
 ### 3.5 拆解卡实体与注入
-- `<dataDir>/patterns/patterns.jsonl`，append-only、按 id latest-wins，**带 `revision`、`updatedAt`、`deletedAt`（墓碑）**——支持补注、删除；删除后同链接再转发，查重会命中墓碑 → 回执「此前已删过，回复 /redo 可重拆」（显式覆盖而非静默复活）。
+- `<dataDir>/patterns/patterns.jsonl`，append-only、按 id latest-wins，**带 `revision`、`updatedAt`、`deletedAt`（墓碑）**——支持补注、删除；删除后同链接再转发，查重会命中墓碑 → 回执「此前拆解卡已删除；要重拆请重新转发并附『重拆』备注」（显式覆盖而非静默复活；实现取备注关键词而非 /redo 命令，免去 bot 命令面）。
 - `PatternCard: {id, sourceUrl, canonicalUrl, sourcePlatform: "douyin"|"x"|"wechat_article"|"web", applicablePlatforms: PlatformId[], author?, title, hook, structure[3-6], first5s?, whyItWorks[1-3], themes[1-3], stats?{likes,comments,collects,capturedAt}, founderNote?, sourceInboxId, revision, createdAt, updatedAt, deletedAt?}`
   - **来源平台与适用平台是两个字段**：sourcePlatform 记录从哪拆的；applicablePlatforms 是输出平台枚举（douyin/wechat_video/xiaohongshu/…），LLM 建议、创始人可改。
 - **注入点只有一个：`script-prompt` 组装时**（写稿入口）。~~koubo pack、video-kit 各自加槽~~——koubo 是静态包不该塞动态数据；video-kit 是稿后发布件、注入范例会让发布件偏离已审稿。
@@ -106,7 +106,7 @@
 
 - IPC 通道：`inbox:list`、`inbox:retry`、`inbox:delete`、`inbox:reingest`、`inbox:settings_get/set`（token 掩码）、`patterns:list`、`patterns:update`（founderNote/applicablePlatforms）、`patterns:delete`；各配 channel contract + handler + 前端 API。
 - SSE 事件 `inbox:updated` 驱动视图刷新（复用现有事件总线）。
-- 收件箱视图：pending/blocked/failed/rejected 分组，blocked 项直链设置页；digested 项链到落点。空态 = 配对引导（建 bot、填 token、验证连通按钮）。
+- 收件箱视图：pending/blocked/failed/rejected 分组，blocked 项直链设置页；digested 项链到落点。空态 = 配对引导（建 bot、填 token、验证连通按钮）。「移除」是展示层 `hiddenAt` 隐藏（可恢复）：台账 append-only 不破，被移除项仍参与查重——同链接再转发回「已收录过」。
 - 拆解卡列表：表格 + 删除 + 补注。v1 不做编辑器。
 - doctor 三项：TG worker（最近成功 poll / 最老 pending 时长 / 401、409 状态）、TikHub key、patterns 库可读写。
 
@@ -115,9 +115,9 @@
 设计五问浓缩：状态机四态 + blocked 由配置事件唤醒；最坏输入见 §3.1/§3.2；防呆 = 白名单静默忽略 + 三库幂等 + 墓碑显式覆盖；失败可见 = 回执 + 视图双通道，绝不静默降级；命名不做 = 微信个人号 bot、公网 webhook、ASR、视频下载、拆解卡直出稿件、>24h 离线找回。
 
 验收用例（发布前逐条走，含 codex 补充的崩溃/并发面）：
-1. 转发 X 链接（V1.0 期抓不了 → blocked 提示「X 解析 V1.1」；V1.1 后 → 卡/题落库回执）。
+1. 转发 X/抖音链接（V1.0 **不特判**：走通用抓取，抓不到正文按判定落 rejected/failed，有测试锁死防提前加 blocked 特判；V1.1 上专用解析器后 → 卡/题落库回执，缺 key → blocked）。
 2. 转发普通文章链接 → digested，回执含判定与落点；工作台可见。
-3. 未配 TikHub key 转抖音链接 → **blocked**（非 failed）；配 key 后自动重试转 digested。
+3. blocked 语义（等外部条件、配置变更自动唤醒）在 V1.0 由**引擎不可达**路径验收：引擎恢复/保存引擎配置 → 自动重试转 digested。TikHub 缺 key 的 blocked 属 V1.1。
 4. 同链接转发两次（含并发同时到达）→ 恰一条 digested，第二次回「已收录过」。
 5. **崩溃矩阵**：在「入队后未推进 offset」「fetching 中」「card_done 未 topic_done」三点 kill 进程 → 重启后分别：TG 重投被幂等吸收；lease 回收重跑；从 checkpoint 续做且不重复落卡。
 6. TG 回执发送失败 → item 标 receiptFailed，工作台可见，消化结果不丢。
@@ -174,3 +174,23 @@
 | 28 | 验收缺崩溃/并发面 | 吸收：崩溃矩阵 + 并发重复 + 恶意重定向等 11 条（§5） |
 | 29 | 学习闭环无归因 | 吸收：usedPatternIds 进 run-log 与 content 元数据（§3.5） |
 | 30 | V1 范围过大 | 吸收：重切 V1.0（通用抓取先行）/V1.1（X+抖音）/V1.5（扩展）（§7） |
+
+## 10. V1.0 验收记录（2026-07-25）
+
+分支 `claude/autocrew-dynamic-workflow-automation-211a38`，提交链 `00dd332`(A) → `69f1458`(B) → `f3c0f18`(C1) → `8dd49f7`(B4+集成) → `1a5b040`(C2+C3)。**tsc 干净、1545 vitest 全绿、lint 0 error、前端构建通过、真实 server 启动冒烟通过**（not_configured 可见态 + inbox:status/doctor:inbox/inbox:list 经鉴权 HTTP 全部正确）。
+
+| §5 用例 | 证据 |
+|---|---|
+| 1 X/抖音不特判 | digest-pipeline.test（域名特判有反向锁测试） |
+| 2 普通文章 digested | digest-pipeline.test happy path 三路 |
+| 3 blocked→唤醒 | inbox-runtime.test（引擎配置保存→唤醒→digested，真 setEngineSettings 链路） |
+| 4 同链接幂等（含并发） | digest-pipeline.test 三库查重 + inbox-store.test + 单 worker 串行测试 |
+| 5 崩溃矩阵 | telegram-poller.test（append 中途真失败重启不丢不重）、inbox-worker.test（lease 回收）、digest-pipeline.test（card_done 续做 revision=1） |
+| 6 回执失败不丢结果 | telegram-poller.test + digest-pipeline.test |
+| 7 429/退避/409 停 | telegram-poller.test 逐条 |
+| 8 SSRF/2MB/重定向 | fetch-external.test（46 例地址矩阵 + 流式变异验证） |
+| 9 注入块 + usedPatternIds | pattern-select.test + script-prompt.test + generate-script-patterns.test + run-log.test |
+| 10 白名单外无响应 | telegram-poller.test（含 offset 照常推进） |
+| 11 换 token 重置 offset / 换工作区 | telegram-poller.test（botId 比对）+ inbox-runtime.test（配置变更热重启） |
+
+**未验收（如实声明）**：真实 Telegram 网络冒烟（需创始人 bot token + 出站代理，交付后第一步）；X/抖音专用解析器与扩展右键属 V1.1/V1.5 未实现。
