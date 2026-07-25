@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { buildScriptPrompts, type ScriptRequest } from "./script-prompt.js";
+import {
+  buildScriptPrompts,
+  PATTERN_BLOCK_START,
+  PATTERN_BLOCK_END,
+  type ScriptRequest,
+} from "./script-prompt.js";
 import { KOUBO_PACK } from "../packs/koubo.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
+import type { PatternCard } from "../patterns/pattern-store.js";
 
 describe("buildScriptPrompts", () => {
   it("system prompt contains 口播脚本编剧 role + pack name", () => {
@@ -229,5 +235,67 @@ describe("voice sections (V5.7 活人感)", () => {
     const result = buildScriptPrompts(KOUBO_PACK, baseProfile, req, { contrastPairs: [] });
     expect(result.system).not.toContain("创作者声音样本");
     expect(result.system).not.toContain("改稿方向");
+  });
+});
+
+// ─── 对标拆解卡注入（收件箱设计 §3.5 唯一注入点）──────────────────────────────
+
+describe("reference pattern block", () => {
+  const req: ScriptRequest = { topic: "内容创作者怎么找选题", platform: "douyin" };
+
+  const card: PatternCard = {
+    id: "pat-inbox-001",
+    sourceUrl: "https://www.douyin.com/video/123",
+    canonicalUrl: "https://www.douyin.com/video/123",
+    sourcePlatform: "douyin",
+    applicablePlatforms: ["douyin"],
+    title: "三步搞定选题",
+    hook: "你以为选题难，其实是没有清单",
+    structure: ["抛反常识结论", "给三步清单", "收尾留钩子"],
+    whyItWorks: ["反常识开头压住划走"],
+    themes: ["内容创作"],
+    sourceInboxId: "inbox-001",
+    revision: 1,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+
+  it("有卡：user prompt 出现成对定界块，块内含卡片字段与借鉴纪律", () => {
+    const { user } = buildScriptPrompts(KOUBO_PACK, null, req, { patterns: [card] });
+
+    expect(user).toContain(PATTERN_BLOCK_START);
+    expect(user).toContain(PATTERN_BLOCK_END);
+    const block = user.slice(user.indexOf(PATTERN_BLOCK_START), user.indexOf(PATTERN_BLOCK_END));
+    expect(block).toContain("禁止改写");
+    expect(block).toContain(card.title);
+    expect(block).toContain(card.hook);
+    for (const step of card.structure) expect(block).toContain(step);
+    expect(block).toContain(card.whyItWorks[0]);
+    expect(block).toContain(card.themes[0]);
+  });
+
+  it("多张卡各自成条，且不越过上层给的顺序", () => {
+    const second: PatternCard = { ...card, id: "pat-inbox-002", title: "反差开头模板", hook: "第二张卡的钩子" };
+    const { user } = buildScriptPrompts(KOUBO_PACK, null, req, { patterns: [card, second] });
+
+    expect(user).toContain("【参考 1】");
+    expect(user).toContain("【参考 2】");
+    expect(user.indexOf(card.title)).toBeLessThan(user.indexOf(second.title));
+  });
+
+  it("系统提示不受影响：卡片只进 user prompt（外部内容永不进系统提示 §3.6）", () => {
+    const { system } = buildScriptPrompts(KOUBO_PACK, null, req, { patterns: [card] });
+    expect(system).not.toContain(PATTERN_BLOCK_START);
+    expect(system).not.toContain(card.hook);
+  });
+
+  it("无卡（空数组 / 缺省 extras）：整块不出现", () => {
+    const empty = buildScriptPrompts(KOUBO_PACK, null, req, { patterns: [] });
+    expect(empty.user).not.toContain(PATTERN_BLOCK_START);
+    expect(empty.user).not.toContain(PATTERN_BLOCK_END);
+
+    const noExtras = buildScriptPrompts(KOUBO_PACK, null, req);
+    expect(noExtras.user).not.toContain(PATTERN_BLOCK_START);
+    expect(noExtras.user).toBe(empty.user); // 无卡时 prompt 与改动前逐字一致
   });
 });

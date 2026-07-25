@@ -17,6 +17,8 @@ import { loadProfile } from "../profile/creator-profile.js";
 import { recentContrastPairs } from "../learnings/diff-tracker.js";
 import { buildScriptPrompts } from "./script-prompt.js";
 import type { ScriptRequest } from "./script-prompt.js";
+import { selectPatternsForScript } from "../patterns/pattern-select.js";
+import type { PatternCard } from "../patterns/pattern-store.js";
 import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./quality-gate.js";
 import type { GateFailure } from "./quality-gate.js";
 import { humanizeZh } from "../humanizer/zh.js";
@@ -154,6 +156,12 @@ async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<
   return placeholder.id;
 }
 
+/** 选卡（usePatterns:false 显式关闭时连读都不读）。选题标题与角度都在 req.topic 这一串自由文本里 */
+function selectPatterns(req: ScriptRequest, dataDir?: string): Promise<PatternCard[]> {
+  if (req.usePatterns === false) return Promise.resolve([]);
+  return selectPatternsForScript({ platform: req.platform, topicText: req.topic }, dataDir);
+}
+
 /** 执行体:loop → 占位稿转正;失败标〔生成中断〕+ lastError 后原样抛出 */
 async function runGeneration(
   placeholderId: string,
@@ -162,15 +170,20 @@ async function runGeneration(
   deps?: { runLoopImpl?: typeof runLoop },
   runId?: string,
 ): Promise<GeneratedScript> {
-  const [config, pack, profile, contrastPairs] = await Promise.all([
+  const [config, pack, profile, contrastPairs, patterns] = await Promise.all([
     loadEngineConfig(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
     // 改稿对比对(V5.7 活人感):读取失败不阻断写稿——样例是增强,不是依赖
     recentContrastPairs(3, dataDir).catch(() => []),
+    // 对标拆解卡(收件箱 §3.5):平台+主题相关才选,无匹配即空数组。
+    // 这里**不加 catch**:patterns 库不存在是正常空态(store 已按 ENOENT 返回 []),
+    // 其余读故障必须炸出来——静默降级会让「卡怎么没生效」查无可查。
+    selectPatterns(req, dataDir),
   ]);
+  const usedPatternIds = patterns.map((card) => card.id);
 
-  const { system, user } = buildScriptPrompts(pack, profile, req, { contrastPairs });
+  const { system, user } = buildScriptPrompts(pack, profile, req, { contrastPairs, patterns });
   const writer = resolveEngineRoute(config, "writer", config.strongModel);
   const captured: Captured = { payload: null, gateFailures: [] };
   const gate = resolveQualityGate(pack, req.platform);
@@ -186,7 +199,12 @@ async function runGeneration(
       // Gate 修复轮需要额外回合与 token 预算（整稿 × 最多 1+N 稿）
       maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
       maxTotalTokens: gate ? 80000 : undefined,
-      logMeta: { ...(runId ? { runId } : {}), agent: "writer" },
+      // usedPatternIds 进 run-log 元数据(§3.5 使用追踪):无卡时字段不出现,日志口径不变
+      logMeta: {
+        ...(runId ? { runId } : {}),
+        agent: "writer",
+        ...(usedPatternIds.length > 0 ? { usedPatternIds } : {}),
+      },
     });
 
     if (!captured.payload) {
@@ -196,7 +214,7 @@ async function runGeneration(
     }
 
     const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
-    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, placeholderId, dataDir);
+    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, usedPatternIds, placeholderId, dataDir);
   } catch (err) {
     // 失败留痕:占位稿标注中断原因（best-effort,不吞原错误）——UI 显示徽章与重试入口
     const msg = err instanceof Error ? err.message : String(err);
@@ -271,6 +289,7 @@ async function finalizeScript(
   tokensUsed: number,
   gateFailures: GateFailure[],
   rulesApplied: number,
+  usedPatternIds: string[],
   placeholderId: string,
   dataDir?: string,
 ): Promise<GeneratedScript> {
@@ -293,6 +312,8 @@ async function finalizeScript(
       status: "draft_ready",
       hashtags: cleanHashtags,
       lastError: null,
+      // 归因落稿件元数据(§3.5):无卡时不写字段——没用卡的稿与改动前一字不差
+      ...(usedPatternIds.length > 0 ? { usedPatternIds } : {}),
       _versionNote: "AI 完成初稿",
     },
     dataDir,

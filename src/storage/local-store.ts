@@ -142,6 +142,8 @@ export interface Content {
   videoKit?: VideoKit;
   /** 最近一次生成/处理失败的原因（防呆:失败留痕,成功后清空）。UI 据此显示中断徽章与重试 */
   lastError?: string | null;
+  /** 本稿写作时注入的对标拆解卡 id（收件箱设计 §3.5）：学习闭环归因，无卡时字段不落 */
+  usedPatternIds?: string[];
   /** 软删除时间戳(回收站语义);null/缺省 = 活跃。默认读侧全部过滤 */
   deletedAt?: string | null;
   assets: Asset[];

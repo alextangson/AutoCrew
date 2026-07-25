@@ -32,6 +32,8 @@ export interface RunLogRecord {
   /** llm=assistant 消息 JSON;tool=返回串。已脱敏+截断 */
   output: string;
   truncated?: boolean;
+  /** 本次生成注入的对标拆解卡 id(收件箱设计 §3.5):飞轮据此归因「用卡的稿 vs 没用的」 */
+  usedPatternIds?: string[];
 }
 
 export interface RunSummary {
@@ -178,16 +180,22 @@ export interface RunRecorder {
 const NOOP_RECORDER: RunRecorder = { llm: () => {}, tool: () => {} };
 
 /** dataDir 缺省(手工构造的测试 config)= 不落日志,引擎行为零变化 */
-export function createRunRecorder(dataDir: string | undefined, meta?: { runId?: string; agent?: string }): RunRecorder {
+export function createRunRecorder(
+  dataDir: string | undefined,
+  meta?: { runId?: string; agent?: string; usedPatternIds?: string[] },
+): RunRecorder {
   if (!dataDir) return NOOP_RECORDER;
   const runId = meta?.runId ?? `run-eng-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const agent = meta?.agent;
+  // 归因元数据挂在每条记录上:单条日志自带「这稿用了哪几张卡」,不用回溯整个 run
+  const attribution = meta?.usedPatternIds?.length ? { usedPatternIds: meta.usedPatternIds } : {};
   return {
     llm: (e) =>
       void appendRunLog(dataDir, {
         runId,
         kind: "llm",
         agent,
+        ...attribution,
         name: e.model,
         durationMs: e.durationMs,
         ok: e.ok,
@@ -201,6 +209,7 @@ export function createRunRecorder(dataDir: string | undefined, meta?: { runId?: 
         runId,
         kind: "tool",
         agent,
+        ...attribution,
         name: e.name,
         durationMs: e.durationMs,
         ok: e.ok,

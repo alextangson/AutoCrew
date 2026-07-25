@@ -10,6 +10,7 @@ import { rulesForPlatform, personaSummary, goalSummary } from "../profile/creato
 import type { ContrastPair } from "../learnings/diff-tracker.js";
 import { resolveQualityGate } from "./quality-gate.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
+import type { PatternCard } from "../patterns/pattern-store.js";
 
 export interface ScriptRequest {
   topic: string;
@@ -20,12 +21,20 @@ export interface ScriptRequest {
   packId?: string;
   /** 灵感库血缘（V5.4c）:选题来自灵感库时携带——归因、过期保护、平台矩阵都靠它 */
   topicId?: string;
+  /** 对标拆解卡注入开关（收件箱设计 §3.5）：缺省启用，false = 本次不选卡也不注入 */
+  usePatterns?: boolean;
 }
 
 export interface ScriptPromptExtras {
   /** 创始人亲手改稿的对比对(diff-tracker 提取)——教"改动方向" */
   contrastPairs?: ContrastPair[];
+  /** 对标拆解卡（收件箱设计 §3.5 的唯一注入点）：缺省/空数组时整块不出现 */
+  patterns?: PatternCard[];
 }
+
+/** 定界符导出给测试与下游断言用——块的存在与否是可验证结构，不靠匹配文案 */
+export const PATTERN_BLOCK_START = "<<<REFERENCE_PATTERNS>>>";
+export const PATTERN_BLOCK_END = "<<<END_REFERENCE_PATTERNS>>>";
 
 export function buildScriptPrompts(
   pack: TrackPack,
@@ -34,7 +43,7 @@ export function buildScriptPrompts(
   extras?: ScriptPromptExtras,
 ): { system: string; user: string } {
   const system = buildSystemPrompt(pack, profile, req.platform, extras);
-  const user = buildUserPrompt(req);
+  const user = buildUserPrompt(req, extras?.patterns ?? []);
   return { system, user };
 }
 
@@ -218,7 +227,28 @@ function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform, con
   return parts.join("\n");
 }
 
-function buildUserPrompt(req: ScriptRequest): string {
+/**
+ * 对标拆解卡定界块（§3.5 注入 + §3.6 注入防护）：外部来源的内容进 prompt 必须带
+ * 边界与用途说明——卡是"怎么讲"的参考，不是可搬运的文案。字段级长度上限已在
+ * pattern-store 落库时截过，这里不重复截断。
+ */
+function renderPatterns(cards: PatternCard[]): string {
+  const parts: string[] = [
+    PATTERN_BLOCK_START,
+    "以下为对标拆解参考：借钩子类型与结构骨架，禁止改写或翻译其文案原句。",
+  ];
+  cards.forEach((card, i) => {
+    parts.push(`【参考 ${i + 1}】${card.title}`);
+    parts.push(`- 钩子：${card.hook}`);
+    parts.push(`- 结构：${card.structure.map((step, j) => `${j + 1}) ${step}`).join(" ")}`);
+    if (card.whyItWorks.length > 0) parts.push(`- 为什么有效：${card.whyItWorks.join("；")}`);
+    if (card.themes.length > 0) parts.push(`- 主题：${card.themes.join("、")}`);
+  });
+  parts.push(PATTERN_BLOCK_END);
+  return parts.join("\n");
+}
+
+function buildUserPrompt(req: ScriptRequest, patterns: PatternCard[]): string {
   const parts: string[] = [];
 
   parts.push(`选题：${req.topic}`);
@@ -230,6 +260,11 @@ function buildUserPrompt(req: ScriptRequest): string {
     parts.push("无调研材料，基于常识写但避免编造数据。");
   }
   parts.push("");
+
+  if (patterns.length > 0) {
+    parts.push(renderPatterns(patterns));
+    parts.push("");
+  }
 
   parts.push(`目标平台：${req.platform}`);
 
