@@ -31,7 +31,8 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.10",
-    "@sinclair/typebox": "0.34.48"
+    "@sinclair/typebox": "0.34.48",
+    "undici": "^8.9.0"
   },
   "scripts": {
     "start": "node bin/autocrew.mjs start",

@@ -7,47 +7,18 @@
  * 查重口径:与全部既有 Topic（含回收站）比标题与链接——用户删过的灵感不许次日还魂。
  * 触发:app 启动雷达刷新后 + 手动扫榜后（真调度器随总监 L2 上，PRD-v4 §4）。
  */
-import fs from "node:fs/promises";
-import path from "node:path";
 import { loadTopicCache, rankCandidatesScored } from "./topic-radar.js";
 import type { ScoredRadarItem } from "./topic-radar.js";
 import { judgeRelevance } from "./relevance.js";
-import { saveTopic, listTopics, listTrash, updateTopic, getDataDir } from "../../storage/local-store.js";
+// 查重(含回收站)与 7 天落选记忆住在 intake-gate——与收件箱单条入库门共用同一口径,只此一份实现。
+import { loadDedupeIndex, loadRejects, saveRejects, rejectKeySet } from "./intake-gate.js";
+import { saveTopic, listTopics, updateTopic } from "../../storage/local-store.js";
 import type { Topic } from "../../storage/local-store.js";
 import { loadProfile, personaSummary } from "../profile/creator-profile.js";
 
 const INTAKE_LIMIT = 3;
 const CANDIDATE_POOL = 20;
 const RELEVANCE_THRESHOLD = 7;
-// 落选记忆:粗筛排序是确定性的(关键词+热度),LLM 评过但没过关的候选若无记忆,每轮都
-// 霸占评判池、被反复重评——池子永远是老面孔,新灵感进不来(这就是「扫了几轮灵感不增加」)。
-// 记 7 天:时效过了的老候选自然出清,偶有误杀的好题一周后还有机会回池。
-const REJECT_FILE = "radar-rejects.json";
-const REJECT_TTL_MS = 7 * 24 * 3600_000;
-
-interface RejectEntry {
-  title: string;
-  link: string;
-  at: string;
-}
-
-async function loadRejects(dataDir?: string): Promise<RejectEntry[]> {
-  try {
-    const raw = JSON.parse(await fs.readFile(path.join(getDataDir(dataDir), REJECT_FILE), "utf-8")) as {
-      entries?: RejectEntry[];
-    };
-    const cutoff = Date.now() - REJECT_TTL_MS;
-    return (raw.entries ?? []).filter((e) => new Date(e.at).getTime() > cutoff);
-  } catch {
-    return [];
-  }
-}
-
-async function saveRejects(entries: RejectEntry[], dataDir?: string): Promise<void> {
-  const dir = getDataDir(dataDir);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, REJECT_FILE), JSON.stringify({ entries }, null, 2) + "\n", "utf-8");
-}
 // 关注型信源(X)在评判池里的保底名额——不被关键词粗筛挤掉,交给 LLM 判相关性。
 // two-stage judge 的 Stage1 能覆盖 ~20 条,留 5 席给 X 足够;够格的才进 Stage2 精修入库。
 const X_POOL_RESERVE = 5;
@@ -82,16 +53,13 @@ export async function intakeRadarTopics(
   if (!cache || cache.items.length === 0) return { saved: [], skippedDuplicates: 0, qualified: 0, filter: "keyword" };
 
   // 先排除看过/删过的条目再评分：否则每次「继续收集」都把同一批重复项送进模型，永远走不到后面的池。
-  const [active, trash] = await Promise.all([listTopics(dataDir), listTrash(dataDir)]);
-  const allTopics = [...active, ...trash.topics];
-  const seenTitles = new Set(allTopics.flatMap((t) => [t.title, t.originalTitle].filter((v): v is string => Boolean(v))));
-  const seenLinks = new Set(allTopics.map((t) => t.link).filter((l): l is string => Boolean(l)));
+  const dedupe = await loadDedupeIndex(dataDir);
   // 落选记忆:近 7 天被 LLM 评过且没过关的不再回池,把名额让给新候选
   const rejects = await loadRejects(dataDir);
-  const rejectKeys = new Set(rejects.flatMap((r) => [r.title, r.link].filter(Boolean)));
+  const rejectKeys = rejectKeySet(rejects);
   const unseen = cache.items.filter(
     (item) =>
-      !seenTitles.has(item.title) && !seenLinks.has(item.link) &&
+      !dedupe.findDuplicate([item.title], item.link) &&
       !rejectKeys.has(item.title) && !rejectKeys.has(item.link),
   );
 
@@ -164,7 +132,7 @@ export async function intakeRadarTopics(
   const intakeLimit = Math.max(1, Math.min(options?.limit ?? INTAKE_LIMIT, 10));
   for (const q of qualified) {
     if (saved.length >= intakeLimit) break;
-    if (seenTitles.has(q.title) || seenTitles.has(q.item.title) || seenLinks.has(q.item.link)) {
+    if (dedupe.findDuplicate([q.title, q.item.title], q.item.link)) {
       skippedDuplicates++;
       continue;
     }
@@ -184,8 +152,7 @@ export async function intakeRadarTopics(
       dataDir,
     );
     saved.push(topic);
-    seenTitles.add(topic.title);
-    if (topic.link) seenLinks.add(topic.link);
+    dedupe.remember(topic);
   }
 
   // 记录本轮 LLM 评过但没过关的候选(verdicts 里没有的 pool 项 = Stage1 低分/未选中),
