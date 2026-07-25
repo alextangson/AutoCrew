@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import {
   createDigestPipeline,
-  DIGEST_RECEIPTS,
   type DigestPipelineDeps,
   type DigestPatternStore,
 } from "./digest-pipeline.js";
+import { DIGEST_RECEIPTS } from "./digest-outcome.js";
 import { FetchExternalError, type ExternalPage } from "./fetch-external.js";
+import { JustoneapiError, type DouyinVideoContent, type JustoneapiClient } from "./justoneapi.js";
 import { appendItem, getItem, type InboxItem, type NewInboxItem } from "./inbox-store.js";
 import { createInboxWorker } from "./inbox-worker.js";
 import {
@@ -401,7 +402,12 @@ describe("digest pipeline · 错误映射", () => {
     expect(receipts[0]).not.toContain("会自动重试");
   });
 
-  it("x.com / douyin.com 没有专用解析器时不特判 blocked（V1.1 才上）", async () => {
+  /**
+   * V1.0 锁的是「两个域名都不特判」；V1.1 上了 justoneapi 后**抖音那半已按新契约反转**
+   * （缺 key → blocked、有 key → 走解析器，见下方「抖音路由」组）。
+   * x.com 这半继续锁死：tweet-by-id 解析器是下一期，在它上线前抖音的做法不许提前抄过来。
+   */
+  it("x.com 仍不特判 blocked（专用解析器未上线，走通用抓取）", async () => {
     const item = await seed({ url: "https://x.com/someone/status/123" });
     const { processItem } = makePipeline({
       fetchImpl: async () => {
@@ -416,6 +422,215 @@ describe("digest pipeline · 错误映射", () => {
     const item = await seed({});
     const { processItem } = makePipeline();
     expect(await processItem(item)).toMatchObject({ status: "rejected", errorCode: "empty_item" });
+  });
+});
+
+// --- 抖音路由（V1.1：justoneapi 专用解析器，spec §3.2） ---
+
+const DOUYIN_ID = "7656056306591884643";
+const DOUYIN_CANONICAL = `https://www.douyin.com/video/${DOUYIN_ID}`;
+const DOUYIN_SHORT = "https://v.douyin.com/iRxYqPq/";
+
+const VIDEO: DouyinVideoContent = {
+  videoId: DOUYIN_ID,
+  canonicalUrl: DOUYIN_CANONICAL,
+  desc: "做AI Agent整整一年了，说几句真话\n第二行文案",
+  authorNickname: "Ai-Agent",
+  createTime: 1782823718,
+  durationMs: 866934,
+  stats: { likes: 135, comments: 11, collects: 132, shares: 29 },
+};
+
+/** 假解析器：记录调用次数，便于断言「查重命中不再烧一次额度」 */
+function fakeDouyin(over: Partial<JustoneapiClient> = {}): {
+  client: JustoneapiClient;
+  calls: { resolve: string[]; detail: string[] };
+} {
+  const calls = { resolve: [] as string[], detail: [] as string[] };
+  const client: JustoneapiClient = {
+    async resolveShareUrl(shareUrl) {
+      calls.resolve.push(shareUrl);
+      return `${DOUYIN_CANONICAL}?previous_page=app_code_link`;
+    },
+    async fetchVideoDetail(videoId) {
+      calls.detail.push(videoId);
+      return VIDEO;
+    },
+    ...over,
+  };
+  return { client, calls };
+}
+
+describe("digest pipeline · 抖音路由", () => {
+  it("没配 justoneapi key → blocked + 指引，且绝不退回通用抓取", async () => {
+    const item = await seed({ url: DOUYIN_SHORT });
+    let fetched = 0;
+    const { processItem, receipts } = makePipeline({
+      fetchImpl: async () => {
+        fetched += 1;
+        return PAGE;
+      },
+    });
+
+    const result = await processItem(item);
+
+    expect(result).toMatchObject({ status: "blocked", errorCode: "justoneapi_key_missing" });
+    expect(fetched).toBe(0);
+    expect(receipts[0]).toContain("设置 · 灵感收件箱");
+  });
+
+  it("短链：先换标准链再取详情，卡上带 stats（含 shares）与作者", async () => {
+    const item = await seed({ url: DOUYIN_SHORT });
+    const douyin = fakeDouyin();
+    const { processItem } = makePipeline({
+      parsers: { justoneapiKey: "k-live", justoneapiImpl: douyin.client },
+      triageImpl: async () => triageResult("exemplar", { sourcePlatform: "douyin" }),
+    });
+
+    const result = await processItem(item);
+
+    expect(result).toMatchObject({ status: "digested", verdict: "exemplar", stage: "card_done" });
+    expect(douyin.calls.resolve).toEqual([DOUYIN_SHORT]);
+    expect(douyin.calls.detail).toEqual([DOUYIN_ID]);
+    // 幂等键收敛到标准形态，与 canonicalizeUrl 同款
+    expect((await getItem(item.id, dataDir))?.canonicalUrl).toBe(DOUYIN_CANONICAL);
+
+    const [card] = await listPatternCards({}, dataDir);
+    expect(card.canonicalUrl).toBe(DOUYIN_CANONICAL);
+    expect(card.author).toBe("Ai-Agent");
+    expect(card.stats).toMatchObject({ likes: 135, comments: 11, collects: 132, shares: 29 });
+    expect(Number.isNaN(Date.parse(card.stats?.capturedAt ?? ""))).toBe(false);
+  });
+
+  it("标准链：不走短链端点，triage 输入带文案 + 作者/发布/时长 + 赞评藏转", async () => {
+    const item = await seed({ url: `${DOUYIN_CANONICAL}?from=webapp` });
+    const douyin = fakeDouyin();
+    const inputs: TriageInput[] = [];
+    const { processItem } = makePipeline({
+      parsers: { justoneapiKey: "k-live", justoneapiImpl: douyin.client },
+      triageImpl: async (input) => {
+        inputs.push(input);
+        return triageResult("inspiration");
+      },
+    });
+
+    expect(await processItem(item)).toMatchObject({ status: "digested", verdict: "inspiration" });
+    expect(douyin.calls.resolve).toEqual([]);
+    expect(douyin.calls.detail).toEqual([DOUYIN_ID]);
+
+    const { text, title, finalUrl } = inputs[0].content;
+    expect(text).toContain("做AI Agent整整一年了");
+    expect(text).toContain("作者：Ai-Agent");
+    expect(text).toContain("发布：2026-06-30");
+    expect(text).toContain("时长：14分26秒");
+    expect(text).toContain("数据：赞135 评11 藏132 转29");
+    expect(title).toBe("做AI Agent整整一年了，说几句真话"); // 文案首行，≤30 字
+    expect(finalUrl).toBe(DOUYIN_CANONICAL);
+  });
+
+  it("查重命中就不再取详情（重复件不烧 API 额度）", async () => {
+    await seed({ url: DOUYIN_CANONICAL, canonicalUrl: DOUYIN_CANONICAL, status: "digested", targetIds: ["topic-old"] });
+    const item = await seed({ url: DOUYIN_SHORT });
+    const douyin = fakeDouyin();
+    const { processItem, receipts } = makePipeline({
+      parsers: { justoneapiKey: "k-live", justoneapiImpl: douyin.client },
+    });
+
+    expect(await processItem(item)).toMatchObject({ status: "digested", targetIds: ["topic-old"] });
+    expect(douyin.calls.resolve).toHaveLength(1); // 短链得先换标准链才知道是不是重复
+    expect(douyin.calls.detail).toEqual([]);
+    expect(receipts[0]).toContain("已收录过");
+  });
+
+  it("抠不到 videoId 的抖音链接（主页/合集）→ rejected", async () => {
+    const item = await seed({ url: "https://www.douyin.com/user/MS4wLjABAAAA" });
+    const { processItem } = makePipeline({
+      parsers: { justoneapiKey: "k-live", justoneapiImpl: fakeDouyin().client },
+    });
+
+    expect(await processItem(item)).toMatchObject({ status: "rejected", errorCode: "douyin_no_video_id" });
+  });
+
+  it("解析器三态经管线原样落账：blocked / failed / rejected", async () => {
+    const cases: Array<{ err: JustoneapiError; status: string }> = [
+      { err: new JustoneapiError("justoneapi_601", "blocked", "余额不足"), status: "blocked" },
+      { err: new JustoneapiError("justoneapi_301", "failed", "上游查询失败"), status: "failed" },
+      { err: new JustoneapiError("justoneapi_400", "rejected", "参数不合法"), status: "rejected" },
+      { err: new JustoneapiError("justoneapi_foreign_redirect", "rejected", "不是抖音域名"), status: "rejected" },
+    ];
+    for (const { err, status } of cases) {
+      const item = await seed({ url: `${DOUYIN_CANONICAL}?case=${err.errorCode}` });
+      const { processItem } = makePipeline({
+        parsers: {
+          justoneapiKey: "k-live",
+          justoneapiImpl: fakeDouyin({
+            fetchVideoDetail: async () => {
+              throw err;
+            },
+            resolveShareUrl: async () => {
+              throw err;
+            },
+          }).client,
+        },
+      });
+      expect(await processItem(item)).toMatchObject({ status, errorCode: err.errorCode });
+    }
+  });
+
+  it("blocked 的回执指向收件箱设置页，不是引擎设置", async () => {
+    const item = await seed({ url: DOUYIN_CANONICAL });
+    const { processItem, receipts } = makePipeline({
+      parsers: {
+        justoneapiKey: "k-dead",
+        justoneapiImpl: fakeDouyin({
+          fetchVideoDetail: async () => {
+            throw new JustoneapiError("justoneapi_100", "blocked", "token 无效或已失效");
+          },
+        }).client,
+      },
+    });
+
+    expect(await processItem(item)).toMatchObject({ status: "blocked", errorCode: "justoneapi_100" });
+    expect(receipts[0]).toContain("justoneapi key");
+    expect(receipts[0]).not.toContain("中转地址");
+  });
+});
+
+describe("digest pipeline · 抖音 worker 合跑", () => {
+  it("缺 key → blocked；配好 key 后 wakeBlocked 重跑 → digested 并落卡", async () => {
+    const item = await seed({ url: DOUYIN_SHORT });
+    const douyin = fakeDouyin();
+    const base = {
+      dataDir,
+      triageImpl: async () => triageResult("exemplar", { sourcePlatform: "douyin" }),
+      gateImpl: async () => ({ saved: true, topicId: "topic-1" }),
+      loadProfileImpl: async () => null,
+      onError: () => {},
+    } satisfies Partial<DigestPipelineDeps> & { dataDir: string };
+
+    // 配置变更时 runtime 会按新配置重新接线（inbox-runtime.bringUp），这里照搬那个语义
+    let pipeline = createDigestPipeline({ ...base, parsers: {} });
+    const worker = createInboxWorker({ dataDir, processItem: (it) => pipeline(it), onError: () => {} });
+
+    worker.enqueue(item);
+    await worker.idle();
+    expect(await getItem(item.id, dataDir)).toMatchObject({
+      status: "blocked",
+      errorCode: "justoneapi_key_missing",
+      attempts: 0, // blocked 不吃重试额度
+    });
+
+    pipeline = createDigestPipeline({
+      ...base,
+      parsers: { justoneapiKey: "k-just-saved", justoneapiImpl: douyin.client },
+    });
+    worker.wakeBlocked("inbox_settings_changed");
+    await worker.idle();
+
+    expect(await getItem(item.id, dataDir)).toMatchObject({ status: "digested", verdict: "exemplar" });
+    const [card] = await listPatternCards({}, dataDir);
+    expect(card.stats).toMatchObject({ shares: 29 });
+    worker.stop();
   });
 });
 

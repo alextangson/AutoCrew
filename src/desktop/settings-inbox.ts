@@ -34,12 +34,24 @@ export interface InboxSettings {
   targetWorkspaceId: string;
   /** 大陆网络必须（Node fetch 不自动走系统代理）；含账密时读侧脱敏 */
   proxyUrl?: string;
+  /**
+   * 抖音解析器（justoneapi）的 key。缺省 = 抖音链接落 blocked + 指引，不静默降级
+   * 去通用抓取。**不走 proxyUrl**——那条代理是 Telegram 通道的（spec §3.2）。
+   */
+  justoneapiKey?: string;
 }
 
 const INBOX_FILE = "inbox.json";
 /** 与 workspace-store 的 DEFAULT_ID 对齐——注册表首读恒有这一条 */
 const DEFAULT_WORKSPACE_ID = "default";
-const INBOX_FIELDS = ["bot_token", "bot_id", "allowed_user_ids", "target_workspace_id", "proxy_url"];
+const INBOX_FIELDS = [
+  "bot_token",
+  "bot_id",
+  "allowed_user_ids",
+  "target_workspace_id",
+  "proxy_url",
+  "justoneapi_key",
+];
 /** TG user id 恒为正整数；非数字的白名单永远匹配不上，必须当场拒而不是静默失效 */
 const TG_USER_ID_RE = /^\d{1,20}$/;
 /** scheme://user[:pass]@host —— 只吃凭证段，端口/路径原样保留 */
@@ -72,6 +84,7 @@ function normalizeInbox(raw: Partial<InboxSettings>): InboxSettings {
     allowedUserIds: Array.isArray(raw.allowedUserIds) ? raw.allowedUserIds : [],
     targetWorkspaceId: raw.targetWorkspaceId || DEFAULT_WORKSPACE_ID,
     ...(raw.proxyUrl ? { proxyUrl: raw.proxyUrl } : {}),
+    ...(raw.justoneapiKey ? { justoneapiKey: raw.justoneapiKey } : {}),
   };
 }
 
@@ -97,6 +110,8 @@ export async function getInboxSettings(payload: Record<string, unknown>): Promis
         allowedUserIds: cfg.allowedUserIds,
         targetWorkspaceId: cfg.targetWorkspaceId,
         proxyUrlMasked: cfg.proxyUrl ? maskProxyUrl(cfg.proxyUrl) : null,
+        justoneapiConfigured: Boolean(cfg.justoneapiKey),
+        justoneapiKeyMasked: cfg.justoneapiKey ? maskKey(cfg.justoneapiKey) : null,
       },
     };
   } catch (err) {
@@ -156,6 +171,14 @@ function applyInboxUpdates(next: InboxSettings, payload: Record<string, unknown>
     const clean = v.trim();
     if (!clean) delete next.proxyUrl;
     else if (!(next.proxyUrl && clean === maskProxyUrl(next.proxyUrl))) next.proxyUrl = clean;
+  }
+  // 与 bot_token 同款掩码纪律：设置页拿掩码当 placeholder 回显，原样回传 = 没动这一格
+  if (payload.justoneapi_key !== undefined) {
+    const v = payload.justoneapi_key;
+    if (typeof v !== "string") return "justoneapi_key 必须是字符串（清空传空串）";
+    const clean = v.trim();
+    if (!clean) delete next.justoneapiKey;
+    else if (!(next.justoneapiKey && clean === maskKey(next.justoneapiKey))) next.justoneapiKey = clean;
   }
   return null;
 }

@@ -96,8 +96,10 @@ export function Settings() {
     allowedUserIds: string[];
     targetWorkspaceId: string;
     proxyUrlMasked: string | null;
+    justoneapiConfigured: boolean;
+    justoneapiKeyMasked: string | null;
   } | null>(null);
-  const [iForm, setIForm] = useState({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "" });
+  const [iForm, setIForm] = useState({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "", justoneapi_key: "" });
 
   const load = async () => {
     const [er, sr, pr, cr, rr, kr, wr, ir] = await Promise.all([
@@ -353,15 +355,25 @@ export function Settings() {
           placeholder={inbox?.proxyUrlMasked ?? "http://127.0.0.1:7890(大陆网络必填;Node 不走系统代理)"}
           onChange={(v) => setIForm((f) => ({ ...f, proxy_url: v }))}
         />
+        <Field
+          label="抖音解析 Key"
+          password
+          value={iForm.justoneapi_key}
+          placeholder={inbox?.justoneapiKeyMasked ?? "justoneapi.com 的 token(转发抖音链接必填;直连不走上面的代理)"}
+          onChange={(v) => setIForm((f) => ({ ...f, justoneapi_key: v }))}
+        />
         <SaveRow
           label="保存收件箱配置"
           onSave={() =>
             void submit("inbox:settings_set", iForm, () =>
-              setIForm({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "" }),
+              setIForm({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "", justoneapi_key: "" }),
             )
           }
         />
-        <p className="muted mono">保存即热重启轮询;换 bot 会重置消费游标,等外部条件的条目会被自动唤醒重试。</p>
+        <p className="muted mono">
+          保存即热重启轮询;换 bot 会重置消费游标,等外部条件的条目会被自动唤醒重试。 抖音解析:
+          {inbox?.justoneapiConfigured ? "已配置" : "未配置——转发抖音链接会先挂起等 key"}
+        </p>
       </Section>
 
       <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>

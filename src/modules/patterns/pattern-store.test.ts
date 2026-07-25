@@ -148,6 +148,21 @@ describe("字段校验与截断", () => {
   });
 });
 
+describe("stats（解析器直供，不经 LLM）", () => {
+  it("赞评藏转与 capturedAt 原样落盘并读回——shares 是抖音病毒性主信号，不许丢", async () => {
+    const stats = { likes: 135, comments: 11, collects: 132, shares: 29, capturedAt: "2026-07-25T05:00:00.000Z" };
+    await upsertPatternCard(baseCard({ stats }), testDir);
+
+    const [reread] = await listPatternCards({}, testDir);
+    expect(reread.stats).toEqual(stats);
+  });
+
+  it("没有 stats 的卡照常落库（通用抓取路径拿不到公开数据）", async () => {
+    const card = await upsertPatternCard(baseCard(), testDir);
+    expect(card.stats).toBeUndefined();
+  });
+});
+
 describe("updatePatternCard", () => {
   it("applies whitelisted fields and bumps revision", async () => {
     const created = await upsertPatternCard(baseCard(), testDir);

@@ -97,6 +97,9 @@ function buildWorker(dataDir: string, settings: InboxSettings): InboxWorker {
         botToken: settings.botToken,
         ...(settings.proxyUrl ? { proxyUrl: settings.proxyUrl } : {}),
       },
+      // 解析器 key 与 TG 代理不共用：justoneapi 直连（spec §3.2）。
+      // 缺 key 时抖音链接落 blocked，配好保存 → 本函数重新接线 + wakeBlocked 自动重跑。
+      parsers: { ...(settings.justoneapiKey ? { justoneapiKey: settings.justoneapiKey } : {}) },
       onError: report,
     });
   // 事件走 worker 的 onItemChanged（写账**之后**触发），不走 pipeline 的 onEvent——

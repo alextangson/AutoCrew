@@ -269,6 +269,32 @@ describe("inbox settings(收件箱 · 全局根 inbox.json,不随工作区)", ()
     // 拒掉的都没落盘
     expect(await getInboxSettingsRaw(testDir)).toBeNull();
   });
+
+  it("justoneapi key(抖音解析):掩码读、掩码回传不覆盖真值、空串清空", async () => {
+    const KEY = "jo-live-abcdefghijklmnop-9999";
+    await setInboxSettings({ _rootDir: testDir, bot_token: TOKEN, justoneapi_key: KEY });
+
+    const masked = (await getInboxSettings({ _rootDir: testDir })).data as Record<string, unknown>;
+    expect(masked.justoneapiConfigured).toBe(true);
+    expect(masked.justoneapiKeyMasked).toBe("jo-l…9999");
+    expect(JSON.stringify(masked)).not.toContain("abcdefghijklmnop");
+    expect((await getInboxSettingsRaw(testDir))?.justoneapiKey).toBe(KEY);
+
+    // 掩码原样回传 = 用户没动这一格,真值必须留住
+    await setInboxSettings({
+      _rootDir: testDir,
+      justoneapi_key: masked.justoneapiKeyMasked as string,
+      allowed_user_ids: ["12345"],
+    });
+    expect((await getInboxSettingsRaw(testDir))?.justoneapiKey).toBe(KEY);
+
+    // 空串 = 显式清空(与 proxy_url 同口径)
+    await setInboxSettings({ _rootDir: testDir, justoneapi_key: "" });
+    expect((await getInboxSettingsRaw(testDir))?.justoneapiKey).toBeUndefined();
+    const cleared = (await getInboxSettings({ _rootDir: testDir })).data as Record<string, unknown>;
+    expect(cleared.justoneapiConfigured).toBe(false);
+    expect(cleared.justoneapiKeyMasked).toBeNull();
+  });
 });
 
 describe("onEngineSettingsChanged(引擎配置保存钩子)", () => {

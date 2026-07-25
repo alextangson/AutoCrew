@@ -8,13 +8,14 @@
  *
  * 三条纪律：
  * 1. **三态语义不共用 failed**（§3.1）：确定性拒绝 → rejected，等外部条件 → blocked，
- *    可重试故障 → failed。映射表见 `classifyError`，是验收项，不许随手改。
+ *    可重试故障 → failed。映射表与全部回执文案在 `digest-outcome.ts`，是验收项，不许随手改。
  * 2. **断点续做**：`both` 的卡步做完就把 stage=card_done 随结果（含失败结果）带回，
  *    重试时跳过卡步；卡本身也按 sourceInboxId 幂等，重跑不会产生第二张。
  * 3. **回执是旁路**：发失败只标 receiptStatus=failed，绝不回滚消化结果（§2.1）。
  *
- * V1.0 不为 x.com / douyin.com 做特判——没有专用解析器就走通用抓取，抓不到正文自然
- * 落 rejected/failed，解析器 V1.1 才上（§3.2/§7）。这里**不能**给这两个域名硬编 blocked。
+ * 域名路由（§3.2）：抖音（douyin.com / v.douyin.com / iesdouyin.com）走 justoneapi 专用
+ * 解析器——V1.1 起生效，缺 key 落 blocked 并指引去设置页（保存即自动唤醒）。x.com 仍**不特判**：
+ * tweet-by-id 解析器是下一期，在它上线前走通用抓取，抓不到正文按判定落 rejected/failed。
  */
 import { loadProfile, type CreatorProfile } from "../profile/creator-profile.js";
 import {
@@ -22,22 +23,33 @@ import {
   upsertPatternCard,
   type PatternCard,
   type PatternCardInput,
+  type PatternStats,
 } from "../patterns/pattern-store.js";
 import { gateTopicCandidate, type GateResult, type TopicCandidate } from "../radar/intake-gate.js";
-import { FetchExternalError, fetchExternalPage, type ExternalPage } from "./fetch-external.js";
 import {
-  findByCanonicalUrl,
-  findByTextHash,
-  updateItem,
-  type InboxItem,
-  type InboxStage,
-  type InboxVerdict,
-} from "./inbox-store.js";
-import { MAX_ATTEMPTS, type ProcessResult } from "./inbox-worker.js";
+  carry,
+  DIGEST_RECEIPTS,
+  duplicateOutcome,
+  failureOutcome,
+  rejectedOutcome,
+  type Outcome,
+  type Progress,
+} from "./digest-outcome.js";
+import { fetchExternalPage, type ExternalPage } from "./fetch-external.js";
+import {
+  createJustoneapiClient,
+  douyinCanonicalUrl,
+  extractDouyinVideoId,
+  isDouyinShareLink,
+  isDouyinUrl,
+  JustoneapiError,
+  type DouyinVideoContent,
+  type JustoneapiClient,
+} from "./justoneapi.js";
+import { findByCanonicalUrl, findByTextHash, updateItem, type InboxItem } from "./inbox-store.js";
+import { type ProcessResult } from "./inbox-worker.js";
 import { sendTelegramReceipt, type TelegramClientOptions } from "./telegram-api.js";
 import {
-  EngineUnavailableError,
-  TriageError,
   triageInboxContent,
   type TriageInput,
   type TriageOptions,
@@ -61,10 +73,18 @@ export interface DigestPatternStore {
   findByCanonicalUrl(canonicalUrl: string, dataDir?: string): Promise<PatternCard | null>;
 }
 
+/** 按域名路由的专用解析器配置（§3.2）。key 缺省 = 该域名的链接落 blocked，不静默降级去通用抓取 */
+export interface DigestParserDeps {
+  justoneapiKey?: string;
+  /** 测试注入；仍受 key 门约束——「有没有配」与「怎么调」是两件事 */
+  justoneapiImpl?: JustoneapiClient;
+}
+
 export interface DigestPipelineDeps {
   /** 固定工作区（§2.1 targetWorkspaceId） */
   dataDir: string;
   telegram?: DigestTelegramConfig;
+  parsers?: DigestParserDeps;
   fetchImpl?: (url: string) => Promise<ExternalPage>;
   triageImpl?: (input: TriageInput, opts?: TriageOptions) => Promise<TriageResult>;
   gateImpl?: (candidate: TopicCandidate, dataDir?: string) => Promise<GateResult>;
@@ -76,48 +96,7 @@ export interface DigestPipelineDeps {
   onError?: (message: string) => void;
 }
 
-// ─── 回执文案（常量，改文案只改这里） ────────────────────────────────────────
-
-const VERDICT_LABEL: Record<InboxVerdict, string> = {
-  inspiration: "灵感选题",
-  exemplar: "对标拆解卡",
-  both: "拆解卡 + 灵感选题",
-  unusable: "用不上",
-};
-
-export const DIGEST_RECEIPTS = {
-  digested: (verdict: InboxVerdict, landings: string[]): string =>
-    `已消化 · ${VERDICT_LABEL[verdict]}\n落点：${landings.join("；") || "（无）"}`,
-  alreadyDigested: (where: string): string => `已收录过，这次没重复入库\n原落点：${where}`,
-  rejected: (reason: string): string => `这条没收下：${reason}`,
-  failed: (reason: string): string => `这条暂时没处理成功：${reason}\n会自动重试，不用重发`,
-  /** 重试额度已用尽——别再承诺「会自动重试」，指向人工入口 */
-  failedFinal: (reason: string): string =>
-    `这条试了 ${MAX_ATTEMPTS} 次都没成功：${reason}\n去工作台收件箱里手动重试`,
-  blocked: (reason: string, hint: string): string => `这条先挂起：${reason}\n${hint}`,
-  /** 墓碑命中：显式覆盖而非静默复活（§3.5） */
-  tombstone: "此前拆解卡已删除；要重拆请重新转发并附『重拆』备注",
-  topicRejectMemory: "这个选题 7 天内评估过并落选了，暂不重复入库",
-  emptyItem: "这条既没有链接也没有文字，没法消化",
-} as const;
-
-const ENGINE_BLOCKED_HINT = "去设置页把引擎（模型 / 中转地址 / API key）配好，保存后会自动重试。";
-
 // ─── 内部形态 ────────────────────────────────────────────────────────────────
-
-/** 一次消化的产出：给 worker 的结论 + 给创始人的人话 */
-interface Outcome {
-  result: ProcessResult;
-  receipt: string;
-}
-
-/** 跨步骤累积的进度——失败时也要随结果带回台账，否则 checkpoint 丢了要重跑卡步 */
-interface Progress {
-  stage?: InboxStage;
-  targetIds: string[];
-  /** 人话落点，只进回执 */
-  landings: string[];
-}
 
 interface Ctx {
   dataDir: string;
@@ -126,119 +105,23 @@ interface Ctx {
   gate: NonNullable<DigestPipelineDeps["gateImpl"]>;
   patterns: DigestPatternStore;
   loadProfile: NonNullable<DigestPipelineDeps["loadProfileImpl"]>;
-}
-
-/** 纯文字笔记的选题标题：正文前 30 字（按码点切，别把代理对劈一半） */
-const TEXT_TITLE_CHARS = 30;
-/** 备注里带这两个词 = 创始人显式要求重拆，绕开全部查重（§3.5 显式覆盖） */
-const REDO_RE = /重拆|redo/i;
-
-function carry(progress: Progress): Pick<ProcessResult, "stage" | "targetIds"> {
-  return {
-    ...(progress.stage ? { stage: progress.stage } : {}),
-    ...(progress.targetIds.length ? { targetIds: progress.targetIds } : {}),
-  };
-}
-
-function rejectedOutcome(reason: string, errorCode: string, progress: Progress): Outcome {
-  return {
-    result: { status: "rejected", errorCode, failReason: reason, ...carry(progress) },
-    receipt: DIGEST_RECEIPTS.rejected(reason),
-  };
-}
-
-function duplicateOutcome(where: string, targetIds: string[], verdict?: InboxVerdict): Outcome {
-  return {
-    result: { status: "digested", ...(verdict ? { verdict } : {}), targetIds },
-    receipt: DIGEST_RECEIPTS.alreadyDigested(where),
-  };
-}
-
-// ─── 错误映射（三态语义，验收项） ────────────────────────────────────────────
-
-/** 确定性抓取失败：重试也不会变，直接 rejected */
-const DETERMINISTIC_FETCH = new Set([
-  "invalid_url",
-  "unsupported_protocol",
-  "ssrf_blocked",
-  "unsupported_content_type",
-  "body_too_large",
-  "too_many_redirects",
-]);
-
-const FETCH_REASON: Record<string, string> = {
-  invalid_url: "这个链接解析不了",
-  unsupported_protocol: "只吃 http/https 链接",
-  ssrf_blocked: "这个地址指向本机或内网，出于安全没抓",
-  unsupported_content_type: "这个链接不是网页正文（只吃 HTML / 纯文本）",
-  body_too_large: "页面超过 2MB 上限，已中止",
-  too_many_redirects: "跳转超过 5 跳，已放弃",
-  timeout: "抓取超时",
-  fetch_failed: "抓不到这个页面（网络或对方站点问题）",
-};
-
-/** http_<n>：4xx 是对方明确拒绝（确定性），5xx/其它按可重试处理 */
-function httpStatusOf(errorCode: string): number | null {
-  const m = /^http_(\d{3})$/.exec(errorCode);
-  return m ? Number(m[1]) : null;
-}
-
-function fetchReason(err: FetchExternalError): string {
-  const http = httpStatusOf(err.errorCode);
-  return http !== null ? `对方站点返回 ${http}` : (FETCH_REASON[err.errorCode] ?? err.message);
-}
-
-interface Classified {
-  status: "rejected" | "failed" | "blocked";
-  errorCode: string;
-  reason: string;
-  receipt: string;
-}
-
-/** failed 的回执文案取决于「还有没有下一次」——worker 的 retryable 口径同款 */
-function failedReceipt(reason: string, willRetry: boolean): string {
-  return willRetry ? DIGEST_RECEIPTS.failed(reason) : DIGEST_RECEIPTS.failedFinal(reason);
+  /** 缺 key 时抛 blocked 态的 JustoneapiError——由 classifyError 统一落账与回执 */
+  douyin: () => JustoneapiClient;
 }
 
 /**
- * 错误 → 三态。判错方向的默认值一律偏「可见地重试几次」（failed），
- * 而不是永久 rejected——把能救的判死比多跑两次贵得多。
+ * 解析器直接产出、**不经 LLM** 的卡片字段（§3.2）：数据是抓取时点的事实，
+ * 让模型转述一遍只会引入幻觉。
  */
-function classifyError(err: unknown, willRetry: boolean): Classified {
-  if (err instanceof FetchExternalError) {
-    const http = httpStatusOf(err.errorCode);
-    const deterministic = DETERMINISTIC_FETCH.has(err.errorCode) || (http !== null && http < 500);
-    const reason = fetchReason(err);
-    return deterministic
-      ? { status: "rejected", errorCode: err.errorCode, reason, receipt: DIGEST_RECEIPTS.rejected(reason) }
-      : { status: "failed", errorCode: err.errorCode, reason, receipt: failedReceipt(reason, willRetry) };
-  }
-  if (err instanceof EngineUnavailableError) {
-    return {
-      status: "blocked",
-      errorCode: err.errorCode,
-      reason: err.message,
-      receipt: DIGEST_RECEIPTS.blocked(err.message, ENGINE_BLOCKED_HINT),
-    };
-  }
-  if (err instanceof TriageError) {
-    const reason = err.message;
-    return err.retryable
-      ? { status: "failed", errorCode: err.errorCode, reason, receipt: failedReceipt(reason, willRetry) }
-      : { status: "rejected", errorCode: err.errorCode, reason, receipt: DIGEST_RECEIPTS.rejected(reason) };
-  }
-  const reason = err instanceof Error ? err.message : String(err);
-  return { status: "failed", errorCode: "digest_failed", reason, receipt: failedReceipt(reason, willRetry) };
+interface ParsedExtras {
+  author?: string;
+  stats?: PatternStats;
 }
 
-/** attempts 是 worker claim 时已经 +1 过的「本次是第几次」，与它的 retryable 同口径 */
-function failureOutcome(err: unknown, progress: Progress, attempts: number): Outcome {
-  const c = classifyError(err, attempts < MAX_ATTEMPTS);
-  return {
-    result: { status: c.status, errorCode: c.errorCode, failReason: c.reason, ...carry(progress) },
-    receipt: c.receipt,
-  };
-}
+/** 由正文派生标题时的字数（随手记取前 30 字、抖音取文案首行 30 字；按码点切，别劈开代理对） */
+const TEXT_TITLE_CHARS = 30;
+/** 备注里带这两个词 = 创始人显式要求重拆，绕开全部查重（§3.5 显式覆盖） */
+const REDO_RE = /重拆|redo/i;
 
 // ─── 纯文字笔记 ──────────────────────────────────────────────────────────────
 
@@ -308,17 +191,26 @@ async function findDuplicate(ctx: Ctx, item: InboxItem, canonicalUrl: string): P
 
 // ─── 链接：抓取 → 分流 → 落库 ────────────────────────────────────────────────
 
-async function digestUrl(ctx: Ctx, item: InboxItem, progress: Progress): Promise<Outcome> {
-  const sourceUrl = item.url ?? "";
-  const page = await ctx.fetchPage(sourceUrl);
-  const canonicalUrl = canonicalizeUrl(page.finalUrl);
+/**
+ * 幂等键落账 + 三库查重——两条链接路径（通用抓取 / 抖音解析器）的共用中段。
+ * 返回非空 = 这条是重复件，直接拿它当结论。
+ */
+async function claimCanonical(ctx: Ctx, item: InboxItem, canonicalUrl: string): Promise<Outcome | null> {
   // 幂等键先落账：崩在分流途中，重跑也认得这条是谁（§3.1）
   if (item.canonicalUrl !== canonicalUrl) await updateItem(item.id, { canonicalUrl }, ctx.dataDir);
+  if (wantsRedo(item.note)) return null;
+  return findDuplicate(ctx, item, canonicalUrl);
+}
 
-  if (!wantsRedo(item.note)) {
-    const duplicate = await findDuplicate(ctx, item, canonicalUrl);
-    if (duplicate) return duplicate;
-  }
+/** 域名路由（§3.2）：抖音走专用解析器，其余（含 x.com，解析器下一期）走通用抓取 */
+async function digestUrl(ctx: Ctx, item: InboxItem, progress: Progress): Promise<Outcome> {
+  const sourceUrl = item.url ?? "";
+  if (isDouyinUrl(sourceUrl)) return digestDouyin(ctx, item, sourceUrl, progress);
+
+  const page = await ctx.fetchPage(sourceUrl);
+  const canonicalUrl = canonicalizeUrl(page.finalUrl);
+  const duplicate = await claimCanonical(ctx, item, canonicalUrl);
+  if (duplicate) return duplicate;
 
   const profile = await ctx.loadProfile(ctx.dataDir);
   const triaged = await ctx.triage(
@@ -334,7 +226,77 @@ async function digestUrl(ctx: Ctx, item: InboxItem, progress: Progress): Promise
     },
     { dataDir: ctx.dataDir },
   );
-  return routeVerdict(ctx, item, canonicalUrl, triaged, progress);
+  return routeVerdict(ctx, item, canonicalUrl, triaged, progress, {});
+}
+
+// ─── 抖音：justoneapi 解析器（§3.2，V1.1） ──────────────────────────────────
+
+function fmtDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
+}
+
+/**
+ * 分流输入正文：文案 + 空行 + 「作者 ｜ 发布 ｜ 时长」+「数据：赞评藏转」。
+ * 缺的字段整段省略，不写「未知」——给模型一堆占位词只会让它编。
+ */
+function douyinTriageText(video: DouyinVideoContent): string {
+  const { likes, comments, collects, shares } = video.stats;
+  const keep = (v: string | null): v is string => v !== null;
+  const meta = [
+    video.authorNickname ? `作者：${video.authorNickname}` : null,
+    video.createTime !== undefined ? `发布：${new Date(video.createTime * 1000).toISOString().slice(0, 10)}` : null,
+    video.durationMs !== undefined ? `时长：${fmtDuration(video.durationMs)}` : null,
+  ].filter(keep);
+  const numbers = [
+    likes !== undefined ? `赞${likes}` : null,
+    comments !== undefined ? `评${comments}` : null,
+    collects !== undefined ? `藏${collects}` : null,
+    shares !== undefined ? `转${shares}` : null,
+  ].filter(keep);
+  const tail = [meta.join(" ｜ "), numbers.length ? `数据：${numbers.join(" ")}` : ""].filter(Boolean);
+  return [video.desc.trim(), ...(tail.length ? ["", ...tail] : [])].join("\n");
+}
+
+/**
+ * 判定顺序（改这里等于改验收语义）：
+ * key 门（缺 → blocked）→ 短链换标准链 → videoId → 幂等键 + 三库查重 → 取详情 → 分流。
+ * 查重排在取详情**之前**：重复件不该再烧一次 API 额度。
+ */
+async function digestDouyin(
+  ctx: Ctx,
+  item: InboxItem,
+  sourceUrl: string,
+  progress: Progress,
+): Promise<Outcome> {
+  const client = ctx.douyin(); // 缺 key 在这里抛 blocked 态的 JustoneapiError
+  const standardUrl = isDouyinShareLink(sourceUrl) ? await client.resolveShareUrl(sourceUrl) : sourceUrl;
+  const videoId = extractDouyinVideoId(standardUrl);
+  if (!videoId) return rejectedOutcome(DIGEST_RECEIPTS.douyinNoVideoId, "douyin_no_video_id", progress);
+
+  const canonicalUrl = douyinCanonicalUrl(videoId);
+  const duplicate = await claimCanonical(ctx, item, canonicalUrl);
+  if (duplicate) return duplicate;
+
+  const video = await client.fetchVideoDetail(videoId);
+  const profile = await ctx.loadProfile(ctx.dataDir);
+  const triaged = await ctx.triage(
+    {
+      content: {
+        text: douyinTriageText(video),
+        title: clampChars(video.desc.split("\n")[0] ?? "", TEXT_TITLE_CHARS),
+        sourceUrl,
+        finalUrl: video.canonicalUrl,
+      },
+      ...(item.note ? { note: item.note } : {}),
+      profile,
+    },
+    { dataDir: ctx.dataDir },
+  );
+  return routeVerdict(ctx, item, canonicalUrl, triaged, progress, {
+    ...(video.authorNickname ? { author: video.authorNickname } : {}),
+    stats: { ...video.stats, capturedAt: new Date().toISOString() },
+  });
 }
 
 /** 卡步：stage=card_done 就跳过（续做）；落卡按 sourceInboxId 幂等，重跑不产生第二张 */
@@ -344,6 +306,7 @@ async function runCardStep(
   canonicalUrl: string,
   triaged: TriageResult,
   progress: Progress,
+  extras: ParsedExtras,
 ): Promise<void> {
   const card = triaged.card;
   if (!card) return; // 契约由 triage 的条件校验兜住，这里只是不让类型漏气
@@ -357,6 +320,9 @@ async function runCardStep(
       sourceUrl: item.url ?? canonicalUrl,
       canonicalUrl,
       sourceInboxId: item.id,
+      // 解析器产出的事实字段：不经 LLM 直接落卡（§3.2）
+      ...(extras.author ? { author: extras.author } : {}),
+      ...(extras.stats ? { stats: extras.stats } : {}),
       ...(item.note ? { founderNote: item.note } : {}),
     },
     ctx.dataDir,
@@ -408,6 +374,7 @@ async function routeVerdict(
   canonicalUrl: string,
   triaged: TriageResult,
   progress: Progress,
+  extras: ParsedExtras,
 ): Promise<Outcome> {
   const { verdict } = triaged;
   if (verdict === "unusable") {
@@ -418,7 +385,7 @@ async function routeVerdict(
     };
   }
   if (verdict === "exemplar" || verdict === "both") {
-    await runCardStep(ctx, item, canonicalUrl, triaged, progress);
+    await runCardStep(ctx, item, canonicalUrl, triaged, progress, extras);
   }
   if (verdict === "inspiration" || verdict === "both") {
     const blockedReason = await runTopicStep(ctx, item, canonicalUrl, triaged, progress);
@@ -448,6 +415,18 @@ export function createDigestPipeline(deps: DigestPipelineDeps): (item: InboxItem
     gate: deps.gateImpl ?? gateTopicCandidate,
     patterns: deps.patternStore ?? { upsert: upsertPatternCard, findByCanonicalUrl: findPatternByCanonicalUrl },
     loadProfile: deps.loadProfileImpl ?? loadProfile,
+    douyin: () => {
+      // key 门先过：没配就是「等外部条件」，不能悄悄降级成通用抓取（抖音页反爬，抓了也是空）
+      const key = deps.parsers?.justoneapiKey?.trim();
+      if (!key) {
+        throw new JustoneapiError(
+          "justoneapi_key_missing",
+          "blocked",
+          "抖音链接要 justoneapi key 才能解析，现在还没配",
+        );
+      }
+      return deps.parsers?.justoneapiImpl ?? createJustoneapiClient(key);
+    },
   };
   const sendReceipt = deps.sendReceiptImpl ?? sendTelegramReceipt;
   const report = deps.onError ?? ((m: string) => console.error(`[inbox-digest] ${m}`));

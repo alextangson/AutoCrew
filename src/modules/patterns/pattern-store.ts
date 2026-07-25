@@ -22,6 +22,8 @@ export interface PatternStats {
   likes?: number;
   comments?: number;
   collects?: number;
+  /** 转发数——抖音病毒性的主信号，赞评藏都不如它说明「值得转给别人」（V1.1 解析器起有值） */
+  shares?: number;
   capturedAt: string;
 }
 
