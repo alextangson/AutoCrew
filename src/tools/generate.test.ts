@@ -148,8 +148,10 @@ describe("executeGenerate", () => {
   });
 });
 
-describe("knowledge injection", () => {
-  it("appends knowledge excerpts to research when knowledge dir matches topic", async () => {
+describe("knowledge dedupe", () => {
+  // 检索已下沉到生成管线(generate-script.ts runGeneration,那边的测试覆盖注入)。
+  // 这里守住去重:入口层不再自行检索,否则 MCP 路径知识块双份注入。
+  it("does not retrieve knowledge at the tool layer — research passes through untouched", async () => {
     const testDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-gen-knowledge-"));
     await fs.mkdir(path.join(testDir, "knowledge"), { recursive: true });
     await fs.writeFile(path.join(testDir, "knowledge", "agent.md"), "工具调用循环是 Agent 的核心。");
@@ -166,10 +168,7 @@ describe("knowledge injection", () => {
     );
 
     expect(capturedReq).not.toBeNull();
-    const research = String((capturedReq as { research?: string }).research);
-    expect(research).toContain("用户给的资料");
-    expect(research).toContain("知识库参考");
-    expect(research).toContain("工具调用循环");
+    expect((capturedReq as { research?: string }).research).toBe("用户给的资料");
     await fs.rm(testDir, { recursive: true, force: true });
   });
 });
