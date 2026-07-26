@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { expireStaleTopics, TOPIC_TTL_MS } from "./topic-expiry.js";
 import { createWorkspace } from "./workspace-store.js";
-import { saveTopic, listTopics, listTrash, saveContent } from "../storage/local-store.js";
+import { saveTopic, listTopics, listTrash, saveContent, updateTopic } from "../storage/local-store.js";
 
 let tmpHome: string;
 let savedEnv: string | undefined;
@@ -47,6 +47,17 @@ describe("expireStaleTopics", () => {
     expect(active.map((t) => t.id)).toEqual([fresh.id]);
     const trash = await listTrash();
     expect(trash.topics.map((t) => t.id)).toEqual([stale.id]); // 可恢复,且参与查重防还魂
+  });
+
+  it("续期过的老灵感不被回收(深调研启动即续期一次)", async () => {
+    const renewed = await saveTopic({ title: "正在深调研", description: "d", tags: [] });
+    await ageTopic(renewed.id, 10);
+    await updateTopic(renewed.id, { renewedAt: new Date().toISOString() });
+
+    const r = await expireStaleTopics();
+
+    expect(r.total).toBe(0);
+    expect((await listTopics()).map((t) => t.id)).toEqual([renewed.id]);
   });
 
   it("有稿件血缘(content.topicId 指向)的到期灵感被保护,永不自动清理", async () => {

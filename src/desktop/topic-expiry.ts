@@ -37,7 +37,8 @@ export async function expireStaleTopics(
       const [topics, contents] = await Promise.all([listTopics(ws.dataDir), listContents(ws.dataDir)]);
       const usedTopicIds = new Set(contents.map((c) => c.topicId).filter((id): id is string => Boolean(id)));
       for (const t of topics) {
-        const age = now - new Date(t.createdAt).getTime();
+        // 续期锚：有动作(如启动深调研)就从那一刻重新计时,没有才回落 createdAt
+        const age = now - new Date(t.renewedAt ?? t.createdAt).getTime();
         if (!(age > ttlMs)) continue; // 未到期(含坏时间戳 NaN:比较为 false,不误删)
         if (usedTopicIds.has(t.id)) {
           protectedByLineage += 1;

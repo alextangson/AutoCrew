@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import {
   fetchExternalPage,
   isBlockedAddress,
+  collectImageCandidates,
   FetchExternalError,
   type LookupFn,
 } from "./fetch-external.js";
@@ -11,6 +12,11 @@ import {
 const HTML =
   "<html><head><title>外部标题</title></head><body><h1>正文标题</h1><p>第一段。</p>" +
   "<script>evil_payload()</script></body></html>";
+
+/** 图片页放在多级路径下：相对 URL 必须按 **finalUrl** 解析，跳转前的路径解出来不一样 */
+const IMG_HTML =
+  '<html><head><title>图页</title><meta property="og:image" content="https://cdn.test/hero.jpg"></head>' +
+  '<body><img src="pic.png" width="800"><p>正文</p></body></html>';
 const CHUNK = Buffer.alloc(64 * 1024, "a");
 const THREE_MB = 3 * 1024 * 1024;
 /** 无穷体的安全闸——只有「客户端把整个体读完」才可能撞到它 */
@@ -74,6 +80,11 @@ function handler(req: http.IncomingMessage, res: http.ServerResponse): void {
     case "/missing":
       res.writeHead(404, { "content-type": "text/html" });
       return void res.end("<html>404</html>");
+    case "/deep/dir/imgs":
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return void res.end(IMG_HTML);
+    case "/imgs-hop":
+      return redirect(res, "/deep/dir/imgs");
     case "/to-loopback":
       return redirect(res, `http://127.0.0.1:${port}/ok`);
     case "/to-private":
@@ -285,5 +296,150 @@ describe("isBlockedAddress", () => {
 
   it.each(allowed)("放行 %s", (ip) => {
     expect(isBlockedAddress(ip)).toBe(false);
+  });
+});
+
+// ─── 图片候选采集（深调研 R1a）────────────────────────────────────────────────
+
+const PAGE_URL = "https://ex.test/a/b/page.html";
+const urls = (html: string, base = PAGE_URL): string[] =>
+  collectImageCandidates(html, base).map((c) => c.url);
+
+describe("collectImageCandidates — 抽取", () => {
+  it("srcset 取像素描述最大的候选，标 sourceAttr=srcset", () => {
+    const html = '<img src="fallback.jpg" srcset="s.jpg 320w, l.jpg 1600w, m.jpg 800w">';
+    expect(collectImageCandidates(html, PAGE_URL)).toEqual([
+      { url: "https://ex.test/a/b/l.jpg", sourceAttr: "srcset" },
+    ]);
+  });
+
+  it("srcset 的 x 描述子与无描述子混排也取最大", () => {
+    expect(urls('<img srcset="a.jpg, b.jpg 2x, c.jpg 1.5x">')).toEqual(["https://ex.test/a/b/b.jpg"]);
+  });
+
+  it("srcset 最大候选被跳过时回落 src", () => {
+    const html = '<img src="ok.png" srcset="logo.svg 1600w">';
+    expect(collectImageCandidates(html, PAGE_URL)).toEqual([
+      { url: "https://ex.test/a/b/ok.png", sourceAttr: "img" },
+    ]);
+  });
+
+  it("相对 URL 按 base 解析（同级/上级/根/协议相对）", () => {
+    const html =
+      '<img src="pic.png"><img src="../up.png"><img src="/root.png"><img src="//cdn.test/x.png">';
+    expect(urls(html)).toEqual([
+      "https://ex.test/a/b/pic.png",
+      "https://ex.test/a/up.png",
+      "https://ex.test/root.png",
+      "https://cdn.test/x.png",
+    ]);
+  });
+
+  it("og:image 排在最前（属性顺序与 name= 写法都认）", () => {
+    const html =
+      '<meta content="https://cdn.test/hero.jpg" name="og:image"><img src="pic.png">';
+    expect(collectImageCandidates(html, PAGE_URL)).toEqual([
+      { url: "https://cdn.test/hero.jpg", sourceAttr: "og" },
+      { url: "https://ex.test/a/b/pic.png", sourceAttr: "img" },
+    ]);
+  });
+
+  it("HTML 实体 &amp; 还原成 &", () => {
+    expect(urls('<img src="https://cdn.test/x.png?a=1&amp;b=2">')).toEqual([
+      "https://cdn.test/x.png?a=1&b=2",
+    ]);
+  });
+
+  it("页内按绝对 URL 去重", () => {
+    expect(urls('<img src="pic.png"><img src="/a/b/pic.png"><img src="pic.png">')).toEqual([
+      "https://ex.test/a/b/pic.png",
+    ]);
+  });
+
+  it("脚本/样式里的 img 不算数", () => {
+    expect(urls('<script><img src="fake.png"></script><style><img src="s.png"></style>')).toEqual([]);
+  });
+
+  it("base 不可解析时返回空，不抛", () => {
+    expect(collectImageCandidates('<img src="pic.png">', "not-a-url")).toEqual([]);
+  });
+});
+
+describe("collectImageCandidates — 跳过规则", () => {
+  const skipped: Array<[string, string]> = [
+    ["data: URI", '<img src="data:image/png;base64,iVBORw0KGgo=">'],
+    [".svg 后缀", '<img src="logo.svg">'],
+    [".svg 带查询串", '<img src="logo.svg?v=2">'],
+    ["路径含 pixel", '<img src="https://cdn.test/pixel/track.gif">'],
+    ["域名含 tracker", '<img src="https://tracker.test/x.png">'],
+    ["查询串含 beacon", '<img src="https://cdn.test/x.png?m=beacon">'],
+    ["width < 200", '<img src="small.png" width="120">'],
+    ["height < 200", '<img src="small.png" height="1">'],
+    ["非 http(s) 协议", '<img src="ftp://ex.test/x.png">'],
+    ["空 src", '<img src="" alt="x">'],
+  ];
+  it.each(skipped)("跳过 %s", (_label, html) => {
+    expect(urls(html)).toEqual([]);
+  });
+
+  const kept: Array<[string, string]> = [
+    ["尺寸恰为 200（不是 <200）", '<img src="ok.png" width="200" height="200">'],
+    ["百分比宽度不当像素判", '<img src="ok.png" width="100%">'],
+    ["无尺寸属性", '<img src="ok.png">'],
+    ["px 后缀的大尺寸", '<img src="ok.png" width="640px">'],
+  ];
+  it.each(kept)("保留 %s", (_label, html) => {
+    expect(urls(html)).toEqual(["https://ex.test/a/b/ok.png"]);
+  });
+});
+
+describe("collectImageCandidates — 上限", () => {
+  it("每页最多 10 条（含 og:image 占位）", () => {
+    const html =
+      '<meta property="og:image" content="https://cdn.test/hero.jpg">' +
+      Array.from({ length: 15 }, (_, i) => `<img src="p${i}.png">`).join("");
+    const got = collectImageCandidates(html, PAGE_URL);
+    expect(got).toHaveLength(10);
+    expect(got[0].sourceAttr).toBe("og");
+    expect(got[9].url).toBe("https://ex.test/a/b/p8.png");
+  });
+});
+
+describe("fetchExternalPage — collectImages 开关", () => {
+  it("默认关闭：返回值形状不含 imageCandidates", async () => {
+    const page = await fetchExternalPage(`${base()}/deep/dir/imgs`, { lookup: publicLookup });
+    expect("imageCandidates" in page).toBe(false);
+    expect(Object.keys(page).sort()).toEqual(["finalUrl", "text", "title"]);
+  });
+
+  it("显式 false 也不带该字段", async () => {
+    const page = await fetchExternalPage(`${base()}/deep/dir/imgs`, {
+      lookup: publicLookup,
+      collectImages: false,
+    });
+    expect("imageCandidates" in page).toBe(false);
+  });
+
+  it("开启后带候选，相对 URL 按 finalUrl（跳转后）解析，正文不受影响", async () => {
+    const page = await fetchExternalPage(`${base()}/imgs-hop`, {
+      lookup: publicLookup,
+      collectImages: true,
+    });
+    expect(page.finalUrl).toBe(`${base()}/deep/dir/imgs`);
+    expect(page.title).toBe("图页");
+    expect(page.text).toContain("正文");
+    expect(page.imageCandidates).toEqual([
+      { url: "https://cdn.test/hero.jpg", sourceAttr: "og" },
+      { url: `${base()}/deep/dir/pic.png`, sourceAttr: "img" },
+    ]);
+  });
+
+  it("text/plain 开启后是空数组（字段存在性只跟随请求，不跟随内容）", async () => {
+    const page = await fetchExternalPage(`${base()}/plain`, {
+      lookup: publicLookup,
+      collectImages: true,
+    });
+    expect(page.text).toBe("纯文本正文。");
+    expect(page.imageCandidates).toEqual([]);
   });
 });

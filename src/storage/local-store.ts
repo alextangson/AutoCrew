@@ -26,6 +26,11 @@ export interface Topic {
   angles?: string[];
   scoredAt?: string;
   createdAt: string;
+  /**
+   * 「最近一次有动作」的时间戳——3 天过期回收以它为锚（缺省回落 createdAt）。
+   * 深调研启动即续期一次（深调研 spec §2）：正在被调研的选题不该半路被清走。
+   */
+  renewedAt?: string;
   /** 软删除时间戳(回收站语义,qingmo 设计细节);null/缺省 = 活跃 */
   deletedAt?: string | null;
 }
