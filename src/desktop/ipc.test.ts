@@ -131,10 +131,14 @@ describe("IPC_CHANNELS", () => {
     "content:restore",
     "content:open_folder",
     "trash:list",
+    "research:deep_dive",
+    "research:status",
+    "research:brief_get",
+    "research:list_assets",
   ];
 
-  it("has exactly 117 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(117);
+  it("has exactly 121 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(121);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -319,7 +323,11 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "inbox:status" &&
           ch !== "patterns:list" &&
           ch !== "patterns:update" &&
-          ch !== "patterns:delete",
+          ch !== "patterns:delete" &&
+          ch !== "research:deep_dive" &&
+          ch !== "research:status" &&
+          ch !== "research:brief_get" &&
+          ch !== "research:list_assets",
       ).sort(),
     );
   });

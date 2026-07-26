@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
+import { ResearchPanel } from "./ResearchPanel";
 import {
   BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
@@ -398,6 +399,8 @@ function Matrix(props: {
             value={direction}
             onChange={(e) => setDirection(e.target.value)}
           />
+          {/* 深调研:四视角简报,写这条选题时自动注入(deep-research spec §8) */}
+          <ResearchPanel topicId={t.id} />
         </div>
       )}
       <div className="mono muted" style={{ margin: "8px 0 6px" }}>平台矩阵 · 有稿点开,无稿生成</div>

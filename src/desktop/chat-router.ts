@@ -32,6 +32,8 @@ import { reviseDraft, type ReviseDraftResult } from "../modules/writing/draft-re
 import { reviseFocus, type ReviseFocus, type ReviseFocusResult } from "../modules/writing/revise-focus.js";
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
+import { triggerDeepResearch } from "./research-runtime.js";
+import type { TriggerResult } from "../modules/research/research-runner.js";
 
 export interface ChatCard {
   type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit" | "revision_proposal";
@@ -84,6 +86,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   prepare_video_kit: { role: "publisher", label: "发布员在备发布件" },
   revise_draft: { role: "writer", label: "编剧正在按你的意见修改稿件" },
   revise_focus: { role: "writer", label: "编剧正在改这段" },
+  deep_research: { role: "scout", label: "调研员在派四视角深调研" },
 };
 
 export interface ChatHistoryMessage {
@@ -110,6 +113,7 @@ export interface ChatToolDeps {
   startGenerate?: (req: ScriptRequest, dataDir?: string) => Promise<StartedGeneration>;
   reviseDraftImpl?: (contentId: string, instruction: string, dataDir?: string) => Promise<ReviseDraftResult>;
   reviseFocusImpl?: (contentId: string, instruction: string, focus: ReviseFocus, dataDir?: string) => Promise<ReviseFocusResult>;
+  deepResearch?: (topicId: string, dataDir?: string) => Promise<TriggerResult>;
 }
 
 interface ChatEffects {
@@ -137,7 +141,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 15. 用户要「主动搜/去找找/全网搜一下 X」或想按定位补充灵感时，调用 scout_inspiration（可带 query，不带则按定位+画像自动生成搜索词）。搜索未配置时把报错原样告诉用户（去设置配 key），不要假装搜过。
 16. 用户粘贴一大段自己写过的文案时，先问一句用途：是「学我的风格」（→ absorb_style）还是「里面有想法要入灵感库」（→ 提炼观点后 save_topic，reason 注明来自用户旧文）；两者都要就都做。不要不问就默认其一。
 17. 视频稿（抖音/视频号/小红书/B站）要发布时，先调用 prepare_video_kit 备发布件：平台发布文案+分镜表+竖版封面。口播稿是「读的」，发布件才是「发的」——不要把口播稿当发布文案。备好后引导用户看卡片，粘贴发布走 publish_clipboard。
-18. 用户说「/goal …」「我的目标是…」「这个季度要…」时调用 set_goal 记录（目标会注入选题、写作、复盘全链，旧目标自动留档）；问目标或要对照进展时用 get_goal。有目标后，选题推荐与建议围绕目标排优先级，明显偏航时提醒一句。`;
+18. 用户说「/goal …」「我的目标是…」「这个季度要…」时调用 set_goal 记录（目标会注入选题、写作、复盘全链，旧目标自动留档）；问目标或要对照进展时用 get_goal。有目标后，选题推荐与建议围绕目标排优先级，明显偏航时提醒一句。
+19. 用户说「深入调研/深调研某个选题」「多找点材料再写」时调用 deep_research，参数是灵感库选题编号（还没入库先 save_topic）。它是**异步任务，投递即返回**：回执任务状态（新任务已派下去／已经在跑，进度在选题卡上看）就结束本轮，不要等它跑完，更不要凭空复述简报内容；简报出来后写这条选题会自动带上。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -186,6 +191,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         })),
     reviseDraftImpl: deps?.reviseDraftImpl ?? reviseDraft,
     reviseFocusImpl: deps?.reviseFocusImpl ?? reviseFocus,
+    deepResearch: deps?.deepResearch ?? triggerDeepResearch,
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
@@ -915,6 +921,39 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         } catch (err) {
           return fail(err instanceof Error ? err.message : err);
         }
+      },
+    },
+    {
+      name: "deep_research",
+      description:
+        "深调研:给灵感库某条选题派四视角并行侦察(受众痛点/证据数据/反方/对标),产出带跨视角张力点的调研简报,之后写这条选题会自动注入。用户说「深入调研一下这个选题」「多找点材料再写」时调用。**异步任务,投递即返回**——不要等它跑完,也不要假装已经读到简报。",
+      parameters: {
+        type: "object",
+        properties: { topic_id: { type: "string", description: "灵感库选题编号(topic-…);没有就先 save_topic 入库" } },
+        required: ["topic_id"],
+      },
+      execute: async (args) => {
+        const topicId = String(sanitize(args).topic_id ?? "").trim();
+        if (!topicId) return fail("topic_id 必填(灵感库选题编号)");
+        let res: TriggerResult;
+        try {
+          res = await d.deepResearch(topicId, dataDir);
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+        // 被拒(搜索 key 未配/选题不存在/运行时没起)照原样回,让总编辑把原因转达给用户
+        if (!res.accepted) return fail(res.reason);
+        const done = res.job.perspectives.filter((p) => p.status === "succeeded").length;
+        return JSON.stringify({
+          ok: true,
+          topicId,
+          jobStatus: res.job.status,
+          deduped: res.deduped,
+          perspectivesDone: `${done}/${res.job.perspectives.length}`,
+          note: res.deduped
+            ? "这条选题的深调研已经在跑,本次合并进去了。告诉用户「已经在调研中」和当前进度,别重复派活。"
+            : "已排队,四视角并行侦察,通常几分钟。告诉用户「已派下去」,进度在选题卡上看;不要在本轮等结果。",
+        });
       },
     },
   ];

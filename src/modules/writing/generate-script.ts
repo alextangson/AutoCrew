@@ -23,8 +23,11 @@ import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./qualit
 import type { GateFailure } from "./quality-gate.js";
 import { humanizeZh } from "../humanizer/zh.js";
 import { scanText } from "../filter/sensitive-words.js";
-import { retrieveKnowledge } from "../knowledge/knowledge-base.js";
-import { saveContent, updateContent } from "../../storage/local-store.js";
+import { retrieveKnowledge, KNOWLEDGE_DEFAULT_CHARS } from "../knowledge/knowledge-base.js";
+import { buildBriefBlock, knowledgeBudgetFor } from "../research/brief-inject.js";
+import { loadBrief } from "../research/brief-store.js";
+import { getJob, topicHashOf } from "../research/research-job-store.js";
+import { getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
 
 export type { ScriptRequest };
@@ -42,6 +45,23 @@ export interface GeneratedScript {
   /** 本稿注入的个人写作规则数（声音内核+当前平台包——IA v4.2 §B5「越用越像你」可感知） */
   rulesApplied: number;
   tokensUsed: number;
+}
+
+/** 生成管线的注入口：loop 替身（测试用）+ 非致命故障的可见出口 */
+export interface GenerationDeps {
+  runLoopImpl?: typeof runLoop;
+  /**
+   * 「材料少一块但照写」这类降级的可见出口（简报读不动、选题查不到）；默认 console.warn。
+   * 静默降级会让「简报怎么没生效」查无可查。
+   */
+  onWarn?: (message: string) => void;
+}
+
+/** 本稿的归因元数据——两条落点（run-log 的 logMeta 与 content 元数据）共用同一份 */
+interface Attribution {
+  usedPatternIds: string[];
+  /** 本稿注入的简报版本（§6）：无简报时字段不出现，日志与稿件口径与改动前一字不差 */
+  usedBriefRevision?: number;
 }
 
 interface SubmitPayload {
@@ -163,15 +183,78 @@ function selectPatterns(req: ScriptRequest, dataDir?: string): Promise<PatternCa
   return selectPatternsForScript({ platform: req.platform, topicText: req.topic }, dataDir);
 }
 
-/** 执行体:loop → 占位稿转正;失败标〔生成中断〕+ lastError 后原样抛出 */
-async function runGeneration(
-  placeholderId: string,
+/**
+ * 取「当前有效简报」并渲染成注入块（深调研 spec §6）。
+ *
+ * `job.briefRevision` 是唯一指针（§2「重跑读语义」）：**没有指针就是没有简报**，
+ * 绝不用「最新一版」兜底——重跑失败时兜底会把没被采纳的那版偷偷注进稿子里。
+ * 读侧任何故障都降级成「无简报」并 warn：写稿宁可少一块材料，也不该整条链断掉。
+ */
+async function loadBriefBlock(
   req: ScriptRequest,
+  dataDir: string | undefined,
+  warn: (message: string) => void,
+): Promise<{ block: string; revision: number } | null> {
+  if (!req.topicId) return null;
+  const dir = getDataDir(dataDir);
+  try {
+    const job = await getJob(req.topicId, dir);
+    if (!job || job.briefRevision === undefined) return null;
+    const brief = await loadBrief(req.topicId, job.briefRevision, dir, warn);
+    if (!brief) return null; // 坏文件/未知 schemaVersion：loadBrief 已经 warn 过
+    const topic = await getTopic(req.topicId, dataDir);
+    if (!topic) warn(`选题 ${req.topicId} 已不在库中，简报按「基于旧版选题」标注注入`);
+    // 核对不上就当过期：选题查不到时不给这份简报背书（§2 过期标注，注入照做）
+    const topicStale = !topic || topicHashOf(topic.title, topic.description) !== brief.topicHash;
+    return { block: buildBriefBlock(brief, { topicStale }), revision: brief.revision };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warn(`调研简报读取失败（${req.topicId}），本稿按无简报写：${msg}`);
+    return null;
+  }
+}
+
+/**
+ * research 槽装配（§6 预算表）：用户材料在前，简报块**优先占用**预算，
+ * 知识库检索只能用剩余的；剩余不足 `KNOWLEDGE_MIN_BUDGET` 时知识块整体省略。
+ * 无简报时走的还是老路（知识库用它自己的默认预算），prompt 与改动前逐字一致。
+ */
+async function composeResearchSlot(
+  req: ScriptRequest,
+  briefBlock: string | undefined,
   dataDir?: string,
-  deps?: { runLoopImpl?: typeof runLoop },
-  runId?: string,
-): Promise<GeneratedScript> {
-  const [config, pack, profile, contrastPairs, patterns, knowledge] = await Promise.all([
+): Promise<ScriptRequest> {
+  const budget = briefBlock
+    ? knowledgeBudgetFor(
+        { briefChars: briefBlock.length, userResearchChars: req.research?.length ?? 0 },
+        KNOWLEDGE_DEFAULT_CHARS,
+      )
+    : KNOWLEDGE_DEFAULT_CHARS;
+  const knowledge = budget === null ? null : await retrieveKnowledge(req.topic, dataDir, { maxChars: budget });
+
+  const extras = [briefBlock, knowledge].filter((s): s is string => !!s);
+  if (extras.length === 0) return req; // 无简报无知识：req 原样透传，prompt 一字不变
+  return { ...req, research: [req.research, ...extras].filter(Boolean).join("\n\n") };
+}
+
+interface GenerationInputs {
+  config: Awaited<ReturnType<typeof loadEngineConfig>>;
+  pack: ReturnType<typeof getPack>;
+  profile: Awaited<ReturnType<typeof loadProfile>>;
+  contrastPairs: Awaited<ReturnType<typeof recentContrastPairs>>;
+  patterns: PatternCard[];
+  /** research 槽装配完的请求（用户材料 + 简报 + 知识片段） */
+  promptReq: ScriptRequest;
+  attribution: Attribution;
+}
+
+/** 写稿前的材料收集：能并行的一起拿，知识库要等简报长度定了才知道自己的预算 */
+async function gatherInputs(
+  req: ScriptRequest,
+  dataDir: string | undefined,
+  warn: (message: string) => void,
+): Promise<GenerationInputs> {
+  const [config, pack, profile, contrastPairs, patterns, brief] = await Promise.all([
     loadEngineConfig(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
@@ -181,16 +264,35 @@ async function runGeneration(
     // 这里**不加 catch**:patterns 库不存在是正常空态(store 已按 ENOENT 返回 []),
     // 其余读故障必须炸出来——静默降级会让「卡怎么没生效」查无可查。
     selectPatterns(req, dataDir),
-    // 知识库检索在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖
-    // (曾只在 tools/generate.ts 检索,桌面写稿吃不到 knowledge/)。目录缺失/无命中即 null。
-    retrieveKnowledge(req.topic, dataDir),
+    // 调研简报(深调研 §6):三条写稿入口共用这一处注入点,无 topicId/无指针即 null
+    loadBriefBlock(req, dataDir, warn),
   ]);
-  const usedPatternIds = patterns.map((card) => card.id);
+  return {
+    config,
+    pack,
+    profile,
+    contrastPairs,
+    patterns,
+    promptReq: await composeResearchSlot(req, brief?.block, dataDir),
+    attribution: {
+      usedPatternIds: patterns.map((card) => card.id),
+      ...(brief ? { usedBriefRevision: brief.revision } : {}),
+    },
+  };
+}
 
-  // 知识片段并入 research 槽(用户材料在前);无命中时 req 原样透传,prompt 一字不变
-  const promptReq = knowledge
-    ? { ...req, research: [req.research, knowledge].filter(Boolean).join("\n\n") }
-    : req;
+/** 执行体:loop → 占位稿转正;失败标〔生成中断〕+ lastError 后原样抛出 */
+async function runGeneration(
+  placeholderId: string,
+  req: ScriptRequest,
+  dataDir?: string,
+  deps?: GenerationDeps,
+  runId?: string,
+): Promise<GeneratedScript> {
+  const warn = deps?.onWarn ?? ((message: string) => console.warn(`[generate-script] ${message}`));
+  // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)
+  const { config, pack, profile, contrastPairs, patterns, promptReq, attribution } =
+    await gatherInputs(req, dataDir, warn);
   const { system, user } = buildScriptPrompts(pack, profile, promptReq, { contrastPairs, patterns });
   const writer = resolveEngineRoute(config, "writer", config.strongModel);
   const captured: Captured = { payload: null, gateFailures: [] };
@@ -207,11 +309,14 @@ async function runGeneration(
       // Gate 修复轮需要额外回合与 token 预算（整稿 × 最多 1+N 稿）
       maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
       maxTotalTokens: gate ? 80000 : undefined,
-      // usedPatternIds 进 run-log 元数据(§3.5 使用追踪):无卡时字段不出现,日志口径不变
+      // 归因进 run-log 元数据(§3.5 卡 / 深调研 §6 简报):没用到的字段不出现,日志口径不变
       logMeta: {
         ...(runId ? { runId } : {}),
         agent: "writer",
-        ...(usedPatternIds.length > 0 ? { usedPatternIds } : {}),
+        ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
+        ...(attribution.usedBriefRevision !== undefined
+          ? { usedBriefRevision: attribution.usedBriefRevision }
+          : {}),
       },
     });
 
@@ -222,7 +327,7 @@ async function runGeneration(
     }
 
     const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
-    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, usedPatternIds, placeholderId, dataDir);
+    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, attribution, placeholderId, dataDir);
   } catch (err) {
     // 失败留痕:占位稿标注中断原因（best-effort,不吞原错误）——UI 显示徽章与重试入口
     const msg = err instanceof Error ? err.message : String(err);
@@ -241,7 +346,7 @@ async function runGeneration(
 export async function generateScript(
   req: ScriptRequest,
   dataDir?: string,
-  deps?: { runLoopImpl?: typeof runLoop },
+  deps?: GenerationDeps,
 ): Promise<GeneratedScript> {
   const placeholderId = await createPlaceholder(req, dataDir);
   return runGeneration(placeholderId, req, dataDir, deps);
@@ -270,7 +375,7 @@ export interface StartedGeneration {
 export function startGenerateScript(
   req: ScriptRequest,
   dataDir?: string,
-  deps?: { runLoopImpl?: typeof runLoop; onEvent?: (e: BackgroundGenEvent) => void },
+  deps?: GenerationDeps & { onEvent?: (e: BackgroundGenEvent) => void },
 ): Promise<StartedGeneration> {
   const runId = `run-bg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const emit = (e: BackgroundGenEvent) => { try { deps?.onEvent?.(e); } catch { /* 观测层吞错 */ } };
@@ -297,7 +402,7 @@ async function finalizeScript(
   tokensUsed: number,
   gateFailures: GateFailure[],
   rulesApplied: number,
-  usedPatternIds: string[],
+  attribution: Attribution,
   placeholderId: string,
   dataDir?: string,
 ): Promise<GeneratedScript> {
@@ -322,8 +427,11 @@ async function finalizeScript(
       draftReadyAt: new Date().toISOString(),
       hashtags: cleanHashtags,
       lastError: null,
-      // 归因落稿件元数据(§3.5):无卡时不写字段——没用卡的稿与改动前一字不差
-      ...(usedPatternIds.length > 0 ? { usedPatternIds } : {}),
+      // 归因落稿件元数据(§3.5 卡 / 深调研 §6 简报):没用到就不写字段——与改动前一字不差
+      ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
+      ...(attribution.usedBriefRevision !== undefined
+        ? { usedBriefRevision: attribution.usedBriefRevision }
+        : {}),
       _versionNote: "AI 完成初稿",
     },
     dataDir,

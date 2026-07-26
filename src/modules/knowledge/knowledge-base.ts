@@ -8,10 +8,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
 
+/** 知识片段的默认字符预算——写稿侧按 research 槽剩余预算压低时，以它为上限 */
+export const KNOWLEDGE_DEFAULT_CHARS = 2_000;
+
 export interface KnowledgeOptions {
   /** 默认 3 */
   maxFiles?: number;
-  /** 全部片段合计字符预算，默认 2000 */
+  /** 全部片段合计字符预算，默认 KNOWLEDGE_DEFAULT_CHARS */
   maxChars?: number;
 }
 
@@ -87,7 +90,7 @@ export async function retrieveKnowledge(
 
   scored.sort((a, b) => b.score - a.score);
   const top = scored.slice(0, opts.maxFiles ?? 3);
-  const budget = opts.maxChars ?? 2_000;
+  const budget = opts.maxChars ?? KNOWLEDGE_DEFAULT_CHARS;
   const per = Math.floor(budget / top.length);
   const parts = top.map((f) => `《${f.name}》：${f.content.slice(0, per).trim()}`);
   return `【知识库参考】\n${parts.join("\n---\n")}`;

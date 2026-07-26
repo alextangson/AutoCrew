@@ -155,6 +155,8 @@ export interface Content {
   lastError?: string | null;
   /** 本稿写作时注入的对标拆解卡 id（收件箱设计 §3.5）：学习闭环归因，无卡时字段不落 */
   usedPatternIds?: string[];
+  /** 本稿注入的调研简报版本（深调研 §6）：回溯得到 briefs/<topicId>.v<N>.json 那份不可变输入，无简报时字段不落 */
+  usedBriefRevision?: number;
   /** 软删除时间戳(回收站语义);null/缺省 = 活跃。默认读侧全部过滤 */
   deletedAt?: string | null;
   assets: Asset[];

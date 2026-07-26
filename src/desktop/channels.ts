@@ -124,6 +124,10 @@ export const IPC_CHANNELS = [
   "patterns:list",
   "patterns:update",
   "patterns:delete",
+  "research:deep_dive",
+  "research:status",
+  "research:brief_get",
+  "research:list_assets",
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];

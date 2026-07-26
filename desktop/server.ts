@@ -24,6 +24,7 @@ import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
+import { startResearchRuntime } from "../src/desktop/research-runtime.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadarIfStale } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
@@ -350,6 +351,12 @@ try {
 void startInboxRuntime({ onInboxEvent: (e) => broadcast("inbox", e) })
   .then((s) => console.log(`  [inbox] 收件箱 worker:${s.state}${s.detail ? ` —— ${s.detail}` : ""}`))
   .catch((err) => console.error("[inbox] 收件箱启动失败:", err instanceof Error ? err.message : err));
+
+// 深调研(deep-research spec §2):串行 runner 是进程内单例,启动回收中断的 job 并重排。
+// onResearchEvent 同时接 job 级落定与视角级进度 → SSE `research` 流,选题卡据此刷新。
+void startResearchRuntime({ onResearchEvent: (e) => broadcast("research", e) })
+  .then((s) => console.log(`  [research] 深调研 runner:${s.state}${s.reclaimed ? ` —— 回收 ${s.reclaimed} 条中断任务` : ""}`))
+  .catch((err) => console.error("[research] 深调研启动失败:", err instanceof Error ? err.message : err));
 
 server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");

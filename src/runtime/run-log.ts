@@ -34,6 +34,8 @@ export interface RunLogRecord {
   truncated?: boolean;
   /** 本次生成注入的对标拆解卡 id(收件箱设计 §3.5):飞轮据此归因「用卡的稿 vs 没用的」 */
   usedPatternIds?: string[];
+  /** 本次生成注入的调研简报版本(深调研 §6):可回溯到 briefs/<topicId>.v<N>.json 那份不可变输入 */
+  usedBriefRevision?: number;
 }
 
 export interface RunSummary {
@@ -182,13 +184,16 @@ const NOOP_RECORDER: RunRecorder = { llm: () => {}, tool: () => {} };
 /** dataDir 缺省(手工构造的测试 config)= 不落日志,引擎行为零变化 */
 export function createRunRecorder(
   dataDir: string | undefined,
-  meta?: { runId?: string; agent?: string; usedPatternIds?: string[] },
+  meta?: { runId?: string; agent?: string; usedPatternIds?: string[]; usedBriefRevision?: number },
 ): RunRecorder {
   if (!dataDir) return NOOP_RECORDER;
   const runId = meta?.runId ?? `run-eng-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const agent = meta?.agent;
-  // 归因元数据挂在每条记录上:单条日志自带「这稿用了哪几张卡」,不用回溯整个 run
-  const attribution = meta?.usedPatternIds?.length ? { usedPatternIds: meta.usedPatternIds } : {};
+  // 归因元数据挂在每条记录上:单条日志自带「这稿用了哪几张卡/哪版简报」,不用回溯整个 run
+  const attribution = {
+    ...(meta?.usedPatternIds?.length ? { usedPatternIds: meta.usedPatternIds } : {}),
+    ...(meta?.usedBriefRevision !== undefined ? { usedBriefRevision: meta.usedBriefRevision } : {}),
+  };
   return {
     llm: (e) =>
       void appendRunLog(dataDir, {

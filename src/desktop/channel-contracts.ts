@@ -133,6 +133,11 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "patterns:list": [],
   "patterns:update": ["id"],
   "patterns:delete": ["id"],
+  // 深调研（deep-research spec §8）。brief_get 的可选键 revision（正整数）= 回溯指定版本
+  "research:deep_dive": ["topic_id"],
+  "research:status": ["topic_id"],
+  "research:brief_get": ["topic_id"],
+  "research:list_assets": ["topic_id"],
 } as const;
 
 /**

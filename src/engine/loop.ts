@@ -43,7 +43,7 @@ export interface LoopOptions {
   /** 工具执行进度回调（UI 状态流）。回调异常被吞——观测层不得破坏执行层。 */
   onEvent?: (e: LoopEvent) => void;
   /** 运行日志归属(V5.6):runId 缺省自动生成 run-eng-…;config.dataDir 缺省不落日志 */
-  logMeta?: { runId?: string; agent?: string; usedPatternIds?: string[] };
+  logMeta?: { runId?: string; agent?: string; usedPatternIds?: string[]; usedBriefRevision?: number };
 }
 
 export interface LoopResult {

@@ -122,6 +122,12 @@ import {
 } from "./inbox-handlers.js";
 import { getInboxSettings, setInboxSettings } from "./settings-inbox.js";
 import { patternsListHandler, patternsUpdateHandler, patternsDeleteHandler } from "./pattern-handlers.js";
+import {
+  researchDeepDiveHandler,
+  researchStatusHandler,
+  researchBriefGetHandler,
+  researchListAssetsHandler,
+} from "./research-handlers.js";
 import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, updateTopic, softDeleteTopic, restoreTopic, listTrash, updateContent } from "../storage/local-store.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
 import type { ApprovalBinding } from "./approval-gate.js";
@@ -1018,6 +1024,10 @@ export function buildIpcHandlers(
     "patterns:list": patternsListHandler,
     "patterns:update": patternsUpdateHandler,
     "patterns:delete": patternsDeleteHandler,
+    "research:deep_dive": researchDeepDiveHandler,
+    "research:status": researchStatusHandler,
+    "research:brief_get": researchBriefGetHandler,
+    "research:list_assets": researchListAssetsHandler,
   };
 
   // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。

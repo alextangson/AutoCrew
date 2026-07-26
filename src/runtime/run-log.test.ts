@@ -122,6 +122,19 @@ describe("createRunRecorder", () => {
     expect(without.usedPatternIds).toBeUndefined();
   });
 
+  it("usedBriefRevision 随每条记录落盘(简报归因);缺省则字段不出现", async () => {
+    createRunRecorder(dir, { runId: "run-brief", agent: "writer", usedBriefRevision: 2 })
+      .llm({ model: "m1", durationMs: 5, ok: true, input: "in", output: "out" });
+    createRunRecorder(dir, { runId: "run-nobrief", agent: "writer" })
+      .llm({ model: "m1", durationMs: 5, ok: true, input: "in", output: "out" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const [withBrief] = await readRun(dir, "run-brief");
+    expect(withBrief.usedBriefRevision).toBe(2);
+    const [without] = await readRun(dir, "run-nobrief");
+    expect(without.usedBriefRevision).toBeUndefined();
+  });
+
   it("有 dataDir → llm/tool 都落盘,共享 runId 与 agent", async () => {
     const rec = createRunRecorder(dir, { runId: "run-rec", agent: "cover-designer" });
     rec.llm({ model: "m1", durationMs: 5, ok: true, tokens: 9, input: "in", output: "out" });

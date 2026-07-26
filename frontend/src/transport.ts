@@ -70,8 +70,11 @@ export async function invoke(channel: string, payload: Record<string, unknown> =
 }
 
 export interface SseEvent {
-  /** inbox = 收件箱台账落定（{type:"inbox:updated", itemId}），驱动收件箱视图刷新 */
-  kind: "engine" | "chat" | "inbox";
+  /**
+   * inbox = 收件箱台账落定（{type:"inbox:updated", itemId}），驱动收件箱视图刷新；
+   * research = 深调研台账落定或视角级进度（{type:"research:updated", topicId}），驱动选题卡刷新
+   */
+  kind: "engine" | "chat" | "inbox" | "research";
   data: Record<string, unknown>;
 }
 
@@ -88,7 +91,7 @@ export function subscribeEvents(fn: SseListener): () => void {
       .then(() => {
         if (source || listeners.size === 0) return;
         source = new EventSource("/api/events");
-        for (const kind of ["engine", "chat", "inbox"] as const) {
+        for (const kind of ["engine", "chat", "inbox", "research"] as const) {
           source.addEventListener(kind, (ev) => {
             let data: Record<string, unknown> = {};
             try {
