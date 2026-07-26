@@ -106,6 +106,7 @@ export function buildReadPageTool(broker: PerspectiveBroker, state: RunState): L
           externalBlock([
             `标题：${sanitizeExternal(page.title ?? "", MAX_TITLE_CHARS) || "(无)"}`,
             `正文：${sanitizeExternal(page.text, MAX_PAGE_CHARS) || "(抓取为空)"}`,
+            `（引用本页做 evidence：从上面正文逐字复制 15~60 字短句，不要改写）`,
             assets.length
               ? `图片候选（代码采集，只能按 id 选）：\n${assets
                   .map((a) => `- ${a.assetId} ${sanitizeUrlish(a.url, MAX_URL_CHARS)}`)

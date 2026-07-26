@@ -49,8 +49,8 @@ import {
 const MAX_TURNS = 8;
 /** 每视角输出 token 上限（§3）；也是 deadline 丢弃结果后的最终兜底 */
 const MAX_TOTAL_TOKENS = 15_000;
-/** 每视角墙钟上限 4 分钟（§3） */
-export const DEFAULT_PERSPECTIVE_DEADLINE_MS = 240_000;
+/** 每视角墙钟上限 8 分钟——spec §3 原定 4 分钟，真实网络+中转首跑三路全超时（2026-07-26 冒烟），加倍 */
+export const DEFAULT_PERSPECTIVE_DEADLINE_MS = 480_000;
 
 const TOPIC_TITLE_MAX_CHARS = 120;
 const TOPIC_DESC_MAX_CHARS = 600;
@@ -84,6 +84,7 @@ export const PERSPECTIVE_TASK_BOOKS: Record<PerspectiveName, PerspectiveTaskBook
       "你负责**把这个选题坐实**：数字、时间点、具体案例、可核验的出处。",
       "每条洞察都要能指到具体来源；能摘到原文的一律进 evidence，**逐字摘抄**页面原文，",
       "一个字都不要改写或转述——引文会被代码逐条回原页校验，改写必被打回。",
+      "引文取 15~60 字的短句，宁短勿长：从 read_page 显示的正文里直接复制粘贴。",
       "没有数字或案例支撑的漂亮话不如不写；数据有冲突就把冲突本身当作发现记下来。",
     ],
   },
@@ -326,7 +327,7 @@ const SUBMIT_SCHEMA = {
         properties: {
           claim: { type: "string", description: "这条引文证明了什么" },
           source_id: { type: "string", description: "read_page 返回的 p 开头 id" },
-          quote: { type: "string", description: "逐字摘抄的页面原文，不要改写" },
+          quote: { type: "string", description: "从 read_page 显示正文里逐字复制的 15~60 字短句，不要改写" },
         },
         required: ["claim", "source_id", "quote"],
       },

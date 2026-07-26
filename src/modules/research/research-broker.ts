@@ -11,10 +11,10 @@
  *
  * 缓存与配额的关系：**只有真实出网才计配额**。四路撞同一页/同一搜索词只花一次额度，
  * 后来者拿缓存（含并发时共享同一个 in-flight 请求）。这是「共用 broker」的全部意义。
- *
  * 生命周期：per-job 内存实例（全文缓存住在内存里，job 结束即释放）。不落盘。
  */
 import { canonicalizeUrl } from "../inbox/url-canonical.js";
+import { sanitizeExternal } from "./research-prompt-kit.js";
 import { fetchExternalPage } from "../inbox/fetch-external.js";
 import type { ExternalPage, FetchExternalOptions } from "../inbox/fetch-external.js";
 import { searchWeb } from "./search-provider.js";
@@ -190,6 +190,11 @@ export function normalizeWhitespace(text: string): string {
   return text.replace(SPACE_CHARS, " ").replace(/\s+/g, " ").trim();
 }
 
+/** 引文语料 = 模型实际看到的形态（展示端同款消毒再折空白），否则逐字复制也会被误杀（冒烟实证） */
+export function quoteCorpus(text: string): string {
+  return normalizeWhitespace(sanitizeExternal(text, Number.MAX_SAFE_INTEGER));
+}
+
 // ─── 实现 ────────────────────────────────────────────────────────────────────
 
 interface SourceEntry {
@@ -277,7 +282,7 @@ class BrokerCore {
   async search(name: string, query: string): Promise<BrokerSearchResponse> {
     const q = query.trim();
     if (!q) throw new Error("搜索词不能为空");
-    const key = `${this.provider} ${normalizeWhitespace(q).toLowerCase()}`;
+    const key = `${this.provider}\0${normalizeWhitespace(q).toLowerCase()}`;
     const cached = this.searchCache.get(key);
     if (cached) {
       this.cacheHits.search++;
@@ -385,7 +390,7 @@ class BrokerCore {
         ...(page.title ? { title: page.title } : {}),
         fetchedAt: this.stamp(),
       },
-      normalized: normalizeWhitespace(page.text),
+      normalized: quoteCorpus(page.text),
     });
     return sourceId;
   }
@@ -420,10 +425,13 @@ class BrokerCore {
         reason: `证据必须来自已读页面：「${sourceId}」只是搜索结果，先 read_page 打开它，再引用页面里的原文`,
       };
     }
-    const needle = normalizeWhitespace(quote);
+    const needle = quoteCorpus(quote);
     if (!needle) return { ok: false, reason: "引文不能为空" };
     if (entry.normalized.includes(needle)) return { ok: true };
-    return { ok: false, reason: `引文在「${sourceId}」正文里找不到——必须逐字摘抄原文，不能转述或改写` };
+    return {
+      ok: false,
+      reason: `引文在「${sourceId}」正文里找不到——从 read_page 显示的正文里逐字复制一段 15~60 字的短句（链接在显示里已折叠为[链接]），不能转述或改写`,
+    };
   }
 
   getSource(sourceId: string): ResearchSource | null {

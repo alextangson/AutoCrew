@@ -311,6 +311,19 @@ describe("broker quote 校验", () => {
     expect(unknown.ok === false && unknown.reason).toContain("未登记的来源 id");
     expect(empty.ok === false && empty.reason).toContain("引文不能为空");
   });
+
+  it("校验语料与展示端消毒对齐：复制[链接]折叠版或原始 URL 版都命中（真实冒烟回归）", async () => {
+    const b = makeBroker({
+      fetchImpl: makeFetch({
+        "https://ex.test/u": { text: "详见官方报告 https://example.com/report 的第三章数据。" },
+      }).impl,
+    });
+    await b.forPerspective("证据").readPage("https://ex.test/u");
+    // 模型从 read_page 看到的是消毒后的「…官方报告 [链接] 的第三章…」——逐字复制必须命中
+    expect(b.validateQuote("p1", "详见官方报告 [链接] 的第三章数据。")).toEqual({ ok: true });
+    // 引原始 URL 也命中：两侧走同一条消毒管线
+    expect(b.validateQuote("p1", "详见官方报告 https://example.com/report 的第三章数据。")).toEqual({ ok: true });
+  });
 });
 
 describe("broker 素材候选登记", () => {
