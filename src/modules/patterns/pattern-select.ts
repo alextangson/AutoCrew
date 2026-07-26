@@ -51,6 +51,16 @@ function matchesTopic(themes: string[], topicNorm: string): boolean {
 }
 
 /**
+ * 主题相关性的**唯一口径**，供不带平台维度的调用方复用（深调研对标视角按选题挑卡）。
+ * 写稿选卡仍走 selectPatternsForScript——它还要叠平台过滤。
+ */
+export function matchesTopicThemes(themes: string[], topicText: string): boolean {
+  const topicNorm = normalize(topicText);
+  if (!topicNorm) return false;
+  return matchesTopic(themes, topicNorm);
+}
+
+/**
  * 选卡。已排墓碑、按 updatedAt 降序稳定排序（listPatternCards 的口径），截断到上限 3 张。
  */
 export async function selectPatternsForScript(
