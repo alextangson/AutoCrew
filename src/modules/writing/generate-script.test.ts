@@ -526,3 +526,56 @@ describe("startGenerateScript — 后台化（契约 P1 完全体）", () => {
     expect(events.map((e) => e.kind)).toEqual(["work", "run_failed"]);
   });
 });
+
+// ─── 知识库注入（codex 评审修复:检索下沉统一执行体——桌面 IPC/chat-router 路径生效）──
+
+/** 捕获 userMessage 的 runLoopImpl:知识块最终落在 user prompt 的调研材料槽 */
+function makePromptCapturingLoop(sink: { userMessage: string }) {
+  return async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+    sink.userMessage = opts.userMessage;
+    const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
+    await tool.execute(GOOD_PAYLOAD);
+    return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+  };
+}
+
+describe("knowledge injection — 生成管线统一检索", () => {
+  it("desktop path (startGenerateScript): matching knowledge file lands in the prompt research slot", async () => {
+    await fs.mkdir(path.join(testDir, "knowledge"), { recursive: true });
+    await fs.writeFile(
+      path.join(testDir, "knowledge", "普通人赚钱方法论.md"),
+      "普通人赚钱的第一性原理是解决具体问题,而不是追风口。",
+    );
+
+    const sink = { userMessage: "" };
+    const started = await startGenerateScript({ ...TEST_REQ, research: "用户给的资料" }, testDir, {
+      runLoopImpl: makePromptCapturingLoop(sink),
+    });
+    await started.completion;
+
+    expect(sink.userMessage).toContain("调研材料");
+    expect(sink.userMessage).toContain("用户给的资料"); // 用户材料在前,不被知识块顶掉
+    expect(sink.userMessage).toContain("知识库参考");
+    expect(sink.userMessage).toContain("普通人赚钱方法论.md"); // 来源文件名可溯
+    expect(sink.userMessage).toContain("第一性原理"); // 片段内容真进了 prompt
+  });
+
+  it("no knowledge dir → prompt unchanged (sync entry, same executor)", async () => {
+    const sink = { userMessage: "" };
+    await generateScript(TEST_REQ, testDir, { runLoopImpl: makePromptCapturingLoop(sink) });
+
+    expect(sink.userMessage).not.toContain("知识库参考");
+    expect(sink.userMessage).toContain("无调研材料"); // 空态文案与改动前一致
+  });
+
+  it("knowledge present but irrelevant to topic → no block injected", async () => {
+    await fs.mkdir(path.join(testDir, "knowledge"), { recursive: true });
+    await fs.writeFile(path.join(testDir, "knowledge", "烘焙入门.md"), "戚风蛋糕的打发要点是蛋白温度。");
+
+    const sink = { userMessage: "" };
+    await generateScript(TEST_REQ, testDir, { runLoopImpl: makePromptCapturingLoop(sink) });
+
+    expect(sink.userMessage).not.toContain("知识库参考");
+    expect(sink.userMessage).toContain("无调研材料");
+  });
+});

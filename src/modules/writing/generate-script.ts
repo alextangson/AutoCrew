@@ -23,6 +23,7 @@ import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./qualit
 import type { GateFailure } from "./quality-gate.js";
 import { humanizeZh } from "../humanizer/zh.js";
 import { scanText } from "../filter/sensitive-words.js";
+import { retrieveKnowledge } from "../knowledge/knowledge-base.js";
 import { saveContent, updateContent } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
 
@@ -170,7 +171,7 @@ async function runGeneration(
   deps?: { runLoopImpl?: typeof runLoop },
   runId?: string,
 ): Promise<GeneratedScript> {
-  const [config, pack, profile, contrastPairs, patterns] = await Promise.all([
+  const [config, pack, profile, contrastPairs, patterns, knowledge] = await Promise.all([
     loadEngineConfig(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
@@ -180,10 +181,17 @@ async function runGeneration(
     // 这里**不加 catch**:patterns 库不存在是正常空态(store 已按 ENOENT 返回 []),
     // 其余读故障必须炸出来——静默降级会让「卡怎么没生效」查无可查。
     selectPatterns(req, dataDir),
+    // 知识库检索在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖
+    // (曾只在 tools/generate.ts 检索,桌面写稿吃不到 knowledge/)。目录缺失/无命中即 null。
+    retrieveKnowledge(req.topic, dataDir),
   ]);
   const usedPatternIds = patterns.map((card) => card.id);
 
-  const { system, user } = buildScriptPrompts(pack, profile, req, { contrastPairs, patterns });
+  // 知识片段并入 research 槽(用户材料在前);无命中时 req 原样透传,prompt 一字不变
+  const promptReq = knowledge
+    ? { ...req, research: [req.research, knowledge].filter(Boolean).join("\n\n") }
+    : req;
+  const { system, user } = buildScriptPrompts(pack, profile, promptReq, { contrastPairs, patterns });
   const writer = resolveEngineRoute(config, "writer", config.strongModel);
   const captured: Captured = { payload: null, gateFailures: [] };
   const gate = resolveQualityGate(pack, req.platform);

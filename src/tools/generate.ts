@@ -8,7 +8,6 @@ import { Type } from "@sinclair/typebox";
 import { generateScript } from "../modules/writing/generate-script.js";
 import type { GeneratedScript, ScriptRequest } from "../modules/writing/generate-script.js";
 import type { ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
-import { retrieveKnowledge } from "../modules/knowledge/knowledge-base.js";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -104,15 +103,12 @@ export async function executeGenerate(
   }
 
   const dataDir = (params._dataDir as string) || undefined;
-  const knowledge = await retrieveKnowledge(topic.trim(), dataDir);
-  const researchParts = [params.research as string | undefined, knowledge].filter(
-    (s): s is string => Boolean(s),
-  );
 
   const req: ScriptRequest = {
     topic: topic.trim(),
     platform: platformRaw,
-    research: researchParts.length > 0 ? researchParts.join("\n\n") : undefined,
+    // 知识库检索已下沉到生成管线(runGeneration)统一做——这里再检索会让 MCP 路径双份注入
+    research: (params.research as string) || undefined,
   };
 
   const generateFn = deps.generateScriptImpl ?? generateScript;
