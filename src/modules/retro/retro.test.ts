@@ -111,6 +111,39 @@ describe("generateRetro", () => {
     expect(captured[0].systemPrompt).toContain("提案——需创始人确认后执行");
   });
 
+  it("生产用时:代码算好的事实进 prompt,并随产物结构化返回(不由模型算)", async () => {
+    const HOUR = 3600_000;
+    // 有全套戳的稿:开写 → 2h 稿成 → 26h 发布
+    const timed = await saveContent({ title: "带戳稿", body: "b", platform: "wechat_mp", status: "published", tags: [], hashtags: [] }, dir);
+    const base = Date.parse(timed.createdAt);
+    await updateContent(timed.id, {
+      draftReadyAt: new Date(base + 2 * HOUR).toISOString(),
+      publishedAt: new Date(base + 26 * HOUR).toISOString(),
+    }, dir);
+    // 戳上线前的旧稿:只有发布戳,分段必须跳过并被点名
+    const legacy = await saveContent({ title: "缺戳旧稿", body: "b", platform: "wechat_mp", status: "published", tags: [], hashtags: [] }, dir);
+    await updateContent(legacy.id, { publishedAt: new Date(Date.parse(legacy.createdAt) + HOUR).toISOString() }, dir);
+
+    const captured: Captured[] = [];
+    const result = await generateRetro("weekly", dir, { runLoopImpl: mockLoop(REPORT_MD, captured) });
+
+    expect(captured[0].userMessage).toContain("内容生产用时");
+    expect(captured[0].userMessage).toContain("开写→稿成:中位 2 小时(1 篇)");
+    expect(captured[0].userMessage).toContain("1 篇缺时间戳未计入");
+    expect(result.timing.published).toBe(2);
+    expect(result.timing.drafting).toMatchObject({ count: 1, medianText: "2 小时" });
+    expect(result.timing.endToEnd.count).toBe(2); // 全程两头有戳,旧稿也算得出
+    expect(result.timing.missingStamps).toBe(1);
+  });
+
+  it("本期无发布:用时段明说无数据 + 禁止编造", async () => {
+    const captured: Captured[] = [];
+    const result = await generateRetro("weekly", dir, { runLoopImpl: mockLoop(REPORT_MD, captured) });
+    expect(captured[0].userMessage).toContain("无用时可算");
+    expect(result.timing).toMatchObject({ published: 0, missingStamps: 0 });
+    expect(result.timing.endToEnd.medianText).toBeNull();
+  });
+
   it("模型不提交 → 明确报错,不落盘", async () => {
     await expect(generateRetro("weekly", dir, { runLoopImpl: mockLoop(null) })).rejects.toThrow(/submit_retro/);
     await expect(fs.access(path.join(dir, "reports"))).rejects.toThrow();

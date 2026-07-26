@@ -310,6 +310,8 @@ async function finalizeScript(
       title,
       body: humanizedText,
       status: "draft_ready",
+      // 生产计时的「稿成」节点:转正这一刻就是稿成:起点是占位稿的 createdAt(开写)
+      draftReadyAt: new Date().toISOString(),
       hashtags: cleanHashtags,
       lastError: null,
       // 归因落稿件元数据(§3.5):无卡时不写字段——没用卡的稿与改动前一字不差

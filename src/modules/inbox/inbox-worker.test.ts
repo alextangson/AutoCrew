@@ -465,3 +465,73 @@ describe("onItemChanged（SSE 视图刷新用的写账后通知）", () => {
     expect(errPhases.filter((p) => p === "on_item_changed")).toHaveLength(events.length);
   });
 });
+
+describe("settledAt（「灵感段」计时：receivedAt → 落定）", () => {
+  const AT = Date.parse("2026-07-20T08:00:00.000Z");
+  const SETTLED: Array<ProcessResult["status"]> = ["digested", "rejected", "blocked", "failed"];
+
+  for (const status of SETTLED) {
+    it(`${status} 落定时盖 settledAt（四种终态一视同仁）`, async () => {
+      const worker = makeWorker({ processItem: async () => ({ status }), now: () => AT });
+      const item = await newItem({ id: `inbox-settled-${status}` });
+      worker.enqueue(item);
+      await worker.idle();
+
+      const settled = await getItem(item.id, dataDir);
+      expect(settled?.status).toBe(status);
+      expect(settled?.settledAt).toBe(new Date(AT).toISOString());
+    });
+  }
+
+  it("claim（fetching）不是落定：处理中不许有 settledAt", async () => {
+    let midFlight: InboxItem | null = null;
+    const worker = makeWorker({
+      processItem: async (item) => {
+        midFlight = await getItem(item.id, dataDir);
+        return { status: "digested" };
+      },
+    });
+    worker.enqueue(await newItem({ id: "inbox-settled-midflight" }));
+    await worker.idle();
+
+    expect(midFlight!.status).toBe("fetching");
+    expect(midFlight!.settledAt).toBeUndefined();
+    expect((await getItem("inbox-settled-midflight", dataDir))?.settledAt).toBeTruthy();
+  });
+
+  it("重试后再落终态：settledAt 更新成最近一次，不停在首次失败", async () => {
+    let clock = AT;
+    let attempt = 0;
+    const worker = makeWorker({
+      processItem: async () => (++attempt === 1 ? { status: "failed", errorCode: "timeout" } : { status: "digested" }),
+      now: () => clock,
+    });
+    const item = await newItem({ id: "inbox-settled-retry" });
+
+    worker.enqueue(item);
+    await worker.idle();
+    const firstSettled = (await getItem(item.id, dataDir))?.settledAt;
+    expect(firstSettled).toBe(new Date(AT).toISOString());
+
+    clock = AT + 90_000;
+    worker.requestRetry(item.id);
+    await worker.idle();
+
+    const final = await getItem(item.id, dataDir);
+    expect(final?.status).toBe("digested");
+    expect(final?.settledAt).toBe(new Date(AT + 90_000).toISOString());
+  });
+
+  it("灵感段用时可算：receivedAt → settledAt 是一段真实时长", async () => {
+    const worker = makeWorker({ processItem: async () => ({ status: "digested" }), now: () => AT });
+    const item = await newItem({
+      id: "inbox-settled-span",
+      receivedAt: new Date(AT - 3 * 3600_000).toISOString(),
+    });
+    worker.enqueue(item);
+    await worker.idle();
+
+    const settled = await getItem(item.id, dataDir);
+    expect(Date.parse(settled!.settledAt!) - Date.parse(settled!.receivedAt)).toBe(3 * 3600_000);
+  });
+});

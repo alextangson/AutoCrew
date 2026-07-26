@@ -61,7 +61,15 @@ export async function retroGenerateHandler(payload: Payload): Promise<Record<str
   try {
     const result = await generateRetro(mode as RetroMode, dataDir);
     void emitEngineEvent({ role: "analyst", kind: "run_done", label: `${label}已生成——数据回流页可看全文`, runId }, dataDir).catch(() => {});
-    return { ok: true, data: { file: result.file, mode: result.mode, from: result.from, to: result.to, markdown: result.markdown } };
+    return {
+      ok: true,
+      data: {
+        file: result.file, mode: result.mode, from: result.from, to: result.to,
+        markdown: result.markdown,
+        // 生产用时随产物一起回:调用方要读数,不该去 markdown 里正则抠
+        timing: result.timing,
+      },
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     void emitEngineEvent({ role: "analyst", kind: "run_failed", label: `${label}生成失败:${msg.slice(0, 60)}`, runId }, dataDir).catch(() => {});

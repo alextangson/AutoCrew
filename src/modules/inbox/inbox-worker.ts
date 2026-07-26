@@ -101,11 +101,13 @@ function isClaimable(item: InboxItem, nowMs: number): boolean {
  * 结论 → 落盘补丁。claimedAt 一律清空（释放租约）；
  * blocked 把 attempts 回滚到 claim 前——等外部条件不算一次尝试（§3.1）。
  * stage/verdict/targetIds 只在本次有值时覆盖：`both` 的 checkpoint 要跨重试存活。
+ * settledAt 每次落定都重盖（「灵感段」计时口径 = receivedAt → 最终落定）。
  */
-function outcomePatch(result: ProcessResult, prevAttempts: number): InboxPatch {
+function outcomePatch(result: ProcessResult, prevAttempts: number, settledAt: string): InboxPatch {
   const patch: InboxPatch = {
     status: result.status,
     claimedAt: undefined,
+    settledAt,
     errorCode: result.errorCode,
     failReason: result.failReason,
     retryable: result.status === "blocked" || (result.status === "failed" && prevAttempts + 1 < MAX_ATTEMPTS),
@@ -259,7 +261,11 @@ class SerialInboxWorker implements InboxWorker {
       // 管线抛错 = 可重试故障；错误可见地写进台账，不静默降级
       result = { status: "failed", errorCode: "process_threw", failReason: errText(err) };
     }
-    const settled = await updateItem(id, outcomePatch(result, prevAttempts), dataDir);
+    const settled = await updateItem(
+      id,
+      outcomePatch(result, prevAttempts, new Date(this.now()).toISOString()),
+      dataDir,
+    );
     if (settled?.status === "failed" && settled.retryable) this.scheduleRetry(settled);
     this.notifyChanged(settled);
   }

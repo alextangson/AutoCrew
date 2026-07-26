@@ -233,6 +233,29 @@ describe("generateScript", () => {
     expect(all[0].lastError ?? null).toBeNull();
   });
 
+  // 3d. 生产计时:转正即盖「稿成」戳,起点用占位稿的 createdAt(开写),两戳成一段用时
+  it("promotion stamps draftReadyAt — createdAt(开写) → draftReadyAt(稿成) is a real span", async () => {
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl: makeRunLoop([GOOD_PAYLOAD]) });
+    const saved = await getContent(result.contentId, testDir);
+
+    expect(saved!.draftReadyAt).toBeTruthy();
+    const started = Date.parse(saved!.createdAt);
+    const ready = Date.parse(saved!.draftReadyAt!);
+    expect(Number.isNaN(ready)).toBe(false);
+    expect(ready).toBeGreaterThanOrEqual(started); // 稿成不早于开写
+  });
+
+  // 3e. 失败的占位稿没成稿 → 不许有稿成戳(否则复盘会把没写完的稿算进用时)
+  it("interrupted placeholder carries no draftReadyAt", async () => {
+    const runLoopImpl: (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> = async () => {
+      throw new Error("relay 断流");
+    };
+    await expect(generateScript(TEST_REQ, testDir, { runLoopImpl })).rejects.toThrow();
+
+    const all = await listContents(testDir);
+    expect(all[0].draftReadyAt).toBeUndefined();
+  });
+
   // 4. Violations: payload body containing a real sensitive word — draft still saved
   it("violations: sensitive word in body → violations non-empty, draft still saved", async () => {
     // "翻墙" is a real word from the political category in sensitive-words-builtin.json

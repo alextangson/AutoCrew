@@ -47,6 +47,12 @@ export interface InboxItem {
   attempts: number;
   /** fetching 的 lease 起点；崩溃后靠它回收（§3.1） */
   claimedAt?: string;
+  /**
+   * 本次处理落定的时刻（digested/rejected/blocked/failed 都盖）。
+   * 「灵感段」用时 = receivedAt → settledAt；重试后再次落定会覆盖成最新一次，
+   * 读数口径始终是「这条灵感最终花了多久落定」，不是第一次失败的时间。
+   */
+  settledAt?: string;
   receiptStatus?: ReceiptStatus;
   /**
    * 创始人「从收件箱移除」的时间戳——**纯展示层**字段，与状态机正交。
