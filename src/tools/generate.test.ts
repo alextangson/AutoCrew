@@ -169,6 +169,6 @@ describe("knowledge dedupe", () => {
 
     expect(capturedReq).not.toBeNull();
     expect((capturedReq as { research?: string }).research).toBe("用户给的资料");
-    await fs.rm(testDir, { recursive: true, force: true });
+    await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

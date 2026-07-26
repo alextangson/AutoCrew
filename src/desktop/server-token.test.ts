@@ -24,7 +24,7 @@ afterEach(async () => {
   else process.env.AUTOCREW_DATA_DIR = savedDataDir;
   if (savedToken === undefined) delete process.env.AUTOCREW_TOKEN;
   else process.env.AUTOCREW_TOKEN = savedToken;
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe("resolveServerToken", () => {

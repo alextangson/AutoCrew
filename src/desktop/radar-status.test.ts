@@ -17,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 const RSS = `<rss><channel><item><title>T1</title><link>https://a.com/1</link><pubDate>Thu, 11 Jun 2026 01:00:00 GMT</pubDate></item></channel></rss>`;

@@ -86,7 +86,7 @@ async function switchToRelay(): Promise<void> {
 }
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 async function seedContent(status = "draft_ready", platform = "wechat_mp"): Promise<string> {

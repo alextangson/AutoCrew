@@ -41,7 +41,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   for (const k of ENV_KEYS) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];

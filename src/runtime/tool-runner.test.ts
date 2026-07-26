@@ -160,7 +160,7 @@ describe("ToolRunner", () => {
     const result = await emptyRunner.execute("autocrew_content", {});
     expect(result.ok).toBe(true);
 
-    await fs.rm(emptyDir, { recursive: true, force: true });
+    await fs.rm(emptyDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("pre-publish gate blocks publishing nonexistent content (real checker)", async () => {
@@ -197,6 +197,6 @@ describe("ToolRunner", () => {
     const result = await uncalRunner.execute("autocrew_content", {});
     expect(result.ok).toBe(true);
 
-    await fs.rm(uncalDir, { recursive: true, force: true });
+    await fs.rm(uncalDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

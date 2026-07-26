@@ -24,7 +24,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe("gateTopicCandidate — happy path", () => {

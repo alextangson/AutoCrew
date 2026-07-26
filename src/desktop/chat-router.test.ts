@@ -20,7 +20,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   vi.unstubAllEnvs();
 });
 
@@ -317,7 +317,7 @@ describe("runChatTurn", () => {
     const res = await runChatTurn({ message: "你好", dataDir: emptyDir });
     expect(res.ok).toBe(false);
     expect(res.needsSetup).toBe(true);
-    await fs.rm(emptyDir, { recursive: true, force: true });
+    await fs.rm(emptyDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("runs tool calls and returns reply + cards", async () => {

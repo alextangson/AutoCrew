@@ -17,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   for (const k of ENV_KEYS) {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
@@ -149,7 +149,7 @@ describe("multi-workspace engine.json fallback", () => {
     } finally {
       if (saved === undefined) delete process.env.AUTOCREW_DATA_DIR;
       else process.env.AUTOCREW_DATA_DIR = saved;
-      await fs.rm(home, { recursive: true, force: true });
+      await fs.rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

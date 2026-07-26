@@ -14,7 +14,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe("retrieveKnowledge", () => {
@@ -29,7 +29,7 @@ describe("retrieveKnowledge", () => {
     expect(await retrieveKnowledge("量子物理", testDir)).toBeNull();
     const emptyDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-knowledge-empty-"));
     expect(await retrieveKnowledge("任何主题", emptyDir)).toBeNull();
-    await fs.rm(emptyDir, { recursive: true, force: true });
+    await fs.rm(emptyDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("caps total excerpt length", async () => {

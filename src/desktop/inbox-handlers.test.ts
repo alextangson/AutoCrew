@@ -28,7 +28,7 @@ afterEach(async () => {
   await stopInboxRuntime();
   if (savedEnv === undefined) delete process.env.AUTOCREW_DATA_DIR;
   else process.env.AUTOCREW_DATA_DIR = savedEnv;
-  await fs.rm(tmpHome, { recursive: true, force: true });
+  await fs.rm(tmpHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 /** runtime 未起时 handler 回退到 _dataDir——server 注入的当前工作区 */
@@ -230,7 +230,7 @@ describe("工作区归属与状态透传", () => {
     const reply = await inboxListHandler({ _dataDir: elsewhere });
 
     expect(items(reply).map((it) => it.id)).toEqual([item.id]);
-    await fs.rm(elsewhere, { recursive: true, force: true });
+    await fs.rm(elsewhere, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("inbox:status 透传 runtime 状态——未配置是可见状态不是错误", async () => {

@@ -209,7 +209,7 @@ describe("与 pattern-store 的接缝", () => {
       expect(saved.structure).toHaveLength(4);
       expect(saved.themes).toEqual(["AI 工具", "独立开发"]);
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -372,7 +372,7 @@ describe("引擎路径", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     for (const k of ENV_KEYS) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];

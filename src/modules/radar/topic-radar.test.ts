@@ -20,7 +20,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 const RSS = `<?xml version="1.0"?><rss><channel>
@@ -183,7 +183,7 @@ describe("refreshTopicRadarIfStale (TTL 门:自动触发不烧付费源)", () =>
 describe("getCachedTopicCandidates", () => {
   let dir: string;
   beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-radarcache-")); });
-  afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
+  afterEach(async () => { await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   async function seedCache(items: Array<{ title: string; link: string; source: string; publishedAt: string }>) {
     await fs.mkdir(dir, { recursive: true });

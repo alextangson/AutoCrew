@@ -27,7 +27,7 @@ afterEach(async () => {
   for (const w of workers) w.stop();
   workers = [];
   resetInboxWorker();
-  await fs.rm(dataDir, { recursive: true, force: true });
+  await fs.rm(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 /** 收集被安排的退避重投，由测试手动触发——不让测试等真实定时器 */

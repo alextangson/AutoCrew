@@ -16,7 +16,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (savedEnv === undefined) delete process.env.AUTOCREW_DATA_DIR;
   else process.env.AUTOCREW_DATA_DIR = savedEnv;
-  await fs.rm(tmpHome, { recursive: true, force: true });
+  await fs.rm(tmpHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe("workspace-store", () => {

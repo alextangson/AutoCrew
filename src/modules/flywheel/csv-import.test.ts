@@ -80,7 +80,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(testDir, { recursive: true, force: true });
+  await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 const DOUYIN_CSV = `﻿作品名称,发布时间,播放量,完播率,点赞量,评论量,分享量,收藏量,粉丝增量
@@ -195,7 +195,7 @@ describe("ratioMetrics（抖音作品列表导出为小数比例）", () => {
       const a = outcomes.find((o) => o.platformTitle === "口播A");
       expect(a?.metrics.completionRate).toBe(1.89); // 0.018947 → 1.89%
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -207,7 +207,7 @@ describe("ratioMetrics（抖音作品列表导出为小数比例）", () => {
       const outcomes = await listOutcomes(dir);
       expect(outcomes[0]?.metrics.completionRate).toBe(32.5); // 已是百分比（>1），不重复转换
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -221,7 +221,7 @@ describe("ratioMetrics boundary", () => {
       const o = (await listOutcomes(dir))[0];
       expect(o.metrics.completionRate).toBe(100); // 比例声明下 1 = 100%，不是 1%
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -238,7 +238,7 @@ describe("completion5s ingestion (douyin 作品列表)", () => {
       expect(o.metrics.completionRate).toBe(1.89);
       expect(o.metrics.completion5s).toBe(37.39);
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -249,7 +249,7 @@ describe("wechat_mp 公众号导出导入(datacube 48001 无权限时的兜底�
     mpDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-mpcsv-"));
   });
   afterEach(async () => {
-    await fs.rm(mpDir, { recursive: true, force: true });
+    await fs.rm(mpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("公众号内容分析导出列名 → 指标落库,标题精确匹配稿件", async () => {

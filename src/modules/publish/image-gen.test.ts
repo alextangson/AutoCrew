@@ -127,7 +127,7 @@ describe("editImageViaRelay(V5.6.1 参考图/人物一致性)", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   const EDIT_REQ = { ...REQ, size: "3:4", referenceImagePaths: [] as string[] };

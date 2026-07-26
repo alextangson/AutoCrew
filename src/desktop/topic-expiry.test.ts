@@ -21,7 +21,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (savedEnv === undefined) delete process.env.AUTOCREW_DATA_DIR;
   else process.env.AUTOCREW_DATA_DIR = savedEnv;
-  await fs.rm(tmpHome, { recursive: true, force: true });
+  await fs.rm(tmpHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 /** 直接改 topic 文件的 createdAt(saveTopic 总是写 now,测试需要旧时间戳) */

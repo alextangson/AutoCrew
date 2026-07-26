@@ -217,8 +217,8 @@ afterEach(async () => {
   pollers = [];
   await fake.close();
   if (fsSync.existsSync(ledgerFile())) fsSync.chmodSync(ledgerFile(), 0o644);
-  await fs.rm(dataDir, { recursive: true, force: true });
-  await fs.rm(rootDir, { recursive: true, force: true });
+  await fs.rm(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  await fs.rm(rootDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 // --- offset 纪律 ---

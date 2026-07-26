@@ -224,7 +224,7 @@ describe("真实 store 接线（默认依赖）", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(testDir, { recursive: true, force: true });
+    await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   function card(over: Partial<PatternCardInput> = {}): PatternCardInput {

@@ -30,8 +30,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
-  await fs.rm(mediaDir, { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  await fs.rm(mediaDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe("detectType", () => {

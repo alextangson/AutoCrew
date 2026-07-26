@@ -36,7 +36,7 @@ afterEach(async () => {
   await stopInboxRuntime();
   if (savedEnv === undefined) delete process.env.AUTOCREW_DATA_DIR;
   else process.env.AUTOCREW_DATA_DIR = savedEnv;
-  await fs.rm(tmpHome, { recursive: true, force: true });
+  await fs.rm(tmpHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 function fakePoller(deps: TelegramPollerDeps): TelegramPoller {
