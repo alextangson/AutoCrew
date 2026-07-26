@@ -93,9 +93,11 @@ export async function executePublish(
     if (!content) {
       return { ok: false, error: `Content not found: ${contentId}` };
     }
+    // 发布时刻只盖一次:重复确认(手滑双击/助手重跑)不许把首次发布时间冲成现在,
+    // 否则「稿成→发布」的用时会被越算越短。另一条路(transitionStatus → published)同守此约。
     const updated = await updateContent(contentId, {
       status: "published",
-      publishedAt: new Date().toISOString(),
+      publishedAt: content.publishedAt ?? new Date().toISOString(),
       publishUrl: (params.publish_url as string) || null,
     }, dataDir);
     if (!updated) {

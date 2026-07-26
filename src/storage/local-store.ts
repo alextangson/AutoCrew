@@ -130,7 +130,13 @@ export interface Content {
   siblings: string[];
   /** Platform-specific hashtags */
   hashtags: string[];
-  /** ISO timestamp when published */
+  /**
+   * 稿成时刻（内容生产计时的中间节点）:占位稿转正为 draft_ready 时盖一次。
+   * 「开写」不另设字段——占位稿是开写那一刻创建的,`createdAt` 就是开写时刻,
+   * 生产用时的起点一律读 createdAt。旧稿无此字段 → 计时按「缺戳」跳过,不倒推、不编造。
+   */
+  draftReadyAt?: string;
+  /** ISO timestamp when published — 计时终点;首次盖章后不被重复确认覆盖 */
   publishedAt: string | null;
   /** URL on the target platform after publishing */
   publishUrl: string | null;

@@ -14,6 +14,7 @@ import { listContents, getDataDir } from "../../storage/local-store.js";
 import { listLatestOutcomes } from "../flywheel/outcome-store.js";
 import type { OutcomeMetrics } from "../flywheel/outcome-schema.js";
 import { loadProfile, personaSummary, goalSummary } from "../profile/creator-profile.js";
+import { computeProductionTiming, timingFactsBlock, type ProductionTiming } from "./production-timing.js";
 
 export type RetroMode = "weekly" | "monthly";
 
@@ -24,6 +25,8 @@ export interface RetroResult {
   file: string;
   markdown: string;
   tokensUsed: number;
+  /** 生产用时（代码算的事实，与报告正文同源；调用方可直接展示，不必从 markdown 里抠） */
+  timing: ProductionTiming;
 }
 
 const DAY_MS = 86_400_000;
@@ -56,6 +59,7 @@ interface RetroFacts {
   fromDate: string;
   toDate: string;
   block: string;
+  timing: ProductionTiming;
 }
 
 async function gatherFacts(mode: RetroMode, dataDir?: string): Promise<RetroFacts> {
@@ -75,6 +79,8 @@ async function gatherFacts(mode: RetroMode, dataDir?: string): Promise<RetroFact
   const judged = contents.filter((c) => c.adoption?.recordedAt && c.adoption.recordedAt >= fromIso);
   const adopted = judged.filter((c) => c.adoption && ["adopted", "light_edit"].includes(c.adoption.verdict)).length;
   const windowOutcomes = outcomes.filter((o) => o.metricDate >= fromDate);
+  // 用时是算出来的,不是让模型估的——算好的事实进 prompt,模型只负责解读
+  const timing = computeProductionTiming(published);
 
   const contentLine = (c: (typeof contents)[number]) => `- 《${c.title}》(${c.platform || "未定平台"}·${c.status})`;
   const parts: string[] = [
@@ -94,8 +100,10 @@ async function gatherFacts(mode: RetroMode, dataDir?: string): Promise<RetroFact
     windowOutcomes.length
       ? windowOutcomes.slice(0, 20).map((o) => `- 《${o.platformTitle}》(${o.platform}) ${metricsLine(o.metrics)}`).join("\n")
       : "(无——提醒创作者回填数据,复盘才有据可依)",
+    "",
+    timingFactsBlock(timing),
   ];
-  return { fromDate, toDate, block: parts.join("\n") };
+  return { fromDate, toDate, block: parts.join("\n"), timing };
 }
 
 export async function generateRetro(
@@ -144,7 +152,15 @@ export async function generateRetro(
   await fs.mkdir(dir, { recursive: true });
   const file = `retro-${mode}-${facts.toDate}.md`;
   await fs.writeFile(path.join(dir, file), captured.markdown + "\n", "utf-8");
-  return { mode, from: facts.fromDate, to: facts.toDate, file, markdown: captured.markdown, tokensUsed: result.totalTokens };
+  return {
+    mode,
+    from: facts.fromDate,
+    to: facts.toDate,
+    file,
+    markdown: captured.markdown,
+    tokensUsed: result.totalTokens,
+    timing: facts.timing,
+  };
 }
 
 export async function listRetros(dataDir?: string): Promise<Array<{ file: string; mode: RetroMode; date: string }>> {

@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { executePublish } from "./publish.js";
-import { saveContent, updateContent, saveCoverReview, approveCoverVariant } from "../storage/local-store.js";
+import { saveContent, updateContent, saveCoverReview, approveCoverVariant, getContent, transitionStatus } from "../storage/local-store.js";
 import type { WechatMpDraftOptions, WechatMpDraftResult } from "../modules/publish/wechat-mp.js";
 
 let dir: string;
@@ -191,5 +191,46 @@ describe("executePublish wechat_mp_draft", () => {
     >;
     expect(missing.ok).toBe(false);
     expect(publishImpl).not.toHaveBeenCalled();
+  });
+});
+
+// 生产计时的「发布」节点:确认已发布 = 盖发布戳,重复确认不许把首次时刻冲掉
+describe("executePublish confirm_published — 发布戳", () => {
+  it("首次确认盖 publishedAt 并转 published", async () => {
+    const c = await mkContent("正文");
+    const before = Date.now();
+    const r = (await executePublish(
+      { action: "confirm_published", content_id: c.id, publish_url: "https://mp.weixin.qq.com/s/x", _dataDir: dir },
+    )) as Record<string, unknown>;
+
+    expect(r.ok).toBe(true);
+    const saved = await getContent(c.id, dir);
+    expect(saved!.status).toBe("published");
+    expect(saved!.publishUrl).toBe("https://mp.weixin.qq.com/s/x");
+    const at = Date.parse(saved!.publishedAt!);
+    expect(Number.isNaN(at)).toBe(false);
+    expect(at).toBeGreaterThanOrEqual(before);
+  });
+
+  it("重复确认幂等:publishedAt 保持首次时刻,不被第二次点击覆盖", async () => {
+    const c = await mkContent("正文");
+    await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });
+    const first = (await getContent(c.id, dir))!.publishedAt;
+
+    await new Promise((r) => setTimeout(r, 5));
+    await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });
+
+    expect((await getContent(c.id, dir))!.publishedAt).toBe(first);
+  });
+
+  it("transitionStatus 这条路同样只盖一次", async () => {
+    const c = await mkContent("正文");
+    await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });
+    const first = (await getContent(c.id, dir))!.publishedAt;
+
+    await new Promise((r) => setTimeout(r, 5));
+    await transitionStatus(c.id, "published", { force: true }, dir);
+
+    expect((await getContent(c.id, dir))!.publishedAt).toBe(first);
   });
 });
