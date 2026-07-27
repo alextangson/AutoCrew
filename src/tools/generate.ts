@@ -29,6 +29,12 @@ export const generateSchema = Type.Object({
   research: Type.Optional(
     Type.String({ description: "Optional research material to inject into the prompt." }),
   ),
+  topic_id: Type.Optional(
+    Type.String({
+      description:
+        "Optional topic id. Links the draft to its topic and injects the topic's research brief into the prompt when one exists.",
+    }),
+  ),
 });
 
 // ─── Valid platforms ──────────────────────────────────────────────────────────
@@ -109,6 +115,8 @@ export async function executeGenerate(
     platform: platformRaw,
     // 知识库检索已下沉到生成管线(runGeneration)统一做——这里再检索会让 MCP 路径双份注入
     research: (params.research as string) || undefined,
+    // 简报注入与选题血缘都挂在 topicId 上——空串视为未提供，口径同桌面 IPC(ipc.ts)
+    topicId: typeof params.topic_id === "string" && params.topic_id ? params.topic_id : undefined,
   };
 
   const generateFn = deps.generateScriptImpl ?? generateScript;

@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { generateScript, startGenerateScript } from "./generate-script.js";
+import { executeGenerate } from "../../tools/generate.js";
 import {
   BRIEF_BLOCK_END,
   BRIEF_BLOCK_START,
@@ -390,6 +391,34 @@ describe("注入点唯一 — 桌面/聊天/MCP 三路一致", () => {
     // 整个 user prompt 也一致：research 槽的装配顺序与预算判定都在同一处
     expect(background.opts!.userMessage).toBe(sync.opts!.userMessage);
     expect(background.opts!.logMeta?.usedBriefRevision).toBe(sync.opts!.logMeta?.usedBriefRevision);
+  });
+
+  it("MCP 工具入口带 topic_id → 简报块经 executeGenerate 注入 prompt", async () => {
+    const { topic } = await seedResearched();
+    const seen: { opts?: LoopOptions } = {};
+
+    const res = await executeGenerate(
+      { action: "script", topic: TOPIC_TITLE, platform: "douyin", topic_id: topic.id, _dataDir: testDir },
+      { generateScriptImpl: (req, dd) => generateScript(req, dd, { runLoopImpl: capturingLoop(seen) }) },
+    );
+
+    expect(res.ok).toBe(true);
+    const msg = seen.opts!.userMessage;
+    expect(briefBlockOf(msg)).not.toBe("");
+    expect(msg).toContain("厂商宣称提效 55%");
+  });
+
+  it("MCP 工具入口不带 topic_id → 盘上有简报也不注入（行为与改动前一致）", async () => {
+    await seedResearched();
+    const seen: { opts?: LoopOptions } = {};
+
+    const res = await executeGenerate(
+      { action: "script", topic: TOPIC_TITLE, platform: "douyin", _dataDir: testDir },
+      { generateScriptImpl: (req, dd) => generateScript(req, dd, { runLoopImpl: capturingLoop(seen) }) },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(seen.opts!.userMessage).not.toContain(BRIEF_BLOCK_START);
   });
 
   it("三条入口的调用层都不自己拼 research 槽——装配只发生在生成执行器里", async () => {
