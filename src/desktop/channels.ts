@@ -129,6 +129,17 @@ export const IPC_CHANNELS = [
   "research:brief_get",
   "research:list_assets",
   "research:import_asset",
+  // 视频生产线 V0a（设计 spec §8.2）：全部投递即返回，进度走 SSE `video:updated` + 重拉 status
+  "video:build_start",
+  "video:status",
+  "video:transcript_get",
+  "video:cut_confirm",
+  "video:review_confirm",
+  "video:retry",
+  "video:asr_warmup",
+  "video:asr_status",
+  "video:settings_get",
+  "video:settings_set",
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];

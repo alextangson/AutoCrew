@@ -8,7 +8,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
 
-export type EngineEventRole = "scout" | "writer" | "review" | "analyst" | "publisher" | "system";
+/** editor = 剪辑师（视频生产线入职，视频 spec §8.4）；与 chat-router 的席位名同一套 */
+export type EngineEventRole = "scout" | "writer" | "review" | "analyst" | "publisher" | "editor" | "system";
 
 export interface EngineEvent {
   ts: string;

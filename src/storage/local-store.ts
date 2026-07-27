@@ -142,6 +142,13 @@ export interface Content {
    * 生产用时的起点一律读 createdAt。旧稿无此字段 → 计时按「缺戳」跳过,不倒推、不编造。
    */
   draftReadyAt?: string;
+  /**
+   * 成片就绪时刻（视频生产线的终点戳，设计 spec §8.4）：审片确认通过时盖一次。
+   * **只盖一次**（publishedAt 同款纪律）——重剪重审不覆盖首次达成的时刻。
+   * 视频线的其余状态一律不进 Content（§2.1：updateContent 非原子，并发写会互相覆盖），
+   * 全量状态在 `contents/<id>/video/state.json`。
+   */
+  videoReadyAt?: string;
   /** ISO timestamp when published — 计时终点;首次盖章后不被重复确认覆盖 */
   publishedAt: string | null;
   /** URL on the target platform after publishing */

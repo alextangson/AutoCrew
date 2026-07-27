@@ -163,6 +163,33 @@ describe("buildChatTools", () => {
     expect(JSON.parse(out as string)).toMatchObject({ ok: true, contentId: "c2" });
   });
 
+  it("build_video 只投递:回后台任务口吻的状态摘要,不推卡片", async () => {
+    const sink: ChatCard[] = [];
+    const buildVideo = vi.fn(async () => ({ ok: true, data: { state: { phase: "ingest", state: "queued" } } }));
+    const tools = buildChatTools(sink, testDir, { buildVideo });
+
+    const tool = tools.find((t) => t.name === "build_video");
+    expect(tool!.description).toContain("后台任务");
+    const out = await tool!.execute({ content_id: "content-1", _dataDir: "/tmp/evil" });
+
+    // 模型给的 _dataDir 被剥掉,注入的是可信 dataDir(与其他工具同款纪律)
+    expect(buildVideo).toHaveBeenCalledWith({ content_id: "content-1", _dataDir: testDir });
+    const parsed = JSON.parse(out as string);
+    expect(parsed).toMatchObject({ ok: true, contentId: "content-1", phase: "ingest", state: "queued" });
+    expect(String(parsed.note)).toContain("后台");
+    expect(sink).toHaveLength(0);
+  });
+
+  it("build_video 被拒(未过审/非视频平台)时照实回错,不假装已剪", async () => {
+    const sink: ChatCard[] = [];
+    const buildVideo = vi.fn(async () => ({ ok: false, error: "成片只服务视频平台，这篇是 wechat_mp" }));
+    const tools = buildChatTools(sink, testDir, { buildVideo });
+
+    const out = await tools.find((t) => t.name === "build_video")!.execute({ content_id: "content-1" });
+    expect(JSON.parse(out as string)).toMatchObject({ ok: false, error: "成片只服务视频平台，这篇是 wechat_mp" });
+    expect(sink).toHaveLength(0);
+  });
+
   it("tool failure returns ok:false JSON to the model without pushing a card", async () => {
     const sink: ChatCard[] = [];
     const startGenerate = vi.fn(async () => { throw new Error("占位稿创建失败：磁盘只读"); });

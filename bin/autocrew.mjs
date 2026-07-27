@@ -337,6 +337,15 @@ switch (command) {
       try { fs.copyFileSync(wechatConfigExample, wechatConfig); wechatConfigCreated = true; } catch {}
     }
     const uvOk = !spawnSync("uv", ["--version"], { stdio: "ignore" }).error;
+    // 视频生产线（视频 spec §6.1/§4.3）：ffmpeg/ffprobe 是外部二进制、ASR 首跑要下 ~1GB 模型。
+    // 三项都是**纯检查**——doctor 不装东西、不预热（预热是分钟级下载，要用户自己按下）。
+    // uv 复用上面那一项，不重复探测：ASR sidecar 与公众号发布共用同一个运行器。
+    const binOk = (cmd) => !spawnSync(cmd, ["-version"], { stdio: "ignore" }).error;
+    let asrStatus = "absent";
+    try {
+      asrStatus = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "video", "asr-status.json"), "utf-8")).status || "absent";
+    } catch {}
+    const asrSidecarOk = fs.existsSync(path.join(ROOT, "sidecars", "asr", "asr.py"));
     // 生图就绪:配了中转(原生 HTTP 生图,自包含)→ 封面/正文图不依赖 ~/.openclaw 外部脚本。
     let imageRelay = false;
     let apiProxySet = false;
@@ -358,6 +367,10 @@ switch (command) {
       wechatPublishScript: fs.existsSync(wechatScript),
       wechatConfig: fs.existsSync(wechatConfig),
       imageGenRelay: imageRelay,
+      ffmpeg: binOk("ffmpeg"),
+      ffprobe: binOk("ffprobe"),
+      asrSidecar: asrSidecarOk,
+      asrModelReady: asrStatus === "ready",
     };
     // 灵感收件箱三项（spec §4）：心跳只存在于 server 进程内存，经 /api/invoke 读；
     // 绝不带外调 Telegram getUpdates（会抢正式消费者的游标 → 真丢消息）。
@@ -373,7 +386,12 @@ switch (command) {
       + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
       + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh")
       + (imageRelay ? "" : "\n  → 生图(封面/正文图)建议配中转：设置→发布 填生图 Key/端点(OpenAI 兼容)，原生生图不依赖外部脚本")
-      + (apiProxySet ? "\n  公众号 API 代理已配（固定出口 IP，动态 IP 变动免疫 40164）" : ""),
+      + (apiProxySet ? "\n  公众号 API 代理已配（固定出口 IP，动态 IP 变动免疫 40164）" : "")
+      + (checks.ffmpeg && checks.ffprobe ? "" : "\n  → 成片渲染需要 ffmpeg/ffprobe：brew install ffmpeg")
+      + (checks.asrSidecar ? "" : "\n  → 缺 ASR sidecar(sidecars/asr/asr.py)：仓库不完整，重新拉取")
+      + (checks.asrModelReady
+        ? ""
+        : `\n  → ASR 模型未就绪(当前 ${asrStatus})：设置页点「预热 ASR 模型」或调 video:asr_warmup，首跑约 1GB 下载${uvOk ? "" : "；它也要 uv"}`),
     );
     if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
       || !checks.uv || !checks.wechatPublishScript || inbox.failed) process.exitCode = 1;

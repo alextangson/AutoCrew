@@ -140,6 +140,19 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "research:list_assets": ["topic_id"],
   // 可选键 index（非负整数）= 落到第几个插图位；不给则落第一个空位（§7 放置即导入）
   "research:import_asset": ["topic_id", "asset_id", "content_id"],
+  // 视频生产线（设计 spec §8.2）。乐观锁的 base revision 是必填——少一个就等于
+  // 允许「不带版本就确认」，两个窗口并发确认时后到者会默默覆盖（codex #11）。
+  // keeps/flags/overlays 的深校验（分句是否存在、槽位是否越界）在 handler 与 service。
+  "video:build_start": ["content_id"],
+  "video:status": ["content_id"],
+  "video:transcript_get": ["content_id"],
+  "video:cut_confirm": ["content_id", "keeps", "base_transcript_revision", "base_cut_revision"],
+  "video:review_confirm": ["content_id", "rendered_revision", "verdict"],
+  "video:retry": ["content_id"],
+  "video:asr_warmup": [],
+  "video:asr_status": [],
+  "video:settings_get": [],
+  "video:settings_set": [],
 } as const;
 
 /**

@@ -28,6 +28,7 @@ import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../s
 import { saveTopic, listSiblings, type Topic } from "../storage/local-store.js";
 import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
 import { startGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
+import { videoBuildStartHandler } from "./video-handlers.js";
 import { reviseDraft, type ReviseDraftResult } from "../modules/writing/draft-revision.js";
 import { reviseFocus, type ReviseFocus, type ReviseFocusResult } from "../modules/writing/revise-focus.js";
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
@@ -53,7 +54,8 @@ export interface ChatProgressEvent {
   phase: "start" | "end";
   /** 原始工具名（来自模型 tool_call，模型可控字符串）。渲染层不得直接展示——展示一律用 label。 */
   tool: string;
-  role: "scout" | "writer" | "review" | "analyst" | "publisher" | null;
+  /** editor = 剪辑师（视频生产线入职，视频 spec §8.4），与 EngineEventRole 同一套席位名 */
+  role: "scout" | "writer" | "review" | "analyst" | "publisher" | "editor" | null;
   label: string;
   /** 任务归属（chatTurnHandler 注入，同 turn 事件共享）——前端任务带按此聚合 */
   runId?: string;
@@ -84,6 +86,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   audience_review: { role: "review", label: "审核员代入受众画像审稿" },
   scout_inspiration: { role: "scout", label: "侦查员出去搜灵感了" },
   prepare_video_kit: { role: "publisher", label: "发布员在备发布件" },
+  build_video: { role: "editor", label: "剪辑师在起成片构建" },
   revise_draft: { role: "writer", label: "编剧正在按你的意见修改稿件" },
   revise_focus: { role: "writer", label: "编剧正在改这段" },
   deep_research: { role: "scout", label: "调研员在派四视角深调研" },
@@ -114,6 +117,7 @@ export interface ChatToolDeps {
   reviseDraftImpl?: (contentId: string, instruction: string, dataDir?: string) => Promise<ReviseDraftResult>;
   reviseFocusImpl?: (contentId: string, instruction: string, focus: ReviseFocus, dataDir?: string) => Promise<ReviseFocusResult>;
   deepResearch?: (topicId: string, dataDir?: string) => Promise<TriggerResult>;
+  buildVideo?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 interface ChatEffects {
@@ -142,7 +146,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 16. 用户粘贴一大段自己写过的文案时，先问一句用途：是「学我的风格」（→ absorb_style）还是「里面有想法要入灵感库」（→ 提炼观点后 save_topic，reason 注明来自用户旧文）；两者都要就都做。不要不问就默认其一。
 17. 视频稿（抖音/视频号/小红书/B站）要发布时，先调用 prepare_video_kit 备发布件：平台发布文案+分镜表+竖版封面。口播稿是「读的」，发布件才是「发的」——不要把口播稿当发布文案。备好后引导用户看卡片，粘贴发布走 publish_clipboard。
 18. 用户说「/goal …」「我的目标是…」「这个季度要…」时调用 set_goal 记录（目标会注入选题、写作、复盘全链，旧目标自动留档）；问目标或要对照进展时用 get_goal。有目标后，选题推荐与建议围绕目标排优先级，明显偏航时提醒一句。
-19. 用户说「深入调研/深调研某个选题」「多找点材料再写」时调用 deep_research，参数是灵感库选题编号（还没入库先 save_topic）。它是**异步任务，投递即返回**：回执任务状态（新任务已派下去／已经在跑，进度在选题卡上看）就结束本轮，不要等它跑完，更不要凭空复述简报内容；简报出来后写这条选题会自动带上。`;
+19. 用户说「深入调研/深调研某个选题」「多找点材料再写」时调用 deep_research，参数是灵感库选题编号（还没入库先 save_topic）。它是**异步任务，投递即返回**：回执任务状态（新任务已派下去／已经在跑，进度在选题卡上看）就结束本轮，不要等它跑完，更不要凭空复述简报内容；简报出来后写这条选题会自动带上。
+20. 用户说「剪成片」「把这篇做成视频」「开始剪」时调用 build_video 投递给剪辑师（稿件须已过审、且是视频平台，A-roll 要先拍好并挂进稿件素材）。这是后台任务：投完就告诉用户去成片卡看进度，不要在对话里等、更不要宣称已剪好。转写完成后需要用户亲手在成片卡里勾选分句、审片确认——这两步是人的活，你只负责投递和答状态。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -192,6 +197,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     reviseDraftImpl: deps?.reviseDraftImpl ?? reviseDraft,
     reviseFocusImpl: deps?.reviseFocusImpl ?? reviseFocus,
     deepResearch: deps?.deepResearch ?? triggerDeepResearch,
+    buildVideo: deps?.buildVideo ?? videoBuildStartHandler,
   };
   const dirParams = dataDir ? { _dataDir: dataDir } : {};
 
@@ -776,6 +782,34 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
             cover: r.kit.coverPath ?? null,
             coverError: r.coverError ?? null,
             note: "发布件卡已展示。提醒用户:口播稿照着读,发布时用卡里的文案;粘贴发布走 publish_clipboard(会自动取发布件文案)。",
+          });
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : err);
+        }
+      },
+    },
+    {
+      name: "build_video",
+      description:
+        "把一篇已过审的视频稿投给剪辑师做成片(A-roll 转写→选段→组装→渲染)。**成片构建是后台任务**:本工具只投递,立刻返回当前状态——进度用 video:status 查(成片卡会自动刷新),不要在对话里等结果、更不要宣称已剪好。转写完成后需要用户亲手勾选分句、渲染完成后需要用户审片确认。",
+      parameters: {
+        type: "object",
+        properties: { content_id: { type: "string", description: "稿件 id(须已过审、视频平台)" } },
+        required: ["content_id"],
+      },
+      execute: async (args) => {
+        const contentId = String(sanitize(args).content_id ?? "").trim();
+        if (!contentId) return fail("build_video 需要 content_id");
+        try {
+          const res = await d.buildVideo({ content_id: contentId, ...dirParams });
+          if (!res.ok) return fail(res.error);
+          const state = (res.data as { state?: { phase?: string; state?: string } } | null)?.state;
+          return JSON.stringify({
+            ok: true,
+            contentId,
+            phase: state?.phase ?? "ingest",
+            state: state?.state ?? "queued",
+            note: "已投给剪辑师,后台在跑(分钟级)。告诉用户去稿件的成片卡看进度;转写完成后要他亲手勾选分句,渲染完成后要他审片确认。",
           });
         } catch (err) {
           return fail(err instanceof Error ? err.message : err);

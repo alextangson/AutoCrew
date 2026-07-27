@@ -96,6 +96,65 @@ describe("computeProductionTiming", () => {
   });
 });
 
+describe("第四段:稿成→成片(视频线)", () => {
+  /** 开写 0h → 稿成 draftH → 成片 videoH → 发布 pubH */
+  function videoed(id: string, draftH: number, videoH: number, pubH: number): Content {
+    return content({
+      id,
+      createdAt: iso(0),
+      draftReadyAt: iso(draftH * HOUR),
+      videoReadyAt: iso(videoH * HOUR),
+      publishedAt: iso(pubH * HOUR),
+    });
+  }
+
+  it("只统计有成片戳的稿件，中位数取自 draftReadyAt→videoReadyAt", () => {
+    const t = computeProductionTiming([videoed("content-a", 2, 6, 8), videoed("content-b", 1, 9, 12), timed("content-c", 1, 2)]);
+    expect(t.toVideo).toMatchObject({ count: 2, medianMs: 6 * HOUR }); // 4h 与 8h 的均值
+    expect(t.missingVideoStamps).toBe(0); // 没给视频活动名单 = 不追究缺戳
+  });
+
+  it("没剪过片的稿件既不进分子也不进缺戳——既有三段一个数都不许变", () => {
+    const plain = [timed("content-a", 2, 4), timed("content-b", 4, 8)];
+    const before = computeProductionTiming(plain);
+    const after = computeProductionTiming(plain, []);
+
+    expect(after.drafting).toEqual(before.drafting);
+    expect(after.toPublish).toEqual(before.toPublish);
+    expect(after.endToEnd).toEqual(before.endToEnd);
+    expect(after.missingStamps).toBe(0);
+    expect(after.toVideo).toEqual({ count: 0, medianMs: null, medianText: null });
+    expect(after.missingVideoStamps).toBe(0);
+  });
+
+  it("剪过片但没走到审片通过：只计 missingVideoStamps，不污染 missingStamps", () => {
+    const building = timed("content-building", 2, 6); // 有视频活动、无 videoReadyAt
+    const t = computeProductionTiming([videoed("content-done", 1, 3, 5), building], ["content-building", "content-done"]);
+
+    expect(t.toVideo).toMatchObject({ count: 1, medianMs: 2 * HOUR });
+    expect(t.missingVideoStamps).toBe(1);
+    expect(t.missingStamps).toBe(0); // 三段的戳齐全,与视频线无关
+  });
+
+  it("缺稿成戳导致成片段算不出：同样只进视频缺戳计数", () => {
+    const noDraft = content({ id: "content-x", createdAt: iso(0), videoReadyAt: iso(5 * HOUR), publishedAt: iso(9 * HOUR) });
+    const t = computeProductionTiming([noDraft], ["content-x"]);
+    expect(t.toVideo.count).toBe(0);
+    expect(t.missingVideoStamps).toBe(1);
+    expect(t.missingStamps).toBe(1); // 这一篇本来就缺 draftReadyAt,既有口径照旧计
+  });
+
+  it("时序倒挂(成片戳早于稿成)作废，不产出负用时", () => {
+    const inverted = content({
+      id: "content-y", createdAt: iso(0), draftReadyAt: iso(10 * HOUR),
+      videoReadyAt: iso(2 * HOUR), publishedAt: iso(20 * HOUR),
+    });
+    const t = computeProductionTiming([inverted], ["content-y"]);
+    expect(t.toVideo.count).toBe(0);
+    expect(t.missingVideoStamps).toBe(1);
+  });
+});
+
 describe("timingFactsBlock", () => {
   it("有数据：三段都出人话读数，并显式点名未计入的篇数", () => {
     const legacy = content({ id: "content-old", createdAt: iso(0), publishedAt: iso(DAY) });
@@ -112,6 +171,24 @@ describe("timingFactsBlock", () => {
     expect(block).toContain("无用时可算");
     expect(block).toContain("不要编造");
     expect(block).not.toContain("中位");
+  });
+
+  it("没剪过片：不多出「稿成→成片」这一行(不给没做视频的人添噪音)", () => {
+    const block = timingFactsBlock(computeProductionTiming([timed("content-a", 2, 4)]));
+    expect(block).not.toContain("稿成→成片");
+    expect(block).not.toContain("成片戳");
+  });
+
+  it("剪过片：成片用时与缺戳篇数各出一行", () => {
+    const done = content({
+      id: "content-v", createdAt: iso(0), draftReadyAt: iso(HOUR),
+      videoReadyAt: iso(4 * HOUR), publishedAt: iso(6 * HOUR),
+    });
+    const building = timed("content-w", 1, 3);
+    const block = timingFactsBlock(computeProductionTiming([done, building], ["content-v", "content-w"]));
+
+    expect(block).toContain("稿成→成片:中位 3 小时(1 篇)");
+    expect(block).toContain("1 篇剪过片但没有成片戳");
   });
 
   it("全部缺戳：分段写「无数据」而不是 0 或 null", () => {

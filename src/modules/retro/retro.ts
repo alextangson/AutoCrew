@@ -45,6 +45,26 @@ function metricsLine(m: OutcomeMetrics): string {
   return METRIC_LABELS.flatMap(([k, label]) => (typeof m[k] === "number" ? [`${label} ${m[k]}`] : [])).join(" · ");
 }
 
+/**
+ * 有视频构建活动的稿件 = 落过 `video/state.json` 的（视频状态按设计不进 Content，
+ * 见视频 spec §2.1，只能靠目录判定）。用来把「剪过片却没成片戳」与「压根没剪过」
+ * 分开——后者不该出现在任何缺戳计数里。
+ */
+async function videoActiveIds(ids: string[], dataDir?: string): Promise<string[]> {
+  const base = getDataDir(dataDir);
+  const hits = await Promise.all(
+    ids.map(async (id) => {
+      try {
+        await fs.access(path.join(base, "contents", id, "video", "state.json"));
+        return id;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return hits.filter((id): id is string => id !== null);
+}
+
 const WEEKLY_PROMPT =
   "你是编辑部数据分析师,为创作者写每周复盘。只基于给到的事实数据写,不编造;数据少就直说数据少,并给出补数据的具体动作。" +
   "结构(markdown):\n# 周复盘 <日期区间>\n## 本周产出\n## 数据表现\n## 对照目标\n(目标进展一句话;没设目标就提醒设,并给一个候选目标)\n## 下周建议\n(≤3 条,每条具体到能直接执行,围绕目标排优先级)\n" +
@@ -80,7 +100,7 @@ async function gatherFacts(mode: RetroMode, dataDir?: string): Promise<RetroFact
   const adopted = judged.filter((c) => c.adoption && ["adopted", "light_edit"].includes(c.adoption.verdict)).length;
   const windowOutcomes = outcomes.filter((o) => o.metricDate >= fromDate);
   // 用时是算出来的,不是让模型估的——算好的事实进 prompt,模型只负责解读
-  const timing = computeProductionTiming(published);
+  const timing = computeProductionTiming(published, await videoActiveIds(published.map((c) => c.id), dataDir));
 
   const contentLine = (c: (typeof contents)[number]) => `- 《${c.title}》(${c.platform || "未定平台"}·${c.status})`;
   const parts: string[] = [

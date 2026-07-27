@@ -6,6 +6,12 @@
  *   稿成 → 发布    draftReadyAt → publishedAt
  *   全程          createdAt   → publishedAt
  *
+ * 第四段（视频线，设计 spec §8.4 / codex P2-29）：
+ *   稿成 → 成片    draftReadyAt → videoReadyAt
+ * 它**只对启用了视频构建的稿件成立**，因此缺戳计数独立成 `missingVideoStamps`：
+ * 没剪过片的稿件既不进分子也不进分母，绝不污染既有三段的 `missingStamps`
+ * （否则每写一篇公众号文章都会被记成「缺一个成片戳」）。
+ *
  * 缺戳的旧稿（转正戳上线前写的稿）直接跳过并计数，宁可少算不可编造：
  * 报告里出现的每一个用时，都来自两个真实落盘的时间戳。
  */
@@ -30,6 +36,10 @@ export interface ProductionTiming {
   endToEnd: DurationStat;
   /** 缺时间戳（或时序倒挂）导致未能算全三段的篇数 */
   missingStamps: number;
+  /** 稿成 → 成片（视频线；仅统计有 videoReadyAt 的稿件） */
+  toVideo: DurationStat;
+  /** 有视频构建活动却算不出成片用时的篇数——独立计数，不进 missingStamps */
+  missingVideoStamps: number;
 }
 
 const MINUTE = 60_000;
@@ -75,12 +85,22 @@ function stat(values: number[]): DurationStat {
 /**
  * 统计一批「窗口内已发布」的稿件。调用方负责窗口过滤（publishedAt 落在本期）；
  * 本函数只做算术，不读盘、不猜时间。
+ *
+ * `videoActiveIds` = 本期有视频构建活动的稿件 id（调用方从 `video/state.json` 判定——
+ * 视频状态按设计不进 Content，所以这份信息只能由外面给）。**不给 = 第四段只统计
+ * 真有成片戳的稿件、缺戳计数恒为 0**，既有三段的口径丝毫不变。
  */
-export function computeProductionTiming(published: Content[]): ProductionTiming {
+export function computeProductionTiming(
+  published: Content[],
+  videoActiveIds?: Iterable<string>,
+): ProductionTiming {
   const drafting: number[] = [];
   const toPublish: number[] = [];
   const endToEnd: number[] = [];
+  const toVideo: number[] = [];
+  const videoActive = new Set(videoActiveIds ?? []);
   let missingStamps = 0;
+  let missingVideoStamps = 0;
 
   for (const c of published) {
     const d = span(c.createdAt, c.draftReadyAt);
@@ -90,6 +110,11 @@ export function computeProductionTiming(published: Content[]): ProductionTiming 
     if (p !== null) toPublish.push(p);
     if (e !== null) endToEnd.push(e);
     if (d === null || p === null || e === null) missingStamps += 1;
+
+    // 第四段独立结账：算得出就进分子；只有「剪过片却算不出」才计缺戳
+    const v = span(c.draftReadyAt, c.videoReadyAt);
+    if (v !== null) toVideo.push(v);
+    else if (videoActive.has(c.id)) missingVideoStamps += 1;
   }
 
   return {
@@ -98,6 +123,8 @@ export function computeProductionTiming(published: Content[]): ProductionTiming 
     toPublish: stat(toPublish),
     endToEnd: stat(endToEnd),
     missingStamps,
+    toVideo: stat(toVideo),
+    missingVideoStamps,
   };
 }
 
@@ -120,6 +147,13 @@ export function timingFactsBlock(t: ProductionTiming): string {
   }
   if (t.missingStamps > 0) {
     lines.push(`- ${t.missingStamps} 篇缺时间戳未计入(戳上线前的旧稿,不做推算)`);
+  }
+  // 视频段只在真有视频线活动时出现:没剪过片的创作者不该在复盘里看到一行「无数据」
+  if (t.toVideo.count > 0) {
+    lines.push(`- 稿成→成片:中位 ${t.toVideo.medianText}(${t.toVideo.count} 篇)`);
+  }
+  if (t.missingVideoStamps > 0) {
+    lines.push(`- ${t.missingVideoStamps} 篇剪过片但没有成片戳(未走到审片通过),不计入成片用时`);
   }
   lines.push("以上用时是算好的事实,直接引用,不要自己重算或推测。");
   return lines.join("\n");

@@ -26,6 +26,9 @@ import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { startResearchRuntime } from "../src/desktop/research-runtime.js";
 import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
+import { setVideoService } from "../src/desktop/video-handlers.js";
+import { createVideoMediaHandler, VIDEO_MEDIA_PREFIX } from "../src/desktop/video-media.js";
+import { createVideoService, type VideoService } from "../src/modules/video/service.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadarIfStale } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
@@ -133,6 +136,20 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     req.on("error", reject);
   });
 }
+
+// ── 视频线接线（视频 spec §8）────────────────────────────────────────────────
+/** 当前工作区 dataDir;注册表异常一律回退默认工作区(与 /api/asset、/mcp 同款) */
+async function activeDataDir(): Promise<string> {
+  try {
+    return (await activeWorkspaceDataDir()) ?? getDataDir();
+  } catch {
+    return getDataDir();
+  }
+}
+const videoMedia = createVideoMediaHandler({
+  resolveDataDir: activeDataDir,
+  authorize: (req) => authorize(req) !== null,
+});
 
 const server = http.createServer(async (req, res) => {
   setSecurityHeaders(res);
@@ -268,6 +285,9 @@ const server = http.createServer(async (req, res) => {
     createReadStream(served.file).pipe(res);
     return;
   }
+  // 成片播放端点(视频 spec §6.4):审片视图的 <video> 播不了 file://,没有它整条视频线
+  // 到 review 就断。鉴权/路径白名单/Range 全在 video-media.ts(可测),这里只接线。
+  if (p.startsWith(VIDEO_MEDIA_PREFIX) && (await videoMedia(req, res, p))) return;
 
   // SSE:引擎事件 + chat 进度实时流
   if (p === "/api/events") {
@@ -339,7 +359,15 @@ const server = http.createServer(async (req, res) => {
 server.requestTimeout = 0;
 server.timeout = 0;
 let stopCampaignHost: (() => void) | undefined;
-server.on("close", () => stopCampaignHost?.());
+let videoService: VideoService | null = null;
+server.on("close", () => {
+  stopCampaignHost?.();
+  // 视频 runner 会拿着 ffmpeg/remotion 子进程,停机要给它机会收尾(job lease 也在这层解)
+  const running = videoService;
+  videoService = null;
+  setVideoService(null);
+  void running?.shutdown().catch((err) => console.error("[video] 停机失败:", err instanceof Error ? err.message : err));
+});
 
 // 先清孤儿再开门(SESSION-8 §3.1):上次崩溃遗留的「生成中」占位稿在接收任何
 // 新请求前标记为中断——listen 前执行,与本进程的新生成零竞态;失败不阻断启动。
@@ -374,6 +402,20 @@ void startInboxRuntime({ onInboxEvent: (e) => broadcast("inbox", e) })
 void startResearchRuntime({ onResearchEvent: (e) => broadcast("research", e) })
   .then((s) => console.log(`  [research] 深调研 runner:${s.state}${s.reclaimed ? ` —— 回收 ${s.reclaimed} 条中断任务` : ""}`))
   .catch((err) => console.error("[research] 深调研启动失败:", err instanceof Error ? err.message : err));
+// 视频生产线(spec §8.3 SSE 四件套之一):状态每次落盘 → broadcast `video:updated`,
+// 订阅方收到后重拉 video:status。启动回收(心跳过期的 running 重排)在 service 内部,
+// 这里只管建与停。服务跟随**启动时**的工作区——切工作区后要重启(handler 会照实拒绝)。
+try {
+  const videoDataDir = await activeDataDir();
+  videoService = createVideoService({
+    dataDir: videoDataDir,
+    onEvent: (e) => broadcast(e.type, { contentId: e.contentId }),
+    onError: (msg) => console.error(`[video] ${msg}`),
+  });
+  setVideoService(videoService, videoDataDir);
+} catch (err) {
+  console.error("[video] 视频服务启动失败:", err instanceof Error ? err.message : err);
+}
 
 server.listen(PORT, HOST, () => {
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");

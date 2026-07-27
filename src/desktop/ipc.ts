@@ -121,6 +121,17 @@ import {
   inboxStatusHandler,
 } from "./inbox-handlers.js";
 import { getInboxSettings, setInboxSettings } from "./settings-inbox.js";
+import { getVideoSettings, setVideoSettings } from "./settings-video.js";
+import {
+  videoAsrStatusHandler,
+  videoAsrWarmupHandler,
+  videoBuildStartHandler,
+  videoCutConfirmHandler,
+  videoRetryHandler,
+  videoReviewConfirmHandler,
+  videoStatusHandler,
+  videoTranscriptGetHandler,
+} from "./video-handlers.js";
 import { patternsListHandler, patternsUpdateHandler, patternsDeleteHandler } from "./pattern-handlers.js";
 import {
   researchDeepDiveHandler,
@@ -1030,6 +1041,16 @@ export function buildIpcHandlers(
     "research:brief_get": researchBriefGetHandler,
     "research:list_assets": researchListAssetsHandler,
     "research:import_asset": researchImportAssetHandler,
+    "video:build_start": videoBuildStartHandler,
+    "video:status": videoStatusHandler,
+    "video:transcript_get": videoTranscriptGetHandler,
+    "video:cut_confirm": videoCutConfirmHandler,
+    "video:review_confirm": videoReviewConfirmHandler,
+    "video:retry": videoRetryHandler,
+    "video:asr_warmup": videoAsrWarmupHandler,
+    "video:asr_status": videoAsrStatusHandler,
+    "video:settings_get": getVideoSettings,
+    "video:settings_set": setVideoSettings,
   };
 
   // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。
