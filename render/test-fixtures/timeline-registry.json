@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "graphics": { "code-block": { "props": { "code": "string", "lang": "string" } } },
+  "captions": ["word-highlight"],
+  "titles": ["hook-title"],
+  "transitions": ["cut", "fade"]
+}

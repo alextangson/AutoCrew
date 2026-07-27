@@ -1,0 +1,4 @@
+node_modules/
+out/
+public/fonts/*
+!public/fonts/.gitkeep
