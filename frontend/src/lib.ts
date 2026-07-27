@@ -2,6 +2,7 @@
  * 共享常量与领域类型(B 期)。平台目录/看板列/状态文案与 vanilla(dom.js/board.js)
  * 同源同值——D 期清场前两边手动同步,清场后这里是唯一事实源。
  */
+import { invoke } from "./transport";
 
 export const PLATFORM_CATALOG = [
   { id: "wechat_mp", label: "公众号", group: "cn", gen: true },
@@ -156,3 +157,275 @@ export const COVER_RATIO_LABEL: Record<string, string> = {
   "16:9": "16:9 横屏",
   "4:3": "4:3 横屏",
 };
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 视频生产线 V0a(设计 spec 2026-07-27 §2 数据模型 / §8.2 IPC / §8.3 SSE)
+ *
+ * frontend 是独立 workspace,**不 import 主仓库源码**——下面这批类型是照
+ * src/modules/video/types.ts 手写的对应件(Content/Topic 同款约定),改一边同步另一边。
+ * 只抄界面真正读的字段:timeline / render manifest / asset 清单前端碰不到,不抄。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export type VideoPhase = "ingest" | "transcribe" | "cut" | "assemble" | "render" | "review" | "done";
+
+export type VideoRunState = "idle" | "queued" | "running" | "awaiting_human" | "blocked" | "failed" | "done";
+
+export type VideoBlockedReason =
+  | "asr_not_ready"
+  | "ffmpeg_missing"
+  | "key_missing"
+  | "aroll_drifted"
+  | "budget_exceeded";
+
+export interface VideoRevisions {
+  transcript?: number;
+  cut?: number;
+  timeline?: number;
+  rendered?: number;
+}
+
+export interface VideoState {
+  schemaVersion: 1;
+  entryType: "aroll";
+  phase: VideoPhase;
+  state: VideoRunState;
+  blockedReason?: VideoBlockedReason;
+  failedPhase?: VideoPhase;
+  errorCode?: string;
+  failReason?: string;
+  revisions: VideoRevisions;
+  /** 输入漂移**只标注不自动重跑**(§2.2)——所以要在卡上说人话,让人决定重不重开 */
+  stale?: { body?: boolean; aroll?: boolean };
+  updatedAt: string;
+}
+
+/** jobs 只用来显示「第几次尝试/错在哪」,字段抄够就行 */
+export interface VideoJob {
+  jobId: string;
+  phase: "transcribe" | "assemble" | "render";
+  status: "queued" | "running" | "succeeded" | "failed";
+  attempts: number;
+  failReason?: string;
+}
+
+export interface VideoStatusData {
+  state: VideoState;
+  jobs: VideoJob[];
+}
+
+export interface TranscriptSegment {
+  id: string;
+  text: string;
+  /** A-roll 源时间域(毫秒) */
+  startMs: number;
+  endMs: number;
+}
+
+export interface VideoTranscript {
+  schemaVersion: 1;
+  source: "funasr";
+  segments: TranscriptSegment[];
+  /** 与口播稿的对齐度;< 0.5 说明念得跟稿子差很多,要逐句盯着看(§10 最坏输入) */
+  scriptAlignment?: { matchedRatio: number };
+}
+
+export type CutFlagKind = "misread" | "repeat" | "offtopic";
+
+export interface CutFlag {
+  segmentId: string;
+  flag: CutFlagKind;
+}
+
+export interface VideoCut {
+  transcriptRevision: number;
+  keeps: string[];
+  flags: CutFlag[];
+  origin: "default_all" | "llm" | "human";
+  baseCutRevision?: number;
+}
+
+/**
+ * video:* 的统一返回信封。`conflict:true` 是**一等结果不是故障**
+ * (video-handlers.ts 纪律 4):调用方据此提示「版本过期,已为你重载」。
+ */
+export interface VideoReply<T> {
+  ok: boolean;
+  error?: string;
+  conflict?: boolean;
+  data?: T;
+}
+
+async function videoInvoke<T>(channel: string, payload: Record<string, unknown> = {}): Promise<VideoReply<T>> {
+  return (await invoke(channel, payload)) as VideoReply<T>;
+}
+
+// ── 10 条通道(§8.2)。payload 一律 snake_case,与 video-handlers 的解析口对齐 ──
+
+export const videoBuildStart = (contentId: string) =>
+  videoInvoke<{ state: VideoState }>("video:build_start", { content_id: contentId });
+
+/** data 为 null = 这篇还没开始剪(不是错误,卡片据此显示「开始构建」) */
+export const videoStatus = (contentId: string) =>
+  videoInvoke<VideoStatusData | null>("video:status", { content_id: contentId });
+
+export const videoTranscriptGet = (contentId: string) =>
+  videoInvoke<{ transcript: VideoTranscript; cut: VideoCut } | null>("video:transcript_get", { content_id: contentId });
+
+export const videoCutConfirm = (args: {
+  contentId: string;
+  keeps: string[];
+  flags: CutFlag[];
+  baseTranscriptRevision: number;
+  baseCutRevision: number;
+}) =>
+  videoInvoke<{ state: VideoState }>("video:cut_confirm", {
+    content_id: args.contentId,
+    keeps: args.keeps,
+    flags: args.flags.map((f) => ({ segment_id: f.segmentId, flag: f.flag })),
+    base_transcript_revision: args.baseTranscriptRevision,
+    base_cut_revision: args.baseCutRevision,
+    // overlays(屏录/图片覆盖轨)service 已支持,V0a 界面不做——留给 V0b 的选段视图
+  });
+
+export const videoReviewConfirm = (args: { contentId: string; renderedRevision: number; verdict: "approve" | "reject" }) =>
+  videoInvoke<{ state: VideoState; videoReadyAt?: string | null; stampWarning?: string }>("video:review_confirm", {
+    content_id: args.contentId,
+    rendered_revision: args.renderedRevision,
+    verdict: args.verdict,
+  });
+
+export const videoRetry = (contentId: string) =>
+  videoInvoke<{ state: VideoState }>("video:retry", { content_id: contentId });
+
+export const videoAsrWarmup = () => videoInvoke<{ status: string }>("video:asr_warmup");
+
+/** absent | warming | ready | failed */
+export const videoAsrStatus = () => videoInvoke<{ status: string; detail?: string }>("video:asr_status");
+
+export const videoSettingsGet = () =>
+  videoInvoke<{ renderConcurrency: number | null; snapshotCopy: boolean }>("video:settings_get");
+
+export const videoSettingsSet = (patch: { renderConcurrency?: number | null; snapshotCopy?: boolean }) =>
+  videoInvoke<{ renderConcurrency: number | null; snapshotCopy: boolean }>("video:settings_set", {
+    ...(patch.renderConcurrency !== undefined ? { render_concurrency: patch.renderConcurrency } : {}),
+    ...(patch.snapshotCopy !== undefined ? { snapshot_copy: patch.snapshotCopy } : {}),
+  });
+
+// ── 人话层:phase×state 全枚举都有说法(§10 边界清单 1) ──────────────────────
+
+export const VIDEO_PHASE_LABEL: Record<VideoPhase, string> = {
+  ingest: "素材校验",
+  transcribe: "转写",
+  cut: "选段",
+  assemble: "组装",
+  render: "渲染",
+  review: "审片",
+  done: "完成",
+};
+
+export const CUT_FLAG_LABEL: Record<CutFlagKind, string> = {
+  misread: "念错",
+  repeat: "重复",
+  offtopic: "跑题",
+};
+
+export interface VideoBlockedGuide {
+  /** 卡在哪 */
+  title: string;
+  /** 人怎么解掉它 */
+  how: string;
+  /** 要在终端敲的命令(有就单独一行,可复制) */
+  command?: string;
+  /** 有专属动作的阻因;其余都是「解掉后重试」 */
+  action?: "asr_warmup";
+}
+
+const BLOCKED_GUIDES: Record<VideoBlockedReason, VideoBlockedGuide> = {
+  asr_not_ready: {
+    title: "语音模型还没就绪",
+    how: "首次要下载约 1GB 模型。点下面这个按钮开始预热,可以先干别的——好了会自动接着剪。",
+    action: "asr_warmup",
+  },
+  ffmpeg_missing: {
+    title: "系统里找不到 ffmpeg",
+    how: "抽音轨和渲染都靠它。在终端装好后回来点「重试」:",
+    command: "brew install ffmpeg",
+  },
+  key_missing: {
+    title: "缺少必要的密钥",
+    how: "去设置页把视频线要用的密钥填上,再回来点「重试」。",
+  },
+  aroll_drifted: {
+    title: "A-roll 素材和开拍时对不上了",
+    how: "素材是引用不是拷贝——文件被改名、移动或重新导出过。把原文件放回原处(或重新挂接一遍新素材),再点「重试」。",
+  },
+  budget_exceeded: {
+    title: "这篇的 AI 镜头预算用完了",
+    how: "V0a 不采购 AI 镜头,出现这条说明配置里预算被设成了 0——去设置页调整后重试。",
+  },
+};
+
+/** blocked 但没给原因也要有说法——没说法的红字最劝退 */
+export function videoBlockedGuide(reason?: VideoBlockedReason): VideoBlockedGuide {
+  return (reason && BLOCKED_GUIDES[reason]) || { title: "卡住了(没给出原因)", how: "先点「重试」;还卡就看任务日志里剪辑师那几条。" };
+}
+
+/** 任意 phase×state 组合都有一句人话:状态机可见是验收清单第一条 */
+export function videoStateSummary(s: VideoState): string {
+  const phase = VIDEO_PHASE_LABEL[s.phase] ?? s.phase;
+  switch (s.state) {
+    case "idle":
+      return "还没开始剪";
+    case "queued":
+      return `排队中 · ${phase}`;
+    case "running":
+      return `${phase}中…`;
+    case "awaiting_human":
+      if (s.phase === "cut") return "转写好了 —— 等你勾选留哪些句子";
+      if (s.phase === "review") return "成片渲染好了 —— 等你审片";
+      return `${phase} —— 等你确认`;
+    case "blocked":
+      return `卡住了 · ${videoBlockedGuide(s.blockedReason).title}`;
+    case "failed":
+      return `${VIDEO_PHASE_LABEL[s.failedPhase ?? s.phase] ?? phase}失败了`;
+    case "done":
+      return "成片已完成";
+  }
+}
+
+/**
+ * 成片播放地址(§6.4 / video-media.ts)。鉴权沿用 server 那套 **HttpOnly 同源
+ * session cookie**——没有 query token,所以 `<video src>` 写相对路径就够;
+ * 端点支持 Range(206),进度条能拖。
+ */
+export function videoMediaUrl(contentId: string, renderedRevision: number): string {
+  return `/api/video/media/${encodeURIComponent(contentId)}/final.v${renderedRevision}.mp4`;
+}
+
+/** 成片登记回稿件素材时的文件名(render-exec.ts:`final-v<K>.mp4`,与上面播放名不同源) */
+export function videoFinalAssetName(renderedRevision: number): string {
+  return `final-v${renderedRevision}.mp4`;
+}
+
+/** 毫秒 → mm:ss.s(分句时间码与成片时长共用一套读法) */
+export function formatTimecode(ms: number): string {
+  const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  const tenths = Math.floor(safe / 100) / 10;
+  const m = Math.floor(tenths / 60);
+  return `${String(m).padStart(2, "0")}:${(tenths - m * 60).toFixed(1).padStart(4, "0")}`;
+}
+
+/**
+ * 提交给 `video:cut_confirm` 的 keeps:**按 transcript 顺序**归一。
+ * 后端 buildOutputMap 本来就不看顺序,这里归一只为让每次提交确定可比(排查时 diff 干净)。
+ */
+export function keepsInTranscriptOrder(segments: TranscriptSegment[], kept: ReadonlySet<string>): string[] {
+  return segments.filter((s) => kept.has(s.id)).map((s) => s.id);
+}
+
+/** matchedRatio < 0.5 → 不给建议权,人要逐句盯(§4.4 / §10);没有对齐数据就不吓唬人 */
+export function alignmentWarning(t: VideoTranscript | null): string | null {
+  const ratio = t?.scriptAlignment?.matchedRatio;
+  if (typeof ratio !== "number" || ratio >= 0.5) return null;
+  return `转写和口播稿只对上 ${Math.round(ratio * 100)}% —— 可能念得跟稿子差很多(或转写不准)。这一版默认全留,请逐句自己确认。`;
+}

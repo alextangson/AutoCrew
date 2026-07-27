@@ -423,3 +423,27 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .ra-item { display: flex; flex-direction: column; gap: 3px; align-items: stretch; text-align: left; padding: 6px; height: auto; font-size: 11px; }
 .ra-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--border); background: var(--surface); }
 .ra-cap { font-size: 12px; }
+/* 视频生产线 V0a:成片卡 + 选段视图 + 审片视图(复用 .ed-tools/.row-actions/.chip,不另起设计) */
+.vid-card { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.vid-card p { margin: 0; max-width: 760px; line-height: 1.6; }
+.vid-head { display: flex; align-items: baseline; gap: 10px; width: 100%; }
+.vid-head .mono { flex: 1; }
+.vid-warn { border-left: 2px solid var(--ink); background: var(--surface); padding: 6px 10px; font-size: 12px; }
+.vid-blocked, .vid-bad, .vid-done { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; border-left: 2px solid var(--border); padding: 6px 10px; width: 100%; }
+.vid-blocked { border-left-color: var(--ink); }
+.vid-bad { border-left-color: var(--danger); }
+.vid-done { border-left-color: var(--success); }
+.vid-cmd { border: 1px solid var(--border); background: var(--surface); padding: 3px 8px; font-size: 12px; }
+.vid-sub { display: flex; flex-direction: column; gap: 8px; }
+.vid-sub-bar { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.vid-sub-right { margin-left: auto; }
+.vid-seg-tools { align-items: baseline; flex-wrap: wrap; }
+.vid-segs { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
+.vid-seg { border-bottom: 1px dashed var(--border); }
+.vid-seg:last-child { border-bottom: none; }
+.vid-seg > label { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; cursor: pointer; }
+.vid-seg:hover { background: var(--surface); }
+.vid-seg-off { opacity: 0.42; text-decoration: line-through; }
+.vid-seg-time { flex: 0 0 auto; font-size: 11px; }
+.vid-seg-text { flex: 1; min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.vid-player { width: 100%; max-width: 420px; aspect-ratio: 9 / 16; background: var(--ink); border: 1px solid var(--border); border-radius: var(--radius-card); }

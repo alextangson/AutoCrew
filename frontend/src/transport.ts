@@ -71,10 +71,14 @@ export async function invoke(channel: string, payload: Record<string, unknown> =
 
 export interface SseEvent {
   /**
-   * inbox = 收件箱台账落定（{type:"inbox:updated", itemId}），驱动收件箱视图刷新；
-   * research = 深调研台账落定或视角级进度（{type:"research:updated", topicId}），驱动选题卡刷新
+   * - inbox：收件箱台账落定（{type:"inbox:updated", itemId}），驱动收件箱视图刷新
+   * - research：深调研台账落定或视角级进度（{type:"research:updated", topicId}），驱动选题卡刷新
+   * - video:updated：视频状态每次落盘（{contentId}）——订阅方据此重拉 `video:status`
+   *   （视频 spec §8.3 四件套之三；事件只报「变了」，不带状态本身，避免两份事实）
+   * - reconnect：**客户端合成**事件，不来自服务端。SSE 断线期间的事件已经永久丢失，
+   *   重连后订阅方必须无条件重拉一次（同 spec §8.3 之四）
    */
-  kind: "engine" | "chat" | "inbox" | "research";
+  kind: "engine" | "chat" | "inbox" | "research" | "video:updated" | "reconnect";
   data: Record<string, unknown>;
 }
 
@@ -91,7 +95,15 @@ export function subscribeEvents(fn: SseListener): () => void {
       .then(() => {
         if (source || listeners.size === 0) return;
         source = new EventSource("/api/events");
-        for (const kind of ["engine", "chat", "inbox", "research"] as const) {
+        // EventSource 自己会重连,但断线那几秒的事件不会补发。第一次 open 是首连
+        // (各视图挂载时本来就拉过一次),之后每次 open 都是重连 → 广播一条合成
+        // reconnect,订阅方无条件重拉,免得界面停在断线前那一帧。
+        let everOpened = false;
+        source.addEventListener("open", () => {
+          if (everOpened) for (const l of listeners) l({ kind: "reconnect", data: {} });
+          everOpened = true;
+        });
+        for (const kind of ["engine", "chat", "inbox", "research", "video:updated"] as const) {
           source.addEventListener(kind, (ev) => {
             let data: Record<string, unknown> = {};
             try {

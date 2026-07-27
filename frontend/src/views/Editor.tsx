@@ -17,6 +17,7 @@ import { setFocus, clearFocus, clearProposal, useRevisionProposal } from "../rev
 import { applySpan } from "../apply-span";
 import { CoverPanel } from "./CoverPanel";
 import { ArticleImagesPanel } from "./ArticleImagesPanel";
+import { VideoPanel } from "./VideoPanel";
 import { platformLabel, VARIANT_STATUS, VIDEO_PLATFORMS, type Content } from "../lib";
 import { compareVersions, isGenericVersionNote, type VersionLike } from "../version-diff";
 
@@ -548,6 +549,8 @@ export function Editor(props: { id: string; back: () => void }) {
       </div>
 
       <div className="ed-media">
+        {/* 成片卡:选段列表与审片播放器都要宽度,和封面/配图一样进整宽区,不挤 400px 副栏 */}
+        {isVideo && <VideoPanel contentId={props.id} />}
         <details className="ed-tools">
           <summary>封面设计</summary>
           <CoverPanel contentId={props.id} platform={c.platform} />

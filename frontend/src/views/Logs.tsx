@@ -50,6 +50,7 @@ const AGENT_LABEL: Record<string, string> = {
   "cover-designer": "封面设计师",
   "audience-researcher": "受众研究员",
   scout: "侦查员",
+  editor: "剪辑师",
   review: "审核员",
   publisher: "发布员",
   analyst: "分析师",
