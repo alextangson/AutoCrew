@@ -1,0 +1,20 @@
+[project]
+name = "autocrew-asr"
+version = "0.1.0"
+description = "AutoCrew ASR sidecar —— FunASR Paraformer 中文转写 + 字级时间戳（设计 spec §4.3）"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    # FunASR 本体：Paraformer-zh（识别）+ fsmn-vad（长音频切段）+ ct-punc（标点）
+    "funasr>=1.2.0",
+    # 模型下载与本地缓存（首跑约 1GB，只在 --warmup 时发生）
+    "modelscope>=1.20.0",
+    # CPU 版 torch：macOS/Apple Silicon 的 PyPI wheel 本就是 CPU(+MPS) 版，
+    # 不需要也不存在 CUDA 变体，故这里不额外配 index。
+    # 若将来要在 Linux 上跑，需加 https://download.pytorch.org/whl/cpu 索引，否则会拉 ~2GB 的 CUDA 包。
+    "torch>=2.4.0",
+    "torchaudio>=2.4.0",
+]
+
+[tool.uv]
+# 本目录是「一组依赖 + 一个脚本」，不是要安装的库：关掉打包，uv run 直接进 venv 跑 asr.py。
+package = false

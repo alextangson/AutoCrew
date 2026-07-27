@@ -16,7 +16,16 @@ dist/
 .worktrees/
 # CodeGraph local index (machine-local, rebuild with `codegraph init .`)
 .codegraph/
+# render/ is a standalone npm workspace (Remotion). Deps, render output and downloaded fonts stay local.
+render/node_modules/
+render/out/
+render/public/fonts/*
+!render/public/fonts/.gitkeep
 # Vendored WeChat formatter: runtime config holds creds (real ones come via env). Ship the example only.
 vendor/wechat-format/config.json
 vendor/**/__pycache__/
 vendor/**/*.pyc
+# ASR sidecar: uv 自建的 venv 与 python 缓存是机器本地产物（uv.lock 要提交，它才是可复现的凭证）
+sidecars/**/.venv/
+sidecars/**/__pycache__/
+sidecars/**/*.pyc
