@@ -24,8 +24,10 @@ export interface ArticleImageEntry {
   imagePath?: string;
   error?: string;
   updatedAt?: string;
-  /** 缺省视为 generated（历史条目无此字段）。 */
-  origin?: "generated" | "uploaded";
+  /** 缺省视为 generated（历史条目无此字段）。research = 深调研素材导入。 */
+  origin?: "generated" | "uploaded" | "research";
+  /** origin=research 时的来源素材 id：用来认出「这一槽已经是这张图了」，避免重复导入空转。 */
+  sourceAssetId?: string;
 }
 
 export interface ArticleImageReview {
@@ -210,12 +212,23 @@ function sniffImageExt(bytes: Buffer): "png" | "jpg" | null {
   return null;
 }
 
-/** 用户自有图片顶进一个插图位。只收 png/jpg：webp 会在公众号推送的内容类型映射里静默失败。 */
+/** 图片来源标注：用户上传（缺省）或深调研素材导入。校验对两者一视同仁。 */
+export interface ArticleImageProvenance {
+  origin: "uploaded" | "research";
+  sourceAssetId?: string;
+}
+
+/**
+ * 外来图片顶进一个插图位——用户上传与深调研素材导入**共用这一条路**（同一套校验：
+ * 生成中不许顶、非空、≤5MB、按字节魔数只收 png/jpg）。只收 png/jpg：webp 会在
+ * 公众号推送的内容类型映射里静默失败。
+ */
 export async function attachUploadedArticleImage(
   contentId: string,
   index: number,
   bytes: Buffer,
   dataDir?: string,
+  provenance: ArticleImageProvenance = { origin: "uploaded" },
 ): Promise<ArticleImageReview> {
   const review = await getArticleImageReview(contentId, dataDir);
   const entry = review.entries.find((candidate) => candidate.index === index);
@@ -240,7 +253,8 @@ export async function attachUploadedArticleImage(
     status: "ready",
     imagePath,
     revision,
-    origin: "uploaded",
+    origin: provenance.origin,
+    sourceAssetId: provenance.sourceAssetId,
     error: undefined,
     updatedAt: new Date().toISOString(),
   }, dataDir);

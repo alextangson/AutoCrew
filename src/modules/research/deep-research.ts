@@ -24,6 +24,10 @@ import {
   type PerspectiveOutput,
   type ResearchBrief,
 } from "./brief-store.js";
+import {
+  downloadBriefAssets,
+  type AssetDownloadOptions,
+} from "./research-asset-download.js";
 import { createResearchBroker, type ResearchBrokerDeps } from "./research-broker.js";
 import {
   PERSPECTIVE_NAMES,
@@ -50,6 +54,8 @@ export interface DeepResearchDeps {
   runLoopImpl?: typeof runLoop;
   /** 每视角墙钟上限；缺省 4 分钟（spec §3） */
   perspectiveDeadlineMs?: number;
+  /** 素材下载段的注入口（测试塞假下载器 / 收紧预算）；预算缺省见 research-asset-download */
+  assetDownloadDeps?: Omit<AssetDownloadOptions, "dataDir" | "topicId">;
   /**
    * 视角进度写盘后的通知（SSE `research:updated` 用）。
    * runner 的 `onJobChanged` 只覆盖它自己写的三处（queued/running/落定），**管不到**
@@ -229,6 +235,30 @@ async function publishBrief(
 }
 
 /**
+ * 素材下载段（§7）：综合成功之后、简报落盘之前。**只改 payload，不改 job 终态**——
+ * 一张图都没下来也不会让这轮调研变成 failed，降级原因逐条落在 pick 上、全败进 gaps。
+ */
+async function withDownloadedAssets(
+  payload: SynthesisPayload,
+  topicId: string,
+  deps: DeepResearchDeps,
+  warn: (message: string) => void,
+): Promise<SynthesisPayload> {
+  const result = await downloadBriefAssets(payload.assetPicks, {
+    dataDir: deps.dataDir,
+    topicId,
+    ...deps.assetDownloadDeps,
+  });
+  const degraded = result.picks.length - result.storedCount;
+  if (degraded > 0) warn(`素材下载：${result.storedCount} 张入库、${degraded} 张降级为仅链接`);
+  return {
+    ...payload,
+    assetPicks: result.picks,
+    gaps: result.gap ? [...payload.gaps, result.gap] : payload.gaps,
+  };
+}
+
+/**
  * 建一个可以直接塞进 `createResearchRunner({ runJob })` 的执行体。
  * 回执语义见 `JobOutcome`：briefRevision 只在 succeeded/partial 时被 runner 采纳。
  */
@@ -278,6 +308,7 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
     if (synthesis.status === "failed") {
       return failed(perspectives, "synthesis_failed", `${synthesis.errorCode}：${synthesis.reason}`);
     }
-    return publishBrief(job, topic, outputs, perspectives, synthesis.payload, deps.dataDir);
+    const payload = await withDownloadedAssets(synthesis.payload, job.topicId, deps, warn);
+    return publishBrief(job, topic, outputs, perspectives, payload, deps.dataDir);
   };
 }

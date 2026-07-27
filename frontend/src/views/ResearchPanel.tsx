@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { toast } from "../ui";
+import { loadResearchAssets, type ResearchAssetView as AssetView } from "./ResearchAssetPicker";
 
 type JobStatus = "queued" | "running" | "succeeded" | "partial" | "failed";
 type PerspectiveStatus = "pending" | "running" | "succeeded" | "failed";
@@ -49,7 +50,6 @@ interface Brief {
   tensions: string[];
   angleSuggestions: string[];
   evidence: Array<{ claim: string; quote: string; sourceUrl: string }>;
-  assetPicks: Array<{ url: string; sourcePageUrl: string; caption: string }>;
   gaps: string[];
   missingPerspectives: string[];
   revision: number;
@@ -81,7 +81,53 @@ function domain(url: string): string {
   return m ? m[1].replace(/^www\./, "") : url.slice(0, 30);
 }
 
-function BriefView({ brief }: { brief: Brief }) {
+/**
+ * 素材候选区（§7）。两类各说各的话：
+ * - 已下载（stored）：缩略图 + 尺寸 + 来源域名 + caption，「授权需自查」常驻标注；
+ * - 仅链接：把**为什么没下下来**摆出来，而不是让人对着一条秃链接猜。
+ * 硬闸提醒也留着：素材永远不会自动进正文，得在配图那边手动选。
+ */
+function AssetPicks({ assets }: { assets: AssetView[] }) {
+  if (assets.length === 0) return null;
+  const stored = assets.filter((a) => a.stored);
+  return (
+    <div className="research-block">
+      <strong>素材候选</strong>
+      <span className="muted mono">
+        {" "}· {stored.length}/{assets.length} 张已入库 · 授权需自查,不会自动进正文
+      </span>
+      <div className="research-assets">
+        {assets.map((a, i) => (
+          <figure key={a.assetId ?? i} className={a.stored ? "research-asset" : "research-asset research-asset-link"}>
+            {a.stored ? (
+              <img src={a.fileUrl} alt={a.caption} loading="lazy" />
+            ) : (
+              <div className="research-asset-ph muted mono">仅链接</div>
+            )}
+            <figcaption>
+              <span className="research-asset-cap">{a.caption || "(未命名)"}</span>
+              {a.stored ? (
+                <span className="muted mono">{a.width}×{a.height} · 授权需自查</span>
+              ) : (
+                <span className="research-asset-err">{a.downloadError ?? "未下载"}</span>
+              )}
+              <a className="research-src mono" href={a.sourcePageUrl} target="_blank" rel="noreferrer">
+                {domain(a.sourcePageUrl)} ↗
+              </a>
+              {!a.stored && (
+                <a className="research-src mono" href={a.url} target="_blank" rel="noreferrer">
+                  原图 ↗
+                </a>
+              )}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BriefView({ brief, assets }: { brief: Brief; assets: AssetView[] }) {
   return (
     <div className="research-brief">
       <p>{brief.summary}</p>
@@ -114,22 +160,7 @@ function BriefView({ brief }: { brief: Brief }) {
           </ul>
         </div>
       )}
-      {brief.assetPicks.length > 0 && (
-        <div className="research-block">
-          <strong>素材候选</strong>
-          <span className="muted mono"> · 只是链接,授权需自查,不会自动进正文</span>
-          <ul>
-            {brief.assetPicks.map((a, i) => (
-              <li key={i}>
-                <a href={a.url} target="_blank" rel="noreferrer">{a.caption || a.url}</a>
-                <a className="research-src mono" href={a.sourcePageUrl} target="_blank" rel="noreferrer">
-                  {domain(a.sourcePageUrl)} ↗
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <AssetPicks assets={assets} />
       {brief.gaps.length > 0 && (
         <div className="research-block">
           <strong>材料缺口</strong>
@@ -207,6 +238,7 @@ export function ResearchPanel({ topicId }: { topicId: string }) {
   const [st, setSt] = useState<StatusData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
+  const [assets, setAssets] = useState<AssetView[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -236,6 +268,10 @@ export function ResearchPanel({ topicId }: { topicId: string }) {
         return toast(r.error ?? "简报读取失败");
       }
       setBrief((r as unknown as { data: { brief: Brief } }).data.brief);
+    });
+    // 素材单独读:落盘态(stored/尺寸/取图地址)只有 list_assets 说了算,简报里存的是候选本身
+    void loadResearchAssets(topicId).then((list) => {
+      if (alive) setAssets(list);
     });
     return () => {
       alive = false;
@@ -284,7 +320,7 @@ export function ResearchPanel({ topicId }: { topicId: string }) {
       </div>
 
       <StateLines st={st} />
-      {open && brief && <BriefView brief={brief} />}
+      {open && brief && <BriefView brief={brief} assets={assets} />}
     </div>
   );
 }

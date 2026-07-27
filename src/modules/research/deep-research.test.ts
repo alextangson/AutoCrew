@@ -9,8 +9,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { createDeepResearchRunJob } from "./deep-research.js";
+import { createDeepResearchRunJob, type DeepResearchDeps } from "./deep-research.js";
 import { briefPath, briefsDir, loadBrief, loadLatestBrief } from "./brief-store.js";
+import {
+  FetchImageError,
+  type FetchImageErrorCode,
+  type FetchedImage,
+  type fetchExternalImage,
+} from "./fetch-image.js";
+import { listResearchAssets } from "./research-asset-store.js";
 import { PERSPECTIVE_TASK_BOOKS } from "./research-perspectives.js";
 import {
   PERSPECTIVE_NAMES,
@@ -38,15 +45,41 @@ const PAGE_TEXT = "2026 年开发者调查：62% 的人每天使用 AI 编程助
 const REAL_QUOTE = "62% 的人每天使用 AI 编程助手";
 const IMAGE_URL = "https://example.com/chart.png";
 
+const IMAGE_URL_2 = "https://example.com/table.png";
+
 const BROKER_DEPS = {
   searchImpl: async () => [{ title: "2026 开发者调查", url: PAGE_URL, snippet: "每天使用比例过半" }],
   fetchImpl: async (url: string) => ({
     finalUrl: url,
     text: PAGE_TEXT,
     title: "2026 开发者调查",
-    imageCandidates: [{ url: IMAGE_URL, sourceAttr: "img" as const }],
+    imageCandidates: [
+      { url: IMAGE_URL, sourceAttr: "img" as const },
+      { url: IMAGE_URL_2, sourceAttr: "img" as const },
+    ],
   }),
 };
+
+// ─── 素材下载桩：管线测试一律零出网 ─────────────────────────────────────────
+
+/** 手搓 PNG 头（只需要「一段确定的、能被 store 收下的字节」） */
+function pngBytes(seed: string): Buffer {
+  const head = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(head, 0);
+  head.write("IHDR", 12, "latin1");
+  head.writeUInt32BE(800, 16);
+  head.writeUInt32BE(600, 20);
+  return Buffer.concat([head, Buffer.from(seed, "utf-8")]);
+}
+
+/** 缺省全成；`fails` 里点名的 URL 抛指定错误码 */
+function stubFetchImage(fails: Record<string, FetchImageErrorCode> = {}): typeof fetchExternalImage {
+  return (async (url: string): Promise<FetchedImage> => {
+    const code = fails[url];
+    if (code) throw new FetchImageError(code, `桩：${url} 下载失败`);
+    return { bytes: pngBytes(url), format: "png", width: 800, height: 600, finalUrl: url };
+  }) as unknown as typeof fetchExternalImage;
+}
 
 let dataDir: string;
 
@@ -148,13 +181,18 @@ function planLoop(plan: Plan = {}): typeof runLoop {
   }) as unknown as typeof runLoop;
 }
 
-function makeRunJob(plan: Plan = {}, warns: string[] = []) {
+function makeRunJob(
+  plan: Plan = {},
+  warns: string[] = [],
+  assetDownloadDeps: DeepResearchDeps["assetDownloadDeps"] = { fetchImageImpl: stubFetchImage() },
+) {
   return createDeepResearchRunJob({
     dataDir,
     engineConfig: CONFIG,
     brokerDeps: BROKER_DEPS,
     runLoopImpl: planLoop(plan),
     onWarn: (m) => warns.push(m),
+    assetDownloadDeps,
   });
 }
 
@@ -179,9 +217,14 @@ describe("四路全成", () => {
     expect(brief!.missingPerspectives).toEqual([]);
     expect(brief!.perspectives.map((p) => p.name).sort()).toEqual([...PERSPECTIVE_NAMES].sort());
     expect(brief!.evidence).toEqual([{ claim: "使用率过半", quote: REAL_QUOTE, sourceUrl: PAGE_URL }]);
-    expect(brief!.assetPicks).toEqual([
-      { url: IMAGE_URL, sourcePageUrl: PAGE_URL, caption: "使用率图" },
-    ]);
+    expect(brief!.assetPicks).toHaveLength(1);
+    expect(brief!.assetPicks[0]).toMatchObject({
+      url: IMAGE_URL,
+      sourcePageUrl: PAGE_URL,
+      caption: "使用率图",
+    });
+    expect(brief!.assetPicks[0].assetId).toMatch(/^rasset-/); // 下载成功 → 已入素材库
+    expect(brief!.assetPicks[0].downloadError).toBeUndefined();
     expect(brief!.gaps).toContain("没找到分语言细分数据");
     expect(brief!.topicHash).toBe(topicHashOf(topic.title, topic.description));
     expect(Number.isNaN(Date.parse(brief!.generatedAt))).toBe(false);
@@ -202,6 +245,7 @@ describe("四路全成", () => {
       },
       runLoopImpl: planLoop(),
       onWarn: () => {},
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
     });
     await runJob(jobFor(topic));
     expect(fetches).toBe(1);
@@ -217,6 +261,111 @@ describe("四路全成", () => {
     expect(second.briefRevision).toBe(2);
     expect(await fs.readFile(briefPath(topic.id, 1, dataDir), "utf-8")).toBe(v1Raw);
     expect((await loadLatestBrief(topic.id, dataDir))?.revision).toBe(2);
+  });
+});
+
+// ─── 素材下载（§7：入库 / 逐张降级 / 预算 / 全败点名） ───────────────────────
+
+describe("素材下载", () => {
+  /** 综合挑两张图（a1/a2 由 broker 读页时确定性登记），好看清「一成一败」 */
+  const TWO_PICKS: Plan = {
+    synthesis: [
+      {
+        ...BRIEF_OK,
+        asset_picks: [
+          { asset_id: "a1", caption: "使用率图" },
+          { asset_id: "a2", caption: "成本表" },
+        ],
+      },
+    ],
+  };
+
+  const picksOf = async (topicId: string) => (await loadLatestBrief(topicId, dataDir))!.assetPicks;
+
+  it("全成：两张都带 assetId 进简报，素材库里各一条 candidate", async () => {
+    const topic = await newTopic();
+    const outcome = await makeRunJob(TWO_PICKS)(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    const picks = await picksOf(topic.id);
+    expect(picks.map((p) => p.url)).toEqual([IMAGE_URL, IMAGE_URL_2]);
+    expect(picks.every((p) => p.assetId && !p.downloadError)).toBe(true);
+
+    const stored = await listResearchAssets(topic.id, dataDir);
+    expect(stored).toHaveLength(2);
+    expect(stored.every((a) => a.status === "candidate" && a.license === "unknown")).toBe(true);
+    expect(stored.map((a) => a.sourcePageUrl)).toEqual([PAGE_URL, PAGE_URL]);
+  });
+
+  it("部分失败：失败那张降级为仅链接 + 人话原因，成功那张不受影响", async () => {
+    const topic = await newTopic();
+    const warns: string[] = [];
+    const outcome = await makeRunJob(TWO_PICKS, warns, {
+      fetchImageImpl: stubFetchImage({ [IMAGE_URL_2]: "http_403" }),
+    })(jobFor(topic));
+
+    // 下载失败不参与 job 终态判定
+    expect(outcome.status).toBe("succeeded");
+
+    const picks = await picksOf(topic.id);
+    expect(picks[0].assetId).toMatch(/^rasset-/);
+    expect(picks[1].assetId).toBeUndefined();
+    expect(picks[1].url).toBe(IMAGE_URL_2); // 降级 ≠ 删除：链接还在
+    expect(picks[1].downloadError).toContain("防盗链");
+    expect(await listResearchAssets(topic.id, dataDir)).toHaveLength(1);
+    expect(warns.join("\n")).toContain("1 张降级为仅链接");
+  });
+
+  it.each([
+    ["张数", { maxCount: 1 }],
+    ["字节", { maxTotalBytes: 1 }],
+  ])("预算触顶（%s）：超出的直接降级，原因说得出口", async (_label, budget) => {
+    const topic = await newTopic();
+    await makeRunJob(TWO_PICKS, [], { fetchImageImpl: stubFetchImage(), ...budget })(jobFor(topic));
+
+    const picks = await picksOf(topic.id);
+    expect(picks[0].assetId).toMatch(/^rasset-/); // 第一张在预算内
+    expect(picks[1].assetId).toBeUndefined();
+    expect(picks[1].downloadError).toContain("预算已用尽");
+  });
+
+  it("墙钟触顶：deadline 过了就不再下一张", async () => {
+    const topic = await newTopic();
+    let clock = 0;
+    await makeRunJob(TWO_PICKS, [], {
+      fetchImageImpl: stubFetchImage(),
+      deadlineMs: 100,
+      now: () => (clock += 80), // 第二张之前就已越过 deadline
+    })(jobFor(topic));
+
+    const picks = await picksOf(topic.id);
+    expect(picks[1].downloadError).toContain("预算已用尽");
+  });
+
+  it("全军覆没 → 简报 gaps 点名，且 job 仍是 succeeded", async () => {
+    const topic = await newTopic();
+    const outcome = await makeRunJob(TWO_PICKS, [], {
+      fetchImageImpl: stubFetchImage({ [IMAGE_URL]: "timeout", [IMAGE_URL_2]: "ssrf_blocked" }),
+    })(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    const brief = await loadLatestBrief(topic.id, dataDir);
+    expect(brief!.assetPicks.every((p) => !p.assetId && p.downloadError)).toBe(true);
+    expect(brief!.assetPicks[0].downloadError).toContain("超时");
+    expect(brief!.assetPicks[1].downloadError).toContain("内网");
+    expect(brief!.gaps.some((g) => g.includes("一张都没能下载"))).toBe(true);
+    expect(await listResearchAssets(topic.id, dataDir)).toEqual([]);
+  });
+
+  it("入库失败（素材目录被文件占位）也只降级这一张，简报照常落盘", async () => {
+    const topic = await newTopic();
+    await fs.mkdir(path.join(dataDir, "research"), { recursive: true });
+    await fs.writeFile(path.join(dataDir, "research", "assets"), "我是个文件，不是目录", "utf-8");
+
+    const outcome = await makeRunJob(TWO_PICKS)(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+    const picks = await picksOf(topic.id);
+    expect(picks.every((p) => p.downloadError === "存入素材库失败，只保留链接")).toBe(true);
   });
 });
 
@@ -269,6 +418,7 @@ describe("视角缺席", () => {
           ? new Promise<LoopResult>(() => {}) // 永不返回：runLoop 不可中断，只能丢弃
           : normal(cfg, opts)) as unknown as typeof runLoop,
       onWarn: () => {},
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
     })(jobFor(topic));
 
     expect(outcome.status).toBe("partial");
@@ -374,6 +524,7 @@ describe("视角进度实时可见", () => {
       brokerDeps: BROKER_DEPS,
       runLoopImpl: planLoop(),
       onWarn: () => {},
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
       // 装配时这条与 runner 的 onJobChanged 接同一个 SSE 发射器
       onProgress: record,
     });

@@ -407,3 +407,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .research-block ul, .research-block ol { margin: 4px 0 0; padding-left: 20px; }
 .research-block li { margin: 3px 0; }
 .research-src { font-size: 11px; margin-left: 6px; }
+/* 素材候选:已入库的显缩略图,仅链接的显降级原因——两类同一网格,一眼看得出差别 */
+.research-assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 6px; }
+.research-asset { margin: 0; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 6px; }
+.research-asset img, .research-asset-ph { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--border); background: var(--surface); }
+.research-asset-ph { display: flex; align-items: center; justify-content: center; font-size: 11px; }
+.research-asset-link { border-style: dashed; }
+.research-asset figcaption { display: flex; flex-direction: column; gap: 1px; font-size: 11px; margin-top: 5px; }
+.research-asset-cap { font-size: 12px; }
+.research-asset-err { color: var(--danger); }
+.research-asset figcaption .research-src { margin-left: 0; }
+/* 研究素材选图弹层:复用 .dlg 报纸风外框,只加一层网格 */
+.ra-dlg { width: min(620px, 94vw); }
+.ra-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; max-height: 46vh; overflow-y: auto; }
+.ra-item { display: flex; flex-direction: column; gap: 3px; align-items: stretch; text-align: left; padding: 6px; height: auto; font-size: 11px; }
+.ra-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--border); background: var(--surface); }
+.ra-cap { font-size: 12px; }

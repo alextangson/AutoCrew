@@ -558,7 +558,7 @@ export function Editor(props: { id: string; back: () => void }) {
           onToggle={(event) => setArticleImagesOpen(event.currentTarget.open)}
         >
           <summary>正文配图 · {[...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length} 个位置</summary>
-          <ArticleImagesPanel contentId={props.id} dirty={dirty} body={body} platform={c.platform} />
+          <ArticleImagesPanel contentId={props.id} dirty={dirty} body={body} platform={c.platform} topicId={c.topicId} />
         </details>
       </div>
     </div>

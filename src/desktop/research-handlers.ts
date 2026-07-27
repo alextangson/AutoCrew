@@ -1,6 +1,6 @@
 /**
  * 深调研 IPC handlers（deep-research spec §8）：
- * `research:deep_dive / status / brief_get / list_assets`。
+ * `research:deep_dive / status / brief_get / list_assets / import_asset`。
  *
  * 四条纪律：
  * 1. **投递即返回**：deep_dive 只把任务落进台账，绝不等四视角跑完（分钟级）。
@@ -13,14 +13,29 @@
  * 4. **过期标注现算**：简报存的是生成时的 topicHash，与**当前**选题文本现算的 hash 比对——
  *    存下来的布尔会随选题被改而失真。
  */
-import { getDataDir, getTopic, type Topic } from "../storage/local-store.js";
+import fs from "node:fs/promises";
+import { getContent, getDataDir, getTopic, type Topic } from "../storage/local-store.js";
+import { isContentId } from "../storage/entity-id.js";
 import {
   loadBrief,
   type BriefAssetPick,
   type ResearchBrief,
 } from "../modules/research/brief-store.js";
+import {
+  getResearchAsset,
+  getResearchAssetFile,
+  markResearchAssetImported,
+  resolveAssetPath,
+  type ResearchAsset,
+} from "../modules/research/research-asset-store.js";
+import {
+  attachUploadedArticleImage,
+  getArticleImageReview,
+  type ArticleImageReview,
+} from "../modules/publish/article-images.js";
 import { getJob, topicHashOf, type ResearchJob } from "../modules/research/research-job-store.js";
 import { searchAvailable } from "../modules/research/search-provider.js";
+import { emitEngineEvent } from "./event-hub.js";
 import { triggerDeepResearch } from "./research-runtime.js";
 
 type Payload = Record<string, unknown>;
@@ -159,9 +174,46 @@ export async function researchBriefGetHandler(payload: Payload): Promise<Reply> 
   }
 }
 
+/** 简报里的一条候选 + 落盘态；stored=false 的那些只有链接与降级原因 */
+export interface ResearchAssetView extends BriefAssetPick {
+  /** 有 assetId **且**文件确实在盘上——索引说有、文件没了就不算 stored */
+  stored: boolean;
+  width?: number;
+  height?: number;
+  /** 给前端取图的地址（只对 stored 的给） */
+  fileUrl?: string;
+}
+
+/** 文件在不在要现查：索引是 append-only 的历史，磁盘才是当下 */
+async function assetFileExists(asset: ResearchAsset, dataDir: string): Promise<boolean> {
+  try {
+    await fs.access(resolveAssetPath(asset.file, dataDir));
+    return true;
+  } catch {
+    // 路径越界会抛（索引被污染）——同样按「这张不可用」处理，但不带走整个列表
+    return false;
+  }
+}
+
+async function toAssetView(pick: BriefAssetPick, dataDir: string): Promise<ResearchAssetView> {
+  if (!pick.assetId) return { ...pick, stored: false };
+  const asset = await getResearchAsset(pick.assetId, dataDir);
+  if (!asset || !(await assetFileExists(asset, dataDir))) {
+    return { ...pick, stored: false, downloadError: pick.downloadError ?? "素材文件已丢失，只剩链接" };
+  }
+  return {
+    ...pick,
+    stored: true,
+    width: asset.width,
+    height: asset.height,
+    fileUrl: `/api/research-asset?asset_id=${encodeURIComponent(pick.assetId)}`,
+  };
+}
+
 /**
- * 当前简报里的素材候选（R1a 只到链接级：不下载，给 URL + 来源页 + caption）。
- * 硬闸在别处：candidate 素材绝不自动进正文（§7）。
+ * 当前简报里的素材候选。R1b-B 起分两类：下载入库的（stored，可显缩略图、可导入配图）
+ * 与降级为仅链接的（带 downloadError 说明为什么）。
+ * 硬闸不变：素材绝不自动进正文，导入永远是人点出来的（§7）。
  */
 export async function researchListAssetsHandler(payload: Payload): Promise<Reply> {
   const bad = badPayload(payload);
@@ -173,9 +225,99 @@ export async function researchListAssetsHandler(payload: Payload): Promise<Reply
     const job = await getJob(topicId, dataDir);
     const brief = await loadCurrentBrief(job, dataDir);
     if (!brief) return { ok: false, error: NO_BRIEF };
-    const assets: BriefAssetPick[] = brief.assetPicks ?? [];
-    return { ok: true, data: { revision: brief.revision, assets, total: assets.length } };
+    const picks: BriefAssetPick[] = brief.assetPicks ?? [];
+    const assets = await Promise.all(picks.map((pick) => toAssetView(pick, dataDir)));
+    return {
+      ok: true,
+      data: {
+        revision: brief.revision,
+        assets,
+        total: assets.length,
+        storedCount: assets.filter((a) => a.stored).length,
+      },
+    };
   } catch (err) {
     return fail(err);
   }
+}
+
+// ─── 配图导入（§7「放置即导入」）────────────────────────────────────────────
+
+/** 没给 index 时的落点：第一个还没图的插图位。全满就报错，绝不替人挑一个覆盖掉 */
+function resolveSlotIndex(payload: Payload, review: ArticleImageReview): number | string {
+  const raw = payload.index;
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0) {
+    return review.entries.some((e) => e.index === raw) ? raw : `正文配图 ${raw + 1} 不存在`;
+  }
+  if (review.entries.length === 0) return "这篇稿子还没有插图位——先在「正文配图」里加一个位置";
+  const empty = review.entries.find((e) => e.status !== "ready");
+  return empty ? empty.index : "所有插图位都已有图——点某一位的「研究素材」来指定要替换哪一张";
+}
+
+/**
+ * 把一张研究素材导入为该稿件的正文配图。
+ *
+ * 三条纪律：
+ * 1. **走既有承接口**：字节交给 `attachUploadedArticleImage`（与「用自己的图」同一条路），
+ *    5MB / png-jpg 魔数 / 生成中不许顶这些校验一条不绕——webp 素材会在这里被如实拒绝。
+ * 2. **幂等按「这一槽已经是这张图」判**：同一素材重复导同一位置 → 返回既有结果、不churn
+ *    revision。**跨 content / 跨槽位不算重复**：一张图进两篇稿子是正当需求，不是误操作。
+ * 3. **素材不属于这条选题就拒**：assetId 是全局的，topic_id 是调用方的断言，对不上说明
+ *    界面串了选题——这时候静默照做会把别的选题的图塞进来。
+ */
+export async function researchImportAssetHandler(payload: Payload): Promise<Reply> {
+  const bad = badPayload(payload);
+  if (bad) return bad;
+  const topicId = requireTopicId(payload);
+  if (!topicId) return { ok: false, error: "topic_id 必填" };
+  const assetId = typeof payload.asset_id === "string" ? payload.asset_id.trim() : "";
+  const contentId = typeof payload.content_id === "string" ? payload.content_id : "";
+  if (!assetId) return { ok: false, error: "asset_id 必填" };
+  if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
+
+  try {
+    const dataDir = researchDataDir(payload);
+    const content = await getContent(contentId, dataDir);
+    if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
+    const asset = await getResearchAsset(assetId, dataDir);
+    if (!asset) return { ok: false, error: `研究素材不存在：${assetId}` };
+    if (asset.topicId !== topicId) {
+      return { ok: false, error: "这张素材不属于该选题——刷新一下再试" };
+    }
+    return await importAssetToSlot(asset, contentId, payload, dataDir);
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+async function importAssetToSlot(
+  asset: ResearchAsset,
+  contentId: string,
+  payload: Payload,
+  dataDir: string,
+): Promise<Reply> {
+  const review = await getArticleImageReview(contentId, dataDir);
+  const slot = resolveSlotIndex(payload, review);
+  if (typeof slot === "string") return { ok: false, error: slot };
+
+  const current = review.entries.find((e) => e.index === slot);
+  if (current?.status === "ready" && current.sourceAssetId === asset.assetId) {
+    return { ok: true, data: { review, index: slot, deduped: true, note: "这一位已经是这张素材了" } };
+  }
+
+  const file = await getResearchAssetFile(asset.assetId, dataDir);
+  if (!file) return { ok: false, error: `研究素材文件不存在：${asset.assetId}` };
+  const bytes = await fs.readFile(file).catch(() => null);
+  if (!bytes) return { ok: false, error: "研究素材文件读不到（可能已被删除），请重跑深调研" };
+
+  const updated = await attachUploadedArticleImage(contentId, slot, bytes, dataDir, {
+    origin: "research",
+    sourceAssetId: asset.assetId,
+  });
+  await markResearchAssetImported(asset.assetId, dataDir);
+  void emitEngineEvent(
+    { role: "publisher", kind: "work", label: `配图 ${slot + 1} 已换成深调研素材（来源需自查授权）`, contentId },
+    dataDir,
+  ).catch(() => {});
+  return { ok: true, data: { review: updated, index: slot, deduped: false } };
 }

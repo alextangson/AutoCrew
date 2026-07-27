@@ -25,6 +25,7 @@ import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { startResearchRuntime } from "../src/desktop/research-runtime.js";
+import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { refreshTopicRadarIfStale } from "../src/modules/radar/topic-radar.js";
 import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
@@ -249,6 +250,22 @@ const server = http.createServer(async (req, res) => {
     try { await fs.access(file); } catch { res.writeHead(404).end(); return; }
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable" });
     createReadStream(file).pipe(res);
+    return;
+  }
+
+  // 研究素材只读端点(深调研 §7):同 /api/asset 的鉴权纪律,但路径一律经存储层的越界闸
+  // (index.jsonl 是可篡改文本,不在这里拼路径)。文件名是内容 hash → immutable 缓存安全。
+  if (p === "/api/research-asset") {
+    let base: string;
+    try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
+    const served = await serveResearchAsset({
+      assetId: url.searchParams.get("asset_id") || "",
+      authorized: Boolean(authorize(req)),
+      dataDir: base,
+    });
+    if (!served.ok) { res.writeHead(served.status).end(served.error); return; }
+    res.writeHead(200, { "Content-Type": served.contentType, "Cache-Control": "public, max-age=31536000, immutable" });
+    createReadStream(served.file).pipe(res);
     return;
   }
 

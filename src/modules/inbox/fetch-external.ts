@@ -8,13 +8,21 @@
  * 加固链：协议白名单 → 每跳 SSRF 校验（DNS 解析后逐个 IP 判段）→ 手动跟随 ≤5 跳 →
  * Content-Type 白名单 → 流式 2MB 封顶 → 15s 硬超时。
  *
+ * 前三段（协议/SSRF/重定向）由 `utils/guarded-fetch` 提供，与深调研图片下载器共用
+ * 同一份实现——本文件只保留网页侧的裁决（Content-Type、正文抽取、图片候选采集）。
+ * 错误类型仍是本文件的 `FetchExternalError`：骨架通过 makeError 工厂产出它。
+ *
  * 残余风险（V1 显式接受）：DNS rebinding TOCTOU —— 校验用的解析与 fetch 实际连接时的
  * 解析是两次独立解析，两次之间 DNS 可被改写指向内网。V1 不做 connect-by-IP（会破坏
  * TLS SNI / 证书校验与后续 undici 代理链路），显式接受该残余面。
  */
-import { lookup as dnsLookup } from "node:dns/promises";
-import net from "node:net";
 import { htmlToText } from "../../utils/fetch-page.js";
+import { fetchFollowingRedirects, isBlockedAddress } from "../../utils/guarded-fetch.js";
+import type { LookupFn } from "../../utils/guarded-fetch.js";
+
+/** 守卫原语在 utils/guarded-fetch，这里原样转出——既有调用方与测试的导入路径不变 */
+export { isBlockedAddress };
+export type { LookupFn };
 
 export type FetchExternalErrorCode =
   | "invalid_url"
@@ -36,9 +44,6 @@ export class FetchExternalError extends Error {
     this.name = "FetchExternalError";
   }
 }
-
-/** hostname → 地址列表；仅测试注入（生产用 node:dns lookup）。 */
-export type LookupFn = (hostname: string) => Promise<string[]>;
 
 export interface FetchExternalOptions {
   /** 全流程硬超时，默认 15_000ms（覆盖全部重定向跳数与读体） */
@@ -80,78 +85,10 @@ export interface ExternalPage {
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 5;
-const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 const REQUEST_HEADERS = {
   "user-agent": "Mozilla/5.0 AutoCrew/1.0",
   accept: "text/html,text/plain;q=0.9,*/*;q=0.1",
 };
-
-const BLOCKED_ADDRESSES = new net.BlockList();
-// IPv4：环回、私网三段、链路本地（含 169.254.169.254 云元数据）、"本网络" 0.0.0.0/8
-BLOCKED_ADDRESSES.addSubnet("0.0.0.0", 8, "ipv4");
-BLOCKED_ADDRESSES.addSubnet("10.0.0.0", 8, "ipv4");
-BLOCKED_ADDRESSES.addSubnet("127.0.0.0", 8, "ipv4");
-BLOCKED_ADDRESSES.addSubnet("169.254.0.0", 16, "ipv4");
-BLOCKED_ADDRESSES.addSubnet("172.16.0.0", 12, "ipv4");
-BLOCKED_ADDRESSES.addSubnet("192.168.0.0", 16, "ipv4");
-// IPv6：::/96 一网打尽 ::（未指定）、::1（环回）与已废弃的 IPv4-compatible 形态（::127.0.0.1）
-BLOCKED_ADDRESSES.addSubnet("::", 96, "ipv6");
-BLOCKED_ADDRESSES.addSubnet("fc00::", 7, "ipv6"); // unique local
-BLOCKED_ADDRESSES.addSubnet("fe80::", 10, "ipv6"); // link local
-// IPv4-mapped（::ffff:a.b.c.d / ::ffff:7f00:1）由 BlockList 自动折回 IPv4 规则校验
-
-/**
- * 地址是否落在禁止访问的网段。
- * 解析不出来的字符串一律判为受阻（fail closed）——守卫宁可误杀不可漏放。
- */
-export function isBlockedAddress(address: string): boolean {
-  const bare = address.split("%")[0].replace(/^\[|\]$/g, "").trim();
-  const family = net.isIP(bare);
-  if (family === 0) return true;
-  return BLOCKED_ADDRESSES.check(bare, family === 4 ? "ipv4" : "ipv6");
-}
-
-const defaultLookup: LookupFn = async (hostname) => {
-  const entries = await dnsLookup(hostname, { all: true, verbatim: true });
-  return entries.map((e) => e.address);
-};
-
-function parseHttpUrl(raw: string, base?: URL): URL {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw, base);
-  } catch {
-    throw new FetchExternalError("invalid_url", `无法解析的链接：${raw}`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new FetchExternalError("unsupported_protocol", `仅支持 http/https 链接：${parsed.protocol}`);
-  }
-  return parsed;
-}
-
-/** 每一跳都要过这道门：hostname 是 IP 直接判段，否则解析后任一地址命中即拒。 */
-async function assertHostAllowed(url: URL, lookup: LookupFn): Promise<void> {
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  if (net.isIP(host) !== 0) {
-    if (isBlockedAddress(host)) {
-      throw new FetchExternalError("ssrf_blocked", `目标地址属环回/私网/链路本地，已拒绝：${host}`);
-    }
-    return;
-  }
-  let addresses: string[];
-  try {
-    addresses = await lookup(host);
-  } catch (err) {
-    throw new FetchExternalError("fetch_failed", `域名解析失败：${host}（${String(err)}）`);
-  }
-  if (addresses.length === 0) {
-    throw new FetchExternalError("fetch_failed", `域名无解析结果：${host}`);
-  }
-  const blocked = addresses.find(isBlockedAddress);
-  if (blocked !== undefined) {
-    throw new FetchExternalError("ssrf_blocked", `${host} 解析到受限地址，已拒绝：${blocked}`);
-  }
-}
 
 function contentKind(header: string | null): "html" | "text" | null {
   const mime = (header ?? "").split(";")[0].trim().toLowerCase();
@@ -327,9 +264,7 @@ function toFetchError(err: unknown, timedOut: boolean): FetchExternalError {
  * 抓取外部网页（收件箱路径）。失败一律抛 FetchExternalError，带稳定 errorCode。
  */
 export async function fetchExternalPage(url: string, opts: FetchExternalOptions = {}): Promise<ExternalPage> {
-  const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
-  const lookup = opts.lookup ?? defaultLookup;
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -338,20 +273,15 @@ export async function fetchExternalPage(url: string, opts: FetchExternalOptions 
   }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   try {
-    let current = parseHttpUrl(url);
-    for (let hop = 0; hop <= maxRedirects; hop++) {
-      await assertHostAllowed(current, lookup);
-      const res = await fetch(current.href, {
-        signal: controller.signal,
-        redirect: "manual",
-        headers: REQUEST_HEADERS,
-      });
-      const location = REDIRECT_STATUS.has(res.status) ? res.headers.get("location") : null;
-      if (!location) return await readPage(res, current, maxBytes, opts.collectImages === true);
-      await res.body?.cancel().catch(() => {});
-      current = parseHttpUrl(location, current);
-    }
-    throw new FetchExternalError("too_many_redirects", `重定向超过 ${maxRedirects} 跳，已放弃`);
+    const { res, finalUrl } = await fetchFollowingRedirects({
+      url,
+      maxRedirects: opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS,
+      signal: controller.signal,
+      headers: REQUEST_HEADERS,
+      lookup: opts.lookup,
+      makeError: (code, message) => new FetchExternalError(code, message),
+    });
+    return await readPage(res, finalUrl, maxBytes, opts.collectImages === true);
   } catch (err) {
     throw toFetchError(err, timedOut);
   } finally {

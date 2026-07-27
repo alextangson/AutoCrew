@@ -69,7 +69,8 @@
 ## 7. 素材采集与下载（R1b；P1-1/6/7 + P2-17 的答案）
 
 - 下载器 `fetchExternalImage`：同款 SSRF（含每跳复检）；**格式白名单 PNG/JPEG/WebP**（Content-Type 与 **magic bytes 双校验**，SVG 明确拒绝——主动内容）；5MB 流式封顶；从格式头读像素尺寸，>6000×6000 拒绝（解码炸弹面；不引新图像依赖、不做真实解码，残余面注明）；落盘文件名 = 内容 hash。
-- 存入研究素材库（§0.3 裁决点结构）：`{assetId, topicId, file, sourceUrl, sourcePageUrl, caption, capturedAt, status: "candidate", license: "unknown"}`；按 URL 规范化 hash 全库去重（已有则引用）。
+- 存入研究素材库（§0.3 裁决点结构）：`{assetId, topicId, file, sourceUrl, sourcePageUrl, caption, capturedAt, status: "candidate"|"imported", license: "unknown"}`；**去重键 = (topicId, 规范化 URL)**（创始人裁决 R1b-B：素材清单按选题看，别的选题存过不该让这条选题少一张），**文件层按内容 hash 全库共享**（`research/assets/files/<hash>.<ext>`，两条记录指同一份字节）。
+- 下载预算（每 job，常量导出并测试锁定）：最多 12 张 / 累计 30MB / 下载段总墙钟 3 分钟；超预算的 pick 直接降级为仅链接并写明原因。单张 timeout 按剩余墙钟收窄。
 - **硬闸**：candidate 素材绝不自动进正文；配图放置界面可见「研究素材」分组（带来源 URL 与「授权需自查」标注），放置即导入为 content 素材并走既有确认流程。
 - 单张下载失败 → 简报里该素材降级「仅链接」；全军覆没 → 简报点名（防盗链/网络）。视频不下载：`video_link` 仅引用（沿收件箱排除项）；R2 若配 justoneapi 附赞藏数据。
 

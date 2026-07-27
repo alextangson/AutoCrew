@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
+import { ResearchAssetPicker, loadResearchAssets } from "./ResearchAssetPicker";
 
 interface ArticleImageEntry {
   id: string;
@@ -12,7 +13,8 @@ interface ArticleImageEntry {
   revision: number;
   imagePath?: string;
   error?: string;
-  origin?: "generated" | "uploaded";
+  origin?: "generated" | "uploaded" | "research";
+  sourceAssetId?: string;
 }
 
 interface ArticleImageReview {
@@ -34,7 +36,14 @@ const STATUS_LABEL: Record<ArticleImageEntry["status"], string> = {
   error: "失败",
 };
 
-export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; body: string; platform?: string }) {
+export function ArticleImagesPanel(props: {
+  contentId: string;
+  dirty: boolean;
+  body: string;
+  platform?: string;
+  /** 稿件所属选题;有它且该选题真有下载好的素材,才露「研究素材」入口 */
+  topicId?: string;
+}) {
   const [review, setReview] = useState<ArticleImageReview | null>(null);
   const [prompts, setPrompts] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
@@ -43,6 +52,9 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
   const startedStampRef = useRef<string | undefined>();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadIndexRef = useRef(0);
+  // 研究素材入口:只在「这条选题确实有下载成功的素材」时出现——空入口比没入口更糟
+  const [researchCount, setResearchCount] = useState(0);
+  const [pickerIndex, setPickerIndex] = useState<number | null>(null);
 
   const stopPoll = () => {
     if (pollRef.current) window.clearInterval(pollRef.current);
@@ -66,6 +78,18 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
     return stopPoll;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.contentId]);
+
+  useEffect(() => {
+    const topicId = props.topicId;
+    if (!topicId) return setResearchCount(0);
+    let alive = true;
+    void loadResearchAssets(topicId).then((list) => {
+      if (alive) setResearchCount(list.filter((a) => a.stored).length);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [props.topicId]);
 
   useEffect(() => {
     const off = subscribeEvents((event) => {
@@ -238,7 +262,11 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
                 <span className="muted">正文里没找到对应标记</span>
               )}
               <span className={`chip article-image-status-${entry.status}`}>
-                {entry.origin === "uploaded" && entry.status === "ready" ? "自己上传" : STATUS_LABEL[entry.status]}
+                {entry.status === "ready" && entry.origin === "uploaded"
+                  ? "自己上传"
+                  : entry.status === "ready" && entry.origin === "research"
+                    ? "研究素材"
+                    : STATUS_LABEL[entry.status]}
               </span>
             </div>
             {entry.imagePath ? (
@@ -270,6 +298,14 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
               >
                 用自己的图
               </button>
+              {researchCount > 0 && props.topicId && (
+                <button
+                  disabled={busy || entry.status === "generating"}
+                  onClick={() => setPickerIndex(entry.index)}
+                >
+                  研究素材 {researchCount}
+                </button>
+              )}
               {entry.imagePath && (
                 <button
                   disabled={busy}
@@ -294,6 +330,16 @@ export function ArticleImagesPanel(props: { contentId: string; dirty: boolean; b
           </article>
         ))}
       </div>
+
+      {pickerIndex !== null && props.topicId && (
+        <ResearchAssetPicker
+          topicId={props.topicId}
+          contentId={props.contentId}
+          index={pickerIndex}
+          onClose={() => setPickerIndex(null)}
+          onImported={() => void load()}
+        />
+      )}
     </div>
   );
 }

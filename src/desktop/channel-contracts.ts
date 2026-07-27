@@ -138,6 +138,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "research:status": ["topic_id"],
   "research:brief_get": ["topic_id"],
   "research:list_assets": ["topic_id"],
+  // 可选键 index（非负整数）= 落到第几个插图位；不给则落第一个空位（§7 放置即导入）
+  "research:import_asset": ["topic_id", "asset_id", "content_id"],
 } as const;
 
 /**

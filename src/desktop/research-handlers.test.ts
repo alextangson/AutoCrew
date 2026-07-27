@@ -9,9 +9,18 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   researchBriefGetHandler,
   researchDeepDiveHandler,
+  researchImportAssetHandler,
   researchListAssetsHandler,
   researchStatusHandler,
 } from "./research-handlers.js";
+import {
+  getResearchAsset,
+  saveResearchAsset,
+  type ResearchAsset,
+} from "../modules/research/research-asset-store.js";
+import type { ArticleImageReview } from "../modules/publish/article-images.js";
+import type { BriefAssetPick } from "../modules/research/brief-store.js";
+import type { FetchedImage } from "../modules/research/fetch-image.js";
 import {
   SEARCH_NOT_CONFIGURED,
   startResearchRuntime,
@@ -27,7 +36,14 @@ import {
   type ResearchJob,
 } from "../modules/research/research-job-store.js";
 import { saveSearchConfig } from "../modules/research/search-provider.js";
-import { getTopic, saveTopic, updateTopic, type Topic } from "../storage/local-store.js";
+import {
+  getTopic,
+  saveContent,
+  saveTopic,
+  updateTopic,
+  type Content,
+  type Topic,
+} from "../storage/local-store.js";
 
 let dataDir: string;
 let topic: Topic;
@@ -99,6 +115,65 @@ function briefFixture(over: Partial<ResearchBrief> = {}): ResearchBrief {
     ...over,
   };
 }
+
+// ─── 素材侧的夹具（R1b-B） ───────────────────────────────────────────────────
+
+/** 手搓 PNG 头：24 字节里写死 800×600，magic/IHDR 都真，够 store 与配图校验收下 */
+function pngBytes(seed: string): Buffer {
+  const head = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(head, 0);
+  head.write("IHDR", 12, "latin1");
+  head.writeUInt32BE(800, 16);
+  head.writeUInt32BE(600, 20);
+  return Buffer.concat([head, Buffer.from(seed, "utf-8")]);
+}
+
+/** 真 WebP 头：正文配图按字节魔数只收 png/jpg，webp 必须在那一层被认出来 */
+function webpBytes(): Buffer {
+  const b = Buffer.alloc(32);
+  b.write("RIFF", 0, "latin1");
+  b.writeUInt32LE(24, 4);
+  b.write("WEBP", 8, "latin1");
+  b.write("VP8 ", 12, "latin1");
+  return b;
+}
+
+function seedAsset(over: Partial<FetchedImage> = {}): Promise<ResearchAsset> {
+  const image: FetchedImage = {
+    bytes: pngBytes(over.finalUrl ?? "chart"),
+    format: "png",
+    width: 800,
+    height: 600,
+    finalUrl: "https://example.com/chart.png",
+    ...over,
+  };
+  return saveResearchAsset(
+    {
+      topicId: topic.id,
+      sourceUrl: image.finalUrl,
+      sourcePageUrl: "https://example.com/report",
+      caption: "提效曲线",
+    },
+    image,
+    dataDir,
+  );
+}
+
+const pickFor = (assetId: string): BriefAssetPick => ({
+  url: "https://example.com/chart.png",
+  sourcePageUrl: "https://example.com/report",
+  caption: "提效曲线",
+  assetId,
+});
+
+const listed = (res: Record<string, unknown>) =>
+  (res.data as { assets: Array<Record<string, unknown>> }).assets;
+
+const newContent = (body = "开头\n\n[IMAGE: 一张图]\n\n结尾"): Promise<Content> =>
+  saveContent(
+    { title: "稿件", body, status: "draft_ready", tags: [], topicId: topic.id, platform: "wechat_mp" },
+    dataDir,
+  );
 
 describe("research:deep_dive", () => {
   it("搜索 key 未配 → ok:false 且带设置指引", async () => {
@@ -242,17 +317,197 @@ describe("research:list_assets", () => {
     expect((await researchListAssetsHandler(p())).ok).toBe(false);
   });
 
-  it("happy：回当前简报的链接级素材候选", async () => {
+  it("链接级候选（R1a 旧简报，没跑过下载）→ stored:false，无 fileUrl", async () => {
     await seedJob();
     await saveBrief(topic.id, briefFixture(), dataDir);
     const res = await researchListAssetsHandler(p());
     expect(res.ok).toBe(true);
-    expect(res.data).toMatchObject({ revision: 1, total: 1 });
-    const assets = (res.data as { assets: Array<{ url: string; sourcePageUrl: string }> }).assets;
-    expect(assets[0]).toMatchObject({
+    expect(res.data).toMatchObject({ revision: 1, total: 1, storedCount: 0 });
+    expect(listed(res)[0]).toMatchObject({
       url: "https://example.com/chart.png",
       sourcePageUrl: "https://example.com/report",
+      stored: false,
     });
+    expect(listed(res)[0].fileUrl).toBeUndefined();
+  });
+
+  it("已下载的：stored:true + 尺寸 + 取图地址", async () => {
+    const asset = await seedAsset();
+    await seedJob();
+    await saveBrief(topic.id, briefFixture({ assetPicks: [pickFor(asset.assetId)] }), dataDir);
+
+    const res = await researchListAssetsHandler(p());
+    expect(res.data).toMatchObject({ total: 1, storedCount: 1 });
+    expect(listed(res)[0]).toMatchObject({
+      stored: true,
+      width: 800,
+      height: 600,
+      caption: "提效曲线",
+      fileUrl: `/api/research-asset?asset_id=${asset.assetId}`,
+    });
+  });
+
+  it("降级那张：stored:false 且原因原样带出来", async () => {
+    await seedJob();
+    await saveBrief(
+      topic.id,
+      briefFixture({
+        assetPicks: [
+          {
+            url: "https://example.com/chart.png",
+            sourcePageUrl: "https://example.com/report",
+            caption: "提效曲线",
+            downloadError: "对方站点拒绝取图（多半是防盗链）",
+          },
+        ],
+      }),
+      dataDir,
+    );
+    const res = await researchListAssetsHandler(p());
+    expect(res.data).toMatchObject({ storedCount: 0 });
+    expect(listed(res)[0]).toMatchObject({ stored: false, downloadError: "对方站点拒绝取图（多半是防盗链）" });
+  });
+
+  it("索引说有、文件没了 → stored:false 并说清楚（不假装能显示）", async () => {
+    const asset = await seedAsset();
+    await fs.rm(path.join(dataDir, asset.file));
+    await seedJob();
+    await saveBrief(topic.id, briefFixture({ assetPicks: [pickFor(asset.assetId)] }), dataDir);
+
+    const res = await researchListAssetsHandler(p());
+    expect(res.data).toMatchObject({ storedCount: 0 });
+    expect(listed(res)[0]).toMatchObject({ stored: false, downloadError: "素材文件已丢失，只剩链接" });
+  });
+});
+
+describe("research:import_asset", () => {
+  const importP = (extra: Record<string, unknown> = {}) => p(extra);
+
+  it("happy：走正文配图既有承接口落进第一个空位，素材转 imported", async () => {
+    const asset = await seedAsset();
+    const content = await newContent();
+
+    const res = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id }),
+    );
+    expect(res.ok).toBe(true);
+    const data = res.data as { review: ArticleImageReview; index: number; deduped: boolean };
+    expect(data).toMatchObject({ index: 0, deduped: false });
+
+    const entry = data.review.entries[0];
+    expect(entry).toMatchObject({ status: "ready", origin: "research", sourceAssetId: asset.assetId });
+    // 字节真落到该稿件的配图目录里（不是引用研究素材库的路径）
+    expect(entry.imagePath).toContain(path.join("contents", content.id));
+    expect((await fs.readFile(entry.imagePath!)).equals(await fs.readFile(path.join(dataDir, asset.file)))).toBe(true);
+    expect((await getResearchAsset(asset.assetId, dataDir))?.status).toBe("imported");
+  });
+
+  it("幂等：同一素材再导同一位置 → deduped，revision 不动", async () => {
+    const asset = await seedAsset();
+    const content = await newContent();
+    const first = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id, index: 0 }),
+    );
+    const revision = (first.data as { review: ArticleImageReview }).review.entries[0].revision;
+
+    const again = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id, index: 0 }),
+    );
+    expect(again.ok).toBe(true);
+    const data = again.data as { review: ArticleImageReview; deduped: boolean };
+    expect(data.deduped).toBe(true);
+    expect(data.review.entries[0].revision).toBe(revision);
+  });
+
+  it("跨 content 重复导：一张图可以进两篇稿子，两边都真落地", async () => {
+    const asset = await seedAsset();
+    const a = await newContent();
+    const b = await newContent();
+
+    const first = await researchImportAssetHandler(importP({ asset_id: asset.assetId, content_id: a.id }));
+    const second = await researchImportAssetHandler(importP({ asset_id: asset.assetId, content_id: b.id }));
+
+    expect(first.ok && second.ok).toBe(true);
+    expect((second.data as { deduped: boolean }).deduped).toBe(false);
+    const entry = (second.data as { review: ArticleImageReview }).review.entries[0];
+    expect(entry.status).toBe("ready");
+    expect(entry.imagePath).toContain(path.join("contents", b.id));
+  });
+
+  it("指定位置：落到第 index 槽，不动别的槽", async () => {
+    const asset = await seedAsset();
+    const content = await newContent("正文\n\n[IMAGE: 第一张]\n\n更多\n\n[IMAGE: 第二张]");
+    const res = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id, index: 1 }),
+    );
+    const review = (res.data as { review: ArticleImageReview }).review;
+    expect(review.entries[0].status).toBe("missing");
+    expect(review.entries[1]).toMatchObject({ status: "ready", sourceAssetId: asset.assetId });
+  });
+
+  it.each([
+    ["content 不存在", { content_id: "content-1-gone" }, "稿件不存在"],
+    ["asset 不存在", { asset_id: "rasset-1-gone" }, "研究素材不存在"],
+    ["content_id 形状不合法", { content_id: "not-an-id" }, "合法 content_id"],
+  ])("%s → ok:false 且说清是什么问题", async (_label, over, expected) => {
+    const asset = await seedAsset();
+    const content = await newContent();
+    const res = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id, ...over }),
+    );
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain(expected);
+  });
+
+  it("素材不属于该选题 → 拒（界面串了选题时不能静默照做）", async () => {
+    const asset = await seedAsset();
+    const content = await newContent();
+    const other = await saveTopic({ title: "别的选题", description: "x", tags: [] }, dataDir);
+    const res = await researchImportAssetHandler(
+      importP({ topic_id: other.id, asset_id: asset.assetId, content_id: content.id }),
+    );
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("不属于该选题");
+  });
+
+  it("稿件里没有插图位 → 说人话地拒，不凭空造一个位置", async () => {
+    const asset = await seedAsset();
+    const content = await newContent("一段没有任何插图标记的正文");
+    const res = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id }),
+    );
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("还没有插图位");
+  });
+
+  it("素材文件丢了 → 拒，不写一个坏图进配图区", async () => {
+    const asset = await seedAsset();
+    const content = await newContent();
+    await fs.rm(path.join(dataDir, asset.file));
+    const res = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id }),
+    );
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("研究素材文件");
+  });
+
+  it("webp 素材 → 被既有承接口的格式校验挡下（没绕开它的校验）", async () => {
+    const asset = await seedAsset({
+      format: "webp",
+      bytes: webpBytes(),
+      finalUrl: "https://example.com/pic.webp",
+    });
+    const content = await newContent();
+    const res = await researchImportAssetHandler(
+      importP({ asset_id: asset.assetId, content_id: content.id }),
+    );
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("PNG/JPG");
+  });
+
+  it("缺必填 / 非对象 payload → 守卫拦下", async () => {
+    expect((await researchImportAssetHandler(null as unknown as Record<string, unknown>)).ok).toBe(false);
+    expect((await researchImportAssetHandler(p({ content_id: "content-1-a" }))).ok).toBe(false);
   });
 });
 

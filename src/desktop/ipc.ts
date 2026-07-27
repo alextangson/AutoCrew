@@ -127,6 +127,7 @@ import {
   researchStatusHandler,
   researchBriefGetHandler,
   researchListAssetsHandler,
+  researchImportAssetHandler,
 } from "./research-handlers.js";
 import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, updateTopic, softDeleteTopic, restoreTopic, listTrash, updateContent } from "../storage/local-store.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
@@ -1028,6 +1029,7 @@ export function buildIpcHandlers(
     "research:status": researchStatusHandler,
     "research:brief_get": researchBriefGetHandler,
     "research:list_assets": researchListAssetsHandler,
+    "research:import_asset": researchImportAssetHandler,
   };
 
   // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。

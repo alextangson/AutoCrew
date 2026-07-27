@@ -60,11 +60,19 @@ export interface BriefEvidence {
   sourceUrl: string;
 }
 
-/** R1a 只到链接级：不下载，assetId 已解析成图片 URL + 它所在的页面 */
+/**
+ * 素材候选。R1a 只到链接级；R1b-B 起管线会尝试下载：
+ * - `assetId` 有值 = 已入研究素材库（可显缩略图、可导入配图）；
+ * - `downloadError` 有值 = 这一张降级成「仅链接」，附**人话**原因（§7「单张下载失败 → 仅链接」）。
+ * 两者互斥；都没有 = 这份简报出自 R1a（没跑过下载）。**schemaVersion 保持 1**：
+ * 新字段全可选，旧简报读进来逐字有效，读侧不需要分支。
+ */
 export interface BriefAssetPick {
   url: string;
   sourcePageUrl: string;
   caption: string;
+  assetId?: string;
+  downloadError?: string;
 }
 
 export interface ResearchBrief {
