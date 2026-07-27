@@ -30,11 +30,11 @@
 ## 2. 数据模型
 
 ### 2.1 落点：视频状态独立于 Content（P1-9 的答案）
-仓库现状：`local-store.updateContent()` 是非原子读改写且吞异常返回 null——worker、人工确认、旧渲染回调并发写 Content 会互相覆盖。**因此视频线状态不进 Content**：
+仓库现状（2026-07-27 更新）：本节写作时 `local-store.updateContent()` 是非原子读改写且吞异常返回 null，并发写 Content 会互相覆盖——该问题已修（commit bc9a64a：全部 meta.json 写路径 tmp+rename 原子写 + 逐 content 串行队列，null 只表示不存在、其余失败向上抛）。**视频线状态仍不进 Content**——理由从「绕开底座风险」换成职责边界：phase×state 是构建管线的高频中间态，膨胀进稿件元数据只会让 Content 变成杂物抽屉：
 
-- `contents/<id>/video/state.json`：视频构建全量状态，**tmp+rename 原子写 + 模块内逐 content 串行队列**（promise 链，inbox `serialize()` 同款）。
-- Content 仅两处最小接触：终点盖 `videoReadyAt`（只盖一次，publishedAt 纪律）；成片登记为既有语义的 content asset（§6.4）。
-- local-store 的非原子问题本身是全仓风险，**另立独立任务卡**，不在本 spec 修。
+- `contents/<id>/video/state.json`：视频构建全量状态，**tmp+rename 原子写 + 模块内逐 content 串行队列**（promise 链，与修复后的 local-store 同款）。
+- Content 仅两处最小接触：终点盖 `videoReadyAt`（只盖一次，publishedAt 纪律）；成片登记为既有语义的 content asset（§6.4）——两处都落在修复后的 `updateContent`/`addAsset` 上，天然原子且串行。
+- local-store 非原子问题当时**另立独立任务卡**——**已销**（2026-07-27，commit bc9a64a，全量 vitest 1967 项通过）。
 
 ### 2.2 `video/state.json`（phase × state，P1-4/5 的答案）
 ```ts
@@ -179,7 +179,7 @@ chat 工具 `build_video`（投递）；`AGENT_LABELS` 加 `editor`；系统提�
 3. 并发防呆：同 content 重复投递合并（inputKey latest-wins）；渲染中确认旧版被乐观锁拒绝；旧 revision settle 被 CAS 拒绝只留历史；跨进程重复渲染被心跳 lease 阻止。
 4. 幂等与钱：submitting 孤儿对账呈人裁决，绝不盲重提；预算 reserve+settle 台账可审计；价目表带版本。
 5. 失败可见：全链无静默降级；stderr 截断留档；AI 标注只读 rendered manifest provenance。
-6. 明确不做（V0）：全自动发布、剪映导出、MCP 工具、双 TTS、多账号、对标视频 ASR、BGM 卡点、竖屏以外画幅、local-store 原子化改造（独立任务卡）。
+6. 明确不做（V0）：全自动发布、剪映导出、MCP 工具、双 TTS、多账号、对标视频 ASR、BGM 卡点、竖屏以外画幅。（local-store 原子化改造原列此处，任务卡已销——2026-07-27 修复落地，§2.1）
 
 验收用例：创始人真拍一条 → V0a 全链到 done → 发布件含标注判定（false 路径）→ 真实发抖音；transcribe 中杀进程重启 → 心跳过期回收重排；两窗口并发 cut_confirm → 后到者冲突可见；改稿两轮 → cut v3/timeline v2/render v2 链路一致且旧 mp4 留档；A-roll 拍后被改名 → assemble 前复检 blocked；ffprobe 断言 1080×1920/30fps/时长=输出域±0.5s（**不做逐帧 golden**）；V0b：预算超限拒投递、submitting 孤儿重启后呈现人裁决、AI 槽位失败重排出新 revision。
 
@@ -201,7 +201,7 @@ chat 工具 `build_video`（投递）；`AGENT_LABELS` 加 `editor`；系统提�
 | 6 | 按 contentId latest-wins 丢任务 | 吸收：jobId + {contentId, phase, inputKey} 读视图（§3） |
 | 7 | job schema 不完整 | 吸收：attempts/leaseOwner/heartbeatAt/outputRevision 等补齐（§3） |
 | 8 | 固定 30 分钟 lease 重复渲染 | 吸收：10 分钟 lease + 60 秒心跳续租 + owner 校验（§3） |
-| 9 | updateContent 非原子并发覆盖 | 吸收：视频状态独立 state.json + 原子写 + 串行队列；local-store 修复另立任务卡（§2.1） |
+| 9 | updateContent 非原子并发覆盖 | 吸收：视频状态独立 state.json + 原子写 + 串行队列；local-store 修复已落地（2026-07-27 bc9a64a，§2.1） |
 | 10 | 旧 revision settle 污染新状态 | 吸收：settle CAS 校验 owner+inputKey，旧结果只留历史（§3） |
 | 11 | 人工确认无乐观锁 | 吸收：cut/review confirm 必带 base revision，不符冲突返回（§4.4） |
 | 12 | transcript 混合事实与编辑 | 吸收：不可变 transcript + 版本化 cut 决策分离（§2.3） |
