@@ -146,6 +146,46 @@ describe("executeGenerate", () => {
     expect(capturedReq).not.toBeNull();
     expect((capturedReq as Record<string, unknown>).research).toBe("参考资料...");
   });
+
+  // 9. topic_id → ScriptRequest.topicId — 简报注入与选题血缘都挂在它上面
+  //    （注入本身在生成管线，MCP 路径含简报块的集成验证见 generate-script-brief.test.ts）
+  it("topic_id param is forwarded as ScriptRequest.topicId", async () => {
+    let capturedReq: Record<string, unknown> | null = null;
+    const impl = async (req: Record<string, unknown>): Promise<GeneratedScript> => {
+      capturedReq = req;
+      return GOOD_RESULT;
+    };
+
+    await executeGenerate(
+      { action: "script", topic: "AI技能", platform: "douyin", topic_id: "topic-42" },
+      { generateScriptImpl: impl as Parameters<typeof executeGenerate>[1]["generateScriptImpl"] },
+    );
+
+    expect(capturedReq).not.toBeNull();
+    expect((capturedReq as Record<string, unknown>).topicId).toBe("topic-42");
+  });
+
+  // 10. 不带 topic_id / 空串 → topicId 不设值，行为与改动前一致（口径同桌面 IPC）
+  it("absent or empty topic_id → topicId stays undefined", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const impl = async (req: Record<string, unknown>): Promise<GeneratedScript> => {
+      seen.push(req);
+      return GOOD_RESULT;
+    };
+    const deps = {
+      generateScriptImpl: impl as Parameters<typeof executeGenerate>[1]["generateScriptImpl"],
+    };
+
+    await executeGenerate({ action: "script", topic: "AI技能", platform: "douyin" }, deps);
+    await executeGenerate(
+      { action: "script", topic: "AI技能", platform: "douyin", topic_id: "" },
+      deps,
+    );
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0].topicId).toBeUndefined();
+    expect(seen[1].topicId).toBeUndefined();
+  });
 });
 
 describe("knowledge dedupe", () => {
