@@ -243,14 +243,11 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   }
   const summary = lines.join("\n");
 
-  // Auto-transition to publish_ready if all passed
+  // Auto-transition to publish_ready if all passed。
+  // 非法流转走返回值 {ok:false}，照旧容忍；写盘失败会 throw 到工具错误边界——
+  // 不能吞：吞掉 = 报了「可以发布」但 publish_ready 没落盘
   if (allPassed) {
-    await transitionStatus(
-      contentId,
-      normalizeLegacyStatus("publish_ready"),
-      {},
-      dataDir,
-    ).catch(() => { /* transition may fail if not in correct state — ok */ });
+    await transitionStatus(contentId, normalizeLegacyStatus("publish_ready"), {}, dataDir);
   }
 
   return {

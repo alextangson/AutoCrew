@@ -38,15 +38,20 @@ export async function reconcileOrphanDrafts(): Promise<OrphanReconcileResult> {
         if (c.status !== "drafting") continue;
         if (c.lastError) continue; // 运行时失败路径已标过,保留真实错误原因
         if (!c.title.startsWith(GENERATING_TITLE_PREFIX)) continue; // 手工 drafting 稿不动
-        const updated = await updateContent(
-          c.id,
-          {
-            title: `${INTERRUPTED_TITLE_PREFIX}${c.title.slice(GENERATING_TITLE_PREFIX.length)}`,
-            lastError: ORPHAN_ERROR,
-          },
-          ws.dataDir,
-        );
-        if (updated) marked += 1;
+        try {
+          const updated = await updateContent(
+            c.id,
+            {
+              title: `${INTERRUPTED_TITLE_PREFIX}${c.title.slice(GENERATING_TITLE_PREFIX.length)}`,
+              lastError: ORPHAN_ERROR,
+            },
+            ws.dataDir,
+          );
+          if (updated) marked += 1;
+        } catch (err) {
+          // updateContent 现在写失败会 throw:单篇标记失败留痕后继续,不中断本工作区其余稿件
+          console.warn(`[orphan-reconcile] mark ${c.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     } catch {
       continue; // 单工作区坏数据不阻断其余工作区的清理

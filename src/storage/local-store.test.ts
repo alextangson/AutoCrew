@@ -141,6 +141,57 @@ describe("Content", () => {
   });
 });
 
+// --- 并发与失败可见性（codex 2026-07-27：非原子读改写互相覆盖 + 吞异常返回 null） ---
+
+describe("Content write safety", () => {
+  it("updateContent returns null for a well-formed id that does not exist", async () => {
+    const result = await updateContent("content-nope", { title: "x" }, testDir);
+    expect(result).toBeNull();
+  });
+
+  it("updateContent throws on corrupt meta.json instead of returning null", async () => {
+    const saved = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    await fs.writeFile(path.join(testDir, "contents", saved.id, "meta.json"), "not json{", "utf-8");
+    await expect(updateContent(saved.id, { title: "x" }, testDir)).rejects.toThrow();
+  });
+
+  it("updateContent surfaces write failures instead of returning null", async () => {
+    const saved = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const projDir = path.join(testDir, "contents", saved.id);
+    await fs.chmod(projDir, 0o555);
+    try {
+      // digest-only 更新:不触发版本快照,首个写盘动作就落在只读目录里
+      await expect(updateContent(saved.id, { digest: "钩子" }, testDir)).rejects.toThrow();
+    } finally {
+      await fs.chmod(projDir, 0o755);
+    }
+  });
+
+  it("concurrent updateContent calls do not overwrite each other's fields", async () => {
+    const saved = await saveContent({ title: "原稿", body: "b", tags: [], status: "draft_ready" }, testDir);
+    await Promise.all([
+      updateContent(saved.id, { digest: "摘要钩子" }, testDir),
+      updateContent(saved.id, { title: "新标题" }, testDir),
+    ]);
+    const final = await getContent(saved.id, testDir);
+    expect(final!.digest).toBe("摘要钩子");
+    expect(final!.title).toBe("新标题");
+  });
+
+  it("concurrent updateContent and addAsset both land", async () => {
+    const saved = await saveContent({ title: "C", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const [updated, assetRes] = await Promise.all([
+      updateContent(saved.id, { digest: "并发摘要" }, testDir),
+      addAsset(saved.id, { filename: "cover.png", type: "cover" }, testDir),
+    ]);
+    expect(updated).not.toBeNull();
+    expect(assetRes.ok).toBe(true);
+    const final = await getContent(saved.id, testDir);
+    expect(final!.digest).toBe("并发摘要");
+    expect(final!.assets.map((a) => a.filename)).toContain("cover.png");
+  });
+});
+
 // --- Assets ---
 
 describe("Assets", () => {

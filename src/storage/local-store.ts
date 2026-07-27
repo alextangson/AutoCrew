@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
+import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 
 export interface Topic {
   id: string;
@@ -247,6 +248,29 @@ async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
+function isFileMissing(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
+/**
+ * 逐 content 写队列（codex 2026-07-27 评审：meta.json 读-改-写并发互相覆盖丢字段）。
+ * 同一稿件的写路径按 id 排队（promise 链，inbox-runtime serialize() 同款，也是
+ * 视频线 spec §2.1 为 state.json 选定的模式）。只护本进程内的 worker/IPC/回调
+ * 并发；跨进程仍是 last-writer-wins（原子写只保证不留半个 JSON）。
+ */
+const contentWriteChains = new Map<string, Promise<unknown>>();
+
+function serializeContentWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = contentWriteChains.get(id) ?? Promise.resolve();
+  const next = prev.then(fn, fn); // 前一步失败也不许卡住后一步
+  const tail = next.then(() => undefined, () => undefined);
+  contentWriteChains.set(id, tail);
+  void tail.then(() => {
+    if (contentWriteChains.get(id) === tail) contentWriteChains.delete(id);
+  });
+  return next;
+}
+
 // --- Topics ---
 
 async function topicsDir(dataDir?: string): Promise<string> {
@@ -263,7 +287,7 @@ export async function saveTopic(topic: Omit<Topic, "id" | "createdAt">, dataDir?
     id,
     createdAt: new Date().toISOString(),
   };
-  await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(full, null, 2), "utf-8");
+  await writeJsonAtomic(path.join(dir, `${id}.json`), full);
   return full;
 }
 
@@ -293,7 +317,7 @@ export async function getTopic(id: string, dataDir?: string): Promise<Topic | nu
 async function writeTopic(topic: Topic, dataDir?: string): Promise<void> {
   if (!isTopicId(topic.id)) throw new Error("Invalid topic id");
   const dir = await topicsDir(dataDir);
-  await fs.writeFile(path.join(dir, `${topic.id}.json`), JSON.stringify(topic, null, 2), "utf-8");
+  await writeJsonAtomic(path.join(dir, `${topic.id}.json`), topic);
 }
 
 /** 更新灵感加工结果（中文标题、评分、角度等）；id/createdAt 不允许被覆盖。 */
@@ -373,12 +397,10 @@ export async function saveContent(
     updatedAt: now,
   };
 
-  // Write meta.json
-  await fs.writeFile(path.join(projDir, "meta.json"), JSON.stringify(full, null, 2), "utf-8");
-  // Write readable draft.md
-  await fs.writeFile(path.join(projDir, "draft.md"), `# ${content.title}\n\n${content.body}\n`, "utf-8");
-  // Write version snapshot
-  await fs.writeFile(path.join(projDir, "versions", "v1.md"), content.body, "utf-8");
+  // meta.json 最后写 = 提交点：中途崩溃只留一个没有 meta 的孤儿目录（读侧会跳过），不留半份稿
+  await writeTextAtomic(path.join(projDir, "draft.md"), `# ${content.title}\n\n${content.body}\n`);
+  await writeTextAtomic(path.join(projDir, "versions", "v1.md"), content.body);
+  await writeJsonAtomic(path.join(projDir, "meta.json"), full);
 
   return full;
 }
@@ -502,63 +524,65 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
 
 export type ContentUpdates = Partial<Content> & { _versionNote?: string };
 
+/**
+ * 契约（codex 2026-07-27 评审后收紧）：null 只表示「稿件不存在」；
+ * 坏 JSON、写盘失败等一律向上抛——吞成 null 会让并发覆盖与磁盘故障都不可见。
+ * 同一稿件的读-改-写按 id 串行，防止多写方（worker/IPC/回调）互相覆盖字段。
+ */
 export async function updateContent(id: string, updates: ContentUpdates, dataDir?: string): Promise<Content | null> {
   if (!isContentId(id)) return null;
+  return serializeContentWrite(id, () => updateContentLocked(id, updates, dataDir));
+}
+
+async function updateContentLocked(id: string, updates: ContentUpdates, dataDir?: string): Promise<Content | null> {
   const projDir = path.join(getDataDir(dataDir), "contents", id);
   const metaPath = path.join(projDir, "meta.json");
+  let raw: string;
   try {
-    const raw = await fs.readFile(metaPath, "utf-8");
-    const existing: Content = JSON.parse(raw);
-    const now = new Date().toISOString();
-
-    // 正文或标题变化都形成新版本；版本不再只记录 body，标题优化也可追溯。
-    const bodyChanged = updates.body !== undefined && updates.body !== existing.body;
-    const titleChanged = updates.title !== undefined && updates.title !== existing.title;
-    if (bodyChanged || titleChanged) {
-      const nextVersion = (existing.versions?.length || 0) + 1;
-      const versionEntry: ContentVersion = {
-        version: nextVersion,
-        title: updates.title ?? existing.title,
-        body: updates.body ?? existing.body,
-        note: updates._versionNote || `第 ${nextVersion} 版`,
-        savedAt: now,
-      };
-      existing.versions = [...(existing.versions || []), versionEntry];
-      // Write version snapshot
-      await fs.writeFile(
-        path.join(projDir, "versions", `v${nextVersion}.md`),
-        versionEntry.body,
-        "utf-8",
-      );
-    }
-
-    const updated: Content = {
-      ...existing,
-      ...updates,
-      id: existing.id,
-      assets: updates.assets || existing.assets || [],
-      versions: existing.versions,
-      siblings: updates.siblings || existing.siblings || [],
-      hashtags: updates.hashtags || existing.hashtags || [],
-      publishedAt: updates.publishedAt !== undefined ? updates.publishedAt : existing.publishedAt ?? null,
-      publishUrl: updates.publishUrl !== undefined ? updates.publishUrl : existing.publishUrl ?? null,
-      performanceData: updates.performanceData || existing.performanceData || {},
-      createdAt: existing.createdAt,
-      updatedAt: now,
-    };
-
-    await fs.writeFile(metaPath, JSON.stringify(updated, null, 2), "utf-8");
-    // Update readable draft
-    await fs.writeFile(
-      path.join(projDir, "draft.md"),
-      `# ${updated.title}\n\n${updated.body}\n`,
-      "utf-8",
-    );
-
-    return updated;
-  } catch {
-    return null;
+    raw = await fs.readFile(metaPath, "utf-8");
+  } catch (err) {
+    if (isFileMissing(err)) return null;
+    throw err;
   }
+  const existing: Content = JSON.parse(raw);
+  const now = new Date().toISOString();
+
+  // 正文或标题变化都形成新版本；版本不再只记录 body，标题优化也可追溯。
+  const bodyChanged = updates.body !== undefined && updates.body !== existing.body;
+  const titleChanged = updates.title !== undefined && updates.title !== existing.title;
+  if (bodyChanged || titleChanged) {
+    const nextVersion = (existing.versions?.length || 0) + 1;
+    const versionEntry: ContentVersion = {
+      version: nextVersion,
+      title: updates.title ?? existing.title,
+      body: updates.body ?? existing.body,
+      note: updates._versionNote || `第 ${nextVersion} 版`,
+      savedAt: now,
+    };
+    existing.versions = [...(existing.versions || []), versionEntry];
+    await writeTextAtomic(path.join(projDir, "versions", `v${nextVersion}.md`), versionEntry.body);
+  }
+
+  const updated: Content = {
+    ...existing,
+    ...updates,
+    id: existing.id,
+    assets: updates.assets || existing.assets || [],
+    versions: existing.versions,
+    siblings: updates.siblings || existing.siblings || [],
+    hashtags: updates.hashtags || existing.hashtags || [],
+    publishedAt: updates.publishedAt !== undefined ? updates.publishedAt : existing.publishedAt ?? null,
+    publishUrl: updates.publishUrl !== undefined ? updates.publishUrl : existing.publishUrl ?? null,
+    performanceData: updates.performanceData || existing.performanceData || {},
+    createdAt: existing.createdAt,
+    updatedAt: now,
+  };
+
+  // draft.md 先写、meta.json 最后写 = 提交点：镜像超前可被下次成功写自愈，meta 不留中间态
+  await writeTextAtomic(path.join(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
+  await writeJsonAtomic(metaPath, updated);
+
+  return updated;
 }
 
 // --- Assets ---
@@ -613,15 +637,21 @@ export async function addAsset(
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
-  const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-  const metaPath = path.join(projDir, "meta.json");
+  return serializeContentWrite(contentId, async () => {
+    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+    const metaPath = path.join(projDir, "meta.json");
 
-  try {
-    const raw = await fs.readFile(metaPath, "utf-8");
+    let raw: string;
+    try {
+      raw = await fs.readFile(metaPath, "utf-8");
+    } catch (err) {
+      if (isFileMissing(err)) return { ok: false, error: `Content ${contentId} not found` };
+      throw err;
+    }
     const content: Content = JSON.parse(raw);
     const now = new Date().toISOString();
 
-    // Copy source file into assets/ if provided
+    // Copy source file into assets/ if provided（拷贝失败向上抛，不再伪装成 not found）
     if (asset.sourcePath) {
       const destPath = path.join(projDir, "assets", asset.filename);
       await fs.copyFile(asset.sourcePath, destPath);
@@ -636,12 +666,10 @@ export async function addAsset(
 
     content.assets = [...(content.assets || []), newAsset];
     content.updatedAt = now;
-    await fs.writeFile(metaPath, JSON.stringify(content, null, 2), "utf-8");
+    await writeJsonAtomic(metaPath, content);
 
     return { ok: true, asset: newAsset };
-  } catch {
-    return { ok: false, error: `Content ${contentId} not found` };
-  }
+  });
 }
 
 export async function listAssets(contentId: string, dataDir?: string): Promise<Asset[]> {
@@ -658,20 +686,24 @@ export async function listAssets(contentId: string, dataDir?: string): Promise<A
 
 export async function removeAsset(contentId: string, filename: string, dataDir?: string): Promise<boolean> {
   if (!isContentId(contentId) || !isSafeFilename(filename)) return false;
-  const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-  const metaPath = path.join(projDir, "meta.json");
-  try {
-    const raw = await fs.readFile(metaPath, "utf-8");
+  return serializeContentWrite(contentId, async () => {
+    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+    const metaPath = path.join(projDir, "meta.json");
+    let raw: string;
+    try {
+      raw = await fs.readFile(metaPath, "utf-8");
+    } catch (err) {
+      if (isFileMissing(err)) return false; // false 只表示稿件不存在；写失败向上抛
+      throw err;
+    }
     const content: Content = JSON.parse(raw);
     content.assets = (content.assets || []).filter(a => a.filename !== filename);
     content.updatedAt = new Date().toISOString();
-    await fs.writeFile(metaPath, JSON.stringify(content, null, 2), "utf-8");
+    await writeJsonAtomic(metaPath, content);
     // Also delete the file
     try { await fs.unlink(path.join(projDir, "assets", filename)); } catch { /* ok */ }
     return true;
-  } catch {
-    return false;
-  }
+  });
 }
 
 // --- Versions ---
@@ -720,12 +752,18 @@ export async function saveCoverReview(
   dataDir?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-  const metaPath = path.join(projDir, "meta.json");
-  const reviewPath = path.join(projDir, "cover-review.json");
+  return serializeContentWrite(contentId, async () => {
+    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+    const metaPath = path.join(projDir, "meta.json");
+    const reviewPath = path.join(projDir, "cover-review.json");
 
-  try {
-    const raw = await fs.readFile(metaPath, "utf-8");
+    let raw: string;
+    try {
+      raw = await fs.readFile(metaPath, "utf-8");
+    } catch (err) {
+      if (isFileMissing(err)) return null; // null 只表示稿件不存在；写失败向上抛
+      throw err;
+    }
     const content: Content = JSON.parse(raw);
     const now = new Date().toISOString();
     // createdAt 保留首次值——反馈重做会反复保存,历史起点不许被覆盖
@@ -735,13 +773,11 @@ export async function saveCoverReview(
       updatedAt: now,
     };
 
-    await fs.writeFile(reviewPath, JSON.stringify(full, null, 2), "utf-8");
+    await writeJsonAtomic(reviewPath, full);
     content.updatedAt = now;
-    await fs.writeFile(metaPath, JSON.stringify(content, null, 2), "utf-8");
+    await writeJsonAtomic(metaPath, content);
     return full;
-  } catch {
-    return null;
-  }
+  });
 }
 
 export async function getCoverReview(contentId: string, dataDir?: string): Promise<CoverReview | null> {
@@ -761,55 +797,66 @@ export async function approveCoverVariant(
   dataDir?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
+  return serializeContentWrite(contentId, () => approveCoverVariantLocked(contentId, label, dataDir));
+}
+
+async function approveCoverVariantLocked(
+  contentId: string,
+  label: "a" | "b" | "c",
+  dataDir?: string,
+): Promise<CoverReview | null> {
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
   const reviewPath = path.join(projDir, "cover-review.json");
   const metaPath = path.join(projDir, "meta.json");
 
+  let reviewRaw: string;
+  let metaRaw: string;
   try {
-    const [reviewRaw, metaRaw] = await Promise.all([
+    [reviewRaw, metaRaw] = await Promise.all([
       fs.readFile(reviewPath, "utf-8"),
       fs.readFile(metaPath, "utf-8"),
     ]);
-    const review: CoverReview = JSON.parse(reviewRaw);
-    const content: Content = JSON.parse(metaRaw);
-    const selected = review.variants.find((variant) => variant.label === label);
-    if (!selected) {
-      return null;
-    }
-
-    const now = new Date().toISOString();
-    review.status = "publish_ready";
-    review.approvedLabel = label;
-    // 修复存量 bug:create_candidates 只写 imagePaths,旧字段 imagePath 从未赋值。
-    // 主比例可选(V5.6.1 横屏封面),取主比例成图,再兜底其他比例
-    review.approvedImagePath =
-      selected.imagePaths?.[review.primaryRatio ?? "3:4"] ??
-      selected.imagePaths?.["3:4"] ??
-      selected.imagePaths?.["16:9"] ??
-      selected.imagePaths?.["4:3"] ??
-      selected.imagePath;
-    review.approvedAt = now;
-    review.updatedAt = now;
-    // 修复存量 bug:选封面不许把已进发布链的稿件倒拨回 approved
-    const protectedStatuses: ContentStatus[] = ["publish_ready", "publishing", "published", "archived"];
-    if (!protectedStatuses.includes(content.status)) {
-      content.status = "approved";
-    }
-    content.updatedAt = now;
-
-    await Promise.all([
-      fs.writeFile(reviewPath, JSON.stringify(review, null, 2), "utf-8"),
-      fs.writeFile(metaPath, JSON.stringify(content, null, 2), "utf-8"),
-    ]);
-    // 人机协同(V5.6.1):选定封面在文件夹根留一份「拿了就走」的副本(重选自动覆盖)
-    if (review.approvedImagePath) {
-      const ext = path.extname(review.approvedImagePath) || ".png";
-      await fs.copyFile(review.approvedImagePath, path.join(projDir, `封面${ext}`)).catch(() => {});
-    }
-    return review;
-  } catch {
+  } catch (err) {
+    if (isFileMissing(err)) return null; // 稿件或评审单不存在；其余失败向上抛
+    throw err;
+  }
+  const review: CoverReview = JSON.parse(reviewRaw);
+  const content: Content = JSON.parse(metaRaw);
+  const selected = review.variants.find((variant) => variant.label === label);
+  if (!selected) {
     return null;
   }
+
+  const now = new Date().toISOString();
+  review.status = "publish_ready";
+  review.approvedLabel = label;
+  // 修复存量 bug:create_candidates 只写 imagePaths,旧字段 imagePath 从未赋值。
+  // 主比例可选(V5.6.1 横屏封面),取主比例成图,再兜底其他比例
+  review.approvedImagePath =
+    selected.imagePaths?.[review.primaryRatio ?? "3:4"] ??
+    selected.imagePaths?.["3:4"] ??
+    selected.imagePaths?.["16:9"] ??
+    selected.imagePaths?.["4:3"] ??
+    selected.imagePath;
+  review.approvedAt = now;
+  review.updatedAt = now;
+  // 修复存量 bug:选封面不许把已进发布链的稿件倒拨回 approved
+  const protectedStatuses: ContentStatus[] = ["publish_ready", "publishing", "published", "archived"];
+  if (!protectedStatuses.includes(content.status)) {
+    content.status = "approved";
+  }
+  content.updatedAt = now;
+
+  await Promise.all([
+    writeJsonAtomic(reviewPath, review),
+    writeJsonAtomic(metaPath, content),
+  ]);
+  // 人机协同(V5.6.1):选定封面在文件夹根留一份「拿了就走」的副本(重选自动覆盖)
+  if (review.approvedImagePath) {
+    const ext = path.extname(review.approvedImagePath) || ".png";
+    await fs.copyFile(review.approvedImagePath, path.join(projDir, `封面${ext}`)).catch(() => {});
+  }
+  return review;
 }
 
 // --- Content Status Machine ---

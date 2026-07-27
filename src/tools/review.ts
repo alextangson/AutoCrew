@@ -284,14 +284,9 @@ export async function executeReview(params: Record<string, unknown>) {
   if (contentId) {
     const targetStatus = passed ? "approved" : "revision";
     const diffNote = passed ? undefined : fixes.join("; ");
-    await transitionStatus(
-      contentId,
-      normalizeLegacyStatus(targetStatus),
-      { diffNote },
-      dataDir,
-    ).catch(() => {
-      /* transition may fail if not in reviewing state — that's ok */
-    });
+    // 非法流转（如不在 reviewing 态）走返回值 {ok:false}，照旧容忍丢弃；
+    // 写盘失败会 throw，交给工具错误边界——不能吞，否则审核过了状态没落盘也无人知道
+    await transitionStatus(contentId, normalizeLegacyStatus(targetStatus), { diffNote }, dataDir);
   }
 
   const report: ReviewReport = {
