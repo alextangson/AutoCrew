@@ -48,7 +48,11 @@
   stale?: { body?: boolean, aroll?: boolean },                     // 输入漂移标注，不自动重跑
   updatedAt }
 ```
-迁移表（仅列合法迁移，其余一律拒绝并可见）：`idle→queued(投递)`；`queued→running(claim)`；`running→awaiting_human(转写完/渲染完)｜failed｜blocked`；`awaiting_human→queued(人工确认推进下一 phase)`；`failed→queued(重试 failedPhase)`；`blocked→queued(阻因消除)`；`review 确认→done`。
+迁移表（仅列合法迁移，其余一律拒绝并可见；**2026-07-27 v2.1 修正**——W1 实现期发现原表两处漏边：done 成死路与 assemble 无法自动接 render，与 §3/§4.1/§10 自相矛盾）：`idle→queued(投递)`；`queued→running(claim)`；`running→awaiting_human(人工门：transcribe 完、render 完)｜queued(自动接续，仅 ingest→transcribe、assemble→render 两对；同阶段则为启动回收重排)｜failed｜blocked`；`awaiting_human→queued(人工确认推进)`；`failed→queued(重试 failedPhase)`；`blocked→queued(阻因消除)`；`review/awaiting_human→done(审片确认)｜cut/awaiting_human(审片打回改选段)`；`done/done→assemble/queued(重开：对已完成内容提交新 cut)`。阶段回退仅限打回与重开两条显式白名单边。
+
+**v2.1 实现期修正记录（W1 反馈吸收，实现为准）**：`identity.codeTheme` 为对象 `{background?,foreground?,accent?,fontFamily?}`（渲染端 strict schema 对齐）；版本化文件用 tmp+link 实现不可覆盖（rename 会静默覆盖）；`verifyFingerprint` 不比对 mtime（rsync/Finder 拷贝会改 mtime 而字节未变，只比 size+quickHash）；`resolveAssetRef` 为 async；`failedPhase` 强类型为 VideoPhase；无/损坏 state.json 一律按创世 `{ingest, idle}` 读取（损坏即从头，代码内注明）。
+
+**v2.1 实现期修正记录（W2/W3 反馈吸收）**：① Remotion 只认 http(s) 素材源——render CLI 内置渲染期 127.0.0.1 随机端口静态服务（白名单路径 + Range，渲染完即关），素材不复制，主进程契约不变（§6.1 未预见层）；② 渲染端未引 @remotion/captions/@remotion/fonts，字幕分行与本地字体自实现，零额外依赖；③ ffprobe 时长断言以 **video stream duration** 为准（AAC 编码 padding 会污染 format duration）；④ 临时成片命名 `final.v<K>.tmp.mp4`、留档 `final.v<K>.failed.mp4`（ffmpeg/Remotion 按扩展名推容器，`.mp4.tmp` 直接渲染失败——实测）；⑤ A-roll 来源发现序：assets.json 已登记 aroll → 稿件 assets/ 首个视频（排除 final-v*）→ 都没有则 failed `errorCode:"aroll_missing"`；⑥ anchor wav 是 (A-roll, cut) 的确定性纯函数产物，可覆盖重算（tmp+rename），不入不可变序列；⑦ ingest 阶段无 job 行，其启动回收走 state.json updatedAt 超时；⑧ `scriptAlignment.matchedRatio` 在 TS 侧以字符二元组重合率计算，仅作 V0b LLM 建议权判据；⑨ eligibility 的「approved 及之后」含 archived（归档不等于不能重出一版）；⑩ `retry` 同时接受 failed 与 blocked（阻因消除后重试是自然动作，即 §2.2 blocked→queued 边）。
 
 ### 2.3 transcript 与 cut 分离（P1-12 的答案）
 - `video/transcript.v<N>.json`（**不可变 ASR 事实**，源时间域）：`{ schemaVersion, source: "funasr", segments: [{id, text, startMs, endMs, words: [{w, startMs, endMs}]}], scriptAlignment?: {matchedRatio} }`。重跑 ASR 才产生新 revision。
