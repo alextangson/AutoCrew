@@ -8,7 +8,7 @@
  * 引擎未配置 → {ok:false, needsSetup:true}，renderer 引导去设置页。
  */
 import { loadEngineConfig } from "../engine/config.js";
-import { runLoop, type LoopTool, type LoopEvent } from "../engine/loop.js";
+import { runLoop, type LoopTool, type LoopEvent, type LoopStreamEvent } from "../engine/loop.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeRewrite } from "../tools/rewrite.js";
 import { executeFlywheel } from "../tools/flywheel.js";
@@ -66,6 +66,15 @@ export interface ChatProgressEvent {
   label: string;
   /** 任务归属（chatTurnHandler 注入，同 turn 事件共享）——前端任务带按此聚合 */
   runId?: string;
+}
+
+/**
+ * 流式正文事件（对话控制面设计 §Phase 3）——turnId/seq 由上层（chatTurnHandler）补齐后广播。
+ * delta = 正文增量；reset = 新 attempt 开始，作废本轮已累积的增量；done = 本轮流结束，等 invoke 全量覆盖。
+ */
+export interface ChatDeltaEvent {
+  ev: "delta" | "reset" | "done";
+  text?: string;
 }
 
 /** 工具 → 角色/人话状态（UI 状态流署名；与 cards.js 的 CREW_META 角色键一致）。导出供覆盖断言。 */
@@ -1101,6 +1110,11 @@ export async function runChatTurn(params: {
   /** 运行日志归属(V5.6):与任务动态卡同一 runId,工作日志视图按它聚合 */
   runId?: string;
   onEvent?: (e: ChatProgressEvent) => void;
+  /**
+   * 流式正文出口（设计 §Phase 3）:reset/delta 来自 runLoop，done 由本函数在 loop 收尾后补。
+   * 只对可寻址的 turn 接线（见 chatTurnHandler）——不传 = 不流式，行为与今天一致。
+   */
+  onDelta?: (e: ChatDeltaEvent) => void;
   /** 用户中止信号（设计 §Phase 3）:中止走 ok:true + stopReason="aborted",不是失败轮 */
   signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
@@ -1191,6 +1205,7 @@ export async function runChatTurn(params: {
             params.onEvent!({ phase: e.type === "tool_start" ? "start" : "end", tool: e.tool, role: meta.role, label: meta.label });
           }
         : undefined,
+      ...(params.onDelta ? { onTextDelta: (e: LoopStreamEvent) => params.onDelta!(e) } : {}),
     });
     return {
       ok: true,
@@ -1206,5 +1221,13 @@ export async function runChatTurn(params: {
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    // 流结束（成功/中止/失败都算）:前端据此把气泡切到「整理回复中」，等 invoke 全量覆盖。
+    // 失败轮也发——否则气泡会永远停在「还在吐字」的假象里。
+    try {
+      params.onDelta?.({ ev: "done" });
+    } catch {
+      /* 观测层异常不破坏执行层 */
+    }
   }
 }

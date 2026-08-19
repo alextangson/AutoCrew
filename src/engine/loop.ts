@@ -25,6 +25,14 @@ export interface LoopEvent {
   tool: string;
 }
 
+/**
+ * 流式文本事件（对话控制面设计 §Phase 3「流式 delta 协议」）。
+ * reset = 一次新 attempt 开始（withRetry 重试、或工具往返后的新一轮模型调用）——
+ * 重试单位是一次完整流消费，失败 attempt 已经吐出去的字必须先作废，
+ * 否则 UI 上会出现「同一段话说两遍/改写一半」。reset 之后到达的 delta 属于新 attempt。
+ */
+export type LoopStreamEvent = { ev: "delta"; text: string } | { ev: "reset" };
+
 export interface LoopOptions {
   model: string;
   systemPrompt: string;
@@ -42,6 +50,12 @@ export interface LoopOptions {
   idleTimeoutMs?: number;
   /** 工具执行进度回调（UI 状态流）。回调异常被吞——观测层不得破坏执行层。 */
   onEvent?: (e: LoopEvent) => void;
+  /**
+   * 流式正文回调（设计 §Phase 3）。additive:不传 = 今天的行为(一次都不调)。
+   * 每次 attempt 开始先发 reset,再逐段发 delta;多 assistant 轮(工具往返)各轮都走这条。
+   * 回调异常同样被吞。
+   */
+  onTextDelta?: (e: LoopStreamEvent) => void;
   /** 运行日志归属(V5.6):runId 缺省自动生成 run-eng-…;config.dataDir 缺省不落日志 */
   logMeta?: { runId?: string; agent?: string; usedPatternIds?: string[]; usedBriefRevision?: number };
   /**
@@ -99,16 +113,31 @@ async function callModel(
   fetchImpl: typeof fetch,
   idleMs: number = IDLE_TIMEOUT_MS,
   signal?: AbortSignal,
+  onTextDelta?: (e: LoopStreamEvent) => void,
 ): Promise<CompletionResponse> {
+  const emitStream = (e: LoopStreamEvent) => {
+    if (!onTextDelta) return;
+    try {
+      onTextDelta(e);
+    } catch {
+      /* 观测层异常不破坏执行层 */
+    }
+  };
   // 完整流消费在 withRetry 事务内:流不可续,重试 = 重发整个请求（生成幂等,新稿）。
   // 中途断流/挂起由观察器字节级看门狗中止（含首字节等待,任何字节续命——健康长文不误杀）,
   // SDK 侧转为连接错误,isRetryable 按消息模式识别。工具提交只发生在流成功收尾之后。
   // 用户中止贯通两处:观察器掐传输,withRetry 不把中止当瞬时故障重放。
   return withRetry(async () => {
+    // 事务边界 = 一次完整流消费,所以 reset 就发在这里:重试与新一轮共用同一条语义,
+    // 上层不必知道自己收到的是第几次尝试。
+    emitStream({ ev: "reset" });
     const exchange = await registerExchange({ upstreamBase: config.baseUrl, fetchImpl, idleMs, ...(signal ? { signal } : {}) });
     try {
       const piModel = makePiModel(config, model, exchange.baseUrl);
-      const done = await consumePiStream(startPiStream(config, piModel, toPiContext(messages, tools)));
+      const done = await consumePiStream(
+        startPiStream(config, piModel, toPiContext(messages, tools)),
+        onTextDelta ? (text) => emitStream({ ev: "delta", text }) : undefined,
+      );
       const wire = fromAssistant(done);
       return {
         choices: [
@@ -208,7 +237,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
     const tCall = Date.now();
     let data: CompletionResponse;
     try {
-      data = await callModel(config, opts.model, messages, tools, fetchImpl, opts.idleTimeoutMs, opts.signal);
+      data = await callModel(config, opts.model, messages, tools, fetchImpl, opts.idleTimeoutMs, opts.signal, opts.onTextDelta);
     } catch (err) {
       recorder.llm({
         model: opts.model,

@@ -186,6 +186,12 @@ export { IPC_CHANNELS, type IpcChannel } from "./channels.js";
 /** 每个 handler：收 payload（+可选 ctx），返回 {ok,...}，永不 throw。ctx 由 main.ts 注入（推送等主进程能力）。 */
 export type IpcHandlerContext = {
   onProgress?: (e: Record<string, unknown>) => void;
+  /**
+   * 流式正文广播（对话控制面设计 §Phase 3）：与 onProgress 同一条 SSE 通道，
+   * 但事件名独立（chat_delta），工具进度条不被正文增量污染。
+   * seq 由 chatTurnHandler 单调计数（per turn），乱序/重复在前端可判。
+   */
+  onChatDelta?: (e: { turnId: string; seq: number; ev: "delta" | "reset" | "done"; text?: string }) => void;
   requestApproval?: (binding: ApprovalBinding) => { token: string; expiresAt: string };
   consumeApproval?: (token: string, binding: ApprovalBinding) => { ok: true } | { ok: false; error: string };
 };
@@ -504,6 +510,19 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
   }
   // 任务动态带（IA v4.2）:每个 chat turn = 一个 run,事件按 runId 聚合成任务卡
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  // 流式 delta（设计 §Phase 3）:只对可寻址的 turn 广播——没有 turnId 的调用（老前端）
+  // 收到 delta 也没法判断该不该渲染,不如不发。seq 服务端单调计数,前端据此丢重复/旧帧。
+  let deltaSeq = 0;
+  const onDelta =
+    turnId && ctx?.onChatDelta
+      ? (e: { ev: "delta" | "reset" | "done"; text?: string }) => {
+          try {
+            ctx.onChatDelta!({ turnId, seq: deltaSeq++, ev: e.ev, ...(e.text !== undefined ? { text: e.text } : {}) });
+          } catch {
+            /* 推送失败（窗口已关）不影响生成 */
+          }
+        }
+      : undefined;
   let settledConversationId = conversationId;
   try {
     const result = await runPersistedChatTurn({
@@ -514,6 +533,7 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
       runId,
       ...(turnId ? { turnId } : {}),
       ...(signal ? { signal } : {}),
+      ...(onDelta ? { onDelta } : {}),
       ...(ctx?.onProgress
         ? {
             onEvent: (e: unknown) => {

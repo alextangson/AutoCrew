@@ -68,6 +68,17 @@ export function openaiSse(c: CompletionShape): string {
   return chunks.map((x) => `data: ${x}\n\n`).join("") + "data: [DONE]\n\n";
 }
 
+/**
+ * 多段正文的 OpenAI 流：每段单独一个 delta chunk。
+ * 「增量逐段到达」是流式 delta 协议的核心断言，一整段发完的夹具证明不了它。
+ */
+export function openaiSseTextParts(parts: string[], usage: Record<string, unknown> = { total_tokens: 6 }): string {
+  const chunks = parts.map((p) => JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant", content: p } }] }));
+  chunks.push(JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }));
+  chunks.push(JSON.stringify({ choices: [], usage: normalizeUsage(usage) }));
+  return chunks.map((x) => `data: ${x}\n\n`).join("") + "data: [DONE]\n\n";
+}
+
 /** 旧夹具只给 total_tokens：拆成 prompt/completion（pi-ai 只读拆分字段） */
 function normalizeUsage(u: Record<string, unknown>): Record<string, unknown> {
   const total = Number(u.total_tokens);

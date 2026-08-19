@@ -11,7 +11,7 @@
  * 注意：历史读取在写队列之外——同会话两条并发 turn 各自看到回合前的历史；
  * 落盘完整性由队列保证，renderer 侧约定 busy 时禁发（chatBusy 已做）。
  */
-import { runChatTurn, type ChatHistoryMessage, type ChatProgressEvent, type ChatViewContext } from "./chat-router.js";
+import { runChatTurn, type ChatDeltaEvent, type ChatHistoryMessage, type ChatProgressEvent, type ChatViewContext } from "./chat-router.js";
 import {
   createConversation,
   getConversation,
@@ -50,6 +50,8 @@ export async function runPersistedChatTurn(params: {
   /** 用户中止信号:中止走 ok:true + stopReason="aborted",按正常轮落盘（不写失败轮） */
   signal?: AbortSignal;
   onEvent?: (e: ChatProgressEvent) => void;
+  /** 流式正文出口（设计 §Phase 3）:纯透传,持久层不参与 delta（事实源仍是本函数落盘的完整回复） */
+  onDelta?: (e: ChatDeltaEvent) => void;
   runTurn?: typeof runChatTurn;
 }): Promise<Record<string, unknown>> {
   const run = params.runTurn ?? runChatTurn;
@@ -72,6 +74,7 @@ export async function runPersistedChatTurn(params: {
     ...(params.runId ? { runId: params.runId } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.onEvent ? { onEvent: params.onEvent } : {}),
+    ...(params.onDelta ? { onDelta: params.onDelta } : {}),
   });
   if (!result.ok) {
     // 防呆:失败轮也留痕（仅已有会话——首轮失败仍不建空壳,needsSetup 是配置态不是任务失败）。

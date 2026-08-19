@@ -179,17 +179,34 @@ export function startPiStream(
 /**
  * 消费事件流到终态（重试事务边界 = 这里的完整消费，spec §2）。
  * done → AssistantMessage；error 事件/异常 → 分类后抛出（不产出半成品）。
+ *
+ * onTextDelta（对话控制面设计 §Phase 3「流式 delta 协议」）：assistant 正文增量逐段透出，
+ * 只透 text_delta——thinking 不是给用户看的，toolcall 参数更不是。additive:不传 = 今天的行为。
+ * 回调异常吞掉：观测层不得破坏这次流消费（否则一个 UI 推送失败会把整轮打成重试）。
  */
-export async function consumePiStream(s: AssistantMessageEventStream): Promise<AssistantMessage> {
+export async function consumePiStream(
+  s: AssistantMessageEventStream,
+  onTextDelta?: (text: string) => void,
+): Promise<AssistantMessage> {
   let final: AssistantMessage | undefined;
   let failure: { message: string } | undefined;
   try {
     for await (const ev of s as AsyncIterable<
       | { type: "done"; message: AssistantMessage }
       | { type: "error"; error: AssistantMessage }
+      | { type: "text_delta"; delta: string }
       | { type: string }
     >) {
-      if (ev.type === "done") final = (ev as { type: "done"; message: AssistantMessage }).message;
+      if (ev.type === "text_delta") {
+        const delta = (ev as { type: "text_delta"; delta: string }).delta;
+        if (onTextDelta && delta) {
+          try {
+            onTextDelta(delta);
+          } catch {
+            /* 观测层异常不破坏执行层 */
+          }
+        }
+      } else if (ev.type === "done") final = (ev as { type: "done"; message: AssistantMessage }).message;
       else if (ev.type === "error") {
         const e = (ev as { type: "error"; error: AssistantMessage }).error;
         failure = { message: e.errorMessage || "engine loop: provider stream error" };

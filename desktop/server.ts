@@ -328,6 +328,9 @@ const server = http.createServer(async (req, res) => {
     const ctx: IpcHandlerContext = {
       requestApproval: (binding) => APPROVALS.issue(binding),
       consumeApproval: (token, binding) => APPROVALS.consume(token, binding),
+      // 流式正文（设计 §Phase 3）:与工具进度同一条 SSE 连接,事件名分开——
+      // 前端按 turnId 过滤,异 turn/旧 turn 的帧丢弃。
+      onChatDelta: (e) => broadcast("chat_delta", e),
       onProgress: (e) => {
         broadcast("chat", e);
         const pe = e as { phase?: string; role?: string | null; label?: string; runId?: string };

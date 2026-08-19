@@ -19,6 +19,7 @@ import {
   randomId,
   type TurnStatusView,
 } from "./turn-recovery";
+import { EMPTY_STREAM, applyDelta, clearStream, parseDeltaFrame, startStream } from "./delta-stream";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
 interface Msg {
@@ -70,6 +71,8 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
   const turnIdRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [progress, setProgress] = useState<string[]>([]);
+  /** 流式正文（SSE chat_delta）：只是「正在生成的样子」，invoke 返回后一律被响应全量覆盖 */
+  const [stream, setStream] = useState(EMPTY_STREAM);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
@@ -165,6 +168,7 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     // turnId 客户端生成:中止靠它寻址,断线后也靠它认领本轮结果
     const turnId = randomId();
     turnIdRef.current = turnId;
+    setStream(startStream(turnId)); // 本轮之后到达的 chat_delta 才收，别的 turn 一律丢弃
     writePendingTurn({ turnId, ...(activeConversationId ? { conversationId: activeConversationId } : {}) });
     const focusNow = getFocus();
     const ctx = focusNow
@@ -185,6 +189,8 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     turnIdRef.current = null;
     clearPendingTurn();
     setProgress([]);
+    // 事实源规则：响应到达 = 流式气泡下岗，回复以下面 setMsgs 的完整内容为准（全量覆盖）
+    setStream(clearStream());
     if (!r.ok) {
       setMsgs((m) => [...m, { role: "assistant", text: "出错了：" + (r.error ?? "未知错误") }]);
       return { ok: false, error: r.error ?? "未知错误" };
@@ -280,6 +286,12 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
           void recoverPendingTurn();
           return;
         }
+        // 正文增量：turnId 过滤与 seq 去重都在 delta-stream 里判（本页只管渲染）
+        if (e.kind === "chat_delta") {
+          const frame = parseDeltaFrame(e.data);
+          if (frame) setStream((s) => applyDelta(s, frame));
+          return;
+        }
         if (e.kind !== "chat") return;
         const label = typeof e.data.label === "string" ? e.data.label : "";
         const phase = e.data.phase;
@@ -291,7 +303,7 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
 
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
-  }, [msgs, progress]);
+  }, [msgs, progress, stream.text]);
 
   return (
     <div className="chat">
@@ -366,12 +378,22 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
           </div>
         ))}
         {recoveryNotice && <p className="muted run-line">{recoveryNotice}</p>}
+        {/* 流式气泡：视觉与最终回复一致（同一套 markdown 渲染），不做打字机动画 */}
+        {busy && stream.text && (
+          <div className="msg">
+            <div className="chat-md">
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{stream.text}</ReactMarkdown>
+            </div>
+          </div>
+        )}
         {busy && (
           <div className="msg">
             {stopping ? (
               <p className="muted">正在停…（已投递的后台任务会继续跑）</p>
+            ) : stream.done ? (
+              <p className="muted">整理回复中…</p>
             ) : progress.length === 0 ? (
-              <p className="muted">总编辑在想…</p>
+              <p className="muted">{stream.text ? "总编辑正在说…" : "总编辑在想…"}</p>
             ) : (
               progress.map((p, i) => (
                 <p key={i} className="muted run-line">
