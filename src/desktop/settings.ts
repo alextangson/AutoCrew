@@ -136,6 +136,14 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         xConfigured: Boolean(cfg.xApiKey),
         xApiKeyMasked: cfg.xApiKey ? maskKey(cfg.xApiKey) : null,
         imageModel: cfg.imageModel ?? null,
+        // 备用生图通道链:回显时抹掉 key,只留够认人的字段——设置页要能看清链的顺序
+        imageFallbacks: (cfg.imageFallbacks ?? []).map((f) => ({
+          name: f.name ?? null,
+          baseUrl: f.baseUrl,
+          apiKeyMasked: f.apiKey ? maskKey(f.apiKey) : null,
+          model: f.model ?? null,
+          dialect: f.dialect ?? "openai",
+        })),
         theme: cfg.theme ?? null,
         themes: await listWechatThemes(),
         author: cfg.author ?? null,
@@ -150,6 +158,46 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * 备用生图通道链:设置页传 JSON 文本(一条链最多几家,JSON 比自造行格式可靠)。
+ * 解析失败要说清是哪一条坏了——生图链配错的代价是故障时才发现,那时已经太迟。
+ */
+export function parseImageFallbacks(
+  raw: unknown,
+): { value: Array<{ name?: string; baseUrl: string; apiKey: string; model?: string; dialect?: "openai" | "ark" }> } | { error: string } {
+  let list: unknown = raw;
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    if (text === "") return { value: [] };
+    try {
+      list = JSON.parse(text);
+    } catch (err) {
+      return { error: `备用生图通道 JSON 解析失败：${(err as Error).message}` };
+    }
+  }
+  if (!Array.isArray(list)) return { error: "备用生图通道必须是数组，例如 [{\"name\":\"即梦\",\"baseUrl\":\"...\",\"apiKey\":\"...\"}]" };
+  const value = [];
+  for (const [i, item] of list.entries()) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return { error: `第 ${i + 1} 条通道不是对象` };
+    }
+    const f = item as Record<string, unknown>;
+    if (typeof f.baseUrl !== "string" || !f.baseUrl.trim()) return { error: `第 ${i + 1} 条通道缺 baseUrl` };
+    if (typeof f.apiKey !== "string" || !f.apiKey.trim()) return { error: `第 ${i + 1} 条通道缺 apiKey` };
+    if (f.dialect !== undefined && f.dialect !== "openai" && f.dialect !== "ark") {
+      return { error: `第 ${i + 1} 条通道的 dialect 只能是 openai 或 ark（即梦/火山 Seedream 用 ark）` };
+    }
+    value.push({
+      ...(typeof f.name === "string" && f.name.trim() ? { name: f.name.trim() } : {}),
+      baseUrl: f.baseUrl.trim(),
+      apiKey: f.apiKey.trim(),
+      ...(typeof f.model === "string" && f.model.trim() ? { model: f.model.trim() } : {}),
+      ...(f.dialect ? { dialect: f.dialect as "openai" | "ark" } : {}),
+    });
+  }
+  return { value };
 }
 
 /** 发布配置写:merge 进 <dataDir>/publish.json 的 wechatMp 段(600 权限,key 不回显) */
@@ -176,6 +224,14 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
       return { ok: false, error: `${source} 必须是非空字符串` };
     }
     updates[target] = v.trim();
+  }
+  // 备用生图通道链:整条替换(不是 merge)——链的顺序就是降级顺序,半更新会让顺序不可预期。
+  // 空串=不改(设置页每次提交都会带上这个字段,当成清空会把链默默删掉);要清空请显式填 []。
+  const rawFallbacks = payload.image_fallbacks;
+  if (rawFallbacks !== undefined && !(typeof rawFallbacks === "string" && rawFallbacks.trim() === "")) {
+    const parsed = parseImageFallbacks(rawFallbacks);
+    if ("error" in parsed) return { ok: false, error: parsed.error };
+    (updates as Record<string, unknown>).imageFallbacks = parsed.value;
   }
   // 留言开关是布尔:GUI 下拉传 "1"/"0"
   if (payload.open_comment !== undefined) {

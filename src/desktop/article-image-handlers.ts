@@ -65,6 +65,10 @@ async function startGenerate(payload: Payload, single: boolean): Promise<Handler
       } else {
         emit("run_done", result.generated > 0 ? `正文配图已完成：新生成 ${result.generated} 张` : "正文配图已全部准备好");
       }
+      // 降级单独播一条:图出来了不代表主生图通道是好的,别让故障被成功消息盖过去
+      if (result.degraded?.length) {
+        emit("work", `⚠️ ${result.degraded[0].slice(0, 160)}`);
+      }
     } catch (err) {
       emit("run_failed", `正文配图失败：${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`);
     }

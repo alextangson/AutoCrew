@@ -155,7 +155,7 @@ async function updateEntry(
 export async function generateArticleImages(
   input: { contentId: string; index?: number; prompt?: string },
   dataDir?: string,
-): Promise<{ ok: boolean; review: ArticleImageReview; generated: number; failed: number; errors?: string[] }> {
+): Promise<{ ok: boolean; review: ArticleImageReview; generated: number; failed: number; errors?: string[]; degraded?: string[] }> {
   let review = await getArticleImageReview(input.contentId, dataDir);
   const targets = input.index === undefined
     ? review.entries.filter((entry) => entry.status !== "ready")
@@ -164,6 +164,8 @@ export async function generateArticleImages(
 
   let generated = 0;
   const errors: string[] = [];
+  // 走了备用通道就要说出来:图出来了不代表主通道没坏,不说等于把故障闷掉
+  const degradations = new Set<string>();
   const loc = locations(input.contentId, dataDir);
   await fs.mkdir(loc.assets, { recursive: true });
 
@@ -182,6 +184,7 @@ export async function generateArticleImages(
     const result = await generateWechatImageAsset(enrichBodyImagePrompt(prompt), outputPath, { dataDir, size: "16:9" });
     if (result.ok) {
       generated += 1;
+      if (result.degraded) degradations.add(result.degraded);
       review = await updateEntry(review, target.index, {
         status: "ready",
         imagePath: outputPath,
@@ -200,7 +203,14 @@ export async function generateArticleImages(
       }, dataDir);
     }
   }
-  return { ok: errors.length === 0, review, generated, failed: errors.length, ...(errors.length ? { errors } : {}) };
+  return {
+    ok: errors.length === 0,
+    review,
+    generated,
+    failed: errors.length,
+    ...(errors.length ? { errors } : {}),
+    ...(degradations.size ? { degraded: [...degradations] } : {}),
+  };
 }
 
 export const MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024;

@@ -301,6 +301,9 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .focus-x { border: none; background: none; padding: 0 4px; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
 .focus-x:hover { color: var(--danger); }
 .bf-input { width: 110px; }
+/* 备用生图通道链是 JSON,要整行看得见——窄输入框里根本没法编辑 */
+.set-field-wide { grid-column: 1 / -1; }
+.set-field-wide textarea { width: 100%; font-size: 12px; line-height: 1.6; resize: vertical; }
 
 .sel-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; border: 1px solid var(--ink); border-radius: var(--radius-card); background: var(--card); padding: 6px 8px; margin: 6px 0; }
 .sel-float { position: absolute; z-index: 5; margin: 0; width: max-content; max-width: min(560px, 96%); box-shadow: 0 2px 10px rgba(22, 21, 15, 0.14); }

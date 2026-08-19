@@ -78,8 +78,8 @@ export function Settings() {
   });
   const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
-  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean; xConfigured: boolean; xApiKeyMasked: string | null } | null>(null);
-  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" });
+  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; imageFallbacks: Array<{ name: string | null; baseUrl: string; apiKeyMasked: string | null; model: string | null; dialect: string }>; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean; xConfigured: boolean; xApiKeyMasked: string | null } | null>(null);
+  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", image_fallbacks: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" });
   const [cover, setCover] = useState<{
     provider: string;
     relay: { configured: boolean; model: string | null };
@@ -232,6 +232,19 @@ export function Settings() {
         <Field label="生图 Key" password value={pForm.image_api_key} placeholder={pub?.imageApiKeyMasked ?? "sk-..."} onChange={(v) => setPForm((f) => ({ ...f, image_api_key: v }))} />
         <Field label="生图端点" value={pForm.image_base_url} placeholder={pub?.imageBaseUrl ?? "https://api.xiaojiu.one/v1"} onChange={(v) => setPForm((f) => ({ ...f, image_base_url: v }))} />
         <Field label="生图模型" value={pForm.image_model} placeholder={pub?.imageModel ?? "gpt-image-2"} onChange={(v) => setPForm((f) => ({ ...f, image_model: v }))} />
+        <label className="set-field set-field-wide">
+          <span className="mono muted">
+            备用生图通道（主通道限流/挂了按顺序往下顶；留空=不降级）
+            {pub?.imageFallbacks?.length ? `　当前链：${pub.imageFallbacks.map((f) => f.name || f.baseUrl).join(" → ")}` : ""}
+          </span>
+          <textarea
+            rows={5}
+            className="mono"
+            value={pForm.image_fallbacks}
+            placeholder={'[{"name":"newcli","baseUrl":"https://code.newcli.com/codex/v1","apiKey":"sk-...","model":"gpt-image-2"},\n {"name":"即梦","baseUrl":"https://ark.cn-beijing.volces.com/api/v3","apiKey":"...","dialect":"ark"}]'}
+            onChange={(e) => setPForm((f) => ({ ...f, image_fallbacks: e.target.value }))}
+          />
+        </label>
         <Field label="公众号 AppID" value={pForm.wechat_app_id} placeholder={pub?.wechatAppIdMasked ?? "wx…"} onChange={(v) => setPForm((f) => ({ ...f, wechat_app_id: v }))} />
         <Field label="公众号 AppSecret" password value={pForm.wechat_app_secret} placeholder={pub?.wechatConfigured ? "已保存(重填即覆盖)" : "后台生成后粘贴"} onChange={(v) => setPForm((f) => ({ ...f, wechat_app_secret: v }))} />
         <label className="set-field">
@@ -253,7 +266,7 @@ export function Settings() {
         </label>
         <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
         <Field label="公众号 API 代理" value={pForm.api_proxy} placeholder={pub?.apiProxyConfigured ? "已配置(不回显)——填新值覆盖" : "http://user:pass@固定IP:端口(可选,锁定出口)"} onChange={(v) => setPForm((f) => ({ ...f, api_proxy: v }))} />
-        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" }))} />
+        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", image_fallbacks: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" }))} />
       </Section>
 
       <Section title="封面生成 · 生图通道" status={coverStatus} on={coverOn}>

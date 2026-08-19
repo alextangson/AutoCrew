@@ -3,8 +3,19 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { generateImageViaRelay } from "./image-gen.js";
-import { loadWechatMpConfig } from "./wechat-config.js";
+import { generateImageViaChain, type ImageProvider } from "./image-gen.js";
+import { loadWechatMpConfig, type ImageFallbackConfig } from "./wechat-config.js";
+
+/** 生图结果:provider/degraded 让「谁出的图、主通道是不是坏了」能一路传到用户眼前 */
+export interface ImageGenOutcome {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  /** 实际出图的通道名 */
+  provider?: string;
+  /** 非空=走了备用通道,附主通道的失败原因 */
+  degraded?: string;
+}
 
 const DEFAULT_IMAGE_GENERATOR_SCRIPT = path.join(
   os.homedir(),
@@ -102,6 +113,33 @@ function resolveImageBaseUrl(custom?: string): string | undefined {
 
 function resolveImageModel(custom?: string): string | undefined {
   return custom || process.env.AUTOCREW_IMAGE_MODEL || undefined;
+}
+
+/**
+ * 通道名取二级域名——事件里「xiaojiu 挂了,newcli 顶上」比一串 URL 好读。
+ * 取第一段不行:code.newcli.com 会取成「code」,认不出是谁。
+ */
+export function providerLabel(baseUrl: string): string {
+  try {
+    const labels = new URL(baseUrl).hostname.split(".");
+    return labels.length > 1 ? labels[labels.length - 2] : labels[0];
+  } catch {
+    return baseUrl.slice(0, 24);
+  }
+}
+
+/** 备用生图通道链:配全 baseUrl+key 才算数,半配的静默丢弃只会在故障时坑人,所以直接忽略 */
+export function resolveImageFallbacks(fallbacks?: ImageFallbackConfig[]): ImageProvider[] {
+  if (!Array.isArray(fallbacks)) return [];
+  return fallbacks
+    .filter((f) => typeof f?.baseUrl === "string" && f.baseUrl && typeof f?.apiKey === "string" && f.apiKey)
+    .map((f) => ({
+      name: f.name?.trim() || providerLabel(f.baseUrl),
+      baseUrl: f.baseUrl,
+      apiKey: f.apiKey,
+      ...(f.model ? { model: f.model } : {}),
+      ...(f.dialect ? { dialect: f.dialect } : {}),
+    }));
 }
 
 function escapeRegExp(value: string): string {
@@ -207,24 +245,41 @@ async function generateImage(
     imageApiKey,
     imageBaseUrl,
     imageModel,
-  }: { size: string; imageGeneratorScript: string; imageApiKey?: string; imageBaseUrl?: string; imageModel?: string },
-): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    fallbacks = [],
+  }: {
+    size: string;
+    imageGeneratorScript: string;
+    imageApiKey?: string;
+    imageBaseUrl?: string;
+    imageModel?: string;
+    fallbacks?: ImageProvider[];
+  },
+): Promise<ImageGenOutcome> {
   const cwd = path.dirname(outputPath);
   await fs.mkdir(cwd, { recursive: true });
 
   // 中转模式(imageBaseUrl 已配)→ 原生 HTTP 生图(PRD-v4 §9 去桥化):超时自己掌控,
   // 不受外部脚本 30s 死线误杀。未配中转 → 维持外部脚本(火山 ARK 直连),行为零变化。
-  if (imageBaseUrl && imageApiKey) {
+  const chain: ImageProvider[] = [
+    ...(imageBaseUrl && imageApiKey
+      ? [{ name: providerLabel(imageBaseUrl), baseUrl: imageBaseUrl, apiKey: imageApiKey, model: imageModel }]
+      : []),
+    ...fallbacks,
+  ];
+  if (chain.length > 0) {
     try {
-      const png = await generateImageViaRelay({
-        baseUrl: imageBaseUrl,
-        apiKey: imageApiKey,
-        model: imageModel || "gpt-image-2",
-        prompt,
-        size,
-      });
-      await fs.writeFile(outputPath, png);
-      return { ok: true, stdout: `native relay: ${outputPath}`, stderr: "" };
+      const result = await generateImageViaChain(chain, { prompt, size });
+      await fs.writeFile(outputPath, result.buf);
+      return {
+        ok: true,
+        stdout: `native relay(${result.provider}): ${outputPath}`,
+        stderr: "",
+        provider: result.provider,
+        // 降级要可见:备用通道顶上了不等于主通道没坏,写进事件让人知道该去修
+        degraded: result.usedFallback
+          ? `主生图通道不可用,已由「${result.provider}」出图——${result.skipped.map((s) => `${s.provider}: ${s.error.slice(0, 90)}`).join("；")}`
+          : undefined,
+      };
     } catch (err) {
       return { ok: false, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
     }
@@ -274,7 +329,7 @@ export async function generateWechatImageAsset(
   prompt: string,
   outputPath: string,
   options: { dataDir?: string; size?: string } = {},
-): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+): Promise<ImageGenOutcome> {
   const cfg = await loadWechatMpConfig(options.dataDir);
   return generateImage(prompt, outputPath, {
     size: options.size || "16:9",
@@ -282,6 +337,7 @@ export async function generateWechatImageAsset(
     imageApiKey: resolveImageApiKey(cfg.imageApiKey),
     imageBaseUrl: resolveImageBaseUrl(cfg.imageBaseUrl),
     imageModel: resolveImageModel(cfg.imageModel),
+    fallbacks: resolveImageFallbacks(cfg.imageFallbacks),
   });
 }
 
