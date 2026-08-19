@@ -398,6 +398,46 @@ describe("runChatTurn", () => {
   });
 });
 
+// 对话控制面设计 §Phase 3：中止走 ok:true + stopReason 透传，兜底文案不许再报「任务已完成」
+describe("runChatTurn 用户中止", () => {
+  it("工具执行到一半中止：已完成的卡片保留，回复是「已停，以下是已完成的部分」", async () => {
+    const ctrl = new AbortController();
+    const fetchImpl = (async () =>
+      jsonResponse(
+        assistantTurn(null, [
+          { id: "tc1", type: "function", function: { name: "add_style_rule", arguments: JSON.stringify({ rule: "口语化" }) } },
+          { id: "tc2", type: "function", function: { name: "add_style_rule", arguments: JSON.stringify({ rule: "别用书面腔" }) } },
+        ]),
+      )) as typeof fetch;
+
+    // 第一条规则记完用户就点了停 —— 第二条不许再执行
+    const addRule = vi.fn(async () => {
+      ctrl.abort();
+      return {} as never;
+    });
+
+    const res = await runChatTurn({ message: "记两条偏好", dataDir: testDir, deps: { addRule }, fetchImpl, signal: ctrl.signal });
+
+    expect(res.ok).toBe(true);
+    const data = res.data as { reply: string; cards: ChatCard[]; stopReason: string };
+    expect(data.stopReason).toBe("aborted");
+    expect(addRule).toHaveBeenCalledOnce();
+    expect(data.cards).toHaveLength(1); // 已经做完的事保留
+    expect(data.reply).toBe("已停，以下是已完成的部分。");
+  });
+
+  it("一上来就中止：无卡片时回「已停。」，不是「任务已完成」", async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const fetchImpl = (async () => jsonResponse(assistantTurn("不该出现"))) as typeof fetch;
+    const res = await runChatTurn({ message: "算了", dataDir: testDir, fetchImpl, signal: ctrl.signal });
+    expect(res.ok).toBe(true);
+    const data = res.data as { reply: string; stopReason: string };
+    expect(data.stopReason).toBe("aborted");
+    expect(data.reply).toBe("已停。");
+  });
+});
+
 describe("context awareness + intake tools (IA v4.2 C1/A2/C3)", () => {
   it("viewContext prefixes the model userMessage; positioning enters system prompt", async () => {
     await fs.writeFile(

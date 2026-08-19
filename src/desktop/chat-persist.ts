@@ -45,6 +45,10 @@ export async function runPersistedChatTurn(params: {
   viewContext?: ChatViewContext;
   /** 任务动态/运行日志归属(chatTurnHandler 注入,透传到 runLoop logMeta) */
   runId?: string;
+  /** 客户端生成的 turnId（设计 §Phase 3）:随 assistant 消息落盘,断线恢复凭它认领本轮 */
+  turnId?: string;
+  /** 用户中止信号:中止走 ok:true + stopReason="aborted",按正常轮落盘（不写失败轮） */
+  signal?: AbortSignal;
   onEvent?: (e: ChatProgressEvent) => void;
   runTurn?: typeof runChatTurn;
 }): Promise<Record<string, unknown>> {
@@ -66,6 +70,7 @@ export async function runPersistedChatTurn(params: {
     dataDir,
     ...(params.viewContext ? { viewContext: params.viewContext } : {}),
     ...(params.runId ? { runId: params.runId } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
     ...(params.onEvent ? { onEvent: params.onEvent } : {}),
   });
   if (!result.ok) {
@@ -93,7 +98,12 @@ export async function runPersistedChatTurn(params: {
   // prior concurrent writer — serialization only guards the read-modify-write path)
   const persist = async () => {
     const convId = conversationId ?? (await createConversation(message, dataDir)).id;
-    const meta = await appendTurn(convId, { content: message }, { content: reply, cards }, dataDir);
+    const meta = await appendTurn(
+      convId,
+      { content: message },
+      { content: reply, cards, ...(params.turnId ? { turnId: params.turnId } : {}) },
+      dataDir,
+    );
     if (!meta) console.warn("[chat-persist] 会话在回合中被删除，本轮未落盘：" + convId);
     return {
       ...result,

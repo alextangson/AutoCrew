@@ -35,7 +35,10 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "article_images:add_slot": ["content_id"],
   "article_images:remove_slot": ["content_id", "index"],
   "article_images:upload": ["content_id", "index", "data_base64"],
+  // turn_id / client_id 是可选的 additive 扩展：老前端不传照常对话，只是那一轮不可中止
   "chat:turn": ["message"],
+  "chat:abort": ["turn_id", "client_id"],
+  "chat:turn_status": ["turn_id"],
   "settings:get": [],
   "settings:set": [],
   "settings:search_get": [],

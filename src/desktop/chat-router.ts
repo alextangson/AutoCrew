@@ -191,9 +191,15 @@ function sourceDomain(s: string): string {
   return m ? m[1].replace(/^www\./, "") : "海外";
 }
 
-function visibleChatReply(raw: string, cards: ChatCard[], toolCallCount: number): string {
+/**
+ * 兜底文案（设计 §Phase 3）：中止分支必须排在其它兜底之前——
+ * 用户按了停止却看到「任务已完成」是彻头彻尾的误报。
+ * 「中止 ≠ 取消」：已投递的后台任务继续跑，文案不得暗示它们停了（前端另附一行提示）。
+ */
+function visibleChatReply(raw: string, cards: ChatCard[], toolCallCount: number, stopReason?: string): string {
   const reply = raw.trim();
   if (reply && reply !== "(no content)") return reply;
+  if (stopReason === "aborted") return cards.length > 0 ? "已停，以下是已完成的部分。" : "已停。";
   if (cards.length > 0) return "任务已完成，结果见下方卡片。";
   if (toolCallCount > 0) return "任务已经交给对应成员执行，可在看板和工作日志查看进度。";
   return "这轮模型没有返回可显示内容，请重试一次。";
@@ -1095,6 +1101,8 @@ export async function runChatTurn(params: {
   /** 运行日志归属(V5.6):与任务动态卡同一 runId,工作日志视图按它聚合 */
   runId?: string;
   onEvent?: (e: ChatProgressEvent) => void;
+  /** 用户中止信号（设计 §Phase 3）:中止走 ok:true + stopReason="aborted",不是失败轮 */
+  signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
   let config;
   try {
@@ -1176,6 +1184,7 @@ export async function runChatTurn(params: {
       maxTurns: 6,
       logMeta: { ...(params.runId ? { runId: params.runId } : {}), agent: "chief-editor" },
       ...(params.fetchImpl !== undefined ? { fetchImpl: params.fetchImpl } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
       onEvent: params.onEvent
         ? (e: LoopEvent) => {
             const meta = CREW_TOOL_STATUS[e.tool] ?? { role: null, label: "正在处理" };
@@ -1186,8 +1195,10 @@ export async function runChatTurn(params: {
     return {
       ok: true,
       data: {
-        reply: visibleChatReply(result.finalMessage, cards, result.toolCallCount),
+        reply: visibleChatReply(result.finalMessage, cards, result.toolCallCount, result.stopReason),
         cards,
+        // 中止是正常收尾:ok:true + stopReason 透传,持久层按正常轮落盘,前端据此提示后台任务继续跑
+        stopReason: result.stopReason,
         tokensUsed: result.totalTokens,
         contentIds: [...effects.contentIds],
         ...(params.runId ? { runId: params.runId, actionId: params.runId } : {}),

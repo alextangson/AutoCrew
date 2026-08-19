@@ -12,6 +12,12 @@ export interface RetryOptions {
   maxRetries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /**
+   * 用户中止信号（对话控制面设计 §Phase 3）：signal.aborted 时的失败一律不重试。
+   * 中止本来就长得像瞬时网络错误（AbortError / "aborted"），不特判就会被重试通道
+   * 原样重放一遍——用户点了停止，模型却又被叫起来跑一次。
+   */
+  signal?: AbortSignal;
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504, 520, 522, 524]);
@@ -66,7 +72,8 @@ export async function withRetry<T>(
     } catch (err) {
       lastError = err;
 
-      if (attempt === maxRetries || !isRetryable(err)) {
+      // 用户中止：这次失败是我们自己掐的，重试等于无视用户的「停止」
+      if (opts?.signal?.aborted || attempt === maxRetries || !isRetryable(err)) {
         throw err;
       }
 

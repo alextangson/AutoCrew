@@ -26,7 +26,9 @@
  *   content:get        { id }
  *   publish:clipboard  { content_id, hashtags? }
  *   publish:confirm    { content_id, publish_url? }
- *   chat:turn          { conversation_id?, message }
+ *   chat:turn          { conversation_id?, message, turn_id?, client_id? }
+ *   chat:abort         { turn_id, client_id }
+ *   chat:turn_status   { turn_id }
  *   settings:get       {}
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
  *   settings:search_get {}
@@ -99,6 +101,7 @@ import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler,
 import { openContentFolder } from "./folder-open.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
+import { registerTurn, abortTurn, settleTurn, getTurnStatus, noteTurnConversation } from "./turn-registry.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
 import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings, getPublishSettings, setPublishSettings } from "./settings.js";
 import { wechatPullHandler } from "./wechat-pull.js";
@@ -489,8 +492,19 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
       };
     }
   }
+  // turn 寻址（设计 §Phase 3）:turn_id + client_id 齐全才登记,才可中止。
+  // 老前端不传 → 不登记、不可中止,行为与今天完全一致（additive 扩展的代价只落在新能力上）。
+  const turnId = typeof payload.turn_id === "string" && payload.turn_id ? payload.turn_id : undefined;
+  const clientId = typeof payload.client_id === "string" && payload.client_id ? payload.client_id : undefined;
+  let signal: AbortSignal | undefined;
+  if (turnId && clientId) {
+    const reg = registerTurn(turnId, clientId, conversationId ? { conversationId } : undefined);
+    if (!reg.ok) return { ok: false, error: reg.error };
+    signal = reg.signal;
+  }
   // 任务动态带（IA v4.2）:每个 chat turn = 一个 run,事件按 runId 聚合成任务卡
   const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  let settledConversationId = conversationId;
   try {
     const result = await runPersistedChatTurn({
       message: message.trim(),
@@ -498,6 +512,8 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
       ...(viewContext ? { viewContext } : {}),
       dataDir,
       runId,
+      ...(turnId ? { turnId } : {}),
+      ...(signal ? { signal } : {}),
       ...(ctx?.onProgress
         ? {
             onEvent: (e: unknown) => {
@@ -512,15 +528,23 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     });
     // run 收尾:成功有产出发 run_done;失败发 run_failed——任务带上的 run 不许悬空「进行中」
     if (result.ok !== false) {
-      const data = result.data as { cards?: unknown[]; contentIds?: string[] } | undefined;
+      const data = result.data as { cards?: unknown[]; contentIds?: string[]; conversationId?: unknown; stopReason?: unknown } | undefined;
       const cardCount = Array.isArray(data?.cards) ? data.cards.length : 0;
       const contentId = Array.isArray(data?.contentIds) ? data.contentIds[0] : undefined;
+      if (typeof data?.conversationId === "string" && data.conversationId) {
+        settledConversationId = data.conversationId;
+        if (turnId) noteTurnConversation(turnId, data.conversationId);
+      }
+      // 中止的 run 不许在任务带上冒充「完成」（中止 ≠ 取消:已投递的后台任务继续跑）
+      const aborted = data?.stopReason === "aborted";
       void emitEngineEvent(
         {
           role: "system",
           kind: "run_done",
           runId,
-          label: cardCount > 0 ? `任务完成 · 产出 ${cardCount} 张卡片` : "任务已受理",
+          label: aborted
+            ? "本轮已停（已投递的后台任务继续跑）"
+            : cardCount > 0 ? `任务完成 · 产出 ${cardCount} 张卡片` : "任务已受理",
           ...(contentId ? { contentId } : {}),
         },
         dataDir,
@@ -536,7 +560,43 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     const msg = err instanceof Error ? err.message : String(err);
     void emitEngineEvent({ role: "system", kind: "run_failed", runId, label: `任务中断：${msg.slice(0, 60)}` }, dataDir);
     return { ok: false, error: msg };
+  } finally {
+    // settle 才解锁:注册表条目从登记一直活到本轮真正收尾（含落盘），
+    // 否则用户点完停止立刻再发言,新轮会和上一轮的收尾并行跑（二审 新1）。
+    if (turnId) {
+      await settleTurn(turnId, {
+        ...(settledConversationId ? { conversationId: settledConversationId } : {}),
+        ...(dataDir ? { dataDir } : {}),
+      });
+    }
   }
+}
+
+// ── chat:abort / chat:turn_status — 中止链路与断线恢复（设计 §Phase 3）─────────
+
+async function chatAbortHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const turnId = typeof payload.turn_id === "string" ? payload.turn_id : "";
+  const clientId = typeof payload.client_id === "string" ? payload.client_id : "";
+  if (!turnId || !clientId) return { ok: false, error: "chat:abort 需要 turn_id 与 client_id" };
+  const outcome = abortTurn(turnId, clientId);
+  // 归属不符 = 另一个标签页想停别人的轮:明说拒绝,不假装已完成
+  if (outcome === "forbidden") return { ok: false, error: "这一轮不是本页面发起的，请回到发起它的页面停止" };
+  // 已完成/未知一律幂等:停止连点、停已经结束的轮,用户视角都该是「停了就是停了」
+  if (outcome === "not_found") return { ok: true, already: "done" };
+  return { ok: true, settling: true };
+}
+
+async function chatTurnStatusHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const turnId = typeof payload.turn_id === "string" ? payload.turn_id : "";
+  if (!turnId) return { ok: false, error: "chat:turn_status 需要 turn_id" };
+  const view = await getTurnStatus(turnId, (payload._dataDir as string) || undefined);
+  return { ok: true, data: view };
 }
 
 // ── style:update_rule — 个性化中心：编辑/停用规则 ─────────────────────────────
@@ -967,6 +1027,8 @@ export function buildIpcHandlers(
     "article_images:remove_slot": articleImagesRemoveSlotHandler,
     "article_images:upload": articleImagesUploadHandler,
     "chat:turn": chatTurnHandler,
+    "chat:abort": chatAbortHandler,
+    "chat:turn_status": chatTurnStatusHandler,
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
     "settings:search_get": getSearchSettings,

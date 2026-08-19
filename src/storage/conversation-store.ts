@@ -27,6 +27,12 @@ export interface ConversationMessage {
   content: string;
   /** 仅 assistant：本轮工具产出的卡片，只做回放渲染，不进 LLM 上下文 */
   cards?: Record<string, unknown>[];
+  /**
+   * 仅 assistant：本轮的 turnId（对话控制面设计 §Phase 3 断线恢复契约）。
+   * additive 扩展——旧记录没有这个字段照常读。用途是「响应丢了但结果已落盘」时
+   * 客户端能凭 turnId 认出自己那一轮。
+   */
+  turnId?: string;
   ts: string;
 }
 
@@ -96,7 +102,7 @@ export async function getConversation(
 export async function appendTurn(
   id: string,
   user: { content: string },
-  assistant: { content: string; cards?: Record<string, unknown>[] },
+  assistant: { content: string; cards?: Record<string, unknown>[]; turnId?: string },
   dataDir?: string,
 ): Promise<ConversationMeta | null> {
   const existing = await getConversation(id, dataDir);
@@ -111,6 +117,7 @@ export async function appendTurn(
     role: "assistant",
     content: assistant.content,
     ...(assistant.cards && assistant.cards.length > 0 ? { cards: assistant.cards } : {}),
+    ...(assistant.turnId ? { turnId: assistant.turnId } : {}),
     ts: now,
   });
   const meta: ConversationMeta = { ...existing.meta, turns: existing.meta.turns + 1, updatedAt: now };

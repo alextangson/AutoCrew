@@ -128,6 +128,47 @@ describe("runPersistedChatTurn", () => {
     expect(conv!.messages).toHaveLength(2);
   });
 
+  // 对话控制面设计 §Phase 3 断线恢复契约
+  it("persists turnId on the assistant message and passes signal through", async () => {
+    const ctrl = new AbortController();
+    const spy = vi.fn(async () => ({ ok: true, data: { reply: "好", cards: [], tokensUsed: 1 } }));
+    const res = await runPersistedChatTurn({
+      message: "带 turnId 的一轮",
+      dataDir: dir,
+      turnId: "turn-abc",
+      signal: ctrl.signal,
+      runTurn: spy as unknown as typeof runChatTurn,
+    });
+    expect((spy.mock.calls[0][0] as { signal?: AbortSignal }).signal).toBe(ctrl.signal);
+    const conv = await getConversation((res.data as Record<string, unknown>).conversationId as string, dir);
+    expect(conv!.messages[1].turnId).toBe("turn-abc");
+    expect(conv!.messages[0].turnId).toBeUndefined();
+  });
+
+  it("aborted turn is persisted as a NORMAL turn (不写失败轮)", async () => {
+    const meta = await createConversation("中止会话", dir);
+    const abortedTurn = vi.fn(async () => ({
+      ok: true,
+      data: { reply: "已停。", cards: [], stopReason: "aborted", tokensUsed: 3 },
+    })) as unknown as typeof runChatTurn;
+
+    const res = await runPersistedChatTurn({
+      message: "写一篇长文",
+      conversationId: meta.id,
+      dataDir: dir,
+      turnId: "turn-stop",
+      runTurn: abortedTurn,
+    });
+
+    expect(res.ok).toBe(true);
+    expect((res.data as Record<string, unknown>).stopReason).toBe("aborted");
+    const conv = await getConversation(meta.id, dir);
+    expect(conv!.messages).toHaveLength(2);
+    expect(conv!.messages[1].content).toBe("已停。");
+    expect(conv!.messages[1].content).not.toContain("本轮执行失败");
+    expect(conv!.messages[1].turnId).toBe("turn-stop");
+  });
+
   it("appends to an existing conversation and echoes its id", async () => {
     const meta = await createConversation("续聊", dir);
     await appendTurn(meta.id, { content: "续聊" }, { content: "好" }, dir);

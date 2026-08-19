@@ -68,6 +68,38 @@ describe("withRetry", () => {
       expect(attempt, msg).toBe(2);
     }
   });
+
+  // 对话控制面设计 §Phase 3：用户中止不重试（中止长得像瞬时网络错误，不特判就会被重放）
+  it("does NOT retry when the user aborted — even for a normally retryable error", async () => {
+    const ctrl = new AbortController();
+    let attempt = 0;
+    await expect(
+      withRetry(
+        async () => {
+          attempt++;
+          ctrl.abort();
+          throw new Error("terminated"); // 中止把流掐断后典型的报错形态
+        },
+        { maxRetries: 3, baseDelayMs: 1, signal: ctrl.signal },
+      ),
+    ).rejects.toThrow("terminated");
+    expect(attempt).toBe(1);
+  });
+
+  it("still retries retryable failures while the signal is NOT aborted (对照)", async () => {
+    const ctrl = new AbortController();
+    let attempt = 0;
+    const result = await withRetry(
+      async () => {
+        attempt++;
+        if (attempt < 3) throw new Error("terminated");
+        return "ok";
+      },
+      { maxRetries: 3, baseDelayMs: 1, signal: ctrl.signal },
+    );
+    expect(result).toBe("ok");
+    expect(attempt).toBe(3);
+  });
 });
 
 describe("checkFetchResponse", () => {

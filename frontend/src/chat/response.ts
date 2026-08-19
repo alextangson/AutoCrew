@@ -8,6 +8,7 @@ interface ChatTurnData {
   conversation_id?: unknown;
   runId?: unknown;
   actionId?: unknown;
+  stopReason?: unknown;
 }
 
 export interface ParsedChatTurnResponse {
@@ -15,6 +16,8 @@ export interface ParsedChatTurnResponse {
   cards: ChatCardShape[];
   conversationId?: string;
   actionId?: string;
+  /** "aborted" = 用户中止本轮（设计 §Phase 3）：正常渲染 + 一行「后台任务继续跑」提示 */
+  stopReason?: string;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -45,6 +48,8 @@ export function parseChatTurnResponse(result: InvokeResult): ParsedChatTurnRespo
   const conversationId = typeof rawConversationId === "string" && rawConversationId ? rawConversationId : undefined;
   const rawActionId = data.actionId ?? data.runId ?? result.actionId ?? result.runId;
   const actionId = typeof rawActionId === "string" && rawActionId ? rawActionId : undefined;
+  const rawStopReason = data.stopReason ?? result.stopReason;
+  const stopReason = typeof rawStopReason === "string" && rawStopReason ? rawStopReason : undefined;
   const reply = rawReply.trim() ||
     (cards.length > 0
       ? "任务已完成，结果见下方卡片。"
@@ -55,5 +60,6 @@ export function parseChatTurnResponse(result: InvokeResult): ParsedChatTurnRespo
     cards,
     ...(conversationId ? { conversationId } : {}),
     ...(actionId ? { actionId } : {}),
+    ...(stopReason ? { stopReason } : {}),
   };
 }

@@ -44,6 +44,12 @@ export interface LoopOptions {
   onEvent?: (e: LoopEvent) => void;
   /** 运行日志归属(V5.6):runId 缺省自动生成 run-eng-…;config.dataDir 缺省不落日志 */
   logMeta?: { runId?: string; agent?: string; usedPatternIds?: string[]; usedBriefRevision?: number };
+  /**
+   * 用户中止（对话控制面设计 §Phase 3）。additive:不传 = 今天的行为。
+   * 检查点 = 每次模型调用前 + 每个工具执行之间；贯通到观察器（掐传输）与 withRetry（不重放）。
+   * 中止**不走 throw 出口**——正常返回 stopReason:"aborted"，调用方按正常轮收尾。
+   */
+  signal?: AbortSignal;
 }
 
 export interface LoopResult {
@@ -51,7 +57,8 @@ export interface LoopResult {
   turns: number;
   totalTokens: number;
   toolCallCount: number;
-  stopReason: "no_tool_calls" | "max_turns" | "max_tokens";
+  /** aborted = 用户中止（不是失败）：已完成的工具产出保留，剩余工具跳过 */
+  stopReason: "no_tool_calls" | "max_turns" | "max_tokens" | "aborted";
 }
 
 /** 流式空闲超时:IDLE 窗口内无任何字节 = relay 挂起（含首字节等待），中止并重试。
@@ -91,12 +98,14 @@ async function callModel(
   tools: LoopTool[],
   fetchImpl: typeof fetch,
   idleMs: number = IDLE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<CompletionResponse> {
   // 完整流消费在 withRetry 事务内:流不可续,重试 = 重发整个请求（生成幂等,新稿）。
   // 中途断流/挂起由观察器字节级看门狗中止（含首字节等待,任何字节续命——健康长文不误杀）,
   // SDK 侧转为连接错误,isRetryable 按消息模式识别。工具提交只发生在流成功收尾之后。
+  // 用户中止贯通两处:观察器掐传输,withRetry 不把中止当瞬时故障重放。
   return withRetry(async () => {
-    const exchange = await registerExchange({ upstreamBase: config.baseUrl, fetchImpl, idleMs });
+    const exchange = await registerExchange({ upstreamBase: config.baseUrl, fetchImpl, idleMs, ...(signal ? { signal } : {}) });
     try {
       const piModel = makePiModel(config, model, exchange.baseUrl);
       const done = await consumePiStream(startPiStream(config, piModel, toPiContext(messages, tools)));
@@ -117,7 +126,7 @@ async function callModel(
     } finally {
       exchange.release();
     }
-  });
+  }, signal ? { signal } : undefined);
 }
 
 async function executeToolCalls(
@@ -126,9 +135,12 @@ async function executeToolCalls(
   messages: Message[],
   onEvent?: (e: LoopEvent) => void,
   recorder?: RunRecorder,
+  signal?: AbortSignal,
 ): Promise<number> {
   let count = 0;
   for (const tc of toolCalls) {
+    // 工具边界语义（不宣称原子）：已开始的工具跑完，剩余未执行的跳过。
+    if (signal?.aborted) break;
     count++;
     const emit = (type: LoopEvent["type"]) => {
       if (!onEvent) return;
@@ -187,11 +199,16 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
       stopReason = "max_tokens";
       break;
     }
+    // 中止检查点之一：模型调用前（本轮还没开销就停住）
+    if (opts.signal?.aborted) {
+      stopReason = "aborted";
+      break;
+    }
 
     const tCall = Date.now();
     let data: CompletionResponse;
     try {
-      data = await callModel(config, opts.model, messages, tools, fetchImpl, opts.idleTimeoutMs);
+      data = await callModel(config, opts.model, messages, tools, fetchImpl, opts.idleTimeoutMs, opts.signal);
     } catch (err) {
       recorder.llm({
         model: opts.model,
@@ -201,6 +218,11 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
         input: JSON.stringify(messages),
         output: "",
       });
+      // 用户中止不是失败轮：调用失败是我们自己掐的,正常返回 aborted（设计 §Phase 3 二审 #8）
+      if (opts.signal?.aborted) {
+        stopReason = "aborted";
+        break;
+      }
       throw err;
     }
     turns++;
@@ -223,18 +245,24 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
       break;
     }
 
-    toolCallCount += await executeToolCalls(toolCalls, toolMap, messages, opts.onEvent, recorder);
+    toolCallCount += await executeToolCalls(toolCalls, toolMap, messages, opts.onEvent, recorder, opts.signal);
+
+    // 工具间中止：剩余工具已跳过,这里直接收尾（不再回模型要下一轮）
+    if (opts.signal?.aborted) {
+      stopReason = "aborted";
+      break;
+    }
 
     if (turns >= maxTurns) {
       stopReason = "max_turns";
     }
   }
 
-  const finalMessage =
-    [...messages]
-      .reverse()
-      .find((m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim() !== "")
-      ?.content ?? "(no content)";
+  const lastAssistantText = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim() !== "")?.content;
+  // 中止时没有助手文本就是空串——「(no content)」是「模型没吐字」的信号,不是「用户按了停」
+  const finalMessage = lastAssistantText ?? (stopReason === "aborted" ? "" : "(no content)");
 
   return { finalMessage, turns, totalTokens, toolCallCount, stopReason };
 }

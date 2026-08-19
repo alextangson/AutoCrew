@@ -18,6 +18,12 @@ export interface ObserverRoute {
   fetchImpl: typeof fetch;
   /** 空闲看门狗窗口（ms）：窗口内无任何字节 → 中止本次交换 */
   idleMs: number;
+  /**
+   * 外部中止信号（对话控制面设计 §Phase 3）：用户点「停止」时接管本次交换——
+   * 与内部看门狗 AbortController 联动，掐上游 fetch 并断开给 SDK 的连接。
+   * release 语义不变（只删路由），中止走 signal。
+   */
+  signal?: AbortSignal;
 }
 
 interface ObserverHandle {
@@ -73,6 +79,17 @@ async function forward(
   const disarm = () => {
     if (idleTimer) clearTimeout(idleTimer);
   };
+
+  // 用户中止：与看门狗共用同一个 ctrl——上游 fetch 掐掉，连接断给 SDK（转为连接错误）。
+  // 监听器必须在 finally 摘掉：一个 signal 会跨多次交换（loop 每轮一次 registerExchange）。
+  const onExternalAbort = () => {
+    ctrl.abort(new Error("engine loop: 用户中止本轮"));
+    if (!res.destroyed) res.destroy(new Error("observer aborted by user"));
+  };
+  if (route.signal) {
+    if (route.signal.aborted) onExternalAbort();
+    else route.signal.addEventListener("abort", onExternalAbort);
+  }
 
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(req.headers)) {
@@ -131,6 +148,7 @@ async function forward(
     }
   } finally {
     disarm();
+    route.signal?.removeEventListener("abort", onExternalAbort);
   }
 }
 

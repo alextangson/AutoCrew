@@ -11,13 +11,32 @@ import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
 import { parseChatTurnResponse } from "./response";
+import {
+  decideRecovery,
+  readPendingTurn,
+  writePendingTurn,
+  clearPendingTurn,
+  randomId,
+  type TurnStatusView,
+} from "./turn-recovery";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
 interface Msg {
   role: "user" | "assistant";
   text: string;
   cards?: ChatCardShape[];
+  /** 气泡下面的一行灰字（中止提示等），不进模型上下文 */
+  note?: string;
 }
+
+/**
+ * 每标签页一个 clientId（模块级随机，会话期驻内存）——turn 归属的命名空间：
+ * 别的标签页拿到 turnId 也停不了本页的轮（对话控制面设计 §Phase 3）。
+ */
+const CLIENT_ID = randomId();
+
+/** 中止 ≠ 取消：已投递的后台任务（封面、配图、深调研、成片）继续跑，文案不许暗示它们停了 */
+const ABORT_NOTE = "已停。已投递的后台任务会继续跑，进度看对应卡片。";
 
 interface ConversationSummary {
   id: string;
@@ -45,6 +64,11 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  /** 已发出 chat:abort、等本轮 invoke 返回才解锁（服务端注册表也 busy 到 settle） */
+  const [stopping, setStopping] = useState(false);
+  const [recoveryNotice, setRecoveryNotice] = useState("");
+  const turnIdRef = useRef<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [progress, setProgress] = useState<string[]>([]);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
@@ -85,10 +109,44 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
         .filter((m) => m.text.trim() || (m.cards?.length ?? 0) > 0),
     );
   };
+  /**
+   * 断线恢复（设计 §Phase 3）：挂载/SSE 重连时先重载会话，再看本地有没有记着一轮没收尾的 turn。
+   * 三态各有明确出口，绝不假装「还在跑」——服务端重启后 turn_status 就是 unknown。
+   */
+  const recoverPendingTurn = async () => {
+    // turnIdRef 有值 = 本标签页正跑着一轮，那一轮由 invoke 返回收尾，不归恢复管
+    const pending = readPendingTurn();
+    if (!pending || turnIdRef.current) return;
+    const r = await invoke("chat:turn_status", { turn_id: pending.turnId });
+    if (!r.ok) return; // 查不动就保留 pending，下次重连再查
+    const view = ((r as unknown as { data?: TurnStatusView }).data ?? { status: "unknown" }) as TurnStatusView;
+    const decision = decideRecovery(pending, view);
+    if (pollRef.current) clearTimeout(pollRef.current);
+    if (decision.action === "reload") {
+      clearPendingTurn();
+      setRecoveryNotice("");
+      if (decision.conversationId) await loadConversation(decision.conversationId);
+      void listConversations().then(setConvs);
+      return;
+    }
+    if (decision.action === "lost") clearPendingTurn();
+    else {
+      // 还在跑：本页不是发起方，拿不到 invoke 返回——只能轮询到它收尾，
+      // 否则「上一轮还在跑」会一直挂在那里，用户永远等不到结果
+      pollRef.current = setTimeout(() => void recoverPendingTurn(), 3000);
+    }
+    setRecoveryNotice(decision.notice);
+  };
+
+  useEffect(() => () => {
+    if (pollRef.current) clearTimeout(pollRef.current);
+  }, []);
+
   useEffect(() => {
     void listConversations().then(async (list) => {
       setConvs(list);
       if (list.length > 0) await loadConversation(list[0].id);
+      await recoverPendingTurn();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -100,7 +158,14 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     setMsgs((m) => [...m, { role: "user", text: message }]);
     setInput("");
     setBusy(true);
+    setStopping(false);
+    setRecoveryNotice("");
+    if (pollRef.current) clearTimeout(pollRef.current); // 新一轮接管，恢复轮询让位
     setProgress([]);
+    // turnId 客户端生成:中止靠它寻址,断线后也靠它认领本轮结果
+    const turnId = randomId();
+    turnIdRef.current = turnId;
+    writePendingTurn({ turnId, ...(activeConversationId ? { conversationId: activeConversationId } : {}) });
     const focusNow = getFocus();
     const ctx = focusNow
       ? { content_id: focusNow.contentId, revision_focus: { scope: focusNow.scope, ...(focusNow.selection ? { selection: focusNow.selection.text } : {}) } }
@@ -109,10 +174,16 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
         : undefined;
     const r = await invoke("chat:turn", {
       message,
+      turn_id: turnId,
+      client_id: CLIENT_ID,
       ...(activeConversationId ? { conversation_id: activeConversationId } : {}),
       ...(ctx ? { context: ctx } : {}),
     });
+    // invoke 返回 = 本轮真的 settle 了（服务端注册表同刻解锁）——停止按钮与输入框在这里一起解锁
     setBusy(false);
+    setStopping(false);
+    turnIdRef.current = null;
+    clearPendingTurn();
     setProgress([]);
     if (!r.ok) {
       setMsgs((m) => [...m, { role: "assistant", text: "出错了：" + (r.error ?? "未知错误") }]);
@@ -144,9 +215,30 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
       });
     }
     const visibleCards = parsed.cards.filter((c) => c.type !== "revision_proposal");
-    setMsgs((m) => [...m, { role: "assistant", text: parsed.reply, cards: visibleCards }]);
+    setMsgs((m) => [
+      ...m,
+      {
+        role: "assistant",
+        text: parsed.reply,
+        cards: visibleCards,
+        ...(parsed.stopReason === "aborted" ? { note: ABORT_NOTE } : {}),
+      },
+    ]);
     void listConversations().then(setConvs);
     return { ok: true, ...(parsed.actionId ? { actionId: parsed.actionId } : {}) };
+  };
+
+  /** 停止：只停对话编排，不取消已投递的后台任务。以本轮 invoke 返回解锁。 */
+  const stopTurn = async () => {
+    const turnId = turnIdRef.current;
+    if (!turnId || stopping) return;
+    setStopping(true);
+    const r = await invoke("chat:abort", { turn_id: turnId, client_id: CLIENT_ID });
+    // 已经停完/没找到都是幂等成功；真失败（如归属不符）要说出来，并把按钮放回去
+    if (!r.ok) {
+      setStopping(false);
+      toast(r.error ?? "停止失败");
+    }
   };
 
   const deleteActiveConversation = async () => {
@@ -180,14 +272,20 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
   }, [busy, activeConversationId, props.contentContext?.contentId]);
 
   // 工具进度(chat SSE):in-flight 时滚动展示「侦察员正在扫热榜…」
+  // reconnect 是断线重连的合成事件:断线那几秒的结果不会补发,按恢复契约查一次 turn_status
   useEffect(
     () =>
       subscribeEvents((e) => {
+        if (e.kind === "reconnect") {
+          void recoverPendingTurn();
+          return;
+        }
         if (e.kind !== "chat") return;
         const label = typeof e.data.label === "string" ? e.data.label : "";
         const phase = e.data.phase;
         if (phase === "start" && label) setProgress((p) => [...p.slice(-2), label]);
       }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -264,11 +362,15 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
             {(m.cards ?? []).map((c, j) => (
               <ChatCard key={j} card={c} />
             ))}
+            {m.note && <p className="muted">{m.note}</p>}
           </div>
         ))}
+        {recoveryNotice && <p className="muted run-line">{recoveryNotice}</p>}
         {busy && (
           <div className="msg">
-            {progress.length === 0 ? (
+            {stopping ? (
+              <p className="muted">正在停…（已投递的后台任务会继续跑）</p>
+            ) : progress.length === 0 ? (
               <p className="muted">总编辑在想…</p>
             ) : (
               progress.map((p, i) => (
@@ -296,9 +398,19 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
             }
           }}
         />
-        <button className="primary" disabled={busy} onClick={() => void send(input)}>
-          发送
-        </button>
+        {busy ? (
+          <button
+            title="停止这一轮（已投递的后台任务会继续跑）"
+            disabled={stopping || !turnIdRef.current}
+            onClick={() => void stopTurn()}
+          >
+            {stopping ? "正在停…" : "停止"}
+          </button>
+        ) : (
+          <button className="primary" onClick={() => void send(input)}>
+            发送
+          </button>
+        )}
       </div>
     </div>
   );

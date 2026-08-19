@@ -28,6 +28,9 @@ export const IPC_CHANNELS = [
   "article_images:remove_slot",
   "article_images:upload",
   "chat:turn",
+  // 对话控制面设计 §Phase 3：turn 寻址与中止链路 + 断线恢复
+  "chat:abort",
+  "chat:turn_status",
   "settings:get",
   "settings:set",
   "settings:search_get",
