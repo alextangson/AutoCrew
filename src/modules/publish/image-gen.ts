@@ -10,6 +10,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { generateImageViaCodex } from "./codex-image.js";
 
 // gpt-image-* 系中转只接受固定尺寸集;比例简写映射到最接近的合法尺寸
 const GPT_IMAGE_RATIO_MAP: Record<string, string> = {
@@ -164,11 +165,19 @@ export async function generateImageViaRelay(req: RelayImageRequest): Promise<Buf
  */
 export type ImageDialect = "openai" | "ark";
 
+/**
+ * 通道种类:relay 是 OpenAI 兼容中转(HTTP);codex 是本地 Codex CLI 子进程,
+ * 走用户自己的 ChatGPT 订阅——不依赖任何中转,中转集体挂掉时它照样出图。
+ */
+export type ImageProviderKind = "relay" | "codex";
+
 export interface ImageProvider {
-  /** 事件里显示给人看的名字,如「xiaojiu」「newcli」「即梦」 */
+  /** 事件里显示给人看的名字,如「xiaojiu」「newcli」「codex」「即梦」 */
   name: string;
-  baseUrl: string;
-  apiKey: string;
+  kind?: ImageProviderKind;
+  /** kind=relay 必填 */
+  baseUrl?: string;
+  apiKey?: string;
   model?: string;
   dialect?: ImageDialect;
 }
@@ -231,28 +240,45 @@ export class ImageChainError extends Error {
  */
 export async function generateImageViaChain(
   providers: ImageProvider[],
-  req: Omit<RelayImageRequest, "baseUrl" | "apiKey" | "model">,
+  req: Omit<RelayImageRequest, "baseUrl" | "apiKey" | "model"> & {
+    /** kind=codex 需要一个落盘路径(它是 CLI,产物是文件不是响应体) */
+    codexOutputPath?: string;
+  },
 ): Promise<ChainImageResult> {
   if (providers.length === 0) throw new ImageChainError([{ provider: "(未配置)", error: "没有可用的生图通道" }]);
   const failures: Array<{ provider: string; error: string }> = [];
   for (const [index, provider] of providers.entries()) {
     const isLast = index === providers.length - 1;
     try {
-      const buf = await generateImageViaRelay({
-        ...req,
-        baseUrl: provider.baseUrl,
-        apiKey: provider.apiKey,
-        model: provider.model || (provider.dialect === "ark" ? "doubao-seedream-4-0-250828" : "gpt-image-2"),
-        dialect: provider.dialect,
-        // 还有下家就少磨两次(4 次退避要 35s);最后一家才把重试打满,因为已经无处可跳
-        maxAttempts: req.maxAttempts ?? (isLast ? MAX_ATTEMPTS : 2),
-      });
+      const buf = provider.kind === "codex"
+        ? await generateImageViaCodexProvider(req)
+        : await generateImageViaRelay({
+            ...req,
+            baseUrl: provider.baseUrl ?? "",
+            apiKey: provider.apiKey ?? "",
+            model: provider.model || (provider.dialect === "ark" ? "doubao-seedream-4-0-250828" : "gpt-image-2"),
+            dialect: provider.dialect,
+            // 还有下家就少磨两次(4 次退避要 35s);最后一家才把重试打满,因为已经无处可跳
+            maxAttempts: req.maxAttempts ?? (isLast ? MAX_ATTEMPTS : 2),
+          });
       return { buf, provider: provider.name, usedFallback: failures.length > 0, skipped: failures };
     } catch (err) {
       failures.push({ provider: provider.name, error: err instanceof Error ? err.message : String(err) });
     }
   }
   throw new ImageChainError(failures);
+}
+
+async function generateImageViaCodexProvider(
+  req: { prompt: string; size: string; codexOutputPath?: string; timeoutMs?: number },
+): Promise<Buffer> {
+  if (!req.codexOutputPath) throw new Error("codex 通道需要 codexOutputPath(它产出文件而不是响应体)");
+  return generateImageViaCodex({
+    prompt: req.prompt,
+    size: req.size,
+    outputPath: req.codexOutputPath,
+    ...(req.timeoutMs ? { timeoutMs: req.timeoutMs } : {}),
+  });
 }
 
 /** /images/edits 4xx——多为中转不支持该端点或不收参考图,调用方降级 generations */

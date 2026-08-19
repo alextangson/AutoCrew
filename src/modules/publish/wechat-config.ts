@@ -8,10 +8,13 @@ import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
 
 export interface ImageFallbackConfig {
-  /** 显示名,留空则由域名推出来 */
+  /** 显示名,留空则由域名推出来(codex 通道留空则叫 codex) */
   name?: string;
-  baseUrl: string;
-  apiKey: string;
+  /** relay=OpenAI 兼容中转(默认);codex=本地 Codex CLI,走自己的 ChatGPT 订阅 */
+  kind?: "relay" | "codex";
+  /** kind=relay 必填 */
+  baseUrl?: string;
+  apiKey?: string;
   model?: string;
   /** 请求体方言:gpt-image 系用 openai(默认);即梦/火山 Seedream 用 ark */
   dialect?: "openai" | "ark";
@@ -31,10 +34,10 @@ export interface WechatMpPublishConfig {
   /** 生图模型 id(如 gpt-image-2)。缺省=脚本默认(doubao-seedream) */
   imageModel?: string;
   /**
-   * 备用生图通道链:主通道限流/账号池空时按顺序往下顶(2026-08 xiaojiu 空池三天,
-   * 整条公众号线停摆)。留空=不降级,行为与从前一致。
+   * 生图通道链(有序,第一个出图的赢)。配了它就以它为准——包括排在最前的位置,
+   * 所以本地 Codex 可以排在中转前面。留空则退回「imageBaseUrl 单通道」的老行为。
    */
-  imageFallbacks?: ImageFallbackConfig[];
+  imageChain?: ImageFallbackConfig[];
   author?: string;
   theme?: string;
   /** 公众号 API 走的 HTTP 代理(固定出口 IP 用);经 HTTPS_PROXY 传给 publish.py。含账密,不回显。 */

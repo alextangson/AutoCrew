@@ -128,18 +128,30 @@ export function providerLabel(baseUrl: string): string {
   }
 }
 
-/** 备用生图通道链:配全 baseUrl+key 才算数,半配的静默丢弃只会在故障时坑人,所以直接忽略 */
-export function resolveImageFallbacks(fallbacks?: ImageFallbackConfig[]): ImageProvider[] {
-  if (!Array.isArray(fallbacks)) return [];
-  return fallbacks
-    .filter((f) => typeof f?.baseUrl === "string" && f.baseUrl && typeof f?.apiKey === "string" && f.apiKey)
-    .map((f) => ({
-      name: f.name?.trim() || providerLabel(f.baseUrl),
-      baseUrl: f.baseUrl,
-      apiKey: f.apiKey,
-      ...(f.model ? { model: f.model } : {}),
-      ...(f.dialect ? { dialect: f.dialect } : {}),
-    }));
+/**
+ * 生图通道链:relay 必须配全 baseUrl+key 才算数(半配的在故障时才暴露,不如当场丢掉);
+ * codex 不需要凭证——它借本地 Codex CLI 已登录的 ChatGPT 订阅。
+ */
+export function resolveImageChain(chain?: ImageFallbackConfig[]): ImageProvider[] {
+  if (!Array.isArray(chain)) return [];
+  const out: ImageProvider[] = [];
+  for (const item of chain) {
+    if (item?.kind === "codex") {
+      out.push({ name: item.name?.trim() || "codex", kind: "codex" });
+      continue;
+    }
+    if (typeof item?.baseUrl !== "string" || !item.baseUrl) continue;
+    if (typeof item?.apiKey !== "string" || !item.apiKey) continue;
+    out.push({
+      name: item.name?.trim() || providerLabel(item.baseUrl),
+      kind: "relay",
+      baseUrl: item.baseUrl,
+      apiKey: item.apiKey,
+      ...(item.model ? { model: item.model } : {}),
+      ...(item.dialect ? { dialect: item.dialect } : {}),
+    });
+  }
+  return out;
 }
 
 function escapeRegExp(value: string): string {
@@ -245,14 +257,14 @@ async function generateImage(
     imageApiKey,
     imageBaseUrl,
     imageModel,
-    fallbacks = [],
+    chain = [],
   }: {
     size: string;
     imageGeneratorScript: string;
     imageApiKey?: string;
     imageBaseUrl?: string;
     imageModel?: string;
-    fallbacks?: ImageProvider[];
+    chain?: ImageProvider[];
   },
 ): Promise<ImageGenOutcome> {
   const cwd = path.dirname(outputPath);
@@ -260,15 +272,16 @@ async function generateImage(
 
   // 中转模式(imageBaseUrl 已配)→ 原生 HTTP 生图(PRD-v4 §9 去桥化):超时自己掌控,
   // 不受外部脚本 30s 死线误杀。未配中转 → 维持外部脚本(火山 ARK 直连),行为零变化。
-  const chain: ImageProvider[] = [
-    ...(imageBaseUrl && imageApiKey
-      ? [{ name: providerLabel(imageBaseUrl), baseUrl: imageBaseUrl, apiKey: imageApiKey, model: imageModel }]
-      : []),
-    ...fallbacks,
-  ];
-  if (chain.length > 0) {
+  // 配了显式链就以它为准(顺序即优先级,本地 codex 可以排在中转之前);
+  // 没配则退回「设置页那一个中转端点」的老行为
+  const providers: ImageProvider[] = chain.length > 0
+    ? chain
+    : imageBaseUrl && imageApiKey
+      ? [{ name: providerLabel(imageBaseUrl), kind: "relay", baseUrl: imageBaseUrl, apiKey: imageApiKey, model: imageModel }]
+      : [];
+  if (providers.length > 0) {
     try {
-      const result = await generateImageViaChain(chain, { prompt, size });
+      const result = await generateImageViaChain(providers, { prompt, size, codexOutputPath: outputPath });
       await fs.writeFile(outputPath, result.buf);
       return {
         ok: true,
@@ -337,7 +350,7 @@ export async function generateWechatImageAsset(
     imageApiKey: resolveImageApiKey(cfg.imageApiKey),
     imageBaseUrl: resolveImageBaseUrl(cfg.imageBaseUrl),
     imageModel: resolveImageModel(cfg.imageModel),
-    fallbacks: resolveImageFallbacks(cfg.imageFallbacks),
+    chain: resolveImageChain(cfg.imageChain),
   });
 }
 

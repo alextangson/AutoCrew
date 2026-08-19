@@ -136,10 +136,11 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         xConfigured: Boolean(cfg.xApiKey),
         xApiKeyMasked: cfg.xApiKey ? maskKey(cfg.xApiKey) : null,
         imageModel: cfg.imageModel ?? null,
-        // 备用生图通道链:回显时抹掉 key,只留够认人的字段——设置页要能看清链的顺序
-        imageFallbacks: (cfg.imageFallbacks ?? []).map((f) => ({
+        // 生图通道链:回显时抹掉 key,只留够认人的字段——设置页要能看清链的顺序
+        imageChain: (cfg.imageChain ?? []).map((f) => ({
           name: f.name ?? null,
-          baseUrl: f.baseUrl,
+          kind: f.kind ?? "relay",
+          baseUrl: f.baseUrl ?? null,
           apiKeyMasked: f.apiKey ? maskKey(f.apiKey) : null,
           model: f.model ?? null,
           dialect: f.dialect ?? "openai",
@@ -160,13 +161,21 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
   }
 }
 
+interface ParsedImageProvider {
+  name?: string;
+  kind?: "relay" | "codex";
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  dialect?: "openai" | "ark";
+}
+
 /**
- * 备用生图通道链:设置页传 JSON 文本(一条链最多几家,JSON 比自造行格式可靠)。
+ * 生图通道链:设置页传 JSON 文本(一条链最多几家,JSON 比自造行格式可靠)。
  * 解析失败要说清是哪一条坏了——生图链配错的代价是故障时才发现,那时已经太迟。
+ * codex 通道不需要凭证(借本地 Codex CLI 的 ChatGPT 订阅),所以只对 relay 查 baseUrl/apiKey。
  */
-export function parseImageFallbacks(
-  raw: unknown,
-): { value: Array<{ name?: string; baseUrl: string; apiKey: string; model?: string; dialect?: "openai" | "ark" }> } | { error: string } {
+export function parseImageChain(raw: unknown): { value: ParsedImageProvider[] } | { error: string } {
   let list: unknown = raw;
   if (typeof raw === "string") {
     const text = raw.trim();
@@ -174,23 +183,35 @@ export function parseImageFallbacks(
     try {
       list = JSON.parse(text);
     } catch (err) {
-      return { error: `备用生图通道 JSON 解析失败：${(err as Error).message}` };
+      return { error: `生图通道链 JSON 解析失败：${(err as Error).message}` };
     }
   }
-  if (!Array.isArray(list)) return { error: "备用生图通道必须是数组，例如 [{\"name\":\"即梦\",\"baseUrl\":\"...\",\"apiKey\":\"...\"}]" };
-  const value = [];
+  if (!Array.isArray(list)) {
+    return { error: "生图通道链必须是数组，例如 [{\"kind\":\"codex\"},{\"baseUrl\":\"...\",\"apiKey\":\"...\"}]" };
+  }
+  const value: ParsedImageProvider[] = [];
   for (const [i, item] of list.entries()) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) {
       return { error: `第 ${i + 1} 条通道不是对象` };
     }
     const f = item as Record<string, unknown>;
+    const kind = f.kind === undefined ? "relay" : f.kind;
+    if (kind !== "relay" && kind !== "codex") {
+      return { error: `第 ${i + 1} 条通道的 kind 只能是 relay（中转）或 codex（本地 Codex CLI）` };
+    }
+    const name = typeof f.name === "string" && f.name.trim() ? f.name.trim() : undefined;
+    if (kind === "codex") {
+      value.push({ ...(name ? { name } : {}), kind: "codex" });
+      continue;
+    }
     if (typeof f.baseUrl !== "string" || !f.baseUrl.trim()) return { error: `第 ${i + 1} 条通道缺 baseUrl` };
     if (typeof f.apiKey !== "string" || !f.apiKey.trim()) return { error: `第 ${i + 1} 条通道缺 apiKey` };
     if (f.dialect !== undefined && f.dialect !== "openai" && f.dialect !== "ark") {
       return { error: `第 ${i + 1} 条通道的 dialect 只能是 openai 或 ark（即梦/火山 Seedream 用 ark）` };
     }
     value.push({
-      ...(typeof f.name === "string" && f.name.trim() ? { name: f.name.trim() } : {}),
+      ...(name ? { name } : {}),
+      kind: "relay",
       baseUrl: f.baseUrl.trim(),
       apiKey: f.apiKey.trim(),
       ...(typeof f.model === "string" && f.model.trim() ? { model: f.model.trim() } : {}),
@@ -227,11 +248,11 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
   }
   // 备用生图通道链:整条替换(不是 merge)——链的顺序就是降级顺序,半更新会让顺序不可预期。
   // 空串=不改(设置页每次提交都会带上这个字段,当成清空会把链默默删掉);要清空请显式填 []。
-  const rawFallbacks = payload.image_fallbacks;
+  const rawFallbacks = payload.image_chain;
   if (rawFallbacks !== undefined && !(typeof rawFallbacks === "string" && rawFallbacks.trim() === "")) {
-    const parsed = parseImageFallbacks(rawFallbacks);
+    const parsed = parseImageChain(rawFallbacks);
     if ("error" in parsed) return { ok: false, error: parsed.error };
-    (updates as Record<string, unknown>).imageFallbacks = parsed.value;
+    (updates as Record<string, unknown>).imageChain = parsed.value;
   }
   // 留言开关是布尔:GUI 下拉传 "1"/"0"
   if (payload.open_comment !== undefined) {
