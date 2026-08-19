@@ -29,3 +29,4 @@ vendor/**/*.pyc
 sidecars/**/.venv/
 sidecars/**/__pycache__/
 sidecars/**/*.pyc
+.context/

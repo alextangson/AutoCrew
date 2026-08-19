@@ -34,6 +34,7 @@ import { reviseFocus, type ReviseFocus, type ReviseFocusResult } from "../module
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
 import { triggerDeepResearch } from "./research-runtime.js";
+import { listGuiSkills, type GuiSkill } from "./skills-reader.js";
 import type { TriggerResult } from "../modules/research/research-runner.js";
 
 export interface ChatCard {
@@ -90,6 +91,7 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   revise_draft: { role: "writer", label: "编剧正在按你的意见修改稿件" },
   revise_focus: { role: "writer", label: "编剧正在改这段" },
   deep_research: { role: "scout", label: "调研员在派四视角深调研" },
+  read_skill: { role: null, label: "总编辑在翻工作手册" },
 };
 
 export interface ChatHistoryMessage {
@@ -174,7 +176,26 @@ function visibleChatReply(raw: string, cards: ChatCard[], toolCallCount: number)
   return "这轮模型没有返回可显示内容，请重试一次。";
 }
 
-export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatToolDeps, effects?: ChatEffects, viewContext?: ChatViewContext): LoopTool[] {
+/** 工具名唯一是 fail-closed 断言(设计 §Phase 1):重名会被 loop 静默覆盖,宁可起不来也不带病跑 */
+export function assertUniqueToolNames(tools: LoopTool[]): LoopTool[] {
+  const seen = new Set<string>();
+  for (const t of tools) {
+    if (seen.has(t.name)) throw new Error(`chat 工具重名：${t.name}——注册表必须唯一`);
+    seen.add(t.name);
+  }
+  return tools;
+}
+
+/** GUI 技能索引段:名字 + 一句话摘要 + 何时读手册。低频变化,不破 system prompt 前缀缓存。 */
+export function skillIndexPrompt(skills: GuiSkill[]): string {
+  if (skills.length === 0) return "";
+  return (
+    "\n\n编辑部的专项工作手册（命中下列场景时，先调用 read_skill 读对应手册，再按手册里的方法与步骤操作，别凭印象硬干）：\n" +
+    skills.map((s) => `- ${s.id}：${s.summary}`).join("\n")
+  );
+}
+
+export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatToolDeps, effects?: ChatEffects, viewContext?: ChatViewContext, guiSkills?: GuiSkill[]): LoopTool[] {
   const d = {
     generate: deps?.generate ?? (executeGenerate as ExecuteFn),
     rewrite: deps?.rewrite ?? (executeRewrite as ExecuteFn),
@@ -207,7 +228,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
 
   const fail = (error: unknown) => JSON.stringify({ ok: false, error: String(error ?? "未知错误") });
 
-  return [
+  const tools: LoopTool[] = [
     {
       name: "find_topics",
       description: "选题雷达：按创作者的定位/赛道从公开热榜拉取并排序候选选题。用户问「写什么」「找选题」「最近热点」时调用。",
@@ -991,6 +1012,41 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
       },
     },
   ];
+
+  // 工作手册(设计 §Phase 1):只有存在 GUI 面技能时才注册——无技能时工具集与今天完全一致。
+  if (guiSkills && guiSkills.length > 0) {
+    const ids = guiSkills.map((s) => s.id);
+    // 本轮缓存:同一轮里模型翻同一本手册第二次直接回上次的结果(cache 建在本次调用作用域,天然按轮隔离)
+    const turnCache = new Map<string, string>();
+    tools.push({
+      name: "read_skill",
+      description:
+        "读取一本专项工作手册的正文（方法论 + 操作步骤）。命中手册覆盖的场景时先读再干；一轮里同一本读一次就够。",
+      parameters: {
+        type: "object",
+        properties: {
+          skill: { type: "string", enum: ids, description: `手册名，只能是：${ids.join(" | ")}` },
+        },
+        required: ["skill"],
+      },
+      execute: async (args) => {
+        const id = String(sanitize(args).skill ?? "").trim();
+        const cached = turnCache.get(id);
+        if (cached) return cached;
+        // 只查预加载白名单——不用模型输入拼任何路径,harness-only 技能与 `../` 串一律未命中
+        const manual = guiSkills.find((s) => s.id === id)?.guiContent;
+        if (manual === undefined) {
+          // 只回显模型自己给的 id(截断),不带任何本地路径
+          return JSON.stringify({ ok: false, error: `未知技能「${id.slice(0, 40)}」——可用手册：${ids.join("、")}` });
+        }
+        const payload = JSON.stringify({ ok: true, skill: id, manual });
+        turnCache.set(id, payload);
+        return payload;
+      },
+    });
+  }
+
+  return assertUniqueToolNames(tools);
 }
 
 export async function runChatTurn(params: {
@@ -1000,6 +1056,8 @@ export async function runChatTurn(params: {
   viewContext?: ChatViewContext;
   deps?: ChatToolDeps;
   fetchImpl?: typeof fetch;
+  /** 工作手册目录(缺省仓库 skills/)——测试用 fixture 目录 */
+  skillsDir?: string;
   /** 运行日志归属(V5.6):与任务动态卡同一 runId,工作日志视图按它聚合 */
   runId?: string;
   onEvent?: (e: ChatProgressEvent) => void;
@@ -1013,11 +1071,18 @@ export async function runChatTurn(params: {
 
   const cards: ChatCard[] = [];
   const effects: ChatEffects = { contentIds: new Set<string>() };
-  const tools = buildChatTools(cards, params.dataDir, params.deps, effects, params.viewContext);
+  // 工作手册加载失败不阻断对话——视同无技能(索引不注入、read_skill 不注册)
+  let guiSkills: GuiSkill[] = [];
+  try {
+    guiSkills = await listGuiSkills(params.skillsDir);
+  } catch (err) {
+    console.warn(`[chat] 工作手册加载失败，本轮按无技能处理：${err instanceof Error ? err.message : String(err)}`);
+  }
+  const tools = buildChatTools(cards, params.dataDir, params.deps, effects, params.viewContext, guiSkills);
 
   // 定位摘要进 system（§C1）:总编辑说话像「你的总编辑」。只注入定位,不注入全量风格——
   // 总编辑不写稿,写手席才吃声音内核（PRD-v4 §4.3 上下文隔离）。profile 低频变化,不破前缀缓存。
-  let systemPrompt = SYSTEM_PROMPT;
+  let systemPrompt = SYSTEM_PROMPT + skillIndexPrompt(guiSkills);
   try {
     const profile = await loadProfile(params.dataDir);
     if (profile?.industry) {
