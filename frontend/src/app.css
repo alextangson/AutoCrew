@@ -28,6 +28,15 @@
   width: 360px; min-width: 300px; border-left: 1px solid var(--border);
   background: var(--surface); display: flex; flex-direction: column;
 }
+/* 收起用 display:none 而不是卸载组件——卸载会丢掉正在进行的对话 */
+.dock-collapsed { display: none; }
+.dock-rail {
+  flex: none; width: 28px; padding: 14px 0; border: none; border-left: 1px solid var(--border);
+  border-radius: 0; background: var(--surface); color: var(--muted);
+  font-size: 12px; letter-spacing: .2em; writing-mode: vertical-rl;
+}
+.dock-rail:hover { background: var(--card); color: var(--ink); }
+.dock-rail.on { width: 20px; padding: 8px 0; letter-spacing: 0; }
 
 /* 增长项目：Campaign → Agent Team → Task graph */
 .campaign-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
@@ -162,19 +171,105 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .mcell { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .mcell-filled { border-color: var(--ink); }
 
-.editor { max-width: 1280px; margin-inline: auto; }
-.ed-grid { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 22px; align-items: start; }
-.ed-main { min-width: 0; }
-.ed-side { min-width: 0; display: flex; flex-direction: column; }
-.ed-side .ed-tools:first-child { border-top: none; padding-top: 0; }
-/* 图片类面板(封面/正文配图)要宽,不进窄副栏——在编辑区下方整宽展示 */
-.ed-media { margin-top: 10px; }
-@media (max-width: 1180px) { .ed-grid { grid-template-columns: 1fr; } }
-.ed-title { width: 100%; font-size: 20px; font-weight: 700; border-color: transparent; background: transparent; margin: 8px 0 4px; }
+/* ── 编辑页:整屏写作画布(飞书云文档式)────────────────────────────
+   .main 有 18/22 的 padding,编辑页要贴边铺满 → 负 margin 抵掉。
+   版心 46em(约 46 个汉字/行)是长文阅读的舒适行宽,再宽眼睛回行会丢行。 */
+.editor { margin: -18px -22px; display: flex; flex-direction: column; min-height: calc(100% + 36px); }
+.ed-topbar {
+  position: sticky; top: -18px; z-index: 8;
+  display: flex; align-items: center; gap: 10px; padding: 9px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(245, 244, 239, .93); backdrop-filter: blur(8px);
+}
+.ed-topbar-right { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.ed-topbar-right button.on { border-color: var(--ink); font-weight: 700; }
+.ed-topbar-right select { min-width: 90px; }
+
+.ed-main-row { flex: 1; display: flex; align-items: stretch; min-height: 0; }
+.ed-stage { flex: 1; min-width: 0; padding: 44px 20px 44px; }
+/* 780px ≈ 46 个汉字/行:长文阅读的舒适行宽,再宽眼睛回行容易丢行 */
+.ed-canvas { max-width: 780px; margin-inline: auto; }
+/* 封面/配图/成片要宽度,不进窄抽屉——沉到正文下方,与正文拉开距离 */
+.ed-below { max-width: 780px; margin: 56px auto 0; }
+
+/* 标题用 textarea 而非 input:长标题要像飞书那样换行,不能截断 */
+.ed-title {
+  display: block; width: 100%; font-family: var(--font-display); font-size: 30px;
+  line-height: 1.35; font-weight: 700; border-color: transparent; background: transparent;
+  padding: 4px 0; margin: 0 0 12px; resize: none; overflow: hidden;
+}
 .ed-title:hover { border-color: var(--border); }
-.ed-title:focus { border-color: var(--ink); background: var(--card); }
-.ed-body { width: 100%; min-height: 60vh; line-height: 1.9; padding: 12px 14px; resize: vertical; }
-.ed-hint { font-size: 12px; margin: 4px 0; }
+.ed-title:focus { border-color: transparent; background: transparent; }
+
+/* 降级态 textarea:排版参数与 CodeMirror 保持一致,切换过去不跳版 */
+.ed-body {
+  width: 100%; min-height: 60vh; font-size: 17px; line-height: 1.9;
+  padding: 0; border-color: transparent; background: transparent; resize: none;
+}
+.ed-body:focus { border-color: transparent; }
+
+.ed-savebar {
+  position: sticky; bottom: 0; z-index: 8;
+  display: flex; gap: 8px; align-items: center; padding: 8px 20px;
+  border-top: 1px solid var(--border);
+  background: rgba(245, 244, 239, .93); backdrop-filter: blur(8px);
+}
+.ed-savebar .sel-input { flex: 1; }
+.ed-readonly {
+  border: 1px solid var(--border); border-left: 2px solid var(--hot);
+  background: var(--card); color: var(--hot);
+  padding: 7px 10px; margin: 10px 0; font-size: 12px;
+}
+
+/* 工具抽屉:sticky 而非 fixed——不用猜顶栏高度,滚动时自然跟随 */
+.ed-drawer {
+  flex: none; width: 420px; align-self: flex-start;
+  position: sticky; top: 0; max-height: 100vh; overflow-y: auto;
+  background: var(--card); border-left: 1px solid var(--border);
+}
+.ed-drawer-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); background: var(--card);
+}
+.ed-drawer-head button { margin-left: auto; }
+.ed-drawer-body { padding: 4px 14px 24px; }
+.ed-drawer-body > .ed-tools:first-child { border-top: none; }
+@media (max-width: 1100px) { .ed-drawer { width: 320px; } }
+@media (max-width: 820px) { .ed-main-row { flex-direction: column; } .ed-drawer { width: 100%; position: static; max-height: none; } }
+
+/* ── Markdown 实时渲染(CodeMirror)──────────────────────────────
+   编辑器不自己滚动(scroller overflow visible + height auto),让整页滚——
+   这样正文才是"一整屏文字",而不是页面里的一个滚动框。 */
+.ed-cm .cm-editor { height: auto; background: transparent; }
+.ed-cm .cm-editor.cm-focused { outline: none; }
+.ed-cm .cm-scroller { font-family: inherit; font-size: 17px; line-height: 1.9; overflow: visible; }
+.ed-cm .cm-content { padding: 0; min-height: 58vh; caret-color: var(--ink); }
+/* 行间距交给 markdown 源码里的空行(它本身就占一行高)——再叠 margin 就是双倍行距 */
+.ed-cm .cm-line { padding: 0; margin: 0; }
+.ed-cm .cm-placeholder { color: var(--muted); }
+.ed-cm .cm-selectionBackground, .ed-cm .cm-content ::selection { background: #dfe6f2; }
+
+.cm-md-h1 { font-family: var(--font-display); font-size: 1.55em; font-weight: 700; line-height: 1.4; margin: 1.15em 0 .4em; }
+.cm-md-h2 { font-family: var(--font-display); font-size: 1.32em; font-weight: 700; line-height: 1.45; margin: 1em 0 .35em; }
+.cm-md-h3 { font-size: 1.14em; font-weight: 700; margin: .9em 0 .3em; }
+.cm-md-h4 { font-size: 1.02em; font-weight: 700; margin: .8em 0 .3em; }
+.cm-md-quote { border-left: 2px solid var(--border); padding-left: .9em; color: var(--muted); }
+.cm-md-hr { position: relative; color: transparent; }
+.cm-md-hr::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--border); }
+.cm-md-strong { font-weight: 700; }
+.cm-md-em { font-style: italic; }
+.cm-md-strike { text-decoration: line-through; color: var(--muted); }
+.cm-md-code { font-family: var(--font-mono); font-size: .88em; background: var(--surface); border: 1px solid var(--border); padding: 0 .25em; }
+.cm-md-link { color: var(--crew-analyst); text-decoration: underline; text-underline-offset: 2px; }
+/* 配图位是产品概念,不该以裸标记的样子出现在正文里 */
+.cm-md-image-chip {
+  display: inline-flex; align-items: center; font-family: var(--font-mono); font-size: .78em;
+  color: var(--crew-publisher); background: #f3effc; border: 1px solid #ddd3f4;
+  border-radius: 3px; padding: .1em .5em; cursor: text; vertical-align: baseline;
+}
+
+.ed-hint { font-size: 12px; margin: 0; white-space: nowrap; }
 .ed-error { border: 1px solid var(--danger); color: var(--danger); border-radius: var(--radius-card); padding: 8px 10px; margin: 6px 0; }
 .ed-save-row { display: flex; gap: 8px; margin: 8px 0; }
 .ed-save-row .sel-input { flex: 1; }
@@ -208,13 +303,11 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .sel-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; border: 1px solid var(--ink); border-radius: var(--radius-card); background: var(--card); padding: 6px 8px; margin: 6px 0; }
 .sel-float { position: absolute; z-index: 5; margin: 0; width: max-content; max-width: min(560px, 96%); box-shadow: 0 2px 10px rgba(22, 21, 15, 0.14); }
 .ed-body-wrap { position: relative; }
-.ed-mode { display: flex; gap: 6px; margin: 2px 0 4px; }
-.ed-mode button { font-size: 11px; padding: 2px 8px; }
-.ed-mode button.on { border-color: var(--ink); font-weight: 700; }
-.md-preview { min-height: 60vh; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 14px 18px; line-height: 1.9; overflow-wrap: break-word; }
-.md-preview h1, .md-preview h2, .md-preview h3 { font-family: var(--font-display); margin: 14px 0 6px; }
-.md-preview h1 { font-size: 20px; } .md-preview h2 { font-size: 17px; } .md-preview h3 { font-size: 15px; }
-.md-preview p { margin: 8px 0; }
+/* 预览态(成稿样子)与编辑态用同一套排版参数,切过去不跳版 */
+.md-preview { min-height: 58vh; font-size: 17px; line-height: 1.9; overflow-wrap: break-word; }
+.md-preview h1, .md-preview h2, .md-preview h3 { font-family: var(--font-display); margin: 1.1em 0 .4em; line-height: 1.4; }
+.md-preview h1 { font-size: 1.55em; } .md-preview h2 { font-size: 1.32em; } .md-preview h3 { font-size: 1.14em; }
+.md-preview p { margin: .55em 0; }
 .md-preview ul, .md-preview ol { padding-left: 22px; margin: 8px 0; }
 .md-preview blockquote { border-left: 2px solid var(--border); padding-left: 10px; color: var(--muted); margin: 8px 0; }
 .md-preview code { font-family: var(--font-mono); font-size: 12px; background: var(--surface); padding: 1px 4px; }

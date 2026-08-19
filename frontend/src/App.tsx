@@ -17,6 +17,7 @@ import { Onboarding } from "./views/Onboarding";
 import { ChatDock } from "./chat/ChatDock";
 import { ToastHost, DialogHost, toast, openDialog } from "./ui";
 import { invoke } from "./transport";
+import { useRevisionFocus } from "./revision";
 
 export type Route =
   | { view: "dashboard" }
@@ -45,10 +46,19 @@ const SECONDARY_NAV: Array<{ view: Route["view"]; label: string }> = [
   { view: "library", label: "素材库" },
 ];
 
+const DOCK_KEY = "dock-open";
+
 export function App() {
   const [route, setRoute] = useState<Route>({ view: "dashboard" });
   const [gate, setGate] = useState<"checking" | "onboarding" | "ready">("checking");
+  // 总编辑默认收起——写作要整屏。锁定「改这段/改这篇」时自动滑出:需要它的那一刻才出现
+  const [dockOpen, setDockOpen] = useState(() => localStorage.getItem(DOCK_KEY) === "1");
+  const focus = useRevisionFocus();
   const active = route.view === "editor" ? "board" : route.view;
+
+  useEffect(() => {
+    if (focus) setDockOpen(true);
+  }, [focus]);
 
   useEffect(() => {
     let alive = true;
@@ -140,9 +150,22 @@ export function App() {
           {route.view === "inbox" && <Inbox nav={setRoute} />}
           {route.view === "settings" && <Settings />}
         </main>
-        <aside className="dock">
+        {/* 收起时用 CSS 隐藏而不是卸载——卸载会丢掉正在进行的对话 */}
+        <aside className={dockOpen ? "dock" : "dock dock-collapsed"}>
           <ChatDock contentContext={route.view === "editor" ? { contentId: route.id } : undefined} />
         </aside>
+        <button
+          className={dockOpen ? "dock-rail on" : "dock-rail"}
+          title={dockOpen ? "收起总编辑" : "展开总编辑"}
+          onClick={() => {
+            setDockOpen((open) => {
+              localStorage.setItem(DOCK_KEY, open ? "0" : "1");
+              return !open;
+            });
+          }}
+        >
+          {dockOpen ? "›" : "总编辑"}
+        </button>
       </div>
       <ToastHost />
       <DialogHost />
