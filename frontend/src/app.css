@@ -129,7 +129,9 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 
 /* B 期:看板/矩阵/编辑器 */
 .board-bar { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.board-title { font-size: 20px; font-weight: 700; }
+/* 整段话当选题名很常见——标题必须可收缩,两边按钮不能被挤成竖排 */
+.board-bar > button, .board-bar > select, .board-bar > a { flex: none; white-space: nowrap; }
+.board-title { flex: 1; min-width: 0; font-size: 20px; font-weight: 700; line-height: 1.45; }
 .kanban { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; flex: 1; min-width: 0; }
 
 /* V5.6.2 看板重排:左灵感面板(行式高密度) + 右管线四列 */
