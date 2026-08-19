@@ -101,6 +101,7 @@ import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler,
 import { openContentFolder } from "./folder-open.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
+import { parseViewContext } from "./chat-view-context.js";
 import { registerTurn, abortTurn, settleTurn, getTurnStatus, noteTurnConversation } from "./turn-registry.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
 import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings, getPublishSettings, setPublishSettings } from "./settings.js";
@@ -473,31 +474,9 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
       ? payload.conversation_id
       : undefined;
   const dataDir = (payload._dataDir as string) || undefined;
-  // 上下文感知（IA v4.2 §C1）：renderer 报告用户正看着哪篇稿
-  const rawCtx = payload.context;
-  let viewContext;
-  if (rawCtx && typeof rawCtx === "object" && !Array.isArray(rawCtx)) {
-    const input = rawCtx as Record<string, unknown>;
-    const contentId = typeof input.content_id === "string" ? input.content_id : "";
-    if (isContentId(contentId)) {
-      const current = await getContent(contentId, dataDir);
-      const rf = input.revision_focus;
-      let revisionFocus: { scope: "selection" | "draft"; selection?: string } | undefined;
-      if (rf && typeof rf === "object" && !Array.isArray(rf)) {
-        const scope = (rf as Record<string, unknown>).scope;
-        const selection = (rf as Record<string, unknown>).selection;
-        if (scope === "draft") revisionFocus = { scope: "draft" };
-        else if (scope === "selection" && typeof selection === "string" && selection.trim())
-          revisionFocus = { scope: "selection", selection };
-      }
-      viewContext = {
-        contentId,
-        contentTitle: String(input.content_title ?? current?.title ?? ""),
-        platform: String(input.platform ?? current?.platform ?? ""),
-        ...(revisionFocus ? { revisionFocus } : {}),
-      };
-    }
-  }
+  // 上下文感知（IA v4.2 §C1 + 设计 §Phase 3）：renderer 报告用户正看着哪——
+  // 枚举白名单 + 存在性校验都在 chat-view-context，非法字段静默丢弃，不进 prompt。
+  const viewContext = await parseViewContext(payload.context, dataDir);
   // turn 寻址（设计 §Phase 3）:turn_id + client_id 齐全才登记,才可中止。
   // 老前端不传 → 不登记、不可中止,行为与今天完全一致（additive 扩展的代价只落在新能力上）。
   const turnId = typeof payload.turn_id === "string" && payload.turn_id ? payload.turn_id : undefined;

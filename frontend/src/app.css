@@ -23,13 +23,22 @@
 .topnav-menu button { text-align: left; width: 100%; }
 
 .body { display: flex; flex: 1; min-height: 0; }
-.main { flex: 1; overflow-y: auto; padding: 18px 22px; }
+/* min-width:0——对话栏拖宽时主区让位收缩，而不是把整个壳撑出横向滚动条 */
+.main { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 22px; }
+/* 宽度由 --dock-w 驱动(App 内联给值,320–560 已夹好),窄屏媒体查询照旧覆盖成整宽 */
 .dock {
-  width: 360px; min-width: 300px; border-left: 1px solid var(--border);
+  position: relative; flex: none;
+  width: var(--dock-w, 360px); min-width: 300px; border-left: 1px solid var(--border);
   background: var(--surface); display: flex; flex-direction: column;
 }
 /* 收起用 display:none 而不是卸载组件——卸载会丢掉正在进行的对话 */
 .dock-collapsed { display: none; }
+/* 左缘拖拽柄:压在边框上,不占布局(绝对定位),命中区比 1px 边框宽 */
+.dock-resizer {
+  position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; z-index: 5;
+  cursor: col-resize; touch-action: none;
+}
+.dock-resizer:hover { background: var(--border); }
 .dock-rail {
   flex: none; width: 28px; padding: 14px 0; border: none; border-left: 1px solid var(--border);
   border-radius: 0; background: var(--surface); color: var(--muted);
@@ -115,10 +124,15 @@
 .ccard-body { white-space: pre-wrap; font: inherit; font-size: 13px; max-height: 260px; overflow-y: auto; }
 .stay-yes { color: var(--success); font-weight: 700; }
 .stay-no { color: var(--danger); font-weight: 700; }
+/* 卡片深链动作条:「在工作区打开」——对话给回执,工作区给动手的地方 */
+.ccard-actions { margin-top: 6px; }
+.ccard-open { font-size: 12px; padding: 2px 8px; }
 
 @media (max-width: 900px) {
   .body { flex-direction: column; }
   .dock { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
+  /* 上下堆叠时左缘拖拽没有意义 */
+  .dock-resizer { display: none; }
 }
 
 /* V5.6.2 全局丝滑化:统一动效/页头字号/键盘焦点 */

@@ -115,7 +115,7 @@ const AUTONOMY_LABEL: Record<AutonomyMode, string> = {
   managed: "全托管",
 };
 
-export function Campaigns() {
+export function Campaigns(props: { onSelect?: (id: string | null) => void } = {}) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -142,6 +142,16 @@ export function Campaigns() {
   useEffect(() => {
     void load();
   }, []);
+
+  /**
+   * 选中的活动报给壳（设计 §Phase 3）:随本轮 chat:turn 上报,总编辑才知道「这个活动」指谁。
+   * 离开增长面板时清掉——不能让上下文停留在用户已经不看的东西上。
+   */
+  const onSelect = props.onSelect;
+  useEffect(() => {
+    onSelect?.(selectedId);
+    return () => onSelect?.(null);
+  }, [selectedId, onSelect]);
 
   const selected = campaigns.find((campaign) => campaign.id === selectedId) ?? null;
 

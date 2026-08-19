@@ -37,6 +37,7 @@ import { triggerDeepResearch } from "./research-runtime.js";
 import { listGuiSkills, type GuiSkill } from "./skills-reader.js";
 import { buildWorkspaceTools, type WorkspaceToolDeps } from "./chat-tools-workspace.js";
 import { readRecentActions, recentActionsBlock } from "./recent-actions.js";
+import { viewContextLine, type ChatViewContext } from "./chat-view-context.js";
 import type { TriggerResult } from "../modules/research/research-runner.js";
 
 export interface ChatCard {
@@ -48,14 +49,11 @@ export interface ChatCard {
   data: Record<string, unknown>;
 }
 
-/** §C1 上下文感知：renderer 报告用户正看着哪篇稿（只进模型上下文，不进持久历史） */
-export interface ChatViewContext {
-  contentId: string;
-  contentTitle?: string;
-  platform?: string;
-  /** 对话式修改的焦点：选中的一段或整篇。存在时修改意见走 revise_focus。 */
-  revisionFocus?: { scope: "selection" | "draft"; selection?: string };
-}
+/**
+ * §C1 上下文感知：renderer 报告用户正看着哪（只进模型上下文，不进持久历史）。
+ * 类型与校验都住在 chat-view-context.ts，这里只转出口，老 import 路径不动。
+ */
+export type { ChatViewContext } from "./chat-view-context.js";
 
 export interface ChatProgressEvent {
   phase: "start" | "end";
@@ -1183,8 +1181,14 @@ export async function runChatTurn(params: {
   // 最近工作区动作（设计 §Phase 2）:用户刚在工作区点过什么,总编辑得知道——只进模型不进持久历史
   // (与 siblingLine 同模式);无动作不注入,读失败当无动作。
   const actionsBlock = recentActionsBlock(await readRecentActions(params.dataDir).catch(() => []));
-  const contextBlock = ctx?.contentId
-    ? `【当前上下文】用户正打开稿件《${ctx.contentTitle || "无标题"}》（id: ${ctx.contentId}${ctx.platform ? `，平台: ${ctx.platform}` : ""}）——「这篇」「开头」等指代默认指它，可用 get_draft 读全文。${siblingLine}${voiceLine}\n\n`
+  // 位置行（设计 §Phase 3）:用户在看板/增长面板时,总编辑也该知道他正看着哪——
+  // 字段已在 chat-view-context 过白名单/存在性,这里只负责拼话。
+  const draftLine = ctx?.contentId
+    ? `用户正打开稿件《${ctx.contentTitle || "无标题"}》（id: ${ctx.contentId}${ctx.platform ? `，平台: ${ctx.platform}` : ""}）——「这篇」「开头」等指代默认指它，可用 get_draft 读全文。${siblingLine}${voiceLine}`
+    : "";
+  const whereLine = viewContextLine(ctx);
+  const contextBlock = draftLine || whereLine
+    ? `【当前上下文】${[draftLine, whereLine].filter(Boolean).join("\n")}\n\n`
     : "";
   const userMessage = `${actionsBlock ? actionsBlock + "\n\n" : ""}${contextBlock}${params.message}`;
 

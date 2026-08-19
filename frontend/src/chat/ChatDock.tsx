@@ -10,6 +10,8 @@ import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
+import { buildTurnContext, type ViewSnapshot } from "./view-context";
+import type { Route } from "../App";
 import { parseChatTurnResponse } from "./response";
 import {
   decideRecovery,
@@ -61,8 +63,17 @@ export function useChatSend(): (msg: string) => Promise<ChatDispatchReceipt> {
   return (msg) => sendImpl(msg);
 }
 
-export function ChatDock(props: { contentContext?: { contentId: string } }) {
+export function ChatDock(props: {
+  contentContext?: { contentId: string };
+  /** 用户正看着哪（壳给的路由/选中态）——随本轮 chat:turn 上报 */
+  view?: ViewSnapshot;
+  /** 卡片「在工作区打开」的落点（壳的 setRoute） */
+  nav?: (route: Route) => void;
+}) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  // view 每次 App 渲染都是新对象:用 ref 拿最新值，别把它塞进 sendImpl 的依赖里反复重注册
+  const viewRef = useRef(props.view);
+  viewRef.current = props.view;
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   /** 已发出 chat:abort、等本轮 invoke 返回才解锁（服务端注册表也 busy 到 settle） */
@@ -170,12 +181,13 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
     turnIdRef.current = turnId;
     setStream(startStream(turnId)); // 本轮之后到达的 chat_delta 才收，别的 turn 一律丢弃
     writePendingTurn({ turnId, ...(activeConversationId ? { conversationId: activeConversationId } : {}) });
+    // 视图上下文（设计 §Phase 3）:稿件/修改焦点 + 用户正看着哪一页——服务端还会过一道白名单
     const focusNow = getFocus();
-    const ctx = focusNow
-      ? { content_id: focusNow.contentId, revision_focus: { scope: focusNow.scope, ...(focusNow.selection ? { selection: focusNow.selection.text } : {}) } }
-      : props.contentContext
-        ? { content_id: props.contentContext.contentId }
-        : undefined;
+    const ctx = buildTurnContext({
+      ...(viewRef.current ? { view: viewRef.current } : {}),
+      ...(props.contentContext ? { contentId: props.contentContext.contentId } : {}),
+      ...(focusNow ? { focus: focusNow } : {}),
+    });
     const r = await invoke("chat:turn", {
       message,
       turn_id: turnId,
@@ -372,7 +384,7 @@ export function ChatDock(props: { contentContext?: { contentId: string } }) {
                 </div>
               ))}
             {(m.cards ?? []).map((c, j) => (
-              <ChatCard key={j} card={c} />
+              <ChatCard key={j} card={c} {...(props.nav ? { nav: props.nav } : {})} />
             ))}
             {m.note && <p className="muted">{m.note}</p>}
           </div>

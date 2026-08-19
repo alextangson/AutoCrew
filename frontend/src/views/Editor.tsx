@@ -24,6 +24,7 @@ import { CoverPanel } from "./CoverPanel";
 import { ArticleImagesPanel } from "./ArticleImagesPanel";
 import { VideoPanel } from "./VideoPanel";
 import { platformLabel, VARIANT_STATUS, VIDEO_PLATFORMS, type Content } from "../lib";
+import type { EditorPanel } from "../App";
 import { type VersionLike } from "../version-diff";
 
 const DRAWER_KEY = "ed-drawer-open";
@@ -53,7 +54,7 @@ function TitleInput(props: { value: string; onChange: (value: string) => void })
   );
 }
 
-export function Editor(props: { id: string; back: () => void }) {
+export function Editor(props: { id: string; back: () => void; panel?: EditorPanel }) {
   const [c, setC] = useState<Content | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -67,7 +68,14 @@ export function Editor(props: { id: string; back: () => void }) {
   // 抽屉/配图面板的开合是用户偏好,记住它——每次进来都要重开是最烦人的那种细节
   const [drawerOpen, setDrawerOpen] = useState(() => localStorage.getItem(DRAWER_KEY) === "1");
   const [articleImagesOpen, setArticleImagesOpen] = useState(() => localStorage.getItem(IMAGES_KEY) === "1");
+  // 封面面板默认折叠(不记忆);对话卡片深链过来时才自动展开
+  const [coverOpen, setCoverOpen] = useState(false);
   const [fallback, setFallback] = useState<string | null>(null);
+  const panelRefs = {
+    cover: useRef<HTMLDetailsElement | null>(null),
+    images: useRef<HTMLDetailsElement | null>(null),
+    video: useRef<HTMLDivElement | null>(null),
+  };
   const cmRef = useRef<EditorView | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const send = useChatSend();
@@ -123,6 +131,28 @@ export function Editor(props: { id: string; back: () => void }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.id]);
+
+  /**
+   * 卡片深链（设计 §Phase 3）:对话里点「去封面/配图/成片面板」→ 展开那块并滚到它。
+   * 稿件读完(c 有值)才滚——面板挂上去之前滚是空滚。
+   */
+  useEffect(() => {
+    const panel = props.panel;
+    if (!panel || !c) return;
+    if (panel === "cover") setCoverOpen(true);
+    if (panel === "images") {
+      setArticleImagesOpen(true);
+      localStorage.setItem(IMAGES_KEY, "1");
+    }
+    // 滚两次:面板内容(封面候选/配图/成片)是异步拉的,第一次滚的时候页面还没长高,
+    // 只滚到当时的底;等内容落位后补一次才真的把面板顶到视野里。
+    // 直接跳位不做平滑动画:深链是「带我去那儿」,动画只是让位置在某些环境里丢掉
+    const timers = [80, 600].map((delay) =>
+      setTimeout(() => panelRefs[panel].current?.scrollIntoView({ block: "start" }), delay),
+    );
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.panel, props.id, c !== null]);
 
   // 本地暂存(1s 防抖)
   useEffect(() => {
@@ -335,13 +365,23 @@ export function Editor(props: { id: string; back: () => void }) {
 
         {/* 封面/配图/成片要宽度,不进窄抽屉——沉到正文下方,默认折叠,不打扰写作 */}
         <div className="ed-below">
-          {isVideo && <VideoPanel contentId={props.id} />}
-          <details className="ed-tools">
+          {isVideo && (
+            <div ref={panelRefs.video}>
+              <VideoPanel contentId={props.id} />
+            </div>
+          )}
+          <details
+            className="ed-tools"
+            ref={panelRefs.cover}
+            open={coverOpen}
+            onToggle={(event) => setCoverOpen(event.currentTarget.open)}
+          >
             <summary>封面设计</summary>
             <CoverPanel contentId={props.id} platform={c.platform} />
           </details>
           <details
             className="ed-tools"
+            ref={panelRefs.images}
             open={articleImagesOpen}
             onToggle={(event) => {
               const open = event.currentTarget.open;
