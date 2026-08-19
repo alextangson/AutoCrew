@@ -103,6 +103,7 @@ import { listConversations, getConversation, deleteConversation } from "../stora
 import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings, getPublishSettings, setPublishSettings } from "./settings.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
+import { appendAction } from "./recent-actions.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
 import {
@@ -231,6 +232,29 @@ export function wrapExecute(fn: ExecuteFn, action: string): IpcHandler {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  };
+}
+
+// ── 工作区动作 → recent-actions 有界环（对话控制面设计 §Phase 2）────────────────
+
+/**
+ * 只在成功路径记一笔，供下一轮 chat:turn 注入模型上下文。
+ * appendAction 自吞失败——观测层不得改变执行层的返回，也不得让它变慢到用户有感。
+ */
+function withActionRecord(inner: IpcHandler, kind: string): IpcHandler {
+  return async (payload, ctx) => {
+    const res = await inner(payload, ctx);
+    if (res.ok !== true) return res;
+    const data = (res.data ?? {}) as Record<string, unknown>;
+    const subject = (res.content ?? data.content ?? data) as { id?: unknown; title?: unknown; status?: unknown };
+    void appendAction((payload._dataDir as string) || undefined, {
+      kind,
+      contentId: String(subject.id ?? payload.content_id ?? payload.id ?? ""),
+      ...(typeof subject.title === "string" ? { title: subject.title } : {}),
+      // 流转要说清挪到哪一列；其余动作 kind 本身已经说完了，别再重复一遍状态名
+      ...(kind === "transition" && typeof subject.status === "string" ? { detail: subject.status } : {}),
+    });
+    return res;
   };
 }
 
@@ -928,7 +952,10 @@ export function buildIpcHandlers(
     "content:get": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:get"]),
     "publish:clipboard": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:clipboard"]),
     "publish:digest": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:digest"]),
-    "publish:confirm": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
+    "publish:confirm": withActionRecord(
+      wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
+      "published",
+    ),
     "publish:request_wechat": requestWechatDraftApprovalHandler,
     "publish:wechat_draft": publishWechatDraftApprovedHandler,
     "article_images:get": articleImagesGetHandler,
@@ -978,7 +1005,10 @@ export function buildIpcHandlers(
     "radar:sources_set": setRadarSources,
     "profile:update": profileUpdateHandler,
     "content:update": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:update"]),
-    "content:transition": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:transition"]),
+    "content:transition": withActionRecord(
+      wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:transition"]),
+      "transition",
+    ),
     "content:allowed_transitions": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:allowed_transitions"]),
     "content:adoption": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:adoption"]),
     "content:delete": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:delete"]),

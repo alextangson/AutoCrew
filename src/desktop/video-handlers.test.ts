@@ -89,7 +89,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   setVideoService(null);
-  await fs.rm(dir, { recursive: true, force: true });
+  // 确认成功路径会 fire-and-forget 写 recent-actions.json（观测层不 await），
+  // 清理要能扛住这条晚到的写：maxRetries 让 rm 对 ENOTEMPTY 重试。
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 describe("service 接线", () => {

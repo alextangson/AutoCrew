@@ -14,6 +14,7 @@ import {
   type CoverProvider,
 } from "../modules/cover/provider.js";
 import { emitEngineEvent } from "./event-hub.js";
+import { appendAction } from "./recent-actions.js";
 import { coverRatiosForPlatform } from "../modules/cover/platform-ratios.js";
 
 type Payload = Record<string, unknown>;
@@ -165,6 +166,12 @@ export async function approveCoverJob(payload: Payload): Promise<StartedCoverJob
     return { response: { ok: false, error: err instanceof Error ? err.message : String(err) }, completion: Promise.resolve() };
   }
   if (!result.ok) return { response: result as HandlerResult, completion: Promise.resolve() };
+  // 工作区动作进有界环（设计 §Phase 2）：下一轮对话里总编辑要知道封面已经定稿了
+  void appendAction(dataDir, {
+    kind: "cover_approved",
+    contentId: String(payload.content_id ?? ""),
+    detail: String(payload.label ?? "").toUpperCase(),
+  });
 
   const review = result.review;
   const approved = review?.variants?.find((v) => v.label === review?.approvedLabel);

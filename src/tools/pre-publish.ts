@@ -246,7 +246,10 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // Auto-transition to publish_ready if all passed。
   // 非法流转走返回值 {ok:false}，照旧容忍；写盘失败会 throw 到工具错误边界——
   // 不能吞：吞掉 = 报了「可以发布」但 publish_ready 没落盘
-  if (allPassed) {
+  //
+  // `_readOnly`（内部参数，模型输入到不了这里）：对话面的 pre_publish_check 是纯查询，
+  // 不许替用户跨过「待发布」这条人审关卡（设计 §总原则：人审关卡保留人手点击）。
+  if (allPassed && params._readOnly !== true) {
     await transitionStatus(contentId, normalizeLegacyStatus("publish_ready"), {}, dataDir);
   }
 

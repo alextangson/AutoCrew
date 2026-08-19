@@ -34,22 +34,30 @@ export async function articleImagesGetHandler(payload: Payload): Promise<Handler
   }
 }
 
-async function startGenerate(payload: Payload, single: boolean): Promise<HandlerResult> {
+export interface StartedArticleImagesJob {
+  response: HandlerResult;
+  /** 后台执行句柄——IPC 面忽略；对话面用它把 claim 持有到任务 settle（设计 §Phase 2） */
+  completion: Promise<void>;
+}
+
+const noJob = (response: HandlerResult): StartedArticleImagesJob => ({ response, completion: Promise.resolve() });
+
+export function startArticleImagesJob(payload: Payload, single: boolean): StartedArticleImagesJob {
   const checked = valid(payload);
-  if (!checked.ok) return checked;
+  if (!checked.ok) return noJob(checked);
   const index = single ? Number(payload.index) : undefined;
   if (single && (!Number.isInteger(index) || (index as number) < 0)) {
-    return { ok: false, error: "需要合法 index" };
+    return noJob({ ok: false, error: "需要合法 index" });
   }
   const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : undefined;
-  if (single && !prompt) return { ok: false, error: "重做正文配图需要非空 prompt" };
+  if (single && !prompt) return noJob({ ok: false, error: "重做正文配图需要非空 prompt" });
 
   const runId = `run-article-images-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const emit = (kind: "work" | "run_done" | "run_failed", label: string) =>
     void emitEngineEvent({ role: "publisher", kind, label, contentId: checked.contentId, runId }, checked.dataDir).catch(() => {});
   emit("work", single ? `正在重做正文配图 ${(index as number) + 1}…` : "正在生成缺失的正文配图…");
 
-  void (async () => {
+  const completion = (async () => {
     try {
       const result = await generateArticleImages({
         contentId: checked.contentId,
@@ -73,15 +81,15 @@ async function startGenerate(payload: Payload, single: boolean): Promise<Handler
       emit("run_failed", `正文配图失败：${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`);
     }
   })();
-  return { ok: true, pending: true, runId };
+  return { response: { ok: true, pending: true, runId }, completion };
 }
 
 export async function articleImagesGenerateHandler(payload: Payload): Promise<HandlerResult> {
-  return startGenerate(payload, false);
+  return startArticleImagesJob(payload, false).response;
 }
 
 export async function articleImagesRegenerateHandler(payload: Payload): Promise<HandlerResult> {
-  return startGenerate(payload, true);
+  return startArticleImagesJob(payload, true).response;
 }
 
 export async function articleImagesRemoveHandler(payload: Payload): Promise<HandlerResult> {

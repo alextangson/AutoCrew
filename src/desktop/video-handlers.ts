@@ -14,6 +14,7 @@
  *    不吞——确认照样成功，但 warning 明写在返回里。
  */
 import { getContent, updateContent } from "../storage/local-store.js";
+import { appendAction } from "./recent-actions.js";
 import { isContentId } from "../storage/entity-id.js";
 import { VideoConflictError, type ConfirmCutArgs, type VideoService } from "../modules/video/service.js";
 import type { OverlaySlot } from "../modules/video/assemble.js";
@@ -204,7 +205,9 @@ export async function videoCutConfirmHandler(payload: Payload): Promise<Reply> {
   const args = parseCutArgs(payload);
   if (typeof args === "string") return { ok: false, error: args };
   try {
-    return { ok: true, data: { state: await ctx.service.confirmCut(contentId, args) } };
+    const state = await ctx.service.confirmCut(contentId, args);
+    void appendAction(ctx.dataDir, { kind: "video_cut", contentId }); // 工作区动作进有界环（设计 §Phase 2）
+    return { ok: true, data: { state } };
   } catch (err) {
     return fail(err);
   }
@@ -226,6 +229,7 @@ export async function videoReviewConfirmHandler(payload: Payload): Promise<Reply
   try {
     const state = await ctx.service.confirmReview(contentId, { renderedRevision: rendered, verdict });
     if (verdict !== "approve") return { ok: true, data: { state } };
+    void appendAction(ctx.dataDir, { kind: "video_reviewed", contentId }); // 工作区动作进有界环（设计 §Phase 2）
     const stamped = await stampVideoReady(contentId, ctx.dataDir);
     return { ok: true, data: { state, ...stamped } };
   } catch (err) {

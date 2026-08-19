@@ -171,8 +171,9 @@ DeepSeek Harness（dsh，2026-08-13 发布）把"会话式 harness 底座"推向
 ## 落地记录
 
 - **Phase 1 ✅（2026-08-19）**：skills-reader 单行 frontmatter 契约 + `listGuiSkills()` 六道 fail-closed 门控（harness-only 不入选、name≠目录名、symlink 越界、无/空 GUI 节、>6000 字符、缺 gui_summary）；chat-router 注入技能索引 + `read_skill`（预加载白名单、同轮缓存、40 字符 id 回显截断）+ 工具重名 throw；5 技能双协议改写（GUI 节 947–1426 字符）。新增 27 测试，全仓 2187 passed，tsc 干净。既有 27 条 chat-router 测试零改动通过。偏离：harness-only 跳过不 warn（13 个技能的启动噪音）；缺 gui_summary 增补为第六道门。
-- 待办：dogfood 一轮（真实引擎跑 read_skill 全链）后进 Phase 2。
-- 预存在问题（非本期引入）：src/desktop/ipc.test.ts 第 39 行 describe 未闭合导致整文件 0 测试执行（已开独立修复任务）。
+- **Phase 1 dogfood ✅（2026-08-19）**：真实引擎（~/.autocrew 生产配置）跑 runChatTurn，输入"帮我想想「AI 帮小团队干活」…"：工具序列 `["read_skill"]`，回复按 topic-ideas GUI 节的受众张力方法论展开（张力 A-D 结构），turn 正常收尾、无意外写入。闸门通过，进 Phase 2。
+- **Phase 2 ✅（2026-08-19）**：九个到达面工具（create_cover / generate_article_images / move_content / pre_publish_check / list_campaigns / campaign_status / list_inbox / retry_inbox / list_versions）落在新文件 `chat-tools-workspace.ts`（chat-router 已 1161 行，不再塞）；`job-claims.ts` 同步 tick check-and-register + 持有到 settle；`error-clean.ts` 剥绝对路径与堆栈、语义不改；`recent-actions.ts` 20 条有界环 + 30 分钟/5 条注入（挂 content:transition、cover approve、publish:confirm、video cut/review confirm 四处成功路径）；move_content enum 只有 draft_ready/revision/reviewing，发布边在 schema 层不存在；pre_publish_check 用 `_readOnly` 压住 pre-publish 的 auto-transition（否则"只读检查"会把稿推过待发布关卡）。新增 38 测试，src/desktop 382 → 420，全仓 2228 passed，tsc 干净，frontend build 通过。偏离：新增 `startArticleImagesJob`（暴露 completion 句柄，镜像 cover 的 StartedCoverJob，行为不变）；RecentAction 多一个可选 `detail`（流转要说清挪到哪列）；灵感库列在稿件侧没有对应状态（那列是选题），白名单实际落在在写/待审两列。
+- 预存在问题（非本期引入）：src/desktop/ipc.test.ts 第 39 行 describe 未闭合导致整文件 0 测试执行（已开独立修复任务）；src/desktop/inbox-handlers.test.ts「attempts 超限项被重跑」在全仓并发下偶发超时（单独跑稳定通过）。
 
 ## 评审记录
 

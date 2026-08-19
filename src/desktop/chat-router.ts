@@ -35,10 +35,16 @@ import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
 import { triggerDeepResearch } from "./research-runtime.js";
 import { listGuiSkills, type GuiSkill } from "./skills-reader.js";
+import { buildWorkspaceTools, type WorkspaceToolDeps } from "./chat-tools-workspace.js";
+import { readRecentActions, recentActionsBlock } from "./recent-actions.js";
 import type { TriggerResult } from "../modules/research/research-runner.js";
 
 export interface ChatCard {
-  type: "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic" | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit" | "revision_proposal";
+  type:
+    | "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic"
+    | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit" | "revision_proposal"
+    // Phase 2 到达面：封面/配图投递回执、看板流转、发布前检查、活动/收件箱/版本只读查询
+    | "cover_job" | "article_images_job" | "content_moved" | "pre_publish" | "campaigns" | "inbox" | "versions";
   data: Record<string, unknown>;
 }
 
@@ -62,8 +68,8 @@ export interface ChatProgressEvent {
   runId?: string;
 }
 
-/** 工具 → 角色/人话状态（UI 状态流署名；与 cards.js 的 CREW_META 角色键一致） */
-const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label: string }> = {
+/** 工具 → 角色/人话状态（UI 状态流署名；与 cards.js 的 CREW_META 角色键一致）。导出供覆盖断言。 */
+export const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label: string }> = {
   find_topics: { role: "scout", label: "侦察员正在扫热榜" },
   find_overseas_topics: { role: "scout", label: "侦察员正在扫海外源" },
   save_topic: { role: "scout", label: "侦察员把想法记进灵感库" },
@@ -92,6 +98,18 @@ const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"]; label:
   revise_focus: { role: "writer", label: "编剧正在改这段" },
   deep_research: { role: "scout", label: "调研员在派四视角深调研" },
   read_skill: { role: null, label: "总编辑在翻工作手册" },
+  // Phase 2 到达面（角色按现有席位语义选：封面/配图是 publisher 的活——两条产线的引擎事件
+  // 本来就以 publisher 席位发；流转与预检是 review 的关卡；活动/经营只读归 analyst；
+  // 收件箱是情报入口归 scout；版本是稿件本身，归 writer）
+  create_cover: { role: "publisher", label: "封面设计师在出候选图" },
+  generate_article_images: { role: "publisher", label: "发布员在补正文配图" },
+  move_content: { role: "review", label: "审核员在挪看板卡" },
+  pre_publish_check: { role: "review", label: "审核员在跑发布前检查" },
+  list_campaigns: { role: "analyst", label: "分析师在翻增长活动" },
+  campaign_status: { role: "analyst", label: "分析师在查活动进度" },
+  list_inbox: { role: "scout", label: "侦察员在翻灵感收件箱" },
+  retry_inbox: { role: "scout", label: "侦察员把这条重新排队" },
+  list_versions: { role: "writer", label: "编剧在翻版本历史" },
 };
 
 export interface ChatHistoryMessage {
@@ -102,7 +120,7 @@ export interface ChatHistoryMessage {
 type ExecuteFn = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 /** 测试注入口 — 缺省全部用真实 execute*（镜像 buildIpcHandlers 的 deps 模式） */
-export interface ChatToolDeps {
+export interface ChatToolDeps extends WorkspaceToolDeps {
   generate?: ExecuteFn;
   rewrite?: ExecuteFn;
   flywheel?: ExecuteFn;
@@ -149,7 +167,12 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 17. 视频稿（抖音/视频号/小红书/B站）要发布时，先调用 prepare_video_kit 备发布件：平台发布文案+分镜表+竖版封面。口播稿是「读的」，发布件才是「发的」——不要把口播稿当发布文案。备好后引导用户看卡片，粘贴发布走 publish_clipboard。
 18. 用户说「/goal …」「我的目标是…」「这个季度要…」时调用 set_goal 记录（目标会注入选题、写作、复盘全链，旧目标自动留档）；问目标或要对照进展时用 get_goal。有目标后，选题推荐与建议围绕目标排优先级，明显偏航时提醒一句。
 19. 用户说「深入调研/深调研某个选题」「多找点材料再写」时调用 deep_research，参数是灵感库选题编号（还没入库先 save_topic）。它是**异步任务，投递即返回**：回执任务状态（新任务已派下去／已经在跑，进度在选题卡上看）就结束本轮，不要等它跑完，更不要凭空复述简报内容；简报出来后写这条选题会自动带上。
-20. 用户说「剪成片」「把这篇做成视频」「开始剪」时调用 build_video 投递给剪辑师（稿件须已过审、且是视频平台，A-roll 要先拍好并挂进稿件素材）。这是后台任务：投完就告诉用户去成片卡看进度，不要在对话里等、更不要宣称已剪好。转写完成后需要用户亲手在成片卡里勾选分句、审片确认——这两步是人的活，你只负责投递和答状态。`;
+20. 用户说「剪成片」「把这篇做成视频」「开始剪」时调用 build_video 投递给剪辑师（稿件须已过审、且是视频平台，A-roll 要先拍好并挂进稿件素材）。这是后台任务：投完就告诉用户去成片卡看进度，不要在对话里等、更不要宣称已剪好。转写完成后需要用户亲手在成片卡里勾选分句、审片确认——这两步是人的活，你只负责投递和答状态。
+21. 用户要封面/正文配图时调用 create_cover / generate_article_images。两者都是**异步投递即返回**：回执「已派下去，进度看卡」就结束本轮，不要等图、不要描述你没见过的图。工具回「已在跑」时照实说，别重复派活；封面选哪张是用户亲手在封面卡上点的。
+22. 用户说「送审」「打回重写」「挪到待审」时调用 move_content——它只管在写与待审之间这几步。**待发布/已发布不归对话管**：用户说要发布时，引导他去工作区稿件卡上亲手确认，别承诺代发。
+23. 用户问「能发了吗」「帮我检查一下」时调用 pre_publish_check（只读，不改状态、不发布）：挑没过的两三项用人话讲清楚怎么改；全过了也只说「检查通过，去工作区点发布」。
+24. 用户问增长活动进度时用 list_campaigns（全部）/ campaign_status（单个），都是只读；创建活动、推进活动、改自治档位一律引导去工作区增长面板。
+25. 用户问收件箱（转发进来的链接消化了没）时用 list_inbox；某条失败要重试用 retry_inbox——worker 没在跑时工具会照实说，原样转达，不要假装重试成功。问「改过几版」用 list_versions，回滚要用户去编辑器版本面板亲手点。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -1013,6 +1036,17 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     },
   ];
 
+  // 到达面(设计 §Phase 2):封面/配图/流转/预检/活动/收件箱/版本——同一套包装模式,单独成文件
+  tools.push(
+    ...buildWorkspaceTools({
+      sink,
+      ...(dataDir !== undefined ? { dataDir } : {}),
+      ...(deps !== undefined ? { deps } : {}),
+      ...(effects !== undefined ? { effects } : {}),
+      content: d.content,
+    }),
+  );
+
   // 工作手册(设计 §Phase 1):只有存在 GUI 面技能时才注册——无技能时工具集与今天完全一致。
   if (guiSkills && guiSkills.length > 0) {
     const ids = guiSkills.map((s) => s.id);
@@ -1124,9 +1158,13 @@ export async function runChatTurn(params: {
   }
   // 当前平台腔调:让派生/改写贴平台表达习惯(如 X 偏观点),而非把长文照搬。
   const voiceLine = ctx?.platform && PLATFORM_VOICE[ctx.platform] ? `\n当前平台腔调:${PLATFORM_VOICE[ctx.platform]}` : "";
-  const userMessage = ctx?.contentId
-    ? `【当前上下文】用户正打开稿件《${ctx.contentTitle || "无标题"}》（id: ${ctx.contentId}${ctx.platform ? `，平台: ${ctx.platform}` : ""}）——「这篇」「开头」等指代默认指它，可用 get_draft 读全文。${siblingLine}${voiceLine}\n\n${params.message}`
-    : params.message;
+  // 最近工作区动作（设计 §Phase 2）:用户刚在工作区点过什么,总编辑得知道——只进模型不进持久历史
+  // (与 siblingLine 同模式);无动作不注入,读失败当无动作。
+  const actionsBlock = recentActionsBlock(await readRecentActions(params.dataDir).catch(() => []));
+  const contextBlock = ctx?.contentId
+    ? `【当前上下文】用户正打开稿件《${ctx.contentTitle || "无标题"}》（id: ${ctx.contentId}${ctx.platform ? `，平台: ${ctx.platform}` : ""}）——「这篇」「开头」等指代默认指它，可用 get_draft 读全文。${siblingLine}${voiceLine}\n\n`
+    : "";
+  const userMessage = `${actionsBlock ? actionsBlock + "\n\n" : ""}${contextBlock}${params.message}`;
 
   try {
     const result = await runLoop(config, {
