@@ -43,7 +43,7 @@ import type { TriggerResult } from "../modules/research/research-runner.js";
 export interface ChatCard {
   type:
     | "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic"
-    | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit" | "revision_proposal"
+    | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit" | "revision_proposal" | "focus_cleared"
     // Phase 2 到达面：封面/配图投递回执、看板流转、发布前检查、活动/收件箱/版本只读查询
     | "cover_job" | "article_images_job" | "content_moved" | "pre_publish" | "campaigns" | "inbox" | "versions";
   data: Record<string, unknown>;
@@ -103,6 +103,7 @@ export const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"];
   build_video: { role: "editor", label: "剪辑师在起成片构建" },
   revise_draft: { role: "writer", label: "编剧正在按你的意见修改稿件" },
   revise_focus: { role: "writer", label: "编剧正在改这段" },
+  clear_revision_focus: { role: "writer", label: "编剧退出修改模式" },
   deep_research: { role: "scout", label: "调研员在派四视角深调研" },
   read_skill: { role: null, label: "总编辑在翻工作手册" },
   // Phase 2 到达面（角色按现有席位语义选：封面/配图是 publisher 的活——两条产线的引擎事件
@@ -157,7 +158,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 1. 永远用工具完成实际工作（生成、查数据、记风格、发布），不要口头承诺。
 2. 工具结果会以卡片形式直接呈现给用户——你的文字回复只做一句简短引导或下一步建议，不要复述卡片内容。
 3. 用户针对当前稿件给修改反馈（如“这篇太 AI 味”“开头口语一点”“删掉第三段”）时，必须调用 revise_draft 修改并保存当前稿件，不能只口头答应；若反馈同时是长期偏好，再调用 add_style_rule 记录。只有与具体稿件无关的通用偏好才只调用 add_style_rule。
-3.5 但当存在「当前修改焦点」时（用户在编辑器选了一段或点了改整篇），修改意见一律改走 revise_focus（不是 revise_draft）：要求不明确先反问澄清一句、别硬改；revise_focus 返回问题时，把问题原样问用户、等回答；它的改动是提案不直接保存，改完提示用户在编辑器看红绿 diff、满意点「收下这版」。
+3.5 但当存在「当前修改焦点」时（用户在编辑器选了一段或点了改整篇），焦点范围内的修改意见一律改走 revise_focus（不是 revise_draft）：要求不明确先反问澄清一句、别硬改；revise_focus 返回问题时，把问题原样问用户、等回答；它的改动是提案不直接保存，改完提示用户在编辑器看红绿 diff、满意点「收下这版」。
+3.6 焦点你自己就能退：用户说「不改这段了／直接改整篇／取消」，或这轮要求明显超出焦点范围（改别的稿、整篇重写、写新的）时，调用 clear_revision_focus 退出，同一轮接着用 revise_draft、generate_script 等常规工具把事办完——绝不要让用户去编辑器里点什么、取消选区、再回来说「好了」。用户想自己退的出口只有两个：对话顶部「正在改」那条的 ×，或编辑器里「修改模式」窄条/修改提案卡上的「退出修改」按钮；只在他主动问怎么退时才提这句。
 4. 用户给链接（对标文章、资料）时，先调用 read_url 读取内容，再基于内容写作或吸收风格——不要凭空假装读过。
 5. 缺少必要信息（选题、平台）时先问清，一次只问一个问题。
 6. 始终用中文，语气像靠谱的同事：简短、直接、不客套。
@@ -263,6 +265,13 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith("_")));
 
   const fail = (error: unknown) => JSON.stringify({ ok: false, error: String(error ?? "未知错误") });
+
+  /**
+   * 本轮焦点（可被 clear_revision_focus 撤下）。焦点的事实源是前端 store，
+   * 服务端只在本轮内跟着改一份：退出后同一轮里 revise_draft 等常规工具立刻放行，
+   * 用户不必再发一轮（真机 dogfood 死循环的根因之一）。前端由 focus_cleared 卡同步。
+   */
+  let revisionFocus = viewContext?.revisionFocus;
 
   const tools: LoopTool[] = [
     {
@@ -512,7 +521,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         const contentId = String(a.content_id ?? "");
         const instruction = String(a.instruction ?? "").trim();
         if (!contentId || !instruction) return fail("revise_draft 需要 content_id 和 instruction");
-        if (viewContext?.revisionFocus) return fail("当前有修改焦点——请改用 revise_focus(它出提案让用户收下),不要用 revise_draft 直接覆盖。");
+        if (revisionFocus) return fail("当前有修改焦点——焦点内的修改请用 revise_focus(出提案让用户收下);要改的超出焦点范围就先 clear_revision_focus 退出,再用本工具。");
         try {
           const result = await d.reviseDraftImpl(contentId, instruction, dataDir);
           const content = result.content;
@@ -550,7 +559,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         required: ["instruction"],
       },
       execute: async (args) => {
-        const focus = viewContext?.revisionFocus;
+        const focus = revisionFocus;
         const contentId = viewContext?.contentId ?? "";
         if (!focus || !contentId) return fail("当前没有修改焦点——请用户在编辑器里选段「改这段」或点「改这篇」");
         const instruction = String(sanitize(args).instruction ?? "").trim();
@@ -579,6 +588,24 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         } catch (err) {
           return fail(err instanceof Error ? err.message : err);
         }
+      },
+    },
+    {
+      name: "clear_revision_focus",
+      description:
+        "退出当前修改焦点。用户说「不改这段了／直接改整篇／取消」，或这轮要求超出焦点范围（改别的稿、整篇重写、写新的）时调用——退出后同一轮就能直接用 revise_draft、generate_script 等常规工具，别让用户自己去编辑器里操作再回来。",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        // 无焦点时不推卡:给用户看一张"已退出修改模式"的空回执只会造成困惑
+        if (!revisionFocus) {
+          return JSON.stringify({ ok: true, note: "当前没有修改焦点,无需退出;直接用 revise_draft/generate_script 等常规工具即可" });
+        }
+        revisionFocus = undefined;
+        sink.push({ type: "focus_cleared", data: {} });
+        return JSON.stringify({
+          ok: true,
+          note: "焦点已退出，本轮接下来可直接用 revise_draft/generate_script 等常规工具",
+        });
       },
     },
     {

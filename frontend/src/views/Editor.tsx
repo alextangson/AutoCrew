@@ -18,7 +18,7 @@ import { useChatSend } from "../chat/ChatDock";
 import { SelectionBar } from "./SelectionBar";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { EditorTools } from "./EditorTools";
-import { setFocus, clearFocus, clearProposal, useRevisionProposal } from "../revision";
+import { setFocus, clearFocus, clearProposal, getFocus, getProposal, useRevisionFocus, useRevisionProposal } from "../revision";
 import { applySpan } from "../apply-span";
 import { CoverPanel } from "./CoverPanel";
 import { ArticleImagesPanel } from "./ArticleImagesPanel";
@@ -65,6 +65,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const proposal = useRevisionProposal();
+  const focus = useRevisionFocus();
   // 抽屉/配图面板的开合是用户偏好,记住它——每次进来都要重开是最烦人的那种细节
   const [drawerOpen, setDrawerOpen] = useState(() => localStorage.getItem(DRAWER_KEY) === "1");
   const [articleImagesOpen, setArticleImagesOpen] = useState(() => localStorage.getItem(IMAGES_KEY) === "1");
@@ -116,6 +117,19 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.id]);
+
+  /**
+   * 焦点的生命周期绑在这个编辑器上：切稿件或离开编辑器时，属于本稿的焦点自动退。
+   * 否则过期焦点会一路跟着用户（回看板、开别的稿），把后续每一轮对话都劫持进修改模式。
+   */
+  useEffect(() => {
+    const id = props.id;
+    return () => {
+      // 有未收下的提案时不清:用户"回看板瞄一眼再回来收下"是正常路径,提案不能丢;
+      // 劫持风险由 clear_revision_focus / 顶部 × / 修改模式窄条兜住。
+      if (getFocus()?.contentId === id && getProposal()?.contentId !== id) clearFocus();
+    };
   }, [props.id]);
 
   useEffect(() => {
@@ -199,6 +213,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   };
 
   const activeProposal = proposal && proposal.contentId === props.id ? proposal : null;
+  const activeFocus = focus && focus.contentId === props.id ? focus : null;
   const bodyReadOnly = activeProposal?.scope === "selection";
 
   const startSelectionFocus = () => {
@@ -316,6 +331,16 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
                 <button onClick={() => clearProposal()}>放弃这版</button>
                 <button onClick={() => clearFocus()}>退出修改</button>
               </div>
+            </div>
+          )}
+
+          {/* 提案还没出来时的修改模式窄条:编辑器里也要有一条明确的退路,不然用户只能干等 */}
+          {activeFocus && !activeProposal && (
+            <div className="pending-edit ed-focus-bar">
+              <span className="mono muted">
+                修改模式（{activeFocus.scope === "selection" ? "这一段" : "整篇"}）——在右侧总编辑说怎么改,改完这里出提案
+              </span>
+              <button onClick={() => clearFocus()}>退出修改</button>
             </div>
           )}
 

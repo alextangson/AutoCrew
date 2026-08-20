@@ -232,6 +232,8 @@ export function ChatDock(props: {
         ...(f?.selection ? { selection: f.selection } : {}),
       });
     }
+    // 总编辑自己退出了修改模式（clear_revision_focus）——store 跟着退，否则焦点会一直劫持后续对话
+    if (parsed.cards.some((c) => c.type === "focus_cleared")) clearFocus();
     const visibleCards = parsed.cards.filter((c) => c.type !== "revision_proposal");
     setMsgs((m) => [
       ...m,

@@ -340,6 +340,9 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .pending-edit { border: 1px solid var(--border); border-left: 2px solid var(--ink); border-radius: var(--radius-card); background: var(--card); padding: 8px 10px; margin: 6px 0; }
 .pe-before { white-space: pre-wrap; font: inherit; font-size: 13px; background: #F9ECEC; text-decoration: line-through; padding: 6px 8px; margin: 6px 0; }
 .pe-after { white-space: pre-wrap; font: inherit; font-size: 13px; background: #EAF3EC; padding: 6px 8px; margin: 6px 0; }
+/* 无提案时的修改模式窄条:一行说明 + 出口,沿用 pending-edit 的边框语言 */
+.ed-focus-bar { display: flex; align-items: center; gap: 8px; }
+.ed-focus-bar > span { flex: 1; }
 .row-actions { display: flex; gap: 8px; }
 .adopt-rw { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
 .adopt-reasons { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }

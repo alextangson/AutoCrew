@@ -313,6 +313,15 @@ function VersionsCard({ data }: { data: CardData }) {
   );
 }
 
+/** clear_revision_focus 回执：一行，告诉用户修改模式已经退了（退的动作总编辑自己做的） */
+function FocusClearedCard() {
+  return (
+    <div className="ccard">
+      <Kicker>已退出修改模式 · 后面的修改会直接存为新版本</Kicker>
+    </div>
+  );
+}
+
 export function ChatCard({ card, nav }: { card: ChatCardShape; nav?: (route: Route) => void }) {
   switch (card.type) {
     case "draft": return <DraftCard data={card.data} nav={nav} />;
@@ -330,6 +339,7 @@ export function ChatCard({ card, nav }: { card: ChatCardShape; nav?: (route: Rou
     case "campaigns": return <CampaignsCard data={card.data} />;
     case "inbox": return <InboxCard data={card.data} />;
     case "versions": return <VersionsCard data={card.data} />;
+    case "focus_cleared": return <FocusClearedCard />;
     default:
       return (
         <div className="ccard">
