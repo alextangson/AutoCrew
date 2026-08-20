@@ -139,8 +139,50 @@ function runBuild() {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+/** 递归找目录下最新的文件 mtime（跳过 node_modules/dist）。 */
+function newestMtime(dir) {
+  let newest = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return newest;
+  }
+  for (const e of entries) {
+    if (e.name === "node_modules" || e.name === "dist") continue;
+    const p = path.join(dir, e.name);
+    try {
+      if (e.isDirectory()) {
+        newest = Math.max(newest, newestMtime(p));
+      } else {
+        newest = Math.max(newest, fs.statSync(p).mtimeMs);
+      }
+    } catch {
+      /* 单个文件读不到不影响判断 */
+    }
+  }
+  return newest;
+}
+
 function ensureBuild() {
-  if (!fs.existsSync(path.join(ROOT, "frontend", "dist", "index.html"))) runBuild();
+  const marker = path.join(ROOT, "frontend", "dist", "index.html");
+  if (!fs.existsSync(marker)) return runBuild();
+  // dist 存在但源码更新过 → 必须重建。否则"更新代码后 restart"会静默端出旧前端,
+  // 用户以为升级了,实际一个改动都看不到（2026-08-20 真机踩坑）。
+  const distAt = fs.statSync(marker).mtimeMs;
+  const srcAt = newestMtime(path.join(ROOT, "frontend", "src"));
+  const rootFiles = ["index.html", "package.json", "vite.config.ts"].map((f) =>
+    path.join(ROOT, "frontend", f),
+  );
+  let newestSrc = srcAt;
+  for (const f of rootFiles) {
+    try {
+      newestSrc = Math.max(newestSrc, fs.statSync(f).mtimeMs);
+    } catch {
+      /* 可选文件缺失跳过 */
+    }
+  }
+  if (newestSrc > distAt) runBuild();
 }
 
 async function waitForLaunch(logOffset, pid) {
