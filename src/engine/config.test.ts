@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadEngineConfig, resolveEngineRoute } from "./config.js";
+import { loadEngineConfig, resolveEngineRoute, resolveFallbackModel, type EngineConfig } from "./config.js";
 
 let testDir: string;
 const ENV_KEYS = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"] as const;
@@ -130,6 +130,104 @@ describe("protocol auto-detect", () => {
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── 备用端点（主端点 429 烧完后顶上）────────────────────────────────────────
+
+describe("fallback 配置解析", () => {
+  const writeCfg = (obj: Record<string, unknown>) =>
+    fs.writeFile(path.join(testDir, "engine.json"), JSON.stringify({ apiKey: "sk-main", baseUrl: "https://relay.example.com", ...obj }));
+
+  it("完整块原样解析（含显式 protocol 与两档模型）", async () => {
+    await writeCfg({
+      fallback: { baseUrl: "https://api.deepseek.com/", apiKey: "sk-fb", strongModel: "ds-pro", fastModel: "ds-flash", protocol: "openai" },
+    });
+    const c = await loadEngineConfig(testDir);
+    expect(c.fallback).toEqual({
+      baseUrl: "https://api.deepseek.com", // 尾斜杠归一化，与 route 同规矩
+      apiKey: "sk-fb",
+      strongModel: "ds-pro",
+      fastModel: "ds-flash",
+      protocol: "openai",
+    });
+  });
+
+  it("模型档位缺省 = DeepSeek 官方两档", async () => {
+    await writeCfg({ fallback: { baseUrl: "https://api.deepseek.com", apiKey: "sk-fb" } });
+    const c = await loadEngineConfig(testDir);
+    expect(c.fallback?.strongModel).toBe("deepseek-v4-pro");
+    expect(c.fallback?.fastModel).toBe("deepseek-v4-flash");
+  });
+
+  it("protocol 未填走推断：sk-ant 前缀 / claude 域名 → anthropic，其余 → openai", async () => {
+    await writeCfg({ fallback: { baseUrl: "https://api.deepseek.com", apiKey: "sk-fb" } });
+    expect((await loadEngineConfig(testDir)).fallback?.protocol).toBe("openai");
+
+    await writeCfg({ fallback: { baseUrl: "https://relay.example.com", apiKey: "sk-ant-fb" } });
+    expect((await loadEngineConfig(testDir)).fallback?.protocol).toBe("anthropic");
+
+    await writeCfg({ fallback: { baseUrl: "https://x.example.com/claude/ultra", apiKey: "sk-fb" } });
+    expect((await loadEngineConfig(testDir)).fallback?.protocol).toBe("anthropic");
+  });
+
+  it("缺 apiKey（或缺 baseUrl）→ 整块忽略并 warn 一行：半配的备用比没有更危险", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await writeCfg({ fallback: { baseUrl: "https://api.deepseek.com" } });
+      expect((await loadEngineConfig(testDir)).fallback).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      warn.mockClear();
+      await writeCfg({ fallback: { apiKey: "sk-fb" } });
+      expect((await loadEngineConfig(testDir)).fallback).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("没有 fallback 块 = 今天的行为，不 warn", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await writeCfg({});
+      expect((await loadEngineConfig(testDir)).fallback).toBeUndefined();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("route 继承顶层 fallback（本期不做 per-route 备用）", async () => {
+    await writeCfg({
+      routes: { writer: { baseUrl: "https://code.newcli.com/claude/ultra", model: "claude-opus-4-8" } },
+      fallback: { baseUrl: "https://api.deepseek.com", apiKey: "sk-fb" },
+    });
+    const c = await loadEngineConfig(testDir);
+    const writer = resolveEngineRoute(c, "writer", c.strongModel);
+    expect(writer.config.fallback).toEqual(c.fallback);
+    expect(resolveFallbackModel(writer.config, writer.model)).toBe("deepseek-v4-pro");
+  });
+});
+
+describe("resolveFallbackModel", () => {
+  const base: EngineConfig = {
+    apiKey: "sk-main",
+    baseUrl: "https://relay.example.com",
+    strongModel: "main-strong",
+    fastModel: "main-fast",
+    fallback: { baseUrl: "https://api.deepseek.com", apiKey: "sk-fb", strongModel: "ds-pro", fastModel: "ds-flash", protocol: "openai" },
+  };
+
+  it("快档 → 备用快档；强档与 route 专属模型 → 备用强档（宁强勿弱）", () => {
+    expect(resolveFallbackModel(base, "main-fast")).toBe("ds-flash");
+    expect(resolveFallbackModel(base, "main-strong")).toBe("ds-pro");
+    expect(resolveFallbackModel(base, "claude-opus-4-8")).toBe("ds-pro");
+  });
+
+  it("没配备用 → undefined（调用方据此不切换）", () => {
+    const { fallback: _drop, ...noFallback } = base;
+    expect(resolveFallbackModel(noFallback, "main-fast")).toBeUndefined();
   });
 });
 

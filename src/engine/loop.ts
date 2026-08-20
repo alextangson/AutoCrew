@@ -4,9 +4,9 @@
  * 传输经环回观察器（observer.ts）：字节级空闲看门狗 + fetchImpl 注入口
  * （测试把 fake 喂到观察器上游腿，生产默认 globalThis.fetch）。
  */
-import { withRetry } from "../utils/retry.js";
+import { withRetry, isRetryable } from "../utils/retry.js";
 import { createRunRecorder, type RunRecorder } from "../runtime/run-log.js";
-import type { EngineConfig } from "./config.js";
+import { resolveFallbackModel, type EngineConfig } from "./config.js";
 import { registerExchange } from "./observer.js";
 import { makePiModel, toPiContext, startPiStream, consumePiStream, fromAssistant } from "./pi-wire.js";
 
@@ -20,10 +20,13 @@ export interface LoopTool {
   execute: (args: Record<string, unknown>) => Promise<string> | string;
 }
 
-export interface LoopEvent {
-  type: "tool_start" | "tool_end";
-  tool: string;
-}
+/**
+ * 观测事件。fallback = 主端点重试烧完后切到备用模型顶本次调用——
+ * 红线：切换绝不静默，聊天进度条与 run-log 都必须看得出这轮是谁在说话。
+ */
+export type LoopEvent =
+  | { type: "tool_start" | "tool_end"; tool: string }
+  | { type: "fallback"; from: string; to: string };
 
 /**
  * 流式文本事件（对话控制面设计 §Phase 3「流式 delta 协议」）。
@@ -48,6 +51,8 @@ export interface LoopOptions {
   fetchImpl?: typeof fetch;
   /** 流式空闲超时（ms）;默认 IDLE_TIMEOUT_MS。测试注入小值验证挂起中止 */
   idleTimeoutMs?: number;
+  /** 重试退避上限（ms）;默认走 withRetry 缺省。测试注入小值,免得为了烧完主端点真睡 7 秒 */
+  retryMaxDelayMs?: number;
   /** 工具执行进度回调（UI 状态流）。回调异常被吞——观测层不得破坏执行层。 */
   onEvent?: (e: LoopEvent) => void;
   /**
@@ -105,57 +110,121 @@ interface CompletionResponse {
 
 // ─── Private helpers ─────────────────────────────────────────────────────────
 
-async function callModel(
+interface ModelCallParams {
+  config: EngineConfig;
+  model: string;
+  messages: Message[];
+  tools: LoopTool[];
+  fetchImpl: typeof fetch;
+  idleMs: number;
+  retryMaxDelayMs?: number;
+  signal?: AbortSignal;
+  onTextDelta?: (e: LoopStreamEvent) => void;
+  onEvent?: (e: LoopEvent) => void;
+}
+
+interface ModelCallOutcome {
+  data: CompletionResponse;
+  /** 实际产出本次回复的模型（切了备用就是备用模型名）——run-log 记这个 */
+  model: string;
+  /** 主端点的失败详情（仅发生切换时非空）：被救回来的那次失败同样要留痕 */
+  primaryFailure?: { model: string; error: string; durationMs: number };
+}
+
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/**
+ * 一次完整流消费 = 重试事务边界（流不可续,重试 = 重发整个请求,生成幂等即新稿）。
+ * 中途断流/挂起由观察器字节级看门狗中止（含首字节等待,任何字节续命——健康长文不误杀）,
+ * SDK 侧转为连接错误,isRetryable 按消息模式识别。工具提交只发生在流成功收尾之后。
+ * 用户中止贯通两处:观察器掐传输,withRetry 不把中止当瞬时故障重放。
+ */
+async function streamOnce(
+  p: ModelCallParams,
   config: EngineConfig,
   model: string,
-  messages: Message[],
-  tools: LoopTool[],
-  fetchImpl: typeof fetch,
-  idleMs: number = IDLE_TIMEOUT_MS,
-  signal?: AbortSignal,
-  onTextDelta?: (e: LoopStreamEvent) => void,
+  emitStream: (e: LoopStreamEvent) => void,
 ): Promise<CompletionResponse> {
+  // 事务边界 = 一次完整流消费,所以 reset 就发在这里:重试、备用 attempt 与新一轮共用
+  // 同一条语义,上层不必知道自己收到的是第几次尝试、走的是哪个端点。
+  emitStream({ ev: "reset" });
+  const exchange = await registerExchange({
+    upstreamBase: config.baseUrl,
+    fetchImpl: p.fetchImpl,
+    idleMs: p.idleMs,
+    ...(p.signal ? { signal: p.signal } : {}),
+  });
+  try {
+    const piModel = makePiModel(config, model, exchange.baseUrl);
+    const done = await consumePiStream(
+      startPiStream(config, piModel, toPiContext(p.messages, p.tools)),
+      p.onTextDelta ? (text) => emitStream({ ev: "delta", text }) : undefined,
+    );
+    const wire = fromAssistant(done);
+    return {
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: wire.content,
+            ...(wire.toolCalls.length ? { tool_calls: wire.toolCalls } : {}),
+          },
+          finish_reason: done.stopReason === "toolUse" ? "tool_calls" : "stop",
+        },
+      ],
+      usage: { total_tokens: wire.totalTokens },
+    };
+  } finally {
+    exchange.release();
+  }
+}
+
+/**
+ * 主端点 → （失败且值得换端点时）备用端点。
+ * 换端点的三个前提缺一不可:配了备用、错误确实是可重试类（400/401/403 换个端点照样错）、
+ * 用户没点停止（中止长得像瞬时故障,不特判就等于无视用户按的停）。
+ */
+async function callModel(p: ModelCallParams): Promise<ModelCallOutcome> {
   const emitStream = (e: LoopStreamEvent) => {
-    if (!onTextDelta) return;
+    if (!p.onTextDelta) return;
     try {
-      onTextDelta(e);
+      p.onTextDelta(e);
     } catch {
       /* 观测层异常不破坏执行层 */
     }
   };
-  // 完整流消费在 withRetry 事务内:流不可续,重试 = 重发整个请求（生成幂等,新稿）。
-  // 中途断流/挂起由观察器字节级看门狗中止（含首字节等待,任何字节续命——健康长文不误杀）,
-  // SDK 侧转为连接错误,isRetryable 按消息模式识别。工具提交只发生在流成功收尾之后。
-  // 用户中止贯通两处:观察器掐传输,withRetry 不把中止当瞬时故障重放。
-  return withRetry(async () => {
-    // 事务边界 = 一次完整流消费,所以 reset 就发在这里:重试与新一轮共用同一条语义,
-    // 上层不必知道自己收到的是第几次尝试。
-    emitStream({ ev: "reset" });
-    const exchange = await registerExchange({ upstreamBase: config.baseUrl, fetchImpl, idleMs, ...(signal ? { signal } : {}) });
-    try {
-      const piModel = makePiModel(config, model, exchange.baseUrl);
-      const done = await consumePiStream(
-        startPiStream(config, piModel, toPiContext(messages, tools)),
-        onTextDelta ? (text) => emitStream({ ev: "delta", text }) : undefined,
-      );
-      const wire = fromAssistant(done);
-      return {
-        choices: [
-          {
-            message: {
-              role: "assistant",
-              content: wire.content,
-              ...(wire.toolCalls.length ? { tool_calls: wire.toolCalls } : {}),
-            },
-            finish_reason: done.stopReason === "toolUse" ? "tool_calls" : "stop",
-          },
-        ],
-        usage: { total_tokens: wire.totalTokens },
-      };
-    } finally {
-      exchange.release();
+  const retryOpts = {
+    ...(p.signal ? { signal: p.signal } : {}),
+    ...(p.retryMaxDelayMs !== undefined ? { maxDelayMs: p.retryMaxDelayMs } : {}),
+  };
+
+  const tPrimary = Date.now();
+  try {
+    const data = await withRetry(() => streamOnce(p, p.config, p.model, emitStream), retryOpts);
+    return { data, model: p.model };
+  } catch (err) {
+    const fb = p.config.fallback;
+    const fbModel = resolveFallbackModel(p.config, p.model);
+    if (!fb || !fbModel || !isRetryable(err) || p.signal?.aborted) throw err;
+
+    const primaryFailure = { model: p.model, error: errText(err), durationMs: Date.now() - tPrimary };
+    if (p.onEvent) {
+      try {
+        p.onEvent({ type: "fallback", from: p.model, to: fbModel });
+      } catch {
+        /* 观测层异常不破坏执行层 */
+      }
     }
-  }, signal ? { signal } : undefined);
+    // 备用端点有自己的 key/协议,所以也有自己的 registerExchange（观察器按 upstreamBase 分路由）
+    const fbConfig: EngineConfig = { ...p.config, baseUrl: fb.baseUrl, apiKey: fb.apiKey, protocol: fb.protocol };
+    try {
+      const data = await withRetry(() => streamOnce(p, fbConfig, fbModel, emitStream), { maxRetries: 1, ...retryOpts });
+      return { data, model: fbModel, primaryFailure };
+    } catch (fbErr) {
+      // 两端都倒了:两条原因一起端给用户,别用备用的错误盖掉主端点的病根
+      throw new Error(`模型调用失败 — 主端点: ${primaryFailure.error}；备用端点(deepseek): ${errText(fbErr)}`);
+    }
+  }
 }
 
 async function executeToolCalls(
@@ -171,7 +240,7 @@ async function executeToolCalls(
     // 工具边界语义（不宣称原子）：已开始的工具跑完，剩余未执行的跳过。
     if (signal?.aborted) break;
     count++;
-    const emit = (type: LoopEvent["type"]) => {
+    const emit = (type: "tool_start" | "tool_end") => {
       if (!onEvent) return;
       try {
         onEvent({ type, tool: tc.function.name });
@@ -235,9 +304,20 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
     }
 
     const tCall = Date.now();
-    let data: CompletionResponse;
+    let call: ModelCallOutcome;
     try {
-      data = await callModel(config, opts.model, messages, tools, fetchImpl, opts.idleTimeoutMs, opts.signal, opts.onTextDelta);
+      call = await callModel({
+        config,
+        model: opts.model,
+        messages,
+        tools,
+        fetchImpl,
+        idleMs: opts.idleTimeoutMs ?? IDLE_TIMEOUT_MS,
+        ...(opts.retryMaxDelayMs !== undefined ? { retryMaxDelayMs: opts.retryMaxDelayMs } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(opts.onTextDelta ? { onTextDelta: opts.onTextDelta } : {}),
+        ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),
+      });
     } catch (err) {
       recorder.llm({
         model: opts.model,
@@ -254,12 +334,24 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
       }
       throw err;
     }
+    // 主端点失败但备用救回来了:失败那次照样留痕,否则 run-log 上看不出这轮换过端点
+    if (call.primaryFailure) {
+      recorder.llm({
+        model: call.primaryFailure.model,
+        durationMs: call.primaryFailure.durationMs,
+        ok: false,
+        error: call.primaryFailure.error,
+        input: JSON.stringify(messages),
+        output: "",
+      });
+    }
+    const data = call.data;
     turns++;
     totalTokens += Number(data.usage?.total_tokens) || 0;
 
     const assistantMsg = data.choices[0].message;
     recorder.llm({
-      model: opts.model,
+      model: call.model,
       durationMs: Date.now() - tCall,
       ok: true,
       tokens: Number(data.usage?.total_tokens) || 0,

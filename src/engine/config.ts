@@ -7,6 +7,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
 
+export type EngineProtocol = "openai" | "anthropic";
+
+/**
+ * 备用端点（DeepSeek 官方 API 兜底）：主端点重试烧完仍是可重试类错误时顶上本次调用。
+ * 共用一套档位（强/快），不做 per-route 备用——主端点的 route 专属模型统一落到备用强档。
+ */
+export interface EngineFallbackConfig {
+  baseUrl: string;
+  apiKey: string;
+  strongModel: string;
+  fastModel: string;
+  protocol: EngineProtocol;
+}
+
 export interface EngineConfig {
   apiKey: string;
   baseUrl: string;
@@ -16,6 +30,11 @@ export interface EngineConfig {
   fastModel: string;
   /** 任务级模型路由；未配置的任务继续使用 strongModel/fastModel。 */
   routes?: EngineRoutes;
+  /**
+   * 备用端点；未配置 = 主端点失败即报错（今天的行为）。
+   * route 不单独配备用，resolveEngineRoute 原样继承顶层这一块。
+   */
+  fallback?: EngineFallbackConfig;
   /**
    * 上游协议:openai = /chat/completions(缺省);anthropic = /v1/messages
    * (Claude 系中转,创始人实际付费通道 2026-07-08)。loadEngineConfig 必解析;
@@ -115,6 +134,45 @@ function normalizeRoute(value: unknown): EngineRouteConfig | undefined {
   };
 }
 
+/**
+ * 备用端点解析。baseUrl/apiKey 缺任一 → 整块忽略并 warn 一行：
+ * 半配的备用比没有更危险——等主端点真挂了才发现备用也打不通。
+ * 模型档位缺省用 DeepSeek 官方两档；协议未填走与主端点同一套推断。
+ */
+function normalizeFallback(value: unknown): EngineFallbackConfig | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    console.warn("[engine] engine.json 的 fallback 不是对象，已忽略备用端点");
+    return undefined;
+  }
+  const fb = value as Partial<EngineFallbackConfig>;
+  const baseUrl = typeof fb.baseUrl === "string" ? fb.baseUrl.trim().replace(/\/+$/, "") : "";
+  const apiKey = typeof fb.apiKey === "string" ? fb.apiKey.trim() : "";
+  if (!baseUrl || !apiKey) {
+    console.warn("[engine] engine.json 的 fallback 缺 baseUrl 或 apiKey，已忽略备用端点：主端点失败将直接报错");
+    return undefined;
+  }
+  const pick = (v: unknown, dflt: string) => (typeof v === "string" && v.trim() ? v.trim() : dflt);
+  return {
+    baseUrl,
+    apiKey,
+    strongModel: pick(fb.strongModel, ENGINE_DEFAULTS.strongModel),
+    fastModel: pick(fb.fastModel, ENGINE_DEFAULTS.fastModel),
+    protocol: inferProtocol(apiKey, baseUrl, fb.protocol),
+  };
+}
+
+/**
+ * 档位映射（纯函数）：请求的是主端点快档 → 备用快档；其余一律备用强档。
+ * route 专属模型（如 writer 的 opus）也算强档——宁强勿弱，备用不许悄悄降质。
+ * 未配置备用返回 undefined，调用方据此判定不切换。
+ */
+export function resolveFallbackModel(config: EngineConfig, requestedModel: string): string | undefined {
+  const fb = config.fallback;
+  if (!fb) return undefined;
+  return requestedModel === config.fastModel ? fb.fastModel : fb.strongModel;
+}
+
 function normalizeRoutes(value: unknown): EngineRoutes | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const input = value as Record<string, unknown>;
@@ -178,6 +236,7 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   const baseUrl = fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl;
   const protocol = inferProtocol(apiKey, baseUrl, fromFile.protocol);
   const routes = normalizeRoutes(fromFile.routes);
+  const fallback = normalizeFallback(fromFile.fallback);
   return {
     apiKey,
     baseUrl,
@@ -186,5 +245,6 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
     protocol,
     dataDir: getDataDir(dataDir),
     ...(routes ? { routes } : {}),
+    ...(fallback ? { fallback } : {}),
   };
 }

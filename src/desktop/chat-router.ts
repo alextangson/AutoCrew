@@ -120,6 +120,25 @@ export const CREW_TOOL_STATUS: Record<string, { role: ChatProgressEvent["role"];
   list_versions: { role: "writer", label: "编剧在翻版本历史" },
 };
 
+/**
+ * 备用模型接管的进度条状态（引擎 LoopEvent "fallback" 的人话版）。
+ * tool 位不是模型给的工具名,而是这个保留标记——渲染层只展示 label,这里只做归类。
+ */
+export const FALLBACK_STATUS_TOOL = "__fallback__";
+export const FALLBACK_STATUS_LABEL = "主模型接不上，备用 DeepSeek 顶上了";
+
+/**
+ * 引擎事件 → 聊天进度条事件。备用模型接管走 phase:"start"（dock 的状态条只收 start），
+ * 红线：切换绝不静默——用户必须看得见这轮是备用模型顶上的。
+ */
+export function chatProgressEvent(e: LoopEvent): ChatProgressEvent {
+  if (e.type === "fallback") {
+    return { phase: "start", tool: FALLBACK_STATUS_TOOL, role: null, label: FALLBACK_STATUS_LABEL };
+  }
+  const meta = CREW_TOOL_STATUS[e.tool] ?? { role: null, label: "正在处理" };
+  return { phase: e.type === "tool_start" ? "start" : "end", tool: e.tool, role: meta.role, label: meta.label };
+}
+
 export interface ChatHistoryMessage {
   role: "user" | "assistant";
   content: string;
@@ -1230,12 +1249,7 @@ export async function runChatTurn(params: {
       logMeta: { ...(params.runId ? { runId: params.runId } : {}), agent: "chief-editor" },
       ...(params.fetchImpl !== undefined ? { fetchImpl: params.fetchImpl } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
-      onEvent: params.onEvent
-        ? (e: LoopEvent) => {
-            const meta = CREW_TOOL_STATUS[e.tool] ?? { role: null, label: "正在处理" };
-            params.onEvent!({ phase: e.type === "tool_start" ? "start" : "end", tool: e.tool, role: meta.role, label: meta.label });
-          }
-        : undefined,
+      onEvent: params.onEvent ? (e: LoopEvent) => params.onEvent!(chatProgressEvent(e)) : undefined,
       ...(params.onDelta ? { onTextDelta: (e: LoopStreamEvent) => params.onDelta!(e) } : {}),
     });
     return {

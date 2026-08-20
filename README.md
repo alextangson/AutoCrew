@@ -94,9 +94,25 @@ npm run restart
       "protocol": "openai",
       "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
     }
+  },
+  "fallback": {
+    "baseUrl": "https://api.deepseek.com",
+    "apiKey": "YOUR_DEEPSEEK_KEY",
+    "strongModel": "deepseek-v4-pro",
+    "fastModel": "deepseek-v4-flash",
+    "protocol": "openai"
   }
 }
 ```
+
+### 备用模型（可选）
+
+主端点连续 429 / 断流时，`fallback` 块让 DeepSeek 官方 API 顶完这一次调用，而不是把错误直接甩给你。
+
+- `baseUrl` 与 `apiKey` 必填，缺一整块忽略（启动时 warn 一行）；`strongModel` / `fastModel` 不填默认 `deepseek-v4-pro` / `deepseek-v4-flash`；`protocol` 不填按 key 前缀与域名自动推断。
+- 档位对应：请求快档模型时用备用快档，其余（含写稿路由的专属模型）一律用备用强档——宁强勿弱。
+- **切换不会静默**：聊天进度条会出现「主模型接不上，备用 DeepSeek 顶上了」，工作日志里主端点的失败与备用端点的成功各留一条记录。
+- 只在瞬时故障（429/5xx/断流）时触发；401/403 这类换端点也没用的错误、以及你点了「停止」的场景，都不会切。
 
 正文配图与公众号草稿箱还需要在「设置 → 发布」配置图像服务，以及公众号 AppID/AppSecret（如果要实际推草稿箱）。密钥不会回显到页面。
 

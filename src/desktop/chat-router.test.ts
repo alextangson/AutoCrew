@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runChatTurn, buildChatTools, type ChatCard } from "./chat-router.js";
+import { runChatTurn, buildChatTools, chatProgressEvent, FALLBACK_STATUS_TOOL, type ChatCard } from "./chat-router.js";
 import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
 
 let testDir: string;
@@ -334,6 +334,28 @@ describe("runChatTurn onEvent", () => {
       { phase: "start", tool: "generate_script", role: "writer", label: "编剧正在写稿" },
       { phase: "end", tool: "generate_script", role: "writer", label: "编剧正在写稿" },
     ]);
+  });
+
+  it("备用模型接管说人话，且不动 tool_start/end 的既有映射", () => {
+    // 红线：引擎切备用绝不静默——聊天进度条必须出现一条给人看的状态
+    expect(chatProgressEvent({ type: "fallback", from: "claude-opus-4-8", to: "deepseek-v4-pro" })).toEqual({
+      phase: "start",
+      tool: FALLBACK_STATUS_TOOL,
+      role: null,
+      label: "主模型接不上，备用 DeepSeek 顶上了",
+    });
+    expect(chatProgressEvent({ type: "tool_start", tool: "find_topics" })).toEqual({
+      phase: "start",
+      tool: "find_topics",
+      role: "scout",
+      label: "侦察员正在扫热榜",
+    });
+    expect(chatProgressEvent({ type: "tool_end", tool: "没登记过的工具" })).toEqual({
+      phase: "end",
+      tool: "没登记过的工具",
+      role: null,
+      label: "正在处理",
+    });
   });
 });
 
