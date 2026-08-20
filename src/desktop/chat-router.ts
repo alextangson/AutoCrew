@@ -7,8 +7,9 @@
  * 正文——总编辑要能读稿才能讨论；工具结果只活在本轮 loop，不进持久历史。
  * 引擎未配置 → {ok:false, needsSetup:true}，renderer 引导去设置页。
  */
-import { loadEngineConfig } from "../engine/config.js";
+import { loadEngineConfig, type EngineConfig } from "../engine/config.js";
 import { runLoop, type LoopTool, type LoopEvent, type LoopStreamEvent } from "../engine/loop.js";
+import { cleanErrorMessage } from "./error-clean.js";
 import { executeGenerate } from "../tools/generate.js";
 import { executeRewrite } from "../tools/rewrite.js";
 import { executeFlywheel } from "../tools/flywheel.js";
@@ -142,6 +143,70 @@ export function chatProgressEvent(e: LoopEvent): ChatProgressEvent {
 export interface ChatHistoryMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+// ── 对话模型档位（右栏切换器）────────────────────────────────────────────────
+
+/** 缺省 fast = 今天的行为；fallback_* 直接点名备用端点（engine.json 的 fallback 块）。 */
+export type ChatModelChoice = "fast" | "strong" | "fallback_fast" | "fallback_strong";
+
+export interface ChatModelOption {
+  id: ChatModelChoice;
+  /** 用户自己配的真实模型名——选择器显示它,不显示抽象档位代号 */
+  model: string;
+  /** 档位字（快/强/备用快/备用强） */
+  tier: string;
+}
+
+/**
+ * 可选档位清单。**只有模型名与档位字**——apiKey/baseUrl 一个字节都不出主进程
+ * （这个清单要经 IPC 到渲染层）。未配备用端点时只有主端点两档。
+ */
+export function chatModelOptions(config: EngineConfig): ChatModelOption[] {
+  const options: ChatModelOption[] = [
+    { id: "fast", model: config.fastModel, tier: "快" },
+    { id: "strong", model: config.strongModel, tier: "强" },
+  ];
+  const fb = config.fallback;
+  if (fb) {
+    options.push({ id: "fallback_fast", model: fb.fastModel, tier: "备用快" });
+    options.push({ id: "fallback_strong", model: fb.strongModel, tier: "备用强" });
+  }
+  return options;
+}
+
+export type ChatModelResolution =
+  | { ok: true; config: EngineConfig; model: string }
+  | { ok: false; error: string };
+
+/**
+ * 档位 → 本轮实际用的 {config, model}。三条纪律：
+ * 1. 缺省/"fast" 字面等于今天（主端点快档，引擎级 fallback 链照常兜底）。
+ * 2. 用户点名备用端点时，这次调用**不再带二级 fallback**——他要的就是这个端点，
+ *    打不通就如实报错，不许再悄悄绕回主端点。
+ * 3. 非法值、或点了备用但根本没配备用：显式报错，绝不静默降级到别的模型
+ *    （"我选了 opus，它却拿 flash 写了"是最贵的那种静默失败）。
+ */
+export function resolveChatModel(config: EngineConfig, choice?: string): ChatModelResolution {
+  if (choice === undefined || choice === "fast") return { ok: true, config, model: config.fastModel };
+  if (choice === "strong") return { ok: true, config, model: config.strongModel };
+  if (choice !== "fallback_fast" && choice !== "fallback_strong") {
+    return { ok: false, error: `该模型未配置：不认识的档位「${cleanErrorMessage(choice, 40)}」——请在对话框的模型选择器里重选` };
+  }
+  const fb = config.fallback;
+  if (!fb) {
+    return { ok: false, error: "该模型未配置：engine.json 里没有备用端点（fallback），请先在配置里补上再选它" };
+  }
+  const picked: EngineConfig = {
+    ...config,
+    baseUrl: fb.baseUrl,
+    apiKey: fb.apiKey,
+    protocol: fb.protocol,
+    strongModel: fb.strongModel,
+    fastModel: fb.fastModel,
+  };
+  delete picked.fallback; // 点名备用后没有"备用的备用"
+  return { ok: true, config: picked, model: choice === "fallback_fast" ? fb.fastModel : fb.strongModel };
 }
 
 type ExecuteFn = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -1161,6 +1226,8 @@ export async function runChatTurn(params: {
   onDelta?: (e: ChatDeltaEvent) => void;
   /** 用户中止信号（设计 §Phase 3）:中止走 ok:true + stopReason="aborted",不是失败轮 */
   signal?: AbortSignal;
+  /** 右栏选的模型档位（chat:model_options 的 id）；不传 = 主端点快档,与今天一致 */
+  modelChoice?: string;
 }): Promise<Record<string, unknown>> {
   let config;
   try {
@@ -1168,6 +1235,9 @@ export async function runChatTurn(params: {
   } catch (err) {
     return { ok: false, needsSetup: true, error: err instanceof Error ? err.message : String(err) };
   }
+  // 档位解析在最前面:选了一个不存在的模型就该当场失败,不该先跑完工具再发现
+  const picked = resolveChatModel(config, params.modelChoice);
+  if (!picked.ok) return { ok: false, error: picked.error };
 
   const cards: ChatCard[] = [];
   const effects: ChatEffects = { contentIds: new Set<string>() };
@@ -1239,8 +1309,8 @@ export async function runChatTurn(params: {
   const userMessage = `${actionsBlock ? actionsBlock + "\n\n" : ""}${contextBlock}${params.message}`;
 
   try {
-    const result = await runLoop(config, {
-      model: config.fastModel,
+    const result = await runLoop(picked.config, {
+      model: picked.model,
       systemPrompt,
       userMessage,
       history: params.history ?? [],

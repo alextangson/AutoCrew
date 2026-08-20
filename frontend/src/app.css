@@ -116,6 +116,13 @@
 .msg-user { background: var(--ink); color: var(--accent-text); align-self: flex-end; max-width: 90%; }
 .chat-input-row { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
 .chat-input-row textarea { flex: 1; resize: none; }
+/* 输入区整体（模型档位 + 输入行）：分隔线提到外层，有没有切换器都是同一条 */
+.chat-compose { border-top: 1px solid var(--border); }
+.chat-compose .chat-input-row { border-top: none; }
+/* 切换器在场时才收紧上间距——没有它的时候输入行的留白与今天一致 */
+.chat-model-row + .chat-input-row { padding-top: 6px; }
+.chat-model-row { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; font-size: 11px; }
+.chat-model-row select { font-size: 11px; padding: 1px 4px; max-width: 200px; }
 
 /* Chat cards */
 .ccard { border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px 10px; margin-top: 8px; background: var(--card); color: var(--text); }

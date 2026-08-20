@@ -31,6 +31,8 @@ export const IPC_CHANNELS = [
   // 对话控制面设计 §Phase 3：turn 寻址与中止链路 + 断线恢复
   "chat:abort",
   "chat:turn_status",
+  // 右栏模型切换器的只读数据源：模型名 + 档位字，绝不含 apiKey/baseUrl
+  "chat:model_options",
   "settings:get",
   "settings:set",
   "settings:search_get",

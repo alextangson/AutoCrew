@@ -26,9 +26,10 @@
  *   content:get        { id }
  *   publish:clipboard  { content_id, hashtags? }
  *   publish:confirm    { content_id, publish_url? }
- *   chat:turn          { conversation_id?, message, turn_id?, client_id? }
+ *   chat:turn          { conversation_id?, message, turn_id?, client_id?, model_choice? }
  *   chat:abort         { turn_id, client_id }
  *   chat:turn_status   { turn_id }
+ *   chat:model_options {}                                  (只读；回模型名+档位，无凭证)
  *   settings:get       {}
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
  *   settings:search_get {}
@@ -101,6 +102,8 @@ import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler,
 import { openContentFolder } from "./folder-open.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
+import { chatModelOptions } from "./chat-router.js";
+import { loadEngineConfig } from "../engine/config.js";
 import { parseViewContext } from "./chat-view-context.js";
 import { registerTurn, abortTurn, settleTurn, getTurnStatus, noteTurnConversation } from "./turn-registry.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
@@ -481,6 +484,10 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
   // 老前端不传 → 不登记、不可中止,行为与今天完全一致（additive 扩展的代价只落在新能力上）。
   const turnId = typeof payload.turn_id === "string" && payload.turn_id ? payload.turn_id : undefined;
   const clientId = typeof payload.client_id === "string" && payload.client_id ? payload.client_id : undefined;
+  // 模型档位（可选 additive）:不传 = 主端点快档,与今天字面一致;
+  // 非法值不在这里兜——runChatTurn 拿到真配置后显式报错,绝不静默换一个模型跑
+  const modelChoice =
+    typeof payload.model_choice === "string" && payload.model_choice ? payload.model_choice : undefined;
   let signal: AbortSignal | undefined;
   if (turnId && clientId) {
     const reg = registerTurn(turnId, clientId, conversationId ? { conversationId } : undefined);
@@ -508,6 +515,7 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
       message: message.trim(),
       ...(conversationId ? { conversationId } : {}),
       ...(viewContext ? { viewContext } : {}),
+      ...(modelChoice ? { modelChoice } : {}),
       dataDir,
       runId,
       ...(turnId ? { turnId } : {}),
@@ -586,6 +594,23 @@ async function chatAbortHandler(payload: Record<string, unknown>): Promise<Recor
   // 已完成/未知一律幂等:停止连点、停已经结束的轮,用户视角都该是「停了就是停了」
   if (outcome === "not_found") return { ok: true, already: "done" };
   return { ok: true, settling: true };
+}
+
+/**
+ * chat:model_options — 右栏模型切换器的数据源（只读）。
+ * 回的是「模型名 + 档位字」，**不含 apiKey/baseUrl**：凭证不出主进程。
+ * 引擎没配置就回空清单——前端据此隐藏切换器（配 key 的地方是设置页，不在这里喊）。
+ */
+async function chatModelOptionsHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  try {
+    const config = await loadEngineConfig((payload._dataDir as string) || undefined);
+    return { ok: true, data: { options: chatModelOptions(config) } };
+  } catch {
+    return { ok: true, data: { options: [] } };
+  }
 }
 
 async function chatTurnStatusHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -1028,6 +1053,7 @@ export function buildIpcHandlers(
     "chat:turn": chatTurnHandler,
     "chat:abort": chatAbortHandler,
     "chat:turn_status": chatTurnStatusHandler,
+    "chat:model_options": chatModelOptionsHandler,
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
     "settings:search_get": getSearchSettings,

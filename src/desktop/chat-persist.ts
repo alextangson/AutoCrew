@@ -49,6 +49,8 @@ export async function runPersistedChatTurn(params: {
   turnId?: string;
   /** 用户中止信号:中止走 ok:true + stopReason="aborted",按正常轮落盘（不写失败轮） */
   signal?: AbortSignal;
+  /** 右栏选的模型档位(纯透传;解析与校验都在 runChatTurn) */
+  modelChoice?: string;
   onEvent?: (e: ChatProgressEvent) => void;
   /** 流式正文出口（设计 §Phase 3）:纯透传,持久层不参与 delta（事实源仍是本函数落盘的完整回复） */
   onDelta?: (e: ChatDeltaEvent) => void;
@@ -71,6 +73,7 @@ export async function runPersistedChatTurn(params: {
     history,
     dataDir,
     ...(params.viewContext ? { viewContext: params.viewContext } : {}),
+    ...(params.modelChoice ? { modelChoice: params.modelChoice } : {}),
     ...(params.runId ? { runId: params.runId } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.onEvent ? { onEvent: params.onEvent } : {}),

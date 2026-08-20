@@ -22,6 +22,14 @@ import {
   type TurnStatusView,
 } from "./turn-recovery";
 import { EMPTY_STREAM, applyDelta, clearStream, parseDeltaFrame, startStream } from "./delta-stream";
+import {
+  DEFAULT_CHAT_MODEL,
+  modelOptionLabel,
+  parseModelOptions,
+  readModelChoice,
+  writeModelChoice,
+  type ChatModelOption,
+} from "./model-choice";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
 interface Msg {
@@ -88,7 +96,22 @@ export function ChatDock(props: {
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [contextTitle, setContextTitle] = useState("");
+  /** 可选模型档位（服务端给的真实清单）与当前选择；只有 >1 档时才显示切换器 */
+  const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
+  const [modelChoice, setModelChoice] = useState<string>(DEFAULT_CHAT_MODEL);
+  // sendImpl 的闭包不随 modelChoice 重注册——用 ref 读最新值（与 viewRef 同一手法）
+  const modelChoiceRef = useRef(modelChoice);
+  modelChoiceRef.current = modelChoice;
   const focus = useRevisionFocus();
+
+  useEffect(() => {
+    void invoke("chat:model_options").then((r) => {
+      if (!r.ok) return; // 拉不到就当没有可切的（切换器隐藏），对话照常走缺省档
+      const options = parseModelOptions(r);
+      setModelOptions(options);
+      setModelChoice(readModelChoice(options));
+    });
+  }, []);
 
   useEffect(() => {
     const id = props.contentContext?.contentId;
@@ -188,12 +211,15 @@ export function ChatDock(props: {
       ...(props.contentContext ? { contentId: props.contentContext.contentId } : {}),
       ...(focusNow ? { focus: focusNow } : {}),
     });
+    // 缺省档不带 model_choice：默认路径的 payload 与切换器上线前逐字一致
+    const choice = modelChoiceRef.current;
     const r = await invoke("chat:turn", {
       message,
       turn_id: turnId,
       client_id: CLIENT_ID,
       ...(activeConversationId ? { conversation_id: activeConversationId } : {}),
       ...(ctx ? { context: ctx } : {}),
+      ...(choice && choice !== DEFAULT_CHAT_MODEL ? { model_choice: choice } : {}),
     });
     // invoke 返回 = 本轮真的 settle 了（服务端注册表同刻解锁）——停止按钮与输入框在这里一起解锁
     setBusy(false);
@@ -418,35 +444,57 @@ export function ChatDock(props: {
           </div>
         )}
       </div>
-      <div className="chat-input-row">
-        <textarea
-          value={input}
-          rows={2}
-          placeholder={props.contentContext
-            ? "说修改要求，如：开头更直接，删掉第三段（Enter 发送）"
-            : "跟总编辑说…修改某篇稿前请先在看板打开它"}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            // 输入法合成中(拼音未上屏)时回车只上屏候选,不发送——isComposing 拦住。
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              void send(input);
-            }
-          }}
-        />
-        {busy ? (
-          <button
-            title="停止这一轮（已投递的后台任务会继续跑）"
-            disabled={stopping || !turnIdRef.current}
-            onClick={() => void stopTurn()}
-          >
-            {stopping ? "正在停…" : "停止"}
-          </button>
-        ) : (
-          <button className="primary" onClick={() => void send(input)}>
-            发送
-          </button>
+      <div className="chat-compose">
+        {/* 只有一档（或引擎没配）时不出现——没得选就不该占一行 */}
+        {modelOptions.length > 1 && (
+          <div className="chat-model-row mono">
+            <span className="muted">模型</span>
+            <select
+              aria-label="切换模型"
+              title="这一轮对话用哪个模型（只影响总编辑对话，不改写稿/调研的模型）"
+              value={modelChoice}
+              disabled={busy}
+              onChange={(e) => {
+                setModelChoice(e.target.value);
+                writeModelChoice(e.target.value);
+              }}
+            >
+              {modelOptions.map((o) => (
+                <option key={o.id} value={o.id}>{modelOptionLabel(o)}</option>
+              ))}
+            </select>
+          </div>
         )}
+        <div className="chat-input-row">
+          <textarea
+            value={input}
+            rows={2}
+            placeholder={props.contentContext
+              ? "说修改要求，如：开头更直接，删掉第三段（Enter 发送）"
+              : "跟总编辑说…修改某篇稿前请先在看板打开它"}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              // 输入法合成中(拼音未上屏)时回车只上屏候选,不发送——isComposing 拦住。
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void send(input);
+              }
+            }}
+          />
+          {busy ? (
+            <button
+              title="停止这一轮（已投递的后台任务会继续跑）"
+              disabled={stopping || !turnIdRef.current}
+              onClick={() => void stopTurn()}
+            >
+              {stopping ? "正在停…" : "停止"}
+            </button>
+          ) : (
+            <button className="primary" onClick={() => void send(input)}>
+              发送
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
