@@ -150,7 +150,8 @@ export interface ChatHistoryMessage {
 /** 缺省 fast = 今天的行为；fallback_* 直接点名备用端点（engine.json 的 fallback 块）。 */
 export type ChatModelChoice = "fast" | "strong" | "fallback_fast" | "fallback_strong";
 
-export interface ChatModelOption {
+/** 引擎默认档（四档）：`{id, model, tier}` */
+export interface ChatModelTierOption {
   id: ChatModelChoice;
   /** 用户自己配的真实模型名——选择器显示它,不显示抽象档位代号 */
   model: string;
@@ -158,9 +159,23 @@ export interface ChatModelOption {
   tier: string;
 }
 
+/** 用户自定义端点 × 模型：`{id:"p:<pid>:<model>", model, group:端点名}`，前端按 group 分组 */
+export interface ChatModelProviderOption {
+  id: string;
+  model: string;
+  /** optgroup 标题 = 端点显示名 */
+  group: string;
+}
+
+export type ChatModelOption = ChatModelTierOption | ChatModelProviderOption;
+
+/** 选项 id 前缀：自定义端点走 `p:<providerId>:<model>`（providerId 字符集禁冒号，前两个冒号定界） */
+const PROVIDER_CHOICE_PREFIX = "p:";
+
 /**
- * 可选档位清单。**只有模型名与档位字**——apiKey/baseUrl 一个字节都不出主进程
- * （这个清单要经 IPC 到渲染层）。未配备用端点时只有主端点两档。
+ * 可选档位清单。**只有模型名与端点显示名**——apiKey/baseUrl 一个字节都不出主进程
+ * （这个清单要经 IPC 到渲染层）。未配备用端点时只有主端点两档；
+ * 自定义端点按 端点 × 模型 追加在四档之后（设计 §Phase 4）。
  */
 export function chatModelOptions(config: EngineConfig): ChatModelOption[] {
   const options: ChatModelOption[] = [
@@ -172,7 +187,39 @@ export function chatModelOptions(config: EngineConfig): ChatModelOption[] {
     options.push({ id: "fallback_fast", model: fb.fastModel, tier: "备用快" });
     options.push({ id: "fallback_strong", model: fb.strongModel, tier: "备用强" });
   }
+  for (const provider of config.providers ?? []) {
+    for (const model of provider.models) {
+      options.push({ id: `${PROVIDER_CHOICE_PREFIX}${provider.id}:${model}`, model, group: provider.name });
+    }
+  }
   return options;
+}
+
+/**
+ * `p:<providerId>:<model>` → 本轮的 {config, model}。
+ * 解析按**前两个冒号**定界：providerId 字符集不含冒号，剩余整体是 model（模型名可含冒号）。
+ * 以顶层 config 为基底只覆盖 baseUrl/apiKey/protocol —— dataDir 必须留住（run-log 的落点）。
+ */
+function resolveProviderChoice(config: EngineConfig, choice: string): ChatModelResolution {
+  const rest = choice.slice(PROVIDER_CHOICE_PREFIX.length);
+  const cut = rest.indexOf(":");
+  const providerId = cut < 0 ? "" : rest.slice(0, cut);
+  const model = cut < 0 ? "" : rest.slice(cut + 1);
+  const provider = (config.providers ?? []).find((p) => p.id === providerId);
+  if (!provider || !model || !provider.models.includes(model)) {
+    return {
+      ok: false,
+      error: `该模型未配置：找不到端点「${cleanErrorMessage(providerId, 40)}」的模型「${cleanErrorMessage(model, 40)}」——它可能已在设置里被删掉，请在对话框的模型选择器里重选`,
+    };
+  }
+  const picked: EngineConfig = {
+    ...config,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    protocol: provider.protocol,
+  };
+  delete picked.fallback; // 用户点名了端点，没有"点名端点的备用"
+  return { ok: true, config: picked, model };
 }
 
 export type ChatModelResolution =
@@ -186,10 +233,12 @@ export type ChatModelResolution =
  *    打不通就如实报错，不许再悄悄绕回主端点。
  * 3. 非法值、或点了备用但根本没配备用：显式报错，绝不静默降级到别的模型
  *    （"我选了 opus，它却拿 flash 写了"是最贵的那种静默失败）。
+ * 4. `p:*`（自定义端点）与 fallback_* 同一条规矩：点名即无兜底链。
  */
 export function resolveChatModel(config: EngineConfig, choice?: string): ChatModelResolution {
   if (choice === undefined || choice === "fast") return { ok: true, config, model: config.fastModel };
   if (choice === "strong") return { ok: true, config, model: config.strongModel };
+  if (choice.startsWith(PROVIDER_CHOICE_PREFIX)) return resolveProviderChoice(config, choice);
   if (choice !== "fallback_fast" && choice !== "fallback_strong") {
     return { ok: false, error: `该模型未配置：不认识的档位「${cleanErrorMessage(choice, 40)}」——请在对话框的模型选择器里重选` };
   }

@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CHAT_MODEL_KEY, DEFAULT_CHAT_MODEL,
-  modelOptionLabel, parseModelOptions, readModelChoice, writeModelChoice,
+  groupModelOptions, modelOptionLabel, parseModelOptions, readModelChoice, writeModelChoice,
   type ChatModelOption,
 } from "./model-choice";
 import type { PrefStore } from "./dock-prefs";
@@ -28,6 +28,13 @@ const FULL: ChatModelOption[] = [
   { id: "fallback_strong", model: "deepseek-v4-pro", tier: "备用强" },
 ];
 const PRIMARY_ONLY = FULL.slice(0, 2);
+/** 自定义端点选项（Phase 4）：带 group、没有 tier */
+const WITH_PROVIDERS: ChatModelOption[] = [
+  ...FULL,
+  { id: "p:ollama:qwen3:32b", model: "qwen3:32b", group: "本地 Ollama" },
+  { id: "p:ollama:llama4", model: "llama4", group: "本地 Ollama" },
+  { id: "p:kimi:kimi-k3", model: "kimi-k3", group: "Kimi" },
+];
 
 describe("readModelChoice", () => {
   it("没存过 = 缺省快档（切换器上线前的行为）", () => {
@@ -81,5 +88,40 @@ describe("parseModelOptions / modelOptionLabel", () => {
   it("选项文案 = 真实模型名 + 档位字", () => {
     expect(modelOptionLabel(FULL[0])).toBe("claude-sonnet-5 · 快");
     expect(modelOptionLabel(FULL[3])).toBe("deepseek-v4-pro · 备用强");
+  });
+
+  it("带 group 的自定义端点条目照收；tier/group 都没有的条目不算可选项", () => {
+    expect(parseModelOptions({ ok: true, data: { options: WITH_PROVIDERS } })).toEqual(WITH_PROVIDERS);
+    expect(parseModelOptions({ data: { options: [{ id: "p:x:m", model: "m" }] } })).toEqual([]);
+  });
+
+  it("自定义端点的文案只有模型名——optgroup 标题已经是端点名了", () => {
+    expect(modelOptionLabel(WITH_PROVIDERS[4])).toBe("qwen3:32b");
+  });
+});
+
+describe("groupModelOptions", () => {
+  it("四档置顶不套 optgroup，自定义端点按端点名分组且保持服务端顺序", () => {
+    const { plain, groups } = groupModelOptions(WITH_PROVIDERS);
+    expect(plain.map((o) => o.id)).toEqual(["fast", "strong", "fallback_fast", "fallback_strong"]);
+    expect(groups.map((g) => g.name)).toEqual(["本地 Ollama", "Kimi"]);
+    expect(groups[0].options.map((o) => o.id)).toEqual(["p:ollama:qwen3:32b", "p:ollama:llama4"]);
+  });
+
+  it("没有自定义端点时 groups 为空（渲染与今天一模一样）", () => {
+    expect(groupModelOptions(FULL).groups).toEqual([]);
+    expect(groupModelOptions([]).plain).toEqual([]);
+  });
+});
+
+describe("陈旧的 p:*（端点被删）", () => {
+  it("清单里没有就回落快档并覆写存储——绝不指向一个不存在的端点", () => {
+    const store = fakeStore({ [CHAT_MODEL_KEY]: "p:kimi:kimi-k3" });
+    expect(readModelChoice(FULL, store)).toBe(DEFAULT_CHAT_MODEL);
+    expect(store.data[CHAT_MODEL_KEY]).toBe(DEFAULT_CHAT_MODEL);
+  });
+
+  it("端点还在就照旧用它", () => {
+    expect(readModelChoice(WITH_PROVIDERS, fakeStore({ [CHAT_MODEL_KEY]: "p:kimi:kimi-k3" }))).toBe("p:kimi:kimi-k3");
   });
 });

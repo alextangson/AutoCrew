@@ -31,7 +31,8 @@
  *   chat:turn_status   { turn_id }
  *   chat:model_options {}                                  (只读；回模型名+档位，无凭证)
  *   settings:get       {}
- *   settings:set       { api_key?, base_url?, strong_model?, fast_model? }
+ *   settings:set       { api_key?, base_url?, strong_model?, fast_model?, providers? }
+ *   settings:open_config {}                                (打开实际生效的 engine.json)
  *   settings:search_get {}
  *   settings:search_set { provider, api_key, base_url? }
  *   settings:publish_get {}
@@ -107,7 +108,7 @@ import { loadEngineConfig } from "../engine/config.js";
 import { parseViewContext } from "./chat-view-context.js";
 import { registerTurn, abortTurn, settleTurn, getTurnStatus, noteTurnConversation } from "./turn-registry.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
-import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings, getPublishSettings, setPublishSettings } from "./settings.js";
+import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings, getPublishSettings, setPublishSettings, openEngineConfigFile } from "./settings.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { appendAction } from "./recent-actions.js";
@@ -1056,6 +1057,7 @@ export function buildIpcHandlers(
     "chat:model_options": chatModelOptionsHandler,
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
+    "settings:open_config": (payload) => openEngineConfigFile(payload),
     "settings:search_get": getSearchSettings,
     "settings:search_set": setSearchSettings,
     "settings:publish_get": getPublishSettings,

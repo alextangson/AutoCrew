@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast, openDialog } from "../ui";
+import { slugProviderId } from "./provider-id";
 
 function Section(props: { title: string; status?: string; on?: boolean; children: React.ReactNode }) {
   return (
@@ -52,6 +53,43 @@ interface RadarSource {
   [k: string]: unknown;
 }
 
+/** settings:get 回的一条端点：无 key、无掩码，只有一个"配没配" */
+interface ProviderView {
+  id: string;
+  name: string;
+  baseUrl: string;
+  protocol: string | null;
+  models: string[];
+  apiKeySet: boolean;
+}
+
+/** 表单里的一行。key 只在浏览器里活着（React key）；id 是落盘的那个，创建时生成一次后不再变 */
+interface ProviderRow {
+  key: string;
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: string;
+  protocol: string;
+  apiKey: string;
+  apiKeySet: boolean;
+}
+
+let providerRowSeq = 0;
+
+function toProviderRows(list: ProviderView[] | undefined): ProviderRow[] {
+  return (list ?? []).map((p) => ({
+    key: `saved-${p.id}`,
+    id: p.id,
+    name: p.name,
+    baseUrl: p.baseUrl,
+    models: p.models.join(", "),
+    protocol: p.protocol ?? "",
+    apiKey: "",
+    apiKeySet: p.apiKeySet,
+  }));
+}
+
 export function Settings() {
   type RouteView = { baseUrl: string; model: string; protocol?: string; models?: string[] } | null;
   const [engine, setEngine] = useState<{
@@ -61,7 +99,9 @@ export function Settings() {
     strongModel: string;
     fastModel: string;
     routes: { writer: RouteView; analytics: RouteView; scout: RouteView; codex: RouteView };
+    providers?: ProviderView[];
   } | null>(null);
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [eForm, setEForm] = useState({
     api_key: "",
     base_url: "",
@@ -113,7 +153,11 @@ export function Settings() {
       invoke("inbox:settings_get"),
     ]);
     if (ir.ok) setInbox((ir as unknown as { data: typeof inbox }).data);
-    if (er.ok) setEngine((er as unknown as { data: typeof engine }).data);
+    if (er.ok) {
+      const d = (er as unknown as { data: NonNullable<typeof engine> }).data;
+      setEngine(d);
+      setProviders(toProviderRows(d.providers));
+    }
     if (sr.ok) setSearch((sr as unknown as { data: typeof search }).data);
     if (pr.ok) setPub((pr as unknown as { data: typeof pub }).data);
     if (cr.ok) setCover((cr as unknown as { data: typeof cover }).data);
@@ -136,6 +180,36 @@ export function Settings() {
     if (!r.ok) return toast(r.error ?? "保存失败");
     toast("已保存");
     reset();
+    void load();
+  };
+
+  const patchProvider = (key: string, patch: Partial<ProviderRow>) =>
+    setProviders((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+
+  /**
+   * 端点整份提交（服务端原子校验，任一条非法就整次拒绝并说清是哪条）。
+   * id 在第一次提交前生成一次并留在表单里——之后改名不重算，切换器里存着的选择不会作废。
+   */
+  const saveProviders = async () => {
+    const taken = new Set(providers.filter((p) => p.id).map((p) => p.id));
+    const withIds = providers.map((p) => {
+      if (p.id) return p;
+      const id = slugProviderId(p.name, taken);
+      taken.add(id);
+      return { ...p, id };
+    });
+    setProviders(withIds);
+    const payload = withIds.map((p) => ({
+      id: p.id,
+      name: p.name.trim(),
+      baseUrl: p.baseUrl.trim(),
+      models: p.models.split(/[,，\s]+/).filter(Boolean),
+      ...(p.protocol ? { protocol: p.protocol } : {}),
+      ...(p.apiKey.trim() ? { apiKey: p.apiKey.trim() } : {}),
+    }));
+    const r = await invoke("settings:set", { providers: payload });
+    if (!r.ok) return toast(r.error ?? "保存失败"); // 服务端的原因原样展示,不改写
+    toast(payload.length ? "端点已保存——对话切换器里可以选了" : "端点已清空");
     void load();
   };
 
@@ -194,6 +268,66 @@ export function Settings() {
             )
           }
         />
+
+        <p className="mono muted set-providers-head">
+          自定义端点 · 总编辑对话的模型切换器里按端点分组直接选（不影响上面的主通道与任务路由）
+        </p>
+        {providers.length === 0 && <p className="muted">还没有自定义端点。加一个，比如本地 Ollama 或另一家中转。</p>}
+        {providers.map((p) => (
+          <div key={p.key} className="set-provider">
+            <div className="row">
+              <span className="mono pri">{p.id || "新端点"}</span>
+              <span className="row-title">{p.name.trim() || "未命名"}</span>
+              <button onClick={() => setProviders((rows) => rows.filter((r) => r.key !== p.key))}>删除</button>
+            </div>
+            <Field label="名称" value={p.name} placeholder="如:DeepSeek 官方" onChange={(v) => patchProvider(p.key, { name: v })} />
+            <Field label="地址" value={p.baseUrl} placeholder="https://api.deepseek.com" onChange={(v) => patchProvider(p.key, { baseUrl: v })} />
+            <Field
+              label="模型"
+              value={p.models}
+              placeholder="逗号分隔,如:deepseek-v4-pro, deepseek-v4-flash"
+              onChange={(v) => patchProvider(p.key, { models: v })}
+            />
+            <label className="set-field">
+              <span className="mono muted">协议</span>
+              <select value={p.protocol} onChange={(e) => patchProvider(p.key, { protocol: e.target.value })}>
+                <option value="">自动推断(按 key 前缀与域名)</option>
+                <option value="openai">openai</option>
+                <option value="anthropic">anthropic</option>
+              </select>
+            </label>
+            <Field
+              label="API Key"
+              password
+              value={p.apiKey}
+              placeholder={p.apiKeySet ? "已配置,留空保持不变" : "必填"}
+              onChange={(v) => patchProvider(p.key, { apiKey: v })}
+            />
+          </div>
+        ))}
+        <div className="set-save">
+          <button
+            onClick={() =>
+              setProviders((rows) => [
+                ...rows,
+                { key: `new-${(providerRowSeq += 1)}`, id: "", name: "", baseUrl: "", models: "", protocol: "", apiKey: "", apiKeySet: false },
+              ])
+            }
+          >
+            ＋添加端点
+          </button>
+          <button className="primary" onClick={() => void saveProviders()}>保存端点</button>
+          <button
+            onClick={async () => {
+              const r = await invoke("settings:open_config");
+              if (!r.ok) return toast(r.error ?? "打开失败");
+              const d = (r as unknown as { data: { path: string; opened: boolean } }).data;
+              toast(d.opened ? `已打开 ${d.path}` : `请手动打开 ${d.path}`);
+            }}
+          >
+            打开配置文件
+          </button>
+        </div>
       </Section>
 
       <Section title="搜索 · 侦查员外网搜集" status={search?.configured ? `已配置 ${search.provider}` : "未配置"} on={search?.configured}>

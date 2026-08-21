@@ -34,6 +34,30 @@ const WITH_FALLBACK: EngineConfig = {
   },
 };
 
+/** 自定义端点（设计 §Phase 4）：dataDir 一并带上——run-log 的落点不能因为换端点丢掉 */
+const WITH_PROVIDERS: EngineConfig = {
+  ...WITH_FALLBACK,
+  dataDir: "/tmp/autocrew-ws",
+  providers: [
+    {
+      id: "ollama",
+      name: "本地 Ollama",
+      baseUrl: "http://localhost:11434/v1",
+      apiKey: "ollama-key",
+      protocol: "openai",
+      models: ["qwen3:32b", "llama4"],
+    },
+    {
+      id: "kimi",
+      name: "Kimi",
+      baseUrl: "https://api.moonshot.cn",
+      apiKey: "kimi-key",
+      protocol: "anthropic",
+      models: ["kimi-k3"],
+    },
+  ],
+};
+
 describe("resolveChatModel", () => {
   it("缺省与 fast 字面等于今天：主端点快档，引擎级 fallback 链原样保留", () => {
     for (const choice of [undefined, "fast"]) {
@@ -89,6 +113,50 @@ describe("resolveChatModel", () => {
   });
 });
 
+describe("resolveChatModel — 自定义端点 p:*", () => {
+  it("换端点+凭证+协议；dataDir 留住；不再带兜底链", () => {
+    const r = resolveChatModel(WITH_PROVIDERS, "p:kimi:kimi-k3");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.model).toBe("kimi-k3");
+    expect(r.config.baseUrl).toBe("https://api.moonshot.cn");
+    expect(r.config.apiKey).toBe("kimi-key");
+    expect(r.config.protocol).toBe("anthropic");
+    // run-log 的落点:换端点不能把它弄丢
+    expect(r.config.dataDir).toBe("/tmp/autocrew-ws");
+    // 用户点名了端点,失败就如实报错
+    expect(r.config.fallback).toBeUndefined();
+    // 主端点的档位名原样留着（本轮的模型是显式传的，不看这两个字段）
+    expect(r.config.strongModel).toBe(WITH_PROVIDERS.strongModel);
+  });
+
+  it("模型名带冒号：按前两个冒号定界，剩余整体是模型名", () => {
+    const r = resolveChatModel(WITH_PROVIDERS, "p:ollama:qwen3:32b");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.model).toBe("qwen3:32b");
+    expect(r.config.baseUrl).toBe("http://localhost:11434/v1");
+  });
+
+  it("端点已删 / 模型不在该端点清单里 / 缺模型段 → 清洗后的错误，不静默降级", () => {
+    for (const choice of ["p:gone:some-model", "p:kimi:not-listed", "p:kimi:", "p:kimi", "p:"]) {
+      const r = resolveChatModel(WITH_PROVIDERS, choice);
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.error).toContain("该模型未配置");
+    }
+    // 一个端点都没配时同样是错误，不回落到主端点
+    expect(resolveChatModel(PRIMARY, "p:kimi:kimi-k3").ok).toBe(false);
+  });
+
+  it("错误消息里不带本地绝对路径（清洗过）", () => {
+    const r = resolveChatModel(WITH_PROVIDERS, "p:x:/Users/somebody/secret");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).not.toContain("/Users/somebody");
+  });
+});
+
 describe("chatModelOptions", () => {
   it("无备用端点时只有主端点两档", () => {
     expect(chatModelOptions(PRIMARY)).toEqual([
@@ -113,6 +181,29 @@ describe("chatModelOptions", () => {
     expect(serialized).not.toContain("backup.local");
     for (const option of chatModelOptions(WITH_FALLBACK)) {
       expect(Object.keys(option).sort()).toEqual(["id", "model", "tier"]);
+    }
+  });
+
+  it("自定义端点按 端点 × 模型 追加在四档之后，形如 p:<id>:<model> + group=端点名", () => {
+    const options = chatModelOptions(WITH_PROVIDERS);
+    expect(options.map((o) => o.id)).toEqual([
+      "fast", "strong", "fallback_fast", "fallback_strong",
+      "p:ollama:qwen3:32b", "p:ollama:llama4", "p:kimi:kimi-k3",
+    ]);
+    expect(options[4]).toEqual({ id: "p:ollama:qwen3:32b", model: "qwen3:32b", group: "本地 Ollama" });
+    // 四档的形状一个字段都没动
+    expect(Object.keys(options[0]).sort()).toEqual(["id", "model", "tier"]);
+  });
+
+  it("provider 选项零敏感字段：无 key、无 baseUrl，只有 id/model/group", () => {
+    const providerOptions = chatModelOptions(WITH_PROVIDERS).filter((o) => o.id.startsWith("p:"));
+    const serialized = JSON.stringify(providerOptions);
+    expect(serialized).not.toContain("ollama-key");
+    expect(serialized).not.toContain("kimi-key");
+    expect(serialized).not.toContain("localhost:11434");
+    expect(serialized).not.toContain("moonshot");
+    for (const option of providerOptions) {
+      expect(Object.keys(option).sort()).toEqual(["group", "id", "model"]);
     }
   });
 });
@@ -165,6 +256,27 @@ describe("chat:model_options 通道", () => {
     const res = await call();
     const options = (res.data as { options: Array<Record<string, string>> }).options;
     expect(options.map((o) => o.id)).toEqual(["fast", "strong"]);
+  });
+
+  it("自定义端点进清单且带 group；坏条目被丢掉；响应零凭证零 baseUrl", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        apiKey: "primary-key",
+        baseUrl: "https://primary.local",
+        providers: [
+          { id: "kimi", name: "Kimi", baseUrl: "https://api.moonshot.cn", apiKey: "kimi-key", models: ["kimi-k3"] },
+          { id: "BAD-ID", name: "坏的", baseUrl: "https://x.com", apiKey: "k", models: ["m"] },
+        ],
+      }),
+    );
+    const res = await call();
+    const options = (res.data as { options: Array<Record<string, string>> }).options;
+    expect(options.map((o) => o.id)).toEqual(["fast", "strong", "p:kimi:kimi-k3"]);
+    expect(options[2].group).toBe("Kimi");
+    const serialized = JSON.stringify(res);
+    expect(serialized).not.toContain("kimi-key");
+    expect(serialized).not.toContain("moonshot");
   });
 
   it("引擎没配置：回空清单（前端据此隐藏切换器），不是错误", async () => {
@@ -236,6 +348,37 @@ describe("runChatTurn modelChoice", () => {
     });
     expect(seen[0].model).toBe("backup-strong");
     expect(seen[0].url).toContain("backup.local");
+  });
+
+  it("p:* 真打到那个自定义端点、用点名的模型", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        apiKey: "primary-key",
+        baseUrl: "https://primary.local",
+        protocol: "openai",
+        providers: [
+          { id: "kimi", name: "Kimi", baseUrl: "https://api.moonshot.cn", apiKey: "kimi-key", protocol: "openai", models: ["kimi-k3"] },
+        ],
+      }),
+    );
+    const seen: Array<{ url: string; model: unknown }> = [];
+    const res = await runChatTurn({
+      message: "你好", dataDir: testDir, modelChoice: "p:kimi:kimi-k3", fetchImpl: capturingFetch(seen),
+    });
+    expect(res.ok).toBe(true);
+    expect(seen[0].model).toBe("kimi-k3");
+    expect(seen[0].url).toContain("api.moonshot.cn");
+  });
+
+  it("陈旧的 p:*（端点已删）当场失败，一个请求都不发", async () => {
+    const seen: Array<{ url: string; model: unknown }> = [];
+    const res = await runChatTurn({
+      message: "你好", dataDir: testDir, modelChoice: "p:gone:some-model", fetchImpl: capturingFetch(seen),
+    });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("该模型未配置");
+    expect(seen).toHaveLength(0);
   });
 
   it("非法档位当场失败，一个请求都不发", async () => {

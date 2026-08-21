@@ -42,7 +42,9 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "chat:turn_status": ["turn_id"],
   "chat:model_options": [],
   "settings:get": [],
+  // providers 是可选数组（字段存在性判定：未提交保留、空数组清空、有数组走 merge）
   "settings:set": [],
+  "settings:open_config": [],
   "settings:search_get": [],
   "settings:search_set": ["provider", "api_key"],
   "settings:publish_get": [],

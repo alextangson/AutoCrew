@@ -101,7 +101,24 @@ npm run restart
     "strongModel": "deepseek-v4-pro",
     "fastModel": "deepseek-v4-flash",
     "protocol": "openai"
-  }
+  },
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "YOUR_DEEPSEEK_KEY",
+      "protocol": "openai",
+      "models": ["deepseek-v4-pro", "deepseek-v4-flash"]
+    },
+    {
+      "id": "ollama",
+      "name": "本地 Ollama",
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKey": "ollama",
+      "models": ["qwen3:32b"]
+    }
+  ]
 }
 ```
 
@@ -113,6 +130,17 @@ npm run restart
 - 档位对应：请求快档模型时用备用快档，其余（含写稿路由的专属模型）一律用备用强档——宁强勿弱。
 - **切换不会静默**：聊天进度条会出现「主模型接不上，备用 DeepSeek 顶上了」，工作日志里主端点的失败与备用端点的成功各留一条记录。
 - 只在瞬时故障（429/5xx/断流）时触发；401/403 这类换端点也没用的错误、以及你点了「停止」的场景，都不会切。
+
+### 自定义端点（可选）
+
+`providers` 是你自己增删的端点清单：配好后，总编辑对话右下角的模型切换器里会按端点分组列出「端点 × 模型」，随时切。它是**额外**通道——主端点、任务路由、备用端点全都不受影响。
+
+- 在「设置 → 引擎 · 模型服务」里增删即可，不用手改文件；「打开配置文件」按钮会用系统默认应用打开当前实际生效的 `engine.json`。
+- `id` 只允许小写字母、数字、连字符（1–32 位），由创建时生成一次并落盘——**改名不会重算**，你在切换器里选中的端点不会因为改个显示名就失效。
+- `baseUrl` 只接受 http/https，不能带账密、查询串或锚点；`localhost` 允许。`models` 至少一个；`apiKey` 必填；`protocol` 不填按 key 前缀与域名自动推断。
+- 手改文件时：某条配错了只丢那一条（启动 warn 一行），**同一个 id 出现多次则该 id 全部失效**（首赢末赢都是静默换端点，最贵的那种错）。设置页保存则是整份校验，任何一条非法就整次拒绝并告诉你是哪条。
+- 切换器里点名了某个端点，这一轮**不带备用链**：打不通就如实报错，不会悄悄绕回主端点。
+- 主端点仍然必填（写稿/复盘/选题路由依赖它），providers 不能单独撑起整个引擎。
 
 正文配图与公众号草稿箱还需要在「设置 → 发布」配置图像服务，以及公众号 AppID/AppSecret（如果要实际推草稿箱）。密钥不会回显到页面。
 

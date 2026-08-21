@@ -18,6 +18,10 @@ import {
   type EngineRouteName,
 } from "../engine/config.js";
 import { getDataDir } from "../storage/local-store.js";
+import { mergeProviders, providerViews } from "./settings-providers.js";
+
+// 自定义端点的逃生门（打开实际生效的 engine.json）——设置页统一从 settings.ts 取
+export { openEngineConfigFile } from "./settings-providers.js";
 
 // 收件箱设置（全局根 ~/.autocrew/inbox.json，不随工作区）——设置面统一从 settings.ts 取
 export {
@@ -67,6 +71,8 @@ export async function getEngineSettings(payload: Record<string, unknown>): Promi
           codex: fromFile.routes?.codex ?? null,
         },
         routePresets: ENGINE_ROUTE_PRESETS,
+        // 自定义端点:无 key 无掩码,只回"配没配"——掩码遇上数组整体替换会被当真值写回去
+        providers: providerViews(fromFile.providers),
       },
     };
   } catch (err) {
@@ -362,15 +368,32 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
         ...(spec.name === "codex" ? { models: ENGINE_ROUTE_PRESETS.codex.models } : {}),
       };
     }
-    if (Object.keys(updates).length === 0 && JSON.stringify(routes) === JSON.stringify(fromFile.routes ?? {})) {
+    // 自定义端点按**字段存在性**判定:未提交 = 保留文件现值(随 ...fromFile 原样带过去);
+    // 空数组 = 清空;有数组 = 经 merge 整体替换(整份原子校验,不部分写)
+    const submittedProviders = Object.prototype.hasOwnProperty.call(payload, "providers") ? payload.providers : undefined;
+    let providers: unknown;
+    if (submittedProviders !== undefined) {
+      const merged = mergeProviders(submittedProviders, fromFile.providers);
+      if ("error" in merged) return { ok: false, error: merged.error };
+      providers = merged.value;
+    }
+    if (
+      Object.keys(updates).length === 0 &&
+      JSON.stringify(routes) === JSON.stringify(fromFile.routes ?? {}) &&
+      providers === undefined
+    ) {
       return {
         ok: false,
         error:
-          "没有可写入的字段（api_key / base_url / strong_model / fast_model / writer_* / analytics_* / scout_* / codex_*）",
+          "没有可写入的字段（api_key / base_url / strong_model / fast_model / writer_* / analytics_* / scout_* / codex_* / providers）",
       };
     }
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify({ ...fromFile, ...updates, routes }, null, 2) + "\n", { mode: 0o600 });
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({ ...fromFile, ...updates, routes, ...(providers !== undefined ? { providers } : {}) }, null, 2) + "\n",
+      { mode: 0o600 },
+    );
     await fs.chmod(filePath, 0o600);
     notifyEngineSettingsChanged();
     return getEngineSettings({ _dataDir: dataDir });

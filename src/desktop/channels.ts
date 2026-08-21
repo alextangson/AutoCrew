@@ -35,6 +35,8 @@ export const IPC_CHANNELS = [
   "chat:model_options",
   "settings:get",
   "settings:set",
+  // 端点配置的逃生门（设计 §Phase 4）：用系统默认应用打开实际生效的 engine.json
+  "settings:open_config",
   "settings:search_get",
   "settings:search_set",
   "settings:publish_get",

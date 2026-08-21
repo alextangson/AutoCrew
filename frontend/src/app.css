@@ -441,6 +441,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .set-field span { min-width: 96px; }
 .set-field input, .set-field select { flex: 1; }
 .set-save { display: flex; gap: 10px; align-items: baseline; margin-top: 10px; }
+/* 自定义端点列表(Phase 4):每行一块,与上面的路由字段拉开距离但不另起卡片 */
+.set-providers-head { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 14px; }
+.set-provider { border-left: 2px solid var(--border); padding: 2px 0 6px 10px; margin: 8px 0; }
+.set-provider .row { gap: 8px; }
 .runcard { border-left: 2px solid var(--border); padding: 4px 8px; margin: 6px 0; }
 .runcard-done { border-left-color: var(--success); }
 .runcard-failed { border-left-color: var(--danger); }

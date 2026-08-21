@@ -138,6 +138,64 @@ DeepSeek Harness（dsh，2026-08-13 发布）把"会话式 harness 底座"推向
 | 失败可见 | abort 时有工具已执行 | 卡片保留 + "已停，以下是已完成的部分"；后台任务明示继续跑 |
 | 有意排除 | 多 turn 并行（进行中禁再发）、dock 左右位置切换、会话分支 | |
 
+## Phase 4：端点即用户数据（providers 配置面）
+
+创始人真机反馈（2026-08-21，对照 dsh 的模型设置）：四档切换器是从"主+备"两个焊死槽位**派生**的，不丝滑；应当是 dsh 式的——**端点(provider)是用户可增删的数据**，设置里配端点和模型，会话窗口在全量 (端点×模型) 里切。
+
+### 配置 schema（additive，向后兼容）
+
+engine.json 增可选数组：
+
+```json
+"providers": [
+  { "id": "deepseek", "name": "DeepSeek", "baseUrl": "https://api.deepseek.com",
+    "apiKey": "…", "protocol": "openai", "models": ["deepseek-v4-flash", "deepseek-v4-pro"] }
+]
+```
+
+- `id` 唯一（缺省由 name slug 化）；`protocol` 缺省走 inferProtocol；`baseUrl`+`apiKey`+`models`(≥1) 必填，缺任一该条目丢弃并 console.warn（逐条 fail-closed，不拖垮整个列表）。
+- 顶层主端点（strongModel/fastModel）与 `fallback` 块**原样保留**：它们是引擎默认档与自动兜底，routes/写手席/analytics 全部不动。providers 只是**额外**可选端点。旧 engine.json 无 providers → 行为与今天完全一致。
+
+### 会话切换器
+
+- `chat:model_options` 扩展：四档 tier 选项之后追加 providers × models，id 形如 `"p:<providerId>:<model>"`，label `模型名 · 端点名`；select 按端点 optgroup 分组。响应照旧零密钥零 baseUrl。
+- `resolveChatModel` 增 `p:*` 分支：整轮用该 provider 的 baseUrl/apiKey/protocol + 指定模型；**显式点名不带引擎 fallback 链**（与现有 fallback_* 选项同规则：用户点名，失败如实报错）。
+- 非法/陈旧 id（provider 被删）→ 前端选项校验回落 fast（现有机制覆盖）；服务端未命中 → 清洗错误。
+
+### 设置面
+
+- 设置 → 模型与路由 增「端点」列表：增/改/删 provider（name、baseUrl、apiKey、models 逗号输入、protocol 自动推断可覆写）。
+- 密钥回显遵循设置页现有 apiKey 的既有约定（与主端点同一处理，不另立规则）。
+- 增「打开配置文件」入口（shell open engine.json），照 dsh 的逃生门。
+- setEngineSettings 合并语义：providers 数组整体替换；未提交 providers 字段时保留文件现值（沿用 fallback 块已验证的合并行为）。
+
+### codex 快审吸收（2026-08-21，8 P1 + 5 P2，NO-GO → 逐条修入）
+
+| # | 发现 | 修法 |
+|---|---|---|
+| 1 | name slug 化的 id 不稳定，改名废掉已存选择 | id **创建时生成一次并落盘**，改名不重算；手写配置由用户保证 |
+| 2 | `p:<id>:<model>` 冒号歧义 | providerId 字符集强制 `[a-z0-9-]{1,32}`；解析按前两个冒号定界，剩余整体为 model（model 可含任意字符） |
+| 3 | 重复 id 首/末赢会静默换端点 | 读取路径：同 id **全部失效** + warn；设置写入：拒绝整次提交 |
+| 4 | model_options 响应养不活 optgroup | schema 明确：tier 项 `{id,model,tier}`；provider 项 `{id,model,group:providerName}`；前端解析器同步扩展 |
+| 5+6 | 掩码密钥 × 数组整体替换互斥 | settings:get 的 provider 只回 `{id,name,baseUrl,protocol,models,apiKeySet}`（不回 key 也不回掩码）；写入 merge：非空 apiKey 替换、已有 id 空/缺 key 保留原值、新 id 无 key 拒绝、数组缺席=删除 |
+| 7 | tolerant 丢弃用于写入会丢数据 | 逐条丢弃仅限**读取**；settings:set 对整份 providers 原子校验，任何非法/重复 → 拒绝整次写入并给具体原因 |
+| 8 | setEngineSettings 变更检测漏 providers | 按**字段存在性**判定：未提交保留、空数组清空、有数组替换（经 merge） |
+| 9 | settings:get 形状未定义 | 见 5+6 |
+| 10 | baseUrl 校验过松 | http(s)、禁 userinfo/query/hash、去尾斜杠、显式允许 localhost |
+| 11 | provider-only 配置不可用 | **有意限制并文档化**：主端点仍必填（routes/写手席依赖），providers 是增量端点 |
+| 12 | p:* 分支丢 dataDir 会丢 run-log | 以顶层 config 为基底仅覆盖 baseUrl/apiKey/protocol + 删 fallback（与 fallback_* 分支同实现路径） |
+| 13 | 打开配置文件可能打开继承前的空路径 | 打开 loadEngineConfig **实际解析到**的文件路径（加载器暴露真实路径） |
+
+### 边界与防呆
+
+| # | 项 | 决定 |
+|---|---|---|
+| 状态 | providers 缺失/空/全非法 | 切换器只显示四档（今天的行为） |
+| 最坏输入 | 读取遇非法条目/重复 id | 非法逐条丢弃、重复同 id 全失效，均 warn；不 throw 不拖垮引擎加载 |
+| 防呆 | 删掉正在被选中的端点 | 前端回落 fast 并覆写存储（现有陈旧值机制） |
+| 失败可见 | 点名端点打不通 | 如实报错（无兜底链），错误经清洗 |
+| 有意排除 | provider-only 配置（主端点必填）、provider 级 routes 绑定、per-provider 限流、连通性测试按钮 | |
+
 ## dsh 插件轨（观察，本期零代码）
 
 - dsh 发布 6 天、developer preview、官方声明必有破坏性变更——现在写适配层是给别人交学费。
@@ -178,6 +236,7 @@ DeepSeek Harness（dsh，2026-08-13 发布）把"会话式 harness 底座"推向
 - **Phase 3-3 ✅（2026-08-19）常驻与双向上下文**（Phase 3 收官）：dock 缺省翻转为展开——迁移语义收进新纯模块 `frontend/src/chat/dock-prefs.ts`，`readDockOpen` 只有显式存过 `"0"`（手动收起过）才收起，没存过=展开，老用户的表态一个都不覆盖；宽度 360 固定 → 左缘 `.dock-resizer` 指针拖拽 320–560px（clamp 在纯模块里，坏值/空串回 360），双击回默认，值经 `--dock-w` 内联变量下发（窄屏媒体查询照旧覆盖成整宽），`.main` 补 `min-width:0` 让主区让位而不是撑出横向滚动条。viewContext：前端 `frontend/src/chat/view-context.ts` 组装 `{content_id?, revision_focus?, route, campaign_id?}`（修改焦点的稿件优先于当前打开的稿件）；服务端新文件 `src/desktop/chat-view-context.ts` 收下全部校验——route/boardColumn 走枚举白名单、campaignId 走 `getCampaign` 存在性查询（顺带取名字进注入行）、看板列脱离 board 视图即丢、非法字段静默丢弃且一个字不进 prompt；`ChatViewContext` 类型迁到该文件，chat-router 只做 `export type` 转出口，ipc.ts 的 30 行内联解析塌成一行 `parseViewContext`。注入行拼在既有【当前上下文】块里（编辑器路由+有稿件时不重复报位置），system prompt 未动。卡片深链：`ChatCard` 收 `nav`（= 壳的 setRoute，与 Dashboard/Inbox 同一套 house pattern），draft/pre_publish→编辑器、cover_job/article_images_job/video_kit→编辑器的封面/配图/成片面板（Route 的 editor 分支加可选 `panel`，Editor 按它展开对应 `<details>` 并 `scrollIntoView`，滚两次以等异步面板内容落位）、topic/topic_saved/content_moved→看板；顺带补了 `drafts_list`（原本 JSON 兜底）与 `topic_saved` 两张卡的正式渲染，前者每行直接开编辑器。新增 32 测试（服务端 chat-view-context 15 / 前端 dock-prefs 10 + view-context 7），src/desktop+src/engine+frontend/src/chat 522 → 554，全仓 2325 passed，tsc 干净，frontend build 通过。真机烟测（临时 AUTOCREW_DATA_DIR + 本地 server + 浏览器）：无 localStorage 时 dock 默认展开、存 `"0"` 的老用户刷新后仍收起；拖拽 360→480→夹到 560→双击回 360 且均落 localStorage；board 视图发言实发 `context:{route:"board"}`、campaigns 视图带 `campaign_id`、离开该视图后不再带；封面/配图深链真的展开面板并滚到位，稿件列表行与「去看板」落点正确。偏离：① **boardColumn 前端无产出方**——Board.tsx 没有"聚焦列"这个概念（只有瞬时 dragOver 与矩阵模式），不硬造 UI 状态，字段的白名单校验按 P2-6 落地并单测，产出方留给真需要时再加；② 深链滚动用即时定位而非 `behavior:"smooth"`（烟测环境里平滑滚动整段丢失，深链的语义是"带我去那儿"，不欠一个动画）；③ 封面面板的展开态不进 localStorage（保持"每次进来默认折叠"的既有行为，只有深链才自动展开），配图面板沿用既有记忆；④ 同一深链连点两次（route 值不变）不会重新展开/滚动，需先切走再回来——权衡后不引入 nonce。
 - **Bugfix ✅（2026-08-20）修改焦点退不出去的死循环**（真机 dogfood）：**现象**——锁了焦点后提超出焦点范围的要求，总编辑答「去编辑器点空白处取消选区，然后回『好了』」，用户照做焦点仍在，模型继续拒绝，来回死循环。**根因**三条：① 焦点只有 `clearFocus()` 能清（`frontend/src/revision.ts` 模块级 store），点编辑器空白处根本无效，而 system prompt 3.5 既没说真实退出机制、也没给模型退出的手段，于是它编了一个；② 编辑器侧「退出修改」按钮只在 `activeProposal` 块里渲染，没出提案时编辑器里无路可退（ChatDock 那条 × 用户没找到）；③ 焦点全局持久，切稿件/离开编辑器都不清，过期焦点持续劫持后续 turn。**修法**四件：新增 chat 工具 `clear_revision_focus`（署名 writer「编剧退出修改模式」，推 `focus_cleared` 卡 + 回执告诉模型同轮可接着用常规工具；服务端 `revisionFocus` 改为本轮可变，退出后同一轮 `revise_draft` 立刻放行）；prompt 加 3.6 规则（要求超出焦点范围或用户说取消时**自己调工具退出**、同轮把事办完，禁止让用户去编辑器操作再回来说「好了」，真实手动出口只当被问起时提）；Editor 在有焦点无提案时渲染一条窄条 + 「退出修改」；焦点生命周期绑定编辑器（卸载/切稿件时清掉属于本稿的焦点）。两处收紧：卸载清焦点**仅在无未收下提案时**（"拿到提案→回看板瞄一眼→回来收下"不能丢提案，劫持风险由其余三个修复兜住）；无焦点误调 `clear_revision_focus` 回 ok 但不推卡（不给用户看空回执）。新增 5 测试（`revise-focus-tool.test.ts`），全仓 2330 passed，tsc 干净，frontend build 通过。
 - **引擎级备用模型路由 ✅（2026-08-20）主端点 429 不再直接甩错**：`EngineConfig.fallback`（baseUrl/apiKey 必填，缺一整块忽略并 warn 一行；strongModel/fastModel 缺省 `deepseek-v4-pro`/`deepseek-v4-flash`；protocol 未填走与主端点同一套推断）；纯函数 `resolveFallbackModel(config, requestedModel)` 两档映射——只有等于主端点 fastModel 才用备用快档，其余（含 writer route 的 opus）一律备用强档，**宁强勿弱**；`resolveEngineRoute` 原样继承顶层 fallback（本期无 per-route 备用）。切换点在 `callModel`：主端点 withRetry 烧完后，`config.fallback && isRetryable(err) && !signal?.aborted` 三个前提缺一不可才切——400/401/403 换端点照样错，用户中止更不许偷偷再叫一次模型；备用调用有自己的 `registerExchange`（观察器按 upstreamBase 分路由）+ 自己的 key/协议 + `withRetry({maxRetries:1})`，两端都倒时抛组合错误（`主端点: …；备用端点(deepseek): …`），不拿备用的错误盖掉主端点的病根。**红线：切换绝不静默**——`LoopEvent` 加 `{type:"fallback",from,to}`（union 化，tool 事件成员不变），chat-router 的 `chatProgressEvent()` 映射成进度条上的「主模型接不上，备用 DeepSeek 顶上了」（role:null、phase:"start"，dock 状态条只收 start）；run-log 两端各留一条——被救回来的主端点失败照样记 `ok:false`，成功那条的 model 字段是备用模型名（`callModel` 回传 `{data, model, primaryFailure}`，recorder 仍只在 runLoop 一处调）。流式语义天然覆盖：reset 发在每次 attempt 开头，备用 attempt 也是新 attempt，主端点吐了半句再断的场景屏幕上不会两段话拼一起。README「配置模型」加 fallback 示例（占位 key，真 key 不入仓库）。新增 17 测试（loop-fallback 8 / config 8 / chat-router 1），src/engine+src/desktop 516 → 533，全仓 2347，tsc 与 eslint 干净，frontend build 通过。偏离：① `LoopOptions` 加了 `retryMaxDelayMs`（镜像既有 `idleTimeoutMs` 的测试注入口）——否则「烧完主端点重试」的每条测试都要真睡 7 秒，超过 vitest 默认 5s 超时；② fallback 是 per-call 救火而非本轮粘性切换：同一 turn 的下一次模型调用仍从主端点开始（主端点恢复后立刻回归，代价是每轮各烧一次重试预算）；③ 进度条事件的 `tool` 位用保留标记 `__fallback__`（该字段语义是模型给的工具名，这里无工具可填；渲染层只展示 label，未动前端）。
+- **Phase 4 ✅（2026-08-21）端点即用户数据**：`EngineProviderConfig{id,name,baseUrl,apiKey,protocol,models}` + `normalizeProviders`（**读取路径**逐条 fail-closed：id 必须 `[a-z0-9-]{1,32}`、`normalizeProviderBaseUrl` 只认 http/https 且禁 userinfo/查询串/锚点、去尾斜杠、localhost 放行、models≥1、缺 apiKey 丢弃，全程 console.warn 不 throw；**重复 id 两条都失效**，先数一遍 id 再解析，重复只 warn 一次）；name 缺省回落 id，protocol 未填走 inferProtocol。`resolveEngineConfigPath()` 抽出"实际生效的 engine.json 路径"（access 判定，子工作区继承默认工作区的语义与 loadEngineConfig 共用一处，loadEngineConfig 改为消费它——继承逻辑不再有第二份）。切换器：`chatModelOptions` 在四档之后追加 `{id:"p:<pid>:<model>", model, group:端点名}`（tier 项形状一个字段没动），`resolveChatModel` 的 `p:*` 分支按**前两个冒号**定界（模型名可含冒号，`qwen3:32b` 实测过），以顶层 config 为基底只覆盖 baseUrl/apiKey/protocol、删 fallback、**dataDir 留住**（run-log 落点），未命中 → 清洗后的"该模型未配置"。设置面：`settings:get` 的 providers 是 `{id,name,baseUrl,protocol,models,apiKeySet}`——**不回 key 也不回掩码**（掩码遇上数组整体替换会被当真值写回去）；`settings:set` 的 providers 按**字段存在性**判定（未提交保留、`[]` 清空、有数组走 merge），merge 语义落在新文件 `settings-providers.ts`：非空 apiKey 替换 / 已有 id 留空保留原值 / 新 id 无 key 拒绝 / 缺席=删除 / 数组内重复 id 拒绝，**整份原子**——任何一条非法都回具体原因且一个字节不写。新增通道 `settings:open_config`（打开 `resolveEngineConfigPath` 的结果，darwin=open / win32=cmd start / 其余 xdg-open，spawn 失败降级为"请手动打开 <路径>"，文件不存在明说没有）。前端：设置页「引擎 · 模型服务」区末尾加端点列表（每行 名称/地址/模型逗号输入/协议下拉[自动推断|openai|anthropic]/Key 输入框，placeholder 依 apiKeySet 分「已配置,留空保持不变」与「必填」，＋添加端点 / 删除 / 保存端点 / 打开配置文件），id 由 `provider-id.ts` 的 `slugProviderId` 在**首次提交前生成一次**并留在表单里（改名不重算，冲突加 `-2`，纯中文名回落 `endpoint`），服务端拒绝时错误原样 toast；`model-choice.ts` 的选项类型改为 `{id,model,tier?,group?}`，`groupModelOptions` 把四档置顶、自定义端点按端点名 optgroup，provider 项 label 只有模型名（组标题已是端点名）。陈旧 `p:*` 沿用既有"清单里没有就回落 fast 并覆写存储"的机制，加测试钉住。新增 44 测试（engine/config 11：normalizeProviders 全形态 + resolveEngineConfigPath 继承；chat-model-choice 9：p:* 解析/冒号模型名/dataDir 保留/fallback 删除/未命中清洗 + model_options 含 group 且零凭证 + runChatTurn 真打到自定义端点；settings-providers 13：视图无 key 无掩码 / merge 六条语义 / 12 种非法输入整拒且文件零改动 / open_config 三平台分支与两个降级出口 + 通道登记；前端 model-choice 6 + provider-id 5），src/desktop+src/engine+frontend/src/chat 640 passed，全仓 2416 passed，tsc 与 eslint 干净，frontend build 通过。真机烟测（临时 AUTOCREW_DATA_DIR + 本地 server + 浏览器）：设置页「＋添加端点」→ 填「本地 Ollama / http://localhost:11434/v1/ / qwen3:32b, llama4 / key」→ 保存，落盘 id 为 `ollama`（name slug 化）、尾斜杠被归一化、模型按逗号拆开、行头出现 id 徽标且 Key 框变「已配置,留空保持不变」；刷新后对话切换器顶部仍是四档、下面多出 optgroup「本地 Ollama」含 `p:ollama:qwen3:32b`/`p:ollama:llama4`（label 只有模型名）；localStorage 塞进陈旧的 `p:gone:some-model` 后刷新回落 fast 并覆写存储；再加一条 `ftp://` 地址的端点保存 → toast 原样显示服务端的「端点「坏端点」的地址不合法：只支持 http/https，且不能带账密、查询串或锚点」，已存的那条一个字节没动。偏离：① settings:get 的 providers 用**宽容读**（坏条目照样显示）而不是引擎那套逐条丢弃——用户得先看得见才能改，真正的把关在写入侧；② `name` 在写入侧是必填（读取侧缺省回落 id）：它就是切换器上的分组标题，空标题的分组没法用；③ `protocol` 留空**不落盘**（每次按当前 key/域名推断），只有用户显式选了才写——否则"自动推断"会在下一次保存时被悄悄钉死成旧值；④ 「打开配置文件」开的是继承后**实际读到**的那份（codex #13），而设置页读写的是本工作区自己的 engine.json，子工作区尚未写过配置时这两者是不同文件——按 spec 取实际生效路径；⑤ ipc.test.ts 的通道计数与 CHANNEL_ACTIONS 排除表没同步新通道（该文件整体 0 测试执行，属预存在问题，与 Phase 3 新增通道时的处理一致）。
 - 预存在问题（非本期引入）：src/desktop/ipc.test.ts 第 39 行 describe 未闭合导致整文件 0 测试执行（已开独立修复任务）；src/desktop/inbox-handlers.test.ts「attempts 超限项被重跑」与 research-runtime.test.ts「四拍进度」在全仓并发下偶发超时（单独跑稳定通过）。
 
 ## 评审记录

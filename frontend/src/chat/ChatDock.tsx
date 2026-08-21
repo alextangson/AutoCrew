@@ -24,6 +24,7 @@ import {
 import { EMPTY_STREAM, applyDelta, clearStream, parseDeltaFrame, startStream } from "./delta-stream";
 import {
   DEFAULT_CHAT_MODEL,
+  groupModelOptions,
   modelOptionLabel,
   parseModelOptions,
   readModelChoice,
@@ -345,6 +346,9 @@ export function ChatDock(props: {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
   }, [msgs, progress, stream.text]);
 
+  // 四档置顶 + 自定义端点按端点名 optgroup（清单本身低频变化，随渲染算即可）
+  const modelGroups = groupModelOptions(modelOptions);
+
   return (
     <div className="chat">
       <div className="chat-head mono">
@@ -459,8 +463,15 @@ export function ChatDock(props: {
                 writeModelChoice(e.target.value);
               }}
             >
-              {modelOptions.map((o) => (
+              {modelGroups.plain.map((o) => (
                 <option key={o.id} value={o.id}>{modelOptionLabel(o)}</option>
+              ))}
+              {modelGroups.groups.map((g) => (
+                <optgroup key={g.name} label={g.name}>
+                  {g.options.map((o) => (
+                    <option key={o.id} value={o.id}>{modelOptionLabel(o)}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>

@@ -21,6 +21,23 @@ export interface EngineFallbackConfig {
   protocol: EngineProtocol;
 }
 
+/**
+ * 用户自定义端点（设计 §Phase 4：端点即用户数据）。主端点与 fallback 是引擎默认档与
+ * 自动兜底，providers 只是**额外**可选端点：只有对话切换器点名时才用到，
+ * routes/写手席/analytics 一概不受影响。
+ * id 由创建方生成一次并落盘（改名不重算）——切换器的选项 id 靠它稳定。
+ */
+export interface EngineProviderConfig {
+  id: string;
+  /** 显示名（切换器的 optgroup 标题）；缺省回落 id */
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  protocol: EngineProtocol;
+  /** 至少一个；切换器按 端点 × 模型 展开 */
+  models: string[];
+}
+
 export interface EngineConfig {
   apiKey: string;
   baseUrl: string;
@@ -35,6 +52,11 @@ export interface EngineConfig {
    * route 不单独配备用，resolveEngineRoute 原样继承顶层这一块。
    */
   fallback?: EngineFallbackConfig;
+  /**
+   * 用户自定义端点（可选）；缺失/全非法 = 与今天完全一致（切换器只有四档）。
+   * 读取路径逐条 fail-closed（见 normalizeProviders），永不因为一条坏配置拖垮引擎加载。
+   */
+  providers?: EngineProviderConfig[];
   /**
    * 上游协议:openai = /chat/completions(缺省);anthropic = /v1/messages
    * (Claude 系中转,创始人实际付费通道 2026-07-08)。loadEngineConfig 必解析;
@@ -162,6 +184,103 @@ function normalizeFallback(value: unknown): EngineFallbackConfig | undefined {
   };
 }
 
+/** 自定义端点 id 的字符集：切换器的选项 id 是 `p:<id>:<model>`，冒号定界要求 id 里不能有冒号 */
+export const PROVIDER_ID_RE = /^[a-z0-9-]{1,32}$/;
+
+/**
+ * 端点 baseUrl 归一化（读取与写入两路共用同一把尺）：
+ * 只认 http/https、禁 userinfo（账密会随日志外泄）/查询串/锚点、去尾斜杠；
+ * localhost 显式放行——本地跑的模型服务是常见形态。
+ * 返回 null = 不合法（读取路径丢弃该条，写入路径拒绝整次提交）。
+ */
+export function normalizeProviderBaseUrl(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  if (url.search || url.hash) return null;
+  if (!url.hostname) return null;
+  return url.href.replace(/\/+$/, "");
+}
+
+/**
+ * 自定义端点解析（**读取路径**：逐条 fail-closed，坏的丢掉、好的照用）。
+ * 三条纪律：
+ * 1. id 格式非法 / baseUrl 非法 / 缺 apiKey / models 为空 → 丢弃该条并 warn 一行。
+ * 2. **重复 id 全部失效**：首赢还是末赢都是静默换端点，最贵的那种失败——两条都丢。
+ * 3. 全程不 throw：一条坏端点不该让整个引擎起不来。
+ * 写入路径是另一套规矩（settings:set 整份原子校验，不逐条丢弃——那会丢用户数据）。
+ */
+export function normalizeProviders(value: unknown): EngineProviderConfig[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    console.warn("[engine] engine.json 的 providers 不是数组，已忽略全部自定义端点");
+    return undefined;
+  }
+  // 先数一遍 id：重复的整组失效，不进解析
+  const counts = new Map<string, number>();
+  for (const item of value) {
+    const id = (item as { id?: unknown })?.id;
+    if (typeof id === "string" && PROVIDER_ID_RE.test(id.trim())) {
+      const key = id.trim();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  const warnedDup = new Set<string>();
+  const parsed: EngineProviderConfig[] = [];
+  for (const [i, item] of value.entries()) {
+    const at = `第 ${i + 1} 条自定义端点`;
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      console.warn(`[engine] ${at}不是对象，已丢弃`);
+      continue;
+    }
+    const p = item as Partial<EngineProviderConfig>;
+    const id = typeof p.id === "string" ? p.id.trim() : "";
+    if (!PROVIDER_ID_RE.test(id)) {
+      console.warn(`[engine] ${at}的 id 不合法（只允许小写字母/数字/连字符，1–32 位），已丢弃`);
+      continue;
+    }
+    if ((counts.get(id) ?? 0) > 1) {
+      if (!warnedDup.has(id)) {
+        console.warn(`[engine] 自定义端点 id「${id}」重复，同 id 的条目全部失效——请在设置里改成唯一 id`);
+        warnedDup.add(id);
+      }
+      continue;
+    }
+    const baseUrl = normalizeProviderBaseUrl(p.baseUrl);
+    if (!baseUrl) {
+      console.warn(`[engine] 自定义端点「${id}」的 baseUrl 不合法（只支持 http/https，且不能带账密/查询串/锚点），已丢弃`);
+      continue;
+    }
+    const apiKey = typeof p.apiKey === "string" ? p.apiKey.trim() : "";
+    if (!apiKey) {
+      console.warn(`[engine] 自定义端点「${id}」缺 apiKey，已丢弃`);
+      continue;
+    }
+    const models = Array.isArray(p.models)
+      ? p.models.filter((m): m is string => typeof m === "string" && Boolean(m.trim())).map((m) => m.trim())
+      : [];
+    if (!models.length) {
+      console.warn(`[engine] 自定义端点「${id}」没有可用模型（models 至少要有一个），已丢弃`);
+      continue;
+    }
+    parsed.push({
+      id,
+      name: typeof p.name === "string" && p.name.trim() ? p.name.trim() : id,
+      baseUrl,
+      apiKey,
+      protocol: inferProtocol(apiKey, baseUrl, p.protocol),
+      models,
+    });
+  }
+  return parsed.length ? parsed : undefined;
+}
+
 /**
  * 档位映射（纯函数）：请求的是主端点快档 → 备用快档；其余一律备用强档。
  * route 专属模型（如 writer 的 opus）也算强档——宁强勿弱，备用不许悄悄降质。
@@ -207,25 +326,41 @@ export function resolveEngineRoute(
   };
 }
 
+/**
+ * 本次**实际生效**的 engine.json 路径（"打开配置文件"入口据此打开，不能打开继承前的空路径）。
+ * 多工作区:子工作区（<default>/workspaces/ 下,即注册表创建的）没有自己的 engine.json 时
+ * 回退默认工作区——同一个人,key 不用配两遍。判据收紧到 workspaces/ 前缀:
+ * 任意外部 dataDir（MCP 调用方/测试临时目录）不得静默回退偷读用户真实 key。
+ * 两处都没有文件时返回本工作区的路径——那正是保存时会写入的位置。
+ */
+export async function resolveEngineConfigPath(dataDir?: string): Promise<string> {
+  const filePath = path.join(getDataDir(dataDir), "engine.json");
+  try {
+    await fs.access(filePath);
+    return filePath;
+  } catch {
+    /* 本工作区没有,看看能不能继承默认工作区 */
+  }
+  const workspacesRoot = path.join(getDataDir(), "workspaces") + path.sep;
+  if (getDataDir(dataDir).startsWith(workspacesRoot)) {
+    const defaultPath = path.join(getDataDir(), "engine.json");
+    try {
+      await fs.access(defaultPath);
+      return defaultPath;
+    } catch {
+      /* 默认工作区也没有 */
+    }
+  }
+  return filePath;
+}
+
 export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> {
   let fromFile: Partial<EngineConfig> = {};
-  const filePath = path.join(getDataDir(dataDir), "engine.json");
+  const filePath = await resolveEngineConfigPath(dataDir);
   try {
     fromFile = parseEngineJson(await fs.readFile(filePath, "utf-8"), filePath);
   } catch (err) {
     if ((err as { code?: string }).code !== "ENOENT") throw err;
-    // 多工作区:子工作区（<default>/workspaces/ 下,即注册表创建的）没有自己的 engine.json 时
-    // 回退默认工作区——同一个人,key 不用配两遍。判据收紧到 workspaces/ 前缀:
-    // 任意外部 dataDir（MCP 调用方/测试临时目录）不得静默回退偷读用户真实 key。
-    const workspacesRoot = path.join(getDataDir(), "workspaces") + path.sep;
-    if (getDataDir(dataDir).startsWith(workspacesRoot)) {
-      const defaultPath = path.join(getDataDir(), "engine.json");
-      try {
-        fromFile = parseEngineJson(await fs.readFile(defaultPath, "utf-8"), defaultPath);
-      } catch (fallbackErr) {
-        if ((fallbackErr as { code?: string }).code !== "ENOENT") throw fallbackErr;
-      }
-    }
   }
   const apiKey = fromFile.apiKey ?? (process.env.DEEPSEEK_API_KEY || undefined);
   if (!apiKey) {
@@ -237,6 +372,7 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   const protocol = inferProtocol(apiKey, baseUrl, fromFile.protocol);
   const routes = normalizeRoutes(fromFile.routes);
   const fallback = normalizeFallback(fromFile.fallback);
+  const providers = normalizeProviders(fromFile.providers);
   return {
     apiKey,
     baseUrl,
@@ -246,5 +382,6 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
     dataDir: getDataDir(dataDir),
     ...(routes ? { routes } : {}),
     ...(fallback ? { fallback } : {}),
+    ...(providers ? { providers } : {}),
   };
 }
