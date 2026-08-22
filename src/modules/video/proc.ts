@@ -15,11 +15,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { runLoop } from "../../engine/loop.js";
 
-/** 全线 DI 口子。`spawnImpl` 与 `node:child_process.spawn` 签名兼容（测试注入假进程） */
+/**
+ * 全线 DI 口子。`spawnImpl` 与 `node:child_process.spawn` 签名兼容（测试注入假进程）；
+ * `runLoopImpl` 是 V0b 粗剪的模型调用口——测试一律注入假实现，绝不真调模型。
+ */
 export interface VideoDeps {
   spawnImpl?: typeof spawn;
   nowImpl?: () => number;
+  runLoopImpl?: typeof runLoop;
 }
 
 export function nowMs(deps?: VideoDeps): number {

@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { addAsset, saveContent } from "../../storage/local-store.js";
+import type { runLoop } from "../../engine/loop.js";
 import { runProcess } from "./proc.js";
 import type { VideoTranscript } from "./types.js";
 
@@ -79,6 +80,90 @@ export function fixtureTranscript(): VideoTranscript {
       },
     ],
   };
+}
+
+/**
+ * 词覆盖完整的两句转写（每个词恰好对上 text 里的一个字）。
+ * `fixtureTranscript` 的「聊聊」没有词时间戳，覆盖率只有 83%，会被粗剪的前置健康检查
+ * 挡在门外——那条路径也要测，但走 AI 分支时得用这一份。
+ */
+export function fixtureDenseTranscript(): VideoTranscript {
+  const word = (w: string, startMs: number, endMs: number) => ({ w, startMs, endMs });
+  return {
+    schemaVersion: 1,
+    source: "funasr",
+    segments: [
+      {
+        id: "seg-0001",
+        text: "今天聊聊效率",
+        startMs: 0,
+        endMs: 600,
+        words: [word("今", 0, 100), word("天", 100, 200), word("聊", 200, 300), word("聊", 300, 400), word("效", 400, 500), word("率", 500, 600)],
+      },
+      {
+        id: "seg-0002",
+        text: "今天聊聊效率",
+        startMs: 1000,
+        endMs: 1600,
+        words: [word("今", 1000, 1100), word("天", 1100, 1200), word("聊", 1200, 1300), word("聊", 1300, 1400), word("效", 1400, 1500), word("率", 1500, 1600)],
+      },
+    ],
+  };
+}
+
+export type FakeTurns = Array<Record<string, unknown>>;
+
+/**
+ * 假 runLoop —— **测试绝不真调模型**。按 `turns` 里的参数依次调第一个工具；
+ * 工具返回 `Error:` 开头的串就相当于模型被打回，继续下一轮（自纠语义）。
+ * `turns` 为空 = 模型一次工具都没调。
+ *
+ * 传函数形态可以按本次调用的 userMessage 决定回什么——粗剪分窗后每次调用只看一段词流，
+ * 分窗测试要靠它给不同窗口不同答案（函数里 throw 就是那一窗调用失败）。
+ */
+export function fakeRunLoop(turns: FakeTurns | ((userMessage: string) => FakeTurns)): typeof runLoop {
+  return (async (_config, opts) => {
+    const tool = opts.tools?.[0];
+    const plan = typeof turns === "function" ? turns(opts.userMessage) : turns;
+    const outputs: string[] = [];
+    for (const args of plan.slice(0, opts.maxTurns ?? 6)) {
+      if (!tool) break;
+      outputs.push(await tool.execute(args));
+    }
+    return {
+      finalMessage: outputs.at(-1) ?? "",
+      turns: outputs.length,
+      totalTokens: 0,
+      toolCallCount: outputs.length,
+      stopReason: "no_tool_calls",
+    };
+  }) as typeof runLoop;
+}
+
+/** 从粗剪的 userMessage 里读出本次窗口的合法索引区间（分窗测试用） */
+export function windowOf(userMessage: string): { from: number; to: number } {
+  const m = /合法索引区间 \[(\d+), (\d+)\)/.exec(userMessage);
+  if (!m) throw new Error(`userMessage 里找不到窗口区间：${userMessage.slice(0, 200)}`);
+  return { from: Number(m[1]), to: Number(m[2]) };
+}
+
+/** 模型调用直接炸（无 key / 端点挂了）——降级必须可见，不许被吞 */
+export function throwingRunLoop(message: string): typeof runLoop {
+  return (() => Promise.reject(new Error(message))) as typeof runLoop;
+}
+
+/**
+ * 种一份引擎配置。**测试必须显式种它**：否则 `loadEngineConfig` 会去读
+ * `process.env.DEEPSEEK_API_KEY`，跑测试的人配没配 key 会让结果不一样。
+ * baseUrl 指向不可解析的域名，就算哪天真调了也打不出去。
+ */
+export async function seedEngineConfig(dataDir: string): Promise<void> {
+  await fs.mkdir(dataDir, { recursive: true });
+  await fs.writeFile(
+    path.join(dataDir, "engine.json"),
+    JSON.stringify({ apiKey: "test-key", baseUrl: "https://engine.invalid", strongModel: "test-strong" }),
+    "utf-8",
+  );
 }
 
 /** 稿件 + A-roll 素材一把种好；返回 contentId 与 A-roll 在稿件里的绝对路径 */

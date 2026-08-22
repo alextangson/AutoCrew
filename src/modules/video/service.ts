@@ -21,6 +21,7 @@ import { createVideoRunner, type VideoRunner } from "./runner.js";
 import type { VideoDeps } from "./proc.js";
 import {
   latestJobsView,
+  readEditUnits,
   readVersioned,
   readVideoJobs,
   readVideoState,
@@ -28,7 +29,16 @@ import {
   videoDir,
   writeVersioned,
 } from "./video-store.js";
-import type { CutFlag, VideoCut, VideoJob, VideoPhase, VideoState, VideoTranscript } from "./types.js";
+import type {
+  CutFlag,
+  TranscriptSegment,
+  VideoCut,
+  VideoEditUnits,
+  VideoJob,
+  VideoPhase,
+  VideoState,
+  VideoTranscript,
+} from "./types.js";
 
 /** 乐观锁冲突：调用方据此提示「有人改过了，已为你重载」，而不是当作系统故障 */
 export class VideoConflictError extends Error {
@@ -60,13 +70,22 @@ export interface VideoStatus {
   jobs: VideoJob[];
 }
 
+/** 选段视图要的一整套：转写（事实）、剪辑单元（派生，可能不存在）、当前决策 */
+export interface CutView {
+  transcript: VideoTranscript;
+  cut: VideoCut;
+  editUnits?: VideoEditUnits;
+}
+
 export interface VideoService {
   startBuild(contentId: string): Promise<VideoState>;
   confirmCut(contentId: string, args: ConfirmCutArgs): Promise<VideoState>;
   confirmReview(contentId: string, args: ConfirmReviewArgs): Promise<VideoState>;
+  /** 重新跑一次 AI 粗剪（粗剪 spec §3.4）；人工已终裁的那版不许被后台覆盖 */
+  rerunRoughCut(contentId: string): Promise<VideoState>;
   retry(contentId: string): Promise<VideoState>;
   getStatus(contentId: string): Promise<VideoStatus | null>;
-  getTranscript(contentId: string): Promise<{ transcript: VideoTranscript; cut: VideoCut } | null>;
+  getTranscript(contentId: string): Promise<CutView | null>;
   warmupAsr(): Promise<{ status: string }>;
   asrStatus(): Promise<{ status: string; detail?: string }>;
   shutdown(): Promise<void>;
@@ -172,17 +191,29 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
     }
   }
 
-  function assertKeeps(transcript: VideoTranscript, args: ConfirmCutArgs): void {
-    const known = new Set(transcript.segments.map((s) => s.id));
+  function assertKeeps(segments: TranscriptSegment[], args: ConfirmCutArgs): void {
+    const known = new Set(segments.map((s) => s.id));
     const unknown = [...new Set([...args.keeps, ...args.flags.map((f) => f.segmentId)])].filter((id) => !known.has(id));
     if (unknown.length > 0) throw new Error(`引用了转写里不存在的分句：${unknown.join("、")}`);
     if (args.keeps.length === 0) {
       throw new Error(
-        transcript.segments.length === 0
+        segments.length === 0
           ? "这条素材没转写出任何一句（纯音乐或全程静音？），换素材或重跑转写"
           : "一句都没勾选，成片会是空的——至少留一句",
       );
     }
+  }
+
+  /**
+   * 单元表随 cut 一起进新版本：cut.vK 与 edit-units.vK 必须同号，否则 assemble 会拿
+   * 新 keeps 去 transcript.segments 里找 unit id，当场找不到。
+   * AI 的 suggestedDrops 与 provenance 原样留着——人「恢复全留」之后，那仍是只读证据。
+   */
+  async function carryEditUnits(dir: string, base: VideoEditUnits | null, revision: number, flags: CutFlag[]): Promise<void> {
+    if (!base) return;
+    // warning 是「AI 那一轮出了什么状况」，人已经处理完了，不该跟着新版本继续报警
+    const { warning: _handled, ...rest } = base;
+    await writeVersioned(dir, "edit-units", revision, { ...rest, flags });
   }
 
   function confirmCut(contentId: string, args: ConfirmCutArgs): Promise<VideoState> {
@@ -197,7 +228,8 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
       const transcriptRevision = state.revisions.transcript ?? 0;
       const transcript = await readVersioned<VideoTranscript>(dir, "transcript", transcriptRevision);
       if (!transcript) throw new Error(`读不到 transcript.v${transcriptRevision}，请重跑转写`);
-      assertKeeps(transcript, args);
+      const units = await readEditUnits(dir, args.baseCutRevision);
+      assertKeeps(units?.segments ?? transcript.segments, args);
 
       const cutRevision = (state.revisions.cut ?? 0) + 1;
       if (args.overlays?.length) await writeOverlaySlots(dataDir, contentId, cutRevision, args.overlays);
@@ -209,12 +241,33 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
         baseCutRevision: args.baseCutRevision,
       };
       await writeVersioned(dir, "cut", cutRevision, cut);
+      await carryEditUnits(dir, units, cutRevision, args.flags);
       const next = await write(contentId, (cur) => ({
         ...cur,
         phase: "assemble",
         state: "queued",
         revisions: { ...cur.revisions, cut: cutRevision },
       }));
+      runner.enqueue(contentId);
+      return next;
+    });
+  }
+
+  /**
+   * 重新跑 AI 粗剪（§3.4）。`retry` 只接受 failed/blocked，够不着「建议没产出但状态是
+   * awaiting_human」这一格，所以单开一个入口。**人工已终裁的那版禁止被后台覆盖**。
+   */
+  function rerunRoughCut(contentId: string): Promise<VideoState> {
+    return serialize(async () => {
+      const state = await requireState(contentId);
+      if (!(state.phase === "cut" && state.state === "awaiting_human")) {
+        throw new Error(`当前是 ${ref(state)}，还轮不到重跑 AI 粗剪`);
+      }
+      const cut = await readVersioned<VideoCut>(videoDir(dataDir, contentId), "cut", state.revisions.cut ?? 0);
+      if (cut?.origin === "human") {
+        throw new Error("这一版选段是你自己确认过的，AI 建议不会覆盖它——想重来请先重跑转写");
+      }
+      const next = await write(contentId, (cur) => ({ ...cur, phase: "cut", state: "queued" }));
       runner.enqueue(contentId);
       return next;
     });
@@ -277,14 +330,17 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
     });
   }
 
-  function getTranscript(contentId: string): Promise<{ transcript: VideoTranscript; cut: VideoCut } | null> {
+  function getTranscript(contentId: string): Promise<CutView | null> {
     return serialize(async () => {
       const { state } = await readVideoState(dataDir, contentId);
       if (!state?.revisions.transcript || !state.revisions.cut) return null;
       const dir = videoDir(dataDir, contentId);
       const transcript = await readVersioned<VideoTranscript>(dir, "transcript", state.revisions.transcript);
       const cut = await readVersioned<VideoCut>(dir, "cut", state.revisions.cut);
-      return transcript && cut ? { transcript, cut } : null;
+      if (!transcript || !cut) return null;
+      // 老产物没有 edit-units：面板据此回落 transcript.segments（§4）
+      const editUnits = await readEditUnits(dir, state.revisions.cut);
+      return { transcript, cut, ...(editUnits ? { editUnits } : {}) };
     });
   }
 
@@ -292,6 +348,7 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
     startBuild,
     confirmCut,
     confirmReview,
+    rerunRoughCut,
     retry,
     getStatus,
     getTranscript,

@@ -11,14 +11,17 @@ import { describe, expect, it } from "vitest";
 import {
   VIDEO_PHASE_LABEL,
   alignmentWarning,
+  formatMinutesSeconds,
   formatTimecode,
   keepsInTranscriptOrder,
+  roughCutSummary,
   videoBlockedGuide,
   videoFinalAssetName,
   videoMediaUrl,
   videoStateSummary,
   type TranscriptSegment,
   type VideoBlockedReason,
+  type VideoEditUnits,
   type VideoPhase,
   type VideoRunState,
   type VideoState,
@@ -134,6 +137,51 @@ describe("keepsInTranscriptOrder", () => {
 
   it("一句不留 = 空数组(交给后端拒,不在这里假装成功)", () => {
     expect(keepsInTranscriptOrder(segments, new Set<string>())).toEqual([]);
+  });
+});
+
+describe("formatMinutesSeconds", () => {
+  it("不足一分钟只报秒;坏值不显示成 NaN", () => {
+    expect(formatMinutesSeconds(45_000)).toBe("45 秒");
+    expect(formatMinutesSeconds(125_000)).toBe("2 分 5 秒");
+    expect(formatMinutesSeconds(Number.NaN)).toBe("0 秒");
+    expect(formatMinutesSeconds(-1)).toBe("0 秒");
+  });
+});
+
+describe("roughCutSummary", () => {
+  const units = (patch: Partial<VideoEditUnits>): VideoEditUnits => ({
+    schemaVersion: 1,
+    transcriptRevision: 1,
+    origin: "llm",
+    segments: [
+      { id: "unit-0001", text: "一", startMs: 0, endMs: 30_000 },
+      { id: "unit-0002", text: "二", startMs: 30_000, endMs: 90_000 },
+    ],
+    suggestedDrops: [],
+    flags: [],
+    ...patch,
+  });
+
+  it("报剔除数、总数与预计成片时长", () => {
+    const text = roughCutSummary(units({ suggestedDrops: ["unit-0001"] }))!;
+    expect(text).toContain("剔除 1 段");
+    expect(text).toContain("共 2 段");
+    expect(text).toContain("1 分 0 秒");
+  });
+
+  it("有剔除就说明切口是硬切——不静默假装无损", () => {
+    expect(roughCutSummary(units({ suggestedDrops: ["unit-0001"] }))).toContain("硬切");
+    expect(roughCutSummary(units({}))).not.toContain("硬切");
+  });
+
+  it("drops 为空但 AI 确实跑过 → 明说「认为无需剔除」", () => {
+    expect(roughCutSummary(units({}))).toContain("无需剔除");
+  });
+
+  it("全留版(raw)不报 AI 结论——AI 压根没跑,说「剔除 0 段」是骗人", () => {
+    expect(roughCutSummary(units({ origin: "raw" }))).toBeNull();
+    expect(roughCutSummary(undefined)).toBeNull();
   });
 });
 

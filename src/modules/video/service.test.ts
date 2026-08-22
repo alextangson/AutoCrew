@@ -8,9 +8,17 @@ import os from "node:os";
 import path from "node:path";
 import { listAssets, saveContent } from "../../storage/local-store.js";
 import { createVideoService, VideoConflictError, type VideoService } from "./service.js";
-import { fakeRenderSpawn, fakeUvSpawn, routedSpawn, seedVideoContent } from "./testkit.js";
+import {
+  fakeRenderSpawn,
+  fakeRunLoop,
+  fakeUvSpawn,
+  fixtureDenseTranscript,
+  routedSpawn,
+  seedEngineConfig,
+  seedVideoContent,
+} from "./testkit.js";
 import { readVersioned, videoDir } from "./video-store.js";
-import type { RenderManifest, VideoCut, VideoState } from "./types.js";
+import type { RenderManifest, VideoCut, VideoEditUnits, VideoState } from "./types.js";
 
 let dir: string;
 let contentId: string;
@@ -32,10 +40,17 @@ async function settled(): Promise<VideoState> {
   return (await service.getStatus(contentId))!.state;
 }
 
-function build(routes?: Parameters<typeof routedSpawn>[0]): VideoService {
+function build(
+  routes?: Parameters<typeof routedSpawn>[0],
+  turns: Array<Record<string, unknown>> = [],
+): VideoService {
   return createVideoService({
     dataDir: dir,
-    deps: { spawnImpl: routedSpawn(routes ?? { uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() }) },
+    // 模型调用一律注入假实现——这一层测的是状态与版本链，不是模型说了什么
+    deps: {
+      spawnImpl: routedSpawn(routes ?? { uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() }),
+      runLoopImpl: fakeRunLoop(turns),
+    },
     onEvent: (e) => events.push(e.contentId),
     onError: () => {},
   });
@@ -44,6 +59,7 @@ function build(routes?: Parameters<typeof routedSpawn>[0]): VideoService {
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-video-service-"));
   contentId = (await seedVideoContent(dir)).contentId;
+  await seedEngineConfig(dir);
   events = [];
   service = build();
 });
@@ -79,28 +95,35 @@ describe("全链走查", () => {
     await service.startBuild(contentId);
     const afterAsr = await settled();
     expect(describeState(afterAsr)).toBe("cut/awaiting_human");
-    expect(afterAsr.revisions).toEqual({ transcript: 1, cut: 1 });
+    // cut.v1 = 转写写的全留版；cut.v2 = 粗剪步的产物（夹具词覆盖不足，降级成全留 + warning）
+    expect(afterAsr.revisions).toEqual({ transcript: 1, cut: 2 });
 
-    // cut.v1 是全 keep 的默认决策，人只做减法
     const loaded = await service.getTranscript(contentId);
     expect(loaded?.cut).toMatchObject({ origin: "default_all", keeps: ["seg-0001", "seg-0002"] });
     expect(loaded?.transcript.scriptAlignment?.matchedRatio).toBeGreaterThan(0);
+    expect(loaded?.editUnits).toMatchObject({ origin: "raw" });
+    expect(loaded?.editUnits?.warning).toBeTruthy();
 
     const confirmed = await service.confirmCut(contentId, {
       keeps: ["seg-0001", "seg-0002"],
       flags: [{ segmentId: "seg-0002", flag: "repeat" }],
       baseTranscriptRevision: 1,
-      baseCutRevision: 1,
+      baseCutRevision: 2,
     });
     expect(describeState(confirmed)).toBe("assemble/queued");
 
     const afterRender = await settled();
     expect(describeState(afterRender)).toBe("review/awaiting_human");
-    expect(afterRender.revisions).toEqual({ transcript: 1, cut: 2, timeline: 1, rendered: 1 });
+    expect(afterRender.revisions).toEqual({ transcript: 1, cut: 3, timeline: 1, rendered: 1 });
+
+    // 单元表随 cut 进新版本，warning 不跟着走（人已经处理过了）
+    const carried = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 3);
+    expect(carried).toMatchObject({ origin: "raw", flags: [{ segmentId: "seg-0002", flag: "repeat" }] });
+    expect(carried?.warning).toBeUndefined();
 
     // 冻结的 manifest 字段齐全，AI 标注判定走 false 路径
     const manifest = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 1))!;
-    expect(manifest).toMatchObject({ cutRevision: 2, transcriptRevision: 1, durationMs: 2000, provenance: { hasAiClips: false, hasClonedVoice: false } });
+    expect(manifest).toMatchObject({ cutRevision: 3, transcriptRevision: 1, durationMs: 2000, provenance: { hasAiClips: false, hasClonedVoice: false } });
     expect(manifest.captions.words.length).toBeGreaterThan(0);
 
     // 成片就位并登记回稿件素材
@@ -117,22 +140,22 @@ describe("全链走查", () => {
   it("打回 → 重剪 → 再渲染：revision 链一致且旧成片留档", async () => {
     await service.startBuild(contentId);
     await settled();
-    await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 1 });
+    await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
     await settled();
 
     const bounced = await service.confirmReview(contentId, { renderedRevision: 1, verdict: "reject" });
     expect(describeState(bounced)).toBe("cut/awaiting_human");
 
-    const recut = await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    const recut = await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 3 });
     expect(describeState(recut)).toBe("assemble/queued");
     const after = await settled();
     expect(describeState(after)).toBe("review/awaiting_human");
-    expect(after.revisions).toEqual({ transcript: 1, cut: 3, timeline: 2, rendered: 2 });
+    expect(after.revisions).toEqual({ transcript: 1, cut: 4, timeline: 2, rendered: 2 });
 
-    const cut3 = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 3);
-    expect(cut3).toMatchObject({ origin: "human", baseCutRevision: 2, keeps: ["seg-0001"] });
+    const cut4 = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 4);
+    expect(cut4).toMatchObject({ origin: "human", baseCutRevision: 3, keeps: ["seg-0001"] });
     const m2 = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 2))!;
-    expect(m2.cutRevision).toBe(3);
+    expect(m2.cutRevision).toBe(4);
     expect(m2.durationMs).toBe(1000);
     // 旧成片不许被覆盖——「按哪版剪的」永远说得清
     await fs.access(path.join(videoDir(dir, contentId), "final.v1.mp4"));
@@ -142,14 +165,91 @@ describe("全链走查", () => {
   it("重开：done 的内容提交新选段直接重组装", async () => {
     await service.startBuild(contentId);
     await settled();
-    await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 1 });
+    await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
     await settled();
     await service.confirmReview(contentId, { renderedRevision: 1, verdict: "approve" });
 
-    const reopened = await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    const reopened = await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 3 });
     expect(describeState(reopened)).toBe("assemble/queued");
     expect(describeState(await settled())).toBe("review/awaiting_human");
   }, 120_000);
+});
+
+describe("AI 粗剪（LLM 一律注入假实现）", () => {
+  const dense = { uv: fakeUvSpawn("ok", fixtureDenseTranscript()), npm: fakeRenderSpawn() };
+  const drops = [{ startWord: 0, endWordExclusive: 3, flag: "repeat", quote: "今天聊" }];
+
+  async function withSuggestion(): Promise<void> {
+    await service.shutdown();
+    service = build(dense, [{ drops }]);
+    await service.startBuild(contentId);
+    await settled();
+  }
+
+  it("建议落进 cut.v2，面板拿到重分后的单元；确认后按单元组装出更短的成片", async () => {
+    await withSuggestion();
+    const loaded = (await service.getTranscript(contentId))!;
+    expect(loaded.editUnits).toMatchObject({ origin: "llm", suggestedDrops: ["unit-0001"] });
+    expect(loaded.editUnits?.warning).toBeUndefined();
+    // 预勾的就是补集
+    expect(loaded.cut.keeps).toEqual(["unit-0002", "unit-0003"]);
+    // 转写本身一个字都没被改（I2：事实与派生分家）
+    expect(loaded.transcript.segments.map((s) => s.id)).toEqual(["seg-0001", "seg-0002"]);
+
+    await service.confirmCut(contentId, {
+      keeps: loaded.cut.keeps,
+      flags: loaded.cut.flags,
+      baseTranscriptRevision: 1,
+      baseCutRevision: 2,
+    });
+    expect(describeState(await settled())).toBe("review/awaiting_human");
+    const manifest = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 1))!;
+    // 留下 unit-0002(300ms) + unit-0003(600ms)
+    expect(manifest.durationMs).toBe(900);
+    expect(manifest.arollVideo.segments).toEqual([
+      { sourceStartMs: 300, sourceEndMs: 600, outputStartMs: 0 },
+      { sourceStartMs: 1000, sourceEndMs: 1600, outputStartMs: 300 },
+    ]);
+  }, 90_000);
+
+  it("恢复全留：勾回单元全集照样能组装（单元 id 与 cut 同版本，不会对不上）", async () => {
+    await withSuggestion();
+    const loaded = (await service.getTranscript(contentId))!;
+    const all = loaded.editUnits!.segments.map((s) => s.id);
+    await service.confirmCut(contentId, {
+      keeps: all,
+      flags: loaded.cut.flags,
+      baseTranscriptRevision: 1,
+      baseCutRevision: 2,
+    });
+    expect(describeState(await settled())).toBe("review/awaiting_human");
+    // AI 的 flag 作为只读证据留着，没被「恢复全留」清掉
+    const carried = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 3);
+    expect(carried?.suggestedDrops).toEqual(["unit-0001"]);
+    expect(carried?.flags).toEqual([{ segmentId: "unit-0001", flag: "repeat" }]);
+  }, 90_000);
+
+  it("重跑 AI 粗剪：在人工门上可用，跑完仍停在人工门并产出新一版", async () => {
+    await withSuggestion();
+    expect(describeState(await service.rerunRoughCut(contentId))).toBe("cut/queued");
+    const after = await settled();
+    expect(describeState(after)).toBe("cut/awaiting_human");
+    expect(after.revisions.cut).toBe(3);
+    expect((await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 3))?.origin).toBe("llm");
+  }, 90_000);
+
+  it("人工终裁过的那一版禁止被后台建议覆盖", async () => {
+    await withSuggestion();
+    await service.confirmCut(contentId, { keeps: ["unit-0003"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    await settled();
+    await service.confirmReview(contentId, { renderedRevision: 1, verdict: "reject" });
+    await expect(service.rerunRoughCut(contentId)).rejects.toThrow(/你自己确认过/);
+  }, 120_000);
+
+  it("不在选段门上时重跑被拒（不把跑着的任务顶掉）", async () => {
+    await service.startBuild(contentId);
+    await expect(service.rerunRoughCut(contentId)).rejects.toThrow(/还轮不到/);
+  });
 });
 
 describe("乐观锁", () => {
@@ -167,14 +267,14 @@ describe("乐观锁", () => {
 
   it("引用不存在的分句 → 打回，不产出 cut", async () => {
     await expect(
-      service.confirmCut(contentId, { keeps: ["seg-9999"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 1 }),
+      service.confirmCut(contentId, { keeps: ["seg-9999"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 }),
     ).rejects.toThrow(/不存在的分句/);
-    expect(await readVersioned(videoDir(dir, contentId), "cut", 2)).toBeNull();
+    expect(await readVersioned(videoDir(dir, contentId), "cut", 3)).toBeNull();
   }, 60_000);
 
   it("一句都不留 → 当场拒，不用等到组装才发现", async () => {
     await expect(
-      service.confirmCut(contentId, { keeps: [], flags: [], baseTranscriptRevision: 1, baseCutRevision: 1 }),
+      service.confirmCut(contentId, { keeps: [], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 }),
     ).rejects.toThrow(/至少留一句/);
   }, 60_000);
 
@@ -183,7 +283,7 @@ describe("乐观锁", () => {
   }, 60_000);
 
   it("审的不是当前那版成片 → VideoConflictError", async () => {
-    await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 1 });
+    await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
     await settled();
     await expect(service.confirmReview(contentId, { renderedRevision: 99, verdict: "approve" })).rejects.toThrow(VideoConflictError);
   }, 90_000);

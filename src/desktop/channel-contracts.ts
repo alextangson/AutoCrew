@@ -155,6 +155,9 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "video:status": ["content_id"],
   "video:transcript_get": ["content_id"],
   "video:cut_confirm": ["content_id", "keeps", "base_transcript_revision", "base_cut_revision"],
+  // 重跑 AI 粗剪（粗剪 spec §3.4）：不带版本——它只是把 cut 的计算步重排一次，
+  // 会不会覆盖由 service 按当前 cut.origin 判（人工终裁过的一律拒）
+  "video:rough_cut_rerun": ["content_id"],
   "video:review_confirm": ["content_id", "rendered_revision", "verdict"],
   "video:retry": ["content_id"],
   "video:asr_warmup": [],

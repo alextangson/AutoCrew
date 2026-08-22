@@ -127,6 +127,28 @@ export interface CutFlag {
 /** 决策来源：default_all = V0a 首版全 keep；llm = 建议；human = 人工终裁 */
 export type CutOrigin = "default_all" | "llm" | "human";
 
+/**
+ * `video/edit-units.v<K>.json` —— **剪辑单位**（粗剪 spec §4）。K 与 cut revision 同号：
+ * 一版剪辑决策配一版单元表，消费方拿 `revisions.cut` 一个数就能同时定位两份产物。
+ *
+ * 为什么不直接改 transcript：I2「事实与派生分家」——`transcript.vN` 必须原样保留 FunASR
+ * 产物，重分出来的单元是派生物，混进去就再也说不清哪些边界是 ASR 给的、哪些是 LLM 划的。
+ * segments 与 `TranscriptSegment` 同形，`buildOutputMap` / `projectWordsToOutput` 无差别消费。
+ */
+export interface VideoEditUnits {
+  schemaVersion: 1;
+  transcriptRevision: number;
+  /** raw = transcript.segments 原样搬运（transcribe 阶段写，兜底）；llm = 按 drop 区间重分 */
+  origin: "raw" | "llm";
+  segments: TranscriptSegment[];
+  /** 建议剔除的 unit id；**是提案不是决定**（I4），最终 keeps 由人裁 */
+  suggestedDrops: string[];
+  flags: CutFlag[];
+  provenance?: { model: string; promptVersion: string; bodyHash: string; generatedAt: string };
+  /** 降级可见（I5）：AI 没跑/没采纳时这里写人话原因，面板出横幅 */
+  warning?: string;
+}
+
 /** `video/cut.v<M>.json` —— 只存决策，不复制任何 ASR 数据 */
 export interface VideoCut {
   /** 这份决策是对哪一版转写做的（乐观锁与漂移判定都靠它） */
@@ -351,8 +373,12 @@ export interface RenderManifest {
 // §3 执行模型 —— video/jobs.jsonl
 // ---------------------------------------------------------------------------
 
-/** 只有这三步值得开 job：cut/review 是人工门，ingest 是同步校验 */
-export type VideoJobPhase = "transcribe" | "assemble" | "render";
+/**
+ * 值得开 job 的四步。cut 从 V0b 起有了计算步（AI 粗剪），所以它也要 lease/心跳/CAS——
+ * 人工门是 `cut/awaiting_human`，门前那一道计算跟其它阶段一样要被调度纪律管住。
+ * review 仍是纯人工门，ingest 是同步校验，两者不开 job。
+ */
+export type VideoJobPhase = "transcribe" | "cut" | "assemble" | "render";
 
 export type VideoJobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -377,4 +403,6 @@ export interface VideoJob {
   outputRevision?: number;
   errorCode?: string;
   failReason?: string;
+  /** 跑完了但结果没达成（AI 粗剪降级）：status 仍是 succeeded，原因留在台账里可追 */
+  warning?: string;
 }

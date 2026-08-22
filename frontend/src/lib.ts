@@ -247,6 +247,29 @@ export interface VideoCut {
 }
 
 /**
+ * 剪辑单元表(粗剪 spec §4)。V0b 起 **勾选列表渲染的是它的 segments**,不是 transcript
+ * 的 VAD 分句——AI 按词区间重分过,单元边界与分句不再一一对应。老产物没有这份,回落
+ * transcript.segments。
+ */
+export interface VideoEditUnits {
+  schemaVersion: 1;
+  transcriptRevision: number;
+  origin: "raw" | "llm";
+  segments: TranscriptSegment[];
+  suggestedDrops: string[];
+  flags: CutFlag[];
+  provenance?: { model: string; promptVersion: string; bodyHash: string; generatedAt: string };
+  /** 非空 = AI 粗剪降级了(没 key/词流不健康/建议过激),面板必须原样把这句话摆出来 */
+  warning?: string;
+}
+
+export interface CutView {
+  transcript: VideoTranscript;
+  cut: VideoCut;
+  editUnits?: VideoEditUnits;
+}
+
+/**
  * video:* 的统一返回信封。`conflict:true` 是**一等结果不是故障**
  * (video-handlers.ts 纪律 4):调用方据此提示「版本过期,已为你重载」。
  */
@@ -271,7 +294,11 @@ export const videoStatus = (contentId: string) =>
   videoInvoke<VideoStatusData | null>("video:status", { content_id: contentId });
 
 export const videoTranscriptGet = (contentId: string) =>
-  videoInvoke<{ transcript: VideoTranscript; cut: VideoCut } | null>("video:transcript_get", { content_id: contentId });
+  videoInvoke<CutView | null>("video:transcript_get", { content_id: contentId });
+
+/** 重跑 AI 粗剪(粗剪 spec §3.4);人工确认过的那版后端会拒,错误原样透传 */
+export const videoRoughCutRerun = (contentId: string) =>
+  videoInvoke<{ state: VideoState }>("video:rough_cut_rerun", { content_id: contentId });
 
 export const videoCutConfirm = (args: {
   contentId: string;
@@ -425,9 +452,36 @@ export function keepsInTranscriptOrder(segments: TranscriptSegment[], kept: Read
   return segments.filter((s) => kept.has(s.id)).map((s) => s.id);
 }
 
+/** 「X 分 Y 秒」——预计成片时长给人的读法,不用 mm:ss(那是时间码,不是时长) */
+export function formatMinutesSeconds(ms: number): string {
+  const total = Math.round((Number.isFinite(ms) && ms > 0 ? ms : 0) / 1000);
+  const m = Math.floor(total / 60);
+  return m > 0 ? `${m} 分 ${total - m * 60} 秒` : `${total} 秒`;
+}
+
+/**
+ * AI 粗剪结果条(粗剪 spec §6)。只有 `origin:"llm"` 才有 AI 结论可报——
+ * 全留版(raw)说「AI 剔除 0 段」会让人以为 AI 看过了,而它其实压根没跑。
+ */
+export function roughCutSummary(units?: VideoEditUnits): string | null {
+  if (!units || units.origin !== "llm") return null;
+  const dropped = new Set(units.suggestedDrops);
+  const keptMs = units.segments.reduce(
+    (sum, s) => (dropped.has(s.id) ? sum : sum + Math.max(0, s.endMs - s.startMs)),
+    0,
+  );
+  const head = dropped.size === 0 ? "AI 认为无需剔除" : `剔除 ${dropped.size} 段`;
+  const body = `AI 粗剪:${head} / 共 ${units.segments.length} 段,预计成片 ${formatMinutesSeconds(keptMs)}`;
+  // 切口是硬切,这一版不做淡入淡出(粗剪 spec §7 #15)——不静默假装无损
+  return dropped.size === 0 ? body : `${body}。剔除处是硬切,这一版不做淡入淡出`;
+}
+
 /** matchedRatio < 0.5 → 不给建议权,人要逐句盯(§4.4 / §10);没有对齐数据就不吓唬人 */
 export function alignmentWarning(t: VideoTranscript | null): string | null {
   const ratio = t?.scriptAlignment?.matchedRatio;
   if (typeof ratio !== "number" || ratio >= 0.5) return null;
-  return `转写和口播稿只对上 ${Math.round(ratio * 100)}% —— 可能念得跟稿子差很多(或转写不准)。这一版默认全留,请逐句自己确认。`;
+  return (
+    `转写和口播稿只对上 ${Math.round(ratio * 100)}% —— 可能念得跟稿子差很多(或转写不准)。` +
+    "AI 粗剪只给「重复/念错」建议,「跑题」判断已禁用(没有可靠准绳)。请逐句自己复核。"
+  );
 }

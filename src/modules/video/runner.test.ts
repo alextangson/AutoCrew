@@ -6,9 +6,18 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { updateContent } from "../../storage/local-store.js";
 import { ingestAroll } from "./ingest.js";
 import { createVideoRunner } from "./runner.js";
-import { fakeRenderSpawn, fakeUvSpawn, routedSpawn, seedVideoContent } from "./testkit.js";
+import {
+  fakeRenderSpawn,
+  fakeRunLoop,
+  fakeUvSpawn,
+  fixtureDenseTranscript,
+  routedSpawn,
+  seedEngineConfig,
+  seedVideoContent,
+} from "./testkit.js";
 import {
   appendVideoJob,
   readVersioned,
@@ -16,8 +25,9 @@ import {
   readVideoState,
   videoDir,
   videoJobsPath,
+  writeVersioned,
 } from "./video-store.js";
-import type { VideoCut, VideoJob, VideoState } from "./types.js";
+import type { VideoCut, VideoEditUnits, VideoJob, VideoState } from "./types.js";
 
 let dir: string;
 let contentId: string;
@@ -25,19 +35,27 @@ let contentId: string;
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-video-runner-"));
   contentId = (await seedVideoContent(dir)).contentId;
+  await seedEngineConfig(dir);
 });
 
 afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-function makeRunner(routes: Parameters<typeof routedSpawn>[0], extra?: { onStateWritten?: (id: string) => void }) {
+type Deps = NonNullable<Parameters<typeof createVideoRunner>[0]["deps"]>;
+
+function makeRunner(
+  routes: Parameters<typeof routedSpawn>[0],
+  extra?: { onStateWritten?: (id: string) => void; runLoopImpl?: Deps["runLoopImpl"] },
+) {
+  const { runLoopImpl, ...rest } = extra ?? {};
   return createVideoRunner({
     dataDir: dir,
-    deps: { spawnImpl: routedSpawn(routes) },
+    // 模型调用一律注入假实现，测试永不真调模型
+    deps: { spawnImpl: routedSpawn(routes), runLoopImpl: runLoopImpl ?? fakeRunLoop([]) },
     launchId: "test",
     onError: () => {},
-    ...extra,
+    ...rest,
   });
 }
 
@@ -68,7 +86,7 @@ async function rawJobs(): Promise<VideoJob[]> {
 }
 
 describe("阶段推进", () => {
-  it("ingest → transcribe 自动接续 → 停在 cut 的人工门，cut.v1 全 keep", async () => {
+  it("ingest → transcribe → cut 计算步 → 停在 cut 的人工门；两版 cut 都是全 keep", async () => {
     await forceState({ phase: "ingest", state: "queued" });
     const runner = makeRunner({ uv: fakeUvSpawn("ok") });
     runner.enqueue(contentId);
@@ -76,11 +94,81 @@ describe("阶段推进", () => {
 
     expect(await currentRef()).toBe("cut/awaiting_human");
     const { state } = await readVideoState(dir, contentId);
-    expect(state?.revisions).toEqual({ transcript: 1, cut: 1 });
+    expect(state?.revisions).toEqual({ transcript: 1, cut: 2 });
 
     const cut = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 1);
     expect(cut).toMatchObject({ transcriptRevision: 1, origin: "default_all", flags: [] });
     expect(cut?.keeps).toEqual(["seg-0001", "seg-0002"]);
+    // 夹具的「聊聊」没有词时间戳（覆盖率 83%），AI 粗剪被健康检查挡下 → 降级全留 + warning
+    const units = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 2);
+    expect(units).toMatchObject({ origin: "raw", suggestedDrops: [] });
+    expect(units?.warning).toContain("覆盖率");
+    expect((await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 2))?.keeps).toEqual(["seg-0001", "seg-0002"]);
+  }, 30_000);
+
+  it("词流健康时 AI 建议真的落进 cut.v2：staging 先落盘，CAS 通过后才定版本", async () => {
+    await forceState({ phase: "ingest", state: "queued" });
+    const drops = [{ startWord: 0, endWordExclusive: 3, flag: "repeat", quote: "今天聊" }];
+    const runner = makeRunner(
+      { uv: fakeUvSpawn("ok", fixtureDenseTranscript()) },
+      { runLoopImpl: fakeRunLoop([{ drops }]) },
+    );
+    runner.enqueue(contentId);
+    await runner.whenIdle();
+
+    expect(await currentRef()).toBe("cut/awaiting_human");
+    const units = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 2);
+    expect(units).toMatchObject({ origin: "llm", suggestedDrops: ["unit-0001"] });
+    const cut = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 2);
+    expect(cut).toMatchObject({ origin: "llm", baseCutRevision: 1, keeps: ["unit-0002", "unit-0003"] });
+    // staging 已经改名走了，不留半成品
+    const names = await fs.readdir(videoDir(dir, contentId));
+    expect(names.filter((n) => n.includes(".staging."))).toEqual([]);
+
+    const cutJob = (await readVideoJobs(dir)).filter((j) => j.phase === "cut").at(-1)!;
+    expect(cutJob).toMatchObject({ status: "succeeded", outputRevision: 2 });
+    expect(cutJob.warning).toBeUndefined();
+    // inputKey 含转写版本、稿件、prompt 版本与模型路由（§3.2）
+    expect(cutJob.inputKey).toMatch(/^transcript:1\+body:[0-9a-f]{8}\+algo:[\w.-]+\+route:[0-9a-f]{8}$/);
+  }, 30_000);
+
+  it("AI 降级 → job 记 succeeded 但带 warning（跑完了，只是没结果）", async () => {
+    await forceState({ phase: "ingest", state: "queued" });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    runner.enqueue(contentId);
+    await runner.whenIdle();
+    const cutJob = (await readVideoJobs(dir)).filter((j) => j.phase === "cut").at(-1)!;
+    expect(cutJob.status).toBe("succeeded");
+    expect(cutJob.warning).toContain("覆盖率");
+  }, 30_000);
+
+  it("执行期间稿件正文被改 → 输入快照对不上，产物只作历史留档", async () => {
+    // 直接种转写与首版 cut：这里要测的是 settle 的输入核对，不是前面那两步
+    const vdir = videoDir(dir, contentId);
+    await writeVersioned(vdir, "transcript", 1, fixtureDenseTranscript());
+    await writeVersioned(vdir, "cut", 1, { transcriptRevision: 1, keeps: [], flags: [], origin: "default_all" });
+    await forceState({ phase: "cut", state: "queued", revisions: { transcript: 1, cut: 1 } });
+
+    const runner = makeRunner(
+      { uv: fakeUvSpawn("ok", fixtureDenseTranscript()) },
+      {
+        runLoopImpl: (async () => {
+          await updateContent(contentId, { body: "换了一份完全不同的稿子" }, dir);
+          return { finalMessage: "", turns: 0, totalTokens: 0, toolCallCount: 0, stopReason: "no_tool_calls" as const };
+        }) as Deps["runLoopImpl"],
+      },
+    );
+    runner.enqueue(contentId);
+    await runner.whenIdle();
+
+    expect(await currentRef()).toBe("cut/running");
+    const last = (await readVideoJobs(dir)).at(-1)!;
+    expect(last.errorCode).toBe("stale_settle");
+    expect(last.failReason).toContain("输入在执行期间被改动");
+    // CAS 没过 → 不定版本，产物停在 staging（可安全覆盖，重跑不会撞文件）
+    expect(await readVersioned(videoDir(dir, contentId), "cut", 2)).toBeNull();
+    const names = await fs.readdir(videoDir(dir, contentId));
+    expect(names.some((n) => n.startsWith("cut.") && n.endsWith(".staging.json"))).toBe(true);
   }, 30_000);
 
   it("转写 job 带 lease 与心跳，结算成 succeeded 并记录 outputRevision", async () => {
@@ -123,13 +211,33 @@ describe("阶段推进", () => {
     expect(state).toMatchObject({ state: "blocked", blockedReason: "aroll_drifted" });
   }, 30_000);
 
-  it("非可执行阶段被投递 → failed，不静默停住", async () => {
+  it("上次崩在 staging 之后 → 重跑安全覆盖半成品，不撞不可覆盖文件", async () => {
+    const vdir = videoDir(dir, contentId);
+    await writeVersioned(vdir, "transcript", 1, fixtureDenseTranscript());
+    await writeVersioned(vdir, "cut", 1, { transcriptRevision: 1, keeps: [], flags: [], origin: "default_all" });
     await forceState({ phase: "cut", state: "queued", revisions: { transcript: 1, cut: 1 } });
+    // 先跑一次让它写出 staging，再把状态拨回 queued 伪造「崩在定版之前」
+    const first = makeRunner({ uv: fakeUvSpawn("ok", fixtureDenseTranscript()) });
+    first.enqueue(contentId);
+    await first.whenIdle();
+    await fs.rm(path.join(vdir, "cut.v2.json"), { force: true });
+    await fs.rm(path.join(vdir, "edit-units.v2.json"), { force: true });
+    await forceState({ phase: "cut", state: "queued", revisions: { transcript: 1, cut: 1 } });
+
+    const again = makeRunner({ uv: fakeUvSpawn("ok", fixtureDenseTranscript()) });
+    again.enqueue(contentId);
+    await again.whenIdle();
+    expect(await currentRef()).toBe("cut/awaiting_human");
+    expect(await readVersioned(videoDir(dir, contentId), "cut", 2)).not.toBeNull();
+  }, 30_000);
+
+  it("非可执行阶段被投递 → failed，不静默停住", async () => {
+    await forceState({ phase: "review", state: "queued", revisions: { transcript: 1, cut: 1, timeline: 1, rendered: 1 } });
     const runner = makeRunner({});
     runner.enqueue(contentId);
     await runner.whenIdle();
     const { state } = await readVideoState(dir, contentId);
-    expect(state).toMatchObject({ state: "failed", errorCode: "not_runnable", failedPhase: "cut" });
+    expect(state).toMatchObject({ state: "failed", errorCode: "not_runnable", failedPhase: "review" });
   }, 30_000);
 });
 

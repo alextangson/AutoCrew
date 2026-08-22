@@ -1,16 +1,18 @@
 /**
- * 选段视图(视频 spec §4.4 人工路径)——分句列表,勾上=留,不勾=剪掉。
+ * 选段视图(视频 spec §4.4 人工路径 + 粗剪 spec §6)——剪辑单元列表,勾上=留,不勾=剪掉。
  *
- * 三条纪律:
+ * 四条纪律:
  * 1. **乐观锁**:提交必须带手里这版的 base revision;`conflict:true` 不是故障,
  *    是「有人/后台改过了」——提示已刷新最新版并重拉,绝不覆盖别人的决定。
  * 2. **转写是事实,不可改**:这里只写「留哪些」(cut),一个字都不改转写。
- *    flags(念错/重复/跑题)是别人打的标记,原样带回去,不在 V0a 编辑。
  * 3. **空结果说人话**:一句都没转写出来、一句都没勾,都要当场讲清楚,不让人对着
  *    禁用按钮猜为什么。
+ * 4. **AI 只是提案**:降级 warning 原样摆出来;flags 是只读证据,「恢复全留」之后也不清除
+ *    ——人需要知道 AI 当时认为哪里有问题。「恢复全留」**现场算当前单元的全集**,
+ *    不能钉死某一版:重跑转写会继续递增 revision,写死的那版会指向错的东西。
  *
- * V0a 只做「留哪些句子」。屏录/图片覆盖轨(overlays)service 已经支持,
- * 但摆时间轴那套交互留给 V0b——现在把半成品放上来只会让人以为它已经能用。
+ * 屏录/图片覆盖轨(overlays)service 已经支持,但摆时间轴那套交互还没做——
+ * 现在把半成品放上来只会让人以为它已经能用。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "../ui";
@@ -19,12 +21,13 @@ import {
   alignmentWarning,
   formatTimecode,
   keepsInTranscriptOrder,
+  roughCutSummary,
   videoCutConfirm,
+  videoRoughCutRerun,
   videoTranscriptGet,
   type CutFlagKind,
-  type VideoCut,
+  type CutView,
   type VideoState,
-  type VideoTranscript,
 } from "../lib";
 
 export function VideoCutPanel(props: {
@@ -38,7 +41,7 @@ export function VideoCutPanel(props: {
   /** done 上进来 = 重开(§2.2 done→assemble 白名单边):确认后会重新组装渲染 */
   const reopening = props.state.phase === "done";
 
-  const [data, setData] = useState<{ transcript: VideoTranscript; cut: VideoCut } | null>(null);
+  const [data, setData] = useState<CutView | null>(null);
   const [kept, setKept] = useState<ReadonlySet<string>>(new Set<string>());
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,7 +60,8 @@ export function VideoCutPanel(props: {
     void load();
   }, [load, tRev, cRev]);
 
-  const segments = data?.transcript.segments ?? [];
+  // 单元表在就用它;老产物(V0a)没有,回落 VAD 分句
+  const segments = data?.editUnits?.segments ?? data?.transcript.segments ?? [];
   const flags = useMemo(() => {
     const map = new Map<string, CutFlagKind[]>();
     for (const f of data?.cut.flags ?? []) map.set(f.segmentId, [...(map.get(f.segmentId) ?? []), f.flag]);
@@ -65,8 +69,26 @@ export function VideoCutPanel(props: {
   }, [data]);
   const keptMs = segments.reduce((sum, s) => (kept.has(s.id) ? sum + Math.max(0, s.endMs - s.startMs) : sum), 0);
   const warn = alignmentWarning(data?.transcript ?? null);
+  const aiWarn = data?.editUnits?.warning;
+  const aiSummary = roughCutSummary(data?.editUnits);
+  /** 人工终裁过的那一版,后台不许再覆盖(粗剪 spec §3.4) */
+  const rerunnable = data?.cut.origin !== "human" && !reopening;
 
+  // 现场算全集:指向的永远是当前这版单元
   const setAll = (on: boolean) => setKept(on ? new Set(segments.map((s) => s.id)) : new Set<string>());
+
+  const rerun = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await videoRoughCutRerun(props.contentId);
+      if (!r.ok) return toast(r.error ?? "重跑 AI 粗剪失败");
+      toast("AI 粗剪已重新排队 —— 跑完这里会自动刷新");
+      await props.reload();
+    } finally {
+      setBusy(false);
+    }
+  };
   const toggle = (id: string) =>
     setKept((cur) => {
       const next = new Set(cur);
@@ -113,8 +135,10 @@ export function VideoCutPanel(props: {
       </div>
 
       {err && <p className="ed-error">{err}</p>}
+      {aiWarn && <p className="vid-warn">{aiWarn}</p>}
       {warn && <p className="vid-warn">{warn}</p>}
       {reopening && <p className="vid-warn">这条已经出过成片。改完确认会重新组装渲染出新一版,旧成片留档不删。</p>}
+      {aiSummary && <p className="muted">{aiSummary}(下面已按建议预勾,最终留哪些由你定)</p>}
 
       {!err && !data && <p className="muted">读取转写中…</p>}
       {data && segments.length === 0 && (
@@ -124,9 +148,15 @@ export function VideoCutPanel(props: {
       {segments.length > 0 && (
         <>
           <div className="row-actions vid-seg-tools">
-            <button onClick={() => setAll(true)}>全留</button>
+            <button onClick={() => setAll(true)}>恢复全留</button>
             <button onClick={() => setAll(false)}>全不留</button>
-            <span className="muted">勾上的句子按原顺序拼成成片;时间码是 A-roll 里的原始位置。</span>
+            <button disabled={busy || !rerunnable} onClick={() => void rerun()}>
+              重新跑 AI 粗剪
+            </button>
+            <span className="muted">
+              勾上的句子按原顺序拼成成片;时间码是 A-roll 里的原始位置。
+              {rerunnable ? "" : "这一版你已经确认过,AI 建议不会再覆盖它。"}
+            </span>
           </div>
           <ul className="vid-segs">
             {segments.map((s) => (

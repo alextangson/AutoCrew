@@ -43,8 +43,10 @@ describe("迁移表锁定（spec §2.2 原文）", () => {
     ]);
   });
 
-  it("自动接续只有两对相邻阶段；回退白名单只有打回与重开两条", () => {
-    expect(AUTO_CHAIN_PHASES).toEqual([["ingest", "transcribe"], ["assemble", "render"]]);
+  it("自动接续只有三对相邻阶段；回退白名单只有打回与重开两条", () => {
+    expect(AUTO_CHAIN_PHASES).toEqual([
+      ["ingest", "transcribe"], ["transcribe", "cut"], ["assemble", "render"],
+    ]);
     expect(PHASE_REGRESSION_EDGES).toEqual([
       { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
       { from: { phase: "done", state: "done" }, to: { phase: "assemble", state: "queued" } },
@@ -104,10 +106,14 @@ describe("合法迁移", () => {
 });
 
 describe("非法迁移", () => {
-  it("人工门不可绕过：transcribe/running 不能自动接 cut/queued，render 完必须停审片", () => {
-    const err = videoTransitionError(at("transcribe", "running"), at("cut", "queued"));
+  it("人工门不可绕过：cut/running 不能自动接 assemble/queued，render 完必须停审片", () => {
+    const err = videoTransitionError(at("cut", "running"), at("assemble", "queued"));
     expect(err).toContain("人工门不可绕过");
     expect(videoTransitionError(at("render", "running"), at("review", "queued"))).toContain("人工门不可绕过");
+  });
+
+  it("transcribe/running → cut/queued 是排 AI 粗剪的计算步，不是绕过门（门在 cut/awaiting_human）", () => {
+    expect(videoTransitionError(at("transcribe", "running"), at("cut", "queued"))).toBeNull();
   });
 
   it("跳过 claim：queued 不能直接 awaiting_human", () => {

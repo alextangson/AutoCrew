@@ -16,17 +16,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isContentId } from "../../storage/entity-id.js";
-import { executePhase, type StepResult } from "./phases.js";
+import { getContent } from "../../storage/local-store.js";
+import { executePhase, stepWarning, type StepResult } from "./phases.js";
 import { nowIso, nowMs, type VideoDeps } from "./proc.js";
+import { roughCutInputKey } from "./rough-cut.js";
 import {
   appendVideoJob,
   jobKey,
   latestJobsView,
+  promoteStaging,
   readVideoJobs,
   readVideoAssets,
   readVideoState,
   recoverExpiredJobs,
   transitionVideoState,
+  videoDir,
   VIDEO_HEARTBEAT_MS,
   VIDEO_LEASE_MS,
 } from "./video-store.js";
@@ -40,7 +44,7 @@ import type {
 
 export type { StepResult };
 
-const JOB_PHASES = new Set<string>(["transcribe", "assemble", "render"]);
+const JOB_PHASES = new Set<string>(["transcribe", "cut", "assemble", "render"]);
 
 export interface VideoRunnerOptions {
   dataDir: string;
@@ -155,18 +159,30 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     const r = state.revisions;
     if (state.phase === "assemble") return `cut:${r.cut ?? 0}+transcript:${r.transcript ?? 0}`;
     if (state.phase === "render") return `timeline:${r.timeline ?? 0}`;
+    // 粗剪还消费 Content.body、prompt 版本与模型路由（§3.2）：只写 transcript 版本的话，
+    // 稿子改了而转写没变时，旧输入的结果会被当成新结果推进
+    if (state.phase === "cut") {
+      const body = (await getContent(contentId, dataDir))?.body ?? "";
+      return roughCutInputKey(dataDir, r.transcript ?? 0, body);
+    }
     // transcribe 的输入是 A-roll 本身：换了素材就是另一个任务，同一素材重复投递自动合并
     const aroll = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll");
     return `aroll:${aroll?.fingerprint?.quickHash.slice(0, 12) ?? "none"}`;
   }
 
-  function executeStep(contentId: string, state: VideoState, heartbeat: Heartbeat): Promise<StepResult> {
+  function executeStep(
+    contentId: string,
+    state: VideoState,
+    heartbeat: Heartbeat,
+    job: VideoJob | null,
+  ): Promise<StepResult> {
     return executePhase({
       dataDir,
       contentId,
       state,
       ...(deps ? { deps } : {}),
       ...(opts.renderDir ? { renderDir: opts.renderDir } : {}),
+      ...(job ? { jobId: job.jobId } : {}),
       abortSignal: controller.signal,
       onProgress: () => heartbeat.touch(),
     });
@@ -218,16 +234,56 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   function outputRevision(phase: VideoPhase, revisions?: Partial<VideoRevisions>): number | undefined {
     if (!revisions) return undefined;
     if (phase === "transcribe") return revisions.transcript;
+    if (phase === "cut") return revisions.cut;
     if (phase === "assemble") return revisions.timeline;
     return revisions.rendered;
   }
 
+  /**
+   * 认领前的输入快照是否还成立（§3.2 / §7 #7）。revisions 由 CAS 管，这里管的是 CAS 看不见的
+   * 那部分输入：稿件正文、A-roll 指纹、模型路由。变了就说明这次的产物已经是对着旧输入算的。
+   */
+  async function inputDrifted(contentId: string, before: VideoState, job: VideoJob): Promise<boolean> {
+    try {
+      return (await inputKeyFor(contentId, before)) !== job.inputKey;
+    } catch {
+      return false; // 读不到输入不等于输入变了；真出问题会在下一次执行时暴露
+    }
+  }
+
+  /** CAS 通过后才把 staging 产物定版本（§3.3）。失败必须吼出来：状态推了、产物没落位 */
+  async function promoteStaged(contentId: string, result: StepResult, job: VideoJob | null): Promise<void> {
+    if (!result.ok || !result.staged?.length || !job) return;
+    const dir = videoDir(dataDir, contentId);
+    for (const item of result.staged) {
+      try {
+        await promoteStaging(dir, item.base, job.jobId, item.revision);
+      } catch (err) {
+        report(`${contentId} 的 ${item.base}.v${item.revision} 定版失败（状态已推进，产物仍在 staging）：${errText(err)}`);
+      }
+    }
+  }
+
+  async function settleViolation(
+    contentId: string,
+    before: VideoState,
+    result: StepResult,
+    job: VideoJob | null,
+  ): Promise<string | null> {
+    if (job) {
+      const live = latestJobsView(await readVideoJobs(dataDir)).find((j) => j.jobId === job.jobId);
+      if (live?.leaseOwner !== leaseOwner) return "lease 已被别人接管";
+      if (await inputDrifted(contentId, before, job)) return "输入在执行期间被改动（稿件或素材已不是认领时那份）";
+    }
+    return settleState(contentId, before, result);
+  }
+
   async function settle(contentId: string, before: VideoState, result: StepResult, job: VideoJob | null): Promise<void> {
-    const leaseLost = job
-      ? latestJobsView(await readVideoJobs(dataDir)).find((j) => j.jobId === job.jobId)?.leaseOwner !== leaseOwner
-      : false;
-    const violation = leaseLost ? "lease 已被别人接管" : await settleState(contentId, before, result);
+    const violation = await settleViolation(contentId, before, result, job);
     if (violation) report(`${contentId} 的 ${before.phase} 产物只作历史留档：${violation}`);
+    else await promoteStaged(contentId, result, job);
+    const warning = stepWarning(result);
+    if (!violation && warning) report(`${contentId} 的 ${before.phase} 跑完了但结果没达成：${warning}`);
     if (!job) return;
     const rev = violation ? undefined : outputRevision(before.phase, result.ok ? result.revisions : undefined);
     await appendVideoJob(dataDir, {
@@ -235,6 +291,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       status: result.ok && !violation ? "succeeded" : "failed",
       settledAt: nowIso(deps),
       ...(rev !== undefined ? { outputRevision: rev } : {}),
+      ...(!violation && warning ? { warning } : {}),
       ...(violation
         ? { errorCode: "stale_settle", failReason: `历史产物（文件已留盘，状态未推进）：${violation}` }
         : result.ok
@@ -251,7 +308,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     const heartbeat = startHeartbeat(job);
     let result: StepResult;
     try {
-      result = await executeStep(contentId, claimed, heartbeat);
+      result = await executeStep(contentId, claimed, heartbeat, job);
     } catch (err) {
       result = { ok: false, errorCode: "unexpected", reason: `${before.phase} 阶段异常中止：${errText(err)}` };
     } finally {

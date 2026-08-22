@@ -25,7 +25,7 @@ import { isContentId, isSafeFilename } from "../../storage/entity-id.js";
 import { readJson, writeJsonAtomic } from "../../storage/json-atomic.js";
 import { getAsset } from "../../storage/library-store.js";
 import { assertTransition, type VideoStateRef } from "./state-machine.js";
-import type { AssetRef, VideoAssetEntry, VideoJob, VideoState } from "./types.js";
+import type { AssetRef, VideoAssetEntry, VideoEditUnits, VideoJob, VideoState } from "./types.js";
 
 /** lease 10 分钟；心跳 60 秒续租（§3）。过期即可回收，避免跨进程重复渲染 */
 export const VIDEO_LEASE_MS = 10 * 60_000;
@@ -223,6 +223,46 @@ export async function writeVersioned(
 
 export function readVersioned<T>(dir: string, base: string, revision: number): Promise<T | null> {
   return readJson<T>(path.join(dir, versionedName(base, revision)));
+}
+
+/**
+ * 剪辑单元表（粗剪 spec §4），与 cut 同版本号。**消费方一律经这里读**：
+ * 拿不到（V0a 时期的老产物）就回落 `transcript.segments`，回落逻辑写在各消费点。
+ */
+export function readEditUnits(dir: string, cutRevision: number): Promise<VideoEditUnits | null> {
+  return readVersioned<VideoEditUnits>(dir, "edit-units", cutRevision);
+}
+
+function stagingName(base: string, jobId: string): string {
+  return `${base}.${jobId}.staging.json`;
+}
+
+/**
+ * 先落 staging，settle 的 CAS 通过后才定版本（粗剪 spec §3.3）。
+ *
+ * 修的是一个真实的崩溃窗口：产物在 CAS 之前写盘时，「写出 cut.v2 → 崩 → 回收重跑 →
+ * 按 state 里的 cut v1 再写 cut.v2 → 撞上不可覆盖文件 → 永久失败」。staging 以 jobId
+ * 命名且**可安全覆盖**：同一条 job 重跑就是覆盖自己上一次的半成品，撞不着任何审计凭证。
+ */
+export async function writeStaging(dir: string, base: string, jobId: string, data: unknown): Promise<string> {
+  await fs.mkdir(dir, { recursive: true });
+  const target = path.join(dir, stagingName(base, jobId));
+  await writeJsonAtomic(target, data);
+  return target;
+}
+
+/**
+ * staging → 正式 revision。用 `rename` 而不是 `link`：CAS 刚刚证明了这个 revision 号没被人
+ * 占走，而万一存在「CAS 已过、rename 前崩溃」留下的同名残片，link 的 EEXIST 会把这条
+ * content 永久钉死——那正是 §3.3 要消灭的失败模式。
+ */
+export async function promoteStaging(dir: string, base: string, jobId: string, revision: number): Promise<string> {
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new Error(`revision 必须是 ≥1 的整数，当前是 ${String(revision)}`);
+  }
+  const target = path.join(dir, versionedName(base, revision));
+  await fs.rename(path.join(dir, stagingName(base, jobId)), target);
+  return target;
 }
 
 /** 扫目录取最大 revision；目录不存在或一版都没有 → null */

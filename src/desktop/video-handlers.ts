@@ -213,6 +213,19 @@ export async function videoCutConfirmHandler(payload: Payload): Promise<Reply> {
   }
 }
 
+/** 重跑 AI 粗剪：只在 cut/awaiting_human 且没人工终裁时可用（判定在 service） */
+export async function videoRoughCutRerunHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  try {
+    return { ok: true, data: { state: await ctx.service.rerunRoughCut(contentId) } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
 /**
  * 审片确认。approve → done 并盖 `videoReadyAt`（只盖一次）；reject → 回选段重剪。
  * 盖戳失败不改变确认结果，但 warning 必须可见（复盘的第四段用时靠这枚戳）。

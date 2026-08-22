@@ -30,3 +30,6 @@ sidecars/**/.venv/
 sidecars/**/__pycache__/
 sidecars/**/*.pyc
 .context/
+# 拍摄素材：口播原片动辄 1-2GB，进仓库就再也拿不出来。素材归 ~/.autocrew 或素材库管。
+# 必须根锚定：裸写 video/ 会连 src/modules/video/ 一起吞掉，新源文件将静默漏提交
+/video/

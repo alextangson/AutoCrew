@@ -57,9 +57,15 @@ export const PHASE_ADVANCING_EDGES: readonly string[] = [
   "awaiting_human->done", // review 确认收尾
 ] as const;
 
-/** running→queued 允许顺带推进的相邻阶段对——人工门（cut、review 之前）绝不在此列 */
+/**
+ * running→queued 允许顺带推进的相邻阶段对。
+ * `transcribe→cut` 不是绕过人工门：门是 `cut/awaiting_human`，这条边只是把 cut 的**计算步**
+ * （AI 粗剪，粗剪 spec §3）排上队，人仍要在门上终裁。render→review 不在此列，因为
+ * review 没有计算步，渲染完必须直接停在人跟前。
+ */
 export const AUTO_CHAIN_PHASES: readonly (readonly [VideoPhase, VideoPhase])[] = [
   ["ingest", "transcribe"],
+  ["transcribe", "cut"],
   ["assemble", "render"],
 ] as const;
 

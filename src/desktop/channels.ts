@@ -141,6 +141,7 @@ export const IPC_CHANNELS = [
   "video:status",
   "video:transcript_get",
   "video:cut_confirm",
+  "video:rough_cut_rerun",
   "video:review_confirm",
   "video:retry",
   "video:asr_warmup",

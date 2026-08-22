@@ -6,11 +6,19 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { executePhase, type PhaseContext } from "./phases.js";
+import { executePhase, stepWarning, type PhaseContext } from "./phases.js";
 import { ingestAroll } from "./ingest.js";
-import { fakeUvSpawn, routedSpawn, seedVideoContent } from "./testkit.js";
-import { readVersioned, readVideoAssets, videoDir } from "./video-store.js";
-import type { VideoCut, VideoPhase, VideoState, VideoTranscript } from "./types.js";
+import {
+  fakeRunLoop,
+  fakeUvSpawn,
+  fixtureDenseTranscript,
+  routedSpawn,
+  seedEngineConfig,
+  seedVideoContent,
+  throwingRunLoop,
+} from "./testkit.js";
+import { readVersioned, readVideoAssets, videoDir, writeVersioned } from "./video-store.js";
+import type { VideoCut, VideoEditUnits, VideoPhase, VideoState, VideoTranscript } from "./types.js";
 
 let dir: string;
 let contentId: string;
@@ -18,27 +26,36 @@ let contentId: string;
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-video-phases-"));
   contentId = (await seedVideoContent(dir)).contentId;
+  await seedEngineConfig(dir);
 });
 
 afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-function ctx(phase: VideoPhase, revisions: VideoState["revisions"] = {}, routes = { uv: fakeUvSpawn("ok") }): PhaseContext {
+function ctx(
+  phase: VideoPhase,
+  revisions: VideoState["revisions"] = {},
+  routes = { uv: fakeUvSpawn("ok") },
+  extra: Partial<PhaseContext> = {},
+): PhaseContext {
   return {
     dataDir: dir,
     contentId,
     state: { schemaVersion: 1, entryType: "aroll", phase, state: "running", revisions, updatedAt: new Date().toISOString() },
-    deps: { spawnImpl: routedSpawn(routes) },
+    // 模型调用一律注入假实现——测试永不真调模型
+    deps: { spawnImpl: routedSpawn(routes), runLoopImpl: fakeRunLoop([]) },
+    jobId: "vjob-test",
     abortSignal: new AbortController().signal,
+    ...extra,
   };
 }
 
 describe("executePhase 分派", () => {
   it("人工门阶段不是可执行阶段 → not_runnable（不静默停住）", async () => {
-    const r = await executePhase(ctx("cut"));
+    const r = await executePhase(ctx("review"));
     expect(r.ok === false && r.errorCode).toBe("not_runnable");
-    expect(r.ok === false && r.reason).toContain("cut");
+    expect(r.ok === false && r.reason).toContain("review");
   });
 
   it("done 阶段同样不可执行", async () => {
@@ -56,17 +73,21 @@ describe("ingest", () => {
 });
 
 describe("transcribe", () => {
-  it("成功 → cut 人工门 + transcript.v1 + cut.v1 全 keep + 对齐度已算", async () => {
+  it("成功 → 排 cut 计算步 + transcript.v1 + cut.v1 全 keep + edit-units.v1 兜底 + 对齐度已算", async () => {
     await ingestAroll(dir, contentId);
     const r = await executePhase(ctx("transcribe"));
     expect(r.ok).toBe(true);
-    expect(r.ok && r.next).toEqual({ phase: "cut", state: "awaiting_human" });
+    expect(r.ok && r.next).toEqual({ phase: "cut", state: "queued" });
     expect(r.ok && r.revisions).toEqual({ transcript: 1, cut: 1 });
 
     const transcript = await readVersioned<VideoTranscript>(videoDir(dir, contentId), "transcript", 1);
     expect(transcript?.scriptAlignment?.matchedRatio).toBeGreaterThan(0);
     const cut = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 1);
     expect(cut).toMatchObject({ origin: "default_all", keeps: ["seg-0001", "seg-0002"] });
+    const units = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 1);
+    expect(units).toMatchObject({ origin: "raw", suggestedDrops: [] });
+    // 兜底单元表就是转写分句原样搬运（I2：事实与派生分家，但派生的第一版等于事实）
+    expect(units?.segments.map((s) => s.id)).toEqual(["seg-0001", "seg-0002"]);
   });
 
   it("重跑转写 → revision 递增，旧版不动", async () => {
@@ -87,6 +108,112 @@ describe("transcribe", () => {
     await ingestAroll(dir, contentId);
     const r = await executePhase(ctx("transcribe", {}, { uv: fakeUvSpawn("model_missing") }));
     expect(r.ok === false && r.blockedReason).toBe("asr_not_ready");
+  });
+});
+
+describe("cut（AI 粗剪）", () => {
+  const dense = { uv: fakeUvSpawn("ok", fixtureDenseTranscript()) };
+
+  /** 产物先落 staging，定版本是 runner 在 CAS 之后的事（spec §3.3） */
+  async function staged<T>(base: string): Promise<T> {
+    const file = path.join(videoDir(dir, contentId), `${base}.vjob-test.staging.json`);
+    return JSON.parse(await fs.readFile(file, "utf-8")) as T;
+  }
+
+  async function upToCut(routes = dense): Promise<void> {
+    await ingestAroll(dir, contentId);
+    await executePhase(ctx("transcribe", {}, routes));
+  }
+
+  beforeEach(async () => {
+    contentId = (await seedVideoContent(dir, { body: "今天聊聊效率" })).contentId;
+  });
+
+  it("模型给出 drop → 按词区间重分单元，keeps 是补集，时间戳原样搬运", async () => {
+    await upToCut();
+    const drops = [{ startWord: 0, endWordExclusive: 3, flag: "repeat", quote: "今天聊" }];
+    const r = await executePhase(
+      ctx("cut", { transcript: 1, cut: 1 }, dense, { deps: { spawnImpl: routedSpawn(dense), runLoopImpl: fakeRunLoop([{ drops }]) } }),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.next).toEqual({ phase: "cut", state: "awaiting_human" });
+    expect(r.ok && r.revisions).toEqual({ cut: 2 });
+    expect(stepWarning(r)).toBeUndefined();
+    expect(r.ok && r.staged).toEqual([
+      { base: "edit-units", revision: 2 },
+      { base: "cut", revision: 2 },
+    ]);
+
+    const units = await staged<VideoEditUnits>("edit-units");
+    // 切点 = drop 边界 ∪ 分句边界 → [0,3) [3,6) [6,12)
+    expect(units.origin).toBe("llm");
+    expect(units.segments.map((s) => [s.startMs, s.endMs])).toEqual([[0, 300], [300, 600], [1000, 1600]]);
+    expect(units.suggestedDrops).toEqual(["unit-0001"]);
+    expect(units.flags).toEqual([{ segmentId: "unit-0001", flag: "repeat" }]);
+    expect(units.provenance?.promptVersion).toBeTruthy();
+
+    const cut = await staged<VideoCut>("cut");
+    expect(cut).toMatchObject({ origin: "llm", baseCutRevision: 1, keeps: ["unit-0002", "unit-0003"] });
+  });
+
+  it("模型一次工具都没调 → 全留版 + warning，照常进人工门（不 failed）", async () => {
+    await upToCut();
+    const r = await executePhase(
+      ctx("cut", { transcript: 1, cut: 1 }, dense, { deps: { spawnImpl: routedSpawn(dense), runLoopImpl: fakeRunLoop([]) } }),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.next).toEqual({ phase: "cut", state: "awaiting_human" });
+    expect(stepWarning(r)).toContain("没调用 submit_rough_cut");
+    const units = await staged<VideoEditUnits>("edit-units");
+    expect(units).toMatchObject({ origin: "raw", suggestedDrops: [] });
+    expect(units.segments.map((s) => s.id)).toEqual(["seg-0001", "seg-0002"]);
+    expect((await staged<VideoCut>("cut")).keeps).toEqual(["seg-0001", "seg-0002"]);
+  });
+
+  it("模型调用炸了 → 全留版 + warning，不 failed 也不 blocked", async () => {
+    await upToCut();
+    const r = await executePhase(
+      ctx("cut", { transcript: 1, cut: 1 }, dense, {
+        deps: { spawnImpl: routedSpawn(dense), runLoopImpl: throwingRunLoop("端点 502") },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    expect(stepWarning(r)).toContain("502");
+    expect((await staged<VideoEditUnits>("edit-units")).origin).toBe("raw");
+  });
+
+  it("引擎未配置 → 全留版 + warning，绝不 blocked（V0b 的缺失不许弄坏 V0a）", async () => {
+    await upToCut();
+    await fs.rm(path.join(dir, "engine.json"), { force: true });
+    const r = await executePhase(ctx("cut", { transcript: 1, cut: 1 }, dense));
+    expect(r.ok).toBe(true);
+    expect(r.ok === false && r.blockedReason).toBeFalsy();
+    expect(stepWarning(r)).toContain("引擎未配置");
+  });
+
+  it("词流不健康（词时间戳覆盖不足）→ 跳过 AI，全留版 + warning", async () => {
+    await upToCut({ uv: fakeUvSpawn("ok") }); // 默认夹具的「聊聊」没有词时间戳
+    const r = await executePhase(ctx("cut", { transcript: 1, cut: 1 }));
+    expect(stepWarning(r)).toContain("覆盖率");
+    expect((await staged<VideoEditUnits>("edit-units")).origin).toBe("raw");
+  });
+
+  it("人工已提交终裁 → 拒绝覆盖，不产新版本", async () => {
+    await upToCut();
+    await writeVersioned(videoDir(dir, contentId), "cut", 2, {
+      transcriptRevision: 1,
+      keeps: ["seg-0001"],
+      flags: [],
+      origin: "human",
+    });
+    const r = await executePhase(ctx("cut", { transcript: 1, cut: 2 }, dense));
+    expect(r.ok && r.revisions).toBeUndefined();
+    expect(stepWarning(r)).toContain("人工确认");
+  });
+
+  it("读不到转写 → missing_input（这个是真失败，不是降级）", async () => {
+    const r = await executePhase(ctx("cut", { transcript: 9, cut: 1 }, dense));
+    expect(r.ok === false && r.errorCode).toBe("missing_input");
   });
 });
 

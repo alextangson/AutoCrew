@@ -140,6 +140,7 @@ import {
   videoCutConfirmHandler,
   videoRetryHandler,
   videoReviewConfirmHandler,
+  videoRoughCutRerunHandler,
   videoStatusHandler,
   videoTranscriptGetHandler,
 } from "./video-handlers.js";
@@ -1175,6 +1176,7 @@ export function buildIpcHandlers(
     "video:status": videoStatusHandler,
     "video:transcript_get": videoTranscriptGetHandler,
     "video:cut_confirm": videoCutConfirmHandler,
+    "video:rough_cut_rerun": videoRoughCutRerunHandler,
     "video:review_confirm": videoReviewConfirmHandler,
     "video:retry": videoRetryHandler,
     "video:asr_warmup": videoAsrWarmupHandler,
