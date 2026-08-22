@@ -47,6 +47,7 @@ import {
   type RoughCutWindow,
   type WordStream,
 } from "./rough-cut-units.js";
+import { asIndex, parseArrayArg } from "./tool-args.js";
 import type { CutFlag, CutFlagKind, TranscriptSegment, TranscriptWord } from "./types.js";
 
 /** 改判定口径 / 改词流呈现 / 改分块方式都要升版本——它进 inputKey，旧结果因此不会被当新结果 */
@@ -72,13 +73,6 @@ const sha8 = (s: string): string => createHash("sha256").update(s, "utf-8").dige
 
 /** `quote` / `note` 只在校验与提示里活着，不落盘 */
 type SubmittedDrop = RoughCutDrop & { quote: string };
-
-/** 索引以字符串数字到达时照收（上游序列化口径不一），转不动就是转不动，打回不猜 */
-function asIndex(v: unknown): number | null {
-  if (Number.isInteger(v)) return v as number;
-  if (typeof v === "string" && /^-?\d+$/.test(v.trim())) return Number(v.trim());
-  return null;
-}
 
 function parseDropItem(raw: unknown, i: number): SubmittedDrop | string {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `drops[${i}] 必须是对象`;
@@ -135,73 +129,6 @@ function checkQuote(d: SubmittedDrop, i: number, words: readonly TranscriptWord[
   );
 }
 
-/**
- * 修掉模型在 JSON 字符串值里写的**未转义 `"`**（中文写作习惯，爱用半角引号强调词句）。
- * 实测原样：`"note": "口误，应为"所以今天想"，但话未说完就改口重来"` —— JSON.parse 当场炸。
- *
- * 判定：串内遇到 `"`，只有当它后面（跳过空白）紧跟 `,` `}` `]` `:` 时才是真正的收尾引号，
- * 否则是正文里的引号，转义掉。只在 parse 失败后兜底跑一次，正常报文不经过这里。
- */
-function escapeStrayQuotes(text: string): string {
-  let out = "";
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === "\\") {
-      out += c + (text[i + 1] ?? "");
-      i += 1;
-      continue;
-    }
-    if (c !== '"') {
-      out += c;
-      continue;
-    }
-    if (!inString) {
-      inString = true;
-      out += c;
-    } else if (/^\s*[,}\]:]/.test(text.slice(i + 1))) {
-      inString = false;
-      out += c;
-    } else {
-      out += '\\"';
-    }
-  }
-  return out;
-}
-
-/**
- * `drops` 参数的形状。**两次实测踩的坑都在这儿**：
- *
- * 1. 中转层（`code.newcli.com/claude/ultra`）会把数组序列化成 JSON 字符串再交过来。
- *    字符串**不是错误，是这条链路的常态**，必须无声吃掉——旧实现 `Array.isArray(x) ? x : []`
- *    把模型找出的四十来处剔除静默当成「无需剔除」，跑完一无所获还报告成功。
- * 2. 串里常带未转义引号（见 escapeStrayQuotes）。这也不该让模型背——它再交一遍还是这样，
- *    打回只会把三轮自纠瞬间烧完。
- *
- * 只有**真的解析不出数组**才打回，且错误信息要说清是解析问题、不是类型问题。
- */
-function parseDropsArg(value: unknown): unknown[] | string {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== "string") {
-    return `drops 必须是数组（或数组的 JSON 字符串），收到的是 ${value === undefined ? "空" : typeof value}`;
-  }
-  const text = value.trim();
-  if (!text) return "drops 是空字符串；没有要剔的请交空数组 []";
-  for (const candidate of [text, escapeStrayQuotes(text)]) {
-    try {
-      const parsed: unknown = JSON.parse(candidate);
-      if (Array.isArray(parsed)) return parsed;
-      return `drops 解析出来是 ${parsed === null ? "null" : typeof parsed}，不是数组；请交 [{...}, {...}] 这样的数组`;
-    } catch {
-      /* 试下一个候选 */
-    }
-  }
-  return (
-    "drops 这段 JSON 解析不了（多半是 note/quote 里写了没转义的引号）。" +
-    "请重新提交合法 JSON：正文里的引号改用「」，或干脆不写引号。"
-  );
-}
-
 const DROP_ITEM_SCHEMA = {
   type: "object",
   properties: {
@@ -231,7 +158,7 @@ export function buildRoughCutTool(captured: { drops: RoughCutDrop[] | null }, ct
       required: ["drops"],
     },
     execute(args) {
-      const raw = parseDropsArg(args.drops);
+      const raw = parseArrayArg(args.drops, "drops", "没有要剔的请交空数组 []");
       if (typeof raw === "string") return `Error: ${raw}`;
       const parsed: SubmittedDrop[] = [];
       for (const [i, item] of raw.entries()) {

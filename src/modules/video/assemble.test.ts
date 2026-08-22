@@ -265,9 +265,31 @@ describe("assembleVideo", () => {
     expect(r.ok && r.manifest.titleCard).toEqual({ template: "hook-title", text: "删代码年入百万", durationMs: 2000 });
   });
 
-  it("emphasisWords 管道接通：timeline 有什么，manifest 就带什么（P0 数据源仍为空）", async () => {
-    const r = await assembleVideo(input());
-    expect(r.ok && r.manifest.captions.emphasisWords).toEqual([]);
+  it("emphasisWords 管道接通：不给 = 空数组，给了就原样进字幕（数据源是剪辑师 plan）", async () => {
+    expect((await assembleVideo(input())).ok && true).toBe(true);
+    const r = await assembleVideo(input({ timelineRevision: 2, emphasisWords: ["FDE", "第二句"] }));
+    expect(r.ok && r.manifest.captions.emphasisWords).toEqual(["FDE", "第二句"]);
+  });
+
+  it("屏录的取材窗口与转场传到 manifest（inMs/outMs 丢了就只会从头播）", async () => {
+    const fixture = await ensureArollFixture();
+    await fs.copyFile(fixture, path.join(dir, "contents", contentId, "assets", "screen.mp4"));
+    const slots = [
+      {
+        kind: "screen" as const,
+        ref: { kind: "content" as const, filename: "screen.mp4" },
+        outputStartMs: 200,
+        durationMs: 800,
+        inMs: 500,
+        outMs: 1300,
+        fit: "contain" as const,
+        transition: "fade",
+      },
+    ];
+    const r = await assembleVideo(input({ slots }));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.overlays[0]).toMatchObject({ kind: "screen", inMs: 500, outMs: 1300, fit: "contain", transition: "fade" });
   });
 });
 

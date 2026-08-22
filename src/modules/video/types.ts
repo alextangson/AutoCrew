@@ -18,11 +18,16 @@
 // §2.2 video/state.json —— phase × state
 // ---------------------------------------------------------------------------
 
-/** 阶段：只许前进或停留（重试 = 停在原 phase 重投） */
+/**
+ * 阶段：只许前进或停留（重试 = 停在原 phase 重投）。
+ * `edit` = 剪辑师 agent 排 B-roll（横屏 spec §3.1）：它必须在 keeps 定稿**之后**跑
+ * （plan 用输出域时间），且人要能在组装前删 overlay，所以是独立阶段而不是 assemble 的头部。
+ */
 export type VideoPhase =
   | "ingest"
   | "transcribe"
   | "cut"
+  | "edit"
   | "assemble"
   | "render"
   | "review"
@@ -50,6 +55,11 @@ export type VideoBlockedReason =
 export interface VideoRevisions {
   transcript?: number;
   cut?: number;
+  /**
+   * 剪辑师 plan 的版本（`editor-plan.v<N>.json`）。**与 cut 各自计数**：同一版 cut 可以重跑
+   * 剪辑师若干次，而版本化产物不可覆盖——共用 cut 号第二次重跑就会撞上已存在的文件。
+   */
+  editor?: number;
   timeline?: number;
   rendered?: number;
 }
@@ -161,6 +171,65 @@ export interface VideoCut {
 }
 
 // ---------------------------------------------------------------------------
+// 剪辑师 plan（横屏 spec §3.1）——B-roll 编排的提案，人删完才生效
+// ---------------------------------------------------------------------------
+
+/**
+ * plan 里的一段覆盖轨。`assetId` 是**本 plan 的目录编号**（b1、b2…），不是素材清单里的
+ * assetId：编排时素材还没登记进 `assets.json`（那是 assemble 的活），而短编号比文件名
+ * 更不容易被模型抄错。真正的落点由 `ref` 钉住，确认时直接翻成 OverlaySlot。
+ */
+export interface EditorPlanOverlay {
+  overlayId: string;
+  assetId: string;
+  /** 素材说明快照，面板逐条显示（人靠它判断这一刀切得对不对） */
+  label: string;
+  filename: string;
+  kind: "screen" | "image";
+  ref: AssetRef;
+  /** 输出时间域（成片时间轴） */
+  outputStartMs: number;
+  durationMs: number;
+  /** 屏录取源素材的哪一段；跨度恒等于 durationMs */
+  inMs?: number;
+  outMs?: number;
+  fit?: OverlayFit;
+  transition?: string;
+}
+
+/**
+ * `video/editor-plan.v<N>.json`。**是提案不是决定**：人在 `edit/awaiting_human` 上删到剩几条
+ * （删光也合法，纯口播），确认时才写进 assemble 消费的覆盖轨槽位。
+ *
+ * 空 plan 的两种成因必须分得开（§3.1）：
+ * - `origin:"llm"` + 空 overlays = 剪辑师看过了，认为不需要 B-roll
+ * - `origin:"empty"` = 压根没跑（没素材/片子太短 → `note`；调用失败/无 key → `warning`）
+ */
+export interface VideoEditorPlan {
+  schemaVersion: 1;
+  /** 这份编排是对哪一版**确认后**的选段算的（输出域时间随 keeps 变，错版即失效） */
+  cutRevision: number;
+  origin: "llm" | "empty";
+  overlays: EditorPlanOverlay[];
+  emphasisWords: string[];
+  /** 归一化后在成片里找不到的强调词（边界 #14）：面板标出来，不假装它们会亮 */
+  unmatchedEmphasis?: string[];
+  /** 没写说明、读不出时长、或超预算被截掉的素材（边界 #3 / #9）——面板点名 */
+  excludedAssets?: string[];
+  /** 非空 = 剪辑师没跑成，面板出横幅（降级必须可见） */
+  warning?: string;
+  /** 合法空 plan 的原因；不是故障，但也不能什么都不说 */
+  note?: string;
+  provenance?: {
+    model: string;
+    promptVersion: string;
+    bodyHash: string;
+    assetsHash: string;
+    generatedAt: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // §2.4 EDL：源时间域 → 输出时间域
 // ---------------------------------------------------------------------------
 
@@ -198,7 +267,8 @@ export type OverlaySource =
   | { type: "screen"; assetId: string; inMs?: number; outMs?: number; fit?: OverlayFit }
   | { type: "graphic"; template: string; props: Record<string, unknown> }
   | { type: "ai"; assetId: string }
-  | { type: "image"; assetId: string };
+  /** 图版也吃 fit：宽截图铺满还是留黑边，剪辑师说了算（渲染侧本来就读这个字段） */
+  | { type: "image"; assetId: string; fit?: OverlayFit };
 
 export interface TimelineOverlay {
   clipId: string;
@@ -378,11 +448,11 @@ export interface RenderManifest {
 // ---------------------------------------------------------------------------
 
 /**
- * 值得开 job 的四步。cut 从 V0b 起有了计算步（AI 粗剪），所以它也要 lease/心跳/CAS——
+ * 值得开 job 的五步。cut 从 V0b 起有了计算步（AI 粗剪），所以它也要 lease/心跳/CAS——
  * 人工门是 `cut/awaiting_human`，门前那一道计算跟其它阶段一样要被调度纪律管住。
  * review 仍是纯人工门，ingest 是同步校验，两者不开 job。
  */
-export type VideoJobPhase = "transcribe" | "cut" | "assemble" | "render";
+export type VideoJobPhase = "transcribe" | "cut" | "edit" | "assemble" | "render";
 
 export type VideoJobStatus = "queued" | "running" | "succeeded" | "failed";
 

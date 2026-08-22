@@ -10,7 +10,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { getContent, saveContent, updateContent } from "../storage/local-store.js";
-import { VideoConflictError, type ConfirmCutArgs, type VideoService } from "../modules/video/service.js";
+import {
+  VideoConflictError,
+  type ConfirmCutArgs,
+  type ConfirmEditorPlanArgs,
+  type VideoService,
+} from "../modules/video/service.js";
 import type { VideoState } from "../modules/video/types.js";
 import {
   getVideoRuntimeStatus,
@@ -19,6 +24,9 @@ import {
   videoAsrWarmupHandler,
   videoBuildStartHandler,
   videoCutConfirmHandler,
+  videoEditorConfirmHandler,
+  videoEditorPlanGetHandler,
+  videoEditorRerunHandler,
   videoRetryHandler,
   videoReviewConfirmHandler,
   videoRoughCutRerunHandler,
@@ -38,9 +46,11 @@ const STATE: VideoState = {
 interface Calls {
   startBuild: string[];
   confirmCut: Array<[string, ConfirmCutArgs]>;
+  confirmEditorPlan: Array<[string, ConfirmEditorPlanArgs]>;
   confirmReview: Array<[string, { renderedRevision: number; verdict: string }]>;
   retry: string[];
   rerunRoughCut: string[];
+  rerunEditor: string[];
   shutdown: number;
 }
 
@@ -57,6 +67,10 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
     },
     confirmCut: async (id, args) => {
       calls.confirmCut.push([id, args]);
+      return { ...STATE, phase: "edit", state: "queued" };
+    },
+    confirmEditorPlan: async (id, args) => {
+      calls.confirmEditorPlan.push([id, args]);
       return { ...STATE, phase: "assemble", state: "queued" };
     },
     confirmReview: async (id, args) => {
@@ -73,8 +87,13 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
       calls.rerunRoughCut.push(id);
       return { ...STATE, phase: "cut", state: "queued" };
     },
+    rerunEditor: async (id) => {
+      calls.rerunEditor.push(id);
+      return { ...STATE, phase: "edit", state: "queued" };
+    },
     getStatus: async () => ({ state: STATE, jobs: [] }),
     getTranscript: async () => null,
+    getEditorPlan: async () => null,
     warmupAsr: async () => ({ status: "warming" }),
     asrStatus: async () => ({ status: "ready", detail: "模型已就位" }),
     shutdown: async () => {
@@ -86,7 +105,16 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
 
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-video-handlers-"));
-  calls = { startBuild: [], confirmCut: [], confirmReview: [], retry: [], rerunRoughCut: [], shutdown: 0 };
+  calls = {
+    startBuild: [],
+    confirmCut: [],
+    confirmEditorPlan: [],
+    confirmReview: [],
+    retry: [],
+    rerunRoughCut: [],
+    rerunEditor: [],
+    shutdown: 0,
+  };
   contentId = (
     await saveContent({ title: "口播稿", body: "正文", status: "approved", tags: [], platform: "douyin" }, dir)
   ).id;
@@ -201,15 +229,12 @@ describe("video:build_start / status / transcript_get / retry", () => {
 describe("video:cut_confirm 的 payload 解析", () => {
   const base = { keeps: ["s1", "s2"], base_transcript_revision: 1, base_cut_revision: 1 };
 
-  it("snake_case 的 flags / overlays 被翻成域内形状", async () => {
+  it("snake_case 的 flags 被翻成域内形状（覆盖轨不在这一步提交）", async () => {
     const res = await videoCutConfirmHandler({
       ...base,
       content_id: contentId,
       _dataDir: dir,
       flags: [{ segment_id: "s3", flag: "misread" }],
-      overlays: [
-        { kind: "screen", ref: { kind: "library", id: "lib-1" }, output_start_ms: 0, duration_ms: 3000, fit: "cover" },
-      ],
     });
     expect(res.ok).toBe(true);
     expect(calls.confirmCut[0][1]).toEqual({
@@ -217,11 +242,10 @@ describe("video:cut_confirm 的 payload 解析", () => {
       flags: [{ segmentId: "s3", flag: "misread" }],
       baseTranscriptRevision: 1,
       baseCutRevision: 1,
-      overlays: [{ kind: "screen", ref: { kind: "library", id: "lib-1" }, outputStartMs: 0, durationMs: 3000, fit: "cover" }],
     });
   });
 
-  it("flags 缺省 = 空数组；没 overlays 就不传这个键", async () => {
+  it("flags 缺省 = 空数组", async () => {
     await videoCutConfirmHandler({ ...base, content_id: contentId, _dataDir: dir });
     expect(calls.confirmCut[0][1]).toEqual({
       keeps: ["s1", "s2"],
@@ -237,9 +261,6 @@ describe("video:cut_confirm 的 payload 解析", () => {
     [{ flags: [{ segment_id: "s1", flag: "hallucinated" }] }, "flag 只能是"],
     [{ base_cut_revision: -1 }, "base_cut_revision 必须是非负整数"],
     [{ base_transcript_revision: 1.5 }, "base_transcript_revision 必须是非负整数"],
-    [{ overlays: [{ kind: "screen", ref: { kind: "library", id: "l" }, output_start_ms: 0, duration_ms: 0 }] }, "duration_ms 必须是正数"],
-    [{ overlays: [{ kind: "ai", ref: { kind: "library", id: "l" }, output_start_ms: 0, duration_ms: 10 }] }, "kind 只能是 screen / image"],
-    [{ overlays: [{ kind: "image", ref: { kind: "library" }, output_start_ms: 0, duration_ms: 10 }] }, "ref 必须是"],
   ])("变形 payload %# 被拒且不进 service", async (patch, expected) => {
     const res = await videoCutConfirmHandler({ ...base, ...patch, content_id: contentId, _dataDir: dir });
     expect(res.ok).toBe(false);
@@ -259,6 +280,62 @@ describe("video:cut_confirm 的 payload 解析", () => {
     const res = await videoCutConfirmHandler({ ...base, content_id: contentId, _dataDir: dir });
     expect(res).toMatchObject({ ok: false, conflict: true, data: { state: { phase: "review" } } });
     expect(String(res.error)).toContain("已过期");
+  });
+});
+
+describe("video:editor_* 的 payload 解析", () => {
+  const base = { plan_revision: 2, kept_overlay_ids: ["ov-01"] };
+
+  it("snake_case 翻成域内形状；不传强调词 = 全留（键不出现）", async () => {
+    const res = await videoEditorConfirmHandler({ ...base, content_id: contentId, _dataDir: dir });
+    expect(res.ok).toBe(true);
+    expect(calls.confirmEditorPlan[0][1]).toEqual({ planRevision: 2, keptOverlayIds: ["ov-01"] });
+  });
+
+  it("强调词全删 = 空数组（与「不传」不是一回事）", async () => {
+    await videoEditorConfirmHandler({ ...base, kept_emphasis_words: [], content_id: contentId, _dataDir: dir });
+    expect(calls.confirmEditorPlan[0][1]).toEqual({ planRevision: 2, keptOverlayIds: ["ov-01"], keptEmphasisWords: [] });
+  });
+
+  it.each([
+    [{ plan_revision: -1 }, "plan_revision 必须是非负整数"],
+    [{ kept_overlay_ids: "ov-01" }, "kept_overlay_ids 必须是字符串数组"],
+    [{ kept_overlay_ids: ["ov-01", 7] }, "kept_overlay_ids 里有非法项"],
+    [{ kept_emphasis_words: [3] }, "kept_emphasis_words 里有非法项"],
+  ])("变形 payload %# 被拒且不进 service", async (patch, expected) => {
+    const res = await videoEditorConfirmHandler({ ...base, ...patch, content_id: contentId, _dataDir: dir });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain(expected);
+    expect(calls.confirmEditorPlan).toEqual([]);
+  });
+
+  it("乐观锁冲突：带 conflict 标记 + 当前状态", async () => {
+    setVideoService(
+      stubService({
+        confirmEditorPlan: async () => {
+          throw new VideoConflictError("成片计划基于的版本已过期，请重载后重试", STATE);
+        },
+      }),
+      dir,
+    );
+    const res = await videoEditorConfirmHandler({ ...base, content_id: contentId, _dataDir: dir });
+    expect(res).toMatchObject({ ok: false, conflict: true, data: { state: { phase: "review" } } });
+  });
+
+  it("plan_get 还没跑过 = data:null（不是错误）；rerun 只投递", async () => {
+    expect(await videoEditorPlanGetHandler({ content_id: contentId, _dataDir: dir })).toEqual({ ok: true, data: null });
+    const res = await videoEditorRerunHandler({ content_id: contentId, _dataDir: dir });
+    expect(res).toMatchObject({ ok: true, data: { state: { phase: "edit", state: "queued" } } });
+    expect(calls.rerunEditor).toEqual([contentId]);
+  });
+
+  it("service 没起来 → 三个口都说人话，不崩", async () => {
+    setVideoService(null);
+    for (const handler of [videoEditorPlanGetHandler, videoEditorConfirmHandler, videoEditorRerunHandler]) {
+      const res = await handler({ ...base, content_id: contentId, _dataDir: dir });
+      expect(res.ok).toBe(false);
+      expect(String(res.error)).toContain("视频服务没在跑");
+    }
   });
 });
 

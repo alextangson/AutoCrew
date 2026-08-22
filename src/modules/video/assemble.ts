@@ -218,6 +218,8 @@ export interface AssembleInput {
   cutRevision: number;
   timelineRevision: number;
   slots: OverlaySlot[];
+  /** 剪辑师 plan 里被人留下的强调词（横屏 spec §3.5）；没有就是不点亮任何词 */
+  emphasisWords?: string[];
 }
 
 export type AssembleOutcome =
@@ -251,7 +253,10 @@ function manifestOverlays(
       durationMs: o.durationMs,
       kind,
       ...(file ? { file } : {}),
-      ...(o.source.type === "screen" && o.source.fit ? { fit: o.source.fit } : {}),
+      // 屏录的取材窗口必须传到渲染侧，否则整段素材只会从头播（横屏 spec §3.3 阻断项）
+      ...(o.source.type === "screen" && o.source.inMs !== undefined ? { inMs: o.source.inMs } : {}),
+      ...(o.source.type === "screen" && o.source.outMs !== undefined ? { outMs: o.source.outMs } : {}),
+      ...("fit" in o.source && o.source.fit ? { fit: o.source.fit } : {}),
       ...(o.source.type === "graphic" ? { template: o.source.template, props: o.source.props } : {}),
       ...(o.transition === "fade" ? { transition: "fade" as const } : { transition: "cut" as const }),
     };
@@ -344,7 +349,7 @@ function freezeManifest(f: FreezeInput): RenderManifest {
     captions: {
       style: "word-highlight",
       words: projectWordsToOutput(input.transcript, f.map),
-      // 数据源是 P1 剪辑师 agent，P0 只把管道接通（§2.7）
+      // 数据源是剪辑师 plan（人删剩的那些词），经 timeline 落到这里（§2.7 / §3.5）
       emphasisWords: timeline.captions.emphasisWords ?? [],
     },
     ...(timeline.titleCard
@@ -388,6 +393,7 @@ async function stageTimeline(
     overlays,
     outputDurationMs: durationMs,
     ...(titleText ? { titleText } : {}),
+    ...(input.emphasisWords?.length ? { emphasisWords: input.emphasisWords } : {}),
   });
   const errors = validateTimeline(timeline, {
     registry: TIMELINE_REGISTRY,

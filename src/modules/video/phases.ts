@@ -13,9 +13,12 @@
 import path from "node:path";
 import { getContent } from "../../storage/local-store.js";
 import { assembleVideo, driftedAssets } from "./assemble.js";
-import { readOverlaySlots } from "./timeline-build.js";
+import { readEmphasisWords, readOverlaySlots } from "./timeline-build.js";
 import { extractAsrWav, runAsr, scriptMatchRatio } from "./asr.js";
+import { catalogDigest, runEditor, type EditorKeepUnit } from "./editor.js";
+import { scanBrollCandidates, trimCandidates, unmatchedEmphasisWords } from "./editor-plan.js";
 import { ingestAroll } from "./ingest.js";
+import { buildOutputMap, outputDurationMs } from "./output-map.js";
 import type { VideoDeps } from "./proc.js";
 import { runRenderJob } from "./render-exec.js";
 import { runRoughCut } from "./rough-cut.js";
@@ -34,6 +37,7 @@ import type {
   VideoBlockedReason,
   VideoCut,
   VideoEditUnits,
+  VideoEditorPlan,
   VideoRevisions,
   VideoState,
   VideoTranscript,
@@ -255,6 +259,115 @@ async function stageCutArtifacts(
   await writeStaging(dir, "cut", jobId, cut);
 }
 
+/** edit 的出口只有一个：人工门。剪辑师跑成什么样都停在这儿，由人删定（横屏 spec §3.1） */
+const EDIT_GATE: VideoStateRef = { phase: "edit", state: "awaiting_human" };
+
+/** 剪辑师看到的是**成片时间轴**：keeps 拼接后的输出域时间，不是 A-roll 源时间 */
+function keepUnits(transcript: VideoTranscript, cut: VideoCut): { units: EditorKeepUnit[]; durationMs: number } {
+  const map = buildOutputMap(transcript, cut);
+  const byId = new Map(transcript.segments.map((s) => [s.id, s]));
+  return {
+    units: map.map((e) => ({
+      id: e.segmentId,
+      text: byId.get(e.segmentId)?.text ?? "",
+      outputStartMs: e.outputStartMs,
+      outputEndMs: e.outputStartMs + (e.sourceEndMs - e.sourceStartMs),
+    })),
+    durationMs: outputDurationMs(map),
+  };
+}
+
+/** 读确认后的选段并换算到输出域；读不到就是真失败（不是降级），原样返回 StepResult */
+async function loadKeeps(
+  ctx: PhaseContext,
+  cutRevision: number,
+): Promise<{ keeps: { units: EditorKeepUnit[]; durationMs: number } } | StepResult> {
+  const dir = videoDir(ctx.dataDir, ctx.contentId);
+  const transcriptRevision = ctx.state.revisions.transcript ?? 0;
+  const transcript = await readVersioned<VideoTranscript>(dir, "transcript", transcriptRevision);
+  const cut = await readVersioned<VideoCut>(dir, "cut", cutRevision);
+  if (!transcript || !cut) {
+    return {
+      ok: false,
+      errorCode: "missing_input",
+      reason: `读不到 transcript.v${transcriptRevision} 或 cut.v${cutRevision}，请回选段视图重新确认一次`,
+    };
+  }
+  // 剪辑单位以 edit-units.vK 为准；没有（V0a 老产物）才回落 transcript.segments
+  const units = await readEditUnits(dir, cutRevision);
+  try {
+    return { keeps: keepUnits(units ? { ...transcript, segments: units.segments } : transcript, cut) };
+  } catch (err) {
+    return { ok: false, errorCode: "cut_invalid", reason: (err as Error).message };
+  }
+}
+
+function stageEditorPlan(
+  dir: string,
+  jobId: string,
+  input: { outcome: Awaited<ReturnType<typeof runEditor>>; cutRevision: number; excluded: string[]; keptText: string },
+): Promise<string> {
+  const { outcome, cutRevision, excluded, keptText } = input;
+  const unmatched = unmatchedEmphasisWords(outcome.emphasisWords, keptText);
+  const plan: VideoEditorPlan = {
+    schemaVersion: 1,
+    cutRevision,
+    origin: outcome.origin,
+    overlays: outcome.overlays,
+    emphasisWords: outcome.emphasisWords,
+    ...(unmatched.length > 0 ? { unmatchedEmphasis: unmatched } : {}),
+    ...(excluded.length > 0 ? { excludedAssets: excluded } : {}),
+    ...(outcome.warning ? { warning: outcome.warning } : {}),
+    ...(outcome.note ? { note: outcome.note } : {}),
+    ...(outcome.provenance ? { provenance: outcome.provenance } : {}),
+  };
+  return writeStaging(dir, "editor-plan", jobId, plan);
+}
+
+/**
+ * 剪辑师 agent（横屏 spec §3）。**只提议不决定**：产出 B-roll 编排与强调词，
+ * 人在 `edit/awaiting_human` 门上删定。跑不起来一律降级成空 plan + warning，绝不 failed/blocked
+ * ——P1 的失败不许让「纯口播成片」这条已经可用的路径变成不可用。
+ */
+async function editPhase(ctx: PhaseContext): Promise<StepResult> {
+  const { dataDir, contentId } = ctx;
+  const dir = videoDir(dataDir, contentId);
+  const cutRevision = ctx.state.revisions.cut ?? 0;
+  const loaded = await loadKeeps(ctx, cutRevision);
+  if ("ok" in loaded) return loaded;
+  const keeps = loaded.keeps;
+  if (!ctx.jobId) return { ok: false, errorCode: "missing_job", reason: "edit 阶段缺 jobId，产物无处落 staging" };
+
+  const content = await getContent(contentId, dataDir);
+  const scan = trimCandidates(scanBrollCandidates(content?.assets ?? []));
+  const outcome = await runEditor(
+    {
+      dataDir,
+      candidates: scan.candidates,
+      units: keeps.units,
+      outputDurationMs: keeps.durationMs,
+      body: content?.body ?? "",
+      assetsDigest: catalogDigest(scan.candidates, scan.excluded),
+      abortSignal: ctx.abortSignal,
+    },
+    ctx.deps,
+  );
+  const editorRevision = (ctx.state.revisions.editor ?? 0) + 1;
+  await stageEditorPlan(dir, ctx.jobId, {
+    outcome,
+    cutRevision,
+    excluded: scan.excluded,
+    keptText: keeps.units.map((u) => u.text).join(""),
+  });
+  return {
+    ok: true,
+    next: EDIT_GATE,
+    revisions: { editor: editorRevision },
+    staged: [{ base: "editor-plan", revision: editorRevision }],
+    ...(outcome.warning ? { warning: outcome.warning } : {}),
+  };
+}
+
 async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
   const { dataDir, contentId } = ctx;
   const dir = videoDir(dataDir, contentId);
@@ -281,7 +394,9 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
       cut,
       cutRevision,
       timelineRevision,
+      // 覆盖轨与强调词都是「人在 edit 门上确认的那一份」，按 cutRevision 存取（见 timeline-build）
       slots: await readOverlaySlots(dataDir, contentId, cutRevision),
+      emphasisWords: await readEmphasisWords(dataDir, contentId, cutRevision),
     },
     ctx.deps,
   );
@@ -320,7 +435,7 @@ async function renderPhase(ctx: PhaseContext): Promise<StepResult> {
   return { ok: true, next: { phase: "review", state: "awaiting_human" }, revisions: { rendered: timelineRevision } };
 }
 
-/** 这五个阶段会真的跑东西；review 是纯人工门，done 是终点 */
+/** 这六个阶段会真的跑东西；review 是纯人工门，done 是终点 */
 export function executePhase(ctx: PhaseContext): Promise<StepResult> {
   switch (ctx.state.phase) {
     case "ingest":
@@ -329,6 +444,8 @@ export function executePhase(ctx: PhaseContext): Promise<StepResult> {
       return transcribePhase(ctx);
     case "cut":
       return cutPhase(ctx);
+    case "edit":
+      return editPhase(ctx);
     case "assemble":
       return assemblePhase(ctx);
     case "render":

@@ -1,6 +1,10 @@
 /**
  * 选段视图(视频 spec §4.4 人工路径 + 粗剪 spec §6)——剪辑单元列表,勾上=留,不勾=剪掉。
  *
+ * 从横屏 spec §3.5 起它是**两步向导的第 1 步**:确认选段之后不回卡片,直接停在同一页的
+ * 第 2 步「成片计划」等剪辑师排完。两步各自是独立组件而不是一个组件里的分支——
+ * phase 变化时如果只切分支,hook 数量会随之变化,React 当场报「渲染的 hook 比上次少」。
+ *
  * 四条纪律:
  * 1. **乐观锁**:提交必须带手里这版的 base revision;`conflict:true` 不是故障,
  *    是「有人/后台改过了」——提示已刷新最新版并重拉,绝不覆盖别人的决定。
@@ -29,13 +33,21 @@ import {
   type CutView,
   type VideoState,
 } from "../lib";
+import { VideoPlanStep } from "./VideoPlanStep";
 
-export function VideoCutPanel(props: {
+interface StepProps {
   contentId: string;
   state: VideoState;
   reload: () => Promise<void>;
   back: () => void;
-}) {
+}
+
+/** 向导入口:phase 决定站在哪一步 */
+export function VideoCutPanel(props: StepProps) {
+  return props.state.phase === "edit" ? <VideoPlanStep {...props} /> : <CutStep {...props} />;
+}
+
+function CutStep(props: StepProps) {
   const tRev = props.state.revisions.transcript ?? 0;
   const cRev = props.state.revisions.cut ?? 0;
   /** done 上进来 = 重开(§2.2 done→assemble 白名单边):确认后会重新组装渲染 */
@@ -114,9 +126,9 @@ export function VideoCutPanel(props: {
         return;
       }
       if (!r.ok) return toast(r.error ?? "确认选段失败");
-      toast(reopening ? "已重开 —— 按新选段重新组装渲染,旧成片留档" : "选段已确认 —— 组装和渲染在后台跑");
+      // 不回卡片:下一步(成片计划)就在同一页,剪辑师排完这里会自己变成第 2 步
+      toast(reopening ? "已重开 —— 剪辑师按新选段重排 B-roll" : "选段已确认 —— 剪辑师在排 B-roll");
       await props.reload();
-      props.back();
     } finally {
       setBusy(false);
     }
@@ -127,7 +139,7 @@ export function VideoCutPanel(props: {
       <div className="vid-sub-bar">
         <button onClick={props.back}>← 成片卡</button>
         <span className="mono muted">
-          选段 · 基于转写 v{tRev} / 选段 v{cRev}
+          ① 选段 → ② 成片计划 · 基于转写 v{tRev} / 选段 v{cRev}
         </span>
         <span className="mono muted vid-sub-right">
           留 {kept.size}/{segments.length} 句 · 约 {formatTimecode(keptMs)}
@@ -178,7 +190,7 @@ export function VideoCutPanel(props: {
           </ul>
           <div className="row-actions">
             <button className="primary" disabled={busy || kept.size === 0} onClick={() => void submit()}>
-              {busy ? "提交中…" : reopening ? "确认并重出一版" : "确认选段"}
+              {busy ? "提交中…" : reopening ? "确认并重出一版" : "确认选段,去排 B-roll"}
             </button>
             <button onClick={props.back}>取消</button>
             {kept.size === 0 && <span className="muted">一句都没留,成片会是空的 —— 至少留一句。</span>}

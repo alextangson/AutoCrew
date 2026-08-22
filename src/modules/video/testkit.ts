@@ -130,6 +130,33 @@ export function fixtureDenseTranscript(): VideoTranscript {
   };
 }
 
+/**
+ * 一条「够长」的转写：输出域 60 秒，掐掉开头 30s / 结尾 15s 之后还剩 15 秒合法窗口。
+ * 剪辑师的禁区规则让短片子根本排不下 B-roll，测编排就必须有这么一份。
+ * 注意它对应的 A-roll 夹具只有 3 秒——**只能用来测不碰媒体的步骤**（edit phase、plan 确认）。
+ */
+export function fixtureLongTranscript(): VideoTranscript {
+  const seg = (id: string, text: string, startMs: number, endMs: number) => ({
+    id,
+    text,
+    startMs,
+    endMs,
+    words: [...text].map((w, i, all) => ({
+      w,
+      startMs: startMs + Math.round(((endMs - startMs) * i) / all.length),
+      endMs: startMs + Math.round(((endMs - startMs) * (i + 1)) / all.length),
+    })),
+  });
+  return {
+    schemaVersion: 1,
+    source: "funasr",
+    segments: [
+      seg("seg-0001", "先讲清楚这件事为什么重要", 0, 30_000),
+      seg("seg-0002", "你看这个界面我演示一下流程", 30_000, 60_000),
+    ],
+  };
+}
+
 export type FakeTurns = Array<Record<string, unknown>>;
 
 /**
@@ -222,6 +249,36 @@ export async function seedVideoContent(
   );
   if (!added.ok) throw new Error(`种 A-roll 素材失败：${added.error}`);
   return { contentId: content.id, arollPath: path.join(assetsDir, "aroll.mp4") };
+}
+
+/**
+ * 往稿件里挂一条 B-roll（屏录）。`description` 决定它进不进剪辑师视野——
+ * 没说明的素材被排除是横屏 spec §2.6 的兜底规则，测边界时把它传成空串。
+ * 文件用的是 3 秒 A-roll 夹具，所以 `durationMs` 默认按真实时长 3000 报。
+ */
+export async function seedBrollAsset(
+  dataDir: string,
+  contentId: string,
+  overrides?: { filename?: string; description?: string; durationMs?: number; type?: "video" | "image" },
+): Promise<string> {
+  const filename = overrides?.filename ?? "screen.mp4";
+  const type = overrides?.type ?? "video";
+  const source = await ensureArollFixture();
+  const description = overrides?.description ?? "屏录：产品界面演示";
+  const added = await addAsset(
+    contentId,
+    {
+      filename,
+      type,
+      role: "broll",
+      sourcePath: source,
+      ...(description ? { description } : {}),
+      ...(type === "video" ? { media: { durationMs: overrides?.durationMs ?? 3000 } } : {}),
+    },
+    dataDir,
+  );
+  if (!added.ok) throw new Error(`种 B-roll 素材失败：${added.error}`);
+  return path.join(dataDir, "contents", contentId, "assets", filename);
 }
 
 /** 往稿件里挂一条 BGM（角色写死 bgm）；返回它在稿件里的绝对路径 */

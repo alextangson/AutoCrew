@@ -163,6 +163,7 @@ export function VideoPanel({ contentId }: { contentId: string }) {
     st.state === "blocked" ||
     st.state === "failed" ||
     canCut ||
+    canPlan ||
     canReview ||
     isDone;
 
@@ -170,7 +171,7 @@ export function VideoPanel({ contentId }: { contentId: string }) {
     <details className="ed-tools" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>成片 · {headline}</summary>
       {err && <p className="ed-error">{err}</p>}
-      {view === "cut" && st && canCut && (
+      {view === "cut" && st && (canCut || inPlan) && (
         <VideoCutPanel contentId={contentId} state={st} reload={load} back={() => setView("card")} />
       )}
       {view === "review" && st && (canReview || isDone) && (
@@ -240,6 +241,12 @@ export function VideoPanel({ contentId }: { contentId: string }) {
             <>
               <p className="muted">转写好了 —— 哪些句子留、哪些删,由你定。</p>
               <button className="primary" onClick={() => setView("cut")}>去选段 →</button>
+            </>
+          )}
+          {canPlan && (
+            <>
+              <p className="muted">剪辑师排好 B-roll 了 —— 哪几段留、哪几段删,由你定。</p>
+              <button className="primary" onClick={() => setView("cut")}>去看成片计划 →</button>
             </>
           )}
           {canReview && (

@@ -21,13 +21,24 @@ export const TITLE_CARD_MS = 3000;
 /** 人工指定的覆盖轨转场恒 cut；fade 在 registry 里，留给剪辑师 agent 用 */
 export const DEFAULT_TRANSITION = "cut";
 
-/** 人工在选段视图上指定的覆盖轨槽位（与 cut 同版本存盘：它也是剪辑决策的一部分） */
+/**
+ * 人确认后的覆盖轨槽位。**按 cutRevision 存**，因为它是这一版剪辑决策的一部分：
+ * 覆盖轨用输出域时间，keeps 一改时间轴就全变，钉在 cut 上才不会张冠李戴。
+ *
+ * 剪辑师 plan 自己的版本号（`revisions.editor`）与它无关——同一版 cut 可以重跑 N 次
+ * 剪辑师，但只会有一次「确认」，所以确认产物按 cut 编号恰好一份，与 assemble 的读法对齐。
+ */
 export interface OverlaySlot {
   kind: "screen" | "image";
   ref: AssetRef;
   outputStartMs: number;
   durationMs: number;
+  /** 屏录取源素材的哪一段（横屏 spec §3.3 阻断项）；跨度恒等于 durationMs */
+  inMs?: number;
+  outMs?: number;
   fit?: OverlayFit;
+  /** registry.transitions 之一；不给按 DEFAULT_TRANSITION */
+  transition?: string;
 }
 
 export function writeOverlaySlots(
@@ -49,6 +60,29 @@ export async function readOverlaySlots(
   return Array.isArray(slots) ? slots : [];
 }
 
+/**
+ * 人确认后的强调词，与覆盖轨槽位同版本口径（都按 cutRevision）。
+ * 单独一份产物而不是塞进 overlays：删光 overlay 只留强调词是常见的合法结果，
+ * 两者的存在与否互不牵连。
+ */
+export function writeEmphasisWords(
+  dataDir: string,
+  contentId: string,
+  cutRevision: number,
+  words: string[],
+): Promise<string> {
+  return writeVersioned(videoDir(dataDir, contentId), "emphasis", cutRevision, words);
+}
+
+export async function readEmphasisWords(
+  dataDir: string,
+  contentId: string,
+  cutRevision: number,
+): Promise<string[]> {
+  const words = await readVersioned<string[]>(videoDir(dataDir, contentId), "emphasis", cutRevision);
+  return Array.isArray(words) ? words.filter((w): w is string => typeof w === "string") : [];
+}
+
 export interface DeterministicTimelineInput {
   transcriptRevision: number;
   cutRevision: number;
@@ -56,6 +90,8 @@ export interface DeterministicTimelineInput {
   overlays: { assetId: string; slot: OverlaySlot }[];
   /** 片头大字 = `videoKit.coverText`；没有发布件就没有标题卡（合法状态，§2.3） */
   titleText?: string;
+  /** 字幕点亮的概念词，数据源是剪辑师 plan 里人留下的那些（横屏 spec §2.7 / §3.5） */
+  emphasisWords?: string[];
   /** 成片输出域总长，用来给标题卡封顶——它是盖在开头的覆盖层，不许比片子还长 */
   outputDurationMs?: number;
 }
@@ -78,11 +114,18 @@ export function buildDeterministicTimeline(input: DeterministicTimelineInput): V
     durationMs: slot.durationMs,
     source:
       slot.kind === "screen"
-        ? { type: "screen", assetId, ...(slot.fit ? { fit: slot.fit } : {}) }
-        : { type: "image", assetId },
-    transition: DEFAULT_TRANSITION,
+        ? {
+            type: "screen",
+            assetId,
+            ...(slot.inMs !== undefined ? { inMs: slot.inMs } : {}),
+            ...(slot.outMs !== undefined ? { outMs: slot.outMs } : {}),
+            ...(slot.fit ? { fit: slot.fit } : {}),
+          }
+        : { type: "image", assetId, ...(slot.fit ? { fit: slot.fit } : {}) },
+    transition: slot.transition ?? DEFAULT_TRANSITION,
   }));
   const titleCard = titleCardOf(input);
+  const emphasisWords = input.emphasisWords?.filter((w) => w.trim()) ?? [];
   return {
     schemaVersion: 2,
     fps: OUTPUT_FPS,
@@ -91,7 +134,7 @@ export function buildDeterministicTimeline(input: DeterministicTimelineInput): V
     anchor: { kind: "aroll", transcriptRevision: input.transcriptRevision, cutRevision: input.cutRevision },
     base: { type: "aroll" },
     overlays,
-    captions: { style: "word-highlight" },
+    captions: { style: "word-highlight", ...(emphasisWords.length > 0 ? { emphasisWords } : {}) },
     ...(titleCard ? { titleCard } : {}),
     audio: { anchorGainDb: 0 },
   };

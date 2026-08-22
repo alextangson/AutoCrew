@@ -19,6 +19,7 @@ export const VIDEO_PHASE_ORDER: readonly VideoPhase[] = [
   "ingest",
   "transcribe",
   "cut",
+  "edit",
   "assemble",
   "render",
   "review",
@@ -32,8 +33,9 @@ export const VIDEO_PHASE_ORDER: readonly VideoPhase[] = [
  *   awaiting_human→queued(人工确认推进)｜done(审片确认)｜awaiting_human(审片打回，见回退白名单)
  *   failed→queued(重试 failedPhase)｜blocked→queued(阻因消除)｜done→queued(重开，见回退白名单)
  *
- * 人工门只有两个：transcribe 完 → cut 选段、render 完 → review 审片（spec §3）。
- * assemble 完自动接 render、ingest 完自动接 transcribe——这两处不停人工门。
+ * 人工门有三个：transcribe 完 → cut 选段、edit 完 → 删/确认 overlay、render 完 → review 审片
+ * （spec §3 + 横屏 spec §3.1）。assemble 完自动接 render、ingest 完自动接 transcribe——
+ * 这两处不停人工门。
  */
 export const VIDEO_STATE_TRANSITIONS: Record<VideoRunState, readonly VideoRunState[]> = {
   idle: ["queued"],
@@ -62,6 +64,9 @@ export const PHASE_ADVANCING_EDGES: readonly string[] = [
  * `transcribe→cut` 不是绕过人工门：门是 `cut/awaiting_human`，这条边只是把 cut 的**计算步**
  * （AI 粗剪，粗剪 spec §3）排上队，人仍要在门上终裁。render→review 不在此列，因为
  * review 没有计算步，渲染完必须直接停在人跟前。
+ *
+ * `edit→assemble` 同样**不在此列**（横屏 spec §3.1 明写）：edit 是人工门，跑完停在
+ * `edit/awaiting_human`，由人删完 overlay 走 `awaiting_human→queued` 推进。
  */
 export const AUTO_CHAIN_PHASES: readonly (readonly [VideoPhase, VideoPhase])[] = [
   ["ingest", "transcribe"],
@@ -71,14 +76,17 @@ export const AUTO_CHAIN_PHASES: readonly (readonly [VideoPhase, VideoPhase])[] =
 
 /**
  * 阶段回退白名单：只有这两条显式边允许 phase 倒退（spec §2.2 v2.1）。
- * 打回=审片不满意回去改选段；重开=对已完成内容提交新 cut 直接重组装。
+ * 打回=审片不满意回去改选段；重开=对已完成内容提交新 cut 再出一版。
+ *
+ * 重开落 `edit/queued` 而不是 `assemble/queued`（横屏 spec §3.1 起）：新 cut 改了 keeps，
+ * 输出域时间全变，旧 plan 的 overlay 会落在错误的话上——必须让剪辑师按新选段重排一遍。
  */
 export const PHASE_REGRESSION_EDGES: readonly {
   readonly from: VideoStateRef;
   readonly to: VideoStateRef;
 }[] = [
   { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
-  { from: { phase: "done", state: "done" }, to: { phase: "assemble", state: "queued" } },
+  { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
 ] as const;
 
 function fmt(ref: VideoStateRef): string {

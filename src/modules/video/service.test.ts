@@ -13,7 +13,9 @@ import {
   fakeRunLoop,
   fakeUvSpawn,
   fixtureDenseTranscript,
+  fixtureLongTranscript,
   routedSpawn,
+  seedBrollAsset,
   seedEngineConfig,
   seedVideoContent,
 } from "./testkit.js";
@@ -38,6 +40,20 @@ async function settled(): Promise<VideoState> {
     .poll(async () => SETTLED.has((await service.getStatus(contentId))?.state.state ?? ""), { timeout: 60_000, interval: 40 })
     .toBe(true);
   return (await service.getStatus(contentId))!.state;
+}
+
+/**
+ * 走完成片计划这道门（默认全留）。种子稿件没有 broll 素材，所以 plan 恒为空——
+ * 「空 plan 也能确认，出纯口播」正是横屏 spec §4 #1/#7 要的行为。
+ */
+async function passEditorGate(): Promise<VideoState> {
+  const at = await settled();
+  expect(describeState(at)).toBe("edit/awaiting_human");
+  const view = (await service.getEditorPlan(contentId))!;
+  return service.confirmEditorPlan(contentId, {
+    planRevision: view.revision,
+    keptOverlayIds: view.plan.overlays.map((o) => o.overlayId),
+  });
 }
 
 function build(
@@ -110,11 +126,13 @@ describe("全链走查", () => {
       baseTranscriptRevision: 1,
       baseCutRevision: 2,
     });
-    expect(describeState(confirmed)).toBe("assemble/queued");
+    // 选段定稿后接的是剪辑师，不是组装（横屏 spec §3.1）
+    expect(describeState(confirmed)).toBe("edit/queued");
+    expect(describeState(await passEditorGate())).toBe("assemble/queued");
 
     const afterRender = await settled();
     expect(describeState(afterRender)).toBe("review/awaiting_human");
-    expect(afterRender.revisions).toEqual({ transcript: 1, cut: 3, timeline: 1, rendered: 1 });
+    expect(afterRender.revisions).toEqual({ transcript: 1, cut: 3, editor: 1, timeline: 1, rendered: 1 });
 
     // 单元表随 cut 进新版本，warning 不跟着走（人已经处理过了）
     const carried = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 3);
@@ -141,16 +159,19 @@ describe("全链走查", () => {
     await service.startBuild(contentId);
     await settled();
     await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    await passEditorGate();
     await settled();
 
     const bounced = await service.confirmReview(contentId, { renderedRevision: 1, verdict: "reject" });
     expect(describeState(bounced)).toBe("cut/awaiting_human");
 
+    // 改了 keeps，输出域时间全变 → 必须重新过一遍剪辑师（边界 #8）
     const recut = await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 3 });
-    expect(describeState(recut)).toBe("assemble/queued");
+    expect(describeState(recut)).toBe("edit/queued");
+    await passEditorGate();
     const after = await settled();
     expect(describeState(after)).toBe("review/awaiting_human");
-    expect(after.revisions).toEqual({ transcript: 1, cut: 4, timeline: 2, rendered: 2 });
+    expect(after.revisions).toEqual({ transcript: 1, cut: 4, editor: 2, timeline: 2, rendered: 2 });
 
     const cut4 = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 4);
     expect(cut4).toMatchObject({ origin: "human", baseCutRevision: 3, keeps: ["seg-0001"] });
@@ -162,15 +183,17 @@ describe("全链走查", () => {
     await fs.access(path.join(videoDir(dir, contentId), "final.v2.mp4"));
   }, 120_000);
 
-  it("重开：done 的内容提交新选段直接重组装", async () => {
+  it("重开：done 的内容提交新选段 → 重排 B-roll 再重组装", async () => {
     await service.startBuild(contentId);
     await settled();
     await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    await passEditorGate();
     await settled();
     await service.confirmReview(contentId, { renderedRevision: 1, verdict: "approve" });
 
     const reopened = await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 3 });
-    expect(describeState(reopened)).toBe("assemble/queued");
+    expect(describeState(reopened)).toBe("edit/queued");
+    await passEditorGate();
     expect(describeState(await settled())).toBe("review/awaiting_human");
   }, 120_000);
 });
@@ -202,6 +225,7 @@ describe("AI 粗剪（LLM 一律注入假实现）", () => {
       baseTranscriptRevision: 1,
       baseCutRevision: 2,
     });
+    await passEditorGate();
     expect(describeState(await settled())).toBe("review/awaiting_human");
     const manifest = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 1))!;
     // 留下 unit-0002(300ms) + unit-0003(600ms)
@@ -222,6 +246,7 @@ describe("AI 粗剪（LLM 一律注入假实现）", () => {
       baseTranscriptRevision: 1,
       baseCutRevision: 2,
     });
+    await passEditorGate();
     expect(describeState(await settled())).toBe("review/awaiting_human");
     // AI 的 flag 作为只读证据留着，没被「恢复全留」清掉
     const carried = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 3);
@@ -241,6 +266,7 @@ describe("AI 粗剪（LLM 一律注入假实现）", () => {
   it("人工终裁过的那一版禁止被后台建议覆盖", async () => {
     await withSuggestion();
     await service.confirmCut(contentId, { keeps: ["unit-0003"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    await passEditorGate();
     await settled();
     await service.confirmReview(contentId, { renderedRevision: 1, verdict: "reject" });
     await expect(service.rerunRoughCut(contentId)).rejects.toThrow(/你自己确认过/);
@@ -250,6 +276,126 @@ describe("AI 粗剪（LLM 一律注入假实现）", () => {
     await service.startBuild(contentId);
     await expect(service.rerunRoughCut(contentId)).rejects.toThrow(/还轮不到/);
   });
+});
+
+describe("剪辑师 agent（成片计划的人工门）", () => {
+  /** 60 秒成片的合法窗口是 [30000, 45000]；素材是 3 秒屏录 */
+  const overlay = { assetId: "b1", outputStartMs: 32_000, durationMs: 2_000, inMs: 500, outMs: 2_500 };
+  const longRoutes = { uv: fakeUvSpawn("ok", fixtureLongTranscript()), npm: fakeRenderSpawn() };
+  /** 同一个 runLoop 会被粗剪与剪辑师共用，按 prompt 分流：粗剪不给建议，剪辑师给一段 B-roll */
+  const byPrompt = (msg: string) =>
+    msg.includes("【成片逐句】") ? [{ overlays: [overlay], emphasisWords: ["界面"] }] : [];
+
+  async function upToPlanGate(): Promise<void> {
+    await service.shutdown();
+    service = createVideoService({
+      dataDir: dir,
+      deps: { spawnImpl: routedSpawn(longRoutes), runLoopImpl: fakeRunLoop(byPrompt) },
+      onEvent: (e) => events.push(e.contentId),
+      onError: () => {},
+    });
+    await seedBrollAsset(dir, contentId);
+    await service.startBuild(contentId);
+    await settled();
+    await service.confirmCut(contentId, {
+      keeps: ["seg-0001", "seg-0002"],
+      flags: [],
+      baseTranscriptRevision: 1,
+      baseCutRevision: 2,
+    });
+    expect(describeState(await settled())).toBe("edit/awaiting_human");
+  }
+
+  it("确认时把留下的 overlay 与强调词写成 assemble 消费的产物（按 cutRevision 存）", async () => {
+    await upToPlanGate();
+    const view = (await service.getEditorPlan(contentId))!;
+    expect(view.revision).toBe(1);
+    expect(view.plan.origin).toBe("llm");
+    expect(view.plan.overlays).toHaveLength(1);
+
+    const confirmed = await service.confirmEditorPlan(contentId, {
+      planRevision: view.revision,
+      keptOverlayIds: [view.plan.overlays[0].overlayId],
+      keptEmphasisWords: ["界面"],
+    });
+    expect(describeState(confirmed)).toBe("assemble/queued");
+    // cut.v3 = 人工确认那一版；覆盖轨与强调词都钉在它身上（assemble 就按这个号读）
+    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toEqual([
+      {
+        kind: "screen",
+        ref: { kind: "content", filename: "screen.mp4" },
+        outputStartMs: 32_000,
+        durationMs: 2_000,
+        inMs: 500,
+        outMs: 2_500,
+        transition: "cut",
+      },
+    ]);
+    expect(await readVersioned(videoDir(dir, contentId), "emphasis", 3)).toEqual(["界面"]);
+  }, 90_000);
+
+  it("人把 overlay 全删了照样能确认（边界 #7：合法，出纯口播）", async () => {
+    await upToPlanGate();
+    const view = (await service.getEditorPlan(contentId))!;
+    const confirmed = await service.confirmEditorPlan(contentId, {
+      planRevision: view.revision,
+      keptOverlayIds: [],
+      keptEmphasisWords: [],
+    });
+    expect(describeState(confirmed)).toBe("assemble/queued");
+    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toBeNull();
+  }, 90_000);
+
+  it("plan_revision 过期 → VideoConflictError，状态不动、产物不落", async () => {
+    await upToPlanGate();
+    await expect(
+      service.confirmEditorPlan(contentId, { planRevision: 99, keptOverlayIds: [] }),
+    ).rejects.toThrow(VideoConflictError);
+    expect(describeState((await service.getStatus(contentId))!.state)).toBe("edit/awaiting_human");
+    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toBeNull();
+  }, 90_000);
+
+  it("引用计划里不存在的片段 / 强调词 → 打回（前端只能删，不能塞新东西进来）", async () => {
+    await upToPlanGate();
+    const view = (await service.getEditorPlan(contentId))!;
+    await expect(
+      service.confirmEditorPlan(contentId, { planRevision: view.revision, keptOverlayIds: ["ov-99"] }),
+    ).rejects.toThrow(/没有这些片段/);
+    await expect(
+      service.confirmEditorPlan(contentId, { planRevision: view.revision, keptOverlayIds: [], keptEmphasisWords: ["自己编的"] }),
+    ).rejects.toThrow(/没有这些强调词/);
+  }, 90_000);
+
+  it("重跑剪辑师：门上可用，跑完仍停在门上并产出新一版 plan", async () => {
+    await upToPlanGate();
+    expect(describeState(await service.rerunEditor(contentId))).toBe("edit/queued");
+    const after = await settled();
+    expect(describeState(after)).toBe("edit/awaiting_human");
+    expect(after.revisions.editor).toBe(2);
+    expect((await service.getEditorPlan(contentId))?.revision).toBe(2);
+  }, 90_000);
+
+  it("零 broll 素材 → 空 plan（origin:empty + note，不是 warning），照样能确认出纯口播", async () => {
+    await service.startBuild(contentId);
+    await settled();
+    await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    await settled();
+    const view = (await service.getEditorPlan(contentId))!;
+    expect(view.plan).toMatchObject({ origin: "empty", overlays: [], emphasisWords: [] });
+    expect(view.plan.note).toBeTruthy();
+    expect(view.plan.warning).toBeUndefined();
+    expect(describeState(await service.confirmEditorPlan(contentId, { planRevision: view.revision, keptOverlayIds: [] }))).toBe(
+      "assemble/queued",
+    );
+  }, 90_000);
+
+  it("不在成片计划门上时，确认与重跑都被拒（不把跑着的任务顶掉）", async () => {
+    await service.startBuild(contentId);
+    await settled();
+    await expect(service.rerunEditor(contentId)).rejects.toThrow(/还轮不到/);
+    await expect(service.confirmEditorPlan(contentId, { planRevision: 1, keptOverlayIds: [] })).rejects.toThrow(/还轮不到/);
+    expect(await service.getEditorPlan(contentId)).toBeNull();
+  }, 60_000);
 });
 
 describe("乐观锁", () => {
@@ -284,6 +430,7 @@ describe("乐观锁", () => {
 
   it("审的不是当前那版成片 → VideoConflictError", async () => {
     await service.confirmCut(contentId, { keeps: ["seg-0001"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    await passEditorGate();
     await settled();
     await expect(service.confirmReview(contentId, { renderedRevision: 99, verdict: "approve" })).rejects.toThrow(VideoConflictError);
   }, 90_000);

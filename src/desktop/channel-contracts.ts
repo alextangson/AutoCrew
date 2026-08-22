@@ -158,6 +158,11 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   // 重跑 AI 粗剪（粗剪 spec §3.4）：不带版本——它只是把 cut 的计算步重排一次，
   // 会不会覆盖由 service 按当前 cut.origin 判（人工终裁过的一律拒）
   "video:rough_cut_rerun": ["content_id"],
+  // 成片计划（横屏 spec §3.1）。确认必须带 plan_revision（乐观锁）与 kept_overlay_ids
+  // ——空数组是合法的「全删，出纯口播」，所以校验只看键在不在，不看长度
+  "video:editor_plan_get": ["content_id"],
+  "video:editor_confirm": ["content_id", "plan_revision", "kept_overlay_ids"],
+  "video:editor_rerun": ["content_id"],
   "video:review_confirm": ["content_id", "rendered_revision", "verdict"],
   "video:retry": ["content_id"],
   "video:asr_warmup": [],

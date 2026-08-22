@@ -18,9 +18,9 @@ import {
 const at = (phase: string, state: string) => ({ phase, state }) as VideoStateRef;
 
 describe("迁移表锁定（spec §2.2 原文）", () => {
-  it("阶段顺序：ingest→transcribe→cut→assemble→render→review→done", () => {
+  it("阶段顺序：ingest→transcribe→cut→edit→assemble→render→review→done", () => {
     expect(VIDEO_PHASE_ORDER).toEqual([
-      "ingest", "transcribe", "cut", "assemble", "render", "review", "done",
+      "ingest", "transcribe", "cut", "edit", "assemble", "render", "review", "done",
     ]);
   });
 
@@ -49,7 +49,7 @@ describe("迁移表锁定（spec §2.2 原文）", () => {
     ]);
     expect(PHASE_REGRESSION_EDGES).toEqual([
       { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
-      { from: { phase: "done", state: "done" }, to: { phase: "assemble", state: "queued" } },
+      { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
     ]);
   });
 });
@@ -67,8 +67,17 @@ describe("合法迁移", () => {
     expect(canTransition(at("transcribe", "running"), at("cut", "awaiting_human"))).toBe(true);
   });
 
-  it("人工确认推进下一阶段：cut/awaiting_human → assemble/queued", () => {
-    expect(canTransition(at("cut", "awaiting_human"), at("assemble", "queued"))).toBe(true);
+  it("人工确认推进下一阶段：cut/awaiting_human → edit/queued（选段定稿后交剪辑师）", () => {
+    expect(canTransition(at("cut", "awaiting_human"), at("edit", "queued"))).toBe(true);
+  });
+
+  it("成片计划的人工门：edit/running → edit/awaiting_human → assemble/queued", () => {
+    expect(videoTransitionError(at("edit", "running"), at("edit", "awaiting_human"))).toBeNull();
+    expect(videoTransitionError(at("edit", "awaiting_human"), at("assemble", "queued"))).toBeNull();
+  });
+
+  it("重跑剪辑师：edit/awaiting_human → edit/queued（同阶段重排，不换 phase）", () => {
+    expect(canTransition(at("edit", "awaiting_human"), at("edit", "queued"))).toBe(true);
   });
 
   it("失败与阻塞：running → failed / blocked，随后都能回 queued 重投同阶段", () => {
@@ -95,8 +104,9 @@ describe("合法迁移", () => {
     expect(videoTransitionError(at("review", "awaiting_human"), at("cut", "awaiting_human"))).toBeNull();
   });
 
-  it("重开：done/done → assemble/queued（对已完成内容提交新 cut）", () => {
-    expect(videoTransitionError(at("done", "done"), at("assemble", "queued"))).toBeNull();
+  it("重开：done/done → edit/queued（新 cut 的输出域时间全变，B-roll 必须重排）", () => {
+    expect(videoTransitionError(at("done", "done"), at("edit", "queued"))).toBeNull();
+    expect(videoTransitionError(at("done", "done"), at("assemble", "queued"))).toContain("阶段回退只允许");
   });
 
   it("原地更新（只改 revisions/stale 等负载）恒合法", () => {
@@ -106,10 +116,14 @@ describe("合法迁移", () => {
 });
 
 describe("非法迁移", () => {
-  it("人工门不可绕过：cut/running 不能自动接 assemble/queued，render 完必须停审片", () => {
-    const err = videoTransitionError(at("cut", "running"), at("assemble", "queued"));
+  it("人工门不可绕过：cut/running 不能自动接 edit/queued，render 完必须停审片", () => {
+    const err = videoTransitionError(at("cut", "running"), at("edit", "queued"));
     expect(err).toContain("人工门不可绕过");
     expect(videoTransitionError(at("render", "running"), at("review", "queued"))).toContain("人工门不可绕过");
+  });
+
+  it("剪辑师跑完不能自己接组装：edit/running → assemble/queued 被拒（门在 edit/awaiting_human）", () => {
+    expect(videoTransitionError(at("edit", "running"), at("assemble", "queued"))).toContain("人工门不可绕过");
   });
 
   it("transcribe/running → cut/queued 是排 AI 粗剪的计算步，不是绕过门（门在 cut/awaiting_human）", () => {

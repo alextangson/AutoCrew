@@ -17,6 +17,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isContentId } from "../../storage/entity-id.js";
 import { getContent } from "../../storage/local-store.js";
+import { catalogDigest, editorInputKey } from "./editor.js";
+import { scanBrollCandidates, trimCandidates } from "./editor-plan.js";
 import { fingerprintFile } from "./fingerprint.js";
 import { resolveBgmRef } from "./ingest.js";
 import { MASTER_AUDIO_PARAMS } from "./master-audio.js";
@@ -48,7 +50,7 @@ import type {
 
 export type { StepResult };
 
-const JOB_PHASES = new Set<string>(["transcribe", "cut", "assemble", "render"]);
+const JOB_PHASES = new Set<string>(["transcribe", "cut", "edit", "assemble", "render"]);
 
 export interface VideoRunnerOptions {
   dataDir: string;
@@ -188,6 +190,13 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       const body = (await getContent(contentId, dataDir))?.body ?? "";
       return roughCutInputKey(dataDir, r.transcript ?? 0, body);
     }
+    // 剪辑师消费的是「确认后的 cut + 稿件 + broll 素材清单」（横屏 spec §3.1）：
+    // 素材说明改一个字、换一条素材，编排就该重算，所以清单指纹也进 key
+    if (state.phase === "edit") {
+      const content = await getContent(contentId, dataDir);
+      const scan = trimCandidates(scanBrollCandidates(content?.assets ?? []));
+      return editorInputKey(dataDir, r.cut ?? 0, content?.body ?? "", catalogDigest(scan.candidates, scan.excluded));
+    }
     // transcribe 的输入是 A-roll 本身：换了素材就是另一个任务，同一素材重复投递自动合并
     const aroll = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll");
     return `aroll:${aroll?.fingerprint?.quickHash.slice(0, 12) ?? "none"}`;
@@ -258,6 +267,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     if (!revisions) return undefined;
     if (phase === "transcribe") return revisions.transcript;
     if (phase === "cut") return revisions.cut;
+    if (phase === "edit") return revisions.editor;
     if (phase === "assemble") return revisions.timeline;
     return revisions.rendered;
   }

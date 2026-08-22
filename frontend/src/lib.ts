@@ -168,7 +168,7 @@ export const COVER_RATIO_LABEL: Record<string, string> = {
  * 只抄界面真正读的字段:timeline / render manifest / asset 清单前端碰不到,不抄。
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-export type VideoPhase = "ingest" | "transcribe" | "cut" | "assemble" | "render" | "review" | "done";
+export type VideoPhase = "ingest" | "transcribe" | "cut" | "edit" | "assemble" | "render" | "review" | "done";
 
 export type VideoRunState = "idle" | "queued" | "running" | "awaiting_human" | "blocked" | "failed" | "done";
 
@@ -182,6 +182,8 @@ export type VideoBlockedReason =
 export interface VideoRevisions {
   transcript?: number;
   cut?: number;
+  /** 剪辑师 plan 的版本;确认成片计划时当乐观锁的 base */
+  editor?: number;
   timeline?: number;
   rendered?: number;
 }
@@ -204,7 +206,7 @@ export interface VideoState {
 /** jobs 只用来显示「第几次尝试/错在哪」,字段抄够就行 */
 export interface VideoJob {
   jobId: string;
-  phase: "transcribe" | "assemble" | "render";
+  phase: "transcribe" | "cut" | "edit" | "assemble" | "render";
   status: "queued" | "running" | "succeeded" | "failed";
   attempts: number;
   failReason?: string;
@@ -270,6 +272,43 @@ export interface CutView {
 }
 
 /**
+ * 剪辑师排的一段 B-roll(横屏 spec §3)。界面只读不改:人能做的只有「删掉这段」,
+ * 时间轴拖拽本期不做——摆半成品的交互出来只会让人以为它能用。
+ */
+export interface EditorPlanOverlay {
+  overlayId: string;
+  assetId: string;
+  label: string;
+  filename: string;
+  kind: "screen" | "image";
+  outputStartMs: number;
+  durationMs: number;
+  inMs?: number;
+  outMs?: number;
+  transition?: string;
+}
+
+export interface VideoEditorPlan {
+  schemaVersion: 1;
+  cutRevision: number;
+  /** llm = 剪辑师真跑过(空 overlays = 它认为不需要);empty = 压根没跑(看 note/warning) */
+  origin: "llm" | "empty";
+  overlays: EditorPlanOverlay[];
+  emphasisWords: string[];
+  /** 归一化后仍对不上转写的强调词:标出来,不假装它们会亮(边界 #14) */
+  unmatchedEmphasis?: string[];
+  /** 没写说明/读不出时长/超预算被截的素材——面板必须点名,否则人不知道自己少填了一行字 */
+  excludedAssets?: string[];
+  warning?: string;
+  note?: string;
+}
+
+export interface EditorPlanView {
+  plan: VideoEditorPlan;
+  revision: number;
+}
+
+/**
  * video:* 的统一返回信封。`conflict:true` 是**一等结果不是故障**
  * (video-handlers.ts 纪律 4):调用方据此提示「版本过期,已为你重载」。
  */
@@ -313,8 +352,29 @@ export const videoCutConfirm = (args: {
     flags: args.flags.map((f) => ({ segment_id: f.segmentId, flag: f.flag })),
     base_transcript_revision: args.baseTranscriptRevision,
     base_cut_revision: args.baseCutRevision,
-    // overlays(屏录/图片覆盖轨)service 已支持,V0a 界面不做——留给 V0b 的选段视图
+    // 覆盖轨不在这一步提交:它由剪辑师排、由人在下一步删定(video:editor_confirm)
   });
+
+/** 成片计划;data 为 null = 剪辑师还没跑过(不是错误) */
+export const videoEditorPlanGet = (contentId: string) =>
+  videoInvoke<EditorPlanView | null>("video:editor_plan_get", { content_id: contentId });
+
+export const videoEditorConfirm = (args: {
+  contentId: string;
+  planRevision: number;
+  keptOverlayIds: string[];
+  keptEmphasisWords: string[];
+}) =>
+  videoInvoke<{ state: VideoState }>("video:editor_confirm", {
+    content_id: args.contentId,
+    plan_revision: args.planRevision,
+    kept_overlay_ids: args.keptOverlayIds,
+    kept_emphasis_words: args.keptEmphasisWords,
+  });
+
+/** 重新跑剪辑师(横屏 spec §3.1);只在成片计划的人工门上可用,错误原样透传 */
+export const videoEditorRerun = (contentId: string) =>
+  videoInvoke<{ state: VideoState }>("video:editor_rerun", { content_id: contentId });
 
 export const videoReviewConfirm = (args: { contentId: string; renderedRevision: number; verdict: "approve" | "reject" }) =>
   videoInvoke<{ state: VideoState; videoReadyAt?: string | null; stampWarning?: string }>("video:review_confirm", {
@@ -346,6 +406,7 @@ export const VIDEO_PHASE_LABEL: Record<VideoPhase, string> = {
   ingest: "素材校验",
   transcribe: "转写",
   cut: "选段",
+  edit: "成片计划",
   assemble: "组装",
   render: "渲染",
   review: "审片",
@@ -411,6 +472,7 @@ export function videoStateSummary(s: VideoState): string {
       return `${phase}中…`;
     case "awaiting_human":
       if (s.phase === "cut") return "转写好了 —— 等你勾选留哪些句子";
+      if (s.phase === "edit") return "剪辑师排好 B-roll 了 —— 等你过一遍";
       if (s.phase === "review") return "成片渲染好了 —— 等你审片";
       return `${phase} —— 等你确认`;
     case "blocked":
