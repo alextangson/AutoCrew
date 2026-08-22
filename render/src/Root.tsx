@@ -9,8 +9,8 @@ import { VideoComposition, type VideoCompositionProps } from './components/Video
 
 export const COMPOSITION_ID = 'autocrew-video';
 
-/** manifest 缺失时的占位画幅（V0a 竖屏 1080×1920@30）。 */
-const FALLBACK = { width: 1080, height: 1920, fps: 30, durationInFrames: 30 } as const;
+/** manifest 缺失时的占位画幅（视频线唯一画幅：横屏 1920×1080@30）。 */
+const FALLBACK = { width: 1920, height: 1080, fps: 30, durationInFrames: 30 } as const;
 
 export const RemotionRoot: React.FC = () => {
   return (

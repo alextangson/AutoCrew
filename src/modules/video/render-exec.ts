@@ -5,7 +5,7 @@
  * stdout 是 JSON lines 进度，stderr 是日志（环形截断 256KB 进 job 台账）。
  *
  * 事务边界是这层的全部价值：
- *   写 `final.v<K>.tmp.mp4` → **ffprobe 断言**（h264 / 1080×1920 / 30fps / 时长 ±0.5s / 有音轨）
+ *   写 `final.v<K>.tmp.mp4` → **ffprobe 断言**（h264 / 1920×1080 / 30fps / 时长 ±0.5s / 有音轨）
  *   → rename 就位 → 登记为稿件 asset。
  * 任何一步不过：改名 `final.v<K>.failed.mp4` 留档（能拖进播放器看崩在哪儿），**绝不登记为 asset**。
  * 少了断言这一步，「渲染成功」只是「进程退出码为 0」——半截视频、没声音、尺寸不对都算成功。
@@ -13,6 +13,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { addAsset } from "../../storage/local-store.js";
+import { OUTPUT_FPS, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "./timeline-build.js";
 import { probeMedia } from "./ingest.js";
 import { REPO_ROOT, runProcess, stderrTail, type VideoDeps } from "./proc.js";
 import { videoDir } from "./video-store.js";
@@ -92,10 +93,12 @@ export async function assertFinalVideo(
   if (!probe.video) problems.push("成片里没有画面轨");
   else {
     if (probe.video.codec !== "h264") problems.push(`视频编码是 ${probe.video.codec}，应为 h264`);
-    if (probe.video.width !== 1080 || probe.video.height !== 1920) {
-      problems.push(`分辨率是 ${probe.video.width}×${probe.video.height}，应为 1080×1920（竖屏）`);
+    if (probe.video.width !== OUTPUT_WIDTH || probe.video.height !== OUTPUT_HEIGHT) {
+      problems.push(`分辨率是 ${probe.video.width}×${probe.video.height}，应为 ${OUTPUT_WIDTH}×${OUTPUT_HEIGHT}（横屏）`);
     }
-    if (Math.abs(probe.video.fps - 30) > 0.05) problems.push(`帧率是 ${probe.video.fps.toFixed(2)}fps，应为 30fps`);
+    if (Math.abs(probe.video.fps - OUTPUT_FPS) > 0.05) {
+      problems.push(`帧率是 ${probe.video.fps.toFixed(2)}fps，应为 ${OUTPUT_FPS}fps`);
+    }
   }
   if (!probe.audio) problems.push("成片里没有音轨");
   const drift = Math.abs(probe.durationMs - durationMs);

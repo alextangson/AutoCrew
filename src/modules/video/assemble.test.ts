@@ -6,20 +6,28 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  assembleVideo,
-  buildAnchorWav,
-  buildDeterministicTimeline,
-  DEFAULT_IDENTITY,
-  loadIdentity,
-  readOverlaySlots,
-  writeOverlaySlots,
-} from "./assemble.js";
+import { assembleVideo, buildAnchorWav, DEFAULT_IDENTITY, loadIdentity } from "./assemble.js";
+import { buildDeterministicTimeline, readOverlaySlots, writeOverlaySlots } from "./timeline-build.js";
+import { addAsset, updateContent } from "../../storage/local-store.js";
 import { ingestAroll } from "./ingest.js";
 import { buildOutputMap } from "./output-map.js";
-import { ensureArollFixture, fixtureTranscript, seedVideoContent } from "./testkit.js";
+import { runProcess } from "./proc.js";
+import { ensureArollFixture, fixtureTranscript, seedBgmAsset, seedVideoContent } from "./testkit.js";
 import { readVersioned, readVideoAssets, videoDir } from "./video-store.js";
 import type { RenderManifest, VideoCut } from "./types.js";
+
+/** 最小可用发布件：标题卡只读 coverText，其余字段只为满足类型 */
+function videoKit(coverText: string) {
+  return {
+    platform: "douyin",
+    postTitle: "平台发布标题",
+    caption: "发布文案",
+    storyboard: [],
+    coverText,
+    coverPrompt: "封面 prompt",
+    generatedAt: new Date().toISOString(),
+  };
+}
 
 let dir: string;
 let contentId: string;
@@ -55,20 +63,37 @@ function input(overrides?: Partial<Parameters<typeof assembleVideo>[0]>) {
 }
 
 describe("buildDeterministicTimeline", () => {
-  it("V0a 形状固定：底轨 aroll + 逐词字幕 + 无标题卡 + 转场恒 cut", () => {
+  it("形状固定：v2 横屏 1920×1080 + 底轨 aroll + 逐词字幕 + 转场恒 cut", () => {
     const t = buildDeterministicTimeline({ transcriptRevision: 1, cutRevision: 2, overlays: [] });
     expect(t).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       fps: 30,
-      width: 1080,
-      height: 1920,
+      width: 1920,
+      height: 1080,
       base: { type: "aroll" },
       anchor: { kind: "aroll", transcriptRevision: 1, cutRevision: 2 },
       captions: { style: "word-highlight" },
       audio: { anchorGainDb: 0 },
     });
-    expect(t.titleCard).toBeUndefined();
     expect(t.overlays).toEqual([]);
+  });
+
+  it("没有发布件就没有标题卡（§2.3 合法状态）", () => {
+    expect(buildDeterministicTimeline({ transcriptRevision: 1, cutRevision: 1, overlays: [] }).titleCard).toBeUndefined();
+    expect(
+      buildDeterministicTimeline({ transcriptRevision: 1, cutRevision: 1, overlays: [], titleText: "   " }).titleCard,
+    ).toBeUndefined();
+  });
+
+  it("有 coverText → 3s 标题卡；成片比 3s 还短就按成片总长封顶", () => {
+    const long = buildDeterministicTimeline({
+      transcriptRevision: 1, cutRevision: 1, overlays: [], titleText: "删代码年入百万", outputDurationMs: 60_000,
+    });
+    expect(long.titleCard).toEqual({ template: "hook-title", text: "删代码年入百万", durationMs: 3000 });
+    const short = buildDeterministicTimeline({
+      transcriptRevision: 1, cutRevision: 1, overlays: [], titleText: "钩子", outputDurationMs: 2000,
+    });
+    expect(short.titleCard?.durationMs).toBe(2000);
   });
 
   it("覆盖轨按顺序编 clipId，screen 带 fit、image 不带", () => {
@@ -147,11 +172,11 @@ describe("assembleVideo", () => {
 
     const m = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 1))!;
     expect(m).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       contentId,
       fps: 30,
-      width: 1080,
-      height: 1920,
+      width: 1920,
+      height: 1080,
       durationMs: 2000,
       timelineRevision: 1,
       cutRevision: 1,
@@ -225,6 +250,68 @@ describe("assembleVideo", () => {
   it("同一 timeline revision 不许重写（版本化产物是审计凭证）", async () => {
     expect((await assembleVideo(input())).ok).toBe(true);
     await expect(assembleVideo(input())).rejects.toThrow(/不可覆盖/);
+  });
+
+  it("没有发布件 → manifest 里没有标题卡（合法状态，§2.3）", async () => {
+    const r = await assembleVideo(input());
+    expect(r.ok && r.manifest.titleCard).toBeUndefined();
+  });
+
+  it("有 videoKit.coverText → 标题卡进 manifest（数据源是封面大字，不是发布标题）", async () => {
+    await updateContent(contentId, { videoKit: videoKit("删代码年入百万") }, dir);
+    const r = await assembleVideo(input());
+    expect(r.ok).toBe(true);
+    // 成片只有 2000ms，标题卡按总长封顶——它是覆盖层，不许比片子还长
+    expect(r.ok && r.manifest.titleCard).toEqual({ template: "hook-title", text: "删代码年入百万", durationMs: 2000 });
+  });
+
+  it("emphasisWords 管道接通：timeline 有什么，manifest 就带什么（P0 数据源仍为空）", async () => {
+    const r = await assembleVideo(input());
+    expect(r.ok && r.manifest.captions.emphasisWords).toEqual([]);
+  });
+});
+
+describe("BGM → master-audio（§2.4）", () => {
+  it("没挂 BGM → 音轨直接指 anchor，且不报 warning", async () => {
+    const r = await assembleVideo(input());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.anchorAudio.file).toContain("anchor.v1.wav");
+    expect(r.warning).toBeUndefined();
+  });
+
+  it("挂了合格 BGM → 音轨指 master-audio.v<timelineRevision>.wav，产物真的在盘上", async () => {
+    await seedBgmAsset(dir, contentId);
+    const r = await assembleVideo(input());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.anchorAudio.file).toBe(path.join(videoDir(dir, contentId), "master-audio.v1.wav"));
+    await fs.access(r.manifest.anchorAudio.file);
+    // BGM 也是受管素材：进清单、带指纹
+    expect((await readVideoAssets(dir, contentId)).some((a) => a.kind === "bgm" && a.fingerprint)).toBe(true);
+  });
+
+  it("BGM 太短 → 降级成无 BGM + warning（成片照出，但降级必须可见）", async () => {
+    const short = path.join(dir, "contents", contentId, "assets", "blip.wav");
+    await runProcess({
+      command: "ffmpeg",
+      args: ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=200:duration=1", "-c:a", "pcm_s16le", short],
+      timeoutMs: 30_000,
+    });
+    await addAsset(contentId, { filename: "blip.wav", type: "audio", role: "bgm" }, dir);
+    const r = await assembleVideo(input());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.anchorAudio.file).toContain("anchor.v1.wav");
+    expect(r.warning).toContain("无 BGM 出片");
+  });
+
+  it("挂了两条 BGM → 组装失败并点名，系统不替你猜（§2.4）", async () => {
+    await seedBgmAsset(dir, contentId, "a.wav");
+    await seedBgmAsset(dir, contentId, "b.wav");
+    const r = await assembleVideo(input());
+    expect(r.ok === false && r.errorCode).toBe("bgm_ambiguous");
+    expect(r.ok === false && r.reason).toContain("a.wav");
   });
 });
 

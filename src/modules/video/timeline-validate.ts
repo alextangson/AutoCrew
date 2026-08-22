@@ -62,7 +62,10 @@ export function validateTimeline(timeline: unknown, ctx: TimelineValidateContext
 
 function validateHeader(t: Record<string, unknown>): string[] {
   const errors: string[] = [];
-  if (t.schemaVersion !== 1) errors.push("schemaVersion 必须是 1");
+  // v2 = 横屏换向；v1 竖屏 timeline 只读归档，不再进组装（横屏 spec §2.1）
+  if (t.schemaVersion !== 2) {
+    errors.push(`schemaVersion 必须是 2（画幅已换向横屏 1920×1080），当前是 ${JSON.stringify(t.schemaVersion)}`);
+  }
   for (const key of ["fps", "width", "height"] as const) {
     if (!isPosInt(t[key])) errors.push(`${key} 必须是正整数，当前是 ${JSON.stringify(t[key])}`);
   }

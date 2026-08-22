@@ -15,7 +15,7 @@
  * 每次状态落盘成功后触发 `onEvent`——SSE 的事件源就是这里，没有第二处（§8.3 四件套之一）。
  */
 import { readAsrStatus, warmupAsr, type AsrStatusRecord } from "./asr.js";
-import { writeOverlaySlots, type OverlaySlot } from "./assemble.js";
+import { writeOverlaySlots, type OverlaySlot } from "./timeline-build.js";
 import { checkVideoEligibility } from "./ingest.js";
 import { createVideoRunner, type VideoRunner } from "./runner.js";
 import type { VideoDeps } from "./proc.js";

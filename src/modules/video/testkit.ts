@@ -5,7 +5,7 @@
  * - **ffmpeg/ffprobe 用真的**：3 秒 testsrc2 + sine 合成的 mp4 当 A-roll，缓存在 os.tmpdir。
  *   响度归一、时长断言这些东西 mock 掉就等于没测。
  * - **ASR 用假的**：真 FunASR 要 1GB 模型 + 几十秒推理，契约测试只需要「进程怎么退出」。
- * - **render 用假的，但产物是真的**：假 CLI 调真 ffmpeg 生成合法的 1080×1920@30 mp4，
+ * - **render 用假的，但产物是真的**：假 CLI 调真 ffmpeg 生成合法的 1920×1080@30 mp4，
  *   于是 render-exec 的 ffprobe 断言是真断言，不是自问自答。
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -14,7 +14,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { addAsset, saveContent } from "../../storage/local-store.js";
+import { addAsset, saveContent, type AssetRole } from "../../storage/local-store.js";
 import type { runLoop } from "../../engine/loop.js";
 import { runProcess } from "./proc.js";
 import type { VideoTranscript } from "./types.js";
@@ -25,6 +25,7 @@ import type { VideoTranscript } from "./types.js";
 
 const FIXTURE_DIR = path.join(os.tmpdir(), "autocrew-video-fixtures");
 const AROLL_FIXTURE = path.join(FIXTURE_DIR, "aroll-3s.mp4");
+const BGM_FIXTURE = path.join(FIXTURE_DIR, "bgm-5s.wav");
 
 /** 3 秒 640×360 测试图 + 440Hz 正弦音轨。合成一次缓存复用（每个测试重合成太慢） */
 export async function ensureArollFixture(): Promise<string> {
@@ -48,6 +49,24 @@ export async function ensureArollFixture(): Promise<string> {
   });
   if (result.code !== 0) throw new Error(`合成 A-roll 夹具失败：${result.stderr}`);
   return AROLL_FIXTURE;
+}
+
+/** 5 秒 220Hz 正弦当 BGM：比 anchor 长，混音链的 loop/截断分支才有东西可截 */
+export async function ensureBgmFixture(): Promise<string> {
+  try {
+    await fs.access(BGM_FIXTURE);
+    return BGM_FIXTURE;
+  } catch {
+    /* 还没合成过 */
+  }
+  await fs.mkdir(FIXTURE_DIR, { recursive: true });
+  const result = await runProcess({
+    command: "ffmpeg",
+    args: ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=5", "-c:a", "pcm_s16le", BGM_FIXTURE],
+    timeoutMs: 60_000,
+  });
+  if (result.code !== 0) throw new Error(`合成 BGM 夹具失败：${result.stderr}`);
+  return BGM_FIXTURE;
 }
 
 /** 与 3 秒夹具对齐的两句转写：keep 全部 → 输出域 2000ms */
@@ -166,10 +185,20 @@ export async function seedEngineConfig(dataDir: string): Promise<void> {
   );
 }
 
-/** 稿件 + A-roll 素材一把种好；返回 contentId 与 A-roll 在稿件里的绝对路径 */
+/**
+ * 稿件 + A-roll 素材一把种好；返回 contentId 与 A-roll 在稿件里的绝对路径。
+ *
+ * A-roll 默认带 `role: "aroll"`——那是横屏 spec §2.6 之后的正路。要测老稿件的
+ * 「第一个 video」回落，把 `arollRole` 传 `null` 显式种一份无角色数据。
+ */
 export async function seedVideoContent(
   dataDir: string,
-  overrides?: { status?: "approved" | "published" | "draft_ready"; platform?: string; body?: string },
+  overrides?: {
+    status?: "approved" | "published" | "draft_ready";
+    platform?: string;
+    body?: string;
+    arollRole?: AssetRole | null;
+  },
 ): Promise<{ contentId: string; arollPath: string }> {
   const fixture = await ensureArollFixture();
   const content = await saveContent(
@@ -185,9 +214,26 @@ export async function seedVideoContent(
   );
   const assetsDir = path.join(dataDir, "contents", content.id, "assets");
   await fs.mkdir(assetsDir, { recursive: true });
-  const added = await addAsset(content.id, { filename: "aroll.mp4", type: "video", sourcePath: fixture }, dataDir);
+  const role = overrides?.arollRole === undefined ? "aroll" : overrides.arollRole;
+  const added = await addAsset(
+    content.id,
+    { filename: "aroll.mp4", type: "video", sourcePath: fixture, ...(role ? { role } : {}) },
+    dataDir,
+  );
   if (!added.ok) throw new Error(`种 A-roll 素材失败：${added.error}`);
   return { contentId: content.id, arollPath: path.join(assetsDir, "aroll.mp4") };
+}
+
+/** 往稿件里挂一条 BGM（角色写死 bgm）；返回它在稿件里的绝对路径 */
+export async function seedBgmAsset(
+  dataDir: string,
+  contentId: string,
+  filename = "bgm.wav",
+): Promise<string> {
+  const source = await ensureBgmFixture();
+  const added = await addAsset(contentId, { filename, type: "audio", role: "bgm", sourcePath: source }, dataDir);
+  if (!added.ok) throw new Error(`种 BGM 素材失败：${added.error}`);
+  return path.join(dataDir, "contents", contentId, "assets", filename);
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +360,7 @@ export interface FakeRenderOptions {
   onStart?: (manifestPath: string) => Promise<void> | void;
 }
 
-/** 用真 ffmpeg 生成 1080×1920@30 的 mp4 写到 --out，并按契约吐 JSON lines 进度 */
+/** 用真 ffmpeg 生成 1920×1080@30 的 mp4 写到 --out，并按契约吐 JSON lines 进度 */
 export function fakeRenderSpawn(opts: FakeRenderOptions = {}): (args: readonly string[]) => ChildProcess {
   return (args) => {
     const manifestPath = argValue(args, "--manifest")!;
@@ -328,7 +374,7 @@ export function fakeRenderSpawn(opts: FakeRenderOptions = {}): (args: readonly s
         await opts.onStart?.(manifestPath);
         const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8")) as { durationMs: number };
         const seconds = ((manifest.durationMs + (opts.durationDeltaMs ?? 0)) / 1000).toFixed(3);
-        const size = `${opts.width ?? 1080}x${opts.height ?? 1920}`;
+        const size = `${opts.width ?? 1920}x${opts.height ?? 1080}`;
         const fps = opts.fps ?? 30;
         const result = await runProcess({
           command: "ffmpeg",

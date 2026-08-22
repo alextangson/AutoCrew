@@ -29,10 +29,10 @@ function ctx(over: Partial<TimelineValidateContext> = {}): TimelineValidateConte
 
 function timeline(over: Partial<VideoTimeline> = {}): VideoTimeline {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     fps: 30,
-    width: 1080,
-    height: 1920,
+    width: 1920,
+    height: 1080,
     anchor: { kind: "aroll", transcriptRevision: 1, cutRevision: 2 },
     base: { type: "aroll" },
     overlays: [],
@@ -91,9 +91,14 @@ describe("结构与头部", () => {
   });
 
   it("schemaVersion / fps / width / height 必须合法", () => {
-    const errs = validateTimeline(timeline({ schemaVersion: 2 as 1, fps: 0, width: -1, height: 1920.5 }), ctx());
-    expect(errs.join("\n")).toContain("schemaVersion 必须是 1");
+    const errs = validateTimeline(timeline({ schemaVersion: 3 as 2, fps: 0, width: -1, height: 1080.5 }), ctx());
+    expect(errs.join("\n")).toContain("schemaVersion 必须是 2");
     expect(errs.filter((e) => /^(fps|width|height)/.test(e))).toHaveLength(3);
+  });
+
+  it("v1 竖屏 timeline 被拒，且说得出该干什么（边界 #11）", () => {
+    const errs = validateTimeline(timeline({ schemaVersion: 1 as unknown as 2 }), ctx());
+    expect(errs.join("\n")).toContain("画幅已换向横屏 1920×1080");
   });
 
   it("anchor 缺失 / kind 不对 / revision 非正整数都被点名", () => {

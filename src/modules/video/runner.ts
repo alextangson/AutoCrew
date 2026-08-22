@@ -17,6 +17,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isContentId } from "../../storage/entity-id.js";
 import { getContent } from "../../storage/local-store.js";
+import { fingerprintFile } from "./fingerprint.js";
+import { resolveBgmRef } from "./ingest.js";
+import { MASTER_AUDIO_PARAMS } from "./master-audio.js";
 import { executePhase, stepWarning, type StepResult } from "./phases.js";
 import { nowIso, nowMs, type VideoDeps } from "./proc.js";
 import { roughCutInputKey } from "./rough-cut.js";
@@ -29,6 +32,7 @@ import {
   readVideoAssets,
   readVideoState,
   recoverExpiredJobs,
+  resolveAssetRef,
   transitionVideoState,
   videoDir,
   VIDEO_HEARTBEAT_MS,
@@ -155,9 +159,28 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   // 认领 → 执行 → settle
   // -------------------------------------------------------------------------
 
+  /**
+   * 换 BGM 是换输入（边界 #13）：不进 inputKey 的话，转写与选段都没变时重投组装会被
+   * 当成「同一份输入」合并掉，旧的 master-audio 就那么留在成片里了。
+   */
+  async function bgmKey(contentId: string): Promise<string> {
+    try {
+      const bgm = await resolveBgmRef(dataDir, contentId);
+      if (bgm.kind === "none") return "none";
+      if (bgm.kind === "ambiguous") return `ambiguous:${bgm.filenames.slice().sort().join(",")}`;
+      const fp = await fingerprintFile(await resolveAssetRef(dataDir, contentId, bgm.ref));
+      return `${fp.quickHash.slice(0, 12)}+${MASTER_AUDIO_PARAMS}`;
+    } catch {
+      // 读不到 BGM 不等于没有 BGM；真出问题会在组装那一步显式失败
+      return "unreadable";
+    }
+  }
+
   async function inputKeyFor(contentId: string, state: VideoState): Promise<string> {
     const r = state.revisions;
-    if (state.phase === "assemble") return `cut:${r.cut ?? 0}+transcript:${r.transcript ?? 0}`;
+    if (state.phase === "assemble") {
+      return `cut:${r.cut ?? 0}+transcript:${r.transcript ?? 0}+bgm:${await bgmKey(contentId)}`;
+    }
     if (state.phase === "render") return `timeline:${r.timeline ?? 0}`;
     // 粗剪还消费 Content.body、prompt 版本与模型路由（§3.2）：只写 transcript 版本的话，
     // 稿子改了而转写没变时，旧输入的结果会被当成新结果推进

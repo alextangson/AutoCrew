@@ -12,7 +12,8 @@
  */
 import path from "node:path";
 import { getContent } from "../../storage/local-store.js";
-import { assembleVideo, driftedAssets, readOverlaySlots } from "./assemble.js";
+import { assembleVideo, driftedAssets } from "./assemble.js";
+import { readOverlaySlots } from "./timeline-build.js";
 import { extractAsrWav, runAsr, scriptMatchRatio } from "./asr.js";
 import { ingestAroll } from "./ingest.js";
 import type { VideoDeps } from "./proc.js";
@@ -285,7 +286,13 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
     ctx.deps,
   );
   if (!result.ok) return fail(result);
-  return { ok: true, next: { phase: "render", state: "queued" }, revisions: { timeline: timelineRevision } };
+  return {
+    ok: true,
+    next: { phase: "render", state: "queued" },
+    revisions: { timeline: timelineRevision },
+    // BGM 被降级掉时这句话必须冒到面板上——不静默降级（横屏 spec §2.4）
+    ...(result.warning ? { warning: result.warning } : {}),
+  };
 }
 
 async function renderPhase(ctx: PhaseContext): Promise<StepResult> {

@@ -14,8 +14,10 @@ export const HookTitle: React.FC<{
   readonly theme: CaptionTheme;
 }> = ({ text, durationInFrames, theme }) => {
   const frame = useCurrentFrame();
-  const { fps, width } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
   const localFamily = useLocalCaptionFont();
+  // 字号跟画面高度走而不是写死像素：换画幅时标题卡不该跟着变大变小。
+  const fontSize = Math.round(height * 0.096);
 
   const enterFrames = Math.max(1, Math.min(Math.round(fps * 0.4), Math.floor(durationInFrames / 2)));
   const opacity = interpolate(frame, [0, enterFrames], [0, 1], {
@@ -41,7 +43,7 @@ export const HookTitle: React.FC<{
         style={{
           transform: `translateY(${rise}px)`,
           fontFamily: captionFontStack(theme, localFamily),
-          fontSize: 104,
+          fontSize,
           fontWeight: 900,
           lineHeight: 1.2,
           color: theme.primaryColor,

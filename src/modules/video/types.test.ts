@@ -12,14 +12,14 @@ import { describe, it, expect } from "vitest";
 import type { RenderManifest, VideoJob, VideoState } from "./types.js";
 
 const manifest: RenderManifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   contentId: "content-1-abc",
   timelineRevision: 1,
   cutRevision: 2,
   transcriptRevision: 1,
   fps: 30,
-  width: 1080,
-  height: 1920,
+  width: 1920,
+  height: 1080,
   durationMs: 42_000,
   anchorAudio: { file: "/abs/anchor.wav", durationMs: 42_000 },
   arollVideo: {
@@ -93,8 +93,9 @@ describe("RenderManifest 渲染契约", () => {
     );
   });
 
-  it("V0 固定竖屏 1080×1920@30，画幅是契约不是配置", () => {
-    expect([manifest.fps, manifest.width, manifest.height]).toEqual([30, 1080, 1920]);
+  it("唯一画幅 = 横屏 1920×1080@30，画幅是契约不是配置（横屏 spec §2.1）", () => {
+    expect([manifest.fps, manifest.width, manifest.height]).toEqual([30, 1920, 1080]);
+    expect(manifest.schemaVersion).toBe(2);
   });
 
   it("JSON 往返无损（manifest 必须是纯数据，不能夹带类实例/函数）", () => {

@@ -17,7 +17,7 @@ import { getContent, updateContent } from "../storage/local-store.js";
 import { appendAction } from "./recent-actions.js";
 import { isContentId } from "../storage/entity-id.js";
 import { VideoConflictError, type ConfirmCutArgs, type VideoService } from "../modules/video/service.js";
-import type { OverlaySlot } from "../modules/video/assemble.js";
+import type { OverlaySlot } from "../modules/video/timeline-build.js";
 import type { AssetRef, CutFlag, CutFlagKind } from "../modules/video/types.js";
 
 type Payload = Record<string, unknown>;

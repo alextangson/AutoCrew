@@ -9,11 +9,13 @@ import path from "node:path";
 import { saveContent, updateContent, addAsset } from "../../storage/local-store.js";
 import {
   checkVideoEligibility,
+  guessAssetRole,
   ingestAroll,
   MAX_AROLL_MS,
   probeAroll,
   probeMedia,
   resolveArollRef,
+  resolveBgmRef,
 } from "./ingest.js";
 import { fakeChild, fakeFfprobe, routedSpawn, seedVideoContent, ensureArollFixture } from "./testkit.js";
 import { readVideoAssets } from "./video-store.js";
@@ -154,5 +156,88 @@ describe("ingestAroll", () => {
     await fs.mkdir(path.join(dir, "contents", c.id, "assets"), { recursive: true });
     await addAsset(c.id, { filename: "final-v1.mp4", type: "video", sourcePath: fixture }, dir);
     expect(await resolveArollRef(dir, c.id)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 素材角色（横屏 spec §2.6）
+// ---------------------------------------------------------------------------
+
+/** 造一篇只有 meta 的稿件，素材按角色手写——这里测的是选取规则，不需要真文件 */
+async function seedRoles(assets: Parameters<typeof addAsset>[1][]): Promise<string> {
+  const c = await saveContent({ title: "t", body: "b", platform: "douyin", status: "approved", tags: [], hashtags: [] }, dir);
+  await fs.mkdir(path.join(dir, "contents", c.id, "assets"), { recursive: true });
+  for (const a of assets) await addAsset(c.id, a, dir);
+  return c.id;
+}
+
+describe("A-roll 按 role 发现", () => {
+  it("认 role=aroll，而不是「第一个 video」——屏录排在前面也不会被当口播底轨", async () => {
+    const id = await seedRoles([
+      { filename: "screen.mp4", type: "video", role: "broll" },
+      { filename: "talk.mp4", type: "video", role: "aroll" },
+    ]);
+    expect(await resolveArollRef(dir, id)).toEqual({ kind: "content", filename: "talk.mp4" });
+  });
+
+  it("老稿件（一个 role 都没有）回落「第一个 video」，不迁移数据", async () => {
+    const id = await seedRoles([
+      { filename: "cover.png", type: "image" },
+      { filename: "talk.mp4", type: "video" },
+      { filename: "screen.mp4", type: "video" },
+    ]);
+    expect(await resolveArollRef(dir, id)).toEqual({ kind: "content", filename: "talk.mp4" });
+  });
+
+  it("标过角色但没有 aroll → 没有，就是没有（不再回头猜）", async () => {
+    const id = await seedRoles([{ filename: "screen.mp4", type: "video", role: "broll" }]);
+    expect(await resolveArollRef(dir, id)).toBeNull();
+  });
+
+  it("封面被排除：它是发布件，不是可剪素材", async () => {
+    const id = await seedRoles([{ filename: "cover.mp4", type: "cover", role: "aroll" }]);
+    expect(await resolveArollRef(dir, id)).toBeNull();
+  });
+});
+
+describe("BGM 按 role 选取", () => {
+  it("没挂 = none（合法状态，不是 warning）", async () => {
+    const id = await seedRoles([{ filename: "talk.mp4", type: "video", role: "aroll" }]);
+    expect(await resolveBgmRef(dir, id)).toEqual({ kind: "none" });
+  });
+
+  it("挂了音频但角色不是 bgm → 仍是 none（有个音频 ≠ 这首是配乐）", async () => {
+    const id = await seedRoles([{ filename: "vo.wav", type: "audio", role: "other" }]);
+    expect(await resolveBgmRef(dir, id)).toEqual({ kind: "none" });
+  });
+
+  it("恰好一条 → 用它", async () => {
+    const id = await seedRoles([{ filename: "bed.mp3", type: "audio", role: "bgm" }]);
+    expect(await resolveBgmRef(dir, id)).toMatchObject({ kind: "one", filename: "bed.mp3" });
+  });
+
+  it("多条 bgm → ambiguous，点名让人自己删（系统不猜）", async () => {
+    const id = await seedRoles([
+      { filename: "a.mp3", type: "audio", role: "bgm" },
+      { filename: "b.mp3", type: "audio", role: "bgm" },
+    ]);
+    expect(await resolveBgmRef(dir, id)).toEqual({ kind: "ambiguous", filenames: ["a.mp3", "b.mp3"] });
+  });
+});
+
+describe("guessAssetRole —— 挂接时的默认值（只是预填）", () => {
+  it("第一条 video 猜 aroll，之后的 video 猜 broll", () => {
+    expect(guessAssetRole("video", [])).toBe("aroll");
+    expect(guessAssetRole("video", [{ filename: "a.mp4", type: "video", addedAt: "" }])).toBe("broll");
+  });
+
+  it("成片不算「已有 video」——重剪时第一条真素材仍猜 aroll", () => {
+    expect(guessAssetRole("video", [{ filename: "final-v1.mp4", type: "video", addedAt: "" }])).toBe("aroll");
+  });
+
+  it("audio → bgm、image → broll、其余 → other", () => {
+    expect(guessAssetRole("audio", [])).toBe("bgm");
+    expect(guessAssetRole("image", [])).toBe("broll");
+    expect(guessAssetRole("subtitle", [])).toBe("other");
   });
 });

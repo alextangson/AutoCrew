@@ -5,7 +5,7 @@
 import React from 'react';
 import { AbsoluteFill, Audio, Sequence } from 'remotion';
 import type { RenderManifest } from '../manifest';
-import { msToDurationFrames } from '../time';
+import { captionBackdropSpans, msToDurationFrames } from '../time';
 import { ARollFrame } from './ARollFrame';
 import { HookTitle } from './HookTitle';
 import { OverlayClip } from './OverlayClip';
@@ -73,6 +73,9 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ manifest }) 
         emphasisWords={manifest.captions.emphasisWords}
         theme={manifest.identity.captionTheme}
         durationMs={manifest.durationMs}
+        // 标题卡在场时字幕整体让位；整屏屏录/图版之上则垫底板（spec §2.2）
+        hideUntilMs={titleCard ? titleCard.durationMs : 0}
+        backdropSpans={captionBackdropSpans(manifest.overlays)}
       />
     </AbsoluteFill>
   );

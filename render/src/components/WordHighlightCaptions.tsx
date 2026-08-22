@@ -2,42 +2,56 @@
  * 逐词高亮字幕（registry caption style: word-highlight）。
  *
  * 输入的 words 已被上游投影到**输出时间域**（spec §2.4），渲染层不再做时间映射。
- * 高亮规则：当前时刻命中的词用 emphasisColor；emphasisWords 命中的词恒用 emphasisColor。
- * 版式：底部安全区留画面高度 15%，最多 10 字/行或 2.5 秒/行。
+ * 高亮规则：当前时刻命中的词用 emphasisColor；emphasisWords 命中的词恒用 emphasisColor
+ * （归一化 + 跨词短语匹配，见 emphasis.ts）。
+ *
+ * 横屏版式（横屏 spec §2.2）：按像素估宽断行、字号随文本宽度自适应、底部安全区 15%、
+ * 整屏屏录之上垫半透明底板、标题卡在场时段整体隐藏。
  */
 import React, { useMemo } from 'react';
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from 'remotion';
+import { markEmphasis } from '../emphasis';
 import { captionFontStack, useLocalCaptionFont } from '../fonts';
 import type { CaptionTheme, CaptionWord } from '../manifest';
-import { framesToMs, groupWordsIntoLines } from '../time';
+import {
+  CAPTION_BOTTOM_SAFE_RATIO,
+  captionFontSize,
+  captionLayout,
+  framesToMs,
+  groupWordsIntoLines,
+  spansContain,
+  type TimeSpan,
+} from '../time';
 
-/** 下沿安全区：画面高度的 15%。 */
-export const CAPTION_BOTTOM_SAFE_RATIO = 0.15;
+export { CAPTION_BOTTOM_SAFE_RATIO };
 
 export const WordHighlightCaptions: React.FC<{
   readonly words: readonly CaptionWord[];
   readonly emphasisWords: readonly string[];
   readonly theme: CaptionTheme;
   readonly durationMs: number;
-}> = ({ words, emphasisWords, theme, durationMs }) => {
+  /** 标题卡在场的时段（0 = 无标题卡）；层级冲突显式化，两者不叠。 */
+  readonly hideUntilMs?: number;
+  /** 需要垫底板的时段（整屏屏录/图版）。 */
+  readonly backdropSpans?: readonly TimeSpan[];
+}> = ({ words, emphasisWords, theme, durationMs, hideUntilMs = 0, backdropSpans = [] }) => {
   const frame = useCurrentFrame();
-  const { fps, height } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
   const localFamily = useLocalCaptionFont();
 
+  const layout = useMemo(() => captionLayout(width, height), [width, height]);
   const lines = useMemo(
-    () => groupWordsIntoLines([...words], { totalDurationMs: durationMs }),
-    [words, durationMs],
-  );
-  const emphasisSet = useMemo(
-    () => new Set(emphasisWords.map((w) => w.trim()).filter((w) => w.length > 0)),
-    [emphasisWords],
+    () => groupWordsIntoLines([...words], { totalDurationMs: durationMs, maxWidthEm: layout.maxWidthEm }),
+    [words, durationMs, layout.maxWidthEm],
   );
 
   const nowMs = framesToMs(frame, fps);
-  const line = lines.find((l) => nowMs >= l.showFromMs && nowMs < l.showUntilMs);
+  const line = nowMs < hideUntilMs ? undefined : lines.find((l) => nowMs >= l.showFromMs && nowMs < l.showUntilMs);
+  const emphasis = useMemo(() => markEmphasis(line?.words ?? [], emphasisWords), [line, emphasisWords]);
   if (!line) return null;
 
-  const fontFamily = captionFontStack(theme, localFamily);
+  const fontSize = captionFontSize(line.widthEm, layout);
+  const onOverlay = spansContain(backdropSpans, nowMs);
 
   return (
     <AbsoluteFill
@@ -45,8 +59,6 @@ export const WordHighlightCaptions: React.FC<{
         justifyContent: 'flex-end',
         alignItems: 'center',
         paddingBottom: Math.round(height * CAPTION_BOTTOM_SAFE_RATIO),
-        paddingLeft: 72,
-        paddingRight: 72,
       }}
     >
       <div
@@ -56,18 +68,26 @@ export const WordHighlightCaptions: React.FC<{
           justifyContent: 'center',
           alignItems: 'baseline',
           gap: '0 6px',
-          fontFamily,
-          fontSize: 76,
+          maxWidth: Math.round(layout.rowWidthPx),
+          fontFamily: captionFontStack(theme, localFamily),
+          fontSize,
           fontWeight: 800,
           lineHeight: 1.25,
           textAlign: 'center',
           textShadow: '0 4px 18px rgba(0,0,0,0.75), 0 0 2px rgba(0,0,0,0.9)',
+          // 白色界面的屏录上描边扛不住，改用底板（spec §2.2）
+          ...(onOverlay
+            ? {
+                backgroundColor: 'rgba(0,0,0,0.62)',
+                borderRadius: Math.round(fontSize * 0.25),
+                padding: `${Math.round(fontSize * 0.18)}px ${Math.round(fontSize * 0.4)}px`,
+              }
+            : {}),
         }}
       >
         {line.words.map((word, index) => {
           const isCurrent = nowMs >= word.startMs && nowMs < word.endMs;
-          const isEmphasis = emphasisSet.has(word.w.trim());
-          const color = isCurrent || isEmphasis ? theme.emphasisColor : theme.primaryColor;
+          const color = isCurrent || emphasis[index] ? theme.emphasisColor : theme.primaryColor;
           return (
             <span
               key={`${word.startMs}-${index}`}

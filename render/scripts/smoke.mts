@@ -19,6 +19,9 @@ const REGISTRY_FIXTURE = path.join(RENDER_ROOT, 'test-fixtures/timeline-registry
 
 const TOTAL_MS = 3000;
 const FPS = 30;
+/** 视频线唯一画幅（横屏 spec §0）。 */
+const WIDTH = 1920;
+const HEIGHT = 1080;
 
 const failures: string[] = [];
 
@@ -57,7 +60,7 @@ function buildFixtures(): { aroll: string; audio: string; image: string } {
   log('[1/4] 用系统 ffmpeg 合成素材…');
   run(
     'ffmpeg',
-    ['-y', '-v', 'error', '-f', 'lavfi', '-i', `testsrc2=size=1080x1920:rate=${FPS}:duration=4`,
+    ['-y', '-v', 'error', '-f', 'lavfi', '-i', `testsrc2=size=${WIDTH}x${HEIGHT}:rate=${FPS}:duration=4`,
      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', '4', aroll],
     'ffmpeg 合成 A-roll',
   );
@@ -79,14 +82,14 @@ function buildFixtures(): { aroll: string; audio: string; image: string } {
 // ---- 2. manifest ---------------------------------------------------------
 function buildManifest(assets: { aroll: string; audio: string; image: string }): string {
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     contentId: 'smoke-content',
     timelineRevision: 1,
     cutRevision: 1,
     transcriptRevision: 1,
     fps: FPS,
-    width: 1080,
-    height: 1920,
+    width: WIDTH,
+    height: HEIGHT,
     durationMs: TOTAL_MS,
     anchorAudio: { file: assets.audio, durationMs: TOTAL_MS },
     arollVideo: {
@@ -114,7 +117,7 @@ function buildManifest(assets: { aroll: string; audio: string; image: string }):
         file: assets.aroll,
         inMs: 0,
         outMs: 600,
-        fit: 'cover',
+        // 不写 fit：走 screen 的默认 contain（横屏 spec §2.5）
         transition: 'cut',
       },
       {
@@ -123,7 +126,7 @@ function buildManifest(assets: { aroll: string; audio: string; image: string }):
         durationMs: 700,
         kind: 'image',
         file: assets.image,
-        fit: 'cover',
+        // 不写 fit：1080×1080 的图在 1920×1080 画布上应当留左右黑边（默认 contain）
         transition: 'fade',
       },
     ],
@@ -149,19 +152,35 @@ function buildManifest(assets: { aroll: string; audio: string; image: string }):
 
   const file = path.join(FIXTURE_DIR, 'render-manifest.json');
   writeFileSync(file, JSON.stringify(manifest, null, 2), 'utf8');
+
+  // 边界 #11：v1 竖屏产物必须被 zod 拒绝，且拒绝理由是人话。
+  const legacy = { ...manifest, schemaVersion: 1, width: 1080, height: 1920 };
+  writeFileSync(path.join(FIXTURE_DIR, 'render-manifest.v1.json'), JSON.stringify(legacy, null, 2), 'utf8');
   return file;
+}
+
+/** 拿一份 v1 竖屏 manifest 撞校验：必须非零退出，且 stderr 说清「重新确认选段以重组装」。 */
+async function checkLegacyRejected(): Promise<void> {
+  const legacyPath = path.join(FIXTURE_DIR, 'render-manifest.v1.json');
+  const cli = await runCli(legacyPath, path.join(OUT_DIR, 'smoke-legacy.mp4'));
+  check('v1 竖屏 manifest 被拒', cli.code !== 0, `退出码 ${cli.code}`);
+  check(
+    'v1 拒绝理由是人话',
+    cli.stderr.includes('重新确认选段以重组装'),
+    cli.stderr.trim().split('\n').slice(-3).join(' | ') || '（无 stderr）',
+  );
 }
 
 // ---- 3. 跑 CLI -----------------------------------------------------------
 type CliResult = { stdout: string; stderr: string; code: number; elapsedMs: number };
 
-function runCli(manifestPath: string): Promise<CliResult> {
+function runCli(manifestPath: string, outFile: string = OUT_FILE): Promise<CliResult> {
   const tsx = path.join(RENDER_ROOT, 'node_modules/.bin/tsx');
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(
       tsx,
-      ['src/cli.ts', '--manifest', manifestPath, '--out', OUT_FILE, '--registry', REGISTRY_FIXTURE],
+      ['src/cli.ts', '--manifest', manifestPath, '--out', outFile, '--registry', REGISTRY_FIXTURE],
       { cwd: RENDER_ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     let stdout = '';
@@ -217,6 +236,7 @@ async function main(): Promise<void> {
   const assets = buildFixtures();
   const manifestPath = buildManifest(assets);
   log(`[2/4] manifest 写入 ${manifestPath}`);
+  await checkLegacyRejected();
 
   log('[3/4] 跑渲染 CLI（首次会下载 Chrome Headless Shell，属预期）…');
   const cli = await runCli(manifestPath);
@@ -264,8 +284,12 @@ async function main(): Promise<void> {
     const duration = Number(probe.format.duration ?? NaN);
 
     check('视频编码 h264', video?.codec_name === 'h264', String(video?.codec_name));
-    check('画幅 1080×1920', video?.width === 1080 && video?.height === 1920, `${video?.width}×${video?.height}`);
-    check('帧率 30fps', parseRate(video?.r_frame_rate) === 30, String(video?.r_frame_rate));
+    check(
+      `画幅 ${WIDTH}×${HEIGHT}（横屏）`,
+      video?.width === WIDTH && video?.height === HEIGHT,
+      `${video?.width}×${video?.height}`,
+    );
+    check('帧率 30fps', parseRate(video?.r_frame_rate) === FPS, String(video?.r_frame_rate));
     check(
       `时长 ${TOTAL_MS / 1000}s ±0.2s`,
       Math.abs(duration - TOTAL_MS / 1000) <= 0.2,

@@ -13,7 +13,13 @@
  * 这是「等一个外部条件」而不是「这条内容剪不出来」。
  */
 import path from "node:path";
-import { getContent, type Content, type ContentStatus } from "../../storage/local-store.js";
+import {
+  getContent,
+  type Asset,
+  type AssetRole,
+  type Content,
+  type ContentStatus,
+} from "../../storage/local-store.js";
 import { VIDEO_PLATFORMS } from "../publish/video-kit.js";
 import { fingerprintFile } from "./fingerprint.js";
 import { runProcess, stderrTail, type VideoDeps } from "./proc.js";
@@ -200,20 +206,58 @@ export async function upsertVideoAsset(
   return next;
 }
 
+/** 成片与封面永远不是可剪素材：前者是上一版产物，后者是发布件（横屏 spec §2.6） */
+function selectable(asset: Asset): boolean {
+  return asset.type !== "cover" && !FINAL_ASSET_RE.test(asset.filename);
+}
+
 /**
- * A-roll 从哪来（V0a 无独立导入 UI）：
+ * A-roll 从哪来：
  *   ① 素材清单里已有的 aroll 条目（重剪、重试都走这条）；
- *   ② 否则取稿件 `assets/` 下第一个 video 素材——把拍好的口播丢进稿件素材即可开工。
- * 成片（final-v*.mp4）被排除，否则第二次构建会拿上一版成片当素材。
+ *   ② 挂接时标了 `role: "aroll"` 的稿件素材（横屏 spec §2.6 的正路）；
+ *   ③ 老稿件兼容：整篇一个 role 都没有时，回落旧约定「第一个 video」。
+ *
+ * ③ 只在**完全没有 role 数据**时生效。已经标过角色的稿件里没有 aroll，就是真的没有——
+ * 此时再去猜「第一个 video」会把创始人明明标成 broll 的屏录当口播底轨。
  */
 export async function resolveArollRef(dataDir: string, contentId: string): Promise<AssetRef | null> {
   const existing = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll");
   if (existing) return existing.ref;
-  const content = await getContent(contentId, dataDir);
-  const candidate = (content?.assets ?? []).find(
-    (a) => a.type === "video" && !FINAL_ASSET_RE.test(a.filename),
+  const assets = ((await getContent(contentId, dataDir))?.assets ?? []).filter(selectable);
+  const byRole = assets.find((a) => a.role === "aroll");
+  if (byRole) return { kind: "content", filename: byRole.filename };
+  if (assets.some((a) => a.role)) return null;
+  const legacy = assets.find((a) => a.type === "video");
+  return legacy ? { kind: "content", filename: legacy.filename } : null;
+}
+
+export const ASSET_ROLES: readonly AssetRole[] = ["aroll", "broll", "bgm", "other"];
+
+/**
+ * 挂接时的角色默认值（spec §2.6）：video 首个 = aroll、其余 video = broll、audio = bgm、image = broll。
+ * 这只是**预填**——挂接 UI 上仍要人确认一次，猜错的代价（拿屏录当口播底轨）比多点一下大得多。
+ */
+export function guessAssetRole(type: Asset["type"], existing: readonly Asset[]): AssetRole {
+  if (type === "audio") return "bgm";
+  if (type === "video") return existing.some((a) => a.type === "video" && selectable(a)) ? "broll" : "aroll";
+  if (type === "image" || type === "broll") return "broll";
+  return "other";
+}
+
+/** 多条 bgm 不猜（spec §2.4）：`ambiguous` 一路冒到人工门，由人删到只剩一条 */
+export type BgmResolution =
+  | { kind: "none" }
+  | { kind: "one"; ref: AssetRef; filename: string }
+  | { kind: "ambiguous"; filenames: string[] };
+
+/** BGM 只认 `role: "bgm"`——「稿件里有个音频文件」不等于「这首是配乐」 */
+export async function resolveBgmRef(dataDir: string, contentId: string): Promise<BgmResolution> {
+  const assets = ((await getContent(contentId, dataDir))?.assets ?? []).filter(
+    (a) => selectable(a) && a.role === "bgm",
   );
-  return candidate ? { kind: "content", filename: candidate.filename } : null;
+  if (assets.length === 0) return { kind: "none" };
+  if (assets.length > 1) return { kind: "ambiguous", filenames: assets.map((a) => a.filename) };
+  return { kind: "one", ref: { kind: "content", filename: assets[0].filename }, filename: assets[0].filename };
 }
 
 export type IngestOutcome =

@@ -21,6 +21,7 @@ import {
   videoCutConfirmHandler,
   videoRetryHandler,
   videoReviewConfirmHandler,
+  videoRoughCutRerunHandler,
   videoStatusHandler,
   videoTranscriptGetHandler,
 } from "./video-handlers.js";
@@ -39,6 +40,7 @@ interface Calls {
   confirmCut: Array<[string, ConfirmCutArgs]>;
   confirmReview: Array<[string, { renderedRevision: number; verdict: string }]>;
   retry: string[];
+  rerunRoughCut: string[];
   shutdown: number;
 }
 
@@ -67,6 +69,10 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
       calls.retry.push(id);
       return { ...STATE, phase: "render", state: "queued" };
     },
+    rerunRoughCut: async (id) => {
+      calls.rerunRoughCut.push(id);
+      return { ...STATE, phase: "cut", state: "queued" };
+    },
     getStatus: async () => ({ state: STATE, jobs: [] }),
     getTranscript: async () => null,
     warmupAsr: async () => ({ status: "warming" }),
@@ -80,7 +86,7 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
 
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-video-handlers-"));
-  calls = { startBuild: [], confirmCut: [], confirmReview: [], retry: [], shutdown: 0 };
+  calls = { startBuild: [], confirmCut: [], confirmReview: [], retry: [], rerunRoughCut: [], shutdown: 0 };
   contentId = (
     await saveContent({ title: "口播稿", body: "正文", status: "approved", tags: [], platform: "douyin" }, dir)
   ).id;
@@ -157,6 +163,30 @@ describe("video:build_start / status / transcript_get / retry", () => {
     );
     const res = await videoRetryHandler({ content_id: contentId, _dataDir: dir });
     expect(res).toEqual({ ok: false, error: "当前是 render/running，没有可重试的失败" });
+  });
+
+  it("rough_cut_rerun：投递即返回 cut/queued", async () => {
+    const res = await videoRoughCutRerunHandler({ content_id: contentId, _dataDir: dir });
+    expect(res).toMatchObject({ ok: true, data: { state: { phase: "cut", state: "queued" } } });
+    expect(calls.rerunRoughCut).toEqual([contentId]);
+  });
+
+  it("rough_cut_rerun：人工终裁过的那版被拒，人话原样透传", async () => {
+    setVideoService(
+      stubService({
+        rerunRoughCut: async () => {
+          throw new Error("这一版选段是你自己确认过的，AI 建议不会覆盖它");
+        },
+      }),
+      dir,
+    );
+    const res = await videoRoughCutRerunHandler({ content_id: contentId, _dataDir: dir });
+    expect(res).toEqual({ ok: false, error: "这一版选段是你自己确认过的，AI 建议不会覆盖它" });
+  });
+
+  it("rough_cut_rerun：非法 content_id 在边界就被拒", async () => {
+    expect(await videoRoughCutRerunHandler({ content_id: "../x", _dataDir: dir })).toMatchObject({ ok: false });
+    expect(calls.rerunRoughCut).toEqual([]);
   });
 
   it("asr 预热与查询透传 service 结果", async () => {

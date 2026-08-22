@@ -36,11 +36,35 @@ export interface Topic {
   deletedAt?: string | null;
 }
 
+/**
+ * 素材在成片里的角色（横屏 spec §2.6）。挂接时必填，是 A-roll 发现与 BGM 选取的唯一依据——
+ * 旧数据没有这个字段，消费方按「整篇都没标过角色」回落旧约定，不做数据迁移。
+ */
+export type AssetRole = "aroll" | "broll" | "bgm" | "other";
+
+/** 视频/音频素材的客观事实（ffprobe 读出，挂接时钉住）：剪辑师 agent 要靠它排时长，指纹给不了 */
+export interface AssetMedia {
+  durationMs: number;
+  width?: number;
+  height?: number;
+  fps?: number;
+}
+
 export interface Asset {
   filename: string;
   type: "cover" | "broll" | "image" | "video" | "audio" | "subtitle" | "other";
+  /** 一行内容说明；挂接 UI 用素材库 name/tags 预填——不靠人记得改文件名 */
   description?: string;
   addedAt: string;
+  role?: AssetRole;
+  /**
+   * 素材库来源与其元数据**快照**（spec §2.6）。存快照不存引用：素材库改名/改标签
+   * 不该悄悄改变一篇已定稿稿件的素材说明，那是「同一版稿件两种事实」。
+   */
+  sourceLibraryId?: string;
+  sourceName?: string;
+  tags?: string[];
+  media?: AssetMedia;
 }
 
 export interface ContentVersion {
@@ -639,7 +663,7 @@ export async function adoptionStats(dataDir?: string): Promise<AdoptionStats> {
 
 export async function addAsset(
   contentId: string,
-  asset: { filename: string; type: Asset["type"]; description?: string; sourcePath?: string },
+  asset: Omit<Asset, "addedAt"> & { sourcePath?: string },
   dataDir?: string,
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
@@ -664,12 +688,8 @@ export async function addAsset(
       await fs.copyFile(asset.sourcePath, destPath);
     }
 
-    const newAsset: Asset = {
-      filename: asset.filename,
-      type: asset.type,
-      description: asset.description,
-      addedAt: now,
-    };
+    const { sourcePath: _copied, ...fields } = asset;
+    const newAsset: Asset = { ...fields, addedAt: now };
 
     content.assets = [...(content.assets || []), newAsset];
     content.updatedAt = now;

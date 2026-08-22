@@ -342,21 +342,69 @@ function AdoptButton(props: {
   );
 }
 
+/** 角色决定这条素材在成片里怎么用：口播底轨只能有一条，BGM 多于一条组装会报错要你选 */
+const ASSET_ROLES: Array<[string, string]> = [
+  ["aroll", "口播底轨"],
+  ["broll", "B-roll(屏录/图版)"],
+  ["bgm", "背景音乐"],
+  ["other", "其他"],
+];
+
+const ROLE_LABEL = new Map(ASSET_ROLES);
+
+/** 与后端 guessAssetRole 同一套默认值；这里只是预填，最终由人确认 */
+function guessRole(type: string, assets: Array<{ type: string; filename: string }>): string {
+  if (type === "audio") return "bgm";
+  if (type === "video") return assets.some((a) => a.type === "video" && !/^final-v\d+\.mp4$/i.test(a.filename)) ? "broll" : "aroll";
+  if (type === "image") return "broll";
+  return "other";
+}
+
+type LibraryPick = { id: string; name: string; type: string; tags?: string[]; description?: string; missing?: boolean };
+
 function AssetsSection(props: {
   contentId: string;
-  assets: Array<{ filename: string; type: string; description?: string }>;
+  assets: Array<{ filename: string; type: string; description?: string; role?: string }>;
   reload: () => Promise<void>;
 }) {
   const [picking, setPicking] = useState(false);
-  const [lib, setLib] = useState<Array<{ id: string; name: string; missing?: boolean }>>([]);
+  const [lib, setLib] = useState<LibraryPick[]>([]);
+  const [chosen, setChosen] = useState<LibraryPick | null>(null);
+  const [role, setRole] = useState("other");
+  const [note, setNote] = useState("");
 
   const openPicker = async () => {
     if (picking) return setPicking(false);
     const r = await invoke("library:list");
     if (!r.ok) return toast(r.error ?? "素材库加载失败");
-    const d = (r as unknown as { data: { assets?: typeof lib } }).data;
+    const d = (r as unknown as { data: { assets?: LibraryPick[] } }).data;
     setLib((d.assets ?? []).filter((a) => !a.missing));
+    setChosen(null);
     setPicking(true);
+  };
+
+  // 选中素材时预填角色与说明——不靠创始人记得改文件名(spec §2.6)
+  const choose = (a: LibraryPick) => {
+    setChosen(a);
+    setRole(guessRole(a.type, props.assets));
+    setNote(a.description?.trim() || [a.name, (a.tags ?? []).join("、")].filter(Boolean).join(" · "));
+  };
+
+  const attach = async () => {
+    if (!chosen) return;
+    if (!note.trim()) return toast("写一行说明再挂接——没有说明的素材,剪辑师看不见它");
+    const r = await invoke("content:asset_add", {
+      content_id: props.contentId,
+      library_id: chosen.id,
+      role,
+      description: note.trim(),
+    });
+    if (!r.ok) return toast(r.error ?? "挂接失败");
+    const warning = (r as unknown as { data?: { warning?: string } }).data?.warning;
+    toast(warning ? `已挂接「${chosen.name}」·${warning}` : `已挂接「${chosen.name}」`);
+    setPicking(false);
+    setChosen(null);
+    void props.reload();
   };
 
   return (
@@ -376,7 +424,10 @@ function AssetsSection(props: {
       {props.assets.map((a) => (
         <div key={a.filename} className="row">
           <span className="row-title">{a.filename}</span>
-          <span className="muted mono">{a.type}{a.description ? " · " + a.description : ""}</span>
+          <span className="muted mono">
+            {a.role ? (ROLE_LABEL.get(a.role) ?? a.role) : a.type}
+            {a.description ? " · " + a.description : " · 无说明"}
+          </span>
           <button
             onClick={async () => {
               const yes = await confirmDialog({
@@ -399,15 +450,31 @@ function AssetsSection(props: {
           {lib.map((a) => (
             <div key={a.id} className="row">
               <span className="row-title">{a.name}</span>
-              <button
-                onClick={async () => {
-                  const r = await invoke("content:asset_add", { content_id: props.contentId, library_id: a.id });
-                  toast(r.ok ? `已挂接「${a.name}」` : (r.error ?? "挂接失败"));
-                  if (r.ok) { setPicking(false); void props.reload(); }
-                }}
-              >挂接</button>
+              <button className={chosen?.id === a.id ? "chip chip-pub" : ""} onClick={() => choose(a)}>
+                {chosen?.id === a.id ? "✓ 已选" : "选它"}
+              </button>
             </div>
           ))}
+          {chosen && (
+            <div className="ed-digest">
+              <span className="mono muted">「{chosen.name}」在成片里的角色</span>
+              <select className="sel-input" value={role} onChange={(e) => setRole(e.target.value)}>
+                {ASSET_ROLES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              </select>
+              <span className="mono muted">一行说明(剪辑师只看得见有说明的素材)</span>
+              <input
+                className="sel-input"
+                maxLength={80}
+                value={note}
+                placeholder="例:命令行跑 autocrew 的屏录,含安装到出稿全过程"
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <div className="row-actions">
+                <button className="primary" disabled={!note.trim()} onClick={() => void attach()}>挂接</button>
+                <button onClick={() => setChosen(null)}>取消</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

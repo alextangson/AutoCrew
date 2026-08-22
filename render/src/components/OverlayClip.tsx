@@ -7,6 +7,7 @@
 import React from 'react';
 import { AbsoluteFill, Img, interpolate, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from 'remotion';
 import type { CodeTheme, Overlay } from '../manifest';
+import { defaultFit } from '../overlay';
 import { fadeRanges, msToDurationFrames, msToFrames } from '../time';
 import { CodeBlock } from './CodeBlock';
 import { ScreenRecClip } from './ScreenRecClip';
@@ -28,7 +29,7 @@ const OverlayBody: React.FC<{
   readonly codeTheme?: CodeTheme;
 }> = ({ overlay, durationInFrames, codeTheme }) => {
   const { fps } = useVideoConfig();
-  const fit = overlay.fit ?? 'cover';
+  const fit = overlay.fit ?? defaultFit(overlay.kind);
 
   switch (overlay.kind) {
     case 'screen':

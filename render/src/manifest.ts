@@ -135,16 +135,31 @@ const ProvenanceSchema = z
   })
   .strict();
 
+/**
+ * v1 = 竖屏 1080×1920 时代的产物。它们只读归档：不原地改写，也不维护竖屏渲染分支。
+ * 拒绝时必须说人话——拿着一份旧 manifest 的人需要知道下一步按哪个按钮（spec §2.1 / 边界 #11）。
+ */
+const SCHEMA_V2_HINT =
+  '画幅已换向 v2（横屏 1920×1080），这份 manifest 还是 v1 竖屏产物：请重新确认选段以重组装';
+const LANDSCAPE_HINT = '视频线唯一画幅是横屏 1920×1080@30；v1 竖屏产物请重新确认选段以重组装';
+
+/**
+ * 字面量不匹配报的是 `invalid_literal`，而 zod 的 `message` 快捷参数只覆盖
+ * `invalid_type` / `invalid_enum_value`——不走 errorMap 的话，人只会看到
+ * 「Invalid literal value, expected 2」这种天书。
+ */
+const hint = (message: string) => ({ errorMap: () => ({ message }) });
+
 export const RenderManifestSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2, hint(SCHEMA_V2_HINT)),
     contentId: z.string().min(1),
     timelineRevision: posInt,
     cutRevision: posInt,
     transcriptRevision: posInt,
     fps: z.literal(30),
-    width: z.literal(1080),
-    height: z.literal(1920),
+    width: z.literal(1920, hint(LANDSCAPE_HINT)),
+    height: z.literal(1080, hint(LANDSCAPE_HINT)),
     durationMs: positiveMs,
     anchorAudio: AudioTrackSchema,
     arollVideo: ARollVideoSchema,

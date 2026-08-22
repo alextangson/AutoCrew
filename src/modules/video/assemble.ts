@@ -1,25 +1,37 @@
 /**
- * Assemble：确定性组装 + 冻结（设计 spec §2.4 / §2.5 / §2.8 / §5）。
+ * Assemble：确定性组装 + 冻结（设计 spec §2.4 / §2.5 / §2.8 / §5；横屏 spec §2.3 / §2.4）。
  *
- * V0a 这一层**没有 LLM**：timeline 由 transcript + cut + 人工指定的覆盖轨槽位算出来，
- * 同样的输入永远得到同样的 timeline。智能层（LLM 建议 / LLM 组装）是 V0b 的事。
+ * 这一层**没有 LLM**：timeline 由 transcript + cut + 人工指定的覆盖轨槽位算出来，
+ * 同样的输入永远得到同样的 timeline。timeline 的形状本身在 `timeline-build.ts`。
  *
- * 四个不可省的动作，顺序即语义：
+ * 五个不可省的动作，顺序即语义：
  * 1. `buildOutputMap` 把源时间域换成输出时间域——timeline 一律工作在输出域（§2.4）。
- * 2. `validateTimeline` 把关，不合法当场失败（V0b 起这里是 LLM 自纠的入口）。
+ * 2. `validateTimeline` 把关，不合法当场失败。
  * 3. **anchor wav**：按 keep 段抽 A-roll 音轨 → `loudnorm` 双 pass 到 -14 LUFS。
  *    单 pass 的动态归一会随内容忽大忽小，双 pass（先测量再按测量值线性归一）才稳定。
- * 4. **冻结 render-manifest**：render 只吃这份 manifest，绝不回头读 timeline（§2.8）。
+ * 4. **音轨选取**：挂了 BGM 就再合一版 master-audio，没挂就直接指 anchor。
+ *    anchor 永远是纯人声，混音是它之后的独立一步（横屏 spec §2.4）。
+ * 5. **冻结 render-manifest**：render 只吃这份 manifest，绝不回头读 timeline（§2.8）。
  *    冻结前复检全部素材指纹——A-roll 是引用不是拷贝，这是最后一次能发现它被换掉的机会。
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getContent } from "../../storage/local-store.js";
 import { readJson } from "../../storage/json-atomic.js";
 import { verifyFingerprint, fingerprintFile } from "./fingerprint.js";
-import { probeMedia } from "./ingest.js";
+import { probeMedia, resolveBgmRef } from "./ingest.js";
 import { upsertVideoAsset } from "./ingest.js";
+import { ffmpeg, LOUDNORM_MEASURE, parseLoudnorm, seconds, tunedLoudnorm } from "./loudnorm.js";
+import { buildMasterAudio } from "./master-audio.js";
 import { buildOutputMap, outputDurationMs, projectWordsToOutput } from "./output-map.js";
-import { runProcess, stderrTail, type VideoDeps } from "./proc.js";
+import { stderrTail, type VideoDeps } from "./proc.js";
+import {
+  buildDeterministicTimeline,
+  OUTPUT_FPS,
+  OUTPUT_HEIGHT,
+  OUTPUT_WIDTH,
+  type OverlaySlot,
+} from "./timeline-build.js";
 import { TIMELINE_REGISTRY, validateTimeline } from "./timeline-validate.js";
 import {
   readVersioned,
@@ -29,109 +41,19 @@ import {
   writeVersioned,
 } from "./video-store.js";
 import type {
-  AssetRef,
   OutputMapEntry,
-  OverlayFit,
   RenderManifest,
   RenderManifestIdentity,
   RenderManifestOverlay,
-  TimelineOverlay,
   VideoAssetEntry,
   VideoCut,
   VideoTimeline,
   VideoTranscript,
 } from "./types.js";
 
-/** 主音轨响度目标（§5，常量不可调——每条片子响度一致才是「一个频道」） */
-export const LOUDNESS_TARGET_I = -14;
-const LOUDNORM_BASE = `I=${LOUDNESS_TARGET_I}:TP=-1.5:LRA=11`;
-
-/** V0 只出竖屏 1080×1920@30（§10「竖屏以外画幅」不做） */
-export const OUTPUT_FPS = 30;
-export const OUTPUT_WIDTH = 1080;
-export const OUTPUT_HEIGHT = 1920;
-
-/** V0a 覆盖轨只有人工指定的屏录/图片；转场恒 cut——fade 在 registry 里，留给 V0b 的 LLM 用 */
-export const DEFAULT_TRANSITION = "cut";
-
-export const DEFAULT_IDENTITY: RenderManifestIdentity = {
-  captionTheme: { fontFamily: "PingFang SC", primaryColor: "#FFFFFF", emphasisColor: "#FFD54A" },
-};
-
-/** 人工在选段视图上指定的覆盖轨槽位（与 cut 同版本存盘：它也是剪辑决策的一部分） */
-export interface OverlaySlot {
-  kind: "screen" | "image";
-  ref: AssetRef;
-  outputStartMs: number;
-  durationMs: number;
-  fit?: OverlayFit;
-}
-
-export function writeOverlaySlots(
-  dataDir: string,
-  contentId: string,
-  cutRevision: number,
-  slots: OverlaySlot[],
-): Promise<string> {
-  return writeVersioned(videoDir(dataDir, contentId), "overlays", cutRevision, slots);
-}
-
-/** 没写过覆盖轨 = 没有覆盖轨，不是错误 */
-export async function readOverlaySlots(
-  dataDir: string,
-  contentId: string,
-  cutRevision: number,
-): Promise<OverlaySlot[]> {
-  const slots = await readVersioned<OverlaySlot[]>(videoDir(dataDir, contentId), "overlays", cutRevision);
-  return Array.isArray(slots) ? slots : [];
-}
-
-// ---------------------------------------------------------------------------
-// timeline
-// ---------------------------------------------------------------------------
-
-export interface DeterministicTimelineInput {
-  transcriptRevision: number;
-  cutRevision: number;
-  /** 已登记进素材清单的覆盖轨（assetId 由 registerOverlayAssets 产出） */
-  overlays: { assetId: string; slot: OverlaySlot }[];
-}
-
-/**
- * V0a 的 timeline 形状是固定的：底轨全程 A-roll + 逐词字幕 + 0-N 个人工覆盖轨，无标题卡。
- * 「没有标题卡」是 V0a 的显式选择——标题卡的文案得有人写，V0a 不引入这个人工门。
- */
-export function buildDeterministicTimeline(input: DeterministicTimelineInput): VideoTimeline {
-  const overlays: TimelineOverlay[] = input.overlays.map(({ assetId, slot }, i) => ({
-    clipId: `clip-${String(i + 1).padStart(2, "0")}`,
-    outputStartMs: slot.outputStartMs,
-    durationMs: slot.durationMs,
-    source:
-      slot.kind === "screen"
-        ? { type: "screen", assetId, ...(slot.fit ? { fit: slot.fit } : {}) }
-        : { type: "image", assetId },
-    transition: DEFAULT_TRANSITION,
-  }));
-  return {
-    schemaVersion: 1,
-    fps: OUTPUT_FPS,
-    width: OUTPUT_WIDTH,
-    height: OUTPUT_HEIGHT,
-    anchor: { kind: "aroll", transcriptRevision: input.transcriptRevision, cutRevision: input.cutRevision },
-    base: { type: "aroll" },
-    overlays,
-    captions: { style: "word-highlight" },
-    audio: { anchorGainDb: 0 },
-  };
-}
-
 // ---------------------------------------------------------------------------
 // anchor wav（loudnorm 双 pass）
 // ---------------------------------------------------------------------------
-
-function seconds(ms: number): string {
-  return (ms / 1000).toFixed(3);
-}
 
 /** keep 段 atrim → concat → loudnorm。单段时省掉 concat（`concat=n=1` 纯属噪音） */
 function anchorFilter(map: OutputMapEntry[], loudnorm: string): string {
@@ -143,40 +65,9 @@ function anchorFilter(map: OutputMapEntry[], loudnorm: string): string {
   return `${parts.join(";")};${labels}concat=n=${map.length}:v=0:a=1,loudnorm=${loudnorm}[out]`;
 }
 
-interface LoudnormMeasured {
-  input_i: string;
-  input_tp: string;
-  input_lra: string;
-  input_thresh: string;
-  target_offset: string;
-}
-
-/** loudnorm 的 JSON 报文混在 stderr 的日志里，取最后一个含 input_i 的对象 */
-function parseLoudnorm(stderr: string): LoudnormMeasured | null {
-  const matches = stderr.match(/\{[^{}]*"input_i"[\s\S]*?\}/g);
-  if (!matches?.length) return null;
-  try {
-    const parsed = JSON.parse(matches[matches.length - 1]) as LoudnormMeasured;
-    const nums = [parsed.input_i, parsed.input_tp, parsed.input_lra, parsed.input_thresh, parsed.target_offset];
-    return nums.every((v) => Number.isFinite(Number(v))) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 export type AnchorOutcome =
   | { ok: true; file: string; durationMs: number }
   | { ok: false; errorCode: string; reason: string };
-
-async function ffmpeg(args: string[], deps?: VideoDeps): Promise<{ code: number | null; stderr: string; spawnError?: string }> {
-  const result = await runProcess({
-    command: "ffmpeg",
-    args: ["-hide_banner", "-nostdin", ...args],
-    timeoutMs: 30 * 60_000,
-    ...(deps?.spawnImpl ? { spawnImpl: deps.spawnImpl } : {}),
-  });
-  return { code: result.code, stderr: result.stderr, ...(result.spawnError ? { spawnError: result.spawnError } : {}) };
-}
 
 /**
  * 抽 keep 段音轨 → 双 pass 归一到 -14 LUFS → `video/anchor.v<cutRevision>.wav`。
@@ -192,7 +83,7 @@ export async function buildAnchorWav(
 ): Promise<AnchorOutcome> {
   await fs.mkdir(path.dirname(outFile), { recursive: true });
   const pass1 = await ffmpeg(
-    ["-v", "info", "-i", arollFile, "-filter_complex", anchorFilter(map, `${LOUDNORM_BASE}:print_format=json`), "-map", "[out]", "-f", "null", "-"],
+    ["-v", "info", "-i", arollFile, "-filter_complex", anchorFilter(map, LOUDNORM_MEASURE), "-map", "[out]", "-f", "null", "-"],
     deps,
   );
   if (pass1.spawnError) return { ok: false, errorCode: "ffmpeg_missing", reason: `找不到 ffmpeg：${pass1.spawnError}。装法：brew install ffmpeg` };
@@ -204,10 +95,7 @@ export async function buildAnchorWav(
     return { ok: false, errorCode: "loudnorm_measure_failed", reason: "读不出响度测量值（音轨可能接近全静音），无法做双 pass 归一" };
   }
 
-  const tuned =
-    `${LOUDNORM_BASE}:measured_I=${measured.input_i}:measured_TP=${measured.input_tp}` +
-    `:measured_LRA=${measured.input_lra}:measured_thresh=${measured.input_thresh}` +
-    `:offset=${measured.target_offset}:linear=true`;
+  const tuned = tunedLoudnorm(measured);
   const tmp = `${outFile}.tmp`;
   const pass2 = await ffmpeg(
     ["-y", "-v", "error", "-i", arollFile, "-filter_complex", anchorFilter(map, tuned), "-map", "[out]", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "-f", "wav", tmp],
@@ -226,6 +114,10 @@ export async function buildAnchorWav(
 // ---------------------------------------------------------------------------
 // identity
 // ---------------------------------------------------------------------------
+
+export const DEFAULT_IDENTITY: RenderManifestIdentity = {
+  captionTheme: { fontFamily: "PingFang SC", primaryColor: "#FFFFFF", emphasisColor: "#FFD54A" },
+};
 
 function pickString(value: unknown, fallback?: string): string | undefined {
   return typeof value === "string" && value.trim() ? value : fallback;
@@ -329,8 +221,13 @@ export interface AssembleInput {
 }
 
 export type AssembleOutcome =
-  | { ok: true; timeline: VideoTimeline; manifest: RenderManifest; manifestFile: string }
+  /** warning = 组装成了但有话要说（例：BGM 不合格已降级为无 BGM）——降级必须可见 */
+  | { ok: true; timeline: VideoTimeline; manifest: RenderManifest; manifestFile: string; warning?: string }
   | { ok: false; blockedReason?: "aroll_drifted" | "ffmpeg_missing"; errorCode: string; reason: string };
+
+type AudioTrackOutcome =
+  | { ok: true; file: string; durationMs: number; warning?: string }
+  | { ok: false; errorCode: string; reason: string };
 
 function driftBlocked(drifted: string[]): AssembleOutcome {
   return {
@@ -361,12 +258,154 @@ function manifestOverlays(
   });
 }
 
-/** 组装到冻结的一条直线。任何一步不过都当场返回原因，绝不带病往下走 */
+/** 片头大字取发布件的 `coverText`（§2.3）——postTitle 是平台发布标题，不是给画面用的 */
+async function titleTextOf(dataDir: string, contentId: string): Promise<string | undefined> {
+  const content = await getContent(contentId, dataDir);
+  return content?.videoKit?.coverText?.trim() || undefined;
+}
+
+/**
+ * 成片音轨：有 BGM 走 master-audio，无 BGM 直接指 anchor（§2.4）。
+ * 「无 BGM」是合法状态不报警；BGM 挂了但不能用才降级 + warning；挂了多条一律报错让人选，不猜。
+ */
+async function resolveAudioTrack(
+  input: AssembleInput,
+  anchor: { file: string; durationMs: number },
+  deps?: VideoDeps,
+): Promise<AudioTrackOutcome> {
+  const { dataDir, contentId } = input;
+  const bgm = await resolveBgmRef(dataDir, contentId);
+  if (bgm.kind === "none") return { ok: true, ...anchor };
+  if (bgm.kind === "ambiguous") {
+    return {
+      ok: false,
+      errorCode: "bgm_ambiguous",
+      reason: `这篇挂了 ${bgm.filenames.length} 条 BGM（${bgm.filenames.join("、")}），系统不替你猜用哪条——把多余的改成别的角色或移除后重试`,
+    };
+  }
+  let bgmPath: string;
+  try {
+    bgmPath = await resolveAssetRef(dataDir, contentId, bgm.ref);
+    await fs.access(bgmPath);
+  } catch (err) {
+    return { ok: true, ...anchor, warning: `BGM 用不了（${(err as Error).message}），这一版按无 BGM 出片` };
+  }
+  // BGM 是受管素材：进清单、带指纹，冻结前的复检因此也盯着它（§2.4）
+  await upsertVideoAsset(dataDir, contentId, {
+    kind: "bgm",
+    ref: bgm.ref,
+    status: "ready",
+    fingerprint: await fingerprintFile(bgmPath),
+  });
+  const master = await buildMasterAudio(
+    {
+      anchorFile: anchor.file,
+      durationMs: anchor.durationMs,
+      bgmFile: bgmPath,
+      outFile: path.join(videoDir(dataDir, contentId), `master-audio.v${input.timelineRevision}.wav`),
+    },
+    deps,
+  );
+  if (master.ok) return { ok: true, file: master.file, durationMs: master.durationMs };
+  if (master.rejected) return { ok: true, ...anchor, warning: master.warning };
+  return { ok: false, errorCode: master.errorCode, reason: master.reason };
+}
+
+interface FreezeInput {
+  input: AssembleInput;
+  timeline: VideoTimeline;
+  map: OutputMapEntry[];
+  durationMs: number;
+  arollPath: string;
+  audio: { file: string; durationMs: number };
+  pathById: Map<string, string>;
+  identity: RenderManifestIdentity;
+}
+
+/** manifest 是渲染的唯一事实：这里之后没人再回头读 timeline（§2.8） */
+function freezeManifest(f: FreezeInput): RenderManifest {
+  const { input, timeline } = f;
+  return {
+    schemaVersion: 2,
+    contentId: input.contentId,
+    timelineRevision: input.timelineRevision,
+    cutRevision: input.cutRevision,
+    transcriptRevision: input.transcriptRevision,
+    fps: OUTPUT_FPS,
+    width: OUTPUT_WIDTH,
+    height: OUTPUT_HEIGHT,
+    durationMs: f.durationMs,
+    anchorAudio: { file: f.audio.file, durationMs: f.audio.durationMs },
+    arollVideo: {
+      file: f.arollPath,
+      segments: f.map.map(({ sourceStartMs, sourceEndMs, outputStartMs }) => ({ sourceStartMs, sourceEndMs, outputStartMs })),
+    },
+    overlays: manifestOverlays(timeline, f.pathById),
+    captions: {
+      style: "word-highlight",
+      words: projectWordsToOutput(input.transcript, f.map),
+      // 数据源是 P1 剪辑师 agent，P0 只把管道接通（§2.7）
+      emphasisWords: timeline.captions.emphasisWords ?? [],
+    },
+    ...(timeline.titleCard
+      ? { titleCard: { template: "hook-title" as const, text: timeline.titleCard.text, durationMs: timeline.titleCard.durationMs } }
+      : {}),
+    identity: f.identity,
+    // V0a 不采购 AI 镜头、不用克隆音色（§7 是 V0b 起）——发布件的 AI 标注读的就是这两个字段
+    provenance: { hasAiClips: false, hasClonedVoice: false },
+  };
+}
+
+/** 输出域总长与零长分句的把关；不过就当场说清楚，绝不带病往下走 */
+function checkOutputMap(map: OutputMapEntry[]): { ok: false; errorCode: string; reason: string } | null {
+  if (outputDurationMs(map) <= 0) {
+    return { ok: false, errorCode: "empty_cut", reason: "这一版剪辑没有保留任何有时长的分句，成片会是空的——回选段视图勾几句再来" };
+  }
+  const zeroLength = map.find((e) => e.sourceEndMs <= e.sourceStartMs);
+  return zeroLength
+    ? { ok: false, errorCode: "zero_length_segment", reason: `分句 ${zeroLength.segmentId} 的时长为 0，转写有问题，请重跑 ASR` }
+    : null;
+}
+
+/** ffmpeg 缺席是「等一个外部条件」不是「这条剪不出来」——两种命运在这里分岔 */
+function audioFailed(result: { errorCode: string; reason: string }): AssembleOutcome {
+  return result.errorCode === "ffmpeg_missing"
+    ? { ok: false, blockedReason: "ffmpeg_missing", errorCode: result.errorCode, reason: result.reason }
+    : { ok: false, errorCode: result.errorCode, reason: result.reason };
+}
+
+/** 建 timeline → 校验 → 落盘。不合法的 timeline 绝不落盘（落了就成了假的审计凭证） */
+async function stageTimeline(
+  input: AssembleInput,
+  overlays: { assetId: string; slot: OverlaySlot }[],
+  durationMs: number,
+): Promise<{ ok: true; timeline: VideoTimeline } | { ok: false; errorCode: string; reason: string }> {
+  const { dataDir, contentId } = input;
+  const titleText = await titleTextOf(dataDir, contentId);
+  const timeline = buildDeterministicTimeline({
+    transcriptRevision: input.transcriptRevision,
+    cutRevision: input.cutRevision,
+    overlays,
+    outputDurationMs: durationMs,
+    ...(titleText ? { titleText } : {}),
+  });
+  const errors = validateTimeline(timeline, {
+    registry: TIMELINE_REGISTRY,
+    outputDurationMs: durationMs,
+    assets: await readVideoAssets(dataDir, contentId),
+  });
+  if (errors.length > 0) {
+    return { ok: false, errorCode: "timeline_invalid", reason: `timeline 校验不通过：\n${errors.map((e) => `· ${e}`).join("\n")}` };
+  }
+  await writeVersioned(videoDir(dataDir, contentId), "timeline", input.timelineRevision, timeline);
+  return { ok: true, timeline };
+}
+
+/** 组装到冻结的一条直线。任何一步不过都当场返回原因 */
 export async function assembleVideo(input: AssembleInput, deps?: VideoDeps): Promise<AssembleOutcome> {
   const { dataDir, contentId } = input;
   const dir = videoDir(dataDir, contentId);
-  const assets = await readVideoAssets(dataDir, contentId);
-  const aroll = assets.find((a) => a.kind === "aroll");
+  const aroll = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll");
   if (!aroll?.fingerprint) return { ok: false, errorCode: "aroll_missing", reason: "素材清单里没有已登记的 A-roll，请重新走一次导入" };
 
   // 开跑前先看 A-roll 还在不在（§4.2 每 phase 复检）——不然 ffmpeg 会用一句天书报错
@@ -382,37 +421,18 @@ export async function assembleVideo(input: AssembleInput, deps?: VideoDeps): Pro
   } catch (err) {
     return { ok: false, errorCode: "cut_invalid", reason: (err as Error).message };
   }
+  const mapProblem = checkOutputMap(map);
+  if (mapProblem) return mapProblem;
   const durationMs = outputDurationMs(map);
-  if (durationMs <= 0) {
-    return { ok: false, errorCode: "empty_cut", reason: "这一版剪辑没有保留任何有时长的分句，成片会是空的——回选段视图勾几句再来" };
-  }
-  const zeroLength = map.find((e) => e.sourceEndMs <= e.sourceStartMs);
-  if (zeroLength) {
-    return { ok: false, errorCode: "zero_length_segment", reason: `分句 ${zeroLength.segmentId} 的时长为 0，转写有问题，请重跑 ASR` };
-  }
 
-  const timeline = buildDeterministicTimeline({
-    transcriptRevision: input.transcriptRevision,
-    cutRevision: input.cutRevision,
-    overlays: registered.overlays,
-  });
-  const errors = validateTimeline(timeline, {
-    registry: TIMELINE_REGISTRY,
-    outputDurationMs: durationMs,
-    assets: await readVideoAssets(dataDir, contentId),
-  });
-  if (errors.length > 0) {
-    return { ok: false, errorCode: "timeline_invalid", reason: `timeline 校验不通过：\n${errors.map((e) => `· ${e}`).join("\n")}` };
-  }
-  await writeVersioned(dir, "timeline", input.timelineRevision, timeline);
+  const staged = await stageTimeline(input, registered.overlays, durationMs);
+  if (!staged.ok) return staged;
 
   const arollPath = await resolveAssetRef(dataDir, contentId, aroll.ref);
   const anchor = await buildAnchorWav(arollPath, map, path.join(dir, `anchor.v${input.cutRevision}.wav`), deps);
-  if (!anchor.ok) {
-    return anchor.errorCode === "ffmpeg_missing"
-      ? { ok: false, blockedReason: "ffmpeg_missing", errorCode: anchor.errorCode, reason: anchor.reason }
-      : { ok: false, errorCode: anchor.errorCode, reason: anchor.reason };
-  }
+  if (!anchor.ok) return audioFailed(anchor);
+  const audio = await resolveAudioTrack(input, { file: anchor.file, durationMs: anchor.durationMs }, deps);
+  if (!audio.ok) return audioFailed(audio);
 
   // 冻结前最后一次复检：从这一刻起 manifest 就是渲染的唯一事实
   const finalAssets = await readVideoAssets(dataDir, contentId);
@@ -423,24 +443,11 @@ export async function assembleVideo(input: AssembleInput, deps?: VideoDeps): Pro
   for (const entry of finalAssets) {
     pathById.set(entry.assetId, await resolveAssetRef(dataDir, contentId, entry.ref));
   }
-  const manifest: RenderManifest = {
-    schemaVersion: 1,
-    contentId,
-    timelineRevision: input.timelineRevision,
-    cutRevision: input.cutRevision,
-    transcriptRevision: input.transcriptRevision,
-    fps: OUTPUT_FPS,
-    width: OUTPUT_WIDTH,
-    height: OUTPUT_HEIGHT,
-    durationMs,
-    anchorAudio: { file: anchor.file, durationMs: anchor.durationMs },
-    arollVideo: { file: arollPath, segments: map.map(({ sourceStartMs, sourceEndMs, outputStartMs }) => ({ sourceStartMs, sourceEndMs, outputStartMs })) },
-    overlays: manifestOverlays(timeline, pathById),
-    captions: { style: "word-highlight", words: projectWordsToOutput(input.transcript, map), emphasisWords: [] },
+  const manifest = freezeManifest({
+    input, timeline: staged.timeline, map, durationMs, arollPath, pathById,
+    audio: { file: audio.file, durationMs: audio.durationMs },
     identity: await loadIdentity(dataDir),
-    // V0a 不采购 AI 镜头、不用克隆音色（§7 是 V0b 起）——发布件的 AI 标注读的就是这两个字段
-    provenance: { hasAiClips: false, hasClonedVoice: false },
-  };
+  });
   const manifestFile = await writeVersioned(dir, "render-manifest", input.timelineRevision, manifest);
-  return { ok: true, timeline, manifest, manifestFile };
+  return { ok: true, timeline: staged.timeline, manifest, manifestFile, ...(audio.warning ? { warning: audio.warning } : {}) };
 }

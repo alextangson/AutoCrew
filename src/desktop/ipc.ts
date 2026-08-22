@@ -63,7 +63,7 @@
  *   library:folder_create { name }
  *   library:folder_remove { id }
  *   dialog:pick_media    {}
- *   content:asset_add    { content_id, library_id }
+ *   content:asset_add    { content_id, library_id, role?, description? }
  *   content:asset_remove { content_id, filename }
  *   today:summary       {}
  */
@@ -99,7 +99,13 @@ import {
   articleImagesUploadHandler,
 } from "./article-image-handlers.js";
 import { logsListHandler, logsGetRunHandler, skillsListHandler } from "./log-handlers.js";
-import { goalGetHandler, goalSetHandler, retroGenerateHandler, retroListHandler, retroGetHandler } from "./goal-retro-handlers.js";
+import {
+  goalGetHandler,
+  goalSetHandler,
+  retroGenerateHandler,
+  retroListHandler,
+  retroGetHandler,
+} from "./goal-retro-handlers.js";
 import { openContentFolder } from "./folder-open.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
@@ -108,7 +114,15 @@ import { loadEngineConfig } from "../engine/config.js";
 import { parseViewContext } from "./chat-view-context.js";
 import { registerTurn, abortTurn, settleTurn, getTurnStatus, noteTurnConversation } from "./turn-registry.js";
 import { listConversations, getConversation, deleteConversation } from "../storage/conversation-store.js";
-import { getEngineSettings, setEngineSettings, getSearchSettings, setSearchSettings, getPublishSettings, setPublishSettings, openEngineConfigFile } from "./settings.js";
+import {
+  getEngineSettings,
+  setEngineSettings,
+  getSearchSettings,
+  setSearchSettings,
+  getPublishSettings,
+  setPublishSettings,
+  openEngineConfigFile,
+} from "./settings.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { appendAction } from "./recent-actions.js";
@@ -152,8 +166,23 @@ import {
   researchListAssetsHandler,
   researchImportAssetHandler,
 } from "./research-handlers.js";
-import { listVersions, revertToVersion, addAsset as addContentAsset, removeAsset as removeContentAsset, getContent, getDataDir, listTopics, saveTopic, updateTopic, softDeleteTopic, restoreTopic, listTrash, updateContent } from "../storage/local-store.js";
+import {
+  listVersions,
+  revertToVersion,
+  addAsset as addContentAsset,
+  removeAsset as removeContentAsset,
+  getContent,
+  getDataDir,
+  listTopics,
+  saveTopic,
+  updateTopic,
+  softDeleteTopic,
+  restoreTopic,
+  listTrash,
+  updateContent,
+} from "../storage/local-store.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
+import { attachLibraryAsset } from "./content-asset-attach.js";
 import type { ApprovalBinding } from "./approval-gate.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
@@ -203,7 +232,10 @@ export type IpcHandlerContext = {
   requestApproval?: (binding: ApprovalBinding) => { token: string; expiresAt: string };
   consumeApproval?: (token: string, binding: ApprovalBinding) => { ok: true } | { ok: false; error: string };
 };
-export type IpcHandler = (payload: Record<string, unknown>, ctx?: IpcHandlerContext) => Promise<Record<string, unknown>>;
+export type IpcHandler = (
+  payload: Record<string, unknown>,
+  ctx?: IpcHandlerContext,
+) => Promise<Record<string, unknown>>;
 
 type ExecuteFn = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -242,7 +274,10 @@ export const CHANNEL_ACTIONS = {
 export function wrapExecute(fn: ExecuteFn, action: string): IpcHandler {
   return async (payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
     if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-      return { ok: false, error: `Invalid payload: expected object, got ${payload === null ? "null" : typeof payload}` };
+      return {
+        ok: false,
+        error: `Invalid payload: expected object, got ${payload === null ? "null" : typeof payload}`,
+      };
     }
     try {
       return await fn({ ...payload, action });
@@ -310,7 +345,10 @@ async function contentOpenFolderHandler(payload: Record<string, unknown>): Promi
     return { ok: false, error: "Invalid payload: expected object" };
   }
   try {
-    return (await openContentFolder(String(payload.id ?? ""), (payload._dataDir as string) || undefined)) as unknown as Record<string, unknown>;
+    return (await openContentFolder(
+      String(payload.id ?? ""),
+      (payload._dataDir as string) || undefined,
+    )) as unknown as Record<string, unknown>;
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -468,7 +506,10 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
 
 // ── chat:turn — Agent 态对话入口 ──────────────────────────────────────────────
 
-async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandlerContext): Promise<Record<string, unknown>> {
+async function chatTurnHandler(
+  payload: Record<string, unknown>,
+  ctx?: IpcHandlerContext,
+): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
@@ -477,9 +518,7 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     return { ok: false, error: "chat:turn 需要非空 message" };
   }
   const conversationId =
-    typeof payload.conversation_id === "string" && payload.conversation_id !== ""
-      ? payload.conversation_id
-      : undefined;
+    typeof payload.conversation_id === "string" && payload.conversation_id !== "" ? payload.conversation_id : undefined;
   const dataDir = (payload._dataDir as string) || undefined;
   // 上下文感知（IA v4.2 §C1 + 设计 §Phase 3）：renderer 报告用户正看着哪——
   // 枚举白名单 + 存在性校验都在 chat-view-context，非法字段静默丢弃，不进 prompt。
@@ -539,7 +578,9 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
     });
     // run 收尾:成功有产出发 run_done;失败发 run_failed——任务带上的 run 不许悬空「进行中」
     if (result.ok !== false) {
-      const data = result.data as { cards?: unknown[]; contentIds?: string[]; conversationId?: unknown; stopReason?: unknown } | undefined;
+      const data = result.data as
+        | { cards?: unknown[]; contentIds?: string[]; conversationId?: unknown; stopReason?: unknown }
+        | undefined;
       const cardCount = Array.isArray(data?.cards) ? data.cards.length : 0;
       const contentId = Array.isArray(data?.contentIds) ? data.contentIds[0] : undefined;
       if (typeof data?.conversationId === "string" && data.conversationId) {
@@ -555,21 +596,31 @@ async function chatTurnHandler(payload: Record<string, unknown>, ctx?: IpcHandle
           runId,
           label: aborted
             ? "本轮已停（已投递的后台任务继续跑）"
-            : cardCount > 0 ? `任务完成 · 产出 ${cardCount} 张卡片` : "任务已受理",
+            : cardCount > 0
+              ? `任务完成 · 产出 ${cardCount} 张卡片`
+              : "任务已受理",
           ...(contentId ? { contentId } : {}),
         },
         dataDir,
       );
     } else {
       void emitEngineEvent(
-        { role: "system", kind: "run_failed", runId, label: `任务中断：${String((result as { error?: unknown }).error ?? "未知错误").slice(0, 60)}` },
+        {
+          role: "system",
+          kind: "run_failed",
+          runId,
+          label: `任务中断：${String((result as { error?: unknown }).error ?? "未知错误").slice(0, 60)}`,
+        },
         dataDir,
       );
     }
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    void emitEngineEvent({ role: "system", kind: "run_failed", runId, label: `任务中断：${msg.slice(0, 60)}` }, dataDir);
+    void emitEngineEvent(
+      { role: "system", kind: "run_failed", runId, label: `任务中断：${msg.slice(0, 60)}` },
+      dataDir,
+    );
     return { ok: false, error: msg };
   } finally {
     // settle 才解锁:注册表条目从登记一直活到本轮真正收尾（含落盘），
@@ -774,7 +825,9 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Prom
     if (!updated) return { ok: false, error: `稿件不存在：${contentId}` };
     // 采纳即学习闸门：正文确有变化才把 before→after 喂给蒸馏管线（延迟学习，不确认不学）
     if (before && before !== body) {
-      await recordDiff(contentId, "body", before, body, dataDir, feedback || undefined, updated.platform).catch(() => {});
+      await recordDiff(contentId, "body", before, body, dataDir, feedback || undefined, updated.platform).catch(
+        () => {},
+      );
     }
     return { ok: true, content: updated };
   } catch (err) {
@@ -891,7 +944,8 @@ async function libraryUpdateHandler(payload: Record<string, unknown>): Promise<R
   if (typeof payload.name === "string") patch.name = payload.name;
   if (Array.isArray(payload.tags)) patch.tags = (payload.tags as unknown[]).map(String);
   if (typeof payload.description === "string") patch.description = payload.description;
-  if (payload.folder_id !== undefined) patch.folderId = typeof payload.folder_id === "string" && payload.folder_id ? payload.folder_id : null;
+  if (payload.folder_id !== undefined)
+    patch.folderId = typeof payload.folder_id === "string" && payload.folder_id ? payload.folder_id : null;
   if (typeof payload.path === "string") patch.path = payload.path;
   if (Object.keys(patch).length === 0) return { ok: false, error: "至少提供一个可更新字段" };
   try {
@@ -954,35 +1008,16 @@ async function contentAssetAddHandler(payload: Record<string, unknown>): Promise
   const libraryId = payload.library_id;
   if (!isContentId(contentId)) return { ok: false, error: "需要合法 content_id" };
   if (typeof libraryId !== "string" || !libraryId) return { ok: false, error: "需要 library_id" };
-  const dataDir = (payload._dataDir as string) || undefined;
   try {
-    const asset = await getLibraryAsset(libraryId, dataDir);
-    if (!asset) return { ok: false, error: "素材不存在" };
-    try {
-      await fsAccess(asset.path);
-    } catch {
-      return { ok: false, error: "原文件已移动或删除，请先在素材库重新定位" };
-    }
-    const filename = nodePath.basename(asset.path);
-    // 同名拒绝：addContentAsset 复制无排他且 meta 不去重——同名二次挂接会覆盖字节
-    // 并双登记，detach 时一次删两条（评审 fix 2026-06-11）
-    const content = await getContent(contentId, dataDir);
-    if (!content) return { ok: false, error: "稿件不存在" };
-    if (content.assets.some((a) => a.filename === filename)) {
-      return { ok: false, error: "同名素材已挂接：" + filename };
-    }
-    const result = await addContentAsset(
+    const result = await attachLibraryAsset({
       contentId,
-      {
-        filename,
-        type: asset.type,
-        description: asset.name !== filename ? asset.name : undefined,
-        sourcePath: asset.path,
-      },
-      dataDir,
-    );
-    if (!result.ok) return { ok: false, error: result.error || "挂接失败" };
-    return { ok: true, data: { asset: result.asset } };
+      libraryId,
+      ...((payload._dataDir as string) ? { dataDir: payload._dataDir as string } : {}),
+      role: payload.role,
+      description: payload.description,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, data: { asset: result.asset, ...(result.warning ? { warning: result.warning } : {}) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -1036,9 +1071,7 @@ async function dashboardSummaryHandler(payload: Record<string, unknown>): Promis
 /**
  * Returns a handler per channel. `deps` overrides individual channels (for tests).
  */
-export function buildIpcHandlers(
-  deps?: Partial<Record<IpcChannel, IpcHandler>>,
-): Record<IpcChannel, IpcHandler> {
+export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>): Record<IpcChannel, IpcHandler> {
   const defaults: Record<IpcChannel, IpcHandler> = {
     "flywheel:report": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:report"]),
     "generate:script": generateBackgroundHandler,
@@ -1110,7 +1143,10 @@ export function buildIpcHandlers(
       wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:transition"]),
       "transition",
     ),
-    "content:allowed_transitions": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:allowed_transitions"]),
+    "content:allowed_transitions": wrapExecute(
+      executeContentSave as ExecuteFn,
+      CHANNEL_ACTIONS["content:allowed_transitions"],
+    ),
     "content:adoption": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:adoption"]),
     "content:delete": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:delete"]),
     "content:restore": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:restore"]),
@@ -1299,7 +1335,8 @@ export async function topicCreateHandler(
         // 提炼摘要在前、原文垫底:卡片和派活 brief 先看到能读的正文;原文永远留着当材料,
         // 提炼只换了个能用的标题,不该吃掉用户写下的东西
         description: idea
-          ? (idea.summary ? `${idea.summary}\n\n——原始灵感——\n\n` : "") + (description ? `${description}\n\n${title}` : title)
+          ? (idea.summary ? `${idea.summary}\n\n——原始灵感——\n\n` : "") +
+            (description ? `${description}\n\n${title}` : title)
           : description || title,
         tags: Array.isArray(payload.tags) ? (payload.tags as string[]) : [],
         source,

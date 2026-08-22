@@ -231,7 +231,8 @@ export interface TimelineAudio {
 }
 
 export interface VideoTimeline {
-  schemaVersion: 1;
+  /** v2 = 横屏换向（横屏 spec §2.1）；v1 竖屏产物只读归档，不再重渲 */
+  schemaVersion: 2;
   fps: number;
   width: number;
   height: number;
@@ -259,7 +260,8 @@ export type AssetRef =
   | { kind: "content"; filename: string }
   | { kind: "video"; file: string };
 
-export type VideoAssetKind = "aroll" | "screen" | "ai" | "image";
+/** bgm 是受管素材（横屏 spec §2.4）：走清单与指纹，混音永不接受裸文件路径 */
+export type VideoAssetKind = "aroll" | "screen" | "ai" | "image" | "bgm";
 
 /** 五态：pending/generating 尚无文件，ready 可用，confirmed 人工确认过，failed 出局 */
 export type VideoAssetStatus = "pending" | "generating" | "ready" | "failed" | "confirmed";
@@ -350,16 +352,18 @@ export interface RenderManifestIdentity {
 }
 
 export interface RenderManifest {
-  schemaVersion: 1;
+  /** v2 = 横屏换向；v1 竖屏 manifest 进渲染会被 render 侧 zod 拒绝（横屏 spec §2.1） */
+  schemaVersion: 2;
   contentId: string;
   timelineRevision: number;
   cutRevision: number;
   transcriptRevision: number;
-  /** V0 只出竖屏 1080×1920@30（§10「竖屏以外画幅」不做）——字面量即契约 */
+  /** 视频线唯一画幅 = 横屏 1920×1080@30（横屏 spec §0）——字面量即契约 */
   fps: 30;
-  width: 1080;
-  height: 1920;
+  width: 1920;
+  height: 1080;
   durationMs: number;
+  /** 有 BGM 时指 master-audio.v<K>.wav，无 BGM 时指 anchor.v<M>.wav；渲染侧只播这一条 */
   anchorAudio: { file: string; durationMs: number };
   arollVideo: { file: string; segments: RenderManifestArollSegment[] };
   overlays: RenderManifestOverlay[];
