@@ -70,14 +70,16 @@ def log(message: str) -> None:
 def modelscope_cache_roots() -> list[Path]:
     """ModelScope 各版本的缓存布局都覆盖到——判「已下载」宁可宽松，也不误报未就绪。"""
     base = Path(os.environ.get("MODELSCOPE_CACHE", Path.home() / ".cache" / "modelscope"))
-    return [base / "hub" / "models", base / "hub", base]
+    return [base / "hub" / "models", base / "hub", base / "models", base]
 
 
 def model_cached(name: str) -> bool:
     repo = MODEL_REPOS.get(name)
     if repo is None:
         return True  # 自定义模型名：无从判断，放行
-    return any((root / repo).is_dir() for root in modelscope_cache_roots())
+    # 新版 modelscope 把 org/name 扁平成 org--name 落盘，两种形态都认
+    candidates = (repo, repo.replace("/", "--"))
+    return any((root / c).is_dir() for root in modelscope_cache_roots() for c in candidates)
 
 
 def missing_models() -> list[str]:
