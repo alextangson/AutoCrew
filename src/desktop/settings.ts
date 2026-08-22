@@ -141,6 +141,9 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         // 选题雷达 X 源 key:只回状态与掩码
         xConfigured: Boolean(cfg.xApiKey),
         xApiKeyMasked: cfg.xApiKey ? maskKey(cfg.xApiKey) : null,
+        // Reddit 源 OAuth 凭据:id/secret 齐了才算配好,secret 永不回显
+        redditConfigured: Boolean(cfg.redditClientId && cfg.redditClientSecret),
+        redditClientIdMasked: cfg.redditClientId ? maskKey(cfg.redditClientId) : null,
         imageModel: cfg.imageModel ?? null,
         // 生图通道链:回显时抹掉 key,只留够认人的字段——设置页要能看清链的顺序
         imageChain: (cfg.imageChain ?? []).map((f) => ({
@@ -243,6 +246,8 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     ["wechatAppId", "wechat_app_id"],
     ["wechatAppSecret", "wechat_app_secret"],
     ["xApiKey", "x_api_key"],
+    ["redditClientId", "reddit_client_id"],
+    ["redditClientSecret", "reddit_client_secret"],
   ];
   for (const [target, source] of fields) {
     const v = payload[source];
@@ -268,7 +273,7 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     else return { ok: false, error: 'open_comment 必须是 "1"(开) 或 "0"(关)' };
   }
   if (Object.keys(updates).length === 0) {
-    return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author / wechat_app_id / wechat_app_secret / x_api_key / open_comment）" };
+    return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author / wechat_app_id / wechat_app_secret / x_api_key / reddit_client_id / reddit_client_secret / open_comment）" };
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;

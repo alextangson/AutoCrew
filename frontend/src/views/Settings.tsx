@@ -48,8 +48,9 @@ function SaveRow(props: { label: string; onSave: () => void }) {
 interface RadarSource {
   id?: string;
   name: string;
-  url?: string;
   enabled?: boolean;
+  /** v2 源的 url/keyword 都在 config 里（引擎侧 RadarSource 同形） */
+  config?: { url?: string; keyword?: string };
   [k: string]: unknown;
 }
 
@@ -118,8 +119,8 @@ export function Settings() {
   });
   const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
-  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; imageChain: Array<{ name: string | null; kind: string; baseUrl: string | null; apiKeyMasked: string | null; model: string | null; dialect: string }>; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean; xConfigured: boolean; xApiKeyMasked: string | null } | null>(null);
-  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", image_chain: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" });
+  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; imageChain: Array<{ name: string | null; kind: string; baseUrl: string | null; apiKeyMasked: string | null; model: string | null; dialect: string }>; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean; xConfigured: boolean; xApiKeyMasked: string | null; redditConfigured: boolean; redditClientIdMasked: string | null } | null>(null);
+  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", image_chain: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "", reddit_client_id: "", reddit_client_secret: "" });
   const [cover, setCover] = useState<{
     provider: string;
     relay: { configured: boolean; model: string | null };
@@ -400,7 +401,7 @@ export function Settings() {
         </label>
         <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
         <Field label="公众号 API 代理" value={pForm.api_proxy} placeholder={pub?.apiProxyConfigured ? "已配置(不回显)——填新值覆盖" : "http://user:pass@固定IP:端口(可选,锁定出口)"} onChange={(v) => setPForm((f) => ({ ...f, api_proxy: v }))} />
-        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", image_chain: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "" }))} />
+        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", image_chain: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "", reddit_client_id: "", reddit_client_secret: "" }))} />
       </Section>
 
       <Section title="封面生成 · 生图通道" status={coverStatus} on={coverOn}>
@@ -440,13 +441,29 @@ export function Settings() {
           <div key={s.id ?? s.name ?? i} className="row">
             <span className="mono pri">{s.enabled === false ? "关" : "开"}</span>
             <span className="row-title">{s.name}</span>
-            <span className="muted mono">{typeof s.url === "string" ? s.url.slice(0, 40) : ""}</span>
+            <span className="muted mono">{(s.config?.url ?? s.config?.keyword ?? "").slice(0, 40)}</span>
             <button onClick={() => void toggleSource(i)}>{s.enabled === false ? "启用" : "停用"}</button>
           </div>
         ))}
         <Field label="X 源 Key" password value={pForm.x_api_key} placeholder={pub?.xApiKeyMasked ?? "twitterapi.io key——启用「X」源前先填"} onChange={(v) => setPForm((f) => ({ ...f, x_api_key: v }))} />
-        <p className="muted">X 源走 twitterapi.io(自带 key,注册送 $1 额度)。存 key 后再在上面把「X」启用。海外源需定位里含英文词(如 AI)才能派生检索词。</p>
-        <SaveRow label="保存 X Key" onSave={() => void submit("settings:publish_set", { x_api_key: pForm.x_api_key }, () => setPForm((f) => ({ ...f, x_api_key: "" })))} />
+        <Field label="Reddit Client ID" password value={pForm.reddit_client_id} placeholder={pub?.redditClientIdMasked ?? "reddit.com/prefs/apps 建 script 应用——启用「Reddit」源前先填"} onChange={(v) => setPForm((f) => ({ ...f, reddit_client_id: v }))} />
+        <Field label="Reddit Client Secret" password value={pForm.reddit_client_secret} placeholder={pub?.redditConfigured ? "已保存(重填即覆盖)" : "同一页面的 secret"} onChange={(v) => setPForm((f) => ({ ...f, reddit_client_secret: v }))} />
+        <p className="muted">
+          X 走 twitterapi.io(自带 key,注册送 $1 额度);Reddit 走官方 OAuth(免费,匿名接口已被反爬挡死),
+          在 reddit.com/prefs/apps 建一个 script 应用拿 ID/Secret。存好凭据再到上面把对应源启用。
+          YouTube 源无需 key,但要求本机能直连 youtube.com。搜索型海外源(HN/GitHub 等)需定位里含英文词(如 AI)才能派生检索词;
+          X/YouTube/Reddit 是清单型源,不吃检索词。
+        </p>
+        <SaveRow
+          label="保存情报源凭据"
+          onSave={() =>
+            void submit(
+              "settings:publish_set",
+              { x_api_key: pForm.x_api_key, reddit_client_id: pForm.reddit_client_id, reddit_client_secret: pForm.reddit_client_secret },
+              () => setPForm((f) => ({ ...f, x_api_key: "", reddit_client_id: "", reddit_client_secret: "" })),
+            )
+          }
+        />
         <div className="set-save">
           <button
             onClick={async () => {

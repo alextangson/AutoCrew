@@ -23,6 +23,10 @@ export interface SourceItem {
 export interface FetchOptions {
   /** twitterapi.io API key,仅 `x` 源使用(bring-your-own-key);其余源忽略。 */
   xApiKey?: string;
+  /** Reddit OAuth app client id,仅 `reddit` 源使用(匿名接口被反爬挡死,必须走 OAuth)。 */
+  redditClientId?: string;
+  /** Reddit OAuth app secret,仅 `reddit` 源使用。 */
+  redditClientSecret?: string;
 }
 
 /** A source fetcher pulls recent items for a keyword. */

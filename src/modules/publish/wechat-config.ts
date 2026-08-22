@@ -44,6 +44,9 @@ export interface WechatMpPublishConfig {
   apiProxy?: string;
   /** 选题雷达 X 源的 twitterapi.io key(自带 key,不回显)。放这里复用既有第三方 key 存储袋。 */
   xApiKey?: string;
+  /** 选题雷达 Reddit 源的 OAuth app 凭据(自带,不回显)——匿名接口被反爬挡死,只能走 OAuth。 */
+  redditClientId?: string;
+  redditClientSecret?: string;
 }
 
 export async function loadWechatMpConfig(dataDir?: string): Promise<WechatMpPublishConfig> {

@@ -8,6 +8,8 @@
     { "id": "github", "kind": "github", "name": "GitHub Trending", "enabled": true, "config": {} },
     { "id": "arxiv", "kind": "arxiv", "name": "arXiv", "enabled": false, "config": {} },
     { "id": "huggingface", "kind": "huggingface", "name": "Hugging Face", "enabled": false, "config": {} },
-    { "id": "x", "kind": "x", "name": "X", "enabled": false, "config": {} }
+    { "id": "x", "kind": "x", "name": "X", "enabled": false, "config": {} },
+    { "id": "youtube", "kind": "youtube", "name": "YouTube", "enabled": false, "config": {} },
+    { "id": "reddit", "kind": "reddit", "name": "Reddit", "enabled": false, "config": {} }
   ]
 }
