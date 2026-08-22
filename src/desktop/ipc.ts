@@ -114,6 +114,8 @@ import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { appendAction } from "./recent-actions.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
+import { distillIdeaTopic } from "../modules/radar/idea-distill.js";
+import type { DistilledIdea } from "../modules/radar/idea-distill.js";
 import {
   getRadarStatus,
   doRadarRefresh,
@@ -676,8 +678,8 @@ async function profileUpdateHandler(payload: Record<string, unknown>): Promise<R
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
-  // industry 与 platforms 均可选，至少给一个（席位编辑不必带定位，反之亦然）
-  const updates: { industry?: string; platforms?: string[] } = {};
+  // industry / platforms / focusKeywords 均可选，至少给一个（席位编辑不必带定位，反之亦然）
+  const updates: { industry?: string; platforms?: string[]; focusKeywords?: string[] } = {};
   if (typeof payload.industry === "string" && payload.industry.trim() !== "") {
     updates.industry = payload.industry.trim();
   }
@@ -686,12 +688,21 @@ async function profileUpdateHandler(payload: Record<string, unknown>): Promise<R
       (p): p is string => typeof p === "string" && p.trim() !== "",
     );
   }
-  if (updates.industry === undefined && updates.platforms === undefined) {
-    return { ok: false, error: "需要 industry 或 platforms 至少其一" };
+  // 雷达粗筛关键词:空数组=显式清空(回落定位派生),故按字段存在性而非非空判定
+  if (Array.isArray(payload.focusKeywords)) {
+    updates.focusKeywords = (payload.focusKeywords as unknown[])
+      .map((k) => (typeof k === "string" ? k.trim() : ""))
+      .filter((k) => k !== "");
+  }
+  if (updates.industry === undefined && updates.platforms === undefined && updates.focusKeywords === undefined) {
+    return { ok: false, error: "需要 industry、platforms 或 focusKeywords 至少其一" };
   }
   try {
     const profile = await updateProfile(updates, (payload._dataDir as string) || undefined);
-    return { ok: true, data: { industry: profile.industry, platforms: profile.platforms } };
+    return {
+      ok: true,
+      data: { industry: profile.industry, platforms: profile.platforms, focusKeywords: profile.focusKeywords ?? [] },
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -1240,23 +1251,73 @@ async function topicsListHandler(payload: Record<string, unknown>): Promise<Reco
   }
 }
 
-/** 手动/对话入库（IA v4.2 §A2）——「＋新想法」与候选卡按钮的落库通道 */
-async function topicCreateHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+/**
+ * 提炼门槛（码点计数,中文一字一码点）:超过这个长度的输入已经不是标题，是一段碎片想法。
+ * 短输入照旧直存——用户认真写好的一句话标题不该被 AI 再改一遍。
+ */
+const IDEA_DISTILL_MIN_CHARS = 30;
+
+/** 引擎抛错等同「没提炼出来」——提炼是增益,不是入库的前置条件,永远不该把异常掀到调用方 */
+async function tryDistillIdea(
+  title: string,
+  dataDir: string | undefined,
+  distill: typeof distillIdeaTopic,
+): Promise<DistilledIdea | null> {
+  try {
+    return await distill(title, dataDir);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 手动/对话入库（IA v4.2 §A2）——「＋新想法」与候选卡按钮的落库通道。
+ *
+ * 手动丢进来的长文本先过一次提炼:看板卡片要的是选题，不是几百字原文。
+ * 提炼失败绝不吞灵感——照原文落库并把 warning 带回前端，让用户知道要自己改标题。
+ */
+export async function topicCreateHandler(
+  payload: Record<string, unknown>,
+  _ctx?: IpcHandlerContext,
+  deps?: { distill?: typeof distillIdeaTopic },
+): Promise<Record<string, unknown>> {
   const title = typeof payload.title === "string" ? payload.title.trim() : "";
   if (!title) return { ok: false, error: "title is required" };
+  const dataDir = (payload._dataDir as string) || undefined;
+  const source = typeof payload.source === "string" && payload.source ? payload.source : "manual";
+  const description = typeof payload.description === "string" && payload.description ? payload.description : "";
+
+  const shouldDistill = source === "manual" && [...title].length > IDEA_DISTILL_MIN_CHARS;
+  const idea = shouldDistill ? await tryDistillIdea(title, dataDir, deps?.distill ?? distillIdeaTopic) : null;
+
   try {
     const topic = await saveTopic(
       {
-        title,
-        description: typeof payload.description === "string" && payload.description ? payload.description : title,
+        title: idea ? idea.title : title,
+        // 提炼摘要在前、原文垫底:卡片和派活 brief 先看到能读的正文;原文永远留着当材料,
+        // 提炼只换了个能用的标题,不该吃掉用户写下的东西
+        description: idea
+          ? (idea.summary ? `${idea.summary}\n\n——原始灵感——\n\n` : "") + (description ? `${description}\n\n${title}` : title)
+          : description || title,
         tags: Array.isArray(payload.tags) ? (payload.tags as string[]) : [],
-        source: typeof payload.source === "string" && payload.source ? payload.source : "manual",
+        source,
         ...(typeof payload.reason === "string" && payload.reason ? { reason: payload.reason } : {}),
         ...(typeof payload.link === "string" && payload.link ? { link: payload.link } : {}),
+        ...(idea
+          ? {
+              score: idea.totalScore,
+              scoredAt: new Date().toISOString(),
+              scoreBreakdown: idea.scoreBreakdown,
+              ...(idea.angles.length ? { angles: idea.angles } : {}),
+            }
+          : {}),
       },
-      (payload._dataDir as string) || undefined,
+      dataDir,
     );
-    return { ok: true, topic };
+    if (!shouldDistill) return { ok: true, topic };
+    return idea
+      ? { ok: true, topic, distilled: true }
+      : { ok: true, topic, distilled: false, warning: "标题提炼失败，已按原文保存，可在看板改标题" };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
