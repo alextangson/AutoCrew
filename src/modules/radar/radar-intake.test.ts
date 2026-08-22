@@ -132,6 +132,60 @@ describe("intakeRadarTopics", () => {
     expect(judgedPerRound[1] ?? []).not.toContain("AI 烂选题"); // 不再重评
   });
 
+  it("池内单源上限:一个源刷屏也挤不掉慢源的位置", async () => {
+    await saveProfile(profileWith("AI"), testDir);
+    const fresh = new Date().toISOString();
+    const old = new Date(Date.now() - 96 * 3600_000).toISOString(); // 无新鲜度加分 → 稳定排在 HN 之后
+    await fs.writeFile(
+      path.join(testDir, "topic-radar.json"),
+      JSON.stringify({
+        fetchedAt: fresh,
+        items: [
+          ...Array.from({ length: 25 }, (_, i) => ({
+            title: `AI 快讯 ${i}`, link: `https://hn/${i}`, source: "Hacker News", publishedAt: fresh,
+          })),
+          { title: "AI 论文一", link: "https://arxiv/1", source: "arXiv", publishedAt: old },
+          { title: "AI 论文二", link: "https://arxiv/2", source: "arXiv", publishedAt: old },
+        ],
+      }),
+    );
+    let pooled: Array<{ title: string; source: string }> = [];
+    const judge = (async (_i: string, _a: string, cands: Array<{ title: string; source: string }>) => {
+      pooled = cands;
+      return [];
+    }) as typeof import("./relevance.js").judgeRelevance;
+
+    await intakeRadarTopics(testDir, { judge, poolSize: 20 });
+
+    // 排序上 HN 全在前面,没有上限时 20 席会被它包圆;上限让 arXiv 也进了评判池
+    expect(pooled.map((c) => c.title)).toEqual(expect.arrayContaining(["AI 论文一", "AI 论文二"]));
+    expect(pooled.filter((c) => c.source === "arXiv")).toHaveLength(2);
+    // 池仍被填满:上限只是先取一轮,剩下的名额回填给超限源
+    expect(pooled).toHaveLength(20);
+  });
+
+  it("池未满时回填超限源:只有一个源也不会因为上限把池饿死", async () => {
+    await saveProfile(profileWith("AI"), testDir);
+    const fresh = new Date().toISOString();
+    await fs.writeFile(
+      path.join(testDir, "topic-radar.json"),
+      JSON.stringify({
+        fetchedAt: fresh,
+        items: Array.from({ length: 12 }, (_, i) => ({
+          title: `AI 快讯 ${i}`, link: `https://hn/${i}`, source: "Hacker News", publishedAt: fresh,
+        })),
+      }),
+    );
+    let pooled: Array<{ title: string }> = [];
+    const judge = (async (_i: string, _a: string, cands: Array<{ title: string }>) => {
+      pooled = cands;
+      return [];
+    }) as typeof import("./relevance.js").judgeRelevance;
+
+    await intakeRadarTopics(testDir, { judge, poolSize: 20 });
+    expect(pooled).toHaveLength(12); // 单源 12 条全进池,而不是被 cap 砍到 5
+  });
+
   it("does nothing without a positioning (no industry = no filter = no intake)", async () => {
     await seedCache([{ title: "AI 大新闻", link: "https://a.example/1" }]);
     const result = await intakeRadarTopics(testDir);

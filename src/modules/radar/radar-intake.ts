@@ -22,6 +22,10 @@ const RELEVANCE_THRESHOLD = 7;
 // 关注型信源(X)在评判池里的保底名额——不被关键词粗筛挤掉,交给 LLM 判相关性。
 // two-stage judge 的 Stage1 能覆盖 ~20 条,留 5 席给 X 足够;够格的才进 Stage2 精修入库。
 const X_POOL_RESERVE = 5;
+// 单源池内上限:一个源最多占 5 席。粗筛分很容易被某个源整体拉高(HN 全是英文短标题、
+// PH 天天有新品),没有上限时评判池会被一个源包圆,arXiv 这类慢源永远挤不进去。
+// 不是硬配额:先按上限取一轮,池没满再回填超限源的剩余条目——宁可单源霸池也不让池空着。
+const PER_SOURCE_CAP = 5;
 
 export interface RadarIntakeResult {
   saved: Topic[];
@@ -34,6 +38,28 @@ export interface RadarIntakeResult {
 
 function ageHours(iso: string): number {
   return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 3600_000));
+}
+
+/** 按 ranked 顺序取 limit 条,每源先不超过 cap;取完不够再按顺序回填超限源的剩余条目。 */
+function takeWithSourceCap(ranked: ScoredRadarItem[], limit: number, cap: number): ScoredRadarItem[] {
+  const picked: ScoredRadarItem[] = [];
+  const overflow: ScoredRadarItem[] = [];
+  const used = new Map<string, number>();
+  for (const s of ranked) {
+    if (picked.length >= limit) return picked;
+    const n = used.get(s.item.source) ?? 0;
+    if (n >= cap) {
+      overflow.push(s);
+      continue;
+    }
+    used.set(s.item.source, n + 1);
+    picked.push(s);
+  }
+  for (const s of overflow) {
+    if (picked.length >= limit) break;
+    picked.push(s);
+  }
+  return picked;
 }
 
 function keywordReason(s: ScoredRadarItem): string {
@@ -68,10 +94,14 @@ export async function intakeRadarTopics(
   // 会被关键词粗筛埋在池外、LLM 根本看不到。故给 X 留固定名额:粗筛只是控池大小,真正的
   // 相关性判断交给 LLM(它看得懂账号观点是否切题)。账号本身已是质量过滤,值得这个名额。
   const poolSize = Math.max(1, Math.min(options?.poolSize ?? CANDIDATE_POOL, 24));
-  const ranked = rankCandidatesScored(unseen, industry, unseen.length);
+  const ranked = rankCandidatesScored(unseen, industry, unseen.length, profile?.focusKeywords);
   // X 放池首:judge 内部只取前 MAX_CANDIDATES 条,放末尾会被切掉、白留名额。
   const xReserved = ranked.filter((s) => s.item.source === "X").slice(0, X_POOL_RESERVE);
-  const rest = ranked.filter((s) => s.item.source !== "X").slice(0, poolSize - xReserved.length);
+  const rest = takeWithSourceCap(
+    ranked.filter((s) => s.item.source !== "X"),
+    poolSize - xReserved.length,
+    PER_SOURCE_CAP,
+  );
   const pool = [...xReserved, ...rest];
   const judge = options?.judge ?? judgeRelevance;
   const audience = personaSummary(profile?.audiencePersona);

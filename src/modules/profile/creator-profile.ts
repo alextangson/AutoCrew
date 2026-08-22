@@ -141,6 +141,12 @@ export interface PerformanceEntry {
 export interface CreatorProfile {
   /** User's content industry/niche */
   industry: string;
+  /**
+   * 选题雷达的粗筛关键词(校准中心可编辑)——与 industry 分开存:
+   * industry 是给 LLM 读的散文定位,整段切词只会切出「部署工程师」这种永不命中的长 token,
+   * 粗筛需要的是「AI、Agent、FDE」这类真会出现在标题里的短词。留空 = 回落 industry 切词。
+   */
+  focusKeywords?: string[];
   /** Active platforms */
   platforms: string[];
   /** Target audience persona */

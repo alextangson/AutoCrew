@@ -71,6 +71,8 @@ export interface Topic {
   angles?: string[];
   scoredAt?: string;
   createdAt: string;
+  /** 续期锚:有动作(如启动深调研)就从那一刻重新计时——过期清理与卡上天龄都按它算 */
+  renewedAt?: string;
 }
 
 export interface Content {

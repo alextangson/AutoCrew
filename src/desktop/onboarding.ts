@@ -17,6 +17,8 @@ export async function getOnboardingStatus(payload: Record<string, unknown>): Pro
         onboarded: Boolean(profile && profile.industry),
         styleCalibrated: profile?.styleCalibrated ?? false,
         industry: profile?.industry || null,
+        // 雷达粗筛关键词(校准中心可编辑,空数组=从定位派生)——首屏要回显用户填过的词
+        focusKeywords: profile?.focusKeywords ?? [],
         // 用户席位（IA v4.2:平台全集是能力目录,platforms 是用户勾选的席位）
         platforms: profile?.platforms ?? [],
       },

@@ -106,6 +106,40 @@ describe("continue collection / rescore handlers", () => {
     expect(intakeImpl).toHaveBeenCalledWith(testDir, { limit: 5, poolSize: 24 });
   });
 
+  it("候选枯竭(缓存新鲜 + 零产出) → 强制真刷新一次再 intake,按钮不空转", async () => {
+    const intakeImpl = vi.fn()
+      .mockResolvedValueOnce({ saved: [], skippedDuplicates: 0, qualified: 0, filter: "llm" })
+      .mockResolvedValueOnce({ saved: [{ id: "t1" }], skippedDuplicates: 0, qualified: 1, filter: "llm" }) as unknown as typeof import("../modules/radar/radar-intake.js").intakeRadarTopics;
+    const refreshImpl = vi.fn(async () => ({ ok: true, itemCount: 30, failedSources: [], skippedFresh: true })) as unknown as typeof import("../modules/radar/topic-radar.js").refreshTopicRadar;
+    const forceRefreshImpl = vi.fn(async () => ({ ok: true, itemCount: 44, failedSources: ["36氪"] })) as unknown as typeof import("../modules/radar/topic-radar.js").refreshTopicRadar;
+
+    const res = await collectMoreRadarTopics(
+      { _dataDir: testDir, limit: 5 },
+      globalThis.fetch,
+      { intakeImpl, refreshImpl, forceRefreshImpl },
+    );
+
+    expect(forceRefreshImpl).toHaveBeenCalledTimes(1);
+    expect(intakeImpl).toHaveBeenCalledTimes(2);
+    const d = res.data as Record<string, unknown>;
+    expect(d.savedCount).toBe(1);
+    expect(d.refreshedItems).toBe(44); // 上报的是真刷新那一轮的数字
+    expect(d.failedSources).toEqual(["36氪"]);
+  });
+
+  it("有产出就不强制刷新(付费源不白烧),真刷新后仍零产出也不再刷一轮", async () => {
+    const forceRefreshImpl = vi.fn() as unknown as typeof import("../modules/radar/topic-radar.js").refreshTopicRadar;
+    const withResult = vi.fn(async () => ({ saved: [{ id: "t1" }], skippedDuplicates: 0, qualified: 1, filter: "llm" as const })) as unknown as typeof import("../modules/radar/radar-intake.js").intakeRadarTopics;
+    const fresh = vi.fn(async () => ({ ok: true, itemCount: 30, failedSources: [], skippedFresh: true })) as unknown as typeof import("../modules/radar/topic-radar.js").refreshTopicRadar;
+    await collectMoreRadarTopics({ _dataDir: testDir }, globalThis.fetch, { intakeImpl: withResult, refreshImpl: fresh, forceRefreshImpl });
+    expect(forceRefreshImpl).not.toHaveBeenCalled();
+
+    const empty = vi.fn(async () => ({ saved: [], skippedDuplicates: 0, qualified: 0, filter: "llm" as const })) as unknown as typeof import("../modules/radar/radar-intake.js").intakeRadarTopics;
+    const realRefresh = vi.fn(async () => ({ ok: true, itemCount: 30, failedSources: [], skippedFresh: false })) as unknown as typeof import("../modules/radar/topic-radar.js").refreshTopicRadar;
+    await collectMoreRadarTopics({ _dataDir: testDir }, globalThis.fetch, { intakeImpl: empty, refreshImpl: realRefresh, forceRefreshImpl });
+    expect(forceRefreshImpl).not.toHaveBeenCalled(); // 刚打过源,零产出是真没题,不是缓存陈旧
+  });
+
   it("rescore exposes updated count", async () => {
     const rescoreImpl = vi.fn(async () => ({ updated: [{ id: "t1" }, { id: "t2" }], examined: 3 })) as unknown as typeof import("../modules/radar/radar-intake.js").rescoreExistingTopics;
     const res = await rescoreRadarTopics({ _dataDir: testDir }, { rescoreImpl });

@@ -113,6 +113,41 @@ describe("rankCandidates", () => {
   });
 });
 
+describe("rankCandidatesScored + 雷达关键词（focusKeywords 粗筛）", () => {
+  const now = new Date().toISOString();
+  const items: RadarItem[] = [
+    { title: "Agent 编排框架实测", link: "l-agent", source: "Hacker News", publishedAt: now },
+    { title: "部署工程师的一天", link: "l-industry", source: "36氪", publishedAt: now },
+  ];
+  // 定位是散文,切出来的是「部署工程师」这种在热榜标题里几乎不出现的长 token
+  const INDUSTRY = "AI 技术,FDE 部署工程师";
+
+  it("关键词非空时直接当 tokens 用,盖过定位切词", () => {
+    const ranked = rankCandidatesScored(items, INDUSTRY, 10, ["Agent"]);
+    expect(ranked.find((r) => r.item.link === "l-agent")?.matchedTokens).toEqual(["Agent"]);
+    expect(ranked.find((r) => r.item.link === "l-industry")?.matchedTokens).toEqual([]);
+    expect(ranked[0].item.link).toBe("l-agent");
+  });
+
+  it("关键词为空/全是单字 → 回落定位切词（其他用户零行为变化）", () => {
+    for (const kws of [undefined, [], ["A", " "]]) {
+      const ranked = rankCandidatesScored(items, INDUSTRY, 10, kws);
+      // 回落路径命中的是定位切出来的长 token,而不是关键词
+      expect(ranked.find((r) => r.item.link === "l-industry")?.matchedTokens).toContain("部署工程师");
+    }
+  });
+
+  it("关键词含正则特殊字符不崩,且按字面匹配", () => {
+    const tricky: RadarItem[] = [
+      { title: "C++ 新标准落地", link: "cpp", source: "InfoQ", publishedAt: now },
+      { title: "普通标题", link: "plain", source: "InfoQ", publishedAt: now },
+    ];
+    const ranked = rankCandidatesScored(tricky, INDUSTRY, 10, ["C++", "(*", "a|b"]);
+    expect(ranked.find((r) => r.item.link === "cpp")?.matchedTokens).toEqual(["C++"]);
+    expect(ranked.find((r) => r.item.link === "plain")?.matchedTokens).toEqual([]);
+  });
+});
+
 describe("refreshTopicRadar + cache + getTopicCandidates", () => {
   it("fetches all sources, tolerates per-source failure, writes cache", async () => {
     // 固定两个 RSS 源,与「默认开哪些海外源」解耦——本用例只测 RSS 单源失败的容错
@@ -134,6 +169,23 @@ describe("refreshTopicRadar + cache + getTopicCandidates", () => {
     const cache = await loadTopicCache(testDir);
     expect(cache?.items).toHaveLength(2);
     expect(typeof cache?.fetchedAt).toBe("string");
+  });
+
+  it("RSS 返回 HTML(解析 0 条) → 该源进 failedSources,不静默当成「今天没新闻」", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "dead", kind: "rss", name: "36氪", enabled: true, config: { url: "https://36kr.com/feed" } },
+      { id: "ok", kind: "rss", name: "爱范儿", enabled: true, config: { url: "https://www.ifanr.com/feed" } },
+    ], testDir);
+    const fetchImpl = vi.fn(async (url: unknown) =>
+      String(url).includes("36kr")
+        ? new Response("<!doctype html><html><body>404</body></html>", { status: 200 })
+        : new Response(RSS, { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    const result = await refreshTopicRadar(testDir, fetchImpl);
+    expect(result.failedSources).toEqual(["36氪"]);
+    expect(result.itemCount).toBe(2); // 活着的源照常入缓存
   });
 
   it("getTopicCandidates serves from fresh cache without fetching", async () => {
@@ -299,6 +351,9 @@ describe("unified intel layer v2 (adapter kinds + migration)", () => {
     expect(enabledOf("producthunt")).toBe(true);
     expect(enabledOf("arxiv")).toBe(false);
     expect(enabledOf("huggingface")).toBe(false);
+    // 自带凭据/依赖直连的清单型源默认关,等用户配好再开(与 x 同待遇)
+    expect(enabledOf("youtube")).toBe(false);
+    expect(enabledOf("reddit")).toBe(false);
   });
 
   it("scan pulls enabled overseas adapters with keyword derived from positioning", async () => {
@@ -326,6 +381,49 @@ describe("unified intel layer v2 (adapter kinds + migration)", () => {
     expect(calls).toEqual([{ kind: "hackernews", keyword: "AI" }]); // enabled 才扫;keyword 从定位派生;disabled 不扫
     const cache = await loadTopicCache(testDir);
     expect(cache.items.some((i) => i.title === "HN item")).toBe(true);
+  });
+
+  it("海外源检索词优先取雷达关键词,再回落定位", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    const { saveProfile } = await import("../profile/creator-profile.js");
+    const now = new Date().toISOString();
+    await saveProfile({
+      industry: "AI 效率工具", focusKeywords: ["工程化", "Agent"], platforms: [], audiencePersona: null,
+      writingRules: [], styleBoundaries: { never: [], always: [] }, competitorAccounts: [],
+      performanceHistory: [], styleCalibrated: true, createdAt: now, updatedAt: now,
+    }, testDir);
+    await saveRadarSources([
+      { id: "hn", kind: "hackernews", name: "Hacker News", enabled: true, config: {} },
+    ], testDir);
+
+    const calls: Array<{ kind: string; keyword: string }> = [];
+    const overseasFetch = async (kind: string, keyword: string) => {
+      calls.push({ kind, keyword });
+      return [{ title: "HN item", url: "https://hn.example/1" }];
+    };
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch });
+    // 「工程化」无 ASCII 可用 → 跳到下一个关键词 "Agent";没有关键词时才回落定位的 "AI"
+    expect(calls).toEqual([{ kind: "hackernews", keyword: "Agent" }]);
+  });
+
+  it("清单型源(X/YouTube/Reddit)不吃检索词:没定位也照常扫,不因缺 keyword 进 failedSources", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "x", kind: "x", name: "X", enabled: true, config: {} },
+      { id: "yt", kind: "youtube", name: "YouTube", enabled: true, config: {} },
+      { id: "rd", kind: "reddit", name: "Reddit", enabled: true, config: {} },
+    ], testDir); // 无 profile → 派生不出任何检索词
+
+    const calls: string[] = [];
+    const overseasFetch = async (kind: string) => {
+      calls.push(kind);
+      return [{ title: `${kind} item`, url: `https://${kind}.example/1` }];
+    };
+    const result = await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch });
+
+    expect(calls.sort()).toEqual(["reddit", "x", "youtube"]);
+    expect(result.failedSources).toEqual([]);
+    expect(result.itemCount).toBe(3);
   });
 
   it("overseas source without any derivable keyword lands in failedSources, not silence", async () => {

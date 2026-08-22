@@ -30,8 +30,7 @@ import { setVideoService } from "../src/desktop/video-handlers.js";
 import { createVideoMediaHandler, VIDEO_MEDIA_PREFIX } from "../src/desktop/video-media.js";
 import { createVideoService, type VideoService } from "../src/modules/video/service.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
-import { refreshTopicRadarIfStale } from "../src/modules/radar/topic-radar.js";
-import { intakeRadarTopics } from "../src/modules/radar/radar-intake.js";
+import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
 import { handleMcpRequest } from "../mcp/server.js";
 
@@ -362,9 +361,11 @@ const server = http.createServer(async (req, res) => {
 server.requestTimeout = 0;
 server.timeout = 0;
 let stopCampaignHost: (() => void) | undefined;
+let radarTimer: NodeJS.Timeout | undefined;
 let videoService: VideoService | null = null;
 server.on("close", () => {
   stopCampaignHost?.();
+  if (radarTimer) clearInterval(radarTimer);
   // 视频 runner 会拿着 ffmpeg/remotion 子进程,停机要给它机会收尾(job lease 也在这层解)
   const running = videoService;
   videoService = null;
@@ -439,21 +440,14 @@ server.listen(PORT, HOST, () => {
     },
   });
 
-  // 选题雷达:启动 fire-and-forget 刷新 → 命中定位的候选自动入灵感库(IA v4.2 §A1)。
-  // TTL 门:缓存新鲜就跳过——X 等付费源按请求计费,每次重启无条件全量扫是白烧钱。
-  void refreshTopicRadarIfStale()
-    .then(async (r) => {
-      if (r.failedSources.length > 0) console.warn("[topic-radar] 部分源失败:", r.failedSources.join(", "));
-      const intake = await intakeRadarTopics();
-      if (intake.saved.length > 0) {
-        void emitEngineEvent({
-          role: "scout",
-          kind: "work",
-          label: `雷达入库 ${intake.saved.length} 条灵感:${intake.saved.map((t) => t.title).join("｜").slice(0, 80)}`,
-        });
-      }
-    })
-    .catch((err) => {
-      console.error("[topic-radar] 启动刷新失败:", err instanceof Error ? err.message : err);
+  // 选题雷达:启动跑一轮 + 每 30 分钟一轮(进程内调度,详见 radar-cycle.ts)。
+  // 一轮 = TTL 门刷新 → 真刷新了才入库与清理;缓存新鲜就整轮跳过,不烧付费源也不重评。
+  const runRadarCycle = createRadarCycle();
+  const tickRadar = () =>
+    void runRadarCycle().catch((err) => {
+      console.error("[topic-radar] 雷达周期失败:", err instanceof Error ? err.message : err);
     });
+  tickRadar();
+  radarTimer = setInterval(tickRadar, RADAR_CYCLE_INTERVAL_MS);
+  radarTimer.unref(); // 定时器不该成为进程退不掉的理由(stop 路径另见 server "close")
 });

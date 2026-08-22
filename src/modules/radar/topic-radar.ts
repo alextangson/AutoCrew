@@ -13,7 +13,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
 import { loadProfile } from "../profile/creator-profile.js";
-import { loadWechatMpConfig } from "../publish/wechat-config.js";
+import { loadWechatMpConfig, type WechatMpPublishConfig } from "../publish/wechat-config.js";
 import sourcesJson from "../../data/topic-sources.json";
 
 export interface RadarItem {
@@ -37,8 +37,17 @@ export interface TopicCache {
  * kind=rss 需要 config.url;海外 kind 走 research/sources 的 adapter,config.keyword
  * 可选（缺省从定位派生 ASCII 词,如「AI 技术」→ "AI"）。enabled=false 的源不参与扫描。
  */
-export type RadarSourceKind = "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface" | "x";
-export const OVERSEAS_KINDS: RadarSourceKind[] = ["hackernews", "producthunt", "github", "arxiv", "huggingface", "x"];
+export type RadarSourceKind =
+  | "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface" | "x" | "youtube" | "reddit";
+export const OVERSEAS_KINDS: RadarSourceKind[] = [
+  "hackernews", "producthunt", "github", "arxiv", "huggingface", "x", "youtube", "reddit",
+];
+/**
+ * 清单型海外源:订阅的是「这批账号/频道/社区」,不吃检索词——关键词搜这三家捞的是全站噪声,
+ * 清单本身就是质量过滤(理由见 x.ts / youtube.ts / reddit.ts 头注释)。其余海外源是搜索型,
+ * 没检索词就没法调,缺词要报失败而不是空跑。
+ */
+const LIST_KINDS = new Set<RadarSourceKind>(["x", "youtube", "reddit"]);
 
 export interface RadarSource {
   id: string;
@@ -133,12 +142,31 @@ function buildHeatNorm(items: RadarItem[]): (item: RadarItem) => number {
   };
 }
 
-/** 确定性候选排序（带评分明细）：定位 token 命中 ×3 + 新鲜度（<24h +2, <72h +1）+ 源内热度（≤3） */
-export function rankCandidatesScored(items: RadarItem[], industry: string, limit: number): ScoredRadarItem[] {
+/**
+ * 粗筛 token:用户填了雷达关键词就用它,否则回落到定位散文切词。
+ * 为什么要这个开关:整段定位("AI 技术,FDE 部署工程师——写全你的内容线")切出来的是
+ * 「部署工程师」这种永不出现在热榜标题里的长 token,命中恒为 0 → 排序退化成纯热度+新鲜度,
+ * 闲聊霸池。关键词是用户手填的短词,粗筛才有信号。
+ */
+function pickTokens(industry: string, focusKeywords?: string[]): string[] {
+  const clean = (list: string[]): string[] =>
+    [...new Set(list.map((t) => t.trim()).filter((t) => t.length >= 2))];
+  const focus = clean(focusKeywords ?? []);
+  if (focus.length > 0) return focus; // 全被清洗掉(如全是单字)才回落,避免"填了等于没填"的静默空筛
   const baseTokens = industry.split(/[/\s,，、|]+/).map((t) => t.trim()).filter((t) => t.length >= 2);
   // 中英混写定位（如 "AI技术博主"）：ASCII 串单独成 token，否则永远匹配不上英文标题里的 "AI"/"GPT"
   const asciiTokens = (industry.match(/[A-Za-z0-9]{2,}/g) ?? []);
-  const tokens = [...new Set([...baseTokens, ...asciiTokens])];
+  return [...new Set([...baseTokens, ...asciiTokens])];
+}
+
+/** 确定性候选排序（带评分明细）：定位 token 命中 ×3 + 新鲜度（<24h +2, <72h +1）+ 源内热度（≤3） */
+export function rankCandidatesScored(
+  items: RadarItem[],
+  industry: string,
+  limit: number,
+  focusKeywords?: string[],
+): ScoredRadarItem[] {
+  const tokens = pickTokens(industry, focusKeywords);
   const now = Date.now();
   const heatNorm = buildHeatNorm(items);
   const scored = items.map((item) => {
@@ -171,8 +199,13 @@ export function rankCandidatesScored(items: RadarItem[], industry: string, limit
   return scored.slice(0, limit);
 }
 
-export function rankCandidates(items: RadarItem[], industry: string, limit: number): RadarItem[] {
-  return rankCandidatesScored(items, industry, limit).map((s) => s.item);
+export function rankCandidates(
+  items: RadarItem[],
+  industry: string,
+  limit: number,
+  focusKeywords?: string[],
+): RadarItem[] {
+  return rankCandidatesScored(items, industry, limit, focusKeywords).map((s) => s.item);
 }
 
 function cachePath(dataDir?: string): string {
@@ -245,12 +278,33 @@ export async function loadTopicCache(dataDir?: string): Promise<TopicCache | nul
   }
 }
 
-/** 海外源的检索词：显式 config.keyword > 定位里的 ASCII 词（「AI 技术」→ "AI"）> 无（跳过并报失败） */
-function overseasKeyword(src: RadarSource, industry: string): string {
+/**
+ * 海外源的检索词：显式 config.keyword > 雷达关键词里的第一个 ASCII 词 > 定位里的 ASCII 词
+ * （「AI 技术」→ "AI"）> 无（跳过并报失败）。
+ * 关键词排在定位前面:用户手填的词就是他要的检索面,比从散文里抠出来的第一个英文串准。
+ */
+function overseasKeyword(src: RadarSource, industry: string, focusKeywords?: string[]): string {
   const explicit = String(src.config.keyword ?? "").trim();
   if (explicit) return explicit;
-  const ascii = industry.match(/[A-Za-z0-9][A-Za-z0-9 .-]{1,30}/g);
-  return ascii ? ascii[0].trim() : "";
+  const firstAscii = (text: string): string => {
+    const ascii = text.match(/[A-Za-z0-9][A-Za-z0-9 .-]{1,30}/g);
+    return ascii ? ascii[0].trim() : "";
+  };
+  for (const kw of focusKeywords ?? []) {
+    const hit = firstAscii(kw);
+    if (hit) return hit;
+  }
+  return firstAscii(industry);
+}
+
+/** 粗筛关键词读侧（档案缺失/坏形状 → 空数组,回落定位切词） */
+async function loadFocusKeywords(dataDir?: string): Promise<string[]> {
+  try {
+    const kws = (await loadProfile(dataDir))?.focusKeywords;
+    return Array.isArray(kws) ? kws.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function refreshTopicRadar(
@@ -268,12 +322,16 @@ export async function refreshTopicRadar(
   if (sources.length === 0) return { ok: false, itemCount: 0, failedSources: [] };
 
   let industry = "";
+  let focusKeywords: string[] = [];
   try {
-    industry = (await loadProfile(dataDir))?.industry ?? "";
+    const profile = await loadProfile(dataDir);
+    industry = profile?.industry ?? "";
+    focusKeywords = (profile?.focusKeywords ?? []).filter((k): k is string => typeof k === "string");
   } catch { /* 无定位 → 海外源需要显式 keyword */ }
 
-  // X 源的 twitterapi.io key(自带 key,存 publish.json)。无 key 时 X 源会抛错进 failedSources。
-  const xApiKey = (await loadWechatMpConfig(dataDir).catch(() => ({}) as { xApiKey?: string })).xApiKey;
+  // 自带凭据的海外源(X 的 twitterapi.io key、Reddit 的 OAuth app)统一存 publish.json。
+  // 缺凭据时对应源自己抛错 → failedSources 里看得见,不静默空跑。
+  const keys = await loadWechatMpConfig(dataDir).catch(() => ({}) as WechatMpPublishConfig);
 
   const overseasFetch =
     deps?.overseasFetch ??
@@ -283,7 +341,11 @@ export async function refreshTopicRadar(
       const { SOURCE_REGISTRY } = await import("../research/sources/registry.js");
       const fetcher = SOURCE_REGISTRY[kind];
       if (!fetcher) return [];
-      return fetcher(keyword, limit, { xApiKey });
+      return fetcher(keyword, limit, {
+        xApiKey: keys.xApiKey,
+        redditClientId: keys.redditClientId,
+        redditClientSecret: keys.redditClientSecret,
+      });
     });
 
   const items: RadarItem[] = [];
@@ -302,16 +364,21 @@ export async function refreshTopicRadar(
               headers: { "user-agent": "Mozilla/5.0 AutoCrew/1.0" },
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            for (const item of parseRssItems(await res.text())) {
+            const parsed = parseRssItems(await res.text());
+            // 0 条 = 失败源:RSS 死掉时常返回 200 + 一页 HTML(36氪就是这样),解析恒为 0,
+            // 静默当成"今天没新闻"就再也没人发现。合法空 feed 也照失败报——0 条产出的源
+            // 对用户就是坏的,宁可在源清单上看见它红着。
+            if (parsed.length === 0) throw new Error("解析 0 条,源可能已失效");
+            for (const item of parsed) {
               items.push({ ...item, source: src.name });
             }
           } finally {
             clearTimeout(timer);
           }
         } else {
-          // X 走关注清单模式,不靠关键词;其余海外源是搜索型,必须有检索词
-          const keyword = overseasKeyword(src, industry);
-          if (!keyword && src.kind !== "x") throw new Error("no keyword");
+          // 清单型源(X/YouTube/Reddit)不靠关键词;其余海外源是搜索型,必须有检索词
+          const keyword = overseasKeyword(src, industry, focusKeywords);
+          if (!keyword && !LIST_KINDS.has(src.kind)) throw new Error("no keyword");
           for (const it of await overseasFetch(src.kind, keyword, 10)) {
             items.push({
               title: it.title,
@@ -363,7 +430,7 @@ export async function getCachedTopicCandidates(
 ): Promise<RadarItem[]> {
   const cache = await loadTopicCache(dataDir);
   if (!cache) return [];
-  return rankCandidates(cache.items, industry, limit);
+  return rankCandidates(cache.items, industry, limit, await loadFocusKeywords(dataDir));
 }
 
 /** 工具侧入口：新鲜缓存直读；缺失/过期则刷新后排序。 */
@@ -380,5 +447,5 @@ export async function getTopicCandidates(
     cache = await loadTopicCache(dataDir);
   }
   if (!cache) return [];
-  return rankCandidates(cache.items, industry, limit);
+  return rankCandidates(cache.items, industry, limit, await loadFocusKeywords(dataDir));
 }

@@ -72,20 +72,34 @@ export async function doRadarRefresh(
 export async function collectMoreRadarTopics(
   payload: Record<string, unknown>,
   fetchImpl?: typeof fetch,
-  deps?: { refreshImpl?: typeof refreshTopicRadar; intakeImpl?: typeof intakeRadarTopics },
+  deps?: {
+    refreshImpl?: typeof refreshTopicRadar;
+    /** 枯竭时的强制真刷新(绕开 TTL 门) */
+    forceRefreshImpl?: typeof refreshTopicRadar;
+    intakeImpl?: typeof intakeRadarTopics;
+  },
 ): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
   const dataDir = (payload._dataDir as string) || undefined;
   const limit = Math.max(1, Math.min(Number(payload.limit) || 5, 10));
+  const fetcher = fetchImpl ?? globalThis.fetch;
+  const intakeOnce = () => (deps?.intakeImpl ?? intakeRadarTopics)(dataDir, { limit, poolSize: 24 });
   try {
-    let refresh: Awaited<ReturnType<typeof refreshTopicRadar>> | null = null;
+    let refresh: (Awaited<ReturnType<typeof refreshTopicRadar>> & { skippedFresh?: boolean }) | null = null;
     if (payload.refresh !== false) {
       // TTL 门:缓存新鲜就不打源(付费 X 按请求计费)——「再找一批」的增量本来就来自缓存里的未看候选
-      refresh = await (deps?.refreshImpl ?? refreshTopicRadarIfStale)(dataDir, fetchImpl ?? globalThis.fetch);
+      refresh = await (deps?.refreshImpl ?? refreshTopicRadarIfStale)(dataDir, fetcher);
     }
-    const intake = await (deps?.intakeImpl ?? intakeRadarTopics)(dataDir, { limit, poolSize: 24 });
+    let intake = await intakeOnce();
+    // 缓存内候选被 7 天落选记忆吃干净时,这个按钮点了永远 0 结果,用户只会以为雷达坏了。
+    // 缓存没变(skippedFresh)且这轮零产出 → 绕开 TTL 真打一次源:多烧的付费额度是用户
+    // 显式点击换来的,按钮必须有真语义。
+    if (refresh?.skippedFresh && intake.saved.length === 0 && intake.qualified === 0) {
+      refresh = { ...(await (deps?.forceRefreshImpl ?? refreshTopicRadar)(dataDir, fetcher)), skippedFresh: false };
+      intake = await intakeOnce();
+    }
     return {
       ok: true,
       data: {

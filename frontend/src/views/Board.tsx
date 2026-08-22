@@ -14,10 +14,14 @@ import {
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
 } from "../lib";
 
-/** 灵感行副标签:来源 + 天龄(3 天未选用会自动清,天龄是紧迫感) */
-function ideaAge(createdAt?: string): string {
-  if (!createdAt) return "";
-  const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
+/**
+ * 灵感行副标签:来源 + 天龄(3 天未选用会自动清,天龄是紧迫感)。
+ * 口径必须与过期清理一致(topic-expiry 用 renewedAt ?? createdAt):深调研续过期的灵感
+ * 已经重新计时,还按 createdAt 显示就是假紧迫感——卡上写"5 天前"其实明天才到期。
+ */
+function ideaAge(anchor?: string): string {
+  if (!anchor) return "";
+  const days = Math.floor((Date.now() - new Date(anchor).getTime()) / 86400000);
   if (!isFinite(days) || days < 0) return "";
   return days === 0 ? "今天" : `${days} 天前`;
 }
@@ -197,7 +201,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
                 {atom.topic?.title ?? atomRep(atom)?.title ?? "（无标题）"}
               </div>
               <div className="idea-sub mono muted">
-                {[typeof atom.topic?.score === "number" ? "综合评分" : "待评分", sourceLabel(atom.topic?.source), ideaAge(atom.topic?.createdAt)].filter(Boolean).join(" · ")}
+                {[typeof atom.topic?.score === "number" ? "综合评分" : "待评分", sourceLabel(atom.topic?.source), ideaAge(atom.topic?.renewedAt ?? atom.topic?.createdAt)].filter(Boolean).join(" · ")}
               </div>
               <button
                 className="acard-del"

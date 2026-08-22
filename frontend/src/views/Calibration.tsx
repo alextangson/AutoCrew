@@ -38,8 +38,14 @@ const SOURCE_LABEL: Record<string, string> = {
   calibrated: "代表作蒸馏",
 };
 
+/** 「AI、Agent、FDE」→ ["AI","Agent","FDE"];逗号/顿号/换行都当分隔符 */
+function parseKeywords(raw: string): string[] {
+  return [...new Set(raw.split(/[,，、\n]/).map((s) => s.trim()).filter(Boolean))];
+}
+
 export function Calibration() {
   const [industry, setIndustry] = useState("");
+  const [focusKeywords, setFocusKeywords] = useState("");
   const [seats, setSeats] = useState<string[]>([]);
   const [persona, setPersona] = useState<{ summary: string; calibrated: boolean; tiers: Persona | null }>({ summary: "", calibrated: false, tiers: null });
   const [proposal, setProposal] = useState<Persona | null>(null);
@@ -57,9 +63,15 @@ export function Calibration() {
       setRules(d.rules ?? []);
       if (d.persona) setPersona(d.persona);
     }
-    const o = ob as unknown as { industry?: string; platforms?: string[]; data?: { industry?: string; platforms?: string[] } };
+    const o = ob as unknown as {
+      industry?: string; platforms?: string[]; focusKeywords?: string[];
+      data?: { industry?: string; platforms?: string[]; focusKeywords?: string[] };
+    };
     setIndustry(o.industry ?? o.data?.industry ?? "");
     setSeats(o.platforms ?? o.data?.platforms ?? []);
+    const kws = o.focusKeywords ?? o.data?.focusKeywords ?? [];
+    setFocusKeywords(kws.join("、"));
+    return kws;
   };
   useEffect(() => {
     void load();
@@ -69,6 +81,16 @@ export function Calibration() {
     if (!industry.trim()) return toast("定位不能为空");
     const r = await invoke("profile:update", { industry: industry.trim() });
     toast(r.ok ? "定位已更新——雷达/侦查过滤即刻生效" : (r.error ?? "保存失败"));
+  };
+
+  const saveFocusKeywords = async () => {
+    const list = parseKeywords(focusKeywords);
+    const r = await invoke("profile:update", { focusKeywords: list });
+    if (!r.ok) return toast(r.error ?? "保存失败");
+    // 回读引擎实际落库的值:保存成功不等于存进去了,不回读就可能对着用户假装保存过
+    const saved = await load();
+    if (saved.length !== list.length || saved.some((k, i) => k !== list[i])) return toast("保存未生效——引擎没接收雷达关键词");
+    toast(list.length ? `雷达关键词已更新(${list.length} 个)——下一轮粗筛按它匹配` : "已清空——粗筛回落到定位派生");
   };
 
   const toggleSeat = async (id: string) => {
@@ -143,6 +165,19 @@ export function Calibration() {
         />
         <button onClick={() => void saveIndustry()}>保存</button>
       </div>
+
+      <div className="ed-section">
+        <span className="mono muted">雷达关键词：</span>
+        <input
+          className="sel-input"
+          style={{ flex: 1 }}
+          value={focusKeywords}
+          placeholder="如：AI、Agent、FDE、部署——逗号或顿号分隔"
+          onChange={(e) => setFocusKeywords(e.target.value)}
+        />
+        <button onClick={() => void saveFocusKeywords()}>保存</button>
+      </div>
+      <p className="muted">雷达粗筛按这些词匹配候选(标题/摘要命中就加分),留空则从定位里派生——定位是散文,派生出的长词常常一条都命中不了。</p>
 
       <div className="ed-section">
         <span className="mono muted">席位：</span>

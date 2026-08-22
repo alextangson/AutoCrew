@@ -79,6 +79,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "radar:more": [],
   "radar:rescore": [],
   "radar:sources_set": ["sources"],
+  // 可选键 industry / platforms / focusKeywords（雷达粗筛关键词），至少给一个由 handler 判
   "profile:update": [],
   "content:update": ["id"],
   "content:transition": ["id", "target_status"],
