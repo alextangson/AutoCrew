@@ -11,6 +11,7 @@ import { saveContent, getContent } from "../storage/local-store.js";
 import {
   GENERATING_TITLE_PREFIX,
   INTERRUPTED_TITLE_PREFIX,
+  RESEARCHING_TITLE_PREFIX,
 } from "../modules/writing/generate-script.js";
 
 let tmpHome: string;
@@ -50,6 +51,20 @@ describe("reconcileOrphanDrafts", () => {
     expect(c!.title).toBe(`${INTERRUPTED_TITLE_PREFIX}AI 编辑部`);
     expect(c!.lastError).toMatch(/server 重启/);
     expect(c!.status).toBe("drafting");
+  });
+
+  it("崩在等调研简报那一段的孤儿(［调研中］)同样被标中断——只认「生成中」就扫不到它", async () => {
+    const orphan = await saveContent({
+      ...placeholder("等简报时崩的稿"),
+      title: `${RESEARCHING_TITLE_PREFIX}等简报时崩的稿`,
+    });
+
+    const r = await reconcileOrphanDrafts();
+
+    expect(r.total).toBe(1);
+    const c = await getContent(orphan.id);
+    expect(c!.title).toBe(`${INTERRUPTED_TITLE_PREFIX}等简报时崩的稿`); // 按各自前缀长度剥
+    expect(c!.lastError).toMatch(/server 重启/);
   });
 
   it("不误伤:手工 drafting 稿(无哨兵前缀)、已标失败的稿、非 drafting 稿都不动", async () => {

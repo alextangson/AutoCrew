@@ -4,6 +4,7 @@ import {
   BrokerQuotaError,
   DEFAULT_BROKER_QUOTAS,
   normalizeWhitespace,
+  type BrokerActivity,
   type BrokerFetchImpl,
   type BrokerSearchImpl,
   type ResearchBroker,
@@ -422,6 +423,51 @@ describe("broker usage 与视角句柄", () => {
       search: { used: 0, limit: 4 },
       readPage: { used: 0, limit: 6 },
     });
+  });
+});
+
+describe("broker 活动事件 — 调研在干活得让人看见", () => {
+  it("搜索发一条：带视角名与搜索词原文", async () => {
+    const seen: BrokerActivity[] = [];
+    const b = makeBroker({ onActivity: (a) => seen.push(a) });
+    await b.forPerspective("evidence").search("新能源车企 2026 销量");
+    expect(seen).toEqual([{ perspective: "evidence", action: "search", detail: "新能源车企 2026 销量" }]);
+  });
+
+  it("读页发一条：detail 只报 host（整条长 URL 会把日志淹了）", async () => {
+    const seen: BrokerActivity[] = [];
+    const b = makeBroker({ onActivity: (a) => seen.push(a) });
+    await b.forPerspective("counter").readPage("https://zhuanlan.zhihu.com/p/123456?utm_source=x");
+    expect(seen).toEqual([{ perspective: "counter", action: "read_page", detail: "zhuanlan.zhihu.com" }]);
+  });
+
+  it("被配额拒掉的调用不发事件（事件量天然被配额封顶）", async () => {
+    const seen: BrokerActivity[] = [];
+    const b = makeBroker({ onActivity: (a) => seen.push(a) });
+    const p = b.forPerspective("audience");
+    for (let i = 0; i < DEFAULT_BROKER_QUOTAS.searchPerPerspective; i++) await p.search(`词${i}`);
+    await quotaErrorOf(p.search("超额的这次"));
+    expect(seen).toHaveLength(4);
+    expect(seen.some((a) => a.detail === "超额的这次")).toBe(false);
+  });
+
+  it("缓存命中不发事件——没出网就没有「在搜」这回事", async () => {
+    const seen: BrokerActivity[] = [];
+    const b = makeBroker({ onActivity: (a) => seen.push(a) });
+    await b.forPerspective("A").readPage("https://ex.test/p");
+    await b.forPerspective("B").readPage("https://ex.test/p");
+    expect(seen).toHaveLength(1);
+  });
+
+  it("回调抛错不影响检索结果（观测层不得破坏执行层）", async () => {
+    const b = makeBroker({
+      onActivity: () => {
+        throw new Error("日志盘满了");
+      },
+    });
+    const p = b.forPerspective("evidence");
+    await expect(p.search("还能搜")).resolves.toMatchObject({ query: "还能搜", cached: false });
+    await expect(p.readPage("https://ex.test/p")).resolves.toMatchObject({ cached: false });
   });
 });
 

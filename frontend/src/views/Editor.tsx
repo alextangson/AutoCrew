@@ -308,7 +308,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           {c.lastError && (
             <div className="ed-error">
               ⚠️ 上次生成中断：{String(c.lastError).slice(0, 120)}{" "}
-              <button onClick={() => void send(`用选题《${(c.title || "").replace(/^［生成中断］|^［生成中］/, "")}》重新写一篇${platformLabel(c.platform)}原生版本`).then((receipt) => {
+              <button onClick={() => void send(`用选题《${(c.title || "").replace(/^［生成中断］|^［生成中］|^［调研中］/, "")}》重新写一篇${platformLabel(c.platform)}原生版本`).then((receipt) => {
                 toast(receipt.ok ? "重写任务已受理" : (receipt.error ?? "派活失败"));
               })}>
                 重新生成

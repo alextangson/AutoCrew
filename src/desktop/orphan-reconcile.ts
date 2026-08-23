@@ -14,8 +14,15 @@ import { listContents, updateContent } from "../storage/local-store.js";
 import {
   GENERATING_TITLE_PREFIX,
   INTERRUPTED_TITLE_PREFIX,
+  RESEARCHING_TITLE_PREFIX,
 } from "../modules/writing/generate-script.js";
 import { emitEngineEvent } from "./event-hub.js";
+
+/**
+ * 后台生成占位稿的两个中间态哨兵：等调研简报（［调研中］）与写稿中（［生成中］）。
+ * 两个都得认——崩在等简报那十几分钟里的稿,标题停的是「调研中」,只认「生成中」就永远扫不到它。
+ */
+const ORPHAN_TITLE_PREFIXES = [GENERATING_TITLE_PREFIX, RESEARCHING_TITLE_PREFIX];
 
 export interface OrphanReconcileResult {
   /** 标记数 >0 的工作区：id → 篇数 */
@@ -37,12 +44,14 @@ export async function reconcileOrphanDrafts(): Promise<OrphanReconcileResult> {
       for (const c of contents) {
         if (c.status !== "drafting") continue;
         if (c.lastError) continue; // 运行时失败路径已标过,保留真实错误原因
-        if (!c.title.startsWith(GENERATING_TITLE_PREFIX)) continue; // 手工 drafting 稿不动
+        const prefix = ORPHAN_TITLE_PREFIXES.find((p) => c.title.startsWith(p));
+        if (!prefix) continue; // 手工 drafting 稿不动
         try {
           const updated = await updateContent(
             c.id,
             {
-              title: `${INTERRUPTED_TITLE_PREFIX}${c.title.slice(GENERATING_TITLE_PREFIX.length)}`,
+              // 按命中的那个前缀的长度剥,别写死一个长度
+              title: `${INTERRUPTED_TITLE_PREFIX}${c.title.slice(prefix.length)}`,
               lastError: ORPHAN_ERROR,
             },
             ws.dataDir,

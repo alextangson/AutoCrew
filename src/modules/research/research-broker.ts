@@ -171,6 +171,16 @@ export type BrokerSearchImpl = (
 
 export type BrokerFetchImpl = (url: string, opts: FetchExternalOptions) => Promise<ExternalPage>;
 
+/**
+ * 一次**真实出网**的观测记录（工作日志用）。视角名就是 `forPerspective` 的入参，
+ * detail：search = 搜索词原文；read_page = 目标 host（整条长 URL 灌进日志没法读）。
+ */
+export interface BrokerActivity {
+  perspective: string;
+  action: "search" | "read_page";
+  detail: string;
+}
+
 export interface ResearchBrokerDeps {
   searchImpl?: BrokerSearchImpl;
   fetchImpl?: BrokerFetchImpl;
@@ -179,6 +189,11 @@ export interface ResearchBrokerDeps {
   dataDir?: string;
   /** 搜索缓存键的命名空间：换 provider 即换缓存空间（spec §3 的 (provider, query) 口径） */
   provider?: string;
+  /**
+   * 出网活动的可见出口。**只在扣额成功后**发——缓存命中与被配额拒掉的调用都不发，
+   * 所以事件量天然被配额封顶（每 job ≤14 搜 + ≤20 读）。回调抛错由 broker 吞掉。
+   */
+  onActivity?: (activity: BrokerActivity) => void;
 }
 
 // ─── 空白归一（quote 校验与搜索缓存键共用） ──────────────────────────────────
@@ -193,6 +208,15 @@ export function normalizeWhitespace(text: string): string {
 /** 引文语料 = 模型实际看到的形态（展示端同款消毒再折空白），否则逐字复制也会被误杀（冒烟实证） */
 export function quoteCorpus(text: string): string {
   return normalizeWhitespace(sanitizeExternal(text, Number.MAX_SAFE_INTEGER));
+}
+
+/** 读页事件只报域名：日志是给人扫一眼的，长 URL 会把那一行淹掉。解析不出来就原样退回 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
 }
 
 // ─── 实现 ────────────────────────────────────────────────────────────────────
@@ -212,6 +236,7 @@ class BrokerCore {
   private readonly now: () => number;
   private readonly dataDir?: string;
   private readonly provider: string;
+  private readonly onActivity?: (activity: BrokerActivity) => void;
 
   private readonly perspectives = new Map<string, { search: number; readPage: number }>();
   private jobSearch = 0;
@@ -239,6 +264,16 @@ class BrokerCore {
     this.now = deps.now ?? Date.now;
     this.dataDir = deps.dataDir;
     this.provider = deps.provider ?? "default";
+    this.onActivity = deps.onActivity;
+  }
+
+  /** 观测层不得破坏执行层：回调炸了也只是这条日志没发出去，检索照跑 */
+  private note(perspective: string, action: BrokerActivity["action"], detail: string): void {
+    try {
+      this.onActivity?.({ perspective, action, detail });
+    } catch {
+      /* 观测层不得破坏执行层 */
+    }
   }
 
   use(name: string): { search: number; readPage: number } {
@@ -294,6 +329,7 @@ class BrokerCore {
       return { query: q, results: await inflight, cached: true };
     }
     this.chargeSearch(name);
+    this.note(name, "search", q);
     const run = this.runSearch(key, q);
     this.searchInflight.set(key, run);
     try {
@@ -352,6 +388,7 @@ class BrokerCore {
       return { ...(await inflight), cached: true };
     }
     this.chargeReadPage(name);
+    this.note(name, "read_page", hostOf(requested));
     const run = this.runReadPage(key, requested);
     this.pageInflight.set(key, run);
     try {

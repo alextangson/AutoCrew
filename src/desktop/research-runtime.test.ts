@@ -16,6 +16,7 @@ import {
   type ResearchUpdatedEvent,
 } from "./research-runtime.js";
 import type { DeepResearchDeps } from "../modules/research/deep-research.js";
+import { readRecentEvents } from "./event-hub.js";
 import type { JobOutcome } from "../modules/research/research-runner.js";
 import {
   PERSPECTIVE_NAMES,
@@ -145,6 +146,26 @@ describe("triggerDeepResearch", () => {
     expect(events.every((e) => e.type === "research:updated" && e.topicId === topic.id)).toBe(true);
     // queued + running + 视角进度 + 落定 —— 至少四拍，缺 onProgress 只会有三拍
     expect(events.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("装配：检索活动落成 scout 工作日志（视角中文名 + 搜索词/域名）", async () => {
+    const topic = await newTopic();
+    await configureSearch();
+    await start({
+      createRunJobImpl: (deps: DeepResearchDeps) => async (job: ResearchJob) => {
+        deps.onActivity?.({ perspective: "evidence", action: "search", detail: "新能源车企 2026 销量" });
+        deps.onActivity?.({ perspective: "counter", action: "read_page", detail: "zhihu.com" });
+        return fakePipeline()(deps)(job);
+      },
+    });
+    await triggerDeepResearch(topic.id, dataDir);
+    await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "succeeded");
+
+    // 事件落盘是异步的（emitEngineEvent fire-and-forget），等它写完再读
+    await waitFor(async () => (await readRecentEvents(dataDir)).length >= 2);
+    const labels = (await readRecentEvents(dataDir)).map((e) => `${e.role}|${e.kind}|${e.label}`);
+    expect(labels).toContain("scout|work|调研员·证据与数据视角在搜：新能源车企 2026 销量");
+    expect(labels).toContain("scout|work|调研员·反方视角在读：zhihu.com");
   });
 
   it("同选题重复投递合并成一个 job（deduped）", async () => {

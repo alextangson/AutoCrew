@@ -95,7 +95,14 @@ export async function reviseDraft(
   const note = `AI 修改：${feedback.replace(/\s+/g, " ").slice(0, 80)}`;
   const updated = await updateContent(
     contentId,
-    { title: revision.title, body: revision.body, _versionNote: note },
+    {
+      title: revision.title,
+      body: revision.body,
+      _versionNote: note,
+      // 改稿不接审稿（审稿 spec §2.7），但改过的稿不得继续顶着「已 AI 审稿」的徽章：
+      // 结论作废但保留（issues 还有回看价值），状态改 stale。没审过就不新增字段。
+      ...(current.review ? { review: { ...current.review, status: "stale" as const } } : {}),
+    },
     dataDir,
   );
   if (!updated) throw new Error(`保存修订稿失败：${contentId}`);

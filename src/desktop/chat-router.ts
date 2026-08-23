@@ -35,6 +35,7 @@ import { reviseFocus, type ReviseFocus, type ReviseFocusResult } from "../module
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 import { emitEngineEvent } from "./event-hub.js";
 import { triggerDeepResearch } from "./research-runtime.js";
+import { makeEnsureBrief } from "./write-research-gate.js";
 import { listGuiSkills, type GuiSkill } from "./skills-reader.js";
 import { buildWorkspaceTools, type WorkspaceToolDeps } from "./chat-tools-workspace.js";
 import { readRecentActions, recentActionsBlock } from "./recent-actions.js";
@@ -385,6 +386,8 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
       ((req, dd) =>
         startGenerateScript(req, dd, {
           onEvent: (e) => void emitEngineEvent(e, dd).catch(() => {}),
+          // 与桌面写作入口同一道闸口：选题没简报就先补调研，闸口故障只降级不阻断
+          ensureBriefImpl: makeEnsureBrief(dd),
         })),
     reviseDraftImpl: deps?.reviseDraftImpl ?? reviseDraft,
     reviseFocusImpl: deps?.reviseFocusImpl ?? reviseFocus,

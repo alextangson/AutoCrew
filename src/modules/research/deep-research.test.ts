@@ -17,6 +17,7 @@ import {
   type FetchedImage,
   type fetchExternalImage,
 } from "./fetch-image.js";
+import type { BrokerActivity } from "./research-broker.js";
 import { listResearchAssets } from "./research-asset-store.js";
 import { PERSPECTIVE_TASK_BOOKS } from "./research-perspectives.js";
 import {
@@ -555,5 +556,33 @@ describe("视角进度实时可见", () => {
       const track = seen.map((s) => rank[codeOf(s.perspectives, name)!.status]);
       expect(track).toEqual([...track].sort((a, b) => a - b));
     }
+  });
+});
+
+describe("检索活动可见", () => {
+  it("onActivity 一路穿到 broker：真出网各发一条，缓存命中的三路不重复刷屏", async () => {
+    const topic = await newTopic();
+    const seen: BrokerActivity[] = [];
+    const runJob = createDeepResearchRunJob({
+      dataDir,
+      engineConfig: CONFIG,
+      brokerDeps: BROKER_DEPS,
+      runLoopImpl: planLoop(),
+      onWarn: () => {},
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
+      onActivity: (a) => seen.push(a),
+    });
+
+    const outcome = await runJob(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    // 四路搜同一个词、读同一页：只有先到的那一路真出网，其余三路吃缓存
+    const searches = seen.filter((a) => a.action === "search");
+    const reads = seen.filter((a) => a.action === "read_page");
+    expect(searches).toHaveLength(1);
+    expect(searches[0].detail).toBe("AI 编程助手 使用率");
+    expect(reads).toHaveLength(1);
+    expect(reads[0].detail).toBe("example.com"); // 只报 host
+    for (const a of seen) expect(PERSPECTIVE_NAMES).toContain(a.perspective as PerspectiveName);
   });
 });

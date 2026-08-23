@@ -2,6 +2,9 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
+// 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
+// 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
+import type { ReviewMeta } from "../modules/writing/script-review.js";
 
 export interface Topic {
   id: string;
@@ -197,6 +200,12 @@ export interface Content {
   usedPatternIds?: string[];
   /** 本稿注入的调研简报版本（深调研 §6）：回溯得到 briefs/<topicId>.v<N>.json 那份不可变输入，无简报时字段不落 */
   usedBriefRevision?: number;
+  /**
+   * AI 审稿结论（审稿 spec §2.5）：工作台稿卡徽章的唯一读数。旧稿无此字段 = 不显示徽章。
+   * 改稿链路（revise_draft / 收下修订）落盘时把 status 改成 "stale"——
+   * 改过的稿不得继续顶着「已 AI 审稿」的徽章（§2.7）。
+   */
+  review?: ReviewMeta;
   /** 软删除时间戳(回收站语义);null/缺省 = 活跃。默认读侧全部过滤 */
   deletedAt?: string | null;
   assets: Asset[];

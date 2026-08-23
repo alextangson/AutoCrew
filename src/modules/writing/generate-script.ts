@@ -3,14 +3,18 @@
  *
  * 流程：loadEngineConfig + getPack + loadProfile → buildScriptPrompts
  *   → runLoop（submit_script 工具作为结构化输出通道）
- *   → humanizeZh → scanText（违禁词）→ saveContent（draft_ready）
+ *   → 组装 + humanizeZh → AI 审稿（含修订轮，script-review）
+ *   → scanText（违禁词）→ saveContent（draft_ready）
  *
  * submit_script 工具的 execute 闭包捕获 payload；缺字段时返回错误消息让
  * 模型自纠，而不是抛出（保持 loop 继续）。
+ * 组装 + humanizeZh 只做一次（审稿 spec §2.1：审稿必须看到终稿形态），
+ * 审稿产出直接进转正——同一段文本不许算两遍。
  */
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
+import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
-import type { LoopTool, LoopResult } from "../../engine/loop.js";
+import type { LoopResult } from "../../engine/loop.js";
 import { getPack, getPackForPlatform } from "../packs/index.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
@@ -19,9 +23,12 @@ import { buildScriptPrompts } from "./script-prompt.js";
 import type { ScriptRequest } from "./script-prompt.js";
 import { selectPatternsForScript } from "../patterns/pattern-select.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
-import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./quality-gate.js";
+import { resolveQualityGate } from "./quality-gate.js";
 import type { GateFailure } from "./quality-gate.js";
-import { humanizeZh } from "../humanizer/zh.js";
+import { assembleAndHumanize, buildSubmitTool } from "./script-payload.js";
+import type { Captured, SubmitPayload } from "./script-payload.js";
+import { reviewAndConverge } from "./script-review.js";
+import type { ReviewDeps, ReviewMeta, ReviewOutcome } from "./script-review.js";
 import { scanText } from "../filter/sensitive-words.js";
 import { retrieveKnowledge, KNOWLEDGE_DEFAULT_CHARS } from "../knowledge/knowledge-base.js";
 import { buildBriefBlock, knowledgeBudgetFor } from "../research/brief-inject.js";
@@ -44,8 +51,26 @@ export interface GeneratedScript {
   gateFailures: string[];
   /** 本稿注入的个人写作规则数（声音内核+当前平台包——IA v4.2 §B5「越用越像你」可感知） */
   rulesApplied: number;
+  /**
+   * 这稿是在**没有调研简报**的情况下写出来的（调研闸口跑不了/失败/等超时）。
+   * 只对带 topicId 的选题写作有意义：带上了简报、或压根不是从选题开写，都是 false。
+   */
+  wroteWithoutBrief: boolean;
+  /** AI 审稿结论（审稿 spec §2.5）：降级路径也一定有值——skipped/failed 就是「没审成」的留痕 */
+  review: ReviewMeta;
   tokensUsed: number;
 }
+
+/**
+ * 开写前「补一轮深调研」的结果（适配器在 desktop 层实现，见 write-research-gate）。
+ * 五态里三态都是降级——降级必须带人话 note，写稿侧照写但要留痕。
+ */
+export type EnsureBriefOutcome =
+  | { state: "already" }
+  | { state: "ready" }
+  | { state: "unavailable"; note: string }
+  | { state: "failed"; note: string }
+  | { state: "timeout" };
 
 /** 生成管线的注入口：loop 替身（测试用）+ 非致命故障的可见出口 */
 export interface GenerationDeps {
@@ -55,6 +80,16 @@ export interface GenerationDeps {
    * 静默降级会让「简报怎么没生效」查无可查。
    */
   onWarn?: (message: string) => void;
+  /**
+   * 写作入口的调研闸口：带 topicId 开写且该选题还没有简报时，先补一轮深调研再写。
+   * 不注入 = 老行为（有简报就注入，没有就裸写），桌面 IPC 与 chat-router 两条入口注入。
+   * MCP 同步入口（src/tools）**故意不接**：外部 agent 自己有 deep_research 工具与判断力，
+   * 这层不该替它决定「该不该先调研」，更不该让它在一个同步调用里干等十几分钟。
+   *
+   * `onWaiting`：闸口**确定要等**（触发被接受、开始轮询前）时回调一次，写作侧借此把
+   * 占位稿标题改成「调研中」。已有简报/跑不了时不调——那两条路径根本没有等待。
+   */
+  ensureBriefImpl?: (topicId: string, onWaiting?: () => Promise<void>) => Promise<EnsureBriefOutcome>;
 }
 
 /** 本稿的归因元数据——两条落点（run-log 的 logMeta 与 content 元数据）共用同一份 */
@@ -64,100 +99,17 @@ interface Attribution {
   usedBriefRevision?: number;
 }
 
-interface SubmitPayload {
-  title: string;
-  hook: string;
-  body: string;
-  cta: string;
-  hashtags: string[];
-}
-
-const TEXT_FIELDS = ["title", "hook", "body", "cta"] as const;
-const REQUIRED_FIELDS: (keyof SubmitPayload)[] = [...TEXT_FIELDS, "hashtags"];
-
-function missingField(field: string): string {
-  return `Error: 缺少字段 ${field}，请补全后重新调用 submit_script`;
-}
-
-function isStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((x) => typeof x === "string");
-}
-
-type SubmitValidation = { ok: true; payload: SubmitPayload } | { ok: false; error: string };
-
-/** LLM 输出是不可信边界：缺失/空之外还必须校验类型，否则坏数据存进稿件后才爆。 */
-function validateSubmitArgs(args: Record<string, unknown>): SubmitValidation {
-  const text: Record<string, string> = {};
-  for (const field of TEXT_FIELDS) {
-    const val = args[field];
-    if (val === undefined || val === null) return { ok: false, error: missingField(field) };
-    if (typeof val !== "string") {
-      return { ok: false, error: `Error: 字段 ${field} 应为字符串，请修正后重新调用 submit_script` };
-    }
-    if (val.trim() === "") return { ok: false, error: missingField(field) };
-    text[field] = val;
-  }
-  const hashtags = args.hashtags;
-  if (hashtags === undefined || hashtags === null) return { ok: false, error: missingField("hashtags") };
-  if (!isStringArray(hashtags)) {
-    return { ok: false, error: "Error: 字段 hashtags 应为字符串数组，请修正后重新调用 submit_script" };
-  }
-  if (hashtags.length === 0) return { ok: false, error: missingField("hashtags") };
-  return {
-    ok: true,
-    payload: { title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags },
-  };
-}
-
-interface Captured {
-  payload: SubmitPayload | null;
-  gateFailures: GateFailure[];
-}
-
-/**
- * Build the submit_script LoopTool; the captured variable is mutated on success.
- * 有 gate 时：字段校验通过后跑 Quality Gate，FAIL 且修复轮未耗尽 → 返回修复指令
- * 打回（复用模型自纠通道）；每稿都先落 captured——loop 提前终止时最后一稿仍可用，
- * 残余 FAIL 经 gateFailures 透出（禁止静默失败）。
- */
-function buildSubmitTool(captured: Captured, gate?: QualityGateSpec): LoopTool {
-  let repairRounds = 0;
-  return {
-    name: "submit_script",
-    description: "提交最终成稿。所有字段必填。",
-    parameters: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "标题" },
-        hook: { type: "string", description: "开篇钩子" },
-        body: { type: "string", description: "正文内容" },
-        cta: { type: "string", description: "行动号召/引导语结尾" },
-        hashtags: { type: "array", items: { type: "string" }, description: "话题标签/关键词列表" },
-      },
-      required: REQUIRED_FIELDS,
-    },
-    execute(args) {
-      const result = validateSubmitArgs(args);
-      if (!result.ok) return result.error;
-      // Last valid submission wins — a corrected resubmission replaces the earlier capture.
-      captured.payload = result.payload;
-      if (gate) {
-        const failures = runQualityGate(gate, result.payload);
-        captured.gateFailures = failures;
-        if (failures.length > 0 && repairRounds < (gate.maxRepairRounds ?? 2)) {
-          repairRounds += 1;
-          return formatGateFeedback(failures);
-        }
-      }
-      return "已收到脚本";
-    },
-  };
-}
-
 /** 生成占位稿标题哨兵——区分「生成占位稿」与手工存的 drafting 稿(content-save 允许)。
  *  renderer(board/workbench.js)按同字面量正则识别,改动需同步。 */
 export const GENERATING_TITLE_PREFIX = "［生成中］";
 export const INTERRUPTED_TITLE_PREFIX = "［生成中断］";
+/**
+ * 开写前等深调研简报的中间态（最长十几分钟）。占位稿在这段时间里说实话:
+ * 「调研中」不是「生成中」——不然人看到的是一张十分钟不动的卡,和卡死没有区别。
+ * **消费方必须同步**:orphan-reconcile 的孤儿判定、Editor.tsx 的剥前缀正则,
+ * 漏一处就是启动扫不到的尸体稿 / 重写时把前缀当选题带进去。
+ */
+export const RESEARCHING_TITLE_PREFIX = "［调研中］";
 
 /** 占位稿先行（防呆 P1）:分钟级长任务先落盘——中途死不许蒸发,刷新/断连不影响它的存在 */
 async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
@@ -281,7 +233,142 @@ async function gatherInputs(
   };
 }
 
-/** 执行体:loop → 占位稿转正;失败标〔生成中断〕+ lastError 后原样抛出 */
+/**
+ * 占位稿改哨兵前缀。标题是观感不是正确性：写失败只 warn,绝不阻断写作。
+ * 顺带给版本注记写人话——updateContent 逢标题变化必记一版,不写注记就是两条「第 N 版」谜语。
+ */
+async function retitlePlaceholder(
+  placeholderId: string,
+  phase: "researching" | "writing",
+  req: ScriptRequest,
+  warn: (message: string) => void,
+  dataDir?: string,
+): Promise<void> {
+  const researching = phase === "researching";
+  const prefix = researching ? RESEARCHING_TITLE_PREFIX : GENERATING_TITLE_PREFIX;
+  try {
+    await updateContent(
+      placeholderId,
+      {
+        title: `${prefix}${req.topic.slice(0, 40)}`,
+        _versionNote: researching ? "开写前先补一轮深调研" : "调研落定,开始写稿",
+      },
+      dataDir,
+    );
+  } catch (err) {
+    warn(`占位稿标题更新失败（${placeholderId}）：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * 开写前补调研（写作入口自动补深调研）。返回 true = 这稿没等到简报，得留痕。
+ *
+ * 用户自己带了 research 材料时**不强等**：他手里已经有料，为一轮分钟级的调研让他排队，
+ * 是拿他的时间换一个他没要的东西。
+ *
+ * 真等起来时占位稿标题走一个来回：［调研中］→（闸口返回）→［生成中］。改回来这一步不能省，
+ * 后面就是写稿阶段了，标题停在「调研中」既骗人，也让中断/孤儿回收的哨兵停在错的那一个。
+ */
+async function ensureBriefBeforeWriting(
+  req: ScriptRequest,
+  deps: GenerationDeps | undefined,
+  warn: (message: string) => void,
+  placeholderId: string,
+  dataDir?: string,
+): Promise<boolean> {
+  if (!req.topicId || !deps?.ensureBriefImpl || req.research?.trim()) return false;
+  let waited = false;
+  const onWaiting = async (): Promise<void> => {
+    waited = true;
+    await retitlePlaceholder(placeholderId, "researching", req, warn, dataDir);
+  };
+  let outcome: EnsureBriefOutcome;
+  try {
+    outcome = await deps.ensureBriefImpl(req.topicId, onWaiting);
+  } catch (err) {
+    // 契约上闸口永不抛;执行层不赌上游守约——闸口自己炸了也只是「没简报」,稿子照写
+    outcome = { state: "unavailable", note: err instanceof Error ? err.message : String(err) };
+  }
+  if (waited) await retitlePlaceholder(placeholderId, "writing", req, warn, dataDir);
+  if (outcome.state === "already" || outcome.state === "ready") return false;
+  const detail = outcome.state === "timeout" ? "调研没在限时内跑完（可能还在跑）" : outcome.note;
+  warn(`未带调研简报开写：${detail}`);
+  return true;
+}
+
+interface WriterRun {
+  payload: SubmitPayload;
+  gateFailures: GateFailure[];
+  tokensUsed: number;
+}
+
+/** 写稿轮：runLoop + submit_script 收束。没提交成稿 = 硬失败（调用方标〔生成中断〕）。 */
+async function runWriterLoop(
+  prompts: { system: string; user: string },
+  gate: QualityGateSpec | undefined,
+  config: EngineConfig,
+  attribution: Attribution,
+  loopFn: typeof runLoop,
+  runId?: string,
+): Promise<WriterRun> {
+  const writer = resolveEngineRoute(config, "writer", config.strongModel);
+  const captured: Captured = { payload: null, gateFailures: [] };
+  const result: LoopResult = await loopFn(writer.config, {
+    model: writer.model,
+    systemPrompt: prompts.system,
+    userMessage: prompts.user,
+    tools: [buildSubmitTool(captured, gate)],
+    // Gate 修复轮需要额外回合与 token 预算（整稿 × 最多 1+N 稿）
+    maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
+    maxTotalTokens: gate ? 80000 : undefined,
+    // 归因进 run-log 元数据(§3.5 卡 / 深调研 §6 简报):没用到的字段不出现,日志口径不变
+    logMeta: {
+      ...(runId ? { runId } : {}),
+      agent: "writer",
+      ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
+      ...(attribution.usedBriefRevision !== undefined
+        ? { usedBriefRevision: attribution.usedBriefRevision }
+        : {}),
+    },
+  });
+  if (!captured.payload) {
+    throw new Error(
+      `脚本生成失败：模型未调用 submit_script 工具提交脚本（loop 状态：${result.stopReason}，turns=${result.turns}）`,
+    );
+  }
+  return { payload: captured.payload, gateFailures: captured.gateFailures, tokensUsed: result.totalTokens };
+}
+
+/**
+ * 审稿轮装配（审稿 §2.4「同批材料」）：写稿用的 system/user、研究槽、声音样本原样交给审稿人——
+ * 审稿判「证据支撑住论点了吗」，靠的就是这批材料，少一块就少判一个维度。
+ */
+function reviewDraft(
+  written: WriterRun,
+  inputs: Pick<GenerationInputs, "config" | "profile" | "promptReq">,
+  prompts: { system: string; user: string },
+  gate: QualityGateSpec | undefined,
+  platform: ScriptRequest["platform"],
+  deps: ReviewDeps,
+): Promise<ReviewOutcome> {
+  return reviewAndConverge(
+    {
+      payload: written.payload,
+      // 组装 + 正则去 AI 味 = 终稿形态,审稿读的就是它（§2.1 正则前置）；全流程只做这一次
+      humanizedText: assembleAndHumanize(written.payload),
+      system: prompts.system,
+      user: prompts.user,
+      ...(inputs.promptReq.research ? { researchSlot: inputs.promptReq.research } : {}),
+      voiceSamples: inputs.profile?.voiceSamples ?? [],
+      ...(gate ? { gate } : {}),
+      platform,
+    },
+    inputs.config,
+    deps,
+  );
+}
+
+/** 执行体:写稿 → 组装+去 AI 味 → AI 审稿 → 占位稿转正;失败标〔生成中断〕+ lastError 后原样抛出 */
 async function runGeneration(
   placeholderId: string,
   req: ScriptRequest,
@@ -290,55 +377,60 @@ async function runGeneration(
   runId?: string,
 ): Promise<GeneratedScript> {
   const warn = deps?.onWarn ?? ((message: string) => console.warn(`[generate-script] ${message}`));
+  // 调研闸口必须跑在材料收集**之前**:简报是本轮刚跑出来的,gatherInputs 才读得到指针
+  const wroteWithoutBrief = await ensureBriefBeforeWriting(req, deps, warn, placeholderId, dataDir);
   // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)
   const { config, pack, profile, contrastPairs, patterns, promptReq, attribution } =
     await gatherInputs(req, dataDir, warn);
-  const { system, user } = buildScriptPrompts(pack, profile, promptReq, { contrastPairs, patterns });
-  const writer = resolveEngineRoute(config, "writer", config.strongModel);
-  const captured: Captured = { payload: null, gateFailures: [] };
+  const prompts = buildScriptPrompts(pack, profile, promptReq, { contrastPairs, patterns });
   const gate = resolveQualityGate(pack, req.platform);
-  const submitTool = buildSubmitTool(captured, gate);
 
   try {
-    const loopFn = deps?.runLoopImpl ?? runLoop;
-    const result: LoopResult = await loopFn(writer.config, {
-      model: writer.model,
-      systemPrompt: system,
-      userMessage: user,
-      tools: [submitTool],
-      // Gate 修复轮需要额外回合与 token 预算（整稿 × 最多 1+N 稿）
-      maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
-      maxTotalTokens: gate ? 80000 : undefined,
-      // 归因进 run-log 元数据(§3.5 卡 / 深调研 §6 简报):没用到的字段不出现,日志口径不变
-      logMeta: {
-        ...(runId ? { runId } : {}),
-        agent: "writer",
-        ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
-        ...(attribution.usedBriefRevision !== undefined
-          ? { usedBriefRevision: attribution.usedBriefRevision }
-          : {}),
-      },
+    const written = await runWriterLoop(prompts, gate, config, attribution, deps?.runLoopImpl ?? runLoop, runId);
+    const reviewed = await reviewDraft(written, { config, profile, promptReq }, prompts, gate, req.platform, {
+      ...(deps?.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
+      ...(runId ? { runId } : {}),
+      onWarn: warn,
     });
 
-    if (!captured.payload) {
-      throw new Error(
-        `脚本生成失败：模型未调用 submit_script 工具提交脚本（loop 状态：${result.stopReason}，turns=${result.turns}）`,
-      );
-    }
-
-    const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
-    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, attribution, placeholderId, dataDir);
+    return await finalizeScript({
+      payload: reviewed.payload,
+      humanizedText: reviewed.humanizedText,
+      review: reviewed.review,
+      req,
+      tokensUsed: written.tokensUsed,
+      // 采纳了修订稿就用修订稿的 gate 结果（必空）；没换稿沿用写稿轮的残余 FAIL
+      gateFailures: reviewed.gateFailures ?? written.gateFailures,
+      rulesApplied: profile ? rulesForPlatform(profile, req.platform).length : 0,
+      attribution,
+      wroteWithoutBrief,
+      placeholderId,
+      dataDir,
+    });
   } catch (err) {
-    // 失败留痕:占位稿标注中断原因（best-effort,不吞原错误）——UI 显示徽章与重试入口
-    const msg = err instanceof Error ? err.message : String(err);
-    try {
-      await updateContent(
-        placeholderId,
-        { title: `${INTERRUPTED_TITLE_PREFIX}${req.topic.slice(0, 40)}`, lastError: msg },
-        dataDir,
-      );
-    } catch { /* 留痕失败不掩盖原错误 */ }
+    await markInterrupted(placeholderId, req, err, dataDir);
     throw err;
+  }
+}
+
+/** 失败留痕:占位稿标〔生成中断〕+ lastError（best-effort,不吞原错误）——UI 据此显示徽章与重试入口 */
+async function markInterrupted(
+  placeholderId: string,
+  req: ScriptRequest,
+  err: unknown,
+  dataDir?: string,
+): Promise<void> {
+  try {
+    await updateContent(
+      placeholderId,
+      {
+        title: `${INTERRUPTED_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
+        lastError: err instanceof Error ? err.message : String(err),
+      },
+      dataDir,
+    );
+  } catch {
+    /* 留痕失败不掩盖原错误 */
   }
 }
 
@@ -367,6 +459,16 @@ export interface StartedGeneration {
   completion: Promise<void>;
 }
 
+/** run_done 标签上的审稿结论（与「（未带简报）」并列，各说各的事） */
+function reviewBrand(review: ReviewMeta): string {
+  if (review.status === "skipped") return "（未经AI审稿）";
+  if (review.status === "failed") {
+    const left = review.issues.filter((i) => i.severity === "blocker").length;
+    return `（审稿未过,残留${left}项）`;
+  }
+  return "（已审稿）";
+}
+
 /**
  * 后台化入口（契约 P1 工程项完全体）:提交即返回占位稿 id,生成在进程后台跑,
  * HTTP 请求/页面刷新与任务生命周期彻底解耦。进度经 onEvent 回调外发
@@ -385,7 +487,16 @@ export function startGenerateScript(
       emit({ role: "writer", kind: "work", label: `编剧开写《${req.topic.slice(0, 24)}》`, contentId, runId });
       try {
         const result = await runGeneration(contentId, req, dataDir, deps, runId);
-        emit({ role: "system", kind: "run_done", label: `《${result.title.slice(0, 24)}》写完,待审改`, contentId, runId });
+        // 「没材料写的」「没过 AI 审稿的」都要在工作日志上自己说出来——
+        // 人看到标签才知道这稿该多挑一点（审稿 §2.5：run_done 追加审稿结论）
+        const brand = result.wroteWithoutBrief ? "（未带简报）" : "";
+        emit({
+          role: "system",
+          kind: "run_done",
+          label: `《${result.title.slice(0, 24)}》写完,待审改${brand}${reviewBrand(result.review)}`,
+          contentId,
+          runId,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}`, contentId, runId });
@@ -395,20 +506,36 @@ export function startGenerateScript(
   });
 }
 
-/** 后处理：组装 → humanize → 违禁词扫描 → 占位稿转正（draft_ready，同现有写作流）。 */
-async function finalizeScript(
-  payload: SubmitPayload,
-  req: ScriptRequest,
-  tokensUsed: number,
-  gateFailures: GateFailure[],
-  rulesApplied: number,
-  attribution: Attribution,
-  placeholderId: string,
-  dataDir?: string,
-): Promise<GeneratedScript> {
-  const { title, hook, body: bodyText, cta, hashtags } = payload;
-  const assembled = `${hook}\n\n${bodyText}\n\n${cta}`;
-  const { humanizedText } = humanizeZh({ text: assembled });
+interface FinalizeArgs {
+  /** 审稿后的最终 payload（未修订时即写稿原样） */
+  payload: SubmitPayload;
+  /** 审稿后的最终正文（组装 + humanize 已在审稿前做过一次，这里不再重做） */
+  humanizedText: string;
+  review: ReviewMeta;
+  req: ScriptRequest;
+  tokensUsed: number;
+  gateFailures: GateFailure[];
+  rulesApplied: number;
+  attribution: Attribution;
+  wroteWithoutBrief: boolean;
+  placeholderId: string;
+  dataDir?: string;
+}
+
+/**
+ * 版本注记：稿件历史里唯一的人话留痕。两件事要在同一句里说清楚——
+ * 这稿有没有材料垫底、审稿有没有让它改过。别互相覆盖，也别堆成两串括号。
+ */
+function versionNote(review: ReviewMeta, wroteWithoutBrief: boolean): string {
+  const head = review.rounds > 0 ? `AI 审稿修订（${review.fixed} 项` : "AI 完成初稿";
+  if (review.rounds > 0) return `${head}${wroteWithoutBrief ? "，未带调研简报" : ""}）`;
+  return wroteWithoutBrief ? "AI 完成初稿（未带调研简报）" : head;
+}
+
+/** 后处理：违禁词扫描 → 占位稿转正（draft_ready，同现有写作流）。 */
+async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
+  const { payload, humanizedText, review, req, attribution, wroteWithoutBrief, placeholderId, dataDir } = args;
+  const { title, hashtags } = payload;
 
   // 标题一并扫描——与 review.ts 的 `title\n\nbody` 口径对齐，标题里的违禁词不得漏报
   const scanResult = await scanText(`${title}\n\n${humanizedText}`, req.platform, dataDir);
@@ -432,7 +559,9 @@ async function finalizeScript(
       ...(attribution.usedBriefRevision !== undefined
         ? { usedBriefRevision: attribution.usedBriefRevision }
         : {}),
-      _versionNote: "AI 完成初稿",
+      // 审稿结论落稿件元数据(审稿 §2.5):稿卡徽章读的就是它,降级路径同样要留下
+      review,
+      _versionNote: versionNote(review, wroteWithoutBrief),
     },
     dataDir,
   );
@@ -446,8 +575,10 @@ async function finalizeScript(
     body: humanizedText,
     hashtags: cleanHashtags,
     violations,
-    gateFailures: gateFailures.map((f) => f.detail),
-    rulesApplied,
-    tokensUsed,
+    gateFailures: args.gateFailures.map((f) => f.detail),
+    rulesApplied: args.rulesApplied,
+    wroteWithoutBrief,
+    review,
+    tokensUsed: args.tokensUsed,
   };
 }

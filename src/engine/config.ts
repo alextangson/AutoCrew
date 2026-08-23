@@ -71,7 +71,8 @@ export interface EngineConfig {
   dataDir?: string;
 }
 
-export type EngineRouteName = "writer" | "analytics" | "scout" | "codex";
+/** reviewer = AI 审稿 agent（审稿 spec §2.6）：未配置时落 strongModel——审稿是品味活，判错比慢贵 */
+export type EngineRouteName = "writer" | "analytics" | "scout" | "codex" | "reviewer";
 
 export interface EngineRouteConfig {
   baseUrl: string;
@@ -86,6 +87,7 @@ export interface EngineRoutes {
   analytics?: EngineRouteConfig;
   scout?: EngineRouteConfig;
   codex?: EngineRouteConfig;
+  reviewer?: EngineRouteConfig;
 }
 
 export const ENGINE_ROUTE_PRESETS = {
@@ -102,6 +104,11 @@ export const ENGINE_ROUTE_PRESETS = {
   scout: {
     baseUrl: "https://code.newcli.com/claude/ultra",
     model: "claude-sonnet-5",
+    protocol: "anthropic" as const,
+  },
+  reviewer: {
+    baseUrl: "https://code.newcli.com/claude/ultra",
+    model: "claude-opus-4-8",
     protocol: "anthropic" as const,
   },
   codex: {
@@ -300,8 +307,11 @@ function normalizeRoutes(value: unknown): EngineRoutes | undefined {
     analytics: normalizeRoute(input.analytics),
     scout: normalizeRoute(input.scout),
     codex: normalizeRoute(input.codex),
+    reviewer: normalizeRoute(input.reviewer),
   };
-  return routes.writer || routes.analytics || routes.scout || routes.codex ? routes : undefined;
+  return routes.writer || routes.analytics || routes.scout || routes.codex || routes.reviewer
+    ? routes
+    : undefined;
 }
 
 /**
