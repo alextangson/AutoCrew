@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { generateScript, startGenerateScript } from "./generate-script.js";
-import type { GeneratedScript } from "./generate-script.js";
+import type { EnsureBriefOutcome, GeneratedScript } from "./generate-script.js";
 import { getContent, listContents } from "../../storage/local-store.js";
 import type { LoopResult, LoopTool, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
@@ -577,5 +577,165 @@ describe("knowledge injection — 生成管线统一检索", () => {
 
     expect(sink.userMessage).not.toContain("知识库参考");
     expect(sink.userMessage).toContain("无调研材料");
+  });
+});
+
+// ─── 写作入口自动补深调研（调研闸口）──────────────────────────────────────────
+//
+// 两条底线:闸口只在「从选题开写且没自带材料」时拦一下;它自己出什么事都不许弄死写作,
+// 但降级必须三处留痕（warn + 版本注记 + 返回值/事件标签）。
+
+const TOPIC_REQ = { ...TEST_REQ, topicId: "topic-1" };
+
+/** 记账版闸口替身：既做结果注入，也验「到底调没调用」 */
+function gateSpy(outcome: EnsureBriefOutcome) {
+  const calls: string[] = [];
+  return {
+    calls,
+    impl: async (topicId: string): Promise<EnsureBriefOutcome> => {
+      calls.push(topicId);
+      return outcome;
+    },
+  };
+}
+
+/** 稿件版本历史里最后一条的人话注记——降级留痕落在这儿 */
+async function latestNote(contentId: string): Promise<string | undefined> {
+  const saved = await getContent(contentId, testDir);
+  return saved?.versions?.at(-1)?.note;
+}
+
+describe("写作入口自动补深调研", () => {
+  it("带 topicId 且用户没自带材料 → 开写前先补一轮调研", async () => {
+    const spy = gateSpy({ state: "ready" });
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: spy.impl,
+    });
+
+    expect(spy.calls).toEqual(["topic-1"]);
+    expect(res.wroteWithoutBrief).toBe(false);
+    expect(await latestNote(res.contentId)).toBe("AI 完成初稿");
+  });
+
+  it("已有简报（already）→ 不改口径，注记与改动前一字不差", async () => {
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: gateSpy({ state: "already" }).impl,
+    });
+
+    expect(res.wroteWithoutBrief).toBe(false);
+    expect(await latestNote(res.contentId)).toBe("AI 完成初稿");
+  });
+
+  it("用户自带调研材料 → 不拦：他手里有料，不该为一轮分钟级调研排队", async () => {
+    const spy = gateSpy({ state: "ready" });
+    await generateScript({ ...TOPIC_REQ, research: "我自己扒的一手资料" }, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: spy.impl,
+    });
+
+    expect(spy.calls).toEqual([]);
+  });
+
+  it("没有 topicId（随手写）→ 不触发调研", async () => {
+    const spy = gateSpy({ state: "ready" });
+    const res = await generateScript(TEST_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: spy.impl,
+    });
+
+    expect(spy.calls).toEqual([]);
+    expect(res.wroteWithoutBrief).toBe(false);
+  });
+
+  it("未注入闸口（MCP 同步入口）→ 行为与改动前完全一致", async () => {
+    const res = await generateScript(TOPIC_REQ, testDir, { runLoopImpl: makeRunLoop([GOOD_PAYLOAD]) });
+
+    expect(res.wroteWithoutBrief).toBe(false);
+    expect(await latestNote(res.contentId)).toBe("AI 完成初稿");
+  });
+
+  it("调研失败 → 照写，但 warn + 版本注记 + 返回值三处都留痕", async () => {
+    const warns: string[] = [];
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: async () => ({ state: "failed", note: "四个视角挂了三个" }),
+      onWarn: (m) => warns.push(m),
+    });
+
+    expect(res.wroteWithoutBrief).toBe(true);
+    expect(res.title).toBe(GOOD_PAYLOAD.title); // 稿子照出，闸口不阻断
+    expect(warns.some((w) => w.includes("未带调研简报开写") && w.includes("四个视角挂了三个"))).toBe(true);
+    expect(await latestNote(res.contentId)).toBe("AI 完成初稿（未带调研简报）");
+    const saved = await getContent(res.contentId, testDir);
+    expect(saved!.status).toBe("draft_ready");
+  });
+
+  it("触发被拒（搜索 key 没配）→ 照写，理由进 warn", async () => {
+    const warns: string[] = [];
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: async () => ({ state: "unavailable", note: "搜索来源还没配 key" }),
+      onWarn: (m) => warns.push(m),
+    });
+
+    expect(res.wroteWithoutBrief).toBe(true);
+    expect(warns.some((w) => w.includes("搜索来源还没配 key"))).toBe(true);
+  });
+
+  it("等超时 → 照写，注记标明未带简报", async () => {
+    const warns: string[] = [];
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: async () => ({ state: "timeout" }),
+      onWarn: (m) => warns.push(m),
+    });
+
+    expect(res.wroteWithoutBrief).toBe(true);
+    expect(warns.some((w) => w.includes("未带调研简报开写"))).toBe(true);
+    expect(await latestNote(res.contentId)).toBe("AI 完成初稿（未带调研简报）");
+  });
+
+  it("闸口自己抛错 → 写作照常完成，并按未带简报留痕", async () => {
+    const warns: string[] = [];
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: async () => {
+        throw new Error("闸口炸了");
+      },
+      onWarn: (m) => warns.push(m),
+    });
+
+    expect(res.contentId).toMatch(/^content-/);
+    expect(res.wroteWithoutBrief).toBe(true);
+    expect(warns.some((w) => w.includes("闸口炸了"))).toBe(true);
+  });
+
+  it("后台入口：没带简报时 run_done 标签自己说出来", async () => {
+    const events: Array<{ kind: string; label: string }> = [];
+    const started = await startGenerateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: async () => ({ state: "timeout" }),
+      onWarn: () => {},
+      onEvent: (e) => events.push(e),
+    });
+    await started.completion;
+
+    const done = events.find((e) => e.kind === "run_done");
+    expect(done?.label).toContain("（未带简报）");
+  });
+
+  it("后台入口：带上简报时标签不变（不给正常路径加噪音）", async () => {
+    const events: Array<{ kind: string; label: string }> = [];
+    const started = await startGenerateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: async () => ({ state: "ready" }),
+      onEvent: (e) => events.push(e),
+    });
+    await started.completion;
+
+    const done = events.find((e) => e.kind === "run_done");
+    expect(done?.label).not.toContain("未带简报");
   });
 });

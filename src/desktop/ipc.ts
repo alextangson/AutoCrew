@@ -125,6 +125,7 @@ import {
 } from "./settings.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
+import { makeEnsureBrief } from "./write-research-gate.js";
 import { appendAction } from "./recent-actions.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
@@ -499,7 +500,11 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
         ...(payload.use_patterns === false ? { usePatterns: false } : {}),
       },
       dataDir,
-      { onEvent: (e) => void emitEngineEvent(e, dataDir).catch(() => {}) },
+      {
+        onEvent: (e) => void emitEngineEvent(e, dataDir).catch(() => {}),
+        // 带 topicId 开写且这选题没跑过调研 → 先补一轮再写（闸口故障只降级，不阻断）
+        ensureBriefImpl: makeEnsureBrief(dataDir),
+      },
     );
     return { ok: true, pending: true, contentId: started.contentId, runId: started.runId };
   } catch (err) {

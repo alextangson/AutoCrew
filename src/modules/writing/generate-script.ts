@@ -44,8 +44,24 @@ export interface GeneratedScript {
   gateFailures: string[];
   /** 本稿注入的个人写作规则数（声音内核+当前平台包——IA v4.2 §B5「越用越像你」可感知） */
   rulesApplied: number;
+  /**
+   * 这稿是在**没有调研简报**的情况下写出来的（调研闸口跑不了/失败/等超时）。
+   * 只对带 topicId 的选题写作有意义：带上了简报、或压根不是从选题开写，都是 false。
+   */
+  wroteWithoutBrief: boolean;
   tokensUsed: number;
 }
+
+/**
+ * 开写前「补一轮深调研」的结果（适配器在 desktop 层实现，见 write-research-gate）。
+ * 五态里三态都是降级——降级必须带人话 note，写稿侧照写但要留痕。
+ */
+export type EnsureBriefOutcome =
+  | { state: "already" }
+  | { state: "ready" }
+  | { state: "unavailable"; note: string }
+  | { state: "failed"; note: string }
+  | { state: "timeout" };
 
 /** 生成管线的注入口：loop 替身（测试用）+ 非致命故障的可见出口 */
 export interface GenerationDeps {
@@ -55,6 +71,13 @@ export interface GenerationDeps {
    * 静默降级会让「简报怎么没生效」查无可查。
    */
   onWarn?: (message: string) => void;
+  /**
+   * 写作入口的调研闸口：带 topicId 开写且该选题还没有简报时，先补一轮深调研再写。
+   * 不注入 = 老行为（有简报就注入，没有就裸写），桌面 IPC 与 chat-router 两条入口注入。
+   * MCP 同步入口（src/tools）**故意不接**：外部 agent 自己有 deep_research 工具与判断力，
+   * 这层不该替它决定「该不该先调研」，更不该让它在一个同步调用里干等十几分钟。
+   */
+  ensureBriefImpl?: (topicId: string) => Promise<EnsureBriefOutcome>;
 }
 
 /** 本稿的归因元数据——两条落点（run-log 的 logMeta 与 content 元数据）共用同一份 */
@@ -281,6 +304,31 @@ async function gatherInputs(
   };
 }
 
+/**
+ * 开写前补调研（写作入口自动补深调研）。返回 true = 这稿没等到简报，得留痕。
+ *
+ * 用户自己带了 research 材料时**不强等**：他手里已经有料，为一轮分钟级的调研让他排队，
+ * 是拿他的时间换一个他没要的东西。
+ */
+async function ensureBriefBeforeWriting(
+  req: ScriptRequest,
+  deps: GenerationDeps | undefined,
+  warn: (message: string) => void,
+): Promise<boolean> {
+  if (!req.topicId || !deps?.ensureBriefImpl || req.research?.trim()) return false;
+  let outcome: EnsureBriefOutcome;
+  try {
+    outcome = await deps.ensureBriefImpl(req.topicId);
+  } catch (err) {
+    // 契约上闸口永不抛;执行层不赌上游守约——闸口自己炸了也只是「没简报」,稿子照写
+    outcome = { state: "unavailable", note: err instanceof Error ? err.message : String(err) };
+  }
+  if (outcome.state === "already" || outcome.state === "ready") return false;
+  const detail = outcome.state === "timeout" ? "调研没在限时内跑完（可能还在跑）" : outcome.note;
+  warn(`未带调研简报开写：${detail}`);
+  return true;
+}
+
 /** 执行体:loop → 占位稿转正;失败标〔生成中断〕+ lastError 后原样抛出 */
 async function runGeneration(
   placeholderId: string,
@@ -290,6 +338,8 @@ async function runGeneration(
   runId?: string,
 ): Promise<GeneratedScript> {
   const warn = deps?.onWarn ?? ((message: string) => console.warn(`[generate-script] ${message}`));
+  // 调研闸口必须跑在材料收集**之前**:简报是本轮刚跑出来的,gatherInputs 才读得到指针
+  const wroteWithoutBrief = await ensureBriefBeforeWriting(req, deps, warn);
   // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)
   const { config, pack, profile, contrastPairs, patterns, promptReq, attribution } =
     await gatherInputs(req, dataDir, warn);
@@ -327,7 +377,7 @@ async function runGeneration(
     }
 
     const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
-    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, attribution, placeholderId, dataDir);
+    return await finalizeScript(captured.payload, req, result.totalTokens, captured.gateFailures, rulesApplied, attribution, wroteWithoutBrief, placeholderId, dataDir);
   } catch (err) {
     // 失败留痕:占位稿标注中断原因（best-effort,不吞原错误）——UI 显示徽章与重试入口
     const msg = err instanceof Error ? err.message : String(err);
@@ -385,7 +435,9 @@ export function startGenerateScript(
       emit({ role: "writer", kind: "work", label: `编剧开写《${req.topic.slice(0, 24)}》`, contentId, runId });
       try {
         const result = await runGeneration(contentId, req, dataDir, deps, runId);
-        emit({ role: "system", kind: "run_done", label: `《${result.title.slice(0, 24)}》写完,待审改`, contentId, runId });
+        // 「没材料写的」要在工作日志上自己说出来——审稿人看到标签才知道这稿该多挑一点
+        const brand = result.wroteWithoutBrief ? "（未带简报）" : "";
+        emit({ role: "system", kind: "run_done", label: `《${result.title.slice(0, 24)}》写完,待审改${brand}`, contentId, runId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}`, contentId, runId });
@@ -403,6 +455,7 @@ async function finalizeScript(
   gateFailures: GateFailure[],
   rulesApplied: number,
   attribution: Attribution,
+  wroteWithoutBrief: boolean,
   placeholderId: string,
   dataDir?: string,
 ): Promise<GeneratedScript> {
@@ -432,7 +485,8 @@ async function finalizeScript(
       ...(attribution.usedBriefRevision !== undefined
         ? { usedBriefRevision: attribution.usedBriefRevision }
         : {}),
-      _versionNote: "AI 完成初稿",
+      // 版本注记是稿件历史里唯一的人话留痕:这稿有没有材料垫底,回看时一眼能看见
+      _versionNote: wroteWithoutBrief ? "AI 完成初稿（未带调研简报）" : "AI 完成初稿",
     },
     dataDir,
   );
@@ -448,6 +502,7 @@ async function finalizeScript(
     violations,
     gateFailures: gateFailures.map((f) => f.detail),
     rulesApplied,
+    wroteWithoutBrief,
     tokensUsed,
   };
 }
