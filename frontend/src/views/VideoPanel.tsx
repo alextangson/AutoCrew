@@ -74,9 +74,12 @@ export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; 
 
   const st = status?.state ?? null;
   const canCut = !!st && ((st.phase === "cut" && st.state === "awaiting_human") || (st.phase === "done" && st.state === "done"));
-  /** 成片计划是同一个向导的第 2 步:剪辑师在跑的时候也留在这一页,别把人踢回卡片 */
-  const inPlan = !!st && st.phase === "edit";
   const canPlan = !!st && st.phase === "edit" && st.state === "awaiting_human";
+  /**
+   * 确认选段后**不回卡片**(VideoCutPanel 头注):整个 edit phase 都停在向导第 2 步——
+   * 排队/在跑时那一页自己会说「剪辑师在排」。blocked/failed 不算:那两种要回卡片拿重试按钮。
+   */
+  const inPlan = !!st && st.phase === "edit" && (st.state === "queued" || st.state === "running" || st.state === "awaiting_human");
   const canReview = !!st && st.phase === "review" && st.state === "awaiting_human";
   const isDone = !!st && st.phase === "done" && st.state === "done";
 

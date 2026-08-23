@@ -669,6 +669,28 @@ export function videoPreviewUrl(contentId: string, previewRevision: number): str
   return `/api/video/media/${encodeURIComponent(contentId)}/preview.v${previewRevision}.mp4`;
 }
 
+export interface CutPreviewStatus {
+  /** 可播的那一版;null = 还没有任何可播预览 */
+  playableRevision: number | null;
+  /** 有新的一版在后台渲(老的那版若在,照常可播) */
+  rendering: boolean;
+  /** 非空 = 最近一次预览没渲出来,要摆成横幅;门照常可确认(边界 #1) */
+  message: string | null;
+}
+
+/**
+ * 预览指针 → 门内看片器的三个问题:现在能播哪版、是不是在渲新的、要不要横幅。
+ * 预览失败**不算 rendering**——辅助 job 已经 settle 了,再显示「渲染中」是骗人。
+ */
+export function previewStatus(p?: VideoPreviewState): CutPreviewStatus {
+  if (!p) return { playableRevision: null, rendering: false, message: null };
+  return {
+    playableRevision: p.readyRevision ?? null,
+    rendering: !p.error && p.requestedRevision > (p.readyRevision ?? 0),
+    message: p.error ? `预览没渲出来:${p.error} —— 不影响确认选段,也可以点「重新生成预览」再试。` : null,
+  };
+}
+
 /** 成片登记回稿件素材时的文件名(render-exec.ts:`final-v<K>.mp4`,与上面播放名不同源) */
 export function videoFinalAssetName(renderedRevision: number): string {
   return `final-v${renderedRevision}.mp4`;
@@ -727,42 +749,24 @@ export function roughCutSummary(units?: VideoEditUnits): string | null {
 }
 
 /**
- * 成片计划结果条(横屏 spec §3.5)。**空 plan 的两种成因说法必须不一样**:
- * 「剪辑师看过了觉得不用切」和「剪辑师压根没跑」对人的下一步动作完全不同。
+ * 成片计划结果条(横屏 spec §3.5)。与 roughCutSummary 同一条纪律:**只有剪辑师真跑过
+ * 才把结论记在它头上**——空 plan 要分清「它看过认为不需要」和「压根没排出来」;
+ * 人填槽派生的版本(origin:"human")不再说「剪辑师排了」,那已经是人的版本。
  */
 export function editorPlanSummary(plan: VideoEditorPlan, outputDurationMs?: number): string {
-  if (plan.origin === "empty") return plan.note ?? plan.warning ?? "剪辑师没跑成,这一版按纯口播出片";
-  if (plan.overlays.length === 0) return "剪辑师看过了:这条不需要 B-roll,按纯口播出片";
-  const covered = plan.overlays.reduce((sum, o) => sum + o.durationMs, 0);
-  const ratio = outputDurationMs && outputDurationMs > 0 ? `,约占成片 ${Math.round((covered / outputDurationMs) * 100)}%` : "";
+  if (plan.overlays.length === 0) {
+    if (plan.origin === "llm") return "剪辑师看过素材,认为这条不需要 B-roll —— 确认后就是一条纯口播。";
+    return plan.note ? `没有可排的 B-roll:${plan.note}` : (plan.warning ?? "这版计划没有 B-roll —— 确认后就是一条纯口播。");
+  }
+  const coveredMs = plan.overlays.reduce((sum, o) => sum + Math.max(0, o.durationMs), 0);
+  const ratio = outputDurationMs && outputDurationMs > 0 ? `,约占成片 ${Math.round((coveredMs / outputDurationMs) * 100)}%` : "";
   const pending = plan.overlays.filter((o) => o.source.kind === "generate").length;
-  const todo = pending > 0 ? `,其中 ${pending} 段还要你去生成` : "";
-  return `剪辑师排了 ${plan.overlays.length} 段 B-roll,共 ${formatMinutesSeconds(covered)}${ratio}${todo}`;
-}
-
-/**
- * 门内预览的状态条(v2 spec §4.1)。三种情形三句话,**降级必须可见**:
- * 渲染中 / 有片可看 / 没渲出来。没有第四种「什么都不说」。
- */
-export function previewStatus(preview?: VideoPreviewState): {
-  playableRevision: number | null;
-  rendering: boolean;
-  message: string | null;
-} {
-  if (!preview) return { playableRevision: null, rendering: false, message: null };
-  const rendering = preview.readyRevision !== preview.requestedRevision && !preview.error;
-  const playableRevision = preview.readyRevision ?? null;
-  if (preview.error) {
-    return { playableRevision, rendering: false, message: `预览没出来:${preview.error}` };
-  }
-  if (rendering) {
-    return {
-      playableRevision,
-      rendering: true,
-      message: playableRevision ? "新一版预览在渲染中,下面播的还是上一版" : "预览渲染中,好了会自动出现",
-    };
-  }
-  return { playableRevision, rendering: false, message: null };
+  const head =
+    plan.origin === "human"
+      ? `这版计划(你填过素材)共 ${plan.overlays.length} 段 B-roll`
+      : `剪辑师排了 ${plan.overlays.length} 段 B-roll`;
+  const slots = pending > 0 ? `;其中 ${pending} 段是待生成槽,要填素材或确认时明示跳过` : "";
+  return `${head},共覆盖 ${formatMinutesSeconds(coveredMs)}${ratio}${slots}。`;
 }
 
 /** matchedRatio < 0.5 → 不给建议权,人要逐句盯(§4.4 / §10);没有对齐数据就不吓唬人 */
