@@ -68,8 +68,18 @@ export function makePiModel(config: EngineConfig, modelId: string, baseUrl: stri
   }
   // compat 显式钉死（127.0.0.1 环回地址无从自动探测）：system 角色、max_tokens 字段名、
   // 流式 usage 开启 —— 与旧 buildOpenAiRequest 的 wire 对齐
+  //
+  // DeepSeek 方言：思考模式下，assistant 轮的 tool_call id 若不是它自家格式（如主端点
+  // claude 产出的 toolu_ 前缀），就强制要求该轮带 reasoning_content 字段，缺失即 400
+  // "must be passed back"（2026-08-23 生产实证：主端点答了第一轮、第二轮才切备用时必炸）。
+  // reasoning + requiresReasoningContentOnAssistantMessages 两道闸缺一不可——pi-ai 只有
+  // 两者同真才给重放的 assistant 轮补 reasoning_content:""（实测空串即可过校验）。
+  // 判定按真实上游 config.baseUrl（本函数收到的 baseUrl 是环回腿）并带上模型名一票：
+  // 档位常是「A 家模型挂 B 家中转 URL」，只看域名会漏。
+  const isDeepSeek = /deepseek/i.test(config.baseUrl) || /deepseek/i.test(modelId);
   return {
     ...shared,
+    ...(isDeepSeek ? { reasoning: true } : {}),
     api: "openai-completions",
     provider: "openai",
     compat: {
@@ -78,6 +88,7 @@ export function makePiModel(config: EngineConfig, modelId: string, baseUrl: stri
       maxTokensField: "max_tokens",
       supportsStore: false,
       supportsReasoningEffort: false,
+      ...(isDeepSeek ? { requiresReasoningContentOnAssistantMessages: true } : {}),
     },
   } as Model<"openai-completions">;
 }

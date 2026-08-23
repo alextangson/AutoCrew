@@ -159,6 +159,12 @@ export interface ResearchBroker {
   getSource(sourceId: string): ResearchSource | null;
   listSources(): ResearchSource[];
   validateQuote(sourceId: string, quote: string): QuoteCheck;
+  /**
+   * 全库定位一段引文：返回正文里逐字含有它的**已读页面** sourceId（无命中 = null）。
+   * 存在的意义（2026-08-23 生产复盘）：视角失败的主因不是模型编证据，而是把真引文
+   * 记到错的页上——引文是真的就不该杀，校验方用它纠正归属而不是打回。
+   */
+  locateQuote(quote: string): string | null;
   getAssetCandidate(assetId: string): AssetCandidate | null;
   listAssetCandidates(): AssetCandidate[];
   usage(): BrokerUsage;
@@ -471,6 +477,15 @@ class BrokerCore {
     };
   }
 
+  locateQuote(quote: string): string | null {
+    const needle = quoteCorpus(quote);
+    if (!needle) return null;
+    for (const [id, entry] of this.sources) {
+      if (entry.normalized && entry.normalized.includes(needle)) return id;
+    }
+    return null;
+  }
+
   getSource(sourceId: string): ResearchSource | null {
     return this.sources.get(sourceId)?.source ?? null;
   }
@@ -530,6 +545,7 @@ export function createResearchBroker(deps: ResearchBrokerDeps = {}): ResearchBro
     getSource: (sourceId) => core.getSource(sourceId),
     listSources: () => core.listSources(),
     validateQuote: (sourceId, quote) => core.validateQuote(sourceId, quote),
+    locateQuote: (quote) => core.locateQuote(quote),
     getAssetCandidate: (assetId) => core.getAssetCandidate(assetId),
     listAssetCandidates: () => core.listAssetCandidates(),
     usage: () => core.usage(),
