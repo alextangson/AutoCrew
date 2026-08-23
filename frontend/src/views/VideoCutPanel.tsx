@@ -201,8 +201,7 @@ function CutStep(props: StepProps) {
           )}
           {preview.playableRevision !== null && !playError && (
             <video
-              // 样式写在这儿而不是 app.css:那边的 .vid-player 还钉着竖屏 9:16,套上去会把横屏预览压扁
-              style={{ width: "100%", maxWidth: 640, aspectRatio: "16 / 9", background: "#000", borderRadius: 8 }}
+              className="vid-player"
               // key 带版本号:换版时强制重建 <video>,不然浏览器会继续播缓存里那一版
               key={preview.playableRevision}
               src={videoPreviewUrl(props.contentId, preview.playableRevision)}

@@ -572,4 +572,4 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .vid-seg-off { opacity: 0.42; text-decoration: line-through; }
 .vid-seg-time { flex: 0 0 auto; font-size: 11px; }
 .vid-seg-text { flex: 1; min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
-.vid-player { width: 100%; max-width: 420px; aspect-ratio: 9 / 16; background: var(--ink); border: 1px solid var(--border); border-radius: var(--radius-card); }
+.vid-player { width: 100%; max-width: 640px; aspect-ratio: 16 / 9; background: var(--ink); border: 1px solid var(--border); border-radius: var(--radius-card); }
