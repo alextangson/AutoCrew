@@ -71,6 +71,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const [articleImagesOpen, setArticleImagesOpen] = useState(() => localStorage.getItem(IMAGES_KEY) === "1");
   // 封面面板默认折叠(不记忆);对话卡片深链过来时才自动展开
   const [coverOpen, setCoverOpen] = useState(false);
+  const [videoDone, setVideoDone] = useState(false);
+  const [coverApproved, setCoverApproved] = useState(false);
   const [fallback, setFallback] = useState<string | null>(null);
   const panelRefs = {
     cover: useRef<HTMLDetailsElement | null>(null),
@@ -167,6 +169,15 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.panel, props.id, c !== null]);
+
+  // 成片通过后自动把下一步展开；用户不必再猜「剪完之后封面在哪里」。
+  useEffect(() => {
+    if (!videoDone || coverApproved) return;
+    setCoverOpen(true);
+    const timer = window.setTimeout(() => panelRefs.cover.current?.scrollIntoView({ block: "start" }), 120);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoDone, coverApproved]);
 
   // 本地暂存(1s 防抖)
   useEffect(() => {
@@ -391,9 +402,30 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
         {/* 封面/配图/成片要宽度,不进窄抽屉——沉到正文下方,默认折叠,不打扰写作 */}
         <div className="ed-below">
           {isVideo && (
-            <div ref={panelRefs.video}>
-              <VideoPanel contentId={props.id} />
-            </div>
+            <>
+              <nav className="video-publish-flow" aria-label="视频发布流程">
+                <span className={videoDone ? "flow-step flow-step-done" : "flow-step flow-step-current"}><b>1</b> 成片</span>
+                <button
+                  className={coverApproved ? "flow-step flow-step-done" : videoDone ? "flow-step flow-step-current" : "flow-step"}
+                  disabled={!videoDone}
+                  onClick={() => {
+                    setCoverOpen(true);
+                    window.setTimeout(() => panelRefs.cover.current?.scrollIntoView({ block: "start" }), 0);
+                  }}
+                ><b>2</b> 封面</button>
+                <button
+                  className={videoDone && coverApproved ? "flow-step flow-step-current" : "flow-step"}
+                  disabled={!videoDone || !coverApproved}
+                  onClick={() => {
+                    setDrawerOpen(true);
+                    localStorage.setItem(DRAWER_KEY, "1");
+                  }}
+                ><b>3</b> 发布</button>
+              </nav>
+              <div ref={panelRefs.video}>
+                <VideoPanel contentId={props.id} onReadyForCover={setVideoDone} />
+              </div>
+            </>
           )}
           <details
             className="ed-tools"
@@ -401,8 +433,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
             open={coverOpen}
             onToggle={(event) => setCoverOpen(event.currentTarget.open)}
           >
-            <summary>封面设计</summary>
-            <CoverPanel contentId={props.id} platform={c.platform} />
+            <summary>封面设计{isVideo ? " · 发布前必做" : ""}{coverApproved ? " · 已选用 ✓" : ""}</summary>
+            <CoverPanel contentId={props.id} platform={c.platform} onApprovalChange={setCoverApproved} />
           </details>
           <details
             className="ed-tools"

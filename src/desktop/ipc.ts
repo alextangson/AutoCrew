@@ -88,6 +88,7 @@ import {
   coverSettingsGetHandler,
   coverSettingsSetHandler,
 } from "./cover-handlers.js";
+import { coverIdentityHandler } from "./cover-identity-handlers.js";
 import {
   articleImagesGenerateHandler,
   articleImagesGetHandler,
@@ -260,6 +261,7 @@ export const CHANNEL_ACTIONS = {
   "content:list": "list",
   "content:get": "get",
   "publish:clipboard": "clipboard",
+  "publish:preflight": "check",
   "publish:digest": "digest",
   "publish:confirm": "confirm_published",
   "flywheel:import_csv": "import_csv",
@@ -1112,6 +1114,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "content:list": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:list"]),
     "content:get": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:get"]),
     "publish:clipboard": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:clipboard"]),
+    "publish:preflight": wrapExecute(executePrePublish as ExecuteFn, CHANNEL_ACTIONS["publish:preflight"]),
     "publish:digest": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:digest"]),
     "publish:confirm": withActionRecord(
       wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
@@ -1146,6 +1149,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "cover:approve": coverApproveHandler,
     "cover:revise": coverReviseHandler,
     "cover:ratios": coverRatiosHandler,
+    "cover:identity": coverIdentityHandler,
     "settings:cover_get": coverSettingsGetHandler,
     "settings:cover_set": coverSettingsSetHandler,
     "logs:list": logsListHandler,

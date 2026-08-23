@@ -37,7 +37,8 @@ const wideMock = vi.mocked(generateWideCover);
 
 let dir: string;
 
-const LONG_PROMPT = "Vertical 3:4 portrait orientation cover image. Cinematic photo-realism with bold Chinese title text overlay.";
+const LONG_PROMPT =
+  "Vertical 3:4 portrait orientation cover image. Cinematic photo-realism with bold Chinese title text overlay.";
 
 const design = (label: "A" | "B" | "C", extra?: Partial<CoverDesign>): CoverDesign => ({
   label,
@@ -80,7 +81,9 @@ async function switchToRelay(): Promise<void> {
   await fs.writeFile(path.join(dir, "cover.json"), JSON.stringify({ provider: "relay" }), "utf-8");
   await fs.writeFile(
     path.join(dir, "publish.json"),
-    JSON.stringify({ wechatMp: { imageApiKey: "sk-relay", imageBaseUrl: "https://relay.test/v1", imageModel: "gpt-image-2" } }),
+    JSON.stringify({
+      wechatMp: { imageApiKey: "sk-relay", imageBaseUrl: "https://relay.test/v1", imageModel: "gpt-image-2" },
+    }),
     "utf-8",
   );
 }
@@ -98,13 +101,30 @@ async function seedContent(status = "draft_ready", platform = "wechat_mp"): Prom
 }
 
 async function createCandidates(contentId: string): Promise<Record<string, unknown>> {
-  return (await executeCoverReview({ action: "create_candidates", content_id: contentId, _dataDir: dir, _geminiApiKey: "k" })) as Record<string, unknown>;
+  return (await executeCoverReview({
+    action: "create_candidates",
+    content_id: contentId,
+    _dataDir: dir,
+    _geminiApiKey: "k",
+  })) as Record<string, unknown>;
 }
 
 describe("create_candidates", () => {
   it("设计师方案 → 3 张候选,r1 文件名,designSource=designer", async () => {
     const id = await seedContent();
-    const r = (await createCandidates(id)) as { ok: boolean; designSource: string; review: { designSource?: string; variants: Array<{ imagePaths: Record<string, string>; revision?: number; designReason?: string; creativeConcept?: string }> } };
+    const r = (await createCandidates(id)) as {
+      ok: boolean;
+      designSource: string;
+      review: {
+        designSource?: string;
+        variants: Array<{
+          imagePaths: Record<string, string>;
+          revision?: number;
+          designReason?: string;
+          creativeConcept?: string;
+        }>;
+      };
+    };
     expect(r.ok).toBe(true);
     expect(r.designSource).toBe("designer");
     expect(r.review.designSource).toBe("designer");
@@ -119,7 +139,11 @@ describe("create_candidates", () => {
   it("设计师失败 → 降级规则版(designSource=rules),候选照出", async () => {
     planMock.mockRejectedValueOnce(new Error("engine down"));
     const id = await seedContent();
-    const r = (await createCandidates(id)) as { ok: boolean; designSource: string; review: { designSource?: string; variants: Array<{ creativeConcept?: string }> } };
+    const r = (await createCandidates(id)) as {
+      ok: boolean;
+      designSource: string;
+      review: { designSource?: string; variants: Array<{ creativeConcept?: string }> };
+    };
     expect(r.ok).toBe(true);
     expect(r.designSource).toBe("rules");
     expect(r.review.designSource).toBe("rules");
@@ -137,6 +161,42 @@ describe("create_candidates", () => {
     const second = await getCoverReview(id, dir);
     expect(second!.createdAt).toBe(first!.createdAt);
     expect(second!.updatedAt).not.toBe(first!.updatedAt);
+  });
+
+  it("读取个人封面标准，并把当前身份照排在参考图第一位", async () => {
+    const refsDir = path.join(dir, "covers", "templates");
+    await fs.mkdir(refsDir, { recursive: true });
+    await Promise.all([
+      fs.writeFile(path.join(refsDir, "studio.jpg"), Buffer.from("studio")),
+      fs.writeFile(path.join(refsDir, "current.png"), Buffer.from("current")),
+      fs.writeFile(path.join(refsDir, "other.webp"), Buffer.from("other")),
+    ]);
+    await fs.writeFile(
+      path.join(dir, "cover-style.json"),
+      JSON.stringify({
+        version: 1,
+        name: "人物清晰的编辑封面",
+        referenceImages: [
+          { filename: "current.png", role: "identity", priority: 0 },
+          { filename: "studio.jpg", role: "editorial", priority: 10 },
+        ],
+        visualRules: ["人物低颗粒"],
+        identityRules: ["当前生活照优先锁脸"],
+        typographyRules: [],
+        layoutRules: ["人物位于标题前方且完全不透明"],
+        avoid: [],
+        qualityGates: [],
+      }),
+      "utf-8",
+    );
+    const id = await seedContent();
+    await createCandidates(id);
+    expect(planMock.mock.calls[0][0].styleProfile?.identityRules).toContain("当前生活照优先锁脸");
+    expect(genMock.mock.calls[0][0].referenceImagePaths?.map((item) => path.basename(item))).toEqual([
+      "current.png",
+      "studio.jpg",
+      "other.webp",
+    ]);
   });
 });
 
@@ -186,10 +246,22 @@ describe("revise(反馈重做闭环)", () => {
     await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
     reviseMock.mockResolvedValueOnce(design("A", { titleText: "更狠大字", designReason: "按反馈加强" }));
 
-    const r = (await executeCoverReview({ action: "revise", content_id: id, label: "a", feedback: "标题太温", _dataDir: dir, _geminiApiKey: "k" })) as {
+    const r = (await executeCoverReview({
+      action: "revise",
+      content_id: id,
+      label: "a",
+      feedback: "标题太温",
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as {
       ok: boolean;
       revision: number;
-      review: { status: string; approvedLabel?: string; feedback?: Array<{ label: string; note: string; prevPrompt?: string }>; variants: Array<{ label: string; titleText?: string; revision?: number; imagePaths: Record<string, string> }> };
+      review: {
+        status: string;
+        approvedLabel?: string;
+        feedback?: Array<{ label: string; note: string; prevPrompt?: string }>;
+        variants: Array<{ label: string; titleText?: string; revision?: number; imagePaths: Record<string, string> }>;
+      };
     };
     expect(r.ok).toBe(true);
     expect(r.revision).toBe(2);
@@ -207,7 +279,13 @@ describe("revise(反馈重做闭环)", () => {
   it("缺 feedback → 明确报错", async () => {
     const id = await seedContent();
     await createCandidates(id);
-    const r = (await executeCoverReview({ action: "revise", content_id: id, label: "a", _dataDir: dir, _geminiApiKey: "k" })) as { ok: boolean; error: string };
+    const r = (await executeCoverReview({
+      action: "revise",
+      content_id: id,
+      label: "a",
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; error: string };
     expect(r.ok).toBe(false);
     expect(r.error).toContain("feedback");
   });
@@ -239,7 +317,12 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
       const p = `${opts.outputPath}.png`;
       await fs.mkdir(path.dirname(p), { recursive: true });
       await fs.writeFile(p, Buffer.from("relay-png"));
-      return { ok: true, imagePath: p, model: "gpt-image-2", warning: "中转不支持参考图(/images/edits),本次未带人物形象" };
+      return {
+        ok: true,
+        imagePath: p,
+        model: "gpt-image-2",
+        warning: "中转不支持参考图(/images/edits),本次未带人物形象",
+      };
     });
     const id = await seedContent();
     const r = (await executeCoverReview({ action: "create_candidates", content_id: id, _dataDir: dir })) as {
@@ -268,7 +351,12 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
   it("横屏主比例(V5.6.1):ratio=16:9 → 候选按 16:9 出,primaryRatio 落库,approve 取横屏成图", async () => {
     await switchToRelay();
     const id = await seedContent("draft_ready", "bilibili");
-    const r = (await executeCoverReview({ action: "create_candidates", content_id: id, ratio: "16:9", _dataDir: dir })) as {
+    const r = (await executeCoverReview({
+      action: "create_candidates",
+      content_id: id,
+      ratio: "16:9",
+      _dataDir: dir,
+    })) as {
       ok: boolean;
       review: { primaryRatio?: string; variants: Array<{ label: string; imagePaths: Record<string, string> }> };
     };
@@ -286,7 +374,12 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
   it("公众号主比例 2.35:1(relay):ratio=2.35:1 → 候选按 2.35:1 出,primaryRatio 落库,不被强制回 3:4", async () => {
     await switchToRelay();
     const id = await seedContent("draft_ready", "wechat_mp");
-    const r = (await executeCoverReview({ action: "create_candidates", content_id: id, ratio: "2.35:1", _dataDir: dir })) as {
+    const r = (await executeCoverReview({
+      action: "create_candidates",
+      content_id: id,
+      ratio: "2.35:1",
+      _dataDir: dir,
+    })) as {
       ok: boolean;
       review: { primaryRatio?: string; variants: Array<{ label: string; imagePaths: Record<string, string> }> };
     };
@@ -340,9 +433,19 @@ describe("platform_ratios", () => {
     const id = await seedContent("draft_ready", "wechat_mp");
     await createCandidates(id);
     await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
-    wideMock.mockResolvedValueOnce({ ok: true, path: path.join(dir, "cover-a-r1-235x1.png"), ratioUsed: "21:9", cropped: true });
+    wideMock.mockResolvedValueOnce({
+      ok: true,
+      path: path.join(dir, "cover-a-r1-235x1.png"),
+      ratioUsed: "21:9",
+      cropped: true,
+    });
 
-    const r = (await executeCoverReview({ action: "platform_ratios", content_id: id, _dataDir: dir, _geminiApiKey: "k" })) as {
+    const r = (await executeCoverReview({
+      action: "platform_ratios",
+      content_id: id,
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as {
       ok: boolean;
       paths: Record<string, string>;
     };
@@ -356,7 +459,12 @@ describe("platform_ratios", () => {
   it("未选用先跑比例 → 明确报错", async () => {
     const id = await seedContent();
     await createCandidates(id);
-    const r = (await executeCoverReview({ action: "platform_ratios", content_id: id, _dataDir: dir, _geminiApiKey: "k" })) as { ok: boolean; error: string };
+    const r = (await executeCoverReview({
+      action: "platform_ratios",
+      content_id: id,
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; error: string };
     expect(r.ok).toBe(false);
     expect(r.error).toContain("approve");
   });
@@ -385,7 +493,12 @@ describe("platform_ratios", () => {
     const id = await seedContent();
     await createCandidates(id);
     await executeCoverReview({ action: "approve", content_id: id, label: "b", _dataDir: dir });
-    const r = (await executeCoverReview({ action: "generate_ratios", content_id: id, _dataDir: dir, _geminiApiKey: "k" })) as {
+    const r = (await executeCoverReview({
+      action: "generate_ratios",
+      content_id: id,
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as {
       ok: boolean;
       paths: Record<string, string>;
       upgradeHint?: string;
@@ -399,7 +512,13 @@ describe("platform_ratios", () => {
     const id = await seedContent();
     await createCandidates(id);
     await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
-    const r = (await executeCoverReview({ action: "platform_ratios", content_id: id, ratios: ["3:4"], _dataDir: dir, _geminiApiKey: "k" })) as {
+    const r = (await executeCoverReview({
+      action: "platform_ratios",
+      content_id: id,
+      ratios: ["3:4"],
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as {
       ok: boolean;
       error: string;
     };
@@ -411,8 +530,19 @@ describe("platform_ratios", () => {
     const id = await seedContent("draft_ready", "wechat_mp");
     await createCandidates(id);
     await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
-    wideMock.mockResolvedValueOnce({ ok: true, path: path.join(dir, "x-235x1.jpg"), ratioUsed: "21:9", cropped: false, warning: "裁切失败(非 PNG),交付未裁切的 21:9 原图" });
-    const r = (await executeCoverReview({ action: "platform_ratios", content_id: id, _dataDir: dir, _geminiApiKey: "k" })) as { ok: boolean; warnings?: string[] };
+    wideMock.mockResolvedValueOnce({
+      ok: true,
+      path: path.join(dir, "x-235x1.jpg"),
+      ratioUsed: "21:9",
+      cropped: false,
+      warning: "裁切失败(非 PNG),交付未裁切的 21:9 原图",
+    });
+    const r = (await executeCoverReview({
+      action: "platform_ratios",
+      content_id: id,
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; warnings?: string[] };
     expect(r.ok).toBe(true);
     expect(r.warnings![0]).toContain("裁切失败");
   });

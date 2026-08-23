@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { toast } from "../ui";
 import { coverRatiosForPlatform, COVER_RATIO_LABEL } from "../lib";
+import { IdentityLibraryPanel } from "./IdentityLibraryPanel";
 
 interface CoverVariant {
   label: string;
@@ -38,7 +39,11 @@ const assetUrl = (contentId: string, filePath?: string): string => {
   return `/api/asset?content_id=${encodeURIComponent(contentId)}&name=${encodeURIComponent(name)}`;
 };
 
-export function CoverPanel(props: { contentId: string; platform: string }) {
+export function CoverPanel(props: {
+  contentId: string;
+  platform: string;
+  onApprovalChange?: (approved: boolean) => void;
+}) {
   const ratioOptions = coverRatiosForPlatform(props.platform);
   const [review, setReview] = useState<CoverReview | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -46,12 +51,15 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
   const [customTitle, setCustomTitle] = useState("");
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [ratioBusy, setRatioBusy] = useState(false);
+  const [identityReady, setIdentityReady] = useState(false);
   const pollRef = useRef<number | null>(null);
   const activeRunRef = useRef<string | null>(null);
 
   const load = async () => {
     const r = await invoke("cover:get", { content_id: props.contentId });
-    setReview(r.ok ? (r as unknown as { review: CoverReview }).review : null);
+    const next = r.ok ? (r as unknown as { review: CoverReview }).review : null;
+    setReview(next);
+    props.onApprovalChange?.(Boolean(next?.approvedLabel));
   };
   useEffect(() => {
     void load();
@@ -100,7 +108,10 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
       const changed = Boolean(rv && rv.updatedAt !== prevStamp);
       if (changed || ticks > 225) {
         // 225×4s=15 分钟断线兜底；正常完成由 SSE 事件即时刷新。
-        if (rv) setReview(rv);
+        if (rv) {
+          setReview(rv);
+          props.onApprovalChange?.(Boolean(rv.approvedLabel));
+        }
         setGenerating(false);
         stopPoll();
         if (changed) toast("封面已更新——挑一张或继续提意见");
@@ -110,6 +121,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
   };
 
   const create = async () => {
+    if (!identityReady) return toast("先上传至少 1 张真实照片，封面才不会把你变成另一个人");
     const payload: Record<string, unknown> = { content_id: props.contentId, ratio };
     if (customTitle.trim()) payload.custom_title = customTitle.trim();
     const r = await invoke("cover:create", payload);
@@ -164,6 +176,13 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
 
   return (
     <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
+      <IdentityLibraryPanel onReadyChange={setIdentityReady} />
+      <div className="cover-create-head">
+        <div>
+          <div className="mono muted identity-kicker">3. 根据选题生成封面</div>
+          <strong>人物、标题和内容隐喻一起设计</strong>
+        </div>
+      </div>
       <div className="row-actions" style={{ alignItems: "baseline" }}>
         <span className="mono muted ed-label">封面(设计师)：</span>
         {review && (
@@ -189,7 +208,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
           value={customTitle}
           onChange={(e) => setCustomTitle(e.target.value)}
         />
-        <button disabled={generating} onClick={() => void create()}>
+        <button disabled={generating || !identityReady} onClick={() => void create()}>
           {generating
             ? "生成中…(看任务动态)"
             : review

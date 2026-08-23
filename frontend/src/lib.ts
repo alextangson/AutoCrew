@@ -669,6 +669,45 @@ export function roughCutSummary(units?: VideoEditUnits): string | null {
   return dropped.size === 0 ? body : `${body}。剔除处是硬切,这一版不做淡入淡出`;
 }
 
+/**
+ * 成片计划结果条(横屏 spec §3.5)。**空 plan 的两种成因说法必须不一样**:
+ * 「剪辑师看过了觉得不用切」和「剪辑师压根没跑」对人的下一步动作完全不同。
+ */
+export function editorPlanSummary(plan: VideoEditorPlan, outputDurationMs?: number): string {
+  if (plan.origin === "empty") return plan.note ?? plan.warning ?? "剪辑师没跑成,这一版按纯口播出片";
+  if (plan.overlays.length === 0) return "剪辑师看过了:这条不需要 B-roll,按纯口播出片";
+  const covered = plan.overlays.reduce((sum, o) => sum + o.durationMs, 0);
+  const ratio = outputDurationMs && outputDurationMs > 0 ? `,约占成片 ${Math.round((covered / outputDurationMs) * 100)}%` : "";
+  const pending = plan.overlays.filter((o) => o.source.kind === "generate").length;
+  const todo = pending > 0 ? `,其中 ${pending} 段还要你去生成` : "";
+  return `剪辑师排了 ${plan.overlays.length} 段 B-roll,共 ${formatMinutesSeconds(covered)}${ratio}${todo}`;
+}
+
+/**
+ * 门内预览的状态条(v2 spec §4.1)。三种情形三句话,**降级必须可见**:
+ * 渲染中 / 有片可看 / 没渲出来。没有第四种「什么都不说」。
+ */
+export function previewStatus(preview?: VideoPreviewState): {
+  playableRevision: number | null;
+  rendering: boolean;
+  message: string | null;
+} {
+  if (!preview) return { playableRevision: null, rendering: false, message: null };
+  const rendering = preview.readyRevision !== preview.requestedRevision && !preview.error;
+  const playableRevision = preview.readyRevision ?? null;
+  if (preview.error) {
+    return { playableRevision, rendering: false, message: `预览没出来:${preview.error}` };
+  }
+  if (rendering) {
+    return {
+      playableRevision,
+      rendering: true,
+      message: playableRevision ? "新一版预览在渲染中,下面播的还是上一版" : "预览渲染中,好了会自动出现",
+    };
+  }
+  return { playableRevision, rendering: false, message: null };
+}
+
 /** matchedRatio < 0.5 → 不给建议权,人要逐句盯(§4.4 / §10);没有对齐数据就不吓唬人 */
 export function alignmentWarning(t: VideoTranscript | null): string | null {
   const ratio = t?.scriptAlignment?.matchedRatio;

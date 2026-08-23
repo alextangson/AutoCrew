@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  buildCoverPrompts,
-  extractCoverTitle,
-  type PromptBuilderInput,
-} from "../cover/prompt-builder.js";
+import { buildCoverPrompts, extractCoverTitle, type PromptBuilderInput } from "../cover/prompt-builder.js";
 
 describe("extractCoverTitle", () => {
   it("returns custom title when valid length", () => {
@@ -147,6 +143,25 @@ describe("buildCoverPrompts", () => {
     for (const p of prompts) {
       expect(p.titleText).toBe("AI赚钱");
     }
+  });
+
+  it("规则降级路径也保留个人 IP 的人物颗粒与图层约束", () => {
+    const prompts = buildCoverPrompts({
+      ...baseInput,
+      hasReferencePhotos: true,
+      styleProfile: {
+        version: 1,
+        name: "人物清晰的编辑封面",
+        visualRules: ["人物低颗粒，文字保留印刷颗粒"],
+        identityRules: ["生活照优先锁脸"],
+        typographyRules: ["副标题缩略图可读"],
+        layoutRules: ["主标题在人物背后，人物完全不透明"],
+        avoid: ["程序员刻板印象"],
+        qualityGates: ["标题不穿过脸"],
+      },
+    });
+    expect(prompts.every((p) => p.imagePrompt.includes("人物低颗粒，文字保留印刷颗粒"))).toBe(true);
+    expect(prompts.every((p) => p.imagePrompt.includes("主标题在人物背后，人物完全不透明"))).toBe(true);
   });
 
   it("each style has different prompt content", () => {

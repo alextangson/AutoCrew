@@ -39,7 +39,7 @@ const ASR_LABEL: Record<string, string> = {
   failed: "预热失败",
 };
 
-export function VideoPanel({ contentId }: { contentId: string }) {
+export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; onReadyForCover?: (ready: boolean) => void }) {
   const [open, setOpen] = useState(true);
   const [status, setStatus] = useState<VideoStatusData | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -74,8 +74,15 @@ export function VideoPanel({ contentId }: { contentId: string }) {
 
   const st = status?.state ?? null;
   const canCut = !!st && ((st.phase === "cut" && st.state === "awaiting_human") || (st.phase === "done" && st.state === "done"));
+  /** 成片计划是同一个向导的第 2 步:剪辑师在跑的时候也留在这一页,别把人踢回卡片 */
+  const inPlan = !!st && st.phase === "edit";
+  const canPlan = !!st && st.phase === "edit" && st.state === "awaiting_human";
   const canReview = !!st && st.phase === "review" && st.state === "awaiting_human";
   const isDone = !!st && st.phase === "done" && st.state === "done";
+
+  useEffect(() => {
+    onReadyForCover?.(isDone);
+  }, [isDone, onReadyForCover]);
 
   useEffect(() => {
     blockedOnAsr.current = st?.state === "blocked" && st.blockedReason === "asr_not_ready";
@@ -83,14 +90,14 @@ export function VideoPanel({ contentId }: { contentId: string }) {
 
   // 后台把状态推走了,手里那版就作废——说一声再收回卡片,别让人对着废页面点确认
   useEffect(() => {
-    if (view === "cut" && !canCut) {
+    if (view === "cut" && !canCut && !inPlan) {
       setView("card");
       toast("这一版选段已经被推进了,先看成片卡的最新状态");
     } else if (view === "review" && !canReview && !isDone) {
       setView("card");
       toast("成片状态变了,先看成片卡的最新状态");
     }
-  }, [view, canCut, canReview, isDone]);
+  }, [view, canCut, inPlan, canReview, isDone]);
 
   // 卡在「语音模型没就绪」时先看一眼预热进度:可能另一个窗口已经在下模型了
   useEffect(() => {

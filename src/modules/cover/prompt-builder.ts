@@ -6,6 +6,7 @@
  * creative pool instead of reproducing the old cinematic/minimalist/bold trio.
  */
 import { ORIENTATION_TEXT } from "../../adapters/image/relay-cover.js";
+import { coverStylePrompt, type CoverStyleProfile } from "./style-profile.js";
 
 // --- Types ---
 
@@ -45,6 +46,8 @@ export interface PromptBuilderInput {
   /** Optional custom title override (user-specified cover title) */
   customTitle?: string;
   targetAspect?: "3:4" | "2.35:1" | "16:9" | "4:3";
+  /** 创作者确认过的封面身份、材质和图层规则 */
+  styleProfile?: CoverStyleProfile | null;
 }
 
 // --- Title extraction ---
@@ -98,8 +101,10 @@ const CREATIVE_POOL: CreativeArchetype[] = [
     concept: "把正文里最具体的一件物品拍成能证明观点的证物，而不是抽象科技背景",
     medium: "documentary editorial photography",
     palette: "natural daylight, paper white, graphite and one evidence-red accent",
-    scene: "a real tabletop evidence scene built from one concrete object explicitly mentioned in the story, with human traces, annotations and believable imperfections",
-    layout: "asymmetric overhead crop; the evidence object owns one edge while the headline is integrated as an evidence label or stamped note",
+    scene:
+      "a real tabletop evidence scene built from one concrete object explicitly mentioned in the story, with human traces, annotations and believable imperfections",
+    layout:
+      "asymmetric overhead crop; the evidence object owns one edge while the headline is integrated as an evidence label or stamped note",
     titleTreatment: "printed on an evidence tag, stamped strip, or clipped annotation inside the scene",
   },
   {
@@ -108,8 +113,10 @@ const CREATIVE_POOL: CreativeArchetype[] = [
     concept: "把文章的核心交换或冲突变成一个可以摸到的荒诞物件",
     medium: "hand-built tactile still life photography",
     palette: "warm material colors, soft shadows, one unexpected saturated object",
-    scene: "a surprising physical metaphor made from everyday materials, with no computer screen, no server rack and no hologram",
-    layout: "one oversized handmade object breaks the frame; the headline belongs to its packaging, warning label or receipt",
+    scene:
+      "a surprising physical metaphor made from everyday materials, with no computer screen, no server rack and no hologram",
+    layout:
+      "one oversized handmade object breaks the frame; the headline belongs to its packaging, warning label or receipt",
     titleTreatment: "physically printed on the object, packaging, receipt or warning seal",
   },
   {
@@ -118,7 +125,8 @@ const CREATIVE_POOL: CreativeArchetype[] = [
     concept: "用正文里的地点、数字、物件和一句判断做有编辑观点的手工拼贴",
     medium: "hand-cut editorial paper collage and risograph texture",
     palette: "high-key off-white paper, ink black, cobalt and vermilion accents",
-    scene: "layered torn paper fragments derived from the story's concrete details, visible tape, crop marks and tactile print texture",
+    scene:
+      "layered torn paper fragments derived from the story's concrete details, visible tape, crop marks and tactile print texture",
     layout: "rhythmic editorial grid with deliberate overlaps; avoid the default left-image-right-text split",
     titleTreatment: "assembled from bold printed Chinese type strips woven into the collage",
   },
@@ -128,7 +136,8 @@ const CREATIVE_POOL: CreativeArchetype[] = [
     concept: "让标题成为场景中的真实物体，而不是后期压在背景上的一层字",
     medium: "large-scale typographic installation photographed in a real environment",
     palette: "bright ambient light, restrained environment, one strong material color",
-    scene: "the Chinese headline fabricated as tape, cardboard, projected shadow, road marking or hanging sign interacting with a story-specific place",
+    scene:
+      "the Chinese headline fabricated as tape, cardboard, projected shadow, road marking or hanging sign interacting with a story-specific place",
     layout: "type creates depth and perspective across the frame; the environment remains simple and believable",
     titleTreatment: "the exact Chinese headline is the physical installation itself",
   },
@@ -138,7 +147,8 @@ const CREATIVE_POOL: CreativeArchetype[] = [
     concept: "把核心矛盾通过尺度错位变成一眼就懂、但现实中不可能发生的静物场景",
     medium: "surreal studio still life with practical effects",
     palette: "clean high-key studio field, crisp object colors, controlled hard shadow",
-    scene: "one impossible but instantly legible scale relationship between two concrete objects from the content, made to look physically photographed",
+    scene:
+      "one impossible but instantly legible scale relationship between two concrete objects from the content, made to look physically photographed",
     layout: "central or diagonal object tension with generous breathing room; no generic futuristic decoration",
     titleTreatment: "set as a museum caption, measuring mark or product label that participates in the illusion",
   },
@@ -148,7 +158,8 @@ const CREATIVE_POOL: CreativeArchetype[] = [
     concept: "把文章处理成一页刚被揭开的档案，突出事实链而不是情绪灯光",
     medium: "archival dossier scan, contact sheet and annotated document design",
     palette: "aged paper, carbon black, faded blue, selective fluorescent marker",
-    scene: "a dense but controlled dossier using a date, place, number or quote taken from the content, with redactions and handwritten connections",
+    scene:
+      "a dense but controlled dossier using a date, place, number or quote taken from the content, with redactions and handwritten connections",
     layout: "modular document composition; the headline acts as the case-file title, not a floating overlay",
     titleTreatment: "typed or stamped as the case-file heading with authentic print imperfections",
   },
@@ -176,10 +187,13 @@ function buildImagePrompt(input: PromptBuilderInput, titleText: string, archetyp
     `Visual medium: ${archetype.medium}.`,
     `Palette and material: ${archetype.palette}.`,
     `Composition: ${archetype.layout}.`,
+    ...(input.styleProfile ? [coverStylePrompt(input.styleProfile).trim()] : []),
     `The image MUST include the exact Chinese text "${titleText}"; ${archetype.titleTreatment}.`,
     "Chinese characters must be sharp, correctly spelled, readable at thumbnail size and naturally integrated into the scene.",
     ...(input.hasReferencePhotos
-      ? ["If a person is included, feature the person from the reference photo and maintain their likeness; otherwise prefer story-specific objects."]
+      ? [
+          "If a person is included, feature the person from the reference photo and maintain their likeness; otherwise prefer story-specific objects.",
+        ]
       : []),
     "No watermarks, no logos, no URLs, no unrelated English decoration.",
     "Avoid glowing keyboards, server rooms, blue-purple neural networks, holographic code, robot brains and generic split-screen technology imagery.",

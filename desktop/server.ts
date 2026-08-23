@@ -26,6 +26,7 @@ import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { startResearchRuntime } from "../src/desktop/research-runtime.js";
 import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
+import { serveCoverIdentityAsset } from "../src/desktop/cover-identity-asset-route.js";
 import { setVideoService } from "../src/desktop/video-handlers.js";
 import { createVideoMediaHandler, VIDEO_MEDIA_PREFIX } from "../src/desktop/video-media.js";
 import { createVideoService, type VideoService } from "../src/modules/video/service.js";
@@ -266,6 +267,22 @@ const server = http.createServer(async (req, res) => {
     try { await fs.access(file); } catch { res.writeHead(404).end(); return; }
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable" });
     createReadStream(file).pipe(res);
+    return;
+  }
+
+  // 个人形象库含真实人脸照片，只允许本地已认证会话读取，且不使用公共 immutable 缓存。
+  if (p === "/api/cover-identity-asset") {
+    let base: string;
+    try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
+    const served = await serveCoverIdentityAsset({
+      authorized: Boolean(authorize(req)),
+      dataDir: base,
+      kind: url.searchParams.get("kind") || "",
+      filename: url.searchParams.get("name") || "",
+    });
+    if (!served.ok) { res.writeHead(served.status).end(served.error); return; }
+    res.writeHead(200, { "Content-Type": served.contentType, "Cache-Control": "private, no-store" });
+    createReadStream(served.file).pipe(res);
     return;
   }
 

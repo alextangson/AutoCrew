@@ -45,6 +45,7 @@ export function EditorTools(props: EditorToolsProps) {
   const [themes, setThemes] = useState<Array<{ id: string; name: string }>>([]);
   const [pubTheme, setPubTheme] = useState("");
   const [defaultTheme, setDefaultTheme] = useState<string | null>(null);
+  const [preflightSummary, setPreflightSummary] = useState("");
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
 
   useEffect(() => setDigestText(c.digest ?? ""), [c.digest]);
@@ -75,6 +76,14 @@ export function EditorTools(props: EditorToolsProps) {
   };
 
   const doClipboard = async () => {
+    if (isVideo) {
+      const gate = await invoke("publish:preflight", { content_id: contentId });
+      const checked = gate as unknown as { ok: boolean; allPassed?: boolean; summary?: string; error?: string };
+      setPreflightSummary(checked.summary ?? "");
+      if (!checked.ok || !checked.allPassed) {
+        return toast(checked.error ?? "发布前检查未通过；先完成封面等必做项");
+      }
+    }
     const r = await invoke("publish:clipboard", { content_id: contentId });
     if (!r.ok) return toast(r.error ?? "排版失败");
     setClip((r as unknown as { data: typeof clip }).data);
@@ -113,6 +122,7 @@ export function EditorTools(props: EditorToolsProps) {
             <AdoptButton key={v} verdict={v} label={label} current={c.adoption?.verdict} submit={submitAdoption} />
           ))}
         </div>
+        {preflightSummary && <pre className="publish-preflight mono">{preflightSummary}</pre>}
       </details>
 
       <details className="ed-tools" open>
