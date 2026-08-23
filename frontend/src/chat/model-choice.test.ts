@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CHAT_MODEL_KEY, DEFAULT_CHAT_MODEL,
-  groupModelOptions, modelOptionLabel, parseModelOptions, readModelChoice, writeModelChoice,
+  groupModelOptions, modelGroupName, modelTriggerLabel, parseModelOptions, readModelChoice, writeModelChoice,
   type ChatModelOption,
 } from "./model-choice";
 import type { PrefStore } from "./dock-prefs";
@@ -73,7 +73,7 @@ describe("readModelChoice", () => {
   });
 });
 
-describe("parseModelOptions / modelOptionLabel", () => {
+describe("parseModelOptions", () => {
   it("正常响应原样取出", () => {
     expect(parseModelOptions({ ok: true, data: { options: FULL } })).toEqual(FULL);
   });
@@ -85,32 +85,45 @@ describe("parseModelOptions / modelOptionLabel", () => {
     expect(parseModelOptions({ data: { options: [{ id: "fast" }, null, "x"] } })).toEqual([]);
   });
 
-  it("选项文案 = 真实模型名 + 档位字", () => {
-    expect(modelOptionLabel(FULL[0])).toBe("claude-sonnet-5 · 快");
-    expect(modelOptionLabel(FULL[3])).toBe("deepseek-v4-pro · 备用强");
-  });
-
   it("带 group 的自定义端点条目照收；tier/group 都没有的条目不算可选项", () => {
     expect(parseModelOptions({ ok: true, data: { options: WITH_PROVIDERS } })).toEqual(WITH_PROVIDERS);
     expect(parseModelOptions({ data: { options: [{ id: "p:x:m", model: "m" }] } })).toEqual([]);
   });
+});
 
-  it("自定义端点的文案只有模型名——optgroup 标题已经是端点名了", () => {
-    expect(modelOptionLabel(WITH_PROVIDERS[4])).toBe("qwen3:32b");
+describe("modelGroupName / modelTriggerLabel", () => {
+  it("主端点与备用端点分成两组——它们走的是两套凭证", () => {
+    expect(modelGroupName(FULL[0])).toBe("主通道");
+    expect(modelGroupName(FULL[3])).toBe("备用端点");
+  });
+
+  it("自定义端点用端点名", () => {
+    expect(modelGroupName(WITH_PROVIDERS[4])).toBe("本地 Ollama");
+  });
+
+  it("触发器显示模型名 + 组名（这一轮花的是哪家的钱）", () => {
+    expect(modelTriggerLabel(FULL, "fast")).toBe("claude-sonnet-5 · 主通道");
+    expect(modelTriggerLabel(FULL, "fallback_strong")).toBe("deepseek-v4-pro · 备用端点");
+    expect(modelTriggerLabel(WITH_PROVIDERS, "p:kimi:kimi-k3")).toBe("kimi-k3 · Kimi");
+  });
+
+  it("清单里找不到时回退成 id，绝不给一个空白按钮", () => {
+    expect(modelTriggerLabel(FULL, "p:没了:x")).toBe("p:没了:x");
+    expect(modelTriggerLabel([], "fast")).toBe("fast");
   });
 });
 
 describe("groupModelOptions", () => {
-  it("四档置顶不套 optgroup，自定义端点按端点名分组且保持服务端顺序", () => {
-    const { plain, groups } = groupModelOptions(WITH_PROVIDERS);
-    expect(plain.map((o) => o.id)).toEqual(["fast", "strong", "fallback_fast", "fallback_strong"]);
-    expect(groups.map((g) => g.name)).toEqual(["本地 Ollama", "Kimi"]);
-    expect(groups[0].options.map((o) => o.id)).toEqual(["p:ollama:qwen3:32b", "p:ollama:llama4"]);
+  it("主通道 → 备用端点 → 各自定义端点，组内外都保持服务端顺序", () => {
+    const groups = groupModelOptions(WITH_PROVIDERS);
+    expect(groups.map((g) => g.name)).toEqual(["主通道", "备用端点", "本地 Ollama", "Kimi"]);
+    expect(groups[0].options.map((o) => o.id)).toEqual(["fast", "strong"]);
+    expect(groups[2].options.map((o) => o.id)).toEqual(["p:ollama:qwen3:32b", "p:ollama:llama4"]);
   });
 
-  it("没有自定义端点时 groups 为空（渲染与今天一模一样）", () => {
-    expect(groupModelOptions(FULL).groups).toEqual([]);
-    expect(groupModelOptions([]).plain).toEqual([]);
+  it("没配备用与自定义端点时只有主通道一组", () => {
+    expect(groupModelOptions(PRIMARY_ONLY).map((g) => g.name)).toEqual(["主通道"]);
+    expect(groupModelOptions([])).toEqual([]);
   });
 });
 

@@ -34,11 +34,24 @@ function defaultStore(): PrefStore | null {
 }
 
 /**
- * 选项文案：默认档是「模型名 · 档位」，自定义端点只给模型名——
- * optgroup 的标题已经是端点名了，再重复一遍是噪音。
+ * 一条选项归哪一组。默认四档拆成「主通道」与「备用端点」——它们走的是两套凭证，
+ * 混在一起叫"默认档"看不出这件事；自定义端点按端点名各成一组。
  */
-export function modelOptionLabel(option: ChatModelOption): string {
-  return option.tier ? `${option.model} · ${option.tier}` : option.model;
+export function modelGroupName(option: ChatModelOption): string {
+  if (option.group) return option.group;
+  return option.id.startsWith("fallback_") ? "备用端点" : "主通道";
+}
+
+/**
+ * 触发器上的一行字：`模型名 · 组名`。
+ * 组名（主通道/备用端点/端点名）比档位字更该占这个位置——
+ * 用户真正需要一眼确认的是「这一轮花的是哪家的钱」。
+ * 找不到（清单还没到/选择已失效）就回退成 id，绝不显示空白按钮。
+ */
+export function modelTriggerLabel(options: ChatModelOption[], choice: string): string {
+  const option = options.find((o) => o.id === choice);
+  if (!option) return choice;
+  return `${option.model} · ${modelGroupName(option)}`;
 }
 
 /**
@@ -70,22 +83,18 @@ export interface ModelOptionGroup {
 }
 
 /**
- * 渲染分组：无 group 的默认档原样置顶（不套 optgroup——四档本来就是"默认"，
- * 多一层标题反而突兀），自定义端点按端点名分组，组内与组间都保持服务端给的顺序。
+ * 面板分组：按 modelGroupName 归组，组间与组内都保持服务端给的顺序
+ * （服务端是 快/强 → 备用快/备用强 → 各端点，本来就是从常用到冷门）。
  */
-export function groupModelOptions(options: ChatModelOption[]): { plain: ChatModelOption[]; groups: ModelOptionGroup[] } {
-  const plain: ChatModelOption[] = [];
+export function groupModelOptions(options: ChatModelOption[]): ModelOptionGroup[] {
   const groups: ModelOptionGroup[] = [];
   for (const option of options) {
-    if (!option.group) {
-      plain.push(option);
-      continue;
-    }
-    const existing = groups.find((g) => g.name === option.group);
+    const name = modelGroupName(option);
+    const existing = groups.find((g) => g.name === name);
     if (existing) existing.options.push(option);
-    else groups.push({ name: option.group, options: [option] });
+    else groups.push({ name, options: [option] });
   }
-  return { plain, groups };
+  return groups;
 }
 
 /** 存过的档位仍在清单里才认；否则回落缺省并把陈旧值覆写掉 */

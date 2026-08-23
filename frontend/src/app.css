@@ -114,15 +114,17 @@
 .msg { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px 10px; }
 .msg p { white-space: pre-wrap; }
 .msg-user { background: var(--ink); color: var(--accent-text); align-self: flex-end; max-width: 90%; }
-.chat-input-row { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
-.chat-input-row textarea { flex: 1; resize: none; }
-/* 输入区整体（模型档位 + 输入行）：分隔线提到外层，有没有切换器都是同一条 */
-.chat-compose { border-top: 1px solid var(--border); }
-.chat-compose .chat-input-row { border-top: none; }
-/* 切换器在场时才收紧上间距——没有它的时候输入行的留白与今天一致 */
-.chat-model-row + .chat-input-row { padding-top: 6px; }
-.chat-model-row { display: flex; align-items: center; gap: 6px; padding: 8px 12px 0; font-size: 11px; }
-.chat-model-row select { font-size: 11px; padding: 1px 4px; max-width: 200px; }
+/* 输入区：文本框在上，模型档位与发送键同处一条控制行——模型不再单独占一行标签 */
+.chat-compose {
+  border-top: 1px solid var(--border); background: var(--card);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.chat-input { width: 100%; resize: none; }
+.chat-compose-bar { display: flex; align-items: center; gap: 8px; }
+/* 模型档位靠左、发送靠右：没有切换器时发送键照样在右 */
+.chat-compose-bar > .picker { margin-right: auto; }
+.chat-compose-bar > button:first-child { margin-left: auto; }
+.chat-model-picker .picker-panel { width: 264px; }
 
 /* Chat cards */
 .ccard { border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px 10px; margin-top: 8px; background: var(--card); color: var(--text); }
@@ -464,10 +466,22 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .set-field span { min-width: 96px; }
 .set-field input, .set-field select { flex: 1; }
 .set-save { display: flex; gap: 10px; align-items: baseline; margin-top: 10px; }
-/* 自定义端点列表(Phase 4):每行一块,与上面的路由字段拉开距离但不另起卡片 */
-.set-providers-head { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 14px; }
-.set-provider { border-left: 2px solid var(--border); padding: 2px 0 6px 10px; margin: 8px 0; }
-.set-provider .row { gap: 8px; }
+/* 引擎区:每条路由一张卡。卡头右侧写的是**此刻真实生效**的模型,不是写死的宣传语 */
+.set-sub-head { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 16px; margin-bottom: 6px; }
+.set-route { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px 10px; margin: 8px 0; }
+.set-route-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+.set-route-name { font-weight: 700; flex: none; }
+.set-route-now { margin-left: auto; text-align: right; overflow-wrap: anywhere; }
+.set-route-head button { flex: none; font-size: 11px; padding: 1px 6px; }
+.set-route-note { font-size: 12px; margin-top: 4px; }
+.set-route-foot { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.set-test-btn { font-size: 11px; padding: 2px 8px; }
+.set-test-ok { color: var(--success); margin-top: 4px; line-height: 1.5; }
+.set-test-fail { color: var(--danger); margin-top: 4px; line-height: 1.5; overflow-wrap: anywhere; }
+/* 四条专线并排:720px 容器下两列,窄屏退单列 */
+.set-route-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(288px, 1fr)); gap: 10px; }
+.set-route-grid .set-field span { min-width: 44px; }
+@media (max-width: 700px) { .set-route-grid { grid-template-columns: 1fr; } }
 .runcard { border-left: 2px solid var(--border); padding: 4px 8px; margin: 6px 0; }
 .runcard-done { border-left-color: var(--success); }
 .runcard-failed { border-left-color: var(--danger); }
@@ -515,9 +529,60 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* D 期前收口:会话历史/素材库 */
 .chat-head { display: flex; align-items: center; gap: 8px; }
-.chat-head-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
-.chat-head-actions select { max-width: 150px; font-size: 11px; }
+/* min-width:0 —— 会话标题在窄对话栏里省略号截断，而不是把「＋」挤出去 */
+.chat-head-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; min-width: 0; }
 .chat-head-actions button { font-size: 11px; padding: 2px 6px; }
+.chat-session-picker { min-width: 0; }
+.chat-session-picker .picker-trigger-label { max-width: 168px; }
+.chat-session-picker .picker-panel { width: 296px; }
+.chat-new { flex: none; }
+
+/* ── 浮层选择器（会话切换 / 模型切换共用）────────────────────────────────── */
+.picker { position: relative; display: inline-flex; min-width: 0; }
+.picker-trigger {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 3px 8px; color: var(--text);
+}
+.picker-trigger-open { border-color: var(--ink); }
+.picker-trigger:disabled { opacity: .45; cursor: default; }
+.picker-trigger:disabled:hover { border-color: var(--border); }
+.picker-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-caret { flex: none; color: var(--muted); font-size: 9px; }
+
+.picker-panel {
+  position: absolute; z-index: 40; width: 280px; max-width: 84vw; outline: none;
+  background: var(--card); border: 1px solid var(--ink); border-top: 2px solid var(--ink);
+  box-shadow: 0 8px 26px rgba(22, 21, 15, .16);
+  animation: picker-in .12s ease-out;
+}
+@keyframes picker-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.picker-down { top: calc(100% + 4px); }
+.picker-up { bottom: calc(100% + 4px); }
+.picker-align-left { left: 0; }
+.picker-align-right { right: 0; }
+
+.picker-search {
+  width: 100%; border: none; border-bottom: 1px solid var(--border); border-radius: 0;
+  padding: 7px 10px; font-size: 12px;
+}
+.picker-search:focus { border-color: var(--border); border-bottom-color: var(--ink); }
+.picker-list { max-height: 300px; overflow-y: auto; padding: 4px 0; }
+.picker-group + .picker-group { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+.picker-group-name { padding: 4px 10px 2px; }
+.picker-row { display: flex; align-items: baseline; gap: 6px; padding: 4px 10px; cursor: pointer; }
+/* 键盘光标与鼠标 hover 是同一种高亮——两套输入不该有两种"当前行" */
+.picker-row-cursor { background: rgba(22, 21, 15, .06); }
+.picker-row-on .picker-label { font-weight: 700; }
+.picker-tick { flex: none; width: 8px; font-size: 10px; }
+.picker-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-hint { flex: none; }
+/* 删除只在当前行露出——一列 × 会让列表看起来像个待办清单 */
+.picker-del { flex: none; border: none; background: none; padding: 0 2px; color: var(--muted); visibility: hidden; }
+.picker-row:hover .picker-del, .picker-row-cursor .picker-del { visibility: visible; }
+.picker-del:hover { color: var(--danger); }
+.picker-empty, .picker-error { padding: 8px 10px; line-height: 1.5; }
+.picker-error { color: var(--danger); }
+.picker-footer { border-top: 1px solid var(--border); padding: 6px 10px; line-height: 1.5; }
 
 /* 灵感收件箱(收件箱设计 §4):状态条 + 分组卡 + 条目行;拆解卡列表复用 .card */
 .inbox { max-width: 900px; }
