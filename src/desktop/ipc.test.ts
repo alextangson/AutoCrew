@@ -1,5 +1,5 @@
 /**
- * IPC contract + handler registry tests — all 50 channels.
+ * IPC contract + handler registry tests — 通道总数以「has exactly N channels」为准。
  *
  * Action-injection testability design:
  *   `wrapExecute(fn, action)` is exported. Tests call it directly with a spy
@@ -34,7 +34,7 @@ afterEach(async () => {
   await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
-// ── 1. Contract: all 28 channels present ─────────────────────────────────────
+// ── 1. Contract: channel registry ────────────────────────────────────────────
 
 describe("IPC_CHANNELS", () => {
   const EXPECTED: IpcChannel[] = [
@@ -138,10 +138,14 @@ describe("IPC_CHANNELS", () => {
     "research:import_asset",
   ];
 
-  it("has exactly 122 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(122);
-  it("has exactly 127 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(127);
+  // 这个数字是「注册链完整性」的闸门:改通道必须动到这里,迫使作者核对
+  // channels.ts / channel-contracts.ts / buildIpcHandlers / renderer 调用四处
+  // 是否同步。历史教训:a5eddc8 在 122 上加了 10 个 video 通道却把断言写成
+  // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
+  // 140 = 122(最后绿态) + 14 video(V0a 10 + rough_cut_rerun + editor 3)
+  //     + chat:abort/turn_status/model_options + settings:open_config。
+  it("has exactly 140 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(140);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -222,7 +226,10 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     expect(CHANNEL_ACTIONS["content:allowed_transitions"]).toBe("allowed_transitions");
   });
 
-  it("covers exactly the execute-backed channels (style:rules, chat:turn, settings:get, settings:set, style:update_rule, onboarding:status, onboarding:init, dialog:pick_file, knowledge:status, radar:status, radar:refresh, profile:update, content:versions, content:revert, draft:rewrite_selection, style:record_edit, conversations:list, conversations:get, conversations:delete, library:list, library:add, library:update, library:remove, library:folder_create, library:folder_remove, dialog:pick_media, content:asset_add, content:asset_remove, today:summary excluded)", () => {
+  // 排除清单 = 走专用 handler/门面而非 wrapExecute 的通道。新通道若不是
+  // execute-backed,必须显式加进来——这迫使作者说清它由哪个专用 handler 承接,
+  // 防止「通道注册了但 action 绑定悄悄漏掉」。
+  it("covers exactly the execute-backed channels (dedicated-handler channels excluded)", () => {
     expect(Object.keys(CHANNEL_ACTIONS).sort()).toEqual(
       IPC_CHANNELS.filter(
         (ch) =>
@@ -240,8 +247,14 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "article_images:upload" &&
           ch !== "flywheel:wechat_pull" &&
           ch !== "chat:turn" &&
+          // 对话控制面 §Phase 3:ipc.ts 内的专用 handler(中止链路/断线恢复/模型切换器)
+          ch !== "chat:abort" &&
+          ch !== "chat:turn_status" &&
+          ch !== "chat:model_options" &&
           ch !== "settings:get" &&
           ch !== "settings:set" &&
+          // 端点配置逃生门:settings-providers.ts 的 openEngineConfigFile
+          ch !== "settings:open_config" &&
           ch !== "settings:search_get" &&
           ch !== "settings:search_set" &&
           ch !== "settings:publish_get" &&
