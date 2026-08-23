@@ -11,7 +11,7 @@ import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
 import { runLoop, type LoopEvent, type LoopStreamEvent } from "./loop.js";
 import { shutdownObserver } from "./observer.js";
-import { openaiSse, openaiSseTextParts, sseResponse } from "./sse-fixtures.js";
+import { bodyText, openaiSse, openaiSseTextParts, sseResponse } from "./sse-fixtures.js";
 import { readRun } from "../runtime/run-log.js";
 import type { EngineConfig } from "./config.js";
 
@@ -56,6 +56,9 @@ interface Legs {
   fallback: number;
   /** 备用腿收到的凭证（观察器透传的请求头）——证明换的是端点+key，不只是模型名 */
   fallbackAuth: string[];
+  /** 两腿各自收到的请求体——wire 方言断言（reasoning_content 等）看这里 */
+  primaryBodies: Array<Record<string, unknown>>;
+  fallbackBodies: Array<Record<string, unknown>>;
 }
 
 /** 按上游 URL 分流的双腿夹具：观察器把 upstreamBase 原样带到 fetchImpl */
@@ -63,12 +66,15 @@ function twoLegs(
   primary: (n: number) => Response | Promise<Response>,
   fallback: (n: number) => Response | Promise<Response>,
 ): { impl: typeof fetch; legs: Legs } {
-  const legs: Legs = { primary: 0, fallback: 0, fallbackAuth: [] };
-  const impl = (async (url: unknown, init?: { headers?: Record<string, string> }) => {
+  const legs: Legs = { primary: 0, fallback: 0, fallbackAuth: [], primaryBodies: [], fallbackBodies: [] };
+  const impl = (async (url: unknown, init?: { headers?: Record<string, string>; body?: unknown }) => {
+    const body = JSON.parse(bodyText(init)) as Record<string, unknown>;
     if (String(url).startsWith(FALLBACK)) {
       legs.fallbackAuth.push(init?.headers?.authorization ?? init?.headers?.["x-api-key"] ?? "");
+      legs.fallbackBodies.push(body);
       return fallback(++legs.fallback);
     }
+    legs.primaryBodies.push(body);
     return primary(++legs.primary);
   }) as unknown as typeof fetch;
   return { impl, legs };
@@ -242,6 +248,93 @@ describe("两端都倒", () => {
     expect(records[0].ok).toBe(false);
     expect(records[0].error).toMatch(/主端点/);
     expect(records[0].error).toMatch(/备用端点/);
+  });
+});
+
+describe("备用腿的 wire 方言（DeepSeek 收货规矩）", () => {
+  // DeepSeek 思考模式的多轮校验：assistant 轮的 tool_call id 不是它自家格式时，
+  // 该轮必须带 reasoning_content 字段（空串即可），缺失即 400 "must be passed back"。
+  // 2026-08-23 生产事故形态：主端点(claude)答了第一轮工具调用，第二轮连接错误才切备用——
+  // 历史里的 toolu_ 外来 id + 无 reasoning_content，备用腿必炸。
+  const echo: import("./loop.js").LoopTool = {
+    name: "echo",
+    description: "回声",
+    parameters: { type: "object", properties: {} },
+    execute: () => "回声",
+  };
+
+  type WireMsg = { role: string; content?: unknown; tool_calls?: unknown[]; reasoning_content?: unknown };
+  const assistantWithTools = (body: Record<string, unknown>) =>
+    (body.messages as WireMsg[]).find((m) => m.role === "assistant" && m.tool_calls?.length);
+
+  it("主端点答了第一轮工具调用、第二轮才切备用：备用请求的 assistant 轮补上 reasoning_content 空串", async () => {
+    const { impl, legs } = twoLegs(
+      (n) =>
+        n === 1
+          ? sseResponse(
+              openaiSse({
+                choices: [{ message: { content: null, tool_calls: [{ id: "toolu_x1", function: { name: "echo", arguments: "{}" } }] } }],
+                usage: { total_tokens: 4 },
+              }),
+            )
+          : rateLimited(),
+      () => reply("备用收尾"),
+    );
+
+    const res = await runLoop(cfg(), {
+      model: "main-strong",
+      systemPrompt: "s",
+      userMessage: "u",
+      tools: [echo],
+      fetchImpl: impl,
+      retryMaxDelayMs: 5,
+    });
+
+    expect(res.finalMessage).toBe("备用收尾");
+    expect(legs.primary).toBe(5); // 第一轮 1 次成功 + 第二轮 4 次烧完
+    expect(legs.fallback).toBe(1);
+
+    // 备用腿（deepseek 模型档）收到的重放 assistant 轮：外来 id 原样透传 + reasoning_content 补空串
+    const fbAsst = assistantWithTools(legs.fallbackBodies[0]);
+    expect(fbAsst).toBeDefined();
+    expect((fbAsst!.tool_calls as Array<{ id: string }>)[0].id).toBe("toolu_x1");
+    expect(fbAsst!.reasoning_content).toBe("");
+
+    // 方言不外溢：同一份历史发给主端点（非 deepseek）时不带 reasoning_content
+    const primaryTurn2 = legs.primaryBodies.find((b) => assistantWithTools(b));
+    expect(primaryTurn2).toBeDefined();
+    expect("reasoning_content" in assistantWithTools(primaryTurn2!)!).toBe(false);
+  });
+
+  it("备用自己吐 reasoning_content 流：解析不炸、思考不进正文，重放轮带 reasoning_content 字段", async () => {
+    const thinkingTurn = [
+      JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "先调一次工具再答" } }] }),
+      JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_00_1", type: "function", function: { name: "echo", arguments: "{}" } }] } }] }),
+      JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }),
+      JSON.stringify({ choices: [], usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 } }),
+    ]
+      .map((x) => `data: ${x}\n\n`)
+      .join("") + "data: [DONE]\n\n";
+
+    const { impl, legs } = twoLegs(rateLimited, (n) => (n === 1 ? sseResponse(thinkingTurn) : reply("查完了")));
+
+    const res = await runLoop(cfg(), {
+      model: "main-strong",
+      systemPrompt: "s",
+      userMessage: "u",
+      tools: [echo],
+      fetchImpl: impl,
+      retryMaxDelayMs: 5,
+    });
+
+    expect(res.toolCallCount).toBe(1);
+    expect(res.finalMessage).toBe("查完了"); // 思考文本不得漏进正文
+    expect(legs.fallback).toBe(2);
+
+    const fbAsst = assistantWithTools(legs.fallbackBodies[1]);
+    expect(fbAsst).toBeDefined();
+    expect(typeof fbAsst!.reasoning_content).toBe("string"); // 契约=字段必须在场；具体值（空串/原文回传）是实现自由度
+    expect(fbAsst!.content ?? null).toBeNull(); // 思考不得混进 content
   });
 });
 
