@@ -9,6 +9,7 @@ import { VIDEO_PLATFORMS } from "../modules/publish/video-kit.js";
 import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
 import { generateAndSaveDigest } from "../modules/publish/digest.js";
+import { bindByPublishUrl } from "../modules/flywheel/platform-items.js";
 
 export const publishSchema = Type.Object({
   action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "confirm_published" | "digest">({
@@ -33,6 +34,36 @@ export const publishSchema = Type.Object({
   force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
   digest: Type.Optional(Type.String({ description: "For 'digest' action: manual 摘要 to save (empty clears it). Omit to AI-generate." })),
 });
+
+/** 平台链接白名单:只认 http(s)。javascript:/file: 之类既不是发布地址,也不该被界面渲染成可点链接 */
+function isHttpUrl(raw: string): boolean {
+  try {
+    const protocol = new URL(raw).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 顺手登记「平台作品 id ↔ 稿件」绑定(spec §5.1 ①):贴了链接就当场认亲,
+ * 回流数据以后按作品 id 精确认领,不再赌标题没被改过。
+ * best-effort:解析不出(如视频号分享链)、短链解不开、写盘失败都只留 warn——
+ * 发布这件事已经在外部世界发生了,系统状态必须先服从事实。
+ */
+async function bindPublishedUrl(
+  contentId: string,
+  platform: string | null,
+  url: string,
+  dataDir: string,
+): Promise<string | null> {
+  try {
+    return await bindByPublishUrl(contentId, platform, url, dataDir);
+  } catch (err) {
+    console.warn(`[publish] 平台作品绑定登记失败(不影响已发布状态)：${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
 
 export async function executePublish(
   params: Record<string, unknown>,
@@ -93,17 +124,35 @@ export async function executePublish(
     if (!content) {
       return { ok: false, error: `Content not found: ${contentId}` };
     }
+    // 平台链接:省略/空串 = 保留旧值,只有显式给了新值才覆盖——重复确认(手滑双击/助手重跑)
+    // 不带链接时,不许把上次贴的链接抹成 null。非 http(s) 直接拒收,不落盘。
+    const rawUrl = typeof params.publish_url === "string" ? params.publish_url.trim() : "";
+    if (rawUrl && !isHttpUrl(rawUrl)) {
+      return { ok: false, error: `平台链接只接受 http/https 开头的地址：${rawUrl.slice(0, 80)}` };
+    }
     // 发布时刻只盖一次:重复确认(手滑双击/助手重跑)不许把首次发布时间冲成现在,
     // 否则「稿成→发布」的用时会被越算越短。另一条路(transitionStatus → published)同守此约。
     const updated = await updateContent(contentId, {
       status: "published",
       publishedAt: content.publishedAt ?? new Date().toISOString(),
-      publishUrl: (params.publish_url as string) || null,
+      publishUrl: rawUrl || content.publishUrl || null,
     }, dataDir);
     if (!updated) {
       return { ok: false, error: `Failed to update content: ${contentId}` };
     }
-    return { ok: true, data: { id: contentId, status: "published", publishedAt: updated.publishedAt } };
+    const boundItemId = updated.publishUrl
+      ? await bindPublishedUrl(contentId, updated.platform ?? null, updated.publishUrl, dataDir)
+      : null;
+    return {
+      ok: true,
+      data: {
+        id: contentId,
+        status: "published",
+        publishedAt: updated.publishedAt,
+        publishUrl: updated.publishUrl ?? null,
+        boundItemId,
+      },
+    };
   }
 
   // --- wechat_mp_draft: A 级发布（P0 阶段 2）——store 为事实源 + 审核员发布门 ---
