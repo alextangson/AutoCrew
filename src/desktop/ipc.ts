@@ -34,6 +34,7 @@
  *   settings:get       {}
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model?, providers? }
  *   settings:open_config {}                                (打开实际生效的 engine.json)
+ *   settings:test_route { target }                         (拿已保存的配置真发一次调用)
  *   settings:search_get {}
  *   settings:search_set { provider, api_key, base_url? }
  *   settings:publish_get {}
@@ -126,6 +127,7 @@ import {
   setPublishSettings,
   openEngineConfigFile,
 } from "./settings.js";
+import { testEngineRoute } from "./settings-probe.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import {
   pullStatusHandler,
@@ -1165,6 +1167,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "settings:get": getEngineSettings,
     "settings:set": setEngineSettings,
     "settings:open_config": (payload) => openEngineConfigFile(payload),
+    // 第二参显式丢掉:handler 的 ctx 与 testEngineRoute 的测试注入口不是一回事
+    "settings:test_route": (payload) => testEngineRoute(payload),
     "settings:search_get": getSearchSettings,
     "settings:search_set": setSearchSettings,
     "settings:publish_get": getPublishSettings,

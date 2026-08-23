@@ -25,12 +25,14 @@ import { EMPTY_STREAM, applyDelta, clearStream, parseDeltaFrame, startStream } f
 import {
   DEFAULT_CHAT_MODEL,
   groupModelOptions,
-  modelOptionLabel,
+  modelTriggerLabel,
   parseModelOptions,
   readModelChoice,
   writeModelChoice,
   type ChatModelOption,
 } from "./model-choice";
+import { conversationGroups, conversationHint, type ConversationSummary } from "./conversation-list";
+import { PickerButton } from "../picker";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
 interface Msg {
@@ -49,12 +51,6 @@ const CLIENT_ID = randomId();
 
 /** 中止 ≠ 取消：已投递的后台任务（封面、配图、深调研、成片）继续跑，文案不许暗示它们停了 */
 const ABORT_NOTE = "已停。已投递的后台任务会继续跑，进度看对应卡片。";
-
-interface ConversationSummary {
-  id: string;
-  title: string;
-  updatedAt: string;
-}
 
 export interface ChatDispatchReceipt {
   ok: boolean;
@@ -95,6 +91,8 @@ export function ChatDock(props: {
   const [stream, setStream] = useState(EMPTY_STREAM);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [convs, setConvs] = useState<ConversationSummary[]>([]);
+  /** 列表拉不动时的红字：空列表和读取失败必须长得不一样，否则用户以为会话没了 */
+  const [convsError, setConvsError] = useState("");
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [contextTitle, setContextTitle] = useState("");
   /** 可选模型档位（服务端给的真实清单）与当前选择；只有 >1 档时才显示切换器 */
@@ -129,16 +127,26 @@ export function ChatDock(props: {
     return () => { active = false; };
   }, [props.contentContext?.contentId]);
 
-  const listConversations = async (): Promise<ConversationSummary[]> => {
+  /** 失败回 null（不是空数组）——调用方据此保住现有列表，不把一次网络抖动渲染成"没有会话" */
+  const listConversations = async (): Promise<ConversationSummary[] | null> => {
     const r = await invoke("conversations:list");
-    if (!r.ok) return [];
+    if (!r.ok) {
+      setConvsError(r.error ?? "会话列表读取失败");
+      return null;
+    }
+    setConvsError("");
     return (r as unknown as { data: { conversations: ConversationSummary[] } }).data.conversations ?? [];
+  };
+
+  const refreshConversations = async (): Promise<void> => {
+    const list = await listConversations();
+    if (list) setConvs(list);
   };
 
   // 会话延续(D 期前缺口):启动加载最近会话(含卡片回放),历史可切换
   const loadConversation = async (id: string) => {
     const r = await invoke("conversations:get", { id });
-    if (!r.ok) return;
+    if (!r.ok) return toast(r.error ?? "这段会话打开失败");
     const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[] }> } }).data;
     setActiveConversationId(id);
     setMsgs(
@@ -164,7 +172,7 @@ export function ChatDock(props: {
       clearPendingTurn();
       setRecoveryNotice("");
       if (decision.conversationId) await loadConversation(decision.conversationId);
-      void listConversations().then(setConvs);
+      void refreshConversations();
       return;
     }
     if (decision.action === "lost") clearPendingTurn();
@@ -182,8 +190,8 @@ export function ChatDock(props: {
 
   useEffect(() => {
     void listConversations().then(async (list) => {
-      setConvs(list);
-      if (list.length > 0) await loadConversation(list[0].id);
+      if (list) setConvs(list);
+      if (list && list.length > 0) await loadConversation(list[0].id);
       await recoverPendingTurn();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -271,7 +279,7 @@ export function ChatDock(props: {
         ...(parsed.stopReason === "aborted" ? { note: ABORT_NOTE } : {}),
       },
     ]);
-    void listConversations().then(setConvs);
+    void refreshConversations();
     return { ok: true, ...(parsed.actionId ? { actionId: parsed.actionId } : {}) };
   };
 
@@ -288,24 +296,27 @@ export function ChatDock(props: {
     }
   };
 
-  const deleteActiveConversation = async () => {
-    if (!activeConversationId || busy) return;
-    const current = convs.find((c) => c.id === activeConversationId);
+  /** 删任意一段（浮层里每行都能删）。只有删掉的正是当前那段时才换会话——删别人不该把用户踢走 */
+  const deleteConversationById = async (id: string) => {
+    if (busy) return;
+    const target = convs.find((c) => c.id === id);
     const yes = await confirmDialog({
       title: "删除这段会话？",
-      body: `“${current?.title ?? "当前会话"}”的聊天记录会从本机删除，稿件和选题不会受影响。`,
+      body: `“${target?.title ?? "这段会话"}”的聊天记录会从本机删除，稿件和选题不会受影响。`,
       confirmLabel: "删除会话",
       danger: true,
     });
     if (!yes) return;
-    const r = await invoke("conversations:delete", { id: activeConversationId });
+    const r = await invoke("conversations:delete", { id });
     if (!r.ok) return toast(r.error ?? "删除失败");
     const list = await listConversations();
-    setConvs(list);
-    if (list.length > 0) await loadConversation(list[0].id);
-    else {
-      setActiveConversationId(undefined);
-      setMsgs([]);
+    if (list) setConvs(list);
+    if (id === activeConversationId) {
+      if (list && list.length > 0) await loadConversation(list[0].id);
+      else {
+        setActiveConversationId(undefined);
+        setMsgs([]);
+      }
     }
     toast("会话已删除；稿件和选题仍保留");
   };
@@ -346,35 +357,48 @@ export function ChatDock(props: {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
   }, [msgs, progress, stream.text]);
 
-  // 四档置顶 + 自定义端点按端点名 optgroup（清单本身低频变化，随渲染算即可）
-  const modelGroups = groupModelOptions(modelOptions);
+  // 主通道/备用端点/自定义端点分组（清单本身低频变化，随渲染算即可）
+  const modelGroups = groupModelOptions(modelOptions).map((g) => ({
+    name: g.name,
+    // 面板里的行尾灰字给档位（快/强）——组名已经说清是哪个端点了
+    items: g.options.map((o) => ({ id: o.id, label: o.model, ...(o.tier ? { hint: o.tier } : {}) })),
+  }));
+
+  const now = Date.now();
+  const sessionGroups = conversationGroups(convs, now).map((g) => ({
+    name: g.name,
+    items: g.items.map((c) => ({
+      id: c.id,
+      label: c.title,
+      hint: conversationHint(c, now),
+      keywords: c.id,
+      onDelete: () => void deleteConversationById(c.id),
+    })),
+  }));
+  const activeTitle = activeConversationId
+    ? (convs.find((c) => c.id === activeConversationId)?.title ?? "当前会话")
+    : "新会话";
 
   return (
     <div className="chat">
       <div className="chat-head mono">
         总编辑
         <span className="chat-head-actions">
-          {convs.length > 0 && (
-            <select
-              aria-label="切换会话"
-              value={activeConversationId ?? ""}
-              disabled={busy}
-              onChange={(e) => {
-                if (e.target.value) void loadConversation(e.target.value);
-              }}
-            >
-              {!activeConversationId && <option value="">新会话（尚未保存）</option>}
-              {convs.map((c) => (
-                <option key={c.id} value={c.id}>{c.title}</option>
-              ))}
-            </select>
-          )}
-          {activeConversationId && (
-            <button title="删除当前会话" disabled={busy} onClick={() => void deleteActiveConversation()}>
-              删除
-            </button>
-          )}
+          <PickerButton
+            className="chat-session-picker"
+            label={activeTitle}
+            title="切换会话（每行右侧 × 删除）"
+            disabled={busy || (convs.length === 0 && !convsError)}
+            groups={sessionGroups}
+            value={activeConversationId}
+            onPick={(id) => void loadConversation(id)}
+            align="right"
+            searchPlaceholder="搜会话标题…"
+            empty="还没有会话——说句话就开始"
+            error={convsError}
+          />
           <button
+            className="chat-new"
             title="开新会话"
             disabled={busy}
             onClick={() => {
@@ -382,7 +406,7 @@ export function ChatDock(props: {
               setMsgs([]);
             }}
           >
-            ＋新会话
+            ＋
           </button>
         </span>
       </div>
@@ -449,49 +473,41 @@ export function ChatDock(props: {
         )}
       </div>
       <div className="chat-compose">
-        {/* 只有一档（或引擎没配）时不出现——没得选就不该占一行 */}
-        {modelOptions.length > 1 && (
-          <div className="chat-model-row mono">
-            <span className="muted">模型</span>
-            <select
-              aria-label="切换模型"
-              title="这一轮对话用哪个模型（只影响总编辑对话，不改写稿/调研的模型）"
-              value={modelChoice}
+        <textarea
+          className="chat-input"
+          value={input}
+          rows={2}
+          placeholder={props.contentContext
+            ? "说修改要求，如：开头更直接，删掉第三段（Enter 发送）"
+            : "跟总编辑说…修改某篇稿前请先在看板打开它"}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            // 输入法合成中(拼音未上屏)时回车只上屏候选,不发送——isComposing 拦住。
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void send(input);
+            }
+          }}
+        />
+        <div className="chat-compose-bar">
+          {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置 */}
+          {modelOptions.length > 1 && (
+            <PickerButton
+              className="chat-model-picker"
+              label={modelTriggerLabel(modelOptions, modelChoice)}
+              title="这一轮对话用哪个模型"
               disabled={busy}
-              onChange={(e) => {
-                setModelChoice(e.target.value);
-                writeModelChoice(e.target.value);
+              placement="up"
+              groups={modelGroups}
+              value={modelChoice}
+              onPick={(id) => {
+                setModelChoice(id);
+                writeModelChoice(id);
               }}
-            >
-              {modelGroups.plain.map((o) => (
-                <option key={o.id} value={o.id}>{modelOptionLabel(o)}</option>
-              ))}
-              {modelGroups.groups.map((g) => (
-                <optgroup key={g.name} label={g.name}>
-                  {g.options.map((o) => (
-                    <option key={o.id} value={o.id}>{modelOptionLabel(o)}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-        )}
-        <div className="chat-input-row">
-          <textarea
-            value={input}
-            rows={2}
-            placeholder={props.contentContext
-              ? "说修改要求，如：开头更直接，删掉第三段（Enter 发送）"
-              : "跟总编辑说…修改某篇稿前请先在看板打开它"}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              // 输入法合成中(拼音未上屏)时回车只上屏候选,不发送——isComposing 拦住。
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void send(input);
-              }
-            }}
-          />
+              searchPlaceholder="搜模型…"
+              footer="只影响总编辑对话；写稿 / 调研 / 复盘各走自己的专线"
+            />
+          )}
           {busy ? (
             <button
               title="停止这一轮（已投递的后台任务会继续跑）"

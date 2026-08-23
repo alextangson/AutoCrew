@@ -1,49 +1,13 @@
 /**
  * 设置中心(V5.6.3 重构):七区全展开卡片 + 状态徽标一眼可扫——之前折叠 details
  * 要点七次才见全貌。所有 key 掩码显示,原文永不出 server;留空的字段保持现状。
+ * 引擎/模型路由区自成一块（SettingsEngine.tsx），它有自己的加载与「测试」闭环。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast, openDialog } from "../ui";
-import { slugProviderId } from "./provider-id";
-
-function Section(props: { title: string; status?: string; on?: boolean; children: React.ReactNode }) {
-  return (
-    <section className="set-zone">
-      <div className="set-head">
-        <h3 className="serif set-title">{props.title}</h3>
-        {props.status && <span className={"chip" + (props.on ? " chip-pub" : "")}>{props.status}</span>}
-      </div>
-      {props.children}
-    </section>
-  );
-}
-
-function Field(props: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; password?: boolean }) {
-  return (
-    <label className="set-field">
-      <span className="mono muted">{props.label}</span>
-      <input
-        type={props.password ? "password" : "text"}
-        value={props.value}
-        placeholder={props.placeholder}
-        onChange={(e) => props.onChange(e.target.value)}
-      />
-    </label>
-  );
-}
-
-/** 保存行:按钮 + 「留空保持现状」契约说明(占位符即当前值) */
-function SaveRow(props: { label: string; onSave: () => void }) {
-  return (
-    <div className="set-save">
-      <button className="primary" onClick={props.onSave}>
-        {props.label}
-      </button>
-      <span className="muted mono">留空的字段保持现状(浅字即当前值)</span>
-    </div>
-  );
-}
+import { Field, SaveRow, Section } from "./settings-kit";
+import { EngineSection } from "./SettingsEngine";
 
 interface RadarSource {
   id?: string;
@@ -54,69 +18,7 @@ interface RadarSource {
   [k: string]: unknown;
 }
 
-/** settings:get 回的一条端点：无 key、无掩码，只有一个"配没配" */
-interface ProviderView {
-  id: string;
-  name: string;
-  baseUrl: string;
-  protocol: string | null;
-  models: string[];
-  apiKeySet: boolean;
-}
-
-/** 表单里的一行。key 只在浏览器里活着（React key）；id 是落盘的那个，创建时生成一次后不再变 */
-interface ProviderRow {
-  key: string;
-  id: string;
-  name: string;
-  baseUrl: string;
-  models: string;
-  protocol: string;
-  apiKey: string;
-  apiKeySet: boolean;
-}
-
-let providerRowSeq = 0;
-
-function toProviderRows(list: ProviderView[] | undefined): ProviderRow[] {
-  return (list ?? []).map((p) => ({
-    key: `saved-${p.id}`,
-    id: p.id,
-    name: p.name,
-    baseUrl: p.baseUrl,
-    models: p.models.join(", "),
-    protocol: p.protocol ?? "",
-    apiKey: "",
-    apiKeySet: p.apiKeySet,
-  }));
-}
-
 export function Settings() {
-  type RouteView = { baseUrl: string; model: string; protocol?: string; models?: string[] } | null;
-  const [engine, setEngine] = useState<{
-    configured: boolean;
-    apiKeyMasked: string | null;
-    baseUrl: string;
-    strongModel: string;
-    fastModel: string;
-    routes: { writer: RouteView; analytics: RouteView; scout: RouteView; codex: RouteView };
-    providers?: ProviderView[];
-  } | null>(null);
-  const [providers, setProviders] = useState<ProviderRow[]>([]);
-  const [eForm, setEForm] = useState({
-    api_key: "",
-    base_url: "",
-    strong_model: "",
-    fast_model: "",
-    writer_base_url: "",
-    writer_model: "",
-    analytics_base_url: "",
-    analytics_model: "",
-    scout_base_url: "",
-    scout_model: "",
-    codex_base_url: "",
-    codex_model: "",
-  });
   const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
   const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; imageChain: Array<{ name: string | null; kind: string; baseUrl: string | null; apiKeyMasked: string | null; model: string | null; dialect: string }>; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean; xConfigured: boolean; xApiKeyMasked: string | null; redditConfigured: boolean; redditClientIdMasked: string | null } | null>(null);
@@ -143,8 +45,7 @@ export function Settings() {
   const [iForm, setIForm] = useState({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "", justoneapi_key: "" });
 
   const load = async () => {
-    const [er, sr, pr, cr, rr, kr, wr, ir] = await Promise.all([
-      invoke("settings:get"),
+    const [sr, pr, cr, rr, kr, wr, ir] = await Promise.all([
       invoke("settings:search_get"),
       invoke("settings:publish_get"),
       invoke("settings:cover_get"),
@@ -154,11 +55,6 @@ export function Settings() {
       invoke("inbox:settings_get"),
     ]);
     if (ir.ok) setInbox((ir as unknown as { data: typeof inbox }).data);
-    if (er.ok) {
-      const d = (er as unknown as { data: NonNullable<typeof engine> }).data;
-      setEngine(d);
-      setProviders(toProviderRows(d.providers));
-    }
     if (sr.ok) setSearch((sr as unknown as { data: typeof search }).data);
     if (pr.ok) setPub((pr as unknown as { data: typeof pub }).data);
     if (cr.ok) setCover((cr as unknown as { data: typeof cover }).data);
@@ -181,36 +77,6 @@ export function Settings() {
     if (!r.ok) return toast(r.error ?? "保存失败");
     toast("已保存");
     reset();
-    void load();
-  };
-
-  const patchProvider = (key: string, patch: Partial<ProviderRow>) =>
-    setProviders((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-
-  /**
-   * 端点整份提交（服务端原子校验，任一条非法就整次拒绝并说清是哪条）。
-   * id 在第一次提交前生成一次并留在表单里——之后改名不重算，切换器里存着的选择不会作废。
-   */
-  const saveProviders = async () => {
-    const taken = new Set(providers.filter((p) => p.id).map((p) => p.id));
-    const withIds = providers.map((p) => {
-      if (p.id) return p;
-      const id = slugProviderId(p.name, taken);
-      taken.add(id);
-      return { ...p, id };
-    });
-    setProviders(withIds);
-    const payload = withIds.map((p) => ({
-      id: p.id,
-      name: p.name.trim(),
-      baseUrl: p.baseUrl.trim(),
-      models: p.models.split(/[,，\s]+/).filter(Boolean),
-      ...(p.protocol ? { protocol: p.protocol } : {}),
-      ...(p.apiKey.trim() ? { apiKey: p.apiKey.trim() } : {}),
-    }));
-    const r = await invoke("settings:set", { providers: payload });
-    if (!r.ok) return toast(r.error ?? "保存失败"); // 服务端的原因原样展示,不改写
-    toast(payload.length ? "端点已保存——对话切换器里可以选了" : "端点已清空");
     void load();
   };
 
@@ -237,99 +103,7 @@ export function Settings() {
     <div className="settings">
       <h2 className="serif">设置</h2>
 
-      <Section title="引擎 · 模型服务" status={engine?.configured ? `已配置 ${engine.apiKeyMasked ?? ""}` : "未配置"} on={engine?.configured}>
-        <p className="muted">总编辑与轻任务走主通道；写稿、复盘可单独走更强模型。所有路由共用同一个 API Key，不重复保存凭证。</p>
-        <p className="muted">主通道:{engine?.baseUrl ?? "—"} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}</p>
-        <Field label="API Key" password value={eForm.api_key} placeholder={engine?.apiKeyMasked ?? "sk-..."} onChange={(v) => setEForm((f) => ({ ...f, api_key: v }))} />
-        <Field label="Base URL" value={eForm.base_url} placeholder={engine?.baseUrl ?? ""} onChange={(v) => setEForm((f) => ({ ...f, base_url: v }))} />
-        <Field label="强模型" value={eForm.strong_model} placeholder={engine?.strongModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, strong_model: v }))} />
-        <Field label="快模型" value={eForm.fast_model} placeholder={engine?.fastModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, fast_model: v }))} />
-        <p className="mono muted">写稿专线 · Opus 4.8</p>
-        <Field label="写稿端点" value={eForm.writer_base_url} placeholder={engine?.routes?.writer?.baseUrl ?? "https://code.newcli.com/claude/ultra"} onChange={(v) => setEForm((f) => ({ ...f, writer_base_url: v }))} />
-        <Field label="写稿模型" value={eForm.writer_model} placeholder={engine?.routes?.writer?.model ?? "claude-opus-4-8"} onChange={(v) => setEForm((f) => ({ ...f, writer_model: v }))} />
-        <p className="mono muted">数据复盘专线 · Opus 4.8</p>
-        <Field label="复盘端点" value={eForm.analytics_base_url} placeholder={engine?.routes?.analytics?.baseUrl ?? "https://code.newcli.com/claude/ultra"} onChange={(v) => setEForm((f) => ({ ...f, analytics_base_url: v }))} />
-        <Field label="复盘模型" value={eForm.analytics_model} placeholder={engine?.routes?.analytics?.model ?? "claude-opus-4-8"} onChange={(v) => setEForm((f) => ({ ...f, analytics_model: v }))} />
-        <p className="mono muted">选题评分专线 · Sonnet 5</p>
-        <Field label="选题端点" value={eForm.scout_base_url} placeholder={engine?.routes?.scout?.baseUrl ?? "https://code.newcli.com/claude/ultra"} onChange={(v) => setEForm((f) => ({ ...f, scout_base_url: v }))} />
-        <Field label="选题模型" value={eForm.scout_model} placeholder={engine?.routes?.scout?.model ?? "claude-sonnet-5"} onChange={(v) => setEForm((f) => ({ ...f, scout_model: v }))} />
-        <p className="mono muted">Codex 备用通道 · 同 Key 可选 sol / terra / luna</p>
-        <Field label="Codex 端点" value={eForm.codex_base_url} placeholder={engine?.routes?.codex?.baseUrl ?? "https://code.newcli.com/codex/v1"} onChange={(v) => setEForm((f) => ({ ...f, codex_base_url: v }))} />
-        <Field label="Codex 默认模型" value={eForm.codex_model} placeholder={engine?.routes?.codex?.model ?? "gpt-5.6-sol"} onChange={(v) => setEForm((f) => ({ ...f, codex_model: v }))} />
-        <SaveRow
-          label="保存引擎与任务路由"
-          onSave={() =>
-            void submit("settings:set", eForm, () =>
-              setEForm({
-                api_key: "", base_url: "", strong_model: "", fast_model: "",
-                writer_base_url: "", writer_model: "", analytics_base_url: "", analytics_model: "",
-                scout_base_url: "", scout_model: "",
-                codex_base_url: "", codex_model: "",
-              }),
-            )
-          }
-        />
-
-        <p className="mono muted set-providers-head">
-          自定义端点 · 总编辑对话的模型切换器里按端点分组直接选（不影响上面的主通道与任务路由）
-        </p>
-        {providers.length === 0 && <p className="muted">还没有自定义端点。加一个，比如本地 Ollama 或另一家中转。</p>}
-        {providers.map((p) => (
-          <div key={p.key} className="set-provider">
-            <div className="row">
-              <span className="mono pri">{p.id || "新端点"}</span>
-              <span className="row-title">{p.name.trim() || "未命名"}</span>
-              <button onClick={() => setProviders((rows) => rows.filter((r) => r.key !== p.key))}>删除</button>
-            </div>
-            <Field label="名称" value={p.name} placeholder="如:DeepSeek 官方" onChange={(v) => patchProvider(p.key, { name: v })} />
-            <Field label="地址" value={p.baseUrl} placeholder="https://api.deepseek.com" onChange={(v) => patchProvider(p.key, { baseUrl: v })} />
-            <Field
-              label="模型"
-              value={p.models}
-              placeholder="逗号分隔,如:deepseek-v4-pro, deepseek-v4-flash"
-              onChange={(v) => patchProvider(p.key, { models: v })}
-            />
-            <label className="set-field">
-              <span className="mono muted">协议</span>
-              <select value={p.protocol} onChange={(e) => patchProvider(p.key, { protocol: e.target.value })}>
-                <option value="">自动推断(按 key 前缀与域名)</option>
-                <option value="openai">openai</option>
-                <option value="anthropic">anthropic</option>
-              </select>
-            </label>
-            <Field
-              label="API Key"
-              password
-              value={p.apiKey}
-              placeholder={p.apiKeySet ? "已配置,留空保持不变" : "必填"}
-              onChange={(v) => patchProvider(p.key, { apiKey: v })}
-            />
-          </div>
-        ))}
-        <div className="set-save">
-          <button
-            onClick={() =>
-              setProviders((rows) => [
-                ...rows,
-                { key: `new-${(providerRowSeq += 1)}`, id: "", name: "", baseUrl: "", models: "", protocol: "", apiKey: "", apiKeySet: false },
-              ])
-            }
-          >
-            ＋添加端点
-          </button>
-          <button className="primary" onClick={() => void saveProviders()}>保存端点</button>
-          <button
-            onClick={async () => {
-              const r = await invoke("settings:open_config");
-              if (!r.ok) return toast(r.error ?? "打开失败");
-              const d = (r as unknown as { data: { path: string; opened: boolean } }).data;
-              toast(d.opened ? `已打开 ${d.path}` : `请手动打开 ${d.path}`);
-            }}
-          >
-            打开配置文件
-          </button>
-        </div>
-      </Section>
+      <EngineSection />
 
       <Section title="搜索 · 侦查员外网搜集" status={search?.configured ? `已配置 ${search.provider}` : "未配置"} on={search?.configured}>
         <p className="muted">配好后总编辑就能派侦查员按定位全网搜灵感。推荐:博查(中文)/Tavily(英文)。</p>
