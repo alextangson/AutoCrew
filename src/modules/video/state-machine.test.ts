@@ -43,15 +43,29 @@ describe("迁移表锁定（spec §2.2 原文）", () => {
     ]);
   });
 
-  it("自动接续只有三对相邻阶段；回退白名单只有打回、重开、重组装三条", () => {
+  /**
+   * 回退边从三条加到五条（lifecycle spec §2.2）：打回分流出「只回门二改 B-roll」，
+   * 门二又能再退一格回门一。名单是白名单——多一条就多一条能绕过人工门的路，所以逐条锁死。
+   */
+  it("自动接续只有三对相邻阶段；回退白名单只有打回两路、门二退门一、重开、重组装五条", () => {
     expect(AUTO_CHAIN_PHASES).toEqual([
       ["ingest", "transcribe"], ["transcribe", "cut"], ["assemble", "render"],
     ]);
     expect(PHASE_REGRESSION_EDGES).toEqual([
       { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
+      { from: { phase: "review", state: "awaiting_human" }, to: { phase: "edit", state: "awaiting_human" } },
+      { from: { phase: "edit", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
       { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
       { from: { phase: "render", state: "failed" }, to: { phase: "assemble", state: "queued" } },
     ]);
+  });
+
+  it("打回门二 / 门二退门一都是显式边；相邻的假边（review→assemble）仍然走不通", () => {
+    expect(canTransition(at("review", "awaiting_human"), at("edit", "awaiting_human"))).toBe(true);
+    expect(canTransition(at("edit", "awaiting_human"), at("cut", "awaiting_human"))).toBe(true);
+    expect(canTransition(at("review", "awaiting_human"), at("assemble", "awaiting_human"))).toBe(false);
+    // 只对停在门上的状态开：running 中的 edit 不许被谁拽回门一
+    expect(canTransition(at("edit", "running"), at("cut", "awaiting_human"))).toBe(false);
   });
 
   // 边界 #10：render/failed 上重试只会重投同一份废 manifest，必须另有一条回组装的边

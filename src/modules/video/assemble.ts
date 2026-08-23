@@ -33,7 +33,7 @@ import {
   readVideoAssets,
   resolveAssetRef,
   videoDir,
-  writeVersioned,
+  writeStaging,
 } from "./video-store.js";
 import type {
   OutputMapEntry,
@@ -229,7 +229,10 @@ export interface AssembleInput {
   cut: VideoCut;
   cutRevision: number;
   timelineRevision: number;
+  /** 来自 `editor-decision.v<confirmedEditorRevision>.json`，assemble 自己不去猜覆盖轨 */
   slots: OverlaySlot[];
+  /** staging 产物按它命名；同一条 job 重跑就是覆盖自己上一次的半成品 */
+  jobId: string;
   /**
    * 剪辑单元的来源（`edit-units.origin`）。cue 切分按它分派：
    * `llm` 走语义单元，`raw`（含老产物缺表回落）走宽度分组。
@@ -237,9 +240,16 @@ export interface AssembleInput {
   unitsOrigin?: "llm" | "raw";
 }
 
+/**
+ * 组装的两件版本化产物。**整体走 staging，CAS 通过后一起定版**（lifecycle spec §2.1）：
+ * 早先 timeline 先落正式版、音频再失败的话，重试会撞上「timeline.vK 已存在」这条不可覆盖，
+ * 把整条 content 永久钉死在组装这一步。
+ */
+export const ASSEMBLE_STAGED_BASES = ["timeline", "render-manifest"] as const;
+
 export type AssembleOutcome =
   /** warning = 组装成了但有话要说（例：BGM 不合格已降级为无 BGM）——降级必须可见 */
-  | { ok: true; timeline: VideoTimeline; manifest: RenderManifest; manifestFile: string; warning?: string }
+  | { ok: true; timeline: VideoTimeline; manifest: RenderManifest; warning?: string }
   | { ok: false; blockedReason?: "aroll_drifted" | "ffmpeg_missing"; errorCode: string; reason: string };
 
 type AudioTrackOutcome =
@@ -386,7 +396,10 @@ function audioFailed(result: { errorCode: string; reason: string }): AssembleOut
     : { ok: false, errorCode: result.errorCode, reason: result.reason };
 }
 
-/** 建 timeline → 校验 → 落盘。不合法的 timeline 绝不落盘（落了就成了假的审计凭证） */
+/**
+ * 建 timeline → 校验 → 落 staging。不合法的 timeline 绝不落盘（落了就成了假的审计凭证）；
+ * 落的是 staging 而不是正式版本——定版由 runner 在 CAS 通过后与 manifest 一起做。
+ */
 async function stageTimeline(
   input: AssembleInput,
   overlays: { assetId: string; slot: OverlaySlot }[],
@@ -409,7 +422,7 @@ async function stageTimeline(
   if (errors.length > 0) {
     return { ok: false, errorCode: "timeline_invalid", reason: `timeline 校验不通过：\n${errors.map((e) => `· ${e}`).join("\n")}` };
   }
-  await writeVersioned(videoDir(dataDir, contentId), "timeline", input.timelineRevision, timeline);
+  await writeStaging(videoDir(dataDir, contentId), "timeline", input.jobId, timeline);
   return { ok: true, timeline };
 }
 
@@ -464,6 +477,6 @@ export async function assembleVideo(input: AssembleInput, deps?: VideoDeps): Pro
     audio: { file: audio.file, durationMs: audio.durationMs },
     identity: await loadIdentity(dataDir),
   });
-  const manifestFile = await writeVersioned(dir, "render-manifest", input.timelineRevision, manifest);
-  return { ok: true, timeline: staged.timeline, manifest, manifestFile, ...(audio.warning ? { warning: audio.warning } : {}) };
+  await writeStaging(dir, "render-manifest", input.jobId, manifest);
+  return { ok: true, timeline: staged.timeline, manifest, ...(audio.warning ? { warning: audio.warning } : {}) };
 }

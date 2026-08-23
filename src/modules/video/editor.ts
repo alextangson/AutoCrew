@@ -30,10 +30,9 @@ import {
   legalWindow,
   toPlanOverlays,
   validatePlanOverlays,
-  type BrollCandidate,
-  type EditorCandidate,
   type SubmittedOverlay,
 } from "./editor-plan.js";
+import type { BrollCandidate, EditorCandidate } from "./broll-catalog.js";
 import type { VideoDeps } from "./proc.js";
 import { asIndex, parseArrayArg } from "./tool-args.js";
 import type { EditorPlanOverlay, OverlayFit } from "./types.js";
@@ -289,12 +288,6 @@ export interface EditorOutcome {
 function emptyPlan(kind: "note" | "warning", message: string): EditorOutcome {
   const base = { origin: "empty" as const, overlays: [] };
   return kind === "note" ? { ...base, note: message } : { ...base, warning: message };
-}
-
-/** 素材清单的指纹：换素材、改说明、改时长都要让 plan 重算（进 inputKey） */
-export function catalogDigest(candidates: readonly BrollCandidate[], excluded: readonly string[]): string {
-  const shape = candidates.map((c) => [c.filename, c.kind, c.label, c.durationMs ?? 0]);
-  return sha8(JSON.stringify([shape, [...excluded].sort()]));
 }
 
 /** edit phase 的输入指纹（§3.1）：确认后的 cut、稿件、素材清单、prompt 版本、模型路由 */

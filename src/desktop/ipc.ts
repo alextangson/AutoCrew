@@ -153,10 +153,12 @@ import {
   videoBuildStartHandler,
   videoCutConfirmHandler,
   videoCutPreviewHandler,
+  videoEditorBackToCutHandler,
   videoEditorConfirmHandler,
   videoEditorPlanGetHandler,
   videoEditorRerunHandler,
   videoEditorSlotFillHandler,
+  videoEditorSlotRemoveHandler,
   videoReassembleHandler,
   videoRetryHandler,
   videoReviewConfirmHandler,
@@ -202,6 +204,7 @@ import {
   removeFolder as removeLibraryFolder,
   getAsset as getLibraryAsset,
 } from "../storage/library-store.js";
+import { probeImportedAssets, setLibraryReusable } from "../modules/video/library-pool.js";
 import nodePath from "node:path";
 import { access as fsAccess } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -934,7 +937,10 @@ async function libraryAddHandler(payload: Record<string, unknown>): Promise<Reco
   }
   const folderId = typeof payload.folder_id === "string" && payload.folder_id ? payload.folder_id : null;
   try {
-    const result = await addLibraryAssets(paths as string[], folderId, (payload._dataDir as string) || undefined);
+    const dataDir = (payload._dataDir as string) || undefined;
+    const result = await addLibraryAssets(paths as string[], folderId, dataDir);
+    // 入库即 ffprobe 并持久化（lifecycle §1）：构目录时同步探等于每跑一次剪辑师就探一遍全库
+    await probeImportedAssets(result.added, dataDir);
     return { ok: true, data: result };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -998,6 +1004,25 @@ async function libraryFolderRemoveHandler(payload: Record<string, unknown>): Pro
     const removed = await removeLibraryFolder(id, (payload._dataDir as string) || undefined);
     if (!removed) return { ok: false, error: "文件夹不存在" };
     return { ok: true, data: {} };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * 常备素材池开关（视频线 lifecycle spec §1）。判定全在 `library-pool`：
+ * 说明非空、类型对、文件在、视频探得出时长——**拒绝要给人话**，不是静默不生效。
+ */
+async function librarySetReusableHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  if (typeof payload.reusable !== "boolean") return { ok: false, error: "reusable 必须是布尔值" };
+  try {
+    const result = await setLibraryReusable(id, payload.reusable, (payload._dataDir as string) || undefined);
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, data: { asset: result.asset, ...(result.warning ? { warning: result.warning } : {}) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -1177,6 +1202,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "library:remove": libraryRemoveHandler,
     "library:folder_create": libraryFolderCreateHandler,
     "library:folder_remove": libraryFolderRemoveHandler,
+    "library:set_reusable": librarySetReusableHandler,
     "dialog:pick_media": dialogPickMediaUnavailableHandler,
     "content:asset_add": contentAssetAddHandler,
     "content:asset_remove": contentAssetRemoveHandler,
@@ -1223,6 +1249,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "video:editor_confirm": videoEditorConfirmHandler,
     "video:editor_rerun": videoEditorRerunHandler,
     "video:editor_slot_fill": videoEditorSlotFillHandler,
+    "video:editor_slot_remove": videoEditorSlotRemoveHandler,
+    "video:editor_back_to_cut": videoEditorBackToCutHandler,
     "video:cut_preview": videoCutPreviewHandler,
     "video:reassemble": videoReassembleHandler,
     "video:review_confirm": videoReviewConfirmHandler,

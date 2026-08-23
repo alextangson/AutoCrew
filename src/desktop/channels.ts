@@ -89,6 +89,8 @@ export const IPC_CHANNELS = [
   "library:remove",
   "library:folder_create",
   "library:folder_remove",
+  // 常备素材池开关（视频线 lifecycle spec §1）：开启前置是 description 非空，判定在 library-pool
+  "library:set_reusable",
   "dialog:pick_media",
   "content:asset_add",
   "content:asset_remove",
@@ -146,6 +148,9 @@ export const IPC_CHANNELS = [
   "video:editor_confirm",
   "video:editor_rerun",
   "video:editor_slot_fill",
+  // 槽位精修与门二回退（lifecycle spec §2.2 / §2.3）：删槽与填槽共用同一个派生函数
+  "video:editor_slot_remove",
+  "video:editor_back_to_cut",
   "video:cut_preview",
   "video:reassemble",
   "video:review_confirm",

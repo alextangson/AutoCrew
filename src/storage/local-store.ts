@@ -65,6 +65,14 @@ export interface Asset {
   sourceName?: string;
   tags?: string[];
   media?: AssetMedia;
+  /**
+   * 所有权标记（视频线 lifecycle spec §3.1）。只有本字段为 `"video-pipeline"` 的登记
+   * 才允许被自动清理删除——**绝不按文件名删**：人手挂接的同名 `final-v1.mp4` 没有这个标记，
+   * 清理时一律不碰（§4 #11）。历史成片没有这个字段，因此也不会被回溯清理（§4 #14）。
+   */
+  managedBy?: "video-pipeline";
+  /** 与 managedBy 配对：这份成片是哪一版渲染的产物。清理按「所有权 + 版本」双重匹配 */
+  renderedRevision?: number;
 }
 
 export interface ContentVersion {
@@ -696,6 +704,90 @@ export async function addAsset(
     await writeJsonAtomic(metaPath, content);
 
     return { ok: true, asset: newAsset };
+  });
+}
+
+/**
+ * 幂等登记：同名素材**替换**而不是追加（视频线 lifecycle spec §3.1）。
+ *
+ * `addAsset` 是无条件 append——重试一次渲染就会在 meta 里留两条同名记录，
+ * 之后 `removeAsset` 一删删两条、`detach` 也说不清删的是哪条。成片这种「同一版只该有一条」
+ * 的登记必须走这里。文件仍然照拷（同名覆盖字节是期望行为：那是同一版的重渲结果）。
+ */
+export async function upsertAsset(
+  contentId: string,
+  asset: Omit<Asset, "addedAt"> & { sourcePath?: string },
+  dataDir?: string,
+): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
+  if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
+  if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
+  return serializeContentWrite(contentId, async () => {
+    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+    const metaPath = path.join(projDir, "meta.json");
+    let raw: string;
+    try {
+      raw = await fs.readFile(metaPath, "utf-8");
+    } catch (err) {
+      if (isFileMissing(err)) return { ok: false, error: `Content ${contentId} not found` };
+      throw err;
+    }
+    const content: Content = JSON.parse(raw);
+    if (asset.sourcePath) {
+      await fs.mkdir(path.join(projDir, "assets"), { recursive: true });
+      await fs.copyFile(asset.sourcePath, path.join(projDir, "assets", asset.filename));
+    }
+    const { sourcePath: _copied, ...fields } = asset;
+    const now = new Date().toISOString();
+    const existing = (content.assets || []).find((a) => a.filename === asset.filename);
+    const next: Asset = { ...fields, addedAt: existing?.addedAt ?? now };
+    content.assets = [...(content.assets || []).filter((a) => a.filename !== asset.filename), next];
+    content.updatedAt = now;
+    await writeJsonAtomic(metaPath, content);
+    return { ok: true, asset: next };
+  });
+}
+
+/**
+ * 反登记一版受管成片（视频线 lifecycle spec §3.1）：**只删所有权与版本都对得上的那一条**。
+ *
+ * 刻意不复用 `removeAsset`：那个按文件名删，会把所有同名记录连同文件一起删掉——
+ * 人手挂接的同名 `final-v1.mp4` 会被误伤，而清理是自动动作，误伤不可撤销。
+ * 返回 false = 没有匹配的受管登记（历史成片、别人的文件），此时**什么都没动**。
+ */
+export async function removeManagedFinalAsset(
+  contentId: string,
+  renderedRevision: number,
+  dataDir?: string,
+): Promise<boolean> {
+  if (!isContentId(contentId) || !Number.isInteger(renderedRevision)) return false;
+  return serializeContentWrite(contentId, async () => {
+    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+    const metaPath = path.join(projDir, "meta.json");
+    let raw: string;
+    try {
+      raw = await fs.readFile(metaPath, "utf-8");
+    } catch (err) {
+      if (isFileMissing(err)) return false;
+      throw err;
+    }
+    const content: Content = JSON.parse(raw);
+    const owned = (content.assets || []).filter(
+      (a) => a.managedBy === "video-pipeline" && a.renderedRevision === renderedRevision,
+    );
+    if (owned.length === 0) return false;
+    const doomed = new Set(owned.map((a) => a.filename));
+    content.assets = (content.assets || []).filter((a) => !doomed.has(a.filename));
+    content.updatedAt = new Date().toISOString();
+    await writeJsonAtomic(metaPath, content);
+    for (const filename of doomed) {
+      if (!isSafeFilename(filename)) continue;
+      try {
+        await fs.unlink(path.join(projDir, "assets", filename));
+      } catch {
+        /* 文件已被人手删掉：登记清干净就算完成 */
+      }
+    }
+    return true;
   });
 }
 

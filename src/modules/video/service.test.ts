@@ -135,7 +135,10 @@ describe("全链走查", () => {
 
     const afterRender = await settled();
     expect(describeState(afterRender)).toBe("review/awaiting_human");
-    expect(afterRender.revisions).toEqual({ transcript: 1, cut: 3, editor: 1, timeline: 1, rendered: 1 });
+    // editor 走到 2 是**确认本身也派生一版 plan**（lifecycle §2.1）：
+    // v1 是剪辑师排的，v2 是人确认下来的那一份，决策就写在 v2 上
+    expect(afterRender.revisions).toEqual({ transcript: 1, cut: 3, editor: 2, timeline: 1, rendered: 1 });
+    expect(afterRender.confirmedEditorRevision).toBe(2);
 
     // 单元表随 cut 进新版本，warning 不跟着走（人已经处理过了）
     const carried = await readVersioned<VideoEditUnits>(videoDir(dir, contentId), "edit-units", 3);
@@ -175,7 +178,8 @@ describe("全链走查", () => {
     await passEditorGate();
     const after = await settled();
     expect(describeState(after)).toBe("review/awaiting_human");
-    expect(after.revisions).toEqual({ transcript: 1, cut: 4, editor: 2, timeline: 2, rendered: 2 });
+    // editor：v1 剪辑师 → v2 确认 → v3 按新选段重排 → v4 再确认
+    expect(after.revisions).toEqual({ transcript: 1, cut: 4, editor: 4, timeline: 2, rendered: 2 });
 
     const cut4 = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 4);
     expect(cut4).toMatchObject({ origin: "human", baseCutRevision: 3, keeps: ["seg-0001"] });

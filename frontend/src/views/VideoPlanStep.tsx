@@ -18,12 +18,15 @@ import { toast } from "../ui";
 import {
   editorPlanSummary,
   formatTimecode,
+  videoEditorBackToCut,
   videoEditorConfirm,
   videoEditorPlanGet,
   videoEditorRerun,
   videoEditorSlotFill,
+  videoEditorSlotRemove,
   type EditorPlanOverlay,
   type EditorPlanView,
+  type VideoReviewDecision,
   type VideoState,
 } from "../lib";
 
@@ -39,6 +42,8 @@ interface LibraryPick {
 export function VideoPlanStep(props: {
   contentId: string;
   state: VideoState;
+  /** 门三打回时留下的备注与定位;回到这道门要原样看得见(刷新也不丢) */
+  review?: VideoReviewDecision;
   reload: () => Promise<void>;
   back: () => void;
 }) {
@@ -46,7 +51,6 @@ export function VideoPlanStep(props: {
   const waiting = props.state.state !== "awaiting_human";
 
   const [view, setView] = useState<EditorPlanView | null>(null);
-  const [dropped, setDropped] = useState<ReadonlySet<string>>(new Set<string>());
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** 手里这份是给哪一版拉的。不记这个,新版本刚到、还没拉回来的那一帧会闪出「没找到」 */
@@ -60,7 +64,6 @@ export function VideoPlanStep(props: {
     setErr(null);
     setView(r.data ?? null);
     setLoadedRev(planRev);
-    setDropped(new Set<string>());
     setFilling(null);
   }, [props.contentId, planRev]);
 
@@ -73,9 +76,13 @@ export function VideoPlanStep(props: {
   const ready = loadedRev === planRev;
 
   const plan = view?.plan ?? null;
-  const kept = useMemo(() => plan?.overlays.filter((o) => !dropped.has(o.overlayId)) ?? [], [plan, dropped]);
+  const kept = useMemo(() => plan?.overlays ?? [], [plan]);
   /** 留下的待生成槽 = 确认后会被丢掉的那些,必须在按钮旁说出条数 */
   const pending = kept.filter((o) => o.source.kind === "generate");
+  /** 打回时点名的那一槽:高亮它,人一眼看见「你说的是这一段」 */
+  const flagged = props.review?.locate?.kind === "overlay" ? props.review.locate.overlayId : null;
+  /** 选段换过版:这份编排按旧输出域时间排的,确认它等于让 overlay 落在错误的话上 */
+  const staleCut = view?.staleCutRevision;
 
   const rerun = async () => {
     if (busy) return;
@@ -90,24 +97,24 @@ export function VideoPlanStep(props: {
     }
   };
 
-  const fill = async (libraryId: string) => {
-    if (!view || !filling || busy) return;
+  /** 填 / 删共用这一段:两者都派生新一版 plan,冲突与刷新的处理完全一样 */
+  const mutate = async (
+    run: (planRevision: number) => Promise<{ ok: boolean; conflict?: boolean; error?: string }>,
+    done: string,
+    failed: string,
+  ) => {
+    if (!view || busy) return;
     setBusy(true);
     try {
-      const r = await videoEditorSlotFill({
-        contentId: props.contentId,
-        planRevision: view.revision,
-        overlayId: filling.overlayId,
-        libraryId,
-      });
+      const r = await run(view.revision);
       if (r.conflict) {
-        toast("成片计划已过期,已刷新最新版 —— 请重新填一次");
+        toast("成片计划已过期,已刷新最新版 —— 请重新来一次");
         await props.reload();
         await load();
         return;
       }
-      if (!r.ok) return toast(r.error ?? "填充素材失败");
-      toast("已填上 —— 这是新一版计划,旧的留档不删");
+      if (!r.ok) return toast(r.error ?? failed);
+      toast(done);
       setFilling(null);
       // 新版本号在状态里,reload 会把它带回来并触发整份重拉
       await props.reload();
@@ -115,6 +122,30 @@ export function VideoPlanStep(props: {
       setBusy(false);
     }
   };
+
+  const fill = (libraryId: string) => {
+    if (!filling) return;
+    const overlayId = filling.overlayId;
+    return mutate(
+      (planRevision) => videoEditorSlotFill({ contentId: props.contentId, planRevision, overlayId, libraryId }),
+      "已填上 —— 这是新一版计划,旧的留档不删",
+      "填充素材失败",
+    );
+  };
+
+  const removeSlot = (overlayId: string) =>
+    mutate(
+      (planRevision) => videoEditorSlotRemove({ contentId: props.contentId, planRevision, overlayId }),
+      "已删掉这一段 —— 派生了新一版计划,旧的留档不删",
+      "删除失败",
+    );
+
+  const backToCut = () =>
+    mutate(
+      (planRevision) => videoEditorBackToCut({ contentId: props.contentId, planRevision }),
+      "已回到选段 —— 改完再走一遍成片计划",
+      "回选段失败",
+    );
 
   const submit = async () => {
     if (!view || busy) return;
@@ -152,6 +183,26 @@ export function VideoPlanStep(props: {
 
       {err && <p className="ed-error">{err}</p>}
       {waiting && <p className="muted">剪辑师在看素材排 B-roll —— 跑完这一页会自己变。</p>}
+      {/* 打回备注落在不可变记录里,所以刷新、换窗口、隔天再来都还在(§2.4) */}
+      {props.review?.verdict === "reject" && props.review.target === "edit" && (
+        <p className="vid-warn">
+          你把成片 v{props.review.renderedRevision} 打回到了这一步
+          {props.review.timestampMs !== undefined ? `(${formatTimecode(props.review.timestampMs)} 处)` : ""}
+          {props.review.note ? `:${props.review.note}` : "。"}
+          {flagged ? ` 指向的是 ${flagged} 这一段。` : ""}
+        </p>
+      )}
+      {ready && staleCut !== undefined && (
+        <div className="vid-bad">
+          <strong>这份编排是对选段 v{staleCut} 排的,当前选段已经换版了</strong>
+          <p>输出域时间全变了,按它出片会让 B-roll 落在错误的话上。重排一版再确认。</p>
+          <div className="row-actions">
+            <button className="primary" disabled={busy} onClick={() => void rerun()}>
+              重新跑剪辑师
+            </button>
+          </div>
+        </div>
+      )}
       {ready && plan?.warning && <p className="vid-warn">{plan.warning}</p>}
       {ready && plan?.excludedAssets && plan.excludedAssets.length > 0 && (
         <p className="vid-warn">
@@ -169,14 +220,9 @@ export function VideoPlanStep(props: {
                 <OverlayRow
                   key={o.overlayId}
                   overlay={o}
-                  off={dropped.has(o.overlayId)}
-                  onToggle={() =>
-                    setDropped((cur) => {
-                      const next = new Set(cur);
-                      if (!next.delete(o.overlayId)) next.add(o.overlayId);
-                      return next;
-                    })
-                  }
+                  flagged={o.overlayId === flagged}
+                  busy={busy}
+                  onRemove={() => void removeSlot(o.overlayId)}
                   onFill={() => setFilling(o)}
                 />
               ))}
@@ -193,11 +239,15 @@ export function VideoPlanStep(props: {
           )}
 
           <div className="row-actions">
-            <button className="primary" disabled={busy} onClick={() => void submit()}>
+            <button className="primary" disabled={busy || staleCut !== undefined} onClick={() => void submit()}>
               {busy ? "提交中…" : kept.length === 0 ? "确认:出纯口播" : `确认 ${kept.length - pending.length} 段,开始组装`}
             </button>
             <button disabled={busy} onClick={() => void rerun()}>
               重新跑剪辑师
+            </button>
+            {/* 门二退门一(§2.2):在这一页才发现话说错了,不该逼人绕回成片卡去找入口 */}
+            <button disabled={busy} onClick={() => void backToCut()}>
+              回选段改勾选
             </button>
             <button onClick={props.back}>回成片卡</button>
           </div>
@@ -227,11 +277,18 @@ export function VideoPlanStep(props: {
   );
 }
 
-/** 一行编排。两类来源长得不一样:已有素材报文件名,待生成槽报「要做成什么」 */
+/**
+ * 一行编排。两类来源长得不一样:已有素材报文件名,待生成槽报「要做成什么」。
+ *
+ * 「删掉这段」是**服务端的一次真实改动**(派生新一版 plan),不是本地打勾:
+ * 刷新、换窗口、隔天回来都还是删过的样子,旧版也留档可查。代价是没有本地撤销——
+ * 要找回来就回上一版计划(它一直在盘上)或重跑一次剪辑师。
+ */
 function OverlayRow(props: {
   overlay: EditorPlanOverlay;
-  off: boolean;
-  onToggle: () => void;
+  flagged: boolean;
+  busy: boolean;
+  onRemove: () => void;
   onFill: () => void;
 }) {
   const o = props.overlay;
@@ -240,12 +297,13 @@ function OverlayRow(props: {
     o.inMs !== undefined && o.outMs !== undefined ? ` · 取材 ${formatTimecode(o.inMs)}–${formatTimecode(o.outMs)}` : "";
   const still = o.source.kind === "generate" ? o.source.mediaKind === "image" : o.source.type === "image";
   return (
-    <li className={"vid-seg" + (props.off ? " vid-seg-off" : "")}>
+    <li className={"vid-seg" + (props.flagged ? " vid-seg-flagged" : "")}>
       <span className="mono muted vid-seg-time">
         {formatTimecode(o.outputStartMs)}–{formatTimecode(o.outputStartMs + o.durationMs)}
       </span>
       <span className="chip">{generate ? "待生成" : still ? "图版" : "屏录"}</span>
       <span className="vid-seg-text">
+        {props.flagged ? <strong>你打回时指的就是这一段 · </strong> : null}
         {o.label}
         <span className="mono muted">
           {" "}
@@ -253,8 +311,8 @@ function OverlayRow(props: {
           {o.source.kind === "asset" ? ` · ${o.source.name}` : ` · 要一段${still ? "静图" : "视频"}`}
         </span>
       </span>
-      {generate && !props.off && <button onClick={props.onFill}>填素材</button>}
-      <button onClick={props.onToggle}>{props.off ? "撤销删除" : "删掉这段"}</button>
+      {generate && <button disabled={props.busy} onClick={props.onFill}>填素材</button>}
+      <button disabled={props.busy} onClick={props.onRemove}>删掉这段</button>
     </li>
   );
 }

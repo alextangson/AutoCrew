@@ -198,6 +198,15 @@ export interface VideoPreviewState {
   error?: string;
 }
 
+/** done 之后的测试产物清理(lifecycle spec §3.3);warning = 清了但有清不掉的,必须让人看见 */
+export interface VideoCleanupState {
+  status: "pending" | "done" | "warning";
+  approvedRevision: number;
+  freedBytes?: number;
+  note?: string;
+  finishedAt?: string;
+}
+
 export interface VideoState {
   schemaVersion: 1;
   entryType: "aroll";
@@ -205,6 +214,9 @@ export interface VideoState {
   state: VideoRunState;
   blockedReason?: VideoBlockedReason;
   preview?: VideoPreviewState;
+  /** 已确认的成片计划版本;assemble 只读这一版的决策 */
+  confirmedEditorRevision?: number;
+  cleanup?: VideoCleanupState;
   failedPhase?: VideoPhase;
   errorCode?: string;
   failReason?: string;
@@ -227,6 +239,8 @@ export interface VideoJob {
 export interface VideoStatusData {
   state: VideoState;
   jobs: VideoJob[];
+  /** 当前成片版的审片记录;打回后目标门的横幅读它 */
+  review?: VideoReviewDecision;
 }
 
 export interface TranscriptSegment {
@@ -322,6 +336,28 @@ export interface VideoEditorPlan {
 export interface EditorPlanView {
   plan: VideoEditorPlan;
   revision: number;
+  /** 非空 = 这份计划是对上一版选段排的,按旧时间排的 overlay 会落错话——挡住确认 */
+  staleCutRevision?: number;
+}
+
+/** 打回定位的落点(lifecycle spec §2.4):落在覆盖轨上就高亮那一槽,否则高亮那一句 */
+export type ReviewLocation =
+  | { kind: "overlay"; overlayId: string }
+  | { kind: "segment"; segmentId: string };
+
+/**
+ * 审片记录(不可变产物 `review-decision.v<K>.json`)。打回的备注刷新不丢就靠它——
+ * 纯前端存的备注活不过一次刷新,而人回到门上第一件事就是想知道「我当时说了什么」。
+ */
+export interface VideoReviewDecision {
+  schemaVersion: 1;
+  renderedRevision: number;
+  verdict: "approve" | "reject";
+  target?: "edit" | "cut";
+  timestampMs?: number;
+  note?: string;
+  locate?: ReviewLocation;
+  decidedAt: string;
 }
 
 /**
@@ -400,6 +436,21 @@ export const videoEditorSlotFill = (args: {
     library_id: args.libraryId,
   });
 
+/** 删掉一段编排;与填槽同样派生**新一版 plan**(旧版留档不删),返回的就是新那版 */
+export const videoEditorSlotRemove = (args: { contentId: string; planRevision: number; overlayId: string }) =>
+  videoInvoke<EditorPlanView>("video:editor_slot_remove", {
+    content_id: args.contentId,
+    plan_revision: args.planRevision,
+    overlay_id: args.overlayId,
+  });
+
+/** 门二退回门一(lifecycle §2.2):在成片计划上才发现话说错了 */
+export const videoEditorBackToCut = (args: { contentId: string; planRevision: number }) =>
+  videoInvoke<{ state: VideoState }>("video:editor_back_to_cut", {
+    content_id: args.contentId,
+    plan_revision: args.planRevision,
+  });
+
 /** 按门上当前勾选重渲一版预览;主状态不动,渲完走 SSE 刷新 */
 export const videoCutPreview = (args: {
   contentId: string;
@@ -422,11 +473,25 @@ export const videoReassemble = (contentId: string) =>
 export const videoEditorRerun = (contentId: string) =>
   videoInvoke<{ state: VideoState }>("video:editor_rerun", { content_id: contentId });
 
-export const videoReviewConfirm = (args: { contentId: string; renderedRevision: number; verdict: "approve" | "reject" }) =>
+/**
+ * 审片裁决。打回带 target(回门二改 B-roll / 回门一改选段)、播放位置与备注——
+ * 三样都落进不可变记录,目标门的横幅刷新后照样看得见(lifecycle §2.4)。
+ */
+export const videoReviewConfirm = (args: {
+  contentId: string;
+  renderedRevision: number;
+  verdict: "approve" | "reject";
+  target?: "edit" | "cut";
+  timestampMs?: number;
+  note?: string;
+}) =>
   videoInvoke<{ state: VideoState; videoReadyAt?: string | null; stampWarning?: string }>("video:review_confirm", {
     content_id: args.contentId,
     rendered_revision: args.renderedRevision,
     verdict: args.verdict,
+    ...(args.target ? { target: args.target } : {}),
+    ...(args.timestampMs !== undefined ? { timestamp_ms: args.timestampMs } : {}),
+    ...(args.note ? { note: args.note } : {}),
   });
 
 export const videoRetry = (contentId: string) =>
@@ -566,6 +631,18 @@ export function formatTimecode(ms: number): string {
  */
 export function keepsInTranscriptOrder(segments: TranscriptSegment[], kept: ReadonlySet<string>): string[] {
   return segments.filter((s) => kept.has(s.id)).map((s) => s.id);
+}
+
+/**
+ * 收尾清理那一行(lifecycle spec §3.3)。**三态三句话**:还没清完 / 清完了释放多少 /
+ * 清了但有清不掉的。没有「什么都不说」——静默清理会让人怀疑成片被动过。
+ */
+export function cleanupSummary(cleanup?: VideoCleanupState): string | null {
+  if (!cleanup) return null;
+  const freed = cleanup.freedBytes ? `,释放 ${(cleanup.freedBytes / 1024 / 1024).toFixed(1)} MB` : "";
+  if (cleanup.status === "pending") return "正在清理测试产物(预览、废弃成片、可重算的音轨)…";
+  if (cleanup.status === "warning") return `已清理测试产物${freed},但有清不掉的:${cleanup.note ?? "看任务日志"}`;
+  return `已清理测试产物${freed} —— 通过版成片、引用音轨与全部决策记录都留着`;
 }
 
 /** 「X 分 Y 秒」——预计成片时长给人的读法,不用 mm:ss(那是时间码,不是时长) */

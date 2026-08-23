@@ -92,6 +92,24 @@ export interface VideoPreviewState {
   error?: string;
 }
 
+/**
+ * done 之后的测试产物清理（lifecycle spec §3.3）。三态而不是布尔：
+ * `pending` 是「该清但还没清完」——done 落盘即置它，进程死在中间下次启动会重试；
+ * `warning` 是「清了但有清不掉的」，必须让人看见，不能装作清干净了。
+ */
+export type VideoCleanupStatus = "pending" | "done" | "warning";
+
+export interface VideoCleanupState {
+  status: VideoCleanupStatus;
+  /** 通过版；清理的全部判定都对着它，换一版通过就是另一次清理 */
+  approvedRevision: number;
+  /** 面板那一行「已清理测试产物，释放 N MB」 */
+  freedBytes?: number;
+  /** status=warning 时的人话原因（清不掉哪几个、为什么） */
+  note?: string;
+  finishedAt?: string;
+}
+
 export interface VideoState {
   schemaVersion: 1;
   entryType: "aroll";
@@ -100,6 +118,13 @@ export interface VideoState {
   blockedReason?: VideoBlockedReason;
   /** 粗剪门内的预览指针；与 phase/state 正交，辅助 job 单独更新它 */
   preview?: VideoPreviewState;
+  /**
+   * 已确认的成片计划版本（lifecycle spec §2.1）——assemble 只读
+   * `editor-decision.v<N>.json`，N 就是它。缺省 = 这一稿还没确认过成片计划。
+   */
+  confirmedEditorRevision?: number;
+  /** done 之后的清理状态机；旧稿没有这个字段，因此不会被回溯清理（§4 #14） */
+  cleanup?: VideoCleanupState;
   /**
    * 失败恢复点：重试 = 重投 failedPhase，回到其前置人工门产物。
    * spec 原文写的是 `string`，这里收紧成 VideoPhase——`video:retry` 要拿它直接投递，

@@ -14,6 +14,7 @@ import {
   PREVIEW_HEIGHT,
   PREVIEW_WIDTH,
   previewVideoPath,
+  removePreviewOutputs,
   runPreviewJob,
   writePreviewRequest,
 } from "./preview-exec.js";
@@ -202,4 +203,37 @@ describe("预览与正式不许长出两套时间映射", () => {
     // 差别只在「预览不带 overlay / 标题卡」这一处，尺寸契约两边同样是 1920×1080
     expect([preview.width, preview.height]).toEqual([assembled.manifest.width, assembled.manifest.height]);
   }, 180_000);
+});
+
+/**
+ * 边界 #12（lifecycle §3.3）：作废的预览**自己把输出收走**。
+ * unlink 只防「正在读的人被拽掉文件」，不防「清理跑完之后一次迟到的 rename 把预览又变出来」——
+ * 谁产出的谁负责收走，否则 done 之后磁盘上会莫名其妙冒出一个预览文件。
+ */
+describe("removePreviewOutputs（superseded 主动删自己的输出）", () => {
+  it("只删指定那一版的全部产物，别版与别的文件一个字不动", async () => {
+    const vdir = videoDir(dir, contentId);
+    const files = [
+      "preview.v2.mp4",
+      "preview.v2.tmp.mp4",
+      "preview-anchor.v2.wav",
+      "preview-manifest.v2.json",
+      "preview.v3.mp4",
+      "final.v1.mp4",
+    ];
+    for (const name of files) await fs.writeFile(path.join(vdir, name), "x");
+
+    await removePreviewOutputs(dir, contentId, 2);
+    const left = await fs.readdir(vdir);
+    expect(left).not.toContain("preview.v2.mp4");
+    expect(left).not.toContain("preview.v2.tmp.mp4");
+    expect(left).not.toContain("preview-anchor.v2.wav");
+    expect(left).not.toContain("preview-manifest.v2.json");
+    expect(left).toContain("preview.v3.mp4");
+    expect(left).toContain("final.v1.mp4");
+  });
+
+  it("那一版本来就没有产物 → 什么都不做，也不抛", async () => {
+    await expect(removePreviewOutputs(dir, contentId, 99)).resolves.toBeUndefined();
+  });
 });

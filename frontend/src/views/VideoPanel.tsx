@@ -16,6 +16,7 @@ import { invoke, subscribeEvents } from "../transport";
 import { toast } from "../ui";
 import {
   VIDEO_PHASE_LABEL,
+  cleanupSummary,
   videoAsrStatus,
   videoAsrWarmup,
   videoBlockedGuide,
@@ -173,7 +174,13 @@ export function VideoPanel({ contentId }: { contentId: string }) {
       <summary>成片 · {headline}</summary>
       {err && <p className="ed-error">{err}</p>}
       {view === "cut" && st && (canCut || inPlan) && (
-        <VideoCutPanel contentId={contentId} state={st} reload={load} back={() => setView("card")} />
+        <VideoCutPanel
+          contentId={contentId}
+          state={st}
+          {...(status?.review ? { review: status.review } : {})}
+          reload={load}
+          back={() => setView("card")}
+        />
       )}
       {view === "review" && st && (canReview || isDone) && (
         <VideoReviewPanel
@@ -279,6 +286,10 @@ export function VideoPanel({ contentId }: { contentId: string }) {
                   ? `成片:稿件素材里的 ${videoFinalAssetName(st.revisions.rendered)}(中间产物在稿件目录 video/ 下)`
                   : "状态是完成,但没记下成片版本号 —— 去稿件文件夹里找 final-v*.mp4"}
               </p>
+              {/* 清理是自动动作,必须说出来:静默删文件会让人怀疑成片被动过(§3.3) */}
+              {cleanupSummary(st.cleanup) && (
+                <p className={st.cleanup?.status === "warning" ? "vid-warn" : "muted"}>{cleanupSummary(st.cleanup)}</p>
+              )}
               <div className="row-actions">
                 <button onClick={() => setView("review")}>查看成片</button>
                 <button onClick={() => setView("cut")}>重开:改选段再出一版</button>

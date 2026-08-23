@@ -29,6 +29,14 @@ export interface LibraryFolder {
   createdAt: string;
 }
 
+/** 视频/音频的客观事实（ffprobe 读出，入库时钉住）。与 local-store 的 AssetMedia 同形 */
+export interface LibraryAssetMedia {
+  durationMs: number;
+  width?: number;
+  height?: number;
+  fps?: number;
+}
+
 export interface LibraryAsset {
   id: string;
   name: string;
@@ -41,6 +49,15 @@ export interface LibraryAsset {
   folderId: string | null;
   tags: string[];
   description?: string;
+  /**
+   * 常备素材池成员（视频线 lifecycle spec §1）。**显式布尔而不是保留字标签**：
+   * tags 是整组替换的自由元数据，误删误触的代价是「这条素材从此不进任何片子的目录」。
+   * 开启的前置是 description 非空——判定在 modules/video/library-pool.ts，不是这里
+   * （storage 只存事实，业务前置留给业务层，否则改说明的顺序会被存储层绑死）。
+   */
+  reusable?: boolean;
+  /** 入库时 ffprobe 探测的时长/画幅；视频候选没有它就排不进剪辑师目录 */
+  media?: LibraryAssetMedia;
   addedAt: string;
 }
 
@@ -241,9 +258,19 @@ export async function getAsset(id: string, dataDir?: string): Promise<LibraryAss
   return isValidAssetRecord(record) ? record : null;
 }
 
+export interface LibraryAssetPatch {
+  name?: string;
+  tags?: string[];
+  description?: string;
+  folderId?: string | null;
+  path?: string;
+  reusable?: boolean;
+  media?: LibraryAssetMedia;
+}
+
 export async function updateAsset(
   id: string,
-  patch: { name?: string; tags?: string[]; description?: string; folderId?: string | null; path?: string },
+  patch: LibraryAssetPatch,
   dataDir?: string,
 ): Promise<LibraryAsset | null> {
   const root = await libraryRoot(dataDir);
@@ -253,6 +280,8 @@ export async function updateAsset(
   if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name.trim();
   if (Array.isArray(patch.tags)) next.tags = patch.tags.map((t) => String(t).trim()).filter(Boolean);
   if (typeof patch.description === "string") next.description = patch.description;
+  if (typeof patch.reusable === "boolean") next.reusable = patch.reusable;
+  if (patch.media) next.media = patch.media;
   if (patch.folderId !== undefined) {
     const folders = await loadFolders(root);
     next.folderId = patch.folderId !== null && folders.some((f) => f.id === patch.folderId) ? patch.folderId : null;
@@ -267,6 +296,8 @@ export async function updateAsset(
       const dt = detectType(abs);
       next.type = dt.type;
       next.ext = dt.ext;
+      // 重定位换了文件，旧的探测事实立即作废；下次进常备池时补探，不留一份对不上号的时长
+      delete next.media;
     } catch {
       return null; // 重定位目标不存在：不动原记录
     }
@@ -275,6 +306,21 @@ export async function updateAsset(
   if (!file) return null;
   await writeJsonAtomic(file, next);
   return next;
+}
+
+/**
+ * 常备素材池成员（视频线 lifecycle spec §1）。
+ *
+ * 两道闸都在这里合并判定：`reusable === true` **且** description 非空。
+ * 第二条不是重复校验——它挡的是「先开常备、后把说明清空」与手改 JSON 两条路，
+ * 常备池必须永远是「人写过说明的素材」（没说明的素材对剪辑师等于不存在）。
+ */
+export async function listReusableAssets(dataDir?: string): Promise<LibraryAsset[]> {
+  const root = await libraryRoot(dataDir);
+  const records = await loadAssetRecords(root);
+  return records
+    .filter((a) => a.reusable === true && (a.description ?? "").trim() !== "")
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export async function removeAsset(id: string, dataDir?: string): Promise<boolean> {

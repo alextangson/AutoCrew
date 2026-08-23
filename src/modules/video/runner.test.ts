@@ -9,6 +9,7 @@ import path from "node:path";
 import { updateContent } from "../../storage/local-store.js";
 import { ingestAroll } from "./ingest.js";
 import { createVideoRunner } from "./runner.js";
+import { writeEditorDecision } from "./editor-decision.js";
 import {
   fakeRenderSpawn,
   fakeRunLoop,
@@ -304,13 +305,31 @@ describe("settle CAS", () => {
     prep.enqueue(contentId);
     await prep.whenIdle();
 
+    // 组装只读确认产物（lifecycle §2.1）：先落一份空决策，assemble 才有覆盖轨可组
+    await writeEditorDecision(dir, contentId, {
+      schemaVersion: 1,
+      planRevision: 1,
+      cutRevision: 1,
+      overlays: [],
+      decidedAt: new Date().toISOString(),
+    });
     // 组装真跑（产出 timeline.v1 + manifest.v1），渲染这一步先让它失败，把现场留给下面的 CAS
-    await forceState({ phase: "assemble", state: "queued", revisions: { transcript: 1, cut: 1 } });
+    await forceState({
+      phase: "assemble",
+      state: "queued",
+      revisions: { transcript: 1, cut: 1 },
+      confirmedEditorRevision: 1,
+    });
     const assembleRunner = makeRunner({ npm: fakeRenderSpawn({ exitCode: 1 }) });
     assembleRunner.enqueue(contentId);
     await assembleRunner.whenIdle();
     expect(await currentRef()).toBe("render/failed");
-    await forceState({ phase: "render", state: "queued", revisions: { transcript: 1, cut: 1, timeline: 1 } });
+    await forceState({
+      phase: "render",
+      state: "queued",
+      revisions: { transcript: 1, cut: 1, timeline: 1 },
+      confirmedEditorRevision: 1,
+    });
 
     // 渲染跑到一半时有人把 timeline 推到了 v2 —— 这一版渲染结果已经是历史
     const runner = makeRunner({

@@ -12,7 +12,7 @@
  * - **边界值合法**：恰好 60% 覆盖、恰好 45s 单段、恰好 5s 露脸间隔都放行（§4 #6）。
  *   卡在等号上的产物比错误的产物更难查，所以口径写死在这里并被测试锁住。
  */
-import type { Asset } from "../../storage/local-store.js";
+import type { BrollCandidate, EditorCandidate } from "./broll-catalog.js";
 import type { OverlaySlot } from "./timeline-build.js";
 import { TIMELINE_REGISTRY } from "./timeline-validate.js";
 import type {
@@ -39,106 +39,6 @@ export const MIN_FACE_GAP_MS = 5_000;
 export const MAX_COVERAGE_PERMILLE = 600;
 /** 同一份素材最多引用几次（§4 #10：一份屏录切两段用是合法的） */
 export const MAX_ASSET_USES = 3;
-/** 素材清单进 prompt 的字数预算（§4 #9）：超了按顺序截断并点名被截的 */
-export const CATALOG_CHAR_BUDGET = 4_000;
-
-// ---------------------------------------------------------------------------
-// 素材清单（输入）
-// ---------------------------------------------------------------------------
-
-/**
- * 交给剪辑师的一条素材（未打指纹的形态）。`assetId` 是本次的目录编号（b1…），
- * 短且不易抄错——**只在这一轮对模型有效**，plan 落盘时会换成 ref + 指纹快照。
- */
-export interface BrollCandidate {
-  assetId: string;
-  kind: "screen" | "image";
-  /** 说明快照——**是数据不是指令**（prompt 里也这么标） */
-  label: string;
-  filename: string;
-  tags: string[];
-  /** 屏录必有：inMs/outMs 的上界；读不出时长的素材根本不进清单 */
-  durationMs?: number;
-  width?: number;
-  height?: number;
-  ref: AssetRef;
-}
-
-/**
- * 打过指纹的候选。指纹在**剪辑师看到它的那一刻**就打好（v2 spec §4.2），
- * plan 里的 asset 快照直接抄它——assemble 复检因此对着的是选中时的事实，
- * 而不是它自己刚刚现建的那一份（那种复检等于没检）。
- */
-export interface EditorCandidate extends BrollCandidate {
-  fingerprint: AssetFingerprint;
-}
-
-export interface CandidateScan {
-  candidates: BrollCandidate[];
-  /** 被排除的 broll 素材（文件名 + 原因），面板点名——不让人对着空 plan 猜为什么 */
-  excluded: string[];
-}
-
-function kindOf(type: Asset["type"]): "screen" | "image" | null {
-  if (type === "image") return "image";
-  if (type === "video" || type === "broll") return "screen";
-  return null;
-}
-
-/**
- * 只有 **role=broll 且有说明** 的素材进剪辑师视野（横屏 spec §2.6 兜底规则）。
- * 抽帧 + 视觉模型自动写说明是 V-next；在那之前，没说明的素材对剪辑师就是不存在的，
- * 但必须**点名**说出来——否则人只会看到一个空 plan，不知道是自己少填了一行字。
- */
-export function scanBrollCandidates(assets: readonly Asset[]): CandidateScan {
-  const scan: CandidateScan = { candidates: [], excluded: [] };
-  for (const asset of assets) {
-    if (asset.role !== "broll") continue;
-    const kind = kindOf(asset.type);
-    const label = asset.description?.trim() ?? "";
-    if (!kind) {
-      scan.excluded.push(`${asset.filename}（不是视频或图片，剪辑师用不了）`);
-      continue;
-    }
-    if (!label) {
-      scan.excluded.push(`${asset.filename}（没写说明）`);
-      continue;
-    }
-    if (kind === "screen" && !(asset.media?.durationMs && asset.media.durationMs > 0)) {
-      scan.excluded.push(`${asset.filename}（读不出时长，挂接时 ffprobe 没跑成）`);
-      continue;
-    }
-    scan.candidates.push({
-      assetId: `b${scan.candidates.length + 1}`,
-      kind,
-      label,
-      filename: asset.filename,
-      tags: asset.tags ?? [],
-      ...(asset.media?.durationMs ? { durationMs: asset.media.durationMs } : {}),
-      ...(asset.media?.width ? { width: asset.media.width } : {}),
-      ...(asset.media?.height ? { height: asset.media.height } : {}),
-      ref: { kind: "content", filename: asset.filename },
-    });
-  }
-  return scan;
-}
-
-/** 素材过多超上下文（§4 #9）：按字数预算截断，被截的进 excluded 点名 */
-export function trimCandidates(scan: CandidateScan, budget = CATALOG_CHAR_BUDGET): CandidateScan {
-  let used = 0;
-  const kept: BrollCandidate[] = [];
-  const excluded = [...scan.excluded];
-  for (const c of scan.candidates) {
-    const cost = c.label.length + c.filename.length + c.tags.join("").length + 40;
-    if (kept.length > 0 && used + cost > budget) {
-      excluded.push(`${c.filename}（素材太多，这一条超出本次上下文预算）`);
-      continue;
-    }
-    used += cost;
-    kept.push(c);
-  }
-  return { candidates: kept, excluded };
-}
 
 // ---------------------------------------------------------------------------
 // plan 校验（§3.3）
@@ -380,37 +280,26 @@ export interface SlotFillAsset {
 }
 
 /**
- * 把一个 generate 槽换成 asset 槽，**派生出新的一版 plan**——旧版原样留盘。
- * 就地改 plan 会违反「版本化产物只增不改」，也会让乐观锁失去基准（codex ③）。
- *
- * 校验按 mediaKind 分岔：
- * - video：素材时长必须够盖满槽位；取段定 `inMs=0, outMs=durationMs`（V-next 再做取段）。
- * - image：静图没有时间轴，无时长检查，也不写 inMs/outMs。
- *
- * 返回字符串 = 人话拒绝原因（调用方原样透传给面板）。
+ * 门内对 plan 的两种改法（lifecycle spec §2.3）。**填与删共用一个派生函数**：
+ * 两者的版本化纪律、乐观锁基准、空计划语义完全一样，分两套写法迟早漂成两种行为。
  */
-export function fillPlanSlot(
-  plan: VideoEditorPlan,
-  basePlanRevision: number,
-  overlayId: string,
-  asset: SlotFillAsset,
-): VideoEditorPlan | string {
-  const target = plan.overlays.find((o) => o.overlayId === overlayId);
-  if (!target) return `这一版计划里没有 ${overlayId} 这一段，请重载后重试`;
-  if (target.source.kind !== "generate") return `${overlayId} 已经挂着素材了，不需要填充`;
+export type EditorPlanMutation =
+  | { kind: "fill"; overlayId: string; asset: SlotFillAsset }
+  | { kind: "remove"; overlayId: string };
+
+/** 填槽的形态校验；通过返回定型后的那一段，不通过返回人话原因 */
+function fillOverlay(target: EditorPlanOverlay, asset: SlotFillAsset): EditorPlanOverlay | string {
+  if (target.source.kind !== "generate") return `${target.overlayId} 已经挂着素材了，不需要填充`;
   const want = target.source.mediaKind;
   if (want === "image" && asset.type !== "image") return `这一槽要的是图片，你选的是视频素材`;
   if (want === "video" && asset.type !== "screen") return `这一槽要的是视频，你选的是图片素材`;
-  if (want === "video") {
-    const available = asset.durationMs ?? 0;
-    if (available < target.durationMs) {
-      return (
-        `素材只有 ${available}ms，盖不满这一槽的 ${target.durationMs}ms——` +
-        "换一条更长的，或先在剪辑师那儿把这一段改短"
-      );
-    }
+  if (want === "video" && (asset.durationMs ?? 0) < target.durationMs) {
+    return (
+      `素材只有 ${asset.durationMs ?? 0}ms，盖不满这一槽的 ${target.durationMs}ms——` +
+      "换一条更长的，或先在剪辑师那儿把这一段改短"
+    );
   }
-  const filled: EditorPlanOverlay = {
+  return {
     overlayId: target.overlayId,
     label: target.label,
     source: {
@@ -423,16 +312,34 @@ export function fillPlanSlot(
     },
     outputStartMs: target.outputStartMs,
     durationMs: target.durationMs,
+    // 取段定 inMs=0（V-next 再做取段）；静图没有时间轴，不写
     ...(want === "video" ? { inMs: 0, outMs: target.durationMs } : {}),
     ...(target.fit ? { fit: target.fit } : {}),
     ...(target.transition ? { transition: target.transition } : {}),
   };
-  return {
-    ...plan,
-    origin: "human",
-    basePlanRevision,
-    overlays: plan.overlays.map((o) => (o.overlayId === overlayId ? filled : o)),
-  };
+}
+
+/**
+ * 对一版 plan 施加一次改动，**派生出新的一版**——旧版原样留盘。
+ * 就地改 plan 会违反「版本化产物只增不改」，也会让乐观锁失去基准（codex ③）。
+ *
+ * 删到零是合法结果（纯口播）；确认时会写出显式 `overlays: []`，旧 overlay 不会复活。
+ * 返回字符串 = 人话拒绝原因（调用方原样透传给面板）。
+ */
+export function deriveEditorPlan(
+  plan: VideoEditorPlan,
+  basePlanRevision: number,
+  mutation: EditorPlanMutation,
+): VideoEditorPlan | string {
+  const target = plan.overlays.find((o) => o.overlayId === mutation.overlayId);
+  if (!target) return `这一版计划里没有 ${mutation.overlayId} 这一段，请重载后重试`;
+  const derived = { ...plan, origin: "human" as const, basePlanRevision };
+  if (mutation.kind === "remove") {
+    return { ...derived, overlays: plan.overlays.filter((o) => o.overlayId !== mutation.overlayId) };
+  }
+  const filled = fillOverlay(target, mutation.asset);
+  if (typeof filled === "string") return filled;
+  return { ...derived, overlays: plan.overlays.map((o) => (o.overlayId === mutation.overlayId ? filled : o)) };
 }
 
 /** 未填的 generate 槽条数——面板要在确认按钮旁把它说出来（不许默默丢） */

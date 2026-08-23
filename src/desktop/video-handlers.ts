@@ -20,7 +20,9 @@ import {
   VideoConflictError,
   type ConfirmCutArgs,
   type ConfirmEditorPlanArgs,
+  type ConfirmReviewArgs,
   type FillEditorSlotArgs,
+  type RemoveEditorSlotArgs,
   type RequestPreviewArgs,
   type VideoService,
 } from "../modules/video/service.js";
@@ -140,14 +142,46 @@ function parseEditorPlanArgs(payload: Payload): ConfirmEditorPlanArgs | string {
   return { planRevision, keptOverlayIds };
 }
 
-function parseSlotFillArgs(payload: Payload): FillEditorSlotArgs | string {
+function parseSlotArgs(payload: Payload): RemoveEditorSlotArgs | string {
   const planRevision = parseRevision(payload.plan_revision, "plan_revision");
   if (typeof planRevision === "string") return planRevision;
   const overlayId = payload.overlay_id;
   if (typeof overlayId !== "string" || !overlayId.trim()) return "overlay_id 必须是非空字符串";
+  return { planRevision, overlayId: overlayId.trim() };
+}
+
+function parseSlotFillArgs(payload: Payload): FillEditorSlotArgs | string {
+  const slot = parseSlotArgs(payload);
+  if (typeof slot === "string") return slot;
   const libraryId = payload.library_id;
   if (typeof libraryId !== "string" || !libraryId.trim()) return "library_id 必须是非空字符串";
-  return { planRevision, overlayId: overlayId.trim(), libraryId: libraryId.trim() };
+  return { ...slot, libraryId: libraryId.trim() };
+}
+
+/**
+ * 审片裁决的入参（lifecycle spec §2.4）。打回可带定位与备注：
+ * 时间戳与备注都要落进不可变记录，所以在这一层就把形态定死，不让脏值进域内。
+ */
+function parseReviewArgs(payload: Payload): ConfirmReviewArgs | string {
+  const rendered = parseRevision(payload.rendered_revision, "rendered_revision");
+  if (typeof rendered === "string") return rendered;
+  const verdict = payload.verdict;
+  if (verdict !== "approve" && verdict !== "reject") return "verdict 只能是 approve / reject";
+  const target = payload.target;
+  if (target !== undefined && target !== "edit" && target !== "cut") return "target 只能是 edit / cut";
+  const raw = payload.timestamp_ms;
+  if (raw !== undefined && raw !== null && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0)) {
+    return "timestamp_ms 必须是非负数（成片时间轴毫秒）";
+  }
+  const note = payload.note;
+  if (note !== undefined && note !== null && typeof note !== "string") return "note 必须是字符串";
+  return {
+    renderedRevision: rendered,
+    verdict,
+    ...(target ? { target } : {}),
+    ...(typeof raw === "number" ? { timestampMs: Math.round(raw) } : {}),
+    ...(typeof note === "string" && note.trim() ? { note: note.trim() } : {}),
+  };
 }
 
 /** 预览请求：勾选是草稿，所以只带 keeps 与两个 base revision，不带 flags */
@@ -260,6 +294,36 @@ export async function videoEditorSlotFillHandler(payload: Payload): Promise<Repl
   }
 }
 
+/** 删掉一段编排：与填槽走同一个派生函数，同样返回新一版 plan */
+export async function videoEditorSlotRemoveHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  const args = parseSlotArgs(payload);
+  if (typeof args === "string") return { ok: false, error: args };
+  try {
+    return { ok: true, data: await ctx.service.removeEditorSlot(contentId, args) };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** 门二退回门一：改选段重来（判定与乐观锁在 service / editor-gate） */
+export async function videoEditorBackToCutHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  const planRevision = parseRevision(payload.plan_revision, "plan_revision");
+  if (typeof planRevision === "string") return { ok: false, error: planRevision };
+  try {
+    return { ok: true, data: { state: await ctx.service.editorBackToCut(contentId, { planRevision }) } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
 /** 门内重渲预览：投递即返回，主状态不动，渲完走 SSE 刷新（判定在 service） */
 export async function videoCutPreviewHandler(payload: Payload): Promise<Reply> {
   const ctx = resolve(payload);
@@ -315,7 +379,8 @@ export async function videoRoughCutRerunHandler(payload: Payload): Promise<Reply
 }
 
 /**
- * 审片确认。approve → done 并盖 `videoReadyAt`（只盖一次）；reject → 回选段重剪。
+ * 审片确认。approve → done 并盖 `videoReadyAt`（只盖一次）+ 排收尾清理；
+ * reject → 按 target 回门二（改 B-roll）或门一（改选段），备注与定位落不可变记录。
  * 盖戳失败不改变确认结果，但 warning 必须可见（复盘的第四段用时靠这枚戳）。
  */
 export async function videoReviewConfirmHandler(payload: Payload): Promise<Reply> {
@@ -323,13 +388,11 @@ export async function videoReviewConfirmHandler(payload: Payload): Promise<Reply
   if (!ctx.ok) return ctx.reply;
   const contentId = requireContentId(payload);
   if (!contentId) return { ok: false, error: "需要合法 content_id" };
-  const rendered = parseRevision(payload.rendered_revision, "rendered_revision");
-  if (typeof rendered === "string") return { ok: false, error: rendered };
-  const verdict = payload.verdict;
-  if (verdict !== "approve" && verdict !== "reject") return { ok: false, error: "verdict 只能是 approve / reject" };
+  const args = parseReviewArgs(payload);
+  if (typeof args === "string") return { ok: false, error: args };
   try {
-    const state = await ctx.service.confirmReview(contentId, { renderedRevision: rendered, verdict });
-    if (verdict !== "approve") return { ok: true, data: { state } };
+    const state = await ctx.service.confirmReview(contentId, args);
+    if (args.verdict !== "approve") return { ok: true, data: { state } };
     void appendAction(ctx.dataDir, { kind: "video_reviewed", contentId }); // 工作区动作进有界环（设计 §Phase 2）
     const stamped = await stampVideoReady(contentId, ctx.dataDir);
     return { ok: true, data: { state, ...stamped } };

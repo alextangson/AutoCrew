@@ -75,18 +75,25 @@ export const AUTO_CHAIN_PHASES: readonly (readonly [VideoPhase, VideoPhase])[] =
 ] as const;
 
 /**
- * 阶段回退白名单：只有这三条显式边允许 phase 倒退（spec §2.2 v2.1 + v2 spec §2.3）。
- * 打回=审片不满意回去改选段；重开=对已完成内容提交新 cut 再出一版；
- * 重组装=渲染失败在一份废 manifest 上（例如旧 schema），重试只会重投同一份，必须回组装重出。
+ * 阶段回退白名单：只有这五条显式边允许 phase 倒退（spec §2.2 v2.1 + v2 spec §2.3
+ * + lifecycle spec §2.2）。
+ *
+ * 打回分两路（lifecycle §2.2）：**B-roll 不对就只回门二**——plan 与决策链原样在，改完槽
+ * 再确认只重走 assemble+render；说错了话才回门一重选段。少了 review→edit 这条边，
+ * 「换一段素材」就得把整条选段决策链重来一遍，那正是「改一处不重头剪」要消灭的事。
+ * edit→cut 是门二再往前退一格（人在成片计划上才发现话说错了）。
  *
  * 重开落 `edit/queued` 而不是 `assemble/queued`（横屏 spec §3.1 起）：新 cut 改了 keeps，
  * 输出域时间全变，旧 plan 的 overlay 会落在错误的话上——必须让剪辑师按新选段重排一遍。
+ * 重组装=渲染失败在一份废 manifest 上（例如旧 schema），重试只会重投同一份，必须回组装重出。
  */
 export const PHASE_REGRESSION_EDGES: readonly {
   readonly from: VideoStateRef;
   readonly to: VideoStateRef;
 }[] = [
   { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
+  { from: { phase: "review", state: "awaiting_human" }, to: { phase: "edit", state: "awaiting_human" } },
+  { from: { phase: "edit", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
   { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
   { from: { phase: "render", state: "failed" }, to: { phase: "assemble", state: "queued" } },
 ] as const;

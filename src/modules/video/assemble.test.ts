@@ -7,14 +7,16 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { assembleVideo, buildAnchorWav, DEFAULT_IDENTITY, loadIdentity } from "./assemble.js";
-import { buildDeterministicTimeline, readOverlaySlots, writeOverlaySlots } from "./timeline-build.js";
+import { buildDeterministicTimeline } from "./timeline-build.js";
+import { readEditorDecision, writeEditorDecision } from "./editor-decision.js";
 import { addAsset, updateContent } from "../../storage/local-store.js";
 import { fingerprintFile } from "./fingerprint.js";
 import { ingestAroll } from "./ingest.js";
 import { buildOutputMap } from "./output-map.js";
 import { runProcess } from "./proc.js";
 import { ensureArollFixture, fixtureTranscript, seedBgmAsset, seedVideoContent } from "./testkit.js";
-import { readVersioned, readVideoAssets, videoDir } from "./video-store.js";
+import { promoteStaging, readVersioned, readVideoAssets, videoDir } from "./video-store.js";
+import { readJson } from "../../storage/json-atomic.js";
 import type { RenderManifest, VideoCut } from "./types.js";
 
 /** 最小可用发布件：标题卡只读 coverText，其余字段只为满足类型 */
@@ -34,6 +36,7 @@ let dir: string;
 let contentId: string;
 let arollPath: string;
 
+const JOB_ID = "vjob-assemble-test";
 const fullCut: VideoCut = { transcriptRevision: 1, keeps: ["seg-0001", "seg-0002"], flags: [], origin: "default_all" };
 
 beforeEach(async () => {
@@ -59,8 +62,17 @@ function input(overrides?: Partial<Parameters<typeof assembleVideo>[0]>) {
     cutRevision: 1,
     timelineRevision: 1,
     slots: [],
+    jobId: JOB_ID,
     ...overrides,
   };
+}
+
+/**
+ * 组装的产物先落 staging，CAS 通过后才由 runner 定版（lifecycle §2.1）。
+ * 测试因此读 staging，而不是正式版本号——那一步是 runner 的事务，不是 assemble 的。
+ */
+function staged<T>(base: string): Promise<T | null> {
+  return readJson<T>(path.join(videoDir(dir, contentId), `${base}.${JOB_ID}.staging.json`));
 }
 
 describe("buildDeterministicTimeline", () => {
@@ -167,11 +179,11 @@ describe("assembleVideo", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    const timeline = await readVersioned(videoDir(dir, contentId), "timeline", 1);
+    const timeline = await staged("timeline");
     expect(timeline).toMatchObject({ base: { type: "aroll" }, captions: { style: "plain" } });
     await fs.access(path.join(videoDir(dir, contentId), "anchor.v1.wav"));
 
-    const m = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 1))!;
+    const m = (await staged<RenderManifest>("render-manifest"))!;
     expect(m).toMatchObject({
       schemaVersion: 3,
       contentId,
@@ -236,7 +248,7 @@ describe("assembleVideo", () => {
     const slots = [{ kind: "screen" as const, ref: { kind: "content" as const, filename: "screen.mp4" }, outputStartMs: 1800, durationMs: 5000 }];
     const r = await assembleVideo(input({ slots }));
     expect(r.ok === false && r.errorCode).toBe("timeline_invalid");
-    expect(await readVersioned(videoDir(dir, contentId), "timeline", 1)).toBeNull();
+    expect(await staged("timeline")).toBeNull();
   });
 
   it("覆盖轨素材文件不在 → 组装前就说清楚", async () => {
@@ -262,9 +274,19 @@ describe("assembleVideo", () => {
     expect(r.ok === false && r.reason).toContain("对不上");
   });
 
-  it("同一 timeline revision 不许重写（版本化产物是审计凭证）", async () => {
+  /**
+   * lifecycle §2.1 修的正是这条死路：早先 timeline 先落正式版、音频再失败，重试就会撞上
+   * 「timeline.v1 已存在」，把这条稿件永久钉死在组装。现在整体走 staging，重跑覆盖自己的半成品。
+   */
+  it("同一 job 重跑组装 → 覆盖自己的 staging，不撞不可覆盖；定版之后正式产物才是不可变的", async () => {
     expect((await assembleVideo(input())).ok).toBe(true);
-    await expect(assembleVideo(input())).rejects.toThrow(/不可覆盖/);
+    expect((await assembleVideo(input())).ok).toBe(true);
+
+    const vdir = videoDir(dir, contentId);
+    await promoteStaging(vdir, "timeline", JOB_ID, 1);
+    await promoteStaging(vdir, "render-manifest", JOB_ID, 1);
+    expect(await readVersioned(vdir, "timeline", 1)).toMatchObject({ base: { type: "aroll" } });
+    expect(await readVersioned<RenderManifest>(vdir, "render-manifest", 1)).toMatchObject({ schemaVersion: 3 });
   });
 
   it("没有发布件 → manifest 里没有标题卡（合法状态，§2.3）", async () => {
@@ -383,11 +405,30 @@ describe("BGM → master-audio（§2.4）", () => {
   });
 });
 
-describe("覆盖轨槽位存取", () => {
-  it("写过就读得回来，没写过 = 空数组", async () => {
-    expect(await readOverlaySlots(dir, contentId, 3)).toEqual([]);
-    const slots = [{ kind: "image" as const, ref: { kind: "video" as const, file: "x.png" }, outputStartMs: 0, durationMs: 100 }];
-    await writeOverlaySlots(dir, contentId, 3, slots);
-    expect(await readOverlaySlots(dir, contentId, 3)).toEqual(slots);
+describe("确认产物 editor-decision（lifecycle §2.1）", () => {
+  it("写过就读得回来；没写过 = null，而不是「没有覆盖轨」", async () => {
+    expect(await readEditorDecision(dir, contentId, 3)).toBeNull();
+    const decision = {
+      schemaVersion: 1 as const,
+      planRevision: 3,
+      cutRevision: 2,
+      overlays: [{ kind: "image" as const, ref: { kind: "video" as const, file: "x.png" }, outputStartMs: 0, durationMs: 100 }],
+      decidedAt: "2026-08-23T00:00:00.000Z",
+    };
+    await writeEditorDecision(dir, contentId, decision);
+    expect(await readEditorDecision(dir, contentId, 3)).toEqual(decision);
+  });
+
+  // 边界 #6：删到零写的是显式空数组——读回来是「确认过、就是不要 overlay」，不是「没确认」
+  it("空计划写的是显式 overlays:[]，与「没确认过」区分得开", async () => {
+    await writeEditorDecision(dir, contentId, {
+      schemaVersion: 1,
+      planRevision: 5,
+      cutRevision: 2,
+      overlays: [],
+      decidedAt: "2026-08-23T00:00:00.000Z",
+    });
+    expect((await readEditorDecision(dir, contentId, 5))!.overlays).toEqual([]);
+    expect(await readEditorDecision(dir, contentId, 4)).toBeNull();
   });
 });
