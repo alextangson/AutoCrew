@@ -35,6 +35,7 @@ export default tseslint.config(
       "spikes/",
       ".worktrees/",
       ".claude/worktrees/",
+      "sidecars/**/.venv/**",
     ],
   },
 );

@@ -188,6 +188,47 @@ describe("pullPlatformNow — 入库与状态", () => {
     expect(state.lastBatchId).toMatch(/^pull-douyin-/);
   });
 
+  it("部分拒收时成功，但状态里的上次入账只记真正 imported", async () => {
+    const attempt = await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({
+        registry: { douyin: async () => okResult([...ROWS, { ...ROWS[0], title: "坏行" }]) },
+        importRows: vi.fn(async () =>
+          report({
+            total: 2,
+            imported: 1,
+            rejected: [{ row: 2, title: "坏行", error: "字段非法" }],
+          }),
+        ),
+      }),
+    });
+
+    expect(attempt).toMatchObject({ status: "ok", rowCount: 2, imported: 1 });
+    expect((await stateOf("douyin")).lastRowCount).toBe(1);
+  });
+
+  it("全部行被拒收 = 失败，不盖成功时间也不进入 12h TTL", async () => {
+    const attempt = await pullPlatformNow("douyin", {
+      dataDir: dir,
+      ...deps({
+        registry: { douyin: async () => okResult() },
+        importRows: vi.fn(async () =>
+          report({
+            imported: 0,
+            matched: 0,
+            rejected: [{ row: 1, title: "视频一", error: "字段非法" }],
+          }),
+        ),
+      }),
+    });
+
+    expect(attempt).toMatchObject({ status: "error", rowCount: 0, imported: 0, errorCode: "all_rows_rejected" });
+    const state = await stateOf("douyin");
+    expect(state.lastSuccessAt).toBeNull();
+    expect(state.lastStatus).toBe("error");
+    expect(Date.parse(state.nextEligibleAt!) - NOW.getTime()).toBe(3_600_000);
+  });
+
   it("hasMore 一路带到结果里（界面只说「还有更多」）", async () => {
     const attempt = await pullPlatformNow("douyin", {
       dataDir: dir,

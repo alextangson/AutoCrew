@@ -398,7 +398,7 @@ async function runGeneration(
       humanizedText: reviewed.humanizedText,
       review: reviewed.review,
       req,
-      tokensUsed: written.tokensUsed,
+      tokensUsed: written.tokensUsed + reviewed.tokensUsed,
       // 采纳了修订稿就用修订稿的 gate 结果（必空）；没换稿沿用写稿轮的残余 FAIL
       gateFailures: reviewed.gateFailures ?? written.gateFailures,
       rulesApplied: profile ? rulesForPlatform(profile, req.platform).length : 0,

@@ -14,6 +14,7 @@ dist/
 # Never commit Pro API keys
 .pro
 .worktrees/
+.claude/
 # CodeGraph local index (machine-local, rebuild with `codegraph init .`)
 .codegraph/
 # render/ is a standalone npm workspace (Remotion). Deps, render output and downloaded fonts stay local.

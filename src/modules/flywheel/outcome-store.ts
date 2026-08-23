@@ -13,7 +13,13 @@ import {
   normalizePlatform,
   type PerformanceOutcome,
 } from "./outcome-schema.js";
-import { lookupPlatformItem, commitBindings, type PendingBinding, type BindingVia } from "./platform-items.js";
+import {
+  lookupPlatformItem,
+  commitBindings,
+  platformItemKey,
+  type PendingBinding,
+  type BindingVia,
+} from "./platform-items.js";
 import { parsePublishUrl } from "./publish-url.js";
 import { listContents, getContent, getDataDir, type Content } from "../../storage/local-store.js";
 
@@ -48,7 +54,7 @@ export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome
   const journal = await readJournal(dataDir);
   const byKey = new Map<string, PerformanceOutcome>();
   for (const o of journal) {
-    byKey.set(outcomeKey(o), o);
+    byKey.set(outcomeKey(o), { ...o, platform: normalizePlatform(o.platform) });
   }
   const deduped = Array.from(byKey.values());
   // 对账：同一平台条目（标题@发布日期）存在任何打标（contentId 非空）版本时，
@@ -59,8 +65,16 @@ export async function listOutcomes(dataDir?: string): Promise<PerformanceOutcome
       .filter((o) => o.contentId !== null)
       .map((o) => outcomeKey({ ...o, contentId: null, metricDate: "" })),
   );
+  const matchedItemKeys = new Set(
+    deduped.flatMap((o) =>
+      o.contentId !== null && o.platformItemId ? [platformItemKey(o.platform, o.platformItemId)] : [],
+    ),
+  );
   return deduped.filter(
-    (o) => o.contentId !== null || !matchedTitleKeys.has(outcomeKey({ ...o, metricDate: "" })),
+    (o) =>
+      o.contentId !== null ||
+      (!matchedTitleKeys.has(outcomeKey({ ...o, metricDate: "" })) &&
+        (!o.platformItemId || !matchedItemKeys.has(platformItemKey(o.platform, o.platformItemId)))),
   );
 }
 
@@ -121,8 +135,9 @@ const SPIKE_MULTIPLE = 20;
 
 /** 同平台已有的 views 样本（升序），暴涨检测的对照基数 */
 export function collectPeerViews(existing: PerformanceOutcome[], platform: string): number[] {
+  const normalizedPlatform = normalizePlatform(platform);
   return existing
-    .filter((o) => o.platform === platform)
+    .filter((o) => normalizePlatform(o.platform) === normalizedPlatform)
     .flatMap((o) => (typeof o.metrics.views === "number" ? [o.metrics.views] : []))
     .sort((a, b) => a - b);
 }
@@ -173,6 +188,7 @@ export async function recordOutcome(
 
     const outcome: PerformanceOutcome = {
       ...input,
+      platform: normalizePlatform(input.platform),
       contentId: binding.contentId,
       recordedAt: new Date().toISOString(),
       needsReview: reviewReasons.length > 0,

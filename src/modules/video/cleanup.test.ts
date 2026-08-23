@@ -49,7 +49,7 @@ const NAMES = [
 describe("planVideoCleanup（§3.2 清单）", () => {
   const plan = planVideoCleanup(NAMES, { approvedRevision: 2, keepAudioFile: "master-audio.v2.wav" });
 
-  it("删：全部预览、临时/残留、失败留档、asr-input、非通过版成片", () => {
+  it("删：全部预览、临时/残留、失败留档、asr-input；成片先走所有权核对", () => {
     expect(plan.remove).toEqual([
       "anchor.v1.wav",
       // 通过版引用的是 master-audio.v2.wav，anchor.v2 只是它的输入，可再生 → 也删
@@ -58,7 +58,6 @@ describe("planVideoCleanup（§3.2 清单）", () => {
       "asr-input.wav",
       "cut.vjob-1.staging.json",
       "final.v1.failed.mp4",
-      "final.v1.mp4",
       "final.v2.tmp.mp4",
       "preview-anchor.v3.wav",
       "preview-manifest.v3.json",
@@ -105,7 +104,7 @@ describe("planVideoCleanup（§3.2 清单）", () => {
   it("通过版换了 → 留的那份也跟着换（判定只对着 approvedRevision）", () => {
     const other = planVideoCleanup(NAMES, { approvedRevision: 1, keepAudioFile: "anchor.v1.wav" });
     expect(other.keep).toContain("final.v1.mp4");
-    expect(other.remove).toContain("final.v2.mp4");
+    expect(other.remove).not.toContain("final.v2.mp4");
     expect(other.unregister).toEqual([2]);
   });
 });
@@ -123,6 +122,8 @@ describe("runVideoCleanup（执行层）", () => {
     for (const name of ["anchor.v1.wav", "anchor.v2.wav", "preview.v3.mp4", "asr-input.wav", "final.v1.mp4", "final.v2.mp4"]) {
       await fs.writeFile(path.join(vdir, name), "x".repeat(1024));
     }
+    await registerFinalAsset(dir, contentId, path.join(vdir, "final.v1.mp4"), 1);
+    await registerFinalAsset(dir, contentId, path.join(vdir, "final.v2.mp4"), 2);
     await fs.writeFile(path.join(vdir, "assets", "gen-01.png"), "keep-me");
   });
 
@@ -173,6 +174,7 @@ describe("runVideoCleanup（执行层）", () => {
     await runVideoCleanup(dir, contentId, 2);
     const mine = (await listAssets(contentId, dir)).find((a) => a.filename === "final-v1.mp4");
     expect(mine).toMatchObject({ description: "我自己拖进来的" });
+    await fs.access(mine0);
     await fs.access(path.join(dir, "contents", contentId, "assets", "final-v1.mp4"));
   });
 

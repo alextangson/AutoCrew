@@ -48,15 +48,20 @@ type Deps = NonNullable<Parameters<typeof createVideoRunner>[0]["deps"]>;
 
 function makeRunner(
   routes: Parameters<typeof routedSpawn>[0],
-  extra?: { onStateWritten?: (id: string) => void; runLoopImpl?: Deps["runLoopImpl"] },
+  extra?: {
+    onStateWritten?: (id: string) => void;
+    runLoopImpl?: Deps["runLoopImpl"];
+    promoteStagingImpl?: NonNullable<Parameters<typeof createVideoRunner>[0]["promoteStagingImpl"]>;
+  },
 ) {
-  const { runLoopImpl, ...rest } = extra ?? {};
+  const { runLoopImpl, promoteStagingImpl, ...rest } = extra ?? {};
   return createVideoRunner({
     dataDir: dir,
     // 模型调用一律注入假实现，测试永不真调模型
     deps: { spawnImpl: routedSpawn(routes), runLoopImpl: runLoopImpl ?? fakeRunLoop([]) },
     launchId: "test",
     onError: () => {},
+    ...(promoteStagingImpl ? { promoteStagingImpl } : {}),
     ...rest,
   });
 }
@@ -132,6 +137,37 @@ describe("阶段推进", () => {
     expect(cutJob.warning).toBeUndefined();
     // inputKey 含转写版本、稿件、prompt 版本与模型路由（§3.2）
     expect(cutJob.inputKey).toMatch(/^transcript:1\+body:[0-9a-f]{8}\+algo:[\w.-]+\+route:[0-9a-f]{8}$/);
+  }, 30_000);
+
+  it("staging 定版失败 → 原阶段 failed，revision 不前移，job 不得伪装成功", async () => {
+    await forceState({ phase: "ingest", state: "queued" });
+    const runner = makeRunner(
+      { uv: fakeUvSpawn("ok", fixtureDenseTranscript()), npm: fakeRenderSpawn() },
+      {
+        promoteStagingImpl: async () => {
+          throw new Error("disk rename denied");
+        },
+      },
+    );
+    runner.enqueue(contentId);
+    await runner.whenIdle();
+
+    const { state } = await readVideoState(dir, contentId);
+    expect(state).toMatchObject({
+      phase: "cut",
+      state: "failed",
+      failedPhase: "cut",
+      errorCode: "promotion_failed",
+      revisions: { transcript: 1, cut: 1 },
+    });
+    expect(await readVersioned(videoDir(dir, contentId), "transcript", 1)).not.toBeNull();
+    expect(await readVersioned(videoDir(dir, contentId), "cut", 1)).not.toBeNull();
+    expect(await readVersioned(videoDir(dir, contentId), "cut", 2)).toBeNull();
+    expect((await readVideoJobs(dir)).at(-1)).toMatchObject({
+      phase: "cut",
+      status: "failed",
+      errorCode: "promotion_failed",
+    });
   }, 30_000);
 
   it("AI 降级 → job 记 succeeded 但带 warning（跑完了，只是没结果）", async () => {

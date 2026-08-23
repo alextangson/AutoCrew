@@ -133,6 +133,18 @@ describe("outcomeKey", () => {
     expect(outcomeKey(a)).toBe(outcomeKey({ ...a }));
   });
 
+  it("平台别名共用幂等键，旧 xhs 数据不会与自动回流分叉", () => {
+    const base = {
+      contentId: null,
+      platformTitle: "同一作品",
+      publishedAt: "2026-06-01T10:00:00.000Z",
+      metricDate: "2026-06-08",
+    };
+    expect(outcomeKey({ ...base, platform: "xhs" })).toBe(
+      outcomeKey({ ...base, platform: "xiaohongshu" }),
+    );
+  });
+
   it("pure-emoji title does not produce an empty item segment", () => {
     const key = outcomeKey({
       contentId: null,

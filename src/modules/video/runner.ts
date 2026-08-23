@@ -35,6 +35,7 @@ import {
   readVideoState,
   resolveAssetRef,
   transitionVideoState,
+  transitionVideoStateWithEffect,
   videoDir,
   VIDEO_HEARTBEAT_MS,
 } from "./video-store.js";
@@ -54,6 +55,8 @@ export interface VideoRunnerOptions {
   /** 每次状态落盘成功后触发（SSE 的源头） */
   onStateWritten?: (contentId: string) => void;
   onError?: (message: string) => void;
+  /** staging 定版注入点；测试用它锁定磁盘失败路径 */
+  promoteStagingImpl?: typeof promoteStaging;
 }
 
 export interface VideoRunner {
@@ -285,16 +288,26 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     return { ...base, phase, revisions: cur.revisions, ...failure, errorCode: result.errorCode, failReason: result.reason };
   }
 
-  /** CAS 不过时用它跳出写入事务——mutator 是同步的，抛错是唯一能在临界区里中止的方式 */
+  /** CAS 不过时用它跳出写入事务，调用方据此把产物留作历史而不推进状态。 */
   class StaleSettle extends Error {}
+  class PromotionFailed extends Error {}
 
-  async function settleState(contentId: string, before: VideoState, result: StepResult): Promise<string | null> {
+  async function settleStateAndPromote(
+    contentId: string,
+    before: VideoState,
+    result: StepResult,
+    job: VideoJob | null,
+  ): Promise<string | null> {
     try {
-      await writeState(contentId, (cur) => {
+      await transitionVideoStateWithEffect(dataDir, contentId, (cur) => {
         const violation = casViolation(before, cur);
         if (violation) throw new StaleSettle(violation);
-        return settledState(cur!, result, before.phase);
+        return {
+          next: settledState(cur!, result, before.phase),
+          beforeCommit: () => promoteStaged(contentId, result, job),
+        };
       });
+      opts.onStateWritten?.(contentId);
       return null;
     } catch (err) {
       if (err instanceof StaleSettle) return err.message;
@@ -323,16 +336,40 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     }
   }
 
-  /** CAS 通过后才把 staging 产物定版本（§3.3）。失败必须吼出来：状态推了、产物没落位 */
+  /** CAS 通过后、状态提交前把 staging 产物定版本（§3.3）；失败会中止状态提交。 */
   async function promoteStaged(contentId: string, result: StepResult, job: VideoJob | null): Promise<void> {
     if (!result.ok || !result.staged?.length || !job) return;
     const dir = videoDir(dataDir, contentId);
     for (const item of result.staged) {
       try {
-        await promoteStaging(dir, item.base, job.jobId, item.revision);
+        await (opts.promoteStagingImpl ?? promoteStaging)(dir, item.base, job.jobId, item.revision);
       } catch (err) {
-        report(`${contentId} 的 ${item.base}.v${item.revision} 定版失败（状态已推进，产物仍在 staging）：${errText(err)}`);
+        throw new PromotionFailed(`${item.base}.v${item.revision} 定版失败：${errText(err)}`);
       }
+    }
+  }
+
+  async function markPromotionFailed(contentId: string, before: VideoState, reason: string): Promise<string | null> {
+    try {
+      await writeState(contentId, (cur) => {
+        const violation = casViolation(before, cur);
+        if (violation) throw new StaleSettle(violation);
+        const carried = { ...cur! };
+        delete carried.blockedReason;
+        return {
+          ...carried,
+          phase: before.phase,
+          state: "failed",
+          revisions: before.revisions,
+          failedPhase: before.phase,
+          errorCode: "promotion_failed",
+          failReason: reason,
+        };
+      });
+      return null;
+    } catch (err) {
+      if (err instanceof StaleSettle) return err.message;
+      throw err;
     }
   }
 
@@ -347,25 +384,36 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       if (live?.leaseOwner !== leaseOwner) return "lease 已被别人接管";
       if (await inputDrifted(contentId, before, job)) return "输入在执行期间被改动（稿件或素材已不是认领时那份）";
     }
-    return settleState(contentId, before, result);
+    return settleStateAndPromote(contentId, before, result, job);
   }
 
   async function settle(contentId: string, before: VideoState, result: StepResult, job: VideoJob | null): Promise<void> {
-    const violation = await settleViolation(contentId, before, result, job);
+    let violation: string | null = null;
+    let promotionError: string | null = null;
+    try {
+      violation = await settleViolation(contentId, before, result, job);
+    } catch (err) {
+      if (!(err instanceof PromotionFailed)) throw err;
+      promotionError = err.message;
+      const failedSettle = await markPromotionFailed(contentId, before, promotionError);
+      if (failedSettle) violation = failedSettle;
+      report(`${contentId} 的 ${before.phase} 产物定版失败，状态未推进：${promotionError}`);
+    }
     if (violation) report(`${contentId} 的 ${before.phase} 产物只作历史留档：${violation}`);
-    else await promoteStaged(contentId, result, job);
     const warning = stepWarning(result);
-    if (!violation && warning) report(`${contentId} 的 ${before.phase} 跑完了但结果没达成：${warning}`);
+    if (!violation && !promotionError && warning) report(`${contentId} 的 ${before.phase} 跑完了但结果没达成：${warning}`);
     if (!job) return;
-    const rev = violation ? undefined : outputRevision(before.phase, result.ok ? result.revisions : undefined);
+    const rev = violation || promotionError ? undefined : outputRevision(before.phase, result.ok ? result.revisions : undefined);
     await appendVideoJob(dataDir, {
       ...job,
-      status: result.ok && !violation ? "succeeded" : "failed",
+      status: result.ok && !violation && !promotionError ? "succeeded" : "failed",
       settledAt: nowIso(deps),
       ...(rev !== undefined ? { outputRevision: rev } : {}),
-      ...(!violation && warning ? { warning } : {}),
+      ...(!violation && !promotionError && warning ? { warning } : {}),
       ...(violation
         ? { errorCode: "stale_settle", failReason: `历史产物（文件已留盘，状态未推进）：${violation}` }
+        : promotionError
+          ? { errorCode: "promotion_failed", failReason: promotionError }
         : result.ok
           ? {}
           : { errorCode: result.errorCode, failReason: result.reason }),

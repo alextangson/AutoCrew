@@ -45,7 +45,7 @@ export interface CleanupContext {
 
 export interface CleanupPlan {
   remove: string[];
-  /** 要反登记的非通过版成片 revision（按所有权删，删不掉就是历史产物，不动） */
+  /** 要核对所有权的非通过版成片 revision；只有受管登记存在时才删文件并反登记 */
   unregister: number[];
   keep: string[];
   /** 认不出来的文件：一律不动，但要说出来 */
@@ -88,7 +88,6 @@ export function planVideoCleanup(names: readonly string[], ctx: CleanupContext):
     else if (verdict === "keep") plan.keep.push(name);
     else if (verdict === "remove") plan.remove.push(name);
     else {
-      plan.remove.push(name);
       plan.unregister.push(verdict.unregister);
     }
   }
@@ -150,11 +149,25 @@ export async function runVideoCleanup(
     }
   }
   for (const revision of plan.unregister) {
-    // 返回 false = 这一版没有受管登记（历史成片 / 人手挂接的同名文件）：不动它的登记
-    await removeManagedFinalAsset(contentId, revision, dataDir).catch((err: unknown) => {
+    let owned = false;
+    try {
+      owned = await removeManagedFinalAsset(contentId, revision, dataDir);
+    } catch (err) {
       warnings.push(`反登记成片 v${revision} 失败：${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    });
+      continue;
+    }
+    // false = 历史成片或人手挂接的同名文件。所有权不成立，原文件也必须保留。
+    if (!owned) continue;
+    const name = `final.v${revision}.mp4`;
+    const file = path.join(dir, name);
+    try {
+      const stat = await fs.stat(file);
+      await fs.rm(file, { force: true });
+      freedBytes += stat.size;
+      removed.push(name);
+    } catch (err) {
+      warnings.push(`受管成片已反登记，但删不掉 ${name}：${(err as Error).message}`);
+    }
   }
   return { freedBytes, removed, warnings };
 }

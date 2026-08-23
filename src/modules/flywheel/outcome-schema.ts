@@ -146,5 +146,5 @@ export function outcomeKey(o: {
   const item = o.contentId
     ? o.contentId
     : `${norm}@${o.publishedAt ? o.publishedAt.slice(0, 10) : "unknown"}`;
-  return `${o.platform}:${item}:${o.metricDate}`;
+  return `${normalizePlatform(o.platform)}:${item}:${o.metricDate}`;
 }

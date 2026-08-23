@@ -47,6 +47,7 @@ export interface PlatformPullState {
   lastStatus: PullStatus | "never";
   /** 脱敏错误码，永不含响应原文（codex #22） */
   lastErrorCode?: string;
+  /** 最近一次成功真正入账的行数，不是抓取器返回的原始行数 */
   lastRowCount?: number;
   lastBatchId?: string;
   /**

@@ -127,7 +127,7 @@ export function applyPullOutcome(
 
   if (landing.status === "ok") {
     next.lastSuccessAt = now.toISOString();
-    next.lastRowCount = landing.rowCount;
+    next.lastRowCount = landing.imported ?? landing.rowCount;
     next.failureCount = 0;
     next.failureDate = null;
     next.nextEligibleAt = new Date(now.getTime() + ttlMs).toISOString();
@@ -206,6 +206,14 @@ async function land(platform: PullPlatform, result: PullResult, now: Date, opts:
       source: "auto",
       dataDir: opts.dataDir,
     });
+    if (report.imported === 0) {
+      return {
+        status: "error",
+        rowCount: 0,
+        imported: 0,
+        errorCode: report.rejected.length > 0 ? "all_rows_rejected" : "zero_rows_imported",
+      };
+    }
     return { ...base, imported: report.imported, batchId };
   } catch (err) {
     opts.warn?.(`[metrics-pull] ${platform} 入库失败：${err instanceof Error ? err.message : String(err)}`);

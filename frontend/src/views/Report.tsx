@@ -29,6 +29,7 @@ interface Report {
 /** 均值指标全量上墙(与 outcome-schema 对齐);率值带 %,量值取整千分位 */
 const METRIC_TILES: Array<[string, string, boolean]> = [
   ["views", "平均播放/阅读", false],
+  ["impressions", "平均曝光", false],
   ["completionRate", "平均完播率", true],
   ["completion5s", "平均5s完播", true],
   ["likes", "平均点赞", false],
@@ -40,6 +41,7 @@ const METRIC_TILES: Array<[string, string, boolean]> = [
 
 const ROW_METRICS: Array<[string, string, boolean]> = [
   ["views", "播放", false],
+  ["impressions", "曝光", false],
   ["likes", "赞", false],
   ["favorites", "藏", false],
   ["comments", "评", false],

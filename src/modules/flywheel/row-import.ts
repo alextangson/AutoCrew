@@ -22,6 +22,7 @@ import type { PendingBinding } from "./platform-items.js";
 import {
   validateOutcome,
   outcomeKey,
+  normalizePlatform,
   type OutcomeMetrics,
   type OutcomeSource,
   type PerformanceOutcome,
@@ -123,7 +124,7 @@ export async function importPerformanceRows(
     const existing = await listOutcomes(opts.dataDir);
     const existingKeys = new Set(existing.map((o) => outcomeKey(o)));
     const ctx: RowContext = {
-      platform,
+      platform: normalizePlatform(platform),
       source: opts.source,
       defaultMetricDate: opts.metricDate || localDateStamp(),
       dataDir: opts.dataDir,

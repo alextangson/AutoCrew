@@ -18,7 +18,13 @@ afterEach(async () => {
   await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
-async function seedOutcome(contentId: string | null, title: string, views: number, metricDate: string) {
+async function seedOutcome(
+  contentId: string | null,
+  title: string,
+  views: number,
+  metricDate: string,
+  extraMetrics: Record<string, number> = {},
+) {
   await recordOutcome(
     {
       contentId,
@@ -26,7 +32,7 @@ async function seedOutcome(contentId: string | null, title: string, views: numbe
       platformTitle: title,
       publishedAt: "2026-06-01T10:00:00.000Z",
       metricDate,
-      metrics: { views, completionRate: 30 },
+      metrics: { views, completionRate: 30, ...extraMetrics },
       source: "csv",
     },
     testDir,
@@ -58,12 +64,13 @@ describe("buildBaseline from outcome store", () => {
   it("emits an avgMetrics-level day-1 insight when history exists but nothing is matched", async () => {
     // day-1 形状：纯历史回灌，sampleSize 过 3 但 traitSampleSize = 0
     for (let i = 0; i < 10; i++) {
-      await seedOutcome(null, `历史作品${i}`, 5000 + i * 100, "2026-06-08");
+      await seedOutcome(null, `历史作品${i}`, 5000 + i * 100, "2026-06-08", { impressions: 20_000 + i });
     }
     const baseline = await buildBaseline(testDir);
     expect(baseline.sampleSize).toBe(10);
     expect(baseline.traitSampleSize).toBe(0);
     expect(baseline.insights[0]).toContain("平均播放");
+    expect(baseline.insights[0]).toContain("平均曝光");
     expect(baseline.insights[0]).toContain("打标");
     expect(baseline.insights[0]).not.toContain("数据还不够多");
   });

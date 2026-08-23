@@ -164,6 +164,21 @@ describe("generateScript", () => {
     expect(all.some((c) => c.id === result.contentId)).toBe(true);
   });
 
+  it("tokensUsed 汇总写稿与 AI 审稿调用", async () => {
+    const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      const tool = (opts.tools ?? [])[0];
+      if (isWriterLoop(opts)) {
+        await tool.execute(GOOD_PAYLOAD);
+        return { finalMessage: "ok", turns: 1, totalTokens: 200, toolCallCount: 1, stopReason: "no_tool_calls" };
+      }
+      await tool.execute({ verdict: "pass", issues: [] });
+      return { finalMessage: "ok", turns: 1, totalTokens: 25, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+
+    const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
+    expect(result.tokensUsed).toBe(225);
+  });
+
   // 2. Self-correction: first call is missing cta, second is full
   it("self-correction: missing cta → execute returns error message, second full call succeeds", async () => {
     const missingCta = { ...GOOD_PAYLOAD };

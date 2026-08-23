@@ -142,13 +142,13 @@ describe("自愈：认对一次，标题再改也不丢", () => {
     expect(latest.every((o) => o.contentId === c.id)).toBe(true);
   });
 
-  it("先历史后绑定：同一作品不双计（幂等键不分叉的红线仍然成立）", async () => {
+  it("先历史后绑定且平台改标题：同一 itemId 的旧行被对账吸收", async () => {
     const c = await publish("完全对不上的稿件标题");
     await importRows([row({ title: "老视频甲", platformItemId: DY_ID })]); // 无人认领 → historical
     await commitBindings([{ platform: "douyin", itemId: DY_ID, contentId: c.id, via: "url" }], dir);
-    await importRows([row({ title: "老视频甲", platformItemId: DY_ID })]); // 这次归到 c
+    await importRows([row({ title: "作者后来改了标题", platformItemId: DY_ID })]); // 这次归到 c
 
-    expect((await listOutcomes(dir)).map((o) => o.contentId)).toEqual([c.id]); // 历史版本被对账吸收
+    expect((await listOutcomes(dir)).map((o) => o.contentId)).toEqual([c.id]);
     expect(await listLatestOutcomes(dir)).toHaveLength(1);
   });
 });

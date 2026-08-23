@@ -1,5 +1,5 @@
 /**
- * 自动回流状态区（回流 spec §4.4）——三平台一行：开关 / 状态徽标 / 最近成功 / 上次入库行数 /
+ * 自动回流状态区（回流 spec §4.4）——三平台一行：开关 / 状态徽标 / 最近成功 / 上次入账行数 /
  * 立即抓取。刷新走 SSE：调度每次抓完发 `metrics_pull` 引擎事件，这里收到就重拉状态。
  *
  * 两条纪律：
@@ -42,7 +42,7 @@ function PullRow(props: {
         <span className={`mono pri ${TONE_CLASS[badge.tone]}`}>{badge.text}</span>
         <span className="row-title">{row.label}</span>
         <span className="muted mono">最近成功 {formatPullTime(row.lastSuccessAt)}</span>
-        <span className="muted mono">上次入库 {row.lastRowCount ?? 0} 行</span>
+        <span className="muted mono">上次入账 {row.lastRowCount ?? 0} 行</span>
         <button className="chip" disabled={busy || row.inFlight} onClick={props.onPull}>
           {busy || row.inFlight ? "抓取中…" : "立即抓取"}
         </button>
