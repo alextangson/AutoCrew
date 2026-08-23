@@ -298,6 +298,13 @@ describe("broker quote 校验", () => {
     expect(check.ok === false && check.reason).toContain("找不到");
   });
 
+  it("locateQuote：真引文能全库定位到所在页；转述与空引文定位不到", async () => {
+    const b = await readied();
+    expect(b.locateQuote("关键数据是 87% 的用户 留存。")).toBe("p1");
+    expect(b.locateQuote("关键数据是 87 % 的用户留存")).toBeNull();
+    expect(b.locateQuote("   ")).toBeNull();
+  });
+
   it("search_result 不可验：明确要求先读页", async () => {
     const b = await readied();
     const check = b.validateQuote("s1", "片段");

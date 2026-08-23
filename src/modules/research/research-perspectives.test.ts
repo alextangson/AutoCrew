@@ -246,6 +246,31 @@ describe("合法输出直通", () => {
     expect(cap.results[1]).toContain("只是搜索结果");
     expect(cap.results[1]).toContain("read_page");
   });
+
+  // 归属纠偏（2026-08-23 生产复盘）：视角死因八成是真引文记错页,不是编造
+  it("真引文记错了页 → 自动纠正 sourceId 收下,不烧修复轮", async () => {
+    const cap = newCapture();
+    const res = await run(
+      [SEARCH, READ, submit({ evidence: [{ claim: "使用率过半", source_id: "s1", quote: REAL_QUOTE }] })],
+      cap,
+    );
+
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.output.evidence).toEqual([{ claim: "使用率过半", sourceId: "p1", quote: REAL_QUOTE }]);
+    expect(cap.results.at(-1)).not.toMatch(/^Error/);
+  });
+
+  it("全库都找不到的引文仍打回——纠偏不放行转述", async () => {
+    const cap = newCapture();
+    const res = await run(
+      [SEARCH, READ, submit({ evidence: [{ claim: "转述", source_id: "p1", quote: "这是模型自己改写的句子" }] })],
+      cap,
+    );
+
+    expect(res.status).toBe("failed");
+    expect(cap.results.at(-1)).toContain("找不到");
+  });
 });
 
 // ─── 校验与修复轮 ────────────────────────────────────────────────────────────

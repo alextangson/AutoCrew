@@ -254,6 +254,13 @@ function readEvidence(raw: unknown, broker: ResearchBroker, problems: string[]) 
     }
     const check = broker.validateQuote(sourceId, quote);
     if (!check.ok) {
+      // 归属纠偏（2026-08-23 生产复盘）：失败引文里八成是**真引文记错了页**——引文能在
+      // 别的已读页逐字找到，就纠正 sourceId 收下，不烧修复轮；全库都找不到才是转述/编造，打回。
+      const relocated = broker.locateQuote(quote);
+      if (relocated) {
+        evidence.push({ claim, sourceId: relocated, quote });
+        continue;
+      }
       problems.push(`evidence[${i}]（${sourceId}）：${check.reason}`);
       continue;
     }
