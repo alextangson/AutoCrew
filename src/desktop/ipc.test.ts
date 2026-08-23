@@ -143,8 +143,8 @@ describe("IPC_CHANNELS", () => {
     "research:import_asset",
   ];
 
-  it("has exactly 148 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(148);
+  it("has exactly 153 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(153);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -344,6 +344,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "research:brief_get" &&
           ch !== "research:list_assets" &&
           ch !== "research:import_asset" &&
+          ch !== "library:set_reusable" &&
+          ch !== "cover:identity" &&
           // 视频线全部走 video-handlers（service 门面），没有一个是 execute-backed
           !ch.startsWith("video:"),
       ).sort(),
