@@ -44,6 +44,22 @@ afterEach(async () => {
 });
 
 /**
+ * 写稿测试的 loop 替身只扮演**写稿那一轮**。写稿收束后还有一轮 AI 审稿（script-review），
+ * 用的是同一个注入口但工具带是 submit_review——替身不出手，审稿按「未经 AI 审稿」降级，
+ * 写稿路径的断言（prompt/归因/标题/版本）因此与改动前逐字一致。审稿本身另有专测。
+ */
+const REVIEW_ABSTAIN: LoopResult = {
+  finalMessage: "审稿替身不出手",
+  turns: 1,
+  totalTokens: 0,
+  toolCallCount: 0,
+  stopReason: "no_tool_calls",
+};
+
+const isWriterLoop = (opts: LoopOptions): boolean =>
+  (opts.tools ?? []).some((t: LoopTool) => t.name === "submit_script");
+
+/**
  * Build a fake runLoopImpl that calls submit_script with the given payloads in order.
  * Each execute return value is pushed into execResults (for asserting error guidance).
  */
@@ -53,6 +69,7 @@ function makeRunLoop(
   execResults: string[] = [],
 ): (_cfg: EngineConfig, opts: LoopOptions) => Promise<LoopResult> {
   return async (_cfg, opts) => {
+    if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
     const submitTool = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_script");
     if (!submitTool) throw new Error("submit_script tool not found in opts");
 
@@ -105,6 +122,7 @@ describe("generateScript", () => {
     let seenConfig: EngineConfig | undefined;
     let seenModel = "";
     const runLoopImpl = async (cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
       seenConfig = cfg;
       seenModel = opts.model;
       const submitTool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
@@ -401,6 +419,7 @@ describe("generateScript × quality gate (wechat_mp)", () => {
   it("wechat_mp 路由到图文包：prompt 含写手角色与硬门禁，budget 提升", async () => {
     let seenOpts: LoopOptions | undefined;
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
       seenOpts = opts;
       const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
       await tool.execute(articlePayload());
@@ -474,6 +493,7 @@ describe("generateScript × quality gate (wechat_mp)", () => {
   it("douyin 不受影响：口播包、无 gate、预算不变", async () => {
     let seenOpts: LoopOptions | undefined;
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
       seenOpts = opts;
       const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
       await tool.execute(GOOD_PAYLOAD);
@@ -492,6 +512,7 @@ describe("startGenerateScript — 后台化（契约 P1 完全体）", () => {
     let releaseLoop;
     const gate = new Promise((r) => { releaseLoop = r; });
     const runLoopImpl = async (_cfg, opts) => {
+      if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
       await gate; // loop 挂起——占位必须先返回
       const submitTool = (opts.tools ?? []).find((t) => t.name === "submit_script");
       await submitTool.execute(GOOD_PAYLOAD);
@@ -532,6 +553,7 @@ describe("startGenerateScript — 后台化（契约 P1 完全体）", () => {
 /** 捕获 userMessage 的 runLoopImpl:知识块最终落在 user prompt 的调研材料槽 */
 function makePromptCapturingLoop(sink: { userMessage: string }) {
   return async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+    if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
     sink.userMessage = opts.userMessage;
     const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
     await tool.execute(GOOD_PAYLOAD);
@@ -731,6 +753,7 @@ describe("写作入口自动补深调研", () => {
       },
       // 写稿这一刻标题必须已经改回来了（接下来是写,不是调研）
       runLoopImpl: async (_cfg, opts) => {
+        if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
         seen.push(await onlyTitle());
         await (opts.tools ?? []).find((t) => t.name === "submit_script")!.execute(GOOD_PAYLOAD);
         return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
@@ -758,6 +781,7 @@ describe("写作入口自动补深调研", () => {
     await generateScript(TOPIC_REQ, testDir, {
       ensureBriefImpl: async () => ({ state: "already" }), // 不叫 onWaiting
       runLoopImpl: async (_cfg, opts) => {
+        if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
         seen.push(await onlyTitle());
         await (opts.tools ?? []).find((t) => t.name === "submit_script")!.execute(GOOD_PAYLOAD);
         return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
@@ -817,5 +841,189 @@ describe("写作入口自动补深调研", () => {
 
     const done = events.find((e) => e.kind === "run_done");
     expect(done?.label).not.toContain("未带简报");
+  });
+});
+
+// ─── AI 审稿接线（审稿 spec §2.1 顺序：组装 → humanize → 审稿 → 违禁词扫描 → 转正）──
+
+const LOOP_OK: LoopResult = {
+  finalMessage: "ok",
+  turns: 1,
+  totalTokens: 120,
+  toolCallCount: 1,
+  stopReason: "no_tool_calls",
+};
+
+/** 写稿轮 + 审稿轮 + 修订轮的替身：按工具带认自己是谁 */
+function reviewingLoop(script: {
+  draft: Record<string, unknown>;
+  reviews: Array<Record<string, unknown> | "throw">;
+  revisions?: Array<Record<string, unknown>>;
+  seen?: { reviewUser: string[] };
+}) {
+  const reviews = [...script.reviews];
+  const revisions = [...(script.revisions ?? [])];
+  let wroteFirstDraft = false;
+  return async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+    const tool = (opts.tools ?? [])[0];
+    if (tool.name === "submit_review") {
+      script.seen?.reviewUser.push(opts.userMessage);
+      const next = reviews.shift();
+      if (next === "throw") throw new Error("审稿 relay 断流");
+      if (next) await tool.execute(next);
+      return LOOP_OK;
+    }
+    const payload = wroteFirstDraft ? revisions.shift() : script.draft;
+    wroteFirstDraft = true;
+    if (payload) await tool.execute(payload);
+    return LOOP_OK;
+  };
+}
+
+/** 带 AI 味的初稿：humanizeZh 会删掉「值得一提的是」，审稿必须看的是删完之后的样子 */
+const AI_FLAVORED = {
+  ...GOOD_PAYLOAD,
+  body: "值得一提的是，正文讲了三件事，每件都有具体数字。",
+};
+
+const BLOCKER = {
+  severity: "blocker",
+  quote: "正文讲了三件事",
+  rule: "信息罗列无论点",
+  instruction: "把三件事收敛成一个判断",
+};
+
+describe("generateScript × AI 审稿", () => {
+  it("审稿读的是 humanize 之后的终稿形态（正则在前，§2.1）", async () => {
+    const seen = { reviewUser: [] as string[] };
+    await generateScript(TEST_REQ, testDir, {
+      runLoopImpl: reviewingLoop({ draft: AI_FLAVORED, reviews: [{ verdict: "pass", issues: [] }], seen }),
+    });
+
+    expect(seen.reviewUser).toHaveLength(1);
+    expect(seen.reviewUser[0]).not.toContain("值得一提的是"); // 正则已经动过手了
+    expect(seen.reviewUser[0]).toContain("正文讲了三件事");
+    expect(seen.reviewUser[0]).toContain(GOOD_PAYLOAD.hook);
+  });
+
+  it("一轮过：review 落 Content 与返回值，正文不变", async () => {
+    const res = await generateScript(TEST_REQ, testDir, {
+      runLoopImpl: reviewingLoop({ draft: GOOD_PAYLOAD, reviews: [{ verdict: "pass", issues: [] }] }),
+    });
+
+    expect(res.review.status).toBe("passed");
+    expect(res.review.rounds).toBe(0);
+    const saved = await getContent(res.contentId, testDir);
+    expect(saved!.review?.status).toBe("passed");
+    expect(saved!.body).toBe(res.body);
+    expect(await latestNote(res.contentId)).toBe("AI 完成初稿");
+  });
+
+  it("修订发生 → 落盘的是修订稿，违禁词扫描扫的也是修订稿（审稿在扫描之前）", async () => {
+    const revised = { ...GOOD_PAYLOAD, body: "你可以通过翻墙来看更多资料，这是一个判断。" };
+    const res = await generateScript(TEST_REQ, testDir, {
+      runLoopImpl: reviewingLoop({
+        draft: AI_FLAVORED,
+        reviews: [{ verdict: "revise", issues: [BLOCKER] }, { verdict: "pass", issues: [] }],
+        revisions: [revised],
+      }),
+    });
+
+    expect(res.review.status).toBe("revised");
+    expect(res.review.rounds).toBe(1);
+    expect(res.review.fixed).toBe(1);
+    expect(res.body).toContain("这是一个判断");
+    // 初稿里没有违禁词，修订稿里有 → 扫描扫的是审稿之后那一版
+    expect(res.violations.some((v) => v.includes("翻墙"))).toBe(true);
+
+    const saved = await getContent(res.contentId, testDir);
+    expect(saved!.body).toBe(res.body);
+    expect(await latestNote(res.contentId)).toBe("AI 审稿修订（1 项）");
+  });
+
+  it("版本注记组合：修订 × 未带简报，一句人话说清两件事", async () => {
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: reviewingLoop({
+        draft: AI_FLAVORED,
+        reviews: [{ verdict: "revise", issues: [BLOCKER] }, { verdict: "pass", issues: [] }],
+        revisions: [{ ...GOOD_PAYLOAD, body: "换成一个判断，不再罗列。" }],
+      }),
+      ensureBriefImpl: async () => ({ state: "timeout" }),
+      onWarn: () => {},
+    });
+
+    expect(res.wroteWithoutBrief).toBe(true);
+    expect(await latestNote(res.contentId)).toBe("AI 审稿修订（1 项，未带调研简报）");
+  });
+
+  it("审稿挂了 → 稿子照样转正，status skipped（审稿是增益，不许弄死写作）", async () => {
+    const warns: string[] = [];
+    const res = await generateScript(TEST_REQ, testDir, {
+      runLoopImpl: reviewingLoop({ draft: GOOD_PAYLOAD, reviews: ["throw"] }),
+      onWarn: (m) => warns.push(m),
+    });
+
+    expect(res.review.status).toBe("skipped");
+    expect(res.title).toBe(GOOD_PAYLOAD.title);
+    const saved = await getContent(res.contentId, testDir);
+    expect(saved!.status).toBe("draft_ready");
+    expect(saved!.review?.status).toBe("skipped");
+    expect(warns.some((w) => w.includes("未经 AI 审稿"))).toBe(true);
+  });
+
+  it("残留 blocker → status failed，用最后一版过 gate 的稿转正", async () => {
+    const res = await generateScript(TEST_REQ, testDir, {
+      runLoopImpl: reviewingLoop({
+        draft: AI_FLAVORED,
+        reviews: [
+          { verdict: "revise", issues: [BLOCKER] },
+          { verdict: "revise", issues: [BLOCKER] },
+          { verdict: "revise", issues: [BLOCKER] },
+        ],
+        revisions: [
+          { ...GOOD_PAYLOAD, body: "正文讲了三件事，第一次修订。" },
+          { ...GOOD_PAYLOAD, body: "正文讲了三件事，第二次修订。" },
+        ],
+      }),
+      onWarn: () => {},
+    });
+
+    expect(res.review.status).toBe("failed");
+    expect(res.review.issues.filter((i) => i.severity === "blocker")).toHaveLength(1);
+    expect(res.body).toContain("第二次修订");
+  });
+
+  it("后台入口 run_done 标签：三态各说各的（与「未带简报」并列）", async () => {
+    const labelOf = async (
+      script: Parameters<typeof reviewingLoop>[0],
+      extra?: { ensureBriefImpl?: () => Promise<EnsureBriefOutcome> },
+    ): Promise<string> => {
+      const events: Array<{ kind: string; label: string }> = [];
+      const started = await startGenerateScript(TEST_REQ, testDir, {
+        runLoopImpl: reviewingLoop(script),
+        onWarn: () => {},
+        onEvent: (e) => events.push(e),
+        ...(extra ?? {}),
+      });
+      await started.completion;
+      return events.find((e) => e.kind === "run_done")!.label;
+    };
+
+    expect(await labelOf({ draft: GOOD_PAYLOAD, reviews: [{ verdict: "pass", issues: [] }] })).toContain("（已审稿）");
+    expect(await labelOf({ draft: GOOD_PAYLOAD, reviews: ["throw"] })).toContain("（未经AI审稿）");
+    expect(
+      await labelOf({
+        draft: AI_FLAVORED,
+        reviews: [
+          { verdict: "revise", issues: [BLOCKER] },
+          { verdict: "revise", issues: [BLOCKER] },
+          { verdict: "revise", issues: [BLOCKER] },
+        ],
+        revisions: [
+          { ...GOOD_PAYLOAD, body: "正文讲了三件事，第一次修订。" },
+          { ...GOOD_PAYLOAD, body: "正文讲了三件事，第二次修订。" },
+        ],
+      }),
+    ).toContain("（审稿未过,残留1项）");
   });
 });

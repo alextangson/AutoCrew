@@ -832,7 +832,19 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Prom
   const feedback = typeof payload.feedback === "string" ? payload.feedback.trim() : "";
   try {
     const note = feedback ? `收下修改：${feedback.replace(/\s+/g, " ").slice(0, 80)}` : "收下修改";
-    const updated = await updateContent(contentId, { body, ...(title ? { title } : {}), _versionNote: note }, dataDir);
+    // revise_focus 的落盘点在这儿（它自己不落库）：收下改稿即审稿结论过期（审稿 spec §2.7）——
+    // 改过的稿不得继续顶着「已 AI 审稿」的徽章。没审过的稿不新增字段。
+    const before0 = await getContent(contentId, dataDir);
+    const updated = await updateContent(
+      contentId,
+      {
+        body,
+        ...(title ? { title } : {}),
+        _versionNote: note,
+        ...(before0?.review ? { review: { ...before0.review, status: "stale" as const } } : {}),
+      },
+      dataDir,
+    );
     if (!updated) return { ok: false, error: `稿件不存在：${contentId}` };
     // 采纳即学习闸门：正文确有变化才把 before→after 喂给蒸馏管线（延迟学习，不确认不学）
     if (before && before !== body) {

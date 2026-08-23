@@ -86,6 +86,14 @@ export interface Content {
   hashtags: string[];
   lastError?: string | null;
   adoption?: { verdict: string; reason?: string; reasonNote?: string };
+  /** AI 审稿结论(审稿 spec §2.5):稿卡徽章读它;旧稿无此字段 = 不显示徽章 */
+  review?: {
+    status: "passed" | "revised" | "failed" | "skipped" | "stale";
+    rounds: number;
+    fixed: number;
+    issues: Array<{ id: string; severity: "blocker" | "advisory"; quote: string; rule: string; instruction: string }>;
+    reviewedAt: string;
+  };
   videoKit?: { postTitle: string; caption: string; storyboard: unknown[]; coverText: string };
   performanceData?: Record<string, number>;
   versions?: Array<{ version: number; note?: string; savedAt: string }>;

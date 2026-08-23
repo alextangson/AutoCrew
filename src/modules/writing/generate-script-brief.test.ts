@@ -69,9 +69,22 @@ const TOPIC_TITLE = "AI 编程助手横评";
 const TOPIC_DESC = "对比 5 个主流工具的真实提效";
 const TEST_REQ = { topic: TOPIC_TITLE, platform: "douyin" as const };
 
+/**
+ * 写稿收束后还有一轮 AI 审稿（script-review）走同一个注入口，工具带是 submit_review——
+ * 替身不出手，审稿按「未经 AI 审稿」降级，写稿轮的注入/归因断言与改动前逐字一致。
+ */
+const REVIEW_ABSTAIN: LoopResult = {
+  finalMessage: "审稿替身不出手",
+  turns: 1,
+  totalTokens: 0,
+  toolCallCount: 0,
+  stopReason: "no_tool_calls",
+};
+
 /** 捕获 loop 入参：注入面（userMessage/systemPrompt）与归因面（logMeta）都在这上面验 */
 function capturingLoop(seen: { opts?: LoopOptions }) {
   return async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+    if (!(opts.tools ?? []).some((t) => t.name === "submit_script")) return REVIEW_ABSTAIN;
     seen.opts = opts;
     const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
     await tool.execute(GOOD_PAYLOAD);
@@ -300,7 +313,8 @@ describe("无简报路径 — 与改动前逐字一致", () => {
     expect(await promptOf({ ...TEST_REQ, topicId: topic.id }, { onWarn: (m) => warns.push(m) })).toEqual(
       baseline,
     );
-    expect(warns).toEqual([]);
+    // 简报侧一条都不许告警（审稿替身不出手会自报「未经 AI 审稿」，那是另一条链路的留痕）
+    expect(warns.filter((w) => w.includes("简报"))).toEqual([]);
   });
 
   it("简报文件损坏 → onWarn 可见 + 回退到无简报行为（prompt 与基线一致）", async () => {

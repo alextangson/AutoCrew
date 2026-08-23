@@ -54,6 +54,53 @@ describe("reviseDraft", () => {
     expect(saved?.versions).toHaveLength(2);
   });
 
+  it("改过的稿不许再顶着「已 AI 审稿」的徽章：review.status 落 stale（spec §2.7）", async () => {
+    const original = await saveContent(
+      {
+        title: "旧标题",
+        body: "旧正文。",
+        platform: "wechat_mp",
+        status: "draft_ready",
+        tags: [],
+        review: {
+          status: "passed",
+          rounds: 0,
+          fixed: 0,
+          issues: [{ id: "r0-1", severity: "advisory", quote: "旧正文", rule: "结尾升华", instruction: "收具体点" }],
+          reviewedAt: "2026-08-23T00:00:00.000Z",
+        },
+      },
+      testDir,
+    );
+
+    const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
+      const submit = (options.tools ?? []).find((tool) => tool.name === "submit_revision")!;
+      await submit.execute({ title: "新标题", body: "改过的新正文。" });
+      return { finalMessage: "done", turns: 2, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+
+    const result = await reviseDraft(original.id, "口语一点", testDir, { runLoopImpl });
+    expect(result.content.review?.status).toBe("stale");
+    // 结论本身留着：改稿让它过期，不等于那些问题没被指出过
+    expect(result.content.review?.issues).toHaveLength(1);
+    expect((await getContent(original.id, testDir))?.review?.status).toBe("stale");
+  });
+
+  it("没审过的稿改完也不凭空长出 review 字段", async () => {
+    const original = await saveContent(
+      { title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
+      testDir,
+    );
+    const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
+      const submit = (options.tools ?? []).find((tool) => tool.name === "submit_revision")!;
+      await submit.execute({ title: "标题", body: "改过的正文" });
+      return { finalMessage: "done", turns: 2, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+
+    const result = await reviseDraft(original.id, "再精炼一点", testDir, { runLoopImpl });
+    expect(result.content.review).toBeUndefined();
+  });
+
   it("refuses to claim success when the model returns an unchanged draft", async () => {
     const original = await saveContent(
       { title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },

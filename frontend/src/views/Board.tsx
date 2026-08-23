@@ -26,6 +26,22 @@ function ideaAge(anchor?: string): string {
   return days === 0 ? "今天" : `${days} 天前`;
 }
 
+/**
+ * AI 审稿徽章(审稿 spec §2.5:稿卡读 review.status)。
+ * 无 review 字段 = 不显示——旧稿不该被扣一顶「未审稿」的帽子;
+ * skipped 才是「这次本该审、没审成」,那顶帽子必须戴上。
+ */
+function reviewBadge(review: Content["review"]): string | null {
+  if (!review) return null;
+  if (review.status === "passed") return "✓已审稿";
+  if (review.status === "revised") return `✓审稿修订${review.fixed}`;
+  if (review.status === "failed") {
+    return `⚠残留${review.issues.filter((i) => i.severity === "blocker").length}项`;
+  }
+  if (review.status === "stale") return "审稿已过期";
+  return "未审稿";
+}
+
 interface TrashData {
   topics: Topic[];
   contents: Content[];
@@ -272,18 +288,23 @@ export function Board(props: { openEditor: (id: string) => void }) {
                   )}
                   {atom.members.length > 0 && (
                     <div className="acard-chips">
-                      {atom.members.map((m) => (
-                        <button
-                          key={m.id}
-                          className={"chip" + (m.status === "published" ? " chip-pub" : "")}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            props.openEditor(m.id);
-                          }}
-                        >
-                          {platformLabel(m.platform)} {VARIANT_STATUS[m.status] ?? m.status}
-                        </button>
-                      ))}
+                      {atom.members.map((m) => {
+                        const badge = reviewBadge(m.review);
+                        return (
+                          <button
+                            key={m.id}
+                            className={"chip" + (m.status === "published" ? " chip-pub" : "")}
+                            title={m.review?.issues.map((i) => i.rule).join("、") || undefined}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              props.openEditor(m.id);
+                            }}
+                          >
+                            {platformLabel(m.platform)} {VARIANT_STATUS[m.status] ?? m.status}
+                            {badge && <span className="muted"> {badge}</span>}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                   {atom.members.some((m) => m.lastError) && <div className="acard-err">⚠ 生成中断,点开可重试</div>}

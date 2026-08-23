@@ -96,6 +96,34 @@ describe("loadEngineConfig", () => {
     expect(config.routes?.scout?.model).toBe("claude-sonnet-5");
   });
 
+  // 审稿 spec §2.6：审稿是品味活，判错比慢贵——没专属配置就吃强模型，不许悄悄降到快档
+  it("reviewer route: 未配置 → 落主端点强模型；配置了 → 走专属端点", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({ apiKey: "sk-shared", strongModel: "main-strong", fastModel: "main-fast" }),
+    );
+    const bare = await loadEngineConfig(testDir);
+    const fallback = resolveEngineRoute(bare, "reviewer", bare.strongModel);
+    expect(fallback.model).toBe("main-strong");
+    expect(fallback.config.baseUrl).toBe(bare.baseUrl);
+
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        apiKey: "sk-shared",
+        strongModel: "main-strong",
+        fastModel: "main-fast",
+        routes: { reviewer: { baseUrl: "https://code.newcli.com/claude/ultra/", model: "claude-opus-4-8" } },
+      }),
+    );
+    const configured = await loadEngineConfig(testDir);
+    const reviewer = resolveEngineRoute(configured, "reviewer", configured.strongModel);
+    expect(reviewer.model).toBe("claude-opus-4-8");
+    expect(reviewer.config.baseUrl).toBe("https://code.newcli.com/claude/ultra");
+    expect(reviewer.config.protocol).toBe("anthropic");
+    expect(reviewer.config.apiKey).toBe("sk-shared");
+  });
+
   it("throws actionable error when no key anywhere", async () => {
     await expect(loadEngineConfig(testDir)).rejects.toThrow(/DEEPSEEK_API_KEY|engine\.json/);
   });

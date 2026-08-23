@@ -66,9 +66,19 @@ const PATTERN_INPUT: PatternCardInput = {
   sourceInboxId: "inbox-001",
 };
 
+/** 写稿收束后那轮 AI 审稿（工具带是 submit_review）替身不出手：写稿轮的断言不受影响 */
+const REVIEW_ABSTAIN: LoopResult = {
+  finalMessage: "审稿替身不出手",
+  turns: 1,
+  totalTokens: 0,
+  toolCallCount: 0,
+  stopReason: "no_tool_calls",
+};
+
 /** 捕获 loop 入参：注入面（userMessage）与归因面（logMeta）都在这上面验 */
 function capturingLoop(seen: { opts?: LoopOptions }) {
   return async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+    if (!(opts.tools ?? []).some((t) => t.name === "submit_script")) return REVIEW_ABSTAIN;
     seen.opts = opts;
     const tool = (opts.tools ?? []).find((t) => t.name === "submit_script")!;
     await tool.execute(GOOD_PAYLOAD);
