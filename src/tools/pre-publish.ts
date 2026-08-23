@@ -3,7 +3,7 @@
  *
  * Runs 6 checks before allowing content to be published:
  * 1. Content review passed
- * 2. Cover review passed (XHS/Douyin only)
+ * 2. Cover review passed (all video platforms)
  * 3. Hashtags exist where the platform uses them
  * 4. Title within platform length range
  * 5. Platform is set
@@ -56,7 +56,7 @@ const PLATFORM_MAX_BODY: Record<string, number> = {
 
 // --- Platforms that require cover review ---
 
-const COVER_REQUIRED_PLATFORMS = new Set(["xiaohongshu", "xhs", "douyin"]);
+const COVER_REQUIRED_PLATFORMS = new Set(["xiaohongshu", "xhs", "douyin", "wechat_video", "bilibili"]);
 
 // --- Schema ---
 
@@ -118,7 +118,7 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
     checks.push({ name: "内容审核", status: "fail", detail: "审核执行出错", fix: "手动运行 autocrew_review" });
   }
 
-  // --- Check 2: Cover review (XHS/Douyin only) ---
+  // --- Check 2: Cover review (all video platforms) ---
   if (COVER_REQUIRED_PLATFORMS.has(platform)) {
     const coverReview = await getCoverReview(contentId, dataDir);
     if (coverReview && coverReview.status === "approved" && coverReview.approvedLabel) {

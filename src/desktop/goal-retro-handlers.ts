@@ -5,6 +5,7 @@
  */
 import { getGoal, setGoal } from "../modules/profile/goal.js";
 import { generateRetro, listRetros, readRetro, type RetroMode } from "../modules/retro/retro.js";
+import { listHypotheses } from "../modules/retro/hypotheses.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 type Payload = Record<string, unknown>;
@@ -68,6 +69,10 @@ export async function retroGenerateHandler(payload: Payload): Promise<Record<str
         markdown: result.markdown,
         // 生产用时随产物一起回:调用方要读数,不该去 markdown 里正则抠
         timing: result.timing,
+        // run 身份与台账落账结果(spec §5.4):台账没写住时 hypotheses.written=false +
+        // error,调用方能如实告诉人「报告在,假设没入账」,不必去 markdown 里找那句话
+        runId: result.runId,
+        hypotheses: result.hypotheses,
       },
     };
   } catch (err) {
@@ -82,6 +87,25 @@ export async function retroListHandler(payload: Payload): Promise<Record<string,
   if (bad) return bad;
   try {
     return { ok: true, data: { retros: await listRetros((payload._dataDir as string) || undefined) } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * 假设台账只读（spec §5.3）——open 与已裁决分两组回，前端不必自己筛。
+ * 裁决是代码算的观察性结论，这里只是把台账端上来，不做任何再解释。
+ */
+export async function hypothesesListHandler(payload: Payload): Promise<Record<string, unknown>> {
+  const bad = badPayload(payload);
+  if (bad) return bad;
+  try {
+    const all = await listHypotheses((payload._dataDir as string) || undefined);
+    const open = all.filter((h) => h.status === "open");
+    const judged = all
+      .filter((h) => h.status !== "open")
+      .sort((a, b) => (b.verdictAt ?? b.proposedAt).localeCompare(a.verdictAt ?? a.proposedAt));
+    return { ok: true, data: { open, judged } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

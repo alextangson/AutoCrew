@@ -120,6 +120,7 @@ describe("reviewAndConverge — 收敛", () => {
     expect(out.review.issues).toEqual([]);
     expect(out.payload).toEqual(PAYLOAD);
     expect(out.humanizedText).toBe(TEXT);
+    expect(out.tokensUsed).toBe(10);
     expect(Number.isNaN(Date.parse(out.review.reviewedAt))).toBe(false);
     expect(seen.reviseOpts).toHaveLength(0); // 没 blocker 就不该有修订轮
   });
@@ -151,6 +152,7 @@ describe("reviewAndConverge — 收敛", () => {
     expect(out.payload.hook).toBe("去年三月我亏了两万块");
     expect(out.humanizedText).toContain("去年三月我亏了两万块");
     expect(out.gateFailures).toEqual([]); // 换稿了就带上修订稿自己的 gate 结果
+    expect(out.tokensUsed).toBe(30); // 审 + 修 + 再审
     expect(seen.reviseOpts).toHaveLength(1);
   });
 

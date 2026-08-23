@@ -23,8 +23,11 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "content:list": [],
   "content:get": ["id"],
   "publish:clipboard": ["content_id"],
+  "publish:preflight": ["content_id"],
   "publish:digest": ["content_id"],
+  // 可选键 publish_url（发布后的平台地址）：省略/空串 = 保留稿件上已有的链接，不清空
   "publish:confirm": ["content_id"],
+  "publish:pre_check": ["content_id"],
   "publish:request_wechat": ["content_id"],
   "publish:wechat_draft": ["content_id", "approval_token"],
   "article_images:get": ["content_id"],
@@ -57,6 +60,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "cover:approve": ["content_id", "label"],
   "cover:revise": ["content_id", "label", "feedback"],
   "cover:ratios": ["content_id"],
+  "cover:identity": ["action"],
   "settings:cover_get": [],
   "settings:cover_set": [],
   "logs:list": [],
@@ -72,6 +76,12 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "flywheel:import_csv": ["platform"],
   "flywheel:record": ["content_id", "metrics"],
   "flywheel:wechat_pull": [],
+  // 自动回流控制面：platform 只认 douyin/wechat_video/xiaohongshu（深校验在 handler）；
+  // pull_toggle 的 enabled 是布尔，false 也算「给了值」，所以列必填不会误拒关开关
+  "flywheel:pull_status": [],
+  "flywheel:pull_now": ["platform"],
+  "flywheel:pull_toggle": ["platform", "enabled"],
+  "flywheel:hypotheses_list": [],
   "dialog:pick_file": [],
   "knowledge:status": [],
   "radar:status": [],
@@ -108,6 +118,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "library:remove": ["id"],
   "library:folder_create": ["name"],
   "library:folder_remove": ["id"],
+  // reusable 是布尔，可能为 false——必填校验按「键存在」判不了它，深校验在 handler
+  "library:set_reusable": ["id"],
   "dialog:pick_media": [],
   "content:asset_add": ["content_id", "library_id"],
   "content:asset_remove": ["content_id", "filename"],
@@ -164,6 +176,10 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "video:editor_confirm": ["content_id", "plan_revision", "kept_overlay_ids"],
   "video:editor_rerun": ["content_id"],
   "video:editor_slot_fill": ["content_id", "plan_revision", "overlay_id", "library_id"],
+  // 删槽与门二回退（lifecycle spec §2.2 / §2.3）：两条都带 plan_revision 当乐观锁，
+  // 它们改的是同一份 plan 派生链，不带版本就等于允许覆盖别人刚做的编排
+  "video:editor_slot_remove": ["content_id", "plan_revision", "overlay_id"],
+  "video:editor_back_to_cut": ["content_id", "plan_revision"],
   "video:cut_preview": ["content_id", "keeps", "base_transcript_revision", "base_cut_revision"],
   "video:reassemble": ["content_id"],
   "video:review_confirm": ["content_id", "rendered_revision", "verdict"],

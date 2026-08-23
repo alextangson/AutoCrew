@@ -1,0 +1,29 @@
+{
+  "_fixture_note": "抖音旧路 /janus/douyin/creator/pc/work_list。端点文档 §1：aweme_list[] 出基础字段与计数，items[] 按索引对应、率类指标在 items[].metrics。**未经真实抓包，待校准**。",
+  "status_code": 0,
+  "has_more": false,
+  "max_cursor": 0,
+  "aweme_list": [
+    {
+      "aweme_id": 7400000000000000123,
+      "desc": "旧路作品：把复盘写成一句话",
+      "item_title": "把复盘写成一句话",
+      "create_time": 1783200000,
+      "statistics": {
+        "play_count": 44210,
+        "digg_count": 1980,
+        "comment_count": 133,
+        "share_count": 51,
+        "collect_count": 208
+      }
+    }
+  ],
+  "items": [
+    {
+      "metrics": {
+        "completion_rate": "27.8",
+        "completion_rate_5s": "61.2"
+      }
+    }
+  ]
+}

@@ -12,12 +12,11 @@
  */
 import path from "node:path";
 import { getContent } from "../../storage/local-store.js";
-import { assembleVideo, driftedAssets } from "./assemble.js";
-import { readOverlaySlots } from "./timeline-build.js";
+import { assembleVideo, driftedAssets, ASSEMBLE_STAGED_BASES } from "./assemble.js";
 import { extractAsrWav, runAsr, scriptMatchRatio } from "./asr.js";
-import { catalogDigest, runEditor, type EditorKeepUnit } from "./editor.js";
-import { fingerprintFile } from "./fingerprint.js";
-import { scanBrollCandidates, trimCandidates, type EditorCandidate } from "./editor-plan.js";
+import { buildBrollCatalog } from "./broll-catalog.js";
+import { loadConfirmedOverlays } from "./editor-decision.js";
+import { runEditor, type EditorKeepUnit } from "./editor.js";
 import { ingestAroll } from "./ingest.js";
 import { buildOutputMap, outputDurationMs } from "./output-map.js";
 import type { VideoDeps } from "./proc.js";
@@ -340,28 +339,6 @@ function stageEditorPlan(
 }
 
 /**
- * 给候选素材打指纹快照（v2 spec §4.2）。读不出的文件当场剔除并点名——
- * 让剪辑师排一段指向不存在文件的 B-roll，只会把问题推到 assemble 才炸。
- */
-async function fingerprintCandidates(
-  dataDir: string,
-  contentId: string,
-  scan: { candidates: readonly Omit<EditorCandidate, "fingerprint">[]; excluded: string[] },
-): Promise<{ candidates: EditorCandidate[]; excluded: string[] }> {
-  const candidates: EditorCandidate[] = [];
-  const excluded = [...scan.excluded];
-  for (const c of scan.candidates) {
-    try {
-      const abs = await resolveAssetRef(dataDir, contentId, c.ref);
-      candidates.push({ ...c, fingerprint: await fingerprintFile(abs) });
-    } catch (err) {
-      excluded.push(`${c.filename}（读不到文件：${(err as Error).message}）`);
-    }
-  }
-  return { candidates, excluded };
-}
-
-/**
  * 剪辑师 agent（横屏 spec §3）。**只提议不决定**：产出 B-roll 编排与强调词，
  * 人在 `edit/awaiting_human` 门上删定。跑不起来一律降级成空 plan + warning，绝不 failed/blocked
  * ——P1 的失败不许让「纯口播成片」这条已经可用的路径变成不可用。
@@ -376,23 +353,23 @@ async function editPhase(ctx: PhaseContext): Promise<StepResult> {
   if (!ctx.jobId) return { ok: false, errorCode: "missing_job", reason: "edit 阶段缺 jobId，产物无处落 staging" };
 
   const content = await getContent(contentId, dataDir);
-  const scan = trimCandidates(scanBrollCandidates(content?.assets ?? []));
-  // 指纹在剪辑师看到素材的这一刻打好，plan 的 asset 快照直接抄它（v2 spec §4.2 / 边界 #12）
-  const fingerprinted = await fingerprintCandidates(dataDir, contentId, scan);
+  // 本稿挂接 + 全库常备合成一份目录；指纹在剪辑师看到素材的这一刻打好，
+  // plan 的 asset 快照直接抄它（v2 spec §4.2 / 边界 #12 / lifecycle §1）
+  const catalog = await buildBrollCatalog(dataDir, contentId, content?.assets ?? []);
   const outcome = await runEditor(
     {
       dataDir,
-      candidates: fingerprinted.candidates,
+      candidates: catalog.candidates,
       units: keeps.units,
       outputDurationMs: keeps.durationMs,
       body: content?.body ?? "",
-      assetsDigest: catalogDigest(scan.candidates, fingerprinted.excluded),
+      assetsDigest: catalog.digest,
       abortSignal: ctx.abortSignal,
     },
     ctx.deps,
   );
   const editorRevision = (ctx.state.revisions.editor ?? 0) + 1;
-  await stageEditorPlan(dir, ctx.jobId, { outcome, cutRevision, excluded: fingerprinted.excluded });
+  await stageEditorPlan(dir, ctx.jobId, { outcome, cutRevision, excluded: catalog.excluded });
   return {
     ok: true,
     next: EDIT_GATE,
@@ -416,6 +393,15 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
       reason: `读不到 transcript.v${transcriptRevision} 或 cut.v${cutRevision}，产物可能被删了`,
     };
   }
+  if (!ctx.jobId) return { ok: false, errorCode: "missing_job", reason: "assemble 阶段缺 jobId，产物无处落 staging" };
+  // 覆盖轨的唯一来源是**确认产物**（lifecycle §2.1）：读不到就是「这一版计划没被确认过」，
+  // 绝不当成「没有覆盖轨」往下走——那正是旧 overlay 静默复活的入口
+  const decided = await loadConfirmedOverlays(ctx.dataDir, ctx.contentId, {
+    confirmedEditorRevision: ctx.state.confirmedEditorRevision,
+    cutRevision,
+  });
+  if (!decided.ok) return fail(decided);
+
   const timelineRevision = (ctx.state.revisions.timeline ?? 0) + 1;
   // 剪辑单位以 edit-units.vK 为准；没有（V0a 老产物）才回落 transcript.segments（§4）
   const units = await readEditUnits(dir, cutRevision);
@@ -428,8 +414,8 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
       cut,
       cutRevision,
       timelineRevision,
-      // 覆盖轨是「人在 edit 门上确认的那一份」，按 cutRevision 存取（见 timeline-build）
-      slots: await readOverlaySlots(dataDir, contentId, cutRevision),
+      slots: decided.overlays,
+      jobId: ctx.jobId,
       // cue 口径跟着剪辑单元来源走；老产物没有单元表就按 raw 回落（边界 #9）
       unitsOrigin: units?.origin ?? "raw",
     },
@@ -440,6 +426,8 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
     ok: true,
     next: { phase: "render", state: "queued" },
     revisions: { timeline: timelineRevision },
+    // timeline 与 manifest 一起定版：中途失败不会留下一个占着号的半成品（lifecycle §2.1）
+    staged: ASSEMBLE_STAGED_BASES.map((base) => ({ base, revision: timelineRevision })),
     // BGM 被降级掉时这句话必须冒到面板上——不静默降级（横屏 spec §2.4）
     ...(result.warning ? { warning: result.warning } : {}),
   };

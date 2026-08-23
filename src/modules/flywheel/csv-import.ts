@@ -1,11 +1,16 @@
 /**
- * CSV 导入 — 三大平台创作者中心导出文件 → PerformanceOutcome。
+ * CSV 导入 — 三大平台创作者中心导出文件 → TypedRow → importPerformanceRows。
  *
+ * 本文件是**薄 adapter**：只管解析文本与列名映射，校验/匹配/幂等/批内语义/落盘
+ * 全在 row-import.ts 的统一漏斗里（spec §4.1，三通道一条入口）。
  * 列名映射是数据不是代码：PLATFORM_MAPPINGS 按已知后台字段名写默认值，
  * 首次 dogfood 用真实导出文件校准（见 docs/dogfood-runbook.md）。
  */
-import { recordOutcome, matchDraft } from "./outcome-store.js";
-import type { OutcomeMetrics, PerformanceOutcome } from "./outcome-schema.js";
+import { importPerformanceRows, type ImportReport } from "./row-import.js";
+import type { OutcomeMetrics, OutcomeSource } from "./outcome-schema.js";
+import type { TypedRow } from "../../adapters/browser/pull-types.js";
+
+export type { ImportReport } from "./row-import.js";
 
 /** 极简 CSV 解析：BOM/CRLF/引号字段/转义引号。平台导出不含换行内嵌字段，不支持也不需要。 */
 export function parseCsv(text: string): Record<string, string>[] {
@@ -74,6 +79,8 @@ export interface CsvColumnMapping {
   publishedAt: string[];
   metricDate?: string[];
   views: string[];
+  /** 曝光/展现量——与播放分列，绝不混进 views 别名（codex #4） */
+  impressions?: string[];
   completionRate?: string[];
   completion5s?: string[];
   /** 平台把这些指标导出为 0-1 小数比例时声明（实战确认后），导入按 ×100 转换；>1 视为已是百分比 */
@@ -87,6 +94,7 @@ export interface CsvColumnMapping {
 
 export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
   douyin: {
+    // TODO(P1b)：抖音导出若含 item_id 类列，映射到 TypedRow.platformItemId（自动抓取先落这个字段）
     title: ["作品名称", "作品标题", "标题"],
     publishedAt: ["发布时间"],
     metricDate: ["数据日期", "统计日期"],
@@ -103,6 +111,7 @@ export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
   },
   wechat_video: {
     // 2026-06-10 按"视频号助手 → 动态数据明细"真实导出校准
+    // TODO(P1b)：视频号导出若含 objectId 类列，映射到 TypedRow.platformItemId
     title: ["视频描述", "内容", "标题", "动态内容"],
     publishedAt: ["发布时间"],
     metricDate: ["数据日期", "统计日期"],
@@ -131,7 +140,9 @@ export const PLATFORM_MAPPINGS: Record<string, CsvColumnMapping> = {
     title: ["笔记标题", "标题"],
     publishedAt: ["发布时间", "首次发布时间"],
     metricDate: ["数据日期", "统计日期"],
-    views: ["观看量", "浏览量", "曝光量"],
+    // 曝光量从 views 别名里摘出来归 impressions：曝光（被推荐看到）和播放不是一个指标
+    views: ["观看量", "浏览量"],
+    impressions: ["曝光量"],
     completionRate: ["完播率"],
     likes: ["点赞", "点赞数"],
     comments: ["评论", "评论数"],
@@ -176,13 +187,15 @@ function applyRatioConversion(metrics: OutcomeMetrics, ratioMetrics: Array<"comp
   }
 }
 
-function rowToOutcomeInput(
+/** CSV 行 → TypedRow（标题缺失就是空标题，不再伪造"(无标题)"——空标题由漏斗行级拒收） */
+function rowToTypedRow(
   row: Record<string, string>,
   mapping: CsvColumnMapping,
   defaultMetricDate: string,
-): { title: string; publishedAt: string | null; metricDate: string; metrics: OutcomeMetrics } {
+): TypedRow {
   const metrics: OutcomeMetrics = {
     views: parseMetricNumber(pick(row, mapping.views)),
+    impressions: parseMetricNumber(pick(row, mapping.impressions)),
     completionRate: parseMetricNumber(pick(row, mapping.completionRate)),
     completion5s: parseMetricNumber(pick(row, mapping.completion5s)),
     likes: parseMetricNumber(pick(row, mapping.likes)),
@@ -193,68 +206,34 @@ function rowToOutcomeInput(
   };
   applyRatioConversion(metrics, mapping.ratioMetrics);
   return {
-    title: pick(row, mapping.title) || "(无标题)",
+    title: pick(row, mapping.title) || "",
     publishedAt: parsePublishTime(pick(row, mapping.publishedAt)),
     metricDate: normalizeMetricDate(pick(row, mapping.metricDate), defaultMetricDate),
     metrics,
   };
 }
 
-export interface ImportReport {
-  total: number;
-  imported: number;
-  replaced: number;
-  matched: number;
-  historical: number;
-  needsReview: PerformanceOutcome[];
-  rejected: Array<{ row: number; title: string; error: string }>;
-}
-
+/**
+ * CSV 文本 → 入库。source 默认 "csv"；扩展桥/自动通道复用本 adapter 时传自己的来源。
+ * rejected 的 row 号沿用「文件行号」口径（表头占第 1 行，首条数据行 = 2）。
+ */
 export async function importPerformanceCsv(
   platform: string,
   csvText: string,
   defaultMetricDate: string,
   dataDir?: string,
+  source: OutcomeSource = "csv",
 ): Promise<ImportReport> {
   const mapping = PLATFORM_MAPPINGS[platform];
   if (!mapping) {
     throw new Error(`平台 ${platform} 没有 CSV 列名映射（已支持：${Object.keys(PLATFORM_MAPPINGS).join("/")}）`);
   }
 
-  const rows = parseCsv(csvText);
-  const report: ImportReport = {
-    total: rows.length,
-    imported: 0,
-    replaced: 0,
-    matched: 0,
-    historical: 0,
-    needsReview: [],
-    rejected: [],
-  };
-
-  for (let i = 0; i < rows.length; i++) {
-    const { title, publishedAt, metricDate, metrics } = rowToOutcomeInput(
-      rows[i],
-      mapping,
-      defaultMetricDate,
-    );
-
-    const draft = await matchDraft(platform, title, publishedAt, dataDir);
-    const result = await recordOutcome(
-      { contentId: draft?.id ?? null, platform, platformTitle: title, publishedAt, metricDate, metrics, source: "csv" },
-      dataDir,
-    );
-
-    if (!result.ok) {
-      report.rejected.push({ row: i + 2, title, error: result.error || "未知错误" });
-      continue;
-    }
-    report.imported++;
-    if (result.replaced) report.replaced++;
-    if (draft) report.matched++;
-    else report.historical++;
-    if (result.outcome?.needsReview) report.needsReview.push(result.outcome);
-  }
-
-  return report;
+  const rows = parseCsv(csvText).map((row) => rowToTypedRow(row, mapping, defaultMetricDate));
+  return importPerformanceRows(platform, rows, {
+    source,
+    metricDate: defaultMetricDate,
+    dataDir,
+    rowNumberBase: 2,
+  });
 }

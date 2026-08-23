@@ -9,8 +9,8 @@
  * 3. **盖戳失败不吞**:通过后 `videoReadyAt` 落盘失败时后端会带 stampWarning——
  *    确认照样算数,但这句警告必须让人看见(复盘的第四段用时靠这枚戳)。
  */
-import { useState } from "react";
-import { confirmDialog, toast } from "../ui";
+import { useRef, useState } from "react";
+import { confirmDialog, openDialog, toast } from "../ui";
 import { videoMediaUrl, videoReviewConfirm, type VideoState } from "../lib";
 
 export function VideoReviewPanel(props: {
@@ -25,33 +25,69 @@ export function VideoReviewPanel(props: {
   const rendered = props.state.revisions.rendered;
   const [busy, setBusy] = useState(false);
   const [playError, setPlayError] = useState(false);
+  /** 打回时把播放头位置一起带上:「第 3 分 20 秒那段不对」比「B-roll 不对」有用得多 */
+  const player = useRef<HTMLVideoElement | null>(null);
 
-  const decide = async (verdict: "approve" | "reject") => {
+  const approve = async () => {
     if (busy || rendered === undefined) return;
-    if (verdict === "approve") {
-      const yes = await confirmDialog({
-        title: "这条成片通过?",
-        body: "通过 = 认这一版可以发了(会记下达成时间)。发布仍然要你自己去平台做,这里不发。",
-        confirmLabel: "通过",
-      });
-      if (!yes) return;
-    }
+    const yes = await confirmDialog({
+      title: "这条成片通过?",
+      body:
+        "通过 = 认这一版可以发了(会记下达成时间),并清理测试产物:预览、废弃成片、可重算的音轨。" +
+        "通过版成片、它引用的音轨与全部决策记录都留着,A-roll 原片和素材库文件永不触碰。",
+      confirmLabel: "通过",
+    });
+    if (!yes) return;
     setBusy(true);
     try {
-      const r = await videoReviewConfirm({ contentId: props.contentId, renderedRevision: rendered, verdict });
+      const r = await videoReviewConfirm({ contentId: props.contentId, renderedRevision: rendered, verdict: "approve" });
       if (r.conflict) {
         toast("版本已过期,已刷新最新版 —— 请重新看一遍再确认");
         await props.reload();
         return;
       }
       if (!r.ok) return toast(r.error ?? "审片确认失败");
-      if (verdict === "approve") {
-        toast("已通过 ✓ 成片可以发了" + (r.data?.stampWarning ? ` · ${r.data.stampWarning}` : ""));
+      toast("已通过 ✓ 成片可以发了" + (r.data?.stampWarning ? ` · ${r.data.stampWarning}` : ""));
+      await props.reload();
+      props.back();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 打回分流(lifecycle §2.2):**B-roll 不对只回门二**,选段与决策链原样在,
+   * 改完槽再确认只重走组装+渲染;说错了话才回门一重选段。
+   * 备注与播放位置一起落进不可变记录——回到那道门时它还在(§2.4)。
+   */
+  const reject = async (target: "edit" | "cut") => {
+    if (busy || rendered === undefined) return;
+    const where = target === "edit" ? "成片计划(改 B-roll)" : "选段(改留哪些句子)";
+    const at = player.current?.currentTime;
+    const v = await openDialog({
+      title: `打回到${where}?`,
+      body: "写一句「哪里不对」,回到那道门时这句话还在。这一版 mp4 留档不删。",
+      fields: [{ key: "note", label: "哪里不对", placeholder: "例:这段屏录跟我说的界面对不上", multiline: true }],
+      confirmLabel: "打回",
+    });
+    if (!v) return;
+    setBusy(true);
+    try {
+      const r = await videoReviewConfirm({
+        contentId: props.contentId,
+        renderedRevision: rendered,
+        verdict: "reject",
+        target,
+        ...(typeof at === "number" && at > 0 ? { timestampMs: Math.round(at * 1000) } : {}),
+        ...(v.note.trim() ? { note: v.note.trim() } : {}),
+      });
+      if (r.conflict) {
+        toast("版本已过期,已刷新最新版 —— 请重新看一遍再确认");
         await props.reload();
-        props.back();
         return;
       }
-      toast("已打回 —— 回到选段重剪,这版成片留档不删");
+      if (!r.ok) return toast(r.error ?? "审片确认失败");
+      toast(`已打回到${where} —— 这版成片留档不删`);
       await props.reload();
       props.toCut();
     } finally {
@@ -76,6 +112,7 @@ export function VideoReviewPanel(props: {
             </p>
           )}
           <video
+            ref={player}
             className="vid-player"
             src={videoMediaUrl(props.contentId, rendered)}
             controls
@@ -87,14 +124,20 @@ export function VideoReviewPanel(props: {
           ) : (
             <>
               <div className="row-actions">
-                <button className="primary" disabled={busy} onClick={() => void decide("approve")}>
+                <button className="primary" disabled={busy} onClick={() => void approve()}>
                   通过
                 </button>
-                <button disabled={busy} onClick={() => void decide("reject")}>
-                  打回重剪
+                <button disabled={busy} onClick={() => void reject("edit")}>
+                  打回:改 B-roll
+                </button>
+                <button disabled={busy} onClick={() => void reject("cut")}>
+                  打回:改选段
                 </button>
               </div>
-              <p className="muted">打回 = 回选段视图改勾选,重新组装渲染出新一版;这一版 mp4 会留档不删。</p>
+              <p className="muted">
+                B-roll 不对就打回成片计划:选段和转写都不动,改完槽位再确认,只重走组装和渲染。
+                话说错了才回选段——那会让剪辑师按新选段重排一遍。播放头停在哪儿,打回时就带上哪个时间点。
+              </p>
             </>
           )}
         </>

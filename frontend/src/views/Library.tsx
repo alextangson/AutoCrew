@@ -18,6 +18,10 @@ interface LibAsset {
   description?: string;
   folderId?: string | null;
   missing?: boolean;
+  /** 常备素材池成员(视频线 lifecycle §1):进每条视频的剪辑师目录 */
+  reusable?: boolean;
+  /** 入库时 ffprobe 探到的时长/画幅 */
+  media?: { durationMs: number; width?: number; height?: number };
 }
 
 interface LibFolder {
@@ -142,6 +146,8 @@ export function Library() {
           <span className="row-title">
             {a.name}
             {a.missing ? "(源文件丢失)" : ""}
+            {a.reusable ? <span className="chip">常备</span> : null}
+            {a.description ? <span className="mono muted"> · {a.description}</span> : null}
           </span>
           <span className="muted mono">{fmtSize(a.size)}{(a.tags ?? []).length ? " · " + (a.tags ?? []).join(",") : ""}</span>
           <button
@@ -159,6 +165,41 @@ export function Library() {
           >
             改名
           </button>
+          {/* 说明编辑此前根本没有入口——常备池的前置是说明非空,没有它开关就是个必然报错的按钮 */}
+          <button
+            onClick={async () => {
+              const v = await openDialog({
+                title: `给「${a.name}」写一行说明`,
+                body: "说明是剪辑师认识这条素材的唯一依据(文件名它读不懂)。例:屏录 · 后台任务面板跑批的过程",
+                fields: [{ key: "description", label: "说明", initial: a.description ?? "", multiline: true }],
+                confirmLabel: "保存",
+              });
+              if (!v) return;
+              const r = await invoke("library:update", { id: a.id, description: v.description.trim() });
+              toast(r.ok ? "已保存说明" : (r.error ?? "保存失败"));
+              if (r.ok) void load();
+            }}
+          >
+            {a.description ? "改说明" : "写说明"}
+          </button>
+          {/* 常备池只对视频/图片有意义:音频进不了覆盖轨,给个开关只会让人白点一次 */}
+          {(a.type === "video" || a.type === "image") && (
+            <button
+              onClick={async () => {
+                const r = await invoke("library:set_reusable", { id: a.id, reusable: !a.reusable });
+                const warning = (r as unknown as { data?: { warning?: string } }).data?.warning;
+                toast(
+                  r.ok
+                    ? (a.reusable ? "已移出常备池" : "已纳入常备池 —— 之后每条视频的剪辑师都能用它") +
+                        (warning ? ` · ${warning}` : "")
+                    : (r.error ?? "操作失败"),
+                );
+                if (r.ok) void load();
+              }}
+            >
+              {a.reusable ? "移出常备" : "设为常备"}
+            </button>
+          )}
           <select
             value={a.folderId ?? ""}
             onChange={async (e) => {

@@ -8,7 +8,6 @@
  * 这边只管「timeline 长什么样」——形状与流程分开，形状才测得动。
  */
 import type { AssetFingerprint, AssetRef, OverlayFit, TimelineOverlay, VideoTimeline } from "./types.js";
-import { readVersioned, videoDir, writeVersioned } from "./video-store.js";
 
 /** 视频线唯一画幅 = 横屏 1920×1080@30（横屏 spec §0 创始人裁决；竖屏路径已删除，不留开关） */
 export const OUTPUT_FPS = 30;
@@ -22,11 +21,9 @@ export const TITLE_CARD_MS = 3000;
 export const DEFAULT_TRANSITION = "cut";
 
 /**
- * 人确认后的覆盖轨槽位。**按 cutRevision 存**，因为它是这一版剪辑决策的一部分：
- * 覆盖轨用输出域时间，keeps 一改时间轴就全变，钉在 cut 上才不会张冠李戴。
- *
- * 剪辑师 plan 自己的版本号（`revisions.editor`）与它无关——同一版 cut 可以重跑 N 次
- * 剪辑师，但只会有一次「确认」，所以确认产物按 cut 编号恰好一份，与 assemble 的读法对齐。
+ * 人确认后的覆盖轨槽位。**住在 `editor-decision.v<planRevision>.json` 里**
+ * （lifecycle spec §2.1）——一版 plan 对一份决策，同一版 cut 可以确认很多次。
+ * 早先按 cutRevision 存的写法已废除：它让「回门二改一处再确认」必撞不可覆盖。
  */
 export interface OverlaySlot {
   kind: "screen" | "image";
@@ -45,25 +42,6 @@ export interface OverlaySlot {
   fit?: OverlayFit;
   /** registry.transitions 之一；不给按 DEFAULT_TRANSITION */
   transition?: string;
-}
-
-export function writeOverlaySlots(
-  dataDir: string,
-  contentId: string,
-  cutRevision: number,
-  slots: OverlaySlot[],
-): Promise<string> {
-  return writeVersioned(videoDir(dataDir, contentId), "overlays", cutRevision, slots);
-}
-
-/** 没写过覆盖轨 = 没有覆盖轨，不是错误 */
-export async function readOverlaySlots(
-  dataDir: string,
-  contentId: string,
-  cutRevision: number,
-): Promise<OverlaySlot[]> {
-  const slots = await readVersioned<OverlaySlot[]>(videoDir(dataDir, contentId), "overlays", cutRevision);
-  return Array.isArray(slots) ? slots : [];
 }
 
 export interface DeterministicTimelineInput {

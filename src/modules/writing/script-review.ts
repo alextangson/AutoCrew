@@ -95,6 +95,8 @@ export interface ReviewOutcome {
   /** 采纳了修订稿时 = 修订稿的 gate 结果（必为空）；没换稿时缺席 = 沿用写稿轮的 */
   gateFailures?: GateFailure[];
   review: ReviewMeta;
+  /** 审稿与修订轮实际返回的 token 总和；超时后仍在途的请求无法计入 */
+  tokensUsed: number;
 }
 
 /** 整阶段墙钟上限 5 分钟（§2.2 硬闸：runLoop 的 token 限额只是轮前软检查） */
@@ -217,8 +219,12 @@ interface Draft {
   gateFailures?: GateFailure[];
 }
 
-type ReviewPass = { ok: true; issues: ReviewIssue[] } | { ok: false; reason: string };
-type RevisionPass = { ok: true; draft: Draft } | { ok: false; reason: string };
+type ReviewPass =
+  | { ok: true; issues: ReviewIssue[]; tokensUsed: number }
+  | { ok: false; reason: string; tokensUsed: number };
+type RevisionPass =
+  | { ok: true; draft: Draft; tokensUsed: number }
+  | { ok: false; reason: string; tokensUsed: number };
 
 /** 审一轮。永不抛：审稿失败只是「这轮没审成」，不是写作失败。 */
 async function reviewOnce(
@@ -248,16 +254,17 @@ async function reviewOnce(
       maxTotalTokens: REVIEW_MAX_TOKENS,
       logMeta: { ...(deps.runId ? { runId: deps.runId } : {}), agent: "reviewer" },
     });
-    if (capture.verdict) return { ok: true, issues: capture.issues };
+    if (capture.verdict) return { ok: true, issues: capture.issues, tokensUsed: result.totalTokens };
     return {
       ok: false,
+      tokensUsed: result.totalTokens,
       reason:
         capture.attempts === 0
           ? `审稿模型没有调用 submit_review（loop ${result.stopReason}，turns=${result.turns}）`
           : `审稿结论不合格：${capture.problems.join("；")}`,
     };
   } catch (err) {
-    return { ok: false, reason: `审稿调用失败：${errText(err)}` };
+    return { ok: false, reason: `审稿调用失败：${errText(err)}`, tokensUsed: 0 };
   }
 }
 
@@ -283,18 +290,27 @@ async function reviseOnce(
       logMeta: { ...(deps.runId ? { runId: deps.runId } : {}), agent: "reviser" },
     });
     if (!captured.payload) {
-      return { ok: false, reason: `修订轮没有提交成稿（loop ${result.stopReason}，turns=${result.turns}）` };
+      return {
+        ok: false,
+        reason: `修订轮没有提交成稿（loop ${result.stopReason}，turns=${result.turns}）`,
+        tokensUsed: result.totalTokens,
+      };
     }
     if (captured.gateFailures.length > 0) {
       // 修订把结构改坏了：整轮作废，回退到修订前那版（§2.2 每轮重验的全部意义）
-      return { ok: false, reason: `修订稿仍未过 Quality Gate：${captured.gateFailures.map((f) => f.check).join("、")}` };
+      return {
+        ok: false,
+        reason: `修订稿仍未过 Quality Gate：${captured.gateFailures.map((f) => f.check).join("、")}`,
+        tokensUsed: result.totalTokens,
+      };
     }
     return {
       ok: true,
       draft: { payload: captured.payload, humanizedText: assembleAndHumanize(captured.payload), gateFailures: [] },
+      tokensUsed: result.totalTokens,
     };
   } catch (err) {
-    return { ok: false, reason: `修订调用失败：${errText(err)}` };
+    return { ok: false, reason: `修订调用失败：${errText(err)}`, tokensUsed: 0 };
   }
 }
 
@@ -327,6 +343,7 @@ function settle(
   rounds: number,
   fixed: number,
   issues: ReviewIssue[],
+  tokensUsed: number,
 ): ReviewOutcome {
   return {
     payload: draft.payload,
@@ -334,6 +351,7 @@ function settle(
     ...(draft.gateFailures ? { gateFailures: draft.gateFailures } : {}),
     // reviewedAt 用真实时钟：nowImpl 是给墙钟算差用的，测试里的假时钟不该变成稿件上的假时间
     review: { status, rounds, fixed, issues, reviewedAt: new Date().toISOString() },
+    tokensUsed,
   };
 }
 
@@ -356,33 +374,38 @@ export async function reviewAndConverge(
   let issues: ReviewIssue[] = [];
   let rounds = 0;
   let fixed = 0;
+  let tokensUsed = 0;
 
   for (;;) {
     const pass = await withDeadline(() => reviewOnce(input, draft, config, deps, rounds), remaining());
+    if (pass !== DEADLINE) tokensUsed += pass.tokensUsed;
     if (pass === DEADLINE || !pass.ok) {
       const reason = pass === DEADLINE ? `审稿超时（${Math.round(deadlineMs / 1000)} 秒）` : pass.reason;
       // 首轮就没审成 = 这稿压根没经 AI 审稿；已经修过再失手 = 审出过问题但收不了尾
       warn(rounds === 0 ? `本稿未经 AI 审稿：${reason}` : `审稿未能收尾（已修订 ${rounds} 轮）：${reason}`);
-      return settle(draft, rounds === 0 ? "skipped" : "failed", rounds, fixed, issues);
+      return settle(draft, rounds === 0 ? "skipped" : "failed", rounds, fixed, issues, tokensUsed);
     }
     issues = pass.issues;
     // 打不打回由**代码**按 blocker 判，不看模型自报的 verdict：说 pass 却列了 blocker 要打回，
     // 说 revise 却只有 advisory 不打回（§2.3 修订轮只处理 blocker，防无限润色）。
     const blockers = issues.filter((i) => i.severity === "blocker");
-    if (blockers.length === 0) return settle(draft, rounds === 0 ? "passed" : "revised", rounds, fixed, issues);
+    if (blockers.length === 0) {
+      return settle(draft, rounds === 0 ? "passed" : "revised", rounds, fixed, issues, tokensUsed);
+    }
     if (rounds >= MAX_REVISION_ROUNDS) {
       warn(`修订 ${rounds} 轮后仍有 ${blockers.length} 项 blocker，按残留转正`);
-      return settle(draft, "failed", rounds, fixed, issues);
+      return settle(draft, "failed", rounds, fixed, issues, tokensUsed);
     }
     const revised = await withDeadline(() => reviseOnce(input, draft, blockers, config, deps), remaining());
+    if (revised !== DEADLINE) tokensUsed += revised.tokensUsed;
     if (revised === DEADLINE || !revised.ok) {
       warn(revised === DEADLINE ? "修订超时，丢弃在途修订，用最后一版过 gate 的稿" : `修订失败：${revised.reason}`);
-      return settle(draft, "failed", rounds, fixed, issues);
+      return settle(draft, "failed", rounds, fixed, issues, tokensUsed);
     }
     if (remaining() <= 0) {
       // 修订跑完了但墙钟已过：结果作废（同上，到点即丢），用上一版转正
       warn("修订跑完时墙钟已到点，丢弃在途修订，用最后一版过 gate 的稿");
-      return settle(draft, "failed", rounds, fixed, issues);
+      return settle(draft, "failed", rounds, fixed, issues, tokensUsed);
     }
     draft = revised.draft;
     rounds += 1;

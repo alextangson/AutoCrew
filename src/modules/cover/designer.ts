@@ -12,6 +12,7 @@ import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { loadProfile, personaSummary } from "../profile/creator-profile.js";
 import { ORIENTATION_TEXT } from "../../adapters/image/relay-cover.js";
+import { coverStylePrompt, type CoverStyleProfile } from "./style-profile.js";
 
 /** 候选主比例(V5.6.1 横屏封面:B站/抖音PC 收 16:9/4:3;V5.6.4 公众号 2.35:1 超宽横幅) */
 export type PrimaryAspect = "3:4" | "2.35:1" | "16:9" | "4:3";
@@ -42,6 +43,8 @@ export interface CoverPlanInput {
   customTitle?: string;
   /** 候选主比例;缺省 3:4 竖屏 */
   targetAspect?: PrimaryAspect;
+  /** 创作者确认过的封面身份、材质和图层规则 */
+  styleProfile?: CoverStyleProfile | null;
 }
 
 /** 模型未收齐三案时，把已通过校验的方案带给调用方，避免成功方案被整组丢弃。 */
@@ -174,16 +177,36 @@ function buildPlanTool(captured: { designs: Map<string, CoverDesign> }): LoopToo
       type: "object",
       properties: {
         label: { type: "string", enum: ["A", "B", "C"] },
-        style: { type: "string", description: "与本文相关的具体艺术指导名,如 海关扣留单/纸上证物/荒诞静物;禁止只写 cinematic/minimalist/bold-impact" },
+        style: {
+          type: "string",
+          description:
+            "与本文相关的具体艺术指导名,如 海关扣留单/纸上证物/荒诞静物;禁止只写 cinematic/minimalist/bold-impact",
+        },
         creativeConcept: { type: "string", description: "一句话说清这张图独有的视觉点子/隐喻" },
-        visualMedium: { type: "string", description: "具体媒介,如 documentary photography / cut-paper collage / typographic installation" },
+        visualMedium: {
+          type: "string",
+          description: "具体媒介,如 documentary photography / cut-paper collage / typographic installation",
+        },
         palette: { type: "string", description: "主色、明暗与材质,须与另外两张拉开" },
-        titleText: { type: "string", description: "封面中文大字,视觉宽度 2-12(汉字 1、字母数字 0.5),必须是制造悬念/冲突/利益缺口的钩子" },
+        titleText: {
+          type: "string",
+          description: "封面中文大字,视觉宽度 2-12(汉字 1、字母数字 0.5),必须是制造悬念/冲突/利益缺口的钩子",
+        },
         imagePrompt: { type: "string", description: "完整英文生图 prompt,含比例、标题文字与全部禁止项" },
         layoutHint: { type: "string", description: "版式一句话(标题位置/主体位置/叠层)" },
         designReason: { type: "string", description: "为什么能停住滑动,1-2 句中文" },
       },
-      required: ["label", "style", "creativeConcept", "visualMedium", "palette", "titleText", "imagePrompt", "layoutHint", "designReason"],
+      required: [
+        "label",
+        "style",
+        "creativeConcept",
+        "visualMedium",
+        "palette",
+        "titleText",
+        "imagePrompt",
+        "layoutHint",
+        "designReason",
+      ],
     },
     execute(args) {
       const label = args.label;
@@ -194,7 +217,7 @@ function buildPlanTool(captured: { designs: Map<string, CoverDesign> }): LoopToo
       if (problem) return `Error: 方案 ${label} ${problem},请修正后重新调用 submit_cover_design`;
       captured.designs.set(label, normalizeDesign(args, label));
       if (captured.designs.size === 3) {
-        const problem = diversityProblem((['A', 'B', 'C'] as const).map((key) => captured.designs.get(key)!));
+        const problem = diversityProblem((["A", "B", "C"] as const).map((key) => captured.designs.get(key)!));
         if (problem) {
           captured.designs.delete(label);
           return `Error: ${problem}。请重新提交方案 ${label},让它真正与另外两张分叉`;
@@ -266,6 +289,7 @@ export async function designCoverPlan(
       `正文(节选):${input.body.slice(0, 600)}\n` +
       (input.customTitle ? `用户指定封面大字:${input.customTitle}(必须使用)\n` : "") +
       (input.hasReferencePhotos ? "已提供创作者形象照(人物方案使用参考人物)\n" : "无形象照\n") +
+      coverStylePrompt(input.styleProfile) +
       audience +
       "请先在心里完成内容洞察,再给出 3 个互不相似、无法替换到别篇文章上的封面设计方案。",
     tools: [buildPlanTool(captured)],
@@ -305,7 +329,16 @@ function buildRevisionTool(captured: { design: CoverDesign | null }, label: "A" 
         layoutHint: { type: "string" },
         designReason: { type: "string", description: "这次改了什么、为什么,1-2 句中文" },
       },
-      required: ["style", "creativeConcept", "visualMedium", "palette", "titleText", "imagePrompt", "layoutHint", "designReason"],
+      required: [
+        "style",
+        "creativeConcept",
+        "visualMedium",
+        "palette",
+        "titleText",
+        "imagePrompt",
+        "layoutHint",
+        "designReason",
+      ],
     },
     execute(args) {
       const problem = designProblem(args);
@@ -317,7 +350,14 @@ function buildRevisionTool(captured: { design: CoverDesign | null }, label: "A" 
 }
 
 export async function reviseCoverDesign(
-  input: { previous: CoverDesign; feedback: string; title: string; hasReferencePhotos: boolean; targetAspect?: PrimaryAspect },
+  input: {
+    previous: CoverDesign;
+    feedback: string;
+    title: string;
+    hasReferencePhotos: boolean;
+    targetAspect?: PrimaryAspect;
+    styleProfile?: CoverStyleProfile | null;
+  },
   dataDir?: string,
   deps?: { runLoopImpl?: typeof runLoop },
 ): Promise<CoverDesign> {
@@ -341,6 +381,7 @@ export async function reviseCoverDesign(
       `- 版式:${input.previous.layoutHint}\n` +
       `- imagePrompt:${input.previous.imagePrompt}\n` +
       (input.hasReferencePhotos ? "已提供创作者形象照\n" : "无形象照\n") +
+      coverStylePrompt(input.styleProfile) +
       `\n用户反馈(必须照办):${input.feedback}\n`,
     tools: [buildRevisionTool(captured, input.previous.label)],
     maxTurns: 5,

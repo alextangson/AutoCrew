@@ -11,6 +11,7 @@ import path from "node:path";
 import { listAssets, saveContent } from "../../storage/local-store.js";
 import { addAssets, getAsset } from "../../storage/library-store.js";
 import { createVideoService, VideoConflictError, type VideoService } from "./service.js";
+import { readEditorDecision } from "./editor-decision.js";
 import {
   ensureArollFixture,
   fakeRenderSpawn,
@@ -118,7 +119,7 @@ describe("剪辑师 agent（成片计划的人工门）", () => {
     expect(describeState(await settled())).toBe("edit/awaiting_human");
   }
 
-  it("确认时把留下的 overlay 写成 assemble 消费的产物（按 cutRevision 存，指纹一路带过去）", async () => {
+  it("确认时把留下的 overlay 写成决策产物（按 plan revision 存，指纹一路带过去）", async () => {
     await upToPlanGate();
     const view = (await service.getEditorPlan(contentId))!;
     expect(view.revision).toBe(1);
@@ -130,8 +131,12 @@ describe("剪辑师 agent（成片计划的人工门）", () => {
       keptOverlayIds: [view.plan.overlays[0].overlayId],
     });
     expect(describeState(confirmed)).toBe("assemble/queued");
-    // cut.v3 = 人工确认那一版；覆盖轨钉在它身上（assemble 就按这个号读）
-    const slots = (await readVersioned<Array<Record<string, unknown>>>(videoDir(dir, contentId), "overlays", 3))!;
+    // 确认自己也派生一版 plan（v2），决策就写在同一个号上；assemble 只认 confirmedEditorRevision
+    expect(confirmed.confirmedEditorRevision).toBe(2);
+    expect(confirmed.revisions.editor).toBe(2);
+    const decision = (await readEditorDecision(dir, contentId, 2))!;
+    expect(decision.cutRevision).toBe(3);
+    const slots = decision.overlays as unknown as Array<Record<string, unknown>>;
     expect(slots).toHaveLength(1);
     expect(slots[0]).toMatchObject({
       kind: "screen",
@@ -154,7 +159,8 @@ describe("剪辑师 agent（成片计划的人工门）", () => {
       keptOverlayIds: [],
     });
     expect(describeState(confirmed)).toBe("assemble/queued");
-    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toBeNull();
+    // 空计划写的是**显式空数组**，不是「不写文件」——后者会让上一版 overlay 静默复活（§2.1）
+    expect((await readEditorDecision(dir, contentId, 2))!.overlays).toEqual([]);
   }, 90_000);
 
   it("plan_revision 过期 → VideoConflictError，状态不动、产物不落", async () => {
@@ -163,7 +169,7 @@ describe("剪辑师 agent（成片计划的人工门）", () => {
       service.confirmEditorPlan(contentId, { planRevision: 99, keptOverlayIds: [] }),
     ).rejects.toThrow(VideoConflictError);
     expect(describeState((await service.getStatus(contentId))!.state)).toBe("edit/awaiting_human");
-    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toBeNull();
+    expect(await readEditorDecision(dir, contentId, 2)).toBeNull();
   }, 90_000);
 
   it("引用计划里不存在的片段 → 打回（前端只能删，不能塞新东西进来）", async () => {
@@ -431,7 +437,7 @@ describe("待生成槽：填槽 / 跳过 / 旧 plan 容忍", () => {
       keptOverlayIds: view.plan.overlays.map((o) => o.overlayId),
     });
     expect(describeState(confirmed)).toBe("assemble/queued");
-    const slots = (await readVersioned<Array<Record<string, unknown>>>(videoDir(dir, contentId), "overlays", 3))!;
+    const slots = (await readEditorDecision(dir, contentId, confirmed.confirmedEditorRevision!))!.overlays;
     expect(slots).toHaveLength(1);
     expect(slots[0]).toMatchObject({ kind: "screen", outputStartMs: 32_000 });
   }, 120_000);
@@ -458,7 +464,8 @@ describe("待生成槽：填槽 / 跳过 / 旧 plan 容忍", () => {
       keptOverlayIds: view.plan.overlays.map((o) => o.overlayId),
     });
     expect(describeState(confirmed)).toBe("assemble/queued");
-    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toBeNull();
+    // 全是未填的 generate 槽 → 决策是显式空数组，纯口播出片
+    expect((await readEditorDecision(dir, contentId, confirmed.confirmedEditorRevision!))!.overlays).toEqual([]);
   }, 120_000);
 
   // 边界 #14
@@ -529,7 +536,8 @@ describe("待生成槽：填槽 / 跳过 / 旧 plan 容忍", () => {
     expect(view.plan.overlays[0]!.source).toMatchObject({ kind: "asset", name: "screen.mp4", type: "screen" });
     const confirmed = await service.confirmEditorPlan(contentId, { planRevision: 2, keptOverlayIds: ["ov-01"] });
     expect(describeState(confirmed)).toBe("assemble/queued");
-    const slots = (await readVersioned<Array<Record<string, unknown>>>(vdir, "overlays", 3))!;
+    const slots = (await readEditorDecision(dir, contentId, confirmed.confirmedEditorRevision!))!
+      .overlays as unknown as Array<Record<string, unknown>>;
     // 旧 plan 没有指纹快照——那时压根没这份，所以槽位也不带（跳过复检，一次性容忍）
     expect(slots[0]).toMatchObject({ kind: "screen", ref: { kind: "content", filename: "screen.mp4" } });
     expect(slots[0]!.fingerprint).toBeUndefined();

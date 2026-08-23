@@ -7,6 +7,8 @@
 
 export interface OutcomeMetrics {
   views?: number;
+  /** 曝光/展现量。与 views(播放)不是一个指标,任何展示与聚合都分列(codex #4) */
+  impressions?: number;
   /** 完播率，百分比 0-100 */
   completionRate?: number;
   /** 5 秒完播率，百分比 0-100（抖音独有，对钩子质量更敏感） */
@@ -30,6 +32,12 @@ export interface PerformanceOutcome {
   publishedAt: string | null;
   /** 本快照对应的数据日期 YYYY-MM-DD */
   metricDate: string;
+  /**
+   * 平台作品 id(抖音 item_id / 视频号 objectId / xhs note_id)。
+   * 只是**属性**——绑定与对账用,不进 outcomeKey:进了键就会与老行分叉成两条,
+   * 同一作品被重复计数(codex #5)。
+   */
+  platformItemId?: string;
   metrics: OutcomeMetrics;
   source: OutcomeSource;
   recordedAt: string;
@@ -62,6 +70,13 @@ function rateMetricIssues(m: OutcomeMetrics): { rejects: string[]; reviews: stri
   return { rejects, reviews };
 }
 
+/** 其他工具接受的平台别名（如 "xhs"）；匹配/绑定/建键前统一归一，避免悄悄永不命中 */
+const PLATFORM_ALIASES: Record<string, string> = { xhs: "xiaohongshu" };
+
+export function normalizePlatform(platform: string): string {
+  return PLATFORM_ALIASES[platform] ?? platform;
+}
+
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
@@ -92,6 +107,10 @@ export function validateOutcome(input: {
   );
   if (hasIllegalNegative) {
     reasons.push("存在负数指标");
+  }
+  // 曝光是计数不是比率:小数一律是读错字段(如把曝光率填进了曝光量)
+  if (m.impressions !== undefined && Number.isFinite(m.impressions) && !Number.isInteger(m.impressions)) {
+    reasons.push(`曝光量 ${m.impressions} 不是整数`);
   }
   const rate = rateMetricIssues(m);
   reasons.push(...rate.rejects);
@@ -127,5 +146,5 @@ export function outcomeKey(o: {
   const item = o.contentId
     ? o.contentId
     : `${norm}@${o.publishedAt ? o.publishedAt.slice(0, 10) : "unknown"}`;
-  return `${o.platform}:${item}:${o.metricDate}`;
+  return `${normalizePlatform(o.platform)}:${item}:${o.metricDate}`;
 }

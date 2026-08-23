@@ -136,9 +136,10 @@ async function assertPreview(file: string, durationMs: number, deps?: VideoDeps)
   return problems;
 }
 
+const PREVIEW_ARTIFACT_RE = /^preview(?:-anchor|-manifest)?\.v(\d+)\.(?:mp4|wav|json)$/;
+
 /** 只留最新：更老的预览 mp4 与它们的中间产物一并删掉（边界 #6） */
 async function prunePreviews(dir: string, keepRevision: number): Promise<void> {
-  const re = /^preview(?:-anchor|-manifest)?\.v(\d+)\.(?:mp4|wav|json)$/;
   let names: string[];
   try {
     names = await fs.readdir(dir);
@@ -146,8 +147,29 @@ async function prunePreviews(dir: string, keepRevision: number): Promise<void> {
     return;
   }
   for (const name of names) {
-    const m = re.exec(name);
+    const m = PREVIEW_ARTIFACT_RE.exec(name);
     if (m && Number(m[1]) !== keepRevision) await fs.rm(path.join(dir, name), { force: true });
+  }
+}
+
+/**
+ * 删掉某一版预览的全部产物（lifecycle spec §3.3）。
+ *
+ * superseded 的预览 settle 时**主动删自己的输出**：unlink 只防「正在读的人被拽掉文件」，
+ * 不防「清理跑完之后一次迟到的 rename 把预览又变出来」。谁产出的谁负责收走。
+ */
+export async function removePreviewOutputs(dataDir: string, contentId: string, revision: number): Promise<void> {
+  const dir = videoDir(dataDir, contentId);
+  let names: string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const m = PREVIEW_ARTIFACT_RE.exec(name);
+    const tmp = name === `preview.v${revision}.tmp.mp4`;
+    if (tmp || (m && Number(m[1]) === revision)) await fs.rm(path.join(dir, name), { force: true });
   }
 }
 

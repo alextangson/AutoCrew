@@ -1,0 +1,7 @@
+{
+  "_fixture_note": "小红书未登录：免签端点 success:false（端点文档 §3 说 code:-1，具体取值未确认）。因为是免签端点，这个 false 可以直接判 needs_login。**未经真实抓包，待校准**。",
+  "success": false,
+  "code": -1,
+  "msg": "请先登录",
+  "data": null
+}

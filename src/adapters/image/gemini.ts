@@ -9,6 +9,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { listSelectedGeneratedPortraitPaths } from "../../modules/cover/identity-library.js";
 import { withRetry, checkFetchResponse } from "../../utils/retry.js";
 
 // --- Types ---
@@ -210,9 +211,11 @@ export async function listReferencePhotos(dataDir?: string): Promise<string[]> {
   const dir = path.join(dataDir || path.join(home, ".autocrew"), "covers", "templates");
   try {
     const files = await fs.readdir(dir);
-    return files
+    const sources = files
       .filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f))
+      .sort((a, b) => a.localeCompare(b, "en"))
       .map((f) => path.join(dir, f));
+    return [...sources, ...(await listSelectedGeneratedPortraitPaths(dataDir))];
   } catch {
     return [];
   }

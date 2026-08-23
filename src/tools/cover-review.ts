@@ -5,7 +5,7 @@
  * - create_candidates: generate 3 content-driven creative directions (A/B/C)
  * - get: retrieve existing cover review for a content
  * - approve: approve a selected variant
- * - generate_ratios: [Pro] generate 16:9 + 4:3 from approved cover
+ * - generate_ratios: generate 16:9 + 4:3 from approved cover
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -25,6 +25,11 @@ import { generateImage, listReferencePhotos, type GeminiModel } from "../adapter
 import { generateCoverViaRelay, adaptCoverPrompt, type CoverAspect } from "../adapters/image/relay-cover.js";
 import { resolveCoverProvider, GEMINI_HINT } from "../modules/cover/provider.js";
 import { getDataDir as resolveDataDir } from "../storage/local-store.js";
+import {
+  loadCoverStyleProfile,
+  orderCoverReferencePhotos,
+  type CoverStyleProfile,
+} from "../modules/cover/style-profile.js";
 
 type PrimaryRatio = "3:4" | "16:9" | "4:3" | "2.35:1";
 
@@ -36,8 +41,8 @@ export const coverReviewSchema = Type.Object({
     enum: ["create_candidates", "get", "approve", "revise", "platform_ratios", "generate_ratios"],
     description:
       "Cover action: create_candidates (generate 3 covers), get (view review), approve (pick one), " +
-      "revise (redo one variant per feedback), platform_ratios (2.35:1 for wechat_mp; 16:9/4:3 Pro), " +
-      "generate_ratios (legacy Pro: 16:9 + 4:3).",
+      "revise (redo one variant per feedback), platform_ratios (2.35:1/16:9/4:3/3:4), " +
+      "generate_ratios (legacy alias: 16:9 + 4:3).",
   }),
   content_id: Type.String({ description: "AutoCrew content id." }),
   label: Type.Optional(
@@ -147,6 +152,7 @@ interface ProviderCtx {
   geminiKey: string | null;
   geminiModel: GeminiModel;
   referencePhotos: string[];
+  styleProfile: CoverStyleProfile | null;
 }
 
 /** 解析生图 provider;MCP 注入的 _geminiApiKey/_geminiModel 在 gemini 分支仍优先 */
@@ -164,12 +170,17 @@ async function resolveProviderCtx(
   if (resolved.provider === "gemini" && !geminiKey) {
     return { ok: false, error: "Gemini API key required for cover generation.", hint: GEMINI_HINT };
   }
+  const [referencePhotos, styleProfile] = await Promise.all([
+    listReferencePhotos(dataDir),
+    loadCoverStyleProfile(dataDir),
+  ]);
   return {
     provider: resolved.provider,
     relay: resolved.relay,
     geminiKey,
     geminiModel,
-    referencePhotos: await listReferencePhotos(dataDir),
+    referencePhotos: orderCoverReferencePhotos(referencePhotos, styleProfile),
+    styleProfile,
   };
 }
 
@@ -215,7 +226,9 @@ async function renderCoverImage(
     referenceImagePaths: refs.length > 0 ? refs : undefined,
     outputPath,
   });
-  return result.ok ? { ok: true, imagePath: result.imagePath, model: result.model } : { ok: false, error: result.error };
+  return result.ok
+    ? { ok: true, imagePath: result.imagePath, model: result.model }
+    : { ok: false, error: result.error };
 }
 
 async function generateVariant(
@@ -271,6 +284,7 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
     hasReferencePhotos: ctx.referencePhotos.length > 0,
     customTitle: params.custom_title as string | undefined,
     targetAspect: primaryRatio,
+    styleProfile: ctx.styleProfile,
   };
 
   // LLM 设计师优先;引擎不可用/未提交时降级规则版——封面不能因引擎故障全断
@@ -280,15 +294,15 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
     specs = (await designCoverPlan(planInput, dataDir)).designs;
   } catch (err) {
     const fallback = buildCoverPrompts(planInput);
-    const partial = err && typeof err === "object" && Array.isArray((err as { designs?: unknown }).designs)
-      ? (err as { designs: CoverDesign[] }).designs
-      : [];
+    const partial =
+      err && typeof err === "object" && Array.isArray((err as { designs?: unknown }).designs)
+        ? (err as { designs: CoverDesign[] }).designs
+        : [];
     if (partial.length > 0) {
       const received = new Set(partial.map((design) => design.label));
-      specs = [
-        ...partial,
-        ...fallback.filter((spec) => !received.has(spec.label)),
-      ].sort((a, b) => a.label.localeCompare(b.label));
+      specs = [...partial, ...fallback.filter((spec) => !received.has(spec.label))].sort((a, b) =>
+        a.label.localeCompare(b.label),
+      );
       designSource = "hybrid";
     } else {
       designSource = "rules";
@@ -307,8 +321,7 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
     typeof params._onVariant === "function"
       ? (params._onVariant as (p: { done: number; total: number; label: string; ok: boolean }) => void)
       : undefined;
-  const onPhase =
-    typeof params._onPhase === "function" ? (params._onPhase as (label: string) => void) : undefined;
+  const onPhase = typeof params._onPhase === "function" ? (params._onPhase as (label: string) => void) : undefined;
   let done = 0;
   const total = specs.length;
   // 设计(LLM)→出图 的交接点:并行出图前先报一声,别让这 ~90s 显得像卡死。
@@ -388,6 +401,7 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
       title: content.title,
       hasReferencePhotos: ctx.referencePhotos.length > 0,
       targetAspect: primaryRatio,
+      styleProfile: ctx.styleProfile,
     },
     dataDir,
   );

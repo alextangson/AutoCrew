@@ -25,7 +25,8 @@
  *   content:list       {}
  *   content:get        { id }
  *   publish:clipboard  { content_id, hashtags? }
- *   publish:confirm    { content_id, publish_url? }
+ *   publish:confirm    { content_id, publish_url? }      (publish_url 省略 = 保留旧链接)
+ *   publish:pre_check  { content_id }                    (发布前检查；全过则自动流转 publish_ready)
  *   chat:turn          { conversation_id?, message, turn_id?, client_id?, model_choice? }
  *   chat:abort         { turn_id, client_id }
  *   chat:turn_status   { turn_id }
@@ -88,6 +89,7 @@ import {
   coverSettingsGetHandler,
   coverSettingsSetHandler,
 } from "./cover-handlers.js";
+import { coverIdentityHandler } from "./cover-identity-handlers.js";
 import {
   articleImagesGenerateHandler,
   articleImagesGetHandler,
@@ -105,6 +107,7 @@ import {
   retroGenerateHandler,
   retroListHandler,
   retroGetHandler,
+  hypothesesListHandler,
 } from "./goal-retro-handlers.js";
 import { openContentFolder } from "./folder-open.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
@@ -124,6 +127,11 @@ import {
   openEngineConfigFile,
 } from "./settings.js";
 import { wechatPullHandler } from "./wechat-pull.js";
+import {
+  pullStatusHandler,
+  pullNowHandler,
+  pullToggleHandler,
+} from "./metrics-pull-handlers.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { makeEnsureBrief } from "./write-research-gate.js";
 import { appendAction } from "./recent-actions.js";
@@ -154,10 +162,12 @@ import {
   videoBuildStartHandler,
   videoCutConfirmHandler,
   videoCutPreviewHandler,
+  videoEditorBackToCutHandler,
   videoEditorConfirmHandler,
   videoEditorPlanGetHandler,
   videoEditorRerunHandler,
   videoEditorSlotFillHandler,
+  videoEditorSlotRemoveHandler,
   videoReassembleHandler,
   videoRetryHandler,
   videoReviewConfirmHandler,
@@ -203,6 +213,7 @@ import {
   removeFolder as removeLibraryFolder,
   getAsset as getLibraryAsset,
 } from "../storage/library-store.js";
+import { probeImportedAssets, setLibraryReusable } from "../modules/video/library-pool.js";
 import nodePath from "node:path";
 import { access as fsAccess } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -258,8 +269,10 @@ export const CHANNEL_ACTIONS = {
   "content:list": "list",
   "content:get": "get",
   "publish:clipboard": "clipboard",
+  "publish:preflight": "check",
   "publish:digest": "digest",
   "publish:confirm": "confirm_published",
+  "publish:pre_check": "check",
   "flywheel:import_csv": "import_csv",
   "flywheel:record": "record",
   "content:update": "update",
@@ -951,7 +964,10 @@ async function libraryAddHandler(payload: Record<string, unknown>): Promise<Reco
   }
   const folderId = typeof payload.folder_id === "string" && payload.folder_id ? payload.folder_id : null;
   try {
-    const result = await addLibraryAssets(paths as string[], folderId, (payload._dataDir as string) || undefined);
+    const dataDir = (payload._dataDir as string) || undefined;
+    const result = await addLibraryAssets(paths as string[], folderId, dataDir);
+    // 入库即 ffprobe 并持久化（lifecycle §1）：构目录时同步探等于每跑一次剪辑师就探一遍全库
+    await probeImportedAssets(result.added, dataDir);
     return { ok: true, data: result };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1015,6 +1031,25 @@ async function libraryFolderRemoveHandler(payload: Record<string, unknown>): Pro
     const removed = await removeLibraryFolder(id, (payload._dataDir as string) || undefined);
     if (!removed) return { ok: false, error: "文件夹不存在" };
     return { ok: true, data: {} };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * 常备素材池开关（视频线 lifecycle spec §1）。判定全在 `library-pool`：
+ * 说明非空、类型对、文件在、视频探得出时长——**拒绝要给人话**，不是静默不生效。
+ */
+async function librarySetReusableHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = guardPayload(payload);
+  if (bad) return bad;
+  const id = payload.id;
+  if (typeof id !== "string" || !id) return { ok: false, error: "需要 id" };
+  if (typeof payload.reusable !== "boolean") return { ok: false, error: "reusable 必须是布尔值" };
+  try {
+    const result = await setLibraryReusable(id, payload.reusable, (payload._dataDir as string) || undefined);
+    if (!result.ok) return { ok: false, error: result.error };
+    return { ok: true, data: { asset: result.asset, ...(result.warning ? { warning: result.warning } : {}) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -1104,11 +1139,15 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "content:list": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:list"]),
     "content:get": wrapExecute(executeContentSave as ExecuteFn, CHANNEL_ACTIONS["content:get"]),
     "publish:clipboard": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:clipboard"]),
+    "publish:preflight": wrapExecute(executePrePublish as ExecuteFn, CHANNEL_ACTIONS["publish:preflight"]),
     "publish:digest": wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:digest"]),
     "publish:confirm": withActionRecord(
       wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
       "published",
     ),
+    // 发布前检查：与公众号推送门（publish:request_wechat）同一套 executePrePublish，
+    // 差别是这条不发凭证——它只跑检查，全过由 pre-publish 自己流转到 publish_ready
+    "publish:pre_check": wrapExecute(executePrePublish as ExecuteFn, CHANNEL_ACTIONS["publish:pre_check"]),
     "publish:request_wechat": requestWechatDraftApprovalHandler,
     "publish:wechat_draft": publishWechatDraftApprovedHandler,
     "article_images:get": articleImagesGetHandler,
@@ -1138,6 +1177,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "cover:approve": coverApproveHandler,
     "cover:revise": coverReviseHandler,
     "cover:ratios": coverRatiosHandler,
+    "cover:identity": coverIdentityHandler,
     "settings:cover_get": coverSettingsGetHandler,
     "settings:cover_set": coverSettingsSetHandler,
     "logs:list": logsListHandler,
@@ -1153,6 +1193,10 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),
     "flywheel:record": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:record"]),
     "flywheel:wechat_pull": wechatPullHandler,
+    "flywheel:pull_status": pullStatusHandler,
+    "flywheel:pull_now": pullNowHandler,
+    "flywheel:pull_toggle": pullToggleHandler,
+    "flywheel:hypotheses_list": hypothesesListHandler,
     "dialog:pick_file": dialogUnavailableHandler,
     "knowledge:status": knowledgeStatusHandler,
     "radar:status": getRadarStatus,
@@ -1194,6 +1238,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "library:remove": libraryRemoveHandler,
     "library:folder_create": libraryFolderCreateHandler,
     "library:folder_remove": libraryFolderRemoveHandler,
+    "library:set_reusable": librarySetReusableHandler,
     "dialog:pick_media": dialogPickMediaUnavailableHandler,
     "content:asset_add": contentAssetAddHandler,
     "content:asset_remove": contentAssetRemoveHandler,
@@ -1240,6 +1285,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "video:editor_confirm": videoEditorConfirmHandler,
     "video:editor_rerun": videoEditorRerunHandler,
     "video:editor_slot_fill": videoEditorSlotFillHandler,
+    "video:editor_slot_remove": videoEditorSlotRemoveHandler,
+    "video:editor_back_to_cut": videoEditorBackToCutHandler,
     "video:cut_preview": videoCutPreviewHandler,
     "video:reassemble": videoReassembleHandler,
     "video:review_confirm": videoReviewConfirmHandler,

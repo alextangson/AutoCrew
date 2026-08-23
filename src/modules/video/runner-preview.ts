@@ -5,7 +5,7 @@
  * 与 runner 的分工：调度、队列、lease、心跳仍归 runner，这里只管
  * 「这一次预览该不该发布、发布成什么」。共用的原语由 runner 注入，不重复实现一套。
  */
-import { runPreviewJob } from "./preview-exec.js";
+import { removePreviewOutputs, runPreviewJob } from "./preview-exec.js";
 import { nowIso, type VideoDeps } from "./proc.js";
 import { appendVideoJob, latestJobsView, readVideoJobs, readVideoState } from "./video-store.js";
 import type { VideoJob, VideoPreviewState, VideoState } from "./types.js";
@@ -119,7 +119,13 @@ export function createPreviewRunner(ctx: PreviewRunnerDeps): PreviewRunner {
               ? { requestedRevision: task.revision, readyRevision: task.revision }
               : { requestedRevision: task.revision, error: result.reason },
           );
-    if (superseded) report(`${task.contentId} 的预览 v${task.revision} 作废：${superseded}`);
+    if (superseded) {
+      // 作废的预览自己把输出收走（§3.3）：清理跑完之后一次迟到的 rename 会让它复活（边界 #12）
+      await removePreviewOutputs(dataDir, task.contentId, task.revision).catch((err: unknown) =>
+        report(`${task.contentId} 的作废预览 v${task.revision} 没清干净：${errText(err)}`),
+      );
+      report(`${task.contentId} 的预览 v${task.revision} 作废：${superseded}`);
+    }
     await appendVideoJob(dataDir, {
       ...job,
       status: result.ok && !superseded ? "succeeded" : "failed",

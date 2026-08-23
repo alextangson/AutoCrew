@@ -98,8 +98,57 @@ export interface Content {
   performanceData?: Record<string, number>;
   versions?: Array<{ version: number; note?: string; savedAt: string }>;
   publishedAt?: string | null;
+  /** 发布后的平台地址(确认已发布时选填);渲染成链接前必须再过一次 isHttpUrl */
+  publishUrl?: string | null;
+  /** 成片就绪时刻(视频线终点戳):非空 = 片子渲染并审过了,等着进发布流程 */
+  videoReadyAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 平台链接白名单:只认 http(s)。输入校验与渲染前校验共用它——存量脏数据同样不许变成可点链接 */
+export function isHttpUrl(raw: string): boolean {
+  try {
+    const protocol = new URL(raw.trim()).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 已发布但没有可用链接 → 该出「补记平台链接」入口(spec §5.1)。
+ * 存量脏数据(非 http(s) 的旧值)同样算「没链接」:它既渲染不成链接,也解析不出作品 id,
+ * 留着只会让人以为已经记过了。
+ */
+export function needsPublishUrlBackfill(c: { status: string; publishUrl?: string | null }): boolean {
+  return c.status === "published" && !(c.publishUrl && isHttpUrl(c.publishUrl));
+}
+
+/** 平台 → 发布链接常见域名。用来提醒「贴错平台」,不是白名单——判不准的一律不吭声 */
+const PLATFORM_DOMAINS: Record<string, string[]> = {
+  wechat_mp: ["mp.weixin.qq.com"],
+  douyin: ["douyin.com", "iesdouyin.com"],
+  xiaohongshu: ["xiaohongshu.com", "xhslink.com"],
+  wechat_video: ["channels.weixin.qq.com", "weixin.qq.com"],
+  bilibili: ["bilibili.com", "b23.tv"],
+  toutiao: ["toutiao.com"],
+  twitter: ["x.com", "twitter.com"],
+  reddit: ["reddit.com"],
+  instagram: ["instagram.com"],
+};
+
+/**
+ * 链接域名与稿件平台明显不符时的提示语(否则 null)。**非阻断**:发错平台是用户
+ * 要知道的事,不是系统要拦的事——一稿多投、短链、自建域都可能合法。
+ */
+export function publishUrlPlatformWarning(raw: string, platform: string | null | undefined): string | null {
+  if (!isHttpUrl(raw) || !platform) return null;
+  const domains = PLATFORM_DOMAINS[platform];
+  if (!domains) return null;
+  const host = new URL(raw.trim()).hostname.toLowerCase();
+  if (domains.some((d) => host === d || host.endsWith("." + d))) return null;
+  return `这个链接看着不像${platformLabel(platform)}的地址(${host})——确认没贴错平台就继续。`;
 }
 
 /** 原子分组(与 vanilla 同构):topicId 为脊椎;孤稿自成原子;纯灵感单列 */
@@ -206,6 +255,15 @@ export interface VideoPreviewState {
   error?: string;
 }
 
+/** done 之后的测试产物清理(lifecycle spec §3.3);warning = 清了但有清不掉的,必须让人看见 */
+export interface VideoCleanupState {
+  status: "pending" | "done" | "warning";
+  approvedRevision: number;
+  freedBytes?: number;
+  note?: string;
+  finishedAt?: string;
+}
+
 export interface VideoState {
   schemaVersion: 1;
   entryType: "aroll";
@@ -213,6 +271,9 @@ export interface VideoState {
   state: VideoRunState;
   blockedReason?: VideoBlockedReason;
   preview?: VideoPreviewState;
+  /** 已确认的成片计划版本;assemble 只读这一版的决策 */
+  confirmedEditorRevision?: number;
+  cleanup?: VideoCleanupState;
   failedPhase?: VideoPhase;
   errorCode?: string;
   failReason?: string;
@@ -235,6 +296,8 @@ export interface VideoJob {
 export interface VideoStatusData {
   state: VideoState;
   jobs: VideoJob[];
+  /** 当前成片版的审片记录;打回后目标门的横幅读它 */
+  review?: VideoReviewDecision;
 }
 
 export interface TranscriptSegment {
@@ -330,6 +393,28 @@ export interface VideoEditorPlan {
 export interface EditorPlanView {
   plan: VideoEditorPlan;
   revision: number;
+  /** 非空 = 这份计划是对上一版选段排的,按旧时间排的 overlay 会落错话——挡住确认 */
+  staleCutRevision?: number;
+}
+
+/** 打回定位的落点(lifecycle spec §2.4):落在覆盖轨上就高亮那一槽,否则高亮那一句 */
+export type ReviewLocation =
+  | { kind: "overlay"; overlayId: string }
+  | { kind: "segment"; segmentId: string };
+
+/**
+ * 审片记录(不可变产物 `review-decision.v<K>.json`)。打回的备注刷新不丢就靠它——
+ * 纯前端存的备注活不过一次刷新,而人回到门上第一件事就是想知道「我当时说了什么」。
+ */
+export interface VideoReviewDecision {
+  schemaVersion: 1;
+  renderedRevision: number;
+  verdict: "approve" | "reject";
+  target?: "edit" | "cut";
+  timestampMs?: number;
+  note?: string;
+  locate?: ReviewLocation;
+  decidedAt: string;
 }
 
 /**
@@ -408,6 +493,21 @@ export const videoEditorSlotFill = (args: {
     library_id: args.libraryId,
   });
 
+/** 删掉一段编排;与填槽同样派生**新一版 plan**(旧版留档不删),返回的就是新那版 */
+export const videoEditorSlotRemove = (args: { contentId: string; planRevision: number; overlayId: string }) =>
+  videoInvoke<EditorPlanView>("video:editor_slot_remove", {
+    content_id: args.contentId,
+    plan_revision: args.planRevision,
+    overlay_id: args.overlayId,
+  });
+
+/** 门二退回门一(lifecycle §2.2):在成片计划上才发现话说错了 */
+export const videoEditorBackToCut = (args: { contentId: string; planRevision: number }) =>
+  videoInvoke<{ state: VideoState }>("video:editor_back_to_cut", {
+    content_id: args.contentId,
+    plan_revision: args.planRevision,
+  });
+
 /** 按门上当前勾选重渲一版预览;主状态不动,渲完走 SSE 刷新 */
 export const videoCutPreview = (args: {
   contentId: string;
@@ -430,11 +530,25 @@ export const videoReassemble = (contentId: string) =>
 export const videoEditorRerun = (contentId: string) =>
   videoInvoke<{ state: VideoState }>("video:editor_rerun", { content_id: contentId });
 
-export const videoReviewConfirm = (args: { contentId: string; renderedRevision: number; verdict: "approve" | "reject" }) =>
+/**
+ * 审片裁决。打回带 target(回门二改 B-roll / 回门一改选段)、播放位置与备注——
+ * 三样都落进不可变记录,目标门的横幅刷新后照样看得见(lifecycle §2.4)。
+ */
+export const videoReviewConfirm = (args: {
+  contentId: string;
+  renderedRevision: number;
+  verdict: "approve" | "reject";
+  target?: "edit" | "cut";
+  timestampMs?: number;
+  note?: string;
+}) =>
   videoInvoke<{ state: VideoState; videoReadyAt?: string | null; stampWarning?: string }>("video:review_confirm", {
     content_id: args.contentId,
     rendered_revision: args.renderedRevision,
     verdict: args.verdict,
+    ...(args.target ? { target: args.target } : {}),
+    ...(args.timestampMs !== undefined ? { timestamp_ms: args.timestampMs } : {}),
+    ...(args.note ? { note: args.note } : {}),
   });
 
 export const videoRetry = (contentId: string) =>
@@ -555,6 +669,28 @@ export function videoPreviewUrl(contentId: string, previewRevision: number): str
   return `/api/video/media/${encodeURIComponent(contentId)}/preview.v${previewRevision}.mp4`;
 }
 
+export interface CutPreviewStatus {
+  /** 可播的那一版;null = 还没有任何可播预览 */
+  playableRevision: number | null;
+  /** 有新的一版在后台渲(老的那版若在,照常可播) */
+  rendering: boolean;
+  /** 非空 = 最近一次预览没渲出来,要摆成横幅;门照常可确认(边界 #1) */
+  message: string | null;
+}
+
+/**
+ * 预览指针 → 门内看片器的三个问题:现在能播哪版、是不是在渲新的、要不要横幅。
+ * 预览失败**不算 rendering**——辅助 job 已经 settle 了,再显示「渲染中」是骗人。
+ */
+export function previewStatus(p?: VideoPreviewState): CutPreviewStatus {
+  if (!p) return { playableRevision: null, rendering: false, message: null };
+  return {
+    playableRevision: p.readyRevision ?? null,
+    rendering: !p.error && p.requestedRevision > (p.readyRevision ?? 0),
+    message: p.error ? `预览没渲出来:${p.error} —— 不影响确认选段,也可以点「重新生成预览」再试。` : null,
+  };
+}
+
 /** 成片登记回稿件素材时的文件名(render-exec.ts:`final-v<K>.mp4`,与上面播放名不同源) */
 export function videoFinalAssetName(renderedRevision: number): string {
   return `final-v${renderedRevision}.mp4`;
@@ -574,6 +710,18 @@ export function formatTimecode(ms: number): string {
  */
 export function keepsInTranscriptOrder(segments: TranscriptSegment[], kept: ReadonlySet<string>): string[] {
   return segments.filter((s) => kept.has(s.id)).map((s) => s.id);
+}
+
+/**
+ * 收尾清理那一行(lifecycle spec §3.3)。**三态三句话**:还没清完 / 清完了释放多少 /
+ * 清了但有清不掉的。没有「什么都不说」——静默清理会让人怀疑成片被动过。
+ */
+export function cleanupSummary(cleanup?: VideoCleanupState): string | null {
+  if (!cleanup) return null;
+  const freed = cleanup.freedBytes ? `,释放 ${(cleanup.freedBytes / 1024 / 1024).toFixed(1)} MB` : "";
+  if (cleanup.status === "pending") return "正在清理测试产物(预览、废弃成片、可重算的音轨)…";
+  if (cleanup.status === "warning") return `已清理测试产物${freed},但有清不掉的:${cleanup.note ?? "看任务日志"}`;
+  return `已清理测试产物${freed} —— 通过版成片、引用音轨与全部决策记录都留着`;
 }
 
 /** 「X 分 Y 秒」——预计成片时长给人的读法,不用 mm:ss(那是时间码,不是时长) */
@@ -598,6 +746,27 @@ export function roughCutSummary(units?: VideoEditUnits): string | null {
   const body = `AI 粗剪:${head} / 共 ${units.segments.length} 段,预计成片 ${formatMinutesSeconds(keptMs)}`;
   // 切口是硬切,这一版不做淡入淡出(粗剪 spec §7 #15)——不静默假装无损
   return dropped.size === 0 ? body : `${body}。剔除处是硬切,这一版不做淡入淡出`;
+}
+
+/**
+ * 成片计划结果条(横屏 spec §3.5)。与 roughCutSummary 同一条纪律:**只有剪辑师真跑过
+ * 才把结论记在它头上**——空 plan 要分清「它看过认为不需要」和「压根没排出来」;
+ * 人填槽派生的版本(origin:"human")不再说「剪辑师排了」,那已经是人的版本。
+ */
+export function editorPlanSummary(plan: VideoEditorPlan, outputDurationMs?: number): string {
+  if (plan.overlays.length === 0) {
+    if (plan.origin === "llm") return "剪辑师看过素材,认为这条不需要 B-roll —— 确认后就是一条纯口播。";
+    return plan.note ? `没有可排的 B-roll:${plan.note}` : (plan.warning ?? "这版计划没有 B-roll —— 确认后就是一条纯口播。");
+  }
+  const coveredMs = plan.overlays.reduce((sum, o) => sum + Math.max(0, o.durationMs), 0);
+  const ratio = outputDurationMs && outputDurationMs > 0 ? `,约占成片 ${Math.round((coveredMs / outputDurationMs) * 100)}%` : "";
+  const pending = plan.overlays.filter((o) => o.source.kind === "generate").length;
+  const head =
+    plan.origin === "human"
+      ? `这版计划(你填过素材)共 ${plan.overlays.length} 段 B-roll`
+      : `剪辑师排了 ${plan.overlays.length} 段 B-roll`;
+  const slots = pending > 0 ? `;其中 ${pending} 段是待生成槽,要填素材或确认时明示跳过` : "";
+  return `${head},共覆盖 ${formatMinutesSeconds(coveredMs)}${ratio}${slots}。`;
 }
 
 /** matchedRatio < 0.5 → 不给建议权,人要逐句盯(§4.4 / §10);没有对齐数据就不吓唬人 */

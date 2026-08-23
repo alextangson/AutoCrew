@@ -9,6 +9,8 @@ import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { platformLabel } from "../lib";
+import { PullStatusPanel } from "./PullStatusPanel";
+import { HypothesesPanel } from "./HypothesesPanel";
 
 interface WorkItem {
   title: string;
@@ -27,6 +29,7 @@ interface Report {
 /** 均值指标全量上墙(与 outcome-schema 对齐);率值带 %,量值取整千分位 */
 const METRIC_TILES: Array<[string, string, boolean]> = [
   ["views", "平均播放/阅读", false],
+  ["impressions", "平均曝光", false],
   ["completionRate", "平均完播率", true],
   ["completion5s", "平均5s完播", true],
   ["likes", "平均点赞", false],
@@ -38,6 +41,7 @@ const METRIC_TILES: Array<[string, string, boolean]> = [
 
 const ROW_METRICS: Array<[string, string, boolean]> = [
   ["views", "播放", false],
+  ["impressions", "曝光", false],
   ["likes", "赞", false],
   ["favorites", "藏", false],
   ["comments", "评", false],
@@ -61,6 +65,13 @@ export function ReportView() {
   const [impPlatform, setImpPlatform] = useState("wechat_mp");
   const [importing, setImporting] = useState(false);
 
+  /** 任何一条回流通道落库后重拉报表——三通道同源幂等,重拉一次数字就是最新的 */
+  const reloadReport = () => {
+    void invoke("flywheel:report").then((rr) => {
+      if (rr.ok) setD((rr as unknown as { data: Report }).data);
+    });
+  };
+
   // 公众号后台一键拉数(chrome-cdp 登录态,只读低频;登录失效会给扫码指引)
   const [pulling, setPulling] = useState(false);
   const pullWechat = async () => {
@@ -70,9 +81,7 @@ export function ReportView() {
     if (!r.ok) return toast(r.error ?? "拉取失败");
     const rep = (r as unknown as { data: { imported: number; matched: number; historical: number } }).data;
     toast(`公众号回填:入账 ${rep.imported} 条(匹配稿件 ${rep.matched} · 历史 ${rep.historical})`);
-    void invoke("flywheel:report").then((rr) => {
-      if (rr.ok) setD((rr as unknown as { data: Report }).data);
-    });
+    reloadReport();
   };
 
   // 创作者中心导出 CSV → flywheel 导入管线(csv_text 直传;校验/对账/幂等在后端)
@@ -85,9 +94,7 @@ export function ReportView() {
     if (!r.ok) return toast(r.error ?? "导入失败");
     const rep = (r as unknown as { data: { imported: number; matched: number; historical: number; needsReview: unknown[]; rejected: unknown[] } }).data;
     toast(`导入 ${rep.imported} 条:匹配稿件 ${rep.matched} · 历史 ${rep.historical} · 待复核 ${rep.needsReview.length}${rep.rejected.length ? ` · 拒绝 ${rep.rejected.length}` : ""}`);
-    void invoke("flywheel:report").then((rr) => {
-      if (rr.ok) setD((rr as unknown as { data: Report }).data);
-    });
+    reloadReport();
   };
 
   useEffect(() => {
@@ -124,7 +131,7 @@ export function ReportView() {
     <div className="report">
       <div className="board-bar">
         <h2 className="serif board-title" style={{ margin: 0 }}>数据回流</h2>
-        <span className="muted">发布后回填数据——选题评分、基线与复盘都以它为准</span>
+        <span className="muted">发布后回填数据——支撑基线洞察、复盘与受众画像校准</span>
         <span style={{ marginLeft: "auto" }} className="row-actions">
           <button className="chip" disabled={pulling} onClick={() => void pullWechat()}>
             {pulling ? "拉取中…" : "从公众号后台拉取"}
@@ -150,6 +157,12 @@ export function ReportView() {
           </label>
         </span>
       </div>
+
+      <p className="muted pull-note" style={{ marginTop: -4 }}>
+        手动导入（CSV / 抖音扩展）与自动抓取同源幂等——同一批数据重复导入无害，数字不会翻倍。
+      </p>
+
+      <PullStatusPanel onImported={reloadReport} />
 
       <div className="stat-grid">
         {tiles.map(([label, value]) => (
@@ -186,6 +199,8 @@ export function ReportView() {
         </div>
       )}
 
+      <HypothesesPanel />
+
       <div className="card report-card">
         <div className="card-title">复盘报告</div>
         {retros.length === 0 && <p className="muted">还没有复盘——工作台「目标」卡一键生成周复盘/月度深盘。</p>}
@@ -206,7 +221,7 @@ export function ReportView() {
       </div>
 
       <p className="muted" style={{ marginTop: 10 }}>
-        回填入口在编辑器(已发布稿)——数据回来,选题评分与基线才会越来越准。
+        回填入口在编辑器(已发布稿)——数据支撑复盘与受众画像校准提案,确认后画像才会越来越准。
       </p>
     </div>
   );

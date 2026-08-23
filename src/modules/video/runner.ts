@@ -13,12 +13,11 @@
  * 4. **settle 带 CAS**：落盘前校验 lease 还是自己、状态还停在我认领的那一格、revisions 没前移；
  *    不符则**产物留盘、状态不动**——旧 revision 渲染完不许污染新状态（codex #10）。
  */
-import fs from "node:fs/promises";
-import path from "node:path";
-import { isContentId } from "../../storage/entity-id.js";
 import { getContent } from "../../storage/local-store.js";
-import { catalogDigest, editorInputKey } from "./editor.js";
-import { scanBrollCandidates, trimCandidates } from "./editor-plan.js";
+import { buildBrollCatalog } from "./broll-catalog.js";
+import { createCleanupRunner } from "./runner-cleanup.js";
+import { recoverExpired } from "./runner-recover.js";
+import { editorInputKey } from "./editor.js";
 import { fingerprintFile } from "./fingerprint.js";
 import { resolveBgmRef } from "./ingest.js";
 import { MASTER_AUDIO_PARAMS } from "./master-audio.js";
@@ -34,12 +33,11 @@ import {
   readVideoJobs,
   readVideoAssets,
   readVideoState,
-  recoverExpiredJobs,
   resolveAssetRef,
   transitionVideoState,
+  transitionVideoStateWithEffect,
   videoDir,
   VIDEO_HEARTBEAT_MS,
-  VIDEO_LEASE_MS,
 } from "./video-store.js";
 import type { VideoJob, VideoJobPhase, VideoPhase, VideoRevisions, VideoState } from "./types.js";
 
@@ -57,6 +55,8 @@ export interface VideoRunnerOptions {
   /** 每次状态落盘成功后触发（SSE 的源头） */
   onStateWritten?: (contentId: string) => void;
   onError?: (message: string) => void;
+  /** staging 定版注入点；测试用它锁定磁盘失败路径 */
+  promoteStagingImpl?: typeof promoteStaging;
 }
 
 export interface VideoRunner {
@@ -67,6 +67,10 @@ export interface VideoRunner {
    * `cut/awaiting_human`，确认因此不被渲染阻塞——门就是门。
    */
   enqueuePreview(task: PreviewTask): void;
+  /** 排一次成片收尾清理（lifecycle spec §3.3）；只对 done + cleanup=pending 生效 */
+  enqueueCleanup(contentId: string): void;
+  /** 启动时把死在半路的清理接着做完（§4 #9）。返回重排条数 */
+  resumeCleanup(): Promise<number>;
   /** 启动回收：心跳过期的 running 重排。返回回收条数 */
   recoverExpired(): Promise<number>;
   /** 队列跑空（测试与 shutdown 用） */
@@ -87,8 +91,12 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   const leaseOwner = `pid-${process.pid}-${opts.launchId ?? Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const pending = new Set<string>();
-  /** 主推进与辅助预览排同一条队：渲染吃满 CPU，两条同时跑只会互相拖慢 */
-  const order: ({ kind: "advance"; contentId: string } | ({ kind: "preview" } & PreviewTask))[] = [];
+  /** 主推进、辅助预览、收尾清理排同一条队：渲染吃满 CPU，两条同时跑只会互相拖慢 */
+  const order: (
+    | { kind: "advance"; contentId: string }
+    | { kind: "cleanup"; contentId: string }
+    | ({ kind: "preview" } & PreviewTask)
+  )[] = [];
   let pump: Promise<void> = Promise.resolve();
   let running = false;
   let stopped = false;
@@ -159,6 +167,15 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     };
   }
 
+  /** 收尾清理的那一半住在 runner-cleanup.ts：它只动 cleanup 三字段，不动 phase/state */
+  const cleanupRunner = createCleanupRunner({
+    dataDir,
+    now: () => nowIso(deps),
+    report,
+    writeState,
+    enqueue: (contentId) => enqueueCleanup(contentId),
+  });
+
   /**
    * 门内预览的那一半（v2 spec §4.1）住在 runner-preview.ts：调度/lease/心跳仍归这里，
    * 「结果该不该发布」归那里，共用原语靠注入，不重复实现一套。
@@ -200,7 +217,12 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   async function inputKeyFor(contentId: string, state: VideoState): Promise<string> {
     const r = state.revisions;
     if (state.phase === "assemble") {
-      return `cut:${r.cut ?? 0}+transcript:${r.transcript ?? 0}+bgm:${await bgmKey(contentId)}`;
+      // 确认版进 key（lifecycle §2.1）：回门二改一处再确认时 cut/transcript 都没变，
+      // 不带确认版的话这次重投会被当成「同一份输入」合并掉，成片还是上一版的编排
+      return (
+        `cut:${r.cut ?? 0}+transcript:${r.transcript ?? 0}` +
+        `+decision:${state.confirmedEditorRevision ?? 0}+bgm:${await bgmKey(contentId)}`
+      );
     }
     if (state.phase === "render") return `timeline:${r.timeline ?? 0}`;
     // 粗剪还消费 Content.body、prompt 版本与模型路由（§3.2）：只写 transcript 版本的话，
@@ -209,12 +231,13 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       const body = (await getContent(contentId, dataDir))?.body ?? "";
       return roughCutInputKey(dataDir, r.transcript ?? 0, body);
     }
-    // 剪辑师消费的是「确认后的 cut + 稿件 + broll 素材清单」（横屏 spec §3.1）：
-    // 素材说明改一个字、换一条素材，编排就该重算，所以清单指纹也进 key
+    // 剪辑师消费的是「确认后的 cut + 稿件 + 目录（本稿 broll + 常备池）」（横屏 spec §3.1）：
+    // 素材说明改一个字、换一条素材、常备池增减，编排就该重算，所以目录指纹也进 key。
+    // 与 edit phase 共用 buildBrollCatalog——两边算出两份目录会让漂移判定永远误报
     if (state.phase === "edit") {
       const content = await getContent(contentId, dataDir);
-      const scan = trimCandidates(scanBrollCandidates(content?.assets ?? []));
-      return editorInputKey(dataDir, r.cut ?? 0, content?.body ?? "", catalogDigest(scan.candidates, scan.excluded));
+      const catalog = await buildBrollCatalog(dataDir, contentId, content?.assets ?? []);
+      return editorInputKey(dataDir, r.cut ?? 0, content?.body ?? "", catalog.digest);
     }
     // transcribe 的输入是 A-roll 本身：换了素材就是另一个任务，同一素材重复投递自动合并
     const aroll = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll");
@@ -247,17 +270,15 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     return null;
   }
 
+  /**
+   * settle 后的状态。**保留式改写而不是白名单重建**：以前这里按字段名一个个抄，
+   * 于是每加一个状态字段（confirmedEditorRevision、cleanup…）都会在这条路径上被悄悄抹掉，
+   * 而抹掉的后果要到下一步才炸。现在只显式清掉「上一次的失败痕迹」，其余原样带过去。
+   */
   function settledState(cur: VideoState, result: StepResult, phase: VideoPhase): VideoState {
     const preview = (result.ok ? result.preview : undefined) ?? cur.preview;
-    const base = {
-      schemaVersion: 1 as const,
-      entryType: "aroll" as const,
-      updatedAt: "",
-      ...(cur.inputManifest ? { inputManifest: cur.inputManifest } : {}),
-      ...(cur.stale ? { stale: cur.stale } : {}),
-      ...(preview ? { preview } : {}),
-    };
-    // 成功即清空 blockedReason/failedPhase/errorCode/failReason：留着上一次的失败痕迹只会误导人
+    const { blockedReason: _b, failedPhase: _f, errorCode: _e, failReason: _r, ...carried } = cur;
+    const base = { ...carried, updatedAt: "", ...(preview ? { preview } : {}) };
     if (result.ok) {
       return { ...base, phase: result.next.phase, state: result.next.state, revisions: { ...cur.revisions, ...result.revisions } };
     }
@@ -267,16 +288,26 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     return { ...base, phase, revisions: cur.revisions, ...failure, errorCode: result.errorCode, failReason: result.reason };
   }
 
-  /** CAS 不过时用它跳出写入事务——mutator 是同步的，抛错是唯一能在临界区里中止的方式 */
+  /** CAS 不过时用它跳出写入事务，调用方据此把产物留作历史而不推进状态。 */
   class StaleSettle extends Error {}
+  class PromotionFailed extends Error {}
 
-  async function settleState(contentId: string, before: VideoState, result: StepResult): Promise<string | null> {
+  async function settleStateAndPromote(
+    contentId: string,
+    before: VideoState,
+    result: StepResult,
+    job: VideoJob | null,
+  ): Promise<string | null> {
     try {
-      await writeState(contentId, (cur) => {
+      await transitionVideoStateWithEffect(dataDir, contentId, (cur) => {
         const violation = casViolation(before, cur);
         if (violation) throw new StaleSettle(violation);
-        return settledState(cur!, result, before.phase);
+        return {
+          next: settledState(cur!, result, before.phase),
+          beforeCommit: () => promoteStaged(contentId, result, job),
+        };
       });
+      opts.onStateWritten?.(contentId);
       return null;
     } catch (err) {
       if (err instanceof StaleSettle) return err.message;
@@ -305,16 +336,40 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     }
   }
 
-  /** CAS 通过后才把 staging 产物定版本（§3.3）。失败必须吼出来：状态推了、产物没落位 */
+  /** CAS 通过后、状态提交前把 staging 产物定版本（§3.3）；失败会中止状态提交。 */
   async function promoteStaged(contentId: string, result: StepResult, job: VideoJob | null): Promise<void> {
     if (!result.ok || !result.staged?.length || !job) return;
     const dir = videoDir(dataDir, contentId);
     for (const item of result.staged) {
       try {
-        await promoteStaging(dir, item.base, job.jobId, item.revision);
+        await (opts.promoteStagingImpl ?? promoteStaging)(dir, item.base, job.jobId, item.revision);
       } catch (err) {
-        report(`${contentId} 的 ${item.base}.v${item.revision} 定版失败（状态已推进，产物仍在 staging）：${errText(err)}`);
+        throw new PromotionFailed(`${item.base}.v${item.revision} 定版失败：${errText(err)}`);
       }
+    }
+  }
+
+  async function markPromotionFailed(contentId: string, before: VideoState, reason: string): Promise<string | null> {
+    try {
+      await writeState(contentId, (cur) => {
+        const violation = casViolation(before, cur);
+        if (violation) throw new StaleSettle(violation);
+        const carried = { ...cur! };
+        delete carried.blockedReason;
+        return {
+          ...carried,
+          phase: before.phase,
+          state: "failed",
+          revisions: before.revisions,
+          failedPhase: before.phase,
+          errorCode: "promotion_failed",
+          failReason: reason,
+        };
+      });
+      return null;
+    } catch (err) {
+      if (err instanceof StaleSettle) return err.message;
+      throw err;
     }
   }
 
@@ -329,25 +384,36 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       if (live?.leaseOwner !== leaseOwner) return "lease 已被别人接管";
       if (await inputDrifted(contentId, before, job)) return "输入在执行期间被改动（稿件或素材已不是认领时那份）";
     }
-    return settleState(contentId, before, result);
+    return settleStateAndPromote(contentId, before, result, job);
   }
 
   async function settle(contentId: string, before: VideoState, result: StepResult, job: VideoJob | null): Promise<void> {
-    const violation = await settleViolation(contentId, before, result, job);
+    let violation: string | null = null;
+    let promotionError: string | null = null;
+    try {
+      violation = await settleViolation(contentId, before, result, job);
+    } catch (err) {
+      if (!(err instanceof PromotionFailed)) throw err;
+      promotionError = err.message;
+      const failedSettle = await markPromotionFailed(contentId, before, promotionError);
+      if (failedSettle) violation = failedSettle;
+      report(`${contentId} 的 ${before.phase} 产物定版失败，状态未推进：${promotionError}`);
+    }
     if (violation) report(`${contentId} 的 ${before.phase} 产物只作历史留档：${violation}`);
-    else await promoteStaged(contentId, result, job);
     const warning = stepWarning(result);
-    if (!violation && warning) report(`${contentId} 的 ${before.phase} 跑完了但结果没达成：${warning}`);
+    if (!violation && !promotionError && warning) report(`${contentId} 的 ${before.phase} 跑完了但结果没达成：${warning}`);
     if (!job) return;
-    const rev = violation ? undefined : outputRevision(before.phase, result.ok ? result.revisions : undefined);
+    const rev = violation || promotionError ? undefined : outputRevision(before.phase, result.ok ? result.revisions : undefined);
     await appendVideoJob(dataDir, {
       ...job,
-      status: result.ok && !violation ? "succeeded" : "failed",
+      status: result.ok && !violation && !promotionError ? "succeeded" : "failed",
       settledAt: nowIso(deps),
       ...(rev !== undefined ? { outputRevision: rev } : {}),
-      ...(!violation && warning ? { warning } : {}),
+      ...(!violation && !promotionError && warning ? { warning } : {}),
       ...(violation
         ? { errorCode: "stale_settle", failReason: `历史产物（文件已留盘，状态未推进）：${violation}` }
+        : promotionError
+          ? { errorCode: "promotion_failed", failReason: promotionError }
         : result.ok
           ? {}
           : { errorCode: result.errorCode, failReason: result.reason }),
@@ -393,6 +459,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
           pending.delete(taskKey(task));
           try {
             if (task.kind === "advance") await advance(task.contentId);
+            else if (task.kind === "cleanup") await cleanupRunner.run(task.contentId);
             else await previewRunner.run(task);
           } catch (err) {
             report(`${task.contentId} 推进失败：${errText(err)}`);
@@ -405,7 +472,8 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   }
 
   function taskKey(task: { kind: string; contentId: string; revision?: number }): string {
-    return task.kind === "advance" ? `advance|${task.contentId}` : `preview|${task.contentId}|${String(task.revision)}`;
+    if (task.kind === "preview") return `preview|${task.contentId}|${String(task.revision)}`;
+    return `${task.kind}|${task.contentId}`;
   }
 
   function enqueue(contentId: string): void {
@@ -423,67 +491,29 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     schedule();
   }
 
-  // -------------------------------------------------------------------------
-  // 启动回收
-  // -------------------------------------------------------------------------
-
-  async function requeueJob(job: VideoJob): Promise<void> {
-    if (job.phase === "cut_preview") return previewRunner.recover(job);
-    await appendVideoJob(dataDir, {
-      ...job,
-      status: "queued",
-      attempts: job.attempts + 1,
-      leaseOwner: undefined,
-      claimedAt: undefined,
-      heartbeatAt: undefined,
-    });
-    const { state } = await readVideoState(dataDir, job.contentId);
-    if (state?.state === "running") await writeState(job.contentId, (cur) => ({ ...cur!, state: "queued" }));
-    enqueue(job.contentId);
-  }
-
-  /**
-   * ingest 没有 job 行（§3 只有三个 phase 值得开 job），崩在那儿就没人回收它。
-   * 用 state.json 的 updatedAt 兜底：running 且超过一个 lease 没动过 = 上次崩了。
-   * 有活 job 的 content 一律跳过——长渲染的 state.updatedAt 本来就不会动。
-   */
-  async function recoverStuckStates(skip: Set<string>): Promise<number> {
-    let ids: string[];
-    try {
-      ids = await fs.readdir(path.join(dataDir, "contents"));
-    } catch {
-      return 0;
-    }
-    let count = 0;
-    for (const contentId of ids) {
-      // contents/ 下混着 .DS_Store 之类的东西；非法 id 会让 readVideoState 直接抛
-      if (skip.has(contentId) || !isContentId(contentId)) continue;
-      const { state } = await readVideoState(dataDir, contentId);
-      if (!state || state.state !== "running") continue;
-      if (nowMs(deps) - Date.parse(state.updatedAt || "") <= VIDEO_LEASE_MS) continue;
-      await writeState(contentId, (cur) => ({ ...cur!, state: "queued" }));
-      enqueue(contentId);
-      count += 1;
-    }
-    return count;
-  }
-
-  async function recoverExpired(): Promise<number> {
-    const jobs = await readVideoJobs(dataDir);
-    const expired = recoverExpiredJobs(jobs, nowMs(deps));
-    const expiredIds = new Set(expired.map((j) => j.contentId));
-    for (const job of expired) await requeueJob(job);
-    const live = latestJobsView(jobs)
-      .filter((j) => j.status === "running" && !expiredIds.has(j.contentId))
-      .map((j) => j.contentId);
-    return expired.length + (await recoverStuckStates(new Set([...expiredIds, ...live])));
+  function enqueueCleanup(contentId: string): void {
+    if (stopped || pending.has(`cleanup|${contentId}`)) return;
+    pending.add(`cleanup|${contentId}`);
+    order.push({ kind: "cleanup", contentId });
+    schedule();
   }
 
   return {
     leaseOwner,
     enqueue,
     enqueuePreview,
-    recoverExpired,
+    enqueueCleanup,
+    resumeCleanup: () => cleanupRunner.resume(),
+    // 启动回收住在 runner-recover.ts：两类「崩在半路」的判定合起来将近 50 行，
+    // 挤在调度循环旁边会把「谁在跑」这条主线埋掉
+    recoverExpired: () =>
+      recoverExpired({
+        dataDir,
+        nowMs: () => nowMs(deps),
+        writeState,
+        enqueue,
+        recoverPreview: (job) => previewRunner.recover(job),
+      }),
     whenIdle: () => pump,
     async shutdown() {
       stopped = true;

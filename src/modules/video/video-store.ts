@@ -177,6 +177,32 @@ export function transitionVideoState(
   });
 }
 
+export interface VideoTransitionWithEffect {
+  next: VideoState;
+  /** 状态提交前必须完成的副作用；失败时 state.json 保持原样 */
+  beforeCommit: () => Promise<void>;
+}
+
+/**
+ * 把「校验当前状态 → 完成产物落位 → 提交新状态」放进同一条 content 写队列。
+ * 产物落位失败时绝不推进 state.json；跨进程旧 worker 仍由 runner 的 lease/CAS 拦截。
+ */
+export function transitionVideoStateWithEffect(
+  dataDir: string,
+  contentId: string,
+  prepare: (current: VideoState | null) => VideoTransitionWithEffect,
+): Promise<VideoState> {
+  return serializeVideoWrite(contentId, async () => {
+    const { state: current } = await readVideoState(dataDir, contentId);
+    const prepared = prepare(current);
+    const next: VideoState = { ...prepared.next, updatedAt: new Date().toISOString() };
+    assertTransition(current ? stateRef(current) : GENESIS, stateRef(next));
+    await prepared.beforeCommit();
+    await writeStateUnlocked(dataDir, contentId, next);
+    return next;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 版本化不可变产物
 // ---------------------------------------------------------------------------

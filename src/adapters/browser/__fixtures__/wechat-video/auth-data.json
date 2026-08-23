@@ -1,0 +1,13 @@
+{
+  "_fixture_note": "视频号 /cgi-bin/mmfinderassistant-bin/auth/auth_data 已登录响应。finderUsername 的实际路径未确认（端点文档 §2），这里按 data.finderUser.finderUsername 构造，pickFinderUsername 另认几条常见路径。sessionid 是伪造值，用于脱敏回归。**未经真实抓包，待校准**。",
+  "errCode": 0,
+  "errMsg": "ok",
+  "data": {
+    "finderUser": {
+      "finderUsername": "v2_FAKE_FINDER_USERNAME_do_not_leak@finder",
+      "nickname": "一人公司实验室",
+      "uniqId": "autocrew_lab"
+    },
+    "sessionid": "FAKE_SESSIONID_DO_NOT_LEAK_77aa"
+  }
+}

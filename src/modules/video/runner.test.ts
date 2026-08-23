@@ -9,6 +9,7 @@ import path from "node:path";
 import { updateContent } from "../../storage/local-store.js";
 import { ingestAroll } from "./ingest.js";
 import { createVideoRunner } from "./runner.js";
+import { writeEditorDecision } from "./editor-decision.js";
 import {
   fakeRenderSpawn,
   fakeRunLoop,
@@ -47,15 +48,20 @@ type Deps = NonNullable<Parameters<typeof createVideoRunner>[0]["deps"]>;
 
 function makeRunner(
   routes: Parameters<typeof routedSpawn>[0],
-  extra?: { onStateWritten?: (id: string) => void; runLoopImpl?: Deps["runLoopImpl"] },
+  extra?: {
+    onStateWritten?: (id: string) => void;
+    runLoopImpl?: Deps["runLoopImpl"];
+    promoteStagingImpl?: NonNullable<Parameters<typeof createVideoRunner>[0]["promoteStagingImpl"]>;
+  },
 ) {
-  const { runLoopImpl, ...rest } = extra ?? {};
+  const { runLoopImpl, promoteStagingImpl, ...rest } = extra ?? {};
   return createVideoRunner({
     dataDir: dir,
     // 模型调用一律注入假实现，测试永不真调模型
     deps: { spawnImpl: routedSpawn(routes), runLoopImpl: runLoopImpl ?? fakeRunLoop([]) },
     launchId: "test",
     onError: () => {},
+    ...(promoteStagingImpl ? { promoteStagingImpl } : {}),
     ...rest,
   });
 }
@@ -131,6 +137,37 @@ describe("阶段推进", () => {
     expect(cutJob.warning).toBeUndefined();
     // inputKey 含转写版本、稿件、prompt 版本与模型路由（§3.2）
     expect(cutJob.inputKey).toMatch(/^transcript:1\+body:[0-9a-f]{8}\+algo:[\w.-]+\+route:[0-9a-f]{8}$/);
+  }, 30_000);
+
+  it("staging 定版失败 → 原阶段 failed，revision 不前移，job 不得伪装成功", async () => {
+    await forceState({ phase: "ingest", state: "queued" });
+    const runner = makeRunner(
+      { uv: fakeUvSpawn("ok", fixtureDenseTranscript()), npm: fakeRenderSpawn() },
+      {
+        promoteStagingImpl: async () => {
+          throw new Error("disk rename denied");
+        },
+      },
+    );
+    runner.enqueue(contentId);
+    await runner.whenIdle();
+
+    const { state } = await readVideoState(dir, contentId);
+    expect(state).toMatchObject({
+      phase: "cut",
+      state: "failed",
+      failedPhase: "cut",
+      errorCode: "promotion_failed",
+      revisions: { transcript: 1, cut: 1 },
+    });
+    expect(await readVersioned(videoDir(dir, contentId), "transcript", 1)).not.toBeNull();
+    expect(await readVersioned(videoDir(dir, contentId), "cut", 1)).not.toBeNull();
+    expect(await readVersioned(videoDir(dir, contentId), "cut", 2)).toBeNull();
+    expect((await readVideoJobs(dir)).at(-1)).toMatchObject({
+      phase: "cut",
+      status: "failed",
+      errorCode: "promotion_failed",
+    });
   }, 30_000);
 
   it("AI 降级 → job 记 succeeded 但带 warning（跑完了，只是没结果）", async () => {
@@ -304,13 +341,31 @@ describe("settle CAS", () => {
     prep.enqueue(contentId);
     await prep.whenIdle();
 
+    // 组装只读确认产物（lifecycle §2.1）：先落一份空决策，assemble 才有覆盖轨可组
+    await writeEditorDecision(dir, contentId, {
+      schemaVersion: 1,
+      planRevision: 1,
+      cutRevision: 1,
+      overlays: [],
+      decidedAt: new Date().toISOString(),
+    });
     // 组装真跑（产出 timeline.v1 + manifest.v1），渲染这一步先让它失败，把现场留给下面的 CAS
-    await forceState({ phase: "assemble", state: "queued", revisions: { transcript: 1, cut: 1 } });
+    await forceState({
+      phase: "assemble",
+      state: "queued",
+      revisions: { transcript: 1, cut: 1 },
+      confirmedEditorRevision: 1,
+    });
     const assembleRunner = makeRunner({ npm: fakeRenderSpawn({ exitCode: 1 }) });
     assembleRunner.enqueue(contentId);
     await assembleRunner.whenIdle();
     expect(await currentRef()).toBe("render/failed");
-    await forceState({ phase: "render", state: "queued", revisions: { transcript: 1, cut: 1, timeline: 1 } });
+    await forceState({
+      phase: "render",
+      state: "queued",
+      revisions: { transcript: 1, cut: 1, timeline: 1 },
+      confirmedEditorRevision: 1,
+    });
 
     // 渲染跑到一半时有人把 timeline 推到了 v2 —— 这一版渲染结果已经是历史
     const runner = makeRunner({

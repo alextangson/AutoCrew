@@ -1,0 +1,11 @@
+{
+  "_fixture_note": "小红书免签登录 ping /api/galaxy/user/info。登录判定只认免签端点——签名端点上 success:false 分不清未登录与签名失败（端点文档 §3）。**未经真实抓包，待校准**。",
+  "success": true,
+  "code": 0,
+  "msg": "成功",
+  "data": {
+    "user_id": "FAKE_USER_ID_DO_NOT_LEAK_5f2b",
+    "nickname": "一人公司实验室",
+    "red_id": "autocrew_lab"
+  }
+}

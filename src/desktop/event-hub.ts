@@ -21,6 +21,11 @@ export interface EngineEvent {
   contentId?: string;
   /** 任务归属（IA v4.2 任务动态带）：同一 chat turn / 调度批次的事件共享一个 runId，前端按此聚合成任务卡 */
   runId?: string;
+  /**
+   * 自动回流事件（kind="metrics_pull"）的结构化载荷（回流 spec §4.4）：
+   * label 是给人看的一行话，这里是给前端看的——据此定位是哪家平台、要不要刷那一行。
+   */
+  metricsPull?: { platform: string; status: string; rowCount?: number };
 }
 
 type Broadcast = (e: EngineEvent) => void;

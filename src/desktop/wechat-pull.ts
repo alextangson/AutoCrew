@@ -51,7 +51,8 @@ export async function wechatPullHandler(
 
   const csv = rowsToCsvText(statsToImportRows(res.rows));
   try {
-    const report = await importPerformanceCsv("wechat_mp", csv, localDateStamp(), dataDir);
+    // source: "auto" —— 这条是浏览器登录态自动拉取，不是人手导出的 CSV（口径要分得清）
+    const report = await importPerformanceCsv("wechat_mp", csv, localDateStamp(), dataDir, "auto");
     emit("run_done", `公众号回填入账 ${report.imported} 条(匹配稿件 ${report.matched} · 历史 ${report.historical})`);
     return { ok: true, data: report };
   } catch (err) {

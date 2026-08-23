@@ -8,17 +8,15 @@ import type { Asset } from "../../storage/local-store.js";
 import {
   IMAGE_MAX_MS,
   OVERLAY_MAX_MS,
-  fillPlanSlot,
+  deriveEditorPlan,
   hasLegalWindow,
   pendingGenerateSlots,
   planToSlots,
-  scanBrollCandidates,
   toPlanOverlays,
-  trimCandidates,
   validatePlanOverlays,
-  type EditorCandidate,
   type SubmittedOverlay,
 } from "./editor-plan.js";
+import type { EditorCandidate } from "./broll-catalog.js";
 import type { AssetFingerprint, VideoEditorPlan } from "./types.js";
 
 /** 200 秒的成片：掐掉开头 30s / 结尾 15s 之后，合法窗口是 [30000, 185000] */
@@ -34,6 +32,7 @@ const screen: EditorCandidate = {
   tags: [],
   durationMs: 60_000,
   ref: { kind: "content", filename: "screen.mp4" },
+  origin: "content",
   fingerprint: fp("screen-hash"),
 };
 const image: EditorCandidate = {
@@ -43,6 +42,7 @@ const image: EditorCandidate = {
   filename: "layers.png",
   tags: [],
   ref: { kind: "content", filename: "layers.png" },
+  origin: "content",
   fingerprint: fp("image-hash"),
 };
 const candidates = [screen, image];
@@ -284,7 +284,7 @@ describe("门内填槽（v2 spec §4.2）", () => {
 
   it("填成功 → 派生新版：origin human + basePlanRevision，旧版对象不被改", () => {
     const plan = basePlan();
-    const next = fillPlanSlot(plan, 3, "ov-01", fill);
+    const next = deriveEditorPlan(plan, 3, { kind: "fill", overlayId: "ov-01", asset: fill });
     expect(typeof next).not.toBe("string");
     const derived = next as VideoEditorPlan;
     expect(derived.origin).toBe("human");
@@ -298,67 +298,52 @@ describe("门内填槽（v2 spec §4.2）", () => {
 
   // 边界 #11
   it("video 槽：素材短于槽位 → 拒绝并说清差多少；image 槽无时长检查", () => {
-    expect(fillPlanSlot(basePlan(), 3, "ov-01", { ...fill, durationMs: 9_999 })).toContain("盖不满");
+    expect(deriveEditorPlan(basePlan(), 3, { kind: "fill", overlayId: "ov-01", asset: { ...fill, durationMs: 9_999 } })).toContain("盖不满");
     const imagePlan: VideoEditorPlan = { ...basePlan(), overlays: toPlanOverlays([gen({ mediaKind: "image", durationMs: 8_000 })], candidates) };
-    const filled = fillPlanSlot(imagePlan, 1, "ov-01", { ...fill, name: "p.png", type: "image", durationMs: undefined });
+    const filled = deriveEditorPlan(imagePlan, 1, { kind: "fill", overlayId: "ov-01", asset: { ...fill, name: "p.png", type: "image", durationMs: undefined } });
     expect(typeof filled).not.toBe("string");
     expect((filled as VideoEditorPlan).overlays[0]!.inMs).toBeUndefined();
   });
 
   it("mediaKind 对不上 → 拒绝（要图给了视频、要视频给了图都不行）", () => {
-    expect(fillPlanSlot(basePlan(), 3, "ov-01", { ...fill, type: "image" })).toContain("要的是视频");
+    expect(deriveEditorPlan(basePlan(), 3, { kind: "fill", overlayId: "ov-01", asset: { ...fill, type: "image" } })).toContain("要的是视频");
     const imagePlan: VideoEditorPlan = { ...basePlan(), overlays: toPlanOverlays([gen({ mediaKind: "image", durationMs: 8_000 })], candidates) };
-    expect(fillPlanSlot(imagePlan, 1, "ov-01", fill)).toContain("要的是图片");
+    expect(deriveEditorPlan(imagePlan, 1, { kind: "fill", overlayId: "ov-01", asset: fill })).toContain("要的是图片");
   });
 
   it("槽不存在 / 已经是素材槽 → 人话拒绝", () => {
-    expect(fillPlanSlot(basePlan(), 3, "ov-99", fill)).toContain("没有 ov-99");
-    expect(fillPlanSlot(basePlan(), 3, "ov-02", fill)).toContain("已经挂着素材");
+    expect(deriveEditorPlan(basePlan(), 3, { kind: "fill", overlayId: "ov-99", asset: fill })).toContain("没有 ov-99");
+    expect(deriveEditorPlan(basePlan(), 3, { kind: "fill", overlayId: "ov-02", asset: fill })).toContain("已经挂着素材");
   });
 });
 
-describe("素材清单筛选（§2.6 兜底规则）", () => {
-  const asset = (over: Partial<Asset>): Asset => ({
-    filename: "x.mp4",
-    type: "video",
-    addedAt: "2026-08-22T00:00:00.000Z",
-    role: "broll",
-    description: "屏录：一段演示",
-    media: { durationMs: 8_000 },
-    ...over,
+describe("门内删槽（lifecycle spec §2.3：与填槽共用派生函数）", () => {
+  const basePlan = (): VideoEditorPlan => ({
+    schemaVersion: 1,
+    cutRevision: 2,
+    origin: "llm",
+    overlays: toPlanOverlays([gen(), one({ outputStartMs: 60_000 })], candidates),
   });
 
-  it("只收 role=broll 且有说明的；编号从 b1 起", () => {
-    const scan = scanBrollCandidates([
-      asset({ filename: "a.mp4" }),
-      asset({ filename: "b.png", type: "image", media: undefined }),
-      asset({ filename: "aroll.mp4", role: "aroll" }),
-    ]);
-    expect(scan.candidates.map((c) => [c.assetId, c.filename, c.kind])).toEqual([
-      ["b1", "a.mp4", "screen"],
-      ["b2", "b.png", "image"],
-    ]);
-    expect(scan.excluded).toEqual([]);
+  it("删掉一段 → 派生新版：origin human + basePlanRevision，旧版对象不被改", () => {
+    const plan = basePlan();
+    const next = deriveEditorPlan(plan, 3, { kind: "remove", overlayId: "ov-01" }) as VideoEditorPlan;
+    expect(next.origin).toBe("human");
+    expect(next.basePlanRevision).toBe(3);
+    expect(next.overlays.map((o) => o.overlayId)).toEqual(["ov-02"]);
+    expect(plan.overlays).toHaveLength(2);
   });
 
-  it("没写说明 / 读不出时长 / 不是视听素材 → 排除且点名（面板要说清楚）", () => {
-    const scan = scanBrollCandidates([
-      asset({ filename: "nodesc.mp4", description: "  " }),
-      asset({ filename: "nodur.mp4", media: undefined }),
-      asset({ filename: "note.txt", type: "other" }),
-    ]);
-    expect(scan.candidates).toEqual([]);
-    expect(scan.excluded.join()).toContain("nodesc.mp4（没写说明）");
-    expect(scan.excluded.join()).toContain("nodur.mp4（读不出时长");
-    expect(scan.excluded.join()).toContain("note.txt（不是视频或图片");
+  // 边界 #6：删到零是合法结论（纯口播），不是错误
+  it("删到零 → 空 overlays，仍然是一版合法计划", () => {
+    let plan = basePlan();
+    plan = deriveEditorPlan(plan, 3, { kind: "remove", overlayId: "ov-01" }) as VideoEditorPlan;
+    plan = deriveEditorPlan(plan, 4, { kind: "remove", overlayId: "ov-02" }) as VideoEditorPlan;
+    expect(plan.overlays).toEqual([]);
+    expect(planToSlots(plan.overlays)).toEqual([]);
   });
 
-  it("素材过多 → 按预算截断，被截的进 excluded（边界 #9）", () => {
-    const many = Array.from({ length: 20 }, (_, i) => asset({ filename: `s${i}.mp4`, description: "屏".repeat(80) }));
-    const trimmed = trimCandidates(scanBrollCandidates(many), 500);
-    expect(trimmed.candidates.length).toBeGreaterThan(0);
-    expect(trimmed.candidates.length).toBeLessThan(20);
-    expect(trimmed.excluded.join()).toContain("超出本次上下文预算");
+  it("槽不存在 → 人话拒绝（与填槽同一句）", () => {
+    expect(deriveEditorPlan(basePlan(), 3, { kind: "remove", overlayId: "ov-99" })).toContain("没有 ov-99");
   });
 });
-

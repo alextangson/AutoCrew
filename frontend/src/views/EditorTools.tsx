@@ -6,8 +6,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast, confirmDialog } from "../ui";
-import { VIDEO_PLATFORMS, type Content } from "../lib";
+import { VIDEO_PLATFORMS, isHttpUrl, needsPublishUrlBackfill, publishUrlPlatformWarning, type Content } from "../lib";
 import { compareVersions, isGenericVersionNote, type VersionLike } from "../version-diff";
+
+/** 能点「我已发布,确认」的状态:clipboard / 推草稿箱 / 视频发布件三条路殊途同归 */
+const CONFIRMABLE_STATUSES = new Set(["approved", "publish_ready", "publishing"]);
+
+/** 已经进了发布流程(或已退场)的状态:成片就绪的 CTA 到此为止 */
+const PUBLISH_TRACK_STATUSES = new Set(["approved", "publish_ready", "publishing", "published", "archived"]);
 
 /** 存量版本备注是英文自动串(V5.6.2 起后端已改中文)——显示层兜底汉化 */
 function versionNoteLabel(note?: string): string {
@@ -45,7 +51,13 @@ export function EditorTools(props: EditorToolsProps) {
   const [themes, setThemes] = useState<Array<{ id: string; name: string }>>([]);
   const [pubTheme, setPubTheme] = useState("");
   const [defaultTheme, setDefaultTheme] = useState<string | null>(null);
+  const [preflightSummary, setPreflightSummary] = useState("");
+  const [publishUrlDraft, setPublishUrlDraft] = useState("");
+  const [checkBusy, setCheckBusy] = useState(false);
+  const [urlBusy, setUrlBusy] = useState(false);
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
+  const urlWarning = publishUrlPlatformWarning(publishUrlDraft, c.platform);
+  const publishedLink = c.publishUrl && isHttpUrl(c.publishUrl) ? c.publishUrl : null;
 
   useEffect(() => setDigestText(c.digest ?? ""), [c.digest]);
   useEffect(() => {
@@ -75,9 +87,70 @@ export function EditorTools(props: EditorToolsProps) {
   };
 
   const doClipboard = async () => {
+    if (isVideo) {
+      const gate = await invoke("publish:preflight", { content_id: contentId });
+      const checked = gate as unknown as { ok: boolean; allPassed?: boolean; summary?: string; error?: string };
+      setPreflightSummary(checked.summary ?? "");
+      if (!checked.ok || !checked.allPassed) {
+        return toast(checked.error ?? "发布前检查未通过；先完成封面等必做项");
+      }
+    }
     const r = await invoke("publish:clipboard", { content_id: contentId });
     if (!r.ok) return toast(r.error ?? "排版失败");
     setClip((r as unknown as { data: typeof clip }).data);
+  };
+
+  // 确认已发布:链接选填,非 http(s) 当场拒收(后端也拦一道);不填 = 保留稿件上已有的链接
+  const confirmPublished = async () => {
+    const url = publishUrlDraft.trim();
+    if (url && !isHttpUrl(url)) return toast("平台链接要以 http:// 或 https:// 开头——不填也行,之后再补");
+    const r = await invoke("publish:confirm", {
+      content_id: contentId,
+      ...(url ? { publish_url: url } : {}),
+    });
+    toast(r.ok ? "已标记为已发布——记得 T+1 回数据" : (r.error ?? "确认失败"));
+    if (r.ok) { setClip(null); setPublishUrlDraft(""); void reload(); }
+  };
+
+  // 补记链接:发完才想起来贴链接的路。走同一条 publish:confirm(已幂等——发布时刻只盖一次,
+  // 这里只是把链接填上),之后回流数据能按平台作品 id 精确认领,不再赌标题没被改过。
+  const backfillPublishUrl = async () => {
+    const url = publishUrlDraft.trim();
+    if (!isHttpUrl(url)) return toast("平台链接要以 http:// 或 https:// 开头");
+    setUrlBusy(true);
+    try {
+      const r = await invoke("publish:confirm", { content_id: contentId, publish_url: url });
+      if (!r.ok) return toast(r.error ?? "补记失败");
+      const bound = (r as unknown as { data?: { boundItemId?: string | null } }).data?.boundItemId;
+      setPublishUrlDraft("");
+      toast(bound ? "链接已补记——回流数据会按平台作品 id 认领" : "链接已补记(这个链接解析不出作品 id,回流仍按标题认领)");
+      void reload();
+    } finally {
+      setUrlBusy(false);
+    }
+  };
+
+  // 成片就绪 → 发布线的唯一入口:跑发布前检查,全过由后端自动流转「待发布」,不新造状态路径
+  const runPreCheck = async () => {
+    setCheckBusy(true);
+    try {
+      const r = await invoke("publish:pre_check", { content_id: contentId });
+      if (!r.ok) return toast(r.error ?? "发布前检查没跑起来");
+      const d = r as unknown as { allPassed?: boolean; checks?: Array<{ name: string; status: string; detail: string }> };
+      if (d.allPassed) {
+        toast("检查全过——这篇已进「待发布」,发完回来点确认");
+        void reload();
+        return;
+      }
+      // 报出具体挂在哪一项:只说「未通过」用户不知道改什么,发布流程就成死胡同
+      const fails = (d.checks ?? [])
+        .filter((x) => x.status === "fail")
+        .map((x) => `${x.name}:${x.detail.replace(/\s+/g, " ").trim()}`)
+        .join("；");
+      toast(fails ? `发布前检查未过——${fails.slice(0, 200)}` : "发布前检查未过");
+    } finally {
+      setCheckBusy(false);
+    }
   };
 
   const pushWechat = async () => {
@@ -113,6 +186,7 @@ export function EditorTools(props: EditorToolsProps) {
             <AdoptButton key={v} verdict={v} label={label} current={c.adoption?.verdict} submit={submitAdoption} />
           ))}
         </div>
+        {preflightSummary && <pre className="publish-preflight mono">{preflightSummary}</pre>}
       </details>
 
       <details className="ed-tools" open>
@@ -174,6 +248,18 @@ export function EditorTools(props: EditorToolsProps) {
         </div>
       </details>
 
+      {c.videoReadyAt && !PUBLISH_TRACK_STATUSES.has(c.status) && (
+        <div className="pending-edit">
+          <div className="mono muted">成片已就绪 · 还没进发布流程</div>
+          <p className="muted">片子渲染并审过了。跑一遍发布前检查,全过就进「待发布」,再去平台发。</p>
+          <div className="row-actions">
+            <button className="primary" disabled={checkBusy} onClick={() => void runPreCheck()}>
+              {checkBusy ? "检查中…" : "进入发布检查"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {clip && (
         <div className="pending-edit">
           <div className="mono muted">发布文案{clip.fromVideoKit ? "(来自发布件)" : ""} · 复制后到平台粘贴</div>
@@ -191,13 +277,57 @@ export function EditorTools(props: EditorToolsProps) {
               }}
             >复制</button>
             <a href={clip.publishUrl} target="_blank" rel="noreferrer"><button>打开平台后台 ↗</button></a>
+          </div>
+        </div>
+      )}
+
+      {/* 确认区块不跟着「排版发布文案」走:推草稿箱、视频发布件、直接去平台发,都要能确认 */}
+      {CONFIRMABLE_STATUSES.has(c.status) && (
+        <div className="pending-edit">
+          <div className="mono muted">发完了就回来点确认——回流数据靠它认领</div>
+          <div className="ed-digest">
+            <span className="mono muted">平台链接(发布后的视频/笔记地址,选填)</span>
+            <input
+              className="sel-input"
+              value={publishUrlDraft}
+              placeholder="https://…（不填也可以）"
+              onChange={(e) => setPublishUrlDraft(e.target.value)}
+            />
+            {urlWarning && <span className="muted">{urlWarning}</span>}
+          </div>
+          <div className="row-actions">
+            <button className="primary" onClick={() => void confirmPublished()}>我已发布,确认</button>
+          </div>
+        </div>
+      )}
+
+      {c.status === "published" && publishedLink && (
+        <div className="ed-section">
+          <span className="mono muted">平台链接：</span>
+          <a href={publishedLink} target="_blank" rel="noreferrer">{publishedLink}</a>
+        </div>
+      )}
+
+      {/* 已发布但没链接:补记入口。有链接的稿子不出现这块——它的活儿已经干完了 */}
+      {needsPublishUrlBackfill(c) && (
+        <div className="pending-edit">
+          <div className="mono muted">没记链接 · 回流数据只能靠标题+发布时间认领,可能对不准</div>
+          <div className="ed-digest">
+            <span className="mono muted">补记平台链接(发布后的视频/笔记地址)</span>
+            <input
+              className="sel-input"
+              value={publishUrlDraft}
+              placeholder="https://…"
+              onChange={(e) => setPublishUrlDraft(e.target.value)}
+            />
+            {urlWarning && <span className="muted">{urlWarning}</span>}
+          </div>
+          <div className="row-actions">
             <button
-              onClick={async () => {
-                const r = await invoke("publish:confirm", { content_id: contentId });
-                toast(r.ok ? "已标记为已发布——记得 T+1 回数据" : (r.error ?? "确认失败"));
-                if (r.ok) { setClip(null); void reload(); }
-              }}
-            >我已发布,确认</button>
+              className="primary"
+              disabled={urlBusy || !publishUrlDraft.trim()}
+              onClick={() => void backfillPublishUrl()}
+            >{urlBusy ? "保存中…" : "补记链接"}</button>
           </div>
         </div>
       )}

@@ -1,0 +1,7 @@
+{
+  "_fixture_note": "抖音信封 status_code:8 = 未登录/风控（端点文档 §1）。故意带一个伪 token，用于断言 errorCode 与抛错文本都不含响应原文。**未经真实抓包，待校准**。",
+  "status_code": 8,
+  "status_msg": "登录状态失效，请重新登录",
+  "msToken": "FAKE_TOKEN_DO_NOT_LEAK_9f3a1c",
+  "verify_center_decision_conf": "{\"fake\":\"FAKE_TOKEN_DO_NOT_LEAK_9f3a1c\"}"
+}

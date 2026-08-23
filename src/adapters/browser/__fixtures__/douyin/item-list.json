@@ -1,0 +1,52 @@
+{
+  "_fixture_note": "抖音 /web/api/creator/item/list 现行主路。按 docs/metrics-autopull-endpoints.md §1 字段名手工构造，**未经真实抓包，待校准**。msToken/sec_uid 是伪造值，用于脱敏回归测试（断言它们不出现在任何返回值与错误文本里）。",
+  "status_code": 0,
+  "status_msg": "",
+  "msToken": "FAKE_TOKEN_DO_NOT_LEAK_9f3a1c",
+  "has_more": true,
+  "max_cursor": 1783600000000,
+  "items": [
+    {
+      "id": 7412345678901234567,
+      "description": "半夜三点改需求，我把老板的原话喂给了 AI",
+      "item_title": "半夜三点改需求",
+      "create_time": "1783600000",
+      "type": 4,
+      "author": { "sec_uid": "MS4wLjABAAAA_FAKE_SECUID_DO_NOT_LEAK" },
+      "metrics": {
+        "view_count": "128340",
+        "like_count": "5621",
+        "comment_count": "412",
+        "share_count": "133",
+        "favorite_count": "876",
+        "completion_rate": "32.5",
+        "completion_rate_5s": "68.1",
+        "avg_view_second": "18.4"
+      }
+    },
+    {
+      "id": 7412345678901234568,
+      "description": "一个人做公司，第 30 天",
+      "item_title": "",
+      "create_time": "1783510000",
+      "type": 4,
+      "metrics": {
+        "view_count": "9821",
+        "like_count": "301",
+        "comment_count": "27",
+        "share_count": "8",
+        "favorite_count": "44",
+        "completion_rate": "0.41",
+        "completion_rate_5s": "55.0"
+      }
+    },
+    {
+      "id": 7412345678901234569,
+      "description": "",
+      "item_title": "",
+      "create_time": "1783420000",
+      "type": 4,
+      "metrics": { "view_count": "12" }
+    }
+  ]
+}

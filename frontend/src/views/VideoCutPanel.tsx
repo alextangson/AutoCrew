@@ -37,6 +37,7 @@ import {
   videoTranscriptGet,
   type CutFlagKind,
   type CutView,
+  type VideoReviewDecision,
   type VideoState,
 } from "../lib";
 import { VideoPlanStep } from "./VideoPlanStep";
@@ -44,6 +45,8 @@ import { VideoPlanStep } from "./VideoPlanStep";
 interface StepProps {
   contentId: string;
   state: VideoState;
+  /** 门三打回时留下的备注与定位;两道门都要能原样显示(lifecycle §2.4) */
+  review?: VideoReviewDecision;
   reload: () => Promise<void>;
   back: () => void;
 }
@@ -88,6 +91,8 @@ function CutStep(props: StepProps) {
   }, [data]);
   const keptMs = segments.reduce((sum, s) => (kept.has(s.id) ? sum + Math.max(0, s.endMs - s.startMs) : sum), 0);
   const warn = alignmentWarning(data?.transcript ?? null);
+  /** 打回时点名的那一句:高亮它,人一眼看见「你说的是这一句」(§2.4) */
+  const flagged = props.review?.locate?.kind === "segment" ? props.review.locate.segmentId : null;
   const aiWarn = data?.editUnits?.warning;
   const aiSummary = roughCutSummary(data?.editUnits);
   /** 人工终裁过的那一版,后台不许再覆盖(粗剪 spec §3.4) */
@@ -181,6 +186,14 @@ function CutStep(props: StepProps) {
       </div>
 
       {err && <p className="ed-error">{err}</p>}
+      {/* 打回备注落在不可变记录里,刷新、换窗口、隔天再来都还在(§2.4) */}
+      {props.review?.verdict === "reject" && props.review.target === "cut" && (
+        <p className="vid-warn">
+          你把成片 v{props.review.renderedRevision} 打回到了这一步
+          {props.review.timestampMs !== undefined ? `(${formatTimecode(props.review.timestampMs)} 处)` : ""}
+          {props.review.note ? `:${props.review.note}` : "。"}
+        </p>
+      )}
       {aiWarn && <p className="vid-warn">{aiWarn}</p>}
       {warn && <p className="vid-warn">{warn}</p>}
       {reopening && <p className="vid-warn">这条已经出过成片。改完确认会重新组装渲染出新一版,旧成片留档不删。</p>}
@@ -201,8 +214,7 @@ function CutStep(props: StepProps) {
           )}
           {preview.playableRevision !== null && !playError && (
             <video
-              // 样式写在这儿而不是 app.css:那边的 .vid-player 还钉着竖屏 9:16,套上去会把横屏预览压扁
-              style={{ width: "100%", maxWidth: 640, aspectRatio: "16 / 9", background: "#000", borderRadius: 8 }}
+              className="vid-player"
               // key 带版本号:换版时强制重建 <video>,不然浏览器会继续播缓存里那一版
               key={preview.playableRevision}
               src={videoPreviewUrl(props.contentId, preview.playableRevision)}
@@ -233,7 +245,10 @@ function CutStep(props: StepProps) {
           </div>
           <ul className="vid-segs">
             {segments.map((s) => (
-              <li key={s.id} className={"vid-seg" + (kept.has(s.id) ? "" : " vid-seg-off")}>
+              <li
+                key={s.id}
+                className={"vid-seg" + (kept.has(s.id) ? "" : " vid-seg-off") + (s.id === flagged ? " vid-seg-flagged" : "")}
+              >
                 <label>
                   <input type="checkbox" checked={kept.has(s.id)} onChange={() => toggle(s.id)} />
                   <span className="mono muted vid-seg-time">
@@ -244,7 +259,10 @@ function CutStep(props: StepProps) {
                       {CUT_FLAG_LABEL[f]}
                     </span>
                   ))}
-                  <span className="vid-seg-text">{s.text}</span>
+                  <span className="vid-seg-text">
+                    {s.id === flagged ? <strong>你打回时指的就是这一句 · </strong> : null}
+                    {s.text}
+                  </span>
                 </label>
               </li>
             ))}

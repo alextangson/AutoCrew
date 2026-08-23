@@ -26,12 +26,14 @@ import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { startResearchRuntime } from "../src/desktop/research-runtime.js";
 import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
+import { serveCoverIdentityAsset } from "../src/desktop/cover-identity-asset-route.js";
 import { setVideoService } from "../src/desktop/video-handlers.js";
 import { createVideoMediaHandler, VIDEO_MEDIA_PREFIX } from "../src/desktop/video-media.js";
 import { createVideoService, type VideoService } from "../src/modules/video/service.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
+import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
 import { handleMcpRequest } from "../mcp/server.js";
 
 const HOST = "127.0.0.1";
@@ -269,6 +271,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 个人形象库含真实人脸照片，只允许本地已认证会话读取，且不使用公共 immutable 缓存。
+  if (p === "/api/cover-identity-asset") {
+    let base: string;
+    try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
+    const served = await serveCoverIdentityAsset({
+      authorized: Boolean(authorize(req)),
+      dataDir: base,
+      kind: url.searchParams.get("kind") || "",
+      filename: url.searchParams.get("name") || "",
+    });
+    if (!served.ok) { res.writeHead(served.status).end(served.error); return; }
+    res.writeHead(200, { "Content-Type": served.contentType, "Cache-Control": "private, no-store" });
+    createReadStream(served.file).pipe(res);
+    return;
+  }
+
   // 研究素材只读端点(深调研 §7):同 /api/asset 的鉴权纪律,但路径一律经存储层的越界闸
   // (index.jsonl 是可篡改文本,不在这里拼路径)。文件名是内容 hash → immutable 缓存安全。
   if (p === "/api/research-asset") {
@@ -361,10 +379,12 @@ const server = http.createServer(async (req, res) => {
 server.requestTimeout = 0;
 server.timeout = 0;
 let stopCampaignHost: (() => void) | undefined;
+let stopMetricsPull: (() => void) | undefined;
 let radarTimer: NodeJS.Timeout | undefined;
 let videoService: VideoService | null = null;
 server.on("close", () => {
   stopCampaignHost?.();
+  stopMetricsPull?.();
   if (radarTimer) clearInterval(radarTimer);
   // 视频 runner 会拿着 ffmpeg/remotion 子进程,停机要给它机会收尾(job lease 也在这层解)
   const running = videoService;
@@ -450,4 +470,11 @@ server.listen(PORT, HOST, () => {
   tickRadar();
   radarTimer = setInterval(tickRadar, RADAR_CYCLE_INTERVAL_MS);
   radarTimer.unref(); // 定时器不该成为进程退不掉的理由(stop 路径另见 server "close")
+
+  // 三平台自动回流(回流 spec §4.3):启动跑一轮 + 每 30 分钟一轮。真正的节奏由每平台的
+  // TTL(12h)与退避状态机决定——tick 只是把"到点了自动抓"补上;三平台默认全关,
+  // 人在数据回流页自己开(不替人做碰后台的决定)。
+  stopMetricsPull = startMetricsPullCycle({
+    resolveDataDir: async () => activeWorkspaceDataDir(),
+  });
 });

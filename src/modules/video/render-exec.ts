@@ -12,7 +12,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { addAsset } from "../../storage/local-store.js";
+import { upsertAsset } from "../../storage/local-store.js";
 import { OUTPUT_FPS, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "./timeline-build.js";
 import { probeMedia } from "./ingest.js";
 import { REPO_ROOT, runProcess, stderrTail, type VideoDeps } from "./proc.js";
@@ -118,7 +118,13 @@ async function parkFailed(tmp: string, failed: string): Promise<string | undefin
   }
 }
 
-/** 成片拷进稿件 `assets/`（既有 Asset 语义），中间产物留在 video/ */
+/**
+ * 成片拷进稿件 `assets/`（既有 Asset 语义），中间产物留在 video/。
+ *
+ * **幂等 upsert 而不是追加**（lifecycle spec §3.1）：同一版重渲一次就多一条同名登记的话，
+ * 反登记时说不清删的是哪条，`removeAsset` 更是一删删两条。同时盖上所有权标记——
+ * 清理只删打了这个标记的登记，人手挂接的同名文件因此永远安全（§4 #11）。
+ */
 export async function registerFinalAsset(
   dataDir: string,
   contentId: string,
@@ -127,9 +133,16 @@ export async function registerFinalAsset(
 ): Promise<{ ok: true; filename: string } | { ok: false; reason: string }> {
   const filename = finalAssetFilename(revision);
   await fs.mkdir(path.join(dataDir, "contents", contentId, "assets"), { recursive: true });
-  const result = await addAsset(
+  const result = await upsertAsset(
     contentId,
-    { filename, type: "video", description: `视频生产线成片 v${revision}`, sourcePath: file },
+    {
+      filename,
+      type: "video",
+      description: `视频生产线成片 v${revision}`,
+      managedBy: "video-pipeline",
+      renderedRevision: revision,
+      sourcePath: file,
+    },
     dataDir,
   );
   return result.ok ? { ok: true, filename } : { ok: false, reason: result.error ?? "成片登记失败" };

@@ -43,4 +43,23 @@ describe("executePrePublish platform-specific checks", () => {
     expect(result.checks.find((check) => check.name === "Hashtags")).toMatchObject({ status: "skip" });
     expect(result.allPassed).toBe(true);
   });
+
+  for (const platform of ["wechat_video", "bilibili"]) {
+    it(`requires an approved cover for ${platform}`, async () => {
+      const content = await saveContent(
+        {
+          title: "这一年 AI 如何重写工作与生活",
+          body: "这是一段符合平台长度要求的视频正文。".repeat(30),
+          platform,
+          status: "approved",
+          hashtags: ["AI"],
+        },
+        dataDir,
+      );
+      const result = await executePrePublish({ action: "check", content_id: content.id, _dataDir: dataDir });
+      expect("checks" in result).toBe(true);
+      if (!("checks" in result)) return;
+      expect(result.checks.find((check) => check.name === "封面审核")).toMatchObject({ status: "fail" });
+    });
+  }
 });

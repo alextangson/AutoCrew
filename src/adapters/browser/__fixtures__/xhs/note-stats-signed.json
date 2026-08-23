@@ -1,0 +1,19 @@
+{
+  "_fixture_note": "小红书签名路线 /api/galaxy/creator/data/note_stats/new 的响应，形状与 analyze/list 同构（端点文档 §3 把两者的响应并在一处描述——这是文档的一个含糊处，实际可能不同，**待校准**）。",
+  "success": true,
+  "code": 0,
+  "msg": "成功",
+  "data": {
+    "note_infos": [
+      {
+        "id": "65f1a2b3000000001203e4f1",
+        "title": "签名路线才拿得到的那条",
+        "post_time": 1783300000000,
+        "read_count": 7788,
+        "like_count": 210,
+        "fav_count": 95,
+        "comment_count": 12
+      }
+    ]
+  }
+}

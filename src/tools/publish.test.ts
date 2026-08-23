@@ -223,6 +223,42 @@ describe("executePublish confirm_published — 发布戳", () => {
     expect((await getContent(c.id, dir))!.publishedAt).toBe(first);
   });
 
+  it("重复确认不带链接:已贴的 publishUrl 保留,不被抹成 null", async () => {
+    const c = await mkContent("正文");
+    await executePublish({
+      action: "confirm_published", content_id: c.id,
+      publish_url: "https://www.douyin.com/video/123", _dataDir: dir,
+    });
+
+    await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });
+    expect((await getContent(c.id, dir))!.publishUrl).toBe("https://www.douyin.com/video/123");
+
+    // 空串同样按「没给」处理——输入框留空的确认不该有清空语义
+    await executePublish({ action: "confirm_published", content_id: c.id, publish_url: "   ", _dataDir: dir });
+    expect((await getContent(c.id, dir))!.publishUrl).toBe("https://www.douyin.com/video/123");
+  });
+
+  it("显式新链接覆盖旧值", async () => {
+    const c = await mkContent("正文");
+    await executePublish({ action: "confirm_published", content_id: c.id, publish_url: "https://a.example/1", _dataDir: dir });
+    await executePublish({ action: "confirm_published", content_id: c.id, publish_url: "https://b.example/2", _dataDir: dir });
+
+    expect((await getContent(c.id, dir))!.publishUrl).toBe("https://b.example/2");
+  });
+
+  it("非 http(s) 链接拒收:报错且不落盘(旧值与状态都不动)", async () => {
+    const c = await mkContent("正文");
+    const r = (await executePublish({
+      action: "confirm_published", content_id: c.id,
+      publish_url: "javascript:alert(1)", _dataDir: dir,
+    })) as Record<string, unknown>;
+
+    expect(r.ok).toBe(false);
+    const saved = await getContent(c.id, dir);
+    expect(saved!.publishUrl).toBeNull();
+    expect(saved!.status).not.toBe("published");
+  });
+
   it("transitionStatus 这条路同样只盖一次", async () => {
     const c = await mkContent("正文");
     await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });

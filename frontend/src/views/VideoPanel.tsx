@@ -16,6 +16,7 @@ import { invoke, subscribeEvents } from "../transport";
 import { toast } from "../ui";
 import {
   VIDEO_PHASE_LABEL,
+  cleanupSummary,
   videoAsrStatus,
   videoAsrWarmup,
   videoBlockedGuide,
@@ -38,7 +39,7 @@ const ASR_LABEL: Record<string, string> = {
   failed: "预热失败",
 };
 
-export function VideoPanel({ contentId }: { contentId: string }) {
+export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; onReadyForCover?: (ready: boolean) => void }) {
   const [open, setOpen] = useState(true);
   const [status, setStatus] = useState<VideoStatusData | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -73,8 +74,18 @@ export function VideoPanel({ contentId }: { contentId: string }) {
 
   const st = status?.state ?? null;
   const canCut = !!st && ((st.phase === "cut" && st.state === "awaiting_human") || (st.phase === "done" && st.state === "done"));
+  const canPlan = !!st && st.phase === "edit" && st.state === "awaiting_human";
+  /**
+   * 确认选段后**不回卡片**(VideoCutPanel 头注):整个 edit phase 都停在向导第 2 步——
+   * 排队/在跑时那一页自己会说「剪辑师在排」。blocked/failed 不算:那两种要回卡片拿重试按钮。
+   */
+  const inPlan = !!st && st.phase === "edit" && (st.state === "queued" || st.state === "running" || st.state === "awaiting_human");
   const canReview = !!st && st.phase === "review" && st.state === "awaiting_human";
   const isDone = !!st && st.phase === "done" && st.state === "done";
+
+  useEffect(() => {
+    onReadyForCover?.(isDone);
+  }, [isDone, onReadyForCover]);
 
   useEffect(() => {
     blockedOnAsr.current = st?.state === "blocked" && st.blockedReason === "asr_not_ready";
@@ -82,14 +93,14 @@ export function VideoPanel({ contentId }: { contentId: string }) {
 
   // 后台把状态推走了,手里那版就作废——说一声再收回卡片,别让人对着废页面点确认
   useEffect(() => {
-    if (view === "cut" && !canCut) {
+    if (view === "cut" && !canCut && !inPlan) {
       setView("card");
       toast("这一版选段已经被推进了,先看成片卡的最新状态");
     } else if (view === "review" && !canReview && !isDone) {
       setView("card");
       toast("成片状态变了,先看成片卡的最新状态");
     }
-  }, [view, canCut, canReview, isDone]);
+  }, [view, canCut, inPlan, canReview, isDone]);
 
   // 卡在「语音模型没就绪」时先看一眼预热进度:可能另一个窗口已经在下模型了
   useEffect(() => {
@@ -173,7 +184,13 @@ export function VideoPanel({ contentId }: { contentId: string }) {
       <summary>成片 · {headline}</summary>
       {err && <p className="ed-error">{err}</p>}
       {view === "cut" && st && (canCut || inPlan) && (
-        <VideoCutPanel contentId={contentId} state={st} reload={load} back={() => setView("card")} />
+        <VideoCutPanel
+          contentId={contentId}
+          state={st}
+          {...(status?.review ? { review: status.review } : {})}
+          reload={load}
+          back={() => setView("card")}
+        />
       )}
       {view === "review" && st && (canReview || isDone) && (
         <VideoReviewPanel
@@ -279,6 +296,10 @@ export function VideoPanel({ contentId }: { contentId: string }) {
                   ? `成片:稿件素材里的 ${videoFinalAssetName(st.revisions.rendered)}(中间产物在稿件目录 video/ 下)`
                   : "状态是完成,但没记下成片版本号 —— 去稿件文件夹里找 final-v*.mp4"}
               </p>
+              {/* 清理是自动动作,必须说出来:静默删文件会让人怀疑成片被动过(§3.3) */}
+              {cleanupSummary(st.cleanup) && (
+                <p className={st.cleanup?.status === "warning" ? "vid-warn" : "muted"}>{cleanupSummary(st.cleanup)}</p>
+              )}
               <div className="row-actions">
                 <button onClick={() => setView("review")}>查看成片</button>
                 <button onClick={() => setView("cut")}>重开:改选段再出一版</button>
