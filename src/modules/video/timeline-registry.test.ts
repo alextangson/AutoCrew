@@ -26,7 +26,7 @@ describe("timeline-registry.json", () => {
     expect(TIMELINE_REGISTRY).toEqual({
       schemaVersion: 1,
       graphics: { "code-block": { props: { code: "string", lang: "string" } } },
-      captions: ["word-highlight"],
+      captions: ["plain"],
       titles: ["hook-title"],
       transitions: ["cut", "fade"],
     });

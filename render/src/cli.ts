@@ -35,13 +35,25 @@ function logStderr(message: string): void {
 }
 
 // ---- 参数 ---------------------------------------------------------------
-type Args = { manifest: string; out: string; registry?: string };
+export type RenderProfile = 'preview' | 'final';
+type Args = { manifest: string; out: string; registry?: string; profile: RenderProfile };
+
+/**
+ * 两档规格，**不开放散参数**（v2 spec §4.1）：散参数会让「预览」与「成片」的差异
+ * 散落在调用方手里，迟早漂移成两种成片。manifest 尺寸恒为 1920×1080 契约，
+ * preview 靠 `scale: 0.5` 输出 960×540。
+ */
+const PROFILES: Record<RenderProfile, { scale: number; x264Preset: 'veryfast' | 'medium'; crf: number }> = {
+  preview: { scale: 0.5, x264Preset: 'veryfast', crf: 28 },
+  final: { scale: 1, x264Preset: 'medium', crf: 18 },
+};
 
 const USAGE = [
-  '用法：npm --prefix render run render -- --manifest <绝对路径> --out <绝对路径> [--registry <绝对路径>]',
+  '用法：npm --prefix render run render -- --manifest <绝对路径> --out <绝对路径> [--registry <绝对路径>] [--profile preview|final]',
   '  --manifest  render-manifest JSON（spec §2.8 冻结点）',
   '  --out       成片输出路径（.mp4）',
   '  --registry  受控枚举清单，默认 render/../src/modules/video/timeline-registry.json',
+  '  --profile   final（默认，全规格 1920×1080）｜preview（半尺寸 960×540 快出，门内看片用）',
 ].join('\n');
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -72,7 +84,11 @@ export function parseArgs(argv: readonly string[]): Args {
       throw new RenderInputError(`--${key} 必须是绝对路径，收到：${value}`);
     }
   }
-  return { manifest: values.manifest!, out: values.out!, registry: values.registry };
+  const profile = values.profile ?? 'final';
+  if (profile !== 'preview' && profile !== 'final') {
+    throw new RenderInputError(`--profile 只能是 preview / final，收到：${profile}\n${USAGE}`);
+  }
+  return { manifest: values.manifest!, out: values.out!, registry: values.registry, profile };
 }
 
 // ---- 素材 ---------------------------------------------------------------
@@ -169,6 +185,9 @@ async function main(): Promise<void> {
     let lastRenderedFrames = 0;
     emit({ type: 'progress', renderedFrames: 0, totalFrames });
 
+    const profile = PROFILES[args.profile];
+    logStderr(`[render] profile=${args.profile}（scale ${profile.scale} / ${profile.x264Preset} / crf ${profile.crf}）`);
+
     await renderMedia({
       composition,
       serveUrl: bundleDir,
@@ -176,6 +195,9 @@ async function main(): Promise<void> {
       audioCodec: 'aac',
       outputLocation: args.out,
       inputProps,
+      scale: profile.scale,
+      x264Preset: profile.x264Preset,
+      crf: profile.crf,
       // null = 交给 Remotion 按机器核数自动选（spec §6.1：首跑 benchmark 后再写死）。
       concurrency: null,
       logLevel: 'error',

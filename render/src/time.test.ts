@@ -1,23 +1,20 @@
 /**
- * time.test.ts —— 字幕横屏排版的确定性锁（横屏 spec §2.2）。
+ * time.test.ts —— 字幕块内排版的确定性锁（v2 spec §2.1 / §2.2）。
  *
- * 这一层全是纯函数：同样的词流每次必须分出同样的行、算出同样的字号。
+ * 这一层全是纯函数：同一块 cue 每次必须折出同样的行、算出同样的字号。
  * 渲染的逐帧一致性就建立在这上面，所以这里的用例是字面量，不是「差不多」。
+ *
+ * 断句已经不在这一层了（cue 由 assemble 冻结），所以本文件不再有 linger / 行时长的概念。
  */
 import { describe, it, expect } from 'vitest';
 import type { CaptionWord } from './manifest';
-import {
-  captionBackdropSpans,
-  captionFontSize,
-  captionLayout,
-  estimateWidthEm,
-  groupWordsIntoLines,
-  spansContain,
-} from './time';
+import { captionLayout, estimateWidthEm, fitCue, wrapCueLines } from './time';
 
 const LANDSCAPE = captionLayout(1920, 1080);
 
 const word = (w: string, startMs: number, endMs: number): CaptionWord => ({ w, startMs, endMs });
+const chars = (text: string): CaptionWord[] =>
+  [...text].map((c, i) => word(c, i * 60, i * 60 + 60));
 
 describe('estimateWidthEm', () => {
   it('CJK 1em / 数字 0.6em / 拉丁 0.55em', () => {
@@ -58,96 +55,78 @@ describe('captionLayout（1920×1080）', () => {
   });
 });
 
-describe('captionFontSize —— 超长句缩字号优先于折行', () => {
-  it('装得下就用基准字号', () => {
-    expect(captionFontSize(10, LANDSCAPE)).toBe(64);
-    expect(captionFontSize(24, LANDSCAPE)).toBe(64);
-  });
-
-  it('略超一行 → 缩字号塞回一行，而不是立刻折行', () => {
-    // 1536 / 25 = 61.44 → 61，仍在 56–64 区间内
-    expect(captionFontSize(25, LANDSCAPE)).toBe(61);
-  });
-
-  it('缩到下限还装不下 → 停在下限，交给折行（最多 2 行）', () => {
-    expect(captionFontSize(40, LANDSCAPE)).toBe(56);
-  });
-
-  it('空行不炸：宽度 0 时返回基准字号', () => {
-    expect(captionFontSize(0, LANDSCAPE)).toBe(64);
-  });
-});
-
-describe('groupWordsIntoLines —— 按像素估宽断行', () => {
-  it('按宽度断行：横屏一行放得下 20+ 汉字，不再是 10 字一刀切', () => {
-    const words = [...'一二三四五六七八九十一二三四五六七八九十'].map((c, i) => word(c, i * 60, i * 60 + 60));
-    const lines = groupWordsIntoLines(words, { maxWidthEm: LANDSCAPE.maxWidthEm });
+describe('wrapCueLines —— 按像素估宽折行', () => {
+  it('装得下就一行', () => {
+    const lines = wrapCueLines(chars('一二三四五六七八九十'), LANDSCAPE.maxWidthEm);
     expect(lines).toHaveLength(1);
-    expect(lines[0]!.words).toHaveLength(20);
-    expect(lines[0]!.widthEm).toBe(20);
+    expect(lines[0]!).toHaveLength(10);
   });
 
-  it('超出宽度预算就断行，断点在超出的那个词之前', () => {
-    const words = [...'一二三四五'].map((c, i) => word(c, i * 60, i * 60 + 60));
-    const lines = groupWordsIntoLines(words, { maxWidthEm: 3 });
-    expect(lines.map((l) => l.words.map((w) => w.w).join(''))).toEqual(['一二三', '四五']);
+  it('超出行宽就折，断点在超出的那个词之前', () => {
+    const lines = wrapCueLines(chars('一二三四五'), 3);
+    expect(lines.map((l) => l.map((w) => w.w).join(''))).toEqual(['一二三', '四五']);
   });
 
   it('拉丁文按 0.55em 算，同样宽度能多放近一倍', () => {
     const words = 'aaaa aaaa aaaa'.split(' ').map((w, i) => word(w, i * 500, i * 500 + 500));
     // 每个 4 字母词 = 2.2em；预算 5em 只装得下 2 个
-    const lines = groupWordsIntoLines(words, { maxWidthEm: 5, maxDurationMs: 10_000 });
-    expect(lines.map((l) => l.words.length)).toEqual([2, 1]);
+    expect(wrapCueLines(words, 5).map((l) => l.length)).toEqual([2, 1]);
   });
 
   it('单个词超宽时自成一行（不切词——FDE 不许断成 FD / E）', () => {
-    const lines = groupWordsIntoLines([word('超级长的一个词', 0, 500)], { maxWidthEm: 2 });
+    const lines = wrapCueLines([word('超级长的一个词', 0, 500)], 2);
     expect(lines).toHaveLength(1);
-    expect(lines[0]!.words[0]!.w).toBe('超级长的一个词');
+    expect(lines[0]![0]!.w).toBe('超级长的一个词');
   });
 
-  it('时长仍然断行：说得慢的时候不让一行挂太久', () => {
-    const words = [word('慢', 0, 2000), word('话', 2000, 4000)];
-    const lines = groupWordsIntoLines(words, { maxWidthEm: 24, maxDurationMs: 2500 });
-    expect(lines).toHaveLength(2);
-  });
-
-  it('空白词被丢掉，不占宽度也不占位', () => {
-    const lines = groupWordsIntoLines([word(' ', 0, 100), word('字', 100, 300)], { maxWidthEm: 24 });
-    expect(lines[0]!.words.map((w) => w.w)).toEqual(['字']);
-  });
-
-  it('上屏区间挂到下一行开始，最多多挂 lingerMs', () => {
-    const words = [word('一', 0, 200), word('二', 5000, 5200)];
-    const lines = groupWordsIntoLines(words, { maxWidthEm: 24, maxDurationMs: 1000, lingerMs: 1000 });
-    expect(lines[0]!.showUntilMs).toBe(1200);
-    expect(lines[1]!.showFromMs).toBe(5000);
-  });
-
-  it('没有词就没有行（空转写不该崩）', () => {
-    expect(groupWordsIntoLines([])).toEqual([]);
+  it('没有词就没有行', () => {
+    expect(wrapCueLines([], 24)).toEqual([]);
   });
 });
 
-describe('底板时段', () => {
-  it('只有整屏屏录/图版之上才垫板——真人底轨本来就暗，不必全程加板', () => {
-    const spans = captionBackdropSpans([
-      { kind: 'screen', outputStartMs: 1000, durationMs: 2000 },
-      { kind: 'image', outputStartMs: 5000, durationMs: 1000 },
-      { kind: 'graphic', outputStartMs: 8000, durationMs: 1000 },
-      { kind: 'ai', outputStartMs: 9000, durationMs: 1000 },
-    ]);
-    expect(spans).toEqual([
-      { startMs: 1000, endMs: 3000 },
-      { startMs: 5000, endMs: 6000 },
-    ]);
+describe('fitCue —— ≤2 行，装不下就下压字号', () => {
+  it('一行装得下：基准字号 64，一行', () => {
+    const fitted = fitCue(chars('今天聊聊 FDE'), LANDSCAPE);
+    expect(fitted.fontSize).toBe(64);
+    expect(fitted.lines).toHaveLength(1);
   });
 
-  it('区间左闭右开：结束那一刻底板就撤', () => {
-    const spans = [{ startMs: 1000, endMs: 2000 }];
-    expect(spansContain(spans, 1000)).toBe(true);
-    expect(spansContain(spans, 1999)).toBe(true);
-    expect(spansContain(spans, 2000)).toBe(false);
-    expect(spansContain([], 1000)).toBe(false);
+  it('两行装得下就不缩字号（≤2 行是合法版式，不是兜底）', () => {
+    const fitted = fitCue(chars('一二三四五六七八九十一二三四五六七八九十一二三四五六七八'), LANDSCAPE);
+    expect(fitted.fontSize).toBe(64);
+    expect(fitted.lines).toHaveLength(2);
+  });
+
+  it('三行才装得下 → 下压字号直到塞进 2 行', () => {
+    const fitted = fitCue(chars('一'.repeat(52)), LANDSCAPE);
+    expect(fitted.lines).toHaveLength(2);
+    expect(fitted.fontSize).toBeLessThan(64);
+    // 塞进 2 行的最大字号：1536 / 26 = 59.07 → 59
+    expect(fitted.fontSize).toBe(59);
+  });
+
+  it('超长单 token 比一行还宽 → 字号下压到放得下为止，绝不溢出（边界 #7）', () => {
+    const url = 'https://example.com/a-very-long-path-that-never-ends-and-keeps-going';
+    const fitted = fitCue([word(url, 0, 2000)], LANDSCAPE);
+    expect(fitted.lines).toHaveLength(1);
+    // 该 token 宽度 em × 字号 必须 ≤ 行宽
+    expect(estimateWidthEm(url) * fitted.fontSize).toBeLessThanOrEqual(LANDSCAPE.rowWidthPx);
+    expect(fitted.fontSize).toBeLessThan(LANDSCAPE.minFontSize);
+  });
+
+  it('下压不会低于 1px（极端输入不产出 0 字号）', () => {
+    const fitted = fitCue([word('字'.repeat(4000), 0, 1000)], LANDSCAPE);
+    expect(fitted.fontSize).toBeGreaterThanOrEqual(1);
+    expect(fitted.lines).toHaveLength(1);
+  });
+
+  it('空白词被丢掉，不占宽度也不占位', () => {
+    const fitted = fitCue([word(' ', 0, 100), word('字', 100, 300)], LANDSCAPE);
+    expect(fitted.lines[0]!.map((w) => w.w)).toEqual(['字']);
+  });
+
+  it('全空白 → 没有行（该段无字幕，不崩；边界 #8）', () => {
+    expect(fitCue([word('  ', 0, 100)], LANDSCAPE).lines).toEqual([]);
+    expect(fitCue([], LANDSCAPE).lines).toEqual([]);
   });
 });

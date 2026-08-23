@@ -12,7 +12,7 @@ import { describe, it, expect } from "vitest";
 import type { RenderManifest, VideoJob, VideoState } from "./types.js";
 
 const manifest: RenderManifest = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   contentId: "content-1-abc",
   timelineRevision: 1,
   cutRevision: 2,
@@ -48,13 +48,12 @@ const manifest: RenderManifest = {
     },
   ],
   captions: {
-    style: "word-highlight",
-    words: [{ w: "你", startMs: 0, endMs: 200 }],
-    emphasisWords: ["重点"],
+    style: "plain",
+    cues: [{ cueId: "cue-0001", startMs: 0, endMs: 200, words: [{ w: "你", startMs: 0, endMs: 200 }] }],
   },
   titleCard: { template: "hook-title", text: "钩子", durationMs: 1200 },
   identity: {
-    captionTheme: { fontFamily: "Source Han Sans", primaryColor: "#fff", emphasisColor: "#ff0" },
+    captionTheme: { fontFamily: "Source Han Sans", primaryColor: "#fff", accentColor: "#ff0" },
     codeTheme: { background: "#0d1117", foreground: "#c9d1d9", accent: "#58a6ff" },
   },
   provenance: { hasAiClips: false, hasClonedVoice: false },
@@ -76,11 +75,12 @@ describe("RenderManifest 渲染契约", () => {
     expect(Object.keys(manifest.arollVideo).sort()).toEqual(["file", "segments"]);
     expect(Object.keys(manifest.arollVideo.segments[0]).sort())
       .toEqual(["outputStartMs", "sourceEndMs", "sourceStartMs"]);
-    expect(Object.keys(manifest.captions).sort()).toEqual(["emphasisWords", "style", "words"]);
-    expect(Object.keys(manifest.captions.words[0]).sort()).toEqual(["endMs", "startMs", "w"]);
+    expect(Object.keys(manifest.captions).sort()).toEqual(["cues", "style"]);
+    expect(Object.keys(manifest.captions.cues[0]).sort()).toEqual(["cueId", "endMs", "startMs", "words"]);
+    expect(Object.keys(manifest.captions.cues[0].words[0]).sort()).toEqual(["endMs", "startMs", "w"]);
     expect(Object.keys(manifest.identity).sort()).toEqual(["captionTheme", "codeTheme"]);
     expect(Object.keys(manifest.identity.captionTheme).sort())
-      .toEqual(["emphasisColor", "fontFamily", "primaryColor"]);
+      .toEqual(["accentColor", "fontFamily", "primaryColor"]);
     expect(Object.keys(manifest.provenance).sort()).toEqual(["hasAiClips", "hasClonedVoice"]);
   });
 
@@ -95,7 +95,7 @@ describe("RenderManifest 渲染契约", () => {
 
   it("唯一画幅 = 横屏 1920×1080@30，画幅是契约不是配置（横屏 spec §2.1）", () => {
     expect([manifest.fps, manifest.width, manifest.height]).toEqual([30, 1920, 1080]);
-    expect(manifest.schemaVersion).toBe(2);
+    expect(manifest.schemaVersion).toBe(3);
   });
 
   it("JSON 往返无损（manifest 必须是纯数据，不能夹带类实例/函数）", () => {
@@ -104,6 +104,16 @@ describe("RenderManifest 渲染契约", () => {
 });
 
 describe("VideoState / VideoJob 落盘形状", () => {
+  it("预览指针是 state 的可选字段，与 phase/state 正交（辅助 job 单独更新它）", () => {
+    const s: VideoState = {
+      schemaVersion: 1, entryType: "aroll", phase: "cut", state: "awaiting_human",
+      preview: { requestedRevision: 2, readyRevision: 1, error: "上一次没渲出来" },
+      revisions: { transcript: 1, cut: 1 },
+      updatedAt: "2026-08-23T00:00:00.000Z",
+    };
+    expect(Object.keys(JSON.parse(JSON.stringify(s.preview!))).sort()).toEqual(["error", "readyRevision", "requestedRevision"]);
+  });
+
   it("state 的必填字段就是这些；可选字段缺省时不出现在 JSON 里", () => {
     const s: VideoState = {
       schemaVersion: 1,

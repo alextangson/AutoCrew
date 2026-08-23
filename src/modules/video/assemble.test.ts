@@ -9,6 +9,7 @@ import path from "node:path";
 import { assembleVideo, buildAnchorWav, DEFAULT_IDENTITY, loadIdentity } from "./assemble.js";
 import { buildDeterministicTimeline, readOverlaySlots, writeOverlaySlots } from "./timeline-build.js";
 import { addAsset, updateContent } from "../../storage/local-store.js";
+import { fingerprintFile } from "./fingerprint.js";
 import { ingestAroll } from "./ingest.js";
 import { buildOutputMap } from "./output-map.js";
 import { runProcess } from "./proc.js";
@@ -63,7 +64,7 @@ function input(overrides?: Partial<Parameters<typeof assembleVideo>[0]>) {
 }
 
 describe("buildDeterministicTimeline", () => {
-  it("形状固定：v2 横屏 1920×1080 + 底轨 aroll + 逐词字幕 + 转场恒 cut", () => {
+  it("形状固定：v2 横屏 1920×1080 + 底轨 aroll + plain 字幕 + 转场恒 cut", () => {
     const t = buildDeterministicTimeline({ transcriptRevision: 1, cutRevision: 2, overlays: [] });
     expect(t).toMatchObject({
       schemaVersion: 2,
@@ -72,7 +73,7 @@ describe("buildDeterministicTimeline", () => {
       height: 1080,
       base: { type: "aroll" },
       anchor: { kind: "aroll", transcriptRevision: 1, cutRevision: 2 },
-      captions: { style: "word-highlight" },
+      captions: { style: "plain" },
       audio: { anchorGainDb: 0 },
     });
     expect(t.overlays).toEqual([]);
@@ -148,13 +149,13 @@ describe("loadIdentity", () => {
     await fs.writeFile(
       path.join(dir, "video-identity.json"),
       JSON.stringify({
-        captionTheme: { primaryColor: "#000000", emphasisColor: "#FF0000", 乱七八糟: 1 },
+        captionTheme: { primaryColor: "#000000", accentColor: "#FF0000", 乱七八糟: 1 },
         codeTheme: { background: "#111111" },
         另一个不认识的字段: true,
       }),
     );
     const identity = await loadIdentity(dir);
-    expect(identity.captionTheme).toEqual({ fontFamily: "PingFang SC", primaryColor: "#000000", emphasisColor: "#FF0000" });
+    expect(identity.captionTheme).toEqual({ fontFamily: "PingFang SC", primaryColor: "#000000", accentColor: "#FF0000" });
     expect(identity.codeTheme).toEqual({ background: "#111111" });
     expect(JSON.stringify(identity)).not.toContain("乱七八糟");
   });
@@ -167,12 +168,12 @@ describe("assembleVideo", () => {
     if (!r.ok) return;
 
     const timeline = await readVersioned(videoDir(dir, contentId), "timeline", 1);
-    expect(timeline).toMatchObject({ base: { type: "aroll" }, captions: { style: "word-highlight" } });
+    expect(timeline).toMatchObject({ base: { type: "aroll" }, captions: { style: "plain" } });
     await fs.access(path.join(videoDir(dir, contentId), "anchor.v1.wav"));
 
     const m = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 1))!;
     expect(m).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       contentId,
       fps: 30,
       width: 1920,
@@ -192,14 +193,28 @@ describe("assembleVideo", () => {
     expect(path.isAbsolute(m.anchorAudio.file)).toBe(true);
   });
 
-  it("字幕词已投影到输出域（第二段整体前移 500ms）", async () => {
-    const r = await assembleVideo(input());
+  it("字幕 cue 已投影到输出域（第二段整体前移 500ms），且一个单元一屏", async () => {
+    const r = await assembleVideo(input({ unitsOrigin: "llm" }));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const words = r.manifest.captions.words;
-    expect(words[0]).toEqual({ w: "今", startMs: 0, endMs: 200 });
-    expect(words[3]).toEqual({ w: "这", startMs: 1000, endMs: 1300 });
-    expect(words.every((w) => w.endMs <= r.manifest.durationMs)).toBe(true);
+    const cues = r.manifest.captions.cues;
+    expect(r.manifest.captions.style).toBe("plain");
+    // 两句转写 → 两块字幕；边界是单元边界，不是宽度
+    expect(cues.map((c) => c.cueId)).toEqual(["cue-0001", "cue-0002"]);
+    expect(cues[0]!.words[0]).toEqual({ w: "今", startMs: 0, endMs: 200 });
+    expect(cues[1]!.words[0]).toEqual({ w: "这", startMs: 1000, endMs: 1300 });
+    expect(cues[1]!.startMs).toBe(1000);
+    expect(cues.every((c) => c.endMs <= r.manifest.durationMs)).toBe(true);
+  });
+
+  // 边界 #9：origin:"raw" 的单元表在 assemble 内退回宽度分组，渲染端无感
+  it("unitsOrigin=raw → 宽度分组产 cue（渲染端照样只认 cues）", async () => {
+    const r = await assembleVideo(input({ unitsOrigin: "raw" }));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // 两句合起来才 6 个词、远不到宽度预算，但跨度 2500ms 会被时长兜一刀
+    expect(r.manifest.captions.cues.length).toBeGreaterThanOrEqual(1);
+    expect(r.manifest.captions.cues.flatMap((c) => c.words)).toHaveLength(6);
   });
 
   it("人工覆盖轨：素材被登记、manifest 里是解析好的绝对路径", async () => {
@@ -265,10 +280,41 @@ describe("assembleVideo", () => {
     expect(r.ok && r.manifest.titleCard).toEqual({ template: "hook-title", text: "删代码年入百万", durationMs: 2000 });
   });
 
-  it("emphasisWords 管道接通：不给 = 空数组，给了就原样进字幕（数据源是剪辑师 plan）", async () => {
-    expect((await assembleVideo(input())).ok && true).toBe(true);
-    const r = await assembleVideo(input({ timelineRevision: 2, emphasisWords: ["FDE", "第二句"] }));
-    expect(r.ok && r.manifest.captions.emphasisWords).toEqual(["FDE", "第二句"]);
+  // 边界 #12：填槽时打的指纹是复检基准，assemble 不许自己现建一份当基准
+  it("槽位自带指纹且文件已被换掉 → blocked，且话里说清该怎么办", async () => {
+    const fixture = await ensureArollFixture();
+    const screen = path.join(dir, "contents", contentId, "assets", "screen.mp4");
+    await fs.copyFile(fixture, screen);
+    const slots = [
+      {
+        kind: "screen" as const,
+        ref: { kind: "content" as const, filename: "screen.mp4" },
+        fingerprint: { size: 1, mtimeMs: 1, quickHash: "对不上的旧指纹" },
+        outputStartMs: 200,
+        durationMs: 800,
+      },
+    ];
+    const r = await assembleVideo(input({ slots }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.blockedReason).toBe("aroll_drifted");
+    expect(r.reason).toContain("重新填一次");
+  });
+
+  it("槽位指纹对得上 → 照常组装", async () => {
+    const fixture = await ensureArollFixture();
+    const screen = path.join(dir, "contents", contentId, "assets", "screen.mp4");
+    await fs.copyFile(fixture, screen);
+    const slots = [
+      {
+        kind: "screen" as const,
+        ref: { kind: "content" as const, filename: "screen.mp4" },
+        fingerprint: await fingerprintFile(screen),
+        outputStartMs: 200,
+        durationMs: 800,
+      },
+    ];
+    expect((await assembleVideo(input({ slots }))).ok).toBe(true);
   });
 
   it("屏录的取材窗口与转场传到 manifest（inMs/outMs 丢了就只会从头播）", async () => {

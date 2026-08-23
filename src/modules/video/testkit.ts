@@ -417,11 +417,17 @@ export interface FakeRenderOptions {
   onStart?: (manifestPath: string) => Promise<void> | void;
 }
 
-/** 用真 ffmpeg 生成 1920×1080@30 的 mp4 写到 --out，并按契约吐 JSON lines 进度 */
+/**
+ * 用真 ffmpeg 生成 mp4 写到 --out，并按契约吐 JSON lines 进度。
+ *
+ * **认 `--profile`**：真 CLI 在 preview 档走 Remotion `scale: 0.5` 出 960×540，
+ * 假 CLI 不跟着减半的话，preview-exec 的 ffprobe 断言就永远在假失败上打转。
+ */
 export function fakeRenderSpawn(opts: FakeRenderOptions = {}): (args: readonly string[]) => ChildProcess {
   return (args) => {
     const manifestPath = argValue(args, "--manifest")!;
     const out = argValue(args, "--out")!;
+    const half = argValue(args, "--profile") === "preview" ? 2 : 1;
     if (opts.exitCode && opts.exitCode !== 0) {
       return fakeChild({ exitCode: opts.exitCode, stderr: "[render] 渲染失败：\nRenderInputError: 假装崩了\n" });
     }
@@ -431,7 +437,7 @@ export function fakeRenderSpawn(opts: FakeRenderOptions = {}): (args: readonly s
         await opts.onStart?.(manifestPath);
         const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8")) as { durationMs: number };
         const seconds = ((manifest.durationMs + (opts.durationDeltaMs ?? 0)) / 1000).toFixed(3);
-        const size = `${opts.width ?? 1920}x${opts.height ?? 1080}`;
+        const size = `${(opts.width ?? 1920) / half}x${(opts.height ?? 1080) / half}`;
         const fps = opts.fps ?? 30;
         const result = await runProcess({
           command: "ffmpeg",

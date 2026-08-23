@@ -68,19 +68,25 @@ export interface WordProjection {
   dropped: number;
 }
 
+/** 一个 keep 单元投影后的词流；字幕 cue 按单元切分，边界不能在这一步被拍平 */
+export interface SegmentWords {
+  segmentId: string;
+  words: TranscriptWord[];
+}
+
 /**
- * 把词级时间戳从源时间域投影到输出时间域。
+ * 把词级时间戳从源时间域投影到输出时间域，**保留单元边界**。
  * 只投影 keep 段内的词——被剪掉的话不该出现在字幕里。
  *
  * 词级时间戳**不复制进 timeline**（§2.4），渲染前经这里现算，
  * 所以这个函数的正确性由单测锁定，不由肉眼审 JSON 保证。
  */
-export function projectWordsWithDropped(
+export function projectWordsBySegment(
   transcript: VideoTranscript,
   map: OutputMapEntry[],
-): WordProjection {
+): { segments: SegmentWords[]; dropped: number } {
   const segById = new Map(transcript.segments.map((s) => [s.id, s]));
-  const words: TranscriptWord[] = [];
+  const segments: SegmentWords[] = [];
   let dropped = 0;
   for (const entry of map) {
     const seg = segById.get(entry.segmentId);
@@ -89,6 +95,7 @@ export function projectWordsWithDropped(
       throw new Error(`outputMap 引用了转写里不存在的分句 ${entry.segmentId}，两者版本不匹配`);
     }
     const shift = entry.outputStartMs - entry.sourceStartMs;
+    const words: TranscriptWord[] = [];
     for (const word of seg.words) {
       if (word.startMs < entry.sourceStartMs || word.endMs > entry.sourceEndMs) {
         dropped += 1;
@@ -96,8 +103,18 @@ export function projectWordsWithDropped(
       }
       words.push({ w: word.w, startMs: word.startMs + shift, endMs: word.endMs + shift });
     }
+    segments.push({ segmentId: entry.segmentId, words });
   }
-  return { words, dropped };
+  return { segments, dropped };
+}
+
+/** 拍平形态（丢弃计数照给）。单元边界要保留请走 projectWordsBySegment */
+export function projectWordsWithDropped(
+  transcript: VideoTranscript,
+  map: OutputMapEntry[],
+): WordProjection {
+  const { segments, dropped } = projectWordsBySegment(transcript, map);
+  return { words: segments.flatMap((s) => s.words), dropped };
 }
 
 /** 常用形态：只要词。要丢弃计数走 projectWordsWithDropped */

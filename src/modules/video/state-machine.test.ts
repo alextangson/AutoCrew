@@ -43,14 +43,24 @@ describe("迁移表锁定（spec §2.2 原文）", () => {
     ]);
   });
 
-  it("自动接续只有三对相邻阶段；回退白名单只有打回与重开两条", () => {
+  it("自动接续只有三对相邻阶段；回退白名单只有打回、重开、重组装三条", () => {
     expect(AUTO_CHAIN_PHASES).toEqual([
       ["ingest", "transcribe"], ["transcribe", "cut"], ["assemble", "render"],
     ]);
     expect(PHASE_REGRESSION_EDGES).toEqual([
       { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
       { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
+      { from: { phase: "render", state: "failed" }, to: { phase: "assemble", state: "queued" } },
     ]);
+  });
+
+  // 边界 #10：render/failed 上重试只会重投同一份废 manifest，必须另有一条回组装的边
+  it("render/failed → assemble/queued 合法，且只对 failed 开（running/blocked 走不通）", () => {
+    expect(canTransition(at("render", "failed"), at("assemble", "queued"))).toBe(true);
+    expect(canTransition(at("render", "blocked"), at("assemble", "queued"))).toBe(false);
+    expect(canTransition(at("render", "awaiting_human"), at("assemble", "queued"))).toBe(false);
+    // 别的阶段失败不许借这条边往回跑
+    expect(canTransition(at("review", "failed"), at("assemble", "queued"))).toBe(false);
   });
 });
 

@@ -7,8 +7,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { listAssets, saveContent } from "../../storage/local-store.js";
+import { addAssets, getAsset } from "../../storage/library-store.js";
 import { createVideoService, VideoConflictError, type VideoService } from "./service.js";
 import {
+  ensureArollFixture,
   fakeRenderSpawn,
   fakeRunLoop,
   fakeUvSpawn,
@@ -19,7 +21,8 @@ import {
   seedEngineConfig,
   seedVideoContent,
 } from "./testkit.js";
-import { readVersioned, videoDir } from "./video-store.js";
+import { runProcess } from "./proc.js";
+import { readVersioned, videoDir, writeVersioned } from "./video-store.js";
 import type { RenderManifest, VideoCut, VideoEditUnits, VideoState } from "./types.js";
 
 let dir: string;
@@ -142,7 +145,8 @@ describe("全链走查", () => {
     // 冻结的 manifest 字段齐全，AI 标注判定走 false 路径
     const manifest = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 1))!;
     expect(manifest).toMatchObject({ cutRevision: 3, transcriptRevision: 1, durationMs: 2000, provenance: { hasAiClips: false, hasClonedVoice: false } });
-    expect(manifest.captions.words.length).toBeGreaterThan(0);
+    expect(manifest.captions.style).toBe("plain");
+    expect(manifest.captions.cues.length).toBeGreaterThan(0);
 
     // 成片就位并登记回稿件素材
     await fs.access(path.join(videoDir(dir, contentId), "final.v1.mp4"));
@@ -278,126 +282,6 @@ describe("AI 粗剪（LLM 一律注入假实现）", () => {
   });
 });
 
-describe("剪辑师 agent（成片计划的人工门）", () => {
-  /** 60 秒成片的合法窗口是 [30000, 45000]；素材是 3 秒屏录 */
-  const overlay = { assetId: "b1", outputStartMs: 32_000, durationMs: 2_000, inMs: 500, outMs: 2_500 };
-  const longRoutes = { uv: fakeUvSpawn("ok", fixtureLongTranscript()), npm: fakeRenderSpawn() };
-  /** 同一个 runLoop 会被粗剪与剪辑师共用，按 prompt 分流：粗剪不给建议，剪辑师给一段 B-roll */
-  const byPrompt = (msg: string) =>
-    msg.includes("【成片逐句】") ? [{ overlays: [overlay], emphasisWords: ["界面"] }] : [];
-
-  async function upToPlanGate(): Promise<void> {
-    await service.shutdown();
-    service = createVideoService({
-      dataDir: dir,
-      deps: { spawnImpl: routedSpawn(longRoutes), runLoopImpl: fakeRunLoop(byPrompt) },
-      onEvent: (e) => events.push(e.contentId),
-      onError: () => {},
-    });
-    await seedBrollAsset(dir, contentId);
-    await service.startBuild(contentId);
-    await settled();
-    await service.confirmCut(contentId, {
-      keeps: ["seg-0001", "seg-0002"],
-      flags: [],
-      baseTranscriptRevision: 1,
-      baseCutRevision: 2,
-    });
-    expect(describeState(await settled())).toBe("edit/awaiting_human");
-  }
-
-  it("确认时把留下的 overlay 与强调词写成 assemble 消费的产物（按 cutRevision 存）", async () => {
-    await upToPlanGate();
-    const view = (await service.getEditorPlan(contentId))!;
-    expect(view.revision).toBe(1);
-    expect(view.plan.origin).toBe("llm");
-    expect(view.plan.overlays).toHaveLength(1);
-
-    const confirmed = await service.confirmEditorPlan(contentId, {
-      planRevision: view.revision,
-      keptOverlayIds: [view.plan.overlays[0].overlayId],
-      keptEmphasisWords: ["界面"],
-    });
-    expect(describeState(confirmed)).toBe("assemble/queued");
-    // cut.v3 = 人工确认那一版；覆盖轨与强调词都钉在它身上（assemble 就按这个号读）
-    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toEqual([
-      {
-        kind: "screen",
-        ref: { kind: "content", filename: "screen.mp4" },
-        outputStartMs: 32_000,
-        durationMs: 2_000,
-        inMs: 500,
-        outMs: 2_500,
-        transition: "cut",
-      },
-    ]);
-    expect(await readVersioned(videoDir(dir, contentId), "emphasis", 3)).toEqual(["界面"]);
-  }, 90_000);
-
-  it("人把 overlay 全删了照样能确认（边界 #7：合法，出纯口播）", async () => {
-    await upToPlanGate();
-    const view = (await service.getEditorPlan(contentId))!;
-    const confirmed = await service.confirmEditorPlan(contentId, {
-      planRevision: view.revision,
-      keptOverlayIds: [],
-      keptEmphasisWords: [],
-    });
-    expect(describeState(confirmed)).toBe("assemble/queued");
-    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toBeNull();
-  }, 90_000);
-
-  it("plan_revision 过期 → VideoConflictError，状态不动、产物不落", async () => {
-    await upToPlanGate();
-    await expect(
-      service.confirmEditorPlan(contentId, { planRevision: 99, keptOverlayIds: [] }),
-    ).rejects.toThrow(VideoConflictError);
-    expect(describeState((await service.getStatus(contentId))!.state)).toBe("edit/awaiting_human");
-    expect(await readVersioned(videoDir(dir, contentId), "overlays", 3)).toBeNull();
-  }, 90_000);
-
-  it("引用计划里不存在的片段 / 强调词 → 打回（前端只能删，不能塞新东西进来）", async () => {
-    await upToPlanGate();
-    const view = (await service.getEditorPlan(contentId))!;
-    await expect(
-      service.confirmEditorPlan(contentId, { planRevision: view.revision, keptOverlayIds: ["ov-99"] }),
-    ).rejects.toThrow(/没有这些片段/);
-    await expect(
-      service.confirmEditorPlan(contentId, { planRevision: view.revision, keptOverlayIds: [], keptEmphasisWords: ["自己编的"] }),
-    ).rejects.toThrow(/没有这些强调词/);
-  }, 90_000);
-
-  it("重跑剪辑师：门上可用，跑完仍停在门上并产出新一版 plan", async () => {
-    await upToPlanGate();
-    expect(describeState(await service.rerunEditor(contentId))).toBe("edit/queued");
-    const after = await settled();
-    expect(describeState(after)).toBe("edit/awaiting_human");
-    expect(after.revisions.editor).toBe(2);
-    expect((await service.getEditorPlan(contentId))?.revision).toBe(2);
-  }, 90_000);
-
-  it("零 broll 素材 → 空 plan（origin:empty + note，不是 warning），照样能确认出纯口播", async () => {
-    await service.startBuild(contentId);
-    await settled();
-    await service.confirmCut(contentId, { keeps: ["seg-0001", "seg-0002"], flags: [], baseTranscriptRevision: 1, baseCutRevision: 2 });
-    await settled();
-    const view = (await service.getEditorPlan(contentId))!;
-    expect(view.plan).toMatchObject({ origin: "empty", overlays: [], emphasisWords: [] });
-    expect(view.plan.note).toBeTruthy();
-    expect(view.plan.warning).toBeUndefined();
-    expect(describeState(await service.confirmEditorPlan(contentId, { planRevision: view.revision, keptOverlayIds: [] }))).toBe(
-      "assemble/queued",
-    );
-  }, 90_000);
-
-  it("不在成片计划门上时，确认与重跑都被拒（不把跑着的任务顶掉）", async () => {
-    await service.startBuild(contentId);
-    await settled();
-    await expect(service.rerunEditor(contentId)).rejects.toThrow(/还轮不到/);
-    await expect(service.confirmEditorPlan(contentId, { planRevision: 1, keptOverlayIds: [] })).rejects.toThrow(/还轮不到/);
-    expect(await service.getEditorPlan(contentId)).toBeNull();
-  }, 60_000);
-});
-
 describe("乐观锁", () => {
   beforeEach(async () => {
     await service.startBuild(contentId);
@@ -491,3 +375,4 @@ describe("查询口", () => {
     await expect.poll(async () => (await service.asrStatus()).status, { timeout: 5000 }).toBe("ready");
   });
 });
+

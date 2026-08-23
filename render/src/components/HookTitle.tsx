@@ -59,7 +59,7 @@ export const HookTitle: React.FC<{
           width: 160,
           height: 10,
           borderRadius: 5,
-          backgroundColor: theme.emphasisColor,
+          backgroundColor: theme.accentColor,
           opacity,
         }}
       />
