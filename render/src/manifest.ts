@@ -88,11 +88,23 @@ const CaptionWordSchema = z
   })
   .strict();
 
+/**
+ * 一屏字幕。断句由 assemble 冻结（v2 spec §2.1），渲染端只做块内排版——
+ * 这里只校验形状，不校验「断得对不对」（那是上游的语义决策，渲染端无从判断）。
+ */
+const CaptionCueSchema = z
+  .object({
+    cueId: z.string().min(1),
+    startMs: posInt,
+    endMs: posInt,
+    words: z.array(CaptionWordSchema).min(1),
+  })
+  .strict();
+
 const CaptionsSchema = z
   .object({
     style: z.string().min(1),
-    words: z.array(CaptionWordSchema),
-    emphasisWords: z.array(z.string()),
+    cues: z.array(CaptionCueSchema),
   })
   .strict();
 
@@ -108,7 +120,8 @@ const CaptionThemeSchema = z
   .object({
     fontFamily: z.string().min(1).optional(),
     primaryColor: z.string().min(1),
-    emphasisColor: z.string().min(1),
+    /** 强调色。字幕不再用它（逐词高亮已删），标题卡的色块还在用 */
+    accentColor: z.string().min(1),
   })
   .strict();
 
@@ -136,12 +149,13 @@ const ProvenanceSchema = z
   .strict();
 
 /**
- * v1 = 竖屏 1080×1920 时代的产物。它们只读归档：不原地改写，也不维护竖屏渲染分支。
- * 拒绝时必须说人话——拿着一份旧 manifest 的人需要知道下一步按哪个按钮（spec §2.1 / 边界 #11）。
+ * v1 = 竖屏时代，v2 = 逐词字幕时代。它们只读归档：不原地改写，也不维护旧渲染分支。
+ * 拒绝时必须说人话——拿着一份旧 manifest 的人需要知道下一步按哪个按钮（边界 #10）。
+ * render/failed 上的出口是「重新组装」那个按钮（`video:reassemble`），不是「重试」。
  */
-const SCHEMA_V2_HINT =
-  '画幅已换向 v2（横屏 1920×1080），这份 manifest 还是 v1 竖屏产物：请重新确认选段以重组装';
-const LANDSCAPE_HINT = '视频线唯一画幅是横屏 1920×1080@30；v1 竖屏产物请重新确认选段以重组装';
+const SCHEMA_V3_HINT =
+  '字幕已改成整块 cue（v3），这份 manifest 是旧版产物：点「重新组装」出一份新的（重试只会重投同一份废 manifest）';
+const LANDSCAPE_HINT = '视频线唯一画幅是横屏 1920×1080@30；旧竖屏产物请点「重新组装」出一份新的';
 
 /**
  * 字面量不匹配报的是 `invalid_literal`，而 zod 的 `message` 快捷参数只覆盖
@@ -152,7 +166,7 @@ const hint = (message: string) => ({ errorMap: () => ({ message }) });
 
 export const RenderManifestSchema = z
   .object({
-    schemaVersion: z.literal(2, hint(SCHEMA_V2_HINT)),
+    schemaVersion: z.literal(3, hint(SCHEMA_V3_HINT)),
     contentId: z.string().min(1),
     timelineRevision: posInt,
     cutRevision: posInt,
@@ -208,12 +222,29 @@ export const RenderManifestSchema = z
         message: `底轨只覆盖到 ${cursor}ms，短于成片时长 ${m.durationMs}ms`,
       });
     }
-    for (const word of m.captions.words) {
-      if (word.endMs < word.startMs) {
+    // cue 之间不许重叠：同一时刻两块字幕会叠在一起，而这按构造不可能——真出现就是上游算错了
+    let cueCursor = -1;
+    for (const cue of m.captions.cues) {
+      if (cue.endMs <= cue.startMs) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `字幕词「${word.w}」的 endMs 小于 startMs`,
+          message: `字幕块 ${cue.cueId} 的 endMs 必须大于 startMs（当前 ${cue.startMs}–${cue.endMs}ms）`,
         });
+      }
+      if (cue.startMs < cueCursor) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `字幕块 ${cue.cueId} 与上一块时间重叠（${cue.startMs}ms < ${cueCursor}ms）`,
+        });
+      }
+      cueCursor = Math.max(cueCursor, cue.endMs);
+      for (const word of cue.words) {
+        if (word.endMs < word.startMs) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `字幕词「${word.w}」的 endMs 小于 startMs`,
+          });
+        }
       }
     }
     if (m.titleCard && m.titleCard.durationMs > m.durationMs) {
@@ -227,7 +258,8 @@ export const RenderManifestSchema = z
 export type RenderManifest = z.infer<typeof RenderManifestSchema>;
 export type Overlay = RenderManifest['overlays'][number];
 export type ARollSegment = RenderManifest['arollVideo']['segments'][number];
-export type CaptionWord = RenderManifest['captions']['words'][number];
+export type CaptionCue = RenderManifest['captions']['cues'][number];
+export type CaptionWord = CaptionCue['words'][number];
 export type Identity = RenderManifest['identity'];
 export type CaptionTheme = Identity['captionTheme'];
 export type CodeTheme = NonNullable<Identity['codeTheme']>;

@@ -21,6 +21,7 @@ import {
   videoBlockedGuide,
   videoBuildStart,
   videoFinalAssetName,
+  videoReassemble,
   videoRetry,
   videoStateSummary,
   videoStatus,
@@ -228,7 +229,22 @@ export function VideoPanel({ contentId }: { contentId: string }) {
                 <button className="primary" disabled={busy} onClick={() => void act(() => videoRetry(contentId), "已重投,从失败那一步接着跑")}>
                   重试
                 </button>
+                {/* 渲染失败可能是那份 manifest 本身作废了(例如旧 schema):重试只会重投同一份,
+                    所以门上必须另有一条回组装的出口(v2 spec §2.3) */}
+                {(st.failedPhase ?? st.phase) === "render" && (
+                  <button
+                    disabled={busy}
+                    onClick={() => void act(() => videoReassemble(contentId), "已回到组装 —— 会重出一份渲染清单再渲")}
+                  >
+                    重新组装
+                  </button>
+                )}
               </div>
+              {(st.failedPhase ?? st.phase) === "render" && (
+                <p className="muted">
+                  报错里提到「重新组装」就点右边那个:那说明渲染清单是旧版本产物,重试再多次也还是同一份。
+                </p>
+              )}
             </div>
           )}
           {st && !handled && (

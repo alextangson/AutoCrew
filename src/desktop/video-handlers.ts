@@ -20,6 +20,8 @@ import {
   VideoConflictError,
   type ConfirmCutArgs,
   type ConfirmEditorPlanArgs,
+  type FillEditorSlotArgs,
+  type RequestPreviewArgs,
   type VideoService,
 } from "../modules/video/service.js";
 import type { CutFlag, CutFlagKind } from "../modules/video/types.js";
@@ -127,7 +129,7 @@ function parseStringList(v: unknown, name: string): string[] | string {
 }
 
 /**
- * editor_confirm 的入参。`kept_*` 只能是 plan 里原样的 id 与词——service 会逐个核对，
+ * editor_confirm 的入参。`kept_overlay_ids` 只能是 plan 里原样的 id——service 会逐个核对，
  * 这里只管形态，免得把「前端传了个数字」当成「计划里没这段」报错。
  */
 function parseEditorPlanArgs(payload: Payload): ConfirmEditorPlanArgs | string {
@@ -135,12 +137,28 @@ function parseEditorPlanArgs(payload: Payload): ConfirmEditorPlanArgs | string {
   if (typeof planRevision === "string") return planRevision;
   const keptOverlayIds = parseStringList(payload.kept_overlay_ids, "kept_overlay_ids");
   if (typeof keptOverlayIds === "string") return keptOverlayIds;
-  if (payload.kept_emphasis_words === undefined || payload.kept_emphasis_words === null) {
-    return { planRevision, keptOverlayIds };
-  }
-  const keptEmphasisWords = parseStringList(payload.kept_emphasis_words, "kept_emphasis_words");
-  if (typeof keptEmphasisWords === "string") return keptEmphasisWords;
-  return { planRevision, keptOverlayIds, keptEmphasisWords };
+  return { planRevision, keptOverlayIds };
+}
+
+function parseSlotFillArgs(payload: Payload): FillEditorSlotArgs | string {
+  const planRevision = parseRevision(payload.plan_revision, "plan_revision");
+  if (typeof planRevision === "string") return planRevision;
+  const overlayId = payload.overlay_id;
+  if (typeof overlayId !== "string" || !overlayId.trim()) return "overlay_id 必须是非空字符串";
+  const libraryId = payload.library_id;
+  if (typeof libraryId !== "string" || !libraryId.trim()) return "library_id 必须是非空字符串";
+  return { planRevision, overlayId: overlayId.trim(), libraryId: libraryId.trim() };
+}
+
+/** 预览请求：勾选是草稿，所以只带 keeps 与两个 base revision，不带 flags */
+function parsePreviewArgs(payload: Payload): RequestPreviewArgs | string {
+  const keeps = parseKeeps(payload.keeps);
+  if (typeof keeps === "string") return keeps;
+  const baseTranscript = parseRevision(payload.base_transcript_revision, "base_transcript_revision");
+  if (typeof baseTranscript === "string") return baseTranscript;
+  const baseCut = parseRevision(payload.base_cut_revision, "base_cut_revision");
+  if (typeof baseCut === "string") return baseCut;
+  return { keeps, baseTranscriptRevision: baseTranscript, baseCutRevision: baseCut };
 }
 
 // ── handlers ─────────────────────────────────────────────────────────────────
@@ -222,6 +240,49 @@ export async function videoEditorConfirmHandler(payload: Payload): Promise<Reply
   if (typeof args === "string") return { ok: false, error: args };
   try {
     return { ok: true, data: { state: await ctx.service.confirmEditorPlan(contentId, args) } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** 给待生成槽填素材：返回**派生出的新一版 plan**，前端直接换手里那份，不用再拉一次 */
+export async function videoEditorSlotFillHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  const args = parseSlotFillArgs(payload);
+  if (typeof args === "string") return { ok: false, error: args };
+  try {
+    return { ok: true, data: await ctx.service.fillEditorSlot(contentId, args) };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** 门内重渲预览：投递即返回，主状态不动，渲完走 SSE 刷新（判定在 service） */
+export async function videoCutPreviewHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  const args = parsePreviewArgs(payload);
+  if (typeof args === "string") return { ok: false, error: args };
+  try {
+    return { ok: true, data: { state: await ctx.service.requestCutPreview(contentId, args) } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** 渲染失败的死路出口：回组装重出一份 manifest（判定在 service） */
+export async function videoReassembleHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  try {
+    return { ok: true, data: { state: await ctx.service.reassemble(contentId) } };
   } catch (err) {
     return fail(err);
   }

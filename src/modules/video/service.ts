@@ -15,9 +15,16 @@
  * 每次状态落盘成功后触发 `onEvent`——SSE 的事件源就是这里，没有第二处（§8.3 四件套之一）。
  */
 import { readAsrStatus, warmupAsr, type AsrStatusRecord } from "./asr.js";
-import { writeEmphasisWords, writeOverlaySlots } from "./timeline-build.js";
-import { planToSlots } from "./editor-plan.js";
+import { tolerateLegacyPlan } from "./editor-plan.js";
+import { VideoConflictError } from "./errors.js";
+import {
+  createEditorGate,
+  type ConfirmEditorPlanArgs,
+  type EditorPlanView,
+  type FillEditorSlotArgs,
+} from "./editor-gate.js";
 import { checkVideoEligibility } from "./ingest.js";
+import { writePreviewRequest } from "./preview-exec.js";
 import { createVideoRunner, type VideoRunner } from "./runner.js";
 import type { VideoDeps } from "./proc.js";
 import {
@@ -32,7 +39,6 @@ import {
 } from "./video-store.js";
 import type {
   CutFlag,
-  EditorPlanOverlay,
   TranscriptSegment,
   VideoCut,
   VideoEditUnits,
@@ -43,16 +49,7 @@ import type {
   VideoTranscript,
 } from "./types.js";
 
-/** 乐观锁冲突：调用方据此提示「有人改过了，已为你重载」，而不是当作系统故障 */
-export class VideoConflictError extends Error {
-  constructor(
-    message: string,
-    readonly current: VideoState,
-  ) {
-    super(message);
-    this.name = "VideoConflictError";
-  }
-}
+export { VideoConflictError } from "./errors.js";
 
 export interface ConfirmCutArgs {
   keeps: string[];
@@ -62,20 +59,16 @@ export interface ConfirmCutArgs {
 }
 
 /**
- * 成片计划的确认（横屏 spec §3.1）。**覆盖轨槽位的唯一写入口**——
- * 编排由剪辑师产出、由人删定，不再有第二条「人手摆时间轴」的入口与它抢同一份产物。
+ * 成片计划这道门的三个入口住在 editor-gate.ts（横屏 spec §3.1 + v2 spec §4.2）——
+ * 覆盖轨槽位的唯一写入口仍是「确认」，不再有第二条「人手摆时间轴」的路与它抢同一份产物。
  */
-export interface ConfirmEditorPlanArgs {
-  planRevision: number;
-  keptOverlayIds: string[];
-  /** 不传 = 保留 plan 里全部强调词；传了按传的（面板可删 chip），只能删不能新增 */
-  keptEmphasisWords?: string[];
-}
+export type { ConfirmEditorPlanArgs, EditorPlanView, FillEditorSlotArgs } from "./editor-gate.js";
 
-/** 成片计划视图：plan 本体 + 它的版本号（提交时当乐观锁的 base） */
-export interface EditorPlanView {
-  plan: VideoEditorPlan;
-  revision: number;
+/** 门内重渲预览（v2 spec §4.1）：勾选是草稿，**不写 cut revision** */
+export interface RequestPreviewArgs {
+  keeps: string[];
+  baseTranscriptRevision: number;
+  baseCutRevision: number;
 }
 
 export interface ConfirmReviewArgs {
@@ -100,6 +93,12 @@ export interface VideoService {
   confirmCut(contentId: string, args: ConfirmCutArgs): Promise<VideoState>;
   /** 确认成片计划：留下的 overlay 落成覆盖轨槽位，随后进组装 */
   confirmEditorPlan(contentId: string, args: ConfirmEditorPlanArgs): Promise<VideoState>;
+  /** 给一个待生成槽填素材：派生出新一版 plan（旧版原样留盘） */
+  fillEditorSlot(contentId: string, args: FillEditorSlotArgs): Promise<EditorPlanView>;
+  /** 按门上当前勾选重渲一版预览；主状态不动，渲完由辅助 job 更新 preview 指针 */
+  requestCutPreview(contentId: string, args: RequestPreviewArgs): Promise<VideoState>;
+  /** 渲染失败在一份废 manifest 上时回组装重出一份（v2 spec §2.3 的死路出口） */
+  reassemble(contentId: string): Promise<VideoState>;
   confirmReview(contentId: string, args: ConfirmReviewArgs): Promise<VideoState>;
   /** 重新跑一次 AI 粗剪（粗剪 spec §3.4）；人工已终裁的那版不许被后台覆盖 */
   rerunRoughCut(contentId: string): Promise<VideoState>;
@@ -280,56 +279,6 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
   // 成片计划（edit 人工门）
   // -------------------------------------------------------------------------
 
-  /** 只能删不能改：留下的必须是 plan 里原样的那几段，前端传不进新东西 */
-  function pickOverlays(plan: VideoEditorPlan, keptIds: string[]): EditorPlanOverlay[] {
-    const known = new Set(plan.overlays.map((o) => o.overlayId));
-    const unknown = keptIds.filter((id) => !known.has(id));
-    if (unknown.length > 0) throw new Error(`这一版成片计划里没有这些片段：${unknown.join("、")}，请重载后重试`);
-    const kept = new Set(keptIds);
-    return plan.overlays.filter((o) => kept.has(o.overlayId));
-  }
-
-  function pickEmphasis(plan: VideoEditorPlan, kept?: string[]): string[] {
-    if (!kept) return plan.emphasisWords;
-    const known = new Set(plan.emphasisWords);
-    const unknown = kept.filter((w) => !known.has(w));
-    if (unknown.length > 0) throw new Error(`这一版成片计划里没有这些强调词：${unknown.join("、")}，请重载后重试`);
-    return plan.emphasisWords.filter((w) => kept.includes(w));
-  }
-
-  /**
-   * 确认成片计划。**覆盖轨槽位与强调词按 cutRevision 存**，因为 assemble 就按
-   * `revisions.cut` 去读它们；plan 自己的版本（`revisions.editor`）只用来做乐观锁——
-   * 同一版 cut 可以重跑 N 次剪辑师（plan 版本一路涨），但只会确认一次，所以按 cut 编号
-   * 恰好落一份，不会撞上「版本化产物不可覆盖」。
-   */
-  function confirmEditorPlan(contentId: string, args: ConfirmEditorPlanArgs): Promise<VideoState> {
-    return serialize(async () => {
-      const state = await requireState(contentId);
-      if (!(state.phase === "edit" && state.state === "awaiting_human")) {
-        throw new Error(`当前是 ${ref(state)}，还轮不到确认成片计划`);
-      }
-      const planRevision = state.revisions.editor ?? 0;
-      if (planRevision !== args.planRevision) {
-        throw new VideoConflictError(
-          `成片计划基于的版本已过期（你拿的是 v${args.planRevision}，当前是 v${planRevision}），请重载后重试`,
-          state,
-        );
-      }
-      const dir = videoDir(dataDir, contentId);
-      const plan = await readVersioned<VideoEditorPlan>(dir, "editor-plan", planRevision);
-      if (!plan) throw new Error(`读不到 editor-plan.v${planRevision}，请点「重新跑剪辑师」再来一版`);
-      const overlays = pickOverlays(plan, args.keptOverlayIds);
-      const words = pickEmphasis(plan, args.keptEmphasisWords);
-      const cutRevision = state.revisions.cut ?? 0;
-      if (overlays.length > 0) await writeOverlaySlots(dataDir, contentId, cutRevision, planToSlots(overlays));
-      if (words.length > 0) await writeEmphasisWords(dataDir, contentId, cutRevision, words);
-      const next = await write(contentId, (cur) => ({ ...cur, phase: "assemble", state: "queued" }));
-      runner.enqueue(contentId);
-      return next;
-    });
-  }
-
   /** 重新跑剪辑师（§3.1）。plan 还没被确认过，重跑只会多出一版 plan，覆盖不了任何决策 */
   function rerunEditor(contentId: string): Promise<VideoState> {
     return serialize(async () => {
@@ -358,6 +307,83 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
         throw new Error("这一版选段是你自己确认过的，AI 建议不会覆盖它——想重来请先重跑转写");
       }
       const next = await write(contentId, (cur) => ({ ...cur, phase: "cut", state: "queued" }));
+      runner.enqueue(contentId);
+      return next;
+    });
+  }
+
+  /**
+   * 成片计划这道门（confirm / 填槽）。它自己不开事务，读写与入队都用这里的原语——
+   * 「三条路走同一道闸」那段判定住在 editor-gate.ts。
+   */
+  const editorGate = createEditorGate({
+    dataDir,
+    ...(opts.deps ? { deps: opts.deps } : {}),
+    requireState,
+    write,
+    enqueue: (contentId) => runner.enqueue(contentId),
+    describe: ref,
+  });
+
+  // -------------------------------------------------------------------------
+  // 门内预览（cut 人工门，v2 spec §4.1）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 按门上当前勾选重渲一版预览。
+   *
+   * **主状态一个字都不动**：只把 `preview.requestedRevision` 往前推一格，人随时能确认，
+   * 不被渲染阻塞（门就是门）。旧的 `readyRevision` 留着——新的还没好之前，老预览照样能播。
+   * 请求本身落成不可变产物 `cut-preview-request.v<P>.json`，草稿因此不污染 cut 语义。
+   */
+  function requestCutPreview(contentId: string, args: RequestPreviewArgs): Promise<VideoState> {
+    return serialize(async () => {
+      const state = await requireState(contentId);
+      if (!(state.phase === "cut" && state.state === "awaiting_human")) {
+        throw new Error(`当前是 ${ref(state)}，还轮不到看粗剪预览`);
+      }
+      assertCutBase(state, { ...args, flags: [] } as ConfirmCutArgs);
+      const dir = videoDir(dataDir, contentId);
+      const transcript = await readVersioned<VideoTranscript>(dir, "transcript", args.baseTranscriptRevision);
+      if (!transcript) throw new Error(`读不到 transcript.v${args.baseTranscriptRevision}，请重跑转写`);
+      const units = await readEditUnits(dir, args.baseCutRevision);
+      assertKeeps(units?.segments ?? transcript.segments, { ...args, flags: [] } as ConfirmCutArgs);
+
+      const revision = await writePreviewRequest(dataDir, contentId, {
+        keeps: args.keeps,
+        baseCutRevision: args.baseCutRevision,
+        baseTranscriptRevision: args.baseTranscriptRevision,
+      });
+      const next = await write(contentId, (cur) => ({
+        ...cur,
+        preview: {
+          requestedRevision: revision,
+          ...(cur.preview?.readyRevision !== undefined ? { readyRevision: cur.preview.readyRevision } : {}),
+        },
+      }));
+      runner.enqueuePreview({
+        contentId,
+        revision,
+        keeps: args.keeps,
+        transcriptRevision: args.baseTranscriptRevision,
+        cutRevision: args.baseCutRevision,
+      });
+      return next;
+    });
+  }
+
+  /**
+   * 渲染失败在一份废 manifest 上时的出口（v2 spec §2.3）。
+   * `retry` 只会重投同一份 manifest——对「旧 schema 被 zod 拒」这类失败，重试永远是死路，
+   * 所以另开一条受控回退边回 assemble 重出一份。
+   */
+  function reassemble(contentId: string): Promise<VideoState> {
+    return serialize(async () => {
+      const state = await requireState(contentId);
+      if (!(state.phase === "render" && state.state === "failed")) {
+        throw new Error(`当前是 ${ref(state)}，只有渲染失败时才需要重新组装`);
+      }
+      const next = await write(contentId, (cur) => ({ ...cur, phase: "assemble", state: "queued" }));
       runner.enqueue(contentId);
       return next;
     });
@@ -441,14 +467,17 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
       const revision = state?.revisions.editor ?? 0;
       if (!revision) return null;
       const plan = await readVersioned<VideoEditorPlan>(videoDir(dataDir, contentId), "editor-plan", revision);
-      return plan ? { plan, revision } : null;
+      return plan ? { plan: tolerateLegacyPlan(plan), revision } : null;
     });
   }
 
   return {
     startBuild,
     confirmCut,
-    confirmEditorPlan,
+    confirmEditorPlan: (contentId, args) => serialize(() => editorGate.confirm(contentId, args)),
+    fillEditorSlot: (contentId, args) => serialize(() => editorGate.fillSlot(contentId, args)),
+    requestCutPreview,
+    reassemble,
     confirmReview,
     rerunRoughCut,
     rerunEditor,

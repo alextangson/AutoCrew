@@ -7,7 +7,7 @@
  * 与 `assemble.ts` 的分工：那边管流程与冻结（复检指纹、合音轨、写 manifest），
  * 这边只管「timeline 长什么样」——形状与流程分开，形状才测得动。
  */
-import type { AssetRef, OverlayFit, TimelineOverlay, VideoTimeline } from "./types.js";
+import type { AssetFingerprint, AssetRef, OverlayFit, TimelineOverlay, VideoTimeline } from "./types.js";
 import { readVersioned, videoDir, writeVersioned } from "./video-store.js";
 
 /** 视频线唯一画幅 = 横屏 1920×1080@30（横屏 spec §0 创始人裁决；竖屏路径已删除，不留开关） */
@@ -31,6 +31,12 @@ export const DEFAULT_TRANSITION = "cut";
 export interface OverlaySlot {
   kind: "screen" | "image";
   ref: AssetRef;
+  /**
+   * 确认时的素材指纹快照（v2 spec §4.2）。assemble 复检对着**这一份**——
+   * 指纹在剪辑师选中/人填槽的那一刻就打了，不是 assemble 才第一次建，
+   * 否则「填完槽又把文件换了」这条漂移永远看不见。
+   */
+  fingerprint?: AssetFingerprint;
   outputStartMs: number;
   durationMs: number;
   /** 屏录取源素材的哪一段（横屏 spec §3.3 阻断项）；跨度恒等于 durationMs */
@@ -60,29 +66,6 @@ export async function readOverlaySlots(
   return Array.isArray(slots) ? slots : [];
 }
 
-/**
- * 人确认后的强调词，与覆盖轨槽位同版本口径（都按 cutRevision）。
- * 单独一份产物而不是塞进 overlays：删光 overlay 只留强调词是常见的合法结果，
- * 两者的存在与否互不牵连。
- */
-export function writeEmphasisWords(
-  dataDir: string,
-  contentId: string,
-  cutRevision: number,
-  words: string[],
-): Promise<string> {
-  return writeVersioned(videoDir(dataDir, contentId), "emphasis", cutRevision, words);
-}
-
-export async function readEmphasisWords(
-  dataDir: string,
-  contentId: string,
-  cutRevision: number,
-): Promise<string[]> {
-  const words = await readVersioned<string[]>(videoDir(dataDir, contentId), "emphasis", cutRevision);
-  return Array.isArray(words) ? words.filter((w): w is string => typeof w === "string") : [];
-}
-
 export interface DeterministicTimelineInput {
   transcriptRevision: number;
   cutRevision: number;
@@ -90,8 +73,6 @@ export interface DeterministicTimelineInput {
   overlays: { assetId: string; slot: OverlaySlot }[];
   /** 片头大字 = `videoKit.coverText`；没有发布件就没有标题卡（合法状态，§2.3） */
   titleText?: string;
-  /** 字幕点亮的概念词，数据源是剪辑师 plan 里人留下的那些（横屏 spec §2.7 / §3.5） */
-  emphasisWords?: string[];
   /** 成片输出域总长，用来给标题卡封顶——它是盖在开头的覆盖层，不许比片子还长 */
   outputDurationMs?: number;
 }
@@ -105,7 +86,7 @@ function titleCardOf(input: DeterministicTimelineInput): VideoTimeline["titleCar
 }
 
 /**
- * timeline 形状是固定的：底轨全程 A-roll + 逐词字幕 + 0-N 个人工覆盖轨 + 可选标题卡。
+ * timeline 形状是固定的：底轨全程 A-roll + 字幕 + 0-N 个人工覆盖轨 + 可选标题卡。
  */
 export function buildDeterministicTimeline(input: DeterministicTimelineInput): VideoTimeline {
   const overlays: TimelineOverlay[] = input.overlays.map(({ assetId, slot }, i) => ({
@@ -125,7 +106,6 @@ export function buildDeterministicTimeline(input: DeterministicTimelineInput): V
     transition: slot.transition ?? DEFAULT_TRANSITION,
   }));
   const titleCard = titleCardOf(input);
-  const emphasisWords = input.emphasisWords?.filter((w) => w.trim()) ?? [];
   return {
     schemaVersion: 2,
     fps: OUTPUT_FPS,
@@ -134,7 +114,7 @@ export function buildDeterministicTimeline(input: DeterministicTimelineInput): V
     anchor: { kind: "aroll", transcriptRevision: input.transcriptRevision, cutRevision: input.cutRevision },
     base: { type: "aroll" },
     overlays,
-    captions: { style: "word-highlight", ...(emphasisWords.length > 0 ? { emphasisWords } : {}) },
+    captions: { style: "plain" },
     ...(titleCard ? { titleCard } : {}),
     audio: { anchorGainDb: 0 },
   };

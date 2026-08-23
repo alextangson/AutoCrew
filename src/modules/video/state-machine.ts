@@ -75,8 +75,9 @@ export const AUTO_CHAIN_PHASES: readonly (readonly [VideoPhase, VideoPhase])[] =
 ] as const;
 
 /**
- * 阶段回退白名单：只有这两条显式边允许 phase 倒退（spec §2.2 v2.1）。
- * 打回=审片不满意回去改选段；重开=对已完成内容提交新 cut 再出一版。
+ * 阶段回退白名单：只有这三条显式边允许 phase 倒退（spec §2.2 v2.1 + v2 spec §2.3）。
+ * 打回=审片不满意回去改选段；重开=对已完成内容提交新 cut 再出一版；
+ * 重组装=渲染失败在一份废 manifest 上（例如旧 schema），重试只会重投同一份，必须回组装重出。
  *
  * 重开落 `edit/queued` 而不是 `assemble/queued`（横屏 spec §3.1 起）：新 cut 改了 keeps，
  * 输出域时间全变，旧 plan 的 overlay 会落在错误的话上——必须让剪辑师按新选段重排一遍。
@@ -87,6 +88,7 @@ export const PHASE_REGRESSION_EDGES: readonly {
 }[] = [
   { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
   { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
+  { from: { phase: "render", state: "failed" }, to: { phase: "assemble", state: "queued" } },
 ] as const;
 
 function fmt(ref: VideoStateRef): string {

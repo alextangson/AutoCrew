@@ -91,16 +91,11 @@ function validateAnchorAndBase(t: Record<string, unknown>): string[] {
 }
 
 function validateCaptions(raw: unknown, ctx: TimelineValidateContext): string[] {
-  if (!isObj(raw)) return ["captions 必须是对象 { style, emphasisWords? }"];
-  const errors: string[] = [];
+  if (!isObj(raw)) return ["captions 必须是对象 { style }"];
   if (!ctx.registry.captions.includes(raw.style as string)) {
-    errors.push(`captions.style 不在受控枚举里：${JSON.stringify(raw.style)}（可用：${ctx.registry.captions.join("、")}）`);
+    return [`captions.style 不在受控枚举里：${JSON.stringify(raw.style)}（可用：${ctx.registry.captions.join("、")}）`];
   }
-  if (raw.emphasisWords !== undefined) {
-    const ok = Array.isArray(raw.emphasisWords) && raw.emphasisWords.every((w) => typeof w === "string");
-    if (!ok) errors.push("captions.emphasisWords 必须是字符串数组");
-  }
-  return errors;
+  return [];
 }
 
 function validateTitleCard(raw: unknown, ctx: TimelineValidateContext): string[] {

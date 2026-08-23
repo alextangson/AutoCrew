@@ -187,8 +187,9 @@ describe("inbox:retry", () => {
     const reply = await inboxRetryHandler({ id: item.id });
 
     expect(data(reply).queued).toBe(true);
-    await waitFor(() => processed.includes(item.id), "超限项被重跑");
-    expect((await getItem(item.id, tmpHome))?.status).toBe("digested");
+    // 等最终态落盘而非内存标记——processed 的写入早于 worker 落盘，抢跑会读到 fetching
+    await waitFor(async () => (await getItem(item.id, tmpHome))?.status === "digested", "超限项被重跑并落盘");
+    expect(processed).toContain(item.id);
   });
 });
 
