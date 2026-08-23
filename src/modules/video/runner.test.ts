@@ -14,6 +14,7 @@ import {
   fakeRunLoop,
   fakeUvSpawn,
   fixtureDenseTranscript,
+  fixtureTranscript,
   routedSpawn,
   seedEngineConfig,
   seedVideoContent,
@@ -88,7 +89,7 @@ async function rawJobs(): Promise<VideoJob[]> {
 describe("阶段推进", () => {
   it("ingest → transcribe → cut 计算步 → 停在 cut 的人工门；两版 cut 都是全 keep", async () => {
     await forceState({ phase: "ingest", state: "queued" });
-    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     runner.enqueue(contentId);
     await runner.whenIdle();
 
@@ -134,7 +135,7 @@ describe("阶段推进", () => {
 
   it("AI 降级 → job 记 succeeded 但带 warning（跑完了，只是没结果）", async () => {
     await forceState({ phase: "ingest", state: "queued" });
-    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     runner.enqueue(contentId);
     await runner.whenIdle();
     const cutJob = (await readVideoJobs(dir)).filter((j) => j.phase === "cut").at(-1)!;
@@ -173,7 +174,7 @@ describe("阶段推进", () => {
 
   it("转写 job 带 lease 与心跳，结算成 succeeded 并记录 outputRevision", async () => {
     await forceState({ phase: "ingest", state: "queued" });
-    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     runner.enqueue(contentId);
     await runner.whenIdle();
 
@@ -188,7 +189,7 @@ describe("阶段推进", () => {
 
   it("ASR 模型未就绪 → blocked: asr_not_ready，job 记 failed，人话指引落在 failReason", async () => {
     await forceState({ phase: "ingest", state: "queued" });
-    const runner = makeRunner({ uv: fakeUvSpawn("model_missing") });
+    const runner = makeRunner({ uv: fakeUvSpawn("model_missing"), npm: fakeRenderSpawn() });
     runner.enqueue(contentId);
     await runner.whenIdle();
 
@@ -203,7 +204,7 @@ describe("阶段推进", () => {
     await ingestAroll(dir, contentId);
     await fs.appendFile(path.join(dir, "contents", contentId, "assets", "aroll.mp4"), Buffer.alloc(2048, 3));
     await forceState({ phase: "transcribe", state: "queued" });
-    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     runner.enqueue(contentId);
     await runner.whenIdle();
 
@@ -217,14 +218,14 @@ describe("阶段推进", () => {
     await writeVersioned(vdir, "cut", 1, { transcriptRevision: 1, keeps: [], flags: [], origin: "default_all" });
     await forceState({ phase: "cut", state: "queued", revisions: { transcript: 1, cut: 1 } });
     // 先跑一次让它写出 staging，再把状态拨回 queued 伪造「崩在定版之前」
-    const first = makeRunner({ uv: fakeUvSpawn("ok", fixtureDenseTranscript()) });
+    const first = makeRunner({ uv: fakeUvSpawn("ok", fixtureDenseTranscript()), npm: fakeRenderSpawn() });
     first.enqueue(contentId);
     await first.whenIdle();
     await fs.rm(path.join(vdir, "cut.v2.json"), { force: true });
     await fs.rm(path.join(vdir, "edit-units.v2.json"), { force: true });
     await forceState({ phase: "cut", state: "queued", revisions: { transcript: 1, cut: 1 } });
 
-    const again = makeRunner({ uv: fakeUvSpawn("ok", fixtureDenseTranscript()) });
+    const again = makeRunner({ uv: fakeUvSpawn("ok", fixtureDenseTranscript()), npm: fakeRenderSpawn() });
     again.enqueue(contentId);
     await again.whenIdle();
     expect(await currentRef()).toBe("cut/awaiting_human");
@@ -257,7 +258,7 @@ describe("启动回收", () => {
       heartbeatAt: stale,
     });
 
-    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     const recovered = await runner.recoverExpired();
     expect(recovered).toBe(1);
     const requeued = (await rawJobs()).find((j) => j.jobId === "vjob-stale" && j.status === "queued");
@@ -271,7 +272,7 @@ describe("启动回收", () => {
 
   it("崩在 ingest（无 job 行）也能被 state.json 的 updatedAt 兜底回收", async () => {
     await forceState({ phase: "ingest", state: "running", updatedAt: new Date(Date.now() - 30 * 60_000).toISOString() });
-    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     expect(await runner.recoverExpired()).toBe(1);
     await runner.whenIdle();
     expect(await currentRef()).toBe("cut/awaiting_human");
@@ -299,7 +300,7 @@ describe("settle CAS", () => {
   it("执行期间 revisions 前移 → 产物留盘、状态不动、台账记「历史产物」", async () => {
     // 先把管线推到 assemble 之前
     await forceState({ phase: "ingest", state: "queued" });
-    const prep = makeRunner({ uv: fakeUvSpawn("ok") });
+    const prep = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     prep.enqueue(contentId);
     await prep.whenIdle();
 
@@ -363,11 +364,123 @@ describe("settle CAS", () => {
 
 describe("停机", () => {
   it("shutdown 后不再接新任务", async () => {
-    const runner = makeRunner({ uv: fakeUvSpawn("ok") });
+    const runner = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
     await runner.shutdown();
     await forceState({ phase: "ingest", state: "queued" });
     runner.enqueue(contentId);
     await runner.whenIdle();
     expect(await currentRef()).toBe("ingest/queued");
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// 门内预览：辅助 job，全程不动主状态（v2 spec §4.1）
+// ---------------------------------------------------------------------------
+
+describe("cut_preview 辅助 job", () => {
+  const KEEPS = ["seg-0001", "seg-0002"];
+
+  /** 把现场摆成「停在粗剪门上、已请求预览 vN」——预览 job 的前置条件就这两条 */
+  async function atGate(requestedRevision = 1): Promise<void> {
+    const ingested = await ingestAroll(dir, contentId);
+    if (!ingested.ok) throw new Error(ingested.reason);
+    await writeVersioned(videoDir(dir, contentId), "transcript", 1, fixtureTranscript());
+    await forceState({
+      phase: "cut",
+      state: "awaiting_human",
+      revisions: { transcript: 1, cut: 1 },
+      preview: { requestedRevision },
+    });
+  }
+
+  const task = (revision = 1) => ({ contentId, revision, keeps: KEEPS, transcriptRevision: 1, cutRevision: 1 });
+
+  it("跑通：只更新 preview 指针，phase/state 一个字不动", async () => {
+    await atGate();
+    const runner = makeRunner({ npm: fakeRenderSpawn() });
+    runner.enqueuePreview(task());
+    await runner.whenIdle();
+    const { state } = await readVideoState(dir, contentId);
+    expect(`${state?.phase}/${state?.state}`).toBe("cut/awaiting_human");
+    expect(state?.preview).toEqual({ requestedRevision: 1, readyRevision: 1 });
+    const job = (await readVideoJobs(dir)).at(-1)!;
+    expect(job).toMatchObject({ phase: "cut_preview", status: "succeeded", inputKey: "preview:1" });
+  }, 120_000);
+
+  // 边界 #1：预览失败也只写 error，门照常可确认
+  it("渲染失败 → preview.error 可见，状态仍停在门上", async () => {
+    await atGate();
+    const runner = makeRunner({ npm: fakeRenderSpawn({ exitCode: 1 }) });
+    runner.enqueuePreview(task());
+    await runner.whenIdle();
+    const { state } = await readVideoState(dir, contentId);
+    expect(`${state?.phase}/${state?.state}`).toBe("cut/awaiting_human");
+    expect(state?.preview?.readyRevision).toBeUndefined();
+    expect(state?.preview?.error).toContain("预览渲染退出码");
+  }, 120_000);
+
+  // 边界 #2：连点重渲，旧结果 settle 时发现非当前 → superseded 丢弃
+  it("请求已被后来的重渲顶掉 → 旧结果不发布（latest-wins）", async () => {
+    await atGate(2);
+    const runner = makeRunner({ npm: fakeRenderSpawn() });
+    runner.enqueuePreview(task(1)); // 手里这条是 v1，当前 requested 已是 v2
+    await runner.whenIdle();
+    const { state } = await readVideoState(dir, contentId);
+    expect(state?.preview).toEqual({ requestedRevision: 2 });
+    // 早退发生在起渲染之前，连 job 都不该开
+    expect((await readVideoJobs(dir)).some((j) => j.phase === "cut_preview")).toBe(false);
+  }, 120_000);
+
+  // 边界 #3：预览渲染中直接确认，迟到的结果不得写状态
+  it("执行期间人已确认离开门 → 结果作废，不污染新状态", async () => {
+    await atGate();
+    const runner = makeRunner({
+      npm: fakeRenderSpawn({
+        // 渲染进行中把人推到下一步：settle 时「仍在 cut 门」这条校验必须拦住它
+        onStart: () => forceState({ phase: "edit", state: "queued", revisions: { transcript: 1, cut: 2 }, preview: { requestedRevision: 1 } }),
+      }),
+    });
+    runner.enqueuePreview(task());
+    await runner.whenIdle();
+    const { state } = await readVideoState(dir, contentId);
+    expect(`${state?.phase}/${state?.state}`).toBe("edit/queued");
+    expect(state?.preview).toEqual({ requestedRevision: 1 });
+    const job = (await readVideoJobs(dir)).at(-1)!;
+    expect(job).toMatchObject({ status: "failed", errorCode: "superseded" });
+  }, 120_000);
+
+  // 边界 #4：进程重启时预览 job 在跑 → lease 过期回收，且失败可见
+  it("心跳过期的预览 job：回收成 failed + 门上出可见的中断提示，不偷偷重跑", async () => {
+    await atGate();
+    await appendVideoJob(dir, {
+      jobId: "vjob-stale-preview",
+      contentId,
+      phase: "cut_preview",
+      inputKey: "preview:1",
+      status: "running",
+      attempts: 1,
+      leaseOwner: "pid-999-dead",
+      heartbeatAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+    });
+    const runner = makeRunner({ npm: fakeRenderSpawn() });
+    expect(await runner.recoverExpired()).toBe(1);
+    await runner.whenIdle();
+    const { state } = await readVideoState(dir, contentId);
+    expect(state?.preview?.error).toContain("被中断");
+    const job = (await readVideoJobs(dir)).filter((j) => j.jobId === "vjob-stale-preview").at(-1)!;
+    expect(job).toMatchObject({ status: "failed", errorCode: "interrupted" });
+    // 没有第二条预览 job：中断的预览不自动重跑（人点了才跑）
+    expect((await readVideoJobs(dir)).filter((j) => j.phase === "cut_preview" && j.status === "running")).toHaveLength(1);
+  }, 120_000);
+
+  it("同一请求重复入队 → 台账上仍是同一条 job（按 inputKey 合并，attempts 累加）", async () => {
+    await atGate();
+    const runner = makeRunner({ npm: fakeRenderSpawn() });
+    runner.enqueuePreview(task());
+    runner.enqueuePreview(task());
+    await runner.whenIdle();
+    const settled = (await readVideoJobs(dir)).filter((j) => j.phase === "cut_preview" && j.settledAt);
+    expect(new Set(settled.map((j) => j.jobId)).size).toBe(1);
+    expect(settled.at(-1)!.attempts).toBe(2);
+  }, 120_000);
 });

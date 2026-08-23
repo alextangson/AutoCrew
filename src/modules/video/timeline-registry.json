@@ -8,7 +8,7 @@
       }
     }
   },
-  "captions": ["word-highlight"],
+  "captions": ["plain"],
   "titles": ["hook-title"],
   "transitions": ["cut", "fade"]
 }

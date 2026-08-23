@@ -24,6 +24,7 @@ import { resolveBgmRef } from "./ingest.js";
 import { MASTER_AUDIO_PARAMS } from "./master-audio.js";
 import { executePhase, stepWarning, type StepResult } from "./phases.js";
 import { nowIso, nowMs, type VideoDeps } from "./proc.js";
+import { createPreviewRunner, type PreviewTask } from "./runner-preview.js";
 import { roughCutInputKey } from "./rough-cut.js";
 import {
   appendVideoJob,
@@ -40,15 +41,10 @@ import {
   VIDEO_HEARTBEAT_MS,
   VIDEO_LEASE_MS,
 } from "./video-store.js";
-import type {
-  VideoJob,
-  VideoJobPhase,
-  VideoPhase,
-  VideoRevisions,
-  VideoState,
-} from "./types.js";
+import type { VideoJob, VideoJobPhase, VideoPhase, VideoRevisions, VideoState } from "./types.js";
 
 export type { StepResult };
+export type { PreviewTask };
 
 const JOB_PHASES = new Set<string>(["transcribe", "cut", "edit", "assemble", "render"]);
 
@@ -66,6 +62,11 @@ export interface VideoRunnerOptions {
 export interface VideoRunner {
   readonly leaseOwner: string;
   enqueue(contentId: string): void;
+  /**
+   * 排一次门内预览（v2 spec §4.1）。**辅助 job，不动主状态**：主状态全程钉在
+   * `cut/awaiting_human`，确认因此不被渲染阻塞——门就是门。
+   */
+  enqueuePreview(task: PreviewTask): void;
   /** 启动回收：心跳过期的 running 重排。返回回收条数 */
   recoverExpired(): Promise<number>;
   /** 队列跑空（测试与 shutdown 用） */
@@ -86,7 +87,8 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   const leaseOwner = `pid-${process.pid}-${opts.launchId ?? Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const pending = new Set<string>();
-  const order: string[] = [];
+  /** 主推进与辅助预览排同一条队：渲染吃满 CPU，两条同时跑只会互相拖慢 */
+  const order: ({ kind: "advance"; contentId: string } | ({ kind: "preview" } & PreviewTask))[] = [];
   let pump: Promise<void> = Promise.resolve();
   let running = false;
   let stopped = false;
@@ -156,6 +158,23 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       },
     };
   }
+
+  /**
+   * 门内预览的那一半（v2 spec §4.1）住在 runner-preview.ts：调度/lease/心跳仍归这里，
+   * 「结果该不该发布」归那里，共用原语靠注入，不重复实现一套。
+   */
+  const previewRunner = createPreviewRunner({
+    dataDir,
+    ...(deps ? { deps } : {}),
+    ...(opts.renderDir ? { renderDir: opts.renderDir } : {}),
+    leaseOwner,
+    abortSignal: controller.signal,
+    isStopped: () => stopped,
+    report,
+    writeState,
+    claimJob: (contentId, inputKey) => claimJob(contentId, "cut_preview", inputKey),
+    startHeartbeat,
+  });
 
   // -------------------------------------------------------------------------
   // 认领 → 执行 → settle
@@ -229,12 +248,14 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   }
 
   function settledState(cur: VideoState, result: StepResult, phase: VideoPhase): VideoState {
+    const preview = (result.ok ? result.preview : undefined) ?? cur.preview;
     const base = {
       schemaVersion: 1 as const,
       entryType: "aroll" as const,
       updatedAt: "",
       ...(cur.inputManifest ? { inputManifest: cur.inputManifest } : {}),
       ...(cur.stale ? { stale: cur.stale } : {}),
+      ...(preview ? { preview } : {}),
     };
     // 成功即清空 blockedReason/failedPhase/errorCode/failReason：留着上一次的失败痕迹只会误导人
     if (result.ok) {
@@ -368,12 +389,13 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     pump = (async () => {
       try {
         while (order.length > 0 && !stopped) {
-          const contentId = order.shift()!;
-          pending.delete(contentId);
+          const task = order.shift()!;
+          pending.delete(taskKey(task));
           try {
-            await advance(contentId);
+            if (task.kind === "advance") await advance(task.contentId);
+            else await previewRunner.run(task);
           } catch (err) {
-            report(`${contentId} 推进失败：${errText(err)}`);
+            report(`${task.contentId} 推进失败：${errText(err)}`);
           }
         }
       } finally {
@@ -382,10 +404,22 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
     })();
   }
 
+  function taskKey(task: { kind: string; contentId: string; revision?: number }): string {
+    return task.kind === "advance" ? `advance|${task.contentId}` : `preview|${task.contentId}|${String(task.revision)}`;
+  }
+
   function enqueue(contentId: string): void {
-    if (stopped || pending.has(contentId)) return;
-    pending.add(contentId);
-    order.push(contentId);
+    if (stopped || pending.has(`advance|${contentId}`)) return;
+    pending.add(`advance|${contentId}`);
+    order.push({ kind: "advance", contentId });
+    schedule();
+  }
+
+  function enqueuePreview(task: PreviewTask): void {
+    const key = taskKey({ kind: "preview", ...task });
+    if (stopped || pending.has(key)) return;
+    pending.add(key);
+    order.push({ kind: "preview", ...task });
     schedule();
   }
 
@@ -394,6 +428,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   // -------------------------------------------------------------------------
 
   async function requeueJob(job: VideoJob): Promise<void> {
+    if (job.phase === "cut_preview") return previewRunner.recover(job);
     await appendVideoJob(dataDir, {
       ...job,
       status: "queued",
@@ -447,6 +482,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
   return {
     leaseOwner,
     enqueue,
+    enqueuePreview,
     recoverExpired,
     whenIdle: () => pump,
     async shutdown() {

@@ -8,20 +8,23 @@ import type { Asset } from "../../storage/local-store.js";
 import {
   IMAGE_MAX_MS,
   OVERLAY_MAX_MS,
+  fillPlanSlot,
   hasLegalWindow,
-  normalizeEmphasisWords,
+  pendingGenerateSlots,
   planToSlots,
   scanBrollCandidates,
   toPlanOverlays,
   trimCandidates,
-  unmatchedEmphasisWords,
   validatePlanOverlays,
   type EditorCandidate,
   type SubmittedOverlay,
 } from "./editor-plan.js";
+import type { AssetFingerprint, VideoEditorPlan } from "./types.js";
 
 /** 200 秒的成片：掐掉开头 30s / 结尾 15s 之后，合法窗口是 [30000, 185000] */
 const TOTAL = 200_000;
+
+const fp = (quickHash: string): AssetFingerprint => ({ size: 10, mtimeMs: 1, quickHash });
 
 const screen: EditorCandidate = {
   assetId: "b1",
@@ -31,6 +34,7 @@ const screen: EditorCandidate = {
   tags: [],
   durationMs: 60_000,
   ref: { kind: "content", filename: "screen.mp4" },
+  fingerprint: fp("screen-hash"),
 };
 const image: EditorCandidate = {
   assetId: "b2",
@@ -39,17 +43,29 @@ const image: EditorCandidate = {
   filename: "layers.png",
   tags: [],
   ref: { kind: "content", filename: "layers.png" },
+  fingerprint: fp("image-hash"),
 };
 const candidates = [screen, image];
 
-const one = (over: Partial<SubmittedOverlay> = {}): SubmittedOverlay => ({
-  assetId: "b1",
-  outputStartMs: 40_000,
-  durationMs: 10_000,
-  inMs: 0,
-  outMs: 10_000,
-  ...over,
-});
+const one = (over: Record<string, unknown> = {}): SubmittedOverlay =>
+  ({
+    assetId: "b1",
+    outputStartMs: 40_000,
+    durationMs: 10_000,
+    inMs: 0,
+    outMs: 10_000,
+    ...over,
+  }) as SubmittedOverlay;
+
+/** 待生成槽：有完整时间落位，没有源文件 */
+const gen = (over: Record<string, unknown> = {}): SubmittedOverlay =>
+  ({
+    description: "数字滚动 80%→20%，暗底细网格，克制",
+    mediaKind: "video",
+    outputStartMs: 40_000,
+    durationMs: 10_000,
+    ...over,
+  }) as SubmittedOverlay;
 const check = (items: SubmittedOverlay[]): string[] => validatePlanOverlays(items, candidates, TOTAL);
 
 describe("校验：素材与时间的基本盘", () => {
@@ -107,7 +123,7 @@ describe("校验：时长上限（边界值合法）", () => {
 
 describe("校验：inMs/outMs（codex 的阻断项）", () => {
   it("屏录不给取材窗口 → 打回并告诉它素材多长", () => {
-    const errors = check([{ assetId: "b1", outputStartMs: 40_000, durationMs: 10_000 }]);
+    const errors = check([{ assetId: "b1", outputStartMs: 40_000, durationMs: 10_000 } as SubmittedOverlay]);
     expect(errors.join()).toContain("缺 inMs/outMs");
     expect(errors.join()).toContain("60000ms");
   });
@@ -129,7 +145,7 @@ describe("校验：inMs/outMs（codex 的阻断项）", () => {
   });
 
   it("图片带 inMs/outMs → 打回（它没有时间轴）", () => {
-    expect(check([{ assetId: "b2", outputStartMs: 40_000, durationMs: 5_000, inMs: 0, outMs: 5_000 }]).join()).toContain(
+    expect(check([{ assetId: "b2", outputStartMs: 40_000, durationMs: 5_000, inMs: 0, outMs: 5_000 } as SubmittedOverlay]).join()).toContain(
       "没有时间轴",
     );
   });
@@ -172,25 +188,43 @@ describe("校验：排布（重叠 / 露脸间隔 / 总覆盖 / 引用次数）"
 });
 
 describe("定型：toPlanOverlays / planToSlots", () => {
-  it("按时间排序编号，屏录默认 cut、图版默认 fade，素材落点被钉住", () => {
+  it("按时间排序编号，屏录默认 cut、图版默认 fade，素材落点被指纹钉住", () => {
     const plan = toPlanOverlays(
       [
-        { assetId: "b2", outputStartMs: 60_000, durationMs: 5_000 },
+        { assetId: "b2", outputStartMs: 60_000, durationMs: 5_000 } as SubmittedOverlay,
         one({ outputStartMs: 40_000 }),
       ],
       candidates,
     );
     expect(plan.map((o) => o.overlayId)).toEqual(["ov-01", "ov-02"]);
-    expect(plan[0]).toMatchObject({ assetId: "b1", kind: "screen", transition: "cut", label: "屏录：产品界面演示" });
-    expect(plan[1]).toMatchObject({ assetId: "b2", kind: "image", transition: "fade", ref: { kind: "content", filename: "layers.png" } });
+    expect(plan[0]).toMatchObject({
+      transition: "cut",
+      label: "屏录：产品界面演示",
+      source: { kind: "asset", name: "screen.mp4", type: "screen", durationMs: 60_000, fingerprint: fp("screen-hash") },
+    });
+    expect(plan[1]).toMatchObject({
+      transition: "fade",
+      source: { kind: "asset", name: "layers.png", type: "image", ref: { kind: "content", filename: "layers.png" } },
+    });
   });
 
-  it("plan → 覆盖轨槽位：取材窗口与转场一路带过去", () => {
+  it("generate 槽定型成 source.kind=generate，label 用 description，默认转场跟 mediaKind 走", () => {
+    const plan = toPlanOverlays([gen(), gen({ mediaKind: "image", durationMs: 8_000, outputStartMs: 60_000 })], candidates);
+    expect(plan[0]).toMatchObject({
+      label: "数字滚动 80%→20%，暗底细网格，克制",
+      transition: "cut",
+      source: { kind: "generate", mediaKind: "video" },
+    });
+    expect(plan[1]).toMatchObject({ transition: "fade", source: { kind: "generate", mediaKind: "image" } });
+  });
+
+  it("plan → 覆盖轨槽位：取材窗口、转场、指纹一路带过去", () => {
     const slots = planToSlots(toPlanOverlays([one({ inMs: 1_000, outMs: 11_000 })], candidates));
     expect(slots).toEqual([
       {
         kind: "screen",
         ref: { kind: "content", filename: "screen.mp4" },
+        fingerprint: fp("screen-hash"),
         outputStartMs: 40_000,
         durationMs: 10_000,
         inMs: 1_000,
@@ -198,6 +232,88 @@ describe("定型：toPlanOverlays / planToSlots", () => {
         transition: "cut",
       },
     ]);
+  });
+
+  // 边界 #13：未填的 generate 槽在确认时被丢弃，只有 asset 槽出得来
+  it("未填的 generate 槽产不出槽位（确认后跳过）", () => {
+    const plan = toPlanOverlays([one(), gen({ outputStartMs: 60_000 })], candidates);
+    expect(pendingGenerateSlots(plan)).toHaveLength(1);
+    expect(planToSlots(plan)).toHaveLength(1);
+    expect(planToSlots(plan)[0]!.kind).toBe("screen");
+  });
+});
+
+describe("校验：generate 槽与已有素材同一套硬规则", () => {
+  it("规规矩矩的 generate 槽 → 无错误", () => {
+    expect(check([gen()])).toEqual([]);
+  });
+
+  it("落在禁区里照样被拦（它就是未来的画面，不是占位符）", () => {
+    expect(check([gen({ outputStartMs: 29_999 })]).join()).toContain("禁区");
+  });
+
+  it("mediaKind=image 时受图片上限约束", () => {
+    expect(check([gen({ mediaKind: "image", durationMs: IMAGE_MAX_MS })])).toEqual([]);
+    expect(check([gen({ mediaKind: "image", durationMs: IMAGE_MAX_MS + 1 })]).join()).toContain("图片上限");
+  });
+
+  it("generate 槽不许给 inMs/outMs（还没有源文件）", () => {
+    expect(check([gen({ inMs: 0, outMs: 10_000 })]).join()).toContain("还没有源文件");
+  });
+
+  it("generate 槽计入总覆盖与露脸间隔", () => {
+    expect(check([one({ outputStartMs: 40_000 }), gen({ outputStartMs: 52_000 })]).join()).toContain("露脸");
+  });
+
+  it("generate 槽各自独立，不计入「同素材最多 3 次」", () => {
+    const five = [30_000, 45_000, 60_000, 75_000, 90_000].map((outputStartMs) =>
+      gen({ outputStartMs, durationMs: 10_000 }),
+    );
+    expect(check(five)).toEqual([]);
+  });
+});
+
+describe("门内填槽（v2 spec §4.2）", () => {
+  const basePlan = (): VideoEditorPlan => ({
+    schemaVersion: 1,
+    cutRevision: 2,
+    origin: "llm",
+    overlays: toPlanOverlays([gen(), one({ outputStartMs: 60_000 })], candidates),
+  });
+  const fill = { ref: { kind: "library" as const, id: "asset-1" }, name: "shot.mp4", type: "screen" as const, durationMs: 12_000, fingerprint: fp("fill-hash") };
+
+  it("填成功 → 派生新版：origin human + basePlanRevision，旧版对象不被改", () => {
+    const plan = basePlan();
+    const next = fillPlanSlot(plan, 3, "ov-01", fill);
+    expect(typeof next).not.toBe("string");
+    const derived = next as VideoEditorPlan;
+    expect(derived.origin).toBe("human");
+    expect(derived.basePlanRevision).toBe(3);
+    // 视频槽取段定 0 起（V-next 再做取段）
+    expect(derived.overlays[0]).toMatchObject({ inMs: 0, outMs: 10_000, source: { kind: "asset", fingerprint: fp("fill-hash") } });
+    // 另一槽原样；旧 plan 一个字没动
+    expect(derived.overlays[1]).toEqual(plan.overlays[1]);
+    expect(plan.overlays[0]!.source.kind).toBe("generate");
+  });
+
+  // 边界 #11
+  it("video 槽：素材短于槽位 → 拒绝并说清差多少；image 槽无时长检查", () => {
+    expect(fillPlanSlot(basePlan(), 3, "ov-01", { ...fill, durationMs: 9_999 })).toContain("盖不满");
+    const imagePlan: VideoEditorPlan = { ...basePlan(), overlays: toPlanOverlays([gen({ mediaKind: "image", durationMs: 8_000 })], candidates) };
+    const filled = fillPlanSlot(imagePlan, 1, "ov-01", { ...fill, name: "p.png", type: "image", durationMs: undefined });
+    expect(typeof filled).not.toBe("string");
+    expect((filled as VideoEditorPlan).overlays[0]!.inMs).toBeUndefined();
+  });
+
+  it("mediaKind 对不上 → 拒绝（要图给了视频、要视频给了图都不行）", () => {
+    expect(fillPlanSlot(basePlan(), 3, "ov-01", { ...fill, type: "image" })).toContain("要的是视频");
+    const imagePlan: VideoEditorPlan = { ...basePlan(), overlays: toPlanOverlays([gen({ mediaKind: "image", durationMs: 8_000 })], candidates) };
+    expect(fillPlanSlot(imagePlan, 1, "ov-01", fill)).toContain("要的是图片");
+  });
+
+  it("槽不存在 / 已经是素材槽 → 人话拒绝", () => {
+    expect(fillPlanSlot(basePlan(), 3, "ov-99", fill)).toContain("没有 ov-99");
+    expect(fillPlanSlot(basePlan(), 3, "ov-02", fill)).toContain("已经挂着素材");
   });
 });
 
@@ -246,15 +362,3 @@ describe("素材清单筛选（§2.6 兜底规则）", () => {
   });
 });
 
-describe("强调词", () => {
-  it("去空去重、保序、截到 15 个", () => {
-    expect(normalizeEmphasisWords([" FDE ", "FDE", "", "效率"])).toEqual(["FDE", "效率"]);
-    expect(normalizeEmphasisWords(Array.from({ length: 30 }, (_, i) => `词${i}`))).toHaveLength(15);
-  });
-
-  it("归一化后仍对不上的词被点名（边界 #14：不亮，但要看得见）", () => {
-    const kept = "今天聊聊 FDE，这是第二句。";
-    expect(unmatchedEmphasisWords(["fde", "第二句"], kept)).toEqual([]);
-    expect(unmatchedEmphasisWords(["增长黑客"], kept)).toEqual(["增长黑客"]);
-  });
-});

@@ -1,6 +1,9 @@
 /**
- * 输出时间域 ↔ 帧的确定性换算，以及字幕分行。
+ * 输出时间域 ↔ 帧的确定性换算，以及**块内**字幕排版。
  * 纯函数，无 IO、无随机——同一 manifest 每次渲染必须逐帧一致。
+ *
+ * 断句不在这里：cue 由 assemble 冻进 manifest（v2 spec §2.1），
+ * 渲染端只管「这一块怎么放得下」，不管「这一块该断在哪」。
  */
 import type { CaptionWord } from './manifest';
 
@@ -63,10 +66,6 @@ export const CAPTION_FONT_MIN_RATIO = 56 / 1080;
 /** 下沿安全区：画面高度的 15%。 */
 export const CAPTION_BOTTOM_SAFE_RATIO = 0.15;
 
-export const CAPTION_MAX_LINE_DURATION_MS = 2500;
-/** 一行讲完后最多再挂 1 秒（下一行来了就换），避免长停顿时字幕悬空。 */
-export const CAPTION_LINGER_MS = 1000;
-
 export type CaptionLayout = {
   rowWidthPx: number;
   maxFontSize: number;
@@ -86,98 +85,49 @@ export function captionLayout(canvasWidth: number, canvasHeight: number): Captio
   };
 }
 
-/**
- * 字号自适应：一行装得下就用基准字号；装不下**先缩字号**（到 minFontSize 为止），
- * 仍装不下才让它折到第二行——「超长句缩字号优先于折行」（spec §2.2）。
- */
-export function captionFontSize(widthEm: number, layout: CaptionLayout): number {
-  if (widthEm <= 0) return layout.maxFontSize;
-  const fitsOneRow = Math.floor(layout.rowWidthPx / widthEm);
-  if (fitsOneRow >= layout.maxFontSize) return layout.maxFontSize;
-  if (fitsOneRow >= layout.minFontSize) return fitsOneRow;
-  return layout.minFontSize;
-}
-
-export type CaptionLine = {
-  words: CaptionWord[];
-  startMs: number;
-  endMs: number;
-  /** 实际上屏区间 [showFromMs, showUntilMs)，由 groupWordsIntoLines 一并算好。 */
-  showFromMs: number;
-  showUntilMs: number;
-  /** 整行的估算宽度（em），字号自适应据此计算。 */
-  widthEm: number;
-};
-
 function visibleText(word: string): string {
   return word.trim();
 }
 
-/**
- * 词 → 行。规则：累计估算宽度超过 maxWidthEm，或行时长超过 maxDurationMs 就断行。
- * 单个词本身超宽时自成一行（不切词）——切词会把 FDE 断成 FD/E，那比折行难看得多。
- */
-export function groupWordsIntoLines(
-  words: CaptionWord[],
-  opts?: { maxWidthEm?: number; maxDurationMs?: number; lingerMs?: number; totalDurationMs?: number },
-): CaptionLine[] {
-  const maxWidthEm = opts?.maxWidthEm ?? captionLayout(1920, 1080).maxWidthEm;
-  const maxDurationMs = opts?.maxDurationMs ?? CAPTION_MAX_LINE_DURATION_MS;
-  const lingerMs = opts?.lingerMs ?? CAPTION_LINGER_MS;
-
-  const usable = words.filter((w) => visibleText(w.w).length > 0);
-  const lines: CaptionLine[] = [];
+/** 贪心折行：单个词本身超宽时自成一行（不切词）——切词会把 FDE 断成 FD/E，比折行难看得多。 */
+export function wrapCueLines(words: readonly CaptionWord[], rowWidthEm: number): CaptionWord[][] {
+  const lines: CaptionWord[][] = [];
   let bucket: CaptionWord[] = [];
   let widthEm = 0;
-
-  const flush = () => {
-    if (bucket.length === 0) return;
-    const startMs = bucket[0]!.startMs;
-    const endMs = Math.max(...bucket.map((w) => w.endMs));
-    lines.push({ words: bucket, startMs, endMs, showFromMs: startMs, showUntilMs: endMs, widthEm });
-    bucket = [];
-    widthEm = 0;
-  };
-
-  for (const word of usable) {
+  for (const word of words) {
     const em = estimateWidthEm(visibleText(word.w));
-    if (bucket.length > 0) {
-      const wouldBeSpanMs = word.endMs - bucket[0]!.startMs;
-      if (widthEm + em > maxWidthEm || wouldBeSpanMs > maxDurationMs) flush();
+    if (bucket.length > 0 && widthEm + em > rowWidthEm) {
+      lines.push(bucket);
+      bucket = [];
+      widthEm = 0;
     }
     bucket.push(word);
     widthEm += em;
   }
-  flush();
-
-  // 上屏区间：挂到下一行开始，但最多多挂 lingerMs。
-  const totalDurationMs = opts?.totalDurationMs;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const next = lines[i + 1];
-    const hardStop = next ? next.startMs : (totalDurationMs ?? line.endMs + lingerMs);
-    line.showUntilMs = Math.min(hardStop, line.endMs + lingerMs);
-    if (line.showUntilMs <= line.showFromMs) line.showUntilMs = line.showFromMs + 1;
-  }
+  if (bucket.length > 0) lines.push(bucket);
   return lines;
 }
 
-export type TimeSpan = { startMs: number; endMs: number };
+export type CueLayout = { fontSize: number; lines: CaptionWord[][] };
 
 /**
- * 需要给字幕垫半透明底板的时段：整屏屏录/图版之上。
- * 描边扛不住白色界面（spec §2.2），而真人底轨本来就暗，不必全程加板。
+ * 一块 cue 的排版：≤2 行、每行 ≤80% 画布宽，字号自基准值起逐档下压直到装得下。
+ *
+ * 下压是**兜底而非常态**：assemble 的宽度预算已经把 cue 卡在 2 行以内，这里只处理
+ * 「一个 token（长 URL / 长英文词）本身就比一行还宽」的情况——绝不让它溢出画布（边界 #7）。
+ * 纯函数、整数字号：同一 cue 每次渲染逐帧一致。
  */
-export function captionBackdropSpans(
-  overlays: readonly { kind: string; outputStartMs: number; durationMs: number }[],
-): TimeSpan[] {
-  return overlays
-    .filter((o) => o.kind === 'screen' || o.kind === 'image')
-    .map((o) => ({ startMs: o.outputStartMs, endMs: o.outputStartMs + o.durationMs }));
-}
-
-export function spansContain(spans: readonly TimeSpan[], ms: number): boolean {
-  return spans.some((s) => ms >= s.startMs && ms < s.endMs);
+export function fitCue(words: readonly CaptionWord[], layout: CaptionLayout): CueLayout {
+  const usable = words.filter((w) => visibleText(w.w).length > 0);
+  if (usable.length === 0) return { fontSize: layout.maxFontSize, lines: [] };
+  for (let fontSize = layout.maxFontSize; fontSize >= 1; fontSize--) {
+    const rowWidthEm = layout.rowWidthPx / fontSize;
+    const lines = wrapCueLines(usable, rowWidthEm);
+    const fits = lines.length <= CAPTION_MAX_ROWS &&
+      lines.every((line) => line.reduce((sum, w) => sum + estimateWidthEm(visibleText(w.w)), 0) <= rowWidthEm);
+    if (fits) return { fontSize, lines };
+  }
+  return { fontSize: 1, lines: [usable] };
 }
 
 /** 转场淡入淡出：入出各 fadeFrames 帧的 opacity 插值输入区间（严格递增，短片段自动收窄）。 */

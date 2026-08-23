@@ -188,12 +188,23 @@ export interface VideoRevisions {
   rendered?: number;
 }
 
+/**
+ * 粗剪门内的低规格预览指针(v2 spec §4.1)。**它不是成片**:只用来在门上看一眼自己剪的是什么。
+ * requestedRevision > readyRevision = 新的一版正在渲,老的那版还能播。
+ */
+export interface VideoPreviewState {
+  requestedRevision: number;
+  readyRevision?: number;
+  error?: string;
+}
+
 export interface VideoState {
   schemaVersion: 1;
   entryType: "aroll";
   phase: VideoPhase;
   state: VideoRunState;
   blockedReason?: VideoBlockedReason;
+  preview?: VideoPreviewState;
   failedPhase?: VideoPhase;
   errorCode?: string;
   failReason?: string;
@@ -206,7 +217,8 @@ export interface VideoState {
 /** jobs 只用来显示「第几次尝试/错在哪」,字段抄够就行 */
 export interface VideoJob {
   jobId: string;
-  phase: "transcribe" | "cut" | "edit" | "assemble" | "render";
+  /** cut_preview 是门内预览的辅助 job,不是 VideoPhase */
+  phase: "transcribe" | "cut" | "edit" | "assemble" | "render" | "cut_preview";
   status: "queued" | "running" | "succeeded" | "failed";
   attempts: number;
   failReason?: string;
@@ -272,15 +284,21 @@ export interface CutView {
 }
 
 /**
- * 剪辑师排的一段 B-roll(横屏 spec §3)。界面只读不改:人能做的只有「删掉这段」,
+ * 覆盖轨的来源(v2 spec §4.2)。asset = 已有素材(快照钉住);
+ * generate = 还不存在的画面,人要在门内填素材,或确认时明示跳过。
+ */
+export type EditorPlanSource =
+  | { kind: "asset"; name: string; type: "screen" | "image"; durationMs?: number }
+  | { kind: "generate"; description: string; mediaKind: "video" | "image" };
+
+/**
+ * 剪辑师排的一段 B-roll(横屏 spec §3)。界面能做的是「删掉这段」与「给待生成槽填素材」,
  * 时间轴拖拽本期不做——摆半成品的交互出来只会让人以为它能用。
  */
 export interface EditorPlanOverlay {
   overlayId: string;
-  assetId: string;
   label: string;
-  filename: string;
-  kind: "screen" | "image";
+  source: EditorPlanSource;
   outputStartMs: number;
   durationMs: number;
   inMs?: number;
@@ -291,12 +309,10 @@ export interface EditorPlanOverlay {
 export interface VideoEditorPlan {
   schemaVersion: 1;
   cutRevision: number;
-  /** llm = 剪辑师真跑过(空 overlays = 它认为不需要);empty = 压根没跑(看 note/warning) */
-  origin: "llm" | "empty";
+  /** llm = 剪辑师真跑过(空 overlays = 它认为不需要);empty = 压根没跑;human = 人填槽派生的一版 */
+  origin: "llm" | "empty" | "human";
+  basePlanRevision?: number;
   overlays: EditorPlanOverlay[];
-  emphasisWords: string[];
-  /** 归一化后仍对不上转写的强调词:标出来,不假装它们会亮(边界 #14) */
-  unmatchedEmphasis?: string[];
   /** 没写说明/读不出时长/超预算被截的素材——面板必须点名,否则人不知道自己少填了一行字 */
   excludedAssets?: string[];
   warning?: string;
@@ -363,14 +379,44 @@ export const videoEditorConfirm = (args: {
   contentId: string;
   planRevision: number;
   keptOverlayIds: string[];
-  keptEmphasisWords: string[];
 }) =>
   videoInvoke<{ state: VideoState }>("video:editor_confirm", {
     content_id: args.contentId,
     plan_revision: args.planRevision,
     kept_overlay_ids: args.keptOverlayIds,
-    kept_emphasis_words: args.keptEmphasisWords,
   });
+
+/** 给待生成槽填素材;返回的是**派生出的新一版 plan**,直接换掉手里那份 */
+export const videoEditorSlotFill = (args: {
+  contentId: string;
+  planRevision: number;
+  overlayId: string;
+  libraryId: string;
+}) =>
+  videoInvoke<EditorPlanView>("video:editor_slot_fill", {
+    content_id: args.contentId,
+    plan_revision: args.planRevision,
+    overlay_id: args.overlayId,
+    library_id: args.libraryId,
+  });
+
+/** 按门上当前勾选重渲一版预览;主状态不动,渲完走 SSE 刷新 */
+export const videoCutPreview = (args: {
+  contentId: string;
+  keeps: string[];
+  baseTranscriptRevision: number;
+  baseCutRevision: number;
+}) =>
+  videoInvoke<{ state: VideoState }>("video:cut_preview", {
+    content_id: args.contentId,
+    keeps: args.keeps,
+    base_transcript_revision: args.baseTranscriptRevision,
+    base_cut_revision: args.baseCutRevision,
+  });
+
+/** 渲染失败在一份废 manifest 上时的出口:回组装重出一份(重试只会重投同一份) */
+export const videoReassemble = (contentId: string) =>
+  videoInvoke<{ state: VideoState }>("video:reassemble", { content_id: contentId });
 
 /** 重新跑剪辑师(横屏 spec §3.1);只在成片计划的人工门上可用,错误原样透传 */
 export const videoEditorRerun = (contentId: string) =>
@@ -491,6 +537,14 @@ export function videoStateSummary(s: VideoState): string {
  */
 export function videoMediaUrl(contentId: string, renderedRevision: number): string {
   return `/api/video/media/${encodeURIComponent(contentId)}/final.v${renderedRevision}.mp4`;
+}
+
+/**
+ * 门内预览的播放地址(v2 spec §4.1)。与成片同一个媒体端点,但**文件名不同**——
+ * 预览永远不冒充成片,拿错名字就播不出来,这是刻意的。
+ */
+export function videoPreviewUrl(contentId: string, previewRevision: number): string {
+  return `/api/video/media/${encodeURIComponent(contentId)}/preview.v${previewRevision}.mp4`;
 }
 
 /** 成片登记回稿件素材时的文件名(render-exec.ts:`final-v<K>.mp4`,与上面播放名不同源) */

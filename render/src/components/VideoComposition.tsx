@@ -5,11 +5,11 @@
 import React from 'react';
 import { AbsoluteFill, Audio, Sequence } from 'remotion';
 import type { RenderManifest } from '../manifest';
-import { captionBackdropSpans, msToDurationFrames } from '../time';
+import { msToDurationFrames } from '../time';
 import { ARollFrame } from './ARollFrame';
+import { Captions } from './Captions';
 import { HookTitle } from './HookTitle';
 import { OverlayClip } from './OverlayClip';
-import { WordHighlightCaptions } from './WordHighlightCaptions';
 
 export type VideoCompositionProps = {
   manifest: RenderManifest | null;
@@ -68,14 +68,11 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({ manifest }) 
         </Sequence>
       ) : null}
 
-      <WordHighlightCaptions
-        words={manifest.captions.words}
-        emphasisWords={manifest.captions.emphasisWords}
+      <Captions
+        cues={manifest.captions.cues}
         theme={manifest.identity.captionTheme}
-        durationMs={manifest.durationMs}
-        // 标题卡在场时字幕整体让位；整屏屏录/图版之上则垫底板（spec §2.2）
+        // 标题卡在场时字幕整体让位；底板常开，不再按时段开关（v2 spec §2.2）
         hideUntilMs={titleCard ? titleCard.durationMs : 0}
-        backdropSpans={captionBackdropSpans(manifest.overlays)}
       />
     </AbsoluteFill>
   );

@@ -77,12 +77,29 @@ export interface VideoStaleFlags {
   aroll?: boolean;
 }
 
+/**
+ * 粗剪门内的低规格预览（v2 spec §4.1）。**它不是成片**：文件不登记稿件 asset，
+ * 也不参与任何 revision 语义，只是「让人在门上看得见自己剪的是什么」。
+ *
+ * `requestedRevision` 单调递增（= `cut-preview-request.v<P>.json` 的 P）；
+ * settle 时若它已不是当前值，说明人又点了一次重渲，旧结果直接丢弃（latest-wins）。
+ */
+export interface VideoPreviewState {
+  requestedRevision: number;
+  /** 已渲染就绪、可播的那一版；缺省 = 还没有任何可播预览 */
+  readyRevision?: number;
+  /** 非空 = 最近一次预览没出来；门照常可确认，横幅可见（边界 #1） */
+  error?: string;
+}
+
 export interface VideoState {
   schemaVersion: 1;
   entryType: "aroll";
   phase: VideoPhase;
   state: VideoRunState;
   blockedReason?: VideoBlockedReason;
+  /** 粗剪门内的预览指针；与 phase/state 正交，辅助 job 单独更新它 */
+  preview?: VideoPreviewState;
   /**
    * 失败恢复点：重试 = 重投 failedPhase，回到其前置人工门产物。
    * spec 原文写的是 `string`，这里收紧成 VideoPhase——`video:retry` 要拿它直接投递，
@@ -170,23 +187,60 @@ export interface VideoCut {
   baseCutRevision?: number;
 }
 
+/**
+ * `video/cut-preview-request.v<P>.json` —— 门内预览的**不可变请求**（v2 spec §4.1）。
+ *
+ * 刻意**不写正式 cut revision**：门上的勾选是草稿，写成 cut 就污染了「cut = 剪辑决策」
+ * 这条语义，也会让 `cut_confirm` 的乐观锁失去基准。人真确认时才写 human cut revision。
+ */
+export interface VideoPreviewRequest {
+  schemaVersion: 1;
+  keeps: string[];
+  baseCutRevision: number;
+  baseTranscriptRevision: number;
+  /** 渲染算法版本；改了预览口径就该重渲，不该复用旧文件 */
+  renderAlgoVersion: string;
+}
+
 // ---------------------------------------------------------------------------
 // 剪辑师 plan（横屏 spec §3.1）——B-roll 编排的提案，人删完才生效
 // ---------------------------------------------------------------------------
 
 /**
- * plan 里的一段覆盖轨。`assetId` 是**本 plan 的目录编号**（b1、b2…），不是素材清单里的
- * assetId：编排时素材还没登记进 `assets.json`（那是 assemble 的活），而短编号比文件名
- * 更不容易被模型抄错。真正的落点由 `ref` 钉住，确认时直接翻成 OverlaySlot。
+ * 覆盖轨的来源（v2 spec §4.2）。判别联合的 tag 是 `kind`：
+ * - `asset`：已有素材，**快照钉住**（ref + 指纹 + 时长），不再用 b1/b2 临时号对外。
+ *   指纹在「剪辑师选中」或「人填槽」的那一刻打，assemble 复检对着的就是这一份。
+ * - `generate`：还不存在的画面。它有完整时间落位，所以计入覆盖率与禁区校验
+ *   ——它就是未来的画面，不是占位符。
  */
+export type EditorPlanSource =
+  | {
+      kind: "asset";
+      ref: AssetRef;
+      /** 文件名（面板显示与排障都靠它） */
+      name: string;
+      type: "screen" | "image";
+      durationMs?: number;
+      /**
+       * 选中 / 填槽那一刻的指纹快照，assemble 复检对着它。
+       * 可缺省**只为兼容 v1 旧 plan**（那时压根没这份快照）：旧 plan 上的槽跳过复检，
+       * 新产的 plan 一律带着它。一次性容忍，不留长期 shim。
+       */
+      fingerprint?: AssetFingerprint;
+    }
+  | {
+      kind: "generate";
+      /** 可直接当生成指令的画面描述（§5.2 规范）；面板也拿它当标题 */
+      description: string;
+      mediaKind: "video" | "image";
+    };
+
+/** plan 里的一段覆盖轨。落点由 `source` 钉住，确认时直接翻成 OverlaySlot */
 export interface EditorPlanOverlay {
   overlayId: string;
-  assetId: string;
-  /** 素材说明快照，面板逐条显示（人靠它判断这一刀切得对不对） */
+  /** 说明快照，面板逐条显示（人靠它判断这一刀切得对不对） */
   label: string;
-  filename: string;
-  kind: "screen" | "image";
-  ref: AssetRef;
+  source: EditorPlanSource;
   /** 输出时间域（成片时间轴） */
   outputStartMs: number;
   durationMs: number;
@@ -203,17 +257,17 @@ export interface EditorPlanOverlay {
  *
  * 空 plan 的两种成因必须分得开（§3.1）：
  * - `origin:"llm"` + 空 overlays = 剪辑师看过了，认为不需要 B-roll
- * - `origin:"empty"` = 压根没跑（没素材/片子太短 → `note`；调用失败/无 key → `warning`）
+ * - `origin:"empty"` = 压根没跑（片子太短 → `note`；调用失败/无 key → `warning`）
+ * - `origin:"human"` = 人填了槽派生出来的一版（v2 §4.2，版本化纪律：填槽不改旧版）
  */
 export interface VideoEditorPlan {
   schemaVersion: 1;
   /** 这份编排是对哪一版**确认后**的选段算的（输出域时间随 keeps 变，错版即失效） */
   cutRevision: number;
-  origin: "llm" | "empty";
+  origin: "llm" | "empty" | "human";
+  /** `origin:"human"` 时非空：这一版是在哪一版上填槽派生的 */
+  basePlanRevision?: number;
   overlays: EditorPlanOverlay[];
-  emphasisWords: string[];
-  /** 归一化后在成片里找不到的强调词（边界 #14）：面板标出来，不假装它们会亮 */
-  unmatchedEmphasis?: string[];
   /** 没写说明、读不出时长、或超预算被截掉的素材（边界 #3 / #9）——面板点名 */
   excludedAssets?: string[];
   /** 非空 = 剪辑师没跑成，面板出横幅（降级必须可见） */
@@ -283,7 +337,6 @@ export interface TimelineOverlay {
 export interface TimelineCaptions {
   /** registry.captions 之一 */
   style: string;
-  emphasisWords?: string[];
 }
 
 /** 语义 = 输出域开头的覆盖层，**不前插、不改总时长** */
@@ -367,92 +420,31 @@ export interface VideoAssetEntry {
 }
 
 // ---------------------------------------------------------------------------
-// §2.8 render manifest —— 冻结点
+// §2.8 render manifest —— 冻结点（形状住在 render-contract.ts，这里原样再导出）
 // ---------------------------------------------------------------------------
 
-/**
- * assemble 终点冻结的渲染契约。**render 只消费这份 manifest**，绝不回头读 timeline；
- * 发布件的 AI 标注判定只读被审那版的 `provenance`（§2.8 / codex #24）。
- *
- * 字段形状是跨 workspace 契约：render CLI 按它自类型化并做第二次校验，
- * 改这里等于改协议——要么双侧同改，要么升 schemaVersion。
- */
-export interface RenderManifestArollSegment {
-  sourceStartMs: number;
-  sourceEndMs: number;
-  outputStartMs: number;
-}
-
-export interface RenderManifestOverlay {
-  clipId: string;
-  outputStartMs: number;
-  durationMs: number;
-  kind: "screen" | "graphic" | "ai" | "image";
-  /** screen/ai/image：已解析的绝对路径 */
-  file?: string;
-  inMs?: number;
-  outMs?: number;
-  fit?: OverlayFit;
-  /** graphic：registry 模板名与其 props */
-  template?: string;
-  props?: Record<string, unknown>;
-  transition?: "cut" | "fade";
-}
-
-export interface RenderManifestCaptions {
-  style: "word-highlight";
-  /** 已投影到输出时间域的词级时间戳 */
-  words: TranscriptWord[];
-  emphasisWords: string[];
-}
-
-export interface RenderManifestIdentity {
-  captionTheme: {
-    fontFamily?: string;
-    primaryColor: string;
-    emphasisColor: string;
-  };
-  /** 代码块配色。形状与 render workspace 的 CodeThemeSchema 对齐（那边 `.strict()`，写成字符串会被拒） */
-  codeTheme?: {
-    background?: string;
-    foreground?: string;
-    accent?: string;
-    fontFamily?: string;
-  };
-}
-
-export interface RenderManifest {
-  /** v2 = 横屏换向；v1 竖屏 manifest 进渲染会被 render 侧 zod 拒绝（横屏 spec §2.1） */
-  schemaVersion: 2;
-  contentId: string;
-  timelineRevision: number;
-  cutRevision: number;
-  transcriptRevision: number;
-  /** 视频线唯一画幅 = 横屏 1920×1080@30（横屏 spec §0）——字面量即契约 */
-  fps: 30;
-  width: 1920;
-  height: 1080;
-  durationMs: number;
-  /** 有 BGM 时指 master-audio.v<K>.wav，无 BGM 时指 anchor.v<M>.wav；渲染侧只播这一条 */
-  anchorAudio: { file: string; durationMs: number };
-  arollVideo: { file: string; segments: RenderManifestArollSegment[] };
-  overlays: RenderManifestOverlay[];
-  captions: RenderManifestCaptions;
-  titleCard?: { template: "hook-title"; text: string; durationMs: number };
-  identity: RenderManifestIdentity;
-  provenance: { hasAiClips: boolean; hasClonedVoice: boolean };
-}
+export type {
+  RenderManifest,
+  RenderManifestArollSegment,
+  RenderManifestCaptions,
+  RenderManifestCue,
+  RenderManifestIdentity,
+  RenderManifestOverlay,
+} from "./render-contract.js";
 
 // ---------------------------------------------------------------------------
 // §3 执行模型 —— video/jobs.jsonl
 // ---------------------------------------------------------------------------
 
 /**
- * 值得开 job 的五步。cut 从 V0b 起有了计算步（AI 粗剪），所以它也要 lease/心跳/CAS——
- * 人工门是 `cut/awaiting_human`，门前那一道计算跟其它阶段一样要被调度纪律管住。
+ * 值得开 job 的五步 + 一条辅助 job。cut 从 V0b 起有了计算步（AI 粗剪），所以它也要
+ * lease/心跳/CAS——人工门是 `cut/awaiting_human`，门前那一道计算跟其它阶段一样要被调度纪律管住。
  * review 仍是纯人工门，ingest 是同步校验，两者不开 job。
+ *
+ * `cut_preview` **不是 VideoPhase**（v2 spec §4.1）：它是门内重渲的辅助 job，
+ * 全程不动主状态——主状态钉在 `cut/awaiting_human`，确认不被渲染阻塞。
  */
-export type VideoJobPhase = "transcribe" | "cut" | "edit" | "assemble" | "render";
+export type VideoJobPhase = "transcribe" | "cut" | "edit" | "assemble" | "render" | "cut_preview";
 
 export type VideoJobStatus = "queued" | "running" | "succeeded" | "failed";
 

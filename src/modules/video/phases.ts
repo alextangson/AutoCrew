@@ -13,13 +13,15 @@
 import path from "node:path";
 import { getContent } from "../../storage/local-store.js";
 import { assembleVideo, driftedAssets } from "./assemble.js";
-import { readEmphasisWords, readOverlaySlots } from "./timeline-build.js";
+import { readOverlaySlots } from "./timeline-build.js";
 import { extractAsrWav, runAsr, scriptMatchRatio } from "./asr.js";
 import { catalogDigest, runEditor, type EditorKeepUnit } from "./editor.js";
-import { scanBrollCandidates, trimCandidates, unmatchedEmphasisWords } from "./editor-plan.js";
+import { fingerprintFile } from "./fingerprint.js";
+import { scanBrollCandidates, trimCandidates, type EditorCandidate } from "./editor-plan.js";
 import { ingestAroll } from "./ingest.js";
 import { buildOutputMap, outputDurationMs } from "./output-map.js";
 import type { VideoDeps } from "./proc.js";
+import { renderGatePreview } from "./preview-exec.js";
 import { runRenderJob } from "./render-exec.js";
 import { runRoughCut } from "./rough-cut.js";
 import type { VideoStateRef } from "./state-machine.js";
@@ -38,6 +40,7 @@ import type {
   VideoCut,
   VideoEditUnits,
   VideoEditorPlan,
+  VideoPreviewState,
   VideoRevisions,
   VideoState,
   VideoTranscript,
@@ -54,6 +57,8 @@ interface StepOk {
   next: VideoStateRef;
   revisions?: Partial<VideoRevisions>;
   staged?: StagedArtifact[];
+  /** cut 阶段顺带出的门内预览指针（v2 spec §4.1）；由 runner 在同一次 CAS 里落盘 */
+  preview?: VideoPreviewState;
 }
 
 export type StepResult =
@@ -200,8 +205,13 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
   if (!ctx.jobId) return { ok: false, errorCode: "missing_job", reason: "cut 阶段缺 jobId，产物无处落 staging" };
   const base = await readVersioned<VideoCut>(dir, "cut", baseCutRevision);
   if (base?.origin === "human") {
-    // §7 #10：人已经交过终裁，迟到的后台建议一律不许覆盖
-    return { ok: true, next: HUMAN_GATE, warning: "这一版选段已由人工确认，AI 粗剪建议不再覆盖" };
+    // §7 #10：人已经交过终裁，迟到的后台建议一律不许覆盖。预览照出——门上没片可看才是最糟的
+    return {
+      ok: true,
+      next: HUMAN_GATE,
+      preview: await renderGatePreview(ctx, { keeps: base.keeps, transcriptRevision, cutRevision: baseCutRevision }),
+      warning: "这一版选段已由人工确认，AI 粗剪建议不再覆盖",
+    };
   }
 
   const ratio = transcript.scriptAlignment?.matchedRatio;
@@ -217,7 +227,7 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
   );
 
   const cutRevision = baseCutRevision + 1;
-  await stageCutArtifacts(dir, ctx.jobId, { outcome, transcriptRevision, baseCutRevision });
+  const staged = await stageCutArtifacts(dir, ctx.jobId, { outcome, transcriptRevision, baseCutRevision });
   return {
     ok: true,
     next: HUMAN_GATE,
@@ -226,6 +236,13 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
       { base: "edit-units", revision: cutRevision },
       { base: "cut", revision: cutRevision },
     ],
+    // 「粗剪 LLM → 预览渲染」在同一个运行段里顺序做完，人开门时就有片可看（v2 spec §4.1）
+    preview: await renderGatePreview(ctx, {
+      keeps: staged.keeps,
+      transcriptRevision,
+      cutRevision,
+      units: { segments: staged.units.segments, origin: staged.units.origin },
+    }),
     ...(outcome.warning ? { warning: outcome.warning } : {}),
   };
 }
@@ -235,7 +252,7 @@ async function stageCutArtifacts(
   dir: string,
   jobId: string,
   input: { outcome: Awaited<ReturnType<typeof runRoughCut>>; transcriptRevision: number; baseCutRevision: number },
-): Promise<void> {
+): Promise<{ keeps: string[]; units: VideoEditUnits }> {
   const { outcome, transcriptRevision, baseCutRevision } = input;
   const units: VideoEditUnits = {
     schemaVersion: 1,
@@ -257,6 +274,7 @@ async function stageCutArtifacts(
   };
   await writeStaging(dir, "edit-units", jobId, units);
   await writeStaging(dir, "cut", jobId, cut);
+  return { keeps: cut.keeps, units };
 }
 
 /** edit 的出口只有一个：人工门。剪辑师跑成什么样都停在这儿，由人删定（横屏 spec §3.1） */
@@ -305,23 +323,42 @@ async function loadKeeps(
 function stageEditorPlan(
   dir: string,
   jobId: string,
-  input: { outcome: Awaited<ReturnType<typeof runEditor>>; cutRevision: number; excluded: string[]; keptText: string },
+  input: { outcome: Awaited<ReturnType<typeof runEditor>>; cutRevision: number; excluded: string[] },
 ): Promise<string> {
-  const { outcome, cutRevision, excluded, keptText } = input;
-  const unmatched = unmatchedEmphasisWords(outcome.emphasisWords, keptText);
+  const { outcome, cutRevision, excluded } = input;
   const plan: VideoEditorPlan = {
     schemaVersion: 1,
     cutRevision,
     origin: outcome.origin,
     overlays: outcome.overlays,
-    emphasisWords: outcome.emphasisWords,
-    ...(unmatched.length > 0 ? { unmatchedEmphasis: unmatched } : {}),
     ...(excluded.length > 0 ? { excludedAssets: excluded } : {}),
     ...(outcome.warning ? { warning: outcome.warning } : {}),
     ...(outcome.note ? { note: outcome.note } : {}),
     ...(outcome.provenance ? { provenance: outcome.provenance } : {}),
   };
   return writeStaging(dir, "editor-plan", jobId, plan);
+}
+
+/**
+ * 给候选素材打指纹快照（v2 spec §4.2）。读不出的文件当场剔除并点名——
+ * 让剪辑师排一段指向不存在文件的 B-roll，只会把问题推到 assemble 才炸。
+ */
+async function fingerprintCandidates(
+  dataDir: string,
+  contentId: string,
+  scan: { candidates: readonly Omit<EditorCandidate, "fingerprint">[]; excluded: string[] },
+): Promise<{ candidates: EditorCandidate[]; excluded: string[] }> {
+  const candidates: EditorCandidate[] = [];
+  const excluded = [...scan.excluded];
+  for (const c of scan.candidates) {
+    try {
+      const abs = await resolveAssetRef(dataDir, contentId, c.ref);
+      candidates.push({ ...c, fingerprint: await fingerprintFile(abs) });
+    } catch (err) {
+      excluded.push(`${c.filename}（读不到文件：${(err as Error).message}）`);
+    }
+  }
+  return { candidates, excluded };
 }
 
 /**
@@ -340,25 +377,22 @@ async function editPhase(ctx: PhaseContext): Promise<StepResult> {
 
   const content = await getContent(contentId, dataDir);
   const scan = trimCandidates(scanBrollCandidates(content?.assets ?? []));
+  // 指纹在剪辑师看到素材的这一刻打好，plan 的 asset 快照直接抄它（v2 spec §4.2 / 边界 #12）
+  const fingerprinted = await fingerprintCandidates(dataDir, contentId, scan);
   const outcome = await runEditor(
     {
       dataDir,
-      candidates: scan.candidates,
+      candidates: fingerprinted.candidates,
       units: keeps.units,
       outputDurationMs: keeps.durationMs,
       body: content?.body ?? "",
-      assetsDigest: catalogDigest(scan.candidates, scan.excluded),
+      assetsDigest: catalogDigest(scan.candidates, fingerprinted.excluded),
       abortSignal: ctx.abortSignal,
     },
     ctx.deps,
   );
   const editorRevision = (ctx.state.revisions.editor ?? 0) + 1;
-  await stageEditorPlan(dir, ctx.jobId, {
-    outcome,
-    cutRevision,
-    excluded: scan.excluded,
-    keptText: keeps.units.map((u) => u.text).join(""),
-  });
+  await stageEditorPlan(dir, ctx.jobId, { outcome, cutRevision, excluded: fingerprinted.excluded });
   return {
     ok: true,
     next: EDIT_GATE,
@@ -394,9 +428,10 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
       cut,
       cutRevision,
       timelineRevision,
-      // 覆盖轨与强调词都是「人在 edit 门上确认的那一份」，按 cutRevision 存取（见 timeline-build）
+      // 覆盖轨是「人在 edit 门上确认的那一份」，按 cutRevision 存取（见 timeline-build）
       slots: await readOverlaySlots(dataDir, contentId, cutRevision),
-      emphasisWords: await readEmphasisWords(dataDir, contentId, cutRevision),
+      // cue 口径跟着剪辑单元来源走；老产物没有单元表就按 raw 回落（边界 #9）
+      unitsOrigin: units?.origin ?? "raw",
     },
     ctx.deps,
   );

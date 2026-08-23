@@ -15,6 +15,7 @@ const RENDER_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const OUT_DIR = path.join(RENDER_ROOT, 'out');
 const FIXTURE_DIR = path.join(OUT_DIR, 'smoke-fixtures');
 const OUT_FILE = path.join(OUT_DIR, 'smoke.mp4');
+const PREVIEW_FILE = path.join(OUT_DIR, 'smoke-preview.mp4');
 const REGISTRY_FIXTURE = path.join(RENDER_ROOT, 'test-fixtures/timeline-registry.json');
 
 const TOTAL_MS = 3000;
@@ -82,7 +83,7 @@ function buildFixtures(): { aroll: string; audio: string; image: string } {
 // ---- 2. manifest ---------------------------------------------------------
 function buildManifest(assets: { aroll: string; audio: string; image: string }): string {
   const manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     contentId: 'smoke-content',
     timelineRevision: 1,
     cutRevision: 1,
@@ -131,20 +132,33 @@ function buildManifest(assets: { aroll: string; audio: string; image: string }):
       },
     ],
     captions: {
-      style: 'word-highlight',
-      words: [
-        { w: '这条', startMs: 0, endMs: 400 },
-        { w: '视频', startMs: 400, endMs: 900 },
-        { w: '讲', startMs: 900, endMs: 1200 },
-        { w: 'FDE', startMs: 1200, endMs: 1800 },
-        { w: '怎么', startMs: 1800, endMs: 2300 },
-        { w: '落地', startMs: 2300, endMs: 3000 },
+      style: 'plain',
+      cues: [
+        {
+          cueId: 'cue-0001',
+          startMs: 0,
+          endMs: 1200,
+          words: [
+            { w: '这条', startMs: 0, endMs: 400 },
+            { w: '视频', startMs: 400, endMs: 900 },
+            { w: '讲', startMs: 900, endMs: 1200 },
+          ],
+        },
+        {
+          cueId: 'cue-0002',
+          startMs: 1200,
+          endMs: 3000,
+          words: [
+            { w: 'FDE', startMs: 1200, endMs: 1800 },
+            { w: '怎么', startMs: 1800, endMs: 2300 },
+            { w: '落地', startMs: 2300, endMs: 3000 },
+          ],
+        },
       ],
-      emphasisWords: ['FDE'],
     },
     titleCard: { template: 'hook-title', text: 'FDE 是怎么落地的', durationMs: 1200 },
     identity: {
-      captionTheme: { fontFamily: 'PingFang SC', primaryColor: '#ffffff', emphasisColor: '#ffd60a' },
+      captionTheme: { fontFamily: 'PingFang SC', primaryColor: '#ffffff', accentColor: '#ffd60a' },
       codeTheme: { background: '#0d1117', foreground: '#e6edf3', accent: '#7ee787' },
     },
     provenance: { hasAiClips: false, hasClonedVoice: false },
@@ -153,20 +167,24 @@ function buildManifest(assets: { aroll: string; audio: string; image: string }):
   const file = path.join(FIXTURE_DIR, 'render-manifest.json');
   writeFileSync(file, JSON.stringify(manifest, null, 2), 'utf8');
 
-  // 边界 #11：v1 竖屏产物必须被 zod 拒绝，且拒绝理由是人话。
-  const legacy = { ...manifest, schemaVersion: 1, width: 1080, height: 1920 };
-  writeFileSync(path.join(FIXTURE_DIR, 'render-manifest.v1.json'), JSON.stringify(legacy, null, 2), 'utf8');
+  // 边界 #10：旧版 manifest（v2 逐词字幕）必须被 zod 拒绝，且拒绝理由是人话。
+  const legacy = {
+    ...manifest,
+    schemaVersion: 2,
+    captions: { style: 'word-highlight', words: manifest.captions.cues[0]!.words, emphasisWords: ['FDE'] },
+  };
+  writeFileSync(path.join(FIXTURE_DIR, 'render-manifest.legacy.json'), JSON.stringify(legacy, null, 2), 'utf8');
   return file;
 }
 
-/** 拿一份 v1 竖屏 manifest 撞校验：必须非零退出，且 stderr 说清「重新确认选段以重组装」。 */
+/** 拿一份旧 manifest 撞校验：必须非零退出，且 stderr 指的是「重新组装」这个按钮。 */
 async function checkLegacyRejected(): Promise<void> {
-  const legacyPath = path.join(FIXTURE_DIR, 'render-manifest.v1.json');
+  const legacyPath = path.join(FIXTURE_DIR, 'render-manifest.legacy.json');
   const cli = await runCli(legacyPath, path.join(OUT_DIR, 'smoke-legacy.mp4'));
-  check('v1 竖屏 manifest 被拒', cli.code !== 0, `退出码 ${cli.code}`);
+  check('旧版 manifest 被拒', cli.code !== 0, `退出码 ${cli.code}`);
   check(
-    'v1 拒绝理由是人话',
-    cli.stderr.includes('重新确认选段以重组装'),
+    '拒绝理由指路「重新组装」',
+    cli.stderr.includes('重新组装'),
     cli.stderr.trim().split('\n').slice(-3).join(' | ') || '（无 stderr）',
   );
 }
@@ -174,13 +192,13 @@ async function checkLegacyRejected(): Promise<void> {
 // ---- 3. 跑 CLI -----------------------------------------------------------
 type CliResult = { stdout: string; stderr: string; code: number; elapsedMs: number };
 
-function runCli(manifestPath: string, outFile: string = OUT_FILE): Promise<CliResult> {
+function runCli(manifestPath: string, outFile: string = OUT_FILE, profile = 'final'): Promise<CliResult> {
   const tsx = path.join(RENDER_ROOT, 'node_modules/.bin/tsx');
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(
       tsx,
-      ['src/cli.ts', '--manifest', manifestPath, '--out', outFile, '--registry', REGISTRY_FIXTURE],
+      ['src/cli.ts', '--manifest', manifestPath, '--out', outFile, '--registry', REGISTRY_FIXTURE, '--profile', profile],
       { cwd: RENDER_ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     let stdout = '';
@@ -227,6 +245,26 @@ function parseRate(rate: string | undefined): number {
   const [num, den] = rate.split('/').map(Number);
   if (!den) return NaN;
   return num! / den!;
+}
+
+/**
+ * `--profile preview`（v2 spec §4.1）：manifest 尺寸不变，靠 scale 0.5 出 960×540。
+ * 预览规格漂了，人就会对着一个假的画幅做决定，所以它跟成片一样进冒烟门。
+ */
+async function checkPreviewProfile(): Promise<void> {
+  const manifestPath = path.join(FIXTURE_DIR, 'render-manifest.json');
+  rmSync(PREVIEW_FILE, { force: true });
+  const cli = await runCli(manifestPath, PREVIEW_FILE, 'preview');
+  check('preview 档退出码', cli.code === 0, String(cli.code));
+  if (cli.code !== 0) return;
+  const video = ffprobe(PREVIEW_FILE).streams.find((s) => s.codec_type === 'video');
+  check(
+    `preview 画幅 ${WIDTH / 2}×${HEIGHT / 2}`,
+    video?.width === WIDTH / 2 && video?.height === HEIGHT / 2,
+    `${video?.width}×${video?.height}`,
+  );
+  check('preview 仍是 h264', video?.codec_name === 'h264', String(video?.codec_name));
+  log(`      预览：${PREVIEW_FILE}（${(cli.elapsedMs / 1000).toFixed(1)}s）`);
 }
 
 async function main(): Promise<void> {
@@ -298,6 +336,8 @@ async function main(): Promise<void> {
     check('含 aac 音轨', audio?.codec_name === 'aac', String(audio?.codec_name));
     log(`      成片：${OUT_FILE}`);
   }
+
+  await checkPreviewProfile();
 
   if (failures.length > 0) {
     log(`\n冒烟失败（${failures.length} 项）：`);

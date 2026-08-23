@@ -36,7 +36,7 @@ function timeline(over: Partial<VideoTimeline> = {}): VideoTimeline {
     anchor: { kind: "aroll", transcriptRevision: 1, cutRevision: 2 },
     base: { type: "aroll" },
     overlays: [],
-    captions: { style: "word-highlight", emphasisWords: ["重点"] },
+    captions: { style: "plain" },
     audio: { anchorGainDb: 0 },
     ...over,
   };
@@ -129,12 +129,14 @@ describe("结构与头部", () => {
 describe("受控枚举命中 registry", () => {
   it("captions.style 不在枚举里 → 报错并列出可用值", () => {
     const errs = validateTimeline(timeline({ captions: { style: "karaoke" } }), ctx());
-    expect(errs[0]).toContain("word-highlight");
+    expect(errs[0]).toContain("plain");
   });
 
-  it("captions.emphasisWords 必须是字符串数组", () => {
-    const t = timeline({ captions: { style: "word-highlight", emphasisWords: [1] as never } });
-    expect(validateTimeline(t, ctx()).join()).toContain("emphasisWords");
+  // 逐词高亮已整删（v2 spec §3）：旧样式名不再是合法枚举，撞上必须被点名
+  it("旧的 word-highlight 样式被拒（emphasis 机制已删）", () => {
+    const errs = validateTimeline(timeline({ captions: { style: "word-highlight" } }), ctx());
+    expect(errs.join()).toContain("word-highlight");
+    expect(errs.join()).toContain("plain");
   });
 
   it("titleCard.template 不在枚举 / 文案空 / 时长越界", () => {

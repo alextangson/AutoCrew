@@ -14,6 +14,8 @@ import {
   VideoConflictError,
   type ConfirmCutArgs,
   type ConfirmEditorPlanArgs,
+  type FillEditorSlotArgs,
+  type RequestPreviewArgs,
   type VideoService,
 } from "../modules/video/service.js";
 import type { VideoState } from "../modules/video/types.js";
@@ -24,9 +26,12 @@ import {
   videoAsrWarmupHandler,
   videoBuildStartHandler,
   videoCutConfirmHandler,
+  videoCutPreviewHandler,
   videoEditorConfirmHandler,
   videoEditorPlanGetHandler,
   videoEditorRerunHandler,
+  videoEditorSlotFillHandler,
+  videoReassembleHandler,
   videoRetryHandler,
   videoReviewConfirmHandler,
   videoRoughCutRerunHandler,
@@ -51,6 +56,9 @@ interface Calls {
   retry: string[];
   rerunRoughCut: string[];
   rerunEditor: string[];
+  fillEditorSlot: Array<[string, FillEditorSlotArgs]>;
+  requestCutPreview: Array<[string, RequestPreviewArgs]>;
+  reassemble: string[];
   shutdown: number;
 }
 
@@ -91,6 +99,18 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
       calls.rerunEditor.push(id);
       return { ...STATE, phase: "edit", state: "queued" };
     },
+    fillEditorSlot: async (id, args) => {
+      calls.fillEditorSlot.push([id, args]);
+      return { plan: { schemaVersion: 1, cutRevision: 2, origin: "human", overlays: [] }, revision: args.planRevision + 1 };
+    },
+    requestCutPreview: async (id, args) => {
+      calls.requestCutPreview.push([id, args]);
+      return { ...STATE, phase: "cut", state: "awaiting_human", preview: { requestedRevision: 2 } };
+    },
+    reassemble: async (id) => {
+      calls.reassemble.push(id);
+      return { ...STATE, phase: "assemble", state: "queued" };
+    },
     getStatus: async () => ({ state: STATE, jobs: [] }),
     getTranscript: async () => null,
     getEditorPlan: async () => null,
@@ -113,6 +133,9 @@ beforeEach(async () => {
     retry: [],
     rerunRoughCut: [],
     rerunEditor: [],
+    fillEditorSlot: [],
+    requestCutPreview: [],
+    reassemble: [],
     shutdown: 0,
   };
   contentId = (
@@ -286,22 +309,16 @@ describe("video:cut_confirm 的 payload 解析", () => {
 describe("video:editor_* 的 payload 解析", () => {
   const base = { plan_revision: 2, kept_overlay_ids: ["ov-01"] };
 
-  it("snake_case 翻成域内形状；不传强调词 = 全留（键不出现）", async () => {
+  it("snake_case 翻成域内形状", async () => {
     const res = await videoEditorConfirmHandler({ ...base, content_id: contentId, _dataDir: dir });
     expect(res.ok).toBe(true);
     expect(calls.confirmEditorPlan[0][1]).toEqual({ planRevision: 2, keptOverlayIds: ["ov-01"] });
-  });
-
-  it("强调词全删 = 空数组（与「不传」不是一回事）", async () => {
-    await videoEditorConfirmHandler({ ...base, kept_emphasis_words: [], content_id: contentId, _dataDir: dir });
-    expect(calls.confirmEditorPlan[0][1]).toEqual({ planRevision: 2, keptOverlayIds: ["ov-01"], keptEmphasisWords: [] });
   });
 
   it.each([
     [{ plan_revision: -1 }, "plan_revision 必须是非负整数"],
     [{ kept_overlay_ids: "ov-01" }, "kept_overlay_ids 必须是字符串数组"],
     [{ kept_overlay_ids: ["ov-01", 7] }, "kept_overlay_ids 里有非法项"],
-    [{ kept_emphasis_words: [3] }, "kept_emphasis_words 里有非法项"],
   ])("变形 payload %# 被拒且不进 service", async (patch, expected) => {
     const res = await videoEditorConfirmHandler({ ...base, ...patch, content_id: contentId, _dataDir: dir });
     expect(res.ok).toBe(false);
@@ -398,5 +415,65 @@ describe("video:review_confirm 与 videoReadyAt", () => {
     const res = await videoReviewConfirmHandler({ ...approve, content_id: contentId, _dataDir: dir });
     expect(res).toMatchObject({ ok: false, conflict: true });
     expect((await getContent(contentId, dir))?.videoReadyAt).toBeUndefined();
+  });
+});
+
+describe("video:editor_slot_fill / cut_preview / reassemble", () => {
+  const fill = { content_id: "", plan_revision: 3, overlay_id: "ov-01", library_id: "asset-1" };
+
+  it("填槽：翻成域内形状，返回派生出的新一版 plan", async () => {
+    const res = await videoEditorSlotFillHandler({ ...fill, content_id: contentId, _dataDir: dir });
+    expect(res.ok).toBe(true);
+    expect(calls.fillEditorSlot[0][1]).toEqual({ planRevision: 3, overlayId: "ov-01", libraryId: "asset-1" });
+    expect((res.data as { revision: number }).revision).toBe(4);
+  });
+
+  it.each([
+    [{ overlay_id: "" }, "overlay_id 必须是非空字符串"],
+    [{ library_id: 7 }, "library_id 必须是非空字符串"],
+    [{ plan_revision: "3" }, "plan_revision 必须是非负整数"],
+  ])("填槽变形 payload %# 被拒且不进 service", async (patch, expected) => {
+    const res = await videoEditorSlotFillHandler({ ...fill, ...patch, content_id: contentId, _dataDir: dir });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain(expected);
+    expect(calls.fillEditorSlot).toEqual([]);
+  });
+
+  it("预览请求：只带 keeps 与两个 base revision（勾选是草稿，不带 flags）", async () => {
+    const res = await videoCutPreviewHandler({
+      content_id: contentId,
+      keeps: ["seg-0001"],
+      base_transcript_revision: 1,
+      base_cut_revision: 2,
+      _dataDir: dir,
+    });
+    expect(res.ok).toBe(true);
+    expect(calls.requestCutPreview[0][1]).toEqual({ keeps: ["seg-0001"], baseTranscriptRevision: 1, baseCutRevision: 2 });
+    expect((res.data as { state: VideoState }).state.preview?.requestedRevision).toBe(2);
+  });
+
+  it("预览请求变形 payload 被拒且不进 service", async () => {
+    const res = await videoCutPreviewHandler({ content_id: contentId, keeps: "seg-0001", base_transcript_revision: 1, base_cut_revision: 2, _dataDir: dir });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("keeps 必须是分句 id 数组");
+    expect(calls.requestCutPreview).toEqual([]);
+  });
+
+  it("重新组装：只要 content_id，判定在 service", async () => {
+    const res = await videoReassembleHandler({ content_id: contentId, _dataDir: dir });
+    expect(res.ok).toBe(true);
+    expect(calls.reassemble).toEqual([contentId]);
+  });
+
+  it("三条新通道都吃 service 未起 / 工作区不符这两道门", async () => {
+    setVideoService(null);
+    for (const h of [videoEditorSlotFillHandler, videoCutPreviewHandler, videoReassembleHandler]) {
+      expect((await h({ content_id: contentId })).ok).toBe(false);
+    }
+    setVideoService(stubService(), dir);
+    for (const h of [videoEditorSlotFillHandler, videoCutPreviewHandler, videoReassembleHandler]) {
+      const res = await h({ content_id: contentId, _dataDir: "/another/workspace" });
+      expect(String(res.error)).toContain("切换工作区后请重启");
+    }
   });
 });

@@ -17,6 +17,9 @@
  *
  * 屏录/图片覆盖轨(overlays)service 已经支持,但摆时间轴那套交互还没做——
  * 现在把半成品放上来只会让人以为它已经能用。
+ *
+ * v2 起门内多了一个**看片器**(spec §4.1):低规格预览是「看一眼自己剪的是什么」,
+ * 不是成片。预览没渲出来也照样能确认——门就是门,不被渲染阻塞。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "../ui";
@@ -25,8 +28,11 @@ import {
   alignmentWarning,
   formatTimecode,
   keepsInTranscriptOrder,
+  previewStatus,
   roughCutSummary,
   videoCutConfirm,
+  videoCutPreview,
+  videoPreviewUrl,
   videoRoughCutRerun,
   videoTranscriptGet,
   type CutFlagKind,
@@ -57,6 +63,7 @@ function CutStep(props: StepProps) {
   const [kept, setKept] = useState<ReadonlySet<string>>(new Set<string>());
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [playError, setPlayError] = useState(false);
 
   const load = useCallback(async () => {
     const r = await videoTranscriptGet(props.contentId);
@@ -101,6 +108,33 @@ function CutStep(props: StepProps) {
       setBusy(false);
     }
   };
+  /** 预览是低规格的看片辅助:渲不出来就把原因摆出来,门照开(边界 #1) */
+  const preview = previewStatus(props.state.preview);
+  useEffect(() => setPlayError(false), [preview.playableRevision]);
+  const rerenderPreview = async () => {
+    if (busy || kept.size === 0) return;
+    setBusy(true);
+    try {
+      const r = await videoCutPreview({
+        contentId: props.contentId,
+        keeps: keepsInTranscriptOrder(segments, kept),
+        baseTranscriptRevision: tRev,
+        baseCutRevision: cRev,
+      });
+      if (r.conflict) {
+        toast("版本已过期,已刷新最新版 —— 请重新确认一次");
+        await props.reload();
+        await load();
+        return;
+      }
+      if (!r.ok) return toast(r.error ?? "生成预览失败");
+      toast("预览在后台渲染 —— 好了这一页会自己出现");
+      await props.reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggle = (id: string) =>
     setKept((cur) => {
       const next = new Set(cur);
@@ -159,6 +193,33 @@ function CutStep(props: StepProps) {
 
       {segments.length > 0 && (
         <>
+          {preview.message && <p className="vid-warn">{preview.message}</p>}
+          {playError && (
+            <p className="ed-error">
+              预览播不出来 —— 多半是它已经被更新的一版顶掉了(只留最新)。点「重新生成预览」再出一版。
+            </p>
+          )}
+          {preview.playableRevision !== null && !playError && (
+            <video
+              // 样式写在这儿而不是 app.css:那边的 .vid-player 还钉着竖屏 9:16,套上去会把横屏预览压扁
+              style={{ width: "100%", maxWidth: 640, aspectRatio: "16 / 9", background: "#000", borderRadius: 8 }}
+              // key 带版本号:换版时强制重建 <video>,不然浏览器会继续播缓存里那一版
+              key={preview.playableRevision}
+              src={videoPreviewUrl(props.contentId, preview.playableRevision)}
+              controls
+              preload="metadata"
+              onError={() => setPlayError(true)}
+            />
+          )}
+          {preview.playableRevision === null && !preview.message && (
+            <p className="muted">这一版还没有预览 —— 勾完点「重新生成预览」看一眼。</p>
+          )}
+          <div className="row-actions vid-seg-tools">
+            <button disabled={busy || kept.size === 0} onClick={() => void rerenderPreview()}>
+              {preview.rendering ? "预览渲染中…" : "重新生成预览"}
+            </button>
+            <span className="muted">预览是 540p 快出的低规格片,只用来看剪得对不对;成片按全规格另渲。</span>
+          </div>
           <div className="row-actions vid-seg-tools">
             <button onClick={() => setAll(true)}>恢复全留</button>
             <button onClick={() => setAll(false)}>全不留</button>

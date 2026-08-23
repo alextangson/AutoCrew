@@ -23,18 +23,13 @@ import { probeMedia, resolveBgmRef } from "./ingest.js";
 import { upsertVideoAsset } from "./ingest.js";
 import { ffmpeg, LOUDNORM_MEASURE, parseLoudnorm, seconds, tunedLoudnorm } from "./loudnorm.js";
 import { buildMasterAudio } from "./master-audio.js";
-import { buildOutputMap, outputDurationMs, projectWordsToOutput } from "./output-map.js";
+import { buildCaptionCues } from "./captions.js";
+import { buildRenderManifest } from "./manifest-build.js";
+import { buildOutputMap, outputDurationMs } from "./output-map.js";
 import { stderrTail, type VideoDeps } from "./proc.js";
-import {
-  buildDeterministicTimeline,
-  OUTPUT_FPS,
-  OUTPUT_HEIGHT,
-  OUTPUT_WIDTH,
-  type OverlaySlot,
-} from "./timeline-build.js";
+import { buildDeterministicTimeline, type OverlaySlot } from "./timeline-build.js";
 import { TIMELINE_REGISTRY, validateTimeline } from "./timeline-validate.js";
 import {
-  readVersioned,
   readVideoAssets,
   resolveAssetRef,
   videoDir,
@@ -116,7 +111,7 @@ export async function buildAnchorWav(
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_IDENTITY: RenderManifestIdentity = {
-  captionTheme: { fontFamily: "PingFang SC", primaryColor: "#FFFFFF", emphasisColor: "#FFD54A" },
+  captionTheme: { fontFamily: "PingFang SC", primaryColor: "#FFFFFF", accentColor: "#FFD54A" },
 };
 
 function pickString(value: unknown, fallback?: string): string | undefined {
@@ -146,7 +141,7 @@ export async function loadIdentity(dataDir: string): Promise<RenderManifestIdent
         ? { fontFamily: pickString(caption.fontFamily, DEFAULT_IDENTITY.captionTheme.fontFamily)! }
         : {}),
       primaryColor: pickString(caption.primaryColor, DEFAULT_IDENTITY.captionTheme.primaryColor)!,
-      emphasisColor: pickString(caption.emphasisColor, DEFAULT_IDENTITY.captionTheme.emphasisColor)!,
+      accentColor: pickString(caption.accentColor, DEFAULT_IDENTITY.captionTheme.accentColor)!,
     },
     ...(codeTheme && Object.keys(codeTheme).length > 0 ? { codeTheme } : {}),
   };
@@ -156,12 +151,20 @@ export async function loadIdentity(dataDir: string): Promise<RenderManifestIdent
 // 素材：登记与复检
 // ---------------------------------------------------------------------------
 
-/** 覆盖轨槽位先登记成素材（含指纹），timeline 才有 assetId 可引用 */
+/**
+ * 覆盖轨槽位先登记成素材（含指纹），timeline 才有 assetId 可引用。
+ *
+ * 槽位自带指纹时**先复检再登记**（v2 spec §4.2 / 边界 #12）：那份指纹是剪辑师选中或人
+ * 填槽时打的快照。少了这一步，「填完槽又把文件换了」只会被登记成新指纹，从此查无可查。
+ */
 async function registerOverlayAssets(
   dataDir: string,
   contentId: string,
   slots: OverlaySlot[],
-): Promise<{ ok: true; overlays: { assetId: string; slot: OverlaySlot }[] } | { ok: false; reason: string }> {
+): Promise<
+  | { ok: true; overlays: { assetId: string; slot: OverlaySlot }[] }
+  | { ok: false; drifted?: true; reason: string }
+> {
   const overlays: { assetId: string; slot: OverlaySlot }[] = [];
   for (const slot of slots) {
     let absPath: string;
@@ -170,6 +173,15 @@ async function registerOverlayAssets(
       await fs.access(absPath);
     } catch (err) {
       return { ok: false, reason: `覆盖轨素材用不了：${(err as Error).message}` };
+    }
+    if (slot.fingerprint && !(await verifyFingerprint(absPath, slot.fingerprint))) {
+      return {
+        ok: false,
+        drifted: true,
+        reason:
+          `覆盖轨素材 ${path.basename(absPath)} 与确认成片计划时对不上了（被移动、替换或重新导出过）。\n` +
+          "改回原文件即可继续；确实换了新素材就回成片计划重新填一次这一槽",
+      };
     }
     const entry = await upsertVideoAsset(dataDir, contentId, {
       kind: slot.kind === "screen" ? "screen" : "image",
@@ -218,8 +230,11 @@ export interface AssembleInput {
   cutRevision: number;
   timelineRevision: number;
   slots: OverlaySlot[];
-  /** 剪辑师 plan 里被人留下的强调词（横屏 spec §3.5）；没有就是不点亮任何词 */
-  emphasisWords?: string[];
+  /**
+   * 剪辑单元的来源（`edit-units.origin`）。cue 切分按它分派：
+   * `llm` 走语义单元，`raw`（含老产物缺表回落）走宽度分组。
+   */
+  unitsOrigin?: "llm" | "raw";
 }
 
 export type AssembleOutcome =
@@ -327,38 +342,30 @@ interface FreezeInput {
   identity: RenderManifestIdentity;
 }
 
-/** manifest 是渲染的唯一事实：这里之后没人再回头读 timeline（§2.8） */
+/**
+ * manifest 是渲染的唯一事实：这里之后没人再回头读 timeline（§2.8）。
+ * 形状由共享 builder 出，本函数只负责把 timeline 翻成它要的入参——
+ * 预览与正式因此不可能长出两套时间映射（边界 #16）。
+ */
 function freezeManifest(f: FreezeInput): RenderManifest {
   const { input, timeline } = f;
-  return {
-    schemaVersion: 2,
+  return buildRenderManifest({
     contentId: input.contentId,
     timelineRevision: input.timelineRevision,
     cutRevision: input.cutRevision,
     transcriptRevision: input.transcriptRevision,
-    fps: OUTPUT_FPS,
-    width: OUTPUT_WIDTH,
-    height: OUTPUT_HEIGHT,
     durationMs: f.durationMs,
-    anchorAudio: { file: f.audio.file, durationMs: f.audio.durationMs },
-    arollVideo: {
-      file: f.arollPath,
-      segments: f.map.map(({ sourceStartMs, sourceEndMs, outputStartMs }) => ({ sourceStartMs, sourceEndMs, outputStartMs })),
-    },
+    map: f.map,
+    arollFile: f.arollPath,
+    audio: f.audio,
+    // 字幕断句在这里算完冻结，渲染端只做块内排版（v2 spec §2.1）
+    cues: buildCaptionCues({ transcript: input.transcript, map: f.map, origin: input.unitsOrigin ?? "raw" }),
     overlays: manifestOverlays(timeline, f.pathById),
-    captions: {
-      style: "word-highlight",
-      words: projectWordsToOutput(input.transcript, f.map),
-      // 数据源是剪辑师 plan（人删剩的那些词），经 timeline 落到这里（§2.7 / §3.5）
-      emphasisWords: timeline.captions.emphasisWords ?? [],
-    },
     ...(timeline.titleCard
-      ? { titleCard: { template: "hook-title" as const, text: timeline.titleCard.text, durationMs: timeline.titleCard.durationMs } }
+      ? { titleCard: { text: timeline.titleCard.text, durationMs: timeline.titleCard.durationMs } }
       : {}),
     identity: f.identity,
-    // V0a 不采购 AI 镜头、不用克隆音色（§7 是 V0b 起）——发布件的 AI 标注读的就是这两个字段
-    provenance: { hasAiClips: false, hasClonedVoice: false },
-  };
+  });
 }
 
 /** 输出域总长与零长分句的把关；不过就当场说清楚，绝不带病往下走 */
@@ -393,7 +400,6 @@ async function stageTimeline(
     overlays,
     outputDurationMs: durationMs,
     ...(titleText ? { titleText } : {}),
-    ...(input.emphasisWords?.length ? { emphasisWords: input.emphasisWords } : {}),
   });
   const errors = validateTimeline(timeline, {
     registry: TIMELINE_REGISTRY,
@@ -419,7 +425,11 @@ export async function assembleVideo(input: AssembleInput, deps?: VideoDeps): Pro
   if (before.length > 0) return driftBlocked(before);
 
   const registered = await registerOverlayAssets(dataDir, contentId, input.slots);
-  if (!registered.ok) return { ok: false, errorCode: "overlay_asset_unusable", reason: registered.reason };
+  if (!registered.ok) {
+    return registered.drifted
+      ? { ok: false, blockedReason: "aroll_drifted", errorCode: "overlay_asset_drifted", reason: registered.reason }
+      : { ok: false, errorCode: "overlay_asset_unusable", reason: registered.reason };
+  }
 
   let map: OutputMapEntry[];
   try {
