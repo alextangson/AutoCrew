@@ -48,6 +48,7 @@ describe("IPC_CHANNELS", () => {
     "publish:clipboard",
     "publish:digest",
     "publish:confirm",
+    "publish:pre_check",
     "publish:request_wechat",
     "publish:wechat_draft",
     "article_images:get",
@@ -82,6 +83,10 @@ describe("IPC_CHANNELS", () => {
     "onboarding:status",
     "onboarding:init",
     "flywheel:import_csv",
+    "flywheel:pull_status",
+    "flywheel:pull_now",
+    "flywheel:pull_toggle",
+    "flywheel:hypotheses_list",
     "dialog:pick_file",
     "knowledge:status",
     "radar:status",
@@ -138,10 +143,8 @@ describe("IPC_CHANNELS", () => {
     "research:import_asset",
   ];
 
-  it("has exactly 122 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(122);
-  it("has exactly 127 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(127);
+  it("has exactly 145 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(145);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -200,6 +203,7 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
     ["publish:clipboard", "clipboard"],
     ["publish:digest", "digest"],
     ["publish:confirm", "confirm_published"],
+    ["publish:pre_check", "check"],
     ["flywheel:import_csv", "import_csv"],
     ["content:adoption", "adoption"],
     ["content:delete", "delete"],
@@ -239,8 +243,16 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "article_images:remove_slot" &&
           ch !== "article_images:upload" &&
           ch !== "flywheel:wechat_pull" &&
+          ch !== "flywheel:pull_status" &&
+          ch !== "flywheel:pull_now" &&
+          ch !== "flywheel:pull_toggle" &&
+          ch !== "flywheel:hypotheses_list" &&
           ch !== "chat:turn" &&
+          ch !== "chat:abort" &&
+          ch !== "chat:turn_status" &&
+          ch !== "chat:model_options" &&
           ch !== "settings:get" &&
+          ch !== "settings:open_config" &&
           ch !== "settings:set" &&
           ch !== "settings:search_get" &&
           ch !== "settings:search_set" &&

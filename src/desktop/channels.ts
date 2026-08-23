@@ -17,6 +17,8 @@ export const IPC_CHANNELS = [
   "publish:clipboard",
   "publish:digest",
   "publish:confirm",
+  // 发布前检查(任意平台)：GUI 的「进入发布检查」CTA 走它——全过自动流转 publish_ready
+  "publish:pre_check",
   "publish:request_wechat",
   "publish:wechat_draft",
   "article_images:get",
@@ -64,6 +66,13 @@ export const IPC_CHANNELS = [
   "flywheel:import_csv",
   "flywheel:record",
   "flywheel:wechat_pull",
+  // 三平台自动回流控制面（回流 spec §4.4）：状态 / 手动抓 / 开关，
+  // 三条与定时 tick 共用后端 single-flight，前端置灰只是 UX
+  "flywheel:pull_status",
+  "flywheel:pull_now",
+  "flywheel:pull_toggle",
+  // 假设台账只读（spec §5.3）：open + 已裁决两组，裁决是代码算的观察性结论
+  "flywheel:hypotheses_list",
   "dialog:pick_file",
   "knowledge:status",
   "radar:status",

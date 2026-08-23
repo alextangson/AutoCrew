@@ -24,7 +24,9 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "content:get": ["id"],
   "publish:clipboard": ["content_id"],
   "publish:digest": ["content_id"],
+  // 可选键 publish_url（发布后的平台地址）：省略/空串 = 保留稿件上已有的链接，不清空
   "publish:confirm": ["content_id"],
+  "publish:pre_check": ["content_id"],
   "publish:request_wechat": ["content_id"],
   "publish:wechat_draft": ["content_id", "approval_token"],
   "article_images:get": ["content_id"],
@@ -72,6 +74,12 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "flywheel:import_csv": ["platform"],
   "flywheel:record": ["content_id", "metrics"],
   "flywheel:wechat_pull": [],
+  // 自动回流控制面：platform 只认 douyin/wechat_video/xiaohongshu（深校验在 handler）；
+  // pull_toggle 的 enabled 是布尔，false 也算「给了值」，所以列必填不会误拒关开关
+  "flywheel:pull_status": [],
+  "flywheel:pull_now": ["platform"],
+  "flywheel:pull_toggle": ["platform", "enabled"],
+  "flywheel:hypotheses_list": [],
   "dialog:pick_file": [],
   "knowledge:status": [],
   "radar:status": [],

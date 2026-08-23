@@ -9,6 +9,8 @@ import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { platformLabel } from "../lib";
+import { PullStatusPanel } from "./PullStatusPanel";
+import { HypothesesPanel } from "./HypothesesPanel";
 
 interface WorkItem {
   title: string;
@@ -61,6 +63,13 @@ export function ReportView() {
   const [impPlatform, setImpPlatform] = useState("wechat_mp");
   const [importing, setImporting] = useState(false);
 
+  /** 任何一条回流通道落库后重拉报表——三通道同源幂等,重拉一次数字就是最新的 */
+  const reloadReport = () => {
+    void invoke("flywheel:report").then((rr) => {
+      if (rr.ok) setD((rr as unknown as { data: Report }).data);
+    });
+  };
+
   // 公众号后台一键拉数(chrome-cdp 登录态,只读低频;登录失效会给扫码指引)
   const [pulling, setPulling] = useState(false);
   const pullWechat = async () => {
@@ -70,9 +79,7 @@ export function ReportView() {
     if (!r.ok) return toast(r.error ?? "拉取失败");
     const rep = (r as unknown as { data: { imported: number; matched: number; historical: number } }).data;
     toast(`公众号回填:入账 ${rep.imported} 条(匹配稿件 ${rep.matched} · 历史 ${rep.historical})`);
-    void invoke("flywheel:report").then((rr) => {
-      if (rr.ok) setD((rr as unknown as { data: Report }).data);
-    });
+    reloadReport();
   };
 
   // 创作者中心导出 CSV → flywheel 导入管线(csv_text 直传;校验/对账/幂等在后端)
@@ -85,9 +92,7 @@ export function ReportView() {
     if (!r.ok) return toast(r.error ?? "导入失败");
     const rep = (r as unknown as { data: { imported: number; matched: number; historical: number; needsReview: unknown[]; rejected: unknown[] } }).data;
     toast(`导入 ${rep.imported} 条:匹配稿件 ${rep.matched} · 历史 ${rep.historical} · 待复核 ${rep.needsReview.length}${rep.rejected.length ? ` · 拒绝 ${rep.rejected.length}` : ""}`);
-    void invoke("flywheel:report").then((rr) => {
-      if (rr.ok) setD((rr as unknown as { data: Report }).data);
-    });
+    reloadReport();
   };
 
   useEffect(() => {
@@ -151,6 +156,12 @@ export function ReportView() {
         </span>
       </div>
 
+      <p className="muted pull-note" style={{ marginTop: -4 }}>
+        手动导入（CSV / 抖音扩展）与自动抓取同源幂等——同一批数据重复导入无害，数字不会翻倍。
+      </p>
+
+      <PullStatusPanel onImported={reloadReport} />
+
       <div className="stat-grid">
         {tiles.map(([label, value]) => (
           <div key={label} className="stat-tile">
@@ -185,6 +196,8 @@ export function ReportView() {
           ))}
         </div>
       )}
+
+      <HypothesesPanel />
 
       <div className="card report-card">
         <div className="card-title">复盘报告</div>

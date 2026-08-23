@@ -25,7 +25,8 @@
  *   content:list       {}
  *   content:get        { id }
  *   publish:clipboard  { content_id, hashtags? }
- *   publish:confirm    { content_id, publish_url? }
+ *   publish:confirm    { content_id, publish_url? }      (publish_url 省略 = 保留旧链接)
+ *   publish:pre_check  { content_id }                    (发布前检查；全过则自动流转 publish_ready)
  *   chat:turn          { conversation_id?, message, turn_id?, client_id?, model_choice? }
  *   chat:abort         { turn_id, client_id }
  *   chat:turn_status   { turn_id }
@@ -105,6 +106,7 @@ import {
   retroGenerateHandler,
   retroListHandler,
   retroGetHandler,
+  hypothesesListHandler,
 } from "./goal-retro-handlers.js";
 import { openContentFolder } from "./folder-open.js";
 import { getOnboardingStatus, completeOnboardingInit } from "./onboarding.js";
@@ -124,6 +126,11 @@ import {
   openEngineConfigFile,
 } from "./settings.js";
 import { wechatPullHandler } from "./wechat-pull.js";
+import {
+  pullStatusHandler,
+  pullNowHandler,
+  pullToggleHandler,
+} from "./metrics-pull-handlers.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { appendAction } from "./recent-actions.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
@@ -256,6 +263,7 @@ export const CHANNEL_ACTIONS = {
   "publish:clipboard": "clipboard",
   "publish:digest": "digest",
   "publish:confirm": "confirm_published",
+  "publish:pre_check": "check",
   "flywheel:import_csv": "import_csv",
   "flywheel:record": "record",
   "content:update": "update",
@@ -1089,6 +1097,9 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
       wrapExecute(executePublish as ExecuteFn, CHANNEL_ACTIONS["publish:confirm"]),
       "published",
     ),
+    // 发布前检查：与公众号推送门（publish:request_wechat）同一套 executePrePublish，
+    // 差别是这条不发凭证——它只跑检查，全过由 pre-publish 自己流转到 publish_ready
+    "publish:pre_check": wrapExecute(executePrePublish as ExecuteFn, CHANNEL_ACTIONS["publish:pre_check"]),
     "publish:request_wechat": requestWechatDraftApprovalHandler,
     "publish:wechat_draft": publishWechatDraftApprovedHandler,
     "article_images:get": articleImagesGetHandler,
@@ -1133,6 +1144,10 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "flywheel:import_csv": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:import_csv"]),
     "flywheel:record": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:record"]),
     "flywheel:wechat_pull": wechatPullHandler,
+    "flywheel:pull_status": pullStatusHandler,
+    "flywheel:pull_now": pullNowHandler,
+    "flywheel:pull_toggle": pullToggleHandler,
+    "flywheel:hypotheses_list": hypothesesListHandler,
     "dialog:pick_file": dialogUnavailableHandler,
     "knowledge:status": knowledgeStatusHandler,
     "radar:status": getRadarStatus,
