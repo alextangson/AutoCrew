@@ -140,11 +140,16 @@ describe("triggerDeepResearch", () => {
     });
     const res = await triggerDeepResearch(topic.id, dataDir);
     expect(res.accepted).toBe(true);
-    await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "succeeded");
+    // queued + running + 视角进度 + 落定 —— 至少四拍，缺 onProgress 只会有三拍。
+    // 不能只等台账 succeeded：落定行 append 后即可读，第四拍在 fsync+close 之后才发射，
+    // 负载下轮询会抢进这个窗口。事件数必须一起等到（等不齐 = waitFor 超时报错）。
+    await waitFor(async () => {
+      if (events.length < 4) return false;
+      return (await getJob(topic.id, dataDir))?.status === "succeeded";
+    });
 
     expect(sawProgressHook).toBe(true);
     expect(events.every((e) => e.type === "research:updated" && e.topicId === topic.id)).toBe(true);
-    // queued + running + 视角进度 + 落定 —— 至少四拍，缺 onProgress 只会有三拍
     expect(events.length).toBeGreaterThanOrEqual(4);
   });
 
