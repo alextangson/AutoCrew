@@ -76,8 +76,11 @@ export interface GenerationDeps {
    * 不注入 = 老行为（有简报就注入，没有就裸写），桌面 IPC 与 chat-router 两条入口注入。
    * MCP 同步入口（src/tools）**故意不接**：外部 agent 自己有 deep_research 工具与判断力，
    * 这层不该替它决定「该不该先调研」，更不该让它在一个同步调用里干等十几分钟。
+   *
+   * `onWaiting`：闸口**确定要等**（触发被接受、开始轮询前）时回调一次，写作侧借此把
+   * 占位稿标题改成「调研中」。已有简报/跑不了时不调——那两条路径根本没有等待。
    */
-  ensureBriefImpl?: (topicId: string) => Promise<EnsureBriefOutcome>;
+  ensureBriefImpl?: (topicId: string, onWaiting?: () => Promise<void>) => Promise<EnsureBriefOutcome>;
 }
 
 /** 本稿的归因元数据——两条落点（run-log 的 logMeta 与 content 元数据）共用同一份 */
@@ -181,6 +184,13 @@ function buildSubmitTool(captured: Captured, gate?: QualityGateSpec): LoopTool {
  *  renderer(board/workbench.js)按同字面量正则识别,改动需同步。 */
 export const GENERATING_TITLE_PREFIX = "［生成中］";
 export const INTERRUPTED_TITLE_PREFIX = "［生成中断］";
+/**
+ * 开写前等深调研简报的中间态（最长十几分钟）。占位稿在这段时间里说实话:
+ * 「调研中」不是「生成中」——不然人看到的是一张十分钟不动的卡,和卡死没有区别。
+ * **消费方必须同步**:orphan-reconcile 的孤儿判定、Editor.tsx 的剥前缀正则,
+ * 漏一处就是启动扫不到的尸体稿 / 重写时把前缀当选题带进去。
+ */
+export const RESEARCHING_TITLE_PREFIX = "［调研中］";
 
 /** 占位稿先行（防呆 P1）:分钟级长任务先落盘——中途死不许蒸发,刷新/断连不影响它的存在 */
 async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
@@ -305,24 +315,62 @@ async function gatherInputs(
 }
 
 /**
+ * 占位稿改哨兵前缀。标题是观感不是正确性：写失败只 warn,绝不阻断写作。
+ * 顺带给版本注记写人话——updateContent 逢标题变化必记一版,不写注记就是两条「第 N 版」谜语。
+ */
+async function retitlePlaceholder(
+  placeholderId: string,
+  phase: "researching" | "writing",
+  req: ScriptRequest,
+  warn: (message: string) => void,
+  dataDir?: string,
+): Promise<void> {
+  const researching = phase === "researching";
+  const prefix = researching ? RESEARCHING_TITLE_PREFIX : GENERATING_TITLE_PREFIX;
+  try {
+    await updateContent(
+      placeholderId,
+      {
+        title: `${prefix}${req.topic.slice(0, 40)}`,
+        _versionNote: researching ? "开写前先补一轮深调研" : "调研落定,开始写稿",
+      },
+      dataDir,
+    );
+  } catch (err) {
+    warn(`占位稿标题更新失败（${placeholderId}）：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * 开写前补调研（写作入口自动补深调研）。返回 true = 这稿没等到简报，得留痕。
  *
  * 用户自己带了 research 材料时**不强等**：他手里已经有料，为一轮分钟级的调研让他排队，
  * 是拿他的时间换一个他没要的东西。
+ *
+ * 真等起来时占位稿标题走一个来回：［调研中］→（闸口返回）→［生成中］。改回来这一步不能省，
+ * 后面就是写稿阶段了，标题停在「调研中」既骗人，也让中断/孤儿回收的哨兵停在错的那一个。
  */
 async function ensureBriefBeforeWriting(
   req: ScriptRequest,
   deps: GenerationDeps | undefined,
   warn: (message: string) => void,
+  placeholderId: string,
+  dataDir?: string,
 ): Promise<boolean> {
   if (!req.topicId || !deps?.ensureBriefImpl || req.research?.trim()) return false;
+  let waited = false;
+  const onWaiting = async (): Promise<void> => {
+    waited = true;
+    await retitlePlaceholder(placeholderId, "researching", req, warn, dataDir);
+  };
   let outcome: EnsureBriefOutcome;
   try {
-    outcome = await deps.ensureBriefImpl(req.topicId);
+    outcome = await deps.ensureBriefImpl(req.topicId, onWaiting);
   } catch (err) {
     // 契约上闸口永不抛;执行层不赌上游守约——闸口自己炸了也只是「没简报」,稿子照写
     outcome = { state: "unavailable", note: err instanceof Error ? err.message : String(err) };
   }
+  if (waited) await retitlePlaceholder(placeholderId, "writing", req, warn, dataDir);
   if (outcome.state === "already" || outcome.state === "ready") return false;
   const detail = outcome.state === "timeout" ? "调研没在限时内跑完（可能还在跑）" : outcome.note;
   warn(`未带调研简报开写：${detail}`);
@@ -339,7 +387,7 @@ async function runGeneration(
 ): Promise<GeneratedScript> {
   const warn = deps?.onWarn ?? ((message: string) => console.warn(`[generate-script] ${message}`));
   // 调研闸口必须跑在材料收集**之前**:简报是本轮刚跑出来的,gatherInputs 才读得到指针
-  const wroteWithoutBrief = await ensureBriefBeforeWriting(req, deps, warn);
+  const wroteWithoutBrief = await ensureBriefBeforeWriting(req, deps, warn, placeholderId, dataDir);
   // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)
   const { config, pack, profile, contrastPairs, patterns, promptReq, attribution } =
     await gatherInputs(req, dataDir, warn);

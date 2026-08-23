@@ -28,7 +28,7 @@ import {
   downloadBriefAssets,
   type AssetDownloadOptions,
 } from "./research-asset-download.js";
-import { createResearchBroker, type ResearchBrokerDeps } from "./research-broker.js";
+import { createResearchBroker, type BrokerActivity, type ResearchBrokerDeps } from "./research-broker.js";
 import {
   PERSPECTIVE_NAMES,
   getJob,
@@ -62,6 +62,12 @@ export interface DeepResearchDeps {
    * 视角级进度——这条进度是 runJob 内部写的，所以出口在这里，装配时接到同一个发射器上。
    */
   onProgress?: (job: ResearchJob) => void;
+  /**
+   * 每次真实出网的可见出口（工作日志「调研员·X 视角在搜：…」）。
+   * 视角级进度只有四拍，撑不住分钟级的等待——写稿排队等简报的那十几分钟里，
+   * 界面上得有东西在动，否则「调研在干活」和「卡死」长得一模一样。
+   */
+  onActivity?: (activity: BrokerActivity) => void;
   /** 非致命故障的可见出口（进度写失败、单路视角失败原因）；默认 console.warn */
   onWarn?: (message: string) => void;
 }
@@ -272,7 +278,12 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
     }
     const topicRef: ResearchTopicRef = { title: topic.title, description: topic.description };
     const profile = await loadProfile(deps.dataDir);
-    const broker = createResearchBroker({ dataDir: deps.dataDir, ...deps.brokerDeps });
+    // onActivity 排在 brokerDeps 之后：装配层给的观测出口是这条 job 的最终口径
+    const broker = createResearchBroker({
+      dataDir: deps.dataDir,
+      ...deps.brokerDeps,
+      ...(deps.onActivity ? { onActivity: deps.onActivity } : {}),
+    });
     const progress = new PerspectiveProgress(
       job.topicId,
       deps.dataDir,

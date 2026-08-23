@@ -192,6 +192,78 @@ describe("makeEnsureBrief", () => {
     expect(events[0].label).toContain("简报");
   });
 
+  it("真要等时先叫一声 onWaiting——写作侧据此把占位稿标题改成「调研中」", async () => {
+    const order: string[] = [];
+    const clock = fakeClock();
+    const seq: ResearchJob[] = [job(), job({ status: "succeeded", briefRevision: 1 })];
+    let i = 0;
+    const ensure = makeEnsureBrief(DATA_DIR, {
+      getJobImpl: async () => {
+        order.push("poll");
+        return seq[Math.min(i++, seq.length - 1)];
+      },
+      triggerImpl: async () => {
+        order.push("trigger");
+        return ACCEPTED;
+      },
+      emitImpl: emitSpy([]),
+      pollMs: 1000,
+      deadlineMs: 60000,
+      ...clock.opts,
+    });
+
+    expect(await ensure(TOPIC, async () => void order.push("waiting"))).toEqual({ state: "ready" });
+    // 首查 → 投递 → onWaiting → 才开始轮询
+    expect(order).toEqual(["poll", "trigger", "waiting", "poll"]);
+  });
+
+  it("已有简报（already）不叫 onWaiting——秒回的路上没有「调研中」这回事", async () => {
+    const calls: string[] = [];
+    const ensure = makeEnsureBrief(DATA_DIR, {
+      getJobImpl: async () => job({ status: "succeeded", briefRevision: 3 }),
+      triggerImpl: never,
+      emitImpl: never,
+      ...fakeClock().opts,
+    });
+
+    expect(await ensure(TOPIC, async () => void calls.push("waiting"))).toEqual({ state: "already" });
+    expect(calls).toEqual([]);
+  });
+
+  it("投递被拒（unavailable）不叫 onWaiting——压根没排上队，标题不许撒谎", async () => {
+    const calls: string[] = [];
+    const ensure = makeEnsureBrief(DATA_DIR, {
+      getJobImpl: async () => null,
+      triggerImpl: async () => ({ accepted: false, reason: "搜索来源还没配 key" }),
+      emitImpl: never,
+      ...fakeClock().opts,
+    });
+
+    expect(await ensure(TOPIC, async () => void calls.push("waiting"))).toEqual({
+      state: "unavailable",
+      note: "搜索来源还没配 key",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("onWaiting 抛错不改变 outcome（标题是观感，不是正确性）", async () => {
+    const seq: ResearchJob[] = [job(), job({ status: "succeeded", briefRevision: 1 })];
+    let i = 0;
+    const ensure = makeEnsureBrief(DATA_DIR, {
+      getJobImpl: async () => seq[Math.min(i++, seq.length - 1)],
+      triggerImpl: async () => ACCEPTED,
+      emitImpl: emitSpy([]),
+      pollMs: 1000,
+      deadlineMs: 60000,
+      ...fakeClock().opts,
+    });
+
+    const outcome = await ensure(TOPIC, async () => {
+      throw new Error("占位稿写不动");
+    });
+    expect(outcome).toEqual({ state: "ready" });
+  });
+
   it("事件发不出去不影响结果（观测层不得破坏执行层）", async () => {
     const seq: ResearchJob[] = [job(), job({ status: "succeeded", briefRevision: 1 })];
     let i = 0;

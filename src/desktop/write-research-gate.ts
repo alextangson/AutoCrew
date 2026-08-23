@@ -53,6 +53,15 @@ async function announce(emit: typeof emitEngineEvent, dataDir: string): Promise<
   }
 }
 
+/** 写作侧借这一声把占位稿标题改成「调研中」；它炸了也只是标题没变，等待照旧 */
+async function notifyWaiting(onWaiting?: () => Promise<void>): Promise<void> {
+  try {
+    await onWaiting?.();
+  } catch {
+    /* 观测层不得破坏执行层 */
+  }
+}
+
 /** 盯台账等落定。终态有指针才算等到；没等到就照实说是失败还是超时 */
 async function waitForBrief(topicId: string, dataDir: string, ctx: WaitContext): Promise<EnsureBriefOutcome> {
   const deadline = ctx.now() + ctx.deadlineMs;
@@ -71,11 +80,14 @@ async function waitForBrief(topicId: string, dataDir: string, ctx: WaitContext):
 /**
  * 造一个「开写前确保有简报」的闸口，注入给 startGenerateScript 的 deps。
  * dataDir 跟选题所在工作区走（与深调研运行时同一口径）。
+ *
+ * `onWaiting` 只在**真要等**的那条路上响一次（触发被接受、开始轮询前）：already 是秒回、
+ * unavailable 压根没排上队，那两条路上把标题改成「调研中」是撒谎。
  */
 export function makeEnsureBrief(
   dataDir?: string,
   opts: WriteResearchGateOptions = {},
-): (topicId: string) => Promise<EnsureBriefOutcome> {
+): (topicId: string, onWaiting?: () => Promise<void>) => Promise<EnsureBriefOutcome> {
   const getJobImpl = opts.getJobImpl ?? getJob;
   const trigger = opts.triggerImpl ?? triggerDeepResearch;
   const emit = opts.emitImpl ?? emitEngineEvent;
@@ -87,7 +99,7 @@ export function makeEnsureBrief(
     deadlineMs: opts.deadlineMs ?? DEFAULT_DEADLINE_MS,
   };
 
-  return async (topicId: string): Promise<EnsureBriefOutcome> => {
+  return async (topicId: string, onWaiting?: () => Promise<void>): Promise<EnsureBriefOutcome> => {
     const dir = getDataDir(dataDir);
     try {
       const existing = await getJobImpl(topicId, dir);
@@ -95,6 +107,7 @@ export function makeEnsureBrief(
       const accepted = await trigger(topicId, dir);
       // 搜索 key 没配、运行时没起、选题不存在——投递口的人话理由原样带回去留痕
       if (!accepted.accepted) return { state: "unavailable", note: accepted.reason };
+      await notifyWaiting(onWaiting);
       await announce(emit, dir);
       return await waitForBrief(topicId, dir, ctx);
     } catch (err) {

@@ -712,6 +712,86 @@ describe("写作入口自动补深调研", () => {
     expect(warns.some((w) => w.includes("闸口炸了"))).toBe(true);
   });
 
+  /** 当前唯一那篇稿的标题（占位稿先行，测试目录里只会有这一篇） */
+  async function onlyTitle(): Promise<string> {
+    const all = await listContents(testDir);
+    expect(all).toHaveLength(1);
+    return all[0].title;
+  }
+
+  it("等简报期间占位稿标题走一个来回：［调研中］→ 开写时改回［生成中］", async () => {
+    const seen: string[] = [];
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      // 闸口里真去读盘：断言的是用户当下会看到的那个标题
+      ensureBriefImpl: async (_topicId, onWaiting) => {
+        seen.push(await onlyTitle()); // 等待前
+        await onWaiting?.();
+        seen.push(await onlyTitle()); // 等待中
+        return { state: "timeout" };
+      },
+      // 写稿这一刻标题必须已经改回来了（接下来是写,不是调研）
+      runLoopImpl: async (_cfg, opts) => {
+        seen.push(await onlyTitle());
+        await (opts.tools ?? []).find((t) => t.name === "submit_script")!.execute(GOOD_PAYLOAD);
+        return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+      },
+      onWarn: () => {},
+    });
+
+    expect(seen).toEqual([
+      `［生成中］${TOPIC_REQ.topic}`,
+      `［调研中］${TOPIC_REQ.topic}`,
+      `［生成中］${TOPIC_REQ.topic}`,
+    ]);
+    expect(res.title).toBe(GOOD_PAYLOAD.title); // 转正后哨兵全消失
+    // updateContent 逢标题变化必记一版:那两版得是人话,不能在历史里留两条「第 N 版」谜语
+    expect((await listContents(testDir))[0].versions?.map((v) => v.note)).toEqual([
+      "初稿",
+      "开写前先补一轮深调研",
+      "调研落定,开始写稿",
+      "AI 完成初稿（未带调研简报）",
+    ]);
+  });
+
+  it("没等待（already/ready 秒回）→ 标题一次都不动", async () => {
+    const seen: string[] = [];
+    await generateScript(TOPIC_REQ, testDir, {
+      ensureBriefImpl: async () => ({ state: "already" }), // 不叫 onWaiting
+      runLoopImpl: async (_cfg, opts) => {
+        seen.push(await onlyTitle());
+        await (opts.tools ?? []).find((t) => t.name === "submit_script")!.execute(GOOD_PAYLOAD);
+        return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+      },
+    });
+
+    expect(seen).toEqual([`［生成中］${TOPIC_REQ.topic}`]);
+    // 没等待就没有标题来回 → 版本历史只有「初稿 + 转正」两条，不给正常路径加噪音
+    expect((await listContents(testDir))[0].versions).toHaveLength(2);
+  });
+
+  it("占位稿标题写不动 → 只 warn，写作照常出稿（标题是观感,不是正确性）", async () => {
+    const warns: string[] = [];
+    const res = await generateScript(TOPIC_REQ, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      ensureBriefImpl: async (_topicId, onWaiting) => {
+        // 把 meta.json 换成目录：改标题这一刻必炸(EISDIR),改完再恢复,后面的写作不受影响
+        const meta = path.join(testDir, "contents", (await listContents(testDir))[0].id, "meta.json");
+        const raw = await fs.readFile(meta, "utf-8");
+        await fs.rm(meta);
+        await fs.mkdir(meta);
+        await onWaiting?.();
+        await fs.rm(meta, { recursive: true });
+        await fs.writeFile(meta, raw);
+        return { state: "timeout" };
+      },
+      onWarn: (m) => warns.push(m),
+    });
+
+    expect(warns.some((w) => w.includes("占位稿标题更新失败"))).toBe(true);
+    expect(res.title).toBe(GOOD_PAYLOAD.title); // 稿子照出
+    expect(res.wroteWithoutBrief).toBe(true);
+  });
+
   it("后台入口：没带简报时 run_done 标签自己说出来", async () => {
     const events: Array<{ kind: string; label: string }> = [];
     const started = await startGenerateScript(TOPIC_REQ, testDir, {

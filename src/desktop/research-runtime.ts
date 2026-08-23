@@ -16,14 +16,17 @@
  */
 import { getDataDir } from "../storage/local-store.js";
 import { createDeepResearchRunJob, type DeepResearchDeps } from "../modules/research/deep-research.js";
+import type { BrokerActivity } from "../modules/research/research-broker.js";
+import { PERSPECTIVE_TASK_BOOKS } from "../modules/research/research-perspectives.js";
 import type { JobOutcome } from "../modules/research/research-runner.js";
+import { emitEngineEvent } from "./event-hub.js";
 import {
   getResearchRunner,
   resetResearchRunner,
   type ResearchRunner,
   type TriggerResult,
 } from "../modules/research/research-runner.js";
-import type { ResearchJob } from "../modules/research/research-job-store.js";
+import type { PerspectiveName, ResearchJob } from "../modules/research/research-job-store.js";
 import { searchAvailable } from "../modules/research/search-provider.js";
 
 /** SSE `research` 流的载荷（spec §2「进度」）：只报 topicId，消费方按它重读状态 */
@@ -79,9 +82,25 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/** 搜索词/域名进日志要限长——一行日志被一条长 query 淹掉就等于没写 */
+const ACTIVITY_DETAIL_MAX = 40;
+
+/** 视角中文名复用四视角任务书的 label（那是唯一一份，别在这儿造第二套） */
+function perspectiveLabel(name: string): string {
+  return PERSPECTIVE_TASK_BOOKS[name as PerspectiveName]?.label ?? name;
+}
+
+/** 「调研员·证据与数据视角在搜：新能源车企 2026 销量」——人话一行，谁在查什么一眼看见 */
+function activityLabel(activity: BrokerActivity): string {
+  const verb = activity.action === "search" ? "在搜" : "在读";
+  return `调研员·${perspectiveLabel(activity.perspective)}视角${verb}：${activity.detail.slice(0, ACTIVITY_DETAIL_MAX)}`;
+}
+
 /**
  * 唯一装配点。`emit` 同时挂在 runner 的 `onJobChanged`（job 级）与 deep-research 的
  * `onProgress`（视角级）上——两级进度必须走同一个出口，见文件头纪律 1。
+ * `onActivity` 是第三级（每次真实出网），它不进 SSE 而是进工作日志：等简报的那十几分钟里
+ * 界面上唯一在动的东西。emitEngineEvent 自吞错，这里再兜一层 catch。
  */
 function wire(dataDir: string): ResearchRunner {
   const emit = (job: ResearchJob): void => {
@@ -90,6 +109,11 @@ function wire(dataDir: string): ResearchRunner {
   const runJob = (options.createRunJobImpl ?? createDeepResearchRunJob)({
     dataDir,
     onProgress: emit,
+    onActivity: (activity) => {
+      void emitEngineEvent({ role: "scout", kind: "work", label: activityLabel(activity) }, dataDir).catch(
+        () => undefined,
+      );
+    },
     onWarn: (message) => report(message),
   });
   return getResearchRunner({
