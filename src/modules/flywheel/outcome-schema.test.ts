@@ -146,6 +146,47 @@ describe("outcomeKey", () => {
   });
 });
 
+describe("impressions（曝光，与播放分列）", () => {
+  const base = { publishedAt: "2026-06-01T10:00:00.000Z", metricDate: "2026-06-08" };
+
+  it("接受非负整数曝光量", () => {
+    expect(validateOutcome({ ...base, metrics: { impressions: 12000, views: 300 } }).ok).toBe(true);
+    expect(validateOutcome({ ...base, metrics: { impressions: 0, views: 1 } }).ok).toBe(true);
+  });
+
+  it("拒收小数曝光量（把曝光率填进了曝光量）", () => {
+    const v = validateOutcome({ ...base, metrics: { impressions: 1234.5 } });
+    expect(v.ok).toBe(false);
+    expect(v.reasons.join()).toContain("曝光量");
+  });
+
+  it("拒收负数曝光量", () => {
+    expect(validateOutcome({ ...base, metrics: { impressions: -3 } }).ok).toBe(false);
+  });
+
+  it("只有曝光量也算有指标（不因缺 views 被判空）", () => {
+    expect(validateOutcome({ ...base, metrics: { impressions: 500 } }).ok).toBe(true);
+  });
+
+  it("曝光量不进比率校验：大数值不被当成超出 0-100", () => {
+    expect(validateOutcome({ ...base, metrics: { impressions: 999999 } }).ok).toBe(true);
+  });
+});
+
+describe("outcomeKey 与 platformItemId", () => {
+  it("platformItemId 不参与幂等键（带与不带同键，绝不分叉成两条）", () => {
+    const base = {
+      contentId: null,
+      platform: "douyin",
+      platformTitle: "同一作品",
+      publishedAt: "2026-06-01T10:00:00.000Z",
+      metricDate: "2026-06-08",
+    };
+    const withItemId = { ...base, platformItemId: "item-1" };
+    expect(outcomeKey(withItemId)).toBe(outcomeKey(base));
+  });
+});
+
 describe("completion5s", () => {
   const base = { publishedAt: "2026-06-01T10:00:00.000Z", metricDate: "2026-06-08" };
 

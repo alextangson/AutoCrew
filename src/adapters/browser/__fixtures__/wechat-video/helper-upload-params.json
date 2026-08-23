@@ -1,0 +1,9 @@
+{
+  "_fixture_note": "视频号 /helper/helper_upload_params，只为拿 data.uin 去填 X-WECHAT-UIN header。拿不到不阻断（退 0000000000）。**未经真实抓包，待校准**。",
+  "errCode": 0,
+  "errMsg": "ok",
+  "data": {
+    "uin": 2088888888,
+    "uploadDomain": "https://finder.video.qq.com"
+  }
+}

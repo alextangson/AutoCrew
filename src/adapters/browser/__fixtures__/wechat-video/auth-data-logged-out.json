@@ -1,0 +1,6 @@
+{
+  "_fixture_note": "视频号未登录：errCode 非 0（端点文档 §2 只说 errCode===0 且有 finderUsername 才算在线，非 0 的具体取值未确认）。**未经真实抓包，待校准**。",
+  "errCode": 300110,
+  "errMsg": "session expired, please scan qrcode again",
+  "data": {}
+}

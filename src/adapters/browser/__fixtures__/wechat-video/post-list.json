@@ -1,0 +1,47 @@
+{
+  "_fixture_note": "视频号 /post/post_list 一页。字段来源为社区仓库里留痕的真实抓包类型定义（端点文档 §2 标注可信度最高），但仍**未经本仓真实抓包，待校准**。objectId 是 19 位数字，用于验证精度保护。",
+  "errCode": 0,
+  "errMsg": "ok",
+  "data": {
+    "totalCount": 3,
+    "list": [
+      {
+        "objectId": 1441234567890123456,
+        "exportId": "export_FAKE_0001",
+        "createTime": 1783600000,
+        "readCount": 20431,
+        "likeCount": 733,
+        "commentCount": 51,
+        "forwardCount": 96,
+        "favCount": 188,
+        "followCount": 24,
+        "fullPlayRate": 0.412,
+        "avgPlayTimeSec": 21,
+        "visibleType": 0,
+        "desc": {
+          "description": "完整版描述：一个人做公司的第 30 天，我把复盘交给了代码",
+          "shortTitle": [{ "shortTitle": "一个人做公司第 30 天" }]
+        }
+      },
+      {
+        "objectId": 1441234567890123457,
+        "createTime": 1783510000,
+        "readCount": 5120,
+        "likeCount": 88,
+        "commentCount": 4,
+        "forwardCount": 11,
+        "favCount": 30,
+        "followCount": -2,
+        "fullPlayRate": 55.5,
+        "desc": {
+          "description": "没有短标题的那条，只能退回 description"
+        }
+      },
+      {
+        "objectId": 1441234567890123458,
+        "createTime": 1783420000,
+        "desc": { "description": "" }
+      }
+    ]
+  }
+}

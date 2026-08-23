@@ -1,0 +1,35 @@
+{
+  "_fixture_note": "小红书 /api/galaxy/creator/datacenter/note/analyze/list（是否免签**未确认**，第一版以它为主路）。note_infos[] 字段按端点文档 §3。未发现曝光/完播字段——不映射 impressions/completionRate，不猜。**未经真实抓包，待校准**。",
+  "success": true,
+  "code": 0,
+  "msg": "成功",
+  "data": {
+    "note_infos": [
+      {
+        "id": "65f1a2b3000000001203e4d5",
+        "title": "做一人公司的第 30 天：把复盘交给代码",
+        "post_time": 1783600000000,
+        "read_count": 18422,
+        "like_count": 902,
+        "fav_count": 431,
+        "comment_count": 66
+      },
+      {
+        "id": "65f1a2b3000000001203e4d6",
+        "title": "AI 帮我剪了一条片子",
+        "post_time": 1783510000000,
+        "read_count": 3120,
+        "like_count": 77,
+        "fav_count": 40,
+        "comment_count": 5
+      },
+      {
+        "id": "65f1a2b3000000001203e4d7",
+        "title": "",
+        "post_time": 1783420000000,
+        "read_count": 10
+      }
+    ],
+    "has_more": false
+  }
+}

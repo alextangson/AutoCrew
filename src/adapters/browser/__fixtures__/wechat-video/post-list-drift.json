@@ -1,0 +1,9 @@
+{
+  "_fixture_note": "接口漂移 canary：errCode:0 但 data.list 改名成 data.posts。守卫必须判 schema_changed + 零行。**未经真实抓包，待校准**。",
+  "errCode": 0,
+  "errMsg": "ok",
+  "data": {
+    "totalCount": 1,
+    "posts": [{ "objectId": 1441234567890123456, "readCount": 10 }]
+  }
+}
