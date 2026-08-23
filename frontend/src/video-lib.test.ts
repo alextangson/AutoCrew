@@ -11,17 +11,21 @@ import { describe, expect, it } from "vitest";
 import {
   VIDEO_PHASE_LABEL,
   alignmentWarning,
+  editorPlanSummary,
   formatMinutesSeconds,
   formatTimecode,
   keepsInTranscriptOrder,
+  previewStatus,
   roughCutSummary,
   videoBlockedGuide,
   videoFinalAssetName,
   videoMediaUrl,
   videoStateSummary,
+  type EditorPlanOverlay,
   type TranscriptSegment,
   type VideoBlockedReason,
   type VideoEditUnits,
+  type VideoEditorPlan,
   type VideoPhase,
   type VideoRunState,
   type VideoState,
@@ -197,5 +201,74 @@ describe("alignmentWarning", () => {
     expect(alignmentWarning({ ...base, scriptAlignment: { matchedRatio: 0.5 } })).toBeNull();
     expect(alignmentWarning({ ...base })).toBeNull();
     expect(alignmentWarning(null)).toBeNull();
+  });
+});
+
+describe("previewStatus", () => {
+  it("没有预览指针 = 三个都空,不出横幅", () => {
+    expect(previewStatus(undefined)).toEqual({ playableRevision: null, rendering: false, message: null });
+  });
+
+  it("请求版领先就绪版 = 在渲;老的那版照常可播", () => {
+    const s = previewStatus({ requestedRevision: 3, readyRevision: 2 });
+    expect(s.rendering).toBe(true);
+    expect(s.playableRevision).toBe(2);
+    expect(s.message).toBeNull();
+  });
+
+  it("首版还没渲出来:可播为空但确实在渲", () => {
+    expect(previewStatus({ requestedRevision: 1 })).toEqual({ playableRevision: null, rendering: true, message: null });
+  });
+
+  it("渲染失败不算「渲染中」,横幅带原因且明说门照开", () => {
+    const s = previewStatus({ requestedRevision: 3, readyRevision: 2, error: "ffmpeg 崩了" });
+    expect(s.rendering).toBe(false);
+    expect(s.playableRevision).toBe(2);
+    expect(s.message).toContain("ffmpeg 崩了");
+    expect(s.message).toContain("不影响确认");
+  });
+});
+
+describe("editorPlanSummary", () => {
+  const overlay = (patch: Partial<EditorPlanOverlay>): EditorPlanOverlay => ({
+    overlayId: "ov-1",
+    label: "harness 概念图",
+    source: { kind: "asset", name: "demo.mp4", type: "screen" },
+    outputStartMs: 4800,
+    durationMs: 8000,
+    ...patch,
+  });
+  const plan = (patch: Partial<VideoEditorPlan>): VideoEditorPlan => ({
+    schemaVersion: 1,
+    cutRevision: 1,
+    origin: "llm",
+    overlays: [],
+    ...patch,
+  });
+
+  it("报段数与覆盖时长", () => {
+    const s = editorPlanSummary(plan({ overlays: [overlay({}), overlay({ overlayId: "ov-2", durationMs: 4000 })] }));
+    expect(s).toContain("2 段");
+    expect(s).toContain("12 秒");
+  });
+
+  it("待生成槽单独点名——悄悄丢掉等于让人以为那几段画面会有", () => {
+    const s = editorPlanSummary(
+      plan({ overlays: [overlay({}), overlay({ overlayId: "ov-2", source: { kind: "generate", description: "公式动画", mediaKind: "video" } })] }),
+    );
+    expect(s).toContain("1 段是待生成槽");
+  });
+
+  it("剪辑师真跑过的空 plan ≠ 压根没跑的空 plan", () => {
+    expect(editorPlanSummary(plan({ origin: "llm" }))).toContain("认为这条不需要");
+    const empty = editorPlanSummary(plan({ origin: "empty", note: "片子太短" }));
+    expect(empty).toContain("片子太短");
+    expect(empty).not.toContain("剪辑师");
+  });
+
+  it("人填槽派生的版本不再记在剪辑师头上", () => {
+    const s = editorPlanSummary(plan({ origin: "human", overlays: [overlay({})] }));
+    expect(s).not.toContain("剪辑师排了");
+    expect(s).toContain("1 段");
   });
 });

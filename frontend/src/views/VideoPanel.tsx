@@ -73,6 +73,12 @@ export function VideoPanel({ contentId }: { contentId: string }) {
 
   const st = status?.state ?? null;
   const canCut = !!st && ((st.phase === "cut" && st.state === "awaiting_human") || (st.phase === "done" && st.state === "done"));
+  const canPlan = !!st && st.phase === "edit" && st.state === "awaiting_human";
+  /**
+   * 确认选段后**不回卡片**(VideoCutPanel 头注):整个 edit phase 都停在向导第 2 步——
+   * 排队/在跑时那一页自己会说「剪辑师在排」。blocked/failed 不算:那两种要回卡片拿重试按钮。
+   */
+  const inPlan = !!st && st.phase === "edit" && (st.state === "queued" || st.state === "running" || st.state === "awaiting_human");
   const canReview = !!st && st.phase === "review" && st.state === "awaiting_human";
   const isDone = !!st && st.phase === "done" && st.state === "done";
 
@@ -82,14 +88,14 @@ export function VideoPanel({ contentId }: { contentId: string }) {
 
   // 后台把状态推走了,手里那版就作废——说一声再收回卡片,别让人对着废页面点确认
   useEffect(() => {
-    if (view === "cut" && !canCut) {
+    if (view === "cut" && !canCut && !inPlan) {
       setView("card");
       toast("这一版选段已经被推进了,先看成片卡的最新状态");
     } else if (view === "review" && !canReview && !isDone) {
       setView("card");
       toast("成片状态变了,先看成片卡的最新状态");
     }
-  }, [view, canCut, canReview, isDone]);
+  }, [view, canCut, inPlan, canReview, isDone]);
 
   // 卡在「语音模型没就绪」时先看一眼预热进度:可能另一个窗口已经在下模型了
   useEffect(() => {

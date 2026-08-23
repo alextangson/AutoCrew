@@ -547,6 +547,28 @@ export function videoPreviewUrl(contentId: string, previewRevision: number): str
   return `/api/video/media/${encodeURIComponent(contentId)}/preview.v${previewRevision}.mp4`;
 }
 
+export interface CutPreviewStatus {
+  /** 可播的那一版;null = 还没有任何可播预览 */
+  playableRevision: number | null;
+  /** 有新的一版在后台渲(老的那版若在,照常可播) */
+  rendering: boolean;
+  /** 非空 = 最近一次预览没渲出来,要摆成横幅;门照常可确认(边界 #1) */
+  message: string | null;
+}
+
+/**
+ * 预览指针 → 门内看片器的三个问题:现在能播哪版、是不是在渲新的、要不要横幅。
+ * 预览失败**不算 rendering**——辅助 job 已经 settle 了,再显示「渲染中」是骗人。
+ */
+export function previewStatus(p?: VideoPreviewState): CutPreviewStatus {
+  if (!p) return { playableRevision: null, rendering: false, message: null };
+  return {
+    playableRevision: p.readyRevision ?? null,
+    rendering: !p.error && p.requestedRevision > (p.readyRevision ?? 0),
+    message: p.error ? `预览没渲出来:${p.error} —— 不影响确认选段,也可以点「重新生成预览」再试。` : null,
+  };
+}
+
 /** 成片登记回稿件素材时的文件名(render-exec.ts:`final-v<K>.mp4`,与上面播放名不同源) */
 export function videoFinalAssetName(renderedRevision: number): string {
   return `final-v${renderedRevision}.mp4`;
@@ -590,6 +612,26 @@ export function roughCutSummary(units?: VideoEditUnits): string | null {
   const body = `AI 粗剪:${head} / 共 ${units.segments.length} 段,预计成片 ${formatMinutesSeconds(keptMs)}`;
   // 切口是硬切,这一版不做淡入淡出(粗剪 spec §7 #15)——不静默假装无损
   return dropped.size === 0 ? body : `${body}。剔除处是硬切,这一版不做淡入淡出`;
+}
+
+/**
+ * 成片计划结果条(横屏 spec §3.5)。与 roughCutSummary 同一条纪律:**只有剪辑师真跑过
+ * 才把结论记在它头上**——空 plan 要分清「它看过认为不需要」和「压根没排出来」;
+ * 人填槽派生的版本(origin:"human")不再说「剪辑师排了」,那已经是人的版本。
+ */
+export function editorPlanSummary(plan: VideoEditorPlan): string {
+  if (plan.overlays.length === 0) {
+    if (plan.origin === "llm") return "剪辑师看过素材,认为这条不需要 B-roll —— 确认后就是一条纯口播。";
+    return plan.note ? `没有可排的 B-roll:${plan.note}` : "这版计划没有 B-roll —— 确认后就是一条纯口播。";
+  }
+  const coveredMs = plan.overlays.reduce((sum, o) => sum + Math.max(0, o.durationMs), 0);
+  const pending = plan.overlays.filter((o) => o.source.kind === "generate").length;
+  const head =
+    plan.origin === "human"
+      ? `这版计划(你填过素材)共 ${plan.overlays.length} 段 B-roll`
+      : `剪辑师排了 ${plan.overlays.length} 段 B-roll`;
+  const slots = pending > 0 ? `;其中 ${pending} 段是待生成槽,要填素材或确认时明示跳过` : "";
+  return `${head},共覆盖 ${formatMinutesSeconds(coveredMs)}${slots}。`;
 }
 
 /** matchedRatio < 0.5 → 不给建议权,人要逐句盯(§4.4 / §10);没有对齐数据就不吓唬人 */
