@@ -143,8 +143,8 @@ describe("IPC_CHANNELS", () => {
     "research:import_asset",
   ];
 
-  it("has exactly 145 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(145);
+  it("has exactly 148 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(148);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
