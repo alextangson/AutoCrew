@@ -33,6 +33,7 @@ import { createVideoService, type VideoService } from "../src/modules/video/serv
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
+import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
 import { handleMcpRequest } from "../mcp/server.js";
 
 const HOST = "127.0.0.1";
@@ -378,10 +379,12 @@ const server = http.createServer(async (req, res) => {
 server.requestTimeout = 0;
 server.timeout = 0;
 let stopCampaignHost: (() => void) | undefined;
+let stopMetricsPull: (() => void) | undefined;
 let radarTimer: NodeJS.Timeout | undefined;
 let videoService: VideoService | null = null;
 server.on("close", () => {
   stopCampaignHost?.();
+  stopMetricsPull?.();
   if (radarTimer) clearInterval(radarTimer);
   // 视频 runner 会拿着 ffmpeg/remotion 子进程,停机要给它机会收尾(job lease 也在这层解)
   const running = videoService;
@@ -467,4 +470,11 @@ server.listen(PORT, HOST, () => {
   tickRadar();
   radarTimer = setInterval(tickRadar, RADAR_CYCLE_INTERVAL_MS);
   radarTimer.unref(); // 定时器不该成为进程退不掉的理由(stop 路径另见 server "close")
+
+  // 三平台自动回流(回流 spec §4.3):启动跑一轮 + 每 30 分钟一轮。真正的节奏由每平台的
+  // TTL(12h)与退避状态机决定——tick 只是把"到点了自动抓"补上;三平台默认全关,
+  // 人在数据回流页自己开(不替人做碰后台的决定)。
+  stopMetricsPull = startMetricsPullCycle({
+    resolveDataDir: async () => activeWorkspaceDataDir(),
+  });
 });

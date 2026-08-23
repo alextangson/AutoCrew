@@ -3,7 +3,7 @@
  * 后台接口的双层 JSON 字符串形状(publish_page 是字符串、publish_info 也是字符串)必须兼容。
  */
 import { describe, it, expect } from "vitest";
-import { parsePublishPage, statsToImportRows } from "./wechat-mp-stats.js";
+import { parsePublishPage, statsToImportRows, wechatStatusToPullStatus } from "./wechat-mp-stats.js";
 
 const APPMSG = {
   publish_page: JSON.stringify({
@@ -34,6 +34,14 @@ describe("parsePublishPage", () => {
   it("publish_list 为空/坏 JSON → 空数组,不抛", () => {
     expect(parsePublishPage(JSON.stringify({ publish_page: JSON.stringify({ publish_list: [] }) }))).toEqual([]);
     expect(parsePublishPage("not-json")).toEqual([]);
+  });
+});
+
+describe("wechatStatusToPullStatus(三态 → 结构化状态码)", () => {
+  it("in=ok / out=needs_login(等扫码,不是失败) / timeout=timeout", () => {
+    expect(wechatStatusToPullStatus("in")).toBe("ok");
+    expect(wechatStatusToPullStatus("out")).toBe("needs_login");
+    expect(wechatStatusToPullStatus("timeout")).toBe("timeout");
   });
 });
 

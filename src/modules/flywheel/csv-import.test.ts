@@ -181,6 +181,42 @@ describe("PLATFORM_MAPPINGS", () => {
   it("covers the four supported platforms", () => {
     expect(Object.keys(PLATFORM_MAPPINGS).sort()).toEqual(["douyin", "wechat_mp", "wechat_video", "xiaohongshu"]);
   });
+
+  it("小红书「曝光量」不再是 views 的别名（曝光≠播放）", () => {
+    expect(PLATFORM_MAPPINGS.xiaohongshu.views).not.toContain("曝光量");
+    expect(PLATFORM_MAPPINGS.xiaohongshu.impressions).toContain("曝光量");
+  });
+});
+
+describe("CSV adapter → 行漏斗（薄适配层）", () => {
+  it("小红书曝光量入 impressions，观看量入 views", async () => {
+    const CSV = `笔记标题,发布时间,观看量,曝光量,点赞\n护肤笔记,2026-06-01 10:00,800,12000,66`;
+    await importPerformanceCsv("xiaohongshu", CSV, "2026-06-08", testDir);
+    const o = (await listOutcomes(testDir))[0];
+    expect(o.metrics.views).toBe(800);
+    expect(o.metrics.impressions).toBe(12000);
+  });
+
+  it("rejected 行号沿用文件行号口径（表头占第 1 行）", async () => {
+    const CSV = `作品名称,发布时间,播放量\n好行,2026-06-01 10:00,100\n坏行,2026-06-01 10:00,-`;
+    const report = await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir);
+    expect(report.imported).toBe(1);
+    expect(report.rejected[0].row).toBe(3);
+  });
+
+  it("空标题行被行级拒收，同批其余行照常入库", async () => {
+    const CSV = `作品名称,发布时间,播放量\n,2026-06-01 10:00,100\n有标题,2026-06-01 10:00,200`;
+    const report = await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir);
+    expect(report.imported).toBe(1);
+    expect(report.rejected).toHaveLength(1);
+    expect(report.rejected[0].error).toContain("标题");
+  });
+
+  it("source 参数默认 csv，可覆盖为 auto（浏览器自动拉取走同一 adapter）", async () => {
+    const CSV = `作品名称,发布时间,播放量\n自动稿,2026-06-01 10:00,100`;
+    await importPerformanceCsv("douyin", CSV, "2026-06-08", testDir, "auto");
+    expect((await listOutcomes(testDir))[0].source).toBe("auto");
+  });
 });
 
 describe("ratioMetrics（抖音作品列表导出为小数比例）", () => {

@@ -1,0 +1,9 @@
+{
+  "_fixture_note": "接口漂移 canary：success:true 但 note_infos 改名成 notes。守卫必须判 schema_changed + 零行。**未经真实抓包，待校准**。",
+  "success": true,
+  "code": 0,
+  "msg": "成功",
+  "data": {
+    "notes": [{ "id": "65f1a2b3000000001203e4d5", "read_count": 1 }]
+  }
+}

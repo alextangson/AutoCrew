@@ -20,6 +20,11 @@ interface Summary {
   };
   reviewQueue: Array<{ id: string; title: string; platform: string | null; ageDays: number; priority: string }>;
   backfillTodos: Array<{ id: string; title: string; daysSince: number; level: string }>;
+  /** false = outcomes.jsonl 读不出来:待办判不了,界面说「数据不可用」而不是「没有待办」 */
+  outcomesAvailable?: boolean;
+  /** 自动回流登录态过期(回流 spec §4.4):扫一次码,数据继续自己回来 */
+  pullLoginTodos?: Array<{ platform: string; label: string; consoleUrl: string }>;
+  videoReadyTodos?: Array<{ id: string; title: string; daysSince: number }>;
   pipeline: { idea: number; writing: number; review: number; ready: number; published: number };
   inspirations: Array<{ id: string; title: string; reason: string | null; link: string | null }>;
   isFirstRun: boolean;
@@ -75,9 +80,17 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
 
   const rq = d.reviewQueue ?? [];
   const bf = d.backfillTodos ?? [];
+  const vr = d.videoReadyTodos ?? [];
+  const outcomesOk = d.outcomesAvailable !== false;
+  const login = d.pullLoginTodos ?? [];
   const p = d.pipeline;
   const persona = d.calibration.persona ?? { summary: "", calibrated: false };
-  const todo = [rq.length ? `审稿 ${rq.length}` : "", bf.length ? `回数据 ${bf.length}` : ""].filter(Boolean).join(" · ");
+  const todo = [
+    rq.length ? `审稿 ${rq.length}` : "",
+    vr.length ? `发成片 ${vr.length}` : "",
+    outcomesOk && bf.length ? `回数据 ${bf.length}` : "",
+    login.length ? `扫码续期 ${login.length}` : "",
+  ].filter(Boolean).join(" · ");
   const hour = new Date().getHours();
   const greet = hour < 5 ? "夜深了" : hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
   const openEditor = (id: string) => nav({ view: "editor", id });
@@ -104,8 +117,24 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
             ))
           )}
         </Card>
-        <Card title="回填待办" kicker={bf.length ? `${bf.length} 篇` : "无"}>
-          {bf.length === 0 ? (
+        <Card title="成片待发布" kicker={vr.length ? `${vr.length} 篇` : "无"}>
+          {vr.length === 0 ? (
+            <p className="muted">没有剪好还没发的片子。</p>
+          ) : (
+            vr.slice(0, 5).map((t) => (
+              <div key={t.id} className="row" onClick={() => openEditor(t.id)}>
+                <span className="mono pri">该发了</span>
+                <span className="row-title">{t.title || "（无标题）"}</span>
+                <span className="muted">剪好 {t.daysSince} 天</span>
+              </div>
+            ))
+          )}
+        </Card>
+        <Card title="回填待办" kicker={!outcomesOk ? "数据不可用" : bf.length ? `${bf.length} 篇` : "无"}>
+          {!outcomesOk ? (
+            // 读不出 outcomes ≠ 没人回填过:这里绝不能显示「没有待办」,那是假消息
+            <p className="muted">回流数据读不出来（outcomes.jsonl 异常）——待办判不了,先修数据再看这张卡。</p>
+          ) : bf.length === 0 ? (
             <p className="muted">没有等回填的稿子。</p>
           ) : (
             bf.slice(0, 5).map((t) => (
@@ -116,6 +145,13 @@ export function Dashboard({ nav }: { nav: (r: Route) => void }) {
               </div>
             ))
           )}
+          {/* 登录态过期是「扫个码就好」的活,但不说就永远没人扫,数据也就永远不回来 */}
+          {login.map((t) => (
+            <p key={t.platform} className="muted pull-note">
+              {t.label}平台登录态过期，扫码后数据继续回流 ——{" "}
+              <a href={t.consoleUrl} target="_blank" rel="noreferrer">去{t.label}后台扫码 ↗</a>
+            </p>
+          ))}
         </Card>
       </Zone>
 

@@ -1,0 +1,13 @@
+{
+  "_fixture_note": "接口漂移 canary：信封正常（status_code:0）但列表字段改名了（items/aweme_list 都不在）。守卫必须判 schema_changed + 零行，绝不猜 works[] 是不是新的 items[]。**未经真实抓包，待校准**。",
+  "status_code": 0,
+  "status_msg": "",
+  "has_more": false,
+  "works": [
+    {
+      "work_id": 7412345678901234567,
+      "work_title": "改名之后的字段",
+      "stats": { "play": 100 }
+    }
+  ]
+}

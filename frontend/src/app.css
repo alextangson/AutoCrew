@@ -482,6 +482,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .stat-tile { border: 1px solid var(--border); background: var(--card); border-radius: var(--radius-card); padding: 10px 12px; text-align: center; }
 .report-card { max-width: 900px; margin: 12px 0; }
 .work-metrics { white-space: nowrap; }
+
+/* 自动回流状态区(回流 spec §4.4):徽标只报状态,细节走行内一句话;浏览器未连接一条横幅说完 */
+.pull-note { font-size: 12px; margin: 2px 0 6px; max-width: 860px; line-height: 1.5; }
+.pull-warn { font-weight: 700; } /* 没有 warning 色 token,用字重区分「要人动手」而非「坏了」 */
+.pull-bad { color: var(--danger); border-color: var(--danger); }
+.pull-banner { border: 1px solid var(--danger); color: var(--danger); border-radius: var(--radius-card); padding: 8px 10px; margin: 6px 0; font-size: 12px; line-height: 1.5; }
 .calib-industry { flex: 1; resize: vertical; min-height: 52px; }
 .log-id { font-size: 10px; opacity: 0.7; }
 

@@ -90,8 +90,57 @@ export interface Content {
   performanceData?: Record<string, number>;
   versions?: Array<{ version: number; note?: string; savedAt: string }>;
   publishedAt?: string | null;
+  /** 发布后的平台地址(确认已发布时选填);渲染成链接前必须再过一次 isHttpUrl */
+  publishUrl?: string | null;
+  /** 成片就绪时刻(视频线终点戳):非空 = 片子渲染并审过了,等着进发布流程 */
+  videoReadyAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 平台链接白名单:只认 http(s)。输入校验与渲染前校验共用它——存量脏数据同样不许变成可点链接 */
+export function isHttpUrl(raw: string): boolean {
+  try {
+    const protocol = new URL(raw.trim()).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 已发布但没有可用链接 → 该出「补记平台链接」入口(spec §5.1)。
+ * 存量脏数据(非 http(s) 的旧值)同样算「没链接」:它既渲染不成链接,也解析不出作品 id,
+ * 留着只会让人以为已经记过了。
+ */
+export function needsPublishUrlBackfill(c: { status: string; publishUrl?: string | null }): boolean {
+  return c.status === "published" && !(c.publishUrl && isHttpUrl(c.publishUrl));
+}
+
+/** 平台 → 发布链接常见域名。用来提醒「贴错平台」,不是白名单——判不准的一律不吭声 */
+const PLATFORM_DOMAINS: Record<string, string[]> = {
+  wechat_mp: ["mp.weixin.qq.com"],
+  douyin: ["douyin.com", "iesdouyin.com"],
+  xiaohongshu: ["xiaohongshu.com", "xhslink.com"],
+  wechat_video: ["channels.weixin.qq.com", "weixin.qq.com"],
+  bilibili: ["bilibili.com", "b23.tv"],
+  toutiao: ["toutiao.com"],
+  twitter: ["x.com", "twitter.com"],
+  reddit: ["reddit.com"],
+  instagram: ["instagram.com"],
+};
+
+/**
+ * 链接域名与稿件平台明显不符时的提示语(否则 null)。**非阻断**:发错平台是用户
+ * 要知道的事,不是系统要拦的事——一稿多投、短链、自建域都可能合法。
+ */
+export function publishUrlPlatformWarning(raw: string, platform: string | null | undefined): string | null {
+  if (!isHttpUrl(raw) || !platform) return null;
+  const domains = PLATFORM_DOMAINS[platform];
+  if (!domains) return null;
+  const host = new URL(raw.trim()).hostname.toLowerCase();
+  if (domains.some((d) => host === d || host.endsWith("." + d))) return null;
+  return `这个链接看着不像${platformLabel(platform)}的地址(${host})——确认没贴错平台就继续。`;
 }
 
 /** 原子分组(与 vanilla 同构):topicId 为脊椎;孤稿自成原子;纯灵感单列 */
