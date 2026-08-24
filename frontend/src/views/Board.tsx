@@ -250,6 +250,10 @@ export function Board(props: { openEditor: (id: string) => void }) {
               setDragOver(null);
               const id = e.dataTransfer.getData("text/autocrew-content");
               if (!id || !DROP_TARGET_STATUS[col.key]) return;
+              // 同列拖拽是整理动作不是流转:多状态列(如制作中)的落点是列的入口状态,
+              // 在剪辑的卡于本列内拖一下会被静默拉回已过审(创始人真机踩中)
+              const fromStatus = e.dataTransfer.getData("text/autocrew-status");
+              if (fromStatus && STATUS_COLUMN[fromStatus] === i) return;
               // 看板是人工工具:force 直落目标状态,允许自由拖(前进/跳阶/回退),不受流水线单步状态机约束。
               // 拖到「已发布」只标记状态(+publishedAt),不触发真实推送——推送仍走「推 →」。
               const r = await invoke("content:transition", { id, target_status: DROP_TARGET_STATUS[col.key], force: true });
@@ -269,7 +273,11 @@ export function Board(props: { openEditor: (id: string) => void }) {
                   className="acard"
                   draggable={Boolean(rep)}
                   onDragStart={(e) => {
-                    if (rep) e.dataTransfer.setData("text/autocrew-content", rep.id);
+                    if (rep) {
+                      e.dataTransfer.setData("text/autocrew-content", rep.id);
+                      // 给 onDrop 的同列防呆用:拖拽起点的状态决定它属于哪一列
+                      e.dataTransfer.setData("text/autocrew-status", rep.status);
+                    }
                   }}
                   onClick={() => setMode({ kind: "matrix", atomKey: atom.key })}
                 >
