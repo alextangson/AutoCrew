@@ -7,6 +7,8 @@ import {
   getJob,
   isTerminalJobStatus,
   listJobs,
+  markJobFollowedUp,
+  noteJobOrigin,
   pendingPerspectives,
   topicHashOf,
   upsertJob,
@@ -87,6 +89,43 @@ describe("topicHashOf（简报过期判定的锚）", () => {
 
   it("标题与描述的边界不会被拼接串位", () => {
     expect(topicHashOf("ab", "")).not.toBe(topicHashOf("a", "b"));
+  });
+});
+
+describe("回流轮的两个标记（来源会话 / 已回报）", () => {
+  it("回填来源会话：不动其它字段，历史行照旧保留", async () => {
+    await upsertJob(job({ topicId: "topic-a", status: "running", claimedAt: "2026-07-26T08:01:00.000Z" }), dataDir);
+    const updated = await noteJobOrigin("topic-a", "conv-1-abc", dataDir);
+
+    expect(updated).toMatchObject({ status: "running", claimedAt: "2026-07-26T08:01:00.000Z" });
+    expect((await getJob("topic-a", dataDir))?.originConversationId).toBe("conv-1-abc");
+    expect((await fs.readFile(jobsFile(), "utf-8")).trim().split("\n")).toHaveLength(2);
+  });
+
+  it("回填后落定：来源会话跟着走（runner 的读-改-写会带上它）", async () => {
+    await upsertJob(job({ topicId: "topic-a" }), dataDir);
+    await noteJobOrigin("topic-a", "conv-1-abc", dataDir);
+    const claimed = (await getJob("topic-a", dataDir))!;
+    await upsertJob({ ...claimed, status: "succeeded", briefRevision: 1 }, dataDir);
+
+    expect(await getJob("topic-a", dataDir)).toMatchObject({
+      status: "succeeded",
+      originConversationId: "conv-1-abc",
+    });
+  });
+
+  it("已回报戳落盘：防重判据在台账上，重启后照样认", async () => {
+    await upsertJob(job({ topicId: "topic-a", status: "succeeded" }), dataDir);
+    expect((await getJob("topic-a", dataDir))?.followupAt).toBeUndefined();
+
+    await markJobFollowedUp("topic-a", "2026-07-26T09:00:00.000Z", dataDir);
+    expect((await getJob("topic-a", dataDir))?.followupAt).toBe("2026-07-26T09:00:00.000Z");
+  });
+
+  it("job 不存在时两个写口都回 null，不凭空造一条记录", async () => {
+    expect(await noteJobOrigin("topic-gone", "conv-1-abc", dataDir)).toBeNull();
+    expect(await markJobFollowedUp("topic-gone", "2026-07-26T09:00:00.000Z", dataDir)).toBeNull();
+    expect(await listJobs(dataDir)).toEqual([]);
   });
 });
 

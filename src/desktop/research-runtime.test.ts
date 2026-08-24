@@ -13,6 +13,7 @@ import {
   startResearchRuntime,
   stopResearchRuntime,
   triggerDeepResearch,
+  type ChatFollowupEvent,
   type ResearchUpdatedEvent,
 } from "./research-runtime.js";
 import type { DeepResearchDeps } from "../modules/research/deep-research.js";
@@ -21,6 +22,8 @@ import type { JobOutcome } from "../modules/research/research-runner.js";
 import {
   PERSPECTIVE_NAMES,
   getJob,
+  markJobFollowedUp,
+  noteJobOrigin,
   pendingPerspectives,
   topicHashOf,
   upsertJob,
@@ -190,6 +193,85 @@ describe("triggerDeepResearch", () => {
     expect(second).toMatchObject({ accepted: true, deduped: true });
     release();
     await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "succeeded");
+  });
+});
+
+// 调研回流轮 §2：落定即回报的那道门（真回报体由 chat-followup 自己测）
+describe("回流轮接线", () => {
+  /** 记下每次被叫到的 job，并把 SSE 出口原样透出来 */
+  function spyFollowup(seen: ResearchJob[], deliver = true) {
+    return async (job: ResearchJob, deps: { onDelivered?: (e: { conversationId: string; topicId: string }) => void }) => {
+      seen.push(job);
+      if (deliver && job.originConversationId) {
+        deps.onDelivered?.({ conversationId: job.originConversationId, topicId: job.topicId });
+      }
+      return "delivered" as const;
+    };
+  }
+
+  /**
+   * 卡在调研跑到一半的管线：真实时序就是这样——聊天那轮几秒就结束并回填来源会话，
+   * 四视角还要跑好几分钟。落定写回时那个标必须还在（否则永远没人回话）。
+   */
+  function gatedPipeline(gate: Promise<void>) {
+    return (deps: DeepResearchDeps) => async (job: ResearchJob) => {
+      await gate;
+      return fakePipeline()(deps)(job);
+    };
+  }
+
+  it("从对话派的任务落定 → 回流轮开跑，落点经 onChatFollowupEvent 出去", async () => {
+    const topic = await newTopic();
+    await configureSearch();
+    const seen: ResearchJob[] = [];
+    const followups: ChatFollowupEvent[] = [];
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    await start({
+      createRunJobImpl: gatedPipeline(gate),
+      followupImpl: spyFollowup(seen),
+      onChatFollowupEvent: (e) => followups.push(e),
+    });
+    await triggerDeepResearch(topic.id, dataDir);
+    // 来源会话由 chat-persist 在本轮对话落盘后回填——此刻调研还在跑
+    await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "running");
+    await noteJobOrigin(topic.id, "conv-1-abc", dataDir);
+    release();
+
+    await waitFor(async () => followups.length > 0);
+    expect(seen.map((j) => j.status)).toEqual(["succeeded"]); // 只在终态叫一次
+    expect(seen[0].originConversationId).toBe("conv-1-abc"); // 落定写回没把标抹掉
+    expect(followups).toEqual([{ type: "chat:followup", conversationId: "conv-1-abc", topicId: topic.id }]);
+  });
+
+  it("没有来源会话（面板按钮派的）：回流轮压根不启动", async () => {
+    const topic = await newTopic();
+    await configureSearch();
+    const seen: ResearchJob[] = [];
+    await start({ followupImpl: spyFollowup(seen) });
+    await triggerDeepResearch(topic.id, dataDir);
+    await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "succeeded");
+    // 落定后再等几拍，确认确实没有迟到的触发
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seen).toEqual([]);
+  });
+
+  it("已回报过的任务不再回报（followupAt 是持久防重）", async () => {
+    const topic = await newTopic();
+    await configureSearch();
+    const seen: ResearchJob[] = [];
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    await start({ createRunJobImpl: gatedPipeline(gate), followupImpl: spyFollowup(seen) });
+    await triggerDeepResearch(topic.id, dataDir);
+    await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "running");
+    await noteJobOrigin(topic.id, "conv-1-abc", dataDir);
+    await markJobFollowedUp(topic.id, "2026-08-24T09:00:00.000Z", dataDir);
+    release();
+
+    await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "succeeded");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seen).toEqual([]);
   });
 });
 

@@ -53,6 +53,14 @@ export interface ResearchJob {
   failReason?: string;
   /** 触发时选题「标题+描述」的 hash；与当前选题不符 = 简报已过期（§2） */
   topicHash: string;
+  /**
+   * 派这活的那段对话（调研回流轮）。**只有从聊天派出的任务才有**——写稿闸口自动补的
+   * 调研、选题卡按钮触发的都没有来源会话，缺席即天然不回流，不需要再加一道开关。
+   * 由 chat-persist 在本轮落盘拿到 convId 后回填（首轮的会话此前还不存在）。
+   */
+  originConversationId?: string;
+  /** 已经回报过的时刻。防重的持久依据：一个任务只回报一次 */
+  followupAt?: string;
 }
 
 const RESEARCH_DIR = "research";
@@ -118,6 +126,43 @@ export async function upsertJob(job: ResearchJob, dataDir: string): Promise<Rese
     await fh.close();
   }
   return job;
+}
+
+/**
+ * 读-改-追加一个字段。**只给回流轮那两个标记用**：它们不属于 runner 的状态机
+ * （runner 只写 queued/running/落定三处），却要落在同一条记录上，所以在这层给两个
+ * 语义明确的小写口，而不是开一个「随便打补丁」的通用 API——台账不猜补丁语义的纪律还在。
+ * job 不存在返回 null（选题被删/从没调研过）。
+ */
+async function amendJob(
+  topicId: string,
+  patch: Partial<Pick<ResearchJob, "originConversationId" | "followupAt">>,
+  dataDir: string,
+): Promise<ResearchJob | null> {
+  const job = await getJob(topicId, dataDir);
+  if (!job) return null;
+  return upsertJob({ ...job, ...patch }, dataDir);
+}
+
+/**
+ * 回填「这活是哪段对话派的」。本轮 turn 落盘后才知道 convId（首轮成功前不建会话），
+ * 所以是回填不是直写。任务可能已经落定——照样打标，只是那一刻的回流钩子已经错过了。
+ */
+export function noteJobOrigin(
+  topicId: string,
+  conversationId: string,
+  dataDir: string,
+): Promise<ResearchJob | null> {
+  return amendJob(topicId, { originConversationId: conversationId }, dataDir);
+}
+
+/** 盖「已回报」戳。回流轮真的落盘之后才盖——没发出去的回报不算回报 */
+export function markJobFollowedUp(
+  topicId: string,
+  at: string,
+  dataDir: string,
+): Promise<ResearchJob | null> {
+  return amendJob(topicId, { followupAt: at }, dataDir);
 }
 
 export async function getJob(topicId: string, dataDir: string): Promise<ResearchJob | null> {

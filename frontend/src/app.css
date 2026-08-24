@@ -114,6 +114,9 @@
 .msg { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px 10px; }
 .msg p { white-space: pre-wrap; }
 .msg-user { background: var(--ink); color: var(--accent-text); align-self: flex-end; max-width: 90%; }
+/* 后台任务回报（调研回流轮）：既不是用户气泡也不是总编辑发言，用虚线左沿标出来源 */
+.msg-system { border-left: 2px dashed var(--border); }
+.msg-system > .muted:first-child { margin-bottom: 4px; font-size: 11px; }
 /* 输入区：文本框在上，模型档位与发送键同处一条控制行——模型不再单独占一行标签 */
 .chat-compose {
   border-top: 1px solid var(--border); background: var(--card);

@@ -39,6 +39,12 @@ export interface ConversationMessage {
    * 客户端能凭 turnId 认出自己那一轮。
    */
   turnId?: string;
+  /**
+   * 仅 user：这条不是人说的，是后台任务回来了（调研回流轮的【调研回报】）。
+   * additive 扩展——旧记录没有这个字段照常读，缺席即「用户本人说的」。
+   * 渲染层据此不画成用户气泡：把系统消息装成用户发言，回看时会误以为自己说过。
+   */
+  origin?: "system";
   ts: string;
 }
 
@@ -110,7 +116,7 @@ export async function getConversation(
 
 export async function appendTurn(
   id: string,
-  user: { content: string },
+  user: { content: string; origin?: "system" },
   assistant: { content: string; cards?: Record<string, unknown>[]; turnId?: string },
   dataDir?: string,
 ): Promise<ConversationMeta | null> {
@@ -121,7 +127,12 @@ export async function appendTurn(
   if (!convDir) return null;
   const now = new Date().toISOString();
   const messages = existing.messages;
-  messages.push({ role: "user", content: user.content, ts: now });
+  messages.push({
+    role: "user",
+    content: user.content,
+    ...(user.origin ? { origin: user.origin } : {}),
+    ts: now,
+  });
   messages.push({
     role: "assistant",
     content: assistant.content,

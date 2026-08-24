@@ -11,6 +11,12 @@ import {
   listConversations,
 } from "../storage/conversation-store.js";
 import type { runChatTurn } from "./chat-router.js";
+import {
+  getJob,
+  pendingPerspectives,
+  topicHashOf,
+  upsertJob,
+} from "../modules/research/research-job-store.js";
 
 let dir: string;
 
@@ -193,6 +199,88 @@ describe("runPersistedChatTurn", () => {
     const conv = await getConversation(meta.id, dir);
     expect(conv!.messages).toHaveLength(4);
     expect(conv!.meta.turns).toBe(2);
+  });
+
+  // 调研回流轮 §1：本轮派出的深调研要认下这段会话，简报落盘时才知道回哪儿汇报
+  describe("深调研任务回填来源会话", () => {
+    const queuedJob = (topicId: string) =>
+      upsertJob(
+        {
+          topicId,
+          status: "queued",
+          startedAt: "2026-08-24T08:00:00.000Z",
+          perspectives: pendingPerspectives(),
+          topicHash: topicHashOf("标题", "描述"),
+        },
+        dir,
+      );
+
+    const turnWithResearch = (topicIds: string[]) =>
+      vi.fn(async () => ({
+        ok: true,
+        data: { reply: "已派下去", cards: [], researchTopicIds: topicIds, tokensUsed: 5 },
+      })) as unknown as typeof runChatTurn;
+
+    it("首轮新建的会话也回填得上（工具执行时它还不存在）", async () => {
+      await queuedJob("topic-1-abc");
+      const res = await runPersistedChatTurn({
+        message: "深调研一下这条",
+        dataDir: dir,
+        runTurn: turnWithResearch(["topic-1-abc"]),
+      });
+      const convId = (res.data as Record<string, unknown>).conversationId as string;
+      expect(convId).toBeTruthy();
+      expect((await getJob("topic-1-abc", dir))?.originConversationId).toBe(convId);
+    });
+
+    it("续聊的会话逐条回填；没派调研的一轮不碰台账", async () => {
+      const meta = await createConversation("续聊", dir);
+      await appendTurn(meta.id, { content: "a" }, { content: "b" }, dir);
+      await queuedJob("topic-1-abc");
+      await queuedJob("topic-2-def");
+
+      await runPersistedChatTurn({
+        message: "这两条都调研",
+        conversationId: meta.id,
+        dataDir: dir,
+        runTurn: turnWithResearch(["topic-1-abc", "topic-2-def"]),
+      });
+      expect((await getJob("topic-1-abc", dir))?.originConversationId).toBe(meta.id);
+      expect((await getJob("topic-2-def", dir))?.originConversationId).toBe(meta.id);
+
+      // 普通一轮：台账一个字都不该动
+      await runPersistedChatTurn({
+        message: "随便聊聊",
+        conversationId: meta.id,
+        dataDir: dir,
+        runTurn: okTurn("好"),
+      });
+      expect((await getJob("topic-1-abc", dir))?.originConversationId).toBe(meta.id);
+    });
+
+    it("任务已经不在台账里：回填静默跳过，本轮结果不受影响", async () => {
+      const res = await runPersistedChatTurn({
+        message: "深调研一条已经没了的",
+        dataDir: dir,
+        runTurn: turnWithResearch(["topic-9-gone"]),
+      });
+      expect(res.ok).toBe(true);
+      expect(await getJob("topic-9-gone", dir)).toBeNull();
+    });
+  });
+
+  it("origin:system 的一轮落盘时标在 user 侧（后台回报不冒充用户发言）", async () => {
+    const meta = await createConversation("回流会话", dir);
+    await runPersistedChatTurn({
+      message: "【调研回报】选题《X》深度调研完成",
+      conversationId: meta.id,
+      dataDir: dir,
+      origin: "system",
+      runTurn: okTurn("简报来了"),
+    });
+    const conv = await getConversation(meta.id, dir);
+    expect(conv!.messages[0]).toMatchObject({ role: "user", origin: "system" });
+    expect(conv!.messages[1]).not.toHaveProperty("origin");
   });
 
   it("serializes concurrent turns on the same conversation (no message dropped)", async () => {

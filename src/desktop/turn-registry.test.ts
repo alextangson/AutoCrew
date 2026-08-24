@@ -11,6 +11,7 @@ import {
   abortTurn,
   settleTurn,
   getTurnStatus,
+  hasActiveTurnForConversation,
   noteTurnConversation,
   readRecentTurns,
   resetActiveTurns,
@@ -126,6 +127,30 @@ describe("recent-turns 有界环", () => {
     await fs.writeFile(path.join(dir, "recent-turns.json"), "{ 不是 JSON", "utf-8");
     expect(await readRecentTurns(dir)).toEqual([]);
     expect(await getTurnStatus("t1", dir)).toEqual({ status: "unknown" });
+  });
+});
+
+// 调研回流轮：后台回报要靠它避让用户正在进行的那一轮
+describe("hasActiveTurnForConversation", () => {
+  it("这段会话有在途的轮就是忙；stopping 也算忙（还没收尾）；settle 后放行", async () => {
+    expect(hasActiveTurnForConversation("conv-1-abc")).toBe(false);
+
+    registerTurn("t1", "客户端A", { conversationId: "conv-1-abc" });
+    expect(hasActiveTurnForConversation("conv-1-abc")).toBe(true);
+    expect(hasActiveTurnForConversation("conv-1-别人")).toBe(false); // 别的会话不受牵连
+
+    abortTurn("t1", "客户端A");
+    expect(hasActiveTurnForConversation("conv-1-abc")).toBe(true);
+
+    await settleTurn("t1", { conversationId: "conv-1-abc", dataDir: dir });
+    expect(hasActiveTurnForConversation("conv-1-abc")).toBe(false);
+  });
+
+  it("首轮建会话后回填的归属也算数（noteTurnConversation）", () => {
+    registerTurn("t1", "客户端A");
+    expect(hasActiveTurnForConversation("conv-1-new")).toBe(false);
+    noteTurnConversation("t1", "conv-1-new");
+    expect(hasActiveTurnForConversation("conv-1-new")).toBe(true);
   });
 });
 

@@ -117,6 +117,18 @@ describe("appendTurn", () => {
   it("returns null for missing conversation", async () => {
     expect(await appendTurn("conv-1-gone", { content: "a" }, { content: "b" }, dir)).toBeNull();
   });
+
+  // 调研回流轮：后台任务发起的那一轮，user 侧要认得出「这不是人说的」
+  it("persists origin:system on the user message and omits the key otherwise", async () => {
+    const meta = await createConversation("回流会话", dir);
+    await appendTurn(meta.id, { content: "人说的" }, { content: "答" }, dir);
+    await appendTurn(meta.id, { content: "【调研回报】…", origin: "system" }, { content: "答2" }, dir);
+
+    const conv = await getConversation(meta.id, dir);
+    expect(conv!.messages[0]).not.toHaveProperty("origin"); // 旧形态逐字不变
+    expect(conv!.messages[2]).toMatchObject({ role: "user", origin: "system" });
+    expect(conv!.messages[3]).not.toHaveProperty("origin"); // assistant 侧永远不带
+  });
 });
 
 describe("listConversations", () => {

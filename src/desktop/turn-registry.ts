@@ -92,6 +92,18 @@ export function abortTurn(turnId: string, clientId: string): AbortOutcome {
   return "settling";
 }
 
+/**
+ * 这段会话上有没有还没收尾的轮（含 stopping——它要到原轮真收尾才清）。
+ * 后台回流轮靠它避让：用户正打着字等回复时，总编辑不该从旁边插一段进来。
+ * 只看得见**登记过**的轮：老前端不带 turn_id 的轮不在表里（那条路本来就不可寻址）。
+ */
+export function hasActiveTurnForConversation(conversationId: string): boolean {
+  for (const entry of active.values()) {
+    if (entry.conversationId === conversationId) return true;
+  }
+  return false;
+}
+
 /** 记下本轮落在哪个会话（首轮建会话后回填，turn_status 的 running 态也能给出会话） */
 export function noteTurnConversation(turnId: string, conversationId: string): void {
   const entry = active.get(turnId);

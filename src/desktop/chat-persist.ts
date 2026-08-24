@@ -17,6 +17,8 @@ import {
   getConversation,
   appendTurn,
 } from "../storage/conversation-store.js";
+import { getDataDir } from "../storage/local-store.js";
+import { noteJobOrigin } from "../modules/research/research-job-store.js";
 
 const HISTORY_WINDOW = 12;
 
@@ -37,6 +39,35 @@ function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/**
+ * 把本轮派出的深调研任务认到这段会话名下（调研回流轮 §1）。
+ *
+ * 为什么在这里而不是工具里直写：首轮对话在 turn 成功后才建会话（本文件「不留空壳」纪律），
+ * 工具执行那一刻 convId 还不存在。代价是**回填晚于投递**：任务若在本轮回复吐完之前就落定
+ * （只有秒级失败会这样，四视角正常是分钟级），那一刻的回流钩子读不到来源会话，这条不回报
+ * ——已接受，事实仍在选题卡上。
+ *
+ * 回填失败不改变本轮结果：调研照跑、进度照在选题卡上，只是不会回话。
+ */
+async function backfillResearchOrigins(
+  raw: unknown,
+  conversationId: string,
+  dataDir?: string,
+): Promise<void> {
+  const topicIds = Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string" && !!t) : [];
+  if (topicIds.length === 0) return;
+  const dir = getDataDir(dataDir);
+  for (const topicId of topicIds) {
+    try {
+      await noteJobOrigin(topicId, conversationId, dir);
+    } catch (err) {
+      console.warn(
+        `[chat-persist] 调研任务认领会话失败（${topicId}）,简报出来不会回话：${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
 export async function runPersistedChatTurn(params: {
   message: string;
   conversationId?: string;
@@ -47,6 +78,11 @@ export async function runPersistedChatTurn(params: {
   runId?: string;
   /** 客户端生成的 turnId（设计 §Phase 3）:随 assistant 消息落盘,断线恢复凭它认领本轮 */
   turnId?: string;
+  /**
+   * 这一轮的 user 侧消息不是人说的（调研回流轮）。只影响落盘标记与前端渲染,
+   * 模型侧照常当一条 user 消息读——它就该像收到一条消息那样回应。
+   */
+  origin?: "system";
   /** 用户中止信号:中止走 ok:true + stopReason="aborted",按正常轮落盘（不写失败轮） */
   signal?: AbortSignal;
   /** 右栏选的模型档位(纯透传;解析与校验都在 runChatTurn) */
@@ -85,13 +121,18 @@ export async function runPersistedChatTurn(params: {
     if (conversationId && !result.needsSetup) {
       const failNote = `⚠️ 本轮执行失败：${String(result.error ?? "未知错误")}。你的消息已保留,可以直接重发。`;
       await enqueue(conversationId, () =>
-        appendTurn(conversationId, { content: message }, { content: failNote, cards: [] }, dataDir),
+        appendTurn(
+          conversationId,
+          { content: message, ...(params.origin ? { origin: params.origin } : {}) },
+          { content: failNote, cards: [] },
+          dataDir,
+        ),
       ).catch(() => { /* 留痕失败不改变返回 */ });
     }
     return result;
   }
 
-  const data = result.data as { reply?: unknown; cards?: unknown } | undefined;
+  const data = result.data as { reply?: unknown; cards?: unknown; researchTopicIds?: unknown } | undefined;
   const cards = Array.isArray(data?.cards) ? (data.cards as Record<string, unknown>[]) : [];
   const rawReply = typeof data?.reply === "string" ? data.reply.trim() : "";
   // 持久层最后一道防线：历史中不再写入“有气泡、没内容”的 assistant 消息。
@@ -109,11 +150,13 @@ export async function runPersistedChatTurn(params: {
       conversationId ?? (await createConversation(message, dataDir, params.viewContext?.contentId)).id;
     const meta = await appendTurn(
       convId,
-      { content: message },
+      { content: message, ...(params.origin ? { origin: params.origin } : {}) },
       { content: reply, cards, ...(params.turnId ? { turnId: params.turnId } : {}) },
       dataDir,
     );
     if (!meta) console.warn("[chat-persist] 会话在回合中被删除，本轮未落盘：" + convId);
+    // 本轮派出去的深调研认下这段会话——简报落盘时总编辑才知道回哪儿汇报
+    if (meta) await backfillResearchOrigins(data?.researchTopicIds, convId, dataDir);
     return {
       ...result,
       data: { ...(result.data as Record<string, unknown>), conversationId: meta ? convId : null },

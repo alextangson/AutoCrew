@@ -5,6 +5,7 @@ import {
   conversationGroups,
   findConversationForContent,
   decideConversationSwitch,
+  decideFollowupRefresh,
   type ConversationSummary,
 } from "./conversation-list";
 
@@ -149,5 +150,29 @@ describe("decideConversationSwitch", () => {
   it("当前没有激活会话时照常按绑定判定", () => {
     expect(decideConversationSwitch({ list, contentId: "c-1" })).toEqual({ action: "load", id: "A" });
     expect(decideConversationSwitch({ list, contentId: "c-9" })).toEqual({ action: "fresh" });
+  });
+});
+
+describe("decideFollowupRefresh（调研回报到了右栏怎么动）", () => {
+  it("回报落在眼前这段、本页空着 → 直接重载，让它出现在眼前", () => {
+    expect(decideFollowupRefresh({ conversationId: "A", activeId: "A", busy: false })).toEqual({
+      action: "reload",
+      id: "A",
+    });
+  });
+
+  it("本页正跑着一轮 → 不重载（会把进行中的气泡冲掉），只刷列表 + 提示", () => {
+    expect(decideFollowupRefresh({ conversationId: "A", activeId: "A", busy: true })).toEqual({ action: "notify" });
+  });
+
+  it("回报落在别的会话 → 刷列表 + 提示，不把用户拽走", () => {
+    expect(decideFollowupRefresh({ conversationId: "B", activeId: "A", busy: false })).toEqual({ action: "notify" });
+    expect(decideFollowupRefresh({ conversationId: "B", busy: false })).toEqual({ action: "notify" });
+  });
+
+  it("坏帧（没带会话 id）丢弃", () => {
+    expect(decideFollowupRefresh({ conversationId: undefined, activeId: "A", busy: false })).toEqual({ action: "ignore" });
+    expect(decideFollowupRefresh({ conversationId: "", activeId: "A", busy: false })).toEqual({ action: "ignore" });
+    expect(decideFollowupRefresh({ conversationId: 7, activeId: "A", busy: false })).toEqual({ action: "ignore" });
   });
 });

@@ -26,12 +26,24 @@ import {
   type ResearchRunner,
   type TriggerResult,
 } from "../modules/research/research-runner.js";
-import type { PerspectiveName, ResearchJob } from "../modules/research/research-job-store.js";
+import {
+  isTerminalJobStatus,
+  type PerspectiveName,
+  type ResearchJob,
+} from "../modules/research/research-job-store.js";
+import { runResearchFollowup } from "./chat-followup.js";
 import { searchAvailable } from "../modules/research/search-provider.js";
 
 /** SSE `research` 流的载荷（spec §2「进度」）：只报 topicId，消费方按它重读状态 */
 export interface ResearchUpdatedEvent {
   type: "research:updated";
+  topicId: string;
+}
+
+/** SSE `chat_followup` 流的载荷（调研回流轮）：总编辑刚往这段会话里落了一轮回报 */
+export interface ChatFollowupEvent {
+  type: "chat:followup";
+  conversationId: string;
   topicId: string;
 }
 
@@ -48,10 +60,14 @@ export interface ResearchRuntimeOptions {
   rootDir?: string;
   /** 状态落定/进度回调，server 接 SSE（总线不在这层接） */
   onResearchEvent?: (evt: ResearchUpdatedEvent) => void;
+  /** 回流轮落盘回调，server 接 SSE `chat_followup`（同上，总线不在这层接） */
+  onChatFollowupEvent?: (evt: ChatFollowupEvent) => void;
   /** 故障出口——不静默（默认 console.error） */
   onError?: (message: string) => void;
   /** 测试注入：替掉真管线。工厂形态（不是成品 runJob）——替身能看到本层注入的 onProgress */
   createRunJobImpl?: (deps: DeepResearchDeps) => (job: ResearchJob) => Promise<JobOutcome>;
+  /** 测试注入：替掉回流轮本体（生产走 chat-followup 的真实现） */
+  followupImpl?: typeof runResearchFollowup;
 }
 
 /** 搜索未配置时的人话出口（投递口共用，chat 与 IPC 一字不差） */
@@ -97,6 +113,29 @@ function activityLabel(activity: BrokerActivity): string {
 }
 
 /**
+ * 落定即回报（调研回流轮 §2）：从对话派出的任务一落定，总编辑就回那段会话报一轮。
+ * 门在这里一次判完（终态 + 有来源会话 + 没回报过），真正的等待/组装/落盘在 chat-followup。
+ *
+ * **已接受的限制**：server 重启期间落定的任务不补回报——启动回收只重排非终态 job，
+ * 终态的那些不会再触发本钩子。进度与简报仍在选题卡上，不丢事实；
+ * 补一个几小时前的回报比不补更让人困惑。
+ *
+ * 回流轮可能要等用户当前那轮 settle（最长 10 分钟），所以是 fire-and-forget：
+ * 绝不能让它挡住 runner 的下一条任务。
+ */
+function maybeFollowup(job: ResearchJob, dataDir: string): void {
+  if (!isTerminalJobStatus(job.status) || !job.originConversationId || job.followupAt) return;
+  const runFollowup = options.followupImpl ?? runResearchFollowup;
+  const onEvent = options.onChatFollowupEvent;
+  void runFollowup(job, {
+    dataDir,
+    ...(onEvent
+      ? { onDelivered: (e: { conversationId: string; topicId: string }) => onEvent({ type: "chat:followup", ...e }) }
+      : {}),
+  }).catch((err) => report(`调研回报失败（${job.topicId}）：${errText(err)}`));
+}
+
+/**
  * 唯一装配点。`emit` 同时挂在 runner 的 `onJobChanged`（job 级）与 deep-research 的
  * `onProgress`（视角级）上——两级进度必须走同一个出口，见文件头纪律 1。
  * `onActivity` 是第三级（每次真实出网），它不进 SSE 而是进工作日志：等简报的那十几分钟里
@@ -105,6 +144,7 @@ function activityLabel(activity: BrokerActivity): string {
 function wire(dataDir: string): ResearchRunner {
   const emit = (job: ResearchJob): void => {
     options.onResearchEvent?.({ type: "research:updated", topicId: job.topicId });
+    maybeFollowup(job, dataDir);
   };
   const runJob = (options.createRunJobImpl ?? createDeepResearchRunJob)({
     dataDir,

@@ -423,7 +423,12 @@ void startInboxRuntime({ onInboxEvent: (e) => broadcast("inbox", e) })
 
 // 深调研(deep-research spec §2):串行 runner 是进程内单例,启动回收中断的 job 并重排。
 // onResearchEvent 同时接 job 级落定与视角级进度 → SSE `research` 流,选题卡据此刷新。
-void startResearchRuntime({ onResearchEvent: (e) => broadcast("research", e) })
+// onChatFollowupEvent → SSE `chat_followup`:简报落盘后总编辑回派活那段会话报了一轮,
+// 右栏据此重载（正看着那段）或提示（在别处）——不然回报落在盘上没人看见,等于没回。
+void startResearchRuntime({
+  onResearchEvent: (e) => broadcast("research", e),
+  onChatFollowupEvent: (e) => broadcast("chat_followup", { conversationId: e.conversationId, topicId: e.topicId }),
+})
   .then((s) => console.log(`  [research] 深调研 runner:${s.state}${s.reclaimed ? ` —— 回收 ${s.reclaimed} 条中断任务` : ""}`))
   .catch((err) => console.error("[research] 深调研启动失败:", err instanceof Error ? err.message : err));
 // 视频生产线(spec §8.3 SSE 四件套之一):状态每次落盘 → broadcast `video:updated`,

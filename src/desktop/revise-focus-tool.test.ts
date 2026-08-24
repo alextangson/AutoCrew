@@ -3,7 +3,13 @@ import { buildChatTools, CREW_TOOL_STATUS, type ChatCard, type ChatToolDeps, typ
 import type { ReviseFocus, ReviseFocusResult } from "../modules/writing/revise-focus.js";
 
 function toolset(sink: ChatCard[], viewContext: ChatViewContext | undefined, deps: ChatToolDeps) {
-  const tools = buildChatTools(sink, undefined, deps, { contentIds: new Set<string>() }, viewContext);
+  const tools = buildChatTools(
+    sink,
+    undefined,
+    deps,
+    { contentIds: new Set<string>(), researchTopicIds: new Set<string>() },
+    viewContext,
+  );
   return (name: string) => {
     const found = tools.find((t) => t.name === name);
     if (!found) throw new Error(`工具未注册：${name}`);

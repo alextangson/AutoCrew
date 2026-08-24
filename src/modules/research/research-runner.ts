@@ -280,8 +280,12 @@ class SerialResearchRunner implements ResearchRunner {
         failReason: errText(err),
       };
     }
+    // 落定前**重读**台账：这轮跑了几分钟，期间可能有人往这条记录上打过标
+    // （回流轮的 originConversationId 就是聊天那边事后回填的）。拿 claim 那一刻的快照
+    // 去写等于把这些标悄悄抹掉——状态与视角仍以本轮 outcome 为准，其余字段照最新的走。
+    const latest = (await getJob(topicId, this.deps.dataDir)) ?? claimed;
     // 选题中途被删由 W3 报错上来（failed），本层不特判：台账照常落定，简报文件保留
-    await this.write(settledJob(claimed, outcome, this.nowIso()));
+    await this.write(settledJob(latest, outcome, this.nowIso()));
   }
 }
 

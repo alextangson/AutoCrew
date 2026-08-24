@@ -35,6 +35,7 @@ import {
   conversationGroups,
   conversationHint,
   decideConversationSwitch,
+  decideFollowupRefresh,
   type ConversationSummary,
 } from "./conversation-list";
 import { PickerButton } from "../picker";
@@ -46,6 +47,17 @@ interface Msg {
   cards?: ChatCardShape[];
   /** 气泡下面的一行灰字（中止提示等），不进模型上下文 */
   note?: string;
+  /** user 侧的系统消息（后台任务回报）——不画成用户气泡，见 SYSTEM_MSG_LABEL */
+  origin?: "system";
+}
+
+/** 系统消息的标头：一眼看出「这条不是我说的」 */
+const SYSTEM_MSG_LABEL = "调研回报";
+
+/** 三种气泡：用户（深色右对齐）/ 系统回报（虚线左沿）/ 总编辑（默认卡片） */
+function msgClass(m: Msg): string {
+  if (m.origin === "system") return "msg msg-system";
+  return m.role === "user" ? "msg msg-user" : "msg";
 }
 
 /**
@@ -86,6 +98,9 @@ export function ChatDock(props: {
   viewRef.current = props.view;
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // SSE 订阅只注册一次（依赖表为空），里面要读的 busy 必须走 ref，否则永远是挂载那刻的 false
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   /** 已发出 chat:abort、等本轮 invoke 返回才解锁（服务端注册表也 busy 到 settle） */
   const [stopping, setStopping] = useState(false);
   const [recoveryNotice, setRecoveryNotice] = useState("");
@@ -168,11 +183,16 @@ export function ChatDock(props: {
   const loadConversation = async (id: string) => {
     const r = await invoke("conversations:get", { id });
     if (!r.ok) return toast(r.error ?? "这段会话打开失败");
-    const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[] }> } }).data;
+    const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[]; origin?: "system" }> } }).data;
     setActiveConversationId(id);
     setMsgs(
       d.messages
-        .map((m) => ({ role: m.role, text: m.content, cards: (m.cards ?? []).filter((c) => c.type !== "revision_proposal") }))
+        .map((m) => ({
+          role: m.role,
+          text: m.content,
+          cards: (m.cards ?? []).filter((c) => c.type !== "revision_proposal"),
+          ...(m.origin === "system" ? { origin: "system" as const } : {}),
+        }))
         .filter((m) => m.text.trim() || (m.cards?.length ?? 0) > 0),
     );
   };
@@ -413,6 +433,20 @@ export function ChatDock(props: {
           if (frame) setStream((s) => applyDelta(s, frame));
           return;
         }
+        // 调研回报：后台任务回来了。判定是纯函数（decideFollowupRefresh），这里只接线
+        if (e.kind === "chat_followup") {
+          const decision = decideFollowupRefresh({
+            conversationId: e.data.conversationId,
+            ...(activeConvRef.current ? { activeId: activeConvRef.current } : {}),
+            busy: busyRef.current,
+          });
+          if (decision.action === "reload") void loadConversation(decision.id);
+          else if (decision.action === "notify") {
+            void refreshConversations();
+            toast("总编辑回报了调研结果,在会话列表里");
+          }
+          return;
+        }
         if (e.kind !== "chat") return;
         const label = typeof e.data.label === "string" ? e.data.label : "";
         const phase = e.data.phase;
@@ -498,9 +532,11 @@ export function ChatDock(props: {
           </p>
         )}
         {msgs.map((m, i) => (
-          <div key={i} className={m.role === "user" ? "msg msg-user" : "msg"}>
+          <div key={i} className={msgClass(m)}>
+            {/* 系统消息（后台任务回报）不画成用户气泡：回看时不该以为这话是自己说的 */}
+            {m.origin === "system" && <p className="muted mono">{SYSTEM_MSG_LABEL}</p>}
             {m.text &&
-              (m.role === "user" ? (
+              (m.role === "user" && m.origin !== "system" ? (
                 <p>{m.text}</p>
               ) : (
                 // 总编辑回复渲染 markdown(与编辑器预览同栈)——裸 ** 不再示人

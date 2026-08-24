@@ -16,6 +16,7 @@ import {
   PERSPECTIVE_NAMES,
   getJob,
   listJobs,
+  noteJobOrigin,
   pendingPerspectives,
   topicHashOf,
   upsertJob,
@@ -244,6 +245,32 @@ describe("briefRevision 指针（只进不退）", () => {
       await runner.idle();
       expect((await getJob(topic.id, dataDir))?.briefRevision).toBe(expected);
     }
+  });
+});
+
+describe("落定写回不抹掉别人打的标", () => {
+  /**
+   * 真实时序（调研回流轮）：聊天那轮几秒就结束并回填 originConversationId，
+   * 四视角还要跑几分钟。落定若用 claim 那一刻的快照写回，这个标会被悄悄抹掉，
+   * 简报出来后就永远没人回话——而且没有任何报错。
+   */
+  it("runJob 期间回填的来源会话，落定后还在", async () => {
+    const topic = await newTopic();
+    const runner = makeRunner({
+      runJob: async (job) => {
+        await noteJobOrigin(job.topicId, "conv-1-abc", dataDir);
+        return { status: "succeeded", perspectives: allOk(), briefRevision: 1 };
+      },
+    });
+
+    await runner.trigger(topic.id);
+    await runner.idle();
+
+    expect(await getJob(topic.id, dataDir)).toMatchObject({
+      status: "succeeded",
+      briefRevision: 1,
+      originConversationId: "conv-1-abc",
+    });
   });
 });
 

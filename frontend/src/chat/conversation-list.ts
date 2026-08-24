@@ -86,6 +86,28 @@ export function decideConversationSwitch(params: {
   return hit ? { action: "load", id: hit.id } : { action: "fresh" };
 }
 
+/**
+ * 收到「总编辑回报了调研结果」（SSE chat_followup）时右栏该怎么动：
+ * reload = 回报正落在眼前这段会话且本页空着，直接重载让它出现；
+ * notify = 不是当前这段、或本页正跑着一轮（重载会把进行中的气泡冲掉）——刷列表 + 提示一句；
+ * ignore = 事件没带会话 id，坏帧丢弃。
+ */
+export type FollowupRefresh =
+  | { action: "reload"; id: string }
+  | { action: "notify" }
+  | { action: "ignore" };
+
+export function decideFollowupRefresh(params: {
+  conversationId?: unknown;
+  activeId?: string;
+  busy: boolean;
+}): FollowupRefresh {
+  const { conversationId, activeId, busy } = params;
+  if (typeof conversationId !== "string" || !conversationId) return { action: "ignore" };
+  if (conversationId === activeId && !busy) return { action: "reload", id: conversationId };
+  return { action: "notify" };
+}
+
 /** 本地日历日的 00:00（分组按自然日，不按 24 小时滚动窗口——「昨天」得是昨天） */
 function startOfDay(ts: number): number {
   const d = new Date(ts);

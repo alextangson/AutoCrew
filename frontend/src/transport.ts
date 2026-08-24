@@ -77,10 +77,12 @@ export interface SseEvent {
    *   （视频 spec §8.3 四件套之三；事件只报「变了」，不带状态本身，避免两份事实）
    * - chat_delta：总编辑回复的正文增量（{turnId, seq, ev:"delta"|"reset"|"done", text?}）——
    *   只是「正在生成的样子」，事实源仍是 chat:turn 的 invoke 返回（到达后全量覆盖）
+   * - chat_followup：总编辑往某段会话里落了一轮**调研回报**（{conversationId, topicId}）——
+   *   后台任务回来了,不是用户发起的一轮;右栏据此重载当前会话或提示去会话列表看
    * - reconnect：**客户端合成**事件，不来自服务端。SSE 断线期间的事件已经永久丢失，
    *   重连后订阅方必须无条件重拉一次（同 spec §8.3 之四）
    */
-  kind: "engine" | "chat" | "chat_delta" | "inbox" | "research" | "video:updated" | "reconnect";
+  kind: "engine" | "chat" | "chat_delta" | "chat_followup" | "inbox" | "research" | "video:updated" | "reconnect";
   data: Record<string, unknown>;
 }
 
@@ -105,7 +107,7 @@ export function subscribeEvents(fn: SseListener): () => void {
           if (everOpened) for (const l of listeners) l({ kind: "reconnect", data: {} });
           everOpened = true;
         });
-        for (const kind of ["engine", "chat", "chat_delta", "inbox", "research", "video:updated"] as const) {
+        for (const kind of ["engine", "chat", "chat_delta", "chat_followup", "inbox", "research", "video:updated"] as const) {
           source.addEventListener(kind, (ev) => {
             let data: Record<string, unknown> = {};
             try {
