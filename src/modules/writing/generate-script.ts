@@ -34,7 +34,8 @@ import { retrieveKnowledge, KNOWLEDGE_DEFAULT_CHARS } from "../knowledge/knowled
 import { buildBriefBlock, knowledgeBudgetFor } from "../research/brief-inject.js";
 import { loadBrief } from "../research/brief-store.js";
 import { getJob, topicHashOf } from "../research/research-job-store.js";
-import { getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
+import { getContent, getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
+import type { Content } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
 
 export type { ScriptRequest };
@@ -123,10 +124,37 @@ async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<
       hashtags: [],
       // 血缘(V5.4c):从占位稿起就带上灵感来源,转正时 updateContent 不触碰该字段
       ...(req.topicId ? { topicId: req.topicId } : {}),
+      // 中断重写的依据:写崩之后靠它原样重来一次,不必从标题反推(调研材料会丢)
+      genRequest: req,
     },
     dataDir,
   );
   return placeholder.id;
+}
+
+/** 占位稿标题上的三个阶段哨兵——重写要的是它们后面那个原选题 */
+const TITLE_SENTINELS = [GENERATING_TITLE_PREFIX, RESEARCHING_TITLE_PREFIX, INTERRUPTED_TITLE_PREFIX];
+
+function stripTitleSentinel(title: string): string {
+  const hit = TITLE_SENTINELS.find((p) => title.startsWith(p));
+  return hit ? title.slice(hit.length) : title;
+}
+
+/**
+ * 重建中断稿的写作请求。有 genRequest 就照抄（连调研材料、对标卡开关一起）；
+ * 旧稿没有这个字段时降级还原——选题只能从标题剥哨兵取回，材料确实找不回来了，
+ * 但「在原稿上重写」这件事本身不该因为一份旧数据就做不成。
+ */
+function rebuildRequest(content: Content): ScriptRequest {
+  if (content.genRequest) return content.genRequest;
+  if (!content.platform) {
+    throw new Error(`稿件 ${content.id} 没有记录目标平台,无法重写——请在编辑器里手工补一篇`);
+  }
+  return {
+    topic: stripTitleSentinel(content.title),
+    platform: content.platform as ScriptRequest["platform"],
+    ...(content.topicId ? { topicId: content.topicId } : {}),
+  };
 }
 
 /** 选卡（usePatterns:false 显式关闭时连读都不读）。选题标题与角度都在 req.topic 这一串自由文本里 */
@@ -469,6 +497,45 @@ function reviewBrand(review: ReviewMeta): string {
   return "（已审稿）";
 }
 
+type BackgroundDeps = GenerationDeps & { onEvent?: (e: BackgroundGenEvent) => void };
+
+/**
+ * 后台执行体（新写与中断重写共用）。占位稿已经存在——本函数只负责起 run、
+ * 播事件、把失败关在 run_failed 里（后台任务不该向调用方 reject:投递已经成功了）。
+ * `workLabel` 由调用方给：任务带上「开写」与「重写」要能一眼分开。
+ */
+function runInBackground(
+  contentId: string,
+  req: ScriptRequest,
+  workLabel: string,
+  dataDir?: string,
+  deps?: BackgroundDeps,
+): StartedGeneration {
+  const runId = `run-bg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const emit = (e: BackgroundGenEvent) => { try { deps?.onEvent?.(e); } catch { /* 观测层吞错 */ } };
+
+  const completion = (async () => {
+    emit({ role: "writer", kind: "work", label: workLabel, contentId, runId });
+    try {
+      const result = await runGeneration(contentId, req, dataDir, deps, runId);
+      // 「没材料写的」「没过 AI 审稿的」都要在工作日志上自己说出来——
+      // 人看到标签才知道这稿该多挑一点（审稿 §2.5：run_done 追加审稿结论）
+      const brand = result.wroteWithoutBrief ? "（未带简报）" : "";
+      emit({
+        role: "system",
+        kind: "run_done",
+        label: `《${result.title.slice(0, 24)}》写完,待审改${brand}${reviewBrand(result.review)}`,
+        contentId,
+        runId,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}`, contentId, runId });
+    }
+  })();
+  return { contentId, runId, completion };
+}
+
 /**
  * 后台化入口（契约 P1 工程项完全体）:提交即返回占位稿 id,生成在进程后台跑,
  * HTTP 请求/页面刷新与任务生命周期彻底解耦。进度经 onEvent 回调外发
@@ -477,33 +544,48 @@ function reviewBrand(review: ReviewMeta): string {
 export function startGenerateScript(
   req: ScriptRequest,
   dataDir?: string,
-  deps?: GenerationDeps & { onEvent?: (e: BackgroundGenEvent) => void },
+  deps?: BackgroundDeps,
 ): Promise<StartedGeneration> {
-  const runId = `run-bg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const emit = (e: BackgroundGenEvent) => { try { deps?.onEvent?.(e); } catch { /* 观测层吞错 */ } };
+  return createPlaceholder(req, dataDir).then((contentId) =>
+    runInBackground(contentId, req, `编剧开写《${req.topic.slice(0, 24)}》`, dataDir, deps),
+  );
+}
 
-  return createPlaceholder(req, dataDir).then((contentId) => {
-    const completion = (async () => {
-      emit({ role: "writer", kind: "work", label: `编剧开写《${req.topic.slice(0, 24)}》`, contentId, runId });
-      try {
-        const result = await runGeneration(contentId, req, dataDir, deps, runId);
-        // 「没材料写的」「没过 AI 审稿的」都要在工作日志上自己说出来——
-        // 人看到标签才知道这稿该多挑一点（审稿 §2.5：run_done 追加审稿结论）
-        const brand = result.wroteWithoutBrief ? "（未带简报）" : "";
-        emit({
-          role: "system",
-          kind: "run_done",
-          label: `《${result.title.slice(0, 24)}》写完,待审改${brand}${reviewBrand(result.review)}`,
-          contentId,
-          runId,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}`, contentId, runId });
-      }
-    })();
-    return { contentId, runId, completion };
-  });
+/**
+ * 中断稿原地重写。**不新建稿件**——这是整条重试链的要点：老路是「重试 = 再派一次活」，
+ * 于是中断稿成僵尸卡、每重试一次看板多一张重复卡（2026-08-24 缺陷）。
+ *
+ * 只认「有 lastError」的稿：没有中断记录的稿子重写就是拿一篇好稿去赌，
+ * 用户要的是改稿（revise_draft）而不是推倒重来。
+ * 重置发生在起 run 之前——标题回［生成中］、lastError 清空，看板当场变回「在写」。
+ */
+export async function retryGenerateScript(
+  contentId: string,
+  dataDir?: string,
+  deps?: BackgroundDeps,
+  /**
+   * 用户这一轮刚提的新要求（对话入口会带；编辑器的「重新生成」按钮不带）。
+   * 盖在原请求之上而不是替换它：换了角度就按新角度写，这次没重提的（比如上回贴的
+   * 调研材料）照旧保留——两个方向的静默丢失都不可接受。**只放真给了值的键**，
+   * 带 undefined 进来等于把原请求那一格擦掉。
+   */
+  override?: Partial<ScriptRequest>,
+): Promise<StartedGeneration> {
+  const content = await getContent(contentId, dataDir);
+  if (!content) throw new Error(`稿件不存在（${contentId}）`);
+  if (!content.lastError) throw new Error("这稿没有中断记录,不能重写——要改稿请直接说怎么改");
+
+  const req: ScriptRequest = { ...rebuildRequest(content), ...override };
+  await updateContent(
+    contentId,
+    {
+      title: `${GENERATING_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
+      lastError: null,
+      _versionNote: "中断重写:在原稿上重来一次",
+    },
+    dataDir,
+  );
+  return runInBackground(contentId, req, `编剧重写《${req.topic.slice(0, 24)}》`, dataDir, deps);
 }
 
 interface FinalizeArgs {
@@ -554,6 +636,8 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
       draftReadyAt: new Date().toISOString(),
       hashtags: cleanHashtags,
       lastError: null,
+      // 转正即清:成稿没有「中断」可重试,留着这份请求只是 meta 里一处会骗人的旧事实
+      genRequest: undefined,
       // 归因落稿件元数据(§3.5 卡 / 深调研 §6 简报):没用到就不写字段——与改动前一字不差
       ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
       ...(attribution.usedBriefRevision !== undefined

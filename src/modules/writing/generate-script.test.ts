@@ -9,9 +9,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { generateScript, startGenerateScript } from "./generate-script.js";
-import type { EnsureBriefOutcome, GeneratedScript } from "./generate-script.js";
-import { getContent, listContents } from "../../storage/local-store.js";
+import { generateScript, startGenerateScript, retryGenerateScript } from "./generate-script.js";
+import type { EnsureBriefOutcome, GeneratedScript, ScriptRequest } from "./generate-script.js";
+import { getContent, listContents, saveContent } from "../../storage/local-store.js";
 import type { LoopResult, LoopTool, LoopOptions } from "../../engine/loop.js";
 import type { EngineConfig } from "../../engine/config.js";
 
@@ -560,6 +560,164 @@ describe("startGenerateScript — 后台化（契约 P1 完全体）", () => {
     const placeholder = await getContent(started.contentId, testDir);
     expect(placeholder.lastError).toContain("relay 断流");
     expect(events.map((e) => e.kind)).toEqual(["work", "run_failed"]);
+  });
+});
+
+// ─── 中断稿原地重写（retryGenerateScript）────────────────────────────────────
+//
+// 这条链的要点只有一个:重试**不新建稿件**。老路每重试一次看板多一张重复卡,
+// 中断稿则永远躺在那儿没人管。
+
+/** 跑一次必崩的生成,留下一张带 lastError 的中断稿 */
+async function makeInterrupted(req: ScriptRequest = TEST_REQ): Promise<string> {
+  const started = await startGenerateScript(req, testDir, {
+    runLoopImpl: async () => { throw new Error("relay 断流:ECONNRESET"); },
+  });
+  await started.completion;
+  return started.contentId;
+}
+
+describe("retryGenerateScript — 中断稿原地重写", () => {
+  it("复用原 id 转正,不新建稿件", async () => {
+    const contentId = await makeInterrupted();
+
+    const retried = await retryGenerateScript(contentId, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+    });
+    await retried.completion;
+
+    expect(retried.contentId).toBe(contentId);
+    const all = await listContents(testDir);
+    expect(all).toHaveLength(1); // 看板上仍然只有那一张卡
+    expect(all[0].id).toBe(contentId);
+    expect(all[0].status).toBe("draft_ready");
+    expect(all[0].title).toBe(GOOD_PAYLOAD.title);
+  });
+
+  it("投递即清中断痕:标题回［生成中］、lastError 清空——不必等写完", async () => {
+    const contentId = await makeInterrupted();
+    let releaseLoop: () => void = () => {};
+    const gate = new Promise<void>((r) => { releaseLoop = r; });
+
+    const retried = await retryGenerateScript(contentId, testDir, {
+      runLoopImpl: async (_cfg, opts) => {
+        if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
+        await gate;
+        await (opts.tools ?? []).find((t) => t.name === "submit_script")!.execute(GOOD_PAYLOAD);
+        return { finalMessage: "ok", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+      },
+    });
+
+    const running = await getContent(contentId, testDir);
+    expect(running!.lastError ?? null).toBeNull();
+    expect(running!.title.startsWith("［生成中］")).toBe(true);
+
+    releaseLoop();
+    await retried.completion;
+  });
+
+  it("原始请求从 genRequest 还原:调研材料与选题原文都不丢", async () => {
+    const contentId = await makeInterrupted({ ...TEST_REQ, research: "我自己扒的一手资料" });
+    const sink = { userMessage: "" };
+
+    const retried = await retryGenerateScript(contentId, testDir, {
+      runLoopImpl: makePromptCapturingLoop(sink),
+    });
+    await retried.completion;
+
+    expect(sink.userMessage).toContain(TEST_REQ.topic); // 不是带哨兵前缀的标题
+    expect(sink.userMessage).toContain("我自己扒的一手资料");
+  });
+
+  it("override 盖在原请求之上:换了角度按新角度写,没重提的材料照旧带上", async () => {
+    const contentId = await makeInterrupted({ ...TEST_REQ, research: "上回贴的一手资料" });
+    const sink = { userMessage: "" };
+
+    const retried = await retryGenerateScript(
+      contentId,
+      testDir,
+      { runLoopImpl: makePromptCapturingLoop(sink) },
+      { topic: "换个角度:AI 时代的求职者" }, // 只给了选题,没重提材料
+    );
+    await retried.completion;
+
+    expect(sink.userMessage).toContain("换个角度:AI 时代的求职者");
+    expect(sink.userMessage).not.toContain(TEST_REQ.topic); // 旧角度没被照抄
+    expect(sink.userMessage).toContain("上回贴的一手资料"); // 没重提的那格没被擦掉
+  });
+
+  it("老数据没有 genRequest → 降级:选题从标题剥哨兵,平台/血缘取稿件字段", async () => {
+    const legacy = await saveContent(
+      {
+        title: "［生成中断］AI时代普通人赚钱",
+        body: "",
+        platform: "douyin",
+        topicId: "topic-legacy",
+        status: "drafting",
+        tags: [],
+        hashtags: [],
+        lastError: "server 重启",
+      },
+      testDir,
+    );
+    const sink = { userMessage: "" };
+
+    const retried = await retryGenerateScript(legacy.id, testDir, {
+      runLoopImpl: makePromptCapturingLoop(sink),
+    });
+    await retried.completion;
+
+    expect(retried.contentId).toBe(legacy.id);
+    expect(sink.userMessage).toContain("选题：AI时代普通人赚钱"); // 哨兵没被当成选题带进去
+    expect(sink.userMessage).not.toContain("［生成中断］");
+    expect((await getContent(legacy.id, testDir))!.status).toBe("draft_ready");
+  });
+
+  it("没有中断记录的稿件拒绝重写——好稿不许被推倒重来", async () => {
+    const ok = await generateScript(TEST_REQ, testDir, { runLoopImpl: makeRunLoop([GOOD_PAYLOAD]) });
+
+    await expect(retryGenerateScript(ok.contentId, testDir)).rejects.toThrow(/中断记录/);
+    // 拒绝 = 什么都没动:稿子还是成稿,标题没被改回哨兵
+    const saved = await getContent(ok.contentId, testDir);
+    expect(saved!.status).toBe("draft_ready");
+    expect(saved!.title).toBe(GOOD_PAYLOAD.title);
+  });
+
+  it("稿件不存在 → 报「稿件不存在」,不静默新建", async () => {
+    await expect(retryGenerateScript("content-not-there", testDir)).rejects.toThrow(/不存在/);
+    expect(await listContents(testDir)).toHaveLength(0);
+  });
+
+  it("转正清掉 genRequest:成稿没有「中断」可重试,不留过期请求", async () => {
+    const res = await generateScript(TEST_REQ, testDir, { runLoopImpl: makeRunLoop([GOOD_PAYLOAD]) });
+    expect((await getContent(res.contentId, testDir))!.genRequest).toBeUndefined();
+  });
+
+  it("重写又崩 → 沿用现有失败留痕（〔生成中断〕+ lastError）,仍然只有一张卡", async () => {
+    const contentId = await makeInterrupted();
+
+    const retried = await retryGenerateScript(contentId, testDir, {
+      runLoopImpl: async () => { throw new Error("第二次也崩:502"); },
+    });
+    await retried.completion; // 后台失败不向调用方 reject
+
+    const all = await listContents(testDir);
+    expect(all).toHaveLength(1);
+    expect(all[0].title).toContain("［生成中断］");
+    expect(all[0].lastError).toContain("502");
+  });
+
+  it("任务带上「重写」和「开写」分得开", async () => {
+    const contentId = await makeInterrupted();
+    const events: Array<{ kind: string; label: string }> = [];
+    const retried = await retryGenerateScript(contentId, testDir, {
+      runLoopImpl: makeRunLoop([GOOD_PAYLOAD]),
+      onEvent: (e) => events.push(e),
+    });
+    await retried.completion;
+
+    expect(events[0].kind).toBe("work");
+    expect(events[0].label).toContain("重写");
   });
 });
 

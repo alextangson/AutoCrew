@@ -21,6 +21,7 @@ import { recordOutcome } from "../modules/flywheel/outcome-store.js";
 import { createConversation, appendTurn } from "../storage/conversation-store.js";
 import { addAssets as libAddAssets } from "../storage/library-store.js";
 import { saveContent } from "../storage/local-store.js";
+import { claimJob, releaseJob, isJobClaimed, GENERATE_JOB_KEY } from "./job-claims.js";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ describe("IPC_CHANNELS", () => {
   const EXPECTED: IpcChannel[] = [
     "flywheel:report",
     "generate:script",
+    "generate:retry",
     "style:distill",
     "style:absorb",
     "style:rules",
@@ -147,8 +149,8 @@ describe("IPC_CHANNELS", () => {
   // channels.ts / channel-contracts.ts / buildIpcHandlers / renderer 调用四处
   // 是否同步。历史教训:a5eddc8 在 122 上加了 10 个 video 通道却把断言写成
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
-  it("has exactly 154 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(154);
+  it("has exactly 155 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(155);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -239,6 +241,8 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
         (ch) =>
           ch !== "style:rules" &&
           ch !== "generate:script" &&
+          // 中断稿原地重写：ipc.ts 的 generateRetryHandler（带 job-claims 防双击）
+          ch !== "generate:retry" &&
           ch !== "publish:request_wechat" &&
           ch !== "publish:wechat_draft" &&
           ch !== "article_images:get" &&
@@ -383,6 +387,45 @@ describe("buildIpcHandlers — deps injection", () => {
         expect(typeof handlers[ch]).toBe("function");
       }
     }
+  });
+});
+
+// ── 3b. generate:retry — 中断稿原地重写的投递闸 ───────────────────────────────
+//
+// 真正的重写逻辑在 generate-script 有专测；这里只守住 IPC 这一层的两件事：
+// 参数不齐不投、同一篇在跑时不投第二条（「重新生成」是个按钮，连点两下是常态）。
+
+describe("generate:retry — 投递闸", () => {
+  it("缺 content_id → {ok:false}，不投任务", async () => {
+    const handlers = buildIpcHandlers();
+    expect(await handlers["generate:retry"]({})).toMatchObject({ ok: false });
+    expect(await handlers["generate:retry"]({ content_id: "  " })).toMatchObject({ ok: false });
+  });
+
+  it("同一篇已经在跑 → 拒绝并照实说「已经在写了」", async () => {
+    const handlers = buildIpcHandlers();
+    const key = GENERATE_JOB_KEY("content-busy");
+    expect(claimJob(key)).toBe(true); // 模拟上一条 run 还占着
+    try {
+      const res = await handlers["generate:retry"]({ content_id: "content-busy", _dataDir: testDir });
+      expect(res.ok).toBe(false);
+      expect(String(res.error)).toContain("已经在写");
+    } finally {
+      releaseJob(key);
+    }
+  });
+
+  it("没有中断记录的稿件 → 原因原样透出，claim 当场释放（不许卡住后续重试）", async () => {
+    const c = await saveContent(
+      { title: "好稿", body: "正文", platform: "douyin", status: "draft_ready", tags: [] },
+      testDir,
+    );
+    const handlers = buildIpcHandlers();
+    const res = await handlers["generate:retry"]({ content_id: c.id, _dataDir: testDir });
+
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("中断记录");
+    expect(isJobClaimed(GENERATE_JOB_KEY(c.id))).toBe(false);
   });
 });
 

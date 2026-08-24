@@ -19,6 +19,7 @@
  * publish channels take `content_id`, content:get takes `id`):
  *   flywheel:report    {}                                  (optional _dataDir in tests)
  *   generate:script    { topic, platform, research? }
+ *   generate:retry     { content_id }                    (中断稿原地重写，不新建稿件)
  *   style:distill      {}
  *   style:absorb       { samples: string[] }               (1-5 entries)
  *   style:rules        {}
@@ -72,7 +73,7 @@
 import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
-import { startGenerateScript } from "../modules/writing/generate-script.js";
+import { startGenerateScript, retryGenerateScript } from "../modules/writing/generate-script.js";
 import { listWorkspaces, createWorkspace, switchWorkspace } from "./workspace-store.js";
 import { executeStyle } from "../tools/style.js";
 import { executeContentSave } from "../tools/content-save.js";
@@ -136,6 +137,7 @@ import {
 } from "./metrics-pull-handlers.js";
 import { emitEngineEvent, readRecentEvents } from "./event-hub.js";
 import { makeEnsureBrief } from "./write-research-gate.js";
+import { claimJob, releaseJob, holdJobUntilSettled, GENERATE_JOB_KEY } from "./job-claims.js";
 import { appendAction } from "./recent-actions.js";
 import { CHANNEL_EVENT_MAP } from "./event-map.js";
 import { knowledgeStatus } from "../modules/knowledge/knowledge-base.js";
@@ -527,6 +529,38 @@ async function generateBackgroundHandler(payload: Record<string, unknown>): Prom
     return { ok: true, pending: true, contentId: started.contentId, runId: started.runId };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * generate:retry — 中断稿原地重写。镜像上面的启动接线（同一套 onEvent/emitEngineEvent），
+ * 唯一的区别是**不建新稿**：写崩的那一篇自己重来一次。
+ *
+ * 防双击：中断徽章上的「重新生成」是个按钮，连点两下就是两条 run 同时改一份 meta。
+ * claim 与封面/配图同一套（job-claims），check-and-register 必须在任何 await 之前。
+ */
+async function generateRetryHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const contentId = typeof payload.content_id === "string" ? payload.content_id.trim() : "";
+  if (!contentId) return { ok: false, error: "generate:retry 需要 content_id" };
+  const dataDir = (payload._dataDir as string) || undefined;
+  const key = GENERATE_JOB_KEY(contentId);
+  if (!claimJob(key)) return { ok: false, error: "这篇已经在写了——等它跑完再重试" };
+  let held = false;
+  try {
+    const started = await retryGenerateScript(contentId, dataDir, {
+      onEvent: (e) => void emitEngineEvent(e, dataDir).catch(() => {}),
+      ensureBriefImpl: makeEnsureBrief(dataDir),
+    });
+    holdJobUntilSettled(key, started.completion); // claim 持有到后台 settle
+    held = true;
+    return { ok: true, pending: true, contentId: started.contentId, runId: started.runId };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    if (!held) releaseJob(key);
   }
 }
 
@@ -1135,6 +1169,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
   const defaults: Record<IpcChannel, IpcHandler> = {
     "flywheel:report": wrapExecute(executeFlywheel as ExecuteFn, CHANNEL_ACTIONS["flywheel:report"]),
     "generate:script": generateBackgroundHandler,
+    "generate:retry": generateRetryHandler,
     "style:distill": wrapExecute(executeStyle as ExecuteFn, CHANNEL_ACTIONS["style:distill"]),
     "style:absorb": wrapExecute(executeStyle as ExecuteFn, CHANNEL_ACTIONS["style:absorb"]),
     "style:rules": styleRulesHandler,

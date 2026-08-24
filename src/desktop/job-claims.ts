@@ -13,6 +13,12 @@
 
 const claimed = new Set<string>();
 
+/**
+ * 写稿/重写的 claim key。两个入口要用同一把锁——编辑器按钮走 IPC，
+ * 总编辑派活走 chat 工具，key 拼错一个字就等于没锁，所以只留这一处拼装。
+ */
+export const GENERATE_JOB_KEY = (contentId: string): string => `generate:${contentId}`;
+
 /** 同步 check-and-register。true = 占位成功（本次投递归你），false = 已经在跑。 */
 export function claimJob(key: string): boolean {
   if (claimed.has(key)) return false;

@@ -215,6 +215,17 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     void load();
   };
 
+  /**
+   * 中断重写:在**这一篇**上重跑生成,不派聊天活。老路发一句 brief 给总编辑,
+   * 总编辑再调 generate_script 新建一篇——中断稿就此成僵尸卡,每点一次多一张重复卡。
+   */
+  const retryGenerate = async () => {
+    const r = await invoke("generate:retry", { content_id: props.id });
+    if (!r.ok) return toast(r.error ?? "重写没起来");
+    toast("重写已开始,1-3 分钟");
+    void load();
+  };
+
   /** 降级态的 textarea 选区读取(CodeMirror 正常时由 MarkdownEditor 回调) */
   const onTextareaSelect = () => {
     const ta = taRef.current;
@@ -308,11 +319,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           {c.lastError && (
             <div className="ed-error">
               ⚠️ 上次生成中断：{String(c.lastError).slice(0, 120)}{" "}
-              <button onClick={() => void send(`用选题《${(c.title || "").replace(/^［生成中断］|^［生成中］|^［调研中］/, "")}》重新写一篇${platformLabel(c.platform)}原生版本`).then((receipt) => {
-                toast(receipt.ok ? "重写任务已受理" : (receipt.error ?? "派活失败"));
-              })}>
-                重新生成
-              </button>
+              <button onClick={() => void retryGenerate()}>重新生成</button>
             </div>
           )}
 

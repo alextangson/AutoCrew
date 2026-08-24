@@ -9,6 +9,8 @@
 export const IPC_CHANNELS = [
   "flywheel:report",
   "generate:script",
+  // 中断稿原地重写：在**原稿件 id** 上重跑生成，不新建——重试不该往看板堆重复卡
+  "generate:retry",
   "style:distill",
   "style:absorb",
   "style:rules",

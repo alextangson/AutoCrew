@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runChatTurn, buildChatTools, chatProgressEvent, dedupeDraftCards, FALLBACK_STATUS_TOOL, type ChatCard } from "./chat-router.js";
 import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
+import { releaseJob, GENERATE_JOB_KEY } from "./job-claims.js";
 
 let testDir: string;
 
@@ -78,6 +79,94 @@ describe("buildChatTools", () => {
     const parsed = JSON.parse(out as string);
     expect(parsed).toMatchObject({ ok: true, pending: true, contentId: "c1" });
     expect(sink).toHaveLength(0); // 成稿没出来,不推 draft 卡——占位卡在看板,进度在任务带
+  });
+
+  // ── 中断稿原地重写:重试不许往看板堆重复卡（2026-08-24 缺陷）──────────────
+  //
+  // 命中条件是「同 topicId + 同 platform + 有 lastError + 未删」。四个条件缺一
+  // 就该照旧新建——把好稿或别的平台的稿推倒重写,比多一张僵尸卡糟得多。
+
+  /** 一份中断稿 + 若干干扰项，走 content list 的注入口喂进去 */
+  const listWith = (...contents: Array<Record<string, unknown>>) =>
+    vi.fn(async (params: Record<string, unknown>) =>
+      params.action === "list" ? { ok: true, contents } : { ok: true });
+
+  const STALE = { id: "c-stale", topicId: "topic-1", platform: "douyin", lastError: "relay 断流" };
+
+  it("generate_script 命中同选题同平台的中断稿 → 原地重写,不新建", async () => {
+    const sink: ChatCard[] = [];
+    const retryGenerate = vi.fn(async () => ({
+      contentId: "c-stale", runId: "run-bg-2", completion: Promise.resolve(),
+    }));
+    const startGenerate = vi.fn(async () => ({
+      contentId: "c-new", runId: "run-bg-3", completion: Promise.resolve(),
+    }));
+    const tools = buildChatTools(sink, testDir, { content: listWith(STALE), retryGenerate, startGenerate });
+
+    const out = JSON.parse((await tools.find((t) => t.name === "generate_script")!.execute({
+      topic: "AI 焦虑:换个角度写求职者", platform: "douyin", topic_id: "topic-1",
+    })) as string);
+
+    // 用户这一轮说的话跟着走：换了角度就按新角度重写，不是照抄崩掉那次的请求
+    expect(retryGenerate).toHaveBeenCalledWith("c-stale", testDir, {
+      topic: "AI 焦虑:换个角度写求职者", platform: "douyin", topicId: "topic-1",
+    });
+    expect(startGenerate).not.toHaveBeenCalled(); // 没有第二张卡
+    expect(out).toMatchObject({ ok: true, pending: true, contentId: "c-stale" });
+    expect(out.note).toContain("没有新建稿件");
+  });
+
+  it("覆盖层不带没给值的键——上回贴的调研材料不该被一个 undefined 擦掉", async () => {
+    let override: Record<string, unknown> | undefined;
+    const retryGenerate = vi.fn(async (_id: string, _dd?: string, o?: Record<string, unknown>) => {
+      override = o;
+      return { contentId: "c-stale", runId: "run-bg-2", completion: Promise.resolve() };
+    });
+    const tools = buildChatTools([], testDir, { content: listWith(STALE), retryGenerate });
+
+    await tools.find((t) => t.name === "generate_script")!.execute({
+      topic: "AI 焦虑", platform: "douyin", topic_id: "topic-1",
+    });
+
+    expect(Object.keys(override ?? {}).sort()).toEqual(["platform", "topic", "topicId"]);
+  });
+
+  it("没有中断稿 / 换了平台 / 没带 topic_id → 照旧新建", async () => {
+    const cases: Array<[string, Record<string, unknown>, Array<Record<string, unknown>>]> = [
+      ["库里没有中断稿", { topic: "t", platform: "douyin", topic_id: "topic-1" }, []],
+      ["同选题但别的平台", { topic: "t", platform: "xiaohongshu", topic_id: "topic-1" }, [STALE]],
+      ["同选题同平台但没崩过", { topic: "t", platform: "douyin", topic_id: "topic-1" },
+        [{ ...STALE, lastError: null }]],
+      ["随手写没带 topic_id", { topic: "t", platform: "douyin" }, [STALE]],
+    ];
+    for (const [label, args, contents] of cases) {
+      const retryGenerate = vi.fn();
+      const startGenerate = vi.fn(async () => ({
+        contentId: "c-new", runId: "run-bg-3", completion: Promise.resolve(),
+      }));
+      const tools = buildChatTools([], testDir, { content: listWith(...contents), retryGenerate, startGenerate });
+      const out = JSON.parse((await tools.find((t) => t.name === "generate_script")!.execute(args)) as string);
+
+      expect(retryGenerate, label).not.toHaveBeenCalled();
+      expect(startGenerate, label).toHaveBeenCalledOnce();
+      expect(out.contentId, label).toBe("c-new");
+    }
+  });
+
+  it("同一篇已经在重写 → 回「已在跑」,不重复派活", async () => {
+    const retryGenerate = vi.fn(async () => ({
+      contentId: "c-stale", runId: "run-bg-2", completion: new Promise<void>(() => {}), // 永不 settle
+    }));
+    const tools = buildChatTools([], testDir, { content: listWith(STALE), retryGenerate });
+    const args = { topic: "AI 焦虑", platform: "douyin", topic_id: "topic-1" };
+    const tool = tools.find((t) => t.name === "generate_script")!;
+
+    await tool.execute(args);
+    const second = JSON.parse((await tool.execute(args)) as string);
+
+    expect(retryGenerate).toHaveBeenCalledOnce(); // claim 挡住了第二次
+    expect(second).toMatchObject({ ok: true, alreadyRunning: true, contentId: "c-stale" });
+    releaseJob(GENERATE_JOB_KEY("c-stale")); // 进程内 claim 是全局的,别漏给下一条用例
   });
 
   it("add_style_rule records a user_explicit rule and pushes a style card", async () => {
