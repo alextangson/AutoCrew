@@ -97,6 +97,8 @@ export function ChatDock(props: {
   const [contextTitle, setContextTitle] = useState("");
   /** 可选模型档位（服务端给的真实清单）与当前选择；只有 >1 档时才显示切换器 */
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
+  /** 清单拉不到时的红字——只有"引擎真的只有一档"才该让切换器消失，读取失败必须说出来 */
+  const [modelError, setModelError] = useState("");
   const [modelChoice, setModelChoice] = useState<string>(DEFAULT_CHAT_MODEL);
   // sendImpl 的闭包不随 modelChoice 重注册——用 ref 读最新值（与 viewRef 同一手法）
   const modelChoiceRef = useRef(modelChoice);
@@ -105,7 +107,12 @@ export function ChatDock(props: {
 
   useEffect(() => {
     void invoke("chat:model_options").then((r) => {
-      if (!r.ok) return; // 拉不到就当没有可切的（切换器隐藏），对话照常走缺省档
+      // 拉不到 ≠ 只有一档：静默隐藏会让人以为「模型不能切了」，把原因摆出来（对话照常走缺省档）
+      if (!r.ok) {
+        setModelError(r.error ?? "模型清单读取失败");
+        return;
+      }
+      setModelError("");
       const options = parseModelOptions(r);
       setModelOptions(options);
       setModelChoice(readModelChoice(options));
@@ -490,12 +497,12 @@ export function ChatDock(props: {
           }}
         />
         <div className="chat-compose-bar">
-          {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置 */}
-          {modelOptions.length > 1 && (
+          {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置；但读取失败要留着并说原因 */}
+          {(modelOptions.length > 1 || modelError) && (
             <PickerButton
               className="chat-model-picker"
-              label={modelTriggerLabel(modelOptions, modelChoice)}
-              title="这一轮对话用哪个模型"
+              label={modelError ? "模型清单读不到" : modelTriggerLabel(modelOptions, modelChoice)}
+              title={modelError || "这一轮对话用哪个模型"}
               disabled={busy}
               placement="up"
               groups={modelGroups}
@@ -505,6 +512,7 @@ export function ChatDock(props: {
                 writeModelChoice(id);
               }}
               searchPlaceholder="搜模型…"
+              error={modelError}
               footer="只影响总编辑对话；写稿 / 调研 / 复盘各走自己的专线"
             />
           )}
