@@ -40,7 +40,7 @@ export const contentSaveSchema = Type.Object({
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   title: Type.Optional(Type.String({ description: "Content title" })),
   body: Type.Optional(Type.String({ description: "Content body (markdown)" })),
-  platform: Type.Optional(Type.String({ description: "Target platform: xhs, douyin, wechat_video, wechat_mp, bilibili" })),
+  platform: Type.Optional(Type.String({ description: "Target platform: douyin, xiaohongshu, wechat_mp, wechat_video, bilibili, twitter, reddit, toutiao" })),
   topicId: Type.Optional(Type.String({ description: "Related topic id (for save/create_variant)" })),
   status: Type.Optional(Type.Unsafe<string>({
     type: "string",

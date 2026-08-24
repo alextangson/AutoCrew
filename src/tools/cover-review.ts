@@ -346,7 +346,7 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
   if (variants.length === 0) return { ok: false, error: "All 3 cover generations failed", details: errors };
 
   const review: CoverReview = {
-    platform: content.platform || "xhs",
+    platform: content.platform || "xiaohongshu",
     designSource,
     expectedVariantCount: specs.length,
     ...(errors.length > 0 ? { generationErrors: errors } : {}),
