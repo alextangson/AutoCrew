@@ -13,6 +13,7 @@ import { useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import { VARIANT_STATUS, type AllowedTransition } from "../lib";
+import { defaultAdvanceTarget } from "./stage-default";
 
 export function StageAdvance(props: {
   contentId: string;
@@ -26,7 +27,12 @@ export function StageAdvance(props: {
   const [busy, setBusy] = useState(false);
   if (props.transitions.length === 0) return null;
 
-  const chosen = props.transitions.find((t) => t.status === target) ?? props.transitions[0];
+  // 默认指向管线前进方向——表序第一位在「待审」恰好是「修订」,推进按钮默认后退是真机踩过的陷阱
+  const fallback = defaultAdvanceTarget(props.currentStatus, props.transitions);
+  const chosen =
+    props.transitions.find((t) => t.status === target) ??
+    props.transitions.find((t) => t.status === fallback) ??
+    props.transitions[0];
   const blocked = chosen.blockedReason;
 
   const advance = async () => {
