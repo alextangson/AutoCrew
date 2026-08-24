@@ -1,5 +1,5 @@
 /**
- * 稿件的控制面：采纳裁决 / 发布分发 / 素材附件 / 版本记录。
+ * 稿件的控制面：采纳判定 / 发布分发 / 素材附件 / 版本记录。
  *
  * 两处用它（阶段制 spec §2）：文案页右侧抽屉（写作画布要独占整屏，这些是「需要时
  * 才滑出」的控制面），以及发布工作台的整页主体。
@@ -33,6 +33,12 @@ const ADOPT: Array<[string, string]> = [
   ["rewritten", "基本要重写"],
 ];
 
+const ADOPT_LABEL = new Map(ADOPT);
+
+function adoptionLabel(verdict?: string): string {
+  return (verdict && ADOPT_LABEL.get(verdict)) || verdict || "";
+}
+
 export interface EditorToolsProps {
   contentId: string;
   content: Content;
@@ -56,6 +62,7 @@ export function EditorTools(props: EditorToolsProps) {
   const [publishUrlDraft, setPublishUrlDraft] = useState("");
   const [checkBusy, setCheckBusy] = useState(false);
   const [urlBusy, setUrlBusy] = useState(false);
+  const [rejudging, setRejudging] = useState(false);
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
   const urlWarning = publishUrlPlatformWarning(publishUrlDraft, c.platform);
   const publishedLink = c.publishUrl && isHttpUrl(c.publishUrl) ? c.publishUrl : null;
@@ -71,19 +78,19 @@ export function EditorTools(props: EditorToolsProps) {
     });
   }, []);
 
-  const submitAdoption = async (verdict: string, reason?: string, reasonNote?: string) => {
-    const payload: Record<string, unknown> = { id: contentId, verdict };
-    if (reason) payload.reason = reason;
-    if (reasonNote) payload.reason_note = reasonNote;
-    const r = await invoke("content:adoption", payload);
+  // 改判:只发 verdict(reason/reason_note 通道保留给 MCP,界面不再问原因)。
+  // recordAdoption 整条覆盖 → 系统推导的 derived 标记自然消失,改判后就是人给的裁决。
+  const submitAdoption = async (verdict: string) => {
+    const r = await invoke("content:adoption", { id: contentId, verdict });
     if (!r.ok) return toast(r.error ?? "记录失败");
     const stats = (r as { stats?: { rate: number | null; judged: number; adopted: number; lightEdit: number } }).stats;
     toast(
-      "反馈已记录——团队会据此学习你的标准" +
+      "已按你的判定更正——团队会据此学习你的标准" +
         (stats && stats.rate !== null && stats.judged > 0
           ? ` · 可用率 ${Math.round(stats.rate * 100)}%（${stats.adopted + stats.lightEdit}/${stats.judged}）`
           : ""),
     );
+    setRejudging(false);
     void reload();
   };
 
@@ -109,8 +116,16 @@ export function EditorTools(props: EditorToolsProps) {
       content_id: contentId,
       ...(url ? { publish_url: url } : {}),
     });
-    toast(r.ok ? "已标记为已发布——记得 T+1 回数据" : (r.error ?? "确认失败"));
-    if (r.ok) { setClip(null); setPublishUrlDraft(""); void reload(); }
+    if (!r.ok) return toast(r.error ?? "确认失败");
+    // 发布时刻系统会按改动量判一次采纳——当场告诉创始人判成了什么,免得它是个暗箱
+    const verdict = (r as unknown as { data?: { adoption?: { verdict: string } } }).data?.adoption?.verdict;
+    toast(
+      "已标记为已发布——记得 T+1 回数据" +
+        (verdict ? ` · 判定：${adoptionLabel(verdict)}（可在右侧改判）` : ""),
+    );
+    setClip(null);
+    setPublishUrlDraft("");
+    void reload();
   };
 
   // 补记链接:发完才想起来贴链接的路。走同一条 publish:confirm(已幂等——发布时刻只盖一次,
@@ -178,18 +193,26 @@ export function EditorTools(props: EditorToolsProps) {
 
   return (
     <>
-      <details className="ed-tools" open>
-        <summary>这篇稿子好不好用？{c.adoption?.verdict ? ` · ${ADOPT.find(([v]) => v === c.adoption?.verdict)?.[1] ?? "已反馈"}` : ""}</summary>
-        <p className="muted adoption-guide">
-          成稿后选一次：它只会告诉编辑部这版是否达到你的标准，用来改进后续写作；不会自动改正文，也不会发布。
-        </p>
-        <div className="ed-section">
-          {ADOPT.map(([v, label]) => (
-            <AdoptButton key={v} verdict={v} label={label} current={c.adoption?.verdict} submit={submitAdoption} />
-          ))}
+      {/* 采纳判定:发布确认时由系统按改动量自动判一次,这里只做展示 + 改判入口 */}
+      {c.adoption && (
+        <div className="ed-section adoption-verdict">
+          <span className="mono muted">
+            采纳判定：{adoptionLabel(c.adoption.verdict)}
+            {c.adoption.derived ? "（系统按改动量判定）" : ""}
+          </span>
+          <button onClick={() => setRejudging((v) => !v)}>{rejudging ? "收起" : "改判"}</button>
+          {rejudging &&
+            ADOPT.map(([v, label]) => (
+              <button
+                key={v}
+                className={c.adoption?.verdict === v ? "chip chip-pub" : ""}
+                onClick={() => void submitAdoption(v)}
+              >
+                {c.adoption?.verdict === v ? "✓ " : ""}{label}
+              </button>
+            ))}
         </div>
-        {preflightSummary && <pre className="publish-preflight mono">{preflightSummary}</pre>}
-      </details>
+      )}
 
       <details className="ed-tools" open>
         <summary>发布与分发</summary>
@@ -248,6 +271,8 @@ export function EditorTools(props: EditorToolsProps) {
             </button>
           )}
         </div>
+        {/* 发布前检查明细:由「排版发布文案」触发,结果留在发布区里 */}
+        {preflightSummary && <pre className="publish-preflight mono">{preflightSummary}</pre>}
       </details>
 
       {/* 预检是发布台的活:阶段推进归顶栏推进按钮,这里只回答「这篇现在能不能发」 */}
@@ -420,50 +445,5 @@ export function EditorTools(props: EditorToolsProps) {
         </details>
       )}
     </>
-  );
-}
-
-function AdoptButton(props: {
-  verdict: string;
-  label: string;
-  current?: string;
-  submit: (verdict: string, reason?: string, reasonNote?: string) => Promise<void>;
-}) {
-  const [asking, setAsking] = useState(false);
-  const [noteText, setNoteText] = useState("");
-  const isCurrent = props.current === props.verdict;
-  if (props.verdict !== "rewritten") {
-    return (
-      <button className={isCurrent ? "chip chip-pub" : ""} onClick={() => void props.submit(props.verdict)}>
-        {isCurrent ? "✓ " : ""}{props.label}
-      </button>
-    );
-  }
-  return (
-    <span className="adopt-rw">
-      <button className={isCurrent ? "chip chip-pub" : ""} onClick={() => setAsking((a) => !a)}>
-        {isCurrent ? "✓ " : ""}{props.label}
-      </button>
-      {asking && (
-        <span className="adopt-reasons">
-          {([["style_mismatch", "风格不像"], ["factual_error", "有事实错误"], ["structure_bad", "结构不好"]] as const).map(([v, txt]) => (
-            <button key={v} onClick={() => { setAsking(false); void props.submit("rewritten", v); }}>{txt}</button>
-          ))}
-          <input
-            className="sel-input"
-            placeholder="或写一句主要问题，回车记录"
-            value={noteText}
-            onChange={(e) => setNoteText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing && noteText.trim()) {
-                setAsking(false);
-                void props.submit("rewritten", undefined, noteText.trim());
-              }
-            }}
-          />
-          <button onClick={() => { setAsking(false); void props.submit("rewritten"); }}>只记录结果</button>
-        </span>
-      )}
-    </span>
   );
 }

@@ -20,6 +20,7 @@ import type { AdoptionVerdict } from "../storage/local-store.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
+import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
@@ -235,9 +236,10 @@ export async function executeContentSave(
     if (!targetStatus) return { ok: false, error: "target_status is required for transition" };
     // from_status：调用方手里那一版的状态。旧标签页/双击推进时后端据此人话拒绝，不硬盖
     const from = typeof params.from_status === "string" ? normalizeLegacyStatus(params.from_status) : undefined;
+    const target = normalizeLegacyStatus(targetStatus);
     const result = await transitionStatus(
       id,
-      normalizeLegacyStatus(targetStatus),
+      target,
       {
         force: params.force as boolean,
         diffNote: params.diff_note as string,
@@ -245,6 +247,16 @@ export async function executeContentSave(
       },
       dataDir,
     );
+    // 到「已发布」的另一条路（publish.ts confirm_published 是第一条）：同样在发布时刻
+    // 推导一次采纳判定。best-effort——判定失败不该把已经发生的状态流转打回。
+    if (result.ok && target === "published") {
+      try {
+        const adoption = await deriveAndRecordAdoption(id, dataDir);
+        if (adoption) return { ...result, adoption };
+      } catch {
+        /* 判定是附加读数，流转本身已完成 */
+      }
+    }
     return result;
   }
 

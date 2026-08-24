@@ -111,7 +111,7 @@ export interface Content {
   topicId?: string;
   hashtags: string[];
   lastError?: string | null;
-  adoption?: { verdict: string; reason?: string; reasonNote?: string };
+  adoption?: { verdict: string; reason?: string; reasonNote?: string; derived?: boolean };
   /** AI 审稿结论(审稿 spec §2.5):稿卡徽章读它;旧稿无此字段 = 不显示徽章 */
   review?: {
     status: "passed" | "revised" | "failed" | "skipped" | "stale";

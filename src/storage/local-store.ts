@@ -173,6 +173,11 @@ export interface AdoptionRecord {
   reason?: RewriteReason;
   /** 自由文本原因（IA v5 V5.0:「哪里不行」不只选择题）——风格蒸馏的高价值负信号,与 chip 归类字段分开 */
   reasonNote?: string;
+  /**
+   * 发布时刻由系统按「AI 成稿 → 实际发布稿」的改动量推导，不是创始人手点的。
+   * 手动改判会整条覆盖这份记录，标记随之消失——改判后的裁决就是人给的。
+   */
+  derived?: boolean;
   recordedAt: string;
 }
 
@@ -680,12 +685,14 @@ export async function recordAdoption(
   dataDir?: string,
   reason?: RewriteReason,
   reasonNote?: string,
+  opts?: { derived?: boolean },
 ): Promise<Content | null> {
   return updateContent(id, {
     adoption: {
       verdict,
       ...(verdict === "rewritten" && reason ? { reason } : {}),
       ...(verdict === "rewritten" && reasonNote ? { reasonNote } : {}),
+      ...(opts?.derived ? { derived: true } : {}),
       recordedAt: new Date().toISOString(),
     },
   }, dataDir);

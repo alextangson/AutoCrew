@@ -406,6 +406,42 @@ describe("voice excerpts (V5.7 声音样本)", () => {
   });
 });
 
+describe("创作者原话进 prompt（changeType = 意图的第一依据）", () => {
+  /** 捕获真正发给模型的 userMessage——prompt 是可验证结构，不靠事后猜模型看到了什么 */
+  function makeCapturingRunLoop(captured: { userMessage?: string; systemPrompt?: string }) {
+    return async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      captured.userMessage = opts.userMessage;
+      captured.systemPrompt = opts.systemPrompt;
+      const submitTool = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_rules")!;
+      await submitTool.execute({ rules: GOOD_RULES });
+      return { finalMessage: "done", turns: 2, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+  }
+
+  it("带 note 的 diff：原话整句进 userMessage，且排在 before 之前", async () => {
+    await recordDiff("c1", "body", "旧正文", "新正文", testDir, "别用书面语，说人话", "wechat_mp");
+
+    const captured: { userMessage?: string; systemPrompt?: string } = {};
+    await distillStyleRules(testDir, { runLoopImpl: makeCapturingRunLoop(captured) });
+
+    const msg = captured.userMessage!;
+    expect(msg).toContain("创作者的修改要求（原话）：别用书面语，说人话");
+    expect(msg.indexOf("创作者的修改要求")).toBeLessThan(msg.indexOf("before："));
+    // 系统提示要说清原话与对照的主次关系，否则模型仍会只盯 diff 猜
+    expect(captured.systemPrompt).toContain("第一依据");
+  });
+
+  it("没有 note 的 diff：不出现原话那一行（不编造意图）", async () => {
+    await recordDiff("c1", "body", "旧正文", "新正文", testDir, undefined, "wechat_mp");
+
+    const captured: { userMessage?: string } = {};
+    await distillStyleRules(testDir, { runLoopImpl: makeCapturingRunLoop(captured) });
+
+    expect(captured.userMessage).not.toContain("创作者的修改要求");
+    expect(captured.userMessage).toContain("before：旧正文");
+  });
+});
+
 describe("scope routing through distillStyleRules", () => {
   it("persists the scope submitted by the model (纠正记入发生平台)", async () => {
     await recordDiff("c1", "body", "旧正文", "新正文", testDir, undefined, "wechat_mp");

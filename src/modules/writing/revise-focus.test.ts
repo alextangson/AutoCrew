@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { reviseFocus } from "./revise-focus.js";
 import { saveContent } from "../../storage/local-store.js";
+import { addWritingRule, updateProfile } from "../profile/creator-profile.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
 
@@ -29,6 +30,30 @@ async function mkContent() {
     testDir,
   );
 }
+
+describe("reviseFocus 的品牌上下文", () => {
+  // 改稿与写初稿吃同一块上下文:此前这里只拼全量规则(跨平台污染),受众/风格边界一个字都不给
+  it("注入本平台规则+受众+风格边界，别的平台的规则不进上下文", async () => {
+    const c = await mkContent();
+    await addWritingRule({ rule: "公众号正文用空行分段", source: "user_explicit", confidence: 1, scope: "platform:wechat_mp" }, testDir);
+    await addWritingRule({ rule: "小红书标题带 emoji", source: "user_explicit", confidence: 1, scope: "platform:xiaohongshu" }, testDir);
+    await updateProfile({ styleBoundaries: { never: ["赋能"], always: ["具体案例"] } }, testDir);
+
+    let systemPrompt = "";
+    const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      systemPrompt = opts.systemPrompt ?? "";
+      const submit = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_revision")!;
+      await submit.execute({ title: "标题", body: "改过的正文。" });
+      return done();
+    };
+    await reviseFocus(c.id, "口语一点", { scope: "draft" }, testDir, { runLoopImpl });
+
+    expect(systemPrompt).toContain("公众号正文用空行分段");
+    expect(systemPrompt).not.toContain("小红书标题带 emoji");
+    expect(systemPrompt).toContain("赋能");
+    expect(systemPrompt).toContain("具体案例");
+  });
+});
 
 describe("reviseFocus", () => {
   it("selection scope + clear instruction → returns a revised span only", async () => {

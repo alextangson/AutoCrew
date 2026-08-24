@@ -353,9 +353,7 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .ed-focus-bar { display: flex; align-items: center; gap: 8px; }
 .ed-focus-bar > span { flex: 1; }
 .row-actions { display: flex; gap: 8px; }
-.adopt-rw { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
-.adopt-reasons { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
-.adoption-guide { margin: 6px 0 2px; max-width: 720px; line-height: 1.55; }
+.adoption-verdict { flex-wrap: wrap; align-items: baseline; }
 
 .toast {
   position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
