@@ -400,4 +400,39 @@ describe("reviewAndConverge — 审稿材料", () => {
     expect(seen.reviewOpts[0].userMessage).toContain(PAYLOAD.body); // 终稿全文进审稿
     expect(seen.reviewOpts[0].userMessage).toContain("我说话就是这个调子。"); // 声音样本进审稿
   });
+
+  // 角度卡（角度卡 spec §1.5 / 审稿 §2.4）：写稿前定了论点,审稿就按论点验收。
+  // 没选角度时两条 prompt 必须与无角度阶段**逐字节相同**——additive 纪律同注入侧。
+  it("有选中角度 → 论点/禁区进材料块，深度判据加严到「thesis 论证了吗」", async () => {
+    const angle = {
+      id: "angle-1",
+      angle: "算一笔维护账",
+      thesis: "省下的编码时间被维护成本吃回去了",
+      coreEvidenceIds: ["ev-1"],
+      antiScope: "不写工具横评",
+      audiencePain: "老板拿提效数字压 KPI",
+      holdTrigger: "看到自己上周那笔返工账",
+      hookDraft: "账没算完。",
+    };
+    const { impl, seen } = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge({ ...INPUT, researchSlot: "【调研简报】三个数字", angle }, CONFIG, { runLoopImpl: impl });
+
+    expect(seen.reviewOpts[0].userMessage).toContain(angle.thesis);
+    expect(seen.reviewOpts[0].userMessage).toContain(angle.antiScope);
+    expect(seen.reviewOpts[0].systemPrompt).toContain("thesis 没被论证");
+    expect(seen.reviewOpts[0].systemPrompt).toContain("闯进禁区");
+  });
+
+  it("无角度 → 两条 prompt 与无角度阶段逐字节一致（additive 纪律）", async () => {
+    const withSlot = { ...INPUT, researchSlot: "【调研简报】三个数字" };
+    const a = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge(withSlot, CONFIG, { runLoopImpl: a.impl });
+    const b = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge({ ...withSlot, angle: undefined }, CONFIG, { runLoopImpl: b.impl });
+
+    expect(b.seen.reviewOpts[0].systemPrompt).toBe(a.seen.reviewOpts[0].systemPrompt);
+    expect(b.seen.reviewOpts[0].userMessage).toBe(a.seen.reviewOpts[0].userMessage);
+    expect(a.seen.reviewOpts[0].systemPrompt).not.toContain("thesis 没被论证");
+    expect(a.seen.reviewOpts[0].userMessage).not.toContain("【本稿切入点");
+  });
 });

@@ -20,7 +20,7 @@ import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { recentContrastPairs } from "../learnings/diff-tracker.js";
 import { buildScriptPrompts } from "./script-prompt.js";
-import type { ScriptRequest } from "./script-prompt.js";
+import type { ResolvedAngle, ScriptRequest } from "./script-prompt.js";
 import { selectPatternsForScript } from "../patterns/pattern-select.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
 import { resolveQualityGate } from "./quality-gate.js";
@@ -33,7 +33,8 @@ import { transitionStatus } from "../../storage/local-store.js";
 import { scanText } from "../filter/sensitive-words.js";
 import { retrieveKnowledge, KNOWLEDGE_DEFAULT_CHARS } from "../knowledge/knowledge-base.js";
 import { buildBriefBlock, knowledgeBudgetFor } from "../research/brief-inject.js";
-import { loadBrief } from "../research/brief-store.js";
+import { loadBrief, loadLatestBrief } from "../research/brief-store.js";
+import { activeAngleCard, angleCardsOf } from "../research/angle-cards.js";
 import { getJob, topicHashOf } from "../research/research-job-store.js";
 import { getContent, getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
 import type { Content } from "../../storage/local-store.js";
@@ -58,6 +59,11 @@ export interface GeneratedScript {
    * 只对带 topicId 的选题写作有意义：带上了简报、或压根不是从选题开写，都是 false。
    */
   wroteWithoutBrief: boolean;
+  /**
+   * 这条选题**有**角度候选卡，但这稿绕过了点选（角度卡 spec §1.6）。
+   * 没有候选卡、或用了手写 direction 都是 false——那两种情况下没有闸口可绕。
+   */
+  wroteWithoutAngle: boolean;
   /** AI 审稿结论（审稿 spec §2.5）：降级路径也一定有值——skipped/failed 就是「没审成」的留痕 */
   review: ReviewMeta;
   tokensUsed: number;
@@ -218,6 +224,45 @@ async function composeResearchSlot(
   return { ...req, research: [req.research, ...extras].filter(Boolean).join("\n\n") };
 }
 
+/**
+ * 生效角度（角度卡 spec §1.3 优先级：手写 direction > 选中角度卡 > 无）。
+ *
+ * 「选中」要**现算是否还作数**（activeAngleCard）：选的不是最新那版简报、或简报因选题被改
+ * 而过期，一律按没选处理并 warn——拿一张对不上号的卡去约束全稿，比不给角度更糟。
+ *
+ * 返回的 `hasCards` 是「这条选题本来有角度可选」：它 + 没生效角度 = 这稿绕过了品味闸口，
+ * 要在版本注记里说出来（§1.6「直写稿版本注记标未经角度点选」）。
+ */
+async function resolveAngle(
+  req: ScriptRequest,
+  dataDir: string | undefined,
+  warn: (message: string) => void,
+): Promise<{ angle?: ResolvedAngle; hasCards: boolean }> {
+  if (!req.topicId) return { hasCards: false };
+  try {
+    const dir = getDataDir(dataDir);
+    const brief = await loadLatestBrief(req.topicId, dir, warn);
+    const hasCards = angleCardsOf(brief).length > 0;
+    // 手写角度压过一切：卡照样算「有」，但这一轮不解析它（§1.3 手填时角度卡仍展示不注入）
+    if (req.direction?.trim() || !brief) return { hasCards };
+    const topic = await getTopic(req.topicId, dataDir);
+    const card = topic
+      ? activeAngleCard(topic.selectedAngle, brief, topicHashOf(topic.title, topic.description))
+      : null;
+    if (!card) {
+      if (topic?.selectedAngle) {
+        warn(`选中的角度已过期（选题或简报在选完之后变过），本稿按未选角度写：${req.topicId}`);
+      }
+      return { hasCards };
+    }
+    return { angle: { card, evidence: brief.evidence, tensions: brief.tensions }, hasCards };
+  } catch (err) {
+    // 同简报读侧：材料少一块照写，绝不让读盘故障带走整条写作链
+    warn(`角度卡读取失败（${req.topicId}），本稿按未选角度写：${err instanceof Error ? err.message : String(err)}`);
+    return { hasCards: false };
+  }
+}
+
 interface GenerationInputs {
   config: Awaited<ReturnType<typeof loadEngineConfig>>;
   pack: ReturnType<typeof getPack>;
@@ -226,6 +271,10 @@ interface GenerationInputs {
   patterns: PatternCard[];
   /** research 槽装配完的请求（用户材料 + 简报 + 知识片段） */
   promptReq: ScriptRequest;
+  /** 本稿生效的角度卡；手写 direction 或没选时缺席（direction 由 buildUserPrompt 自己认） */
+  angle?: ResolvedAngle;
+  /** 有候选卡却没有生效角度 = 绕过了品味闸口，版本注记要说出来 */
+  wroteWithoutAngle: boolean;
   attribution: Attribution;
 }
 
@@ -235,7 +284,7 @@ async function gatherInputs(
   dataDir: string | undefined,
   warn: (message: string) => void,
 ): Promise<GenerationInputs> {
-  const [config, pack, profile, contrastPairs, patterns, brief] = await Promise.all([
+  const [config, pack, profile, contrastPairs, patterns, brief, picked] = await Promise.all([
     loadEngineConfig(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
@@ -247,6 +296,8 @@ async function gatherInputs(
     selectPatterns(req, dataDir),
     // 调研简报(深调研 §6):三条写稿入口共用这一处注入点,无 topicId/无指针即 null
     loadBriefBlock(req, dataDir, warn),
+    // 角度卡(角度卡 §1.3):同一处解析优先级,三条写稿入口一次覆盖
+    resolveAngle(req, dataDir, warn),
   ]);
   return {
     config,
@@ -255,6 +306,8 @@ async function gatherInputs(
     contrastPairs,
     patterns,
     promptReq: await composeResearchSlot(req, brief?.block, dataDir),
+    ...(picked.angle ? { angle: picked.angle } : {}),
+    wroteWithoutAngle: picked.hasCards && !picked.angle && !req.direction?.trim(),
     attribution: {
       usedPatternIds: patterns.map((card) => card.id),
       ...(brief ? { usedBriefRevision: brief.revision } : {}),
@@ -374,7 +427,7 @@ async function runWriterLoop(
  */
 function reviewDraft(
   written: WriterRun,
-  inputs: Pick<GenerationInputs, "config" | "profile" | "promptReq">,
+  inputs: Pick<GenerationInputs, "config" | "profile" | "promptReq" | "angle">,
   prompts: { system: string; user: string },
   gate: QualityGateSpec | undefined,
   platform: ScriptRequest["platform"],
@@ -388,6 +441,8 @@ function reviewDraft(
       system: prompts.system,
       user: prompts.user,
       ...(inputs.promptReq.research ? { researchSlot: inputs.promptReq.research } : {}),
+      // 选中角度进审稿材料（审稿 §2.4）：深度判据的基准从「有没有论点」升到「thesis 论证了吗」
+      ...(inputs.angle ? { angle: inputs.angle.card } : {}),
       voiceSamples: inputs.profile?.voiceSamples ?? [],
       ...(gate ? { gate } : {}),
       platform,
@@ -409,14 +464,21 @@ async function runGeneration(
   // 调研闸口必须跑在材料收集**之前**:简报是本轮刚跑出来的,gatherInputs 才读得到指针
   const wroteWithoutBrief = await ensureBriefBeforeWriting(req, deps, warn, placeholderId, dataDir);
   // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)
-  const { config, pack, profile, contrastPairs, patterns, promptReq, attribution } =
+  const { config, pack, profile, contrastPairs, patterns, promptReq, angle, wroteWithoutAngle, attribution } =
     await gatherInputs(req, dataDir, warn);
-  const prompts = buildScriptPrompts(pack, profile, promptReq, { contrastPairs, patterns });
+  // 跳过角度是**用户的显式动作**（§1.6 不许模型猜布尔），所以它的原话要落 run-log 可回溯
+  if (req.angleSkipReason?.trim()) warn(`用户明说跳过角度点选：${req.angleSkipReason.trim()}`);
+  else if (wroteWithoutAngle) warn(`未经角度点选开写：这条选题有角度候选卡但没选（${req.topicId}）`);
+  const prompts = buildScriptPrompts(pack, profile, promptReq, {
+    contrastPairs,
+    patterns,
+    ...(angle ? { angle } : {}),
+  });
   const gate = resolveQualityGate(pack, req.platform);
 
   try {
     const written = await runWriterLoop(prompts, gate, config, attribution, deps?.runLoopImpl ?? runLoop, runId);
-    const reviewed = await reviewDraft(written, { config, profile, promptReq }, prompts, gate, req.platform, {
+    const reviewed = await reviewDraft(written, { config, profile, promptReq, angle }, prompts, gate, req.platform, {
       ...(deps?.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
       ...(runId ? { runId } : {}),
       onWarn: warn,
@@ -433,6 +495,7 @@ async function runGeneration(
       rulesApplied: profile ? rulesForPlatform(profile, req.platform).length : 0,
       attribution,
       wroteWithoutBrief,
+      wroteWithoutAngle,
       placeholderId,
       dataDir,
     });
@@ -601,23 +664,32 @@ interface FinalizeArgs {
   rulesApplied: number;
   attribution: Attribution;
   wroteWithoutBrief: boolean;
+  wroteWithoutAngle: boolean;
   placeholderId: string;
   dataDir?: string;
 }
 
 /**
- * 版本注记：稿件历史里唯一的人话留痕。两件事要在同一句里说清楚——
- * 这稿有没有材料垫底、审稿有没有让它改过。别互相覆盖，也别堆成两串括号。
+ * 版本注记：稿件历史里唯一的人话留痕。三件事要在同一句里说清楚——
+ * 这稿有没有材料垫底、有没有经过角度点选、审稿有没有让它改过。
+ * 别互相覆盖，也别堆成三串括号。
  */
-function versionNote(review: ReviewMeta, wroteWithoutBrief: boolean): string {
-  const head = review.rounds > 0 ? `AI 审稿修订（${review.fixed} 项` : "AI 完成初稿";
-  if (review.rounds > 0) return `${head}${wroteWithoutBrief ? "，未带调研简报" : ""}）`;
-  return wroteWithoutBrief ? "AI 完成初稿（未带调研简报）" : head;
+function versionNote(
+  review: ReviewMeta,
+  marks: { wroteWithoutBrief: boolean; wroteWithoutAngle: boolean },
+): string {
+  const notes = [
+    ...(marks.wroteWithoutBrief ? ["未带调研简报"] : []),
+    ...(marks.wroteWithoutAngle ? ["未经角度点选"] : []),
+  ];
+  if (review.rounds > 0) return `AI 审稿修订（${review.fixed} 项${notes.length ? `，${notes.join("、")}` : ""}）`;
+  return notes.length ? `AI 完成初稿（${notes.join("、")}）` : "AI 完成初稿";
 }
 
 /** 后处理：违禁词扫描 → 占位稿转正（draft_ready，同现有写作流）。 */
 async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
-  const { payload, humanizedText, review, req, attribution, wroteWithoutBrief, placeholderId, dataDir } = args;
+  const { payload, humanizedText, review, req, attribution, wroteWithoutBrief, wroteWithoutAngle, placeholderId, dataDir } =
+    args;
   const { title, hashtags } = payload;
 
   // 标题一并扫描——与 review.ts 的 `title\n\nbody` 口径对齐，标题里的违禁词不得漏报
@@ -645,7 +717,7 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
         : {}),
       // 审稿结论落稿件元数据(审稿 §2.5):稿卡徽章读的就是它,降级路径同样要留下
       review,
-      _versionNote: versionNote(review, wroteWithoutBrief),
+      _versionNote: versionNote(review, { wroteWithoutBrief, wroteWithoutAngle }),
     },
     dataDir,
   );
@@ -668,6 +740,7 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
     gateFailures: args.gateFailures.map((f) => f.detail),
     rulesApplied: args.rulesApplied,
     wroteWithoutBrief,
+    wroteWithoutAngle,
     review,
     tokensUsed: args.tokensUsed,
   };

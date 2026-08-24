@@ -194,6 +194,7 @@ import {
   removeAsset as removeContentAsset,
   getContent,
   getDataDir,
+  getTopic,
   listTopics,
   saveTopic,
   updateTopic,
@@ -202,6 +203,8 @@ import {
   listTrash,
   updateContent,
 } from "../storage/local-store.js";
+import { loadLatestBrief } from "../modules/research/brief-store.js";
+import { findAngleCard, parseAngleCard } from "../modules/research/angle-cards.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
 import { attachLibraryAsset } from "./content-asset-attach.js";
 import type { ApprovalBinding } from "./approval-gate.js";
@@ -1275,6 +1278,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "topic:update": topicUpdateHandler,
     "topic:delete": topicDeleteHandler,
     "topic:restore": topicRestoreHandler,
+    "topic:select_angle": topicSelectAngleHandler,
+    "topic:clear_angle": topicClearAngleHandler,
     "trash:list": trashListHandler,
     "content:versions": contentVersionsHandler,
     "content:revert": contentRevertHandler,
@@ -1513,6 +1518,61 @@ async function topicDeleteHandler(payload: Record<string, unknown>): Promise<Rec
   try {
     const topic = await softDeleteTopic(id, (payload._dataDir as string) || undefined);
     if (!topic) return { ok: false, error: `Topic ${id} not found` };
+    return { ok: true, topic };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── 角度点选（角度卡 spec §1.4：点选 / 改写 / 清除） ─────────────────────────
+
+/**
+ * 落一张生效角度卡。两道校验缺一不可：
+ * 1. `brief_revision` 必须是**该选题最新那版**——对不上说明用户看的是过期候选（简报重跑过），
+ *    这时候照落等于让他在不知情的情况下选了一张已经不存在的卡；
+ * 2. `angle_id` 必须在那版简报里；改写版（可选 `card`）还要过一遍字段与证据引用校验，
+ *    创始人能改任何文字，但改不出简报里没有的证据。
+ */
+async function topicSelectAngleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const topicId = typeof payload.topic_id === "string" ? payload.topic_id.trim() : "";
+  const angleId = typeof payload.angle_id === "string" ? payload.angle_id.trim() : "";
+  const revision = payload.brief_revision;
+  if (!topicId || !angleId) return { ok: false, error: "topic_id 与 angle_id 必填" };
+  if (typeof revision !== "number" || !Number.isInteger(revision)) {
+    return { ok: false, error: "brief_revision 必须是整数" };
+  }
+  const dataDir = (payload._dataDir as string) || undefined;
+  try {
+    const topic = await getTopic(topicId, dataDir);
+    if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
+    const brief = await loadLatestBrief(topicId, getDataDir(dataDir));
+    if (!brief) return { ok: false, error: "这条选题还没有可用简报——先跑一轮深调研" };
+    if (brief.revision !== revision) {
+      return { ok: false, error: `角度候选已更新（当前 v${brief.revision}，你手上是 v${revision}）——刷新后重选` };
+    }
+    const original = findAngleCard(brief, angleId);
+    if (!original) return { ok: false, error: `角度 ${angleId} 不在简报 v${brief.revision} 里` };
+    // 没给 card = 点选原卡；给了 = 改写版（§1.4 改写才是创始人观点进管线的口子）
+    const card = payload.card === undefined ? original : parseAngleCard(payload.card, brief, angleId);
+    if (typeof card === "string") return { ok: false, error: card };
+    const updated = await updateTopic(
+      topicId,
+      { selectedAngle: { briefRevision: brief.revision, angleId, card, selectedAt: new Date().toISOString() } },
+      dataDir,
+    );
+    return { ok: true, topic: updated };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** 撤回选择（写稿回到「未经角度点选」）。字段置 undefined 即从盘上消失 */
+async function topicClearAngleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const topicId = typeof payload.topic_id === "string" ? payload.topic_id.trim() : "";
+  if (!topicId) return { ok: false, error: "topic_id 必填" };
+  try {
+    const topic = await updateTopic(topicId, { selectedAngle: undefined }, (payload._dataDir as string) || undefined);
+    if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
     return { ok: true, topic };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

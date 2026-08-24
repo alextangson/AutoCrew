@@ -89,11 +89,35 @@ function scriptedLoop(argsSeq: Array<Record<string, unknown>>, cap: Capture, tok
   }) as unknown as typeof runLoop;
 }
 
+/** 一张合法角度卡；差异性靠 thesis+anti_scope，改这两处才能造出「同角度换皮」 */
+function angleCard(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    angle: "算一笔维护账",
+    thesis: "省下的编码时间被维护成本吃回去了，净收益接近于零",
+    core_evidence_ids: ["ev-1"],
+    anti_scope: "不写工具横评、不写怎么写 prompt",
+    audience_pain: "老板拿提效数字压 KPI，自己却在给 AI 擦屁股",
+    hold_trigger: "看到自己上周那笔返工账被算了出来",
+    hook_draft: "提效 55% 是真的，只是账没算完。",
+    ...over,
+  };
+}
+
+const CARD_B = {
+  angle: "从翻车案例倒推",
+  thesis: "翻车集中在重构类任务，说明它擅长的是补全不是设计",
+  anti_scope: "不做成本测算、不谈团队管理",
+  audience_pain: "以为是自己不会用，其实是任务类型选错了",
+  hold_trigger: "第一个案例就是他昨天踩过的那种坑",
+  hook_draft: "同一个工具，写新函数很神，一动老代码就废。",
+};
+
 function briefArgs(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     summary: "工具已经普及，真正的分歧在维护成本。",
     tensions: [],
     angle_suggestions: ["算一笔维护账", "从翻车案例倒推"],
+    angle_cards: [angleCard(), angleCard(CARD_B)],
     evidence: [{ claim: "使用率过半", source_id: "p1", quote: REAL_QUOTE }],
     asset_picks: [{ asset_id: "a1", caption: "使用率图" }],
     ...over,
@@ -240,5 +264,111 @@ describe("伪造与降级", () => {
     });
     expect(boom.status).toBe("failed");
     if (boom.status === "failed") expect(boom.errorCode).toBe("engine_failed");
+  });
+});
+
+// ─── 角度卡（角度卡 spec §1.2）──────────────────────────────────────────────
+//
+// 断言全在确定性层：id 由代码按位置编、证据引用由代码验存在性、张数与差异性由代码判。
+// 卡上的文字是 LLM 写的，一个字都不断言。
+
+describe("角度卡产出与校验", () => {
+  it("合法两张 → id 按位置编（angle-1/angle-2），字段原样进简报", async () => {
+    const cap = newCapture();
+    const res = await synth([briefArgs()], cap);
+    if (res.status !== "succeeded") throw new Error("应当成功");
+
+    const cards = res.payload.angleCards ?? [];
+    expect(cards.map((c) => c.id)).toEqual(["angle-1", "angle-2"]);
+    expect(cards[0].coreEvidenceIds).toEqual(["ev-1"]);
+    expect(cards[0].tensionId).toBeUndefined(); // 张力点为空 → 不硬编
+    for (const c of cards) {
+      for (const field of [c.angle, c.thesis, c.antiScope, c.audiencePain, c.holdTrigger, c.hookDraft]) {
+        expect(field.length).toBeGreaterThan(0);
+      }
+    }
+    expect(cap.results[0]).not.toMatch(/^Error/);
+  });
+
+  it("张数不足 2 / 超过 4：不足打回，超出只取前 4 张", async () => {
+    const one = newCapture();
+    const res = await synth([briefArgs({ angle_cards: [angleCard()] })], one);
+    expect(one.results[0]).toContain("angle_cards 需 2-4 张");
+    expect(res.status).toBe("failed");
+
+    // 五张里前四张两两不同 → 收下前 4 张,不为「多交了」耗修复轮
+    const five = newCapture();
+    const variants = [
+      { thesis: "省下的编码时间被维护成本吃回去了", anti_scope: "不写工具横评" },
+      { thesis: "翻车集中在重构类任务，它擅长补全不擅长设计", anti_scope: "不做成本测算" },
+      { thesis: "真正被替代的是初级岗位的练手机会", anti_scope: "回避一切技术细节" },
+      { thesis: "买单的是老板，承担返工的是工程师", anti_scope: "别谈模型能力边界" },
+      { thesis: "开源方案两年内会把这一层利润抹平", anti_scope: "不讲个人使用技巧" },
+    ].map((over) => angleCard(over));
+    const many = await synth([briefArgs({ angle_cards: variants })], five);
+    if (many.status !== "succeeded") throw new Error("应当成功");
+    expect(many.payload.angleCards).toHaveLength(4);
+  });
+
+  it("core_evidence_ids 指向不存在的证据 → 打回并说清有几条可引", async () => {
+    const cap = newCapture();
+    const res = await synth([briefArgs({ angle_cards: [angleCard({ core_evidence_ids: ["ev-7"] }), angleCard(CARD_B)] })], cap);
+    expect(cap.results[0]).toContain("ev-7");
+    expect(cap.results[0]).toContain("只有 1 条证据");
+    expect(res.status).toBe("failed");
+  });
+
+  it("一条证据都不引 → 打回（没有证据的论点是臆测）", async () => {
+    const cap = newCapture();
+    await synth([briefArgs({ angle_cards: [angleCard({ core_evidence_ids: [] }), angleCard(CARD_B)] })], cap);
+    expect(cap.results[0]).toContain("至少要引 1 条证据");
+  });
+
+  it("tension_id 引不到 → 打回；简报有张力点时引得到就收下", async () => {
+    const bad = newCapture();
+    await synth([briefArgs({ angle_cards: [angleCard({ tension_id: "tension-1" }), angleCard(CARD_B)] })], bad);
+    expect(bad.results[0]).toContain("tension-1");
+
+    const good = newCapture();
+    const res = await synth(
+      [
+        briefArgs({
+          tensions: ["厂商宣称提效 55%，独立评测只测到 12%"],
+          angle_cards: [angleCard({ tension_id: "tension-1" }), angleCard(CARD_B)],
+        }),
+      ],
+      good,
+    );
+    if (res.status !== "succeeded") throw new Error("应当成功");
+    expect(res.payload.angleCards?.[0].tensionId).toBe("tension-1");
+  });
+
+  it("两张卡是同一个角度换皮 → 差异性粗筛打回", async () => {
+    const cap = newCapture();
+    const twin = angleCard({
+      // 只把「吃回去」换成「抵消掉」：论点与禁区几乎逐字相同 = 五卡一角度的典型形态
+      thesis: "省下的编码时间被维护成本抵消掉了，净收益接近于零",
+    });
+    const res = await synth([briefArgs({ angle_cards: [angleCard(), twin] })], cap);
+
+    expect(cap.results[0]).toContain("同一个角度换套说法");
+    expect(res.status).toBe("failed");
+  });
+
+  it("字段缺一 → 打回并点名是哪一张", async () => {
+    const cap = newCapture();
+    await synth([briefArgs({ angle_cards: [angleCard({ anti_scope: "  " }), angleCard(CARD_B)] })], cap);
+    expect(cap.results[0]).toContain("angle_cards[0]");
+    expect(cap.results[0]).toContain("anti_scope");
+  });
+
+  it("一条证据都没挑出来 → 不硬出角度卡（§1.8），缺席进 gaps 且简报照常成立", async () => {
+    const cap = newCapture();
+    const res = await synth([briefArgs({ evidence: [], angle_cards: [] })], cap);
+
+    expect(cap.results[0]).not.toMatch(/^Error/);
+    if (res.status !== "succeeded") throw new Error("应当成功");
+    expect(res.payload.angleCards).toBeUndefined();
+    expect(res.payload.gaps.join("；")).toContain("未产出角度卡");
   });
 });

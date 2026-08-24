@@ -26,7 +26,10 @@ import { prepareVideoKit } from "../modules/publish/video-kit.js";
 import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar.js";
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
-import { saveTopic, listSiblings, type Topic } from "../storage/local-store.js";
+import { getDataDir, getTopic, saveTopic, updateTopic, listSiblings, type Topic } from "../storage/local-store.js";
+import { loadLatestBrief, type AngleCard, type ResearchBrief } from "../modules/research/brief-store.js";
+import { activeAngleCard, angleCardsOf, findAngleCard } from "../modules/research/angle-cards.js";
+import { topicHashOf } from "../modules/research/research-job-store.js";
 import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
 import { startGenerateScript, retryGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
 import { videoBuildStartHandler } from "./video-handlers.js";
@@ -48,7 +51,9 @@ export interface ChatCard {
     | "draft" | "report" | "drafts_list" | "style" | "publish" | "publish_confirm" | "published" | "topic"
     | "topic_saved" | "assets" | "persona" | "audience_review" | "video_kit" | "revision_proposal" | "focus_cleared"
     // Phase 2 到达面：封面/配图投递回执、看板流转、发布前检查、活动/收件箱/版本只读查询
-    | "cover_job" | "article_images_job" | "content_moved" | "pre_publish" | "campaigns" | "inbox" | "versions";
+    | "cover_job" | "article_images_job" | "content_moved" | "pre_publish" | "campaigns" | "inbox" | "versions"
+    // 角度候选卡（角度卡 spec §1.6）：写稿闸口不接单时回它，让创始人点选/改写/手写/直写
+    | "angle_cards";
   data: Record<string, unknown>;
 }
 
@@ -322,7 +327,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 23. 用户问「能发了吗」「帮我检查一下」时调用 pre_publish_check（只读，不改状态、不发布）：挑没过的两三项用人话讲清楚怎么改；全过了也只说「检查通过，去工作区点发布」。
 24. 用户问增长活动进度时用 list_campaigns（全部）/ campaign_status（单个），都是只读；创建活动、推进活动、改自治档位一律引导去工作区增长面板。
 25. 用户问收件箱（转发进来的链接消化了没）时用 list_inbox；某条失败要重试用 retry_inbox——worker 没在跑时工具会照实说，原样转达，不要假装重试成功。问「改过几版」用 list_versions，回滚要用户去编辑器版本面板亲手点。
-26. 用户提到某篇既有稿件（「抖音那篇」「上次发的」「之前写的 XX」）而上下文里没有它的 id 时，先调用 list_drafts 带关键词/平台/状态筛选自己找——绝不开口向用户要稿件 id 或看板位置；筛完命中多篇拿不准，列出候选标题让用户挑即可。`;
+26. 用户提到某篇既有稿件（「抖音那篇」「上次发的」「之前写的 XX」）而上下文里没有它的 id 时，先调用 list_drafts 带关键词/平台/状态筛选自己找——绝不开口向用户要稿件 id 或看板位置；筛完命中多篇拿不准，列出候选标题让用户挑即可。
+27. generate_script 回 needsAngle 时说明这条选题有调研出的角度候选、还没定角度：把每张卡的切入点与核心论点用人话念给用户听（一两句一张），然后等他拍板——**绝不替用户选**，角度是他的品味不是你的判断。他挑了某张就带 angle_id 重调；他自己说了个角度就把**原话**放进 direction；他明说「直接写/别选角度」才把那句原话放进 skip_reason 重调。这三样都没有就别重调，等他说话。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -504,6 +510,56 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     }
   };
 
+  /** 落选题 + 放行。卡不在最新简报里 = 用户看的是过期候选，拒绝并让他重看一次 */
+  const selectAngle = async (topicId: string, brief: ResearchBrief, angleId: string): Promise<string | null> => {
+    const card = findAngleCard(brief, angleId);
+    if (!card) {
+      return fail(`角度 ${angleId} 不在这条选题的最新简报（v${brief.revision}）里——重新把候选念给用户听,让他重选`);
+    }
+    const updated = await updateTopic(
+      topicId,
+      { selectedAngle: { briefRevision: brief.revision, angleId, card, selectedAt: new Date().toISOString() } },
+      dataDir,
+    );
+    return updated ? null : fail(`选题不存在：${topicId}`);
+  };
+
+  /** 不接单回执：把候选原样交给总编辑去念，**由用户拍板**——替他选就等于没有品味闸口 */
+  const needsAngleReply = (topicId: string, brief: ResearchBrief, cards: AngleCard[]): string => {
+    sink.push({ type: "angle_cards", data: { topicId, revision: brief.revision, cards } });
+    return JSON.stringify({
+      ok: true,
+      needsAngle: true,
+      cards: cards.map((c) => ({
+        id: c.id, angle: c.angle, thesis: c.thesis,
+        antiScope: c.antiScope, audiencePain: c.audiencePain, hookDraft: c.hookDraft,
+      })),
+      note: "把候选讲给用户听,让他选一张/说自己的角度/明说直接写;不要替用户选。",
+    });
+  };
+
+  /**
+   * 角度闸口（角度卡 spec §1.6「聊天 write_script」）。返回工具回执 = **不接单**，
+   * null = 放行开写。
+   *
+   * 有候选卡却没选就直接开写，等于把整条角度链白建——所以这里多走一轮往返
+   * （创始人 2026-08-23 裁决点 1：接受这一轮）。放行的四条路：
+   * 用户点了卡（angle_id）、自己写了角度（direction）、明说直接写（skip_reason）、
+   * 或这条选题压根没有角度卡（无简报 / 旧简报 / 证据为空的降级简报，§1.8 不硬出角度）。
+   */
+  const angleGate = async (req: ScriptRequest, angleId: string): Promise<string | null> => {
+    if (!req.topicId) return null;
+    const brief = await loadLatestBrief(req.topicId, getDataDir(dataDir), () => {});
+    const cards = angleCardsOf(brief);
+    if (!brief || cards.length === 0) return null; // 没有候选就没有闸口（§1.8 降级：不硬出角度）
+    if (angleId) return selectAngle(req.topicId, brief, angleId);
+    if (req.direction?.trim() || req.angleSkipReason?.trim()) return null;
+    const topic = await getTopic(req.topicId, dataDir);
+    const hash = topic ? topicHashOf(topic.title, topic.description) : "";
+    if (topic && activeAngleCard(topic.selectedAngle, brief, hash)) return null; // 之前选过且还作数
+    return needsAngleReply(req.topicId, brief, cards);
+  };
+
   const tools: LoopTool[] = [
     {
       name: "find_topics",
@@ -613,7 +669,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     {
       name: "generate_script",
       description:
-        "开写一篇稿件（后台任务）。调用立即返回占位稿——写作在后台进行（长文约 1-3 分钟）,完成后看板卡片自动转正、任务带显示进度。需要明确的选题和目标平台。选题来自灵感库时必须带 topic_id（灵感库编号,形如 topic-xxx——brief/候选卡里都有）,血缘断了归因和灵感保护就断了。带 topic_id 时,这条选题上次写崩的那张卡会被就地重写（不新建）——用户说「重新生成/再写一次」照常调这个工具即可。",
+        "开写一篇稿件（后台任务）。调用立即返回占位稿——写作在后台进行（长文约 1-3 分钟）,完成后看板卡片自动转正、任务带显示进度。需要明确的选题和目标平台。选题来自灵感库时必须带 topic_id（灵感库编号,形如 topic-xxx——brief/候选卡里都有）,血缘断了归因和灵感保护就断了。带 topic_id 时,这条选题上次写崩的那张卡会被就地重写（不新建）——用户说「重新生成/再写一次」照常调这个工具即可。若这条选题调研出了角度候选卡而用户还没定角度,本工具**不接单**,回 needsAngle + 候选清单让你念给用户挑（见守则 27）。",
       parameters: {
         type: "object",
         properties: {
@@ -624,6 +680,21 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           use_patterns: {
             type: "boolean",
             description: "是否借鉴对标拆解卡(默认 true;用户明说「别参考对标/别套模板」时传 false)",
+          },
+          angle_id: {
+            type: "string",
+            description:
+              "用户选中的角度卡编号(形如 angle-2),来自本工具上一轮回执里的角度候选。用户从候选里挑了一张才传,不要自己替他挑。",
+          },
+          direction: {
+            type: "string",
+            description:
+              "用户自己手写的角度原话(不是你的转述、不是候选卡的复述)。他说「我想从 XX 角度写」时传这句,它压过一切候选卡。",
+          },
+          skip_reason: {
+            type: "string",
+            description:
+              "仅当用户原话明确表示不选角度直接写(「别选角度」「直接写」「就按老样子」)时,把那句原话转述进来。用户没说过就绝不要传。",
           },
         },
         required: ["topic", "platform"],
@@ -639,13 +710,29 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           ...(typeof a.topic_id === "string" && a.topic_id ? { topicId: a.topic_id } : {}),
           // 缺省启用；只有显式 false 才关掉对标拆解卡注入（收件箱设计 §3.5）
           ...(a.use_patterns === false ? { usePatterns: false } : {}),
+          // 角度三口（§1.3/§1.6）：手写 direction 最高优先级；skip_reason 只进 run-log 留痕
+          ...(typeof a.direction === "string" && a.direction.trim() ? { direction: a.direction.trim() } : {}),
+          ...(typeof a.skip_reason === "string" && a.skip_reason.trim()
+            ? { angleSkipReason: a.skip_reason.trim() }
+            : {}),
         };
         try {
-          // 这条选题上次就写崩了 → 救活那张卡，而不是再开一张（见 retryInterrupted）
+          const angleId = typeof a.angle_id === "string" ? a.angle_id.trim() : "";
+          // 用户这轮点了卡：先落选题再走任何路——即便下一步命中中断稿重写,
+          // 重写读的也是 topic.selectedAngle,不先落盘他刚选的角度就会被静默丢掉
+          if (angleId) {
+            const selected = await angleGate(req, angleId);
+            if (selected) return selected;
+          }
+          // 这条选题上次就写崩了 → 救活那张卡，而不是再开一张（见 retryInterrupted）。
+          // **排在 needsAngle 弹卡之前**：中断重写不该再问一遍角度。
           if (req.topicId) {
             const retried = await retryInterrupted(req);
             if (retried) return retried;
           }
+          // angleId 那条已在上面选定并放行,不必再过一遍闸口
+          const gated = angleId ? null : await angleGate(req, "");
+          if (gated) return gated;
           // 后台化（契约 P1 完全体）:任务生命周期与本次对话请求解耦——对话立即回,写作照跑
           const started = await d.startGenerate(req, dataDir);
           effects?.contentIds.add(started.contentId);

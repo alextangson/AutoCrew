@@ -13,10 +13,15 @@ import {
   BriefExistsError,
   briefPath,
   briefsDir,
+  evidenceByRef,
+  evidenceRefId,
   loadBrief,
   loadLatestBrief,
   nextBriefRevision,
   saveBrief,
+  tensionByRef,
+  tensionRefId,
+  type AngleCard,
   type ResearchBrief,
 } from "./brief-store.js";
 
@@ -177,5 +182,54 @@ describe("读侧降级", () => {
 
     expect(await nextBriefRevision(TOPIC, dataDir)).toBe(2);
     expect((await loadLatestBrief(TOPIC, dataDir))?.revision).toBe(1);
+  });
+});
+
+// ─── 角度卡（角度卡 spec §1.3）───────────────────────────────────────────────
+//
+// 这一组守的是 2026-08-24 的裁决：angleCards 是**全可选新字段，schemaVersion 保持 1**。
+// 升版本 = 读侧把存量简报全部当「无简报」，那是拿几百份既有材料换一个字段名分——
+// 所以「旧简报照常读得出来」这条必须有机器验证，不能靠记性。
+
+const CARD: AngleCard = {
+  id: "angle-1",
+  angle: "算一笔维护账",
+  thesis: "省下的编码时间被维护成本吃回去了",
+  coreEvidenceIds: ["ev-1"],
+  antiScope: "不写工具横评",
+  audiencePain: "老板拿提效数字压 KPI",
+  holdTrigger: "看到自己上周那笔返工账",
+  hookDraft: "提效 55% 是真的，只是账没算完。",
+};
+
+describe("角度卡随简报落盘", () => {
+  it("带 angleCards 落盘 → 原样读回（schemaVersion 仍是 1）", async () => {
+    await saveBrief(TOPIC, makeBrief({ angleCards: [CARD, { ...CARD, id: "angle-2" }] }), dataDir);
+
+    const loaded = await loadLatestBrief(TOPIC, dataDir);
+    expect(loaded?.schemaVersion).toBe(1);
+    expect(loaded?.angleCards).toEqual([CARD, { ...CARD, id: "angle-2" }]);
+  });
+
+  it("旧简报（没有 angleCards 字段）照常读出来，字段缺席即缺席", async () => {
+    await saveBrief(TOPIC, makeBrief({ revision: 1 }), dataDir);
+
+    const loaded = await loadLatestBrief(TOPIC, dataDir);
+    expect(loaded?.summary).toBe("四路指向一致：工具好用但维护成本被低估。");
+    expect(loaded?.angleCards).toBeUndefined();
+    expect(loaded).not.toHaveProperty("angleCards");
+  });
+
+  it("证据/张力点按位置解引用：越界、格式不对、非字符串一律 null", () => {
+    const brief = makeBrief({ tensions: ["张力甲", "张力乙"] });
+    expect(evidenceRefId(0)).toBe("ev-1");
+    expect(tensionRefId(1)).toBe("tension-2");
+    expect(evidenceByRef(brief.evidence, "ev-1")?.claim).toBe("使用率高");
+    expect(tensionByRef(brief.tensions, "tension-2")).toBe("张力乙");
+
+    for (const bad of ["ev-0", "ev-2", "ev-x", "1", "", "tension-1", null, 3]) {
+      expect(evidenceByRef(brief.evidence, bad)).toBeNull();
+    }
+    expect(tensionByRef(brief.tensions, "tension-3")).toBeNull();
   });
 });

@@ -133,6 +133,9 @@ export const IPC_CHANNELS = [
   "topic:update",
   "topic:delete",
   "topic:restore",
+  // 角度点选（角度卡 spec §1.4）：点选 = 只带 angle_id；改写 = 额外带改写后的 card
+  "topic:select_angle",
+  "topic:clear_angle",
   "content:delete",
   "content:restore",
   "content:open_folder",

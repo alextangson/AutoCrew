@@ -11,6 +11,9 @@ import type { ContrastPair } from "../learnings/diff-tracker.js";
 import { resolveQualityGate } from "./quality-gate.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
+import { evidenceByRef, tensionByRef, type AngleCard, type BriefEvidence } from "../research/brief-store.js";
+import { domainOf } from "../research/brief-inject.js";
+import { sanitizeExternal } from "../research/research-prompt-kit.js";
 
 export interface ScriptRequest {
   topic: string;
@@ -23,6 +26,23 @@ export interface ScriptRequest {
   topicId?: string;
   /** 对标拆解卡注入开关（收件箱设计 §3.5）：缺省启用，false = 本次不选卡也不注入 */
   usePatterns?: boolean;
+  /**
+   * 创作者手写的角度（角度卡 spec §1.3 优先级最高一档）。有它就压过选中的角度卡——
+   * 创始人手写即最高裁决，卡还展示但不注入。
+   */
+  direction?: string;
+  /**
+   * 用户**明确**要跳过角度点选时的原话转述（§1.6：不让模型猜裸布尔）。
+   * 只进 run-log 留痕，不进 prompt——它是「为什么没选角度」的证据，不是写作指令。
+   */
+  angleSkipReason?: string;
+}
+
+/** 生效的角度卡 + 它引用的那份证据（由 generate-script 解析好传进来，本模块不读盘） */
+export interface ResolvedAngle {
+  card: AngleCard;
+  evidence: BriefEvidence[];
+  tensions: string[];
 }
 
 export interface ScriptPromptExtras {
@@ -30,6 +50,8 @@ export interface ScriptPromptExtras {
   contrastPairs?: ContrastPair[];
   /** 对标拆解卡（收件箱设计 §3.5 的唯一注入点）：缺省/空数组时整块不出现 */
   patterns?: PatternCard[];
+  /** 生效角度卡（角度卡 spec §1.5）：req.direction 存在时由调用方留空——手写压过点选 */
+  angle?: ResolvedAngle;
 }
 
 /** 定界符导出给测试与下游断言用——块的存在与否是可验证结构，不靠匹配文案 */
@@ -43,7 +65,7 @@ export function buildScriptPrompts(
   extras?: ScriptPromptExtras,
 ): { system: string; user: string } {
   const system = buildSystemPrompt(pack, profile, req.platform, extras);
-  const user = buildUserPrompt(req, extras?.patterns ?? []);
+  const user = buildUserPrompt(req, extras?.patterns ?? [], extras?.angle);
   return { system, user };
 }
 
@@ -258,11 +280,77 @@ function renderPatterns(cards: PatternCard[]): string {
   return parts.join("\n");
 }
 
-function buildUserPrompt(req: ScriptRequest, patterns: PatternCard[]): string {
+// ─── 本稿切入点（角度卡 spec §1.5 注入） ─────────────────────────────────────
+
+/** 卡上的字段是模型写的、引文更是外部原文——同简报块的注入纪律：剥链接 + 掐伪造定界符 + 截断 */
+const ANGLE_FIELD_MAX = 200;
+const ANGLE_QUOTE_MAX = 160;
+const ANGLE_CLAIM_MAX = 80;
+
+function angleField(raw: string, max = ANGLE_FIELD_MAX): string {
+  return sanitizeExternal(raw, max).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * 【本稿切入点】块。角度约束的是**全稿**不是开头，所以 thesis 要标死「必须论证」、
+ * antiScope 要标死「禁区」——只丢一句 angle 进去等于什么都没约束（P1-16）。
+ * coreEvidence 按 id 解出原文引用：论点旁边就摆着它的证据，写手不必回去翻简报块。
+ */
+export function buildAngleBlock(card: AngleCard, evidence: BriefEvidence[], tensions: string[] = []): string {
+  const lines = [
+    "【本稿切入点（已选定，全稿按它写）】",
+    `切入点：${angleField(card.angle)}`,
+    `核心论点：${angleField(card.thesis)}`,
+    "　↑ 全稿必须论证它，不是复述材料——每一段都要服务于把这句话立住。",
+  ];
+  const cited = card.coreEvidenceIds
+    .map((id) => evidenceByRef(evidence, id))
+    .filter((e): e is BriefEvidence => e !== null);
+  if (cited.length > 0) {
+    lines.push("支撑证据（论点的地基，引用时保持原意）：");
+    for (const e of cited) {
+      lines.push(
+        `- ${angleField(e.claim, ANGLE_CLAIM_MAX) || "（无主张）"}｜引文：「${angleField(e.quote, ANGLE_QUOTE_MAX)}」｜来源：${domainOf(e.sourceUrl)}`,
+      );
+    }
+  }
+  const tension = card.tensionId ? tensionByRef(tensions, card.tensionId) : null;
+  if (tension) lines.push(`依托的张力点：${angleField(tension)}`);
+  lines.push(`禁区（这一稿不写）：${angleField(card.antiScope)}`);
+  lines.push("　↑ 写进去就是跑题，四平八稳面面俱到没有深度。");
+  lines.push(`目标受众痛点：${angleField(card.audiencePain)}`);
+  lines.push(`预期停留触发：${angleField(card.holdTrigger)}`);
+  lines.push(`开头钩子草稿（手感参考，可以改写，不必照抄）：${angleField(card.hookDraft)}`);
+  return lines.join("\n");
+}
+
+/** 手写角度块：创始人自己写的一句话，不消毒、不解读——原样交给写手，它就是最高裁决 */
+export function buildDirectionBlock(direction: string): string {
+  return [
+    "【本稿切入点（创作者手写，最高优先级）】",
+    direction.trim(),
+    "按这句话的角度写全稿；它与调研材料冲突时以它为准，材料只用来支撑它。",
+  ].join("\n");
+}
+
+/** 三套角度来源的合并（§1.3）：手写 > 选中卡 > 无。三者皆无时返回空串，整块省略 */
+function angleBlockFor(req: ScriptRequest, angle?: ResolvedAngle): string {
+  if (req.direction?.trim()) return buildDirectionBlock(req.direction);
+  return angle ? buildAngleBlock(angle.card, angle.evidence, angle.tensions) : "";
+}
+
+function buildUserPrompt(req: ScriptRequest, patterns: PatternCard[], angle?: ResolvedAngle): string {
   const parts: string[] = [];
 
   parts.push(`选题：${req.topic}`);
   parts.push("");
+
+  // 角度在材料之前：先定「这一稿要论证什么」，再看「有哪些材料可用」
+  const angleBlock = angleBlockFor(req, angle);
+  if (angleBlock) {
+    parts.push(angleBlock);
+    parts.push("");
+  }
 
   if (req.research) {
     parts.push(`调研材料：${req.research}`);

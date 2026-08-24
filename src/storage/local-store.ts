@@ -7,6 +7,21 @@ import { stageGuardError } from "./stage-guard.js";
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
 import type { ReviewMeta } from "../modules/writing/script-review.js";
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
+// 角度卡的形状归简报模块定义（它是简报 schema 的一部分），这里只引用不复制
+import type { AngleCard } from "../modules/research/brief-store.js";
+
+/**
+ * 创始人选定的写作角度（角度卡 spec §1.3）。指针 + **生效卡快照**两样都存：
+ * 点选存的是原卡，改写（选择 UI）存的是改写版——读侧统一走 `card`，不必再回简报里找，
+ * 也不会因为「改写过」而丢掉创始人的那一版。指针（briefRevision/angleId）只用来判过期：
+ * 重跑简报或改了选题文本，这份选择就作废，写稿按「没选」处理。
+ */
+export interface SelectedAngle {
+  briefRevision: number;
+  angleId: string;
+  card: AngleCard;
+  selectedAt: string;
+}
 
 export interface Topic {
   id: string;
@@ -30,6 +45,8 @@ export interface Topic {
   };
   /** 可以直接派给写手展开的角度。 */
   angles?: string[];
+  /** 创始人选中/改写的角度卡（角度卡 spec §1.3）；未选 = 字段不落，写稿走「未经角度点选」 */
+  selectedAngle?: SelectedAngle;
   scoredAt?: string;
   createdAt: string;
   /**

@@ -15,6 +15,7 @@
  */
 import { resolveEngineRoute, type EngineConfig } from "../../engine/config.js";
 import { runLoop, type LoopTool } from "../../engine/loop.js";
+import type { AngleCard } from "../research/brief-store.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 import type { GateFailure } from "./quality-gate.js";
 import {
@@ -68,12 +69,14 @@ export interface ReviewInput {
   system: string;
   /** 写稿时的 user prompt（选题 + 调研槽 + 对标卡），修订轮复用以保住「同批材料」 */
   user: string;
-  /**
-   * 本稿注入过的调研材料（含简报块）；缺席 = 不判证据深度维度（§2.4）。
-   * R2 接点：选中角度卡（thesis/antiScope）在这里并列加一个 `angle?` 字段，
-   * 判据随之从「有没有论点」升到「thesis 论证了吗、antiScope 守住了吗」。
-   */
+  /** 本稿注入过的调研材料（含简报块）；缺席 = 不判证据深度维度（§2.4）。 */
   researchSlot?: string;
+  /**
+   * 本稿生效的角度卡（角度卡 spec §1.5 / 审稿 §2.4）。有它时深度判据从「有没有论点」
+   * 升到「thesis 论证了吗、antiScope 守住了吗」——写稿时定了论点，审稿就该按论点验收。
+   * 缺席（未选角度 / 手写 direction / 无简报）时判据表与材料块都与今天逐字一致。
+   */
+  angle?: AngleCard;
   voiceSamples: string[];
   gate?: QualityGateSpec;
   platform: string;
@@ -241,11 +244,12 @@ async function reviewOnce(
   try {
     const result = await (deps.runLoopImpl ?? runLoop)(reviewer.config, {
       model: reviewer.model,
-      systemPrompt: buildReviewSystemPrompt(Boolean(input.researchSlot?.trim())),
+      systemPrompt: buildReviewSystemPrompt(Boolean(input.researchSlot?.trim()), Boolean(input.angle)),
       userMessage: buildReviewUserMessage({
         payload: draft.payload,
         humanizedText: draft.humanizedText,
         ...(input.researchSlot ? { researchSlot: input.researchSlot } : {}),
+        ...(input.angle ? { angle: input.angle } : {}),
         voiceSamples: input.voiceSamples,
         platform: input.platform,
       }),

@@ -134,10 +134,33 @@ const PERSPECTIVE_OK: Call[] = [
   },
 ];
 
+/** 角度卡（角度卡 spec §1.2）：综合这一步必交 2-4 张，两张之间论点与禁区必须真的不同 */
+const ANGLE_CARDS_OK: Array<Record<string, unknown>> = [
+  {
+    angle: "算一笔维护账",
+    thesis: "省下的编码时间被维护成本吃回去了，净收益接近于零",
+    core_evidence_ids: ["ev-1"],
+    anti_scope: "不写工具横评、不写怎么写 prompt",
+    audience_pain: "老板拿提效数字压 KPI，自己却在给 AI 擦屁股",
+    hold_trigger: "看到自己上周那笔返工账被算了出来",
+    hook_draft: "提效 55% 是真的，只是账没算完。",
+  },
+  {
+    angle: "从翻车案例倒推",
+    thesis: "翻车集中在重构类任务，说明它擅长的是补全不是设计",
+    core_evidence_ids: ["ev-1"],
+    anti_scope: "不做成本测算、不谈团队管理",
+    audience_pain: "以为是自己不会用，其实是任务类型选错了",
+    hold_trigger: "第一个案例就是他昨天踩过的那种坑",
+    hook_draft: "同一个工具，写新函数很神，一动老代码就废。",
+  },
+];
+
 const BRIEF_OK: Record<string, unknown> = {
   summary: "四路指向一致：工具已普及，分歧在维护成本。",
   tensions: [],
   angle_suggestions: ["算一笔维护账", "从翻车案例倒推"],
+  angle_cards: ANGLE_CARDS_OK,
   evidence: [{ claim: "使用率过半", source_id: "p1", quote: REAL_QUOTE }],
   asset_picks: [{ asset_id: "a1", caption: "使用率图" }],
 };

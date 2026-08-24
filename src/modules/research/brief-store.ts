@@ -75,6 +75,60 @@ export interface BriefAssetPick {
   downloadError?: string;
 }
 
+/**
+ * 角度卡（角度卡 spec §1.2）：写前「角度决策」的结构化载体，随简报的 revision 走。
+ * 一张卡约束的是**全稿**，不只是开头——thesis 是必须论证的论点，antiScope 是禁区。
+ */
+export interface AngleCard {
+  /** "angle-1"…（版本内稳定：简报不可覆盖，位置就是身份） */
+  id: string;
+  /** 切入点一句话 */
+  angle: string;
+  /** 本稿核心论点——写稿师必须论证它，不是复述简报 */
+  thesis: string;
+  /** 支撑论点的证据引用（"ev-2" = brief.evidence 第 2 条）；≥1，产地校验存在性防编造 */
+  coreEvidenceIds: string[];
+  /** 依托的跨视角张力点（"tension-1"）；简报 tensions 允许为空，没有就不引 */
+  tensionId?: string;
+  /** 明确不写什么——深度的一半是舍弃 */
+  antiScope: string;
+  audiencePain: string;
+  holdTrigger: string;
+  /** 开头钩子草稿（给创始人预览手感，写稿师可改写） */
+  hookDraft: string;
+}
+
+/** 证据的稳定引用 id：按位置编（1-based）。同版简报永不改写，位置即身份 */
+export function evidenceRefId(index: number): string {
+  return `ev-${index + 1}`;
+}
+
+/** 张力点的稳定引用 id：同上 */
+export function tensionRefId(index: number): string {
+  return `tension-${index + 1}`;
+}
+
+/** "ev-2" → 1；格式不对返回 null（越界由调用方按数组长度判） */
+function refIndex(id: unknown, prefix: string): number | null {
+  if (typeof id !== "string") return null;
+  const m = new RegExp(`^${prefix}-(\\d+)$`).exec(id.trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isInteger(n) && n >= 1 ? n - 1 : null;
+}
+
+/** "ev-2" → evidence[1]；解析不到/越界一律 null（调用方决定打回还是省略） */
+export function evidenceByRef(evidence: BriefEvidence[], id: unknown): BriefEvidence | null {
+  const i = refIndex(id, "ev");
+  return i !== null && i < evidence.length ? evidence[i] : null;
+}
+
+/** "tension-1" → tensions[0]；同上 */
+export function tensionByRef(tensions: string[], id: unknown): string | null {
+  const i = refIndex(id, "tension");
+  return i !== null && i < tensions.length ? tensions[i] : null;
+}
+
 export interface ResearchBrief {
   schemaVersion: number;
   /** ≤200 字中文摘要 */
@@ -84,6 +138,18 @@ export interface ResearchBrief {
   /** 跨视角张力点 0-3 条；**空数组合法**——没有就是没有，不逼模型编（§5） */
   tensions: string[];
   angleSuggestions: string[];
+  /**
+   * 结构化角度卡 2-4 张（角度卡 spec §1.3「角度是简报的一部分」）。
+   *
+   * **schemaVersion 保持 1**（2026-08-24 裁决，否决 spec §1.2 的升版本要求）：读侧对
+   * 不认识的版本一律按「无简报」处理，升版本 = 存量简报当场全部隐身，代价远大于收益。
+   * 沿用 `BriefAssetPick` 的既有先例——新增**全可选**字段不 bump，旧简报读进来逐字有效。
+   *
+   * spec 升版本本是为了「证据/张力点有可引用的稳定 id」（P1-10）：简报按 revision 落盘
+   * 且不可覆盖（saveBrief 的 BriefExistsError 保证），所以按位置编的 `ev-N` / `tension-N`
+   * 在版本内天然稳定，不需要往每条证据里塞一个存下来的 id。
+   */
+  angleCards?: AngleCard[];
   evidence: BriefEvidence[];
   assetPicks: BriefAssetPick[];
   /** 没跑成的视角，partial 时逐个点名 */

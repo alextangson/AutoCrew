@@ -8,13 +8,25 @@
  *    模型转述的链接不进简报。引文再过一次 `validateQuote`——综合这一层同样不许伪造。
  * 3. **缺口不靠模型自觉**：`gaps` 全部由代码合成（各路 gaps + 配额耗尽 + 解析失败被丢弃的条目），
  *    模型忘了写也不会漏（§9.4「配额耗尽在简报 gaps 点名」）。
+ *
+ * 角度卡（角度卡 spec §1.2）也在这一步产出——**不新开一个 pass**：本轮已经把四路材料
+ * 都读进来了，角度是这份材料的直接结论，再起一个 loop 是重复劳动（P2-1）。
+ * 同样三条纪律：证据引用由代码验存在性（防编造）、张数由代码判、差异性由代码粗筛。
  */
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import type { BrokerUsage, ResearchBroker } from "./research-broker.js";
-import type { BriefAssetPick, BriefEvidence, PerspectiveOutput } from "./brief-store.js";
+import {
+  evidenceRefId,
+  tensionRefId,
+  type AngleCard,
+  type BriefAssetPick,
+  type BriefEvidence,
+  type PerspectiveOutput,
+} from "./brief-store.js";
+import { readAngleCards, ANGLE_CARD_MAX, ANGLE_CARD_MIN } from "./angle-cards.js";
 import { PERSPECTIVE_TASK_BOOKS, type ResearchTopicRef } from "./research-perspectives.js";
 import {
   INJECTION_NOTICE,
@@ -31,8 +43,8 @@ import {
 } from "./research-prompt-kit.js";
 
 const MAX_TURNS = 5;
-/** 输入本来就大（四路产出全进来），给足两轮修复的余量 */
-const MAX_TOTAL_TOKENS = 24_000;
+/** 输入本来就大（四路产出全进来），给足两轮修复的余量；角度卡进来后输出侧又多出 2-4 张卡 */
+const MAX_TOTAL_TOKENS = 32_000;
 
 const SUMMARY_MAX_CHARS = 200;
 const TENSION_MAX = 3;
@@ -61,6 +73,8 @@ export interface SynthesisPayload {
   summary: string;
   tensions: string[];
   angleSuggestions: string[];
+  /** 结构化角度卡（§1.2）；本轮一条证据都没挑出来时缺席——无证据不硬出角度（§1.8） */
+  angleCards?: AngleCard[];
   evidence: BriefEvidence[];
   assetPicks: BriefAssetPick[];
   gaps: string[];
@@ -133,6 +147,19 @@ const SYSTEM_PROMPT = [
   `summary ≤${SUMMARY_MAX_CHARS} 字，讲清这个选题现在的判断；angle_suggestions ${ANGLE_MIN}-${ANGLE_MAX} 条，每条是一个能站的切入角度。`,
   "evidence 只能从上面各路给过的证据里挑（source_id 与 quote 原样搬运，一个字都不能改，代码会逐条回原页核对）；",
   "asset_picks 同理只能用给过的图片 id。宁可少交，不要改写。",
+  "",
+  `此外要交 angle_cards ${ANGLE_CARD_MIN}-${ANGLE_CARD_MAX} 张。角度卡不是「开头怎么写」，是**整篇稿子的作战方案**：`,
+  "- angle：切入点一句话；",
+  "- thesis：本稿核心论点。写稿师要**论证它**，所以它必须是一句能被证据支撑、也能被反驳的判断，",
+  "  不是「XX 值得关注」这类不可证伪的空话，更不是把 summary 换个说法；",
+  "- core_evidence_ids：支撑这个论点的证据编号，至少 1 条。编号按你在 evidence 数组里交的顺序数：",
+  `  第 1 条是 ${evidenceRefId(0)}、第 2 条是 ${evidenceRefId(1)}，以此类推。引不到证据的论点不要交；`,
+  `- tension_id：依托的张力点编号（第 1 条张力点是 ${tensionRefId(0)}）。张力点为空就不要给这个字段，不许硬编；`,
+  "- anti_scope：这一稿**明确不写什么**。四平八稳面面俱到就是没有深度，舍弃什么和写什么一样重要；",
+  "- audience_pain：打中目标受众的哪个具体处境；hold_trigger：读者为什么会看下去而不是划走；",
+  "- hook_draft：开头钩子草稿，给人预览手感。",
+  "",
+  "几张卡之间**论点、受众痛点、叙事结构至少有一维不同**——同一个角度换套说法交三遍等于没得选，代码会做近似度粗筛并打回。",
   "只调用 submit_brief 提交，不要输出工具之外的分析文字。",
 ].join("\n");
 
@@ -224,13 +251,18 @@ function validateBrief(
     problems.push(`angle_suggestions 需 ${ANGLE_MIN}-${ANGLE_MAX} 条，当前 ${angleSuggestions.length} 条`);
   }
   const evidence = readEvidence(args.evidence, input.broker, problems, dropped);
+  // 证据先定稿再校角度：角度卡的 ev-N 指的是**解析后**的那份数组（去重/丢弃都已发生）
+  if (problems.length) return { ok: false, problems };
+  const tensions = strList(args.tensions).slice(0, TENSION_MAX);
+  const angleCards = readAngleCards(args.angle_cards ?? args.angleCards, evidence, tensions, problems, dropped);
   if (problems.length) return { ok: false, problems };
   return {
     ok: true,
     value: {
       summary: clampChars(summary, SUMMARY_MAX_CHARS),
-      tensions: strList(args.tensions).slice(0, TENSION_MAX),
+      tensions,
       angleSuggestions,
+      ...(angleCards.length > 0 ? { angleCards } : {}),
       evidence,
       assetPicks: readAssetPicks(args.asset_picks ?? args.assetPicks, input.broker, dropped),
       gaps: dedupe([...baseGaps, ...dropped]),
@@ -268,6 +300,36 @@ const SUBMIT_SCHEMA = {
         required: ["claim", "source_id", "quote"],
       },
     },
+    angle_cards: {
+      type: "array",
+      description: `${ANGLE_CARD_MIN}-${ANGLE_CARD_MAX} 张角度卡，每张是一整篇稿子的作战方案；彼此至少一维不同`,
+      items: {
+        type: "object",
+        properties: {
+          angle: { type: "string", description: "切入点一句话" },
+          thesis: { type: "string", description: "本稿核心论点——能被证据支撑也能被反驳的判断，不是摘要换说法" },
+          core_evidence_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: `支撑论点的证据编号，≥1 条；按 evidence 数组顺序数（${evidenceRefId(0)} = 第 1 条）`,
+          },
+          tension_id: { type: "string", description: `依托的张力点编号（${tensionRefId(0)} = 第 1 条）；没有就不给` },
+          anti_scope: { type: "string", description: "这一稿明确不写什么" },
+          audience_pain: { type: "string", description: "打中目标受众的哪个具体处境" },
+          hold_trigger: { type: "string", description: "读者为什么会看下去而不是划走" },
+          hook_draft: { type: "string", description: "开头钩子草稿" },
+        },
+        required: [
+          "angle",
+          "thesis",
+          "core_evidence_ids",
+          "anti_scope",
+          "audience_pain",
+          "hold_trigger",
+          "hook_draft",
+        ],
+      },
+    },
     asset_picks: {
       type: "array",
       description: `0-${ASSET_PICK_MAX} 张真实图片，只能用各路给过的图片 id`,
@@ -278,7 +340,7 @@ const SUBMIT_SCHEMA = {
       },
     },
   },
-  required: ["summary", "tensions", "angle_suggestions"],
+  required: ["summary", "tensions", "angle_suggestions", "angle_cards"],
 };
 
 function buildSubmitTool(

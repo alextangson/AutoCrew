@@ -62,8 +62,11 @@ function fieldList(raw: unknown, limit: number, max: number): string[] {
   return raw.slice(0, limit).map((item) => field(item, max)).filter(Boolean);
 }
 
-/** 只展示来源域名：完整 URL 又长又是模型转述钓鱼链接的载体，域名足够判断可信度 */
-function domainOf(url: unknown): string {
+/**
+ * 只展示来源域名：完整 URL 又长又是模型转述钓鱼链接的载体，域名足够判断可信度。
+ * 导出给角度卡注入块复用（script-prompt）——两处都在渲染同一份简报的证据，口径必须一致。
+ */
+export function domainOf(url: unknown): string {
   if (typeof url !== "string") return "来源不详";
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");

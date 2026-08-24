@@ -9,6 +9,7 @@
  * - **洞察深度**：只有给了材料才判（§2.4「没给材料的维度不判」）。没有简报的稿子去问
  *   「证据支撑够不够」，等于逼模型编一个不存在的标准。
  */
+import type { AngleCard } from "../research/brief-store.js";
 import type { SubmitPayload } from "./script-payload.js";
 import type { ReviewIssue } from "./script-review.js";
 
@@ -39,11 +40,23 @@ const DEPTH_RULES = [
   "关键主张裸奔：最重要的那句判断没有任何材料或经验支撑",
 ];
 
+/**
+ * 有选定角度卡时**加挂**的判据（角度卡 spec §1.5 / 审稿 §2.4）。
+ * 写稿前定了论点与禁区，验收就该按那两样验——「有没有论点」这种通用问法这时候太软了。
+ */
+const ANGLE_DEPTH_RULES = [
+  "thesis 没被论证：全文没有把【本稿切入点】里那句核心论点立住，只是绕着它说了些相关的话",
+  "论点被稀释：写着写着回到面面俱到，最后没有一个明确主张——选角度就是为了不这样",
+  "闯进禁区：写了 antiScope 里明确说不写的东西（哪怕写得不错，也是跑题）",
+  "证据没落到论点上：引了 coreEvidence，但它支撑的不是这个论点",
+  "受众痛点落空：全文没有打中 audiencePain 说的那个具体处境",
+];
+
 function ruleLines(rules: string[]): string {
   return rules.map((r) => `- ${r}`).join("\n");
 }
 
-export function buildReviewSystemPrompt(hasResearch: boolean): string {
+export function buildReviewSystemPrompt(hasResearch: boolean, hasAngle = false): string {
   return [
     "你是这位创作者内容团队里的审稿人。你的职责不是润色，是**判断这稿能不能发**。",
     "读完全文后给一次结论，逐条指出问题——每条都要能在原文里指到位置，指不到就不要提。",
@@ -52,7 +65,17 @@ export function buildReviewSystemPrompt(hasResearch: boolean): string {
     ruleLines(STYLE_RULES),
     "",
     hasResearch
-      ? ["## 判据二：洞察深度（本稿带了调研材料，这一类要判）", ruleLines(DEPTH_RULES)].join("\n")
+      ? [
+          "## 判据二：洞察深度（本稿带了调研材料，这一类要判）",
+          ruleLines(DEPTH_RULES),
+          ...(hasAngle
+            ? [
+                "",
+                "本稿写作前已经定了切入点（见下方【本稿切入点】），所以深度按它验收——判据加严：",
+                ruleLines(ANGLE_DEPTH_RULES),
+              ]
+            : []),
+        ].join("\n")
       : [
           "## 判据二：洞察深度——本轮**不判**",
           "本稿没有调研材料。没有材料就没有「证据是否支撑论点」的判定基准，",
@@ -76,6 +99,8 @@ export interface ReviewUserInput {
   payload: SubmitPayload;
   humanizedText: string;
   researchSlot?: string;
+  /** 本稿写作前选定的角度卡；缺席时整块不出现，输出与无角度阶段逐字一致 */
+  angle?: AngleCard;
   voiceSamples: string[];
   platform: string;
 }
@@ -84,10 +109,23 @@ function clamp(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…（已截断）` : text;
 }
 
+/** 角度材料块：只交判定基准（论点/禁区/受众痛点），不重复贴证据——那在调研材料块里 */
+function angleBlock(card: AngleCard): string[] {
+  return [
+    "【本稿切入点（写作前已选定，深度判据的基准）】",
+    `切入点：${card.angle}`,
+    `核心论点（全稿必须论证它）：${card.thesis}`,
+    `禁区（这一稿明确不写）：${card.antiScope}`,
+    `目标受众痛点：${card.audiencePain}`,
+    `预期停留触发：${card.holdTrigger}`,
+    "",
+  ];
+}
+
 /**
- * 审稿材料（§2.4）：终稿全文 + 本稿注入过的调研材料 + 声音样本。
- * R2 接点：选中角度卡（thesis / antiScope）在这里追加一块——「论点论证了吗、禁区守住了吗」
- * 是深度判据的基准。R1 无角度阶段，故整块缺席，判据表也随之只留通用深度项。
+ * 审稿材料（§2.4）：终稿全文 + 本稿注入过的调研材料 + 选中角度卡 + 声音样本。
+ * 角度卡在时，「论点论证了吗、禁区守住了吗」才是深度判据的基准；缺席时整块不出现，
+ * 判据表也随之只留通用深度项——没给材料的维度不判。
  */
 export function buildReviewUserMessage(input: ReviewUserInput): string {
   const parts = [
@@ -98,6 +136,7 @@ export function buildReviewUserMessage(input: ReviewUserInput): string {
     input.humanizedText,
     "",
   ];
+  if (input.angle) parts.push(...angleBlock(input.angle));
   if (input.researchSlot?.trim()) {
     parts.push(
       "【本稿写作时用的调研材料（引文与数据的出处，判「证据是否支撑论点」用它）】",
