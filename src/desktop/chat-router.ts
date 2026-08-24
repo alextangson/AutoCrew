@@ -315,7 +315,8 @@ const SYSTEM_PROMPT = `你是 AutoCrew 编辑部的总编辑，带一支数字�
 22. 用户说「送审」「打回重写」「挪到待审」时调用 move_content——它只管在写与待审之间这几步。**待发布/已发布不归对话管**：用户说要发布时，引导他去工作区稿件卡上亲手确认，别承诺代发。
 23. 用户问「能发了吗」「帮我检查一下」时调用 pre_publish_check（只读，不改状态、不发布）：挑没过的两三项用人话讲清楚怎么改；全过了也只说「检查通过，去工作区点发布」。
 24. 用户问增长活动进度时用 list_campaigns（全部）/ campaign_status（单个），都是只读；创建活动、推进活动、改自治档位一律引导去工作区增长面板。
-25. 用户问收件箱（转发进来的链接消化了没）时用 list_inbox；某条失败要重试用 retry_inbox——worker 没在跑时工具会照实说，原样转达，不要假装重试成功。问「改过几版」用 list_versions，回滚要用户去编辑器版本面板亲手点。`;
+25. 用户问收件箱（转发进来的链接消化了没）时用 list_inbox；某条失败要重试用 retry_inbox——worker 没在跑时工具会照实说，原样转达，不要假装重试成功。问「改过几版」用 list_versions，回滚要用户去编辑器版本面板亲手点。
+26. 用户提到某篇既有稿件（「抖音那篇」「上次发的」「之前写的 XX」）而上下文里没有它的 id 时，先调用 list_drafts 带关键词/平台/状态筛选自己找——绝不开口向用户要稿件 id 或看板位置；筛完命中多篇拿不准，列出候选标题让用户挑即可。`;
 
 const PLATFORM_ENUM = ["douyin", "xiaohongshu", "wechat_mp", "wechat_video", "bilibili", "twitter", "reddit", "toutiao"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -634,17 +635,37 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     },
     {
       name: "list_drafts",
-      description: "列出现有稿件（标题、状态、平台）。",
-      parameters: { type: "object", properties: {} },
-      execute: async () => {
+      description:
+        "列出/搜索现有稿件（标题、状态、平台）。用户提到某篇既有稿件（「抖音那篇」「之前发的 XX」）时，先用关键词/平台/状态筛选自己找到它的 id——不要向用户要稿件 id 或看板位置；命中多篇拿不准再列候选让用户挑。",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "标题关键词，大小写不敏感的包含匹配" },
+          platform: { type: "string", enum: PLATFORM_ENUM, description: "按平台筛选" },
+          status: { type: "string", description: "按状态筛选，如 published、approved、draft_ready" },
+        },
+      },
+      execute: async (args) => {
+        const a = sanitize(args);
         const res = await d.content({ ...dirParams, action: "list" });
         if (!res.ok) return fail(res.error);
-        const contents = (res.contents ?? []) as Array<Record<string, unknown>>;
+        const all = (res.contents ?? []) as Array<Record<string, unknown>>;
+        const query = String(a.query ?? "").trim().toLowerCase();
+        const platform = String(a.platform ?? "").trim();
+        const status = String(a.status ?? "").trim();
+        const contents = all.filter((c) =>
+          (!query || String(c.title ?? "").toLowerCase().includes(query)) &&
+          (!platform || c.platform === platform) &&
+          (!status || c.status === status));
         sink.push({ type: "drafts_list", data: { contents } });
-        const compact = contents.slice(0, 10).map((c) => ({
+        const compact = contents.slice(0, 20).map((c) => ({
           id: c.id, title: c.title, status: c.status, platform: c.platform,
         }));
-        return JSON.stringify({ ok: true, total: contents.length, drafts: compact });
+        return JSON.stringify({
+          ok: true, total: contents.length, drafts: compact,
+          // 截断必须显式说——模型以为「看全了」就会漏掉老稿,又回到问用户要 id 的老路
+          ...(contents.length > compact.length ? { note: `共 ${contents.length} 条仅显示前 ${compact.length} 条，用 query/platform/status 缩小范围` } : {}),
+        });
       },
     },
     {

@@ -148,6 +148,42 @@ describe("buildChatTools", () => {
     expect(sink[0]).toMatchObject({ type: "draft" }); // 全文卡片照旧推给 UI
   });
 
+  it("list_drafts 按关键词+平台筛选——总编辑自己定位稿件 id，不向用户要", async () => {
+    const sink: ChatCard[] = [];
+    const content = vi.fn(async () => ({
+      ok: true,
+      contents: [
+        { id: "c1", title: "AI 焦虑这回事", platform: "douyin", status: "published" },
+        { id: "c2", title: "AI 焦虑这回事(公众号版)", platform: "wechat_mp", status: "drafting" },
+        { id: "c3", title: "另一个选题", platform: "douyin", status: "draft_ready" },
+      ],
+    }));
+    const tools = buildChatTools(sink, testDir, { content });
+
+    const out = JSON.parse(
+      (await tools.find((t) => t.name === "list_drafts")!.execute({ query: "焦虑", platform: "douyin" })) as string,
+    );
+
+    expect(out).toMatchObject({ ok: true, total: 1 });
+    expect(out.drafts).toEqual([{ id: "c1", title: "AI 焦虑这回事", status: "published", platform: "douyin" }]);
+    expect(sink[0]).toMatchObject({ type: "drafts_list" }); // 卡片展示的是筛选后的结果
+  });
+
+  it("list_drafts 超过 20 条时显式报截断并提示缩小范围（静默截断会让模型以为看全了）", async () => {
+    const sink: ChatCard[] = [];
+    const contents = Array.from({ length: 43 }, (_, i) => ({
+      id: `c${i}`, title: `稿${i}`, platform: "douyin", status: "draft_ready",
+    }));
+    const content = vi.fn(async () => ({ ok: true, contents }));
+    const tools = buildChatTools(sink, testDir, { content });
+
+    const out = JSON.parse((await tools.find((t) => t.name === "list_drafts")!.execute({})) as string);
+
+    expect(out.total).toBe(43);
+    expect(out.drafts).toHaveLength(20);
+    expect(out.note).toContain("缩小范围");
+  });
+
   it("strips model-injected underscore keys (e.g. _dataDir) from tool args", async () => {
     const sink: ChatCard[] = [];
     const rewrite = vi.fn(async () => ({ ok: false, error: "x" }));
