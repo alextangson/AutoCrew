@@ -32,19 +32,22 @@ export const BOARD_COLUMNS = [
   { key: "idea", label: "灵感库", statuses: [] as string[] },
   { key: "writing", label: "在写", statuses: ["topic_saved", "drafting", "draft_ready", "revision"] },
   { key: "review", label: "待审", statuses: ["reviewing"] },
-  // 阶段制（spec §0 清扫 2）:editing/cover_pending 是定稿之后的生产阶段,与 approved 同列;
-  // 它们不是「待审」——没人在等着审,是片子/封面在做。
-  { key: "ready", label: "待发布", statuses: ["approved", "editing", "cover_pending", "publish_ready", "publishing"] },
+  // 制作中单独成列（创始人 2026-08-24 真机反馈）:剪辑/封面折进「待发布」时,
+  // 片子还没剪的稿顶着「待发布」的列名,创始人在板上找不到它——列名对阶段撒谎。
+  // approved 也算制作中:它是生产段的入口(视频等着进剪辑,图文等着排版发布)。
+  { key: "producing", label: "制作中", statuses: ["approved", "editing", "cover_pending"] },
+  { key: "ready", label: "待发布", statuses: ["publish_ready", "publishing"] },
   { key: "published", label: "已发布", statuses: ["published"] },
 ] as const;
 
 export const STATUS_COLUMN: Record<string, number> = {};
 BOARD_COLUMNS.forEach((c, i) => c.statuses.forEach((s) => (STATUS_COLUMN[s] = i)));
 
-/** 拖到某列 = 流转到该列代表状态(状态机校验,非法拒绝) */
+/** 拖到某列 = 流转到该列代表状态(状态机校验,非法拒绝;拖进制作中 = 过审放行) */
 export const DROP_TARGET_STATUS: Record<string, string> = {
   writing: "draft_ready",
   review: "reviewing",
+  producing: "approved",
   ready: "publish_ready",
   published: "published",
 };

@@ -47,7 +47,12 @@ export function StageAdvance(props: {
         from_status: props.currentStatus,
       });
       if (!r.ok) return toast(r.error ?? "推进失败");
-      toast("已推进到「" + (VARIANT_STATUS[chosen.status] ?? chosen.status) + "」");
+      // 进剪辑要多说一句:工作台就地切换,创始人第一次走到这儿找不到上传口(真机反馈)
+      toast(
+        chosen.status === "editing"
+          ? "已推进到「剪辑」——本页已切为剪辑台,先在「素材挂接」传 A-roll(角色选口播底轨)"
+          : "已推进到「" + (VARIANT_STATUS[chosen.status] ?? chosen.status) + "」",
+      );
       await props.reload();
     } finally {
       setBusy(false);
