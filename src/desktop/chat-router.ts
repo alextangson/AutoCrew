@@ -348,6 +348,31 @@ function visibleChatReply(raw: string, cards: ChatCard[], toolCallCount: number,
   return "这轮模型没有返回可显示内容，请重试一次。";
 }
 
+/**
+ * 同一轮里同一篇稿只留**最后一张**稿件卡。一轮多工具常见形态:get_draft(读全文)→
+ * clear_revision_focus → revise_draft(存新版),前两步各推一张同稿卡,用户看到的是
+ * 「旧版卡 + 分隔线 + 新版卡」两张重复(2026-08-23 创始人截图)。读稿是模型的内部动作,
+ * 版本以最后一张为准;位置也取最后出现处,保证新版卡落在「已退出修改模式」分隔线之后。
+ * 稿件 id 兼容两种载荷形态(contentId=generate/revise 系,id=get_draft 直回内容体)。
+ */
+export function dedupeDraftCards(cards: ChatCard[]): ChatCard[] {
+  const keyOf = (c: ChatCard): string | null => {
+    if (c.type !== "draft") return null;
+    const d = c.data as Record<string, unknown>;
+    const key = d.contentId ?? d.id;
+    return typeof key === "string" && key ? key : null;
+  };
+  const lastIndex = new Map<string, number>();
+  cards.forEach((c, i) => {
+    const key = keyOf(c);
+    if (key) lastIndex.set(key, i);
+  });
+  return cards.filter((c, i) => {
+    const key = keyOf(c);
+    return !key || lastIndex.get(key) === i;
+  });
+}
+
 /** 工具名唯一是 fail-closed 断言(设计 §Phase 1):重名会被 loop 静默覆盖,宁可起不来也不带病跑 */
 export function assertUniqueToolNames(tools: LoopTool[]): LoopTool[] {
   const seen = new Set<string>();
@@ -1374,11 +1399,13 @@ export async function runChatTurn(params: {
       onEvent: params.onEvent ? (e: LoopEvent) => params.onEvent!(chatProgressEvent(e)) : undefined,
       ...(params.onDelta ? { onTextDelta: (e: LoopStreamEvent) => params.onDelta!(e) } : {}),
     });
+    // 同稿多卡去重要在收尾做——工具执行期间不知道后面还会不会再推同一篇
+    const finalCards = dedupeDraftCards(cards);
     return {
       ok: true,
       data: {
-        reply: visibleChatReply(result.finalMessage, cards, result.toolCallCount, result.stopReason),
-        cards,
+        reply: visibleChatReply(result.finalMessage, finalCards, result.toolCallCount, result.stopReason),
+        cards: finalCards,
         // 中止是正常收尾:ok:true + stopReason 透传,持久层按正常轮落盘,前端据此提示后台任务继续跑
         stopReason: result.stopReason,
         tokensUsed: result.totalTokens,

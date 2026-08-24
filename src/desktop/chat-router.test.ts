@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runChatTurn, buildChatTools, chatProgressEvent, FALLBACK_STATUS_TOOL, type ChatCard } from "./chat-router.js";
+import { runChatTurn, buildChatTools, chatProgressEvent, dedupeDraftCards, FALLBACK_STATUS_TOOL, type ChatCard } from "./chat-router.js";
 import { openaiSseResponse, bodyText } from "../engine/sse-fixtures.js";
 
 let testDir: string;
@@ -35,6 +35,29 @@ function assistantTurn(content: string | null, toolCalls?: unknown[]) {
     usage: { total_tokens: 10 },
   };
 }
+
+describe("dedupeDraftCards", () => {
+  const draft = (key: Record<string, unknown>): ChatCard => ({ type: "draft", data: { ...key, title: "t" } });
+
+  it("同稿多卡只留最后一张,位置取最后出现处(新版卡落在分隔卡之后)", () => {
+    const cards: ChatCard[] = [
+      draft({ id: "content-1" }), // get_draft 读全文推的旧版卡(载荷用 id)
+      { type: "focus_cleared", data: {} },
+      draft({ contentId: "content-1" }), // revise_draft 存新版推的卡(载荷用 contentId)
+    ];
+    expect(dedupeDraftCards(cards)).toEqual([{ type: "focus_cleared", data: {} }, cards[2]]);
+  });
+
+  it("不同稿件与非稿件卡原样保留,无 id 的稿件卡不参与去重", () => {
+    const cards: ChatCard[] = [
+      draft({ contentId: "content-1" }),
+      draft({ contentId: "content-2" }),
+      draft({}),
+      { type: "report", data: {} },
+    ];
+    expect(dedupeDraftCards(cards)).toEqual(cards);
+  });
+});
 
 describe("buildChatTools", () => {
   it("generate_script starts a background run and returns pending immediately (契约 P1 后台化)", async () => {
