@@ -259,6 +259,37 @@ describe("executePublish confirm_published — 发布戳", () => {
     expect(saved!.status).not.toBe("published");
   });
 
+  // 隐式采纳判定:发布这个动作本身就表达了「这版我认了」,剩下要读的只是改了多少
+  it("确认发布 → 自动落一条 derived 采纳判定,回执带上", async () => {
+    const c = await mkContent("AI 写的正文,原样发出去没动过。");
+    await updateContent(c.id, { draftReadyAt: new Date().toISOString() }, dir);
+
+    const r = (await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir })) as {
+      ok: boolean;
+      data: { adoption?: { verdict: string; derived?: boolean } };
+    };
+
+    expect(r.ok).toBe(true);
+    expect(r.data.adoption?.verdict).toBe("adopted");
+    expect(r.data.adoption?.derived).toBe(true);
+    const saved = await getContent(c.id, dir);
+    expect(saved!.adoption?.derived).toBe(true);
+  });
+
+  it("重复确认不重判:已有判定不被第二次点击覆盖", async () => {
+    const c = await mkContent("AI 写的正文。");
+    await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });
+    const first = (await getContent(c.id, dir))!.adoption!;
+
+    await updateContent(c.id, { body: "发布之后又整篇换成完全不同的另一段内容了。" }, dir);
+    const again = (await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir })) as {
+      data: { adoption?: unknown };
+    };
+
+    expect(again.data.adoption).toBeUndefined();
+    expect((await getContent(c.id, dir))!.adoption).toEqual(first);
+  });
+
   it("transitionStatus 这条路同样只盖一次", async () => {
     const c = await mkContent("正文");
     await executePublish({ action: "confirm_published", content_id: c.id, _dataDir: dir });

@@ -262,7 +262,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     });
     if (!r.ok) return toast((r as { error?: string }).error ?? "收下失败");
     clearFocus();
-    toast("已收下并存为新版本");
+    const receipt = r as { styleLearned?: { summary?: string }; warning?: string };
+    toast("已收下并存为新版本" + (receipt.styleLearned?.summary ? " · " + receipt.styleLearned.summary : ""));
+    if (receipt.warning) toast(receipt.warning);
     void load();
   };
 

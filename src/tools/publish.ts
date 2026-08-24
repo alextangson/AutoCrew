@@ -10,6 +10,7 @@ import { preparedArticleImages } from "../modules/publish/article-images.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
 import { generateAndSaveDigest } from "../modules/publish/digest.js";
 import { bindByPublishUrl } from "../modules/flywheel/platform-items.js";
+import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
 
 export const publishSchema = Type.Object({
   action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "confirm_published" | "digest">({
@@ -61,6 +62,19 @@ async function bindPublishedUrl(
     return await bindByPublishUrl(contentId, platform, url, dataDir);
   } catch (err) {
     console.warn(`[publish] 平台作品绑定登记失败(不影响已发布状态)：${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * 发布时刻推导采纳判定（隐式裁决）。best-effort：判定失败绝不能让「确认已发布」失败——
+ * 发布这件事已经在外部世界发生了，系统状态必须先服从事实。
+ */
+async function deriveAdoption(contentId: string, dataDir: string) {
+  try {
+    return await deriveAndRecordAdoption(contentId, dataDir);
+  } catch (err) {
+    console.warn(`[publish] 采纳判定失败(不影响已发布状态)：${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -143,6 +157,7 @@ export async function executePublish(
     const boundItemId = updated.publishUrl
       ? await bindPublishedUrl(contentId, updated.platform ?? null, updated.publishUrl, dataDir)
       : null;
+    const adoption = await deriveAdoption(contentId, dataDir);
     return {
       ok: true,
       data: {
@@ -151,6 +166,7 @@ export async function executePublish(
         publishedAt: updated.publishedAt,
         publishUrl: updated.publishUrl ?? null,
         boundItemId,
+        ...(adoption ? { adoption } : {}),
       },
     };
   }

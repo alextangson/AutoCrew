@@ -8,6 +8,8 @@ import { loadEngineConfig, resolveEngineRoute, type EngineConfig } from "../../e
 import { runLoop, type LoopOptions, type LoopResult, type LoopTool } from "../../engine/loop.js";
 import { getContent, updateContent, type Content } from "../../storage/local-store.js";
 import { loadProfile } from "../profile/creator-profile.js";
+import { recordDiff } from "../learnings/diff-tracker.js";
+import { renderBrandContext } from "./script-prompt.js";
 
 export interface ReviseDraftResult {
   content: Content;
@@ -60,10 +62,12 @@ export async function reviseDraft(
     },
   };
 
-  let rules: string[] = [];
+  // 品牌上下文与写初稿同源（受众/目标/声音样本/本平台规则/风格边界）——
+  // 不带对比对：当前这条修改要求就是最新鲜的活信号，不必再拿历史改动去教。
+  let brandContext = "";
   try {
     const profile = await loadProfile(dataDir);
-    rules = (profile?.writingRules ?? []).filter((rule) => !rule.disabled).map((rule) => rule.rule);
+    if (profile) brandContext = renderBrandContext(profile, current.platform ?? "", undefined);
   } catch {
     // 档案不可用不应阻断一次明确的稿件修改。
   }
@@ -73,7 +77,7 @@ export async function reviseDraft(
     "保留原稿中没有被反馈否定的事实、论点和有效结构；不要编造新事实或数据。",
     "需要改标题时一起改；不需要时保留原标题。正文必须完整返回，禁止用省略号或“其余不变”。",
     "完成后必须调用 submit_revision 提交完整标题和完整正文，不要只给建议。",
-    rules.length ? `创作者长期写作规则：\n${rules.map((rule) => `- ${rule}`).join("\n")}` : "",
+    brandContext,
   ].filter(Boolean).join("\n\n");
 
   const result = await runLoopImpl(writer.config, {
@@ -106,6 +110,15 @@ export async function reviseDraft(
     dataDir,
   );
   if (!updated) throw new Error(`保存修订稿失败：${contentId}`);
+
+  // 创作者的修改指令是最直接的风格信号，整篇改稿这条路此前整个丢掉了它。
+  // best-effort：记录失败不阻断改稿（稿已落盘）。这里不触发蒸馏——对话轮要快，
+  // 攒下的 diff 由下一次保存/收稿时的蒸馏一并消化。
+  try {
+    await recordDiff(contentId, "body", current.body, revision.body, dataDir, feedback, current.platform);
+  } catch {
+    /* 学习信号丢一条，不影响这次修改 */
+  }
 
   return { content: updated, tokensUsed: result.totalTokens };
 }

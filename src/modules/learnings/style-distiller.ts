@@ -166,6 +166,9 @@ function buildDiffSystemPrompt(): string {
     "你是一位专业的内容风格分析师。",
     "根据用户提供的编辑前后对照和现有规则，",
     "提炼最多 3 条新的写作偏好规则。",
+    "diff 带「创作者的修改要求（原话）」时，那句话是创作者意图的第一依据——",
+    "先按原话理解 TA 要什么，再用 before/after 验证它、把它具体化成可执行的规则；",
+    "只有没带原话的 diff 才靠 before/after 对照反推意图。",
     "要求：中文祈使句；具体可执行；",
     "不与现有规则语义重复；每条附 evidence（引自 diff 的具体片段）和 confidence（0-1）。",
     "每条规则标注 scope：证据只来自单一已知平台且属于该平台的形式规范（长度/结构/格式/标签惯例）→ platform:<平台id>；",
@@ -192,10 +195,11 @@ function buildDiffUserMessage(diffs: EditDiff[], existingRules: WritingRule[]): 
       ? existingRules.map((r) => `- ${r.rule}`).join("\n")
       : "（暂无）";
   const diffsText = diffs
-    .map(
-      (d, i) =>
-        `【diff ${i + 1}｜平台：${d.platform ?? "未知"}】\nbefore：${d.before.slice(0, 400)}\nafter：${d.after.slice(0, 400)}`,
-    )
+    .map((d, i) => {
+      // 创作者原话（changeType）优先于 before/after 出场：它是意图本身，对照只是佐证
+      const intent = d.changeType ? `创作者的修改要求（原话）：${d.changeType}\n` : "";
+      return `【diff ${i + 1}｜平台：${d.platform ?? "未知"}】\n${intent}before：${d.before.slice(0, 400)}\nafter：${d.after.slice(0, 400)}`;
+    })
     .join("\n\n");
   return `现有规则：\n${rulesText}\n\n编辑记录：\n${diffsText}`;
 }

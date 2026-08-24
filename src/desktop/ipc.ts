@@ -205,6 +205,8 @@ import { attachLibraryAsset } from "./content-asset-attach.js";
 import type { ApprovalBinding } from "./approval-gate.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
+import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
+import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 import type { IpcChannel } from "./channels.js";
 import {
   listLibrary,
@@ -862,12 +864,22 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Prom
     );
     if (!updated) return { ok: false, error: `稿件不存在：${contentId}` };
     // 采纳即学习闸门：正文确有变化才把 before→after 喂给蒸馏管线（延迟学习，不确认不学）
-    if (before && before !== body) {
-      await recordDiff(contentId, "body", before, body, dataDir, feedback || undefined, updated.platform).catch(
-        () => {},
-      );
+    if (!before || before === body) return { ok: true, content: updated };
+    try {
+      await recordDiff(contentId, "body", before, body, dataDir, feedback || undefined, updated.platform);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: true, content: updated, warning: `diff 记录失败：${msg}，稿件已正常保存` };
     }
-    return { ok: true, content: updated };
+    // 采纳时刻即学习时刻（对话式修订设计）：攒够 diff 就当场把规则学出来。
+    // best-effort——没配模型/蒸馏出错都不该让「收下这版」失败，稿件早已落盘。
+    let styleLearned: StyleDistillResult | undefined;
+    try {
+      if (await shouldDistillStyle(dataDir)) styleLearned = await distillStyleRules(dataDir);
+    } catch {
+      /* 蒸馏是附加收益，收稿本身已完成 */
+    }
+    return styleLearned ? { ok: true, content: updated, styleLearned } : { ok: true, content: updated };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

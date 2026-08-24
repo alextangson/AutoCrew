@@ -9,6 +9,7 @@ import { loadEngineConfig, resolveEngineRoute, type EngineConfig } from "../../e
 import { runLoop, type LoopOptions, type LoopResult, type LoopTool } from "../../engine/loop.js";
 import { getContent } from "../../storage/local-store.js";
 import { loadProfile } from "../profile/creator-profile.js";
+import { renderBrandContext } from "./script-prompt.js";
 
 export type ReviseFocus =
   | { scope: "draft" }
@@ -92,10 +93,12 @@ export async function reviseFocus(
           },
         };
 
-  let rules: string[] = [];
+  // 品牌上下文与写初稿同源（受众/目标/声音样本/本平台规则/风格边界）——
+  // 不带对比对：当前这条修改指令就是最新鲜的活信号，不必再拿历史改动去教。
+  let brandContext = "";
   try {
     const profile = await loadProfile(dataDir);
-    rules = (profile?.writingRules ?? []).filter((rule) => !rule.disabled).map((rule) => rule.rule);
+    if (profile) brandContext = renderBrandContext(profile, current.platform ?? "", undefined);
   } catch {
     // 档案不可用不应阻断一次明确的修改。
   }
@@ -110,7 +113,7 @@ export async function reviseFocus(
     scopeLine,
     "保留没被反馈否定的事实与有效结构，不编造新事实或数据。",
     "二选一：submit_question 或 submit_revision，必须调用其中一个。",
-    rules.length ? `创作者长期写作规则：\n${rules.map((rule) => `- ${rule}`).join("\n")}` : "",
+    brandContext,
   ]
     .filter(Boolean)
     .join("\n\n");

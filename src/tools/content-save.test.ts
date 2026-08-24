@@ -425,3 +425,39 @@ describe("executeContentSave adoption", () => {
     expect(gone.ok).toBe(false);
   });
 });
+
+// ─── transition → published：到「已发布」的另一条路同样在发布时刻推导采纳判定 ──
+
+describe("executeContentSave transition → published", () => {
+  it("流转到 published 时自动落 derived 判定，并随流转结果返回", async () => {
+    const { saveContent, getContent } = await import("../storage/local-store.js");
+    const c = await saveContent(
+      { title: "t", body: "AI 写的正文,原样发出去。", status: "publishing", tags: [], hashtags: [] },
+      testDir,
+    );
+
+    const r = (await executeContentSave({
+      action: "transition", id: c.id, target_status: "published", _dataDir: testDir,
+    })) as { ok: boolean; adoption?: { verdict: string; derived?: boolean } };
+
+    expect(r.ok).toBe(true);
+    expect(r.adoption?.verdict).toBe("adopted");
+    expect((await getContent(c.id, testDir))?.adoption?.derived).toBe(true);
+  });
+
+  it("非 published 的流转不判定", async () => {
+    const { saveContent, getContent } = await import("../storage/local-store.js");
+    const c = await saveContent(
+      { title: "t", body: "正文", status: "draft_ready", tags: [], hashtags: [] },
+      testDir,
+    );
+
+    const r = (await executeContentSave({
+      action: "transition", id: c.id, target_status: "reviewing", _dataDir: testDir,
+    })) as { ok: boolean; adoption?: unknown };
+
+    expect(r.ok).toBe(true);
+    expect(r.adoption).toBeUndefined();
+    expect((await getContent(c.id, testDir))?.adoption).toBeUndefined();
+  });
+});

@@ -93,7 +93,7 @@ function buildSystemPrompt(
     parts.push("");
   }
 
-  const profileSection = profile ? renderProfile(profile, platform, extras?.contrastPairs) : "";
+  const profileSection = profile ? renderBrandContext(profile, platform, extras?.contrastPairs) : "";
   if (profileSection) parts.push(profileSection);
 
   // Compliance
@@ -152,7 +152,17 @@ function renderStructure(pack: TrackPack): string {
   return parts.join("\n");
 }
 
-function renderProfile(profile: CreatorProfile, platform: ClipboardPlatform, contrastPairs?: ContrastPair[]): string {
+/**
+ * 创作者品牌上下文（受众/目标/声音样本/改稿方向/平台规则/风格边界）。
+ * 写初稿与改稿共用同一块——两条路吃不同的上下文，改出来的稿就不是同一个人写的。
+ * platform 放宽为 string：改稿链路拿到的是 Content.platform（可能为空/未知平台），
+ * 空串时 rulesForPlatform 只回 voice_core 规则，正是想要的行为。
+ */
+export function renderBrandContext(
+  profile: CreatorProfile,
+  platform: string,
+  contrastPairs?: ContrastPair[],
+): string {
   const parts: string[] = [];
 
   // 受众画像(V5.1):写手必须知道写给谁——core 层全量,邻近/意外一行带过
