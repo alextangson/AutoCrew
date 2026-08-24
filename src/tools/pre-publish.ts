@@ -10,7 +10,14 @@
  * 6. Body length within platform range (min, and max where the platform caps copy)
  */
 import { Type } from "@sinclair/typebox";
-import { getContent, getCoverReview, transitionStatus, normalizeLegacyStatus } from "../storage/local-store.js";
+import {
+  getContent,
+  getCoverReview,
+  transitionStatus,
+  stageBlockReason,
+  normalizeLegacyStatus,
+  CONTENT_STATUS_LABEL,
+} from "../storage/local-store.js";
 import { executeReview } from "./review.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 
@@ -68,6 +75,23 @@ export const prePublishSchema = Type.Object({
   }),
   content_id: Type.String({ description: "AutoCrew content id to check." }),
 });
+
+/** 已经在发布轨上（含已发/归档）：自动流转到此为止，重跑预检不许把已发布的稿倒拨回待发布 */
+const ON_PUBLISH_TRACK = new Set(["publish_ready", "publishing", "published", "archived"]);
+
+/**
+ * 真正推进到「待发布」。返回 null = 进去了；返回一句话 = 拦下的原因。
+ * 写盘失败照旧向上 throw 到工具错误边界——吞掉等于报了「可以发布」但状态没落盘。
+ */
+async function runAutoTransition(contentId: string, dataDir?: string): Promise<string | null> {
+  const moved = await transitionStatus(contentId, "publish_ready", {}, dataDir);
+  if (moved.ok) return null;
+  if (moved.blocked) return moved.error ?? "阶段门拒绝";
+  // 形状不对（比如稿子还在「草稿就绪」）：状态机的英文原文对创始人没意义，换人话
+  const content = await getContent(contentId, dataDir);
+  const label = content ? CONTENT_STATUS_LABEL[normalizeLegacyStatus(content.status)] : "当前状态";
+  return `稿件还在「${label}」，先把前面的阶段走完才谈发布`;
+}
 
 // --- Execute ---
 
@@ -221,6 +245,29 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
     });
   }
 
+  // --- Check 7: 阶段门（阶段制 spec §1.2/§4 #1） ---
+  // 六项全过之后才谈流转。**预检不许绕过阶段门**：视频稿卡在剪辑阶段时，
+  // 从前这里的 transitionStatus 失败被整个忽略，结果照报「全部通过，可以发布」——
+  // 状态没动，人却以为可以发了。现在门拦下就明说卡在哪、为什么。
+  //
+  // `_readOnly`（内部参数，模型输入到不了这里）：对话面的 pre_publish_check 是纯查询，
+  // 不许替用户跨过「待发布」这条人审关卡（设计 §总原则：人审关卡保留人手点击）——
+  // 但门的判定照跑照报，只是不写盘。
+  const current = normalizeLegacyStatus(content.status);
+  if (checks.every((c) => c.status !== "fail") && !ON_PUBLISH_TRACK.has(current)) {
+    const blocked = params._readOnly === true
+      ? await stageBlockReason(content, "publish_ready", dataDir)
+      : await runAutoTransition(contentId, dataDir);
+    if (blocked) {
+      checks.push({
+        name: "阶段门",
+        status: "fail",
+        detail: `卡在阶段门：${blocked}`,
+        fix: "回稿件顶栏用「推进」走完当前阶段，再回来跑发布前检查",
+      });
+    }
+  }
+
   // --- Aggregate ---
   const passCount = checks.filter((c) => c.status === "pass" || c.status === "skip").length;
   const failCount = checks.filter((c) => c.status === "fail").length;
@@ -242,16 +289,6 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
     lines.push(`🔴 ${issues} 项需要关注${failCount > 0 ? `（${failCount} 项未通过）` : ""}，请先修复再发布。`);
   }
   const summary = lines.join("\n");
-
-  // Auto-transition to publish_ready if all passed。
-  // 非法流转走返回值 {ok:false}，照旧容忍；写盘失败会 throw 到工具错误边界——
-  // 不能吞：吞掉 = 报了「可以发布」但 publish_ready 没落盘
-  //
-  // `_readOnly`（内部参数，模型输入到不了这里）：对话面的 pre_publish_check 是纯查询，
-  // 不许替用户跨过「待发布」这条人审关卡（设计 §总原则：人审关卡保留人手点击）。
-  if (allPassed && params._readOnly !== true) {
-    await transitionStatus(contentId, normalizeLegacyStatus("publish_ready"), {}, dataDir);
-  }
 
   return {
     ok: true,

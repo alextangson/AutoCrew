@@ -1,6 +1,11 @@
 /**
- * 编辑器：整屏写作画布（飞书云文档式）——正文用 CodeMirror 实时渲染 markdown,
- * 工具面板收进右侧抽屉,封面/配图这类要宽度的面板沉到正文下方且默认折叠。
+ * 稿件编辑器 = **工作台分派点 + 文案工作台**（阶段制 spec §2）。
+ *
+ * 路由不变，按状态渲染工作台：文案（≤approved）/ 剪辑（editing）/ 封面（cover_pending）
+ * / 发布（≥publish_ready）。顶栏推进按钮四张台子全局在场，阶段由它驱动。
+ *
+ * 文案工作台仍是整屏写作画布（飞书云文档式）：正文用 CodeMirror 实时渲染 markdown,
+ * 工具面板收进右侧抽屉。成片向导与封面折叠区**已经搬走**——剪辑不该塞在文案页底下。
  *
  * body 始终是 markdown 纯文本、偏移量与 textarea 同坐标系,所以框选 AI 快改
  * (applySpan)、[IMAGE:] 解析、localStorage 暂存这些逻辑全部原样保留。
@@ -20,10 +25,21 @@ import { MarkdownEditor } from "./MarkdownEditor";
 import { EditorTools } from "./EditorTools";
 import { setFocus, clearFocus, clearProposal, getFocus, getProposal, useRevisionFocus, useRevisionProposal } from "../revision";
 import { applySpan } from "../apply-span";
-import { CoverPanel } from "./CoverPanel";
 import { ArticleImagesPanel } from "./ArticleImagesPanel";
-import { VideoPanel } from "./VideoPanel";
-import { platformLabel, VARIANT_STATUS, VIDEO_PLATFORMS, type Content } from "../lib";
+import { EditingWorkspace } from "./EditingWorkspace";
+import { CoverWorkspace } from "./CoverWorkspace";
+import { PublishWorkspace } from "./PublishWorkspace";
+import { StageAdvance } from "./StageAdvance";
+import {
+  platformLabel,
+  videoStatus,
+  VARIANT_STATUS,
+  VIDEO_PLATFORMS,
+  workspaceForStatus,
+  WORKSPACE_LABEL,
+  type AllowedTransition,
+  type Content,
+} from "../lib";
 import type { EditorPanel } from "../App";
 import { type VersionLike } from "../version-diff";
 
@@ -59,9 +75,10 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [note, setNote] = useState("");
-  const [allowed, setAllowed] = useState<string[]>([]);
-  const [nextStatus, setNextStatus] = useState("");
+  const [transitions, setTransitions] = useState<AllowedTransition[]>([]);
   const [versions, setVersions] = useState<VersionLike[]>([]);
+  /** 视频线跑到哪了。只为文案页那条「此稿已有剪辑进度」横幅服务——不静默丢进度（spec §3①） */
+  const [videoStarted, setVideoStarted] = useState(false);
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const proposal = useRevisionProposal();
@@ -69,16 +86,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   // 抽屉/配图面板的开合是用户偏好,记住它——每次进来都要重开是最烦人的那种细节
   const [drawerOpen, setDrawerOpen] = useState(() => localStorage.getItem(DRAWER_KEY) === "1");
   const [articleImagesOpen, setArticleImagesOpen] = useState(() => localStorage.getItem(IMAGES_KEY) === "1");
-  // 封面面板默认折叠(不记忆);对话卡片深链过来时才自动展开
-  const [coverOpen, setCoverOpen] = useState(false);
-  const [videoDone, setVideoDone] = useState(false);
-  const [coverApproved, setCoverApproved] = useState(false);
   const [fallback, setFallback] = useState<string | null>(null);
-  const panelRefs = {
-    cover: useRef<HTMLDetailsElement | null>(null),
-    images: useRef<HTMLDetailsElement | null>(null),
-    video: useRef<HTMLDivElement | null>(null),
-  };
+  const imagesRef = useRef<HTMLDetailsElement | null>(null);
   const cmRef = useRef<EditorView | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const send = useChatSend();
@@ -110,10 +119,13 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       invoke("content:allowed_transitions", { id: props.id }),
       invoke("content:versions", { id: props.id }),
     ]);
-    const transitions = ((at as Record<string, unknown>).allowedTransitions ?? []) as string[];
-    setAllowed(transitions);
-    setNextStatus((current) => transitions.includes(current) ? current : (transitions[0] ?? ""));
+    // transitions 带阶段门预判(后端算);界面不自己推演规则,灰显与原因都来自这一份
+    setTransitions(((at as Record<string, unknown>).transitions ?? []) as AllowedTransition[]);
     setVersions((((vr as Record<string, unknown>).data ?? {}) as { versions?: VersionLike[] }).versions ?? []);
+    if (VIDEO_PLATFORMS.has(content.platform)) {
+      const vs = await videoStatus(props.id);
+      setVideoStarted(Boolean(vs.ok && vs.data?.state));
+    }
   };
 
   useEffect(() => {
@@ -149,35 +161,29 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   }, [props.id]);
 
   /**
-   * 卡片深链（设计 §Phase 3）:对话里点「去封面/配图/成片面板」→ 展开那块并滚到它。
-   * 稿件读完(c 有值)才滚——面板挂上去之前滚是空滚。
+   * 卡片深链（设计 §Phase 3）。阶段制之后封面/成片各自是整页工作台,深链只剩两件事:
+   * 配图仍在文案页里滚过去;封面/成片则由**状态**决定人在不在那张台子上——
+   * 不在就说一句实话,绝不静默把人扔在一个跟卡片说的不是一回事的页面上。
    */
   useEffect(() => {
     const panel = props.panel;
     if (!panel || !c) return;
-    if (panel === "cover") setCoverOpen(true);
-    if (panel === "images") {
-      setArticleImagesOpen(true);
-      localStorage.setItem(IMAGES_KEY, "1");
+    const here = workspaceForStatus(c.status);
+    if (panel === "cover" || panel === "video") {
+      const want = panel === "cover" ? "cover" : "editing";
+      if (here !== want) toast(`这篇现在在「${WORKSPACE_LABEL[here]}」——用顶栏「推进」才能到${panel === "cover" ? "封面" : "剪辑"}阶段`);
+      return;
     }
-    // 滚两次:面板内容(封面候选/配图/成片)是异步拉的,第一次滚的时候页面还没长高,
-    // 只滚到当时的底;等内容落位后补一次才真的把面板顶到视野里。
-    // 直接跳位不做平滑动画:深链是「带我去那儿」,动画只是让位置在某些环境里丢掉
+    setArticleImagesOpen(true);
+    localStorage.setItem(IMAGES_KEY, "1");
+    // 滚两次:配图是异步拉的,第一次滚的时候页面还没长高,只滚到当时的底;
+    // 等内容落位后补一次才真的把面板顶到视野里。直接跳位不做平滑动画。
     const timers = [80, 600].map((delay) =>
-      setTimeout(() => panelRefs[panel].current?.scrollIntoView({ block: "start" }), delay),
+      setTimeout(() => imagesRef.current?.scrollIntoView({ block: "start" }), delay),
     );
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.panel, props.id, c !== null]);
-
-  // 成片通过后自动把下一步展开；用户不必再猜「剪完之后封面在哪里」。
-  useEffect(() => {
-    if (!videoDone || coverApproved) return;
-    setCoverOpen(true);
-    const timer = window.setTimeout(() => panelRefs.cover.current?.scrollIntoView({ block: "start" }), 120);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoDone, coverApproved]);
 
   // 本地暂存(1s 防抖)
   useEffect(() => {
@@ -269,42 +275,68 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
   const imageSlots = [...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length;
 
-  const transitionNext = async () => {
-    if (!nextStatus) return;
-    if (dirty) return toast("有未保存的改动——先保存或撤销再流转");
-    const r = await invoke("content:transition", { id: props.id, target_status: nextStatus });
-    if (!r.ok) return toast(r.error ?? "流转失败");
-    toast("已流转到「" + (VARIANT_STATUS[nextStatus] ?? nextStatus) + "」");
-    void load();
-  };
-
-  return (
-    <div className={"editor" + (drawerOpen ? " ed-with-drawer" : "")}>
-      <div className="ed-topbar">
-        <button onClick={props.back}>← 看板</button>
-        <span className="mono muted">{platformLabel(c.platform)} · {VARIANT_STATUS[c.status] ?? c.status}</span>
-        <span className="ed-topbar-right">
-          {!activeProposal && <button onClick={startDraftFocus}>改这篇 →</button>}
+  const workspace = workspaceForStatus(c.status);
+  const stageBar = (
+    <div className="ed-topbar">
+      <button onClick={props.back}>← 看板</button>
+      <span className="mono muted">
+        {platformLabel(c.platform)} · {VARIANT_STATUS[c.status] ?? c.status}
+        {workspace !== "draft" ? ` · ${WORKSPACE_LABEL[workspace]}` : ""}
+      </span>
+      <span className="ed-topbar-right">
+        {workspace === "draft" && !activeProposal && <button onClick={startDraftFocus}>改这篇 →</button>}
+        {workspace === "draft" && (
           <button onClick={() => setMode(mode === "edit" ? "preview" : "edit")}>
             {mode === "edit" ? "预览" : "回到编辑"}
           </button>
-          {allowed.length > 0 && (
-            <>
-              <select value={nextStatus} onChange={(event) => setNextStatus(event.target.value)}>
-                {allowed.map((status) => <option key={status} value={status}>{VARIANT_STATUS[status] ?? status}</option>)}
-              </select>
-              <button onClick={() => void transitionNext()}>推进 →</button>
-            </>
-          )}
+        )}
+        <StageAdvance
+          contentId={props.id}
+          currentStatus={c.status}
+          transitions={transitions}
+          dirty={workspace === "draft" && dirty}
+          reload={load}
+        />
+        {workspace === "draft" && (
           <button className={drawerOpen ? "on" : ""} onClick={toggleDrawer}>
             {drawerOpen ? "收起工具 ›" : "‹ 工具"}
           </button>
-        </span>
+        )}
+      </span>
+    </div>
+  );
+
+  // 工作台随状态（spec §2）：文案之外的三张台子是整页，不带写作画布与抽屉
+  if (workspace !== "draft") {
+    return (
+      <div className="editor">
+        {stageBar}
+        <div className="ed-main-row">
+          {workspace === "editing" && <EditingWorkspace content={c} reload={load} />}
+          {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
+          {workspace === "publish" && (
+            <PublishWorkspace content={c} versions={versions} reload={load} send={send} />
+          )}
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <div className={"editor" + (drawerOpen ? " ed-with-drawer" : "")}>
+      {stageBar}
 
       <div className="ed-main-row">
       <div className="ed-stage">
         <div className="ed-canvas">
+          {/* 旧稿在途 / 从剪辑回文案改稿：剪辑进度一个字都没丢，说清楚，不让人以为白剪了（spec §3①③） */}
+          {isVideo && (videoStarted || c.videoReadyAt) && (
+            <div className="vid-warn">
+              这篇已经有剪辑进度（决策与成片都留着，回文案改稿不会丢）——
+              用顶栏「推进」到「剪辑」接着做。
+            </div>
+          )}
+
           {c.lastError && (
             <div className="ed-error">
               ⚠️ 上次生成中断：{String(c.lastError).slice(0, 120)}{" "}
@@ -399,46 +431,12 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           )}
         </div>
 
-        {/* 封面/配图/成片要宽度,不进窄抽屉——沉到正文下方,默认折叠,不打扰写作 */}
+        {/* 配图要宽度,不进窄抽屉——沉到正文下方,默认折叠,不打扰写作。
+            成片向导与封面折叠区已搬去各自的工作台（阶段制 spec §2）。 */}
         <div className="ed-below">
-          {isVideo && (
-            <>
-              <nav className="video-publish-flow" aria-label="视频发布流程">
-                <span className={videoDone ? "flow-step flow-step-done" : "flow-step flow-step-current"}><b>1</b> 成片</span>
-                <button
-                  className={coverApproved ? "flow-step flow-step-done" : videoDone ? "flow-step flow-step-current" : "flow-step"}
-                  disabled={!videoDone}
-                  onClick={() => {
-                    setCoverOpen(true);
-                    window.setTimeout(() => panelRefs.cover.current?.scrollIntoView({ block: "start" }), 0);
-                  }}
-                ><b>2</b> 封面</button>
-                <button
-                  className={videoDone && coverApproved ? "flow-step flow-step-current" : "flow-step"}
-                  disabled={!videoDone || !coverApproved}
-                  onClick={() => {
-                    setDrawerOpen(true);
-                    localStorage.setItem(DRAWER_KEY, "1");
-                  }}
-                ><b>3</b> 发布</button>
-              </nav>
-              <div ref={panelRefs.video}>
-                <VideoPanel contentId={props.id} onReadyForCover={setVideoDone} />
-              </div>
-            </>
-          )}
           <details
             className="ed-tools"
-            ref={panelRefs.cover}
-            open={coverOpen}
-            onToggle={(event) => setCoverOpen(event.currentTarget.open)}
-          >
-            <summary>封面设计{isVideo ? " · 发布前必做" : ""}{coverApproved ? " · 已选用 ✓" : ""}</summary>
-            <CoverPanel contentId={props.id} platform={c.platform} onApprovalChange={setCoverApproved} />
-          </details>
-          <details
-            className="ed-tools"
-            ref={panelRefs.images}
+            ref={imagesRef}
             open={articleImagesOpen}
             onToggle={(event) => {
               const open = event.currentTarget.open;

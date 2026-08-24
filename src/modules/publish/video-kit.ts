@@ -10,11 +10,14 @@ import { runLoop } from "../../engine/loop.js";
 import type { LoopTool } from "../../engine/loop.js";
 import { getContent, updateContent, getDataDir } from "../../storage/local-store.js";
 import type { VideoKit, StoryboardShot } from "../../storage/local-store.js";
+import { VIDEO_PLATFORMS } from "../../storage/stage-guard.js";
 import { loadProfile, personaSummary, rulesForPlatform } from "../profile/creator-profile.js";
 import { loadWechatMpConfig } from "./wechat-config.js";
 import { generateImageViaRelay } from "./image-gen.js";
 
-export const VIDEO_PLATFORMS = new Set(["douyin", "wechat_video", "xiaohongshu", "bilibili"]);
+// 事实源搬去 storage/stage-guard（阶段门要它，而那层不能 import 本文件——会成环）；
+// 这里再导出一次，既有调用方（ingest、publish）一个字不用改。
+export { VIDEO_PLATFORMS };
 
 /** 平台文案纪律(prompt 注入用,与 clipboard tips 同口径) */
 const CAPTION_RULES: Record<string, string> = {

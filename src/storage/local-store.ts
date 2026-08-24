@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
+import { stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
 import type { ReviewMeta } from "../modules/writing/script-review.js";
@@ -94,11 +95,29 @@ export type ContentStatus =
   | "reviewing"
   | "revision"
   | "approved"
+  /** 剪辑阶段（阶段制 spec §0）：视频稿定稿之后、封面之前的工作台 */
+  | "editing"
   | "cover_pending"
   | "publish_ready"
   | "publishing"
   | "published"
   | "archived";
+
+/** 状态的人话名。后端拒绝话术与事件文案共用一份，前端 VARIANT_STATUS 是它的镜像 */
+export const CONTENT_STATUS_LABEL: Record<ContentStatus, string> = {
+  topic_saved: "选题已存",
+  drafting: "写作中",
+  draft_ready: "草稿就绪",
+  reviewing: "待审",
+  revision: "修订中",
+  approved: "已过审",
+  editing: "剪辑",
+  cover_pending: "封面设计",
+  publish_ready: "待发布",
+  publishing: "发布中",
+  published: "已发布",
+  archived: "已归档",
+};
 
 /** Legacy status values for backward compatibility */
 export type LegacyContentStatus = "draft" | "review";
@@ -184,6 +203,12 @@ export interface Content {
    * 全量状态在 `contents/<id>/video/state.json`。
    */
   videoReadyAt?: string;
+  /**
+   * 「当前这一版成片审过了」——阶段门（spec §1.2）唯一认的凭据。审片通过时视频线写入，
+   * 从 done 重开（改选段再出一版）时清除。刻意不复用 `videoReadyAt`：那枚戳只盖一次、
+   * 永不覆盖，重剪之后它会放行一版早就作废的成片。
+   */
+  videoDone?: { renderedRevision: number; at: string };
   /** ISO timestamp when published — 计时终点;首次盖章后不被重复确认覆盖 */
   publishedAt: string | null;
   /** URL on the target platform after publishing */
@@ -427,6 +452,12 @@ export async function saveContent(
   content: Omit<Content, "id" | "createdAt" | "updatedAt" | "assets" | "versions" | "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData"> & Partial<Pick<Content, "siblings" | "hashtags" | "publishedAt" | "publishUrl" | "performanceData">>,
   dataDir?: string,
 ): Promise<Content> {
+  // 初始态也过阶段门（spec §1.2 收口）：from=to 时只有「这个阶段属不属于这种平台」会响，
+  // 挡住的正是「把公众号稿直接建在剪辑阶段」这类跳阶段建稿。
+  const initial = normalizeLegacyStatus(content.status);
+  const illegal = await stageGuardError(content, initial, initial, async () => true);
+  if (illegal) throw new Error(`稿件不能直接建在这个阶段：${illegal}`);
+
   const id = `content-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const now = new Date().toISOString();
   const projDir = await contentProjectDir(id, dataDir);
@@ -570,7 +601,14 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
   }
 }
 
-export type ContentUpdates = Partial<Content> & { _versionNote?: string };
+/**
+ * 状态在类型上就不许从这里写（阶段制 spec §1.2 收口）：`status` 的唯一写入通道是
+ * `transitionStatus`——只有它在写锁内跑过阶段门。放开这里等于让任何一处 update 跳阶段。
+ */
+export type ContentUpdates = Partial<Omit<Content, "status">> & { _versionNote?: string };
+
+/** 收口通道内部用：全仓只有 `transitionStatusLocked` 能带 status 走这条路 */
+type StatusfulUpdates = ContentUpdates & { status?: ContentStatus };
 
 /**
  * 契约（codex 2026-07-27 评审后收紧）：null 只表示「稿件不存在」；
@@ -582,7 +620,7 @@ export async function updateContent(id: string, updates: ContentUpdates, dataDir
   return serializeContentWrite(id, () => updateContentLocked(id, updates, dataDir));
 }
 
-async function updateContentLocked(id: string, updates: ContentUpdates, dataDir?: string): Promise<Content | null> {
+async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDir?: string): Promise<Content | null> {
   const projDir = path.join(getDataDir(dataDir), "contents", id);
   const metaPath = path.join(projDir, "meta.json");
   let raw: string;
@@ -968,11 +1006,8 @@ async function approveCoverVariantLocked(
     selected.imagePath;
   review.approvedAt = now;
   review.updatedAt = now;
-  // 修复存量 bug:选封面不许把已进发布链的稿件倒拨回 approved
-  const protectedStatuses: ContentStatus[] = ["publish_ready", "publishing", "published", "archived"];
-  if (!protectedStatuses.includes(content.status)) {
-    content.status = "approved";
-  }
+  // 阶段制起（spec §0 清扫 1）：选封面**只做标记，不碰稿件状态**。
+  // 推进阶段是人的动作，走顶栏推进按钮；这里代改状态会把人刚推到的阶段悄悄倒拨回去。
   content.updatedAt = now;
 
   await Promise.all([
@@ -1000,12 +1035,12 @@ const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   draft_ready: ["reviewing", "drafting"],
   reviewing: ["revision", "approved", "draft_ready"],
   revision: ["reviewing", "approved", "draft_ready"],
-  // cover_pending 移出 approved 的出口:封面设计师是 P1.5 才转正的员工（PRD-v4 §4.2），
-  // 现无 UI/通道,把它作为可达状态暴露 = 展示未转正员工（§7.4 红线）+ 掉进无工具死角。
-  // 公众号发布链在发布时自动配封面（wechat-mp.ts）,P0 不需要此状态。
-  // 保留 enum 与下面的出口给历史数据兜底;封面设计师转正时把 cover_pending 加回这里。
-  approved: ["publish_ready", "reviewing"],
-  cover_pending: ["publish_ready", "approved"],
+  // 阶段制（spec §1.1）：视频稿定稿后走 editing → cover_pending → publish_ready。
+  // 表保持平台无关的单表——公众号照旧 approved → publish_ready 直通，
+  // 「哪条边属于哪种平台」由阶段门判定（stage-guard），不在这里分叉。
+  approved: ["publish_ready", "reviewing", "editing"],
+  editing: ["cover_pending", "approved"],
+  cover_pending: ["publish_ready", "editing"],
   publish_ready: ["publishing", "approved"],
   publishing: ["published", "publish_ready"],
   published: ["archived", "publish_ready"],
@@ -1016,16 +1051,51 @@ export interface TransitionResult {
   ok: boolean;
   content?: Content;
   error?: string;
+  /** true = 被阶段门拦下（不是状态图形状不对）。调用方据此说「卡在阶段门」 */
+  blocked?: boolean;
   /** If an auto-trigger fired, describes what happened */
   autoTriggered?: string;
 }
 
+export interface TransitionOptions {
+  /** 只越得过**状态图形状**（看板拖拽这类人工工具）；越不过阶段门（spec §1.2） */
+  force?: boolean;
+  /**
+   * 调用方手里那一版的状态。与盘上不符即拒绝、不覆盖——开着的旧标签页与
+   * 推进按钮双击都靠它，人看到的是一句人话而不是被静默改掉的状态。
+   */
+  expectedStatus?: ContentStatus;
+  diffNote?: string;
+}
+
+/** 封面是否已定稿：复用既有判定（选用即写 approvedLabel，revise 掉它即作废） */
+async function coverApproved(contentId: string, dataDir?: string): Promise<boolean> {
+  const review = await getCoverReview(contentId, dataDir);
+  return Boolean(review?.approvedLabel);
+}
+
 /**
- * Transition a content item to a new status with validation.
- * Enforces the state machine defined in PRD §13.
+ * 阶段门的**不写盘**预判：推进下拉的灰显原因、发布预检的「卡在阶段门」提示，
+ * 与真正写入时跑的是同一个判定，不许两处结论打架。
+ */
+export async function stageBlockReason(
+  content: Content,
+  targetStatus: ContentStatus,
+  dataDir?: string,
+): Promise<string | null> {
+  return stageGuardError(content, normalizeLegacyStatus(content.status), targetStatus, () =>
+    coverApproved(content.id, dataDir),
+  );
+}
+
+/**
+ * 稿件状态的**唯一写入通道**（阶段制 spec §1.2）。
  *
- * Auto-trigger rules:
- * - draft_ready → reviewing: fires automatically (caller should run content-review)
+ * 「读当前状态 → 校验 → 写入」整段跑在按 id 串行的写锁**内**：从前是锁外读、锁内写，
+ * 两个并发推进都能读到同一个旧状态，各自算出「合法」再互相覆盖。
+ *
+ * 两层校验各管各的：`force` 越得过状态图形状（看板拖拽是人工工具），
+ * 越不过阶段门——没剪的片子不许被强推进封面台。
  *
  * Note: opts.diffNote is accepted but no longer consumed here — the ad-hoc snapshot
  * write (learnings/edits) that used it is retired; content-save's recordDiff wiring
@@ -1035,15 +1105,34 @@ export interface TransitionResult {
 export async function transitionStatus(
   contentId: string,
   targetStatus: ContentStatus,
-  opts?: { force?: boolean; diffNote?: string },
+  opts?: TransitionOptions,
+  dataDir?: string,
+): Promise<TransitionResult> {
+  if (!isContentId(contentId)) return { ok: false, error: `Content ${contentId} not found` };
+  return serializeContentWrite(contentId, () => transitionStatusLocked(contentId, targetStatus, opts, dataDir));
+}
+
+async function transitionStatusLocked(
+  contentId: string,
+  targetStatus: ContentStatus,
+  opts: TransitionOptions | undefined,
   dataDir?: string,
 ): Promise<TransitionResult> {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `Content ${contentId} not found` };
 
   const currentStatus = normalizeLegacyStatus(content.status);
+  const label = (s: ContentStatus) => CONTENT_STATUS_LABEL[s] ?? s;
 
-  // Validate transition
+  if (opts?.expectedStatus && opts.expectedStatus !== currentStatus) {
+    return {
+      ok: false,
+      error:
+        `这篇现在是「${label(currentStatus)}」，你手上那份还写着「${label(opts.expectedStatus)}」` +
+        `——刷新一下再推进，免得盖掉别处刚做的改动`,
+    };
+  }
+
   if (!opts?.force) {
     const allowed = STATE_TRANSITIONS[currentStatus];
     if (!allowed || !allowed.includes(targetStatus)) {
@@ -1054,8 +1143,14 @@ export async function transitionStatus(
     }
   }
 
+  // 阶段门在写锁内、force 之后——它是产品事实，强推不得（spec §1.2）
+  const blocked = await stageGuardError(content, currentStatus, targetStatus, () =>
+    coverApproved(contentId, dataDir),
+  );
+  if (blocked) return { ok: false, blocked: true, error: blocked };
+
   const now = new Date().toISOString();
-  const updates: Partial<Content> = { status: targetStatus };
+  const updates: StatusfulUpdates = { status: targetStatus };
 
   // Auto-trigger: draft_ready → reviewing (signal to caller)
   let autoTriggered: string | undefined;
@@ -1068,17 +1163,38 @@ export async function transitionStatus(
     updates.publishedAt = now;
   }
 
-  const updated = await updateContent(contentId, updates, dataDir);
+  const updated = await updateContentLocked(contentId, updates, dataDir);
   if (!updated) return { ok: false, error: "Failed to update content" };
 
   return { ok: true, content: updated, autoTriggered };
 }
 
 /**
- * Get allowed next statuses for a content item.
+ * 状态图形状允许的下一站（不含阶段门判定）。
+ * UI 要「灰显带原因」时另配 `stageBlockReason` 逐条预判。
  */
 export function getAllowedTransitions(status: ContentStatus): ContentStatus[] {
   return STATE_TRANSITIONS[status] || [];
+}
+
+export interface AllowedTransition {
+  status: ContentStatus;
+  /** 非空 = 形状允许但阶段门拦着：下拉里灰显这一条，并把原因摆出来 */
+  blockedReason?: string;
+}
+
+/** 推进下拉的数据源：形状 + 阶段门预判一次算完，前端不必自己推演规则 */
+export async function describeAllowedTransitions(
+  content: Content,
+  dataDir?: string,
+): Promise<AllowedTransition[]> {
+  const from = normalizeLegacyStatus(content.status);
+  const out: AllowedTransition[] = [];
+  for (const status of getAllowedTransitions(from)) {
+    const reason = await stageBlockReason(content, status, dataDir);
+    out.push(reason ? { status, blockedReason: reason } : { status });
+  }
+  return out;
 }
 
 // --- Multi-platform distribution ---

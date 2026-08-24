@@ -82,6 +82,16 @@ describe("recent-actions 有界环", () => {
 });
 
 describe("工作区挂接点", () => {
+  /** 等 fire-and-forget 的那次写落盘（上限 2s，超时就照实返回当前值让断言报错） */
+  const settledRing = async () => {
+    for (let i = 0; i < 100; i++) {
+      const ring = await readRecentActions(dir);
+      if (ring.length > 0) return ring;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return readRecentActions(dir);
+  };
+
   it("content:transition 成功后进环（带标题与目标列），失败的流转不进环", async () => {
     const saved = (await executeContentSave({
       action: "save", title: "AI 写作趋势", body: "正文", platform: "wechat_mp", status: "draft_ready", _dataDir: dir,
@@ -94,7 +104,11 @@ describe("工作区挂接点", () => {
     const rejected = await transition({ id: saved.content.id, target_status: "published", _dataDir: dir });
     expect(rejected.ok).toBe(false);
 
-    const ring = await readRecentActions(dir);
+    // 观测层是 fire-and-forget（withActionRecord 里 void appendAction——记录不许拖慢动作），
+    // 所以这里必须等那一次写落盘，不能读一次就断言：读到空只说明写还在路上。
+    // 「失败的流转不进环」这一半不受影响：res.ok !== true 时 withActionRecord 直接返回，
+    // 压根不会调 appendAction，环的长度永远到不了 2。
+    const ring = await settledRing();
     expect(ring).toHaveLength(1);
     expect(ring[0]).toMatchObject({ kind: "transition", contentId: saved.content.id, title: "AI 写作趋势", detail: "reviewing" });
   });

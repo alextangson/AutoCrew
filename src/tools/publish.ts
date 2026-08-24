@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
-import { getContent, updateContent, getDataDir, getCoverReview } from "../storage/local-store.js";
+import { getContent, updateContent, transitionStatus, getDataDir, getCoverReview } from "../storage/local-store.js";
 import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
 import { loadWechatMpConfig } from "../modules/publish/wechat-config.js";
 import { formatForClipboard, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
@@ -130,11 +130,16 @@ export async function executePublish(
     if (rawUrl && !isHttpUrl(rawUrl)) {
       return { ok: false, error: `平台链接只接受 http/https 开头的地址：${rawUrl.slice(0, 80)}` };
     }
+    // 状态收口（阶段制 spec §1.2）：这里不再直改 status，走唯一通道 transitionStatus。
+    // force 是因为「approved / 待发布 / 发布中 都能点确认」这条既有产品规则跨了状态图形状；
+    // 阶段门 force 也越不过，但它对「→ 已发布」本就没有规则，行为一字未变。
     // 发布时刻只盖一次:重复确认(手滑双击/助手重跑)不许把首次发布时间冲成现在,
-    // 否则「稿成→发布」的用时会被越算越短。另一条路(transitionStatus → published)同守此约。
+    // 否则「稿成→发布」的用时会被越算越短——这条纪律现在由 transitionStatus 统一守。
+    const marked = await transitionStatus(contentId, "published", { force: true }, dataDir);
+    if (!marked.ok) {
+      return { ok: false, error: marked.error ?? `Failed to update content: ${contentId}` };
+    }
     const updated = await updateContent(contentId, {
-      status: "published",
-      publishedAt: content.publishedAt ?? new Date().toISOString(),
       publishUrl: rawUrl || content.publishUrl || null,
     }, dataDir);
     if (!updated) {

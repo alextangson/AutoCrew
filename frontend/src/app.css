@@ -644,12 +644,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .ra-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--border); background: var(--surface); }
 .ra-cap { font-size: 12px; }
 /* 视频生产线 V0a:成片卡 + 选段视图 + 审片视图(复用 .ed-tools/.row-actions/.chip,不另起设计) */
-.video-publish-flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; padding: 3px; margin-bottom: 12px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-card); }
-.video-publish-flow .flow-step { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 5px 10px; color: var(--muted); background: var(--surface); border: 0; border-radius: 0; font-size: 11px; }
-.video-publish-flow .flow-step b { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; }
-.video-publish-flow .flow-step-current { color: var(--ink); background: var(--card); font-weight: 700; }
-.video-publish-flow .flow-step-done { color: var(--success); background: var(--card); }
-.video-publish-flow button.flow-step:not(:disabled) { cursor: pointer; }
+/* 阶段制:成片卡是剪辑工作台的主体(整页),不再是文案页底下的折叠区 */
+.vid-stage { display: flex; flex-direction: column; gap: 8px; }
+.vid-stage-head { margin: 0; font-size: 13px; font-weight: 700; }
+/* 封面台头:左边成片首帧,右边标题——封面是对着片子做的 */
+.cover-stage-head { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 12px; }
+.cover-stage-head h2 { margin: 0 0 4px; }
+.cover-stage-head p { margin: 0 0 6px; }
+.cover-stage-head > div { flex: 1; min-width: 240px; }
+.cover-stage-film {
+  flex: 0 0 auto; width: 240px; aspect-ratio: 16 / 9; background: var(--ink);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+}
+.cover-stage-film.cover-missing { display: grid; place-items: center; background: var(--surface); font-size: 12px; }
 .vid-card { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .vid-card p { margin: 0; max-width: 760px; line-height: 1.6; }
 .vid-head { display: flex; align-items: baseline; gap: 10px; width: 100%; }

@@ -15,6 +15,8 @@ import {
   getCoverReview,
   saveCoverReview,
   approveCoverVariant,
+  transitionStatus,
+  normalizeLegacyStatus,
   type CoverReview,
   type CoverVariant,
 } from "../storage/local-store.js";
@@ -370,6 +372,23 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
   };
 }
 
+/**
+ * 撤销封面批准后的同步降级（阶段制 spec §1.2）：已经站在「待发布」的稿件，
+ * 封面一作废就退回「封面设计」——不留「发布就绪但封面作废」这种错位态。
+ *
+ * force 是因为 publish_ready → cover_pending 不是状态图里的人工边（它是系统纠错，
+ * 不该出现在推进下拉里）；阶段门对这条边没有规则，所以纠错永远做得成。
+ * 返回一句话给调用方拿去 toast——状态被系统改了，人必须看得见。
+ */
+async function downgradeAfterRevoke(contentId: string, dataDir: string): Promise<string | null> {
+  const content = await getContent(contentId, dataDir);
+  if (!content || normalizeLegacyStatus(content.status) !== "publish_ready") return null;
+  const moved = await transitionStatus(contentId, "cover_pending", { force: true }, dataDir);
+  return moved.ok
+    ? "封面选用已作废，这篇退回「封面设计」"
+    : `封面选用已作废，但稿件状态没退回「封面设计」：${moved.error ?? "未知原因"}`;
+}
+
 async function reviseVariant(params: Record<string, unknown>, contentId: string, dataDir: string) {
   const ctx = await resolveProviderCtx(params, dataDir);
   if ("error" in ctx) return ctx;
@@ -418,7 +437,8 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
     { label, note: feedback, prevPrompt: variant.imagePrompt, at: new Date().toISOString() },
   ];
   // 修订过的方案若曾被选用,选用作废回待审
-  if (review.approvedLabel === label) {
+  const revoked = review.approvedLabel === label;
+  if (revoked) {
     review.status = "review_pending";
     delete review.approvedLabel;
     delete review.approvedImagePath;
@@ -426,11 +446,13 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
   }
   const saved = await saveCoverReview(contentId, review, dataDir);
   if (!saved) return { ok: false, error: "Failed to save cover review" };
+  const statusNote = revoked ? await downgradeAfterRevoke(contentId, dataDir) : null;
   return {
     ok: true,
     review: saved,
     revised: label,
     revision,
+    ...(statusNote ? { statusNote } : {}),
     ...(generated.warning ? { warnings: [generated.warning] } : {}),
   };
 }

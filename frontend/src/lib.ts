@@ -31,8 +31,10 @@ export function sourceLabel(s: string | null | undefined): string {
 export const BOARD_COLUMNS = [
   { key: "idea", label: "灵感库", statuses: [] as string[] },
   { key: "writing", label: "在写", statuses: ["topic_saved", "drafting", "draft_ready", "revision"] },
-  { key: "review", label: "待审", statuses: ["reviewing", "cover_pending"] },
-  { key: "ready", label: "待发布", statuses: ["approved", "publish_ready", "publishing"] },
+  { key: "review", label: "待审", statuses: ["reviewing"] },
+  // 阶段制（spec §0 清扫 2）:editing/cover_pending 是定稿之后的生产阶段,与 approved 同列;
+  // 它们不是「待审」——没人在等着审,是片子/封面在做。
+  { key: "ready", label: "待发布", statuses: ["approved", "editing", "cover_pending", "publish_ready", "publishing"] },
   { key: "published", label: "已发布", statuses: ["published"] },
 ] as const;
 
@@ -49,8 +51,32 @@ export const DROP_TARGET_STATUS: Record<string, string> = {
 
 export const VARIANT_STATUS: Record<string, string> = {
   topic_saved: "选题", drafting: "写中", draft_ready: "草稿", revision: "修订",
-  reviewing: "待审", cover_pending: "待封面", approved: "已过审",
+  reviewing: "待审", approved: "已过审", editing: "剪辑", cover_pending: "封面设计",
   publish_ready: "待发", publishing: "发布中", published: "已发", archived: "归档",
+};
+
+/** 稿件阶段 → 工作台（阶段制 spec §2）:打开稿件按状态进对应的那一张台子 */
+export type StageWorkspace = "draft" | "editing" | "cover" | "publish";
+
+const WORKSPACE_BY_STATUS: Record<string, StageWorkspace> = {
+  editing: "editing",
+  cover_pending: "cover",
+  publish_ready: "publish",
+  publishing: "publish",
+  published: "publish",
+  archived: "publish",
+};
+
+/** 未知状态一律回落文案台:界面不认识的状态也要有地方站,不能白屏 */
+export function workspaceForStatus(status: string): StageWorkspace {
+  return WORKSPACE_BY_STATUS[status] ?? "draft";
+}
+
+export const WORKSPACE_LABEL: Record<StageWorkspace, string> = {
+  draft: "文案",
+  editing: "剪辑台",
+  cover: "封面台",
+  publish: "发布台",
 };
 
 export interface Topic {
@@ -102,8 +128,18 @@ export interface Content {
   publishUrl?: string | null;
   /** 成片就绪时刻(视频线终点戳):非空 = 片子渲染并审过了,等着进发布流程 */
   videoReadyAt?: string | null;
+  /** 当前这一版成片审过了(阶段门唯一认的凭据);重开剪辑即清空 */
+  videoDone?: { renderedRevision: number; at: string } | null;
+  /** 挂接进本稿的素材(剪辑台按 role 判断 A-roll 齐没齐) */
+  assets?: Array<{ filename: string; type: string; description?: string; role?: string }>;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 推进下拉的一项:blockedReason 非空 = 形状允许但阶段门拦着,灰显并说清为什么 */
+export interface AllowedTransition {
+  status: string;
+  blockedReason?: string;
 }
 
 /** 平台链接白名单:只认 http(s)。输入校验与渲染前校验共用它——存量脏数据同样不许变成可点链接 */

@@ -1,19 +1,20 @@
 /**
- * 编辑页右侧抽屉：采纳裁决 / 发布分发 / 素材附件 / 版本记录。
- * 从 Editor.tsx 抽出来——写作画布要独占整屏，这些是「需要时才滑出」的控制面，
- * 不该常驻挤占版心，也不该让 Editor.tsx 继续膨胀。
+ * 稿件的控制面：采纳裁决 / 发布分发 / 素材附件 / 版本记录。
+ *
+ * 两处用它（阶段制 spec §2）：文案页右侧抽屉（写作画布要独占整屏，这些是「需要时
+ * 才滑出」的控制面），以及发布工作台的整页主体。
+ *
+ * 素材附件只留给文字平台：视频稿的素材挂接是剪辑的第一步，已经搬进剪辑台。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast, confirmDialog } from "../ui";
 import { VIDEO_PLATFORMS, isHttpUrl, needsPublishUrlBackfill, publishUrlPlatformWarning, type Content } from "../lib";
 import { compareVersions, isGenericVersionNote, type VersionLike } from "../version-diff";
+import { AssetsSection } from "./AssetsSection";
 
 /** 能点「我已发布,确认」的状态:clipboard / 推草稿箱 / 视频发布件三条路殊途同归 */
 const CONFIRMABLE_STATUSES = new Set(["approved", "publish_ready", "publishing"]);
-
-/** 已经进了发布流程(或已退场)的状态:成片就绪的 CTA 到此为止 */
-const PUBLISH_TRACK_STATUSES = new Set(["approved", "publish_ready", "publishing", "published", "archived"]);
 
 /** 存量版本备注是英文自动串(V5.6.2 起后端已改中文)——显示层兜底汉化 */
 function versionNoteLabel(note?: string): string {
@@ -130,7 +131,8 @@ export function EditorTools(props: EditorToolsProps) {
     }
   };
 
-  // 成片就绪 → 发布线的唯一入口:跑发布前检查,全过由后端自动流转「待发布」,不新造状态路径
+  // 发布前检查:六项内容检查 + 阶段门。还没到「待发布」的稿子全过会被后端顺手推进去;
+  // 被阶段门拦下时结果里有「卡在阶段门」那一条,照样报出来,绝不谎报全过
   const runPreCheck = async () => {
     setCheckBusy(true);
     try {
@@ -138,7 +140,7 @@ export function EditorTools(props: EditorToolsProps) {
       if (!r.ok) return toast(r.error ?? "发布前检查没跑起来");
       const d = r as unknown as { allPassed?: boolean; checks?: Array<{ name: string; status: string; detail: string }> };
       if (d.allPassed) {
-        toast("检查全过——这篇已进「待发布」,发完回来点确认");
+        toast("检查全过——可以去平台发了,发完回来点确认");
         void reload();
         return;
       }
@@ -248,17 +250,12 @@ export function EditorTools(props: EditorToolsProps) {
         </div>
       </details>
 
-      {c.videoReadyAt && !PUBLISH_TRACK_STATUSES.has(c.status) && (
-        <div className="pending-edit">
-          <div className="mono muted">成片已就绪 · 还没进发布流程</div>
-          <p className="muted">片子渲染并审过了。跑一遍发布前检查,全过就进「待发布」,再去平台发。</p>
-          <div className="row-actions">
-            <button className="primary" disabled={checkBusy} onClick={() => void runPreCheck()}>
-              {checkBusy ? "检查中…" : "进入发布检查"}
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 预检是发布台的活:阶段推进归顶栏推进按钮,这里只回答「这篇现在能不能发」 */}
+      <div className="ed-section">
+        <button disabled={checkBusy} onClick={() => void runPreCheck()}>
+          {checkBusy ? "检查中…" : "跑发布前检查"}
+        </button>
+      </div>
 
       {clip && (
         <div className="pending-edit">
@@ -358,14 +355,13 @@ export function EditorTools(props: EditorToolsProps) {
         </div>
       )}
 
-      <details className="ed-tools">
-        <summary>素材附件</summary>
-        <AssetsSection
-          contentId={contentId}
-          assets={(c as unknown as { assets?: Array<{ filename: string; type: string; description?: string }> }).assets ?? []}
-          reload={reload}
-        />
-      </details>
+      {/* 视频稿的素材挂接在剪辑台（阶段制 spec §2）；这里只服务文字平台的配图与附件 */}
+      {!isVideo && (
+        <details className="ed-tools">
+          <summary>素材附件</summary>
+          <AssetsSection contentId={contentId} assets={c.assets ?? []} reload={reload} />
+        </details>
+      )}
 
       {versions.length > 0 && (
         <details className="ed-tools ed-version-tools">
@@ -469,144 +465,5 @@ function AdoptButton(props: {
         </span>
       )}
     </span>
-  );
-}
-
-/** 角色决定这条素材在成片里怎么用：口播底轨只能有一条，BGM 多于一条组装会报错要你选 */
-const ASSET_ROLES: Array<[string, string]> = [
-  ["aroll", "口播底轨"],
-  ["broll", "B-roll(屏录/图版)"],
-  ["bgm", "背景音乐"],
-  ["other", "其他"],
-];
-
-const ROLE_LABEL = new Map(ASSET_ROLES);
-
-/** 与后端 guessAssetRole 同一套默认值；这里只是预填，最终由人确认 */
-function guessRole(type: string, assets: Array<{ type: string; filename: string }>): string {
-  if (type === "audio") return "bgm";
-  if (type === "video") return assets.some((a) => a.type === "video" && !/^final-v\d+\.mp4$/i.test(a.filename)) ? "broll" : "aroll";
-  if (type === "image") return "broll";
-  return "other";
-}
-
-type LibraryPick = { id: string; name: string; type: string; tags?: string[]; description?: string; missing?: boolean };
-
-function AssetsSection(props: {
-  contentId: string;
-  assets: Array<{ filename: string; type: string; description?: string; role?: string }>;
-  reload: () => Promise<void>;
-}) {
-  const [picking, setPicking] = useState(false);
-  const [lib, setLib] = useState<LibraryPick[]>([]);
-  const [chosen, setChosen] = useState<LibraryPick | null>(null);
-  const [role, setRole] = useState("other");
-  const [note, setNote] = useState("");
-
-  const openPicker = async () => {
-    if (picking) return setPicking(false);
-    const r = await invoke("library:list");
-    if (!r.ok) return toast(r.error ?? "素材库加载失败");
-    const d = (r as unknown as { data: { assets?: LibraryPick[] } }).data;
-    setLib((d.assets ?? []).filter((a) => !a.missing));
-    setChosen(null);
-    setPicking(true);
-  };
-
-  // 选中素材时预填角色与说明——不靠创始人记得改文件名(spec §2.6)
-  const choose = (a: LibraryPick) => {
-    setChosen(a);
-    setRole(guessRole(a.type, props.assets));
-    setNote(a.description?.trim() || [a.name, (a.tags ?? []).join("、")].filter(Boolean).join(" · "));
-  };
-
-  const attach = async () => {
-    if (!chosen) return;
-    if (!note.trim()) return toast("写一行说明再挂接——没有说明的素材,剪辑师看不见它");
-    const r = await invoke("content:asset_add", {
-      content_id: props.contentId,
-      library_id: chosen.id,
-      role,
-      description: note.trim(),
-    });
-    if (!r.ok) return toast(r.error ?? "挂接失败");
-    const warning = (r as unknown as { data?: { warning?: string } }).data?.warning;
-    toast(warning ? `已挂接「${chosen.name}」·${warning}` : `已挂接「${chosen.name}」`);
-    setPicking(false);
-    setChosen(null);
-    void props.reload();
-  };
-
-  return (
-    <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
-      <div>
-        <span className="mono muted ed-label">素材（{props.assets.length}）：</span>
-        <button onClick={() => void openPicker()}>{picking ? "收起" : "从素材库挂接"}</button>
-        <button
-          onClick={async () => {
-            const r = await invoke("content:open_folder", { id: props.contentId });
-            if (!r.ok) return toast((r as { error?: string }).error ?? "打开失败");
-            const d = r as { opened?: boolean; path?: string };
-            toast(d.opened ? "已在 Finder 打开——文案 draft.md、封面、素材都在里面" : `文件夹:${d.path ?? ""}`);
-          }}
-        >打开稿件文件夹</button>
-      </div>
-      {props.assets.map((a) => (
-        <div key={a.filename} className="row">
-          <span className="row-title">{a.filename}</span>
-          <span className="muted mono">
-            {a.role ? (ROLE_LABEL.get(a.role) ?? a.role) : a.type}
-            {a.description ? " · " + a.description : " · 无说明"}
-          </span>
-          <button
-            onClick={async () => {
-              const yes = await confirmDialog({
-                title: `移除挂接素材「${a.filename}」?`,
-                body: "删除稿件项目内的副本,素材库原件不受影响。",
-                confirmLabel: "移除",
-                danger: true,
-              });
-              if (!yes) return;
-              const r = await invoke("content:asset_remove", { content_id: props.contentId, filename: a.filename });
-              toast(r.ok ? "已移除" : (r.error ?? "移除失败"));
-              if (r.ok) void props.reload();
-            }}
-          >移除</button>
-        </div>
-      ))}
-      {picking && (
-        <div className="pending-edit">
-          {lib.length === 0 && <p className="muted">素材库暂无可用素材——先到「素材库」粘路径导入。</p>}
-          {lib.map((a) => (
-            <div key={a.id} className="row">
-              <span className="row-title">{a.name}</span>
-              <button className={chosen?.id === a.id ? "chip chip-pub" : ""} onClick={() => choose(a)}>
-                {chosen?.id === a.id ? "✓ 已选" : "选它"}
-              </button>
-            </div>
-          ))}
-          {chosen && (
-            <div className="ed-digest">
-              <span className="mono muted">「{chosen.name}」在成片里的角色</span>
-              <select className="sel-input" value={role} onChange={(e) => setRole(e.target.value)}>
-                {ASSET_ROLES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-              </select>
-              <span className="mono muted">一行说明(剪辑师只看得见有说明的素材)</span>
-              <input
-                className="sel-input"
-                maxLength={80}
-                value={note}
-                placeholder="例:命令行跑 autocrew 的屏录,含安装到出稿全过程"
-                onChange={(e) => setNote(e.target.value)}
-              />
-              <div className="row-actions">
-                <button className="primary" disabled={!note.trim()} onClick={() => void attach()}>挂接</button>
-                <button onClick={() => setChosen(null)}>取消</button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
   );
 }

@@ -2,6 +2,10 @@
  * 「成片」卡(视频 spec §8.4)——phase×state 状态机的可视化:每个状态只给该状态该做的事,
  * 底下挂选段视图与审片视图两个人工门。
  *
+ * 阶段制起(spec §2)它是**剪辑工作台的主体**,不再是文案页底下一个折叠区:
+ * 根节点从 details 变成整页 section,标题行常驻。通过之后不再自动展开封面——
+ * 换阶段是人的动作,这里只把「下一步去哪」说清楚。
+ *
  * 四条纪律:
  * 1. **状态只有一个来源**:`video:status`。界面不自己推演下一步,后端说什么显示什么;
  *    刷新靠 SSE `video:updated` 驱动重拉 + 断线重连无条件重拉(§8.3 三、四)。
@@ -39,8 +43,14 @@ const ASR_LABEL: Record<string, string> = {
   failed: "预热失败",
 };
 
-export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; onReadyForCover?: (ready: boolean) => void }) {
-  const [open, setOpen] = useState(true);
+export function VideoPanel({
+  contentId,
+  arollBlockReason,
+}: {
+  contentId: string;
+  /** 非空 = 前置没齐(多半是没挂 A-roll):「开始构建」灰掉并把原因摆在按钮边上 */
+  arollBlockReason: string | null;
+}) {
   const [status, setStatus] = useState<VideoStatusData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -82,10 +92,6 @@ export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; 
   const inPlan = !!st && st.phase === "edit" && (st.state === "queued" || st.state === "running" || st.state === "awaiting_human");
   const canReview = !!st && st.phase === "review" && st.state === "awaiting_human";
   const isDone = !!st && st.phase === "done" && st.state === "done";
-
-  useEffect(() => {
-    onReadyForCover?.(isDone);
-  }, [isDone, onReadyForCover]);
 
   useEffect(() => {
     blockedOnAsr.current = st?.state === "blocked" && st.blockedReason === "asr_not_ready";
@@ -180,8 +186,8 @@ export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; 
     isDone;
 
   return (
-    <details className="ed-tools" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>成片 · {headline}</summary>
+    <section className="ed-tools vid-stage">
+      <h3 className="vid-stage-head">成片 · {headline}</h3>
       {err && <p className="ed-error">{err}</p>}
       {view === "cut" && st && (canCut || inPlan) && (
         <VideoCutPanel
@@ -217,9 +223,18 @@ export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; 
                 A-roll(你对着镜头拍的那条)挂进上面的「素材附件」后就能开工:转写 → 你勾选留哪些句子 → 组装渲染 → 你审片。
                 全程后台跑,分钟级。
               </p>
-              <button className="primary" disabled={busy} onClick={() => void act(() => videoBuildStart(contentId), "已投给剪辑师,后台在跑")}>
-                开始构建
-              </button>
+              <div className="row-actions">
+                <button
+                  className="primary"
+                  disabled={busy || Boolean(arollBlockReason)}
+                  title={arollBlockReason ?? ""}
+                  onClick={() => void act(() => videoBuildStart(contentId), "已投给剪辑师,后台在跑")}
+                >
+                  开始构建
+                </button>
+                {/* 禁用要说得出原因:对着灰按钮猜前置是最坏的空态 */}
+                {arollBlockReason && <span className="muted">{arollBlockReason}</span>}
+              </div>
             </>
           )}
           {st && (st.state === "queued" || st.state === "running") && (
@@ -300,6 +315,8 @@ export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; 
               {cleanupSummary(st.cleanup) && (
                 <p className={st.cleanup?.status === "warning" ? "vid-warn" : "muted"}>{cleanupSummary(st.cleanup)}</p>
               )}
+              {/* 阶段制:下一步是「推进到封面」,由顶栏推进按钮驱动——这里只说去哪,不代人换阶段 */}
+              <p className="muted">下一步：用顶栏「推进」进入封面阶段，对着这条片子做封面。</p>
               <div className="row-actions">
                 <button onClick={() => setView("review")}>查看成片</button>
                 <button onClick={() => setView("cut")}>重开:改选段再出一版</button>
@@ -316,7 +333,7 @@ export function VideoPanel({ contentId, onReadyForCover }: { contentId: string; 
           )}
         </div>
       )}
-    </details>
+    </section>
   );
 }
 

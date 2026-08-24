@@ -29,6 +29,7 @@ import { assembleAndHumanize, buildSubmitTool } from "./script-payload.js";
 import type { Captured, SubmitPayload } from "./script-payload.js";
 import { reviewAndConverge } from "./script-review.js";
 import type { ReviewDeps, ReviewMeta, ReviewOutcome } from "./script-review.js";
+import { transitionStatus } from "../../storage/local-store.js";
 import { scanText } from "../filter/sensitive-words.js";
 import { retrieveKnowledge, KNOWLEDGE_DEFAULT_CHARS } from "../knowledge/knowledge-base.js";
 import { buildBriefBlock, knowledgeBudgetFor } from "../research/brief-inject.js";
@@ -549,7 +550,6 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
     {
       title,
       body: humanizedText,
-      status: "draft_ready",
       // 生产计时的「稿成」节点:转正这一刻就是稿成:起点是占位稿的 createdAt(开写)
       draftReadyAt: new Date().toISOString(),
       hashtags: cleanHashtags,
@@ -567,6 +567,12 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
   );
   if (!content) {
     throw new Error(`占位稿丢失（${placeholderId}）：生成完成但无法转正,稿件内容未保存`);
+  }
+  // 状态另走收口通道（阶段制 spec §1.2）：正文已经落盘,这一步只把 drafting 推到 draft_ready。
+  // 推不动就抛——留一篇正文齐全却仍标着「写作中」的稿,比当场报错更难查。
+  const promoted = await transitionStatus(placeholderId, "draft_ready", {}, dataDir);
+  if (!promoted.ok) {
+    throw new Error(`占位稿转正失败（${placeholderId}）：${promoted.error ?? "状态未推进"}；正文已保存`);
   }
 
   return {

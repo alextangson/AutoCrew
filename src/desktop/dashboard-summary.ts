@@ -18,11 +18,13 @@ import {
   readPullState,
 } from "../modules/flywheel/pull-state.js";
 
-const REVIEW_STATUSES = new Set(["reviewing", "cover_pending"]);
+// 阶段制起（spec §0 清扫 2）：cover_pending 不再是「待审」——它是定稿之后的生产阶段，
+// 和 editing 一起归在「待发布」这一列，跟 approved 同侧。
+const REVIEW_STATUSES = new Set(["reviewing"]);
 const WRITING_STATUSES = new Set(["topic_saved", "drafting", "draft_ready", "revision"]);
-const READY_STATUSES = new Set(["approved", "publish_ready", "publishing"]);
+const READY_STATUSES = new Set(["approved", "editing", "cover_pending", "publish_ready", "publishing"]);
 /** 已经进了发布流程（或已退场）的状态：成片就绪待办到此为止，不再催 */
-const PUBLISH_TRACK_STATUSES = new Set(["approved", "publish_ready", "publishing", "published", "archived"]);
+const PUBLISH_TRACK_STATUSES = new Set(["approved", "editing", "cover_pending", "publish_ready", "publishing", "published", "archived"]);
 /** 「已回填」只认这三个核心指标——回流一条全空的快照不算回填过 */
 const CORE_METRICS = ["views", "likes", "comments"] as const;
 const OVERDUE_REVIEW_DAYS = 3;

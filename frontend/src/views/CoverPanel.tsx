@@ -39,11 +39,7 @@ const assetUrl = (contentId: string, filePath?: string): string => {
   return `/api/asset?content_id=${encodeURIComponent(contentId)}&name=${encodeURIComponent(name)}`;
 };
 
-export function CoverPanel(props: {
-  contentId: string;
-  platform: string;
-  onApprovalChange?: (approved: boolean) => void;
-}) {
+export function CoverPanel(props: { contentId: string; platform: string }) {
   const ratioOptions = coverRatiosForPlatform(props.platform);
   const [review, setReview] = useState<CoverReview | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -57,9 +53,7 @@ export function CoverPanel(props: {
 
   const load = async () => {
     const r = await invoke("cover:get", { content_id: props.contentId });
-    const next = r.ok ? (r as unknown as { review: CoverReview }).review : null;
-    setReview(next);
-    props.onApprovalChange?.(Boolean(next?.approvedLabel));
+    setReview(r.ok ? (r as unknown as { review: CoverReview }).review : null);
   };
   useEffect(() => {
     void load();
@@ -108,10 +102,7 @@ export function CoverPanel(props: {
       const changed = Boolean(rv && rv.updatedAt !== prevStamp);
       if (changed || ticks > 225) {
         // 225×4s=15 分钟断线兜底；正常完成由 SSE 事件即时刷新。
-        if (rv) {
-          setReview(rv);
-          props.onApprovalChange?.(Boolean(rv.approvedLabel));
-        }
+        if (rv) setReview(rv);
         setGenerating(false);
         stopPoll();
         if (changed) toast("封面已更新——挑一张或继续提意见");

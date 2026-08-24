@@ -95,6 +95,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   // 可选键 industry / platforms / focusKeywords（雷达粗筛关键词），至少给一个由 handler 判
   "profile:update": [],
   "content:update": ["id"],
+  // 可选键 from_status（调用方手里那一版的状态）：与盘上不符时人话拒绝，
+  // 挡的是开着的旧标签页与推进按钮双击（阶段制 spec §2）。可选键 force 只越状态图形状，越不过阶段门
   "content:transition": ["id", "target_status"],
   "content:allowed_transitions": ["id"],
   "content:adoption": ["id", "verdict"],

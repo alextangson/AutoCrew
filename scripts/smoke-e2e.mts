@@ -13,7 +13,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { saveProfile } from "../src/modules/profile/creator-profile.js";
-import { saveTopic, saveContent, updateContent } from "../src/storage/local-store.js";
+import { saveTopic, saveContent, updateContent, transitionStatus } from "../src/storage/local-store.js";
 import { buildCampaignTeam, createCampaign } from "../src/storage/campaign-store.js";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -90,9 +90,12 @@ async function seed(dataDir: string): Promise<void> {
     await saveTopic({ title: `AI 效率选题 ${i}`, description: "d", tags: ["radar"], reason: "命中定位「AI」· 冒烟种子", link: `https://smoke.example/${i}` }, dataDir);
   }
   const c1 = await saveContent({ title: "待审冒烟稿", body: "正文。[IMAGE: 一张示意图]", platform: "wechat_mp", status: "drafting", tags: [] }, dataDir);
-  await updateContent(c1.id, { status: "reviewing" }, dataDir);
+  // 冒烟种子也走收口通道：状态只能由 transitionStatus 写（阶段制 spec §1.2）
+  await transitionStatus(c1.id, "reviewing", { force: true }, dataDir);
   const c2 = await saveContent({ title: "已发冒烟稿", body: "正文", platform: "wechat_mp", status: "drafting", tags: [] }, dataDir);
-  await updateContent(c2.id, { status: "published", publishedAt: new Date(Date.now() - 2 * 86400_000).toISOString() }, dataDir);
+  // 发布时刻先落，再流转：transitionStatus 只在 publishedAt 为空时盖戳，两天前这个种子值保得住
+  await updateContent(c2.id, { publishedAt: new Date(Date.now() - 2 * 86400_000).toISOString() }, dataDir);
+  await transitionStatus(c2.id, "published", { force: true }, dataDir);
   const campaign = await createCampaign({
     name: "冒烟 SaaS 增长",
     mode: "managed_growth",

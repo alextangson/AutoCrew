@@ -390,7 +390,43 @@ describe("video:review_confirm 与 videoReadyAt", () => {
     await fs.rm(path.join(dir, "contents", contentId), { recursive: true, force: true });
     const res = await videoReviewConfirmHandler({ ...approve, content_id: contentId, _dataDir: dir });
     expect(res.ok).toBe(true);
-    expect(String((res.data as { stampWarning?: string }).stampWarning)).toContain("videoReadyAt");
+    expect(String((res.data as { stampWarning?: string }).stampWarning)).toContain("成片戳");
+  });
+
+  it("approve：videoDone 记住的是这一版成片（阶段门只认它）", async () => {
+    await videoReviewConfirmHandler({ ...approve, content_id: contentId, _dataDir: dir });
+    expect((await getContent(contentId, dir))?.videoDone).toMatchObject({ renderedRevision: 1 });
+  });
+
+  it("重开剪辑即清 videoDone：旧成片当场作废（spec §4 #3）", async () => {
+    await videoReviewConfirmHandler({ ...approve, content_id: contentId, _dataDir: dir });
+    // done 上确认选段 = 重开；这是全仓唯一一条离开 done 的边
+    setVideoService(stubService({ getStatus: async () => ({ state: { ...STATE, phase: "done", state: "done" }, jobs: [] }) }), dir);
+    const res = await videoCutConfirmHandler({
+      content_id: contentId,
+      keeps: ["s1"],
+      base_transcript_revision: 1,
+      base_cut_revision: 2,
+      _dataDir: dir,
+    });
+    expect(res.ok).toBe(true);
+    const c = await getContent(contentId, dir);
+    expect(c?.videoDone).toBeUndefined();
+    // 首次达成的指标戳不动——它记的是「这条片子哪天第一次成了」，重剪不该改写历史
+    expect(c?.videoReadyAt).toBeTruthy();
+  });
+
+  it("门一上正常确认选段（不是重开）不碰 videoDone", async () => {
+    await videoReviewConfirmHandler({ ...approve, content_id: contentId, _dataDir: dir });
+    await videoCutConfirmHandler({
+      content_id: contentId,
+      keeps: ["s1"],
+      base_transcript_revision: 1,
+      base_cut_revision: 2,
+      _dataDir: dir,
+    });
+    // 桩里 getStatus 停在 review/awaiting_human，不是 done → 不算重开
+    expect((await getContent(contentId, dir))?.videoDone).toMatchObject({ renderedRevision: 1 });
   });
 
   it("verdict / rendered_revision 变形被拒", async () => {

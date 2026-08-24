@@ -22,6 +22,8 @@ import {
   approveCoverVariant,
   transitionStatus,
   getAllowedTransitions,
+  describeAllowedTransitions,
+  stageBlockReason,
   createPlatformVariant,
   listSiblings,
   normalizeLegacyStatus,
@@ -327,16 +329,125 @@ describe("Status Transitions", () => {
     expect(allowed.length).toBeGreaterThan(0);
   });
 
-  it("approved does NOT offer cover_pending — 封面设计师未转正,不暴露死角状态（§7.4）", () => {
-    const allowed = getAllowedTransitions("approved");
-    expect(allowed).not.toContain("cover_pending");
-    expect(allowed).toContain("publish_ready"); // 直通发布(公众号发布时自动配封面)
+  it("阶段制迁移表：approved 多一条剪辑出口，editing/cover_pending 各自成边（spec §1.1）", () => {
+    expect(getAllowedTransitions("approved")).toEqual(["publish_ready", "reviewing", "editing"]);
+    expect(getAllowedTransitions("editing")).toEqual(["cover_pending", "approved"]);
+    // cover_pending 的出口从 approved 改为 editing——回的是剪辑台，不是文案页
+    expect(getAllowedTransitions("cover_pending")).toEqual(["publish_ready", "editing"]);
   });
 
   it("normalizeLegacyStatus maps old status names", () => {
     expect(normalizeLegacyStatus("draft")).toBe("draft_ready");
     expect(normalizeLegacyStatus("review")).toBe("reviewing");
     expect(normalizeLegacyStatus("approved")).toBe("approved");
+  });
+});
+
+// --- 阶段门在写锁内（阶段制 spec §1.2）---
+
+describe("阶段门 · 收口通道", () => {
+  const video = async () =>
+    saveContent({ title: "口播稿", body: "b", tags: [], platform: "douyin", status: "approved" }, testDir);
+  const text = async () =>
+    saveContent({ title: "长文", body: "b", tags: [], platform: "wechat_mp", status: "approved" }, testDir);
+
+  it("视频稿 approved 直通 publish_ready 被门拦下,状态一个字没动", async () => {
+    const c = await video();
+    const r = await transitionStatus(c.id, "publish_ready", undefined, testDir);
+    expect(r.ok).toBe(false);
+    expect(r.blocked).toBe(true);
+    expect(r.error).toContain("推进到剪辑");
+    expect((await getContent(c.id, testDir))!.status).toBe("approved");
+  });
+
+  it("force 越得过状态图形状,越不过阶段门", async () => {
+    const c = await video();
+    const r = await transitionStatus(c.id, "publish_ready", { force: true }, testDir);
+    expect(r.ok).toBe(false);
+    expect(r.blocked).toBe(true);
+    expect((await getContent(c.id, testDir))!.status).toBe("approved");
+  });
+
+  it("文字稿照旧 approved → publish_ready 直通", async () => {
+    const c = await text();
+    expect((await transitionStatus(c.id, "publish_ready", undefined, testDir)).ok).toBe(true);
+  });
+
+  it("文字稿进不了剪辑阶段", async () => {
+    const c = await text();
+    const r = await transitionStatus(c.id, "editing", undefined, testDir);
+    expect(r.blocked).toBe(true);
+    expect(r.error).toContain("只属于视频平台");
+  });
+
+  it("editing → cover_pending 只认 videoDone：videoReadyAt 有值也拦", async () => {
+    const c = await video();
+    await transitionStatus(c.id, "editing", undefined, testDir);
+    // 首次达成的指标戳在，但这一版成片没审过——不许放行过时成片
+    await updateContent(c.id, { videoReadyAt: new Date().toISOString() }, testDir);
+    expect((await transitionStatus(c.id, "cover_pending", undefined, testDir)).blocked).toBe(true);
+
+    await updateContent(c.id, { videoDone: { renderedRevision: 1, at: new Date().toISOString() } }, testDir);
+    expect((await transitionStatus(c.id, "cover_pending", undefined, testDir)).ok).toBe(true);
+  });
+
+  it("cover_pending → publish_ready 要封面已批准", async () => {
+    const c = await video();
+    await updateContent(c.id, { videoDone: { renderedRevision: 1, at: "x" } }, testDir);
+    await transitionStatus(c.id, "editing", undefined, testDir);
+    await transitionStatus(c.id, "cover_pending", undefined, testDir);
+    expect((await transitionStatus(c.id, "publish_ready", undefined, testDir)).blocked).toBe(true);
+
+    await saveCoverReview(
+      c.id,
+      { platform: "douyin", status: "review_pending", variants: [{ label: "a", imagePaths: { "3:4": "/tmp/a.png" } }] },
+      testDir,
+    );
+    await approveCoverVariant(c.id, "a", testDir);
+    expect((await transitionStatus(c.id, "publish_ready", undefined, testDir)).ok).toBe(true);
+  });
+
+  it("saveContent 也过门：公众号稿建不进剪辑阶段", async () => {
+    await expect(
+      saveContent({ title: "x", body: "b", tags: [], platform: "wechat_mp", status: "editing" }, testDir),
+    ).rejects.toThrow(/剪辑阶段只属于视频平台/);
+  });
+
+  it("expectedStatus 对不上就拒绝、不覆盖（旧标签页 / 双击）", async () => {
+    const c = await video();
+    const first = await transitionStatus(c.id, "editing", { expectedStatus: "approved" }, testDir);
+    expect(first.ok).toBe(true);
+    // 第二次带的还是那一屏看到的 approved——盘上已经是 editing 了
+    const second = await transitionStatus(c.id, "editing", { expectedStatus: "approved" }, testDir);
+    expect(second.ok).toBe(false);
+    expect(second.error).toContain("刷新");
+    expect((await getContent(c.id, testDir))!.status).toBe("editing");
+  });
+
+  it("并发推进只成一次：校验与写入在同一把锁里（无 CAS 时两边都会读到旧状态）", async () => {
+    const c = await video();
+    const [a, b] = await Promise.all([
+      transitionStatus(c.id, "editing", undefined, testDir),
+      transitionStatus(c.id, "reviewing", undefined, testDir),
+    ]);
+    expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+    const winner = a.ok ? "editing" : "reviewing";
+    expect((await getContent(c.id, testDir))!.status).toBe(winner);
+  });
+
+  it("stageBlockReason 是不写盘的同一判定", async () => {
+    const c = await video();
+    const content = (await getContent(c.id, testDir))!;
+    expect(await stageBlockReason(content, "publish_ready", testDir)).toContain("推进到剪辑");
+    expect(await stageBlockReason(content, "editing", testDir)).toBeNull();
+    expect((await getContent(c.id, testDir))!.status).toBe("approved"); // 预判不落盘
+  });
+
+  it("describeAllowedTransitions 把被拦的那一条标出原因（推进下拉灰显）", async () => {
+    const c = await video();
+    const list = await describeAllowedTransitions((await getContent(c.id, testDir))!, testDir);
+    expect(list.find((t) => t.status === "editing")?.blockedReason).toBeUndefined();
+    expect(list.find((t) => t.status === "publish_ready")?.blockedReason).toContain("推进到剪辑");
   });
 });
 

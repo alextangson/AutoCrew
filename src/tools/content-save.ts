@@ -8,6 +8,7 @@ import {
   createPlatformVariant,
   listSiblings,
   getAllowedTransitions,
+  describeAllowedTransitions,
   normalizeLegacyStatus,
   recordAdoption,
   adoptionStats,
@@ -22,7 +23,7 @@ import type { StyleDistillResult } from "../modules/learnings/style-distiller.js
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
-  "approved", "cover_pending", "publish_ready", "publishing", "published", "archived",
+  "approved", "editing", "cover_pending", "publish_ready", "publishing", "published", "archived",
   // Legacy compat
   "draft", "review",
 ] as const;
@@ -57,7 +58,12 @@ export const contentSaveSchema = Type.Object({
   siblings: Type.Optional(Type.Array(Type.String(), { description: "Sibling content IDs" })),
   publish_url: Type.Optional(Type.String({ description: "Published URL on target platform" })),
   performance_data: Type.Optional(Type.Record(Type.String(), Type.Number(), { description: "Performance metrics: views, likes, comments, shares, etc." })),
-  force: Type.Optional(Type.Boolean({ description: "Force transition even if not in allowed transitions" })),
+  from_status: Type.Optional(Type.Unsafe<string>({
+    type: "string",
+    enum: ALL_STATUSES as unknown as string[],
+    description: "Status the caller believes the content is in (for 'transition'). Rejected with a human message if the stored status differs — stale tab / double-click protection.",
+  })),
+  force: Type.Optional(Type.Boolean({ description: "Force transition even if not in allowed transitions (never bypasses the stage guard)" })),
   diff_note: Type.Optional(Type.String({ description: "Note for revision diff tracking" })),
   verdict: Type.Optional(Type.Unsafe<AdoptionVerdict>({
     type: "string",
@@ -84,7 +90,8 @@ function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
   if (params.title !== undefined) updates.title = params.title as string;
   if (params.body !== undefined) updates.body = params.body as string;
   if (params.platform !== undefined) updates.platform = params.platform as string;
-  if (params.status) updates.status = normalizeLegacyStatus(params.status as string);
+  // status 刻意不在这里：改状态一律走 transitionStatus（阶段制 spec §1.2 收口），
+  // update 只管字段。带了 status 的 update 由调用处转成一次流转，阶段门照跑。
   if (params.tags !== undefined) updates.tags = params.tags as string[];
   if (params.hashtags !== undefined) updates.hashtags = params.hashtags as string[];
   if (params.siblings !== undefined) updates.siblings = params.siblings as string[];
@@ -135,8 +142,19 @@ export async function executeContentSave(
     const oldBody = oldContent.body;
     const newBody = params.body as string | undefined;
 
-    const updated = await updateContent(id, buildContentUpdates(params), dataDir);
+    let updated = await updateContent(id, buildContentUpdates(params), dataDir);
     if (!updated) return { ok: false, error: `Content ${id} not found` };
+
+    // 带 status 的 update 转成一次真流转：阶段门只有一条通道，直改状态跳阶段的路已封死。
+    // 目标就是当前状态时什么都不做（幂等），被门拦下则连同原因一起返回，不谎报成功。
+    if (params.status) {
+      const target = normalizeLegacyStatus(params.status as string);
+      if (target !== updated.status) {
+        const moved = await transitionStatus(id, target, {}, dataDir);
+        if (!moved.ok) return { ok: false, error: moved.error, ...(moved.blocked ? { blocked: true } : {}) };
+        updated = moved.content ?? updated;
+      }
+    }
 
     // Record diff if body changed
     let styleLearned: StyleDistillResult | undefined;
@@ -215,10 +233,16 @@ export async function executeContentSave(
     const targetStatus = params.target_status as string;
     if (!id) return { ok: false, error: "id is required for transition" };
     if (!targetStatus) return { ok: false, error: "target_status is required for transition" };
+    // from_status：调用方手里那一版的状态。旧标签页/双击推进时后端据此人话拒绝，不硬盖
+    const from = typeof params.from_status === "string" ? normalizeLegacyStatus(params.from_status) : undefined;
     const result = await transitionStatus(
       id,
       normalizeLegacyStatus(targetStatus),
-      { force: params.force as boolean, diffNote: params.diff_note as string },
+      {
+        force: params.force as boolean,
+        diffNote: params.diff_note as string,
+        ...(from ? { expectedStatus: from } : {}),
+      },
       dataDir,
     );
     return result;
@@ -252,7 +276,9 @@ export async function executeContentSave(
     if (!content) return { ok: false, error: `Content ${id} not found` };
     const currentStatus = normalizeLegacyStatus(content.status);
     const allowed = getAllowedTransitions(currentStatus);
-    return { ok: true, currentStatus, allowedTransitions: allowed };
+    // transitions 带阶段门预判：推进下拉灰显要说得出原因,不是点了才报错
+    const transitions = await describeAllowedTransitions(content, dataDir);
+    return { ok: true, currentStatus, allowedTransitions: allowed, transitions };
   }
 
   // save

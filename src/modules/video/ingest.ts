@@ -35,6 +35,7 @@ export const MAX_AROLL_MS = 30 * 60_000;
  */
 export const VIDEO_ELIGIBLE_STATUSES: ReadonlySet<ContentStatus> = new Set<ContentStatus>([
   "approved",
+  "editing",
   "cover_pending",
   "publish_ready",
   "publishing",

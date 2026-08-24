@@ -214,20 +214,13 @@ describe("approve(存量 bug 修复)", () => {
     expect(r.review.approvedImagePath).toBeTruthy();
   });
 
-  it("publish_ready 稿件选封面不被倒拨回 approved", async () => {
-    const id = await seedContent("publish_ready");
+  // 阶段制（spec §0 清扫 1）：选封面只做标记,推进阶段是人的动作,批准不许代改稿件状态
+  it.each(["publish_ready", "draft_ready", "cover_pending"])("选封面不动稿件状态（%s）", async (status) => {
+    const id = await seedContent(status);
     await createCandidates(id);
     await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
     const content = await getContent(id, dir);
-    expect(content!.status).toBe("publish_ready");
-  });
-
-  it("draft_ready 稿件选封面 → 正常推进到 approved", async () => {
-    const id = await seedContent("draft_ready");
-    await createCandidates(id);
-    await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
-    const content = await getContent(id, dir);
-    expect(content!.status).toBe("approved");
+    expect(content!.status).toBe(status);
   });
 
   it("人机协同:选定封面复制到文件夹根 封面.png(拿了就走)", async () => {
@@ -274,6 +267,47 @@ describe("revise(反馈重做闭环)", () => {
     // 修订过的方案曾被选用 → 选用作废回待审
     expect(r.review.status).toBe("review_pending");
     expect(r.review.approvedLabel).toBeUndefined();
+  });
+
+  // 阶段制 spec §1.2：撤销批准不许留下「发布就绪但封面作废」的错位态
+  it("已在待发布的稿件撤销封面批准 → 同步降级回封面设计,并给出可 toast 的说明", async () => {
+    const id = await seedContent("publish_ready");
+    await createCandidates(id);
+    await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
+    reviseMock.mockResolvedValueOnce(design("A", { titleText: "再来一版" }));
+
+    const r = (await executeCoverReview({
+      action: "revise",
+      content_id: id,
+      label: "a",
+      feedback: "标题太温",
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; statusNote?: string };
+
+    expect(r.ok).toBe(true);
+    expect((await getContent(id, dir))!.status).toBe("cover_pending");
+    expect(r.statusNote).toContain("封面设计");
+  });
+
+  it("重做的不是被选用的那张 → 不碰稿件状态", async () => {
+    const id = await seedContent("publish_ready");
+    await createCandidates(id);
+    await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir });
+    reviseMock.mockResolvedValueOnce(design("B", { titleText: "改 B" }));
+
+    const r = (await executeCoverReview({
+      action: "revise",
+      content_id: id,
+      label: "b",
+      feedback: "B 再狠一点",
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; statusNote?: string };
+
+    expect(r.ok).toBe(true);
+    expect(r.statusNote).toBeUndefined();
+    expect((await getContent(id, dir))!.status).toBe("publish_ready");
   });
 
   it("缺 feedback → 明确报错", async () => {

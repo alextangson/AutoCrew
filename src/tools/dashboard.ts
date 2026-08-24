@@ -73,7 +73,8 @@ async function overview(params: Record<string, unknown>) {
   const needsReview = contents.filter(c => c.status === "draft_ready").length;
   const needsPublish = contents.filter(c => c.status === "publish_ready").length;
   const inRevision = contents.filter(c => c.status === "revision").length;
-  const needsCover = contents.filter(c => c.status === "approved" || c.status === "cover_pending").length;
+  // 阶段制起：「等封面」就是 cover_pending 这一个阶段——approved 的视频稿要先过剪辑
+  const needsCover = contents.filter(c => c.status === "cover_pending").length;
 
   // Published stats
   const published = contents.filter(c => c.status === "published");
@@ -150,7 +151,7 @@ async function pending(params: Record<string, unknown>) {
   const contents = await listContents(dataDir);
 
   const items = contents
-    .filter(c => ["draft_ready", "revision", "approved", "cover_pending", "publish_ready"].includes(c.status))
+    .filter(c => ["draft_ready", "revision", "approved", "editing", "cover_pending", "publish_ready"].includes(c.status))
     .map(c => ({
       id: c.id,
       title: c.title,
@@ -160,15 +161,16 @@ async function pending(params: Record<string, unknown>) {
       suggestedAction: getSuggestedAction(c.status),
     }))
     .sort((a, b) => {
-      // Priority: publish_ready > draft_ready > revision > approved > cover_pending
+      // 越靠近发布越先办；剪辑/封面排在 approved 之前——它们是已经开工的稿
       const priority: Record<string, number> = {
         publish_ready: 0,
         draft_ready: 1,
         revision: 2,
-        approved: 3,
-        cover_pending: 4,
+        cover_pending: 3,
+        editing: 4,
+        approved: 5,
       };
-      return (priority[a.status] ?? 5) - (priority[b.status] ?? 5);
+      return (priority[a.status] ?? 6) - (priority[b.status] ?? 6);
     });
 
   return {
@@ -183,8 +185,9 @@ function getSuggestedAction(status: string): string {
   switch (status) {
     case "draft_ready": return "运行审核 (autocrew_review)";
     case "revision": return "修改后重新审核";
-    case "approved": return "生成封面 (autocrew_cover_review)";
-    case "cover_pending": return "等待封面生成完成";
+    case "approved": return "视频稿推进到「剪辑」；文字稿直接跑发布前检查";
+    case "editing": return "去剪辑台把成片做出来（挂 A-roll → 选段 → 审片）";
+    case "cover_pending": return "去封面台定封面，再推进到「待发布」";
     case "publish_ready": return "发布 (autocrew_publish clipboard)";
     default: return "";
   }

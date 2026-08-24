@@ -243,11 +243,27 @@ export async function videoCutConfirmHandler(payload: Payload): Promise<Reply> {
   const args = parseCutArgs(payload);
   if (typeof args === "string") return { ok: false, error: args };
   try {
+    // done 上确认 = 重开（改选段再出一版）。这是全仓唯一一条离开 done 的边
+    // （video state-machine 的回退白名单里只有 done/done → edit/queued），
+    // 所以 `videoDone` 的清除点就这一处：旧成片当场作废，重新审过才能再推进到封面。
+    const before = await ctx.service.getStatus(contentId);
     const state = await ctx.service.confirmCut(contentId, args);
+    if (before?.state?.phase === "done") await clearVideoDone(contentId, ctx.dataDir);
     void appendAction(ctx.dataDir, { kind: "video_cut", contentId }); // 工作区动作进有界环（设计 §Phase 2）
     return { ok: true, data: { state } };
   } catch (err) {
     return fail(err);
+  }
+}
+
+/** 重开即作废上一版的「审过了」。清不掉要报出来——留着它等于放行一版过时成片 */
+async function clearVideoDone(contentId: string, dataDir: string): Promise<void> {
+  try {
+    await updateContent(contentId, { videoDone: undefined }, dataDir);
+  } catch (err) {
+    console.warn(
+      `[video] ${contentId} 的成片戳没清掉（推进到封面可能放行旧成片）：${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -394,24 +410,43 @@ export async function videoReviewConfirmHandler(payload: Payload): Promise<Reply
     const state = await ctx.service.confirmReview(contentId, args);
     if (args.verdict !== "approve") return { ok: true, data: { state } };
     void appendAction(ctx.dataDir, { kind: "video_reviewed", contentId }); // 工作区动作进有界环（设计 §Phase 2）
-    const stamped = await stampVideoReady(contentId, ctx.dataDir);
+    const stamped = await stampVideoReady(contentId, state.revisions.rendered ?? 0, ctx.dataDir);
     return { ok: true, data: { state, ...stamped } };
   } catch (err) {
     return fail(err);
   }
 }
 
-/** 首次达成盖戳，已有值不覆盖（publishedAt 同款纪律） */
-async function stampVideoReady(contentId: string, dataDir: string): Promise<Reply> {
+/**
+ * 审片通过的两枚戳，一次写完：
+ * - `videoReadyAt` **首次达成**盖一次，已有值不覆盖（publishedAt 同款纪律，复盘用时靠它）；
+ * - `videoDone` **每次通过都刷新**，记的是「现在这一版成片审过了」——阶段门只认它，
+ *   重开剪辑时会被清掉（见 videoCutConfirmHandler）。
+ *
+ * 盖戳失败不改变裁决结果，但 warning 必须可见：没有 `videoDone` 就推不进封面阶段，
+ * 静默失败会让人对着灰掉的推进按钮找不着北。
+ */
+async function stampVideoReady(contentId: string, renderedRevision: number, dataDir: string): Promise<Reply> {
   try {
     const content = await getContent(contentId, dataDir);
-    if (!content) return { videoReadyAt: null, stampWarning: "稿件读不到，videoReadyAt 未盖" };
-    if (content.videoReadyAt) return { videoReadyAt: content.videoReadyAt };
-    const updated = await updateContent(contentId, { videoReadyAt: new Date().toISOString() }, dataDir);
-    if (!updated?.videoReadyAt) return { videoReadyAt: null, stampWarning: "videoReadyAt 落盘失败（复盘用时会少这一条）" };
-    return { videoReadyAt: updated.videoReadyAt };
+    if (!content) return { videoReadyAt: null, stampWarning: "稿件读不到，成片戳未盖（推进到封面会被拦下）" };
+    const updated = await updateContent(
+      contentId,
+      {
+        ...(content.videoReadyAt ? {} : { videoReadyAt: new Date().toISOString() }),
+        videoDone: { renderedRevision, at: new Date().toISOString() },
+      },
+      dataDir,
+    );
+    if (!updated?.videoDone) {
+      return { videoReadyAt: null, stampWarning: "成片戳落盘失败（推进到封面会被拦下，重新确认一次）" };
+    }
+    return { videoReadyAt: updated.videoReadyAt ?? null };
   } catch (err) {
-    return { videoReadyAt: null, stampWarning: `videoReadyAt 落盘失败：${err instanceof Error ? err.message : String(err)}` };
+    return {
+      videoReadyAt: null,
+      stampWarning: `成片戳落盘失败：${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 
