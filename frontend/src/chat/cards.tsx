@@ -313,6 +313,30 @@ function VersionsCard({ data }: { data: CardData }) {
   );
 }
 
+/**
+ * 角度候选（角度卡 spec §1.6）：写稿工具**不接单**时的回执。
+ * 纯展示——选哪张是创始人的品味，由他在对话里说出来（卡上放个「选这张」按钮等于替他省掉
+ * 那句话，而那句话正是总编辑判断「他是真选了还是随手点了」的依据）。
+ */
+function AngleCardsCard({ data }: { data: CardData }) {
+  const cards = arr(data.cards) as Array<CardData>;
+  return (
+    <div className="ccard">
+      <Kicker>角度候选 · {cards.length} 张 · 简报 v{String(data.revision ?? "?")}</Kicker>
+      {cards.map((c, i) => (
+        <div key={i} className="angle-mini">
+          <div className="ccard-title">
+            {i + 1}. {str(c.angle) || str(c.id)}
+          </div>
+          <p>论点：{str(c.thesis)}</p>
+          {str(c.antiScope) && <p className="muted mono">禁区：{str(c.antiScope)}</p>}
+        </div>
+      ))}
+      <p className="muted">回复选哪张（如「第2张」）,或直接说你的角度,或说「直接写」。</p>
+    </div>
+  );
+}
+
 /** clear_revision_focus 回执：一行，告诉用户修改模式已经退了（退的动作总编辑自己做的） */
 function FocusClearedCard() {
   return (
@@ -339,6 +363,7 @@ export function ChatCard({ card, nav }: { card: ChatCardShape; nav?: (route: Rou
     case "campaigns": return <CampaignsCard data={card.data} />;
     case "inbox": return <InboxCard data={card.data} />;
     case "versions": return <VersionsCard data={card.data} />;
+    case "angle_cards": return <AngleCardsCard data={card.data} />;
     case "focus_cleared": return <FocusClearedCard />;
     default:
       return (

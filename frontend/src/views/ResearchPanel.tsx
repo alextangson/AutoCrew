@@ -12,6 +12,9 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { toast } from "../ui";
 import { loadResearchAssets, type ResearchAssetView as AssetView } from "./ResearchAssetPicker";
+import { linkDomain, type AngleCard, type Topic } from "../lib";
+import { angleChoiceState, type AngleGate } from "./angle-choice";
+import { AngleSection } from "./AngleCards";
 
 type JobStatus = "queued" | "running" | "succeeded" | "partial" | "failed";
 type PerspectiveStatus = "pending" | "running" | "succeeded" | "failed";
@@ -49,6 +52,8 @@ interface Brief {
   summary: string;
   tensions: string[];
   angleSuggestions: string[];
+  /** 结构化角度卡(角度卡 spec §1.2);旧简报没有这个字段 = 没有闸口 */
+  angleCards?: AngleCard[];
   evidence: Array<{ claim: string; quote: string; sourceUrl: string }>;
   gaps: string[];
   missingPerspectives: string[];
@@ -75,11 +80,6 @@ const STEP_ICON: Record<PerspectiveStatus, string> = {
 const JOB_RUNNING: JobStatus[] = ["queued", "running"];
 
 const fmtTime = (iso: string): string => (iso.length >= 16 ? `${iso.slice(5, 10)} ${iso.slice(11, 16)}` : iso);
-
-function domain(url: string): string {
-  const m = url.match(/https?:\/\/([^/\s]+)/);
-  return m ? m[1].replace(/^www\./, "") : url.slice(0, 30);
-}
 
 /**
  * 素材候选区（§7）。两类各说各的话：
@@ -112,7 +112,7 @@ function AssetPicks({ assets }: { assets: AssetView[] }) {
                 <span className="research-asset-err">{a.downloadError ?? "未下载"}</span>
               )}
               <a className="research-src mono" href={a.sourcePageUrl} target="_blank" rel="noreferrer">
-                {domain(a.sourcePageUrl)} ↗
+                {linkDomain(a.sourcePageUrl)} ↗
               </a>
               {!a.stored && (
                 <a className="research-src mono" href={a.url} target="_blank" rel="noreferrer">
@@ -139,7 +139,8 @@ function BriefView({ brief, assets }: { brief: Brief; assets: AssetView[] }) {
       ) : (
         <p className="muted">未发现明确张力点。</p>
       )}
-      {brief.angleSuggestions.length > 0 && (
+      {/* 有结构化角度卡时不再重复这份纯文本候选——角度决策在上面的角度卡区,两份候选会打架 */}
+      {(brief.angleCards ?? []).length === 0 && brief.angleSuggestions.length > 0 && (
         <div className="research-block">
           <strong>可写角度</strong>
           <ol>{brief.angleSuggestions.map((a, i) => <li key={i}>{a}</li>)}</ol>
@@ -153,7 +154,7 @@ function BriefView({ brief, assets }: { brief: Brief; assets: AssetView[] }) {
               <li key={i}>
                 {e.claim}
                 <a className="research-src mono" href={e.sourceUrl} target="_blank" rel="noreferrer">
-                  {domain(e.sourceUrl)} ↗
+                  {linkDomain(e.sourceUrl)} ↗
                 </a>
               </li>
             ))}
@@ -234,10 +235,47 @@ function StateLines({ st }: { st: StatusData }) {
   return null;
 }
 
-export function ResearchPanel({ topicId }: { topicId: string }) {
+/**
+ * 读当前有效简报。**不等「看简报」展开就读**:角度卡是写稿前的闸口,藏在折叠里等于没有闸口。
+ * 读不到就把原因留成常驻一行(不 toast:这是事实不是一次性提示)。
+ */
+function useBrief(topicId: string, revision: number | null) {
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [briefErr, setBriefErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (revision === null) {
+      setBrief(null);
+      setBriefErr(null);
+      return;
+    }
+    let alive = true;
+    void invoke("research:brief_get", { topic_id: topicId }).then((r) => {
+      if (!alive) return;
+      if (!r.ok) {
+        setBrief(null);
+        return setBriefErr(r.error ?? "简报读取失败");
+      }
+      setBriefErr(null);
+      setBrief((r as unknown as { data: { brief: Brief } }).data.brief);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [revision, topicId]);
+  return { brief, briefErr };
+}
+
+export function ResearchPanel(props: {
+  topic: Topic;
+  /** 角度闸口的事实上报给平台矩阵(「生成」按钮据此决定拦不拦) */
+  onAngleGate?: (gate: AngleGate) => void;
+  /** 选择落盘后让上层重读选题——selectedAngle 是选题的字段,事实源在上层 */
+  onSelectionChange?: () => void;
+  focusAngles?: boolean;
+}) {
+  const topicId = props.topic.id;
   const [st, setSt] = useState<StatusData | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [brief, setBrief] = useState<Brief | null>(null);
   const [assets, setAssets] = useState<AssetView[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -258,18 +296,12 @@ export function ResearchPanel({ topicId }: { topicId: string }) {
   }, [load, topicId]);
 
   const revision = st?.currentBrief?.revision ?? null;
+  const { brief, briefErr } = useBrief(topicId, revision);
+
+  // 素材单独读(展开时才要):落盘态只有 list_assets 说了算,简报里存的是候选本身
   useEffect(() => {
-    if (!open || revision === null) return setBrief(null);
+    if (!open || revision === null) return;
     let alive = true;
-    void invoke("research:brief_get", { topic_id: topicId }).then((r) => {
-      if (!alive) return;
-      if (!r.ok) {
-        setBrief(null);
-        return toast(r.error ?? "简报读取失败");
-      }
-      setBrief((r as unknown as { data: { brief: Brief } }).data.brief);
-    });
-    // 素材单独读:落盘态(stored/尺寸/取图地址)只有 list_assets 说了算,简报里存的是候选本身
     void loadResearchAssets(topicId).then((list) => {
       if (alive) setAssets(list);
     });
@@ -277,6 +309,13 @@ export function ResearchPanel({ topicId }: { topicId: string }) {
       alive = false;
     };
   }, [open, revision, topicId]);
+
+  const cards = brief?.angleCards ?? [];
+  const choice = angleChoiceState(props.topic.selectedAngle, st?.currentBrief ?? null);
+  const onAngleGate = props.onAngleGate;
+  useEffect(() => {
+    onAngleGate?.({ cards: cards.length, state: choice });
+  }, [cards.length, choice, onAngleGate]);
 
   const dig = async () => {
     setBusy(true);
@@ -320,6 +359,26 @@ export function ResearchPanel({ topicId }: { topicId: string }) {
       </div>
 
       <StateLines st={st} />
+      {briefErr && <p className="inbox-bad">{briefErr}</p>}
+      {/* 选择过期、而新简报又没有候选可换(降级简报/简报读不到):这时候也得说,不能让它悄悄失效 */}
+      {cards.length === 0 && choice === "stale" && (
+        <p className="inbox-bad">
+          你之前选的角度「{props.topic.selectedAngle?.card.angle}」已过期,当前又没有可选的角度候选——
+          写这条会按「未经角度点选」处理,重跑深调研可以出新候选。
+        </p>
+      )}
+      {brief && cards.length > 0 && (
+        <AngleSection
+          topicId={topicId}
+          briefRevision={brief.revision}
+          evidence={brief.evidence}
+          cards={cards}
+          selected={props.topic.selectedAngle}
+          state={choice}
+          focus={props.focusAngles}
+          onChanged={() => props.onSelectionChange?.()}
+        />
+      )}
       {open && brief && <BriefView brief={brief} assets={assets} />}
     </div>
   );

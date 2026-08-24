@@ -4,11 +4,14 @@
  * 拖拽换列=content:transition;卡可入回收站(软删)+回收站恢复;
  * 点原子→平台矩阵(灵感详情/方向补充/有稿点开/无稿生成)。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { ResearchPanel } from "./ResearchPanel";
+import { ANGLE_SECTION_ID, AngleGuide } from "./AngleCards";
+import { needsAnglePick, NO_ANGLE_GATE, type AngleGate } from "./angle-choice";
+import { buildDispatchBrief } from "./dispatch-brief";
 import {
   BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
@@ -329,6 +332,11 @@ function Matrix(props: {
 }) {
   const { atom, seats } = props;
   const [direction, setDirection] = useState("");
+  /** 角度闸口的事实由 ResearchPanel 上报(它才有简报);这里只用来决定拦不拦 */
+  const [gate, setGate] = useState<AngleGate>(NO_ANGLE_GATE);
+  /** 非 null = 这个平台的「生成」被角度闸口拦下了,正等创始人四选其一(§1.6) */
+  const [asking, setAsking] = useState<string | null>(null);
+  const directionRef = useRef<HTMLInputElement | null>(null);
   const t = atom.topic;
   const title = t?.title ?? atomRep(atom)?.title ?? "（无标题）";
   const byPlatform = new Map(atom.members.map((m) => [m.platform, m]));
@@ -339,20 +347,32 @@ function Matrix(props: {
     return isFinite(age) ? Math.max(0, Math.ceil(3 - age)) : null;
   })();
 
-  const dispatch = async (platform: string) => {
-    let brief = `用选题《${title}》写一篇${platformLabel(platform)}原生版本`;
-    const ctx: string[] = [];
-    if (t) {
-      ctx.push(`灵感库编号：${t.id}（开写时带上 topic_id,血缘别断）`);
-      if (t.reason) ctx.push("入库理由：" + t.reason);
-      if (t.description && t.description !== title) ctx.push("背景：" + t.description);
-      if (typeof t.score === "number") ctx.push(`选题评分：${t.score}/100`);
-      if (t.angles?.length) ctx.push(`可写角度：${t.angles.join("；")}`);
-      if (t.link) ctx.push(`参考链接：${t.link}（先用 read_url 读原文再写，不要凭标题脑补）`);
+  const onAngleGate = useCallback((g: AngleGate) => {
+    // 值没变就不换对象——否则「上报 → 重渲 → 再上报」会转起来
+    setGate((prev) => (prev.cards === g.cards && prev.state === g.state ? prev : g));
+  }, []);
+
+  const scrollToAngles = () => {
+    document.getElementById(ANGLE_SECTION_ID)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const focusDirection = () => {
+    directionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    directionRef.current?.focus();
+  };
+
+  /**
+   * 派活。有角度候选却还没定角度时**先不派**(§1.6):拦下来给三个出口,
+   * 「直接写」是显式按钮——点了才走,并把这句话原样带进 brief 让总编辑落成 skip_reason。
+   */
+  const dispatch = async (platform: string, skipAngle = false) => {
+    if (!skipAngle && needsAnglePick(gate, direction)) {
+      setAsking(platform);
+      scrollToAngles();
+      return;
     }
-    if (direction.trim()) ctx.push(`创作者想写的方向：${direction.trim()}（这是最高优先级的角度指引）`);
-    if (ctx.length) brief += "。选题上下文——" + ctx.join("；");
-    const receipt = await props.send(brief);
+    setAsking(null);
+    const receipt = await props.send(buildDispatchBrief({ title, topic: t ?? null, platform, direction, skipAngle }));
     toast(receipt.ok ? `已受理${receipt.actionId ? ` · ${receipt.actionId}` : ""}` : (receipt.error ?? "派活失败"));
   };
 
@@ -419,14 +439,32 @@ function Matrix(props: {
             </p>
           )}
           <input
+            ref={directionRef}
             className="matrix-direction"
-            placeholder="你想写的方向/角度(可选,派活时带给写手)"
+            placeholder="你想写的方向/角度(可选,派活时带给写手——手写角度优先级最高)"
             value={direction}
             onChange={(e) => setDirection(e.target.value)}
           />
-          {/* 深调研:四视角简报,写这条选题时自动注入(deep-research spec §8) */}
-          <ResearchPanel topicId={t.id} />
+          {/* 深调研:四视角简报 + 写前角度卡,写这条选题时自动注入(deep-research spec §8 / 角度卡 spec §1.4) */}
+          <ResearchPanel
+            topic={t}
+            onAngleGate={onAngleGate}
+            onSelectionChange={() => void props.reload()}
+            focusAngles={asking !== null}
+          />
         </div>
+      )}
+      {asking && (
+        <AngleGuide
+          platform={asking}
+          cards={gate.cards}
+          ready={!needsAnglePick(gate, direction)}
+          onGoPick={scrollToAngles}
+          onWriteOwn={focusDirection}
+          onSkip={() => void dispatch(asking, true)}
+          onGo={() => void dispatch(asking)}
+          onCancel={() => setAsking(null)}
+        />
       )}
       <div className="mono muted" style={{ margin: "8px 0 6px" }}>平台矩阵 · 有稿点开,无稿生成</div>
       <div className="matrix-grid">

@@ -79,6 +79,35 @@ export const WORKSPACE_LABEL: Record<StageWorkspace, string> = {
   publish: "发布台",
 };
 
+/**
+ * 角度卡(角度卡 spec §1.2)——后端 src/modules/research/brief-store.ts 的 `AngleCard` 对应件,
+ * 逐字段同名同义。它约束的是**全稿**不只是开头:thesis 必须被论证,antiScope 是禁区。
+ * 证据引用是**位置 id**("ev-1" = 简报 evidence 第 1 条,"tension-1" 同理)。
+ */
+export interface AngleCard {
+  /** "angle-1"…(简报版本内稳定:位置即身份) */
+  id: string;
+  angle: string;
+  thesis: string;
+  coreEvidenceIds: string[];
+  tensionId?: string;
+  antiScope: string;
+  audiencePain: string;
+  holdTrigger: string;
+  hookDraft: string;
+}
+
+/**
+ * 创始人选定的角度(后端 SelectedAngle 对应件)。存指针 + **生效卡快照**两样:
+ * 改写版就存改写版,读侧统一走 `card`;指针(briefRevision/angleId)只用来现算过期。
+ */
+export interface SelectedAngle {
+  briefRevision: number;
+  angleId: string;
+  card: AngleCard;
+  selectedAt: string;
+}
+
 export interface Topic {
   id: string;
   title: string;
@@ -95,6 +124,8 @@ export interface Topic {
     timeliness: number;
   };
   angles?: string[];
+  /** 创始人点选/改写的角度卡;未选 = 字段不落,写稿走「未经角度点选」 */
+  selectedAngle?: SelectedAngle;
   scoredAt?: string;
   createdAt: string;
   /** 续期锚:有动作(如启动深调研)就从那一刻重新计时——过期清理与卡上天龄都按它算 */
@@ -140,6 +171,12 @@ export interface Content {
 export interface AllowedTransition {
   status: string;
   blockedReason?: string;
+}
+
+/** 链接的显示域名(去掉 www.);不是合法 URL 就截前 30 字符——展示用,不做校验 */
+export function linkDomain(url: string): string {
+  const m = url.match(/https?:\/\/([^/\s]+)/);
+  return m ? m[1].replace(/^www\./, "") : url.slice(0, 30);
 }
 
 /** 平台链接白名单:只认 http(s)。输入校验与渲染前校验共用它——存量脏数据同样不许变成可点链接 */

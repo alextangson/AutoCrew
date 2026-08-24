@@ -635,6 +635,32 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .research-asset-cap { font-size: 12px; }
 .research-asset-err { color: var(--danger); }
 .research-asset figcaption .research-src { margin-left: 0; }
+/* 角度卡:写前的品味闸口(角度卡 spec §1.4)。沿用简报区的发丝线语言,选中态用墨线加粗左边 */
+.angle-section { margin-top: 10px; padding: 6px 0 2px; border-top: 1px dashed var(--border); }
+.angle-section-focus { border-left: 2px solid var(--hot); padding-left: 10px; background: var(--card); }
+.angle-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: 8px 10px; margin-top: 8px; font-size: 13px; }
+.angle-card-on { border-left: 3px solid var(--ink); }
+.angle-card-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.angle-angle { font-size: 14px; }
+.angle-chip-on { background: var(--ink); color: var(--accent-text); border-color: var(--ink); }
+.angle-thesis { margin-top: 4px; }
+.angle-hook { margin-top: 4px; font-family: var(--font-display); }
+.angle-evidence { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.angle-evidence li { margin: 2px 0; }
+.angle-card-actions { margin-top: 8px; }
+.angle-card-actions button { font-size: 11px; padding: 2px 8px; }
+.angle-edit { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.angle-edit-field { display: block; margin-bottom: 6px; }
+.angle-edit-field textarea { width: 100%; resize: vertical; margin-top: 2px; }
+/* 派活被拦下时的引导条:窄条不是弹层——要选的卡就在同一页上面,盖住它就本末倒置了 */
+.angle-guide { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 10px 0 0; padding: 8px 10px; border: 1px solid var(--hot); border-radius: var(--radius-card); background: var(--card); font-size: 13px; }
+.angle-guide > span:first-child { flex: 1; min-width: 220px; }
+.angle-guide-ready { border-color: var(--success); }
+.angle-guide button { font-size: 11px; padding: 2px 8px; }
+/* 对话里的角度候选卡:紧凑三行一张,只报事实不给动作(选哪张由用户在对话里说) */
+.angle-mini { margin-top: 6px; font-size: 13px; }
+.angle-mini + .angle-mini { padding-top: 6px; border-top: 1px dashed var(--border); }
+
 /* 研究素材选图弹层:复用 .dlg 报纸风外框,只加一层网格 */
 .ra-dlg { width: min(620px, 94vw); }
 .ra-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; max-height: 46vh; overflow-y: auto; }
