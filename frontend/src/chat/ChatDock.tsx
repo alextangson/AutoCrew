@@ -31,7 +31,12 @@ import {
   writeModelChoice,
   type ChatModelOption,
 } from "./model-choice";
-import { conversationGroups, conversationHint, type ConversationSummary } from "./conversation-list";
+import {
+  conversationGroups,
+  conversationHint,
+  decideConversationSwitch,
+  type ConversationSummary,
+} from "./conversation-list";
 import { PickerButton } from "../picker";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
@@ -94,6 +99,15 @@ export function ChatDock(props: {
   /** 列表拉不动时的红字：空列表和读取失败必须长得不一样，否则用户以为会话没了 */
   const [convsError, setConvsError] = useState("");
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
+  // 自动切换在 effect 里跑，读的必须是最新的激活会话（与 viewRef 同一手法）
+  const activeConvRef = useRef(activeConversationId);
+  activeConvRef.current = activeConversationId;
+  /**
+   * 已经为哪篇稿件做过自动切换。初值 = 挂载时那篇（深链直达编辑器）——
+   * 挂载那次由下面的启动 effect 负责，这里先认下，免得切换 effect 抢跑一次。
+   * 只在真的换了稿件时才动，否则会盖掉用户在同一篇稿件下手动选的会话。
+   */
+  const handledContentRef = useRef<string | undefined>(props.contentContext?.contentId);
   const [contextTitle, setContextTitle] = useState("");
   /** 可选模型档位（服务端给的真实清单）与当前选择；只有 >1 档时才显示切换器 */
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
@@ -163,6 +177,34 @@ export function ChatDock(props: {
     );
   };
   /**
+   * 打开稿件 → 右栏落到这篇稿件名下的会话（软绑定）。判定是纯函数,这里只接线。
+   * 每次现拉一次列表：刚聊完那轮新建的会话可能还没进 convs,凭旧列表会把「聊过」误判成没聊过。
+   * notify=false 用于挂载那次——刚进来就弹提示是噪音。
+   */
+  const applyContentSwitch = async (contentId: string, notify: boolean) => {
+    const list = await listConversations();
+    if (list === null) return; // 列表拉不动就别动会话：切错窗口比不切更伤
+    // 拉列表这会儿用户又翻到了别的稿件：让位给后来的那次，别把窗口切回旧稿件
+    if (handledContentRef.current !== contentId) return;
+    setConvs(list);
+    const decision = decideConversationSwitch({
+      list,
+      contentId,
+      ...(activeConvRef.current ? { activeId: activeConvRef.current } : {}),
+    });
+    if (decision.action === "stay") return;
+    if (decision.action === "load") {
+      await loadConversation(decision.id);
+      if (notify) toast("已切到这篇稿件的会话");
+      return;
+    }
+    // 这篇还没聊过：进新会话空状态,首条消息发出时才建会话并绑定。
+    // 静默——头部「当前稿件」那行已经说清在哪篇上了
+    setActiveConversationId(undefined);
+    setMsgs([]);
+  };
+
+  /**
    * 断线恢复（设计 §Phase 3）：挂载/SSE 重连时先重载会话，再看本地有没有记着一轮没收尾的 turn。
    * 三态各有明确出口，绝不假装「还在跑」——服务端重启后 turn_status 就是 unknown。
    */
@@ -196,13 +238,33 @@ export function ChatDock(props: {
   }, []);
 
   useEffect(() => {
-    void listConversations().then(async (list) => {
-      if (list) setConvs(list);
-      if (list && list.length > 0) await loadConversation(list[0].id);
+    void (async () => {
+      const contentId = props.contentContext?.contentId;
+      if (contentId) {
+        // 深链直达编辑器：挂载就带着稿件时按绑定落位,不先跳去一段无关会话再被切走
+        await applyContentSwitch(contentId, false);
+      } else {
+        const list = await listConversations();
+        if (list) setConvs(list);
+        if (list && list.length > 0) await loadConversation(list[0].id);
+      }
       await recoverPendingTurn();
-    });
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * 换稿件就换会话。busy 时不切（不打断进行中的一轮）——busy 进依赖表,
+   * 本轮 settle 后这个 effect 会带着当时最新的 contentId 再跑一次,把切换补上。
+   */
+  useEffect(() => {
+    const id = props.contentContext?.contentId;
+    if (!id) return; // 看板/增长面板等非稿件视图：会话不动
+    if (id === handledContentRef.current || busy) return;
+    handledContentRef.current = id;
+    void applyContentSwitch(id, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.contentContext?.contentId, busy]);
 
   const send = async (text: string): Promise<ChatDispatchReceipt> => {
     const message = text.trim();

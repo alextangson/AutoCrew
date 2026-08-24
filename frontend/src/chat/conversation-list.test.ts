@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { relativeTime, conversationHint, conversationGroups, type ConversationSummary } from "./conversation-list";
+import {
+  relativeTime,
+  conversationHint,
+  conversationGroups,
+  findConversationForContent,
+  decideConversationSwitch,
+  type ConversationSummary,
+} from "./conversation-list";
 
 /** 固定"现在"= 2026-08-23 15:00 本地时间，所有断言都相对它 */
 const NOW = new Date(2026, 7, 23, 15, 0, 0).getTime();
@@ -84,5 +91,63 @@ describe("conversationGroups", () => {
 
   it("全空回空数组", () => {
     expect(conversationGroups([], NOW)).toEqual([]);
+  });
+});
+
+/** 绑定了稿件的会话 */
+function bound(id: string, contentId: string, updatedAt: string): ConversationSummary {
+  return { id, title: id, updatedAt, contentId };
+}
+
+describe("findConversationForContent", () => {
+  const list = [
+    bound("旧的A", "c-1", at(3 * 3_600_000)),
+    bound("新的A", "c-1", at(60_000)),
+    bound("B", "c-2", at(30_000)),
+    conv("没绑定的", at(0)),
+  ];
+
+  it("命中这篇稿件名下 updatedAt 最新的一条", () => {
+    expect(findConversationForContent(list, "c-1")?.id).toBe("新的A");
+    expect(findConversationForContent(list, "c-2")?.id).toBe("B");
+  });
+
+  it("没聊过的稿件回 undefined，旧会话（无绑定字段）永不被认领", () => {
+    expect(findConversationForContent(list, "c-9")).toBeUndefined();
+    expect(findConversationForContent([conv("旧", at(0))], "c-1")).toBeUndefined();
+  });
+
+  it("空 contentId 不匹配任何东西", () => {
+    expect(findConversationForContent(list, "")).toBeUndefined();
+  });
+
+  it("坏时间戳不崩：当作最旧，但唯一候选照样返回", () => {
+    expect(findConversationForContent([bound("坏", "c-1", "xxx"), bound("好", "c-1", at(0))], "c-1")?.id).toBe("好");
+    expect(findConversationForContent([bound("坏", "c-1", "xxx")], "c-1")?.id).toBe("坏");
+  });
+});
+
+describe("decideConversationSwitch", () => {
+  const list = [bound("A", "c-1", at(60_000)), bound("B", "c-2", at(30_000))];
+
+  it("当前这段已经属于这篇稿件 → 不动（别打断正在聊的）", () => {
+    expect(decideConversationSwitch({ list, contentId: "c-1", activeId: "A" })).toEqual({ action: "stay" });
+  });
+
+  it("换到别的稿件 → 切到它名下最近那段", () => {
+    expect(decideConversationSwitch({ list, contentId: "c-2", activeId: "A" })).toEqual({ action: "load", id: "B" });
+  });
+
+  it("这篇稿件还没聊过 → 进新会话空状态", () => {
+    expect(decideConversationSwitch({ list, contentId: "c-9", activeId: "A" })).toEqual({ action: "fresh" });
+  });
+
+  it("非稿件视图（contentId 为空）→ 会话不动", () => {
+    expect(decideConversationSwitch({ list, contentId: "", activeId: "A" })).toEqual({ action: "stay" });
+  });
+
+  it("当前没有激活会话时照常按绑定判定", () => {
+    expect(decideConversationSwitch({ list, contentId: "c-1" })).toEqual({ action: "load", id: "A" });
+    expect(decideConversationSwitch({ list, contentId: "c-9" })).toEqual({ action: "fresh" });
   });
 });

@@ -20,6 +20,12 @@ export interface ConversationMeta {
   createdAt: string;
   updatedAt: string;
   turns: number;
+  /**
+   * 会话归属的稿件（软绑定）。additive 扩展——旧会话没这个字段照常读，
+   * 只是永远不会被「打开稿件自动切会话」命中，纯手动，这是预期。
+   * 有意不做硬隔离：跨稿件聊（「借鉴抖音那篇的开头」）必须仍然可行。
+   */
+  contentId?: string;
 }
 
 export interface ConversationMessage {
@@ -67,6 +73,7 @@ function safeConvDir(root: string, id: string): string | null {
 export async function createConversation(
   firstUserMessage: string,
   dataDir?: string,
+  contentId?: string,
 ): Promise<ConversationMeta> {
   const root = await conversationsRoot(dataDir);
   const id = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -77,6 +84,8 @@ export async function createConversation(
     createdAt: now,
     updatedAt: now,
     turns: 0,
+    // 空串不写：没绑定和绑了个空 id 在读取侧是两回事
+    ...(contentId ? { contentId } : {}),
   };
   const convDir = path.join(root, id);
   await fs.mkdir(convDir, { recursive: true });

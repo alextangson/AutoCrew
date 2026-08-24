@@ -13,6 +13,8 @@ export interface ConversationSummary {
   title: string;
   updatedAt: string;
   turns?: number;
+  /** 会话归属的稿件（软绑定）；旧会话没有，永远不参与自动匹配 */
+  contentId?: string;
 }
 
 const MINUTE = 60_000;
@@ -36,6 +38,52 @@ export function conversationHint(c: ConversationSummary, now: number): string {
   const rel = relativeTime(c.updatedAt, now);
   const turns = typeof c.turns === "number" && c.turns > 0 ? `${c.turns}轮` : "";
   return [turns, rel].filter(Boolean).join(" · ");
+}
+
+/**
+ * 这篇稿件名下最近聊过的那段（软绑定的「最近」= updatedAt 最大）。
+ * 坏时间戳当作最旧，但绝不因此漏掉唯一一条候选——全坏时返回排在最前的那条。
+ */
+export function findConversationForContent(
+  list: ConversationSummary[],
+  contentId: string,
+): ConversationSummary | undefined {
+  if (!contentId) return undefined;
+  let best: ConversationSummary | undefined;
+  let bestTs = -Infinity;
+  for (const c of list) {
+    if (c.contentId !== contentId) continue;
+    const t = Date.parse(c.updatedAt);
+    const ts = Number.isFinite(t) ? t : -Infinity;
+    if (!best || ts > bestTs) {
+      best = c;
+      bestTs = ts;
+    }
+  }
+  return best;
+}
+
+/**
+ * 打开某篇稿件时右栏该怎么动（切换判定的唯一事实源，ChatDock 只接线）：
+ * stay = 当前这段已经是这篇稿件的，别打断；load = 切到它名下最近那段；
+ * fresh = 这篇稿件还没聊过，进新会话空状态（首条消息发出时才建会话并绑定）。
+ */
+export type ConversationSwitch =
+  | { action: "stay" }
+  | { action: "load"; id: string }
+  | { action: "fresh" };
+
+export function decideConversationSwitch(params: {
+  list: ConversationSummary[];
+  contentId: string;
+  activeId?: string;
+}): ConversationSwitch {
+  const { list, contentId, activeId } = params;
+  if (!contentId) return { action: "stay" }; // 非稿件视图（看板/增长面板）不动会话
+  const active = activeId ? list.find((c) => c.id === activeId) : undefined;
+  if (active?.contentId === contentId) return { action: "stay" };
+  const hit = findConversationForContent(list, contentId);
+  return hit ? { action: "load", id: hit.id } : { action: "fresh" };
 }
 
 /** 本地日历日的 00:00（分组按自然日，不按 24 小时滚动窗口——「昨天」得是昨天） */

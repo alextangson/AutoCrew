@@ -41,6 +41,17 @@ describe("runPersistedChatTurn", () => {
     expect(conv!.messages[1].cards).toHaveLength(1);
   });
 
+  it("binds the new conversation to the viewed content (打开稿件能切回这段)", async () => {
+    const res = await runPersistedChatTurn({
+      message: "把开头改直接点",
+      dataDir: dir,
+      viewContext: { route: "editor", contentId: "content-7" },
+      runTurn: okTurn("改好了"),
+    });
+    const conv = await getConversation((res.data as Record<string, unknown>).conversationId as string, dir);
+    expect(conv!.meta.contentId).toBe("content-7");
+  });
+
   it("never persists an empty assistant message", async () => {
     const res = await runPersistedChatTurn({ message: "执行任务", dataDir: dir, runTurn: okTurn("   ") });
     const id = (res.data as Record<string, unknown>).conversationId as string;

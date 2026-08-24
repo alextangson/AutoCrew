@@ -55,6 +55,20 @@ describe("createConversation / getConversation", () => {
     expect(conv!.messages).toEqual([]);
   });
 
+  it("binds contentId when given, omits the key otherwise", async () => {
+    const bound = await createConversation("改这篇", dir, "content-42");
+    expect(bound.contentId).toBe("content-42");
+    expect((await getConversation(bound.id, dir))!.meta.contentId).toBe("content-42");
+    const free = await createConversation("随便聊", dir);
+    expect(free).not.toHaveProperty("contentId");
+  });
+
+  it("keeps the binding across appendTurn (续聊不该把归属聊丢)", async () => {
+    const meta = await createConversation("改这篇", dir, "content-42");
+    const updated = await appendTurn(meta.id, { content: "再改" }, { content: "好" }, dir);
+    expect(updated!.contentId).toBe("content-42");
+  });
+
   it("returns null for unknown id", async () => {
     expect(await getConversation("conv-123-abcdef", dir)).toBeNull();
   });
