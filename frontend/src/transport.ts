@@ -69,6 +69,43 @@ export async function invoke(channel: string, payload: Record<string, unknown> =
   }
 }
 
+export interface UploadResult {
+  ok: boolean;
+  /** 落盘后的绝对路径——直接喂给 `library:add` 入库 */
+  path?: string;
+  size?: number;
+  error?: string;
+}
+
+/**
+ * 素材直传（素材直传 §2）：字节走独立的 `POST /api/upload`，不塞进 invoke 的 JSON。
+ * body 直接给 File，浏览器自己从磁盘流式发；A-roll 是 GB 级的，base64 进 JSON
+ * 等于把整条片子搬进内存。
+ *
+ * 不做进度条：fetch 拿不到上传进度（要换 XHR），为一根进度条引一套请求栈不值得——
+ * 调用方把按钮转成「上传中…」即可。
+ */
+export async function uploadFile(file: File): Promise<UploadResult> {
+  try {
+    await ensureSession();
+    const res = await fetch(`/api/upload?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as UploadResult;
+    } catch {
+      // 非 JSON 响应（如 host 白名单的裸文本 403）：照实把状态码摆出来，不装成成功
+      return { ok: false, error: text || `上传失败（HTTP ${res.status}）` };
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export interface SseEvent {
   /**
    * - inbox：收件箱台账落定（{type:"inbox:updated", itemId}），驱动收件箱视图刷新

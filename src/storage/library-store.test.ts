@@ -13,6 +13,7 @@ import {
   removeAsset,
   getAsset,
   searchAssets,
+  uploadsDir,
 } from "./library-store.js";
 
 let dir: string;
@@ -210,6 +211,43 @@ describe("removeAsset / getAsset", () => {
     expect(await removeAsset(added[0].id, dir)).toBe(true);
     expect((await listLibrary(dir)).assets).toEqual([]);
     await expect(fs.access(p)).resolves.toBeUndefined(); // 原文件还在
+  });
+
+  // 直传副本住在工作区里，记录一没就再没人引用它——留着只会烂成孤儿字节（GB 级的 A-roll）
+  it("直传副本：删记录连带删文件，空目录一并收走", async () => {
+    const shot = path.join(uploadsDir(dir), "1700000000000-abcd1234");
+    await fs.mkdir(shot, { recursive: true });
+    const file = path.join(shot, "口播.mp4");
+    await fs.writeFile(file, "bytes", "utf-8");
+    const { added } = await addAssets([file], null, dir);
+    expect((await listLibrary(dir)).assets[0].uploaded).toBe(true);
+
+    expect(await removeAsset(added[0].id, dir)).toBe(true);
+    await expect(fs.access(file)).rejects.toThrow();
+    await expect(fs.access(shot)).rejects.toThrow();
+  });
+
+  it("库外引用：记录删了，人自己那份原文件一根汗毛都不动", async () => {
+    const p = await makeFile("外部原件.mp4");
+    const { added } = await addAssets([p], null, dir);
+    expect((await listLibrary(dir)).assets[0].uploaded).toBe(false);
+
+    expect(await removeAsset(added[0].id, dir)).toBe(true);
+    await expect(fs.access(p)).resolves.toBeUndefined();
+  });
+
+  it("同一个直传目录里还有别的文件：只删自己那份，目录留着", async () => {
+    const shot = path.join(uploadsDir(dir), "1700000000001-beef0001");
+    await fs.mkdir(shot, { recursive: true });
+    const mine = path.join(shot, "a.mp4");
+    const other = path.join(shot, "b.mp4");
+    await fs.writeFile(mine, "a", "utf-8");
+    await fs.writeFile(other, "b", "utf-8");
+    const { added } = await addAssets([mine], null, dir);
+
+    expect(await removeAsset(added[0].id, dir)).toBe(true);
+    await expect(fs.access(mine)).rejects.toThrow();
+    await expect(fs.access(other)).resolves.toBeUndefined();
   });
 
   it("getAsset returns record or null", async () => {

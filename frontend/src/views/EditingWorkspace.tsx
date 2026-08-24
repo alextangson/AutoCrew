@@ -34,8 +34,8 @@ export function EditingWorkspace(props: { content: Content; reload: () => Promis
           <summary>素材挂接{aroll ? " · A-roll 已就位" : " · 还差 A-roll"}</summary>
           {!aroll && (
             <p className="vid-warn">
-              还没挂 A-roll（你对着镜头拍的那条口播）。从素材库挂一条、角色选「口播底轨」，
-              才能开始构建。
+              还没挂 A-roll（你对着镜头拍的那条口播）。点下面的「传文件」，或者把视频直接拖进来，
+              第一条视频会自动挂成「口播底轨」，然后就能开始构建。
             </p>
           )}
           <AssetsSection contentId={props.content.id} assets={assets} reload={props.reload} showPool />

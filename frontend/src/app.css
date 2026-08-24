@@ -358,6 +358,11 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .row-actions { display: flex; gap: 8px; }
 .adoption-verdict { flex-wrap: wrap; align-items: baseline; }
 
+/* 素材直传:虚线框=「可以往这儿丢东西」,拖上来时按看板同一套(.kcol-over)点亮 */
+.upload-drop { border: 1px dashed var(--border); border-radius: var(--radius-card); padding: 8px 10px; margin: 6px 0; }
+.upload-drop-over { border-color: var(--ink); background: var(--card); }
+.upload-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
 .toast {
   position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
   background: var(--ink); color: var(--accent-text); padding: 8px 14px;

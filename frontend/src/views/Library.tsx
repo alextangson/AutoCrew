@@ -1,12 +1,14 @@
 /**
  * 素材库(D 期前迁移,最后一个 vanilla 视图):列表/搜索/文件夹/改名/移动/移除。
- * 导入 = 粘贴绝对路径(每行一个)——浏览器拿不到本地路径,Electron 时代的文件对话框
- * 在 server 模式本来就是坏的("文件选择不可用");本地工具,路径粘贴反而最直接
- * (Finder 里 Option+Cmd+C 复制路径)。引用不复制,原文件不动。
+ *
+ * 导入两条路,主路是直传(素材直传 §4):点「传文件」或拖进来,字节走 /api/upload
+ * 落进工作区的 library/uploads/,再入库。粘绝对路径退居「高级」——它仍是引用不复制
+ * (原文件不动)的最省盘做法,但让人去 Finder 抄一遍路径不该是默认走法。
  */
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "../transport";
+import { invoke, uploadFile } from "../transport";
 import { toast, openDialog, confirmDialog } from "../ui";
+import { UploadDrop } from "./UploadDrop";
 
 interface LibAsset {
   id: string;
@@ -20,6 +22,8 @@ interface LibAsset {
   missing?: boolean;
   /** 常备素材池成员(视频线 lifecycle §1):进每条视频的剪辑师目录 */
   reusable?: boolean;
+  /** 直传进工作区的副本——移除会连文件一起删,确认框得照实说 */
+  uploaded?: boolean;
   /** 入库时 ffprobe 探到的时长/画幅 */
   media?: { durationMs: number; width?: number; height?: number };
 }
@@ -45,6 +49,8 @@ export function Library() {
   const [q, setQ] = useState("");
   const [paths, setPaths] = useState("");
   const [importing, setImporting] = useState(false);
+  /** null = 没在传；否则是「第几条/共几条」——GB 级素材要让人看见它在动 */
+  const [uploading, setUploading] = useState<{ at: number; total: number } | null>(null);
 
   const load = async () => {
     const r = await invoke("library:list", folderId ? { folder_id: folderId } : {});
@@ -68,6 +74,29 @@ export function Library() {
         (a.description ?? "").toLowerCase().includes(kw),
     );
   }, [assets, q]);
+
+  // 直传:落进当前选中的文件夹(人选了「B-roll 素材」还往根目录扔,等于让人再拖一次)
+  const doUpload = async (files: File[]) => {
+    let done = 0;
+    for (const [i, file] of files.entries()) {
+      setUploading({ at: i + 1, total: files.length });
+      const up = await uploadFile(file);
+      if (!up.ok || !up.path) {
+        toast(`「${file.name}」上传失败:${up.error ?? "未知原因"}`);
+        continue;
+      }
+      const r = await invoke("library:add", { paths: [up.path], ...(folderId ? { folder_id: folderId } : {}) });
+      if (!r.ok) {
+        toast(`「${file.name}」入库失败:${r.error ?? "素材库没收下它"}`);
+        continue;
+      }
+      done++;
+    }
+    setUploading(null);
+    if (done === 0) return;
+    toast(`已传入 ${done} 条素材${folderId ? "到当前文件夹" : ""}——记得给它写一行说明,剪辑师只认说明`);
+    void load();
+  };
 
   const doImport = async () => {
     const list = paths.split("\n").map((p) => p.trim()).filter(Boolean);
@@ -128,8 +157,15 @@ export function Library() {
         )}
       </div>
 
-      <div className="pending-edit">
-        <div className="mono muted">导入素材——粘贴绝对路径,每行一个(引用不复制,原文件不动)</div>
+      <UploadDrop
+        busy={uploading !== null}
+        busyLabel={uploading ? `上传中 ${uploading.at}/${uploading.total}…` : undefined}
+        hint={`或把文件拖到这一片——存进${folderId ? "当前文件夹" : "工作区"},原件留在你自己那儿`}
+        onFiles={doUpload}
+      />
+
+      <details className="ed-tools">
+        <summary>高级:按路径导入(引用不复制,原文件不动)</summary>
         <textarea rows={3} style={{ width: "100%" }} value={paths} placeholder={"/Users/you/Movies/broll-01.mp4\n/Users/you/Pictures/cover.png"} onChange={(e) => setPaths(e.target.value)} />
         <div className="row-actions">
           <button className="primary" disabled={importing} onClick={() => void doImport()}>
@@ -137,9 +173,9 @@ export function Library() {
           </button>
           <span className="muted mono">Finder 选中文件 Option+Cmd+C 即复制路径</span>
         </div>
-      </div>
+      </details>
 
-      {shown.length === 0 && <p className="muted">这里还没有素材{q ? "(换个关键词?)" : "——粘路径导入,或让写手在稿里标 [缺图:] 时再来补"}。</p>}
+      {shown.length === 0 && <p className="muted">这里还没有素材{q ? "(换个关键词?)" : "——点「传文件」递一条进来,或让写手在稿里标 [缺图:] 时再来补"}。</p>}
       {shown.map((a) => (
         <div key={a.id} className={"row" + (a.missing ? " rule-off" : "")}>
           <span>{TYPE_ICON[a.type] ?? "📄"}</span>
@@ -217,7 +253,10 @@ export function Library() {
             onClick={async () => {
               const yes = await confirmDialog({
                 title: `移除「${a.name}」?`,
-                body: "只移除素材库索引,磁盘上的原文件不动。",
+                // 直传副本住在工作区里,记录一没就再没人引用它——它会被一并删掉,这话必须说在前面
+                body: a.uploaded
+                  ? "这条是直传进工作区的副本,移除会连文件一起删掉,恢复不了。"
+                  : "只移除素材库索引,磁盘上的原文件不动。",
                 confirmLabel: "移除",
                 danger: true,
               });

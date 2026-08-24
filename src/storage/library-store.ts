@@ -63,6 +63,11 @@ export interface LibraryAsset {
 
 export interface LibraryAssetView extends LibraryAsset {
   missing: boolean;
+  /**
+   * 字节是直传进工作区的副本（`library/uploads/` 里那份），不是对外部原件的引用。
+   * 移除它会连文件一起删——所以这个事实必须能传到 UI，让确认框说真话。
+   */
+  uploaded: boolean;
 }
 
 export interface LibraryView {
@@ -96,6 +101,20 @@ async function libraryRoot(dataDir?: string): Promise<string> {
   const root = path.join(getDataDir(dataDir), "library");
   await fs.mkdir(path.join(root, "assets"), { recursive: true });
   return root;
+}
+
+/**
+ * 素材直传的落点。这一层里的文件是**我们自己复制进工作区的副本**（不是引用），
+ * 所以它是「删记录连带删文件」的唯一例外范围；库外的引用路径永远不碰。
+ * 路径口径的单一事实源：直传端点写它，removeAsset 按它判定要不要清理。
+ */
+export function uploadsDir(dataDir?: string): string {
+  return path.join(getDataDir(dataDir), "library", "uploads");
+}
+
+/** 这条素材的字节是不是直传副本；库外引用（人自己 Movies 里的原件）永远是 false */
+export function isUploadedCopy(filePath: string, dataDir?: string): boolean {
+  return path.resolve(filePath).startsWith(uploadsDir(dataDir) + path.sep);
 }
 
 async function loadFolders(root: string): Promise<LibraryFolder[]> {
@@ -244,7 +263,7 @@ export async function listLibrary(dataDir?: string): Promise<LibraryView> {
     } catch {
       missing = true;
     }
-    assets.push({ ...record, missing });
+    assets.push({ ...record, missing, uploaded: isUploadedCopy(record.path, dataDir) });
   }
   assets.sort((a, b) => b.addedAt.localeCompare(a.addedAt));
   return { folders, assets };
@@ -323,17 +342,38 @@ export async function listReusableAssets(dataDir?: string): Promise<LibraryAsset
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * 直传副本的连带清理：只清 `library/uploads/` 里那份。
+ * 判定按路径前缀而不是按标记位——手改过的记录、旧版本写的记录都能对上号，
+ * 而库外引用（人自己 Movies 里的原件）无论如何都落不进这个前缀。
+ */
+async function removeUploadedCopy(filePath: string, dataDir?: string): Promise<void> {
+  if (!isUploadedCopy(filePath, dataDir)) return;
+  const abs = path.resolve(filePath);
+  try {
+    await fs.rm(abs, { force: true });
+    // 每次直传独占一个时间戳目录，文件走了目录就空了；非空说明不是我们那套，留着不猜
+    await fs.rmdir(path.dirname(abs));
+  } catch {
+    /* 清不掉不阻断：记录已经删了，最坏结果只是工作区里留一份没人引用的字节 */
+  }
+}
+
 export async function removeAsset(id: string, dataDir?: string): Promise<boolean> {
-  // 只删记录，永不碰 record.path 指向的原文件（引用模式安全底线）
+  // 只删记录，永不碰 record.path 指向的原文件（引用模式安全底线）。唯一例外是
+  // library/uploads/ 里的直传副本：那是入库时我们复制进来的，记录一没就再没人引用它，
+  // 留着只会让工作区烂成一堆孤儿字节（GB 级的 A-roll，一条就是一次磁盘事故）。
   const root = await libraryRoot(dataDir);
   const p = safeAssetPath(root, id);
   if (!p) return false;
+  const record = await readJson<LibraryAsset>(p);
   try {
     await fs.unlink(p);
-    return true;
   } catch {
     return false;
   }
+  if (typeof record?.path === "string") await removeUploadedCopy(record.path, dataDir);
+  return true;
 }
 
 export async function searchAssets(

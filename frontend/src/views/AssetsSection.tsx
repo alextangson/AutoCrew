@@ -5,8 +5,9 @@
  *   挂素材是剪辑的第一步，隔着一个抽屉去挂是上一版 IA 的遗留。
  */
 import { useEffect, useState } from "react";
-import { invoke } from "../transport";
+import { invoke, uploadFile } from "../transport";
 import { toast, confirmDialog } from "../ui";
+import { UploadDrop } from "./UploadDrop";
 
 /** 角色决定这条素材在成片里怎么用：口播底轨只能有一条，BGM 多于一条组装会报错要你选 */
 const ASSET_ROLES: Array<[string, string]> = [
@@ -40,6 +41,43 @@ export function isFinalAsset(filename: string): boolean {
   return /^final-v\d+\.mp4$/i.test(filename);
 }
 
+type AddedLibraryAsset = { id: string; name: string; type: string };
+
+/**
+ * 直传一条：传盘 → 入库 → 挂接，一步到位（素材直传 §3）。
+ *
+ * 角色按 guessRole 预填、说明先用原始文件名占位（说明非空是挂接的前置，
+ * 拿文件名兜住它，人随后可以改）——递完文件就能开工，才是这一步该有的样子。
+ * 三步里哪一步坏了就报哪一步，不合并成一句「失败」。
+ */
+async function uploadAttachOne(contentId: string, file: File, seen: AssetItem[]): Promise<AssetItem | null> {
+  const up = await uploadFile(file);
+  if (!up.ok || !up.path) {
+    toast(`「${file.name}」上传失败：${up.error ?? "未知原因"}`);
+    return null;
+  }
+  const add = await invoke("library:add", { paths: [up.path] });
+  const asset = (add as unknown as { data?: { added?: AddedLibraryAsset[] } }).data?.added?.[0];
+  if (!add.ok || !asset) {
+    toast(`「${file.name}」入库失败：${add.error ?? "素材库没收下它"}`);
+    return null;
+  }
+  const role = guessRole(asset.type, seen);
+  const attached = await invoke("content:asset_add", {
+    content_id: contentId,
+    library_id: asset.id,
+    role,
+    description: file.name,
+  });
+  if (!attached.ok) {
+    toast(`「${file.name}」已入库，但挂接失败：${attached.error ?? "未知原因"}`);
+    return null;
+  }
+  const warning = (attached as unknown as { data?: { warning?: string } }).data?.warning;
+  toast(`已传并挂接为「${ROLE_LABEL.get(role) ?? role}」·${asset.name}${warning ? ` · ${warning}` : ""}`);
+  return { filename: asset.name, type: asset.type, role };
+}
+
 export function AssetsSection(props: {
   contentId: string;
   assets: AssetItem[];
@@ -53,6 +91,8 @@ export function AssetsSection(props: {
   const [role, setRole] = useState("other");
   const [note, setNote] = useState("");
   const [poolCount, setPoolCount] = useState<number | null>(null);
+  /** null = 没在传；否则是「第几条/共几条」，GB 级素材传起来是分钟级的，得让人看见它在动 */
+  const [uploading, setUploading] = useState<{ at: number; total: number } | null>(null);
 
   useEffect(() => {
     if (!props.showPool) return;
@@ -78,6 +118,22 @@ export function AssetsSection(props: {
     setChosen(a);
     setRole(guessRole(a.type, props.assets));
     setNote(a.description?.trim() || [a.name, (a.tags ?? []).join("、")].filter(Boolean).join(" · "));
+  };
+
+  // 多条一起传时角色要按「已经进去的那些」算：连传两条视频，第一条口播底轨、第二条 B-roll。
+  // props.assets 要等 reload 才更新，所以本轮的战果先记在 seen 里。
+  const uploadAndAttach = async (files: File[]) => {
+    const seen = [...props.assets];
+    let done = 0;
+    for (const [i, file] of files.entries()) {
+      setUploading({ at: i + 1, total: files.length });
+      const added = await uploadAttachOne(props.contentId, file, seen);
+      if (!added) continue;
+      seen.push(added);
+      done++;
+    }
+    setUploading(null);
+    if (done > 0) await props.reload();
   };
 
   const attach = async () => {
@@ -116,32 +172,42 @@ export function AssetsSection(props: {
           剪辑师还能用素材库里 {poolCount} 条常备素材（在「素材库」页设为常备，每条片子都能用）。
         </span>
       )}
-      {props.assets.map((a) => (
-        <div key={a.filename} className="row">
-          <span className="row-title">{a.filename}</span>
-          <span className="muted mono">
-            {a.role ? (ROLE_LABEL.get(a.role) ?? a.role) : a.type}
-            {a.description ? " · " + a.description : " · 无说明"}
-          </span>
-          <button
-            onClick={async () => {
-              const yes = await confirmDialog({
-                title: `移除挂接素材「${a.filename}」?`,
-                body: "删除稿件项目内的副本,素材库原件不受影响。",
-                confirmLabel: "移除",
-                danger: true,
-              });
-              if (!yes) return;
-              const r = await invoke("content:asset_remove", { content_id: props.contentId, filename: a.filename });
-              toast(r.ok ? "已移除" : (r.error ?? "移除失败"));
-              if (r.ok) void props.reload();
-            }}
-          >移除</button>
-        </div>
-      ))}
+      <UploadDrop
+        busy={uploading !== null}
+        busyLabel={uploading ? `上传中 ${uploading.at}/${uploading.total}…` : undefined}
+        hint="或把视频/图片/音频直接拖到这一片——自动入库并挂好角色"
+        onFiles={uploadAndAttach}
+      >
+        {props.assets.map((a) => (
+          <div key={a.filename} className="row">
+            <span className="row-title">{a.filename}</span>
+            <span className="muted mono">
+              {a.role ? (ROLE_LABEL.get(a.role) ?? a.role) : a.type}
+              {a.description ? " · " + a.description : " · 无说明"}
+            </span>
+            <button
+              onClick={async () => {
+                const yes = await confirmDialog({
+                  title: `移除挂接素材「${a.filename}」?`,
+                  body: "删除稿件项目内的副本,素材库原件不受影响。",
+                  confirmLabel: "移除",
+                  danger: true,
+                });
+                if (!yes) return;
+                const r = await invoke("content:asset_remove", { content_id: props.contentId, filename: a.filename });
+                toast(r.ok ? "已移除" : (r.error ?? "移除失败"));
+                if (r.ok) void props.reload();
+              }}
+            >移除</button>
+          </div>
+        ))}
+        {props.assets.length === 0 && (
+          <p className="muted">还没有素材——点「传文件」或直接把文件拖进来,传完自动入库并挂好角色。</p>
+        )}
+      </UploadDrop>
       {picking && (
         <div className="pending-edit">
-          {lib.length === 0 && <p className="muted">素材库暂无可用素材——先到「素材库」粘路径导入。</p>}
+          {lib.length === 0 && <p className="muted">素材库暂无可用素材——用上面的「传文件」直接递一条进来。</p>}
           {lib.map((a) => (
             <div key={a.id} className="row">
               <span className="row-title">{a.name}</span>

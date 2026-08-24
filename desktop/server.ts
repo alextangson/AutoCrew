@@ -29,6 +29,7 @@ import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
 import { serveCoverIdentityAsset } from "../src/desktop/cover-identity-asset-route.js";
 import { setVideoService } from "../src/desktop/video-handlers.js";
 import { createVideoMediaHandler, VIDEO_MEDIA_PREFIX } from "../src/desktop/video-media.js";
+import { createUploadHandler, UPLOAD_PATH } from "../src/desktop/upload-route.js";
 import { createVideoService, type VideoService } from "../src/modules/video/service.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
 import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
@@ -150,6 +151,17 @@ async function activeDataDir(): Promise<string> {
 const videoMedia = createVideoMediaHandler({
   resolveDataDir: activeDataDir,
   authorize: (req) => authorize(req) !== null,
+});
+
+// 素材直传:文件字节走这条流式路由,不进 /api/invoke 的 JSON 体(A-roll 是 GB 级的)。
+// 鉴权/写闸与 invoke 同一套,逻辑全在 upload-route.ts(可测),这里只接线。
+const uploadRoute = createUploadHandler({
+  resolveDataDir: activeDataDir,
+  authorize: (req) => authorize(req) !== null,
+  writeAllowed: (req) => {
+    const method = authorize(req);
+    return method !== null && browserWriteAllowed(req, method);
+  },
 });
 
 const server = http.createServer(async (req, res) => {
@@ -305,6 +317,9 @@ const server = http.createServer(async (req, res) => {
   // 成片播放端点(视频 spec §6.4):审片视图的 <video> 播不了 file://,没有它整条视频线
   // 到 review 就断。鉴权/路径白名单/Range 全在 video-media.ts(可测),这里只接线。
   if (p.startsWith(VIDEO_MEDIA_PREFIX) && (await videoMedia(req, res, p))) return;
+
+  // 素材直传(素材直传 §1):把文件递给系统的那一步,不该再让人手抄绝对路径
+  if (p === UPLOAD_PATH && (await uploadRoute(req, res, p))) return;
 
   // SSE:引擎事件 + chat 进度实时流
   if (p === "/api/events") {
