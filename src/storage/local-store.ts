@@ -748,6 +748,28 @@ export async function adoptionStats(dataDir?: string): Promise<AdoptionStats> {
   };
 }
 
+/**
+ * 挂接素材的落盘一步：同卷硬链接，跨卷退回复制。
+ *
+ * A-roll 是 GB 级的——直传已经在 `library/uploads/` 存了一份，挂接再 copyFile
+ * 就是双份占盘。硬链接让两侧共享同一份字节，且删除语义天然正确：任一侧 unlink
+ * 只断自己那条链接，最后一条断掉数据才消失，content:asset_remove 与素材库的
+ * uploads 连带清理都无需特判。
+ *
+ * 先 rm 再 link：link 不覆盖已存在的目标（EEXIST），rm 对齐 copyFile 的覆盖语义
+ * （半途失败留下的孤儿字节重挂时要能盖掉）。
+ */
+async function linkOrCopyFile(src: string, dest: string): Promise<void> {
+  await fs.rm(dest, { force: true });
+  try {
+    await fs.link(src, dest);
+  } catch {
+    // 跨卷（EXDEV）或文件系统不支持硬链接时退回复制；
+    // src 真不可读的话 copyFile 会把真实错误照旧抛上去，失败不静默
+    await fs.copyFile(src, dest);
+  }
+}
+
 export async function addAsset(
   contentId: string,
   asset: Omit<Asset, "addedAt"> & { sourcePath?: string },
@@ -769,10 +791,10 @@ export async function addAsset(
     const content: Content = JSON.parse(raw);
     const now = new Date().toISOString();
 
-    // Copy source file into assets/ if provided（拷贝失败向上抛，不再伪装成 not found）
+    // Link (or copy) source file into assets/ if provided（失败向上抛，不再伪装成 not found）
     if (asset.sourcePath) {
       const destPath = path.join(projDir, "assets", asset.filename);
-      await fs.copyFile(asset.sourcePath, destPath);
+      await linkOrCopyFile(asset.sourcePath, destPath);
     }
 
     const { sourcePath: _copied, ...fields } = asset;
@@ -813,7 +835,10 @@ export async function upsertAsset(
     const content: Content = JSON.parse(raw);
     if (asset.sourcePath) {
       await fs.mkdir(path.join(projDir, "assets"), { recursive: true });
-      await fs.copyFile(asset.sourcePath, path.join(projDir, "assets", asset.filename));
+      const destPath = path.join(projDir, "assets", asset.filename);
+      // 先断链再拷：dest 若是挂接留下的硬链接，copyFile 的截断写会穿透改写素材库那份共享字节
+      await fs.rm(destPath, { force: true });
+      await fs.copyFile(asset.sourcePath, destPath);
     }
     const { sourcePath: _copied, ...fields } = asset;
     const now = new Date().toISOString();

@@ -4,7 +4,7 @@
  *
  * 「库是索引，项目是快照」：只存元数据 JSON，原文件留在原地不复制；
  * 删除素材 = 删记录，永不碰原文件。挂接到稿件时由 ipc 层走 local-store
- * addAsset 的复制语义。
+ * addAsset 的硬链接语义（同卷共享字节，跨卷退回复制）。
  *
  * ~/.autocrew/library/
  *   folders.json        — LibraryFolder[]（扁平，v1 不嵌套）
@@ -346,6 +346,10 @@ export async function listReusableAssets(dataDir?: string): Promise<LibraryAsset
  * 直传副本的连带清理：只清 `library/uploads/` 里那份。
  * 判定按路径前缀而不是按标记位——手改过的记录、旧版本写的记录都能对上号，
  * 而库外引用（人自己 Movies 里的原件）无论如何都落不进这个前缀。
+ *
+ * 挂接是硬链接（local-store addAsset）：这里的 rm 只断 uploads 这条链接，
+ * 已挂接稿件的 `contents/<id>/assets/` 那条链接与数据原样还在——最后一条
+ * 链接删除时数据才真正消失，所以无需查引用计数，硬链接语义天然正确。
  */
 async function removeUploadedCopy(filePath: string, dataDir?: string): Promise<void> {
   if (!isUploadedCopy(filePath, dataDir)) return;

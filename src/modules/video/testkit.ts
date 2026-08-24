@@ -213,6 +213,21 @@ export async function seedEngineConfig(dataDir: string): Promise<void> {
 }
 
 /**
+ * 夹具缓存是跨测试文件共享的，而 addAsset 按硬链接落盘（生产语义）。
+ * 直接拿共享缓存当挂接源，「模拟素材漂移」的用例 appendFile 改自己稿件里的
+ * aroll.mp4 时会写穿链接、污染共享缓存，并发中的其他测试随即集体 aroll_drifted。
+ * 所以种子一律先复制出本测试私有的一份，硬链接两端都落在本测试的 dataDir 里。
+ * 复制前先 rm 断掉可能存在的旧链接——copyFile 的截断写同样会写穿。
+ */
+async function stageFixture(fixture: string, dataDir: string, name: string): Promise<string> {
+  const staged = path.join(dataDir, "fixture-src", name);
+  await fs.mkdir(path.dirname(staged), { recursive: true });
+  await fs.rm(staged, { force: true });
+  await fs.copyFile(fixture, staged);
+  return staged;
+}
+
+/**
  * 稿件 + A-roll 素材一把种好；返回 contentId 与 A-roll 在稿件里的绝对路径。
  *
  * A-roll 默认带 `role: "aroll"`——那是横屏 spec §2.6 之后的正路。要测老稿件的
@@ -227,7 +242,6 @@ export async function seedVideoContent(
     arollRole?: AssetRole | null;
   },
 ): Promise<{ contentId: string; arollPath: string }> {
-  const fixture = await ensureArollFixture();
   const content = await saveContent(
     {
       title: "FDE 是什么",
@@ -242,9 +256,10 @@ export async function seedVideoContent(
   const assetsDir = path.join(dataDir, "contents", content.id, "assets");
   await fs.mkdir(assetsDir, { recursive: true });
   const role = overrides?.arollRole === undefined ? "aroll" : overrides.arollRole;
+  const source = await stageFixture(await ensureArollFixture(), dataDir, "aroll.mp4");
   const added = await addAsset(
     content.id,
-    { filename: "aroll.mp4", type: "video", sourcePath: fixture, ...(role ? { role } : {}) },
+    { filename: "aroll.mp4", type: "video", sourcePath: source, ...(role ? { role } : {}) },
     dataDir,
   );
   if (!added.ok) throw new Error(`种 A-roll 素材失败：${added.error}`);
@@ -263,7 +278,7 @@ export async function seedBrollAsset(
 ): Promise<string> {
   const filename = overrides?.filename ?? "screen.mp4";
   const type = overrides?.type ?? "video";
-  const source = await ensureArollFixture();
+  const source = await stageFixture(await ensureArollFixture(), dataDir, filename);
   const description = overrides?.description ?? "屏录：产品界面演示";
   const added = await addAsset(
     contentId,
@@ -287,7 +302,7 @@ export async function seedBgmAsset(
   contentId: string,
   filename = "bgm.wav",
 ): Promise<string> {
-  const source = await ensureBgmFixture();
+  const source = await stageFixture(await ensureBgmFixture(), dataDir, filename);
   const added = await addAsset(contentId, { filename, type: "audio", role: "bgm", sourcePath: source }, dataDir);
   if (!added.ok) throw new Error(`种 BGM 素材失败：${added.error}`);
   return path.join(dataDir, "contents", contentId, "assets", filename);

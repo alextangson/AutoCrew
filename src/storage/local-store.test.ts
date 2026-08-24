@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,7 @@ import {
   getContent,
   updateContent,
   addAsset,
+  upsertAsset,
   listAssets,
   removeAsset,
   listVersions,
@@ -231,6 +232,66 @@ describe("Assets", () => {
 
     const assets = await listAssets(content.id, testDir);
     expect(assets.some((a) => a.filename === "remove-me.png")).toBe(false);
+  });
+});
+
+// --- 挂接落盘 = 硬链接（GB 级 A-roll 不再双份占盘） ---
+
+describe("addAsset 硬链接语义", () => {
+  async function seedContentAndSource(name: string, bytes: string) {
+    const content = await saveContent({ title: "A", body: "b", tags: [], status: "draft_ready" }, testDir);
+    const src = path.join(testDir, name);
+    await fs.writeFile(src, bytes);
+    return { content, src, dest: path.join(testDir, "contents", content.id, "assets", name) };
+  }
+
+  it("同卷落盘是硬链接：两侧同 inode，字节只存一份", async () => {
+    const { content, src, dest } = await seedContentAndSource("aroll.mp4", "gigabytes-of-aroll");
+    const r = await addAsset(content.id, { filename: "aroll.mp4", type: "video", sourcePath: src }, testDir);
+    expect(r.ok).toBe(true);
+
+    const [s, d] = [await fs.stat(src), await fs.stat(dest)];
+    expect(d.ino).toBe(s.ino);
+    expect(d.nlink).toBe(2);
+  });
+
+  it("link 失败（如跨卷 EXDEV）退回复制，挂接照常成功", async () => {
+    const { content, src, dest } = await seedContentAndSource("cross.mp4", "cross-volume-bytes");
+    const spy = vi
+      .spyOn(fs, "link")
+      .mockRejectedValueOnce(Object.assign(new Error("EXDEV: cross-device link"), { code: "EXDEV" }));
+    try {
+      const r = await addAsset(content.id, { filename: "cross.mp4", type: "video", sourcePath: src }, testDir);
+      expect(r.ok).toBe(true);
+      expect(spy).toHaveBeenCalled();
+      expect(await fs.readFile(dest, "utf-8")).toBe("cross-volume-bytes");
+      expect((await fs.stat(dest)).ino).not.toBe((await fs.stat(src)).ino);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("removeAsset 只断稿件那条链接：源文件与数据原样还在", async () => {
+    const { content, src, dest } = await seedContentAndSource("keep.mp4", "shared-bytes");
+    await addAsset(content.id, { filename: "keep.mp4", type: "video", sourcePath: src }, testDir);
+
+    expect(await removeAsset(content.id, "keep.mp4", testDir)).toBe(true);
+    await expect(fs.access(dest)).rejects.toThrow();
+    expect(await fs.readFile(src, "utf-8")).toBe("shared-bytes");
+    expect((await fs.stat(src)).nlink).toBe(1);
+  });
+
+  it("upsertAsset 同名覆盖先断链再拷：不写穿硬链接另一侧的共享字节", async () => {
+    const { content, src, dest } = await seedContentAndSource("final-v1.mp4", "library-original");
+    await addAsset(content.id, { filename: "final-v1.mp4", type: "video", sourcePath: src }, testDir);
+
+    const rerender = path.join(testDir, "rerender.mp4");
+    await fs.writeFile(rerender, "rerendered-bytes");
+    const r = await upsertAsset(content.id, { filename: "final-v1.mp4", type: "video", sourcePath: rerender }, testDir);
+    expect(r.ok).toBe(true);
+
+    expect(await fs.readFile(dest, "utf-8")).toBe("rerendered-bytes");
+    expect(await fs.readFile(src, "utf-8")).toBe("library-original");
   });
 });
 

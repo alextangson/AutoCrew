@@ -8,8 +8,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { addAssets as addLibraryAssets, updateAsset as updateLibraryAsset } from "../storage/library-store.js";
-import { getContent, saveContent } from "../storage/local-store.js";
+import {
+  addAssets as addLibraryAssets,
+  updateAsset as updateLibraryAsset,
+  removeAsset as removeLibraryAsset,
+  uploadsDir,
+} from "../storage/library-store.js";
+import { getContent, saveContent, removeAsset as removeContentAsset } from "../storage/local-store.js";
 import { ensureArollFixture } from "../modules/video/testkit.js";
 import { attachLibraryAsset } from "./content-asset-attach.js";
 
@@ -165,5 +170,54 @@ describe("拒绝路径", () => {
   it("稿件不存在 → 拒", async () => {
     const r = await attachLibraryAsset({ contentId: "content-1-nope", libraryId: await seedLibrary("a.mp4"), dataDir: dir });
     expect(r.ok === false && r.error).toBe("稿件不存在");
+  });
+});
+
+/**
+ * 挂接是硬链接不是复制（GB 级 A-roll 直传后再挂接，双份占盘代价太大）。
+ * 两侧删除各自只断自己那条链接——最后一条链接删除时数据才消失，全靠
+ * 硬链接的天然语义，删除代码两侧都没有特判，这组测试锁住这一点。
+ */
+describe("硬链接挂接与两侧删除", () => {
+  /** 模拟直传落盘：文件放进 library/uploads/<时间戳>/ 独占目录再入库 */
+  async function seedUpload(filename: string, bytes: string): Promise<{ id: string; file: string }> {
+    const file = path.join(uploadsDir(dir), "1700000000000-abcd1234", filename);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, bytes);
+    const { added } = await addLibraryAssets([file], null, dir);
+    return { id: added[0]!.id, file };
+  }
+
+  function attachedPath(filename: string): string {
+    return path.join(dir, "contents", contentId, "assets", filename);
+  }
+
+  it("挂接后两侧同 inode：字节只存一份，不再双份占盘", async () => {
+    const { id, file } = await seedUpload("aroll.png", "uploaded-aroll-bytes");
+    const r = await attachLibraryAsset({ contentId, libraryId: id, dataDir: dir });
+    expect(r.ok).toBe(true);
+
+    const [lib, attached] = [await fs.stat(file), await fs.stat(attachedPath("aroll.png"))];
+    expect(attached.ino).toBe(lib.ino);
+    expect(attached.nlink).toBe(2);
+  });
+
+  it("删稿件侧（content:asset_remove）：素材库直传副本原样还在", async () => {
+    const { id, file } = await seedUpload("aroll.png", "uploaded-aroll-bytes");
+    await attachLibraryAsset({ contentId, libraryId: id, dataDir: dir });
+
+    expect(await removeContentAsset(contentId, "aroll.png", dir)).toBe(true);
+    await expect(fs.access(attachedPath("aroll.png"))).rejects.toThrow();
+    expect(await fs.readFile(file, "utf-8")).toBe("uploaded-aroll-bytes");
+  });
+
+  it("删素材库侧（library:remove 连带清理 uploads）：稿件侧字节仍完整可读", async () => {
+    const { id, file } = await seedUpload("aroll.png", "uploaded-aroll-bytes");
+    await attachLibraryAsset({ contentId, libraryId: id, dataDir: dir });
+
+    expect(await removeLibraryAsset(id, dir)).toBe(true);
+    await expect(fs.access(file)).rejects.toThrow(); // uploads 那条链接与独占目录已收走
+    expect(await fs.readFile(attachedPath("aroll.png"), "utf-8")).toBe("uploaded-aroll-bytes");
+    expect((await fs.stat(attachedPath("aroll.png"))).nlink).toBe(1);
   });
 });
