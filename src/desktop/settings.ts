@@ -36,6 +36,13 @@ function maskKey(key: string): string {
   return key.length <= 8 ? "****" : `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
+/** 路由视图：剥掉专属 apiKey 只回「配没配」——key 不出后端（同 providers 纪律） */
+function routeView(route: EngineRouteConfig | undefined): (Omit<EngineRouteConfig, "apiKey"> & { hasApiKey: boolean }) | null {
+  if (!route) return null;
+  const { apiKey, ...rest } = route;
+  return { ...rest, hasApiKey: Boolean(apiKey) };
+}
+
 async function readEngineJson(dataDir?: string): Promise<{ filePath: string; fromFile: Partial<EngineConfig> }> {
   const filePath = path.join(getDataDir(dataDir), "engine.json");
   try {
@@ -64,11 +71,12 @@ export async function getEngineSettings(payload: Record<string, unknown>): Promi
         baseUrl: fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl,
         strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
         fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
+        // 路由可带专属 apiKey(EngineRouteConfig.apiKey)——视图层剥掉,与 providers 同一条纪律:key 不出后端
         routes: {
-          writer: fromFile.routes?.writer ?? null,
-          analytics: fromFile.routes?.analytics ?? null,
-          scout: fromFile.routes?.scout ?? null,
-          codex: fromFile.routes?.codex ?? null,
+          writer: routeView(fromFile.routes?.writer),
+          analytics: routeView(fromFile.routes?.analytics),
+          scout: routeView(fromFile.routes?.scout),
+          codex: routeView(fromFile.routes?.codex),
         },
         routePresets: ENGINE_ROUTE_PRESETS,
         // 自定义端点:无 key 无掩码,只回"配没配"——掩码遇上数组整体替换会被当真值写回去
@@ -370,6 +378,8 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
         baseUrl: (typeof baseInput === "string" ? baseInput.trim() : existing?.baseUrl ?? preset.baseUrl).replace(/\/+$/, ""),
         model: typeof modelInput === "string" ? modelInput.trim() : existing?.model ?? preset.model,
         protocol: spec.protocol,
+        // 路由专属 key 是手工在 engine.json 配的——设置页重建对象时必须原样保留,不然一次改模型就把 key 洗掉
+        ...(existing?.apiKey ? { apiKey: existing.apiKey } : {}),
         ...(spec.name === "codex" ? { models: ENGINE_ROUTE_PRESETS.codex.models } : {}),
       };
     }

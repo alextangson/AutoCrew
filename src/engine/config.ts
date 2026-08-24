@@ -78,6 +78,11 @@ export interface EngineRouteConfig {
   baseUrl: string;
   model: string;
   protocol?: "openai" | "anthropic";
+  /**
+   * 路由专属凭证；缺省继承顶层 apiKey。主备端点对调后（2026-08-23 deepseek 转正）
+   * 「钉 writer/reviewer 回 opus」需要它——目标中转和顶层用的不是同一把 key。
+   */
+  apiKey?: string;
   /** 可选模型清单，供设置页和后续模型选择器展示。 */
   models?: string[];
 }
@@ -159,6 +164,7 @@ function normalizeRoute(value: unknown): EngineRouteConfig | undefined {
     baseUrl: route.baseUrl.trim().replace(/\/+$/, ""),
     model: route.model.trim(),
     ...(route.protocol === "openai" || route.protocol === "anthropic" ? { protocol: route.protocol } : {}),
+    ...(typeof route.apiKey === "string" && route.apiKey.trim() ? { apiKey: route.apiKey.trim() } : {}),
     ...(models?.length ? { models } : {}),
   };
 }
@@ -326,11 +332,14 @@ export function resolveEngineRoute(
   const route = config.routes?.[name];
   if (!route) return { config, model: fallbackModel };
   const baseUrl = route.baseUrl.replace(/\/+$/, "");
+  // 路由带专属 key 时协议按**它自己的** key 推断——顶层 key 属于另一个端点,拿它推断会误判
+  const apiKey = route.apiKey ?? config.apiKey;
   return {
     config: {
       ...config,
       baseUrl,
-      protocol: inferProtocol(config.apiKey, baseUrl, route.protocol),
+      apiKey,
+      protocol: inferProtocol(apiKey, baseUrl, route.protocol),
     },
     model: route.model,
   };

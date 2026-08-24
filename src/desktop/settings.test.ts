@@ -106,6 +106,25 @@ describe("setEngineSettings", () => {
     expect(res.ok).toBe(false);
   });
 
+  // 路由专属 key（主备对调后钉 writer 回 opus）:设置页改模型不得洗掉手工配的 key,视图不得外泄 key
+  it("route 专属 apiKey：设置页重建路由时保留，GET 视图剥掉只回 hasApiKey", async () => {
+    await setEngineSettings({ _dataDir: testDir, api_key: "sk-primary" });
+    const filePath = path.join(testDir, "engine.json");
+    const raw = JSON.parse(await fs.readFile(filePath, "utf-8"));
+    raw.routes = { writer: { baseUrl: "https://code.newcli.com/claude/ultra", model: "claude-opus-4-8", protocol: "anthropic", apiKey: "sk-route-secret" } };
+    await fs.writeFile(filePath, JSON.stringify(raw));
+
+    const result = await setEngineSettings({ _dataDir: testDir, writer_model: "claude-opus-4-9" });
+    expect(result.ok).toBe(true);
+    const saved = JSON.parse(await fs.readFile(filePath, "utf-8"));
+    expect(saved.routes.writer).toMatchObject({ model: "claude-opus-4-9", apiKey: "sk-route-secret" });
+
+    const read = await getEngineSettings({ _dataDir: testDir });
+    expect(JSON.stringify(read)).not.toContain("sk-route-secret");
+    const routes = (read.data as Record<string, unknown>).routes as Record<string, Record<string, unknown>>;
+    expect(routes.writer.hasApiKey).toBe(true);
+  });
+
   it("tightens permissions to 0600 even when file pre-exists with looser mode", async () => {
     const filePath = path.join(testDir, "engine.json");
     await fs.writeFile(filePath, JSON.stringify({ apiKey: "sk-old" }), { mode: 0o644 });

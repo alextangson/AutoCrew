@@ -96,6 +96,31 @@ describe("loadEngineConfig", () => {
     expect(config.routes?.scout?.model).toBe("claude-sonnet-5");
   });
 
+  // 主备对调后钉 writer/reviewer 回 opus（2026-08-23）：目标中转和顶层不是同一把 key
+  it("route 专属 apiKey：配置了 → 覆盖顶层并按它推断协议；未配置 → 继承顶层", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        apiKey: "sk-deepseek",
+        baseUrl: "https://api.deepseek.com",
+        strongModel: "deepseek-v4-pro",
+        fastModel: "deepseek-v4-flash",
+        protocol: "openai",
+        routes: {
+          writer: { baseUrl: "https://code.newcli.com/claude/ultra/", model: "claude-opus-4-8", protocol: "anthropic", apiKey: "sk-relay" },
+          scout: { baseUrl: "https://api.deepseek.com", model: "deepseek-v4-pro" },
+        },
+      }),
+    );
+    const config = await loadEngineConfig(testDir);
+    const writer = resolveEngineRoute(config, "writer", config.strongModel);
+    expect(writer.config.apiKey).toBe("sk-relay");
+    expect(writer.config.protocol).toBe("anthropic");
+    expect(writer.model).toBe("claude-opus-4-8");
+    const scout = resolveEngineRoute(config, "scout", config.fastModel);
+    expect(scout.config.apiKey).toBe("sk-deepseek");
+  });
+
   // 审稿 spec §2.6：审稿是品味活，判错比慢贵——没专属配置就吃强模型，不许悄悄降到快档
   it("reviewer route: 未配置 → 落主端点强模型；配置了 → 走专属端点", async () => {
     await fs.writeFile(
