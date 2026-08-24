@@ -6,6 +6,7 @@ import { stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
 import type { ReviewMeta } from "../modules/writing/script-review.js";
+import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 
 export interface Topic {
   id: string;
@@ -226,6 +227,13 @@ export interface Content {
   videoKit?: VideoKit;
   /** 最近一次生成/处理失败的原因（防呆:失败留痕,成功后清空）。UI 据此显示中断徽章与重试 */
   lastError?: string | null;
+  /**
+   * 生成占位稿身上钉住的原始写作请求——中断后「在原稿上重写」的唯一依据。
+   * 不钉住就只能从标题反推选题（调研材料、对标卡开关全丢），而那正是重试
+   * 一次多出一张僵尸卡的老路。转正时清掉：成稿没有「中断」可重试，留一份
+   * 过期的请求只会让 meta 里多一处会骗人的事实。旧稿没有此字段，重试走降级还原。
+   */
+  genRequest?: ScriptRequest;
   /** 本稿写作时注入的对标拆解卡 id（收件箱设计 §3.5）：学习闭环归因，无卡时字段不落 */
   usedPatternIds?: string[];
   /** 本稿注入的调研简报版本（深调研 §6）：回溯得到 briefs/<topicId>.v<N>.json 那份不可变输入，无简报时字段不落 */

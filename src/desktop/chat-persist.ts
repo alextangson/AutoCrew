@@ -103,7 +103,10 @@ export async function runPersistedChatTurn(params: {
   // Serialize writes for existing conversations only (new conversations have no
   // prior concurrent writer — serialization only guards the read-modify-write path)
   const persist = async () => {
-    const convId = conversationId ?? (await createConversation(message, dataDir)).id;
+    // 首轮建会话时把当前稿件钉进去——之后再打开这篇稿件，右栏能自动切回这段对话。
+    // 只认首轮：中途换稿件不改归属，跨稿件聊天照常，会话仍算最初那篇的。
+    const convId =
+      conversationId ?? (await createConversation(message, dataDir, params.viewContext?.contentId)).id;
     const meta = await appendTurn(
       convId,
       { content: message },

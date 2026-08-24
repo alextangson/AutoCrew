@@ -28,7 +28,7 @@ import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
 import { saveTopic, listSiblings, type Topic } from "../storage/local-store.js";
 import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
-import { startGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
+import { startGenerateScript, retryGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
 import { videoBuildStartHandler } from "./video-handlers.js";
 import { reviseDraft, type ReviseDraftResult } from "../modules/writing/draft-revision.js";
 import { reviseFocus, type ReviseFocus, type ReviseFocusResult } from "../modules/writing/revise-focus.js";
@@ -38,6 +38,7 @@ import { triggerDeepResearch } from "./research-runtime.js";
 import { makeEnsureBrief } from "./write-research-gate.js";
 import { listGuiSkills, type GuiSkill } from "./skills-reader.js";
 import { buildWorkspaceTools, type WorkspaceToolDeps } from "./chat-tools-workspace.js";
+import { claimJob, releaseJob, holdJobUntilSettled, GENERATE_JOB_KEY } from "./job-claims.js";
 import { readRecentActions, recentActionsBlock } from "./recent-actions.js";
 import { viewContextLine, type ChatViewContext } from "./chat-view-context.js";
 import type { TriggerResult } from "../modules/research/research-runner.js";
@@ -276,6 +277,11 @@ export interface ChatToolDeps extends WorkspaceToolDeps {
   libSearch?: (query: string, type?: LibraryAssetType) => Promise<LibraryAssetView[]>;
   saveTopicImpl?: typeof saveTopic;
   startGenerate?: (req: ScriptRequest, dataDir?: string) => Promise<StartedGeneration>;
+  retryGenerate?: (
+    contentId: string,
+    dataDir?: string,
+    override?: Partial<ScriptRequest>,
+  ) => Promise<StartedGeneration>;
   reviseDraftImpl?: (contentId: string, instruction: string, dataDir?: string) => Promise<ReviseDraftResult>;
   reviseFocusImpl?: (contentId: string, instruction: string, focus: ReviseFocus, dataDir?: string) => Promise<ReviseFocusResult>;
   deepResearch?: (topicId: string, dataDir?: string) => Promise<TriggerResult>;
@@ -374,6 +380,19 @@ export function dedupeDraftCards(cards: ChatCard[]): ChatCard[] {
   });
 }
 
+/**
+ * 同选题同平台的中断稿（未删、带 lastError）。listContents 已按 createdAt 倒序，
+ * 所以 find 拿到的就是最新那一张——用户眼里那张卡就在看板最上面。
+ */
+function findInterruptedDraft(
+  contents: Array<Record<string, unknown>>,
+  topicId: string,
+  platform: string,
+): string | null {
+  const hit = contents.find((c) => c.topicId === topicId && c.platform === platform && c.lastError);
+  return typeof hit?.id === "string" ? hit.id : null;
+}
+
 /** 工具名唯一是 fail-closed 断言(设计 §Phase 1):重名会被 loop 静默覆盖,宁可起不来也不带病跑 */
 export function assertUniqueToolNames(tools: LoopTool[]): LoopTool[] {
   const seen = new Set<string>();
@@ -415,6 +434,18 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
           // 与桌面写作入口同一道闸口：选题没简报就先补调研，闸口故障只降级不阻断
           ensureBriefImpl: makeEnsureBrief(dd),
         })),
+    retryGenerate:
+      deps?.retryGenerate ??
+      ((contentId, dd, override) =>
+        retryGenerateScript(
+          contentId,
+          dd,
+          {
+            onEvent: (e) => void emitEngineEvent(e, dd).catch(() => {}),
+            ensureBriefImpl: makeEnsureBrief(dd),
+          },
+          override,
+        )),
     reviseDraftImpl: deps?.reviseDraftImpl ?? reviseDraft,
     reviseFocusImpl: deps?.reviseFocusImpl ?? reviseFocus,
     deepResearch: deps?.deepResearch ?? triggerDeepResearch,
@@ -434,6 +465,44 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
    * 用户不必再发一轮（真机 dogfood 死循环的根因之一）。前端由 focus_cleared 卡同步。
    */
   let revisionFocus = viewContext?.revisionFocus;
+
+  /**
+   * 中断稿原地重写分支（generate_script 的前置）。返回工具回执，null = 没有中断稿，照旧新建。
+   *
+   * 老路是「重试 = 再派一次活」→ 中断稿成僵尸卡，每重试一次看板多一张重复卡
+   * （2026-08-24 缺陷）。claim 与编辑器按钮共用一把锁：两个入口不许同时改一份 meta。
+   */
+  const retryInterrupted = async (req: ScriptRequest): Promise<string | null> => {
+    const list = await d.content({ ...dirParams, action: "list" });
+    if (!list.ok) return fail(list.error);
+    const staleId = findInterruptedDraft(
+      (list.contents ?? []) as Array<Record<string, unknown>>,
+      req.topicId ?? "",
+      req.platform,
+    );
+    if (!staleId) return null;
+    const key = GENERATE_JOB_KEY(staleId);
+    if (!claimJob(key)) {
+      return JSON.stringify({
+        ok: true, alreadyRunning: true, contentId: staleId,
+        note: "这篇已经在写了——照实说「已在跑,进度看看板」,不要重复派活。",
+      });
+    }
+    let held = false;
+    try {
+      // 带上这一轮的新要求:用户换了角度就按新角度重写(见 retryGenerateScript 的 override)
+      const started = await d.retryGenerate(staleId, dataDir, req);
+      holdJobUntilSettled(key, started.completion);
+      held = true;
+      effects?.contentIds.add(staleId);
+      return JSON.stringify({
+        ok: true, pending: true, contentId: staleId,
+        note: "上次这篇写崩了,已在原稿上重写,没有新建稿件（约 1-3 分钟）。告诉用户去看板看那张卡,不要编造成稿内容。",
+      });
+    } finally {
+      if (!held) releaseJob(key);
+    }
+  };
 
   const tools: LoopTool[] = [
     {
@@ -544,7 +613,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     {
       name: "generate_script",
       description:
-        "开写一篇稿件（后台任务）。调用立即返回占位稿——写作在后台进行（长文约 1-3 分钟）,完成后看板卡片自动转正、任务带显示进度。需要明确的选题和目标平台。选题来自灵感库时必须带 topic_id（灵感库编号,形如 topic-xxx——brief/候选卡里都有）,血缘断了归因和灵感保护就断了。",
+        "开写一篇稿件（后台任务）。调用立即返回占位稿——写作在后台进行（长文约 1-3 分钟）,完成后看板卡片自动转正、任务带显示进度。需要明确的选题和目标平台。选题来自灵感库时必须带 topic_id（灵感库编号,形如 topic-xxx——brief/候选卡里都有）,血缘断了归因和灵感保护就断了。带 topic_id 时,这条选题上次写崩的那张卡会被就地重写（不新建）——用户说「重新生成/再写一次」照常调这个工具即可。",
       parameters: {
         type: "object",
         properties: {
@@ -561,19 +630,24 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
       },
       execute: async (args) => {
         const a = sanitize(args);
+        // 没给值的键**不出现**（而不是置 undefined）：这份请求也当重写的覆盖层用，
+        // 带一个 undefined 进去就等于把原稿上存着的那一格擦掉
+        const req: ScriptRequest = {
+          topic: String(a.topic ?? ""),
+          platform: a.platform as never,
+          ...(typeof a.research === "string" && a.research ? { research: a.research } : {}),
+          ...(typeof a.topic_id === "string" && a.topic_id ? { topicId: a.topic_id } : {}),
+          // 缺省启用；只有显式 false 才关掉对标拆解卡注入（收件箱设计 §3.5）
+          ...(a.use_patterns === false ? { usePatterns: false } : {}),
+        };
         try {
+          // 这条选题上次就写崩了 → 救活那张卡，而不是再开一张（见 retryInterrupted）
+          if (req.topicId) {
+            const retried = await retryInterrupted(req);
+            if (retried) return retried;
+          }
           // 后台化（契约 P1 完全体）:任务生命周期与本次对话请求解耦——对话立即回,写作照跑
-          const started = await d.startGenerate(
-            {
-              topic: String(a.topic ?? ""),
-              platform: a.platform as never,
-              research: typeof a.research === "string" ? a.research : undefined,
-              topicId: typeof a.topic_id === "string" && a.topic_id ? a.topic_id : undefined,
-              // 缺省启用；只有显式 false 才关掉对标拆解卡注入（收件箱设计 §3.5）
-              ...(a.use_patterns === false ? { usePatterns: false } : {}),
-            },
-            dataDir,
-          );
+          const started = await d.startGenerate(req, dataDir);
           effects?.contentIds.add(started.contentId);
           return JSON.stringify({
             ok: true,

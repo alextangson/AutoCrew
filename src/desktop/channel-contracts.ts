@@ -17,6 +17,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "flywheel:report": [],
   // 可选键 use_patterns（boolean）：false = 本次不注入对标拆解卡（收件箱设计 §3.5）
   "generate:script": ["topic", "platform"],
+  // 重写的参数全在稿件自己身上（genRequest / 平台 / 血缘），renderer 只需点名是哪一篇
+  "generate:retry": ["content_id"],
   "style:distill": [],
   "style:absorb": ["samples"],
   "style:rules": [],
