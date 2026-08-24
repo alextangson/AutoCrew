@@ -902,6 +902,7 @@ async function conversationsListHandler(payload: Record<string, unknown>): Promi
     return { ok: false, error: "Invalid payload: expected object" };
   }
   try {
+    // meta 整条直出（含可选 contentId）——右栏靠它判断「这篇稿件名下有没有会话」
     return { ok: true, data: { conversations: await listConversations((payload._dataDir as string) || undefined) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
