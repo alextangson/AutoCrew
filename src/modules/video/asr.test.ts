@@ -21,8 +21,33 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-function req(extra?: { timeoutMs?: number }) {
+function req(extra?: { timeoutMs?: number; hotwords?: string[] }) {
   return { audioFile: path.join(dir, "in.wav"), outFile: path.join(dir, "out.json"), ...extra };
+}
+
+/**
+ * 抓 sidecar 的 argv。热词是**只存在于命令行上**的东西——sidecar 是假的，
+ * 不看 argv 就等于没测；套在 `fakeUvSpawn` 外面，剧本行为保持不变。
+ */
+function capturingUv(): { calls: string[][]; spawnImpl: ReturnType<typeof routedSpawn> } {
+  const calls: string[][] = [];
+  const inner = fakeUvSpawn("ok");
+  return {
+    calls,
+    spawnImpl: routedSpawn({
+      uv: (args) => {
+        calls.push([...args]);
+        return inner(args);
+      },
+    }),
+  };
+}
+
+/** 转写那一次调用（`commandExists` 的 --version 探测也走 uv，得挑出来） */
+function transcribeArgv(calls: string[][]): string[] {
+  const argv = calls.find((a) => a.includes("--audio"));
+  if (!argv) throw new Error(`没抓到转写调用：${JSON.stringify(calls)}`);
+  return argv;
 }
 
 describe("runAsr 契约", () => {
@@ -80,6 +105,25 @@ describe("runAsr 契约", () => {
     const r = await runAsr(req(), { spawnImpl });
     expect(r.ok).toBe(false);
     await expect(fs.access(path.join(dir, "out.json"))).rejects.toThrow();
+  });
+});
+
+describe("热词透传（spec §3）", () => {
+  it("有热词 → argv 带 --hotword，多词按空格拼成一个参数", async () => {
+    const { calls, spawnImpl } = capturingUv();
+    const r = await runAsr(req({ hotwords: ["DeepSeek", "Harness"] }), { spawnImpl });
+    expect(r.ok).toBe(true);
+    const argv = transcribeArgv(calls);
+    expect(argv[argv.indexOf("--hotword") + 1]).toBe("DeepSeek Harness");
+  });
+
+  it("空表 / 缺省 → argv 里根本没有 --hotword（缺省行为逐字节不变）", async () => {
+    for (const hotwords of [undefined, []]) {
+      const { calls, spawnImpl } = capturingUv();
+      const r = await runAsr(req(hotwords ? { hotwords } : {}), { spawnImpl });
+      expect(r.ok).toBe(true);
+      expect(transcribeArgv(calls)).not.toContain("--hotword");
+    }
   });
 });
 

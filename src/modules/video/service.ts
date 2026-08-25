@@ -25,7 +25,12 @@ import {
   type FillEditorSlotArgs,
   type RemoveEditorSlotArgs,
 } from "./editor-gate.js";
-import { createCutGate, type ConfirmCutArgs, type RequestPreviewArgs } from "./cut-gate.js";
+import {
+  createCutGate,
+  type ConfirmCutArgs,
+  type EditUnitTextArgs,
+  type RequestPreviewArgs,
+} from "./cut-gate.js";
 import { checkVideoEligibility } from "./ingest.js";
 import { createReviewGate, type ConfirmReviewArgs } from "./review-gate.js";
 import { createVideoRunner, type VideoRunner } from "./runner.js";
@@ -33,12 +38,13 @@ import type { VideoDeps } from "./proc.js";
 import {
   latestJobsView,
   readEditUnits,
+  readEffectiveTranscript,
+  readTranscriptClean,
   readVersioned,
   readVideoJobs,
   readVideoState,
   transitionVideoState,
   videoDir,
-  writeVersioned,
 } from "./video-store.js";
 import { readReviewDecision, type VideoReviewDecision } from "./review-decision.js";
 import type {
@@ -52,8 +58,8 @@ import type {
 
 export { VideoConflictError } from "./errors.js";
 
-/** 选段这道门（确认 / 重跑粗剪 / 门内预览）的入参住在 cut-gate.ts */
-export type { ConfirmCutArgs, RequestPreviewArgs } from "./cut-gate.js";
+/** 选段这道门（确认 / 重跑粗剪 / 门内预览 / 手工改字）的入参住在 cut-gate.ts */
+export type { ConfirmCutArgs, EditUnitTextArgs, RequestPreviewArgs } from "./cut-gate.js";
 
 /**
  * 成片计划这道门的入口住在 editor-gate.ts（横屏 spec §3.1 + v2 spec §4.2 + lifecycle §2.3）——
@@ -83,9 +89,18 @@ export interface VideoStatus {
 
 /** 选段视图要的一整套：转写（事实）、剪辑单元（派生，可能不存在）、当前决策 */
 export interface CutView {
+  /**
+   * **有效文字**（转写纠错 spec §5）：有清洗版就是清洗后的分句，没有才是 ASR 原文。
+   * 前端看到的字必须与成片字幕同源，否则人在门上对着未纠正的错字做取舍。
+   */
   transcript: VideoTranscript;
   cut: VideoCut;
   editUnits?: VideoEditUnits;
+  /**
+   * 清洗降级的人话（`TranscriptClean.warning` 原样透传）。单独一个字段而不是塞进
+   * `editUnits.warning`——那句话说的是粗剪出了什么状况，两种降级不能互相覆盖。
+   */
+  cleanWarning?: string;
 }
 
 export interface VideoService {
@@ -101,11 +116,21 @@ export interface VideoService {
   editorBackToCut(contentId: string, args: BackToCutArgs): Promise<VideoState>;
   /** 按门上当前勾选重渲一版预览；主状态不动，渲完由辅助 job 更新 preview 指针 */
   requestCutPreview(contentId: string, args: RequestPreviewArgs): Promise<VideoState>;
+  /**
+   * 门上手工改一句的文字（转写纠错 spec §6）：热词与清洗都没治好的错字，人自己动手。
+   * 落一版 `origin:"human"` 的清洗文字 + 同号的新 cut/单元表，勾选与标注原样带过去。
+   */
+  editTranscriptText(contentId: string, args: EditUnitTextArgs): Promise<VideoState>;
   /** 渲染失败在一份废 manifest 上时回组装重出一份（v2 spec §2.3 的死路出口） */
   reassemble(contentId: string): Promise<VideoState>;
   confirmReview(contentId: string, args: ConfirmReviewArgs): Promise<VideoState>;
   /** 重新跑一次 AI 粗剪（粗剪 spec §3.4）；人工已终裁的那版不许被后台覆盖 */
   rerunRoughCut(contentId: string): Promise<VideoState>;
+  /**
+   * 重新跑一次转写（转写纠错 spec §7）：只在选段门上可用，会作废这一版选段与手工改字。
+   * 素材没换时走 ASR 缓存，等于「只重跑热词接线之后的清洗」。
+   */
+  rerunTranscribe(contentId: string): Promise<VideoState>;
   /** 重新跑一次剪辑师（横屏 spec §3.1）；只在成片计划的人工门上可用 */
   rerunEditor(contentId: string): Promise<VideoState>;
   retry(contentId: string): Promise<VideoState>;
@@ -319,12 +344,20 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
       const { state } = await readVideoState(dataDir, contentId);
       if (!state?.revisions.transcript || !state.revisions.cut) return null;
       const dir = videoDir(dataDir, contentId);
-      const transcript = await readVersioned<VideoTranscript>(dir, "transcript", state.revisions.transcript);
+      const clean = state.revisions.clean;
+      const transcript = await readEffectiveTranscript(dir, { transcript: state.revisions.transcript, clean });
       const cut = await readVersioned<VideoCut>(dir, "cut", state.revisions.cut);
       if (!transcript || !cut) return null;
       // 老产物没有 edit-units：面板据此回落 transcript.segments（§4）
       const editUnits = await readEditUnits(dir, state.revisions.cut);
-      return { transcript, cut, ...(editUnits ? { editUnits } : {}) };
+      // 清洗降级要让人看见（§8 #4）：读一次 clean 只为把它那句话带出去
+      const cleanWarning = clean ? (await readTranscriptClean(dir, clean))?.warning : undefined;
+      return {
+        transcript,
+        cut,
+        ...(editUnits ? { editUnits } : {}),
+        ...(cleanWarning ? { cleanWarning } : {}),
+      };
     });
   }
 
@@ -358,9 +391,11 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
     removeEditorSlot: (contentId, args) => serialize(() => editorGate.removeSlot(contentId, args)),
     editorBackToCut: (contentId, args) => serialize(() => editorGate.backToCut(contentId, args)),
     requestCutPreview: (contentId, args) => serialize(() => cutGate.requestPreview(contentId, args)),
+    editTranscriptText: (contentId, args) => serialize(() => cutGate.editText(contentId, args)),
     reassemble,
     confirmReview: (contentId, args) => serialize(() => reviewGate.confirm(contentId, args)),
     rerunRoughCut: (contentId) => serialize(() => cutGate.rerunRoughCut(contentId)),
+    rerunTranscribe: (contentId) => serialize(() => cutGate.rerunTranscribe(contentId)),
     rerunEditor,
     retry,
     getStatus,

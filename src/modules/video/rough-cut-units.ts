@@ -177,7 +177,8 @@ export function halveWindow(stream: WordStream, win: RoughCutWindow): [RoughCutW
   ];
 }
 
-function clock(ms: number): string {
+/** 毫秒 → `m:ss` 时间码。降级 warning 一律用它点名「哪一段」，人才知道去复核哪儿 */
+export function clock(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }

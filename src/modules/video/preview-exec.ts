@@ -22,7 +22,7 @@ import { OUTPUT_FPS } from "./timeline-build.js";
 import {
   latestRevision,
   readEditUnits,
-  readVersioned,
+  readEffectiveTranscript,
   readVideoAssets,
   resolveAssetRef,
   videoDir,
@@ -54,7 +54,7 @@ export function previewVideoPath(dataDir: string, contentId: string, revision: n
 export async function writePreviewRequest(
   dataDir: string,
   contentId: string,
-  req: { keeps: string[]; baseCutRevision: number; baseTranscriptRevision: number },
+  req: { keeps: string[]; baseCutRevision: number; baseTranscriptRevision: number; baseCleanRevision?: number },
 ): Promise<number> {
   const dir = videoDir(dataDir, contentId);
   const revision = ((await latestRevision(dir, "cut-preview-request")) ?? 0) + 1;
@@ -71,6 +71,8 @@ export interface PreviewExecInput {
   keeps: string[];
   transcriptRevision: number;
   cutRevision: number;
+  /** 用哪一版清洗文字出字幕；缺省 = 这一稿还没有清洗版，回落 ASR 原文（§5） */
+  cleanRevision?: number;
   /**
    * 剪辑单元覆盖。cut job 尾接的那次预览跑在 staging 还没定版的时刻，
    * 盘上读不到 `edit-units.v<cutRevision>`——不传进来就会拿 keeps 去 transcript 里找不存在的 id。
@@ -95,7 +97,10 @@ interface PreviewSource {
 async function loadSource(input: PreviewExecInput): Promise<PreviewSource | PreviewOutcome> {
   const { dataDir, contentId } = input;
   const dir = videoDir(dataDir, contentId);
-  const transcript = await readVersioned<VideoTranscript>(dir, "transcript", input.transcriptRevision);
+  const transcript = await readEffectiveTranscript(dir, {
+    transcript: input.transcriptRevision,
+    ...(input.cleanRevision ? { clean: input.cleanRevision } : {}),
+  });
   if (!transcript) {
     return { ok: false, errorCode: "missing_input", reason: `读不到 transcript.v${input.transcriptRevision}` };
   }
@@ -198,6 +203,7 @@ async function stagePreviewManifest(
     timelineRevision: input.revision,
     cutRevision: input.cutRevision,
     transcriptRevision: input.transcriptRevision,
+    ...(input.cleanRevision ? { cleanRevision: input.cleanRevision } : {}),
     durationMs,
     map,
     arollFile: src.arollFile,
@@ -273,6 +279,7 @@ export async function renderGatePreview(
     keeps: string[];
     transcriptRevision: number;
     cutRevision: number;
+    cleanRevision?: number;
     units?: Pick<VideoEditUnits, "segments" | "origin">;
   },
 ): Promise<VideoPreviewState> {
@@ -282,6 +289,7 @@ export async function renderGatePreview(
       keeps: input.keeps,
       baseCutRevision: input.cutRevision,
       baseTranscriptRevision: input.transcriptRevision,
+      ...(input.cleanRevision ? { baseCleanRevision: input.cleanRevision } : {}),
     });
   } catch (err) {
     return { requestedRevision: 0, error: `预览请求没落盘：${(err as Error).message}` };

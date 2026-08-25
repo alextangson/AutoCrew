@@ -9,6 +9,10 @@
  *   绝不把半个 transcript 当事实存进不可变产物里。
  * - **预热是后台动作**：模型 ~1GB，`warmupAsr` 投出去就返回，状态写
  *   `<dataDir>/video/asr-status.json`（原子写）供 doctor/设置页查询。
+ * - **热词是「防」不是「治」**：专有名词念得再准也常被认成谐音词（真机上 DeepSeek →
+ *   deepsick），错字还会烧进成片字幕。所用模型是 SeACo 热词定制版，识别期就能偏置，
+ *   比事后纠错便宜且无损。本模块只把词表翻成 sidecar 的 `--hotword`；词表怎么来是
+ *   `hotwords.ts` 的事（转写纠错 spec §3）。
  *
  * FunASR 吃的是音频。A-roll 是 mp4，所以先用 ffmpeg 抽一条 16k 单声道 wav——
  * 这一步属于「准备 ASR 输入」，故留在本模块，不散到 assemble 去。
@@ -45,6 +49,11 @@ export type AsrOutcome =
 export interface AsrRequest {
   audioFile: string;
   outFile: string;
+  /**
+   * 识别期热词（来自 `extractHotwords(body)`）。空或缺省 = 不拼 `--hotword`，
+   * sidecar 走与今天逐字节一致的老路——热词是可选增强，不是新的必填协议。
+   */
+  hotwords?: string[];
   timeoutMs?: number;
   abortSignal?: AbortSignal;
 }
@@ -153,7 +162,13 @@ export async function runAsr(req: AsrRequest, deps?: VideoDeps): Promise<AsrOutc
 
   const result = await runProcess({
     command: "uv",
-    args: sidecarArgs(["--audio", req.audioFile, "--out", req.outFile]),
+    args: sidecarArgs([
+      "--audio", req.audioFile,
+      "--out", req.outFile,
+      // 空表连参数都不给：`--hotword ""` 在 FunASR 里未必等于「没热词」，
+      // 而「没稿子/稿子里没拉丁词」的老路必须跟今天完全一样
+      ...(req.hotwords?.length ? ["--hotword", req.hotwords.join(" ")] : []),
+    ]),
     cwd: REPO_ROOT,
     timeoutMs,
     ...(req.abortSignal ? { abortSignal: req.abortSignal } : {}),

@@ -3,7 +3,7 @@
 
 契约（调用方是 src/modules/video/asr.ts，改这里等于改协议）：
 
-    uv run --project sidecars/asr sidecars/asr/asr.py --audio <绝对路径> --out <绝对路径>
+    uv run --project sidecars/asr sidecars/asr/asr.py --audio <绝对路径> --out <绝对路径> [--hotword "词1 词2"]
     uv run --project sidecars/asr sidecars/asr/asr.py --warmup
 
   * `--out` 落一份 JSON，逐字段对齐 TS 侧的 `VideoTranscript`：
@@ -11,6 +11,10 @@
        "segments":[{"id":"seg-0001","text":"…","startMs":0,"endMs":1200,
                     "words":[{"w":"你","startMs":0,"endMs":120}]}]}
     `scriptAlignment` 由 TS 侧算（口播稿在主进程里），python 不碰。
+  * `--hotword` 可选，空格分隔的热词表，原样透传给 `model.generate(hotword=...)`
+    （所用的 SeACo-Paraformer 就是 FunASR 的热词定制模型，原生支持）。**不传 = 缺省行为
+    逐字节不变**——热词是可选增强，不是新的必填协议。词表由 TS 侧从口播稿正文里抽
+    （src/modules/video/hotwords.ts）。
   * 进度与告警一律走 stderr；stdout 保持干净。
   * 退出码即状态：0 成功｜2 入参不对｜20 模型未就绪（调用方据此落 blocked: asr_not_ready）｜1 其余失败。
 
@@ -20,6 +24,8 @@
    直接退 20，让调用方给出「去预热」的人话指引——而不是让一次点击悄悄卡在下载上 20 分钟。
 2. **不做文本规范化**。识别出什么就写什么（标点由 ct-punc 给），大小写/数字/错别字都不改：
    规范化是有损的，一旦写进不可变的 transcript 就再也回不去了。
+   `--hotword` 不破这条纪律：热词是**解码期的识别偏置**（改的是模型认出什么），不是拿规则
+   去改模型认出来的结果——后处理才有损，偏置没有。
 3. **输出原子落盘**（tmp + os.replace）。半个 JSON 比没有 JSON 更难查——调用方读到半文件
    只能报「转写产物损坏」，那本可以避免。
 """
@@ -55,6 +61,10 @@ MODEL_REPOS = {
 
 # 一个「词」= 一个汉字，或一串连续的拉丁字母/数字（Paraformer 的 token 粒度就是这样）。
 # 标点与空白不占时间戳，对齐时跳过。
+#
+# **这个口径是双侧契约**：TS 侧的清洗（src/modules/video/transcript-clean-align.ts）要按同样的
+# 规则把改后的文字切回词，两边差一个字符，词与时间戳就整体错位一格。样本与期望落在
+# word-units.contract.json，TS 的测试会同时验两侧——改这行正则先去那里加样本。
 WORD_UNIT_RE = re.compile(r"[A-Za-z0-9']+|[^\s\W_]", re.UNICODE)
 
 
@@ -191,14 +201,19 @@ def do_warmup() -> int:
     return EXIT_OK
 
 
-def do_transcribe(audio: Path, out: Path) -> int:
+def do_transcribe(audio: Path, out: Path, hotword: str | None = None) -> int:
     model = load_model(allow_download=False)
+    if hotword:
+        log(f"热词偏置：{hotword}")
     log(f"转写中：{audio.name}")
     results = model.generate(
         input=str(audio),
         # 长音频先由 fsmn-vad 切段再批量识别；300 秒一批是 FunASR 的推荐量级
         batch_size_s=300,
         sentence_timestamp=True,
+        # 没热词就一个字都不多传：空串/空表在各版本 FunASR 里的语义不一致，
+        # 而「不传热词」必须与热词功能上线前逐字节等价（调用方靠这条判断结果可复用）
+        **({"hotword": hotword} if hotword else {}),
     )
     if not results:
         log("识别结果为空（可能是纯音乐或全程静音）")
@@ -214,6 +229,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AutoCrew ASR sidecar（FunASR Paraformer 中文）")
     parser.add_argument("--audio", help="输入音频/视频绝对路径")
     parser.add_argument("--out", help="转写结果 JSON 的输出绝对路径")
+    parser.add_argument("--hotword", help="空格分隔的热词表（识别期偏置）；不传则行为与今天一致")
     parser.add_argument("--warmup", action="store_true", help="只下载/加载模型然后退出")
     return parser.parse_args(argv)
 
@@ -238,7 +254,7 @@ def main(argv: list[str]) -> int:
             log(f"模型尚未下载：{'、'.join(missing)}；请先跑一次 --warmup（约 1GB）")
             return EXIT_MODEL_NOT_READY
 
-    return do_transcribe(audio, Path(args.out))
+    return do_transcribe(audio, Path(args.out), args.hotword)
 
 
 if __name__ == "__main__":

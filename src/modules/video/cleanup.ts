@@ -20,6 +20,7 @@ import type { RenderManifest } from "./types.js";
 /** 决策 JSON 是重剪的依据（KB 级），一律留 */
 const KEEP_JSON_BASES = [
   "transcript",
+  "transcript-clean",
   "cut",
   "edit-units",
   "editor-plan",
@@ -30,8 +31,8 @@ const KEEP_JSON_BASES = [
   "review-decision",
 ];
 
-/** 不带版本号但必须留的常驻文件 */
-const KEEP_PLAIN = new Set(["state.json", "assets.json", "asr-out.json"]);
+/** 不带版本号但必须留的常驻文件；meta 是 asr-out.json 的缓存键，删一个留一个等于缓存失灵 */
+const KEEP_PLAIN = new Set(["state.json", "assets.json", "asr-out.json", "asr-out.meta.json"]);
 
 export interface CleanupContext {
   /** 通过版；只有它的成片、它引用的音轨会被留下 */

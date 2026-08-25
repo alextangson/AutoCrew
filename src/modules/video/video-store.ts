@@ -5,6 +5,7 @@
  *   contents/<contentId>/video/
  *     state.json                 全量构建状态（原子写 + 逐 content 串行队列）
  *     transcript.v<N>.json       不可变 ASR 事实
+ *     transcript-clean.v<C>.json 清洗/手改后的派生文字（事实不动，改写落这里）
  *     cut.v<M>.json              剪辑决策
  *     timeline.v<K>.json         组装结果
  *     render-manifest.v<K>.json  渲染冻结点
@@ -25,7 +26,15 @@ import { isContentId, isSafeFilename } from "../../storage/entity-id.js";
 import { readJson, writeJsonAtomic } from "../../storage/json-atomic.js";
 import { getAsset } from "../../storage/library-store.js";
 import { assertTransition, type VideoStateRef } from "./state-machine.js";
-import type { AssetRef, VideoAssetEntry, VideoEditUnits, VideoJob, VideoState } from "./types.js";
+import type {
+  AssetRef,
+  TranscriptClean,
+  VideoAssetEntry,
+  VideoEditUnits,
+  VideoJob,
+  VideoState,
+  VideoTranscript,
+} from "./types.js";
 
 /** lease 10 分钟；心跳 60 秒续租（§3）。过期即可回收，避免跨进程重复渲染 */
 export const VIDEO_LEASE_MS = 10 * 60_000;
@@ -247,6 +256,15 @@ export async function writeVersioned(
   return target;
 }
 
+/**
+ * 回删一版产物。**只许回滚自己刚写、state 还没引用的号**（多步写的第一步成功、
+ * 后续步撞号时，留下的孤儿会让下一次写永远撞同一个号）——不可变纪律针对的是
+ * 「已被 state 引用的事实」，一个从未被引用的号谈不上不可变。
+ */
+export async function removeVersioned(dir: string, base: string, revision: number): Promise<void> {
+  await fs.rm(path.join(dir, versionedName(base, revision)), { force: true });
+}
+
 export function readVersioned<T>(dir: string, base: string, revision: number): Promise<T | null> {
   return readJson<T>(path.join(dir, versionedName(base, revision)));
 }
@@ -257,6 +275,31 @@ export function readVersioned<T>(dir: string, base: string, revision: number): P
  */
 export function readEditUnits(dir: string, cutRevision: number): Promise<VideoEditUnits | null> {
   return readVersioned<VideoEditUnits>(dir, "edit-units", cutRevision);
+}
+
+export function readTranscriptClean(dir: string, cleanRevision: number): Promise<TranscriptClean | null> {
+  return readVersioned<TranscriptClean>(dir, "transcript-clean", cleanRevision);
+}
+
+/**
+ * **文字的唯一读点**（转写纠错 spec §5）：有清洗版就用清洗版的分句，没有就回落 ASR 事实。
+ * 形状仍是 `VideoTranscript`，所以 outputMap / 字幕 cue / 粗剪一个都不用改口径。
+ *
+ * 回落收在这一个函数里而不是各消费点各写一遍：漏一处，那条路径烧出来的就是没纠过的字。
+ * `scriptAlignment` 始终跟着 transcript 走——它是对着**事实**算的对齐度，清洗改不动它。
+ *
+ * clean 的 `transcriptRevision` 与要读的事实对不上时按「没有清洗版」处理：那种 clean 的段 id
+ * 属于另一版 ASR，硬用只会让 keeps 在下游找不到分句，回落到事实反而是能跑通的那条路。
+ */
+export async function readEffectiveTranscript(
+  dir: string,
+  revisions: { transcript: number; clean?: number },
+): Promise<VideoTranscript | null> {
+  const transcript = await readVersioned<VideoTranscript>(dir, "transcript", revisions.transcript);
+  if (!transcript) return null;
+  const clean = revisions.clean ? await readTranscriptClean(dir, revisions.clean) : null;
+  if (!clean || !Array.isArray(clean.segments) || clean.transcriptRevision !== revisions.transcript) return transcript;
+  return { ...transcript, segments: clean.segments };
 }
 
 function stagingName(base: string, jobId: string): string {

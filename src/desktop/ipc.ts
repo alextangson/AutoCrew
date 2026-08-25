@@ -177,7 +177,9 @@ import {
   videoReviewConfirmHandler,
   videoRoughCutRerunHandler,
   videoStatusHandler,
+  videoTranscribeRerunHandler,
   videoTranscriptGetHandler,
+  videoTranscriptTextEditHandler,
 } from "./video-handlers.js";
 import { patternsListHandler, patternsUpdateHandler, patternsDeleteHandler } from "./pattern-handlers.js";
 import {
@@ -1338,6 +1340,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "video:transcript_get": videoTranscriptGetHandler,
     "video:cut_confirm": videoCutConfirmHandler,
     "video:rough_cut_rerun": videoRoughCutRerunHandler,
+    "video:transcribe_rerun": videoTranscribeRerunHandler,
+    "video:transcript_text_edit": videoTranscriptTextEditHandler,
     "video:editor_plan_get": videoEditorPlanGetHandler,
     "video:editor_confirm": videoEditorConfirmHandler,
     "video:editor_rerun": videoEditorRerunHandler,

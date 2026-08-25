@@ -54,6 +54,12 @@ export type VideoBlockedReason =
 /** 各产物的当前 revision；缺省 = 该产物尚未产生 */
 export interface VideoRevisions {
   transcript?: number;
+  /**
+   * 清洗后文字的版本（`transcript-clean.v<C>.json`）。**与 transcript 各自计数**：
+   * 一版 ASR 事实上可以有多版清洗（LLM 一版、人手改字再一版），共用 transcript 号第二次就撞
+   * 「版本化产物不可覆盖」。缺省 = 这一稿还没有清洗版，消费方回落 transcript（§5）。
+   */
+  clean?: number;
   cut?: number;
   /**
    * 剪辑师 plan 的版本（`editor-plan.v<N>.json`）。**与 cut 各自计数**：同一版 cut 可以重跑
@@ -168,6 +174,32 @@ export interface VideoTranscript {
   scriptAlignment?: { matchedRatio: number };
 }
 
+/**
+ * `video/transcript-clean.v<C>.json` —— 转写的**派生文本**（转写纠错 spec §1）。
+ *
+ * 为什么不就地改 transcript：I2「事实与派生分家」——`transcript.vN` 必须原样保留 FunASR
+ * 产物，否则「这个字是 ASR 听成这样的、还是清洗改出来的」再也说不清，也没法回退到事实重来。
+ *
+ * 追溯链靠两个字段闭合：`transcriptRevision` 说清基于哪版事实，`baseCleanRevision` 说清
+ * 手改是在哪一版清洗上改的（LLM 首版无所本，为 null）。
+ *
+ * 段 id 约定 `cseg-XXXX`：清洗会沿断句重分段，与 ASR 的 `seg-XXXX` 前缀分开才看得出
+ * 「这一段边界是谁划的」。**唯一例外是清洗没真跑的那些版**——没稿件正文（跳过清洗）、
+ * 引擎没配、全部窗口都没跑成时，clean 是 transcript 的原样复制，段 id 就仍是 `seg-XXXX`：
+ * 复制品不该伪装成清洗过的产物。判定与降级见 `transcript-clean.ts`。
+ */
+export interface TranscriptClean {
+  schemaVersion: 1;
+  /** 基于哪版 FunASR 事实；与 `revisions.transcript` 对不上的清洗版一律作废（§5 回落） */
+  transcriptRevision: number;
+  /** 手改基于哪版 clean；llm 首版为 null */
+  baseCleanRevision: number | null;
+  origin: "llm" | "human";
+  segments: TranscriptSegment[];
+  /** 清洗降级的人话细节，UI 选段卡展示。**不塞进 units.warning**——那句话说的是粗剪 */
+  warning?: string;
+}
+
 /** 分句标注：给人看的问题标记，不影响 keep 判定 */
 export type CutFlagKind = "misread" | "repeat" | "offtopic";
 
@@ -190,7 +222,9 @@ export type CutOrigin = "default_all" | "llm" | "human";
 export interface VideoEditUnits {
   schemaVersion: 1;
   transcriptRevision: number;
-  /** raw = transcript.segments 原样搬运（transcribe 阶段写，兜底）；llm = 按 drop 区间重分 */
+  /** 这批单元的文字取自哪一版清洗；缺省 = 直接切的 ASR 事实（历史产物或还没有清洗版） */
+  cleanRevision?: number;
+  /** raw = 有效转写的 segments 原样搬运（transcribe 阶段写，兜底）；llm = 按 drop 区间重分 */
   origin: "raw" | "llm";
   segments: TranscriptSegment[];
   /** 建议剔除的 unit id；**是提案不是决定**（I4），最终 keeps 由人裁 */
@@ -205,6 +239,8 @@ export interface VideoEditUnits {
 export interface VideoCut {
   /** 这份决策是对哪一版转写做的（乐观锁与漂移判定都靠它） */
   transcriptRevision: number;
+  /** 勾的是哪一版清洗文字（§1 追溯链）：任何一版字幕都要能回答「用的哪版文字」 */
+  cleanRevision?: number;
   keeps: string[];
   flags: CutFlag[];
   origin: CutOrigin;
@@ -223,6 +259,11 @@ export interface VideoPreviewRequest {
   keeps: string[];
   baseCutRevision: number;
   baseTranscriptRevision: number;
+  /**
+   * 这次预览烧的是哪一版清洗文字。渲染动辄几分钟，期间文字可能被重跑转写或手改换掉——
+   * 落盘前拿它与当前 revision 对一次，**迟到的旧预览不许冒充新字幕**（§5）。
+   */
+  baseCleanRevision?: number;
   /** 渲染算法版本；改了预览口径就该重渲，不该复用旧文件 */
   renderAlgoVersion: string;
 }

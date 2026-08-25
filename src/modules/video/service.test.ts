@@ -115,13 +115,17 @@ describe("全链走查", () => {
     const afterAsr = await settled();
     expect(describeState(afterAsr)).toBe("cut/awaiting_human");
     // cut.v1 = 转写写的全留版；cut.v2 = 粗剪步的产物（夹具词覆盖不足，降级成全留 + warning）
-    expect(afterAsr.revisions).toEqual({ transcript: 1, cut: 2 });
+    expect(afterAsr.revisions).toEqual({ transcript: 1, clean: 1, cut: 2 });
 
     const loaded = await service.getTranscript(contentId);
     expect(loaded?.cut).toMatchObject({ origin: "default_all", keeps: ["seg-0001", "seg-0002"] });
     expect(loaded?.transcript.scriptAlignment?.matchedRatio).toBeGreaterThan(0);
     expect(loaded?.editUnits).toMatchObject({ origin: "raw" });
     expect(loaded?.editUnits?.warning).toBeTruthy();
+    // 假模型一个工具都不调 → 清洗整体降级成原样转写。这句降级必须**单独**冒到选段卡上，
+    // 不许被粗剪那句 warning 顶掉：两种降级说的不是一回事（转写纠错 spec §8 #4）
+    expect(loaded?.cleanWarning).toContain("清洗");
+    expect(loaded?.cleanWarning).not.toBe(loaded?.editUnits?.warning);
 
     const confirmed = await service.confirmCut(contentId, {
       keeps: ["seg-0001", "seg-0002"],
@@ -137,7 +141,7 @@ describe("全链走查", () => {
     expect(describeState(afterRender)).toBe("review/awaiting_human");
     // editor 走到 2 是**确认本身也派生一版 plan**（lifecycle §2.1）：
     // v1 是剪辑师排的，v2 是人确认下来的那一份，决策就写在 v2 上
-    expect(afterRender.revisions).toEqual({ transcript: 1, cut: 3, editor: 2, timeline: 1, rendered: 1 });
+    expect(afterRender.revisions).toEqual({ transcript: 1, clean: 1, cut: 3, editor: 2, timeline: 1, rendered: 1 });
     expect(afterRender.confirmedEditorRevision).toBe(2);
 
     // 单元表随 cut 进新版本，warning 不跟着走（人已经处理过了）
@@ -179,12 +183,14 @@ describe("全链走查", () => {
     const after = await settled();
     expect(describeState(after)).toBe("review/awaiting_human");
     // editor：v1 剪辑师 → v2 确认 → v3 按新选段重排 → v4 再确认
-    expect(after.revisions).toEqual({ transcript: 1, cut: 4, editor: 4, timeline: 2, rendered: 2 });
+    expect(after.revisions).toEqual({ transcript: 1, clean: 1, cut: 4, editor: 4, timeline: 2, rendered: 2 });
 
     const cut4 = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 4);
-    expect(cut4).toMatchObject({ origin: "human", baseCutRevision: 3, keeps: ["seg-0001"] });
+    expect(cut4).toMatchObject({ origin: "human", baseCutRevision: 3, keeps: ["seg-0001"], cleanRevision: 1 });
     const m2 = (await readVersioned<RenderManifest>(videoDir(dir, contentId), "render-manifest", 2))!;
     expect(m2.cutRevision).toBe(4);
+    // 追溯链闭到成片：这一版字幕的字是哪来的，manifest 自己说得清（§1）
+    expect(m2.cleanRevision).toBe(1);
     expect(m2.durationMs).toBe(1000);
     // 旧成片不许被覆盖——「按哪版剪的」永远说得清
     await fs.access(path.join(videoDir(dir, contentId), "final.v1.mp4"));
@@ -278,11 +284,42 @@ describe("AI 粗剪（LLM 一律注入假实现）", () => {
     await settled();
     await service.confirmReview(contentId, { renderedRevision: 1, verdict: "reject" });
     await expect(service.rerunRoughCut(contentId)).rejects.toThrow(/你自己确认过/);
+    // 但「重跑转写」在同一格上是放行的（§7）：它作废的正是这一版终裁与手改，
+    // 而且是人自己按的按钮，不是后台悄悄盖——两条边防的是不同的事
+    expect(describeState(await service.rerunTranscribe(contentId))).toBe("transcribe/queued");
   }, 120_000);
 
   it("不在选段门上时重跑被拒（不把跑着的任务顶掉）", async () => {
     await service.startBuild(contentId);
     await expect(service.rerunRoughCut(contentId)).rejects.toThrow(/还轮不到/);
+  });
+});
+
+/**
+ * 重跑转写（转写纠错 spec §7）：门上看见错字时唯一能回到转写的出口。
+ * 它作废的正是当前这一版文字与选段，所以判定与「重跑粗剪」刚好相反——那条边防的是
+ * 后台悄悄盖掉人的决定，这条边是人自己要求换一版事实。
+ */
+describe("重跑转写", () => {
+  it("从选段门退回转写：跑完仍停在选段门，转写/清洗/选段三条 revision 一起前进，旧版留盘", async () => {
+    await service.startBuild(contentId);
+    const before = await settled();
+    expect(describeState(before)).toBe("cut/awaiting_human");
+
+    expect(describeState(await service.rerunTranscribe(contentId))).toBe("transcribe/queued");
+    const after = await settled();
+    expect(describeState(after)).toBe("cut/awaiting_human");
+    expect(after.revisions).toMatchObject({ transcript: 2, clean: 2 });
+    expect(after.revisions.cut).toBeGreaterThan(before.revisions.cut!);
+    // 旧版是审计凭证，一版都不许被顶掉
+    const vdir = videoDir(dir, contentId);
+    expect(await readVersioned(vdir, "transcript", 1)).not.toBeNull();
+    expect(await readVersioned(vdir, "transcript-clean", 1)).not.toBeNull();
+  }, 120_000);
+
+  it("不在选段门上时被拒（不把跑着的任务顶掉）", async () => {
+    await service.startBuild(contentId);
+    await expect(service.rerunTranscribe(contentId)).rejects.toThrow(/只有停在选段这道门上/);
   });
 });
 

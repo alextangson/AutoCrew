@@ -21,6 +21,7 @@ import {
   type ConfirmCutArgs,
   type ConfirmEditorPlanArgs,
   type ConfirmReviewArgs,
+  type EditUnitTextArgs,
   type FillEditorSlotArgs,
   type RemoveEditorSlotArgs,
   type RequestPreviewArgs,
@@ -181,6 +182,31 @@ function parseReviewArgs(payload: Payload): ConfirmReviewArgs | string {
     ...(target ? { target } : {}),
     ...(typeof raw === "number" ? { timestampMs: Math.round(raw) } : {}),
     ...(typeof note === "string" && note.trim() ? { note: note.trim() } : {}),
+  };
+}
+
+/**
+ * 手工改字的入参（转写纠错 spec §6）。**三个 base 都是必填**：文字住在 clean 里，
+ * 少锁一版就等于允许「后台刚换过文字」时盲改。文字本身的空/超长/零词判定在 service，
+ * 这一层只管形态——把「不是字符串」与「改成了空的」混成同一句错话会让人摸不着头脑。
+ */
+function parseTextEditArgs(payload: Payload): EditUnitTextArgs | string {
+  const unitId = payload.unit_id;
+  if (typeof unitId !== "string" || !unitId.trim()) return "unit_id 必须是非空字符串";
+  const text = payload.text;
+  if (typeof text !== "string") return "text 必须是字符串";
+  const baseTranscript = parseRevision(payload.base_transcript_revision, "base_transcript_revision");
+  if (typeof baseTranscript === "string") return baseTranscript;
+  const baseClean = parseRevision(payload.base_clean_revision, "base_clean_revision");
+  if (typeof baseClean === "string") return baseClean;
+  const baseCut = parseRevision(payload.base_cut_revision, "base_cut_revision");
+  if (typeof baseCut === "string") return baseCut;
+  return {
+    unitId: unitId.trim(),
+    text,
+    baseTranscriptRevision: baseTranscript,
+    baseCleanRevision: baseClean,
+    baseCutRevision: baseCut,
   };
 }
 
@@ -389,6 +415,37 @@ export async function videoRoughCutRerunHandler(payload: Payload): Promise<Reply
   if (!contentId) return { ok: false, error: "需要合法 content_id" };
   try {
     return { ok: true, data: { state: await ctx.service.rerunRoughCut(contentId) } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** 重跑转写：只在 cut/awaiting_human 上可用，会作废这一版选段与手改（判定在 service） */
+export async function videoTranscribeRerunHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  try {
+    return { ok: true, data: { state: await ctx.service.rerunTranscribe(contentId) } };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/**
+ * 手工改一句的文字：落新一版清洗文字 + 同号的新 cut/单元表（判定与产物在 cut-gate）。
+ * 版本对不上是**冲突不是故障**——`fail` 会把它翻成 `conflict:true`，前端重载后重改。
+ */
+export async function videoTranscriptTextEditHandler(payload: Payload): Promise<Reply> {
+  const ctx = resolve(payload);
+  if (!ctx.ok) return ctx.reply;
+  const contentId = requireContentId(payload);
+  if (!contentId) return { ok: false, error: "需要合法 content_id" };
+  const args = parseTextEditArgs(payload);
+  if (typeof args === "string") return { ok: false, error: args };
+  try {
+    return { ok: true, data: { state: await ctx.service.editTranscriptText(contentId, args) } };
   } catch (err) {
     return fail(err);
   }

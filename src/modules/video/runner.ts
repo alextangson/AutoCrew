@@ -25,6 +25,7 @@ import { executePhase, stepWarning, type StepResult } from "./phases.js";
 import { nowIso, nowMs, type VideoDeps } from "./proc.js";
 import { createPreviewRunner, type PreviewTask } from "./runner-preview.js";
 import { roughCutInputKey } from "./rough-cut.js";
+import { transcribeInputKey } from "./transcribe-input.js";
 import {
   appendVideoJob,
   jobKey,
@@ -239,9 +240,12 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       const catalog = await buildBrollCatalog(dataDir, contentId, content?.assets ?? []);
       return editorInputKey(dataDir, r.cut ?? 0, content?.body ?? "", catalog.digest);
     }
-    // transcribe 的输入是 A-roll 本身：换了素材就是另一个任务，同一素材重复投递自动合并
+    // transcribe 消费的不止 A-roll（转写纠错 spec §2）：热词从稿件正文抽、清洗对着正文纠错，
+    // 所以正文、热词算法版、清洗 prompt 版、模型路由都是它的输入。只写 A-roll 指纹的话，
+    // 「素材没变、只改了稿子或清洗口径」的重投会被当成同一份输入合并掉，永远拿不到新结果
     const aroll = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll");
-    return `aroll:${aroll?.fingerprint?.quickHash.slice(0, 12) ?? "none"}`;
+    const body = (await getContent(contentId, dataDir))?.body ?? "";
+    return transcribeInputKey(dataDir, aroll?.fingerprint?.quickHash.slice(0, 12) ?? "none", body);
   }
 
   function executeStep(
@@ -259,6 +263,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
       ...(job ? { jobId: job.jobId } : {}),
       abortSignal: controller.signal,
       onProgress: () => heartbeat.touch(),
+      report,
     });
   }
 

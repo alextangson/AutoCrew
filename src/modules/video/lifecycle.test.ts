@@ -23,7 +23,8 @@ import {
   seedEngineConfig,
   seedVideoContent,
 } from "./testkit.js";
-import { readVersioned, readVideoState, videoDir } from "./video-store.js";
+import { createReviewGate } from "./review-gate.js";
+import { readVersioned, readVideoState, videoDir, writeVersioned } from "./video-store.js";
 import type { VideoReviewDecision, VideoState } from "./types.js";
 
 let dir: string;
@@ -136,6 +137,45 @@ describe("打回分流（§2.2 / §2.4）", () => {
     expect(record.locate).toEqual({ kind: "segment", segmentId: "seg-0001" });
     expect(record.target).toBe("cut");
   }, 180_000);
+
+  /**
+   * 重跑转写会整代换掉分句 id（转写纠错 spec §7）：`unit-0001` / `cseg-0001` 这种编号跨代复用，
+   * 所以任何按 id 的消费都必须扛得住「这一版里根本没有这个 id」。定位是其中一处——
+   * 定位不到只许**不高亮**，不许崩，也不许编一个指针出来。
+   *
+   * 直接用门的注入口跑，不走整条管线：这里验的是判定，不是调度（跑一遍 ffmpeg 要三分钟）。
+   */
+  it("keeps 指向这一版里不存在的分句（重跑转写后的老指针）→ 定位退化成空，打回照常成立", async () => {
+    const vdir = videoDir(dir, contentId);
+    await writeVersioned(vdir, "transcript", 1, {
+      schemaVersion: 1,
+      source: "funasr",
+      segments: [{ id: "cseg-0001", text: "今天", startMs: 0, endMs: 200, words: [{ w: "今", startMs: 0, endMs: 100 }] }],
+    });
+    // 上一代的 unit id：新一代的转写里压根没有它
+    await writeVersioned(vdir, "cut", 1, { transcriptRevision: 1, keeps: ["unit-0001"], flags: [], origin: "human" });
+    const state: VideoState = {
+      schemaVersion: 1,
+      entryType: "aroll",
+      phase: "review",
+      state: "awaiting_human",
+      revisions: { transcript: 1, cut: 1, rendered: 1 },
+      updatedAt: new Date().toISOString(),
+    };
+    const gate = createReviewGate({
+      dataDir: dir,
+      requireState: async () => state,
+      write: async (_id, mutate) => mutate(state),
+      enqueueCleanup: () => {},
+      describe: (s) => `${s.phase}/${s.state}`,
+      report: () => {},
+    });
+    const next = await gate.confirm(contentId, { renderedRevision: 1, verdict: "reject", timestampMs: 5_000, note: "这句是错的" });
+    expect(describeState(next)).toBe("cut/awaiting_human");
+    const record = (await readVersioned<VideoReviewDecision>(vdir, "review-decision", 1))!;
+    expect(record.locate).toBeUndefined();
+    expect(record).toMatchObject({ verdict: "reject", target: "cut", note: "这句是错的" });
+  });
 
   /**
    * 本刀的核心诉求：改一处不重头剪。回门二改一处再确认，只重走 assemble+render，

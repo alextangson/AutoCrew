@@ -15,6 +15,7 @@ import {
   jobKey,
   latestJobsView,
   latestRevision,
+  readEffectiveTranscript,
   readVideoAssets,
   readVideoJobs,
   readVersioned,
@@ -30,7 +31,7 @@ import {
   writeVideoAssets,
   writeVideoState,
 } from "./video-store.js";
-import type { VideoAssetEntry, VideoJob, VideoState } from "./types.js";
+import type { TranscriptClean, VideoAssetEntry, VideoJob, VideoState, VideoTranscript } from "./types.js";
 
 const CID = "content-1770000000000-abc123";
 
@@ -208,6 +209,54 @@ describe("版本化不可变产物", () => {
     await fs.writeFile(path.join(dir(), "cut.v7.json.tmp-1-2-ab"), "x");
     await fs.writeFile(path.join(dir(), "cut.vX.json"), "x");
     expect(await latestRevision(dir(), "cut")).toBe(1);
+  });
+});
+
+/**
+ * 文字的唯一读点（转写纠错 spec §5）。回落只写在这一处，所以这一处的用例就是全部消费方的
+ * 用例——错一次，成片烧的就是没纠过的字。
+ */
+describe("readEffectiveTranscript", () => {
+  const transcript: VideoTranscript = {
+    schemaVersion: 1,
+    source: "funasr",
+    segments: [{ id: "seg-0001", text: "deepsick 很快", startMs: 0, endMs: 900, words: [] }],
+    scriptAlignment: { matchedRatio: 0.8 },
+  };
+  const clean: TranscriptClean = {
+    schemaVersion: 1,
+    transcriptRevision: 1,
+    baseCleanRevision: null,
+    origin: "llm",
+    segments: [{ id: "cseg-0001", text: "DeepSeek 很快", startMs: 0, endMs: 900, words: [] }],
+  };
+
+  it("有 clean → 读 clean 的分句，scriptAlignment 仍跟着事实走", async () => {
+    await writeVersioned(dir(), "transcript", 1, transcript);
+    await writeVersioned(dir(), "transcript-clean", 1, clean);
+    const got = await readEffectiveTranscript(dir(), { transcript: 1, clean: 1 });
+    expect(got?.segments).toEqual(clean.segments);
+    expect(got?.scriptAlignment).toEqual({ matchedRatio: 0.8 });
+  });
+
+  it("没有 clean（历史稿件）→ 原样回落 ASR 事实", async () => {
+    await writeVersioned(dir(), "transcript", 1, transcript);
+    expect((await readEffectiveTranscript(dir(), { transcript: 1 }))?.segments).toEqual(transcript.segments);
+  });
+
+  it("state 说有 clean 但文件不在 → 回落事实，不当成「没有转写」", async () => {
+    await writeVersioned(dir(), "transcript", 1, transcript);
+    expect((await readEffectiveTranscript(dir(), { transcript: 1, clean: 9 }))?.segments).toEqual(transcript.segments);
+  });
+
+  it("clean 基于另一版事实 → 作废回落：它的段 id 属于别人，硬用只会让 keeps 找不到分句", async () => {
+    await writeVersioned(dir(), "transcript", 2, transcript);
+    await writeVersioned(dir(), "transcript-clean", 1, clean); // transcriptRevision=1，对不上
+    expect((await readEffectiveTranscript(dir(), { transcript: 2, clean: 1 }))?.segments).toEqual(transcript.segments);
+  });
+
+  it("读不到转写本身 → null（这是真缺产物，由调用方报失败）", async () => {
+    expect(await readEffectiveTranscript(dir(), { transcript: 1 })).toBeNull();
   });
 });
 

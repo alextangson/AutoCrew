@@ -13,8 +13,8 @@ import { tolerateLegacyPlan } from "./editor-plan.js";
 import { buildOutputMap } from "./output-map.js";
 import { locateReviewTarget, suggestedGate, type LocateSpan } from "./review-locate.js";
 import { writeReviewDecision, type ReviewLocation, type VideoReviewDecision } from "./review-decision.js";
-import { readEditUnits, readVersioned, videoDir } from "./video-store.js";
-import type { VideoCut, VideoEditorPlan, VideoState, VideoTranscript } from "./types.js";
+import { readEditUnits, readEffectiveTranscript, readVersioned, videoDir } from "./video-store.js";
+import type { VideoCut, VideoEditorPlan, VideoState } from "./types.js";
 
 export interface ConfirmReviewArgs {
   renderedRevision: number;
@@ -60,7 +60,10 @@ export function createReviewGate(ctx: ReviewGateDeps): ReviewGate {
   async function segmentSpans(state: VideoState, contentId: string): Promise<LocateSpan[]> {
     const dir = videoDir(dataDir, contentId);
     const cutRevision = state.revisions.cut ?? 0;
-    const transcript = await readVersioned<VideoTranscript>(dir, "transcript", state.revisions.transcript ?? 0);
+    const transcript = await readEffectiveTranscript(dir, {
+      transcript: state.revisions.transcript ?? 0,
+      clean: state.revisions.clean,
+    });
     const cut = await readVersioned<VideoCut>(dir, "cut", cutRevision);
     if (!transcript || !cut) return [];
     const units = await readEditUnits(dir, cutRevision);

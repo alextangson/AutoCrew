@@ -21,6 +21,8 @@ export interface RenderManifestInput {
   timelineRevision: number;
   cutRevision: number;
   transcriptRevision: number;
+  /** 字幕文字取自哪一版清洗；缺省 = 烧的是 ASR 原文（历史稿件或还没有清洗版） */
+  cleanRevision?: number;
   durationMs: number;
   map: OutputMapEntry[];
   arollFile: string;
@@ -42,6 +44,7 @@ export function buildRenderManifest(input: RenderManifestInput): RenderManifest 
     timelineRevision: input.timelineRevision,
     cutRevision: input.cutRevision,
     transcriptRevision: input.transcriptRevision,
+    ...(input.cleanRevision ? { cleanRevision: input.cleanRevision } : {}),
     fps: OUTPUT_FPS,
     width: OUTPUT_WIDTH,
     height: OUTPUT_HEIGHT,

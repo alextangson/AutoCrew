@@ -75,8 +75,8 @@ export const AUTO_CHAIN_PHASES: readonly (readonly [VideoPhase, VideoPhase])[] =
 ] as const;
 
 /**
- * 阶段回退白名单：只有这五条显式边允许 phase 倒退（spec §2.2 v2.1 + v2 spec §2.3
- * + lifecycle spec §2.2）。
+ * 阶段回退白名单：只有这六条显式边允许 phase 倒退（spec §2.2 v2.1 + v2 spec §2.3
+ * + lifecycle spec §2.2 + 转写纠错 spec §7）。
  *
  * 打回分两路（lifecycle §2.2）：**B-roll 不对就只回门二**——plan 与决策链原样在，改完槽
  * 再确认只重走 assemble+render；说错了话才回门一重选段。少了 review→edit 这条边，
@@ -86,6 +86,11 @@ export const AUTO_CHAIN_PHASES: readonly (readonly [VideoPhase, VideoPhase])[] =
  * 重开落 `edit/queued` 而不是 `assemble/queued`（横屏 spec §3.1 起）：新 cut 改了 keeps，
  * 输出域时间全变，旧 plan 的 overlay 会落在错误的话上——必须让剪辑师按新选段重排一遍。
  * 重组装=渲染失败在一份废 manifest 上（例如旧 schema），重试只会重投同一份，必须回组装重出。
+ *
+ * `cut→transcribe` 是转写纠错 spec §7 的重跑入口，也是**唯一**一条能回到转写的边：
+ * 门上看见错字、或者改了稿子想让热词/清洗重认一遍时，人只能从选段门退回去重转写。
+ * 只开这一条是因为再往后（编排/组装/审片）的产物全都建立在这一版文字上，从那儿倒回来
+ * 等于把后面几步的人工一起废掉——那条路走审片打回。
  */
 export const PHASE_REGRESSION_EDGES: readonly {
   readonly from: VideoStateRef;
@@ -94,6 +99,7 @@ export const PHASE_REGRESSION_EDGES: readonly {
   { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
   { from: { phase: "review", state: "awaiting_human" }, to: { phase: "edit", state: "awaiting_human" } },
   { from: { phase: "edit", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
+  { from: { phase: "cut", state: "awaiting_human" }, to: { phase: "transcribe", state: "queued" } },
   { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
   { from: { phase: "render", state: "failed" }, to: { phase: "assemble", state: "queued" } },
 ] as const;

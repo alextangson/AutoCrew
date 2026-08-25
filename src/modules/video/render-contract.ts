@@ -81,6 +81,11 @@ export interface RenderManifest {
   timelineRevision: number;
   cutRevision: number;
   transcriptRevision: number;
+  /**
+   * 字幕文字取自哪一版清洗（转写纠错 spec §1 追溯链）。可缺省：历史成片与没有清洗版的稿件
+   * 都没有它，缺省即「烧的是 ASR 原文」。渲染端不消费，它是发布后回答「这版字幕哪来的」的凭证。
+   */
+  cleanRevision?: number;
   /** 视频线唯一画幅 = 横屏 1920×1080@30（横屏 spec §0）——字面量即契约 */
   fps: 30;
   width: 1920;

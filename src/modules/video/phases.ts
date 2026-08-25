@@ -17,6 +17,7 @@ import { extractAsrWav, runAsr, scriptMatchRatio } from "./asr.js";
 import { buildBrollCatalog } from "./broll-catalog.js";
 import { loadConfirmedOverlays } from "./editor-decision.js";
 import { runEditor, type EditorKeepUnit } from "./editor.js";
+import { extractHotwords } from "./hotwords.js";
 import { ingestAroll } from "./ingest.js";
 import { buildOutputMap, outputDurationMs } from "./output-map.js";
 import type { VideoDeps } from "./proc.js";
@@ -24,17 +25,22 @@ import { renderGatePreview } from "./preview-exec.js";
 import { runRenderJob } from "./render-exec.js";
 import { runRoughCut } from "./rough-cut.js";
 import type { VideoStateRef } from "./state-machine.js";
+import { ASR_OUT_FILE, asrCacheMeta, clearAsrCacheMeta, readCachedAsr, writeAsrCacheMeta } from "./transcribe-input.js";
+import { runTranscriptClean } from "./transcript-clean.js";
 import {
   readEditUnits,
+  readEffectiveTranscript,
   readVersioned,
   readVideoAssets,
   resolveAssetRef,
   videoDir,
   writeStaging,
-  writeVersioned,
 } from "./video-store.js";
 import type {
   RenderManifest,
+  TranscriptClean,
+  TranscriptSegment,
+  VideoAssetEntry,
   VideoBlockedReason,
   VideoCut,
   VideoEditUnits,
@@ -84,6 +90,11 @@ export interface PhaseContext {
   abortSignal: AbortSignal;
   /** 渲染进度回调（runner 拿它续租） */
   onProgress?: () => void;
+  /**
+   * 阶段内的人话日志（缓存命中之类「没出错但人该知道」的事），由 runner 注入它自己的报错通道。
+   * 不是给失败用的——失败一律走 StepResult，这里只说过程。
+   */
+  report?: (message: string) => void;
 }
 
 /** 把子模块的 outcome 翻成 StepResult：blocked 与 failed 是两种命运，不许混 */
@@ -116,42 +127,67 @@ async function assertArollFresh(dataDir: string, contentId: string): Promise<Ste
   };
 }
 
+/** transcribe 一次产四件，全部先落 staging、由 runner 在 CAS 之后一起定版（转写纠错 spec §2） */
+interface TranscribeRevisions {
+  transcript: number;
+  clean: number;
+  cut: number;
+}
+
 /**
  * 首版剪辑决策 = 全 keep（§4.4 V0a）：人打开选段视图看到的是完整的一条，只做减法。
  * 同时落一份 `origin:"raw"` 的兜底单元表——AI 粗剪跑不起来时，消费方照样有 edit-units 可读。
+ *
+ * 分句取自**清洗后的文字**（§5），所以两件产物都记 `cleanRevision`：一版字幕要能回答
+ * 「这些字是哪来的」。
  */
-async function writeDefaultCut(
+async function stageDefaultCut(
   dir: string,
-  transcript: VideoTranscript,
-  transcriptRevision: number,
-  cutRevision: number,
+  jobId: string,
+  segments: TranscriptSegment[],
+  rev: TranscribeRevisions,
 ): Promise<void> {
   const cut: VideoCut = {
-    transcriptRevision,
-    keeps: transcript.segments.map((s) => s.id),
+    transcriptRevision: rev.transcript,
+    cleanRevision: rev.clean,
+    keeps: segments.map((s) => s.id),
     flags: [],
     origin: "default_all",
   };
-  await writeVersioned(dir, "cut", cutRevision, cut);
+  await writeStaging(dir, "cut", jobId, cut);
   const units: VideoEditUnits = {
     schemaVersion: 1,
-    transcriptRevision,
+    transcriptRevision: rev.transcript,
+    cleanRevision: rev.clean,
     origin: "raw",
-    segments: transcript.segments,
+    segments,
     suggestedDrops: [],
     flags: [],
   };
-  await writeVersioned(dir, "edit-units", cutRevision, units);
+  await writeStaging(dir, "edit-units", jobId, units);
 }
 
-async function transcribePhase(ctx: PhaseContext): Promise<StepResult> {
-  const { dataDir, contentId } = ctx;
-  const stale = await assertArollFresh(dataDir, contentId);
-  if (stale) return stale;
-  const dir = videoDir(dataDir, contentId);
-  const aroll = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll")!;
-  const arollPath = await resolveAssetRef(dataDir, contentId, aroll.ref);
-
+/**
+ * 拿到这条 A-roll 的 ASR 事实：指纹与参数全对得上就直接用盘上的 `asr-out.json`，
+ * 否则抽音轨重跑 sidecar（§2）。「只想换个清洗口径重试一次」不该再等十几分钟推理。
+ *
+ * **热词表与缓存键必须是同一份**：`runAsr` 的入参与 `asrCacheMeta` 的热词 hash 取自同一个
+ * `hotwords` 变量，改一处漏一处就会留下「meta 说是这批热词、内容却是另一批」的缓存——
+ * 那种错是静默的，它会让下次重跑拿到一份对不上的转写。
+ */
+async function resolveAsrFact(
+  ctx: PhaseContext,
+  dir: string,
+  aroll: VideoAssetEntry,
+  hotwords: readonly string[],
+): Promise<{ transcript: VideoTranscript } | StepResult> {
+  const meta = asrCacheMeta(aroll.fingerprint?.quickHash ?? "none", hotwords);
+  const cached = await readCachedAsr(dir, meta);
+  if (cached) {
+    ctx.report?.(`${ctx.contentId} 复用已有 ASR 结果（A-roll 与热词都没变），跳过转写`);
+    return { transcript: cached };
+  }
+  const arollPath = await resolveAssetRef(ctx.dataDir, ctx.contentId, aroll.ref);
   const wav = path.join(dir, "asr-input.wav");
   const extracted = await extractAsrWav(arollPath, wav, ctx.deps);
   if (!extracted.ok) {
@@ -161,26 +197,98 @@ async function transcribePhase(ctx: PhaseContext): Promise<StepResult> {
       reason: extracted.reason,
     });
   }
+  // 先作废 → 重算 → 再登记：崩在中间只会退化成下次没命中，不会留下错配的缓存
+  await clearAsrCacheMeta(dir);
   const asr = await runAsr(
-    { audioFile: wav, outFile: path.join(dir, "asr-out.json"), abortSignal: ctx.abortSignal },
+    {
+      audioFile: wav,
+      outFile: path.join(dir, ASR_OUT_FILE),
+      // 空表不拼 `--hotword`，sidecar 走与今天逐字节一致的老路（asr.ts 的契约）
+      ...(hotwords.length > 0 ? { hotwords: [...hotwords] } : {}),
+      abortSignal: ctx.abortSignal,
+    },
     ctx.deps,
   );
   if (!asr.ok) return fail(asr);
+  await writeAsrCacheMeta(dir, meta);
+  return { transcript: asr.transcript };
+}
 
-  const transcriptRevision = (ctx.state.revisions.transcript ?? 0) + 1;
-  // 与口播稿的对齐度只在这里算一次并钉进不可变产物：V0b 的 LLM 建议权按它判定（§4.4）
+/**
+ * 清洗（转写纠错 spec §4）：LLM 对着稿子纠同音错认、重新断句，产出派生文字。
+ *
+ * **body 为空 = 不跑清洗**：清洗认专名全靠稿件正文，没稿子就只剩凭空猜错字，那比不改更糟
+ * （热词那侧同理，见 hotwords.ts）。此时 clean 是转写原样复制，段 id 保持 `seg-XXXX`
+ * ——复制品不伪装成清洗过的产物（`cseg-` 前缀留给真重分段的那一版）。
+ *
+ * 清洗降级只落 `TranscriptClean.warning`（选段卡读它，service.getTranscript 单独透传），
+ * **不翻成 StepResult 的 warning**：那句话说的是「这一步跑完了但结果没达成」，而清洗降级
+ * 时转写这一步是实打实成功的，混在一起会让台账上的失败原因失真。
+ */
+async function cleanTranscript(
+  ctx: PhaseContext,
+  transcript: VideoTranscript,
+  body: string,
+  transcriptRevision: number,
+): Promise<TranscriptClean> {
+  const base: TranscriptClean = {
+    schemaVersion: 1,
+    transcriptRevision,
+    baseCleanRevision: null,
+    origin: "llm",
+    segments: transcript.segments,
+  };
+  // 没稿子就没有纠错的参照——但不能默不作声：面板上「文字 v1」摆着而一个错字没纠，
+  // 人会以为清洗跑过了。一句话说清为什么没跑、错字该去哪儿改。
+  if (!body) return { ...base, warning: "这条稿件没有正文，AI 清洗与热词都没有运行——错字请在选段列表里点「改字」手工修正" };
+  const outcome = await runTranscriptClean(
+    { dataDir: ctx.dataDir, segments: transcript.segments, body, abortSignal: ctx.abortSignal },
+    ctx.deps,
+  );
+  if (outcome.warning) ctx.report?.(`${ctx.contentId} 的转写清洗有降级：${outcome.warning}`);
+  return { ...base, segments: outcome.segments, ...(outcome.warning ? { warning: outcome.warning } : {}) };
+}
+
+async function transcribePhase(ctx: PhaseContext): Promise<StepResult> {
+  const { dataDir, contentId } = ctx;
+  const stale = await assertArollFresh(dataDir, contentId);
+  if (stale) return stale;
+  if (!ctx.jobId) return { ok: false, errorCode: "missing_job", reason: "transcribe 阶段缺 jobId，产物无处落 staging" };
+  const dir = videoDir(dataDir, contentId);
+  const aroll = (await readVideoAssets(dataDir, contentId)).find((a) => a.kind === "aroll")!;
+
+  // 稿件正文是转写这一步的第二份输入（§2）：热词从它抽、清洗对着它纠错，所以先读它
   const body = (await getContent(contentId, dataDir))?.body ?? "";
+  const fact = await resolveAsrFact(ctx, dir, aroll, extractHotwords(body));
+  if ("ok" in fact) return fact;
+
+  // 与口播稿的对齐度只在这里算一次并钉进不可变产物：V0b 的 LLM 建议权按它判定（§4.4）
   const transcript: VideoTranscript = body
-    ? { ...asr.transcript, scriptAlignment: { matchedRatio: scriptMatchRatio(asr.transcript, body) } }
-    : asr.transcript;
-  await writeVersioned(dir, "transcript", transcriptRevision, transcript);
-  const cutRevision = (ctx.state.revisions.cut ?? 0) + 1;
-  await writeDefaultCut(dir, transcript, transcriptRevision, cutRevision);
+    ? { ...fact.transcript, scriptAlignment: { matchedRatio: scriptMatchRatio(fact.transcript, body) } }
+    : fact.transcript;
+
+  const rev: TranscribeRevisions = {
+    transcript: (ctx.state.revisions.transcript ?? 0) + 1,
+    clean: (ctx.state.revisions.clean ?? 0) + 1,
+    cut: (ctx.state.revisions.cut ?? 0) + 1,
+  };
+  const clean = await cleanTranscript(ctx, transcript, body, rev.transcript);
+  await writeStaging(dir, "transcript", ctx.jobId, transcript);
+  await writeStaging(dir, "transcript-clean", ctx.jobId, clean);
+  await stageDefaultCut(dir, ctx.jobId, clean.segments, rev);
   return {
     ok: true,
     // 人工门仍是 cut/awaiting_human，这里只是把门前那道计算（AI 粗剪）排上队
     next: { phase: "cut", state: "queued" },
-    revisions: { transcript: transcriptRevision, cut: cutRevision },
+    revisions: { transcript: rev.transcript, clean: rev.clean, cut: rev.cut },
+    // 四件一起定版（§2）：早先直写正式版本，崩在 CAS 之前的话恢复重算同号会撞
+    // 「版本化产物不可覆盖」，这条 content 就永久卡死在转写这一步
+    staged: [
+      { base: "transcript", revision: rev.transcript },
+      { base: "transcript-clean", revision: rev.clean },
+      { base: "edit-units", revision: rev.cut },
+      { base: "cut", revision: rev.cut },
+    ],
   };
 }
 
@@ -196,8 +304,10 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
   const { dataDir, contentId } = ctx;
   const dir = videoDir(dataDir, contentId);
   const transcriptRevision = ctx.state.revisions.transcript ?? 0;
+  const cleanRevision = ctx.state.revisions.clean;
   const baseCutRevision = ctx.state.revisions.cut ?? 0;
-  const transcript = await readVersioned<VideoTranscript>(dir, "transcript", transcriptRevision);
+  // 粗剪切的是**有效文字**（§5）：清洗纠过的字才是人在门上会看到的那些字
+  const transcript = await readEffectiveTranscript(dir, { transcript: transcriptRevision, clean: cleanRevision });
   if (!transcript) {
     return { ok: false, errorCode: "missing_input", reason: `读不到 transcript.v${transcriptRevision}，请重跑转写` };
   }
@@ -208,7 +318,12 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
     return {
       ok: true,
       next: HUMAN_GATE,
-      preview: await renderGatePreview(ctx, { keeps: base.keeps, transcriptRevision, cutRevision: baseCutRevision }),
+      preview: await renderGatePreview(ctx, {
+        keeps: base.keeps,
+        transcriptRevision,
+        cutRevision: baseCutRevision,
+        ...(cleanRevision ? { cleanRevision } : {}),
+      }),
       warning: "这一版选段已由人工确认，AI 粗剪建议不再覆盖",
     };
   }
@@ -226,7 +341,12 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
   );
 
   const cutRevision = baseCutRevision + 1;
-  const staged = await stageCutArtifacts(dir, ctx.jobId, { outcome, transcriptRevision, baseCutRevision });
+  const staged = await stageCutArtifacts(dir, ctx.jobId, {
+    outcome,
+    transcriptRevision,
+    baseCutRevision,
+    ...(cleanRevision ? { cleanRevision } : {}),
+  });
   return {
     ok: true,
     next: HUMAN_GATE,
@@ -240,6 +360,7 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
       keeps: staged.keeps,
       transcriptRevision,
       cutRevision,
+      ...(cleanRevision ? { cleanRevision } : {}),
       units: { segments: staged.units.segments, origin: staged.units.origin },
     }),
     ...(outcome.warning ? { warning: outcome.warning } : {}),
@@ -250,12 +371,18 @@ async function cutPhase(ctx: PhaseContext): Promise<StepResult> {
 async function stageCutArtifacts(
   dir: string,
   jobId: string,
-  input: { outcome: Awaited<ReturnType<typeof runRoughCut>>; transcriptRevision: number; baseCutRevision: number },
+  input: {
+    outcome: Awaited<ReturnType<typeof runRoughCut>>;
+    transcriptRevision: number;
+    cleanRevision?: number;
+    baseCutRevision: number;
+  },
 ): Promise<{ keeps: string[]; units: VideoEditUnits }> {
-  const { outcome, transcriptRevision, baseCutRevision } = input;
+  const { outcome, transcriptRevision, cleanRevision, baseCutRevision } = input;
+  const traced = { transcriptRevision, ...(cleanRevision ? { cleanRevision } : {}) };
   const units: VideoEditUnits = {
     schemaVersion: 1,
-    transcriptRevision,
+    ...traced,
     origin: outcome.origin,
     segments: outcome.units,
     suggestedDrops: outcome.suggestedDrops,
@@ -265,7 +392,7 @@ async function stageCutArtifacts(
   };
   const dropped = new Set(outcome.suggestedDrops);
   const cut: VideoCut = {
-    transcriptRevision,
+    ...traced,
     keeps: outcome.units.filter((u) => !dropped.has(u.id)).map((u) => u.id),
     flags: outcome.flags,
     origin: outcome.origin === "llm" ? "llm" : "default_all",
@@ -301,7 +428,10 @@ async function loadKeeps(
 ): Promise<{ keeps: { units: EditorKeepUnit[]; durationMs: number } } | StepResult> {
   const dir = videoDir(ctx.dataDir, ctx.contentId);
   const transcriptRevision = ctx.state.revisions.transcript ?? 0;
-  const transcript = await readVersioned<VideoTranscript>(dir, "transcript", transcriptRevision);
+  const transcript = await readEffectiveTranscript(dir, {
+    transcript: transcriptRevision,
+    clean: ctx.state.revisions.clean,
+  });
   const cut = await readVersioned<VideoCut>(dir, "cut", cutRevision);
   if (!transcript || !cut) {
     return {
@@ -310,7 +440,7 @@ async function loadKeeps(
       reason: `读不到 transcript.v${transcriptRevision} 或 cut.v${cutRevision}，请回选段视图重新确认一次`,
     };
   }
-  // 剪辑单位以 edit-units.vK 为准；没有（V0a 老产物）才回落 transcript.segments
+  // 剪辑单位以 edit-units.vK 为准；没有（V0a 老产物）才回落有效转写的分句
   const units = await readEditUnits(dir, cutRevision);
   try {
     return { keeps: keepUnits(units ? { ...transcript, segments: units.segments } : transcript, cut) };
@@ -383,8 +513,9 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
   const { dataDir, contentId } = ctx;
   const dir = videoDir(dataDir, contentId);
   const transcriptRevision = ctx.state.revisions.transcript ?? 0;
+  const cleanRevision = ctx.state.revisions.clean;
   const cutRevision = ctx.state.revisions.cut ?? 0;
-  const transcript = await readVersioned<VideoTranscript>(dir, "transcript", transcriptRevision);
+  const transcript = await readEffectiveTranscript(dir, { transcript: transcriptRevision, clean: cleanRevision });
   const cut = await readVersioned<VideoCut>(dir, "cut", cutRevision);
   if (!transcript || !cut) {
     return {
@@ -403,7 +534,7 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
   if (!decided.ok) return fail(decided);
 
   const timelineRevision = (ctx.state.revisions.timeline ?? 0) + 1;
-  // 剪辑单位以 edit-units.vK 为准；没有（V0a 老产物）才回落 transcript.segments（§4）
+  // 剪辑单位以 edit-units.vK 为准；没有（V0a 老产物）才回落有效转写的分句（§4）
   const units = await readEditUnits(dir, cutRevision);
   const result = await assembleVideo(
     {
@@ -411,6 +542,7 @@ async function assemblePhase(ctx: PhaseContext): Promise<StepResult> {
       contentId,
       transcript: units ? { ...transcript, segments: units.segments } : transcript,
       transcriptRevision,
+      ...(cleanRevision ? { cleanRevision } : {}),
       cut,
       cutRevision,
       timelineRevision,

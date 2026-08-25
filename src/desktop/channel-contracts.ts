@@ -181,6 +181,19 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   // 重跑 AI 粗剪（粗剪 spec §3.4）：不带版本——它只是把 cut 的计算步重排一次，
   // 会不会覆盖由 service 按当前 cut.origin 判（人工终裁过的一律拒）
   "video:rough_cut_rerun": ["content_id"],
+  // 重跑转写（转写纠错 spec §7）：同样不带版本——它作废的正是当前这一版选段与手改，
+  // 带乐观锁反而会在「门上刚被后台刷新过」时把这条唯一的出路堵死
+  "video:transcribe_rerun": ["content_id"],
+  // 手工改字（转写纠错 spec §6）：文字住在 clean 里，所以乐观锁是**三版**——
+  // 少了 base_clean_revision，「后台刚重跑完清洗」那一格会被静默盖回旧文字
+  "video:transcript_text_edit": [
+    "content_id",
+    "unit_id",
+    "text",
+    "base_transcript_revision",
+    "base_clean_revision",
+    "base_cut_revision",
+  ],
   // 成片计划（横屏 spec §3.1）。确认必须带 plan_revision（乐观锁）与 kept_overlay_ids
   // ——空数组是合法的「全删，出纯口播」，所以校验只看键在不在，不看长度
   "video:editor_plan_get": ["content_id"],

@@ -706,9 +706,15 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .vid-segs { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
 .vid-seg { border-bottom: 1px dashed var(--border); }
 .vid-seg:last-child { border-bottom: none; }
-.vid-seg > label { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; cursor: pointer; }
+/* 勾选区与操作区并列:label 只包 checkbox 那一段,否则点「改字」会顺带切掉勾选 */
+.vid-seg-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; }
+.vid-seg-pick { display: flex; gap: 8px; align-items: baseline; flex: 1; min-width: 0; cursor: pointer; }
+.vid-seg-edit-btn { flex: 0 0 auto; }
+.vid-seg-edit { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 8px 10px; }
+.vid-seg-edit textarea { width: 100%; resize: vertical; }
 .vid-seg:hover { background: var(--surface); }
-.vid-seg-off { opacity: 0.42; text-decoration: line-through; }
+/* 划掉的是「这句不留」,不是操作区:按钮跟着划线会看不清 */
+.vid-seg-off .vid-seg-pick { opacity: 0.42; text-decoration: line-through; }
 .vid-seg-time { flex: 0 0 auto; font-size: 11px; }
 .vid-seg-text { flex: 1; min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
 .vid-player { width: 100%; max-width: 640px; aspect-ratio: 16 / 9; background: var(--ink); border: 1px solid var(--border); border-radius: var(--radius-card); }

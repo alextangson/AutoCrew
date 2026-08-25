@@ -44,10 +44,11 @@ describe("迁移表锁定（spec §2.2 原文）", () => {
   });
 
   /**
-   * 回退边从三条加到五条（lifecycle spec §2.2）：打回分流出「只回门二改 B-roll」，
-   * 门二又能再退一格回门一。名单是白名单——多一条就多一条能绕过人工门的路，所以逐条锁死。
+   * 回退边从三条加到六条（lifecycle spec §2.2 + 转写纠错 spec §7）：打回分流出「只回门二改
+   * B-roll」，门二又能再退一格回门一，门一还能再退回转写重认一遍文字。名单是白名单——
+   * 多一条就多一条能绕过人工门的路，所以逐条锁死。
    */
-  it("自动接续只有三对相邻阶段；回退白名单只有打回两路、门二退门一、重开、重组装五条", () => {
+  it("自动接续只有三对相邻阶段；回退白名单只有打回两路、门二退门一、门一退转写、重开、重组装六条", () => {
     expect(AUTO_CHAIN_PHASES).toEqual([
       ["ingest", "transcribe"], ["transcribe", "cut"], ["assemble", "render"],
     ]);
@@ -55,9 +56,21 @@ describe("迁移表锁定（spec §2.2 原文）", () => {
       { from: { phase: "review", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
       { from: { phase: "review", state: "awaiting_human" }, to: { phase: "edit", state: "awaiting_human" } },
       { from: { phase: "edit", state: "awaiting_human" }, to: { phase: "cut", state: "awaiting_human" } },
+      { from: { phase: "cut", state: "awaiting_human" }, to: { phase: "transcribe", state: "queued" } },
       { from: { phase: "done", state: "done" }, to: { phase: "edit", state: "queued" } },
       { from: { phase: "render", state: "failed" }, to: { phase: "assemble", state: "queued" } },
     ]);
+  });
+
+  /**
+   * 重跑转写（转写纠错 spec §7）：只从选段门上开一条，且只对停在门上的状态开。
+   * 门后的阶段不许借这条边往回跑——那等于把编排/组装/审片的人工一起废掉。
+   */
+  it("cut/awaiting_human → transcribe/queued 合法；跑着的 cut 与门后的阶段都借不到这条边", () => {
+    expect(canTransition(at("cut", "awaiting_human"), at("transcribe", "queued"))).toBe(true);
+    expect(canTransition(at("cut", "running"), at("transcribe", "queued"))).toBe(false);
+    expect(canTransition(at("edit", "awaiting_human"), at("transcribe", "queued"))).toBe(false);
+    expect(canTransition(at("review", "awaiting_human"), at("transcribe", "queued"))).toBe(false);
   });
 
   it("打回门二 / 门二退门一都是显式边；相邻的假边（review→assemble）仍然走不通", () => {

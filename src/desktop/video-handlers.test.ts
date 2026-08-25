@@ -14,6 +14,7 @@ import {
   VideoConflictError,
   type ConfirmCutArgs,
   type ConfirmEditorPlanArgs,
+  type EditUnitTextArgs,
   type FillEditorSlotArgs,
   type RequestPreviewArgs,
   type VideoService,
@@ -36,7 +37,9 @@ import {
   videoReviewConfirmHandler,
   videoRoughCutRerunHandler,
   videoStatusHandler,
+  videoTranscribeRerunHandler,
   videoTranscriptGetHandler,
+  videoTranscriptTextEditHandler,
 } from "./video-handlers.js";
 
 const STATE: VideoState = {
@@ -55,9 +58,11 @@ interface Calls {
   confirmReview: Array<[string, { renderedRevision: number; verdict: string }]>;
   retry: string[];
   rerunRoughCut: string[];
+  rerunTranscribe: string[];
   rerunEditor: string[];
   fillEditorSlot: Array<[string, FillEditorSlotArgs]>;
   requestCutPreview: Array<[string, RequestPreviewArgs]>;
+  editTranscriptText: Array<[string, EditUnitTextArgs]>;
   reassemble: string[];
   shutdown: number;
 }
@@ -95,6 +100,10 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
       calls.rerunRoughCut.push(id);
       return { ...STATE, phase: "cut", state: "queued" };
     },
+    rerunTranscribe: async (id) => {
+      calls.rerunTranscribe.push(id);
+      return { ...STATE, phase: "transcribe", state: "queued" };
+    },
     rerunEditor: async (id) => {
       calls.rerunEditor.push(id);
       return { ...STATE, phase: "edit", state: "queued" };
@@ -106,6 +115,15 @@ function stubService(overrides: Partial<VideoService> = {}): VideoService {
     requestCutPreview: async (id, args) => {
       calls.requestCutPreview.push([id, args]);
       return { ...STATE, phase: "cut", state: "awaiting_human", preview: { requestedRevision: 2 } };
+    },
+    editTranscriptText: async (id, args) => {
+      calls.editTranscriptText.push([id, args]);
+      return {
+        ...STATE,
+        phase: "cut",
+        state: "awaiting_human",
+        revisions: { ...STATE.revisions, clean: args.baseCleanRevision + 1, cut: args.baseCutRevision + 1 },
+      };
     },
     reassemble: async (id) => {
       calls.reassemble.push(id);
@@ -132,9 +150,11 @@ beforeEach(async () => {
     confirmReview: [],
     retry: [],
     rerunRoughCut: [],
+    rerunTranscribe: [],
     rerunEditor: [],
     fillEditorSlot: [],
     requestCutPreview: [],
+    editTranscriptText: [],
     reassemble: [],
     shutdown: 0,
   };
@@ -240,6 +260,30 @@ describe("video:build_start / status / transcript_get / retry", () => {
     expect(calls.rerunRoughCut).toEqual([]);
   });
 
+  it("transcribe_rerun：投递即返回 transcribe/queued", async () => {
+    const res = await videoTranscribeRerunHandler({ content_id: contentId, _dataDir: dir });
+    expect(res).toMatchObject({ ok: true, data: { state: { phase: "transcribe", state: "queued" } } });
+    expect(calls.rerunTranscribe).toEqual([contentId]);
+  });
+
+  it("transcribe_rerun：不在选段门上时，人话原样透传", async () => {
+    setVideoService(
+      stubService({
+        rerunTranscribe: async () => {
+          throw new Error("当前是 review/awaiting_human，只有停在选段这道门上时才能重跑转写");
+        },
+      }),
+      dir,
+    );
+    const res = await videoTranscribeRerunHandler({ content_id: contentId, _dataDir: dir });
+    expect(res).toEqual({ ok: false, error: "当前是 review/awaiting_human，只有停在选段这道门上时才能重跑转写" });
+  });
+
+  it("transcribe_rerun：非法 content_id 在边界就被拒", async () => {
+    expect(await videoTranscribeRerunHandler({ content_id: "../x", _dataDir: dir })).toMatchObject({ ok: false });
+    expect(calls.rerunTranscribe).toEqual([]);
+  });
+
   it("asr 预热与查询透传 service 结果", async () => {
     expect(await videoAsrWarmupHandler({ _dataDir: dir })).toEqual({ ok: true, data: { status: "warming" } });
     expect(await videoAsrStatusHandler({ _dataDir: dir })).toEqual({
@@ -303,6 +347,54 @@ describe("video:cut_confirm 的 payload 解析", () => {
     const res = await videoCutConfirmHandler({ ...base, content_id: contentId, _dataDir: dir });
     expect(res).toMatchObject({ ok: false, conflict: true, data: { state: { phase: "review" } } });
     expect(String(res.error)).toContain("已过期");
+  });
+});
+
+describe("video:transcript_text_edit 的 payload 解析", () => {
+  const base = {
+    unit_id: "unit-0001",
+    text: "今天聊聊 DeepSeek",
+    base_transcript_revision: 1,
+    base_clean_revision: 1,
+    base_cut_revision: 2,
+  };
+
+  it("snake_case 翻成域内形状，三个 base 一个不漏", async () => {
+    const res = await videoTranscriptTextEditHandler({ ...base, content_id: contentId, _dataDir: dir });
+    expect(res).toMatchObject({ ok: true, data: { state: { revisions: { clean: 2, cut: 3 } } } });
+    expect(calls.editTranscriptText[0][1]).toEqual({
+      unitId: "unit-0001",
+      text: "今天聊聊 DeepSeek",
+      baseTranscriptRevision: 1,
+      baseCleanRevision: 1,
+      baseCutRevision: 2,
+    });
+  });
+
+  it.each([
+    [{ unit_id: "" }, "unit_id 必须是非空字符串"],
+    [{ unit_id: 7 }, "unit_id 必须是非空字符串"],
+    [{ text: null }, "text 必须是字符串"],
+    [{ base_clean_revision: -1 }, "base_clean_revision 必须是非负整数"],
+    [{ base_transcript_revision: 1.5 }, "base_transcript_revision 必须是非负整数"],
+  ])("变形 payload %# 被拒且不进 service", async (patch, expected) => {
+    const res = await videoTranscriptTextEditHandler({ ...base, ...patch, content_id: contentId, _dataDir: dir });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain(expected);
+    expect(calls.editTranscriptText).toEqual([]);
+  });
+
+  it("乐观锁冲突：带 conflict 标记 + 当前状态，前端据此重载重改", async () => {
+    setVideoService(
+      stubService({
+        editTranscriptText: async () => {
+          throw new VideoConflictError("要改的那版文字已经过期，请重载后重改", STATE);
+        },
+      }),
+      dir,
+    );
+    const res = await videoTranscriptTextEditHandler({ ...base, content_id: contentId, _dataDir: dir });
+    expect(res).toMatchObject({ ok: false, conflict: true, data: { state: { phase: "review" } } });
   });
 });
 

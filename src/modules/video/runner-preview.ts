@@ -17,6 +17,8 @@ export interface PreviewTask {
   keeps: string[];
   transcriptRevision: number;
   cutRevision: number;
+  /** 请求时的清洗版本；缺省 = 那时还没有清洗版。发布前拿它对一次，防迟到的旧字幕 */
+  cleanRevision?: number;
 }
 
 /** runner 注入的共用原语——预览不另起一套 lease / 心跳 / 写状态的实现 */
@@ -45,15 +47,24 @@ export function createPreviewRunner(ctx: PreviewRunnerDeps): PreviewRunner {
   const { dataDir, deps, leaseOwner, report } = ctx;
 
   /**
-   * 预览结果的三重校验（spec §4.1）：lease 还是我 + 仍是当前 requested revision + 仍在 cut 门。
-   * 任一不符 = 我是历史，**旧结果不发布**（latest-wins 的最低实现）。
+   * 预览结果的校验（spec §4.1 + 转写纠错 spec §5）：lease 还是我 + 仍是当前 requested revision
+   * + 仍在 cut 门 + **文字与选段还是请求时那两版**。任一不符 = 我是历史，**旧结果不发布**。
+   *
+   * 加文字/选段这两条是因为预览要渲几分钟，期间后台重跑转写、人手改字都会换掉字幕来源：
+   * 请求指针没动，产物却已经是旧字幕——迟到的它不许冒充新的。
    * 返回 null 表示可以发布。
    */
-  function previewStale(cur: VideoState | null, revision: number): string | null {
+  function previewStale(cur: VideoState | null, task: PreviewTask): string | null {
     if (!cur) return "状态文件在预览执行期间消失了";
     if (!(cur.phase === "cut" && cur.state === "awaiting_human")) return `已经离开选段门（当前 ${cur.phase}/${cur.state}）`;
-    if (cur.preview?.requestedRevision !== revision) {
+    if (cur.preview?.requestedRevision !== task.revision) {
       return `又点了一次重渲（当前请求是 v${String(cur.preview?.requestedRevision)}）`;
+    }
+    if ((cur.revisions.clean ?? 0) !== (task.cleanRevision ?? 0)) {
+      return `文字已经换了一版（清洗 v${String(cur.revisions.clean ?? 0)}，这份预览烧的是 v${String(task.cleanRevision ?? 0)}）`;
+    }
+    if ((cur.revisions.cut ?? 0) !== task.cutRevision) {
+      return `选段已经换了一版（当前 v${String(cur.revisions.cut ?? 0)}，这份预览剪的是 v${task.cutRevision}）`;
     }
     return null;
   }
@@ -64,21 +75,46 @@ export function createPreviewRunner(ctx: PreviewRunnerDeps): PreviewRunner {
   async function publishPreview(task: PreviewTask, next: VideoPreviewState): Promise<string | null> {
     try {
       await ctx.writeState(task.contentId, (cur) => {
-        const stale = previewStale(cur, task.revision);
+        const stale = previewStale(cur, task);
         if (stale) throw new StalePreview(stale);
         // 主状态一个字都不动：预览是门内辅助，不参与 phase/state 语义
         return { ...cur!, preview: next };
       });
       return null;
     } catch (err) {
-      if (err instanceof StalePreview) return err.message;
+      if (err instanceof StalePreview) {
+        await tombstonePreview(task, err.message);
+        return err.message;
+      }
       throw err;
     }
   }
 
+  /**
+   * 迟到预览的可见收场：请求指针还指着我、产物却永远不会来时，必须把 error 写回去——
+   * 前端按「requested > ready 且无 error = 渲染中」推导，留着悬空指针就是永远的
+   * 「预览渲染中…」（手改字/重跑转写换掉字幕来源正是这条路）。指针已被新请求接管
+   * 时一个字不动：那是别人的进行时。readyRevision 照留，老预览还能播（recover 同款）。
+   */
+  async function tombstonePreview(task: PreviewTask, reason: string): Promise<void> {
+    await ctx.writeState(task.contentId, (cur) => {
+      if (!cur || cur.preview?.requestedRevision !== task.revision || cur.preview.readyRevision === task.revision) {
+        return cur!;
+      }
+      return {
+        ...cur,
+        preview: {
+          requestedRevision: task.revision,
+          ...(cur.preview.readyRevision !== undefined ? { readyRevision: cur.preview.readyRevision } : {}),
+          error: `这版预览已作废：${reason}。点「重新生成预览」按当前文字与选段再渲`,
+        },
+      };
+    });
+  }
+
   async function runPreview(task: PreviewTask): Promise<void> {
     const { state: before } = await readVideoState(dataDir, task.contentId);
-    const early = previewStale(before, task.revision);
+    const early = previewStale(before, task);
     if (early) return report(`${task.contentId} 的预览 v${task.revision} 不再需要：${early}`);
     const job = await ctx.claimJob(task.contentId, `preview:${task.revision}`);
     const heartbeat = ctx.startHeartbeat(job);
@@ -91,6 +127,7 @@ export function createPreviewRunner(ctx: PreviewRunnerDeps): PreviewRunner {
         keeps: task.keeps,
         transcriptRevision: task.transcriptRevision,
         cutRevision: task.cutRevision,
+        ...(task.cleanRevision ? { cleanRevision: task.cleanRevision } : {}),
         ...(ctx.renderDir ? { renderDir: ctx.renderDir } : {}),
         onProgress: () => heartbeat.touch(),
         abortSignal: ctx.abortSignal,

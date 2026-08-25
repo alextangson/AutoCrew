@@ -19,8 +19,10 @@ const NAMES = [
   "state.json",
   "assets.json",
   "asr-out.json",
+  "asr-out.meta.json",
   "asr-input.wav",
   "transcript.v1.json",
+  "transcript-clean.v1.json",
   "cut.v1.json",
   "cut.v2.json",
   "edit-units.v2.json",
@@ -69,6 +71,8 @@ describe("planVideoCleanup（§3.2 清单）", () => {
   it("留：通过版成片、通过版引用的音轨、全部决策 JSON 与常驻文件", () => {
     expect(plan.keep).toEqual([
       "asr-out.json",
+      // meta 是 asr-out.json 的缓存键：删一个留一个等于下次重跑白等一遍 ASR
+      "asr-out.meta.json",
       "assets.json",
       "cut-preview-request.v4.json",
       "cut.v1.json",
@@ -82,6 +86,8 @@ describe("planVideoCleanup（§3.2 清单）", () => {
       "review-decision.v2.json",
       "state.json",
       "timeline.v2.json",
+      // 清洗后的文字是重剪的依据，与 transcript 同级留（转写纠错 spec §1）
+      "transcript-clean.v1.json",
       "transcript.v1.json",
     ]);
   });

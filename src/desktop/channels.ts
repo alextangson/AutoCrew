@@ -162,6 +162,10 @@ export const IPC_CHANNELS = [
   "video:transcript_get",
   "video:cut_confirm",
   "video:rough_cut_rerun",
+  // 重跑转写（转写纠错 spec §7）：门上看见错字时唯一能回到转写的入口
+  "video:transcribe_rerun",
+  // 手工改字（转写纠错 spec §6）：热词与清洗都没治好的错字，人在门上自己改
+  "video:transcript_text_edit",
   "video:editor_plan_get",
   "video:editor_confirm",
   "video:editor_rerun",

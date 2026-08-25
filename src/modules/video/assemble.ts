@@ -226,6 +226,8 @@ export interface AssembleInput {
   contentId: string;
   transcript: VideoTranscript;
   transcriptRevision: number;
+  /** 字幕文字取自哪一版清洗；进 manifest 当追溯凭证（转写纠错 spec §1），无清洗版就缺省 */
+  cleanRevision?: number;
   cut: VideoCut;
   cutRevision: number;
   timelineRevision: number;
@@ -364,6 +366,7 @@ function freezeManifest(f: FreezeInput): RenderManifest {
     timelineRevision: input.timelineRevision,
     cutRevision: input.cutRevision,
     transcriptRevision: input.transcriptRevision,
+    ...(input.cleanRevision ? { cleanRevision: input.cleanRevision } : {}),
     durationMs: f.durationMs,
     map: f.map,
     arollFile: f.arollPath,

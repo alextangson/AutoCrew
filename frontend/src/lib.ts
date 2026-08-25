@@ -314,6 +314,8 @@ export type VideoBlockedReason =
 
 export interface VideoRevisions {
   transcript?: number;
+  /** 清洗后文字的版本;与 transcript 各自计数。缺省 = 这一稿还没有清洗版,读的是 ASR 原文 */
+  clean?: number;
   cut?: number;
   /** 剪辑师 plan 的版本;确认成片计划时当乐观锁的 base */
   editor?: number;
@@ -401,6 +403,8 @@ export interface CutFlag {
 
 export interface VideoCut {
   transcriptRevision: number;
+  /** 这版选段勾的是哪一版清洗文字(追溯链);缺省 = 直接对着 ASR 事实勾的老产物 */
+  cleanRevision?: number;
   keeps: string[];
   flags: CutFlag[];
   origin: "default_all" | "llm" | "human";
@@ -415,6 +419,8 @@ export interface VideoCut {
 export interface VideoEditUnits {
   schemaVersion: 1;
   transcriptRevision: number;
+  /** 这批单元的文字取自哪一版清洗;缺省 = 直接切的 ASR 事实(老产物) */
+  cleanRevision?: number;
   origin: "raw" | "llm";
   segments: TranscriptSegment[];
   suggestedDrops: string[];
@@ -425,9 +431,12 @@ export interface VideoEditUnits {
 }
 
 export interface CutView {
+  /** 已经是**有效文字**:后端有清洗版就回传清洗后的分句,没有才是 ASR 原文 */
   transcript: VideoTranscript;
   cut: VideoCut;
   editUnits?: VideoEditUnits;
+  /** 清洗降级的人话;与 editUnits.warning(粗剪降级)是两回事,不能互相覆盖 */
+  cleanWarning?: string;
 }
 
 /**
@@ -523,6 +532,35 @@ export const videoTranscriptGet = (contentId: string) =>
 /** 重跑 AI 粗剪(粗剪 spec §3.4);人工确认过的那版后端会拒,错误原样透传 */
 export const videoRoughCutRerun = (contentId: string) =>
   videoInvoke<{ state: VideoState }>("video:rough_cut_rerun", { content_id: contentId });
+
+/**
+ * 重跑转写(转写纠错 spec §7)。只在选段门上可用,**会作废这一版选段与手工改字**
+ * ——按钮那侧必须把这句话写在人眼前,后端不做二次确认。
+ */
+export const videoTranscribeRerun = (contentId: string) =>
+  videoInvoke<{ state: VideoState }>("video:transcribe_rerun", { content_id: contentId });
+
+/**
+ * 手工改一句的文字(转写纠错 spec §6)。**三个 base 一起带**:文字住在 clean 里,
+ * 只带转写+选段两版会漏掉「后台刚重跑完清洗」那一格,照改等于把新文字悄悄盖回旧的。
+ * 成功后 clean 与 cut 各推一版,SSE 一响这一页自己重拉。
+ */
+export const videoTranscriptTextEdit = (args: {
+  contentId: string;
+  unitId: string;
+  text: string;
+  baseTranscriptRevision: number;
+  baseCleanRevision: number;
+  baseCutRevision: number;
+}) =>
+  videoInvoke<{ state: VideoState }>("video:transcript_text_edit", {
+    content_id: args.contentId,
+    unit_id: args.unitId,
+    text: args.text,
+    base_transcript_revision: args.baseTranscriptRevision,
+    base_clean_revision: args.baseCleanRevision,
+    base_cut_revision: args.baseCutRevision,
+  });
 
 export const videoCutConfirm = (args: {
   contentId: string;
@@ -662,6 +700,12 @@ export const CUT_FLAG_LABEL: Record<CutFlagKind, string> = {
   repeat: "重复",
   offtopic: "跑题",
 };
+
+/**
+ * 手改一句的字数上限。与后端 `transcript-edit.ts` 的 `MAX_MANUAL_TEXT_CHARS` 是同一个数,
+ * 改一边同步另一边——这里只为「按钮先灰掉」,判定以后端为准。
+ */
+export const VIDEO_TEXT_EDIT_MAX_CHARS = 500;
 
 export interface VideoBlockedGuide {
   /** 卡在哪 */

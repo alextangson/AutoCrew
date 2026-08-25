@@ -151,8 +151,8 @@ describe("IPC_CHANNELS", () => {
   // channels.ts / channel-contracts.ts / buildIpcHandlers / renderer 调用四处
   // 是否同步。历史教训:a5eddc8 在 122 上加了 10 个 video 通道却把断言写成
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
-  it("has exactly 157 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(157);
+  it("has exactly 159 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(159);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {

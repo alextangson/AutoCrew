@@ -1,0 +1,15 @@
+{
+  "note": "分词口径的双侧契约（转写纠错 spec §4）。sidecar 的 asr.py 用它把 FunASR 的时间戳对回文本单元，TS 侧的 transcript-clean-align.ts 用它把清洗后的文字切回词——两边差一个字符，词与时间戳就整体错位一格。改任何一侧的正则，先在这里加样本。TS 侧的 transcript-clean-align.test.ts 会同时验：① 自己的分词等于 units；② 直接跑 asr.py 的 WORD_UNIT_RE 也等于 units。",
+  "samples": [
+    { "text": "今天聊聊 DeepSeek，它很强。", "units": ["今", "天", "聊", "聊", "DeepSeek", "它", "很", "强"] },
+    { "text": "GPT-4 与 C++ 的差别", "units": ["GPT", "4", "与", "C", "的", "差", "别"] },
+    { "text": "don't 说 I'm fine", "units": ["don't", "说", "I'm", "fine"] },
+    { "text": "第2版，2026 年", "units": ["第", "2", "版", "2026", "年"] },
+    { "text": "a_b_c 下划线不占词", "units": ["a", "b", "c", "下", "划", "线", "不", "占", "词"] },
+    { "text": "全角数字１２３ 与 ①", "units": ["全", "角", "数", "字", "１", "２", "３", "与", "①"] },
+    { "text": "。，！？——…… ", "units": [] },
+    { "text": "", "units": [] },
+    { "text": "把 deepsick 改回 DeepSeek", "units": ["把", "deepsick", "改", "回", "DeepSeek"] },
+    { "text": "emoji 🎬 不进词", "units": ["emoji", "不", "进", "词"] }
+  ]
+}

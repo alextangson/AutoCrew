@@ -5,7 +5,9 @@ description = "AutoCrew ASR sidecar —— FunASR Paraformer 中文转写 + 字�
 requires-python = ">=3.10,<3.13"
 dependencies = [
     # FunASR 本体：Paraformer-zh（识别）+ fsmn-vad（长音频切段）+ ct-punc（标点）
-    "funasr>=1.2.0",
+    # 锁上界到 <2：`--hotword` 走的是 generate() 的热词契约，那是大版本内才保证的行为，
+    # 无上界等于赌 2.x 不改签名——赌输的表现是热词静默失效（转写照样成功，只是又认错）。
+    "funasr>=1.2.0,<2",
     # 模型下载与本地缓存（首跑约 1GB，只在 --warmup 时发生）
     "modelscope>=1.20.0",
     # CPU 版 torch：macOS/Apple Silicon 的 PyPI wheel 本就是 CPU(+MPS) 版，

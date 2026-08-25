@@ -193,6 +193,16 @@ export function windowOf(userMessage: string): { from: number; to: number } {
   return { from: Number(m[1]), to: Number(m[2]) };
 }
 
+/**
+ * 从清洗的 userMessage 里读出本窗要覆盖的分句（id + 文字）。清洗按分句分窗，
+ * 分窗测试要靠它给不同窗口不同答案（也用来拼「原样交回」的 groups）。
+ */
+export function cleanWindow(userMessage: string): { id: string; text: string }[] {
+  const body = userMessage.split("【本次要处理的分句】")[1];
+  if (!body) throw new Error(`userMessage 里找不到本窗分句：${userMessage.slice(0, 200)}`);
+  return [...(body.split("\n\n后文")[0].matchAll(/^\[([^\]]+)\] (.*)$/gm))].map((m) => ({ id: m[1], text: m[2] }));
+}
+
 /** 模型调用直接炸（无 key / 端点挂了）——降级必须可见，不许被吞 */
 export function throwingRunLoop(message: string): typeof runLoop {
   return (() => Promise.reject(new Error(message))) as typeof runLoop;

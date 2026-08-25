@@ -171,6 +171,9 @@ export const RenderManifestSchema = z
     timelineRevision: posInt,
     cutRevision: posInt,
     transcriptRevision: posInt,
+    // 字幕文字取自哪一版清洗。渲染端不消费它，但 schema 是 .strict() 的——
+    // 不认这个字段，主进程一带上追溯信息整份 manifest 就会被拒（可缺省 = 烧的是 ASR 原文）
+    cleanRevision: posInt.optional(),
     fps: z.literal(30),
     width: z.literal(1920, hint(LANDSCAPE_HINT)),
     height: z.literal(1080, hint(LANDSCAPE_HINT)),

@@ -22,6 +22,7 @@ import {
 } from "./testkit.js";
 import {
   appendVideoJob,
+  promoteStaging,
   readVersioned,
   readVideoJobs,
   readVideoState,
@@ -101,7 +102,8 @@ describe("阶段推进", () => {
 
     expect(await currentRef()).toBe("cut/awaiting_human");
     const { state } = await readVideoState(dir, contentId);
-    expect(state?.revisions).toEqual({ transcript: 1, cut: 2 });
+    // clean 与 transcript 同在转写那一步产出（首版是转写原样，清洗 LLM 是后话）
+    expect(state?.revisions).toEqual({ transcript: 1, clean: 1, cut: 2 });
 
     const cut = await readVersioned<VideoCut>(videoDir(dir, contentId), "cut", 1);
     expect(cut).toMatchObject({ transcriptRevision: 1, origin: "default_all", flags: [] });
@@ -144,8 +146,11 @@ describe("阶段推进", () => {
     const runner = makeRunner(
       { uv: fakeUvSpawn("ok", fixtureDenseTranscript()), npm: fakeRenderSpawn() },
       {
-        promoteStagingImpl: async () => {
-          throw new Error("disk rename denied");
+        // 只放倒粗剪那一步：转写的四件产物全是 v1，粗剪的两件全是 v2，按号分得开。
+        // 转写照常定版，测的才是「前面都成了、卡在定版这一下」
+        promoteStagingImpl: async (...args) => {
+          if (args[3] >= 2) throw new Error("disk rename denied");
+          return promoteStaging(...args);
         },
       },
     );
@@ -158,7 +163,7 @@ describe("阶段推进", () => {
       state: "failed",
       failedPhase: "cut",
       errorCode: "promotion_failed",
-      revisions: { transcript: 1, cut: 1 },
+      revisions: { transcript: 1, clean: 1, cut: 1 },
     });
     expect(await readVersioned(videoDir(dir, contentId), "transcript", 1)).not.toBeNull();
     expect(await readVersioned(videoDir(dir, contentId), "cut", 1)).not.toBeNull();
@@ -221,7 +226,30 @@ describe("阶段推进", () => {
     const settled = transcribe.at(-1)!;
     expect(settled).toMatchObject({ status: "succeeded", outputRevision: 1, attempts: 1 });
     expect(settled.heartbeatAt).toBeTruthy();
-    expect(settled.inputKey).toMatch(/^aroll:[0-9a-f]{12}$/);
+    // inputKey 含 A-roll、稿件、热词算法版、清洗 prompt 版与模型路由（转写纠错 spec §2）
+    expect(settled.inputKey).toMatch(
+      /^aroll:[0-9a-f]{12}\+body:[0-9a-f]{8}\+hot:[\w.-]+\+clean:[\w.-]+\+route:[0-9a-f]{8}$/,
+    );
+  }, 30_000);
+
+  it("改稿子（素材没换）→ transcribe 的 inputKey 变化，重投不会被当同一份输入合并", async () => {
+    await ingestAroll(dir, contentId);
+    await forceState({ phase: "transcribe", state: "queued" });
+    const first = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
+    first.enqueue(contentId);
+    await first.whenIdle();
+    const before = (await readVideoJobs(dir)).filter((j) => j.phase === "transcribe").at(-1)!;
+
+    await updateContent(contentId, { body: "换了一份完全不同的稿子" }, dir);
+    await forceState({ phase: "transcribe", state: "queued", revisions: { transcript: 1, clean: 1, cut: 1 } });
+    const again = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
+    again.enqueue(contentId);
+    await again.whenIdle();
+    const after = (await readVideoJobs(dir)).filter((j) => j.phase === "transcribe").at(-1)!;
+
+    expect(after.inputKey).not.toBe(before.inputKey);
+    // 不同 inputKey = 不同 job：合并成一条的话，改稿之后永远拿不到新的热词/清洗结果
+    expect(after.jobId).not.toBe(before.jobId);
   }, 30_000);
 
   it("ASR 模型未就绪 → blocked: asr_not_ready，job 记 failed，人话指引落在 failReason", async () => {
@@ -247,6 +275,34 @@ describe("阶段推进", () => {
 
     const { state } = await readVideoState(dir, contentId);
     expect(state).toMatchObject({ state: "blocked", blockedReason: "aroll_drifted" });
+  }, 30_000);
+
+  /**
+   * 转写纠错 spec §2 修的那个现存 bug：转写的产物早先直写 `transcript.vN` / `cut.vN`，
+   * 崩在「产物已写、状态未推进」之间时，回收重跑会按老 state 再算同一个号，撞上
+   * 「版本化产物不可覆盖」→ 这条 content 永久卡死在转写这一步。
+   */
+  it("转写崩在定版与状态提交之间 → 重跑照常推进，不撞 EEXIST", async () => {
+    await ingestAroll(dir, contentId);
+    await forceState({ phase: "transcribe", state: "queued" });
+    const first = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
+    first.enqueue(contentId);
+    await first.whenIdle();
+    const vdir = videoDir(dir, contentId);
+    await fs.access(path.join(vdir, "transcript.v1.json"));
+
+    // 产物留在盘上、状态拨回转写前：这就是「崩在 CAS 与 state.json 之间」的现场
+    await forceState({ phase: "transcribe", state: "queued", revisions: {} });
+    const again = makeRunner({ uv: fakeUvSpawn("ok"), npm: fakeRenderSpawn() });
+    again.enqueue(contentId);
+    await again.whenIdle();
+
+    expect(await currentRef()).toBe("cut/awaiting_human");
+    const settled = (await readVideoJobs(dir)).filter((j) => j.phase === "transcribe").at(-1)!;
+    expect(settled.status).toBe("succeeded");
+    expect(settled.failReason).toBeUndefined();
+    const names = await fs.readdir(vdir);
+    expect(names.filter((n) => n.includes(".staging."))).toEqual([]);
   }, 30_000);
 
   it("上次崩在 staging 之后 → 重跑安全覆盖半成品，不撞不可覆盖文件", async () => {
@@ -499,9 +555,60 @@ describe("cut_preview 辅助 job", () => {
     await runner.whenIdle();
     const { state } = await readVideoState(dir, contentId);
     expect(`${state?.phase}/${state?.state}`).toBe("edit/queued");
-    expect(state?.preview).toEqual({ requestedRevision: 1 });
+    // phase/state 一个字不动；preview 收成可见墓碑（打回重进选段门时不许还挂着「渲染中」）
+    expect(state?.preview).toEqual({
+      requestedRevision: 1,
+      error: expect.stringContaining("这版预览已作废") as unknown as string,
+    });
     const job = (await readVideoJobs(dir)).at(-1)!;
     expect(job).toMatchObject({ status: "failed", errorCode: "superseded" });
+  }, 120_000);
+
+  /**
+   * 转写纠错 spec §5 的预览过期防线：渲染要几分钟，期间后台重跑转写、人手改字都会换掉
+   * 字幕来源。请求指针没动，但这份产物烧的已经是旧字幕——它不许冒充新的。
+   */
+  it("执行期间文字换了一版 → 产物丢弃、日志点名，不冒充新字幕", async () => {
+    await atGate();
+    await forceState({
+      phase: "cut",
+      state: "awaiting_human",
+      revisions: { transcript: 1, clean: 1, cut: 1 },
+      preview: { requestedRevision: 1 },
+    });
+    const logs: string[] = [];
+    const runner = createVideoRunner({
+      dataDir: dir,
+      deps: {
+        spawnImpl: routedSpawn({
+          npm: fakeRenderSpawn({
+            // 渲染中清洗版本推到 v2：这份预览的字来自 v1，落盘前必须被拦下
+            onStart: () =>
+              forceState({
+                phase: "cut",
+                state: "awaiting_human",
+                revisions: { transcript: 1, clean: 2, cut: 1 },
+                preview: { requestedRevision: 1 },
+              }),
+          }),
+        }),
+        runLoopImpl: fakeRunLoop([]),
+      },
+      launchId: "test",
+      onError: (m) => logs.push(m),
+    });
+    runner.enqueuePreview({ ...task(), cleanRevision: 1 });
+    await runner.whenIdle();
+
+    const { state } = await readVideoState(dir, contentId);
+    // 悬空指针必须收成可见墓碑：requested>ready 且无 error 会让前端永远显示「渲染中」
+    expect(state?.preview?.requestedRevision).toBe(1);
+    expect(state?.preview?.readyRevision).toBeUndefined();
+    expect(state?.preview?.error).toContain("这版预览已作废");
+    expect(logs.join("\n")).toContain("文字已经换了一版");
+    // 作废的预览自己把输出收走，不留一个能被播放器读到的旧字幕成品
+    await expect(fs.access(path.join(videoDir(dir, contentId), "preview.v1.mp4"))).rejects.toThrow();
+    expect((await readVideoJobs(dir)).at(-1)).toMatchObject({ status: "failed", errorCode: "superseded" });
   }, 120_000);
 
   // 边界 #4：进程重启时预览 job 在跑 → lease 过期回收，且失败可见
