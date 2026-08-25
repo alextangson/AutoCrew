@@ -166,9 +166,11 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .idea-row { position: relative; padding: 7px 26px 7px 8px; border-bottom: 1px dashed var(--border); cursor: pointer; }
 .idea-row:hover { background: var(--card); }
 .idea-row:last-child { border-bottom: none; }
-/* auto-phrase = 按中文词组断行（吃 html lang，Chromium 内置 BudouX），「拦截/迁移」不再被劈成两行；
-   不支持的引擎整条声明忽略，退回逐字断行。带 line-clamp 的标题不能加 balance——先均衡再截断会多丢字 */
-.idea-title { font-size: 13px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: auto-phrase; }
+/* 按词断行三件套（与 views/phrase-break.ts 配套）：标题渲染前已按中文词典插零宽空格当断点，
+   keep-all 禁掉字中间的断行（否则「拦截」照样被劈），anywhere 是保险阀——万一某标题没走
+   phraseBreak（无断点 + keep-all = 撑破卡片），允许紧急任意断。CSS 的 auto-phrase 只认日文，
+   中文下整条被忽略，别回头再试。带 line-clamp 的标题不能加 balance——先均衡再截断会多丢字 */
+.idea-title { font-size: 13px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere; }
 .topic-score { display: inline-block; min-width: 25px; margin-right: 6px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--muted); font: 700 10px/17px var(--mono); text-align: center; vertical-align: 1px; }
 .topic-score-high { color: var(--surface); background: var(--ink); border-color: var(--ink); }
 .idea-sub { margin-top: 2px; font-size: 11px; }
@@ -181,7 +183,7 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .acard:hover { border-color: var(--ink); }
 .acard-head { display: flex; gap: 6px; align-items: baseline; }
 /* balance 均衡各行长度，行尾不挂单字；不截断的标题才可用（截断场景见 .idea-title 注释） */
-.acard-title { flex: 1; font-weight: 700; font-size: 13px; word-break: auto-phrase; text-wrap: balance; }
+.acard-title { flex: 1; font-weight: 700; font-size: 13px; word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance; }
 .acard-del { border: none; background: none; color: var(--muted); padding: 0 2px; }
 .acard-del:hover { color: var(--danger); }
 .acard-sub { margin-top: 2px; }

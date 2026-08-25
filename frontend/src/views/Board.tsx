@@ -12,6 +12,7 @@ import { ResearchPanel } from "./ResearchPanel";
 import { ANGLE_SECTION_ID, AngleGuide } from "./AngleCards";
 import { needsAnglePick, NO_ANGLE_GATE, type AngleGate } from "./angle-choice";
 import { buildDispatchBrief } from "./dispatch-brief";
+import { phraseBreak } from "./phrase-break";
 import {
   BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
@@ -217,7 +218,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
                 {typeof atom.topic?.score === "number" && (
                   <span className={"topic-score" + (atom.topic.score >= 80 ? " topic-score-high" : "")}>{atom.topic.score}</span>
                 )}
-                {atom.topic?.title ?? atomRep(atom)?.title ?? "（无标题）"}
+                {phraseBreak(atom.topic?.title ?? atomRep(atom)?.title ?? "（无标题）")}
               </div>
               <div className="idea-sub mono muted">
                 {[typeof atom.topic?.score === "number" ? "综合评分" : "待评分", sourceLabel(atom.topic?.source), ideaAge(atom.topic?.renewedAt ?? atom.topic?.createdAt)].filter(Boolean).join(" · ")}
@@ -282,7 +283,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
                   onClick={() => setMode({ kind: "matrix", atomKey: atom.key })}
                 >
                   <div className="acard-head">
-                    <span className="acard-title">{atom.topic?.title ?? rep?.title ?? "（无标题）"}</span>
+                    <span className="acard-title">{phraseBreak(atom.topic?.title ?? rep?.title ?? "（无标题）")}</span>
                     <button
                       className="acard-del"
                       title="移入回收站"
