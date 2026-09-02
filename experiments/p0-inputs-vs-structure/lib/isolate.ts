@@ -51,13 +51,26 @@ export interface IsolationResult {
  * 复用是默认：同一选题 15 格跑下来共用一份材料，才谈得上「只有格子在变」。
  * refresh=true 时整个删了重拷（改过生产画像/简报后用）。
  */
+export interface IsolationOptions {
+  /** true = 整个删了重拷（改过生产画像/简报后用） */
+  refresh?: boolean;
+  /** 目录后缀：不同调研档各一份隔离目录，因为它们拷的东西不一样 */
+  variant?: string;
+  /**
+   * 是否拷 jobs.jsonl（简报指针）。false = 管线读不到指针 → 不追加 2800 字块，
+   * 调研只剩调用方经 research 字段给的那份。这是 full 档的关键。
+   */
+  includeBriefPointer?: boolean;
+}
+
 export async function buildIsolatedDataDir(
   topicId: string,
   runsRoot: string,
-  refresh = false,
+  options: IsolationOptions = {},
 ): Promise<IsolationResult> {
+  const { refresh = false, variant, includeBriefPointer = true } = options;
   const src = sourceDataDir();
-  const dataDir = path.join(runsRoot, topicId, "_data");
+  const dataDir = path.join(runsRoot, topicId, variant ? `_data-${variant}` : "_data");
   const stamp = path.join(dataDir, ".isolated");
 
   if (await exists(stamp)) {
@@ -102,12 +115,14 @@ export async function buildIsolatedDataDir(
   } else {
     missing.push("research/briefs/");
   }
-  await copyIfPresent(
-    path.join(src, "research", "jobs.jsonl"),
-    path.join(dataDir, "research", "jobs.jsonl"),
-    missing,
-    "research/jobs.jsonl（无它 = 无简报指针 = 管线裸写）",
-  );
+  if (includeBriefPointer) {
+    await copyIfPresent(
+      path.join(src, "research", "jobs.jsonl"),
+      path.join(dataDir, "research", "jobs.jsonl"),
+      missing,
+      "research/jobs.jsonl（无它 = 无简报指针 = 管线裸写）",
+    );
+  }
 
   await copyIfPresent(path.join(src, "patterns"), path.join(dataDir, "patterns"), missing, "patterns/（对标拆解卡）");
   await copyIfPresent(path.join(src, "knowledge"), path.join(dataDir, "knowledge"), missing, "knowledge/（知识库）");

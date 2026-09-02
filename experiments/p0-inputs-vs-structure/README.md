@@ -1,52 +1,59 @@
-# P0：输入贫瘠还是流程缺陷
+# P0：多少调研到达写手
 
-对应 `docs/superpowers/specs/2026-09-02-dsh-employees-and-case-files.md` §6 P0。要回答的只有一个问题：**同一个写手模型，AutoCrew 写得比聊天里直写差，是因为没给料（输入假设），还是流程本身在拖后腿（结构假设）？**
+对应 `docs/superpowers/specs/2026-09-02-dsh-employees-and-case-files.md` §6 P0。要回答的只有一个问题：**同一个写手模型，AutoCrew 的短视频文案不达标，是因为到达写手的调研太少（输入假设），还是流程本身在拖后腿（结构假设）？** 创作者不提供任何输入——产品预期就是全自动调研出稿。
 
-## 设计：2×2 + 一格消融
+## 设计：3 × 2 因子
 
-| 格 | 是什么 |
+| 流程档 | 是什么 |
 |---|---|
-| `direct` | 同一条 writer 路由、极简 system prompt、单轮、无工具、无质量门、无去 AI 味 |
-| `pipeline` | AutoCrew 现状全流程：写手 → AI 审稿 → 修订，含质量门与人味化 |
-| `pipeline-noreview` | 消融：只跑写手，审稿轮短路（不发请求，`review.status = skipped`） |
+| `direct` | 同一条 writer 路由、极简 system prompt、单轮、无工具、无质量门、无人味化。「聊天里直写」的替身 |
+| `writer` | AutoCrew 写手轮 + 质量门 + 人味化，审稿轮短路（消融） |
+| `pipeline` | AutoCrew 现状全流程：写手 → AI 审稿 → 修订 |
 
-每格 × {`nofacts`, `facts`}。事实包是你为该选题**口述的第一手材料**（`facts/_template.md` 有六节提纲），两侧走同一个注入口：`direct` 拼进 system prompt，`pipeline` 走现成的 `ScriptRequest.research` 字段——**不改生产代码**。
+| 调研档 | 是什么 |
+|---|---|
+| `brief` | 生产现状：`buildBriefBlock` 的 2800 字摘要 |
+| `full` | 简报全文（含四视角洞察/证据/缺口，不裁剪）+ **内部语料**：创作者自己的口播转写与人审过的稿子，按选题 bigram 覆盖率挑，转写优先于审定稿，同选题的 AI 旧稿排除（防泄漏）；同选题的**转写**保留并在 meta 里标 `sameTopic`——那是他亲口说的 |
+
+平台固定 `douyin`（口播赛道包）。3 选题 × 6 格 × 2 重复 = 36 稿。
 
 判读：
-- 事实包主效应显著、流程主效应不显著 → 输入假设成立，spec P1 案卷制直上。
-- 流程主效应为负（`pipeline` 系统性低于 `direct`）→ 先修审修环，再谈案卷。
-- `pipeline-noreview` 高于 `pipeline` → 审稿在伤稿子。
+- 调研档主效应显著、流程档不显著 → 输入假设成立，spec P1 案卷制直上。
+- 流程档主效应为负（`pipeline` 系统性低于 `direct`）→ 先修审修环。
+- `writer` 高于 `pipeline` → 审稿在伤稿子。
+- 内部语料命中的选题（有转写的）比没命中的分差大 → 内部调研这条腿值得单独做。
+
+## 注入口：不改生产代码
+
+`brief` 档什么都不传，让生产代码按 `jobs.jsonl` 指针自己追加 2800 字块，与现状逐字一致。`full` 档把全文经现成的 `ScriptRequest.research` 字段 RAW 注入（`script-prompt.ts` 的「调研材料：」段，无上限），且隔离目录**不带 jobs.jsonl**，生产代码找不到指针就不会再追加摘要块——两档不叠加。`direct` 档把同一份调研文本放进 system prompt。
 
 ## 红线：生产 `~/.autocrew` 只读
 
-跑格前把管线要读的白名单（engine.json、画像、该选题、该选题的简报、jobs.jsonl、patterns、knowledge、sensitive-words、learnings）拷进 `runs/<topicId>/_data/`，再用显式 `dataDir` 参数 + `AUTOCREW_DATA_DIR` 两把锁把进程钉在那儿（`lib/isolate.ts`）。管线格写出的占位稿落在隔离目录，生产库一个字节不动。
+管线要读的白名单（engine.json、画像、该选题、该选题的简报、patterns、knowledge、sensitive-words、learnings；`brief` 档另拷 jobs.jsonl）拷进 `runs/<topicId>/_data-<research>/`，再用显式 `dataDir` 参数 + `AUTOCREW_DATA_DIR` 两把锁钉住进程（`lib/isolate.ts`）。内部语料从生产目录只读取。管线格写出的占位稿落在隔离目录。
 
 ## 跑
 
 ```bash
 # 先 --mock 冒烟：一次 API 都不发，验证隔离、注入、消融开关、盲评卷
-npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic <topicId> --cell pipeline --facts none --rep 1 --mock
+npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic <topicId> --cell pipeline --research full --rep 1 --mock
 ```
 
-真跑（3 选题 × 5 格 × 2 重复 = 30 次）：
+真跑：
 
 ```bash
-T=<topicId>; F=experiments/p0-inputs-vs-structure/facts/$T.md
-for rep in 1 2; do
-  for cell in direct pipeline pipeline-noreview; do
-    npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic $T --cell $cell --facts none --rep $rep
-    npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic $T --cell $cell --facts $F   --rep $rep
-  done
-done
+T=<topicId>
+for rep in 1 2; do for r in brief full; do for c in direct writer pipeline; do
+  npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic $T --cell $c --research $r --rep $rep
+done; done; done
 ```
 
-`--facts` 必须显式写 `none` 或路径，不许靠省略；空事实包直接报错（空文件跑出来的 facts 格是假对照）。改过生产画像/简报后加 `--refresh-data` 重拷隔离目录。
+`--research` 必须显式写。改过生产画像/简报后加 `--refresh-data` 重拷隔离目录。`brief` 档若检测到裸写（指针没生效）直接作废报错。
 
 ## 每格留下什么
 
-`runs/<topicId>/<cell>-<facts|nofacts>-rep<n>/`：
+`runs/<topicId>/<cell>-<research>-rep<n>/`：
 - `draft.md` 正文
-- `meta.json`：resolved writer 路由（baseUrl/model/protocol）、事实包 sha256、隔离目录缺料清单、token、时长；**每一轮模型调用的完整 system + user**（写手/审稿/修订各一条，含是否被消融短路）；管线格另有 review 结果、gate 失败、是否无简报/无角度裸写。盲评分数不一样时，能回答「到底喂了什么」的只有这份。
+- `meta.json`：resolved writer 路由、调研文本字符数与 sha256、简报版本、内部语料命中清单（来源/标题/字符数/相关度）与扫描统计、隔离目录缺料清单、token、时长；**每一轮模型调用的完整 system + user**（写手/审稿/修订各一条，含是否被消融短路）；管线格另有 review 结果、gate 失败、是否裸写。盲评分数不一样时，能回答「到底喂了什么」的只有这份。
 
 ## 盲评
 
@@ -54,10 +61,10 @@ done
 npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts [--topic <topicId>] [--seed <n>]
 ```
 
-把所有 `draft.md` 洗牌成 `blind/<topicId>/A.md B.md …`，答案单独在 `blind/key.json`，评分表在 `blind/score-sheet.md`。四维各 1–5：事实性（只有当事人才知道的具体事实）、观点（能被反驳的主张）、声音（像不像本人）、结构（钩子—论证—收尾）。**先把一个选题下所有稿读完再打分**，打完再开 key。种子固定，字母分配可复现。
+所有 `draft.md` 洗牌成 `blind/<topicId>/A.md B.md …`，答案单独在 `blind/key.json`，评分表在 `blind/score-sheet.md`。四维各 1–5：事实性、观点、声音、结构。**先把一个选题下所有稿读完再打分**，打完再开 key。种子固定，字母分配可复现。
 
-`runs/` 与 `blind/` 都在 `.gitignore` 里：含模型输出与答案，不进仓库。
+`runs/` 与 `blind/` 都在 `.gitignore` 里。
 
 ## 冒烟记录（2026-09-02）
 
-`--mock` 走通 4 格：事实包文本出现在写手 user prompt；`pipeline-noreview` 的审稿轮标 `shortCircuited`、`review.status = skipped`；盲评卷生成 A–D；生产 `contents/` 数量前后一致。真跑等创始人选定三个选题并写事实包。
+`--mock` 六格全通：`brief` 档写手 user prompt 里恰有一个 2800 字块、无全文；`full` 档恰有全文 + 内部语料、无 2800 字块（指针刻意不拷；`wroteWithoutBrief` 仍为 false，因为 research 字段算已带材料）；`writer` 档审稿轮 `shortCircuited`；盲评卷生成六个字母；生产 `contents/` 数量前后一致。

@@ -26,7 +26,7 @@ interface Entry {
   topicId: string;
   cellDir: string;
   cell: string;
-  facts: string;
+  research: string;
   rep: string;
   draft: string;
 }
@@ -50,10 +50,10 @@ function shuffle<T>(items: T[], rand: () => number): T[] {
   return out;
 }
 
-/** 目录名形如 pipeline-noreview-facts-rep2 → {cell, facts, rep} */
-function parseCellDir(name: string): { cell: string; facts: string; rep: string } | null {
-  const m = /^(.+)-(facts|nofacts)-rep(\d+)$/.exec(name);
-  return m ? { cell: m[1], facts: m[2], rep: m[3] } : null;
+/** 目录名形如 pipeline-full-rep2 → {cell, research, rep} */
+function parseCellDir(name: string): { cell: string; research: string; rep: string } | null {
+  const m = /^(.+)-(brief|full)-rep(\d+)$/.exec(name);
+  return m ? { cell: m[1], research: m[2], rep: m[3] } : null;
 }
 
 async function collect(topicFilter: string | null): Promise<Entry[]> {
@@ -67,7 +67,7 @@ async function collect(topicFilter: string | null): Promise<Entry[]> {
   for (const topicId of topics) {
     if (topicFilter && topicId !== topicFilter) continue;
     const cellDirs = (await fs.readdir(path.join(RUNS_ROOT, topicId), { withFileTypes: true }))
-      .filter((d) => d.isDirectory() && d.name !== "_data")
+      .filter((d) => d.isDirectory() && !d.name.startsWith("_data"))
       .map((d) => d.name)
       .sort();
     for (const cellDir of cellDirs) {
@@ -136,7 +136,7 @@ async function main(): Promise<void> {
   await fs.rm(BLIND_ROOT, { recursive: true, force: true });
   await fs.mkdir(BLIND_ROOT, { recursive: true });
 
-  const key: Record<string, Record<string, { cell: string; facts: string; rep: string; dir: string }>> = {};
+  const key: Record<string, Record<string, { cell: string; research: string; rep: string; dir: string }>> = {};
   const sheet: string[] = scoreSheetHead();
 
   for (const [topicId, list] of [...byTopic.entries()].sort()) {
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
       const letter = LETTERS[i];
       letters.push(letter);
       await fs.writeFile(path.join(dir, `${letter}.md`), entry.draft, "utf-8");
-      key[topicId][letter] = { cell: entry.cell, facts: entry.facts, rep: entry.rep, dir: entry.cellDir };
+      key[topicId][letter] = { cell: entry.cell, research: entry.research, rep: entry.rep, dir: entry.cellDir };
     }
     sheet.push(...scoreSheetSection(topicId, letters));
     console.log(`[blind] ${topicId}：${letters.length} 稿 → ${letters.join(" ")}`);
