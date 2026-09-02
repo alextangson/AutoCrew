@@ -38,13 +38,10 @@
 npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic <topicId> --cell pipeline --research full --rep 1 --mock
 ```
 
-真跑：
+真跑（一个选题一条链，幂等、失败重试、开跑前等端点连通）：
 
 ```bash
-T=<topicId>
-for rep in 1 2; do for r in brief full; do for c in direct writer pipeline; do
-  npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic $T --cell $c --research $r --rep $rep
-done; done; done
+experiments/p0-inputs-vs-structure/run-all.sh <topicId>   # 三个选题各起一条，可并行
 ```
 
 `--research` 必须显式写。改过生产画像/简报后加 `--refresh-data` 重拷隔离目录。`brief` 档若检测到裸写（指针没生效）直接作废报错。
@@ -64,6 +61,14 @@ npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts [--topic <topicId
 所有 `draft.md` 洗牌成 `blind/<topicId>/A.md B.md …`，答案单独在 `blind/key.json`，评分表在 `blind/score-sheet.md`。四维各 1–5：事实性、观点、声音、结构。**先把一个选题下所有稿读完再打分**，打完再开 key。种子固定，字母分配可复现。
 
 `runs/` 与 `blind/` 都在 `.gitignore` 里。
+
+## 第一次真跑记录（2026-09-02 20:44–21:42）
+
+- **模型不是 Claude**：写手/审稿配的中转 `code.newcli.com` 从 17:56 起持续不通（主备端点同一家），创始人裁决切 DeepSeek V4 Pro 跑。只改了隔离目录里六份 `engine.json` 副本（删 `routes.writer/reviewer` 与 `fallback`，落回 `strongModel`），生产配置未动。36 格全部 `deepseek-v4-pro @ api.deepseek.com`，meta.json 里的 `resolvedWriterRoute` 可核。代价：丢掉「与聊天里同一模型」的前提；「多少调研到达写手」这个变量仍然干净。
+- 36 格全成。中间三处超时降级（审稿 300s ×2、修订超时 ×1，都在 pipeline 格，稿子用的是最后一版过 gate 的写手稿，meta 有 warning）。
+- 客观信号（不是质量分）：`full` 档正文均长 992 vs `brief` 817 中文字符；`pipeline` 与 `writer` 长度几乎相同（1068 vs 1065），`direct` 只有 581。12 格 pipeline 里 9 格审稿 `passed/0 轮修订`（意见全是 advisory）、3 格超时——在这个模型上审稿几乎没改稿，却让 token 翻倍（33k vs 18k）、时长翻倍（486s vs 240s）。
+- 内部语料命中：三个选题都拿到两段口播转写（8k 字符）；「DeepSeek Harness」选题的 `full` 直写稿里出现了转写里的原话（「我上次不是给它写了个插件，用手机远程审批家里的电脑吗」），bigram 重合 0.25 vs `brief` 0.22。
+- 盲评卷：`blind/score-sheet.md`，每选题 12 稿 A–L，seed 20260902。
 
 ## 冒烟记录（2026-09-02）
 
