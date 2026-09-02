@@ -20,6 +20,7 @@
   },
   "files": [
     "dist",
+    "agent-presets",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -38,6 +39,7 @@
   },
   "//dependencies": "只列 dist/index.js 真正 import 的外部包（bundle 把 AutoCrew 的 TS 源码内联了，node_modules 依赖保持 external）。每放行一个新工具都要重新核对这份清单。",
   "dependencies": {
+    "@deepseek-ai/dsh-home-paths": "^0.1.1-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@earendil-works/pi-ai": "0.80.10",
     "@sinclair/typebox": "0.34.48"

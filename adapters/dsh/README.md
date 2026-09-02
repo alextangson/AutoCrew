@@ -21,7 +21,20 @@ dsh plugin --profile autocrew-dev add ./adapters/dsh
   config:
     dataDir: ''          # 留空 = ~/.autocrew
     geminiApiKey: ''     # 留空 = 封面生成不可用
+    installPreset: true  # false = 不往 $DSH_HOME/.agent-presets 装 preset
 ```
+
+## preset：总编辑是怎么进 dsh 会话的
+
+装好后新建会话时能选到「AutoCrew 总编辑」这个 preset（`agent-presets/autocrew/`）。它是一份 agent-plane composition：总编辑人设 + AutoCrew 自己的 `skills/`（`skill-filesystem` 发现、`tool-skill` 加载）+ `ask_user` + `todo`。**刻意不挂** `tool-fs`、`tool-bash`、`tool-subagent*`——案卷要经业务读取工具定界读，员工由代码起，总编辑只能派发流水线（设计见 `docs/superpowers/specs/2026-09-02-dsh-employees-and-case-files.md` §4）。
+
+**它是复制进去的，不是声明出来的。** dsh launcher 合成 host composition 时把 `agent-presets.roots` 整体覆盖成只剩自带根，bundle 没有路径把自己的 preset 根交出去；roster 剩下的唯一入口是用户根 `$DSH_HOME/.agent-presets`。所以插件 `apply` 时把 `agent-presets/autocrew/` 复制到 `$DSH_HOME/.agent-presets/autocrew/`，并把 `__AUTOCREW_SKILLS_DIR__` 占位符换成 skills 目录的绝对路径。三条不变量（`src/preset-install.ts`）：
+
+1. 幂等：版本戳 `.dsh-autocrew.json` 与 skillsDir 都没变就一个字节不写（preset mtime 变了 roster 会起新 generation，旧的永不回收）。
+2. 只覆盖自带文件：用户在那个目录里加的东西一个不删。
+3. 只碰 `autocrew` 这一个 id，每次写路径都过越界断言。
+
+改了 `agent-presets/autocrew/` 下任何文件，**`PRESET_VERSION` 必须 +1**，否则已装机器不会更新。preset 装失败只记 error 日志并报出目标路径，工具桥照常注册。
 
 ## 现在有什么
 

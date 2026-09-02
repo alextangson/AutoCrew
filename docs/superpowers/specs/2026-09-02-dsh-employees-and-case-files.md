@@ -37,7 +37,27 @@
 
 ### 1.4 实证样本的诚实说明
 
-「最大简报 27KB、四视角三个 evidence=0、gaps=19」来自 `~/.autocrew/research/briefs/` 一份文件的直接读取，**未附 runId、broker usage、提交校验错误**。evidence=0 可能来自页面不可读、配额耗尽、引文校验剔除或调研模型能力，不只是压缩。P0 前补：对全部 9 份简报输出 `runId / 四路状态 / usage / 校验剔除数 / 最终注入 prompt`。
+全部 9 份简报的证据链（2026-09-02 从 `research/jobs.jsonl` + `logs/runs/*.jsonl` 拉取；scout 运行按选题标题在简报生成时刻 ±12h 内归属；7 月的两份早于 run-log 上线无记录；最后两份选题同名，归属合并了，数字要打折）：
+
+| 简报 | 视角状态 | LLM 调用/失败 | tokens | search/read/read 失败 | submit 被拒 | 注入写手字符 | evidence |
+|---|---|---|---|---|---|---|---|
+| 8xj3we.v1 (7/26) | 4/4 | 无记录 | — | — | — | 2354 | 6 |
+| 8xj3we.v2 (7/27) | 2/4：audience `engine_failed`、counter `invalid_output` | 无记录 | — | — | — | 912 | 0 |
+| thcm3w | 3/4：evidence `invalid_output` | 43 / 3 | 37.6k | 24 / 32 / 4 | 8 | **2800（顶格）** | 8 |
+| efy5eh | 4/4 | 51 / 3 | 42.1k | 32 / 31 / 0 | 6 | 2507 | 8 |
+| rp5nb0 | 2/4：audience、counter `invalid_output` | 51 / 3 | 44.2k | 35 / 35 / 0 | 8 | 2197 | 6 |
+| bc5vhv | 3/4：benchmark `no_submit` | 80 / 3 | 95.1k | 53 / 71 / 5 | 14 | 2317 | 4 |
+| 2iityo | 4/4 | 63 / 3 | 59.0k | 41 / 50 / 6 | 10 | 2619 | 7 |
+| lsba4l | 3/4：audience `invalid_output` | 59 / 0 | 194k† | 62 / 69 / 8 | 7 | 2321 | 8 |
+| k6zesa | 2/4：audience、counter `invalid_output` | 59 / 0 | 194k† | 62 / 69 / 8 | 7 | 1904 | 8 |
+
+† 同名选题归属合并。
+
+读法：
+- 9 个失败视角里 **7 个是 `invalid_output`**（提交校验两轮修复后仍不过），1 个 `no_submit`，1 个引擎错误。被拒原文两类：「引文在「pN」正文里找不到」和「合法洞察需 ≥2 条（每条带有效来源），当前 0 条」。即调研端的瓶颈是**引文逐字校验**把视角整段清零，不是模型不会搜——每份简报平均 30+ 次搜索、40+ 次读页、4–19 万 token 换来 4–8 条 evidence。
+- 注入写手的简报块 1904–2800 字符，1 份顶到 `BRIEF_BUDGET` 上限；而这些简报本身 20–27KB。压缩比约 10:1。
+- 9 份简报 **没有一份带 angleCards**（角度卡 R2 于 8/24 上线，存量简报未回填）。角度门对这些选题从未生效。
+- 这些数字不否定「输入贫瘠」假设，但把它拆成两层：调研端**产出本来就薄**（校验剔除），写作端**再压 10 倍**。P0 的事实包实验只测第二层；第一层留待案卷制里 `read_source` 让写手能回看原文。
 
 ### 1.5 总编辑 bug 五根因（159 个提交归档）与 dsh 的边界
 
@@ -144,7 +164,7 @@ dsh 的 `fs-sandbox` **只限写不限读**（README：reads always pass through
 `adapters/dsh/` 扩展为 bundle，`dsh plugin --profile web add dsh-autocrew`：
 
 1. **工具桥**（已有）：放行写作线工具 + §3.3 三个读取工具 + `autocrew_run_pipeline`。按 README 检查单逐个过。
-2. **agent preset `autocrew`**（`agent-presets/autocrew/agent.cordis.yml`，经 `agent-presets.roots` 注册）：
+2. **agent preset `autocrew`**（`adapters/dsh/agent-presets/autocrew/agent.cordis.yml`）。**dsh 限制（2026-09-02 实测）**：launcher `profile-boot` 合成时把 `agent-presets.roots` 整体覆盖成只剩自带根目录，bundle 无法经 patch 声明 preset 根；唯一路径是插件 apply 时把 preset 复制进 `$DSH_HOME/.agent-presets/autocrew/`（用户根，`includeUserRoot` 默认开），带版本戳幂等、只覆盖自带文件、可用 `installPreset:false` 关闭。组成：
    - `dsh-persona`：总编辑人设（§4.3）
    - `dsh-autocrew` 工具桥（含读取工具）；**不挂 `tool-fs`/`tool-fs-search`**
    - `skill-filesystem` + **`tool-skill`**（前者只发现，后者才是模型入口）指向 AutoCrew `skills/`；`surfaces: gui` 过滤迁为 invocation policy

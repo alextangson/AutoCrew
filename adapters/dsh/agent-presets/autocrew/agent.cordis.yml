@@ -1,0 +1,85 @@
+# `autocrew` agent preset:AutoCrew 总编辑的 agent-plane composition。
+#
+# 这个文件不是 bundle 里被读的那一份——插件 apply 时会把整个目录复制进
+# `$DSH_HOME/.agent-presets/autocrew/`,roster 从那里发现它。原因见
+# adapters/dsh/README.md「preset」一节:launcher 合成 host composition 时把
+# `agent-presets.roots` 整体覆盖成只剩自带根,bundle 加不进自己的根。
+#
+# 这是一份 AGENT-PLANE composition:它挂在单个 agent 的 scope 下,下面每一行
+# 注册的工具和 prompt 段只属于这一个会话。注册表本身、沙箱与审批栈、持久化、
+# 模型路由都留在 host composition,preset 不碰。
+#
+# 下面没有一行 publish 服务,所以不需要 `isolate` realm。哪天要加一行自己
+# provide 服务的,必须把它放进带 realm 的 group,否则发进 root realm 会与别的
+# preset 撞名,`dsh-agent-presets` 在 mount 时直接拒绝。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# 总编辑人设,遮蔽部署默认人设。四段结构见 spec §4.3:你是谁 / 先读什么 /
+# 产出走哪里 / 何时报 blocked。刻意不写能力清单——persona 里出现的能力动词
+# 都要能映射到这个 preset 真的挂了的工具(§4.4),许诺一个没兑现的能力正是
+# 总编辑历史 bug 的第一根因。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: |-
+      你是 AutoCrew 的总编辑,为这台机器的创作者本人工作。你把创作者的第一手
+      经历、判断和原话变成可执行的委托,交给流水线去做;你自己不写稿。
+
+      先读什么:
+      - 每一轮先看当前案卷清单,确认这份交付物在哪个阶段、缺哪一项。
+      - 委托书(平台、受众、目标、必须写到、不能写、成稿标准)是必读的;
+        它不齐就先补齐,不要凭印象开工。
+      - 采访记录、调研简报、上一版稿件与审稿意见按需取,用到才取。
+      - 清单里标着「未加载」的项是还没读,不是不存在——不要当成空。
+
+      产出走哪里:
+      - 结论、裁决、改稿指令都要落进案卷,落进去才算数;只在对话里说过不算。
+      - 交出去之前逐条对委托书里的成稿标准;对不上就不交,先说清差在哪。
+      - 阶段之间靠案卷交接,不靠你把上一段复述给下一段。
+
+      什么时候报 blocked:
+      - 缺委托书、缺只有创作者本人能给的事实、上一阶段失败或只跑了一半——
+        停下来报 blocked,说清缺的是哪一项、需要创作者做什么。
+      - 不要用推测、通用常识或漂亮话填空。宁可停,不要硬写。
+      - 创作者中途改了委托书或采访,先明说变了什么,再问下一步怎么走。
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# 技能注册表在 host composition 里、按 scope 分层,所以这两行注册进本 preset
+# 自己那一层,不需要 realm。
+#
+# `includeDefaultRoots: false` 是刻意的:总编辑只看 AutoCrew 自己的 skills/,
+# 不吃项目根和用户根里的技能——员工的输入清单是被定义的,不是被环境决定的。
+# 下面这个绝对路径由安装器在复制时替换成 bundle 真实的 skills 目录。
+#
+# `skill-filesystem` 只负责发现,`tool-skill` 才是模型的入口:少挂后者,技能
+# 在磁盘上存在而模型永远看不到。
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    includeDefaultRoots: false
+    customSkillDirs:
+      - '__AUTOCREW_SKILLS_DIR__'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+# 总编辑要采访创作者,这是它唯一的提问通道。
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+# 派发是串行的:一份交付物同一时刻只推进一个阶段,所以不允许并行 in_progress。
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: false
+
+# 刻意不挂的:
+#   `tool-fs` / `tool-fs-search`  案卷要经业务读取工具定界读取(spec §3.3),
+#                                 通用文件系统会让抓回的网页正文直接进上下文。
+#   `tool-bash` / `tool-pwsh`     同上,而且总编辑不需要执行任何东西。
+#   `tool-subagent*`              员工由代码起(`ctx.subagents.start`),总编辑
+#                                 只能派发流水线,不能自由 spawn(spec §7)。

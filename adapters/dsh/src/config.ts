@@ -19,6 +19,12 @@ export interface Config {
   geminiApiKey: string;
   /** 图像模型档位：auto / gemini-native / imagen-4。 */
   geminiModel: string;
+  /**
+   * 是否把自带的 `autocrew` agent preset 装进 `$DSH_HOME/.agent-presets/`。
+   * 默认开——launcher 覆盖了 preset 根，这是 preset 唯一的到达路径（见
+   * preset-install.ts）。部署方想自己管 preset 目录时关掉它。
+   */
+  installPreset: boolean;
 }
 
 export const Config: z<Config> = z.object({
@@ -28,6 +34,7 @@ export const Config: z<Config> = z.object({
   cdpProxyUrl: z.string().default(""),
   geminiApiKey: z.string().default(""),
   geminiModel: z.string().default(""),
+  installPreset: z.boolean().default(true),
 });
 
 /** 空字符串 = 未配置，要丢掉而不是当成空值传下去——AutoCrew 靠 falsy 走自己的默认。 */

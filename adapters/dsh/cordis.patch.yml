@@ -15,6 +15,11 @@
 #   dataDir      留空 = ~/.autocrew(或环境变量 AUTOCREW_DATA_DIR)
 #   proApiKey    留空 = 免费版,深度抓取/竞品监控/数据分析不可用
 #   geminiApiKey 留空 = 封面生成不可用,相关工具会明确报「未配置」而不是静默跳过
+#
+# installPreset 是唯一的布尔项:开着时插件启动会把自带的 `autocrew` agent preset
+# 复制进 $DSH_HOME/.agent-presets/autocrew/。这不是「顺手」——launcher 合成时把
+# agent-presets.roots 整体覆盖成只剩自带根,bundle 没有别的路径把 preset 交出去。
+# 部署方要自己管那个目录,就设成 false;工具桥不受影响,照常注册。
 - insert:
     - id: dsh-autocrew
       name: dsh-autocrew
@@ -25,3 +30,4 @@
         cdpProxyUrl: ''
         geminiApiKey: ''
         geminiModel: ''
+        installPreset: true

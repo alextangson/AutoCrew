@@ -7,6 +7,9 @@
  *
  *   npm run build && node scripts/smoke-register.mjs
  */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 // ToolRuntime 声明 inject: ['systemPrompt']，不挂它注册表永远停在 pending。
 import { SystemPrompt } from "@deepseek-ai/dsh-system-prompt";
@@ -14,6 +17,11 @@ import { ToolRuntime } from "@deepseek-ai/dsh-tools";
 import * as autocrew from "../dist/index.js";
 
 const DATA_DIR = "/tmp/autocrew-dsh-smoke";
+
+// preset 安装器读 $DSH_HOME。指到临时目录:冒烟脚本绝不许往真的 ~/.dsh 里写,
+// 而且这样才能当场验「装进去的那份 preset 是不是替换好的」。
+const DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "autocrew-dsh-smoke-home-"));
+process.env.DSH_HOME = DSH_HOME;
 
 // cordis 的 fiber 是 thenable：await 它才等到 apply 真正跑完。
 const ctx = new Context();
@@ -50,6 +58,27 @@ if (!threw) {
   console.error("FAIL: ok:false was swallowed instead of thrown");
   process.exit(1);
 }
+
+// preset 必须真的落进 $DSH_HOME/.agent-presets/autocrew/,而且占位符已被替换——
+// 留着占位符等于 skill-filesystem 去扫一个字面量目录、悄悄发现 0 个技能。
+const presetDir = path.join(DSH_HOME, ".agent-presets", "autocrew");
+const composition = path.join(presetDir, "agent.cordis.yml");
+if (!fs.existsSync(composition)) {
+  console.error(`FAIL: preset not installed at ${presetDir}`);
+  process.exit(1);
+}
+const text = fs.readFileSync(composition, "utf8");
+if (text.includes("__AUTOCREW_SKILLS_DIR__")) {
+  console.error("FAIL: skills dir placeholder was not substituted");
+  process.exit(1);
+}
+const stamp = JSON.parse(fs.readFileSync(path.join(presetDir, ".dsh-autocrew.json"), "utf8"));
+if (!fs.existsSync(path.join(stamp.skillsDir, "write-script"))) {
+  console.error(`FAIL: stamped skillsDir does not look like AutoCrew skills/: ${stamp.skillsDir}`);
+  process.exit(1);
+}
+console.log(`preset installed: ${presetDir} (skillsDir ${stamp.skillsDir})`);
+fs.rmSync(DSH_HOME, { recursive: true, force: true });
 
 console.log("SMOKE OK");
 process.exit(0);
