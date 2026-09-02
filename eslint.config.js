@@ -13,7 +13,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["bin/**/*.mjs"],
+    files: ["bin/**/*.mjs", "adapters/**/*.mjs"],
     languageOptions: {
       globals: {
         AbortController: "readonly",

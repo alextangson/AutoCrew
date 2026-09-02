@@ -1,0 +1,27 @@
+# dsh-autocrew —— 这个 bundle 往 profile 里贡献的一层。
+#
+# 装法:
+#   dsh plugin --profile <name> add dsh-autocrew
+#
+# patch 会**整体替换**一行的 `config`(不做深合并),所以要改下面任何一个值,
+# 都得在你自己的 $DSH_HOME/profiles/<name>/cordis.patch.yml 里把想要的键全写齐:
+#
+#   - id: dsh-autocrew
+#     config:
+#       dataDir: '/Users/me/.autocrew'
+#       geminiApiKey: 'AIza...'
+#
+# 每一项留空都是明确的「没配」状态,不是坏值:
+#   dataDir      留空 = ~/.autocrew(或环境变量 AUTOCREW_DATA_DIR)
+#   proApiKey    留空 = 免费版,深度抓取/竞品监控/数据分析不可用
+#   geminiApiKey 留空 = 封面生成不可用,相关工具会明确报「未配置」而不是静默跳过
+- insert:
+    - id: dsh-autocrew
+      name: dsh-autocrew
+      config:
+        dataDir: ''
+        proApiKey: ''
+        proApiUrl: ''
+        cdpProxyUrl: ''
+        geminiApiKey: ''
+        geminiModel: ''
