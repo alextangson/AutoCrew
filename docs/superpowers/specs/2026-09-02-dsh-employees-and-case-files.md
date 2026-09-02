@@ -1,10 +1,12 @@
-# AutoCrew 进 dsh：数字员工定义 + 案卷制事实共享（设计稿 v2）
+# AutoCrew 进 dsh：数字员工定义 + 案卷制事实共享（设计稿 v3）
 
-日期：2026-09-02 · 状态：v2，已吸收 codex 评审 26 条（处置表见 §10）· 前置：[dsh 工具桥第一刀](../../../adapters/dsh/README.md)（分支 `claude/autocrew-deepseek-harness-plugin-4c19fd`，未合 main）· codex 会话 `.context/codex-session-id`
+日期：2026-09-02 · 状态：v3（v2 吸收 codex 26 条见 §10；v3 按创始人裁决撤销采访门、加内部调研腿、P0 重设计，见 §11）· 前置：[dsh 工具桥第一刀](../../../adapters/dsh/README.md)（已合入本分支）· codex 会话 `.context/codex-session-id`
 
 ## 0. 一句话
 
-**把「阶段间传裁剪过的摘要」改成「所有员工通过业务读取工具读同一份案卷」，把「总编辑替你写需求」改成「总编辑采访你、把你的第一手事实记进案卷」；agent 基础设施（循环、子 agent、任务、会话、重试）交给 dsh，AutoCrew 只定义员工、案卷、提交契约和恢复。**
+**把「阶段间传裁剪过的摘要」改成「所有员工通过业务读取工具读同一份案卷」，把「只搜外网」改成「先挖创作者自己的语料再搜外网」；创作者不提供任何输入，产品的预期就是全自动调研出优质短视频文案；agent 基础设施（循环、子 agent、任务、会话、重试）交给 dsh，AutoCrew 只定义员工、案卷、提交契约和恢复。**
+
+**设计前提（创始人 2026-09-02 裁决）**：纯外网调研在 FDE 赛道的上限是「资料翔实的综述」，到不了「只有他知道的事」。要突破这个上限，来源只能是创作者**已经产出过**的东西——口播转写、审定稿、灵感收件。所以内部语料不是锦上添花，是这个产品在这个赛道上唯一能到「优质」的路径。任何要求创作者额外做一步的输入（事实包、采访）一律不做，同 [[feedback-loop-implicit]]。
 
 ## 1. 诊断（假设级，待 P0 实验证实）
 
@@ -25,7 +27,7 @@
 
 落盘的 `brief.perspectives`（四视角结构化全文）**没有任何写作提示读过**；抓回的页面正文只存在调研 broker 内存缓存，job 结束即释放，写手、审稿、总编辑都看不到。
 
-**更根本的缺口**：你在聊天里让 Claude 写稿时，倒给它的是你自己的 FDE 现场经历、判断、原话——对这个赛道来说，**创始人本人就是第一手事实源**。AutoCrew 没有容器接住这些：总编辑 28 条规则里没有「采访创作者」；`direction` 虽无上限，但语义是「切入角度」不是「事实素材」。
+**更根本的缺口**：你在聊天里让 Claude 写稿时，倒给它的是你自己的 FDE 现场经历、判断、原话——对这个赛道来说，**创始人本人就是第一手事实源**。而这些材料很大一部分已经在磁盘上：45 篇历史稿（12 篇抖音口播稿、4 篇人审放行）、2 份你自己的口播转写（`contents/<id>/video/transcript.v1.json`，其中一份正是「DeepSeek Harness」这个选题你亲口说的 4281 字）、20 条灵感收件、3 条声音样本、19 条写作规则。**没有一条进过写手的提示词**——调研只搜外网，写手只拿 300 字声音样本。另：8 篇抖音稿里只有 2 篇带过简报，你对短视频文案的不满大部分样本是裸写的。
 
 ### 1.2 信息链在哪里断
 
@@ -79,10 +81,11 @@
 |---|---|---|
 | 流水线编排 | **代码 workflow** | 步骤固定。不用 dsh `tool-workflow`（无 journaling/resume），不用 `ralph` 工具本身；代码定序，直接调 `ctx.subagents.start({outputSchema})`（programmatic 层才有 outputSchema，模型可见的 `subagent` 工具没有） |
 | 人味化 / 质量门 / 发布前检查 / 案卷渲染 | 脚本 | 已是纯函数 |
-| 总编辑 | 单 agent（dsh 会话主 agent） | 对话、采访、派发、回报 |
-| 调研员 ×4 / 综合 / 写手·修订 / 审稿 | 子 agent | 路径不可枚举；审稿=故意的无知 |
+| 总编辑 | 单 agent（dsh 会话主 agent） | 对话、派发、回报 |
+| 内部调研（检索创作者语料） | **脚本** | 输入输出确定：按相关度从转写/审定稿/收件里挑，不需要模型 |
+| 外网调研员 ×4 / 综合 / 写手·修订 / 审稿 | 子 agent | 路径不可枚举；审稿=故意的无知 |
 
-**隔离的上下文**：调研员看委托书+采访+选题，不看声音库；写手看案卷（委托书、采访、简报、角度、规则、范文、上一版+审稿），不看原始网页、不看审稿判据；审稿看案卷+当前稿+判据，不看写手推理；总编辑看案卷与工作区状态，不写稿、不载入声音内核。禁 agent 互聊不变。
+**隔离的上下文**：外网调研员看委托书+选题+内部语料摘要（知道创作者已经说过什么，避免重复搜），不看声音库；写手看案卷（委托书、内部语料、简报、角度、规则、范文、上一版+审稿），不看原始网页、不看审稿判据；审稿看案卷+当前稿+判据，不看写手推理；总编辑看案卷与工作区状态，不写稿、不载入声音内核。禁 agent 互聊不变。
 
 ## 3. 案卷制
 
@@ -93,7 +96,7 @@
 | 记录 | 位置 | 说明 |
 |---|---|---|
 | `case.json` | `cases/<topicId>/` | caseId、shared 阶段状态、caseRevision 计数 |
-| `interview/<seq>.json` | shared | 采访问答，原话 + 时间 + 来源会话 |
+| `own-material.json` | shared | **内部语料检索结果**（§3.4）：命中的转写/审定稿/收件片段 + 来源 contentId + 相关度；脚本产出，可重算 |
 | `sources/<sourceId>.json` | shared | **抓取时即落盘**的页面快照：url、抓取时间、原文、标题、hash；broker 现有内存缓存改为先写后读 |
 | `deliverables/<contentId>/brief.json` | 每稿 | 委托书：platform、audience、goal、must/avoid、evidenceMode、成稿标准 |
 | `deliverables/<contentId>/decisions/<seq>.json` | 每稿 | 追加式裁决：原话、类型（改稿指令/采纳/打回/发布 diff 摘要）、时间 |
@@ -108,7 +111,7 @@
 ```
 ~/.autocrew/cases/<topicId>/
   case.json
-  shared/            采访、来源快照、（指向 research/briefs 的引用）
+  shared/            内部语料检索结果、来源快照、（指向 research/briefs 的引用）
   deliverables/<contentId>/   委托书、角度选择、（指向 contents/<id> 版本的引用）、审稿、裁决、status
 ~/.autocrew/voice/
   rules.json         写作规则（现 creator-profile.writingRules 的搬迁或引用）
@@ -116,7 +119,7 @@
   anti/<contentId>.json       打回稿 + 原因原话（**只供蒸馏**，员工不直接读）
 ```
 
-一选题多平台：调研与采访共享，委托书/角度/稿/审稿/裁决/状态按交付隔离，两条平台稿互不阻塞。
+一选题多平台：外网调研与内部语料共享，委托书/角度/稿/审稿/裁决/状态按交付隔离，两条平台稿互不阻塞。
 
 ### 3.3 员工读案卷：业务读取工具，不给通用文件系统
 
@@ -128,24 +131,19 @@ dsh 的 `fs-sandbox` **只限写不限读**（README：reads always pass through
 | `read_case_artifact(artifactId, offset?, limit?)` | 渲染为 markdown 的只读视图；分页 |
 | `read_source(sourceId, offset?, limit?)` | 来源快照；**输出裹「不可信外部数据」定界符**，沿用 `sanitizeExternal`；仅调研员与综合可见 |
 
-**输入清单（input manifest）由代码生成**，按角色、去重、带 token 预算：写手必读 = 委托书 + 采访 + 简报 vN + 角度 + 规则；按需读 = perspectives（简报证据已含者不重复）、范文 ≤2 篇。实际加载清单记入 handoff 收据。现有 `BRIEF_BUDGET=2800` 等硬上限退役，由预算清单替代（不是无限制）。
+**输入清单（input manifest）由代码生成**，按角色、去重、带 token 预算：写手必读 = 委托书 + 内部语料 + 简报 vN + 角度 + 规则；按需读 = perspectives（简报证据已含者不重复）、范文 ≤2 篇。实际加载清单记入 handoff 收据。现有 `BRIEF_BUDGET=2800` 等硬上限退役，由预算清单替代（不是无限制）。
 
-### 3.4 委托书与采访：把创始人变成事实源
+### 3.4 委托书自动生成 + 内部调研：不问创作者一个字
 
-总编辑两项新职责，作为 `generate_script` 的前置门（与角度门同构，不满足不接单）：
-
-1. **委托书**：从对话逐项落成 `brief.json`，可改。含 `evidenceMode`：
-   - `firsthand`：亲历/观点/案例型内容，采访**必做**
-   - `optional`：新闻解释、资料综述，采访可跳
-   - 缺可核验第一手事实时由总编辑升级为 `firsthand`
-2. **采访**：≤3 个「具体的、过去发生的」问题（Mom Test 纪律），回答原话入 `interview/`。写手提示明示：采访记录优先级高于网络调研。
-
-跳过留 `skip_reason`；写手提示显式出现「无采访记录」。
+- **委托书**由总编辑从选题（标题、描述、来源灵感卡）和创作者画像**自动生成**落成 `brief.json`，创作者可改但不必改；不再是前置门。`evidenceMode` 保留但改为脚本判定：内部语料命中 → `firsthand`（写手提示明示「以下是创作者自己说过的话」），未命中 → `external`（写手提示明示「本稿无第一手材料，只能写综述型」，审稿据此不把「缺亲历」记 blocker）。
+- **内部调研**是调研阶段的第一步（脚本）：从 `contents/*/video/transcript.v*.json`（口播转写，最纯的第一手）、人审放行的稿子（approved/publish_ready/published）、灵感收件的拆解卡里按相关度检索，**排除同选题的 AI 旧稿**（否则是改写不是调研），结果落 `own-material.json`。P0 跑格器里的 `lib/internal-corpus.ts` 是它的最小实现。
+- 外网调研员在任务书里拿到内部语料摘要：知道创作者已经说过什么，去搜他没说过的。
+- 采访门**撤销**（创始人 2026-09-02 裁决，见 §11）。
 
 ### 3.5 阶段交接契约：租约锁 + fencing token + 收据
 
 - **锁**：`O_EXCL` lockfile（`deliverables/<id>/.lock-<stage>`）+ lease TTL + 心跳 + 单调 fencing token。超时抢占后旧 owner 的迟到写入被 token 拒绝。
-- **阶段冻结**：阶段开始时生成 `caseRevision` 输入快照（每个输入 artifact 的 digest）。创作者中途改委托书/采访/裁决 → caseRevision +1；在跑阶段按旧快照跑完；下一阶段开始前发现 revision 变化 → **总编辑向创作者明示**「按新采访重跑调研还是继续」，不静默混用。
+- **阶段冻结**：阶段开始时生成 `caseRevision` 输入快照（每个输入 artifact 的 digest）。创作者中途改委托书/裁决，或内部语料重算有变 → caseRevision +1；在跑阶段按旧快照跑完；下一阶段开始前发现 revision 变化 → **总编辑向创作者明示**「按新材料重跑调研还是继续」，不静默混用。
 - **提交**：子 agent 内部仍用现有 `submit_*` 工具（保留循环内校验+修复），但 submit 只写**暂存区**（attemptId + token）；子 agent 结束后由编排代码校验 `outputSchema` 结果与暂存 artifact 的 digest 一致，再**一次事务**提交 artifact 收据与 stage 状态。**成功的唯一判据 = 提交收据**，`SubagentResult` 只作说明。
 - **收据字段**：`attemptId, runId, stage, status(done|failed|partial|skipped), inputManifestDigest, outputDigest, schemaVersion, loadedArtifacts[], evidence, blocker?, token`。
 - **恢复**：启动时 reconciliation 扫描未完成 attempt（有锁无收据）→ 标 failed/可续跑；`autocrew_run_pipeline({deliverableId, from})` 从最后一个 done 阶段续。
@@ -190,12 +188,13 @@ dsh 的 `fs-sandbox` **只限写不限读**（README：reads always pass through
 
 | 情形 | 行为 |
 |---|---|
-| 无委托书要求写稿 | 不接单，先补；显式「直接写」→ skip_reason，写手提示「无委托书」 |
-| `evidenceMode=firsthand` 但拒绝采访 | 允许跳过并留痕；审稿把「无第一手事实」记 advisory |
+| 选题信息太少生成不出委托书 | 总编辑用画像默认值补齐并标「自动生成」，不问创作者；创作者随时可改 |
+| 内部语料零命中 | `evidenceMode=external`，写手提示明示「无第一手材料」，审稿不把缺亲历记 blocker；总编辑回报里说明 |
+| 内部语料命中的是同选题旧 AI 稿 | 排除；只有转写允许同选题（他亲口说的） |
 | 调研全挂/部分挂 | status=failed/partial + 缺口；写手可继续，提示显式；总编辑用 failed 措辞 |
 | 子 agent 未调 submit / outputSchema 不过 / digest 不一致 | 阶段 failed，收据记 stopReason/turns；重试 ≤1 |
 | 同交付同阶段重复派发 | 锁在 → 返回在跑 attemptId |
-| 创作者中途改委托书/采访 | caseRevision+1；下一阶段前总编辑明示选择 |
+| 创作者中途改委托书 | caseRevision+1；下一阶段前总编辑明示选择 |
 | 案卷超预算 | 输入清单截断项显式列出「未加载」，写手可 read 分页补 |
 | 网页内容含提示注入 | 只经 `read_source` 定界读取；写手不可见 |
 | dsh 用户无 `~/.autocrew` | 首次创建 dataDir + 最小画像；总编辑首轮引导 |
@@ -207,28 +206,29 @@ dsh 的 `fs-sandbox` **只限写不限读**（README：reads always pass through
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| **P0 两天** | 2×2 对照：{单轮直写, AutoCrew 全流程} × {无事实包, 同一事实包}。事实包 = 你为该选题口述的第一手材料，两侧都经现有 `research` 字段注入（不改代码）。固定 resolved provider/model，3 选题 × 2 重复 = 12 稿；盲评四维（事实性/观点/声音/结构）。加消融：AutoCrew 只跑写手 vs 写手+审修 | 事实包主效应显著 → §1.1 成立，P1 直上；流程主效应为负 → 先修审修环再谈案卷 |
-| **P1 案卷制（core）** | canonical 记录、来源落盘、三个读取工具、委托书门+采访门、输入清单、锁/token/收据、reconciliation、写手/审稿/改稿/适配走案卷、蒸馏改读整交付 | 5 个历史选题重跑盲评；`revise_draft` 能引用简报证据；kill -9 中途重启可续跑；双派发只跑一次 |
-| **P2 dsh preset** | 先合入工具桥分支；preset `autocrew`、`autocrew_run_pipeline`、员工 persona、`autocrew-dev` profile 重链（现指向已删 worktree）。**只有 bundle/preset 骨架可与 P1 并行**，端到端要等 P1 契约冻结 | 干净机器 `dsh plugin add` 走完 委托书→采访→调研→稿→审；收据可查 |
+| **P0 一天，创作者零输入** | 3×2 因子：{直写, 写手（审稿短路）, 全流程} × {brief=现状 2800 字摘要, full=简报全文+四视角+内部语料}。平台固定抖音口播。`full` 经现有 `research` 字段 RAW 注入且隔离目录不带简报指针（不叠加、不改代码）。固定 resolved provider/model，3 选题 × 6 格 × 2 重复 = 36 稿；盲评四维（事实性/观点/声音/结构）。跑格器 `experiments/p0-inputs-vs-structure/` | 调研档主效应显著 → §1.1 成立，P1 直上；流程档为负 → 先修审修环；写手 > 全流程 → 审稿伤稿；有转写的选题分差更大 → 内部调研腿单独立项 |
+| **P1 案卷制（core）** | canonical 记录、来源落盘、三个读取工具、委托书自动生成、内部调研脚本、输入清单、锁/token/收据、reconciliation、写手/审稿/改稿/适配走案卷、蒸馏改读整交付 | 5 个历史选题重跑盲评；`revise_draft` 能引用简报证据；kill -9 中途重启可续跑；双派发只跑一次 |
+| **P2 dsh preset** | 先合入工具桥分支；preset `autocrew`、`autocrew_run_pipeline`、员工 persona、`autocrew-dev` profile 重链（现指向已删 worktree）。**只有 bundle/preset 骨架可与 P1 并行**，端到端要等 P1 契约冻结 | 干净机器 `dsh plugin add` 走完 委托书→内部调研→外网调研→稿→审；收据可查 |
 | **P3 声音库 + 案卷面板** | exemplars/anti 自动入库、反模式蒸馏、dsh 侧案卷面板 | 采纳率曲线 |
 
 ## 7. 明确不做
 
 - 不搬工作台进 dsh；不用 `tool-workflow`/`ralph` 工具；不给总编辑自由 `subagent`。
 - 不做显式反馈按钮；不做 agent 互聊；不做 N 平台 N 写手。
+- **不做采访门、不做事实包、不做任何要创作者额外输入的东西**（§0 设计前提）。
 - 不把 `sources/` 给写手；员工不读 anti 原文。
 - 不给员工通用文件系统工具。
 
-## 8. 裁决点（v2 立场）
+## 8. 裁决点（v3 立场）
 
-1. **采访门**：不按视频/公众号分，按 `evidenceMode` 自适应（§3.4）；默认 ≤3 问，显式跳过留痕。
+1. **采访门**：撤销。`evidenceMode` 由内部语料命中与否脚本判定（§3.4）。
 2. **目录**：`cases/<topicId>/` 拆 `shared/` 与 `deliverables/<contentId>/`；`contents/<id>` 仍是稿件真相源，反向引用 caseId/deliverableId。
 3. **审稿读 anti**：不读原文；读蒸馏后的反模式规则，仅声音维度 advisory。
 
 ## 9. 待创始人确认
 
-- P0 的三个选题选哪三个（建议：一个你有强第一手经历的、一个纯资料综述的、一个介于中间的）。
-- 采访问题由总编辑现场生成还是先按赛道写一份固定题库（倾向：固定题库 + 现场追问 1 个）。
+- P0 盲评：36 篇口播稿，每选题 12 篇读完再打分（约半小时）。
+- 选题已定（无需创始人选）：`2iityo` DeepSeek Harness 实战（有他本人口播转写命中）、`lsba4l` 入口之争（综述型）、`efy5eh` 你改了 AI 的错（中间）。
 
 ## 10. codex 评审处置表（2026-09-02，26 条：20 P1 / 6 P2）
 
@@ -260,3 +260,18 @@ dsh 的 `fs-sandbox` **只限写不限读**（README：reads always pass through
 | 24 | P1 | 采访门按 evidenceMode 自适应 | 吸收：§3.4/§8.1 |
 | 25 | P1 | shared/deliverables 拆分 | 吸收：§3.2/§8.2 |
 | 26 | P2 | 审稿不读完整 anti | 吸收：§3.6/§8.3 |
+
+## 11. v3 变更记录（2026-09-02，创始人裁决）
+
+创始人原话：「我没给他事实包，我对这个产品最终的预期就是他能自动调研然后出优质的短视频文案。」据此：
+
+| 项 | v2 | v3 |
+|---|---|---|
+| 采访门 / 事实包 | 采访 ≤3 问作为写稿前置门 | **撤销**。任何要创作者额外输入的东西不做 |
+| 第一手材料来源 | 创作者口述 | **内部语料脚本**：口播转写、人审放行稿、灵感收件，按相关度检索（§3.4） |
+| 委托书 | 总编辑从对话逐项问出 | 从选题 + 画像自动生成，可改不必改 |
+| `evidenceMode` | firsthand/optional 由内容类型定 | 由内部语料命中与否脚本判定 |
+| P0 | {直写, 全流程} × {无事实包, 事实包} | {直写, 写手, 全流程} × {brief 2800 字, full 全文+内部语料}，创作者零输入，36 稿 |
+| 设计前提 | 无 | §0：纯外网调研上限是综述，内部语料是到「优质」的唯一路径 |
+
+codex 第 24 条（采访门按 evidenceMode 自适应）的处置随之改为「采访撤销，evidenceMode 保留但改脚本判定」。
