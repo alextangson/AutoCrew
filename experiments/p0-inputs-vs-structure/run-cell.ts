@@ -29,13 +29,15 @@ import { createRecorder, type RecordedCall } from "./lib/recorder.js";
 import { makeMockRunLoop } from "./lib/mock-loop.js";
 import { renderFullBrief } from "./lib/render-brief.js";
 import { collectInternalCorpus, type InternalCorpus } from "./lib/internal-corpus.js";
+import { runAngleStage, type AngleResult } from "./lib/angle-stage.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RUNS_ROOT = path.join(HERE, "runs");
 
-type Cell = "direct" | "writer" | "pipeline";
+type Cell = "direct" | "writer" | "pipeline" | "angle";
 type Research = "brief" | "full";
-const CELLS: Cell[] = ["direct", "writer", "pipeline"];
+/** angle = P0b：先立意（lib/angle-stage.ts）再走 writer 档；只配 full 调研 */
+const CELLS: Cell[] = ["direct", "writer", "pipeline", "angle"];
 const RESEARCH: Research[] = ["brief", "full"];
 
 interface Args {
@@ -61,6 +63,7 @@ function parseArgs(argv: string[]): Args {
   if (!cell || !CELLS.includes(cell)) throw new Error(`--cell 只能是 ${CELLS.join(" | ")}`);
   if (!research || !RESEARCH.includes(research)) throw new Error(`--research 只能是 ${RESEARCH.join(" | ")}（必须显式写）`);
   if (!Number.isInteger(rep) || rep < 1) throw new Error("--rep 要是 ≥1 的整数");
+  if (cell === "angle" && research !== "full") throw new Error("angle 格只配 --research full（立意要吃全量调研与内部语料）");
   return {
     topicId,
     cell,
@@ -100,6 +103,8 @@ interface Meta {
     wroteWithoutBrief: boolean;
     wroteWithoutAngle: boolean;
   };
+  /** angle 格才有：误区清单、候选、代码侧打分、选中的卡 */
+  angle?: Omit<AngleResult, "direction">;
   warnings: string[];
   calls: RecordedCall[];
 }
@@ -156,7 +161,7 @@ async function main(): Promise<void> {
   }
 
   const impl = args.mock ? makeMockRunLoop() : runLoop;
-  const { runLoopImpl, calls } = createRecorder({ disableReview: args.cell === "writer", impl });
+  const { runLoopImpl, calls } = createRecorder({ disableReview: args.cell === "writer" || args.cell === "angle", impl });
   const warnings: string[] = [];
   const startedAt = new Date();
   const t0 = Date.now();
@@ -169,7 +174,7 @@ async function main(): Promise<void> {
     topicId: args.topicId,
     topicTitle: topic.title,
     platform: args.platform,
-    reviewDisabled: args.cell === "writer",
+    reviewDisabled: args.cell === "writer" || args.cell === "angle",
     mock: args.mock,
     startedAt: startedAt.toISOString(),
     durationMs: 0,
@@ -205,6 +210,17 @@ async function main(): Promise<void> {
     if (!draft) throw new Error(`直写格没拿到正文（loop ${result.stopReason}，turns=${result.turns}）`);
     meta = { ...meta, tokensUsed: result.totalTokens, stopReason: result.stopReason };
   } else {
+    // angle 格：先立意，选中的卡渲染成 direction（写手提示里优先级最高的一块）
+    let angle: AngleResult | undefined;
+    if (args.cell === "angle") {
+      angle = await runAngleStage(runLoopImpl, writer.config, writer.model, {
+        topicTitle: topic.title,
+        ...(topic.description ? { topicDescription: topic.description } : {}),
+        research: researchText,
+      });
+      const { misconceptions, candidates, scores, picked } = angle;
+      meta = { ...meta, angle: { misconceptions, candidates, scores, picked } };
+    }
     // brief 档：research 留空，让生产代码自己按 jobs.jsonl 指针追加 2800 字块（与现状逐字一致）
     // full 档：research = 全文；隔离目录无指针，生产代码不会再追加
     const generated = await generateScript(
@@ -213,6 +229,7 @@ async function main(): Promise<void> {
         platform: args.platform as never,
         topicId: args.topicId,
         ...(args.research === "full" ? { research: researchText } : {}),
+        ...(angle ? { direction: angle.direction } : {}),
       },
       dataDir,
       { runLoopImpl, onWarn: (m) => warnings.push(m) },

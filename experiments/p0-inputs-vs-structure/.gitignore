@@ -2,3 +2,4 @@
 runs/
 # 盲评卷（含 key.json 答案）：本地看，别推
 blind/
+blind-*/

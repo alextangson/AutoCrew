@@ -2,7 +2,7 @@
 /**
  * 盲评卷生成器：把 runs/ 下所有 draft.md 洗牌成 A/B/C…，答案单独存 key.json。
  *
- *   npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts [--topic <topicId>] [--seed <n>]
+ *   npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts [--topic <topicId>] [--seed <n>] [--cells a-full,b-full] [--out <dir>]
  *
  * 盲的定义是**打分的人看不到格子名**：所以 blind/<topicId>/<letter>.md 里
  * 只有正文，连标题里的「【冒烟】」这类痕迹都不做特殊处理（真跑不会有），
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RUNS_ROOT = path.join(HERE, "runs");
-const BLIND_ROOT = path.join(HERE, "blind");
+let BLIND_ROOT = path.join(HERE, "blind");
 
 /** 26 个字母够用（一个选题最多 15 格） */
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -56,7 +56,7 @@ function parseCellDir(name: string): { cell: string; research: string; rep: stri
   return m ? { cell: m[1], research: m[2], rep: m[3] } : null;
 }
 
-async function collect(topicFilter: string | null): Promise<Entry[]> {
+async function collect(topicFilter: string | null, cellFilter: Set<string> | null): Promise<Entry[]> {
   const entries: Entry[] = [];
   let topics: string[];
   try {
@@ -73,6 +73,7 @@ async function collect(topicFilter: string | null): Promise<Entry[]> {
     for (const cellDir of cellDirs) {
       const parsed = parseCellDir(cellDir);
       if (!parsed) continue;
+      if (cellFilter && !cellFilter.has(`${parsed.cell}-${parsed.research}`)) continue;
       const draftPath = path.join(RUNS_ROOT, topicId, cellDir, "draft.md");
       try {
         entries.push({ topicId, cellDir, ...parsed, draft: await fs.readFile(draftPath, "utf-8") });
@@ -126,10 +127,13 @@ async function main(): Promise<void> {
     return i >= 0 ? argv[i + 1] : undefined;
   };
   const topicFilter = get("--topic") ?? null;
+  // --cells writer-full,angle-full：只收这些格（P0b 时不让已评过的 36 稿重新洗牌）
+  const cellFilter = get("--cells") ? new Set(get("--cells")!.split(",").map((s) => s.trim())) : null;
+  if (get("--out")) BLIND_ROOT = path.resolve(get("--out")!);
   const seed = Number(get("--seed") ?? "20260902");
   if (!Number.isFinite(seed)) throw new Error("--seed 要是数字");
 
-  const entries = await collect(topicFilter);
+  const entries = await collect(topicFilter, cellFilter);
   const byTopic = new Map<string, Entry[]>();
   for (const e of entries) byTopic.set(e.topicId, [...(byTopic.get(e.topicId) ?? []), e]);
 

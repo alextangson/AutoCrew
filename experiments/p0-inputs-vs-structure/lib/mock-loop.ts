@@ -63,6 +63,22 @@ export function makeMockRunLoop(): typeof RunLoop {
       return { finalMessage: "已提交", turns: 2, totalTokens: 4200, toolCallCount: 1, stopReason: "no_tool_calls" };
     }
 
+    if (agent === "angle") {
+      const tool = findTool(options.tools, "submit_angles");
+      if (!tool) throw new Error("mock：立意轮没有 submit_angles 工具——契约变了，冒烟需要同步更新");
+      const gains = { grow: "听懂了 harness 是什么，想关注", trust: "看到实测细节，收藏", convert: "知道找谁问" };
+      const mk = (id: string, persona: "grow" | "trust" | "convert", thesis: string) => ({
+        id, primaryPersona: persona, misconception: "Star 多等于能用", thesis, nextAction: "今晚花 20 分钟装一个插件", elements: ["新奇点", "爽点"],
+        counterResponse: "rc 版不稳", firsthandAnchor: "我上次给它写了个插件", personaGains: gains, structure: "claim-case-claim", hookDraft: "两天十万星，我却先装了个插件", antiScope: "不讲论文",
+      });
+      const reply = await tool.execute({
+        misconceptions: { grow: ["以为要会写代码才能用"], trust: ["以为是又一个框架"], convert: ["以为 Star 多就能上生产"] },
+        candidates: [mk("a", "grow", "Star 和能不能用是两件事"), mk("b", "trust", "插件协议才是它真正的产品"), mk("c", "convert", "先拿它做内部工具再谈生产")],
+      });
+      if (reply.startsWith("Error:")) throw new Error(`mock：假立意没过校验：${reply}`);
+      return { finalMessage: "已提交", turns: 2, totalTokens: 2500, toolCallCount: 1, stopReason: "no_tool_calls" };
+    }
+
     if (agent === "reviewer") {
       const tool = findTool(options.tools, "submit_review");
       if (!tool) throw new Error("mock：审稿轮没有 submit_review 工具——管线契约变了，冒烟需要同步更新");
