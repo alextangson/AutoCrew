@@ -62,6 +62,21 @@ npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts [--topic <topicId
 
 `runs/` 与 `blind/` 都在 `.gitignore` 里。
 
+## P0b：立意格（2026-09-03 10:44–11:30）
+
+创始人盲评到一半的发现：「DeepSeek Harness」选题 12 篇稿全是「劝你别碰」立场，与调研档、流程档无关——立场在调研综合里就定了（angle-stage spec v3 §7.0）。于是加 `angle` 格：先跑一次立意 pass（`lib/angle-stage.ts`：三画像误区清单 → 3–4 个候选 → 代码侧打分选一 → 渲染成 `direction`），再走 `writer` 档；只配 `full` 调研。
+
+```bash
+npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic <topicId> --cell angle --research full --rep 1
+npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts --cells angle-full,writer-full --out experiments/p0-inputs-vs-structure/blind-angle
+```
+
+结果（6 格全成，DeepSeek V4 Pro，每格 6–10 分钟、2.5–3.3 万 token；立意 pass 一次过校验）：
+- 6 张选中的卡主画像全是涨粉画像，骨架 4 张反认知纠偏、1 张亲历复盘、1 张观点+案例+观点。
+- 「DeepSeek Harness」两稿立场不再是「别碰」：「第一次把 AI 的手脚交给你」「最值钱的不是学会用」；候选里那张「Star 陷阱」卡（劝退且无判断框架）被代码打分压到 3 分落选。
+- 「入口之争」两稿：「抢的不是流量，是你的起点」「入口要散了」；「你改了 AI 的错」两稿：「关掉对话框那一下，你把它格式化了」。
+- 盲评卷 `blind-angle/`：每选题 4 稿（angle-full ×2 + writer-full ×2，同一份调研，唯一差别是有没有立意），seed 20260903。
+
 ## 第一次真跑记录（2026-09-02 20:44–21:42）
 
 - **模型不是 Claude**：写手/审稿配的中转 `code.newcli.com` 从 17:56 起持续不通（主备端点同一家），创始人裁决切 DeepSeek V4 Pro 跑。只改了隔离目录里六份 `engine.json` 副本（删 `routes.writer/reviewer` 与 `fallback`，落回 `strongModel`），生产配置未动。36 格全部 `deepseek-v4-pro @ api.deepseek.com`，meta.json 里的 `resolvedWriterRoute` 可核。代价：丢掉「与聊天里同一模型」的前提；「多少调研到达写手」这个变量仍然干净。
