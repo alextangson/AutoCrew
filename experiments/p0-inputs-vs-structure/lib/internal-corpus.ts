@@ -138,8 +138,12 @@ export async function collectInternalCorpus(
   chunks.sort((a, b) => (a.kind === b.kind ? b.score - a.score : a.kind === "transcript" ? -1 : 1));
   const picked: CorpusChunk[] = [];
   let used = 0;
+  let foreignTranscripts = 0;
   for (const c of chunks) {
     if (c.score <= 0) continue;
+    // 不是本选题的转写最多进一段：P0b 里两段转写全塞给每个选题，DeepSeek 插件的故事漏进了「入口之争」
+    if (c.kind === "transcript" && !c.sameTopic && foreignTranscripts >= 1) continue;
+    if (c.kind === "transcript" && !c.sameTopic) foreignTranscripts++;
     const room = Math.min(maxChars - used, PER_CHUNK_MAX);
     if (room < 400) break;
     const text = c.text.length > room ? `${c.text.slice(0, room)}…（截断）` : c.text;

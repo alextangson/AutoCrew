@@ -30,14 +30,16 @@ import { makeMockRunLoop } from "./lib/mock-loop.js";
 import { renderFullBrief } from "./lib/render-brief.js";
 import { collectInternalCorpus, type InternalCorpus } from "./lib/internal-corpus.js";
 import { runAngleStage, type AngleResult } from "./lib/angle-stage.js";
+import { buildFindEvidenceTool, createTargetedResearcher, renderTargetedEvidence, type TargetedLookup } from "./lib/targeted-research.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RUNS_ROOT = path.join(HERE, "runs");
 
-type Cell = "direct" | "writer" | "pipeline" | "angle";
+type Cell = "direct" | "writer" | "pipeline" | "angle" | "angle2";
 type Research = "brief" | "full";
 /** angle = P0b：先立意（lib/angle-stage.ts）再走 writer 档；只配 full 调研 */
-const CELLS: Cell[] = ["direct", "writer", "pipeline", "angle"];
+/** angle2 = P0c：angle + 定向补证 + 写手 find_evidence + 数字核验 + 无镜头标注 */
+const CELLS: Cell[] = ["direct", "writer", "pipeline", "angle", "angle2"];
 const RESEARCH: Research[] = ["brief", "full"];
 
 interface Args {
@@ -63,7 +65,7 @@ function parseArgs(argv: string[]): Args {
   if (!cell || !CELLS.includes(cell)) throw new Error(`--cell 只能是 ${CELLS.join(" | ")}`);
   if (!research || !RESEARCH.includes(research)) throw new Error(`--research 只能是 ${RESEARCH.join(" | ")}（必须显式写）`);
   if (!Number.isInteger(rep) || rep < 1) throw new Error("--rep 要是 ≥1 的整数");
-  if (cell === "angle" && research !== "full") throw new Error("angle 格只配 --research full（立意要吃全量调研与内部语料）");
+  if ((cell === "angle" || cell === "angle2") && research !== "full") throw new Error("angle 格只配 --research full（立意要吃全量调研与内部语料）");
   return {
     topicId,
     cell,
@@ -105,6 +107,8 @@ interface Meta {
   };
   /** angle 格才有：误区清单、候选、代码侧打分、选中的卡 */
   angle?: Omit<AngleResult, "direction">;
+  /** angle2 格才有：补证结果、写手查证次数、正文里没有证据支撑的数字 */
+  evidence?: { targeted: TargetedLookup[]; writerLookups: number; unverifiedNumbers: string[]; verifiedNumbers: number };
   warnings: string[];
   calls: RecordedCall[];
 }
@@ -161,7 +165,16 @@ async function main(): Promise<void> {
   }
 
   const impl = args.mock ? makeMockRunLoop() : runLoop;
-  const { runLoopImpl, calls } = createRecorder({ disableReview: args.cell === "writer" || args.cell === "angle", impl });
+  const isAngle = args.cell === "angle" || args.cell === "angle2";
+  const researcher =
+    args.cell === "angle2" && !args.mock
+      ? createTargetedResearcher({ config: writer.config, model: resolveEngineRoute(config, "scout", config.strongModel).model, dataDir, runLoopImpl: impl })
+      : null;
+  const { runLoopImpl, calls } = createRecorder({
+    disableReview: isAngle || args.cell === "writer",
+    impl,
+    ...(researcher ? { extraWriterTools: [buildFindEvidenceTool(researcher)] } : {}),
+  });
   const warnings: string[] = [];
   const startedAt = new Date();
   const t0 = Date.now();
@@ -174,7 +187,7 @@ async function main(): Promise<void> {
     topicId: args.topicId,
     topicTitle: topic.title,
     platform: args.platform,
-    reviewDisabled: args.cell === "writer" || args.cell === "angle",
+    reviewDisabled: args.cell === "writer" || isAngle,
     mock: args.mock,
     startedAt: startedAt.toISOString(),
     durationMs: 0,
@@ -212,7 +225,8 @@ async function main(): Promise<void> {
   } else {
     // angle 格：先立意，选中的卡渲染成 direction（写手提示里优先级最高的一块）
     let angle: AngleResult | undefined;
-    if (args.cell === "angle") {
+    const targeted: TargetedLookup[] = [];
+    if (isAngle) {
       angle = await runAngleStage(runLoopImpl, writer.config, writer.model, {
         topicTitle: topic.title,
         ...(topic.description ? { topicDescription: topic.description } : {}),
@@ -220,6 +234,12 @@ async function main(): Promise<void> {
       });
       const { misconceptions, candidates, scores, picked } = angle;
       meta = { ...meta, angle: { misconceptions, candidates, scores, picked } };
+      // P0c：拿着选中卡的证据需求去定向补证，补回来的证据追加进写手的调研材料
+      if (researcher) {
+        for (const need of picked.evidenceNeeds) targeted.push(await researcher.find(need));
+        researchText = `${researchText}\n\n${renderTargetedEvidence(targeted)}`;
+        console.log(`[p0] 补证：${targeted.map((t) => `${t.status}(${t.items.length})`).join(" ")}`);
+      }
     }
     // brief 档：research 留空，让生产代码自己按 jobs.jsonl 指针追加 2800 字块（与现状逐字一致）
     // full 档：research = 全文；隔离目录无指针，生产代码不会再追加
@@ -235,6 +255,22 @@ async function main(): Promise<void> {
       { runLoopImpl, onWarn: (m) => warnings.push(m) },
     );
     draft = `# ${generated.title}\n\n${generated.body}\n\n${generated.hashtags.map((h) => `#${h}`).join(" ")}`.trim();
+    if (researcher) {
+      // 数字核验：正文里每个数字是否出现在任一证据/材料里（简报、内部语料、补证、写手查证）。粗但可比
+      const corpus = [researchText, ...researcher.lookups().flatMap((l) => l.items.map((i) => i.quote))].join("\n");
+      const nums = [...new Set((generated.body.match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => n.replace(/,/g, "")))];
+      const unverified = nums.filter((n) => !corpus.replace(/,/g, "").includes(n));
+      meta = {
+        ...meta,
+        evidence: {
+          targeted,
+          writerLookups: researcher.lookups().length - targeted.length,
+          unverifiedNumbers: unverified,
+          verifiedNumbers: nums.length - unverified.length,
+        },
+      };
+      console.log(`[p0] 数字核验：${nums.length - unverified.length}/${nums.length} 有据；写手查证 ${researcher.lookups().length - targeted.length} 次`);
+    }
     if (args.research === "brief" && generated.wroteWithoutBrief) {
       throw new Error("brief 档却裸写了：隔离目录的 jobs.jsonl 指针没生效，这格作废");
     }

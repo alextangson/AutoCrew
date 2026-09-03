@@ -124,6 +124,7 @@ export async function buildIsolatedDataDir(
     );
   }
 
+  await copyIfPresent(path.join(src, "search.json"), path.join(dataDir, "search.json"), missing, "search.json（搜索 key，补证要用）");
   await copyIfPresent(path.join(src, "patterns"), path.join(dataDir, "patterns"), missing, "patterns/（对标拆解卡）");
   await copyIfPresent(path.join(src, "knowledge"), path.join(dataDir, "knowledge"), missing, "knowledge/（知识库）");
   await copyIfPresent(

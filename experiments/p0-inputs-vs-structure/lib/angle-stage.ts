@@ -63,6 +63,10 @@ export interface AngleCandidate {
   structure: StructureKey;
   hookDraft: string;
   antiScope: string;
+  /** v3.1：收获感——用大白话讲清「为什么会这样」+ 一个他能做的方案/启发 */
+  payoff: string;
+  /** v3.1：这个主张要落地还缺什么证据（1–3 条），流水线拿去定向补证 */
+  evidenceNeeds: string[];
 }
 
 export interface AngleResult {
@@ -96,7 +100,10 @@ function systemPrompt(): string {
     "3. 网感元素 ≥2：新奇点（认知违背）/ 爽点（看穿、走捷径）/ 痛点→理想状态 / 笑点（自我否定式坦白）/ 泪点（真实失败的细节）/ 美点（把混乱理顺）。不能全靠新奇点。",
     "4. 立场站得住：过反方一句话。劝退、唱衰这类反向立场只在给观众一个能拿走的判断框架时成立，否则是对同行说话。",
     "5. 热点走中层：事件本身是表层；观众的社会情绪（怕落后、怕被割、谁在定义下一代做事方式）是中层；立意落在中层。",
-    "6. 第一手锚点：优先用「创作者本人说过/审定过」的材料做案例；没有第一手锚点的立意最高只能算综述级。",
+    "6. 第一手锚点：优先用「创作者本人说过/审定过」的材料做案例；没有第一手锚点的立意最高只能算综述级。锚点必须与主张直接相关——不相关的创作者材料一个字都不要引。",
+    "7. 收获感：每个候选写清 payoff——用大白话讲清「为什么会这样」+ 一个观众今天能做的方案或启发。小白听不懂的术语等于没讲。",
+    "8. 证据需求：每个候选列 1–3 条 evidenceNeeds，写清「这个主张要落地还缺什么证据」（数字、案例、原话），流水线会专门去找；材料里已经有的不用列。",
+    "9. 自嘲只能嘲行为和判断（「我当时以为」「我走了弯路」），不能嘲身份和资历（学历、出身、是否科班）——那会降低创作者的可信度。",
     "",
     "结构是菜单不是模板，由立意挑一种；措辞、节奏、案例展开留给写手：",
     structures,
@@ -137,6 +144,8 @@ function schema(): Record<string, unknown> {
             "structure",
             "hookDraft",
             "antiScope",
+            "payoff",
+            "evidenceNeeds",
           ],
           properties: {
             id: str,
@@ -155,6 +164,8 @@ function schema(): Record<string, unknown> {
             structure: { type: "string", enum: Object.keys(STRUCTURES) },
             hookDraft: str,
             antiScope: str,
+            payoff: { type: "string", description: "大白话讲清为什么会这样 + 一个观众能做的方案/启发" },
+            evidenceNeeds: { type: "array", items: str, minItems: 1, maxItems: 3 },
           },
         },
       },
@@ -177,6 +188,9 @@ export function validateAngles(args: Record<string, unknown>): string[] {
     if (!c.misconception?.trim()) errs.push(`${tag}：缺误区`);
     if (!c.nextAction?.trim()) errs.push(`${tag}：缺最小动作`);
     if (!c.counterResponse?.trim()) errs.push(`${tag}：缺反方回应`);
+    if (!c.payoff?.trim() || c.payoff.trim().length < 20) errs.push(`${tag}：payoff 太短——要讲清为什么 + 一个方案`);
+    if (!Array.isArray(c.evidenceNeeds) || c.evidenceNeeds.length < 1) errs.push(`${tag}：缺 evidenceNeeds`);
+    if (/科班|学历|出身|不是专业/.test(`${c.hookDraft}${c.thesis}${c.payoff}`)) errs.push(`${tag}：不要拿身份/资历自嘲`);
     if (c.thesis && theses.has(c.thesis.trim())) errs.push(`${tag}：主张与另一候选重复`);
     if (c.thesis) theses.add(c.thesis.trim());
   }
@@ -219,7 +233,13 @@ export function renderDirection(c: AngleCandidate): string {
     `结构骨架：${STRUCTURES[c.structure]}。只用这一种骨架；措辞、节奏、案例展开你自己定。`,
     `开头钩子草稿（可改写）：${c.hookDraft}`,
     `不写：${c.antiScope}`,
+    `收获感（正文必须兑现）：${c.payoff}`,
     "前 3 秒必须点出误区或反常识并提问，不要「今天聊聊」；全篇只讲这一个主张；结尾给观众今天就能做的一步。",
+    "术语必须翻译：每个专业词第一次出现时用一句大白话解释，或者不用。",
+    "证据纪律：每个数字、每个「某公司/某研究/某人说」都必须来自材料里的证据（带 ev- id）或 find_evidence 的结果；找不到就删掉或标「[未证实]」，不要编。",
+    "第一手材料只用上面「第一手锚点」指定的那一处；其余创作者材料只供口吻参考，不得作为案例。",
+    "自嘲只能嘲行为和判断，不能嘲身份、学历、出身、是否科班。",
+    "**不要写任何镜头、画面、字幕条、B-roll 标注**（[画面]、[字幕条]、[切真人] 一类）：画面是稿子定稿之后的事。只写口播正文。",
   ].join("\n");
 }
 

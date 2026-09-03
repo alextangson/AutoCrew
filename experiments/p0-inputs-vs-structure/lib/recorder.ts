@@ -12,7 +12,7 @@
  *    reviewAndConverge 自己会判成 status="skipped" 并原样交回写手稿。
  *    改稿轮（reviser）永远发生在审稿出 blocker 之后，审稿短路了它自然也不跑 = 只剩写手。
  */
-import type { runLoop as RunLoop, LoopResult } from "../../../src/engine/loop.js";
+import type { runLoop as RunLoop, LoopResult, LoopTool } from "../../../src/engine/loop.js";
 
 export interface RecordedCall {
   /** writer / reviewer / reviser / direct-writer；缺省 unknown */
@@ -36,6 +36,8 @@ export interface RecorderOptions {
   disableReview: boolean;
   /** 底层实现；冒烟测试传 mock，真跑传 runLoop */
   impl: typeof RunLoop;
+  /** 给写手/修订轮追加的工具（P0c：find_evidence）。不改生产代码——生产的写手工具箱在 generate-script 里 */
+  extraWriterTools?: LoopTool[];
 }
 
 const EMPTY: LoopResult = {
@@ -66,7 +68,11 @@ export function createRecorder(opts: RecorderOptions): { runLoopImpl: typeof Run
     }
 
     const startedAt = Date.now();
-    const result = await opts.impl(config, options);
+    const withExtra =
+      opts.extraWriterTools?.length && (agent === "writer" || agent === "reviser")
+        ? { ...options, tools: [...(options.tools ?? []), ...opts.extraWriterTools] }
+        : options;
+    const result = await opts.impl(config, withExtra);
     calls.push({
       ...base,
       turns: result.turns,

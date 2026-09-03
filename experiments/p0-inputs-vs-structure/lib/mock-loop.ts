@@ -70,6 +70,7 @@ export function makeMockRunLoop(): typeof RunLoop {
       const mk = (id: string, persona: "grow" | "trust" | "convert", thesis: string) => ({
         id, primaryPersona: persona, misconception: "Star 多等于能用", thesis, nextAction: "今晚花 20 分钟装一个插件", elements: ["新奇点", "爽点"],
         counterResponse: "rc 版不稳", firsthandAnchor: "我上次给它写了个插件", personaGains: gains, structure: "claim-case-claim", hookDraft: "两天十万星，我却先装了个插件", antiScope: "不讲论文",
+        payoff: "Star 只说明多少人想看，不说明能不能用；今晚花 20 分钟装一个插件，你就知道它对你有没有用", evidenceNeeds: ["一个企业用开源框架上生产翻车的真实案例"],
       });
       const reply = await tool.execute({
         misconceptions: { grow: ["以为要会写代码才能用"], trust: ["以为是又一个框架"], convert: ["以为 Star 多就能上生产"] },
