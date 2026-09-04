@@ -89,7 +89,7 @@ function makeRunLoop(
 
 const GOOD_PAYLOAD = {
   title: "普通人怎么用AI赚钱",
-  hook: "你知道吗，身边有人靠AI每月多赚五千",
+  hook: "你知道吗，身边有人靠AI接私活，已经辞掉了工作",
   body: "AI工具让普通人也能做到这些事情，关键是选对方向",
   cta: "关注我，每周分享AI变现实战",
   hashtags: ["#AI赚钱", "#普通人逆袭"],
@@ -411,8 +411,11 @@ describe("generateScript", () => {
 
 // ─── Quality Gate（公众号图文包，PRD-v4 §4.3）─────────────────────────────────
 
+/** 图文稿里的数据点：既喂 gate 的 minDataPoints，也当作创始人给的材料喂账本 */
+const ARTICLE_DATA = "增长 40%，营收 3 亿元，用户 5000 万人，历时 6 个月，客单价 199 元。";
+
 function articlePayload(bodyOverride?: string): Record<string, unknown> {
-  const data = "增长 40%，营收 3 亿元，用户 5000 万人，历时 6 个月，客单价 199 元。";
+  const data = ARTICLE_DATA;
   const body =
     bodyOverride ??
     // 1700 字落在图文包 gate 的 [1500, 2000] 区间内（maxChars 上限自创始人字数裁定）
@@ -428,7 +431,12 @@ function articlePayload(bodyOverride?: string): Record<string, unknown> {
   };
 }
 
-const WECHAT_REQ = { topic: "AI 变现", platform: "wechat_mp" as const };
+/**
+ * 图文包的 gate 要求「数据引用 ≥N」，而 P1 §4.4 的数字硬门要求每个数字有出处——
+ * 两道门只有在**材料里真有这些数**的时候才同时过得去。所以这条请求自带材料，
+ * 里面就是 `articlePayload` 用的那串数（账本按 user_claim 收，正是生产里创始人贴材料的形态）。
+ */
+const WECHAT_REQ = { topic: "AI 变现", platform: "wechat_mp" as const, research: ARTICLE_DATA };
 
 describe("generateScript × quality gate (wechat_mp)", () => {
   it("wechat_mp 路由到图文包：prompt 含写手角色与硬门禁，budget 提升", async () => {
@@ -443,7 +451,8 @@ describe("generateScript × quality gate (wechat_mp)", () => {
     const res = await generateScript(WECHAT_REQ, testDir, { runLoopImpl });
     expect(seenOpts!.systemPrompt).toContain("公众号");
     expect(seenOpts!.systemPrompt).toContain("质量硬门禁");
-    expect(seenOpts!.maxTurns).toBe(8);
+    // 回合预算 = 4 + find_evidence 额度(3) + gate 修复轮(2)×2（P1 §4.4 / codex #12）
+    expect(seenOpts!.maxTurns).toBe(11);
     expect(seenOpts!.maxTotalTokens).toBe(80000);
     expect(res.gateFailures).toEqual([]);
   });
@@ -505,7 +514,7 @@ describe("generateScript × quality gate (wechat_mp)", () => {
     expect(res.gateFailures).toEqual([]);
   });
 
-  it("douyin 不受影响：口播包、无 gate、预算不变", async () => {
+  it("douyin 无包级 gate，但硬门照样要打回预算：回合按同一个公式给（codex #12）", async () => {
     let seenOpts: LoopOptions | undefined;
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
       if (!isWriterLoop(opts)) return REVIEW_ABSTAIN;
@@ -517,7 +526,8 @@ describe("generateScript × quality gate (wechat_mp)", () => {
     const res = await generateScript(TEST_REQ, testDir, { runLoopImpl });
     expect(seenOpts!.systemPrompt).toContain("口播");
     expect(seenOpts!.systemPrompt).not.toContain("质量硬门禁");
-    expect(seenOpts!.maxTurns).toBe(4);
+    // 老行为是 4——包没有 gate 就不给修复回合，于是第一次被硬门打回之后它交不出第二稿
+    expect(seenOpts!.maxTurns).toBe(11);
     expect(res.gateFailures).toEqual([]);
   });
 });

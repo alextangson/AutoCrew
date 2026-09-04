@@ -397,6 +397,28 @@ describe("Status Transitions", () => {
     expect(getAllowedTransitions("cover_pending")).toEqual(["publish_ready", "editing"]);
   });
 
+  it("缺证据（P1 §4.4）：drafting 能进，出口是重写(drafting)/人工放行(draft_ready)/归档", () => {
+    expect(getAllowedTransitions("drafting")).toEqual(["draft_ready", "needs_evidence", "topic_saved"]);
+    expect(getAllowedTransitions("needs_evidence")).toEqual(["drafting", "draft_ready", "archived"]);
+  });
+
+  it("缺证据稿走重试回 drafting：状态机认这条边，不必 force", async () => {
+    const content = await saveContent({ title: "T", body: "b", tags: [], status: "drafting" }, testDir);
+    const blocked = await transitionStatus(content.id, "needs_evidence", undefined, testDir);
+    expect(blocked.ok).toBe(true);
+    const back = await transitionStatus(content.id, "drafting", undefined, testDir);
+    expect(back.ok).toBe(true);
+    expect(back.content?.status).toBe("drafting");
+  });
+
+  it("缺证据 → reviewing 不通：没成的稿不许直接送审", async () => {
+    const content = await saveContent({ title: "T", body: "b", tags: [], status: "drafting" }, testDir);
+    await transitionStatus(content.id, "needs_evidence", undefined, testDir);
+    const jump = await transitionStatus(content.id, "reviewing", undefined, testDir);
+    expect(jump.ok).toBe(false);
+    expect(jump.error).toContain("Invalid transition");
+  });
+
   it("normalizeLegacyStatus maps old status names", () => {
     expect(normalizeLegacyStatus("draft")).toBe("draft_ready");
     expect(normalizeLegacyStatus("review")).toBe("reviewing");

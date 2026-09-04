@@ -151,7 +151,8 @@ async function pending(params: Record<string, unknown>) {
   const contents = await listContents(dataDir);
 
   const items = contents
-    .filter(c => ["draft_ready", "revision", "approved", "editing", "cover_pending", "publish_ready"].includes(c.status))
+    // needs_evidence（P1 §4.4）也是待办：它在等人补材料，漏掉这一档等于让缺证据的稿悄悄消失
+    .filter(c => ["needs_evidence", "draft_ready", "revision", "approved", "editing", "cover_pending", "publish_ready"].includes(c.status))
     .map(c => ({
       id: c.id,
       title: c.title,
@@ -166,6 +167,7 @@ async function pending(params: Record<string, unknown>) {
         publish_ready: 0,
         draft_ready: 1,
         revision: 2,
+        needs_evidence: 2.5,
         cover_pending: 3,
         editing: 4,
         approved: 5,
@@ -183,6 +185,7 @@ async function pending(params: Record<string, unknown>) {
 
 function getSuggestedAction(status: string): string {
   switch (status) {
+    case "needs_evidence": return "数字没有出处被硬门拦下：补材料或删掉那些数字后重新生成";
     case "draft_ready": return "运行审核 (autocrew_review)";
     case "revision": return "修改后重新审核";
     case "approved": return "视频稿推进到「剪辑」；文字稿直接跑发布前检查";

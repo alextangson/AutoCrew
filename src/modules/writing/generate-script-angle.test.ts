@@ -53,8 +53,8 @@ afterEach(async () => {
 
 const GOOD_PAYLOAD = {
   title: "AI 编程助手值不值",
-  hook: "厂商说提效一半，实测只有一成",
-  body: "把两组数字摆在一起看，差距出在任务类型上",
+  hook: "厂商说能提效，实测差得远",
+  body: "把这些数字摆在一起看，差距出在任务类型上",
   cta: "关注我，下周拆解实测方法",
   hashtags: ["#AI编程"],
 };

@@ -14,7 +14,7 @@
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
-import type { LoopResult } from "../../engine/loop.js";
+import type { LoopResult, LoopTool } from "../../engine/loop.js";
 import { getPack, getPackForPlatform } from "../packs/index.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
@@ -25,19 +25,58 @@ import { selectPatternsForScript } from "../patterns/pattern-select.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
 import { resolveQualityGate } from "./quality-gate.js";
 import type { GateFailure } from "./quality-gate.js";
-import { assembleAndHumanize, buildSubmitTool } from "./script-payload.js";
-import type { Captured, SubmitPayload } from "./script-payload.js";
+import {
+  assembleAndHumanize,
+  buildSubmitTool,
+  createCapture,
+  isAcceptedCapture,
+  DEFAULT_REPAIR_ROUNDS,
+} from "./script-payload.js";
+import type { CaptureBlock, Captured, SubmitGateDeps, SubmitPayload } from "./script-payload.js";
+import {
+  assembleResearchInput,
+  joinCoreEvidence,
+  renderCoreEvidence,
+  ANCHOR_BUDGET,
+  VOICE_REFERENCE_BUDGET,
+  type ResearchSnapshot,
+} from "./input-budget.js";
 import { reviewAndConverge } from "./script-review.js";
 import type { ReviewDeps, ReviewMeta, ReviewOutcome } from "./script-review.js";
 import { transitionStatus } from "../../storage/local-store.js";
 import { scanText } from "../filter/sensitive-words.js";
 import { retrieveKnowledge, KNOWLEDGE_DEFAULT_CHARS } from "../knowledge/knowledge-base.js";
-import { buildBriefBlock, knowledgeBudgetFor } from "../research/brief-inject.js";
+import { buildBriefBlock } from "../research/brief-inject.js";
 import { resolveEffectiveBrief, type BriefSnapshot } from "../research/brief-snapshot.js";
-import { activeAngleCard, angleCardsOf } from "../research/angle-cards.js";
+import { activeAngleCard, angleCardHash, angleCardsOf } from "../research/angle-cards.js";
+import { evidenceByRef, isAngleCardV3, type AngleCardV3 } from "../research/brief-store.js";
+import {
+  createEvidenceLedger,
+  seedLedgerFromBrief,
+  seedLedgerFromOwnMaterial,
+  seedLedgerFromUserClaims,
+  type EvidenceLedger,
+} from "../research/evidence-ledger.js";
+import {
+  collectOwnMaterial,
+  renderOwnMaterial,
+  ownChunkById,
+  EMPTY_OWN_MATERIAL,
+  type OwnMaterial,
+  type OwnMaterialChunk,
+  type OwnMaterialRef,
+} from "../research/own-material.js";
+import {
+  buildFindEvidenceTool,
+  createTargetedResearcher,
+  renderTargetedEvidence,
+  researchNeeds,
+  type TargetedResearcher,
+} from "../research/targeted-research.js";
+import { searchAvailable } from "../research/search-provider.js";
 import { topicHashOf } from "../research/research-job-store.js";
 import { getContent, getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
-import type { Content } from "../../storage/local-store.js";
+import type { Content, Topic } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
 
 export type { ScriptRequest };
@@ -66,6 +105,15 @@ export interface GeneratedScript {
   wroteWithoutAngle: boolean;
   /** AI 审稿结论（审稿 spec §2.5）：降级路径也一定有值——skipped/failed 就是「没审成」的留痕 */
   review: ReviewMeta;
+  /**
+   * 硬门拦下了这一稿（P1 §4.4）：稿件落到 `needs_evidence` 而不是 `draft_ready`。
+   * 正文照样存盘（创始人要能看见被拦的是什么），但它不是成稿。
+   */
+  needsEvidence: boolean;
+  /** 被拦的人话原因（硬门打回文案）；没被拦时缺席 */
+  blockedReason?: string;
+  /** 无据数字 + 归一不了的模糊量词——看板与编辑器据此列清单 */
+  unverifiedNumbers: string[];
   tokensUsed: number;
 }
 
@@ -98,6 +146,11 @@ export interface GenerationDeps {
    * 占位稿标题改成「调研中」。已有简报/跑不了时不调——那两条路径根本没有等待。
    */
   ensureBriefImpl?: (topicId: string, onWaiting?: () => Promise<void>) => Promise<EnsureBriefOutcome>;
+  /**
+   * 整稿墙钟（P1 §4.4，缺省 15 分钟）。生产不传；测试与运维压缩它来验「到点即中断」。
+   * 到点不是「等久一点」，是这一轮作废——占位稿标〔生成中断〕，重试从头再来一次。
+   */
+  wallClockMs?: number;
 }
 
 /** 本稿的归因元数据——两条落点（run-log 的 logMeta 与 content 元数据）共用同一份 */
@@ -107,7 +160,18 @@ interface Attribution {
   usedBriefRevision?: number;
   /** 同一份快照的内容指纹（P1 §3.0）：版本号说「哪一版」，指纹说「盘上那份没被换过」 */
   usedBriefHash?: string;
+  /** 本稿生效的角度卡（P1 §4.4）：id + 卡版本 + 内容指纹，三样缺一说不清「写的是哪一版」 */
+  usedAngle?: { id: string; cardVersion: number; hash: string };
+  /** 写手实际注入的内部语料片段（§3.2）：与简报里的 `ownMaterialRefs`（立意侧）分记 */
+  usedOwnMaterial?: OwnMaterialRef[];
+  /** 定向补证登记进账本的条目 id（§3.3） */
+  usedLookupIds?: string[];
+  /** 用户明说跳过角度点选的原话（§1.6）：进结构化 run-log，不只是一句 warn */
+  angleSkipReason?: string;
 }
+
+/** 整稿墙钟（P1 §4.4）：补证 + 写稿 + 审稿三段合计的上限 */
+export const GENERATION_WALL_CLOCK_MS = 15 * 60_000;
 
 /** 生成占位稿标题哨兵——区分「生成占位稿」与手工存的 drafting 稿(content-save 允许)。
  *  renderer(board/workbench.js)按同字面量正则识别,改动需同步。 */
@@ -173,12 +237,15 @@ function selectPatterns(req: ScriptRequest, dataDir?: string): Promise<PatternCa
 }
 
 interface ResolvedResearch {
-  /** research 槽的简报注入块 + 它的来源快照；无 topicId / 无指针 / 文件坏了都缺席 */
-  brief?: { block: string; snapshot: BriefSnapshot };
+  /** 简报快照 + 它相对当前选题是否过期；无 topicId / 无指针 / 文件坏了都缺席。
+   *  注入块**不在这里渲染**：要渲染成什么样得先知道选中卡引了哪几条证据（§4.3 去重） */
+  brief?: { snapshot: BriefSnapshot; topicStale: boolean };
   /** 本稿生效的角度卡（手写 direction、没选、选择已过期时缺席） */
   angle?: ResolvedAngle;
   /** 这条选题**有**角度候选卡（无论这轮是否用上） */
   hasCards: boolean;
+  /** 选题本体（内部语料按它的标题+描述检索）；查不到时缺席 */
+  topic?: Topic;
 }
 
 /**
@@ -210,21 +277,23 @@ async function resolveResearch(
     const currentHash = topic ? topicHashOf(topic.title, topic.description) : "";
     // 核对不上就当过期：选题查不到时不给这份简报背书（§2 过期标注，注入照做）
     const topicStale = !topic || currentHash !== brief.topicHash;
-    const injected = { block: buildBriefBlock(brief, { topicStale }), snapshot };
+    const injected = { snapshot, topicStale };
+    const found = { ...(topic ? { topic } : {}) };
     // 手写角度压过一切：卡照样算「有」，但这一轮不解析它（§1.3 手填时角度卡仍展示不注入）
-    if (req.direction?.trim()) return { brief: injected, hasCards };
+    if (req.direction?.trim()) return { brief: injected, hasCards, ...found };
     // 「选中」现算是否还作数：选的不是快照那版、或简报因选题被改而过期，一律按没选处理
     const card = activeAngleCard(topic?.selectedAngle, brief, currentHash);
     if (!card) {
       if (topic?.selectedAngle) {
         warn(`选中的角度已过期（选题或简报在选完之后变过），本稿按未选角度写：${req.topicId}`);
       }
-      return { brief: injected, hasCards };
+      return { brief: injected, hasCards, ...found };
     }
     return {
       brief: injected,
       angle: { card, evidence: brief.evidence, tensions: brief.tensions },
       hasCards,
+      ...found,
     };
   } catch (err) {
     // 材料少一块照写，绝不让读盘故障带走整条写作链
@@ -234,49 +303,213 @@ async function resolveResearch(
   }
 }
 
-/**
- * research 槽装配（§6 预算表）：用户材料在前，简报块**优先占用**预算，
- * 知识库检索只能用剩余的；剩余不足 `KNOWLEDGE_MIN_BUDGET` 时知识块整体省略。
- * 无简报时走的还是老路（知识库用它自己的默认预算），prompt 与改动前逐字一致。
- */
-async function composeResearchSlot(
-  req: ScriptRequest,
-  briefBlock: string | undefined,
-  dataDir?: string,
-): Promise<ScriptRequest> {
-  const budget = briefBlock
-    ? knowledgeBudgetFor(
-        { briefChars: briefBlock.length, userResearchChars: req.research?.length ?? 0 },
-        KNOWLEDGE_DEFAULT_CHARS,
-      )
-    : KNOWLEDGE_DEFAULT_CHARS;
-  const knowledge = budget === null ? null : await retrieveKnowledge(req.topic, dataDir, { maxChars: budget });
+/** 生效卡里的 v3；v2 卡与手写 direction 都返回 undefined（v3 才有补证与新角度块） */
+function activeV3(angle?: ResolvedAngle): AngleCardV3 | undefined {
+  const card = angle?.card;
+  return card && isAngleCardV3(card) ? card : undefined;
+}
 
-  const extras = [briefBlock, knowledge].filter((s): s is string => !!s);
-  if (extras.length === 0) return req; // 无简报无知识：req 原样透传，prompt 一字不变
-  return { ...req, research: [req.research, ...extras].filter(Boolean).join("\n\n") };
+/** 一稿的内部语料只有**一处**能当亲历案例用：卡上 firsthandAnchor 指的那一段（§3.2 注入规则） */
+function splitOwnMaterial(
+  material: OwnMaterial,
+  angle?: ResolvedAngle,
+): { anchor: OwnMaterialChunk | null; rest: OwnMaterialChunk[] } {
+  const anchorId = activeV3(angle)?.firsthandAnchor?.chunkId;
+  const anchor = anchorId ? ownChunkById(material, anchorId) : null;
+  return { anchor, rest: material.chunks.filter((c) => c !== anchor) };
+}
+
+/** 块头留出的余量：`renderOwnMaterial` 只管块体，标题行的开销要从预算里先扣掉，
+ *  否则装配层的硬截断会切在结束定界符上——半个块等于把外部文本泄进指令区 */
+const BLOCK_HEADING_ROOM = 80;
+
+function renderAnchorBlock(anchor: OwnMaterialChunk | null): string {
+  if (!anchor) return "";
+  return [
+    "【第一手锚点（本稿唯一可以当亲身经历讲的材料）】",
+    renderOwnMaterial([anchor], ANCHOR_BUDGET - BLOCK_HEADING_ROOM),
+  ].join("\n");
+}
+
+function renderVoiceBlock(rest: OwnMaterialChunk[]): string {
+  if (rest.length === 0) return "";
+  return [
+    "【口吻参考（只学他怎么说话，不得当案例讲，也不要说成「我做过」）】",
+    renderOwnMaterial(rest, VOICE_REFERENCE_BUDGET - BLOCK_HEADING_ROOM),
+  ].join("\n");
+}
+
+/** 内部语料只在带 topicId 时收：`collectOwnMaterial` 的同选题泄漏防线靠 topicId 认，没有它就形同虚设 */
+async function gatherOwnMaterial(
+  req: ScriptRequest,
+  topic: Topic | undefined,
+  dataDir: string | undefined,
+  warn: (message: string) => void,
+): Promise<OwnMaterial> {
+  if (!req.topicId) return EMPTY_OWN_MATERIAL;
+  try {
+    return await collectOwnMaterial(getDataDir(dataDir), {
+      id: req.topicId,
+      title: topic?.title ?? req.topic,
+      ...(topic?.description ? { description: topic.description } : {}),
+    });
+  } catch (err) {
+    // 语料是加分项：扫盘故障不该带走整条写作链
+    warn(`内部语料读取失败（${req.topicId}）：${err instanceof Error ? err.message : String(err)}——本稿按无语料写`);
+    return EMPTY_OWN_MATERIAL;
+  }
+}
+
+/**
+ * 一稿一本账（§3.3）：简报证据、内部语料、用户材料先全部登记，拿到稳定 id，
+ * 正文里的每个数字最后都要能指回其中一条。
+ */
+function seedLedger(
+  req: ScriptRequest,
+  picked: ResolvedResearch,
+  ownMaterial: OwnMaterial,
+): EvidenceLedger {
+  const ledger = createEvidenceLedger();
+  if (picked.brief) seedLedgerFromBrief(ledger, picked.brief.snapshot.brief);
+  seedLedgerFromOwnMaterial(ledger, ownMaterial.chunks);
+  seedLedgerFromUserClaims(ledger, [
+    ...(req.research?.trim() ? [{ id: "user-research", text: req.research }] : []),
+    ...(picked.topic?.description?.trim() ? [{ id: "user-topic", text: picked.topic.description }] : []),
+  ]);
+  return ledger;
+}
+
+/** 补证阶段的产物：写手的查证工具从这个 researcher 上挂，降级留痕进版本注记 */
+interface EvidencePhase {
+  researcher?: TargetedResearcher;
+  /** 降级人话（未补证 / 补证失败）；正常路径缺席 */
+  note?: string;
+}
+
+/**
+ * 定向补证（§4.2 调用点）。只有**选中的 v3 卡**才补：手写 direction 是创始人自己定的角度、
+ * 明说跳过点选的没有卡、v2 卡没有 `evidenceNeeds`——三种情况下没有「这个主张缺什么证据」
+ * 这个问题可问，跑一轮搜索只是烧钱。
+ *
+ * 搜索没配 → warn + 跳过 + 版本注记「未补证」（§5）。补证失败**永不抛**：少一块材料照写，
+ * 写手会在增补证据块里看到「没找到」，那比让它以为材料齐全安全。
+ */
+async function runEvidencePhase(args: {
+  req: ScriptRequest;
+  angle?: ResolvedAngle;
+  config: EngineConfig;
+  ledger: EvidenceLedger;
+  dataDir?: string;
+  warn: (message: string) => void;
+  runLoopImpl?: typeof runLoop;
+}): Promise<EvidencePhase> {
+  const { req, config, ledger, dataDir, warn } = args;
+  const card = activeV3(args.angle);
+  const wantsLookup =
+    !!card && card.evidenceNeeds.length > 0 && !req.direction?.trim() && !req.angleSkipReason?.trim();
+
+  const canSearch = await searchAvailable(dataDir).catch(() => false);
+  if (!canSearch) {
+    if (wantsLookup) warn("搜索未配置：本稿跳过定向补证，写手只能用现有材料（版本注记标「未补证」）");
+    return wantsLookup ? { note: "未补证" } : {};
+  }
+  const researcher = createTargetedResearcher({
+    dataDir: getDataDir(dataDir),
+    config,
+    ledger,
+    ...(args.runLoopImpl ? { runLoopImpl: args.runLoopImpl } : {}),
+  });
+  if (!wantsLookup) return { researcher };
+  try {
+    await researchNeeds(researcher, card.evidenceNeeds);
+  } catch (err) {
+    warn(`定向补证失败（不阻断写稿）：${err instanceof Error ? err.message : String(err)}`);
+    return { researcher, note: "补证失败" };
+  }
+  return { researcher };
 }
 
 interface GenerationInputs {
-  config: Awaited<ReturnType<typeof loadEngineConfig>>;
+  config: EngineConfig;
   pack: ReturnType<typeof getPack>;
   profile: Awaited<ReturnType<typeof loadProfile>>;
   contrastPairs: Awaited<ReturnType<typeof recentContrastPairs>>;
   patterns: PatternCard[];
-  /** research 槽装配完的请求（用户材料 + 简报 + 知识片段） */
+  /** research 槽装配完的请求（快照文本写进 `research`） */
   promptReq: ScriptRequest;
+  /** 写手与审稿共用的**同一份**材料快照（§4.3：两侧不许各裁一刀） */
+  snapshot: ResearchSnapshot;
   /** 本稿生效的角度卡；手写 direction 或没选时缺席（direction 由 buildUserPrompt 自己认） */
   angle?: ResolvedAngle;
   /** 有候选卡却没有生效角度 = 绕过了品味闸口，版本注记要说出来 */
   wroteWithoutAngle: boolean;
   attribution: Attribution;
+  /** 一稿一本账：写手与修订轮共享同一个实例（含 find_evidence 的次数额度） */
+  ledger: EvidenceLedger;
+  /** 有它才给写手挂 find_evidence（搜索没配时就是没有） */
+  researcher?: TargetedResearcher;
+  /** 补证降级的人话，进版本注记 */
+  evidenceNote?: string;
 }
 
-/** 写稿前的材料收集：能并行的一起拿，知识库要等简报长度定了才知道自己的预算 */
+/**
+ * research 槽装配（§4.3 优先级表）。顺序是**预算表定的**，不是 join 的先后：
+ * 核心证据与补证块占第一档（本稿主张的地基），简报去掉已在第一档的证据，
+ * 内部语料锚点、用户材料、口吻参考依次占位，知识库拿剩余（<400 整块省略）。
+ */
+async function composeResearchSlot(
+  req: ScriptRequest,
+  picked: ResolvedResearch,
+  ledger: EvidenceLedger,
+  ownMaterial: OwnMaterial,
+  dataDir?: string,
+): Promise<ResearchSnapshot> {
+  const card = activeV3(picked.angle);
+  const coreIds = card?.coreEvidenceIds ?? [];
+  const evidence = picked.brief?.snapshot.brief.evidence ?? [];
+  const coreEvidence = joinCoreEvidence(
+    renderCoreEvidence(
+      coreIds
+        .map((id) => ({ id, item: evidenceByRef(evidence, id) }))
+        .filter((e): e is { id: string; item: NonNullable<typeof e.item> } => e.item !== null)
+        .map(({ id, item }) => ({
+          id,
+          ...(item.claim ? { claim: item.claim } : {}),
+          quote: item.quote,
+          ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
+        })),
+    ),
+    renderTargetedEvidence(ledger),
+  );
+  const brief = picked.brief
+    ? buildBriefBlock(picked.brief.snapshot.brief, {
+        topicStale: picked.brief.topicStale,
+        excludeEvidenceIds: coreIds,
+      })
+    : "";
+  const { anchor, rest } = splitOwnMaterial(ownMaterial, picked.angle);
+
+  return assembleResearchInput(
+    {
+      coreEvidence,
+      brief,
+      ownAnchor: renderAnchorBlock(anchor),
+      ...(req.research ? { userResearch: req.research } : {}),
+      voiceReference: renderVoiceBlock(rest),
+    },
+    {
+      defaultChars: KNOWLEDGE_DEFAULT_CHARS,
+      retrieve: (maxChars) => retrieveKnowledge(req.topic, dataDir, { maxChars }),
+    },
+  );
+}
+
+/** 写稿前的材料收集：能并行的一起拿，补证与装配必须等简报/卡落定才能跑 */
 async function gatherInputs(
   req: ScriptRequest,
   dataDir: string | undefined,
   warn: (message: string) => void,
+  deps?: GenerationDeps,
 ): Promise<GenerationInputs> {
   const [config, pack, profile, contrastPairs, patterns, picked] = await Promise.all([
     loadEngineConfig(dataDir),
@@ -291,15 +524,36 @@ async function gatherInputs(
     // 调研简报 + 角度卡(深调研 §6 / 角度卡 §1.3):同一份快照解析,三条写稿入口一次覆盖
     resolveResearch(req, dataDir, warn),
   ]);
+
+  const ownMaterial = await gatherOwnMaterial(req, picked.topic, dataDir, warn);
+  const ledger = seedLedger(req, picked, ownMaterial);
+  const phase = await runEvidencePhase({
+    req,
+    ...(picked.angle ? { angle: picked.angle } : {}),
+    config,
+    ledger,
+    dataDir,
+    warn,
+    ...(deps?.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
+  });
+  const snapshot = await composeResearchSlot(req, picked, ledger, ownMaterial, dataDir);
+  const { anchor, rest } = splitOwnMaterial(ownMaterial, picked.angle);
+  const injectedChunks = [...(anchor ? [anchor] : []), ...rest];
+  const lookupIds = ledger.lookups().flatMap((l) => l.itemIds);
+
   return {
     config,
     pack,
     profile,
     contrastPairs,
     patterns,
-    promptReq: await composeResearchSlot(req, picked.brief?.block, dataDir),
+    promptReq: snapshot.text ? { ...req, research: snapshot.text } : req,
+    snapshot,
     ...(picked.angle ? { angle: picked.angle } : {}),
     wroteWithoutAngle: picked.hasCards && !picked.angle && !req.direction?.trim(),
+    ledger,
+    ...(phase.researcher ? { researcher: phase.researcher } : {}),
+    ...(phase.note ? { evidenceNote: phase.note } : {}),
     attribution: {
       usedPatternIds: patterns.map((card) => card.id),
       ...(picked.brief
@@ -308,7 +562,54 @@ async function gatherInputs(
             usedBriefHash: picked.brief.snapshot.hash,
           }
         : {}),
+      ...(picked.angle
+        ? {
+            usedAngle: {
+              id: picked.angle.card.id,
+              cardVersion: isAngleCardV3(picked.angle.card) ? 3 : 2,
+              hash: angleCardHash(picked.angle.card),
+            },
+          }
+        : {}),
+      ...(injectedChunks.length > 0
+        ? { usedOwnMaterial: injectedChunks.map((c) => ({ id: c.id, excerptHash: c.excerptHash })) }
+        : {}),
+      ...(lookupIds.length > 0 ? { usedLookupIds: lookupIds } : {}),
+      ...(req.angleSkipReason?.trim() ? { angleSkipReason: req.angleSkipReason.trim() } : {}),
     },
+  };
+}
+
+/** run-log 的归因段（写稿轮与修订轮共用同一份口径）：没用到的字段一律不出现 */
+function logAttribution(attribution: Attribution): Record<string, unknown> {
+  return {
+    ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
+    ...(attribution.usedBriefRevision !== undefined ? { usedBriefRevision: attribution.usedBriefRevision } : {}),
+    ...(attribution.usedBriefHash ? { usedBriefHash: attribution.usedBriefHash } : {}),
+    ...(attribution.usedAngle
+      ? {
+          usedAngleId: attribution.usedAngle.id,
+          usedAngleCardVersion: attribution.usedAngle.cardVersion,
+          usedAngleHash: attribution.usedAngle.hash,
+        }
+      : {}),
+    ...(attribution.usedOwnMaterial?.length
+      ? { usedOwnMaterialIds: attribution.usedOwnMaterial.map((r) => r.id) }
+      : {}),
+    ...(attribution.usedLookupIds?.length ? { usedLookupIds: attribution.usedLookupIds } : {}),
+    ...(attribution.angleSkipReason ? { angleSkipReason: attribution.angleSkipReason } : {}),
+  };
+}
+
+/** 归因落稿件元数据（写手开工前一次、收尾一次——中途崩了也不丢） */
+function contentAttribution(attribution: Attribution, ledger: EvidenceLedger): Partial<Content> {
+  return {
+    evidenceLedger: ledger.snapshot(),
+    ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
+    ...(attribution.usedBriefRevision !== undefined ? { usedBriefRevision: attribution.usedBriefRevision } : {}),
+    ...(attribution.usedBriefHash ? { usedBriefHash: attribution.usedBriefHash } : {}),
+    ...(attribution.usedAngle ? { usedAngle: attribution.usedAngle } : {}),
+    ...(attribution.usedOwnMaterial?.length ? { usedOwnMaterial: attribution.usedOwnMaterial } : {}),
   };
 }
 
@@ -378,7 +679,28 @@ async function ensureBriefBeforeWriting(
 interface WriterRun {
   payload: SubmitPayload;
   gateFailures: GateFailure[];
+  /** 非空 = 硬门拦下了最后一稿：正文照存，但它不是成稿（稿件走 `needs_evidence`） */
+  blocked?: CaptureBlock | null;
+  /** 归一不了的模糊量词（十几、数十）：advisory，与无据数字一起列给创始人过目 */
+  needsHumanNumbers: string[];
   tokensUsed: number;
+}
+
+/**
+ * 写手的工具箱依赖（§4.4）：账本用 getter 传——写手在同一轮里用 `find_evidence` 查到的
+ * 条目要当场对数字硬门生效，传快照就永远慢一拍。两个硬门开关与赛道包无关，恒定打开。
+ */
+function submitDepsFor(ledger: EvidenceLedger): SubmitGateDeps {
+  return { ledger: () => ledger.entries(), requireNumberEvidence: true, forbidFormatMarkers: true };
+}
+
+/**
+ * 写手回合预算（§4.4 / codex #12）：4 轮正常写作 + 每次 `find_evidence` 一轮 + 每轮修复两回合。
+ * **不看包有没有 gate**：抖音包没有 qualityGate，但硬门照样会打回它，按 4 轮算等于让它
+ * 在第一次打回之后无回合可用，交不出第二稿。
+ */
+function writerTurnBudget(gate: QualityGateSpec | undefined, ledger: EvidenceLedger): number {
+  return 4 + ledger.budget.max + (gate?.maxRepairRounds ?? DEFAULT_REPAIR_ROUNDS) * 2;
 }
 
 /** 写稿轮：runLoop + submit_script 收束。没提交成稿 = 硬失败（调用方标〔生成中断〕）。 */
@@ -388,35 +710,37 @@ async function runWriterLoop(
   config: EngineConfig,
   attribution: Attribution,
   loopFn: typeof runLoop,
+  tools: { ledger: EvidenceLedger; evidenceTool?: LoopTool },
   runId?: string,
 ): Promise<WriterRun> {
   const writer = resolveEngineRoute(config, "writer", config.strongModel);
-  const captured: Captured = { payload: null, gateFailures: [] };
+  const captured: Captured = createCapture();
   const result: LoopResult = await loopFn(writer.config, {
     model: writer.model,
     systemPrompt: prompts.system,
     userMessage: prompts.user,
-    tools: [buildSubmitTool(captured, gate)],
-    // Gate 修复轮需要额外回合与 token 预算（整稿 × 最多 1+N 稿）
-    maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
+    tools: [
+      buildSubmitTool(captured, gate, submitDepsFor(tools.ledger)),
+      // 搜索没配就没有这把工具——写手会在提示里看到「没有证据不要编」，而不是一个永远失败的工具
+      ...(tools.evidenceTool ? [tools.evidenceTool] : []),
+    ],
+    maxTurns: writerTurnBudget(gate, tools.ledger),
     maxTotalTokens: gate ? 80000 : undefined,
-    // 归因进 run-log 元数据(§3.5 卡 / 深调研 §6 简报):没用到的字段不出现,日志口径不变
-    logMeta: {
-      ...(runId ? { runId } : {}),
-      agent: "writer",
-      ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
-      ...(attribution.usedBriefRevision !== undefined
-        ? { usedBriefRevision: attribution.usedBriefRevision }
-        : {}),
-      ...(attribution.usedBriefHash ? { usedBriefHash: attribution.usedBriefHash } : {}),
-    },
+    // 归因进 run-log 元数据(§3.5 卡 / 深调研 §6 简报 / P1 §4.4 角度与语料):没用到的字段不出现
+    logMeta: { ...(runId ? { runId } : {}), agent: "writer", ...logAttribution(attribution) },
   });
   if (!captured.payload) {
     throw new Error(
       `脚本生成失败：模型未调用 submit_script 工具提交脚本（loop 状态：${result.stopReason}，turns=${result.turns}）`,
     );
   }
-  return { payload: captured.payload, gateFailures: captured.gateFailures, tokensUsed: result.totalTokens };
+  return {
+    payload: captured.payload,
+    gateFailures: captured.gateFailures,
+    blocked: captured.blocked ?? null,
+    needsHumanNumbers: captured.needsHumanNumbers ?? [],
+    tokensUsed: result.totalTokens,
+  };
 }
 
 /**
@@ -425,11 +749,13 @@ async function runWriterLoop(
  */
 function reviewDraft(
   written: WriterRun,
-  inputs: Pick<GenerationInputs, "config" | "profile" | "promptReq" | "angle">,
+  inputs: Pick<GenerationInputs, "config" | "profile" | "snapshot" | "angle" | "ledger">,
   prompts: { system: string; user: string },
   gate: QualityGateSpec | undefined,
   platform: ScriptRequest["platform"],
   deps: ReviewDeps,
+  /** 写手手上那**一个** find_evidence 实例：额度在账本上共享，写手用掉的修订就没有了 */
+  evidenceTool?: LoopTool,
 ): Promise<ReviewOutcome> {
   return reviewAndConverge(
     {
@@ -438,15 +764,23 @@ function reviewDraft(
       humanizedText: assembleAndHumanize(written.payload),
       system: prompts.system,
       user: prompts.user,
-      ...(inputs.promptReq.research ? { researchSlot: inputs.promptReq.research } : {}),
+      // 写手拿到的那份**同一个字符串**（§4.3）——审稿不再自己裁一刀
+      ...(inputs.snapshot.text ? { researchSlot: inputs.snapshot.text } : {}),
       // 选中角度进审稿材料（审稿 §2.4）：深度判据的基准从「有没有论点」升到「thesis 论证了吗」
       ...(inputs.angle ? { angle: inputs.angle.card } : {}),
       voiceSamples: inputs.profile?.voiceSamples ?? [],
       ...(gate ? { gate } : {}),
       platform,
+      canFindEvidence: Boolean(evidenceTool),
     },
     inputs.config,
-    deps,
+    {
+      ...deps,
+      // 修订轮 = 同一本账、同一把 submit_script、同一个 find_evidence 实例（§3.3 / §4.4）
+      submitDeps: submitDepsFor(inputs.ledger),
+      ...(evidenceTool ? { evidenceTool } : {}),
+      maxWriterTurns: writerTurnBudget(gate, inputs.ledger),
+    },
   );
 }
 
@@ -461,9 +795,52 @@ async function runGeneration(
   const warn = deps?.onWarn ?? ((message: string) => console.warn(`[generate-script] ${message}`));
   // 调研闸口必须跑在材料收集**之前**:简报是本轮刚跑出来的,gatherInputs 才读得到指针
   const wroteWithoutBrief = await ensureBriefBeforeWriting(req, deps, warn, placeholderId, dataDir);
+
+  try {
+    return await withWallClock(
+      () => writeAndFinalize({ placeholderId, req, wroteWithoutBrief, warn, dataDir, deps, runId }),
+      deps?.wallClockMs ?? GENERATION_WALL_CLOCK_MS,
+    );
+  } catch (err) {
+    await markInterrupted(placeholderId, req, err, dataDir);
+    throw err;
+  }
+}
+
+/**
+ * 整稿墙钟（§4.4）。runLoop 不可强杀，到点只能**丢弃结果**——底层那轮请求会自然跑完
+ * （token 上限兜底）。到点等于本轮作废：占位稿标〔生成中断〕，人点重试从头再来一次，
+ * 而不是留一张永远停在「生成中」的卡（那和卡死没有区别）。
+ */
+async function withWallClock<T>(work: () => Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`脚本生成超时（${Math.round(ms / 1000)} 秒整稿墙钟）：本轮作废，可点「重新生成」重来`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([work(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 材料收集 → 补证 → 写稿 → 审稿 → 转正/拦下。墙钟之内的全部工作都在这儿 */
+async function writeAndFinalize(args: {
+  placeholderId: string;
+  req: ScriptRequest;
+  wroteWithoutBrief: boolean;
+  warn: (message: string) => void;
+  dataDir?: string;
+  deps?: GenerationDeps;
+  runId?: string;
+}): Promise<GeneratedScript> {
+  const { placeholderId, req, wroteWithoutBrief, warn, dataDir, deps, runId } = args;
   // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)
-  const { config, pack, profile, contrastPairs, patterns, promptReq, angle, wroteWithoutAngle, attribution } =
-    await gatherInputs(req, dataDir, warn);
+  const inputs = await gatherInputs(req, dataDir, warn, deps);
+  const { config, pack, profile, contrastPairs, patterns, promptReq, angle, wroteWithoutAngle, attribution } = inputs;
   // 跳过角度是**用户的显式动作**（§1.6 不许模型猜布尔），所以它的原话要落 run-log 可回溯
   if (req.angleSkipReason?.trim()) warn(`用户明说跳过角度点选：${req.angleSkipReason.trim()}`);
   else if (wroteWithoutAngle) warn(`未经角度点选开写：这条选题有角度候选卡但没选（${req.topicId}）`);
@@ -473,33 +850,78 @@ async function runGeneration(
     ...(angle ? { angle } : {}),
   });
   const gate = resolveQualityGate(pack, req.platform);
+  // 账本先随占位稿落一次（§3.3）：写手还没开工，但补证已经花过钱了——
+  // 这一步之后崩掉，「这稿当时手上有哪些证据」仍然查得到
+  await persistAttribution(placeholderId, attribution, inputs.ledger, warn, dataDir);
 
-  try {
-    const written = await runWriterLoop(prompts, gate, config, attribution, deps?.runLoopImpl ?? runLoop, runId);
-    const reviewed = await reviewDraft(written, { config, profile, promptReq, angle }, prompts, gate, req.platform, {
+  const evidenceTool = inputs.researcher ? buildFindEvidenceTool(inputs.researcher) : undefined;
+  const written = await runWriterLoop(
+    prompts,
+    gate,
+    config,
+    attribution,
+    deps?.runLoopImpl ?? runLoop,
+    { ledger: inputs.ledger, ...(evidenceTool ? { evidenceTool } : {}) },
+    runId,
+  );
+  const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
+  const common = {
+    req,
+    rulesApplied,
+    attribution,
+    ledger: inputs.ledger,
+    wroteWithoutBrief,
+    wroteWithoutAngle,
+    ...(inputs.evidenceNote ? { evidenceNote: inputs.evidenceNote } : {}),
+    placeholderId,
+    ...(dataDir ? { dataDir } : {}),
+  };
+
+  // 硬门拦下 = 这稿不进审稿也不转正（§4.4）：审一篇不能发的稿是浪费，
+  // 更重要的是修订轮可能把「无据数字」改成另一个无据数字，看起来像修好了
+  if (!isAcceptedCapture({ payload: written.payload, gateFailures: written.gateFailures, blocked: written.blocked })) {
+    warn(`硬门拦下本稿（${written.blocked?.reason}）：稿件标「缺证据」，不转草稿就绪`);
+    return finalizeBlocked({ ...common, written });
+  }
+
+  const reviewed = await reviewDraft(
+    written,
+    { config, profile, snapshot: inputs.snapshot, ...(angle ? { angle } : {}), ledger: inputs.ledger },
+    prompts,
+    gate,
+    req.platform,
+    {
       ...(deps?.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
       ...(runId ? { runId } : {}),
       onWarn: warn,
-    });
+    },
+    evidenceTool,
+  );
 
-    return await finalizeScript({
-      payload: reviewed.payload,
-      humanizedText: reviewed.humanizedText,
-      review: reviewed.review,
-      req,
-      tokensUsed: written.tokensUsed + reviewed.tokensUsed,
-      // 采纳了修订稿就用修订稿的 gate 结果（必空）；没换稿沿用写稿轮的残余 FAIL
-      gateFailures: reviewed.gateFailures ?? written.gateFailures,
-      rulesApplied: profile ? rulesForPlatform(profile, req.platform).length : 0,
-      attribution,
-      wroteWithoutBrief,
-      wroteWithoutAngle,
-      placeholderId,
-      dataDir,
-    });
+  return finalizeScript({
+    ...common,
+    payload: reviewed.payload,
+    humanizedText: reviewed.humanizedText,
+    review: reviewed.review,
+    tokensUsed: written.tokensUsed + reviewed.tokensUsed,
+    // 采纳了修订稿就用修订稿的 gate 结果（必空）；没换稿沿用写稿轮的残余 FAIL
+    gateFailures: reviewed.gateFailures ?? written.gateFailures,
+    needsHumanNumbers: written.needsHumanNumbers,
+  });
+}
+
+/** 归因落占位稿（best-effort）：写不进去只 warn——归因是留痕，不该反过来弄死写作 */
+async function persistAttribution(
+  placeholderId: string,
+  attribution: Attribution,
+  ledger: EvidenceLedger,
+  warn: (message: string) => void,
+  dataDir?: string,
+): Promise<void> {
+  try {
+    await updateContent(placeholderId, contentAttribution(attribution, ledger), dataDir);
   } catch (err) {
-    await markInterrupted(placeholderId, req, err, dataDir);
-    throw err;
+    warn(`归因落盘失败（${placeholderId}）：${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -583,13 +1005,11 @@ function runInBackground(
       // 「没材料写的」「没过 AI 审稿的」都要在工作日志上自己说出来——
       // 人看到标签才知道这稿该多挑一点（审稿 §2.5：run_done 追加审稿结论）
       const brand = result.wroteWithoutBrief ? "（未带简报）" : "";
-      emit({
-        role: "system",
-        kind: "run_done",
-        label: `《${result.title.slice(0, 24)}》写完,待审改${brand}${reviewBrand(result.review)}`,
-        contentId,
-        runId,
-      });
+      // 硬门拦下的稿不是「写完待审改」——说成写完了，人就不会去补材料（§4.4）
+      const label = result.needsEvidence
+        ? `《${result.title.slice(0, 24)}》被数字硬门拦下:有 ${result.unverifiedNumbers.length} 个数字没有出处,稿件标「缺证据」${brand}`
+        : `《${result.title.slice(0, 24)}》写完,待审改${brand}${reviewBrand(result.review)}`;
+      emit({ role: "system", kind: "run_done", label, contentId, runId });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}`, contentId, runId });
@@ -617,7 +1037,7 @@ export function startGenerateScript(
  * 中断稿原地重写。**不新建稿件**——这是整条重试链的要点：老路是「重试 = 再派一次活」，
  * 于是中断稿成僵尸卡、每重试一次看板多一张重复卡（2026-08-24 缺陷）。
  *
- * 只认「有 lastError」的稿：没有中断记录的稿子重写就是拿一篇好稿去赌，
+ * 只认「有 lastError」或「缺证据」的稿：没有这两个记号的稿子重写就是拿一篇好稿去赌，
  * 用户要的是改稿（revise_draft）而不是推倒重来。
  * 重置发生在起 run 之前——标题回［生成中］、lastError 清空，看板当场变回「在写」。
  */
@@ -635,7 +1055,12 @@ export async function retryGenerateScript(
 ): Promise<StartedGeneration> {
   const content = await getContent(contentId, dataDir);
   if (!content) throw new Error(`稿件不存在（${contentId}）`);
-  if (!content.lastError) throw new Error("这稿没有中断记录,不能重写——要改稿请直接说怎么改");
+  // 「缺证据」和「写崩了」是同一类可重写态（P1 §4.4）：两者都是**没写成**的稿，
+  // 区别只在一个是硬门拦的、一个是跑崩的。没有这两个记号的稿子重写就是拿好稿去赌。
+  const blocked = content.status === "needs_evidence";
+  if (!content.lastError && !blocked) {
+    throw new Error("这稿没有中断记录,不能重写——要改稿请直接说怎么改");
+  }
 
   const req: ScriptRequest = { ...rebuildRequest(content), ...override };
   await updateContent(
@@ -643,45 +1068,131 @@ export async function retryGenerateScript(
     {
       title: `${GENERATING_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
       lastError: null,
-      _versionNote: "中断重写:在原稿上重来一次",
+      // 重写即清上一轮的拦截痕：新一轮会重新判，留着旧清单只会让看板显示两个事实
+      ...(blocked ? { blockedReason: null, unverifiedNumbers: [] } : {}),
+      _versionNote: blocked ? "缺证据重写:补材料后在原稿上重来一次" : "中断重写:在原稿上重来一次",
     },
     dataDir,
   );
+  // needs_evidence 稿要先退回 drafting——占位稿的整条流程都假定自己是「写作中」
+  if (blocked) {
+    const back = await transitionStatus(contentId, "drafting", {}, dataDir);
+    if (!back.ok) throw new Error(`稿件退回写作中失败（${contentId}）：${back.error ?? "状态未推进"}`);
+  }
   return runInBackground(contentId, req, `编剧重写《${req.topic.slice(0, 24)}》`, dataDir, deps);
 }
 
-interface FinalizeArgs {
+/** 转正与拦下两条路共用的一份上下文 */
+interface FinalizeCommon {
+  req: ScriptRequest;
+  rulesApplied: number;
+  attribution: Attribution;
+  ledger: EvidenceLedger;
+  wroteWithoutBrief: boolean;
+  wroteWithoutAngle: boolean;
+  /** 补证降级（未补证 / 补证失败）：进版本注记 */
+  evidenceNote?: string;
+  placeholderId: string;
+  dataDir?: string;
+}
+
+interface FinalizeArgs extends FinalizeCommon {
   /** 审稿后的最终 payload（未修订时即写稿原样） */
   payload: SubmitPayload;
   /** 审稿后的最终正文（组装 + humanize 已在审稿前做过一次，这里不再重做） */
   humanizedText: string;
   review: ReviewMeta;
-  req: ScriptRequest;
   tokensUsed: number;
   gateFailures: GateFailure[];
-  rulesApplied: number;
-  attribution: Attribution;
-  wroteWithoutBrief: boolean;
-  wroteWithoutAngle: boolean;
-  placeholderId: string;
-  dataDir?: string;
+  /** 归一不了的模糊量词：放行但要人过目（§5） */
+  needsHumanNumbers: string[];
 }
 
 /**
- * 版本注记：稿件历史里唯一的人话留痕。三件事要在同一句里说清楚——
- * 这稿有没有材料垫底、有没有经过角度点选、审稿有没有让它改过。
- * 别互相覆盖，也别堆成三串括号。
+ * 版本注记：稿件历史里唯一的人话留痕。四件事要在同一句里说清楚——
+ * 这稿有没有材料垫底、有没有经过角度点选、补证有没有跑成、审稿有没有让它改过。
+ * 别互相覆盖，也别堆成四串括号。
  */
 function versionNote(
   review: ReviewMeta,
-  marks: { wroteWithoutBrief: boolean; wroteWithoutAngle: boolean },
+  marks: { wroteWithoutBrief: boolean; wroteWithoutAngle: boolean; evidenceNote?: string },
 ): string {
   const notes = [
     ...(marks.wroteWithoutBrief ? ["未带调研简报"] : []),
     ...(marks.wroteWithoutAngle ? ["未经角度点选"] : []),
+    ...(marks.evidenceNote ? [marks.evidenceNote] : []),
   ];
   if (review.rounds > 0) return `AI 审稿修订（${review.fixed} 项${notes.length ? `，${notes.join("、")}` : ""}）`;
   return notes.length ? `AI 完成初稿（${notes.join("、")}）` : "AI 完成初稿";
+}
+
+/** 空审稿结论：硬门拦下的稿压根没进审稿轮，但 `review` 字段必须有值（读侧不分支） */
+function unreviewed(): ReviewMeta {
+  return { status: "skipped", rounds: 0, fixed: 0, issues: [], reviewedAt: new Date().toISOString() };
+}
+
+/**
+ * 硬门拦下（§4.4 / §5「数字无据且修复耗尽」）：正文照落盘、状态走 `needs_evidence`。
+ *
+ * 为什么正文要存：创始人得看见被拦的是**哪一稿**才判断得了「这个数删掉还是我去找来源」。
+ * 为什么不盖 `draftReadyAt`：那枚戳的语义是「稿成」，这稿没成。
+ */
+async function finalizeBlocked(args: FinalizeCommon & { written: WriterRun }): Promise<GeneratedScript> {
+  const { written, req, placeholderId, dataDir } = args;
+  const humanizedText = assembleAndHumanize(written.payload);
+  const unverified = [...blockedNumbersOf(written), ...written.needsHumanNumbers];
+  const scanResult = await scanText(`${written.payload.title}\n\n${humanizedText}`, req.platform, dataDir);
+  const review = unreviewed();
+
+  const content = await updateContent(
+    placeholderId,
+    {
+      title: written.payload.title,
+      body: humanizedText,
+      hashtags: written.payload.hashtags.map((t) => t.trim()).filter(Boolean),
+      // genRequest **不清**：这稿还要重写，重写的依据就是它
+      lastError: null,
+      blockedReason: written.blocked?.detail ?? "硬门未通过",
+      unverifiedNumbers: unverified,
+      ...contentAttribution(args.attribution, args.ledger),
+      review,
+      _versionNote: `缺证据，未转草稿（${versionNote(review, args)}）`,
+    },
+    dataDir,
+  );
+  if (!content) throw new Error(`占位稿丢失（${placeholderId}）：硬门拦下的稿件内容未保存`);
+
+  const moved = await transitionStatus(placeholderId, "needs_evidence", {}, dataDir);
+  if (!moved.ok) {
+    throw new Error(`稿件状态推不动（${placeholderId} → needs_evidence）：${moved.error ?? "状态未推进"}；正文已保存`);
+  }
+  return {
+    contentId: content.id,
+    title: written.payload.title,
+    body: humanizedText,
+    hashtags: content.hashtags,
+    violations: scanResult.hits.map((h) => h.word),
+    gateFailures: written.gateFailures.map((f) => f.detail),
+    rulesApplied: args.rulesApplied,
+    wroteWithoutBrief: args.wroteWithoutBrief,
+    wroteWithoutAngle: args.wroteWithoutAngle,
+    review,
+    needsEvidence: true,
+    ...(written.blocked?.detail ? { blockedReason: written.blocked.detail } : {}),
+    unverifiedNumbers: unverified,
+    tokensUsed: written.tokensUsed,
+  };
+}
+
+/** 硬门打回文案里那份「哪些数字没据」的清单——detail 是给模型的人话，这里只取一行摘要 */
+function blockedNumbersOf(written: WriterRun): string[] {
+  const failure = written.gateFailures.find((f) => f.check === "unverified_numbers");
+  if (!failure) return [];
+  return failure.detail
+    .split("\n")
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter(Boolean);
 }
 
 /** 后处理：违禁词扫描 → 占位稿转正（draft_ready，同现有写作流）。 */
@@ -689,6 +1200,7 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
   const { payload, humanizedText, review, req, attribution, wroteWithoutBrief, wroteWithoutAngle, placeholderId, dataDir } =
     args;
   const { title, hashtags } = payload;
+  const needsHuman = args.needsHumanNumbers;
 
   // 标题一并扫描——与 review.ts 的 `title\n\nbody` 口径对齐，标题里的违禁词不得漏报
   const scanResult = await scanText(`${title}\n\n${humanizedText}`, req.platform, dataDir);
@@ -708,15 +1220,15 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
       lastError: null,
       // 转正即清:成稿没有「中断」可重试,留着这份请求只是 meta 里一处会骗人的旧事实
       genRequest: undefined,
-      // 归因落稿件元数据(§3.5 卡 / 深调研 §6 简报):没用到就不写字段——与改动前一字不差
-      ...(attribution.usedPatternIds.length > 0 ? { usedPatternIds: attribution.usedPatternIds } : {}),
-      ...(attribution.usedBriefRevision !== undefined
-        ? { usedBriefRevision: attribution.usedBriefRevision }
-        : {}),
-      ...(attribution.usedBriefHash ? { usedBriefHash: attribution.usedBriefHash } : {}),
+      // 转正即清：这稿过了硬门，上一轮（如果有）留下的「缺证据」痕迹不该跟着成稿走
+      blockedReason: null,
+      // 模糊量词照样落盘：它不拦门，但创始人要能一眼看到「这几个数没法核」（§5）
+      unverifiedNumbers: needsHuman,
+      // 归因落稿件元数据(§3.5 卡 / 深调研 §6 简报 / P1 §3.2 语料 §3.3 账本):没用到就不写字段
+      ...contentAttribution(attribution, args.ledger),
       // 审稿结论落稿件元数据(审稿 §2.5):稿卡徽章读的就是它,降级路径同样要留下
       review,
-      _versionNote: versionNote(review, { wroteWithoutBrief, wroteWithoutAngle }),
+      _versionNote: versionNote(review, { wroteWithoutBrief, wroteWithoutAngle, ...(args.evidenceNote ? { evidenceNote: args.evidenceNote } : {}) }),
     },
     dataDir,
   );
@@ -741,6 +1253,8 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
     wroteWithoutBrief,
     wroteWithoutAngle,
     review,
+    needsEvidence: false,
+    unverifiedNumbers: needsHuman,
     tokensUsed: args.tokensUsed,
   };
 }

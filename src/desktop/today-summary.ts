@@ -13,7 +13,7 @@ const STALE_DAYS = 2;
 const RADAR_LIMIT = 10;
 
 const BUCKET: Record<string, ContentStatus[]> = {
-  draft: ["topic_saved", "drafting", "draft_ready", "revision"],
+  draft: ["topic_saved", "drafting", "needs_evidence", "draft_ready", "revision"],
   review: ["reviewing"],
   // editing/cover_pending 是定稿后的生产阶段（阶段制 spec §0），与 approved 同列
   ready: ["approved", "editing", "cover_pending", "publish_ready", "publishing"],

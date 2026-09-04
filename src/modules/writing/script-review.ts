@@ -21,7 +21,9 @@ import type { GateFailure } from "./quality-gate.js";
 import {
   assembleAndHumanize,
   buildSubmitTool,
-  type Captured,
+  createCapture,
+  isAcceptedCapture,
+  type SubmitGateDeps,
   type SubmitPayload,
 } from "./script-payload.js";
 import {
@@ -80,6 +82,12 @@ export interface ReviewInput {
   voiceSamples: string[];
   gate?: QualityGateSpec;
   platform: string;
+  /**
+   * 修订轮手上有没有 `find_evidence`（P1 §4.5 / codex #21）。审稿 prompt 的「能不能要求补数据」
+   * 与修订轮的工具箱必须是同一个事实——写在两处必然出现「审稿要求补、修订没工具补」。
+   * 调用方传 `deps.evidenceTool` 时这里就该是 true（`reviewAndConverge` 不替它猜）。
+   */
+  canFindEvidence?: boolean;
 }
 
 export interface ReviewDeps {
@@ -90,6 +98,19 @@ export interface ReviewDeps {
   runId?: string;
   /** 降级出口：审稿是增益，降级了必须有人话留痕，默认 console.warn */
   onWarn?: (message: string) => void;
+  /**
+   * 写稿轮那把 `submit_script` 的硬门依赖（账本 getter + 两个开关，P1 §4.4）。
+   * **必须与写稿轮同一份**：修订轮少挂一个数字硬门，就等于给「改 AI 味时顺手编个数」
+   * 开了一条绕过门禁的路。
+   */
+  submitDeps?: SubmitGateDeps;
+  /**
+   * 写手的 `find_evidence` 工具**实例**（不是新建一个）。次数额度在账本上共享——
+   * 写手用掉 2 次、修订只剩 1 次，这正是要的行为（codex #13）。
+   */
+  evidenceTool?: LoopTool;
+  /** 修订轮的回合上限；缺省沿用「4 + gate 修复轮 ×2」。写稿侧算好了就传同一个数 */
+  maxWriterTurns?: number;
 }
 
 export interface ReviewOutcome {
@@ -244,7 +265,11 @@ async function reviewOnce(
   try {
     const result = await (deps.runLoopImpl ?? runLoop)(reviewer.config, {
       model: reviewer.model,
-      systemPrompt: buildReviewSystemPrompt(Boolean(input.researchSlot?.trim()), Boolean(input.angle)),
+      systemPrompt: buildReviewSystemPrompt(
+        Boolean(input.researchSlot?.trim()),
+        Boolean(input.angle),
+        Boolean(input.canFindEvidence),
+      ),
       userMessage: buildReviewUserMessage({
         payload: draft.payload,
         humanizedText: draft.humanizedText,
@@ -280,7 +305,7 @@ async function reviseOnce(
   config: EngineConfig,
   deps: ReviewDeps,
 ): Promise<RevisionPass> {
-  const captured: Captured = { payload: null, gateFailures: [] };
+  const captured = createCapture();
   const writer = resolveEngineRoute(config, "writer", config.strongModel);
   const gate = input.gate;
   try {
@@ -288,8 +313,9 @@ async function reviseOnce(
       model: writer.model,
       systemPrompt: input.system,
       userMessage: buildRevisionUserMessage(draft.payload, blockers, input.user),
-      tools: [buildSubmitTool(captured, gate)],
-      maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
+      // 同一把 submit_script（同硬门依赖）+ 写手那个 find_evidence **实例**（共享次数额度）
+      tools: [buildSubmitTool(captured, gate, deps.submitDeps), ...(deps.evidenceTool ? [deps.evidenceTool] : [])],
+      maxTurns: deps.maxWriterTurns ?? (gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4),
       maxTotalTokens: gate ? 80000 : undefined,
       logMeta: { ...(deps.runId ? { runId: deps.runId } : {}), agent: "reviser" },
     });
@@ -300,13 +326,13 @@ async function reviseOnce(
         tokensUsed: result.totalTokens,
       };
     }
-    if (captured.gateFailures.length > 0) {
-      // 修订把结构改坏了：整轮作废，回退到修订前那版（§2.2 每轮重验的全部意义）
-      return {
-        ok: false,
-        reason: `修订稿仍未过 Quality Gate：${captured.gateFailures.map((f) => f.check).join("、")}`,
-        tokensUsed: result.totalTokens,
-      };
+    if (!isAcceptedCapture(captured) || captured.gateFailures.length > 0) {
+      // 修订把结构改坏了（或改出了无据数字/镜头标注）：整轮作废，回退到修订前那版
+      // （§2.2 每轮重验的全部意义）。硬门拦下的那版尤其不能收——它比原稿更不能发。
+      const why = captured.blocked
+        ? `触发硬门 ${captured.blocked.reason}`
+        : captured.gateFailures.map((f) => f.check).join("、");
+      return { ok: false, reason: `修订稿仍未过门禁：${why}`, tokensUsed: result.totalTokens };
     }
     return {
       ok: true,

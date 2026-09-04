@@ -11,7 +11,31 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
 
-export interface RunLogRecord {
+/**
+ * 归因元数据(一处定义,三处消费:日志记录、recorder 入参、`LoopOptions.logMeta`)。
+ * 抄三份必然分叉——P1 加了角度/语料/补证三组字段,分叉一次就有一处日志永远缺列。
+ */
+export interface RunLogAttribution {
+  /** 本次生成注入的对标拆解卡 id(收件箱设计 §3.5):飞轮据此归因「用卡的稿 vs 没用的」 */
+  usedPatternIds?: string[];
+  /** 本次生成注入的调研简报版本(深调研 §6):可回溯到 briefs/<topicId>.v<N>.json 那份不可变输入 */
+  usedBriefRevision?: number;
+  /** 那份简报的内容指纹(P1 §3.0):版本号说「哪一版」,指纹说「盘上那份没被换过」 */
+  usedBriefHash?: string;
+  /** 本稿生效的角度卡 id(P1 §4.4 归因):手写 direction / 无卡时不出现 */
+  usedAngleId?: string;
+  /** 那张卡的版本(2 或 3)与内容指纹——卡可改写,光有 id 说不清写的时候是哪一版 */
+  usedAngleCardVersion?: number;
+  usedAngleHash?: string;
+  /** 写手实际注入的内部语料片段 id(P1 §3.2) */
+  usedOwnMaterialIds?: string[];
+  /** 定向补证/写手查证登记进账本的条目 id(P1 §3.3) */
+  usedLookupIds?: string[];
+  /** 用户明说跳过角度点选的原话(§1.6):它是「为什么没选角度」的证据,必须结构化留痕 */
+  angleSkipReason?: string;
+}
+
+export interface RunLogRecord extends RunLogAttribution {
   ts: string;
   /** 任务归属:chat 轮 run-…/后台写稿 run-bg-…/封面 run-cover-…/独立引擎调用 run-eng-… */
   runId: string;
@@ -32,12 +56,6 @@ export interface RunLogRecord {
   /** llm=assistant 消息 JSON;tool=返回串。已脱敏+截断 */
   output: string;
   truncated?: boolean;
-  /** 本次生成注入的对标拆解卡 id(收件箱设计 §3.5):飞轮据此归因「用卡的稿 vs 没用的」 */
-  usedPatternIds?: string[];
-  /** 本次生成注入的调研简报版本(深调研 §6):可回溯到 briefs/<topicId>.v<N>.json 那份不可变输入 */
-  usedBriefRevision?: number;
-  /** 那份简报的内容指纹(P1 §3.0):版本号说「哪一版」,指纹说「盘上那份没被换过」 */
-  usedBriefHash?: string;
 }
 
 export interface RunSummary {
@@ -186,22 +204,22 @@ const NOOP_RECORDER: RunRecorder = { llm: () => {}, tool: () => {} };
 /** dataDir 缺省(手工构造的测试 config)= 不落日志,引擎行为零变化 */
 export function createRunRecorder(
   dataDir: string | undefined,
-  meta?: {
-    runId?: string;
-    agent?: string;
-    usedPatternIds?: string[];
-    usedBriefRevision?: number;
-    usedBriefHash?: string;
-  },
+  meta?: RunLogAttribution & { runId?: string; agent?: string },
 ): RunRecorder {
   if (!dataDir) return NOOP_RECORDER;
   const runId = meta?.runId ?? `run-eng-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const agent = meta?.agent;
   // 归因元数据挂在每条记录上:单条日志自带「这稿用了哪几张卡/哪版简报」,不用回溯整个 run
-  const attribution = {
+  const attribution: RunLogAttribution = {
     ...(meta?.usedPatternIds?.length ? { usedPatternIds: meta.usedPatternIds } : {}),
     ...(meta?.usedBriefRevision !== undefined ? { usedBriefRevision: meta.usedBriefRevision } : {}),
     ...(meta?.usedBriefHash ? { usedBriefHash: meta.usedBriefHash } : {}),
+    ...(meta?.usedAngleId ? { usedAngleId: meta.usedAngleId } : {}),
+    ...(meta?.usedAngleCardVersion !== undefined ? { usedAngleCardVersion: meta.usedAngleCardVersion } : {}),
+    ...(meta?.usedAngleHash ? { usedAngleHash: meta.usedAngleHash } : {}),
+    ...(meta?.usedOwnMaterialIds?.length ? { usedOwnMaterialIds: meta.usedOwnMaterialIds } : {}),
+    ...(meta?.usedLookupIds?.length ? { usedLookupIds: meta.usedLookupIds } : {}),
+    ...(meta?.angleSkipReason ? { angleSkipReason: meta.angleSkipReason } : {}),
   };
   return {
     llm: (e) =>

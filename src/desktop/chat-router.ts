@@ -396,7 +396,8 @@ export function dedupeDraftCards(cards: ChatCard[]): ChatCard[] {
 }
 
 /**
- * 同选题同平台的中断稿（未删、带 lastError）。listContents 已按 createdAt 倒序，
+ * 同选题同平台的可重写稿（未删；带 lastError 的中断稿，或被硬门拦下的 needs_evidence 稿）。
+ * listContents 已按 createdAt 倒序，
  * 所以 find 拿到的就是最新那一张——用户眼里那张卡就在看板最上面。
  */
 function findInterruptedDraft(
@@ -404,7 +405,11 @@ function findInterruptedDraft(
   topicId: string,
   platform: string,
 ): string | null {
-  const hit = contents.find((c) => c.topicId === topicId && c.platform === platform && c.lastError);
+  // 「缺证据」稿与中断稿同属可就地重写（P1 §4.4）：两者都是没写成的稿，
+  // 漏掉它就会在同一条选题上再新建一张卡，退回「重试 = 多一张僵尸卡」的老路
+  const hit = contents.find(
+    (c) => c.topicId === topicId && c.platform === platform && (c.lastError || c.status === "needs_evidence"),
+  );
   return typeof hit?.id === "string" ? hit.id : null;
 }
 

@@ -357,6 +357,16 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
             </div>
           )}
 
+          {/* 缺证据（P1 §4.4）：正文写出来了但数字没出处,不转草稿。走的是同一条重写通道 */}
+          {c.status === "needs_evidence" && (
+            <div className="ed-error">
+              ⚠️ 这一稿有没出处的数字，没转成草稿：
+              {(c.unverifiedNumbers ?? []).slice(0, 6).join("、") || String(c.blockedReason ?? "").slice(0, 120)}
+              <div className="muted">补一段材料（或把这些数字删掉）之后重新生成；也可以直接在下面改稿。</div>
+              <button onClick={() => void retryGenerate()}>重新生成</button>
+            </div>
+          )}
+
           {fallback && (
             <div className="ed-error">
               实时渲染编辑器没能启动（{fallback.slice(0, 80)}）——已降级为纯文本编辑，正文内容不受影响。

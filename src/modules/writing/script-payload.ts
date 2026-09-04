@@ -105,7 +105,7 @@ export interface SubmitGateDeps {
 }
 
 /** 包无 qualityGate 时硬门也要有修复预算（抖音包就没有 gate，codex #22/#12） */
-const DEFAULT_REPAIR_ROUNDS = 2;
+export const DEFAULT_REPAIR_ROUNDS = 2;
 
 function runAllGates(
   payload: SubmitPayload,

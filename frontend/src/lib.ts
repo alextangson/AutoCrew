@@ -30,7 +30,8 @@ export function sourceLabel(s: string | null | undefined): string {
 
 export const BOARD_COLUMNS = [
   { key: "idea", label: "灵感库", statuses: [] as string[] },
-  { key: "writing", label: "在写", statuses: ["topic_saved", "drafting", "draft_ready", "revision"] },
+  // needs_evidence（P1 §4.4）留在「在写」列:稿子还没成,人要在这一列看到它并去补材料
+  { key: "writing", label: "在写", statuses: ["topic_saved", "drafting", "needs_evidence", "draft_ready", "revision"] },
   { key: "review", label: "待审", statuses: ["reviewing"] },
   // 制作中单独成列（创始人 2026-08-24 真机反馈）:剪辑/封面折进「待发布」时,
   // 片子还没剪的稿顶着「待发布」的列名,创始人在板上找不到它——列名对阶段撒谎。
@@ -53,7 +54,7 @@ export const DROP_TARGET_STATUS: Record<string, string> = {
 };
 
 export const VARIANT_STATUS: Record<string, string> = {
-  topic_saved: "选题", drafting: "写中", draft_ready: "草稿", revision: "修订",
+  topic_saved: "选题", drafting: "写中", needs_evidence: "缺证据", draft_ready: "草稿", revision: "修订",
   reviewing: "待审", approved: "已过审", editing: "剪辑", cover_pending: "封面设计",
   publish_ready: "待发", publishing: "发布中", published: "已发", archived: "归档",
 };
@@ -212,6 +213,10 @@ export interface Content {
   topicId?: string;
   hashtags: string[];
   lastError?: string | null;
+  /** 硬门拦下的人话原因(P1 §4.4);状态 needs_evidence 时非空 */
+  blockedReason?: string | null;
+  /** 没有出处的数字 + 归一不了的模糊量词——缺证据徽章的悬浮说明 */
+  unverifiedNumbers?: string[];
   adoption?: { verdict: string; reason?: string; reasonNote?: string; derived?: boolean };
   /** AI 审稿结论(审稿 spec §2.5):稿卡徽章读它;旧稿无此字段 = 不显示徽章 */
   review?: {

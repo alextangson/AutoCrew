@@ -9,6 +9,8 @@ import type { ReviewMeta } from "../modules/writing/script-review.js";
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
 // 角度卡的形状归简报模块定义（它是简报 schema 的一部分），这里只引用不复制
 import type { AngleCard } from "../modules/research/brief-store.js";
+// 证据账本的落盘形状归账本模块定义（P1 §3.3），这里同样只引用
+import type { EvidenceLedgerSnapshot } from "../modules/research/evidence-ledger.js";
 
 /**
  * 创始人选定的写作角度（角度卡 spec §1.3）。指针 + **生效卡快照**两样都存：
@@ -109,6 +111,12 @@ export interface ContentVersion {
 export type ContentStatus =
   | "topic_saved"
   | "drafting"
+  /**
+   * 数字硬门拦下的稿（P1 spec §4.4）：正文写完了，但里面有无据数字，修复轮已耗尽。
+   * **不是** draft_ready——放它转正就等于把「[未证实]」当成了放行口。看板上单独可见，
+   * 创始人补材料或改稿后按重试重写。
+   */
+  | "needs_evidence"
   | "draft_ready"
   | "reviewing"
   | "revision"
@@ -125,6 +133,7 @@ export type ContentStatus =
 export const CONTENT_STATUS_LABEL: Record<ContentStatus, string> = {
   topic_saved: "选题已存",
   drafting: "写作中",
+  needs_evidence: "缺证据",
   draft_ready: "草稿就绪",
   reviewing: "待审",
   revision: "修订中",
@@ -257,6 +266,22 @@ export interface Content {
   usedBriefRevision?: number;
   /** 那份简报的内容指纹（P1 §3.0）：版本号说「哪一版」，指纹说「盘上那份没被换过」 */
   usedBriefHash?: string;
+  /**
+   * 本稿生效的角度卡（P1 §4.4 归因）：`hash` = 卡的 canonical JSON sha256 前 16。
+   * 卡是可改写的，光记 id 说不清「写的时候是哪一版」。手写 direction / 无卡时字段不落。
+   */
+  usedAngle?: { id: string; cardVersion: number; hash: string };
+  /** 写手实际注入的内部语料片段（P1 §3.2）：与 `brief.ownMaterialRefs`（立意侧）分记 */
+  usedOwnMaterial?: { id: string; excerptHash: string }[];
+  /**
+   * 本稿的证据账本快照（P1 §3.3）：写手开工**前**先落一次，生成崩了也留得住归因；
+   * 收尾再落一次（含写手 find_evidence 查来的条目）。
+   */
+  evidenceLedger?: EvidenceLedgerSnapshot;
+  /** 数字硬门拦下的那些数字（`needs_evidence` 稿的清单）；也用于 needsHuman 的 advisory 展示 */
+  unverifiedNumbers?: string[];
+  /** `needs_evidence` 的人话原因（硬门打回文案）；转正时清空 */
+  blockedReason?: string | null;
   /**
    * AI 审稿结论（审稿 spec §2.5）：工作台稿卡徽章的唯一读数。旧稿无此字段 = 不显示徽章。
    * 改稿链路（revise_draft / 收下修订）落盘时把 status 改成 "stale"——
@@ -1090,7 +1115,11 @@ async function approveCoverVariantLocked(
  */
 const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   topic_saved: ["drafting"],
-  drafting: ["draft_ready", "topic_saved"],
+  drafting: ["draft_ready", "needs_evidence", "topic_saved"],
+  // 缺证据（P1 §4.4）：重试回 drafting；补材料后重跑一轮**完整生成**才能到 draft_ready
+  // （那一轮从 drafting 走正常边过来，不是从这里直推）。人工判定「这些数字我认」时也
+  // 允许直接放行——所以 draft_ready 留着，但它是人的动作，不是生成管线的出口。
+  needs_evidence: ["drafting", "draft_ready", "archived"],
   draft_ready: ["reviewing", "drafting"],
   reviewing: ["revision", "approved", "draft_ready"],
   revision: ["reviewing", "approved", "draft_ready"],

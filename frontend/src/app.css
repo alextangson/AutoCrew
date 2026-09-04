@@ -191,6 +191,8 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .chip { font-size: 11px; padding: 1px 6px; font-family: var(--font-mono); }
 .chip-pub { background: var(--ink); color: var(--accent-text); border-color: var(--ink); }
 .acard-err { margin-top: 6px; color: var(--danger); font-size: 12px; }
+/* 缺证据徽章(P1 §4.4):贴在稿卡 chip 里,不能带 acard-err 的块级外边距 */
+.chip-blocked { color: var(--danger); font-weight: 600; }
 
 .matrix-detail { border-left: 2px solid var(--border); padding: 8px 12px; margin: 6px 0; }
 .matrix-detail p { margin: 3px 0; }

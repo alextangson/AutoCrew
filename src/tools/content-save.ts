@@ -23,7 +23,7 @@ import type { StyleDistillResult } from "../modules/learnings/style-distiller.js
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
 
 const ALL_STATUSES = [
-  "topic_saved", "drafting", "draft_ready", "reviewing", "revision",
+  "topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision",
   "approved", "editing", "cover_pending", "publish_ready", "publishing", "published", "archived",
   // Legacy compat
   "draft", "review",

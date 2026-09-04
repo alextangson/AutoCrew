@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildAngleBlock,
   buildScriptPrompts,
+  ANGLE_FIELD_MAX,
+  ANGLE_LONG_FIELD_MAX,
   PATTERN_BLOCK_START,
   PATTERN_BLOCK_END,
   type ScriptRequest,
@@ -8,7 +11,7 @@ import {
 import { KOUBO_PACK } from "../packs/koubo.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
-import type { AngleCard, BriefEvidence } from "../research/brief-store.js";
+import type { AngleCard, AngleCardV3, BriefEvidence } from "../research/brief-store.js";
 
 describe("buildScriptPrompts", () => {
   it("system prompt contains 口播脚本编剧 role + pack name", () => {
@@ -412,5 +415,127 @@ describe("angle block", () => {
     const { system } = buildScriptPrompts(KOUBO_PACK, null, req, { angle: { card, evidence, tensions } });
     expect(system).not.toContain(card.thesis);
     expect(system).not.toContain("【本稿切入点");
+  });
+});
+
+// ─── 角度块 v3（P1 spec §4.4）────────────────────────────────────────────────
+
+describe("buildAngleBlock — v3 卡", () => {
+  const v3: AngleCardV3 = {
+    cardVersion: 3,
+    id: "angle-1",
+    angle: "算一笔维护账",
+    thesis: "省下的编码时间被维护成本吃回去了",
+    evidenceLevel: "grounded",
+    coreEvidenceIds: ["ev-1"],
+    tensionId: "tension-1",
+    antiScope: "不写工具横评",
+    hookDraft: "账没算完。",
+    primaryPersona: "trust",
+    misconception: "以为提效数字等于净收益",
+    mechanism: "省下的时间落在写代码那一步，维护成本落在读代码那一步",
+    payoff: "看完你知道该拿哪个数字去跟老板谈",
+    nextAction: "把上周的返工工时也记进提效表",
+    counterResponse: "有人说熟练了就好",
+    personaGains: { grow: "听懂水分", trust: "拿到能复算的账", convert: "知道该盯哪一项" },
+    elements: ["痛点→理想状态", "新奇点"],
+    evidenceNeeds: ["一个企业公开披露的维护成本数字"],
+    structure: "claim-case-claim",
+  };
+  const tensions = ["厂商口径与独立评测差了四倍"];
+
+  it("§4.4 的十一项字段都在：主画像/误区/机制/主张/动作/三画像收益/元素/反方/锚点/骨架/收获感", () => {
+    const block = buildAngleBlock(v3, [], tensions);
+    expect(block).toContain("主画像");
+    expect(block).toContain(v3.misconception);
+    expect(block).toContain(v3.mechanism);
+    expect(block).toContain(v3.thesis);
+    expect(block).toContain(v3.nextAction);
+    expect(block).toContain(v3.personaGains.convert);
+    expect(block).toContain("痛点→理想状态");
+    expect(block).toContain(v3.counterResponse);
+    expect(block).toContain("第一手锚点");
+    expect(block).toContain("结构骨架");
+    expect(block).toContain(v3.payoff);
+    expect(block).toContain(v3.antiScope);
+    expect(block).toContain("厂商口径与独立评测差了四倍");
+  });
+
+  it("八条硬规矩逐条在场（P0c 可发稿反推出来的那一套）", () => {
+    const block = buildAngleBlock(v3, [], tensions);
+    expect(block).toContain("前 3 秒");
+    expect(block).toContain("只讲这一个主张");
+    expect(block).toContain("今天就能做的那一步");
+    expect(block).toContain("术语必须翻译");
+    expect(block).toContain("证据纪律");
+    expect(block).toContain("自嘲只能嘲行为和判断");
+    expect(block).toContain("不写任何镜头、画面、字幕条");
+    expect(block).toContain("转写可作『我亲身经历的转折』");
+  });
+
+  it("不给「未证实」这个逃生口：数字硬门按账本逐个对账，标一下没用", () => {
+    const block = buildAngleBlock(v3, [], tensions);
+    expect(block).toContain("不要编，也不要写「未证实」蒙混过去");
+    expect(block).not.toContain("[未证实]");
+  });
+
+  it("机制与收获感放宽到 400 字，其余字段仍是 200", () => {
+    const long = { ...v3, mechanism: "机".repeat(600), payoff: "收".repeat(600), thesis: "主".repeat(600) };
+    const block = buildAngleBlock(long, [], []);
+    expect(block).toContain("机".repeat(ANGLE_LONG_FIELD_MAX));
+    expect(block).not.toContain("机".repeat(ANGLE_LONG_FIELD_MAX + 1));
+    expect(block).toContain("收".repeat(ANGLE_LONG_FIELD_MAX));
+    expect(block).toContain("主".repeat(ANGLE_FIELD_MAX));
+    expect(block).not.toContain("主".repeat(ANGLE_FIELD_MAX + 1));
+  });
+
+  it("有第一手锚点 → 引文与片段 id 都进块；没有 → 明说「不要虚构亲历」", () => {
+    const anchored = {
+      ...v3,
+      firsthandAnchor: {
+        kind: "transcript" as const,
+        contentId: "content-1",
+        chunkId: "om:content-1:transcript:3:0",
+        excerptHash: "abc123",
+        quote: "我自己做插件那次，卡住的不是模型",
+      },
+    };
+    const withAnchor = buildAngleBlock(anchored, [], []);
+    expect(withAnchor).toContain("我自己做插件那次，卡住的不是模型");
+    expect(withAnchor).toContain("om:content-1:transcript:3:0");
+
+    expect(buildAngleBlock(v3, [], [])).toContain("不要虚构");
+  });
+
+  it("综述级卡多一句提醒：没有第一手证据的判断不许伪装成事实", () => {
+    const overview = { ...v3, evidenceLevel: "overview" as const, coreEvidenceIds: [] };
+    expect(buildAngleBlock(overview, [], [])).toContain("综述级");
+    expect(buildAngleBlock(v3, [], [])).not.toContain("综述级");
+  });
+
+  it("核心证据不在立意块里（它在 research 槽的优先级 1 块，§4.3）", () => {
+    const evidence: BriefEvidence[] = [
+      { claim: "维护成本上升", quote: "维护成本上升了三成。", sourceUrl: "https://news.example.org/a" },
+    ];
+    const block = buildAngleBlock(v3, evidence, []);
+    expect(block).not.toContain("维护成本上升了三成。");
+  });
+
+  it("v2 卡的渲染一个字没变（只读兼容）", () => {
+    const v2: AngleCard = {
+      id: "angle-2",
+      angle: "算一笔维护账",
+      thesis: "省下的编码时间被维护成本吃回去了",
+      coreEvidenceIds: ["ev-1"],
+      antiScope: "不写工具横评",
+      audiencePain: "老板拿提效数字压 KPI",
+      holdTrigger: "看到自己上周那笔返工账",
+      hookDraft: "账没算完。",
+    };
+    const block = buildAngleBlock(v2, [], []);
+    expect(block).toContain("目标受众痛点");
+    expect(block).toContain("预期停留触发");
+    expect(block).not.toContain("主画像");
+    expect(block).not.toContain("硬规矩");
   });
 });

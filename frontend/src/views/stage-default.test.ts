@@ -36,3 +36,17 @@ describe("defaultAdvanceTarget", () => {
     expect(defaultAdvanceTarget("reviewing", [])).toBe("");
   });
 });
+
+describe("缺证据（P1 §4.4）", () => {
+  it("默认推进指向草稿就绪：它与 drafting 同秩，往前一站就是稿成", () => {
+    expect(defaultAdvanceTarget("needs_evidence", [{ status: "drafting" }, { status: "draft_ready" }])).toBe(
+      "draft_ready",
+    );
+  });
+
+  it("归档不算推进：有草稿就绪可走时默认不指向归档（推进按钮不该把稿子扔进回收站）", () => {
+    expect(
+      defaultAdvanceTarget("needs_evidence", [{ status: "drafting" }, { status: "draft_ready" }, { status: "archived" }]),
+    ).toBe("draft_ready");
+  });
+});

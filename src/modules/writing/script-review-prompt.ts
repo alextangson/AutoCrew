@@ -20,7 +20,6 @@ export const QUOTE_MIN_CHARS = 6;
 export const QUOTE_MAX_CHARS = 60;
 
 const VOICE_SAMPLE_MAX_CHARS = 300;
-const RESEARCH_MAX_CHARS = 6000;
 
 /** AI 味判据（rule 名进 issue，回看时一眼知道被判了哪一条） */
 const STYLE_RULES = [
@@ -58,7 +57,16 @@ function ruleLines(rules: string[]): string {
   return rules.map((r) => `- ${r}`).join("\n");
 }
 
-export function buildReviewSystemPrompt(hasResearch: boolean, hasAngle = false): string {
+/**
+ * @param canFindEvidence 修订轮手上有没有 `find_evidence`（P1 §4.5 / codex #21）。
+ *   有工具时「去补个数据」是可执行的指令；没工具时它只是在逼作者编——所以那条
+ *   「不要凭空要求补数据」的禁令只在**没有**工具时才成立，两侧必须一致。
+ */
+export function buildReviewSystemPrompt(
+  hasResearch: boolean,
+  hasAngle = false,
+  canFindEvidence = false,
+): string {
   return [
     "你是这位创作者内容团队里的审稿人。你的职责不是润色，是**判断这稿能不能发**。",
     "读完全文后给一次结论，逐条指出问题——每条都要能在原文里指到位置，指不到就不要提。",
@@ -81,7 +89,10 @@ export function buildReviewSystemPrompt(hasResearch: boolean, hasAngle = false):
       : [
           "## 判据二：洞察深度——本轮**不判**",
           "本稿没有调研材料。没有材料就没有「证据是否支撑论点」的判定基准，",
-          "不要凭空要求作者补数据、补案例、补出处，也不要因此给出 blocker。只判 AI 味。",
+          canFindEvidence
+            ? "只判 AI 味。修订轮手上有查证工具，所以「这句判断需要一个来源」这类问题可以提，" +
+              "但仍然要能在原文里逐字指到位置。"
+            : "不要凭空要求作者补数据、补案例、补出处，也不要因此给出 blocker。只判 AI 味。",
         ].join("\n"),
     "",
     "## 严重程度",
@@ -140,9 +151,12 @@ export function buildReviewUserMessage(input: ReviewUserInput): string {
   ];
   if (input.angle) parts.push(...angleBlock(input.angle));
   if (input.researchSlot?.trim()) {
+    // 逐字照搬写手拿到的那份快照（P1 §4.3）：审稿从前在这里按 6000 再裁一刀，
+    // 于是审稿人看到的材料比写手少，判「证据支撑住论点了吗」的基准和写作的输入
+    // 不是同一份——预算已经在装配层收过口，这里不许再收一次。
     parts.push(
       "【本稿写作时用的调研材料（引文与数据的出处，判「证据是否支撑论点」用它）】",
-      clamp(input.researchSlot.trim(), RESEARCH_MAX_CHARS),
+      input.researchSlot.trim(),
       "",
     );
   } else {

@@ -45,7 +45,7 @@ afterEach(async () => {
 
 const GOOD_PAYLOAD = {
   title: "普通人怎么用AI赚钱",
-  hook: "你知道吗，身边有人靠AI每月多赚五千",
+  hook: "你知道吗，身边有人靠AI接私活，已经辞掉了工作",
   body: "AI工具让普通人也能做到这些事情，关键是选对方向",
   cta: "关注我，每周分享AI变现实战",
   hashtags: ["#AI赚钱"],

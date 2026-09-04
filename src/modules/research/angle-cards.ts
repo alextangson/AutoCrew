@@ -10,6 +10,7 @@
  */
 import type { SelectedAngle } from "../../storage/local-store.js";
 import { isAnchorValid, scoreAngleCard, validateAngleCardV3 } from "./angle-stage.js";
+import { contentHash } from "./brief-snapshot.js";
 import {
   ANGLE_ELEMENTS,
   evidenceByRef,
@@ -38,6 +39,15 @@ export const ANGLE_CARD_MAX = 4;
  * 不是学术查重，不引入 embedding。
  */
 const ANGLE_SIMILARITY_MAX = 0.6;
+
+/**
+ * 这张卡的内容指纹（P1 §4.4 归因）：卡是可改写的，`Content.usedAngle` 光记 id
+ * 说不清「写这稿的时候它长什么样」——回溯时指纹是唯一能证明「就是那一版」的东西。
+ * 与简报指纹同一把尺（canonical JSON + sha256 前 16），键序变了指纹不变。
+ */
+export function angleCardHash(card: AngleCard): string {
+  return contentHash(card);
+}
 
 /** 简报里的角度卡（旧简报没有这个字段 = 空数组，读侧不分支） */
 export function angleCardsOf(brief: ResearchBrief | null | undefined): AngleCard[] {

@@ -60,8 +60,8 @@ afterEach(async () => {
 
 const GOOD_PAYLOAD = {
   title: "AI 编程助手值不值",
-  hook: "厂商说提效一半，实测只有一成",
-  body: "把两组数字摆在一起看，差距出在任务类型上",
+  hook: "厂商说能提效，实测差得远",
+  body: "把这些数字摆在一起看，差距出在任务类型上",
   cta: "关注我，下周拆解实测方法",
   hashtags: ["#AI编程"],
 };
@@ -185,7 +185,7 @@ function knowledgeChunk(userMessage: string): string {
 // ─── 注入与预算 ──────────────────────────────────────────────────────────────
 
 describe("简报注入 × research 槽预算（§6）", () => {
-  it("有简报 → prompt 带定界块（≤2800），用户材料仍在最前", async () => {
+  it("有简报 → prompt 带定界块（≤2800），简报排在用户材料之前（P1 §4.3 优先级表）", async () => {
     const { topic } = await seedResearched();
     const seen: { opts?: LoopOptions } = {};
 
@@ -201,11 +201,13 @@ describe("简报注入 × research 槽预算（§6）", () => {
     expect(msg).toContain("厂商宣称提效 55%");
     expect(msg).toContain("来源：example.com");
     expect(briefBlockOf(msg).length).toBeLessThanOrEqual(BRIEF_BUDGET);
-    // 用户材料在简报之前——创始人给的东西永远排第一
-    expect(msg.indexOf("创始人自己给的一段材料")).toBeLessThan(msg.indexOf(BRIEF_BLOCK_START));
+    // P1 §4.3 换了排序：本稿专属的材料（核心证据 → 简报）在前，创始人贴的材料排第 4 档。
+    // 改动前是「用户材料永远第一」，那条规则在四样新材料挤进同一个槽之后不再成立——
+    // 谁被挤掉必须由预算表决定，不能由 join 的先后顺序碰运气。
+    expect(msg.indexOf(BRIEF_BLOCK_START)).toBeLessThan(msg.indexOf("创始人自己给的一段材料"));
   });
 
-  it("知识库只吃剩余预算：简报占满 2800 → 知识片段正好拿到 4000-2800", async () => {
+  it("总槽 12000 之后简报不再挤掉知识库：简报占满 2800，知识库照拿自己的默认 2000", async () => {
     const { topic } = await seedResearched(hugeBrief());
     await seedKnowledge();
     const seen: { opts?: LoopOptions } = {};
@@ -217,9 +219,9 @@ describe("简报注入 × research 槽预算（§6）", () => {
     const msg = seen.opts!.userMessage;
     // 简报块撞上硬顶（含块尾说明行，比提取出的定界段略长）
     expect(briefBlockOf(msg).length).toBeLessThanOrEqual(BRIEF_BUDGET);
-    expect(knowledgeChunk(msg)).toBe(
-      `【知识库参考】\n《${KNOWLEDGE_FILE}》：${"字".repeat(RESEARCH_SLOT_BUDGET - BRIEF_BUDGET)}`,
-    );
+    // 改动前是 4000-2800=1200：老槽只有 4000，简报吃掉 2800 之后知识库只剩零头。
+    // §4.3 把总槽提到 12000，知识库回到「取自己的默认上限与剩余的较小者」。
+    expect(knowledgeChunk(msg)).toBe(`【知识库参考】\n《${KNOWLEDGE_FILE}》：${"字".repeat(2000)}`);
   });
 
   it("无简报时知识库拿的是自己的默认预算（2000）——对照组", async () => {
@@ -233,7 +235,7 @@ describe("简报注入 × research 槽预算（§6）", () => {
     );
   });
 
-  it("剩余预算 <400 → 知识块整体省略（半截知识没意义），简报与用户材料照留", async () => {
+  it("用户材料撞上 2000 的档位上限被截断，简报与知识库照留（§4.3 第 4 档）", async () => {
     const { topic } = await seedResearched(hugeBrief());
     await seedKnowledge();
     const seen: { opts?: LoopOptions } = {};
@@ -245,9 +247,13 @@ describe("简报注入 × research 槽预算（§6）", () => {
     );
 
     const msg = seen.opts!.userMessage;
-    expect(msg).not.toContain("知识库参考");
     expect(msg).toContain(BRIEF_BLOCK_START);
-    expect(msg).toContain("用户材料");
+    // 3004 字的用户材料只进得去 2000 字：档位上限是硬的，不许一段材料吃光整个槽
+    expect(msg).toContain(`用户材料${"料".repeat(1996)}`);
+    expect(msg).not.toContain(`用户材料${"料".repeat(1997)}`);
+    // 「剩余不足 400 就整块省略知识库」这条规则改到装配层单测里锁（input-budget.test.ts）——
+    // 总槽 12000 之后，靠一段用户材料已经撑不到那个边界了
+    expect(msg).toContain("知识库参考");
   });
 
   it("简报过期（选题改过）→ 照注入但块首标注", async () => {

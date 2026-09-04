@@ -16,6 +16,8 @@ import type { AllowedTransition } from "../lib";
 const STAGE_RANK: Record<string, number> = {
   topic_saved: 0,
   drafting: 1,
+  // 缺证据与写作中同秩:它是「还没写成」的一种,推进方向仍然是草稿就绪
+  needs_evidence: 1,
   draft_ready: 2,
   reviewing: 3,
   revision: 3,
@@ -30,9 +32,16 @@ const STAGE_RANK: Record<string, number> = {
 
 const rank = (status: string): number => STAGE_RANK[status] ?? -1;
 
+/**
+ * 归档是**退场**不是推进（P1 §4.4 起「缺证据」也能直接归档）。它的秩最高，
+ * 不排除掉的话「缺证据」稿的推进按钮默认会指向归档——一个叫推进的按钮把稿子扔进回收站。
+ * 只剩它可走时仍会经表序第一位回落到它（已发布 → 归档就是这条路）。
+ */
+const TERMINAL = "archived";
+
 export function defaultAdvanceTarget(currentStatus: string, transitions: AllowedTransition[]): string {
   const cur = rank(currentStatus);
-  const forward = transitions.filter((t) => rank(t.status) > cur);
+  const forward = transitions.filter((t) => rank(t.status) > cur && t.status !== TERMINAL);
   const farthest = (list: AllowedTransition[]): string =>
     list.reduce((best, t) => (rank(t.status) > rank(best.status) ? t : best)).status;
   const open = forward.filter((t) => !t.blockedReason);

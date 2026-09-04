@@ -33,7 +33,7 @@ export interface BriefSnapshot {
 }
 
 /** 键序无关的 canonical JSON：同一份简报无论字段怎么排，指纹恒定 */
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value as Record<string, unknown>)
@@ -42,8 +42,13 @@ function canonicalJson(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
 }
 
+/** 内容指纹：canonical JSON 的 sha256 前 16。简报、角度卡共用同一把尺 */
+export function contentHash(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value), "utf-8").digest("hex").slice(0, 16);
+}
+
 export function briefHash(brief: ResearchBrief): string {
-  return createHash("sha256").update(canonicalJson(brief), "utf-8").digest("hex").slice(0, 16);
+  return contentHash(brief);
 }
 
 /**

@@ -302,7 +302,7 @@ describe("reviewAndConverge — 降级", () => {
     expect(out.review.status).toBe("failed");
     expect(out.payload).toEqual(PAYLOAD); // 改坏了就不要这一版
     expect(out.humanizedText).toBe(TEXT);
-    expect(warns.some((w) => w.includes("Quality Gate"))).toBe(true);
+    expect(warns.some((w) => w.includes("修订稿仍未过门禁"))).toBe(true);
   });
 
   it("修订轮没提交成稿 → failed，不换稿", async () => {
@@ -434,5 +434,106 @@ describe("reviewAndConverge — 审稿材料", () => {
     expect(b.seen.reviewOpts[0].userMessage).toBe(a.seen.reviewOpts[0].userMessage);
     expect(a.seen.reviewOpts[0].systemPrompt).not.toContain("thesis 没被论证");
     expect(a.seen.reviewOpts[0].userMessage).not.toContain("【本稿切入点");
+  });
+});
+
+// ─── 共享账本与共享工具（P1 §3.3 / §4.4 / codex #13、#21） ────────────────────
+
+describe("修订轮与写稿轮共用同一份门禁与同一份额度", () => {
+  /** 账本替身：真实现在 research/evidence-ledger.ts，这里只要「同一个实例」这件事 */
+  function ledgerWithBudget(max: number) {
+    let used = 0;
+    return {
+      entries: [{ id: "ev-1", source: "verified_quote" as const, quote: "一年省下 3000 万美元" }],
+      budget: {
+        max,
+        used: () => used,
+        take: () => (used >= max ? false : (used += 1, true)),
+      },
+    };
+  }
+
+  it("写手用掉的 find_evidence 次数，修订轮就没有了（同一个实例，不是各记各的）", async () => {
+    const ledger = ledgerWithBudget(3);
+    const calls: string[] = [];
+    const evidenceTool = {
+      name: "find_evidence",
+      description: "查证",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        if (!ledger.budget.take()) return "Error: 额度用完了";
+        calls.push("hit");
+        return "证据";
+      },
+    };
+    // 写手先用掉 2 次
+    await evidenceTool.execute();
+    await evidenceTool.execute();
+
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    const out = await reviewAndConverge({ ...INPUT, canFindEvidence: true }, CONFIG, {
+      runLoopImpl: impl,
+      evidenceTool,
+    });
+
+    expect(out.review.status).toBe("revised");
+    // 修订轮拿到的是**同一把**工具
+    expect((seen.reviseOpts[0].tools ?? []).map((t) => t.name)).toEqual(["submit_script", "find_evidence"]);
+    // 额度是同一份：写手花了 2 次，修订只剩 1 次
+    expect(await evidenceTool.execute()).toBe("证据");
+    expect(await evidenceTool.execute()).toContain("额度用完了");
+    expect(calls).toHaveLength(3);
+  });
+
+  it("没有查证工具时修订轮的工具带与改动前一致（只有 submit_script）", async () => {
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: impl });
+    expect((seen.reviseOpts[0].tools ?? []).map((t) => t.name)).toEqual(["submit_script"]);
+  });
+
+  it("canFindEvidence=true → 审稿 prompt 删掉「不要凭空要求作者补数据」（codex #21）", async () => {
+    const withTool = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge({ ...INPUT, canFindEvidence: true }, CONFIG, { runLoopImpl: withTool.impl });
+    expect(withTool.seen.reviewOpts[0].systemPrompt).not.toContain("不要凭空要求作者补数据");
+    expect(withTool.seen.reviewOpts[0].systemPrompt).toContain("修订轮手上有查证工具");
+
+    const without = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: without.impl });
+    expect(without.seen.reviewOpts[0].systemPrompt).toContain("不要凭空要求作者补数据");
+  });
+
+  it("修订稿触发数字硬门 → 整轮作废，回退修订前那版（改 AI 味不许顺手编个数）", async () => {
+    const { impl } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }]],
+      // 修订稿凭空多了一个「一年省下 500 万」——账本里没有这个数
+      revisions: [[{ ...REVISED, body: "正文讲了三件事。开头一句话也留着。这样一年省下 500 万。" }]],
+    });
+    const warns: string[] = [];
+    const out = await reviewAndConverge(INPUT, CONFIG, {
+      runLoopImpl: impl,
+      onWarn: (m) => warns.push(m),
+      submitDeps: {
+        ledger: () => [{ id: "ev-1", source: "verified_quote", quote: "一年省下 3000 万美元" }],
+        requireNumberEvidence: true,
+        forbidFormatMarkers: true,
+      },
+    });
+    expect(out.payload).toEqual(PAYLOAD); // 回退到修订前
+    expect(warns.some((w) => w.includes("needs_evidence"))).toBe(true);
+  });
+
+  it("修订轮回合上限由调用方给（写稿侧算好的同一个数）", async () => {
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: impl, maxWriterTurns: 11 });
+    expect(seen.reviseOpts[0].maxTurns).toBe(11);
   });
 });
