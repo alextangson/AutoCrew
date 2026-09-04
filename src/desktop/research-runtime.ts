@@ -33,7 +33,7 @@ import {
   type ResearchJobKind,
 } from "../modules/research/research-job-store.js";
 import { runResearchFollowup } from "./chat-followup.js";
-import { searchAvailable } from "../modules/research/search-provider.js";
+import { searchAvailable, SEARCH_NOT_CONFIGURED } from "../modules/research/search-provider.js";
 
 /** SSE `research` 流的载荷（spec §2「进度」）：只报 topicId，消费方按它重读状态 */
 export interface ResearchUpdatedEvent {
@@ -71,9 +71,8 @@ export interface ResearchRuntimeOptions {
   followupImpl?: typeof runResearchFollowup;
 }
 
-/** 搜索未配置时的人话出口（投递口共用，chat 与 IPC 一字不差） */
-export const SEARCH_NOT_CONFIGURED =
-  "深调研要联网取证：先去设置页 · 搜索来源配好博查或 Tavily 的 key，再回来点深调研（简报里的每条证据都要有可点的来源）";
+/** 搜索未配置时的人话出口——事实源在 search-provider（core 层，dsh/MCP 也要同一句） */
+export { SEARCH_NOT_CONFIGURED };
 
 const RUNTIME_DOWN = "深调研运行时没在跑（server 未接线）——重启 AutoCrew 后重试";
 

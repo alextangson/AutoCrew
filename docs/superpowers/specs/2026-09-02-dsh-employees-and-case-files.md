@@ -162,6 +162,8 @@ dsh 的 `fs-sandbox` **只限写不限读**（README：reads always pass through
 `adapters/dsh/` 扩展为 bundle，`dsh plugin --profile web add dsh-autocrew`：
 
 1. **工具桥**（已有）：放行写作线工具 + §3.3 三个读取工具 + `autocrew_run_pipeline`。按 README 检查单逐个过。
+
+   > **偏差记录（2026-09-04）**：这一批只放行了写作线的 12 个工具（`autocrew_init`/`status`/`dashboard`/`topic`/`content`/`generate`/`style`/`review`/`humanize`/`rewrite`/`pre_publish`/`workflow`），§3.3 的三个案卷读取工具与 `autocrew_run_pipeline` 尚未在注册表里存在，故不在本批。逐工具审计结论（含不放行的原因）见 `adapters/dsh/README.md` 的审计表；其中 `autocrew_research` 判定为**不合格**——适配器空手时会造占位选题并 `ok:true` 报成功，调研入口改由 `autocrew_workflow research` 承担。
 2. **agent preset `autocrew`**（`adapters/dsh/agent-presets/autocrew/agent.cordis.yml`）。**dsh 限制（2026-09-02 实测）**：launcher `profile-boot` 合成时把 `agent-presets.roots` 整体覆盖成只剩自带根目录，bundle 无法经 patch 声明 preset 根；唯一路径是插件 apply 时把 preset 复制进 `$DSH_HOME/.agent-presets/autocrew/`（用户根，`includeUserRoot` 默认开），带版本戳幂等、只覆盖自带文件、可用 `installPreset:false` 关闭。组成：
    - `dsh-persona`：总编辑人设（§4.3）
    - `dsh-autocrew` 工具桥（含读取工具）；**不挂 `tool-fs`/`tool-fs-search`**

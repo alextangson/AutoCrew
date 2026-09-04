@@ -24,10 +24,33 @@ import { EventBus } from "../../../src/runtime/events.js";
 import { ToolRunner } from "../../../src/runtime/tool-runner.js";
 
 /**
- * 第一批进 dsh 的工具。每加一个都要先过它的输出契约（返回形状是否稳定、失败是否
- * 都走 ok:false、有没有 import.meta.url 相对资源），过一个加一个，不整批放行。
+ * 放行进 dsh 的工具 —— 「写作线」：开机 → 看状态 → 立意 → 写 → 审 → 发布前门禁。
+ *
+ * 每一个都逐条过了 README「再放行一个工具的检查单」，逐工具的审计结论记在
+ * README 的审计表里（失败是否都走 ok:false、有没有 import.meta.url 推出的
+ * REPO_ROOT、有没有新的外部依赖）。表里判定为「不放行」的工具**不许**因为
+ * 「顺手」被加进这个数组——尤其是 `autocrew_research`：它的浏览器适配器拿不到
+ * 数据时会造 5 条占位选题、然后 `ok:true` 报成功，正是这个桥要挡的那类 bug。
  */
-export const PORTED_TOOLS: readonly string[] = ["autocrew_status"];
+export const PORTED_TOOLS: readonly string[] = [
+  // 开机自检与全局视图
+  "autocrew_init",
+  "autocrew_status",
+  "autocrew_dashboard",
+  // 选题 → 案卷
+  "autocrew_topic",
+  "autocrew_content",
+  // 写
+  "autocrew_generate",
+  "autocrew_style",
+  // 审 → 改 → 发布前门禁
+  "autocrew_review",
+  "autocrew_humanize",
+  "autocrew_rewrite",
+  "autocrew_pre_publish",
+  // 一站式流程：research / status / select_angle / write / draft / doctor
+  "autocrew_workflow",
+];
 
 /** 开放对象：只保证「是个对象」，形状随 action 变。 */
 const OPEN_OBJECT_SCHEMA = { type: "object" as const, additionalProperties: true };
@@ -50,6 +73,11 @@ export interface BuiltTools {
   definitions: ToolDefinition[];
   /** 注册源里存在、但这一批还没放行的工具名——调用方据此打印进度。 */
   pending: string[];
+  /**
+   * 在 `PORTED_TOOLS` 里、但注册源里查无此名的工具名。写错一个字母就等于那个工具
+   * 悄悄消失，所以这里把它抬成一条可见的诊断，而不是让 for 循环无声跳过。
+   */
+  missing: string[];
 }
 
 /**
@@ -89,5 +117,8 @@ export function buildDshTools(config: PluginConfig = {}): BuiltTools {
     });
   }
 
-  return { definitions, pending };
+  const built = new Set(definitions.map((d) => d.name));
+  const missing = PORTED_TOOLS.filter((name) => !built.has(name));
+
+  return { definitions, pending, missing };
 }

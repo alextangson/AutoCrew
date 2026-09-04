@@ -22,10 +22,30 @@ function statusTool() {
 
 describe("ToolRunner → dsh 工具桥", () => {
   it("只放行 PORTED_TOOLS，其余记进 pending 而不是静默消失", () => {
-    const { definitions, pending } = buildDshTools({ data_dir: DATA_DIR });
-    expect(definitions.map((d) => d.name)).toEqual([...PORTED_TOOLS]);
-    expect(pending).toContain("autocrew_generate");
-    expect(pending).not.toContain("autocrew_status");
+    const { definitions, pending, missing } = buildDshTools({ data_dir: DATA_DIR });
+    const built = definitions.map((d) => d.name);
+    // 放行的 = 清单 - 还没落地的；两边并起来必须正好是清单，一个不多一个不少。
+    expect([...built, ...missing].sort()).toEqual([...PORTED_TOOLS].sort());
+    for (const name of built) expect(PORTED_TOOLS).toContain(name);
+    for (const name of pending) expect(PORTED_TOOLS).not.toContain(name);
+    expect(pending).toContain("autocrew_publish");
+    expect(built).toContain("autocrew_status");
+  });
+
+  it("没放行的高危工具一个都不许漏进来", () => {
+    // 逐条对应 README 审计表里判定「不放行」的那几行。这条锁的不是名单长度，
+    // 而是那几个具体的坑：bundle 后指错的 REPO_ROOT、需要 Gemini key、
+    // 拿不到数据就造占位结果还报 ok:true、需要常驻 daemon。
+    const { definitions } = buildDshTools({ data_dir: DATA_DIR });
+    const built = definitions.map((d) => d.name);
+    for (const name of [
+      "autocrew_publish", // wechat-mp.ts 的 REPO_ROOT 打包后必然指错
+      "autocrew_cover_review", // 需要 Gemini key
+      "autocrew_research", // 适配器空手时造占位选题、仍 ok:true
+      "autocrew_pipeline", // 只写调度定义，执行要常驻 daemon
+    ]) {
+      expect(built).not.toContain(name);
+    }
   });
 
   it("参数 schema 是 lossless JSON —— TypeBox 的 symbol 必须被剥掉", () => {

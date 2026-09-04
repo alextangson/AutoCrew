@@ -23,6 +23,7 @@ import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
 import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
 import { generateSchema, executeGenerate } from "./src/tools/generate.js";
 import { styleSchema, executeStyle } from "./src/tools/style.js";
+import { workflowSchema, executeWorkflow, WORKFLOW_DESCRIPTION } from "./src/tools/workflow.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -63,6 +64,14 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
       "Actions: save, list, get, update, transition, list_siblings, create_variant.",
     parameters: contentSaveSchema,
     execute: executeContentSave,
+  });
+
+  runner.register({
+    name: "autocrew_workflow",
+    label: "AutoCrew Workflow",
+    description: WORKFLOW_DESCRIPTION,
+    parameters: workflowSchema,
+    execute: (params) => executeWorkflow(params),
   });
 
   runner.register({
