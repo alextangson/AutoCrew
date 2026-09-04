@@ -169,8 +169,11 @@ interface Attribution {
   angleSkipReason?: string;
 }
 
-/** 整稿墙钟（P1 §4.4）：补证 + 写稿 + 审稿三段合计的上限 */
-export const GENERATION_WALL_CLOCK_MS = 15 * 60_000;
+/**
+ * 整稿墙钟（P1 §4.4）：补证 + 写稿 + 审稿三段合计的上限。
+ * 30 分钟：DeepSeek 上补证 ≤6 分钟、写稿 5–8 分钟、审稿段 ≤12 分钟；原 15 分钟会在审稿段中途砍掉。
+ */
+export const GENERATION_WALL_CLOCK_MS = 30 * 60_000;
 
 /** 生成占位稿标题哨兵——区分「生成占位稿」与手工存的 drafting 稿(content-save 允许)。
  *  renderer(board/workbench.js)按同字面量正则识别,改动需同步。 */

@@ -99,6 +99,8 @@ export interface ReviewDeps {
   runLoopImpl?: typeof runLoop;
   /** 整阶段墙钟；缺省 5 分钟 */
   deadlineMs?: number;
+  /** 单轮墙钟上限；缺省 PER_PASS_DEADLINE_MS（测试注入小值） */
+  perPassDeadlineMs?: number;
   nowImpl?: () => number;
   runId?: string;
   /** 降级出口：审稿是增益，降级了必须有人话留痕，默认 console.warn */
@@ -128,8 +130,15 @@ export interface ReviewOutcome {
   tokensUsed: number;
 }
 
-/** 整阶段墙钟上限 5 分钟（§2.2 硬闸：runLoop 的 token 限额只是轮前软检查） */
-export const DEFAULT_REVIEW_DEADLINE_MS = 300_000;
+/**
+ * 整阶段墙钟上限 12 分钟（§2.2 硬闸：runLoop 的 token 限额只是轮前软检查）。
+ * 原 5 分钟是审稿+全部修订轮**共用**的：P1b 端到端里 DeepSeek 审一遍就用掉大半，修订轮
+ * 必然超时降级——P1c 花在审稿判据上的功夫一行都没执行到。现在总额 12 分钟，另给每一轮
+ * 单独封顶（PER_PASS_DEADLINE_MS），一轮卡死不拖垮整段。
+ */
+export const DEFAULT_REVIEW_DEADLINE_MS = 12 * 60_000;
+/** 单轮（审一遍 / 修一遍）墙钟上限 */
+export const PER_PASS_DEADLINE_MS = 5 * 60_000;
 /** 修订上限 2 轮（§2.2）——再多就是无限润色 */
 const MAX_REVISION_ROUNDS = 2;
 /** malformed 自纠 1 轮（§2.3） */
@@ -403,7 +412,9 @@ export async function reviewAndConverge(
   const now = deps.nowImpl ?? Date.now;
   const startedAt = now();
   const deadlineMs = deps.deadlineMs ?? DEFAULT_REVIEW_DEADLINE_MS;
+  const perPassMs = deps.perPassDeadlineMs ?? PER_PASS_DEADLINE_MS;
   const remaining = () => deadlineMs - (now() - startedAt);
+  const passCap = () => Math.min(remaining(), perPassMs);
   const warn = deps.onWarn ?? ((message: string) => console.warn(`[script-review] ${message}`));
 
   let draft: Draft = { payload: input.payload, humanizedText: input.humanizedText };
@@ -413,10 +424,11 @@ export async function reviewAndConverge(
   let tokensUsed = 0;
 
   for (;;) {
-    const pass = await withDeadline(() => reviewOnce(input, draft, config, deps, rounds), remaining());
+    const cap = passCap();
+    const pass = await withDeadline(() => reviewOnce(input, draft, config, deps, rounds), cap);
     if (pass !== DEADLINE) tokensUsed += pass.tokensUsed;
     if (pass === DEADLINE || !pass.ok) {
-      const reason = pass === DEADLINE ? `审稿超时（${Math.round(deadlineMs / 1000)} 秒）` : pass.reason;
+      const reason = pass === DEADLINE ? `审稿超时（本轮上限 ${Math.round(cap / 1000)} 秒，整段 ${Math.round(deadlineMs / 1000)} 秒）` : pass.reason;
       // 首轮就没审成 = 这稿压根没经 AI 审稿；已经修过再失手 = 审出过问题但收不了尾
       warn(rounds === 0 ? `本稿未经 AI 审稿：${reason}` : `审稿未能收尾（已修订 ${rounds} 轮）：${reason}`);
       return settle(draft, rounds === 0 ? "skipped" : "failed", rounds, fixed, issues, tokensUsed);
@@ -432,7 +444,7 @@ export async function reviewAndConverge(
       warn(`修订 ${rounds} 轮后仍有 ${blockers.length} 项 blocker，按残留转正`);
       return settle(draft, "failed", rounds, fixed, issues, tokensUsed);
     }
-    const revised = await withDeadline(() => reviseOnce(input, draft, blockers, config, deps), remaining());
+    const revised = await withDeadline(() => reviseOnce(input, draft, blockers, config, deps), passCap());
     if (revised !== DEADLINE) tokensUsed += revised.tokensUsed;
     if (revised === DEADLINE || !revised.ok) {
       warn(revised === DEADLINE ? "修订超时，丢弃在途修订，用最后一版过 gate 的稿" : `修订失败：${revised.reason}`);

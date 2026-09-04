@@ -360,6 +360,22 @@ describe("reviewAndConverge — 墙钟", () => {
     expect(warns.some((w) => w.includes("丢弃在途修订"))).toBe(true);
   });
 
+  it("单轮封顶：整段还有富余但审一遍超过单轮上限 → 本稿未经审稿，原因带两个上限", async () => {
+    const warns: string[] = [];
+    const runLoopImpl = async (): Promise<LoopResult> => {
+      await new Promise((r) => setTimeout(r, 60)); // 真等：单轮上限走的是真实计时器
+      return { finalMessage: "", turns: 1, totalTokens: 0, toolCallCount: 0, stopReason: "no_tool_calls" };
+    };
+    const out = await reviewAndConverge(INPUT, CONFIG, {
+      runLoopImpl,
+      deadlineMs: 60_000,
+      perPassDeadlineMs: 10,
+      onWarn: (m) => warns.push(m),
+    });
+    expect(out.review.status).toBe("skipped");
+    expect(warns.some((w) => w.includes("本轮上限 0 秒") && w.includes("整段 60 秒"))).toBe(true);
+  });
+
   it("第二轮开始前已到点 → 不再发起修订，failed", async () => {
     let clock = 0;
     const { impl, seen } = makeLoop({ reviews: [[{ verdict: "revise", issues: [BLOCKER] }]] });
