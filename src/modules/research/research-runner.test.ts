@@ -156,7 +156,7 @@ describe("触发与合并", () => {
     expect(!res.accepted && res.reason).toContain("回收站");
   });
 
-  it("非终态重复触发：返回同一个 job，不重排也不重跑", async () => {
+  it("在途时再触发（两种 kind 都）→ 拒「研究进行中」，不排第二条也不重跑", async () => {
     let calls = 0;
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
@@ -171,14 +171,46 @@ describe("触发与合并", () => {
     const topic = await newTopic();
     const first = acceptedJob(await runner.trigger(topic.id));
     const second = await runner.trigger(topic.id);
-    const third = await runner.trigger(topic.id);
+    const third = await runner.trigger(topic.id, "angles");
 
-    expect(second.accepted && second.deduped).toBe(true);
-    expect(third.accepted && third.deduped).toBe(true);
-    expect(acceptedJob(second).startedAt).toBe(first.startedAt);
+    for (const res of [second, third]) {
+      expect(res.accepted).toBe(false);
+      expect(!res.accepted && res.inFlight).toBe(true);
+      expect(!res.accepted && res.reason).toContain("研究进行中");
+    }
+    // 台账上仍只有第一条那一轮（startedAt 没被刷新 = 没有第二条 job）
+    expect((await getJob(topic.id, dataDir))?.startedAt).toBe(first.startedAt);
     release();
     await runner.idle();
     expect(calls).toBe(1);
+  });
+
+  it("running 但租约已过期 → 捡回原任务重排（deduped），不新开一轮、kind 不变", async () => {
+    const topic = await newTopic();
+    await upsertJob(
+      {
+        topicId: topic.id,
+        kind: "angles",
+        status: "running",
+        startedAt: new Date(AT - RESEARCH_LEASE_MS * 2).toISOString(),
+        claimedAt: new Date(AT - RESEARCH_LEASE_MS * 2).toISOString(),
+        perspectives: [],
+        topicHash: topicHashOf(topic.title, topic.description),
+      },
+      dataDir,
+    );
+    const runner = makeRunner({
+      now: () => AT,
+      runJob: async (job) => {
+        expect(job.kind).toBe("angles");
+        return { status: "succeeded", perspectives: [], briefRevision: 3 };
+      },
+    });
+    // 用 full 去触发也不改写它的 kind：半路换 kind 等于凭空改写一条在册任务
+    const res = await runner.trigger(topic.id, "full");
+    expect(res).toMatchObject({ accepted: true, deduped: true });
+    await runner.idle();
+    expect(await getJob(topic.id, dataDir)).toMatchObject({ status: "succeeded", kind: "angles" });
   });
 
   it("终态后再触发：开新一轮（startedAt 刷新、视角重置、hash 现算）", async () => {
@@ -245,6 +277,93 @@ describe("briefRevision 指针（只进不退）", () => {
       await runner.idle();
       expect((await getJob(topic.id, dataDir))?.briefRevision).toBe(expected);
     }
+  });
+});
+
+/**
+ * angles job（P1 spec §3.5）：走同一套租约/心跳/结算，但结算多一道 CAS——
+ * 它算的是「起跑那一刻那份简报」的卡，指针被别人推过就作废。
+ */
+describe("angles job", () => {
+  /** 已有一版简报的选题：angles job 的起点 */
+  async function seedBrief(topicId: string, revision: number): Promise<void> {
+    await upsertJob(
+      {
+        topicId,
+        status: "succeeded",
+        startedAt: new Date(AT - 3600_000).toISOString(),
+        settledAt: new Date(AT - 3500_000).toISOString(),
+        perspectives: allOk(),
+        briefRevision: revision,
+        topicHash: "h",
+      },
+      dataDir,
+    );
+  }
+
+  it("投递即带 kind 与空视角，落定推进指针（与 full 同一套租约/结算）", async () => {
+    const topic = await newTopic();
+    await seedBrief(topic.id, 1);
+    const claims: Array<string | undefined> = [];
+    const runner = makeRunner({
+      now: () => AT,
+      runJob: async (job) => {
+        claims.push(job.claimedAt);
+        expect(job.kind).toBe("angles");
+        expect(job.briefRevision).toBe(1); // CAS 的起点在 claim 那一刻定死
+        return { status: "succeeded", perspectives: [], briefRevision: 2 };
+      },
+    });
+
+    const queued = acceptedJob(await runner.trigger(topic.id, "angles"));
+    expect(queued).toMatchObject({ kind: "angles", status: "queued", perspectives: [], briefRevision: 1 });
+    await runner.idle();
+
+    expect(claims).toEqual([new Date(AT).toISOString()]); // 租约照盖
+    const settled = await getJob(topic.id, dataDir);
+    expect(settled).toMatchObject({
+      kind: "angles",
+      status: "succeeded",
+      briefRevision: 2,
+      perspectives: [],
+    });
+    expect(settled?.claimedAt).toBeUndefined(); // 租约照样释放
+  });
+
+  it("CAS：落定时指针已被别人推过 → failed/stale_pointer，且不覆盖那个更新的指针", async () => {
+    const topic = await newTopic();
+    await seedBrief(topic.id, 1);
+    const runner = makeRunner({
+      runJob: async (job) => {
+        // 跨进程的晚到结算：这一轮跑的时候，别人已经把简报推到了 v3
+        const latest = (await getJob(job.topicId, dataDir))!;
+        await upsertJob({ ...latest, briefRevision: 3 }, dataDir);
+        return { status: "succeeded", perspectives: [], briefRevision: 2 };
+      },
+    });
+
+    await runner.trigger(topic.id, "angles");
+    await runner.idle();
+
+    const settled = await getJob(topic.id, dataDir);
+    expect(settled).toMatchObject({ status: "failed", errorCode: "stale_pointer", briefRevision: 3 });
+    expect(settled?.failReason).toContain("v3");
+  });
+
+  it("full job 语义不变：指针被推过照样推进（它产的是更大的新版本）", async () => {
+    const topic = await newTopic();
+    await seedBrief(topic.id, 1);
+    const runner = makeRunner({
+      runJob: async (job) => {
+        const latest = (await getJob(job.topicId, dataDir))!;
+        await upsertJob({ ...latest, briefRevision: 3 }, dataDir);
+        return { status: "succeeded", perspectives: allOk(), briefRevision: 4 };
+      },
+    });
+
+    await runner.trigger(topic.id);
+    await runner.idle();
+    expect(await getJob(topic.id, dataDir)).toMatchObject({ status: "succeeded", briefRevision: 4 });
   });
 });
 

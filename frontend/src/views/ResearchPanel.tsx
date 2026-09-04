@@ -28,6 +28,8 @@ interface PerspectiveState {
 interface ResearchJob {
   topicId: string;
   status: JobStatus;
+  /** 缺席 = 深调研(full);"angles" = 只重跑立意,没有视角进度可画 */
+  kind?: "full" | "angles";
   startedAt: string;
   settledAt?: string;
   perspectives: PerspectiveState[];
@@ -173,6 +175,8 @@ function BriefView({ brief, assets }: { brief: Brief; assets: AssetView[] }) {
 }
 
 function Progress({ job }: { job: ResearchJob }) {
+  // angles job 不跑视角:空数组不是「四路都还没开始」,画四个 ○ 是在撒谎
+  if (job.perspectives.length === 0) return null;
   const byName = new Map(job.perspectives.map((p) => [p.name, p]));
   return (
     <div className="research-steps">
@@ -213,7 +217,13 @@ function StateLines({ st }: { st: StatusData }) {
     return (
       <>
         <Progress job={job} />
-        <p className="muted mono">{job.status === "queued" ? "排队中…" : "四视角并行侦察中,通常几分钟"}</p>
+        <p className="muted mono">
+          {job.status === "queued"
+            ? "排队中…"
+            : job.kind === "angles"
+              ? "在重新立意,通常一两分钟"
+              : "四视角并行侦察中,通常几分钟"}
+        </p>
       </>
     );
   }
@@ -317,11 +327,12 @@ export function ResearchPanel(props: {
     onAngleGate?.({ cards: cards.length, state: choice });
   }, [cards.length, choice, onAngleGate]);
 
-  const dig = async () => {
+  /** 两个投递按钮共用一条路:回执 note 原样 toast,拒绝原样 toast(「研究进行中」也是拒绝) */
+  const post = async (channel: "research:deep_dive" | "research:regenerate_angles", failed: string) => {
     setBusy(true);
     try {
-      const r = await invoke("research:deep_dive", { topic_id: topicId });
-      if (!r.ok) return toast(r.error ?? "深调研派发失败");
+      const r = await invoke(channel, { topic_id: topicId });
+      if (!r.ok) return toast(r.error ?? failed);
       toast((r as unknown as { data?: { note?: string } }).data?.note ?? "已排队");
       await load();
     } finally {
@@ -350,8 +361,20 @@ export function ResearchPanel(props: {
           {meta && (
             <button onClick={() => setOpen((v) => !v)}>{open ? "收起简报" : "看简报"}</button>
           )}
+          {/* 重新立意只重跑立意 pass:有简报才有事实可用,在途任务期间一律禁用(投出去也会被拒) */}
+          {meta && (
+            <button
+              disabled={busy || running}
+              onClick={() => void post("research:regenerate_angles", "重新立意派发失败")}
+            >
+              {busy ? "派发中…" : "重新立意"}
+            </button>
+          )}
           {!running && (
-            <button disabled={busy || !st.searchConfigured} onClick={() => void dig()}>
+            <button
+              disabled={busy || !st.searchConfigured}
+              onClick={() => void post("research:deep_dive", "深调研派发失败")}
+            >
               {busy ? "派发中…" : label}
             </button>
           )}

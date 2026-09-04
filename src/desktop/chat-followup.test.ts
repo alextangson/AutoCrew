@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
+  ANGLE_FOLLOWUP_PREFIX,
   FOLLOWUP_PREFIX,
   buildFollowupMessage,
   resetFollowupState,
@@ -99,6 +100,20 @@ describe("buildFollowupMessage（回报文案四形态）", () => {
     const msg = buildFollowupMessage(report({ failed: true, failReason: "搜索配额耗尽(quota)" }));
     expect(msg).toBe(`${FOLLOWUP_PREFIX}选题《AI 编程助手横评》调研失败:搜索配额耗尽(quota)`);
   });
+
+  it("重新立意：换暗号、不念摘要（材料没变），只摆新卡", () => {
+    const msg = buildFollowupMessage(report({ kind: "angles", briefRevision: 3 }));
+    expect(msg.startsWith(ANGLE_FOLLOWUP_PREFIX)).toBe(true);
+    expect(msg).not.toContain(FOLLOWUP_PREFIX);
+    expect(msg).toContain("选题《AI 编程助手横评》重新立意完成(第 3 版简报,材料没变、只换了角度候选)。");
+    expect(msg).toContain("角度候选(1 张):");
+    expect(msg).not.toContain("摘要:"); // 事实一个字没变，重念一遍只会让人以为又查了一轮
+  });
+
+  it("重新立意失败：说的是「重新立意失败」，不是「调研失败」", () => {
+    const msg = buildFollowupMessage(report({ kind: "angles", failed: true, failReason: "立意未产出（no_submit）" }));
+    expect(msg).toBe(`${ANGLE_FOLLOWUP_PREFIX}选题《AI 编程助手横评》重新立意失败:立意未产出（no_submit）`);
+  });
 });
 
 // ─── 编排 ────────────────────────────────────────────────────────────────────
@@ -166,6 +181,18 @@ describe("runResearchFollowup", () => {
     expect(String(call.message)).toContain("AI 编程助手横评");
     expect(delivered).toEqual([{ conversationId: conv.id, topicId: job.topicId }]);
     expect((await getJob(job.topicId, dir))?.followupAt).toBeTruthy();
+  });
+
+  it("angles job 的回报走同一条路，措辞按 kind 走（不叫「调研回报」）", async () => {
+    const conv = await createConversation("派活那段", dir);
+    const job = await settledJob({ kind: "angles", perspectives: [], originConversationId: conv.id });
+    const runTurn = stubTurn();
+
+    expect(await runResearchFollowup(job, { dataDir: dir, runTurn, isBusy: () => false })).toBe("delivered");
+    const call = (runTurn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(String(call.message)).toContain(ANGLE_FOLLOWUP_PREFIX);
+    expect(String(call.message)).toContain("重新立意完成");
+    expect(String(call.message)).toContain("角度候选(1 张):");
   });
 
   it("一个任务只回报一次：followupAt 已盖的再触发直接跳过", async () => {

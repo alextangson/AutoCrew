@@ -10,7 +10,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { createDeepResearchRunJob, type DeepResearchDeps } from "./deep-research.js";
-import { briefPath, briefsDir, isAngleCardV3, loadBrief, loadLatestBrief } from "./brief-store.js";
+import {
+  briefPath,
+  briefsDir,
+  isAngleCardV3,
+  loadBrief,
+  loadLatestBrief,
+  type ResearchBrief,
+} from "./brief-store.js";
 import {
   FetchImageError,
   type FetchImageErrorCode,
@@ -24,12 +31,13 @@ import {
   PERSPECTIVE_NAMES,
   pendingPerspectives,
   topicHashOf,
+  upsertJob,
   type PerspectiveName,
   type PerspectiveState,
   type ResearchJob,
 } from "./research-job-store.js";
 import { createResearchRunner } from "./research-runner.js";
-import { saveTopic, softDeleteTopic, type Topic } from "../../storage/local-store.js";
+import { saveTopic, softDeleteTopic, updateTopic, type Topic } from "../../storage/local-store.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, runLoop } from "../../engine/loop.js";
 
@@ -699,5 +707,115 @@ describe("立意 pass", () => {
 
     const brief = await loadLatestBrief(topic.id, dataDir);
     expect(brief!.gaps.join("")).toContain("网感元素需 ≥2");
+  });
+});
+
+
+// ─── angles job（P1 spec §3.5）：只重跑立意，事实原样抄 ──────────────────────
+
+describe("angles job", () => {
+  /** 先跑一轮 full 把简报 v1 与指针备好——angles job 的输入就是「当前生效简报」 */
+  async function seedBrief(topic: Topic): Promise<ResearchBrief> {
+    const outcome = await makeRunJob()(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+    await upsertJob(
+      {
+        ...jobFor(topic),
+        status: "succeeded",
+        claimedAt: undefined,
+        settledAt: "2026-07-26T08:06:00.000Z",
+        briefRevision: outcome.briefRevision,
+      },
+      dataDir,
+    );
+    return (await loadBrief(topic.id, 1, dataDir))!;
+  }
+
+  function anglesJob(topic: Topic): ResearchJob {
+    return { ...jobFor(topic), kind: "angles", perspectives: [], briefRevision: 1 };
+  }
+
+  it("事实字段逐字照抄 + 新卡 + 新 revision，回执不带视角", async () => {
+    const topic = await newTopic();
+    const v1 = await seedBrief(topic);
+
+    // 第二轮立意换一批卡：证明新简报里的卡确实是这一轮产的
+    const relit = {
+      ...ANGLES_OK,
+      candidates: [
+        angleCand({ angle: "把维护账摊开算", thesis: "省下的编码时间被维护成本吃回去，净收益接近于零" }),
+        angleCand({
+          angle: "验收标准换一个",
+          primary_persona: "convert",
+          thesis: "该被考核的不是生成速度，而是改完之后谁能读懂",
+          anti_scope: "不谈选型、不谈价格",
+          elements: ["美点", "爽点"],
+        }),
+        angleCand({
+          angle: "从翻车案例倒推",
+          primary_persona: "trust",
+          thesis: "翻车集中在重构类任务，说明它擅长补全而不是设计",
+          anti_scope: "不做成本测算、不谈团队管理",
+          elements: ["痛点→理想状态", "泪点"],
+        }),
+      ],
+    };
+    const outcome = await makeRunJob({ angles: [relit] })(anglesJob(topic));
+
+    expect(outcome).toMatchObject({ status: "succeeded", briefRevision: 2, perspectives: [] });
+
+    const v2 = (await loadBrief(topic.id, 2, dataDir))!;
+    expect(v2.summary).toBe(v1.summary);
+    expect(v2.evidence).toEqual(v1.evidence);
+    expect(v2.assetPicks).toEqual(v1.assetPicks);
+    expect(v2.perspectives).toEqual(v1.perspectives);
+    expect(v2.tensions).toEqual(v1.tensions);
+    expect(v2.missingPerspectives).toEqual(v1.missingPerspectives);
+    expect(v2.gaps).toEqual(v1.gaps);
+    expect(v2.revision).toBe(2);
+    expect(v2.topicHash).toBe(topicHashOf(topic.title, topic.description));
+    expect(Date.parse(v2.generatedAt)).toBeGreaterThanOrEqual(Date.parse(v1.generatedAt));
+
+    const cards = v2.angleCards ?? [];
+    expect(cards.map((c) => c.angle)).toEqual(["把维护账摊开算", "验收标准换一个", "从翻车案例倒推"]);
+    expect(cards.every((c) => isAngleCardV3(c))).toBe(true);
+    // v1 逐字不变（不可变版本）
+    expect((await loadBrief(topic.id, 1, dataDir))!.angleCards?.[0].angle).toBe("算一笔维护账");
+  });
+
+  it("立意失败 → job failed(angle_failed)，一份新简报都不落", async () => {
+    const topic = await newTopic();
+    await seedBrief(topic);
+    const warns: string[] = [];
+    const outcome = await makeRunJob({ angles: [] }, warns)(anglesJob(topic));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.errorCode).toBe("angle_failed");
+    expect(String(outcome.failReason)).toContain("no_submit");
+    expect(outcome.perspectives).toEqual([]);
+    // 只换卡的新版本没有卡就毫无意义：不落盘，指针留在 v1
+    expect(await loadBrief(topic.id, 2, dataDir)).toBeNull();
+    expect((await loadLatestBrief(topic.id, dataDir))!.revision).toBe(1);
+  });
+
+  it("没有生效简报 → no_brief（绝不拿磁盘上那份没被采纳的顶上）", async () => {
+    const topic = await newTopic();
+    const outcome = await makeRunJob()(anglesJob(topic));
+    expect(outcome).toMatchObject({ status: "failed", errorCode: "no_brief", perspectives: [] });
+    expect(String(outcome.failReason)).toContain("先跑一轮深调研");
+  });
+
+  it("选题正文在上一轮之后改过 → 照跑，但把「基于旧版选题」写进 gaps", async () => {
+    const topic = await newTopic();
+    const v1 = await seedBrief(topic);
+    const renamed = (await updateTopic(topic.id, { title: "AI 编程助手横评（2026 版）" }, dataDir))!;
+
+    const outcome = await makeRunJob()({ ...anglesJob(topic), topicHash: topicHashOf(renamed.title, renamed.description) });
+    expect(outcome.status).toBe("succeeded");
+
+    const v2 = (await loadBrief(topic.id, 2, dataDir))!;
+    expect(v2.topicHash).toBe(topicHashOf(renamed.title, renamed.description));
+    expect(v2.topicHash).not.toBe(v1.topicHash);
+    expect(v2.gaps.some((g) => g.includes("仍基于旧版选题"))).toBe(true);
   });
 });

@@ -105,8 +105,12 @@ export function makeEnsureBrief(
       const existing = await getJobImpl(topicId, dir);
       if (existing?.briefRevision !== undefined) return { state: "already" };
       const accepted = await trigger(topicId, dir);
-      // 搜索 key 没配、运行时没起、选题不存在——投递口的人话理由原样带回去留痕
-      if (!accepted.accepted) return { state: "unavailable", note: accepted.reason };
+      // 「研究进行中」不是投递失败：这条选题此刻正有一轮在跑，等它就是本闸口要干的事
+      // （P1 §3.5 把「合并进在途任务」改成了拒，这里必须显式认这一位，否则开写会跳过等待）
+      if (!accepted.accepted && !accepted.inFlight) {
+        // 搜索 key 没配、运行时没起、选题不存在——投递口的人话理由原样带回去留痕
+        return { state: "unavailable", note: accepted.reason };
+      }
       await notifyWaiting(onWaiting);
       await announce(emit, dir);
       return await waitForBrief(topicId, dir, ctx);

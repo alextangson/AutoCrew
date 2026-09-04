@@ -184,6 +184,7 @@ import {
 import { patternsListHandler, patternsUpdateHandler, patternsDeleteHandler } from "./pattern-handlers.js";
 import {
   researchDeepDiveHandler,
+  researchRegenerateAnglesHandler,
   researchStatusHandler,
   researchBriefGetHandler,
   researchListAssetsHandler,
@@ -1331,6 +1332,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "patterns:update": patternsUpdateHandler,
     "patterns:delete": patternsDeleteHandler,
     "research:deep_dive": researchDeepDiveHandler,
+    "research:regenerate_angles": researchRegenerateAnglesHandler,
     "research:status": researchStatusHandler,
     "research:brief_get": researchBriefGetHandler,
     "research:list_assets": researchListAssetsHandler,

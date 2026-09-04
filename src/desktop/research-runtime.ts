@@ -30,6 +30,7 @@ import {
   isTerminalJobStatus,
   type PerspectiveName,
   type ResearchJob,
+  type ResearchJobKind,
 } from "../modules/research/research-job-store.js";
 import { runResearchFollowup } from "./chat-followup.js";
 import { searchAvailable } from "../modules/research/search-provider.js";
@@ -197,19 +198,36 @@ export function startResearchRuntime(opts: ResearchRuntimeOptions = {}): Promise
   });
 }
 
-/** 选题卡按钮 / chat 工具 / 以后的托管触发共用的**唯一投递口** */
-export async function triggerDeepResearch(topicId: string, dataDir?: string): Promise<TriggerResult> {
+/** 两种 kind 共用的投递体。`what` 只用于故障文案（「深调研」/「重新立意」） */
+async function postJob(topicId: string, kind: ResearchJobKind, dataDir?: string): Promise<TriggerResult> {
   if (!started) return { accepted: false, reason: RUNTIME_DOWN };
   const target = dataDir ?? boundDataDir ?? getDataDir(options.rootDir);
-  if (!(await searchAvailable(target))) return { accepted: false, reason: SEARCH_NOT_CONFIGURED };
+  const what = kind === "angles" ? "重新立意" : "深调研";
+  // 搜索 key 门只管 full：angles job 不出网，它要的是引擎不是搜索
+  if (kind === "full" && !(await searchAvailable(target))) {
+    return { accepted: false, reason: SEARCH_NOT_CONFIGURED };
+  }
   try {
     const active = await serialize(() => bindTo(target));
-    return await active.trigger(topicId);
+    return await active.trigger(topicId, kind);
   } catch (err) {
     // 台账写不进去之类的自身故障：照实拒，不假装已排队
     report(`投递失败（${topicId}）：${errText(err)}`);
-    return { accepted: false, reason: `深调研投递失败：${errText(err)}` };
+    return { accepted: false, reason: `${what}投递失败：${errText(err)}` };
   }
+}
+
+/** 选题卡按钮 / chat 工具 / 以后的托管触发共用的**唯一投递口** */
+export function triggerDeepResearch(topicId: string, dataDir?: string): Promise<TriggerResult> {
+  return postJob(topicId, "full", dataDir);
+}
+
+/**
+ * 重新立意（P1 spec §3.5）：在**当前生效简报**上只重跑立意 pass，产一版只换角度卡的新简报。
+ * 同选题有在途研究会被 runner 拒（「研究进行中」）——angles job 永远不和 full job 抢指针。
+ */
+export function triggerRegenerateAngles(topicId: string, dataDir?: string): Promise<TriggerResult> {
+  return postJob(topicId, "angles", dataDir);
 }
 
 /** doctor / 状态查询读口 */

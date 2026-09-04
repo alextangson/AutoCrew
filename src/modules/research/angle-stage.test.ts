@@ -477,6 +477,6 @@ describe("失败路径", () => {
   });
 
   it("缺省墙钟是 4 分钟（spec §4.1）", () => {
-    expect(DEFAULT_ANGLE_DEADLINE_MS).toBe(240_000);
+    expect(DEFAULT_ANGLE_DEADLINE_MS).toBe(480_000);
   });
 });

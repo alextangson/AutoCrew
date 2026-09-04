@@ -25,6 +25,8 @@ function job(over: Partial<ResearchJob> = {}): ResearchJob {
 }
 
 const ACCEPTED: TriggerResult = { accepted: true, deduped: false, job: job({ status: "queued" }) };
+/** 同选题已有一轮在跑：投递口拒（P1 §3.5），但本闸口该等它而不是放弃 */
+const IN_FLIGHT: TriggerResult = { accepted: false, reason: "研究进行中：这条选题的深调研正在跑", inFlight: true };
 
 /** 假时钟：sleep 只推钟不真睡——轮询逻辑照跑，测试瞬间返回 */
 function fakeClock() {
@@ -95,6 +97,21 @@ describe("makeEnsureBrief", () => {
 
     expect(await ensure(TOPIC)).toEqual({ state: "ready" });
     expect(clock.slept).toEqual([1000, 1000]); // 首查 + 两轮轮询
+  });
+
+  it("投递被拒但理由是「研究进行中」→ 照样等它跑完（这正是闸口的活）", async () => {
+    const seq: ResearchJob[] = [job(), job({ status: "succeeded", briefRevision: 2 })];
+    let i = 0;
+    const ensure = makeEnsureBrief(DATA_DIR, {
+      getJobImpl: async () => seq[Math.min(i++, seq.length - 1)],
+      triggerImpl: async () => IN_FLIGHT,
+      emitImpl: emitSpy([]),
+      pollMs: 1000,
+      deadlineMs: 60000,
+      ...fakeClock().opts,
+    });
+
+    expect(await ensure(TOPIC)).toEqual({ state: "ready" });
   });
 
   it("partial（部分视角挂了但出了简报）也算 ready——有料就能写", async () => {

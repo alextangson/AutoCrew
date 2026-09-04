@@ -54,8 +54,8 @@ import {
 
 const MAX_TURNS = 5;
 const MAX_TOTAL_TOKENS = 60_000;
-/** 墙钟：立意只有一次提交 + ≤2 轮修复，4 分钟够；到点丢结果（runLoop 不可中断） */
-export const DEFAULT_ANGLE_DEADLINE_MS = 240_000;
+/** 墙钟：到点丢结果（runLoop 不可中断）。与视角同口径 8 分钟：DeepSeek V4 Pro 吃 9k 字材料出 4 张卡实测 4 分钟不够（2026-09-05 预览超时） */
+export const DEFAULT_ANGLE_DEADLINE_MS = 480_000;
 
 const CARD_MIN = 3;
 const CARD_MAX = 4;

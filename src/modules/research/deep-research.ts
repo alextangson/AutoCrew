@@ -18,6 +18,7 @@ import type { EngineConfig } from "../../engine/config.js";
 import type { runLoop } from "../../engine/loop.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { runAngleStage } from "./angle-stage.js";
+import { resolveEffectiveBrief } from "./brief-snapshot.js";
 import {
   BRIEF_SCHEMA_VERSION,
   nextBriefRevision,
@@ -279,7 +280,7 @@ async function withAngleCards(
   profile: Awaited<ReturnType<typeof loadProfile>>,
   deps: DeepResearchDeps,
   warn: (message: string) => void,
-): Promise<SynthesisPayload> {
+): Promise<{ payload: SynthesisPayload; failure?: { errorCode: string; reason: string } }> {
   // 只喂事实：卡是本段的产出，revision 还没分配（落盘那步才定），这里给 0 占位
   const factBrief: ResearchBrief = {
     schemaVersion: BRIEF_SCHEMA_VERSION,
@@ -300,11 +301,84 @@ async function withAngleCards(
     ...engineOverrides(deps),
   });
   if (result.status === "succeeded") {
-    return { ...payload, angleCards: result.cards };
+    return { payload: { ...payload, angleCards: result.cards } };
   }
   warn(`立意未产出（${result.errorCode}）：${result.reason}`);
-  // 综合那一步产的 v2 卡照旧保留（本刀不动综合产地）：立意失败不该连既有候选一起没收
-  return { ...payload, gaps: [...payload.gaps, `立意未产出：${result.reason}`] };
+  // 综合那一步产的 v2 卡照旧保留（本刀不动综合产地）：立意失败不该连既有候选一起没收。
+  // full job 只记 gaps（简报照出，写稿走无卡路径）；angles job 拿 failure 让整轮失败——
+  // 一份「只换了卡、卡还没换成」的新 revision 没有任何意义。
+  return {
+    payload: { ...payload, gaps: [...payload.gaps, `立意未产出：${result.reason}`] },
+    failure: { errorCode: result.errorCode, reason: result.reason },
+  };
+}
+
+/**
+ * angles job（P1 spec §3.5）：**不出网、不跑视角**，只在当前生效简报上重跑一次立意，
+ * 把事实字段原样抄进新一版、只换角度卡。
+ *
+ * 三条纪律：
+ * 1. **认指针不认磁盘最新版**（§3.0）：读 `resolveEffectiveBrief`，没有生效简报就
+ *    `no_brief` 失败——绝不拿一份没被采纳的简报重算立意。
+ * 2. **立意失败即整轮失败**：`angle_failed`，一个字都不落盘。full job 允许「简报没有卡」，
+ *    angles job 不允许——那样只会产出一版和上一版逐字相同的简报。
+ * 3. **事实原样抄**：摘要/视角/张力/证据/素材/缺口/缺席视角全部照抄，本段不重新解释材料。
+ */
+async function runAnglesOnly(
+  job: ResearchJob,
+  topic: { title: string; description: string },
+  deps: DeepResearchDeps,
+  warn: (message: string) => void,
+): Promise<JobOutcome> {
+  const snapshot = await resolveEffectiveBrief(job.topicId, deps.dataDir, warn);
+  if (!snapshot) {
+    return failed([], "no_brief", "这条选题还没有生效简报——先跑一轮深调研，才有事实可以重新立意");
+  }
+  const { brief } = snapshot;
+  const topicRef: ResearchTopicRef = { title: topic.title, description: topic.description };
+  const profile = await loadProfile(deps.dataDir);
+  const facts: SynthesisPayload = {
+    summary: brief.summary,
+    tensions: brief.tensions,
+    angleSuggestions: brief.angleSuggestions,
+    evidence: brief.evidence,
+    assetPicks: brief.assetPicks,
+    gaps: brief.gaps,
+  };
+  const { payload, failure } = await withAngleCards(
+    facts,
+    brief.perspectives,
+    topicRef,
+    profile,
+    deps,
+    warn,
+  );
+  if (failure) return failed([], "angle_failed", `立意未产出（${failure.errorCode}）：${failure.reason}`);
+
+  // 选题正文可能在上一轮调研之后被改过：照跑（事实还是那批事实），但把「基于旧版选题」
+  // 写进 gaps——与简报 stale 标注同一口径，不静默
+  const topicHash = topicHashOf(topic.title, topic.description);
+  const gaps =
+    topicHash === brief.topicHash
+      ? payload.gaps
+      : [...payload.gaps, `选题正文在上一轮调研后改过，这版立意仍基于旧版选题的事实（简报 v${snapshot.revision}）——需要新事实就跑深调研`];
+
+  try {
+    const revision = await nextBriefRevision(job.topicId, deps.dataDir);
+    const next: ResearchBrief = {
+      ...brief,
+      ...payload,
+      gaps,
+      missingPerspectives: brief.missingPerspectives,
+      generatedAt: new Date().toISOString(),
+      revision,
+      topicHash,
+    };
+    await saveBrief(job.topicId, next, deps.dataDir);
+    return { status: "succeeded", perspectives: [], briefRevision: revision };
+  } catch (err) {
+    return failed([], "brief_write_failed", `简报写盘失败：${errText(err)}`);
+  }
 }
 
 /**
@@ -319,6 +393,8 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
     if (!topic || topic.deletedAt) {
       return failed(job.perspectives, "topic_missing", `选题已不存在或在回收站：${job.topicId}`);
     }
+    // angles job 走另一条短得多的路：不建 broker、不跑视角，只重跑立意（§3.5）
+    if (job.kind === "angles") return runAnglesOnly(job, topic, deps, warn);
     const topicRef: ResearchTopicRef = { title: topic.title, description: topic.description };
     const profile = await loadProfile(deps.dataDir);
     // onActivity 排在 brokerDeps 之后：装配层给的观测出口是这条 job 的最终口径
@@ -363,7 +439,8 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
       return failed(perspectives, "synthesis_failed", `${synthesis.errorCode}：${synthesis.reason}`);
     }
     const payload = await withDownloadedAssets(synthesis.payload, job.topicId, deps, warn);
+    // full job：立意失败只记 gaps（failure 忽略），简报照出——写稿走无卡路径（§5 边界行为）
     const withAngles = await withAngleCards(payload, outputs, topicRef, profile, deps, warn);
-    return publishBrief(job, topic, outputs, perspectives, withAngles, deps.dataDir);
+    return publishBrief(job, topic, outputs, perspectives, withAngles.payload, deps.dataDir);
   };
 }
