@@ -406,6 +406,9 @@ describe("代码打分（只用于展示排序）", () => {
     const got = scoreAngleCard({ ...base, thesis: "劝退：这个工具你先别碰" }, brief);
     expect(got.score).toBe(-1); // 元素 2 − 劝退 3
     expect(got.reasons.some((r) => r.includes("劝退"))).toBe(true);
+    // 2026-09-05 e2e 漏网的变体：带判断框架的「别现在上生产」同样是创始人否掉的那一族
+    const variant = scoreAngleCard({ ...base, thesis: "Star 衡量的是围观，DeepSeek Harness 现在的状态是明确的别现在上生产" }, brief);
+    expect(variant.reasons.some((r) => r.includes("劝退"))).toBe(true);
   });
 
   it("grounded +1、主画像 grow +1、锚点对不上不给 2 分", () => {
