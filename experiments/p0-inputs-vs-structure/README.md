@@ -80,6 +80,16 @@ npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts --cells angle2-fu
 - 写手 `find_evidence` 一次都没调用：补证已经把需求填满了，工具是兜底。
 - 盲评卷 `blind-angle2/`：每选题 4 稿（angle2 ×2 + P0b 的 angle ×2），seed 20260904，测的是这四处改动有没有落到稿子上。
 
+**创始人盲评（2026-09-04，判据只有一条「会不会发」）**：
+
+| 选题 | 会发 | 不会发 |
+|---|---|---|
+| 你改了 AI 的错 | A、B（**都是 angle2**） | C、D（angle） |
+| DeepSeek Harness | D（angle2 rep1「最大的变化不在对话框里」） | A（angle2 rep2「Star 数…先别拿它干正事」）、B、C（angle） |
+| 入口之争 | D（**angle** rep1「抢的不是流量，是你的起点」） | B、C（angle2「问题的那个框=选票箱」「你在给入口投票」） |
+
+合计：angle2 可发 3/6，angle 可发 1/6；P0 那 36 篇（含 12 篇「别碰」）0 篇可发。三篇可发稿的共同点：主张是一个**机制判断**（纠正写在易失内存里 / 变化在 harness 层 / 起点从网址变成问题）且**第一手锚点是创作者自己做插件的经历**；三篇被否的 angle2 稿共同点：主张靠**比喻**撑（选票箱、投票）或回到 Star 数劝退。下一版打分应加：比喻型主张扣分、机制型主张加分；劝退类即便带判断框架也扣分。
+
 ## P0b：立意格（2026-09-03 10:44–11:30）
 
 创始人盲评到一半的发现：「DeepSeek Harness」选题 12 篇稿全是「劝你别碰」立场，与调研档、流程档无关——立场在调研综合里就定了（angle-stage spec v3 §7.0）。于是加 `angle` 格：先跑一次立意 pass（`lib/angle-stage.ts`：三画像误区清单 → 3–4 个候选 → 代码侧打分选一 → 渲染成 `direction`），再走 `writer` 档；只配 `full` 调研。
