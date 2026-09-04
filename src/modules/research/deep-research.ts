@@ -17,6 +17,7 @@ import { getTopic } from "../../storage/local-store.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { runLoop } from "../../engine/loop.js";
 import { loadProfile } from "../profile/creator-profile.js";
+import { runAngleStage } from "./angle-stage.js";
 import {
   BRIEF_SCHEMA_VERSION,
   nextBriefRevision,
@@ -265,6 +266,48 @@ async function withDownloadedAssets(
 }
 
 /**
+ * 立意段（P1 spec §4.1）：综合与素材下载之后、简报落盘之前，**独立一次 LLM pass** 产角度卡 v3。
+ *
+ * 为什么在这里而不是并进综合：立场一旦在材料综合里定死，写出来的就是「劝你别碰」那一类
+ * （P0 36 稿 0 可发）。也因此它**永远不该让整条 job 失败**——失败只是这份简报没有卡，
+ * 写稿走无卡路径，原因写进 gaps 让人看得见（§5 边界行为）。
+ */
+async function withAngleCards(
+  payload: SynthesisPayload,
+  outputs: PerspectiveOutput[],
+  topic: ResearchTopicRef,
+  profile: Awaited<ReturnType<typeof loadProfile>>,
+  deps: DeepResearchDeps,
+  warn: (message: string) => void,
+): Promise<SynthesisPayload> {
+  // 只喂事实：卡是本段的产出，revision 还没分配（落盘那步才定），这里给 0 占位
+  const factBrief: ResearchBrief = {
+    schemaVersion: BRIEF_SCHEMA_VERSION,
+    ...payload,
+    angleCards: undefined,
+    // 视角全文一起给：立意要看到受众/反方视角的洞察，不只是综合后的摘要
+    perspectives: outputs,
+    missingPerspectives: [],
+    generatedAt: new Date().toISOString(),
+    revision: 0,
+    topicHash: "",
+  };
+  const result = await runAngleStage({
+    brief: factBrief,
+    topic,
+    profile,
+    dataDir: deps.dataDir,
+    ...engineOverrides(deps),
+  });
+  if (result.status === "succeeded") {
+    return { ...payload, angleCards: result.cards };
+  }
+  warn(`立意未产出（${result.errorCode}）：${result.reason}`);
+  // 综合那一步产的 v2 卡照旧保留（本刀不动综合产地）：立意失败不该连既有候选一起没收
+  return { ...payload, gaps: [...payload.gaps, `立意未产出：${result.reason}`] };
+}
+
+/**
  * 建一个可以直接塞进 `createResearchRunner({ runJob })` 的执行体。
  * 回执语义见 `JobOutcome`：briefRevision 只在 succeeded/partial 时被 runner 采纳。
  */
@@ -320,6 +363,7 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
       return failed(perspectives, "synthesis_failed", `${synthesis.errorCode}：${synthesis.reason}`);
     }
     const payload = await withDownloadedAssets(synthesis.payload, job.topicId, deps, warn);
-    return publishBrief(job, topic, outputs, perspectives, payload, deps.dataDir);
+    const withAngles = await withAngleCards(payload, outputs, topicRef, profile, deps, warn);
+    return publishBrief(job, topic, outputs, perspectives, withAngles, deps.dataDir);
   };
 }

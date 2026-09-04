@@ -10,6 +10,13 @@ import { useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
 import type { Route } from "../App";
+import {
+  EVIDENCE_LEVEL_LABEL,
+  PERSONA_LABEL,
+  STRUCTURE_LABEL,
+  type AngleCardV3,
+  type PersonaKey,
+} from "../lib";
 
 type CardData = Record<string, unknown>;
 export interface ChatCardShape {
@@ -318,6 +325,32 @@ function VersionsCard({ data }: { data: CardData }) {
  * 纯展示——选哪张是创始人的品味，由他在对话里说出来（卡上放个「选这张」按钮等于替他省掉
  * 那句话，而那句话正是总编辑判断「他是真选了还是随手点了」的依据）。
  */
+function AngleMiniV3({ c }: { c: CardData }) {
+  const persona = str(c.primaryPersona) as PersonaKey;
+  const level = str(c.evidenceLevel) as "grounded" | "overview";
+  const structure = str(c.structure) as AngleCardV3["structure"];
+  const needs = arr(c.evidenceNeeds).map(str).filter(Boolean);
+  const elements = arr(c.elements).map(str).filter(Boolean);
+  const reasons = arr(c.scoreReasons).map(str).filter(Boolean);
+  return (
+    <>
+      <p className="muted mono">
+        主画像：{PERSONA_LABEL[persona] ?? persona}
+        {level && ` · ${EVIDENCE_LEVEL_LABEL[level] ?? level}`}
+        {structure && ` · ${STRUCTURE_LABEL[structure] ?? structure}`}
+        {typeof c.score === "number" && (
+          <span title={reasons.length > 0 ? reasons.join("\n") : "无评分理由"}> · {c.score} 分</span>
+        )}
+      </p>
+      {str(c.misconception) && <p>误区：{str(c.misconception)}</p>}
+      {str(c.mechanism) && <p>为什么：{str(c.mechanism)}</p>}
+      {str(c.payoff) && <p>收获：{str(c.payoff)}</p>}
+      {needs.length > 0 && <p className="muted">待补证据：{needs.join(" / ")}</p>}
+      {elements.length > 0 && <p className="muted mono">元素：{elements.join("、")}</p>}
+    </>
+  );
+}
+
 function AngleCardsCard({ data }: { data: CardData }) {
   const cards = arr(data.cards) as Array<CardData>;
   return (
@@ -329,6 +362,7 @@ function AngleCardsCard({ data }: { data: CardData }) {
             {i + 1}. {str(c.angle) || str(c.id)}
           </div>
           <p>论点：{str(c.thesis)}</p>
+          {c.cardVersion === 3 && <AngleMiniV3 c={c} />}
           {str(c.antiScope) && <p className="muted mono">禁区：{str(c.antiScope)}</p>}
         </div>
       ))}

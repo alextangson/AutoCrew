@@ -83,11 +83,13 @@ export const WORKSPACE_LABEL: Record<StageWorkspace, string> = {
 };
 
 /**
- * 角度卡(角度卡 spec §1.2)——后端 src/modules/research/brief-store.ts 的 `AngleCard` 对应件,
+ * 角度卡 v2(角度卡 spec §1.2)——后端 src/modules/research/brief-store.ts 的对应件,
  * 逐字段同名同义。它约束的是**全稿**不只是开头:thesis 必须被论证,antiScope 是禁区。
  * 证据引用是**位置 id**("ev-1" = 简报 evidence 第 1 条,"tension-1" 同理)。
+ *
+ * v2 只读兼容:存量简报里的卡就是这个形状,新产地只产 v3(P1 spec §3.1)。
  */
-export interface AngleCard {
+export interface AngleCardV2 {
   /** "angle-1"…(简报版本内稳定:位置即身份) */
   id: string;
   angle: string;
@@ -99,6 +101,71 @@ export interface AngleCard {
   holdTrigger: string;
   hookDraft: string;
 }
+
+/** 三画像(P1 spec §3.4):立意 pass 必须挑一个主画像,收益三份都要写 */
+export type PersonaKey = "grow" | "trust" | "convert";
+
+/**
+ * 角度卡 v3(P1 spec §3.1)。判别字段是 `cardVersion: 3`——v2 卡没有这个字段。
+ * `score / scoreReasons` **只用于展示与排序**:永不自动选卡,客户端也永不回传(服务端重算)。
+ */
+export interface AngleCardV3 {
+  cardVersion: 3;
+  id: string;
+  angle: string;
+  thesis: string;
+  coreEvidenceIds: string[];
+  tensionId?: string;
+  antiScope: string;
+  hookDraft: string;
+  /** grounded = 有据(coreEvidenceIds ≥1);overview = 综述级(允许空证据,但 evidenceNeeds ≥2) */
+  evidenceLevel: "grounded" | "overview";
+  primaryPersona: PersonaKey;
+  misconception: string;
+  mechanism: string;
+  payoff: string;
+  nextAction: string;
+  counterResponse: string;
+  personaGains: Record<PersonaKey, string>;
+  elements: string[];
+  /** 第一手锚点:结构化引用,`excerptHash` 是与原片段的接榫,不给改 */
+  firsthandAnchor?: {
+    kind: "transcript" | "approved_draft" | "brief_evidence";
+    contentId?: string;
+    sourceRevision?: number;
+    chunkId?: string;
+    excerptHash: string;
+    quote: string;
+  };
+  evidenceNeeds: string[];
+  structure: "myth-busting" | "story" | "single-point" | "claim-case-claim";
+  score?: number;
+  scoreReasons?: string[];
+}
+
+export type AngleCard = AngleCardV2 | AngleCardV3;
+
+/** 读侧两版都认(P1 spec §3.1):判别只看 `cardVersion === 3` */
+export const isAngleCardV3 = (c: AngleCard): c is AngleCardV3 => (c as AngleCardV3).cardVersion === 3;
+
+/** 三画像的展示名——界面上不出现 grow/trust/convert 这种内部键 */
+export const PERSONA_LABEL: Record<PersonaKey, string> = {
+  grow: "涨粉：被 AI 追着跑的职场人",
+  trust: "立信：同行 / 独立开发者",
+  convert: "变现：要落地 AI 的决策者",
+};
+
+export const STRUCTURE_LABEL: Record<AngleCardV3["structure"], string> = {
+  "myth-busting": "反认知纠偏",
+  story: "亲历复盘",
+  "single-point": "单点打穿",
+  "claim-case-claim": "观点+案例+观点",
+};
+
+export const EVIDENCE_LEVEL_LABEL: Record<AngleCardV3["evidenceLevel"], string> = {
+  grounded: "有据",
+  overview: "综述级",
+};
 
 /**
  * 创始人选定的角度(后端 SelectedAngle 对应件)。存指针 + **生效卡快照**两样:

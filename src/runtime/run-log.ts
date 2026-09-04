@@ -36,6 +36,8 @@ export interface RunLogRecord {
   usedPatternIds?: string[];
   /** 本次生成注入的调研简报版本(深调研 §6):可回溯到 briefs/<topicId>.v<N>.json 那份不可变输入 */
   usedBriefRevision?: number;
+  /** 那份简报的内容指纹(P1 §3.0):版本号说「哪一版」,指纹说「盘上那份没被换过」 */
+  usedBriefHash?: string;
 }
 
 export interface RunSummary {
@@ -184,7 +186,13 @@ const NOOP_RECORDER: RunRecorder = { llm: () => {}, tool: () => {} };
 /** dataDir 缺省(手工构造的测试 config)= 不落日志,引擎行为零变化 */
 export function createRunRecorder(
   dataDir: string | undefined,
-  meta?: { runId?: string; agent?: string; usedPatternIds?: string[]; usedBriefRevision?: number },
+  meta?: {
+    runId?: string;
+    agent?: string;
+    usedPatternIds?: string[];
+    usedBriefRevision?: number;
+    usedBriefHash?: string;
+  },
 ): RunRecorder {
   if (!dataDir) return NOOP_RECORDER;
   const runId = meta?.runId ?? `run-eng-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -193,6 +201,7 @@ export function createRunRecorder(
   const attribution = {
     ...(meta?.usedPatternIds?.length ? { usedPatternIds: meta.usedPatternIds } : {}),
     ...(meta?.usedBriefRevision !== undefined ? { usedBriefRevision: meta.usedBriefRevision } : {}),
+    ...(meta?.usedBriefHash ? { usedBriefHash: meta.usedBriefHash } : {}),
   };
   return {
     llm: (e) =>

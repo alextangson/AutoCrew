@@ -12,28 +12,39 @@
 import { useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
-import { linkDomain, platformLabel, type AngleCard, type Topic } from "../lib";
 import {
-  ANGLE_EDIT_FIELDS,
+  EVIDENCE_LEVEL_LABEL,
+  PERSONA_LABEL,
+  STRUCTURE_LABEL,
+  isAngleCardV3,
+  linkDomain,
+  platformLabel,
+  type AngleCard,
+  type AngleCardV2,
+  type AngleCardV3,
+  type Topic,
+} from "../lib";
+import {
+  angleDraft,
+  angleDraftComplete,
+  angleEditFields,
+  applyAngleDraft,
   displayCard,
   isRewritten,
   resolveEvidenceRefs,
+  sortedByScore,
   type AngleChoiceState,
-  type AngleEditKey,
+  type AngleDraft,
   type BriefEvidenceLike,
 } from "./angle-choice";
 
 /** 角度卡区的锚点:平台矩阵的「去选一张」靠它滚过来(同时只挂一个选题详情) */
 export const ANGLE_SECTION_ID = "angle-cards";
 
-type Draft = Record<AngleEditKey, string>;
-
-const draftOf = (card: AngleCard): Draft =>
-  Object.fromEntries(ANGLE_EDIT_FIELDS.map((f) => [f.key, card[f.key]])) as Draft;
-
 /**
  * 改写(§1.4「改写才是创始人观点进管线的口子」)。文字随便改,**id 与证据引用不给改**——
  * 那两样是这张卡与简报的接榫,后端也会拒;不给编辑框比拒绝更早说清楚。
+ * v3 另有两样不给改:第一手锚点(要与原片段逐字对得上)与展示分(服务端重算)。
  */
 function AngleEditor({ card, busy, onSave, onCancel }: {
   card: AngleCard;
@@ -41,24 +52,28 @@ function AngleEditor({ card, busy, onSave, onCancel }: {
   onSave: (edited: AngleCard) => void;
   onCancel: () => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(() => draftOf(card));
-  const filled = ANGLE_EDIT_FIELDS.every((f) => draft[f.key].trim() !== "");
+  const fields = angleEditFields(card);
+  const [draft, setDraft] = useState<AngleDraft>(() => angleDraft(card));
+  const filled = angleDraftComplete(card, draft);
   return (
     <div className="angle-edit">
-      {ANGLE_EDIT_FIELDS.map((f) => (
+      {fields.map((f) => (
         <label key={f.key} className="angle-edit-field">
           <span className="mono muted">{f.label}</span>
           <textarea
-            rows={f.key === "hookDraft" ? 3 : 2}
-            value={draft[f.key]}
+            rows={f.rows}
+            value={draft[f.key] ?? ""}
             onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
           />
         </label>
       ))}
-      <p className="muted mono">证据引用与卡片编号不可改(它们是这张卡与简报的接榫);六项都要有内容。</p>
+      <p className="muted mono">
+        证据引用与卡片编号不可改(它们是这张卡与简报的接榫)
+        {isAngleCardV3(card) && ",第一手锚点与展示分也不可改(分由服务端重算)"};每项都要有内容。
+      </p>
       <span className="row-actions">
         <button onClick={onCancel}>取消</button>
-        <button className="primary" disabled={busy || !filled} onClick={() => onSave({ ...card, ...draft })}>
+        <button className="primary" disabled={busy || !filled} onClick={() => onSave(applyAngleDraft(card, draft))}>
           {busy ? "保存中…" : "保存并用这版"}
         </button>
       </span>
@@ -86,13 +101,71 @@ function AngleEvidence({ card, evidence }: { card: AngleCard; evidence: BriefEvi
   );
 }
 
-function AngleFacts({ card }: { card: AngleCard }) {
+/**
+ * 卡面(v2/v3 各一套)。v3 多出来的不是装饰:主画像说这条写给谁,误区/机制/收获是
+ * 「凭什么值得看完」的三段骨头,待补证据是写稿前会去补的那几条——都摊在卡面上,
+ * 创始人才判得动「这张能不能发」。
+ */
+function AngleFactsV2({ card }: { card: AngleCardV2 }) {
   return (
     <>
       <p className="angle-thesis">论点：{card.thesis}</p>
       <p className="muted">禁区：{card.antiScope}</p>
       <p className="muted">受众痛点：{card.audiencePain} · 停留触发：{card.holdTrigger}</p>
       <p className="angle-hook">钩子草稿：{card.hookDraft}</p>
+    </>
+  );
+}
+
+function AngleFactsV3({ card }: { card: AngleCardV3 }) {
+  return (
+    <>
+      <p className="muted mono">主画像：{PERSONA_LABEL[card.primaryPersona]}</p>
+      <p className="angle-thesis">论点：{card.thesis}</p>
+      <p>误区：{card.misconception}</p>
+      <p>为什么：{card.mechanism}</p>
+      <p>收获：{card.payoff}</p>
+      <p className="muted">最小动作：{card.nextAction}</p>
+      <p className="muted">反方回应：{card.counterResponse}</p>
+      <p className="muted">禁区：{card.antiScope}</p>
+      {card.firsthandAnchor && (
+        <p className="muted">第一手锚点：「{card.firsthandAnchor.quote}」</p>
+      )}
+      <p className="angle-hook">钩子草稿：{card.hookDraft}</p>
+      {card.evidenceNeeds.length > 0 && (
+        <div className="angle-needs">
+          <span className="mono muted">待补证据</span>
+          <ul>{card.evidenceNeeds.map((n, i) => <li key={i}>{n}</li>)}</ul>
+        </div>
+      )}
+      <div className="angle-chips">
+        {card.elements.map((e, i) => <span key={i} className="chip angle-element">{e}</span>)}
+        <span className="chip angle-structure">骨架：{STRUCTURE_LABEL[card.structure] ?? card.structure}</span>
+      </div>
+    </>
+  );
+}
+
+const AngleFacts = ({ card }: { card: AngleCard }) =>
+  isAngleCardV3(card) ? <AngleFactsV3 card={card} /> : <AngleFactsV2 card={card} />;
+
+/**
+ * 卡头上的两枚标(只 v3 有):证据档次说这张能不能拿数字说话;分只是**排序与提示**,
+ * 悬停看理由——它永远不替创始人选卡。
+ */
+function AngleBadges({ card }: { card: AngleCard }) {
+  if (!isAngleCardV3(card)) return null;
+  const reasons = card.scoreReasons ?? [];
+  return (
+    <>
+      <span className={"chip angle-level angle-level-" + card.evidenceLevel}>
+        {EVIDENCE_LEVEL_LABEL[card.evidenceLevel] ?? card.evidenceLevel}
+      </span>
+      {typeof card.score === "number" && (
+        <span className="chip angle-score" title={reasons.length > 0 ? reasons.join("\n") : "无评分理由"}>
+          {card.score} 分
+        </span>
+      )}
     </>
   );
 }
@@ -116,6 +189,7 @@ function AngleCardBox(props: {
       <div className="angle-card-head">
         <span className="mono muted">{card.id}</span>
         <strong className="angle-angle">{card.angle}</strong>
+        <AngleBadges card={card} />
         {chosen && <span className="chip angle-chip-on">已选{props.rewritten ? "(已改写)" : ""}</span>}
       </div>
       <AngleFacts card={card} />
@@ -204,7 +278,8 @@ export function AngleSection(props: AngleSectionProps) {
         <span className="muted mono">{cards.length} 张候选 · 选一张,或改写成你的话</span>
       </div>
       <AngleStateNote state={state} selected={selected} />
-      {cards.map((card) => {
+      {/* 有分就按分排(高的在前),但**不自动选**:选中态只由创始人点出来 */}
+      {sortedByScore(cards).map((card) => {
         const shown = displayCard(card, selected, state);
         const chosen = state === "active" && selected?.angleId === card.id;
         return (

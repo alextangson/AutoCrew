@@ -21,6 +21,7 @@ import {
   RESEARCH_SLOT_BUDGET,
 } from "../research/brief-inject.js";
 import { BRIEF_SCHEMA_VERSION, briefPath, saveBrief, type ResearchBrief } from "../research/brief-store.js";
+import { briefHash } from "../research/brief-snapshot.js";
 import {
   pendingPerspectives,
   topicHashOf,
@@ -361,8 +362,8 @@ describe("无简报路径 — 与改动前逐字一致", () => {
 
 // ─── 归因（两条落点，照 usedPatternIds 的纪律） ───────────────────────────────
 
-describe("usedBriefRevision 归因", () => {
-  it("有简报 → run-log 元数据与稿件元数据都带版本号", async () => {
+describe("usedBriefRevision / usedBriefHash 归因", () => {
+  it("有简报 → run-log 元数据与稿件元数据都带版本号与内容指纹", async () => {
     const { topic, brief } = await seedResearched(makeBrief({ revision: 1 }));
     const seen: { opts?: LoopOptions } = {};
 
@@ -373,6 +374,12 @@ describe("usedBriefRevision 归因", () => {
     expect(seen.opts!.logMeta?.usedBriefRevision).toBe(brief.revision);
     const saved = await getContent(result.contentId, testDir);
     expect(saved!.usedBriefRevision).toBe(brief.revision);
+    // 指纹是「盘上那份没被换过」的凭据：不断言字面值(那会变成一条脆的 golden),
+    // 只断言它存在、是 16 位十六进制、且两条落点一致
+    const hash = briefHash(brief);
+    expect(hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(seen.opts!.logMeta?.usedBriefHash).toBe(hash);
+    expect(saved!.usedBriefHash).toBe(hash);
   });
 
   it("无简报 → 两条落点都不写该字段（与改动前一字不差）", async () => {
@@ -380,8 +387,10 @@ describe("usedBriefRevision 归因", () => {
     const result = await generateScript(TEST_REQ, testDir, { runLoopImpl: capturingLoop(seen) });
 
     expect(seen.opts!.logMeta).not.toHaveProperty("usedBriefRevision");
+    expect(seen.opts!.logMeta).not.toHaveProperty("usedBriefHash");
     const saved = await getContent(result.contentId, testDir);
     expect(saved).not.toHaveProperty("usedBriefRevision");
+    expect(saved).not.toHaveProperty("usedBriefHash");
   });
 });
 

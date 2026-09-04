@@ -10,6 +10,8 @@
  *   「证据支撑够不够」，等于逼模型编一个不存在的标准。
  */
 import type { AngleCard } from "../research/brief-store.js";
+// v2/v3 联合卡的兼容读法（v3 判据是 P1c 的审稿第三类判据）
+import { cardAudiencePain, cardHoldTrigger } from "../research/angle-cards.js";
 import type { SubmitPayload } from "./script-payload.js";
 import type { ReviewIssue } from "./script-review.js";
 
@@ -116,8 +118,8 @@ function angleBlock(card: AngleCard): string[] {
     `切入点：${card.angle}`,
     `核心论点（全稿必须论证它）：${card.thesis}`,
     `禁区（这一稿明确不写）：${card.antiScope}`,
-    `目标受众痛点：${card.audiencePain}`,
-    `预期停留触发：${card.holdTrigger}`,
+    `目标受众痛点：${cardAudiencePain(card)}`,
+    `预期停留触发：${cardHoldTrigger(card)}`,
     "",
   ];
 }

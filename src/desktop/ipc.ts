@@ -205,7 +205,7 @@ import {
   listTrash,
   updateContent,
 } from "../storage/local-store.js";
-import { loadLatestBrief } from "../modules/research/brief-store.js";
+import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { findAngleCard, parseAngleCard } from "../modules/research/angle-cards.js";
 import { isContentId, isSafeFilename } from "../storage/entity-id.js";
 import { attachLibraryAsset } from "./content-asset-attach.js";
@@ -1532,7 +1532,8 @@ async function topicDeleteHandler(payload: Record<string, unknown>): Promise<Rec
 
 /**
  * 落一张生效角度卡。两道校验缺一不可：
- * 1. `brief_revision` 必须是**该选题最新那版**——对不上说明用户看的是过期候选（简报重跑过），
+ * 1. `brief_revision` 必须是**当前生效那版**（`job.briefRevision` 指针，P1 §3.0）——对不上
+ *    说明用户看的是过期候选（简报重跑过），
  *    这时候照落等于让他在不知情的情况下选了一张已经不存在的卡；
  * 2. `angle_id` 必须在那版简报里；改写版（可选 `card`）还要过一遍字段与证据引用校验，
  *    创始人能改任何文字，但改不出简报里没有的证据。
@@ -1549,19 +1550,21 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>): Promis
   try {
     const topic = await getTopic(topicId, dataDir);
     if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
-    const brief = await loadLatestBrief(topicId, getDataDir(dataDir));
-    if (!brief) return { ok: false, error: "这条选题还没有可用简报——先跑一轮深调研" };
-    if (brief.revision !== revision) {
-      return { ok: false, error: `角度候选已更新（当前 v${brief.revision}，你手上是 v${revision}）——刷新后重选` };
+    // 唯一「当前有效简报」入口（P1 §3.0）：认 job.briefRevision 指针，不认磁盘最大版——
+    // 磁盘上可能躺着一份重跑失败、从未被采纳的 v(N+1)
+    const snap = await resolveEffectiveBrief(topicId, getDataDir(dataDir));
+    if (!snap) return { ok: false, error: "这条选题还没有可用简报——先跑一轮深调研" };
+    if (snap.revision !== revision) {
+      return { ok: false, error: `角度候选已更新（当前 v${snap.revision}，你手上是 v${revision}）——刷新后重选` };
     }
-    const original = findAngleCard(brief, angleId);
-    if (!original) return { ok: false, error: `角度 ${angleId} 不在简报 v${brief.revision} 里` };
+    const original = findAngleCard(snap.brief, angleId);
+    if (!original) return { ok: false, error: `角度 ${angleId} 不在简报 v${snap.revision} 里` };
     // 没给 card = 点选原卡；给了 = 改写版（§1.4 改写才是创始人观点进管线的口子）
-    const card = payload.card === undefined ? original : parseAngleCard(payload.card, brief, angleId);
+    const card = payload.card === undefined ? original : parseAngleCard(payload.card, snap.brief, angleId);
     if (typeof card === "string") return { ok: false, error: card };
     const updated = await updateTopic(
       topicId,
-      { selectedAngle: { briefRevision: brief.revision, angleId, card, selectedAt: new Date().toISOString() } },
+      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
       dataDir,
     );
     return { ok: true, topic: updated };

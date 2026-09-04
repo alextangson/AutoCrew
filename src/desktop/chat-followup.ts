@@ -22,7 +22,8 @@
  */
 import { getConversation } from "../storage/conversation-store.js";
 import { getTopic } from "../storage/local-store.js";
-import { loadLatestBrief, type AngleCard } from "../modules/research/brief-store.js";
+import type { AngleCard } from "../modules/research/brief-store.js";
+import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import {
   markJobFollowedUp,
   type PerspectiveName,
@@ -118,18 +119,30 @@ async function collectReport(job: ResearchJob, dataDir: string): Promise<Followu
   if (job.status === "failed") {
     return { topicTitle, failed: true, failReason: job.failReason ?? job.errorCode ?? "调研失败" };
   }
-  const brief = await loadLatestBrief(job.topicId, dataDir, (m) => warn(m));
-  if (!brief) {
+  // 唯一「当前有效简报」入口（P1 §3.0）：回报念的必须是这一轮真正生效的那版,
+  // 不能是磁盘上版本号最大的那份
+  const snap = await resolveEffectiveBrief(job.topicId, dataDir, (m) => warn(m));
+  if (!snap) {
     return {
       topicTitle,
       failed: true,
       failReason: "四视角跑完了,但简报读不出来(文件损坏或已被清理)——去选题卡重跑一轮",
     };
   }
+  // 指针已经不指向本轮产出 = 这条选题后来又跑过一轮(或本轮没结算成)。
+  // 照念会把别人的简报安在这一轮头上,不如照实说
+  if (snap.revision !== job.briefRevision) {
+    return {
+      topicTitle,
+      failed: true,
+      failReason: `这一轮的简报已不是当前生效版(现在生效的是 v${snap.revision})——去选题卡看最新那版`,
+    };
+  }
+  const { brief } = snap;
   return {
     topicTitle,
     failed: false,
-    briefRevision: brief.revision,
+    briefRevision: snap.revision,
     missingPerspectives: brief.missingPerspectives ?? [],
     summary: brief.summary,
     angleCards: brief.angleCards ?? [],

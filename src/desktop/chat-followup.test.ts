@@ -269,6 +269,36 @@ describe("runResearchFollowup", () => {
     expect(String(call.message)).toContain("简报读不出来");
   });
 
+  // ── 单一简报快照（P1 §3.0）─────────────────────────────────────────────────
+
+  it("盘上有孤儿 v2（重跑落了盘没结算）→ 念的仍是指针指的 v1，不是磁盘最大版", async () => {
+    const conv = await createConversation("派活那段", dir);
+    const job = await settledJob({ originConversationId: conv.id });
+    await saveBrief(job.topicId, brief({ revision: 2, summary: "孤儿 v2 的摘要" }), dir);
+    const runTurn = stubTurn();
+
+    await runResearchFollowup(job, { dataDir: dir, runTurn, isBusy: () => false });
+
+    const call = (runTurn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(String(call.message)).toContain("第 1 版简报");
+    expect(String(call.message)).not.toContain("孤儿 v2 的摘要");
+  });
+
+  it("指针已被后来那轮推到 v2 → 照实说「已不是当前生效版」，不把别人的简报安在这一轮头上", async () => {
+    const conv = await createConversation("派活那段", dir);
+    const job = await settledJob({ originConversationId: conv.id });
+    await saveBrief(job.topicId, brief({ revision: 2, summary: "后来那轮的摘要" }), dir);
+    await upsertJob({ ...(await getJob(job.topicId, dir))!, briefRevision: 2 }, dir);
+    const runTurn = stubTurn();
+
+    await runResearchFollowup(job, { dataDir: dir, runTurn, isBusy: () => false });
+
+    const call = (runTurn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(String(call.message)).toContain("已不是当前生效版");
+    expect(String(call.message)).toContain("v2");
+    expect(String(call.message)).not.toContain("后来那轮的摘要");
+  });
+
   it("回流轮自己失败：warn + 工作日志留痕，不重试、不盖已回报戳", async () => {
     const conv = await createConversation("派活那段", dir);
     const job = await settledJob({ originConversationId: conv.id });

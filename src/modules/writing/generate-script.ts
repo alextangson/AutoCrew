@@ -33,9 +33,9 @@ import { transitionStatus } from "../../storage/local-store.js";
 import { scanText } from "../filter/sensitive-words.js";
 import { retrieveKnowledge, KNOWLEDGE_DEFAULT_CHARS } from "../knowledge/knowledge-base.js";
 import { buildBriefBlock, knowledgeBudgetFor } from "../research/brief-inject.js";
-import { loadBrief, loadLatestBrief } from "../research/brief-store.js";
+import { resolveEffectiveBrief, type BriefSnapshot } from "../research/brief-snapshot.js";
 import { activeAngleCard, angleCardsOf } from "../research/angle-cards.js";
-import { getJob, topicHashOf } from "../research/research-job-store.js";
+import { topicHashOf } from "../research/research-job-store.js";
 import { getContent, getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
 import type { Content } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
@@ -105,6 +105,8 @@ interface Attribution {
   usedPatternIds: string[];
   /** 本稿注入的简报版本（§6）：无简报时字段不出现，日志与稿件口径与改动前一字不差 */
   usedBriefRevision?: number;
+  /** 同一份快照的内容指纹（P1 §3.0）：版本号说「哪一版」，指纹说「盘上那份没被换过」 */
+  usedBriefHash?: string;
 }
 
 /** 生成占位稿标题哨兵——区分「生成占位稿」与手工存的 drafting 稿(content-save 允许)。
@@ -170,34 +172,65 @@ function selectPatterns(req: ScriptRequest, dataDir?: string): Promise<PatternCa
   return selectPatternsForScript({ platform: req.platform, topicText: req.topic }, dataDir);
 }
 
+interface ResolvedResearch {
+  /** research 槽的简报注入块 + 它的来源快照；无 topicId / 无指针 / 文件坏了都缺席 */
+  brief?: { block: string; snapshot: BriefSnapshot };
+  /** 本稿生效的角度卡（手写 direction、没选、选择已过期时缺席） */
+  angle?: ResolvedAngle;
+  /** 这条选题**有**角度候选卡（无论这轮是否用上） */
+  hasCards: boolean;
+}
+
 /**
- * 取「当前有效简报」并渲染成注入块（深调研 spec §6）。
+ * 简报快照 → 注入块 + 生效角度（深调研 §6 + 角度卡 §1.3 + P1 §3.0）。
  *
- * `job.briefRevision` 是唯一指针（§2「重跑读语义」）：**没有指针就是没有简报**，
- * 绝不用「最新一版」兜底——重跑失败时兜底会把没被采纳的那版偷偷注进稿子里。
- * 读侧任何故障都降级成「无简报」并 warn：写稿宁可少一块材料，也不该整条链断掉。
+ * **一次生成只读一次快照**：注入的事实、选中卡是否还作数、归因写的版本号，三者必须
+ * 出自同一份简报。改动前注入认 `job.briefRevision`、角度解析认「磁盘最新版」，重跑刚落盘
+ * 而指针未推进的窗口里，会把 v1 的材料配上 v2 的卡写成一稿（P1 spec §3.0）。
+ *
+ * `resolveEffectiveBrief` 没有指针就返回 null，绝不回落磁盘最新版——重跑失败不推进指针
+ * 是设计意图，兜底等于把没被采纳的那版偷偷注进稿子。
+ *
+ * `hasCards` 是「这条选题本来有角度可选」：它 + 没生效角度 = 这稿绕过了品味闸口，
+ * 要在版本注记里说出来（§1.6「直写稿版本注记标未经角度点选」）。
  */
-async function loadBriefBlock(
+async function resolveResearch(
   req: ScriptRequest,
   dataDir: string | undefined,
   warn: (message: string) => void,
-): Promise<{ block: string; revision: number } | null> {
-  if (!req.topicId) return null;
-  const dir = getDataDir(dataDir);
+): Promise<ResolvedResearch> {
+  if (!req.topicId) return { hasCards: false };
   try {
-    const job = await getJob(req.topicId, dir);
-    if (!job || job.briefRevision === undefined) return null;
-    const brief = await loadBrief(req.topicId, job.briefRevision, dir, warn);
-    if (!brief) return null; // 坏文件/未知 schemaVersion：loadBrief 已经 warn 过
+    const snapshot = await resolveEffectiveBrief(req.topicId, getDataDir(dataDir), warn);
+    if (!snapshot) return { hasCards: false };
+    const { brief } = snapshot;
+    const hasCards = angleCardsOf(brief).length > 0;
     const topic = await getTopic(req.topicId, dataDir);
     if (!topic) warn(`选题 ${req.topicId} 已不在库中，简报按「基于旧版选题」标注注入`);
+    const currentHash = topic ? topicHashOf(topic.title, topic.description) : "";
     // 核对不上就当过期：选题查不到时不给这份简报背书（§2 过期标注，注入照做）
-    const topicStale = !topic || topicHashOf(topic.title, topic.description) !== brief.topicHash;
-    return { block: buildBriefBlock(brief, { topicStale }), revision: brief.revision };
+    const topicStale = !topic || currentHash !== brief.topicHash;
+    const injected = { block: buildBriefBlock(brief, { topicStale }), snapshot };
+    // 手写角度压过一切：卡照样算「有」，但这一轮不解析它（§1.3 手填时角度卡仍展示不注入）
+    if (req.direction?.trim()) return { brief: injected, hasCards };
+    // 「选中」现算是否还作数：选的不是快照那版、或简报因选题被改而过期，一律按没选处理
+    const card = activeAngleCard(topic?.selectedAngle, brief, currentHash);
+    if (!card) {
+      if (topic?.selectedAngle) {
+        warn(`选中的角度已过期（选题或简报在选完之后变过），本稿按未选角度写：${req.topicId}`);
+      }
+      return { brief: injected, hasCards };
+    }
+    return {
+      brief: injected,
+      angle: { card, evidence: brief.evidence, tensions: brief.tensions },
+      hasCards,
+    };
   } catch (err) {
+    // 材料少一块照写，绝不让读盘故障带走整条写作链
     const msg = err instanceof Error ? err.message : String(err);
-    warn(`调研简报读取失败（${req.topicId}），本稿按无简报写：${msg}`);
-    return null;
+    warn(`调研简报读取失败（${req.topicId}），本稿按无简报无角度写：${msg}`);
+    return { hasCards: false };
   }
 }
 
@@ -224,45 +257,6 @@ async function composeResearchSlot(
   return { ...req, research: [req.research, ...extras].filter(Boolean).join("\n\n") };
 }
 
-/**
- * 生效角度（角度卡 spec §1.3 优先级：手写 direction > 选中角度卡 > 无）。
- *
- * 「选中」要**现算是否还作数**（activeAngleCard）：选的不是最新那版简报、或简报因选题被改
- * 而过期，一律按没选处理并 warn——拿一张对不上号的卡去约束全稿，比不给角度更糟。
- *
- * 返回的 `hasCards` 是「这条选题本来有角度可选」：它 + 没生效角度 = 这稿绕过了品味闸口，
- * 要在版本注记里说出来（§1.6「直写稿版本注记标未经角度点选」）。
- */
-async function resolveAngle(
-  req: ScriptRequest,
-  dataDir: string | undefined,
-  warn: (message: string) => void,
-): Promise<{ angle?: ResolvedAngle; hasCards: boolean }> {
-  if (!req.topicId) return { hasCards: false };
-  try {
-    const dir = getDataDir(dataDir);
-    const brief = await loadLatestBrief(req.topicId, dir, warn);
-    const hasCards = angleCardsOf(brief).length > 0;
-    // 手写角度压过一切：卡照样算「有」，但这一轮不解析它（§1.3 手填时角度卡仍展示不注入）
-    if (req.direction?.trim() || !brief) return { hasCards };
-    const topic = await getTopic(req.topicId, dataDir);
-    const card = topic
-      ? activeAngleCard(topic.selectedAngle, brief, topicHashOf(topic.title, topic.description))
-      : null;
-    if (!card) {
-      if (topic?.selectedAngle) {
-        warn(`选中的角度已过期（选题或简报在选完之后变过），本稿按未选角度写：${req.topicId}`);
-      }
-      return { hasCards };
-    }
-    return { angle: { card, evidence: brief.evidence, tensions: brief.tensions }, hasCards };
-  } catch (err) {
-    // 同简报读侧：材料少一块照写，绝不让读盘故障带走整条写作链
-    warn(`角度卡读取失败（${req.topicId}），本稿按未选角度写：${err instanceof Error ? err.message : String(err)}`);
-    return { hasCards: false };
-  }
-}
-
 interface GenerationInputs {
   config: Awaited<ReturnType<typeof loadEngineConfig>>;
   pack: ReturnType<typeof getPack>;
@@ -284,7 +278,7 @@ async function gatherInputs(
   dataDir: string | undefined,
   warn: (message: string) => void,
 ): Promise<GenerationInputs> {
-  const [config, pack, profile, contrastPairs, patterns, brief, picked] = await Promise.all([
+  const [config, pack, profile, contrastPairs, patterns, picked] = await Promise.all([
     loadEngineConfig(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
@@ -294,10 +288,8 @@ async function gatherInputs(
     // 这里**不加 catch**:patterns 库不存在是正常空态(store 已按 ENOENT 返回 []),
     // 其余读故障必须炸出来——静默降级会让「卡怎么没生效」查无可查。
     selectPatterns(req, dataDir),
-    // 调研简报(深调研 §6):三条写稿入口共用这一处注入点,无 topicId/无指针即 null
-    loadBriefBlock(req, dataDir, warn),
-    // 角度卡(角度卡 §1.3):同一处解析优先级,三条写稿入口一次覆盖
-    resolveAngle(req, dataDir, warn),
+    // 调研简报 + 角度卡(深调研 §6 / 角度卡 §1.3):同一份快照解析,三条写稿入口一次覆盖
+    resolveResearch(req, dataDir, warn),
   ]);
   return {
     config,
@@ -305,12 +297,17 @@ async function gatherInputs(
     profile,
     contrastPairs,
     patterns,
-    promptReq: await composeResearchSlot(req, brief?.block, dataDir),
+    promptReq: await composeResearchSlot(req, picked.brief?.block, dataDir),
     ...(picked.angle ? { angle: picked.angle } : {}),
     wroteWithoutAngle: picked.hasCards && !picked.angle && !req.direction?.trim(),
     attribution: {
       usedPatternIds: patterns.map((card) => card.id),
-      ...(brief ? { usedBriefRevision: brief.revision } : {}),
+      ...(picked.brief
+        ? {
+            usedBriefRevision: picked.brief.snapshot.revision,
+            usedBriefHash: picked.brief.snapshot.hash,
+          }
+        : {}),
     },
   };
 }
@@ -411,6 +408,7 @@ async function runWriterLoop(
       ...(attribution.usedBriefRevision !== undefined
         ? { usedBriefRevision: attribution.usedBriefRevision }
         : {}),
+      ...(attribution.usedBriefHash ? { usedBriefHash: attribution.usedBriefHash } : {}),
     },
   });
   if (!captured.payload) {
@@ -715,6 +713,7 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
       ...(attribution.usedBriefRevision !== undefined
         ? { usedBriefRevision: attribution.usedBriefRevision }
         : {}),
+      ...(attribution.usedBriefHash ? { usedBriefHash: attribution.usedBriefHash } : {}),
       // 审稿结论落稿件元数据(审稿 §2.5):稿卡徽章读的就是它,降级路径同样要留下
       review,
       _versionNote: versionNote(review, { wroteWithoutBrief, wroteWithoutAngle }),

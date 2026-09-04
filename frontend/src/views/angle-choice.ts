@@ -6,7 +6,7 @@
  * 界面说「这份选择还作数」的条件,必须和写稿时真正注入的条件逐条一致——
  * 两套事实会长成「工作台说已选、写出来却没带角度」。
  */
-import type { AngleCard, SelectedAngle } from "../lib";
+import { isAngleCardV3, type AngleCard, type SelectedAngle } from "../lib";
 
 /** 简报元信息(research:status / brief_get 都给这三样) */
 export interface BriefMetaLike {
@@ -84,21 +84,118 @@ export function resolveEvidenceRefs(evidence: BriefEvidenceLike[], ids: string[]
   });
 }
 
-/** 卡上可改写的六个文本字段(id 与证据引用是与简报的接榫,不许改——后端也会拒) */
-export const ANGLE_EDIT_FIELDS = [
-  { key: "angle", label: "切入点" },
-  { key: "thesis", label: "核心论点" },
-  { key: "antiScope", label: "禁区(不写什么)" },
-  { key: "audiencePain", label: "受众痛点" },
-  { key: "holdTrigger", label: "停留触发" },
-  { key: "hookDraft", label: "钩子草稿" },
-] as const;
+/**
+ * 改写表单的一格。`lines` = 一行一条的列表字段(现在只有 v3 的 `evidenceNeeds`),
+ * 表单里仍是一个 textarea,进出各做一次拆/拼——列表字段不该逼创始人手打 JSON。
+ */
+export interface AngleEditField {
+  key: string;
+  label: string;
+  kind: "text" | "lines";
+  rows: number;
+}
 
-export type AngleEditKey = (typeof ANGLE_EDIT_FIELDS)[number]["key"];
+/** v2 卡上可改写的六个文本字段(id 与证据引用是与简报的接榫,不许改——后端也会拒) */
+export const ANGLE_EDIT_FIELDS: readonly AngleEditField[] = [
+  { key: "angle", label: "切入点", kind: "text", rows: 2 },
+  { key: "thesis", label: "核心论点", kind: "text", rows: 2 },
+  { key: "antiScope", label: "禁区(不写什么)", kind: "text", rows: 2 },
+  { key: "audiencePain", label: "受众痛点", kind: "text", rows: 2 },
+  { key: "holdTrigger", label: "停留触发", kind: "text", rows: 2 },
+  { key: "hookDraft", label: "钩子草稿", kind: "text", rows: 3 },
+];
 
-/** 生效的这张卡是不是被创始人改写过(与简报原卡逐字段比) */
+/**
+ * v3 卡可改写的字段(P1 spec §3.1「可改所有文本」)。**不在这份清单里的一律不给改**:
+ * `id / coreEvidenceIds / cardVersion / firsthandAnchor` 是这张卡与简报、与第一手材料的接榫,
+ * `score / scoreReasons` 是代码算的展示分——客户端提交一律丢弃,服务端重算。
+ */
+export const ANGLE_EDIT_FIELDS_V3: readonly AngleEditField[] = [
+  { key: "angle", label: "切入点", kind: "text", rows: 2 },
+  { key: "thesis", label: "核心论点", kind: "text", rows: 2 },
+  { key: "misconception", label: "误区(大家以为)", kind: "text", rows: 2 },
+  { key: "mechanism", label: "为什么(机制)", kind: "text", rows: 3 },
+  { key: "payoff", label: "收获(看完能带走什么)", kind: "text", rows: 2 },
+  { key: "nextAction", label: "最小动作", kind: "text", rows: 2 },
+  { key: "counterResponse", label: "反方回应", kind: "text", rows: 2 },
+  { key: "antiScope", label: "禁区(不写什么)", kind: "text", rows: 2 },
+  { key: "hookDraft", label: "钩子草稿", kind: "text", rows: 3 },
+  { key: "evidenceNeeds", label: "待补证据(一行一条)", kind: "lines", rows: 3 },
+];
+
+export function angleEditFields(card: AngleCard): readonly AngleEditField[] {
+  return isAngleCardV3(card) ? ANGLE_EDIT_FIELDS_V3 : ANGLE_EDIT_FIELDS;
+}
+
+/** 表单态:每格都是字符串(列表字段用换行拼),提交时才还原成卡的形状 */
+export type AngleDraft = Record<string, string>;
+
+const splitLines = (text: string): string[] =>
+  text.split(/\r?\n/).map((s) => s.trim()).filter((s) => s !== "");
+
+const fieldText = (card: AngleCard, f: AngleEditField): string => {
+  const raw = (card as unknown as Record<string, unknown>)[f.key];
+  if (f.kind === "lines") return Array.isArray(raw) ? raw.join("\n") : "";
+  return typeof raw === "string" ? raw : "";
+};
+
+/** 卡 → 表单态 */
+export function angleDraft(card: AngleCard): AngleDraft {
+  return Object.fromEntries(angleEditFields(card).map((f) => [f.key, fieldText(card, f)]));
+}
+
+/** 每格都要有内容才让保存(列表字段:至少一条非空行) */
+export function angleDraftComplete(card: AngleCard, draft: AngleDraft): boolean {
+  return angleEditFields(card).every((f) =>
+    f.kind === "lines" ? splitLines(draft[f.key] ?? "").length > 0 : (draft[f.key] ?? "").trim() !== "",
+  );
+}
+
+/**
+ * 表单态 → 提交给服务端的卡。**只覆盖可改字段**,其余原样从原卡带过去;
+ * v3 的 `score / scoreReasons` 整个不带(spec §3.1:客户端提交的分一律丢弃,服务端重算)。
+ */
+export function applyAngleDraft(card: AngleCard, draft: AngleDraft): AngleCard {
+  const fields = angleEditFields(card);
+  const base = { ...card } as Record<string, unknown>;
+  if (isAngleCardV3(card)) {
+    delete base.score;
+    delete base.scoreReasons;
+  }
+  for (const f of fields) {
+    const raw = draft[f.key] ?? "";
+    base[f.key] = f.kind === "lines" ? splitLines(raw) : raw;
+  }
+  return base as unknown as AngleCard;
+}
+
+/** 生效的这张卡是不是被创始人改写过(与简报原卡逐可改字段比) */
 export function isRewritten(original: AngleCard, chosen: AngleCard): boolean {
-  return ANGLE_EDIT_FIELDS.some((f) => original[f.key].trim() !== chosen[f.key].trim());
+  if (isAngleCardV3(original) !== isAngleCardV3(chosen)) return true;
+  return angleEditFields(original).some((f) => {
+    if (f.kind === "lines") return fieldText(original, f) !== fieldText(chosen, f);
+    return fieldText(original, f).trim() !== fieldText(chosen, f).trim();
+  });
+}
+
+/**
+ * 展示序(P1 spec §3.1「分只用于展示与排序」):有分的按分从高到低,同分与无分保持原序。
+ * **排序不等于选择**——列表顺序变了,选中态仍然只由创始人点出来。
+ */
+export function sortedByScore(cards: readonly AngleCard[]): AngleCard[] {
+  const scoreOf = (c: AngleCard): number | null =>
+    isAngleCardV3(c) && typeof c.score === "number" ? c.score : null;
+  return cards
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => {
+      const sa = scoreOf(a.c);
+      const sb = scoreOf(b.c);
+      if (sa === sb) return a.i - b.i;
+      if (sa === null) return 1;
+      if (sb === null) return -1;
+      return sb - sa;
+    })
+    .map((x) => x.c);
 }
 
 /**

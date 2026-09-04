@@ -12,6 +12,8 @@ import { resolveQualityGate } from "./quality-gate.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
 import { evidenceByRef, tensionByRef, type AngleCard, type BriefEvidence } from "../research/brief-store.js";
+// v2/v3 联合卡的兼容读法（v3 角度块是 P1b）——两版各写一套渲染必然分叉
+import { cardAudiencePain, cardHoldTrigger } from "../research/angle-cards.js";
 import { domainOf } from "../research/brief-inject.js";
 import { sanitizeExternal } from "../research/research-prompt-kit.js";
 
@@ -318,8 +320,8 @@ export function buildAngleBlock(card: AngleCard, evidence: BriefEvidence[], tens
   if (tension) lines.push(`依托的张力点：${angleField(tension)}`);
   lines.push(`禁区（这一稿不写）：${angleField(card.antiScope)}`);
   lines.push("　↑ 写进去就是跑题，四平八稳面面俱到没有深度。");
-  lines.push(`目标受众痛点：${angleField(card.audiencePain)}`);
-  lines.push(`预期停留触发：${angleField(card.holdTrigger)}`);
+  lines.push(`目标受众痛点：${angleField(cardAudiencePain(card))}`);
+  lines.push(`预期停留触发：${angleField(cardHoldTrigger(card))}`);
   lines.push(`开头钩子草稿（手感参考，可以改写，不必照抄）：${angleField(card.hookDraft)}`);
   return lines.join("\n");
 }

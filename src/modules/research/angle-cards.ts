@@ -9,14 +9,23 @@
  * 全是纯函数、不读盘：简报与选题由调用方各自取好再传进来。
  */
 import type { SelectedAngle } from "../../storage/local-store.js";
+import { isAnchorValid, scoreAngleCard, validateAngleCardV3 } from "./angle-stage.js";
 import {
+  ANGLE_ELEMENTS,
   evidenceByRef,
   evidenceRefId,
+  isAngleCardV3,
   tensionByRef,
   type AngleCard,
+  type AngleCardV2,
+  type AngleCardV3,
+  type AngleElement,
+  type AngleStructure,
   type BriefEvidence,
+  type FirsthandAnchor,
   type ResearchBrief,
 } from "./brief-store.js";
+import { DEFAULT_PERSONAS, type PersonaKey } from "./personas.js";
 import { objList, str, strList } from "./research-prompt-kit.js";
 
 /** 候选张数（§1.2）：少于 2 张等于没得选，多于 4 张是让人做阅读理解 */
@@ -59,9 +68,28 @@ export function activeAngleCard(
 }
 
 /**
+ * v2 展示字段的兼容读法。v3 把「对谁说」拆成了主画像 + 误区 + 收获感，不再有
+ * `audiencePain / holdTrigger`；而角度块的 v3 渲染要等 P1b（spec §4.4）。
+ * 在那之前，既有消费方（写稿注入、审稿材料、聊天回执）用这两个函数拿语义最近的一句——
+ * 好过让它们各自 `if (cardVersion === 3)` 分叉出三套说法。
+ */
+export function cardAudiencePain(card: AngleCard): string {
+  if (!isAngleCardV3(card)) return card.audiencePain;
+  return `${DEFAULT_PERSONAS[card.primaryPersona].name}｜他信的是：${card.misconception}`;
+}
+
+export function cardHoldTrigger(card: AngleCard): string {
+  if (!isAngleCardV3(card)) return card.holdTrigger;
+  return `${DEFAULT_PERSONAS[card.primaryPersona].triggers}｜网感元素：${card.elements.join("、")}`;
+}
+
+/**
  * 校验一张**外部传进来的**角度卡（选择 UI 的「改写」动作走这条）。
  * 创始人可以改写任何文字，但不能改 id、也不能凭空造证据引用——那两样是这份卡与简报的接榫。
  * 返回 string = 人话拒绝原因。
+ *
+ * 走哪一版由**简报里的原卡**决定（客户端自称的 cardVersion 只作兜底）：改写是在原卡上改，
+ * 版本由产地钉死，不能靠提交方声明——否则改一张 v3 卡时少交几个字段就「降级」成 v2 了。
  */
 export function parseAngleCard(raw: unknown, brief: ResearchBrief, angleId: string): AngleCard | string {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "card 必须是一个对象";
@@ -69,6 +97,11 @@ export function parseAngleCard(raw: unknown, brief: ResearchBrief, angleId: stri
   const text = (key: string): string => (typeof src[key] === "string" ? (src[key] as string).trim() : "");
   if (typeof src.id === "string" && src.id.trim() && src.id.trim() !== angleId) {
     return `card.id（${src.id}）与 angle_id（${angleId}）不一致——改写不能换一张卡`;
+  }
+  const original = findAngleCard(brief, angleId);
+  if (isAngleCardV3(original)) return parseRewrittenV3(src, brief, original);
+  if (src.cardVersion === 3 || src.card_version === 3) {
+    return `简报里的 ${angleId} 是旧版（v2）卡——改写不能顺手升级卡版本，要 v3 请重跑立意`;
   }
   const missing = ["angle", "thesis", "antiScope", "audiencePain", "holdTrigger", "hookDraft"].filter(
     (k) => !text(k),
@@ -98,6 +131,87 @@ export function parseAngleCard(raw: unknown, brief: ResearchBrief, angleId: stri
   };
 }
 
+/**
+ * 改写一张 v3 卡（P1 spec §3.1）。**可改所有文字，不可改接榫**：
+ * `id / cardVersion / coreEvidenceIds / firsthandAnchor.excerptHash` 是这张卡与简报的
+ * 引用关系，改了就不再是「同一张卡的改写版」，归因与补证会跟着错。
+ * 客户端提交的 `score` 一律丢弃、服务端重算（codex #7：分数是代码写的）。
+ */
+function parseRewrittenV3(
+  src: Record<string, unknown>,
+  brief: ResearchBrief,
+  original: AngleCardV3,
+): AngleCardV3 | string {
+  const text = (key: string): string => (typeof src[key] === "string" ? (src[key] as string).trim() : "");
+  if (src.cardVersion !== undefined && src.cardVersion !== 3) return "card.cardVersion 不可改（这是一张 v3 卡）";
+  if (src.coreEvidenceIds !== undefined) {
+    const refs = strList(src.coreEvidenceIds);
+    const same =
+      refs.length === original.coreEvidenceIds.length && refs.every((id, i) => id === original.coreEvidenceIds[i]);
+    if (!same) return "card.coreEvidenceIds 不可改——要换证据请重跑立意，不要在改写里换地基";
+  }
+  const anchor = rewriteAnchor(src.firsthandAnchor, original.firsthandAnchor);
+  if (typeof anchor === "string") return anchor;
+  const gains = (src.personaGains ?? {}) as Record<string, unknown>;
+  const card: AngleCardV3 = {
+    ...original,
+    angle: text("angle"),
+    thesis: text("thesis"),
+    antiScope: text("antiScope"),
+    hookDraft: text("hookDraft"),
+    misconception: text("misconception"),
+    mechanism: text("mechanism"),
+    payoff: text("payoff"),
+    nextAction: text("nextAction"),
+    counterResponse: text("counterResponse"),
+    evidenceLevel: (text("evidenceLevel") || original.evidenceLevel) as AngleCardV3["evidenceLevel"],
+    primaryPersona: (text("primaryPersona") || original.primaryPersona) as PersonaKey,
+    structure: (text("structure") || original.structure) as AngleStructure,
+    personaGains: {
+      grow: str(gains.grow) || original.personaGains.grow,
+      trust: str(gains.trust) || original.personaGains.trust,
+      convert: str(gains.convert) || original.personaGains.convert,
+    },
+    elements: src.elements === undefined ? original.elements : readElements(src.elements),
+    evidenceNeeds: src.evidenceNeeds === undefined ? original.evidenceNeeds : strList(src.evidenceNeeds),
+    ...(anchor ? { firsthandAnchor: anchor } : {}),
+  };
+  const tensionId = text("tensionId");
+  if (tensionId) card.tensionId = tensionId;
+  else delete card.tensionId;
+  // 分数不是创始人能填的字段：先抹掉，校验通过后由代码重算
+  delete card.score;
+  delete card.scoreReasons;
+
+  const problems: string[] = [];
+  validateAngleCardV3(card, brief, "card", problems);
+  if (problems.length > 0) return problems.join("；");
+  if (card.firsthandAnchor && !isAnchorValid(card, brief)) {
+    return "card.firsthandAnchor.quote 必须仍是被引证据里的逐字片段——改了引文就得重新命中";
+  }
+  const { score, reasons } = scoreAngleCard(card, brief);
+  return { ...card, score, scoreReasons: reasons };
+}
+
+/** 锚点：kind/引用/指纹原样继承，只有 quote 可改（改了在上层重新逐字命中） */
+function rewriteAnchor(raw: unknown, original: FirsthandAnchor | undefined): FirsthandAnchor | undefined | string {
+  if (!original) {
+    // 原卡没锚点就不能在改写里新造一个：新锚点没有产地那一步的引用校验，等于凭空声明第一手材料
+    if (raw && typeof raw === "object") return "card.firsthandAnchor 不能在改写里新增——重跑立意才会产生第一手锚点";
+    return undefined;
+  }
+  if (raw === undefined || raw === null) return original;
+  if (typeof raw !== "object" || Array.isArray(raw)) return "card.firsthandAnchor 必须是一个对象";
+  const item = raw as Record<string, unknown>;
+  const hash = str(item.excerptHash);
+  if (hash && hash !== original.excerptHash) return "card.firsthandAnchor.excerptHash 不可改——它是引文出处的凭据";
+  return { ...original, quote: str(item.quote) || original.quote };
+}
+
+function readElements(raw: unknown): AngleElement[] {
+  return strList(raw).filter((e): e is AngleElement => (ANGLE_ELEMENTS as readonly string[]).includes(e));
+}
+
 // ─── 产地校验（综合子运行的 submit_brief 走这条） ─────────────────────────────
 
 /** 字符 bigram 集合（空白不计）——中文没有词边界，bigram 是最省事的字面近似度底座 */
@@ -122,7 +236,7 @@ function readAngleCard(
   evidence: BriefEvidence[],
   tensions: string[],
   problems: string[],
-): AngleCard | null {
+): AngleCardV2 | null {
   const at = `angle_cards[${index}]`;
   // 只看**本张**新增的问题：problems 是全卡共用的收集器，用长度快照才不会被上一张连坐
   const before = problems.length;
@@ -164,8 +278,11 @@ function readAngleCard(
   };
 }
 
-/** 任意两张卡的 thesis+antiScope 太像 = 同角度换皮，打回（§1.2 差异性校验） */
-function checkDistinct(cards: AngleCard[], problems: string[]): void {
+/**
+ * 任意两张卡的 thesis+antiScope 太像 = 同角度换皮，打回（§1.2 差异性校验）。
+ * 立意 pass（v3 卡）复用同一把尺：两处各写一套差异标准，迟早分叉成两种「像」。
+ */
+export function checkDistinct(cards: AngleCard[], problems: string[]): void {
   const grams = cards.map((c) => bigrams(`${c.thesis}${c.antiScope}`));
   for (let i = 0; i < cards.length; i += 1) {
     for (let j = i + 1; j < cards.length; j += 1) {
@@ -204,7 +321,7 @@ export function readAngleCards(
   }
   const cards = items
     .map((item, i) => readAngleCard(item, i, evidence, tensions, problems))
-    .filter((c): c is AngleCard => c !== null);
+    .filter((c): c is AngleCardV2 => c !== null);
   if (problems.length > 0) return [];
   checkDistinct(cards, problems);
   return problems.length > 0 ? [] : cards;

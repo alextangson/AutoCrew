@@ -136,6 +136,20 @@ async function seedResearched(brief = makeBrief()): Promise<Topic> {
   return topic;
 }
 
+/** CAS 推进台账指针 = 这一版才是「当前生效简报」（P1 §3.0） */
+async function bumpPointer(topicId: string, briefRevision: number): Promise<void> {
+  const job: ResearchJob = {
+    topicId,
+    status: "succeeded",
+    startedAt: "2026-08-24T09:00:00.000Z",
+    settledAt: "2026-08-24T12:00:00.000Z",
+    perspectives: pendingPerspectives(),
+    briefRevision,
+    topicHash: topicHashOf(TOPIC_TITLE, TOPIC_DESC),
+  };
+  await upsertJob(job, testDir);
+}
+
 async function pick(topicId: string, card: AngleCard, briefRevision = 1): Promise<void> {
   await updateTopic(
     topicId,
@@ -219,10 +233,11 @@ describe("生效角度的优先级：direction > 选中卡 > 无", () => {
 // ─── 过期即无选择（§1.3）──────────────────────────────────────────────────────
 
 describe("选择过期", () => {
-  it("简报重跑过（选的是 v1，最新是 v2）→ 按没选处理并留痕", async () => {
+  it("简报重跑过且指针已推进（选的是 v1，生效的是 v2）→ 按没选处理并留痕", async () => {
     const topic = await seedResearched();
     await pick(topic.id, CARD, 1);
     await saveBrief(topic.id, makeBrief({ revision: 2, generatedAt: "2026-08-24T12:00:00.000Z" }), testDir);
+    await bumpPointer(topic.id, 2);
     const warns: string[] = [];
 
     const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id }, warns);
@@ -289,5 +304,48 @@ describe("显式跳过", () => {
     expect(saved?.versions?.at(-1)?.note).toBe("AI 完成初稿（未带调研简报、未经角度点选）");
     expect(res.wroteWithoutBrief).toBe(true);
     expect(res.wroteWithoutAngle).toBe(true);
+  });
+});
+
+// ─── 单一简报快照（P1 spec §3.0）──────────────────────────────────────────────
+
+describe("注入与选卡认同一版简报", () => {
+  it("盘上有孤儿 v2（重跑落了盘但没结算）→ 材料与角度卡一起停在指针指的 v1", async () => {
+    const topic = await seedResearched();
+    await pick(topic.id, CARD, 1);
+    // v2 的卡换了论点：如果角度解析偷偷认了磁盘最大版，这句话会出现在 prompt 里
+    const orphanCard: AngleCard = { ...CARD, thesis: "孤儿 v2 的论点：只有 v2 才有这句话" };
+    await saveBrief(
+      topic.id,
+      makeBrief({
+        revision: 2,
+        summary: "孤儿 v2 的摘要",
+        angleCards: [orphanCard],
+        generatedAt: "2026-08-24T12:00:00.000Z",
+      }),
+      testDir,
+    );
+
+    const { seen, contentId } = await write({ ...TEST_REQ, topicId: topic.id });
+
+    // 选中的卡还作数：它选的 v1 仍是生效版
+    expect(seen.write!.userMessage).toContain(CARD.thesis);
+    expect(seen.write!.userMessage).not.toContain(orphanCard.thesis);
+    // 注入的事实块也来自 v1
+    expect(seen.write!.userMessage).not.toContain("孤儿 v2 的摘要");
+    // 归因写的是同一版
+    expect((await getContent(contentId, testDir))?.usedBriefRevision).toBe(1);
+  });
+
+  it("台账没有指针（简报文件孤零零躺着）→ 材料与角度卡都不生效，也不算绕闸口", async () => {
+    const topic = await saveTopic({ title: TOPIC_TITLE, description: TOPIC_DESC, tags: [] }, testDir);
+    await saveBrief(topic.id, makeBrief(), testDir);
+    await pick(topic.id, CARD, 1);
+
+    const { seen, note } = await write({ ...TEST_REQ, topicId: topic.id });
+
+    expect(seen.write!.userMessage).not.toContain(CARD.thesis);
+    expect(seen.write!.userMessage).not.toContain("厂商口径与独立评测差了四倍");
+    expect(note).toBe("AI 完成初稿");
   });
 });

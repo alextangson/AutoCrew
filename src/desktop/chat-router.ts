@@ -27,8 +27,9 @@ import { getTopicCandidates, type RadarItem } from "../modules/radar/topic-radar
 import { fetchPageText, type PageText } from "../utils/fetch-page.js";
 import { searchAssets, type LibraryAssetType, type LibraryAssetView } from "../storage/library-store.js";
 import { getDataDir, getTopic, saveTopic, updateTopic, listSiblings, type Topic } from "../storage/local-store.js";
-import { loadLatestBrief, type AngleCard, type ResearchBrief } from "../modules/research/brief-store.js";
-import { activeAngleCard, angleCardsOf, findAngleCard } from "../modules/research/angle-cards.js";
+import type { AngleCard } from "../modules/research/brief-store.js";
+import { resolveEffectiveBrief, type BriefSnapshot } from "../modules/research/brief-snapshot.js";
+import { activeAngleCard, angleCardsOf, cardAudiencePain, findAngleCard } from "../modules/research/angle-cards.js";
 import { topicHashOf } from "../modules/research/research-job-store.js";
 import { loadRadarSources, saveRadarSources } from "../modules/radar/topic-radar.js";
 import { startGenerateScript, retryGenerateScript, type StartedGeneration } from "../modules/writing/generate-script.js";
@@ -516,29 +517,29 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     }
   };
 
-  /** 落选题 + 放行。卡不在最新简报里 = 用户看的是过期候选，拒绝并让他重看一次 */
-  const selectAngle = async (topicId: string, brief: ResearchBrief, angleId: string): Promise<string | null> => {
-    const card = findAngleCard(brief, angleId);
+  /** 落选题 + 放行。卡不在生效简报里 = 用户看的是过期候选，拒绝并让他重看一次 */
+  const selectAngle = async (topicId: string, snap: BriefSnapshot, angleId: string): Promise<string | null> => {
+    const card = findAngleCard(snap.brief, angleId);
     if (!card) {
-      return fail(`角度 ${angleId} 不在这条选题的最新简报（v${brief.revision}）里——重新把候选念给用户听,让他重选`);
+      return fail(`角度 ${angleId} 不在这条选题的当前简报（v${snap.revision}）里——重新把候选念给用户听,让他重选`);
     }
     const updated = await updateTopic(
       topicId,
-      { selectedAngle: { briefRevision: brief.revision, angleId, card, selectedAt: new Date().toISOString() } },
+      { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
       dataDir,
     );
     return updated ? null : fail(`选题不存在：${topicId}`);
   };
 
   /** 不接单回执：把候选原样交给总编辑去念，**由用户拍板**——替他选就等于没有品味闸口 */
-  const needsAngleReply = (topicId: string, brief: ResearchBrief, cards: AngleCard[]): string => {
-    sink.push({ type: "angle_cards", data: { topicId, revision: brief.revision, cards } });
+  const needsAngleReply = (topicId: string, snap: BriefSnapshot, cards: AngleCard[]): string => {
+    sink.push({ type: "angle_cards", data: { topicId, revision: snap.revision, cards } });
     return JSON.stringify({
       ok: true,
       needsAngle: true,
       cards: cards.map((c) => ({
         id: c.id, angle: c.angle, thesis: c.thesis,
-        antiScope: c.antiScope, audiencePain: c.audiencePain, hookDraft: c.hookDraft,
+        antiScope: c.antiScope, audiencePain: cardAudiencePain(c), hookDraft: c.hookDraft,
       })),
       note: "把候选讲给用户听,让他选一张/说自己的角度/明说直接写;不要替用户选。",
     });
@@ -555,15 +556,17 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
    */
   const angleGate = async (req: ScriptRequest, angleId: string): Promise<string | null> => {
     if (!req.topicId) return null;
-    const brief = await loadLatestBrief(req.topicId, getDataDir(dataDir), () => {});
-    const cards = angleCardsOf(brief);
-    if (!brief || cards.length === 0) return null; // 没有候选就没有闸口（§1.8 降级：不硬出角度）
-    if (angleId) return selectAngle(req.topicId, brief, angleId);
+    // 唯一「当前有效简报」入口（P1 §3.0）：闸口与写稿注入必须认同一版，不然聊天里选的是
+    // v2 的卡、写稿注进去的却是 v1 的材料
+    const snap = await resolveEffectiveBrief(req.topicId, getDataDir(dataDir), () => {});
+    const cards = angleCardsOf(snap?.brief);
+    if (!snap || cards.length === 0) return null; // 没有候选就没有闸口（§1.8 降级：不硬出角度）
+    if (angleId) return selectAngle(req.topicId, snap, angleId);
     if (req.direction?.trim() || req.angleSkipReason?.trim()) return null;
     const topic = await getTopic(req.topicId, dataDir);
     const hash = topic ? topicHashOf(topic.title, topic.description) : "";
-    if (topic && activeAngleCard(topic.selectedAngle, brief, hash)) return null; // 之前选过且还作数
-    return needsAngleReply(req.topicId, brief, cards);
+    if (topic && activeAngleCard(topic.selectedAngle, snap.brief, hash)) return null; // 之前选过且还作数
+    return needsAngleReply(req.topicId, snap, cards);
   };
 
   const tools: LoopTool[] = [

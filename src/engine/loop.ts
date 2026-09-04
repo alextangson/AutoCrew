@@ -62,7 +62,13 @@ export interface LoopOptions {
    */
   onTextDelta?: (e: LoopStreamEvent) => void;
   /** 运行日志归属(V5.6):runId 缺省自动生成 run-eng-…;config.dataDir 缺省不落日志 */
-  logMeta?: { runId?: string; agent?: string; usedPatternIds?: string[]; usedBriefRevision?: number };
+  logMeta?: {
+    runId?: string;
+    agent?: string;
+    usedPatternIds?: string[];
+    usedBriefRevision?: number;
+    usedBriefHash?: string;
+  };
   /**
    * 用户中止（对话控制面设计 §Phase 3）。additive:不传 = 今天的行为。
    * 检查点 = 每次模型调用前 + 每个工具执行之间；贯通到观察器（掐传输）与 withRetry（不重放）。

@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { createDeepResearchRunJob, type DeepResearchDeps } from "./deep-research.js";
-import { briefPath, briefsDir, loadBrief, loadLatestBrief } from "./brief-store.js";
+import { briefPath, briefsDir, isAngleCardV3, loadBrief, loadLatestBrief } from "./brief-store.js";
 import {
   FetchImageError,
   type FetchImageErrorCode,
@@ -165,11 +165,57 @@ const BRIEF_OK: Record<string, unknown> = {
   asset_picks: [{ asset_id: "a1", caption: "使用率图" }],
 };
 
+/** 立意 pass（P1 §4.1）：综合之后的独立一 pass，产角度卡 v3 */
+function angleCand(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    primary_persona: "grow",
+    angle: "算一笔维护账",
+    thesis: "省下的编码时间被维护成本吃回去了，净收益接近于零",
+    evidence_level: "grounded",
+    core_evidence_ids: ["ev-1"],
+    misconception: "以为提效数字等于净收益",
+    mechanism: "补全省下的是打字时间，维护花的是理解时间；理解更贵，所以账会反过来",
+    payoff: "你会知道该拿哪一段时间去比，今天就把上周的返工时间记一次",
+    next_action: "把上周被 AI 改过的代码返工时间记下来",
+    counter_response: "有人会说熟练了就好——熟练解决的是打字，不是理解成本",
+    persona_gains: { grow: "听懂提效数字怎么骗人", trust: "有可复算的账", convert: "知道验收该验什么" },
+    elements: ["新奇点", "爽点"],
+    evidence_needs: ["返工时长的公开统计"],
+    structure: "myth-busting",
+    hook_draft: "提效 55% 是真的，只是账没算完。",
+    anti_scope: "不写工具横评、不写怎么写 prompt",
+    ...over,
+  };
+}
+
+const ANGLES_OK: Record<string, unknown> = {
+  misconceptions: { grow: ["提效等于净收益"], trust: ["新工具都差不多"], convert: ["买了就等于落地"] },
+  candidates: [
+    angleCand(),
+    angleCand({
+      angle: "从翻车案例倒推",
+      primary_persona: "trust",
+      thesis: "翻车集中在重构类任务，说明它擅长补全而不是设计",
+      anti_scope: "不做成本测算、不谈团队管理",
+      elements: ["痛点→理想状态", "泪点"],
+    }),
+    angleCand({
+      angle: "验收标准换一个",
+      primary_persona: "convert",
+      thesis: "该被考核的不是生成速度，而是改完之后谁能读懂",
+      anti_scope: "不谈选型、不谈价格",
+      elements: ["美点", "爽点"],
+    }),
+  ],
+};
+
 interface Plan {
   /** 缺省用 PERSPECTIVE_OK；给 [] 表示这一路什么都不提交（no_submit） */
   perspectives?: Partial<Record<PerspectiveName, Call[]>>;
   /** 缺省用 BRIEF_OK；给 [] 表示综合没提交 */
   synthesis?: Array<Record<string, unknown>>;
+  /** 缺省用 ANGLES_OK；给 [] 表示立意 pass 没提交（no_submit） */
+  angles?: Array<Record<string, unknown>>;
   /** 每次子运行开始前的副作用钩子（模拟「调研途中选题被删」） */
   hook?: (key: string) => Promise<void>;
 }
@@ -182,13 +228,17 @@ function perspectiveOf(systemPrompt: string): PerspectiveName | null {
 
 function planLoop(plan: Plan = {}): typeof runLoop {
   return (async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
-    const isSynthesis = (opts.tools ?? []).some((t) => t.name === "submit_brief");
+    const has = (tool: string) => (opts.tools ?? []).some((t) => t.name === tool);
+    const isSynthesis = has("submit_brief");
+    const isAngle = has("submit_angles");
     const name = perspectiveOf(opts.systemPrompt);
-    await plan.hook?.(isSynthesis ? "synthesis" : (name ?? "?"));
+    await plan.hook?.(isSynthesis ? "synthesis" : isAngle ? "angles" : (name ?? "?"));
 
     const calls: Call[] = isSynthesis
       ? (plan.synthesis ?? [BRIEF_OK]).map((args) => ({ tool: "submit_brief", args }))
-      : (plan.perspectives?.[name!] ?? PERSPECTIVE_OK);
+      : isAngle
+        ? (plan.angles ?? [ANGLES_OK]).map((args) => ({ tool: "submit_angles", args }))
+        : (plan.perspectives?.[name!] ?? PERSPECTIVE_OK);
 
     for (const call of calls) {
       const tool = (opts.tools ?? []).find((t) => t.name === call.tool);
@@ -607,5 +657,47 @@ describe("检索活动可见", () => {
     expect(reads).toHaveLength(1);
     expect(reads[0].detail).toBe("example.com"); // 只报 host
     for (const a of seen) expect(PERSPECTIVE_NAMES).toContain(a.perspective as PerspectiveName);
+  });
+});
+
+// ─── 立意 pass（P1 spec §4.1）：独立一 pass，失败不带走整条 job ──────────────
+
+describe("立意 pass", () => {
+  it("成功 → 简报里落的是卡 v3（带代码打的分），覆盖综合那批候选", async () => {
+    const topic = await newTopic();
+    const outcome = await makeRunJob()(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    const brief = await loadLatestBrief(topic.id, dataDir);
+    const cards = brief!.angleCards ?? [];
+    expect(cards).toHaveLength(3);
+    expect(cards.every((c) => isAngleCardV3(c))).toBe(true);
+    expect(cards.map((c) => c.id)).toEqual(["angle-1", "angle-2", "angle-3"]);
+    const first = cards[0];
+    expect(isAngleCardV3(first) && first.score).toBe(4); // 元素 2 + grounded 1 + 主画像 grow 1
+    expect(brief!.gaps.some((g) => g.startsWith("立意未产出"))).toBe(false);
+  });
+
+  it("立意没提交 → job 照常 succeeded，原因写进 gaps 并从 warn 冒出来", async () => {
+    const topic = await newTopic();
+    const warns: string[] = [];
+    const outcome = await makeRunJob({ angles: [] }, warns)(jobFor(topic));
+    expect(outcome.status).toBe("succeeded"); // 立意失败绝不让整条调研失败
+
+    const brief = await loadLatestBrief(topic.id, dataDir);
+    expect(brief!.gaps.some((g) => g.startsWith("立意未产出"))).toBe(true);
+    expect(warns.join("")).toContain("立意未产出（no_submit）");
+    // 本刀不动综合产地：立意失败时，综合那批 v2 卡还在，写稿不至于一张候选都没有
+    expect((brief!.angleCards ?? []).every((c) => !isAngleCardV3(c))).toBe(true);
+  });
+
+  it("立意交了不合规的候选（元素只有 1 个）→ invalid_output 进 gaps", async () => {
+    const topic = await newTopic();
+    const bad = { ...ANGLES_OK, candidates: [angleCand({ elements: ["爽点"] })] };
+    const outcome = await makeRunJob({ angles: [bad] })(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    const brief = await loadLatestBrief(topic.id, dataDir);
+    expect(brief!.gaps.join("")).toContain("网感元素需 ≥2");
   });
 });

@@ -255,6 +255,8 @@ export interface Content {
   usedPatternIds?: string[];
   /** 本稿注入的调研简报版本（深调研 §6）：回溯得到 briefs/<topicId>.v<N>.json 那份不可变输入，无简报时字段不落 */
   usedBriefRevision?: number;
+  /** 那份简报的内容指纹（P1 §3.0）：版本号说「哪一版」，指纹说「盘上那份没被换过」 */
+  usedBriefHash?: string;
   /**
    * AI 审稿结论（审稿 spec §2.5）：工作台稿卡徽章的唯一读数。旧稿无此字段 = 不显示徽章。
    * 改稿链路（revise_draft / 收下修订）落盘时把 status 改成 "stale"——
