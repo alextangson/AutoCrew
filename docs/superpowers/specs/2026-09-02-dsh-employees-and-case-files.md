@@ -277,3 +277,14 @@ dsh 的 `fs-sandbox` **只限写不限读**（README：reads always pass through
 | 设计前提 | 无 | §0：纯外网调研上限是综述，内部语料是到「优质」的唯一路径 |
 
 codex 第 24 条（采访门按 evidenceMode 自适应）的处置随之改为「采访撤销，evidenceMode 保留但改脚本判定」。
+
+## 12. dsh 真机记录（2026-09-05，commits 972d656 / 7991d9f）
+
+`dsh --profile autocrew-dev --patch <临时 patch：dataDir 指隔离副本> --no-open --port 3089`，网页端选「AutoCrew 总编辑」preset，DeepSeek-V4-Flash 当总编辑，AutoCrew 引擎走隔离副本的 engine.json（DeepSeek V4 Pro）。
+
+- **第一发就抓到真 bug**：`autocrew_workflow status` 被注册表判「value is not lossless JSON」（返回值带 `undefined` 字段）→ 桥对所有返回值 JSON 往返，加回归测试。
+- **总编辑行为全按人设**：读状态 → 发现简报无卡、拒绝拿旧雷达角度冒充 → 自主投 angles job 并轮询（三次后按「不原地空转」收手）→ 4 张卡按立意/论点/钩子/写给谁/机制/证据程度/缺什么逐条念，明说「分数只代表排序不是推荐」→ 用 dsh 提问卡让创作者选 → 选定后落 `select_angle` → 问平台 → 我的自动化误选「先不开写」，它把矛盾摆出来重问而不是猜 → `write` 返回 contentId 后主动结束轮次「你先去忙别的」→ 下一轮 `draft` 取稿，正文 + 逐个数字对应 `ev-` id + 如实报审稿 skipped，再自己跑 `autocrew_review full_review` 出审核报告。
+- **对照**：第一次没选中 preset 时，标准模式 agent 拿 Bash/Read 翻数据目录读 JSON——「不挂通用文件系统」的设计正确。
+- **成稿**：《我差点关掉 DeepSeek Harness，直到我给它加了个插件》，亲历复盘，锚创作者转写；补证 3 条需求 found(3)/found(4)/found(2)，写手查证 1 次；数字门 1 个 needs_human（「几十万人」，出自创作者原话）。
+- **审稿仍 skipped**：DeepSeek 审一遍 296s + 第二轮 4s 撞 5 分钟单轮上限 → 单轮上限改 8 分钟、审稿段 16 分钟、整稿 35 分钟（commit 见 git log）。
+- **ego-browser 操作要点**：选 preset 要用 DOM 找文本节点再点最近的 `role=menuitem`；dsh 提问卡是 `role=radio` + 「提交」按钮。
