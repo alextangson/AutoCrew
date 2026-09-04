@@ -30,8 +30,7 @@ import {
   buildSubmitTool,
   createCapture,
   isAcceptedCapture,
-  DEFAULT_REPAIR_ROUNDS,
-} from "./script-payload.js";
+  DEFAULT_REPAIR_ROUNDS, WRITER_MAX_TOKENS } from "./script-payload.js";
 import type { CaptureBlock, Captured, SubmitGateDeps, SubmitPayload } from "./script-payload.js";
 import {
   assembleResearchInput,
@@ -725,7 +724,7 @@ async function runWriterLoop(
       ...(tools.evidenceTool ? [tools.evidenceTool] : []),
     ],
     maxTurns: writerTurnBudget(gate, tools.ledger),
-    maxTotalTokens: gate ? 80000 : undefined,
+    maxTotalTokens: WRITER_MAX_TOKENS,
     // 归因进 run-log 元数据(§3.5 卡 / 深调研 §6 简报 / P1 §4.4 角度与语料):没用到的字段不出现
     logMeta: { ...(runId ? { runId } : {}), agent: "writer", ...logAttribution(attribution) },
   });

@@ -29,6 +29,13 @@ export interface SubmitPayload {
 }
 
 const TEXT_FIELDS = ["title", "hook", "body", "cta"] as const;
+/**
+ * 写手/修订轮的 token 总预算。**不能按 pack 有没有 gate 分叉**：runLoop 缺省只有 20000，
+ * 而 v3 角度块 + 12k 研究槽 + 补证块一轮就能用掉——2026-09-05 端到端里抖音稿一轮即 max_tokens，
+ * 写手连 submit_script 都没来得及调。
+ */
+export const WRITER_MAX_TOKENS = 120_000;
+
 export const REQUIRED_FIELDS: (keyof SubmitPayload)[] = [...TEXT_FIELDS, "hashtags"];
 
 function missingField(field: string): string {

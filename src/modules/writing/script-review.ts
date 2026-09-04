@@ -24,8 +24,7 @@ import {
   createCapture,
   isAcceptedCapture,
   type SubmitGateDeps,
-  type SubmitPayload,
-} from "./script-payload.js";
+  type SubmitPayload, WRITER_MAX_TOKENS } from "./script-payload.js";
 import {
   buildReviewSystemPrompt,
   buildReviewUserMessage,
@@ -316,7 +315,7 @@ async function reviseOnce(
       // 同一把 submit_script（同硬门依赖）+ 写手那个 find_evidence **实例**（共享次数额度）
       tools: [buildSubmitTool(captured, gate, deps.submitDeps), ...(deps.evidenceTool ? [deps.evidenceTool] : [])],
       maxTurns: deps.maxWriterTurns ?? (gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4),
-      maxTotalTokens: gate ? 80000 : undefined,
+      maxTotalTokens: WRITER_MAX_TOKENS,
       logMeta: { ...(deps.runId ? { runId: deps.runId } : {}), agent: "reviser" },
     });
     if (!captured.payload) {

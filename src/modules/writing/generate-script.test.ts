@@ -453,7 +453,7 @@ describe("generateScript × quality gate (wechat_mp)", () => {
     expect(seenOpts!.systemPrompt).toContain("质量硬门禁");
     // 回合预算 = 4 + find_evidence 额度(3) + gate 修复轮(2)×2（P1 §4.4 / codex #12）
     expect(seenOpts!.maxTurns).toBe(11);
-    expect(seenOpts!.maxTotalTokens).toBe(80000);
+    expect(seenOpts!.maxTotalTokens).toBe(120000);
     expect(res.gateFailures).toEqual([]);
   });
 
