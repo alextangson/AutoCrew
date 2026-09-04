@@ -112,7 +112,10 @@ export function buildDshTools(config: PluginConfig = {}): BuiltTools {
         if (result.ok === false) {
           throw new Error(String(result.error ?? `${tool.name} failed`));
         }
-        return result;
+        // dsh 注册表对返回值同样要求 lossless JSON：AutoCrew 工具的结果里常带 `undefined` 字段
+        // （可选项没值就不写）——2026-09-05 真机第一发 `autocrew_workflow status` 就被判
+        // 「value is not lossless JSON」。JSON 往返一次把 undefined/NaN/Date 都归一成纯 JSON。
+        return toLosslessJson(result);
       },
     });
   }

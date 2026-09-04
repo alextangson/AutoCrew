@@ -85,3 +85,22 @@ describe("ToolRunner → dsh 工具桥", () => {
     expect(Object.keys(frozen)).toEqual(["action"]);
   });
 });
+
+
+describe("output projection", () => {
+  it("返回值经 JSON 往返：undefined 字段被剥掉，dsh 注册表不再判「not lossless JSON」", async () => {
+    const { definitions } = buildDshTools({});
+    const status = definitions.find((d) => d.name === "autocrew_status")!;
+    const out = (await status.execute({ action: "overview" } as never, {} as never)) as Record<string, unknown>;
+    const walk = (v: unknown, seen: Set<string>): void => {
+      if (v === undefined) seen.add("undefined");
+      if (typeof v === "number" && !Number.isFinite(v)) seen.add("non-finite");
+      if (v instanceof Date) seen.add("date");
+      if (v && typeof v === "object") for (const x of Object.values(v as Record<string, unknown>)) walk(x, seen);
+    };
+    const seen = new Set<string>();
+    walk(out, seen);
+    expect([...seen]).toEqual([]);
+    expect(JSON.parse(JSON.stringify(out))).toEqual(out);
+  });
+});
