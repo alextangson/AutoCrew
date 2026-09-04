@@ -62,6 +62,24 @@ npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts [--topic <topicId
 
 `runs/` 与 `blind/` 都在 `.gitignore` 里。
 
+## P0c：证据按需回查 + 评语修正（2026-09-03 20:14–21:31）
+
+创始人读完 P0b 六篇的评语（例子重复、术语多、没收获感、自嘲伤身份、内部语料串题、镜头标注多余）加一条原则「证据不够就去搜，硬编就是幻觉」。`angle2` 格 = `angle` + 四处改动（angle-stage spec v3.1 §7.9）：
+
+- 立意卡新增必填 `evidenceNeeds`（1–3 条）与 `payoff`；流水线按需求跑**定向补证**（`lib/targeted-research.ts`：同搜索代理、同配额、同引文逐字校验，引文真页记错就 `locateQuote` 纠正），结果作为增补证据块给写手。
+- 写手加 `find_evidence` 工具（最多 3 次，只返回校验过的引文）；正文数字与全部证据源做代码侧核验，无据数字记进 meta。
+- 稿子不写镜头/字幕条标注；术语首次出现必须翻译；自嘲不嘲身份；非本选题的转写最多进一段，第一手材料只用卡上指定的锚点。
+
+```bash
+npx tsx experiments/p0-inputs-vs-structure/run-cell.ts --topic <topicId> --cell angle2 --research full --rep 1
+npx tsx experiments/p0-inputs-vs-structure/make-blind-sheet.ts --cells angle2-full,angle-full --out experiments/p0-inputs-vs-structure/blind-angle2
+```
+
+结果（6 格全成，DeepSeek V4 Pro，每格 12–15 分钟、2.4–3.8 万 token，比 `angle` 格多出的时间几乎全是补证）：
+- 18 条证据需求补回 16 条（2 条如实报空，写手被告知「不要编」）；6 篇正文里的数字 **31/31 全部有据**；镜头标注 0 处。
+- 写手 `find_evidence` 一次都没调用：补证已经把需求填满了，工具是兜底。
+- 盲评卷 `blind-angle2/`：每选题 4 稿（angle2 ×2 + P0b 的 angle ×2），seed 20260904，测的是这四处改动有没有落到稿子上。
+
 ## P0b：立意格（2026-09-03 10:44–11:30）
 
 创始人盲评到一半的发现：「DeepSeek Harness」选题 12 篇稿全是「劝你别碰」立场，与调研档、流程档无关——立场在调研综合里就定了（angle-stage spec v3 §7.0）。于是加 `angle` 格：先跑一次立意 pass（`lib/angle-stage.ts`：三画像误区清单 → 3–4 个候选 → 代码侧打分选一 → 渲染成 `direction`），再走 `writer` 档；只配 `full` 调研。
