@@ -160,6 +160,8 @@ const roleOf = (opts: LoopOptions): "writer" | "reviser" | "targeted" | "reviewe
 interface Seen {
   writer: LoopOptions[];
   targeted: LoopOptions[];
+  /** 审稿轮拿到的 prompt（验「立意卡与 needs_human 数字有没有走到审稿人手里」） */
+  reviewer: LoopOptions[];
   /** 写手开工那一刻磁盘上的稿件（验「账本先落盘」） */
   atWriterStart?: Awaited<ReturnType<typeof getContent>>;
 }
@@ -176,6 +178,7 @@ function makeLoop(payloads: Array<Record<string, unknown>>, seen: Seen, contentI
       return { finalMessage: "", turns: 1, totalTokens: 0, toolCallCount: 0, stopReason: "no_tool_calls" };
     }
     if (role === "reviewer") {
+      seen.reviewer.push(opts);
       return { finalMessage: "", turns: 1, totalTokens: 0, toolCallCount: 0, stopReason: "no_tool_calls" };
     }
     seen.writer.push(opts);
@@ -193,7 +196,7 @@ async function write(
   req: Parameters<typeof generateScript>[0],
   payloads: Array<Record<string, unknown>> = [CLEAN_PAYLOAD],
 ): Promise<{ res: GeneratedScript; seen: Seen; warns: string[] }> {
-  const seen: Seen = { writer: [], targeted: [] };
+  const seen: Seen = { writer: [], targeted: [], reviewer: [] };
   const ref: { id?: string } = {};
   const warns: string[] = [];
   const res = await generateScript(req, testDir, {
@@ -433,6 +436,35 @@ describe("写手回合预算 = 4 + 查证额度 + 修复轮×2", () => {
       { ...CLEAN_PAYLOAD, body: `${CLEAN_PAYLOAD.body}${"字".repeat(1600)}` },
     ]);
     expect(seen.writer[0].maxTurns).toBe(4 + 3 + 2 * 2);
+  });
+});
+
+// ─── 6.5 立意卡进审稿（§4.5 判据三的接线） ───────────────────────────────────
+
+describe("审稿轮拿到立意卡与 needs_human 数字", () => {
+  it("选了 v3 卡 → 判据三与立意卡进审稿 prompt；模糊量词跟着一起交过去", async () => {
+    const topic = await seedResearched();
+    await pick(topic.id, V3_CARD);
+    // 「几十万」归一不了 → 数字硬门放行但标 needs_human（§4.4），它必须走到审稿人手上
+    const { seen, res } = await write({ ...TEST_REQ, topicId: topic.id }, [
+      { ...CLEAN_PAYLOAD, body: "有几十万人开始用它写代码，重构类任务基本没用。" },
+    ]);
+
+    expect(res.unverifiedNumbers).toContain("几十万人");
+    expect(seen.reviewer).toHaveLength(1);
+    expect(seen.reviewer[0].systemPrompt).toContain("## 判据三：立意执行");
+    expect(seen.reviewer[0].systemPrompt).toContain("需人工过目的模糊数量词：几十万人");
+    expect(seen.reviewer[0].userMessage).toContain("【立意卡（本稿切入点");
+    expect(seen.reviewer[0].userMessage).toContain("以为提效数字等于净收益"); // 卡上的误区
+  });
+
+  it("选了 v2 卡 → 审稿仍走原来的加严表，不出现判据三", async () => {
+    const topic = await seedResearched();
+    await pick(topic.id, V2_CARD);
+    const { seen } = await write({ ...TEST_REQ, topicId: topic.id });
+
+    expect(seen.reviewer[0].systemPrompt).not.toContain("判据三");
+    expect(seen.reviewer[0].systemPrompt).toContain("thesis 没被论证");
   });
 });
 

@@ -10,6 +10,7 @@ import type { SubmitPayload } from "./script-payload.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult } from "../../engine/loop.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
+import type { AngleCardV3 } from "../research/brief-store.js";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -434,6 +435,86 @@ describe("reviewAndConverge — 审稿材料", () => {
     expect(b.seen.reviewOpts[0].userMessage).toBe(a.seen.reviewOpts[0].userMessage);
     expect(a.seen.reviewOpts[0].systemPrompt).not.toContain("thesis 没被论证");
     expect(a.seen.reviewOpts[0].userMessage).not.toContain("【本稿切入点");
+  });
+});
+
+// ─── 立意卡 v3：第三类判据（P1 §4.5 / 角度卡 spec §7.5） ──────────────────────
+
+describe("reviewAndConverge — 立意执行判据（v3 卡）", () => {
+  const V3: AngleCardV3 = {
+    cardVersion: 3,
+    id: "angle-1",
+    angle: "算一笔维护账",
+    thesis: "省下的编码时间被维护成本吃回去了",
+    evidenceLevel: "grounded",
+    coreEvidenceIds: ["ev-1"],
+    antiScope: "不写工具横评",
+    hookDraft: "账没算完。",
+    primaryPersona: "trust",
+    misconception: "以为提效数字等于净收益",
+    mechanism: "省下的时间落在写代码那一步，维护成本落在读代码那一步",
+    payoff: "看完你知道该拿哪个数字去跟老板谈",
+    nextAction: "把上周的返工工时也记进提效表",
+    counterResponse: "有人说熟练了就好",
+    personaGains: { grow: "听懂水分", trust: "拿到能复算的账", convert: "知道该盯哪一项" },
+    elements: ["痛点→理想状态", "新奇点"],
+    evidenceNeeds: ["一个企业公开披露的维护成本数字"],
+    structure: "claim-case-claim",
+  };
+  const withV3 = { ...INPUT, researchSlot: "【调研简报】三个数字", angle: V3 };
+
+  it("判据三进 system、立意卡进 user，needs_human 数字跟着一起交给审稿人", async () => {
+    const { impl, seen } = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge({ ...withV3, needsHumanNumbers: ["几十万"] }, CONFIG, { runLoopImpl: impl });
+
+    expect(seen.reviewOpts[0].systemPrompt).toContain("## 判据三：立意执行");
+    expect(seen.reviewOpts[0].systemPrompt).toContain(V3.nextAction);
+    expect(seen.reviewOpts[0].systemPrompt).toContain("需人工过目的模糊数量词：几十万");
+    expect(seen.reviewOpts[0].userMessage).toContain("【立意卡（本稿切入点");
+    expect(seen.reviewOpts[0].userMessage).toContain(V3.mechanism);
+    expect(seen.reviewOpts[0].userMessage).toContain("三个数字"); // 调研快照照样透传
+  });
+
+  // 判据三的 blocker 与 AI 味的 blocker 走同一个 { id, severity, quote, rule, instruction } 契约，
+  // 所以收敛循环一个字都不用改——这条测试就是在钉这件事。
+  it("立意执行 blocker 照样驱动一轮修订：status revised、fixed 1、rule 与 instruction 进修订轮", async () => {
+    const angleBlocker = {
+      severity: "blocker",
+      quote: "开头一句话",
+      rule: "误区没被点出或没被反驳",
+      instruction: `开头 3 秒先把「${V3.misconception}」这句话摆出来再反驳`,
+    };
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [angleBlocker] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    const out = await reviewAndConverge(withV3, CONFIG, { runLoopImpl: impl });
+
+    expect(out.review.status).toBe("revised");
+    expect(out.review.rounds).toBe(1);
+    expect(out.review.fixed).toBe(1);
+    expect(out.payload.hook).toBe(REVISED.hook);
+    expect(seen.reviseOpts).toHaveLength(1);
+    expect(seen.reviseOpts[0].userMessage).toContain(angleBlocker.rule);
+    expect(seen.reviseOpts[0].userMessage).toContain(angleBlocker.instruction);
+    // 再审那一轮读的是修订稿，判据三仍在（每轮重验，不是只验第一轮）
+    expect(seen.reviewOpts[1].systemPrompt).toContain("## 判据三：立意执行");
+    expect(seen.reviewOpts[1].userMessage).toContain(REVISED.hook as string);
+  });
+
+  it("立意执行 advisory 不打回：只透给创作者", async () => {
+    const advisory = {
+      severity: "advisory",
+      quote: "开头一句话",
+      rule: "身份表述",
+      instruction: "「不会写代码」这句创作者自己没说过，换成嘲行为的说法",
+    };
+    const { impl, seen } = makeLoop({ reviews: [[{ verdict: "revise", issues: [advisory] }]] });
+    const out = await reviewAndConverge(withV3, CONFIG, { runLoopImpl: impl });
+
+    expect(out.review.status).toBe("passed");
+    expect(out.review.issues).toHaveLength(1);
+    expect(seen.reviseOpts).toHaveLength(0);
   });
 });
 

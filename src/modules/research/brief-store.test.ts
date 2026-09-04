@@ -123,6 +123,42 @@ describe("不可变版本", () => {
   });
 });
 
+// P1c §3.6：inferences / partialProblems 是全可选新字段，schemaVersion 不动
+describe("视角新字段（无来源推断 / 剔除记录）", () => {
+  it("带新字段的简报存回来逐字不变", async () => {
+    const brief = makeBrief({
+      perspectives: [
+        {
+          name: "audience",
+          insights: [{ text: "维护账才是重点", sourceIds: ["p1"] }],
+          evidence: [],
+          assetPicks: [],
+          gaps: [],
+          inferences: [{ text: "他们以为换个模型就能解决", persona: "grow" }, { text: "第三秒会划走" }],
+          partialProblems: ["已剔除：evidence[0]（p1）：引文在原页找不到"],
+        },
+      ],
+    });
+    await saveBrief(TOPIC, brief, dataDir);
+
+    const loaded = await loadBrief(TOPIC, 1, dataDir);
+    expect(loaded?.perspectives[0].inferences).toEqual(brief.perspectives[0].inferences);
+    expect(loaded?.perspectives[0].partialProblems).toEqual(brief.perspectives[0].partialProblems);
+    expect(loaded?.schemaVersion).toBe(1);
+  });
+
+  it("旧简报（两个字段都没有）照常读进来，不告警、不降级", async () => {
+    await saveBrief(TOPIC, makeBrief(), dataDir);
+
+    const warns: string[] = [];
+    const loaded = await loadLatestBrief(TOPIC, dataDir, (m) => warns.push(m));
+    expect(warns).toEqual([]);
+    expect(loaded?.perspectives[0].insights).toHaveLength(2);
+    expect(loaded?.perspectives[0].inferences).toBeUndefined();
+    expect(loaded?.perspectives[0].partialProblems).toBeUndefined();
+  });
+});
+
 describe("读侧降级", () => {
   it("没有简报 → null，且不告警（正常空态）", async () => {
     const warns: string[] = [];

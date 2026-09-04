@@ -76,6 +76,8 @@ const RESEARCH_BLOCK_MAX = 9000;
 const OWN_MATERIAL_MAX = 9000;
 /** 每路视角进立意 prompt 的洞察条数上限——P0 的 full 档喂的是四视角全文，立意要看到同一份 */
 const INSIGHTS_PER_PERSPECTIVE = 6;
+/** 无来源推断进立意 prompt 的条数上限（与产地 §3.6 同口径 6 条） */
+const INFERENCES_PER_PERSPECTIVE = 6;
 const QUOTE_MAX = 300;
 
 /** 身份自嘲词表：嘲行为可以，嘲身份会直接掉可信度（判据 9） */
@@ -436,6 +438,16 @@ function briefFacts(brief: ResearchBrief): string {
     if (p.insights.length === 0) continue;
     lines.push(`视角「${p.name}」洞察：`);
     for (const ins of p.insights.slice(0, INSIGHTS_PER_PERSPECTIVE)) lines.push(`- ${sanitizeExternal(ins.text, TEXT_MAX)}`);
+  }
+  // 受众推断正是**误区**的原料（P1c §3.6）：误区本来就说不出出处，它靠的是对受众的判断。
+  // 标签写死「不可作证据」——它能进 misconception，绝不能进 coreEvidenceIds 或锚点。
+  for (const p of brief.perspectives) {
+    const inferences = p.inferences ?? [];
+    if (inferences.length === 0) continue;
+    lines.push(`视角「${p.name}」受众推断（无来源，不可作证据）：`);
+    for (const inf of inferences.slice(0, INFERENCES_PER_PERSPECTIVE)) {
+      lines.push(`- ${sanitizeExternal(inf.text, TEXT_MAX)}${inf.persona ? `（画像 ${inf.persona}）` : ""}`);
+    }
   }
   return clampChars(externalBlock(lines), RESEARCH_BLOCK_MAX);
 }

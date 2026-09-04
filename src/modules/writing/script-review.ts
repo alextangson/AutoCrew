@@ -87,6 +87,12 @@ export interface ReviewInput {
    * 调用方传 `deps.evidenceTool` 时这里就该是 true（`reviewAndConverge` 不替它猜）。
    */
   canFindEvidence?: boolean;
+  /**
+   * 数字硬门归一不了、放行但标了 `needs_human` 的量词（P1 §4.4/§4.5）。审稿人看到它们才知道
+   * 「几十万人」这种数是**代码放过的**，不是漏网的——不写进来，判据三那条 advisory 就只能靠
+   * 模型自己猜哪些数字模糊，而它猜不准（精确数字已经被硬门对过账了）。
+   */
+  needsHumanNumbers?: string[];
 }
 
 export interface ReviewDeps {
@@ -264,11 +270,12 @@ async function reviewOnce(
   try {
     const result = await (deps.runLoopImpl ?? runLoop)(reviewer.config, {
       model: reviewer.model,
-      systemPrompt: buildReviewSystemPrompt(
-        Boolean(input.researchSlot?.trim()),
-        Boolean(input.angle),
-        Boolean(input.canFindEvidence),
-      ),
+      systemPrompt: buildReviewSystemPrompt({
+        hasResearch: Boolean(input.researchSlot?.trim()),
+        ...(input.angle ? { angle: input.angle } : {}),
+        canFindEvidence: Boolean(input.canFindEvidence),
+        needsHumanNumbers: input.needsHumanNumbers ?? [],
+      }),
       userMessage: buildReviewUserMessage({
         payload: draft.payload,
         humanizedText: draft.humanizedText,

@@ -43,6 +43,17 @@ export interface PerspectiveAssetPick {
   caption: string;
 }
 
+/**
+ * 无来源的受众推断（P1c spec §3.6）：凭经验而非页面得出的心理/行为判断。
+ * **只有受众视角能产**，且与 `insights` 严格分家——洞察必须挂来源，推断明确不可作证据，
+ * 渲染时一律带「无来源」标签。它是立意 pass 要的「误区」原料（P0 可发稿的共同起点）。
+ */
+export interface PerspectiveInference {
+  text: string;
+  /** 这条推断针对哪个画像；模型给不出就缺席，不硬猜 */
+  persona?: PersonaKey;
+}
+
 export interface PerspectiveOutput {
   name: PerspectiveName;
   insights: PerspectiveInsight[];
@@ -50,6 +61,14 @@ export interface PerspectiveOutput {
   assetPicks: PerspectiveAssetPick[];
   /** 这一路自己点名的材料缺口（配额耗尽 / 找不到数据 / 页面反爬） */
   gaps: string[];
+  /** 受众视角的无来源推断（§3.6）；其余视角缺席 */
+  inferences?: PerspectiveInference[];
+  /**
+   * 校验剔除记录（§4.7）：这一路交回来但没通过校验、被**逐条剔除**的条目原因。
+   * 有值 = 这份产出是「部分成功」的——整路不再因为几条坏条目被清零。
+   * 新增全可选字段，**不 bump schemaVersion**（同 assetPicks / angleCards 先例）。
+   */
+  partialProblems?: string[];
 }
 
 // ─── 简报（§5 schema） ───────────────────────────────────────────────────────

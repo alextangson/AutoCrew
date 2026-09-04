@@ -214,6 +214,40 @@ describe("立意 pass 成功路径", () => {
     expect(user).toContain(EV_QUOTE); // 锚点要逐字回引，引文不能被改写
     expect(user).toContain("tension-1");
   });
+
+  // P1c §3.6：受众推断就是误区的原料，但它进来时必须自带「不可作证据」的标签
+  it("受众推断进事实块：带无来源标签、带画像、最多 6 条", () => {
+    const user = buildAngleUserMessage({
+      brief: makeBrief({
+        perspectives: [
+          {
+            name: "audience",
+            insights: [{ text: "维护成本才是真账单", sourceIds: ["p1"] }],
+            evidence: [],
+            assetPicks: [],
+            gaps: [],
+            inferences: [
+              { text: "他们以为换个模型就能解决", persona: "grow" },
+              ...Array.from({ length: 6 }, (_, i) => ({ text: `推断 ${i + 1}` })),
+            ],
+          },
+        ],
+      }),
+      topic: TOPIC,
+      profile: PROFILE,
+    });
+
+    expect(user).toContain("受众推断（无来源，不可作证据）");
+    expect(user).toContain("他们以为换个模型就能解决");
+    expect(user).toContain("（画像 grow）");
+    expect(user).toContain("推断 5"); // 首条 + 前 5 条，正好 6 条
+    expect(user).not.toContain("推断 6");
+  });
+
+  it("没有推断的简报不多出这一段", () => {
+    const user = buildAngleUserMessage({ brief: makeBrief(), topic: TOPIC, profile: PROFILE });
+    expect(user).not.toContain("受众推断");
+  });
 });
 
 // ─── 校验：证据级别 ──────────────────────────────────────────────────────────

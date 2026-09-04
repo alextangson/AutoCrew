@@ -128,10 +128,21 @@ function renderPerspective(p: PerspectiveOutput): string {
       parts.push(`  quote：${clampChars(stripDelimiters(e.quote), QUOTE_MAX_CHARS)}`);
     }
   }
+  // 无来源推断单独一段并把「不可引用」写在标题里：合成时它只能影响判断，绝不能被当证据搬进简报
+  if (p.inferences?.length) {
+    parts.push("受众推断（无来源）——只是这一路的经验判断，**不可引用、不可当证据**：");
+    for (const inf of p.inferences) {
+      parts.push(`- ${line(inf.text)}${inf.persona ? `（画像 ${inf.persona}）` : ""}`);
+    }
+  }
   if (p.assetPicks.length) {
     parts.push(`图片候选：${p.assetPicks.map((a) => `${a.assetId}（${line(a.caption, 40)}）`).join("；")}`);
   }
   if (p.gaps.length) parts.push(`缺口：${p.gaps.map((g) => line(g, 80)).join("；")}`);
+  // 只报条数不报原因：剔除原因是给人看的运维信息，展开只会挤掉材料
+  if (p.partialProblems?.length) {
+    parts.push(`（这一路有 ${p.partialProblems.length} 条产出未通过校验被剔除，材料比平常少）`);
+  }
   return parts.join("\n");
 }
 

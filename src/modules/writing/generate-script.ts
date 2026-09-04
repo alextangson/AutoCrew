@@ -771,6 +771,8 @@ function reviewDraft(
       ...(gate ? { gate } : {}),
       platform,
       canFindEvidence: Boolean(evidenceTool),
+      // 硬门放行但要人工过目的模糊量词（§4.5 判据三 advisory）：审稿人替创始人先点一遍名
+      needsHumanNumbers: written.needsHumanNumbers,
     },
     inputs.config,
     {
