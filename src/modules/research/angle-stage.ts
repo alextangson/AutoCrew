@@ -9,11 +9,10 @@
  * 1. **代码只校形状与引用**：机制是不是因果、payoff 是不是大白话、主张是不是比喻——
  *    这些是语义判断，交审稿的第三类判据（§4.5），立意 pass 只在提示词里要求（codex #20）。
  * 2. **引用不可伪造**：coreEvidenceIds 逐条回简报证据；firsthandAnchor 是结构化引用，
- *    `excerptHash` 由代码算、quote 必须在被引证据里逐字命中（codex #8）。
+ *    `excerptHash` 由代码算、quote 必须在被引材料（简报证据或内部语料片段）里逐字命中（codex #8）。
  * 3. **打分不选卡**：分数只用于展示与排序，永远不写 `selectedAngle`——选哪张是创始人的
  *    品味闸口，代码替他选就等于把这个闸口拆了（codex #7）。
  */
-import crypto from "node:crypto";
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
@@ -32,7 +31,15 @@ import {
   type FirsthandAnchor,
   type ResearchBrief,
 } from "./brief-store.js";
+import {
+  OWN_MATERIAL_USAGE_RULE,
+  excerptHashOf,
+  ownChunkById,
+  renderOwnMaterial,
+  type OwnMaterial,
+} from "./own-material.js";
 import { PERSONA_KEYS, renderPersonas, type PersonaKey } from "./personas.js";
+import { quoteCorpus } from "./research-broker.js";
 import type { ResearchTopicRef } from "./research-perspectives.js";
 import type { RunState } from "./research-tools.js";
 import {
@@ -65,6 +72,8 @@ const LONG_TEXT_MAX = 400;
 const EVIDENCE_NEEDS_MAX = 3;
 const OVERVIEW_NEEDS_MIN = 2;
 const RESEARCH_BLOCK_MAX = 9000;
+/** 内部语料块在立意提示词里的预算：装不下的整段丢掉（renderOwnMaterial 保证块始终完整） */
+const OWN_MATERIAL_MAX = 9000;
 /** 每路视角进立意 prompt 的洞察条数上限——P0 的 full 档喂的是四视角全文，立意要看到同一份 */
 const INSIGHTS_PER_PERSPECTIVE = 6;
 const QUOTE_MAX = 300;
@@ -93,6 +102,8 @@ export interface RunAngleStageInput {
   /** 只用它的**事实字段**（摘要/张力/证据/缺口）；卡是本 pass 的产出，传进来的一律忽略 */
   brief: ResearchBrief;
   topic: ResearchTopicRef;
+  /** 创作者自己的材料（P1b §3.2）：第一手锚点的另一半来源；缺省 = 这轮只有简报证据可引 */
+  ownMaterial?: OwnMaterial;
   profile: CreatorProfile | null;
   engineConfig?: EngineConfig;
   dataDir?: string;
@@ -117,38 +128,43 @@ function errText(err: unknown): string {
 
 // ─── 引用校验（引用不可伪造） ────────────────────────────────────────────────
 
-/** 片段指纹：被引正文的 sha256 前 16。模型算不出也改不动，改写卡时用它验「还是那段材料」 */
-export function excerptHashOf(text: string): string {
-  return crypto.createHash("sha256").update(text.replace(/\s+/g, " ").trim(), "utf-8").digest("hex").slice(0, 16);
-}
+export { excerptHashOf };
 
-/** 逐字命中：只压空白再比子串——中文引文里的空格差异不该算作篡改 */
+/**
+ * 逐字命中：先按**模型实际看到的形态**归一（broker 的 quoteCorpus：消毒 + 折空白），
+ * 再把空白全去掉比子串——中文引文里的空格差异不该算作篡改（broker 冒烟实证同款理由）。
+ */
 function verbatimIn(haystack: string, needle: string): boolean {
-  const norm = (s: string) => s.replace(/\s+/g, "").trim();
-  return needle.length > 0 && norm(haystack).includes(norm(needle));
+  const norm = (s: string) => quoteCorpus(s).replace(/\s+/g, "");
+  return needle.trim().length > 0 && norm(haystack).includes(norm(needle));
 }
 
 /**
- * 锚点校验。**本刀只认 `brief_evidence`**：转写与审定稿要等内部语料（P1b §3.2）落地，
- * 现在放行等于让模型自由编一个 contentId——宁可明确拒绝，也不要一个校验不了的引用。
+ * 锚点是否**当下仍然成立**：引用解得到 + 指纹对得上 + 引文逐字在被引正文里。
+ *
+ * 内部语料的两类（transcript / approved_draft）要拿着当轮扫到的 `ownMaterial` 才验得了。
+ * **没传语料时只校形状**：产地那一步已经逐字校验过、`excerptHash` 又是创始人改写里的
+ * 禁改字段，若在这里一律判否，一张带第一手锚点的卡会连改都改不了（改写路径没有语料入口）。
  */
-function anchorEvidence(brief: ResearchBrief, anchor: FirsthandAnchor | undefined) {
-  if (!anchor || anchor.kind !== "brief_evidence") return null;
-  return evidenceByRef(brief.evidence, anchor.chunkId);
-}
-
-/** 锚点是否**当下仍然成立**：引用解得到 + 指纹对得上 + 引文逐字在原证据里 */
-export function isAnchorValid(card: AngleCardV3, brief: ResearchBrief): boolean {
-  const ev = anchorEvidence(brief, card.firsthandAnchor);
-  if (!ev || !card.firsthandAnchor) return false;
-  return (
-    card.firsthandAnchor.excerptHash === excerptHashOf(ev.quote) && verbatimIn(ev.quote, card.firsthandAnchor.quote)
-  );
+export function isAnchorValid(card: AngleCardV3, brief: ResearchBrief, ownMaterial?: OwnMaterial): boolean {
+  const anchor = card.firsthandAnchor;
+  if (!anchor) return false;
+  if (anchor.kind === "brief_evidence") {
+    const ev = evidenceByRef(brief.evidence, anchor.chunkId);
+    return !!ev && anchor.excerptHash === excerptHashOf(ev.quote) && verbatimIn(ev.quote, anchor.quote);
+  }
+  const chunk = ownChunkById(ownMaterial, anchor.chunkId);
+  if (!chunk) return ownMaterial ? false : Boolean(anchor.chunkId && anchor.excerptHash && anchor.quote);
+  return anchor.excerptHash === chunk.excerptHash && verbatimIn(chunk.text, anchor.quote);
 }
 
 // ─── 打分（代码侧，确定性；只用于展示与排序） ────────────────────────────────
 
-export function scoreAngleCard(card: AngleCardV3, brief: ResearchBrief): { score: number; reasons: string[] } {
+export function scoreAngleCard(
+  card: AngleCardV3,
+  brief: ResearchBrief,
+  ownMaterial?: OwnMaterial,
+): { score: number; reasons: string[] } {
   const reasons: string[] = [];
   const elements = new Set(card.elements ?? []);
   let score = Math.min(elements.size, 3);
@@ -159,7 +175,7 @@ export function scoreAngleCard(card: AngleCardV3, brief: ResearchBrief): { score
   } else {
     reasons.push("综述级（overview）");
   }
-  if (isAnchorValid(card, brief)) {
+  if (isAnchorValid(card, brief, ownMaterial)) {
     score += 2;
     reasons.push("第一手锚点校验通过");
   } else {
@@ -183,31 +199,60 @@ function pushLen(value: string, max: number, label: string, tag: string, problem
   else if (Array.from(value).length > max) problems.push(`${tag}：${label} 超过 ${max} 字，压缩后重交`);
 }
 
+const ANCHOR_KINDS = ["transcript", "approved_draft", "brief_evidence"] as const;
+
 function readAnchorArg(
   raw: unknown,
   brief: ResearchBrief,
+  ownMaterial: OwnMaterial | undefined,
   tag: string,
   problems: string[],
 ): FirsthandAnchor | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const item = raw as Record<string, unknown>;
   const kind = str(item.kind) || "brief_evidence";
-  if (kind !== "brief_evidence") {
-    problems.push(`${tag}：本轮第一手锚点只能引简报证据（kind=brief_evidence）——转写与审定稿还没接进来`);
-    return undefined;
-  }
   const ref = str(item.chunk_id ?? item.chunkId ?? item.content_id ?? item.contentId);
   const quote = str(item.quote);
-  const ev = evidenceByRef(brief.evidence, ref);
-  if (!ev) {
-    problems.push(`${tag}：第一手锚点引用「${ref || "(空)"}」不存在——只能引本份简报的 ev-N，或者不给锚点`);
+  if (kind === "brief_evidence") {
+    const ev = evidenceByRef(brief.evidence, ref);
+    if (!ev) {
+      problems.push(`${tag}：第一手锚点引用「${ref || "(空)"}」不存在——只能引本份简报的 ev-N，或者不给锚点`);
+      return undefined;
+    }
+    if (!verbatimIn(ev.quote, quote)) {
+      problems.push(`${tag}：第一手锚点的 quote 必须是 ${ref} 那条证据里的**逐字**片段，不能转述`);
+      return undefined;
+    }
+    return { kind: "brief_evidence", chunkId: ref, excerptHash: excerptHashOf(ev.quote), quote };
+  }
+  if (kind !== "transcript" && kind !== "approved_draft") {
+    problems.push(`${tag}：firsthandAnchor.kind 只能是 ${ANCHOR_KINDS.join(" / ")}`);
     return undefined;
   }
-  if (!verbatimIn(ev.quote, quote)) {
-    problems.push(`${tag}：第一手锚点的 quote 必须是 ${ref} 那条证据里的**逐字**片段，不能转述`);
+  // 内部语料的引用只能落在**本轮实际喂进去的**片段上：编一个 om:… 就等于凭空声明第一手材料
+  const chunk = ownChunkById(ownMaterial, ref);
+  if (!chunk) {
+    problems.push(
+      `${tag}：第一手锚点引用「${ref || "(空)"}」不存在——只能引上面「我自己的材料」块里给出的片段 id（om: 开头），或者不给锚点`,
+    );
     return undefined;
   }
-  return { kind: "brief_evidence", chunkId: ref, excerptHash: excerptHashOf(ev.quote), quote };
+  if (chunk.kind !== kind) {
+    problems.push(`${tag}：片段 ${ref} 的 kind 是 ${chunk.kind}，不是 ${kind}`);
+    return undefined;
+  }
+  if (!verbatimIn(chunk.text, quote)) {
+    problems.push(`${tag}：第一手锚点的 quote 必须是片段 ${ref} 正文里的**逐字**片段，不能转述或改写`);
+    return undefined;
+  }
+  return {
+    kind: chunk.kind,
+    contentId: chunk.contentId,
+    sourceRevision: chunk.sourceRevision,
+    chunkId: chunk.id,
+    excerptHash: chunk.excerptHash,
+    quote,
+  };
 }
 
 /** 单张卡的判据（产地与创始人改写共用；`tag` 决定报错口吻挂在哪张卡上） */
@@ -264,14 +309,20 @@ function validateEvidenceLevel(card: AngleCardV3, brief: ResearchBrief, tag: str
 }
 
 /** tool args → 落盘形状。id 由代码按位置编（angle-1…），模型说了不算 */
-function readCard(item: Record<string, unknown>, index: number, brief: ResearchBrief, problems: string[]): AngleCardV3 {
+function readCard(
+  item: Record<string, unknown>,
+  index: number,
+  brief: ResearchBrief,
+  ownMaterial: OwnMaterial | undefined,
+  problems: string[],
+): AngleCardV3 {
   const tag = `候选 ${index + 1}`;
   const pick = (snake: string, camel: string): string => str(item[snake] ?? item[camel]);
   const gains = (item.persona_gains ?? item.personaGains) as Record<string, unknown> | undefined;
   const elements = strList(item.elements).filter((e): e is AngleElement =>
     (ANGLE_ELEMENTS as readonly string[]).includes(e),
   );
-  const anchor = readAnchorArg(item.firsthand_anchor ?? item.firsthandAnchor, brief, tag, problems);
+  const anchor = readAnchorArg(item.firsthand_anchor ?? item.firsthandAnchor, brief, ownMaterial, tag, problems);
   const card: AngleCardV3 = {
     cardVersion: 3,
     id: `angle-${index + 1}`,
@@ -312,18 +363,22 @@ function readMisconceptions(raw: unknown, problems: string[]): Record<PersonaKey
   return out;
 }
 
-export function validateAngles(args: Record<string, unknown>, brief: ResearchBrief): Checked<AngleStagePayload> {
+export function validateAngles(
+  args: Record<string, unknown>,
+  brief: ResearchBrief,
+  ownMaterial?: OwnMaterial,
+): Checked<AngleStagePayload> {
   const problems: string[] = [];
   const misconceptions = readMisconceptions(args.misconceptions, problems);
   const items = objList(args.candidates ?? args.cards).slice(0, CARD_MAX);
   if (items.length < CARD_MIN) problems.push(`候选需 ${CARD_MIN}-${CARD_MAX} 个，当前 ${items.length} 个`);
-  const cards = items.map((item, i) => readCard(item, i, brief, problems));
+  const cards = items.map((item, i) => readCard(item, i, brief, ownMaterial, problems));
   // 差异性沿用角度卡 spec 的字面粗筛（thesis+antiScope 的 bigram Jaccard）——一套口径，不另起
   if (problems.length === 0) checkDistinct(cards, problems);
   if (problems.length > 0) return { ok: false, problems };
   // 打分是**代码写的**：模型给的 score 一律不看，这里统一算一次
   for (const card of cards) {
-    const { score, reasons } = scoreAngleCard(card, brief);
+    const { score, reasons } = scoreAngleCard(card, brief, ownMaterial);
     card.score = score;
     card.scoreReasons = reasons;
   }
@@ -351,8 +406,9 @@ export function buildAngleSystemPrompt(profile: CreatorProfile | null): string {
     "6. 机制：mechanism 用一句话说清**为什么会这样**的因果——「A 导致 B，因为 C」。比喻不是机制（「像投票箱」不算），复述材料也不算。",
     "7. 收获感：payoff 用大白话讲清「为什么会这样」+ 一个观众今天能做的方案或启发。小白听不懂的术语等于没讲。",
     "8. 证据级别：主张有简报证据撑着就写 evidenceLevel=grounded 并给 coreEvidenceIds（ev-N）；材料里确实没有就写 overview，并在 evidenceNeeds 里写够 2 条「去找什么」——不要为了凑 grounded 硬引一条不相干的证据。",
-    "9. 第一手锚点：本轮只能引简报证据（kind=brief_evidence，chunk_id 写 ev-N，quote 从那条证据里**逐字**复制）。没有合适的就不要给锚点——引用会被代码逐字校验，编造必被打回。",
-    "10. 自嘲只能嘲行为和判断（「我当时以为」「我走了弯路」），不能嘲身份和资历（学历、出身、是否科班）——那会降低创作者的可信度。",
+    "9. 第一手锚点：优先引创作者自己的材料（kind=transcript / approved_draft，chunk_id 写材料块里的 om:… 片段 id）；没有合适的就引简报证据（kind=brief_evidence，chunk_id 写 ev-N）。quote 一律从被引正文里**逐字**复制，引用会被代码逐字校验，编造必被打回；实在没有合适的就不要给锚点。",
+    `10. 自己的材料怎么用：${OWN_MATERIAL_USAGE_RULE}——他的转写是「我当时做了什么、卡在哪、后来怎么想通的」，不是拿来讲另一个题目的讲义；锚点必须直接支撑这张卡的主张，挂不上就别挂。`,
+    "11. 自嘲只能嘲行为和判断（「我当时以为」「我走了弯路」），不能嘲身份和资历（学历、出身、是否科班）——那会降低创作者的可信度。",
     "",
     "结构是菜单不是模板，由立意挑一种；措辞、节奏、案例展开留给写手：",
     ...ANGLE_STRUCTURES.map((k) => `- ${k}：${STRUCTURE_MENU[k]}`),
@@ -385,6 +441,7 @@ function briefFacts(brief: ResearchBrief): string {
 }
 
 export function buildAngleUserMessage(input: RunAngleStageInput): string {
+  const own = renderOwnMaterial(input.ownMaterial?.chunks ?? [], OWN_MATERIAL_MAX);
   return [
     "本次选题（来自我们自己的灵感库，可信）：",
     `标题：${clampChars(input.topic.title.trim(), 120) || "(无标题)"}`,
@@ -392,6 +449,7 @@ export function buildAngleUserMessage(input: RunAngleStageInput): string {
     "",
     "调研简报的事实部分：",
     briefFacts(input.brief),
+    ...(own ? ["", "我自己的材料（第一手，锚点优先引这里）：", own] : []),
     "",
     "先想清楚三画像各自的误区，再给候选立意，最后调用 submit_angles 一次交齐。",
   ].join("\n");
@@ -437,12 +495,15 @@ const CARD_SCHEMA = {
     elements: { type: "array", items: { type: "string", enum: [...ANGLE_ELEMENTS] }, minItems: 2 },
     firsthand_anchor: {
       type: "object",
-      description: "第一手锚点（可省）",
+      description: "第一手锚点（可省）：创作者自己的材料优先",
       required: ["kind", "chunk_id", "quote"],
       properties: {
-        kind: { type: "string", enum: ["brief_evidence"] },
-        chunk_id: { type: "string", description: "被引简报证据的 ev-N" },
-        quote: { type: "string", description: "从该条证据里逐字复制的片段" },
+        kind: { type: "string", enum: [...ANCHOR_KINDS] },
+        chunk_id: {
+          type: "string",
+          description: "内部语料写材料块里的片段 id（om:…），简报证据写 ev-N",
+        },
+        quote: { type: "string", description: "从被引正文里逐字复制的片段" },
       },
     },
     evidence_needs: { type: "array", items: { type: "string" }, minItems: 1, maxItems: EVIDENCE_NEEDS_MAX },
@@ -470,6 +531,7 @@ const SUBMIT_TOOL_NAME = "submit_angles";
 function buildSubmitTool(
   capture: SubmitCapture<AngleStagePayload>,
   brief: ResearchBrief,
+  ownMaterial: OwnMaterial | undefined,
   state: RunState,
 ): LoopTool {
   return {
@@ -479,7 +541,7 @@ function buildSubmitTool(
     execute(args) {
       // 超时后晚到的提交一律丢弃：那一轮的结果已经作废，收下等于让墙钟形同虚设
       if (state.abandoned) return "Error: 本轮立意已超时作废，不要再调用任何工具。";
-      return captureSubmit(capture, validateAngles(args, brief), SUBMIT_TOOL_NAME);
+      return captureSubmit(capture, validateAngles(args, brief, ownMaterial), SUBMIT_TOOL_NAME);
     },
   };
 }
@@ -548,7 +610,7 @@ export async function runAngleStage(input: RunAngleStageInput): Promise<AngleSta
     model: scout.model,
     systemPrompt: buildAngleSystemPrompt(input.profile),
     userMessage: buildAngleUserMessage(input),
-    tools: [buildSubmitTool(capture, input.brief, state)],
+    tools: [buildSubmitTool(capture, input.brief, input.ownMaterial, state)],
     maxTurns: MAX_TURNS,
     maxTotalTokens: MAX_TOTAL_TOKENS,
     logMeta: { agent: "angle" },

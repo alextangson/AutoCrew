@@ -16,6 +16,7 @@ import {
   type RunAngleStageInput,
 } from "./angle-stage.js";
 import { BRIEF_SCHEMA_VERSION, type AngleCardV3, type ResearchBrief } from "./brief-store.js";
+import type { OwnMaterial } from "./own-material.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../../engine/loop.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
@@ -314,11 +315,155 @@ describe("firsthandAnchor 结构化引用", () => {
     expect(msg).toContain("ev-8");
   });
 
-  it("本刀不认转写/审定稿锚点（内部语料还没接进来）", async () => {
+  it("kind 不认识 → 打回并列出三种合法值", async () => {
     const msg = await reject({
-      candidates: [cand({ firsthand_anchor: anchor({ kind: "transcript", chunk_id: "om:c1:video:3:0" }) }), CAND_2, CAND_3],
+      candidates: [cand({ firsthand_anchor: anchor({ kind: "wechat_post", chunk_id: "ev-1" }) }), CAND_2, CAND_3],
     });
     expect(msg).toContain("brief_evidence");
+    expect(msg).toContain("transcript");
+  });
+});
+
+// ─── 校验：内部语料锚点（P1b §3.2） ─────────────────────────────────────────
+
+describe("firsthandAnchor 引内部语料", () => {
+  const CHUNK_TEXT = "我自己做那个插件的时候，卡了整整两天才发现纠正被写进了会消失的内存里。";
+  const OWN: OwnMaterial = {
+    chunks: [
+      {
+        id: "om:content-a:transcript:10:0",
+        kind: "transcript",
+        contentId: "content-a",
+        sourceRevision: 10,
+        chunkIndex: 0,
+        title: "我做插件那次",
+        score: 0.4,
+        sameTopic: false,
+        excerptHash: excerptHashOf(CHUNK_TEXT),
+        text: CHUNK_TEXT,
+      },
+      {
+        id: "om:content-b:approved_draft:3:0",
+        kind: "approved_draft",
+        contentId: "content-b",
+        sourceRevision: 3,
+        chunkIndex: 0,
+        title: "上一篇放行稿",
+        score: 0.2,
+        sameTopic: false,
+        excerptHash: excerptHashOf("放行稿里那句：维护成本是用理解时间付的。"),
+        text: "放行稿里那句：维护成本是用理解时间付的。",
+      },
+    ],
+    rendered: "",
+    refs: [],
+    scanned: { transcripts: 1, approvedDrafts: 1, excludedSameTopic: 0, skippedForeignTranscripts: 0 },
+  };
+
+  const ownAnchor = (over: Record<string, unknown> = {}) => ({
+    kind: "transcript",
+    chunk_id: "om:content-a:transcript:10:0",
+    quote: "卡了整整两天才发现纠正被写进了会消失的内存里",
+    ...over,
+  });
+
+  const runOwn = (over: Record<string, unknown>, cap: Capture = { results: [] }) =>
+    run([submitArgs(over)], cap, { ownMaterial: OWN });
+
+  it("转写锚点逐字命中 → 收下 contentId/版本/指纹，打分 +2", async () => {
+    const res = await runOwn({ candidates: [cand({ firsthand_anchor: ownAnchor() }), CAND_2, CAND_3] });
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.cards[0].firsthandAnchor).toEqual({
+      kind: "transcript",
+      contentId: "content-a",
+      sourceRevision: 10,
+      chunkId: "om:content-a:transcript:10:0",
+      excerptHash: excerptHashOf(CHUNK_TEXT),
+      quote: "卡了整整两天才发现纠正被写进了会消失的内存里",
+    });
+    expect(res.cards[0].score).toBe(6); // 4 + 锚点 2
+    expect(res.cards[0].scoreReasons).toContain("第一手锚点校验通过");
+  });
+
+  it("放行稿锚点同样收（kind 必须与片段对得上）", async () => {
+    const ok = ownAnchor({
+      kind: "approved_draft",
+      chunk_id: "om:content-b:approved_draft:3:0",
+      quote: "维护成本是用理解时间付的",
+    });
+    const res = await runOwn({ candidates: [cand({ firsthand_anchor: ok }), CAND_2, CAND_3] });
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.cards[0].firsthandAnchor?.kind).toBe("approved_draft");
+    expect(res.cards[0].firsthandAnchor?.sourceRevision).toBe(3);
+
+    const cap: Capture = { results: [] };
+    const wrongKind = await runOwn(
+      { candidates: [cand({ firsthand_anchor: ownAnchor({ chunk_id: "om:content-b:approved_draft:3:0" }) }), CAND_2, CAND_3] },
+      cap,
+    );
+    expect(wrongKind.status).toBe("failed");
+    expect(cap.results[0]).toContain("kind 是 approved_draft");
+  });
+
+  it("转述（非逐字）→ 打回", async () => {
+    const cap: Capture = { results: [] };
+    const res = await runOwn(
+      { candidates: [cand({ firsthand_anchor: ownAnchor({ quote: "我卡了两天才发现内存会丢" }) }), CAND_2, CAND_3] },
+      cap,
+    );
+    expect(res.status).toBe("failed");
+    expect(cap.results[0]).toContain("逐字");
+  });
+
+  it("引一个不存在的片段 id → 打回（编不出第一手材料）", async () => {
+    const cap: Capture = { results: [] };
+    const res = await runOwn(
+      { candidates: [cand({ firsthand_anchor: ownAnchor({ chunk_id: "om:content-zz:transcript:1:0" }) }), CAND_2, CAND_3] },
+      cap,
+    );
+    expect(res.status).toBe("failed");
+    expect(cap.results[0]).toContain("om:content-zz:transcript:1:0");
+  });
+
+  it("没有内部语料时引 om: 片段 → 打回；简报证据锚点照常收", async () => {
+    const cap: Capture = { results: [] };
+    const res = await run([submitArgs({ candidates: [cand({ firsthand_anchor: ownAnchor() }), CAND_2, CAND_3] })], cap);
+    expect(res.status).toBe("failed");
+    expect(cap.results[0]).toContain("不存在");
+
+    const withEv = await runOwn({
+      candidates: [
+        cand({ firsthand_anchor: { kind: "brief_evidence", chunk_id: "ev-1", quote: "维护成本上升了三成" } }),
+        CAND_2,
+        CAND_3,
+      ],
+    });
+    expect(withEv.status).toBe("succeeded");
+    if (withEv.status !== "succeeded") return;
+    expect(withEv.cards[0].firsthandAnchor?.kind).toBe("brief_evidence");
+    expect(withEv.cards[0].score).toBe(6);
+  });
+
+  it("语料块进用户消息：片段 id 可引、用法规则在场", async () => {
+    const user = buildAngleUserMessage({
+      brief: makeBrief(),
+      topic: TOPIC,
+      profile: PROFILE,
+      ownMaterial: OWN,
+    });
+    expect(user).toContain("om:content-a:transcript:10:0");
+    expect(user).toContain(CHUNK_TEXT);
+    expect(user).toContain("转写可作『我亲身经历的转折』，不可作『讲解另一个主题』");
+    // 没有语料就不要出现空块
+    expect(buildAngleUserMessage({ brief: makeBrief(), topic: TOPIC, profile: PROFILE })).not.toContain("我自己的材料");
+  });
+
+  it("系统提示词：锚点优先引自己的材料，且说清转写不能拿来讲他题", () => {
+    const prompt = buildAngleSystemPrompt(PROFILE);
+    expect(prompt).toContain("kind=transcript / approved_draft");
+    expect(prompt).toContain("转写可作『我亲身经历的转折』，不可作『讲解另一个主题』");
   });
 });
 

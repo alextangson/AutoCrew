@@ -5,6 +5,10 @@
  */
 import type { QualityGateSpec, TrackPack } from "../packs/pack-schema.js";
 import type { ClipboardPlatform } from "../publish/clipboard-publisher.js";
+import { formatFormatGateFeedback } from "./format-gate.js";
+import type { FormatMarkerHit } from "./format-gate.js";
+import { formatNumberGateFeedback } from "./number-gate.js";
+import type { NumberVerdict } from "./number-gate.js";
 
 export interface GateInput {
   hook: string;
@@ -12,9 +16,35 @@ export interface GateInput {
   cta: string;
 }
 
+/**
+ * `format_markers` / `unverified_numbers` 是**硬门**（P1 §4.4）：包级 QualityGateSpec 之外，
+ * 由调用方按稿件形态显式打开；修复轮耗尽后不接受该稿（见 script-payload 的 blocked 状态），
+ * 与其余「接受最后一稿并透出未过项」的软项不同。
+ */
 export interface GateFailure {
-  check: "min_chars" | "max_chars" | "min_data_points" | "min_image_tags" | "banned_hook";
+  check:
+    | "min_chars"
+    | "max_chars"
+    | "min_data_points"
+    | "min_image_tags"
+    | "banned_hook"
+    | "format_markers"
+    | "unverified_numbers";
   detail: string;
+}
+
+export const HARD_GATE_CHECKS = new Set<GateFailure["check"]>(["format_markers", "unverified_numbers"]);
+
+/** 镜头/字幕标注 → GateFailure（detail 即模型侧打回文案，写稿与修订两侧同一把尺） */
+export function formatMarkerFailure(hits: FormatMarkerHit[]): GateFailure | null {
+  if (hits.length === 0) return null;
+  return { check: "format_markers", detail: formatFormatGateFeedback(hits) };
+}
+
+/** 无据数字 → GateFailure。needsHuman 只是 advisory，单独出现不构成 FAIL。 */
+export function unverifiedNumberFailure(verdict: NumberVerdict): GateFailure | null {
+  if (verdict.unverified.length === 0) return null;
+  return { check: "unverified_numbers", detail: formatNumberGateFeedback(verdict) };
 }
 
 /**

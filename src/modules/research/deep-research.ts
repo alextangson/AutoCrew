@@ -30,6 +30,7 @@ import {
   downloadBriefAssets,
   type AssetDownloadOptions,
 } from "./research-asset-download.js";
+import { EMPTY_OWN_MATERIAL, collectOwnMaterial, type OwnMaterial } from "./own-material.js";
 import { createResearchBroker, type BrokerActivity, type ResearchBrokerDeps } from "./research-broker.js";
 import {
   PERSPECTIVE_NAMES,
@@ -58,6 +59,8 @@ export interface DeepResearchDeps {
   perspectiveDeadlineMs?: number;
   /** 素材下载段的注入口（测试塞假下载器 / 收紧预算）；预算缺省见 research-asset-download */
   assetDownloadDeps?: Omit<AssetDownloadOptions, "dataDir" | "topicId">;
+  /** 内部语料扫盘的注入口（测试塞故障源）；生产走真实只读扫盘 */
+  collectOwnMaterialImpl?: typeof collectOwnMaterial;
   /**
    * 视角进度写盘后的通知（SSE `research:updated` 用）。
    * runner 的 `onJobChanged` 只覆盖它自己写的三处（queued/running/落定），**管不到**
@@ -216,6 +219,7 @@ async function publishBrief(
   outputs: PerspectiveOutput[],
   perspectives: PerspectiveState[],
   payload: SynthesisPayload,
+  ownMaterial: OwnMaterial,
   dataDir: string,
 ): Promise<JobOutcome> {
   const missingPerspectives = perspectives.filter((p) => p.status !== "succeeded").map((p) => p.name);
@@ -225,6 +229,8 @@ async function publishBrief(
       schemaVersion: BRIEF_SCHEMA_VERSION,
       ...payload,
       perspectives: outputs,
+      // 归因：立意 pass 这一轮**实际读到**的内部语料片段（§3.2）；一段都没读到就是空数组
+      ownMaterialRefs: ownMaterial.refs,
       missingPerspectives,
       generatedAt: new Date().toISOString(),
       revision,
@@ -278,6 +284,7 @@ async function withAngleCards(
   outputs: PerspectiveOutput[],
   topic: ResearchTopicRef,
   profile: Awaited<ReturnType<typeof loadProfile>>,
+  ownMaterial: OwnMaterial,
   deps: DeepResearchDeps,
   warn: (message: string) => void,
 ): Promise<{ payload: SynthesisPayload; failure?: { errorCode: string; reason: string } }> {
@@ -297,6 +304,7 @@ async function withAngleCards(
     brief: factBrief,
     topic,
     profile,
+    ownMaterial,
     dataDir: deps.dataDir,
     ...engineOverrides(deps),
   });
@@ -311,6 +319,28 @@ async function withAngleCards(
     payload: { ...payload, gaps: [...payload.gaps, `立意未产出：${result.reason}`] },
     failure: { errorCode: result.errorCode, reason: result.reason },
   };
+}
+
+/**
+ * 内部语料段（P1 spec §3.2）：立意之前扫一遍创作者自己的转写与放行稿。**只读**，
+ * 而且**读不到不算失败**——第一手锚点是加分项，为了它把一整轮调研判死是本末倒置。
+ */
+async function collectOwn(
+  topicId: string,
+  topic: { title: string; description: string },
+  deps: DeepResearchDeps,
+  warn: (message: string) => void,
+): Promise<OwnMaterial> {
+  try {
+    return await (deps.collectOwnMaterialImpl ?? collectOwnMaterial)(deps.dataDir, {
+      id: topicId,
+      title: topic.title,
+      description: topic.description,
+    });
+  } catch (err) {
+    warn(`内部语料读取失败，本轮立意只有简报证据可引：${errText(err)}`);
+    return EMPTY_OWN_MATERIAL;
+  }
 }
 
 /**
@@ -345,11 +375,13 @@ async function runAnglesOnly(
     assetPicks: brief.assetPicks,
     gaps: brief.gaps,
   };
+  const ownMaterial = await collectOwn(job.topicId, topic, deps, warn);
   const { payload, failure } = await withAngleCards(
     facts,
     brief.perspectives,
     topicRef,
     profile,
+    ownMaterial,
     deps,
     warn,
   );
@@ -368,6 +400,8 @@ async function runAnglesOnly(
     const next: ResearchBrief = {
       ...brief,
       ...payload,
+      // 这一版的卡是这一轮语料产的：上一版的归因绝不能顺着 ...brief 混进来
+      ownMaterialRefs: ownMaterial.refs,
       gaps,
       missingPerspectives: brief.missingPerspectives,
       generatedAt: new Date().toISOString(),
@@ -439,8 +473,9 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
       return failed(perspectives, "synthesis_failed", `${synthesis.errorCode}：${synthesis.reason}`);
     }
     const payload = await withDownloadedAssets(synthesis.payload, job.topicId, deps, warn);
+    const ownMaterial = await collectOwn(job.topicId, topic, deps, warn);
     // full job：立意失败只记 gaps（failure 忽略），简报照出——写稿走无卡路径（§5 边界行为）
-    const withAngles = await withAngleCards(payload, outputs, topicRef, profile, deps, warn);
-    return publishBrief(job, topic, outputs, perspectives, withAngles.payload, deps.dataDir);
+    const withAngles = await withAngleCards(payload, outputs, topicRef, profile, ownMaterial, deps, warn);
+    return publishBrief(job, topic, outputs, perspectives, withAngles.payload, ownMaterial, deps.dataDir);
   };
 }

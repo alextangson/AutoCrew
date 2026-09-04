@@ -2,7 +2,16 @@
  * quality-gate.test.ts — 纯函数门禁的判定口径测试（P0 附录 0-2 阈值语义）
  */
 import { describe, it, expect } from "vitest";
-import { runQualityGate, formatGateFeedback, resolveQualityGate } from "./quality-gate.js";
+import {
+  runQualityGate,
+  formatGateFeedback,
+  resolveQualityGate,
+  formatMarkerFailure,
+  unverifiedNumberFailure,
+  HARD_GATE_CHECKS,
+} from "./quality-gate.js";
+import { findFormatMarkers } from "./format-gate.js";
+import { verifyNumbers } from "./number-gate.js";
 import { KOUBO_PACK } from "../packs/koubo.js";
 import { WECHAT_ARTICLE_PACK } from "../packs/wechat-article.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
@@ -124,5 +133,29 @@ describe("formatGateFeedback", () => {
     expect(msg).toContain("QUALITY GATE 未通过");
     expect(msg).toContain("中文字符 100 < 5000");
     expect(msg).toContain("重新调用 submit_script");
+  });
+});
+
+describe("硬门 failure 构造（P1 §4.4）", () => {
+  it("format_markers：有命中才产 failure，detail 即模型侧打回文案", () => {
+    const hits = findFormatMarkers({ title: "", hook: "", body: "开场[画面]讲三个坑", cta: "" });
+    const failure = formatMarkerFailure(hits);
+    expect(failure?.check).toBe("format_markers");
+    expect(failure?.detail).toContain("口播格式硬门未通过");
+    expect(formatMarkerFailure([])).toBeNull();
+  });
+
+  it("unverified_numbers：只有无据数字算 FAIL，needsHuman 单独出现不算", () => {
+    const bad = verifyNumbers({ title: "", hook: "", body: "留存 45%", cta: "" }, []);
+    expect(unverifiedNumberFailure(bad)?.check).toBe("unverified_numbers");
+    const fuzzy = verifyNumbers({ title: "", hook: "", body: "十几个团队", cta: "" }, []);
+    expect(fuzzy.needsHuman).toHaveLength(1);
+    expect(unverifiedNumberFailure(fuzzy)).toBeNull();
+  });
+
+  it("两个新 check 都登记为硬门（软门不在表里）", () => {
+    expect(HARD_GATE_CHECKS.has("format_markers")).toBe(true);
+    expect(HARD_GATE_CHECKS.has("unverified_numbers")).toBe(true);
+    expect(HARD_GATE_CHECKS.has("min_chars")).toBe(false);
   });
 });

@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { createDeepResearchRunJob, type DeepResearchDeps } from "./deep-research.js";
+import { collectOwnMaterial } from "./own-material.js";
 import {
   briefPath,
   briefsDir,
@@ -817,5 +818,134 @@ describe("angles job", () => {
     expect(v2.topicHash).toBe(topicHashOf(renamed.title, renamed.description));
     expect(v2.topicHash).not.toBe(v1.topicHash);
     expect(v2.gaps.some((g) => g.includes("仍基于旧版选题"))).toBe(true);
+  });
+});
+
+// ─── 内部语料（P1b §3.2） ───────────────────────────────────────────────────
+
+describe("内部语料进立意", () => {
+  const OWN_LINE = "我自己拿 AI 编程助手做过一轮横评，真实收益被维护成本吃掉了大半。";
+  const OWN_CHUNK_ID = "om:content-own-1:transcript:10:0";
+
+  /** 铺一条别的选题的口播转写：v9/v10 并存，数值排序应当取 v10 */
+  async function seedTranscript(): Promise<void> {
+    const dir = path.join(dataDir, "contents", "content-own-1", "video");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "contents", "content-own-1", "meta.json"),
+      JSON.stringify({ id: "content-own-1", title: "我做插件那次", status: "published", topicId: "topic-other" }),
+      "utf-8",
+    );
+    for (const rev of [9, 10]) {
+      await fs.writeFile(
+        path.join(dir, `transcript.v${rev}.json`),
+        JSON.stringify({
+          schemaVersion: 1,
+          source: "funasr",
+          segments: [{ id: "seg-0", text: `第 ${rev} 版：${OWN_LINE}`, startMs: 0, endMs: 1, words: [] }],
+        }),
+        "utf-8",
+      );
+    }
+  }
+
+  /** 立意这一轮把锚点挂到转写片段上 */
+  const anchored = {
+    ...ANGLES_OK,
+    candidates: [
+      angleCand({
+        firsthand_anchor: { kind: "transcript", chunk_id: OWN_CHUNK_ID, quote: "真实收益被维护成本吃掉了大半" },
+      }),
+      ...(ANGLES_OK.candidates as Record<string, unknown>[]).slice(1),
+    ],
+  };
+
+  it("full job：语料喂进立意提示词，锚点落卡，refs 记进简报", async () => {
+    await seedTranscript();
+    const topic = await newTopic();
+    const prompts: string[] = [];
+    const runJob = createDeepResearchRunJob({
+      dataDir,
+      engineConfig: CONFIG,
+      brokerDeps: BROKER_DEPS,
+      runLoopImpl: (async (cfg: EngineConfig, opts: LoopOptions) => {
+        if ((opts.tools ?? []).some((t) => t.name === "submit_angles")) prompts.push(opts.userMessage);
+        return planLoop({ angles: [anchored] })(cfg, opts);
+      }) as unknown as typeof runLoop,
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
+    });
+
+    const outcome = await runJob(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    // 只喂了 v10 那一版（版本号数值排序）
+    expect(prompts[0]).toContain(OWN_CHUNK_ID);
+    expect(prompts[0]).toContain("第 10 版");
+    expect(prompts[0]).not.toContain("第 9 版");
+
+    const brief = (await loadBrief(topic.id, 1, dataDir))!;
+    const chunk = (await collectOwnMaterial(dataDir, { id: topic.id, title: topic.title, description: topic.description }))
+      .chunks[0];
+    expect(brief.ownMaterialRefs).toEqual([{ id: OWN_CHUNK_ID, excerptHash: chunk.excerptHash }]);
+    const card = brief.angleCards![0];
+    expect(isAngleCardV3(card) && card.firsthandAnchor).toMatchObject({
+      kind: "transcript",
+      contentId: "content-own-1",
+      sourceRevision: 10,
+      chunkId: OWN_CHUNK_ID,
+      excerptHash: chunk.excerptHash,
+    });
+  });
+
+  it("没有任何内部语料 → refs 是空数组（「读到了但没有」也是归因）", async () => {
+    const topic = await newTopic();
+    expect((await makeRunJob()(jobFor(topic))).status).toBe("succeeded");
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
+  });
+
+  it("语料读取炸了 → 只 warn，job 照常出简报（第一手材料是加分项，不是命门）", async () => {
+    const topic = await newTopic();
+    const warns: string[] = [];
+    const runJob = createDeepResearchRunJob({
+      dataDir,
+      engineConfig: CONFIG,
+      brokerDeps: BROKER_DEPS,
+      runLoopImpl: planLoop(),
+      onWarn: (m) => warns.push(m),
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
+      collectOwnMaterialImpl: async () => {
+        throw new Error("磁盘炸了");
+      },
+    });
+
+    const outcome = await runJob(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+    expect(warns.some((w) => w.includes("内部语料读取失败") && w.includes("磁盘炸了"))).toBe(true);
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
+  });
+
+  it("angles job：这一轮的语料归因覆盖上一版，不顺着旧简报抄回来", async () => {
+    const topic = await newTopic();
+    const seed = await makeRunJob()(jobFor(topic));
+    expect(seed.status).toBe("succeeded");
+    await upsertJob(
+      { ...jobFor(topic), status: "succeeded", claimedAt: undefined, briefRevision: seed.briefRevision },
+      dataDir,
+    );
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
+
+    // v1 落定之后才铺语料：v2 的归因必须是新扫到的那一段
+    await seedTranscript();
+    const outcome = await makeRunJob({ angles: [anchored] })({
+      ...jobFor(topic),
+      kind: "angles",
+      perspectives: [],
+      briefRevision: 1,
+    });
+    expect(outcome.status).toBe("succeeded");
+
+    const v2 = (await loadBrief(topic.id, 2, dataDir))!;
+    expect(v2.ownMaterialRefs?.map((r) => r.id)).toEqual([OWN_CHUNK_ID]);
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
   });
 });
