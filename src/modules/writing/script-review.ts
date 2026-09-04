@@ -136,9 +136,12 @@ export interface ReviewOutcome {
  * 必然超时降级——P1c 花在审稿判据上的功夫一行都没执行到。现在总额 12 分钟，另给每一轮
  * 单独封顶（PER_PASS_DEADLINE_MS），一轮卡死不拖垮整段。
  */
-export const DEFAULT_REVIEW_DEADLINE_MS = 12 * 60_000;
-/** 单轮（审一遍 / 修一遍）墙钟上限 */
-export const PER_PASS_DEADLINE_MS = 5 * 60_000;
+export const DEFAULT_REVIEW_DEADLINE_MS = 16 * 60_000;
+/**
+ * 单轮（审一遍 / 修一遍）墙钟上限。8 分钟：dsh 真机（2026-09-05）DeepSeek V4 Pro 审一遍
+ * 296 秒回来、再补一轮 4 秒就撞上 5 分钟的线——差 4 秒把整段审稿判成 skipped。
+ */
+export const PER_PASS_DEADLINE_MS = 8 * 60_000;
 /** 修订上限 2 轮（§2.2）——再多就是无限润色 */
 const MAX_REVISION_ROUNDS = 2;
 /** malformed 自纠 1 轮（§2.3） */
