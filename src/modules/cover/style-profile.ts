@@ -122,3 +122,22 @@ export function orderCoverReferencePhotos(paths: string[], profile?: CoverStyleP
     return aPriority - bPriority || aName.localeCompare(bName, "en");
   });
 }
+
+/**
+ * 最终封面只有 3 个参考位：真实主身份照必须第一；若用户明确选了 AI 肖像，
+ * 只让优先级最高的一张占姿态位，另一个位置仍保留真实编辑照来压住身份漂移。
+ */
+export function selectCoverReferencePhotos(paths: string[], profile?: CoverStyleProfile | null): string[] {
+  const ordered = orderCoverReferencePhotos(paths, profile);
+  if (!profile?.referenceImages?.length) return ordered.slice(0, 3);
+  const role = new Map(profile.referenceImages.map((reference) => [reference.filename, reference.role]));
+  const identity = ordered.find((item) => role.get(path.basename(item)) === "identity") ?? ordered[0];
+  const realSupport = ordered.filter(
+    (item) => item !== identity && role.get(path.basename(item)) !== "generated",
+  );
+  const generated = ordered.filter((item) => role.get(path.basename(item)) === "generated");
+  const selected = generated.length > 0
+    ? [identity, realSupport[0], generated[0]]
+    : [identity, ...realSupport];
+  return selected.filter((item): item is string => Boolean(item)).slice(0, 3);
+}

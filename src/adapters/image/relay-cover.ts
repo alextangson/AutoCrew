@@ -20,6 +20,8 @@ export interface RelayCoverInput {
   prompt: string;
   targetAspect: CoverAspect;
   referenceImagePaths?: string[];
+  /** 可选局部编辑遮罩；仅用于带参考图的 /images/edits，不允许降级为无参考图生成。 */
+  maskPath?: string;
   /** 不带扩展名;函数落 .png */
   outputPath: string;
   relay: { apiKey: string; baseUrl: string; model: string };
@@ -78,9 +80,11 @@ async function fetchImageBytes(input: RelayCoverInput, prompt: string, size: str
     return { buf: await generateImageViaRelay(base) };
   }
   try {
-    return { buf: await editImageViaRelay({ ...base, referenceImagePaths: refs }) };
+    return { buf: await editImageViaRelay({ ...base, referenceImagePaths: refs, maskPath: input.maskPath }) };
   } catch (err) {
     if (!(err instanceof RelayEditUnsupportedError)) throw err;
+    // 遮罩任务必须保持编辑语义；降级 generations 会静默重画整张图并破坏身份一致性。
+    if (input.maskPath) throw err;
     const buf = await generateImageViaRelay(base);
     return { buf, warning: "中转不支持参考图(/images/edits),本次未带人物形象" };
   }

@@ -119,11 +119,14 @@ describe("generateImageViaRelay", () => {
 describe("editImageViaRelay(V5.6.1 参考图/人物一致性)", () => {
   let dir: string;
   let refPath: string;
+  let maskPath: string;
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-imageedit-"));
     refPath = path.join(dir, "me.png");
+    maskPath = path.join(dir, "mask.png");
     await fs.writeFile(refPath, Buffer.from("ref-photo-bytes"));
+    await fs.writeFile(maskPath, Buffer.from("mask-bytes"));
   });
 
   afterEach(async () => {
@@ -150,6 +153,19 @@ describe("editImageViaRelay(V5.6.1 参考图/人物一致性)", () => {
     expect(image?.name).toBe("me.png");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-test");
     expect(form.get("api_key")).toBeNull();
+  });
+
+  it("带遮罩时以 mask 字段随第一张参考图提交", async () => {
+    const png = Buffer.from("masked-edit-png-bytes");
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [{ b64_json: png.toString("base64") }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await editImageViaRelay({ ...EDIT_REQ, referenceImagePaths: [refPath], maskPath });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+    const mask = form.get("mask") as File;
+    expect(mask?.name).toBe("mask.png");
   });
 
   it("4xx → RelayEditUnsupportedError,不重试(调用方降级 generations)", async () => {

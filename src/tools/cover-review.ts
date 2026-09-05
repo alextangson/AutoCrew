@@ -29,9 +29,16 @@ import { resolveCoverProvider, GEMINI_HINT } from "../modules/cover/provider.js"
 import { getDataDir as resolveDataDir } from "../storage/local-store.js";
 import {
   loadCoverStyleProfile,
-  orderCoverReferencePhotos,
+  selectCoverReferencePhotos,
   type CoverStyleProfile,
 } from "../modules/cover/style-profile.js";
+import {
+  identityLockedOutpaintPrompt,
+  localizedEditPrompt,
+  prepareIdentityLockedOutpaint,
+  prepareLocalizedEditMask,
+  type NormalizedMaskRegion,
+} from "../modules/cover/identity-outpaint.js";
 
 type PrimaryRatio = "3:4" | "16:9" | "4:3" | "2.35:1";
 
@@ -43,7 +50,7 @@ export const coverReviewSchema = Type.Object({
     enum: ["create_candidates", "get", "approve", "revise", "platform_ratios", "generate_ratios"],
     description:
       "Cover action: create_candidates (generate 3 covers), get (view review), approve (pick one), " +
-      "revise (redo one variant per feedback), platform_ratios (2.35:1/16:9/4:3/3:4), " +
+      "revise (full redraw or local masked edit via edit_mode), platform_ratios (identity-locked outpaint for personal IP; 2.35:1/16:9/4:3/3:4), " +
       "generate_ratios (legacy alias: 16:9 + 4:3).",
   }),
   content_id: Type.String({ description: "AutoCrew content id." }),
@@ -66,6 +73,21 @@ export const coverReviewSchema = Type.Object({
     }),
   ),
   feedback: Type.Optional(Type.String({ description: "Revision feedback in Chinese (for revise action)." })),
+  edit_mode: Type.Optional(
+    Type.Unsafe<"full" | "local">({
+      type: "string",
+      enum: ["full", "local"],
+      description: "Revision mode: full redraw, or local masked edit that locks every pixel outside mask_region.",
+    }),
+  ),
+  mask_region: Type.Optional(
+    Type.Object({
+      x: Type.Number({ minimum: 0, maximum: 1 }),
+      y: Type.Number({ minimum: 0, maximum: 1 }),
+      width: Type.Number({ minimum: 0.02, maximum: 1 }),
+      height: Type.Number({ minimum: 0.02, maximum: 1 }),
+    }),
+  ),
   ratios: Type.Optional(
     Type.Array(Type.String(), { description: 'Ratios for platform_ratios, e.g. ["2.35:1"] or ["16:9","4:3"].' }),
   ),
@@ -157,6 +179,19 @@ interface ProviderCtx {
   styleProfile: CoverStyleProfile | null;
 }
 
+/**
+ * 局部编辑只有 3 个图像位：现有封面必须占 1 位，剩下两位固定留给
+ * 真实身份锚点和用户选中的生成生活照。旧逻辑直接 slice 前三张，会把
+ * 排在 identity/editorial 之后的 generated portrait 截掉，导致用户明明
+ * 选过生活照，修脸时却永远看不到它。
+ */
+function localEditReferences(sourcePath: string, referencePhotos: string[]): string[] {
+  const identity = referencePhotos[0];
+  const generated = referencePhotos.find((item) => path.basename(path.dirname(item)) === "portraits");
+  const fallback = referencePhotos.find((item) => item !== identity && item !== generated);
+  return [...new Set([sourcePath, identity, generated ?? fallback].filter((item): item is string => Boolean(item)))].slice(0, 3);
+}
+
 /** 解析生图 provider;MCP 注入的 _geminiApiKey/_geminiModel 在 gemini 分支仍优先 */
 async function resolveProviderCtx(
   params: Record<string, unknown>,
@@ -181,7 +216,7 @@ async function resolveProviderCtx(
     relay: resolved.relay,
     geminiKey,
     geminiModel,
-    referencePhotos: orderCoverReferencePhotos(referencePhotos, styleProfile),
+    referencePhotos: selectCoverReferencePhotos(referencePhotos, styleProfile),
     styleProfile,
   };
 }
@@ -193,12 +228,14 @@ async function renderCoverImage(
   outputPath: string,
   ctx: ProviderCtx,
   refs: string[],
+  maskPath?: string,
 ): Promise<{ ok: boolean; imagePath?: string; model?: string; warning?: string; error?: string }> {
   if (ctx.provider === "relay" && ctx.relay) {
     const r = await generateCoverViaRelay({
       prompt: imagePrompt,
       targetAspect,
       referenceImagePaths: refs,
+      ...(maskPath ? { maskPath } : {}),
       outputPath,
       relay: ctx.relay,
     });
@@ -403,38 +440,87 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
   if (!variant?.imagePrompt) return { ok: false, error: `Variant ${label} has no prompt to revise` };
 
   const primaryRatio: PrimaryRatio = review.primaryRatio ?? "3:4";
-  const design = await reviseCoverDesign(
-    {
-      previous: {
-        label: label.toUpperCase() as "A" | "B" | "C",
-        style: variant.style ?? "存量方案",
-        creativeConcept: variant.creativeConcept ?? variant.designReason ?? "沿用存量方案的核心画面",
-        visualMedium: variant.visualMedium ?? "legacy generated image",
-        palette: variant.palette ?? "沿用存量配色",
-        imagePrompt: variant.imagePrompt,
-        titleText: variant.titleText ?? "",
-        layoutHint: variant.layoutHint ?? "",
-        designReason: variant.designReason ?? "",
-      },
-      feedback,
-      title: content.title,
-      hasReferencePhotos: ctx.referencePhotos.length > 0,
-      targetAspect: primaryRatio,
-      styleProfile: ctx.styleProfile,
-    },
-    dataDir,
-  );
-
   const revision = (variant.revision ?? 1) + 1;
   const assetsDir = path.join(dataDir, "contents", contentId, "assets", "covers");
-  const generated = await generateVariant(design, revision, { ctx, assetsDir, ratio: primaryRatio });
+  let generated: Awaited<ReturnType<typeof generateVariant>>;
+  if (params.edit_mode === "local") {
+    if (ctx.provider !== "relay" || !ctx.relay) {
+      return { ok: false, error: "局部遮罩修订需要支持 mask 的 image2 中转；已拒绝整张重画" };
+    }
+    const region = params.mask_region as NormalizedMaskRegion | undefined;
+    if (!region) return { ok: false, error: "局部修订需要先在封面上框选区域" };
+    const sourcePath = variant.imagePaths[primaryRatio];
+    if (!sourcePath) return { ok: false, error: `方案 ${label.toUpperCase()} 缺少 ${primaryRatio} 母版` };
+    let workDir: string | undefined;
+    try {
+      const mask = await prepareLocalizedEditMask(sourcePath, region);
+      workDir = mask.workDir;
+      const suffix = primaryRatio === "3:4" ? "" : `-${primaryRatio.replace(":", "x")}`;
+      const outputPath = path.join(assetsDir, `cover-${label}-r${revision}${suffix}`);
+      const result = await renderCoverImage(
+        localizedEditPrompt(variant.imagePrompt, feedback),
+        primaryRatio,
+        outputPath,
+        ctx,
+        localEditReferences(sourcePath, ctx.referencePhotos),
+        mask.maskPath,
+      );
+      generated = result.ok && result.imagePath
+        ? {
+            variant: {
+              ...variant,
+              imagePaths: { [primaryRatio]: result.imagePath },
+              revision,
+              model: result.model,
+              hasPersonalIP: true,
+              designReason: `${variant.designReason ?? variant.creativeConcept ?? "局部修订"} · 框外像素锁定`,
+            },
+            ...(result.warning ? { warning: result.warning } : {}),
+          }
+        : { error: result.error ?? `${label.toUpperCase()}: 局部修订未返回图片` };
+    } catch (err) {
+      generated = {
+        error: `${label.toUpperCase()}: 局部遮罩修订失败，已拒绝整张重画：${err instanceof Error ? err.message : String(err)}`,
+      };
+    } finally {
+      if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
+  } else {
+    const design = await reviseCoverDesign(
+      {
+        previous: {
+          label: label.toUpperCase() as "A" | "B" | "C",
+          style: variant.style ?? "存量方案",
+          creativeConcept: variant.creativeConcept ?? variant.designReason ?? "沿用存量方案的核心画面",
+          visualMedium: variant.visualMedium ?? "legacy generated image",
+          palette: variant.palette ?? "沿用存量配色",
+          imagePrompt: variant.imagePrompt,
+          titleText: variant.titleText ?? "",
+          layoutHint: variant.layoutHint ?? "",
+          designReason: variant.designReason ?? "",
+        },
+        feedback,
+        title: content.title,
+        hasReferencePhotos: ctx.referencePhotos.length > 0,
+        targetAspect: primaryRatio,
+        styleProfile: ctx.styleProfile,
+      },
+      dataDir,
+    );
+    generated = await generateVariant(design, revision, { ctx, assetsDir, ratio: primaryRatio });
+  }
   if ("error" in generated) return { ok: false, error: generated.error };
 
   const idx = review.variants.findIndex((v) => v.label === label);
   review.variants[idx] = generated.variant;
   review.feedback = [
     ...(review.feedback ?? []),
-    { label, note: feedback, prevPrompt: variant.imagePrompt, at: new Date().toISOString() },
+    {
+      label,
+      note: params.edit_mode === "local" ? `局部遮罩：${feedback}` : feedback,
+      prevPrompt: variant.imagePrompt,
+      at: new Date().toISOString(),
+    },
   ];
   // 修订过的方案若曾被选用,选用作废回待审
   const revoked = review.approvedLabel === label;
@@ -452,6 +538,7 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
     review: saved,
     revised: label,
     revision,
+    editMode: params.edit_mode === "local" ? "local" : "full",
     ...(statusNote ? { statusNote } : {}),
     ...(generated.warning ? { warnings: [generated.warning] } : {}),
   };
@@ -467,8 +554,9 @@ async function platformRatios(params: Record<string, unknown>, contentId: string
   const approved = review.variants.find((v) => v.label === review.approvedLabel);
   if (!approved?.imagePrompt) return { ok: false, error: "Approved variant has no prompt" };
 
-  // 可适配比例(V5.6.1:横屏是一等需求,B站/抖音PC 收 16:9/4:3——不再过 Pro 门):
-  // 同一设计方案(同 prompt/大字/形象照)按新比例重渲染 = 多比例风格统一
+  // 可适配比例(V5.6.1:横屏是一等需求,B站/抖音PC 收 16:9/4:3——不再过 Pro 门)。
+  // 个人 IP + relay 不得整张重渲染：批准母版像素锁定，只 outpaint 新增画布；
+  // 非人物方案或不支持 mask 的 Gemini 才沿用同 prompt 新比例重渲染。
   const ADAPT_RATIOS = ["2.35:1", "16:9", "4:3", "3:4"] as const;
   const primaryRatio: PrimaryRatio = review.primaryRatio ?? "3:4";
   const requestedRaw =
@@ -485,6 +573,13 @@ async function platformRatios(params: Record<string, unknown>, contentId: string
   }
 
   const refs = approved.hasPersonalIP ? ctx.referencePhotos : [];
+  const approvedMaster =
+    approved.imagePaths[primaryRatio] ??
+    review.approvedImagePath ??
+    approved.imagePaths["3:4"] ??
+    approved.imagePaths["16:9"] ??
+    approved.imagePaths["4:3"] ??
+    approved.imagePaths["2.35:1"];
   const assetsDir = path.join(dataDir, "contents", contentId, "assets", "covers");
   const baseName = `cover-${approved.label}-r${approved.revision ?? 1}`;
   const paths: Record<string, string> = {};
@@ -492,24 +587,46 @@ async function platformRatios(params: Record<string, unknown>, contentId: string
   const errors: string[] = [];
 
   for (const ratio of requested) {
-    // gemini 没有 2.35:1 原生比例 → 21:9 桥(wide-crop);其余(含 relay 全部)统一走 renderCoverImage
-    const r =
-      ctx.provider === "gemini" && ratio === "2.35:1"
-        ? await generateWideCover({
-            originalPrompt: approved.imagePrompt,
-            apiKey: ctx.geminiKey ?? "",
-            model: ctx.geminiModel,
-            referenceImagePaths: refs.length > 0 ? refs : undefined,
-            outputDir: assetsDir,
-            baseName,
-          }).then((wide) => ({ ok: wide.ok, imagePath: wide.path, warning: wide.warning, error: wide.error }))
-        : await renderCoverImage(
-            approved.imagePrompt,
-            ratio,
-            path.join(assetsDir, `${baseName}-${ratio === "2.35:1" ? "235x1" : ratio.replace(":", "x")}`),
-            ctx,
-            refs,
-          );
+    const outputPath = path.join(
+      assetsDir,
+      `${baseName}-${ratio === "2.35:1" ? "235x1" : ratio.replace(":", "x")}`,
+    );
+    let r: { ok: boolean; imagePath?: string; warning?: string; error?: string };
+    if (ctx.provider === "relay" && approved.hasPersonalIP && approvedMaster) {
+      let workDir: string | undefined;
+      try {
+        const assets = await prepareIdentityLockedOutpaint(approvedMaster, ratio);
+        workDir = assets.workDir;
+        r = await renderCoverImage(
+          identityLockedOutpaintPrompt(approved.imagePrompt, ratio),
+          ratio,
+          outputPath,
+          ctx,
+          [assets.canvasPath, ...refs].slice(0, 3),
+          assets.maskPath,
+        );
+      } catch (err) {
+        r = {
+          ok: false,
+          error: `个人 IP 锁定延展失败，已拒绝整张重画：${err instanceof Error ? err.message : String(err)}`,
+        };
+      } finally {
+        if (workDir) await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+      }
+    } else {
+      // Gemini 没有 2.35:1 原生比例 → 21:9 桥(wide-crop);其余统一走新比例重渲染。
+      r =
+        ctx.provider === "gemini" && ratio === "2.35:1"
+          ? await generateWideCover({
+              originalPrompt: approved.imagePrompt,
+              apiKey: ctx.geminiKey ?? "",
+              model: ctx.geminiModel,
+              referenceImagePaths: refs.length > 0 ? refs : undefined,
+              outputDir: assetsDir,
+              baseName,
+            }).then((wide) => ({ ok: wide.ok, imagePath: wide.path, warning: wide.warning, error: wide.error }))
+          : await renderCoverImage(approved.imagePrompt, ratio, outputPath, ctx, refs);
+    }
     if (r.ok && r.imagePath) {
       approved.imagePaths = { ...approved.imagePaths, [ratio]: r.imagePath };
       paths[ratio] = r.imagePath;

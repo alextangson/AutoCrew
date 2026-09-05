@@ -28,6 +28,7 @@ import { generateImage } from "../adapters/image/gemini.js";
 import { generateCoverViaRelay } from "../adapters/image/relay-cover.js";
 import { generateWideCover } from "../modules/cover/wide-crop.js";
 import { saveContent, getContent, getCoverReview } from "../storage/local-store.js";
+import { encodePng } from "../modules/cover/png-crop.js";
 
 const planMock = vi.mocked(designCoverPlan);
 const reviseMock = vi.mocked(reviseCoverDesign);
@@ -369,6 +370,121 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
     expect(r.review.variants.every((v) => v.hasPersonalIP === false)).toBe(true);
   });
 
+  it("局部修订只把框选 mask 交给 image2，框外不走整图重画", async () => {
+    await switchToRelay();
+    const refsDir = path.join(dir, "covers", "templates");
+    await fs.mkdir(refsDir, { recursive: true });
+    await fs.writeFile(path.join(refsDir, "current.jpg"), Buffer.from("identity-photo"));
+    const id = await seedContent();
+    await createCandidates(id);
+    const review = await getCoverReview(id, dir);
+    const sourcePath = review!.variants.find((variant) => variant.label === "a")!.imagePaths["3:4"]!;
+    const rows = Array.from({ length: 16 }, () => Buffer.alloc(12 * 4, 180));
+    await fs.writeFile(sourcePath, encodePng(12, 16, 4, rows));
+    relayMock.mockClear();
+
+    const result = (await executeCoverReview({
+      action: "revise",
+      content_id: id,
+      label: "a",
+      feedback: "清理脸部脏纹，保持原本五官",
+      edit_mode: "local",
+      mask_region: { x: 0.25, y: 0.15, width: 0.5, height: 0.45 },
+      _dataDir: dir,
+    })) as { ok: boolean; editMode?: string; review: { variants: Array<{ label: string; revision?: number }> } };
+
+    expect(result.ok).toBe(true);
+    expect(result.editMode).toBe("local");
+    expect(reviseMock).not.toHaveBeenCalled();
+    expect(relayMock).toHaveBeenCalledTimes(1);
+    const call = relayMock.mock.calls[0][0];
+    expect(call.referenceImagePaths?.[0]).toBe(sourcePath);
+    expect(call.maskPath).toContain("autocrew-cover-local-edit-");
+    expect(call.prompt).toContain("change only the transparent selected region");
+    expect(call.prompt).toContain("清理脸部脏纹");
+    expect(result.review.variants.find((variant) => variant.label === "a")?.revision).toBe(2);
+    await expect(fs.access(path.dirname(call.maskPath!))).rejects.toThrow();
+  });
+
+  it("局部修脸会保留真实身份锚点，并优先带入用户选中的生成生活照", async () => {
+    await switchToRelay();
+    const refsDir = path.join(dir, "covers", "templates");
+    const portraitsDir = path.join(dir, "covers", "portraits");
+    await Promise.all([
+      fs.mkdir(refsDir, { recursive: true }),
+      fs.mkdir(portraitsDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      fs.writeFile(path.join(refsDir, "current.jpg"), Buffer.from("identity-photo")),
+      fs.writeFile(path.join(refsDir, "studio.jpg"), Buffer.from("editorial-photo")),
+      fs.writeFile(path.join(portraitsDir, "lifestyle.png"), Buffer.from("generated-lifestyle")),
+      fs.writeFile(
+        path.join(dir, "cover-style.json"),
+        JSON.stringify({
+          version: 1,
+          name: "个人 IP 封面",
+          referenceImages: [
+            { filename: "current.jpg", role: "identity", priority: 0 },
+            { filename: "studio.jpg", role: "editorial", priority: 10 },
+            { filename: "lifestyle.png", role: "generated", priority: 20 },
+          ],
+          visualRules: [],
+          identityRules: [],
+          typographyRules: [],
+          layoutRules: [],
+          avoid: [],
+          qualityGates: [],
+        }),
+      ),
+    ]);
+    const id = await seedContent();
+    await createCandidates(id);
+    const review = await getCoverReview(id, dir);
+    const sourcePath = review!.variants.find((variant) => variant.label === "a")!.imagePaths["3:4"]!;
+    const rows = Array.from({ length: 16 }, () => Buffer.alloc(12 * 4, 180));
+    await fs.writeFile(sourcePath, encodePng(12, 16, 4, rows));
+    relayMock.mockClear();
+
+    const result = await executeCoverReview({
+      action: "revise",
+      content_id: id,
+      label: "a",
+      feedback: "使用选中的生活照表情",
+      edit_mode: "local",
+      mask_region: { x: 0.25, y: 0.15, width: 0.5, height: 0.45 },
+      _dataDir: dir,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(relayMock.mock.calls[0][0].referenceImagePaths?.map((item) => path.basename(item))).toEqual([
+      path.basename(sourcePath),
+      "current.jpg",
+      "lifestyle.png",
+    ]);
+  });
+
+  it("不支持 mask 的 provider 对局部修订 fail closed，不偷偷降级整图重画", async () => {
+    const id = await seedContent();
+    await createCandidates(id);
+    reviseMock.mockClear();
+    genMock.mockClear();
+    const result = (await executeCoverReview({
+      action: "revise",
+      content_id: id,
+      label: "a",
+      feedback: "只修脸",
+      edit_mode: "local",
+      mask_region: { x: 0.25, y: 0.15, width: 0.5, height: 0.45 },
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean; error: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("已拒绝整张重画");
+    expect(reviseMock).not.toHaveBeenCalled();
+    expect(genMock).not.toHaveBeenCalled();
+  });
+
   it("relay 选中但未配置 → 明确报错指向 设置·发布", async () => {
     await fs.writeFile(path.join(dir, "cover.json"), JSON.stringify({ provider: "relay" }), "utf-8");
     const id = await seedContent();
@@ -459,6 +575,35 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
     expect(review!.variants.find((v) => v.label === "a")!.imagePaths["2.35:1"]).toContain("235x1");
     // 人机协同:适配比例在文件夹根留副本
     await expect(fs.access(path.join(dir, "contents", id, "封面-235x1.png"))).resolves.toBeUndefined();
+  });
+
+  it("个人 IP 的 4:3 适配锁定已批准母版，只把新增左右区域交给 mask outpaint", async () => {
+    await switchToRelay();
+    await fs.mkdir(path.join(dir, "covers", "templates"), { recursive: true });
+    await fs.writeFile(path.join(dir, "covers", "templates", "me.png"), Buffer.from("identity"));
+    const id = await seedContent("draft_ready", "douyin");
+    await executeCoverReview({ action: "create_candidates", content_id: id, _dataDir: dir });
+    await executeCoverReview({ action: "approve", content_id: id, label: "b", _dataDir: dir });
+    const review = await getCoverReview(id, dir);
+    const masterPath = review!.variants.find((variant) => variant.label === "b")!.imagePaths["3:4"]!;
+    const rows = Array.from({ length: 12 }, () => Buffer.alloc(9 * 3, 128));
+    await fs.writeFile(masterPath, encodePng(9, 12, 3, rows));
+    relayMock.mockClear();
+
+    const result = (await executeCoverReview({
+      action: "platform_ratios",
+      content_id: id,
+      ratios: ["4:3"],
+      _dataDir: dir,
+    })) as { ok: boolean; paths: Record<string, string> };
+
+    expect(result.ok).toBe(true);
+    const call = relayMock.mock.calls[0][0];
+    expect(call.targetAspect).toBe("4:3");
+    expect(call.maskPath).toContain("identity-locked-mask.png");
+    expect(call.referenceImagePaths[0]).toContain("identity-locked-canvas.png");
+    expect(call.prompt).toContain("preserve every opaque master pixel exactly");
+    await expect(fs.access(path.dirname(call.maskPath))).rejects.toThrow();
   });
 });
 

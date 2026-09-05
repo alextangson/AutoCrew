@@ -230,11 +230,11 @@ export function IdentityLibraryPanel(props: { onReadyChange?: (ready: boolean) =
                         onClick={() =>
                           void mutate(
                             { action: "select_generated", filename: asset.filename, selected: !asset.selected },
-                            asset.selected ? "已取消用于封面" : "已加入封面参考",
+                            asset.selected ? "已取消姿态参考" : "已加入封面姿态参考",
                           )
                         }
                       >
-                        {asset.selected ? "✓ 用于封面" : "选用"}
+                        {asset.selected ? "✓ 姿态参考" : "选作姿态"}
                       </button>
                       <button disabled={busy} onClick={() => void remove(asset)}>
                         移除
@@ -245,7 +245,7 @@ export function IdentityLibraryPanel(props: { onReadyChange?: (ready: boolean) =
               ))}
             </div>
             <p className="mono muted identity-note">
-              最多选 {library.maxSelectedGenerated} 张 AI 备选；真实主身份照始终排在第一参考位。
+              最多选 {library.maxSelectedGenerated} 张 AI 备选作为姿态参考；最终仍由 2 张真实照片锁定身份，生成图不负责锁脸。
             </p>
           </>
         )}

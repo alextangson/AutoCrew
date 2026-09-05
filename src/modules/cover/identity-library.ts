@@ -12,6 +12,7 @@ import {
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const MAX_SOURCE_BYTES = 6 * 1024 * 1024;
 const INDEX_FILE = "identity-library.json";
+const MAX_SELECTED_GENERATED = 1;
 
 export type IdentityAssetKind = "source" | "generated";
 
@@ -125,7 +126,9 @@ async function rebalanceReferences(
     : sourceNames.includes(existingPrimary ?? "")
       ? existingPrimary
       : sourceNames[0];
-  const selectedGenerated = generatedNames.filter((filename) => old.get(filename)?.role === "generated").slice(0, 2);
+  const selectedGenerated = generatedNames
+    .filter((filename) => old.get(filename)?.role === "generated")
+    .slice(0, MAX_SELECTED_GENERATED);
   const references: CoverReferenceImage[] = [];
   if (primary) {
     references.push({ ...old.get(primary), filename: primary, role: "identity", priority: 0 });
@@ -179,7 +182,7 @@ export async function listIdentityLibrary(dataDir?: string): Promise<IdentityLib
     sources: await Promise.all(sourceNames.map((filename) => toView(filename, "source"))),
     generated: await Promise.all(generatedNames.map((filename) => toView(filename, "generated"))),
     recommendedSourceCount: 3,
-    maxSelectedGenerated: 2,
+    maxSelectedGenerated: MAX_SELECTED_GENERATED,
   };
 }
 
@@ -251,7 +254,9 @@ export async function setGeneratedPortraitSelected(
     .filter((reference) => reference.role === "generated")
     .map((reference) => reference.filename);
   const next = selected ? [...new Set([...current, safe])] : current.filter((name) => name !== safe);
-  if (next.length > 2) throw new Error("最多选择 2 张生成肖像；真实主身份照会固定占 1 个参考位");
+  if (next.length > MAX_SELECTED_GENERATED) {
+    throw new Error("最多选择 1 张生成肖像作为姿态参考；另外 2 个位置固定留给真实照片锁定身份");
+  }
   const withoutGenerated = {
     ...profile,
     referenceImages: references.filter((reference) => reference.role !== "generated"),

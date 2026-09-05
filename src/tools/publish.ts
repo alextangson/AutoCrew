@@ -11,12 +11,13 @@ import { scanText } from "../modules/filter/sensitive-words.js";
 import { generateAndSaveDigest } from "../modules/publish/digest.js";
 import { bindByPublishUrl } from "../modules/flywheel/platform-items.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
+import { prepareEgoLitePublish } from "../modules/publish/ego-lite.js";
 
 export const publishSchema = Type.Object({
-  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "confirm_published" | "digest">({
+  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "ego_lite_prepare" | "confirm_published" | "digest">({
     type: "string",
-    enum: ["wechat_mp_draft", "clipboard", "confirm_published", "digest"],
-    description: "Publish action. 'wechat_mp_draft' for WeChat MP, 'clipboard' for copy-paste, 'confirm_published' to mark published, 'digest' to generate+save a ≤20-char WeChat 摘要.",
+    enum: ["wechat_mp_draft", "clipboard", "ego_lite_prepare", "confirm_published", "digest"],
+    description: "Publish action. 'ego_lite_prepare' resolves a browser upload package for 视频号/小红书/抖音/Bilibili without clicking Publish; 'wechat_mp_draft' for WeChat MP; 'clipboard' for copy-paste; 'confirm_published' marks a live result; 'digest' generates/saves a ≤20-char WeChat 摘要.",
   }),
   article_path: Type.Optional(Type.String({ description: "Absolute or relative path to the markdown article file." })),
   content_id: Type.Optional(Type.String({ description: "AutoCrew content id. If provided, draft.md will be used." })),
@@ -34,6 +35,7 @@ export const publishSchema = Type.Object({
   publish_url: Type.Optional(Type.String({ description: "The URL where content was published (for confirm_published action)." })),
   force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
   digest: Type.Optional(Type.String({ description: "For 'digest' action: manual 摘要 to save (empty clears it). Omit to AI-generate." })),
+  schedule: Type.Optional(Type.String({ description: "Optional platform-local scheduled time carried into the ego lite browser hand-off." })),
 });
 
 /** 平台链接白名单:只认 http(s)。javascript:/file: 之类既不是发布地址,也不该被界面渲染成可点链接 */
@@ -108,6 +110,20 @@ export async function executePublish(
     }
     const output = formatForClipboard(platform, content.title, content.body, hashtags);
     return { ok: true, data: output };
+  }
+
+  // --- ego_lite_prepare: resolve upload files/copy, but never click the external Publish button ---
+  if (action === "ego_lite_prepare") {
+    const contentId = params.content_id as string | undefined;
+    if (!contentId) {
+      return { ok: false, error: "content_id is required for ego_lite_prepare action" };
+    }
+    try {
+      const data = await prepareEgoLitePublish(contentId, dataDir, params.schedule as string | undefined);
+      return { ok: true, data };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   // --- digest: 生成(默认) 或 手动保存(带 digest 参数) 一条 ≤20 字公众号摘要 ---

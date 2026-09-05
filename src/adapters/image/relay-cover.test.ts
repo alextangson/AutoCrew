@@ -103,6 +103,27 @@ describe("generateCoverViaRelay", () => {
     expect(r.warning).toBeUndefined();
   });
 
+  it("遮罩编辑不支持时不得降级 generations 重画整张图", async () => {
+    const refPath = path.join(dir, "me.jpg");
+    const maskPath = path.join(dir, "mask.png");
+    await fs.writeFile(refPath, Buffer.from("jpeg-bytes"));
+    await fs.writeFile(maskPath, Buffer.from("png-mask-bytes"));
+    editMock.mockRejectedValueOnce(new RelayEditUnsupportedError("HTTP 404: no masks"));
+
+    const r = await generateCoverViaRelay({
+      prompt: PROMPT,
+      targetAspect: "3:4",
+      referenceImagePaths: [refPath],
+      maskPath,
+      outputPath: path.join(dir, "cover-mask"),
+      relay: RELAY,
+    });
+
+    expect(editMock.mock.calls[0][0].maskPath).toBe(maskPath);
+    expect(genMock).not.toHaveBeenCalled();
+    expect(r.ok).toBe(false);
+  });
+
   it("中转回非 PNG(JPEG 字节) → 精裁降级,原样落盘带 warning", async () => {
     genMock.mockResolvedValueOnce(Buffer.from("\xff\xd8\xff fake jpeg", "binary"));
     const r = await generateCoverViaRelay({ prompt: PROMPT, targetAspect: "3:4", outputPath: path.join(dir, "cover-d-r1"), relay: RELAY });

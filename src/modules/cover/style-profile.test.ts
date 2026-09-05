@@ -7,6 +7,7 @@ import {
   loadCoverStyleProfile,
   orderCoverReferencePhotos,
   saveCoverStyleProfile,
+  selectCoverReferencePhotos,
   type CoverStyleProfile,
 } from "./style-profile.js";
 
@@ -53,5 +54,21 @@ describe("cover style profile", () => {
   it("按 profile 优先级排列参考图，身份照永远在 relay 前三张", () => {
     const ordered = orderCoverReferencePhotos(["/tmp/other.webp", "/tmp/studio.jpg", "/tmp/current.png"], profile);
     expect(ordered.map((item) => path.basename(item))).toEqual(["current.png", "studio.jpg", "other.webp"]);
+  });
+
+  it("最终封面只取一个已选 AI 姿态，并保留两张真实照片压住身份漂移", () => {
+    const withGenerated: CoverStyleProfile = {
+      ...profile,
+      referenceImages: [
+        ...(profile.referenceImages ?? []),
+        { filename: "pose-a.png", role: "generated", priority: 20 },
+        { filename: "pose-b.png", role: "generated", priority: 21 },
+      ],
+    };
+    const selected = selectCoverReferencePhotos(
+      ["/tmp/pose-b.png", "/tmp/studio.jpg", "/tmp/pose-a.png", "/tmp/current.png"],
+      withGenerated,
+    );
+    expect(selected.map((item) => path.basename(item))).toEqual(["current.png", "studio.jpg", "pose-a.png"]);
   });
 });

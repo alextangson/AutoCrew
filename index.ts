@@ -95,7 +95,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_publish",
     label: "AutoCrew Publish",
     description:
-      "Run proven publishing flows. Currently supports action='wechat_mp_draft' to generate images, produce a cover, and push a WeChat MP article into the draft box.",
+      "Run approval-gated publishing flows. Use action='ego_lite_prepare' for 视频号/小红书/抖音/Bilibili browser upload packages, or action='wechat_mp_draft' for WeChat MP drafts.",
     parameters: publishSchema,
     execute: executePublish,
   });
@@ -121,7 +121,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_cover_review",
     label: "AutoCrew Cover Review",
     description:
-      "Generate, review, and approve content-driven cover concepts. Actions: create_candidates (generate 3 genuinely different creative directions), get (view review), approve (pick one), generate_ratios (16:9 + 4:3).",
+      "Create personal-IP covers from real identity photos plus at most one AI pose reference. Actions: create_candidates (3 content-driven directions), get, revise (full redraw or local masked edit), approve, and platform_ratios/generate_ratios (identity-locked outpaint for personal-IP masters).",
     parameters: coverReviewSchema,
     execute: executeCoverReview,
     needsGemini: true,

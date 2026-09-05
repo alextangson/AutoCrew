@@ -124,9 +124,10 @@ export async function coverCreateHandler(payload: Payload): Promise<HandlerResul
 export async function coverReviseHandler(payload: Payload): Promise<HandlerResult> {
   const bad = badPayload(payload);
   if (bad) return bad;
+  const local = payload.edit_mode === "local";
   const job = await startCoverJob(payload, "revise", {
-    work: "封面设计师按你的意见重做…",
-    done: "封面已按意见重做——去编辑器看新方案",
+    work: local ? "封面设计师只修改你框选的局部，框外已锁定…" : "封面设计师按你的意见整体重做…",
+    done: local ? "封面局部已修订，人物与框外版面保持不变" : "封面已按意见整体重做——去编辑器看新方案",
   });
   return job.response;
 }

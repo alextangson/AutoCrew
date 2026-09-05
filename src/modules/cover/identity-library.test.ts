@@ -42,7 +42,7 @@ describe("identity library", () => {
     expect((await fs.stat(sourceFile)).mode & 0o777).toBe(0o600);
   });
 
-  it("selects at most two generated portraits after the real identity", async () => {
+  it("selects at most one generated pose after the real identity", async () => {
     await uploadIdentitySource(PNG.toString("base64"), dataDir);
     const dir = generatedPortraitDir(dataDir);
     await fs.mkdir(dir, { recursive: true });
@@ -60,13 +60,11 @@ describe("identity library", () => {
     );
 
     await setGeneratedPortraitSelected(names[0], true, dataDir);
-    await setGeneratedPortraitSelected(names[1], true, dataDir);
-    await expect(setGeneratedPortraitSelected(names[2], true, dataDir)).rejects.toThrow("最多选择 2 张");
+    await expect(setGeneratedPortraitSelected(names[1], true, dataDir)).rejects.toThrow("最多选择 1 张");
 
     const profile = await loadCoverStyleProfile(dataDir);
     expect(profile?.referenceImages?.map((reference) => reference.role)).toEqual([
       "identity",
-      "generated",
       "generated",
     ]);
   });

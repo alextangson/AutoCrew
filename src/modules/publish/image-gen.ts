@@ -287,6 +287,8 @@ export class RelayEditUnsupportedError extends Error {}
 export interface RelayEditRequest extends RelayImageRequest {
   /** 参考图路径(封面人物一致性),最多取前 3 张 */
   referenceImagePaths: string[];
+  /** 可选 PNG 遮罩；透明区域交给模型编辑，尺寸须与第一张参考图一致。 */
+  maskPath?: string;
 }
 
 const REF_MIME: Record<string, string> = {
@@ -316,6 +318,11 @@ export async function editImageViaRelay(req: RelayEditRequest): Promise<Buffer> 
     const bytes = await fs.readFile(refPath);
     const mime = REF_MIME[path.extname(refPath).toLowerCase()] ?? "image/jpeg";
     form.append("image[]", new Blob([new Uint8Array(bytes)], { type: mime }), path.basename(refPath));
+  }
+  if (req.maskPath) {
+    const bytes = await fs.readFile(req.maskPath);
+    const mime = REF_MIME[path.extname(req.maskPath).toLowerCase()] ?? "image/png";
+    form.append("mask", new Blob([new Uint8Array(bytes)], { type: mime }), path.basename(req.maskPath));
   }
 
   let lastErr = "";

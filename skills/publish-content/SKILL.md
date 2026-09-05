@@ -1,511 +1,161 @@
 ---
 name: publish-content
 description: |
-  Publish approved content to social media platforms. Activate when user asks to publish, post, or distribute content. Trigger: "发布" / "发到小红书" / "帮我发" / "发布这篇". Supports Xiaohongshu, Douyin, WeChat Video, WeChat MP (公众号).
+  发布已审核的视频内容。用户说“发布”“发到小红书/抖音/视频号/B站”“帮我同步发”时启用。
+  浏览器执行统一使用 ego lite；支持视频号、小红书、抖音、Bilibili，并保留公众号草稿与手工复制路径。
 ---
 
 # Publish Content
 
-> Utility skill. Dual-mode: clipboard-first (Free) + browser automation (Pro/OpenClaw with MCP Browser).
+AutoCrew 是内容、素材、阶段门和结果状态的事实源；ego lite 只负责登录态复用、上传、填表和发布后页面核验。
 
-## Tier Routing
+## 支持范围
 
-| Tier | Flow | How it works |
-|------|------|-------------|
-| Free | Clipboard-first | `autocrew_publish` action="clipboard" → format → user copies → opens platform → pastes → `autocrew_publish` action="confirm_published" |
-| Pro | Browser CDP | OpenClaw MCP Browser automates the full publish flow end-to-end |
+| 平台 | AutoCrew 值 | 浏览器方式 |
+|---|---|---|
+| 视频号 | `wechat_video` | ego lite |
+| 小红书 | `xiaohongshu` | ego lite |
+| 抖音 | `douyin` | ego lite |
+| Bilibili | `bilibili` | ego lite |
+| 微信公众号 | `wechat_mp` | `wechat_mp_draft` 或 clipboard，不走本 Skill 的视频流 |
 
-**Default: always use clipboard flow.** Only use browser automation when MCP Browser is explicitly available and user opts in.
+## 不可突破的边界
 
-## Clipboard Flow (Free — Default)
+1. 浏览器操作前必须加载并遵守 `ego-browser` Skill；不要改用内置 Browser、Chrome 或临时 Playwright。
+2. `ego_lite_prepare` 只生成发布包，不代表已经上传，更不代表已经发布。
+3. 上传、填文案、选封面可以自动执行；点击平台最终“发布/投稿”按钮前必须得到用户针对本次发布的明确确认。
+4. 登录、扫码、验证码、身份确认或平台风控出现时，调用 `handOffTaskSpace(taskId)` 把控制权交给用户。用户明确说“继续”后才能 `takeOverTaskSpace(taskId)`。
+5. 只有看到平台成功页、作品管理中的新作品，或可访问的作品 URL，才能调用 `confirm_published`。按钮点击成功、上传进度 100%、进入审核页面都不是发布成功证据。
+6. 不输出或记录 Cookie、二维码内容、验证码、账号标识等敏感信息。
+7. 不静默截断标题或文案；平台拒绝时回到 AutoCrew 修改发布件。
 
-1. `autocrew_publish` action="clipboard" content_id="xxx"
-   → Returns `ClipboardOutput`: formattedTitle, formattedBody, copyText, publishUrl, tips
-2. Present the formatted content to user with copy instructions
-3. User copies text, opens publishUrl, pastes, and publishes manually
-4. `autocrew_publish` action="confirm_published" content_id="xxx" publish_url="<optional url>"
-   → Marks content as published with timestamp
+## 标准流程
 
-## Capabilities
+### 0. 找到目标稿件
 
-| Feature | OpenClaw | Claude Code |
-|---------|----------|-------------|
-| Pre-publish validation | ✅ | ✅ |
-| Format for copy-paste | ✅ | ✅ |
-| Browser automation publish | ✅ (MCP Browser) | ❌ (manual) |
-| Status tracking | ✅ | ✅ |
+使用 `autocrew_content` 获取用户指定稿件。只接受目标平台为上述四个视频平台的稿件。
 
-## CRITICAL RULES (Browser Automation)
+确认它至少具备：
 
-1. **Navigate by URL**, not by clicking menus (menus are unreliable in accessibility tree).
-2. **Wait 5 seconds** after each navigation for page to load.
-3. **Video upload uses `input[type=file]`** — find the hidden file input via `evaluate`, then use `setInputFiles`. NEVER try drag-and-drop.
-4. **Cover image upload** — same approach: find `input[type=file]` for cover, use `setInputFiles`.
-5. **Truncate content** to platform limits silently. Add "…" if truncated.
-6. **Respond in Simplified Chinese** for all user-facing messages.
+- 审片通过的成片
+- 已批准封面
+- 平台发布标题和发布文案（优先读取 `videoKit`）
+- 发布前检查可通过
 
-## Platform Routes
+缺素材或未过阶段门时停止，明确告诉用户缺什么，不要绕过。
 
-| Platform | Upload/Create URL | Login Detection |
-|----------|------------------|-----------------|
-| xiaohongshu | `https://creator.xiaohongshu.com/publish/publish` | URL contains `/login` |
-| douyin | `https://creator.douyin.com/creator-micro/content/upload` | URL redirects to `sso.douyin.com` |
-| wechat_video | `https://channels.weixin.qq.com/platform/post/create` | URL redirects to `/login.html` |
-| wechat_mp | `https://mp.weixin.qq.com/` | URL contains `/login` or no cookie |
+### 1. 生成 ego lite 发布包
 
-## Platform Limits
-
-| Platform | Title limit | Body limit | Tags |
-|----------|------------|-----------|------|
-| xiaohongshu | 20 chars | 1000 chars | 5-15 |
-| douyin | 30 chars | 1000 chars | 5 |
-| wechat_video | — (描述 only) | 1000 chars | 5 |
-| wechat_mp | 64 chars | 20000 chars | — |
-
----
-
-## Step 0: Identify content to publish
-
-1. List content: `autocrew_content` action="list"
-2. Filter for status="approved" (or "draft" if user explicitly asks)
-3. IF no content → tell user to write some first.
-4. Load the content project: `autocrew_asset` action="list" content_id=xxx to check for cover/video assets.
-
-## Step 1: Pre-publish validation
-
-Check content against platform limits. Auto-truncate with "…" if over limit.
-
-Check required assets:
-- xiaohongshu image note: needs at least 1 image
-- douyin: needs video
-- wechat_video: needs video
-- wechat_mp: text only is fine
-
-IF missing required assets → ask user to provide them, or use `autocrew_asset` action="add" to register.
-
-## Step 2: Route by mode
-
-- IF browser automation available (OpenClaw MCP Browser) AND user wants auto-publish → go to **Browser Automation Steps**
-- ELSE → go to **Copy-Paste Mode**
-
----
-
-## Copy-Paste Mode (Universal — uses clipboard tool)
-
-Format content via `autocrew_publish` action="clipboard" content_id="xxx". The tool returns a `ClipboardOutput` object with platform-optimized text. Present it to the user like this:
-
-### Xiaohongshu format:
-```
-📋 小红书发布内容：
-
-标题：{title}
-
-正文：
-{body}
-
-标签：#tag1 #tag2 #tag3 #tag4 #tag5
-
-📎 封面：{cover asset path or "需要手动上传"}
-🔗 发布地址：https://creator.xiaohongshu.com/publish/publish
-```
-
-### Douyin format:
-```
-📋 抖音发布内容：
-
-作品描述：{title}
-简介：{body_truncated_1000}
-标签：#tag1 #tag2 #tag3
-
-📎 视频：{video asset path}
-📎 封面：{cover asset path or "使用自动封面"}
-🔗 发布地址：https://creator.douyin.com/creator-micro/content/upload
-```
-
-### WeChat Video format:
-```
-📋 视频号发布内容：
-
-创作描述：
-{title}
-{body_truncated_900}
-
-#tag1 #tag2 #tag3
-
-📎 视频：{video asset path}
-🔗 发布地址：https://channels.weixin.qq.com/platform/post/create
-```
-
-### WeChat MP (公众号) format:
-```
-📋 公众号发布内容：
-
-标题：{title}
-正文：
-{body_with_formatting}
-
-📎 封面：{cover asset path or "需要手动上传"}
-🔗 发布地址：https://mp.weixin.qq.com/
-```
-
-After user confirms they published, update status:
-```json
-{ "action": "confirm_published", "content_id": "content-xxx", "publish_url": "<optional platform url>" }
-```
-
----
-
-## Browser Automation Steps (OpenClaw Only)
-
-### Common: Navigate and check login
-
-```json
-{"action": "navigate", "targetUrl": "<platform create URL>"}
-```
-
-Wait 5 seconds. Take snapshot.
-
-- IF URL matches login detection pattern → tell user: "平台登录已过期，请手动登录后重试。"
-- ELSE → continue to platform-specific steps.
-
----
-
-### Steps (Douyin)
-
-> URL: `https://creator.douyin.com/creator-micro/content/upload`
-> After video upload, auto-redirects to `/content/publish`
-
-**D1: Upload video**
-
-Find file input and upload:
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const input = document.querySelector('input[type=file][accept*=video], input[type=file][accept*=mp4]'); if (input) { input.style.display = 'block'; return 'found'; } return 'not_found'; })()"
-  }
-}
-```
-
-Get video path from project assets, then:
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "setInputFiles",
-    "selector": "input[type=file][accept*=video], input[type=file][accept*=mp4]",
-    "files": ["<video_path>"]
-  }
-}
-```
-
-Wait for upload (poll every 5s, up to 120s). Check if URL changes to `/content/publish`.
-
-**D2: Fill form**
-
-Title (作品描述, max 30 chars):
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const input = document.querySelector('input[placeholder*=标题], input[placeholder*=作品]'); if (input) { const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; nativeSet.call(input, '<title_30>'); input.dispatchEvent(new Event('input', {bubbles: true})); return 'filled'; } return 'not_found'; })()"
-  }
-}
-```
-
-Description (简介, max 1000 chars) — contenteditable div:
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const editors = document.querySelectorAll('[contenteditable=true]'); for (const ed of editors) { if (ed.offsetHeight > 50) { ed.focus(); ed.textContent = '<description_1000>'; ed.dispatchEvent(new Event('input', {bubbles: true})); return 'filled'; } } return 'not_found'; })()"
-  }
-}
-```
-
-Tags — append to description or find tag input:
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const editors = document.querySelectorAll('[contenteditable=true]'); for (const ed of editors) { if (ed.textContent.includes('添加话题') || ed.closest('[class*=topic]')) { ed.focus(); const tags = ['tag1','tag2','tag3']; tags.slice(0,5).forEach(t => { ed.textContent += ' #' + t; }); ed.dispatchEvent(new Event('input', {bubbles: true})); return 'added'; } } return 'not_found'; })()"
-  }
-}
-```
-
-**D3: Set cover** (if cover asset exists)
-
-Find cover file input:
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const inputs = document.querySelectorAll('input[type=file][accept*=image]'); for (const inp of inputs) { const parent = inp.closest('[class*=cover], [class*=poster]'); if (parent) { inp.style.display = 'block'; return 'found'; } } return 'not_found'; })()"
-  }
-}
-```
-
-Then `setInputFiles` with cover path. Wait 3s.
-
-**D4: Publish**
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const btns = document.querySelectorAll('button'); for (const b of btns) { if (b.textContent.trim() === '发布' && !b.disabled) { b.click(); return 'clicked'; } } return 'not_found'; })()"
-  }
-}
-```
-
-Wait 5s. Verify success (redirect to content management or success message).
-
----
-
-### Steps (Xiaohongshu)
-
-> URL: `https://creator.xiaohongshu.com/publish/publish`
-> Tabs: 上传视频 / 上传图文 / 写长文 (tabs NOT in accessibility tree, use JS click)
-
-**X1: Switch tab if needed**
-
-IF no video (image note) → switch to "上传图文":
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const tabs = document.querySelectorAll('[class*=tab] span, [role=tab]'); for (const t of tabs) { if (t.textContent.includes('上传图文')) { t.click(); return 'switched'; } } return 'not_found'; })()"
-  }
-}
-```
-
-**X2: Upload media**
-
-Video or images via `input[type=file]` + `setInputFiles`. Same pattern as Douyin.
-
-**X3: Fill form**
-
-Title (max 20 chars):
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const input = document.querySelector('input[placeholder*=标题], input[class*=title]'); if (input) { const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; nativeSet.call(input, '<title_20>'); input.dispatchEvent(new Event('input', {bubbles: true})); return 'filled'; } return 'not_found'; })()"
-  }
-}
-```
-
-Body (max 1000 chars) — contenteditable:
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const editors = document.querySelectorAll('[contenteditable=true], textarea[placeholder*=正文]'); for (const ed of editors) { if (ed.offsetHeight > 80 || ed.tagName === 'TEXTAREA') { ed.focus(); if (ed.tagName === 'TEXTAREA') { ed.value = '<body_1000>'; } else { ed.textContent = '<body_1000>'; } ed.dispatchEvent(new Event('input', {bubbles: true})); return 'filled'; } } return 'not_found'; })()"
-  }
-}
-```
-
-Tags — append `#tag1 #tag2` to body, or find tag input and Enter each tag.
-
-**X4: Publish**
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const btns = document.querySelectorAll('button'); for (const b of btns) { const t = b.textContent.trim(); if ((t === '发布' || t === '发布笔记') && !b.disabled) { b.click(); return 'clicked'; } } return 'not_found'; })()"
-  }
-}
-```
-
----
-
-### Steps (WeChat Video)
-
-> URL: `https://channels.weixin.qq.com/platform/post/create`
-
-**W1: Upload video** — same `input[type=file]` + `setInputFiles` pattern.
-
-**W2: Fill 创作描述** — combine title + body + tags into one field (no separate title):
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const editors = document.querySelectorAll('[contenteditable=true], textarea'); for (const ed of editors) { if (ed.offsetHeight > 50) { ed.focus(); const text = '<title>\\n<body_900>\\n\\n#tag1 #tag2 #tag3'; if (ed.tagName === 'TEXTAREA') { ed.value = text; } else { ed.textContent = text; } ed.dispatchEvent(new Event('input', {bubbles: true})); return 'filled'; } } return 'not_found'; })()"
-  }
-}
-```
-
-**W3: Set cover** — find cover file input if custom cover exists.
-
-**W4: Toggle 原创声明** (if original content):
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const switches = document.querySelectorAll('[role=switch], input[type=checkbox]'); for (const s of switches) { if (s.closest('label')?.textContent?.includes('原创')) { if (!s.checked) { s.click(); return 'toggled'; } return 'already_on'; } } return 'not_found'; })()"
-  }
-}
-```
-
-**W5: Publish** — button text is "发表":
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const btns = document.querySelectorAll('button'); for (const b of btns) { if ((b.textContent.trim() === '发表' || b.textContent.trim() === '发布') && !b.disabled) { b.click(); return 'clicked'; } } return 'not_found'; })()"
-  }
-}
-```
-
----
-
-### Steps (WeChat MP 公众号)
-
-> URL: `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77`
-> This is the "图文消息" editor. Navigate via: 内容与互动 → 图文消息 → 写新图文
-
-**M1: Navigate to new article editor**
-
-```json
-{"action": "navigate", "targetUrl": "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=77"}
-```
-
-Wait 5s. If redirected to login → tell user to log in manually.
-
-**M2: Fill title**
+调用：
 
 ```json
 {
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const input = document.querySelector('#title, input[placeholder*=标题], input[name=title]'); if (input) { const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; nativeSet.call(input, '<title_64>'); input.dispatchEvent(new Event('input', {bubbles: true})); return 'filled'; } return 'not_found'; })()"
-  }
+  "action": "ego_lite_prepare",
+  "content_id": "content-xxx",
+  "schedule": "可选，平台当地时间"
 }
 ```
 
-**M3: Fill body**
-
-The MP editor uses a rich text iframe or contenteditable. Fill with formatted content:
+返回的 `data` 是唯一上传输入：
 
 ```json
 {
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const editor = document.querySelector('#edui1_body, [contenteditable=true][class*=rich], .edui-body-container'); if (editor) { editor.innerHTML = '<formatted_html_body>'; editor.dispatchEvent(new Event('input', {bubbles: true})); return 'filled'; } const iframe = document.querySelector('#ueditor_0, iframe[class*=edui]'); if (iframe) { const doc = iframe.contentDocument || iframe.contentWindow.document; const body = doc.querySelector('body[contenteditable=true], body'); if (body) { body.innerHTML = '<formatted_html_body>'; return 'filled_iframe'; } } return 'not_found'; })()"
-  }
+  "provider": "ego-lite",
+  "platform": "douyin",
+  "taskSpaceName": "autocrew-publish-douyin-content-xxx",
+  "publishUrl": "https://...",
+  "title": "平台标题",
+  "caption": "平台发布文案",
+  "videoPath": "/absolute/path/final-v2.mp4",
+  "coverPath": "/absolute/path/cover.png",
+  "requiresFinalConfirmation": true,
+  "nextAction": "open_and_fill_only"
 }
 ```
 
-Note: MP body supports HTML formatting. Convert markdown to HTML:
-- `## heading` → `<h2>heading</h2>`
-- `**bold**` → `<strong>bold</strong>`
-- Paragraphs → `<p>text</p>`
-- Blank lines → `<p><br></p>`
+任何字段缺失或文件不存在都要失败关闭，不能自行猜另一个文件。
 
-**M4: Set cover image**
+### 2. 用 ego lite 打开并检查登录态
 
-Find the cover upload area (usually at the top of the editor):
+使用发布包的 `taskSpaceName` 创建或复用同一 task space，然后打开 `publishUrl`。先读取 `pageInfo()` 和 `snapshotText()`。
+
+登录判断：
+
+- 小红书：URL 出现 `/login`，或页面要求登录
+- 抖音：跳转到 `sso.douyin.com`，或页面要求扫码/手机号登录
+- 视频号：跳转到 `/login.html`
+- Bilibili：跳转到 `passport.bilibili.com`
+
+命中时立即 handoff，不要尝试读取、代填或绕过验证信息。
+
+### 3. 上传并填表，但停在最终发布前
+
+每次以最新 `snapshotText()` 为准定位控件；优先语义 locator，其次截图+坐标，最后才使用 DOM/CDP。不要把历史 ref 当稳定 selector。
+
+1. 用 `uploadFile()` 上传 `videoPath`。
+2. 等待平台明确显示视频处理完成或进入编辑表单。
+3. 填写 `title`、`caption`。
+4. 上传 `coverPath`，并验证预览确实变成该封面。
+5. 用户要求定时发布且发布包有 `schedule` 时，设置并读回页面显示的时间。
+6. Bilibili 若要求分区、转载声明等发布包没有的必填项，停下让用户选择，不擅自决定。
+7. 用截图或 `snapshotText()` 复核标题、文案、封面、定时设置和所有必填项。
+8. 不点击最终发布按钮；告诉用户当前准备状态并请求确认。
+
+### 4. 获得确认后发布
+
+用户确认后复用原 task space。若此前 handoff 给用户，必须先 `takeOverTaskSpace(taskId)`；否则用原 id/name 恢复。
+
+发布前再检查一次：
+
+- 当前仍是正确平台和正确稿件
+- 视频处理完成
+- 标题、文案、封面未丢失
+- 定时设置与用户要求一致
+- 没有新增平台警告或必填项
+
+然后点击一次最终发布按钮。遇到不确定响应不要重复点击。
+
+### 5. 核验并回写 AutoCrew
+
+优先取得作品 URL；若平台先进入审核，读取作品管理页中与本次标题/时间匹配的新条目并记录其真实状态。
+
+只有确认作品已提交成功时才调用：
+
 ```json
 {
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const inputs = document.querySelectorAll('input[type=file][accept*=image]'); for (const inp of inputs) { inp.style.display = 'block'; return 'found'; } return 'not_found'; })()"
-  }
+  "action": "confirm_published",
+  "content_id": "content-xxx",
+  "publish_url": "https://平台作品地址"
 }
 ```
 
-Then `setInputFiles` with cover path.
+如果只能确认“已提交审核”而暂时没有公开 URL，要如实说明，不能宣称公开可见。若点击结果不明，保持 AutoCrew 未确认状态，先读取平台作品列表再决定。
 
-**M5: Preview and publish**
+任务真正完成后，在独立的最后一次 ego-browser 调用中执行 `completeTaskSpace(taskId, { keep: false })`；只有用户需要继续人工查看页面时才使用 `keep: true`。
 
-MP has a two-step flow: "预览" then "群发" or "发布".
+## 多平台同步发布
 
-For draft save (safer):
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const btns = document.querySelectorAll('button, a'); for (const b of btns) { const t = b.textContent.trim(); if (t === '保存' || t === '保存草稿') { b.click(); return 'saved_draft'; } } return 'not_found'; })()"
-  }
-}
-```
+同一内容发布到多个平台时，每个平台必须有自己的 AutoCrew 平台稿件和 `content_id`，分别生成发布包。不要把一个平台的标题、封面比例或作品 URL 写回另一个平台稿件。
 
-For direct publish:
-```json
-{
-  "action": "act",
-  "request": {
-    "kind": "evaluate",
-    "fn": "(() => { const btns = document.querySelectorAll('button, a'); for (const b of btns) { const t = b.textContent.trim(); if (t === '群发' || t === '发布') { b.click(); return 'clicked'; } } return 'not_found'; })()"
-  }
-}
-```
+顺序执行并逐个平台收口：
 
----
+1. 准备四个平台发布包。
+2. 分别完成上传和填表。
+3. 汇总四个平台的待发布预览，请用户确认。
+4. 获得确认后逐个平台点击一次。
+5. 每个平台独立核验、回写成功或失败状态。
 
-## Common: Update Status
+某个平台失败不应让其他平台被标记成功；也不要为追求“全成功”而自动重发响应不明确的平台。
 
-After publish (success or failure), update content status:
+## 失败处理
 
-```json
-{ "action": "update", "id": "content-xxx", "status": "published" }
-```
-
-Output:
-```
-✅ 已发布到{platform_label}
-```
-or
-```
-❌ 发布失败：{error_message}。请检查账号状态后重试。
-```
-
-## Selector Adaptation Strategy
-
-DOM selectors are based on page structures observed in early 2026. **Pages will change.**
-
-When a selector returns `not_found`:
-1. Use `browser snapshot` to see current page structure
-2. Identify the correct element by role, placeholder, or nearby labels
-3. Adapt the selector
-4. Core pattern stays the same: evaluate → find element → fill/click
-
-Key hints:
-- **Douyin**: Title placeholder "填写作品标题". Publish button "发布".
-- **Xiaohongshu**: Title placeholder contains "标题". Publish button "发布" or "发布笔记".
-- **WeChat Video**: One main text area (创作描述). Publish button "发表".
-- **WeChat MP**: Title input `#title`. Body in iframe or contenteditable. Save "保存", publish "群发".
-
-## Error Handling
-
-| Failure | Action |
-|---------|--------|
-| Login expired (redirect) | Tell user to log in manually. |
-| Upload timeout (>120s) | Report failure, suggest retry. |
-| CAPTCHA/verification popup | Report failure, suggest manual login. |
-| Form validation error | Read error from DOM, report to user. |
-| Content too long | Truncate to limit + "…", proceed. |
-| `setInputFiles` fails | Try all `input[type=file]` on page. |
-| Publish button not found | Use snapshot to find correct button. |
-| Browser not available | Fall back to copy-paste mode. |
+- 页面结构变化：重新 snapshot；必要时切换视觉操作，不盲点坐标。
+- 用户接管：硬停止，等用户明确说继续。
+- 上传失败：保留页面证据和平台错误，不调用 `confirm_published`。
+- 发布响应不明：先查作品管理页，不重复点击。
+- 平台要求新必填项：让用户决定，不能代替用户选择声明、商业属性或内容分类。
 
 ## Changelog
 
-- 2026-04-01: v2 — Added clipboard-first publishing flow (Free tier default). New actions: `clipboard`, `confirm_published`. Added bilibili platform. Tier routing: Free=clipboard, Pro=browser CDP.
-- 2026-03-31: v1 — Adapted from Qingmo publish-content.md v2. Added WeChat MP (公众号) support. Dual-mode: copy-paste + browser automation. Removed backend API dependency. Assets loaded from local project directory.
+- 2026-08-31: v3 — Browser publishing standardized on ego lite; added approval-gated upload packages for 视频号、小红书、抖音、Bilibili and live-result verification.
+- 2026-04-01: v2 — Added clipboard-first publishing flow and platform formatting.
