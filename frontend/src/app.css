@@ -739,6 +739,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .vid-seg:hover { background: var(--surface); }
 /* 划掉的是「这句不留」,不是操作区:按钮跟着划线会看不清 */
 .vid-seg-off .vid-seg-pick { opacity: 0.42; text-decoration: line-through; }
+/* 审片打回时点名的那一句/那一段。色条用 inset box-shadow 而非 border-left:不占布局,
+   行内文字不会跟着错位;底色由 --danger 兑出,不引入新色值 */
+.vid-seg-flagged { box-shadow: inset 3px 0 0 var(--danger); }
+/* .vid-seg:hover 的 --surface 同为 0,2,0 优先级,不跟在它后面重申一次,鼠标一扫底色就没了 */
+.vid-seg-flagged, .vid-seg-flagged:hover { background: color-mix(in srgb, var(--danger) 6%, var(--card)); }
+/* 编排页的行没有 .vid-seg-row 那层内边距(时间码直接挂在 li 下),不让位色条会压住时间码 */
+.vid-seg-flagged > .vid-seg-time { padding-left: 7px; }
+/* 「不留」把整段文字压到 0.42,而被点名那句的正文恰恰是人要读的;抬到 0.62——
+   仍明显淡于常规行,划掉的语义还在,但「你打回时指的就是这一句」读得出来 */
+.vid-seg-flagged.vid-seg-off .vid-seg-pick { opacity: 0.62; }
 .vid-seg-time { flex: 0 0 auto; font-size: 11px; }
 .vid-seg-text { flex: 1; min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
 .vid-player { width: 100%; max-width: 640px; aspect-ratio: 16 / 9; background: var(--ink); border: 1px solid var(--border); border-radius: var(--radius-card); }
