@@ -399,11 +399,19 @@ async function engineSeed(dataDir: string, hints: string[]): Promise<Record<stri
   if (await fs.access(filePath).then(() => true, () => false)) return {};
   const key = process.env.DEEPSEEK_API_KEY;
   if (!key) return {};
+  // v2 形状（一张端点表 + main 指针）；v1 的老文件仍然读得动，但新写的一律是 v2
   const minimal = {
-    apiKey: "<你的 DEEPSEEK_API_KEY>",
-    baseUrl: ENGINE_DEFAULTS.baseUrl,
-    strongModel: ENGINE_DEFAULTS.strongModel,
-    fastModel: ENGINE_DEFAULTS.fastModel,
+    version: 2,
+    providers: [
+      {
+        id: "deepseek",
+        name: "DeepSeek 官方",
+        baseUrl: ENGINE_DEFAULTS.baseUrl,
+        apiKey: "<你的 DEEPSEEK_API_KEY>",
+        models: [ENGINE_DEFAULTS.strongModel, ENGINE_DEFAULTS.fastModel],
+      },
+    ],
+    main: { provider: "deepseek", strong: ENGINE_DEFAULTS.strongModel, fast: ENGINE_DEFAULTS.fastModel },
   };
   if (process.env.AUTOCREW_SEED_ENGINE !== "1") {
     hints.push(
@@ -413,7 +421,8 @@ async function engineSeed(dataDir: string, hints: string[]): Promise<Record<stri
     return { engineSeedHint: filePath };
   }
   await fs.mkdir(dataDir, { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify({ ...minimal, apiKey: key }, null, 2) + "\n", "utf-8");
+  const seeded = { ...minimal, providers: [{ ...minimal.providers[0], apiKey: key }] };
+  await fs.writeFile(filePath, JSON.stringify(seeded, null, 2) + "\n", "utf-8");
   await fs.chmod(filePath, 0o600).catch(() => {}); // key 文件收权限，非 posix 环境失败不阻断
   hints.push(`已按 AUTOCREW_SEED_ENGINE=1 写入 ${filePath}（apiKey 取自环境变量，不回显）`);
   return { engineSeeded: filePath };
@@ -427,7 +436,7 @@ async function doDoctor(dataDir: string): Promise<WorkflowResult> {
     engine = {
       configured: true,
       strongModel: cfg.strongModel,
-      ...(cfg.routes?.writer ? { writerRoute: cfg.routes.writer.model } : {}),
+      ...(cfg.assignments?.writer ? { writerRoute: cfg.assignments.writer.model } : {}),
     };
   } catch (err) {
     hints.push(errText(err));

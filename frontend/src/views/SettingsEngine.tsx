@@ -1,13 +1,13 @@
 /**
- * 设置 · 引擎与模型路由。
+ * 设置 · 引擎与岗位分配。
  *
- * 这一区之前是十二个长得一模一样的输入框排成一列，四条专线靠一行小字分隔，
- * 而且标题写死「写稿专线 · Opus 4.8」——你把模型改掉，那行字还在说 Opus 4.8。
- * 两条改法：
- *   1. 每条路由一张卡，卡头显示**它此刻真实生效的模型**（读 settings:get 的 routes，
- *      没单独配就明说「跟随主通道强模型」），不再有写死的假标签。
- *   2. 每张卡一个「测试」——拿**已保存的**配置真发一次极小调用（settings:test_route），
- *      回耗时与上游实际回的模型名。配置面没有反馈闭环，等于让用户拿生产任务当探针。
+ * 两条不变的规矩：
+ *   1. 每张卡的卡头显示**它此刻真实生效的模型**（读 settings:get 的 assignments，
+ *      没单独配就明说「跟随主端点强模型」），不再有写死的假标签。
+ *   2. 每张卡一个「测试」——拿**已保存的**配置真发一次极小调用（settings:test_route，
+ *      按 端点 id + 模型名 测），回耗时。配置面没有反馈闭环，等于让用户拿生产任务当探针。
+ *
+ * P2a-1 只把这页接到 v2 的端点表上（够用、能存、能测）；整页重排是 P2b。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
@@ -15,10 +15,11 @@ import { toast } from "../ui";
 import { Field, SaveRow, Section } from "./settings-kit";
 import { slugProviderId } from "./provider-id";
 
-type RouteView = { baseUrl: string; model: string; protocol?: string; models?: string[] } | null;
-type RouteKey = "writer" | "analytics" | "scout" | "codex";
+/** 岗位视图：指向端点表里的一条 + 一个模型；null = 跟随主端点强模型 */
+type AssignmentView = { provider: string; model: string; baseUrl: string } | null;
+type RouteKey = "writer" | "reviewer" | "scout" | "analytics";
 
-/** settings:get 回的一条端点：无 key、无掩码，只有一个"配没配" */
+/** settings:get 回的一条端点：只有掩码与"配没配"，永不回 key 原文 */
 interface ProviderView {
   id: string;
   name: string;
@@ -26,17 +27,20 @@ interface ProviderView {
   protocol: string | null;
   models: string[];
   apiKeySet: boolean;
+  apiKeyMasked?: string | null;
 }
 
 interface EngineView {
   configured: boolean;
+  version?: number;
   apiKeyMasked: string | null;
   baseUrl: string;
   strongModel: string;
   fastModel: string;
-  routes: Record<RouteKey, RouteView>;
-  routePresets?: Record<RouteKey, { baseUrl: string; model: string }>;
+  main?: { provider: string; strong: string; fast: string } | null;
+  assignments?: Record<RouteKey, AssignmentView>;
   providers?: ProviderView[];
+  warnings?: string[];
 }
 
 /** 表单里的一行。key 只在浏览器里活着（React key）；id 是落盘的那个，创建时生成一次后不再变 */
@@ -71,9 +75,9 @@ function toProviderRows(list: ProviderView[] | undefined): ProviderRow[] {
 
 const ROUTES: Array<{ key: RouteKey; title: string; note: string; baseField: string; modelField: string }> = [
   { key: "writer", title: "写稿专线", note: "生成初稿、改稿、平台适配", baseField: "writer_base_url", modelField: "writer_model" },
-  { key: "analytics", title: "数据复盘专线", note: "复盘报告、campaign 重排", baseField: "analytics_base_url", modelField: "analytics_model" },
+  { key: "reviewer", title: "审稿专线", note: "AI 审稿、去 AI 味复核", baseField: "reviewer_base_url", modelField: "reviewer_model" },
   { key: "scout", title: "选题评分专线", note: "雷达筛选、灵感提炼、深调研", baseField: "scout_base_url", modelField: "scout_model" },
-  { key: "codex", title: "Codex 备用通道", note: "同一个 Key，可选 sol / terra / luna", baseField: "codex_base_url", modelField: "codex_model" },
+  { key: "analytics", title: "数据复盘专线", note: "复盘报告、campaign 重排", baseField: "analytics_base_url", modelField: "analytics_model" },
 ];
 
 type TestState =
@@ -116,8 +120,8 @@ function TestLine(props: { label?: string; state?: TestState }) {
 
 const EMPTY_FORM = {
   api_key: "", base_url: "", strong_model: "", fast_model: "",
-  writer_base_url: "", writer_model: "", analytics_base_url: "", analytics_model: "",
-  scout_base_url: "", scout_model: "", codex_base_url: "", codex_model: "",
+  writer_base_url: "", writer_model: "", reviewer_base_url: "", reviewer_model: "",
+  scout_base_url: "", scout_model: "", analytics_base_url: "", analytics_model: "",
 };
 
 export function EngineSection() {
@@ -137,20 +141,23 @@ export function EngineSection() {
     void load();
   }, []);
 
-  const runTest = async (target: string) => {
-    if (tests[target]?.status === "running") return;
-    setTests((t) => ({ ...t, [target]: { status: "running" } }));
-    const r = await invoke("settings:test_route", { target });
+  /** 测的是**端点**（provider_id + model），不是岗位；key 只是这张页面上的状态槽 */
+  const runTest = async (key: string, provider_id: string, model: string) => {
+    if (tests[key]?.status === "running") return;
+    setTests((t) => ({ ...t, [key]: { status: "running" } }));
+    const r = await invoke("settings:test_route", { provider_id, model });
     if (!r.ok) {
-      setTests((t) => ({ ...t, [target]: { status: "fail", error: r.error ?? "测试失败" } }));
+      setTests((t) => ({ ...t, [key]: { status: "fail", error: r.error ?? "测试失败" } }));
       return;
     }
     const d = (r as unknown as { data: { ms: number; model: string } }).data;
-    setTests((t) => ({ ...t, [target]: { status: "ok", ...d } }));
+    setTests((t) => ({ ...t, [key]: { status: "ok", ms: d.ms, model: d.model } }));
   };
 
   /** 表单里有没敲完就去测的东西——测的是已保存的配置，这件事必须当场说明白 */
   const dirty = Object.values(eForm).some((v) => v.trim() !== "");
+  /** 端点表里主端点那一条的 id——「测强档/测快档」测的就是它 */
+  const mainProvider = engine?.main?.provider ?? "";
   const testable = Boolean(engine?.configured);
   const testHint = !testable ? "先填 API Key 并保存，才能测试" : dirty ? "测的是已保存的配置——先保存再测" : undefined;
 
@@ -204,13 +211,13 @@ export function EngineSection() {
       on={engine?.configured}
     >
       <p className="muted">
-        总编辑与轻任务走主通道；写稿、复盘、选题可各走更强的专线。所有路由共用同一个 API Key，不重复保存凭证。
+        总编辑与轻任务走主端点；写稿、审稿、选题、复盘可各指向更强的端点。密钥按端点只存一份，不重复保存。
         每张卡的「测试」会拿已保存的配置真发一次极小调用。
       </p>
 
       <div className="set-route">
         <div className="set-route-head">
-          <span className="set-route-name">主通道</span>
+          <span className="set-route-name">主端点</span>
           <span className="mono muted set-route-now">
             {host(engine?.baseUrl)} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}
           </span>
@@ -220,43 +227,47 @@ export function EngineSection() {
         <Field label="强模型" value={eForm.strong_model} placeholder={engine?.strongModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, strong_model: v }))} />
         <Field label="快模型" value={eForm.fast_model} placeholder={engine?.fastModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, fast_model: v }))} />
         <div className="set-route-foot">
-          <TestButton label="测强档" state={tests.strong} disabled={!testable} {...(testHint ? { title: testHint } : {})} onRun={() => void runTest("strong")} />
-          <TestButton label="测快档" state={tests.fast} disabled={!testable} {...(testHint ? { title: testHint } : {})} onRun={() => void runTest("fast")} />
+          <TestButton label="测强档" state={tests.strong} disabled={!testable} {...(testHint ? { title: testHint } : {})} onRun={() => void runTest("strong", mainProvider, engine?.strongModel ?? "")} />
+          <TestButton label="测快档" state={tests.fast} disabled={!testable} {...(testHint ? { title: testHint } : {})} onRun={() => void runTest("fast", mainProvider, engine?.fastModel ?? "")} />
           {testHint && <span className="mono muted">{testHint}</span>}
         </div>
         <TestLine label="强档" state={tests.strong} />
         <TestLine label="快档" state={tests.fast} />
       </div>
 
-      <p className="mono muted set-sub-head">任务专线 · 留空即跟随主通道强模型</p>
+      <p className="mono muted set-sub-head">岗位分配 · 留空即跟随主端点强模型</p>
       <div className="set-route-grid">
         {ROUTES.map((r) => {
-          const route = engine?.routes?.[r.key] ?? null;
-          const preset = engine?.routePresets?.[r.key];
+          const route = engine?.assignments?.[r.key] ?? null;
           return (
             <div key={r.key} className="set-route">
               <div className="set-route-head">
                 <span className="set-route-name">{r.title}</span>
                 {/* 卡头说的是**此刻真实生效**的那一档，不是写死的宣传语 */}
                 <span className="mono muted set-route-now">
-                  {route ? `${route.model} · ${host(route.baseUrl)}` : `跟随主通道强模型 · ${engine?.strongModel ?? "—"}`}
+                  {route ? `${route.model} · ${host(route.baseUrl)}` : `跟随主端点强模型 · ${engine?.strongModel ?? "—"}`}
                 </span>
               </div>
               <p className="muted set-route-note">{r.note}</p>
               <Field
                 label="端点"
                 value={eForm[r.baseField as keyof typeof eForm]}
-                placeholder={route?.baseUrl ?? preset?.baseUrl ?? ""}
+                placeholder={route?.baseUrl ?? engine?.baseUrl ?? ""}
                 onChange={(v) => setEForm((f) => ({ ...f, [r.baseField]: v }))}
               />
               <Field
                 label="模型"
                 value={eForm[r.modelField as keyof typeof eForm]}
-                placeholder={route?.model ?? preset?.model ?? ""}
+                placeholder={route?.model ?? engine?.strongModel ?? ""}
                 onChange={(v) => setEForm((f) => ({ ...f, [r.modelField]: v }))}
               />
               <div className="set-route-foot">
-                <TestButton state={tests[r.key]} disabled={!testable} {...(testHint ? { title: testHint } : {})} onRun={() => void runTest(r.key)} />
+                <TestButton
+                  state={tests[r.key]}
+                  disabled={!testable}
+                  {...(testHint ? { title: testHint } : {})}
+                  onRun={() => void runTest(r.key, route?.provider ?? mainProvider, route?.model ?? engine?.strongModel ?? "")}
+                />
               </div>
               <TestLine state={tests[r.key]} />
             </div>
@@ -308,7 +319,7 @@ export function EngineSection() {
                 state={tests[target]}
                 disabled={!target}
                 title={target ? "用已保存的地址与 key 测第一个模型" : "先保存这个端点，才能测"}
-                onRun={() => void runTest(target)}
+                onRun={() => void runTest(target, p.id, p.savedModels[0] ?? "")}
               />
             </div>
             <TestLine state={tests[target]} />

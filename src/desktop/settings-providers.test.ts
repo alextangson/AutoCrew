@@ -1,8 +1,11 @@
 /**
- * 自定义端点的设置面读写（设计 §Phase 4）。三条红线钉在这里：
- *   1. 读回**没有 key、也没有掩码**——只有 apiKeySet 布尔。
+ * 端点表的设置面读写（设计 §Phase 4 + P2 spec §3）。三条红线钉在这里：
+ *   1. 读回**没有 key 原文**——只有掩码与 apiKeySet 布尔。
  *   2. 写入**整份原子**：任何一条非法/重复 id 都拒绝整次提交，一个字节都不落盘。
- *   3. 字段存在性判定：未提交保留、空数组清空、有数组走 merge。
+ *   3. 字段存在性判定：未提交保留、有数组走 merge（整表替换）。
+ *
+ * v2 起 providers 是**唯一**的端点表，主端点自己也在里面：提交时必须把它带上
+ * （key 留空即保留原值），否则等于删掉被 main 引用的端点，整次拒绝。
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -20,10 +23,15 @@ const OLLAMA = { id: "ollama", name: "本地 Ollama", baseUrl: "http://localhost
 
 const enginePath = () => path.join(testDir, "engine.json");
 const readRaw = async () => JSON.parse(await fs.readFile(enginePath(), "utf-8")) as Record<string, unknown>;
-const providersOnDisk = async () => (await readRaw()).providers as Array<Record<string, unknown>> | undefined;
+const allOnDisk = async () => (await readRaw()).providers as Array<Record<string, unknown>>;
+/** 只看用户自己加的那些——主端点那条由 beforeEach 建好，每次提交都原样带上 */
+const providersOnDisk = async () => (await allOnDisk()).filter((p) => p.id !== "main");
+/** 提交时把主端点原样带上（apiKey 留空 = 保留已存的 key） */
+const MAIN_ROW = { id: "main", name: "主端点", baseUrl: "https://api.deepseek.com", models: ["deepseek-v4-pro", "deepseek-v4-flash"] };
+const withMain = (rows: unknown) => (Array.isArray(rows) ? [MAIN_ROW, ...rows] : rows);
 const providersInView = async () => {
   const res = await getEngineSettings({ _dataDir: testDir });
-  return (res.data as { providers: Array<Record<string, unknown>> }).providers;
+  return (res.data as { providers: Array<Record<string, unknown>> }).providers.filter((p) => p.id !== "main");
 };
 
 beforeEach(async () => {
@@ -38,18 +46,24 @@ afterEach(async () => {
 });
 
 describe("settings:get 的 providers 视图", () => {
-  it("回 {id,name,baseUrl,protocol,models,apiKeySet}——无 key 无掩码", async () => {
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, apiKey: "sk-kimi-secret-9876" }] });
+  it("回 {id,name,baseUrl,protocol,models,apiKeySet,apiKeyMasked}——key 原文永不外泄", async () => {
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, apiKey: "sk-kimi-secret-9876" }]) });
     const view = await providersInView();
     expect(view).toEqual([
-      { id: "kimi", name: "Kimi", baseUrl: "https://api.moonshot.cn", protocol: null, models: ["kimi-k3"], apiKeySet: true },
+      {
+        id: "kimi",
+        name: "Kimi",
+        baseUrl: "https://api.moonshot.cn",
+        protocol: null,
+        models: ["kimi-k3"],
+        apiKeySet: true,
+        apiKeyMasked: "sk-k…9876",
+      },
     ]);
     expect(JSON.stringify(await getEngineSettings({ _dataDir: testDir }))).not.toContain("kimi-secret");
-    // 掩码也不给:数组整体替换时,掩码会被原样当成真值写回来
-    expect(JSON.stringify(view)).not.toContain("…");
   });
 
-  it("没有 providers 的老配置 → 空数组（不是缺字段，前端不用做形状判断）", async () => {
+  it("只有主端点的配置 → 用户端点为空数组（不是缺字段，前端不用做形状判断）", async () => {
     expect(await providersInView()).toEqual([]);
   });
 });
@@ -58,7 +72,7 @@ describe("setEngineSettings 的 providers merge", () => {
   it("新增：非空 apiKey 落盘，baseUrl 归一化尾斜杠", async () => {
     const res = await setEngineSettings({
       _dataDir: testDir,
-      providers: [{ ...KIMI, baseUrl: "https://api.moonshot.cn/", apiKey: "sk-kimi" }],
+      providers: withMain([{ ...KIMI, baseUrl: "https://api.moonshot.cn/", apiKey: "sk-kimi" }]),
     });
     expect(res.ok).toBe(true);
     expect(await providersOnDisk()).toEqual([
@@ -67,50 +81,55 @@ describe("setEngineSettings 的 providers merge", () => {
   });
 
   it("已有 id 留空 key = 保留原值；非空 = 替换", async () => {
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, apiKey: "sk-old" }] });
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, apiKey: "sk-old" }]) });
 
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, name: "Kimi 改名了", models: ["kimi-k3", "kimi-k3-turbo"] }] });
-    let onDisk = (await providersOnDisk())!;
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, name: "Kimi 改名了", models: ["kimi-k3", "kimi-k3-turbo"] }]) });
+    let onDisk = await providersOnDisk();
     expect(onDisk[0].apiKey).toBe("sk-old"); // 只改了名字与模型,key 必须留住
     expect(onDisk[0].name).toBe("Kimi 改名了");
     expect(onDisk[0].models).toEqual(["kimi-k3", "kimi-k3-turbo"]);
 
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, apiKey: "sk-new" }] });
-    onDisk = (await providersOnDisk())!;
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, apiKey: "sk-new" }]) });
+    onDisk = await providersOnDisk();
     expect(onDisk[0].apiKey).toBe("sk-new");
   });
 
   it("新 id 没给 key → 拒绝整次提交（并且已有的那条不受影响）", async () => {
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, apiKey: "sk-kimi" }] });
-    const res = await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI }, { ...OLLAMA }] });
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, apiKey: "sk-kimi" }]) });
+    const res = await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI }, { ...OLLAMA }]) });
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain("必须填 API Key");
-    expect((await providersOnDisk())!.map((p) => p.id)).toEqual(["kimi"]);
+    expect((await providersOnDisk()).map((p) => p.id)).toEqual(["kimi"]);
   });
 
-  it("缺席 = 删除；空数组 = 清空；未提交 providers 字段 = 保留文件现值", async () => {
+  it("缺席 = 删除；未提交 providers 字段 = 保留文件现值；删掉被引用的端点 = 整次拒绝", async () => {
     await setEngineSettings({
       _dataDir: testDir,
-      providers: [{ ...KIMI, apiKey: "sk-kimi" }, { ...OLLAMA, apiKey: "sk-ollama" }],
+      providers: withMain([{ ...KIMI, apiKey: "sk-kimi" }, { ...OLLAMA, apiKey: "sk-ollama" }]),
     });
-    expect((await providersOnDisk())!.map((p) => p.id)).toEqual(["kimi", "ollama"]);
+    expect((await providersOnDisk()).map((p) => p.id)).toEqual(["kimi", "ollama"]);
 
     // 只提交一条 = 另一条被删
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...OLLAMA }] });
-    expect((await providersOnDisk())!.map((p) => p.id)).toEqual(["ollama"]);
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...OLLAMA }]) });
+    expect((await providersOnDisk()).map((p) => p.id)).toEqual(["ollama"]);
 
     // 改别的字段但不带 providers = 现值原样留着
     await setEngineSettings({ _dataDir: testDir, base_url: "https://relay.example.com" });
-    expect((await providersOnDisk())!.map((p) => p.id)).toEqual(["ollama"]);
+    expect((await providersOnDisk()).map((p) => p.id)).toEqual(["ollama"]);
 
-    // 空数组 = 显式清空
-    await setEngineSettings({ _dataDir: testDir, providers: [] });
+    // 用户端点清空（主端点仍在）
+    await setEngineSettings({ _dataDir: testDir, providers: [{ ...MAIN_ROW, baseUrl: "https://relay.example.com" }] });
     expect(await providersOnDisk()).toEqual([]);
     expect(await providersInView()).toEqual([]);
+
+    // 真·空数组 = 连主端点一起删 → 拒绝（它被 main 指着）
+    const res = await setEngineSettings({ _dataDir: testDir, providers: [] });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("主端点");
   });
 
   it("非法条目一律拒绝整次写入，并说清是哪一条；文件保持原样（不部分写）", async () => {
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, apiKey: "sk-kimi" }] });
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, apiKey: "sk-kimi" }]) });
     const before = await readRaw();
     const cases: Array<[unknown, string]> = [
       [[{ ...KIMI }, { ...OLLAMA, id: "Ollama", apiKey: "k" }], "id 不合法"],
@@ -127,7 +146,7 @@ describe("setEngineSettings 的 providers merge", () => {
       ["providers 不是数组", "必须是数组"],
     ];
     for (const [providers, expected] of cases) {
-      const res = await setEngineSettings({ _dataDir: testDir, providers });
+      const res = await setEngineSettings({ _dataDir: testDir, providers: withMain(providers) });
       expect(res.ok, `应当拒绝：${JSON.stringify(providers)}`).toBe(false);
       expect(String(res.error)).toContain(expected);
       expect(await readRaw()).toEqual(before); // 一个字节都没写
@@ -135,21 +154,20 @@ describe("setEngineSettings 的 providers merge", () => {
   });
 
   it("protocol：留空 = 不落盘（引擎按 key/域名推断），显式选了才写", async () => {
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, apiKey: "sk-kimi", protocol: "" }] });
-    expect((await providersOnDisk())![0].protocol).toBeUndefined();
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, apiKey: "sk-kimi", protocol: "" }]) });
+    expect((await providersOnDisk())[0].protocol).toBeUndefined();
     expect((await providersInView())[0].protocol).toBeNull();
 
-    await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, protocol: "anthropic" }] });
-    expect((await providersOnDisk())![0].protocol).toBe("anthropic");
+    await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, protocol: "anthropic" }]) });
+    expect((await providersOnDisk())[0].protocol).toBe("anthropic");
     expect((await providersInView())[0].protocol).toBe("anthropic");
   });
 
   it("只提交 providers 也算有可写字段（不会被「没有可写入的字段」挡掉）", async () => {
-    const res = await setEngineSettings({ _dataDir: testDir, providers: [{ ...KIMI, apiKey: "sk-kimi" }] });
+    const res = await setEngineSettings({ _dataDir: testDir, providers: withMain([{ ...KIMI, apiKey: "sk-kimi" }]) });
     expect(res.ok).toBe(true);
-    // 顶层与路由一个都没动
-    const raw = await readRaw();
-    expect(raw.apiKey).toBe("sk-primary-key-1234");
+    // 主端点那条一个字节没动：key 留空即保留
+    expect((await allOnDisk()).find((p) => p.id === "main")?.apiKey).toBe("sk-primary-key-1234");
   });
 });
 

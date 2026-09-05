@@ -54,62 +54,37 @@ npm run restart
 
 ## 配置模型
 
-打开工作台的「设置 → 模型与路由」，填入同一把 API Key 后即可按任务分流：
+配置只有**一张端点表**：填过的每个端点（地址 + Key + 模型清单）在里面存一份，主端点、备用端点、四个岗位、对话里的模型切换器全部指向它——同一把 Key 不用填四遍。
 
-| 工作 | 推荐端点 | 推荐模型 |
+打开工作台的「设置 → 引擎 · 模型服务」，最少填一个端点就能开工：主端点是必填的，其余全可缺省。
+
+| 位置 | 作用 | 缺省 |
 |---|---|---|
-| 写稿 | `https://code.newcli.com/claude/ultra` | `claude-opus-4-8` |
-| 数据复盘 | `https://code.newcli.com/claude/ultra` | `claude-opus-4-8` |
-| 选题侦察、快速任务 | `https://code.newcli.com/claude/ultra` | `claude-sonnet-5` |
-| Codex 任务 | `https://code.newcli.com/codex/v1` | `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` |
+| 主端点 | 总编辑对话、所有没单独分配的岗位 | 必填 |
+| 备用端点 | 主端点 429/断流时顶完这一次调用 | 不配 = 主端点失败即报错 |
+| 岗位分配 | 写稿 / 审稿 / 选题 / 复盘各指一个端点 + 一个模型 | 不配 = 跟随主端点强模型 |
 
-也可以手工写入 `~/.autocrew/engine.json`。以下是等价示例；请将 `YOUR_API_KEY` 替换为自己的 Key，文件权限会在设置页保存时收紧：
+也可以手工写入 `~/.autocrew/engine.json`。请把 `YOUR_*_KEY` 换成自己的 Key，文件权限会在设置页保存时收紧到 0600：
 
 ```json
 {
-  "apiKey": "YOUR_API_KEY",
-  "baseUrl": "https://code.newcli.com/claude/ultra",
-  "strongModel": "claude-sonnet-5",
-  "fastModel": "claude-sonnet-5",
-  "protocol": "anthropic",
-  "routes": {
-    "writer": {
-      "baseUrl": "https://code.newcli.com/claude/ultra",
-      "model": "claude-opus-4-8",
-      "protocol": "anthropic"
-    },
-    "analytics": {
-      "baseUrl": "https://code.newcli.com/claude/ultra",
-      "model": "claude-opus-4-8",
-      "protocol": "anthropic"
-    },
-    "scout": {
-      "baseUrl": "https://code.newcli.com/claude/ultra",
-      "model": "claude-sonnet-5",
-      "protocol": "anthropic"
-    },
-    "codex": {
-      "baseUrl": "https://code.newcli.com/codex/v1",
-      "model": "gpt-5.6-sol",
-      "protocol": "openai",
-      "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
-    }
-  },
-  "fallback": {
-    "baseUrl": "https://api.deepseek.com",
-    "apiKey": "YOUR_DEEPSEEK_KEY",
-    "strongModel": "deepseek-v4-pro",
-    "fastModel": "deepseek-v4-flash",
-    "protocol": "openai"
-  },
+  "version": 2,
   "providers": [
     {
       "id": "deepseek",
-      "name": "DeepSeek",
+      "name": "DeepSeek 官方",
       "baseUrl": "https://api.deepseek.com",
       "apiKey": "YOUR_DEEPSEEK_KEY",
       "protocol": "openai",
       "models": ["deepseek-v4-pro", "deepseek-v4-flash"]
+    },
+    {
+      "id": "newcli",
+      "name": "newcli 中转",
+      "baseUrl": "https://code.newcli.com/claude/ultra",
+      "apiKey": "YOUR_RELAY_KEY",
+      "protocol": "anthropic",
+      "models": ["claude-opus-4-8", "claude-sonnet-5"]
     },
     {
       "id": "ollama",
@@ -118,31 +93,46 @@ npm run restart
       "apiKey": "ollama",
       "models": ["qwen3:32b"]
     }
-  ]
+  ],
+  "main": { "provider": "deepseek", "strong": "deepseek-v4-pro", "fast": "deepseek-v4-flash" },
+  "fallback": { "provider": "newcli", "strong": "claude-opus-4-8", "fast": "claude-sonnet-5" },
+  "assignments": {
+    "writer": { "provider": "newcli", "model": "claude-opus-4-8" },
+    "reviewer": { "provider": "newcli", "model": "claude-opus-4-8" }
+  }
 }
 ```
 
-### 备用模型（可选）
+上面这份是**推荐形状**：写稿与审稿走中转的 Opus，主端点与备用端点分属两家——主线整站不通时备用还活着。
 
-主端点连续 429 / 断流时，`fallback` 块让 DeepSeek 官方 API 顶完这一次调用，而不是把错误直接甩给你。
+- `providers` 的 `id` 只允许小写字母、数字、连字符（1–32 位），创建时生成一次并落盘，**改名不会重算**；`baseUrl` 只接受 http/https，不能带账密、查询串或锚点（`localhost` 允许）；`models` 至少一个；`apiKey` 必填；`protocol` 不填按 key 前缀与域名自动推断。
+- `main` 必填，指向的端点必须在表里且有 Key，否则整份配置视为**未配置**（产品会把你带回首次开机卡）。
+- `assignments` 四个岗位是 `writer`（写稿、改稿、平台适配）、`reviewer`（AI 审稿）、`scout`（雷达筛选、灵感提炼、深调研）、`analytics`（复盘报告、活动重排），全部可缺省。
+- 引用不存在的端点 id：该项丢弃并在设置页留一条提醒，其余照常工作。设置页保存则是整份校验，任何一条不成立就整次拒绝并告诉你是哪条——一个字节都不落盘。
+- 删除被主端点、备用端点或任一岗位引用的端点会被拒绝。
 
-- `baseUrl` 与 `apiKey` 必填，缺一整块忽略（启动时 warn 一行）；`strongModel` / `fastModel` 不填默认 `deepseek-v4-pro` / `deepseek-v4-flash`；`protocol` 不填按 key 前缀与域名自动推断。
-- 档位对应：请求快档模型时用备用快档，其余（含写稿路由的专属模型）一律用备用强档——宁强勿弱。
-- **切换不会静默**：聊天进度条会出现「主模型接不上，备用 DeepSeek 顶上了」，工作日志里主端点的失败与备用端点的成功各留一条记录。
+**老配置自动迁移**：v1 的 `engine.json`（顶层 `apiKey/baseUrl` + `routes` + `fallback` + `providers` 四处各填一遍）读取时在内存里迁移成上面的形状，行为不变；第一次在设置页保存时才写成 v2，并在同目录留一份 `engine.json.v1.bak`。v1 里的 `codex` 专线没有任何功能在用，迁移时丢弃并提醒一句（生图链里的本地 Codex CLI 通道是另一回事，不受影响）。
+
+### 备用端点（可选）
+
+主端点连续 429 / 断流时，`fallback` 指向的端点顶完这一次调用，而不是把错误直接甩给你。
+
+- `fallback` 指一个端点 + 强/快两档模型；不配 = 主端点失败即报错（今天的行为）。
+- 档位对应：请求快档模型时用备用快档，其余（含岗位专属模型）一律用备用强档——宁强勿弱。
+- **切换不会静默**：聊天进度条会出现「主模型接不上，备用顶上了」，工作日志里主端点的失败与备用端点的成功各留一条记录。
 - 只在瞬时故障（429/5xx/断流）时触发；401/403 这类换端点也没用的错误、以及你点了「停止」的场景，都不会切。
+- **同家提醒**：备用端点的主机名和主端点或任一岗位相同时，设置页会说一句「备用端点和写稿专线是同一家（xxx），它挂了备用一起挂」。只比主机名、故意忽略路径——同一家中转的 `/claude/ultra` 与 `/codex/v1` 是不同服务，但整站不通时一起死，那正是这条提醒要抓的情形。配了也能存，提醒常驻。
 
-### 自定义端点（可选）
+### 对话里的模型切换器
 
-`providers` 是你自己增删的端点清单：配好后，总编辑对话右下角的模型切换器里会按端点分组列出「端点 × 模型」，随时切。它是**额外**通道——主端点、任务路由、备用端点全都不受影响。
+端点表里的每个「端点 × 模型」都会出现在总编辑对话右下角的切换器里，随时切。
 
-- 在「设置 → 引擎 · 模型服务」里增删即可，不用手改文件；「打开配置文件」按钮会用系统默认应用打开当前实际生效的 `engine.json`。
-- `id` 只允许小写字母、数字、连字符（1–32 位），由创建时生成一次并落盘——**改名不会重算**，你在切换器里选中的端点不会因为改个显示名就失效。
-- `baseUrl` 只接受 http/https，不能带账密、查询串或锚点；`localhost` 允许。`models` 至少一个；`apiKey` 必填；`protocol` 不填按 key 前缀与域名自动推断。
-- 手改文件时：某条配错了只丢那一条（启动 warn 一行），**同一个 id 出现多次则该 id 全部失效**（首赢末赢都是静默换端点，最贵的那种错）。设置页保存则是整份校验，任何一条非法就整次拒绝并告诉你是哪条。
-- 切换器里点名了某个端点，这一轮**不带备用链**：打不通就如实报错，不会悄悄绕回主端点。
-- 主端点仍然必填（写稿/复盘/选题路由依赖它），providers 不能单独撑起整个引擎。
+- 点名了某个端点，这一轮**不带备用链**：打不通就如实报错，不会悄悄绕回主端点。
+- 手改文件时：某条端点配错了只丢那一条（启动 warn 一行），**同一个 id 出现多次则该 id 全部失效**（首赢末赢都是静默换端点，最贵的那种错）。
+- 「打开配置文件」按钮会用系统默认应用打开当前实际生效的 `engine.json`。
 
 正文配图与公众号草稿箱还需要在「设置 → 发布」配置图像服务，以及公众号 AppID/AppSecret（如果要实际推草稿箱）。密钥不会回显到页面。
+
 
 ## 推荐工作流
 

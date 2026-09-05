@@ -1,13 +1,12 @@
 /**
- * 自定义端点的设置面读写（设计 §Phase 4：端点即用户数据）。
+ * 端点表的写入校验与「打开配置文件」逃生门（设计 §Phase 4：端点即用户数据）。
  *
  * 与引擎读取路径（config.ts 的 normalizeProviders：逐条 fail-closed）**不是同一套规矩**：
  * 写入必须整份原子校验——设置页提交的是全量数组，逐条丢弃等于替用户删数据。
  * 任何一条非法/重复 id → 拒绝整次提交并说清是哪一条，一个字节都不落盘。
  *
- * 密钥口径：读回只给 `apiKeySet` 布尔（不回原文也不回掩码——掩码遇上"数组整体替换"
- * 会被当成真值写回去）；写入按 id merge：非空即替换、留空且 id 已存在则保留原值、
- * 新 id 无 key 直接拒。
+ * 密钥口径：读回只给掩码与"配没配"（settings-engine.ts）；写入按 id merge：
+ * 非空即替换、留空且 id 已存在则保留原值、新 id 无 key 直接拒。
  */
 import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -19,39 +18,11 @@ import {
   type EngineProviderConfig,
 } from "../engine/config.js";
 
-/** settings:get 里的一条端点：**无 key、无掩码**，只有一个"配没配"的布尔 */
-export interface ProviderView {
-  id: string;
-  name: string;
-  baseUrl: string;
-  /** 显式协议；null = 未指定（引擎按 key 前缀与域名推断） */
-  protocol: EngineProtocol | null;
-  models: string[];
-  apiKeySet: boolean;
-}
-
 /** 落盘形状：protocol 只有用户显式选过才写（不写 = 交给 inferProtocol 每次按当前 key/域名推断） */
 type StoredProvider = Omit<EngineProviderConfig, "protocol"> & { protocol?: EngineProtocol };
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
-}
-
-/**
- * 文件里的 providers → 设置页视图。宽容读：坏条目也照样显示（用户得看得见才能改），
- * 真正的把关在写入侧。
- */
-export function providerViews(raw: unknown): ProviderView[] {
-  return asArray(raw)
-    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
-    .map((p) => ({
-      id: typeof p.id === "string" ? p.id : "",
-      name: typeof p.name === "string" ? p.name : "",
-      baseUrl: typeof p.baseUrl === "string" ? p.baseUrl : "",
-      protocol: p.protocol === "openai" || p.protocol === "anthropic" ? p.protocol : null,
-      models: asArray(p.models).filter((m): m is string => typeof m === "string" && Boolean(m.trim())).map((m) => m.trim()),
-      apiKeySet: typeof p.apiKey === "string" && Boolean(p.apiKey.trim()),
-    }));
 }
 
 /** 文件里已存的 key（按 id 索引）——留空提交时靠它保住原值 */

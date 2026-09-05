@@ -35,7 +35,7 @@
  *   settings:get       {}
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model?, providers? }
  *   settings:open_config {}                                (打开实际生效的 engine.json)
- *   settings:test_route { target }                         (拿已保存的配置真发一次调用)
+ *   settings:test_route { provider_id, model }             (拿已保存的配置真发一次调用)
  *   settings:search_get {}
  *   settings:search_set { provider, api_key, base_url? }
  *   settings:publish_get {}

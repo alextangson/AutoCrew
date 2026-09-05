@@ -1,8 +1,7 @@
 /**
- * 引擎设置 — 设置页「开发者区」的读写（PRD §7.3 个性化中心）。
- * 读：engine.json + env 回退，key 永远掩码返回（renderer 拿不到原文）。
- * 写：merge 进 <dataDir>/engine.json。dogfood 期的默认路径；终端用户
- * 版本此区折叠隐藏，积分中转上线后整区退役（§9）。
+ * 设置面的读写汇总口（PRD §7.3 个性化中心）。key 永远掩码返回（renderer 拿不到原文）。
+ * 引擎那一块搬去了 settings-engine.ts（v2 端点表的写入是固定四步，塞不进这里的增量 merge），
+ * 本文件保留搜索 / 发布 / 生图链，并把引擎与收件箱原样转出——设置页只认 settings.ts 一个入口。
  *
  * 两种落盘根，别混：本文件的 engine/search/publish 都走**工作区** <dataDir>
  * （server 端从注册表解析后注入 _dataDir）；收件箱走**全局根** ~/.autocrew/，
@@ -10,18 +9,18 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import {
-  ENGINE_DEFAULTS,
-  ENGINE_ROUTE_PRESETS,
-  type EngineConfig,
-  type EngineRouteConfig,
-  type EngineRouteName,
-} from "../engine/config.js";
-import { getDataDir } from "../storage/local-store.js";
-import { mergeProviders, providerViews } from "./settings-providers.js";
+import { maskKey } from "./settings-engine.js";
 
 // 自定义端点的逃生门（打开实际生效的 engine.json）——设置页统一从 settings.ts 取
 export { openEngineConfigFile } from "./settings-providers.js";
+
+// 引擎配置（v2 一张端点表：读取迁移 + 写入四步）——设置面统一从 settings.ts 取
+export {
+  getEngineSettings,
+  setEngineSettings,
+  onEngineSettingsChanged,
+  maskKey,
+} from "./settings-engine.js";
 
 // 收件箱设置（全局根 ~/.autocrew/inbox.json，不随工作区）——设置面统一从 settings.ts 取
 export {
@@ -31,62 +30,6 @@ export {
   onInboxSettingsChanged,
   type InboxSettings,
 } from "./settings-inbox.js";
-
-function maskKey(key: string): string {
-  return key.length <= 8 ? "****" : `${key.slice(0, 4)}…${key.slice(-4)}`;
-}
-
-/** 路由视图：剥掉专属 apiKey 只回「配没配」——key 不出后端（同 providers 纪律） */
-function routeView(route: EngineRouteConfig | undefined): (Omit<EngineRouteConfig, "apiKey"> & { hasApiKey: boolean }) | null {
-  if (!route) return null;
-  const { apiKey, ...rest } = route;
-  return { ...rest, hasApiKey: Boolean(apiKey) };
-}
-
-async function readEngineJson(dataDir?: string): Promise<{ filePath: string; fromFile: Partial<EngineConfig> }> {
-  const filePath = path.join(getDataDir(dataDir), "engine.json");
-  try {
-    return { filePath, fromFile: JSON.parse(await fs.readFile(filePath, "utf-8")) as Partial<EngineConfig> };
-  } catch (err) {
-    if ((err as { code?: string }).code !== "ENOENT") throw err;
-    return { filePath, fromFile: {} };
-  }
-}
-
-export async function getEngineSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return { ok: false, error: "Invalid payload: expected object" };
-  }
-  try {
-    const { fromFile } = await readEngineJson((payload._dataDir as string) || undefined);
-    const envKey = process.env.DEEPSEEK_API_KEY;
-    const apiKey = fromFile.apiKey ?? (envKey || undefined);
-    const source = fromFile.apiKey ? "file" : envKey ? "env" : "none";
-    return {
-      ok: true,
-      data: {
-        configured: Boolean(apiKey),
-        source,
-        apiKeyMasked: apiKey ? maskKey(apiKey) : null,
-        baseUrl: fromFile.baseUrl ?? (process.env.DEEPSEEK_BASE_URL || undefined) ?? ENGINE_DEFAULTS.baseUrl,
-        strongModel: fromFile.strongModel ?? ENGINE_DEFAULTS.strongModel,
-        fastModel: fromFile.fastModel ?? ENGINE_DEFAULTS.fastModel,
-        // 路由可带专属 apiKey(EngineRouteConfig.apiKey)——视图层剥掉,与 providers 同一条纪律:key 不出后端
-        routes: {
-          writer: routeView(fromFile.routes?.writer),
-          analytics: routeView(fromFile.routes?.analytics),
-          scout: routeView(fromFile.routes?.scout),
-          codex: routeView(fromFile.routes?.codex),
-        },
-        routePresets: ENGINE_ROUTE_PRESETS,
-        // 自定义端点:无 key 无掩码,只回"配没配"——掩码遇上数组整体替换会被当真值写回去
-        providers: providerViews(fromFile.providers),
-      },
-    };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
 
 /** 搜索 provider 配置读(V5.3):key 掩码返回,renderer 拿不到原文 */
 export async function getSearchSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -295,123 +238,6 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     await fs.writeFile(filePath, JSON.stringify({ ...existing, wechatMp }, null, 2) + "\n", { mode: 0o600 });
     await fs.chmod(filePath, 0o600);
     return getPublishSettings({ _dataDir: dataDir });
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-const engineSettingsListeners: Array<() => void> = [];
-
-/** 引擎配置保存成功后的通知（收件箱 runtime 用它唤醒 blocked 项）；返回退订函数 */
-export function onEngineSettingsChanged(cb: () => void): () => void {
-  engineSettingsListeners.push(cb);
-  return () => {
-    const at = engineSettingsListeners.indexOf(cb);
-    if (at >= 0) engineSettingsListeners.splice(at, 1);
-  };
-}
-
-function notifyEngineSettingsChanged(): void {
-  for (const cb of [...engineSettingsListeners]) {
-    try {
-      cb();
-    } catch {
-      // 监听者的异常不该让保存失败
-    }
-  }
-}
-
-export async function setEngineSettings(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return { ok: false, error: "Invalid payload: expected object" };
-  }
-  const updates: Partial<EngineConfig> = {};
-  const fields: Array<["apiKey" | "baseUrl" | "strongModel" | "fastModel", string]> = [
-    ["apiKey", "api_key"],
-    ["baseUrl", "base_url"],
-    ["strongModel", "strong_model"],
-    ["fastModel", "fast_model"],
-  ];
-  for (const [target, source] of fields) {
-    const v = payload[source];
-    if (v === undefined) continue;
-    if (typeof v !== "string" || v.trim() === "") {
-      return { ok: false, error: `${source} 必须是非空字符串` };
-    }
-    updates[target] = v.trim();
-  }
-  // protocol 单独收(枚举校验,不走裸 string 路径);缺省由 loadEngineConfig 自动识别
-  if (payload.protocol !== undefined) {
-    if (payload.protocol !== "openai" && payload.protocol !== "anthropic") {
-      return { ok: false, error: "protocol 必须是 openai 或 anthropic" };
-    }
-    updates.protocol = payload.protocol;
-  }
-  try {
-    const dataDir = (payload._dataDir as string) || undefined;
-    const { filePath, fromFile } = await readEngineJson(dataDir);
-    const routes = { ...(fromFile.routes ?? {}) };
-    const routeFields: Array<{
-      name: EngineRouteName;
-      baseField: string;
-      modelField: string;
-      protocol: "openai" | "anthropic";
-    }> = [
-      { name: "writer", baseField: "writer_base_url", modelField: "writer_model", protocol: "anthropic" },
-      { name: "analytics", baseField: "analytics_base_url", modelField: "analytics_model", protocol: "anthropic" },
-      { name: "scout", baseField: "scout_base_url", modelField: "scout_model", protocol: "anthropic" },
-      { name: "codex", baseField: "codex_base_url", modelField: "codex_model", protocol: "openai" },
-    ];
-    for (const spec of routeFields) {
-      const baseInput = payload[spec.baseField];
-      const modelInput = payload[spec.modelField];
-      if (baseInput === undefined && modelInput === undefined) continue;
-      if (baseInput !== undefined && (typeof baseInput !== "string" || !baseInput.trim())) {
-        return { ok: false, error: `${spec.baseField} 必须是非空字符串` };
-      }
-      if (modelInput !== undefined && (typeof modelInput !== "string" || !modelInput.trim())) {
-        return { ok: false, error: `${spec.modelField} 必须是非空字符串` };
-      }
-      const existing = routes[spec.name] as EngineRouteConfig | undefined;
-      const preset = ENGINE_ROUTE_PRESETS[spec.name];
-      routes[spec.name] = {
-        baseUrl: (typeof baseInput === "string" ? baseInput.trim() : existing?.baseUrl ?? preset.baseUrl).replace(/\/+$/, ""),
-        model: typeof modelInput === "string" ? modelInput.trim() : existing?.model ?? preset.model,
-        protocol: spec.protocol,
-        // 路由专属 key 是手工在 engine.json 配的——设置页重建对象时必须原样保留,不然一次改模型就把 key 洗掉
-        ...(existing?.apiKey ? { apiKey: existing.apiKey } : {}),
-        ...(spec.name === "codex" ? { models: ENGINE_ROUTE_PRESETS.codex.models } : {}),
-      };
-    }
-    // 自定义端点按**字段存在性**判定:未提交 = 保留文件现值(随 ...fromFile 原样带过去);
-    // 空数组 = 清空;有数组 = 经 merge 整体替换(整份原子校验,不部分写)
-    const submittedProviders = Object.prototype.hasOwnProperty.call(payload, "providers") ? payload.providers : undefined;
-    let providers: unknown;
-    if (submittedProviders !== undefined) {
-      const merged = mergeProviders(submittedProviders, fromFile.providers);
-      if ("error" in merged) return { ok: false, error: merged.error };
-      providers = merged.value;
-    }
-    if (
-      Object.keys(updates).length === 0 &&
-      JSON.stringify(routes) === JSON.stringify(fromFile.routes ?? {}) &&
-      providers === undefined
-    ) {
-      return {
-        ok: false,
-        error:
-          "没有可写入的字段（api_key / base_url / strong_model / fast_model / writer_* / analytics_* / scout_* / codex_* / providers）",
-      };
-    }
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(
-      filePath,
-      JSON.stringify({ ...fromFile, ...updates, routes, ...(providers !== undefined ? { providers } : {}) }, null, 2) + "\n",
-      { mode: 0o600 },
-    );
-    await fs.chmod(filePath, 0o600);
-    notifyEngineSettingsChanged();
-    return getEngineSettings({ _dataDir: dataDir });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

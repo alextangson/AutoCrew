@@ -499,7 +499,10 @@ describe("workflow doctor", () => {
     const res = (await run({ action: "doctor" })) as Record<string, any>;
     const file = path.join(testDir, "engine.json");
     expect(res.engineSeeded).toBe(file);
-    expect(JSON.parse(await fs.readFile(file, "utf-8"))).toMatchObject({ apiKey: "sk-secret-value" });
+    const seeded = JSON.parse(await fs.readFile(file, "utf-8"));
+    expect(seeded.version).toBe(2);
+    expect(seeded.providers[0].apiKey).toBe("sk-secret-value");
+    expect(seeded.main.provider).toBe("deepseek");
     expect(res.hints.join("\n")).not.toContain("sk-secret-value");
   });
 

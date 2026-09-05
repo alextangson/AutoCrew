@@ -50,9 +50,9 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   // providers 是可选数组（字段存在性判定：未提交保留、空数组清空、有数组走 merge）
   "settings:set": [],
   "settings:open_config": [],
-  // target = 档位名(fast/strong/fallback_*)、路由名(writer/analytics/scout/codex)
-  // 或切换器选项 id(p:<端点>:<模型>)。**永不接受裸 baseUrl/apiKey**，见 settings-probe.ts
-  "settings:test_route": ["target"],
+  // 测的是**端点**不是岗位（P2 spec §4.1）：provider_id 指端点表里的一条，model 指要试的模型名。
+  // **永不接受裸 baseUrl/apiKey**，见 settings-probe.ts
+  "settings:test_route": ["provider_id", "model"],
   "settings:search_get": [],
   "settings:search_set": ["provider", "api_key"],
   "settings:publish_get": [],

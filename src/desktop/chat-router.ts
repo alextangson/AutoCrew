@@ -196,8 +196,19 @@ export function chatModelOptions(config: EngineConfig): ChatModelOption[] {
     options.push({ id: "fallback_fast", model: fb.fastModel, tier: "备用快" });
     options.push({ id: "fallback_strong", model: fb.strongModel, tier: "备用强" });
   }
-  for (const provider of config.providers ?? []) {
+  // v2 起 providers 是**唯一**的端点表（含主端点与备用端点本身）：已经在上面四档里出现过的
+  // (端点, 模型) 不再重复列一遍，切换器的可见选项与今天一致。
+  const table = config.providers ?? [];
+  const mainId = config.activeProvider?.id ?? table.find((p) => p.baseUrl === config.baseUrl && p.apiKey === config.apiKey)?.id ?? "";
+  const fbId = fb ? (table.find((p) => p.baseUrl === fb.baseUrl && p.apiKey === fb.apiKey)?.id ?? "") : "";
+  const covered = new Set<string>([
+    `${mainId}:${config.fastModel}`,
+    `${mainId}:${config.strongModel}`,
+    ...(fbId ? [`${fbId}:${fb?.fastModel}`, `${fbId}:${fb?.strongModel}`] : []),
+  ]);
+  for (const provider of table) {
     for (const model of provider.models) {
+      if (covered.has(`${provider.id}:${model}`)) continue;
       options.push({ id: `${PROVIDER_CHOICE_PREFIX}${provider.id}:${model}`, model, group: provider.name });
     }
   }
@@ -226,6 +237,7 @@ function resolveProviderChoice(config: EngineConfig, choice: string): ChatModelR
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
     protocol: provider.protocol,
+    activeProvider: { id: provider.id, role: "chat" },
   };
   delete picked.fallback; // 用户点名了端点，没有"点名端点的备用"
   return { ok: true, config: picked, model };
@@ -255,6 +267,7 @@ export function resolveChatModel(config: EngineConfig, choice?: string): ChatMod
   if (!fb) {
     return { ok: false, error: "该模型未配置：engine.json 里没有备用端点（fallback），请先在配置里补上再选它" };
   }
+  const fbProvider = (config.providers ?? []).find((p) => p.baseUrl === fb.baseUrl && p.apiKey === fb.apiKey);
   const picked: EngineConfig = {
     ...config,
     baseUrl: fb.baseUrl,
@@ -262,6 +275,7 @@ export function resolveChatModel(config: EngineConfig, choice?: string): ChatMod
     protocol: fb.protocol,
     strongModel: fb.strongModel,
     fastModel: fb.fastModel,
+    activeProvider: { id: fbProvider?.id ?? "fallback", role: "chat" },
   };
   delete picked.fallback; // 点名备用后没有"备用的备用"
   return { ok: true, config: picked, model: choice === "fallback_fast" ? fb.fastModel : fb.strongModel };

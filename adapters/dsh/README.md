@@ -43,6 +43,27 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `<dataDir>/engine.json` | 写稿引擎未配置：`autocrew_generate` / `autocrew_style` 起不来 | 一切要调模型的步骤 |
 | `<dataDir>/search.json` | 调研取不到网页来源，只能靠创作者自己给材料 | 调研 / 证据回填 |
 
+`engine.json` 是**一张端点表 + 几个指针**（v2）。最少一个端点、一个 `main` 就能跑：
+
+```json
+{
+  "version": 2,
+  "providers": [
+    { "id": "deepseek", "name": "DeepSeek 官方", "baseUrl": "https://api.deepseek.com",
+      "apiKey": "YOUR_DEEPSEEK_KEY", "protocol": "openai",
+      "models": ["deepseek-v4-pro", "deepseek-v4-flash"] },
+    { "id": "newcli", "name": "newcli 中转", "baseUrl": "https://code.newcli.com/claude/ultra",
+      "apiKey": "YOUR_RELAY_KEY", "protocol": "anthropic",
+      "models": ["claude-opus-4-8", "claude-sonnet-5"] }
+  ],
+  "main":     { "provider": "deepseek", "strong": "deepseek-v4-pro", "fast": "deepseek-v4-flash" },
+  "fallback": { "provider": "newcli",   "strong": "claude-opus-4-8", "fast": "claude-sonnet-5" },
+  "assignments": { "writer": { "provider": "newcli", "model": "claude-opus-4-8" } }
+}
+```
+
+`main` 必填且必须指到表里有 Key 的那条，否则整份视为未配置；`fallback` 与 `assignments`（`writer` / `reviewer` / `scout` / `analytics`）全可缺省，缺省即跟随 `main` 的强档。把备用和写稿放在同一家中转能存，但产品会提醒你「它挂了备用一起挂」。**v1 的老 `engine.json`（顶层 `apiKey` + `routes` + `fallback`）仍然读得动**，读取时在内存里迁移，行为不变；桌面端第一次保存会写成 v2 并留一份 `engine.json.v1.bak`。字段完整说明见仓库根 README 的「配置模型」。
+
 插件 `apply` 时会打一行 `readiness: dataDir=… engine.json=… search.json=…`：**只看这两个文件在不在**，不加载、不校验、不写盘。「文件在」不等于「配得对」——判定写作线能不能真跑是 `autocrew_workflow doctor` 的活，不是启动日志的活。
 
 ## preset：总编辑是怎么进 dsh 会话的

@@ -86,14 +86,19 @@ describe("loadEngineConfig", () => {
         },
       }),
     );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const config = await loadEngineConfig(testDir);
+    warn.mockRestore();
     const writer = resolveEngineRoute(config, "writer", config.strongModel);
     expect(writer.model).toBe("claude-opus-4-8");
     expect(writer.config.baseUrl).toBe("https://code.newcli.com/claude/ultra");
     expect(writer.config.protocol).toBe("anthropic");
     expect(writer.config.apiKey).toBe("sk-shared");
-    expect(config.routes?.codex?.models).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
-    expect(config.routes?.scout?.model).toBe("claude-sonnet-5");
+    expect(writer.config.activeProvider).toEqual({ id: "code-newcli-com", role: "writer" });
+    expect(config.assignments?.scout?.model).toBe("claude-sonnet-5");
+    // codex 专线零消费者，P2 删除：迁移时丢弃并留一条 warning
+    expect(config.assignments).not.toHaveProperty("codex");
+    expect(config.warnings?.some((w) => w.includes("codex"))).toBe(true);
   });
 
   // 主备对调后钉 writer/reviewer 回 opus（2026-08-23）：目标中转和顶层不是同一把 key
@@ -397,10 +402,11 @@ describe("normalizeProviders", () => {
       JSON.stringify({ apiKey: "sk-main", baseUrl: "https://relay.example.com", providers: [good] }),
     );
     const c = await loadEngineConfig(testDir);
-    expect(c.providers?.map((p) => p.id)).toEqual(["deepseek"]);
+    // v2 起 providers 是唯一的端点表：主端点自己也在里面（id 由迁移生成）
+    expect(c.providers?.map((p) => p.id)).toEqual(["main", "deepseek"]);
 
     await fs.writeFile(path.join(testDir, "engine.json"), JSON.stringify({ apiKey: "sk-main" }));
-    expect((await loadEngineConfig(testDir)).providers).toBeUndefined();
+    expect((await loadEngineConfig(testDir)).providers?.map((p) => p.id)).toEqual(["main"]);
   });
 });
 
@@ -450,5 +456,49 @@ describe("multi-workspace engine.json fallback", () => {
       else process.env.AUTOCREW_DATA_DIR = saved;
       await fs.rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
+  });
+});
+
+// ─── v2：岗位指针与归因（P2 spec §3.3）──────────────────────────────────────
+
+describe("resolveEngineRoute（v2 端点表）", () => {
+  const V2 = {
+    version: 2,
+    providers: [
+      { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", apiKey: "sk-ds", models: ["ds-pro", "ds-flash"] },
+      { id: "newcli", name: "newcli", baseUrl: "https://code.newcli.com/claude/ultra", apiKey: "sk-relay", models: ["opus"] },
+    ],
+    main: { provider: "deepseek", strong: "ds-pro", fast: "ds-flash" },
+    assignments: { writer: { provider: "newcli", model: "opus" } },
+  };
+
+  it("已分配的岗位走它自己的端点，返回的 config 带 activeProvider", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), JSON.stringify(V2));
+    const c = await loadEngineConfig(testDir);
+    const writer = resolveEngineRoute(c, "writer", c.strongModel);
+    expect(writer.model).toBe("opus");
+    expect(writer.config.baseUrl).toBe("https://code.newcli.com/claude/ultra");
+    expect(writer.config.apiKey).toBe("sk-relay");
+    expect(writer.config.protocol).toBe("anthropic");
+    expect(writer.config.activeProvider).toEqual({ id: "newcli", role: "writer" });
+    // 档位字段不动：resolveFallbackModel 的「宁强勿弱」判据靠 config.fastModel
+    expect(writer.config.fastModel).toBe("ds-flash");
+  });
+
+  it("未分配的岗位原样返回主端点 + 传入的兜底模型，归因仍指主端点", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), JSON.stringify(V2));
+    const c = await loadEngineConfig(testDir);
+    const analytics = resolveEngineRoute(c, "analytics", c.strongModel);
+    expect(analytics.model).toBe("ds-pro");
+    expect(analytics.config.baseUrl).toBe(c.baseUrl);
+    expect(analytics.config.apiKey).toBe(c.apiKey);
+    expect(analytics.config.activeProvider).toEqual({ id: "deepseek", role: "analytics" });
+  });
+
+  it("手工构造的 config（测试注入，没有端点表）照旧可用", () => {
+    const bare: EngineConfig = { apiKey: "sk", baseUrl: "https://x.example.com", strongModel: "s", fastModel: "f" };
+    const r = resolveEngineRoute(bare, "scout", bare.fastModel);
+    expect(r.model).toBe("f");
+    expect(r.config.baseUrl).toBe("https://x.example.com");
   });
 });

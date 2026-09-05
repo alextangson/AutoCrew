@@ -17,7 +17,9 @@ const CONFIG: EngineConfig = {
   baseUrl: "https://main.test",
   strongModel: "m-strong",
   fastModel: "m-fast",
-  routes: { scout: { baseUrl: "https://scout.test", model: "m-scout" } },
+  // v2：端点表 + 岗位指针（迁移前的 routes 形状已下线）
+  providers: [{ id: "scout", name: "scout", baseUrl: "https://scout.test", apiKey: "sk-test", protocol: "openai" as const, models: ["m-scout"] }],
+  assignments: { scout: { provider: "scout", model: "m-scout" } },
 };
 
 const TOPIC = { title: "AI 编程助手横评", description: "对比主流工具的真实收益与维护成本" };
