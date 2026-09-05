@@ -32,6 +32,7 @@ import { createVideoMediaHandler, VIDEO_MEDIA_PREFIX } from "../src/desktop/vide
 import { createUploadHandler, UPLOAD_PATH } from "../src/desktop/upload-route.js";
 import { createVideoService, type VideoService } from "../src/modules/video/service.js";
 import { initEventHub, emitEngineEvent, type EngineEventRole } from "../src/desktop/event-hub.js";
+import { initEngineHealth, probeAllProviders } from "../src/desktop/engine-health.js";
 import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
@@ -449,6 +450,18 @@ void startResearchRuntime({
 // 视频生产线(spec §8.3 SSE 四件套之一):状态每次落盘 → broadcast `video:updated`,
 // 订阅方收到后重拉 video:status。启动回收(心跳过期的 running 重排)在 service 内部,
 // 这里只管建与停。服务跟随**启动时**的工作区——切工作区后要重启(handler 会照实拒绝)。
+// 引擎线路健康(P2 spec §4.1):runLoop 的真实调用回执接进健康态,并在启动后异步探一遍
+// 全部端点——**不阻塞启动**。探针只有四个时机(启动/保存/点测试/真实调用),不轮询。
+try {
+  const healthDataDir = await activeDataDir();
+  initEngineHealth(healthDataDir);
+  void probeAllProviders(healthDataDir).catch((err) =>
+    console.error("[engine] 启动探针失败:", err instanceof Error ? err.message : err),
+  );
+} catch (err) {
+  console.error("[engine] 线路健康启动失败:", err instanceof Error ? err.message : err);
+}
+
 try {
   const videoDataDir = await activeDataDir();
   videoService = createVideoService({

@@ -40,6 +40,8 @@ export interface JobOutcome {
   briefRevision?: number;
   errorCode?: string;
   failReason?: string;
+  /** 这轮用过备用端点（P2 spec §4.3）：落进台账，任务卡出「备用顶上」徽章 */
+  usedFallback?: ResearchJob["usedFallback"];
 }
 
 export interface ResearchRunnerDeps {
@@ -140,6 +142,9 @@ function settledJob(
     perspectives: outcome.perspectives,
     errorCode: outcome.errorCode,
     failReason: outcome.failReason,
+    // 兜底留痕（P2 §4.3）:本轮切过就写,没切过就清空——任务卡说的永远是最后这一轮,
+    // 留着上一轮的痕迹会让人以为这次也是备用顶的。
+    usedFallback: outcome.usedFallback,
   };
   if (outcome.status === "failed" || outcome.briefRevision === undefined) return next;
   if (claimed.kind === "angles" && latest.briefRevision !== claimed.briefRevision) {

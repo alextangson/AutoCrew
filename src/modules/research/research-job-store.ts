@@ -62,6 +62,11 @@ export interface ResearchJob {
   briefRevision?: number;
   errorCode?: string;
   failReason?: string;
+  /**
+   * 这轮调研/立意是备用端点顶上来的（P2 spec §4.3）。任务卡据此出「备用顶上」徽章，
+   * hover 显示主线当时的失败原因；没切过就缺席（本轮是新事实，不继承上一轮）。
+   */
+  usedFallback?: { role: string; from: string; to: string; error: string };
   /** 触发时选题「标题+描述」的 hash；与当前选题不符 = 简报已过期（§2） */
   topicHash: string;
   /**

@@ -7,7 +7,9 @@
  * 正文——总编辑要能读稿才能讨论；工具结果只活在本轮 loop，不进持久历史。
  * 引擎未配置 → {ok:false, needsSetup:true}，renderer 引导去设置页。
  */
-import { loadEngineConfig, type EngineConfig } from "../engine/config.js";
+import { hostOf, loadEngineConfig, type EngineConfig } from "../engine/config.js";
+import { classifyEngineError } from "../engine/error-kind.js";
+import { describeEngineFailure, isEngineFailure, type FailureRole } from "../engine/failure-text.js";
 import { runLoop, type LoopTool, type LoopEvent, type LoopStreamEvent } from "../engine/loop.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { executeGenerate } from "../tools/generate.js";
@@ -1529,6 +1531,25 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
   return assertUniqueToolNames(tools);
 }
 
+/**
+ * 聊天轮的失败文案（spec §4.2 四条链路之一）。角色按 `activeProvider.role` 归位——
+ * 用户在对话框里点了备用端点档位时，说的就该是那个端点，不是「主端点」。
+ */
+function engineFailureText(config: EngineConfig, err: unknown): string {
+  const classified = classifyEngineError(err);
+  const raw = cleanErrorMessage(err);
+  if (!isEngineFailure(classified)) return raw;
+  const id = config.activeProvider?.id ?? "main";
+  const provider = (config.providers ?? []).find((p) => p.id === id);
+  const role = (config.activeProvider?.role ?? "chat") as FailureRole;
+  return describeEngineFailure({
+    role: role === "main" ? "chat" : role,
+    provider: { id, host: hostOf(provider?.baseUrl ?? config.baseUrl) },
+    classified,
+    fallbackAvailable: Boolean(config.fallback),
+  });
+}
+
 export async function runChatTurn(params: {
   message: string;
   history?: ChatHistoryMessage[];
@@ -1661,7 +1682,9 @@ export async function runChatTurn(params: {
       },
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    // 报病走全产品唯一的翻译器（P2 spec §4.2）：说哪条线、哪个端点、什么故障、这次怎么顶的。
+    // 认不出类型的错误（模型没提交、工具炸了…）原样说——用确定的语气说错话比原文更糟。
+    return { ok: false, error: engineFailureText(picked.config, err) };
   } finally {
     // 流结束（成功/中止/失败都算）:前端据此把气泡切到「整理回复中」，等 invoke 全量覆盖。
     // 失败轮也发——否则气泡会永远停在「还在吐字」的假象里。

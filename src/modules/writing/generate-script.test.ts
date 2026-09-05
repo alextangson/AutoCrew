@@ -250,7 +250,10 @@ describe("generateScript", () => {
     const placeholder = all[0];
     expect(placeholder.status).toBe("drafting");
     expect(placeholder.title).toContain("［生成中断］");
-    expect(placeholder.lastError).toContain("ECONNRESET");
+    // P2 spec §4.2：线路故障说人话——哪条线、哪个端点、什么故障，不再端原始 ECONNRESET
+    expect(placeholder.lastError).toContain("写稿专线");
+    expect(placeholder.lastError).toMatch(/连不上|网络不通/);
+    expect(placeholder.lastError).not.toContain("ECONNRESET");
   });
 
   // 3c. 防呆 P1:成功 = 占位稿原地转正（同一 id,不留孤儿占位）,lastError 清空

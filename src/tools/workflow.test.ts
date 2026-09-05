@@ -506,6 +506,40 @@ describe("workflow doctor", () => {
     expect(res.hints.join("\n")).not.toContain("sk-secret-value");
   });
 
+  it("默认不出网：health 视图给端点表与指针，但一条探针都没跑过（dsh 契约不变）", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        version: 2,
+        providers: [{ id: "newcli", name: "newcli", baseUrl: "https://code.newcli.com", apiKey: "sk-relay", models: ["relay-strong"] }],
+        main: { provider: "newcli", strong: "relay-strong", fast: "relay-strong" },
+      }),
+    );
+    const res = (await run({ action: "doctor" })) as Record<string, any>;
+    expect(res.health.configured).toBe(true);
+    expect(res.health.providers[0]).toMatchObject({ id: "newcli", host: "code.newcli.com" });
+    // 没探过 = null，不是「坏」（spec §7 边界）
+    expect(res.health.providers[0].probe).toBeNull();
+  });
+
+  it("probe:true 真去测一遍：坏端点在健康视图里说得出是哪条线、坏在哪", async () => {
+    await fs.writeFile(
+      path.join(testDir, "engine.json"),
+      JSON.stringify({
+        version: 2,
+        providers: [{ id: "newcli", name: "newcli", baseUrl: "https://code.newcli.invalid", apiKey: "sk-relay", models: ["relay-strong"] }],
+        main: { provider: "newcli", strong: "relay-strong", fast: "relay-strong" },
+      }),
+    );
+    const res = (await run({ action: "doctor", probe: true })) as Record<string, any>;
+    // 真出网打一个不存在的域名：只断「探过了、判定是坏的、给了原因」，不断具体文案（DNS 报错各机器不同）
+    expect(res.health.providers[0].probe).not.toBeNull();
+    expect(res.health.providers[0].probe.ok).toBe(false);
+    expect(typeof res.health.providers[0].probe.error).toBe("string");
+    expect(res.health.providers[0].probe.error.length).toBeGreaterThan(0);
+    expect(JSON.stringify(res.health)).not.toContain("sk-relay");
+  }, 30_000);
+
   it("配好了就不再提示种子文件", async () => {
     await fs.writeFile(path.join(testDir, "engine.json"), JSON.stringify({ apiKey: "sk-in-file", strongModel: "m1" }));
     await configureSearch();

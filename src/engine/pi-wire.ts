@@ -16,7 +16,12 @@ import type {
   Tool as PiTool,
 } from "@earendil-works/pi-ai";
 import { RetryableError } from "../utils/retry.js";
+import { classifyEngineError } from "./error-kind.js";
 import type { EngineConfig } from "./config.js";
+
+// spec §4.2 点名的入口在本模块：分类器本身零依赖地住在 error-kind.ts（翻译器与探针
+// 都要认它，谁都不该为了一个枚举把 pi-ai SDK 拖进来），这里原样再导出一份。
+export { classifyEngineError, PROTOCOL_MISMATCH, type ClassifiedEngineError, type EngineErrorKind } from "./error-kind.js";
 
 /** 与旧 loop 内部形状一致：runLoop/executeToolCalls 零改动的关键 */
 export interface WireToolCall {
@@ -239,18 +244,21 @@ const CONNECTION_ERROR_RE = /premature close|connection error|fetch failed|socke
 export function classifyPiError(err: unknown): Error {
   if (err instanceof RetryableError) return err;
   const e = err instanceof Error ? err : new Error(String(err));
+  // 分类只算一次:可重试性（本函数）与人话文案（failure-text）从同一个 kind 出发,
+  // 不会出现「重试通道当它是连接错误、界面说它是限流」这种自相矛盾。
+  const classified = classifyEngineError(e);
   const status =
     typeof (err as { status?: unknown })?.status === "number"
       ? ((err as { status: number }).status)
       : Number(/\b(\d{3})\b/.exec(e.message)?.[1] ?? Number.NaN);
   if (Number.isFinite(status)) {
-    if (RETRYABLE_STATUS.has(status)) return new RetryableError(e.message, status);
+    if (RETRYABLE_STATUS.has(status)) return new RetryableError(e.message, status, classified.kind);
     return e; // 明确的客户端错误（400/401/403/404）：原样抛，不重试
   }
   // SDK 把连接失败包成自己的错误类型/文案（Premature close / Connection error. 等），
   // 旧 isRetryable 的消息模式认不出 —— 在此显式归入可重试
   if (e.name === "APIConnectionError" || CONNECTION_ERROR_RE.test(e.message)) {
-    return new RetryableError(e.message);
+    return new RetryableError(e.message, undefined, classified.kind);
   }
   // 其余无状态码错误：terminated/aborted/ECONNRESET… 已被 isRetryable 消息模式覆盖，原样抛
   return e;

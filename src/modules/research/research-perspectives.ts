@@ -21,7 +21,7 @@
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
-import type { LoopResult, LoopTool } from "../../engine/loop.js";
+import type { LoopFallbackInfo, LoopResult, LoopTool } from "../../engine/loop.js";
 import { listPatternCards } from "../patterns/pattern-store.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
 import { personaSummary } from "../profile/creator-profile.js";
@@ -148,7 +148,14 @@ export type PerspectiveErrorCode = "deadline" | "no_submit" | "invalid_output" |
 
 export type PerspectiveRunResult =
   /** `partial` = 有条目被校验剔除（原因在 output.partialProblems）；这一路仍然算成功 */
-  | { status: "succeeded"; output: PerspectiveOutput; tokensUsed: number; partial: boolean }
+  | {
+      status: "succeeded";
+      output: PerspectiveOutput;
+      tokensUsed: number;
+      partial: boolean;
+      /** 这一路是备用端点顶完的（P2 spec §4.3）：落进 ResearchJob.usedFallback */
+      usedFallback?: LoopFallbackInfo;
+    }
   | { status: "failed"; errorCode: PerspectiveErrorCode; reason: string };
 
 // ─── prompt 组装 ─────────────────────────────────────────────────────────────
@@ -531,6 +538,7 @@ function settle(
       output: capture.payload,
       tokensUsed: result.totalTokens,
       partial: (capture.payload.partialProblems?.length ?? 0) > 0,
+      ...(result.usedFallback ? { usedFallback: result.usedFallback } : {}),
     };
   }
   if (capture.attempts === 0) {

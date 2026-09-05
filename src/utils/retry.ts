@@ -20,12 +20,19 @@ export interface RetryOptions {
   signal?: AbortSignal;
 }
 
+import type { EngineErrorKind } from "../engine/error-kind.js";
+
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504, 520, 522, 524]);
 
 export class RetryableError extends Error {
   constructor(
     message: string,
     public statusCode?: number,
+    /**
+     * 稳定分类（P2 spec §4.2）：重试通道与报病文案从同一个 kind 出发。
+     * type-only 导入——engine 层不会在运行时被 utils 拉进来。
+     */
+    public kind?: EngineErrorKind,
   ) {
     super(message);
     this.name = "RetryableError";

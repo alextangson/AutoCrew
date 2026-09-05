@@ -11,10 +11,13 @@
  * 组装 + humanizeZh 只做一次（审稿 spec §2.1：审稿必须看到终稿形态），
  * 审稿产出直接进转正——同一段文本不许算两遍。
  */
-import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
+import { hostOf, loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
+import { classifyEngineError } from "../../engine/error-kind.js";
+import { describeEngineFailure, isEngineFailure } from "../../engine/failure-text.js";
+import { cleanErrorMessage } from "../../desktop/error-clean.js";
 import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
-import type { LoopResult, LoopTool } from "../../engine/loop.js";
+import type { LoopFallbackInfo, LoopResult, LoopTool } from "../../engine/loop.js";
 import { getPack, getPackForPlatform } from "../packs/index.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
@@ -686,6 +689,8 @@ interface WriterRun {
   /** 归一不了的模糊量词（十几、数十）：advisory，与无据数字一起列给创始人过目 */
   needsHumanNumbers: string[];
   tokensUsed: number;
+  /** 写稿轮用了备用端点（P2 spec §4.3）：落进 Content.usedFallback，稿卡出徽章 */
+  usedFallback?: LoopFallbackInfo;
 }
 
 /**
@@ -737,6 +742,7 @@ async function runWriterLoop(
     );
   }
   return {
+    ...(result.usedFallback ? { usedFallback: result.usedFallback } : {}),
     payload: captured.payload,
     gateFailures: captured.gateFailures,
     blocked: captured.blocked ?? null,
@@ -868,6 +874,13 @@ async function writeAndFinalize(args: {
     { ledger: inputs.ledger, ...(evidenceTool ? { evidenceTool } : {}) },
     runId,
   );
+  // 兜底留痕（§4.3）：写手这轮切过备用就当场落盘——后面还有审稿与转正，
+  // 崩在半路也不该把「这稿是备用写的」这件事一起丢掉。留痕失败不阻断写作。
+  if (written.usedFallback) {
+    await updateContent(placeholderId, { usedFallback: written.usedFallback }, dataDir).catch((err: unknown) =>
+      warn(`兜底留痕落盘失败（${placeholderId}）：${err instanceof Error ? err.message : String(err)}`),
+    );
+  }
   const rulesApplied = profile ? rulesForPlatform(profile, req.platform).length : 0;
   const common = {
     req,
@@ -929,6 +942,32 @@ async function persistAttribution(
   }
 }
 
+/**
+ * 写稿失败的人话（P2 spec §4.2 四条链路之二）。**只翻译线路故障**——
+ * 「模型没调用 submit_script」「整稿墙钟到点」这类不是线路的病，套上「写稿专线连不上」
+ * 就是用确定的语气说错话，原样说更诚实。
+ * 端点归因现读配置：错误可能从任意深处冒上来，把 config 一路传下去只会污染十几个签名。
+ */
+export async function writeFailureText(err: unknown, dataDir?: string): Promise<string> {
+  const classified = classifyEngineError(err);
+  const raw = cleanErrorMessage(err);
+  if (!isEngineFailure(classified)) return raw;
+  try {
+    const config = await loadEngineConfig(dataDir);
+    const writer = resolveEngineRoute(config, "writer", config.strongModel);
+    const id = writer.config.activeProvider?.id ?? "main";
+    const provider = (config.providers ?? []).find((p) => p.id === id);
+    return describeEngineFailure({
+      role: "writer",
+      provider: { id, host: hostOf(provider?.baseUrl ?? writer.config.baseUrl) },
+      classified,
+      fallbackAvailable: Boolean(config.fallback),
+    });
+  } catch {
+    return raw; // 配置都读不出来了：原样说，别编端点名
+  }
+}
+
 /** 失败留痕:占位稿标〔生成中断〕+ lastError（best-effort,不吞原错误）——UI 据此显示徽章与重试入口 */
 async function markInterrupted(
   placeholderId: string,
@@ -941,7 +980,7 @@ async function markInterrupted(
       placeholderId,
       {
         title: `${INTERRUPTED_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
-        lastError: err instanceof Error ? err.message : String(err),
+        lastError: await writeFailureText(err, dataDir),
       },
       dataDir,
     );
@@ -1015,8 +1054,9 @@ function runInBackground(
         : `《${result.title.slice(0, 24)}》写完,待审改${brand}${reviewBrand(result.review)}`;
       emit({ role: "system", kind: "run_done", label, contentId, runId });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 60)}`, contentId, runId });
+      // 工作日志上那一行也说人话（§4.2）：「编剧写稿中断：502 {…fetch failed}」帮不了任何人
+      const msg = await writeFailureText(err, dataDir);
+      emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 80)}`, contentId, runId });
     }
   })();
   return { contentId, runId, completion };

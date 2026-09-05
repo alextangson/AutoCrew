@@ -35,7 +35,7 @@ export const SKILLS_DIR_PLACEHOLDER = "__AUTOCREW_SKILLS_DIR__";
  * 否则已装过的机器不会被覆盖。刻意与 package.json 的版本脱钩:一次不碰 preset
  * 的 patch 发布不该去重写用户手上的 preset。
  */
-export const PRESET_VERSION = "3";
+export const PRESET_VERSION = "4";
 
 /** dsh 自己复制 preset 时的权限:文件 0o600、目录 0o700。 */
 const FILE_MODE = 0o600;

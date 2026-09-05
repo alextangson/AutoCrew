@@ -97,7 +97,7 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_humanize` | 单独跑中文去 AI 味 |
 | `autocrew_rewrite` | 平台化改写，单平台或多平台批量 |
 | `autocrew_pre_publish` | 发布前六项门禁 |
-| `autocrew_workflow` | 一站式流程：`research`（后台深调研）/ `status`（轮询）/ `select_angle`（落创作者选的那张立意卡）/ `write`（后台开写）/ `draft`（取稿）/ `doctor`（跑不动时先看它） |
+| `autocrew_workflow` | 一站式流程：`research`（后台深调研）/ `status`（轮询）/ `select_angle`（落创作者选的那张立意卡）/ `write`（后台开写）/ `draft`（取稿）/ `doctor`（跑不动时先看它；`doctor{probe:true}` 真去每个端点发一次极小调用，回哪条线通、哪条线坏与耗时——模型调用报错时先跑它） |
 
 `autocrew_publish`、`autocrew_cover_review`、`autocrew_research`、`autocrew_pipeline` 等**不放行**，原因逐条记在下面的审计表里。启动时会把没放行的名字打进日志，不会让人误以为全量能力已经在 dsh 里了。
 

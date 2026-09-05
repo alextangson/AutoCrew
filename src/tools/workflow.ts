@@ -46,6 +46,8 @@ import {
   type Content,
 } from "../storage/local-store.js";
 import { cardLine, cardView, jobView, sortedCards } from "./workflow-views.js";
+// 健康视图是桌面与 dsh 共用的那一个（spec §4.1「同一个视图函数」）——doctor 不另写一份
+import { buildEngineHealth, probeAllProviders } from "../desktop/engine-health.js";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -93,6 +95,12 @@ export const workflowSchema = Type.Object({
     Type.String({ description: "write：创始人**明说**不选卡直接写时的原话转述；只进留痕，不进 prompt" }),
   ),
   content_id: Type.Optional(Type.String({ description: "draft：稿件 id（write 返回的 contentId）" })),
+  probe: Type.Optional(
+    Type.Boolean({
+      description:
+        "doctor：true = 真去每个模型端点发一次极小调用，回每条线的通/坏与耗时（几秒到几十秒）。默认 false，只看配置不出网。",
+    }),
+  ),
 });
 
 export const WORKFLOW_DESCRIPTION = [
@@ -103,7 +111,7 @@ export const WORKFLOW_DESCRIPTION = [
   "4) select_angle{topic_id, angle_id, card?}：落他选的那张。他改了文字就把改写后的整张卡放进 card。",
   "5) write{topic_id, platform, direction?, skip_reason?}：开写。**有候选卡却没选、也没给 direction/skip_reason 时会被拒**（needsAngle）——那是让你回去问创始人，不是让你自己挑一张。写稿也是后台的，通常 15–30 分钟。",
   "6) draft{content_id}：轮询取稿。status=drafting = 还在写；needs_evidence = 数字硬门拦下了，看 unverifiedNumbers 和 blockedReason。",
-  "doctor{}：引擎/搜索配没配好、数据目录在哪。跑不动时先看它。",
+  "doctor{probe?}：引擎/搜索配没配好、数据目录在哪。跑不动时先看它；模型调用报错时用 doctor{probe:true} 真测一遍端点，回答创始人是哪条线坏了，别复述原始报错。",
 ].join("\n");
 
 // ─── Result types ─────────────────────────────────────────────────────────────
@@ -372,6 +380,7 @@ function draftView(content: Content): WorkflowOk {
     blockedReason: content.blockedReason ?? undefined,
     lastError: content.lastError ?? undefined,
     usedAngle: content.usedAngle,
+    usedFallback: content.usedFallback,
   };
 }
 
@@ -428,7 +437,17 @@ async function engineSeed(dataDir: string, hints: string[]): Promise<Record<stri
   return { engineSeeded: filePath };
 }
 
-async function doDoctor(dataDir: string): Promise<WorkflowResult> {
+/**
+ * `probe: true`（P2 spec §4.1）：真去每个端点发一次极小调用，返回与桌面 `engine:health`
+ * **同一个视图函数**的输出——桌面与 dsh 看的是同一份事实，不分叉。
+ * 默认不出网（dsh 契约不变）：doctor 是「配没配好」，不是「网通不通」。
+ */
+async function doctorHealth(dataDir: string, probe: boolean) {
+  if (probe) await probeAllProviders(dataDir);
+  return buildEngineHealth(dataDir);
+}
+
+async function doDoctor(dataDir: string, opts: { probe?: boolean } = {}): Promise<WorkflowResult> {
   const hints: string[] = [];
   let engine: Record<string, unknown> = { configured: false };
   try {
@@ -444,7 +463,8 @@ async function doDoctor(dataDir: string): Promise<WorkflowResult> {
   const searchConfigured = await searchAvailable(dataDir);
   if (!searchConfigured) hints.push(SEARCH_NOT_CONFIGURED);
   const seed = await engineSeed(dataDir, hints);
-  return { ok: true, engine, search: { configured: searchConfigured }, dataDir, hints, ...seed };
+  const health = await doctorHealth(dataDir, opts.probe === true);
+  return { ok: true, engine, search: { configured: searchConfigured }, dataDir, hints, health, ...seed };
 }
 
 // ─── Entry ────────────────────────────────────────────────────────────────────
@@ -469,7 +489,7 @@ export async function executeWorkflow(
       case "draft":
         return await doDraft(params, dataDir);
       case "doctor":
-        return await doDoctor(dataDir);
+        return await doDoctor(dataDir, { probe: params.probe === true });
       default:
         return fail(`未知 action：${action || "(空)"}。支持：${ACTIONS.join(" | ")}`);
     }

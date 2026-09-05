@@ -12,43 +12,27 @@
  *      不翻译成"配置有误"这种把线索抹掉的话。
  *
  * P2 起测的是**端点**不是岗位（spec §4.1）：端点表里任一条都能测，审稿专线自然可测，
- * 岗位白名单删除。
+ * 岗位白名单删除。每次测试的结果同时落进健康通道——设置页的状态点与顶栏横幅
+ * 与这个按钮看的是同一份事实。翻译归 engine/failure-text.ts（全产品唯一那一个）。
  */
 import { loadEngineConfig, type EngineConfig } from "../engine/config.js";
+import { describeProbeFailure } from "../engine/failure-text.js";
 import { probeEngineRoute } from "../engine/probe.js";
+import { recordProbeResult } from "./engine-health.js";
 import { cleanErrorMessage } from "./error-clean.js";
-
-/**
- * 错误消息人话化。**只做两件事，语义一个字不改**：
- *   1. 拆掉观察器/上游的 JSON 错误信封——`401 {"error":{"message":"invalid x-api-key"}}`
- *      对用户就是一串噪音，真正有用的是里面那句和状态码。
- *   2. undici 把 DNS/连接失败一律叫 "fetch failed"，那三个字说明不了任何事；
- *      补一句它到底意味着什么，原文保留在括号里，不掩盖。
- */
-export function humanizeProbeError(raw: string): string {
-  const m = /^(\d{3})\s+(\{[\s\S]*\})\s*$/.exec(raw.trim());
-  let status = "";
-  let body = raw.trim();
-  if (m) {
-    status = m[1];
-    body = m[2]; // 状态码已单独拿出来，剩下的正文不能再带着它，否则会拼成 "500 · 500 {…}"
-    try {
-      const inner = (JSON.parse(m[2]) as { error?: { message?: unknown } }).error?.message;
-      if (typeof inner === "string" && inner.trim()) body = inner.trim();
-    } catch {
-      /* 不是 JSON 就原样留着——宁可长，不许猜 */
-    }
-  }
-  if (/^fetch failed$/i.test(body)) {
-    body = "连不上这个端点：域名解析不了或网络不通（fetch failed）";
-    status = ""; // 502 是观察器补的，不是上游给的，说出来只会误导
-  }
-  return status ? `${status} · ${body}` : body;
-}
 
 /** 测试注入口（镜像 buildIpcHandlers 的 deps 模式）：缺省即真实探针 */
 export interface ProbeDeps {
   probe?: typeof probeEngineRoute;
+  record?: typeof recordProbeResult;
+}
+
+function safeHost(baseUrl: string): string | undefined {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function testEngineRoute(
@@ -82,7 +66,10 @@ export async function testEngineRoute(
     activeProvider: { id: provider.id, role: "probe" },
   };
   const result = await (deps.probe ?? probeEngineRoute)(probeConfig, model);
-  if (!result.ok) return { ok: false, error: humanizeProbeError(cleanErrorMessage(result.error ?? "未知错误")) };
+  // 探针结果进健康通道（spec §4.1 的四个更新时机之一）；写不进去不该让「测试」本身失败
+  const host = safeHost(provider.baseUrl);
+  await (deps.record ?? recordProbeResult)(provider.id, result, (payload._dataDir as string) || undefined, host).catch(() => {});
+  if (!result.ok) return { ok: false, error: describeProbeFailure(cleanErrorMessage(result.error ?? "未知错误"), { id: provider.id, host }) };
   // 只报能负责的两件事：多久、用的哪个模型名。上游到底拿什么模型答的，这条链路看不见（见 probe.ts）
   return { ok: true, data: { ms: result.ms, model, providerId: provider.id } };
 }

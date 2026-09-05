@@ -107,7 +107,17 @@ describe("主端点烧完 → 备用顶上", () => {
     expect(legs.fallback).toBe(1);
     expect(legs.fallbackAuth[0]).toContain("sk-deepseek-fake"); // 用的是备用端点自己的 key
     // 红线之一：切换必须冒泡到调用方（chat 进度条的事实源）
-    expect(events).toEqual([{ type: "fallback", from: "main-fast", to: "deepseek-v4-flash" }]);
+    // P2 spec §4.3：事件带全归因——哪条线、从哪个端点切到哪个端点、主端点当时报了什么
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "fallback",
+      from: "main-fast",
+      to: "deepseek-v4-flash",
+      fromProvider: "main",
+      toProvider: "fallback",
+      role: "main",
+    });
+    expect((events[0] as { error: string }).error).toMatch(/429/);
 
     await new Promise((r) => setTimeout(r, 60));
     const records = await readRun(dir, "run-fb-ok");
@@ -162,7 +172,8 @@ describe("主端点烧完 → 备用顶上", () => {
       retryMaxDelayMs: 5,
       onEvent: (e) => events.push(e),
     });
-    expect(events).toEqual([{ type: "fallback", from: "claude-opus-4-8", to: "deepseek-v4-pro" }]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "fallback", from: "claude-opus-4-8", to: "deepseek-v4-pro" });
   });
 });
 

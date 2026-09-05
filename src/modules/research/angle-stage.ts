@@ -16,7 +16,7 @@
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
-import type { LoopResult, LoopTool } from "../../engine/loop.js";
+import type { LoopFallbackInfo, LoopResult, LoopTool } from "../../engine/loop.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
 import { checkDistinct } from "./angle-cards.js";
 import {
@@ -121,7 +121,14 @@ export interface AngleStagePayload {
 }
 
 export type AngleStageResult =
-  | { status: "succeeded"; cards: AngleCardV3[]; misconceptions: Record<PersonaKey, string[]>; tokensUsed: number }
+  | {
+      status: "succeeded";
+      cards: AngleCardV3[];
+      misconceptions: Record<PersonaKey, string[]>;
+      tokensUsed: number;
+      /** 这轮立意是备用端点顶完的（P2 spec §4.3）：落进 ResearchJob.usedFallback */
+      usedFallback?: LoopFallbackInfo;
+    }
   | { status: "failed"; errorCode: AngleStageErrorCode; reason: string };
 
 function errText(err: unknown): string {
@@ -590,6 +597,7 @@ function settle(capture: SubmitCapture<AngleStagePayload>, result: LoopResult): 
       cards: capture.payload.cards,
       misconceptions: capture.payload.misconceptions,
       tokensUsed: result.totalTokens,
+      ...(result.usedFallback ? { usedFallback: result.usedFallback } : {}),
     };
   }
   if (capture.attempts === 0) {

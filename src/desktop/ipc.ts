@@ -36,6 +36,7 @@
  *   settings:set       { api_key?, base_url?, strong_model?, fast_model?, providers? }
  *   settings:open_config {}                                (打开实际生效的 engine.json)
  *   settings:test_route { provider_id, model }             (拿已保存的配置真发一次调用)
+ *   engine:health      {}                                  (只读；每个端点最近一次探针 + 真实调用结果)
  *   settings:search_get {}
  *   settings:search_set { provider, api_key, base_url? }
  *   settings:publish_get {}
@@ -129,6 +130,7 @@ import {
   openEngineConfigFile,
 } from "./settings.js";
 import { testEngineRoute } from "./settings-probe.js";
+import { getEngineHealth } from "./engine-health.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import {
   pullStatusHandler,
@@ -1223,6 +1225,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "settings:open_config": (payload) => openEngineConfigFile(payload),
     // 第二参显式丢掉:handler 的 ctx 与 testEngineRoute 的测试注入口不是一回事
     "settings:test_route": (payload) => testEngineRoute(payload),
+    // 线路健康（P2 spec §4.1）：只读派生视图，不含密钥；更新靠四个时机推，不靠轮询
+    "engine:health": getEngineHealth,
     "settings:search_get": getSearchSettings,
     "settings:search_set": setSearchSettings,
     "settings:publish_get": getPublishSettings,

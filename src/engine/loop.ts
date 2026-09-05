@@ -7,6 +7,7 @@
 import { withRetry, isRetryable } from "../utils/retry.js";
 import { createRunRecorder, type RunLogAttribution, type RunRecorder } from "../runtime/run-log.js";
 import { resolveFallbackModel, type EngineConfig } from "./config.js";
+import { recordEngineLive } from "./health-sink.js";
 import { registerExchange } from "./observer.js";
 import { makePiModel, toPiContext, startPiStream, consumePiStream, fromAssistant } from "./pi-wire.js";
 
@@ -21,12 +22,26 @@ export interface LoopTool {
 }
 
 /**
+ * 兜底留痕（P2 spec §4.3）：主端点失败、备用顶完本次调用。稿卡/任务卡的「备用顶上」
+ * 徽章与 hover 全文都从这一份来——`from/to` 是模型名，`fromProvider/toProvider` 是端点 id。
+ */
+export interface LoopFallbackInfo {
+  /** 出事的岗位（config.activeProvider.role；缺省 "main"） */
+  role: string;
+  from: string;
+  to: string;
+  /** 主端点这次的失败原文（翻译在消费侧做） */
+  error: string;
+}
+
+/**
  * 观测事件。fallback = 主端点重试烧完后切到备用模型顶本次调用——
  * 红线：切换绝不静默，聊天进度条与 run-log 都必须看得出这轮是谁在说话。
+ * P2 起它带全归因（哪条线、从哪个端点切到哪个端点、主端点当时报了什么）。
  */
 export type LoopEvent =
   | { type: "tool_start" | "tool_end"; tool: string }
-  | { type: "fallback"; from: string; to: string };
+  | ({ type: "fallback"; fromProvider: string; toProvider: string } & LoopFallbackInfo);
 
 /**
  * 流式文本事件（对话控制面设计 §Phase 3「流式 delta 协议」）。
@@ -78,6 +93,12 @@ export interface LoopResult {
   toolCallCount: number;
   /** aborted = 用户中止（不是失败）：已完成的工具产出保留，剩余工具跳过 */
   stopReason: "no_tool_calls" | "max_turns" | "max_tokens" | "aborted";
+  /**
+   * 本轮用过备用端点（P2 spec §4.3）。调用方把它落进 `Content.usedFallback` /
+   * `ResearchJob.usedFallback`——用了备用而稿子上没痕迹，等于兜底从没发生过。
+   * 多轮都切过时留最后一次（「这稿最后是谁写的」才是要回答的问题）。
+   */
+  usedFallback?: LoopFallbackInfo;
 }
 
 /** 流式空闲超时:IDLE 窗口内无任何字节 = relay 挂起（含首字节等待），中止并重试。
@@ -121,6 +142,8 @@ interface ModelCallParams {
   signal?: AbortSignal;
   onTextDelta?: (e: LoopStreamEvent) => void;
   onEvent?: (e: LoopEvent) => void;
+  /** 健康记录上的任务归属（= logMeta.runId） */
+  jobId?: string;
 }
 
 interface ModelCallOutcome {
@@ -129,6 +152,8 @@ interface ModelCallOutcome {
   model: string;
   /** 主端点的失败详情（仅发生切换时非空）：被救回来的那次失败同样要留痕 */
   primaryFailure?: { model: string; error: string; durationMs: number };
+  /** 兜底归因（仅发生切换时非空）：LoopResult.usedFallback 与稿卡徽章的数据来源 */
+  fallback?: LoopFallbackInfo;
 }
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -179,6 +204,29 @@ async function streamOnce(
   }
 }
 
+/** 本次调用落在哪条线上（config.activeProvider 由 resolveEngineRoute/loadEngineConfig 盖章） */
+function attribution(config: EngineConfig): { providerId: string; role: string } {
+  return { providerId: config.activeProvider?.id ?? "main", role: config.activeProvider?.role ?? "main" };
+}
+
+/** 备用端点在端点表里的 id：v2 起备用也是表里的一条，按 (baseUrl, apiKey) 认回去 */
+function fallbackProviderId(config: EngineConfig): string {
+  const fb = config.fallback;
+  if (!fb) return "fallback";
+  return (config.providers ?? []).find((x) => x.baseUrl === fb.baseUrl && x.apiKey === fb.apiKey)?.id ?? "fallback";
+}
+
+/** 健康回执（观测层，自吞错）：jobId 取 run-log 的 runId,足够从横幅点回那条任务 */
+function live(p: ModelCallParams, providerId: string, role: string, ok: boolean, error?: string): void {
+  recordEngineLive({
+    providerId,
+    ok,
+    role,
+    ...(p.jobId ? { jobId: p.jobId } : {}),
+    ...(error ? { error } : {}),
+  });
+}
+
 /**
  * 主端点 → （失败且值得换端点时）备用端点。
  * 换端点的三个前提缺一不可:配了备用、错误确实是可重试类（400/401/403 换个端点照样错）、
@@ -199,18 +247,28 @@ async function callModel(p: ModelCallParams): Promise<ModelCallOutcome> {
   };
 
   const tPrimary = Date.now();
+  const who = attribution(p.config);
   try {
     const data = await withRetry(() => streamOnce(p, p.config, p.model, emitStream), retryOpts);
+    live(p, who.providerId, who.role, true);
     return { data, model: p.model };
   } catch (err) {
     const fb = p.config.fallback;
     const fbModel = resolveFallbackModel(p.config, p.model);
-    if (!fb || !fbModel || !isRetryable(err) || p.signal?.aborted) throw err;
+    if (!fb || !fbModel || !isRetryable(err) || p.signal?.aborted) {
+      // 中止不是线路的病:用户按了停,不该把端点标成坏的
+      if (!p.signal?.aborted) live(p, who.providerId, who.role, false, errText(err));
+      throw err;
+    }
 
     const primaryFailure = { model: p.model, error: errText(err), durationMs: Date.now() - tPrimary };
+    const fbProviderId = fallbackProviderId(p.config);
+    const info: LoopFallbackInfo = { role: who.role, from: p.model, to: fbModel, error: primaryFailure.error };
+    // 主端点这次是真失败了——被救回来也照样进健康视图（横幅要能说「写稿专线连不上」）
+    live(p, who.providerId, who.role, false, primaryFailure.error);
     if (p.onEvent) {
       try {
-        p.onEvent({ type: "fallback", from: p.model, to: fbModel });
+        p.onEvent({ type: "fallback", fromProvider: who.providerId, toProvider: fbProviderId, ...info });
       } catch {
         /* 观测层异常不破坏执行层 */
       }
@@ -219,8 +277,10 @@ async function callModel(p: ModelCallParams): Promise<ModelCallOutcome> {
     const fbConfig: EngineConfig = { ...p.config, baseUrl: fb.baseUrl, apiKey: fb.apiKey, protocol: fb.protocol };
     try {
       const data = await withRetry(() => streamOnce(p, fbConfig, fbModel, emitStream), { maxRetries: 1, ...retryOpts });
-      return { data, model: fbModel, primaryFailure };
+      live(p, fbProviderId, who.role, true);
+      return { data, model: fbModel, primaryFailure, fallback: info };
     } catch (fbErr) {
+      live(p, fbProviderId, who.role, false, errText(fbErr));
       // 两端都倒了:两条原因一起端给用户,别用备用的错误盖掉主端点的病根
       throw new Error(`模型调用失败 — 主端点: ${primaryFailure.error}；备用端点(deepseek): ${errText(fbErr)}`);
     }
@@ -291,6 +351,8 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
   let totalTokens = 0;
   let toolCallCount = 0;
   let stopReason: LoopResult["stopReason"] = "no_tool_calls";
+  // 多轮都切过就留最后一次:「这稿最后是谁写的」才是稿卡徽章要回答的问题
+  let usedFallback: LoopFallbackInfo | undefined;
 
   while (turns < maxTurns) {
     if (totalTokens >= maxTotalTokens) {
@@ -317,6 +379,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(opts.onTextDelta ? { onTextDelta: opts.onTextDelta } : {}),
         ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),
+        ...(opts.logMeta?.runId ? { jobId: opts.logMeta.runId } : {}),
       });
     } catch (err) {
       recorder.llm({
@@ -335,6 +398,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
       throw err;
     }
     // 主端点失败但备用救回来了:失败那次照样留痕,否则 run-log 上看不出这轮换过端点
+    if (call.fallback) usedFallback = call.fallback;
     if (call.primaryFailure) {
       recorder.llm({
         model: call.primaryFailure.model,
@@ -385,5 +449,12 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
   // 中止时没有助手文本就是空串——「(no content)」是「模型没吐字」的信号,不是「用户按了停」
   const finalMessage = lastAssistantText ?? (stopReason === "aborted" ? "" : "(no content)");
 
-  return { finalMessage, turns, totalTokens, toolCallCount, stopReason };
+  return {
+    finalMessage,
+    turns,
+    totalTokens,
+    toolCallCount,
+    stopReason,
+    ...(usedFallback ? { usedFallback } : {}),
+  };
 }

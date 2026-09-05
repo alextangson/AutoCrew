@@ -2,7 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { testEngineRoute, humanizeProbeError } from "./settings-probe.js";
+import { testEngineRoute } from "./settings-probe.js";
+// 翻译器 P2 起收进 engine/failure-text.ts（全产品唯一一个），探针行为一个字不变
+import { humanizeEngineError as humanizeProbeError } from "../engine/failure-text.js";
 import type { ProbeResult } from "../engine/probe.js";
 
 let testDir: string;
@@ -130,7 +132,8 @@ describe("settings:test_route — 结果", () => {
     const { probe } = fakeProbe({ ok: false, ms: 90, error: "401 invalid api key\n    at /Users/x/y.ts:3" });
     const res = await testEngineRoute({ _dataDir: testDir, provider_id: MAIN, model: "main-fast" }, { probe });
     expect(res.ok).toBe(false);
-    expect(String(res.error)).toContain("invalid api key");
+    expect(String(res.error)).toContain("拒绝了 Key（401）");
+    expect(String(res.error)).toContain("端点 main");
     expect(String(res.error)).not.toContain("/Users/x");
   });
 
@@ -138,7 +141,8 @@ describe("settings:test_route — 结果", () => {
     await writeEngine();
     const { probe } = fakeProbe({ ok: false, ms: 90, error: '401 {"error":{"message":"invalid x-api-key"}}' });
     const res = await testEngineRoute({ _dataDir: testDir, provider_id: MAIN, model: "main-fast" }, { probe });
-    expect(res.error).toBe("401 · invalid x-api-key");
+    expect(String(res.error)).toContain("拒绝了 Key（401）");
+    expect(String(res.error)).not.toContain("{");
   });
 });
 

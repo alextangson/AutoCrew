@@ -14,8 +14,10 @@
  *    旧简报的有效性由 runner 的 briefRevision 指针保证（重跑失败不回退，§2）。
  */
 import { getTopic } from "../../storage/local-store.js";
-import type { EngineConfig } from "../../engine/config.js";
-import type { runLoop } from "../../engine/loop.js";
+import { hostOf, loadEngineConfig, resolveEngineRoute, type EngineConfig } from "../../engine/config.js";
+import { classifyEngineError } from "../../engine/error-kind.js";
+import { describeEngineFailure, isEngineFailure } from "../../engine/failure-text.js";
+import type { LoopFallbackInfo, runLoop } from "../../engine/loop.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { runAngleStage } from "./angle-stage.js";
 import { resolveEffectiveBrief } from "./brief-snapshot.js";
@@ -145,6 +147,13 @@ interface PerspectiveRunContext {
   topic: ResearchTopicRef;
   progress: PerspectiveProgress;
   warn: (message: string) => void;
+  /**
+   * 引擎失败的**原始**错误（P2 spec §4.2）。视角台账只记 errorCode，翻译不出「哪条线怎么坏的」——
+   * 聚合时若失败视角全是引擎错误，就拿这里的第一条去分类，把 failReason 换成线路描述。
+   */
+  engineErrors: string[];
+  /** 任一路走过备用（§4.3）：落进 ResearchJob.usedFallback，任务卡出「备用顶上」 */
+  usedFallback?: LoopFallbackInfo;
 }
 
 function failed(
@@ -175,11 +184,46 @@ async function runOne(
   });
   if (result.status === "succeeded") {
     await ctx.progress.set(name, "succeeded");
+    if (result.usedFallback) ctx.usedFallback = result.usedFallback;
     return result.output;
   }
   await ctx.progress.set(name, "failed", result.errorCode);
+  if (result.errorCode === "engine_failed") ctx.engineErrors.push(result.reason);
   ctx.warn(`视角「${name}」失败（${result.errorCode}）：${result.reason}`);
   return null;
+}
+
+/**
+ * 四路全折在引擎上时的人话（spec §4.2 四条链路之三）。
+ * `errorCode` 仍是 `too_few_perspectives`（机器判断的口径不变），只把给人看的那句
+ * 从「只有 0 路视角成功」换成「调研专线 X 连不上」——数字说明不了该去修什么。
+ * 有一路是因为超时/没提交挂的就不换：那时「几路成功」才是准确的说法。
+ */
+async function engineFailReason(
+  ctx: PerspectiveRunContext,
+  perspectives: PerspectiveState[],
+  deps: DeepResearchDeps,
+): Promise<string | undefined> {
+  const failures = perspectives.filter((p) => p.status !== "succeeded");
+  if (!failures.length || !failures.every((p) => p.errorCode === "engine_failed")) return undefined;
+  const raw = ctx.engineErrors[0];
+  if (!raw) return undefined;
+  const classified = classifyEngineError(raw);
+  if (!isEngineFailure(classified)) return undefined;
+  try {
+    const config = deps.engineConfig ?? (await loadEngineConfig(deps.dataDir));
+    const scout = resolveEngineRoute(config, "scout", config.strongModel);
+    const id = scout.config.activeProvider?.id ?? "main";
+    const provider = (config.providers ?? []).find((p) => p.id === id);
+    return describeEngineFailure({
+      role: "scout",
+      provider: { id, host: hostOf(provider?.baseUrl ?? scout.config.baseUrl) },
+      classified,
+      fallbackAvailable: Boolean(config.fallback),
+    });
+  } catch {
+    return undefined; // 配置都读不出来了：留着原来那句「只有 N 路成功」，别编端点名
+  }
 }
 
 function describeFailures(perspectives: PerspectiveState[]): string {
@@ -287,7 +331,7 @@ async function withAngleCards(
   ownMaterial: OwnMaterial,
   deps: DeepResearchDeps,
   warn: (message: string) => void,
-): Promise<{ payload: SynthesisPayload; failure?: { errorCode: string; reason: string } }> {
+): Promise<{ payload: SynthesisPayload; failure?: { errorCode: string; reason: string }; usedFallback?: LoopFallbackInfo }> {
   // 只喂事实：卡是本段的产出，revision 还没分配（落盘那步才定），这里给 0 占位
   const factBrief: ResearchBrief = {
     schemaVersion: BRIEF_SCHEMA_VERSION,
@@ -309,7 +353,10 @@ async function withAngleCards(
     ...engineOverrides(deps),
   });
   if (result.status === "succeeded") {
-    return { payload: { ...payload, angleCards: result.cards } };
+    return {
+      payload: { ...payload, angleCards: result.cards },
+      ...(result.usedFallback ? { usedFallback: result.usedFallback } : {}),
+    };
   }
   warn(`立意未产出（${result.errorCode}）：${result.reason}`);
   // 综合那一步产的 v2 卡照旧保留（本刀不动综合产地）：立意失败不该连既有候选一起没收。
@@ -376,7 +423,7 @@ async function runAnglesOnly(
     gaps: brief.gaps,
   };
   const ownMaterial = await collectOwn(job.topicId, topic, deps, warn);
-  const { payload, failure } = await withAngleCards(
+  const { payload, failure, usedFallback } = await withAngleCards(
     facts,
     brief.perspectives,
     topicRef,
@@ -409,7 +456,12 @@ async function runAnglesOnly(
       topicHash,
     };
     await saveBrief(job.topicId, next, deps.dataDir);
-    return { status: "succeeded", perspectives: [], briefRevision: revision };
+    return {
+      status: "succeeded",
+      perspectives: [],
+      briefRevision: revision,
+      ...(usedFallback ? { usedFallback } : {}),
+    };
   } catch (err) {
     return failed([], "brief_write_failed", `简报写盘失败：${errText(err)}`);
   }
@@ -444,15 +496,17 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
       warn,
       deps.onProgress,
     );
-    const ctx: PerspectiveRunContext = { topic: topicRef, progress, warn };
+    const ctx: PerspectiveRunContext = { topic: topicRef, progress, warn, engineErrors: [] };
 
     const outputs = await runAllPerspectives(ctx, deps, broker, profile);
     const perspectives = progress.snapshot();
     if (outputs.length < MIN_PERSPECTIVES) {
+      // 全折在引擎上 → 说是哪条线坏了；errorCode 仍是 too_few_perspectives（机器口径不变）
+      const lineDown = await engineFailReason(ctx, perspectives, deps);
       return failed(
         perspectives,
         "too_few_perspectives",
-        `只有 ${outputs.length} 路视角成功（需 ≥${MIN_PERSPECTIVES}）：${describeFailures(perspectives)}`,
+        lineDown ?? `只有 ${outputs.length} 路视角成功（需 ≥${MIN_PERSPECTIVES}）：${describeFailures(perspectives)}`,
       );
     }
 
@@ -476,6 +530,8 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
     const ownMaterial = await collectOwn(job.topicId, topic, deps, warn);
     // full job：立意失败只记 gaps（failure 忽略），简报照出——写稿走无卡路径（§5 边界行为）
     const withAngles = await withAngleCards(payload, outputs, topicRef, profile, ownMaterial, deps, warn);
-    return publishBrief(job, topic, outputs, perspectives, withAngles.payload, ownMaterial, deps.dataDir);
+    if (withAngles.usedFallback) ctx.usedFallback = withAngles.usedFallback;
+    const done = await publishBrief(job, topic, outputs, perspectives, withAngles.payload, ownMaterial, deps.dataDir);
+    return ctx.usedFallback ? { ...done, usedFallback: ctx.usedFallback } : done;
   };
 }

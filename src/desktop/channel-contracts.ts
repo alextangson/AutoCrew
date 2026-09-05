@@ -53,6 +53,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   // 测的是**端点**不是岗位（P2 spec §4.1）：provider_id 指端点表里的一条，model 指要试的模型名。
   // **永不接受裸 baseUrl/apiKey**，见 settings-probe.ts
   "settings:test_route": ["provider_id", "model"],
+  // 只读，无参：视图由服务端从配置 + 健康态派生（不含任何密钥）
+  "engine:health": [],
   "settings:search_get": [],
   "settings:search_set": ["provider", "api_key"],
   "settings:publish_get": [],

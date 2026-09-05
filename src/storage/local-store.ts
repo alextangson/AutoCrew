@@ -271,6 +271,11 @@ export interface Content {
    * 卡是可改写的，光记 id 说不清「写的时候是哪一版」。手写 direction / 无卡时字段不落。
    */
   usedAngle?: { id: string; cardVersion: number; hash: string };
+  /**
+   * 这稿是备用端点顶上来的（P2 spec §4.3）。用了备用而稿子上没痕迹，等于兜底从没发生过——
+   * 稿卡据此出「备用顶上」徽章，hover 显示主线当时的失败原因。
+   */
+  usedFallback?: { role: string; from: string; to: string; error: string };
   /** 写手实际注入的内部语料片段（P1 §3.2）：与 `brief.ownMaterialRefs`（立意侧）分记 */
   usedOwnMaterial?: { id: string; excerptHash: string }[];
   /**

@@ -36,12 +36,27 @@ export function initEventHub(b: Broadcast): void {
   broadcast = b;
 }
 
-export async function emitEngineEvent(e: Omit<EngineEvent, "ts">, dataDir?: string): Promise<EngineEvent> {
+export interface EmitOptions {
+  /**
+   * 落 events.jsonl 吗？缺省 true = 今天的行为。
+   * `false` 用于**只报「变了」**的推送（引擎健康 kind:"engine_health"）：每次模型调用都记一行
+   * 会把工作日志淹掉，而那条推送的全部价值就是让前端重拉一次通道。
+   */
+  persist?: boolean;
+}
+
+export async function emitEngineEvent(
+  e: Omit<EngineEvent, "ts">,
+  dataDir?: string,
+  opts: EmitOptions = {},
+): Promise<EngineEvent> {
   const full: EngineEvent = { ts: new Date().toISOString(), ...e };
   try {
-    const dir = getDataDir(dataDir);
-    await fs.mkdir(dir, { recursive: true });
-    await fs.appendFile(path.join(dir, "events.jsonl"), JSON.stringify(full) + "\n", "utf-8");
+    if (opts.persist !== false) {
+      const dir = getDataDir(dataDir);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.appendFile(path.join(dir, "events.jsonl"), JSON.stringify(full) + "\n", "utf-8");
+    }
   } catch {
     /* 观测层不得破坏执行层 */
   }

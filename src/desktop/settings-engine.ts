@@ -36,10 +36,24 @@ export function maskKey(key: string): string {
 
 const V1_BACKUP = "engine.json.v1.bak";
 
-const engineSettingsListeners: Array<() => void> = [];
+/**
+ * 保存成功后的通知载荷。`changedProviderIds` = 地址/Key/协议真的变了的那几条
+ * （只改显示名或模型清单不算「线路变了」）——健康模块据此只重探被改动的端点。
+ */
+export interface EngineSettingsChange {
+  changedProviderIds: string[];
+}
 
-/** 引擎配置保存成功后的通知（收件箱 runtime 用它唤醒 blocked 项）；返回退订函数 */
-export function onEngineSettingsChanged(cb: () => void): () => void {
+type EngineSettingsListener = (change: EngineSettingsChange) => void;
+
+const engineSettingsListeners: EngineSettingsListener[] = [];
+
+/**
+ * 引擎配置保存成功后的通知（收件箱 runtime 唤醒 blocked 项、健康模块重探端点）；
+ * 返回退订函数。**保存本身不发网络请求**——探针由订阅方决定要不要跑，
+ * 所以设置的单元测试不会因为一次保存就真去打端点。
+ */
+export function onEngineSettingsChanged(cb: EngineSettingsListener): () => void {
   engineSettingsListeners.push(cb);
   return () => {
     const at = engineSettingsListeners.indexOf(cb);
@@ -47,10 +61,10 @@ export function onEngineSettingsChanged(cb: () => void): () => void {
   };
 }
 
-function notifyEngineSettingsChanged(): void {
+function notifyEngineSettingsChanged(change: EngineSettingsChange): void {
   for (const cb of [...engineSettingsListeners]) {
     try {
-      cb();
+      cb(change);
     } catch {
       // 监听者的异常不该让保存失败
     }
@@ -329,6 +343,17 @@ async function backupV1Once(filePath: string, raw: Record<string, unknown>): Pro
   await fs.chmod(backup, 0o600).catch(() => {});
 }
 
+/** 地址/Key/协议变了才值得重探；只改显示名或模型清单不算「线路变了」 */
+function changedProviderIds(before: EngineProviderConfig[], after: EngineProviderConfig[]): string[] {
+  const old = new Map(before.map((p) => [p.id, p] as const));
+  return after
+    .filter((p) => {
+      const prev = old.get(p.id);
+      return !prev || prev.baseUrl !== p.baseUrl || prev.apiKey !== p.apiKey || prev.protocol !== p.protocol;
+    })
+    .map((p) => p.id);
+}
+
 const NOTHING_TO_WRITE =
   "没有可写入的字段（api_key / base_url / strong_model / fast_model / protocol / " +
   "writer_* / reviewer_* / scout_* / analytics_* / providers / main / fallback / assignments）";
@@ -342,6 +367,7 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
     const filePath = path.join(getDataDir(dataDir), "engine.json");
     const raw = await readEngineFile(filePath); // 1. 读原文件
     const { draft } = migrateEngineConfig(raw, engineEnv()); // 2. 迁移成 v2
+    const previous = draft.providers.map((p) => ({ ...p })); // 保存后要知道哪几条被改了（探针只探它们）
     let touched = false;
     for (const apply of [applyProviders, applyMainFields, applyRoleFields, applyPointers]) {
       const r = apply(draft, payload); // 3. 套用提交
@@ -365,7 +391,10 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
     );
     await backupV1Once(filePath, raw);
     await atomicWrite(filePath, `${body}\n`);
-    notifyEngineSettingsChanged();
+    // 保存后探被改动的端点（spec §4.1 的四个更新时机之二）由订阅方去跑：
+    // **不阻塞保存返回**（探针最长 20 秒，保存按钮不该转 20 秒的圈），
+    // 也不让「保存配置」这件事本身依赖网络。旧探针结果会被那一轮覆盖。
+    notifyEngineSettingsChanged({ changedProviderIds: changedProviderIds(previous, providers) });
     return getEngineSettings({ _dataDir: dataDir });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

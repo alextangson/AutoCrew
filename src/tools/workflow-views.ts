@@ -26,6 +26,8 @@ export function jobView(job: ResearchJob): Record<string, unknown> {
     perspectives: job.perspectives,
     errorCode: job.errorCode,
     failReason: job.failReason,
+    // 兜底留痕（P2 spec §4.3）：这轮是备用端点顶上来的，宿主 agent 也该看得见
+    usedFallback: job.usedFallback,
     startedAt: job.startedAt,
     settledAt: job.settledAt,
   };

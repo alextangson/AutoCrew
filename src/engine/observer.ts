@@ -12,6 +12,7 @@
  */
 import http from "node:http";
 import { isRetryable } from "../utils/retry.js";
+import { PROTOCOL_MISMATCH } from "./error-kind.js";
 
 export interface ObserverRoute {
   upstreamBase: string;
@@ -116,8 +117,17 @@ async function forward(
     const contentType = upstream.headers?.get?.("content-type") ?? "";
     if (upstream.status === 200 && !contentType.includes("event-stream")) {
       const junk = await upstream.text();
-      res.writeHead(400, { "content-type": contentType || "text/plain" });
-      res.end(junk);
+      // body 是**结构化**的（P2 spec §4.2）:分类器读 error.type,不再靠猜字符串。
+      // 原 body 截断后进 message —— 中转把真正的原因写在里面的情形很常见,不许丢。
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            type: PROTOCOL_MISMATCH,
+            message: `${PROTOCOL_MISMATCH}: 端点回了 200 但不是流式响应（content-type: ${contentType || "(空)"}）${junk ? `；原文：${junk.slice(0, 300)}` : ""}`,
+          },
+        }),
+      );
       return;
     }
     res.writeHead(upstream.status, outHeaders);
