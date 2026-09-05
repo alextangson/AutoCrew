@@ -13,6 +13,7 @@ import {
   startResearchRuntime,
   stopResearchRuntime,
   triggerDeepResearch,
+  triggerRegenerateAngles,
   type ChatFollowupEvent,
   type ResearchUpdatedEvent,
 } from "./research-runtime.js";
@@ -176,7 +177,7 @@ describe("triggerDeepResearch", () => {
     expect(labels).toContain("scout|work|调研员·反方视角在读：zhihu.com");
   });
 
-  it("同选题重复投递合并成一个 job（deduped）", async () => {
+  it("同选题在途时再投递 → 拒「研究进行中」（angles 与 full 共用这道门）", async () => {
     const topic = await newTopic();
     await configureSearch();
     let release = (): void => {};
@@ -189,8 +190,11 @@ describe("triggerDeepResearch", () => {
     });
     const first = await triggerDeepResearch(topic.id, dataDir);
     const second = await triggerDeepResearch(topic.id, dataDir);
+    const angles = await triggerRegenerateAngles(topic.id, dataDir);
     expect(first).toMatchObject({ accepted: true, deduped: false });
-    expect(second).toMatchObject({ accepted: true, deduped: true });
+    expect(second).toMatchObject({ accepted: false, inFlight: true });
+    expect(angles).toMatchObject({ accepted: false, inFlight: true });
+    expect(!angles.accepted && angles.reason).toContain("研究进行中");
     release();
     await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "succeeded");
   });

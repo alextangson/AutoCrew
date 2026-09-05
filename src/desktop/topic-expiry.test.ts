@@ -8,6 +8,11 @@ import path from "node:path";
 import { expireStaleTopics, TOPIC_TTL_MS } from "./topic-expiry.js";
 import { createWorkspace } from "./workspace-store.js";
 import { saveTopic, listTopics, listTrash, saveContent, updateTopic } from "../storage/local-store.js";
+import {
+  pendingPerspectives,
+  upsertJob,
+  type ResearchJob,
+} from "../modules/research/research-job-store.js";
 
 let tmpHome: string;
 let savedEnv: string | undefined;
@@ -106,11 +111,26 @@ const ANGLE_CARD = {
   hookDraft: "提效 55% 是真的，只是账没算完。",
 };
 
+/** 台账指针：豁免认的是 job.briefRevision 指向的那版（P1 §3.0），落一份就够 */
+async function seedJob(topicId: string, briefRevision: number | undefined, dataDir?: string): Promise<void> {
+  const job: ResearchJob = {
+    topicId,
+    status: "succeeded",
+    startedAt: new Date(Date.now() - 3600_000).toISOString(),
+    settledAt: new Date().toISOString(),
+    perspectives: pendingPerspectives(),
+    ...(briefRevision === undefined ? {} : { briefRevision }),
+    topicHash: "h",
+  };
+  await upsertJob(job, dataDir ?? tmpHome);
+}
+
 /** 一份最小可读简报（isBriefShape 只查注入/展示要用的字段） */
 async function seedBrief(
   topicId: string,
-  opts: { daysAgo: number; withCards?: boolean; dataDir?: string },
+  opts: { daysAgo: number; withCards?: boolean; dataDir?: string; revision?: number; adopt?: boolean },
 ): Promise<void> {
+  const revision = opts.revision ?? 1;
   const brief = {
     schemaVersion: 1,
     summary: "s",
@@ -123,12 +143,14 @@ async function seedBrief(
     missingPerspectives: [],
     gaps: [],
     generatedAt: new Date(Date.now() - opts.daysAgo * 24 * 3600_000).toISOString(),
-    revision: 1,
+    revision,
     topicHash: "h",
   };
   const dir = path.join(opts.dataDir ?? tmpHome, "research", "briefs");
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, `${topicId}.v1.json`), JSON.stringify(brief), "utf-8");
+  await fs.writeFile(path.join(dir, `${topicId}.v${revision}.json`), JSON.stringify(brief), "utf-8");
+  // adopt:false = 只落文件不推指针（重跑落了盘却没结算成的孤儿版本）
+  if (opts.adopt !== false) await seedJob(topicId, revision, opts.dataDir);
 }
 
 describe("等选角豁免", () => {
@@ -179,6 +201,28 @@ describe("等选角豁免", () => {
     const dir = path.join(tmpHome, "research", "briefs");
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, `${broken.id}.v1.json`), "{ 半条 JSON", "utf-8");
+    await seedJob(broken.id, 1);
+
+    expect((await expireStaleTopics()).total).toBe(1);
+  });
+
+  // ── 单一简报快照（P1 §3.0）─────────────────────────────────────────────────
+
+  it("盘上有更新的孤儿 v2（重跑没结算成）→ 豁免仍按指针指的 v1 算，不被白续期", async () => {
+    const orphan = await saveTopic({ title: "孤儿 v2", description: "d", tags: [] });
+    await ageTopic(orphan.id, 10);
+    // 生效那版（v1）的角度卡已经放凉 10 天 → 豁免到期
+    await seedBrief(orphan.id, { daysAgo: 10, revision: 1 });
+    // 磁盘最大版是刚落的 v2，但从未被采纳：拿它续期等于给没结果的选题白加三天
+    await seedBrief(orphan.id, { daysAgo: 0, revision: 2, adopt: false });
+
+    expect((await expireStaleTopics()).total).toBe(1);
+  });
+
+  it("没有台账指针（简报文件孤零零躺着）→ 按「没有简报」处理，照常回收", async () => {
+    const noPointer = await saveTopic({ title: "无指针", description: "d", tags: [] });
+    await ageTopic(noPointer.id, 10);
+    await seedBrief(noPointer.id, { daysAgo: 0, adopt: false });
 
     expect((await expireStaleTopics()).total).toBe(1);
   });

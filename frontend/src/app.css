@@ -191,6 +191,8 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 .chip { font-size: 11px; padding: 1px 6px; font-family: var(--font-mono); }
 .chip-pub { background: var(--ink); color: var(--accent-text); border-color: var(--ink); }
 .acard-err { margin-top: 6px; color: var(--danger); font-size: 12px; }
+/* 缺证据徽章(P1 §4.4):贴在稿卡 chip 里,不能带 acard-err 的块级外边距 */
+.chip-blocked { color: var(--danger); font-weight: 600; }
 
 .matrix-detail { border-left: 2px solid var(--border); padding: 8px 12px; margin: 6px 0; }
 .matrix-detail p { margin: 3px 0; }
@@ -667,6 +669,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .angle-hook { margin-top: 4px; font-family: var(--font-display); }
 .angle-evidence { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
 .angle-evidence li { margin: 2px 0; }
+/* 卡 v3(P1 spec §4.6):待补证据 / 元素与骨架 / 证据档次与展示分——分只排序,不选卡 */
+.angle-needs { margin-top: 6px; font-size: 12px; }
+.angle-needs ul { margin: 2px 0 0; padding-left: 18px; color: var(--muted); }
+.angle-needs li { margin: 2px 0; }
+.angle-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.angle-element { font-size: 11px; }
+.angle-structure { font-size: 11px; background: var(--card); }
+.angle-level { font-size: 11px; }
+.angle-level-overview { border-style: dashed; color: var(--muted); }
+.angle-score { font-size: 11px; cursor: help; }
 .angle-card-actions { margin-top: 8px; }
 .angle-card-actions button { font-size: 11px; padding: 2px 8px; }
 .angle-edit { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }

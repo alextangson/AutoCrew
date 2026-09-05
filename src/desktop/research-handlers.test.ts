@@ -11,6 +11,7 @@ import {
   researchDeepDiveHandler,
   researchImportAssetHandler,
   researchListAssetsHandler,
+  researchRegenerateAnglesHandler,
   researchStatusHandler,
 } from "./research-handlers.js";
 import {
@@ -26,10 +27,12 @@ import {
   startResearchRuntime,
   stopResearchRuntime,
 } from "./research-runtime.js";
-import { buildChatTools, type ChatCard } from "./chat-router.js";
+import { CREW_TOOL_STATUS, buildChatTools, type ChatCard } from "./chat-router.js";
 import { BRIEF_SCHEMA_VERSION, saveBrief, type ResearchBrief } from "../modules/research/brief-store.js";
 import {
   PERSPECTIVE_NAMES,
+  getJob,
+  isTerminalJobStatus,
   pendingPerspectives,
   topicHashOf,
   upsertJob,
@@ -199,7 +202,7 @@ describe("research:deep_dive", () => {
     expect(String(res.error)).toContain("选题不存在");
   });
 
-  it("happy：投递即返回 queued job；重复投递合并（deduped）", async () => {
+  it("happy：投递即返回 queued job；在途时再投递被拒（研究进行中）", async () => {
     await configureSearch();
     await startRuntime();
     const first = await researchDeepDiveHandler(p());
@@ -212,15 +215,54 @@ describe("research:deep_dive", () => {
     // 投递即给选题续期一次（§2）：正在深调研的选题不该被 3 天回收扫走
     expect((await getTopic(topic.id, dataDir))?.renewedAt).toBeTruthy();
 
+    // 串行队列可能已经把它消化完（终态可再投），只有还在途时才该被拒
     const again = await researchDeepDiveHandler(p());
-    expect(again.ok).toBe(true);
-    const second = again.data as { deduped: boolean; note: string };
-    if (second.deduped) expect(second.note).toContain("已有调研在跑");
+    const still = await getJob(topic.id, dataDir);
+    if (still && !isTerminalJobStatus(still.status)) {
+      expect(again.ok).toBe(false);
+      expect(String(again.error)).toContain("研究进行中");
+    }
   });
 
   it("非对象 payload / 缺 topic_id → 守卫拦下", async () => {
     expect((await researchDeepDiveHandler(null as unknown as Record<string, unknown>)).ok).toBe(false);
     expect((await researchDeepDiveHandler({ _dataDir: dataDir })).ok).toBe(false);
+  });
+});
+
+describe("research:regenerate_angles", () => {
+  it("运行时没起来 → ok:false 照实说", async () => {
+    const res = await researchRegenerateAnglesHandler(p());
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("没在跑");
+  });
+
+  it("不要搜索 key（不出网）：没配 key 也能投递，落一条 kind=angles 的 job", async () => {
+    await startRuntime();
+    const res = await researchRegenerateAnglesHandler(p());
+    expect(res.ok).toBe(true);
+    const d = res.data as { job: ResearchJob; deduped: boolean; note: string };
+    expect(d.job).toMatchObject({ topicId: topic.id, kind: "angles", perspectives: [] });
+    expect(d.deduped).toBe(false);
+    expect(d.note).toContain("只重跑立意");
+  });
+
+  it("选题不存在 / 缺 topic_id / 非对象 payload → 拒", async () => {
+    await startRuntime();
+    expect((await researchRegenerateAnglesHandler(p({ topic_id: "topic-1-gone" }))).ok).toBe(false);
+    expect((await researchRegenerateAnglesHandler({ _dataDir: dataDir })).ok).toBe(false);
+    expect(
+      (await researchRegenerateAnglesHandler(null as unknown as Record<string, unknown>)).ok,
+    ).toBe(false);
+  });
+
+  it("已有深调研在途 → 拒「研究进行中」，不排第二条", async () => {
+    await seedJob({ status: "running", claimedAt: new Date().toISOString(), settledAt: undefined });
+    await startRuntime();
+    const res = await researchRegenerateAnglesHandler(p());
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("研究进行中");
+    expect((await getJob(topic.id, dataDir))?.kind).toBeUndefined(); // 台账上还是那条 full
   });
 });
 
@@ -542,7 +584,7 @@ describe("chat 工具 deep_research", () => {
     expect(String(parsed.note)).toContain("不要在本轮等结果");
   });
 
-  it("进行中合并 → 回执说「已经在跑」", async () => {
+  it("捡回中断的任务 → 回执说清是重跑不是新派", async () => {
     const out = await tool({
       deepResearch: async (id: string) => ({
         accepted: true as const,
@@ -561,7 +603,7 @@ describe("chat 工具 deep_research", () => {
     }).execute({ topic_id: topic.id });
     const parsed = JSON.parse(out as string);
     expect(parsed).toMatchObject({ ok: true, deduped: true, perspectivesDone: "2/4" });
-    expect(String(parsed.note)).toContain("已经在跑");
+    expect(String(parsed.note)).toContain("捡回来重跑");
   });
 
   it("被拒（key 未配/选题没了）→ 原因原样回给总编辑", async () => {
@@ -580,6 +622,63 @@ describe("chat 工具 deep_research", () => {
       },
     }).execute({});
     expect(JSON.parse(out as string).ok).toBe(false);
+    expect(called).toBe(false);
+  });
+});
+
+
+describe("chat 工具 regenerate_angles", () => {
+  const effects = () => ({ contentIds: new Set<string>(), researchTopicIds: new Set<string>() });
+  const queued = (id: string): ResearchJob => ({
+    topicId: id,
+    kind: "angles",
+    status: "queued",
+    startedAt: "2026-07-26T08:00:00.000Z",
+    perspectives: [],
+    briefRevision: 1,
+    topicHash: "h",
+  });
+
+  it("已注册、透传 topic_id 与 dataDir、把选题记进本轮 effects（回流轮靠它回话）", async () => {
+    const calls: Array<[string, string | undefined]> = [];
+    const eff = effects();
+    const tools = buildChatTools([] as ChatCard[], dataDir, {
+      regenerateAngles: async (id: string, dir?: string) => {
+        calls.push([id, dir]);
+        return { accepted: true, deduped: false, job: queued(id) };
+      },
+    }, eff);
+    const t = tools.find((x) => x.name === "regenerate_angles");
+    if (!t) throw new Error("regenerate_angles 工具未注册");
+
+    const parsed = JSON.parse((await t.execute({ topic_id: topic.id })) as string);
+    expect(calls).toEqual([[topic.id, dataDir]]);
+    expect(parsed).toMatchObject({ ok: true, topicId: topic.id, jobStatus: "queued", deduped: false });
+    // 投递即返回：回执明说本轮别等结果，也别自己编角度
+    expect(String(parsed.note)).toContain("不要在本轮等结果");
+    expect([...eff.researchTopicIds]).toEqual([topic.id]);
+    expect(CREW_TOOL_STATUS.regenerate_angles).toMatchObject({ role: "scout" });
+  });
+
+  it("被拒（没简报/研究进行中）→ 原因原样回，且不记 effects", async () => {
+    const eff = effects();
+    const t = buildChatTools([] as ChatCard[], dataDir, {
+      regenerateAngles: async () => ({ accepted: false as const, reason: "研究进行中：这条选题的深调研正在跑" }),
+    }, eff).find((x) => x.name === "regenerate_angles")!;
+    const parsed = JSON.parse((await t.execute({ topic_id: topic.id })) as string);
+    expect(parsed).toEqual({ ok: false, error: "研究进行中：这条选题的深调研正在跑" });
+    expect([...eff.researchTopicIds]).toEqual([]);
+  });
+
+  it("缺 topic_id → 直接拒，不投递", async () => {
+    let called = false;
+    const t = buildChatTools([] as ChatCard[], dataDir, {
+      regenerateAngles: async () => {
+        called = true;
+        return { accepted: false as const, reason: "x" };
+      },
+    }, effects()).find((x) => x.name === "regenerate_angles")!;
+    expect(JSON.parse((await t.execute({})) as string).ok).toBe(false);
     expect(called).toBe(false);
   });
 });

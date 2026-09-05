@@ -10,7 +10,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { createDeepResearchRunJob, type DeepResearchDeps } from "./deep-research.js";
-import { briefPath, briefsDir, loadBrief, loadLatestBrief } from "./brief-store.js";
+import { collectOwnMaterial } from "./own-material.js";
+import {
+  briefPath,
+  briefsDir,
+  isAngleCardV3,
+  loadBrief,
+  loadLatestBrief,
+  type ResearchBrief,
+} from "./brief-store.js";
 import {
   FetchImageError,
   type FetchImageErrorCode,
@@ -24,12 +32,13 @@ import {
   PERSPECTIVE_NAMES,
   pendingPerspectives,
   topicHashOf,
+  upsertJob,
   type PerspectiveName,
   type PerspectiveState,
   type ResearchJob,
 } from "./research-job-store.js";
 import { createResearchRunner } from "./research-runner.js";
-import { saveTopic, softDeleteTopic, type Topic } from "../../storage/local-store.js";
+import { saveTopic, softDeleteTopic, updateTopic, type Topic } from "../../storage/local-store.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, runLoop } from "../../engine/loop.js";
 
@@ -165,11 +174,57 @@ const BRIEF_OK: Record<string, unknown> = {
   asset_picks: [{ asset_id: "a1", caption: "使用率图" }],
 };
 
+/** 立意 pass（P1 §4.1）：综合之后的独立一 pass，产角度卡 v3 */
+function angleCand(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    primary_persona: "grow",
+    angle: "算一笔维护账",
+    thesis: "省下的编码时间被维护成本吃回去了，净收益接近于零",
+    evidence_level: "grounded",
+    core_evidence_ids: ["ev-1"],
+    misconception: "以为提效数字等于净收益",
+    mechanism: "补全省下的是打字时间，维护花的是理解时间；理解更贵，所以账会反过来",
+    payoff: "你会知道该拿哪一段时间去比，今天就把上周的返工时间记一次",
+    next_action: "把上周被 AI 改过的代码返工时间记下来",
+    counter_response: "有人会说熟练了就好——熟练解决的是打字，不是理解成本",
+    persona_gains: { grow: "听懂提效数字怎么骗人", trust: "有可复算的账", convert: "知道验收该验什么" },
+    elements: ["新奇点", "爽点"],
+    evidence_needs: ["返工时长的公开统计"],
+    structure: "myth-busting",
+    hook_draft: "提效 55% 是真的，只是账没算完。",
+    anti_scope: "不写工具横评、不写怎么写 prompt",
+    ...over,
+  };
+}
+
+const ANGLES_OK: Record<string, unknown> = {
+  misconceptions: { grow: ["提效等于净收益"], trust: ["新工具都差不多"], convert: ["买了就等于落地"] },
+  candidates: [
+    angleCand(),
+    angleCand({
+      angle: "从翻车案例倒推",
+      primary_persona: "trust",
+      thesis: "翻车集中在重构类任务，说明它擅长补全而不是设计",
+      anti_scope: "不做成本测算、不谈团队管理",
+      elements: ["痛点→理想状态", "泪点"],
+    }),
+    angleCand({
+      angle: "验收标准换一个",
+      primary_persona: "convert",
+      thesis: "该被考核的不是生成速度，而是改完之后谁能读懂",
+      anti_scope: "不谈选型、不谈价格",
+      elements: ["美点", "爽点"],
+    }),
+  ],
+};
+
 interface Plan {
   /** 缺省用 PERSPECTIVE_OK；给 [] 表示这一路什么都不提交（no_submit） */
   perspectives?: Partial<Record<PerspectiveName, Call[]>>;
   /** 缺省用 BRIEF_OK；给 [] 表示综合没提交 */
   synthesis?: Array<Record<string, unknown>>;
+  /** 缺省用 ANGLES_OK；给 [] 表示立意 pass 没提交（no_submit） */
+  angles?: Array<Record<string, unknown>>;
   /** 每次子运行开始前的副作用钩子（模拟「调研途中选题被删」） */
   hook?: (key: string) => Promise<void>;
 }
@@ -182,13 +237,17 @@ function perspectiveOf(systemPrompt: string): PerspectiveName | null {
 
 function planLoop(plan: Plan = {}): typeof runLoop {
   return (async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
-    const isSynthesis = (opts.tools ?? []).some((t) => t.name === "submit_brief");
+    const has = (tool: string) => (opts.tools ?? []).some((t) => t.name === tool);
+    const isSynthesis = has("submit_brief");
+    const isAngle = has("submit_angles");
     const name = perspectiveOf(opts.systemPrompt);
-    await plan.hook?.(isSynthesis ? "synthesis" : (name ?? "?"));
+    await plan.hook?.(isSynthesis ? "synthesis" : isAngle ? "angles" : (name ?? "?"));
 
     const calls: Call[] = isSynthesis
       ? (plan.synthesis ?? [BRIEF_OK]).map((args) => ({ tool: "submit_brief", args }))
-      : (plan.perspectives?.[name!] ?? PERSPECTIVE_OK);
+      : isAngle
+        ? (plan.angles ?? [ANGLES_OK]).map((args) => ({ tool: "submit_angles", args }))
+        : (plan.perspectives?.[name!] ?? PERSPECTIVE_OK);
 
     for (const call of calls) {
       const tool = (opts.tools ?? []).find((t) => t.name === call.tool);
@@ -607,5 +666,286 @@ describe("检索活动可见", () => {
     expect(reads).toHaveLength(1);
     expect(reads[0].detail).toBe("example.com"); // 只报 host
     for (const a of seen) expect(PERSPECTIVE_NAMES).toContain(a.perspective as PerspectiveName);
+  });
+});
+
+// ─── 立意 pass（P1 spec §4.1）：独立一 pass，失败不带走整条 job ──────────────
+
+describe("立意 pass", () => {
+  it("成功 → 简报里落的是卡 v3（带代码打的分），覆盖综合那批候选", async () => {
+    const topic = await newTopic();
+    const outcome = await makeRunJob()(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    const brief = await loadLatestBrief(topic.id, dataDir);
+    const cards = brief!.angleCards ?? [];
+    expect(cards).toHaveLength(3);
+    expect(cards.every((c) => isAngleCardV3(c))).toBe(true);
+    expect(cards.map((c) => c.id)).toEqual(["angle-1", "angle-2", "angle-3"]);
+    const first = cards[0];
+    expect(isAngleCardV3(first) && first.score).toBe(4); // 元素 2 + grounded 1 + 主画像 grow 1
+    expect(brief!.gaps.some((g) => g.startsWith("立意未产出"))).toBe(false);
+  });
+
+  it("立意没提交 → job 照常 succeeded，原因写进 gaps 并从 warn 冒出来", async () => {
+    const topic = await newTopic();
+    const warns: string[] = [];
+    const outcome = await makeRunJob({ angles: [] }, warns)(jobFor(topic));
+    expect(outcome.status).toBe("succeeded"); // 立意失败绝不让整条调研失败
+
+    const brief = await loadLatestBrief(topic.id, dataDir);
+    expect(brief!.gaps.some((g) => g.startsWith("立意未产出"))).toBe(true);
+    expect(warns.join("")).toContain("立意未产出（no_submit）");
+    // 本刀不动综合产地：立意失败时，综合那批 v2 卡还在，写稿不至于一张候选都没有
+    expect((brief!.angleCards ?? []).every((c) => !isAngleCardV3(c))).toBe(true);
+  });
+
+  it("立意交了不合规的候选（元素只有 1 个）→ invalid_output 进 gaps", async () => {
+    const topic = await newTopic();
+    const bad = { ...ANGLES_OK, candidates: [angleCand({ elements: ["爽点"] })] };
+    const outcome = await makeRunJob({ angles: [bad] })(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    const brief = await loadLatestBrief(topic.id, dataDir);
+    expect(brief!.gaps.join("")).toContain("网感元素需 ≥2");
+  });
+});
+
+
+// ─── angles job（P1 spec §3.5）：只重跑立意，事实原样抄 ──────────────────────
+
+describe("angles job", () => {
+  /** 先跑一轮 full 把简报 v1 与指针备好——angles job 的输入就是「当前生效简报」 */
+  async function seedBrief(topic: Topic): Promise<ResearchBrief> {
+    const outcome = await makeRunJob()(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+    await upsertJob(
+      {
+        ...jobFor(topic),
+        status: "succeeded",
+        claimedAt: undefined,
+        settledAt: "2026-07-26T08:06:00.000Z",
+        briefRevision: outcome.briefRevision,
+      },
+      dataDir,
+    );
+    return (await loadBrief(topic.id, 1, dataDir))!;
+  }
+
+  function anglesJob(topic: Topic): ResearchJob {
+    return { ...jobFor(topic), kind: "angles", perspectives: [], briefRevision: 1 };
+  }
+
+  it("事实字段逐字照抄 + 新卡 + 新 revision，回执不带视角", async () => {
+    const topic = await newTopic();
+    const v1 = await seedBrief(topic);
+
+    // 第二轮立意换一批卡：证明新简报里的卡确实是这一轮产的
+    const relit = {
+      ...ANGLES_OK,
+      candidates: [
+        angleCand({ angle: "把维护账摊开算", thesis: "省下的编码时间被维护成本吃回去，净收益接近于零" }),
+        angleCand({
+          angle: "验收标准换一个",
+          primary_persona: "convert",
+          thesis: "该被考核的不是生成速度，而是改完之后谁能读懂",
+          anti_scope: "不谈选型、不谈价格",
+          elements: ["美点", "爽点"],
+        }),
+        angleCand({
+          angle: "从翻车案例倒推",
+          primary_persona: "trust",
+          thesis: "翻车集中在重构类任务，说明它擅长补全而不是设计",
+          anti_scope: "不做成本测算、不谈团队管理",
+          elements: ["痛点→理想状态", "泪点"],
+        }),
+      ],
+    };
+    const outcome = await makeRunJob({ angles: [relit] })(anglesJob(topic));
+
+    expect(outcome).toMatchObject({ status: "succeeded", briefRevision: 2, perspectives: [] });
+
+    const v2 = (await loadBrief(topic.id, 2, dataDir))!;
+    expect(v2.summary).toBe(v1.summary);
+    expect(v2.evidence).toEqual(v1.evidence);
+    expect(v2.assetPicks).toEqual(v1.assetPicks);
+    expect(v2.perspectives).toEqual(v1.perspectives);
+    expect(v2.tensions).toEqual(v1.tensions);
+    expect(v2.missingPerspectives).toEqual(v1.missingPerspectives);
+    expect(v2.gaps).toEqual(v1.gaps);
+    expect(v2.revision).toBe(2);
+    expect(v2.topicHash).toBe(topicHashOf(topic.title, topic.description));
+    expect(Date.parse(v2.generatedAt)).toBeGreaterThanOrEqual(Date.parse(v1.generatedAt));
+
+    const cards = v2.angleCards ?? [];
+    expect(cards.map((c) => c.angle)).toEqual(["把维护账摊开算", "验收标准换一个", "从翻车案例倒推"]);
+    expect(cards.every((c) => isAngleCardV3(c))).toBe(true);
+    // v1 逐字不变（不可变版本）
+    expect((await loadBrief(topic.id, 1, dataDir))!.angleCards?.[0].angle).toBe("算一笔维护账");
+  });
+
+  it("立意失败 → job failed(angle_failed)，一份新简报都不落", async () => {
+    const topic = await newTopic();
+    await seedBrief(topic);
+    const warns: string[] = [];
+    const outcome = await makeRunJob({ angles: [] }, warns)(anglesJob(topic));
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.errorCode).toBe("angle_failed");
+    expect(String(outcome.failReason)).toContain("no_submit");
+    expect(outcome.perspectives).toEqual([]);
+    // 只换卡的新版本没有卡就毫无意义：不落盘，指针留在 v1
+    expect(await loadBrief(topic.id, 2, dataDir)).toBeNull();
+    expect((await loadLatestBrief(topic.id, dataDir))!.revision).toBe(1);
+  });
+
+  it("没有生效简报 → no_brief（绝不拿磁盘上那份没被采纳的顶上）", async () => {
+    const topic = await newTopic();
+    const outcome = await makeRunJob()(anglesJob(topic));
+    expect(outcome).toMatchObject({ status: "failed", errorCode: "no_brief", perspectives: [] });
+    expect(String(outcome.failReason)).toContain("先跑一轮深调研");
+  });
+
+  it("选题正文在上一轮之后改过 → 照跑，但把「基于旧版选题」写进 gaps", async () => {
+    const topic = await newTopic();
+    const v1 = await seedBrief(topic);
+    const renamed = (await updateTopic(topic.id, { title: "AI 编程助手横评（2026 版）" }, dataDir))!;
+
+    const outcome = await makeRunJob()({ ...anglesJob(topic), topicHash: topicHashOf(renamed.title, renamed.description) });
+    expect(outcome.status).toBe("succeeded");
+
+    const v2 = (await loadBrief(topic.id, 2, dataDir))!;
+    expect(v2.topicHash).toBe(topicHashOf(renamed.title, renamed.description));
+    expect(v2.topicHash).not.toBe(v1.topicHash);
+    expect(v2.gaps.some((g) => g.includes("仍基于旧版选题"))).toBe(true);
+  });
+});
+
+// ─── 内部语料（P1b §3.2） ───────────────────────────────────────────────────
+
+describe("内部语料进立意", () => {
+  const OWN_LINE = "我自己拿 AI 编程助手做过一轮横评，真实收益被维护成本吃掉了大半。";
+  const OWN_CHUNK_ID = "om:content-own-1:transcript:10:0";
+
+  /** 铺一条别的选题的口播转写：v9/v10 并存，数值排序应当取 v10 */
+  async function seedTranscript(): Promise<void> {
+    const dir = path.join(dataDir, "contents", "content-own-1", "video");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "contents", "content-own-1", "meta.json"),
+      JSON.stringify({ id: "content-own-1", title: "我做插件那次", status: "published", topicId: "topic-other" }),
+      "utf-8",
+    );
+    for (const rev of [9, 10]) {
+      await fs.writeFile(
+        path.join(dir, `transcript.v${rev}.json`),
+        JSON.stringify({
+          schemaVersion: 1,
+          source: "funasr",
+          segments: [{ id: "seg-0", text: `第 ${rev} 版：${OWN_LINE}`, startMs: 0, endMs: 1, words: [] }],
+        }),
+        "utf-8",
+      );
+    }
+  }
+
+  /** 立意这一轮把锚点挂到转写片段上 */
+  const anchored = {
+    ...ANGLES_OK,
+    candidates: [
+      angleCand({
+        firsthand_anchor: { kind: "transcript", chunk_id: OWN_CHUNK_ID, quote: "真实收益被维护成本吃掉了大半" },
+      }),
+      ...(ANGLES_OK.candidates as Record<string, unknown>[]).slice(1),
+    ],
+  };
+
+  it("full job：语料喂进立意提示词，锚点落卡，refs 记进简报", async () => {
+    await seedTranscript();
+    const topic = await newTopic();
+    const prompts: string[] = [];
+    const runJob = createDeepResearchRunJob({
+      dataDir,
+      engineConfig: CONFIG,
+      brokerDeps: BROKER_DEPS,
+      runLoopImpl: (async (cfg: EngineConfig, opts: LoopOptions) => {
+        if ((opts.tools ?? []).some((t) => t.name === "submit_angles")) prompts.push(opts.userMessage);
+        return planLoop({ angles: [anchored] })(cfg, opts);
+      }) as unknown as typeof runLoop,
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
+    });
+
+    const outcome = await runJob(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+
+    // 只喂了 v10 那一版（版本号数值排序）
+    expect(prompts[0]).toContain(OWN_CHUNK_ID);
+    expect(prompts[0]).toContain("第 10 版");
+    expect(prompts[0]).not.toContain("第 9 版");
+
+    const brief = (await loadBrief(topic.id, 1, dataDir))!;
+    const chunk = (await collectOwnMaterial(dataDir, { id: topic.id, title: topic.title, description: topic.description }))
+      .chunks[0];
+    expect(brief.ownMaterialRefs).toEqual([{ id: OWN_CHUNK_ID, excerptHash: chunk.excerptHash }]);
+    const card = brief.angleCards![0];
+    expect(isAngleCardV3(card) && card.firsthandAnchor).toMatchObject({
+      kind: "transcript",
+      contentId: "content-own-1",
+      sourceRevision: 10,
+      chunkId: OWN_CHUNK_ID,
+      excerptHash: chunk.excerptHash,
+    });
+  });
+
+  it("没有任何内部语料 → refs 是空数组（「读到了但没有」也是归因）", async () => {
+    const topic = await newTopic();
+    expect((await makeRunJob()(jobFor(topic))).status).toBe("succeeded");
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
+  });
+
+  it("语料读取炸了 → 只 warn，job 照常出简报（第一手材料是加分项，不是命门）", async () => {
+    const topic = await newTopic();
+    const warns: string[] = [];
+    const runJob = createDeepResearchRunJob({
+      dataDir,
+      engineConfig: CONFIG,
+      brokerDeps: BROKER_DEPS,
+      runLoopImpl: planLoop(),
+      onWarn: (m) => warns.push(m),
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() },
+      collectOwnMaterialImpl: async () => {
+        throw new Error("磁盘炸了");
+      },
+    });
+
+    const outcome = await runJob(jobFor(topic));
+    expect(outcome.status).toBe("succeeded");
+    expect(warns.some((w) => w.includes("内部语料读取失败") && w.includes("磁盘炸了"))).toBe(true);
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
+  });
+
+  it("angles job：这一轮的语料归因覆盖上一版，不顺着旧简报抄回来", async () => {
+    const topic = await newTopic();
+    const seed = await makeRunJob()(jobFor(topic));
+    expect(seed.status).toBe("succeeded");
+    await upsertJob(
+      { ...jobFor(topic), status: "succeeded", claimedAt: undefined, briefRevision: seed.briefRevision },
+      dataDir,
+    );
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
+
+    // v1 落定之后才铺语料：v2 的归因必须是新扫到的那一段
+    await seedTranscript();
+    const outcome = await makeRunJob({ angles: [anchored] })({
+      ...jobFor(topic),
+      kind: "angles",
+      perspectives: [],
+      briefRevision: 1,
+    });
+    expect(outcome.status).toBe("succeeded");
+
+    const v2 = (await loadBrief(topic.id, 2, dataDir))!;
+    expect(v2.ownMaterialRefs?.map((r) => r.id)).toEqual([OWN_CHUNK_ID]);
+    expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
   });
 });

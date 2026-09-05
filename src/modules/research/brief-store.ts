@@ -17,6 +17,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isTopicId } from "../../storage/entity-id.js";
+import type { PersonaKey } from "./personas.js";
 import type { PerspectiveName } from "./research-job-store.js";
 
 /** 落盘契约版本。改字段语义必须 +1，读侧对不认识的版本一律降级成「无简报」 */
@@ -42,6 +43,17 @@ export interface PerspectiveAssetPick {
   caption: string;
 }
 
+/**
+ * 无来源的受众推断（P1c spec §3.6）：凭经验而非页面得出的心理/行为判断。
+ * **只有受众视角能产**，且与 `insights` 严格分家——洞察必须挂来源，推断明确不可作证据，
+ * 渲染时一律带「无来源」标签。它是立意 pass 要的「误区」原料（P0 可发稿的共同起点）。
+ */
+export interface PerspectiveInference {
+  text: string;
+  /** 这条推断针对哪个画像；模型给不出就缺席，不硬猜 */
+  persona?: PersonaKey;
+}
+
 export interface PerspectiveOutput {
   name: PerspectiveName;
   insights: PerspectiveInsight[];
@@ -49,6 +61,14 @@ export interface PerspectiveOutput {
   assetPicks: PerspectiveAssetPick[];
   /** 这一路自己点名的材料缺口（配额耗尽 / 找不到数据 / 页面反爬） */
   gaps: string[];
+  /** 受众视角的无来源推断（§3.6）；其余视角缺席 */
+  inferences?: PerspectiveInference[];
+  /**
+   * 校验剔除记录（§4.7）：这一路交回来但没通过校验、被**逐条剔除**的条目原因。
+   * 有值 = 这份产出是「部分成功」的——整路不再因为几条坏条目被清零。
+   * 新增全可选字段，**不 bump schemaVersion**（同 assetPicks / angleCards 先例）。
+   */
+  partialProblems?: string[];
 }
 
 // ─── 简报（§5 schema） ───────────────────────────────────────────────────────
@@ -76,10 +96,12 @@ export interface BriefAssetPick {
 }
 
 /**
- * 角度卡（角度卡 spec §1.2）：写前「角度决策」的结构化载体，随简报的 revision 走。
+ * 角度卡 v2（角度卡 spec §1.2）：写前「角度决策」的结构化载体，随简报的 revision 走。
  * 一张卡约束的是**全稿**，不只是开头——thesis 是必须论证的论点，antiScope 是禁区。
+ *
+ * 新产地（立意 pass）只产 v3；v2 留作**只读兼容**——存量简报里的卡逐字有效。
  */
-export interface AngleCard {
+export interface AngleCardV2 {
   /** "angle-1"…（版本内稳定：简报不可覆盖，位置就是身份） */
   id: string;
   /** 切入点一句话 */
@@ -96,6 +118,78 @@ export interface AngleCard {
   holdTrigger: string;
   /** 开头钩子草稿（给创始人预览手感，写稿师可改写） */
   hookDraft: string;
+}
+
+/** 网感元素（P1 spec §3.1）：一张卡至少命中 2 个，且不能全靠「新奇点」 */
+export const ANGLE_ELEMENTS = ["新奇点", "爽点", "痛点→理想状态", "笑点", "泪点", "美点"] as const;
+export type AngleElement = (typeof ANGLE_ELEMENTS)[number];
+
+/** 结构骨架的**枚举**（说明文案在 angle-stage：那是提示词材料，不是落盘 schema） */
+export const ANGLE_STRUCTURES = ["myth-busting", "story", "single-point", "claim-case-claim"] as const;
+export type AngleStructure = (typeof ANGLE_STRUCTURES)[number];
+
+/**
+ * 第一手锚点（P1 spec §3.1）：**结构化引用**，不是一句自由文本。
+ * `excerptHash` 由代码算（被引片段正文的 sha256 前 16），模型给不出也改不动——
+ * 它是「这句引文当初确实出自那段材料」的唯一凭据（codex #8）。
+ */
+export interface FirsthandAnchor {
+  kind: "transcript" | "approved_draft" | "brief_evidence";
+  /** transcript / approved_draft：内容 id；brief_evidence 不用 */
+  contentId?: string;
+  /** transcript 的版本号（数值） */
+  sourceRevision?: number;
+  /** 片段 id；brief_evidence 时就是简报证据引用 "ev-N" */
+  chunkId?: string;
+  excerptHash: string;
+  /** 必须在被引片段里**逐字**存在 */
+  quote: string;
+}
+
+/**
+ * 角度卡 v3（P1 spec §3.1）：立意 pass 的产出。判别字段 `cardVersion: 3`（v2 卡没有）。
+ *
+ * **schemaVersion 不 bump**（沿用 2026-08-24 的裁决）：卡是可选字段，两版是联合类型，
+ * 旧简报读进来逐字有效；升版本等于把存量简报全部变成「无简报」。
+ */
+export interface AngleCardV3 {
+  cardVersion: 3;
+  id: string;
+  angle: string;
+  thesis: string;
+  /** grounded = 有简报证据撑着；overview = 综述级，必须写够证据需求（§5 无证据也要能出卡） */
+  evidenceLevel: "grounded" | "overview";
+  /** grounded 必填 ≥1；overview 允许空 */
+  coreEvidenceIds: string[];
+  tensionId?: string;
+  antiScope: string;
+  hookDraft: string;
+  /** 这一稿对谁说（账号的三项工作之一） */
+  primaryPersona: PersonaKey;
+  /** 他走进来时信的那个错的东西——前 3 秒要点它 */
+  misconception: string;
+  /** 一句话说清「为什么会这样」的因果；是不是比喻由审稿判，代码只校形状（codex #20） */
+  mechanism: string;
+  /** 收获感：大白话讲清为什么 + 一个他今天能做的方案/启发 */
+  payoff: string;
+  nextAction: string;
+  counterResponse: string;
+  personaGains: Record<PersonaKey, string>;
+  elements: AngleElement[];
+  firsthandAnchor?: FirsthandAnchor;
+  /** 这个主张要落地还缺什么证据（1–3 条），写稿前定向补证按它去找 */
+  evidenceNeeds: string[];
+  structure: AngleStructure;
+  /** 代码打的分，**只用于展示与排序**，永不写 selectedAngle（codex #7） */
+  score?: number;
+  scoreReasons?: string[];
+}
+
+/** 落盘类型：两版并存，读侧都认，UI 都渲染 */
+export type AngleCard = AngleCardV2 | AngleCardV3;
+
+export function isAngleCardV3(card: AngleCard | null | undefined): card is AngleCardV3 {
+  return !!card && (card as AngleCardV3).cardVersion === 3;
 }
 
 /** 证据的稳定引用 id：按位置编（1-based）。同版简报永不改写，位置即身份 */
@@ -150,6 +244,12 @@ export interface ResearchBrief {
    * 在版本内天然稳定，不需要往每条证据里塞一个存下来的 id。
    */
   angleCards?: AngleCard[];
+  /**
+   * 立意 pass 实际读到的内部语料片段（P1 spec §3.2 归因）：`{片段 id, excerptHash}`。
+   * 写手那一侧另记 `Content.usedOwnMaterial`——两处分记，才看得出「立意用了但写手没用」。
+   * P1a 还没接内部语料，字段先立好：新增全可选字段不 bump schemaVersion（同 assetPicks 先例）。
+   */
+  ownMaterialRefs?: { id: string; excerptHash: string }[];
   evidence: BriefEvidence[];
   assetPicks: BriefAssetPick[];
   /** 没跑成的视角，partial 时逐个点名 */
@@ -250,7 +350,13 @@ export async function saveBrief(
   return dest;
 }
 
-/** 形状体检：只查「注入与展示要用到的字段在不在」，不做全字段深校验 */
+/**
+ * 形状体检：只查「注入与展示要用到的字段在不在」，不做全字段深校验。
+ *
+ * **卡的版本不进体检**（P1 spec §3.1）：v2 与 v3 是联合类型，一份简报里两版混着也合法，
+ * 没有卡同样合法——这里只保证 `angleCards` 要么缺席、要么是个数组（读侧全按数组遍历）。
+ * 逐张卡的合法性由消费方各自判：一张坏卡不该让整份简报隐身。
+ */
 function isBriefShape(value: unknown): value is ResearchBrief {
   const b = value as Partial<ResearchBrief> | null;
   return (
@@ -260,6 +366,7 @@ function isBriefShape(value: unknown): value is ResearchBrief {
     Array.isArray(b.perspectives) &&
     Array.isArray(b.tensions) &&
     Array.isArray(b.angleSuggestions) &&
+    (b.angleCards === undefined || Array.isArray(b.angleCards)) &&
     typeof b.revision === "number"
   );
 }

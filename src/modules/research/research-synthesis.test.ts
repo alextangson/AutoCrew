@@ -201,6 +201,41 @@ describe("合法输出直通", () => {
     });
     expect(message).toContain(REAL_QUOTE);
   });
+
+  // P1c §3.6：无来源推断要进综合，但必须带着「不可引用」的标签进
+  it("受众推断单独成段并标明无来源；剔除条数只报数量", () => {
+    const message = buildSynthesisUserMessage({
+      topic: TOPIC,
+      perspectiveResults: [
+        perspective({
+          name: "audience",
+          inferences: [
+            { text: "他们以为换个模型就能解决", persona: "grow" },
+            { text: "第三秒没数字就划走" },
+          ],
+          partialProblems: ["已剔除：evidence[0]（p1）：找不到"],
+        }),
+      ],
+      broker: makeBroker(),
+    });
+
+    expect(message).toContain("受众推断（无来源）");
+    expect(message).toContain("不可引用");
+    expect(message).toContain("他们以为换个模型就能解决");
+    expect(message).toContain("（画像 grow）");
+    expect(message).toContain("有 1 条产出未通过校验被剔除");
+    expect(message).not.toContain("找不到"); // 剔除原因是运维信息，不占提示词
+  });
+
+  it("没有推断/剔除记录的视角不会多出空段落", () => {
+    const message = buildSynthesisUserMessage({
+      topic: TOPIC,
+      perspectiveResults: [perspective()],
+      broker: makeBroker(),
+    });
+    expect(message).not.toContain("受众推断");
+    expect(message).not.toContain("被剔除");
+  });
 });
 
 describe("伪造与降级", () => {

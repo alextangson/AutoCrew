@@ -22,11 +22,13 @@
  */
 import { getConversation } from "../storage/conversation-store.js";
 import { getTopic } from "../storage/local-store.js";
-import { loadLatestBrief, type AngleCard } from "../modules/research/brief-store.js";
+import type { AngleCard } from "../modules/research/brief-store.js";
+import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import {
   markJobFollowedUp,
   type PerspectiveName,
   type ResearchJob,
+  type ResearchJobKind,
 } from "../modules/research/research-job-store.js";
 import { PERSPECTIVE_TASK_BOOKS } from "../modules/research/research-perspectives.js";
 import { runPersistedChatTurn } from "./chat-persist.js";
@@ -36,6 +38,13 @@ import { hasActiveTurnForConversation } from "./turn-registry.js";
 /** 回报消息的开头暗号。SYSTEM_PROMPT 第 28 条按它识别「这不是用户在说话」——两处必须一致 */
 export const FOLLOWUP_PREFIX = "【调研回报】";
 
+/**
+ * 重新立意（angles job）的暗号。**不共用**「调研回报」那四个字：这一轮一条新材料都没查，
+ * 只是换了一批角度候选；套用调研的话术会让创始人以为又出网跑了一遍。
+ * 第 28 条同时认这两个前缀。
+ */
+export const ANGLE_FOLLOWUP_PREFIX = "【重新立意】";
+
 /** 等用户那一轮 settle：四视角都跑完了，多等几秒不算什么 */
 const BUSY_POLL_MS = 3000;
 /** 等待上限。超过就放弃——回报的价值随时间衰减，硬插进半小时后的对话只会让人莫名其妙 */
@@ -44,6 +53,8 @@ const BUSY_DEADLINE_MS = 10 * 60 * 1000;
 /** 组装回报所需的全部事实（确定层；由调用方从台账/简报取好再传进来） */
 export interface FollowupReport {
   topicTitle: string;
+  /** angles job（只重跑立意）与 full job 的回报是两件事，措辞不共用 */
+  kind?: ResearchJobKind;
   /** true = 这轮调研没出简报，下面只有 failReason 有意义 */
   failed: boolean;
   failReason?: string;
@@ -79,8 +90,17 @@ function angleBlock(cards: AngleCard[], gaps: string[]): string {
  */
 export function buildFollowupMessage(r: FollowupReport): string {
   const title = `选题《${r.topicTitle}》`;
+  const angles = r.kind === "angles";
+  const prefix = angles ? ANGLE_FOLLOWUP_PREFIX : FOLLOWUP_PREFIX;
   if (r.failed) {
-    return `${FOLLOWUP_PREFIX}${title}调研失败:${r.failReason || "未知原因"}`;
+    return `${prefix}${title}${angles ? "重新立意失败" : "调研失败"}:${r.failReason || "未知原因"}`;
+  }
+  if (angles) {
+    // 事实没变（这一轮一条新材料都没查），所以不重念摘要与缺席视角——只摆新卡
+    return [
+      `${prefix}${title}重新立意完成(第 ${r.briefRevision ?? 1} 版简报,材料没变、只换了角度候选)。`,
+      angleBlock(r.angleCards ?? [], r.gaps ?? []),
+    ].join("\n");
   }
   const missing = r.missingPerspectives ?? [];
   const partial = missing.length > 0 ? `,缺${missing.map(perspectiveLabel).join("、")}视角` : "";
@@ -115,21 +135,40 @@ function warn(message: string): void {
 async function collectReport(job: ResearchJob, dataDir: string): Promise<FollowupReport> {
   const topic = await getTopic(job.topicId, dataDir);
   const topicTitle = topic?.title || job.topicId;
+  const kind: ResearchJobKind = job.kind ?? "full";
   if (job.status === "failed") {
-    return { topicTitle, failed: true, failReason: job.failReason ?? job.errorCode ?? "调研失败" };
+    return { topicTitle, kind, failed: true, failReason: job.failReason ?? job.errorCode ?? "调研失败" };
   }
-  const brief = await loadLatestBrief(job.topicId, dataDir, (m) => warn(m));
-  if (!brief) {
+  // 唯一「当前有效简报」入口（P1 §3.0）：回报念的必须是这一轮真正生效的那版,
+  // 不能是磁盘上版本号最大的那份
+  const snap = await resolveEffectiveBrief(job.topicId, dataDir, (m) => warn(m));
+  if (!snap) {
     return {
       topicTitle,
+      kind,
       failed: true,
-      failReason: "四视角跑完了,但简报读不出来(文件损坏或已被清理)——去选题卡重跑一轮",
+      failReason:
+        kind === "angles"
+          ? "立意跑完了,但新简报读不出来(文件损坏或已被清理)——去选题卡再点一次「重新立意」"
+          : "四视角跑完了,但简报读不出来(文件损坏或已被清理)——去选题卡重跑一轮",
     };
   }
+  // 指针已经不指向本轮产出 = 这条选题后来又跑过一轮(或本轮没结算成)。
+  // 照念会把别人的简报安在这一轮头上,不如照实说
+  if (snap.revision !== job.briefRevision) {
+    return {
+      topicTitle,
+      kind,
+      failed: true,
+      failReason: `这一轮的简报已不是当前生效版(现在生效的是 v${snap.revision})——去选题卡看最新那版`,
+    };
+  }
+  const { brief } = snap;
   return {
     topicTitle,
+    kind,
     failed: false,
-    briefRevision: brief.revision,
+    briefRevision: snap.revision,
     missingPerspectives: brief.missingPerspectives ?? [],
     summary: brief.summary,
     angleCards: brief.angleCards ?? [],

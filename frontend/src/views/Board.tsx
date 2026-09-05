@@ -302,24 +302,35 @@ export function Board(props: { openEditor: (id: string) => void }) {
                     <div className="acard-chips">
                       {atom.members.map((m) => {
                         const badge = reviewBadge(m.review);
+                        // 缺证据（P1 §4.4）是硬门拦下的稿：红徽章 + 悬浮列出没出处的数字，
+                        // 混在灰色审稿徽章里会被当成又一条「还行」的提示
+                        const blocked = m.status === "needs_evidence";
                         return (
                           <button
                             key={m.id}
                             className={"chip" + (m.status === "published" ? " chip-pub" : "")}
-                            title={m.review?.issues.map((i) => i.rule).join("、") || undefined}
+                            title={
+                              blocked
+                                ? m.blockedReason ?? (m.unverifiedNumbers ?? []).join("、") ?? undefined
+                                : m.review?.issues.map((i) => i.rule).join("、") || undefined
+                            }
                             onClick={(e) => {
                               e.stopPropagation();
                               props.openEditor(m.id);
                             }}
                           >
                             {platformLabel(m.platform)} {VARIANT_STATUS[m.status] ?? m.status}
-                            {badge && <span className="muted"> {badge}</span>}
+                            {blocked && <span className="chip-blocked"> 缺证据</span>}
+                            {!blocked && badge && <span className="muted"> {badge}</span>}
                           </button>
                         );
                       })}
                     </div>
                   )}
                   {atom.members.some((m) => m.lastError) && <div className="acard-err">⚠ 生成中断,点开可重试</div>}
+                  {atom.members.some((m) => m.status === "needs_evidence") && (
+                    <div className="acard-err">⚠ 数字没有出处,点开补材料后重新生成</div>
+                  )}
                 </div>
               );
             })}

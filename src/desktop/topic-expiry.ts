@@ -9,7 +9,7 @@
  */
 import { listWorkspaces } from "./workspace-store.js";
 import { listTopics, listContents, softDeleteTopic, type Topic } from "../storage/local-store.js";
-import { loadLatestBrief } from "../modules/research/brief-store.js";
+import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { angleCardsOf } from "../modules/research/angle-cards.js";
 import { emitEngineEvent } from "./event-hub.js";
 
@@ -21,14 +21,17 @@ export const TOPIC_TTL_MS = 3 * 24 * 3600_000;
  * 简报 `generatedAt` 当续期锚：从调研落定那一刻重新计时（不新增状态字段）。
  *
  * 已经选过角度的照常计时——选完还不写，那就是真放下了。
- * 简报读不动一律按「没有简报」处理：豁免是加保护，加不上不该反过来阻断清理。
+ * 简报读不动一律按「没有简报」处理：豁免是加保护，加不上不该反过来阻断清理
+ * （`resolveEffectiveBrief` 自己吞异常并降级，这里不需要再 catch）。
  */
 async function expiryAnchor(topic: Topic, dataDir: string): Promise<number> {
   const base = new Date(topic.renewedAt ?? topic.createdAt).getTime();
   if (topic.selectedAngle) return base;
-  const brief = await loadLatestBrief(topic.id, dataDir).catch(() => null);
-  if (angleCardsOf(brief).length === 0) return base;
-  const generatedAt = new Date(brief!.generatedAt).getTime();
+  // 认生效简报（P1 §3.0）：磁盘上最大版可能是一份从未被采纳的重跑残留，
+  // 拿它续期等于给一条其实没结果的选题白加三天
+  const snap = await resolveEffectiveBrief(topic.id, dataDir);
+  if (!snap || angleCardsOf(snap.brief).length === 0) return base;
+  const generatedAt = new Date(snap.brief.generatedAt).getTime();
   // 坏时间戳不许把锚点污染成 NaN——那会让这条选题从此永不回收
   return Number.isFinite(generatedAt) ? Math.max(base, generatedAt) : base;
 }

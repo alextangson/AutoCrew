@@ -1,0 +1,66 @@
+{
+  "name": "dsh-autocrew",
+  "version": "0.1.0",
+  "description": "AutoCrew content-ops crew as a DeepSeek Harness plugin — topic research, writing, covers, and pre-publish checks driven by dsh's agent loop.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "autocrew",
+    "content-ops",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "author": "alextangson",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "agent-presets",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "smoke": "node scripts/smoke-register.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "//dependencies": "只列 dist/index.js 真正 import 的外部包（bundle 把 AutoCrew 的 TS 源码内联了，node_modules 依赖保持 external）。每放行一个新工具都要重新核对这份清单。",
+  "dependencies": {
+    "@deepseek-ai/dsh-home-paths": "^0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@sinclair/typebox": "0.34.48"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-llm": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2",
+    "@types/node": "^25.9.2",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alextangson/AutoCrew.git",
+    "directory": "adapters/dsh"
+  }
+}

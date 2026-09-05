@@ -10,7 +10,7 @@
  * 3. **过期照注但要标注**（§2）：简报基于旧版选题时不拦截注入，只在块首标一行——
  *    材料仍然有价值，判断权交给模型和人，不静默。
  */
-import type { BriefEvidence, ResearchBrief } from "./brief-store.js";
+import { evidenceRefId, type BriefEvidence, type ResearchBrief } from "./brief-store.js";
 import { sanitizeExternal, sanitizeUrlish } from "./research-prompt-kit.js";
 
 // ─── 预算表（spec §6：优先级与预算写成常量并测试锁定） ────────────────────────
@@ -76,10 +76,19 @@ export function domainOf(url: unknown): string {
   }
 }
 
-function evidenceLines(raw: unknown): string[] {
+/**
+ * 证据行。`exclude` 是「已经在别处逐字摆过的证据 id」（P1 §4.3 优先级 1 的核心证据块）——
+ * 同一条引文在一份 prompt 里出现两遍既浪费预算，也让写手以为那是两条独立来源。
+ * 先按 id 过滤再取前 N 条：反过来会让被排除的条目白占名额，把后面的证据挤出块外。
+ */
+function evidenceLines(raw: unknown, exclude: ReadonlySet<string>): string[] {
   if (!Array.isArray(raw)) return [];
+  const kept = (raw as BriefEvidence[])
+    .map((item, i) => ({ item, id: evidenceRefId(i) }))
+    .filter(({ id }) => !exclude.has(id))
+    .slice(0, MAX_EVIDENCE);
   const lines: string[] = [];
-  for (const item of (raw as BriefEvidence[]).slice(0, MAX_EVIDENCE)) {
+  for (const { item } of kept) {
     const claim = field(item?.claim, CLAIM_MAX);
     const quote = field(item?.quote, QUOTE_MAX);
     if (!claim && !quote) continue;
@@ -96,7 +105,7 @@ function numbered(items: string[]): string[] {
 }
 
 /** 块体：每个小节**空则整节省略**（tensions 允许为空，§5「不逼模型编张力」） */
-function renderBody(brief: ResearchBrief): string[] {
+function renderBody(brief: ResearchBrief, exclude: ReadonlySet<string>): string[] {
   const lines: string[] = [];
 
   const summary = field(brief.summary, SUMMARY_MAX);
@@ -108,7 +117,7 @@ function renderBody(brief: ResearchBrief): string[] {
   const angles = fieldList(brief.angleSuggestions, MAX_ANGLES, ANGLE_MAX);
   if (angles.length > 0) lines.push(`【可选切入角度】${numbered(angles).join(" ")}`);
 
-  const evidence = evidenceLines(brief.evidence);
+  const evidence = evidenceLines(brief.evidence, exclude);
   if (evidence.length > 0) lines.push("【证据（引文出自来源页，引用时保持原意）】", ...evidence);
 
   // 缺口摘要：告诉写手「哪些没查到」，比让它以为材料齐全更重要
@@ -135,14 +144,17 @@ function hardClamp(value: string, max: number): string {
  * 渲染注入块。`topicStale` 由调用方现算（当前选题 hash vs `brief.topicHash`）——
  * 本函数是纯的，不读盘。
  */
-export function buildBriefBlock(brief: ResearchBrief, opts: { topicStale: boolean }): string {
+export function buildBriefBlock(
+  brief: ResearchBrief,
+  opts: { topicStale: boolean; excludeEvidenceIds?: readonly string[] },
+): string {
   const head = [BRIEF_BLOCK_START, USAGE_NOTICE, ...(opts.topicStale ? [STALE_NOTICE] : [])];
   const tail = [BRIEF_BLOCK_END, BLOCK_TAIL];
   // 空行占位：join 之后的长度正好是「框架 + 块体」，块体预算由此确定
   const frameChars = [...head, "", ...tail].join("\n").length;
   const bodyBudget = BRIEF_BUDGET - frameChars;
 
-  const body = renderBody(brief).join("\n");
+  const body = renderBody(brief, new Set(opts.excludeEvidenceIds ?? [])).join("\n");
   const clipped =
     body.length <= bodyBudget
       ? body

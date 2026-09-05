@@ -13,7 +13,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildChatTools, type ChatCard } from "./chat-router.js";
 import { buildIpcHandlers } from "./ipc.js";
 import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCard, type ResearchBrief } from "../modules/research/brief-store.js";
-import { topicHashOf } from "../modules/research/research-job-store.js";
+import {
+  pendingPerspectives,
+  topicHashOf,
+  upsertJob,
+  type ResearchJob,
+} from "../modules/research/research-job-store.js";
 import { getTopic, saveTopic, updateTopic, type Topic } from "../storage/local-store.js";
 
 let testDir: string;
@@ -66,29 +71,46 @@ function makeBrief(over: Partial<ResearchBrief> = {}): ResearchBrief {
   };
 }
 
+/** CAS 推进台账指针 = 这一版才是「当前生效简报」（P1 §3.0，两个入口都认它） */
+async function adopt(topicId: string, briefRevision: number): Promise<void> {
+  const job: ResearchJob = {
+    topicId,
+    status: "succeeded",
+    startedAt: "2026-08-24T09:00:00.000Z",
+    settledAt: "2026-08-24T10:00:00.000Z",
+    perspectives: pendingPerspectives(),
+    briefRevision,
+    topicHash: topicHashOf(TITLE, DESC),
+  };
+  await upsertJob(job, testDir);
+}
+
 async function seed(brief: ResearchBrief | null = makeBrief()): Promise<Topic> {
   const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
-  if (brief) await saveBrief(topic.id, brief, testDir);
+  if (brief) {
+    await saveBrief(topic.id, brief, testDir);
+    await adopt(topic.id, brief.revision);
+  }
   return topic;
 }
 
 // ─── 聊天闸口（§1.6）─────────────────────────────────────────────────────────
 
+/** 每条分支都要看「有没有真的派活」，所以 startGenerate 一律打桩并断言调用次数 */
+function tools(sink: ChatCard[] = []) {
+  const startGenerate = vi.fn(async () => ({
+    contentId: "c-new", runId: "run-1", completion: Promise.resolve(),
+  }));
+  // list 永远空：中断稿重写是另一条分支，这里不该被它抢先
+  const content = vi.fn(async (p: Record<string, unknown>) =>
+    p.action === "list" ? { ok: true, contents: [] } : { ok: true });
+  return { sink, startGenerate, list: buildChatTools(sink, testDir, { startGenerate, content }) };
+}
+
+const run = (t: ReturnType<typeof tools>, args: Record<string, unknown>) =>
+  t.list.find((x) => x.name === "generate_script")!.execute(args) as Promise<string>;
+
 describe("generate_script 的角度闸口", () => {
-  /** 每条分支都要看「有没有真的派活」，所以 startGenerate 一律打桩并断言调用次数 */
-  function tools(sink: ChatCard[] = []) {
-    const startGenerate = vi.fn(async () => ({
-      contentId: "c-new", runId: "run-1", completion: Promise.resolve(),
-    }));
-    // list 永远空：中断稿重写是另一条分支，这里不该被它抢先
-    const content = vi.fn(async (p: Record<string, unknown>) =>
-      p.action === "list" ? { ok: true, contents: [] } : { ok: true });
-    return { sink, startGenerate, list: buildChatTools(sink, testDir, { startGenerate, content }) };
-  }
-
-  const run = (t: ReturnType<typeof tools>, args: Record<string, unknown>) =>
-    t.list.find((x) => x.name === "generate_script")!.execute(args) as Promise<string>;
-
   it("有候选卡且没选 → 不接单：回 needsAngle + 候选清单，同时推一张 angle_cards 卡", async () => {
     const topic = await seed();
     const t = tools();
@@ -118,7 +140,7 @@ describe("generate_script 的角度闸口", () => {
     expect(saved?.selectedAngle).toMatchObject({ briefRevision: 1, angleId: "angle-2", card: CARD_2 });
   });
 
-  it("angle_id 不在最新简报里 → 拒绝并让总编辑重念候选，不落选题、不开写", async () => {
+  it("angle_id 不在生效简报里 → 拒绝并让总编辑重念候选，不落选题、不开写", async () => {
     const topic = await seed();
     const t = tools();
 
@@ -254,9 +276,10 @@ describe("topic:select_angle / topic:clear_angle", () => {
     expect(saved?.selectedAngle).toMatchObject({ briefRevision: 1, angleId: "angle-1", card: CARD });
   });
 
-  it("brief_revision 不是最新版 → 拒（用户手上是过期候选）", async () => {
+  it("brief_revision 不是生效版 → 拒（用户手上是过期候选）", async () => {
     const topic = await seed();
     await saveBrief(topic.id, makeBrief({ revision: 2 }), testDir);
+    await adopt(topic.id, 2);
 
     const res = await call("topic:select_angle", { topic_id: topic.id, brief_revision: 1, angle_id: "angle-1" });
 
@@ -314,5 +337,75 @@ describe("topic:select_angle / topic:clear_angle", () => {
     expect(res.ok).toBe(true);
     const saved = await getTopic(topic.id, testDir);
     expect(saved).not.toHaveProperty("selectedAngle");
+  });
+});
+
+// ─── 单一简报快照（P1 spec §3.0）──────────────────────────────────────────────
+
+describe("两个入口都只认 job.briefRevision 指针", () => {
+  /** 生效的是 v1，磁盘上另躺一份从未被采纳的 v2（重跑落了盘却没结算成） */
+  async function seedOrphanV2(): Promise<{ topic: Topic; orphanCard: AngleCard }> {
+    const topic = await seed();
+    const orphanCard: AngleCard = { ...CARD, id: "angle-9", thesis: "只有孤儿 v2 才有的论点" };
+    await saveBrief(topic.id, makeBrief({ revision: 2, angleCards: [orphanCard] }), testDir);
+    return { topic, orphanCard };
+  }
+
+  it("聊天闸口：念的是 v1 的候选，卡片也标 v1——不是磁盘最大版", async () => {
+    const { topic } = await seedOrphanV2();
+    const t = tools();
+
+    const out = JSON.parse(await run(t, { topic: TITLE, platform: "douyin", topic_id: topic.id }));
+
+    expect(out.cards.map((c: { id: string }) => c.id)).toEqual(["angle-1", "angle-2"]);
+    expect(t.sink[0].data).toMatchObject({ topicId: topic.id, revision: 1 });
+  });
+
+  it("聊天闸口：v2 才有的 angle_id 选不了；v1 的选得了并落 briefRevision 1", async () => {
+    const { topic, orphanCard } = await seedOrphanV2();
+
+    const bad = JSON.parse(
+      await run(tools(), { topic: TITLE, platform: "douyin", topic_id: topic.id, angle_id: orphanCard.id }),
+    );
+    expect(bad.ok).toBe(false);
+    expect(String(bad.error)).toContain("v1");
+
+    const ok = JSON.parse(
+      await run(tools(), { topic: TITLE, platform: "douyin", topic_id: topic.id, angle_id: "angle-2" }),
+    );
+    expect(ok).toMatchObject({ ok: true, pending: true });
+    expect((await getTopic(topic.id, testDir))?.selectedAngle).toMatchObject({ briefRevision: 1, angleId: "angle-2" });
+  });
+
+  it("选卡 IPC：brief_revision 比对的是指针版 v1——报 2 反而被拒", async () => {
+    const { topic } = await seedOrphanV2();
+    const call = (payload: Record<string, unknown>) =>
+      buildIpcHandlers()["topic:select_angle"]({ ...payload, _dataDir: testDir });
+
+    const stale = await call({ topic_id: topic.id, brief_revision: 2, angle_id: "angle-1" });
+    expect(stale.ok).toBe(false);
+    expect(String(stale.error)).toContain("当前 v1");
+
+    const ok = await call({ topic_id: topic.id, brief_revision: 1, angle_id: "angle-1" });
+    expect(ok.ok).toBe(true);
+    expect((await getTopic(topic.id, testDir))?.selectedAngle).toMatchObject({ briefRevision: 1, card: CARD });
+  });
+
+  it("有简报文件但台账没指针 → 两个入口都当「没有简报」", async () => {
+    const topic = await saveTopic({ title: TITLE, description: DESC, tags: [] }, testDir);
+    await saveBrief(topic.id, makeBrief(), testDir);
+
+    // 闸口：没有候选就没有闸口，直接放行开写
+    const t = tools();
+    const out = JSON.parse(await run(t, { topic: TITLE, platform: "douyin", topic_id: topic.id }));
+    expect(out).toMatchObject({ ok: true, pending: true });
+    expect(t.sink).toHaveLength(0);
+
+    // 选卡 IPC：人话拒绝，不拿盘上那份顶上
+    const res = await buildIpcHandlers()["topic:select_angle"]({
+      topic_id: topic.id, brief_revision: 1, angle_id: "angle-1", _dataDir: testDir,
+    });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("还没有可用简报");
   });
 });

@@ -79,28 +79,19 @@ function adaptForDouyin(title: string, body: string, tags: string[]): AdaptPlatf
   const voiceover = paragraphs.slice(1).join("\n\n") || paragraphs[0] || body;
   const tagLine = hashtags(tags.slice(0, 5));
 
+  // 不写 [3秒开头]/[口播]/[字幕重点] 这类标注（P1 §4.4 口播格式硬门）：抖音稿是**纯口播正文**，
+  // 生成侧现在会把带标注的稿整篇打回，改写侧再注进去等于自己造一份过不了门的稿。
+  // 钩子仍然排在第一段、互动引导仍然收尾——结构照旧，只是不再用方括号说出来。
   return {
     ok: true,
     platform: "douyin",
     title: trimTitle(cleanTitle(title), 30),
-    body: [
-      "[3秒开头]",
-      hook,
-      "",
-      "[口播]",
-      voiceover,
-      "",
-      "[字幕重点]",
-      trimTitle(cleanTitle(title), 18),
-      "",
-      "[互动引导]",
-      "你最卡的是哪一步？评论区告诉我。",
-      tagLine ? `\n${tagLine}` : "",
-    ]
+    body: [hook, "", voiceover, "", "你最卡的是哪一步？评论区告诉我。", tagLine ? `\n${tagLine}` : ""]
       .join("\n")
       .trim(),
     notes: [
-      "改成短视频脚本结构，先给 3 秒钩子。",
+      "改成短视频口播结构，第一句就是 3 秒钩子。",
+      "纯口播正文，不写画面/字幕条/镜头标注。",
       "默认附带一条互动引导，方便评论区承接。",
     ],
   };

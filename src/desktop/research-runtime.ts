@@ -30,9 +30,10 @@ import {
   isTerminalJobStatus,
   type PerspectiveName,
   type ResearchJob,
+  type ResearchJobKind,
 } from "../modules/research/research-job-store.js";
 import { runResearchFollowup } from "./chat-followup.js";
-import { searchAvailable } from "../modules/research/search-provider.js";
+import { searchAvailable, SEARCH_NOT_CONFIGURED } from "../modules/research/search-provider.js";
 
 /** SSE `research` 流的载荷（spec §2「进度」）：只报 topicId，消费方按它重读状态 */
 export interface ResearchUpdatedEvent {
@@ -70,9 +71,8 @@ export interface ResearchRuntimeOptions {
   followupImpl?: typeof runResearchFollowup;
 }
 
-/** 搜索未配置时的人话出口（投递口共用，chat 与 IPC 一字不差） */
-export const SEARCH_NOT_CONFIGURED =
-  "深调研要联网取证：先去设置页 · 搜索来源配好博查或 Tavily 的 key，再回来点深调研（简报里的每条证据都要有可点的来源）";
+/** 搜索未配置时的人话出口——事实源在 search-provider（core 层，dsh/MCP 也要同一句） */
+export { SEARCH_NOT_CONFIGURED };
 
 const RUNTIME_DOWN = "深调研运行时没在跑（server 未接线）——重启 AutoCrew 后重试";
 
@@ -197,19 +197,36 @@ export function startResearchRuntime(opts: ResearchRuntimeOptions = {}): Promise
   });
 }
 
-/** 选题卡按钮 / chat 工具 / 以后的托管触发共用的**唯一投递口** */
-export async function triggerDeepResearch(topicId: string, dataDir?: string): Promise<TriggerResult> {
+/** 两种 kind 共用的投递体。`what` 只用于故障文案（「深调研」/「重新立意」） */
+async function postJob(topicId: string, kind: ResearchJobKind, dataDir?: string): Promise<TriggerResult> {
   if (!started) return { accepted: false, reason: RUNTIME_DOWN };
   const target = dataDir ?? boundDataDir ?? getDataDir(options.rootDir);
-  if (!(await searchAvailable(target))) return { accepted: false, reason: SEARCH_NOT_CONFIGURED };
+  const what = kind === "angles" ? "重新立意" : "深调研";
+  // 搜索 key 门只管 full：angles job 不出网，它要的是引擎不是搜索
+  if (kind === "full" && !(await searchAvailable(target))) {
+    return { accepted: false, reason: SEARCH_NOT_CONFIGURED };
+  }
   try {
     const active = await serialize(() => bindTo(target));
-    return await active.trigger(topicId);
+    return await active.trigger(topicId, kind);
   } catch (err) {
     // 台账写不进去之类的自身故障：照实拒，不假装已排队
     report(`投递失败（${topicId}）：${errText(err)}`);
-    return { accepted: false, reason: `深调研投递失败：${errText(err)}` };
+    return { accepted: false, reason: `${what}投递失败：${errText(err)}` };
   }
+}
+
+/** 选题卡按钮 / chat 工具 / 以后的托管触发共用的**唯一投递口** */
+export function triggerDeepResearch(topicId: string, dataDir?: string): Promise<TriggerResult> {
+  return postJob(topicId, "full", dataDir);
+}
+
+/**
+ * 重新立意（P1 spec §3.5）：在**当前生效简报**上只重跑立意 pass，产一版只换角度卡的新简报。
+ * 同选题有在途研究会被 runner 拒（「研究进行中」）——angles job 永远不和 full job 抢指针。
+ */
+export function triggerRegenerateAngles(topicId: string, dataDir?: string): Promise<TriggerResult> {
+  return postJob(topicId, "angles", dataDir);
 }
 
 /** doctor / 状态查询读口 */

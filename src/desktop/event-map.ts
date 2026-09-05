@@ -14,7 +14,7 @@ export interface EventMapInput {
 type Mapper = (input: EventMapInput) => Omit<EngineEvent, "ts"> | null;
 
 const STATUS_LABELS: Record<string, string> = {
-  topic_saved: "选题已存", drafting: "写作中", draft_ready: "草稿就绪", reviewing: "待审",
+  topic_saved: "选题已存", drafting: "写作中", needs_evidence: "缺证据", draft_ready: "草稿就绪", reviewing: "待审",
   revision: "修订中", approved: "已过审", editing: "剪辑", cover_pending: "封面设计", publish_ready: "待发布",
   publishing: "发布中", published: "已发布", archived: "已归档",
 };

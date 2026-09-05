@@ -75,7 +75,7 @@ export const KOUBO_PACK: TrackPack = {
   ],
   platformAdjustments: {
     xiaohongshu: { chars: "300-1000", style: "emoji 丰富、口语化，话题标签置尾（5-15 个）", maxChars: 1000 },
-    douyin: { chars: "脚本格式", style: "[画面] + [口播] + [字幕条]，3 秒内出钩子" },
+    douyin: { chars: "脚本格式", style: "纯口播正文，不写画面/字幕条/镜头标注；3 秒内出钩子" },
     wechat_mp: { chars: "1500-3000", style: "每 300-500 字一个小标题，结构感更强", maxChars: 3000 },
     wechat_video: { chars: "300-800", style: "教育向语气，附文字总结", maxChars: 800 },
     bilibili: { chars: "500-2000", style: "年轻化表达，可以用梗，【】标注类型", maxChars: 2000 },

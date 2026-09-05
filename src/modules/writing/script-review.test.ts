@@ -10,6 +10,7 @@ import type { SubmitPayload } from "./script-payload.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult } from "../../engine/loop.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
+import type { AngleCardV3 } from "../research/brief-store.js";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -302,7 +303,7 @@ describe("reviewAndConverge — 降级", () => {
     expect(out.review.status).toBe("failed");
     expect(out.payload).toEqual(PAYLOAD); // 改坏了就不要这一版
     expect(out.humanizedText).toBe(TEXT);
-    expect(warns.some((w) => w.includes("Quality Gate"))).toBe(true);
+    expect(warns.some((w) => w.includes("修订稿仍未过门禁"))).toBe(true);
   });
 
   it("修订轮没提交成稿 → failed，不换稿", async () => {
@@ -357,6 +358,22 @@ describe("reviewAndConverge — 墙钟", () => {
     expect(out.review.rounds).toBe(0);
     expect(out.payload).toEqual(PAYLOAD); // 在途修订作废
     expect(warns.some((w) => w.includes("丢弃在途修订"))).toBe(true);
+  });
+
+  it("单轮封顶：整段还有富余但审一遍超过单轮上限 → 本稿未经审稿，原因带两个上限", async () => {
+    const warns: string[] = [];
+    const runLoopImpl = async (): Promise<LoopResult> => {
+      await new Promise((r) => setTimeout(r, 60)); // 真等：单轮上限走的是真实计时器
+      return { finalMessage: "", turns: 1, totalTokens: 0, toolCallCount: 0, stopReason: "no_tool_calls" };
+    };
+    const out = await reviewAndConverge(INPUT, CONFIG, {
+      runLoopImpl,
+      deadlineMs: 60_000,
+      perPassDeadlineMs: 10,
+      onWarn: (m) => warns.push(m),
+    });
+    expect(out.review.status).toBe("skipped");
+    expect(warns.some((w) => w.includes("本轮上限 0 秒") && w.includes("整段 60 秒"))).toBe(true);
   });
 
   it("第二轮开始前已到点 → 不再发起修订，failed", async () => {
@@ -434,5 +451,186 @@ describe("reviewAndConverge — 审稿材料", () => {
     expect(b.seen.reviewOpts[0].userMessage).toBe(a.seen.reviewOpts[0].userMessage);
     expect(a.seen.reviewOpts[0].systemPrompt).not.toContain("thesis 没被论证");
     expect(a.seen.reviewOpts[0].userMessage).not.toContain("【本稿切入点");
+  });
+});
+
+// ─── 立意卡 v3：第三类判据（P1 §4.5 / 角度卡 spec §7.5） ──────────────────────
+
+describe("reviewAndConverge — 立意执行判据（v3 卡）", () => {
+  const V3: AngleCardV3 = {
+    cardVersion: 3,
+    id: "angle-1",
+    angle: "算一笔维护账",
+    thesis: "省下的编码时间被维护成本吃回去了",
+    evidenceLevel: "grounded",
+    coreEvidenceIds: ["ev-1"],
+    antiScope: "不写工具横评",
+    hookDraft: "账没算完。",
+    primaryPersona: "trust",
+    misconception: "以为提效数字等于净收益",
+    mechanism: "省下的时间落在写代码那一步，维护成本落在读代码那一步",
+    payoff: "看完你知道该拿哪个数字去跟老板谈",
+    nextAction: "把上周的返工工时也记进提效表",
+    counterResponse: "有人说熟练了就好",
+    personaGains: { grow: "听懂水分", trust: "拿到能复算的账", convert: "知道该盯哪一项" },
+    elements: ["痛点→理想状态", "新奇点"],
+    evidenceNeeds: ["一个企业公开披露的维护成本数字"],
+    structure: "claim-case-claim",
+  };
+  const withV3 = { ...INPUT, researchSlot: "【调研简报】三个数字", angle: V3 };
+
+  it("判据三进 system、立意卡进 user，needs_human 数字跟着一起交给审稿人", async () => {
+    const { impl, seen } = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge({ ...withV3, needsHumanNumbers: ["几十万"] }, CONFIG, { runLoopImpl: impl });
+
+    expect(seen.reviewOpts[0].systemPrompt).toContain("## 判据三：立意执行");
+    expect(seen.reviewOpts[0].systemPrompt).toContain(V3.nextAction);
+    expect(seen.reviewOpts[0].systemPrompt).toContain("需人工过目的模糊数量词：几十万");
+    expect(seen.reviewOpts[0].userMessage).toContain("【立意卡（本稿切入点");
+    expect(seen.reviewOpts[0].userMessage).toContain(V3.mechanism);
+    expect(seen.reviewOpts[0].userMessage).toContain("三个数字"); // 调研快照照样透传
+  });
+
+  // 判据三的 blocker 与 AI 味的 blocker 走同一个 { id, severity, quote, rule, instruction } 契约，
+  // 所以收敛循环一个字都不用改——这条测试就是在钉这件事。
+  it("立意执行 blocker 照样驱动一轮修订：status revised、fixed 1、rule 与 instruction 进修订轮", async () => {
+    const angleBlocker = {
+      severity: "blocker",
+      quote: "开头一句话",
+      rule: "误区没被点出或没被反驳",
+      instruction: `开头 3 秒先把「${V3.misconception}」这句话摆出来再反驳`,
+    };
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [angleBlocker] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    const out = await reviewAndConverge(withV3, CONFIG, { runLoopImpl: impl });
+
+    expect(out.review.status).toBe("revised");
+    expect(out.review.rounds).toBe(1);
+    expect(out.review.fixed).toBe(1);
+    expect(out.payload.hook).toBe(REVISED.hook);
+    expect(seen.reviseOpts).toHaveLength(1);
+    expect(seen.reviseOpts[0].userMessage).toContain(angleBlocker.rule);
+    expect(seen.reviseOpts[0].userMessage).toContain(angleBlocker.instruction);
+    // 再审那一轮读的是修订稿，判据三仍在（每轮重验，不是只验第一轮）
+    expect(seen.reviewOpts[1].systemPrompt).toContain("## 判据三：立意执行");
+    expect(seen.reviewOpts[1].userMessage).toContain(REVISED.hook as string);
+  });
+
+  it("立意执行 advisory 不打回：只透给创作者", async () => {
+    const advisory = {
+      severity: "advisory",
+      quote: "开头一句话",
+      rule: "身份表述",
+      instruction: "「不会写代码」这句创作者自己没说过，换成嘲行为的说法",
+    };
+    const { impl, seen } = makeLoop({ reviews: [[{ verdict: "revise", issues: [advisory] }]] });
+    const out = await reviewAndConverge(withV3, CONFIG, { runLoopImpl: impl });
+
+    expect(out.review.status).toBe("passed");
+    expect(out.review.issues).toHaveLength(1);
+    expect(seen.reviseOpts).toHaveLength(0);
+  });
+});
+
+// ─── 共享账本与共享工具（P1 §3.3 / §4.4 / codex #13、#21） ────────────────────
+
+describe("修订轮与写稿轮共用同一份门禁与同一份额度", () => {
+  /** 账本替身：真实现在 research/evidence-ledger.ts，这里只要「同一个实例」这件事 */
+  function ledgerWithBudget(max: number) {
+    let used = 0;
+    return {
+      entries: [{ id: "ev-1", source: "verified_quote" as const, quote: "一年省下 3000 万美元" }],
+      budget: {
+        max,
+        used: () => used,
+        take: () => (used >= max ? false : (used += 1, true)),
+      },
+    };
+  }
+
+  it("写手用掉的 find_evidence 次数，修订轮就没有了（同一个实例，不是各记各的）", async () => {
+    const ledger = ledgerWithBudget(3);
+    const calls: string[] = [];
+    const evidenceTool = {
+      name: "find_evidence",
+      description: "查证",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        if (!ledger.budget.take()) return "Error: 额度用完了";
+        calls.push("hit");
+        return "证据";
+      },
+    };
+    // 写手先用掉 2 次
+    await evidenceTool.execute();
+    await evidenceTool.execute();
+
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    const out = await reviewAndConverge({ ...INPUT, canFindEvidence: true }, CONFIG, {
+      runLoopImpl: impl,
+      evidenceTool,
+    });
+
+    expect(out.review.status).toBe("revised");
+    // 修订轮拿到的是**同一把**工具
+    expect((seen.reviseOpts[0].tools ?? []).map((t) => t.name)).toEqual(["submit_script", "find_evidence"]);
+    // 额度是同一份：写手花了 2 次，修订只剩 1 次
+    expect(await evidenceTool.execute()).toBe("证据");
+    expect(await evidenceTool.execute()).toContain("额度用完了");
+    expect(calls).toHaveLength(3);
+  });
+
+  it("没有查证工具时修订轮的工具带与改动前一致（只有 submit_script）", async () => {
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: impl });
+    expect((seen.reviseOpts[0].tools ?? []).map((t) => t.name)).toEqual(["submit_script"]);
+  });
+
+  it("canFindEvidence=true → 审稿 prompt 删掉「不要凭空要求作者补数据」（codex #21）", async () => {
+    const withTool = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge({ ...INPUT, canFindEvidence: true }, CONFIG, { runLoopImpl: withTool.impl });
+    expect(withTool.seen.reviewOpts[0].systemPrompt).not.toContain("不要凭空要求作者补数据");
+    expect(withTool.seen.reviewOpts[0].systemPrompt).toContain("修订轮手上有查证工具");
+
+    const without = makeLoop({ reviews: [[{ verdict: "pass", issues: [] }]] });
+    await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: without.impl });
+    expect(without.seen.reviewOpts[0].systemPrompt).toContain("不要凭空要求作者补数据");
+  });
+
+  it("修订稿触发数字硬门 → 整轮作废，回退修订前那版（改 AI 味不许顺手编个数）", async () => {
+    const { impl } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }]],
+      // 修订稿凭空多了一个「一年省下 500 万」——账本里没有这个数
+      revisions: [[{ ...REVISED, body: "正文讲了三件事。开头一句话也留着。这样一年省下 500 万。" }]],
+    });
+    const warns: string[] = [];
+    const out = await reviewAndConverge(INPUT, CONFIG, {
+      runLoopImpl: impl,
+      onWarn: (m) => warns.push(m),
+      submitDeps: {
+        ledger: () => [{ id: "ev-1", source: "verified_quote", quote: "一年省下 3000 万美元" }],
+        requireNumberEvidence: true,
+        forbidFormatMarkers: true,
+      },
+    });
+    expect(out.payload).toEqual(PAYLOAD); // 回退到修订前
+    expect(warns.some((w) => w.includes("needs_evidence"))).toBe(true);
+  });
+
+  it("修订轮回合上限由调用方给（写稿侧算好的同一个数）", async () => {
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: impl, maxWriterTurns: 11 });
+    expect(seen.reviseOpts[0].maxTurns).toBe(11);
   });
 });

@@ -1,6 +1,6 @@
 /**
- * 深调研 IPC handlers（deep-research spec §8）：
- * `research:deep_dive / status / brief_get / list_assets / import_asset`。
+ * 深调研 IPC handlers（deep-research spec §8 + P1 spec §4.6）：
+ * `research:deep_dive / regenerate_angles / status / brief_get / list_assets / import_asset`。
  *
  * 四条纪律：
  * 1. **投递即返回**：deep_dive 只把任务落进台账，绝不等四视角跑完（分钟级）。
@@ -33,10 +33,11 @@ import {
   getArticleImageReview,
   type ArticleImageReview,
 } from "../modules/publish/article-images.js";
-import { getJob, topicHashOf, type ResearchJob } from "../modules/research/research-job-store.js";
+import { getJob, topicHashOf } from "../modules/research/research-job-store.js";
+import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { searchAvailable } from "../modules/research/search-provider.js";
 import { emitEngineEvent } from "./event-hub.js";
-import { triggerDeepResearch } from "./research-runtime.js";
+import { triggerDeepResearch, triggerRegenerateAngles } from "./research-runtime.js";
 
 type Payload = Record<string, unknown>;
 type Reply = Record<string, unknown>;
@@ -83,16 +84,21 @@ function briefMeta(brief: ResearchBrief, topic: Topic): BriefMeta {
   };
 }
 
-/** 当前有效简报 = job.briefRevision 指向的那一份；没有 job / 没有指针 / 文件坏了都算「没有」 */
-async function loadCurrentBrief(job: ResearchJob | null, dataDir: string): Promise<ResearchBrief | null> {
-  if (!job || job.briefRevision === undefined) return null;
-  return loadBrief(job.topicId, job.briefRevision, dataDir, warn);
+/**
+ * 当前有效简报。**唯一入口是 `resolveEffectiveBrief`**（P1 §3.0）：这里曾经有一份
+ * 「读 job.briefRevision 再 loadBrief」的本地实现，规则同一条却是第二份代码——
+ * 快照层后来加的「文件内版本与指针不符按无简报处理」这类判断就不会落到这条路上。
+ */
+async function currentBrief(topicId: string, dataDir: string): Promise<ResearchBrief | null> {
+  const snapshot = await resolveEffectiveBrief(topicId, dataDir, warn);
+  return snapshot?.brief ?? null;
 }
 
 /**
  * 投递一次深调研。透传 `TriggerResult`：
- * - `accepted:false` → `{ok:false, error:reason}`（key 未配、选题不存在/在回收站、运行时未起）
- * - `deduped:true` → 已有任务在跑，返回的是**进行中那个** job，不重复排队
+ * - `accepted:false` → `{ok:false, error:reason}`（key 未配、选题不存在/在回收站、
+ *   运行时未起、**这条选题正在研究中**）
+ * - `deduped:true` → 捡回了一条租约已过期的在册任务（跑它的进程死了），没有新开一轮
  */
 export async function researchDeepDiveHandler(payload: Payload): Promise<Reply> {
   const bad = badPayload(payload);
@@ -108,8 +114,35 @@ export async function researchDeepDiveHandler(payload: Payload): Promise<Reply> 
         job: res.job,
         deduped: res.deduped,
         note: res.deduped
-          ? "这条选题已有调研在跑，本次合并到进行中的任务"
+          ? "上一轮中断在半路，已把它捡回来重跑"
           : "已排队——四视角并行侦察，进度在选题卡上实时更新",
+      },
+    };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/**
+ * 重新立意（P1 spec §3.5/§4.6）：在当前生效简报上只重跑立意 pass，落一版只换角度卡的新简报。
+ * 回执形状与 deep_dive 一致（同一条投递语义，前端一套处理）；不出网，所以没有搜索 key 门。
+ */
+export async function researchRegenerateAnglesHandler(payload: Payload): Promise<Reply> {
+  const bad = badPayload(payload);
+  if (bad) return bad;
+  const topicId = requireTopicId(payload);
+  if (!topicId) return { ok: false, error: "topic_id 必填" };
+  try {
+    const res = await triggerRegenerateAngles(topicId, researchDataDir(payload));
+    if (!res.accepted) return { ok: false, error: res.reason };
+    return {
+      ok: true,
+      data: {
+        job: res.job,
+        deduped: res.deduped,
+        note: res.deduped
+          ? "上一轮中断在半路，已把它捡回来重跑"
+          : "已排队——只重跑立意，出新角度卡后会落一版新简报（事实不变）",
       },
     };
   } catch (err) {
@@ -131,7 +164,7 @@ export async function researchStatusHandler(payload: Payload): Promise<Reply> {
     const topic = await getTopic(topicId, dataDir);
     if (!topic) return { ok: false, error: `选题不存在：${topicId}` };
     const job = await getJob(topicId, dataDir);
-    const brief = await loadCurrentBrief(job, dataDir);
+    const brief = await currentBrief(topicId, dataDir);
     return {
       ok: true,
       data: {
@@ -222,8 +255,7 @@ export async function researchListAssetsHandler(payload: Payload): Promise<Reply
   if (!topicId) return { ok: false, error: "topic_id 必填" };
   try {
     const dataDir = researchDataDir(payload);
-    const job = await getJob(topicId, dataDir);
-    const brief = await loadCurrentBrief(job, dataDir);
+    const brief = await currentBrief(topicId, dataDir);
     if (!brief) return { ok: false, error: NO_BRIEF };
     const picks: BriefAssetPick[] = brief.assetPicks ?? [];
     const assets = await Promise.all(picks.map((pick) => toAssetView(pick, dataDir)));

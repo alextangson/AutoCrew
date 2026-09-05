@@ -21,7 +21,9 @@ import {
   saveBrief,
   tensionByRef,
   tensionRefId,
+  isAngleCardV3,
   type AngleCard,
+  type AngleCardV3,
   type ResearchBrief,
 } from "./brief-store.js";
 
@@ -118,6 +120,42 @@ describe("不可变版本", () => {
     expect(await fs.readFile(briefPath(TOPIC, 1, dataDir), "utf-8")).toBe(v1Raw);
     expect((await loadBrief(TOPIC, 1, dataDir))?.summary).toBe("v1 的判断");
     expect((await loadLatestBrief(TOPIC, dataDir))?.summary).toBe("v2 的判断");
+  });
+});
+
+// P1c §3.6：inferences / partialProblems 是全可选新字段，schemaVersion 不动
+describe("视角新字段（无来源推断 / 剔除记录）", () => {
+  it("带新字段的简报存回来逐字不变", async () => {
+    const brief = makeBrief({
+      perspectives: [
+        {
+          name: "audience",
+          insights: [{ text: "维护账才是重点", sourceIds: ["p1"] }],
+          evidence: [],
+          assetPicks: [],
+          gaps: [],
+          inferences: [{ text: "他们以为换个模型就能解决", persona: "grow" }, { text: "第三秒会划走" }],
+          partialProblems: ["已剔除：evidence[0]（p1）：引文在原页找不到"],
+        },
+      ],
+    });
+    await saveBrief(TOPIC, brief, dataDir);
+
+    const loaded = await loadBrief(TOPIC, 1, dataDir);
+    expect(loaded?.perspectives[0].inferences).toEqual(brief.perspectives[0].inferences);
+    expect(loaded?.perspectives[0].partialProblems).toEqual(brief.perspectives[0].partialProblems);
+    expect(loaded?.schemaVersion).toBe(1);
+  });
+
+  it("旧简报（两个字段都没有）照常读进来，不告警、不降级", async () => {
+    await saveBrief(TOPIC, makeBrief(), dataDir);
+
+    const warns: string[] = [];
+    const loaded = await loadLatestBrief(TOPIC, dataDir, (m) => warns.push(m));
+    expect(warns).toEqual([]);
+    expect(loaded?.perspectives[0].insights).toHaveLength(2);
+    expect(loaded?.perspectives[0].inferences).toBeUndefined();
+    expect(loaded?.perspectives[0].partialProblems).toBeUndefined();
   });
 });
 
@@ -218,6 +256,65 @@ describe("角度卡随简报落盘", () => {
     expect(loaded?.summary).toBe("四路指向一致：工具好用但维护成本被低估。");
     expect(loaded?.angleCards).toBeUndefined();
     expect(loaded).not.toHaveProperty("angleCards");
+  });
+
+  // ─── 卡 v3（P1 spec §3.1）：判别字段 cardVersion，schemaVersion 仍是 1 ──────
+  const CARD_V3: AngleCardV3 = {
+    cardVersion: 3,
+    id: "angle-2",
+    angle: "验收标准换一个",
+    thesis: "该被考核的不是生成速度，而是改完之后谁能读懂",
+    evidenceLevel: "grounded",
+    coreEvidenceIds: ["ev-1"],
+    antiScope: "不谈选型、不谈价格",
+    hookDraft: "你们验收 AI 代码的那一条标准，可能正好是错的。",
+    primaryPersona: "convert",
+    misconception: "以为验收看的是速度",
+    mechanism: "生成快省的是打字，读不懂付的是维护，所以验收要验可读性",
+    payoff: "你会知道验收该验哪一条，今天就把它加进 checklist",
+    nextAction: "在验收清单里加一条「谁能读懂」",
+    counterResponse: "有人会说读不懂就重写——重写的成本正是这条要防的",
+    personaGains: { grow: "听懂验收在验什么", trust: "有可复用的清单", convert: "落地时少踩一次" },
+    elements: ["新奇点", "美点"],
+    firsthandAnchor: {
+      kind: "brief_evidence",
+      chunkId: "ev-1",
+      excerptHash: "0123456789abcdef",
+      quote: "62% 的开发者每天使用",
+    },
+    evidenceNeeds: ["验收清单的公开范例", "读不懂导致重写的案例"],
+    structure: "single-point",
+    score: 5,
+    scoreReasons: ["元素 2", "有简报证据（grounded）", "第一手锚点校验通过"],
+  };
+
+  it("v2 与 v3 卡混在一份简报里 → 原样读回，schemaVersion 仍是 1", async () => {
+    await saveBrief(TOPIC, makeBrief({ angleCards: [CARD, CARD_V3] }), dataDir);
+
+    const loaded = await loadLatestBrief(TOPIC, dataDir);
+    expect(loaded?.schemaVersion).toBe(1);
+    expect(loaded?.angleCards).toEqual([CARD, CARD_V3]);
+    expect(isAngleCardV3(loaded!.angleCards![0])).toBe(false);
+    expect(isAngleCardV3(loaded!.angleCards![1])).toBe(true);
+    // 判别只认 cardVersion：v2 卡没有这个字段，读回来也不许被补上
+    expect(loaded!.angleCards![0]).not.toHaveProperty("cardVersion");
+  });
+
+  it("ownMaterialRefs 是新增可选字段：给了原样读回，不给就缺席", async () => {
+    await saveBrief(TOPIC, makeBrief({ ownMaterialRefs: [{ id: "om:c1:video:3:0", excerptHash: "abc123" }] }), dataDir);
+    const loaded = await loadLatestBrief(TOPIC, dataDir);
+    expect(loaded?.ownMaterialRefs).toEqual([{ id: "om:c1:video:3:0", excerptHash: "abc123" }]);
+    expect(loaded?.schemaVersion).toBe(1);
+  });
+
+  it("angleCards 不是数组 → 按「无简报」降级并告警（读侧全按数组遍历）", async () => {
+    const broken = { ...makeBrief(), angleCards: "两张卡" };
+    await fs.mkdir(briefsDir(dataDir), { recursive: true });
+    await fs.writeFile(briefPath(TOPIC, 1, dataDir), JSON.stringify(broken), "utf-8");
+
+    const warns: string[] = [];
+    expect(await loadBrief(TOPIC, 1, dataDir, (m) => warns.push(m))).toBeNull();
+    expect(warns.join("")).toContain("字段残缺");
   });
 
   it("证据/张力点按位置解引用：越界、格式不对、非字符串一律 null", () => {

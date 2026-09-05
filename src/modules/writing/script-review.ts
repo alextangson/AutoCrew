@@ -21,9 +21,10 @@ import type { GateFailure } from "./quality-gate.js";
 import {
   assembleAndHumanize,
   buildSubmitTool,
-  type Captured,
-  type SubmitPayload,
-} from "./script-payload.js";
+  createCapture,
+  isAcceptedCapture,
+  type SubmitGateDeps,
+  type SubmitPayload, WRITER_MAX_TOKENS } from "./script-payload.js";
 import {
   buildReviewSystemPrompt,
   buildReviewUserMessage,
@@ -80,16 +81,43 @@ export interface ReviewInput {
   voiceSamples: string[];
   gate?: QualityGateSpec;
   platform: string;
+  /**
+   * 修订轮手上有没有 `find_evidence`（P1 §4.5 / codex #21）。审稿 prompt 的「能不能要求补数据」
+   * 与修订轮的工具箱必须是同一个事实——写在两处必然出现「审稿要求补、修订没工具补」。
+   * 调用方传 `deps.evidenceTool` 时这里就该是 true（`reviewAndConverge` 不替它猜）。
+   */
+  canFindEvidence?: boolean;
+  /**
+   * 数字硬门归一不了、放行但标了 `needs_human` 的量词（P1 §4.4/§4.5）。审稿人看到它们才知道
+   * 「几十万人」这种数是**代码放过的**，不是漏网的——不写进来，判据三那条 advisory 就只能靠
+   * 模型自己猜哪些数字模糊，而它猜不准（精确数字已经被硬门对过账了）。
+   */
+  needsHumanNumbers?: string[];
 }
 
 export interface ReviewDeps {
   runLoopImpl?: typeof runLoop;
   /** 整阶段墙钟；缺省 5 分钟 */
   deadlineMs?: number;
+  /** 单轮墙钟上限；缺省 PER_PASS_DEADLINE_MS（测试注入小值） */
+  perPassDeadlineMs?: number;
   nowImpl?: () => number;
   runId?: string;
   /** 降级出口：审稿是增益，降级了必须有人话留痕，默认 console.warn */
   onWarn?: (message: string) => void;
+  /**
+   * 写稿轮那把 `submit_script` 的硬门依赖（账本 getter + 两个开关，P1 §4.4）。
+   * **必须与写稿轮同一份**：修订轮少挂一个数字硬门，就等于给「改 AI 味时顺手编个数」
+   * 开了一条绕过门禁的路。
+   */
+  submitDeps?: SubmitGateDeps;
+  /**
+   * 写手的 `find_evidence` 工具**实例**（不是新建一个）。次数额度在账本上共享——
+   * 写手用掉 2 次、修订只剩 1 次，这正是要的行为（codex #13）。
+   */
+  evidenceTool?: LoopTool;
+  /** 修订轮的回合上限；缺省沿用「4 + gate 修复轮 ×2」。写稿侧算好了就传同一个数 */
+  maxWriterTurns?: number;
 }
 
 export interface ReviewOutcome {
@@ -102,8 +130,18 @@ export interface ReviewOutcome {
   tokensUsed: number;
 }
 
-/** 整阶段墙钟上限 5 分钟（§2.2 硬闸：runLoop 的 token 限额只是轮前软检查） */
-export const DEFAULT_REVIEW_DEADLINE_MS = 300_000;
+/**
+ * 整阶段墙钟上限 12 分钟（§2.2 硬闸：runLoop 的 token 限额只是轮前软检查）。
+ * 原 5 分钟是审稿+全部修订轮**共用**的：P1b 端到端里 DeepSeek 审一遍就用掉大半，修订轮
+ * 必然超时降级——P1c 花在审稿判据上的功夫一行都没执行到。现在总额 12 分钟，另给每一轮
+ * 单独封顶（PER_PASS_DEADLINE_MS），一轮卡死不拖垮整段。
+ */
+export const DEFAULT_REVIEW_DEADLINE_MS = 16 * 60_000;
+/**
+ * 单轮（审一遍 / 修一遍）墙钟上限。8 分钟：dsh 真机（2026-09-05）DeepSeek V4 Pro 审一遍
+ * 296 秒回来、再补一轮 4 秒就撞上 5 分钟的线——差 4 秒把整段审稿判成 skipped。
+ */
+export const PER_PASS_DEADLINE_MS = 8 * 60_000;
 /** 修订上限 2 轮（§2.2）——再多就是无限润色 */
 const MAX_REVISION_ROUNDS = 2;
 /** malformed 自纠 1 轮（§2.3） */
@@ -244,7 +282,12 @@ async function reviewOnce(
   try {
     const result = await (deps.runLoopImpl ?? runLoop)(reviewer.config, {
       model: reviewer.model,
-      systemPrompt: buildReviewSystemPrompt(Boolean(input.researchSlot?.trim()), Boolean(input.angle)),
+      systemPrompt: buildReviewSystemPrompt({
+        hasResearch: Boolean(input.researchSlot?.trim()),
+        ...(input.angle ? { angle: input.angle } : {}),
+        canFindEvidence: Boolean(input.canFindEvidence),
+        needsHumanNumbers: input.needsHumanNumbers ?? [],
+      }),
       userMessage: buildReviewUserMessage({
         payload: draft.payload,
         humanizedText: draft.humanizedText,
@@ -280,7 +323,7 @@ async function reviseOnce(
   config: EngineConfig,
   deps: ReviewDeps,
 ): Promise<RevisionPass> {
-  const captured: Captured = { payload: null, gateFailures: [] };
+  const captured = createCapture();
   const writer = resolveEngineRoute(config, "writer", config.strongModel);
   const gate = input.gate;
   try {
@@ -288,9 +331,10 @@ async function reviseOnce(
       model: writer.model,
       systemPrompt: input.system,
       userMessage: buildRevisionUserMessage(draft.payload, blockers, input.user),
-      tools: [buildSubmitTool(captured, gate)],
-      maxTurns: gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4,
-      maxTotalTokens: gate ? 80000 : undefined,
+      // 同一把 submit_script（同硬门依赖）+ 写手那个 find_evidence **实例**（共享次数额度）
+      tools: [buildSubmitTool(captured, gate, deps.submitDeps), ...(deps.evidenceTool ? [deps.evidenceTool] : [])],
+      maxTurns: deps.maxWriterTurns ?? (gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4),
+      maxTotalTokens: WRITER_MAX_TOKENS,
       logMeta: { ...(deps.runId ? { runId: deps.runId } : {}), agent: "reviser" },
     });
     if (!captured.payload) {
@@ -300,13 +344,13 @@ async function reviseOnce(
         tokensUsed: result.totalTokens,
       };
     }
-    if (captured.gateFailures.length > 0) {
-      // 修订把结构改坏了：整轮作废，回退到修订前那版（§2.2 每轮重验的全部意义）
-      return {
-        ok: false,
-        reason: `修订稿仍未过 Quality Gate：${captured.gateFailures.map((f) => f.check).join("、")}`,
-        tokensUsed: result.totalTokens,
-      };
+    if (!isAcceptedCapture(captured) || captured.gateFailures.length > 0) {
+      // 修订把结构改坏了（或改出了无据数字/镜头标注）：整轮作废，回退到修订前那版
+      // （§2.2 每轮重验的全部意义）。硬门拦下的那版尤其不能收——它比原稿更不能发。
+      const why = captured.blocked
+        ? `触发硬门 ${captured.blocked.reason}`
+        : captured.gateFailures.map((f) => f.check).join("、");
+      return { ok: false, reason: `修订稿仍未过门禁：${why}`, tokensUsed: result.totalTokens };
     }
     return {
       ok: true,
@@ -371,7 +415,9 @@ export async function reviewAndConverge(
   const now = deps.nowImpl ?? Date.now;
   const startedAt = now();
   const deadlineMs = deps.deadlineMs ?? DEFAULT_REVIEW_DEADLINE_MS;
+  const perPassMs = deps.perPassDeadlineMs ?? PER_PASS_DEADLINE_MS;
   const remaining = () => deadlineMs - (now() - startedAt);
+  const passCap = () => Math.min(remaining(), perPassMs);
   const warn = deps.onWarn ?? ((message: string) => console.warn(`[script-review] ${message}`));
 
   let draft: Draft = { payload: input.payload, humanizedText: input.humanizedText };
@@ -381,10 +427,11 @@ export async function reviewAndConverge(
   let tokensUsed = 0;
 
   for (;;) {
-    const pass = await withDeadline(() => reviewOnce(input, draft, config, deps, rounds), remaining());
+    const cap = passCap();
+    const pass = await withDeadline(() => reviewOnce(input, draft, config, deps, rounds), cap);
     if (pass !== DEADLINE) tokensUsed += pass.tokensUsed;
     if (pass === DEADLINE || !pass.ok) {
-      const reason = pass === DEADLINE ? `审稿超时（${Math.round(deadlineMs / 1000)} 秒）` : pass.reason;
+      const reason = pass === DEADLINE ? `审稿超时（本轮上限 ${Math.round(cap / 1000)} 秒，整段 ${Math.round(deadlineMs / 1000)} 秒）` : pass.reason;
       // 首轮就没审成 = 这稿压根没经 AI 审稿；已经修过再失手 = 审出过问题但收不了尾
       warn(rounds === 0 ? `本稿未经 AI 审稿：${reason}` : `审稿未能收尾（已修订 ${rounds} 轮）：${reason}`);
       return settle(draft, rounds === 0 ? "skipped" : "failed", rounds, fixed, issues, tokensUsed);
@@ -400,7 +447,7 @@ export async function reviewAndConverge(
       warn(`修订 ${rounds} 轮后仍有 ${blockers.length} 项 blocker，按残留转正`);
       return settle(draft, "failed", rounds, fixed, issues, tokensUsed);
     }
-    const revised = await withDeadline(() => reviseOnce(input, draft, blockers, config, deps), remaining());
+    const revised = await withDeadline(() => reviseOnce(input, draft, blockers, config, deps), passCap());
     if (revised !== DEADLINE) tokensUsed += revised.tokensUsed;
     if (revised === DEADLINE || !revised.ok) {
       warn(revised === DEADLINE ? "修订超时，丢弃在途修订，用最后一版过 gate 的稿" : `修订失败：${revised.reason}`);

@@ -152,6 +152,7 @@ export const IPC_CHANNELS = [
   "patterns:update",
   "patterns:delete",
   "research:deep_dive",
+  "research:regenerate_angles",
   "research:status",
   "research:brief_get",
   "research:list_assets",

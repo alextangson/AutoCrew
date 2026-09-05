@@ -33,10 +33,21 @@ export interface PerspectiveState {
   errorCode?: string;
 }
 
+/**
+ * 任务类型（P1 spec §3.5）。`full` = 四视角深调研；`angles` = 只在当前简报上重跑一次立意。
+ * **缺省即 full**：存量台账里一行 kind 都没有，加了默认值它们才继续是深调研。
+ */
+export type ResearchJobKind = "full" | "angles";
+
 export interface ResearchJob {
   /** 台账主键：一个选题同时只有一个「当前 job」 */
   topicId: string;
   status: ResearchJobStatus;
+  /**
+   * 缺席 = `full`（存量记录全是这样）。angles job 不跑视角，
+   * 所以它的 `perspectives` 恒为 `[]`——进度条那一栏什么都不画。
+   */
+  kind?: ResearchJobKind;
   /** running 的 lease 起点；跨进程/重启防重靠它（§2） */
   claimedAt?: string;
   /** 本轮任务入队时刻（重跑会刷新成新一轮的起点） */

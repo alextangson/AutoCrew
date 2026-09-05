@@ -290,15 +290,24 @@ describe("伪造与修复轮", () => {
     expect(res.status).toBe("succeeded");
   });
 
-  it("修复轮耗尽 → 本路 failed(invalid_output)，不静默收下残缺产出", async () => {
+  // P1c §4.7：修复轮耗尽本身不再是死因——**一条合法洞察都不剩**才是
+  it("洞察全是伪造来源 → 修复轮耗尽后 failed(invalid_output)", async () => {
     const cap = newCapture();
-    const res = await run([READ, fakeQuote, fakeQuote, fakeQuote, fakeQuote], cap);
+    const allFake = submit({
+      insights: [
+        { text: "凭空一条", source_ids: ["p99"] },
+        { text: "凭空两条", source_ids: ["p98"] },
+      ],
+      evidence: [],
+      asset_picks: [],
+    });
+    const res = await run([READ, allFake, allFake, allFake, allFake], cap);
 
     expect(cap.results.at(-1)).toContain("修复轮已用尽");
     expect(res.status).toBe("failed");
     if (res.status !== "failed") return;
     expect(res.errorCode).toBe("invalid_output");
-    expect(res.reason).toContain("找不到");
+    expect(res.reason).toContain("p99");
   });
 
   it("伪造 assetId → 打回（模型只能选 broker 登记过的图）", async () => {
@@ -346,6 +355,156 @@ describe("伪造与修复轮", () => {
       expect(res.errorCode).toBe("engine_failed");
       expect(res.reason).toContain("502");
     }
+  });
+});
+
+// ─── 剔条目不清零（P1c §4.7） ────────────────────────────────────────────────
+
+describe("校验剔除只剔条目", () => {
+  const fakeQuote = submit({
+    evidence: [{ claim: "编的", source_id: "p1", quote: "97% 的人已经放弃了 AI 编程助手" }],
+  });
+
+  it("再次提交时坏引文只被剔掉，洞察还在 → succeeded(partial) 并记 partialProblems", async () => {
+    const cap = newCapture();
+    const res = await run([SEARCH, READ, fakeQuote, fakeQuote], cap);
+
+    expect(cap.results[2]).toMatch(/^Error/); // 首次提交仍然给一次修复机会
+    expect(cap.results[3]).not.toMatch(/^Error/);
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.partial).toBe(true);
+    expect(res.output.insights).toHaveLength(2);
+    expect(res.output.evidence).toEqual([]); // 只有那条引文被剔了
+    expect(res.output.partialProblems?.join("")).toContain("已剔除");
+    expect(res.output.partialProblems?.join("")).toContain("找不到");
+  });
+
+  it("坏图片 id 同样只剔那一张，其余产出照收", async () => {
+    const cap = newCapture();
+    const bad = submit({ asset_picks: [{ asset_id: "a99", caption: "并不存在" }] });
+    const res = await run([SEARCH, READ, bad, bad], cap);
+
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.output.assetPicks).toEqual([]);
+    expect(res.output.evidence).toHaveLength(1);
+    expect(res.output.partialProblems?.join("")).toContain("a99");
+  });
+
+  it("合法洞察只剩 1 条也收下（严格档 ≥2 只管首次提交）", async () => {
+    const cap = newCapture();
+    const oneGood = submit({
+      insights: [
+        { text: "只有这条挂得上来源", source_ids: ["p1"] },
+        { text: "这条来源是编的", source_ids: ["p97"] },
+      ],
+      evidence: [],
+      asset_picks: [],
+    });
+    const res = await run([READ, oneGood, oneGood], cap);
+
+    expect(cap.results[1]).toContain("p97");
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.output.insights).toHaveLength(1);
+    expect(res.partial).toBe(true);
+  });
+
+  it("全程干净的产出不带 partial 标记", async () => {
+    const cap = newCapture();
+    const res = await run([SEARCH, READ, submit()], cap);
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.partial).toBe(false);
+    expect(res.output.partialProblems).toBeUndefined();
+  });
+});
+
+// ─── 受众推断（P1c §3.6） ────────────────────────────────────────────────────
+
+describe("受众推断 inferences", () => {
+  const submitTool = (cap: Capture) =>
+    (cap.opts!.tools ?? []).find((t) => t.name === "submit_perspective")!;
+
+  it("只有受众视角的 schema 和提示词里有 inferences", async () => {
+    for (const name of ["audience", "evidence", "counter", "benchmark"] as const) {
+      const cap = newCapture();
+      await run([SEARCH, READ, submit()], cap, { name });
+      const props = (submitTool(cap).parameters as { properties: Record<string, unknown> }).properties;
+      expect("inferences" in props).toBe(name === "audience");
+      expect(cap.opts!.systemPrompt.includes("无来源的受众推断")).toBe(name === "audience");
+    }
+  });
+
+  it("受众视角的推断不需要任何来源就被收下，persona 认三画像", async () => {
+    const cap = newCapture();
+    const res = await run(
+      [
+        SEARCH,
+        READ,
+        submit({
+          inferences: [
+            { text: "他们以为换个模型就能解决，其实卡在自己的提示词里", persona: "grow" },
+            { text: "同行看到第三秒还没有数字就会划走" },
+            { text: "画像写错的这条只丢 persona", persona: "老板" },
+          ],
+        }),
+      ],
+      cap,
+      { name: "audience" },
+    );
+
+    expect(cap.results[2]).not.toMatch(/^Error/); // 首次提交直通：推断不需要来源
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.partial).toBe(false);
+    expect(res.output.inferences).toEqual([
+      { text: "他们以为换个模型就能解决，其实卡在自己的提示词里", persona: "grow" },
+      { text: "同行看到第三秒还没有数字就会划走" },
+      { text: "画像写错的这条只丢 persona" },
+    ]);
+  });
+
+  it("超过 6 条截断、空 text 忽略——都只记 partialProblems，不打回", async () => {
+    const cap = newCapture();
+    const res = await run(
+      [
+        SEARCH,
+        READ,
+        submit({
+          inferences: [
+            { text: "" },
+            ...Array.from({ length: 7 }, (_, i) => ({ text: `推断 ${i + 1}` })),
+          ],
+        }),
+      ],
+      cap,
+      { name: "audience" },
+    );
+
+    expect(cap.results[2]).not.toMatch(/^Error/);
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.output.inferences).toHaveLength(5); // 前 6 条里有一条是空 text
+    expect(res.output.partialProblems?.join("")).toContain("已截断");
+    expect(res.output.partialProblems?.join("")).toContain("为空");
+  });
+
+  it("非受众视角交推断 → 整块忽略并记一笔，但不打回（那字段本来就没给它）", async () => {
+    const cap = newCapture();
+    const res = await run(
+      [SEARCH, READ, submit({ inferences: [{ text: "我猜他们不在乎价格" }] })],
+      cap,
+      { name: "counter" },
+    );
+
+    expect(cap.results[2]).not.toMatch(/^Error/);
+    expect(res.status).toBe("succeeded");
+    if (res.status !== "succeeded") return;
+    expect(res.output.inferences).toBeUndefined();
+    expect(res.partial).toBe(true);
+    expect(res.output.partialProblems?.join("")).toContain("只有受众视角能产");
   });
 });
 

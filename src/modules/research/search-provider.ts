@@ -58,6 +58,13 @@ export async function searchAvailable(dataDir?: string): Promise<boolean> {
   return (await loadSearchConfig(dataDir)) !== null;
 }
 
+/**
+ * 搜索未配置时的人话出口。住在这里而不是某个宿主层：桌面投递口、dsh/MCP 的
+ * `autocrew_workflow` 都要一字不差地说同一句，抄两份迟早分叉成两种说法。
+ */
+export const SEARCH_NOT_CONFIGURED =
+  "深调研要联网取证：先去设置页 · 搜索来源配好博查或 Tavily 的 key，再回来点深调研（简报里的每条证据都要有可点的来源）";
+
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);

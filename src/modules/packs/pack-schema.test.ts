@@ -20,6 +20,14 @@ describe("koubo pack shape", () => {
     }
   });
 
+  it("抖音 = 纯口播正文，包里不再示范镜头/字幕条格式（P1 §4.4 口播格式硬门）", () => {
+    const douyin = KOUBO_PACK.platformAdjustments.douyin;
+    expect(douyin?.style).toBe("纯口播正文，不写画面/字幕条/镜头标注；3 秒内出钩子");
+    for (const marker of ["[画面]", "[口播]", "[字幕条]"]) {
+      expect(douyin?.style).not.toContain(marker);
+    }
+  });
+
   it("structure skeleton covers hook/body/cta with non-empty rules", () => {
     expect(KOUBO_PACK.structure.hook.length).toBeGreaterThan(0);
     expect(KOUBO_PACK.structure.body.length).toBeGreaterThanOrEqual(4);

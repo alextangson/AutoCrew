@@ -6,8 +6,9 @@
  * 真正的四视角检索由 `runJob` 注入（W3 填），本模块只管
  * claim / lease / 状态落盘 / briefRevision 指针 / 启动回收。
  *
- * 同选题重复触发的防重是**两层**：进程内靠队列按 topicId 合并，跨进程/重启靠
- * job 的 claimedAt lease（30 分钟）——进程内 Map 拦不住「上一个进程崩在半路」。
+ * 同选题重复触发的防重是**两层**：投递口按台账拒（非终态一律「研究进行中」，
+ * full 与 angles 共用这一道门），跨进程/重启靠 job 的 claimedAt lease（30 分钟）
+ * ——台账那一眼拦不住「上一个进程崩在半路」，租约过期的 running 才允许被捡回重排。
  */
 import { getTopic, updateTopic } from "../../storage/local-store.js";
 import {
@@ -19,6 +20,7 @@ import {
   upsertJob,
   type PerspectiveState,
   type ResearchJob,
+  type ResearchJobKind,
 } from "./research-job-store.js";
 
 /** running 租约 30 分钟（§2）：超时即认为跑它的进程已死，可回收重排 */
@@ -58,16 +60,21 @@ export interface ResearchRunnerDeps {
 }
 
 /**
- * 投递结果。`accepted:false` = 连 job 都没落（选题没了）；
- * `deduped:true` = 已有非终态 job，返回的是**进行中那个**，本次没有重新排队。
+ * 投递结果。`accepted:false` = 连 job 都没落（选题没了 / 这条选题正在研究中）；
+ * `inFlight:true` 是后者的判别位——调用方要说「研究进行中」而不是「投递失败」。
+ * `deduped:true` = 捡回了一条**租约已过期**的 running（跑它的进程死了），没有新开一轮。
  */
 export type TriggerResult =
   | { accepted: true; deduped: boolean; job: ResearchJob }
-  | { accepted: false; reason: string };
+  | { accepted: false; reason: string; inFlight?: true };
 
 export interface ResearchRunner {
-  /** 投递一次深调研；同选题非终态时合并成同一个 job */
-  trigger(topicId: string): Promise<TriggerResult>;
+  /**
+   * 投递一次研究任务（`full` = 四视角深调研，`angles` = 只重跑立意）。
+   * 同选题已有在途任务 → **拒绝**（不合并、不排队）：两种 kind 共用这一道门，
+   * angles job 因此永远不会和 full job 抢同一条选题的简报指针（§3.5）。
+   */
+  trigger(topicId: string, kind?: ResearchJobKind): Promise<TriggerResult>;
   /** 启动用：回收 lease 过期的 running（→ queued）并把所有非终态 job 重新排队，返回被回收的项 */
   reclaimStaleJobs(): Promise<ResearchJob[]>;
   /** 队列排空且无在途任务时 resolve（测试与优雅停机用） */
@@ -101,13 +108,32 @@ function isClaimable(job: ResearchJob, nowMs: number): boolean {
   return false;
 }
 
+/** 「这条选题正在研究中」的人话（chat 与 IPC 共用一句，别在别处再造一套） */
+function inFlightReason(job: ResearchJob): string {
+  const what = job.kind === "angles" ? "重新立意" : "深调研";
+  const where = job.status === "queued" ? "还在队列里" : "正在跑";
+  return `研究进行中：这条选题的${what}${where}，等它落定再派下一轮（进度在选题卡上）`;
+}
+
 /**
  * 回执 → 落定后的完整记录。claimedAt 清空（释放租约）；
  * briefRevision **只在 succeeded/partial 且本轮真出了简报时**推进，其余保留旧指针。
+ *
+ * angles job 多一道 **CAS**（§3.5/§5）：它是拿「起跑那一刻的简报」重算的卡，
+ * 落定时指针要是已经被别人推过（跨进程的晚到结算、租约回收后的重排），
+ * 这版卡就是长在旧简报上的——照推等于让**更新的**那版简报被旧立意覆盖。
+ * 所以指针不等即作废：failed + `stale_pointer`，指针原样保留。
+ * full job 语义不变：它自己产的是**新版**简报（revision 由 nextBriefRevision 现算，
+ * 只会更大），推进不会把新的盖成旧的。
  */
-function settledJob(claimed: ResearchJob, outcome: JobOutcome, settledAt: string): ResearchJob {
+function settledJob(
+  claimed: ResearchJob,
+  latest: ResearchJob,
+  outcome: JobOutcome,
+  settledAt: string,
+): ResearchJob {
   const next: ResearchJob = {
-    ...claimed,
+    ...latest,
     status: outcome.status,
     settledAt,
     claimedAt: undefined,
@@ -115,9 +141,16 @@ function settledJob(claimed: ResearchJob, outcome: JobOutcome, settledAt: string
     errorCode: outcome.errorCode,
     failReason: outcome.failReason,
   };
-  if (outcome.status !== "failed" && outcome.briefRevision !== undefined) {
-    next.briefRevision = outcome.briefRevision;
+  if (outcome.status === "failed" || outcome.briefRevision === undefined) return next;
+  if (claimed.kind === "angles" && latest.briefRevision !== claimed.briefRevision) {
+    return {
+      ...next,
+      status: "failed",
+      errorCode: "stale_pointer",
+      failReason: `这轮立意基于简报 v${claimed.briefRevision ?? "-"}，落定时生效的已经是 v${latest.briefRevision ?? "-"}——本轮结果作废，请在新简报上重新立意`,
+    };
   }
+  next.briefRevision = outcome.briefRevision;
   return next;
 }
 
@@ -140,7 +173,7 @@ class SerialResearchRunner implements ResearchRunner {
         console.error(`[research-runner] ${ctx.phase} 失败（${ctx.topicId ?? "-"}）：${errText(err)}`));
   }
 
-  async trigger(topicId: string): Promise<TriggerResult> {
+  async trigger(topicId: string, kind: ResearchJobKind = "full"): Promise<TriggerResult> {
     const { dataDir } = this.deps;
     const topic = await getTopic(topicId, dataDir);
     if (!topic) return { accepted: false, reason: `选题不存在：${topicId}` };
@@ -149,18 +182,30 @@ class SerialResearchRunner implements ResearchRunner {
     }
 
     const existing = await getJob(topicId, dataDir);
-    // 非终态 = 已经在跑或已在队列里：返回进行中那个，不重复投递、不重排（§2「合并」）
     if (existing && !isTerminalJobStatus(existing.status)) {
+      // 真的有人在跑（排队中 / 租约还活着）：**拒**，两种 kind 同一道门（§3.5）——
+      // 合并成同一条 job 会让「重新立意」悄悄变成「深调研」（反之亦然），
+      // 而并排两条 job 又会让两轮结算抢同一个简报指针
+      if (existing.status === "queued" || leaseAlive(existing, this.now())) {
+        return { accepted: false, reason: inFlightReason(existing), inFlight: true };
+      }
+      // running 但租约过期 = 跑它的进程已经死了：把这条捡回队列重跑，不新开一轮
+      // （它自己的 kind 说了算——半路换 kind 等于凭空改写一条在册任务）
+      await this.renewOnce(topicId); // 真的要跑了，选题照样续一次命
+      this.post(topicId);
       return { accepted: true, deduped: true, job: existing };
     }
 
     const job: ResearchJob = {
       topicId,
       status: "queued",
+      ...(kind === "angles" ? { kind } : {}),
       startedAt: this.nowIso(),
-      perspectives: pendingPerspectives(),
+      // angles job 不跑视角：空数组是它的正确形状，不是「四路都还没开始」
+      perspectives: kind === "angles" ? [] : pendingPerspectives(),
       topicHash: topicHashOf(topic.title, topic.description),
       // 重跑期间旧简报继续有效：指针跟着新 job 走，不因为「又开了一轮」而失效
+      // （对 angles job 这还是 CAS 的起点：落定时拿它跟当前指针比）
       ...(existing?.briefRevision !== undefined ? { briefRevision: existing.briefRevision } : {}),
     };
     await this.write(job);
@@ -285,7 +330,7 @@ class SerialResearchRunner implements ResearchRunner {
     // 去写等于把这些标悄悄抹掉——状态与视角仍以本轮 outcome 为准，其余字段照最新的走。
     const latest = (await getJob(topicId, this.deps.dataDir)) ?? claimed;
     // 选题中途被删由 W3 报错上来（failed），本层不特判：台账照常落定，简报文件保留
-    await this.write(settledJob(latest, outcome, this.nowIso()));
+    await this.write(settledJob(claimed, latest, outcome, this.nowIso()));
   }
 }
 
