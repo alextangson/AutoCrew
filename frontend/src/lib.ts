@@ -217,6 +217,8 @@ export interface Content {
   blockedReason?: string | null;
   /** 没有出处的数字 + 归一不了的模糊量词——缺证据徽章的悬浮说明 */
   unverifiedNumbers?: string[];
+  /** 这一稿是备用端点顶完的（P2 spec §4.3）：稿卡出「备用顶上」，hover 显示主线失败原因 */
+  usedFallback?: { role: string; from: string; to: string; error: string };
   adoption?: { verdict: string; reason?: string; reasonNote?: string; derived?: boolean };
   /** AI 审稿结论(审稿 spec §2.5):稿卡徽章读它;旧稿无此字段 = 不显示徽章 */
   review?: {

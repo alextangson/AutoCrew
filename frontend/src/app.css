@@ -752,3 +752,47 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .vid-seg-time { flex: 0 0 auto; font-size: 11px; }
 .vid-seg-text { flex: 1; min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
 .vid-player { width: 100%; max-width: 640px; aspect-ratio: 16 / 9; background: var(--ink); border: 1px solid var(--border); border-radius: var(--radius-card); }
+
+/* P2 一把钥匙开机：线路报病（顶栏横幅 / 状态点 / 兜底徽章）+ 设置两标签 + 首次开机卡 */
+.engine-banner {
+  display: flex; gap: 10px; align-items: baseline;
+  border-bottom: 1px solid var(--danger); background: var(--card); color: var(--danger);
+  padding: 6px 14px; font-size: 12px; line-height: 1.6;
+}
+.engine-banner-lines { flex: 1; }
+.engine-banner p { margin: 1px 0; overflow-wrap: anywhere; }
+.engine-banner button { flex: none; font-size: 11px; padding: 1px 8px; }
+/* 状态点：未测是灰的中性态,绝不用红色——没测过不是坏了 */
+.engine-dot { font-size: 11px; padding: 0 6px; border: 1px solid var(--border); white-space: nowrap; cursor: help; }
+.engine-dot-idle { color: var(--muted); }
+.engine-dot-ok { color: var(--success); border-color: var(--success); }
+.engine-dot-bad { color: var(--danger); border-color: var(--danger); }
+.engine-warn {
+  display: flex; gap: 10px; align-items: baseline; font-size: 12px; line-height: 1.6;
+  border: 1px dashed var(--border); border-radius: var(--radius); padding: 6px 10px; margin: 8px 0;
+}
+.engine-warn > span { flex: 1; overflow-wrap: anywhere; }
+.engine-warn button { flex: none; font-size: 11px; padding: 1px 8px; }
+.engine-roles { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 10px; }
+.engine-roles summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+/* 兜底徽章：贴在稿卡 chip 里,不能带块级外边距（同 .chip-blocked 的约定） */
+.chip-fallback { color: var(--hot); font-weight: 600; cursor: help; }
+.ed-fallback {
+  border-left: 2px solid var(--hot); color: var(--muted); padding: 4px 10px; margin: 6px 0;
+  font-size: 12px; cursor: help;
+}
+.set-tabs { display: flex; gap: 8px; margin: 8px 0 4px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.set-tabs .nav-on { border-color: var(--ink); font-weight: 700; }
+.int-line { margin: 3px 0; font-size: 12px; line-height: 1.6; }
+.int-line .mono { color: var(--muted); }
+.chip.int-on { border-color: var(--success); color: var(--success); }
+.chip.int-bad { border-color: var(--danger); color: var(--danger); }
+/* 首次开机卡：三选一端点 + 两列强/快模型 + 可选搜索区 */
+.onboard-wide { max-width: 520px; }
+.onboard-kinds { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 2px; }
+.onboard-kind { display: flex; gap: 4px; align-items: baseline; border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; font-size: 13px; cursor: pointer; }
+.onboard-kind.on { border-color: var(--ink); font-weight: 700; }
+.onboard-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.onboard-optional { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.onboard-optional p { font-size: 12px; margin: 2px 0 6px; line-height: 1.6; }
+.onboard-skip { width: 100%; margin-top: 8px; padding: 6px; }

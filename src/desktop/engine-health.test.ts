@@ -104,7 +104,9 @@ describe("落盘与更新", () => {
     await recordLiveResult({ providerId: "newcli", ok: false, role: "writer", error: "fetch failed" }, dir);
     const state = await loadHealthState(dir);
     expect(state.providers.newcli?.live).toMatchObject({ ok: false, role: "writer" });
-    expect(state.providers.newcli?.live?.error).toContain("fetch failed");
+    // 真实调用的失败也走翻译器（真机复盘 2026-09-05：横幅曾把 live 的原文漏出去）
+    expect(state.providers.newcli?.live?.error).toContain("连不上");
+    expect(state.providers.newcli?.live?.error).not.toContain("fetch failed");
   });
 
   it("健康文件缺失/损坏 = 当作没探过，不报错", async () => {
@@ -178,5 +180,64 @@ describe("probeAllProviders / IPC", () => {
   it("没配引擎时探针是空转，不抛", async () => {
     await expect(probeAllProviders(dir, { probe: async () => ({ ok: true, ms: 1 }) })).resolves.toBeUndefined();
     expect((await buildEngineHealth(dir)).configured).toBe(false);
+  });
+});
+
+describe("指针改动也广播（真机复盘 2026-09-05）", () => {
+  it("只改备用指针、端点没变：不重探，但要发一次 engine_health 事件让横幅重拉", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ac-health-ptr-"));
+    await fs.writeFile(
+      path.join(dir, "engine.json"),
+      JSON.stringify({
+        version: 2,
+        providers: [
+          { id: "a", name: "A", baseUrl: "https://a.example.com", apiKey: "sk-aaaaaaaaaaaa", models: ["m1"] },
+          { id: "b", name: "B", baseUrl: "https://b.example.com", apiKey: "sk-bbbbbbbbbbbb", models: ["m2"] },
+        ],
+        main: { provider: "a", strong: "m1", fast: "m1" },
+      }),
+    );
+    const hub = await import("./event-hub.js");
+    const seen: unknown[] = [];
+    hub.initEventHub((e) => seen.push(e));
+    const unsub = () => hub.initEventHub(() => {});
+    const off = initEngineHealth(dir);
+    try {
+      const r = await setEngineSettings({ _dataDir: dir, fallback: { provider: "b", strong: "m2", fast: "m2" } });
+      expect(r.ok).toBe(true);
+      await new Promise((res) => setTimeout(res, 50));
+      const health = JSON.stringify(seen);
+      expect(health).toContain("engine_health");
+    } finally {
+      off();
+      unsub();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe("真实调用的失败也翻译", () => {
+  it("runLoop 回执里的 `502 {fetch failed}` 落到 live 时已是人话，带岗位与主机名", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ac-health-live-"));
+    await fs.writeFile(
+      path.join(dir, "engine.json"),
+      JSON.stringify({
+        version: 2,
+        providers: [{ id: "relay", name: "R", baseUrl: "https://relay.example.com/v1", apiKey: "sk-rrrrrrrrrrrr", models: ["m"] }],
+        main: { provider: "relay", strong: "m", fast: "m" },
+      }),
+    );
+    try {
+      await recordLiveResult({ providerId: "relay", ok: false, role: "writer", error: '502 {"error":{"message":"fetch failed"}}' }, dir);
+      const view = await buildEngineHealth(dir);
+      const err = view.providers[0]?.live?.error ?? "";
+      expect(err).toContain("写稿专线");
+      expect(err).toContain("relay.example.com");
+      expect(err).toContain("连不上");
+      expect(err).not.toContain("fetch failed");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

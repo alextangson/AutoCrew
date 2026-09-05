@@ -40,6 +40,7 @@ import {
   type AllowedTransition,
   type Content,
 } from "../lib";
+import { fallbackTitle } from "./engine-lib";
 import type { EditorPanel } from "../App";
 import { type VersionLike } from "../version-diff";
 
@@ -350,6 +351,10 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
             </div>
           )}
 
+          {/* 兜底留痕（P2 §4.3）：这一稿由备用端点顶完，hover 显示主线失败原因 */}
+          {c.usedFallback && (
+            <div className="ed-fallback" title={fallbackTitle(c.usedFallback)}>备用顶上 · 主线 {c.usedFallback.from} 没跑通，由 {c.usedFallback.to} 顶完</div>
+          )}
           {c.lastError && (
             <div className="ed-error">
               ⚠️ 上次生成中断：{String(c.lastError).slice(0, 120)}{" "}

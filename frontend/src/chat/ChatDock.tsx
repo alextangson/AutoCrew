@@ -91,11 +91,16 @@ export function ChatDock(props: {
   view?: ViewSnapshot;
   /** 卡片「在工作区打开」的落点（壳的 setRoute） */
   nav?: (route: Route) => void;
+  /** 引擎压根没配（chat:turn 回 needsSetup）：把首次开机卡请回来，别让人对着报错干瞪眼 */
+  onNeedsSetup?: () => void;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   // view 每次 App 渲染都是新对象:用 ref 拿最新值，别把它塞进 sendImpl 的依赖里反复重注册
   const viewRef = useRef(props.view);
   viewRef.current = props.view;
+  // sendImpl 只注册一次：回调走 ref，否则拿到的是挂载那一刻的那个 props.onNeedsSetup
+  const needsSetupRef = useRef(props.onNeedsSetup);
+  needsSetupRef.current = props.onNeedsSetup;
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   // SSE 订阅只注册一次（依赖表为空），里面要读的 busy 必须走 ref，否则永远是挂载那刻的 false
@@ -329,6 +334,9 @@ export function ChatDock(props: {
     setStream(clearStream());
     if (!r.ok) {
       setMsgs((m) => [...m, { role: "assistant", text: "出错了：" + (r.error ?? "未知错误") }]);
+      // needsSetup = 还没有可用的主端点（P2 spec §4.2）：这不是「这条线坏了」，是「还没配」，
+      // 报错留在会话里，人直接被送回首次开机卡
+      if ((r as { needsSetup?: boolean }).needsSetup) needsSetupRef.current?.();
       return { ok: false, error: r.error ?? "未知错误" };
     }
     const parsed = parseChatTurnResponse(r);

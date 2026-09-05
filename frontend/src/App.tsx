@@ -14,6 +14,7 @@ import { Logs } from "./views/Logs";
 import { Campaigns } from "./views/Campaigns";
 import { Inbox } from "./views/Inbox";
 import { Onboarding } from "./views/Onboarding";
+import { EngineBanner } from "./views/EngineBanner";
 import { ChatDock } from "./chat/ChatDock";
 import {
   DOCK_WIDTH_DEFAULT, clampDockWidth, readDockOpen, readDockWidth, writeDockOpen, writeDockWidth,
@@ -35,7 +36,7 @@ export type Route =
   | { view: "logs" }
   | { view: "campaigns" }
   | { view: "inbox" }
-  | { view: "settings" };
+  | { view: "settings"; tab?: "models" | "integrations" };
 
 const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
   { view: "dashboard", label: "今日" },
@@ -163,6 +164,8 @@ export function App() {
           </button>
         </nav>
       </header>
+      {/* 线路报病（P2 spec §4.3）：坏了才在，恢复即消失——不占位、不轮询 */}
+      <EngineBanner onSettings={() => setRoute({ view: "settings", tab: "models" })} />
       <div className="body">
         <main className="main">
           {route.view === "dashboard" && <Dashboard nav={setRoute} />}
@@ -176,7 +179,9 @@ export function App() {
           {route.view === "logs" && <Logs />}
           {route.view === "campaigns" && <Campaigns onSelect={setCampaignId} />}
           {route.view === "inbox" && <Inbox nav={setRoute} />}
-          {route.view === "settings" && <Settings />}
+          {route.view === "settings" && (
+            <Settings {...(route.tab ? { tab: route.tab } : {})} onTab={(tab) => setRoute({ view: "settings", tab })} />
+          )}
         </main>
         {/* 收起时用 CSS 隐藏而不是卸载——卸载会丢掉正在进行的对话 */}
         <aside
@@ -212,6 +217,8 @@ export function App() {
             contentContext={route.view === "editor" ? { contentId: route.id } : undefined}
             view={{ route: route.view, ...(route.view === "campaigns" && campaignId ? { campaignId } : {}) }}
             nav={setRoute}
+            // 聊天回 needsSetup = 引擎压根没配（不是这条线坏了）：直接把首次开机卡请回来
+            onNeedsSetup={() => setGate("onboarding")}
           />
         </aside>
         <button

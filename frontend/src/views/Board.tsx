@@ -13,6 +13,7 @@ import { ANGLE_SECTION_ID, AngleGuide } from "./AngleCards";
 import { needsAnglePick, NO_ANGLE_GATE, type AngleGate } from "./angle-choice";
 import { buildDispatchBrief } from "./dispatch-brief";
 import { phraseBreak } from "./phrase-break";
+import { fallbackTitle } from "./engine-lib";
 import {
   BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
@@ -322,6 +323,8 @@ export function Board(props: { openEditor: (id: string) => void }) {
                             {platformLabel(m.platform)} {VARIANT_STATUS[m.status] ?? m.status}
                             {blocked && <span className="chip-blocked"> 缺证据</span>}
                             {!blocked && badge && <span className="muted"> {badge}</span>}
+                            {/* 兜底留痕（P2 §4.3）：这一稿由备用端点顶完，hover 说主线为什么失败 */}
+                            {m.usedFallback && <span className="chip-fallback" title={fallbackTitle(m.usedFallback)}> 备用顶上</span>}
                           </button>
                         );
                       })}

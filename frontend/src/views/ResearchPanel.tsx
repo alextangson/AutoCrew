@@ -15,6 +15,7 @@ import { loadResearchAssets, type ResearchAssetView as AssetView } from "./Resea
 import { linkDomain, type AngleCard, type Topic } from "../lib";
 import { angleChoiceState, type AngleGate } from "./angle-choice";
 import { AngleSection } from "./AngleCards";
+import { fallbackTitle } from "./engine-lib";
 
 type JobStatus = "queued" | "running" | "succeeded" | "partial" | "failed";
 type PerspectiveStatus = "pending" | "running" | "succeeded" | "failed";
@@ -36,6 +37,8 @@ interface ResearchJob {
   briefRevision?: number;
   errorCode?: string;
   failReason?: string;
+  /** 这一轮是备用端点顶完的（P2 spec §4.3）：任务卡出「备用顶上」 */
+  usedFallback?: { role: string; from: string; to: string; error: string };
 }
 
 interface BriefMeta {
@@ -245,6 +248,16 @@ function StateLines({ st }: { st: StatusData }) {
   return null;
 }
 
+/** 兜底留痕（P2 spec §4.3）：这一轮调研是备用端点顶完的，hover 说主线为什么失败 */
+function FallbackBadge({ job }: { job: ResearchJob | null }) {
+  if (!job?.usedFallback) return null;
+  return (
+    <p className="mono chip-fallback" title={fallbackTitle(job.usedFallback)}>
+      备用顶上 · 主线 {job.usedFallback.from} 没跑通，由 {job.usedFallback.to} 顶完
+    </p>
+  );
+}
+
 /**
  * 读当前有效简报。**不等「看简报」展开就读**:角度卡是写稿前的闸口,藏在折叠里等于没有闸口。
  * 读不到就把原因留成常驻一行(不 toast:这是事实不是一次性提示)。
@@ -382,6 +395,7 @@ export function ResearchPanel(props: {
       </div>
 
       <StateLines st={st} />
+      <FallbackBadge job={st.job} />
       {briefErr && <p className="inbox-bad">{briefErr}</p>}
       {/* 选择过期、而新简报又没有候选可换(降级简报/简报读不到):这时候也得说,不能让它悄悄失效 */}
       {cards.length === 0 && choice === "stale" && (

@@ -1,64 +1,38 @@
 /**
- * 设置中心(V5.6.3 重构):七区全展开卡片 + 状态徽标一眼可扫——之前折叠 details
- * 要点七次才见全貌。所有 key 掩码显示,原文永不出 server;留空的字段保持现状。
- * 引擎/模型路由区自成一块（SettingsEngine.tsx），它有自己的加载与「测试」闭环。
+ * 设置中心（P2 spec §5.3 重排）——两个标签，一条分界线：
+ *
+ *   「模型」= 必填的那把钥匙（端点表 / 主端点 / 备用 / 岗位）+ 工作区 + 知识库；
+ *   「接入更多」= 全部可选接入，各自写明解锁什么、不配会怎样、现在什么状态。
+ *
+ * 不新增路由（spec §10 第 13 条）：标签是 `Route.tab`，「去设置」的深链能直接落到
+ * 「模型」页，浏览器前进后退不会掉进一个没有导航的孤岛。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast, openDialog } from "../ui";
-import { Field, SaveRow, Section } from "./settings-kit";
+import { Section } from "./settings-kit";
 import { EngineSection } from "./SettingsEngine";
+import { Integrations } from "./Integrations";
 
-interface RadarSource {
-  id?: string;
-  name: string;
-  enabled?: boolean;
-  /** v2 源的 url/keyword 都在 config 里（引擎侧 RadarSource 同形） */
-  config?: { url?: string; keyword?: string };
-  [k: string]: unknown;
-}
+export type SettingsTab = "models" | "integrations";
 
-export function Settings() {
-  const [search, setSearch] = useState<{ configured: boolean; provider: string | null; apiKeyMasked: string | null } | null>(null);
-  const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
-  const [pub, setPub] = useState<{ imageConfigured: boolean; imageApiKeyMasked: string | null; imageBaseUrl: string | null; imageModel: string | null; imageChain: Array<{ name: string | null; kind: string; baseUrl: string | null; apiKeyMasked: string | null; model: string | null; dialect: string }>; theme: string | null; themes: Array<{ id: string; name: string }>; author: string | null; apiProxyConfigured: boolean; wechatConfigured: boolean; wechatAppIdMasked: string | null; openComment: boolean; xConfigured: boolean; xApiKeyMasked: string | null; redditConfigured: boolean; redditClientIdMasked: string | null } | null>(null);
-  const [pForm, setPForm] = useState({ image_api_key: "", image_base_url: "", image_model: "", image_chain: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "", reddit_client_id: "", reddit_client_secret: "" });
-  const [cover, setCover] = useState<{
-    provider: string;
-    relay: { configured: boolean; model: string | null };
-    gemini: { configured: boolean; apiKeyMasked: string | null; source: string; model: string };
-  } | null>(null);
-  const [cForm, setCForm] = useState({ provider: "", relay_model: "", gemini_api_key: "", gemini_model: "" });
-  const [sources, setSources] = useState<RadarSource[]>([]);
+const TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: "models", label: "模型" },
+  { id: "integrations", label: "接入更多" },
+];
+
+export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) => void }) {
+  const [local, setLocal] = useState<SettingsTab>(props.tab ?? "models");
+  const tab = props.tab ?? local;
+  const setTab = (next: SettingsTab) => {
+    setLocal(next);
+    props.onTab?.(next);
+  };
   const [kb, setKb] = useState<{ dir: string; count: number } | null>(null);
   const [ws, setWs] = useState<{ active: string; workspaces: Array<{ id: string; name: string }> } | null>(null);
-  const [inbox, setInbox] = useState<{
-    configured: boolean;
-    botTokenMasked: string | null;
-    botId: string | null;
-    allowedUserIds: string[];
-    targetWorkspaceId: string;
-    proxyUrlMasked: string | null;
-    justoneapiConfigured: boolean;
-    justoneapiKeyMasked: string | null;
-  } | null>(null);
-  const [iForm, setIForm] = useState({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "", justoneapi_key: "" });
 
   const load = async () => {
-    const [sr, pr, cr, rr, kr, wr, ir] = await Promise.all([
-      invoke("settings:search_get"),
-      invoke("settings:publish_get"),
-      invoke("settings:cover_get"),
-      invoke("radar:status"),
-      invoke("knowledge:status"),
-      invoke("workspace:list"),
-      invoke("inbox:settings_get"),
-    ]);
-    if (ir.ok) setInbox((ir as unknown as { data: typeof inbox }).data);
-    if (sr.ok) setSearch((sr as unknown as { data: typeof search }).data);
-    if (pr.ok) setPub((pr as unknown as { data: typeof pub }).data);
-    if (cr.ok) setCover((cr as unknown as { data: typeof cover }).data);
-    if (rr.ok) setSources((((rr as unknown as { data: { sources?: RadarSource[] } }).data ?? {}).sources ?? []));
+    const [kr, wr] = await Promise.all([invoke("knowledge:status"), invoke("workspace:list")]);
     if (kr.ok) setKb((kr as unknown as { data: typeof kb }).data);
     if (wr.ok) {
       const w = wr as unknown as { active?: string; workspaces?: Array<{ id: string; name: string }>; data?: { active: string; workspaces: Array<{ id: string; name: string }> } };
@@ -69,295 +43,69 @@ export function Settings() {
     void load();
   }, []);
 
-  const submit = async (channel: string, form: Record<string, string>, reset: () => void) => {
-    const payload: Record<string, string> = {};
-    for (const [k, v] of Object.entries(form)) if (v.trim()) payload[k] = v.trim();
-    if (Object.keys(payload).length === 0) return toast("没有要保存的修改");
-    const r = await invoke(channel, payload);
-    if (!r.ok) return toast(r.error ?? "保存失败");
-    toast("已保存");
-    reset();
-    void load();
-  };
-
-  const toggleSource = async (idx: number) => {
-    const next = sources.map((s, i) => (i === idx ? { ...s, enabled: s.enabled === false } : s));
-    const r = await invoke("radar:sources_set", { sources: next });
-    if (!r.ok) return toast(r.error ?? "保存失败");
-    setSources(next);
-    toast("源清单已保存——手动扫榜后生效");
-  };
-
-  const coverStatus = cover
-    ? cover.provider === "relay"
-      ? cover.relay.configured
-        ? `中转 ${cover.relay.model ?? ""}`
-        : "中转未配置"
-      : cover.gemini.configured
-        ? `Gemini ${cover.gemini.apiKeyMasked ?? ""}`
-        : "Gemini 未配置"
-    : "";
-  const coverOn = cover ? (cover.provider === "relay" ? cover.relay.configured : cover.gemini.configured) : false;
-
   return (
     <div className="settings">
       <h2 className="serif">设置</h2>
-
-      <EngineSection />
-
-      <Section title="搜索 · 侦查员外网搜集" status={search?.configured ? `已配置 ${search.provider}` : "未配置"} on={search?.configured}>
-        <p className="muted">配好后总编辑就能派侦查员按定位全网搜灵感。推荐:博查(中文)/Tavily(英文)。</p>
-        <label className="set-field">
-          <span className="mono muted">Provider</span>
-          <select value={sForm.provider} onChange={(e) => setSForm((f) => ({ ...f, provider: e.target.value }))}>
-            <option value="bocha">博查 bocha(中文优先)</option>
-            <option value="tavily">Tavily(英文圈)</option>
-          </select>
-        </label>
-        <Field label="API Key" password value={sForm.api_key} placeholder={search?.apiKeyMasked ?? "sk-..."} onChange={(v) => setSForm((f) => ({ ...f, api_key: v }))} />
-        <div className="set-save">
-          <button
-            className="primary"
-            onClick={() => {
-              if (!sForm.api_key.trim()) return toast("请填入 API key");
-              void submit("settings:search_set", sForm, () => setSForm((f) => ({ ...f, api_key: "" })));
-            }}
-          >
-            保存搜索配置
+      <nav className="set-tabs">
+        {TABS.map((t) => (
+          <button key={t.id} className={tab === t.id ? "nav-on" : ""} onClick={() => setTab(t.id)}>
+            {t.label}
           </button>
-        </div>
-      </Section>
-
-      <Section
-        title="发布 · 公众号与生图"
-        status={pub ? `${pub.imageConfigured ? "生图 ✓" : "生图未配置"} · ${pub.wechatConfigured ? `公众号 ${pub.wechatAppIdMasked ?? "✓"}` : "公众号未绑定"}` : ""}
-        on={pub?.imageConfigured}
-      >
-        <p className="muted">
-          公众号推草稿、文章配图与封面生成都走这里(存 publish.json)。生图 key 与端点必须配对(否则 401);
-          公众号 AppID/AppSecret 在 mp.weixin.qq.com「设置与开发 · 开发接口管理」获取——绑定后推草稿用你自己的号,
-          未绑定时沿用发布脚本自带配置(兜底);原创声明与赞赏是官方接口不支持的,群发时手点。
-        </p>
-        <Field label="生图 Key" password value={pForm.image_api_key} placeholder={pub?.imageApiKeyMasked ?? "sk-..."} onChange={(v) => setPForm((f) => ({ ...f, image_api_key: v }))} />
-        <Field label="生图端点" value={pForm.image_base_url} placeholder={pub?.imageBaseUrl ?? "https://api.xiaojiu.one/v1"} onChange={(v) => setPForm((f) => ({ ...f, image_base_url: v }))} />
-        <Field label="生图模型" value={pForm.image_model} placeholder={pub?.imageModel ?? "gpt-image-2"} onChange={(v) => setPForm((f) => ({ ...f, image_model: v }))} />
-        <label className="set-field set-field-wide">
-          <span className="mono muted">
-            生图通道链（有序，第一个出图的赢；留空=只用上面那个端点）
-            {pub?.imageChain?.length ? `　当前链：${pub.imageChain.map((f) => f.name || f.baseUrl || f.kind).join(" → ")}` : ""}
-          </span>
-          <textarea
-            rows={5}
-            className="mono"
-            value={pForm.image_chain}
-            placeholder={'[{"kind":"codex"},\n {"name":"newcli","baseUrl":"https://code.newcli.com/codex/v1","apiKey":"sk-...","model":"gpt-image-2"},\n {"name":"即梦","baseUrl":"https://ark.cn-beijing.volces.com/api/v3","apiKey":"...","dialect":"ark"}]'}
-            onChange={(e) => setPForm((f) => ({ ...f, image_chain: e.target.value }))}
-          />
-        </label>
-        <Field label="公众号 AppID" value={pForm.wechat_app_id} placeholder={pub?.wechatAppIdMasked ?? "wx…"} onChange={(v) => setPForm((f) => ({ ...f, wechat_app_id: v }))} />
-        <Field label="公众号 AppSecret" password value={pForm.wechat_app_secret} placeholder={pub?.wechatConfigured ? "已保存(重填即覆盖)" : "后台生成后粘贴"} onChange={(v) => setPForm((f) => ({ ...f, wechat_app_secret: v }))} />
-        <label className="set-field">
-          <span className="mono muted">推草稿默认打开留言</span>
-          <select value={pForm.open_comment} onChange={(e) => setPForm((f) => ({ ...f, open_comment: e.target.value }))}>
-            <option value="">当前:{pub?.openComment ? "开" : "关"}(不改)</option>
-            <option value="1">开</option>
-            <option value="0">关</option>
-          </select>
-        </label>
-        <label className="set-field">
-          <span className="mono muted">排版主题</span>
-          <select value={pForm.theme} onChange={(e) => setPForm((f) => ({ ...f, theme: e.target.value }))}>
-            <option value="">当前:{pub?.theme ?? "newspaper"}(不改)</option>
-            {(pub?.themes ?? []).map((t) => (
-              <option key={t.id} value={t.id}>{t.name}（{t.id}）</option>
-            ))}
-          </select>
-        </label>
-        <Field label="署名" value={pForm.author} placeholder={pub?.author ?? "Lawrence"} onChange={(v) => setPForm((f) => ({ ...f, author: v }))} />
-        <Field label="公众号 API 代理" value={pForm.api_proxy} placeholder={pub?.apiProxyConfigured ? "已配置(不回显)——填新值覆盖" : "http://user:pass@固定IP:端口(可选,锁定出口)"} onChange={(v) => setPForm((f) => ({ ...f, api_proxy: v }))} />
-        <SaveRow label="保存发布配置" onSave={() => void submit("settings:publish_set", pForm, () => setPForm({ image_api_key: "", image_base_url: "", image_model: "", image_chain: "", theme: "", author: "", api_proxy: "", wechat_app_id: "", wechat_app_secret: "", open_comment: "", x_api_key: "", reddit_client_id: "", reddit_client_secret: "" }))} />
-      </Section>
-
-      <Section title="封面生成 · 生图通道" status={coverStatus} on={coverOn}>
-        <p className="muted">
-          默认走中转 image2——复用上面「发布」区的生图 Key/端点(公众号配图同一条,不用另配)。
-          形象照放 ~/.autocrew/covers/templates/(jpg/png)自动带上做人物一致性;中转若不支持
-          /images/edits 会自动降级无人物并明说。Gemini 保留为可选。
-        </p>
-        <label className="set-field">
-          <span className="mono muted">生图通道</span>
-          <select value={cForm.provider} onChange={(e) => setCForm((f) => ({ ...f, provider: e.target.value }))}>
-            <option value="">不改(当前 {cover?.provider === "gemini" ? "Gemini" : "中转 image2"})</option>
-            <option value="relay">中转 image2(推荐,复用发布区凭证)</option>
-            <option value="gemini">Gemini</option>
-          </select>
-        </label>
-        <Field label="中转模型" value={cForm.relay_model} placeholder={cover?.relay.model ?? "gpt-image-2"} onChange={(v) => setCForm((f) => ({ ...f, relay_model: v }))} />
-        <Field label="Gemini Key" password value={cForm.gemini_api_key} placeholder={cover?.gemini.apiKeyMasked ?? "AIza...(切 Gemini 才需要)"} onChange={(v) => setCForm((f) => ({ ...f, gemini_api_key: v }))} />
-        <label className="set-field">
-          <span className="mono muted">Gemini 模型</span>
-          <select value={cForm.gemini_model} onChange={(e) => setCForm((f) => ({ ...f, gemini_model: e.target.value }))}>
-            <option value="">不改(当前 {cover?.gemini.model ?? "auto"})</option>
-            <option value="auto">auto(native 优先)</option>
-            <option value="gemini-native">gemini-native(支持形象照)</option>
-            <option value="imagen-4">imagen-4</option>
-          </select>
-        </label>
-        <SaveRow
-          label="保存封面配置"
-          onSave={() => void submit("settings:cover_set", cForm, () => setCForm({ provider: "", relay_model: "", gemini_api_key: "", gemini_model: "" }))}
-        />
-      </Section>
-
-      <Section title="情报源" status={`${sources.filter((s) => s.enabled !== false).length}/${sources.length} 开启`} on={sources.some((s) => s.enabled !== false)}>
-        <p className="muted">雷达订阅清单,命中定位语义筛才入灵感库。开关即改,手动扫榜生效。</p>
-        {sources.map((s, i) => (
-          <div key={s.id ?? s.name ?? i} className="row">
-            <span className="mono pri">{s.enabled === false ? "关" : "开"}</span>
-            <span className="row-title">{s.name}</span>
-            <span className="muted mono">{(s.config?.url ?? s.config?.keyword ?? "").slice(0, 40)}</span>
-            <button onClick={() => void toggleSource(i)}>{s.enabled === false ? "启用" : "停用"}</button>
-          </div>
         ))}
-        <Field label="X 源 Key" password value={pForm.x_api_key} placeholder={pub?.xApiKeyMasked ?? "twitterapi.io key——启用「X」源前先填"} onChange={(v) => setPForm((f) => ({ ...f, x_api_key: v }))} />
-        <Field label="Reddit Client ID" password value={pForm.reddit_client_id} placeholder={pub?.redditClientIdMasked ?? "reddit.com/prefs/apps 建 script 应用——启用「Reddit」源前先填"} onChange={(v) => setPForm((f) => ({ ...f, reddit_client_id: v }))} />
-        <Field label="Reddit Client Secret" password value={pForm.reddit_client_secret} placeholder={pub?.redditConfigured ? "已保存(重填即覆盖)" : "同一页面的 secret"} onChange={(v) => setPForm((f) => ({ ...f, reddit_client_secret: v }))} />
-        <p className="muted">
-          X 走 twitterapi.io(自带 key,注册送 $1 额度);Reddit 走官方 OAuth(免费,匿名接口已被反爬挡死),
-          在 reddit.com/prefs/apps 建一个 script 应用拿 ID/Secret。存好凭据再到上面把对应源启用。
-          YouTube 源无需 key,但要求本机能直连 youtube.com。搜索型海外源(HN/GitHub 等)需定位里含英文词(如 AI)才能派生检索词;
-          X/YouTube/Reddit 是清单型源,不吃检索词。
-        </p>
-        <SaveRow
-          label="保存情报源凭据"
-          onSave={() =>
-            void submit(
-              "settings:publish_set",
-              { x_api_key: pForm.x_api_key, reddit_client_id: pForm.reddit_client_id, reddit_client_secret: pForm.reddit_client_secret },
-              () => setPForm((f) => ({ ...f, x_api_key: "", reddit_client_id: "", reddit_client_secret: "" })),
-            )
-          }
-        />
-        <div className="set-save">
-          <button
-            onClick={async () => {
-              toast("扫榜中…");
-              const r = await invoke("radar:refresh");
-              toast(r.ok ? "扫榜完成——命中定位的候选已入灵感库" : (r.error ?? "扫榜失败"));
-            }}
-          >
-            手动扫一轮
-          </button>
-        </div>
-      </Section>
+      </nav>
 
-      <Section
-        title="灵感收件箱 · Telegram bot"
-        status={inbox?.configured ? `已配对 ${inbox.botTokenMasked ?? ""}` : "未配置"}
-        on={inbox?.configured}
-      >
-        <p className="muted">
-          手机上刷到好内容,转发链接给自己的 bot,它异步消化成灵感或对标拆解卡。找 @BotFather 发 /newbot 建 bot 拿
-          token;user id 找 @userinfobot 要——**白名单外的消息一律静默忽略**,不回执也不入队。
-          消息固定落下面选的工作区,不跟随「当前工作区」切换。
-        </p>
-        <Field
-          label="Bot Token"
-          password
-          value={iForm.bot_token}
-          placeholder={inbox?.botTokenMasked ?? "123456:AA…(BotFather 给的那串)"}
-          onChange={(v) => setIForm((f) => ({ ...f, bot_token: v }))}
-        />
-        <Field
-          label="允许的 user id"
-          value={iForm.allowed_user_ids}
-          placeholder={inbox?.allowedUserIds.length ? inbox.allowedUserIds.join(", ") : "你自己的数字 id,多个用逗号分隔"}
-          onChange={(v) => setIForm((f) => ({ ...f, allowed_user_ids: v }))}
-        />
-        <label className="set-field">
-          <span className="mono muted">消息落哪个工作区</span>
-          <select value={iForm.target_workspace_id} onChange={(e) => setIForm((f) => ({ ...f, target_workspace_id: e.target.value }))}>
-            <option value="">
-              当前:{ws?.workspaces.find((w) => w.id === inbox?.targetWorkspaceId)?.name ?? inbox?.targetWorkspaceId ?? "default"}(不改)
-            </option>
-            {(ws?.workspaces ?? []).map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}（{w.id}）
-              </option>
+      {tab === "integrations" ? (
+        <Integrations />
+      ) : (
+        <>
+          <EngineSection />
+
+          <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>
+            <p className="muted">一人多 IP：每个工作区是独立编辑部（定位/灵感/稿件/画像全隔离）。</p>
+            {ws?.workspaces.map((w) => (
+              <div key={w.id} className="row">
+                <span className="mono pri">{w.id === ws.active ? "当前" : ""}</span>
+                <span className="row-title">{w.name}</span>
+                {w.id !== ws.active && (
+                  <button
+                    onClick={async () => {
+                      const r = await invoke("workspace:switch", { id: w.id });
+                      if (!r.ok) return toast(r.error ?? "切换失败");
+                      toast("已切换——刷新页面加载该编辑部");
+                      window.location.reload();
+                    }}
+                  >
+                    切换
+                  </button>
+                )}
+              </div>
             ))}
-          </select>
-        </label>
-        <Field
-          label="代理地址"
-          value={iForm.proxy_url}
-          placeholder={inbox?.proxyUrlMasked ?? "http://127.0.0.1:7890(大陆网络必填;Node 不走系统代理)"}
-          onChange={(v) => setIForm((f) => ({ ...f, proxy_url: v }))}
-        />
-        <Field
-          label="抖音解析 Key"
-          password
-          value={iForm.justoneapi_key}
-          placeholder={inbox?.justoneapiKeyMasked ?? "justoneapi.com 的 token(转发抖音链接必填;直连不走上面的代理)"}
-          onChange={(v) => setIForm((f) => ({ ...f, justoneapi_key: v }))}
-        />
-        <SaveRow
-          label="保存收件箱配置"
-          onSave={() =>
-            void submit("inbox:settings_set", iForm, () =>
-              setIForm({ bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "", justoneapi_key: "" }),
-            )
-          }
-        />
-        <p className="muted mono">
-          保存即热重启轮询;换 bot 会重置消费游标,等外部条件的条目会被自动唤醒重试。 抖音解析:
-          {inbox?.justoneapiConfigured ? "已配置" : "未配置——转发抖音链接会先挂起等 key"}
-        </p>
-      </Section>
-
-      <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>
-        <p className="muted">一人多 IP:每个工作区是独立编辑部(定位/灵感/稿件/画像全隔离)。</p>
-        {ws?.workspaces.map((w) => (
-          <div key={w.id} className="row">
-            <span className="mono pri">{w.id === ws.active ? "当前" : ""}</span>
-            <span className="row-title">{w.name}</span>
-            {w.id !== ws.active && (
+            <div className="set-save">
               <button
                 onClick={async () => {
-                  const r = await invoke("workspace:switch", { id: w.id });
-                  if (!r.ok) return toast(r.error ?? "切换失败");
-                  toast("已切换——刷新页面加载该编辑部");
+                  const v = await openDialog({
+                    title: "新建工作区",
+                    body: "每个工作区是独立编辑部——定位、灵感、稿件、画像全部隔离。创建后自动切换过去。",
+                    fields: [{ key: "name", label: "名称", placeholder: "如：Muse 公众号", required: true }],
+                    confirmLabel: "创建并切换",
+                  });
+                  if (!v) return;
+                  const r = await invoke("workspace:create", { name: v.name.trim() });
+                  if (!r.ok) return toast(r.error ?? "创建失败");
+                  toast("已创建并切换——刷新加载");
                   window.location.reload();
                 }}
               >
-                切换
+                ＋新建工作区
               </button>
-            )}
-          </div>
-        ))}
-        <div className="set-save">
-          <button
-            onClick={async () => {
-              const v = await openDialog({
-                title: "新建工作区",
-                body: "每个工作区是独立编辑部——定位、灵感、稿件、画像全部隔离。创建后自动切换过去。",
-                fields: [{ key: "name", label: "名称", placeholder: "如:Muse 公众号", required: true }],
-                confirmLabel: "创建并切换",
-              });
-              if (!v) return;
-              const r = await invoke("workspace:create", { name: v.name.trim() });
-              if (!r.ok) return toast(r.error ?? "创建失败");
-              toast("已创建并切换——刷新加载");
-              window.location.reload();
-            }}
-          >
-            ＋新建工作区
-          </button>
-        </div>
-      </Section>
+            </div>
+          </Section>
 
-      <Section title="知识库" status={kb ? `${kb.count} 个文件` : ""} on={(kb?.count ?? 0) > 0}>
-        <p className="muted">把你的笔记/干货文档(.md/.txt)放进 {kb?.dir ?? "…"},生成时自动检索注入。</p>
-      </Section>
+          <Section title="知识库" status={kb ? `${kb.count} 个文件` : ""} on={(kb?.count ?? 0) > 0}>
+            <p className="muted">把你的笔记/干货文档（.md/.txt）放进 {kb?.dir ?? "…"}，生成时自动检索注入。</p>
+          </Section>
+        </>
+      )}
     </div>
   );
 }

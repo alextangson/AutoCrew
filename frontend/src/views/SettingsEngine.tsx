@@ -1,343 +1,304 @@
 /**
- * 设置 · 引擎与岗位分配。
+ * 设置 · 模型（P2 spec §5.2 重写）。一页说清四件事，一个保存按钮提交整张图：
  *
- * 两条不变的规矩：
- *   1. 每张卡的卡头显示**它此刻真实生效的模型**（读 settings:get 的 assignments，
- *      没单独配就明说「跟随主端点强模型」），不再有写死的假标签。
- *   2. 每张卡一个「测试」——拿**已保存的**配置真发一次极小调用（settings:test_route，
- *      按 端点 id + 模型名 测），回耗时。配置面没有反馈闭环，等于让用户拿生产任务当探针。
+ *   端点表（唯一的密钥落点） → 主端点（必填） → 备用端点（可无） → 岗位分配（默认收起）
  *
- * P2a-1 只把这页接到 v2 的端点表上（够用、能存、能测）；整页重排是 P2b。
+ * 三条纪律：
+ * 1. **整图提交、整图校验**。四块是一份配置的四个部分，分四个按钮存就会存出
+ *    「主端点指向一个刚被删掉的 id」这种半截状态；服务端也是整图校验，
+ *    前端就不该假装它们互不相干。
+ * 2. **删除必须说得出谁在用**（`referrersOf`）——被引用的端点删不掉，且当场列出引用者。
+ * 3. **状态点来自 `engine:health`**，与顶栏横幅同一份事实；这页不自己判断线路好坏。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast } from "../ui";
-import { Field, SaveRow, Section } from "./settings-kit";
+import { Field, Section } from "./settings-kit";
 import { slugProviderId } from "./provider-id";
+import { useEngineHealth } from "./EngineBanner";
+import { ProviderTable, TestButton, TestLine, type TestState } from "./SettingsProviders";
+import {
+  ROLE_KEYS,
+  ROLE_LABEL,
+  ROLE_NOTE,
+  assignmentSummary,
+  providerPayload,
+  referrersOf,
+  splitModels,
+  toProviderRows,
+  type EngineAssignment,
+  type EnginePointer,
+  type EnginePointers,
+  type ProviderRow,
+  type ProviderView,
+  type RoleKey,
+} from "./engine-lib";
 
-/** 岗位视图：指向端点表里的一条 + 一个模型；null = 跟随主端点强模型 */
-type AssignmentView = { provider: string; model: string; baseUrl: string } | null;
-type RouteKey = "writer" | "reviewer" | "scout" | "analytics";
-
-/** settings:get 回的一条端点：只有掩码与"配没配"，永不回 key 原文 */
-interface ProviderView {
-  id: string;
-  name: string;
-  baseUrl: string;
-  protocol: string | null;
-  models: string[];
-  apiKeySet: boolean;
-  apiKeyMasked?: string | null;
-}
-
-interface EngineView {
+interface EngineSettingsView {
   configured: boolean;
-  version?: number;
-  apiKeyMasked: string | null;
-  baseUrl: string;
-  strongModel: string;
-  fastModel: string;
-  main?: { provider: string; strong: string; fast: string } | null;
-  assignments?: Record<RouteKey, AssignmentView>;
+  main?: EnginePointer | null;
+  fallback?: EnginePointer | null;
+  assignments?: Record<string, { provider: string; model: string; baseUrl?: string } | null>;
   providers?: ProviderView[];
   warnings?: string[];
 }
 
-/** 表单里的一行。key 只在浏览器里活着（React key）；id 是落盘的那个，创建时生成一次后不再变 */
-interface ProviderRow {
-  key: string;
-  id: string;
-  name: string;
-  baseUrl: string;
-  models: string;
-  protocol: string;
-  apiKey: string;
-  apiKeySet: boolean;
-  /** 服务端已存的模型清单——「测试」只能测已保存的那些，表单里刚敲的还不算数 */
-  savedModels: string[];
+const DISMISS_KEY = "engine-warnings-dismissed";
+const EMPTY_ASSIGNMENTS: Record<RoleKey, EngineAssignment | null> = { writer: null, reviewer: null, scout: null, analytics: null };
+
+/** 关掉的 warning 存浏览器，不写配置文件（spec §7「关闭状态存前端，不存文件」） */
+function readDismissed(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISMISS_KEY) ?? "[]") as unknown;
+    return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 let providerRowSeq = 0;
 
-function toProviderRows(list: ProviderView[] | undefined): ProviderRow[] {
-  return (list ?? []).map((p) => ({
-    key: `saved-${p.id}`,
-    id: p.id,
-    name: p.name,
-    baseUrl: p.baseUrl,
-    models: p.models.join(", "),
-    protocol: p.protocol ?? "",
-    apiKey: "",
-    apiKeySet: p.apiKeySet,
-    savedModels: p.models,
-  }));
-}
-
-const ROUTES: Array<{ key: RouteKey; title: string; note: string; baseField: string; modelField: string }> = [
-  { key: "writer", title: "写稿专线", note: "生成初稿、改稿、平台适配", baseField: "writer_base_url", modelField: "writer_model" },
-  { key: "reviewer", title: "审稿专线", note: "AI 审稿、去 AI 味复核", baseField: "reviewer_base_url", modelField: "reviewer_model" },
-  { key: "scout", title: "选题评分专线", note: "雷达筛选、灵感提炼、深调研", baseField: "scout_base_url", modelField: "scout_model" },
-  { key: "analytics", title: "数据复盘专线", note: "复盘报告、campaign 重排", baseField: "analytics_base_url", modelField: "analytics_model" },
-];
-
-type TestState =
-  | { status: "running" }
-  | { status: "ok"; ms: number; model: string }
-  | { status: "fail"; error: string };
-
-/** 只取主机名做卡头的紧凑展示；解析不了就原样显示（宁可长，不许骗） */
-function host(url?: string | null): string {
-  if (!url) return "—";
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
-function TestButton(props: { label?: string; state?: TestState; disabled?: boolean; title?: string; onRun: () => void }) {
-  const running = props.state?.status === "running";
+/** 模型名：下拉给该端点已存的清单，也允许手打（不做 /models 自动发现，spec §2） */
+function ModelInput(props: { label: string; listId: string; models: string[]; value: string; onChange: (v: string) => void }) {
   return (
-    <button
-      className="set-test-btn"
-      // 测试中禁重复点：一次探针就是一次真实调用，连点等于连着烧上游额度
-      disabled={running || props.disabled}
-      {...(props.title ? { title: props.title } : {})}
-      onClick={props.onRun}
-    >
-      {running ? "测试中…" : (props.label ?? "测试")}
-    </button>
+    <label className="set-field">
+      <span className="mono muted">{props.label}</span>
+      <input list={props.listId} value={props.value} placeholder="模型名（可手填）" onChange={(e) => props.onChange(e.target.value)} />
+      <datalist id={props.listId}>
+        {props.models.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+    </label>
   );
 }
 
-function TestLine(props: { label?: string; state?: TestState }) {
-  const s = props.state;
-  if (!s || s.status === "running") return null;
-  const prefix = props.label ? `${props.label}：` : "";
-  if (s.status === "fail") return <p className="mono set-test-fail">✗ {prefix}{s.error}</p>;
-  return <p className="mono set-test-ok">✓ {prefix}通了 · {s.ms}ms · {s.model}</p>;
+function ProviderSelect(props: { value: string; rows: ProviderRow[]; noneLabel?: string; onChange: (v: string) => void }) {
+  return (
+    <label className="set-field">
+      <span className="mono muted">端点</span>
+      <select value={props.value} onChange={(e) => props.onChange(e.target.value)}>
+        {props.noneLabel && <option value="">{props.noneLabel}</option>}
+        {props.rows.map((r) => (
+          <option key={r.id || r.key} value={r.id}>
+            {r.name.trim() || r.id || "未命名端点"}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
-const EMPTY_FORM = {
-  api_key: "", base_url: "", strong_model: "", fast_model: "",
-  writer_base_url: "", writer_model: "", reviewer_base_url: "", reviewer_model: "",
-  scout_base_url: "", scout_model: "", analytics_base_url: "", analytics_model: "",
-};
-
 export function EngineSection() {
-  const [engine, setEngine] = useState<EngineView | null>(null);
-  const [providers, setProviders] = useState<ProviderRow[]>([]);
-  const [eForm, setEForm] = useState({ ...EMPTY_FORM });
+  const [rows, setRows] = useState<ProviderRow[]>([]);
+  const [main, setMain] = useState<EnginePointer>({ provider: "", strong: "", fast: "" });
+  const [fallback, setFallback] = useState<EnginePointer | null>(null);
+  const [assignments, setAssignments] = useState<Record<RoleKey, EngineAssignment | null>>({ ...EMPTY_ASSIGNMENTS });
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>(readDismissed);
+  const [errors, setErrors] = useState<string[]>([]);
   const [tests, setTests] = useState<Record<string, TestState>>({});
+  const [configured, setConfigured] = useState(false);
+  const { health, reload: reloadHealth } = useEngineHealth();
 
   const load = async () => {
     const r = await invoke("settings:get");
     if (!r.ok) return toast(r.error ?? "引擎配置读取失败");
-    const d = (r as unknown as { data: EngineView }).data;
-    setEngine(d);
-    setProviders(toProviderRows(d.providers));
+    const d = (r as unknown as { data: EngineSettingsView }).data;
+    setConfigured(d.configured);
+    setRows(toProviderRows(d.providers));
+    setMain(d.main ?? { provider: "", strong: "", fast: "" });
+    setFallback(d.fallback ?? null);
+    const next = { ...EMPTY_ASSIGNMENTS };
+    for (const role of ROLE_KEYS) {
+      const a = d.assignments?.[role];
+      next[role] = a ? { provider: a.provider, model: a.model } : null;
+    }
+    setAssignments(next);
+    setWarnings(d.warnings ?? []);
   };
   useEffect(() => {
     void load();
   }, []);
 
-  /** 测的是**端点**（provider_id + model），不是岗位；key 只是这张页面上的状态槽 */
-  const runTest = async (key: string, provider_id: string, model: string) => {
-    if (tests[key]?.status === "running") return;
-    setTests((t) => ({ ...t, [key]: { status: "running" } }));
-    const r = await invoke("settings:test_route", { provider_id, model });
-    if (!r.ok) {
-      setTests((t) => ({ ...t, [key]: { status: "fail", error: r.error ?? "测试失败" } }));
-      return;
-    }
-    const d = (r as unknown as { data: { ms: number; model: string } }).data;
-    setTests((t) => ({ ...t, [key]: { status: "ok", ms: d.ms, model: d.model } }));
-  };
-
-  /** 表单里有没敲完就去测的东西——测的是已保存的配置，这件事必须当场说明白 */
-  const dirty = Object.values(eForm).some((v) => v.trim() !== "");
-  /** 端点表里主端点那一条的 id——「测强档/测快档」测的就是它 */
-  const mainProvider = engine?.main?.provider ?? "";
-  const testable = Boolean(engine?.configured);
-  const testHint = !testable ? "先填 API Key 并保存，才能测试" : dirty ? "测的是已保存的配置——先保存再测" : undefined;
-
-  const saveEngine = async () => {
-    const payload: Record<string, string> = {};
-    for (const [k, v] of Object.entries(eForm)) if (v.trim()) payload[k] = v.trim();
-    if (Object.keys(payload).length === 0) return toast("没有要保存的修改");
-    const r = await invoke("settings:set", payload);
-    if (!r.ok) return toast(r.error ?? "保存失败");
-    toast("已保存");
-    setEForm({ ...EMPTY_FORM });
-    setTests({}); // 配置换了，上一次的测试结论立刻作废，不许留在屏幕上冒充现状
-    void load();
-  };
-
+  const pointers: EnginePointers = { main: main.provider ? main : null, fallback, assignments };
+  const modelsOf = (id: string) => splitModels(rows.find((r) => r.id === id)?.models ?? "");
   const patchProvider = (key: string, patch: Partial<ProviderRow>) =>
-    setProviders((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setRows((list) => list.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
-  /**
-   * 端点整份提交（服务端原子校验，任一条非法就整次拒绝并说清是哪条）。
-   * id 在第一次提交前生成一次并留在表单里——之后改名不重算，切换器里存着的选择不会作废。
-   */
-  const saveProviders = async () => {
-    const taken = new Set(providers.filter((p) => p.id).map((p) => p.id));
-    const withIds = providers.map((p) => {
+  /** 删除：被引用就拒绝，并把引用者列出来（spec §7 防呆） */
+  const deleteProvider = (row: ProviderRow) => {
+    const used = row.id ? referrersOf(row.id, pointers) : [];
+    if (used.length) return toast(`删不了：${row.name || row.id} 正在被 ${used.join("、")} 使用——先把它们改到别的端点`);
+    setRows((list) => list.filter((r) => r.key !== row.key));
+  };
+
+  const runTest = async (slot: string, providerId: string, model: string) => {
+    if (!slot || tests[slot]?.status === "running") return;
+    setTests((t) => ({ ...t, [slot]: { status: "running" } }));
+    const r = await invoke("settings:test_route", { provider_id: providerId, model });
+    reloadHealth(); // 探针结果同时进健康通道：状态点与横幅立刻跟着变
+    if (!r.ok) return setTests((t) => ({ ...t, [slot]: { status: "fail", error: r.error ?? "测试失败" } }));
+    const d = (r as unknown as { data: { ms: number; model: string } }).data;
+    setTests((t) => ({ ...t, [slot]: { status: "ok", ms: d.ms, model: d.model } }));
+  };
+
+  /** 一次提交整张图：providers + main + fallback + assignments，服务端整图校验 */
+  const saveAll = async () => {
+    const taken = new Set(rows.filter((p) => p.id).map((p) => p.id));
+    const withIds = rows.map((p) => {
       if (p.id) return p;
       const id = slugProviderId(p.name, taken);
       taken.add(id);
       return { ...p, id };
     });
-    setProviders(withIds);
-    const payload = withIds.map((p) => ({
-      id: p.id,
-      name: p.name.trim(),
-      baseUrl: p.baseUrl.trim(),
-      models: p.models.split(/[,，\s]+/).filter(Boolean),
-      ...(p.protocol ? { protocol: p.protocol } : {}),
-      ...(p.apiKey.trim() ? { apiKey: p.apiKey.trim() } : {}),
-    }));
-    const r = await invoke("settings:set", { providers: payload });
-    if (!r.ok) return toast(r.error ?? "保存失败"); // 服务端的原因原样展示,不改写
-    toast(payload.length ? "端点已保存——对话切换器里可以选了" : "端点已清空");
-    setTests({});
+    setRows(withIds);
+    const cleanAssignments: Record<string, EngineAssignment> = {};
+    for (const role of ROLE_KEYS) {
+      const a = assignments[role];
+      if (a?.provider && a.model.trim()) cleanAssignments[role] = { provider: a.provider, model: a.model.trim() };
+    }
+    const r = await invoke("settings:set", {
+      providers: providerPayload(withIds),
+      main,
+      fallback: fallback && fallback.provider ? fallback : null,
+      assignments: cleanAssignments,
+    });
+    if (!r.ok) {
+      // 服务端的逐项错误原样摆出来，一个字不改写
+      setErrors((r.error ?? "保存失败").split("；").filter(Boolean));
+      return toast("没保存：下面列出了每一条不合格的地方");
+    }
+    setErrors([]);
+    setTests({}); // 配置换了，上一次的测试结论立刻作废，不许留在屏幕上冒充现状
+    toast("已保存");
     void load();
+    reloadHealth();
+  };
+
+  const allWarnings = [...new Set([...warnings, ...(health?.warnings ?? [])])];
+  // 同家提醒**常驻**（spec §7）：它描述的是一个仍然成立的事实,不是一次性通知,
+  // 所以摆在备用端点那一格里、不给关闭按钮；其余 warning 才是顶部可关的那一批
+  const sameFamily = allWarnings.filter((w) => w.includes("同一家"));
+  const liveWarnings = allWarnings.filter((w) => !sameFamily.includes(w) && !dismissed.includes(w));
+  const dismiss = (w: string) => {
+    const next = [...dismissed, w];
+    setDismissed(next);
+    try {
+      localStorage.setItem(DISMISS_KEY, JSON.stringify(next));
+    } catch {
+      /* 隐私模式下存不了：这一次关掉也算数，只是下次还会出现 */
+    }
   };
 
   return (
-    <Section
-      title="引擎 · 模型服务"
-      status={engine?.configured ? `已配置 ${engine.apiKeyMasked ?? ""}` : "未配置"}
-      on={engine?.configured}
-    >
+    <Section title="模型 · 端点与岗位" status={configured ? "已配置" : "未配置"} on={configured}>
       <p className="muted">
-        总编辑与轻任务走主端点；写稿、审稿、选题、复盘可各指向更强的端点。密钥按端点只存一份，不重复保存。
-        每张卡的「测试」会拿已保存的配置真发一次极小调用。
+        跑通「调研 → 立意 → 写稿」只要一个主端点。备用端点在主线挂掉时顶上；岗位分配是可选的加强，
+        不配就全部跟随主端点。
       </p>
 
+      {liveWarnings.map((w) => (
+        <div key={w} className="engine-warn">
+          <span>{w}</span>
+          <button onClick={() => dismiss(w)} title="关掉这条提醒（只存在这台浏览器，不写配置文件）">
+            知道了
+          </button>
+        </div>
+      ))}
+      {errors.map((e, i) => (
+        <p key={`${e}-${i}`} className="mono set-test-fail">✗ {e}</p>
+      ))}
+
+      <ProviderTable
+        rows={rows}
+        health={health?.providers ?? []}
+        pointers={pointers}
+        tests={tests}
+        onPatch={patchProvider}
+        onAdd={() =>
+          setRows((list) => [
+            ...list,
+            { key: `new-${(providerRowSeq += 1)}`, id: "", name: "", baseUrl: "", models: "", protocol: "", apiKey: "", apiKeySet: false, savedModels: [] },
+          ])
+        }
+        onDelete={deleteProvider}
+        onTest={(slot, id, model) => void runTest(slot, id, model)}
+      />
+
+      <p className="mono muted set-sub-head">主端点 · 对话与所有没单独分配的岗位都走它</p>
       <div className="set-route">
-        <div className="set-route-head">
-          <span className="set-route-name">主端点</span>
-          <span className="mono muted set-route-now">
-            {host(engine?.baseUrl)} · 强 {engine?.strongModel ?? "—"} · 快 {engine?.fastModel ?? "—"}
-          </span>
-        </div>
-        <Field label="API Key" password value={eForm.api_key} placeholder={engine?.apiKeyMasked ?? "sk-..."} onChange={(v) => setEForm((f) => ({ ...f, api_key: v }))} />
-        <Field label="Base URL" value={eForm.base_url} placeholder={engine?.baseUrl ?? ""} onChange={(v) => setEForm((f) => ({ ...f, base_url: v }))} />
-        <Field label="强模型" value={eForm.strong_model} placeholder={engine?.strongModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, strong_model: v }))} />
-        <Field label="快模型" value={eForm.fast_model} placeholder={engine?.fastModel ?? ""} onChange={(v) => setEForm((f) => ({ ...f, fast_model: v }))} />
+        <ProviderSelect value={main.provider} rows={rows} onChange={(v) => setMain((m) => ({ ...m, provider: v }))} />
+        <ModelInput label="强模型" listId="main-models" models={modelsOf(main.provider)} value={main.strong} onChange={(v) => setMain((m) => ({ ...m, strong: v }))} />
+        <ModelInput label="快模型" listId="main-models" models={modelsOf(main.provider)} value={main.fast} onChange={(v) => setMain((m) => ({ ...m, fast: v }))} />
         <div className="set-route-foot">
-          <TestButton label="测强档" state={tests.strong} disabled={!testable} {...(testHint ? { title: testHint } : {})} onRun={() => void runTest("strong", mainProvider, engine?.strongModel ?? "")} />
-          <TestButton label="测快档" state={tests.fast} disabled={!testable} {...(testHint ? { title: testHint } : {})} onRun={() => void runTest("fast", mainProvider, engine?.fastModel ?? "")} />
-          {testHint && <span className="mono muted">{testHint}</span>}
+          <TestButton
+            label="测强档"
+            state={tests.main}
+            disabled={!main.provider || !main.strong}
+            title="测的是已保存的配置——改完先保存再测"
+            onRun={() => void runTest("main", main.provider, main.strong)}
+          />
         </div>
-        <TestLine label="强档" state={tests.strong} />
-        <TestLine label="快档" state={tests.fast} />
+        <TestLine state={tests.main} />
       </div>
 
-      <p className="mono muted set-sub-head">岗位分配 · 留空即跟随主端点强模型</p>
-      <div className="set-route-grid">
-        {ROUTES.map((r) => {
-          const route = engine?.assignments?.[r.key] ?? null;
+      <p className="mono muted set-sub-head">备用端点 · 主线失败时顶完本次调用（一个备用顶全部岗位）</p>
+      <div className="set-route">
+        <ProviderSelect
+          value={fallback?.provider ?? ""}
+          rows={rows}
+          noneLabel="无（主线失败即报错）"
+          onChange={(v) => setFallback(v ? { provider: v, strong: fallback?.strong ?? "", fast: fallback?.fast ?? "" } : null)}
+        />
+        {sameFamily.map((w) => (
+          <p key={w} className="mono set-test-fail">⚠ {w}</p>
+        ))}
+        {fallback && (
+          <>
+            <ModelInput label="强模型" listId="fb-models" models={modelsOf(fallback.provider)} value={fallback.strong} onChange={(v) => setFallback((f) => (f ? { ...f, strong: v } : f))} />
+            <ModelInput label="快模型" listId="fb-models" models={modelsOf(fallback.provider)} value={fallback.fast} onChange={(v) => setFallback((f) => (f ? { ...f, fast: v } : f))} />
+          </>
+        )}
+      </div>
+
+      <details className="engine-roles">
+        <summary>
+          岗位分配 · <span className="mono muted">{assignmentSummary(assignments)}</span>
+        </summary>
+        {ROLE_KEYS.map((role) => {
+          const a = assignments[role];
           return (
-            <div key={r.key} className="set-route">
+            <div key={role} className="set-route">
               <div className="set-route-head">
-                <span className="set-route-name">{r.title}</span>
-                {/* 卡头说的是**此刻真实生效**的那一档，不是写死的宣传语 */}
-                <span className="mono muted set-route-now">
-                  {route ? `${route.model} · ${host(route.baseUrl)}` : `跟随主端点强模型 · ${engine?.strongModel ?? "—"}`}
-                </span>
+                <span className="set-route-name">{ROLE_LABEL[role]}</span>
+                <span className="mono muted set-route-now">{a ? `${a.model} · ${a.provider}` : "跟随主端点强模型"}</span>
               </div>
-              <p className="muted set-route-note">{r.note}</p>
-              <Field
-                label="端点"
-                value={eForm[r.baseField as keyof typeof eForm]}
-                placeholder={route?.baseUrl ?? engine?.baseUrl ?? ""}
-                onChange={(v) => setEForm((f) => ({ ...f, [r.baseField]: v }))}
+              <p className="muted set-route-note">{ROLE_NOTE[role]}</p>
+              <ProviderSelect
+                value={a?.provider ?? ""}
+                rows={rows}
+                noneLabel="跟随主端点"
+                onChange={(v) => setAssignments((x) => ({ ...x, [role]: v ? { provider: v, model: x[role]?.model ?? "" } : null }))}
               />
-              <Field
-                label="模型"
-                value={eForm[r.modelField as keyof typeof eForm]}
-                placeholder={route?.model ?? engine?.strongModel ?? ""}
-                onChange={(v) => setEForm((f) => ({ ...f, [r.modelField]: v }))}
-              />
-              <div className="set-route-foot">
-                <TestButton
-                  state={tests[r.key]}
-                  disabled={!testable}
-                  {...(testHint ? { title: testHint } : {})}
-                  onRun={() => void runTest(r.key, route?.provider ?? mainProvider, route?.model ?? engine?.strongModel ?? "")}
+              {a && (
+                <ModelInput
+                  label="模型"
+                  listId={`role-${role}-models`}
+                  models={modelsOf(a.provider)}
+                  value={a.model}
+                  onChange={(v) => setAssignments((x) => ({ ...x, [role]: { provider: a.provider, model: v } }))}
                 />
-              </div>
-              <TestLine state={tests[r.key]} />
+              )}
             </div>
           );
         })}
-      </div>
+      </details>
 
-      <SaveRow label="保存引擎与任务路由" onSave={() => void saveEngine()} />
-
-      <p className="mono muted set-sub-head">
-        自定义端点 · 总编辑对话的模型切换器里按端点分组直接选（不影响上面的主通道与任务路由）
-      </p>
-      {providers.length === 0 && <p className="muted">还没有自定义端点。加一个，比如本地 Ollama 或另一家中转。</p>}
-      {providers.map((p) => {
-        const target = p.savedModels[0] ? `p:${p.id}:${p.savedModels[0]}` : "";
-        return (
-          <div key={p.key} className="set-route set-provider">
-            <div className="set-route-head">
-              <span className="set-route-name">{p.name.trim() || "未命名端点"}</span>
-              <span className="mono muted set-route-now">{p.id || "保存后分配 id"}</span>
-              <button onClick={() => setProviders((rows) => rows.filter((r) => r.key !== p.key))}>删除</button>
-            </div>
-            <Field label="名称" value={p.name} placeholder="如:DeepSeek 官方" onChange={(v) => patchProvider(p.key, { name: v })} />
-            <Field label="地址" value={p.baseUrl} placeholder="https://api.deepseek.com" onChange={(v) => patchProvider(p.key, { baseUrl: v })} />
-            <Field
-              label="模型"
-              value={p.models}
-              placeholder="逗号分隔,如:deepseek-v4-pro, deepseek-v4-flash"
-              onChange={(v) => patchProvider(p.key, { models: v })}
-            />
-            <label className="set-field">
-              <span className="mono muted">协议</span>
-              <select value={p.protocol} onChange={(e) => patchProvider(p.key, { protocol: e.target.value })}>
-                <option value="">自动推断(按 key 前缀与域名)</option>
-                <option value="openai">openai</option>
-                <option value="anthropic">anthropic</option>
-              </select>
-            </label>
-            <Field
-              label="API Key"
-              password
-              value={p.apiKey}
-              placeholder={p.apiKeySet ? "已配置,留空保持不变" : "必填"}
-              onChange={(v) => patchProvider(p.key, { apiKey: v })}
-            />
-            <div className="set-route-foot">
-              <TestButton
-                label={p.savedModels[0] ? `测 ${p.savedModels[0]}` : "测试"}
-                state={tests[target]}
-                disabled={!target}
-                title={target ? "用已保存的地址与 key 测第一个模型" : "先保存这个端点，才能测"}
-                onRun={() => void runTest(target, p.id, p.savedModels[0] ?? "")}
-              />
-            </div>
-            <TestLine state={tests[target]} />
-          </div>
-        );
-      })}
       <div className="set-save">
-        <button
-          onClick={() =>
-            setProviders((rows) => [
-              ...rows,
-              { key: `new-${(providerRowSeq += 1)}`, id: "", name: "", baseUrl: "", models: "", protocol: "", apiKey: "", apiKeySet: false, savedModels: [] },
-            ])
-          }
-        >
-          ＋添加端点
+        <button className="primary" onClick={() => void saveAll()}>
+          保存模型配置
         </button>
-        <button className="primary" onClick={() => void saveProviders()}>保存端点</button>
         <button
           onClick={async () => {
             const r = await invoke("settings:open_config");
@@ -348,6 +309,7 @@ export function EngineSection() {
         >
           打开配置文件
         </button>
+        <span className="muted mono">端点表、主端点、备用、岗位一次提交；任一条不合格就整次拒绝，文件不动。</span>
       </div>
     </Section>
   );

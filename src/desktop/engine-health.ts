@@ -17,7 +17,8 @@ import path from "node:path";
 import { hostOf, loadEngineConfig, type EngineConfig } from "../engine/config.js";
 import { setEngineHealthSink, type EngineLiveRecord } from "../engine/health-sink.js";
 import { probeEngineRoute } from "../engine/probe.js";
-import { describeProbeFailure } from "../engine/failure-text.js";
+import { describeEngineFailure, describeProbeFailure, isEngineFailure, type FailureRole } from "../engine/failure-text.js";
+import { classifyEngineError } from "../engine/error-kind.js";
 import { getDataDir } from "../storage/local-store.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { emitEngineEvent } from "./event-hub.js";
@@ -92,14 +93,19 @@ export function resetEngineHealth(): void {
   memory.clear();
 }
 
-/** 变更即广播（既有 SSE `engine` 事件，只报「变了」）；不落 events.jsonl——它不是工作日志 */
-async function commit(state: EngineHealthState, dataDir?: string): Promise<void> {
-  await saveHealthState(state, dataDir);
+/** 只报「变了」（既有 SSE `engine` 事件）；不落 events.jsonl——它不是工作日志 */
+async function broadcastHealthChanged(dataDir?: string): Promise<void> {
   await emitEngineEvent(
     { role: "system", kind: "engine_health", label: "引擎线路状态有更新" },
     dataDir,
     { persist: false },
   ).catch(() => {});
+}
+
+/** 变更即广播 */
+async function commit(state: EngineHealthState, dataDir?: string): Promise<void> {
+  await saveHealthState(state, dataDir);
+  await broadcastHealthChanged(dataDir);
 }
 
 export async function recordProbeResult(
@@ -119,6 +125,20 @@ export async function recordProbeResult(
   await commit(state, dataDir);
 }
 
+/** 真实调用的失败原因也要翻译——横幅取的是「最近一条」，live 比 probe 新时漏原文就在这里 */
+async function liveErrorText(record: EngineLiveRecord, dataDir?: string): Promise<string> {
+  const raw = cleanErrorMessage(record.error ?? "");
+  const config = await readConfig(dataDir).catch(() => null);
+  const provider = config?.providers?.find((p) => p.id === record.providerId);
+  const ctx = { id: record.providerId, host: provider ? hostOf(provider.baseUrl) : undefined };
+  const classified = classifyEngineError(new Error(raw));
+  if (!isEngineFailure(classified)) return raw;
+  const role = (LIVE_ROLES.has(record.role) ? record.role : "main") as FailureRole;
+  return describeEngineFailure({ role, provider: ctx, classified });
+}
+
+const LIVE_ROLES = new Set(["writer", "reviewer", "scout", "analytics", "main", "chat", "probe"]);
+
 export async function recordLiveResult(record: EngineLiveRecord, dataDir?: string): Promise<void> {
   const state = await stateFor(dataDir);
   const entry = (state.providers[record.providerId] ??= {});
@@ -127,7 +147,7 @@ export async function recordLiveResult(record: EngineLiveRecord, dataDir?: strin
     ok: record.ok,
     role: record.role,
     ...(record.jobId ? { jobId: record.jobId } : {}),
-    ...(record.error ? { error: cleanErrorMessage(record.error) } : {}),
+    ...(record.error ? { error: await liveErrorText(record, dataDir) } : {}),
   };
   await commit(state, dataDir);
 }
@@ -238,6 +258,9 @@ export function initEngineHealth(dataDir?: string): () => void {
     void recordLiveResult(record, dataDir).catch(() => {});
   });
   const off = onEngineSettingsChanged(({ changedProviderIds }) => {
+    // 指针（主端点/备用/岗位）改了但端点没变：不用重探，但横幅读的 main/fallback/assignments
+    // 已经不一样了——真机复盘 2026-09-05：配上备用后横幅仍说「没有备用端点」，就是漏了这一广播
+    void broadcastHealthChanged(dataDir);
     if (changedProviderIds.length) void probeAllProviders(dataDir, { only: changedProviderIds }).catch(() => {});
   });
   return () => {
