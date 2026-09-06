@@ -2,7 +2,16 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE = "autocrew_session";
 
+/** 浏览器会话与老 `server-token` 的主体名（P3 §4.1：命名 token 之外的一切都算它）。 */
+export const LOCAL_SUBJECT = "local-user";
+
 export type AuthMethod = "session" | "bearer";
+
+/** 认证结果：方法 + 主体。主体就是 MCP 侧的宿主名，`tools/call` 靠它归因。 */
+export interface AuthIdentity {
+  method: AuthMethod;
+  subject: string;
+}
 
 function constantTimeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
@@ -49,6 +58,11 @@ export class LocalSessionAuth {
     private readonly ttlMs = 30 * 24 * 60 * 60 * 1000,
     private readonly now: () => number = Date.now,
     private readonly automationToken = bootToken,
+    /**
+     * 命名宿主 token 的反查（`<dataDir>/tokens/<host>.token` → 宿主名）。
+     * 注进来而不是直接读盘：这个类是纯逻辑、有单测，不该长出文件系统依赖。
+     */
+    private readonly lookupHost: (token: string) => string | null = () => null,
   ) {}
 
   originAllowed(origin: string | undefined): boolean {
@@ -68,9 +82,17 @@ export class LocalSessionAuth {
   }
 
   authenticate(headers: SessionHeaders): AuthMethod | null {
+    return this.identify(headers)?.method ?? null;
+  }
+
+  /** 与 `authenticate` 同一套判定，另外回答「这是谁」——MCP 归因的唯一来源。 */
+  identify(headers: SessionHeaders): AuthIdentity | null {
     const authorization = headerValue(headers.authorization);
-    if (authorization.startsWith("Bearer ") && constantTimeEqual(authorization.slice(7), this.automationToken)) {
-      return "bearer";
+    if (authorization.startsWith("Bearer ")) {
+      const token = authorization.slice(7);
+      if (constantTimeEqual(token, this.automationToken)) return { method: "bearer", subject: LOCAL_SUBJECT };
+      const host = this.lookupHost(token);
+      if (host) return { method: "bearer", subject: host };
     }
 
     const sessionId = readCookie(headerValue(headers.cookie), SESSION_COOKIE);
@@ -82,7 +104,7 @@ export class LocalSessionAuth {
     if (!constantTimeEqual(signature, this.sign(payload))) return null;
     const expires = Number(expiresText);
     if (!Number.isFinite(expires) || expires <= this.now()) return null;
-    return "session";
+    return { method: "session", subject: LOCAL_SUBJECT };
   }
 
   cookieHeader(sessionId: string): string {

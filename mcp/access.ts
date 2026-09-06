@@ -21,6 +21,12 @@ export interface McpUsageEvent {
 
 export interface McpAccessContext {
   principal: McpPrincipal;
+  /**
+   * 宿主名（P3 §4.1）——来自命名 token 的文件名，老 `server-token` 是 `local-user`。
+   * 归因**不**依赖 `clientInfo`：无会话的 HTTP 上它没有稳定落点，只作日志补充。
+   * `handleMcpRequest` 把它注进每次 `tools/call` 的 `_host` 参数。
+   */
+  host: string;
   authorize?: (
     principal: McpPrincipal,
     tool: string,

@@ -192,32 +192,48 @@ autocrew runs --json           # 最近任务事件
 # 面向自动化的内部能力调用
 autocrew call topics:list --payload '{}'
 
-# stdio MCP server
+# Claude Code 用的 stdio 转发器（把 JSON-RPC 转发给守护进程，不另起服务）
 autocrew mcp
+
+# 接一个宿主：建命名令牌 + 打印接入步骤
+autocrew host codex
 ```
 
 ## MCP 与 OpenClaw
 
 AutoCrew 的网页、CLI、OpenClaw 和 MCP 使用同一套能力注册表。
 
-### Claude Code / 其他 MCP 客户端
+### 接宿主（Claude Code / Codex / dsh）
 
-先运行 `npm link`，再添加：
+**只有一个进程写盘。** `http://127.0.0.1:4317/mcp` 是唯一的 MCP 传输：Codex 的远端客户端直连它，
+Claude Code 的 `autocrew mcp` 只是一个 stdio 转发器（把 JSON-RPC 原样转发到同一个端点）。
+守护进程没起，转发器就报「AutoCrew 服务没有运行，先在仓库里执行 npm start」——不会有第二个进程
+在背后改同一批稿子。
 
-```json
-{
-  "mcpServers": {
-    "autocrew": {
-      "command": "autocrew",
-      "args": ["mcp"]
-    }
-  }
-}
+每个宿主一把命名令牌：
+
+```bash
+npm start                 # 先起服务（令牌目录由它创建）
+autocrew host codex       # 或 claude-code / dsh
 ```
 
-MCP 提供工具、`autocrew://profile` / `autocrew://topics` / `autocrew://contents` 资源，以及写公众号、修改稿件、审稿、周复盘等提示词。
+命令会建好 `~/.autocrew/tokens/<host>.token`（0600）并打印接入步骤。**这个文件等于你的编辑部钥匙**
+——能读到它的人能调用全部 AutoCrew 工具；撤销就是删掉它，宿主下一次调用立刻 401。
+服务端按令牌文件名认出是哪个宿主，稿子上记的「谁写的」就来自它。
 
-本地网页服务启动后还提供 Streamable HTTP MCP：`http://127.0.0.1:4317/mcp`。它只面向本机客户端，认证使用 `~/.autocrew/server-token` 中的 Bearer Token；不要把该 Token 发给他人。
+| 宿主 | 怎么接 |
+| --- | --- |
+| Claude Code | 仓库里的 `.mcp.json` 已经指向转发器，起了服务就能用 |
+| Codex | `export AUTOCREW_MCP_TOKEN=$(cat ~/.autocrew/tokens/codex.token)`，再 `codex mcp add autocrew --url http://127.0.0.1:4317/mcp --bearer-token-env-var AUTOCREW_MCP_TOKEN` |
+| dsh | 走进程内工具桥，见 `adapters/dsh/README.md` |
+
+Codex 提醒：`codex exec`（非交互）会自动取消 MCP 工具调用，除非加
+`--dangerously-bypass-approvals-and-sandbox`（openai/codex #24135、#16685）。日常用交互式会话。
+
+老的 `~/.autocrew/server-token` 继续有效（工作台自动化与旧配置），主体记作 `local-user`。
+
+MCP 提供工具、`autocrew://profile` / `autocrew://topics` / `autocrew://contents` /
+`autocrew://contents/<id>/writing-pack` 资源，以及写公众号、修改稿件、审稿、周复盘等提示词。
 
 ### OpenClaw 本地开发
 
