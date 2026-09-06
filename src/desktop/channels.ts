@@ -47,6 +47,10 @@ export const IPC_CHANNELS = [
   // 线路健康只读通道（P2 spec §4.1）：每个端点最近一次探针 + 最近一次真实调用的结果。
   // 不轮询——变更时服务端发既有 `engine` SSE 事件（kind:"engine_health"），前端据此重拉
   "engine:health",
+  // 「接入更多 · 宿主」卡（P3 spec §4.1）：已发出去的命名令牌 + 一键撤销。
+  // 只出宿主名与时间戳，token 值一个字节都不进这条通道
+  "hosts:list",
+  "hosts:revoke",
   "settings:search_get",
   "settings:search_set",
   "settings:publish_get",

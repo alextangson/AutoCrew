@@ -111,4 +111,7 @@ description: 使用 Image 2 为 AutoCrew 内容依次生成并审核 3:4 母版�
 
 - `autocrew_content`：读取/创建内容。
 - `autocrew_cover_review`：`create_candidates`、`get`、`revise`、`approve`、`platform_ratios`。
+- `autocrew_desk`：从别的宿主（Codex 封面师）进来时先 `claim`，收工 `release`；
+  认领期间 `create_candidates` / `revise` / `approve` / `platform_ratios` 都要带 `claim_token`，
+  否则会被持有者挡下。工作台内部走这个 skill 时不需要。
 - `autocrew_asset`：必要时登记和检查成品资产。

@@ -38,6 +38,8 @@ function printHelp() {
   autocrew call           调用任意内部能力（channel --payload JSON）
   autocrew mcp            stdio ↔ 守护进程 /mcp 转发器（Claude Code 用）
   autocrew host           接入宿主（codex|claude-code|dsh），打印接入步骤
+                          --dir <path> 把人设写进该目录的 AGENTS.md/CLAUDE.md
+                          --role editor-writer|cover 选哪一份人设
   autocrew doctor         检查本地运行环境
 
 选项:
@@ -376,12 +378,19 @@ switch (command) {
     if (!host || !fs.existsSync(tsx)) {
       console.error(host
         ? `缺少依赖。请先在 ${ROOT} 执行 npm install`
-        : "用法：autocrew host <codex|claude-code|dsh> [--dir <path>]");
+        : "用法：autocrew host <codex|claude-code|dsh> [--dir <path>] [--role editor-writer|cover]");
       process.exitCode = 1;
       break;
     }
+    // --dir 把人设写进那个工作目录的 AGENTS.md / CLAUDE.md；--role 选哪一份人设
     const dir = optionValue("dir");
-    const args = [path.join(ROOT, "src", "desktop", "host-cli.ts"), host, ...(dir ? ["--dir", dir] : [])];
+    const role = optionValue("role");
+    const args = [
+      path.join(ROOT, "src", "desktop", "host-cli.ts"),
+      host,
+      ...(dir ? ["--dir", dir] : []),
+      ...(role ? ["--role", role] : []),
+    ];
     const child = spawn(tsx, args, { cwd: ROOT, stdio: "inherit", env: process.env });
     process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
     break;

@@ -14,6 +14,7 @@ import { needsAnglePick, NO_ANGLE_GATE, type AngleGate } from "./angle-choice";
 import { buildDispatchBrief } from "./dispatch-brief";
 import { phraseBreak } from "./phrase-break";
 import { fallbackTitle } from "./engine-lib";
+import { HostBadges } from "./HostBadges";
 import {
   BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
@@ -325,6 +326,8 @@ export function Board(props: { openEditor: (id: string) => void }) {
                             {!blocked && badge && <span className="muted"> {badge}</span>}
                             {/* 兜底留痕（P2 §4.3）：这一稿由备用端点顶完，hover 说主线为什么失败 */}
                             {m.usedFallback && <span className="chip-fallback" title={fallbackTitle(m.usedFallback)}> 备用顶上</span>}
+                            {/* 多宿主留痕（P3 §6.1）：谁写的 / 谁在动 / 领了包没交稿，hover 是详情 */}
+                            <HostBadges content={m} inline />
                           </button>
                         );
                       })}

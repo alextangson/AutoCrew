@@ -781,6 +781,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border-left: 2px solid var(--hot); color: var(--muted); padding: 4px 10px; margin: 6px 0;
   font-size: 12px; cursor: help;
 }
+/* 宿主徽章（P3 §6.1）：贴在稿卡 chip 里,不能带块级外边距（同 .chip-blocked 的约定） */
+.chip-host { color: var(--crew-writer); font-weight: 600; cursor: help; }
+/* 租约过期 / 领包没交稿:是「没人管了」不是「出错了」——灰,不是红 */
+.chip-host-stale { color: var(--muted); cursor: help; }
+.ed-hosts { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; font-size: 12px; }
 .set-tabs { display: flex; gap: 8px; margin: 8px 0 4px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
 .set-tabs .nav-on { border-color: var(--ink); font-weight: 700; }
 .int-line { margin: 3px 0; font-size: 12px; line-height: 1.6; }
