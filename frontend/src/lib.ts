@@ -219,6 +219,14 @@ export interface Content {
   unverifiedNumbers?: string[];
   /** 这一稿是备用端点顶完的（P2 spec §4.3）：稿卡出「备用顶上」，hover 显示主线失败原因 */
   usedFallback?: { role: string; from: string; to: string; error: string };
+  /**
+   * 多宿主留痕（P3 spec §5.3 / §6.1）。四个字段都是**后加的**，老稿一个都没有——
+   * 徽章一律按「缺了就不显示」处理，绝不拿缺省值冒充事实。`claim` 里永远没有令牌值。
+   */
+  writtenBy?: { kind: string; host?: string; provider?: string; model?: string };
+  claim?: { employee: string; host: string; at: string; leaseUntil: string };
+  handoffs?: Array<{ from: string; to: string; at: string; by: string }>;
+  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string };
   adoption?: { verdict: string; reason?: string; reasonNote?: string; derived?: boolean };
   /** AI 审稿结论(审稿 spec §2.5):稿卡徽章读它;旧稿无此字段 = 不显示徽章 */
   review?: {

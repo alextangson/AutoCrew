@@ -37,6 +37,8 @@
  *   settings:open_config {}                                (打开实际生效的 engine.json)
  *   settings:test_route { provider_id, model }             (拿已保存的配置真发一次调用)
  *   engine:health      {}                                  (只读；每个端点最近一次探针 + 真实调用结果)
+ *   hosts:list         {}                                  (只读；命名令牌清单，永不含 token 值)
+ *   hosts:revoke       { host }                            (删掉 tokens/<host>.token，下一次调用 401)
  *   settings:search_get {}
  *   settings:search_set { provider, api_key, base_url? }
  *   settings:publish_get {}
@@ -131,6 +133,7 @@ import {
 } from "./settings.js";
 import { testEngineRoute } from "./settings-probe.js";
 import { getEngineHealth } from "./engine-health.js";
+import { hostsListHandler, hostsRevokeHandler } from "./host-tokens.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import {
   pullStatusHandler,
@@ -1227,6 +1230,9 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "settings:test_route": (payload) => testEngineRoute(payload),
     // 线路健康（P2 spec §4.1）：只读派生视图，不含密钥；更新靠四个时机推，不靠轮询
     "engine:health": getEngineHealth,
+    // 宿主令牌（P3 spec §4.1）：只读清单 + 撤销（撤销 = 删文件，下一次调用 401）
+    "hosts:list": hostsListHandler,
+    "hosts:revoke": hostsRevokeHandler,
     "settings:search_get": getSearchSettings,
     "settings:search_set": setSearchSettings,
     "settings:publish_get": getPublishSettings,

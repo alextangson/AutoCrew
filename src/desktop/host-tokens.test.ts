@@ -5,7 +5,15 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ensureHostToken, listHostTokens, lookupHostToken, revokeHostToken, tokensDir } from "./host-tokens.js";
+import {
+  ensureHostToken,
+  hostsListHandler,
+  hostsRevokeHandler,
+  listHostTokens,
+  lookupHostToken,
+  revokeHostToken,
+  tokensDir,
+} from "./host-tokens.js";
 import { LocalSessionAuth, LOCAL_SUBJECT } from "./server-auth.js";
 
 let dataDir: string;
@@ -83,5 +91,56 @@ describe("host tokens", () => {
     expect(auth.identify({ authorization: "Bearer legacy-token" })).toEqual({ method: "bearer", subject: LOCAL_SUBJECT });
     expect(auth.identify({ authorization: "Bearer nope" })).toBeNull();
     expect(auth.authenticate({ authorization: `Bearer ${codex}` })).toBe("bearer");
+  });
+});
+
+/**
+ * `hosts:list` / `hosts:revoke`（P3 §4.1「接入更多 · 宿主」卡）——
+ * 通道能给出清单与撤销，但**永远不给 token 值**。
+ */
+describe("hosts IPC", () => {
+  it("lists hosts with created/last-used and never the token value", async () => {
+    ensureHostToken("codex");
+    ensureHostToken("dsh");
+    const token = readFileSync(path.join(tokensDir(), "codex.token"), "utf-8").trim();
+    lookupHostToken(token);
+
+    const res = await hostsListHandler({});
+    expect(res.ok).toBe(true);
+    const hosts = (res.data as { hosts: Array<{ host: string; createdAt: string; lastUsedAt?: string }> }).hosts;
+    expect(hosts.map((h) => h.host)).toEqual(["codex", "dsh"]);
+    expect(hosts[0].createdAt).toBeTruthy();
+    expect(hosts[0].lastUsedAt).toBeTruthy();
+    expect(hosts[1].lastUsedAt).toBeUndefined();
+    expect(JSON.stringify(res)).not.toContain(token);
+  });
+
+  it("returns an empty list before the server has ever issued one", async () => {
+    expect(await hostsListHandler({})).toEqual({ ok: true, data: { hosts: [] } });
+  });
+
+  it("revokes a host and reports the fresh list", async () => {
+    const file = ensureHostToken("codex");
+    const res = await hostsRevokeHandler({ host: "codex" });
+    expect(res.ok).toBe(true);
+    expect((res.data as { revoked: boolean }).revoked).toBe(true);
+    expect((res.data as { hosts: unknown[] }).hosts).toEqual([]);
+    expect(String(res.message)).toContain("401");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("says so plainly when there was nothing to revoke", async () => {
+    const res = await hostsRevokeHandler({ host: "codex" });
+    expect(res.ok).toBe(true);
+    expect((res.data as { revoked: boolean }).revoked).toBe(false);
+    expect(String(res.message)).toContain("本来就没有令牌");
+  });
+
+  it("rejects a host name that could escape the tokens dir", async () => {
+    ensureHostToken("codex");
+    for (const host of ["../codex", "", "Codex", "a/b"]) {
+      expect((await hostsRevokeHandler({ host })).ok, host).toBe(false);
+    }
+    expect(listHostTokens()).toHaveLength(1);
   });
 });

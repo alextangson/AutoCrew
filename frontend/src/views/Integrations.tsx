@@ -7,9 +7,11 @@
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
-import { toast } from "../ui";
+import { toast, confirmDialog } from "../ui";
 import { Field, SaveRow } from "./settings-kit";
 import { integrationStatus, type IntegrationStatus } from "./integrations-lib";
+import { relativeTime } from "./engine-lib";
+import { hostLabel } from "./host-badge";
 
 interface RadarSource {
   id?: string;
@@ -73,6 +75,19 @@ const EMPTY_PUBLISH_FORM = {
 
 const EMPTY_INBOX_FORM = { bot_token: "", allowed_user_ids: "", target_workspace_id: "", proxy_url: "", justoneapi_key: "" };
 
+/** 一个宿主的命名令牌（P3 spec §4.1）。**永远不含 token 值**，只有名字与时间。 */
+interface HostTokenView {
+  host: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+const HOST_COMMANDS = [
+  { host: "claude-code", cmd: "npx autocrew host claude-code", what: "总编辑 + 写手（写稿线）" },
+  { host: "codex", cmd: "npx autocrew host codex", what: "写稿或封面，见 adapters/codex/README.md" },
+  { host: "dsh", cmd: "npx autocrew host dsh", what: "DeepSeek harness，写稿线" },
+];
+
 function IntegrationCard(props: {
   title: string;
   unlocks: string;
@@ -97,6 +112,69 @@ function IntegrationCard(props: {
   );
 }
 
+/**
+ * 「接入更多 · 宿主」（P3 spec §4.1）——谁手上有这台机器的编辑部钥匙。
+ *
+ * 一条纪律：**token 值不进这个组件**，通道也不发。这里只有宿主名、发放时间、
+ * 最后一次调用时间，和一个撤销键（撤销 = 删文件，那个宿主下一次调用 401）。
+ */
+function HostsCard(props: { hosts: HostTokenView[]; reload: () => void }) {
+  const now = Date.now();
+  const revoke = async (host: string) => {
+    const ok = await confirmDialog({
+      title: `撤销 ${hostLabel(host)} 的令牌？`,
+      body:
+        `${host} 之后的每一次调用都会 401，正在进行的写稿或封面会当场断掉。` +
+        (host === "claude-code" ? "\n注意：Claude Code 的 stdio 转发器读的就是这把钥匙，撤销后仓库里的 MCP 会连不上。" : "") +
+        `\n要再接回来：npx autocrew host ${host}`,
+      confirmLabel: "撤销",
+      danger: true,
+    });
+    if (!ok) return;
+    const r = await invoke("hosts:revoke", { host });
+    toast(r.ok ? String((r as { message?: string }).message ?? "已撤销") : (r.error ?? "撤销失败"));
+    props.reload();
+  };
+
+  return (
+    <IntegrationCard
+      title="宿主 · Claude Code / Codex / dsh"
+      unlocks="别的 AI 客户端直接当你的员工：Claude 写稿、Codex 做封面，稿件与证据仍然落在这里的案卷。"
+      ifMissing="只有工作台自己能写；Codex / Claude Code 那边调用会连不上或 401。"
+      status={integrationStatus({
+        configured: props.hosts.length > 0,
+        okLabel: `${props.hosts.length} 个宿主已接入`,
+      })}
+    >
+      {props.hosts.map((h) => (
+        <div key={h.host} className="row">
+          <span className="mono pri">{hostLabel(h.host)}</span>
+          <span className="row-title mono">{h.host}</span>
+          <span className="muted mono">
+            {h.lastUsedAt ? `最后调用 ${relativeTime(h.lastUsedAt, now)}` : "还没调用过"}
+            {`　发放于 ${relativeTime(h.createdAt, now)}`}
+          </span>
+          <button onClick={() => void revoke(h.host)}>撤销</button>
+        </div>
+      ))}
+      {props.hosts.length === 0 && (
+        <>
+          <p className="muted int-line">还没有宿主接进来。在仓库目录里跑其中一条，它会打印接入步骤：</p>
+          {HOST_COMMANDS.map((c) => (
+            <p key={c.host} className="muted int-line">
+              <code className="mono">{c.cmd}</code>　{c.what}
+            </p>
+          ))}
+        </>
+      )}
+      <p className="muted mono">
+        令牌文件等于你的编辑部钥匙——能读到它的人能调用全部 AutoCrew 工具。撤销就是删掉它，下一次调用立刻 401。
+        加 <code>--dir &lt;工作目录&gt;</code> 还能把员工人设写进那个目录的 AGENTS.md / CLAUDE.md。
+      </p>
+    </IntegrationCard>
+  );
+}
+
 export function Integrations() {
   const [search, setSearch] = useState<SearchView | null>(null);
   const [sForm, setSForm] = useState({ provider: "bocha", api_key: "" });
@@ -109,9 +187,10 @@ export function Integrations() {
   const [inboxRuntime, setInboxRuntime] = useState<InboxRuntimeView | null>(null);
   const [iForm, setIForm] = useState({ ...EMPTY_INBOX_FORM });
   const [ws, setWs] = useState<{ active: string; workspaces: Array<{ id: string; name: string }> } | null>(null);
+  const [hosts, setHosts] = useState<HostTokenView[]>([]);
 
   const load = async () => {
-    const [sr, pr, cr, rr, ir, runtime, wr] = await Promise.all([
+    const [sr, pr, cr, rr, ir, runtime, wr, hr] = await Promise.all([
       invoke("settings:search_get"),
       invoke("settings:publish_get"),
       invoke("settings:cover_get"),
@@ -119,7 +198,9 @@ export function Integrations() {
       invoke("inbox:settings_get"),
       invoke("inbox:status"),
       invoke("workspace:list"),
+      invoke("hosts:list"),
     ]);
+    if (hr.ok) setHosts((hr as unknown as { data?: { hosts?: HostTokenView[] } }).data?.hosts ?? []);
     if (sr.ok) setSearch((sr as unknown as { data: SearchView }).data);
     if (pr.ok) setPub((pr as unknown as { data: PublishView }).data);
     if (cr.ok) setCover((cr as unknown as { data: CoverView }).data);
@@ -159,6 +240,8 @@ export function Integrations() {
 
   return (
     <>
+      <HostsCard hosts={hosts} reload={() => void load()} />
+
       <IntegrationCard
         title="搜索 · 博查 / Tavily"
         unlocks="深调研全网取证、写稿时按缺口定向补证据。"

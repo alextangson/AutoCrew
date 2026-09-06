@@ -152,8 +152,8 @@ describe("IPC_CHANNELS", () => {
   // channels.ts / channel-contracts.ts / buildIpcHandlers / renderer 调用四处
   // 是否同步。历史教训:a5eddc8 在 122 上加了 10 个 video 通道却把断言写成
   // 127 且改坏语法,套件停摆近一个月——bump 前先确认四处齐全,别只改数字。
-  it("has exactly 161 channels", () => {
-    expect(IPC_CHANNELS).toHaveLength(161);
+  it("has exactly 163 channels", () => {
+    expect(IPC_CHANNELS).toHaveLength(163);
   });
 
   it.each(EXPECTED)("contains %s", (ch) => {
@@ -274,6 +274,9 @@ describe("CHANNEL_ACTIONS — channel→action bindings", () => {
           ch !== "settings:test_route" &&
           // 线路健康（P2 spec §4.1）:engine-health.ts 的 getEngineHealth,只读派生视图
           ch !== "engine:health" &&
+          // 宿主令牌（P3 spec §4.1）:host-tokens.ts 的 hostsList/hostsRevoke,直接读写 tokens/
+          ch !== "hosts:list" &&
+          ch !== "hosts:revoke" &&
           ch !== "settings:search_get" &&
           ch !== "settings:search_set" &&
           ch !== "settings:publish_get" &&

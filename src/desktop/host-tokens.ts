@@ -163,3 +163,35 @@ function constantTimeEqual(left: string, right: string): boolean {
   const b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+// ── IPC（P3 §4.1「接入更多 · 宿主」卡）────────────────────────────────────────
+
+/**
+ * `hosts:list` —— 列出已发出去的宿主令牌：宿主名、发放时间、最后一次调用时间。
+ * **不出 token 值**，一个字节都不出（同 `ensureHostToken` 的理由）。
+ */
+export async function hostsListHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const dataDir = (payload._dataDir as string) || undefined;
+  return { ok: true, data: { hosts: listHostTokens(dataDir) } };
+}
+
+/** `hosts:revoke` —— 撤销 = 删文件，那个宿主下一次调用立刻 401。 */
+export async function hostsRevokeHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, error: "Invalid payload: expected object" };
+  }
+  const host = typeof payload.host === "string" ? payload.host.trim() : "";
+  if (!HOST_NAME_PATTERN.test(host)) return { ok: false, error: `宿主名不合法：${host || "(空)"}` };
+  const dataDir = (payload._dataDir as string) || undefined;
+  const revoked = revokeHostToken(host, dataDir);
+  return {
+    ok: true,
+    data: { host, revoked, hosts: listHostTokens(dataDir) },
+    // 本来就没有这个令牌时也回 ok:true——用户要的结果（它不存在）已经成立，
+    // 但要如实说明，不能让「已撤销」盖住「你撤销的是个不存在的东西」
+    message: revoked ? `已撤销 ${host}——它下一次调用会 401` : `${host} 本来就没有令牌`,
+  };
+}

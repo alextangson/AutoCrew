@@ -41,6 +41,7 @@ import {
   type Content,
 } from "../lib";
 import { fallbackTitle } from "./engine-lib";
+import { HostBadges } from "./HostBadges";
 import type { EditorPanel } from "../App";
 import { type VersionLike } from "../version-diff";
 
@@ -355,6 +356,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           {c.usedFallback && (
             <div className="ed-fallback" title={fallbackTitle(c.usedFallback)}>备用顶上 · 主线 {c.usedFallback.from} 没跑通，由 {c.usedFallback.to} 顶完</div>
           )}
+
+          {/* 多宿主留痕（P3 §6.1）：谁写的 / 谁在动 / 领了包没交稿。hover 是完整说明 */}
+          <HostBadges content={c} />
           {c.lastError && (
             <div className="ed-error">
               ⚠️ 上次生成中断：{String(c.lastError).slice(0, 120)}{" "}

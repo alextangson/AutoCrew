@@ -55,6 +55,10 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "settings:test_route": ["provider_id", "model"],
   // 只读，无参：视图由服务端从配置 + 健康态派生（不含任何密钥）
   "engine:health": [],
+  // 只读，无参：宿主名 + 发放时间 + 最后调用时间，永不含 token 值
+  "hosts:list": [],
+  // 撤销就是删掉 `<dataDir>/tokens/<host>.token`，那个宿主下一次调用 401
+  "hosts:revoke": ["host"],
   "settings:search_get": [],
   "settings:search_set": ["provider", "api_key"],
   "settings:publish_get": [],
