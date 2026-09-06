@@ -261,14 +261,15 @@ interface Draft {
 }
 
 type ReviewPass =
-  | { ok: true; issues: ReviewIssue[]; tokensUsed: number }
-  | { ok: false; reason: string; tokensUsed: number };
+  | { ok: true; verdict: "pass" | "revise"; issues: ReviewIssue[]; tokensUsed: number }
+  /** `error` 只在「线路真的炸了」时有值——调用方据它决定要不要套 P2 故障翻译器 */
+  | { ok: false; reason: string; error?: unknown; tokensUsed: number };
 type RevisionPass =
   | { ok: true; draft: Draft; tokensUsed: number }
   | { ok: false; reason: string; tokensUsed: number };
 
 /** 审一轮。永不抛：审稿失败只是「这轮没审成」，不是写作失败。 */
-async function reviewOnce(
+async function runReviewPass(
   input: ReviewInput,
   draft: Draft,
   config: EngineConfig,
@@ -301,7 +302,9 @@ async function reviewOnce(
       maxTotalTokens: REVIEW_MAX_TOKENS,
       logMeta: { ...(deps.runId ? { runId: deps.runId } : {}), agent: "reviewer" },
     });
-    if (capture.verdict) return { ok: true, issues: capture.issues, tokensUsed: result.totalTokens };
+    if (capture.verdict) {
+      return { ok: true, verdict: capture.verdict, issues: capture.issues, tokensUsed: result.totalTokens };
+    }
     return {
       ok: false,
       tokensUsed: result.totalTokens,
@@ -311,8 +314,47 @@ async function reviewOnce(
           : `审稿结论不合格：${capture.problems.join("；")}`,
     };
   } catch (err) {
-    return { ok: false, reason: `审稿调用失败：${errText(err)}`, tokensUsed: 0 };
+    return { ok: false, reason: `审稿调用失败：${errText(err)}`, error: err, tokensUsed: 0 };
   }
+}
+
+/**
+ * `reviewOnce` 的回执：模型自报的 verdict、**校验过**的 issues、这一轮的元数据。
+ * `blockers` 是 issues 里 severity=blocker 的那些——打回与否由**代码**按它判，不看 verdict。
+ */
+export type ReviewOnceResult =
+  | { ok: true; verdict: "pass" | "revise"; issues: ReviewIssue[]; blockers: ReviewIssue[]; reviewedAt: string; tokensUsed: number }
+  | { ok: false; reason: string; error?: unknown; tokensUsed: number };
+
+/**
+ * 「只审不修」入口（P3 spec §5.3 / codex #9）：宿主写稿时修稿在宿主模型手里，
+ * 产品这边只负责审——收敛循环那一套（自动调写手修）在这条路上是错的。
+ * 与 `reviewAndConverge` 的第一轮跑的是**同一个函数**，判据与降级口径不分叉。
+ * `ReviewMeta` 由调用方组装：`rounds`/`fixed` 是收敛循环的事实，单轮审稿不知道也不该猜。
+ */
+export async function reviewOnce(
+  input: ReviewInput,
+  config: EngineConfig,
+  deps: ReviewDeps = {},
+): Promise<ReviewOnceResult> {
+  const draft: Draft = { payload: input.payload, humanizedText: input.humanizedText };
+  const pass = await runReviewPass(input, draft, config, deps, 0);
+  if (!pass.ok) {
+    return {
+      ok: false,
+      reason: pass.reason,
+      ...(pass.error !== undefined ? { error: pass.error } : {}),
+      tokensUsed: pass.tokensUsed,
+    };
+  }
+  return {
+    ok: true,
+    verdict: pass.verdict,
+    issues: pass.issues,
+    blockers: pass.issues.filter((i) => i.severity === "blocker"),
+    reviewedAt: new Date().toISOString(),
+    tokensUsed: pass.tokensUsed,
+  };
 }
 
 /** 修一轮：写稿的 system + 同批材料 + blocker 清单，收束工具是同一把 submit_script（带 gate）。 */
@@ -428,7 +470,7 @@ export async function reviewAndConverge(
 
   for (;;) {
     const cap = passCap();
-    const pass = await withDeadline(() => reviewOnce(input, draft, config, deps, rounds), cap);
+    const pass = await withDeadline(() => runReviewPass(input, draft, config, deps, rounds), cap);
     if (pass !== DEADLINE) tokensUsed += pass.tokensUsed;
     if (pass === DEADLINE || !pass.ok) {
       const reason = pass === DEADLINE ? `审稿超时（本轮上限 ${Math.round(cap / 1000)} 秒，整段 ${Math.round(deadlineMs / 1000)} 秒）` : pass.reason;

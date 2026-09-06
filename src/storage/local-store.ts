@@ -283,6 +283,17 @@ export interface Content {
    * 收尾再落一次（含写手 find_evidence 查来的条目）。
    */
   evidenceLedger?: EvidenceLedgerSnapshot;
+  /**
+   * 谁写的这一稿（P3 spec §5.3）。宿主写稿之后「后台生成中」不再是唯一解释：
+   * 稿卡要能说出「Claude 写」还是「引擎 deepseek/写手线写」。旧稿无此字段 = 引擎写的老稿。
+   */
+  writtenBy?: { kind: "host"; host: string } | { kind: "engine"; provider: string; model: string };
+  /**
+   * 发出去的写作包（P3 §5.2）。`submittedAt` 缺席 + 状态 `drafting` = **包发出去了、稿没回来**，
+   * 稿卡据此说「写作包已发给 X，未收到稿（N 分钟）」而不是误报「还在后台写」。
+   * `packId` 同时是写手侧的 fencing token：再领一次包换新号，旧号的提交一律被拒。
+   */
+  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string };
   /** 数字硬门拦下的那些数字（`needs_evidence` 稿的清单）；也用于 needsHuman 的 advisory 展示 */
   unverifiedNumbers?: string[];
   /** `needs_evidence` 的人话原因（硬门打回文案）；转正时清空 */
@@ -395,7 +406,7 @@ function isFileMissing(err: unknown): boolean {
  */
 const contentWriteChains = new Map<string, Promise<unknown>>();
 
-function serializeContentWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
+export function serializeContentWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
   const prev = contentWriteChains.get(id) ?? Promise.resolve();
   const next = prev.then(fn, fn); // 前一步失败也不许卡住后一步
   const tail = next.then(() => undefined, () => undefined);
@@ -501,9 +512,14 @@ async function contentsDir(dataDir?: string): Promise<string> {
  *     assets/         — media files (covers, broll, images, videos)
  *     versions/       — version history (v1.md, v2.md, ...)
  */
-async function contentProjectDir(id: string, dataDir?: string): Promise<string> {
+/** 稿件目录（`contents/<id>`）的路径。写作包等**稿件同级**的附属文件从这里取，不各拼各的 */
+export function contentDir(id: string, dataDir?: string): string {
   if (!isContentId(id)) throw new Error("Invalid content id");
-  const dir = path.join(getDataDir(dataDir), "contents", id);
+  return path.join(getDataDir(dataDir), "contents", id);
+}
+
+async function contentProjectDir(id: string, dataDir?: string): Promise<string> {
+  const dir = contentDir(id, dataDir);
   await ensureDir(dir);
   await ensureDir(path.join(dir, "assets"));
   await ensureDir(path.join(dir, "versions"));
@@ -1120,7 +1136,9 @@ async function approveCoverVariantLocked(
  */
 const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   topic_saved: ["drafting"],
-  drafting: ["draft_ready", "needs_evidence", "topic_saved"],
+  // revision 这条边是宿主写稿开的（P3 §5.3）：审稿点了 blocker，稿子回宿主改，
+  // 改完带 attempt+1 再提交。内部写手的修订轮在同一个进程里跑完，不经过这条边。
+  drafting: ["draft_ready", "needs_evidence", "revision", "topic_saved"],
   // 缺证据（P1 §4.4）：重试回 drafting；补材料后重跑一轮**完整生成**才能到 draft_ready
   // （那一轮从 drafting 走正常边过来，不是从这里直推）。人工判定「这些数字我认」时也
   // 允许直接放行——所以 draft_ready 留着，但它是人的动作，不是生成管线的出口。

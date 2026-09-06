@@ -77,7 +77,8 @@ AutoCrew 不再自己雇写手；它把「写一篇稿需要的一切」打成�
   - `Mcp-Session-Id`：`initialize` 时签发、后续请求校验（会话表内存态，重启失效即重新 initialize）——若客户端要求则做。
   - `GET /mcp`：继续 405（流式 HTTP 允许服务端不开 SSE）——若客户端拒绝再开最小 SSE（只保活，不推送）。
   - `notifications/*` → 202（已有）。
-- `tools/list`、`tools/call` 结果经 `toLosslessJson`（从 dsh 桥搬到 `mcp/` 共用）。
+- **spike 记录（2026-09-05 深夜，隔离目录 + 记录请求头的代理）**：Codex CLI 0.145 远端客户端（`clientInfo.name = codex-mcp-client`）请求 `protocolVersion 2025-06-18`、`Accept: text/event-stream, application/json`，我们回 `2025-11-25` 它照常继续；全程只发 POST，不发 GET，不带会话 id；`initialize → notifications/initialized(202) → tools/list(24KB) → tools/call` 端到端通。标准 TypeScript SDK 客户端（Claude Code 同款）同样全通，只多发一次 `GET /mcp`，我们的 405 被容忍，`sessionId` 保持 null。**结论：不加会话 id、不加 SSE**；只把 `initialize` 改为回显客户端请求的版本（在我们支持的 `2025-03-26 / 2025-06-18 / 2025-11-25` 内）。另一个事实：`codex exec` 非交互模式会自动取消 MCP 工具调用（openai/codex #24135、#16685），只有 `--dangerously-bypass-approvals-and-sandbox` 能放行；交互会话按次审批正常。P3b 的 Codex 验收按交互会话或带该参数跑，`autocrew host codex` 文案要写这一条。
+- `tools/list`、`tools/call` 结果经 `toLosslessJson`（从 dsh 桥搬到 `src/utils/` 共用）。
 - 资源加两个：`autocrew://desk/<employee>`、`autocrew://contents/<id>/writing-pack`。
 
 ## 5. 写作包与提交：把写手循环翻过来

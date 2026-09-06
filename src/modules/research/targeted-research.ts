@@ -252,7 +252,10 @@ export function createTargetedResearcher(opts: TargetedResearcherOptions): Targe
   const runLoopImpl = opts.runLoopImpl ?? runLoop;
   const deadlineMs = opts.perNeedDeadlineMs ?? DEFAULT_PER_NEED_DEADLINE_MS;
   const route = resolveEngineRoute(opts.config, "scout", opts.config.strongModel);
-  let seq = 0;
+  // 从账本已有的查证轮数续号（P3 §5.2）：宿主写稿每次 `find_evidence` 都是新进程、新
+  // researcher，seq 回到 0 会让新条目分到已存在的 `ev-T1.1`——而 `ledger.add` 见到
+  // 已存在的 id 返回**旧条目**，新证据会被无声吞掉。
+  let seq = opts.ledger.lookups().length;
 
   /** 落账：只在**未冻结**的正常收尾路径调用，晚到的提交到不了这里 */
   function commit(lookup: TargetedLookup, pending: PendingItem[]): TargetedLookup {
@@ -468,17 +471,58 @@ export function buildFindEvidenceTool(researcher: TargetedResearcher): LoopTool 
       required: ["need"],
     },
     async execute(args) {
-      const need = str(args.need);
-      if (!need) return "Error: need 不能为空";
-      if (!researcher.ledger.budget.take()) {
-        return `Error: find_evidence 已用完 ${max} 次（写手与修订共享这一份额度）。用手上的材料收束：没有证据的数字删掉或改成定性说法，不要编。`;
-      }
-      const lookup = await researcher.find(need);
-      if (lookup.items.length === 0) {
-        const why = lookup.gaps.map((g) => sanitizeExternal(g, MAX_GAP_CHARS)).join("；") || "无说明";
-        return `没找到能核验的证据（${why}）。不要编这个数字，绕开或如实说没有数据。`;
-      }
-      return externalBlock(lookup.items.map(renderItem));
+      return (await runFindEvidence(researcher, str(args.need))).text;
     },
+  };
+}
+
+/** 一次查证的四种结局。宿主工具按它分叉，写手 loop 只读 `text` */
+export type FindEvidenceStatus = "found" | "empty" | "exhausted" | "invalid";
+
+export interface FindEvidenceResult {
+  status: FindEvidenceStatus;
+  /** 交给模型的那一段话（写手 loop 与宿主拿到的是**同一个字符串**） */
+  text: string;
+  /** 本次登记进账本的条目 id（`found` 时非空） */
+  itemIds: string[];
+  /** 还剩几次 */
+  left: number;
+}
+
+/**
+ * `find_evidence` 的执行体（P3 §5.1）：写手 loop 的工具与宿主的 `autocrew_writer
+ * find_evidence` 共用它——同一本账、同一份配额、同一段回话，写两遍就一定会漂。
+ */
+export async function runFindEvidence(
+  researcher: TargetedResearcher,
+  need: string,
+): Promise<FindEvidenceResult> {
+  const budget = researcher.ledger.budget;
+  const left = () => Math.max(0, budget.max - budget.used());
+  const trimmed = str(need);
+  if (!trimmed) return { status: "invalid", text: "Error: need 不能为空", itemIds: [], left: left() };
+  if (!budget.take()) {
+    return {
+      status: "exhausted",
+      text: `Error: find_evidence 已用完 ${budget.max} 次（写手与修订共享这一份额度）。用手上的材料收束：没有证据的数字删掉或改成定性说法，不要编。`,
+      itemIds: [],
+      left: 0,
+    };
+  }
+  const lookup = await researcher.find(trimmed);
+  if (lookup.items.length === 0) {
+    const why = lookup.gaps.map((g) => sanitizeExternal(g, MAX_GAP_CHARS)).join("；") || "无说明";
+    return {
+      status: "empty",
+      text: `没找到能核验的证据（${why}）。不要编这个数字，绕开或如实说没有数据。`,
+      itemIds: [],
+      left: left(),
+    };
+  }
+  return {
+    status: "found",
+    text: externalBlock(lookup.items.map(renderItem)),
+    itemIds: lookup.items.map((i) => i.id),
+    left: left(),
   };
 }

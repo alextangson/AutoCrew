@@ -190,8 +190,11 @@ export const INTERRUPTED_TITLE_PREFIX = "［生成中断］";
  */
 export const RESEARCHING_TITLE_PREFIX = "［调研中］";
 
-/** 占位稿先行（防呆 P1）:分钟级长任务先落盘——中途死不许蒸发,刷新/断连不影响它的存在 */
-async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
+/**
+ * 占位稿先行（防呆 P1）:分钟级长任务先落盘——中途死不许蒸发,刷新/断连不影响它的存在。
+ * 宿主写稿（`autocrew_writer pack`）用**同一个**函数建占位稿：稿件的出生形态不许分叉。
+ */
+export async function createPlaceholder(req: ScriptRequest, dataDir?: string): Promise<string> {
   const placeholder = await saveContent(
     {
       title: `${GENERATING_TITLE_PREFIX}${req.topic.slice(0, 40)}`,
@@ -434,7 +437,7 @@ async function runEvidencePhase(args: {
   return { researcher };
 }
 
-interface GenerationInputs {
+export interface GenerationInputs {
   config: EngineConfig;
   pack: ReturnType<typeof getPack>;
   profile: Awaited<ReturnType<typeof loadProfile>>;
@@ -585,6 +588,43 @@ async function gatherInputs(
   };
 }
 
+/**
+ * 一稿开工前的全部上下文：材料 + 两段提示词 + 质量门。
+ *
+ * 内部写手与宿主写稿（`autocrew_writer pack`）**都从这里出发**（P3 spec §5.4）。
+ * 门禁不因换宿主变松，靠的不是两边各写一遍同样的装配，而是这一个函数只有一份实现——
+ * 「同一选题两条路径的门禁输入一致」因此是构造保证，快照测试只是把它钉住。
+ */
+export interface WritingContext {
+  inputs: GenerationInputs;
+  prompts: { system: string; user: string };
+  gate: QualityGateSpec | undefined;
+}
+
+export async function buildWritingContext(
+  req: ScriptRequest,
+  dataDir: string | undefined,
+  warn: (message: string) => void,
+  deps?: GenerationDeps,
+): Promise<WritingContext> {
+  const inputs = await gatherInputs(req, dataDir, warn, deps);
+  // 跳过角度是**用户的显式动作**（§1.6 不许模型猜布尔），所以它的原话要落 run-log 可回溯
+  if (req.angleSkipReason?.trim()) warn(`用户明说跳过角度点选：${req.angleSkipReason.trim()}`);
+  else if (inputs.wroteWithoutAngle) warn(`未经角度点选开写：这条选题有角度候选卡但没选（${req.topicId}）`);
+  const prompts = buildScriptPrompts(inputs.pack, inputs.profile, inputs.promptReq, {
+    contrastPairs: inputs.contrastPairs,
+    patterns: inputs.patterns,
+    ...(inputs.angle ? { angle: inputs.angle } : {}),
+  });
+  return { inputs, prompts, gate: resolveQualityGate(inputs.pack, req.platform) };
+}
+
+/** 这稿是引擎哪条线写的（P3 §5.3）：宿主稿写 `{kind:"host"}`，两者在稿件上可区分 */
+function engineWriterOf(config: EngineConfig): NonNullable<Content["writtenBy"]> {
+  const writer = resolveEngineRoute(config, "writer", config.strongModel);
+  return { kind: "engine", provider: writer.config.activeProvider?.id ?? "main", model: writer.model };
+}
+
 /** run-log 的归因段（写稿轮与修订轮共用同一份口径）：没用到的字段一律不出现 */
 function logAttribution(attribution: Attribution): Record<string, unknown> {
   return {
@@ -604,6 +644,11 @@ function logAttribution(attribution: Attribution): Record<string, unknown> {
     ...(attribution.usedLookupIds?.length ? { usedLookupIds: attribution.usedLookupIds } : {}),
     ...(attribution.angleSkipReason ? { angleSkipReason: attribution.angleSkipReason } : {}),
   };
+}
+
+/** 归因落稿件元数据的**对外**口径：宿主写稿在发包时落同一份字段，稿件上两条路径不可区分 */
+export function contentAttributionOf(inputs: GenerationInputs): Partial<Content> {
+  return contentAttribution(inputs.attribution, inputs.ledger);
 }
 
 /** 归因落稿件元数据（写手开工前一次、收尾一次——中途崩了也不丢） */
@@ -696,8 +741,9 @@ interface WriterRun {
 /**
  * 写手的工具箱依赖（§4.4）：账本用 getter 传——写手在同一轮里用 `find_evidence` 查到的
  * 条目要当场对数字硬门生效，传快照就永远慢一拍。两个硬门开关与赛道包无关，恒定打开。
+ * 宿主提交（`autocrew_writer submit`）用同一个函数：两个硬门开关不许有第二处定义。
  */
-function submitDepsFor(ledger: EvidenceLedger): SubmitGateDeps {
+export function submitDepsFor(ledger: EvidenceLedger): SubmitGateDeps {
   return { ledger: () => ledger.entries(), requireNumberEvidence: true, forbidFormatMarkers: true };
 }
 
@@ -848,18 +894,10 @@ async function writeAndFinalize(args: {
   runId?: string;
 }): Promise<GeneratedScript> {
   const { placeholderId, req, wroteWithoutBrief, warn, dataDir, deps, runId } = args;
-  // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)
-  const inputs = await gatherInputs(req, dataDir, warn, deps);
-  const { config, pack, profile, contrastPairs, patterns, promptReq, angle, wroteWithoutAngle, attribution } = inputs;
-  // 跳过角度是**用户的显式动作**（§1.6 不许模型猜布尔），所以它的原话要落 run-log 可回溯
-  if (req.angleSkipReason?.trim()) warn(`用户明说跳过角度点选：${req.angleSkipReason.trim()}`);
-  else if (wroteWithoutAngle) warn(`未经角度点选开写：这条选题有角度候选卡但没选（${req.topicId}）`);
-  const prompts = buildScriptPrompts(pack, profile, promptReq, {
-    contrastPairs,
-    patterns,
-    ...(angle ? { angle } : {}),
-  });
-  const gate = resolveQualityGate(pack, req.platform);
+  // 材料收集(知识库检索也在执行体统一做——MCP 工具/桌面 IPC/chat-router 三条入口一次覆盖)。
+  // 宿主写稿走的是**同一个** buildWritingContext（§5.4 门禁输入一致）
+  const { inputs, prompts, gate } = await buildWritingContext(req, dataDir, warn, deps);
+  const { config, profile, angle, wroteWithoutAngle, attribution } = inputs;
   // 账本先随占位稿落一次（§3.3）：写手还没开工，但补证已经花过钱了——
   // 这一步之后崩掉，「这稿当时手上有哪些证据」仍然查得到
   await persistAttribution(placeholderId, attribution, inputs.ledger, warn, dataDir);
@@ -892,6 +930,8 @@ async function writeAndFinalize(args: {
     ...(inputs.evidenceNote ? { evidenceNote: inputs.evidenceNote } : {}),
     placeholderId,
     ...(dataDir ? { dataDir } : {}),
+    // 这稿是产品内部写手写的（P3 §5.3）：宿主稿写 {kind:"host"}，稿卡据此出「谁写的」徽章
+    writtenBy: engineWriterOf(config),
   };
 
   // 硬门拦下 = 这稿不进审稿也不转正（§4.4）：审一篇不能发的稿是浪费，
@@ -1138,6 +1178,8 @@ interface FinalizeCommon {
   evidenceNote?: string;
   placeholderId: string;
   dataDir?: string;
+  /** 谁写的（P3 §5.3）：内部路径恒为 `{kind:"engine"}` */
+  writtenBy: NonNullable<Content["writtenBy"]>;
 }
 
 interface FinalizeArgs extends FinalizeCommon {
@@ -1199,6 +1241,7 @@ async function finalizeBlocked(args: FinalizeCommon & { written: WriterRun }): P
       blockedReason: written.blocked?.detail ?? "硬门未通过",
       unverifiedNumbers: unverified,
       ...contentAttribution(args.attribution, args.ledger),
+      writtenBy: args.writtenBy,
       review,
       _versionNote: `缺证据，未转草稿（${versionNote(review, args)}）`,
     },
@@ -1270,6 +1313,8 @@ async function finalizeScript(args: FinalizeArgs): Promise<GeneratedScript> {
       unverifiedNumbers: needsHuman,
       // 归因落稿件元数据(§3.5 卡 / 深调研 §6 简报 / P1 §3.2 语料 §3.3 账本):没用到就不写字段
       ...contentAttribution(attribution, args.ledger),
+      // 谁写的（P3 §5.3）：内部写手 = 引擎 writer 岗位那条线
+      writtenBy: args.writtenBy,
       // 审稿结论落稿件元数据(审稿 §2.5):稿卡徽章读的就是它,降级路径同样要留下
       review,
       _versionNote: versionNote(review, { wroteWithoutBrief, wroteWithoutAngle, ...(args.evidenceNote ? { evidenceNote: args.evidenceNote } : {}) }),

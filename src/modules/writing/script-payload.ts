@@ -48,6 +48,28 @@ function isStringArray(v: unknown): v is string[] {
 
 type SubmitValidation = { ok: true; payload: SubmitPayload } | { ok: false; error: string };
 
+/**
+ * 长度门（P3 spec §5.1 / codex #12）。今天一篇稿的正文没有任何上限：内部写手有 token
+ * 预算兜着，宿主模型没有——一次跑飞就是把几十万字塞进 `meta.json`。三个数各有出处：
+ * 正文 12 000 = 研究槽的总预算（`INPUT_TOTAL_BUDGET`），比它还长的稿肯定不是照材料写的；
+ * 标题 80 与 hashtags 10 是所有平台上限的宽松包络。
+ */
+export const MAX_BODY_CHARS = 12_000;
+export const MAX_TITLE_CHARS = 80;
+export const MAX_HASHTAGS = 10;
+
+/** 超长是**拒收**不是修复轮：它不是「写得不好」，是这一份根本不该收下 */
+function lengthError(payload: SubmitPayload): string | null {
+  const body = Array.from(payload.body).length;
+  if (body > MAX_BODY_CHARS) return `Error: 正文 ${body} 字，超过上限 ${MAX_BODY_CHARS} 字——删到限内再提交`;
+  const title = Array.from(payload.title).length;
+  if (title > MAX_TITLE_CHARS) return `Error: 标题 ${title} 字，超过上限 ${MAX_TITLE_CHARS} 字——改短再提交`;
+  if (payload.hashtags.length > MAX_HASHTAGS) {
+    return `Error: hashtags ${payload.hashtags.length} 个，超过上限 ${MAX_HASHTAGS} 个——留最相关的几个再提交`;
+  }
+  return null;
+}
+
 /** LLM 输出是不可信边界：缺失/空之外还必须校验类型，否则坏数据存进稿件后才爆。 */
 export function validateSubmitArgs(args: Record<string, unknown>): SubmitValidation {
   const text: Record<string, string> = {};
@@ -66,10 +88,10 @@ export function validateSubmitArgs(args: Record<string, unknown>): SubmitValidat
     return { ok: false, error: "Error: 字段 hashtags 应为字符串数组，请修正后重新调用 submit_script" };
   }
   if (hashtags.length === 0) return { ok: false, error: missingField("hashtags") };
-  return {
-    ok: true,
-    payload: { title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags },
-  };
+  const payload = { title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags };
+  const tooLong = lengthError(payload);
+  if (tooLong) return { ok: false, error: tooLong };
+  return { ok: true, payload };
 }
 
 /** 硬门拦下的原因（P1 §4.4）：needs_evidence 对应稿件状态 `needs_evidence`，不得转 draft_ready */
@@ -114,7 +136,8 @@ export interface SubmitGateDeps {
 /** 包无 qualityGate 时硬门也要有修复预算（抖音包就没有 gate，codex #22/#12） */
 export const DEFAULT_REPAIR_ROUNDS = 2;
 
-function runAllGates(
+/** 三道门跑一遍。宿主提交（`autocrew_writer submit`）与写手 loop 共用它——同一份代码，同一份判据 */
+export function runAllGates(
   payload: SubmitPayload,
   gate: QualityGateSpec | undefined,
   deps: SubmitGateDeps | undefined,

@@ -398,7 +398,8 @@ describe("Status Transitions", () => {
   });
 
   it("缺证据（P1 §4.4）：drafting 能进，出口是重写(drafting)/人工放行(draft_ready)/归档", () => {
-    expect(getAllowedTransitions("drafting")).toEqual(["draft_ready", "needs_evidence", "topic_saved"]);
+    // revision 是宿主写稿开的边（P3 §5.3）：审稿点了 blocker，稿子退回宿主改再交
+    expect(getAllowedTransitions("drafting")).toEqual(["draft_ready", "needs_evidence", "revision", "topic_saved"]);
     expect(getAllowedTransitions("needs_evidence")).toEqual(["drafting", "draft_ready", "archived"]);
   });
 

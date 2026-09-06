@@ -4,7 +4,7 @@
  * 墙钟一律靠注入的 nowImpl 推进：真睡会让「超时」变成一条随机失败的测试。
  */
 import { describe, it, expect } from "vitest";
-import { reviewAndConverge } from "./script-review.js";
+import { reviewAndConverge, reviewOnce } from "./script-review.js";
 import type { ReviewInput } from "./script-review.js";
 import type { SubmitPayload } from "./script-payload.js";
 import type { EngineConfig } from "../../engine/config.js";
@@ -632,5 +632,54 @@ describe("修订轮与写稿轮共用同一份门禁与同一份额度", () => {
     });
     await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: impl, maxWriterTurns: 11 });
     expect(seen.reviseOpts[0].maxTurns).toBe(11);
+  });
+});
+
+// ─── reviewOnce：只审不修（P3 §5.3 / codex #9） ───────────────────────────────
+
+describe("reviewOnce", () => {
+  it("只审一轮，不碰写手：有 blocker 也不起修订 loop", async () => {
+    const { impl, seen } = makeLoop({ reviews: [[{ verdict: "revise", issues: [BLOCKER, ADVISORY] }]] });
+    const out = await reviewOnce(INPUT, CONFIG, { runLoopImpl: impl });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.verdict).toBe("revise");
+    expect(out.blockers).toHaveLength(1);
+    expect(out.issues).toHaveLength(2);
+    expect(out.reviewedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // 修订轮一次都没起——「只审不修」的全部意思就在这一条
+    expect(seen.reviseOpts).toHaveLength(0);
+  });
+
+  it("与 reviewAndConverge 的第一轮跑同一个判据：quote 定位不到的 issue 一律不收", async () => {
+    const { impl } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [{ ...BLOCKER, quote: "这句话稿子里根本没有" }] }, { verdict: "pass", issues: [] }]],
+    });
+    const out = await reviewOnce(INPUT, CONFIG, { runLoopImpl: impl });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.blockers).toHaveLength(0);
+  });
+
+  it("审稿线炸了 → ok:false 且把原始错误带出来（调用方据它套 P2 翻译器）", async () => {
+    const { impl } = makeLoop({ reviews: ["throw"] });
+    const out = await reviewOnce(INPUT, CONFIG, { runLoopImpl: impl });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.reason).toContain("审稿调用失败");
+    expect(out.error).toBeInstanceOf(Error);
+  });
+
+  it("回归：reviewAndConverge 仍然会自己调写手修（内部路径行为不因拆函数而变）", async () => {
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    const out = await reviewAndConverge(INPUT, CONFIG, { runLoopImpl: impl });
+    expect(out.review.status).toBe("revised");
+    expect(out.review.rounds).toBe(1);
+    expect(out.review.fixed).toBe(1);
+    expect(seen.reviseOpts).toHaveLength(1);
+    expect(out.payload.hook).toBe(REVISED.hook);
   });
 });

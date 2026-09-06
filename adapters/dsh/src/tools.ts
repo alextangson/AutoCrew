@@ -50,6 +50,8 @@ export const PORTED_TOOLS: readonly string[] = [
   "autocrew_pre_publish",
   // 一站式流程：research / status / select_angle / write / draft / doctor
   "autocrew_workflow",
+  // 宿主写稿（P3 §5）：领包 → 补证 → 交稿过同一套门禁。dsh 里的模型自己动笔时用它
+  "autocrew_writer",
 ];
 
 /** 开放对象：只保证「是个对象」，形状随 action 变。 */

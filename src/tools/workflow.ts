@@ -37,15 +37,8 @@ import { createResearchRunner, type ResearchRunner } from "../modules/research/r
 import { SEARCH_NOT_CONFIGURED, searchAvailable } from "../modules/research/search-provider.js";
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import { startGenerateScript, type ScriptRequest } from "../modules/writing/generate-script.js";
-import {
-  CONTENT_STATUS_LABEL,
-  getContent,
-  getDataDir,
-  getTopic,
-  updateTopic,
-  type Content,
-} from "../storage/local-store.js";
-import { cardLine, cardView, jobView, sortedCards } from "./workflow-views.js";
+import { getContent, getDataDir, getTopic, updateTopic } from "../storage/local-store.js";
+import { cardLine, cardView, draftingNote, draftOwnerView, draftView, jobView, sortedCards } from "./workflow-views.js";
 // 健康视图是桌面与 dsh 共用的那一个（spec §4.1「同一个视图函数」）——doctor 不另写一份
 import { buildEngineHealth, probeAllProviders } from "../desktop/engine-health.js";
 
@@ -302,7 +295,7 @@ async function doSelectAngle(
  * 角度闸口（角度卡 spec §1.6，同 chat-router.angleGate）。返回拒单回执 = 不接单，null = 放行。
  * 放行四条路：给了 direction、明说 skip_reason、之前选过且还作数、这条选题压根没有候选卡。
  */
-async function angleGate(
+export async function angleGate(
   topicId: string,
   req: ScriptRequest,
   dataDir: string,
@@ -365,39 +358,17 @@ async function doWrite(
 
 // ─── draft ────────────────────────────────────────────────────────────────────
 
-function draftView(content: Content): WorkflowOk {
-  return {
-    ok: true,
-    contentId: content.id,
-    status: content.status,
-    statusLabel: CONTENT_STATUS_LABEL[content.status] ?? content.status,
-    title: content.title,
-    body: content.body,
-    hashtags: content.hashtags,
-    review: content.review,
-    needsEvidence: content.status === "needs_evidence",
-    unverifiedNumbers: content.unverifiedNumbers ?? [],
-    blockedReason: content.blockedReason ?? undefined,
-    lastError: content.lastError ?? undefined,
-    usedAngle: content.usedAngle,
-    usedFallback: content.usedFallback,
-  };
-}
-
 async function doDraft(params: Record<string, unknown>, dataDir: string): Promise<WorkflowResult> {
   const contentId = str(params.content_id);
   if (!contentId) return fail("content_id 必填");
   const content = await getContent(contentId, dataDir);
   if (!content) return fail(`稿件不存在：${contentId}`);
   if (content.status === "drafting") {
-    return {
-      ok: true,
-      contentId,
-      status: "drafting",
-      note: "还在后台写（通常 15–30 分钟），过一会儿再查。正文此刻是占位，别拿去用。",
-    };
+    // 「谁欠这一稿」不能只有一种说法（P3 §5.3）：包发出去了没回稿，说成「还在后台写」
+    // 就是让人对着一张永远不动的卡等一个不存在的后台任务
+    return { ok: true, contentId, status: "drafting", note: draftingNote(content), ...draftOwnerView(content) };
   }
-  return draftView(content);
+  return { ok: true, ...draftView(content) };
 }
 
 // ─── doctor ───────────────────────────────────────────────────────────────────

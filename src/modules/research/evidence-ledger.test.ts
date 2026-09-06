@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   createEvidenceLedger,
+  restoreEvidenceLedger,
   seedLedgerFromBrief,
   seedLedgerFromOwnMaterial,
   seedLedgerFromUserClaims,
@@ -140,5 +141,60 @@ describe("播种", () => {
     seedLedgerFromUserClaims(ledger, [{ id: "", text: "创始人材料" }]);
     expect(ledger.entries().filter((e) => e.source === "verified_quote")).toHaveLength(2);
     expect(ledger.entries()).toHaveLength(4);
+  });
+});
+
+// ─── 从快照恢复（P3 §5.2：宿主写稿是跨调用的，账本只能从盘上续） ─────────────
+
+describe("restoreEvidenceLedger", () => {
+  it("条目、查证记录、配额三样都续上，snapshot 往返不丢东西", () => {
+    const first = createEvidenceLedger();
+    seedLedgerFromBrief(first, BRIEF);
+    first.budget.take();
+    first.recordLookup({
+      need: "返工工时数据",
+      status: "found",
+      itemIds: ["ev-T1.1"],
+      gaps: [],
+      tokens: 10,
+      turns: 2,
+      startedAt: "2026-09-05T00:00:00.000Z",
+      endedAt: "2026-09-05T00:01:00.000Z",
+    });
+
+    const restored = restoreEvidenceLedger(first.snapshot());
+    expect(restored.entries().map((e) => e.id)).toEqual(first.entries().map((e) => e.id));
+    expect(restored.lookups()).toHaveLength(1);
+    expect(restored.budget.used()).toBe(1);
+    expect(restored.snapshot()).toEqual(first.snapshot());
+  });
+
+  it("配额从 used 续：恢复两次不等于额度重置（写两遍就等于没有上限）", () => {
+    const snapshot = createEvidenceLedger({ maxLookups: 3 }).snapshot();
+    const a = restoreEvidenceLedger({ ...snapshot, budget: { max: 3, used: 2 } });
+    expect(a.budget.take()).toBe(true);
+    expect(a.budget.take()).toBe(false);
+    expect(a.budget.used()).toBe(3);
+  });
+
+  it("自动 id 从快照最大号续——回到 led-1 会让新条目撞上旧条目被无声吞掉", () => {
+    const first = createEvidenceLedger();
+    first.add({ source: "user_claim", quote: "第一条" });
+    first.add({ source: "user_claim", quote: "第二条" });
+    expect(first.entries().map((e) => e.id)).toEqual(["led-1", "led-2"]);
+
+    const restored = restoreEvidenceLedger(first.snapshot());
+    const fresh = restored.add({ source: "user_claim", quote: "第三条" });
+    expect(fresh.id).toBe("led-3");
+    expect(fresh.quote).toBe("第三条");
+    expect(restored.entries()).toHaveLength(3);
+  });
+
+  it("显式 budget 参数压过快照里的（换配额时不必先改快照）", () => {
+    const snapshot = createEvidenceLedger().snapshot();
+    const restored = restoreEvidenceLedger(snapshot, { max: 1, used: 0 });
+    expect(restored.budget.max).toBe(1);
+    expect(restored.budget.take()).toBe(true);
+    expect(restored.budget.take()).toBe(false);
   });
 });

@@ -76,8 +76,8 @@ export interface EvidenceLedger {
 /** 每稿 `find_evidence` 次数（spec §3.3） */
 export const DEFAULT_MAX_LOOKUPS = 3;
 
-function createBudget(max: number): LookupBudget {
-  let used = 0;
+function createBudget(max: number, initialUsed = 0): LookupBudget {
+  let used = Math.max(0, Math.min(initialUsed, max));
   return {
     max,
     used: () => used,
@@ -100,11 +100,49 @@ function compact(entry: LedgerEntry): LedgerEntry {
 }
 
 export function createEvidenceLedger(opts: { maxLookups?: number } = {}): EvidenceLedger {
+  return buildLedger({ max: opts.maxLookups ?? DEFAULT_MAX_LOOKUPS, used: 0 });
+}
+
+/**
+ * 从落盘快照续一本账（P3 spec §5.2）。宿主写稿是**跨调用**的：领包一次、补证三次、
+ * 提交若干次，每次都是独立进程调用——账本只能从 `writing-pack.json` 的快照里恢复。
+ *
+ * 两条续法必须同时成立，缺一条就是静默的数据错：
+ * - **id 从快照最大号续**：`led-<n>` 的分配号回到 0 会让新条目撞上旧 id，
+ *   而 `add` 遇到已存在的 id 是**返回旧条目**——新证据会被无声吞掉。
+ * - **配额从 `used` 续**：不续就是每次调用都重置 3 次额度，等于没有上限（codex #13 同款）。
+ */
+export function restoreEvidenceLedger(
+  snapshot: EvidenceLedgerSnapshot,
+  budget?: { max?: number; used?: number },
+): EvidenceLedger {
+  const entries = snapshot?.entries ?? [];
+  const ledger = buildLedger({
+    max: budget?.max ?? snapshot?.budget?.max ?? DEFAULT_MAX_LOOKUPS,
+    used: budget?.used ?? snapshot?.budget?.used ?? 0,
+    seq: maxAutoSeq(entries),
+  });
+  for (const entry of entries) ledger.add(entry);
+  for (const lookup of snapshot?.lookups ?? []) ledger.recordLookup(lookup);
+  return ledger;
+}
+
+/** 快照里代码自动分配过的最大号（`led-<n>`）——恢复后的分配从它之后继续 */
+function maxAutoSeq(entries: readonly LedgerEntry[]): number {
+  let max = 0;
+  for (const entry of entries) {
+    const hit = /^led-(\d+)$/.exec(entry?.id ?? "");
+    if (hit) max = Math.max(max, Number(hit[1]));
+  }
+  return max;
+}
+
+function buildLedger(init: { max: number; used: number; seq?: number }): EvidenceLedger {
   const byId = new Map<string, LedgerEntry>();
   const order: string[] = [];
   const lookupLog: LookupRecord[] = [];
-  const budget = createBudget(opts.maxLookups ?? DEFAULT_MAX_LOOKUPS);
-  let seq = 0;
+  const budget = createBudget(init.max, init.used);
+  let seq = init.seq ?? 0;
 
   return {
     budget,

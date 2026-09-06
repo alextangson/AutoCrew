@@ -24,6 +24,7 @@ import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
 import { generateSchema, executeGenerate } from "./src/tools/generate.js";
 import { styleSchema, executeStyle } from "./src/tools/style.js";
 import { workflowSchema, executeWorkflow, WORKFLOW_DESCRIPTION } from "./src/tools/workflow.js";
+import { writerSchema, executeWriter, WRITER_DESCRIPTION } from "./src/tools/writer.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -72,6 +73,14 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     description: WORKFLOW_DESCRIPTION,
     parameters: workflowSchema,
     execute: (params) => executeWorkflow(params),
+  });
+
+  runner.register({
+    name: "autocrew_writer",
+    label: "AutoCrew Writer",
+    description: WRITER_DESCRIPTION,
+    parameters: writerSchema,
+    execute: (params) => executeWriter(params),
   });
 
   runner.register({
