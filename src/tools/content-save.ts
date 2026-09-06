@@ -42,6 +42,7 @@ export const contentSaveSchema = Type.Object({
       "'adoption' record adoption verdict (采纳率北极星读数).",
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
+  content_id: Type.Optional(Type.String({ description: "Alias of `id` — other AutoCrew tools call it content_id" })),
   title: Type.Optional(Type.String({ description: "Content title" })),
   body: Type.Optional(Type.String({ description: "Content body (markdown)" })),
   platform: Type.Optional(Type.String({ description: "Target platform: xhs, douyin, wechat_video, wechat_mp, bilibili" })),
@@ -137,6 +138,8 @@ export async function executeContentSave(
   },
 ) {
   const action = (params.action as string) || "save";
+  // 宿主 P3b 真机：其它工具都叫 content_id，模型对这个工具也会这么猜——认下别名，不让它撞「id is required」
+  if (params.id === undefined && typeof params.content_id === "string") params.id = params.content_id;
   const dataDir = (params._dataDir as string) || undefined;
   const recordDiffImpl = deps?.recordDiffImpl || recordDiff;
   const shouldDistillImpl = deps?.shouldDistillImpl || shouldDistillStyle;

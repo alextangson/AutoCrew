@@ -461,3 +461,17 @@ describe("executeContentSave transition → published", () => {
     expect((await getContent(c.id, testDir))?.adoption).toBeUndefined();
   });
 });
+
+
+describe("content_id 别名（P3b 真机 2026-09-06）", () => {
+  it("get 用 content_id 也能命中，与 id 同一结果", async () => {
+    const { executeContentSave } = await import("./content-save.js");
+    const saved = (await executeContentSave({ action: "save", title: "别名", body: "正文", platform: "wechat", _dataDir: testDir })) as { ok: boolean; content?: { id: string } };
+    const cid = saved.content?.id ?? (saved as { id?: string }).id;
+    expect(cid).toBeTruthy();
+    const byId = (await executeContentSave({ action: "get", id: cid, _dataDir: testDir })) as { ok: boolean };
+    const byAlias = (await executeContentSave({ action: "get", content_id: cid, _dataDir: testDir })) as { ok: boolean };
+    expect(byId.ok).toBe(true);
+    expect(byAlias.ok).toBe(true);
+  });
+});

@@ -27,6 +27,7 @@ import {
   type Content,
   type ContentStatus,
 } from "../storage/local-store.js";
+import { isVideoPlatform } from "../storage/stage-guard.js";
 
 const ACTIONS = ["inbox", "claim", "release"] as const;
 
@@ -49,7 +50,7 @@ export const deskSchema = Type.Object({
 
 export const DESK_DESCRIPTION = [
   "AutoCrew 待办桌：看自己这一岗有什么活、认领、干完释放。",
-  "1) inbox{employee}：writer=已选立意卡还没稿的选题 + 退回修订的稿；cover=进了封面台还没定稿封面的稿；editor=在剪辑台且成片还没审过的稿。每项带 content_id/topic_id/title/platform/status/claim；写手那张桌上 content_id 为 null 的是「还没建稿」，用 autocrew_writer pack 领包就会建。",
+  "1) inbox{employee}：writer=已选立意卡还没稿的选题 + 退回修订的稿；cover=过审待做封面的稿（公众号稿在 approved、视频稿在成片审过之后、以及退回封面台的）；editor=在剪辑台且成片还没审过的稿。每项带 content_id/topic_id/title/platform/status/claim；写手那张桌上 content_id 为 null 的是「还没建稿」，用 autocrew_writer pack 领包就会建。",
   "2) claim{content_id, employee}：认领，拿 claim_token（租约 30 分钟）。别的宿主还握着未过期的租约会被拒并告诉你持有者是谁；同一个宿主重复认领 = 续约、返回同一枚令牌。",
   "3) release{content_id, claim_token}：干完释放。忘了也不要紧——租约过期后别人可以接管，接管会记在交接台账里。",
   "纪律：认领之后的写操作（autocrew_writer submit / autocrew_cover_review 出图与批准 / autocrew_content update、transition）都带上 claim_token，那是防止两个宿主互相盖写的唯一凭据。",
@@ -102,9 +103,19 @@ async function writerInbox(dataDir: string): Promise<DeskItem[]> {
   return [...fresh, ...contents.filter((c) => c.status === "revision").map(itemOf)];
 }
 
-/** 封面师桌：在封面台、封面还没定稿的稿（定稿判据 = 评审单上的 approvedLabel，与阶段门同一份） */
+/**
+ * 封面师桌：要封面、封面还没定稿的稿（定稿判据 = 评审单上的 approvedLabel，与阶段门同一份）。
+ * 真机 2026-09-06：状态机里非视频稿走 approved → publish_ready，根本不经过 cover_pending，
+ * 只盯 cover_pending 的桌子对公众号稿永远是空的——封面在 approved 就该做；视频稿要等成片审过。
+ */
+function wantsCover(c: Content): boolean {
+  if (c.status === "cover_pending") return true;
+  if (c.status === "approved") return !isVideoPlatform(c.platform);
+  return c.status === "editing" && Boolean(c.videoDone);
+}
+
 async function coverInbox(dataDir: string): Promise<DeskItem[]> {
-  const contents = (await listContents(dataDir)).filter((c) => c.status === "cover_pending");
+  const contents = (await listContents(dataDir)).filter(wantsCover);
   const pending = await Promise.all(
     contents.map(async (c) => ((await getCoverReview(c.id, dataDir))?.approvedLabel ? null : itemOf(c))),
   );

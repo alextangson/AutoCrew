@@ -295,17 +295,44 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
       _dataDir: dir,
     })) as { ok: boolean; content?: { claim?: Record<string, unknown>; handoffs?: unknown[] } };
     expect(moved.ok).toBe(true);
-    expect(moved.content!.claim).not.toHaveProperty("token");
-    expect(moved.content!.claim).toMatchObject({ host: "codex" });
+    // draft_ready 是写手的交接点：写手认领随交接清掉（真机 2026-09-06），视图里自然没有令牌
+    expect(moved.content!.claim).toBeUndefined();
+    expect(JSON.stringify(moved)).not.toContain('"token"');
     expect(moved.content!.handoffs).toHaveLength(1);
 
+    // 再挂一枚活的认领，验视图脱敏：list / get 都要看得到认领、看不到令牌
+    await claimContent(c.id, "cover", "codex", dir);
     const list = (await executeContentSave({ action: "list", _dataDir: dir })) as {
       contents: Array<{ claim?: Record<string, unknown> }>;
     };
+    expect(list.contents[0].claim).toMatchObject({ host: "codex", employee: "cover" });
     expect(list.contents[0].claim).not.toHaveProperty("token");
     const got = (await executeContentSave({ action: "get", id: c.id, _dataDir: dir })) as {
       content: { claim?: Record<string, unknown> };
     };
+    expect(got.content.claim).toMatchObject({ host: "codex" });
     expect(got.content.claim).not.toHaveProperty("token");
+  });
+});
+
+describe("封面桌按状态机的真实路径（真机 2026-09-06）", () => {
+  it("公众号稿 approved 就上封面桌；视频稿要 editing 且成片审过；draft_ready 不上", async () => {
+    const { executeDesk } = await import("./desk.js");
+    const { saveContent, transitionStatus, updateContent } = await import("../storage/local-store.js");
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ac-desk-cover-"));
+    try {
+      const wx = await saveContent({ title: "公众号稿", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
+      for (const st of ["reviewing", "approved"] as const) expect((await transitionStatus(wx.id, st, {}, dir)).ok).toBe(true);
+      const vid = await saveContent({ title: "视频稿", body: "正文", platform: "douyin", status: "draft_ready" }, dir);
+      for (const st of ["reviewing", "approved", "editing"] as const) expect((await transitionStatus(vid.id, st, {}, dir)).ok).toBe(true);
+      await saveContent({ title: "还没过审", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
+      let r = (await executeDesk({ action: "inbox", employee: "cover", _dataDir: dir })) as { items: Array<{ content_id: string }> };
+      expect(r.items.map((i) => i.content_id)).toEqual([wx.id]);
+      await updateContent(vid.id, { videoDone: true }, dir);
+      r = (await executeDesk({ action: "inbox", employee: "cover", _dataDir: dir })) as { items: Array<{ content_id: string }> };
+      expect(r.items.map((i) => i.content_id).sort()).toEqual([wx.id, vid.id].sort());
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

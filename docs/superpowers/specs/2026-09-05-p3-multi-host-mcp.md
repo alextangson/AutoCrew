@@ -253,3 +253,20 @@ submit → 长度门 → 格式门 / 数字门 / 质量门
 **真机验收（隔离目录，标准 MCP SDK 客户端 + codex 命名令牌，客户端保持默认 60 秒超时）**：`pack` 立刻返回 → 120 秒 `ready`（10.8k 字包，补证含 Harrison Chase 三分法出处与 Claude Code 分层）→ 我按包写稿提交 → 门禁同步过 → `reviewing` → 200 秒 `accepted`，稿件 `draft_ready`、`writtenBy.host = codex`、审稿 `passed` 且给出一条真有价值的 advisory（指出 ev-T2.1 的「模型/内核/外壳」三层与本篇「框架/运行时/Harness」三层不是一套切法）。故意带镜头标注 + 无据数字的稿被打回并列出每处；同 attempt 重放原样返回不扣轮；错包号被拒并告知现行包号；`find_evidence` 超时明说「作废、额度照扣、还剩 2 次」；`autocrew_workflow draft` 与 `autocrew://contents/<id>/writing-pack` 资源都能读；服务端日志 `initialize client=… host=codex`。spike：Codex 0.145 与 SDK 客户端均不需会话 id 与 SSE（§4.2）。
 
 **未做 / 遗留**：`codex exec` 非交互取消 MCP 调用（官方 issue），交互会话正常；`writer.test.ts`（1025 行）、`targeted-research.ts`（556 行）、`desktop/server.ts`（524 行）超 500 行；dsh preset 人设尚未改成 pack/submit 流（P3b）；「接入更多 · 宿主」卡（P3b）。
+
+## 13. P3b 落地记录（2026-09-06）
+
+| 提交 | 内容 |
+|---|---|
+| bf14f3f | 后端半：`Content.claim` / `handoffs`、`autocrew_desk` inbox/claim/release、令牌软门硬门、封面 revision CAS、五处交接记账、`autocrew://desk/<employee>` 资源、视图脱敏 |
+| ac440db | 宿主半：改写 `write-script` / `spawn-writer` / `research` 三技能到 pack/submit 流；`adapters/codex/` 封面师与总编辑写手人设 + README；`autocrew host --dir --role`；dsh preset 同步（v5）；能力一致性测试；看板「X 写」「X 封面中」「租约过期」徽章；「接入更多 · 宿主」卡（列令牌、最后调用、撤销） |
+| 本片收尾 | 真机逼出来的三处：封面桌只盯 `cover_pending` 对公众号稿永远是空的（状态机里非视频稿 approved → publish_ready 不经过封面台）→ 改为 approved 的非视频稿 + 成片审过的视频稿 + 退回封面台的；`autocrew_content` 认 `content_id` 别名（宿主照别的工具的习惯猜）；**交接即释放**——写手交稿后认领若还挂着，封面师看到的永远是「被 claude-code 持有」 |
+
+**真机验收（隔离目录，标准 SDK 客户端两把命名令牌 + Codex CLI 真跑）**：
+- 两宿主冲突：claude-code 领包后自动认领写手；codex `desk claim` 被拒「这篇正由 claude-code 处理（写手，还剩 28 分钟）」，codex 不带令牌 `submit` 同样被拒；视图里没有令牌。
+- 写手全链：`submit` 被审稿点名（误区不是卡上那个——我写的是上一张卡的稿，审稿抓得准）→ 按点名改 → 数字门打回「半年」→ 改定性 → 审稿点「三段同义开头」→ 删重复 → `accepted`（一条 advisory）；`handoffs` 记 `writer → creator by claude-code`。
+- 看板：「Claude 写」「Claude 写中 · 刚刚」→ 后来「Codex 封面中 · 10 分钟前」；「宿主」卡列出两个宿主的最后调用时间与撤销。
+- **Codex 封面师真跑**（`codex exec` + `--dangerously-bypass-approvals-and-sandbox`，工作目录 `AGENTS.md` 由 `autocrew host codex --dir --role cover` 写入）：第一次看桌发现稿被写手持有 → 认领被拒 → 如实汇报不出图（人设纪律对）；释放后第二次：看桌 → 认领 → `autocrew_content get` 读稿 → `create_candidates ratio=3:4` → 三张 `gpt-image-2` 真图落 `assets/covers/cover-{a,b,c}-r1.png`（1086×1448，身份锁定的创始人本人 + 补丁单据 + 尺子，标题《你也有块不敢碰的代码》）→ 摆出三案停下，未 approve 未 release，汇报认领令牌与尺寸。
+- **Claude Code 无头运行未验**：`claude -p` 在本机子进程里报「Not logged in」，写手技能的行为只能由创始人在交互式 Claude Code 里验证；技能文本、能力一致性测试、pack/submit 契约（P3a 用 SDK 客户端走通）是现有证据。
+
+**遗留**：`writer.test.ts`（1025 行）、`local-store.ts`（1486）、`cover-review.ts`（706）、`Board.tsx`/`Editor.tsx` 超 500 行；`content:trash` 视图未脱敏（非看板面）；写手技能里 `autocrew_content` 仍写 `content_id`（已兼容）。

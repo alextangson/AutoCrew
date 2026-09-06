@@ -1356,6 +1356,10 @@ async function transitionStatusLocked(
       by: opts?.host ?? content.claim?.host ?? LOCAL_HOST,
       at: now,
     });
+    // 交接即释放（真机 2026-09-06）：写手交了稿、创作者过了审，写手那枚认领若还挂着，
+    // 封面师看到的永远是「被 claude-code 持有」，只能排队等 30 分钟租约过期。
+    // 活已经交出去的那一岗，认领随交接清掉；别的岗位的认领不动。
+    if (content.claim && content.claim.employee === handoff.from) updates.claim = undefined;
   }
 
   // Auto-trigger: draft_ready → reviewing (signal to caller)

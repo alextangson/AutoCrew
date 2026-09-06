@@ -277,3 +277,27 @@ describe("交接台账（五处）", () => {
     expect(after!.handoffs?.at(-1)).toMatchObject({ from: "cover", to: "publisher", by: "codex" });
   });
 });
+
+describe("交接即释放（真机 2026-09-06）", () => {
+  it("写手认领的稿推进到 draft_ready，写手认领随交接清掉；别的岗位认领不动", async () => {
+    const { saveContent, transitionStatus, getContent } = await import("./local-store.js");
+    const { claimContent } = await import("./claims.js");
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ac-claims-handoff-"));
+    try {
+      const c = await saveContent({ title: "t", body: "b", platform: "wechat", status: "drafting" }, dir);
+      const claimed = await claimContent(c.id, "writer", "claude-code", dir);
+      expect(claimed.ok).toBe(true);
+      expect((await transitionStatus(c.id, "draft_ready", { host: "claude-code" }, dir)).ok).toBe(true);
+      const after = await getContent(c.id, dir);
+      expect(after?.claim).toBeUndefined();
+      expect(after?.handoffs?.at(-1)).toMatchObject({ from: "writer", to: "creator" });
+      // 封面师的认领在过审时不该被清：过审的交接是 creator → publisher/editor
+      const c2 = await saveContent({ title: "t2", body: "b", platform: "wechat", status: "reviewing" }, dir);
+      expect((await claimContent(c2.id, "cover", "codex", dir)).ok).toBe(true);
+      expect((await transitionStatus(c2.id, "approved", {}, dir)).ok).toBe(true);
+      expect((await getContent(c2.id, dir))?.claim?.employee).toBe("cover");
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
