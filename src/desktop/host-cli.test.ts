@@ -80,6 +80,7 @@ describe("autocrew host --dir", () => {
     personaDir = mkdtempSync(path.join(os.tmpdir(), "autocrew-host-persona-"));
     writeFileSync(path.join(personaDir, "AGENTS.editor-writer.md"), "# 总编辑 + 写手\n\n先看 status。\n");
     writeFileSync(path.join(personaDir, "AGENTS.cover.md"), "# 封面师\n\n只做 3:4 与 4:3。\n");
+    writeFileSync(path.join(personaDir, "AGENTS.editor.md"), "# 剪辑师\n\n三道门都是创作者的决定。\n");
   });
 
   it("creates AGENTS.md for codex with the default editor-writer persona", () => {
@@ -125,9 +126,15 @@ describe("autocrew host --dir", () => {
     expect(text.split(PERSONA_START)).toHaveLength(2);
   });
 
-  it("reports a bad --role instead of writing a wrong persona", () => {
+  it("honours --role editor（剪辑师人设，P3c §14.3）", () => {
     const out = hostInstructions("codex", { dataDir: booted(), dir: ws, role: "editor", personaDir });
-    expect(out).toContain("--role editor 不认识");
+    expect(readFileSync(path.join(ws, "AGENTS.md"), "utf-8")).toContain("三道门都是创作者的决定。");
+    expect(out).toContain("人设「editor」");
+  });
+
+  it("reports a bad --role instead of writing a wrong persona", () => {
+    const out = hostInstructions("codex", { dataDir: booted(), dir: ws, role: "colorist", personaDir });
+    expect(out).toContain("--role colorist 不认识");
     expect(existsSync(path.join(ws, "AGENTS.md"))).toBe(false);
   });
 

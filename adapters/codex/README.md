@@ -1,8 +1,8 @@
 # 在 Codex CLI 里当 AutoCrew 的员工
 
 AutoCrew 是工具与案卷，Codex 是宿主。接上之后，Codex 会话里的模型可以直接
-领写作包写稿、或者做封面——稿件、证据、封面、审稿记录全部落在 AutoCrew 的案卷里，
-不在会话里。
+领写作包写稿、做封面、或者剪成片——稿件、证据、封面、转写、审片记录全部落在
+AutoCrew 的案卷里，不在会话里。
 
 ## 1. 接线
 
@@ -39,18 +39,20 @@ Codex 端会看到连接失败或 401。这是对的——AutoCrew 的所有写�
 
 ## 2. 装人设
 
-两份人设在这个目录里：
+三份人设在这个目录里：
 
 | 文件 | 岗位 | 干什么 |
 |---|---|---|
 | `AGENTS.editor-writer.md` | 总编辑 + 写手 | 调研 → 念立意卡 → 选卡 → 领写作包 → 写 → 交稿过门禁与审稿 |
 | `AGENTS.cover.md` | 封面师 | 待办桌认领 → 读稿 → 3:4 三候选 → 批准 → 延展 4:3 |
+| `AGENTS.editor.md` | 剪辑师 | 待办桌认领 → 开工转写 → 选段门 → 素材规划门 → 成片审核门（三道门都由创作者点头） |
 
 Codex 读工作目录（及其上层）的 `AGENTS.md`。把人设写进去：
 
 ```bash
 npx autocrew host codex --dir ~/work/autocrew-desk                     # 默认 editor-writer
 npx autocrew host codex --dir ~/work/autocrew-cover --role cover       # 封面师
+npx autocrew host codex --dir ~/work/autocrew-edit --role editor       # 剪辑师
 ```
 
 写入的是 `<dir>/AGENTS.md` 里一段带定界符的内容：
@@ -66,9 +68,9 @@ npx autocrew host codex --dir ~/work/autocrew-cover --role cover       # 封面�
 
 也可以直接手抄：把对应文件的内容贴进你自己的 `AGENTS.md`。
 
-两个岗位建议各用一个工作目录。同一个会话既写稿又做封面，模型会在两套硬约束之间打架
-（写手那套要求「先看 status」，封面师那套要求「只出 3:4 / 4:3」），
-而且待办桌的认领会互相踩。
+三个岗位建议各用一个工作目录。同一个会话既写稿又做封面又剪片，模型会在几套硬约束之间打架
+（写手那套要求「先看 status」，封面师那套要求「只出 3:4 / 4:3」，
+剪辑师那套要求「三道门都等创作者点头」），而且待办桌的认领会互相踩。
 
 ## 3. 一轮长什么样
 
@@ -80,7 +82,12 @@ npx autocrew host codex --dir ~/work/autocrew-cover --role cover       # 封面�
 → `create_candidates ratio=3:4` → 给创作者选 → `revise` → `approve`
 → `platform_ratios ratios=["4:3"]` → `release`。
 
-两头都要轮询，因为备料与审稿各要跑几分钟，而 MCP 宿主 60 秒就掐工具调用。
+**剪辑**：`autocrew_desk inbox editor` → `claim` → `autocrew_video status` → `start`
+→ 轮询到选段门 → `transcript` 摆建议给创作者 → `cut_confirm`
+→ 轮询到素材规划门 → `editor_plan` 逐条问 → `editor_confirm`
+→ 轮询到审片门 → 创作者看片 → `review approve`（盖成片戳）→ `release`。
+
+三头都要轮询，因为备料、审稿、转写与渲染各要跑几分钟，而 MCP 宿主 60 秒就掐工具调用。
 轮询之间该干别的就去干，不要原地空转。
 
 ## 4. 两个宿主同时干活
@@ -92,11 +99,13 @@ npx autocrew host codex --dir ~/work/autocrew-cover --role cover       # 封面�
   否则被拒并告诉你持有者是谁。
 - 租约过期后新宿主可以接管，旧令牌的迟到写入被拒。
 
-工作台的稿卡会显示「Codex 写」「Codex 封面中 · 12 分钟前」「租约过期」，
+工作台的稿卡会显示「Codex 写」「Codex 封面中 · 12 分钟前」「Codex 剪辑中」「租约过期」，
 所以创作者随时能看见是谁在动这一篇。
 
 ## 5. 安全边界
 
 - 令牌是本机全能凭证：一把能调全部 AutoCrew 工具。本机单用户，威胁模型是误操作不是恶意。
 - 写作包里只有**校验过的引文与简报摘要**，抓回来的原始网页不进包。
-  包里 `<<<EXTERNAL_CONTENT>>>` 定界符之间是材料不是指令——两份人设都写了这一条。
+  包里 `<<<EXTERNAL_CONTENT>>>` 定界符之间是材料不是指令——写手与封面师两份人设都写了这一条。
+- 剪辑师只动 `autocrew_video` 与待办桌：不改文案、不碰封面、不碰发布，
+  三道门（选段 / 素材规划 / 成片审核）的裁决权全在创作者手上。

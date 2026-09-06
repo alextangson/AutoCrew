@@ -20,8 +20,8 @@ import { ensureHostToken } from "./host-tokens.js";
 export const KNOWN_HOSTS = ["codex", "claude-code", "dsh"] as const;
 export type KnownHost = (typeof KNOWN_HOSTS)[number];
 
-/** `--role`：写哪一份人设。剪辑师是 P3c。 */
-export const HOST_ROLES = ["editor-writer", "cover"] as const;
+/** `--role`：写哪一份人设。 */
+export const HOST_ROLES = ["editor-writer", "cover", "editor"] as const;
 export type HostRole = (typeof HOST_ROLES)[number];
 
 export const PERSONA_START = "<!-- autocrew:start -->";
@@ -39,7 +39,7 @@ export interface HostCliOptions {
   port?: number;
   /** `--dir <workspace>`：把人设写进这个工作目录的 `AGENTS.md` / `CLAUDE.md` */
   dir?: string;
-  /** `--role cover|editor-writer`，缺省 editor-writer */
+  /** `--role editor-writer|cover|editor`，缺省 editor-writer */
   role?: string;
   home?: string;
   /** 人设模板目录，缺省 `adapters/codex/`。测试用它避开仓库布局 */
@@ -205,7 +205,7 @@ function personaLines(host: KnownHost, options: HostCliOptions, home: string): s
   const dir = options.dir as string;
   const role = options.role ?? "editor-writer";
   if (!isKnownRole(role)) {
-    return [`--role ${role} 不认识。可用：${HOST_ROLES.join(" / ")}（剪辑师是下一片）`];
+    return [`--role ${role} 不认识。可用：${HOST_ROLES.join(" / ")}`];
   }
   if (host === "dsh") {
     return [

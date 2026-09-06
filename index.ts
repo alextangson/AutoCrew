@@ -26,6 +26,7 @@ import { styleSchema, executeStyle } from "./src/tools/style.js";
 import { workflowSchema, executeWorkflow, WORKFLOW_DESCRIPTION } from "./src/tools/workflow.js";
 import { writerSchema, executeWriter, WRITER_DESCRIPTION } from "./src/tools/writer.js";
 import { deskSchema, executeDesk, DESK_DESCRIPTION } from "./src/tools/desk.js";
+import { videoSchema, executeVideo, VIDEO_DESCRIPTION } from "./src/tools/video.js";
 import { executeInit } from "./src/tools/init.js";
 import { getProStatus, saveProKey } from "./src/modules/pro/gate.js";
 import { verifyKey } from "./src/modules/pro/api-client.js";
@@ -90,6 +91,14 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     description: DESK_DESCRIPTION,
     parameters: deskSchema,
     execute: (params) => executeDesk(params),
+  });
+
+  runner.register({
+    name: "autocrew_video",
+    label: "AutoCrew Video",
+    description: VIDEO_DESCRIPTION,
+    parameters: videoSchema,
+    execute: (params) => executeVideo(params),
   });
 
   runner.register({

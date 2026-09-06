@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PORTED_TOOLS } from "../../adapters/dsh/src/tools.js";
+import { HOST_ROLES } from "../desktop/host-cli.js";
 import { registerAutocrewCapabilities } from "../../index.js";
 import { createContext } from "../runtime/context.js";
 import { EventBus } from "../runtime/events.js";
@@ -62,6 +63,7 @@ const HOST_TOOL_FILES: Array<{ file: string; host: string; visible: Set<string> 
   { file: "skills/cover-generator/SKILL.md", host: "claude-code", visible: ALL_TOOLS },
   { file: "adapters/codex/AGENTS.editor-writer.md", host: "codex", visible: ALL_TOOLS },
   { file: "adapters/codex/AGENTS.cover.md", host: "codex", visible: ALL_TOOLS },
+  { file: "adapters/codex/AGENTS.editor.md", host: "codex", visible: ALL_TOOLS },
   { file: "adapters/codex/README.md", host: "codex", visible: ALL_TOOLS },
   {
     file: "adapters/dsh/agent-presets/autocrew/agent.cordis.yml",
@@ -101,8 +103,29 @@ describe("persona ↔ capability consistency", () => {
     expect(text).toContain('ratios:["4:3"]');
   });
 
+  /**
+   * 剪辑师（P3c §14.2）：`autocrew_video` 必须真的注册，且**不进 dsh**——
+   * dsh preset 只放行写作线（§2「封面师、剪辑师只在 Claude Code / Codex 宿主上跑」）。
+   */
+  it("keeps the editor persona on autocrew_video, and keeps that tool out of dsh", () => {
+    const named = toolNamesIn("adapters/codex/AGENTS.editor.md");
+    expect(named).toContain("autocrew_video");
+    expect(ALL_TOOLS.has("autocrew_video")).toBe(true);
+    expect(PORTED_TOOLS).not.toContain("autocrew_video");
+    // 人设点到的每个名字都必须真的注册过（写错一个字母 = 那个能力悄悄消失）
+    expect(named.filter((n) => !ALL_TOOLS.has(n))).toEqual([]);
+  });
+
+  it("keeps the editor persona off the writing and publishing tools", () => {
+    const named = toolNamesIn("adapters/codex/AGENTS.editor.md");
+    // 不改文案、不碰发布（§14.3）：点了名就等于给了它一个可用选项
+    for (const off of ["autocrew_writer", "autocrew_publish", "autocrew_pre_publish", "autocrew_cover_review"]) {
+      expect(named, off).not.toContain(off);
+    }
+  });
+
   it("names every host persona shipped for --dir", () => {
-    for (const role of ["editor-writer", "cover"]) {
+    for (const role of HOST_ROLES) {
       expect(() => readFileSync(path.join(REPO_ROOT, `adapters/codex/AGENTS.${role}.md`), "utf-8")).not.toThrow();
     }
   });
