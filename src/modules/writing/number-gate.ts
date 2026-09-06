@@ -315,6 +315,8 @@ function scanNumeric(s: ScanState): NumberMention | null {
   const unitHit = matchUnit(s.text, afterExpr);
   // 行文量词豁免：中文单字数词 + 量词（一个、两次）不是数据点
   if (sawChinese && expr[0].length === 1 && unitHit?.family === "count") return null;
+  // 「一块主板」「两块板子」：块 在这里是量词不是「元」；只有「一块钱」「三块多」才是钱
+  if (sawChinese && expr[0].length === 1 && unitHit?.raw === "块" && !/^[钱多]/.test(s.text.slice(afterExpr + 1))) return null;
   if (sawChinese && expr[0].length === 1 && !unitHit) return null;
   const raw = sign + expr[0] + (unitHit?.raw ?? "");
   const listRole = !sawChinese && atListPosition(s.text, s.i) && /^\s*[.、)）]/.test(s.text.slice(afterExpr));
@@ -332,8 +334,17 @@ const SCANNERS = [scanVersion, scanOrdinal, scanApprox, scanFraction, scanRange,
  * 抽取一段文本里所有需要证据的数字。扫描按位置从左到右，命中即跳过整段 raw——
  * 同一个数字不会被两个规则重复计。
  */
+/**
+ * 证据编号里的数字不是数据点：写作包要求「引用时带 id」，正文里会出现 `ev-T1.1`、`om:abc-3`、
+ * `user-2` 这类 token（P3 真机 2026-09-06：四个编号被当成 1/2/3/4 打回）。等长掩成空格，下标不变。
+ */
+const EVIDENCE_ID_RE = /(?:ev|om|user)[-:][A-Za-z0-9][A-Za-z0-9.-]*/g;
+function maskEvidenceIds(text: string): string {
+  return text.replace(EVIDENCE_ID_RE, (m) => " ".repeat(m.length));
+}
+
 export function extractNumbers(text: string): NumberMention[] {
-  const norm = normalize(text);
+  const norm = maskEvidenceIds(normalize(text));
   const state: ScanState = { text: norm, i: 0, out: [] };
   while (state.i < norm.length) {
     const ch = norm[state.i];

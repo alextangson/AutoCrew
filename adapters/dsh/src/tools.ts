@@ -107,7 +107,9 @@ export function buildDshTools(config: PluginConfig = {}): BuiltTools {
       async execute(args: unknown) {
         // dsh 交下来的 args 是冻结的，而 ToolRunner 的中间件会就地写 _dataDir /
         // _geminiApiKey——必须拷贝一份再进去，否则第一次调用就 TypeError。
-        const params = { ...(args as Record<string, unknown>) };
+        // 宿主归因（P3 spec §4.1）：dsh 是进程内桥，没有 MCP 层帮它注入 `_host`，这里补上；
+        // 模型自己传的 `_host` 一律覆盖，归因不能由模型自报
+        const params = { ...(args as Record<string, unknown>), _host: "dsh" };
         const result = await runner.execute(tool.name, params);
         if (result.ok === false) {
           throw new Error(String(result.error ?? `${tool.name} failed`));

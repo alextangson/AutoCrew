@@ -241,3 +241,15 @@ submit → 长度门 → 格式门 / 数字门 / 质量门
 | 17 | P2 | 新返回状态不是现有 `ReviewStatus` | 采纳：六值是 `submit` 契约，`ReviewStatus` 不动，明写（§5.3） |
 | 18 | P2 | `autocrew host` 未落，依赖顺序不清 | 采纳：写明前置与失败文案（§7.1） |
 | 19 | P3 | P3c 不能绕过视频 runner 的租约/CAS | 采纳：经 `createVideoService`/runner（§6.2、§10） |
+
+## 12. P3a 落地记录（2026-09-06）
+
+| 提交 | 内容 |
+|---|---|
+| 3a89b0d | 入口半：stdio 转发器（守护进程没起就报错，不再起第二个写进程）、`<dataDir>/tokens/<host>.token` 命名令牌 + `.used` 标记、`_host` 注入、lossless、协议版本回显、`writing-pack` 资源、`autocrew host` 命令 |
+| fa0e338 | 写手半：`autocrew_writer` pack / find_evidence / submit、`restoreEvidenceLedger`、`reviewOnce` 导出、attempt 幂等、长度门、`writtenBy` / `pack` 字段 |
+| 本片收尾 | 真机逼出来的三处：`pack` 改异步（`preparing → pack_status → ready`，准备中重调返回同一包号；第一版同步跑几分钟，宿主 60 秒超时后服务端继续跑并覆盖包文件）；`submit` 过门后改异步（`reviewing → submit_status`，DeepSeek 审一遍 161–200 秒）；`find_evidence` 45 秒封顶、超时额度照扣并明说。数字门两类误伤：证据编号里的数字（`ev-T1.1`）与「一块主板」量词不再当数据点。dsh 桥注入 `_host: "dsh"`。收稿后重发同一 attempt 返回原结果而不是「不收稿」 |
+
+**真机验收（隔离目录，标准 MCP SDK 客户端 + codex 命名令牌，客户端保持默认 60 秒超时）**：`pack` 立刻返回 → 120 秒 `ready`（10.8k 字包，补证含 Harrison Chase 三分法出处与 Claude Code 分层）→ 我按包写稿提交 → 门禁同步过 → `reviewing` → 200 秒 `accepted`，稿件 `draft_ready`、`writtenBy.host = codex`、审稿 `passed` 且给出一条真有价值的 advisory（指出 ev-T2.1 的「模型/内核/外壳」三层与本篇「框架/运行时/Harness」三层不是一套切法）。故意带镜头标注 + 无据数字的稿被打回并列出每处；同 attempt 重放原样返回不扣轮；错包号被拒并告知现行包号；`find_evidence` 超时明说「作废、额度照扣、还剩 2 次」；`autocrew_workflow draft` 与 `autocrew://contents/<id>/writing-pack` 资源都能读；服务端日志 `initialize client=… host=codex`。spike：Codex 0.145 与 SDK 客户端均不需会话 id 与 SSE（§4.2）。
+
+**未做 / 遗留**：`codex exec` 非交互取消 MCP 调用（官方 issue），交互会话正常；`writer.test.ts`（1025 行）、`targeted-research.ts`（556 行）、`desktop/server.ts`（524 行）超 500 行；dsh preset 人设尚未改成 pack/submit 流（P3b）；「接入更多 · 宿主」卡（P3b）。

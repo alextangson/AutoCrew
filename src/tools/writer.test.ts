@@ -1,5 +1,8 @@
 /**
- * writer.test.ts — `autocrew_writer` 三个动作（P3 spec §5）。
+ * writer.test.ts — `autocrew_writer` 四个动作（P3 spec §5）。
+ *
+ * 备料与审稿**两头都是异步的**（`pack`/`pack_status`、`submit`/`submit_status`），所以这里额外钉住三件事：
+ * 中间态不许被当成能写的包或能收工的稿、重入不许起第二条后台任务、被 `force` 顶掉的旧任务不许覆盖新包。
  *
  * 这条链的要害是**闭包状态落了盘还作不作数**：修复计数、证据账本、`find_evidence` 配额
  * 全部跨调用，任何一样没续上都是静默的门禁失效（额度重置 = 没有上限，账本没续 = 新证据被吞）。
@@ -15,8 +18,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { executeWriter } from "./writer.js";
 import { PACK_JSON, PACK_MD, type WritingPackFile } from "./writer-pack.js";
+import { packPreparation } from "./writer-prepare.js";
+import { forgetReview, reviewInFlight } from "./writer-review.js";
 import { executeWorkflow } from "./workflow.js";
-import { generateScript } from "../modules/writing/generate-script.js";
+import { buildWritingContext, generateScript } from "../modules/writing/generate-script.js";
 import {
   BRIEF_SCHEMA_VERSION,
   saveBrief,
@@ -168,17 +173,69 @@ function submitArgs(contentId: string, packId: string, attempt: number, over: Re
   };
 }
 
-/** 领一份包（默认走点过卡的路径） */
-async function pack(over: Record<string, unknown> = {}, deps = {}): Promise<Record<string, any>> {
+/** 领一份包，**不等**备料（`pack` 现在是秒回的领号动作） */
+async function issue(over: Record<string, unknown> = {}, deps = {}): Promise<Record<string, any>> {
   const topic = await seed();
   await pickAngle(topic.id);
   const res = await run({ action: "pack", topic_id: topic.id, platform: "douyin", ...over }, deps);
   return { ...res, topicId: topic.id };
 }
 
+/** 等后台备料落地，再按宿主的真实读法（pack_status）把 ready 的完整回执取回来 */
+async function settle(contentId: string): Promise<Record<string, any>> {
+  await packPreparation(contentId);
+  return (await run({ action: "pack_status", content_id: contentId })) as Record<string, any>;
+}
+
+/** 领一份**已经备好**的包（多数测试要的是 ready 之后那一段） */
+async function pack(over: Record<string, unknown> = {}, deps = {}): Promise<Record<string, any>> {
+  const started = await issue(over, deps);
+  if (started.ok === false) return started;
+  return { ...started, ...(await settle(started.content_id as string)) };
+}
+
+/**
+ * 可控备料替身：`gate` 卡住的这段时间就是「还在准备中」，`release()` 之后才真去装配材料。
+ * 这样中间态是**确定**可观测的，不靠 sleep。
+ */
+function deferredContext(): {
+  impl: typeof buildWritingContext;
+  release: () => void;
+  calls: () => number;
+} {
+  let open = () => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  let calls = 0;
+  const impl: typeof buildWritingContext = async (req, dataDir, warn, deps) => {
+    calls += 1;
+    await gate;
+    return buildWritingContext(req, dataDir, warn, deps);
+  };
+  return { impl, release: () => open(), calls: () => calls };
+}
+
 async function readPackFile(contentId: string): Promise<WritingPackFile> {
   const raw = await fs.readFile(path.join(testDir, "contents", contentId, PACK_JSON), "utf-8");
   return JSON.parse(raw) as WritingPackFile;
+}
+
+/** 交一稿 → 等后台审稿落地 → 按宿主的真实读法（submit_status）把终态取回来 */
+async function submitAndWait(
+  contentId: string,
+  packId: string,
+  attempt: number,
+  over: Record<string, unknown> = {},
+  deps = {},
+): Promise<{ first: Record<string, any>; final: Record<string, any> }> {
+  const first = (await run(submitArgs(contentId, packId, attempt, { review: "engine", ...over }), deps)) as Record<
+    string,
+    any
+  >;
+  await reviewInFlight(contentId);
+  const final = (await run({ action: "submit_status", content_id: contentId }, deps)) as Record<string, any>;
+  return { first, final };
 }
 
 // ─── loop 替身 ────────────────────────────────────────────────────────────────
@@ -200,6 +257,20 @@ function reviewLoop(rounds: Array<Record<string, unknown>>) {
     return DONE;
   };
   return { impl, seen };
+}
+
+/** 卡住的审稿替身：`release()` 之前后台那一遍不出结论——「审稿中」这个中间态因此可确定观测，不靠 sleep */
+function heldReviewLoop(rounds: Array<Record<string, unknown>>) {
+  let open = () => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  const inner = reviewLoop(rounds);
+  const impl = async (cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+    await gate;
+    return inner.impl(cfg, opts);
+  };
+  return { impl, release: () => open(), seen: inner.seen };
 }
 
 /** 补证替身：不调用任何检索工具，直接空转 —— 配额照扣，结果是「没找到」 */
@@ -256,6 +327,7 @@ describe("writer pack", () => {
     const md: string = res.pack_md;
     expect(md).toContain("这是你要写的稿");
     expect(md).toContain("autocrew_writer submit");
+    expect(md).toContain("submit_status"); // 五步走的第五步要写在包里，不能只写在工具描述里
     expect(md).toContain("缺证据先");
     expect(md).toContain(`pack_id=${res.pack_id}`);
 
@@ -292,12 +364,13 @@ describe("writer pack", () => {
     expect(String(res.error)).toContain("angle-1");
   });
 
-  it("再领一次包 = 同一篇稿换新 pack_id，旧号的提交与补证一律被拒", async () => {
+  it("force 再领一次包 = 同一篇稿换新 pack_id，旧号的提交与补证一律被拒", async () => {
     const first = await pack();
     const second = await run({
       action: "pack",
       topic_id: first.topicId,
       platform: "douyin",
+      force: true,
     });
     expect(second.content_id).toBe(first.content_id);
     expect(second.pack_id).not.toBe(first.pack_id);
@@ -321,6 +394,137 @@ describe("writer pack", () => {
     expect(await run({ action: "pack", topic_id: topic.id, platform: "tiktok" })).toMatchObject({ ok: false });
     expect(await run({ action: "pack", topic_id: "topic-nope", platform: "douyin" })).toMatchObject({ ok: false });
     expect(await run({ action: "wander" })).toMatchObject({ ok: false });
+  });
+});
+
+// ─── pack 异步备料（2026-09-06 实机复盘） ─────────────────────────────────────
+
+describe("writer pack 异步备料", () => {
+  it("pack 秒回 preparing → 备料期间不许写 → pack_status 变 ready 才拿到材料", async () => {
+    const gathering = deferredContext();
+    const started = await issue({}, { buildContextImpl: gathering.impl });
+    expect(started).toMatchObject({ ok: true, status: "preparing" });
+    expect(started.pack_id).toMatch(/^wp-/);
+    expect(started.pack_md).toBeUndefined(); // 材料还没有，绝不能先给一份空包
+    expect(String(started.note)).toContain("pack_status");
+
+    const mid = await run({ action: "pack_status", content_id: started.content_id });
+    expect(mid).toMatchObject({ ok: true, status: "preparing", pack_id: started.pack_id });
+    expect(typeof mid.elapsed_s).toBe("number");
+    expect(String(mid.started_at)).toBeTruthy();
+    const preparingFile = await readPackFile(started.content_id);
+    expect(preparingFile.state).toBe("preparing");
+    expect(preparingFile.context).toBeUndefined();
+
+    // 这段时间里交稿与补证一律被拒，并且告诉他该去等什么
+    const early = await run(submitArgs(started.content_id, started.pack_id, 1));
+    expect(early.ok).toBe(false);
+    expect(String(early.error)).toContain("pack_status");
+    const earlyLookup = await run({
+      action: "find_evidence",
+      content_id: started.content_id,
+      pack_id: started.pack_id,
+      need: "返工工时",
+    });
+    expect(earlyLookup.ok).toBe(false);
+    expect(String(earlyLookup.error)).toContain("准备中");
+
+    gathering.release();
+    const ready = await settle(started.content_id);
+    expect(ready).toMatchObject({ ok: true, status: "ready", pack_id: started.pack_id });
+    expect(String(ready.pack_md)).toContain("写作包");
+    expect(ready.budget).toEqual({ find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
+    expect((await readPackFile(started.content_id)).state).toBe("ready");
+    // ready 之后就能正常交稿（同一个 pack_id，不必重新领）
+    expect((await run(submitArgs(started.content_id, started.pack_id, 1))).status).toBe("accepted_unreviewed");
+  });
+
+  it("备料中再 pack 一次：同号返回，绝不起第二条后台任务", async () => {
+    const gathering = deferredContext();
+    const first = await issue({}, { buildContextImpl: gathering.impl });
+    const again = await run(
+      { action: "pack", topic_id: first.topicId, platform: "douyin" },
+      { buildContextImpl: gathering.impl },
+    );
+    expect(again).toMatchObject({ status: "preparing", pack_id: first.pack_id, content_id: first.content_id });
+    expect(gathering.calls()).toBe(1);
+
+    gathering.release();
+    await settle(first.content_id);
+    // 已经备好之后再 pack 一次：原样还回同一份包，不重跑（备料花的是真钱）
+    const third = await run({ action: "pack", topic_id: first.topicId, platform: "douyin" });
+    expect(third).toMatchObject({ status: "ready", pack_id: first.pack_id });
+    expect(gathering.calls()).toBe(1);
+  });
+
+  it("force 重来：旧号当场作废，迟到的旧备料不许覆盖新包", async () => {
+    const slow = deferredContext();
+    const first = await issue({}, { buildContextImpl: slow.impl });
+    const firstTask = packPreparation(first.content_id)!;
+
+    const fresh = deferredContext();
+    const second = await run(
+      { action: "pack", topic_id: first.topicId, platform: "douyin", force: true },
+      { buildContextImpl: fresh.impl },
+    );
+    expect(second.status).toBe("preparing");
+    expect(second.pack_id).not.toBe(first.pack_id);
+    expect(second.content_id).toBe(first.content_id);
+
+    // 旧任务这时候才跑完：它的结果必须被丢掉，否则就是实机那条 bug（旧包覆盖新包）
+    slow.release();
+    await firstTask;
+    const afterLate = await readPackFile(first.content_id);
+    expect(afterLate.packId).toBe(second.pack_id);
+    expect(afterLate.state).toBe("preparing");
+
+    fresh.release();
+    const ready = await settle(first.content_id);
+    expect(ready).toMatchObject({ status: "ready", pack_id: second.pack_id });
+    const stale = await run(submitArgs(first.content_id, first.pack_id, 1));
+    expect(stale.ok).toBe(false);
+    expect(String(stale.error)).toContain("写作包已作废");
+  });
+
+  it("备料炸了 → state failed，人话原因进 pack_status 与稿件，force 能重来", async () => {
+    const boom: typeof buildWritingContext = async () => {
+      throw new Error("relay 断流：ECONNRESET");
+    };
+    const started = await issue({}, { buildContextImpl: boom });
+    const failed = await settle(started.content_id);
+    expect(failed.status).toBe("failed");
+    // P2 翻译器：说的是「哪条线怎么了」，不是复述 ECONNRESET
+    expect(String(failed.error)).toContain("连不上");
+    expect(String(failed.note)).toContain("force");
+    expect((await readPackFile(started.content_id)).state).toBe("failed");
+    expect(String((await getContent(started.content_id, testDir))?.lastError)).toContain("写作包准备失败");
+
+    const rejected = await run(submitArgs(started.content_id, started.pack_id, 1));
+    expect(rejected.ok).toBe(false);
+    expect(String(rejected.error)).toContain("写作包准备失败");
+    expect(String(rejected.error)).toContain("force");
+
+    const retry = await run({ action: "pack", topic_id: started.topicId, platform: "douyin", force: true });
+    expect(retry.status).toBe("preparing");
+    expect((await settle(started.content_id)).status).toBe("ready");
+  });
+
+  it("改异步之前发出的老包（没有 state 字段）算 ready，不许卡成假的「准备中」", async () => {
+    const res = await pack();
+    const file = await readPackFile(res.content_id);
+    delete (file as Partial<WritingPackFile>).state;
+    await fs.writeFile(
+      path.join(testDir, "contents", res.content_id, PACK_JSON),
+      JSON.stringify(file),
+      "utf-8",
+    );
+    expect((await run({ action: "pack_status", content_id: res.content_id })).status).toBe("ready");
+    expect((await run(submitArgs(res.content_id, res.pack_id, 1))).status).toBe("accepted_unreviewed");
+  });
+
+  it("pack_status 查一篇没领过包的稿 → ok:false，不编一个状态出来", async () => {
+    expect(await run({ action: "pack_status", content_id: "content-nope" })).toMatchObject({ ok: false });
+    expect(await run({ action: "pack_status" })).toMatchObject({ ok: false });
   });
 });
 
@@ -371,6 +575,21 @@ describe("writer find_evidence", () => {
     expect(file.ledger.lookups.map((l) => l.need)).toEqual(["需求 1", "需求 2"]);
   });
 
+  it("单次 45 秒墙钟：到点如实说超时，额度照扣（宿主 60 秒掐调用之前先收口）", async () => {
+    const res = await packWithSearch();
+    const hang = (): Promise<LoopResult> => new Promise<LoopResult>(() => {}); // 永不返回的补证
+    const out = await run(
+      { action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id, need: "返工工时数据" },
+      { runLoopImpl: hang, findDeadlineMs: 20 },
+    );
+    expect(out.ok).toBe(true);
+    expect(out.status).toBe("empty");
+    expect(String(out.evidence)).toContain("超时");
+    expect(String(out.evidence)).toContain("额度照扣");
+    expect(out.find_evidence_left).toBe(2);
+    expect((await readPackFile(res.content_id)).ledgerBudget.used).toBe(1);
+  });
+
   it("need 为空、稿件不存在、搜索没配好各自拒绝并说明", async () => {
     const res = await packWithSearch();
     expect(await run({ action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id })).toMatchObject({
@@ -393,11 +612,14 @@ describe("writer find_evidence", () => {
 // ─── submit：门禁 ─────────────────────────────────────────────────────────────
 
 describe("writer submit 门禁", () => {
-  it("格式门打回 → repair，稿件状态不动，修复轮扣一次", async () => {
+  it("格式门打回 → repair，稿件状态不动，修复轮扣一次（门禁这一段仍是同步的）", async () => {
     const res = await pack();
-    const out = await run(submitArgs(res.content_id, res.pack_id, 1, { body: "（镜头：推近）他省下的是敲字的时间。" }));
+    const out = await run(
+      submitArgs(res.content_id, res.pack_id, 1, { review: "engine", body: "（镜头：推近）他省下的是敲字的时间。" }),
+    );
     expect(Object.keys(out)[0]).toBe("status");
     expect(out.status).toBe("repair");
+    expect(reviewInFlight(res.content_id)).toBeUndefined(); // 门没过就没有稿可审
     expect((out.failures as any[]).some((f) => f.check === "format_markers")).toBe(true);
     expect(out.rounds_left).toBe(1);
 
@@ -484,15 +706,16 @@ describe("writer submit 门禁", () => {
   });
 });
 
-// ─── submit：审稿 ─────────────────────────────────────────────────────────────
+// ─── submit：审稿（2026-09-06 实机复盘：审一遍 161 秒 > 宿主 60 秒超时） ──────
 
 describe("writer submit 审稿", () => {
-  it("review=none → accepted_unreviewed，稿件转草稿就绪，审稿结论留 skipped", async () => {
+  it("review=none → 当场 accepted_unreviewed（瞬时判断不必转后台），稿件转草稿就绪", async () => {
     const res = await pack();
     const out = await run(submitArgs(res.content_id, res.pack_id, 1));
     expect(out.status).toBe("accepted_unreviewed");
     expect(out.content_status).toBe("draft_ready");
     expect(String(out.review_skipped_reason)).toBeTruthy();
+    expect(reviewInFlight(res.content_id)).toBeUndefined();
 
     const content = await getContent(res.content_id, testDir);
     expect(content?.status).toBe("draft_ready");
@@ -503,29 +726,56 @@ describe("writer submit 审稿", () => {
     expect(content?.writtenBy).toEqual({ kind: "host", host: "local-user" });
   });
 
-  it("审稿线炸了 → 照样 accepted_unreviewed，原因进 review_skipped_reason 与 lastError", async () => {
+  it("审稿线没配（引擎读不出来）→ 当场 accepted_unreviewed，不挂一个等不到头的「审稿中」", async () => {
+    const res = await pack();
+    await fs.rm(path.join(testDir, "engine.json"));
+    const out = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }));
+    expect(out.status).toBe("accepted_unreviewed");
+    expect(String(out.review_skipped_reason)).toBeTruthy();
+    expect(reviewInFlight(res.content_id)).toBeUndefined();
+    expect((await getContent(res.content_id, testDir))?.status).toBe("draft_ready");
+  });
+
+  it("审稿线跑着炸了 → 后台收口成 accepted_unreviewed，原因进 review_skipped_reason 与 lastError", async () => {
     const res = await pack();
     const boom = async (_cfg: EngineConfig, _opts: LoopOptions): Promise<LoopResult> => {
       throw new Error("relay 断流：ECONNRESET");
     };
-    const out = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: boom });
-    expect(out.status).toBe("accepted_unreviewed");
+    const { first, final } = await submitAndWait(res.content_id, res.pack_id, 1, {}, { runLoopImpl: boom });
+    expect(first.status).toBe("reviewing");
+    expect(final.status).toBe("accepted_unreviewed");
     // P2 翻译器：说的是「审稿这条线怎么了、这次做了什么」，不是复述 ECONNRESET
-    expect(String(out.review_skipped_reason)).toContain("审稿");
-    expect(String(out.review_skipped_reason)).toContain("连不上");
+    expect(String(final.review_skipped_reason)).toContain("审稿");
+    expect(String(final.review_skipped_reason)).toContain("连不上");
     const content = await getContent(res.content_id, testDir);
     expect(content?.status).toBe("draft_ready");
     expect(content?.review?.status).toBe("skipped");
-    expect(content?.lastError).toBe(out.review_skipped_reason);
+    expect(content?.lastError).toBe(final.review_skipped_reason);
   });
 
-  it("审稿无 blocker → accepted", async () => {
+  it("门禁全过 → 先回 reviewing（稿已落盘），submit_status 才拿到 accepted", async () => {
     const res = await pack();
     const { impl } = reviewLoop([{ verdict: "pass", issues: [] }]);
-    const out = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: impl });
-    expect(out.status).toBe("accepted");
-    expect(out.content_status).toBe("draft_ready");
+    const first = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: impl });
+    expect(Object.keys(first)[0]).toBe("status");
+    expect(first).toMatchObject({ status: "reviewing", attempt: 1, content_id: res.content_id });
+    expect(String(first.note)).toContain("submit_status");
+    // 「稿已落盘」不是口号：这一刻正文、归属、submittedAt 都已经在盘上
+    const mid = await getContent(res.content_id, testDir);
+    expect(mid?.status).toBe("drafting");
+    expect(mid?.body).toContain("敲字的时间");
+    expect(mid?.pack?.submittedAt).toBeTruthy();
+    expect((await readPackFile(res.content_id)).attempts["1"]!.status).toBe("reviewing");
+
+    await reviewInFlight(res.content_id);
+    const final = await run({ action: "submit_status", content_id: res.content_id });
+    expect(final).toMatchObject({ ok: true, status: "accepted", attempt: 1, content_status: "draft_ready" });
+    expect(typeof final.elapsed_s).toBe("number");
+    expect(final.title).toBe(GOOD.title);
     expect((await getContent(res.content_id, testDir))?.review?.status).toBe("passed");
+    // 终态落进 attempts：再问一次还是同一个答案，不重审
+    expect((await readPackFile(res.content_id)).attempts["1"]!.status).toBe("accepted");
+    expect((await run({ action: "submit_status", content_id: res.content_id })).status).toBe("accepted");
   });
 
   it("审稿点名 → review_required + 稿件退 revision；改完再交 → accepted", async () => {
@@ -538,23 +788,28 @@ describe("writer submit 审稿", () => {
     };
     const { impl } = reviewLoop([{ verdict: "revise", issues: [blocker] }, { verdict: "pass", issues: [] }]);
 
-    const first = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: impl });
-    expect(first.status).toBe("review_required");
-    expect(first.round).toBe(1);
-    expect((first.issues as any[])[0].rule).toBe("论点只是材料复述");
+    const one = await submitAndWait(res.content_id, res.pack_id, 1, {}, { runLoopImpl: impl });
+    expect(one.first.status).toBe("reviewing");
+    expect(one.final.status).toBe("review_required");
+    expect(one.final.round).toBe(1);
+    expect((one.final.issues as any[])[0].rule).toBe("论点只是材料复述");
     expect((await getContent(res.content_id, testDir))?.status).toBe("revision");
 
-    const second = await run(
-      submitArgs(res.content_id, res.pack_id, 2, {
-        review: "engine",
-        body: "那天他上线前又通宵了一次，敲字确实快了，回头看的活一点没少。",
-      }),
+    const two = await submitAndWait(
+      res.content_id,
+      res.pack_id,
+      2,
+      { body: "那天他上线前又通宵了一次，敲字确实快了，回头看的活一点没少。" },
       { runLoopImpl: impl },
     );
-    expect(second.status).toBe("accepted");
+    expect(two.first.status).toBe("reviewing");
+    expect(two.final).toMatchObject({ status: "accepted", attempt: 2 });
     const content = await getContent(res.content_id, testDir);
     expect(content?.status).toBe("draft_ready");
     expect(content?.review?.rounds).toBe(1);
+    // 真机 2026-09-06：稿已 draft_ready 后宿主重发同一 attempt，要拿回「已收下」的原结果，不是「不收稿」
+    const again = (await run(submitArgs(res.content_id, res.pack_id, 2, { review: "engine" }), { runLoopImpl: impl })) as Record<string, any>;
+    expect(again).toMatchObject({ status: "accepted", replayed: true });
   });
 
   it("点满两轮仍有 blocker → accepted_with_issues，残留清单落盘", async () => {
@@ -571,20 +826,106 @@ describe("writer submit 审稿", () => {
       { verdict: "revise", issues: [blocker] },
     ]);
     const opts = { runLoopImpl: impl };
-    expect((await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), opts)).status).toBe(
-      "review_required",
-    );
-    expect((await run(submitArgs(res.content_id, res.pack_id, 2, { review: "engine" }), opts)).status).toBe(
-      "review_required",
-    );
-    const third = await run(submitArgs(res.content_id, res.pack_id, 3, { review: "engine" }), opts);
-    expect(third.status).toBe("accepted_with_issues");
-    expect((third.issues as any[])).toHaveLength(1);
+    expect((await submitAndWait(res.content_id, res.pack_id, 1, {}, opts)).final.status).toBe("review_required");
+    expect((await submitAndWait(res.content_id, res.pack_id, 2, {}, opts)).final.status).toBe("review_required");
+    const third = await submitAndWait(res.content_id, res.pack_id, 3, {}, opts);
+    expect(third.final.status).toBe("accepted_with_issues");
+    expect(third.final.issues as any[]).toHaveLength(1);
 
     const content = await getContent(res.content_id, testDir);
     expect(content?.status).toBe("draft_ready");
     expect(content?.review?.status).toBe("failed");
     expect(content?.review?.rounds).toBe(2);
+  });
+
+  it("审稿中重放同一个 attempt：还回 reviewing，不起第二遍审稿", async () => {
+    const res = await pack();
+    const held = heldReviewLoop([{ verdict: "pass", issues: [] }]);
+    const opts = { runLoopImpl: held.impl };
+    const first = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), opts);
+    expect(first.status).toBe("reviewing");
+
+    const again = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), opts);
+    expect(again.status).toBe("reviewing");
+    expect(again.replayed).toBe(true);
+    expect((await run({ action: "submit_status", content_id: res.content_id })).status).toBe("reviewing");
+
+    held.release();
+    await reviewInFlight(res.content_id);
+    expect(held.seen).toHaveLength(1); // 重放没有让审稿多跑一遍（那是真金白银）
+    expect((await run({ action: "submit_status", content_id: res.content_id })).status).toBe("accepted");
+  });
+
+  it("上一稿还在审时交下一个 attempt → 拒收，让他先等结果", async () => {
+    const res = await pack();
+    const held = heldReviewLoop([{ verdict: "pass", issues: [] }]);
+    const opts = { runLoopImpl: held.impl };
+    expect((await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), opts)).status).toBe("reviewing");
+
+    const next = await run(submitArgs(res.content_id, res.pack_id, 2, { review: "engine" }), opts);
+    expect(next.ok).toBe(false);
+    expect(String(next.error)).toContain("attempt 1");
+    expect(String(next.error)).toContain("submit_status");
+    expect((await readPackFile(res.content_id)).attempts["2"]).toBeUndefined();
+
+    held.release();
+    await reviewInFlight(res.content_id);
+    expect(held.seen).toHaveLength(1);
+  });
+
+  it("进程重启：盘上留着 reviewing → 下一次 submit_status 把这一遍重跑起来", async () => {
+    const res = await pack();
+    const held = heldReviewLoop([{ verdict: "pass", issues: [] }]);
+    expect((await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: held.impl })).status).toBe(
+      "reviewing",
+    );
+    held.release();
+    await reviewInFlight(res.content_id);
+    // 装成「审稿跑到一半进程没了」：盘上是 reviewing，进程里没人在跑
+    await fs.writeFile(
+      path.join(testDir, "contents", res.content_id, PACK_JSON),
+      JSON.stringify({
+        ...(await readPackFile(res.content_id)),
+        attempts: {
+          "1": {
+            status: "reviewing",
+            at: new Date().toISOString(),
+            result: { status: "reviewing", attempt: 1, content_id: res.content_id, note: "审稿中" },
+            pending: {
+              host: "local-user",
+              payload: { ...GOOD, hashtags: [...GOOD.hashtags] },
+              humanizedText: GOOD.body,
+              needsHuman: [],
+              gateNotes: [],
+            },
+          },
+        },
+      }),
+      "utf-8",
+    );
+    forgetReview(res.content_id);
+
+    const { impl, seen } = reviewLoop([{ verdict: "pass", issues: [] }]);
+    const resumed = await run({ action: "submit_status", content_id: res.content_id }, { runLoopImpl: impl });
+    expect(resumed.status).toBe("reviewing"); // 这一次先如实说「还在审」，同时把它重跑起来
+    await reviewInFlight(res.content_id);
+    expect(seen).toHaveLength(1);
+    expect((await run({ action: "submit_status", content_id: res.content_id })).status).toBe("accepted");
+    expect((await getContent(res.content_id, testDir))?.status).toBe("draft_ready");
+  });
+
+  it("submit_status 查没交过稿 / 不存在的 attempt / 没领过包 → ok:false，不编一个状态出来", async () => {
+    const res = await pack();
+    const never = await run({ action: "submit_status", content_id: res.content_id });
+    expect(never.ok).toBe(false);
+    expect(String(never.error)).toContain("submit");
+
+    await run(submitArgs(res.content_id, res.pack_id, 1));
+    const wrong = await run({ action: "submit_status", content_id: res.content_id, attempt: 7 });
+    expect(wrong.ok).toBe(false);
+    expect(String(wrong.error)).toContain("attempt 7");
+    expect(await run({ action: "submit_status", content_id: "content-nope" })).toMatchObject({ ok: false });
+    expect(await run({ action: "submit_status" })).toMatchObject({ ok: false });
   });
 });
 
@@ -603,6 +944,22 @@ describe("draft 视图", () => {
     expect(view.note).not.toContain("还在后台写");
     expect(view.packOutstanding).toBe(true);
     expect(view.writtenByLabel).toBe("claude-code");
+  });
+
+  it("稿交了、审稿还没出结论 → 说「稿已交，审稿中」，不再说成「已发给谁、未收到稿」", async () => {
+    const res = await pack({ _host: "claude-code" });
+    const held = heldReviewLoop([{ verdict: "pass", issues: [] }]);
+    await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: held.impl });
+    const view = (await executeWorkflow({
+      action: "draft",
+      content_id: res.content_id,
+      _dataDir: testDir,
+    })) as Record<string, any>;
+    expect(view.status).toBe("drafting");
+    expect(view.note).toContain("稿已交，审稿中");
+    expect(view.note).not.toContain("未收到稿");
+    held.release();
+    await reviewInFlight(res.content_id);
   });
 
   it("交稿之后 draft 视图带上 writtenBy 与 pack", async () => {
@@ -628,8 +985,9 @@ describe("门禁输入快照：内部写手 vs 宿主", () => {
     const topic = await seed();
     await pickAngle(topic.id);
 
-    // 宿主路径：领包 → 交一版带镜头标注的稿，拿门禁的打回文案
-    const hostPack = (await run({ action: "pack", topic_id: topic.id, platform: "douyin" })) as Record<string, any>;
+    // 宿主路径：领包 → 等备料 → 交一版带镜头标注的稿，拿门禁的打回文案
+    const issued = (await run({ action: "pack", topic_id: topic.id, platform: "douyin" })) as Record<string, any>;
+    const hostPack = { ...issued, ...(await settle(issued.content_id as string)) };
     const hostSubmit = await run(
       submitArgs(hostPack.content_id, hostPack.pack_id, 1, { body: "（镜头：推近）他省下的是敲字的时间。" }),
     );

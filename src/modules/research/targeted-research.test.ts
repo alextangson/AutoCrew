@@ -9,11 +9,13 @@ import { describe, it, expect } from "vitest";
 
 import { createEvidenceLedger, type EvidenceLedger } from "./evidence-ledger.js";
 import {
+  HOST_FIND_EVIDENCE_DEADLINE_MS,
   TARGETED_QUOTAS,
   buildFindEvidenceTool,
   createTargetedResearcher,
   renderTargetedEvidence,
   researchNeeds,
+  runFindEvidence,
   type TargetedResearcher,
 } from "./targeted-research.js";
 import { EXTERNAL_BLOCK_END, EXTERNAL_BLOCK_START } from "./research-prompt-kit.js";
@@ -454,5 +456,49 @@ describe("buildFindEvidenceTool", () => {
     const { researcher } = makeResearcher(happyScript([]), { ledger });
     expect(String(await buildFindEvidenceTool(researcher).execute({ need: "  " }))).toContain("need 不能为空");
     expect(ledger.budget.used()).toBe(0);
+  });
+});
+
+// ─── 单次墙钟（宿主那条路 45 秒） ─────────────────────────────────────────────
+
+describe("runFindEvidence 的单次墙钟", () => {
+  it("宿主上限是 45 秒——比 MCP 宿主掐工具调用的 60 秒早一步", () => {
+    expect(HOST_FIND_EVIDENCE_DEADLINE_MS).toBe(45_000);
+    expect(HOST_FIND_EVIDENCE_DEADLINE_MS).toBeLessThan(60_000);
+  });
+
+  it("deadlineMs 到点：status empty + 明说超时与「额度照扣」，不含混成一句没找到", async () => {
+    const ledger = createEvidenceLedger();
+    const { researcher } = makeResearcher(async () => sleep(200), { ledger, perNeedDeadlineMs: 5_000 });
+    const out = await runFindEvidence(researcher, "一条真实案例", { deadlineMs: 10 });
+
+    expect(out.status).toBe("empty");
+    expect(out.text).toContain("超时");
+    expect(out.text).toContain("额度照扣");
+    expect(out.text).toContain("不要编这个数字");
+    // 查过了就记账：不扣的话下一次调用等于把额度还回去
+    expect(out.left).toBe(2);
+    expect(ledger.budget.used()).toBe(1);
+    await sleep(240);
+  });
+
+  it("不传 deadlineMs 就走 researcher 自己的墙钟——内部写手的行为一个字没变", async () => {
+    const ledger = createEvidenceLedger();
+    const { researcher } = makeResearcher(
+      async (tools) => {
+        await sleep(30); // 比宿主的 45 秒短得多，但也比「立刻返回」慢：只有默认墙钟生效才查得完
+        await tools.get("search")!.execute({ query: "开发者调查" });
+        await tools.get("read_page")!.execute({ url: PAGE_URL });
+        return tools.get("submit_evidence")!.execute({
+          items: [{ claim: "使用率过半", source_id: "p1", quote: REAL_QUOTE }],
+          gaps: [],
+        });
+      },
+      { ledger, perNeedDeadlineMs: 5_000 },
+    );
+    const viaWriterTool = String(await buildFindEvidenceTool(researcher).execute({ need: "使用率数字" }));
+    expect(viaWriterTool).toContain(REAL_QUOTE);
+    expect(viaWriterTool).not.toContain("超时");
+    expect(ledger.budget.used()).toBe(1);
   });
 });

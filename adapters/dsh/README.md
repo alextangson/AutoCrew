@@ -98,6 +98,7 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_rewrite` | 平台化改写，单平台或多平台批量 |
 | `autocrew_pre_publish` | 发布前六项门禁 |
 | `autocrew_workflow` | 一站式流程：`research`（后台深调研）/ `status`（轮询）/ `select_angle`（落创作者选的那张立意卡）/ `write`（后台开写）/ `draft`（取稿）/ `doctor`（跑不动时先看它；`doctor{probe:true}` 真去每个端点发一次极小调用，回哪条线通、哪条线坏与耗时——模型调用报错时先跑它） |
+| `autocrew_writer` | **总编辑自己动笔**：`pack`（领包，秒回 `preparing`，备料转后台）→ `pack_status`（轮询到 `ready` 才拿到 `pack_md`，通常 1–6 分钟；`failed` 就 `pack{force:true}` 重来）→ `find_evidence`（缺数字去查，整稿 3 次、单次封 45 秒）→ `submit`（过与内部写手同一套门禁；三道门当场判，全过则回 `reviewing`，审稿转后台）→ `submit_status`（轮询到终态，通常 1–3 分钟）。备料几分钟、审稿实测 161 秒，同步跑都会撞上宿主 60 秒的工具超时，所以这条链两头都是「秒回 + 轮询」 |
 
 `autocrew_publish`、`autocrew_cover_review`、`autocrew_research`、`autocrew_pipeline` 等**不放行**，原因逐条记在下面的审计表里。启动时会把没放行的名字打进日志，不会让人误以为全量能力已经在 dsh 里了。
 

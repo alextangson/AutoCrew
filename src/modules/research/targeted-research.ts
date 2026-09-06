@@ -46,6 +46,14 @@ export const DEFAULT_PER_NEED_DEADLINE_MS = 3 * 60_000;
 export const DEFAULT_TOTAL_DEADLINE_MS = 6 * 60_000;
 
 /**
+ * 宿主（MCP）那条路的单次墙钟：45 秒。
+ * 上限不是拍的——MCP 宿主把工具调用卡在 60 秒（TS SDK 默认值），到点客户端就放弃，
+ * 而服务端这边还在跑，配额照花、账本照写，宿主却什么都拿不到。宁可 45 秒如实说
+ * 「这次没查完」，也不要一次没人接的检索。**内部写手不受它影响**，仍是默认 3 分钟。
+ */
+export const HOST_FIND_EVIDENCE_DEADLINE_MS = 45_000;
+
+/**
  * 补证配额：比四视角宽（一次写稿可能补 3 条需求 + 写手若干次查证），
  * 但仍然是硬闸——测试断言 `broker.usage()` 不越过这四个数。
  */
@@ -74,8 +82,14 @@ export interface TargetedLookup extends LookupRecord {
   items: LedgerEntry[];
 }
 
+/** 单次查证的可选参数。`deadlineMs` 覆盖 researcher 的默认墙钟（宿主那条路要更短） */
+export interface FindOptions {
+  signal?: AbortSignal;
+  deadlineMs?: number;
+}
+
 export interface TargetedResearcher {
-  find(need: string, opts?: { signal?: AbortSignal }): Promise<TargetedLookup>;
+  find(need: string, opts?: FindOptions): Promise<TargetedLookup>;
   broker: ResearchBroker;
   /** 与写手/修订共享的同一本账本（`find_evidence` 的次数闸也在它上面） */
   ledger: EvidenceLedger;
@@ -250,7 +264,7 @@ export function createTargetedResearcher(opts: TargetedResearcherOptions): Targe
     quotas: { ...TARGETED_QUOTAS, ...(opts.quotas ?? {}) },
   });
   const runLoopImpl = opts.runLoopImpl ?? runLoop;
-  const deadlineMs = opts.perNeedDeadlineMs ?? DEFAULT_PER_NEED_DEADLINE_MS;
+  const defaultDeadlineMs = opts.perNeedDeadlineMs ?? DEFAULT_PER_NEED_DEADLINE_MS;
   const route = resolveEngineRoute(opts.config, "scout", opts.config.strongModel);
   // 从账本已有的查证轮数续号（P3 §5.2）：宿主写稿每次 `find_evidence` 都是新进程、新
   // researcher，seq 回到 0 会让新条目分到已存在的 `ev-T1.1`——而 `ledger.add` 见到
@@ -296,7 +310,7 @@ export function createTargetedResearcher(opts: TargetedResearcherOptions): Targe
     });
   }
 
-  async function find(need: string, findOpts: { signal?: AbortSignal } = {}): Promise<TargetedLookup> {
+  async function find(need: string, findOpts: FindOptions = {}): Promise<TargetedLookup> {
     const trimmed = str(need);
     const startedAt = new Date().toISOString();
     if (!trimmed) return fail(record("", startedAt, { status: "failed", gaps: ["证据需求为空"] }));
@@ -305,6 +319,7 @@ export function createTargetedResearcher(opts: TargetedResearcherOptions): Targe
     }
 
     const n = ++seq;
+    const deadlineMs = findOpts.deadlineMs ?? defaultDeadlineMs;
     const state: RunState = { abandoned: false };
     const capture: Capture = { payload: null, attempts: 0 };
     const ctl = new AbortController();
@@ -471,6 +486,7 @@ export function buildFindEvidenceTool(researcher: TargetedResearcher): LoopTool 
       required: ["need"],
     },
     async execute(args) {
+      // 内部写手不传墙钟：走 researcher 自己的默认 3 分钟（宿主那条路才封 45 秒）
       return (await runFindEvidence(researcher, str(args.need))).text;
     },
   };
@@ -496,6 +512,7 @@ export interface FindEvidenceResult {
 export async function runFindEvidence(
   researcher: TargetedResearcher,
   need: string,
+  opts: { deadlineMs?: number } = {},
 ): Promise<FindEvidenceResult> {
   const budget = researcher.ledger.budget;
   const left = () => Math.max(0, budget.max - budget.used());
@@ -509,7 +526,18 @@ export async function runFindEvidence(
       left: 0,
     };
   }
-  const lookup = await researcher.find(trimmed);
+  const lookup = await researcher.find(trimmed, opts.deadlineMs ? { deadlineMs: opts.deadlineMs } : {});
+  // 超时单独说一句：**额度已经扣了**（检索真的跑过、也真的花了钱），
+  // 含混成一句「没找到」会让宿主以为还能白查一次。
+  if (lookup.status === "timeout") {
+    const secs = Math.max(1, Math.round((opts.deadlineMs ?? DEFAULT_PER_NEED_DEADLINE_MS) / 1000));
+    return {
+      status: "empty",
+      text: `这次查证超时中止（${secs} 秒没查完），结果作废，**这一次额度照扣**（还剩 ${left()} 次）。不要编这个数字：绕开它或如实说没有数据；确实非要，换一个更窄的 need 再查一次。`,
+      itemIds: [],
+      left: left(),
+    };
+  }
   if (lookup.items.length === 0) {
     const why = lookup.gaps.map((g) => sanitizeExternal(g, MAX_GAP_CHARS)).join("；") || "无说明";
     return {

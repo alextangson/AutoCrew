@@ -218,3 +218,22 @@ describe("formatNumberGateFeedback", () => {
     expect(formatNumberGateFeedback(verdict)).toBe("");
   });
 });
+
+
+describe("P3 真机误伤（2026-09-06）", () => {
+  it("证据编号里的数字不抽：ev-T1.1 / om:abc-3 / user-2", async () => {
+    const { extractNumbers } = await import("./number-gate.js");
+    expect(extractNumbers("三分法（ev-T1.1、ev-T1.2、ev-T1.3、ev-T1.4）出自他本人").map((m) => m.raw)).toEqual([]);
+    expect(extractNumbers("我说过（om:abc-3）和（user-2）").map((m) => m.raw)).toEqual([]);
+    // 掩码等长：后面真正的数字下标不变
+    const hits = extractNumbers("（ev-T1.1）之后是 88 页论文");
+    expect(hits.map((m) => m.raw)).toEqual(["88 页"]);
+    expect(hits[0]?.index).toBe("（ev-T1.1）之后是 ".length);
+  });
+  it("「一块主板」是量词，「一块钱」才是钱", async () => {
+    const { extractNumbers } = await import("./number-gate.js");
+    expect(extractNumbers("就像你买了一块主板，不能怪它没装系统").map((m) => m.raw)).toEqual([]);
+    expect(extractNumbers("它给出的是一块可配置的基底").map((m) => m.raw)).toEqual([]);
+    expect(extractNumbers("一块钱都不值").map((m) => m.raw)).toEqual(["一块钱"]);
+  });
+});
