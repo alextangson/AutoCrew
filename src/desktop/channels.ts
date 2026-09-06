@@ -155,6 +155,8 @@ export const IPC_CHANNELS = [
   "inbox:settings_get",
   "inbox:settings_set",
   "inbox:status",
+  // 每日选题摘要（摘要 spec §2.5）：立刻发一份，当天幂等对它不生效；60 秒内连点第二次会被挡下
+  "inbox:digest_send_now",
   "patterns:list",
   "patterns:update",
   "patterns:delete",

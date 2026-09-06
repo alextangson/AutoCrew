@@ -10,6 +10,7 @@ import { invoke } from "../transport";
 import { toast, confirmDialog } from "../ui";
 import { Field, SaveRow } from "./settings-kit";
 import { integrationStatus, type IntegrationStatus } from "./integrations-lib";
+import { digestHourLabel, digestStateLine, DIGEST_HOURS, type DigestView } from "./digest-lib";
 import { relativeTime } from "./engine-lib";
 import { hostLabel } from "./host-badge";
 
@@ -65,7 +66,63 @@ interface InboxSettingsView {
 interface InboxRuntimeView {
   state: string;
   detail?: string;
-  poller?: { state: string; lastPollOkAt?: string; lastUpdateId?: number; lastError?: string };
+  poller?: { state: string; lastPollOkAt?: string; lastUpdateId?: number; lastError?: string; lastErrorAt?: string };
+  /** 每日选题摘要（摘要 spec §2.5） */
+  digest?: DigestView;
+}
+
+/**
+ * 「每日选题摘要」——雷达每天挑几条推到 Telegram，回一个数字起深调研。
+ * bot 没配时整段禁用：开关/小时/按钮都点不动，那一行状态直接说「先配 bot」。
+ */
+function DigestBlock(props: { configured: boolean; digest?: DigestView | null; reload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const d = props.digest;
+  const save = async (patch: Record<string, unknown>) => {
+    const r = await invoke("inbox:settings_set", patch);
+    toast(r.ok ? "已保存" : (r.error ?? "保存失败"));
+    props.reload();
+  };
+  const sendNow = async () => {
+    setBusy(true);
+    const r = await invoke("inbox:digest_send_now");
+    setBusy(false);
+    // 60 秒内连点第二次会回「刚发过（N 秒前）」——照原话显示，不改写成「失败」
+    toast(r.ok ? String((r as { data?: { message?: string } }).data?.message ?? "已发出") : (r.error ?? "发送失败"));
+    props.reload();
+  };
+  return (
+    <>
+      <div className="row" style={{ cursor: "default" }}>
+        <input
+          type="checkbox"
+          disabled={!props.configured}
+          checked={props.configured && d?.enabled !== false}
+          title="每天到点把雷达当天的新选题发一份到你的 Telegram"
+          onChange={(e) => void save({ digest_enabled: e.target.checked ? "1" : "0" })}
+        />
+        <span className="row-title">每日选题摘要</span>
+        <select
+          disabled={!props.configured}
+          value={String(d?.hour ?? 9)}
+          onChange={(e) => void save({ digest_hour: e.target.value })}
+        >
+          {DIGEST_HOURS.map((h) => (
+            <option key={h} value={String(h)}>{digestHourLabel(h)}</option>
+          ))}
+        </select>
+        <button className="chip" disabled={!props.configured || busy} onClick={() => void sendNow()}>
+          {busy ? "发送中…" : "现在发一份"}
+        </button>
+      </div>
+      <p className="muted int-line">
+        {digestStateLine({ ...(d ? { digest: d } : {}), configured: props.configured, now: Date.now() })}
+      </p>
+      <p className="muted mono">
+        收到后回一个数字起深调研（回 0 = 今天都不做）；回复永远对最新一份清单生效，同一个数字再回一次是查进度。
+      </p>
+    </>
+  );
 }
 
 const EMPTY_PUBLISH_FORM = {
@@ -390,9 +447,8 @@ export function Integrations() {
         ifMissing="灵感只能回电脑手动录入；不配不影响任何其它功能。"
         status={integrationStatus({
           configured: Boolean(inbox?.configured),
-          // `poller` 只有 lastError 没有它的时间戳（后端待补 lastErrorAt）——
-          // 拿 lastPollOkAt 冒充失败时间就是撒谎，宁可只报原因
           ...(inboxRuntime?.poller?.lastError ? { lastError: inboxRuntime.poller.lastError } : {}),
+          ...(inboxRuntime?.poller?.lastErrorAt ? { lastErrorAt: inboxRuntime.poller.lastErrorAt } : {}),
           okLabel: inbox?.botTokenMasked ? `已配对 ${inbox.botTokenMasked}` : "已配对",
         })}
       >
@@ -412,6 +468,11 @@ export function Integrations() {
         <Field label="代理地址" value={iForm.proxy_url} placeholder={inbox?.proxyUrlMasked ?? "http://127.0.0.1:7890（大陆网络必填）"} onChange={(v) => setIForm((f) => ({ ...f, proxy_url: v }))} />
         <Field label="抖音解析 Key" password value={iForm.justoneapi_key} placeholder={inbox?.justoneapiKeyMasked ?? "justoneapi.com 的 token（转发抖音链接必填）"} onChange={(v) => setIForm((f) => ({ ...f, justoneapi_key: v }))} />
         <SaveRow label="保存收件箱配置" onSave={() => void submit("inbox:settings_set", iForm, () => setIForm({ ...EMPTY_INBOX_FORM }))} />
+        <DigestBlock
+          configured={Boolean(inbox?.configured)}
+          {...(inboxRuntime?.digest ? { digest: inboxRuntime.digest } : {})}
+          reload={() => void load()}
+        />
         <p className="muted mono">
           白名单外的消息一律静默忽略。保存即热重启轮询；换 bot 会重置消费游标。抖音解析：
           {inbox?.justoneapiConfigured ? "已配置" : "未配置——转发抖音链接会先挂起等 key"}

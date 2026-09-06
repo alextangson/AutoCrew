@@ -462,6 +462,40 @@ describe("入账与回执", () => {
     expect(item.note).toBeUndefined();
   });
 
+  it("拦截器吃下的纯文本不入账、不回执（每日选题摘要的数字回复）", async () => {
+    const seen: Array<{ text: string; chatId?: number; userId: string }> = [];
+    const poller = makePoller({
+      interceptText: async (msg) => {
+        seen.push(msg);
+        return msg.text === "2";
+      },
+    });
+    fake.push(update(910, " 2 "), update(911, "这条是真的灵感"));
+    poller.start();
+    await waitFor(async () => (await listItems(dataDir)).length === 1, "只有非拦截的那条落账");
+    await waitFor(async () => (await readOffset())?.offset === 912, "两条都推进 offset");
+
+    expect(seen.map((s) => s.text)).toEqual(["2", "这条是真的灵感"]);
+    expect(seen[0]).toMatchObject({ chatId: CHAT, userId: String(ALLOWED) });
+    const items = await listItems(dataDir);
+    expect(items.map((i) => i.text)).toEqual(["这条是真的灵感"]);
+    // 被拦下的那条不发「已收到，消化中」——它的回执由拦截器自己发
+    expect(fake.sent.map((s) => s.text)).toEqual([INTAKE_RECEIPT]);
+  });
+
+  it("拦截器抛错：这条按普通消息入账，错误进 lastError（不吞消息）", async () => {
+    const poller = makePoller({
+      interceptText: async () => {
+        throw new Error("状态文件坏了");
+      },
+    });
+    fake.push(update(920, "3"));
+    poller.start();
+    await waitFor(async () => (await listItems(dataDir)).length === 1, "照常落账");
+    expect((await listItems(dataDir))[0].text).toBe("3");
+    expect(errors.some((e) => e.includes("文本拦截器抛错"))).toBe(true);
+  });
+
   it("getStatus 暴露 doctor 要的三件套", async () => {
     const poller = makePoller();
     expect(poller.getStatus()).toEqual({ state: "stopped" });
@@ -472,6 +506,17 @@ describe("入账与回执", () => {
     expect(status.state).toBe("polling");
     expect(Date.parse(status.lastPollOkAt!)).toBeGreaterThan(0);
     expect(status.lastError).toBeUndefined();
+    expect(status.lastErrorAt).toBeUndefined();
+  });
+
+  it("失败同时记下 lastError 与 lastErrorAt（卡上要说得清「是不是刚刚」）", async () => {
+    fake.pollError = { status: 500, body: { ok: false, description: "boom" }, times: 1 };
+    const poller = makePoller();
+    poller.start();
+    await waitFor(() => Boolean(poller.getStatus().lastErrorAt), "记下失败时间");
+    const status = poller.getStatus();
+    expect(status.lastError).toContain("500");
+    expect(Date.parse(status.lastErrorAt!)).toBeGreaterThan(0);
   });
 });
 

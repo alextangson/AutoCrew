@@ -25,6 +25,8 @@ import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
+import { startDigestScheduler, stopDigestScheduler } from "../src/desktop/digest-scheduler.js";
+import { getInboxSettingsRaw } from "../src/desktop/settings-inbox.js";
 import { startResearchRuntime } from "../src/desktop/research-runtime.js";
 import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
 import { serveCoverIdentityAsset } from "../src/desktop/cover-identity-asset-route.js";
@@ -412,6 +414,7 @@ let videoService: VideoService | null = null;
 server.on("close", () => {
   stopCampaignHost?.();
   stopMetricsPull?.();
+  stopDigestScheduler();
   if (radarTimer) clearInterval(radarTimer);
   // 视频 runner 会拿着 ffmpeg/remotion 子进程,停机要给它机会收尾(job lease 也在这层解)
   const running = videoService;
@@ -447,6 +450,16 @@ try {
 void startInboxRuntime({ onInboxEvent: (e) => broadcast("inbox", e) })
   .then((s) => console.log(`  [inbox] 收件箱 worker:${s.state}${s.detail ? ` —— ${s.detail}` : ""}`))
   .catch((err) => console.error("[inbox] 收件箱启动失败:", err instanceof Error ? err.message : err));
+
+// 每日选题摘要(摘要 spec §2.3):每分钟一 tick + 启动补发当天那份。调度**恒起**,
+// 「有没有配 bot」由 tick 自己判——把这个判定放在启动那一刻,配好 token 就得重启 server 才生效,
+// 与收件箱「保存即热重启」的口径不一致。没配 token 的 tick 是一次纯内存判断,不碰网络也不写盘。
+void (async () => {
+  const dataDir = await activeWorkspaceDataDir();
+  await startDigestScheduler({ ...(dataDir ? { dataDir } : {}) });
+  const configured = Boolean((await getInboxSettingsRaw())?.botToken);
+  console.log(`  [digest] 每日选题摘要:${configured ? "已接线(到点自动发)" : "未配 bot,不发"}`);
+})().catch((err) => console.error("[digest] 摘要调度启动失败:", err instanceof Error ? err.message : err));
 
 // 深调研(deep-research spec §2):串行 runner 是进程内单例,启动回收中断的 job 并重排。
 // onResearchEvent 同时接 job 级落定与视角级进度 → SSE `research` 流,选题卡据此刷新。

@@ -162,6 +162,7 @@ import {
   inboxDeleteHandler,
   inboxReingestHandler,
   inboxStatusHandler,
+  inboxDigestSendNowHandler,
 } from "./inbox-handlers.js";
 import { getInboxSettings, setInboxSettings } from "./settings-inbox.js";
 import { getVideoSettings, setVideoSettings } from "./settings-video.js";
@@ -1338,6 +1339,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "inbox:settings_get": getInboxSettings,
     "inbox:settings_set": setInboxSettings,
     "inbox:status": inboxStatusHandler,
+    "inbox:digest_send_now": inboxDigestSendNowHandler,
     "patterns:list": patternsListHandler,
     "patterns:update": patternsUpdateHandler,
     "patterns:delete": patternsDeleteHandler,

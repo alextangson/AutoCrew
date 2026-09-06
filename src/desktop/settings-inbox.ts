@@ -39,6 +39,10 @@ export interface InboxSettings {
    * 去通用抓取。**不走 proxyUrl**——那条代理是 Telegram 通道的（spec §3.2）。
    */
   justoneapiKey?: string;
+  /** 每日选题摘要开关（每日选题摘要 spec §2.5）；缺省 = 开 */
+  digestEnabled?: boolean;
+  /** 每天几点发（本地时间 0–23）；缺省 9 */
+  digestHour?: number;
 }
 
 const INBOX_FILE = "inbox.json";
@@ -51,7 +55,10 @@ const INBOX_FIELDS = [
   "target_workspace_id",
   "proxy_url",
   "justoneapi_key",
+  "digest_enabled",
+  "digest_hour",
 ];
+export const DEFAULT_DIGEST_HOUR = 9;
 /** TG user id 恒为正整数；非数字的白名单永远匹配不上，必须当场拒而不是静默失效 */
 const TG_USER_ID_RE = /^\d{1,20}$/;
 /** scheme://user[:pass]@host —— 只吃凭证段，端口/路径原样保留 */
@@ -85,7 +92,14 @@ function normalizeInbox(raw: Partial<InboxSettings>): InboxSettings {
     targetWorkspaceId: raw.targetWorkspaceId || DEFAULT_WORKSPACE_ID,
     ...(raw.proxyUrl ? { proxyUrl: raw.proxyUrl } : {}),
     ...(raw.justoneapiKey ? { justoneapiKey: raw.justoneapiKey } : {}),
+    ...(typeof raw.digestEnabled === "boolean" ? { digestEnabled: raw.digestEnabled } : {}),
+    ...(isDigestHour(raw.digestHour) ? { digestHour: raw.digestHour } : {}),
   };
+}
+
+/** 0–23 的整数才是小时；盘上写坏了就当没配（回落缺省 9），不让它把调度顶到一个不存在的时刻 */
+function isDigestHour(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 23;
 }
 
 /** worker 专用的未掩码读取（不经 IPC 暴露）。未配置（无文件 / 无 token）→ null */
@@ -112,6 +126,8 @@ export async function getInboxSettings(payload: Record<string, unknown>): Promis
         proxyUrlMasked: cfg.proxyUrl ? maskProxyUrl(cfg.proxyUrl) : null,
         justoneapiConfigured: Boolean(cfg.justoneapiKey),
         justoneapiKeyMasked: cfg.justoneapiKey ? maskKey(cfg.justoneapiKey) : null,
+        digestEnabled: cfg.digestEnabled !== false,
+        digestHour: cfg.digestHour ?? DEFAULT_DIGEST_HOUR,
       },
     };
   } catch (err) {
@@ -179,6 +195,29 @@ function applyInboxUpdates(next: InboxSettings, payload: Record<string, unknown>
     const clean = v.trim();
     if (!clean) delete next.justoneapiKey;
     else if (!(next.justoneapiKey && clean === maskKey(next.justoneapiKey))) next.justoneapiKey = clean;
+  }
+  return applyDigestUpdates(next, payload);
+}
+
+/** 「1」「true」都当真：开关经 IPC 过来常常已经被前端序列化成字符串（边界上兜死，不指望前端） */
+function parseBool(v: unknown): boolean | null {
+  if (typeof v === "boolean") return v;
+  if (v === "1" || v === "true") return true;
+  if (v === "0" || v === "false") return false;
+  return null;
+}
+
+function applyDigestUpdates(next: InboxSettings, payload: Record<string, unknown>): string | null {
+  if (payload.digest_enabled !== undefined) {
+    const on = parseBool(payload.digest_enabled);
+    if (on === null) return "digest_enabled 必须是布尔值（true/false）";
+    next.digestEnabled = on;
+  }
+  if (payload.digest_hour !== undefined) {
+    const raw = payload.digest_hour;
+    const hour = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+    if (!isDigestHour(hour)) return "digest_hour 必须是 0–23 的整数";
+    next.digestHour = hour;
   }
   return null;
 }

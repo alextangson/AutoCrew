@@ -167,6 +167,8 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "inbox:settings_get": [],
   "inbox:settings_set": [],
   "inbox:status": [],
+  // 无参：发给谁、发什么全在配置与状态里，renderer 不许指定收件人
+  "inbox:digest_send_now": [],
   "patterns:list": [],
   "patterns:update": ["id"],
   "patterns:delete": ["id"],

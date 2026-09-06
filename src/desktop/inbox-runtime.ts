@@ -28,6 +28,7 @@ import {
   type TelegramPoller,
   type TelegramPollerDeps,
 } from "../modules/inbox/telegram-poller.js";
+import { handleDigestReply } from "./digest-reply.js";
 import { getInboxSettingsRaw, onInboxSettingsChanged, type InboxSettings } from "./settings-inbox.js";
 import { onEngineSettingsChanged } from "./settings.js";
 import { listWorkspaces } from "./workspace-store.js";
@@ -55,6 +56,8 @@ export interface InboxRuntimeOptions {
   createPollerImpl?: (deps: TelegramPollerDeps) => TelegramPoller;
   /** 测试注入：替掉真消化管线 */
   processItemImpl?: (item: InboxItem) => Promise<ProcessResult>;
+  /** 测试注入：替掉摘要回复处理（生产走 digest-reply 的真实现） */
+  digestReplyImpl?: typeof handleDigestReply;
 }
 
 const SETTINGS_CHANGED = "settings_changed";
@@ -166,6 +169,9 @@ async function bringUp(wakeReason?: string): Promise<InboxRuntimeStatus> {
     dataDir,
     rootDir: getDataDir(options.rootDir),
     onItem: (item) => active.enqueue(item),
+    // 纯数字 = 对每日选题摘要的回复（摘要 spec §2.4），拦在入账之前：
+    // 不传 dataDir——摘要状态归调度器所有，回复必须读它写的那份清单，不能各读各的
+    interceptText: (msg) => (options.digestReplyImpl ?? handleDigestReply)(msg, { settings }),
     onError: report,
   });
   poller.start();

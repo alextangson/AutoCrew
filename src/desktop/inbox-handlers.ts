@@ -16,6 +16,7 @@
 import { getDataDir } from "../storage/local-store.js";
 import { getItem, listItems, updateItem, type InboxItem, type InboxStatus } from "../modules/inbox/inbox-store.js";
 import { getInboxRuntimeStatus, retryInboxItem } from "./inbox-runtime.js";
+import { getDigestStatus, sendDigestNow } from "./digest-scheduler.js";
 
 type Payload = Record<string, unknown>;
 type Reply = Record<string, unknown>;
@@ -164,9 +165,33 @@ export async function inboxDeleteHandler(payload: Payload): Promise<Reply> {
   }
 }
 
-/** runtime 状态透传（doctor 与设置页同源）：未配置/工作区缺失也是正常返回，不是错误 */
+/**
+ * runtime 状态透传（doctor 与设置页同源）：未配置/工作区缺失也是正常返回，不是错误。
+ * `digest` 是每日选题摘要的状态（摘要 spec §2.5）——现读状态文件，读不出来不阻断本通道。
+ */
 export async function inboxStatusHandler(payload: Payload): Promise<Reply> {
   const bad = badPayload(payload);
   if (bad) return bad;
-  return { ok: true, data: getInboxRuntimeStatus() };
+  const digest = await getDigestStatus().catch(() => null);
+  return { ok: true, data: { ...getInboxRuntimeStatus(), ...(digest ? { digest } : {}) } };
+}
+
+/**
+ * 「现在发一份」（摘要 spec §2.5）：绕过当天幂等，但 60 秒内连点第二次会被挡下。
+ * 发出去的这一份会**替换** lastDigest——之后回的数字按新清单算。
+ */
+export async function inboxDigestSendNowHandler(payload: Payload): Promise<Reply> {
+  const bad = badPayload(payload);
+  if (bad) return bad;
+  // 不吃 payload._dataDir：摘要状态归调度器所有，按「当前工作区」另写一份会让
+  // 「现在发一份」和到点自动发各记各的清单，回复就对不上号了
+  const res = await sendDigestNow();
+  if (!res.ok) return { ok: false, error: res.error ?? "摘要发送失败" };
+  return {
+    ok: true,
+    data: {
+      count: res.count ?? 0,
+      message: res.count ? `已发出 ${res.count} 条选题` : "已发出（今天雷达没有新的命中定位的选题）",
+    },
+  };
 }

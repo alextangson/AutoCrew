@@ -196,6 +196,8 @@ export interface PollerStatus {
   lastPollOkAt?: string;
   lastUpdateId?: number;
   lastError?: string;
+  /** 那次失败发生在什么时候——只有原因没有时间的失败，卡上说不清「是不是刚刚」 */
+  lastErrorAt?: string;
 }
 
 export interface TelegramPollerDeps {
@@ -205,6 +207,12 @@ export interface TelegramPollerDeps {
   /** 全局根：offset 文件不随工作区走 */
   rootDir: string;
   onItem: (item: InboxItem) => void;
+  /**
+   * 纯文本消息的**前置拦截**（每日选题摘要 spec §2.4）：返回 true = 这条已被处理完
+   * （如「回一个数字起深调研」），poller 不再入灵感账、也不发「已收到」回执。
+   * 抛错时按普通消息入账——拦截器坏了不该让消息消失。
+   */
+  interceptText?: (msg: { text: string; chatId?: number; userId: string }) => Promise<boolean>;
   fetchImpl?: FetchLike;
   now?: () => number;
   /** 测试注入假 TG server */
@@ -248,7 +256,7 @@ class Poller implements TelegramPoller {
     this.controller = new AbortController();
     this.botId = null; // 重启可能是因为换了 token，botId 必须重新 getMe
     this.failures = 0;
-    this.status = { ...this.status, state: "polling", lastError: undefined };
+    this.status = { ...this.status, state: "polling", lastError: undefined, lastErrorAt: undefined };
     this.loop = this.run();
   }
 
@@ -358,7 +366,19 @@ class Poller implements TelegramPoller {
       if (chatId !== undefined) await this.receipt(chatId, COMMAND_RECEIPT);
       return;
     }
+    if (parsed.kind === "text" && (await this.intercepted(parsed.text, chatId, String(fromId)))) return;
     await this.intake(update.update_id, chatId, parsed);
+  }
+
+  /** 拦截器的错误不许吃掉消息：报出来，然后当普通文字入账 */
+  private async intercepted(text: string, chatId: number | undefined, userId: string): Promise<boolean> {
+    if (!this.deps.interceptText) return false;
+    try {
+      return await this.deps.interceptText({ text, ...(chatId !== undefined ? { chatId } : {}), userId });
+    } catch (err) {
+      this.fail(`文本拦截器抛错（这条按普通消息入账）：${errorText(err)}`);
+      return false;
+    }
   }
 
   private async intake(
@@ -424,6 +444,7 @@ class Poller implements TelegramPoller {
   private fail(message: string): void {
     const clean = this.redact(message);
     this.status.lastError = clean;
+    this.status.lastErrorAt = new Date(this.now()).toISOString();
     this.report(clean);
   }
 
