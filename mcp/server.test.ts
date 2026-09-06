@@ -156,3 +156,29 @@ describe("writing-pack resource", () => {
     expect(response?.error).toMatchObject({ code: -32002 });
   });
 });
+
+describe("desk resource (P3 §6.1)", () => {
+  it("autocrew://desk/<employee> 与 autocrew_desk inbox 是同一份待办", async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), "autocrew-mcp-desk-"));
+    const listed = await handleMcpRequest({ id: 50, method: "resources/list", params: {} }, LOCAL, dataDir);
+    const uris = ((listed?.result as { resources: Array<{ uri: string }> }).resources).map((r) => r.uri);
+    expect(uris).toEqual(expect.arrayContaining(["autocrew://desk/writer", "autocrew://desk/cover", "autocrew://desk/editor"]));
+
+    const response = await handleMcpRequest(
+      { id: 51, method: "resources/read", params: { uri: "autocrew://desk/cover" } },
+      LOCAL,
+      dataDir,
+    );
+    const contents = (response?.result as { contents: Array<{ mimeType: string; text: string }> }).contents;
+    expect(contents[0].mimeType).toBe("application/json");
+    expect(JSON.parse(contents[0].text)).toMatchObject({ ok: true, employee: "cover", items: [] });
+  });
+
+  it("不认识的员工名 → 资源不存在，不返回一张空桌", async () => {
+    const response = await handleMcpRequest(
+      { id: 52, method: "resources/read", params: { uri: "autocrew://desk/designer" } },
+      LOCAL,
+    );
+    expect(response?.error).toMatchObject({ code: -32002 });
+  });
+});

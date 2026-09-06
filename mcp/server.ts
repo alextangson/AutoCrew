@@ -84,6 +84,11 @@ async function readResource(uri: string, runtime: ReturnType<typeof runtimeFor>)
     }
   }
 
+  // 待办桌（P3 §6.1）：三张桌子各一条资源，内容与 `autocrew_desk inbox` 逐字段相同——
+  // 宿主用资源浏览、用工具认领，两边不许各算一套待办。
+  const desk = uri.match(/^autocrew:\/\/desk\/(writer|cover|editor)$/);
+  if (desk) return json(await runtime.runner.execute("autocrew_desk", { action: "inbox", employee: desk[1] }));
+
   const match = uri.match(new RegExp(`^autocrew://contents/(${CONTENT_ID})$`));
   if (match) return json(await runtime.runner.execute("autocrew_content", { action: "get", id: match[1] }));
   return null;
@@ -152,6 +157,9 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
         { uri: "autocrew://profile", name: "创作者档案", mimeType: "application/json" },
         { uri: "autocrew://topics", name: "选题库", mimeType: "application/json" },
         { uri: "autocrew://contents", name: "内容资产", mimeType: "application/json" },
+        { uri: "autocrew://desk/writer", name: "写手待办桌", mimeType: "application/json" },
+        { uri: "autocrew://desk/cover", name: "封面师待办桌", mimeType: "application/json" },
+        { uri: "autocrew://desk/editor", name: "剪辑师待办桌", mimeType: "application/json" },
       ],
     });
   }

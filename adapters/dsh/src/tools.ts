@@ -53,6 +53,8 @@ export const PORTED_TOOLS: readonly string[] = [
   "autocrew_workflow",
   // 宿主写稿（P3 §5）：领包 → 补证 → 交稿过同一套门禁。dsh 里的模型自己动笔时用它
   "autocrew_writer",
+  // 待办桌与认领（P3 §6）：dsh 只跑写作线，所以这里能看到的是 writer 那张桌
+  "autocrew_desk",
 ];
 
 /** 开放对象：只保证「是个对象」，形状随 action 变。 */

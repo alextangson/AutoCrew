@@ -10,7 +10,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
+import { ensureClaim } from "../storage/claims.js";
 import {
+  LOCAL_HOST,
   getContent,
   getCoverReview,
   saveCoverReview,
@@ -91,6 +93,12 @@ export const coverReviewSchema = Type.Object({
   ratios: Type.Optional(
     Type.Array(Type.String(), { description: 'Ratios for platform_ratios, e.g. ["2.35:1"] or ["16:9","4:3"].' }),
   ),
+  claim_token: Type.Optional(
+    Type.String({
+      description:
+        "认领令牌（autocrew_desk claim 给的）。别的宿主认领了这篇封面时，出图/修订/批准都必须带它；没人认领就不用带，动手会自动认领封面师桌。",
+    }),
+  ),
   _geminiApiKey: Type.Optional(Type.String()),
   _geminiModel: Type.Optional(Type.String()),
   _dataDir: Type.Optional(Type.String()),
@@ -110,12 +118,52 @@ function getGeminiModel(params: Record<string, unknown>): GeminiModel {
   return "auto";
 }
 
+/** 出图/修订/批准都要过的两道：令牌门（§6.1）+ 自动认领封面师桌 */
+async function gateCoverWrite(
+  params: Record<string, unknown>,
+  contentId: string,
+  dataDir: string,
+): Promise<{ ok: false; error: string; holder?: unknown } | null> {
+  const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
+  const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
+  const claimed = await ensureClaim(contentId, { host, employee: "cover", token: token || undefined }, dataDir);
+  if (claimed.ok) return null;
+  return { ok: false, error: claimed.error, ...(claimed.holder ? { holder: claimed.holder } : {}) };
+}
+
+/**
+ * 封面评审单的 CAS（§6.1，codex 评审 #11）：出图那 90 秒里别人也在出图/修订，
+ * 整份 `saveCoverReview` 回去就会把对方那一轮悄悄盖掉。存盘前再读一次，
+ * 修订号或更新时刻变了就拒——让宿主重新 `get` 再来，而不是丢掉一轮结果还报成功。
+ */
+type CoverStamp = { revision: number; updatedAt?: string } | null;
+
+/** 读的那一刻的两个读数。`review` 会被就地改写（revise 换 variant），所以必须先拓下来 */
+function coverStamp(review: CoverReview | null): CoverStamp {
+  return review ? { revision: maxRevision(review), updatedAt: review.updatedAt } : null;
+}
+
+async function coverReviewChanged(contentId: string, seen: CoverStamp, dataDir: string): Promise<boolean> {
+  const now = await getCoverReview(contentId, dataDir);
+  if (!seen) return now !== null;
+  if (!now) return true;
+  return maxRevision(now) !== seen.revision || now.updatedAt !== seen.updatedAt;
+}
+
+const COVER_CAS_ERROR = "封面评审单已被更新，重新 get";
+
 export async function executeCoverReview(params: Record<string, unknown>) {
   const action = params.action as string;
   const contentId = params.content_id as string;
   const dataDir = getDataDir(params);
 
   if (!contentId) return { ok: false, error: "content_id is required" };
+
+  // get 是只读的，其余五个动作都改盘：先过令牌门，再动手
+  if (action !== "get") {
+    const denied = await gateCoverWrite(params, contentId, dataDir);
+    if (denied) return denied;
+  }
 
   // --- GET ---
   if (action === "get") {
@@ -310,6 +358,7 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
   if (!content) return { ok: false, error: `Content ${contentId} not found` };
 
   const existing = await getCoverReview(contentId, dataDir);
+  const stamp = coverStamp(existing);
   const revision = maxRevision(existing) + 1;
   // 主比例:用户在生成入口按平台选;缺省竖屏 3:4。公众号超宽横幅 2.35:1 现为一等主比例(V5.6.5)。
   const PRIMARY_RATIOS: PrimaryRatio[] = ["3:4", "16:9", "4:3", "2.35:1"];
@@ -395,6 +444,7 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
     ...(existing?.createdAt ? { createdAt: existing.createdAt } : {}),
     ...(existing?.feedback ? { feedback: existing.feedback } : {}),
   };
+  if (await coverReviewChanged(contentId, stamp, dataDir)) return { ok: false, error: COVER_CAS_ERROR };
   const saved = await saveCoverReview(contentId, review, dataDir);
   if (!saved) return { ok: false, error: "Failed to save cover review" };
   return {
@@ -436,6 +486,7 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
   const [content, review] = await Promise.all([getContent(contentId, dataDir), getCoverReview(contentId, dataDir)]);
   if (!content) return { ok: false, error: `Content ${contentId} not found` };
   if (!review) return { ok: false, error: `No cover review found for ${contentId}` };
+  const stamp = coverStamp(review);
   const variant = review.variants.find((v) => v.label === label);
   if (!variant?.imagePrompt) return { ok: false, error: `Variant ${label} has no prompt to revise` };
 
@@ -530,6 +581,7 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
     delete review.approvedImagePath;
     delete review.approvedAt;
   }
+  if (await coverReviewChanged(contentId, stamp, dataDir)) return { ok: false, error: COVER_CAS_ERROR };
   const saved = await saveCoverReview(contentId, review, dataDir);
   if (!saved) return { ok: false, error: "Failed to save cover review" };
   const statusNote = revoked ? await downgradeAfterRevoke(contentId, dataDir) : null;

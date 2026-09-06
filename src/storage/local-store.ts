@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
-import { stageGuardError } from "./stage-guard.js";
+import { isVideoPlatform, stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
 import type { ReviewMeta } from "../modules/writing/script-review.js";
@@ -208,6 +208,33 @@ export interface AdoptionRecord {
   recordedAt: string;
 }
 
+/** 三张待办桌（P3 §6.1）。剪辑师的工具面在 P3c，桌子先立起来 */
+export type ClaimEmployee = "writer" | "cover" | "editor";
+
+/** 认领（P3 §6.1）。租约与令牌的判定全在 `claims.ts`，这里只定形状 */
+export interface ContentClaim {
+  employee: ClaimEmployee;
+  /** 认领方的宿主身份（§4.1 命名 token 的主体：codex / claude-code / dsh / local-user） */
+  host: string;
+  /** fencing token。**只回给认领者本人**，任何视图里都不许出现 */
+  token: string;
+  at: string;
+  leaseUntil: string;
+}
+
+/** 一次交接（P3 §6.1）：谁把活交给了谁、什么时候、由哪个宿主记的 */
+export interface ContentHandoff {
+  /** 交出方的角色或宿主名（writer / cover / editor / creator / 或接管时的旧 host） */
+  from: string;
+  /** 接手方 */
+  to: string;
+  at: string;
+  /** 记这条账的宿主（§4.1 的主体，缺省 local-user） */
+  by: string;
+  /** 非常规交接的一句话原因（今天只有「接管（租约过期）」） */
+  note?: string;
+}
+
 export interface Content {
   id: string;
   title: string;
@@ -294,6 +321,20 @@ export interface Content {
    * `packId` 同时是写手侧的 fencing token：再领一次包换新号，旧号的提交一律被拒。
    */
   pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string };
+  /**
+   * 谁在处理这一篇（P3 §6.1）。**认领是软门、令牌是硬门**：没有有效认领时任何宿主直接写
+   * 并自动认领（单人单机不设卡）；有认领时别的宿主必须带匹配 `token`，否则被拒并告知持有者。
+   * 租约 30 分钟，带匹配令牌的写操作自动续租；过期即可被别的宿主接管——接管换新令牌，
+   * 旧令牌的迟到写入随即被拒，这就是 fencing。
+   * **`token` 只回给认领者本人**：list/get 一律经 `redactClaim` 抹掉它（`claims.ts`）。
+   */
+  claim?: ContentClaim;
+  /**
+   * 交接台账（P3 §6.1，只增不改）：`draft_ready`、`approved`、封面 `approve`、
+   * `videoDone` 盖戳、`publish_ready` 五处转换，加上「租约过期被接管」各追加一条。
+   * 稿卡的「Claude 写 → Codex 封面」那条链就读它。
+   */
+  handoffs?: ContentHandoff[];
   /** 数字硬门拦下的那些数字（`needs_evidence` 稿的清单）；也用于 needsHuman 的 advisory 展示 */
   unverifiedNumbers?: string[];
   /** `needs_evidence` 的人话原因（硬门打回文案）；转正时清空 */
@@ -698,6 +739,32 @@ export async function updateContent(id: string, updates: ContentUpdates, dataDir
   return serializeContentWrite(id, () => updateContentLocked(id, updates, dataDir));
 }
 
+/** 缺省宿主身份：没有命名 token 的调用（工作台、老配置）一律记 `local-user`（§4.1） */
+export const LOCAL_HOST = "local-user";
+
+/**
+ * 交接台账的**唯一追加口**（§6.1）。五处转换与「租约过期接管」都从这里写；
+ * 各写各的就会变成六套互不相同的 from/to 口径，稿卡那条链也就读不成一句人话。
+ */
+export function withHandoff(
+  content: Pick<Content, "handoffs">,
+  entry: Omit<ContentHandoff, "at"> & { at?: string },
+): ContentHandoff[] {
+  return [...(content.handoffs ?? []), { ...entry, at: entry.at ?? new Date().toISOString() }];
+}
+
+/**
+ * 由状态转换触发的那三处交接的 from/to。视频稿多两站（剪辑、封面），所以按平台分叉；
+ * 返回 null = 这次转换不是一次交接（写账只记「活交给了谁」，不记每一次状态抖动）。
+ */
+function handoffForStatus(content: Content, target: ContentStatus): { from: string; to: string } | null {
+  const video = isVideoPlatform(content.platform);
+  if (target === "draft_ready") return { from: "writer", to: "creator" };
+  if (target === "approved") return { from: "creator", to: video ? "editor" : "publisher" };
+  if (target === "publish_ready") return { from: video ? "cover" : "creator", to: "publisher" };
+  return null;
+}
+
 async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDir?: string): Promise<Content | null> {
   const projDir = path.join(getDataDir(dataDir), "contents", id);
   const metaPath = path.join(projDir, "meta.json");
@@ -710,6 +777,13 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
   }
   const existing: Content = JSON.parse(raw);
   const now = new Date().toISOString();
+
+  // 成片审过 = 剪辑师把活交给封面师（§6.1 五处之一）。账记在这里而不是视频线里：
+  // `videoDone` 全仓只有这一个落盘口，记在别处早晚会漏掉一个写入方。
+  const videoHandoff =
+    updates.videoDone && updates.videoDone.at !== existing.videoDone?.at
+      ? withHandoff(existing, { from: "editor", to: "cover", by: existing.claim?.host ?? LOCAL_HOST, at: now })
+      : null;
 
   // 正文或标题变化都形成新版本；版本不再只记录 body，标题优化也可追溯。
   const bodyChanged = updates.body !== undefined && updates.body !== existing.body;
@@ -738,6 +812,7 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     publishedAt: updates.publishedAt !== undefined ? updates.publishedAt : existing.publishedAt ?? null,
     publishUrl: updates.publishUrl !== undefined ? updates.publishUrl : existing.publishUrl ?? null,
     performanceData: updates.performanceData || existing.performanceData || {},
+    ...(videoHandoff ? { handoffs: videoHandoff } : {}),
     createdAt: existing.createdAt,
     updatedAt: now,
   };
@@ -1113,6 +1188,13 @@ async function approveCoverVariantLocked(
   review.updatedAt = now;
   // 阶段制起（spec §0 清扫 1）：选封面**只做标记，不碰稿件状态**。
   // 推进阶段是人的动作，走顶栏推进按钮；这里代改状态会把人刚推到的阶段悄悄倒拨回去。
+  // 但账要记：封面定稿 = 封面师把活交出去（§6.1 五处之一），推进仍走 pre_publish。
+  content.handoffs = withHandoff(content, {
+    from: "cover",
+    to: "publisher",
+    by: content.claim?.host ?? LOCAL_HOST,
+    at: now,
+  });
   content.updatedAt = now;
 
   await Promise.all([
@@ -1177,6 +1259,8 @@ export interface TransitionOptions {
    */
   expectedStatus?: ContentStatus;
   diffNote?: string;
+  /** 记这次交接的宿主（§4.1）。缺省时回落到当前认领人，再回落 `local-user` */
+  host?: string;
 }
 
 /** 封面是否已定稿：复用既有判定（选用即写 approvedLabel，revise 掉它即作废） */
@@ -1262,6 +1346,17 @@ async function transitionStatusLocked(
 
   const now = new Date().toISOString();
   const updates: StatusfulUpdates = { status: targetStatus };
+
+  // 交接台账（§6.1）：五处里的三处是状态转换。写在锁内、与状态同一次落盘——
+  // 分两次写就会出现「状态已推进但账没记」的中间态。
+  const handoff = handoffForStatus(content, targetStatus);
+  if (handoff) {
+    updates.handoffs = withHandoff(content, {
+      ...handoff,
+      by: opts?.host ?? content.claim?.host ?? LOCAL_HOST,
+      at: now,
+    });
+  }
 
   // Auto-trigger: draft_ready → reviewing (signal to caller)
   let autoTriggered: string | undefined;

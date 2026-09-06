@@ -27,7 +27,8 @@ import { designCoverPlan, reviseCoverDesign, type CoverDesign } from "../modules
 import { generateImage } from "../adapters/image/gemini.js";
 import { generateCoverViaRelay } from "../adapters/image/relay-cover.js";
 import { generateWideCover } from "../modules/cover/wide-crop.js";
-import { saveContent, getContent, getCoverReview } from "../storage/local-store.js";
+import { saveContent, getContent, getCoverReview, saveCoverReview } from "../storage/local-store.js";
+import { claimContent } from "../storage/claims.js";
 import { encodePng } from "../modules/cover/png-crop.js";
 
 const planMock = vi.mocked(designCoverPlan);
@@ -726,3 +727,74 @@ describe("platform_ratios", () => {
     expect(r.warnings![0]).toContain("裁切失败");
   });
 });
+
+// ─── 认领令牌门与评审单 CAS（P3 spec §6.1，codex 评审 #11） ───────────────────
+
+describe("认领令牌门", () => {
+  it("别的宿主握着活租约时，出图/修订/批准全被拒并说得出持有者", async () => {
+    const id = await seedContent();
+    await claimContent(id, "cover", "codex", dir);
+    for (const action of ["create_candidates", "revise", "approve", "platform_ratios"]) {
+      const r = (await executeCoverReview({
+        action,
+        content_id: id,
+        label: "a",
+        feedback: "换个配色",
+        _dataDir: dir,
+        _geminiApiKey: "k",
+        _host: "claude-code",
+      })) as { ok: boolean; error: string };
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain("codex");
+    }
+    expect(await getCoverReview(id, dir)).toBeNull();
+  });
+
+  it("没人认领 → 直接出图并自动认领封面师桌（软门）", async () => {
+    const id = await seedContent();
+    const r = (await createCandidates(id)) as { ok: boolean };
+    expect(r.ok).toBe(true);
+    expect((await getContent(id, dir))!.claim).toMatchObject({ employee: "cover", host: "local-user" });
+  });
+
+  it("get 是只读的：别人认领着也照读不误", async () => {
+    const id = await seedContent();
+    await createCandidates(id);
+    await claimContent(id, "cover", "codex", dir);
+    const r = (await executeCoverReview({ action: "get", content_id: id, _dataDir: dir, _host: "claude-code" })) as {
+      ok: boolean;
+    };
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("评审单 CAS", () => {
+  it("出图那 90 秒里评审单被换过 → 拒绝并让人重新 get，不覆盖对方那一轮", async () => {
+    const id = await seedContent();
+    await createCandidates(id); // r1 落库
+    // 出图期间另一方写了新一轮候选：用一次真实保存模拟
+    genMock.mockImplementation(async (opts) => {
+      const p = `${opts.outputPath}.png`;
+      await fs.mkdir(path.dirname(p), { recursive: true });
+      await fs.writeFile(p, Buffer.from("png-bytes"));
+      const current = await getCoverReview(id, dir);
+      if (current && maxRevisionOf(current) < 9) {
+        await saveCoverReview(
+          id,
+          { ...current, variants: current.variants.map((v) => ({ ...v, revision: 9 })) },
+          dir,
+        );
+      }
+      return { ok: true, imagePath: p, model: "mock-model" };
+    });
+    const r = (await createCandidates(id)) as { ok: boolean; error?: string };
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("重新 get");
+    // 对方那一轮还在盘上，没被这次结果盖掉
+    expect(maxRevisionOf((await getCoverReview(id, dir))!)).toBe(9);
+  });
+});
+
+function maxRevisionOf(review: { variants: Array<{ revision?: number }> }): number {
+  return review.variants.reduce((m, v) => Math.max(m, v.revision ?? 1), 0);
+}

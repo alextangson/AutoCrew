@@ -1,5 +1,7 @@
 import { Type } from "@sinclair/typebox";
+import { ensureClaim, redactClaim } from "../storage/claims.js";
 import {
+  LOCAL_HOST,
   saveContent,
   listContents,
   getContent,
@@ -79,6 +81,10 @@ export const contentSaveSchema = Type.Object({
   reason_note: Type.Optional(Type.String({
     description: "Optional free-text rewrite reason for verdict=rewritten (IA v5 V5.0) — user's own words on what went wrong; high-value negative signal for style distillation.",
   })),
+  claim_token: Type.Optional(Type.String({
+    description:
+      "认领令牌（autocrew_desk claim 给的）。别的宿主认领了这篇时，update / transition 必须带它；没人认领就不用带，写下去会自动认领。",
+  })),
 });
 
 /**
@@ -106,6 +112,22 @@ function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
   return updates;
 }
 
+/**
+ * 令牌门（P3 §6.1）：`update` / `transition` 是跨岗位的写口，别的宿主认领着就得带令牌。
+ * 岗位不填 = 沿用现有认领的岗位（封面师改稿不该把自己变成写手），全新认领记 `writer`。
+ */
+async function gateContentWrite(
+  params: Record<string, unknown>,
+  id: string,
+  dataDir: string | undefined,
+): Promise<{ ok: false; error: string; holder?: unknown } | null> {
+  const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
+  const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
+  const claimed = await ensureClaim(id, { host, token: token || undefined }, dataDir);
+  if (claimed.ok) return null;
+  return { ok: false, error: claimed.error, ...(claimed.holder ? { holder: claimed.holder } : {}) };
+}
+
 export async function executeContentSave(
   params: Record<string, unknown>,
   deps?: {
@@ -120,9 +142,11 @@ export async function executeContentSave(
   const shouldDistillImpl = deps?.shouldDistillImpl || shouldDistillStyle;
   const distillImpl = deps?.distillImpl || distillStyleRules;
 
+  // 认领令牌只回给认领者本人（§6.1）：list/get 这些视图一律脱敏，
+  // 否则看板一刷新，谁都拿得到别人那枚 fencing token。
   if (action === "list") {
     const contents = await listContents(dataDir);
-    return { ok: true, contents };
+    return { ok: true, contents: contents.map(redactClaim) };
   }
 
   if (action === "get") {
@@ -130,7 +154,7 @@ export async function executeContentSave(
     if (!id) return { ok: false, error: "id is required for get" };
     const content = await getContent(id, dataDir);
     if (!content) return { ok: false, error: `Content ${id} not found` };
-    return { ok: true, content };
+    return { ok: true, content: redactClaim(content) };
   }
 
   if (action === "update") {
@@ -140,6 +164,8 @@ export async function executeContentSave(
     // Get old content before update to check for body changes
     const oldContent = await getContent(id, dataDir);
     if (!oldContent) return { ok: false, error: `Content ${id} not found` };
+    const denied = await gateContentWrite(params, id, dataDir);
+    if (denied) return denied;
     const oldBody = oldContent.body;
     const newBody = params.body as string | undefined;
 
@@ -151,7 +177,8 @@ export async function executeContentSave(
     if (params.status) {
       const target = normalizeLegacyStatus(params.status as string);
       if (target !== updated.status) {
-        const moved = await transitionStatus(id, target, {}, dataDir);
+        const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
+        const moved = await transitionStatus(id, target, { host }, dataDir);
         if (!moved.ok) return { ok: false, error: moved.error, ...(moved.blocked ? { blocked: true } : {}) };
         updated = moved.content ?? updated;
       }
@@ -166,7 +193,7 @@ export async function executeContentSave(
         const errorMsg = err instanceof Error ? err.message : String(err);
         return {
           ok: true,
-          content: updated,
+          content: redactClaim(updated),
           warning: `diff 记录失败：${errorMsg}，稿件已正常保存`,
         };
       }
@@ -184,8 +211,8 @@ export async function executeContentSave(
     }
 
     return styleLearned
-      ? { ok: true, content: updated, styleLearned }
-      : { ok: true, content: updated };
+      ? { ok: true, content: redactClaim(updated), styleLearned }
+      : { ok: true, content: redactClaim(updated) };
   }
 
   if (action === "delete") {
@@ -193,7 +220,7 @@ export async function executeContentSave(
     if (!id) return { ok: false, error: "id is required for delete" };
     const deleted = await softDeleteContent(id, dataDir);
     if (!deleted) return { ok: false, error: `Content ${id} not found` };
-    return { ok: true, content: deleted };
+    return { ok: true, content: redactClaim(deleted) };
   }
 
   if (action === "restore") {
@@ -201,7 +228,7 @@ export async function executeContentSave(
     if (!id) return { ok: false, error: "id is required for restore" };
     const restored = await restoreContent(id, dataDir);
     if (!restored) return { ok: false, error: `Content ${id} not found` };
-    return { ok: true, content: restored };
+    return { ok: true, content: redactClaim(restored) };
   }
 
   if (action === "adoption") {
@@ -226,7 +253,7 @@ export async function executeContentSave(
     if (!updated) return { ok: false, error: `Content ${id} not found` };
     // 附带全局采纳率：UI toast 直接可见北极星读数（白盒资格线的一部分）
     const stats = await adoptionStats(dataDir);
-    return { ok: true, content: updated, stats };
+    return { ok: true, content: redactClaim(updated), stats };
   }
 
   if (action === "transition") {
@@ -234,19 +261,25 @@ export async function executeContentSave(
     const targetStatus = params.target_status as string;
     if (!id) return { ok: false, error: "id is required for transition" };
     if (!targetStatus) return { ok: false, error: "target_status is required for transition" };
+    const denied = await gateContentWrite(params, id, dataDir);
+    if (denied) return denied;
     // from_status：调用方手里那一版的状态。旧标签页/双击推进时后端据此人话拒绝，不硬盖
     const from = typeof params.from_status === "string" ? normalizeLegacyStatus(params.from_status) : undefined;
     const target = normalizeLegacyStatus(targetStatus);
-    const result = await transitionStatus(
+    const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
+    const moved = await transitionStatus(
       id,
       target,
       {
         force: params.force as boolean,
         diffNote: params.diff_note as string,
+        host,
         ...(from ? { expectedStatus: from } : {}),
       },
       dataDir,
     );
+    // 令牌不外泄（§6.1）：流转回执里也带着整份稿件
+    const result = moved.content ? { ...moved, content: redactClaim(moved.content) } : moved;
     // 到「已发布」的另一条路（publish.ts confirm_published 是第一条）：同样在发布时刻
     // 推导一次采纳判定。best-effort——判定失败不该把已经发生的状态流转打回。
     if (result.ok && target === "published") {

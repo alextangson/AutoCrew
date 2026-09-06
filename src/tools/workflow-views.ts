@@ -15,6 +15,7 @@
 import { isAngleCardV3, type AngleCard } from "../modules/research/brief-store.js";
 import { DEFAULT_PERSONAS } from "../modules/research/personas.js";
 import { isTerminalJobStatus, type ResearchJob } from "../modules/research/research-job-store.js";
+import { claimView } from "../storage/claims.js";
 import { CONTENT_STATUS_LABEL, type Content } from "../storage/local-store.js";
 
 export function jobView(job: ResearchJob): Record<string, unknown> {
@@ -123,13 +124,16 @@ export function draftingNote(content: Content): string {
   return `写作包已发给 ${pack.host}，未收到稿（${minutesSince(pack.issuedAt)} 分钟）。刚发包的头几分钟产品还在备料（\`autocrew_writer pack_status\` 看得到）；备好之后球就在宿主那边——催他提交，或 pack{force:true} 再领一次（旧包作废）。`;
 }
 
-/** 「谁在写、领的哪份包」——`drafting` 的占位回执与成稿视图都带上它 */
+/** 「谁在写、领的哪份包、谁在拿着它」——`drafting` 的占位回执与成稿视图都带上它 */
 export function draftOwnerView(content: Content): Record<string, unknown> {
   return {
     writtenBy: content.writtenBy,
     writtenByLabel: writerLabel(content.writtenBy),
     pack: content.pack,
     packOutstanding: packOutstanding(content),
+    // 认领与交接（P3 §6.1）。`claimView` 抹掉令牌——它只回给认领者本人
+    claim: claimView(content.claim),
+    handoffs: content.handoffs ?? [],
   };
 }
 
