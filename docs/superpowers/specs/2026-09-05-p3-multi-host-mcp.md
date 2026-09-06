@@ -270,3 +270,53 @@ submit → 长度门 → 格式门 / 数字门 / 质量门
 - **Claude Code 无头运行未验**：`claude -p` 在本机子进程里报「Not logged in」，写手技能的行为只能由创始人在交互式 Claude Code 里验证；技能文本、能力一致性测试、pack/submit 契约（P3a 用 SDK 客户端走通）是现有证据。
 
 **遗留**：`writer.test.ts`（1025 行）、`local-store.ts`（1486）、`cover-review.ts`（706）、`Board.tsx`/`Editor.tsx` 超 500 行；`content:trash` 视图未脱敏（非看板面）；写手技能里 `autocrew_content` 仍写 `content_id`（已兼容）。
+
+## 14. P3c 剪辑师：设计（2026-09-06）
+
+### 14.1 事实（调查出处）
+
+- 视频线状态机 `ingest → transcribe → cut → edit → assemble → render → review → done`（`state-machine.ts:18`），`edit` 与 `review` 是硬人工门，`done` 只能从 `review/awaiting_human` 到达（`:128-139`）。所有写都过 `serializeVideoWrite` + `assertTransition`（`video-store.ts:80, 154-208`），版本文件用 `fs.link` 做原子仲裁（`:233-251`），runner 有租约/心跳/settle CAS（`runner.ts:92-161, 271-300`）。
+- **唯一门面** `createVideoService`（`service.ts:159`）：起构建、三道门的确认/重跑/回退、预览、审核，冲突抛 `VideoConflictError`。桌面 `video:*` 22 条 IPC 是它的薄壳（`video-handlers.ts`）。
+- **`videoDone` 只在桌面层盖章**：`stampVideoReady`（`video-handlers.ts:486`）在 `review_confirm verdict=approve` 后写 `Content.videoDone/videoReadyAt`；服务层的 `confirmReview` 只推 `done/done`。MCP 直接调服务会到 `done` 却永远不盖章，阶段闸就永远不放行。
+- 粗剪与素材规划都是「内部 agent 提议、人确认」：`rough-cut.ts` 只提 `drops`，keeps 由代码算；`editor.ts` 只提 overlay 计划，硬规则在代码；确认只能做减法（`editor-gate.ts:82-88`）。
+- 输入是 `role:"aroll"` 的稿件资产（`ingest.ts:224-233`），ASR 走 `uv` 子进程 + 1GB 模型（`asr.ts`），一次 15 分钟口播推理十来分钟；`testkit.ts` 提供 3 秒合成 A-roll、假 ASR、假渲染，转写只是 JSON，**没有 SRT 导入口**。
+
+### 14.2 `autocrew_video` 工具（一个工具，动作与门面一一对应，全部经 `createVideoService`）
+
+服务实例必须与桌面共用同一个（进程内队列、启动恢复只能有一份）：把 `video-handlers.ts` 里的单例取法抽到 `src/modules/video/service-registry.ts`，桌面与工具都从它拿。
+
+| 动作 | 语义 | 令牌门 |
+|---|---|---|
+| `status {content_id}` | 状态 + jobs + `next`（人话：等转写 / 粗剪待你确认 / 素材规划待你确认 / 成片待审 / 已完成 / 失败原因） | 否 |
+| `start {content_id}` | `startBuild`，立即返回，轮询 `status` | 是 |
+| `transcript {content_id, full?}` | `getTranscript`；默认紧凑视图：单元 id、起止毫秒、文本、AI 建议（drop 标记 + 引句）；`full` 才带逐词 | 否 |
+| `cut_confirm {content_id, keeps, flags?, base_transcript_revision, base_cut_revision}` | 三处乐观锁原样透传；冲突返回 `conflict:true` + 当前 state | 是 |
+| `transcript_edit {content_id, unit_id, text, base_transcript_revision, base_clean_revision, base_cut_revision}` | 改字，门不动 | 是 |
+| `rough_cut_rerun` / `transcribe_rerun` / `editor_rerun` / `retry` / `reassemble` | 各自前置状态由门面校验；`transcribe_rerun` 会作废人工改动，人设必须先问创作者 | 是 |
+| `cut_preview {content_id, keeps, base_*}` | 后台渲染预览，`status.preview` 给路径 | 是 |
+| `editor_plan {content_id}` | 计划视图：每个 overlay 的 id、位置、来源（asset / generate 占位）、时长 | 否 |
+| `editor_slot_fill {plan_revision, overlay_id, library_id}` / `editor_slot_remove` / `editor_back_to_cut` / `editor_confirm {plan_revision, kept_overlay_ids}` | 同门面；`kept_overlay_ids: []` 合法 = 纯口播 | 是 |
+| `review {content_id, rendered_revision, verdict, target?, timestamp_ms?, note?}` | `confirmReview` **+ 盖章**：把 `stampVideoReady` 抽成 `src/modules/video/video-done.ts` 由桌面与工具共用 | 是 |
+| `asr_status` | 只读 | 否 |
+
+- 所有排队类动作立即返回（runner 本来就是异步的），宿主轮询 `status`；单次调用不超过 30 秒（P3a 教训）。
+- 令牌门与封面同款：`claim_token` 可选，别的宿主持有未过期认领即拒绝；`desk inbox editor` 已存在（`editing && !videoDone`）。
+- 视频线自己的租约/CAS 不动：宿主层的认领只管「谁在这台桌子上」，runner 的租约管「谁在跑这一步」，两层各管各的。
+- 不进 dsh `PORTED_TOOLS`（§2：剪辑师只在 Claude Code / Codex）。
+
+### 14.3 人设：`adapters/codex/AGENTS.editor.md`（`autocrew host codex --role editor`）
+
+四段骨架。纪律：机器步骤自己跑（start、轮询、重跑）；**三道门都是创作者的决定**——把 AI 的粗剪建议按「引句 + 标记」摆出来等创作者点头再 `cut_confirm`，把素材规划里的 generate 占位逐条问「填库里的哪条 / 删」再 `editor_confirm`，成片路径交给创作者看过再 `review approve`；非交互运行到门就停。`transcribe_rerun` 前必须说明会作废已改的字。不写镜头语言、不改文案、不碰发布。冲突（`conflict:true`）= 别的地方改过，重新读状态再来，不重试同一提交。
+
+### 14.4 边界
+
+**状态**：稿件不是视频平台 / 未到 `editing` → `start` 被门面拒并说原因；没有 A-roll 资产 → `blocked: aroll_missing`，`status.next` 说「先把口播原片放进资产」；ASR 未就绪 → `blocked: asr_not_ready` + `asr_status`；`done` 后再 `cut_confirm` = 重开（`videoDone` 会被清，人设要先问）。
+**最坏输入**：`keeps` 越界/重叠 → 门面拒；`plan_revision` 过期 → `conflict`；`transcript` 超长 → 紧凑视图默认，`full` 才展开；`verdict` 非法 → 拒。
+**防呆**：同一 `cut_confirm` 重发 → 第二次因 `base_cut_revision` 过期返回 conflict，不会双写；`review approve` 重发 → 门面按 `rendered_revision` 拒。
+**失败可见**：`failed/blocked` 原因进 `status.next`，runner 的 `failReason` 原样附带；盖章失败返回 `stamp_warning`（与桌面一致）。
+**不做**：SRT 导入口、素材采购/生成、小Lin说节奏导演（`2026-09-03` 研究稿另议）、时间线拖拽。
+
+### 14.5 验收
+
+- 单测：经 testkit（3 秒合成 A-roll + 假 ASR + 假渲染 + 假 runLoop）用 `autocrew_video` 走完 `start → cut_confirm → editor_confirm → review approve`，`Content.videoDone` 置位；每个门的 conflict 路径；令牌门；`status.next` 文案；桌面与工具共用同一服务实例（注册表测试）。
+- 真机：隔离目录用 testkit 把一条视频稿推到 `cut/awaiting_human`，起真服务，Codex 剪辑师人设看桌、认领、读转写、摆出粗剪建议停下（非交互）；再由脚本宿主替创作者走完确认 → 编辑阶段（真 DeepSeek）→ 组装渲染（真 ffmpeg，3 秒）→ `review approve` → `videoDone`，看板显示「Codex 剪辑中」→ 完成。
