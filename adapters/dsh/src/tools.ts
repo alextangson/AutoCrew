@@ -22,6 +22,7 @@ import { registerAutocrewCapabilities } from "../../../index.js";
 import { createContext, type PluginConfig } from "../../../src/runtime/context.js";
 import { EventBus } from "../../../src/runtime/events.js";
 import { ToolRunner } from "../../../src/runtime/tool-runner.js";
+import { toLosslessJson } from "../../../src/utils/lossless-json.js";
 
 /**
  * 放行进 dsh 的工具 —— 「写作线」：开机 → 看状态 → 立意 → 写 → 审 → 发布前门禁。
@@ -56,14 +57,11 @@ export const PORTED_TOOLS: readonly string[] = [
 const OPEN_OBJECT_SCHEMA = { type: "object" as const, additionalProperties: true };
 
 /**
- * AutoCrew 的参数 schema 是 TypeBox 造的，对象上挂着 `Symbol(TypeBox.Kind)` 一类的
- * own symbol；dsh 注册表投影 schema 时要求「lossless JSON」，见到 symbol 直接抛
- * `parameters must be lossless JSON before schema projection`。JSON 往返一次把
- * symbol 和 undefined 都甩掉，剩下的正好是纯 JSON Schema。
+ * dsh 注册表投影 schema 时要求「lossless JSON」，见到 TypeBox 的 own symbol 直接抛
+ * `parameters must be lossless JSON before schema projection`。MCP 侧有同一个要求，
+ * 所以实现搬到了 `src/utils/lossless-json.ts`；这里保留具名再导出，桥的调用点不变。
  */
-function toLosslessJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
+export { toLosslessJson };
 
 function renderJson(_args: unknown, value: unknown): ContentBlock[] {
   return [{ type: "text", text: JSON.stringify(value, null, 2) }];

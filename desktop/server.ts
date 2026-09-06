@@ -19,7 +19,8 @@ import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
 import { resolveServerToken } from "../src/desktop/server-token.js";
-import { LocalSessionAuth } from "../src/desktop/server-auth.js";
+import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
+import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
@@ -36,7 +37,7 @@ import { initEngineHealth, probeAllProviders } from "../src/desktop/engine-healt
 import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
-import { handleMcpRequest } from "../mcp/server.js";
+import { handleMcpRequest, MCP_PROTOCOL_VERSION } from "../mcp/server.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
@@ -49,6 +50,8 @@ const AUTH = new LocalSessionAuth(
   undefined,
   undefined,
   TOKEN,
+  // 命名宿主 token（P3 §4.1）：主体 = 宿主名；撤销 = 删文件，下一次调用立刻 401。
+  (token) => lookupHostToken(token),
 );
 const APPROVALS = new ApprovalGate();
 // D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
@@ -188,10 +191,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // MCP Streamable HTTP 基础端点：与 stdio 共用同一 JSON-RPC 处理器与 Capability Registry。
+  // **唯一**的 MCP 传输（P3 §3）：Codex 远端客户端直连它，Claude Code 的 stdio 入口
+  // （`bin/autocrew.mjs mcp`）也只是把 JSON-RPC 转发到这里，全部宿主共用这一个写进程。
+  // 2026-09-06 抓包实测：两家客户端都不要 `Mcp-Session-Id`、都容忍 `GET` 的 405，故不加会话/SSE。
   // 本地版沿用现有 Bearer/session 鉴权；商业远程部署可在此前置 OAuth 资源服务器。
   if (p === "/mcp") {
-    const authMethod = authorize(req);
+    // identify 而非 authorize：401 判定与「这是谁」是同一次查表，分两次等于把 token 目录读两遍。
+    const identity = AUTH.identify({ authorization: req.headers.authorization, cookie: req.headers.cookie });
+    const authMethod = identity?.method;
     if (!authMethod) {
       res.writeHead(401, { "Content-Type": MIME[".json"], "WWW-Authenticate": "Bearer" });
       res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null }));
@@ -217,17 +224,21 @@ const server = http.createServer(async (req, res) => {
     try { request = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end("bad json"); return; }
     let mcpDataDir: string;
     try { mcpDataDir = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { mcpDataDir = getDataDir(); }
+    const host = identity?.subject ?? LOCAL_SUBJECT;
     const response = await handleMcpRequest(request, {
-      principal: { subject: "local-user", plan: "local" },
+      principal: { subject: host, plan: "local" },
+      host,
     }, mcpDataDir);
     if (!response) {
       res.writeHead(202, { "Cache-Control": "no-store" }).end();
       return;
     }
+    // 版本头跟着协商结果走，不写死——否则回声版本与响应头会互相打架。
+    const negotiated = (response.result as { protocolVersion?: string } | undefined)?.protocolVersion;
     res.writeHead(200, {
       "Content-Type": MIME[".json"],
       "Cache-Control": "no-store",
-      "MCP-Protocol-Version": "2025-11-25",
+      "MCP-Protocol-Version": negotiated ?? MCP_PROTOCOL_VERSION,
     });
     res.end(JSON.stringify(response));
     return;

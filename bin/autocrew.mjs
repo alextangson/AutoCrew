@@ -36,7 +36,8 @@ function printHelp() {
   autocrew retro          生成复盘（--mode weekly|monthly）
   autocrew runs           查看最近任务事件
   autocrew call           调用任意内部能力（channel --payload JSON）
-  autocrew mcp            以前台 stdio 方式启动 MCP Server
+  autocrew mcp            stdio ↔ 守护进程 /mcp 转发器（Claude Code 用）
+  autocrew host           接入宿主（codex|claude-code|dsh），打印接入步骤
   autocrew doctor         检查本地运行环境
 
 选项:
@@ -362,9 +363,27 @@ switch (command) {
     break;
   }
   case "mcp": {
+    // 转发器,不是服务器(P3 §3):stdio 上的 JSON-RPC 原样转发到守护进程的 /mcp,
+    // 于是 Claude Code / Codex / 工作台共用同一个写进程。守护进程没起就报错,
+    // 绝不在这里偷偷起第二个——跨进程的 last-writer-wins 是这一片要根治的病。
+    const { runForwarder } = await import("./mcp-forwarder.mjs");
+    await runForwarder();
+    break;
+  }
+  case "host": {
+    const [host] = positionalAfterCommand();
     const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-    const child = spawn(tsx, [path.join(ROOT, "mcp", "server.ts")], { cwd: ROOT, stdio: "inherit", env: process.env });
-    await new Promise((resolve) => child.on("exit", resolve));
+    if (!host || !fs.existsSync(tsx)) {
+      console.error(host
+        ? `缺少依赖。请先在 ${ROOT} 执行 npm install`
+        : "用法：autocrew host <codex|claude-code|dsh> [--dir <path>]");
+      process.exitCode = 1;
+      break;
+    }
+    const dir = optionValue("dir");
+    const args = [path.join(ROOT, "src", "desktop", "host-cli.ts"), host, ...(dir ? ["--dir", dir] : [])];
+    const child = spawn(tsx, args, { cwd: ROOT, stdio: "inherit", env: process.env });
+    process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
     break;
   }
   case "doctor": {
