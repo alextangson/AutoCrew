@@ -164,15 +164,22 @@ describe("令牌门（§14.2：宿主层认领，与 runner 租约各管各的�
 });
 
 describe("status.next 的人话（§14.2 / §14.4）", () => {
-  async function nextFor(state: Partial<VideoState>): Promise<string> {
+  async function statusFor(state: Partial<VideoState>): Promise<Record<string, unknown>> {
     setVideoService(stubService({ getStatus: async () => ({ state: { ...STATE, ...state }, jobs: [] }) }), dir);
-    return String((await call({ action: "status" })).next);
+    return (await call({ action: "status" })) as Record<string, unknown>;
+  }
+  async function nextFor(state: Partial<VideoState>): Promise<string> {
+    return String((await statusFor(state)).next);
   }
 
   it("每道门、每种卡住都说得出下一步", async () => {
     expect(await nextFor({ phase: "cut", state: "awaiting_human" })).toContain("cut_confirm");
     expect(await nextFor({ phase: "edit", state: "awaiting_human" })).toContain("editor_confirm");
     expect(await nextFor({ phase: "review", state: "awaiting_human" })).toContain("review approve");
+    // 真机 2026-09-06：审核门的 rendered_revision 直接端出来，宿主不用猜 revisions.rendered
+    const review = (await statusFor({ phase: "review", state: "awaiting_human", revisions: { transcript: 1, clean: 1, cut: 3, editor: 2, timeline: 1, rendered: 1 } })) as Record<string, unknown>;
+    expect(review.rendered_revision).toBe(1);
+    expect(String(review.final_path)).toMatch(/final\.v1\.mp4$/);
     expect(await nextFor({ phase: "transcribe", state: "running" })).toContain("轮询");
     expect(await nextFor({ phase: "done", state: "done" })).toContain("已完成");
   });

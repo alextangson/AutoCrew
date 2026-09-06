@@ -320,3 +320,18 @@ submit → 长度门 → 格式门 / 数字门 / 质量门
 
 - 单测：经 testkit（3 秒合成 A-roll + 假 ASR + 假渲染 + 假 runLoop）用 `autocrew_video` 走完 `start → cut_confirm → editor_confirm → review approve`，`Content.videoDone` 置位；每个门的 conflict 路径；令牌门；`status.next` 文案；桌面与工具共用同一服务实例（注册表测试）。
 - 真机：隔离目录用 testkit 把一条视频稿推到 `cut/awaiting_human`，起真服务，Codex 剪辑师人设看桌、认领、读转写、摆出粗剪建议停下（非交互）；再由脚本宿主替创作者走完确认 → 编辑阶段（真 DeepSeek）→ 组装渲染（真 ffmpeg，3 秒）→ `review approve` → `videoDone`，看板显示「Codex 剪辑中」→ 完成。
+
+## 15. P3c 落地记录（2026-09-06）
+
+| 提交 | 内容 |
+|---|---|
+| 8942998 | `autocrew_video`（18 个动作与门面一一对应）、`service-registry`（桌面与工具共用同一实例）、`video-done`（盖章逻辑从桌面层抽出共用）、`payload.ts`（IPC 与工具共用同一份参数解析）、令牌门（employee=editor）、`status.next` 人话、`adapters/codex/AGENTS.editor.md`、`autocrew host --role editor`、能力一致性测试；dsh 不放行 |
+| 本片收尾 | 真机逼出来的一处：审核门要传 `rendered_revision`，但它藏在 `state.revisions.rendered`，宿主得猜 → 审核阶段的 `status` 直接带 `rendered_revision` 与 `final_path`，`next` 明说照它填 |
+
+**真机验收（隔离目录：testkit 3 秒合成 A-roll + 假 ASR 推到 `cut/awaiting_human` 并种一条 AI 粗剪建议；然后起真服务、真 DeepSeek、真 ffmpeg）**：
+- **Codex 剪辑师真跑**（`codex exec` + bypass，人设由 `autocrew host codex --dir --role editor` 写入）：看桌 → 认领 → `status`（读到「粗剪待你确认」）→ `transcript` → 摆出「今天聊 · repeat」一条建议 → 停在门口不确认、不释放，汇报认领令牌。看板显示「Codex 剪辑中 · 3 分钟前」。
+- 令牌门：claude-code 对同一稿 `cut_confirm` 被拒「这篇正由 codex 处理（剪辑师，还剩 28 分钟）」。
+- 脚本宿主持 codex 令牌替创作者走完：`cut_confirm`（保留全部，AI 建议只是提议）→ 编辑阶段真 DeepSeek 15 秒出空计划（素材库只有一条无描述的占位）→ `editor_confirm []`（纯口播）→ 组装 → 渲染。第一次渲染失败：worktree 的 `render/` workspace 没装依赖（`ERR_MODULE_NOT_FOUND`，环境问题，链上主 checkout 的 node_modules 后 `retry` 通过）→ 真 ffmpeg 产出 `final.v1.mp4`（1920×1080，有音轨，700KB）→ `review approve rendered_revision=1` → `done/done`，`Content.videoDone` 与 `videoReadyAt` 盖章，`handoffs` 记 `editor → cover by codex`，剪辑桌清空、封面桌出现这条稿。
+- 失败可见：渲染失败时 `status.next` 带「失败在 render」与 runner 的 `failReason` 原文，`retry` 一次即恢复。
+
+**未做 / 遗留**：`failReason` 把子进程 stack 原样塞进来（几百字），宿主与看板都该只看第一行，后续裁剪；`render/` workspace 依赖不在根 `npm ci` 里，新机器要单独装（README 待补一句）；小Lin说节奏导演（`2026-09-03` 研究稿）不在本片。

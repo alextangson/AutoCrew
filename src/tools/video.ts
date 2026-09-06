@@ -30,6 +30,7 @@ import {
   parseTextEditArgs,
 } from "../modules/video/payload.js";
 import { clearVideoDone, stampVideoReady } from "../modules/video/video-done.js";
+import { finalVideoPath } from "../modules/video/render-exec.js";
 import type { VideoService, VideoStatus } from "../modules/video/service.js";
 import type { VideoState } from "../modules/video/types.js";
 import { editorPlanViewOf, nextHint, transcriptViewOf } from "./video-views.js";
@@ -173,17 +174,22 @@ async function readAction(
   params: Record<string, unknown>,
   service: VideoService,
 ): Promise<VideoToolResult> {
-  if (action === "status") return statusReply(await service.getStatus(contentId));
+  if (action === "status") return statusReply(await service.getStatus(contentId), contentId, getDataDir(params._dataDir as string | undefined));
   if (action === "transcript") return transcriptReply(contentId, params, service);
   return editorPlanReply(contentId, service);
 }
 
-function statusReply(status: VideoStatus | null): VideoToolResult {
+function statusReply(status: VideoStatus | null, contentId: string, dataDir: string): VideoToolResult {
+  const state = status?.state ?? null;
+  // 真机 2026-09-06：审核门要传 rendered_revision，而它藏在 state.revisions.rendered 里，宿主得猜——
+  // 到了审核阶段直接把成片版本号和路径端出来，人设一句「照 status 给的填」就够了
+  const rendered = state?.phase === "review" ? state.revisions?.rendered : undefined;
   return {
     ok: true,
-    state: status?.state ?? null,
+    state,
     jobs: status?.jobs ?? [],
     ...(status?.review ? { review: status.review } : {}),
+    ...(typeof rendered === "number" ? { rendered_revision: rendered, final_path: finalVideoPath(dataDir, contentId, rendered) } : {}),
     next: nextHint(status),
   };
 }
