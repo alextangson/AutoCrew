@@ -10,6 +10,8 @@
     { "id": "huggingface", "kind": "huggingface", "name": "Hugging Face", "enabled": false, "config": {} },
     { "id": "x", "kind": "x", "name": "X", "enabled": false, "config": {} },
     { "id": "youtube", "kind": "youtube", "name": "YouTube", "enabled": false, "config": {} },
+    { "id": "youtube-agent", "kind": "youtube_search", "name": "YouTube 爆款 · AI agent", "enabled": true, "config": { "keyword": "AI agent" } },
+    { "id": "youtube-claude-code", "kind": "youtube_search", "name": "YouTube 爆款 · Claude Code", "enabled": true, "config": { "keyword": "Claude Code" } },
     { "id": "reddit", "kind": "reddit", "name": "Reddit", "enabled": false, "config": {} }
   ]
 }

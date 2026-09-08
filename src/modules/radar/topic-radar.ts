@@ -38,14 +38,17 @@ export interface TopicCache {
  * 可选（缺省从定位派生 ASCII 词,如「AI 技术」→ "AI"）。enabled=false 的源不参与扫描。
  */
 export type RadarSourceKind =
-  | "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface" | "x" | "youtube" | "reddit";
+  | "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface" | "x" | "youtube"
+  | "youtube_search" | "reddit";
 export const OVERSEAS_KINDS: RadarSourceKind[] = [
-  "hackernews", "producthunt", "github", "arxiv", "huggingface", "x", "youtube", "reddit",
+  "hackernews", "producthunt", "github", "arxiv", "huggingface", "x", "youtube", "youtube_search", "reddit",
 ];
 /**
  * 清单型海外源:订阅的是「这批账号/频道/社区」,不吃检索词——关键词搜这三家捞的是全站噪声,
  * 清单本身就是质量过滤(理由见 x.ts / youtube.ts / reddit.ts 头注释)。其余海外源是搜索型,
  * 没检索词就没法调,缺词要报失败而不是空跑。
+ * youtube_search 故意不在这里:它是搜索型,靠 This week + 播放量下限拦噪声(见 youtube-search.ts),
+ * 缺词必须报失败——没有检索词它会去抓全站首页。
  */
 const LIST_KINDS = new Set<RadarSourceKind>(["x", "youtube", "reddit"]);
 

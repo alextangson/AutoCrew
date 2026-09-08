@@ -207,13 +207,17 @@ describe("refreshTopicRadar + cache + getTopicCandidates", () => {
 });
 
 describe("refreshTopicRadarIfStale (TTL 门:自动触发不烧付费源)", () => {
+  // 海外源不走注入的 fetchImpl(它们在 registry 里直接用 global fetch),这里必须显式挡掉,
+  // 否则这两条测的是「本机能不能连上 HN/YouTube」,而不是 TTL 门本身。
+  const noOverseas = { overseasFetch: async () => [] };
+
   it("缓存新鲜 → 跳过,不打任何源", async () => {
     const { refreshTopicRadarIfStale, refreshTopicRadar } = await import("./topic-radar.js");
     const fetchImpl = vi.fn(async () => new Response(RSS, { status: 200 })) as unknown as typeof fetch;
-    await refreshTopicRadar(testDir, fetchImpl); // 先真刷一轮,缓存新鲜
+    await refreshTopicRadar(testDir, fetchImpl, noOverseas); // 先真刷一轮,缓存新鲜
     fetchImpl.mockClear();
 
-    const r = await refreshTopicRadarIfStale(testDir, fetchImpl);
+    const r = await refreshTopicRadarIfStale(testDir, fetchImpl, noOverseas);
     expect(r.skippedFresh).toBe(true);
     expect(r.ok).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled(); // 一个源都没打
@@ -226,7 +230,7 @@ describe("refreshTopicRadarIfStale (TTL 门:自动触发不烧付费源)", () =>
       JSON.stringify({ fetchedAt: new Date(Date.now() - 7 * 3600_000).toISOString(), items: [] }), // 7h 前,超 6h TTL
     );
     const fetchImpl = vi.fn(async () => new Response(RSS, { status: 200 })) as unknown as typeof fetch;
-    const r = await refreshTopicRadarIfStale(testDir, fetchImpl);
+    const r = await refreshTopicRadarIfStale(testDir, fetchImpl, noOverseas);
     expect(r.skippedFresh).toBe(false);
     expect(fetchImpl).toHaveBeenCalled();
   });

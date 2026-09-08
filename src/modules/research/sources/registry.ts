@@ -11,6 +11,7 @@ import { fetchArxiv } from "./arxiv.js";
 import { fetchHuggingFace } from "./huggingface.js";
 import { fetchX } from "./x.js";
 import { fetchYouTube } from "./youtube.js";
+import { fetchYouTubeSearch } from "./youtube-search.js";
 import { fetchReddit } from "./reddit.js";
 
 export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
@@ -22,6 +23,8 @@ export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
   // 下面三个是清单型源:关注的人/频道/社区本身就是过滤器,keyword 忽略(见各自头注释)
   x: (_kw, lim, opts) => fetchX(lim, { apiKey: opts?.xApiKey ?? "" }),
   youtube: (_kw, lim) => fetchYouTube(lim),
+  // 与 youtube 并存的关键词模式:订阅清单看不到全站本周爆款,洗稿选材要的是后者
+  youtube_search: (kw, lim) => fetchYouTubeSearch(kw, lim),
   reddit: (_kw, lim, opts) =>
     fetchReddit(lim, { clientId: opts?.redditClientId ?? "", clientSecret: opts?.redditClientSecret ?? "" }),
 };
