@@ -158,3 +158,19 @@ export async function loadEngineConfig(dataDir?: string): Promise<EngineConfig> 
   if (!outcome.config) throw new Error(ENGINE_UNCONFIGURED);
   return projectEngineConfig(outcome.config, { dataDir: getDataDir(dataDir), warnings });
 }
+
+/**
+ * 「没配引擎」与「配坏了」是两件事（P5 §1.6）。
+ *
+ * 宿主写稿全程不需要模型，所以备料不该因为**没配**引擎就整条失败；但配置文件写坏了、
+ * 读盘炸了仍然必须炸出来——静默当成「没配」会让人查不到自己的 JSON 哪里错了。
+ * 因此这里只吞 `ENGINE_UNCONFIGURED` 这一种，其余原样抛。
+ */
+export async function loadEngineConfigIfConfigured(dataDir?: string): Promise<EngineConfig | undefined> {
+  try {
+    return await loadEngineConfig(dataDir);
+  } catch (err) {
+    if (err instanceof Error && err.message === ENGINE_UNCONFIGURED) return undefined;
+    throw err;
+  }
+}
