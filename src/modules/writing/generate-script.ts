@@ -28,7 +28,7 @@ import { getPack, getPackForPlatform } from "../packs/index.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { recentContrastPairs } from "../learnings/diff-tracker.js";
-import { buildScriptPrompts } from "./script-prompt.js";
+import { buildScriptPrompts, buildWritingContract } from "./script-prompt.js";
 import type { ResolvedAngle, ScriptRequest } from "./script-prompt.js";
 import { selectPatternsForScript } from "../patterns/pattern-select.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
@@ -465,6 +465,8 @@ export interface GenerationInputs {
   patterns: PatternCard[];
   /** research 槽装配完的请求（快照文本写进 `research`） */
   promptReq: ScriptRequest;
+  /** 本次创作要求与品牌定位的快照，独立于可裁剪的研究材料。 */
+  writingContract: string;
   /** 写手与审稿共用的**同一份**材料快照（§4.3：两侧不许各裁一刀） */
   snapshot: ResearchSnapshot;
   /** 本稿生效的角度卡；手写 direction 或没选时缺席（direction 由 buildUserPrompt 自己认） */
@@ -569,6 +571,12 @@ async function gatherInputs(
   const { anchor, rest } = splitOwnMaterial(ownMaterial, picked.angle);
   const injectedChunks = [...(anchor ? [anchor] : []), ...rest];
   const lookupIds = ledger.lookups().flatMap((l) => l.itemIds);
+  const promptReq: ScriptRequest = {
+    ...req,
+    ...(req.topicDescription === undefined && picked.topic?.description
+      ? { topicDescription: picked.topic.description } : {}),
+    ...(snapshot.text ? { research: snapshot.text } : {}),
+  };
 
   return {
     ...(config ? { config } : {}),
@@ -576,7 +584,8 @@ async function gatherInputs(
     profile,
     contrastPairs,
     patterns,
-    promptReq: snapshot.text ? { ...req, research: snapshot.text } : req,
+    promptReq,
+    writingContract: buildWritingContract(profile, promptReq, picked.angle),
     snapshot,
     ...(picked.angle ? { angle: picked.angle } : {}),
     wroteWithoutAngle: picked.hasCards && !picked.angle && !req.direction?.trim(),
@@ -669,7 +678,7 @@ function logAttribution(attribution: Attribution): Record<string, unknown> {
 
 /** 归因落稿件元数据的**对外**口径：宿主写稿在发包时落同一份字段，稿件上两条路径不可区分 */
 export function contentAttributionOf(inputs: GenerationInputs): Partial<Content> {
-  return contentAttribution(inputs.attribution, inputs.ledger);
+  return { ...contentAttribution(inputs.attribution, inputs.ledger), writingContract: inputs.writingContract };
 }
 
 /** 归因落稿件元数据（写手开工前一次、收尾一次——中途崩了也不丢） */
@@ -826,7 +835,7 @@ function reviewDraft(
   written: WriterRun,
   // 审稿要跑模型，所以这里的 config 是**必填**——`GenerationInputs.config` 可缺席，
   // 调用方（内部写手）已经在入口处硬性检查过（P5 §1.6）
-  inputs: Pick<GenerationInputs, "profile" | "snapshot" | "angle" | "ledger"> & { config: EngineConfig },
+  inputs: Pick<GenerationInputs, "profile" | "snapshot" | "angle" | "ledger" | "writingContract"> & { config: EngineConfig },
   prompts: { system: string; user: string },
   gate: QualityGateSpec | undefined,
   platform: ScriptRequest["platform"],
@@ -841,6 +850,7 @@ function reviewDraft(
       humanizedText: assembleAndHumanize(written.payload),
       system: prompts.system,
       user: prompts.user,
+      writingContract: inputs.writingContract,
       // 写手拿到的那份**同一个字符串**（§4.3）——审稿不再自己裁一刀
       ...(inputs.snapshot.text ? { researchSlot: inputs.snapshot.text } : {}),
       // 选中角度进审稿材料（审稿 §2.4）：深度判据的基准从「有没有论点」升到「thesis 论证了吗」
@@ -927,6 +937,7 @@ async function writeAndFinalize(args: {
   // 账本先随占位稿落一次（§3.3）：写手还没开工，但补证已经花过钱了——
   // 这一步之后崩掉，「这稿当时手上有哪些证据」仍然查得到
   await persistAttribution(placeholderId, attribution, inputs.ledger, warn, dataDir);
+  await updateContent(placeholderId, { writingContract: inputs.writingContract }, dataDir);
 
   const evidenceTool = inputs.researcher ? buildFindEvidenceTool(inputs.researcher) : undefined;
   const written = await runWriterLoop(
@@ -969,7 +980,7 @@ async function writeAndFinalize(args: {
 
   const reviewed = await reviewDraft(
     written,
-    { config, profile, snapshot: inputs.snapshot, ...(angle ? { angle } : {}), ledger: inputs.ledger },
+    { config, profile, snapshot: inputs.snapshot, ...(angle ? { angle } : {}), ledger: inputs.ledger, writingContract: inputs.writingContract },
     prompts,
     gate,
     req.platform,

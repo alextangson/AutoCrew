@@ -4,7 +4,7 @@
  * 骨架同 generate-script-patterns.test.ts（全 mock、零网络）。这里验四件事：
  * 1. 注入点唯一：三条写稿入口共用 runGeneration，产出的简报块逐字相同；
  * 2. 预算表：简报优先占 research 槽，知识库吃剩余，剩余不足 400 整块省略；
- * 3. 无简报路径与改动前**逐字一致**（快照对比，不是"看起来差不多"）；
+ * 3. 无简报路径保留选题规划，研究槽与相同描述的基线**逐字一致**；
  * 4. 归因 usedBriefRevision 落 run-log 元数据与稿件元数据，空则不写字段。
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -288,8 +288,8 @@ describe("简报注入 × research 槽预算（§6）", () => {
 
 // ─── 无简报：与现状逐字一致 ──────────────────────────────────────────────────
 
-describe("无简报路径 — 与改动前逐字一致", () => {
-  /** 基线：不带 topicId 的请求，走的就是改动前那条路 */
+describe("无简报路径 — 保留选题规划，不注入无效简报", () => {
+  /** 基线：显式提供相同选题描述、不带 topicId；用它验证简报不可用时规划仍不丢 */
   async function promptOf(
     req: Parameters<typeof generateScript>[0],
     deps: { onWarn?: (m: string) => void } = {},
@@ -299,8 +299,8 @@ describe("无简报路径 — 与改动前逐字一致", () => {
     return { system: seen.opts!.systemPrompt, user: seen.opts!.userMessage };
   }
 
-  it("无 topicId / 无 job / 无 briefRevision 指针 → prompt 与基线一字不差", async () => {
-    const baseline = await promptOf(TEST_REQ);
+  it("无 job / 无 briefRevision 指针 → 仅保留选题规划，与显式描述的基线一致", async () => {
+    const baseline = await promptOf({ ...TEST_REQ, topicDescription: TOPIC_DESC });
 
     const topic = await seedTopic();
     await saveBrief(topic.id, makeBrief(), testDir); // 盘上有简报，但没有指针指向它
@@ -312,7 +312,7 @@ describe("无简报路径 — 与改动前逐字一致", () => {
   });
 
   it("指针指向的简报文件不存在 → 静默空态（不告警），prompt 与基线一致", async () => {
-    const baseline = await promptOf(TEST_REQ);
+    const baseline = await promptOf({ ...TEST_REQ, topicDescription: TOPIC_DESC });
     const topic = await seedTopic();
     await seedJob(topic.id, { briefRevision: 7 });
 
@@ -325,7 +325,7 @@ describe("无简报路径 — 与改动前逐字一致", () => {
   });
 
   it("简报文件损坏 → onWarn 可见 + 回退到无简报行为（prompt 与基线一致）", async () => {
-    const baseline = await promptOf(TEST_REQ);
+    const baseline = await promptOf({ ...TEST_REQ, topicDescription: TOPIC_DESC });
     const topic = await seedTopic();
     await seedJob(topic.id, { briefRevision: 1 });
     await fs.mkdir(path.dirname(briefPath(topic.id, 1, testDir)), { recursive: true });
@@ -339,7 +339,7 @@ describe("无简报路径 — 与改动前逐字一致", () => {
   });
 
   it("台账读不动（jobs.jsonl 是目录）→ onWarn 可见 + 照常写稿，不带走整条链", async () => {
-    const baseline = await promptOf(TEST_REQ);
+    const baseline = await promptOf({ ...TEST_REQ, topicDescription: TOPIC_DESC });
     const topic = await seedTopic();
     await fs.mkdir(path.join(testDir, "research", "jobs.jsonl"), { recursive: true });
 

@@ -29,6 +29,17 @@ function makeGenerateImpl(result: GeneratedScript | Error) {
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("executeGenerate", () => {
+  it("本次要求与手写角度独立透传，不混入 research", async () => {
+    let seen: Record<string, unknown> | undefined;
+    await executeGenerate({
+      action: "script", topic: "AI技能", platform: "douyin", research: "用户的实测材料",
+      requirements: "  写给小白；按一天经历展开；不要工具清单。  ", direction: "  只讲返工成本  ",
+    }, { generateScriptImpl: async (req) => { seen = { ...req }; return GOOD_RESULT; } });
+    expect(seen).toMatchObject({
+      requirements: "写给小白；按一天经历展开；不要工具清单。", direction: "只讲返工成本", research: "用户的实测材料",
+    });
+  });
+
   // 1. Success path — data shape correct
   it("success: returns ok:true with correct data shape", async () => {
     const res = await executeGenerate(

@@ -9,7 +9,8 @@ import { loadEngineConfig, resolveEngineRoute, type EngineConfig } from "../../e
 import { runLoop, type LoopOptions, type LoopResult, type LoopTool } from "../../engine/loop.js";
 import { getContent } from "../../storage/local-store.js";
 import { loadProfile } from "../profile/creator-profile.js";
-import { renderBrandContext } from "./script-prompt.js";
+import { buildWritingContract, renderBrandContext } from "./script-prompt.js";
+import { renderWritingFeedback } from "./writing-feedback.js";
 
 export type ReviseFocus =
   | { scope: "draft" }
@@ -96,9 +97,11 @@ export async function reviseFocus(
   // 品牌上下文与写初稿同源（受众/目标/声音样本/本平台规则/风格边界）——
   // 不带对比对：当前这条修改指令就是最新鲜的活信号，不必再拿历史改动去教。
   let brandContext = "";
+  let writingContract = current.writingContract ?? "";
   try {
     const profile = await loadProfile(dataDir);
     if (profile) brandContext = renderBrandContext(profile, current.platform ?? "", undefined);
+    if (!writingContract && current.genRequest) writingContract = buildWritingContract(profile, current.genRequest);
   } catch {
     // 档案不可用不应阻断一次明确的修改。
   }
@@ -109,11 +112,15 @@ export async function reviseFocus(
       : "范围：修订整篇。改完调 submit_revision 提交完整标题和完整正文。";
   const systemPrompt = [
     "你是资深中文内容编辑，按用户反馈修改稿件。",
+    "本次修改要求优先于原写作约定；未被本次要求改变的受众、论点、禁区与篇幅继续有效，不要因局部改稿重新选择方向。",
     "要求不明确、无法确定怎么改时，先调 submit_question 反问澄清一句，不要硬猜着改；要求清楚就直接改。",
     scopeLine,
     "保留没被反馈否定的事实与有效结构，不编造新事实或数据。",
+    "创作者定位、写作偏好和修辞示例不等于亲身经历，不能据此补造第一人称故事。",
     "二选一：submit_question 或 submit_revision，必须调用其中一个。",
     brandContext,
+    writingContract ? `【本稿原写作约定】\n${writingContract}` : "",
+    renderWritingFeedback(current.writingFeedback),
   ]
     .filter(Boolean)
     .join("\n\n");

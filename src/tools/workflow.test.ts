@@ -344,6 +344,18 @@ describe("workflow select_angle", () => {
 describe("workflow write", () => {
   const startStub = () => vi.fn(async () => ({ contentId: "c-new" }));
 
+  it("本次要求不绕过立意闸口；选卡后完整透传且不冒充 direction", async () => {
+    const topic = await seed();
+    const start = startStub();
+    const params = { action: "write", topic_id: topic.id, platform: "douyin", requirements: "写给小白；按一天经历展开；不要工具清单。" };
+    expect(await run(params, { startGenerateScriptImpl: start })).toMatchObject({ ok: false, needsAngle: true });
+    expect(start).not.toHaveBeenCalled();
+    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" });
+    expect(await run(params, { startGenerateScriptImpl: start })).toMatchObject({ ok: true });
+    expect(start.mock.calls[0][0]).toMatchObject({ requirements: params.requirements, topicDescription: DESC });
+    expect(start.mock.calls[0][0].direction).toBeUndefined();
+  });
+
   it("有候选卡却没选：不接单，把候选原样交回去（error 文本里也带一份，桥只透传它）", async () => {
     const topic = await seed();
     const start = startStub();

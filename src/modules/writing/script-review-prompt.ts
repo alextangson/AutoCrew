@@ -14,6 +14,7 @@ import { isAngleCardV3, type AngleCard, type AngleCardV3 } from "../research/bri
 import { cardAudiencePain, cardHoldTrigger } from "../research/angle-cards.js";
 import { DEFAULT_PERSONAS } from "../research/personas.js";
 import type { SubmitPayload } from "./script-payload.js";
+import { WRITING_PRIORITY } from "./script-prompt.js";
 import type { ReviewIssue } from "./script-review.js";
 
 /** 引文长度纪律：短到能定位、长到不含糊；进 prompt 也进校验口径 */
@@ -115,6 +116,8 @@ function angleExecutionSection(card: AngleCardV3, needsHumanNumbers: string[]): 
 export interface ReviewPromptOptions {
   /** 本稿注入过调研材料吗——没有材料就没有「证据是否支撑论点」的判定基准（§2.4） */
   hasResearch: boolean;
+  /** 创作者规划独立于调研材料：即使无调研，也要检查明确方向是否落实。 */
+  hasWritingContract?: boolean;
   /** 本稿生效的角度卡：v2 走判据二加严，v3 另开判据三「立意执行」 */
   angle?: AngleCard;
   /**
@@ -134,6 +137,15 @@ export function buildReviewSystemPrompt(opts: ReviewPromptOptions): string {
   return [
     "你是这位创作者内容团队里的审稿人。你的职责不是润色，是**判断这稿能不能发**。",
     "读完全文后给一次结论，逐条指出问题——每条都要能在原文里指到位置，指不到就不要提。",
+    ...(opts.hasWritingContract ? [
+      "",
+      "## 判据零：创作者规划遵循",
+      "先对照【本稿写作约定】核查受众、核心主张、必须包含/避免的内容与明确要求的篇幅和结构。",
+      "遗漏明确要求、违背禁区、把本次方向改成泛泛科普，属于 blocker；quote 引用能体现偏离的原稿短句，instruction 指明对应的约定及修改方式。",
+      WRITING_PRIORITY,
+      "用户明确选择的结构不能仅因不符合通用模板被打回；自动提炼偏好不可升级成新的强制要求。",
+      "写作约定是创作意图，不是事实证据：不得把定位、受众、修辞示例写成创作者亲身经历，也不得为兑现方向编造案例或数字。",
+    ] : []),
     "",
     "## 判据一：AI 味（结构与语感）",
     ruleLines(STYLE_RULES),
@@ -156,9 +168,9 @@ export function buildReviewSystemPrompt(opts: ReviewPromptOptions): string {
           "## 判据二：洞察深度——本轮**不判**",
           "本稿没有调研材料。没有材料就没有「证据是否支撑论点」的判定基准，",
           canFindEvidence
-            ? "只判 AI 味。修订轮手上有查证工具，所以「这句判断需要一个来源」这类问题可以提，" +
+            ? "仍检查 AI 味与已有的写作约定。修订轮手上有查证工具，所以「这句判断需要一个来源」这类问题可以提，" +
               "但仍然要能在原文里逐字指到位置。"
-            : "不要凭空要求作者补数据、补案例、补出处，也不要因此给出 blocker。只判 AI 味。",
+            : "不要凭空要求作者补数据、补案例、补出处，也不要因此给出 blocker。仍检查 AI 味与已有的写作约定。",
         ].join("\n"),
     ...(cardV3 ? angleExecutionSection(cardV3, needsHumanNumbers) : []),
     "",
@@ -183,6 +195,7 @@ export interface ReviewUserInput {
   angle?: AngleCard;
   voiceSamples: string[];
   platform: string;
+  writingContract?: string;
 }
 
 function clamp(text: string, max: number): string {
@@ -239,6 +252,9 @@ export function buildReviewUserMessage(input: ReviewUserInput): string {
     input.humanizedText,
     "",
   ];
+  if (input.writingContract?.trim()) {
+    parts.push("【本稿写作约定（与写手收到的同一份规划，审稿按此验收）】", input.writingContract.trim(), "");
+  }
   if (input.angle) parts.push(...angleBlock(input.angle));
   if (input.researchSlot?.trim()) {
     // 逐字照搬写手拿到的那份快照（P1 §4.3）：审稿从前在这里按 6000 再裁一刀，
@@ -250,7 +266,7 @@ export function buildReviewUserMessage(input: ReviewUserInput): string {
       "",
     );
   } else {
-    parts.push("【调研材料】无——本稿是没有材料写的，不判证据深度，只判 AI 味。", "");
+    parts.push("【调研材料】无——本稿是没有材料写的，不判证据深度；已有的写作约定仍需验收。", "");
   }
   const samples = input.voiceSamples.filter((s) => s.trim() !== "");
   if (samples.length > 0) {
@@ -270,12 +286,15 @@ export function buildRevisionUserMessage(
   payload: SubmitPayload,
   blockers: ReviewIssue[],
   originalUser: string,
+  writingContract?: string,
 ): string {
   const issues = blockers.map(
     (issue, i) => `${i + 1}. 【${issue.rule}】原文：「${issue.quote}」\n   怎么改：${issue.instruction}`,
   );
   return [
     originalUser,
+    ...(writingContract?.trim() ? ["", "【本稿写作约定（修订仍须遵守）】", writingContract.trim(),
+      "审稿建议不得改变创作者已经明确的方向、受众、禁区与结构；写作约定不是事实证据，不得为达成约定编造经历。"] : []),
     "",
     "————",
     "上面是这稿的原始任务书。你已经写完一稿，审稿人指出了下面这些**必须修**的问题：",

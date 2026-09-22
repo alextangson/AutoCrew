@@ -70,6 +70,8 @@ export interface ReviewInput {
   system: string;
   /** 写稿时的 user prompt（选题 + 调研槽 + 对标卡），修订轮复用以保住「同批材料」 */
   user: string;
+  /** 写稿时生效的创作者规划；与材料分开，审稿和自动修订都必须遵守。 */
+  writingContract?: string;
   /** 本稿注入过的调研材料（含简报块）；缺席 = 不判证据深度维度（§2.4）。 */
   researchSlot?: string;
   /**
@@ -285,6 +287,7 @@ async function runReviewPass(
       model: reviewer.model,
       systemPrompt: buildReviewSystemPrompt({
         hasResearch: Boolean(input.researchSlot?.trim()),
+        hasWritingContract: Boolean(input.writingContract?.trim()),
         ...(input.angle ? { angle: input.angle } : {}),
         canFindEvidence: Boolean(input.canFindEvidence),
         needsHumanNumbers: input.needsHumanNumbers ?? [],
@@ -296,6 +299,7 @@ async function runReviewPass(
         ...(input.angle ? { angle: input.angle } : {}),
         voiceSamples: input.voiceSamples,
         platform: input.platform,
+        ...(input.writingContract ? { writingContract: input.writingContract } : {}),
       }),
       tools: [buildReviewTool(capture, haystack, round)],
       maxTurns: REVIEW_MAX_TURNS,
@@ -372,7 +376,7 @@ async function reviseOnce(
     const result = await (deps.runLoopImpl ?? runLoop)(writer.config, {
       model: writer.model,
       systemPrompt: input.system,
-      userMessage: buildRevisionUserMessage(draft.payload, blockers, input.user),
+      userMessage: buildRevisionUserMessage(draft.payload, blockers, input.user, input.writingContract),
       // 同一把 submit_script（同硬门依赖）+ 写手那个 find_evidence **实例**（共享次数额度）
       tools: [buildSubmitTool(captured, gate, deps.submitDeps), ...(deps.evidenceTool ? [deps.evidenceTool] : [])],
       maxTurns: deps.maxWriterTurns ?? (gate ? 4 + (gate.maxRepairRounds ?? 2) * 2 : 4),

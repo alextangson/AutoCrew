@@ -107,9 +107,10 @@ describe("runQualityGate", () => {
 });
 
 describe("resolveQualityGate", () => {
-  it("平台 maxChars 落在无包级 gate 的包上（口播×小红书 → 仅 maxChars 的 gate）", () => {
-    expect(resolveQualityGate(KOUBO_PACK, "xiaohongshu")).toEqual({ maxChars: 1000 });
-    expect(resolveQualityGate(KOUBO_PACK, "wechat_video")).toEqual({ maxChars: 800 });
+  it("视频口播全文不套用发布简介字数上限", () => {
+    for (const platform of ["xiaohongshu", "wechat_video", "bilibili", "douyin"] as const) {
+      expect(resolveQualityGate(KOUBO_PACK, platform)).toBeUndefined();
+    }
   });
 
   it("平台无 maxChars → 原样返回包级 gate（口播×抖音无 gate → undefined）", () => {

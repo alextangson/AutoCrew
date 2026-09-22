@@ -57,7 +57,10 @@ export const writerSchema = Type.Object({
     Type.String({ description: `pack：目标平台。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}` }),
   ),
   direction: Type.Optional(
-    Type.String({ description: "pack：创始人自己写的角度（优先级高于选中的立意卡），有它就不再要求选卡" }),
+    Type.String({ description: "pack：创始人自己写的角度（优先级高于选中的立意卡），有它就不再要求选卡。重领时不传会继承；改用已选卡需显式传空串并 force:true" }),
+  ),
+  requirements: Type.Optional(
+    Type.String({ description: "pack：创作者本次完整写作要求，原样保留受众、提纲、必写/禁写、篇幅、口吻与修改反馈。它补充选中立意，不代替 direction，也不绕过选卡。要求变化后需 force:true 换包" }),
   ),
   skip_reason: Type.Optional(
     Type.String({ description: "pack：创始人**明说**不选卡直接写时的原话转述；只进留痕，不进 prompt" }),
@@ -70,7 +73,7 @@ export const writerSchema = Type.Object({
   ),
   force: Type.Optional(
     Type.Boolean({
-      description: "pack：作废手上这份包、重跑一次备料（备料失败或材料要重来时才给 true；正常轮询不要带）",
+      description: "pack：作废旧包、重跑备料（要求、材料、立意或创作者档案变化，或备料失败时使用；正常轮询不要带）",
     }),
   ),
   content_id: Type.Optional(
@@ -110,7 +113,7 @@ export const writerSchema = Type.Object({
 
 export const WRITER_DESCRIPTION = [
   "AutoCrew 写作包：由你（宿主模型）动笔写稿，产品负责发料与把关。五步走（备料与审稿都要跑几分钟，所以两头都是异步的）：",
-  "1) pack{topic_id, platform, direction?, skip_reason?, research?, force?}：领包。自己已经查到材料就放进 research（原文 + 出处），它会进研究槽并记进证据台账；不放进来的材料，正文里引用它的数字会被硬门当作查无出处打回。**秒回** {status:'preparing'|'ready', content_id, pack_id}——后台才开始备料（收材料 + 补证据）。**有立意候选卡却没选会被拒**，那是让你回去问创始人，不是让你自己挑。已经备好的包再 pack 一次会原样还给你（不重跑）；要重来才给 force:true（旧 pack_id 当场作废）。",
+  "1) pack{topic_id, platform, direction?, requirements?, skip_reason?, research?, force?}：领包。创作者本次规划与修改反馈完整放进 requirements，只有明确改变立意才放 direction；research 只装原文与出处。材料会进研究槽并记进证据台账；不放进来的材料，正文里引用它的数字会被硬门当作查无出处打回。**秒回** {status:'preparing'|'ready', content_id, pack_id}——后台才开始备料。**有立意候选卡却没选会被拒**，那是让你回去问创始人，不是让你自己挑。相同请求复用已备包；未重提的要求与材料会继承。新要求与旧包不同会返回 pack_request_changed，此时带完整更新与 force:true 重领（旧 pack_id 当场作废），不能继续照旧包写。",
   "2) pack_status{content_id}：轮询到 status='ready'（通常 1–6 分钟，中途别动笔）。ready 时带 pack_md——那就是你要照着写的全部材料（岗位规则、立意卡、研究槽、证据台账）。status='failed' 时看 error，别写，改用 pack{force:true} 重来。",
   "3) find_evidence{content_id, pack_id, need}：写到一半缺数字/案例/原话时用（整稿最多 3 次，单次最多 45 秒）。返回逐字引文与来源；找不到或超时就不要写这个数字（那一次额度照扣）。",
   "4) submit{content_id, pack_id, attempt, title, hook, body, cta, hashtags, review?}：交稿。**先看返回体的 status**：repair=按条改、blocked=硬门拦下、reviewing=三道门过了、稿已落盘、审稿转后台。每交一次 attempt 加一；同一个 attempt 重复提交返回上次结果。",
@@ -222,9 +225,10 @@ export async function executeWriter(
           {
             topicId,
             platform,
-            direction: str(params.direction),
-            skipReason: str(params.skip_reason),
-            research: str(params.research),
+            direction: typeof params.direction === "string" ? str(params.direction) : undefined,
+            requirements: typeof params.requirements === "string" ? str(params.requirements) : undefined,
+            skipReason: typeof params.skip_reason === "string" ? str(params.skip_reason) : undefined,
+            research: typeof params.research === "string" ? str(params.research) : undefined,
             host,
             force: params.force === true,
           },

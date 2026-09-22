@@ -140,6 +140,22 @@ describe("reviewAndConverge — 收敛", () => {
     expect(seen.reviseOpts[0].userMessage).toContain(INPUT.user); // 同批材料跟着进修订轮
   });
 
+  it("审稿和自动修订共用创作者规划，无角度卡也不能丢掉手写方向", async () => {
+    const writingContract = "只讲门店库存积压，面向店主；不写工具横评；结尾不给关注口号。";
+    const { impl, seen } = makeLoop({
+      reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],
+      revisions: [[REVISED]],
+    });
+    await reviewAndConverge({ ...INPUT, writingContract }, CONFIG, { runLoopImpl: impl });
+    expect(seen.reviewOpts).toHaveLength(2);
+    for (const opts of seen.reviewOpts) {
+      expect(opts.systemPrompt).toContain("判据零：创作者规划遵循");
+      expect(opts.userMessage).toContain(writingContract);
+    }
+    expect(seen.reviseOpts[0].userMessage).toContain(writingContract);
+    expect(seen.reviseOpts[0].userMessage).toContain("审稿建议不得改变创作者已经明确的方向");
+  });
+
   it("revise → 修订 → 重过 gate → 再审 pass：status revised，最终文本是修订版", async () => {
     const { impl, seen } = makeLoop({
       reviews: [[{ verdict: "revise", issues: [BLOCKER] }], [{ verdict: "pass", issues: [] }]],

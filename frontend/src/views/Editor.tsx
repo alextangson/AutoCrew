@@ -274,6 +274,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     }
     const r = await invoke("draft:adopt_revision", {
       content_id: props.id,
+      scope: activeProposal.scope,
+      ...(activeProposal.scope === "selection" && activeProposal.selection ? { selection: activeProposal.selection.text } : {}),
       body: newBody,
       ...(newTitle ? { title: newTitle } : {}),
       before,

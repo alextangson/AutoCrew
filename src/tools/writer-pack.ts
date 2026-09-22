@@ -75,6 +75,8 @@ export interface PackAttempt {
 /** 提交时重建门禁与审稿材料所需的上下文。只进 json，不进 markdown */
 export interface PackContext {
   req: ScriptRequest;
+  /** 本稿实际生效的创作者规划，写作和审稿共用。旧包可缺席。 */
+  writingContract?: string;
   platform: ClipboardPlatform;
   /** 赛道包 id：提交时按它 + 平台重取质量门，门的定义不复制一份进包 */
   trackPackId: string;
@@ -100,6 +102,8 @@ export type PackState = "preparing" | "ready" | "failed";
 
 export interface WritingPackFile {
   packId: string;
+  /** 同步领包时冻结请求，备料期间也能识别新要求；旧包从 context.req 兼容读取。 */
+  request?: { req: ScriptRequest; topicDescription: string; planningFingerprint?: string };
   /** 领号那一刻（也是 `pack_status` 的 `started_at`） */
   issuedAt: string;
   state: PackState;
@@ -193,7 +197,7 @@ export function stalePackError(current: string | undefined, claimed: string): st
 /** 包顶部四行固定（§5.1）：宿主模型第一眼要看到的就是这几句 */
 function packHeader(contentId: string, packId: string): string[] {
   return [
-    "这是你要写的稿：下面「岗位与规则」「本稿任务」两节是编辑部交给你的全部材料，逐字照做。",
+    "这是你要写的稿：先落实「本稿任务」里的创作者规划与写作要求，岗位规则和通用模板只补充未指定的部分；事实与证据约束仍须遵守。",
     "全程五步：`pack`（领号，立刻返回）→ `pack_status` 轮询到 `ready`（备料通常 1–6 分钟，你现在看到的这份就是 ready 的包）→ 你动笔 → `submit` 交回来 → `submit_status` 轮询到终态。",
     `提交走 \`autocrew_writer submit\`（content_id=${contentId}，pack_id=${packId}，attempt 从 1 开始，每提交一次加一）。`,
     "数字必须能指到证据编号（ev-…/om:…/user-…），缺证据先 `autocrew_writer find_evidence`——找不到就删掉这个数字或改成定性说法，不要编。",

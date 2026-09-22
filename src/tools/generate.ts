@@ -29,6 +29,12 @@ export const generateSchema = Type.Object({
   research: Type.Optional(
     Type.String({ description: "Optional research material to inject into the prompt." }),
   ),
+  direction: Type.Optional(
+    Type.String({ description: "创作者明确指定的本稿角度；优先于选中的立意卡。" }),
+  ),
+  requirements: Type.Optional(
+    Type.String({ description: "创作者本次完整写作要求：受众、提纲、必写/禁写、篇幅、口吻与修改反馈。补充立意，不要混入 research。" }),
+  ),
   topic_id: Type.Optional(
     Type.String({
       description:
@@ -115,6 +121,8 @@ export async function executeGenerate(
     platform: platformRaw,
     // 知识库检索已下沉到生成管线(runGeneration)统一做——这里再检索会让 MCP 路径双份注入
     research: (params.research as string) || undefined,
+    direction: typeof params.direction === "string" ? params.direction.trim() || undefined : undefined,
+    requirements: typeof params.requirements === "string" ? params.requirements.trim() || undefined : undefined,
     // 简报注入与选题血缘都挂在 topicId 上——空串视为未提供，口径同桌面 IPC(ipc.ts)
     topicId: typeof params.topic_id === "string" && params.topic_id ? params.topic_id : undefined,
   };
