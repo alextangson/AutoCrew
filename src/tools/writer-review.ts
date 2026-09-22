@@ -27,6 +27,8 @@ import {
   packGate,
   readPack,
   serializeWriterCall,
+  submissionVisibility,
+  writerProgress,
   writePack,
   type PendingReview,
   type ReadyPack,
@@ -49,12 +51,12 @@ export interface ReviewJob {
 
 export type Settled = { status: SubmitStatus } & Record<string, unknown>;
 
-/** 审稿最多点两轮名（§5.3）：第三轮就是无限润色，按残留收下 */
+/** 自动修订最多两轮；达到上限只结束自动循环，不把残留问题判为通过。 */
 const MAX_REVIEW_ROUNDS = 2;
 
 export const REVIEW_NONE_REASON = "宿主明说这一稿不走产品审稿（review=none）";
 export const REVIEWING_NOTE =
-  "稿子收下并落盘了，审稿在后台跑（通常 1–3 分钟）：用 submit_status{content_id} 轮询到终态再收工——别重交同一稿。";
+  "正文已保存，审稿在后台跑（通常 1–3 分钟），尚无质量结论。用 submit_status{content_id} 轮询到终态，再说明审稿结果和待处理事项；别重交同一稿。";
 
 // ─── 在跑的审稿 ───────────────────────────────────────────────────────────────
 
@@ -219,20 +221,35 @@ export async function settleReview(
     return acceptDraft(job, pack, meta("skipped", pack, []), "accepted_unreviewed", {
       review_skipped_reason: turn.reason,
       ...(soft.length ? { gate_notes: soft } : {}),
-      note: "稿子收下了，但这一稿没经过 AI 审稿——原因见 review_skipped_reason。",
+      next_action: {
+        action: "disclose_review_gap",
+        message: "展示正文并说明未完成审稿的原因和材料缺口；需要继续校验时进行宿主侧审阅或恢复审稿线路，不得将保存成功称为审稿通过。",
+      },
+      human_next_step: "这一稿尚未经过产品审稿，请在了解缺口后审阅正文；当前没有记录你的认可。",
+      note: "正文已保存，但未完成 AI 审稿，质量状态为待审；原因见 review_skipped_reason。",
     }, dataDir);
   }
   if (turn.blockers.length === 0) {
     return acceptDraft(job, pack, meta("passed", pack, turn.issues, turn.reviewedAt), "accepted", {
       ...(soft.length ? { gate_notes: soft } : {}),
-      note: "审稿没点 blocker，稿子收下了。advisory 在 review.issues 里，改不改由创始人定。",
+      next_action: {
+        action: "present_draft",
+        message: "向创作者展示正文、实际调研与立意状态，以及 review.issues / gate_notes / unverified_numbers / violations 中的待核对事项。",
+      },
+      human_next_step: "请审阅正文是否符合你的意图；AI 审稿未发现阻断项，不等于你已认可或批准发布。",
+      note: "正文已保存，AI 审稿未发现阻断项；仍需呈现建议和待核对事项，等待创作者实际反馈。",
     }, dataDir);
   }
   if (pack.reviewRounds < MAX_REVIEW_ROUNDS) return requireRevision(job, pack, turn, dataDir);
   return acceptDraft(job, pack, meta("failed", pack, turn.issues, turn.reviewedAt), "accepted_with_issues", {
     issues: turn.blockers,
     ...(soft.length ? { gate_notes: soft } : {}),
-    note: `审稿点了 ${MAX_REVIEW_ROUNDS} 轮仍有 ${turn.blockers.length} 项没解决，按残留收下——创始人过稿时会看到这份清单。`,
+    next_action: {
+      action: "resolve_review_issues",
+      message: "逐条呈现未解决的问题和建议修改，结束自动修订循环；保留现有草稿，不得宣布合格或自动进入发布。",
+    },
+    human_next_step: "请查看残留问题并决定修改方向；这份草稿仍有阻断问题，尚未获得你的认可。",
+    note: `正文已保存；自动修订已到 ${MAX_REVIEW_ROUNDS} 轮上限，仍有 ${turn.blockers.length} 项阻断问题，质量未通过。`,
   }, dataDir);
 }
 
@@ -249,11 +266,22 @@ async function requireRevision(
   const moved = await transitionStatus(job.contentId, "revision", {}, dataDir);
   return {
     status: "review_required",
+    saved: true,
+    quality_status: "needs_revision",
+    needs_attention: true,
     content_id: job.contentId,
+    ...writerProgress(pack, job.pending.host),
     round: pack.reviewRounds,
     issues: turn.blockers,
     advisories: turn.issues.filter((i) => i.severity !== "blocker"),
-    note: "只改被点名的那几句，别重写整篇；改完 attempt 加一再交。",
+    next_action: {
+      action: "revise_and_resubmit",
+      tool: "autocrew_writer",
+      params: { action: "submit", content_id: job.contentId, pack_id: job.packId, attempt: job.attempt + 1 },
+      message: "按 issues 修订对应内容后再提交。规划缺项或结构问题可调整相关段落，保留无关内容。",
+    },
+    human_next_step: "当前由宿主继续修订，尚未进入请你确认成稿的阶段。",
+    note: "正文已保存，审稿发现需修订的问题。按问题范围修改并保留无关内容；改完 attempt 加一再交。",
     ...(moved.ok ? { content_status: "revision" } : { warning: `稿件状态推不动：${moved.error ?? "未推进"}` }),
   };
 }
@@ -293,11 +321,20 @@ async function acceptDraft(
     dataDir,
   );
   const promoted = await transitionStatus(job.contentId, "draft_ready", {}, dataDir);
+  const hasNotes = review.issues.length > 0 || job.pending.gateNotes.length > 0 || job.pending.needsHuman.length > 0 || scan.hits.length > 0;
+  const qualityStatus = review.status === "skipped"
+    ? "unreviewed"
+    : review.status === "failed" ? "issues_remaining" : hasNotes ? "passed_with_notes" : "passed";
   return {
     status,
+    saved: true,
+    quality_status: qualityStatus,
+    needs_attention: qualityStatus !== "passed",
     content_id: job.contentId,
     title: payload.title,
+    ...writerProgress(pack, job.pending.host),
     review: { status: review.status, rounds: review.rounds, issues: review.issues },
+    unverified_numbers: job.pending.needsHuman,
     violations: scan.hits.map((h) => h.word),
     ...extra,
     ...(promoted.ok
@@ -314,7 +351,7 @@ function versionNote(pack: ReadyPack, review: ReviewMeta): string {
     ...(pack.context.evidenceNote ? [pack.context.evidenceNote] : []),
   ];
   const judged =
-    review.status === "skipped" ? "未经AI审稿" : review.status === "failed" ? `审稿残留 ${review.issues.length} 项` : "已过AI审稿";
+    review.status === "skipped" ? "未经AI审稿" : review.status === "failed" ? `审稿残留 ${review.issues.length} 项` : "AI审稿未发现阻断项";
   return `${pack.host} 写（${[judged, ...marks].join("，")}）`;
 }
 
@@ -351,7 +388,8 @@ export async function submitStatus(
     return { ok: false, error: `没有 attempt ${want} 的提交记录——已记录的是 ${recorded.sort((a, b) => a - b).join(" / ")}` };
   }
   if (rec.status === "reviewing" && isReadyPack(pack)) await resumeReview(contentId, pack, dataDir, deps);
-  const { status: _drop, ...rest } = rec.result as { status?: unknown } & Record<string, unknown>;
+  const result = isReadyPack(pack) ? submissionVisibility(pack, rec.result) : rec.result;
+  const { status: _drop, ...rest } = result as { status?: unknown } & Record<string, unknown>;
   return {
     ok: true,
     status: rec.status,

@@ -53,7 +53,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_research",
     label: "AutoCrew Research",
     description:
-      "Topic discovery with multiple modes: browser-first (Pro), API fallback, free (web search + viral scoring), or manual. " +
+      "Discover NEW topic candidates, not deep research for an existing writing request (use autocrew_workflow prepare for that). Modes: browser-first (Pro), API fallback, free (web search + viral scoring), or manual. " +
       "Supports action='discover' to generate/save topics and action='session_status' to inspect browser login readiness.",
     parameters: researchSchema,
     execute: executeResearch,
@@ -63,7 +63,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_content",
     label: "AutoCrew Content",
     description:
-      "Manage content lifecycle: save drafts, list/get/update content, transition status, manage siblings and variants. " +
+      "Manage existing content and explicit manual imports. For NEW AI-written drafts use autocrew_workflow prepare then autocrew_writer submit, never save directly. " +
       "Actions: save, list, get, update, transition, list_siblings, create_variant.",
     parameters: contentSaveSchema,
     execute: executeContentSave,
@@ -176,7 +176,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_review",
     label: "AutoCrew Review",
     description:
-      "Content review: sensitive words scan + quality score + de-AI check. Actions: full_review, scan_only, quality_score, auto_fix.",
+      "Read-only mechanical text checks and optional style suggestions, not semantic review or author approval. full_review/scan_only/quality_score are read-only; auto_fix only normalizes whitespace. For AI semantic review use writer submit.",
     parameters: reviewSchema,
     execute: executeReview,
   });
@@ -213,7 +213,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_generate",
     label: "AutoCrew Generate",
     description:
-      "In-process script generation via the configured model provider (thin loop + koubo track pack). Action: script.",
+      "Explicit BACKGROUND ENGINE writing only: execution=engine must be requested by the user. Normal writing stays with the current host: start with autocrew_workflow prepare, then autocrew_writer. Action: script; requires a prepared topic_id on MCP.",
     parameters: generateSchema,
     execute: (p) => executeGenerate(p),
   });
@@ -555,7 +555,7 @@ const autocrewPlugin = {
 
         crew
           .command("review <content-id>")
-          .description("Run full content review (sensitive words + quality + de-AI)")
+          .description("Run read-only mechanical text checks (not author approval)")
           .option("--platform <platform>", "Target platform for platform-specific checks")
           .action(async (contentId: string, options: Record<string, unknown>) => {
             const result = await runner.execute("autocrew_review", {
@@ -598,7 +598,7 @@ const autocrewPlugin = {
 
             console.log(`Auto-fix complete for ${contentId}.`);
             console.log(`  Sensitive words fixed: ${result.sensitiveWordsFixed || 0}`);
-            console.log(`  AI traces fixed: ${result.aiFixesApplied || 0}`);
+            console.log(`  Whitespace fixes: ${result.formatFixesApplied || 0}`);
             console.log(`  Saved: ${result.saved ? "yes" : "no"}`);
           });
 

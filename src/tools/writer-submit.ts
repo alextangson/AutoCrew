@@ -38,6 +38,8 @@ import {
   packNotReadyError,
   readPack,
   stalePackError,
+  submissionVisibility,
+  writerProgress,
   writePack,
   type PendingReview,
   type ReadyPack,
@@ -62,10 +64,10 @@ export interface SubmitArgs {
   packId: string;
   attempt: number;
   title: string;
-  hook: string;
+  hook?: string;
   body: string;
-  cta: string;
-  hashtags: unknown;
+  cta?: string;
+  hashtags?: unknown;
   /** 缺省 `engine`：产品内部的 reviewer 岗位审一遍（§9.1 待确认项，默认按此实现） */
   review: "engine" | "none";
   host: string;
@@ -104,7 +106,7 @@ async function loadForSubmit(
   await resumeReview(args.contentId, pack, dataDir, deps);
   const done = pack.attempts[String(args.attempt)];
   // 幂等（§5.2）：网络重发、宿主重试都会撞到这里——原样还回去，不扣修复轮、不推状态
-  if (done) return { replay: { ...done.result, replayed: true, replayed_at: done.at } };
+  if (done) return { replay: { ...submissionVisibility(pack, done.result), replayed: true, replayed_at: done.at } };
   // 状态门放在重放之后：稿子已经 draft_ready 时宿主重发同一 attempt，要拿回「已收下」而不是「不收稿」
   if (!WRITABLE.includes(content.status)) {
     return fail(`这篇现在是「${content.status}」，不收稿——只有写作中 / 修订中的稿能提交（${args.contentId}）`);
@@ -195,9 +197,17 @@ async function finalizeBlocked(
   const moved = await transitionStatus(args.contentId, "needs_evidence", {}, dataDir);
   return {
     status: "blocked",
+    saved: true,
+    quality_status: "blocked",
+    needs_attention: true,
     reason,
     unverified_numbers: unverified,
     content_status: moved.ok ? "needs_evidence" : content.status,
+    next_action: {
+      action: "supply_evidence",
+      message: "补充证据或移除无依据的事实数字，再重新准备写作包；保留当前草稿供核对。",
+    },
+    human_next_step: "当前草稿缺少事实依据，尚不能作为通过审核的成稿；需要你掌握的一手信息时，宿主应明确列出缺口。",
     note: "修复轮已用尽，硬门仍未过——稿件标「缺证据」。补上证据编号或删掉这些数字之后，重新 pack 再写。",
     ...(moved.ok ? {} : { warning: `稿件状态推不动：${moved.error ?? "未推进"}（正文已保存）` }),
   };
@@ -241,8 +251,19 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
     pack.repair.used += 1;
     return record(args.contentId, pack, args.attempt, {
       status: "repair",
+      saved: false,
+      quality_status: "needs_revision",
+      needs_attention: true,
+      ...writerProgress(pack, args.host),
       failures: failures.map((f) => ({ check: f.check, detail: f.detail })),
       rounds_left: pack.repair.max - pack.repair.used,
+      next_action: {
+        action: "repair_and_resubmit",
+        tool: "autocrew_writer",
+        params: { action: "submit", content_id: args.contentId, pack_id: args.packId, attempt: args.attempt + 1 },
+        message: "按 failures 修复后重交，本次正文尚未保存为新版本。",
+      },
+      human_next_step: "当前由宿主继续修复，不需要你确认未完成的稿件。",
       note: "按 failures 逐条改，不要重写整篇；改完 attempt 加一再交。",
     }, dataDir);
   }
@@ -251,7 +272,7 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
       args.contentId,
       pack,
       args.attempt,
-      await finalizeBlocked(args, content, payload, hard, { failures, needsHuman: needsHumanNumbers, ledger }, dataDir),
+      { ...await finalizeBlocked(args, content, payload, hard, { failures, needsHuman: needsHumanNumbers, ledger }, dataDir), ...writerProgress(pack, args.host) },
       dataDir,
     );
   }
@@ -284,8 +305,19 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
   // 先落 `reviewing` 再开工：回执立刻还给宿主，终态由 `submit_status` 取
   const result = {
     status: "reviewing" as const,
+    saved: true,
+    quality_status: "reviewing",
+    needs_attention: true,
     attempt: args.attempt,
     content_id: args.contentId,
+    ...writerProgress(pack, args.host),
+    next_action: {
+      action: "wait_for_review",
+      tool: "autocrew_writer",
+      params: { action: "submit_status", content_id: args.contentId, attempt: args.attempt },
+      message: "等待审稿终态，再向创作者呈现真实结果和待处理事项。",
+    },
+    human_next_step: "正文已保存，宿主会继续等待审稿结果；现在尚无需确认成稿。",
     note: REVIEWING_NOTE,
   };
   await record(args.contentId, pack, args.attempt, result, dataDir, job.pending);

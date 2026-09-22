@@ -87,6 +87,15 @@ describe("runQualityGate", () => {
     expect(failures[0].detail).toContain("随着");
   });
 
+  it("完整稿件放在 body 时仍检查开头，且不会要求强行反常识", () => {
+    const spec: QualityGateSpec = { bannedHookPatterns: ["^随着"] };
+    const failures = runQualityGate(spec, { hook: " ", body: " 随着AI的发展，大家都在卷。", cta: "" });
+    expect(failures).toHaveLength(1);
+    expect(failures[0].check).toBe("banned_hook");
+    expect(failures[0].detail).toContain("按本次规划自然进入主题");
+    expect(runQualityGate(spec, { hook: "", body: GOOD_HOOK, cta: "" })).toEqual([]);
+  });
+
   it("「在…领域」中缀反模式可变长匹配", () => {
     const failures = runQualityGate(
       { bannedHookPatterns: ["^在.{1,12}(领域|行业)"] },

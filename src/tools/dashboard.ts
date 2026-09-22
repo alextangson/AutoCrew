@@ -220,7 +220,7 @@ async function batchReview(params: Record<string, unknown>) {
       platform: c.platform,
     })),
     instruction: eligible.length > 0
-      ? `请依次对以下 ${eligible.length} 篇内容执行 autocrew_review action=full_review`
+      ? `请依次对以下 ${eligible.length} 篇内容执行 autocrew_review action=full_review 做只读词表与阅读格式检查；这不包含语义审稿，也不代表创作者认可，不要自动批准稿件。`
       : "没有待审核的内容",
   };
 }

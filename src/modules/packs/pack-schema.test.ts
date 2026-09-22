@@ -22,7 +22,7 @@ describe("koubo pack shape", () => {
 
   it("抖音 = 纯口播正文，包里不再示范镜头/字幕条格式（P1 §4.4 口播格式硬门）", () => {
     const douyin = KOUBO_PACK.platformAdjustments.douyin;
-    expect(douyin?.style).toBe("纯口播正文，不写画面/字幕条/镜头标注；3 秒内出钩子");
+    expect(douyin?.style).toBe("纯口播正文，不写画面/字幕条/镜头标注；开头按本次规划自然进入主题");
     for (const marker of ["[画面]", "[口播]", "[字幕条]"]) {
       expect(douyin?.style).not.toContain(marker);
     }
@@ -34,6 +34,16 @@ describe("koubo pack shape", () => {
     expect(KOUBO_PACK.structure.cta.length).toBeGreaterThan(0);
     // V5.7:自检从 10 条字数打勾收敛为 7 条功能性检验(活人感重写)
     expect(KOUBO_PACK.selfReview.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("口播包不按转折、数据点和 CTA 数量组织内容", () => {
+    const guidance = JSON.stringify(KOUBO_PACK);
+    expect(guidance).not.toContain("至少 2 处来自调研的数据点");
+    expect(guidance).not.toContain("第二个放在 60%");
+    expect(guidance).not.toContain("3 秒内出钩子");
+    expect(guidance).toContain("不为凑数量添加数字、案例或对话");
+    expect(guidance).toContain("不要求行动号召");
+    expect(guidance).toContain("引用是否保持原意");
   });
 
   it("reward: default exists and every byPlatform entry names its primary inside its own weights", () => {

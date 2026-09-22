@@ -11,7 +11,13 @@
  * 组装 + humanizeZh 只做一次（审稿 spec §2.1：审稿必须看到终稿形态），
  * 审稿产出直接进转正——同一段文本不许算两遍。
  */
-import { hostOf, loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
+import {
+  ENGINE_UNCONFIGURED,
+  hostOf,
+  loadEngineConfig,
+  loadEngineConfigIfConfigured,
+  resolveEngineRoute,
+} from "../../engine/config.js";
 import { classifyEngineError } from "../../engine/error-kind.js";
 import { describeEngineFailure, isEngineFailure } from "../../engine/failure-text.js";
 import { cleanErrorMessage } from "../../desktop/error-clean.js";
@@ -408,7 +414,7 @@ interface EvidencePhase {
 async function runEvidencePhase(args: {
   req: ScriptRequest;
   angle?: ResolvedAngle;
-  config: EngineConfig;
+  config?: EngineConfig;
   ledger: EvidenceLedger;
   dataDir?: string;
   warn: (message: string) => void;
@@ -418,6 +424,13 @@ async function runEvidencePhase(args: {
   const card = activeV3(args.angle);
   const wantsLookup =
     !!card && card.evidenceNeeds.length > 0 && !req.direction?.trim() && !req.angleSkipReason?.trim();
+
+  // 补证要跑模型（targeted-research 的 runLoop）。没配引擎就跟「搜索没配」同一条降级路：
+  // warn + 跳过 + 版本注记，绝不静默（P5 §1.6）。宿主自己查到的料走 pack 的 research 槽。
+  if (!config) {
+    if (wantsLookup) warn("引擎未配置：本稿跳过定向补证，写手只能用现有材料（版本注记标「未补证」）");
+    return wantsLookup ? { note: "未补证" } : {};
+  }
 
   const canSearch = await searchAvailable(dataDir).catch(() => false);
   if (!canSearch) {
@@ -441,7 +454,11 @@ async function runEvidencePhase(args: {
 }
 
 export interface GenerationInputs {
-  config: EngineConfig;
+  /**
+   * 引擎配置。**未配置时缺席**（P5 §1.6）——宿主写稿全程不调模型，不该被它挡住。
+   * 内部写手与审稿是真需要它的，在各自入口处硬性检查，别在这里假设它一定在。
+   */
+  config?: EngineConfig;
   pack: ReturnType<typeof getPack>;
   profile: Awaited<ReturnType<typeof loadProfile>>;
   contrastPairs: Awaited<ReturnType<typeof recentContrastPairs>>;
@@ -525,7 +542,8 @@ async function gatherInputs(
   deps?: GenerationDeps,
 ): Promise<GenerationInputs> {
   const [config, pack, profile, contrastPairs, patterns, picked] = await Promise.all([
-    loadEngineConfig(dataDir),
+    // 没配引擎也要能备料（P5 §1.6）：配坏了仍然照抛，只有「压根没配」返回 undefined
+    loadEngineConfigIfConfigured(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
     // 改稿对比对(V5.7 活人感):读取失败不阻断写稿——样例是增强,不是依赖
@@ -561,7 +579,7 @@ async function gatherInputs(
   };
 
   return {
-    config,
+    ...(config ? { config } : {}),
     pack,
     profile,
     contrastPairs,
@@ -815,7 +833,9 @@ async function runWriterLoop(
  */
 function reviewDraft(
   written: WriterRun,
-  inputs: Pick<GenerationInputs, "config" | "profile" | "snapshot" | "angle" | "ledger" | "writingContract">,
+  // 审稿要跑模型，所以这里的 config 是**必填**——`GenerationInputs.config` 可缺席，
+  // 调用方（内部写手）已经在入口处硬性检查过（P5 §1.6）
+  inputs: Pick<GenerationInputs, "profile" | "snapshot" | "angle" | "ledger" | "writingContract"> & { config: EngineConfig },
   prompts: { system: string; user: string },
   gate: QualityGateSpec | undefined,
   platform: ScriptRequest["platform"],
@@ -911,6 +931,9 @@ async function writeAndFinalize(args: {
   // 宿主写稿走的是**同一个** buildWritingContext（§5.4 门禁输入一致）
   const { inputs, prompts, gate } = await buildWritingContext(req, dataDir, warn, deps);
   const { config, profile, angle, wroteWithoutAngle, attribution } = inputs;
+  // 内部写手是**真**要模型的那一条路（宿主写稿不走这里）。没配引擎就在这儿炸，
+  // 报的还是那句原话——把它从备料阶段挪到真正用得上的地方（P5 §1.6）。
+  if (!config) throw new Error(ENGINE_UNCONFIGURED);
   // 账本先随占位稿落一次（§3.3）：写手还没开工，但补证已经花过钱了——
   // 这一步之后崩掉，「这稿当时手上有哪些证据」仍然查得到
   await persistAttribution(placeholderId, attribution, inputs.ledger, warn, dataDir);

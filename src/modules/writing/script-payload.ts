@@ -36,7 +36,7 @@ const TEXT_FIELDS = ["title", "hook", "body", "cta"] as const;
  */
 export const WRITER_MAX_TOKENS = 120_000;
 
-export const REQUIRED_FIELDS: (keyof SubmitPayload)[] = [...TEXT_FIELDS, "hashtags"];
+export const REQUIRED_FIELDS: (keyof SubmitPayload)[] = ["title", "body"];
 
 function missingField(field: string): string {
   return `Error: 缺少字段 ${field}，请补全后重新调用 submit_script`;
@@ -60,8 +60,8 @@ export const MAX_HASHTAGS = 10;
 
 /** 超长是**拒收**不是修复轮：它不是「写得不好」，是这一份根本不该收下 */
 function lengthError(payload: SubmitPayload): string | null {
-  const body = Array.from(payload.body).length;
-  if (body > MAX_BODY_CHARS) return `Error: 正文 ${body} 字，超过上限 ${MAX_BODY_CHARS} 字——删到限内再提交`;
+  const body = Array.from(assembleScript(payload)).length;
+  if (body > MAX_BODY_CHARS) return `Error: 完整正文（含开头与结尾）${body} 字，超过上限 ${MAX_BODY_CHARS} 字——删到限内再提交`;
   const title = Array.from(payload.title).length;
   if (title > MAX_TITLE_CHARS) return `Error: 标题 ${title} 字，超过上限 ${MAX_TITLE_CHARS} 字——改短再提交`;
   if (payload.hashtags.length > MAX_HASHTAGS) {
@@ -75,19 +75,22 @@ export function validateSubmitArgs(args: Record<string, unknown>): SubmitValidat
   const text: Record<string, string> = {};
   for (const field of TEXT_FIELDS) {
     const val = args[field];
-    if (val === undefined || val === null) return { ok: false, error: missingField(field) };
+    const required = REQUIRED_FIELDS.includes(field);
+    if (val === undefined && !required) {
+      text[field] = "";
+      continue;
+    }
+    if ((val === undefined || val === null) && required) return { ok: false, error: missingField(field) };
     if (typeof val !== "string") {
       return { ok: false, error: `Error: 字段 ${field} 应为字符串，请修正后重新调用 submit_script` };
     }
-    if (val.trim() === "") return { ok: false, error: missingField(field) };
+    if (required && val.trim() === "") return { ok: false, error: missingField(field) };
     text[field] = val;
   }
-  const hashtags = args.hashtags;
-  if (hashtags === undefined || hashtags === null) return { ok: false, error: missingField("hashtags") };
+  const hashtags = args.hashtags === undefined ? [] : args.hashtags;
   if (!isStringArray(hashtags)) {
     return { ok: false, error: "Error: 字段 hashtags 应为字符串数组，请修正后重新调用 submit_script" };
   }
-  if (hashtags.length === 0) return { ok: false, error: missingField("hashtags") };
   const payload = { title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags };
   const tooLong = lengthError(payload);
   if (tooLong) return { ok: false, error: tooLong };
@@ -183,15 +186,15 @@ export function buildSubmitTool(
   const maxRepairRounds = gate?.maxRepairRounds ?? DEFAULT_REPAIR_ROUNDS;
   return {
     name: "submit_script",
-    description: "提交最终成稿。所有字段必填。",
+    description: "提交最终成稿。title 和 body 必填；完整稿件可直接放 body，不必拆开头、正文和结尾。",
     parameters: {
       type: "object",
       properties: {
         title: { type: "string", description: "标题" },
-        hook: { type: "string", description: "开篇钩子" },
-        body: { type: "string", description: "正文内容" },
-        cta: { type: "string", description: "行动号召/引导语结尾" },
-        hashtags: { type: "array", items: { type: "string" }, description: "话题标签/关键词列表" },
+        hook: { type: "string", description: "可选开头；body 已含完整稿件时省略或留空，不重复正文" },
+        body: { type: "string", description: "完整稿件，或兼容分段提交时的正文；不能空缺" },
+        cta: { type: "string", description: "可选结尾；不要求行动号召，body 已含结尾时省略或留空" },
+        hashtags: { type: "array", items: { type: "string" }, description: "可选话题标签/关键词列表，可为空数组" },
       },
       required: REQUIRED_FIELDS,
     },
@@ -226,12 +229,12 @@ export function buildSubmitTool(
 
 /** hook + 正文 + CTA 的组装口径（成稿正文的唯一定义，写稿与审稿修订共用） */
 export function assembleScript(payload: SubmitPayload): string {
-  return `${payload.hook}\n\n${payload.body}\n\n${payload.cta}`;
+  return [payload.hook, payload.body, payload.cta].map((part) => part.trim()).filter(Boolean).join("\n\n");
 }
 
 /**
- * 组装 + 正则去 AI 味 = 终稿形态（审稿 spec §2.1：正则在前，审稿读的是正则改写**后**的文本，
- * 终稿不会再被审稿没见过的替换动过）。写稿一次、每轮修订一次，口径必须是同一个函数。
+ * 组装 + 安全空白清理 = 终稿形态。保留旧函数名供所有写稿/修订入口兼容；
+ * 不自动改变词句或叙述主体，审稿人读到的就是准备保存的正文。
  */
 export function assembleAndHumanize(payload: SubmitPayload): string {
   return humanizeZh({ text: assembleScript(payload) }).humanizedText;

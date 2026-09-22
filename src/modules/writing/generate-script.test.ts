@@ -179,11 +179,11 @@ describe("generateScript", () => {
     expect(result.tokensUsed).toBe(225);
   });
 
-  // 2. Self-correction: first call is missing cta, second is full
-  it("self-correction: missing cta → execute returns error message, second full call succeeds", async () => {
-    const missingCta = { ...GOOD_PAYLOAD };
-    // @ts-expect-error intentionally missing cta for test
-    delete missingCta.cta;
+  // 2. Self-correction: first call is missing body, second is full
+  it("self-correction: missing body → execute returns error message, second full call succeeds", async () => {
+    const missingBody = { ...GOOD_PAYLOAD };
+    // @ts-expect-error intentionally missing body for test
+    delete missingBody.body;
 
     let firstCallResult: string | undefined;
 
@@ -194,8 +194,8 @@ describe("generateScript", () => {
       const submitTool = (opts.tools ?? []).find((t: LoopTool) => t.name === "submit_script");
       if (!submitTool) throw new Error("submit_script tool not found");
 
-      // First call: missing cta
-      firstCallResult = await submitTool.execute(missingCta as Record<string, unknown>);
+      // First call: missing body
+      firstCallResult = await submitTool.execute(missingBody as Record<string, unknown>);
 
       // Second call: full payload
       await submitTool.execute(GOOD_PAYLOAD);
@@ -212,7 +212,7 @@ describe("generateScript", () => {
     const result = await generateScript(TEST_REQ, testDir, { runLoopImpl });
 
     // First call must return the error guidance
-    expect(firstCallResult).toContain("缺少字段 cta");
+    expect(firstCallResult).toContain("缺少字段 body");
     expect(firstCallResult).toContain("submit_script");
 
     // Final result is from the second (complete) call
@@ -1065,7 +1065,7 @@ function reviewingLoop(script: {
   };
 }
 
-/** 带 AI 味的初稿：humanizeZh 会删掉「值得一提的是」，审稿必须看的是删完之后的样子 */
+/** 带待判断表达的初稿：humanizeZh 不再按词表删词，审稿须看到原文语义 */
 const AI_FLAVORED = {
   ...GOOD_PAYLOAD,
   body: "值得一提的是，正文讲了三件事，每件都有具体数字。",
@@ -1079,14 +1079,14 @@ const BLOCKER = {
 };
 
 describe("generateScript × AI 审稿", () => {
-  it("审稿读的是 humanize 之后的终稿形态（正则在前，§2.1）", async () => {
+  it("审稿看到原稿表达，自动后处理不会先按词表删改", async () => {
     const seen = { reviewUser: [] as string[] };
     await generateScript(TEST_REQ, testDir, {
       runLoopImpl: reviewingLoop({ draft: AI_FLAVORED, reviews: [{ verdict: "pass", issues: [] }], seen }),
     });
 
     expect(seen.reviewUser).toHaveLength(1);
-    expect(seen.reviewUser[0]).not.toContain("值得一提的是"); // 正则已经动过手了
+    expect(seen.reviewUser[0]).toContain("值得一提的是"); // 表达是否合适留给有语境的审稿判断
     expect(seen.reviewUser[0]).toContain("正文讲了三件事");
     expect(seen.reviewUser[0]).toContain(GOOD_PAYLOAD.hook);
   });

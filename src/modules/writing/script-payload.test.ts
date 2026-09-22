@@ -5,6 +5,8 @@ import {
   isAcceptedCapture,
   validateSubmitArgs,
   assembleScript,
+  assembleAndHumanize,
+  MAX_BODY_CHARS,
 } from "./script-payload.js";
 import type { Captured, SubmitGateDeps } from "./script-payload.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
@@ -43,6 +45,53 @@ describe("buildSubmitTool — 形状校验在最前", () => {
   it("类型不对也退回", () => {
     expect(validateSubmitArgs(args({ hashtags: "AI" }))).toMatchObject({ ok: false });
   });
+  it("完整正文可独立提交，不为格式强制开头、CTA 或标签", () => {
+    const text = "我们记录了实际操作。\n\n我们形成闭环。\n\n我们决定继续观察。";
+    const result = validateSubmitArgs({ title: "试点复盘", body: text });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.payload).toEqual({ title: "试点复盘", body: text, hook: "", cta: "", hashtags: [] });
+    expect(assembleScript(result.payload)).toBe(text);
+    expect(assembleAndHumanize(result.payload)).toBe(text);
+    expect(buildSubmitTool(createCapture()).parameters.required).toEqual(["title", "body"]);
+  });
+
+  it("旧分段提交保持顺序，空开头/结尾不制造空段", () => {
+    const legacy = validateSubmitArgs(args());
+    expect(legacy.ok && assembleScript(legacy.payload)).toBe("开场就说结论\n\n正文讲清机制，读者照做能少走弯路。\n\n今晚就去改一行配置。");
+    const optional = validateSubmitArgs(args({ hook: " ", cta: "", hashtags: [] }));
+    expect(optional.ok && assembleScript(optional.payload)).toBe("正文讲清机制，读者照做能少走弯路。");
+  });
+
+  it.each(["title", "body"])("%s 仍严格必需且不能全是空白", (field) => {
+    for (const value of [undefined, null, "", "  ", 42]) {
+      expect(validateSubmitArgs(args({ [field]: value })).ok).toBe(false);
+    }
+  });
+
+  it.each([{ hook: 42 }, { cta: null }, { hashtags: null }, { hashtags: [42] }])("可选字段仍验证类型：%j", (over) => {
+    expect(validateSubmitArgs(args(over)).ok).toBe(false);
+  });
+
+  it("正文上限覆盖拼接后的开头与结尾，不能把超长正文挪到可选字段绕过", () => {
+    expect(validateSubmitArgs(args({ hook: "", cta: "", body: "文".repeat(MAX_BODY_CHARS) })).ok).toBe(true);
+    for (const over of [
+      { body: "文".repeat(MAX_BODY_CHARS), hook: "开头", cta: "" },
+      { body: "正文", hook: "", cta: "尾".repeat(MAX_BODY_CHARS) },
+    ]) {
+      expect(validateSubmitArgs(args(over))).toMatchObject({ ok: false, error: expect.stringContaining("完整正文") });
+    }
+    expect(validateSubmitArgs(args({ hook: "😀", body: "文".repeat(MAX_BODY_CHARS - 3), cta: "" })).ok).toBe(true);
+  });
+
+  it("完整正文提交仍须通过数字与格式硬门", () => {
+    const captured = createCapture();
+    const tool = buildSubmitTool(captured, undefined, { requireNumberEvidence: true, forbidFormatMarkers: true });
+    tool.execute({ title: "复盘", body: "[画面] 留存上升了 45%。" });
+    expect(captured.gateFailures.map((failure) => failure.check)).toEqual(["format_markers", "unverified_numbers"]);
+    expect(captured.accepted).toBe(false);
+  });
+
 });
 
 describe("口播格式硬门", () => {

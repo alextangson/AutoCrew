@@ -5,14 +5,13 @@
  * write 闸口的拒单摘要）：
  *
  * - **卡要给全**。宿主 agent 得照着念给创始人听——只报 id 和 thesis，人就没法选。
- * - **只按 score 排序，不加推荐标**。分是代码打的、只用于排序（P1 §3.1 codex #7）；
- *   排第一不等于该选它，挑哪张是创始人的活。
+ * - 分数只用于展示排序；推荐另按可追溯证据给理由，永不替用户选择。
  * - **闸口的摘要要能塞进一个字符串**。dsh 桥把 `ok:false` 变成 `new Error(error)`，
  *   结构化字段全丢——候选念不出来的话，那一轮拒单就等于白拒。
  *
  * 全是纯函数、不读盘（稿件视图同理：只读传进来的那份 `Content`）。
  */
-import { isAngleCardV3, type AngleCard } from "../modules/research/brief-store.js";
+import { evidenceByRef, isAngleCardV3, type AngleCard, type ResearchBrief } from "../modules/research/brief-store.js";
 import { DEFAULT_PERSONAS } from "../modules/research/personas.js";
 import { isTerminalJobStatus, type ResearchJob } from "../modules/research/research-job-store.js";
 import { claimView } from "../storage/claims.js";
@@ -71,6 +70,51 @@ export function cardView(card: AngleCard): Record<string, unknown> {
 export function sortedCards(cards: AngleCard[]): AngleCard[] {
   const scoreOf = (c: AngleCard): number => (isAngleCardV3(c) && typeof c.score === "number" ? c.score : -1);
   return [...cards].sort((a, b) => scoreOf(b) - scoreOf(a));
+}
+
+/** Explain the options and recommend on evidence coverage; never select a card. */
+export function angleOptionsView(brief: ResearchBrief): {
+  cards: Record<string, unknown>[];
+  recommendation?: { angleId: string; reasons: string[]; automaticSelection: false };
+} {
+  const options = sortedCards(brief.angleCards ?? []).map(card => {
+    const refs = [...new Set(card.coreEvidenceIds)];
+    const evidence = refs.map(ref => evidenceByRef(brief.evidence, ref))
+      .filter(e => e !== null)
+      .filter(e => Boolean(e.claim.trim() && e.quote.trim() && e.sourceUrl.trim()));
+    const fullyReferenced = refs.length > 0 && refs.length === evidence.length;
+    const grounded = fullyReferenced && (!isAngleCardV3(card) || card.evidenceLevel === "grounded");
+    const gaps = isAngleCardV3(card) ? card.evidenceNeeds : [];
+    const hasFirsthand = isAngleCardV3(card) && Boolean(card.firsthandAnchor);
+    return {
+      card,
+      grounded,
+      // Evidence completeness wins over cosmetic score; gaps and source diversity break ties.
+      priority: [Number(grounded), Number(hasFirsthand), -gaps.length, new Set(evidence.map(e => e.sourceUrl)).size],
+      view: {
+        ...cardView(card),
+        distinction: { thesis: card.thesis, antiScope: card.antiScope, audience: isAngleCardV3(card) ? DEFAULT_PERSONAS[card.primaryPersona]?.name ?? card.primaryPersona : card.audiencePain },
+        evidenceSupport: { completeReferences: fullyReferenced, count: evidence.length, sources: [...new Set(evidence.map(e => e.sourceUrl))], needs: gaps },
+      },
+      reasons: grounded ? [
+        `主张有 ${evidence.length} 条简报证据可追溯`,
+        ...(hasFirsthand ? ["包含可追溯的第一手材料"] : []),
+        ...(gaps.length ? [`仍需补齐：${gaps.join("；")}`] : ["立意卡未列出待补证据；写稿时仍须逐项核查事实"]),
+      ] : [],
+    };
+  });
+  const candidates = options.filter(o => o.grounded).sort((a, b) => {
+    for (let i = 0; i < a.priority.length; i++) {
+      const delta = b.priority[i] - a.priority[i];
+      if (delta) return delta;
+    }
+    return 0;
+  });
+  const chosen = candidates[0];
+  return {
+    cards: options.map(o => o.view),
+    ...(chosen ? { recommendation: { angleId: chosen.card.id, reasons: chosen.reasons, automaticSelection: false as const } } : {}),
+  };
 }
 
 /** 闸口拒单时塞进 error 文本的一行摘要（dsh 桥只把 error 带给模型） */

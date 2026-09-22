@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { executeContentSave } from "./content-save.js";
 import { recordDiff, listDiffs } from "../modules/learnings/diff-tracker.js";
-import { getContent } from "../storage/local-store.js";
+import { getContent, listContents, saveContent, saveTopic } from "../storage/local-store.js";
 
 let testDir: string;
 
@@ -473,5 +473,84 @@ describe("content_id 别名（P3b 真机 2026-09-06）", () => {
     const byAlias = (await executeContentSave({ action: "get", content_id: cid, _dataDir: testDir })) as { ok: boolean };
     expect(byId.ok).toBe(true);
     expect(byAlias.ok).toBe(true);
+  });
+});
+
+describe("MCP content storage cannot bypass writer submission", () => {
+  const run = (params: Record<string, unknown>) => executeContentSave(
+    { _host: "claude_desktop", _dataDir: testDir, ...params },
+    { shouldDistillImpl: async () => false },
+  );
+
+  it("带正文的平台变体须明确人工导入，拒绝前不创建稿件或修改兄弟关系", async () => {
+    const topic = await saveTopic({ title: "返工记录", description: "按真实经历写", tags: [] }, testDir);
+    const sibling = await saveContent({ title: "已有稿件", body: "原文", topicId: topic.id, platform: "douyin" }, testDir);
+    for (const extra of [{}, { source: "manual_import", import_reason: " " }]) {
+      const result = await run({ action: "create_variant", topicId: topic.id, platform: "wechat_mp", body: "宿主刚生成的新稿", ...extra });
+      expect(result).toMatchObject({ ok: false, code: "writer_submission_required" });
+    }
+    expect(await listContents(testDir)).toHaveLength(1);
+    expect(await getContent(sibling.id, testDir)).toEqual(sibling);
+  });
+
+  it("用户已有成稿可导入平台变体，明确未审状态且不批准", async () => {
+    const topic = await saveTopic({ title: "返工记录", description: "素材", tags: [] }, testDir);
+    const result = await run({
+      action: "create_variant", topicId: topic.id, platform: "wechat_mp", body: "用户亲写的原稿",
+      source: "manual_import", import_reason: "用户提供了已有成稿并要求整理进平台变体",
+    });
+    expect(result).toMatchObject({ ok: true, saved: true, quality_status: "unreviewed", needs_attention: true, writing_source: { kind: "manual_import" } });
+    expect("content" in result && result.content).toMatchObject({ body: "用户亲写的原稿", status: "topic_saved" });
+  });
+
+  it("无正文可建平台占位，但不能再用 update 填正文绕过 submit", async () => {
+    const topic = await saveTopic({ title: "返工记录", description: "这里只是选题描述", tags: [] }, testDir);
+    const placeholder = await run({ action: "create_variant", topicId: topic.id, platform: "wechat_mp" });
+    expect(placeholder.ok).toBe(true);
+    if (!("content" in placeholder) || !placeholder.content) throw new Error("missing content");
+    const before = await getContent(placeholder.content.id, testDir);
+    const result = await run({ action: "update", id: placeholder.content.id, title: "绕过的新标题", body: "刚生成的新稿" });
+    expect(result).toMatchObject({ ok: false, code: "writer_submission_required" });
+    expect(await getContent(placeholder.content.id, testDir)).toEqual(before);
+  });
+
+  it("空白稿和未交稿的写作包均不能用 update 填正文，manual_import 不解除该约束", async () => {
+    const blank = await saveContent({ title: "空白稿", body: "  ", status: "drafting" }, testDir);
+    const pending = await saveContent({
+      title: "写作占位", body: "准备中的占位文字", status: "drafting",
+      pack: { packId: "wp-pending", issuedAt: "2026-09-22T00:00:00Z", host: "claude_desktop" },
+    }, testDir);
+    for (const content of [blank, pending]) {
+      const before = await getContent(content.id, testDir);
+      const result = await run({ action: "update", id: content.id, body: "试图跳过交稿的新正文", source: "manual_import", import_reason: "导入已有稿件" });
+      expect(result).toMatchObject({ ok: false, code: "writer_submission_required" });
+      expect(await getContent(content.id, testDir)).toEqual(before);
+    }
+  });
+
+  it("正常旧稿及已提交稿仍可人工修订，旧正文和来源不被误认成占位", async () => {
+    const legacy = await saveContent({ title: "旧稿", body: "旧正文", status: "revision" }, testDir);
+    const submitted = await saveContent({
+      title: "交过的稿", body: "已交正文", status: "revision",
+      pack: { packId: "wp-submitted", issuedAt: "2026-09-22T00:00:00Z", submittedAt: "2026-09-22T01:00:00Z", host: "claude_desktop" },
+      writtenBy: { kind: "host", host: "claude_desktop" },
+    }, testDir);
+    for (const content of [legacy, submitted]) {
+      const result = await run({ action: "update", id: content.id, body: "按作者反馈修订的正文", diff_note: "保留作者真实经历" });
+      expect(result.ok).toBe(true);
+      expect((await getContent(content.id, testDir))?.body).toBe("按作者反馈修订的正文");
+    }
+  });
+
+  it("占位稿的纯元数据更新仍可用，非 MCP 内部写入兼容", async () => {
+    const blank = await saveContent({ title: "旧标题", body: "", status: "drafting" }, testDir);
+    expect((await run({ action: "update", id: blank.id, title: "纠正标题" })).ok).toBe(true);
+    expect((await getContent(blank.id, testDir))?.body).toBe("");
+    const internal = await run({ action: "update", id: blank.id, body: "内部已完成的正文", _host: undefined });
+    expect(internal.ok).toBe(true);
+    expect((await getContent(blank.id, testDir))?.body).toBe("内部已完成的正文");
+    const topic = await saveTopic({ title: "内部选题", description: "素材", tags: [] }, testDir);
+    const internalVariant = await run({ action: "create_variant", topicId: topic.id, platform: "douyin", body: "内部平台稿", _host: undefined });
+    expect(internalVariant.ok).toBe(true);
   });
 });

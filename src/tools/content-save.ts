@@ -43,6 +43,8 @@ export const contentSaveSchema = Type.Object({
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   content_id: Type.Optional(Type.String({ description: "Alias of `id` — other AutoCrew tools call it content_id" })),
+  source: Type.Optional(Type.Literal("manual_import", { description: "save/create_variant：仅用户已有成稿导入时填 manual_import，AI 新稿必须走 writer submit；update 不能填入尚未交稿的写作占位。" })),
+  import_reason: Type.Optional(Type.String({ description: "save/create_variant：用户提供已有稿件并要求导入的说明；不能用于绕过 AI 交稿门。" })),
   title: Type.Optional(Type.String({ description: "Content title" })),
   body: Type.Optional(Type.String({ description: "Content body (markdown)" })),
   platform: Type.Optional(Type.String({ description: "Target platform: xhs, douyin, wechat_video, wechat_mp, bilibili" })),
@@ -141,6 +143,13 @@ export async function executeContentSave(
   // 宿主 P3b 真机：其它工具都叫 content_id，模型对这个工具也会这么猜——认下别名，不让它撞「id is required」
   if (params.id === undefined && typeof params.content_id === "string") params.id = params.content_id;
   const dataDir = (params._dataDir as string) || undefined;
+  const isMcpCall = typeof params._host === "string";
+  const manualImport = params.source === "manual_import" && typeof params.import_reason === "string" && Boolean(params.import_reason.trim());
+  const importReceipt = {
+    saved: true, quality_status: "unreviewed", needs_attention: true,
+    writing_source: { kind: "manual_import" },
+    note: "已有稿件已导入，尚未执行调研、审稿或作者确认；不能将导入成功报告为质量通过。",
+  };
   const recordDiffImpl = deps?.recordDiffImpl || recordDiff;
   const shouldDistillImpl = deps?.shouldDistillImpl || shouldDistillStyle;
   const distillImpl = deps?.distillImpl || distillStyleRules;
@@ -167,6 +176,17 @@ export async function executeContentSave(
     // Get old content before update to check for body changes
     const oldContent = await getContent(id, dataDir);
     if (!oldContent) return { ok: false, error: `Content ${id} not found` };
+    // Generic editing is for existing drafts. A blank/topic placeholder is not a draft,
+    // and filling it here would skip the writer's preparation, gates and review receipt.
+    const fillingBody = typeof params.body === "string" && Boolean(params.body.trim()) && params.body !== oldContent.body;
+    const unsubmittedPlaceholder = !oldContent.body.trim()
+      || oldContent.body.startsWith("<!-- Generated from topic:")
+      || Boolean(oldContent.pack && !oldContent.pack.submittedAt && !oldContent.writtenBy);
+    if (isMcpCall && fillingBody && unsubmittedPlaceholder) return {
+      ok: false, code: "writer_submission_required",
+      error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
+      next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
+    };
     const denied = await gateContentWrite(params, id, dataDir);
     if (denied) return denied;
     const oldBody = oldContent.body;
@@ -301,13 +321,19 @@ export async function executeContentSave(
     const platform = params.platform as string;
     if (!topicId) return { ok: false, error: "topicId is required for create_variant" };
     if (!platform) return { ok: false, error: "platform is required for create_variant" };
+    const hasBody = typeof params.body === "string" && Boolean(params.body.trim());
+    if (isMcpCall && hasBody && !manualImport) return {
+      ok: false, code: "writer_submission_required",
+      error: "平台变体的新正文也必须走 writer pack/submit；只有用户提供的已有成稿，才能以 source=manual_import 并说明 import_reason 导入。",
+      next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: topicId, platform } },
+    };
     const result = await createPlatformVariant(
       topicId,
       platform,
       { title: params.title as string, body: params.body as string },
       dataDir,
     );
-    return result;
+    return result.ok && hasBody && manualImport ? { ...result, ...importReceipt } : result;
   }
 
   if (action === "siblings") {
@@ -329,6 +355,12 @@ export async function executeContentSave(
     return { ok: true, currentStatus, allowedTransitions: allowed, transitions };
   }
 
+  // MCP must not silently use generic storage as an alternative AI writing pipeline.
+  if (isMcpCall && !manualImport) return {
+    ok: false, code: "writer_submission_required",
+    error: "新生成稿必须走 workflow prepare → writer pack/submit。只有用户提供的已有成稿，才能以 source=manual_import 并说明 import_reason 导入。",
+    next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: params.topicId, platform: params.platform } },
+  };
   // save
   const title = params.title as string;
   const body = params.body as string;
@@ -336,7 +368,7 @@ export async function executeContentSave(
     return { ok: false, error: "title and body are required for save" };
   }
 
-  const rawStatus = (params.status as string) || "draft_ready";
+  const rawStatus = manualImport ? "draft_ready" : (params.status as string) || "draft_ready";
   const content = await saveContent({
     title,
     body,
@@ -347,5 +379,5 @@ export async function executeContentSave(
     hashtags: (params.hashtags as string[]) || [],
   }, dataDir);
 
-  return { ok: true, content };
+  return { ok: true, content, ...(manualImport ? importReceipt : {}) };
 }

@@ -1,107 +1,49 @@
 import { describe, it, expect } from "vitest";
-import { humanizeZh } from "../humanizer/zh.js";
+import { humanizeZh } from "./zh.js";
 
-describe("humanizeZh", () => {
-  it("removes filler phrases", () => {
-    const result = humanizeZh({ text: "值得一提的是，这个功能很好用。" });
-    expect(result.ok).toBe(true);
-    expect(result.humanizedText).not.toContain("值得一提的是");
-    expect(result.changes.length).toBeGreaterThan(0);
-  });
-
-  it("replaces corporate buzzwords", () => {
-    const result = humanizeZh({ text: "这个产品可以赋能用户，助力企业发展。" });
-    expect(result.humanizedText).not.toContain("赋能");
-    expect(result.humanizedText).not.toContain("助力");
-    expect(result.humanizedText).toContain("帮");
-  });
-
-  it("replaces 闭环 with 跑通", () => {
-    const result = humanizeZh({ text: "我们需要形成完整的闭环。" });
-    expect(result.humanizedText).toContain("跑通");
-    expect(result.humanizedText).not.toContain("闭环");
-  });
-
-  it("孤立的叙事「最后」不算 AI 痕迹:不计数、不改动(否则检测/修复死循环卡发布门禁)", () => {
-    const result = humanizeZh({ text: "每一次技术浪潮，最后，赚钱的都不是淘金者。" });
-    expect(result.humanizedText).toBe("每一次技术浪潮，最后，赚钱的都不是淘金者。");
-    expect(result.changes.some((c) => c.includes("顺序词"))).toBe(false);
-  });
-
-  it("「首先/其次」模板列表仍被打散计数", () => {
-    const result = humanizeZh({ text: "首先，打开设置。其次，填入 key。最后，保存。" });
-    expect(result.humanizedText).not.toContain("首先");
-    expect(result.humanizedText).not.toContain("其次");
-    expect(result.changes.some((c) => c.includes("顺序词"))).toBe(true);
-  });
-
-  it("removes summary openers", () => {
-    const result = humanizeZh({ text: "综上所述，这是一个好方案。" });
-    expect(result.humanizedText).not.toContain("综上所述");
-  });
-
-  it("removes 总而言之 and 总的来说", () => {
-    const r1 = humanizeZh({ text: "总而言之，效果不错。" });
-    const r2 = humanizeZh({ text: "总的来说，还可以。" });
-    expect(r1.humanizedText).not.toContain("总而言之");
-    expect(r2.humanizedText).not.toContain("总的来说");
-  });
-
-  it("removes vague adjectives", () => {
-    const result = humanizeZh({ text: "这是一个深度分析，全方位覆盖，多维度解读。" });
-    expect(result.humanizedText).not.toContain("深度");
-    expect(result.humanizedText).not.toContain("全方位");
-    expect(result.humanizedText).not.toContain("多维度");
-  });
-
-  it("术语保护：深度学习/深度智联不被肢解（2026-07-08 dogfood 回归）", () => {
-    const result = humanizeZh({ text: "深度学习模型的部署，深度智联发布了新品。" });
-    expect(result.humanizedText).toContain("深度学习");
-    expect(result.humanizedText).toContain("深度智联");
-  });
-
-  it("不插固定节奏句：多段落文本缺“说白了”也不得注入模板句（2026-07-08 dogfood 回归）", () => {
-    const text = "第一段讲一个生意。\n\n第二段讲它为什么成立。\n\n第三段给判断。";
+describe("humanizeZh — 安全格式清理与可选建议", () => {
+  it.each([
+    "我们决定先做试点。\n\n我们安排同事记录。\n\n我们最后复盘结果。",
+    "首先，打开设置。其次，填入 key。最后，保存。",
+    "我们需要形成完整的闭环。",
+    "值得一提的是，“赋能”是这份报告使用的术语。综上所述，这里需要深度分析。",
+    "深度学习模型的部署，深度智联发布了新品。",
+    "创业者找我的时候，十有八九会说他们已经用人工智能省下了一大笔外包费用，而且只用了三天时间就把原型跑起来了。",
+    "第一段讲一个生意。\n\n第二段讲它为什么成立。\n\n第三段给判断。",
+    "每一次技术浪潮，最后，赚钱的都不是淘金者。",
+  ])("保留人称、顺序、术语、引文与标点：%s", (text) => {
     const result = humanizeZh({ text });
-    expect(result.humanizedText).not.toContain("拼的不是工具数量");
-    expect(result.humanizedText).toBe(text);
-  });
-
-  it("不硬切长句：40+ 字长句的逗号不被改成句号（2026-07-08 dogfood 回归）", () => {
-    const text = "创业者找我的时候，十有八九会说他们已经用人工智能省下了一大笔外包费用，而且只用了三天时间就把原型跑起来了。";
-    const result = humanizeZh({ text });
-    expect(result.humanizedText).toBe(text);
-  });
-
-  it("returns original text unchanged when no AI patterns found", () => {
-    const clean = "今天天气不错，出去走走吧。";
-    const result = humanizeZh({ text: clean });
     expect(result.ok).toBe(true);
-    expect(result.humanizedText).toBe(clean);
+    expect(result.humanizedText).toBe(text);
+    expect(result.changes).toEqual([]);
     expect(result.changeCount).toBe(0);
   });
 
-  it("returns ok:true and summary on success", () => {
-    const result = humanizeZh({ text: "赋能用户，助力发展。" });
-    expect(result.ok).toBe(true);
-    expect(result.summary).toContain("humanizer-zh");
+  it("建议与实际改动分离，显式工具不会暗中应用句式或术语建议", () => {
+    const text = "我们先明确目标。\n我们形成闭环。\n我们随后复盘。";
+    const result = humanizeZh({ text });
+    expect(result.suggestions.some((s) => s.includes("专业术语保持原意"))).toBe(true);
+    expect(result.suggestions.some((s) => s.includes("不能改成“你”"))).toBe(true);
+    expect(result.changeCount).toBe(0);
+    expect(result.summary).toContain("均未自动应用");
+    expect(result.humanizedText).not.toContain("形成跑通");
   });
 
-  it("handles empty string", () => {
-    const result = humanizeZh({ text: "" });
-    expect(result.ok).toBe(true);
-    expect(result.humanizedText).toBe("");
+  it("只清理首尾、行尾空白与换行，保留句内空格和段落节奏", () => {
+    const result = humanizeZh({ text: "  甲  乙。 \r\n\r\n\r\n  缩进段落。\t\r\n" });
+    expect(result.humanizedText).toBe("甲  乙。\n\n\n  缩进段落。");
+    expect(result.changeCount).toBe(1);
+    expect(result.changes).toEqual(["规范化首尾、行尾空白与换行"]);
+    expect(humanizeZh({ text: result.humanizedText }).changeCount).toBe(0);
   });
 
-  it("handles multiple replacements in one pass", () => {
-    const result = humanizeZh({
-      text: "值得一提的是，我们需要赋能用户，打通渠道，形成闭环。综上所述，这是深度分析。",
-    });
-    expect(result.humanizedText).not.toContain("值得一提的是");
-    expect(result.humanizedText).not.toContain("赋能");
-    expect(result.humanizedText).not.toContain("闭环");
-    expect(result.humanizedText).not.toContain("综上所述");
-    expect(result.humanizedText).not.toContain("深度");
-    expect(result.changes.length).toBeGreaterThanOrEqual(5);
+  it("没有建议不冒充风格或事实审稿通过", () => {
+    const result = humanizeZh({ text: "今天天气不错。" });
+    expect(result.suggestions).toEqual([]);
+    expect(result.summary).toContain("不代表已通过风格或事实审稿");
+  });
+
+  it("空文本可安全处理", () => {
+    expect(humanizeZh({ text: "" })).toMatchObject({ ok: true, humanizedText: "", changeCount: 0, suggestions: [] });
   });
 });

@@ -28,6 +28,7 @@ import { type ScriptRequest } from "../modules/writing/generate-script.js";
 import { MAX_BODY_CHARS, MAX_HASHTAGS, MAX_TITLE_CHARS } from "../modules/writing/script-payload.js";
 import type { EvidenceLedgerSnapshot } from "../modules/research/evidence-ledger.js";
 import type { AngleCard } from "../modules/research/brief-store.js";
+import type { WritingReadiness } from "./writing-readiness.js";
 
 /** 缺省宿主身份：没有命名 token 的调用（工作台自动化、老配置）一律记 `local-user`（§4.1） */
 export const DEFAULT_HOST = "local-user";
@@ -75,6 +76,8 @@ export interface PackAttempt {
 /** 提交时重建门禁与审稿材料所需的上下文。只进 json，不进 markdown */
 export interface PackContext {
   req: ScriptRequest;
+  /** 发包时实际完成的流程快照；旧包缺席时只能报告 unknown，不能追认已调研。 */
+  readiness?: WritingReadiness;
   /** 本稿实际生效的创作者规划，写作和审稿共用。旧包可缺席。 */
   writingContract?: string;
   platform: ClipboardPlatform;
@@ -103,7 +106,7 @@ export type PackState = "preparing" | "ready" | "failed";
 export interface WritingPackFile {
   packId: string;
   /** 同步领包时冻结请求，备料期间也能识别新要求；旧包从 context.req 兼容读取。 */
-  request?: { req: ScriptRequest; topicDescription: string; planningFingerprint?: string };
+  request?: { req: ScriptRequest; topicDescription: string; planningFingerprint?: string; readiness?: WritingReadiness };
   /** 领号那一刻（也是 `pack_status` 的 `started_at`） */
   issuedAt: string;
   state: PackState;
@@ -130,6 +133,47 @@ export type ReadyPack = WritingPackFile & { state: "ready"; context: PackContext
 
 export function isReadyPack(pack: WritingPackFile | null | undefined): pack is ReadyPack {
   return Boolean(pack && pack.state === "ready" && pack.context);
+}
+
+/** 交稿与轮询都呈现同一份来源和备料事实，不把「包已准备」说成「调研已完成」。 */
+export function writerProgress(pack: ReadyPack, host = pack.host): Record<string, unknown> {
+  return {
+    writing_source: { kind: "host", host },
+    preparation: pack.context.readiness ?? {
+      status: "unknown",
+      note: "旧写作包未记录完整创作流程，无法确认是否完成调研和立意选择；材料存在不等于已完成调研。",
+      available_materials: {
+        research_brief: pack.context.wroteWithoutBrief === false,
+        host_materials: Boolean(pack.context.req.research?.trim()),
+        selected_angle: Boolean(pack.context.angleCard),
+      },
+    },
+  };
+}
+
+/** 重放旧提交时也不能把旧的 accepted 文案解释成作者认可或完整质量结论。 */
+export function submissionVisibility(pack: ReadyPack, result: Record<string, unknown>): Record<string, unknown> {
+  if (typeof result.quality_status === "string") return { status: result.status, ...writerProgress(pack), ...result };
+  const qualityStatus = result.status === "accepted_unreviewed" ? "unreviewed"
+    : result.status === "accepted_with_issues" ? "issues_remaining"
+      : result.status === "reviewing" ? "reviewing"
+        : result.status === "blocked" ? "blocked"
+          : result.status === "repair" || result.status === "review_required" ? "needs_revision" : "unknown";
+  return {
+    ...result,
+    saved: result.status !== "repair",
+    quality_status: qualityStatus,
+    needs_attention: true,
+    ...writerProgress(pack),
+    next_action: {
+      action: result.status === "reviewing" ? "wait_for_review" : "inspect_saved_review",
+      message: result.status === "reviewing"
+        ? "继续用 submit_status 等待审稿终态，尚无质量结论。"
+        : "向创作者说明这是升级前的交稿记录，并逐项核对已存审稿结论与待处理事项；缺失的质量或调研状态不可追认为完成。",
+    },
+    human_next_step: "这是已保存的历史记录，不代表你已认可这份稿件；请依据实际正文和可核验的审稿结果判断。",
+    note: "历史提交已恢复显示；保存状态、可核验的质量结论与创作者认可分开记录。",
+  };
 }
 
 /** 包没 ready 时的人话（`submit` 与 `find_evidence` 共用一句，不各编一版） */
@@ -233,12 +277,17 @@ function renderPackMarkdown(args: {
     "",
     "## 提交契约",
     "",
+    "- `title` 和 `body` 必填；`body` 可以直接放自然完整的正文。`hook`、`cta` 可省略或留空，`hashtags` 可省略或传空数组，不要为了凑字段硬加开场口号或关注引导。",
+    "- `saved` 只表示本次正文是否保存；`quality_status` 才是审稿结果，`needs_attention` 表示仍需处理。保存成功、AI 审稿结果和创作者认可必须分开说明。",
     "- `submit` 的返回体第一个字段永远是 `status`，先看它再看别的：",
     "  - `repair`：门禁打回，按 `failures` 逐条改，**不要重写整篇**，attempt 加一再交；",
     "  - `blocked`：修复轮用尽仍有硬门未过，稿件已标「缺证据」，别再交同一版；",
-    "  - `reviewing`：三道门全过、稿已落盘，审稿在后台跑——用 `submit_status{content_id}` 轮询到终态再收工；",
-    "  - `review_required`：审稿点了 blocker，只改被点名的句子，attempt 加一再交；",
-    "  - `accepted` / `accepted_with_issues` / `accepted_unreviewed`：稿子收下了，收工。",
+    "  - `reviewing`：稿已落盘，审稿在后台跑——用 `submit_status{content_id}` 轮询到终态，再向创作者说明真实结果；",
+    "  - `review_required`：按问题范围修订，保留无关内容；规划缺项或结构问题可以调整相关段落，attempt 加一再交；",
+    "  - `accepted`：AI 审稿未发现阻断项；向创作者展示正文和仍需核对的事项，尚不代表创作者认可；",
+    "  - `accepted_with_issues`：稿已保存但仍有阻断问题，明确展示残留清单和下一步，不得称为合格稿；",
+    "  - `accepted_unreviewed`：稿已保存但未完成审稿，说明 `review_skipped_reason`，不得声称审稿通过；",
+    "- 回执中的 `writing_source`、`preparation`、`next_action` 和 `human_next_step` 用简短人话告知创作者：谁写、调研和立意实际做到了哪一步、还缺什么。",
     "- `submit_status{content_id, attempt?}`：审稿通常 1–3 分钟。`reviewing` 就继续等，别重交同一稿；",
     "  上一稿还在审的时候交下一个 attempt 会被拒（先等结果，再决定改哪几句）。",
     "- 同一个 attempt 重复提交会原样返回上次结果（不扣修复轮）；比已记录的小会被拒。",

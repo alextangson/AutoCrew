@@ -31,7 +31,7 @@ import { DEFAULT_REPAIR_ROUNDS } from "../modules/writing/script-payload.js";
 import { loadProfile, rulesForPlatform } from "../modules/profile/creator-profile.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
-import { angleGate } from "./workflow.js";
+import { inspectWritingReadiness, writingContinueParams, writingReadinessFailure, type WritingReadiness } from "./writing-readiness.js";
 import { describeWriterFailure } from "./writer-failure.js";
 import {
   isReadyPack,
@@ -42,6 +42,7 @@ import {
   serializeWriterCall,
   writePack,
   PACK_MD,
+  writerProgress,
   type PackState,
   type ReadyPack,
   type WritingPackFile,
@@ -113,6 +114,20 @@ function readyResult(contentId: string, pack: ReadyPack): PackReadyResult {
     pack_md: renderPack(contentId, pack),
     budget: packBudget(pack),
     note: pack.note ?? FIRST_NOTE,
+    ...writerProgress(pack),
+  };
+}
+
+/** The same frozen facts must survive repeated pack calls and process restarts. */
+function preparationProgress(contentId: string, pack: WritingPackFile): Record<string, unknown> {
+  return {
+    preparation: pack.request?.readiness ?? {
+      status: "unknown",
+      note: "旧写作包未记录领包时的研究与立意状态，不能追认为已完成。",
+    },
+    writing_source: { kind: "host", host: pack.host },
+    next_action: { tool: "autocrew_writer", params: { action: "pack_status", content_id: contentId } },
+    poll_after_seconds: 30,
   };
 }
 
@@ -147,6 +162,8 @@ export interface PackParams {
   skipReason?: string;
   /** 宿主自己查来的材料（原样注入 research 槽，并登记成 `user-research` 一条未核验账目） */
   research?: string;
+  researchMode?: "auto" | "provided" | "skip";
+  researchReason?: string;
   host: string;
   /** 作废手上这份包、重跑一次备料（宿主明说要重来时才给 true） */
   force: boolean;
@@ -158,7 +175,7 @@ function requestKey(req: ScriptRequest, topicDescription: string): string {
     req.topic.trim(), req.platform, req.topicId ?? "", topicDescription.trim(),
     req.direction?.trim() ?? "", req.requirements?.trim() ?? "",
     req.angleSkipReason?.trim() ?? "", req.research?.trim() ?? "",
-    req.packId ?? "", req.usePatterns ?? true,
+    req.packId ?? "", req.usePatterns ?? true, req.researchMode ?? "auto", req.researchReason?.trim() ?? "",
   ]);
 }
 
@@ -203,6 +220,8 @@ export async function startPack(
     ...(params.requirements !== undefined ? { requirements: params.requirements.trim() || undefined } : {}),
     ...(params.skipReason !== undefined ? { angleSkipReason: params.skipReason.trim() || undefined } : {}),
     ...(params.research !== undefined ? { research: params.research.trim() || undefined } : {}),
+    ...(params.researchMode !== undefined ? { researchMode: params.researchMode } : {}),
+    ...(params.researchReason !== undefined ? { researchReason: params.researchReason.trim() || undefined } : {}),
   };
   const topicDescription = topic.description ?? "";
   // 旧包没存选题描述，无法反推历史值；其余已保存请求仍可比对，新包从领号起完整冻结。
@@ -221,8 +240,18 @@ export async function startPack(
   }
   // 立意闸口与内部写作同一份（§5.1）：有候选卡却没选，宿主也得回去问创始人。
   // 它必须留在同步段——这是拒单，不是「先答应下来再后台失败」。
-  const gated = await angleGate(params.topicId, req, dataDir, warn);
-  if (gated) return gated as Fail;
+  const readiness = await inspectWritingReadiness(params.topicId, req, dataDir, warn);
+  if (!readiness.ready) return writingReadinessFailure(readiness);
+  const frozenReadiness = current?.request?.readiness ?? current?.context?.readiness;
+  const previousBriefHash = isReadyPack(current) ? current.briefHash : frozenReadiness ? frozenReadiness.research.briefHash ?? "" : undefined;
+  if (!params.force && current && previousBriefHash !== undefined && previousBriefHash !== (readiness.research.briefHash ?? "")) {
+    return {
+      ok: false, code: "pack_request_changed", content_id: existing!.id, pack_id: current.packId,
+      error: "调研简报已更新，现有写作包仍使用旧材料；请保留完整要求并用 force:true 重新 pack。",
+      preparation: readiness,
+      next_action: { tool: "autocrew_writer", params: { ...readiness.continue_params, action: "pack", force: true } },
+    };
+  }
 
   const contentId = existing?.id ?? (await createPlaceholder(req, dataDir));
   const inFlight = preparing.has(contentId);
@@ -232,16 +261,16 @@ export async function startPack(
     if (isReadyPack(current)) return readyResult(contentId, current);
     // 还在跑：同一个号回第二遍，绝不起第二条后台任务
     if (current?.state === "preparing" && inFlight) {
-      return { ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE };
+      return { ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE, ...preparationProgress(contentId, current) };
     }
   }
   // 落到这里的三种情形都该重跑：force、没有包、以及「盘上写着 preparing 但没有任务在跑」
   // （进程重启留下的孤儿，不重跑它就永远 ready 不了）。
-  return startPreparation({ contentId, req, topicDescription, planningFingerprint: fingerprint, host: params.host, reissued: Boolean(current) }, dataDir, deps);
+  return startPreparation({ contentId, req, readiness, topicDescription, planningFingerprint: fingerprint, host: params.host, reissued: Boolean(current) }, dataDir, deps);
 }
 
 async function startPreparation(
-  args: { contentId: string; req: ScriptRequest; topicDescription: string; planningFingerprint: string; host: string; reissued: boolean },
+  args: { contentId: string; req: ScriptRequest; readiness: WritingReadiness; topicDescription: string; planningFingerprint: string; host: string; reissued: boolean },
   dataDir: string,
   deps: PackDeps,
 ): Promise<PackPreparingResult> {
@@ -251,7 +280,7 @@ async function startPreparation(
   const note = args.reissued ? REISSUE_NOTE : FIRST_NOTE;
   const placeholder: WritingPackFile = {
     packId,
-    request: { req: args.req, topicDescription: args.topicDescription, planningFingerprint: args.planningFingerprint },
+    request: { req: args.req, topicDescription: args.topicDescription, planningFingerprint: args.planningFingerprint, readiness: args.readiness },
     issuedAt,
     state: "preparing",
     note,
@@ -281,7 +310,7 @@ async function startPreparation(
     );
   });
 
-  const work = prepare({ contentId, packId, req: args.req, host, note }, dataDir, deps);
+  const work = prepare({ contentId, packId, req: args.req, readiness: args.readiness, host, note }, dataDir, deps);
   const task: Promise<void> = work.finally(() => {
     if (preparing.get(contentId) === task) preparing.delete(contentId);
   });
@@ -292,12 +321,14 @@ async function startPreparation(
     content_id: contentId,
     pack_id: packId,
     note: args.reissued ? `${REISSUE_NOTE}${POLL_NOTE}` : POLL_NOTE,
+    ...preparationProgress(contentId, placeholder),
   };
 }
 
 // ─── 后台备料 ─────────────────────────────────────────────────────────────────
 
 interface PrepareArgs {
+  readiness: WritingReadiness;
   contentId: string;
   packId: string;
   req: ScriptRequest;
@@ -342,6 +373,7 @@ function readyPackOf(args: PrepareArgs, base: WritingPackFile, built: WritingCon
     // 修复轮上限与内部写手同源：包有 gate 就用它的，没有 gate 也照给缺省（抖音包没 gate，但硬门照拦）
     repair: { max: gate?.maxRepairRounds ?? DEFAULT_REPAIR_ROUNDS, used: base.repair.used },
     context: {
+      readiness: args.readiness,
       req: args.req,
       writingContract: inputs.writingContract,
       platform,
@@ -364,6 +396,22 @@ function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string):
   return serializeWriterCall(args.contentId, async () => {
     const base = await stillMine(args.contentId, args.packId, dataDir);
     if (!base) return;
+    // Preparation is asynchronous. Never label a pack with a readiness snapshot
+    // from one brief while its actual prompts/ledger came from another.
+    const actual = built.inputs.attribution;
+    if ((args.readiness.research.briefHash ?? "") !== (actual.usedBriefHash ?? "") ||
+        (args.readiness.angle.selectedAngleHash ?? "") !== (actual.usedAngle?.hash ?? "")) {
+      throw new Error("写作包准备期间调研或立意已变化，准备状态与实际材料不一致；请带原始要求和 force:true 重新 pack。");
+    }
+    const latest = await inspectWritingReadiness(args.req.topicId!, args.req, dataDir);
+    const topic = await getTopic(args.req.topicId!, dataDir);
+    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir));
+    if (!latest.ready || latest.research.briefHash !== args.readiness.research.briefHash ||
+        latest.angle.selectedAngleHash !== args.readiness.angle.selectedAngleHash ||
+        !topic || topic.title !== args.req.topic || topic.description !== args.req.topicDescription ||
+        (base.request?.planningFingerprint && base.request.planningFingerprint !== fingerprint)) {
+      throw new Error("写作包准备期间调研、选题或创作者规划已更新，旧准备结果已停止；请带完整要求和 force:true 重新 pack。");
+    }
     const pack = readyPackOf(args, base, built);
     await writePack(args.contentId, pack, dataDir);
     await writeTextAtomic(packPath(args.contentId, dataDir, PACK_MD), renderPack(args.contentId, pack));
@@ -419,11 +467,14 @@ export async function packStatus(contentId: string, dataDir: string): Promise<Pa
   };
   if (isReadyPack(pack)) return { ...base, ...readyResult(contentId, pack), status: "ready" as const };
   if (pack.state === "failed") {
+    const req = pack.request?.req;
     return {
       ...base,
+      ...preparationProgress(contentId, pack),
       error: pack.error ?? "未记原因",
       note: "这份包没备成，别动笔——pack{force:true} 重来一次；连着失败就先跑 autocrew_workflow doctor 看线路。",
+      ...(req?.topicId ? { next_action: { tool: "autocrew_writer", params: { ...writingContinueParams(req.topicId, req), action: "pack", force: true } } } : {}),
     };
   }
-  return { ...base, note: POLL_NOTE };
+  return { ...base, ...preparationProgress(contentId, pack), note: POLL_NOTE };
 }

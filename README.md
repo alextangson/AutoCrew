@@ -203,6 +203,16 @@ autocrew host codex
 
 AutoCrew 的网页、CLI、OpenClaw 和 MCP 使用同一套能力注册表。
 
+### MCP 写作默认流程
+
+新稿从 `autocrew_workflow prepare` 开始，先复用或建立选题。返回真实研究状态、候选立意、证据与推荐理由；
+已有明确角度不重复选卡。研究完成且方向确定后，由当前宿主领取 `writer pack` 并写稿，再用 `writer submit` 交回检查。
+
+MCP 初始化自带流程说明，亦可读取 `autocrew://writing-guide` 或使用 `write_content` prompt，无需依赖宿主自动发现仓库技能。
+已有材料须明确 `research_mode=provided` 并提供 `research`；用户明确不需研究才可用 `skip` 和 `research_reason`。
+交付必须区分已保存、审稿状态和作者认可。`generate` / `workflow write` 的 MCP 调用仅在明确 `execution=engine` 时后台代写。
+`content save` 的 MCP 调用仅用于 `source=manual_import` 加 `import_reason` 的已有稿件导入，不能绕过新稿检查。
+
 ### 接宿主（Claude Code / Codex / dsh）
 
 **只有一个进程写盘。** `http://127.0.0.1:4317/mcp` 是唯一的 MCP 传输：Codex 的远端客户端直连它，

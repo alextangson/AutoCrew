@@ -56,43 +56,44 @@ const PAYLOAD: SubmitPayload = {
 describe("buildReviewSystemPrompt — 判据三 立意执行", () => {
   const v3Prompt = buildReviewSystemPrompt({ hasResearch: true, angle: V3 });
 
-  it("v3 卡 → 判据三出现，五条 blocker 逐条点名卡上的原文", () => {
+  it("按主张、收获、机制与禁区验收，保留已选结构", () => {
     expect(v3Prompt).toContain("## 判据三：立意执行");
-    // 主画像动作：审稿人要代入这个人读，所以画像三要素与卡上的最小动作都得在
     expect(v3Prompt).toContain(DEFAULT_PERSONAS.trust.name);
     expect(v3Prompt).toContain(DEFAULT_PERSONAS.trust.who);
     expect(v3Prompt).toContain(DEFAULT_PERSONAS.trust.state);
-    expect(v3Prompt).toContain("主画像动作没达成");
+    for (const value of [V3.thesis, V3.payoff, V3.mechanism, V3.antiScope]) expect(v3Prompt).toContain(value);
+    expect(v3Prompt).toContain("观点+案例+观点");
+    expect(v3Prompt).toContain("本次写作约定优先");
+    expect(v3Prompt).not.toContain("前 3 秒");
+    expect(v3Prompt).not.toContain("主画像动作没达成");
+    expect(v3Prompt).not.toContain("主张不可反驳");
+  });
+
+  it("故事不强加反常识开头，纠偏结构仍须按材料回应误区", () => {
+    const story = buildReviewSystemPrompt({ hasResearch: true, angle: { ...V3, structure: "story" } });
+    expect(story).toContain("亲历复盘");
+    expect(story).not.toContain("纠偏没有成立");
+    const myth = buildReviewSystemPrompt({ hasResearch: true, angle: { ...V3, structure: "myth-busting" } });
+    expect(myth).toContain("纠偏没有成立");
+    expect(myth).toContain(V3.misconception);
+    expect(myth).toContain("不规定开头位置、不要求反问");
+  });
+
+  it("表达元素与行动建议是参考，不用凑数、凑转折或凑 CTA", () => {
+    expect(v3Prompt).toContain("表达参考（不按数量验收）");
+    expect(v3Prompt).toContain("痛点→理想状态、新奇点");
     expect(v3Prompt).toContain(V3.nextAction);
-    // 误区：前 3 秒点出 + 正文反驳
-    expect(v3Prompt).toContain("误区没被点出或没被反驳");
-    expect(v3Prompt).toContain(V3.misconception);
-    expect(v3Prompt).toContain("前 3 秒");
-    // 收获感：大白话的为什么 + 一个能做的动作
-    expect(v3Prompt).toContain("收获感没兑现");
-    expect(v3Prompt).toContain(V3.payoff);
-    // 主张可反驳性
-    expect(v3Prompt).toContain("主张不可反驳");
-    expect(v3Prompt).toContain(V3.thesis);
-    // 机制只剩比喻
-    expect(v3Prompt).toContain("机制只剩比喻");
-    expect(v3Prompt).toContain(V3.mechanism);
-    // 禁区（v2 加严表里唯一没被上面覆盖的一条，不能随版本丢掉）
-    expect(v3Prompt).toContain("闯进禁区");
-    expect(v3Prompt).toContain(V3.antiScope);
-  });
-
-  it("advisory 三条常驻：网感元素、最小动作、[未证实]，身份表述明写「只提醒」", () => {
-    expect(v3Prompt).toContain("网感元素命中不足 2 个");
-    expect(v3Prompt).toContain("痛点→理想状态、新奇点"); // 卡上的元素逐个列出来
-    expect(v3Prompt).toContain("结尾没有给观众一个最小动作");
+    expect(v3Prompt).toContain("不因缺少 CTA 或最小动作扣分");
+    expect(v3Prompt).not.toContain("网感元素命中不足 2 个");
+    expect(v3Prompt).not.toContain("结尾没有给观众一个最小动作");
     expect(v3Prompt).toContain("[未证实]");
-    expect(v3Prompt).toContain("不会写代码 / 不是科班 / 学历 / 出身");
-    expect(v3Prompt).toContain("永远给 advisory，不要打回");
+    expect(v3Prompt).toContain("不得为塑造人设编造事实");
   });
 
-  it("数字：判据三明说不再复核数字真假（无据数字已被硬门拦下）", () => {
-    expect(v3Prompt).toContain("不要再复核数字真假");
+  it("数字匹配不能替代事实核查，仍审对象、时间、范围和因果", () => {
+    expect(v3Prompt).toContain("数字硬门只确认数值能在材料中找到，不能证明引用成立");
+    expect(v3Prompt).toContain("对象、时间、范围、单位和上下文");
+    expect(v3Prompt).not.toContain("不要再复核数字真假");
   });
 
   it("needs_human 数字：有才列，没有就不出现这条 advisory", () => {

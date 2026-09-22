@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   loadEngineConfig,
+  loadEngineConfigIfConfigured,
   normalizeProviders,
   resolveEngineConfigPath,
   resolveEngineRoute,
@@ -166,6 +167,30 @@ describe("loadEngineConfig", () => {
   it("throws when engine.json is literal null", async () => {
     await fs.writeFile(path.join(testDir, "engine.json"), "null");
     await expect(loadEngineConfig(testDir)).rejects.toThrow(/不是 JSON 对象/);
+  });
+});
+
+// 「没配」与「配坏了」必须分开（P5 §1.6）：宿主写稿不吃模型，不该被没配挡住；
+// 但配坏了照炸，静默当成没配会让人查不出自己的 JSON 哪里写错了。
+describe("loadEngineConfigIfConfigured", () => {
+  it("returns undefined when nothing is configured", async () => {
+    await expect(loadEngineConfigIfConfigured(testDir)).resolves.toBeUndefined();
+  });
+
+  it("returns the config when it is configured", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), JSON.stringify({ apiKey: "sk-live" }));
+    const config = await loadEngineConfigIfConfigured(testDir);
+    expect(config).toBeDefined();
+  });
+
+  it("still throws on a malformed engine.json — that is a bug, not an absence", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), "{broken");
+    await expect(loadEngineConfigIfConfigured(testDir)).rejects.toThrow(/engine\.json 解析失败/);
+  });
+
+  it("still throws on literal null", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), "null");
+    await expect(loadEngineConfigIfConfigured(testDir)).rejects.toThrow(/不是 JSON 对象/);
   });
 });
 

@@ -27,7 +27,7 @@ import {
 } from "../modules/research/research-job-store.js";
 import type { ResearchRunner, TriggerResult } from "../modules/research/research-runner.js";
 import { SEARCH_NOT_CONFIGURED } from "../modules/research/search-provider.js";
-import { saveTopic, updateContent, saveContent, type Topic } from "../storage/local-store.js";
+import { saveTopic, updateTopic, updateContent, saveContent, type Topic } from "../storage/local-store.js";
 
 let testDir: string;
 
@@ -155,6 +155,66 @@ function fakeRunner(trigger: TriggerResult): { runner: ResearchRunner; calls: st
 
 const run = (params: Record<string, unknown>, deps = {}) =>
   executeWorkflow({ ...params, _dataDir: testDir }, { onWarn: () => {}, ...deps });
+
+describe("workflow prepare", () => {
+  it("首次自动开始研究但不代写，并保留请求给后续调用", async () => {
+    const topic = await seed(null);
+    const start = vi.fn(async () => ({ contentId: "unused" }));
+    const fake = fakeRunner({ accepted: true, deduped: false, job: { topicId: topic.id, status: "queued", startedAt: "now", perspectives: [], topicHash: "h" } });
+    const requirements = "  用我提供的顺序\n不要统一反常识开头。  ";
+    const result = await run({ action: "prepare", topic_id: topic.id, platform: "douyin", requirements }, { searchAvailableImpl: async () => true, createRunnerImpl: () => fake.runner, startGenerateScriptImpl: start });
+    expect(result).toMatchObject({ ok: true, status: "researching", ready: false, poll_after_seconds: 30, research: { status: "running", autoResearched: false }, continue_params: { requirements }, next_action: { params: { action: "prepare", requirements } } });
+    expect(fake.calls).toEqual([[topic.id, "full"]]);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("正在研究不重复投递；失败不偷偷无限重试", async () => {
+    const topic = await seed(null);
+    const trigger = vi.fn();
+    const createRunnerImpl = vi.fn(() => ({ trigger, reclaimStaleJobs: async () => [], idle: async () => {}, stop: () => {} }));
+    await adopt(topic.id, undefined, "running");
+    expect(await run({ action: "prepare", topic_id: topic.id }, { createRunnerImpl })).toMatchObject({ ok: true, status: "researching", poll_after_seconds: 30 });
+    await adopt(topic.id, undefined, "failed");
+    expect(await run({ action: "prepare", topic_id: topic.id }, { createRunnerImpl })).toMatchObject({ status: "needs_attention", research: { status: "failed" }, next_action: { params: { action: "research" } } });
+    expect(createRunnerImpl).not.toHaveBeenCalled();
+    expect(trigger).not.toHaveBeenCalled();
+  });
+
+  it("过期简报自动刷新，但失败后的旧简报保持问题可见", async () => {
+    const topic = await seed();
+    await updateTopic(topic.id, { description: "已改变规划" }, testDir);
+    const fake = fakeRunner({ accepted: true, deduped: false, job: { topicId: topic.id, status: "queued", startedAt: "now", perspectives: [], topicHash: "new" } });
+    expect(await run({ action: "prepare", topic_id: topic.id, direction: "沿用角度" }, { searchAvailableImpl: async () => true, createRunnerImpl: () => fake.runner })).toMatchObject({ status: "researching", research: { stale: true } });
+    expect(fake.calls).toEqual([[topic.id, "full"]]);
+    await adopt(topic.id, 1, "failed");
+    expect(await run({ action: "prepare", topic_id: topic.id })).toMatchObject({ status: "needs_attention", research: { status: "failed", stale: true } });
+  });
+
+  it("显式已有材料直接走宿主路线，并如实标明未自动调研", async () => {
+    const topic = await seed(null);
+    const result = await run({ action: "prepare", topic_id: topic.id, platform: "douyin", research_mode: "provided", research: "材料原文", direction: "我亲历的返工" });
+    expect(result).toMatchObject({ ok: true, status: "ready_to_write", research: { status: "provided", autoResearched: false }, next_action: { tool: "autocrew_writer", params: { action: "pack", research_mode: "provided", research: "材料原文" } } });
+  });
+
+  it("清空旧手写方向的意图经过 prepare 仍传给 writer，而未传参数不变成清空", async () => {
+    const topic = await seed();
+    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" });
+    const cleared = await run({ action: "prepare", topic_id: topic.id, platform: "douyin", direction: "", requirements: "" });
+    expect(cleared).toMatchObject({ status: "ready_to_write", next_action: { params: { direction: "", requirements: "" } } });
+    const omitted = await run({ action: "prepare", topic_id: topic.id, platform: "douyin" });
+    expect((omitted.next_action as { params: Record<string, unknown> }).params).not.toHaveProperty("direction");
+  });
+
+  it("MCP 默认不启动内部写手，明确 engine 才进入写前检查", async () => {
+    const topic = await seed();
+    const start = vi.fn(async () => ({ contentId: "engine-draft" }));
+    const params = { action: "write", topic_id: topic.id, platform: "douyin", direction: "用户已给方向", requirements: "完整规划", _host: "claude_desktop" };
+    expect(await run(params, { startGenerateScriptImpl: start })).toMatchObject({ ok: false, code: "host_writer_preferred", next_action: { tool: "autocrew_workflow", params: { action: "prepare", requirements: "完整规划" } } });
+    expect(start).not.toHaveBeenCalled();
+    expect(await run({ ...params, execution: "engine" }, { startGenerateScriptImpl: start })).toMatchObject({ ok: true, contentId: "engine-draft" });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+});
 
 // ─── research ─────────────────────────────────────────────────────────────────
 
@@ -407,12 +467,12 @@ describe("workflow write", () => {
     expect(res).toMatchObject({ ok: true, contentId: "c-new" });
   });
 
-  it("压根没有候选卡就没有闸口（降级路径不硬出角度）", async () => {
+  it("有简报但没有候选和方向时拒绝写稿，补齐立意再继续", async () => {
     const topic = await seed(makeBrief({ angleCards: [] }));
     const start = startStub();
     const res = await run({ action: "write", topic_id: topic.id, platform: "douyin" }, { startGenerateScriptImpl: start });
-    expect(res).toMatchObject({ ok: true });
-    expect(start).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ ok: false, status: "needs_attention" });
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("平台非法当场拒，不派活", async () => {
@@ -568,6 +628,7 @@ describe("workflow entry", () => {
     const projected = JSON.parse(JSON.stringify(workflowSchema));
     expect(projected).toEqual(JSON.parse(JSON.stringify(projected)));
     expect(projected.properties.action.enum).toEqual([
+      "prepare",
       "research",
       "status",
       "select_angle",
