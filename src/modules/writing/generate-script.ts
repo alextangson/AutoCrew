@@ -22,7 +22,7 @@ import { getPack, getPackForPlatform } from "../packs/index.js";
 import type { QualityGateSpec } from "../packs/pack-schema.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { recentContrastPairs } from "../learnings/diff-tracker.js";
-import { buildScriptPrompts } from "./script-prompt.js";
+import { buildScriptPrompts, buildWritingContract } from "./script-prompt.js";
 import type { ResolvedAngle, ScriptRequest } from "./script-prompt.js";
 import { selectPatternsForScript } from "../patterns/pattern-select.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
@@ -275,18 +275,21 @@ async function resolveResearch(
   warn: (message: string) => void,
 ): Promise<ResolvedResearch> {
   if (!req.topicId) return { hasCards: false };
+  const topic = await getTopic(req.topicId, dataDir).catch((err) => {
+    warn(`选题读取失败（${req.topicId}）：${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  });
+  const found = { ...(topic ? { topic } : {}) };
   try {
     const snapshot = await resolveEffectiveBrief(req.topicId, getDataDir(dataDir), warn);
-    if (!snapshot) return { hasCards: false };
+    if (!snapshot) return { hasCards: false, ...found };
     const { brief } = snapshot;
     const hasCards = angleCardsOf(brief).length > 0;
-    const topic = await getTopic(req.topicId, dataDir);
     if (!topic) warn(`选题 ${req.topicId} 已不在库中，简报按「基于旧版选题」标注注入`);
     const currentHash = topic ? topicHashOf(topic.title, topic.description) : "";
     // 核对不上就当过期：选题查不到时不给这份简报背书（§2 过期标注，注入照做）
     const topicStale = !topic || currentHash !== brief.topicHash;
     const injected = { snapshot, topicStale };
-    const found = { ...(topic ? { topic } : {}) };
     // 手写角度压过一切：卡照样算「有」，但这一轮不解析它（§1.3 手填时角度卡仍展示不注入）
     if (req.direction?.trim()) return { brief: injected, hasCards, ...found };
     // 「选中」现算是否还作数：选的不是快照那版、或简报因选题被改而过期，一律按没选处理
@@ -307,7 +310,7 @@ async function resolveResearch(
     // 材料少一块照写，绝不让读盘故障带走整条写作链
     const msg = err instanceof Error ? err.message : String(err);
     warn(`调研简报读取失败（${req.topicId}），本稿按无简报无角度写：${msg}`);
-    return { hasCards: false };
+    return { hasCards: false, ...found };
   }
 }
 
@@ -445,6 +448,8 @@ export interface GenerationInputs {
   patterns: PatternCard[];
   /** research 槽装配完的请求（快照文本写进 `research`） */
   promptReq: ScriptRequest;
+  /** 本次创作要求与品牌定位的快照，独立于可裁剪的研究材料。 */
+  writingContract: string;
   /** 写手与审稿共用的**同一份**材料快照（§4.3：两侧不许各裁一刀） */
   snapshot: ResearchSnapshot;
   /** 本稿生效的角度卡；手写 direction 或没选时缺席（direction 由 buildUserPrompt 自己认） */
@@ -548,6 +553,12 @@ async function gatherInputs(
   const { anchor, rest } = splitOwnMaterial(ownMaterial, picked.angle);
   const injectedChunks = [...(anchor ? [anchor] : []), ...rest];
   const lookupIds = ledger.lookups().flatMap((l) => l.itemIds);
+  const promptReq: ScriptRequest = {
+    ...req,
+    ...(req.topicDescription === undefined && picked.topic?.description
+      ? { topicDescription: picked.topic.description } : {}),
+    ...(snapshot.text ? { research: snapshot.text } : {}),
+  };
 
   return {
     config,
@@ -555,7 +566,8 @@ async function gatherInputs(
     profile,
     contrastPairs,
     patterns,
-    promptReq: snapshot.text ? { ...req, research: snapshot.text } : req,
+    promptReq,
+    writingContract: buildWritingContract(profile, promptReq, picked.angle),
     snapshot,
     ...(picked.angle ? { angle: picked.angle } : {}),
     wroteWithoutAngle: picked.hasCards && !picked.angle && !req.direction?.trim(),
@@ -648,7 +660,7 @@ function logAttribution(attribution: Attribution): Record<string, unknown> {
 
 /** 归因落稿件元数据的**对外**口径：宿主写稿在发包时落同一份字段，稿件上两条路径不可区分 */
 export function contentAttributionOf(inputs: GenerationInputs): Partial<Content> {
-  return contentAttribution(inputs.attribution, inputs.ledger);
+  return { ...contentAttribution(inputs.attribution, inputs.ledger), writingContract: inputs.writingContract };
 }
 
 /** 归因落稿件元数据（写手开工前一次、收尾一次——中途崩了也不丢） */
@@ -803,7 +815,7 @@ async function runWriterLoop(
  */
 function reviewDraft(
   written: WriterRun,
-  inputs: Pick<GenerationInputs, "config" | "profile" | "snapshot" | "angle" | "ledger">,
+  inputs: Pick<GenerationInputs, "config" | "profile" | "snapshot" | "angle" | "ledger" | "writingContract">,
   prompts: { system: string; user: string },
   gate: QualityGateSpec | undefined,
   platform: ScriptRequest["platform"],
@@ -818,6 +830,7 @@ function reviewDraft(
       humanizedText: assembleAndHumanize(written.payload),
       system: prompts.system,
       user: prompts.user,
+      writingContract: inputs.writingContract,
       // 写手拿到的那份**同一个字符串**（§4.3）——审稿不再自己裁一刀
       ...(inputs.snapshot.text ? { researchSlot: inputs.snapshot.text } : {}),
       // 选中角度进审稿材料（审稿 §2.4）：深度判据的基准从「有没有论点」升到「thesis 论证了吗」
@@ -901,6 +914,7 @@ async function writeAndFinalize(args: {
   // 账本先随占位稿落一次（§3.3）：写手还没开工，但补证已经花过钱了——
   // 这一步之后崩掉，「这稿当时手上有哪些证据」仍然查得到
   await persistAttribution(placeholderId, attribution, inputs.ledger, warn, dataDir);
+  await updateContent(placeholderId, { writingContract: inputs.writingContract }, dataDir);
 
   const evidenceTool = inputs.researcher ? buildFindEvidenceTool(inputs.researcher) : undefined;
   const written = await runWriterLoop(
@@ -943,7 +957,7 @@ async function writeAndFinalize(args: {
 
   const reviewed = await reviewDraft(
     written,
-    { config, profile, snapshot: inputs.snapshot, ...(angle ? { angle } : {}), ledger: inputs.ledger },
+    { config, profile, snapshot: inputs.snapshot, ...(angle ? { angle } : {}), ledger: inputs.ledger, writingContract: inputs.writingContract },
     prompts,
     gate,
     req.platform,

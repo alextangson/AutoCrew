@@ -192,14 +192,21 @@ describe("生效角度的优先级：direction > 选中卡 > 无", () => {
     const topic = await seedResearched();
     await pick(topic.id, CARD);
 
-    const { seen, note } = await write({
+    const { seen, note, contentId } = await write({
       ...TEST_REQ,
       topicId: topic.id,
       direction: "从被裁掉的初级程序员视角写",
+      requirements: "先讲真实场景，再解释原因，不做工具横评",
     });
 
     expect(seen.write!.userMessage).toContain("从被裁掉的初级程序员视角写");
     expect(seen.write!.userMessage).not.toContain(CARD.thesis);
+    for (const text of ["从被裁掉的初级程序员视角写", "先讲真实场景，再解释原因，不做工具横评", TOPIC_DESC]) {
+      expect(seen.write!.userMessage).toContain(text);
+      expect(seen.review!.userMessage).toContain(text);
+      expect((await getContent(contentId, testDir))?.writingContract).toContain(text);
+    }
+    expect((await getContent(contentId, testDir))?.genRequest).toBeUndefined();
     expect(note).toBe("AI 完成初稿");
   });
 

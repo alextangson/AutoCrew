@@ -24,6 +24,66 @@ afterEach(async () => {
 });
 
 describe("reviseDraft", () => {
+  it("第二轮改稿仍收到上一轮已采纳的新受众，不被初稿旧规划拉回", async () => {
+    const original = await saveContent(
+      { title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [], writingContract: "原规划：写给老板，篇幅 1800 字。" },
+      testDir,
+    );
+    let round = 0;
+    const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
+      round++;
+      if (round === 2) {
+        expect(options.systemPrompt).toContain("原规划：写给老板，篇幅 1800 字。");
+        expect(options.systemPrompt).toContain("【整篇】 改为写给一线店员，压缩到 1200 字");
+        expect(options.systemPrompt).toContain("后采纳的修改要求 > 先采纳的修改要求 > 原写作约定");
+        expect(options.userMessage).toContain("只把结尾改自然，不改变受众");
+      }
+      await options.tools![0].execute({ title: "库存", body: `第${round}轮已修改正文` });
+      return { finalMessage: "done", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    await reviseDraft(original.id, "改为写给一线店员，压缩到 1200 字", testDir, { runLoopImpl });
+    await reviseDraft(original.id, "只把结尾改自然，不改变受众", testDir, { runLoopImpl });
+    const saved = await getContent(original.id, testDir);
+    expect(saved?.writingFeedback?.map((entry) => entry.instruction)).toEqual([
+      "改为写给一线店员，压缩到 1200 字", "只把结尾改自然，不改变受众",
+    ]);
+    expect(saved?.writingFeedback?.every((entry) => entry.scope === "whole")).toBe(true);
+  });
+
+  it("保留初稿规划并允许本次明确反馈覆盖它，局部改稿不重新选择方向", async () => {
+    const writingContract = "面向实体店主；只谈库存积压；不写工具横评；篇幅 1800 字。";
+    const original = await saveContent(
+      { title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [], writingContract },
+      testDir,
+    );
+    const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
+      expect(options.systemPrompt).toContain(writingContract);
+      expect(options.systemPrompt).toContain("本次修改要求优先于原写作约定");
+      expect(options.systemPrompt).toContain("不能据此补造第一人称故事");
+      expect(options.userMessage).toContain("压缩到 1200 字，其他规划保持");
+      await options.tools![0].execute({ title: "库存", body: "改过的正文" });
+      return { finalMessage: "done", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    await reviseDraft(original.id, "压缩到 1200 字，其他规划保持", testDir, { runLoopImpl });
+    expect((await getContent(original.id, testDir))?.writingContract).toBe(writingContract);
+  });
+
+  it("旧稿仍有原生成请求时恢复手写方向，不依赖现时选题的角度", async () => {
+    const original = await saveContent(
+      {
+        title: "库存", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [],
+        genRequest: { topic: "库存", platform: "wechat_mp", direction: "先写店主面对的积压，不要写榜单" },
+      },
+      testDir,
+    );
+    const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
+      expect(options.systemPrompt).toContain("先写店主面对的积压，不要写榜单");
+      await options.tools![0].execute({ title: "库存", body: "改过的正文" });
+      return { finalMessage: "done", turns: 1, totalTokens: 10, toolCallCount: 1, stopReason: "no_tool_calls" };
+    };
+    await reviseDraft(original.id, "把开头写具体", testDir, { runLoopImpl });
+  });
+
   it("updates the same content and records the feedback as a new version", async () => {
     const original = await saveContent(
       {
@@ -111,6 +171,7 @@ describe("reviseDraft", () => {
 
     await expect(reviseDraft(original.id, "再精炼一点", testDir, { runLoopImpl })).rejects.toThrow();
     expect(await listDiffs({ contentId: original.id }, testDir)).toHaveLength(0);
+    expect((await getContent(original.id, testDir))?.writingFeedback).toBeUndefined();
   });
 
   it("改过的稿不许再顶着「已 AI 审稿」的徽章：review.status 落 stale（spec §2.7）", async () => {

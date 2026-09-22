@@ -32,6 +32,26 @@ afterEach(async () => {
 });
 
 describe("executePrePublish platform-specific checks", () => {
+  for (const [platform, max] of [["xiaohongshu", 1000], ["wechat_video", 800], ["bilibili", 2000]] as const) {
+    it(`${platform} 按发布简介检查长度，长口播不被压缩，超限简介仍被拦下`, async () => {
+      const kit = { platform, postTitle: "这期讲什么", caption: "字".repeat(300), storyboard: [], coverText: "AI", coverPrompt: "封面", generatedAt: new Date().toISOString() };
+      const content = await saveContent({ title: "这期讲什么", body: "字".repeat(2500), platform, status: "approved", videoKit: kit }, dataDir);
+      const params = { action: "check", content_id: content.id, _dataDir: dataDir, _readOnly: true };
+      const result = await executePrePublish(params);
+      expect("checks" in result && result.checks.find((c) => c.name === "发布简介字数")).toMatchObject({ status: "pass" });
+      expect((await getContent(content.id, dataDir))?.body).toHaveLength(2500);
+      await updateContent(content.id, { videoKit: { ...kit, caption: "字".repeat(max + 1) } }, dataDir);
+      const tooLong = await executePrePublish(params);
+      expect("checks" in tooLong && tooLong.checks.find((c) => c.name === "发布简介字数")).toMatchObject({ status: "fail" });
+    });
+  }
+
+  it("公众号仍检查全文上限，不接受无关的视频简介来绕过", async () => {
+    const content = await saveContent({ title: "公众号长文", body: "字".repeat(3001), platform: "wechat_mp", status: "approved", videoKit: { platform: "douyin", postTitle: "介绍", caption: "字".repeat(300), storyboard: [], coverText: "封面", coverPrompt: "封面", generatedAt: new Date().toISOString() } }, dataDir);
+    const result = await executePrePublish({ action: "check", content_id: content.id, _dataDir: dataDir, _readOnly: true });
+    expect("checks" in result && result.checks.find((c) => c.name === "正文字数")).toMatchObject({ status: "fail" });
+  });
+
   it("does not require hashtags for WeChat official-account articles", async () => {
     const content = await saveContent(
       {

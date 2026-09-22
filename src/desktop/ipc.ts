@@ -218,6 +218,7 @@ import { isContentId, isSafeFilename } from "../storage/entity-id.js";
 import { attachLibraryAsset } from "./content-asset-attach.js";
 import type { ApprovalBinding } from "./approval-gate.js";
 import { rewriteSelection } from "../modules/writing/selection-rewrite.js";
+import { appendWritingFeedback } from "../modules/writing/writing-feedback.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
@@ -898,12 +899,19 @@ async function draftAdoptRevisionHandler(payload: Record<string, unknown>): Prom
     // revise_focus 的落盘点在这儿（它自己不落库）：收下改稿即审稿结论过期（审稿 spec §2.7）——
     // 改过的稿不得继续顶着「已 AI 审稿」的徽章。没审过的稿不新增字段。
     const before0 = await getContent(contentId, dataDir);
+    // 新客户端明确传范围；旧客户端的 before 是完整正文才按整篇处理，避免把局部特例泛化。
+    const feedbackScope = payload.scope === "selection" ? "selection"
+      : payload.scope === "draft" || payload.scope === "whole" || (before0 && before === before0.body) ? "whole" : "selection";
+    const changed = before0 && (before0.body !== body || (title !== undefined && title !== before0.title));
     const updated = await updateContent(
       contentId,
       {
         body,
         ...(title ? { title } : {}),
         _versionNote: note,
+        ...(changed && feedback ? { writingFeedback: appendWritingFeedback(before0.writingFeedback, feedback, feedbackScope, {
+          ...(feedbackScope === "selection" && typeof payload.selection === "string" ? { selection: payload.selection } : {}),
+        }) } : {}),
         ...(before0?.review ? { review: { ...before0.review, status: "stale" as const } } : {}),
       },
       dataDir,

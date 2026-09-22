@@ -56,6 +56,46 @@ describe("draft:adopt_revision", () => {
     expect(saved?.body).toBe("新正文更口语");
     expect(saved?.versions).toHaveLength(2);
     expect((await listDiffs(undefined, testDir)).length).toBe(1);
+    expect(saved?.writingFeedback).toEqual([expect.objectContaining({ instruction: "口语一点", scope: "whole" })]);
+  });
+
+  it("只有成功采纳才追加规划，选区反馈保存范围与原文锚点", async () => {
+    const c = await mkContent();
+    const first = await handlers["draft:adopt_revision"]({
+      content_id: c.id, body: "原段落更自然", before: "原正文", feedback: "改为给店员看", scope: "draft", _dataDir: testDir,
+    });
+    expect(first.ok).toBe(true);
+    const second = await handlers["draft:adopt_revision"]({
+      content_id: c.id, body: "原段落更自然，结尾保留列表", before: "更自然", feedback: "此处保留列表", scope: "selection",
+      selection: "更自然", _dataDir: testDir,
+    });
+    expect(second.ok).toBe(true);
+    const saved = await getContent(c.id, testDir);
+    expect(saved?.writingFeedback).toEqual([
+      expect.objectContaining({ instruction: "改为给店员看", scope: "whole" }),
+      expect.objectContaining({ instruction: "此处保留列表", scope: "selection", selection: "更自然" }),
+    ]);
+  });
+
+  it("重复采纳没有正文变化时不追加新要求，失败保存也不污染历史", async () => {
+    const c = await mkContent();
+    await handlers["draft:adopt_revision"]({
+      content_id: c.id, body: c.body, before: c.body, feedback: "没有实际改动的要求", scope: "draft", _dataDir: testDir,
+    });
+    expect((await getContent(c.id, testDir))?.writingFeedback).toBeUndefined();
+    const failed = await handlers["draft:adopt_revision"]({
+      content_id: c.id, body: "", feedback: "未保存的要求", scope: "draft", _dataDir: testDir,
+    });
+    expect(failed.ok).toBe(false);
+    expect((await getContent(c.id, testDir))?.writingFeedback).toBeUndefined();
+  });
+
+  it("旧客户端未传 scope 且 before 只是局部时，不把该要求升级为整篇", async () => {
+    const c = await mkContent();
+    await handlers["draft:adopt_revision"]({
+      content_id: c.id, body: "原正文已改一处", before: "正文", feedback: "这句留下术语", _dataDir: testDir,
+    });
+    expect((await getContent(c.id, testDir))?.writingFeedback?.[0].scope).toBe("selection");
   });
 
   it("does NOT record learning without before (no adopt-gated feedback)", async () => {

@@ -9,7 +9,8 @@ import { runLoop, type LoopOptions, type LoopResult, type LoopTool } from "../..
 import { getContent, updateContent, type Content } from "../../storage/local-store.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { recordDiff } from "../learnings/diff-tracker.js";
-import { renderBrandContext } from "./script-prompt.js";
+import { buildWritingContract, renderBrandContext } from "./script-prompt.js";
+import { appendWritingFeedback, renderWritingFeedback } from "./writing-feedback.js";
 
 export interface ReviseDraftResult {
   content: Content;
@@ -65,19 +66,25 @@ export async function reviseDraft(
   // 品牌上下文与写初稿同源（受众/目标/声音样本/本平台规则/风格边界）——
   // 不带对比对：当前这条修改要求就是最新鲜的活信号，不必再拿历史改动去教。
   let brandContext = "";
+  let writingContract = current.writingContract ?? "";
   try {
     const profile = await loadProfile(dataDir);
     if (profile) brandContext = renderBrandContext(profile, current.platform ?? "", undefined);
+    if (!writingContract && current.genRequest) writingContract = buildWritingContract(profile, current.genRequest);
   } catch {
     // 档案不可用不应阻断一次明确的稿件修改。
   }
 
   const systemPrompt = [
     "你是资深中文内容编辑。按用户的明确反馈修订整篇稿件。",
+    "本次修改要求优先于原写作约定；未被本次要求改变的受众、论点、禁区与篇幅继续有效，不要因局部改稿重新选择方向。",
     "保留原稿中没有被反馈否定的事实、论点和有效结构；不要编造新事实或数据。",
+    "创作者定位、写作偏好和修辞示例不等于亲身经历，不能据此补造第一人称故事。",
     "需要改标题时一起改；不需要时保留原标题。正文必须完整返回，禁止用省略号或“其余不变”。",
     "完成后必须调用 submit_revision 提交完整标题和完整正文，不要只给建议。",
     brandContext,
+    writingContract ? `【本稿原写作约定】\n${writingContract}` : "",
+    renderWritingFeedback(current.writingFeedback),
   ].filter(Boolean).join("\n\n");
 
   const result = await runLoopImpl(writer.config, {
@@ -102,6 +109,7 @@ export async function reviseDraft(
     {
       title: revision.title,
       body: revision.body,
+      writingFeedback: appendWritingFeedback(current.writingFeedback, feedback, "whole"),
       _versionNote: note,
       // 改稿不接审稿（审稿 spec §2.7），但改过的稿不得继续顶着「已 AI 审稿」的徽章：
       // 结论作废但保留（issues 还有回看价值），状态改 stale。没审过就不新增字段。

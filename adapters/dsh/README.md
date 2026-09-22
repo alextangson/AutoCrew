@@ -91,7 +91,7 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_dashboard` | 总览 / 日历 / 待办 / 批量流转 |
 | `autocrew_topic` | 建选题、列选题 |
 | `autocrew_content` | 案卷读写：存稿、列、取、改、流转、平行变体 |
-| `autocrew_generate` | 在进程内调模型写稿（thin loop + 口播 track pack） |
+| `autocrew_generate` | 在进程内调模型写稿（thin loop + 口播 track pack）；`requirements` 传完整写作规划，`direction` 只传明确指定的角度 |
 | `autocrew_style` | 从编辑差分蒸馏风格规则、吸收爆款样本 |
 | `autocrew_review` | 敏感词 + 质量分 + 去 AI 味，可自动修 |
 | `autocrew_humanize` | 单独跑中文去 AI 味 |
@@ -101,6 +101,10 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_writer` | **总编辑自己动笔**：`pack`（领包，秒回 `preparing`，备料转后台）→ `pack_status`（轮询到 `ready` 才拿到 `pack_md`，通常 1–6 分钟；`failed` 就 `pack{force:true}` 重来）→ `find_evidence`（缺数字去查，整稿 3 次、单次封 45 秒）→ `submit`（过与内部写手同一套门禁；三道门当场判，全过则回 `reviewing`，审稿转后台）→ `submit_status`（轮询到终态，通常 1–3 分钟）。备料几分钟、审稿实测 161 秒，同步跑都会撞上宿主 60 秒的工具超时，所以这条链两头都是「秒回 + 轮询」 |
 
 `autocrew_publish`、`autocrew_cover_review`、`autocrew_research`、`autocrew_pipeline` 等**不放行**，原因逐条记在下面的审计表里。启动时会把没放行的名字打进日志，不会让人误以为全量能力已经在 dsh 里了。
+
+写作委托通过 `requirements` 完整传给 `autocrew_writer pack` 或 `autocrew_workflow write`，
+不要把受众、提纲与篇幅误放进会覆盖选卡的 `direction`。已有写作包与新要求不同会返回
+`pack_request_changed`；带更新后的要求和 `force:true` 重领，不能继续沿用旧包。
 
 ## 两条契约
 

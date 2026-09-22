@@ -84,6 +84,9 @@ export const workflowSchema = Type.Object({
   direction: Type.Optional(
     Type.String({ description: "write：创始人自己写的角度（优先级高于选中的卡），有它就不再要求选卡" }),
   ),
+  requirements: Type.Optional(
+    Type.String({ description: "write：创作者本次完整写作要求，原样保留受众、提纲、必写/禁写、篇幅、口吻与修改反馈；补充选中立意，不绕过选卡。" }),
+  ),
   skip_reason: Type.Optional(
     Type.String({ description: "write：创始人**明说**不选卡直接写时的原话转述；只进留痕，不进 prompt" }),
   ),
@@ -102,7 +105,7 @@ export const WORKFLOW_DESCRIPTION = [
   "2) status{topic_id}：轮询到 job.terminal=true 为止（1–2 分钟一次）。落定后 brief.cards 就是立意候选。",
   "3) 把 cards **原样念给创始人听**，让他挑一张。cards 按 score 排序，score 只是排序、不是推荐；本工具永远不替他选卡，你也不要替他选。",
   "4) select_angle{topic_id, angle_id, card?}：落他选的那张。他改了文字就把改写后的整张卡放进 card。",
-  "5) write{topic_id, platform, direction?, skip_reason?}：开写。**有候选卡却没选、也没给 direction/skip_reason 时会被拒**（needsAngle）——那是让你回去问创始人，不是让你自己挑一张。写稿也是后台的，通常 15–30 分钟。",
+  "5) write{topic_id, platform, direction?, requirements?, skip_reason?}：开写。创作者的本次规划与修改反馈完整放进 requirements；只有明确改变立意才放 direction。**有候选卡却没选、也没给 direction/skip_reason 时会被拒**（needsAngle）——requirements 不绕过选卡。写稿也是后台的，通常 15–30 分钟。",
   "6) draft{content_id}：轮询取稿。status=drafting = 还在写；needs_evidence = 数字硬门拦下了，看 unverifiedNumbers 和 blockedReason。",
   "doctor{probe?}：引擎/搜索配没配好、数据目录在哪。跑不动时先看它；模型调用报错时用 doctor{probe:true} 真测一遍端点，回答创始人是哪条线坏了，别复述原始报错。",
 ].join("\n");
@@ -334,12 +337,15 @@ async function doWrite(
   if (!topic) return fail(`选题不存在：${topicId}`);
 
   const direction = str(params.direction);
+  const requirements = str(params.requirements);
   const skipReason = str(params.skip_reason);
   const req: ScriptRequest = {
     topic: topic.title,
+    topicDescription: topic.description,
     platform: platform as ClipboardPlatform,
     topicId,
     ...(direction ? { direction } : {}),
+    ...(requirements ? { requirements } : {}),
     ...(skipReason ? { angleSkipReason: skipReason } : {}),
   };
 

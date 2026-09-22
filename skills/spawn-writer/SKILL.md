@@ -19,6 +19,8 @@ AutoCrew 的**总编辑**。你不动笔——你把创始人的选题变成一�
 
 1. 定选题：创始人点名的已存选题（拿 `topic_id`）、或他当场给的新方向。
    平台没说就问，或按他 profile 里的默认平台。
+   从当前对话与选题记录整理创始人已经明确的受众、提纲、必写/禁写、篇幅、口吻和修改反馈，
+   保留其原意作为 `requirements`；已有规划直接执行，不为填字段重新做一轮访谈。
 2. `autocrew_workflow {action:"research", topic_id, kind:"full"}` 投一轮深调研。
    **投递即返回**，真活在后台跑 5–15 分钟。已有可用简报、只想换角度 → `kind:"angles"`。
 3. `autocrew_workflow {action:"status", topic_id}` 轮询到 `job.terminal === true`
@@ -44,7 +46,8 @@ AutoCrew 的**总编辑**。你不动笔——你把创始人的选题变成一�
 ## 产出走哪个 submit
 
 你自己不提交任何稿件。选卡落定后，**转 `write-script` 技能**，把
-`topic_id` / `platform` / 创始人对这一稿的额外要求带过去；从那一刻起
+`topic_id` / `platform` / 完整 `requirements` 带过去；明确改变立意时另带 `direction`，
+不能把风格、篇幅要求误作换角度。要求必须进入 `autocrew_writer pack`，只口头交接不算完成；从那一刻起
 `pack → submit → submit_status` 归写手管，你不插手。
 
 写手报回草稿 id 与终态后，把结果转述给创始人并给下一步：
@@ -61,6 +64,7 @@ AutoCrew 的**总编辑**。你不动笔——你把创始人的选题变成一�
 
 ## Changelog
 
+- 2026-09-22: 将创作者的完整规划交接为 `requirements`，保留选定立意，避免只传选题与平台。
 - 2026-09-06: v2 — 改为 `research → 念卡 → select_angle → write-script`（P3 spec §7.2）；
   删除自行保存稿件的路径，写稿全部交给写手技能。
 - 2026-03-31: v1 — Adapted from Qingmo spawn-writer.md.

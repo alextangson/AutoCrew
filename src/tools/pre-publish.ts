@@ -20,6 +20,7 @@ import {
 } from "../storage/local-store.js";
 import { executeReview } from "./review.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
+import { isVideoPlatform } from "../storage/stage-guard.js";
 
 // --- Types ---
 
@@ -220,26 +221,30 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   }
 
   // --- Check 6: Body length ---
-  const bodyLen = (content.body || "").length;
+  const hasVideoCaption = isVideoPlatform(platform) && content.videoKit?.platform === platform && Boolean(content.videoKit.caption?.trim());
+  const bodyLen = (hasVideoCaption ? content.videoKit!.caption : content.body || "").length;
+  const lengthLabel = hasVideoCaption ? "发布简介字数" : "正文字数";
   const minBody = PLATFORM_MIN_BODY[platform] || 100;
   const maxBody = PLATFORM_MAX_BODY[platform];
   if (bodyLen < minBody) {
     checks.push({
-      name: "正文字数",
+      name: lengthLabel,
       status: "fail",
       detail: `${bodyLen} 字 (不足 ${minBody})`,
-      fix: "扩充正文，增加案例或数据",
+      fix: hasVideoCaption ? "补全发布简介的内容价值与必要信息" : "扩充正文，增加案例或数据",
     });
   } else if (maxBody !== undefined && bodyLen > maxBody) {
     checks.push({
-      name: "正文字数",
+      name: lengthLabel,
       status: "fail",
       detail: `${bodyLen} 字 (超出 ${maxBody} 上限)`,
-      fix: "编辑器里选段用「缩写」压缩，或 autocrew_rewrite 精简正文",
+      fix: hasVideoCaption ? "精简发布简介，保留口播全文" : isVideoPlatform(platform)
+        ? "先生成视频发布件，用发布简介校验平台字数，不要压缩口播全文"
+        : "编辑器里选段用「缩写」压缩，或 autocrew_rewrite 精简正文",
     });
   } else {
     checks.push({
-      name: "正文字数",
+      name: lengthLabel,
       status: "pass",
       detail: `${bodyLen} 字 (≥${minBody}${maxBody !== undefined ? `，≤${maxBody}` : ""})`,
     });

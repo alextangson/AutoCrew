@@ -7,6 +7,7 @@ import { isVideoPlatform, stageGuardError } from "./stage-guard.js";
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
 import type { ReviewMeta } from "../modules/writing/script-review.js";
 import type { ScriptRequest } from "../modules/writing/script-prompt.js";
+import type { WritingFeedback } from "../modules/writing/writing-feedback.js";
 // 角度卡的形状归简报模块定义（它是简报 schema 的一部分），这里只引用不复制
 import type { AngleCard } from "../modules/research/brief-store.js";
 // 证据账本的落盘形状归账本模块定义（P1 §3.3），这里同样只引用
@@ -287,6 +288,10 @@ export interface Content {
    * 过期的请求只会让 meta 里多一处会骗人的事实。旧稿没有此字段，重试走降级还原。
    */
   genRequest?: ScriptRequest;
+  /** 初稿实际采用的规划快照；转正后仍保留，审稿和后续改稿使用同一份依据。 */
+  writingContract?: string;
+  /** 已成功采纳的本稿修改要求，按顺序覆盖原约定；选区反馈不得泛化到全文。 */
+  writingFeedback?: WritingFeedback[];
   /** 本稿写作时注入的对标拆解卡 id（收件箱设计 §3.5）：学习闭环归因，无卡时字段不落 */
   usedPatternIds?: string[];
   /** 本稿注入的调研简报版本（深调研 §6）：回溯得到 briefs/<topicId>.v<N>.json 那份不可变输入，无简报时字段不落 */

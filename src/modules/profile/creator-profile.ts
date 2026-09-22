@@ -21,7 +21,7 @@ export interface WritingRule {
   rule: string;
   /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly,
    *  "calibrated" = produced by the calibration skills (A/B-verified during onboarding) */
-  source: "auto_distilled" | "user_explicit" | "calibrated";
+  source: "auto_distilled" | "user_explicit" | "calibrated" | "manual";
   /** 0-1, higher = more confident */
   confidence: number;
   scope?: RuleScope;
@@ -141,6 +141,10 @@ export interface PerformanceEntry {
 export interface CreatorProfile {
   /** User's content industry/niche */
   industry: string;
+  /** 创作者保存的表达定位；不能只保存在档案里而不交给写手。 */
+  expressionPersona?: string;
+  /** 长期内容规划。视频时长/字数只作为视频稿的默认值，本次要求优先。 */
+  contentFormat?: { videoLength?: string; contentDepth?: string; wordCount?: string };
   /**
    * 选题雷达的粗筛关键词(校准中心可编辑)——与 industry 分开存:
    * industry 是给 LLM 读的散文定位,整段切词只会切出「部署工程师」这种永不命中的长 token,

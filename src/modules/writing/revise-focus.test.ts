@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { reviseFocus } from "./revise-focus.js";
-import { saveContent } from "../../storage/local-store.js";
+import { getContent, saveContent } from "../../storage/local-store.js";
 import { addWritingRule, updateProfile } from "../profile/creator-profile.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
@@ -56,6 +56,46 @@ describe("reviseFocus 的品牌上下文", () => {
 });
 
 describe("reviseFocus", () => {
+  it("选区修订沿用原稿规划，本次反馈只覆盖被明确改变的部分", async () => {
+    const writingContract = "写给店主，只讲积压诊断，不写工具推荐。";
+    const c = await saveContent(
+      { title: "库存", body: "开头。\n\n中间待改。\n\n结尾。", platform: "douyin", status: "draft_ready", tags: [], writingContract },
+      testDir,
+    );
+    const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      expect(opts.systemPrompt).toContain(writingContract);
+      expect(opts.systemPrompt).toContain("本次修改要求优先于原写作约定");
+      expect(opts.systemPrompt).toContain("范围：只改用户选中的这一段");
+      expect(opts.userMessage).toContain("只把中间的解释改口语");
+      await opts.tools!.find((t) => t.name === "submit_revision")!.execute({ span: "中间改口语了。" });
+      return done();
+    };
+    const result = await reviseFocus(c.id, "只把中间的解释改口语", { scope: "selection", selection: "中间待改。" }, testDir, { runLoopImpl });
+    expect(result).toEqual({ kind: "revision", span: "中间改口语了。" });
+    expect((await getContent(c.id, testDir))?.writingFeedback).toBeUndefined(); // 提案未采纳不记忆
+  });
+
+  it("读取已采纳的整篇和局部反馈，生成新提案不会污染历史", async () => {
+    const writingFeedback = [
+      { instruction: "写给一线店员", scope: "whole" as const, at: "2026-09-21T00:00:00.000Z" },
+      { instruction: "这段保留三条清单", scope: "selection" as const, at: "2026-09-21T01:00:00.000Z", selection: "盘点清单这一段" },
+    ];
+    const c = await saveContent(
+      { title: "库存", body: "现在改结尾", platform: "douyin", status: "draft_ready", tags: [], writingFeedback },
+      testDir,
+    );
+    const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {
+      expect(opts.systemPrompt).toContain("【整篇】 写给一线店员");
+      expect(opts.systemPrompt).toContain("【仅当时选区】 这段保留三条清单");
+      expect(opts.systemPrompt).toContain("盘点清单这一段");
+      expect(opts.systemPrompt).toContain("不得推广到全文或其他选区");
+      await opts.tools!.find((t) => t.name === "submit_revision")!.execute({ span: "结尾更短。" });
+      return done();
+    };
+    await reviseFocus(c.id, "只压缩结尾", { scope: "selection", selection: "现在改结尾" }, testDir, { runLoopImpl });
+    expect((await getContent(c.id, testDir))?.writingFeedback).toEqual(writingFeedback);
+  });
+
   it("selection scope + clear instruction → returns a revised span only", async () => {
     const c = await mkContent();
     const runLoopImpl = async (_cfg: EngineConfig, opts: LoopOptions): Promise<LoopResult> => {

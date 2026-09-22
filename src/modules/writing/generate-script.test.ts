@@ -501,19 +501,18 @@ describe("generateScript × quality gate (wechat_mp)", () => {
     expect(res.gateFailures).toEqual([]);
   });
 
-  it("xiaohongshu 口播包：平台 maxChars=1000 生效——超长发布文案被打回压缩", async () => {
+  it("xiaohongshu 长口播不会因发布简介上限被压缩", async () => {
     const execResults: string[] = [];
     const runLoopImpl = makeRunLoop(
-      [{ ...GOOD_PAYLOAD, body: "字".repeat(1200) }, { ...GOOD_PAYLOAD, body: "字".repeat(600) }],
+      [{ ...GOOD_PAYLOAD, body: "字".repeat(2200) }],
       200,
       execResults,
     );
     const res = await generateScript({ topic: "AI 变现", platform: "xiaohongshu" as const }, testDir, {
       runLoopImpl,
     });
-    expect(execResults[0]).toContain("QUALITY GATE 未通过");
-    expect(execResults[0]).toContain("1000");
-    expect(execResults[1]).toBe("已收到脚本");
+    expect(execResults).toEqual(["已收到脚本"]);
+    expect(res.body).toContain("字".repeat(2200));
     expect(res.gateFailures).toEqual([]);
   });
 

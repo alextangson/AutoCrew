@@ -19,6 +19,7 @@ import { loadEngineConfig, type EngineConfig } from "../engine/config.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
 import { reviewOnce, type ReviewInput, type ReviewIssue, type ReviewMeta } from "../modules/writing/script-review.js";
+import { buildWritingContract } from "../modules/writing/script-prompt.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
 import { getContent, transitionStatus, updateContent } from "../storage/local-store.js";
 import {
@@ -154,6 +155,12 @@ export async function reviewLine(
   }
 }
 
+function packWritingContract(pack: ReadyPack): string {
+  const ctx = pack.context;
+  return ctx.writingContract || buildWritingContract(null, ctx.req,
+    ctx.angleCard ? { card: ctx.angleCard, evidence: [], tensions: [] } : undefined);
+}
+
 function reviewInput(pack: ReadyPack, job: ReviewJob): ReviewInput {
   const ctx = pack.context;
   const gate = packGate(pack);
@@ -162,6 +169,7 @@ function reviewInput(pack: ReadyPack, job: ReviewJob): ReviewInput {
     humanizedText: job.pending.humanizedText,
     system: ctx.prompts.system,
     user: ctx.prompts.user,
+    writingContract: packWritingContract(pack),
     ...(ctx.researchSlot ? { researchSlot: ctx.researchSlot } : {}),
     ...(ctx.angleCard ? { angle: ctx.angleCard } : {}),
     voiceSamples: ctx.voiceSamples ?? [],
@@ -277,6 +285,7 @@ async function acceptDraft(
       draftReadyAt: new Date().toISOString(),
       // 转正即清：成稿没有「中断」可重试，留一份过期的请求只是 meta 里一处会骗人的旧事实
       genRequest: undefined,
+      writingContract: packWritingContract(pack),
       blockedReason: null,
       review,
       _versionNote: versionNote(pack, review),

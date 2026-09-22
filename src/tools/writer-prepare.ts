@@ -16,6 +16,7 @@
  * - **落盘前认号**：后台任务写回之前先读盘对 `packId`，号被 `force` 换掉了就把自己的结果丢掉。
  *   这正是实机那条 bug 的堵口——迟到的备料不许覆盖现行的包。
  */
+import { createHash } from "node:crypto";
 import { writeTextAtomic } from "../storage/json-atomic.js";
 import { getTopic, listContents, updateContent, type Content } from "../storage/local-store.js";
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
@@ -27,7 +28,7 @@ import {
   type WritingContext,
 } from "../modules/writing/generate-script.js";
 import { DEFAULT_REPAIR_ROUNDS } from "../modules/writing/script-payload.js";
-import { rulesForPlatform } from "../modules/profile/creator-profile.js";
+import { loadProfile, rulesForPlatform } from "../modules/profile/creator-profile.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
 import { angleGate } from "./workflow.js";
@@ -141,11 +142,34 @@ async function reusablePlaceholder(
 export interface PackParams {
   topicId: string;
   platform: string;
-  direction: string;
-  skipReason: string;
+  direction?: string;
+  requirements?: string;
+  skipReason?: string;
+  /** 宿主自己查来的材料（原样注入 research 槽，并登记成 `user-research` 一条未核验账目） */
+  research?: string;
   host: string;
   /** 作废手上这份包、重跑一次备料（宿主明说要重来时才给 true） */
   force: boolean;
+}
+
+/** 固定字段顺序，空串与未设置等价；不把宿主或 force 这种调用参数当写作要求。 */
+function requestKey(req: ScriptRequest, topicDescription: string): string {
+  return JSON.stringify([
+    req.topic.trim(), req.platform, req.topicId ?? "", topicDescription.trim(),
+    req.direction?.trim() ?? "", req.requirements?.trim() ?? "",
+    req.angleSkipReason?.trim() ?? "", req.research?.trim() ?? "",
+    req.packId ?? "", req.usePatterns ?? true,
+  ]);
+}
+
+/** 规划快照按值比较，JSON 对象键顺序变化不应触发重新备料；数组顺序仍有意义。 */
+function planningFingerprint(selectedAngle: unknown, profile: unknown): string {
+  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile }, (_key, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+      : value,
+  );
+  return createHash("sha256").update(stable).digest("hex");
 }
 
 export async function startPack(
@@ -159,27 +183,49 @@ export async function startPack(
   }
   const topic = await getTopic(params.topicId, dataDir);
   if (!topic) return { ok: false, error: `选题不存在：${params.topicId}` };
-
-  const req: ScriptRequest = {
-    topic: topic.title,
-    platform: params.platform as ClipboardPlatform,
-    topicId: params.topicId,
-    ...(params.direction ? { direction: params.direction } : {}),
-    ...(params.skipReason ? { angleSkipReason: params.skipReason } : {}),
-  };
-  // 立意闸口与内部写作同一份（§5.1）：有候选卡却没选，宿主也得回去问创始人。
-  // 它必须留在同步段——这是拒单，不是「先答应下来再后台失败」。
-  const gated = await angleGate(params.topicId, req, dataDir, warn);
-  if (gated) return gated as Fail;
+  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir));
 
   const existing = await reusablePlaceholder(
     params.topicId,
     params.platform,
     deps.listContentsImpl ?? (() => listContents(dataDir)),
   );
+  const current = existing ? await readPack(existing.id, dataDir) : null;
+  const previous = current?.request?.req ?? current?.context?.req ?? existing?.genRequest;
+  const req: ScriptRequest = {
+    ...previous,
+    topic: topic.title,
+    topicDescription: topic.description,
+    platform: params.platform as ClipboardPlatform,
+    topicId: params.topicId,
+    // 未重提 = 继承；显式空串 = 清掉。不能把轮询重领误当成删除原来的规划和材料。
+    ...(params.direction !== undefined ? { direction: params.direction.trim() || undefined } : {}),
+    ...(params.requirements !== undefined ? { requirements: params.requirements.trim() || undefined } : {}),
+    ...(params.skipReason !== undefined ? { angleSkipReason: params.skipReason.trim() || undefined } : {}),
+    ...(params.research !== undefined ? { research: params.research.trim() || undefined } : {}),
+  };
+  const topicDescription = topic.description ?? "";
+  // 旧包没存选题描述，无法反推历史值；其余已保存请求仍可比对，新包从领号起完整冻结。
+  const previousDescription = current?.request?.topicDescription ?? previous?.topicDescription ?? topicDescription;
+  const requestChanged = previous && requestKey(previous, previousDescription) !== requestKey(req, topicDescription);
+  // 旧包没存指纹，不能把当前规划假装成旧包实际用过的快照；仅新包可可靠检查规划变更。
+  const planningChanged = current?.request?.planningFingerprint && current.request.planningFingerprint !== fingerprint;
+  if (!params.force && current && (requestChanged || planningChanged)) {
+    return {
+      ok: false,
+      code: "pack_request_changed",
+      error: "本次写作要求、材料、选题描述、已选立意或创作者档案与现有写作包不同，旧包没有应用这些变化。请带更新后的要求和 force:true 重新 pack，再按新包写作。若改用已选立意卡，显式传 direction:\"\" 清除旧手写角度。",
+      content_id: existing!.id,
+      pack_id: current.packId,
+    };
+  }
+  // 立意闸口与内部写作同一份（§5.1）：有候选卡却没选，宿主也得回去问创始人。
+  // 它必须留在同步段——这是拒单，不是「先答应下来再后台失败」。
+  const gated = await angleGate(params.topicId, req, dataDir, warn);
+  if (gated) return gated as Fail;
+
   const contentId = existing?.id ?? (await createPlaceholder(req, dataDir));
   const inFlight = preparing.has(contentId);
-  const current = await readPack(contentId, dataDir);
 
   if (!params.force) {
     // 已经备好了就原样还给他（不重跑：备料花的是真钱）
@@ -191,11 +237,11 @@ export async function startPack(
   }
   // 落到这里的三种情形都该重跑：force、没有包、以及「盘上写着 preparing 但没有任务在跑」
   // （进程重启留下的孤儿，不重跑它就永远 ready 不了）。
-  return startPreparation({ contentId, req, host: params.host, reissued: Boolean(current) }, dataDir, deps);
+  return startPreparation({ contentId, req, topicDescription, planningFingerprint: fingerprint, host: params.host, reissued: Boolean(current) }, dataDir, deps);
 }
 
 async function startPreparation(
-  args: { contentId: string; req: ScriptRequest; host: string; reissued: boolean },
+  args: { contentId: string; req: ScriptRequest; topicDescription: string; planningFingerprint: string; host: string; reissued: boolean },
   dataDir: string,
   deps: PackDeps,
 ): Promise<PackPreparingResult> {
@@ -205,6 +251,7 @@ async function startPreparation(
   const note = args.reissued ? REISSUE_NOTE : FIRST_NOTE;
   const placeholder: WritingPackFile = {
     packId,
+    request: { req: args.req, topicDescription: args.topicDescription, planningFingerprint: args.planningFingerprint },
     issuedAt,
     state: "preparing",
     note,
@@ -225,6 +272,7 @@ async function startPreparation(
       contentId,
       {
         writtenBy: { kind: "host", host },
+        genRequest: args.req,
         pack: { packId, issuedAt, host },
         lastError: null,
         _versionNote: args.reissued ? `重新发写作包给 ${host}（旧包作废）` : `写作包发给 ${host}`,
@@ -295,6 +343,7 @@ function readyPackOf(args: PrepareArgs, base: WritingPackFile, built: WritingCon
     repair: { max: gate?.maxRepairRounds ?? DEFAULT_REPAIR_ROUNDS, used: base.repair.used },
     context: {
       req: args.req,
+      writingContract: inputs.writingContract,
       platform,
       trackPackId: inputs.pack.id,
       prompts,

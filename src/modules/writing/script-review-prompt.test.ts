@@ -9,6 +9,7 @@ import { buildReviewSystemPrompt, buildReviewUserMessage } from "./script-review
 import type { AngleCardV2, AngleCardV3 } from "../research/brief-store.js";
 import { DEFAULT_PERSONAS } from "../research/personas.js";
 import type { SubmitPayload } from "./script-payload.js";
+import { WRITING_PRIORITY } from "./script-prompt.js";
 
 const V3: AngleCardV3 = {
   cardVersion: 3,
@@ -133,6 +134,20 @@ describe("buildReviewSystemPrompt — 判据三 立意执行", () => {
 // ─── canFindEvidence：与修订轮工具箱同一个事实（codex #21）────────────────────
 
 describe("buildReviewSystemPrompt — canFindEvidence", () => {
+  it("手写方向即使没有调研或角度卡也要验收，且不能把规划当成事实", () => {
+    const p = buildReviewSystemPrompt({ hasResearch: false, hasWritingContract: true });
+    expect(p).toContain("判据零：创作者规划遵循");
+    expect(p).toContain("遗漏明确要求、违背禁区");
+    expect(p).toContain(WRITING_PRIORITY);
+    expect(p).toContain("写作约定是创作意图，不是事实证据");
+    expect(p).toContain("不得为兑现方向编造案例或数字");
+    expect(p).not.toContain("只判 AI 味");
+  });
+
+  it("旧输入没有写作约定时不假装存在额外规划", () => {
+    expect(buildReviewSystemPrompt({ hasResearch: false })).not.toContain("判据零");
+  });
+
   it("无材料 + 有查证工具 → 删掉「不要凭空要求作者补数据」", () => {
     const p = buildReviewSystemPrompt({ hasResearch: false, canFindEvidence: true });
     expect(p).not.toContain("不要凭空要求作者补数据");
@@ -159,6 +174,15 @@ describe("buildReviewUserMessage — 立意卡块", () => {
     voiceSamples: [],
     platform: "douyin",
   };
+
+  it("无角度卡的手写要求逐字交给审稿人，不被调研开关吃掉", () => {
+    const contract = "写给店主；只讲库存错误导致的积压；用一个门店场景展开；不写工具榜单。";
+    const msg = buildReviewUserMessage({ ...base, writingContract: contract });
+    expect(msg).toContain("【本稿写作约定");
+    expect(msg).toContain(contract);
+    expect(msg).toContain("已有的写作约定仍需验收");
+    expect(msg).not.toContain("只判 AI 味");
+  });
 
   it("v3 卡 → 七个判定字段都在，标题同时含「立意卡」与「本稿切入点」", () => {
     const msg = buildReviewUserMessage({ ...base, angle: V3, researchSlot: "【调研简报】三个数字" });
