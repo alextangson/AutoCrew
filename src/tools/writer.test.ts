@@ -397,6 +397,48 @@ describe("writer pack", () => {
   });
 });
 
+// ─── 手工建的选题：没有简报也得有账本（2026-09-22 实机复盘） ──────────────────
+
+describe("writer pack — 手工建的选题（没有简报）", () => {
+  const MANUAL_DESC = "自己扒的转录：三家客户上线后返工工时平均多了 18%，出处见对方的复盘会纪要。";
+
+  const manualTopic = (): Promise<Topic> =>
+    saveTopic({ title: TITLE, description: MANUAL_DESC, tags: [] }, testDir);
+
+  it("选题描述与宿主给的 research 都登记成 user_claim——没简报不等于没账本", async () => {
+    const topic = await manualTopic();
+    const started = await run({
+      action: "pack",
+      topic_id: topic.id,
+      platform: "douyin",
+      research: "宿主自己查到的：同一批客户的人力成本一年多花了 24 万。",
+    });
+    expect(started.ok).toBe(true);
+    await settle(started.content_id as string);
+
+    const file = await readPackFile(started.content_id as string);
+    expect(file.briefHash).toBe(""); // 确认走的就是「没简报」那条路
+    const byId = new Map(file.ledger.entries.map((e) => [e.id, e]));
+    expect(byId.get("user-topic")).toMatchObject({ source: "user_claim", quote: MANUAL_DESC });
+    expect(byId.get("user-research")).toMatchObject({ source: "user_claim" });
+    expect(String(byId.get("user-research")?.quote)).toContain("24 万");
+  });
+
+  it("正文引用选题描述里的数字 → 数字门放行（这条路以前全量打回）", async () => {
+    const topic = await manualTopic();
+    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" });
+    await settle(started.content_id as string);
+
+    const out = await run(
+      submitArgs(started.content_id as string, started.pack_id as string, 1, {
+        body: "他们上线之后返工工时平均多了 18%，这笔账得自己记一次。",
+      }),
+    );
+    const failures = (out.failures as Array<{ check: string }> | undefined) ?? [];
+    expect(failures.some((f) => f.check === "unverified_numbers")).toBe(false);
+  });
+});
+
 // ─── pack 异步备料（2026-09-06 实机复盘） ─────────────────────────────────────
 
 describe("writer pack 异步备料", () => {

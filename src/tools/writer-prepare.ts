@@ -143,6 +143,8 @@ export interface PackParams {
   platform: string;
   direction: string;
   skipReason: string;
+  /** 宿主自己查来的材料（原样注入 research 槽，并登记成 `user-research` 一条未核验账目） */
+  research: string;
   host: string;
   /** 作废手上这份包、重跑一次备料（宿主明说要重来时才给 true） */
   force: boolean;
@@ -166,6 +168,7 @@ export async function startPack(
     topicId: params.topicId,
     ...(params.direction ? { direction: params.direction } : {}),
     ...(params.skipReason ? { angleSkipReason: params.skipReason } : {}),
+    ...(params.research ? { research: params.research } : {}),
   };
   // 立意闸口与内部写作同一份（§5.1）：有候选卡却没选，宿主也得回去问创始人。
   // 它必须留在同步段——这是拒单，不是「先答应下来再后台失败」。

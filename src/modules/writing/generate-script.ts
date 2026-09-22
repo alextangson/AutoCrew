@@ -281,18 +281,21 @@ async function resolveResearch(
   warn: (message: string) => void,
 ): Promise<ResolvedResearch> {
   if (!req.topicId) return { hasCards: false };
+  // 选题本体在简报之前取，且**每条返回路径都带上它**：它是「选题描述」那条 user_claim 的
+  // 唯一来源（§3.3）。手工建的选题往往没有简报，早返回时把它一起丢掉，等于正文里的数字
+  // 一个编号都指不到，全被数字硬门打回。`getTopic` 查不到只返回 null，不抛。
+  const topic = (await getTopic(req.topicId, dataDir)) ?? undefined;
+  const found = { ...(topic ? { topic } : {}) };
   try {
     const snapshot = await resolveEffectiveBrief(req.topicId, getDataDir(dataDir), warn);
-    if (!snapshot) return { hasCards: false };
+    if (!snapshot) return { hasCards: false, ...found };
     const { brief } = snapshot;
     const hasCards = angleCardsOf(brief).length > 0;
-    const topic = await getTopic(req.topicId, dataDir);
     if (!topic) warn(`选题 ${req.topicId} 已不在库中，简报按「基于旧版选题」标注注入`);
     const currentHash = topic ? topicHashOf(topic.title, topic.description) : "";
     // 核对不上就当过期：选题查不到时不给这份简报背书（§2 过期标注，注入照做）
     const topicStale = !topic || currentHash !== brief.topicHash;
     const injected = { snapshot, topicStale };
-    const found = { ...(topic ? { topic } : {}) };
     // 手写角度压过一切：卡照样算「有」，但这一轮不解析它（§1.3 手填时角度卡仍展示不注入）
     if (req.direction?.trim()) return { brief: injected, hasCards, ...found };
     // 「选中」现算是否还作数：选的不是快照那版、或简报因选题被改而过期，一律按没选处理
@@ -313,7 +316,7 @@ async function resolveResearch(
     // 材料少一块照写，绝不让读盘故障带走整条写作链
     const msg = err instanceof Error ? err.message : String(err);
     warn(`调研简报读取失败（${req.topicId}），本稿按无简报无角度写：${msg}`);
-    return { hasCards: false };
+    return { hasCards: false, ...found };
   }
 }
 
