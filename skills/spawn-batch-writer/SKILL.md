@@ -4,63 +4,15 @@ description: |
   Orchestrate batch content writing from saved topics. Activate when user asks to write multiple posts at once. Trigger: "都写了" / "批量写" / "写30篇" / "把选题都写成文案".
 ---
 
-# Spawn Batch Writer
+# 批量写稿
 
-> Orchestrator for large writing orders. Iterates through saved topics and writes content for each.
+把一批明确的写作任务逐篇推进。批量只改变数量，不降低材料、立意和交稿标准。
 
-## Inputs
+1. 从用户要求确定数量、选题范围、平台和共同要求；用 `autocrew_topic {action:"list"}` 读取现有选题，避免重复建题或把已有稿再写一遍。没有指定“全部”时，不默认把所有库存选题开写。
+2. 每篇保存自己的完整 `requirements`，调用 `autocrew_workflow {action:"prepare", topic_id, platform, requirements}`。不要把上篇角度或平台口吻带到下一篇。
+3. `researching` 按返回间隔查询；`needs_angle` 汇总待选候选、推荐理由与证据缺口，让创作者一次处理。已有明确方向用 `direction`，不重复问；用户未决定的题停在选角，继续其他已明确的题。
+4. `ready_to_write` 后按 `write-script`：`autocrew_writer pack → pack_status → 宿主写作 → submit → submit_status`。每篇独立包、独立编号、独立审稿。不要另外调用通用存稿工具保存生成稿。
+5. 单篇失败保留失败原因与继续入口，不把失败当草稿完成。仅对本篇明确提供的材料声明 `research_mode=provided`；跳过调研必须有用户明确的 `research_reason`。
+6. 逐篇报告实际状态：已保存、审稿通过或未审、仍需修改、等待角度或缺材料；末尾列稿件 id 与待处理项。采纳和发布由创作者决定。
 
-| Parameter | Source | Required | Description |
-|-----------|--------|----------|-------------|
-| batch_count | User message (e.g. "写10篇") | No | Number of articles to write (default: all saved topics) |
-| direction | User message | No | Theme / business direction filter |
-| platform | User message | No | Target platform for all content |
-
-## Steps
-
-1. Extract `batch_count`, `direction`, and `platform` from user message.
-   - If no count → will write for all unwritten topics.
-   - If no platform → will infer per topic or ask user.
-
-2. List existing topics using `autocrew_topic` action="list".
-   - Filter by direction if specified.
-   - Limit to `batch_count` if specified.
-   - Skip topics that already have linked content.
-
-3. Notify user:
-   > 收到，我按 {count} 篇来写。会逐篇推进，每写完一篇会同步进度。
-
-4. For each topic in the batch:
-   a. Follow the `write-script` skill workflow.
-   b. Save using `autocrew_content` tool with `topicId` linked.
-   c. Report progress:
-      > [{current}/{total}] 写完了「{title}」，已保存为草稿。
-
-5. Final summary:
-   ```
-   批量写作完成：
-   - 总计：{total} 篇
-   - 已保存：{saved} 篇草稿
-   - 平台分布：小红书 {xhs_count}，抖音 {dy_count}，...
-
-   下一步：用 autocrew_content action=list 查看所有草稿，确认后可以标记为待发布。
-   ```
-
-## Guidelines
-
-- Write each piece as a complete, publishable draft — don't rush for quantity.
-- Match tone and format to the target platform.
-- If a topic is too vague to write, skip it and note in the summary.
-- Maintain variety — don't let all posts sound the same.
-
-## Error Handling
-
-| Failure | Action |
-|---------|--------|
-| No topics saved | Tell user to run research/spawn-planner first. |
-| Write fails for one topic | Log error, continue with next topic. Report in summary. |
-| All writes fail | Stop and report the issue. |
-
-## Changelog
-
-- 2026-03-31: v1 — Adapted from Qingmo spawn-batch-writer.md. Removed backend batch job API. Executes sequentially inline.
+共用选题不等于共用平台任务书；一稿多平台也按 `platform-rewrite` 为每个平台重新准备和交稿。

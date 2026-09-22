@@ -36,7 +36,7 @@ const ADOPT: Array<[string, string]> = [
 const ADOPT_LABEL = new Map(ADOPT);
 
 function adoptionLabel(verdict?: string): string {
-  return (verdict && ADOPT_LABEL.get(verdict)) || verdict || "";
+  return verdict === "rejected" ? "未采纳" : (verdict && ADOPT_LABEL.get(verdict)) || verdict || "";
 }
 
 export interface EditorToolsProps {

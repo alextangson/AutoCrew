@@ -1,3 +1,4 @@
+import { createCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * MCP creation entry: prepare material and direction before the host writes.
  * Existing research jobs and brief snapshots are reused, with visible gaps and
@@ -198,7 +199,9 @@ async function doResearch(
 
   const { runner, ready } = runnerFor(dataDir, deps, warn);
   await ready;
-  const res = await runner.trigger(topicId, kind);
+  const [priorJob, priorBrief] = await Promise.all([getJob(topicId, dataDir), resolveEffectiveBrief(topicId, dataDir, warn)]);
+  const task = createCreativeTask(readinessRequest(params), kind === "angles" ? priorBrief?.brief.creativeTask : priorJob?.creativeTask ?? priorBrief?.brief.creativeTask);
+  const res = await runner.trigger(topicId, kind, task);
   if (!res.accepted) return fail(res.reason, res.inFlight ? { inFlight: true } : {});
   return {
     ok: true,
@@ -232,7 +235,7 @@ async function doPrepare(
   if (readiness.status !== "not_started") {
     return { ok: true, ...readiness, ...(readiness.status === "researching" ? { poll_after_seconds: 30 } : {}) };
   }
-  const started = await doResearch({ topic_id: topicId, kind: "full" }, dataDir, deps, warn);
+  const started = await doResearch({ ...readiness.continue_params, topic_id: topicId, kind: "full" }, dataDir, deps, warn);
   if (!started.ok) {
     if (started.inFlight) {
       return { ok: true, ...readiness, status: "researching", research: { ...readiness.research, status: "running" }, poll_after_seconds: 30, note: "调研正在进行；请说明进度，并按间隔继续 prepare。" };
@@ -363,7 +366,7 @@ async function doWrite(
   const topic = await getTopic(topicId, dataDir);
   if (!topic) return fail(`选题不存在：${topicId}`);
 
-  const direction = str(params.direction);
+  const direction = typeof params.direction === "string" ? params.direction : "";
   const requirements = typeof params.requirements === "string" ? params.requirements : "";
   const skipReason = str(params.skip_reason);
   const req: ScriptRequest = {

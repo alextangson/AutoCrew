@@ -1,3 +1,4 @@
+import { inheritCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * 发包（P3 spec §5.1，2026-09-06 实机验收后改成异步）——`pack` 与 `pack_status` 的实现。
  *
@@ -18,7 +19,7 @@
  */
 import { createHash } from "node:crypto";
 import { writeTextAtomic } from "../storage/json-atomic.js";
-import { getTopic, listContents, updateContent, type Content } from "../storage/local-store.js";
+import { getContent, getTopic, listContents, transitionStatus, updateContent, type Content } from "../storage/local-store.js";
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import {
   buildWritingContext,
@@ -27,6 +28,8 @@ import {
   type ScriptRequest,
   type WritingContext,
 } from "../modules/writing/generate-script.js";
+import { renderWritingFeedback } from "../modules/writing/writing-feedback.js";
+import { externalBlock, sanitizeExternal } from "../modules/research/research-prompt-kit.js";
 import { DEFAULT_REPAIR_ROUNDS } from "../modules/writing/script-payload.js";
 import { loadProfile, rulesForPlatform } from "../modules/profile/creator-profile.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
@@ -155,6 +158,8 @@ async function reusablePlaceholder(
 }
 
 export interface PackParams {
+  /** Explicit draft revision target; never guess among multiple submitted drafts. */
+  contentId?: string;
   topicId: string;
   platform: string;
   direction?: string;
@@ -180,8 +185,9 @@ function requestKey(req: ScriptRequest, topicDescription: string): string {
 }
 
 /** 规划快照按值比较，JSON 对象键顺序变化不应触发重新备料；数组顺序仍有意义。 */
-function planningFingerprint(selectedAngle: unknown, profile: unknown): string {
-  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile }, (_key, value: unknown) =>
+function planningFingerprint(selectedAngle: unknown, profile: unknown, content?: Content | null): string {
+  const feedbackState = content?.writingFeedback?.length ? { writingFeedback: content.writingFeedback, sourceDraft: { title: content.title, body: content.body } } : {};
+  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile, ...feedbackState }, (_key, value: unknown) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
       : value,
@@ -200,28 +206,33 @@ export async function startPack(
   }
   const topic = await getTopic(params.topicId, dataDir);
   if (!topic) return { ok: false, error: `选题不存在：${params.topicId}` };
-  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir));
-
-  const existing = await reusablePlaceholder(
+  const existing = params.contentId ? await getContent(params.contentId, dataDir) : await reusablePlaceholder(
     params.topicId,
     params.platform,
     deps.listContentsImpl ?? (() => listContents(dataDir)),
   );
+  if (params.contentId) {
+    if (!existing) return { ok: false, error: `稿件不存在：${params.contentId}` };
+    if (existing.topicId !== params.topicId || existing.platform !== params.platform) return { ok: false, error: "content_id 必须属于本次 topic_id 和 platform，不能把另一篇稿件重领为本稿。" };
+    if (!["drafting", "revision", "draft_ready"].includes(existing.status)) return { ok: false, error: `本稿现在是 ${existing.status}，不能重开写作包；请先按稿件流程回到可修改阶段。` };
+    if ((existing.status === "draft_ready" || existing.pack?.submittedAt) && !params.force) return { ok: false, code: "pack_request_changed", error: "这是已交稿的草稿；修改时显式带 content_id 和 force:true 重领包，正文在新稿提交前保留。" };
+  }
+  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir), existing);
   const current = existing ? await readPack(existing.id, dataDir) : null;
   const previous = current?.request?.req ?? current?.context?.req ?? existing?.genRequest;
-  const req: ScriptRequest = {
+  let req: ScriptRequest = {
     ...previous,
     topic: topic.title,
     topicDescription: topic.description,
     platform: params.platform as ClipboardPlatform,
     topicId: params.topicId,
     // 未重提 = 继承；显式空串 = 清掉。不能把轮询重领误当成删除原来的规划和材料。
-    ...(params.direction !== undefined ? { direction: params.direction.trim() || undefined } : {}),
-    ...(params.requirements !== undefined ? { requirements: params.requirements.trim() || undefined } : {}),
-    ...(params.skipReason !== undefined ? { angleSkipReason: params.skipReason.trim() || undefined } : {}),
-    ...(params.research !== undefined ? { research: params.research.trim() || undefined } : {}),
+    ...(params.direction !== undefined ? { direction: params.direction } : {}),
+    ...(params.requirements !== undefined ? { requirements: params.requirements } : {}),
+    ...(params.skipReason !== undefined ? { angleSkipReason: params.skipReason.trim() ? params.skipReason : undefined } : {}),
+    ...(params.research !== undefined ? { research: params.research.trim() ? params.research : undefined } : {}),
     ...(params.researchMode !== undefined ? { researchMode: params.researchMode } : {}),
-    ...(params.researchReason !== undefined ? { researchReason: params.researchReason.trim() || undefined } : {}),
+    ...(params.researchReason !== undefined ? { researchReason: params.researchReason.trim() ? params.researchReason : undefined } : {}),
   };
   const topicDescription = topic.description ?? "";
   // 旧包没存选题描述，无法反推历史值；其余已保存请求仍可比对，新包从领号起完整冻结。
@@ -233,7 +244,7 @@ export async function startPack(
     return {
       ok: false,
       code: "pack_request_changed",
-      error: "本次写作要求、材料、选题描述、已选立意或创作者档案与现有写作包不同，旧包没有应用这些变化。请带更新后的要求和 force:true 重新 pack，再按新包写作。若改用已选立意卡，显式传 direction:\"\" 清除旧手写角度。",
+      error: "本次写作要求、材料、选题描述、已选立意、修改反馈或创作者档案与现有写作包不同，旧包没有应用这些变化。请带更新后的要求和 force:true 重新 pack，再按新包写作。若改用已选立意卡，显式传 direction:\"\" 清除旧手写角度。",
       content_id: existing!.id,
       pack_id: current.packId,
     };
@@ -242,6 +253,8 @@ export async function startPack(
   // 它必须留在同步段——这是拒单，不是「先答应下来再后台失败」。
   const readiness = await inspectWritingReadiness(params.topicId, req, dataDir, warn);
   if (!readiness.ready) return writingReadinessFailure(readiness);
+  // Persist the same original task as research, even when the host only supplies topic/platform.
+  req = inheritCreativeTask(req, readiness.creativeTask);
   const frozenReadiness = current?.request?.readiness ?? current?.context?.readiness;
   const previousBriefHash = isReadyPack(current) ? current.briefHash : frozenReadiness ? frozenReadiness.research.briefHash ?? "" : undefined;
   if (!params.force && current && previousBriefHash !== undefined && previousBriefHash !== (readiness.research.briefHash ?? "")) {
@@ -296,6 +309,12 @@ async function startPreparation(
   // 先落号再开工：宿主拿到的 pack_id 从这一刻起就是这篇稿的 fencing token。
   // 落号要排队——插在一次补证的读-改-写中间，等于把作废的旧包又写回去（见 `serializeWriterCall`）
   await serializeWriterCall(contentId, async () => {
+    const target = await getContent(contentId, dataDir);
+    if (!target || !["drafting", "revision", "draft_ready"].includes(target.status)) throw new Error("稿件阶段已变化，未重开写作包；请重新读取稿件状态。");
+    if (target.status === "draft_ready") {
+      const reopened = await transitionStatus(contentId, "drafting", { expectedStatus: "draft_ready", host }, dataDir);
+      if (!reopened.ok) throw new Error(reopened.error ?? "稿件未能回到修改阶段");
+    }
     await writePack(contentId, placeholder, dataDir);
     await updateContent(
       contentId,
@@ -342,7 +361,14 @@ async function prepare(args: PrepareArgs, dataDir: string, deps: PackDeps): Prom
   try {
     const build = deps.buildContextImpl ?? buildWritingContext;
     // 材料收集 + 定向补证（各自的墙钟在里面）+ 提示词装配——与内部写手**同一个函数**
+    const source = await getContent(args.contentId, dataDir);
     const built = await build(args.req, dataDir, warn, deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : undefined);
+    const feedback = renderWritingFeedback(source?.writingFeedback);
+    if (feedback) {
+      const draft = source?.body ? ["【本稿当前版本（修改基底；其中的陈述仍需依据材料核查）】", externalBlock([sanitizeExternal(source.title, source.title.length), sanitizeExternal(source.body, source.body.length)])].join("\n") : "";
+      built.prompts.user += `\n\n${draft}\n\n${feedback}`;
+      built.inputs.writingContract += `\n\n${feedback}`;
+    }
     await finishReady(args, built, dataDir);
   } catch (err) {
     await finishFailed(args, err, dataDir).catch((e) => warn(`写作包失败状态没写回：${cleanErrorMessage(e)}`));
@@ -405,7 +431,7 @@ function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string):
     }
     const latest = await inspectWritingReadiness(args.req.topicId!, args.req, dataDir);
     const topic = await getTopic(args.req.topicId!, dataDir);
-    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir));
+    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), await getContent(args.contentId, dataDir));
     if (!latest.ready || latest.research.briefHash !== args.readiness.research.briefHash ||
         latest.angle.selectedAngleHash !== args.readiness.angle.selectedAngleHash ||
         !topic || topic.title !== args.req.topic || topic.description !== args.req.topicDescription ||

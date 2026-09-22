@@ -176,9 +176,9 @@ describe("立意 pass 成功路径", () => {
     expect(res.cards.every((c) => c.cardVersion === 3)).toBe(true);
     expect(res.tokensUsed).toBe(4321);
     expect(res.misconceptions.grow).toEqual(["提效数字等于净收益"]);
-    // 元素 2 + grounded 1 + 主画像 grow 1 = 4
-    expect(res.cards[0].score).toBe(4);
-    expect(res.cards[0].scoreReasons).toContain("主画像=涨粉（账号当前目标）");
+    // 只计可追溯证据，不给目标标签或情绪元素加分
+    expect(res.cards[0].score).toBe(1);
+    expect(res.cards[0].scoreReasons).toContain("证据支撑分，不代表传播潜力或爆款概率");
     expect(cap.results[0]).not.toMatch(/^Error/);
   });
 
@@ -196,11 +196,11 @@ describe("立意 pass 成功路径", () => {
     const res = await run([submitArgs({ candidates: [cand({ score: 99, score_reasons: ["我最好"] }), CAND_2, CAND_3] })]);
     expect(res.status).toBe("succeeded");
     if (res.status !== "succeeded") return;
-    expect(res.cards[0].score).toBe(4);
+    expect(res.cards[0].score).toBe(1);
     expect(res.cards[0].scoreReasons).not.toContain("我最好");
   });
 
-  it("提示词：三画像 + 机制要求 + 证据级别；简报证据带 ev-N 与逐字引文", async () => {
+  it("提示词：目标标签 + 判断依据 + 证据级别；简报证据带 ev-N 与逐字引文", async () => {
     const prompt = buildAngleSystemPrompt(PROFILE);
     expect(prompt).toContain("涨粉");
     expect(prompt).toContain("立信");
@@ -208,13 +208,29 @@ describe("立意 pass 成功路径", () => {
     expect(prompt).toContain("mechanism");
     expect(prompt).toContain("evidenceLevel=grounded");
     expect(prompt).toContain("myth-busting");
-    // 现有核心受众只作补充，绝不冒充变现画像
-    expect(prompt).toContain("补充：现有核心受众画像");
+    // 未校准画像标明假设，不能冒充已确认画像或变现目标
+    expect(prompt).toContain("待确认的账号画像提案");
 
     const user = buildAngleUserMessage({ brief: makeBrief(), topic: TOPIC, profile: PROFILE });
     expect(user).toContain("ev-1");
     expect(user).toContain(EV_QUOTE); // 锚点要逐字回引，引文不能被改写
     expect(user).toContain("tension-1");
+  });
+
+  it("公众号非AI自然叙事完整保留任务书，明确方向高于账号默认", async () => {
+    const creativeTask = { version: 1 as const, platform: "wechat", direction: "从外婆带我种菜的一天说邻里关系", requirements: "公众号；写给第一次参加社区菜园的居民；自然叙事，先写清晨场景再写争执和理解；不反问、不卖课、不讲AI。" };
+    const cap: Capture = { results: [] };
+    await run([submitArgs()], cap, { creativeTask });
+    expect(cap.opts?.systemPrompt).toContain(creativeTask.requirements);
+    expect(cap.opts?.systemPrompt).toContain(creativeTask.direction);
+    expect(cap.opts?.systemPrompt).toContain("公众号按阅读逻辑和内容深度策划");
+    expect(cap.opts?.systemPrompt).toContain("用户方向已明确时");
+    expect(cap.opts?.systemPrompt).not.toContain("误区先行");
+    expect(cap.opts?.systemPrompt).not.toContain("网感元素 ≥2");
+    const user = buildAngleUserMessage({ brief: makeBrief(), topic: TOPIC, profile: null, creativeTask });
+    expect(user).toContain(creativeTask.requirements);
+    expect(user).toContain(creativeTask.direction);
+    expect(user).not.toContain("三画像各自的误区");
   });
 
   // P1c §3.6：受众推断就是误区的原料，但它进来时必须自带「不可作证据」的标签
@@ -280,8 +296,8 @@ describe("evidenceLevel 与证据引用", () => {
     if (res.status !== "succeeded") return;
     expect(res.cards[0].evidenceLevel).toBe("overview");
     expect(res.cards[0].coreEvidenceIds).toEqual([]);
-    // overview 不加那 1 分：元素 2 + grow 1 = 3
-    expect(res.cards[0].score).toBe(3);
+    // 综述级没有可追溯支撑，不因涨粉目标或表达元素加分
+    expect(res.cards[0].score).toBe(0);
   });
 
   it("简报没有任何证据 → 只能出 overview 卡", async () => {
@@ -335,8 +351,8 @@ describe("firsthandAnchor 结构化引用", () => {
       excerptHash: excerptHashOf(EV_QUOTE),
       quote: "维护成本上升了三成",
     });
-    expect(res.cards[0].score).toBe(6); // 4 + 锚点 2
-    expect(res.cards[0].scoreReasons).toContain("第一手锚点校验通过");
+    expect(res.cards[0].score).toBe(3); // 证据 1 + 锚点 2
+    expect(res.cards[0].scoreReasons).toContain("引文锚点校验通过");
   });
 
   it("转述（非逐字）→ 打回", async () => {
@@ -418,8 +434,8 @@ describe("firsthandAnchor 引内部语料", () => {
       excerptHash: excerptHashOf(CHUNK_TEXT),
       quote: "卡了整整两天才发现纠正被写进了会消失的内存里",
     });
-    expect(res.cards[0].score).toBe(6); // 4 + 锚点 2
-    expect(res.cards[0].scoreReasons).toContain("第一手锚点校验通过");
+    expect(res.cards[0].score).toBe(3); // 证据 1 + 锚点 2
+    expect(res.cards[0].scoreReasons).toContain("引文锚点校验通过");
   });
 
   it("放行稿锚点同样收（kind 必须与片段对得上）", async () => {
@@ -479,7 +495,7 @@ describe("firsthandAnchor 引内部语料", () => {
     expect(withEv.status).toBe("succeeded");
     if (withEv.status !== "succeeded") return;
     expect(withEv.cards[0].firsthandAnchor?.kind).toBe("brief_evidence");
-    expect(withEv.cards[0].score).toBe(6);
+    expect(withEv.cards[0].score).toBe(3);
   });
 
   it("语料块进用户消息：片段 id 可引、用法规则在场", async () => {
@@ -505,42 +521,64 @@ describe("firsthandAnchor 引内部语料", () => {
 
 // ─── 校验：形状与词表 ────────────────────────────────────────────────────────
 
-describe("形状、元素、差异性、词表", () => {
-  it("元素 <2 或全是新奇点 → 打回", async () => {
-    expect(await reject({ candidates: [cand({ elements: ["爽点"] }), CAND_2, CAND_3] })).toContain("网感元素需 ≥2");
-    expect(await reject({ candidates: [cand({ elements: ["新奇点", "新奇点"] }), CAND_2, CAND_3] })).toContain(
-      "不能全靠新奇点",
-    );
+describe("按需策划仍校验主目标、结构与引用", () => {
+  it("自然叙事允许无误区、无网感元素，只服务一个目标", async () => {
+    const cap: Capture = { results: [] };
+    const result = await run([submitArgs({
+      misconceptions: { grow: [], trust: [], convert: [] },
+      candidates: [cand({
+        structure: "story", misconception: "", elements: [],
+        primary_persona: "trust", persona_gains: { grow: "", trust: "理解一次社区菜园的协作经历", convert: "" },
+      }), CAND_2, CAND_3],
+    })], cap);
+    expect(result.status).toBe("succeeded");
+    if (result.status !== "succeeded") return;
+    expect(result.cards[0]).toMatchObject({ structure: "story", misconception: "", elements: [], personaGains: { grow: "", trust: "理解一次社区菜园的协作经历", convert: "" } });
+    expect(result.misconceptions).toEqual({ grow: [], trust: [], convert: [] });
+    const tool = cap.opts?.tools?.find(t => t.name === "submit_angles");
+    const schema = tool?.parameters as { properties: { candidates: { items: { properties: Record<string, unknown> } } } };
+    expect(schema.properties.candidates.items.properties.elements).not.toHaveProperty("minItems");
   });
 
-  it("缺三画像收益 / 缺机制 / 机制超 400 字 → 打回", async () => {
-    expect(
-      await reject({ candidates: [cand({ persona_gains: { grow: "a", trust: "", convert: "c" } }), CAND_2, CAND_3] }),
-    ).toContain("trust 画像的收益");
+  it("只有纠偏结构才要求真实误区", async () => {
+    expect(await reject({ candidates: [cand({ misconception: "" }), CAND_2, CAND_3] })).toContain("misconception");
+  });
+
+  it("主目标收益 / 判断依据不可缺，判断依据不可超长", async () => {
+    expect(await reject({ candidates: [cand({ persona_gains: { grow: "", trust: "", convert: "" } }), CAND_2, CAND_3] })).toContain("主目标 grow");
     expect(await reject({ candidates: [cand({ mechanism: "" }), CAND_2, CAND_3] })).toContain("mechanism");
     expect(await reject({ candidates: [cand({ mechanism: "因".repeat(401) }), CAND_2, CAND_3] })).toContain("400 字");
   });
 
-  it("身份自嘲 → 打回（嘲行为可以，嘲身份不行）", async () => {
-    const msg = await reject({ candidates: [cand({ hook_draft: "我不是科班出身，所以踩了这个坑。" }), CAND_2, CAND_3] });
-    expect(msg).toContain("身份");
+  it("非AI领域可讨论学历等事实，不按关键词否定整张卡", async () => {
+    const result = await run([submitArgs({ candidates: [cand({ hook_draft: "招聘时，学历是我们检查的资料之一。" }), CAND_2, CAND_3] })]);
+    expect(result.status).toBe("succeeded");
   });
 
-  it("两张卡主张雷同 → 打回（沿用 checkDistinct 那把尺）", async () => {
-    const msg = await reject({
-      candidates: [cand(), cand({ angle: "换个说法", primary_persona: "trust" }), CAND_3],
-    });
+  it("两张卡主张和展开路径雷同仍打回", async () => {
+    const msg = await reject({ candidates: [cand(), cand({ angle: "换个说法", primary_persona: "trust" }), CAND_3] });
     expect(msg).toContain("同一个角度换套说法");
   });
 
-  it("候选不足 3 个 / 误区缺席 → 打回", async () => {
+  it("用户已定同一主张时，可提供不同叙事路径而不被迫另换主张", async () => {
+    const thesis = "社区菜园让邻居在共同照料中建立信任";
+    const anti_scope = "不讲商业转化";
+    const result = await run([submitArgs({ candidates: [
+      cand({ thesis, anti_scope, structure: "story", angle: "从清晨浇水的具体场景进入", mechanism: "记录阿姨递来水壶到大家轮流值班的事件进展，呈现关系如何慢慢改变" }),
+      cand({ thesis, anti_scope, structure: "single-point", angle: "解释分工规则为什么能缓解摩擦", mechanism: "分别说明公共土地分配、灌溉责任和收获共享的约定，保留仍有争议的边界" }),
+      cand({ thesis, anti_scope, structure: "claim-case-claim", angle: "从一次分歧看参与者怎样形成共识", mechanism: "围绕菜苗损失后的协商过程比较不同参与者的判断，展示经验的适用范围" }),
+    ] })], { results: [] }, { creativeTask: { version: 1, direction: thesis, requirements: "保持这个判断，只讨论不同展开方式" } });
+    expect(result.status).toBe("succeeded");
+    if (result.status === "succeeded") expect(result.cards.every(card => card.thesis === thesis)).toBe(true);
+  });
+
+  it("候选不足 3 个仍打回", async () => {
     expect(await reject({ candidates: [cand(), CAND_2] })).toContain("候选需 3-4 个");
-    expect(await reject({ misconceptions: { grow: [], trust: ["a"], convert: ["b"] } })).toContain("misconceptions.grow");
   });
 
   it("修复轮 ≤2：第三次仍不合法就叫停", async () => {
     const cap: Capture = { results: [] };
-    const bad = submitArgs({ candidates: [cand({ elements: [] }), CAND_2, CAND_3] });
+    const bad = submitArgs({ candidates: [cand({ core_evidence_ids: ["ev-99"] }), CAND_2, CAND_3] });
     const res = await run([bad, bad, bad], cap);
     expect(res.status).toBe("failed");
     if (res.status !== "failed") return;
@@ -548,8 +586,8 @@ describe("形状、元素、差异性、词表", () => {
     expect(cap.results[2]).toContain("修复轮已用尽");
   });
 
-  it("先错后对：修好之后照常收下", async () => {
-    const res = await run([submitArgs({ candidates: [cand({ elements: [] }), CAND_2, CAND_3] }), submitArgs()]);
+  it("先错后对：修好引用之后照常收下", async () => {
+    const res = await run([submitArgs({ candidates: [cand({ core_evidence_ids: ["ev-99"] }), CAND_2, CAND_3] }), submitArgs()]);
     expect(res.status).toBe("succeeded");
   });
 });
@@ -579,31 +617,25 @@ describe("代码打分（只用于展示排序）", () => {
     structure: "story",
   };
 
-  it("元素封顶 3 分", () => {
-    expect(scoreAngleCard({ ...base, elements: ["爽点", "泪点", "美点", "笑点"] }, brief).score).toBe(3);
+  it("网感元素不增加证据分", () => {
+    expect(scoreAngleCard({ ...base, elements: ["爽点", "泪点", "美点", "笑点"] }, brief).score).toBe(0);
+    expect(scoreAngleCard({ ...base, elements: [] }, brief).score).toBe(0);
   });
 
-  it("劝退型主张扣 3 分", () => {
-    const got = scoreAngleCard({ ...base, thesis: "劝退：这个工具你先别碰" }, brief);
-    expect(got.score).toBe(-1); // 元素 2 − 劝退 3
-    expect(got.reasons.some((r) => r.includes("劝退"))).toBe(true);
-    // 2026-09-05 e2e 漏网的变体：带判断框架的「别现在上生产」同样是创始人否掉的那一族
-    const variant = scoreAngleCard({ ...base, thesis: "Star 衡量的是围观，DeepSeek Harness 现在的状态是明确的别现在上生产" }, brief);
-    expect(variant.reasons.some((r) => r.includes("劝退"))).toBe(true);
+  it("不按劝退等字眼替用户决定立场", () => {
+    const got = scoreAngleCard({ ...base, thesis: "不建议在这个季节移栽，因为土壤条件还不合适" }, brief);
+    expect(got.score).toBe(scoreAngleCard(base, brief).score);
+    expect(scoreAngleCard({ ...base, thesis: "劝退：这个工具你先别碰" }, brief).score).toBe(got.score);
   });
 
-  it("grounded +1、主画像 grow +1、锚点对不上不给 2 分", () => {
-    const grounded = scoreAngleCard(
-      { ...base, evidenceLevel: "grounded", coreEvidenceIds: ["ev-1"], primaryPersona: "grow" },
-      brief,
-    );
-    expect(grounded.score).toBe(4);
-    const faked = scoreAngleCard(
-      { ...base, firsthandAnchor: { kind: "brief_evidence", chunkId: "ev-1", excerptHash: "deadbeef", quote: "维护成本上升了三成" } },
-      brief,
-    );
-    expect(faked.score).toBe(2);
-    expect(faked.reasons).toContain("无可校验的第一手锚点");
+  it("只计可追溯证据和有效锚点，不默认涨粉更重要", () => {
+    const grounded = scoreAngleCard({ ...base, evidenceLevel: "grounded", coreEvidenceIds: ["ev-1"], primaryPersona: "grow" }, brief);
+    expect(grounded.score).toBe(1);
+    expect(scoreAngleCard({ ...base, evidenceLevel: "grounded", coreEvidenceIds: ["ev-1"], primaryPersona: "trust" }, brief).score).toBe(grounded.score);
+    expect(scoreAngleCard({ ...base, evidenceLevel: "grounded", coreEvidenceIds: ["ev-404"] }, brief).score).toBe(0);
+    const faked = scoreAngleCard({ ...base, firsthandAnchor: { kind: "brief_evidence", chunkId: "ev-1", excerptHash: "deadbeef", quote: "维护成本上升了三成" } }, brief);
+    expect(faked.score).toBe(0);
+    expect(faked.reasons).toContain("无可校验的引文锚点");
   });
 });
 

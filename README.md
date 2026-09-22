@@ -211,7 +211,24 @@ AutoCrew 的网页、CLI、OpenClaw 和 MCP 使用同一套能力注册表。
 MCP 初始化自带流程说明，亦可读取 `autocrew://writing-guide` 或使用 `write_content` prompt，无需依赖宿主自动发现仓库技能。
 已有材料须明确 `research_mode=provided` 并提供 `research`；用户明确不需研究才可用 `skip` 和 `research_reason`。
 交付必须区分已保存、审稿状态和作者认可。`generate` / `workflow write` 的 MCP 调用仅在明确 `execution=engine` 时后台代写。
-`content save` 的 MCP 调用仅用于 `source=manual_import` 加 `import_reason` 的已有稿件导入，不能绕过新稿检查。
+`content save` 的 MCP 调用仅用于 `source=manual_import` 加 `import_reason` 的已有稿件导入，不能绕过新稿检查。批量写作与平台适配也逐篇走独立的 prepare / pack / submit。
+
+交稿的 `submit` / `submit_status` 同时报告 `audience_review`：已点评时展示各类读者可能停留或流失的位置；画像未校准、服务不可用或明确跳过时如实说明。受众点评是编辑建议，不等于真实读者测试，也不会让另一个模型悄悄重写正文。
+
+`autocrew_editorial profile` 读取档案，`update_profile` 保存用户已确认的定位、受众、表达与样本。用户反馈先 `inspect` 取得当前 `draft_hash`，再通过 `feedback` 保存原话与稳定 `event_id`：默认只影响本篇，用户明确的长期要求才进入平台或跨平台声音规则。用户的采纳评价和模型审稿分别记录。应用反馈修改已有稿时，writer pack 带原 content_id 和 force:true，保留同一稿件。纯 MCP 不需要编辑本地档案文件或用初始化调用校准。
+
+写作相关技能按职责使用：
+
+| 环节 | 技能 |
+| --- | --- |
+| 定位与声音 | `calibrate`、`style-calibration` |
+| 找题与备料 | `topic-ideas`、`spawn-planner`、`research` |
+| 编排与写稿 | `spawn-writer`、`write-script`、`spawn-batch-writer` |
+| 改写与把关 | `platform-rewrite`、`humanizer-zh`、`content-review` |
+| 用户反馈 | `memory-distill` |
+| 后续流程 | `pre-publish`、`manage-pipeline` |
+
+这些技能是操作指引，不意味着同名独立 agent 已经运行。实际分工由工具的任务、材料包、审稿结果和交接记录证明。
 
 ### 接宿主（Claude Code / Codex / dsh）
 

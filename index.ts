@@ -14,8 +14,9 @@ import { assetSchema, executeAsset } from "./src/tools/asset.js";
 import { pipelineSchema, executePipeline } from "./src/tools/pipeline.js";
 import { publishSchema, executePublish } from "./src/tools/publish.js";
 import { humanizeSchema, executeHumanize } from "./src/tools/humanize.js";
-import { rewriteSchema, executeRewrite } from "./src/tools/rewrite.js";
+import { rewriteSchema, executeHostRewrite } from "./src/tools/rewrite.js";
 import { coverReviewSchema, executeCoverReview } from "./src/tools/cover-review.js";
+import { editorialSchema, executeEditorial, EDITORIAL_DESCRIPTION } from "./src/tools/editorial.js";
 import { memorySchema, executeMemory } from "./src/tools/memory.js";
 import { reviewSchema, executeReview } from "./src/tools/review.js";
 import { prePublishSchema, executePrePublish } from "./src/tools/pre-publish.js";
@@ -139,7 +140,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
   runner.register({
     name: "autocrew_humanize",
     label: "AutoCrew Humanize",
-    description: "Run the Chinese de-AI pass on content text. Removes AI-sounding patterns and corporate buzzwords.",
+    description: "Normalize whitespace and return optional style suggestions. Does not automatically replace words or rewrite meaning; use the writer flow for intentional revisions.",
     parameters: humanizeSchema,
     execute: executeHumanize,
   });
@@ -148,9 +149,9 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_rewrite",
     label: "AutoCrew Rewrite",
     description:
-      "Create platform-native rewrites. Actions: adapt_platform (single platform), batch_adapt (multi-platform + auto title/hashtag + sibling linking).",
+      "Platform adaptations use workflow prepare and writer submit by default. Explicit execution=engine can return unreviewed suggestions only; save_as_draft is disallowed through this tool.",
     parameters: rewriteSchema,
-    execute: executeRewrite,
+    execute: executeHostRewrite,
   });
 
   runner.register({
@@ -162,6 +163,8 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     execute: executeCoverReview,
     needsGemini: true,
   });
+
+  runner.register({ name: "autocrew_editorial", label: "AutoCrew Editorial", description: EDITORIAL_DESCRIPTION, parameters: editorialSchema, execute: executeEditorial });
 
   runner.register({
     name: "autocrew_memory",

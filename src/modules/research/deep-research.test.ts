@@ -1,3 +1,4 @@
+import { createCreativeTask, creativeTaskHash } from "../writing/creative-task.js";
 /**
  * deep-research.test.ts — runJob 全链（深调研 §5）：四视角并行 → 综合 → 不可变简报。
  *
@@ -10,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { createDeepResearchRunJob, type DeepResearchDeps } from "./deep-research.js";
-import { collectOwnMaterial } from "./own-material.js";
+import { EMPTY_OWN_MATERIAL, collectOwnMaterial } from "./own-material.js";
 import {
   briefPath,
   briefsDir,
@@ -683,7 +684,7 @@ describe("立意 pass", () => {
     expect(cards.every((c) => isAngleCardV3(c))).toBe(true);
     expect(cards.map((c) => c.id)).toEqual(["angle-1", "angle-2", "angle-3"]);
     const first = cards[0];
-    expect(isAngleCardV3(first) && first.score).toBe(4); // 元素 2 + grounded 1 + 主画像 grow 1
+    expect(isAngleCardV3(first) && first.score).toBe(1); // 证据支撑分，不因套路元素加分
     expect(brief!.gaps.some((g) => g.startsWith("立意未产出"))).toBe(false);
   });
 
@@ -700,14 +701,14 @@ describe("立意 pass", () => {
     expect((brief!.angleCards ?? []).every((c) => !isAngleCardV3(c))).toBe(true);
   });
 
-  it("立意交了不合规的候选（元素只有 1 个）→ invalid_output 进 gaps", async () => {
+  it("立意只交了一个候选 → invalid_output 进 gaps", async () => {
     const topic = await newTopic();
     const bad = { ...ANGLES_OK, candidates: [angleCand({ elements: ["爽点"] })] };
     const outcome = await makeRunJob({ angles: [bad] })(jobFor(topic));
     expect(outcome.status).toBe("succeeded");
 
     const brief = await loadLatestBrief(topic.id, dataDir);
-    expect(brief!.gaps.join("")).toContain("网感元素需 ≥2");
+    expect(brief!.gaps.join("")).toContain("候选需 3-4 个");
   });
 });
 
@@ -815,8 +816,8 @@ describe("angles job", () => {
     expect(outcome.status).toBe("succeeded");
 
     const v2 = (await loadBrief(topic.id, 2, dataDir))!;
-    expect(v2.topicHash).toBe(topicHashOf(renamed.title, renamed.description));
-    expect(v2.topicHash).not.toBe(v1.topicHash);
+    expect(v2.topicHash).toBe(v1.topicHash);
+    expect(v2.topicHash).not.toBe(topicHashOf(renamed.title, renamed.description));
     expect(v2.gaps.some((g) => g.includes("仍基于旧版选题"))).toBe(true);
   });
 });
@@ -947,5 +948,50 @@ describe("内部语料进立意", () => {
     const v2 = (await loadBrief(topic.id, 2, dataDir))!;
     expect(v2.ownMaterialRefs?.map((r) => r.id)).toEqual([OWN_CHUNK_ID]);
     expect((await loadBrief(topic.id, 1, dataDir))!.ownMaterialRefs).toEqual([]);
+  });
+});
+
+
+describe("one task across the editorial pipeline", () => {
+  it("reads own material first and passes the complete task through all six model stages", async () => {
+    const topic = await newTopic();
+    const creativeTask = createCreativeTask({ platform: "wechat", requirements: "写给门店老板，保留失败过程\n不要强制反常识开头", direction: "从一次真实返工展开" });
+    const prompts: string[] = [];
+    let ownRead = false;
+    const fixtureLoop = planLoop();
+    const job = { ...jobFor(topic), creativeTask };
+    const runJob = createDeepResearchRunJob({
+      dataDir, engineConfig: CONFIG, brokerDeps: BROKER_DEPS,
+      assetDownloadDeps: { fetchImageImpl: stubFetchImage() }, onWarn: () => {},
+      collectOwnMaterialImpl: async (_dir, ref) => {
+        expect(ref.description).toContain(creativeTask.requirements);
+        ownRead = true;
+        return { ...EMPTY_OWN_MATERIAL, rendered: "已有访谈摘录：我在门店的返工经历" };
+      },
+      runLoopImpl: async (config, opts) => {
+        expect(ownRead).toBe(true);
+        const prompt = String(opts.userMessage);
+        prompts.push(prompt);
+        expect(prompt).toContain(creativeTask.requirements);
+        expect(prompt).toContain(creativeTask.direction);
+        expect(prompt).toContain(creativeTaskHash(creativeTask));
+        return fixtureLoop(config, opts);
+      },
+    });
+    const result = await runJob(job);
+    expect(result.status).toBe("succeeded");
+    expect(prompts).toHaveLength(6);
+    expect(prompts.slice(0, 5).every(p => p.includes("已有访谈摘录"))).toBe(true);
+    expect((await loadBrief(topic.id, 1, dataDir))?.creativeTask).toEqual(creativeTask);
+  });
+
+  it("rejects angle-only reruns with changed creative intent", async () => {
+    const topic = await newTopic();
+    const creativeTask = createCreativeTask({ platform: "wechat", requirements: "原始要求" });
+    await makeRunJob()({ ...jobFor(topic), creativeTask });
+    await upsertJob({ ...jobFor(topic), status: "succeeded", briefRevision: 1, creativeTask }, dataDir);
+    const result = await makeRunJob()({ ...jobFor(topic), kind: "angles", briefRevision: 1, creativeTask: createCreativeTask({ requirements: "完全不同的新任务" }, creativeTask) });
+    expect(result).toMatchObject({ status: "failed", errorCode: "creative_task_changed" });
+    expect(await loadBrief(topic.id, 2, dataDir)).toBeNull();
   });
 });

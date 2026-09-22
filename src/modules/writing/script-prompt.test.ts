@@ -456,7 +456,7 @@ describe("buildAngleBlock — v3 卡", () => {
 
   it("§4.4 的十一项字段都在：主画像/误区/机制/主张/动作/三画像收益/元素/反方/锚点/骨架/收获感", () => {
     const block = buildAngleBlock(v3, [], tensions);
-    expect(block).toContain("主画像");
+    expect(block).toContain("内容目标");
     expect(block).toContain(v3.misconception);
     expect(block).toContain(v3.mechanism);
     expect(block).toContain(v3.thesis);

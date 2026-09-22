@@ -1,3 +1,4 @@
+import { createCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * workflow.test.ts — `autocrew_workflow` 的六个动作（dsh 插件 spec §4）。
  *
@@ -162,9 +163,11 @@ describe("workflow prepare", () => {
     const start = vi.fn(async () => ({ contentId: "unused" }));
     const fake = fakeRunner({ accepted: true, deduped: false, job: { topicId: topic.id, status: "queued", startedAt: "now", perspectives: [], topicHash: "h" } });
     const requirements = "  用我提供的顺序\n不要统一反常识开头。  ";
+    const trigger = vi.spyOn(fake.runner, "trigger");
     const result = await run({ action: "prepare", topic_id: topic.id, platform: "douyin", requirements }, { searchAvailableImpl: async () => true, createRunnerImpl: () => fake.runner, startGenerateScriptImpl: start });
     expect(result).toMatchObject({ ok: true, status: "researching", ready: false, poll_after_seconds: 30, research: { status: "running", autoResearched: false }, continue_params: { requirements }, next_action: { params: { action: "prepare", requirements } } });
     expect(fake.calls).toEqual([[topic.id, "full"]]);
+    expect(trigger).toHaveBeenCalledWith(topic.id, "full", createCreativeTask({ platform: "douyin", requirements }));
     expect(start).not.toHaveBeenCalled();
   });
 
@@ -206,7 +209,7 @@ describe("workflow prepare", () => {
   });
 
   it("MCP 默认不启动内部写手，明确 engine 才进入写前检查", async () => {
-    const topic = await seed();
+    const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", direction: "用户已给方向", requirements: "完整规划" }) }));
     const start = vi.fn(async () => ({ contentId: "engine-draft" }));
     const params = { action: "write", topic_id: topic.id, platform: "douyin", direction: "用户已给方向", requirements: "完整规划", _host: "claude_desktop" };
     expect(await run(params, { startGenerateScriptImpl: start })).toMatchObject({ ok: false, code: "host_writer_preferred", next_action: { tool: "autocrew_workflow", params: { action: "prepare", requirements: "完整规划" } } });
@@ -376,8 +379,8 @@ describe("workflow select_angle", () => {
     expect(res.ok).toBe(true);
     const saved = res.topic.selectedAngle.card;
     expect(saved.thesis).toBe("真正的账在维护期，不在写代码那半小时");
-    // 元素 2 + grounded 1 + 主画像涨粉 1 = 4；999 是客户端说了不算的那一份
-    expect(saved.score).toBe(4);
+    // 只按证据支撑计分，不因套路元素或涨粉标签加分；999 由服务端重算。
+    expect(saved.score).toBe(1);
   });
 
   it("改写不许换证据地基", async () => {
@@ -405,7 +408,7 @@ describe("workflow write", () => {
   const startStub = () => vi.fn(async () => ({ contentId: "c-new" }));
 
   it("本次要求不绕过立意闸口；选卡后完整透传且不冒充 direction", async () => {
-    const topic = await seed();
+    const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", requirements: "写给小白；按一天经历展开；不要工具清单。" }) }));
     const start = startStub();
     const params = { action: "write", topic_id: topic.id, platform: "douyin", requirements: "写给小白；按一天经历展开；不要工具清单。" };
     expect(await run(params, { startGenerateScriptImpl: start })).toMatchObject({ ok: false, needsAngle: true });
@@ -433,7 +436,7 @@ describe("workflow write", () => {
   });
 
   it("手写 direction 放行（创始人自己的角度优先级最高）", async () => {
-    const topic = await seed();
+    const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", direction: "只讲返工工时这一件事" }) }));
     const start = startStub();
     const res = await run(
       { action: "write", topic_id: topic.id, platform: "douyin", direction: "只讲返工工时这一件事" },

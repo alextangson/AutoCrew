@@ -1,3 +1,4 @@
+import { inheritCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * autocrew_generate — 进程内口播脚本生成工具（PRD §5 薄 loop 内层的宿主入口）。
  *
@@ -158,16 +159,16 @@ export async function executeGenerate(
 
   const dataDir = (params._dataDir as string) || undefined;
 
-  const req: ScriptRequest = {
+  let req: ScriptRequest = {
     topic: topic.trim(),
     platform: platformRaw,
     // 知识库检索已下沉到生成管线(runGeneration)统一做——这里再检索会让 MCP 路径双份注入
     research: (params.research as string) || undefined,
-    direction: typeof params.direction === "string" ? params.direction.trim() || undefined : undefined,
-    requirements: typeof params.requirements === "string" ? params.requirements.trim() || undefined : undefined,
+    ...(typeof params.direction === "string" ? { direction: params.direction } : {}),
+    ...(typeof params.requirements === "string" ? { requirements: params.requirements } : {}),
     researchMode: params.research_mode as ScriptRequest["researchMode"],
-    researchReason: typeof params.research_reason === "string" ? params.research_reason.trim() || undefined : undefined,
-    angleSkipReason: typeof params.skip_reason === "string" ? params.skip_reason.trim() || undefined : undefined,
+    ...(typeof params.research_reason === "string" ? { researchReason: params.research_reason } : {}),
+    ...(typeof params.skip_reason === "string" ? { angleSkipReason: params.skip_reason } : {}),
     // 简报注入与选题血缘都挂在 topicId 上——空串视为未提供，口径同桌面 IPC(ipc.ts)
     topicId: typeof params.topic_id === "string" ? params.topic_id.trim() || undefined : undefined,
   };
@@ -187,6 +188,7 @@ export async function executeGenerate(
     };
     const preparation = await inspectWritingReadiness(req.topicId, req, getDataDir(dataDir));
     if (!preparation.ready) return writingReadinessFailure(preparation);
+    req = inheritCreativeTask(req, preparation.creativeTask);
   }
   const generateFn = deps.generateScriptImpl ?? generateScript;
 

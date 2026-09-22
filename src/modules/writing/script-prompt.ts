@@ -432,14 +432,14 @@ export function buildAngleBlockV3(card: AngleCardV3, tensions: string[] = []): s
   const persona = DEFAULT_PERSONAS[card.primaryPersona];
   const lines = [
     "【本稿切入点（已选定，全稿按它写）】",
-    `主画像（这一稿写给谁）：${persona.name}——${persona.who}。他走进来时的处境：${persona.state}。`,
-    `他信的那个错的东西（误区）：${angleField(card.misconception)}`,
+    `内容目标：${persona.name}——${persona.who}。${persona.state}。受众以本次任务和创作者档案为准。`,
+    ...(card.misconception ? [`本稿相关误区（仅在选定方向需要时澄清）：${angleField(card.misconception)}`] : []),
     `为什么会这样（机制，正文要把这条因果讲透，不是打比方）：${angleField(card.mechanism, ANGLE_LONG_FIELD_MAX)}`,
     `核心主张（全稿必须论证它，不是复述材料）：${angleField(card.thesis)}`,
     `切入点：${angleField(card.angle)}`,
     `可选行动建议（不是必写 CTA）：${angleField(card.nextAction)}`,
-    "三画像收益（写的时候心里有这三个人，但只对主画像说话）：",
-    ...PERSONA_KEYS.map(
+    "本稿有材料支持的目标收益（不补造其他收益）：",
+    ...PERSONA_KEYS.filter(k => card.personaGains[k]?.trim()).map(
       (k) => `- ${DEFAULT_PERSONAS[k].name}：${angleField(card.personaGains[k] ?? "")}`,
     ),
     `可参考的表达元素（不按数量凑项）：${card.elements.map((e) => angleField(e, 20)).join("、")}`,

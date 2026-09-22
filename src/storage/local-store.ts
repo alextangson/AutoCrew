@@ -161,7 +161,7 @@ export function normalizeLegacyStatus(s: string): ContentStatus {
 }
 
 /** 采纳裁决（PRD-v4 §8 北极星读数）：口径 = 主观判定，light_edit =「轻改即用」，rewritten =「推倒重写」（裁决 B） */
-export type AdoptionVerdict = "adopted" | "light_edit" | "rewritten";
+export type AdoptionVerdict = "adopted" | "light_edit" | "rewritten" | "rejected";
 
 /** 重写原因 chip（IA v4.2 §B6）——最强负信号的一次点击标注，可选，喂纠正路由 */
 export type RewriteReason = "style_mismatch" | "factual_error" | "structure_bad";
@@ -197,6 +197,8 @@ export interface VideoKit {
 
 export interface AdoptionRecord {
   verdict: AdoptionVerdict;
+  /** 本次明确裁决对应的标题/正文/平台指纹；历史裁决没有此字段。 */
+  draftHash?: string;
   /** 仅 rewritten 时可选携带（§10-B 低摩擦裁决不变：一次点击，可跳过） */
   reason?: RewriteReason;
   /** 自由文本原因（IA v5 V5.0:「哪里不行」不只选择题）——风格蒸馏的高价值负信号,与 chip 归类字段分开 */
@@ -744,6 +746,33 @@ export async function updateContent(id: string, updates: ContentUpdates, dataDir
   return serializeContentWrite(id, () => updateContentLocked(id, updates, dataDir));
 }
 
+export type DraftMatchResult =
+  | { ok: true; content: Content }
+  | { ok: false; reason: "stale" | "missing" };
+
+/**
+ * 针对用户看到的那版稿原子保存反馈/结论。核对与写入共享所有稿件写路径的锁，
+ * 避免校验后编辑器另存新稿，旧反馈却被套上去。只保证本进程并发（同 updateContent）。
+ */
+export async function updateContentIfDraftMatches(
+  id: string,
+  expected: Pick<Content, "title" | "body" | "platform">,
+  updates: ContentUpdates | ((current: Content) => ContentUpdates),
+  dataDir?: string,
+): Promise<DraftMatchResult> {
+  if (!isContentId(id)) return { ok: false, reason: "missing" };
+  return serializeContentWrite(id, async () => {
+    const current = await getContent(id, dataDir);
+    if (!current) return { ok: false, reason: "missing" };
+    if (current.title !== expected.title || current.body !== expected.body || current.platform !== expected.platform) {
+      return { ok: false, reason: "stale" };
+    }
+    const patch = typeof updates === "function" ? updates(current) : updates;
+    const updated = await updateContentLocked(id, patch, dataDir);
+    return updated ? { ok: true, content: updated } : { ok: false, reason: "missing" };
+  });
+}
+
 /** 缺省宿主身份：没有命名 token 的调用（工作台、老配置）一律记 `local-user`（§4.1） */
 export const LOCAL_HOST = "local-user";
 
@@ -852,7 +881,7 @@ export async function recordAdoption(
 }
 
 export interface AdoptionStats {
-  /** 已裁决稿数（分母） */
+  /** 已裁决稿数（分母），包括明确退稿 rejected */
   judged: number;
   adopted: number;
   lightEdit: number;

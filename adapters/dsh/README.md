@@ -93,8 +93,9 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_content` | 案卷读写：存稿、列、取、改、流转、平行变体 |
 | `autocrew_generate` | 在进程内调模型写稿（thin loop + 口播 track pack）；`requirements` 传完整写作规划，`direction` 只传明确指定的角度 |
 | `autocrew_style` | 从编辑差分蒸馏风格规则、吸收爆款样本 |
-| `autocrew_review` | 敏感词 + 质量分 + 去 AI 味，可自动修 |
-| `autocrew_humanize` | 单独跑中文去 AI 味 |
+| `autocrew_editorial` | 读取/校准写作档案；按当前正文指纹记录用户原话反馈、作用范围与真实采纳评价，重试幂等；不调用模型 |
+| `autocrew_review` | 基础文字检查与表达建议；`auto_fix` 仅清理空白，不提供语义质量通过或 AI 痕迹结论 |
+| `autocrew_humanize` | 清理换行与行尾空白，提供可供判断的表达建议；不机械改主语、术语或连接词 |
 | `autocrew_rewrite` | 平台化改写，单平台或多平台批量 |
 | `autocrew_pre_publish` | 发布前六项门禁 |
 | `autocrew_workflow` | 一站式流程：`research`（后台深调研）/ `status`（轮询）/ `select_angle`（落创作者选的那张立意卡）/ `write`（后台开写）/ `draft`（取稿）/ `doctor`（跑不动时先看它；`doctor{probe:true}` 真去每个端点发一次极小调用，回哪条线通、哪条线坏与耗时——模型调用报错时先跑它） |
@@ -105,6 +106,16 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 写作委托通过 `requirements` 完整传给 `autocrew_writer pack` 或 `autocrew_workflow write`，
 不要把受众、提纲与篇幅误放进会覆盖选卡的 `direction`。已有写作包与新要求不同会返回
 `pack_request_changed`；带更新后的要求和 `force:true` 重领，不能继续沿用旧包。
+
+### 写作档案与反馈（2026-09-22 新放行）
+
+`autocrew_editorial` 与写作包使用同一数据目录，只读写结构化档案、当前稿件与反馈收据；不请求 provider，不产生模型调用，也不依赖仓库相对资源路径。
+
+- `profile` 读取已有档案；`update_profile` 仅保存 `user_confirmed:true` 的明确资料。`confirm_audience:true` 只用于用户已经认可的本次画像，不让模型自行宣布校准完成。
+- `inspect{content_id}` 返回当前 `draft_hash` 与已记录反馈；`feedback` 必须带这个指纹、稳定 `event_id`、用户原话和确认标记。正文变化会拒绝旧稿反馈，不把旧稿采纳套给新稿。
+- `scope` 默认 `draft`，只影响本篇；只有用户明确长期要求才 `platform` 或 `voice`。`verdict` 只记录用户实际的采纳/小改/重写/打回评价，不能由 AI 审稿结论推定。
+- 同一 `event_id`、同一载荷重放返回原收据，不重复学习；相同 id 改成不同反馈会被拒绝。反馈不自动改正文或批准发布；需要修订时按返回 `next_action` 带原 `content_id` 和 `force:true` 重领写作包。
+- 缺参、未确认、正文指纹过期、幂等冲突、档案损坏等失败均返回 `ok:false`，由桥转换成 `isError`；无新增外部依赖。只说明实际写入结果，不用对话中的“记住了”代替收据。
 
 ## 两条契约
 
@@ -133,8 +144,9 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_content` | 逐 action 缺参、找不到、流转被门拦下全走 `ok:false`（`update` 带 status 时把失败的流转原样返回，不谎报保存成功）；`warning` 只出现在「稿子已存盘、差分没记上」这种真部分成功上 | 无 | `@earendil-works/pi-ai/*`（已在 deps） | **放行** |
 | `autocrew_generate` | action/参数校验 + 整段 try/catch 全走 `ok:false` | 无 | `@earendil-works/pi-ai/*`（已在 deps） | **放行** |
 | `autocrew_style` | 参数校验 + 两条 action 各自 try/catch 全走 `ok:false` | 无 | `@earendil-works/pi-ai/*`（已在 deps） | **放行** |
-| `autocrew_review` | 缺 text/content_id、找不到稿子走 `ok:false`；`auto_fix` 会把修不掉的敏感词列进 `unfixedSensitiveWords`，不假装修好了 | 无 | 无 | **放行** |
-| `autocrew_humanize` | 未知 action、找不到稿子、缺输入全走 `ok:false` | 无 | 无 | **放行** |
+| `autocrew_editorial`（2026-09-22 增补） | schema/确认标记/稿件指纹/事件幂等校验失败及读写异常全走 `ok:false`；相同事件重放为 `ok:true + replayed:true` | 无；使用显式 dataDir | 无；不调用 provider | **放行** |
+| `autocrew_review` | 缺 text/content_id、找不到稿子走 `ok:false`；`auto_fix` 仅清理空白，敏感词全部留为上下文核对建议，不假装语义问题已修复 | 无 | 无 | **放行** |
+| `autocrew_humanize` | 未知 action、找不到稿子、缺输入全走 `ok:false`；仅格式清理与表达建议，不把格式变化数称为质量或 AI 痕迹得分 | 无 | 无 | **放行** |
 | `autocrew_rewrite` | 缺 content_id/平台、未知 action 全走 `ok:false` | 无 | `@earendil-works/pi-ai/*`（已在 deps） | **放行** |
 | `autocrew_pre_publish` | 缺 content_id、找不到稿子走 `ok:false`；六项门禁不通过是 `ok:true` + 结构化结论（「没过门」是它的正常输出，不是它失败） | 无 | 无 | **放行** |
 | `autocrew_workflow` | 全部失败经同一个 `fail()` 出口走 `ok:false`，entry 外面还包了一层 try/catch 把意料之外的异常也转成 `ok:false`；`doctor` 是唯一「坏消息也 `ok:true`」的地方——它**返回** `engine.configured:false` 而不是抛，因为「没配好」是这个 action 的正常输出 | 无 | `@earendil-works/pi-ai/*`（已在 deps） | **放行** |

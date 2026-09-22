@@ -3,7 +3,7 @@
  *
  * 为什么独立成一 pass（P0 三轮实验的结论）：同一次运行里既做「材料综合」又做「立意」，
  * 立场会在综合阶段就被材料的调子定死——36 篇里 12 篇同选题稿全是「劝你别碰」，0 篇可发。
- * 把立意拆出来单跑（先误区、再主张、再收获），可发率 0/36 → 1/6 → 3/6。
+ * 把立意拆出来单跑能避免材料立场直接变成创作立场；具体策划方法应服从本次任务。
  *
  * 三条纪律：
  * 1. **代码只校形状与引用**：机制是不是因果、payoff 是不是大白话、主张是不是比喻——
@@ -18,6 +18,7 @@ import type { EngineConfig } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
 import type { LoopFallbackInfo, LoopResult, LoopTool } from "../../engine/loop.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
+import { renderCreativeTask, type CreativeTask } from "../writing/creative-task.js";
 import { checkDistinct } from "./angle-cards.js";
 import {
   ANGLE_ELEMENTS,
@@ -80,22 +81,12 @@ const INSIGHTS_PER_PERSPECTIVE = 6;
 const INFERENCES_PER_PERSPECTIVE = 6;
 const QUOTE_MAX = 300;
 
-/** 身份自嘲词表：嘲行为可以，嘲身份会直接掉可信度（判据 9） */
-const SELF_MOCK_IDENTITY = /科班|学历|出身|不是专业/;
-/** 劝退词表：反向立场在 P0 里是被否稿的共同点，代码给它扣分（§4.1 打分） */
-/**
- * 劝退词表。P0/P0b/P0c 创始人三次否掉的都是同一族：「先别拿它干正事」「别现在上生产」——
- * 带判断框架也否。词表只能挡住直说的，换个说法（「Star 衡量的是围观」）挡不住，
- * 所以这里只影响排序，真正的判断在创始人选卡与审稿。2026-09-05 e2e 又漏了「别现在上生产」，补进来。
- */
-const DISCOURAGE = /劝退|劝你|别碰|别用|别拿|先别|不要碰|不要上|别现在|不能上生产|不可以上生产|唱衰/;
-
-/** 结构骨架菜单：立意挑一种，不是模板；措辞与展开留给写手 */
+/** 结构骨架菜单：方法服务本次规划，字段枚举保留以兼容存量卡片。 */
 export const STRUCTURE_MENU: Record<AngleStructure, string> = {
-  "myth-busting": "反认知纠偏：先立受众信的那个错误说法 → 代价 → 用事实推翻 → 正确判断 → 最小动作",
-  story: "亲历复盘：一段具体经历切入 → 当时的判断与转折 → 提炼一个可带走的结论",
-  "single-point": "单点打穿：一个论断 → 为什么多数人想不到 → 一个完整案例展开 → 怎么用",
-  "claim-case-claim": "观点+案例+观点：先给主张 → 一个第一手案例 → 案例改写后的主张（第二次必须更锋利，不是复述）",
+  "myth-busting": "纠偏：仅在用户需要且确有受众误区时，用证据解释问题与判断；不强制反问或先制造错误认知",
+  story: "自然叙事：具体场景或经历 → 按真实进展展开 → 自然落到理解与感受；不编造亲历、转折或行动口号",
+  "single-point": "解释或实用建议：围绕一个明确问题讲清来龙去脉，或给出适用步骤与边界；不强求多数人想不到",
+  "claim-case-claim": "观点与案例：先说明判断 → 用适切案例检验 → 给出有证据的结论与边界；结论不必更激烈",
 };
 
 // ─── 契约 ────────────────────────────────────────────────────────────────────
@@ -107,6 +98,8 @@ export interface RunAngleStageInput {
   /** 创作者自己的材料（P1b §3.2）：第一手锚点的另一半来源；缺省 = 这轮只有简报证据可引 */
   ownMaterial?: OwnMaterial;
   profile: CreatorProfile | null;
+  /** 本次要求高于账号默认规划，贯穿调研与立意。 */
+  creativeTask?: CreativeTask;
   engineConfig?: EngineConfig;
   dataDir?: string;
   runLoopImpl?: typeof runLoop;
@@ -174,30 +167,26 @@ export function scoreAngleCard(
   brief: ResearchBrief,
   ownMaterial?: OwnMaterial,
 ): { score: number; reasons: string[] } {
-  const reasons: string[] = [];
-  const elements = new Set(card.elements ?? []);
-  let score = Math.min(elements.size, 3);
-  reasons.push(`元素 ${elements.size}`);
-  if (card.evidenceLevel === "grounded") {
+  const reasons: string[] = ["证据支撑分，不代表传播潜力或爆款概率"];
+  const refs = [...new Set(card.coreEvidenceIds)];
+  const completeReferences = refs.length > 0 && refs.every(ref => {
+    const evidence = evidenceByRef(brief.evidence, ref);
+    return Boolean(evidence?.claim.trim() && evidence.quote.trim() && evidence.sourceUrl.trim());
+  });
+  let score = 0;
+  if (card.evidenceLevel === "grounded" && completeReferences) {
     score += 1;
-    reasons.push("有简报证据（grounded）");
+    reasons.push("有可追溯的简报证据（grounded）");
   } else {
-    reasons.push("综述级（overview）");
+    reasons.push("证据尚不足，不能据此判断主张成立");
   }
   if (isAnchorValid(card, brief, ownMaterial)) {
     score += 2;
-    reasons.push("第一手锚点校验通过");
+    reasons.push("引文锚点校验通过");
   } else {
-    reasons.push("无可校验的第一手锚点");
+    reasons.push("无可校验的引文锚点");
   }
-  if (card.primaryPersona === "grow") {
-    score += 1;
-    reasons.push("主画像=涨粉（账号当前目标）");
-  }
-  if (DISCOURAGE.test(`${card.thesis}${card.hookDraft}`)) {
-    score -= 3;
-    reasons.push("劝退型立场（P0 被否稿的共同点）");
-  }
+
   return { score, reasons };
 }
 
@@ -270,23 +259,19 @@ export function validateAngleCardV3(card: AngleCardV3, brief: ResearchBrief, tag
   pushLen(card.thesis, TEXT_MAX, "thesis", tag, problems);
   pushLen(card.antiScope, TEXT_MAX, "antiScope", tag, problems);
   pushLen(card.hookDraft, TEXT_MAX, "hookDraft", tag, problems);
-  pushLen(card.misconception, TEXT_MAX, "misconception（他信的那个错的东西）", tag, problems);
-  pushLen(card.nextAction, TEXT_MAX, "nextAction（看完能做的一步）", tag, problems);
-  pushLen(card.counterResponse, TEXT_MAX, "counterResponse（反方一句话）", tag, problems);
-  pushLen(card.mechanism, LONG_TEXT_MAX, "mechanism（为什么会这样的因果）", tag, problems);
-  pushLen(card.payoff, LONG_TEXT_MAX, "payoff（大白话 + 一个能做的方案）", tag, problems);
-  if (!PERSONA_KEYS.includes(card.primaryPersona)) problems.push(`${tag}：primaryPersona 只能是 grow/trust/convert`);
-  for (const k of PERSONA_KEYS) {
-    if (!card.personaGains?.[k]?.trim()) problems.push(`${tag}：缺 ${k} 画像的收益——三个都答不上来的立意不能用`);
+  if (card.structure === "myth-busting" || card.misconception) {
+    pushLen(card.misconception, TEXT_MAX, "misconception（纠偏时需要的受众误区）", tag, problems);
   }
-  const elements = card.elements ?? [];
-  if (elements.length < 2) problems.push(`${tag}：网感元素需 ≥2（当前 ${elements.length}）`);
-  else if (elements.every((e) => e === "新奇点")) problems.push(`${tag}：不能全靠新奇点，再挑一个别的元素`);
+  pushLen(card.nextAction, TEXT_MAX, "nextAction（读后理解、判断或可选行动）", tag, problems);
+  pushLen(card.counterResponse, TEXT_MAX, "counterResponse（合理异议或适用边界）", tag, problems);
+  pushLen(card.mechanism, LONG_TEXT_MAX, "mechanism（判断依据或事件发展）", tag, problems);
+  pushLen(card.payoff, LONG_TEXT_MAX, "payoff（读者获得的理解、感受或实际帮助）", tag, problems);
+  if (!PERSONA_KEYS.includes(card.primaryPersona)) problems.push(`${tag}：primaryPersona 只能是 grow/trust/convert`);
+  if (PERSONA_KEYS.includes(card.primaryPersona) && !card.personaGains?.[card.primaryPersona]?.trim()) {
+    problems.push(`${tag}：缺主目标 ${card.primaryPersona} 的收益——说明这篇内容对读者有什么用`);
+  }
   if (!ANGLE_STRUCTURES.includes(card.structure)) {
     problems.push(`${tag}：structure 只能是 ${ANGLE_STRUCTURES.join(" / ")}`);
-  }
-  if (SELF_MOCK_IDENTITY.test(`${card.hookDraft}${card.thesis}${card.payoff}`)) {
-    problems.push(`${tag}：自嘲只能嘲行为和判断，不能嘲身份/学历/出身/是否科班`);
   }
   validateEvidenceLevel(card, brief, tag, problems);
 }
@@ -362,12 +347,11 @@ function readCard(
   return card;
 }
 
-function readMisconceptions(raw: unknown, problems: string[]): Record<PersonaKey, string[]> {
+function readMisconceptions(raw: unknown): Record<PersonaKey, string[]> {
   const src = (raw ?? {}) as Record<string, unknown>;
   const out = { grow: [] as string[], trust: [] as string[], convert: [] as string[] };
   for (const k of PERSONA_KEYS) {
     out[k] = strList(src[k]);
-    if (out[k].length === 0) problems.push(`misconceptions.${k} 至少写 1 条——先答「他信什么错的东西」`);
   }
   return out;
 }
@@ -378,7 +362,7 @@ export function validateAngles(
   ownMaterial?: OwnMaterial,
 ): Checked<AngleStagePayload> {
   const problems: string[] = [];
-  const misconceptions = readMisconceptions(args.misconceptions, problems);
+  const misconceptions = readMisconceptions(args.misconceptions);
   const items = objList(args.candidates ?? args.cards).slice(0, CARD_MAX);
   if (items.length < CARD_MIN) problems.push(`候选需 ${CARD_MIN}-${CARD_MAX} 个，当前 ${items.length} 个`);
   const cards = items.map((item, i) => readCard(item, i, brief, ownMaterial, problems));
@@ -396,35 +380,35 @@ export function validateAngles(
 
 // ─── 提示词 ──────────────────────────────────────────────────────────────────
 
-export function buildAngleSystemPrompt(profile: CreatorProfile | null): string {
+export function buildAngleSystemPrompt(profile: CreatorProfile | null, creativeTask?: CreativeTask): string {
   return [
     INJECTION_NOTICE,
     "",
-    "你是这位创作者内容团队里的策划，本轮只负责短视频口播稿的**立意**，不写稿。",
-    "立意 = 对某一个画像成立的、可被反驳的主张 + 他看完能做的一个动作。",
+    "你是这位创作者内容团队里的策划，本轮负责立意，不写稿。平台、体裁、目的和表达方式由本次创作任务决定，不默认短视频口播。",
+    "立意 = 对明确读者有价值的核心判断、问题解释或叙事发现；不必是反常识论断，不必引导关注或成交。",
     "",
-    "三个受众画像（账号的三项工作：涨粉 / 立信 / 变现）：",
+    renderCreativeTask(creativeTask),
+    "受众和目标：",
     renderPersonas(profile),
     "",
-    "判据：",
-    "1. 误区先行：先答「这个画像走进来时信什么错的东西」。先陈述错误认知再反驳，观众才会留下来；讲得顺滑等于看完了可以走了。",
-    "2. 三画像收益：主画像有明确动作，另外两个至少不反感、最好各得一点。三个都答不上来的立意不能用。",
-    "3. 网感元素 ≥2：新奇点（认知违背）/ 爽点（看穿、走捷径）/ 痛点→理想状态 / 笑点（自我否定式坦白）/ 泪点（真实失败的细节）/ 美点（把混乱理顺）。不能全靠新奇点。",
-    "4. 立场站得住：过反方一句话。劝退、唱衰这类反向立场只在给观众一个能拿走的判断框架时成立，否则是对同行说话。",
-    "5. 热点走中层：事件本身是表层；观众的社会情绪（怕落后、怕被割、谁在定义下一代做事方式）是中层；立意落在中层。",
-    "6. 机制：mechanism 用一句话说清**为什么会这样**的因果——「A 导致 B，因为 C」。比喻不是机制（「像投票箱」不算），复述材料也不算。",
-    "7. 收获感：payoff 用大白话讲清「为什么会这样」+ 一个观众今天能做的方案或启发。小白听不懂的术语等于没讲。",
-    "8. 证据级别：主张有简报证据撑着就写 evidenceLevel=grounded 并给 coreEvidenceIds（ev-N）；材料里确实没有就写 overview，并在 evidenceNeeds 里写够 2 条「去找什么」——不要为了凑 grounded 硬引一条不相干的证据。",
-    "9. 第一手锚点：优先引创作者自己的材料（kind=transcript / approved_draft，chunk_id 写材料块里的 om:… 片段 id）；没有合适的就引简报证据（kind=brief_evidence，chunk_id 写 ev-N）。quote 一律从被引正文里**逐字**复制，引用会被代码逐字校验，编造必被打回；实在没有合适的就不要给锚点。",
-    `10. 自己的材料怎么用：${OWN_MATERIAL_USAGE_RULE}——他的转写是「我当时做了什么、卡在哪、后来怎么想通的」，不是拿来讲另一个题目的讲义；锚点必须直接支撑这张卡的主张，挂不上就别挂。`,
-    "11. 自嘲只能嘲行为和判断（「我当时以为」「我走了弯路」），不能嘲身份和资历（学历、出身、是否科班）——那会降低创作者的可信度。",
+    "策划规则：",
+    "1. 本次用户方向、受众、平台、提纲、必写与禁区是共同约束。候选只能在这个范围内展开；用户方向已明确时，提供该方向内的叙事入口或论证路径，不另换主张。",
+    "2. 区分媒介与目的：公众号按阅读逻辑和内容深度策划；口播考虑听懂和口语节奏；自然叙事保留具体场景、过程和真实感；实用说明优先讲清步骤和适用边界。没有指定平台或体裁就明确未设，不替用户决定。",
+    "3. 方法按需：有真实误区且纠偏符合要求才用 myth-busting；叙事、解释、经验分享不强造误区、冲突或反转。情绪和网感元素可用也可不用，elements 可以为空，不凑数量。",
+    "4. primaryPersona 保留 grow/trust/convert 目标标签，仅选本次最相关的一项；personaGains 只需说明该目标下的读者收益，其余留空，不编造三种人群或同时满足三种目的。",
+    "5. mechanism 说明主张依据、事情如何发展或建议为何有效；材料不足以支持因果时标明未知，不把相关性写成因果。payoff 写读者能获得的理解、感受或实际帮助；nextAction 可以是读后的理解与判断，不必是行动号召。",
+    "6. counterResponse 说明合理异议或适用边界；没有可支持的反方就说明尚无材料，不制造稻草人。misconception 仅在适合纠偏时填写，其余为空；misconceptions 的三个数组都允许为空。",
+    "7. 证据级别：主张有简报证据撑着就写 evidenceLevel=grounded 并给 coreEvidenceIds（ev-N）；材料里确实没有就写 overview，并在 evidenceNeeds 里写够 2 条「去找什么」——不要为了凑 grounded 硬引一条不相干的证据。",
+    "8. 第一手锚点：优先引创作者自己的材料（kind=transcript / approved_draft，chunk_id 写材料块里的 om:… 片段 id）；没有合适的就引简报证据（kind=brief_evidence，chunk_id 写 ev-N）。quote 一律从被引正文里逐字复制，引用会被代码逐字校验；实在没有合适的就不要给锚点。",
+    `9. 自己的材料怎么用：${OWN_MATERIAL_USAGE_RULE}——锚点必须直接支撑这张卡的主张，挂不上就别挂。不要编造亲历、身份、数字或受众焦虑。`,
+    "10. 证据充分与传播潜力分别判断：可追溯证据不证明读者一定感兴趣。可能吸引人的原因只能作为待验证假设；不承诺爆款、不编造播放量或成功概率。",
     "",
-    "结构是菜单不是模板，由立意挑一种；措辞、节奏、案例展开留给写手：",
+    "结构是菜单不是模板，服从本次用户规划；措辞、节奏、案例展开留给写手：",
     ...ANGLE_STRUCTURES.map((k) => `- ${k}：${STRUCTURE_MENU[k]}`),
     "",
-    `先列三画像各 1-2 条误区，再给 ${CARD_MIN}-${CARD_MAX} 个候选立意，候选之间主画像或主张至少一维不同。`,
-    "只通过 submit_angles 提交，不要在正文里写稿；候选由创始人挑，不要替他排序或推荐。",
-  ].join("\n");
+    `给 ${CARD_MIN}-${CARD_MAX} 个有实质差异的候选立意或展开路径；用户明确的核心主张保持一致，不为差异而偏离任务。`,
+    "只通过 submit_angles 提交，不要在正文里写稿。系统会单独说明证据推荐依据，最终选择仍由用户决定。",
+  ].filter(Boolean).join("\n");
 }
 
 /** 简报事实块：引文只掐定界符**不改写**——锚点要逐字回引它，消毒会让原文对不上 */
@@ -466,11 +450,12 @@ export function buildAngleUserMessage(input: RunAngleStageInput): string {
     `标题：${clampChars(input.topic.title.trim(), 120) || "(无标题)"}`,
     `描述：${clampChars(input.topic.description.trim(), 600) || "(无描述)"}`,
     "",
+    renderCreativeTask(input.creativeTask),
     "调研简报的事实部分：",
     briefFacts(input.brief),
     ...(own ? ["", "我自己的材料（第一手，锚点优先引这里）：", own] : []),
     "",
-    "先想清楚三画像各自的误区，再给候选立意，最后调用 submit_angles 一次交齐。",
+    "依据共同任务书的受众、目的和明确方向提出候选；只在适用时写误区，最后调用 submit_angles 一次交齐。",
   ].join("\n");
 }
 
@@ -479,13 +464,13 @@ export function buildAngleUserMessage(input: RunAngleStageInput): string {
 /** 必填文本字段：`名 → 说明`（required 清单由它派生，别两处各写一遍） */
 const CARD_TEXT_FIELDS: Record<string, string> = {
   angle: "切入点一句话",
-  thesis: "可被反驳的主张，不是材料复述",
-  misconception: "主画像走进来时信的那个错的东西",
-  mechanism: "一句话说清为什么会这样的因果，不是比喻",
-  payoff: "大白话讲清为什么 + 一个观众能做的方案/启发",
-  next_action: "他看完今天就能做的一步",
-  counter_response: "反方会说什么，怎么回应",
-  hook_draft: "开头钩子草稿",
+  thesis: "符合用户方向的核心判断、问题解释或叙事发现，不是材料复述",
+  misconception: "真实受众误区；非纠偏结构可留空，不编造错误认知",
+  mechanism: "说明判断依据、事件发展或建议为何有效；因果未证实时明确不确定性",
+  payoff: "读者获得的理解、感受、判断或实际帮助",
+  next_action: "读后的理解、判断或可选行动，不要求关注/成交口号",
+  counter_response: "合理异议或适用边界；没有材料支持时说明未知，不制造稻草人",
+  hook_draft: "适合本次平台与表达方式的开头草稿，不强制钩子套路",
   anti_scope: "这一稿明确不写什么",
 };
 
@@ -502,16 +487,17 @@ const CARD_SCHEMA = {
   ],
   properties: {
     ...Object.fromEntries(Object.entries(CARD_TEXT_FIELDS).map(([k, d]) => [k, { type: "string", description: d }])),
-    primary_persona: { type: "string", enum: PERSONA_KEYS },
+    primary_persona: { type: "string", enum: PERSONA_KEYS, description: "本次内容的主目标标签，不是预设人群" },
     evidence_level: { type: "string", enum: ["grounded", "overview"] },
     core_evidence_ids: { type: "array", items: { type: "string" }, description: "grounded 必填：ev-N" },
     tension_id: { type: "string", description: "依托的张力点 tension-N，可省" },
     persona_gains: {
       type: "object",
       required: PERSONA_KEYS,
+      description: "主目标对应收益必填，其余可以是空字符串",
       properties: Object.fromEntries(PERSONA_KEYS.map((k) => [k, { type: "string" }])),
     },
-    elements: { type: "array", items: { type: "string", enum: [...ANGLE_ELEMENTS] }, minItems: 2 },
+    elements: { type: "array", items: { type: "string", enum: [...ANGLE_ELEMENTS] }, description: "实际适用的表达元素，可为空，不凑数量" },
     firsthand_anchor: {
       type: "object",
       description: "第一手锚点（可省）：创作者自己的材料优先",
@@ -538,7 +524,7 @@ const SUBMIT_SCHEMA = {
       type: "object",
       required: PERSONA_KEYS,
       properties: Object.fromEntries(
-        PERSONA_KEYS.map((k) => [k, { type: "array", items: { type: "string" }, minItems: 1 }]),
+        PERSONA_KEYS.map((k) => [k, { type: "array", items: { type: "string" }, description: "适用于本次内容的真实误区，无则空数组" }]),
       ),
     },
     candidates: { type: "array", minItems: CARD_MIN, maxItems: CARD_MAX, items: CARD_SCHEMA },
@@ -555,7 +541,7 @@ function buildSubmitTool(
 ): LoopTool {
   return {
     name: SUBMIT_TOOL_NAME,
-    description: "提交三画像误区清单与候选立意。一次交齐；校验不过会返回错误清单，修正后整份重交。",
+    description: "提交符合本次任务的候选立意；误区只在适用时填写。一次交齐；校验不过会返回错误清单，修正后整份重交。",
     parameters: SUBMIT_SCHEMA,
     execute(args) {
       // 超时后晚到的提交一律丢弃：那一轮的结果已经作废，收下等于让墙钟形同虚设
@@ -628,7 +614,7 @@ export async function runAngleStage(input: RunAngleStageInput): Promise<AngleSta
 
   const work: Promise<LoopOutcome> = (input.runLoopImpl ?? runLoop)(scout.config, {
     model: scout.model,
-    systemPrompt: buildAngleSystemPrompt(input.profile),
+    systemPrompt: buildAngleSystemPrompt(input.profile, input.creativeTask),
     userMessage: buildAngleUserMessage(input),
     tools: [buildSubmitTool(capture, input.brief, input.ownMaterial, state)],
     maxTurns: MAX_TURNS,

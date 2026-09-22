@@ -9,6 +9,7 @@
  *    停在页缓存里的一行崩溃后就等于「这个选题从没被调研过」，会重复跑一遍。
  * 3. **dataDir 由调用方传入**：调研落在选题所在工作区，不跟随「当前工作区」。
  */
+import type { CreativeTask } from "../writing/creative-task.js";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -40,6 +41,8 @@ export interface PerspectiveState {
 export type ResearchJobKind = "full" | "angles";
 
 export interface ResearchJob {
+  /** Frozen creator intent; survives retries and process recovery. */
+  creativeTask?: CreativeTask;
   /** 台账主键：一个选题同时只有一个「当前 job」 */
   topicId: string;
   status: ResearchJobStatus;

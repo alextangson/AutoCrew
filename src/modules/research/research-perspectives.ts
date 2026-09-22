@@ -1,3 +1,4 @@
+import { renderCreativeTask } from "../writing/creative-task.js";
 /**
  * 视角子运行（深调研 spec §4）：一个视角 = 一次 runLoop，工具带 = broker 背书的
  * `search`/`read_page`（对标视角另挂只读 `list_patterns`）+ 收束工具 `submit_perspective`。
@@ -131,6 +132,8 @@ export interface ResearchTopicRef {
 export type PatternLister = () => Promise<PatternCard[]>;
 
 export interface RunPerspectiveInput {
+  creativeTask?: import("../writing/creative-task.js").CreativeTask;
+  ownMaterial?: import("./own-material.js").OwnMaterial;
   name: PerspectiveName;
   topic: ResearchTopicRef;
   profile: CreatorProfile | null;
@@ -200,11 +203,13 @@ export function buildPerspectiveUserMessage(input: RunPerspectiveInput): string 
   const book = PERSPECTIVE_TASK_BOOKS[input.name];
   return [
     buildTrustedContext(input),
+    renderCreativeTask(input.creativeTask),
     "",
     "本次要调研的选题（来自我们自己的灵感库，可信）：",
     `标题：${clampChars(input.topic.title.trim(), TOPIC_TITLE_MAX_CHARS) || "(无标题)"}`,
     `描述：${clampChars(input.topic.description.trim(), TOPIC_DESC_MAX_CHARS) || "(无描述)"}`,
     "",
+    ...(input.ownMaterial?.rendered ? ["创作者已有的内部材料（仅作来源线索和个人经历，不当成外部证据；先看已有内容，再查缺口）：", input.ownMaterial.rendered, ""] : []),
     `你的视角：${book.label}。先想清楚要查什么再动手检索，最后调用 submit_perspective 交付。`,
   ].join("\n");
 }

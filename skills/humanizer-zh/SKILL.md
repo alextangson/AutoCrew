@@ -3,70 +3,40 @@ name: humanizer-zh
 surfaces: gui, harness
 gui_summary: 稿子读着有 AI 味时用——去套话、去论文腔、改回人话
 description: |
-  中文去AI味 skill。社媒内容完稿前必须过一遍。优先调用 `autocrew_humanize`，把 AI 痕迹清掉，再决定是否需要人工二次润色。
+  检查中文文案的重复、空话与语气，保留事实和作者原意。格式工具只清理空白，语义修改由宿主完成并重新交审。
 ---
 
-# Humanizer ZH
+# 自然表达检查
 
-## Purpose
+用户说“生硬、官腔、像 AI”时，先找具体原因，再做必要修改。词语本身、长短句、排比、没有 CTA 都不能单独证明表达有问题。
 
-Make Chinese social content feel less generic, less essay-like, and closer to natural human expression.
+## 先判断
 
-## Rules
+读取当前稿件及本次写作要求，逐段看：
 
-1. Run this as the final pass after writing or rewriting.
-2. Prefer the `autocrew_humanize` tool over manual cleanup.
-3. If the output still sounds generic, do one more focused rewrite instead of adding more buzzwords.
+- 是否有空话、重复解释或失去具体所指的术语。
+- 转折和段落是否承接真实论证，是否擅自改变了用户要求的叙事顺序。
+- 语气是否适合目标读者和这位作者，而非强行口语化。
+- 事实、叙述者、主语和引文是否保持原意。不能为“像人”编亲历、数字、吐槽或故意造语病。
 
-## Tool Usage
+“我们”“其次”“闭环”等词要按语境判断，不能一律删除或替换。清单、论文、专业说明也可能是用户主动选择的形式。
 
-For a saved draft:
+## 工具边界
 
-```json
-{
-  "action": "humanize_zh",
-  "content_id": "content-xxx",
-  "save_back": true
-}
-```
+`autocrew_humanize {action:"humanize_zh", text}` 只清理空白与行尾格式，并可能给出表达建议；它不完成语义润色，也不提供可靠的 AI 痕迹检测。`changeCount` 是实际格式变化数，不是内容质量得分。
 
-For raw text:
+需要对已存稿做格式清理时，可带 `content_id` 和用户所需的 `save_back`；汇报实际格式变化，不说“已去除 AI 痕迹”。
 
-```json
-{
-  "action": "humanize_zh",
-  "text": "待处理文本"
-}
-```
+语义修改由宿主根据问题范围完成：保留无关段落，规划缺项或结构问题可调整相关段落；不是永远只能改几个被引用的字。正式改稿按 `write-script` 的材料包与 `autocrew_writer submit` 交回检查，不能以格式工具的成功代替审稿。GUI 有选区提案工具时可用它，但不要在纯 MCP 会话里假设它存在。
 
-## Completion
-
-Report:
-
-- how many classes of issues were fixed
-- the top 3-5 meaningful changes
+改完展示最关键的修改理由及质量状态。用户只针对本篇说“短一点”时，不能自动升级为所有文章的长期规则。
 
 ## GUI
 
-**什么时候用**：稿子读着像 AI 写的——用户说「太 AI 味了」「这段太官腔」「口语一点」，或你自己读完觉得干净得不像人写的。这是成稿前的最后一道，不是重写。
+本节仅供 AutoCrew 工作台加载；纯 MCP 宿主执行上文。
 
-### 方法论：去 AI 味不是换词，是换说话方式
+用 `get_draft` 读稿，先按用户要求定位重复、空话、语气或论证问题。不要按词表删除“我们”“其次”，不因文章没有 CTA、句长整齐或用了专业词就判成 AI 文。
 
-三个判据，按这个顺序看：
+用户选中了内容时走 `revise_focus`，展示编辑器提案供用户采纳；没有焦点时用 `revise_draft`，指明问题范围与需要保留的意思。修改不得凭空添加数字、亲历或引语，也不自动变更主语与事实。
 
-1. **不泛泛**：每段有没有具体的人、事、数字、场景。通篇「随着……的发展」「在这个时代」就是空的。
-2. **不像论文**：AI 爱写总分总、爱用「首先/其次/最后」排队、爱「综上所述」收尾、爱拿「我们」起句。人说话是想到哪说到哪，有停顿、有插话、有半句。
-3. **像人在说**：句子长度要参差（AI 写出来的句子长度齐得反常），该短就短到三个字；敢用口语、敢自嘲、敢把结论直接拍在开头。
-
-常见 AI 痕迹清单：套话词（值得一提、综上所述、赋能、闭环、生态）、顺序词开头、排比堆砌、每段一样长、结尾必升华。
-
-**关键纪律**：一轮改不干净，就再来一轮**指名到段、到句**的重写——不要靠加更多形容词和金句去补，那只会更 AI。
-
-### 步骤
-
-1. 先确定改哪一篇：上下文里有当前稿件 id 就是它；不确定先 `list_drafts` 让用户指认。动手前用 `get_draft` 读全文。
-2. **有「当前修改焦点」时**（用户在编辑器里选了一段或点了「改这篇」）→ 一律走 `revise_focus`，不要用 `revise_draft`（规则见 system prompt 第 3.5 条）。要求不明确先反问一句、别硬改；它出的是提案、不直接保存，改完提示用户在编辑器看红绿 diff、满意点「收下这版」。
-3. **没有焦点** → `revise_draft`。`instruction` 要写清楚具体判据（「删掉首先其次最后、把第二段的空话换成那个客户的例子、句长打散」），别只丢一句「去 AI 味」。它会原地存成新版本。
-4. 改完自己再读一遍：还是顺得发假，就按第 2/3 步再来一轮聚焦重写。
-5. 用户这条意见是长期偏好（「以后都别用排比」）→ 顺手 `add_style_rule` 记一条，下次写稿自动生效。
-6. 收尾报告：修了哪几类问题、最值得看的 3-5 处改动。别复述全文。
+只针对本篇的反馈留在本稿修改要求；用户明确提出长期表达偏好时才用 `add_style_rule`，保留其适用平台或范围。汇报改了什么与仍需核对的地方，不宣称清除了 AI 痕迹。

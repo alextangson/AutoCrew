@@ -33,7 +33,7 @@ afterEach(async () => {
 function mockLoop(args: Record<string, unknown>): typeof runLoop {
   return (async (_c: unknown, opts: { tools: Array<{ name: string; execute: (a: Record<string, unknown>) => unknown }> }) => {
     const tool = opts.tools.find((t) => t.name === "submit_audience_review");
-    if (tool) await tool.execute(args);
+    if (tool) await tool.execute({ audienceBasis: { source: "profile", quote: "" }, ...args });
     return { stopReason: "tool", turns: 1, totalTokens: 50, finalText: "" };
   }) as unknown as typeof runLoop;
 }
@@ -55,7 +55,7 @@ describe("reviewAudienceStay", () => {
 
   it("happy path:逐层判定 + coreStops 总判定 + 审稿标准透明", async () => {
     await seedProfile(CALIBRATED);
-    const r = await reviewAudienceStay({ title: "标题", body: "正文", platform: "wechat_mp" }, dir, {
+    const r = await reviewAudienceStay({ title: "标题", body: "随着 AI 发展，正文", platform: "wechat_mp" }, dir, {
       runLoopImpl: mockLoop({
         verdicts: [
           { tier: "core", name: "小林", wouldStop: false, why: "开头没打中切入焦虑", losesAt: ["随着 AI 发展"] },
@@ -77,4 +77,52 @@ describe("reviewAudienceStay", () => {
       runLoopImpl: mockLoop({ verdicts: [{ tier: "adjacent", name: "x", wouldStop: true, why: "y" }] }),
     })).rejects.toThrow(/未调用 submit_audience_review/);
   });
+});
+
+
+it("不把字符串false当true，也不接受编造的原文引用", async () => {
+  await seedProfile({ core: CALIBRATED.core, calibratedAt: CALIBRATED.calibratedAt });
+  for (const verdict of [
+    { tier: "core", name: "小林", wouldStop: "false", why: "原因" },
+    { tier: "core", name: "小林", wouldStop: false, why: "原因", losesAt: ["正文里没有这句话"] },
+  ]) {
+    await expect(reviewAudienceStay({ title: "标题", body: "真实正文" }, dir, { runLoopImpl: mockLoop({ verdicts: [verdict] }) })).rejects.toThrow(/未调用/);
+  }
+});
+
+it("全文尾段和本次规划交给受众审稿，不静默裁成6000字", async () => {
+  await seedProfile({ core: CALIBRATED.core, calibratedAt: CALIBRATED.calibratedAt });
+  let message = "";
+  const impl = (async (config, opts) => {
+    message = opts.userMessage;
+    return mockLoop({ verdicts: [{ tier: "core", name: "小林", wouldStop: false, why: "结尾脱离本次受众", losesAt: ["最后一个具体场景"] }] })(config, opts);
+  }) as typeof runLoop;
+  await reviewAudienceStay({ title: "标题", body: "文".repeat(6500) + "最后一个具体场景", writingContract: "这篇写给仓库主管" }, dir, { runLoopImpl: impl });
+  expect(message).toContain("最后一个具体场景");
+  expect(message).toContain("这篇写给仓库主管");
+});
+
+
+it("本次任务受众覆盖长期画像时回执标明实际依据，不冒用旧画像", async () => {
+  await seedProfile(CALIBRATED);
+  const result = await reviewAudienceStay({ title: "仓库", body: "今天跟着仓管走了一遍。", writingContract: "这篇只写给仓库主管" }, dir, {
+    runLoopImpl: mockLoop({ audienceBasis: { source: "current_task", quote: "只写给仓库主管" }, verdicts: [{ tier: "core", name: "仓库主管", wouldStop: true, why: "工作处境具体" }] }),
+  });
+  expect(result.personaUsed).toContain("仓库主管");
+  expect(result.personaUsed).not.toContain("小林");
+  expect(result.verdicts).toHaveLength(1);
+});
+
+it("受众点评使用与语义审稿相同的reviewer岗位线路", async () => {
+  await seedProfile({ core: CALIBRATED.core, calibratedAt: CALIBRATED.calibratedAt });
+  await fs.writeFile(path.join(dir, "engine.json"), JSON.stringify({ apiKey: "fixture", strongModel: "default-model", routes: { reviewer: { model: "review-only-model", baseUrl: "https://review.example.test/v1" } } }));
+  let seenModel = "";
+  let seenBase = "";
+  await reviewAudienceStay({ title: "标题", body: "正文" }, dir, { runLoopImpl: (async (config, opts) => {
+    seenModel = opts.model;
+    seenBase = config.baseUrl;
+    return mockLoop({ verdicts: [{ tier: "core", name: "小林", wouldStop: true, why: "有具体场景" }] })(config, opts);
+  }) as typeof runLoop });
+  expect(seenModel).toBe("review-only-model");
+  expect(seenBase).toContain("review.example.test");
 });

@@ -1,3 +1,4 @@
+import { createCreativeTask } from "../modules/writing/creative-task.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -55,7 +56,8 @@ describe("writing readiness", () => {
 
   it("preserves explicit clearing without converting omitted parameters into clearing", async () => {
     const result = await inspect({ direction: "", requirements: "", angleSkipReason: undefined, research: "" });
-    expect(result.continue_params).toMatchObject({ direction: "", requirements: "", skip_reason: "", research: "" });
+    expect(result.continue_params).toMatchObject({ direction: "", requirements: "", research: "" });
+    expect(result.continue_params).not.toHaveProperty("skip_reason");
     const omitted = await inspect();
     expect(omitted.continue_params).not.toHaveProperty("direction");
     expect(omitted.continue_params).not.toHaveProperty("research");
@@ -92,6 +94,9 @@ describe("writing readiness", () => {
   it("requests candidate generation when research has no cards and no chosen direction", async () => {
     await seed({ angleCards: [] });
     expect(await inspect()).toMatchObject({ ready: false, status: "needs_attention", next_action: { params: { action: "research", kind: "angles" } } });
+    expect(await inspect({ direction: "从我的返工经历展开" })).toMatchObject({ ready: false, research: { status: "stale" } });
+    await saveBrief(topicId, brief({ revision: 2, angleCards: [], creativeTask: createCreativeTask({ direction: "从我的返工经历展开" }) }), dir);
+    await upsertJob(job({ briefRevision: 2 }), dir);
     expect(await inspect({ direction: "从我的返工经历展开" })).toMatchObject({ ready: true, angle: { status: "direction" } });
   });
 
@@ -133,5 +138,43 @@ describe("writing readiness", () => {
 
   it("rejects an invalid mode at runtime instead of treating it as a skip", async () => {
     expect(await inspect({ researchMode: "anything" as "auto", direction: "直接写" })).toMatchObject({ ready: false, status: "needs_attention" });
+  });
+});
+
+
+describe("creative task continuity", () => {
+  const task = createCreativeTask({ platform: "wechat", requirements: "写给门店老板，完整保留失败过程", direction: "从一次返工展开" });
+
+  it("persists the preparation request across a new host conversation", async () => {
+    await seed({ creativeTask: task }, { creativeTask: task });
+    const result = await inspect();
+    expect(result).toMatchObject({ ready: true, creativeTask: task, research: { matchesRequestedTask: true } });
+    expect(result.continue_params).toMatchObject({ platform: task.platform, requirements: task.requirements, direction: task.direction });
+  });
+
+  it.each([
+    { requirements: "改写给新员工，讲第一天怎么做" },
+    { platform: "douyin" },
+    { direction: "改为产品公告" },
+    { requirements: "" },
+  ])("does not reuse research for changed intent %j", async (changed) => {
+    await seed({ creativeTask: task }, { creativeTask: task });
+    const result = await inspect(changed);
+    expect(result).toMatchObject({ ready: false, status: "not_started", research: { status: "stale", matchesRequestedTask: false } });
+    expect(result.angle.cards).toEqual([]);
+  });
+
+  it("explains when the in-flight job belongs to a different task", async () => {
+    await seed({ creativeTask: task }, { creativeTask: task, status: "running" });
+    const result = await inspect({ requirements: "现在要给学生看" });
+    expect(result).toMatchObject({ ready: false, status: "researching", research: { matchesRequestedTask: false } });
+    expect(result.note).toContain("尚未应用本次要求");
+    expect(result.continue_params.requirements).toBe("现在要给学生看");
+  });
+
+  it("keeps platform-only legacy use but rejects new plans against legacy research", async () => {
+    await seed();
+    expect(await inspect({ platform: "douyin" })).toMatchObject({ status: "needs_angle", research: { autoResearched: true } });
+    expect(await inspect({ platform: "douyin", requirements: "新规划" })).toMatchObject({ status: "not_started", research: { status: "stale" } });
   });
 });

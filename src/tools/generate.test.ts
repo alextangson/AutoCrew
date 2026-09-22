@@ -43,7 +43,7 @@ describe("executeGenerate", () => {
       requirements: "  写给小白；按一天经历展开；不要工具清单。  ", direction: "  只讲返工成本  ",
     }, { generateScriptImpl: async (req) => { seen = { ...req }; return GOOD_RESULT; } });
     expect(seen).toMatchObject({
-      requirements: "写给小白；按一天经历展开；不要工具清单。", direction: "只讲返工成本", research: "用户的实测材料",
+      requirements: "  写给小白；按一天经历展开；不要工具清单。  ", direction: "  只讲返工成本  ", research: "用户的实测材料",
     });
   });
 
@@ -331,5 +331,27 @@ describe("knowledge dedupe", () => {
     expect(capturedReq).not.toBeNull();
     expect((capturedReq as { research?: string }).research).toBe("用户给的资料");
     await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+});
+
+describe("engine entry keeps persisted creative intent", () => {
+  it("inherits omitted original requirements rather than clearing them with undefined fields", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "generate-creative-task-"));
+    try {
+      const { saveTopic } = await import("../storage/local-store.js");
+      const { saveBrief } = await import("../modules/research/brief-store.js");
+      const { topicHashOf, upsertJob } = await import("../modules/research/research-job-store.js");
+      const topic = await saveTopic({ title: "返工复盘", description: "真实经历", tags: [] }, dir);
+      const creativeTask = { version: 1 as const, platform: "douyin", requirements: "  保留完整经历\n不要口号  ", direction: "从失败原因展开" };
+      const topicHash = topicHashOf(topic.title, topic.description);
+      await saveBrief(topic.id, { schemaVersion: 1, summary: "已有素材", perspectives: [], tensions: [], angleSuggestions: [], angleCards: [], evidence: [], assetPicks: [], missingPerspectives: [], gaps: [], generatedAt: "2026-09-22T00:00:00Z", revision: 1, topicHash, creativeTask }, dir);
+      await upsertJob({ topicId: topic.id, topicHash, creativeTask, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: 1 }, dir);
+      const generateScriptImpl = vi.fn(async () => GOOD_RESULT);
+      const result = await executeGenerate({ action: "script", topic: topic.title, topic_id: topic.id, platform: "douyin", execution: "engine", _host: "claude_desktop", _dataDir: dir }, { generateScriptImpl });
+      expect(result.ok).toBe(true);
+      expect(generateScriptImpl).toHaveBeenCalledWith(expect.objectContaining({ requirements: creativeTask.requirements, direction: creativeTask.direction }), dir);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

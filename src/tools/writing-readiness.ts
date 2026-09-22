@@ -1,4 +1,5 @@
 /** Shared, read-only preparation gate for every MCP writing entry. */
+import { inheritCreativeTask, createCreativeTask, creativeTaskHash, creativeTaskMatches, type CreativeTask } from "../modules/writing/creative-task.js";
 import { activeAngleCard, angleCardHash, angleCardsOf } from "../modules/research/angle-cards.js";
 import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { getJob, topicHashOf } from "../modules/research/research-job-store.js";
@@ -19,11 +20,14 @@ export interface WritingReadiness {
   ready: boolean;
   status: "not_started" | "researching" | "needs_attention" | "needs_angle" | "ready_to_write";
   topicId: string;
+  creativeTask?: CreativeTask;
   research: {
     mode: "auto" | "provided" | "skip";
     status: "not_started" | "running" | "failed" | "stale" | "complete" | "partial" | "provided" | "skipped";
     /** True only when AutoCrew has a current successful/partial brief. */
     autoResearched: boolean;
+    matchesRequestedTask?: boolean;
+    creativeTaskHash?: string;
     briefRevision?: number;
     briefHash?: string;
     summary?: string;
@@ -66,10 +70,10 @@ export function writingReadinessFailure(readiness: WritingReadiness): { ok: fals
 
 /** Carry original intent across async preparation; never replace it with a summary. */
 export function writingContinueParams(topicId: string, req: WritingReadinessRequest): Record<string, unknown> {
-  // An explicit empty/undefined own field clears an inherited request. Omission
+  // An explicit empty string clears an inherited request. Omission or undefined
   // means inherit. Preserve that distinction through the host's next tool call.
   const carry = (key: keyof WritingReadinessRequest, target: string = key) =>
-    Object.prototype.hasOwnProperty.call(req, key) ? { [target]: req[key] ?? "" } : {};
+    req[key] !== undefined ? { [target]: req[key] } : {};
   return {
     topic_id: topicId,
     ...(req.platform ? { platform: req.platform } : {}),
@@ -90,7 +94,7 @@ export async function inspectWritingReadiness(
   warn?: (message: string) => void,
 ): Promise<WritingReadiness> {
   const mode = req.researchMode ?? "auto";
-  const continuation = writingContinueParams(topicId, req);
+  let continuation = writingContinueParams(topicId, req);
   const next = (action: string, extra: Record<string, unknown> = {}) => ({
     tool: "autocrew_workflow", params: { ...continuation, action, ...extra },
   });
@@ -114,13 +118,23 @@ export async function inspectWritingReadiness(
   const [job, snap] = await Promise.all([
     getJob(topicId, dataDir), resolveEffectiveBrief(topicId, dataDir, warn),
   ]);
+  const task = createCreativeTask(req, job?.creativeTask ?? snap?.brief.creativeTask);
+  // A new host conversation can resume from persisted intent without restating or summarizing it.
+  req = inheritCreativeTask(req, task);
+  continuation = writingContinueParams(topicId, req);
+  result.continue_params = continuation;
+  result.next_action = next("prepare");
+  result.creativeTask = task;
   const topicHash = topicHashOf(topic.title, topic.description);
-  const stale = Boolean(snap && snap.brief.topicHash !== topicHash);
+  const taskMatchesBrief = creativeTaskMatches(task, snap?.brief.creativeTask);
+  const taskMatchesJob = creativeTaskMatches(task, job?.creativeTask);
+  const stale = Boolean(snap && (snap.brief.topicHash !== topicHash || !taskMatchesBrief));
+  result.research.creativeTaskHash = creativeTaskHash(task);
   const options = snap && !stale ? angleOptionsView(snap.brief) : { cards: [] };
   result.angle = { status: options.cards.length ? "needs_selection" : "missing", ...options };
   const effective = snap && !stale ? activeAngleCard(topic.selectedAngle, snap.brief, topicHash) : null;
   if (job) result.research.job = jobView(job);
-  if (snap) Object.assign(result.research, {
+  if (snap && (mode === "auto" || !stale)) Object.assign(result.research, {
     briefRevision: snap.revision,
     briefHash: snap.hash,
     summary: snap.brief.summary,
@@ -145,7 +159,10 @@ export async function inspectWritingReadiness(
     // A retained old brief is not proof that the latest requested research succeeded.
     if (job?.status === "queued" || job?.status === "running") {
       result.research.status = "running";
-      return { ...result, status: "researching", note: "调研正在进行，尚未完成；请先告知进度，不要直接写成稿。", next_action: next("prepare") };
+      result.research.matchesRequestedTask = taskMatchesJob;
+      return { ...result, status: "researching", note: taskMatchesJob
+        ? "调研正在进行，尚未完成；请先告知进度，不要直接写成稿。"
+        : "正在进行的调研使用另一份创作任务，尚未应用本次要求。等待它结束后将按本次任务重新准备，不能把旧任务进度当成本次完成。", next_action: next("prepare") };
     }
     if (job?.status === "failed") {
       result.research.status = "failed";
@@ -154,7 +171,8 @@ export async function inspectWritingReadiness(
     }
     if (stale) {
       result.research.status = "stale";
-      return { ...result, status: "not_started", note: "选题标题或描述已变化，旧简报已过期；需要刷新调研。", next_action: next("prepare") };
+      result.research.matchesRequestedTask = taskMatchesBrief;
+      return { ...result, status: "not_started", note: "选题或本次创作任务（平台、要求、方向）已变化，旧简报已过期；需要按本次要求刷新调研。", next_action: next("prepare") };
     }
     if (!snap) {
       if (job) {
@@ -165,6 +183,7 @@ export async function inspectWritingReadiness(
     }
     result.research.status = job?.status === "partial" ? "partial" : "complete";
     result.research.autoResearched = true;
+    result.research.matchesRequestedTask = true;
     if (angleCardsOf(snap.brief).length === 0 && !req.direction?.trim() && !req.angleSkipReason?.trim()) {
       return { ...result, status: "needs_attention", note: "调研已有简报，但没有形成可选立意；需要补跑立意，不能直接冒充写前准备完成。", next_action: next("research", { kind: "angles" }) };
     }

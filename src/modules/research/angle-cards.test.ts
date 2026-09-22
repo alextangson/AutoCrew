@@ -109,6 +109,15 @@ describe("联合类型读侧", () => {
     checkDistinct([V2, { ...V3, thesis: V2.thesis, antiScope: V2.antiScope }], problems);
     expect(problems.join("")).toContain("同一个角度换套说法");
   });
+  it("长主张被用户固定时，只比较候选展开是否真正不同", () => {
+    const thesis = "社区共同照料菜园可以让原本陌生的居民建立持续交往，在有限的公共空间里慢慢商量责任和利益；但这需要有人持续参与，也需要清楚的分工规则，不能将一次热闹活动当成永远有效的合作模式。";
+    const problems: string[] = [];
+    checkDistinct([
+      { ...V3, thesis, angle: "清晨与外婆浇水", mechanism: "按时间顺序叙述递水壶、照看菜苗以及互相问候的场景", structure: "story" },
+      { ...V3, thesis, angle: "公共土地怎么分配", mechanism: "拆解值班排表和收获共享的约定，解释适用边界与仍然存在的争议", structure: "single-point" },
+    ], problems);
+    expect(problems).toEqual([]);
+  });
 });
 
 describe("parseAngleCard：v3 改写", () => {
@@ -119,8 +128,8 @@ describe("parseAngleCard：v3 改写", () => {
     expect(isAngleCardV3(got)).toBe(true);
     if (!isAngleCardV3(got)) return;
     expect(got.thesis).toBe("净收益接近于零，账要按理解成本算");
-    expect(got.score).toBe(6); // 元素 2 + grounded 1 + 锚点 2 + grow 1
-    expect(got.scoreReasons).toContain("第一手锚点校验通过");
+    expect(got.score).toBe(3); // 证据 1 + 有效锚点 2
+    expect(got.scoreReasons).toContain("引文锚点校验通过");
   });
 
   it("必填 v3 文本清空 → 拒（点名字段）", () => {
@@ -164,9 +173,20 @@ describe("parseAngleCard：v3 改写", () => {
     expect(got).toContain("不能在改写里新增");
   });
 
-  it("元素改到只剩 1 个 / 改成不存在的画像 → 拒", () => {
-    expect(parseAngleCard(rewrite({ elements: ["爽点"] }), makeBrief(), "angle-2")).toContain("网感元素需 ≥2");
+  it("表达元素可清空，不存在的目标标签仍拒绝", () => {
+    expect(parseAngleCard(rewrite({ elements: [] }), makeBrief(), "angle-2")).toMatchObject({ elements: [] });
     expect(parseAngleCard(rewrite({ primaryPersona: "boss" }), makeBrief(), "angle-2")).toContain("primaryPersona");
+  });
+
+  it("改为自然叙事时可以清除不适用的误区与次要目标收益", () => {
+    const got = parseAngleCard(rewrite({
+      structure: "story", misconception: "", elements: [],
+      primaryPersona: "trust", personaGains: { grow: "", trust: "理解事件经过", convert: "" },
+    }), makeBrief(), "angle-2");
+    expect(got).toMatchObject({
+      structure: "story", misconception: "", elements: [],
+      personaGains: { grow: "", trust: "理解事件经过", convert: "" },
+    });
   });
 
   it("换 id → 拒（改写不能换一张卡）", () => {

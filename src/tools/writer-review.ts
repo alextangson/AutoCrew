@@ -15,6 +15,8 @@
  * - **不留悬空的中间态**：进程重启后盘上那个 `reviewing` 由下一次 `submit_status` / `submit` 重跑
  *   （稿早就落盘了，重跑只是再审一次），而不是让创始人对着一张永远「审稿中」的卡等。
  */
+import { loadProfile } from "../modules/profile/creator-profile.js";
+import { reviewAudienceStay, type AudienceReviewResult } from "../modules/review/audience-review.js";
 import { loadEngineConfig, type EngineConfig } from "../engine/config.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
@@ -36,7 +38,12 @@ import {
 } from "./writer-pack.js";
 import { describeWriterFailure } from "./writer-failure.js";
 
+export type AudienceAssessment =
+  | { status: "reviewed"; result: AudienceReviewResult }
+  | { status: "unavailable" | "skipped"; reason: string };
+
 export interface ReviewRunDeps {
+  audienceReviewImpl?: typeof reviewAudienceStay;
   runLoopImpl?: typeof runLoop;
   onWarn?: (message: string) => void;
 }
@@ -116,8 +123,8 @@ async function pendingFromDraft(contentId: string, pack: ReadyPack, dataDir: str
 
 type ReviewTurn =
   | { kind: "stale" }
-  | { kind: "skipped"; reason: string }
-  | { kind: "judged"; issues: ReviewIssue[]; blockers: ReviewIssue[]; reviewedAt: string };
+  | { kind: "skipped"; reason: string; audience?: AudienceAssessment }
+  | { kind: "judged"; issues: ReviewIssue[]; blockers: ReviewIssue[]; reviewedAt: string; audience?: AudienceAssessment };
 
 /** 后台任务**永不 reject**：审稿失败也是一个要落盘的终态，不是掉在地上的 rejection */
 async function runJob(job: ReviewJob, dataDir: string, deps: ReviewRunDeps): Promise<void> {
@@ -133,16 +140,33 @@ async function reviewTurn(job: ReviewJob, dataDir: string, deps: ReviewRunDeps):
     if (!isReadyPack(pack) || pack.packId !== job.packId) return { kind: "stale" };
     const line = await reviewLine(dataDir);
     if (!line.ok) return { kind: "skipped", reason: line.reason };
-    const outcome = await reviewOnce(reviewInput(pack, job), line.config, {
-      ...(deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
-      ...(deps.onWarn ? { onWarn: deps.onWarn } : {}),
-    });
+    const [outcome, audience] = await Promise.all([
+      reviewOnce(reviewInput(pack, job), line.config, {
+        ...(deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
+        ...(deps.onWarn ? { onWarn: deps.onWarn } : {}),
+      }),
+      audienceTurn(pack, job, dataDir, deps),
+    ]);
     if (!outcome.ok) {
-      return { kind: "skipped", reason: await describeWriterFailure(outcome.error, "reviewer", dataDir, outcome.reason) };
+      return { kind: "skipped", reason: await describeWriterFailure(outcome.error, "reviewer", dataDir, outcome.reason), audience };
     }
-    return { kind: "judged", issues: outcome.issues, blockers: outcome.blockers, reviewedAt: outcome.reviewedAt };
+    return { kind: "judged", issues: outcome.issues, blockers: outcome.blockers, reviewedAt: outcome.reviewedAt, audience };
   } catch (err) {
     return { kind: "skipped", reason: await describeWriterFailure(err, "reviewer", dataDir, cleanErrorMessage(err)) };
+  }
+}
+
+async function audienceTurn(pack: ReadyPack, job: ReviewJob, dataDir: string, deps: ReviewRunDeps): Promise<AudienceAssessment> {
+  try {
+    const profile = await loadProfile(dataDir);
+    if (!profile?.audiencePersona?.calibratedAt) return { status: "unavailable", reason: "尚无用户确认的受众画像，未进行受众点评；不把猜测的受众作为标准" };
+    const result = await (deps.audienceReviewImpl ?? reviewAudienceStay)({
+      title: job.pending.payload.title, body: job.pending.humanizedText,
+      platform: pack.context.platform, writingContract: packWritingContract(pack),
+    }, dataDir, { ...(deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}) });
+    return { status: "reviewed", result };
+  } catch (err) {
+    return { status: "unavailable", reason: cleanErrorMessage(err) };
   }
 }
 
@@ -191,7 +215,11 @@ async function applyOutcome(job: ReviewJob, turn: ReviewTurn, dataDir: string): 
     const rec = pack.attempts[String(job.attempt)];
     // 这一次已经被结掉了（重启后重跑的另一条、或人为改盘）：不许把终态再翻一遍
     if (!rec || rec.status !== "reviewing") return;
-    const result = await settleReview(job, pack, turn, dataDir);
+    const current = await getContent(job.contentId, dataDir);
+    const changed = !current || current.platform !== pack.context.platform || current.title !== job.pending.payload.title || current.body !== job.pending.humanizedText;
+    const result: Settled = changed
+      ? { status: "accepted_unreviewed", saved: true, content_id: job.contentId, quality_status: "stale_review", needs_attention: true, note: "审稿期间正文已变化，本次结论不适用于当前稿；未覆盖新正文或推进状态" }
+      : await settleReview(job, pack, turn, dataDir);
     pack.attempts[String(job.attempt)] = {
       status: result.status,
       at: new Date().toISOString(),
@@ -215,11 +243,13 @@ export async function settleReview(
   turn: Exclude<ReviewTurn, { kind: "stale" }>,
   dataDir: string,
 ): Promise<Settled> {
+  const audience = turn.audience ?? { status: "skipped" as const, reason: turn.kind === "skipped" ? turn.reason : "此记录未包含受众点评" };
   const soft = job.pending.gateNotes;
   if (turn.kind === "skipped") {
     await updateContent(job.contentId, { lastError: turn.reason }, dataDir);
     return acceptDraft(job, pack, meta("skipped", pack, []), "accepted_unreviewed", {
       review_skipped_reason: turn.reason,
+      audience_review: audience,
       ...(soft.length ? { gate_notes: soft } : {}),
       next_action: {
         action: "disclose_review_gap",
@@ -231,17 +261,19 @@ export async function settleReview(
   }
   if (turn.blockers.length === 0) {
     return acceptDraft(job, pack, meta("passed", pack, turn.issues, turn.reviewedAt), "accepted", {
+      audience_review: audience,
       ...(soft.length ? { gate_notes: soft } : {}),
       next_action: {
         action: "present_draft",
-        message: "向创作者展示正文、实际调研与立意状态，以及 review.issues / gate_notes / unverified_numbers / violations 中的待核对事项。",
+        message: "向创作者展示正文、实际调研与立意状态，以及 review.issues / audience_review / gate_notes / unverified_numbers / violations 中的待核对事项。",
       },
       human_next_step: "请审阅正文是否符合你的意图；AI 审稿未发现阻断项，不等于你已认可或批准发布。",
       note: "正文已保存，AI 审稿未发现阻断项；仍需呈现建议和待核对事项，等待创作者实际反馈。",
     }, dataDir);
   }
-  if (pack.reviewRounds < MAX_REVIEW_ROUNDS) return requireRevision(job, pack, turn, dataDir);
+  if (pack.reviewRounds < MAX_REVIEW_ROUNDS) return { ...(await requireRevision(job, pack, turn, dataDir)), audience_review: audience };
   return acceptDraft(job, pack, meta("failed", pack, turn.issues, turn.reviewedAt), "accepted_with_issues", {
+    audience_review: audience,
     issues: turn.blockers,
     ...(soft.length ? { gate_notes: soft } : {}),
     next_action: {
@@ -321,7 +353,9 @@ async function acceptDraft(
     dataDir,
   );
   const promoted = await transitionStatus(job.contentId, "draft_ready", {}, dataDir);
-  const hasNotes = review.issues.length > 0 || job.pending.gateNotes.length > 0 || job.pending.needsHuman.length > 0 || scan.hits.length > 0;
+  const audience = extra.audience_review as AudienceAssessment | undefined;
+  const audienceNeedsAttention = !audience || audience.status !== "reviewed" || !audience.result.coreStops || audience.result.suggestions.length > 0;
+  const hasNotes = audienceNeedsAttention || review.issues.length > 0 || job.pending.gateNotes.length > 0 || job.pending.needsHuman.length > 0 || scan.hits.length > 0;
   const qualityStatus = review.status === "skipped"
     ? "unreviewed"
     : review.status === "failed" ? "issues_remaining" : hasNotes ? "passed_with_notes" : "passed";

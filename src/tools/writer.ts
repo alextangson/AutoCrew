@@ -79,7 +79,7 @@ export const writerSchema = Type.Object({
     }),
   ),
   content_id: Type.Optional(
-    Type.String({ description: "pack_status / find_evidence / submit / submit_status：pack 返回的 content_id" }),
+    Type.String({ description: "pack：按反馈重领同一篇时传content_id并force:true（保留旧正文）；其余动作传pack返回的content_id" }),
   ),
   pack_id: Type.Optional(Type.String({ description: "find_evidence / submit：pack 返回的 pack_id" })),
   need: Type.Optional(
@@ -225,14 +225,15 @@ export async function executeWriter(
         if (!platform) return fail(`platform 必填。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}`);
         const issued = await startPack(
           {
+            ...(str(params.content_id) ? { contentId: str(params.content_id) } : {}),
             topicId,
             platform,
-            direction: typeof params.direction === "string" ? str(params.direction) : undefined,
-            requirements: typeof params.requirements === "string" ? str(params.requirements) : undefined,
-            skipReason: typeof params.skip_reason === "string" ? str(params.skip_reason) : undefined,
-            research: typeof params.research === "string" ? str(params.research) : undefined,
+            direction: typeof params.direction === "string" ? params.direction : undefined,
+            requirements: typeof params.requirements === "string" ? params.requirements : undefined,
+            skipReason: typeof params.skip_reason === "string" ? params.skip_reason : undefined,
+            research: typeof params.research === "string" ? params.research : undefined,
             researchMode: params.research_mode as "auto" | "provided" | "skip" | undefined,
-            researchReason: typeof params.research_reason === "string" ? str(params.research_reason) : undefined,
+            researchReason: typeof params.research_reason === "string" ? params.research_reason : undefined,
             host,
             force: params.force === true,
           },

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +24,23 @@ describe("Claude MCP writing journey without external model calls", () => {
     const prompt = await handleMcpRequest({ id: 3, method: "prompts/get", params: { name: "write_content", arguments: { requirements: "只写真实经历" } } }, access, dataDir);
     expect(JSON.stringify(prompt)).toContain("只写真实经历");
     expect(JSON.stringify(prompt)).toContain("workflow prepare");
+  });
+
+  it("exposes the editorial feedback contract through the real MCP tool list", async () => {
+    const response = await handleMcpRequest({ id: 4, method: "tools/list" }, access, dataDir);
+    const tools = (response!.result as { tools: Array<{ name: string; inputSchema: any }> }).tools;
+    const editorial = tools.find(tool => tool.name === "autocrew_editorial");
+    expect(editorial).toBeDefined();
+    expect(editorial!.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        action: { anyOf: [{ const: "profile" }, { const: "update_profile" }, { const: "inspect" }, { const: "feedback" }] },
+        draft_hash: { type: "string" },
+        event_id: { type: "string" },
+        user_confirmed: { type: "boolean" },
+        scope: { anyOf: [{ const: "draft" }, { const: "platform" }, { const: "voice" }] },
+      },
+    });
   });
 
   it("cannot jump from a new topic straight to a pack, engine generation, or generic save", async () => {
@@ -71,5 +88,64 @@ describe("Claude MCP writing journey without external model calls", () => {
       source: "manual_import", import_reason: "用户给出自己的旧稿并要求归档",
     });
     expect(imported).toMatchObject({ ok: true, saved: true, quality_status: "unreviewed", needs_attention: true, content: { status: "draft_ready" } });
+  });
+
+  it("records draft feedback and follows the returned action into a fresh pack for the same content", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("external calls are forbidden in this journey"));
+    try {
+      const topic = await saveTopic({ title: "走访后的交接", description: "团队走访后核对交接记录", tags: [] }, dataDir);
+      const requirements = "保留我们作为叙述者，按真实走访顺序写，不添加关注引导";
+      const request = {
+        topic_id: topic.id, platform: "douyin", research_mode: "provided",
+        research: "团队先走访门店，再检查交接记录，发现交接记录没有写清责任人。",
+        direction: "讲清交接责任问题", requirements,
+      };
+      const prepared = await call("autocrew_workflow", { action: "prepare", ...request });
+      expect(prepared).toMatchObject({ status: "ready_to_write", research: { status: "provided" } });
+      const started = await call(prepared.next_action.tool, prepared.next_action.params);
+      await packPreparation(started.content_id);
+      const ready = await call("autocrew_writer", { action: "pack_status", content_id: started.content_id });
+      expect(ready.status).toBe("ready");
+      const body = "我们先走访门店。\n\n我们其次检查交接记录。\n\n我们发现记录没有写清责任人，交接的事情还没有落实。";
+      const submitted = await call("autocrew_writer", {
+        action: "submit", content_id: started.content_id, pack_id: started.pack_id,
+        attempt: 1, title: "交接责任还没写清", body, review: "none",
+      });
+      expect(submitted).toMatchObject({ status: "accepted_unreviewed", saved: true, audience_review: { status: "skipped" } });
+      const inspected = await call("autocrew_editorial", { action: "inspect", content_id: started.content_id });
+      expect(inspected).toMatchObject({ ok: true, content_id: started.content_id, feedback: [] });
+      expect(inspected.draft_hash).toMatch(/^[a-f0-9]{64}$/);
+      const feedback = "保留走访顺序，把交接责任写具体，结尾不要上价值。";
+      const feedbackRequest = {
+        action: "feedback", content_id: started.content_id, draft_hash: inspected.draft_hash,
+        event_id: "mcp-feedback-journey", feedback, user_confirmed: true,
+      };
+      const recorded = await call("autocrew_editorial", feedbackRequest);
+      expect(recorded).toMatchObject({ ok: true, status: "recorded", receipt: { scope: "draft", feedback } });
+      expect(recorded.next_action).toMatchObject({
+        tool: "autocrew_writer",
+        params: { action: "pack", content_id: started.content_id, topic_id: topic.id, platform: "douyin", force: true },
+      });
+      expect((await call("autocrew_editorial", feedbackRequest))).toMatchObject({ ok: true, replayed: true });
+      const reissued = await call(recorded.next_action.tool, recorded.next_action.params);
+      expect(reissued.content_id).toBe(started.content_id);
+      expect(reissued.pack_id).not.toBe(started.pack_id);
+      await packPreparation(reissued.content_id);
+      const revisedPack = await call("autocrew_writer", { action: "pack_status", content_id: reissued.content_id });
+      expect(revisedPack.status).toBe("ready");
+      expect(revisedPack.pack_md).toContain(requirements);
+      expect(revisedPack.pack_md).toContain(feedback);
+      expect(revisedPack.pack_md).toContain(body);
+      const contents = await listContents(dataDir);
+      expect(contents.map(content => content.id)).toEqual([started.content_id]);
+      expect((await getContent(started.content_id, dataDir))?.body).toBe(body);
+      const afterFeedback = await call("autocrew_editorial", { action: "inspect", content_id: started.content_id });
+      expect(afterFeedback.feedback).toHaveLength(1);
+      const profile = await call("autocrew_editorial", { action: "profile" });
+      expect(JSON.stringify(profile.profile ?? {})).not.toContain(feedback);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

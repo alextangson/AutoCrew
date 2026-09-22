@@ -62,7 +62,7 @@ describe("buildReviewSystemPrompt — 判据三 立意执行", () => {
     expect(v3Prompt).toContain(DEFAULT_PERSONAS.trust.who);
     expect(v3Prompt).toContain(DEFAULT_PERSONAS.trust.state);
     for (const value of [V3.thesis, V3.payoff, V3.mechanism, V3.antiScope]) expect(v3Prompt).toContain(value);
-    expect(v3Prompt).toContain("观点+案例+观点");
+    expect(v3Prompt).toContain("观点与案例");
     expect(v3Prompt).toContain("本次写作约定优先");
     expect(v3Prompt).not.toContain("前 3 秒");
     expect(v3Prompt).not.toContain("主画像动作没达成");
@@ -71,7 +71,7 @@ describe("buildReviewSystemPrompt — 判据三 立意执行", () => {
 
   it("故事不强加反常识开头，纠偏结构仍须按材料回应误区", () => {
     const story = buildReviewSystemPrompt({ hasResearch: true, angle: { ...V3, structure: "story" } });
-    expect(story).toContain("亲历复盘");
+    expect(story).toContain("自然叙事");
     expect(story).not.toContain("纠偏没有成立");
     const myth = buildReviewSystemPrompt({ hasResearch: true, angle: { ...V3, structure: "myth-busting" } });
     expect(myth).toContain("纠偏没有成立");

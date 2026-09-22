@@ -4,69 +4,14 @@ description: |
   Orchestrate a batch topic research session. Activate when user asks to plan content for a period, create a content calendar, or generate multiple topics at once. Trigger: "帮我找选题" / "调研一下" / "内容规划" / "这周写什么".
 ---
 
-# Spawn Planner
+# 内容选题规划
 
-> Orchestrator skill. Coordinates a research session to generate multiple topics. In OpenClaw, spawns a sub-agent. In Claude Code, executes inline.
+按创作者的目标与产能安排一组值得写的选题；这一步产出选题计划，不自动承诺成稿或发布。
 
-## Inputs
+1. 读取已有选题和可用创作者档案，从用户话里整理周期、数量、平台、受众和完整要求。优先复用已有信息，不重复采访。
+2. 按 `topic-ideas` 给出数量适当的候选，结合已有内容避免重复。把“已有事实支持”和“构思后待调研”分开，搜索未执行或失败就如实标注。
+3. 每题说明主张/问题、适合的受众、为什么值得写、材料条件、建议平台与次序。推荐要有理由，不以一个分数代替判断。
+4. 用户要求建立计划即用 `autocrew_topic` 建立或复用条目，将完整描述、出处、待查点保存；部分保存失败时报告哪几题没有成功。
+5. 只对用户要推进的选题进入 `research` / `spawn-writer`。写作依次走 `autocrew_workflow prepare → 选角 → autocrew_writer pack → 宿主写作 → submit → submit_status`。等待角度的题可以汇总展示，不能默认代选。
 
-| Parameter | Source | Required | Description |
-|-----------|--------|----------|-------------|
-| topic_count | User message (e.g. "想3个选题") | No | Number of topics requested (default: 3) |
-| direction | User message (e.g. "围绕 AI 方向") | No | Specific topic direction or theme |
-| user_requirements | Any additional constraints from user | No | Extra instructions |
-
-## Steps
-
-1. Extract inputs from user message.
-   - IF user specifies a count (e.g. "想5个") THEN set `topic_count`.
-   - IF user specifies a direction THEN set `direction`.
-   - ELSE use defaults: `topic_count = 3`, `direction = auto`.
-
-2. Notify user immediately:
-   > 好，我去调研一下，给你找 {topic_count} 个选题，稍等几分钟。
-
-3. Execute the research workflow (load `research` skill logic):
-
-   a. Read `~/.autocrew/MEMORY.md` for brand context and competitor accounts.
-   b. Use `web_search` to gather trending data for the user's industry.
-   c. If competitor accounts are known, research their recent content.
-   d. Generate `topic_count` topic ideas following the research skill's quality gates.
-
-4. Save each topic using `autocrew_topic` tool:
-   ```json
-   { "action": "create", "title": "...", "description": "...", "tags": [...], "source": "..." }
-   ```
-
-5. Report results to user:
-   ```
-   调研完成，共找到 {count} 个选题：
-
-   1. {title_1}
-      {description_1}
-
-   2. {title_2}
-      {description_2}
-
-   ...
-
-   要选一个开始写吗？或者我继续调研其他方向。
-   ```
-
-## Guidelines
-
-- Aim for a mix: competitor-inspired + trending + evergreen + seasonal
-- Tag topics with priority (high/medium/low) in the tags array
-- Include platform recommendations in each topic description
-- Don't over-plan — match the user's stated capacity
-
-## Error Handling
-
-| Failure | Action |
-|---------|--------|
-| Web search fails | Use general knowledge. Note in description that no live data was available. |
-| Topic save fails | Log error, continue with remaining topics. Report partial results. |
-
-## Changelog
-
-- 2026-03-31: v1 — Adapted from Qingmo spawn-planner.md. Removed sessions_spawn dependency. Executes research inline instead of spawning sub-agent.
+不要把技能名称里的 spawn 理解为已经启动独立员工或后台任务；只有工具返回真实任务状态才可这么汇报。周期计划也不等于定时任务已运行，实际排期交给 `manage-pipeline` 检查执行器。

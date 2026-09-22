@@ -13,6 +13,8 @@
  */
 import { evidenceByRef, isAngleCardV3, type AngleCard, type ResearchBrief } from "../modules/research/brief-store.js";
 import { DEFAULT_PERSONAS } from "../modules/research/personas.js";
+import { isAnchorValid } from "../modules/research/angle-stage.js";
+import { creativeTaskHash } from "../modules/writing/creative-task.js";
 import { isTerminalJobStatus, type ResearchJob } from "../modules/research/research-job-store.js";
 import { claimView } from "../storage/claims.js";
 import { CONTENT_STATUS_LABEL, type Content } from "../storage/local-store.js";
@@ -24,6 +26,8 @@ export function jobView(job: ResearchJob): Record<string, unknown> {
     kind: job.kind ?? "full",
     terminal: isTerminalJobStatus(job.status),
     briefRevision: job.briefRevision,
+    creativeTask: job.creativeTask,
+    creativeTaskHash: job.creativeTask ? creativeTaskHash(job.creativeTask) : undefined,
     perspectives: job.perspectives,
     errorCode: job.errorCode,
     failReason: job.failReason,
@@ -61,6 +65,9 @@ export function cardView(card: AngleCard): Record<string, unknown> {
     evidenceLevel: card.evidenceLevel,
     evidenceNeeds: card.evidenceNeeds,
     score: card.score,
+    scoreReasons: card.scoreReasons,
+    scoreMeaning: card.scoreReasons?.some(reason => reason.includes("证据支撑分")) ? "evidence_support" : "legacy_uninterpreted",
+    scoreNotice: "该分数不能代表传播潜力或爆款概率；历史卡的评分规则可能不同",
     /** 有没有第一手锚点（创作者自己的转写/成稿）——P1b 之后这是「有没有私货」的判别位 */
     hasAnchor: Boolean(card.firsthandAnchor),
   };
@@ -75,7 +82,7 @@ export function sortedCards(cards: AngleCard[]): AngleCard[] {
 /** Explain the options and recommend on evidence coverage; never select a card. */
 export function angleOptionsView(brief: ResearchBrief): {
   cards: Record<string, unknown>[];
-  recommendation?: { angleId: string; reasons: string[]; automaticSelection: false };
+  recommendation?: { angleId: string; reasons: string[]; basis: "evidence_coverage"; uncertainties: string[]; automaticSelection: false };
 } {
   const options = sortedCards(brief.angleCards ?? []).map(card => {
     const refs = [...new Set(card.coreEvidenceIds)];
@@ -85,7 +92,7 @@ export function angleOptionsView(brief: ResearchBrief): {
     const fullyReferenced = refs.length > 0 && refs.length === evidence.length;
     const grounded = fullyReferenced && (!isAngleCardV3(card) || card.evidenceLevel === "grounded");
     const gaps = isAngleCardV3(card) ? card.evidenceNeeds : [];
-    const hasFirsthand = isAngleCardV3(card) && Boolean(card.firsthandAnchor);
+    const hasFirsthand = isAngleCardV3(card) && isAnchorValid(card, brief);
     return {
       card,
       grounded,
@@ -93,12 +100,24 @@ export function angleOptionsView(brief: ResearchBrief): {
       priority: [Number(grounded), Number(hasFirsthand), -gaps.length, new Set(evidence.map(e => e.sourceUrl)).size],
       view: {
         ...cardView(card),
-        distinction: { thesis: card.thesis, antiScope: card.antiScope, audience: isAngleCardV3(card) ? DEFAULT_PERSONAS[card.primaryPersona]?.name ?? card.primaryPersona : card.audiencePain },
+        distinction: {
+          thesis: card.thesis,
+          antiScope: card.antiScope,
+          audience: isAngleCardV3(card) ? "以创作任务和已确认账号画像为准；目标标签不代表实际人群" : card.audiencePain,
+          ...(isAngleCardV3(card) ? { objective: DEFAULT_PERSONAS[card.primaryPersona]?.name ?? card.primaryPersona } : {}),
+        },
         evidenceSupport: { completeReferences: fullyReferenced, count: evidence.length, sources: [...new Set(evidence.map(e => e.sourceUrl))], needs: gaps },
+        editorialHypothesis: {
+          status: "needs_creator_judgment",
+          readerValue: isAngleCardV3(card) ? card.payoff : card.holdTrigger,
+          opening: card.hookDraft,
+          ...(isAngleCardV3(card) ? { structure: card.structure } : {}),
+          uncertainty: "读者是否感兴趣、愿意读完或转发尚未验证；这些是编辑假设，不是效果预测",
+        },
       },
       reasons: grounded ? [
         `主张有 ${evidence.length} 条简报证据可追溯`,
-        ...(hasFirsthand ? ["包含可追溯的第一手材料"] : []),
+        ...(hasFirsthand ? ["包含引文锚点，可回查原文；锚点本身不证明主张或传播效果"] : []),
         ...(gaps.length ? [`仍需补齐：${gaps.join("；")}`] : ["立意卡未列出待补证据；写稿时仍须逐项核查事实"]),
       ] : [],
     };
@@ -108,21 +127,29 @@ export function angleOptionsView(brief: ResearchBrief): {
       const delta = b.priority[i] - a.priority[i];
       if (delta) return delta;
     }
-    return 0;
+    // 同等证据采用简报原顺序，不让历史网感分或目标偏好暗中决定推荐。
+    const original = brief.angleCards ?? [];
+    return original.indexOf(a.card) - original.indexOf(b.card);
   });
   const chosen = candidates[0];
   return {
     cards: options.map(o => o.view),
-    ...(chosen ? { recommendation: { angleId: chosen.card.id, reasons: chosen.reasons, automaticSelection: false as const } } : {}),
+    ...(chosen ? { recommendation: {
+      angleId: chosen.card.id,
+      reasons: chosen.reasons,
+      basis: "evidence_coverage" as const,
+      uncertainties: ["推荐仅比较证据覆盖，不评定哪个角度最有传播潜力", "与本次规划的贴合度、受众价值和表达取舍仍须创作者判断"],
+      automaticSelection: false as const,
+    } } : {}),
   };
 }
 
 /** 闸口拒单时塞进 error 文本的一行摘要（dsh 桥只把 error 带给模型） */
 export function cardLine(card: AngleCard): string {
   const who = isAngleCardV3(card)
-    ? `${DEFAULT_PERSONAS[card.primaryPersona]?.name ?? card.primaryPersona}｜他信的是：${card.misconception}`
+    ? `${DEFAULT_PERSONAS[card.primaryPersona]?.name ?? card.primaryPersona}${card.misconception ? `｜误区背景：${card.misconception}` : ""}`
     : card.audiencePain;
-  return `${card.id}【${card.angle}】主张：${card.thesis}｜对谁说：${who}｜不写：${card.antiScope}`;
+  return `${card.id}【${card.angle}】主张：${card.thesis}｜${isAngleCardV3(card) ? "内容目标" : "对谁说"}：${who}｜不写：${card.antiScope}`;
 }
 
 // ─── 稿件视图（draft / writer） ───────────────────────────────────────────────
