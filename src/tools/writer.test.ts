@@ -37,7 +37,7 @@ import {
 import { EXTERNAL_BLOCK_END, EXTERNAL_BLOCK_START } from "../modules/inbox/triage.js";
 import { getContent, saveTopic, updateTopic, type Topic } from "../storage/local-store.js";
 import type { EngineConfig } from "../engine/config.js";
-import type { LoopOptions, LoopResult, LoopTool } from "../engine/loop.js";
+import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
 
 let testDir: string;
 
@@ -436,6 +436,48 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
     );
     const failures = (out.failures as Array<{ check: string }> | undefined) ?? [];
     expect(failures.some((f) => f.check === "unverified_numbers")).toBe(false);
+  });
+
+  /**
+   * P5-0 验收（spec §7）。口径是**模型调用次数 = 0**，不是「没报错」——
+   * 2026-09-22 那次之所以还能领包，是因为配置在、只是端点连不上，
+   * 那证明不了「完全没配也能跑」。所以这条把 engine.json 删掉，并让 runLoop 一调就炸。
+   */
+  it("完全没配 engine 也能领包 → 备料 → 交稿过门，全程零模型调用", async () => {
+    await fs.rm(path.join(testDir, "engine.json"));
+    const modelCalls: unknown[] = [];
+    const runLoopImpl = ((...args: unknown[]) => {
+      modelCalls.push(args);
+      throw new Error("零配置路径不该调用模型");
+    }) as unknown as typeof runLoop;
+
+    const topic = await manualTopic();
+    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" }, { runLoopImpl });
+    expect(started.ok).toBe(true);
+
+    const ready = await settle(started.content_id as string);
+    expect(ready).toMatchObject({ ok: true, status: "ready" });
+
+    // 账本照样建起来了：没有引擎，选题描述这条 user_claim 仍然是数字的出处
+    const file = await readPackFile(started.content_id as string);
+    expect(file.ledger.entries.map((e) => e.id)).toContain("user-topic");
+
+    const out = await run(
+      submitArgs(started.content_id as string, started.pack_id as string, 1, {
+        body: "他们上线之后返工工时平均多了 18%，这笔账得自己记一次。",
+      }),
+    );
+    expect(out.status).toBe("accepted_unreviewed");
+    expect(modelCalls).toHaveLength(0);
+  });
+
+  it("engine.json 写坏了照样炸——不许静默当成「没配」", async () => {
+    await fs.writeFile(path.join(testDir, "engine.json"), "{broken");
+    const topic = await manualTopic();
+    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" });
+    const status = await settle(started.content_id as string);
+    expect(status.status).toBe("failed");
+    expect(String(status.error)).toContain("engine.json");
   });
 });
 
