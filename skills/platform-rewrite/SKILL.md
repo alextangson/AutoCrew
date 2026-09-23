@@ -12,9 +12,9 @@ description: |
 
 1. 用 `autocrew_content {action:"get", id}` 读取原稿全文与来源，复用其 `topicId`；若无选题则建立相关选题并记录原稿来源。确认用户这次指定的平台和要求，已明确的不重复询问。
 2. 原稿代表已有表达，不自动成为事实证明。将仍有效的资料、引文出处和原稿一起交入 `research`，说明哪些事实已核查、哪些仅为原稿陈述。
-3. 每个平台调用 `autocrew_workflow {action:"prepare", topic_id, platform, requirements, research_mode:"provided", research}`；材料不足则用默认自动调研。`requirements` 写清这是适配、要保留的核心意思、可变化的结构与口吻。仅明确改变立意时使用 `direction`。
-4. 展示需要选择的角度和推荐理由；确定后按 `write-script`：`autocrew_writer pack → pack_status → 宿主独立写作 → submit → submit_status`。不要用通用存稿或旧适配工具的保存开关绕过提交检查。
-5. 每个版本都说明保留了什么、改变了什么、质量状态与未解决问题。不要凭版本保存成功宣布“全平台已过审”。标题、标签和 CTA 服从平台与用户要求，不为凑字段添加。
+3. 每个平台调用 `autocrew_workflow {action:"prepare", topic_id, platform, requirements, research_mode:"provided", research}`；材料不足则按 next_action 到 `autocrew_scout` 由当前宿主完成研究，不能等待后台模型自动补料。`requirements` 写清这是适配、要保留的核心意思、可变化的结构与口吻。仅明确改变立意时使用 `direction`。
+4. 展示需要选择的角度和推荐理由；确定后按 `write-script`：`autocrew_writer pack → pack_status → 宿主写作 → submit → autocrew_review_desk pack/submit → submit_status`。不要用通用存稿或旧适配工具的保存开关绕过提交检查。
+5. 默认 `review=host`，普通 MCP 无需配置 engine；单宿主自审标为 `host_self_review`，不宣称独立评审。每个版本都说明保留了什么、改变了什么、质量状态与未解决问题。不要凭版本保存成功宣布“全平台已过审”。标题、标签和 CTA 服从平台与用户要求，不为凑字段添加。
 
 原稿批准不等于新平台版本批准。事实或结论发生改动需重新核对；发布操作另走发布前检查及用户明确的发布要求。
 

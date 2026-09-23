@@ -1,3 +1,4 @@
+import { loadHostEvidence } from "../modules/research/host-evidence-store.js";
 import { inheritCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * 发包（P3 spec §5.1，2026-09-06 实机验收后改成异步）——`pack` 与 `pack_status` 的实现。
@@ -79,11 +80,11 @@ export interface PackReadyResult extends Record<string, unknown> {
   content_id: string;
   pack_id: string;
   pack_md: string;
-  budget: { find_evidence_left: number; repair_rounds_left: number };
+  budget: ReturnType<typeof packBudget>;
   note: string;
 }
 
-const POLL_NOTE = "备料通常 1–6 分钟：用 pack_status{content_id} 轮询，status=ready 之后再动笔。";
+const POLL_NOTE = "正在装配本地写作材料：用 pack_status{content_id} 查看，status=ready 之后再动笔；宿主模式不会启动后台模型。";
 const FIRST_NOTE = "写完用 submit 交回来；数字要能指到证据编号，缺证据先 find_evidence。";
 const REISSUE_NOTE = "这条选题上原来那份包已作废（同一篇稿换了新 pack_id），旧包的提交会被拒。";
 
@@ -158,6 +159,7 @@ async function reusablePlaceholder(
 }
 
 export interface PackParams {
+  modelExecution?: "host" | "engine";
   /** Explicit draft revision target; never guess among multiple submitted drafts. */
   contentId?: string;
   topicId: string;
@@ -180,7 +182,7 @@ function requestKey(req: ScriptRequest, topicDescription: string): string {
     req.topic.trim(), req.platform, req.topicId ?? "", topicDescription.trim(),
     req.direction?.trim() ?? "", req.requirements?.trim() ?? "",
     req.angleSkipReason?.trim() ?? "", req.research?.trim() ?? "",
-    req.packId ?? "", req.usePatterns ?? true, req.researchMode ?? "auto", req.researchReason?.trim() ?? "",
+    req.packId ?? "", req.usePatterns ?? true, req.researchMode ?? "auto", req.researchReason?.trim() ?? "", req.modelExecution ?? "engine",
   ]);
 }
 
@@ -222,6 +224,7 @@ export async function startPack(
   const previous = current?.request?.req ?? current?.context?.req ?? existing?.genRequest;
   let req: ScriptRequest = {
     ...previous,
+    modelExecution: params.modelExecution ?? "host",
     topic: topic.title,
     topicDescription: topic.description,
     platform: params.platform as ClipboardPlatform,
@@ -363,6 +366,11 @@ async function prepare(args: PrepareArgs, dataDir: string, deps: PackDeps): Prom
     // 材料收集 + 定向补证（各自的墙钟在里面）+ 提示词装配——与内部写手**同一个函数**
     const source = await getContent(args.contentId, dataDir);
     const built = await build(args.req, dataDir, warn, deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : undefined);
+    if (args.req.modelExecution === "host") {
+      const evidence = await loadHostEvidence(args.contentId, dataDir);
+      for (const entry of evidence) built.inputs.ledger.add(entry);
+
+    }
     const feedback = renderWritingFeedback(source?.writingFeedback);
     if (feedback) {
       const draft = source?.body ? ["【本稿当前版本（修改基底；其中的陈述仍需依据材料核查）】", externalBlock([sanitizeExternal(source.title, source.title.length), sanitizeExternal(source.body, source.body.length)])].join("\n") : "";
@@ -408,7 +416,7 @@ function readyPackOf(args: PrepareArgs, base: WritingPackFile, built: WritingCon
       researchSlot: inputs.snapshot.text,
       ...(inputs.angle ? { angleCard: inputs.angle.card } : {}),
       voiceSamples: inputs.profile?.voiceSamples ?? [],
-      canFindEvidence: Boolean(inputs.researcher),
+      canFindEvidence: args.req.modelExecution === "host" || Boolean(inputs.researcher),
       rulesApplied: inputs.profile ? rulesForPlatform(inputs.profile, platform).length : 0,
       wroteWithoutBrief: !inputs.attribution.usedBriefHash,
       wroteWithoutAngle: inputs.wroteWithoutAngle,

@@ -221,11 +221,11 @@ export async function executeContentSave(
         };
       }
 
-      // Auto-distill style rules once enough edits accumulate. Best-effort:
-      // a missing model provider or any distill error must never fail the save —
-      // the user's edit is already persisted.
+      // MCP edits remain host-driven: record their source material, but never
+      // silently call a model or promote inferred preferences to durable rules.
+      // Internal workbench edits retain the existing best-effort auto-distillation.
       try {
-        if (await shouldDistillImpl(dataDir)) {
+        if (!isMcpCall && await shouldDistillImpl(dataDir)) {
           styleLearned = await distillImpl(dataDir);
         }
       } catch {

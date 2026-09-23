@@ -26,6 +26,7 @@ export interface WritingReadiness {
     status: "not_started" | "running" | "failed" | "stale" | "complete" | "partial" | "provided" | "skipped";
     /** True only when AutoCrew has a current successful/partial brief. */
     autoResearched: boolean;
+    executedBy?: { kind: "host"; host: string } | { kind: "engine" };
     matchesRequestedTask?: boolean;
     creativeTaskHash?: string;
     briefRevision?: number;
@@ -59,7 +60,7 @@ export function writingReadinessFailure(readiness: WritingReadiness): { ok: fals
     code: readiness.status === "needs_angle" ? "needs_angle" : "writing_not_prepared",
     error: `${readiness.note}${summary ? `\n${summary}` : ""}`,
     needsAngle: readiness.status === "needs_angle",
-    needsResearch: readiness.research.mode === "auto" && !readiness.research.autoResearched,
+    needsResearch: readiness.research.mode === "auto" && !["complete", "partial"].includes(readiness.research.status),
     status: readiness.status,
     briefRevision: readiness.research.briefRevision,
     cards: readiness.angle.cards,
@@ -182,7 +183,8 @@ export async function inspectWritingReadiness(
       return result;
     }
     result.research.status = job?.status === "partial" ? "partial" : "complete";
-    result.research.autoResearched = true;
+    result.research.executedBy = snap.brief.executedBy ?? job?.executedBy ?? { kind: "engine" };
+    result.research.autoResearched = result.research.executedBy.kind !== "host";
     result.research.matchesRequestedTask = true;
     if (angleCardsOf(snap.brief).length === 0 && !req.direction?.trim() && !req.angleSkipReason?.trim()) {
       return { ...result, status: "needs_attention", note: "调研已有简报，但没有形成可选立意；需要补跑立意，不能直接冒充写前准备完成。", next_action: next("research", { kind: "angles" }) };

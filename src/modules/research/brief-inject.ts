@@ -94,6 +94,7 @@ function evidenceLines(raw: unknown, exclude: ReadonlySet<string>): string[] {
     if (!claim && !quote) continue;
     const parts = [`- ${claim || "（无主张）"}`];
     if (quote) parts.push(`引文：「${quote}」`);
+    parts.push(`来源等级：${item?.source ?? "verified_quote"}${item?.source === "user_claim" ? "（未核验用户陈述，不得当作已查证事实）" : item?.source === "own_claim" ? "（创作者材料，非外部核验）" : ""}`);
     parts.push(`来源：${domainOf(item?.sourceUrl)}`);
     lines.push(parts.join("｜"));
   }
@@ -118,7 +119,7 @@ function renderBody(brief: ResearchBrief, exclude: ReadonlySet<string>): string[
   if (angles.length > 0) lines.push(`【可选切入角度】${numbered(angles).join(" ")}`);
 
   const evidence = evidenceLines(brief.evidence, exclude);
-  if (evidence.length > 0) lines.push("【证据（引文出自来源页，引用时保持原意）】", ...evidence);
+  if (evidence.length > 0) lines.push("【材料与证据（保留来源等级，引用时保持原意；未核验陈述不等于事实）】", ...evidence);
 
   // 缺口摘要：告诉写手「哪些没查到」，比让它以为材料齐全更重要
   const gaps = field((Array.isArray(brief.gaps) ? brief.gaps : []).join("；"), GAPS_MAX);

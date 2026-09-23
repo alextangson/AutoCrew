@@ -36,12 +36,14 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
     installPreset: true  # false = 不往 $DSH_HOME/.agent-presets 装 preset
 ```
 
-`dataDir` 是所有状态的根，插件之外还有两份配置放在里面，**它们不由 dsh 管，要自己写**：
+`dataDir` 是所有状态的根。普通宿主写作链不需要配置后台模型：调研、立意、写作与审稿都由当前 dsh 会话的模型完成。产品保管任务、抓页验引文、检查并保存结果。第三方搜索、图像与视频额度仍独立。
 
-| 文件 | 缺了会怎样 | 谁需要它 |
+| 文件 | 作用 | 谁需要它 |
 |---|---|---|
-| `<dataDir>/engine.json` | 写稿引擎未配置：`autocrew_generate` / `autocrew_style` 起不来 | 一切要调模型的步骤 |
-| `<dataDir>/search.json` | 调研取不到网页来源，只能靠创作者自己给材料 | 调研 / 证据回填 |
+| `<dataDir>/engine.json` | 后台模型端点 | 明确选择 engine 或已授权无人值守任务，以及单独调用的后台风格分析等能力 |
+| `<dataDir>/search.json` | 第三方搜索服务 | scout search；宿主自己找到网址后用 scout read_page 不需要此配置 |
+
+下面仅是后台模型的可选配置，普通宿主流程不以它为前置条件。
 
 `engine.json` 是**一张端点表 + 几个指针**（v2）。最少一个端点、一个 `main` 就能跑：
 
@@ -64,13 +66,13 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 
 `main` 必填且必须指到表里有 Key 的那条，否则整份视为未配置；`fallback` 与 `assignments`（`writer` / `reviewer` / `scout` / `analytics`）全可缺省，缺省即跟随 `main` 的强档。把备用和写稿放在同一家中转能存，但产品会提醒你「它挂了备用一起挂」。**v1 的老 `engine.json`（顶层 `apiKey` + `routes` + `fallback`）仍然读得动**，读取时在内存里迁移，行为不变；桌面端第一次保存会写成 v2 并留一份 `engine.json.v1.bak`。字段完整说明见仓库根 README 的「配置模型」。
 
-插件 `apply` 时会打一行 `readiness: dataDir=… engine.json=… search.json=…`：**只看这两个文件在不在**，不加载、不校验、不写盘。「文件在」不等于「配得对」——判定写作线能不能真跑是 `autocrew_workflow doctor` 的活，不是启动日志的活。
+插件 `apply` 时会打一行 `readiness: dataDir=… engine.json=… search.json=…`：**只看这两个文件在不在**，不加载、不校验、不写盘。「文件在」不等于「配得对」——它不表示宿主写作线能否运行。`autocrew_workflow doctor` 用于检查后台服务；普通宿主写作不需要主动探测模型端点。
 
 ## preset：总编辑是怎么进 dsh 会话的
 
-装好后新建会话时能选到「AutoCrew 总编辑」这个 preset（`agent-presets/autocrew/`）。它是一份 agent-plane composition：总编辑人设 + AutoCrew 自己的 `skills/`（`skill-filesystem` 发现、`tool-skill` 加载）+ `ask_user` + `todo`。**刻意不挂** `tool-fs`、`tool-bash`、`tool-subagent*`——案卷要经业务读取工具定界读，员工由代码起，总编辑只能派发流水线（设计见 `docs/superpowers/specs/2026-09-02-dsh-employees-and-case-files.md` §4）。
+装好后新建会话时能选到「AutoCrew 总编辑」这个 preset（`agent-presets/autocrew/`）。它包含总编辑人设、AutoCrew skills、ask_user 和 todo。案卷通过业务工具读取，不要求文件系统或 shell 权限；未挂 subagent 工具时，多视角工作由同一宿主完成，不能称为独立员工团队。
 
-人设按 spec §4.3 分四段（你是谁 / 先读什么 / 产出走哪里 / 何时报 blocked），末尾加一段**一轮的顺序**：先看状态与案卷 → 起调研（分钟级、后台，别干等）→ 把候选立意逐条念给创作者、**绝不替他选** → 选定后开写（后台）→ 按节奏回来看稿件状态 → 稿子回来先对证据，缺什么要指到句子。那段说的是工作次序，**不是能力清单**：§4.4 要求 persona 里的能力动词都能映射到真的挂上的工具，往那段加动词前先回 §4.4 对一遍。
+顺序为 workflow prepare → scout 宿主取材、研究视角、综合与立意 → 创作者选角 → writer pack → 宿主写作 → writer submit（默认 review=host）→ review_desk pack/submit → submit_status。研究与审稿任务必须由宿主执行，不能空等后台模型。实际说明须与放行工具表一致。
 
 **它是复制进去的，不是声明出来的。** dsh launcher 合成 host composition 时把 `agent-presets.roots` 整体覆盖成只剩自带根，bundle 没有路径把自己的 preset 根交出去；roster 剩下的唯一入口是用户根 `$DSH_HOME/.agent-presets`。所以插件 `apply` 时把 `agent-presets/autocrew/` 复制到 `$DSH_HOME/.agent-presets/autocrew/`，并把 `__AUTOCREW_SKILLS_DIR__` 占位符换成 skills 目录的绝对路径。三条不变量（`src/preset-install.ts`）：
 
@@ -90,16 +92,18 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_status` | 流水线状态、质量基线、表现回填、学习报告 |
 | `autocrew_dashboard` | 总览 / 日历 / 待办 / 批量流转 |
 | `autocrew_topic` | 建选题、列选题 |
-| `autocrew_content` | 案卷读写：存稿、列、取、改、流转、平行变体 |
-| `autocrew_generate` | 在进程内调模型写稿（thin loop + 口播 track pack）；`requirements` 传完整写作规划，`direction` 只传明确指定的角度 |
-| `autocrew_style` | 从编辑差分蒸馏风格规则、吸收爆款样本 |
+| `autocrew_content` | 案卷读取与管理；已有稿件可显式 manual_import，生成稿走 writer 提交 |
+| `autocrew_generate` | 显式 execution=engine 才后台代写；默认指回宿主 prepare/pack/submit，requirements 保留完整规划 |
+| `autocrew_style` | 默认 host_style_task 返回样本、修改差异与档案，宿主分析并经用户确认保存；显式 execution=engine 才后台蒸馏 |
 | `autocrew_editorial` | 读取/校准写作档案；按当前正文指纹记录用户原话反馈、作用范围与真实采纳评价，重试幂等；不调用模型 |
 | `autocrew_review` | 基础文字检查与表达建议；`auto_fix` 仅清理空白，不提供语义质量通过或 AI 痕迹结论 |
 | `autocrew_humanize` | 清理换行与行尾空白，提供可供判断的表达建议；不机械改主语、术语或连接词 |
-| `autocrew_rewrite` | 平台化改写，单平台或多平台批量 |
+| `autocrew_rewrite` | 默认指回宿主适配链；显式 execution=engine 仅给未审建议，不能直接保存为正式稿 |
 | `autocrew_pre_publish` | 发布前六项门禁 |
-| `autocrew_workflow` | 一站式流程：`research`（后台深调研）/ `status`（轮询）/ `select_angle`（落创作者选的那张立意卡）/ `write`（后台开写）/ `draft`（取稿）/ `doctor`（跑不动时先看它；`doctor{probe:true}` 真去每个端点发一次极小调用，回哪条线通、哪条线坏与耗时——模型调用报错时先跑它） |
-| `autocrew_writer` | **总编辑自己动笔**：`pack`（领包，秒回 `preparing`，备料转后台）→ `pack_status`（轮询到 `ready` 才拿到 `pack_md`，通常 1–6 分钟；`failed` 就 `pack{force:true}` 重来）→ `find_evidence`（缺数字去查，整稿 3 次、单次封 45 秒）→ `submit`（过与内部写手同一套门禁；三道门当场判，全过则回 `reviewing`，审稿转后台）→ `submit_status`（轮询到终态，通常 1–3 分钟）。备料几分钟、审稿实测 161 秒，同步跑都会撞上宿主 60 秒的工具超时，所以这条链两头都是「秒回 + 轮询」 |
+| `autocrew_workflow` | 默认 prepare 返回宿主研究或写作的下一步；select_angle 保存用户选择；显式 execution=engine 才后台 research/write |
+| `autocrew_scout` | 宿主研究任务：prepare/pack → search/read_page → cite/claim_offline → perspective → synthesize → angles；产品核验引文并保存结果，不调用研究模型 |
+| `autocrew_writer` | pack/pack_status 整理已有材料；find_evidence 返回宿主补证指引；submit 默认 review=host，awaiting_host_review 时交给 review_desk；submit_status 核对真实状态 |
+| `autocrew_review_desk` | pack 发当前版本的审稿任务，submit 保存宿主实际问题与受众建议；同宿主自审标记 host_self_review，不等于独立评审或作者认可 |
 
 `autocrew_publish`、`autocrew_cover_review`、`autocrew_research`、`autocrew_pipeline` 等**不放行**，原因逐条记在下面的审计表里。启动时会把没放行的名字打进日志，不会让人误以为全量能力已经在 dsh 里了。
 
@@ -150,9 +154,11 @@ dsh plugin --profile autocrew-dev add <adapters/dsh 的绝对路径>
 | `autocrew_rewrite` | 缺 content_id/平台、未知 action 全走 `ok:false` | 无 | `@earendil-works/pi-ai/*`（已在 deps） | **放行** |
 | `autocrew_pre_publish` | 缺 content_id、找不到稿子走 `ok:false`；六项门禁不通过是 `ok:true` + 结构化结论（「没过门」是它的正常输出，不是它失败） | 无 | 无 | **放行** |
 | `autocrew_workflow` | 全部失败经同一个 `fail()` 出口走 `ok:false`，entry 外面还包了一层 try/catch 把意料之外的异常也转成 `ok:false`；`doctor` 是唯一「坏消息也 `ok:true`」的地方——它**返回** `engine.configured:false` 而不是抛，因为「没配好」是这个 action 的正常输出 | 无 | `@earendil-works/pi-ai/*`（已在 deps） | **放行** |
+| `autocrew_scout`（宿主研究） | 缺参、任务过期、引文不符、阶段校验或存储失败返回 ok:false；不伪造成功 | 无；使用显式 dataDir | 复用已有搜索/抓页能力，不调用模型 | **放行** |
+| `autocrew_review_desk`（宿主审稿） | 缺参、旧稿、审稿包不符、原句定位失败或结果冲突返回 ok:false；不自动转后台模型 | 无；使用显式 dataDir | 无新增服务调用 | **放行** |
 | `autocrew_publish` | — | **有**：`wechat-mp.ts` / `wechat-themes.ts` 的 `REPO_ROOT` 由 `import.meta.url` 推出，bundle 后指向 `node_modules/dsh-autocrew/`，`vendor/wechat-format/` 必然找不到 | — | **不放行**（先把资源根做成显式配置） |
 | `autocrew_cover_review` | — | 无 | 无 | **不放行**：`needsGemini: true`，没有 `geminiApiKey` 就是一个装了但用不了的工具 |
-| `autocrew_research` | **不合格**：浏览器/CDP 适配器拿不到数据时，会造 `topicCount` 条「手动降级模式生成」的占位选题，然后 `ok: true` 返回、只在 `note` 里小声说适配器是 placeholder | 无 | 无 | **不放行**（正是两条契约要挡的那类 bug；选题改由 `autocrew_workflow research` 走） |
+| `autocrew_research` | **不合格**：浏览器/CDP 适配器拿不到数据时，会造 `topicCount` 条「手动降级模式生成」的占位选题，然后 `ok: true` 返回、只在 `note` 里小声说适配器是 placeholder | 无 | 无 | **不放行**（正是两条契约要挡的那类 bug；选题改由 `autocrew_scout` 的宿主研究任务推进） |
 | `autocrew_pipeline` | 缺参走 `ok:false` | 无 | 无 | **不放行**：只把 cron 定义写进 `<dataDir>/pipelines/`，真正执行要常驻 daemon；在 dsh 里放行等于承诺一个不会到点触发的定时任务 |
 | `autocrew_asset` | 合格：缺 content_id/filename/version、找不到全走 `ok:false`；路径经 `isSafeFilename` + `isContentId` 收口，只落在 `<dataDir>` 内，**没有**仓库相对路径 | 无 | 无 | **不放行**：审计干净，但它是产物管理不是写作线，这一批不放；下一批可直接放行 |
 | `autocrew_flywheel` | 合格：缺参、CSV 读不到、指标非数字全走 `ok:false` | 无 | 无 | **不放行**：表现回流不在写作线上，本批不放 |

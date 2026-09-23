@@ -9,6 +9,7 @@ import { initProfile, loadProfile, saveProfile, type CreatorProfile } from "../m
 import { appendWritingFeedback } from "../modules/writing/writing-feedback.js";
 import { serializeWriterCall } from "./writer-pack.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
+import { revisionNextAction } from "./writer-revision.js";
 
 const text = Type.String({ minLength: 1, maxLength: 12000 });
 const strings = Type.Array(text);
@@ -90,7 +91,10 @@ async function capture(a: Args, dir: string): Promise<Record<string, unknown>> {
   if (prior) {
     const saved = Object.fromEntries(Object.entries(prior).filter(([key]) => key !== "at" && key !== "state"));
     if (JSON.stringify(saved) !== JSON.stringify(event)) return { ok: false, error: "event_id已用于不同反馈，请勿改写原事件" };
-    if (prior.state === "applied") return { ok: true, status: "recorded", replayed: true, receipt: prior };
+    if (prior.state === "applied") {
+      const content = await getContent(a.content_id, dir);
+      return { ok: true, status: "recorded", replayed: true, receipt: prior, ...(content ? { next_action: await revisionNextAction(content, dir) } : {}) };
+    }
   }
   return serializeWriterCall(a.content_id, async () => {
     const content = await getContent(a.content_id!, dir);
@@ -117,7 +121,7 @@ async function capture(a: Args, dir: string): Promise<Record<string, unknown>> {
     }
     receipt.state = "applied";
     await writeReceipt(file, receipt);
-    return { ok: true, status: "recorded", receipt, next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: content.id, topic_id: content.topicId, platform: content.platform, force: true }, message: "如需改稿，重领同篇写作包，保留原规划并按反馈修订；未自动修改正文或批准发布" } };
+    return { ok: true, status: "recorded", receipt, next_action: await revisionNextAction(applied.content, dir) };
   });
 }
 export async function executeEditorial(params: Record<string, unknown>): Promise<Record<string, unknown>> {

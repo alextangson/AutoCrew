@@ -696,3 +696,10 @@ describe("失败路径", () => {
     expect(DEFAULT_ANGLE_DEADLINE_MS).toBe(480_000);
   });
 });
+
+it("伪带URL的user_claim仍不能拿到grounded证据分或第一手锚点分", () => {
+  const brief = makeBrief();
+  brief.evidence[0].source = "user_claim";
+  const card = { cardVersion: 3, id: "angle-1", evidenceLevel: "grounded", coreEvidenceIds: ["ev-1"], firsthandAnchor: { kind: "brief_evidence", chunkId: "ev-1", quote: EV_QUOTE, excerptHash: excerptHashOf(EV_QUOTE) } } as AngleCardV3;
+  expect(scoreAngleCard(card, brief).score).toBe(0);
+});

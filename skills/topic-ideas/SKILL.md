@@ -15,7 +15,7 @@ description: |
 3. 每条说明：题目、主要读者、核心主张或要回答的问题、为什么现在值得写、读完有什么收获、证据来源及待查部分。标题长度和开头形式服从目标平台，不套统一“20字/3秒”硬门。
 4. 比较候选的独特性、证据条件与本次目标，推荐一个并说清取舍；不要把估计停留意愿说成真实受众测试或爆款概率。
 5. 用户要求保存或已要求建立选题清单时，用 `autocrew_topic {action:"create", title, description, tags, source:"brainstorm"}` 落库，先查重。记录完整意图与待查点，不只存标题。
-6. 用户要开始写时转 `spawn-writer`：`autocrew_workflow prepare → 选角 → autocrew_writer pack → 宿主写作 → submit`。需要真实材料时走 `research`，不能把构思当成已经调研。
+6. 用户要开始写时转 `spawn-writer`：`autocrew_workflow prepare → autocrew_scout 宿主调研与选角 → autocrew_writer pack → 宿主写作 → submit → autocrew_review_desk 宿主审稿`。需要真实材料时走 `research`，不能把构思当成已经调研。
 
 本地工作台可能提供找热点、读链接等额外工具；只有工具实际可见时才使用。纯 MCP 只按已暴露能力执行，不调用工作台私有工具名。
 

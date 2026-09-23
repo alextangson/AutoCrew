@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { executeContentSave } from "./content-save.js";
 import { recordDiff, listDiffs } from "../modules/learnings/diff-tracker.js";
+import { shouldDistillStyle } from "../modules/learnings/style-distiller.js";
 import { getContent, listContents, saveContent, saveTopic } from "../storage/local-store.js";
 
 let testDir: string;
@@ -251,6 +252,22 @@ describe("executeContentSave", () => {
       expect(shouldDistillImpl).toHaveBeenCalledWith(testDir);
       expect(distillImpl).toHaveBeenCalledWith(testDir);
       expect((updateRes as any).styleLearned).toEqual(fakeResult);
+    });
+
+    it("MCP edits persist all diffs without background distillation when the real threshold is reached", async () => {
+      const contentId = await seedContent();
+      const distillImpl = vi.fn().mockResolvedValue(fakeResult);
+      for (let index = 0; index < 3; index++) {
+        const updated = await executeContentSave({
+          action: "update", id: contentId, body: `Host edit ${index}`, _host: "claude-desktop-test", _dataDir: testDir,
+        }, { distillImpl });
+        expect(updated.ok).toBe(true);
+        expect((updated as any).styleLearned).toBeUndefined();
+      }
+      expect(await listDiffs({ contentId }, testDir)).toHaveLength(3);
+      expect(await shouldDistillStyle(testDir)).toBe(true);
+      expect((await getContent(contentId, testDir))?.body).toBe("Host edit 2");
+      expect(distillImpl).not.toHaveBeenCalled();
     });
 
     it("does not distill when not enough diffs accumulated", async () => {

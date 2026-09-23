@@ -39,7 +39,11 @@ function ideaAge(anchor?: string): string {
  */
 function reviewBadge(review: Content["review"]): string | null {
   if (!review) return null;
-  if (review.status === "passed") return "✓已审稿";
+  if (review.status === "passed") {
+    if (review.source?.kind === "host_self_review") return "已自审";
+    if (review.source?.kind === "host_other_principal_review") return "已由其他宿主审阅";
+    return "✓已审稿";
+  }
   if (review.status === "revised") return `✓审稿修订${review.fixed}`;
   if (review.status === "failed") {
     return `⚠残留${review.issues.filter((i) => i.severity === "blocker").length}项`;

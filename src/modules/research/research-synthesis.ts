@@ -149,7 +149,7 @@ function renderPerspective(p: PerspectiveOutput): string {
   return parts.join("\n");
 }
 
-const SYSTEM_PROMPT = [
+export const SYSTEM_PROMPT = [
   INJECTION_NOTICE,
   "",
   "你是这位创作者的调研主编。四路调研员刚交回各自的发现，你要合成一份能直接拿去写稿的调研简报。",
@@ -253,24 +253,25 @@ function readAssetPicks(raw: unknown, broker: ResearchBroker, dropped: string[])
   return out;
 }
 
-function validateBrief(
+export function validateBrief(
   args: Record<string, unknown>,
   input: SynthesisInput,
   baseGaps: string[],
+  options: { deferAngles?: boolean } = {},
 ): Checked<SynthesisPayload> {
   const problems: string[] = [];
   const dropped: string[] = [];
   const summary = str(args.summary);
   if (!summary) problems.push("summary 缺失：用一段话讲清这个选题现在的判断");
   const angleSuggestions = strList(args.angle_suggestions ?? args.angleSuggestions).slice(0, ANGLE_MAX);
-  if (angleSuggestions.length < ANGLE_MIN) {
+  if (!options.deferAngles && angleSuggestions.length < ANGLE_MIN) {
     problems.push(`angle_suggestions 需 ${ANGLE_MIN}-${ANGLE_MAX} 条，当前 ${angleSuggestions.length} 条`);
   }
   const evidence = readEvidence(args.evidence, input.broker, problems, dropped);
   // 证据先定稿再校角度：角度卡的 ev-N 指的是**解析后**的那份数组（去重/丢弃都已发生）
   if (problems.length) return { ok: false, problems };
   const tensions = strList(args.tensions).slice(0, TENSION_MAX);
-  const angleCards = readAngleCards(args.angle_cards ?? args.angleCards, evidence, tensions, problems, dropped);
+  const angleCards = options.deferAngles ? [] : readAngleCards(args.angle_cards ?? args.angleCards, evidence, tensions, problems, dropped);
   if (problems.length) return { ok: false, problems };
   return {
     ok: true,
@@ -289,7 +290,7 @@ function validateBrief(
 const SUBMIT_TOOL_NAME = "submit_brief";
 
 /** 工具参数 schema（声明式数据，与校验逻辑分开放） */
-const SUBMIT_SCHEMA = {
+export const SUBMIT_SCHEMA = {
   type: "object",
   properties: {
     summary: { type: "string", description: `≤${SUMMARY_MAX_CHARS} 字：这个选题现在的判断` },

@@ -153,7 +153,7 @@ export function isAnchorValid(card: AngleCardV3, brief: ResearchBrief, ownMateri
   if (!anchor) return false;
   if (anchor.kind === "brief_evidence") {
     const ev = evidenceByRef(brief.evidence, anchor.chunkId);
-    return !!ev && anchor.excerptHash === excerptHashOf(ev.quote) && verbatimIn(ev.quote, anchor.quote);
+    return !!ev && ev.source !== "user_claim" && anchor.excerptHash === excerptHashOf(ev.quote) && verbatimIn(ev.quote, anchor.quote);
   }
   const chunk = ownChunkById(ownMaterial, anchor.chunkId);
   if (!chunk) return ownMaterial ? false : Boolean(anchor.chunkId && anchor.excerptHash && anchor.quote);
@@ -171,7 +171,7 @@ export function scoreAngleCard(
   const refs = [...new Set(card.coreEvidenceIds)];
   const completeReferences = refs.length > 0 && refs.every(ref => {
     const evidence = evidenceByRef(brief.evidence, ref);
-    return Boolean(evidence?.claim.trim() && evidence.quote.trim() && evidence.sourceUrl.trim());
+    return Boolean(evidence?.source !== "user_claim" && evidence?.claim.trim() && evidence.quote.trim() && evidence.sourceUrl.trim());
   });
   let score = 0;
   if (card.evidenceLevel === "grounded" && completeReferences) {
@@ -215,6 +215,10 @@ function readAnchorArg(
     const ev = evidenceByRef(brief.evidence, ref);
     if (!ev) {
       problems.push(`${tag}：第一手锚点引用「${ref || "(空)"}」不存在——只能引本份简报的 ev-N，或者不给锚点`);
+      return undefined;
+    }
+    if (ev.source === "user_claim") {
+      problems.push(`${tag}：未核验 user_claim 不能作为第一手证据锚点`);
       return undefined;
     }
     if (!verbatimIn(ev.quote, quote)) {
@@ -284,6 +288,7 @@ function validateEvidenceLevel(card: AngleCardV3, brief: ResearchBrief, tag: str
     : "本份简报一条证据都没有";
   if (bad.length > 0) problems.push(`${tag}：coreEvidenceIds 指向不存在的证据 ${bad.join("、")}——${known}`);
   if (card.evidenceLevel === "grounded") {
+    if (refs.some(id => evidenceByRef(brief.evidence, id)?.source === "user_claim")) problems.push(`${tag}：grounded 不能引用未核验 user_claim；请核验或标记 overview`);
     if (refs.length === 0) {
       problems.push(`${tag}：grounded 至少引 1 条简报证据；引不到就把 evidenceLevel 改成 overview（${known}）`);
     }
@@ -419,7 +424,7 @@ function briefFacts(brief: ResearchBrief): string {
   brief.evidence.forEach((e, i) => {
     const domain = /^https?:\/\/([^/?#]+)/i.exec(e.sourceUrl)?.[1] ?? "未知来源";
     lines.push(
-      `- ${evidenceRefId(i)}｜${sanitizeExternal(e.claim, TEXT_MAX)}｜引文：「${clampChars(stripDelimiters(e.quote), QUOTE_MAX)}」｜来源：${domain}`,
+      `- ${evidenceRefId(i)}｜${sanitizeExternal(e.claim, TEXT_MAX)}｜引文：「${clampChars(stripDelimiters(e.quote), QUOTE_MAX)}」｜来源等级：${e.source ?? "verified_quote"}｜来源：${domain}`,
     );
   });
   if (brief.evidence.length === 0) lines.push("（本份简报没有可引用的证据——只能出 overview 卡）");
@@ -516,7 +521,7 @@ const CARD_SCHEMA = {
   },
 };
 
-const SUBMIT_SCHEMA = {
+export const SUBMIT_SCHEMA = {
   type: "object",
   required: ["misconceptions", "candidates"],
   properties: {

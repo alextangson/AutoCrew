@@ -24,6 +24,7 @@ export function jobView(job: ResearchJob): Record<string, unknown> {
     topicId: job.topicId,
     status: job.status,
     kind: job.kind ?? "full",
+    executedBy: job.executedBy ?? { kind: "engine" },
     terminal: isTerminalJobStatus(job.status),
     briefRevision: job.briefRevision,
     creativeTask: job.creativeTask,
@@ -88,6 +89,7 @@ export function angleOptionsView(brief: ResearchBrief): {
     const refs = [...new Set(card.coreEvidenceIds)];
     const evidence = refs.map(ref => evidenceByRef(brief.evidence, ref))
       .filter(e => e !== null)
+      .filter(e => e.source !== "user_claim")
       .filter(e => Boolean(e.claim.trim() && e.quote.trim() && e.sourceUrl.trim()));
     const fullyReferenced = refs.length > 0 && refs.length === evidence.length;
     const grounded = fullyReferenced && (!isAngleCardV3(card) || card.evidenceLevel === "grounded");
@@ -172,22 +174,26 @@ export function packOutstanding(content: Content): boolean {
 }
 
 /**
- * 稿交了、审稿还没出结论（P3 §5.3）：`drafting` + 有包 + 有 `submittedAt`。
- * 审出结论就会转 `draft_ready` 或退 `revision`，所以这个组合只可能是「后台在审」。
+ * 新提交记录明确的等待标记，包含revision状态下重交的一稿；旧记录保留原判据。
  */
 export function reviewOutstanding(content: Content): boolean {
+  if (content.pack?.reviewPending !== undefined) return content.pack.reviewPending;
   return content.status === "drafting" && Boolean(content.pack?.submittedAt);
 }
 
 /**
  * `drafting` 的那一句话。三种「写作中」的成因完全不同，说错就是让人白等：
  * 内部写手 = 真有个后台任务在跑；宿主写稿 = 除了发包那几分钟的备料，球都在宿主模型那边；
- * 交了稿的 = 球在产品这边的审稿线上。这里不读盘（纯函数），所以备料与等稿两段合成一句话说。
+ * 交了稿的按实际 reviewMode 指向宿主审阅或明确启用的后台线。这里不读盘（纯函数）。
  */
 export function draftingNote(content: Content): string {
   if (reviewOutstanding(content)) {
+    if (content.pack?.reviewMode === "host") return "正文已保存，等待当前宿主审稿。请调用 `autocrew_review_desk pack` 领取材料，再提交定位到原文的问题；等待或轮询不会启动后台模型。";
+    if (content.pack?.reviewMode === "none") return "正文已保存，本次明确跳过审稿；不能将保存成功当作质量通过。用 `autocrew_writer submit_status` 查看保存结果。";
     return `稿已交，审稿中（${minutesSince(content.pack!.submittedAt!)} 分钟）。审稿在后台跑（通常 1–3 分钟），\`autocrew_writer submit_status\` 看得到结论；出结论后这篇会自动转草稿就绪或退回修订。`;
   }
+  if (content.review?.status === "stale") return "正文已变化，旧审稿结论已经失效。请重新领取当前稿的写作包、提交并审阅，不能沿用旧结论。";
+  if (content.pack?.submittedAt && content.pack.reviewPending === false) return "正文已保存，当前没有等待中的审稿任务。用 `autocrew_writer submit_status` 查看结论和需要处理的事项。";
   if (!packOutstanding(content)) {
     return "还在后台写（通常 15–30 分钟），过一会儿再查。正文此刻是占位，别拿去用。";
   }
@@ -202,6 +208,12 @@ export function draftOwnerView(content: Content): Record<string, unknown> {
     writtenByLabel: writerLabel(content.writtenBy),
     pack: content.pack,
     packOutstanding: packOutstanding(content),
+    ...(reviewOutstanding(content) ? {
+      reviewPending: content.pack?.reviewMode === "host" ? "awaiting_host_review" : content.pack?.reviewMode === "none" ? "unreviewed" : "reviewing",
+      reviewNextAction: content.pack?.reviewMode === "host"
+        ? { tool: "autocrew_review_desk", params: { action: "pack", content_id: content.id } }
+        : { tool: "autocrew_writer", params: { action: "submit_status", content_id: content.id } },
+    } : {}),
     // 认领与交接（P3 §6.1）。`claimView` 抹掉令牌——它只回给认领者本人
     claim: claimView(content.claim),
     handoffs: content.handoffs ?? [],

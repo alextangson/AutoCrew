@@ -25,13 +25,17 @@ export const BRIEF_SCHEMA_VERSION = 1;
 
 // ─── 视角产出（submit_perspective 的合法载荷，原样进简报） ───────────────────
 
+export type EvidenceSourceLevel = "verified_quote" | "own_claim" | "user_claim";
+
 export interface PerspectiveInsight {
+  source?: EvidenceSourceLevel;
   text: string;
   /** 至少一条：洞察必须挂在 broker 登记过的来源上（§4「成功判定」） */
   sourceIds: string[];
 }
 
 export interface PerspectiveEvidence {
+  source?: EvidenceSourceLevel;
   claim: string;
   /** 只能是已读页面（p*）——搜索摘要不足以支撑逐字引文 */
   sourceId: string;
@@ -75,6 +79,10 @@ export interface PerspectiveOutput {
 
 /** 简报级证据：sourceId 已由代码解析成可点的 URL，写稿注入时直接带域名 */
 export interface BriefEvidence {
+  /** Missing on legacy briefs means the old verified-page contract. Explicit claims must never be upgraded. */
+  source?: EvidenceSourceLevel;
+  sourceId?: string;
+  fetchedAt?: string;
   claim: string;
   quote: string;
   sourceUrl: string;
@@ -225,6 +233,7 @@ export function tensionByRef(tensions: string[], id: unknown): string | null {
 }
 
 export interface ResearchBrief {
+  executedBy?: { kind: "host"; host: string } | { kind: "engine" };
   /** Original creator brief used by every stage of this revision. */
   creativeTask?: import("../writing/creative-task.js").CreativeTask;
   schemaVersion: number;

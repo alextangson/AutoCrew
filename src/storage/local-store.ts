@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { isVideoPlatform, stageGuardError } from "./stage-guard.js";
@@ -327,7 +328,7 @@ export interface Content {
    * 稿卡据此说「写作包已发给 X，未收到稿（N 分钟）」而不是误报「还在后台写」。
    * `packId` 同时是写手侧的 fencing token：再领一次包换新号，旧号的提交一律被拒。
    */
-  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string };
+  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string; reviewMode?: "host" | "engine" | "none"; reviewPending?: boolean };
   /**
    * 谁在处理这一篇（P3 §6.1）。**认领是软门、令牌是硬门**：没有有效认领时任何宿主直接写
    * 并自动认领（单人单机不设卡）；有认领时别的宿主必须带匹配 `token`，否则被拒并告知持有者。
@@ -851,6 +852,13 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     updatedAt: now,
   };
 
+  // 宿主结论只适用于其指纹绑定的稿件；改稿与失效同锁落盘，避免竞态留下旧的通过徽章。
+  // 核对合并后的新稿和新结论，不会把本次写入、已匹配新稿的审阅误标过期。
+  if (updated.review?.source?.draftHash && updated.review.status !== "stale") {
+    const draftHash = createHash("sha256").update(JSON.stringify([updated.title, updated.body, updated.platform])).digest("hex");
+    if (updated.review.source.draftHash !== draftHash) updated.review = { ...updated.review, status: "stale" };
+  }
+
   // draft.md 先写、meta.json 最后写 = 提交点：镜像超前可被下次成功写自愈，meta 不留中间态
   await writeTextAtomic(path.join(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
   await writeJsonAtomic(metaPath, updated);
@@ -1280,6 +1288,8 @@ export interface TransitionResult {
   error?: string;
   /** true = 被阶段门拦下（不是状态图形状不对）。调用方据此说「卡在阶段门」 */
   blocked?: boolean;
+  /** 稿件与调用方审阅的版本不符，状态和交接记录均未推进。 */
+  staleDraft?: boolean;
   /** If an auto-trigger fired, describes what happened */
   autoTriggered?: string;
 }
@@ -1292,6 +1302,8 @@ export interface TransitionOptions {
    * 推进按钮双击都靠它，人看到的是一句人话而不是被静默改掉的状态。
    */
   expectedStatus?: ContentStatus;
+  /** 在状态写锁内再次核对正文，避免审稿落盘后编辑器改稿再被旧结论推进。 */
+  expectedDraft?: Pick<Content, "title" | "body" | "platform">;
   diffNote?: string;
   /** 记这次交接的宿主（§4.1）。缺省时回落到当前认领人，再回落 `local-user` */
   host?: string;
@@ -1353,6 +1365,10 @@ async function transitionStatusLocked(
   const currentStatus = normalizeLegacyStatus(content.status);
   const label = (s: ContentStatus) => CONTENT_STATUS_LABEL[s] ?? s;
 
+  if (opts?.expectedDraft && (content.title !== opts.expectedDraft.title || content.body !== opts.expectedDraft.body || content.platform !== opts.expectedDraft.platform)) {
+    return { ok: false, staleDraft: true, error: "稿件已变化，本次状态推进未应用；请重新审阅当前稿" };
+  }
+
   if (opts?.expectedStatus && opts.expectedStatus !== currentStatus) {
     return {
       ok: false,
@@ -1361,6 +1377,9 @@ async function transitionStatusLocked(
         `——刷新一下再推进，免得盖掉别处刚做的改动`,
     };
   }
+
+  // 带版本约束的恢复重试已抵达同一站时直接收口，不重复记交接；旧调用语义保持不变。
+  if (opts?.expectedDraft && currentStatus === targetStatus) return { ok: true, content };
 
   if (!opts?.force) {
     const allowed = STATE_TRANSITIONS[currentStatus];

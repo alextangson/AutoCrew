@@ -11,7 +11,7 @@
  *
  * 缓存与配额的关系：**只有真实出网才计配额**。四路撞同一页/同一搜索词只花一次额度，
  * 后来者拿缓存（含并发时共享同一个 in-flight 请求）。这是「共用 broker」的全部意义。
- * 生命周期：per-job 内存实例（全文缓存住在内存里，job 结束即释放）。不落盘。
+ * 生命周期：per-job 内存实例；宿主多轮调用通过服务器写入的 snapshot 恢复全文与额度。
  */
 import { canonicalizeUrl } from "../inbox/url-canonical.js";
 import { sanitizeExternal } from "./research-prompt-kit.js";
@@ -80,7 +80,7 @@ function quotaError(
 
 // ─── 来源登记 / 素材候选 ─────────────────────────────────────────────────────
 
-export type SourceKind = "search_result" | "page";
+export type SourceKind = "search_result" | "page" | "user_claim";
 
 export interface ResearchSource {
   /** 搜索结果 s1、s2…；已读页面 p1、p2…（两套序号各自递增） */
@@ -168,6 +168,7 @@ export interface ResearchBroker {
   getAssetCandidate(assetId: string): AssetCandidate | null;
   listAssetCandidates(): AssetCandidate[];
   usage(): BrokerUsage;
+  snapshot(): ResearchBrokerSnapshot;
 }
 
 export type BrokerSearchImpl = (
@@ -187,7 +188,24 @@ export interface BrokerActivity {
   detail: string;
 }
 
+/** Server-written snapshot; never accept this structure from a model/tool argument. */
+export interface ResearchBrokerSnapshot {
+  version: 1;
+  sources: Array<[string, { source: ResearchSource; normalized: string }]>;
+  searchCache: Array<[string, BrokerSearchHit[]]>;
+  pageCache: Array<[string, Omit<BrokerPageResponse, "cached">]>;
+  assets: Array<[string, AssetCandidate]>;
+  perspectives: Array<[string, { search: number; readPage: number }]>;
+  jobSearch: number; jobReadPage: number; jobTextBytes: number;
+  searchSeq: number; pageSeq: number; assetSeq: number;
+  cacheHits: { search: number; page: number };
+}
+
 export interface ResearchBrokerDeps {
+  /** Only restore snapshots previously written by AutoCrew. */
+  snapshot?: ResearchBrokerSnapshot;
+  /** Host research persists charged quota before network access; failures abort the request. */
+  beforeNetwork?: (snapshot: ResearchBrokerSnapshot) => Promise<void>;
   searchImpl?: BrokerSearchImpl;
   fetchImpl?: BrokerFetchImpl;
   quotas?: Partial<BrokerQuotas>;
@@ -263,7 +281,10 @@ class BrokerCore {
   private pageSeq = 0;
   private assetSeq = 0;
 
+  private readonly beforeNetwork?: ResearchBrokerDeps["beforeNetwork"];
+
   constructor(deps: ResearchBrokerDeps) {
+    this.beforeNetwork = deps.beforeNetwork;
     this.quotas = { ...DEFAULT_BROKER_QUOTAS, ...deps.quotas };
     this.searchImpl = deps.searchImpl ?? searchWeb;
     this.fetchImpl = deps.fetchImpl ?? fetchExternalPage;
@@ -271,6 +292,28 @@ class BrokerCore {
     this.dataDir = deps.dataDir;
     this.provider = deps.provider ?? "default";
     this.onActivity = deps.onActivity;
+    if (deps.snapshot) {
+      const saved = structuredClone(deps.snapshot);
+      if (saved.version !== 1) throw new Error("不支持的研究来源快照版本");
+      for (const [key, value] of saved.sources) this.sources.set(key, value);
+      for (const [key, value] of saved.searchCache) this.searchCache.set(key, value);
+      for (const [key, value] of saved.pageCache) this.pageCache.set(key, value);
+      for (const [key, value] of saved.assets) this.assets.set(key, value);
+      for (const [key, value] of saved.perspectives) this.perspectives.set(key, value);
+      for (const [id, entry] of this.sources) if (entry.source.kind === "search_result") this.searchSourceByUrl.set(canonicalizeUrl(entry.source.url), id);
+      for (const [id, asset] of this.assets) this.assetByUrl.set(canonicalizeUrl(asset.url), id);
+      this.jobSearch = saved.jobSearch; this.jobReadPage = saved.jobReadPage; this.jobTextBytes = saved.jobTextBytes;
+      this.searchSeq = saved.searchSeq; this.pageSeq = saved.pageSeq; this.assetSeq = saved.assetSeq;
+      this.cacheHits.search = saved.cacheHits.search; this.cacheHits.page = saved.cacheHits.page;
+    }
+  }
+
+  snapshot(): ResearchBrokerSnapshot {
+    return structuredClone({
+      version: 1, sources: [...this.sources], searchCache: [...this.searchCache], pageCache: [...this.pageCache],
+      assets: [...this.assets], perspectives: [...this.perspectives], jobSearch: this.jobSearch, jobReadPage: this.jobReadPage,
+      jobTextBytes: this.jobTextBytes, searchSeq: this.searchSeq, pageSeq: this.pageSeq, assetSeq: this.assetSeq, cacheHits: this.cacheHits,
+    });
   }
 
   /** 观测层不得破坏执行层：回调炸了也只是这条日志没发出去，检索照跑 */
@@ -346,6 +389,7 @@ class BrokerCore {
   }
 
   private async runSearch(key: string, query: string): Promise<BrokerSearchHit[]> {
+    await this.beforeNetwork?.(this.snapshot());
     const raw = await this.searchImpl(query, { count: SEARCH_RESULT_COUNT, dataDir: this.dataDir });
     const hits = raw.filter((r) => r.url?.trim()).map((r) => this.registerSearchResult(r));
     this.searchCache.set(key, hits);
@@ -405,6 +449,7 @@ class BrokerCore {
   }
 
   private async runReadPage(key: string, url: string): Promise<PageCacheEntry> {
+    await this.beforeNetwork?.(this.snapshot());
     const page = await this.fetchImpl(url, { collectImages: true });
     this.jobTextBytes += Buffer.byteLength(page.text, "utf-8");
     const entry: PageCacheEntry = {
@@ -549,5 +594,6 @@ export function createResearchBroker(deps: ResearchBrokerDeps = {}): ResearchBro
     getAssetCandidate: (assetId) => core.getAssetCandidate(assetId),
     listAssetCandidates: () => core.listAssetCandidates(),
     usage: () => core.usage(),
+    snapshot: () => core.snapshot(),
   };
 }

@@ -516,6 +516,7 @@ async function composeResearchSlot(
           id,
           ...(item.claim ? { claim: item.claim } : {}),
           quote: item.quote,
+          ...(item.source ? { source: item.source } : {}),
           ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
         })),
     ),
@@ -553,7 +554,7 @@ async function gatherInputs(
 ): Promise<GenerationInputs> {
   const [config, pack, profile, contrastPairs, patterns, picked] = await Promise.all([
     // 没配引擎也要能备料（P5 §1.6）：配坏了仍然照抛，只有「压根没配」返回 undefined
-    loadEngineConfigIfConfigured(dataDir),
+    req.modelExecution === "host" ? Promise.resolve(undefined) : loadEngineConfigIfConfigured(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
     // 改稿对比对(V5.7 活人感):读取失败不阻断写稿——样例是增强,不是依赖
@@ -570,7 +571,7 @@ async function gatherInputs(
   req = inheritCreativeTask(req, creativeTask);
   const ownMaterial = await gatherOwnMaterial(req, picked.topic, dataDir, warn);
   const ledger = seedLedger(req, picked, ownMaterial);
-  const phase = await runEvidencePhase({
+  const phase: EvidencePhase = req.modelExecution === "host" ? {} : await runEvidencePhase({
     req,
     ...(picked.angle ? { angle: picked.angle } : {}),
     config,

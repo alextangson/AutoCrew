@@ -30,6 +30,8 @@ import { isVideoPlatform } from "../../storage/stage-guard.js";
 
 export interface ScriptRequest {
   topic: string;
+  /** 宿主领包显式为host：不读取引擎配置、不自动调用补证模型。内部无人值守生成默认engine。 */
+  modelExecution?: "host" | "engine";
   platform: ClipboardPlatform;
   /** 调研材料（可选，RAW 注入） */
   research?: string;

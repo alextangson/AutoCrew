@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adoptionStats, getContent, recordAdoption, saveContent, serializeContentWrite, updateContent, updateContentIfDraftMatches } from "./local-store.js";
+import { adoptionStats, getContent, recordAdoption, saveContent, serializeContentWrite, transitionStatus, updateContent, updateContentIfDraftMatches } from "./local-store.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-draft-match-")); });
@@ -81,5 +82,55 @@ describe("adoption denominator", () => {
     await recordAdoption(rejected.id, "rejected", dir);
     expect((await getContent(rejected.id, dir))?.adoption?.verdict).toBe("rejected");
     expect(await adoptionStats(dir)).toEqual({ judged: 2, adopted: 1, lightEdit: 0, rewritten: 0, rate: 0.5 });
+  });
+});
+
+describe("draft compare-and-transition", () => {
+  it.each([{ title: "新标题" }, { body: "编辑器修改的正文" }, { platform: "douyin" }])("锁内拒绝旧稿状态推进，force也不能跨过稿件核对: %j", async patch => {
+    const content = await draft();
+    await updateContent(content.id, patch, dir);
+    const before = await getContent(content.id, dir);
+    expect(await transitionStatus(content.id, "reviewing", { expectedDraft: content, force: true }, dir)).toMatchObject({ ok: false, staleDraft: true });
+    expect(await getContent(content.id, dir)).toEqual(before);
+  });
+
+  it("排在编辑器后面的状态推进不能穿过写锁套到新稿", async () => {
+    const content = await draft();
+    let release!: () => void;
+    const held = serializeContentWrite(content.id, () => new Promise<void>(resolve => { release = resolve; }));
+    await Promise.resolve();
+    const edited = updateContent(content.id, { body: "排队保存的新稿" }, dir);
+    const transition = transitionStatus(content.id, "reviewing", { expectedDraft: content }, dir);
+    release();
+    await held;
+    await edited;
+    expect(await transition).toMatchObject({ ok: false, staleDraft: true });
+    expect((await getContent(content.id, dir))?.status).toBe("draft_ready");
+  });
+
+  it("同稿恢复重试不写第二条交接；显式旧状态仍拒绝", async () => {
+    const content = await saveContent({ title: "同稿重试", body: "尚待宿主审阅的正文", platform: "wechat_mp", status: "drafting", tags: [] }, dir);
+    expect(await transitionStatus(content.id, "draft_ready", { expectedDraft: content }, dir)).toMatchObject({ ok: true });
+    const before = await getContent(content.id, dir);
+    expect(before?.handoffs).toHaveLength(1);
+    expect(await transitionStatus(content.id, "draft_ready", { expectedDraft: content }, dir)).toMatchObject({ ok: true });
+    expect(await getContent(content.id, dir)).toEqual(before);
+    expect(await transitionStatus(content.id, "draft_ready", { expectedDraft: content, expectedStatus: "drafting" }, dir)).toMatchObject({ ok: false });
+    expect(await transitionStatus(content.id, "draft_ready", {}, dir)).toMatchObject({ ok: false });
+  });
+
+  it("改稿按结论指纹失效，合并时匹配新稿的新结论保留", async () => {
+    const content = await draft();
+    const hash = (body: string) => createHash("sha256").update(JSON.stringify([content.title, body, content.platform])).digest("hex");
+    const review = { status: "passed" as const, rounds: 0, fixed: 0, issues: [], reviewedAt: "first", source: { kind: "host_self_review" as const, reviewerHost: "claude", writerHost: "claude", independent: false as const, draftHash: hash(content.body) } };
+    await updateContent(content.id, { review }, dir);
+    await updateContent(content.id, { body: "已经变动的新稿" }, dir);
+    expect((await getContent(content.id, dir))?.review?.status).toBe("stale");
+    const newBody = "与新结论一起保存的稿件";
+    const newReview = { ...review, reviewedAt: "second", source: { ...review.source, draftHash: hash(newBody) } };
+    await updateContent(content.id, { body: newBody, review: newReview }, dir);
+    expect((await getContent(content.id, dir))?.review).toEqual(newReview);
+    await updateContent(content.id, { tags: ["只改标签"] }, dir);
+    expect((await getContent(content.id, dir))?.review).toEqual(newReview);
   });
 });

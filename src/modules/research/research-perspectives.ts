@@ -163,7 +163,7 @@ export type PerspectiveRunResult =
 
 // ─── prompt 组装 ─────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(name: PerspectiveName): string {
+export function buildSystemPrompt(name: PerspectiveName): string {
   const book = PERSPECTIVE_TASK_BOOKS[name];
   return [
     INJECTION_NOTICE,
@@ -366,7 +366,7 @@ function readInferences(raw: unknown, name: PerspectiveName, drops: Drops): Pers
  * 校验（代码侧，模型说了不算）。`strict` = 这是本路的**首次**提交：条目有问题就整份打回，
  * 让模型有一次改对的机会；之后的提交只剔条目，剩 ≥1 条合法洞察就收（§4.7）。
  */
-function validatePerspective(
+export function validatePerspective(
   args: Record<string, unknown>,
   name: PerspectiveName,
   broker: ResearchBroker,
@@ -473,7 +473,7 @@ const SUBMIT_SCHEMA = {
   required: ["insights", "gaps"],
 };
 
-function submitSchema(name: PerspectiveName): Record<string, unknown> {
+export function submitSchema(name: PerspectiveName): Record<string, unknown> {
   if (name !== "audience") return SUBMIT_SCHEMA;
   return {
     ...SUBMIT_SCHEMA,

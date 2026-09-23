@@ -309,7 +309,7 @@ describe("writer pack", () => {
     const res = await pack();
     expect(res.ok).toBe(true);
     expect(res.pack_id).toMatch(/^wp-/);
-    expect(res.budget).toEqual({ find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
+    expect(res.budget).toEqual({ evidence_mode: "host", host_evidence_left: 12, find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
 
     const content = await getContent(res.content_id, testDir);
     expect(content?.status).toBe("drafting");
@@ -492,13 +492,13 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
     expect(modelCalls).toHaveLength(0);
   });
 
-  it("engine.json 写坏了照样炸——不许静默当成「没配」", async () => {
+  it.each(["host", "engine"])("engine.json 损坏：%s 路径按执行模式处理", async (execution) => {
     await fs.writeFile(path.join(testDir, "engine.json"), "{broken");
     const topic = await manualTopic();
-    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin", research_mode: "provided", research: MANUAL_DESC, direction: "按现有实测材料解释返工" });
+    const started = await run({ action: "pack", execution, topic_id: topic.id, platform: "douyin", research_mode: "provided", research: MANUAL_DESC, direction: "按现有实测材料解释返工" });
     const status = await settle(started.content_id as string);
-    expect(status.status).toBe("failed");
-    expect(String(status.error)).toContain("engine.json");
+    expect(status.status).toBe(execution === "host" ? "ready" : "failed");
+    if (execution === "engine") expect(String(status.error)).toContain("engine.json");
   });
 });
 
@@ -653,7 +653,7 @@ describe("writer pack 异步备料", () => {
     const ready = await settle(started.content_id);
     expect(ready).toMatchObject({ ok: true, status: "ready", pack_id: started.pack_id });
     expect(String(ready.pack_md)).toContain("写作包");
-    expect(ready.budget).toEqual({ find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
+    expect(ready.budget).toEqual({ evidence_mode: "host", host_evidence_left: 12, find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
     expect((await readPackFile(started.content_id)).state).toBe("ready");
     // ready 之后就能正常交稿（同一个 pack_id，不必重新领）
     expect((await run(submitArgs(started.content_id, started.pack_id, 1))).status).toBe("accepted_unreviewed");
@@ -800,7 +800,7 @@ describe("writer find_evidence", () => {
     const res = await packWithSearch();
     const call = (n: number) =>
       run(
-        { action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id, need: `返工工时数据 ${n}` },
+        { action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id, need: `返工工时数据 ${n}` },
         { runLoopImpl: emptyResearchLoop },
       );
 
@@ -825,7 +825,7 @@ describe("writer find_evidence", () => {
     const res = await packWithSearch();
     for (const n of [1, 2]) {
       await run(
-        { action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id, need: `需求 ${n}` },
+        { action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id, need: `需求 ${n}` },
         { runLoopImpl: emptyResearchLoop },
       );
     }
@@ -838,7 +838,7 @@ describe("writer find_evidence", () => {
     const res = await packWithSearch();
     const hang = (): Promise<LoopResult> => new Promise<LoopResult>(() => {}); // 永不返回的补证
     const out = await run(
-      { action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id, need: "返工工时数据" },
+      { action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id, need: "返工工时数据" },
       { runLoopImpl: hang, findDeadlineMs: 20 },
     );
     expect(out.ok).toBe(true);
@@ -851,15 +851,15 @@ describe("writer find_evidence", () => {
 
   it("need 为空、稿件不存在、搜索没配好各自拒绝并说明", async () => {
     const res = await packWithSearch();
-    expect(await run({ action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id })).toMatchObject({
+    expect(await run({ action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id })).toMatchObject({
       ok: false,
     });
-    expect(await run({ action: "find_evidence", content_id: "content-nope", pack_id: res.pack_id })).toMatchObject({
+    expect(await run({ action: "find_evidence", execution: "engine", content_id: "content-nope", pack_id: res.pack_id })).toMatchObject({
       ok: false,
     });
     await fs.rm(path.join(testDir, "search.json"));
     const noSearch = await run({
-      action: "find_evidence",
+      action: "find_evidence", execution: "engine",
       content_id: res.content_id,
       pack_id: res.pack_id,
       need: "返工工时",

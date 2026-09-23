@@ -172,13 +172,18 @@ function buildLedger(init: { max: number; used: number; seq?: number }): Evidenc
 
 // ─── 播种（一稿开工时把已有材料一次性登记进来） ──────────────────────────────
 
-/** 简报证据：id 沿用简报内的 `ev-N`（位置即身份，同版简报永不改写） */
+/**
+ * 简报证据沿用稳定编号并透传来源等级；未核验的宿主材料仍是 user_claim。
+ * 历史简报未记录source时，沿用旧版broker逐字核验后的verified_quote约定。
+ * 不能因为用户材料进入了简报，就将其升级为已查证事实。
+ */
 export function seedLedgerFromBrief(ledger: EvidenceLedger, brief: ResearchBrief): void {
   brief.evidence.forEach((ev, i) => {
     if (!ev?.quote?.trim()) return;
     ledger.add({
       id: evidenceRefId(i),
-      source: "verified_quote",
+      source: ev.source ?? "verified_quote",
+      ...(ev.sourceId ? { sourceId: ev.sourceId } : {}),
       claim: ev.claim,
       quote: ev.quote,
       sourceUrl: ev.sourceUrl,

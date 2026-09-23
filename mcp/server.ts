@@ -45,7 +45,7 @@ const PROMPTS = [
   { name: "write_content", title: "准备一篇内容", description: "从写作需求开始，检查材料、推荐立意，再由当前模型写稿", argument: "requirements" },
   { name: "write_wechat", title: "写公众号文章", description: "从明确选题生成公众号原生稿", argument: "topic" },
   { name: "revise_content", title: "按反馈修改稿件", description: "原地修改现有稿件并保存新版本", argument: "feedback" },
-  { name: "review_content", title: "检查稿件", description: "核对词表与阅读格式，并说明语义审稿是否完成", argument: "content_id" },
+  { name: "review_content", title: "检查稿件", description: "由当前宿主检查规划、事实与表达，并标明审稿来源", argument: "content_id" },
   { name: "weekly_retro", title: "本周复盘", description: "根据真实发布与回流数据生成周复盘", argument: "focus" },
 ] as const;
 
@@ -101,8 +101,8 @@ function promptMessages(name: string, args: Record<string, unknown>) {
   const value = (key: string) => String(args[key] ?? "").trim();
   if (name === "write_content") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：${value("requirements")}` } }];
   if (name === "write_wechat") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：用选题《${value("topic")}》写一篇公众号原生文章，先用 workflow prepare 准备材料与立意。` } }];
-  if (name === "revise_content") return [{ role: "user", content: { type: "text", text: `读取当前稿件，按以下反馈原地修改并保存新版本：${value("feedback")}` } }];
-  if (name === "review_content") return [{ role: "user", content: { type: "text", text: `读取 AutoCrew 稿件 ${value("content_id")} 并检查。autocrew_review 仅做词表和阅读格式检查，auto_fix 只清理空白，不能代表事实、规划或表达通过审稿。给出具体问题，说明已有语义审稿状态和仍未核对的内容，不自动替创作者批准。` } }];
+  if (name === "revise_content") return [{ role: "user", content: { type: "text", text: `先用 autocrew_editorial inspect 读取当前稿件与 draft_hash，再用 feedback 保存用户本次已确认的修改要求；按返回的 writer pack 流程原地改稿、submit 和 review_desk 审稿。默认由当前宿主执行，不调用后台改稿模型。反馈：${value("feedback")}` } }];
+  if (name === "review_content") return [{ role: "user", content: { type: "text", text: `读取 AutoCrew 稿件 ${value("content_id")}，用 autocrew_review_desk pack 领取审稿任务，由当前宿主核对规划、事实与表达，再用 submit 交回具体问题与受众建议。不调用后台模型；按 review_source 说明审稿来源，host_self_review 是同宿主自审，不能称独立审稿。autocrew_review 仅做词表和阅读格式检查。没有写作包时如实说明需先领取 writer 包。不自动替创作者批准。` } }];
   if (name === "weekly_retro") return [{ role: "user", content: { type: "text", text: `基于 AutoCrew 中的真实数据生成本周复盘。重点：${value("focus") || "选题、内容质量、转化"}。不要编造缺失数据。` } }];
   return null;
 }

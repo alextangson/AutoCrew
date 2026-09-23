@@ -17,4 +17,4 @@ description: |
 
 纯 MCP 通过结构化工具读写档案。不要用空初始化调用校准，不要求宿主编辑本地 profile / STYLE / MEMORY 文件，也不把展示一份风格摘要说成已持久保存。
 
-用户继续写作时转 `spawn-writer`：`autocrew_workflow prepare → 选角 → autocrew_writer pack → 宿主写作 → submit`。档案更新后要重新领包，让新偏好真正进入本稿。
+用户继续写作时转 `spawn-writer`：`autocrew_workflow prepare → autocrew_scout 宿主调研与选角 → autocrew_writer pack → 宿主写作 → submit → autocrew_review_desk 宿主审稿`。档案更新后要重新领包，让新偏好真正进入本稿。

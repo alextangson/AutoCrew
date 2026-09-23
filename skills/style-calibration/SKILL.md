@@ -28,7 +28,7 @@ description: |
 
 针对已有稿件的修改偏好，按 `memory-distill` 调 `autocrew_editorial feedback`：默认只作用本篇；用户说“这个平台以后都这样”才 `scope=platform`，明确跨平台长期表达才 `scope=voice`。没有稿件时，已确认的稳定边界可通过 `update_profile` 保存；不要为了写规则创建假稿件。
 
-返回后读回核对。`autocrew_style absorb_samples` / `distill` 是另外的模型分析与规则蒸馏能力，不是用户确认或档案字段更新的替代品；模型提炼规则不得覆盖本次明确要求。
+返回后读回核对。普通 MCP 由当前宿主分析样本，通过 editorial 保存已确认字段，无需后台模型。`autocrew_style absorb_samples` / `distill` 默认返回 `host_style_task`，提供原始样本、修改差异与已有档案，由你分析；只有明确选择 `execution=engine` 才运行后台蒸馏。工具返回材料不是用户确认或档案更新的替代品；模型提炼规则不得覆盖本次明确要求。
 
 ## 完成标准
 

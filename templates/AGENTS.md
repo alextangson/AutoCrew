@@ -5,48 +5,23 @@
 1. ALWAYS respond in Simplified Chinese when talking to the user.
 2. NEVER fabricate data, statistics, or case studies. If unsure, say so.
 3. NEVER copy competitor content verbatim. May reference structure but MUST have original perspective.
-4. **SESSION START**: On session start, call `autocrew_pro_status` to check profile state. If `profileExists: false`, silently call `autocrew_init`. Then proceed directly to the user's request — do NOT block for onboarding. Profile data will be inferred progressively from usage.
+4. Read existing creator information with `autocrew_editorial profile` and proceed with the user request. Save only confirmed information through `update_profile`; do not require onboarding or silently promote inferred preferences to confirmed facts.
 5. For any content writing request, follow the write-script skill workflow.
 6. For batch writing (multiple articles), use the spawn-batch-writer skill.
 7. For topic research, use the research or spawn-planner skill.
-8. Save all topics via `autocrew_topic` tool. Save all content via `autocrew_content` tool.
-9. Before writing content, read `~/.autocrew/STYLE.md` and `~/.autocrew/creator-profile.json`.
+8. Save topics with `autocrew_topic`. Generated drafts must use `autocrew_writer pack/submit`, followed by `autocrew_review_desk pack/submit` for host review; content import is only for existing user-authored drafts.
+9. Research, angles, writing and review default to the current host model. Use `autocrew_scout` for research tasks and verified source capture; read the writing pack for current requirements and profile. No engine setup is required for ordinary MCP work. Mark same-host review as `host_self_review`, not independent review or author approval. Third-party search, images and videos use separate service allowances.
 10. After completing a task, suggest one concrete next step.
 11. When user gives feedback on content, capture it via the memory-distill skill.
 
-## Progressive Profiling（渐进式画像 — 替代传统 onboarding）
+## Progressive Profiling
 
-AutoCrew 不再强制用户先填表再干活。采用渐进式画像：
-
-### Level 0: 零配置即可用
-- 用户首次使用任何功能 → 直接执行，用通用风格
-- 如果 `~/.autocrew/` 不存在，静默调用 `autocrew_init` 创建
-- 不问任何问题，不阻断任何操作
-
-### Level 1: 自动推断（第 1-2 次使用）
-- 从用户的写作请求中自动推断行业/平台
-- 推断后轻松确认："看起来你做的是科技领域，对吗？"
-- 只确认，不审讯。用户不回应也没关系
-
-### Level 2: 主动建议（第 3-5 次使用）
-- 用户已有 2-3 篇内容
-- 主动建议风格校准："你已经写了几篇了，要不要花 2 分钟做个风格校准？"
-- 用户拒绝 → 不再提，继续用推断的风格
-
-### Level 3: 持续学习
-- Diff Tracker + Rule Distiller 自动从用户编辑中学习
-- 用户几乎不需要主动操作
-
-### 关键原则
-- 永远不阻断用户的原始请求
-- 画像信息从行为中推断，不从问卷中收集
-- 每次最多顺带问 1 个问题，不打断工作流
+Read existing profile information through `autocrew_editorial profile`, reuse the current conversation, and proceed without an onboarding questionnaire. Ask only about missing information that changes the outcome. Treat inferred preferences as temporary hypotheses until the user confirms them.
 
 ## Memory Protocol
 
-- On session start: read `~/.autocrew/STYLE.md` and `~/.autocrew/creator-profile.json` if they exist.
-- After significant user feedback: update via memory-distill skill (records diff + triggers rule distillation).
-- Never overwrite creator-profile.json entirely — use `autocrew_content action=update` or profile update functions.
+- Record actual user feedback through the memory-distill skill and `autocrew_editorial inspect/feedback`; default to the current draft.
+- Use `update_profile` only for confirmed profile information. Do not edit local profile or memory files, use empty initialization calls for calibration, or turn model self-review into a user verdict.
 
 ## Pro Gate Protocol
 

@@ -226,10 +226,11 @@ export interface Content {
   writtenBy?: { kind: string; host?: string; provider?: string; model?: string };
   claim?: { employee: string; host: string; at: string; leaseUntil: string };
   handoffs?: Array<{ from: string; to: string; at: string; by: string }>;
-  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string };
+  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string; reviewMode?: "host" | "engine" | "none"; reviewPending?: boolean };
   adoption?: { verdict: string; reason?: string; reasonNote?: string; derived?: boolean };
   /** AI 审稿结论(审稿 spec §2.5):稿卡徽章读它;旧稿无此字段 = 不显示徽章 */
   review?: {
+    source?: { kind: "host_self_review" | "host_other_principal_review"; reviewerHost: string; writerHost: string; independent: false; draftHash: string };
     status: "passed" | "revised" | "failed" | "skipped" | "stale";
     rounds: number;
     fixed: number;

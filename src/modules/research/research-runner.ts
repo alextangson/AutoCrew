@@ -107,6 +107,7 @@ function leaseAlive(job: ResearchJob, nowMs: number): boolean {
 
 /** claim 门：终态不重跑（重跑走 trigger 落新 job），租约未过期的 running 不抢 */
 function isClaimable(job: ResearchJob, nowMs: number): boolean {
+  if (job.executedBy?.kind === "host") return false;
   if (job.status === "queued") return true;
   if (job.status === "running") return !leaseAlive(job, nowMs);
   return false;
@@ -195,6 +196,9 @@ class SerialResearchRunner implements ResearchRunner {
     if (kind === "angles" && !creativeTaskMatches(task ?? createCreativeTask({}), snapshot?.brief.creativeTask)) {
       return { accepted: false, reason: "创作任务已变化；仅重新立意不能补齐新要求需要的事实，请先重跑完整调研。" };
     }
+    if (existing?.executedBy?.kind === "host" && !isTerminalJobStatus(existing.status)) {
+      return { accepted: false, reason: "本轮研究由宿主进行，请继续 autocrew_scout；不会自动切换后台模型。", inFlight: true };
+    }
     if (existing && !isTerminalJobStatus(existing.status)) {
       // 真的有人在跑（排队中 / 租约还活着）：**拒**，两种 kind 同一道门（§3.5）——
       // 合并成同一条 job 会让「重新立意」悄悄变成「深调研」（反之亦然），
@@ -241,7 +245,7 @@ class SerialResearchRunner implements ResearchRunner {
     const nowMs = this.now();
     const reclaimed: ResearchJob[] = [];
     for (const job of await listJobs(this.deps.dataDir)) {
-      if (isTerminalJobStatus(job.status)) continue;
+      if (job.executedBy?.kind === "host" || isTerminalJobStatus(job.status)) continue;
       if (job.status === "running" && !leaseAlive(job, nowMs)) {
         reclaimed.push(
           await this.write({

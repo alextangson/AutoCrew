@@ -41,6 +41,7 @@ export interface PerspectiveState {
 export type ResearchJobKind = "full" | "angles";
 
 export interface ResearchJob {
+  executedBy?: { kind: "host"; host: string } | { kind: "engine" };
   /** Frozen creator intent; survives retries and process recovery. */
   creativeTask?: CreativeTask;
   /** 台账主键：一个选题同时只有一个「当前 job」 */

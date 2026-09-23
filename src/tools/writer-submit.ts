@@ -16,6 +16,7 @@
  * 2. **同 `attempt` 重放不产生任何副作用**：原样还回上次结果，不扣修复轮、不推状态。
  * 3. **降级必须可见**：审稿失败不静默跳过，落 `review.status = skipped` + 人话原因 + `lastError`。
  */
+import { createHash, randomUUID } from "node:crypto";
 import { HARD_GATE_CHECKS, type GateFailure } from "../modules/writing/quality-gate.js";
 import {
   assembleAndHumanize,
@@ -68,8 +69,8 @@ export interface SubmitArgs {
   body: string;
   cta?: string;
   hashtags?: unknown;
-  /** 缺省 `engine`：产品内部的 reviewer 岗位审一遍（§9.1 待确认项，默认按此实现） */
-  review: "engine" | "none";
+  /** 缺省host：宿主领取同一份审稿材料完成点评，只有显式engine才调用API。 */
+  review?: "host" | "engine" | "none";
   host: string;
 }
 
@@ -105,6 +106,11 @@ async function loadForSubmit(
   // 盘上写着「在审」但进程里没人在跑（重启留下的）：顺手重跑，别让这一稿卡死在中间态
   await resumeReview(args.contentId, pack, dataDir, deps);
   const done = pack.attempts[String(args.attempt)];
+  if (done?.hostReview) {
+    const draftHash = createHash("sha256").update(JSON.stringify([content.title, content.body, content.platform])).digest("hex");
+    const latestAttempt = Math.max(...Object.keys(pack.attempts).map(Number));
+    if (draftHash !== done.hostReview.draftHash || args.attempt !== latestAttempt) return fail("stale_review: 稿件或提交版本已经变化，不能沿用旧审稿回执；请重新领取当前稿的写作包、提交并审阅");
+  }
   // 幂等（§5.2）：网络重发、宿主重试都会撞到这里——原样还回去，不扣修复轮、不推状态
   if (done) return { replay: { ...submissionVisibility(pack, done.result), replayed: true, replayed_at: done.at } };
   // 状态门放在重放之后：稿子已经 draft_ready 时宿主重发同一 attempt，要拿回「已收下」而不是「不收稿」
@@ -112,8 +118,10 @@ async function loadForSubmit(
     return fail(`这篇现在是「${content.status}」，不收稿——只有写作中 / 修订中的稿能提交（${args.contentId}）`);
   }
   // 上一稿还在审：这时候收下一版就是同一篇稿两遍审稿抢着推状态，先让他等结果
-  const pendingAttempt = Object.entries(pack.attempts).find(([, rec]) => rec.status === "reviewing");
-  if (pendingAttempt) return fail(`上一稿（attempt ${pendingAttempt[0]}）还在审，先 submit_status 等结果`);
+  const pendingAttempt = Object.entries(pack.attempts).find(([, rec]) => rec.status === "reviewing" || rec.status === "awaiting_host_review");
+  if (pendingAttempt) return fail(pendingAttempt[1].status === "awaiting_host_review"
+    ? `上一稿（attempt ${pendingAttempt[0]}）等待宿主审稿，先 autocrew_review_desk pack{content_id} 领取材料并提交结论`
+    : `上一稿（attempt ${pendingAttempt[0]}）还在审，先 submit_status 等结果`);
   const highest = Math.max(0, ...Object.keys(pack.attempts).map((k) => Number(k)));
   if (args.attempt < highest) {
     return fail(`过期重试：这篇已经收到过 attempt ${highest}，你交的是 ${args.attempt}——改用 ${highest + 1} 重交`);
@@ -144,7 +152,7 @@ async function persistDraft(
   content: Content,
   payload: SubmitPayload,
   humanizedText: string,
-  extra: { ledger: EvidenceLedger; needsHuman: string[]; versionNote: string },
+  extra: { ledger: EvidenceLedger; needsHuman: string[]; versionNote: string; reviewPending?: boolean },
   dataDir: string,
 ): Promise<void> {
   await updateContent(
@@ -157,7 +165,7 @@ async function persistDraft(
       unverifiedNumbers: extra.needsHuman,
       evidenceLedger: extra.ledger.snapshot(),
       writtenBy: { kind: "host", host: args.host },
-      pack: { ...content.pack!, submittedAt: new Date().toISOString() },
+      pack: { ...content.pack!, submittedAt: new Date().toISOString(), reviewMode: args.review ?? "host", reviewPending: extra.reviewPending ?? false },
       _versionNote: extra.versionNote,
     },
     dataDir,
@@ -283,12 +291,14 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
     ledger,
     needsHuman: needsHumanNumbers,
     versionNote: `${args.host} 交稿（第 ${args.attempt} 次）`,
+    reviewPending: args.review !== "none",
   }, dataDir);
   const job: ReviewJob = {
     contentId: args.contentId,
     packId: args.packId,
     attempt: args.attempt,
     pending: {
+      mode: args.review === "engine" ? "engine" : "host",
       host: args.host,
       payload,
       humanizedText,
@@ -296,6 +306,29 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
       gateNotes: failures.map((f) => f.detail),
     },
   };
+
+  if ((args.review ?? "host") === "host") {
+    const reviewPackId = randomUUID();
+    const draftHash = createHash("sha256").update(JSON.stringify([payload.title, humanizedText, pack.context.platform])).digest("hex");
+    const result = {
+      status: "awaiting_host_review" as const,
+      saved: true,
+      quality_status: "awaiting_host_review",
+      needs_attention: true,
+      content_id: args.contentId,
+      attempt: args.attempt,
+      review_pack_id: reviewPackId,
+      draft_hash: draftHash,
+      ...writerProgress(pack, args.host),
+      next_action: { tool: "autocrew_review_desk", params: { action: "pack", content_id: args.contentId }, message: "由当前宿主读取审稿材料并提交结论；等待或轮询不会启动后台模型" },
+      human_next_step: "宿主正在接手审稿，当前只有保存结果，尚未形成质量结论或创作者采纳。",
+      note: "正文已保存，等待宿主审稿；未调用后台模型。宿主自审会明确标为自审，不能冒充独立评审。",
+    };
+    const at = new Date().toISOString();
+    pack.attempts[String(args.attempt)] = { status: result.status, at, startedAt: at, pending: job.pending, result, hostReview: { reviewPackId, draftHash, issuedAt: at } };
+    await writePack(args.contentId, pack, dataDir);
+    return result;
+  }
 
   const skip = await skipReason(args.review, dataDir);
   if (skip) {

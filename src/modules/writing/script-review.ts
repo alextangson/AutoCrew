@@ -51,7 +51,18 @@ export interface ReviewIssue {
  */
 export type ReviewStatus = "passed" | "revised" | "failed" | "skipped" | "stale";
 
+/** 可核验的是MCP凭证主体，不保证不同模型或独立审阅。 */
+export interface HostReviewSource {
+  kind: "host_self_review" | "host_other_principal_review";
+  reviewerHost: string;
+  writerHost: string;
+  independent: false;
+  /** 结论绑定的标题、正文和平台指纹；改稿后不得复用通过徽章。 */
+  draftHash: string;
+}
+
 export interface ReviewMeta {
+  source?: HostReviewSource;
   status: ReviewStatus;
   /** 实际发生的修订轮数 */
   rounds: number;
@@ -172,8 +183,12 @@ function locatable(haystack: string, quote: string): boolean {
   return strip(haystack).includes(strip(quote));
 }
 
-function readIssues(raw: unknown, haystack: string, round: number, problems: string[]): ReviewIssue[] {
+function readIssues(raw: unknown, haystack: string, round: number, problems: string[], strict = false): ReviewIssue[] {
   const issues: ReviewIssue[] = [];
+  if (strict && (!Array.isArray(raw) || raw.some(item => !item || typeof item !== "object" || Array.isArray(item)))) {
+    problems.push("issues 必须是问题对象数组，不得混入空值或文字");
+    return issues;
+  }
   for (const [i, item] of objList(raw).entries()) {
     const severity = str(item.severity) === "blocker" ? "blocker" : str(item.severity) === "advisory" ? "advisory" : null;
     const quote = str(item.quote);
@@ -184,7 +199,9 @@ function readIssues(raw: unknown, haystack: string, round: number, problems: str
     if (!instruction) problems.push(`issues[${i}].instruction 为空：写清楚怎么改，不是只说哪里不好`);
     if (!quote) {
       problems.push(`issues[${i}].quote 为空：必须给一段原文引文用于定位`);
-    } else if (!locatable(haystack, quote)) {
+    } else if (strict && (Array.from(quote).length < 6 || Array.from(quote).length > 60)) {
+      problems.push(`issues[${i}].quote 必须是 6-60 字的原文片段`);
+    } else if (strict ? !haystack.includes(quote) : !locatable(haystack, quote)) {
       problems.push(`issues[${i}].quote「${quote.slice(0, 20)}…」在稿件里找不到——只能逐字复制原文，不要改写或凭印象写`);
     }
     if (severity && quote && rule && instruction && locatable(haystack, quote)) {
@@ -196,12 +213,12 @@ function readIssues(raw: unknown, haystack: string, round: number, problems: str
 
 type Checked = { ok: true; verdict: "pass" | "revise"; issues: ReviewIssue[] } | { ok: false; problems: string[] };
 
-function validateReview(args: Record<string, unknown>, haystack: string, round: number): Checked {
+export function validateReview(args: Record<string, unknown>, haystack: string, round: number, strict = false): Checked {
   const problems: string[] = [];
   const raw = str(args.verdict).toLowerCase();
   const verdict = raw === "pass" || raw === "revise" ? raw : null;
   if (!verdict) problems.push('verdict 只能是 "pass" 或 "revise"');
-  const issues = readIssues(args.issues, haystack, round, problems);
+  const issues = readIssues(args.issues, haystack, round, problems, strict);
   if (verdict === "revise" && issues.length === 0) {
     problems.push("verdict=revise 必须附至少一条 issue（可定位的 quote + 具体的 instruction）");
   }

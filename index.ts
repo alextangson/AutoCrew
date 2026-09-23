@@ -23,8 +23,10 @@ import { prePublishSchema, executePrePublish } from "./src/tools/pre-publish.js"
 import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
 import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
 import { generateSchema, executeGenerate } from "./src/tools/generate.js";
-import { styleSchema, executeStyle } from "./src/tools/style.js";
+import { styleSchema, executeHostStyle } from "./src/tools/style.js";
 import { workflowSchema, executeWorkflow, WORKFLOW_DESCRIPTION } from "./src/tools/workflow.js";
+import { scoutSchema, executeScout, SCOUT_DESCRIPTION } from "./src/tools/scout.js";
+import { reviewDeskSchema, executeReviewDesk, REVIEW_DESK_DESCRIPTION } from "./src/tools/host-review.js";
 import { writerSchema, executeWriter, WRITER_DESCRIPTION } from "./src/tools/writer.js";
 import { deskSchema, executeDesk, DESK_DESCRIPTION } from "./src/tools/desk.js";
 import { videoSchema, executeVideo, VIDEO_DESCRIPTION } from "./src/tools/video.js";
@@ -77,6 +79,9 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     parameters: workflowSchema,
     execute: (params) => executeWorkflow(params),
   });
+
+  runner.register({ name: "autocrew_scout", label: "AutoCrew Scout", description: SCOUT_DESCRIPTION, parameters: scoutSchema, execute: executeScout });
+  runner.register({ name: "autocrew_review_desk", label: "AutoCrew Review Desk", description: REVIEW_DESK_DESCRIPTION, parameters: reviewDeskSchema, execute: executeReviewDesk });
 
   runner.register({
     name: "autocrew_writer",
@@ -225,27 +230,35 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_style",
     label: "AutoCrew Style",
     description:
-      "LLM-driven style learning: distill new writing rules from EditDiffs, or absorb viral sample texts. Actions: distill (consume edits, recommend 3+ edits before calling), absorb_samples (1-5 texts).",
+      "Host-driven style analysis: returns samples or edit differences for the current host to analyze. User-confirmed preferences use autocrew_editorial. Only explicit execution=engine invokes a separate model API.",
     parameters: styleSchema,
-    execute: (p) => executeStyle(p),
+    execute: (p) => executeHostStyle(p),
   });
 
   runner.register({
     name: "autocrew_revise",
     label: "AutoCrew Revise",
-    description: "Revise an existing draft in place from explicit feedback and save it as a new version.",
+    description: "Default: return a host revision handoff for the existing draft; record feedback and force a writer pack for that content_id. Only explicit execution=engine invokes a background model and saves a revision.",
     parameters: {
       type: "object" as const,
       required: ["content_id", "instruction"],
       properties: {
         content_id: { type: "string" as const, description: "Existing AutoCrew content id." },
         instruction: { type: "string" as const, description: "Concrete revision feedback." },
+        execution: { type: "string" as const, enum: ["host", "engine"], description: "Default host. engine only when the user explicitly requests separately billed background rewriting." },
       },
     },
     execute: async (params) => {
       const contentId = String(params.content_id ?? "");
       const instruction = String(params.instruction ?? "").trim();
       if (!contentId || !instruction) return { ok: false, error: "content_id and instruction are required" };
+      if (params.execution !== "engine") {
+        const inspected = await executeEditorial({ action: "inspect", content_id: contentId, _dataDir: params._dataDir });
+        if (inspected.ok === false) return inspected;
+        return { ok: true, status: "host_revision_required", executed_by: { kind: "host", host: params._host ?? "local-user" }, model_api_calls: 0,
+          content_id: contentId, draft_hash: inspected.draft_hash, feedback: instruction,
+          next_action: { tool: "autocrew_editorial", params: { action: "feedback", content_id: contentId, draft_hash: inspected.draft_hash, feedback: instruction, scope: "draft" }, message: "以本次用户反馈的稳定event_id及user_confirmed:true记录原话，再按反馈回执重领原稿writer包；局部修改传selection，保留未修改部分。" } };
+      }
       const result = await reviseDraft(contentId, instruction, params._dataDir as string | undefined);
       return {
         ok: true,

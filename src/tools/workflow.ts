@@ -1,3 +1,5 @@
+import { inspectHostResearchTask } from "../modules/research/host-research-store.js";
+import { executeScout } from "./scout.js";
 import { createCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * MCP creation entry: prepare material and direction before the host writes.
@@ -76,11 +78,11 @@ export const workflowSchema = Type.Object({
   ),
   research_mode: Type.Optional(Type.Unsafe<"auto" | "provided" | "skip">({
     type: "string", enum: ["auto", "provided", "skip"],
-    description: "prepare / write：默认 auto 自动调研；provided 明确使用已有 research 材料；skip 仅在创作者明确要求跳过调研时使用，必须给 research_reason。direction 不绕过研究。",
+    description: "prepare / write：默认 auto 要求有效研究；MCP由当前宿主执行scout任务；provided 明确使用已有 research 材料；skip 仅在创作者明确要求跳过调研时使用，必须给 research_reason。direction 不绕过研究。",
   })),
   research: Type.Optional(Type.String({ description: "research_mode=provided 时必填的已有材料、来源与摘录；不能伪称 AutoCrew 已调研。" })),
   research_reason: Type.Optional(Type.String({ description: "research_mode=skip 的创作者明确要求；原样记录，不由 agent 猜测。" })),
-  execution: Type.Optional(Type.Literal("engine", { description: "write：仅在用户明确要求后台模型代写时设为 engine；MCP 默认由当前宿主写。" })),
+  execution: Type.Optional(Type.Union([Type.Literal("host"), Type.Literal("engine")], { description: "默认host：研究分析/立意交当前宿主完成，无后台模型调用；仅用户明确选择后台模式时engine，模型API与搜索服务使用独立额度。" })),
   content_id: Type.Optional(Type.String({ description: "draft：稿件 id（write 返回的 contentId）" })),
   probe: Type.Optional(
     Type.Boolean({
@@ -92,11 +94,11 @@ export const workflowSchema = Type.Object({
 
 export const WORKFLOW_DESCRIPTION = [
   "AutoCrew 创作统一入口。用户提出写作需求时，先查询或创建选题，再 prepare{topic_id,platform,requirements,direction?}；完整保留原始要求，不直接 write/generate。",
-  "prepare 检查材料和立意：首次自动启动调研；researching 时先向用户报告真实进度，按 poll_after_seconds 再 prepare；失败返回 needs_attention，说明原因后明确 research 重试，不反复自动重跑。",
+  "prepare 检查材料和立意：默认返回awaiting_host_research和scout任务，由当前宿主分析与提交，不启动后台模型，不轮询等后台；只有显式execution=engine才启动后台调研。",
   "needs_angle：展示各候选的主张、受众、证据差异和推荐理由，让创作者选择；推荐不会自动选卡。select_angle{topic_id,angle_id,brief_revision,card?} 保存选择，随后带 continue_params 再 prepare。",
   "ready_to_write：调用 next_action 指向的 autocrew_writer pack，当前宿主结合已有对话与原始要求写稿并提交；AutoCrew 提供材料、检查和编辑帮助。",
   "已有研究可显式用 research_mode=provided 并交 research；创作者明确免调研才用 skip 并交 research_reason。这两种都如实标注未自动调研，且仍需已选立意、direction 或明确 skip_reason。",
-  "research{topic_id,kind} 显式启动或重试；full 深调研需搜索配置，angles 基于现有有效简报重跑立意；status 只看事实和准备状态。prepare 不替用户选卡，也不暗中代写。",
+  "research{topic_id,kind} 默认领取scout宿主任务；只有用户明确指定execution=engine才启动后台研究。宿主可自带搜索并将URL交scout read_page核验，scout search使用独立搜索服务额度。status只读状态。prepare 不替用户选卡，也不暗中代写。",
   "write{...,execution:'engine'} 仅供用户明确要求后台模型代写；draft{content_id} 查看实际写作、审稿、证据阻塞状态。",
   "doctor{probe?} 检查配置；probe:true 会实际访问端点。不能把配置检查当成真实调用成功。",
 ].join("\n");
@@ -187,6 +189,10 @@ async function doResearch(
   const rawKind = str(params.kind) || "full";
   if (rawKind !== "full" && rawKind !== "angles") return fail(`未知 kind：${rawKind}。有效值：full | angles`);
   const kind: ResearchJobKind = rawKind;
+  if (params.execution !== "engine") {
+    if (kind === "angles") return fail("宿主模式暂不支持仅重跑立意。可用scout force prepare重做完整调研与立意；只有用户明确要求后台执行时才用execution=engine。", { code: "host_angles_handoff", next_action: { tool: "autocrew_scout", params: { action: "prepare", topic_id: topicId, force: true } } });
+    return executeScout(scoutPrepareParams(params, dataDir)) as Promise<WorkflowResult>;
+  }
 
   // 搜索 key 门只管 full（angles 不出网）——口径同 research-runtime.postJob
   if (kind === "full" && !(await (deps.searchAvailableImpl ?? searchAvailable)(dataDir))) {
@@ -213,6 +219,11 @@ async function doResearch(
 
 // ─── prepare ──────────────────────────────────────────────────────────────────
 
+function scoutPrepareParams(params: Record<string, unknown>, dataDir: string): Record<string, unknown> {
+  return { action: "prepare", topic_id: params.topic_id, _host: params._host, _dataDir: dataDir,
+    ...Object.fromEntries(["platform", "direction", "requirements", "force"].filter(key => params[key] !== undefined).map(key => [key, params[key]])) };
+}
+
 function readinessRequest(params: Record<string, unknown>): WritingReadinessRequest {
   return {
     ...(typeof params.platform === "string" ? { platform: params.platform } : {}),
@@ -232,10 +243,18 @@ async function doPrepare(
   const topicId = str(params.topic_id);
   if (!topicId) return fail("topic_id 必填；先查询或创建选题，再准备创作。");
   const readiness = await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn);
+  if (params.execution !== "engine" && readiness.research.mode === "auto" && !["ready_to_write", "needs_angle"].includes(readiness.status)) {
+    const task = await executeScout(scoutPrepareParams({ ...readiness.continue_params, _host: params._host }, dataDir));
+    if (task.ok === false) return { ...task, ok: false, error: String(task.error ?? "宿主调研任务准备失败"), status: "needs_attention", preparation: readiness };
+    return { ok: true, status: "awaiting_host_research", preparation: readiness, creative_task: task.creative_task,
+      research_task: task, executed_by: { kind: "host", host: params._host ?? "local-user" }, model_api_calls: 0,
+      next_action: { tool: "autocrew_scout", params: { action: "pack", topic_id: topicId, task_id: task.task_id } },
+      note: "已准备当前宿主的调研/立意任务；后台没有模型在运行。现在领取scout任务，完成来源读取、观点分析与立意提交，不要轮询等待或直接裸写。" };
+  }
   if (readiness.status !== "not_started") {
     return { ok: true, ...readiness, ...(readiness.status === "researching" ? { poll_after_seconds: 30 } : {}) };
   }
-  const started = await doResearch({ ...readiness.continue_params, topic_id: topicId, kind: "full" }, dataDir, deps, warn);
+  const started = await doResearch({ ...readiness.continue_params, topic_id: topicId, kind: "full", execution: "engine" }, dataDir, deps, warn);
   if (!started.ok) {
     if (started.inFlight) {
       return { ok: true, ...readiness, status: "researching", research: { ...readiness.research, status: "running" }, poll_after_seconds: 30, note: "调研正在进行；请说明进度，并按间隔继续 prepare。" };
@@ -266,13 +285,15 @@ async function doStatus(
   const options = snap ? angleOptionsView(snap.brief) : { cards: [] };
   const readiness = await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn);
 
+  const hostTask = job?.executedBy?.kind === "host" ? await inspectHostResearchTask(topicId, dataDir) : null;
+  const waitingForHost = hostTask && hostTask.status !== "ready";
   return {
     ok: true,
     topicId,
     title: topic.title,
     readiness,
-    next_action: readiness.next_action,
-    ...(readiness.status === "researching" ? { poll_after_seconds: 30 } : {}),
+    next_action: waitingForHost ? { tool: "autocrew_scout", params: { action: "pack", topic_id: topicId, task_id: hostTask.taskId } } : readiness.next_action,
+    ...(waitingForHost ? { status: "awaiting_host_research", research_task: { task_id: hostTask.taskId, status: hostTask.status, executed_by: { kind: "host", host: hostTask.host } }, note: "正在等待宿主继续调研；后台没有模型运行，领取scout任务继续，不要轮询空等。" } : readiness.status === "researching" ? { poll_after_seconds: 30 } : {}),
     job: job ? jobView(job) : null,
     ...(snap
       ? {
