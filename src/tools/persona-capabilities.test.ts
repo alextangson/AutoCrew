@@ -21,7 +21,7 @@ import { registerAutocrewCapabilities } from "../../index.js";
 import { createContext } from "../runtime/context.js";
 import { EventBus } from "../runtime/events.js";
 import { ToolRunner } from "../runtime/tool-runner.js";
-import { CODEX_EDITOR_DENIED, hostPolicy } from "../../mcp/host-policy.js";
+import { ADOPTION_HOST_DENIED, CODEX_EDITOR_DENIED, hostPolicy } from "../../mcp/host-policy.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -172,6 +172,16 @@ describe("host policy: codex editing station is register/status + read-only", ()
     const decision = hostPolicy(host, tool, action === undefined ? {} : { action });
     expect(decision.ok).toBe(allowed);
     if (!decision.ok) expect(decision.error).toBe(CODEX_EDITOR_DENIED);
+  });
+
+  it("采纳不能由宿主代填：命名宿主调 autocrew_content adoption 一律拒，工作台放行（P6-e r3）", () => {
+    for (const host of ["claude-code", "codex", "dsh"]) {
+      const d = hostPolicy(host, "autocrew_content", { action: "adoption" });
+      expect(d.ok).toBe(false);
+      if (!d.ok) expect(d.error).toBe(ADOPTION_HOST_DENIED);
+    }
+    expect(hostPolicy("local-user", "autocrew_content", { action: "adoption" }).ok).toBe(true);
+    expect(hostPolicy("claude-code", "autocrew_content", { action: "get" }).ok).toBe(true);
   });
 
   it("action 带空白照样按原词判；缺 action 的受限工具一律拒", () => {

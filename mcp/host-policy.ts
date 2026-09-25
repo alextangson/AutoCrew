@@ -28,11 +28,20 @@ const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
 
 const DENIED_MESSAGE: Readonly<Record<string, string>> = { codex: CODEX_EDITOR_DENIED };
 
+/**
+ * 所有命名宿主共用的硬拒（P6-e r3：模型绕开 handoff 的门后，转而用 `autocrew_content adoption`
+ * 替创作者记「采纳」——那是采纳率北极星的读数）。采纳是创作者自己的动作：只在工作台记，
+ * 或发布时隐式推导；宿主不能代填。
+ */
+export const ADOPTION_HOST_DENIED = "采纳是创作者自己的动作：只在工作台记，或发布时隐式推导；宿主不能代填 autocrew_content adoption";
+const HOST_DENIED_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = { autocrew_content: new Set(["adoption"]) };
+
 export function hostPolicy(host: string, tool: string, args: Record<string, unknown>): PolicyDecision {
+  const action = typeof args.action === "string" ? args.action.trim() : "";
+  if (host !== LOCAL_HOST && HOST_DENIED_ACTIONS[tool]?.has(action)) return { ok: false, error: ADOPTION_HOST_DENIED };
   const allowlist = HOST_ALLOWLISTS[host];
   if (!allowlist) return { ok: true };
   const allowed = allowlist[tool];
-  const action = typeof args.action === "string" ? args.action.trim() : "";
   if (allowed === "*" || (allowed && allowed.has(action))) return { ok: true };
   return { ok: false, error: DENIED_MESSAGE[host] ?? `宿主 ${host} 不允许调用 ${tool} ${action}` };
 }

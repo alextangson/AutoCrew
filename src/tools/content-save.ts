@@ -39,7 +39,7 @@ export const contentSaveSchema = Type.Object({
       "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
       "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
       "'siblings' list sibling content, 'allowed_transitions' show valid next statuses, " +
-      "'adoption' record adoption verdict (采纳率北极星读数).",
+      "'adoption' record adoption verdict (采纳率北极星读数)——仅工作台可用，宿主调用会被服务端拒绝（采纳不能由模型代填）.",
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   content_id: Type.Optional(Type.String({ description: "Alias of `id` — other AutoCrew tools call it content_id" })),
