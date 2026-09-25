@@ -1,6 +1,6 @@
 # P6：一条视频一个会话——Claude 驾驶舱 + Codex 剪辑工位，只烧订阅额度
 
-> 状态：v2.1 实施中（2026-09-25）。前置已落 main（42a08c7 / 5fbb078 / be107aa）；P6-a、P6-b、P6-c 在分支 `claude/autocrew-agent-workflow-71c269` 上实现完毕待合并；P6-d、P6-e 未开始。§3.4 / §3.6 已按实际落地更正。
+> 状态：v2.2（2026-09-25）。前置、P6-a、P6-b、P6-c、P6-d 已全部落 main（最新 5186bc2）并重启守护进程真机核对；`video-session` 技能与 `SessionStart` hook 已装；桌面定时任务「选题晨报」已建。**P6-e 行为 eval 未跑**：以下所有行为承诺按 agent-craft 口径属于「harness verified, model behavior not evaluated」。§3.4 / §3.6 已按实际落地更正；§7 表按实际状态更新。
 > 关系：承接 `2026-09-05-p3-multi-host-mcp.md` 与 `2026-09-22-p5-host-first-model-routing.md`。P3 把岗位拆到宿主上，并在非目标里明写「三家对等宿主，没有一家跑全线」；P5 把写稿线的模型调用交给宿主。本篇处置 P3 那条非目标，并把 P5 的原则推到主路上剩下的两处引擎调用。
 > 评审依据：`2026-09-25-one-session-per-video-review.md`（agent-craft 评审，含真实 trace 证据）。本篇只写设计，证据不重复。
 > 标注：**[M]** = 主 checkout `~/Projects/autocrew`（守护进程实际运行的代码，含 130 个未提交条目）；**[W]** = main / 本 worktree。
@@ -259,11 +259,11 @@ Codex CLI 是 ChatGPT 登录态（`~/.codex/auth.json` 有 `tokens` 无 `OPENAI_
 | 片 | 内容 | 验收 |
 |---|---|---|
 | **前置** | 主 checkout 130 个条目提交并合 main（或打 tag）；关 :4450 旧进程 | `git status` 干净；`autocrew status` 显示运行版本 hash |
-| **P6-a 交接—审批—发布** | 迁移表（§3.1）、白名单与归属、`handoff` / `revoke` / `register`、四样同事务、`authorize` 按宿主限权、`AGENTS.editor.md`（§3.4）；**手动派工**闭环 | 断引擎：accepted 稿 + 真 A-roll → handoff → 在 broll 里手动接 → register → `publish_ready` → `ego_lite_prepare` 解析到成片与封面；§4 交接/登记 9 个用例过 |
-| **P6-b 身份、租约、幂等** | 写门统一、认领转移、会话归因（§3.8）；`attempt_conflict`、修订周期、`task_owned` 过期（§3.7 相关行） | 两个转发器进程争同一 content 第二个被拒；重放/冲突用例过 |
-| **P6-c 并发配额与 G2 可观测** | `read_page` 预扣合并（§3.7）；provider 拦截器 + `engine_disabled`（G2）；`radar_pool/score`、`video_kit`、`status --brief`（§3.2、3.6） | `engine.json` 删除后全链拦截计数 = 0；4 路并发 read_page 配额不丢；定时会话入库 ≤3 且重试拿同一收据 |
-| **P6-d 通道** | 定时任务、`SessionStart` hook、CCB `ask`（§3.2、3.5）、`pack` 同步与孤儿恢复、instructions 与工具过滤层、熔断（§3.7、3.9） | 定时会话可继续对话；hook 一行进上下文；`ask codex` 送达；首稿 ≤25 / 修订 ≤10 计数断言；死线路下雷达一轮 <90 s |
-| **P6-e 行为 eval** | §4 全部用例，临时数据目录 + 真宿主模型（`claude -p --mcp-config` 驱动转发器指向临时守护进程），每场景 3 trials | 报告附 PR：pass 率、pass^3、指纹（协议版本 + 工具 schema hash + 模型）；用户可见的门 pass^3 = 1 |
+| **P6-a** ✅（800a87c）| 迁移表（§3.1）、白名单与归属、`handoff` / `revoke` / `register`、四样同事务、`authorize` 按宿主限权、`AGENTS.editor.md`（§3.4）；**手动派工**闭环 | 断引擎：accepted 稿 + 真 A-roll → handoff → 在 broll 里手动接 → register → `publish_ready` → `ego_lite_prepare` 解析到成片与封面；§4 交接/登记 9 个用例过 |
+| **P6-b** ✅（800a87c）| 写门统一、认领转移、会话归因（§3.8）；`attempt_conflict`、修订周期、`task_owned` 过期（§3.7 相关行） | 两个转发器进程争同一 content 第二个被拒；重放/冲突用例过 |
+| **P6-c** ✅（c878eb8 / 2e29a45 / b73ae91）| `read_page` 预扣合并（§3.7）；provider 拦截器 + `engine_disabled`（G2）；`radar_pool/score`、`video_kit`、`status --brief`（§3.2、3.6） | `engine.json` 删除后全链拦截计数 = 0；4 路并发 read_page 配额不丢；定时会话入库 ≤3 且重试拿同一收据 |
+| **P6-d** ✅（b73ae91 / 4508789 / 5186bc2）| 定时任务、`SessionStart` hook、CCB `ask`（§3.2、3.5）、`pack` 同步与孤儿恢复、instructions 与工具过滤层、熔断（§3.7、3.9） | 定时会话可继续对话；hook 一行进上下文；`ask codex` 送达；首稿 ≤25 / 修订 ≤10 计数断言；死线路下雷达一轮 <90 s |
+| **P6-e** ⬜ 未开始 | §4 全部用例，临时数据目录 + 真宿主模型（`claude -p --mcp-config` 驱动转发器指向临时守护进程），每场景 3 trials | 报告附 PR：pass 率、pass^3、指纹（协议版本 + 工具 schema hash + 模型）；用户可见的门 pass^3 = 1 |
 
 P6-a 与 P6-b 有共同前置（写门），先做 P6-b 的写门再做 P6-a 的动作；P6-c、P6-d 可并行；P6-e 最后。
 
