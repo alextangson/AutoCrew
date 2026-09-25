@@ -9,7 +9,7 @@
  * 认领是软门：没人认领时写操作直接执行**并自动认领剪辑师桌**——不记就等于没人知道
  * 是谁在剪，工作台的「Codex 剪辑中」徽章会永远是空的。
  */
-import { ensureClaim } from "../storage/claims.js";
+import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
 import { LOCAL_HOST } from "../storage/local-store.js";
 import { VideoConflictError } from "../modules/video/errors.js";
 import { resolveVideoService, type ResolvedVideoService } from "../modules/video/service-registry.js";
@@ -48,20 +48,15 @@ export function hostOf(params: Record<string, unknown>): string {
 }
 
 /**
- * 令牌门 + 自动认领（封面师同款，员工换成 `editor`）。
- * 返回 null = 放行；非 null 就是原样可回给宿主的拒绝结果。
+ * 令牌门 + 自动认领（封面师同款，员工换成 `editor`），P6 §3.8：同宿主不再免检。
+ * 放行时 `grant.claim_token` = 认领归调用宿主时的令牌，调用方要把它并进回执，宿主下一次写才过得了门。
  */
-export async function gateVideoWrite(
+export function gateVideoWriteGrant(
   params: Record<string, unknown>,
   contentId: string,
   dataDir: string,
-): Promise<VideoToolResult | null> {
+): Promise<WriteGate> {
   const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
-  const claimed = await ensureClaim(
-    contentId,
-    { host: hostOf(params), employee: "editor", ...(token ? { token } : {}) },
-    dataDir,
-  );
-  if (claimed.ok) return null;
-  return videoFail(claimed.error, claimed.holder ? { holder: claimed.holder } : {});
+  return gateClaimWrite(contentId, { host: hostOf(params), employee: "editor", ...(token ? { token } : {}) }, dataDir);
 }
+

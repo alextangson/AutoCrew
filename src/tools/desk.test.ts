@@ -176,6 +176,30 @@ describe("claim / release", () => {
     expect(second.holder).not.toHaveProperty("token");
   });
 
+  it("同宿主第二个会话：不带令牌 claim_held；带令牌续约；takeover:true 换新令牌并记交接", async () => {
+    const c = await seedContent("revision");
+    const claim = (extra: Record<string, unknown> = {}) =>
+      executeDesk({ action: "claim", content_id: c.id, employee: "writer", _host: "claude-code", _dataDir: dir, ...extra });
+    const first = (await claim()) as { ok: boolean; claim_token: string };
+    expect(first.ok).toBe(true);
+
+    const second = await claim();
+    expect(second).toMatchObject({ ok: false, code: "claim_held" });
+    expect(String(second.error)).toContain("takeover");
+    expect(JSON.stringify(second)).not.toContain(first.claim_token);
+
+    expect(await claim({ claim_token: first.claim_token })).toMatchObject({ ok: true, claim_token: first.claim_token });
+
+    const taken = (await claim({ takeover: true })) as { ok: boolean; claim_token: string };
+    expect(taken.ok).toBe(true);
+    expect(taken.claim_token).not.toBe(first.claim_token);
+    expect((await getContent(c.id, dir))!.handoffs?.at(-1)).toMatchObject({
+      from: "claude-code",
+      to: "claude-code",
+      note: "接管（同宿主另一会话）",
+    });
+  });
+
   it("release 要令牌匹配", async () => {
     const c = await seedContent("revision");
     const claimed = (await executeDesk({
@@ -298,7 +322,12 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
     // draft_ready 是写手的交接点：写手认领随交接清掉（真机 2026-09-06），视图里自然没有令牌
     expect(moved.content!.claim).toBeUndefined();
     expect(JSON.stringify(moved)).not.toContain('"token"');
-    expect(moved.content!.handoffs).toHaveLength(1);
+    expect(moved).not.toHaveProperty("claim_token");
+    // 越门留账（P6 §3.8）：先记一条 override，再是 draft_ready 那次交接
+    expect(moved.content!.handoffs).toEqual([
+      expect.objectContaining({ from: "codex", to: "local-user", override: true, note: "工作台越过认领" }),
+      expect.objectContaining({ from: "writer", to: "creator" }),
+    ]);
 
     // 再挂一枚活的认领，验视图脱敏：list / get 都要看得到认领、看不到令牌
     await claimContent(c.id, "cover", "codex", dir);

@@ -1314,6 +1314,28 @@ describe("writer submit 审稿", () => {
   });
 });
 
+// ─── 写门：令牌是凭据（P6 §3.8） ─────────────────────────────────────────────
+
+describe("写门：令牌是凭据（P6 §3.8）", () => {
+  it("pack 把 claim_token 交给认领者；同宿主不带令牌的 submit 被拒，带上就放行", async () => {
+    const res = await pack({ _host: "claude-code" });
+    expect(res.claim_token).toMatch(/^clm-/);
+    expect((await getContent(res.content_id, testDir))?.claim).toMatchObject({ host: "claude-code", token: res.claim_token });
+
+    // 同宿主的另一个会话：手里没令牌 → claim_held，稿子不动
+    const denied = await run(submitArgs(res.content_id, res.pack_id, 1, { _host: "claude-code" }));
+    expect(denied).toMatchObject({ ok: false, code: "claim_held" });
+    expect(String(denied.error)).toContain("同宿主");
+    expect(JSON.stringify(denied)).not.toContain(res.claim_token);
+    expect((await getContent(res.content_id, testDir))?.pack?.submittedAt).toBeFalsy();
+
+    const passed = await run(submitArgs(res.content_id, res.pack_id, 1, { _host: "claude-code", claim_token: res.claim_token }));
+    expect(passed.ok).not.toBe(false);
+    expect(passed.claim_token).toBe(res.claim_token);
+    expect((await getContent(res.content_id, testDir))?.pack?.submittedAt).toBeTruthy();
+  });
+});
+
 // ─── draft 视图 ───────────────────────────────────────────────────────────────
 
 describe("draft 视图", () => {
@@ -1350,7 +1372,7 @@ describe("draft 视图", () => {
   it("交稿之后 draft 视图带上 writtenBy 与 pack", async () => {
     const res = await pack({ _host: "codex" });
     // 交稿的宿主就是 writtenBy 的那个（发包与交稿分属两家时以交稿者为准）
-    await run(submitArgs(res.content_id, res.pack_id, 1, { _host: "codex" }));
+    await run(submitArgs(res.content_id, res.pack_id, 1, { _host: "codex", claim_token: res.claim_token }));
     const view = (await executeWorkflow({
       action: "draft",
       content_id: res.content_id,

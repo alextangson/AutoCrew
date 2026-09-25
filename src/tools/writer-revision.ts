@@ -1,6 +1,6 @@
 /** Compatibility for revising imported drafts that predate a writing topic/pack. */
 import { CLIPBOARD_PLATFORMS } from "../modules/publish/clipboard-publisher.js";
-import { assertClaimToken, ensureClaim } from "../storage/claims.js";
+import { assertClaimToken, claimGrant, ensureClaim } from "../storage/claims.js";
 import { getContent, getTopic, saveTopic, softDeleteTopic, updateContentIfDraftMatches, type Content } from "../storage/local-store.js";
 import { readPack, serializeWriterCall } from "./writer-pack.js";
 
@@ -55,6 +55,8 @@ export async function prepareExistingRevision(params: Record<string, unknown>, h
     const defaults = await importedRevisionDefaults(content, dataDir);
     const claimed = await ensureClaim(contentId, { host, employee: "writer", token: string(params.claim_token) || undefined }, dataDir);
     if (!claimed.ok) return claimed;
+    // 刚认领到的令牌接着用：同宿主不再免检，后面的复核与领包不带它就会被自己挡在门外
+    const token = claimGrant(claimed, host).claim_token ?? (string(params.claim_token) || undefined);
     let createdTopic: string | undefined;
     if (!topicId) {
       const topic = await saveTopic({ title: content.title, description: "基于用户已有原稿与明确反馈修订；原稿陈述未经独立核验。", tags: [], source: REVISION_SOURCE, reason: `已有稿修订：${contentId}` }, dataDir);
@@ -64,7 +66,7 @@ export async function prepareExistingRevision(params: Record<string, unknown>, h
     if (!content.topicId || !content.platform) {
       try {
         const linked = await updateContentIfDraftMatches(contentId, content, latest => {
-          const currentClaim = assertClaimToken(latest, host, string(params.claim_token) || undefined);
+          const currentClaim = assertClaimToken(latest, host, token);
           if (!currentClaim.ok) throw new Error(currentClaim.error);
           if (!["drafting", "revision", "draft_ready"].includes(latest.status) || (latest.topicId && latest.topicId !== topicId)) throw new Error("稿件状态或关联已变化，请重新读取后修订；未覆盖新状态。");
           if ((latest.status === "draft_ready" || latest.pack?.submittedAt) && params.force !== true) throw new Error("稿件已交稿，修改需显式 force:true；未重开写作包。");
@@ -76,6 +78,6 @@ export async function prepareExistingRevision(params: Record<string, unknown>, h
         throw err;
       }
     }
-    return { ok: true, params: { ...defaults, ...params, topic_id: topicId, platform } };
+    return { ok: true, params: { ...defaults, ...params, topic_id: topicId, platform, ...(token ? { claim_token: token } : {}) } };
   });
 }

@@ -1,17 +1,19 @@
 /**
- * 认领与租约（P3 spec §6.1）——多宿主协作里唯一的硬门。
+ * 认领与租约（P3 spec §6.1；P6 spec §3.8 写门）——多宿主协作里唯一的硬门。
  *
- * 一句话：**认领是软门，令牌是硬门**。没人认领时谁写都行（单人单机不设卡），写完顺手把
- * 认领记上，这样工作台看得见「谁在干」；已经有人认领时，别的宿主必须带匹配的 `claim_token`，
+ * 一句话：**认领是软门，令牌是凭据**。没人认领时谁写都行（单人单机不设卡），写完顺手把
+ * 认领记上、把令牌回给写的人；已经有人认领时，写操作必须带匹配的 `claim_token`——
+ * **同宿主也不例外**（P6 §3.8：两个 Claude 会话共用一个宿主名，宿主名分不开它们，只有令牌分得开），
  * 否则当场被拒并告诉他持有者是谁、还剩几分钟。
  *
- * 租约 30 分钟，任何带匹配令牌（或同宿主）的写操作自动续租。过期即可被接管——**接管换新令牌**，
+ * 租约 30 分钟，任何带匹配令牌的写操作自动续租。过期即可被接管——**接管换新令牌**，
  * 旧令牌的迟到写入随即被拒，这就是 fencing（codex 评审 #2：没有 fencing 的认领挡不住迟到写入）。
- * 接管会在 `handoffs[]` 留一条账，不静默换人。
+ * 同宿主的另一个会话要抢活只能明说 `takeover:true`；交接（`transferClaim`）把认领连同新令牌
+ * 转给下一岗。接管、转交都在 `handoffs[]` 留一条账，不静默换人。
  *
  * `local-user` 是创始人自己（工作台、老配置）：他越得过令牌门（deliverable：工作台不许因为
- * 宿主认领而写不动自己的稿），但**不抢**别人手上还活着的认领——抢了工作台就再也看不见
- * 「Codex 封面中」这条真相。
+ * 宿主认领而写不动自己的稿），但每次越过别人的认领都在 `handoffs[]` 记 `override:true`；
+ * 他也**不抢**别人手上还活着的认领——抢了工作台就再也看不见「Codex 封面中」这条真相。
  */
 import {
   getContent,
@@ -21,6 +23,7 @@ import {
   type ClaimEmployee,
   type Content,
   type ContentClaim,
+  type ContentHandoff,
 } from "./local-store.js";
 
 /** 租约 30 分钟（§6.1 创始人裁决 4）。视频线的 runner 租约是 10 分钟，两条线各按各的节奏 */
@@ -81,76 +84,112 @@ export function holderMessage(claim: ContentClaim, now: number = Date.now()): st
   );
 }
 
-export type ClaimGate = { ok: true } | { ok: false; error: string; holder: ClaimView };
+/** 拒绝话术：同宿主的另一个会话要知道「带令牌或 takeover」，别的宿主照旧看持有者 */
+function refusalMessage(claim: ContentClaim, host: string, now: number = Date.now()): string {
+  if (claim.host !== host) return holderMessage(claim, now);
+  return (
+    `这篇由同宿主的另一个会话认领着（${EMPLOYEE_LABEL[claim.employee] ?? claim.employee}，` +
+    `还剩 ${claimMinutesLeft(claim, now)} 分钟），带上它的 claim_token，` +
+    `或用 autocrew_desk claim takeover:true 接管`
+  );
+}
+
+export type ClaimGate =
+  | { ok: true; override?: boolean }
+  | { ok: false; error: string; code: "claim_held"; holder: ClaimView };
 
 /**
- * 令牌门（§6.1）。放行的三种情形：没人认领 / 认领人就是你（同宿主）/ 你带着匹配的令牌。
- * `local-user` 额外放行——那是创始人本人坐在工作台前，不该被自己雇的宿主锁在门外。
+ * 令牌门（P6 §3.8）。放行：没人认领 / 你带着匹配的令牌。同宿主**不**放行——宿主名下可能是另一个会话。
+ * `local-user` 额外放行（创始人本人坐在工作台前，不该被自己雇的宿主锁在门外），
+ * 越过别人的活认领时标 `override`，由调用方记账；认领本来就在工作台名下则不算越门。
  */
 export function assertClaimToken(content: Pick<Content, "claim">, host: string, token?: string): ClaimGate {
   const claim = activeClaim(content);
   if (!claim) return { ok: true };
-  if (claim.host === host) return { ok: true };
   if (token && token === claim.token) return { ok: true };
-  if (host === LOCAL_HOST) return { ok: true };
-  return { ok: false, error: holderMessage(claim), holder: claimView(claim)! };
+  if (host === LOCAL_HOST) return claim.host === LOCAL_HOST ? { ok: true } : { ok: true, override: true };
+  return { ok: false, code: "claim_held", error: refusalMessage(claim, host), holder: claimView(claim)! };
 }
 
-/** 写认领：续约沿用同一枚令牌，接管换新令牌并在 `handoffs[]` 记一条 */
+interface ClaimWrite {
+  employee: ClaimEmployee;
+  host: string;
+  /** true = 续租，沿用活认领的令牌；false = 发新令牌（首次认领、接管、转交） */
+  renew: boolean;
+  /** 非常规换人的账；缺省只在「租约过期、换了宿主」时自动记一条 */
+  handoff?: Omit<ContentHandoff, "at">;
+}
+
+/** 租约过期后被别的宿主拿走：账上记一条，稿卡才说得出「租约过期，Codex 接管」 */
+function expiredTakeover(content: Content, current: ContentClaim | null, host: string): Omit<ContentHandoff, "at"> | null {
+  const previous = content.claim?.host;
+  if (current || !previous || previous === host) return null;
+  return { from: previous, to: host, by: host, note: "接管（租约过期）" };
+}
+
+/** 写认领：续租沿用同一枚令牌，其余一律换新令牌；换人在 `handoffs[]` 记一条 */
 async function writeClaim(
   content: Content,
-  employee: ClaimEmployee,
-  host: string,
+  write: ClaimWrite,
   dataDir: string | undefined,
   now: number,
 ): Promise<ContentClaim> {
   const current = activeClaim(content, now);
-  const mine = current && (current.host === host);
+  const kept = write.renew ? current : null;
+  const at = new Date(now).toISOString();
   const claim: ContentClaim = {
-    employee,
-    host,
-    token: mine ? current!.token : newClaimToken(),
-    at: mine ? current!.at : new Date(now).toISOString(),
+    employee: write.employee,
+    host: write.host,
+    token: kept ? kept.token : newClaimToken(),
+    at: kept ? kept.at : at,
     leaseUntil: leaseUntil(now),
   };
-  // 接管（旧租约已过期且换了宿主）不许静默：账上记一条，稿卡才说得出「租约过期，Codex 接管」
-  const takenOver = !current && content.claim?.host && content.claim.host !== host;
-  const handoffs = takenOver
-    ? withHandoff(content, {
-        from: content.claim!.host,
-        to: host,
-        by: host,
-        at: new Date(now).toISOString(),
-        note: "接管（租约过期）",
-      })
-    : undefined;
+  const handoff = write.handoff ?? expiredTakeover(content, current, write.host);
+  const handoffs = handoff ? withHandoff(content, { ...handoff, at }) : undefined;
   await updateContent(content.id, { claim, ...(handoffs ? { handoffs } : {}) }, dataDir);
   return claim;
 }
 
 export type ClaimResult =
-  | { ok: true; claim: ContentClaim }
-  | { ok: false; error: string; holder?: ClaimView };
+  | { ok: true; claim: ContentClaim; override?: boolean }
+  | { ok: false; error: string; code?: "claim_held"; holder?: ClaimView };
+
+function held(claim: ContentClaim, host: string, now: number): ClaimResult {
+  return { ok: false, code: "claim_held", error: refusalMessage(claim, host, now), holder: claimView(claim)! };
+}
+
+export interface ClaimOptions {
+  /** 手上那枚令牌：对得上 = 续租，令牌不变 */
+  token?: string;
+  /** 同宿主另一个会话明说要接手：发新令牌并记一条交接，旧令牌随即作废 */
+  takeover?: boolean;
+}
 
 /**
- * `autocrew_desk claim`（§6.1）：别的宿主还握着未过期的租约就拒绝并返回持有者；
- * 同宿主重复 claim = 续约、返回同一枚令牌。**明确的认领不给 `local-user` 开后门**——
- * 两边同时认领时第二个必须看见拒绝，这正是这条命令要证明的事。
+ * `autocrew_desk claim`（§6.1 / P6 §3.8）：别的宿主还握着未过期的租约就拒绝并返回持有者；
+ * 同宿主带着匹配令牌 = 续约、返回同一枚令牌；同宿主不带令牌 = `claim_held`，
+ * 除非 `takeover:true`。**明确的认领不给 `local-user` 开后门**——两边同时认领时第二个
+ * 必须看见拒绝，这正是这条命令要证明的事。
  */
 export async function claimContent(
   contentId: string,
   employee: ClaimEmployee,
   host: string,
   dataDir?: string,
+  opts: ClaimOptions = {},
 ): Promise<ClaimResult> {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   const now = Date.now();
   const current = activeClaim(content, now);
-  if (current && current.host !== host) {
-    return { ok: false, error: holderMessage(current, now), holder: claimView(current)! };
+  if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
+  if (current.host !== host) return held(current, host, now);
+  if (opts.token && opts.token === current.token) {
+    return { ok: true, claim: await writeClaim(content, { employee, host, renew: true }, dataDir, now) };
   }
-  return { ok: true, claim: await writeClaim(content, employee, host, dataDir, now) };
+  if (!opts.takeover) return held(current, host, now);
+  const handoff = { from: current.host, to: host, by: host, note: "接管（同宿主另一会话）" };
+  return { ok: true, claim: await writeClaim(content, { employee, host, renew: false, handoff }, dataDir, now) };
 }
 
 /** `autocrew_desk release`：令牌对得上才清（对不上就是别人的活，不许替他放手） */
@@ -173,6 +212,41 @@ export async function releaseClaim(
   return { ok: true, released: true };
 }
 
+export interface TransferInput {
+  /** 交出方手上的令牌（`local-user` 或没人认领时可省） */
+  token?: string;
+  /** 调用方宿主（记账用的 by） */
+  host: string;
+  toEmployee: ClaimEmployee;
+  toHost: string;
+  note?: string;
+}
+
+/**
+ * 交接即转移（P6 §3.8）：把认领从写手/claude-code 转给剪辑师/codex 这类下一岗。
+ * 调用方得先过令牌门（匹配令牌 / `local-user` / 没人认领）；转过去的认领**发新令牌**，
+ * 旧令牌当场作废，迟到写入被拒。返回的 claim 带令牌——给谁看由调用方决定。
+ */
+export async function transferClaim(contentId: string, input: TransferInput, dataDir?: string): Promise<ClaimResult> {
+  const content = await getContent(contentId, dataDir);
+  if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
+  const gate = assertClaimToken(content, input.host, input.token);
+  if (!gate.ok) return { ok: false, error: gate.error, code: gate.code, holder: gate.holder };
+  const now = Date.now();
+  const current = activeClaim(content, now);
+  const fromHost = current?.host ?? input.host;
+  const route = `${fromHost} → ${input.toHost}`;
+  const handoff: Omit<ContentHandoff, "at"> = {
+    from: current?.employee ?? input.host,
+    to: input.toEmployee,
+    by: input.host,
+    note: input.note ? `${input.note}（${route}）` : `认领转交（${route}）`,
+    ...(gate.override ? { override: true } : {}),
+  };
+  const write = { employee: input.toEmployee, host: input.toHost, renew: false, handoff };
+  return { ok: true, claim: await writeClaim(content, write, dataDir, now) };
+}
+
 export interface ClaimGuardInput {
   host: string;
   /** 缺省 = 沿用现有认领的岗位，再缺省 `writer`（`autocrew_content` 这类跨岗位的写口用它） */
@@ -181,11 +255,11 @@ export interface ClaimGuardInput {
 }
 
 /**
- * 写操作的统一入口（§6.1）：先过令牌门，过了就自动认领/续租。
+ * 写操作的统一入口（§6.1 / P6 §3.8）：先过令牌门，过了就自动认领/续租。
  *
  * 「过了就写认领」是软门那一半：没人认领时直接执行**并把认领记上**，
  * 工作台据此出「Claude 写」「Codex 封面中」的徽章；不记就等于谁也不知道谁在干。
- * 越门而过的 `local-user` 不抢别人还活着的认领——抢了就把真相盖掉了。
+ * 越门而过的 `local-user` 不抢别人还活着的认领——抢了就把真相盖掉了；但越门本身记一条账。
  */
 export async function ensureClaim(
   contentId: string,
@@ -195,17 +269,54 @@ export async function ensureClaim(
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   const gate = assertClaimToken(content, input.host, input.token);
-  if (!gate.ok) return { ok: false, error: gate.error, holder: gate.holder };
+  if (!gate.ok) return { ok: false, error: gate.error, code: gate.code, holder: gate.holder };
 
   const now = Date.now();
   const current = activeClaim(content, now);
-  const ours = current && (current.host === input.host || (input.token && input.token === current.token));
-  if (current && !ours) {
-    // `local-user` 越门而过：认领仍归原主，工作台照旧显示持有者
-    return { ok: true, claim: current };
+  if (current && gate.override) {
+    const handoffs = withHandoff(content, {
+      from: current.host,
+      to: input.host,
+      by: input.host,
+      at: new Date(now).toISOString(),
+      note: "工作台越过认领",
+      override: true,
+    });
+    await updateContent(content.id, { handoffs }, dataDir);
+    return { ok: true, claim: current, override: true };
   }
   const employee = input.employee ?? current?.employee ?? content.claim?.employee ?? "writer";
-  // 带着别人令牌来的宿主接手的是同一枚令牌那份认领：沿用它的 host，别把账记到自己头上
-  const host = current && current.host !== input.host && input.token === current.token ? current.host : input.host;
-  return { ok: true, claim: await writeClaim(content, employee, host, dataDir, now) };
+  // 续租沿用原持有者：带着别人令牌来的宿主接手的是那份认领，别把账记到自己头上
+  const host = current ? current.host : input.host;
+  return { ok: true, claim: await writeClaim(content, { employee, host, renew: Boolean(current) }, dataDir, now) };
+}
+
+/** 写操作回执里的令牌：认领落在调用宿主名下才回给他（新认领 / 带令牌续租）；越门的工作台拿不到别人的令牌 */
+export function claimGrant(result: ClaimResult, host: string): { claim_token?: string } {
+  if (!result.ok || result.override || result.claim.host !== host) return {};
+  return { claim_token: result.claim.token };
+}
+
+/** 用 type 不用 interface：各工具的结果类型是 `Record<string, unknown>`，interface 没有隐式索引签名 */
+export type ClaimDenial = {
+  ok: false;
+  error: string;
+  code?: "claim_held";
+  holder?: ClaimView;
+};
+
+/** 写口共用的门：过了就把令牌（若归你）交回，拒了就是原样可回给宿主的拒绝结果 */
+export type WriteGate = { denied: ClaimDenial } | { grant: { claim_token?: string } };
+
+export async function gateClaimWrite(contentId: string, input: ClaimGuardInput, dataDir?: string): Promise<WriteGate> {
+  const claimed = await ensureClaim(contentId, input, dataDir);
+  if (claimed.ok) return { grant: claimGrant(claimed, input.host) };
+  return {
+    denied: {
+      ok: false,
+      error: claimed.error,
+      ...(claimed.code ? { code: claimed.code } : {}),
+      ...(claimed.holder ? { holder: claimed.holder } : {}),
+    },
+  };
 }

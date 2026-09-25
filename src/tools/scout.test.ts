@@ -14,6 +14,7 @@ import { getJob, PERSPECTIVE_NAMES, upsertJob } from "../modules/research/resear
 import { createResearchRunner } from "../modules/research/research-runner.js";
 import { saveTopic, updateTopic, saveContent, updateContent, getContent } from "../storage/local-store.js";
 import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
+import { claimContent } from "../storage/claims.js";
 import * as config from "../engine/config.js";
 
 let dir: string;
@@ -359,14 +360,18 @@ describe("host evidence supplementation", () => {
     await prepare();
     await readPage();
     const { content, pack, target } = await seedPack();
-    const quoteArgs = { ...target, source_id: "p1", quote: QUOTE, claim: "共同浇水" };
-    expect(await run("cite", quoteArgs)).toMatchObject({
+    const first = await run("cite", { ...target, source_id: "p1", quote: QUOTE, claim: "共同浇水" });
+    expect(first).toMatchObject({
       host_evidence_used: 1,
       evidence_entry: { source: "verified_quote" },
+      claim_token: expect.stringMatching(/^clm-/),
     });
+    // 第一次补证入稿即认领（P6 §3.8）：之后对这篇的补证都带它交回的令牌
+    const claimed = { ...target, claim_token: first.claim_token };
+    const quoteArgs = { ...claimed, source_id: "p1", quote: QUOTE, claim: "共同浇水" };
     expect(await run("cite", quoteArgs)).toMatchObject({ host_evidence_used: 1 });
     for (let i = 1; i < 12; i++)
-      expect(await run("claim_offline", { ...target, claim: `回忆${i}`, reason: "只有口述" })).toMatchObject({
+      expect(await run("claim_offline", { ...claimed, claim: `回忆${i}`, reason: "只有口述" })).toMatchObject({
         host_evidence_used: i + 1,
         verified: false,
       });
@@ -375,7 +380,7 @@ describe("host evidence supplementation", () => {
     await writePack(content.id, { ...pack, packId: "pack-2" }, dir);
     await updateContent(content.id, { pack: { packId: "pack-2", issuedAt: "now", host: "claude" } }, dir);
     expect(
-      await run("claim_offline", { content_id: content.id, pack_id: "pack-2", claim: "第十三条", reason: "无原页" }),
+      await run("claim_offline", { ...claimed, pack_id: "pack-2", claim: "第十三条", reason: "无原页" }),
     ).toMatchObject({ code: "evidence_quota" });
     expect(await loadHostEvidence(content.id, dir)).toHaveLength(12);
   });
@@ -395,6 +400,33 @@ describe("host evidence supplementation", () => {
     expect(await run("cite", args)).toMatchObject({ code: "content_not_writable" });
     expect(await loadHostEvidence(content.id, dir)).toEqual([]);
     expect((await readPack(content.id, dir))?.ledger.entries).toEqual([]);
+  });
+});
+
+describe("写门（P6 §3.8）", () => {
+  it("同宿主另一个会话不带令牌补证入稿被拒并看见持有者，稿件账本不动；不入稿的引用照常", async () => {
+    await prepare();
+    await readPage();
+    const { content, target } = await seedPack();
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const args = { ...target, source_id: "p1", quote: QUOTE, claim: "共同浇水" };
+    expect(await run("cite", args)).toMatchObject({ ok: false, code: "claim_held", holder: { host: "claude" } });
+    expect(await run("claim_offline", { ...target, claim: "口述", reason: "无原页" })).toMatchObject({ code: "claim_held" });
+    expect(await loadHostEvidence(content.id, dir)).toEqual([]);
+    expect((await readPack(content.id, dir))?.ledger.entries).toEqual([]);
+    expect(await run("cite", { source_id: "p1", quote: QUOTE, claim: "共同浇水" })).toMatchObject({ ok: true });
+  });
+
+  it("带着令牌补证入稿照常入账，回执交回同一枚令牌", async () => {
+    await prepare();
+    await readPage();
+    const { content, target } = await seedPack();
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const args = { ...target, claim_token: claimed.claim.token, source_id: "p1", quote: QUOTE, claim: "共同浇水" };
+    expect(await run("cite", args)).toMatchObject({ ok: true, host_evidence_used: 1, claim_token: claimed.claim.token });
+    expect(await loadHostEvidence(content.id, dir)).toHaveLength(1);
   });
 });
 
@@ -437,18 +469,21 @@ it("真实writer force重领同稿恢复宿主补证，来源等级、额度和�
     status: "ready",
     budget: { host_evidence_left: 12 },
   });
+  // 领包即认领（P6 §3.8）：往这篇补证是写，带 pack 回的令牌
   const citation = {
     source_id: "p1",
     claim: "公告板记录轮班",
     quote: QUOTE,
     content_id: contentId,
     pack_id: first.pack_id,
+    claim_token: first.claim_token,
   };
   const offline = {
     claim: "我记得水壶是邻居借给我的。",
     reason: "仅创作者回忆，未作外部查证",
     content_id: contentId,
     pack_id: first.pack_id,
+    claim_token: first.claim_token,
   };
   expect(await run("cite", citation)).toMatchObject({ host_evidence_used: 1 });
   expect(await run("claim_offline", offline)).toMatchObject({ host_evidence_used: 2 });
@@ -464,6 +499,8 @@ it("真实writer force重领同稿恢复宿主补证，来源等级、额度和�
     platform: "wechat_mp",
     content_id: contentId,
     force: true,
+    // 重领同篇也是写：带上首次领包回的令牌（P6 §3.8 同宿主不再免检）
+    claim_token: first.claim_token,
   });
   expect(reissued).toMatchObject({ ok: true, content_id: contentId, status: "preparing" });
   expect(reissued.pack_id).not.toBe(first.pack_id);

@@ -7,6 +7,7 @@ import { getContent, saveContent, updateContent, adoptionStats } from "../storag
 import { loadProfile, updateProfile } from "../modules/profile/creator-profile.js";
 import { buildScriptPrompts } from "../modules/writing/script-prompt.js";
 import { KOUBO_PACK } from "../modules/packs/koubo.js";
+import { claimContent } from "../storage/claims.js";
 let dir: string;
 const run = (args: Record<string, unknown>) => executeEditorial({ ...args, _dataDir: dir });
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "editorial-")); });
@@ -104,4 +105,35 @@ it("段落反馈保留原选区，不能自动推广到全文或长期规则", a
   expect(await run({ ...args, selection: "先看仓管怎么工作", scope: "voice" })).toMatchObject({ ok: false });
   expect(await run({ ...args, selection: "先看仓管怎么工作" })).toMatchObject({ ok: true });
   expect((await getContent(content.id, dir))?.writingFeedback).toEqual([expect.objectContaining({ scope: "selection", selection: "先看仓管怎么工作" })]);
+});
+
+describe("写门（P6 §3.8）", () => {
+  it("同宿主另一个会话不带令牌记反馈被拒并看见持有者，回执与稿件都不动；inspect 只读不设卡", async () => {
+    const { content, args } = await draft();
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    expect(await run({ ...args, _host: "claude" })).toMatchObject({ ok: false, code: "claim_held", holder: { host: "claude", employee: "writer" } });
+    expect((await getContent(content.id, dir))?.writingFeedback ?? []).toHaveLength(0);
+    expect(await run({ action: "inspect", content_id: content.id, _host: "claude" })).toMatchObject({ ok: true, feedback: [] });
+  });
+  it("带着令牌记反馈照常落盘，回执交回同一枚令牌", async () => {
+    const { content, args } = await draft();
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const recorded = await run({ ...args, _host: "claude", claim_token: claimed.claim.token });
+    expect(recorded).toMatchObject({ ok: true, status: "recorded", claim_token: claimed.claim.token });
+    expect((await getContent(content.id, dir))?.writingFeedback).toHaveLength(1);
+  });
+  it("工作台 local-user 越过宿主认领照记反馈，越门记 override 账，不拿走也不改宿主的令牌", async () => {
+    const { content, args } = await draft();
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const recorded = await run(args);
+    expect(recorded).toMatchObject({ ok: true, status: "recorded" });
+    expect(recorded).not.toHaveProperty("claim_token");
+    const saved = await getContent(content.id, dir);
+    expect(saved?.writingFeedback).toHaveLength(1);
+    expect(saved?.claim).toMatchObject({ host: "claude", token: claimed.claim.token });
+    expect(saved?.handoffs).toEqual([expect.objectContaining({ from: "claude", to: "local-user", override: true })]);
+  });
 });

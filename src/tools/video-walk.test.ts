@@ -30,13 +30,23 @@ import { executeVideo } from "./video.js";
 let dir: string;
 let contentId: string;
 let service: VideoService;
+/** 首次写动作回执里的认领令牌：之后每次写都带上（P6 §3.8 同宿主不再免检） */
+let claimToken: string | undefined;
 
 const SETTLED = new Set(["awaiting_human", "failed", "blocked", "done", "idle"]);
 /** 60 秒成片的合法窗口是 [30000, 45000]；素材是 3 秒屏录 */
 const overlay = { assetId: "b1", outputStartMs: 32_000, durationMs: 2_000, inMs: 500, outMs: 2_500 };
 
-function call(params: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return executeVideo({ content_id: contentId, _dataDir: dir, _host: "codex", ...params });
+async function call(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const res = await executeVideo({
+    content_id: contentId,
+    _dataDir: dir,
+    _host: "codex",
+    ...(claimToken ? { claim_token: claimToken } : {}),
+    ...params,
+  });
+  if (typeof res.claim_token === "string") claimToken = res.claim_token;
+  return res;
 }
 
 async function status(): Promise<Record<string, unknown>> {
@@ -74,6 +84,7 @@ function byPrompt(msg: string): Array<Record<string, unknown>> {
 }
 
 beforeEach(async () => {
+  claimToken = undefined;
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-video-walk-"));
   contentId = (await seedVideoContent(dir)).contentId;
   await seedEngineConfig(dir);
@@ -100,6 +111,8 @@ describe("剪辑师从工具入口走完一条片子（§14.5）", () => {
     // ── 开工：投递即返回，宿主靠轮询 ──────────────────────────────────────
     const started = await call({ action: "start" });
     expect(started.ok).toBe(true);
+    // 首次写自动认领剪辑师桌，令牌随回执交回；后面每一次写都靠它过门
+    expect(started.claim_token).toBe((await getContent(contentId, dir))?.claim?.token);
     expect(String(started.next)).toContain("轮询");
     expect(ref(await settled())).toBe("cut/awaiting_human");
 

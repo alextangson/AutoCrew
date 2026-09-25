@@ -11,7 +11,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
-import { ensureClaim } from "../storage/claims.js";
+import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
 import {
   LOCAL_HOST,
   getContent,
@@ -98,7 +98,7 @@ export const coverReviewSchema = Type.Object({
   claim_token: Type.Optional(
     Type.String({
       description:
-        "认领令牌（autocrew_desk claim 给的）。别的宿主认领了这篇封面时，出图/修订/批准都必须带它；没人认领就不用带，动手会自动认领封面师桌。",
+        "认领令牌（上次写操作回执或 autocrew_desk claim 给的）。这篇有活认领时出图/修订/批准都必须带它，同宿主的另一个会话也一样；没人认领就不用带，动手会自动认领封面师桌并回令牌。",
     }),
   ),
   _geminiApiKey: Type.Optional(Type.String()),
@@ -120,17 +120,15 @@ function getGeminiModel(params: Record<string, unknown>): GeminiModel {
   return "auto";
 }
 
-/** 出图/修订/批准都要过的两道：令牌门（§6.1）+ 自动认领封面师桌 */
-async function gateCoverWrite(
+/** 出图/修订/批准都要过的两道：令牌门（§6.1 / P6 §3.8）+ 自动认领封面师桌 */
+function gateCoverWrite(
   params: Record<string, unknown>,
   contentId: string,
   dataDir: string,
-): Promise<{ ok: false; error: string; holder?: unknown } | null> {
+): Promise<WriteGate> {
   const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
   const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
-  const claimed = await ensureClaim(contentId, { host, employee: "cover", token: token || undefined }, dataDir);
-  if (claimed.ok) return null;
-  return { ok: false, error: claimed.error, ...(claimed.holder ? { holder: claimed.holder } : {}) };
+  return gateClaimWrite(contentId, { host, employee: "cover", token: token || undefined }, dataDir);
 }
 
 /**
@@ -161,19 +159,25 @@ export async function executeCoverReview(params: Record<string, unknown>) {
 
   if (!contentId) return { ok: false, error: "content_id is required" };
 
-  // get 是只读的，其余动作都改盘：先过令牌门，再动手
-  if (action !== "get") {
-    const denied = await gateCoverWrite(params, contentId, dataDir);
-    if (denied) return denied;
-  }
-
-  // --- GET ---
+  // --- GET ---（只读，不过令牌门）
   if (action === "get") {
     const review = await getCoverReview(contentId, dataDir);
     if (!review) return { ok: false, error: `No cover review found for ${contentId}` };
     return { ok: true, review };
   }
 
+  // 其余动作都改盘：先过令牌门，再动手；认领归你时令牌随回执交回（同宿主不再免检）
+  const gate = await gateCoverWrite(params, contentId, dataDir);
+  if ("denied" in gate) return gate.denied;
+  return { ...(await coverWriteAction(action, params, contentId, dataDir)), ...gate.grant };
+}
+
+async function coverWriteAction(
+  action: string,
+  params: Record<string, unknown>,
+  contentId: string,
+  dataDir: string,
+): Promise<Record<string, unknown>> {
   // --- APPROVE ---
   if (action === "approve") {
     const label = params.label as CoverLabel;

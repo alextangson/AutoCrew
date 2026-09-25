@@ -11,6 +11,7 @@ import { forgetReview, reviewInFlight, submitStatus } from "./writer-review.js";
 import { executeReviewDesk } from "./host-review.js";
 import { updateProfile } from "../modules/profile/creator-profile.js";
 import { draftingNote, draftView } from "./workflow-views.js";
+import { claimContent } from "../storage/claims.js";
 
 let dir: string;
 let engineLoad: ReturnType<typeof vi.spyOn>;
@@ -163,6 +164,29 @@ describe("host review validation and fencing", () => {
   });
 });
 
+describe("写门（P6 §3.8）", () => {
+  it("同宿主另一个会话不带令牌交审稿被拒并看见持有者，结论与状态都不动；pack 只读不设卡", async () => {
+    const { content, submission } = await pending();
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    expect(await desk({ action: "pack", content_id: content.id })).toMatchObject({ ok: true, status: "ready_for_host_review" });
+    expect(await desk(submission)).toMatchObject({ ok: false, code: "claim_held", holder: { host: "claude", employee: "writer" } });
+    expect((await getContent(content.id, dir))?.review).toBeUndefined();
+    expect((await readPack(content.id, dir))?.attempts["1"]).toMatchObject({ status: "awaiting_host_review" });
+    expect((await readPack(content.id, dir))?.attempts["1"].hostReview?.submission).toBeUndefined();
+  });
+
+  it("带着令牌交审稿照常落盘，回执交回同一枚令牌，但令牌不进写作包", async () => {
+    const { content, submission } = await pending();
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const result = await desk({ ...submission, claim_token: claimed.claim.token });
+    expect(result).toMatchObject({ ok: true, status: "accepted", claim_token: claimed.claim.token });
+    expect((await getContent(content.id, dir))?.status).toBe("draft_ready");
+    expect(JSON.stringify(await readPack(content.id, dir))).not.toContain(claimed.claim.token);
+  });
+});
+
 describe("host audience assessment", () => {
   const audience = {
     audienceBasis: { source: "current_task", quote: "写给第一次参加社区菜园的居民" },
@@ -267,12 +291,15 @@ it("结论已应用但最后回执写盘失败，pending重试可恢复且不允
     }
     return rename(from, to);
   });
-  expect(await desk({ ...submission, issues: [issue] })).toMatchObject({ ok: false });
+  // 落盘中途抛错也要把刚认领到的令牌交回：pending 恢复是写，不带令牌过不了门
+  const broken = await desk({ ...submission, issues: [issue] });
+  expect(broken).toMatchObject({ ok: false, claim_token: expect.stringMatching(/^clm-/) });
   expect(interrupted).toBe(true);
   expect((await getContent(content.id, dir))?.status).toBe("revision");
   expect((await readPack(content.id, dir))?.attempts["1"].hostReview?.submission?.state).toBe("pending");
   expect(await desk(submission)).toMatchObject({ ok: false, status: "review_conflict" });
-  const recovered = await desk({ ...submission, issues: [issue] });
+  expect(await desk({ ...submission, issues: [issue] })).toMatchObject({ ok: false, code: "claim_held" });
+  const recovered = await desk({ ...submission, issues: [issue], claim_token: broken.claim_token });
   expect(recovered).toMatchObject({ ok: true, status: "review_required" });
   expect(recovered).not.toHaveProperty("warning");
   expect((await readPack(content.id, dir))?.reviewRounds).toBe(1);

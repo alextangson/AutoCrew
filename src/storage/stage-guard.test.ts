@@ -63,13 +63,33 @@ describe("stage guard", () => {
     expect(read).toHaveBeenCalledTimes(1);
   });
 
+  it("剪辑 → 待发布（P6 剪辑工位登记）：成片戳 + 封面定稿两样都在才放行", async () => {
+    const withDone = { ...video, videoDone: done };
+    expect(await stageGuardError(withDone, "editing", "publish_ready", hasCover)).toBeNull();
+    // 少一样都维持旧话术：登记是同一次落盘写两样，缺一样说明没走登记
+    expect(await stageGuardError(withDone, "editing", "publish_ready", noCover)).toBe("视频稿要先过剪辑与封面（推进到剪辑）");
+    expect(await stageGuardError(video, "editing", "publish_ready", hasCover)).toBe("视频稿要先过剪辑与封面（推进到剪辑）");
+    // 这条新边只开给 editing：别的来路有戳有封面也照拦
+    expect(await stageGuardError(withDone, "approved", "publish_ready", hasCover)).toBe("视频稿要先过剪辑与封面（推进到剪辑）");
+  });
+
+  it("剪辑 → 待发布：没有成片戳时不去读封面评审单", async () => {
+    const read = vi.fn(() => Promise.resolve(true));
+    await stageGuardError(video, "editing", "publish_ready", read);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("撤回交接（剪辑 → 草稿就绪）不设门", async () => {
+    expect(await stageGuardError(video, "editing", "draft_ready", noCover)).toBeNull();
+  });
+
   it("回退边一律不设门：退回改稿/回剪辑随时可走", async () => {
     expect(await stageGuardError(video, "editing", "approved", noCover)).toBeNull();
     expect(await stageGuardError(video, "cover_pending", "editing", noCover)).toBeNull();
   });
 });
 
-// 收紧后的不变量:视频稿进「待发布」唯一入口是封面台——挡住看板从任意列直拖(force 越形状不越阶段门)
+// 收紧后的不变量:视频稿进「待发布」只有封面台与剪辑工位登记两个入口——挡住看板从任意列直拖(force 越形状不越阶段门)
 import { describe as d2, expect as e2, it as i2 } from "vitest";
 d2("stageGuardError · 视频稿进待发布的唯一入口", () => {
   const noCover = () => Promise.resolve(false);

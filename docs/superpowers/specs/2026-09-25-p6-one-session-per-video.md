@@ -1,6 +1,6 @@
 # P6：一条视频一个会话——Claude 驾驶舱 + Codex 剪辑工位，只烧订阅额度
 
-> 状态：设计稿 v2（已吸收 codex 评审 18 条，见 §10）。未落地，待创始人定稿。
+> 状态：v2.1 实施中（2026-09-25）。前置已落 main（42a08c7 / 5fbb078 / be107aa）；P6-a、P6-b、P6-c 在分支 `claude/autocrew-agent-workflow-71c269` 上实现完毕待合并；P6-d、P6-e 未开始。§3.4 / §3.6 已按实际落地更正。
 > 关系：承接 `2026-09-05-p3-multi-host-mcp.md` 与 `2026-09-22-p5-host-first-model-routing.md`。P3 把岗位拆到宿主上，并在非目标里明写「三家对等宿主，没有一家跑全线」；P5 把写稿线的模型调用交给宿主。本篇处置 P3 那条非目标，并把 P5 的原则推到主路上剩下的两处引擎调用。
 > 评审依据：`2026-09-25-one-session-per-video-review.md`（agent-craft 评审，含真实 trace 证据）。本篇只写设计，证据不重复。
 > 标注：**[M]** = 主 checkout `~/Projects/autocrew`（守护进程实际运行的代码，含 130 个未提交条目）；**[W]** = main / 本 worktree。
@@ -154,11 +154,13 @@ Codex CLI 是 ChatGPT 登录态（`~/.codex/auth.json` 有 `tokens` 无 `OPENAI_
 1. 重放：`register_hash = sha256(manifest_hash + final_sha256 + covers sha256s + srt sha256)` 已存在 → 返回既有结果。
 2. `manifest_hash` == 当前交接且不在 `revoked[]`，否则 `stale_handoff`。
 3. 路径：每个都过白名单 + 归属 + 路径段 + 符号链接检查（同上）。
-4. 成片：`ffprobe` 有视频有音频、时长 >0；`sha256(final)` **必须等于** `approvals.final_cut.artifact_sha256`。封面：PNG/JPEG、两张都在；`sha256` 组合必须等于 `approvals.covers.artifact_sha256`（Codex 侧 gate4 的配对凭据）。`user_message` 只记录不校验（产品验不了）。
+4. 成片：`ffprobe` 有视频有音频、时长 >0；`sha256(final)` **必须等于** `approvals.final_cut.artifact_sha256`。封面：PNG/JPEG（按魔数）、两张都在；组合哈希定死为 **`sha256( hex(sha256(3:4)) + hex(sha256(4:3)) )`**（两个十六进制串拼接再哈希），必须等于 `approvals.covers.artifact_sha256`；公式和一行 `shasum` 写在工具说明、交接文件和 `AGENTS.editor.md` 里，Codex 侧照算。`approval_mismatch` 只回 `which`，不回显期望哈希。`user_message` 只记录不校验（产品验不了）。
 5. **同一事务**写四样，任一失败全部回滚不推进：(a) 成片作为 `content.assets[]` 里 `role:"video"` 的 Asset（路径指向 `project_root` 下的文件，`renderedRevision = generation`），让 [M] `ego-lite.ts:88-100` 的 `preferredVideoAsset` 能读到；(b) `CoverReview`：一个 `draftPair` 变体，`imagePaths` 指向两张封面、`sourceSha256/derivedSha256` 填实、`status:"publish_ready"`、`approvedImagePath` = 3:4，复用 [W] `local-store.ts:1233-1244` 的配对校验；(c) `stampVideoReady(contentId, generation)`（`video-done.ts:24`）；(d) `content.status: editing → publish_ready`，`content.video.final = {…, register_hash, generation}`，历史进 `content.video.history[]`。
 6. 换封面不换视频 → 新 `register_hash` → v2，旧版留 history；`generation` 不变。
+7. 落地细节（按实现更正）：成片以写时复制拷进 `contents/<id>/assets/final-g<N>-<sha16>.mp4`，登记为 `type:"video"`、`role:"other"`（内置线不会把它当 A-roll）；封面拷进 `assets/covers/`，`CoverReview` 变体标签 `codex`，走正常 `approveCoverVariant`，`approvedImagePath` 是 3:4 拷贝；哈希核对的是拷贝后的文件，发出去的就是批准的。四写之前先落 `handoff/register-journal.json` 快照，任一步失败按快照回滚；状态推进与 `video.final` 在最后一次保存里一起落（`transitionStatus` 新增 `patch`），这是提交点；下一次 `register` 先回滚崩溃残留的日志。已知缺口：回滚不恢复内容文件夹里的 `封面*.png` 副本；内置线若恰好有同代次号的成片，ego-lite 会先挑到它（内置线已不在主路上，记录即可）。
+8. 拒绝码全集：`not_accepted`、`not_handoffable`、`aroll_invalid`、`roots_unavailable`、`path_not_whitelisted`、`path_symlink`、`path_missing`、`project_owned_by_other`、`handoff_file_exists`、`handoff_too_large`、`nothing_to_revoke`、`stale_handoff`（带 `current_generation`、`expected_manifest_hash`）、`not_editing`、`invalid_params`、`final_invalid`、`cover_invalid`、`approval_mismatch`、`register_failed`。交接后 30 分钟内认领在 codex 名下，Claude 侧 `revoke` 要带交接文件里的令牌。符号链接检查只作用于白名单根以下的路径段（`/var` 这类系统别名放行）。
 
-`register` 是 Codex 唯一的写动作。**服务端**按宿主限制动作：`access.authorize`（`mcp/access.ts` 已有钩子）对 `host:"codex"` 且 `employee:"editor"` 只放行 `autocrew_video register/status`、`autocrew_content get`、`autocrew_desk inbox/claim/release`；`persona-capabilities.test.ts` 改为测 authorize 结果而不是人设文本。`AGENTS.editor.md` 改写要点：读 `autocrew-handoff-g*.md` → 按 `~/Projects/broll/AGENTS.md` 和 `personal-ip-video-loop` 跑四道闸门 → 从 `workflow-state.json` 取 gate3/gate4 凭据 → `register`。
+`register` 是 Codex 唯一的写动作。**服务端**按宿主限制动作（`mcp/host-policy.ts`，接在 `/mcp` 入口）：`host:"codex"` 只放行 `autocrew_video register/status/revoke`、`autocrew_content get`、`autocrew_desk inbox/claim/release`、`autocrew_status`；其余固定拒绝。代价：原 `AGENTS.cover.md`、`AGENTS.editor-writer.md` 两个 Codex 人设在 codex 宿主上停用（文件保留并标注）；若日后要在 Codex 里写稿，改 host-policy 一行即可。`persona-capabilities.test.ts` 改为测 policy 函数。`AGENTS.editor.md` 改写要点：读 `autocrew-handoff-g*.md` → 按 `~/Projects/broll/AGENTS.md` 和 `personal-ip-video-loop` 跑四道闸门 → 从 `workflow-state.json` 取 gate3/gate4 凭据 → `register`。
 
 ### 3.5 派工通道：先跑通手动，再接 CCB
 
@@ -175,7 +177,7 @@ Codex CLI 是 ChatGPT 登录态（`~/.codex/auth.json` 有 `tokens` 无 `OPENAI_
   "kit": { "post_title": "…", "caption": "…", "cover_text": "…", "hashtags": [] } }
 ```
 
-字段映射定死：`post_title` → `videoKit.title`（上限沿用 `video-kit.ts:31`）；`caption` → `videoKit.caption`（上限 `PLATFORM_MAX_BODY[platform]`，下限 20 字）；`cover_text` ≤ 12 字；`platform` 必填且须等于 `content.platform`。保存时记 `draft_hash`，稿件改动后 kit 失效（`pre_publish` 报 `kit_stale`）。**`pre_publish` 的字数预检改为读实际发布文本（`caption`）**，不再混读原稿标签与正文（修 `pre-publish.ts:165,180,223` 的混读）。原 `prepareVideoKit`（引擎）保留给 GUI 聊天。
+字段映射定死（按落地更正）：`post_title` → `videoKit.postTitle`（clipboard 与 ego-lite 实际读的字段；上限 `TITLE_LIMITS`，`video-kit.ts:31`：xhs 20 / douyin 30 / 视频号 22 / B 站 40，中文 1 字英文数字半字）；`caption`（并入 `hashtags` 后计长）→ `videoKit.caption`（上限 `PLATFORM_MAX_BODY[platform]`：xhs 1000 / 视频号 800 / B 站 2000，douyin 不设硬顶——≤300 只是引擎 prompt 纪律；下限 20 字）；`cover_text` ≤ 12 字；`platform` 必填且须等于 `content.platform`。稿件指纹用 `storage/draft-hash`（与 editorial `draft_hash` 同一算法）；保存时记 `draftHash` 与 `source:"host"`，稿件改动后 kit 失效（`pre_publish` 报 `kit_stale`）。**`pre_publish` 的字数预检改为读实际发布文本（`caption`）**，不再混读原稿标签与正文（修 `pre-publish.ts:165,180,223` 的混读）。原 `prepareVideoKit`（引擎）保留给 GUI 聊天。
 
 ### 3.7 写作线协议瘦身
 

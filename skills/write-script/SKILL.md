@@ -16,7 +16,7 @@ description: |
 
 已有材料可明确 `research_mode:"provided"` + `research`；用户明确不需研究才 `research_mode:"skip"` + `research_reason`。不得为绕过失败自行跳过。`needs_attention` 说明缺口，`ready_to_write` 后才按返回动作领包。
 
-1. 需要从待办起稿时先 `autocrew_desk {action:"inbox", employee:"writer"}`；已有指定选题就直接沿用。对已分配稿件用 `claim` 认领并保存 `claim_token`，后续写操作携带它；存在有效他人认领时不能绕过。
+1. 需要从待办起稿时先 `autocrew_desk {action:"inbox", employee:"writer"}`；已有指定选题就直接沿用。对已分配稿件用 `claim` 认领并保存 `claim_token`；`pack` 或第一次写也会回 `claim_token`，之后对这篇的每次写（writer `submit` / `find_evidence`、`review_desk submit`、`editorial feedback`、带 `content_id` 补证的 scout `cite` / `claim_offline`、`pre_publish video_kit`、`content update` / `transition`）都要携带它，同宿主的另一个会话不带也会被拒；存在有效他人认领时不能绕过。
 2. `autocrew_writer {action:"pack", topic_id, platform, requirements}`。材料与出处放 `research`，明确主张放 `direction`；用户明确不选候选时 `skip_reason` 保留其原话。不要拿风格或篇幅当方向覆盖已选立意。
 3. 返回 `preparing` 时按建议间隔调 `pack_status{content_id}`，直到 `ready` 后通读 `pack_md`。这里整理已有材料，不会自动后台研究。`failed` 按具体错误处理，不能要求用户为普通领包配置模型。
 4. `pack_request_changed` 表示旧包未应用新要求，带完整新要求和 `force:true` 重领。未重提字段会继承；从手写角度改回选卡时用 `direction:""` 清除旧方向。
@@ -28,7 +28,7 @@ description: |
 
 完整正文可放 `body`，`hook` / `cta` 可省略，`hashtags` 可空。不为填字段硬加数字、反常识问句、关注结尾或虚构亲历。按原规划组织论证，逐项检查提纲与必写禁写。
 
-数字与引语须能指到实际证据编号，并按写作包的引用要求标注。缺料时可调用 `autocrew_writer {action:"find_evidence", content_id, pack_id, claim_token, need}` 获取宿主补证指引；它默认不会代你调用后台研究模型。按返回动作由宿主查来源，用 `autocrew_scout` 抓页；`cite` 带返回的 `citation_target` 中 `content_id` / `pack_id`，将核验引文写入本稿。再读 `pack_status` 获取更新的材料包，不把聊天里的材料当作已经进入台账。本稿补证上限以回执为准，重领包不会重置。无法支撑的数字或引语要删去或说明限制；离线声明仍是未核验材料。
+数字与引语须能指到实际证据编号，并按写作包的引用要求标注。缺料时可调用 `autocrew_writer {action:"find_evidence", content_id, pack_id, claim_token, need}` 获取宿主补证指引；它默认不会代你调用后台研究模型。按返回动作由宿主查来源，用 `autocrew_scout` 抓页；`cite` 带返回的 `citation_target` 中 `content_id` / `pack_id`（外加 `claim_token`），将核验引文写入本稿。再读 `pack_status` 获取更新的材料包，不把聊天里的材料当作已经进入台账。本稿补证上限以回执为准，重领包不会重置。无法支撑的数字或引语要删去或说明限制；离线声明仍是未核验材料。
 
 ## 提交与宿主审稿
 

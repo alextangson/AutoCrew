@@ -1,15 +1,17 @@
 /** 用户确认的写作档案与反馈。原话、作用域、稿件指纹一起留存。 */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { draftHash } from "../storage/draft-hash.js";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { getContent, getDataDir, updateContentIfDraftMatches, type Content } from "../storage/local-store.js";
+import { getContent, getDataDir, updateContentIfDraftMatches, LOCAL_HOST, type Content } from "../storage/local-store.js";
+import { gateClaimWrite } from "../storage/claims.js";
 import { initProfile, loadProfile, saveProfile, type CreatorProfile } from "../modules/profile/creator-profile.js";
 import { appendWritingFeedback } from "../modules/writing/writing-feedback.js";
 import { serializeWriterCall } from "./writer-pack.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import { revisionNextAction } from "./writer-revision.js";
+import { withTokenInNextAction } from "./claim-grant.js";
 
 const text = Type.String({ minLength: 1, maxLength: 12000 });
 const strings = Type.Array(text);
@@ -33,10 +35,11 @@ export const editorialSchema = Type.Object({
   scope: Type.Optional(Type.Union([Type.Literal("draft"), Type.Literal("platform"), Type.Literal("voice")], { description: "默认draft只影响这篇。只有用户明确长期偏好时用platform或voice，禁止自动推广局部改法。" })),
   platform: Type.Optional(text),
   verdict: Type.Optional(Type.Union([Type.Literal("adopted"), Type.Literal("light_edit"), Type.Literal("rewritten"), Type.Literal("rejected")], { description: "用户的实际采纳评价；AI审稿通过不算采纳。" })),
+  claim_token: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "feedback：这篇有活认领时必须带（writer pack/submit 或 autocrew_desk claim 回的令牌），同宿主的另一个会话也一样；inspect/profile 只读不用带。" })),
 }, { additionalProperties: false });
 type Args = Static<typeof editorialSchema>;
 
-export const EDITORIAL_DESCRIPTION = "Read/calibrate the writing profile and persist explicit user feedback. profile reads current style/audience; update_profile saves confirmed fields (confirm_audience only after user approval). inspect{content_id} returns draft_hash and feedback receipts. feedback{content_id,draft_hash,event_id,feedback,scope?,verdict?,user_confirmed:true} keeps exact words, defaults to this draft, and records actual user adoption/rejection. Long-term rules require explicit platform/voice scope; no automatic generalization. Reuse event_id on retries. Feedback does not rewrite the draft: force a new writer pack to apply it.";
+export const EDITORIAL_DESCRIPTION = "Read/calibrate the writing profile and persist explicit user feedback. profile reads current style/audience; update_profile saves confirmed fields (confirm_audience only after user approval). inspect{content_id} returns draft_hash and feedback receipts. feedback{content_id,draft_hash,event_id,feedback,scope?,verdict?,claim_token?,user_confirmed:true} keeps exact words; it writes onto the draft, so a claimed draft needs the matching claim_token (same host included) or it returns claim_held, defaults to this draft, and records actual user adoption/rejection. Long-term rules require explicit platform/voice scope; no automatic generalization. Reuse event_id on retries. Feedback does not rewrite the draft: force a new writer pack to apply it.";
 
 const queues = new Map<string, Promise<unknown>>();
 async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
@@ -45,9 +48,8 @@ async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
   queues.set(key, next);
   try { return await next; } finally { if (queues.get(key) === next) queues.delete(key); }
 }
-export function editorialDraftHash(content: Pick<Content, "title" | "body" | "platform">): string {
-  return createHash("sha256").update(JSON.stringify([content.title, content.body, content.platform])).digest("hex");
-}
+/** 稿件指纹：算法在 storage/draft-hash（modules 层也要用，不能反向 import 本文件） */
+export const editorialDraftHash = draftHash;
 async function checkedProfile(dir: string): Promise<CreatorProfile | null> {
   // loadProfile 的容错 null 不能被这里解释成可覆盖已有损坏档案。
   try {
@@ -79,7 +81,7 @@ async function receipts(dir: string, id: string): Promise<Receipt[]> {
   const all = await Promise.all(names.filter(n => n.endsWith(".json")).map(async n => JSON.parse(await fs.readFile(path.join(folder, n), "utf8")) as Receipt));
   return all.filter(r => r.content_id === id).sort((a, b) => a.at.localeCompare(b.at));
 }
-async function capture(a: Args, dir: string): Promise<Record<string, unknown>> {
+async function capture(a: Args, dir: string, host: string): Promise<Record<string, unknown>> {
   if (!a.content_id || !a.draft_hash || !a.event_id || !a.feedback?.trim()) return { ok: false, error: "feedback需要content_id、inspect返回的draft_hash、event_id和用户原话feedback" };
   const scope = a.scope ?? "draft";
   if (scope === "platform" && !a.platform?.trim()) return { ok: false, error: "platform作用域必须指定platform" };
@@ -102,6 +104,9 @@ async function capture(a: Args, dir: string): Promise<Record<string, unknown>> {
     if (editorialDraftHash(content) !== a.draft_hash) return { ok: false, status: "stale_draft", error: "正文已变化，先inspect并核对用户评价的是哪一版；未把反馈套到新稿" };
     if (a.selection && !content.body.includes(a.selection)) return { ok: false, error: "selection必须逐字引用当前正文中的原选区" };
     const existingProfile = scope === "draft" ? null : await checkedProfile(dir);
+    // 写门（P6 §3.8）：核对完才过门，免得一次作废的反馈也把稿认领走；工作台 local-user 越门记账
+    const gate = await gateClaimWrite(content.id, { host, employee: "writer", token: a.claim_token?.trim() || undefined }, dir);
+    if ("denied" in gate) return gate.denied;
     const receipt: Receipt = prior ?? { ...event, at: new Date().toISOString(), state: "pending" };
     await writeReceipt(file, receipt);
     const applied = await updateContentIfDraftMatches(content.id, content, (latest) => ({
@@ -110,7 +115,7 @@ async function capture(a: Args, dir: string): Promise<Record<string, unknown>> {
         : appendWritingFeedback(latest.writingFeedback, a.feedback!, a.selection ? "selection" : "whole", { at: receipt.at, selection: a.selection }) } : {}),
       ...(a.verdict ? { adoption: { verdict: a.verdict, recordedAt: receipt.at, draftHash: a.draft_hash } } : {}),
     }), dir);
-    if (!applied.ok) return { ok: false, status: "stale_draft", error: "保存反馈前正文已变化，反馈未套到新稿；先inspect核对版本" };
+    if (!applied.ok) return { ok: false, status: "stale_draft", error: "保存反馈前正文已变化，反馈未套到新稿；先inspect核对版本", ...gate.grant };
     if (scope !== "draft") {
       const profile = existingProfile ?? await initProfile(dir);
       const ruleScope = scope === "voice" ? "voice_core" : `platform:${a.platform}` as const;
@@ -121,7 +126,7 @@ async function capture(a: Args, dir: string): Promise<Record<string, unknown>> {
     }
     receipt.state = "applied";
     await writeReceipt(file, receipt);
-    return { ok: true, status: "recorded", receipt, next_action: await revisionNextAction(applied.content, dir) };
+    return withTokenInNextAction({ ok: true, status: "recorded", receipt, next_action: await revisionNextAction(applied.content, dir), ...gate.grant });
   });
 }
 export async function executeEditorial(params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -131,6 +136,7 @@ export async function executeEditorial(params: Record<string, unknown>): Promise
   if (!Value.Check(editorialSchema, args)) return { ok: false, error: "写作档案/反馈参数不符合工具契约" };
   const a = args as Args;
   const dir = getDataDir(typeof _dataDir === "string" ? _dataDir : undefined);
+  const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
   try {
     return await serialized(dir, async () => {
       if (a.action === "profile") return { ok: true, profile: profileView(await checkedProfile(dir)) };
@@ -140,7 +146,7 @@ export async function executeEditorial(params: Record<string, unknown>): Promise
         return { ok: true, content_id: content.id, title: content.title, platform: content.platform, draft_hash: editorialDraftHash(content), adoption: content.adoption, adoption_applies_to_current: Boolean(content.adoption?.draftHash && content.adoption.draftHash === editorialDraftHash(content)), feedback: await receipts(dir, content.id) };
       }
       if (a.user_confirmed !== true) return { ok: false, error: "只记录用户明确表达或确认的信息，不能把模型推测当成用户反馈" };
-      if (a.action === "feedback") return capture(a, dir);
+      if (a.action === "feedback") return capture(a, dir, host);
       if (!a.profile || !Object.keys(a.profile).length) return { ok: false, error: "update_profile需要profile字段" };
       if (a.confirm_audience && !a.profile.audiencePersona) return { ok: false, error: "confirm_audience需要本次提交用户认可的完整画像" };
       const profile = (await checkedProfile(dir)) ?? await initProfile(dir);

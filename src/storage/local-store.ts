@@ -13,6 +13,7 @@ import type { WritingFeedback } from "../modules/writing/writing-feedback.js";
 import type { AngleCard } from "../modules/research/brief-store.js";
 // 证据账本的落盘形状归账本模块定义（P1 §3.3），这里同样只引用
 import type { EvidenceLedgerSnapshot } from "../modules/research/evidence-ledger.js";
+import type { ContentVideoLink } from "../modules/video/handoff/types.js";
 
 /**
  * 创始人选定的写作角度（角度卡 spec §1.3）。指针 + **生效卡快照**两样都存：
@@ -194,6 +195,13 @@ export interface VideoKit {
   /** 已生成的封面图路径(相对稿件目录;未生成则缺省) */
   coverPath?: string;
   generatedAt: string;
+  /**
+   * 做这份发布包时的稿件指纹（与 editorial draft_hash 同算法）。稿件改了 = 发布包过期，
+   * pre_publish 报 kit_stale（P6 §3.6）。旧发布包无此字段 = 不判过期。
+   */
+  draftHash?: string;
+  /** 谁做的：host = 宿主经 pre_publish video_kit 提交；engine = GUI 聊天里 prepareVideoKit 生成 */
+  source?: "host" | "engine";
 }
 
 export interface AdoptionRecord {
@@ -235,8 +243,10 @@ export interface ContentHandoff {
   at: string;
   /** 记这条账的宿主（§4.1 的主体，缺省 local-user） */
   by: string;
-  /** 非常规交接的一句话原因（今天只有「接管（租约过期）」） */
+  /** 非常规交接的一句话原因（接管（租约过期）/ 接管（同宿主另一会话）/ 认领转交 / 工作台越过认领） */
   note?: string;
+  /** `local-user` 越过别人的活认领写入（P6 §3.8）：放行但留账，不静默 */
+  override?: boolean;
 }
 
 export interface Content {
@@ -353,6 +363,11 @@ export interface Content {
    * 改过的稿不得继续顶着「已 AI 审稿」的徽章（§2.7）。
    */
   review?: ReviewMeta;
+  /**
+   * 交接—登记线（P6 §3.4）：Claude 会话 `handoff` 给 Codex 剪辑工位的当前交接、撤回过的清单哈希、
+   * Codex `register` 回来的成片与历史。形状与判定都在 `modules/video/handoff/`。
+   */
+  video?: ContentVideoLink;
   /** 软删除时间戳(回收站语义);null/缺省 = 活跃。默认读侧全部过滤 */
   deletedAt?: string | null;
   assets: Asset[];
@@ -361,8 +376,11 @@ export interface Content {
   updatedAt: string;
 }
 
+/** 候选标签：a/b/c 是封面台出的候选；codex = 剪辑工位 `register` 登记回来的那组配对封面（P6 §3.4） */
+export type CoverVariantLabel = "a" | "b" | "c" | "codex";
+
 export interface CoverVariant {
-  label: "a" | "b" | "c";
+  label: CoverVariantLabel;
   /** Full image generation prompt used */
   imagePrompt?: string;
   /** Content-specific art direction, not a fixed template name */
@@ -388,7 +406,8 @@ export interface CoverVariant {
     sourceSha256: string;
     derivedSha256: string;
     sourceRevision: number;
-    model: "gpt-image-2";
+    /** codex = 剪辑工位登记的封面：生图发生在 Codex 侧，这里只核两张图的字节 */
+    model: "gpt-image-2" | "codex";
     generatedAt: string;
   };
   /** 修订轮次(反馈重做递增;文件名带 -rN 防浏览器缓存旧图) */
@@ -429,7 +448,7 @@ export interface CoverReview {
   stopReason?: string;
   coverHook?: string;
   variants: CoverVariant[];
-  approvedLabel?: "a" | "b" | "c";
+  approvedLabel?: CoverVariantLabel;
   approvedImagePath?: string;
   approvedAt?: string;
   notes?: string;
@@ -1201,7 +1220,7 @@ export async function getCoverReview(contentId: string, dataDir?: string): Promi
 
 export async function approveCoverVariant(
   contentId: string,
-  label: "a" | "b" | "c",
+  label: CoverVariantLabel,
   dataDir?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
@@ -1210,7 +1229,7 @@ export async function approveCoverVariant(
 
 async function approveCoverVariantLocked(
   contentId: string,
-  label: "a" | "b" | "c",
+  label: CoverVariantLabel,
   dataDir?: string,
 ): Promise<CoverReview | null> {
   const projDir = path.join(getDataDir(dataDir), "contents", contentId);
@@ -1302,14 +1321,16 @@ const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   // （那一轮从 drafting 走正常边过来，不是从这里直推）。人工判定「这些数字我认」时也
   // 允许直接放行——所以 draft_ready 留着，但它是人的动作，不是生成管线的出口。
   needs_evidence: ["drafting", "draft_ready", "archived"],
-  draft_ready: ["reviewing", "drafting"],
+  // editing：P6 交接（`autocrew_video handoff`）——审过的稿直接交剪辑工位，阶段门另核平台
+  draft_ready: ["reviewing", "drafting", "editing"],
   reviewing: ["revision", "approved", "draft_ready"],
   revision: ["reviewing", "approved", "draft_ready"],
   // 阶段制（spec §1.1）：视频稿定稿后走 editing → cover_pending → publish_ready。
   // 表保持平台无关的单表——公众号照旧 approved → publish_ready 直通，
   // 「哪条边属于哪种平台」由阶段门判定（stage-guard），不在这里分叉。
   approved: ["publish_ready", "reviewing", "editing"],
-  editing: ["cover_pending", "approved"],
+  // draft_ready = 撤回交接；publish_ready = 剪辑工位登记（成片戳 + 封面定稿由阶段门核）
+  editing: ["cover_pending", "approved", "draft_ready", "publish_ready"],
   cover_pending: ["publish_ready", "editing"],
   publish_ready: ["publishing", "approved"],
   publishing: ["published", "publish_ready"],
@@ -1342,6 +1363,11 @@ export interface TransitionOptions {
   diffNote?: string;
   /** 记这次交接的宿主（§4.1）。缺省时回落到当前认领人，再回落 `local-user` */
   host?: string;
+  /**
+   * 与状态**同一次落盘**的附带字段（P6 交接/登记：状态与 `video` 记录分两次写就会出现
+   * 「状态推进了、记录没落」的中间态）。函数形式拿锁内读到的当前稿件算补丁。不许带 status。
+   */
+  patch?: ContentUpdates | ((current: Content) => ContentUpdates);
 }
 
 /** 封面是否已定稿：复用既有判定（选用即写 approvedLabel，revise 掉它即作废） */
@@ -1433,7 +1459,8 @@ async function transitionStatusLocked(
   if (blocked) return { ok: false, blocked: true, error: blocked };
 
   const now = new Date().toISOString();
-  const updates: StatusfulUpdates = { status: targetStatus };
+  const patch = typeof opts?.patch === "function" ? opts.patch(content) : opts?.patch;
+  const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus };
 
   // 交接台账（§6.1）：五处里的三处是状态转换。写在锁内、与状态同一次落盘——
   // 分两次写就会出现「状态已推进但账没记」的中间态。

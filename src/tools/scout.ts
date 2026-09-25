@@ -5,6 +5,7 @@ import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getContent, getDataDir, getTopic, updateContent } from "../storage/local-store.js";
+import { gateClaimWrite, type ClaimDenial } from "../storage/claims.js";
 import { writeJsonAtomic, writeTextAtomic } from "../storage/json-atomic.js";
 import { createCreativeTask, creativeTaskHash, renderCreativeTask } from "../modules/writing/creative-task.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
@@ -57,7 +58,7 @@ import { externalBlock, sanitizeExternal } from "../modules/research/research-pr
 import { isReadyPack, readPack, writePack, serializeWriterCall, renderPack, packPath, PACK_MD } from "./writer-pack.js";
 
 export const SCOUT_DESCRIPTION =
-  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every action after prepare requires topic_id/task_id. cite/claim_offline can attach evidence to matching content_id/pack_id; the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
+  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every action after prepare requires topic_id/task_id. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
 const text = Type.String();
 const actions = [
   "prepare",
@@ -96,6 +97,12 @@ export const scoutSchema = Type.Object(
     payload: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
     content_id: Type.Optional(text),
     pack_id: Type.Optional(text),
+    claim_token: Type.Optional(
+      Type.String({
+        description:
+          "cite/claim_offline 带 content_id+pack_id 往稿里补证时：这篇有活认领就必须带（writer pack 回的令牌），同宿主的另一个会话也一样",
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -116,6 +123,12 @@ const digest = (value: unknown) =>
     )
     .digest("hex");
 const str = (v: unknown) => (typeof v === "string" ? v : "");
+/** 补证入稿被写门拒绝（P6 §3.8）：走研究台的错误通道，但把持有者原样带回去 */
+class ClaimHeldError extends HostResearchError {
+  constructor(readonly denial: ClaimDenial) {
+    super(denial.code ?? "claim_held", denial.error);
+  }
+}
 const nonempty = (v: unknown, name: string) => {
   const s = str(v);
   if (!s.trim()) throw new HostResearchError("missing_argument", `${name} 必填`);
@@ -275,6 +288,19 @@ async function publish(
   await save(task);
 }
 
+/** 写门（P6 §3.8）：往稿件证据账本里写 = 写这篇稿，和写稿同一道令牌门；拒绝时带回持有者 */
+async function gateEvidenceWrite(
+  contentId: string,
+  host: string,
+  args: Record<string, unknown>,
+  dir: string,
+): Promise<{ claim_token?: string }> {
+  const token = str(args.claim_token).trim();
+  const gate = await gateClaimWrite(contentId, { host, employee: "writer", token: token || undefined }, dir);
+  if ("denied" in gate) throw new ClaimHeldError(gate.denied);
+  return gate.grant;
+}
+
 /** Citation insertion is fenced by the active writer pack, with a lifetime quota per content. */
 async function attachEvidence(
   task: HostResearchTask,
@@ -321,6 +347,8 @@ async function attachEvidence(
     const id = `ev-H${key.slice(0, 20)}`;
     if (!history[id] && Object.keys(history).length >= 12)
       throw new HostResearchError("evidence_quota", "本稿宿主补证累计已满12条；重领包不会重置额度，请用已有材料收束");
+    // 核对全过才过门：作废的补证不该顺手认领一篇稿
+    const grant = await gateEvidenceWrite(contentId, task.host, args, dir);
     const entry: LedgerEntry = {
       id,
       source: evidence.source,
@@ -342,6 +370,7 @@ async function attachEvidence(
       evidence_entry: entry,
       host_evidence_used: Object.keys(history).length,
       host_evidence_limit: 12,
+      ...grant,
     };
   });
 }
@@ -706,6 +735,7 @@ export async function executeScout(
       ok: false,
       code: err instanceof HostResearchError ? err.code : "research_operation_failed",
       error: err instanceof Error ? err.message : String(err),
+      ...(err instanceof ClaimHeldError && err.denial.holder ? { holder: err.denial.holder } : {}),
       note: "操作失败已如实返回；未调用备用模型，也未把来源自动降为离线声明。",
     };
   }

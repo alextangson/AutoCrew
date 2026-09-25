@@ -9,7 +9,7 @@
 5. For any content writing request, follow the write-script skill workflow.
 6. For batch writing (multiple articles), use the spawn-batch-writer skill.
 7. For topic research, use the research or spawn-planner skill.
-8. Save topics with `autocrew_topic`. Generated drafts must use `autocrew_writer pack/submit`, followed by `autocrew_review_desk pack/submit` for host review; content import is only for existing user-authored drafts.
+8. Save topics with `autocrew_topic`. Generated drafts must use `autocrew_writer pack/submit`, followed by `autocrew_review_desk pack/submit` for host review; content import is only for existing user-authored drafts. `pack` (or the first write) returns a `claim_token`; every later write on that content must carry it — the same host in another session is refused without it.
 9. Research, angles, writing and review default to the current host model. Use `autocrew_scout` for research tasks and verified source capture; read the writing pack for current requirements and profile. No engine setup is required for ordinary MCP work. Mark same-host review as `host_self_review`, not independent review or author approval. Third-party search, images and videos use separate service allowances.
 10. After completing a task, suggest one concrete next step.
 11. When user gives feedback on content, capture it via the memory-distill skill.

@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { ensureClaim, redactClaim } from "../storage/claims.js";
+import { gateClaimWrite, redactClaim, type WriteGate } from "../storage/claims.js";
 import {
   LOCAL_HOST,
   saveContent,
@@ -86,7 +86,7 @@ export const contentSaveSchema = Type.Object({
   })),
   claim_token: Type.Optional(Type.String({
     description:
-      "认领令牌（autocrew_desk claim 给的）。别的宿主认领了这篇时，update / transition 必须带它；没人认领就不用带，写下去会自动认领。",
+      "认领令牌（写操作回执或 autocrew_desk claim 给的）。这篇有活认领时 update / transition 必须带它，同宿主的另一个会话也一样；没人认领就不用带，写下去会自动认领并回令牌。",
   })),
 });
 
@@ -116,19 +116,18 @@ function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
 }
 
 /**
- * 令牌门（P3 §6.1）：`update` / `transition` 是跨岗位的写口，别的宿主认领着就得带令牌。
+ * 令牌门（P3 §6.1 / P6 §3.8）：`update` / `transition` 是跨岗位的写口，有活认领就得带令牌（同宿主也一样）。
  * 岗位不填 = 沿用现有认领的岗位（封面师改稿不该把自己变成写手），全新认领记 `writer`。
+ * 认领归调用宿主时令牌随回执交回（`grant`），否则他下一次写就过不了门。
  */
-async function gateContentWrite(
+function gateContentWrite(
   params: Record<string, unknown>,
   id: string,
   dataDir: string | undefined,
-): Promise<{ ok: false; error: string; holder?: unknown } | null> {
+): Promise<WriteGate> {
   const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
   const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
-  const claimed = await ensureClaim(id, { host, token: token || undefined }, dataDir);
-  if (claimed.ok) return null;
-  return { ok: false, error: claimed.error, ...(claimed.holder ? { holder: claimed.holder } : {}) };
+  return gateClaimWrite(id, { host, token: token || undefined }, dataDir);
 }
 
 export async function executeContentSave(
@@ -187,8 +186,9 @@ export async function executeContentSave(
       error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
       next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
     };
-    const denied = await gateContentWrite(params, id, dataDir);
-    if (denied) return denied;
+    const gate = await gateContentWrite(params, id, dataDir);
+    if ("denied" in gate) return gate.denied;
+    const { grant } = gate;
     const oldBody = oldContent.body;
     const newBody = params.body as string | undefined;
 
@@ -202,7 +202,7 @@ export async function executeContentSave(
       if (target !== updated.status) {
         const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
         const moved = await transitionStatus(id, target, { host }, dataDir);
-        if (!moved.ok) return { ok: false, error: moved.error, ...(moved.blocked ? { blocked: true } : {}) };
+        if (!moved.ok) return { ok: false, error: moved.error, ...(moved.blocked ? { blocked: true } : {}), ...grant };
         updated = moved.content ?? updated;
       }
     }
@@ -218,6 +218,7 @@ export async function executeContentSave(
           ok: true,
           content: redactClaim(updated),
           warning: `diff 记录失败：${errorMsg}，稿件已正常保存`,
+          ...grant,
         };
       }
 
@@ -234,8 +235,8 @@ export async function executeContentSave(
     }
 
     return styleLearned
-      ? { ok: true, content: redactClaim(updated), styleLearned }
-      : { ok: true, content: redactClaim(updated) };
+      ? { ok: true, content: redactClaim(updated), styleLearned, ...grant }
+      : { ok: true, content: redactClaim(updated), ...grant };
   }
 
   if (action === "delete") {
@@ -284,8 +285,8 @@ export async function executeContentSave(
     const targetStatus = params.target_status as string;
     if (!id) return { ok: false, error: "id is required for transition" };
     if (!targetStatus) return { ok: false, error: "target_status is required for transition" };
-    const denied = await gateContentWrite(params, id, dataDir);
-    if (denied) return denied;
+    const gate = await gateContentWrite(params, id, dataDir);
+    if ("denied" in gate) return gate.denied;
     // from_status：调用方手里那一版的状态。旧标签页/双击推进时后端据此人话拒绝，不硬盖
     const from = typeof params.from_status === "string" ? normalizeLegacyStatus(params.from_status) : undefined;
     const target = normalizeLegacyStatus(targetStatus);
@@ -302,7 +303,7 @@ export async function executeContentSave(
       dataDir,
     );
     // 令牌不外泄（§6.1）：流转回执里也带着整份稿件
-    const result = moved.content ? { ...moved, content: redactClaim(moved.content) } : moved;
+    const result = { ...(moved.content ? { ...moved, content: redactClaim(moved.content) } : moved), ...gate.grant };
     // 到「已发布」的另一条路（publish.ts confirm_published 是第一条）：同样在发布时刻
     // 推导一次采纳判定。best-effort——判定失败不该把已经发生的状态流转打回。
     if (result.ok && target === "published") {

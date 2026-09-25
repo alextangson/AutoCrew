@@ -1,3 +1,4 @@
+import { withTokenInNextAction } from "./claim-grant.js";
 /** 宿主审稿台：只发材料和收结构化结论，永远不运行后台模型。 */
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
@@ -9,6 +10,7 @@ import { buildReviewSystemPrompt, buildReviewUserMessage } from "../modules/writ
 import { validateReview, type HostReviewSource } from "../modules/writing/script-review.js";
 import type { AudienceReviewResult } from "../modules/review/audience-review.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
+import { gateClaimWrite } from "../storage/claims.js";
 import { DEFAULT_HOST, isReadyPack, readPack, serializeWriterCall, writePack, type PackAttempt, type ReadyPack } from "./writer-pack.js";
 import { packWritingContract, reviewInput, settleReview, type AudienceAssessment, type ReviewJob } from "./writer-review.js";
 
@@ -42,9 +44,10 @@ export const reviewDeskSchema = Type.Object({
   attempt: Type.Optional(Type.Integer({ minimum: 1, description: "必须使用审稿包里的原写稿attempt，不是审稿重试次数。" })),
   issues: Type.Optional(Type.Array(issue, { maxItems: 40 })),
   audience: Type.Optional(audienceSchema),
+  claim_token: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "submit：这篇有活认领时必须带（writer pack/submit 或 autocrew_desk claim 回的令牌），同宿主的另一个会话也一样；pack 只读不用带。" })),
 }, { additionalProperties: false });
 
-export const REVIEW_DESK_DESCRIPTION = "Host-executed review, no backend LLM call. pack{content_id} returns the saved draft, shared review criteria/creative task, review_pack_id and attempt. The current host reviews it and submits{content_id,review_pack_id,attempt,issues,audience?}. Issues require exact 6-60 character quotes plus rule/severity/instruction. Same authenticated host as the writer is host_self_review; another credential principal is not proof of another model or independent review. Retries with identical payload are idempotent; edited drafts and superseded writing packs are fenced. Review is not user adoption or permission to publish.";
+export const REVIEW_DESK_DESCRIPTION = "Host-executed review, no backend LLM call. pack{content_id} returns the saved draft, shared review criteria/creative task, review_pack_id and attempt. The current host reviews it and submits{content_id,review_pack_id,attempt,issues,audience?,claim_token?}; submit is a write, so a claimed draft needs the matching claim_token (same host included) or it returns claim_held. Issues require exact 6-60 character quotes plus rule/severity/instruction. Same authenticated host as the writer is host_self_review; another credential principal is not proof of another model or independent review. Retries with identical payload are idempotent; edited drafts and superseded writing packs are fenced. Review is not user adoption or permission to publish.";
 
 function hashDraft(title: string, body: string, platform?: string): string {
   return createHash("sha256").update(JSON.stringify([title, body, platform])).digest("hex");
@@ -143,7 +146,8 @@ function parseAudience(raw: unknown, rec: PackAttempt, haystack: string): Audien
   } };
 }
 
-async function submitReview(params: Record<string, unknown>, pack: ReadyPack, reviewerHost: string, dataDir: string): Promise<Record<string, unknown>> {
+/** `grant` 是回执令牌的出参：落盘中途抛错时调用方照样能把刚认领到的令牌交回去 */
+async function submitReview(params: Record<string, unknown>, pack: ReadyPack, reviewerHost: string, dataDir: string, grant: { claim_token?: string }): Promise<Record<string, unknown>> {
   const contentId = String(params.content_id);
   const attempt = Number(params.attempt);
   const rec = pack.attempts[String(attempt)];
@@ -165,6 +169,11 @@ async function submitReview(params: Record<string, unknown>, pack: ReadyPack, re
   if (!checked.ok) return fail(checked.problems.join("；"), "invalid_review");
   const audience = parseAudience(params.audience, rec, haystack);
   if (typeof audience === "string") return fail(audience, "invalid_review");
+  // 写门（P6 §3.8）：核对全过、真要落盘才过门——被拒的审稿不认领也不续租，重放不写盘也不设卡
+  const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
+  const gate = await gateClaimWrite(contentId, { host: reviewerHost, employee: "writer", token: token || undefined }, dataDir);
+  if ("denied" in gate) return gate.denied;
+  Object.assign(grant, gate.grant);
   const source = sourceOf(reviewerHost, rec.pending.host, ticket.draftHash);
   // 先钉住这次提交，再改变内容状态。重启后同一载荷可恢复，不允许另一份结论抢写。
   ticket.submission = { digest, reviewerHost, state: "pending" };
@@ -186,14 +195,18 @@ export async function executeReviewDesk(params: Record<string, unknown>): Promis
   if (!Value.Check(reviewDeskSchema, publicArgs)) return fail("审稿台参数不符合工具契约");
   const contentId = String(params.content_id);
   const reviewerHost = typeof params._host === "string" && params._host.trim() ? params._host : DEFAULT_HOST;
+  // submit 改审稿结论、推进稿件状态，过令牌门（门在 submitReview 里）；pack 只读不设卡。
+  // 令牌只进回执不进写作包：存下来的审稿结果会被重放给别人
+  const grant: { claim_token?: string } = {};
   try {
-    return await serializeWriterCall(contentId, async () => {
+    const result = await serializeWriterCall(contentId, async () => {
       const pack = await readPack(contentId, dataDir);
       if (!isReadyPack(pack)) return fail("稿件没有可用的写作包，先完成writer pack与submit");
-      return params.action === "pack" ? reviewPack(contentId, pack, reviewerHost, dataDir) : submitReview(params, pack, reviewerHost, dataDir);
+      return params.action === "pack" ? reviewPack(contentId, pack, reviewerHost, dataDir) : submitReview(params, pack, reviewerHost, dataDir, grant);
     });
+    return withTokenInNextAction({ ...result, ...grant });
   } catch (err) {
     const error = cleanErrorMessage(err);
-    return fail(error, error.includes("stale_review") ? "stale_review" : undefined);
+    return { ...fail(error, error.includes("stale_review") ? "stale_review" : undefined), ...grant };
   }
 }

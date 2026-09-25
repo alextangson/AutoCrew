@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { handleMcpRequest, runner, DEFAULT_HOST, HOST_PARAM } from "./server.js";
+import { CODEX_EDITOR_DENIED, hostAuthorize } from "./host-policy.js";
 
 const LOCAL: { principal: { subject: string; plan: "local" }; host: string } = {
   principal: { subject: DEFAULT_HOST, plan: "local" },
@@ -30,6 +31,19 @@ describe("MCP protocol adapters", () => {
     );
     expect(authorize).toHaveBeenCalledOnce();
     expect(response?.result).toMatchObject({ isError: true });
+  });
+
+  it("按宿主限权（P6 §3.4）：codex 调写稿工具在协议层就被拒，工具不执行", async () => {
+    const response = await handleMcpRequest(
+      { id: 5, method: "tools/call", params: { name: "autocrew_humanize", arguments: { action: "humanize_zh", text: "测试" } } },
+      { principal: { subject: "codex", plan: "local" }, host: "codex", authorize: hostAuthorize("codex") },
+    );
+    expect(response?.result).toMatchObject({ isError: true, content: [{ type: "text", text: CODEX_EDITOR_DENIED }] });
+    const allowed = await handleMcpRequest(
+      { id: 6, method: "tools/call", params: { name: "autocrew_humanize", arguments: { action: "humanize_zh", text: "测试" } } },
+      { principal: { subject: "claude-code", plan: "local" }, host: "claude-code", authorize: hostAuthorize("claude-code") },
+    );
+    expect((allowed?.result as { content: Array<{ text: string }> }).content[0].text).not.toBe(CODEX_EDITOR_DENIED);
   });
 
   it("records usage for an allowed tool call", async () => {

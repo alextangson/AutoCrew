@@ -152,14 +152,23 @@ describe("令牌门（§14.2：宿主层认领，与 runner 租约各管各的�
     expect(await call({ action: "start", claim_token: token })).toMatchObject({ ok: true });
   });
 
-  it("同一个宿主重复写 = 续约，令牌不变", async () => {
-    await call({ action: "start" });
+  it("同一个宿主重复写（P6 §3.8）：不带令牌 = claim_held；带上回执里的令牌 = 续约，令牌不变", async () => {
+    const started = await call({ action: "start" });
     const first = (await getContent(contentId, dir))!.claim!;
+    // 首次写自动认领，令牌随回执交回（下一次写就靠它）
+    expect(started.claim_token).toBe(first.token);
+
+    // 同宿主不再免检：宿主名下可能是另一个会话
+    const bare = await call({ action: "start" });
+    expect(bare).toMatchObject({ ok: false, code: "claim_held" });
+    expect(JSON.stringify(bare)).not.toContain(first.token);
+
     await new Promise((r) => setTimeout(r, 5));
-    await call({ action: "start" });
+    const renewed = await call({ action: "start", claim_token: first.token });
+    expect(renewed).toMatchObject({ ok: true, claim_token: first.token });
     const second = (await getContent(contentId, dir))!.claim!;
     expect(second.token).toBe(first.token);
-    expect(Date.parse(second.leaseUntil)).toBeGreaterThanOrEqual(Date.parse(first.leaseUntil));
+    expect(Date.parse(second.leaseUntil)).toBeGreaterThan(Date.parse(first.leaseUntil));
   });
 });
 

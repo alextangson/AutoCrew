@@ -43,8 +43,8 @@ Codex 端会看到连接失败或 401。这是对的——AutoCrew 的所有写�
 
 | 文件 | 岗位 | 干什么 |
 |---|---|---|
-| `AGENTS.editor-writer.md` | 总编辑 + 写手 | 调研 → 念立意卡 → 选卡 → 领写作包 → 写 → 交稿过门禁与审稿 |
-| `AGENTS.cover.md` | 封面师 | 读本期定稿 → Codex 订阅内置生图（目标 Image 2.5）→ 同母本 3:4 与 4:3 审核 |
+| `AGENTS.editor-writer.md` | 总编辑 + 写手 | **P6 起在 codex 宿主上停用**：服务端只放行 `autocrew_video register/status/revoke` 与只读查询（`mcp/host-policy.ts`），写稿在 Claude 会话里做 |
+| `AGENTS.cover.md` | 封面师 | **P6 起在 codex 宿主上停用**：封面在 `personal-ip-video-loop` 里用 Codex 内置生图做，随 `register` 一起登记 |
 | `AGENTS.editor.md` | 剪辑师 | 待办桌认领 → 开工转写 → 选段门 → 素材规划门 → 成片审核门（三道门都由创作者点头） |
 
 Codex 读工作目录（及其上层）的 `AGENTS.md`。把人设写进去：

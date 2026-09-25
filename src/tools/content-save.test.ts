@@ -257,12 +257,17 @@ describe("executeContentSave", () => {
     it("MCP edits persist all diffs without background distillation when the real threshold is reached", async () => {
       const contentId = await seedContent();
       const distillImpl = vi.fn().mockResolvedValue(fakeResult);
+      // 第一次写自动认领并回令牌，之后每次都带上（P6 §3.8：同宿主不再免检）
+      let claimToken: string | undefined;
       for (let index = 0; index < 3; index++) {
         const updated = await executeContentSave({
           action: "update", id: contentId, body: `Host edit ${index}`, _host: "claude-desktop-test", _dataDir: testDir,
+          ...(claimToken ? { claim_token: claimToken } : {}),
         }, { distillImpl });
         expect(updated.ok).toBe(true);
         expect((updated as any).styleLearned).toBeUndefined();
+        claimToken = (updated as any).claim_token;
+        expect(claimToken).toMatch(/^clm-/);
       }
       expect(await listDiffs({ contentId }, testDir)).toHaveLength(3);
       expect(await shouldDistillStyle(testDir)).toBe(true);

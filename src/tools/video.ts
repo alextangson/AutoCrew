@@ -13,6 +13,9 @@
  *    宿主重新读状态再来，不重试同一份提交。
  * 4. **审片通过要盖章**：`confirmReview` 只推 `done/done`，阶段闸认的是 `Content.videoDone`，
  *    所以 approve 之后必须走共用的 `stampVideoReady`（否则稿件永远推不进封面台）。
+ *
+ * 例外：handoff / revoke / register（P6 §3.4，Claude 会话 ↔ Codex 剪辑工位的两根线）不碰内置剪辑线，
+ * 在取服务之前就分流给 `video-handoff.ts`——内置服务没起也得能交接、能登记。
  */
 import { Type } from "@sinclair/typebox";
 
@@ -34,7 +37,8 @@ import { finalVideoPath } from "../modules/video/render-exec.js";
 import type { VideoService, VideoStatus } from "../modules/video/service.js";
 import type { VideoState } from "../modules/video/types.js";
 import { editorPlanViewOf, nextHint, transcriptViewOf } from "./video-views.js";
-import { gateVideoWrite, videoError, videoFail, videoService, type VideoToolResult } from "./video-gates.js";
+import { gateVideoWriteGrant, videoError, videoFail, videoService, type VideoToolResult } from "./video-gates.js";
+import { executeVideoHandoff, isHandoffAction } from "./video-handoff.js";
 
 const ACTIONS = [
   "status",
@@ -55,6 +59,9 @@ const ACTIONS = [
   "retry",
   "review",
   "asr_status",
+  "handoff",
+  "revoke",
+  "register",
 ] as const;
 type VideoAction = (typeof ACTIONS)[number];
 
@@ -111,10 +118,37 @@ export const videoSchema = Type.Object({
   ),
   timestamp_ms: Type.Optional(Type.Integer({ description: "review：创作者在成片时间轴上停的位置（毫秒）" })),
   note: Type.Optional(Type.String({ description: "review：创作者的原话（落进不可变审片记录）" })),
+  aroll_path: Type.Optional(Type.String({ description: "handoff：口播原片（A-roll）绝对路径；要有画面+音轨、≤30 分钟" })),
+  project_root: Type.Optional(
+    Type.String({ description: "handoff：剪辑项目目录，必须是白名单根（video.json 的 project_roots）的直接子目录；缺省 <根>/YYYYMMDD 标题" }),
+  ),
+  notes: Type.Optional(Type.String({ description: "handoff：给剪辑工位的备注（进交接包，不进 dispatch_text）" })),
+  revoke: Type.Optional(Type.Boolean({ description: "handoff：true = 撤回当前交接代次（同 action revoke）" })),
+  manifest_hash: Type.Optional(
+    Type.String({ description: "register：交接包里的 manifest_hash（必填）｜revoke：可选，指明撤哪一代（只能是当前代次）" }),
+  ),
+  final_path: Type.Optional(Type.String({ description: "register：project_root 里成片的绝对路径（有画面有音轨）" })),
+  covers: Type.Optional(
+    Type.Object(
+      { "3:4": Type.String(), "4:3": Type.String() },
+      { description: "register：两张封面的绝对路径（PNG/JPEG，都在 project_root 里）" },
+    ),
+  ),
+  srt_path: Type.Optional(Type.String({ description: "register：可选，字幕绝对路径（在 project_root 里）" })),
+  jianying_draft: Type.Optional(Type.String({ description: "register：可选，剪映草稿名或路径（只记录）" })),
+  approvals: Type.Optional(
+    Type.Object(
+      {
+        final_cut: Type.Object({ artifact_sha256: Type.String(), approved_at: Type.String(), user_message: Type.String() }),
+        covers: Type.Object({ artifact_sha256: Type.String(), approved_at: Type.String(), user_message: Type.String() }),
+      },
+      { description: "register：gate3（成片）与 gate4（封面配对）的人工批准凭据，取自 workflow-state.json" },
+    ),
+  ),
   claim_token: Type.Optional(
     Type.String({
       description:
-        "认领令牌（autocrew_desk claim 给的）。别的宿主认领了这篇时，所有写动作都必须带它；没人认领就不用带，动手会自动认领剪辑师桌。",
+        "认领令牌（上次写动作回执或 autocrew_desk claim 给的）。这篇有活认领时所有写动作都必须带它，同宿主的另一个会话也一样；没人认领就不用带，动手会自动认领并回令牌。",
     }),
   ),
 });
@@ -129,8 +163,12 @@ export const VIDEO_DESCRIPTION = [
   "6) editor_confirm{content_id, plan_revision, kept_overlay_ids}：逐条问过创作者后确认；kept_overlay_ids 传 [] 是合法的「全删，出纯口播」。确认后自动组装渲染。",
   "7) review{content_id, rendered_revision, verdict, target?, timestamp_ms?, note?}：**把成片路径交给创作者看过**再报裁决。approve = 通过并盖成片戳（阶段闸只认这枚戳）；revise = 打回，target 选 edit / cut，带上创作者的原话。",
   "8) asr_status / retry / reassemble：转写引擎状态、失败重试、渲染死路时回组装重出一份。",
+  "── 交接—登记（Claude 会话 ↔ Codex 剪辑工位，与上面的内置剪辑线并存，不需要视频服务在跑）──",
+  "handoff{content_id, aroll_path, project_root?, notes?}：审稿结论 accepted（或 accepted_with_issues 且创作者对这一版点了 adopted）的草稿就绪 / 已过审稿交给剪辑工位：写不可变交接包（contents/<id>/handoff/editor-g<代次>.md，复制到 <project_root>/01-script/），状态 → editing，认领转给 codex。返回 generation、manifest_hash、handoff_path、project_handoff_path、dispatch_text（派工话术，照原样给 Codex）。同一份请求重发 = 原样返回。拒绝码：not_accepted / not_handoffable / aroll_invalid / roots_unavailable / path_not_whitelisted / path_symlink / project_owned_by_other。",
+  "revoke{content_id, manifest_hash?}（或 handoff{revoke:true}）：撤回当前代次，状态回 draft_ready，此后带它的 register 一律 stale_handoff。交接后 30 分钟内认领还在 codex 手上，撤回要带交接包里的 claim_token。",
+  "register{content_id, manifest_hash, final_path, covers:{\"3:4\",\"4:3\"}, srt_path?, jianying_draft?, approvals:{final_cut, covers}}（剪辑工位调）：所有文件必须在当前交接的 project_root 里；final_cut.artifact_sha256 = 成片文件 sha256；covers.artifact_sha256 = sha256(3:4 文件 sha256 的 hex + 4:3 文件 sha256 的 hex)。核过后成片、封面评审单、成片戳、状态 → publish_ready 同事务落盘，任一失败全部回滚。拒绝码：stale_handoff / approval_mismatch（which 指明哪份凭据）/ final_invalid / cover_invalid / path_*。",
   "冲突：返回 conflict:true 就是别的地方改过——重新读 status / transcript / editor_plan 拿新版本号再来，不要重试同一份提交。",
-  "认领：动手会自动认领剪辑师桌（租约 30 分钟）。别的宿主先认领了的稿，写动作要带 claim_token，否则会被拒并告诉你持有者是谁。",
+  "认领：动手会自动认领剪辑师桌（租约 30 分钟），写动作回执里的 claim_token 下一次写要带上。稿件有活认领时——同宿主的另一个会话也一样——不带匹配令牌的写动作被拒（code:claim_held，并告诉你持有者是谁）。",
 ].join("\n");
 
 function str(v: unknown): string {
@@ -315,6 +353,8 @@ export async function executeVideo(raw: Record<string, unknown>): Promise<VideoT
   }
   const params = normalizeArrays(raw);
   if (typeof params === "string") return videoFail(params);
+  // 交接—登记不碰内置剪辑线：视频服务没起也得能交接、能登记
+  if (isHandoffAction(action)) return executeVideoHandoff(action, params);
   // 服务与桌面共用同一个实例；没起来就照实说（不在工具进程里另起一条写盘队列）
   const resolved = videoService(params);
   if (!resolved.ok) return videoFail(resolved.error);
@@ -327,13 +367,11 @@ export async function executeVideo(raw: Record<string, unknown>): Promise<VideoT
     if (!isContentId(contentId)) {
       return videoFail("需要合法 content_id（autocrew_desk inbox editor 那张桌上的 content_id）");
     }
-    if (!READ_ONLY.has(action)) {
-      const denied = await gateVideoWrite(params, contentId, dataDir);
-      if (denied) return denied;
-    }
-    return READ_ONLY.has(action)
-      ? await readAction(action, contentId, params, service)
-      : await writeAction(action, contentId, params, service, dataDir);
+    if (READ_ONLY.has(action)) return await readAction(action, contentId, params, service);
+    // 写动作先过令牌门（P6 §3.8）；认领归调用宿主时令牌随回执交回，下一次写要带上
+    const gate = await gateVideoWriteGrant(params, contentId, dataDir);
+    if ("denied" in gate) return gate.denied;
+    return { ...(await writeAction(action, contentId, params, service, dataDir)), ...gate.grant };
   } catch (err) {
     return videoError(err);
   }

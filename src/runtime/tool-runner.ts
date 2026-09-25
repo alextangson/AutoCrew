@@ -76,6 +76,9 @@ const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next)
       action: "check",
       content_id: contentId,
       _dataDir: ctx.dataDir,
+      // 预检会推状态，是写；带上发起宿主，别让宿主的发布被记成工作台越门
+      ...(typeof params._host === "string" ? { _host: params._host } : {}),
+      ...(typeof params.claim_token === "string" ? { claim_token: params.claim_token } : {}),
     });
     if (!("allPassed" in check)) {
       return {

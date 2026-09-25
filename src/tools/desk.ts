@@ -45,13 +45,18 @@ export const deskSchema = Type.Object({
     }),
   ),
   content_id: Type.Optional(Type.String({ description: "claim / release：稿件 id" })),
-  claim_token: Type.Optional(Type.String({ description: "release：claim 返回的令牌（对不上不给释放）" })),
+  claim_token: Type.Optional(
+    Type.String({ description: "claim：带上手里的令牌 = 续约；release：claim 返回的令牌（对不上不给释放）" }),
+  ),
+  takeover: Type.Optional(
+    Type.Boolean({ description: "claim：同宿主另一个会话认领着、你手里没它的令牌时，明确要接手才传 true（换新令牌并记交接）" }),
+  ),
 });
 
 export const DESK_DESCRIPTION = [
   "AutoCrew 待办桌：看自己这一岗有什么活、认领、干完释放。",
   "1) inbox{employee}：writer=已选立意卡还没稿的选题 + 退回修订的稿；cover=过审待做封面的稿（公众号稿在 approved、视频稿在成片审过之后、以及退回封面台的）；editor=在剪辑台且成片还没审过的稿。每项带 content_id/topic_id/title/platform/status/claim；写手那张桌上 content_id 为 null 的是「还没建稿」，用 autocrew_writer pack 领包就会建。",
-  "2) claim{content_id, employee}：认领，拿 claim_token（租约 30 分钟）。别的宿主还握着未过期的租约会被拒并告诉你持有者是谁；同一个宿主重复认领 = 续约、返回同一枚令牌。",
+  "2) claim{content_id, employee, claim_token?, takeover?}：认领，拿 claim_token（租约 30 分钟）。别的宿主还握着未过期的租约会被拒并告诉你持有者是谁；带着令牌重复认领 = 续约、返回同一枚令牌；同宿主不带令牌 = claim_held，除非 takeover:true。",
   "3) release{content_id, claim_token}：干完释放。忘了也不要紧——租约过期后别人可以接管，接管会记在交接台账里。",
   "纪律：认领之后的写操作（autocrew_writer submit / autocrew_cover_review 出图与批准 / autocrew_content update、transition）都带上 claim_token，那是防止两个宿主互相盖写的唯一凭据。",
 ].join("\n");
@@ -149,8 +154,13 @@ export async function executeDesk(params: Record<string, unknown>): Promise<Desk
       const contentId = str(params.content_id);
       if (!contentId) return fail("content_id 必填");
       if (!isClaimEmployee(employee)) return fail("employee 必填：writer | cover | editor");
-      const result = await claimContent(contentId, employee, host, dataDir);
-      if (!result.ok) return fail(result.error, result.holder ? { holder: result.holder } : {});
+      const result = await claimContent(contentId, employee, host, dataDir, {
+        token: str(params.claim_token) || undefined,
+        takeover: params.takeover === true,
+      });
+      if (!result.ok) {
+        return fail(result.error, { ...(result.code ? { code: result.code } : {}), ...(result.holder ? { holder: result.holder } : {}) });
+      }
       return {
         ok: true,
         content_id: contentId,

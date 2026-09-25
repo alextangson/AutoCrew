@@ -8,7 +8,7 @@ export const WRITING_INSTRUCTIONS = [
   "needs_angle 时，展示候选的不同主张、依据、缺口和推荐理由，让用户选择；推荐不等于代选。用户已经明确给出角度可用 direction，不能把风格要求当作选角度。",
   "选定后用 workflow select_angle，再按 prepare 返回的 next_action 领 writer pack。requirements 必须保留用户原话中的提纲、篇幅、口吻、必写和禁写。",
   "用户已提供足够材料时可明确 research_mode=provided 并传 research；用户明确无需调研时用 research_mode=skip 和 research_reason 原话。两者都不能冒充自动调研完成，不能为绕过失败自行选择 skip。",
-  "ready_to_write 后才领包，pack_status=ready 才动笔。writer pack 默认只整理已有材料，不读后台模型配置或自动补证；find_evidence 返回宿主补证指引。由你写，完整正文可放 body，hook/cta 可省略，不硬加反常识提问、数字或关注结尾。只用有依据的事实，不编造亲历。",
+  "ready_to_write 后才领包，pack_status=ready 才动笔。writer pack 默认只整理已有材料，不读后台模型配置或自动补证；find_evidence 返回宿主补证指引。由你写，完整正文可放 body，hook/cta 可省略，不硬加反常识提问、数字或关注结尾。只用有依据的事实，不编造亲历。pack（或对这篇的第一次写）会回 claim_token，之后对这篇的每次写（writer submit / find_evidence、review_desk submit、editorial feedback、带 content_id 补证的 scout cite / claim_offline、pre_publish video_kit、content update / transition）都要带上它；同宿主的另一个会话不带也会被拒（claim_held）。",
   "只走 writer submit 交生成稿，默认 review=host。awaiting_host_review 时用 autocrew_review_desk pack{content_id} 取审稿任务，实际审阅后 submit{content_id,review_pack_id,attempt,issues,audience?}；attempt 沿用写稿尝试。不能靠轮询等后台审稿。再用 writer submit_status 核对 saved、quality_status、needs_attention 和审稿来源。",
   "单宿主审稿必须如实报告 host_self_review / host_self_reviewed；另一宿主的审阅也不自动代表独立评审。语义审稿、作者认可、发布是不同的事。review=none 要报告未审；review=engine 仅在用户明确选择后台审稿时使用。",
   "受众点评随 submit/submit_status 的 audience_review 返回：有实际结果时说明各类读者的反应与具体流失位置；unavailable/skipped 时解释原因，不声称已验证受众。宿主模拟点评不是实际用户研究，产品不会悄悄用另一个模型重写正文。",

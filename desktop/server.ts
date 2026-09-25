@@ -40,6 +40,7 @@ import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
 import { handleMcpRequest, MCP_PROTOCOL_VERSION } from "../mcp/server.js";
+import { hostAuthorize } from "../mcp/host-policy.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
@@ -227,9 +228,11 @@ const server = http.createServer(async (req, res) => {
     let mcpDataDir: string;
     try { mcpDataDir = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { mcpDataDir = getDataDir(); }
     const host = identity?.subject ?? LOCAL_SUBJECT;
+    // 按宿主限权（P6 §3.4）：codex 剪辑工位只放行登记与只读查询，其余宿主不受限
     const response = await handleMcpRequest(request, {
       principal: { subject: host, plan: "local" },
       host,
+      authorize: hostAuthorize(host),
     }, mcpDataDir);
     if (!response) {
       res.writeHead(202, { "Cache-Control": "no-store" }).end();

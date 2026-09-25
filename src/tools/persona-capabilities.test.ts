@@ -21,6 +21,7 @@ import { registerAutocrewCapabilities } from "../../index.js";
 import { createContext } from "../runtime/context.js";
 import { EventBus } from "../runtime/events.js";
 import { ToolRunner } from "../runtime/tool-runner.js";
+import { CODEX_EDITOR_DENIED, hostPolicy } from "../../mcp/host-policy.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -131,6 +132,60 @@ describe("persona ↔ capability consistency", () => {
   it("names every host persona shipped for --dir", () => {
     for (const role of HOST_ROLES) {
       expect(() => readFileSync(path.join(REPO_ROOT, `adapters/codex/AGENTS.${role}.md`), "utf-8")).not.toThrow();
+    }
+  });
+});
+
+/**
+ * 服务端按宿主限权（P6 §3.4）：人设文本挡不住模型照调，这张表挡得住。
+ * 断言的是 `hostPolicy` 的放行结果，而不是人设里写了什么。
+ */
+describe("host policy: codex editing station is register/status + read-only", () => {
+  const TABLE: Array<[host: string, tool: string, action: string | undefined, allowed: boolean]> = [
+    ["codex", "autocrew_video", "register", true],
+    ["codex", "autocrew_video", "status", true],
+    ["codex", "autocrew_video", "revoke", true],
+    ["codex", "autocrew_video", "handoff", false],
+    ["codex", "autocrew_video", "start", false],
+    ["codex", "autocrew_video", "review", false],
+    ["codex", "autocrew_content", "get", true],
+    ["codex", "autocrew_content", "save", false],
+    ["codex", "autocrew_content", "transition", false],
+    ["codex", "autocrew_desk", "inbox", true],
+    ["codex", "autocrew_desk", "claim", true],
+    ["codex", "autocrew_desk", "release", true],
+    ["codex", "autocrew_status", undefined, true],
+    ["codex", "autocrew_status", "overview", true],
+    ["codex", "autocrew_writer", "submit", false],
+    ["codex", "autocrew_review_desk", "submit", false],
+    ["codex", "autocrew_editorial", "feedback", false],
+    ["codex", "autocrew_pre_publish", "check", false],
+    ["codex", "autocrew_publish", "publish", false],
+    ["codex", "autocrew_cover_review", "approve", false],
+    ["claude-code", "autocrew_writer", "submit", true],
+    ["claude-code", "autocrew_video", "handoff", true],
+    ["dsh", "autocrew_writer", "pack", true],
+    ["local-user", "autocrew_publish", "publish", true],
+  ];
+
+  it.each(TABLE)("%s · %s %s → allowed=%s", (host, tool, action, allowed) => {
+    const decision = hostPolicy(host, tool, action === undefined ? {} : { action });
+    expect(decision.ok).toBe(allowed);
+    if (!decision.ok) expect(decision.error).toBe(CODEX_EDITOR_DENIED);
+  });
+
+  it("action 带空白照样按原词判；缺 action 的受限工具一律拒", () => {
+    expect(hostPolicy("codex", "autocrew_video", { action: " register " }).ok).toBe(true);
+    expect(hostPolicy("codex", "autocrew_video", {}).ok).toBe(false);
+    expect(hostPolicy("codex", "autocrew_content", { action: 1 }).ok).toBe(false);
+  });
+
+  it("剪辑工位人设点名的每个工具动作，服务端都放行（人设不许许诺被拒的能力）", () => {
+    const text = personaBody("adapters/codex/AGENTS.editor.md");
+    const calls = [...text.matchAll(/(autocrew_[a-z_]+)\s*\{action:"([a-z_]+)"/g)].map((m) => [m[1], m[2]] as const);
+    expect(text).toContain("`autocrew_video register`");
+    for (const [tool, action] of [...calls, ["autocrew_video", "register"] as const]) {
+      expect(hostPolicy("codex", tool, { action }).ok, `${tool} ${action}`).toBe(true);
     }
   });
 });

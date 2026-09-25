@@ -39,7 +39,7 @@ export interface StageGuardSubject {
 /**
  * 返回人话拒绝原因；`null` = 这一步阶段门放行。
  *
- * `coverApproved` 是懒的：只有走到「封面设计 → 待发布」那一条才会真去读评审单。
+ * `coverApproved` 是懒的：只有走到「封面设计 / 剪辑 → 待发布」那两条才会真去读评审单。
  */
 export async function stageGuardError(
   subject: StageGuardSubject,
@@ -52,10 +52,12 @@ export async function stageGuardError(
   if (to === "editing" && !video) {
     return "剪辑阶段只属于视频平台稿件";
   }
-  // 不变量写目标不写来路：视频稿进「待发布」只有封面台一个入口。只挡 approved 一条边
-  // 挡不住看板从「待审」直拖到「待发布」——force 越得过形状，但阶段是产品事实
+  // 不变量写目标不写来路：视频稿进「待发布」只有两个入口——封面台，或剪辑工位登记
+  // （P6 §3.4：成片戳与封面定稿同一次登记落盘，`editing → publish_ready` 两样都在才放行）。
+  // 只挡 approved 一条边挡不住看板从「待审」直拖到「待发布」——force 越得过形状，但阶段是产品事实
   if (video && to === "publish_ready" && from !== "cover_pending") {
-    return "视频稿要先过剪辑与封面（推进到剪辑）";
+    const registered = from === "editing" && Boolean(subject.videoDone) && (await coverApproved());
+    if (!registered) return "视频稿要先过剪辑与封面（推进到剪辑）";
   }
   if (from === "editing" && to === "cover_pending" && !subject.videoDone) {
     return "成片还没审通过——先在剪辑台把片子审过，再推进到封面";

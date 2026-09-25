@@ -42,7 +42,10 @@ describe("existing draft revision pack", () => {
   it("associates one revision topic across concurrent packs and preserves original text", async () => {
     const saved = await draft();
     const results = await Promise.all([run({ action: "pack", content_id: saved.id, force: true }), run({ action: "pack", content_id: saved.id, force: true })]);
-    expect(results).toEqual([expect.objectContaining({ ok: true, content_id: saved.id }), expect.objectContaining({ ok: true, content_id: saved.id })]);
+    // 同宿主两个会话并发领包（P6 §3.8）：先到的认领并拿到令牌，后到的没令牌 → claim_held，不另建选题
+    const winner = results.find((r) => r.ok === true) as Record<string, unknown>;
+    expect(winner).toMatchObject({ content_id: saved.id, claim_token: expect.stringMatching(/^clm-/) });
+    expect(results.filter((r) => r.ok === false)).toEqual([expect.objectContaining({ code: "claim_held" })]);
     await packPreparation(saved.id);
     const content = await getContent(saved.id, dir);
     const topics = await listTopics(dir);
@@ -52,12 +55,12 @@ describe("existing draft revision pack", () => {
     const pack = await readPack(saved.id, dir);
     expect(pack).toMatchObject({ state: "ready", context: { req: { researchMode: "provided" } } });
     expect(pack?.ledger.entries).toEqual(expect.arrayContaining([expect.objectContaining({ source: "user_claim", quote: expect.stringContaining(saved.body) })]));
-    const retried = await run({ action: "pack", content_id: saved.id });
+    const retried = await run({ action: "pack", content_id: saved.id, claim_token: winner.claim_token });
     expect(retried).toMatchObject({ ok: true, pack_id: pack?.packId });
     expect(await listTopics(dir)).toHaveLength(1);
     const another = await saveTopic({ title: "不相关选题", description: "不要换题", tags: [] }, dir);
     const beforeMismatch = await getContent(saved.id, dir);
-    expect(await run({ action: "pack", content_id: saved.id, topic_id: another.id, force: true })).toMatchObject({ ok: false });
+    expect(await run({ action: "pack", content_id: saved.id, topic_id: another.id, force: true, claim_token: winner.claim_token })).toMatchObject({ ok: false });
     expect(await getContent(saved.id, dir)).toEqual(beforeMismatch);
   });
 
@@ -70,7 +73,7 @@ describe("existing draft revision pack", () => {
     expect(await listTopics(dir)).toHaveLength(1);
     expect((await getContent(saved.id, dir))?.topicId).toBe(topic.id);
     expect((await getTopic(topic.id, dir))?.title).toBe(topic.title);
-    const second = await run({ action: "pack", content_id: saved.id, force: true });
+    const second = await run({ action: "pack", content_id: saved.id, force: true, claim_token: first.claim_token });
     expect(second).toMatchObject({ ok: true });
     await packPreparation(saved.id);
     expect(await readPack(saved.id, dir)).toMatchObject({ context: { req: { direction: "从公告板进入", requirements: "保留公告板这个场景", research: saved.body } } });
@@ -79,13 +82,14 @@ describe("existing draft revision pack", () => {
   it("asks for missing platform without inventing one, then supports the explicit platform", async () => {
     const saved = await draft({ platform: undefined });
     const inspected = await executeEditorial({ action: "inspect", content_id: saved.id, _dataDir: dir });
-    const feedback = { action: "feedback", content_id: saved.id, draft_hash: inspected.draft_hash, event_id: "legacy-feedback", feedback: "把轮班表写具体", user_confirmed: true, _dataDir: dir };
+    // 记反馈也是写（P6 §3.8）：同一宿主记反馈时顺手认领，接着重领包带它回的令牌
+    const feedback = { action: "feedback", content_id: saved.id, draft_hash: inspected.draft_hash, event_id: "legacy-feedback", feedback: "把轮班表写具体", user_confirmed: true, _dataDir: dir, _host: "claude-test" };
     const captured = await executeEditorial(feedback);
-    expect(captured).toMatchObject({ ok: true, next_action: { required_input: "platform", params: { research_mode: "provided", research: expect.stringContaining(saved.body) } } });
+    expect(captured).toMatchObject({ ok: true, claim_token: expect.stringMatching(/^clm-/), next_action: { required_input: "platform", params: { research_mode: "provided", research: expect.stringContaining(saved.body) } } });
     const next = captured.next_action as { params: Record<string, unknown> };
     expect(await run(next.params)).toMatchObject({ ok: false, code: "needs_platform" });
     expect(await listTopics(dir)).toHaveLength(0);
-    expect(await run({ ...next.params, platform: "douyin" })).toMatchObject({ ok: true, content_id: saved.id });
+    expect(await run({ ...next.params, platform: "douyin", claim_token: captured.claim_token })).toMatchObject({ ok: true, content_id: saved.id });
     await packPreparation(saved.id);
     const ready = await run({ action: "pack_status", content_id: saved.id });
     expect(ready).toMatchObject({ status: "ready", pack_md: expect.stringContaining("把轮班表写具体") });
