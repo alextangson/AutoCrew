@@ -8,6 +8,7 @@
  * 只按宿主名判：MCP 层看得到的身份就是命名 token 的主体，看不到它此刻「扮演」哪个岗位。
  */
 import type { McpAccessContext, McpPrincipal } from "./access.js";
+import { LOCAL_HOST } from "../src/storage/local-store.js";
 
 export type PolicyDecision = { ok: true } | { ok: false; error: string };
 
@@ -39,4 +40,37 @@ export function hostPolicy(host: string, tool: string, args: Record<string, unkn
 /** 接到 `McpAccessContext.authorize` 上：宿主名就是命名 token 的主体 */
 export function hostAuthorize(host: string): NonNullable<McpAccessContext["authorize"]> {
   return async (_principal: McpPrincipal, tool: string, args: Record<string, unknown>) => hostPolicy(host, tool, args);
+}
+
+/**
+ * 工具表面瘦身（P6 §3.7）：宿主会话默认不列的工具——老的一步生成/改写/润色线与低频管理面。
+ * 只是不列：注册表不动，工作台/CLI/dsh 照样全有；宿主硬调照样执行，回执多一句 `host_note`。
+ */
+export const HOST_HIDDEN_TOOLS: ReadonlySet<string> = new Set([
+  "autocrew_generate",
+  "autocrew_rewrite",
+  "autocrew_revise",
+  "autocrew_humanize",
+  "autocrew_style",
+  "autocrew_memory",
+  "autocrew_flywheel",
+  "autocrew_pro_status",
+  "autocrew_init",
+]);
+
+/**
+ * `tools/list` 按宿主过滤：`local-user`（工作台、老 token）全列；命名宿主去掉隐藏工具；
+ * 有白名单的宿主（codex）只列它调得动的——列出来却一调就拒，等于白占上下文还诱导它去调。
+ */
+export function hostListsTool(host: string, tool: string): boolean {
+  if (host === LOCAL_HOST) return true;
+  if (HOST_HIDDEN_TOOLS.has(tool)) return false;
+  const allowlist = HOST_ALLOWLISTS[host];
+  return !allowlist || Object.hasOwn(allowlist, tool);
+}
+
+/** 宿主硬调了一个不列的工具：照常执行，回执带这一句，让它知道主路不在这儿 */
+export function hiddenToolNote(host: string, tool: string): string | undefined {
+  if (host === LOCAL_HOST || !HOST_HIDDEN_TOOLS.has(tool)) return undefined;
+  return `${tool} 不在宿主工具清单里（留给工作台/CLI）；本次照常执行，写稿主路走 autocrew_workflow → autocrew_writer`;
 }

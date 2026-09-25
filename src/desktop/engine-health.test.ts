@@ -13,6 +13,7 @@ import {
   getEngineHealth,
   loadHealthState,
   initEngineHealth,
+  recordFallbackCount,
   probeAllProviders,
   recordLiveResult,
   recordProbeResult,
@@ -121,6 +122,31 @@ describe("落盘与更新", () => {
     const state = { providers: { x: { probe: { at: "2026-09-05T01:00:00.000Z", ok: false, ms: 20000, error: "超时" }, live: null } } };
     await saveHealthState(state, dir);
     expect(await loadHealthState(dir)).toEqual(state);
+  });
+});
+
+describe("回退计数（P6 §3.9）", () => {
+  it("fallbacks 进 engine-health.json：备用接手记 count、熔断跳过记 skipped，重启读得回来，别的写入不冲掉它", async () => {
+    await recordFallbackCount({ from: "newcli", to: "deepseek", reason: "429", skipped: false }, dir);
+    await recordFallbackCount({ from: "newcli", to: "deepseek", reason: "熔断", skipped: true }, dir);
+    await recordFallbackCount({ from: "deepseek", to: "none", reason: "熔断", skipped: true }, dir);
+    await recordLiveResult({ providerId: "newcli", ok: false, role: "writer", error: "fetch failed", lineFault: true }, dir);
+
+    resetEngineHealth();
+    const state = await loadHealthState(dir);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(state.fallbacks).toEqual({ day: today, count: 2, skipped: 2 });
+    expect(state.providers.newcli?.live).toMatchObject({ ok: false, lineFault: true });
+  });
+
+  it("跨日归零；坏的计数当没有", async () => {
+    await saveHealthState({ providers: {}, fallbacks: { day: "2026-01-01", count: 9, skipped: 9 } }, dir);
+    resetEngineHealth();
+    await recordFallbackCount({ from: "a", to: "b", reason: "x", skipped: false }, dir);
+    expect((await loadHealthState(dir)).fallbacks).toMatchObject({ count: 1, skipped: 0 });
+
+    await fs.writeFile(path.join(dir, "engine-health.json"), JSON.stringify({ providers: {}, fallbacks: { day: 1 } }), "utf-8");
+    expect(await loadHealthState(dir)).toEqual({ providers: {} });
   });
 });
 

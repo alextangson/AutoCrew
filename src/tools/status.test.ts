@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { executeStatus } from "./status.js";
+import { appendRunLog } from "../runtime/run-log.js";
 import {
   approveCoverVariant,
   saveContent,
@@ -103,5 +104,28 @@ describe("autocrew_status brief", () => {
     const r = await executeStatus({ _dataDir: dir });
     expect(r).toMatchObject({ ok: true, action: "overview", contents: 1, contentsByStatus: { publish_ready: 1 } });
     expect(r).not.toHaveProperty("brief");
+  });
+});
+
+describe("autocrew_status overview：引擎回退可见（P6 §3.9）", () => {
+  const base = { runId: "run-eng-1", durationMs: 1, input: "", output: "" };
+
+  it("没有引擎调用：回退率是 null（0/0 不是 0%），跳过 0", async () => {
+    const r = await executeStatus({ _dataDir: dir });
+    expect(r).toMatchObject({ engine: { fallback_rate_24h: null, skipped_24h: 0, calls_24h: 0 } });
+  });
+
+  it("24 h 回退率 = 备用顶上的成功调用 / 成功调用；熔断跳过单独计；24 h 前的不算", async () => {
+    for (let i = 0; i < 3; i++) await appendRunLog(dir, { ...base, kind: "llm", name: "m", ok: true });
+    await appendRunLog(dir, { ...base, kind: "llm", name: "m", ok: false, error: "429" }); // 被救回来的主端点失败：不进分母
+    await appendRunLog(dir, { ...base, kind: "fallback", name: "fallback", from: "newcli", to: "deepseek", reason: "429", ok: true });
+    await appendRunLog(dir, { ...base, kind: "fallback", name: "fallback", from: "newcli", to: "none", reason: "熔断", skipped: true, ok: false });
+    // 两天前的一条（直接写进前天的文件）：窗口外
+    const old = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const oldFile = path.join(dir, "logs", "runs", `${old.slice(0, 10)}.jsonl`);
+    await fs.writeFile(oldFile, `${JSON.stringify({ ...base, ts: old, seq: 1, kind: "fallback", name: "fallback", from: "a", to: "b", reason: "x", skipped: true, ok: true })}\n`);
+
+    const r = await executeStatus({ _dataDir: dir });
+    expect(r).toMatchObject({ engine: { fallback_rate_24h: 0.333, skipped_24h: 1, calls_24h: 3 } });
   });
 });

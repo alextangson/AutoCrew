@@ -15,7 +15,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { hostOf, loadEngineConfig, type EngineConfig } from "../engine/config.js";
-import { setEngineHealthSink, type EngineLiveRecord } from "../engine/health-sink.js";
+import { setEngineFallbackSink, setEngineHealthSink, type EngineFallbackRecord, type EngineLiveRecord } from "../engine/health-sink.js";
 import { probeEngineRoute } from "../engine/probe.js";
 import { describeEngineFailure, describeProbeFailure, isEngineFailure, type FailureRole } from "../engine/failure-text.js";
 import { classifyEngineError } from "../engine/error-kind.js";
@@ -39,10 +39,28 @@ export interface LiveHealth {
   role: string;
   jobId?: string;
   error?: string;
+  /** 失败是不是线路级的（P6 §3.9 熔断只认线路级；false = 请求本身的错，线路是通的） */
+  lineFault?: boolean;
+}
+
+/** 当日回退计数（P6 §3.9）：跨日归零；逐条明细与 24 h 回退率看 run-log 的 fallback 记录 */
+export interface FallbackCounter {
+  /** UTC 日期 YYYY-MM-DD（与 run-log 文件名同一口径） */
+  day: string;
+  /** 备用端点接手的次数 */
+  count: number;
+  /** 熔断跳过的端点次数 */
+  skipped: number;
 }
 
 export interface EngineHealthState {
   providers: Record<string, { probe?: ProbeHealth | null; live?: LiveHealth | null }>;
+  fallbacks?: FallbackCounter;
+}
+
+function isFallbackCounter(value: unknown): value is FallbackCounter {
+  const v = value as FallbackCounter | null;
+  return Boolean(v) && typeof v?.day === "string" && Number.isFinite(v?.count) && Number.isFinite(v?.skipped);
 }
 
 export const EMPTY_HEALTH: EngineHealthState = { providers: {} };
@@ -56,7 +74,7 @@ export async function loadHealthState(dataDir?: string): Promise<EngineHealthSta
     if (!parsed || typeof parsed !== "object" || typeof parsed.providers !== "object" || !parsed.providers) {
       return { providers: {} };
     }
-    return { providers: parsed.providers };
+    return { providers: parsed.providers, ...(isFallbackCounter(parsed.fallbacks) ? { fallbacks: parsed.fallbacks } : {}) };
   } catch {
     return { providers: {} };
   }
@@ -148,6 +166,20 @@ export async function recordLiveResult(record: EngineLiveRecord, dataDir?: strin
     role: record.role,
     ...(record.jobId ? { jobId: record.jobId } : {}),
     ...(record.error ? { error: await liveErrorText(record, dataDir) } : {}),
+    ...(record.lineFault !== undefined ? { lineFault: record.lineFault } : {}),
+  };
+  await commit(state, dataDir);
+}
+
+/** 一次回退/熔断跳过进当日计数：备用接手记 count，熔断跳过记 skipped（同一次可以两样都记） */
+export async function recordFallbackCount(record: EngineFallbackRecord, dataDir?: string): Promise<void> {
+  const state = await stateFor(dataDir);
+  const day = new Date().toISOString().slice(0, 10);
+  const counter = state.fallbacks?.day === day ? state.fallbacks : { day, count: 0, skipped: 0 };
+  state.fallbacks = {
+    day,
+    count: counter.count + (record.to !== "none" ? 1 : 0),
+    skipped: counter.skipped + (record.skipped ? 1 : 0),
   };
   await commit(state, dataDir);
 }
@@ -257,6 +289,9 @@ export function initEngineHealth(dataDir?: string): () => void {
   setEngineHealthSink((record) => {
     void recordLiveResult(record, dataDir).catch(() => {});
   });
+  setEngineFallbackSink((record) => {
+    void recordFallbackCount(record, dataDir).catch(() => {});
+  });
   const off = onEngineSettingsChanged(({ changedProviderIds }) => {
     // 指针（主端点/备用/岗位）改了但端点没变：不用重探，但横幅读的 main/fallback/assignments
     // 已经不一样了——真机复盘 2026-09-05：配上备用后横幅仍说「没有备用端点」，就是漏了这一广播
@@ -266,6 +301,7 @@ export function initEngineHealth(dataDir?: string): () => void {
   return () => {
     off();
     setEngineHealthSink(undefined);
+    setEngineFallbackSink(undefined);
   };
 }
 

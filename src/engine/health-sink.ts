@@ -18,11 +18,30 @@ export interface EngineLiveRecord {
   jobId?: string;
   /** 失败原因原文（翻译在消费侧做——引擎层不认识 UI 的口径） */
   error?: string;
+  /**
+   * 仅失败时有：是不是线路级故障（P6 §3.9 熔断只认这种）。false = 请求本身的错
+   * （400 内容过滤/超长、404 模型名），线路是通的，不该连坐同一条线上的别的调用。
+   */
+  lineFault?: boolean;
 }
 
 export type EngineHealthSink = (record: EngineLiveRecord) => void;
 
+/**
+ * 一次回退或熔断跳过（P6 §3.9）：装配方据此给 `engine-health.json` 的 `fallbacks` 计数。
+ * `to:"none"` = 没有端点接手；`skipped` = 熔断跳过、没发请求。逐条明细在 run-log。
+ */
+export interface EngineFallbackRecord {
+  from: string;
+  to: string;
+  reason: string;
+  skipped: boolean;
+}
+
+export type EngineFallbackSink = (record: EngineFallbackRecord) => void;
+
 let sink: EngineHealthSink | undefined;
+let fallbackSink: EngineFallbackSink | undefined;
 
 /** 装配口：传 undefined 卸载（测试收尾用） */
 export function setEngineHealthSink(next?: EngineHealthSink): void {
@@ -33,6 +52,20 @@ export function recordEngineLive(record: EngineLiveRecord): void {
   if (!sink) return;
   try {
     sink(record);
+  } catch {
+    /* 观测层不得破坏执行层 */
+  }
+}
+
+/** 装配口（回退计数）：传 undefined 卸载 */
+export function setEngineFallbackSink(next?: EngineFallbackSink): void {
+  fallbackSink = next;
+}
+
+export function recordEngineFallback(record: EngineFallbackRecord): void {
+  if (!fallbackSink) return;
+  try {
+    fallbackSink(record);
   } catch {
     /* 观测层不得破坏执行层 */
   }

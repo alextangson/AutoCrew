@@ -15,9 +15,11 @@ import { ToolRunner } from "../src/runtime/tool-runner.js";
 import { EventBus } from "../src/runtime/events.js";
 import { HookManager } from "../src/runtime/hooks.js";
 import { toLosslessJson } from "../src/utils/lossless-json.js";
+import { withCallerSession } from "../src/runtime/run-log.js";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { McpAccessContext } from "./access.js";
+import { hiddenToolNote, hostListsTool } from "./host-policy.js";
 
 // --- Initialize Runtime ---
 
@@ -41,6 +43,21 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2025-03-26", "2025-06-18", "2025-1
 /** 宿主归因参数名：服务端注入，客户端传的同名值一律丢弃。 */
 export const HOST_PARAM = "_host";
 export const DEFAULT_HOST = "local-user";
+/** 会话归因参数名（P6 §3.8）：同 `_host`，服务端注入，客户端传的同名值一律丢弃 */
+export const SESSION_PARAM = "_session";
+export const UNKNOWN_SESSION = "unknown";
+const SESSION_RE = /^[A-Za-z0-9._:-]{1,80}$/;
+
+/**
+ * `X-AutoCrew-Session` 头 → 会话 nonce。这是系统边界上的外来值：会落进稿件 JSON 与 run-log，
+ * 所以只收短的安全字符；缺失或不像样一律 `unknown`（它只做诊断，认不出不该拦请求）。
+ */
+export function normalizeSession(raw: unknown): string {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== "string") return UNKNOWN_SESSION;
+  const trimmed = value.trim();
+  return SESSION_RE.test(trimmed) ? trimmed : UNKNOWN_SESSION;
+}
 const PROMPTS = [
   { name: "write_content", title: "准备一篇内容", description: "从写作需求开始，检查材料、推荐立意，再由当前模型写稿", argument: "requirements" },
   { name: "write_wechat", title: "写公众号文章", description: "从明确选题生成公众号原生稿", argument: "topic" },
@@ -129,6 +146,56 @@ function errorResponse(id: unknown, code: number, message: string) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
+/** 记一次用量（商业化计费口）：成败都记，失败不许让计费漏掉 */
+async function recordUsage(access: McpAccessContext | undefined, tool: string, ok: boolean, startedAt: number): Promise<void> {
+  await access?.recordUsage?.({
+    subject: access.principal.subject,
+    workspaceId: access.principal.workspaceId,
+    tool,
+    ok,
+    durationMs: Date.now() - startedAt,
+    occurredAt: new Date().toISOString(),
+  });
+}
+
+/** `tools/call`：注入归因参数 → 按宿主限权 → 在会话上下文里执行 */
+async function callTool(
+  id: unknown,
+  params: Record<string, unknown> | undefined,
+  access: McpAccessContext | undefined,
+  runtime: ReturnType<typeof runtimeFor>,
+): Promise<Record<string, unknown>> {
+  const toolName = String(params?.name ?? "");
+  const rawArgs = params?.arguments && typeof params.arguments === "object" ? params.arguments as Record<string, unknown> : {};
+  // 宿主归因（§4.1）：客户端自报的 `_host` 一律丢弃，只认认证时定下的主体；
+  // 会话归因（P6 §3.8）同一条规矩，`_session` 只认传输层带来的那个。
+  const host = access?.host ?? DEFAULT_HOST;
+  const session = access?.session ?? UNKNOWN_SESSION;
+  const toolArgs: Record<string, unknown> = { ...rawArgs, [HOST_PARAM]: host, [SESSION_PARAM]: session };
+  if (!runtime.runner.getTool(toolName)) return errorResponse(id, -32601, `Unknown tool: ${toolName}`);
+  if (access?.authorize) {
+    const permission = await access.authorize(access.principal, toolName, toolArgs);
+    if (!permission.ok) return resultResponse(id, { content: [{ type: "text", text: permission.error }], isError: true });
+  }
+  const startedAt = Date.now();
+  try {
+    // 会话挂在这次调用的异步上下文上：run-log 与认领/交接账顺手记上它，不经参数层层传
+    const executed = await withCallerSession(session, () => runtime.runner.execute(toolName, toolArgs));
+    const note = hiddenToolNote(host, toolName);
+    const result = note ? { ...executed, host_note: note } : executed;
+    await recordUsage(access, toolName, result.ok !== false, startedAt);
+    const lossless = toLosslessJson(result);
+    return resultResponse(id, {
+      content: [{ type: "text", text: JSON.stringify(lossless, null, 2) }],
+      structuredContent: lossless,
+      ...(result.ok === false ? { isError: true } : {}),
+    });
+  } catch (err) {
+    await recordUsage(access, toolName, false, startedAt);
+    return resultResponse(id, { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true });
+  }
+}
+
 /** 纯 JSON-RPC 处理器：stdio 与 Streamable HTTP 共用，避免协议能力再次漂移。 */
 export async function handleMcpRequest(req: McpRequest, access?: McpAccessContext, dataDir?: string): Promise<Record<string, unknown> | null> {
   const { id, method, params } = req;
@@ -149,11 +216,12 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
   }
   if (method === "ping") return resultResponse(id, {});
   if (method === "tools/list") {
+    // 按宿主过滤（P6 §3.7）：只减 Claude/Codex 会话的上下文，注册表与 tools/call 一个不动
+    const host = access?.host ?? DEFAULT_HOST;
+    const listed = runtime.runner.getTools().filter((tool) => hostListsTool(host, tool.name));
     return resultResponse(id, {
       // TypeBox schema 上挂着 own symbol，直接吐出去在传输里会静默丢字段——先过 lossless。
-      tools: toLosslessJson(
-        runtime.runner.getTools().map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters })),
-      ),
+      tools: toLosslessJson(listed.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters }))),
     });
   }
   if (method === "resources/list") {
@@ -194,49 +262,7 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
       ? resultResponse(id, { description: PROMPTS.find((prompt) => prompt.name === name)?.description ?? name, messages })
       : errorResponse(id, -32602, `Unknown prompt: ${name}`);
   }
-  if (method === "tools/call") {
-    const toolName = String(params?.name ?? "");
-    const rawArgs = params?.arguments && typeof params.arguments === "object" ? params.arguments as Record<string, unknown> : {};
-    // 宿主归因（§4.1）：客户端自报的 `_host` 一律丢弃，只认认证时定下的主体。
-    const toolArgs: Record<string, unknown> = { ...rawArgs, [HOST_PARAM]: access?.host ?? DEFAULT_HOST };
-    if (!runtime.runner.getTool(toolName)) return errorResponse(id, -32601, `Unknown tool: ${toolName}`);
-    if (access?.authorize) {
-      const permission = await access.authorize(access.principal, toolName, toolArgs);
-      if (!permission.ok) return resultResponse(id, {
-        content: [{ type: "text", text: permission.error }],
-        isError: true,
-      });
-    }
-    const startedAt = Date.now();
-    try {
-      const result = await runtime.runner.execute(toolName, toolArgs);
-      await access?.recordUsage?.({
-        subject: access.principal.subject,
-        workspaceId: access.principal.workspaceId,
-        tool: toolName,
-        ok: result.ok !== false,
-        durationMs: Date.now() - startedAt,
-        occurredAt: new Date().toISOString(),
-      });
-      const lossless = toLosslessJson(result);
-      return resultResponse(id, {
-        content: [{ type: "text", text: JSON.stringify(lossless, null, 2) }],
-        structuredContent: lossless,
-        ...(result.ok === false ? { isError: true } : {}),
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await access?.recordUsage?.({
-        subject: access.principal.subject,
-        workspaceId: access.principal.workspaceId,
-        tool: toolName,
-        ok: false,
-        durationMs: Date.now() - startedAt,
-        occurredAt: new Date().toISOString(),
-      });
-      return resultResponse(id, { content: [{ type: "text", text: `Error: ${message}` }], isError: true });
-    }
-  }
+  if (method === "tools/call") return callTool(id, params, access, runtime);
   return id === undefined ? null : errorResponse(id, -32601, `Method not found: ${method}`);
 }
 

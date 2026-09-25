@@ -25,6 +25,7 @@ import {
   type ContentClaim,
   type ContentHandoff,
 } from "./local-store.js";
+import { callerSession } from "../runtime/run-log.js";
 
 /** 租约 30 分钟（§6.1 创始人裁决 4）。视频线的 runner 租约是 10 分钟，两条线各按各的节奏 */
 export const CLAIM_LEASE_MS = 30 * 60_000;
@@ -120,6 +121,15 @@ interface ClaimWrite {
   handoff?: Omit<ContentHandoff, "at">;
 }
 
+/**
+ * 会话归因（P6 §3.8，只做诊断）：这次 MCP 调用带来的会话 nonce 记到认领与交接账上。
+ * 不在 MCP 调用里（工作台、后台任务）就什么都不加——没有会话不等于「unknown 会话」。
+ */
+function withSession<T extends object>(entry: T): T & { session?: string } {
+  const session = callerSession();
+  return session ? { ...entry, session } : entry;
+}
+
 /** 租约过期后被别的宿主拿走：账上记一条，稿卡才说得出「租约过期，Codex 接管」 */
 function expiredTakeover(content: Content, current: ContentClaim | null, host: string): Omit<ContentHandoff, "at"> | null {
   const previous = content.claim?.host;
@@ -137,15 +147,15 @@ async function writeClaim(
   const current = activeClaim(content, now);
   const kept = write.renew ? current : null;
   const at = new Date(now).toISOString();
-  const claim: ContentClaim = {
+  const claim: ContentClaim = withSession({
     employee: write.employee,
     host: write.host,
     token: kept ? kept.token : newClaimToken(),
     at: kept ? kept.at : at,
     leaseUntil: leaseUntil(now),
-  };
+  });
   const handoff = write.handoff ?? expiredTakeover(content, current, write.host);
-  const handoffs = handoff ? withHandoff(content, { ...handoff, at }) : undefined;
+  const handoffs = handoff ? withHandoff(content, withSession({ ...handoff, at })) : undefined;
   await updateContent(content.id, { claim, ...(handoffs ? { handoffs } : {}) }, dataDir);
   return claim;
 }
@@ -274,14 +284,14 @@ export async function ensureClaim(
   const now = Date.now();
   const current = activeClaim(content, now);
   if (current && gate.override) {
-    const handoffs = withHandoff(content, {
+    const handoffs = withHandoff(content, withSession({
       from: current.host,
       to: input.host,
       by: input.host,
       at: new Date(now).toISOString(),
       note: "工作台越过认领",
       override: true,
-    });
+    }));
     await updateContent(content.id, { handoffs }, dataDir);
     return { ok: true, claim: current, override: true };
   }

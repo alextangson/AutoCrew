@@ -4,6 +4,7 @@ import { isVideoPlatform } from "../storage/stage-guard.js";
 import { deskInbox } from "./desk.js";
 import { buildBaseline, compareToBaseline, trackPerformance } from "../modules/analytics/quality-baseline.js";
 import { generateLearningReport } from "../modules/learnings/visible-learning.js";
+import { engineFallbackStats } from "../runtime/run-log.js";
 
 export const statusSchema = Type.Object({
   action: Type.Optional(Type.Unsafe<"overview" | "baseline" | "compare" | "track_performance" | "learning_report">({
@@ -55,8 +56,7 @@ export async function executeStatus(params: Record<string, unknown>) {
 
   // Default: overview
   if (params.brief === true) return briefStatus(dataDir);
-  const topics = await listTopics(dataDir);
-  const contents = await listContents(dataDir);
+  const [topics, contents, engine] = await Promise.all([listTopics(dataDir), listContents(dataDir), engineFallbackStats(dataDir)]);
 
   const byStatus: Record<string, number> = {};
   for (const c of contents) {
@@ -72,6 +72,8 @@ export async function executeStatus(params: Record<string, unknown>) {
     contentsByStatus: byStatus,
     latestTopic: topics[0]?.title || null,
     latestContent: contents[0]?.title || null,
+    // 引擎回退可见（P6 §3.9）：24 h 内备用顶上的占比与熔断跳过次数，读 run-log 现算
+    engine,
   };
 }
 

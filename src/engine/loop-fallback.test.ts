@@ -120,7 +120,12 @@ describe("主端点烧完 → 备用顶上", () => {
     expect((events[0] as { error: string }).error).toMatch(/429/);
 
     await new Promise((r) => setTimeout(r, 60));
-    const records = await readRun(dir, "run-fb-ok");
+    const all = await readRun(dir, "run-fb-ok");
+    // P6 §3.9：换线本身也是一条 kind:"fallback"（从哪条线到哪条线、为什么）
+    expect(all.filter((r) => r.kind === "fallback")).toEqual([
+      expect.objectContaining({ from: "main", to: "fallback", ok: true, reason: expect.stringMatching(/429/) }),
+    ]);
+    const records = all.filter((r) => r.kind === "llm");
     // 红线之二：run-log 两端都留痕——失败的主调用不许被成功的备用调用盖掉
     expect(records.map((r) => ({ name: r.name, ok: r.ok }))).toEqual([
       { name: "main-fast", ok: false },
@@ -254,7 +259,10 @@ describe("两端都倒", () => {
     expect(legs.fallback).toBe(2); // 备用只给一次重试机会
 
     await new Promise((r) => setTimeout(r, 60));
-    const records = await readRun(dir, "run-fb-both");
+    const all = await readRun(dir, "run-fb-both");
+    // 备用也倒了：换线记录照样有，ok:false
+    expect(all.filter((r) => r.kind === "fallback")).toEqual([expect.objectContaining({ from: "main", to: "fallback", ok: false })]);
+    const records = all.filter((r) => r.kind === "llm");
     expect(records).toHaveLength(1);
     expect(records[0].ok).toBe(false);
     expect(records[0].error).toMatch(/主端点/);

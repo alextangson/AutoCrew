@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { handleMcpRequest, runner, DEFAULT_HOST, HOST_PARAM } from "./server.js";
-import { CODEX_EDITOR_DENIED, hostAuthorize } from "./host-policy.js";
+import { handleMcpRequest, normalizeSession, runner, DEFAULT_HOST, HOST_PARAM, SESSION_PARAM, UNKNOWN_SESSION } from "./server.js";
+import { CODEX_EDITOR_DENIED, HOST_HIDDEN_TOOLS, hostAuthorize, hostPolicy } from "./host-policy.js";
 
 const LOCAL: { principal: { subject: string; plan: "local" }; host: string } = {
   principal: { subject: DEFAULT_HOST, plan: "local" },
@@ -194,5 +194,83 @@ describe("desk resource (P3 §6.1)", () => {
       LOCAL,
     );
     expect(response?.error).toMatchObject({ code: -32002 });
+  });
+});
+
+/** 以某宿主身份发请求（带上 desktop/server.ts 生产上挂的那个 authorize） */
+function as(host: string, session?: string) {
+  return { principal: { subject: host, plan: "local" as const }, host, authorize: hostAuthorize(host), ...(session ? { session } : {}) };
+}
+
+async function listedNames(host: string): Promise<string[]> {
+  const response = await handleMcpRequest({ id: 60, method: "tools/list", params: {} }, as(host));
+  return ((response?.result as { tools: Array<{ name: string }> }).tools).map((tool) => tool.name);
+}
+
+describe("工具表面瘦身：tools/list 按宿主过滤（P6 §3.7）", () => {
+  it("local-user 全列；claude-code 与任意命名宿主去掉隐藏工具，其余照列", async () => {
+    const all = runner.getTools().map((tool) => tool.name);
+    expect(await listedNames(DEFAULT_HOST)).toEqual(all);
+    for (const host of ["claude-code", "some-named-host"]) {
+      const names = await listedNames(host);
+      for (const hidden of HOST_HIDDEN_TOOLS) expect(names).not.toContain(hidden);
+      expect(names).toEqual(all.filter((name) => !HOST_HIDDEN_TOOLS.has(name)));
+      expect(names).toEqual(expect.arrayContaining(["autocrew_workflow", "autocrew_writer", "autocrew_review_desk"]));
+    }
+  });
+
+  it("codex 只列它调得动的：等于宿主白名单，列外的工具任何 action 都被拒", async () => {
+    const names = await listedNames("codex");
+    expect([...names].sort()).toEqual(["autocrew_content", "autocrew_desk", "autocrew_status", "autocrew_video"]);
+    for (const tool of runner.getTools().map((t) => t.name).filter((name) => !names.includes(name))) {
+      for (const action of ["", "list", "get", "status", "register"]) expect(hostPolicy("codex", tool, { action }).ok).toBe(false);
+    }
+  });
+
+  it("不列 ≠ 不能调：claude-code 硬调隐藏工具照常执行，回执多一句 host_note；local-user 没有这句", async () => {
+    const call = { id: 61, method: "tools/call", params: { name: "autocrew_humanize", arguments: { action: "humanize_zh", text: "首先，我们需要深入探讨。" } } };
+    const hosted = await handleMcpRequest(call, as("claude-code"));
+    const structured = (hosted?.result as { structuredContent: Record<string, unknown> }).structuredContent;
+    expect(structured.host_note).toMatch(/autocrew_humanize 不在宿主工具清单里/);
+    expect(Object.keys(structured).length).toBeGreaterThan(1); // 工具真的跑了，不是只回一句提示
+    const local = await handleMcpRequest(call, as(DEFAULT_HOST));
+    expect((local?.result as { structuredContent: Record<string, unknown> }).structuredContent).not.toHaveProperty("host_note");
+  });
+});
+
+describe("会话归因（P6 §3.8，只做诊断）", () => {
+  it("_session 与 _host 并列注入；客户端自报的一律丢弃；没带头 = unknown", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    runner.register({
+      name: "test_session_probe",
+      label: "session probe",
+      description: "records the params it was called with",
+      parameters: { type: "object", properties: {} },
+      execute: async (params) => {
+        seen.push({ ...params });
+        return { ok: true };
+      },
+    });
+    const call = (args: Record<string, unknown>) => ({ id: 70, method: "tools/call", params: { name: "test_session_probe", arguments: args } });
+    await handleMcpRequest(call({ [SESSION_PARAM]: "forged" }), as("claude-code", "sess-1-abc"));
+    expect(seen[0]).toMatchObject({ [HOST_PARAM]: "claude-code", [SESSION_PARAM]: "sess-1-abc" });
+    await handleMcpRequest(call({ [SESSION_PARAM]: "forged" }), as("codex-direct"));
+    expect(seen[1][SESSION_PARAM]).toBe(UNKNOWN_SESSION);
+  });
+
+  it("X-AutoCrew-Session 头只收短的安全字符，其余一律 unknown", () => {
+    expect(normalizeSession("sess-1790000000000-ab12cd34")).toBe("sess-1790000000000-ab12cd34");
+    expect(normalizeSession([" sess-1-x ", "sess-2-y"])).toBe("sess-1-x");
+    for (const bad of [undefined, "", "a b", "x".repeat(81), "<script>", 42]) expect(normalizeSession(bad)).toBe(UNKNOWN_SESSION);
+  });
+
+  it("这次调用落的 run-log 记录带上会话（runId 仍是服务端的 session-*）", async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), "autocrew-mcp-session-"));
+    await handleMcpRequest({ id: 71, method: "tools/call", params: { name: "autocrew_status", arguments: {} } }, as("claude-code", "sess-9-zz"), dataDir);
+    const file = path.join(dataDir, "logs", "runs", `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    await vi.waitFor(() => {
+      const records = readFileSync(file, "utf-8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(records.find((r) => r.name === "autocrew_status")).toMatchObject({ kind: "tool", session: "sess-9-zz", runId: expect.stringMatching(/^session-/) });
+    });
   });
 });

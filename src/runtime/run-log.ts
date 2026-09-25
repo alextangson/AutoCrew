@@ -7,9 +7,27 @@
  * 纪律:观测层不得破坏执行层——写失败静默吞;密钥字段落盘前脱敏;单条截断 16k;
  * 按文件名日期保留 14 天。注:logs/ 下的历史 session-*(已下线旧 logger)互不相干。
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
+
+/**
+ * 调用方会话（P6 §3.8 会话归因，**只做诊断，不做门禁**）：MCP 层把转发器每进程一个的 nonce
+ * （`X-AutoCrew-Session`）挂在这次 `tools/call` 的异步上下文上，这次调用里落的每条 run-log、
+ * 写的每份认领/交接都顺手带上它——一条 trace 才分得出是哪个 Claude 会话干的。
+ * 不经参数层层传：写认领的调用点散在十几个工具里，挨个加参数就会漏。
+ */
+const callerSessionStore = new AsyncLocalStorage<string>();
+
+export function withCallerSession<T>(session: string, fn: () => T): T {
+  return callerSessionStore.run(session, fn);
+}
+
+/** 当前调用所属的会话；不在 MCP 调用里（工作台、后台定时任务）= undefined */
+export function callerSession(): string | undefined {
+  return callerSessionStore.getStore();
+}
 
 /**
  * 归因元数据(一处定义,三处消费:日志记录、recorder 入参、`LoopOptions.logMeta`)。
@@ -41,7 +59,17 @@ export interface RunLogRecord extends RunLogAttribution {
   runId: string;
   /** run 内单调递增(进程内计数,重启从 1 重来——排序以 ts 兜底) */
   seq: number;
-  kind: "llm" | "tool";
+  /** fallback = 换了端点或熔断跳过(P6 §3.9):from/to/reason 必带,`to:"none"` = 没有端点接手 */
+  kind: "llm" | "tool" | "fallback";
+  /** 发起这次调用的宿主会话(P6 §3.8,诊断用);runId 的 session-* 是服务端按数据目录生成的,分不开会话 */
+  session?: string;
+  /** fallback 专用:从哪个端点 → 到哪个端点(端点 id) */
+  from?: string;
+  to?: string;
+  /** fallback 专用:为什么换(主端点的失败原文,或熔断时健康记录里那句) */
+  reason?: string;
+  /** fallback 专用:熔断跳过、没发请求 */
+  skipped?: boolean;
   /** 角色:chief-editor / writer / cover-designer / audience-researcher / mcp … */
   agent?: string;
   /** llm=模型名;tool=工具名 */
@@ -125,6 +153,7 @@ export async function appendRunLog(
   // seq 在任何 await 之前同步分配——fire-and-forget 并发追加也保持逻辑顺序(读侧按 seq 排)
   const seq = nextSeq(rec.runId);
   const ts = new Date().toISOString();
+  const session = rec.session ?? callerSession();
   try {
     const dir = runsDir(dataDir);
     await fs.mkdir(dir, { recursive: true });
@@ -133,6 +162,7 @@ export async function appendRunLog(
     const output = clip(redactSecrets(rec.output));
     const full: RunLogRecord = {
       ...rec,
+      ...(session ? { session } : {}),
       ts,
       seq,
       input: input.text,
@@ -180,10 +210,11 @@ export async function listRuns(dataDir?: string, limit = 50): Promise<RunSummary
       cur.llmCalls += 1;
       cur.totalTokens += r.tokens ?? 0;
       if (!cur.firstModel) cur.firstModel = r.name;
-    } else {
+    } else if (r.kind === "tool") {
       cur.toolCalls += 1;
     }
-    if (!r.ok) cur.errorCount += 1;
+    // fallback 记录是换线留痕不是失败本身：真失败那次已有自己的 llm 记录，这里再算就重复了
+    if (!r.ok && r.kind !== "fallback") cur.errorCount += 1;
     byRun.set(r.runId, cur);
   }
   return [...byRun.values()].sort((a, b) => (a.endedAt < b.endedAt ? 1 : -1)).slice(0, limit);
@@ -194,12 +225,22 @@ export async function readRun(dataDir: string | undefined, runId: string): Promi
   return records.filter((r) => r.runId === runId).sort((a, b) => a.seq - b.seq || (a.ts < b.ts ? -1 : 1));
 }
 
+/** 一次回退/熔断跳过的留痕(P6 §3.9)。ok = 接手的端点这次成没成(`to:"none"` 恒为 false) */
+export interface FallbackEntry {
+  from: string;
+  to: string;
+  reason: string;
+  skipped: boolean;
+  ok: boolean;
+}
+
 export interface RunRecorder {
   llm: (e: { model: string; durationMs: number; ok: boolean; error?: string; tokens?: number; input: string; output: string }) => void;
   tool: (e: { name: string; durationMs: number; ok: boolean; input: string; output: string }) => void;
+  fallback: (e: FallbackEntry) => void;
 }
 
-const NOOP_RECORDER: RunRecorder = { llm: () => {}, tool: () => {} };
+const NOOP_RECORDER: RunRecorder = { llm: () => {}, tool: () => {}, fallback: () => {} };
 
 /** dataDir 缺省(手工构造的测试 config)= 不落日志,引擎行为零变化 */
 export function createRunRecorder(
@@ -248,5 +289,55 @@ export function createRunRecorder(
         input: e.input,
         output: e.output,
       }),
+    fallback: (e) =>
+      void appendRunLog(dataDir, {
+        runId,
+        kind: "fallback",
+        agent,
+        ...attribution,
+        name: "fallback",
+        action: `${e.from}→${e.to}`,
+        from: e.from,
+        to: e.to,
+        reason: clip(redactSecrets(e.reason)).text,
+        ...(e.skipped ? { skipped: true } : {}),
+        durationMs: 0,
+        ok: e.ok,
+        input: "",
+        output: "",
+      }),
+  };
+}
+
+export interface EngineFallbackStats {
+  /** 24 h 内成功的模型调用里由备用端点顶上的占比;没有调用 = null(0/0 不是 0%) */
+  fallback_rate_24h: number | null;
+  /** 24 h 内熔断跳过的端点次数(每跳过一条线记一次) */
+  skipped_24h: number;
+  /** 分母:24 h 内成功的模型调用数——主路 host-first 时它本来就该是 0 */
+  calls_24h: number;
+}
+
+/**
+ * `autocrew_status overview` 的引擎一栏(P6 §3.9「24 h 回退率」)。
+ * 分母取成功的 llm 记录(每次成功调用恰好一条);分子取「备用接手且成了」的 fallback 记录,
+ * 两者一一对应,比值落在 [0,1]。两端都倒的调用不进比值,它们在 skipped/错误里看得见。
+ */
+export async function engineFallbackStats(dataDir?: string, now: number = Date.now()): Promise<EngineFallbackStats> {
+  const since = new Date(now - 86_400_000).toISOString();
+  const records = (await readRecent(dataDir, 2)).filter((r) => r.ts >= since);
+  let calls = 0;
+  let fallbacks = 0;
+  let skipped = 0;
+  for (const r of records) {
+    if (r.kind === "llm" && r.ok) calls += 1;
+    if (r.kind !== "fallback") continue;
+    if (r.skipped) skipped += 1;
+    if (r.ok && r.to !== "none") fallbacks += 1;
+  }
+  return {
+    fallback_rate_24h: calls ? Math.round((fallbacks / calls) * 1000) / 1000 : null,
+    skipped_24h: skipped,
+    calls_24h: calls,
   };
 }

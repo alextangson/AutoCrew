@@ -5,7 +5,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DAEMON_DOWN_MESSAGE,
+  SESSION_HEADER,
   forwardMessage,
+  newSessionNonce,
   resolveForwarderToken,
   runForwarder,
 } from "../../bin/mcp-forwarder.mjs";
@@ -112,5 +114,38 @@ describe("mcp stdio forwarder", () => {
     await runForwarder({ input, output: stream, env: { AUTOCREW_DATA_DIR: tempDataDir() }, fetchImpl });
     expect(written).toHaveLength(1);
     expect(JSON.parse(written[0])).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+  });
+});
+
+describe("会话 nonce（P6 §3.8，只做诊断）", () => {
+  it("nonce 形如 sess-<ts>-<rand>", () => {
+    expect(newSessionNonce(1790000000000, () => 0.123456789)).toMatch(/^sess-1790000000000-[a-z0-9]+$/);
+    expect(newSessionNonce()).not.toBe(newSessionNonce());
+  });
+
+  it("forwardMessage 把会话放进 X-AutoCrew-Session 头；没给就不带", async () => {
+    const { fetchImpl, calls } = fakeDaemon(() => ({ body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) }));
+    await forwardMessage({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { url: "http://x/mcp", token: "t", session: "sess-1-abc", fetchImpl });
+    await forwardMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { url: "http://x/mcp", token: "t", fetchImpl });
+    expect((calls[0].init.headers as Record<string, string>)[SESSION_HEADER]).toBe("sess-1-abc");
+    expect(calls[1].init.headers as Record<string, string>).not.toHaveProperty(SESSION_HEADER);
+  });
+
+  it("一个转发器进程只用一个 nonce：每条转发（含通知）都带同一个头", async () => {
+    const { fetchImpl, calls } = fakeDaemon((body) => {
+      const message = body as { id?: number };
+      return message.id === undefined ? { status: 202 } : { body: JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }) };
+    });
+    const { stream } = collect();
+    const input = Readable.from([
+      `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n`,
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+      `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`,
+    ]);
+    await runForwarder({ input, output: stream, env: { AUTOCREW_DATA_DIR: tempDataDir() }, fetchImpl });
+    const sessions = calls.map((call) => (call.init.headers as Record<string, string>)[SESSION_HEADER]);
+    expect(sessions).toHaveLength(3);
+    expect(new Set(sessions).size).toBe(1);
+    expect(sessions[0]).toMatch(/^sess-\d+-[a-z0-9]+$/);
   });
 });

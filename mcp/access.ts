@@ -27,6 +27,11 @@ export interface McpAccessContext {
    * `handleMcpRequest` 把它注进每次 `tools/call` 的 `_host` 参数。
    */
   host: string;
+  /**
+   * 宿主会话 nonce（P6 §3.8，**只做诊断，不做门禁**）：转发器每进程一个，经 `X-AutoCrew-Session`
+   * 头带来；Codex HTTP 直连可带可不带，缺省 `unknown`。`handleMcpRequest` 注进 `_session` 参数。
+   */
+  session?: string;
   authorize?: (
     principal: McpPrincipal,
     tool: string,

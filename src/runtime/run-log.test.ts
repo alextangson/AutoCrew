@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { appendRunLog, listRuns, readRun, redactSecrets, createRunRecorder } from "./run-log.js";
+import { appendRunLog, listRuns, readRun, redactSecrets, createRunRecorder, withCallerSession } from "./run-log.js";
 
 let dir: string;
 
@@ -145,5 +145,25 @@ describe("createRunRecorder", () => {
     expect(records.every((r) => r.agent === "cover-designer")).toBe(true);
     expect(records[0].kind).toBe("llm");
     expect(records[1].kind).toBe("tool");
+  });
+});
+
+describe("会话归因与回退记录（P6 §3.8 / §3.9）", () => {
+  it("在调用方会话里落的记录带 session；会话外的不带；runId 不变", async () => {
+    await withCallerSession("sess-1-abc", () => appendRunLog(dir, { ...base, runId: "session-srv" }));
+    await appendRunLog(dir, { ...base, runId: "session-srv" });
+    const [inside, outside] = await readRun(dir, "session-srv");
+    expect(inside.session).toBe("sess-1-abc");
+    expect(outside).not.toHaveProperty("session");
+  });
+
+  it("recorder.fallback 落 kind:fallback，listRuns 不把它算成工具调用或错误", async () => {
+    const rec = createRunRecorder(dir, { runId: "run-fb", agent: "writer" });
+    rec.fallback({ from: "newcli", to: "none", reason: "熔断", skipped: true, ok: false });
+    await new Promise((r) => setTimeout(r, 50));
+    const [record] = await readRun(dir, "run-fb");
+    expect(record).toMatchObject({ kind: "fallback", from: "newcli", to: "none", reason: "熔断", skipped: true, action: "newcli→none" });
+    const [summary] = await listRuns(dir);
+    expect(summary).toMatchObject({ runId: "run-fb", toolCalls: 0, llmCalls: 0, errorCount: 0 });
   });
 });

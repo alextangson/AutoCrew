@@ -36,6 +36,7 @@ import {
   type Content,
   type ContentStatus,
 } from "./local-store.js";
+import { withCallerSession } from "../runtime/run-log.js";
 
 let dir: string;
 
@@ -446,5 +447,48 @@ describe("transferClaim：交接即转移（P6 §3.8）", () => {
     expect(await transferClaim("content-nope", { host: "x", toEmployee: "editor", toHost: "codex" }, dir)).toMatchObject({
       ok: false,
     });
+  });
+});
+
+describe("会话归因（P6 §3.8，只做诊断）", () => {
+  it("MCP 调用里写的认领与交接账都带上会话 nonce；视图保留它（不是秘密）", async () => {
+    const c = await seed("approved", "douyin");
+    const writer = await withCallerSession("sess-1-aaa", () => claimContent(c.id, "writer", "claude-code", dir));
+    if (!writer.ok) throw new Error("claim failed");
+    expect(writer.claim.session).toBe("sess-1-aaa");
+    expect(claimView(writer.claim)).toMatchObject({ session: "sess-1-aaa" });
+    expect(claimView(writer.claim)).not.toHaveProperty("token");
+
+    // 同宿主另一个会话接管：新认领记新会话，交接账记发起接管的会话
+    await withCallerSession("sess-2-bbb", () => claimContent(c.id, "writer", "claude-code", dir, { takeover: true }));
+    const taken = (await getContent(c.id, dir))!;
+    expect(taken.claim?.session).toBe("sess-2-bbb");
+    expect(taken.handoffs?.at(-1)).toMatchObject({ note: "接管（同宿主另一会话）", session: "sess-2-bbb" });
+
+    await withCallerSession("sess-2-bbb", () =>
+      transferClaim(c.id, { token: taken.claim!.token, host: "claude-code", toEmployee: "editor", toHost: "codex" }, dir),
+    );
+    const moved = (await getContent(c.id, dir))!;
+    expect(moved.handoffs?.at(-1)).toMatchObject({ to: "editor", session: "sess-2-bbb" });
+    expect(redactClaim(moved).claim).toMatchObject({ host: "codex", session: "sess-2-bbb" });
+  });
+
+  it("不在 MCP 调用里（工作台、后台任务）不编会话；归因不影响令牌门", async () => {
+    const c = await seed();
+    const claimed = await claimContent(c.id, "writer", "claude-code", dir);
+    if (!claimed.ok) throw new Error("claim failed");
+    expect(claimed.claim).not.toHaveProperty("session");
+    // 会话 nonce 对得上也不是凭据：同宿主不带令牌照样 claim_held
+    expect(await withCallerSession("sess-1-aaa", () => ensureClaim(c.id, { host: "claude-code" }, dir))).toMatchObject({
+      ok: false,
+      code: "claim_held",
+    });
+  });
+
+  it("工作台越门那条 override 账同样带会话", async () => {
+    const c = await seed();
+    await claimContent(c.id, "writer", "claude-code", dir);
+    await withCallerSession("unknown", () => ensureClaim(c.id, { host: "local-user" }, dir));
+    expect((await getContent(c.id, dir))!.handoffs?.at(-1)).toMatchObject({ override: true, session: "unknown" });
   });
 });

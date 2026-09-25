@@ -48,6 +48,17 @@ export function resolveForwarderToken(dataDir, env = process.env, host = "claude
   return "";
 }
 
+/**
+ * 会话 nonce（P6 §3.8）：Claude Code 每开一个会话就 spawn 一个转发器进程，所以「每进程一个」
+ * 就是「每会话一个」。经 `X-AutoCrew-Session` 头带给守护进程，只做诊断归因，不是凭据——
+ * 写门认的是 claim_token，重连换 nonce 不影响任何写入。
+ */
+export const SESSION_HEADER = "X-AutoCrew-Session";
+
+export function newSessionNonce(now = Date.now(), random = Math.random) {
+  return `sess-${now}-${random().toString(36).slice(2, 10)}`;
+}
+
 function jsonRpcError(id, code, message) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
@@ -55,7 +66,7 @@ function jsonRpcError(id, code, message) {
 /**
  * 转发一条已解析的 JSON-RPC 消息，返回该写回 stdout 的对象（通知与 202 返回 null）。
  */
-export async function forwardMessage(message, { url, token, fetchImpl = fetch }) {
+export async function forwardMessage(message, { url, token, session, fetchImpl = fetch }) {
   const id = message?.id;
   const isNotification = id === undefined || id === null;
   let response;
@@ -66,6 +77,7 @@ export async function forwardMessage(message, { url, token, fetchImpl = fetch })
         "Content-Type": "application/json",
         Accept: "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(session ? { [SESSION_HEADER]: session } : {}),
       },
       body: JSON.stringify(message),
     });
@@ -98,6 +110,7 @@ export function runForwarder({
 } = {}) {
   const url = `http://127.0.0.1:${portOf(env)}/mcp`;
   const token = resolveForwarderToken(dataDirOf(env), env);
+  const session = newSessionNonce();
   const rl = readline.createInterface({ input });
   const inflight = [];
 
@@ -110,7 +123,7 @@ export function runForwarder({
       return;
     }
     inflight.push(
-      forwardMessage(message, { url, token, fetchImpl }).then((reply) => {
+      forwardMessage(message, { url, token, session, fetchImpl }).then((reply) => {
         if (reply) output.write(`${JSON.stringify(reply)}\n`);
       }),
     );

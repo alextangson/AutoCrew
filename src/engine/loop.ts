@@ -1,15 +1,12 @@
 /**
  * 薄 agent loop — 协议层走 pi-ai（spec docs/superpowers/specs/2026-07-17-*.md），
- * 编排（工具执行、预算上限、withRetry 重试、run-log）仍归本层。
+ * 编排（工具执行、预算上限、run-log）仍归本层；「这次调用由哪条线接」（重试、备用、熔断）在 router.ts。
  * 传输经环回观察器（observer.ts）：字节级空闲看门狗 + fetchImpl 注入口
  * （测试把 fake 喂到观察器上游腿，生产默认 globalThis.fetch）。
  */
-import { withRetry, isRetryable } from "../utils/retry.js";
 import { createRunRecorder, type RunLogAttribution, type RunRecorder } from "../runtime/run-log.js";
-import { resolveFallbackModel, type EngineConfig } from "./config.js";
-import { recordEngineLive } from "./health-sink.js";
-import { registerExchange } from "./observer.js";
-import { makePiModel, toPiContext, startPiStream, consumePiStream, fromAssistant } from "./pi-wire.js";
+import type { EngineConfig } from "./config.js";
+import { callModel, type Message, type ModelCallOutcome, type ToolCall } from "./router.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -105,188 +102,6 @@ export interface LoopResult {
  *  非绝对超时——健康长文可流式数分钟,只要字节持续到达就不误杀（dogfood 教训）。 */
 const IDLE_TIMEOUT_MS = 45_000;
 
-// ─── Internal types ──────────────────────────────────────────────────────────
-
-interface ToolCall {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-}
-
-interface Message {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
-  tool_calls?: ToolCall[];
-  tool_call_id?: string;
-  name?: string;
-}
-
-interface CompletionResponse {
-  choices: Array<{
-    message: { role: string; content: string | null; tool_calls?: ToolCall[] };
-    finish_reason: string;
-  }>;
-  usage: { total_tokens: number };
-}
-
-// ─── Private helpers ─────────────────────────────────────────────────────────
-
-interface ModelCallParams {
-  config: EngineConfig;
-  model: string;
-  messages: Message[];
-  tools: LoopTool[];
-  fetchImpl: typeof fetch;
-  idleMs: number;
-  retryMaxDelayMs?: number;
-  signal?: AbortSignal;
-  onTextDelta?: (e: LoopStreamEvent) => void;
-  onEvent?: (e: LoopEvent) => void;
-  /** 健康记录上的任务归属（= logMeta.runId） */
-  jobId?: string;
-}
-
-interface ModelCallOutcome {
-  data: CompletionResponse;
-  /** 实际产出本次回复的模型（切了备用就是备用模型名）——run-log 记这个 */
-  model: string;
-  /** 主端点的失败详情（仅发生切换时非空）：被救回来的那次失败同样要留痕 */
-  primaryFailure?: { model: string; error: string; durationMs: number };
-  /** 兜底归因（仅发生切换时非空）：LoopResult.usedFallback 与稿卡徽章的数据来源 */
-  fallback?: LoopFallbackInfo;
-}
-
-const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/**
- * 一次完整流消费 = 重试事务边界（流不可续,重试 = 重发整个请求,生成幂等即新稿）。
- * 中途断流/挂起由观察器字节级看门狗中止（含首字节等待,任何字节续命——健康长文不误杀）,
- * SDK 侧转为连接错误,isRetryable 按消息模式识别。工具提交只发生在流成功收尾之后。
- * 用户中止贯通两处:观察器掐传输,withRetry 不把中止当瞬时故障重放。
- */
-async function streamOnce(
-  p: ModelCallParams,
-  config: EngineConfig,
-  model: string,
-  emitStream: (e: LoopStreamEvent) => void,
-): Promise<CompletionResponse> {
-  // 事务边界 = 一次完整流消费,所以 reset 就发在这里:重试、备用 attempt 与新一轮共用
-  // 同一条语义,上层不必知道自己收到的是第几次尝试、走的是哪个端点。
-  emitStream({ ev: "reset" });
-  const exchange = await registerExchange({
-    upstreamBase: config.baseUrl,
-    fetchImpl: p.fetchImpl,
-    idleMs: p.idleMs,
-    ...(p.signal ? { signal: p.signal } : {}),
-  });
-  try {
-    const piModel = makePiModel(config, model, exchange.baseUrl);
-    const done = await consumePiStream(
-      startPiStream(config, piModel, toPiContext(p.messages, p.tools)),
-      p.onTextDelta ? (text) => emitStream({ ev: "delta", text }) : undefined,
-    );
-    const wire = fromAssistant(done);
-    return {
-      choices: [
-        {
-          message: {
-            role: "assistant",
-            content: wire.content,
-            ...(wire.toolCalls.length ? { tool_calls: wire.toolCalls } : {}),
-          },
-          finish_reason: done.stopReason === "toolUse" ? "tool_calls" : "stop",
-        },
-      ],
-      usage: { total_tokens: wire.totalTokens },
-    };
-  } finally {
-    exchange.release();
-  }
-}
-
-/** 本次调用落在哪条线上（config.activeProvider 由 resolveEngineRoute/loadEngineConfig 盖章） */
-function attribution(config: EngineConfig): { providerId: string; role: string } {
-  return { providerId: config.activeProvider?.id ?? "main", role: config.activeProvider?.role ?? "main" };
-}
-
-/** 备用端点在端点表里的 id：v2 起备用也是表里的一条，按 (baseUrl, apiKey) 认回去 */
-function fallbackProviderId(config: EngineConfig): string {
-  const fb = config.fallback;
-  if (!fb) return "fallback";
-  return (config.providers ?? []).find((x) => x.baseUrl === fb.baseUrl && x.apiKey === fb.apiKey)?.id ?? "fallback";
-}
-
-/** 健康回执（观测层，自吞错）：jobId 取 run-log 的 runId,足够从横幅点回那条任务 */
-function live(p: ModelCallParams, providerId: string, role: string, ok: boolean, error?: string): void {
-  recordEngineLive({
-    providerId,
-    ok,
-    role,
-    ...(p.jobId ? { jobId: p.jobId } : {}),
-    ...(error ? { error } : {}),
-  });
-}
-
-/**
- * 主端点 → （失败且值得换端点时）备用端点。
- * 换端点的三个前提缺一不可:配了备用、错误确实是可重试类（400/401/403 换个端点照样错）、
- * 用户没点停止（中止长得像瞬时故障,不特判就等于无视用户按的停）。
- */
-async function callModel(p: ModelCallParams): Promise<ModelCallOutcome> {
-  const emitStream = (e: LoopStreamEvent) => {
-    if (!p.onTextDelta) return;
-    try {
-      p.onTextDelta(e);
-    } catch {
-      /* 观测层异常不破坏执行层 */
-    }
-  };
-  const retryOpts = {
-    ...(p.signal ? { signal: p.signal } : {}),
-    ...(p.retryMaxDelayMs !== undefined ? { maxDelayMs: p.retryMaxDelayMs } : {}),
-  };
-
-  const tPrimary = Date.now();
-  const who = attribution(p.config);
-  try {
-    const data = await withRetry(() => streamOnce(p, p.config, p.model, emitStream), retryOpts);
-    live(p, who.providerId, who.role, true);
-    return { data, model: p.model };
-  } catch (err) {
-    const fb = p.config.fallback;
-    const fbModel = resolveFallbackModel(p.config, p.model);
-    if (!fb || !fbModel || !isRetryable(err) || p.signal?.aborted) {
-      // 中止不是线路的病:用户按了停,不该把端点标成坏的
-      if (!p.signal?.aborted) live(p, who.providerId, who.role, false, errText(err));
-      throw err;
-    }
-
-    const primaryFailure = { model: p.model, error: errText(err), durationMs: Date.now() - tPrimary };
-    const fbProviderId = fallbackProviderId(p.config);
-    const info: LoopFallbackInfo = { role: who.role, from: p.model, to: fbModel, error: primaryFailure.error };
-    // 主端点这次是真失败了——被救回来也照样进健康视图（横幅要能说「写稿专线连不上」）
-    live(p, who.providerId, who.role, false, primaryFailure.error);
-    if (p.onEvent) {
-      try {
-        p.onEvent({ type: "fallback", fromProvider: who.providerId, toProvider: fbProviderId, ...info });
-      } catch {
-        /* 观测层异常不破坏执行层 */
-      }
-    }
-    // 备用端点有自己的 key/协议,所以也有自己的 registerExchange（观察器按 upstreamBase 分路由）
-    const fbConfig: EngineConfig = { ...p.config, baseUrl: fb.baseUrl, apiKey: fb.apiKey, protocol: fb.protocol };
-    try {
-      const data = await withRetry(() => streamOnce(p, fbConfig, fbModel, emitStream), { maxRetries: 1, ...retryOpts });
-      live(p, fbProviderId, who.role, true);
-      return { data, model: fbModel, primaryFailure, fallback: info };
-    } catch (fbErr) {
-      live(p, fbProviderId, who.role, false, errText(fbErr));
-      // 两端都倒了:两条原因一起端给用户,别用备用的错误盖掉主端点的病根
-      throw new Error(`模型调用失败 — 主端点: ${primaryFailure.error}；备用端点(deepseek): ${errText(fbErr)}`);
-    }
-  }
-}
-
 async function executeToolCalls(
   toolCalls: ToolCall[],
   toolMap: Map<string, LoopTool>,
@@ -380,6 +195,7 @@ export async function runLoop(config: EngineConfig, opts: LoopOptions): Promise<
         ...(opts.onTextDelta ? { onTextDelta: opts.onTextDelta } : {}),
         ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),
         ...(opts.logMeta?.runId ? { jobId: opts.logMeta.runId } : {}),
+        recorder,
       });
     } catch (err) {
       recorder.llm({
