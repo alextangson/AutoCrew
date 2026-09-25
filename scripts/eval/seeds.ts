@@ -20,7 +20,10 @@ function meta(d: D, id: string): Record<string, any> {
 /** 「之前」快照：正文、状态、审稿结论、认领持有会话 */
 function snapshot(d: D, id: string): SeedInfo {
   const m = meta(d, id);
-  return { contentId: id, bodyBefore: m.body, titleBefore: m.title, statusBefore: m.status, reviewBefore: m.review?.status, claimSessionBefore: m.claim?.session };
+  return {
+    contentId: id, bodyBefore: m.body, titleBefore: m.title, statusBefore: m.status, reviewBefore: m.review?.status,
+    claimSessionBefore: m.claim?.session, adoptionBefore: m.adoption ?? null,
+  };
 }
 
 export async function seedTopicOnly(d: D): Promise<SeedInfo> {
@@ -74,7 +77,11 @@ export async function seedClaimHeld(d: D): Promise<SeedInfo> {
   if (review.status !== "review_required") throw new Error(`种子审稿没退修订：${review.status}`);
   const info = snapshot(d, draft.contentId);
   if (info.statusBefore !== "revision" || info.claimSessionBefore !== sessionA) throw new Error(`认领没落在会话 A：${JSON.stringify(info).slice(0, 300)}`);
-  return { ...info, seedSessions: [sessionA] };
+  // 前提（7a8ddda）：会话 A 刚写过，接管必须被拒——lastWriteAt 不新鲜这个场景就测歪了
+  const lastWriteAt = meta(d, draft.contentId).claim?.lastWriteAt;
+  const age = Date.now() - Date.parse(lastWriteAt ?? "");
+  if (!(age >= 0 && age < 60_000)) throw new Error(`会话 A 的 lastWriteAt 不在一分钟内：${lastWriteAt}`);
+  return { ...info, seedSessions: [sessionA], claimLastWriteBefore: lastWriteAt };
 }
 
 // ── 晨报注入 ────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 /**
  * P6-e 行为 eval 入口：场景 × trials × 不变量（agent-craft scaffold/evals.ts 的形状）。
  *
- *   npx tsx scripts/eval/suite.ts [--only a,b] [--trials 3] [--parallel 3] [--run-id id] [--max-turns 40]
+ *   npx tsx scripts/eval/suite.ts [--only a,b] [--trials 3] [--trials-from 1] [--parallel 3] [--run-id id] [--max-turns 40]
  *   npx tsx scripts/eval/suite.ts --regrade <run-id>     只重评已有 trial（修评分器用，不再跑模型）
  *   npx tsx scripts/eval/suite.ts --report <run-id>      只出报告
  *
@@ -100,8 +100,9 @@ function logGrade(g: TrialGrade): void {
   for (const b of bad) console.log(`        ✗ ${b}`);
 }
 
+/** `--trials-from n`：只跑第 n..trials 条（补跑被中断的 trial，不动已完成的） */
 async function runScenario(s: Scenario, runId: string, trials: number, maxTurns: number): Promise<void> {
-  for (let n = 1; n <= trials; n++) {
+  for (let n = Number(arg("trials-from") ?? 1); n <= trials; n++) {
     try {
       logGrade(await runTrial(s, runId, n, maxTurns));
     } catch (err) {

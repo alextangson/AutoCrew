@@ -129,27 +129,45 @@ const UNHANDLED = [
   "试跑 run `p6e-20260925` 因模型读到 `scripts/eval` 作废（原因与修法见上文），目录保留在同一缓存根下备查。",
 ];
 
-export async function writeReport(runId: string, publish = process.argv.includes("--publish")): Promise<string> {
+const DOC = path.join(REPO_ROOT, "docs", "evals", "2026-09-25-p6e-behavior-eval.md");
+
+/** 报告正文（不含标题）。h = 本层标题的井号：整份报告用 "##"，追加到已有报告里的一节用 "###" */
+async function reportBody(runId: string, h: string): Promise<string[]> {
   const grades = loadGrades(runId);
   const rows = aggregate(grades);
   const notesFile = path.join(EVAL_ROOT, runId, "notes.md");
   const notes = existsSync(notesFile) ? readFileSync(notesFile, "utf-8").trim() : "（尚未写：读 transcript 后补在 notes.md）";
   const perInvariant = rows.flatMap((r) => [...r.failures.entries()].map(([k, n]) => `| \`${r.id}\` | ${k} | ${n}/${r.trials} |`));
-  const md = [
-    `# P6-e 行为 eval 报告（run \`${runId}\`）`, "",
+  await fs.writeFile(path.join(EVAL_ROOT, runId, "results.json"), JSON.stringify({ runId, rows: rows.map((r) => ({ ...r, failures: Object.fromEntries(r.failures) })), grades }, null, 2));
+  return [
     `> 生成：\`npx tsx scripts/eval/suite.ts --report ${runId}\`。原始 transcript / run-log / 世界目录：\`${path.join(EVAL_ROOT, runId)}\`。`, "",
-    "## 指纹", "", ...(await fingerprint(runId, grades)), "",
-    "## 结果", "", ...resultsTable(rows), "",
-    "### 各不变量失败次数", "", "| scenario | invariant | failed |", "|---|---|---|", ...(perInvariant.length ? perInvariant : ["| – | （无失败） | – |"]), "",
-    "## 结论（claimsBacked：每句指向场景与 pass^k）", "", ...crossCuttingClaims(grades), ...claimsSection(rows), "",
-    "## 逐场景观察（读 transcript）", "", notes, "",
-    "## 失败明细", "", ...failureList(grades), "",
-    "## 未覆盖", "", ...UNHANDLED.map((u) => `- ${u}`), "",
-  ].join("\n");
+    `${h} 指纹`, "", ...(await fingerprint(runId, grades)), "",
+    `${h} 结果`, "", ...resultsTable(rows), "",
+    `${h}# 各不变量失败次数`, "", "| scenario | invariant | failed |", "|---|---|---|", ...(perInvariant.length ? perInvariant : ["| – | （无失败） | – |"]), "",
+    `${h} 结论（claimsBacked：每句指向场景与 pass^k）`, "", ...crossCuttingClaims(grades), ...claimsSection(rows), "",
+    `${h} 逐场景观察（读 transcript）`, "", notes, "",
+    `${h} 失败明细`, "", ...failureList(grades), "",
+  ];
+}
+
+/**
+ * `--publish`：整份覆盖 docs/evals 里的报告；`--append <标题>`：在已有报告末尾追加一节（修复后重跑用，
+ * 前面的轮次原样留作历史）。同名一节已存在就替换那一节，不重复追加。
+ */
+export async function writeReport(runId: string, publish = process.argv.includes("--publish")): Promise<string> {
+  const i = process.argv.indexOf("--append");
+  const appendTitle = i >= 0 ? process.argv[i + 1] : undefined;
+  const md = [`# P6-e 行为 eval 报告（run \`${runId}\`）`, "", ...(await reportBody(runId, "##")), "## 未覆盖", "", ...UNHANDLED.map((u) => `- ${u}`), ""].join("\n");
   const out = path.join(EVAL_ROOT, runId, "report.md");
   await fs.writeFile(out, md);
-  await fs.writeFile(path.join(EVAL_ROOT, runId, "results.json"), JSON.stringify({ runId, rows: rows.map((r) => ({ ...r, failures: Object.fromEntries(r.failures) })), grades }, null, 2));
-  if (publish) await fs.writeFile(path.join(REPO_ROOT, "docs", "evals", "2026-09-25-p6e-behavior-eval.md"), md);
-  console.log(`报告：${out}${publish ? "（已复制到 docs/evals/）" : ""}`);
+  if (appendTitle) {
+    const section = [`## ${appendTitle}`, "", ...(await reportBody(runId, "###"))].join("\n");
+    const doc = readFileSync(DOC, "utf-8");
+    const at = doc.indexOf(`\n## ${appendTitle}\n`);
+    await fs.writeFile(DOC, `${(at >= 0 ? doc.slice(0, at) : doc).trimEnd()}\n\n${section}`);
+  } else if (publish) {
+    await fs.writeFile(DOC, md);
+  }
+  console.log(`报告：${out}${appendTitle ? `（已追加「${appendTitle}」到 docs/evals/）` : publish ? "（已复制到 docs/evals/）" : ""}`);
   return out;
 }

@@ -44,13 +44,13 @@ export function acceptanceBlock(content: Content): HandoffResult | null {
     // P6-e 行为 eval（handoff-blocks-issues 0/3）证明：「创作者点了采纳」这个 flag 由模型自填，
     // 3/3 都在用户没看到阻断前就替他点了。所以这里不再有采纳通道：改掉阻断、审到 accepted 才交。
     const blockers = content.review.issues.filter((i) => i.severity === "blocker");
-    return handoffFail("not_accepted", `审稿还有 ${blockers.length} 条阻断：改掉并重新审到 accepted 才能交剪辑（模型不能替创作者点采纳，这里没有「就用这一版」的通道；真要带着阻断发，创作者自己去工作台推进）`, {
+    return handoffFail("not_accepted", `审稿还有 ${blockers.length} 条阻断：改掉并重新审到 accepted 才能交剪辑。没有「就用这一版」的采纳通道（模型不能替创作者点）；创作者坚持用这一版，就把这 ${blockers.length} 条按核实结果处理后重新审稿——审稿如实标 host_self_review`, {
       review_status: "accepted_with_issues",
       blockers,
       next_action: {
         tool: "autocrew_writer",
         params: { action: "submit", content_id: content.id, revision_of: hash },
-        message: "把阻断逐条摆给创作者，按问题范围修订，用 submit{revision_of} 重交并重新审稿；审到 accepted 再来交接。",
+        message: "把阻断逐条摆给创作者；按问题范围修订，用 submit{revision_of} 重交并重新审稿，审到 accepted 再来交接。别建议他去工作台点采纳——交接不看采纳。",
       },
     });
   }

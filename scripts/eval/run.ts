@@ -16,7 +16,15 @@ import { REPO_ROOT, type Daemon } from "./daemon.js";
 import { EVAL_ROOT } from "./world.js";
 
 export const RUN_TIMEOUT_MS = 12 * 60_000;
-export const DENIED_TOOLS = ["Bash", "Write", "Edit", "NotebookEdit"];
+/**
+ * 拒绝会碰到假世界之外的工具：Bash/写文件（生产守护进程与 ~/.autocrew），以及跨会话 / 持久化的——
+ * r3 里一条 trial 用 ListAgents 列出了创始人真实的桌面会话、再 SendMessage 想让「另一个会话」放认领
+ * （投递失败，但下一次可能投到真会话里）；定时器、远程触发、开 worktree 同理都会在假世界之外留东西。
+ */
+export const DENIED_TOOLS = [
+  "Bash", "Write", "Edit", "NotebookEdit",
+  "SendMessage", "ListAgents", "CronCreate", "CronDelete", "ScheduleWakeup", "RemoteTrigger", "EnterWorktree", "ExitWorktree",
+];
 /**
  * 读拒绝（对 Read / Grep / Glob 都生效）：eval 不许帮模型——试跑时有 trial 翻到了 scripts/eval
  * 里的场景与不变量；另外生产数据目录一律不读，记录目录（seed/transcript/grade/令牌）不给看。

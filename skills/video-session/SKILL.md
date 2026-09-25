@@ -57,7 +57,7 @@ CCB_CALLER=claude ask codex <<'EOF'
 EOF
 ```
 
-回 `not_accepted` 且 `review_status` 为 `accepted_with_issues`：把阻断逐条摆给用户，按 `next_action` 用 `submit{revision_of}` 改掉再审到 accepted。这里没有「就用这一版」的通道——采纳不能由你替他点，产品也不收；他坚持带着阻断发，让他去工作台推进。其他 `not_accepted` 按 `next_action` 先把这一版审完。
+回 `not_accepted` 且 `review_status` 为 `accepted_with_issues`：把阻断逐条摆给用户，按 `next_action` 用 `submit{revision_of}` 改掉再审到 accepted。这里没有「就用这一版」的采纳通道——采纳不能由你替他点，产品也不收，交接也不看采纳；他坚持用这一版，就把阻断项按他核实的结果处理后重新审稿（自审如实标 host_self_review）。别让他去工作台点采纳，那对交接没用。其他 `not_accepted` 按 `next_action` 先把这一版审完。
 
 ## 5. Codex 剪辑期间
 
