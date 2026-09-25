@@ -173,22 +173,17 @@ function buildLedger(init: { max: number; used: number; seq?: number }): Evidenc
 // ─── 播种（一稿开工时把已有材料一次性登记进来） ──────────────────────────────
 
 /**
- * 简报证据：id 沿用简报内的 `ev-N`（位置即身份，同版简报永不改写）。
- *
- * **前置不变量**：`brief.evidence` 里的每一条都经过 broker 的 `validateQuote`（抓过原页 +
- * 逐字比对），所以这里无条件记 `verified_quote` 是对的。
- *
- * 一旦有别的路径能把未核验材料写进简报（P5 §3.2 的 `claim_offline` 就是这样一条），
- * 这行就变成洗白通道：一条 `user_claim` 进过一次简报，下一篇写稿会被重新包装成已核验。
- * 那时必须给 `BriefEvidence` 加来源档位并在这里透传，**不要**在那之前假设它还成立。
- * 见 `evidence-ledger.test.ts` 的同名回归测试。
+ * 简报证据沿用稳定编号并透传来源等级；未核验的宿主材料仍是 user_claim。
+ * 历史简报未记录source时，沿用旧版broker逐字核验后的verified_quote约定。
+ * 不能因为用户材料进入了简报，就将其升级为已查证事实。
  */
 export function seedLedgerFromBrief(ledger: EvidenceLedger, brief: ResearchBrief): void {
   brief.evidence.forEach((ev, i) => {
     if (!ev?.quote?.trim()) return;
     ledger.add({
       id: evidenceRefId(i),
-      source: "verified_quote",
+      source: ev.source ?? "verified_quote",
+      ...(ev.sourceId ? { sourceId: ev.sourceId } : {}),
       claim: ev.claim,
       quote: ev.quote,
       sourceUrl: ev.sourceUrl,

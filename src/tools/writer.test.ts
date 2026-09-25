@@ -1,3 +1,5 @@
+import { executeEditorial } from "./editorial.js";
+import { createCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * writer.test.ts — `autocrew_writer` 四个动作（P3 spec §5）。
  *
@@ -35,7 +37,7 @@ import {
   type ResearchJob,
 } from "../modules/research/research-job-store.js";
 import { EXTERNAL_BLOCK_END, EXTERNAL_BLOCK_START } from "../modules/inbox/triage.js";
-import { getContent, saveTopic, updateTopic, type Topic } from "../storage/local-store.js";
+import { getContent, saveTopic, updateTopic, updateContent, type Topic } from "../storage/local-store.js";
 import { updateProfile } from "../modules/profile/creator-profile.js";
 import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
@@ -176,7 +178,7 @@ function submitArgs(contentId: string, packId: string, attempt: number, over: Re
 
 /** 领一份包，**不等**备料（`pack` 现在是秒回的领号动作） */
 async function issue(over: Record<string, unknown> = {}, deps = {}): Promise<Record<string, any>> {
-  const topic = await seed();
+  const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", ...over }) }));
   await pickAngle(topic.id);
   const res = await run({ action: "pack", topic_id: topic.id, platform: "douyin", ...over }, deps);
   return { ...res, topicId: topic.id };
@@ -287,8 +289,8 @@ const emptyResearchLoop = async (_cfg: EngineConfig, _opts: LoopOptions): Promis
 
 describe("writer pack", () => {
   it("requirements 完整进包与原请求，保留已选立意；它本身不能绕过选卡", async () => {
-    const topic = await seed();
     const requirements = "写给第一次用 AI 的人；先讲真实返工，再解释原因；不做工具清单。";
+    const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", requirements }) }));
     expect(await run({ action: "pack", topic_id: topic.id, platform: "douyin", requirements }))
       .toMatchObject({ ok: false, needsAngle: true });
     await pickAngle(topic.id);
@@ -307,7 +309,7 @@ describe("writer pack", () => {
     const res = await pack();
     expect(res.ok).toBe(true);
     expect(res.pack_id).toMatch(/^wp-/);
-    expect(res.budget).toEqual({ find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
+    expect(res.budget).toEqual({ evidence_mode: "host", host_evidence_left: 12, find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
 
     const content = await getContent(res.content_id, testDir);
     expect(content?.status).toBe("drafting");
@@ -429,6 +431,7 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
       action: "pack",
       topic_id: topic.id,
       platform: "douyin",
+      research_mode: "provided", direction: "只讲这次亲历的返工问题",
       research: "宿主自己查到的：同一批客户的人力成本一年多花了 24 万。",
     });
     expect(started.ok).toBe(true);
@@ -444,7 +447,7 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
 
   it("正文引用选题描述里的数字 → 数字门放行（这条路以前全量打回）", async () => {
     const topic = await manualTopic();
-    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" });
+    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin", research_mode: "provided", research: MANUAL_DESC, direction: "按现有实测材料解释返工" });
     await settle(started.content_id as string);
 
     const out = await run(
@@ -470,7 +473,7 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
     }) as unknown as typeof runLoop;
 
     const topic = await manualTopic();
-    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" }, { runLoopImpl });
+    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin", research_mode: "provided", research: MANUAL_DESC, direction: "按现有实测材料解释返工" }, { runLoopImpl });
     expect(started.ok).toBe(true);
 
     const ready = await settle(started.content_id as string);
@@ -489,13 +492,13 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
     expect(modelCalls).toHaveLength(0);
   });
 
-  it("engine.json 写坏了照样炸——不许静默当成「没配」", async () => {
+  it.each(["host", "engine"])("engine.json 损坏：%s 路径按执行模式处理", async (execution) => {
     await fs.writeFile(path.join(testDir, "engine.json"), "{broken");
     const topic = await manualTopic();
-    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" });
+    const started = await run({ action: "pack", execution, topic_id: topic.id, platform: "douyin", research_mode: "provided", research: MANUAL_DESC, direction: "按现有实测材料解释返工" });
     const status = await settle(started.content_id as string);
-    expect(status.status).toBe("failed");
-    expect(String(status.error)).toContain("engine.json");
+    expect(status.status).toBe(execution === "host" ? "ready" : "failed");
+    if (execution === "engine") expect(String(status.error)).toContain("engine.json");
   });
 });
 
@@ -517,7 +520,7 @@ describe("writer pack 异步备料", () => {
   });
 
   it("已备包继承未重提要求；新要求先拒绝，force 刷新请求并保留旧材料", async () => {
-    const first = await pack({ requirements: "按一天经历展开。", direction: "只讲维护成本", research: "用户实测材料" });
+    const first = await pack({ requirements: "按一天经历展开。", direction: "只讲维护成本", research: "用户实测材料", research_mode: "provided" });
     const again = await run({ action: "pack", topic_id: first.topicId, platform: "douyin" });
     expect(again).toMatchObject({ status: "ready", pack_id: first.pack_id });
     const changedArgs = { action: "pack", topic_id: first.topicId, platform: "douyin", requirements: "保留经历，开头先说结果。" };
@@ -560,14 +563,17 @@ describe("writer pack 异步备料", () => {
   it("更换选中的立意也使旧包失效；force 并清空 direction 才改用新卡", async () => {
     const first = await pack({ direction: "只讲原来的角度" });
     const changedCard = card({ thesis: "新论点：返工来自没有验收标准" });
-    await pickAngle(first.topicId, makeBrief({ angleCards: [changedCard] }));
+    const renewed = makeBrief({ revision: 2, angleCards: [changedCard], creativeTask: createCreativeTask({ platform: "douyin" }) });
+    await saveBrief(first.topicId, renewed, testDir);
+    await upsertJob({ topicId: first.topicId, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: renewed.revision, topicHash: topicHashOf(TITLE, DESC), creativeTask: renewed.creativeTask }, testDir);
+    await pickAngle(first.topicId, renewed);
     expect(await run({ action: "pack", topic_id: first.topicId, platform: "douyin" }))
       .toMatchObject({ ok: false, code: "pack_request_changed", pack_id: first.pack_id });
     const fresh = await run({ action: "pack", topic_id: first.topicId, platform: "douyin", direction: "", force: true });
     expect(fresh.pack_id).not.toBe(first.pack_id);
     await settle(first.content_id);
     const file = await readPackFile(first.content_id);
-    expect(file.context?.req.direction).toBeUndefined();
+    expect(file.context?.req.direction).toBe("");
     expect(file.context?.angleCard?.thesis).toBe(changedCard.thesis);
     expect(file.context?.writingContract).toContain(changedCard.thesis);
   });
@@ -619,7 +625,11 @@ describe("writer pack 异步备料", () => {
     expect(String(started.note)).toContain("pack_status");
 
     const mid = await run({ action: "pack_status", content_id: started.content_id });
-    expect(mid).toMatchObject({ ok: true, status: "preparing", pack_id: started.pack_id });
+    expect(mid).toMatchObject({
+      ok: true, status: "preparing", pack_id: started.pack_id,
+      preparation: JSON.parse(JSON.stringify(started.preparation)), writing_source: started.writing_source,
+      next_action: started.next_action, poll_after_seconds: 30,
+    });
     expect(typeof mid.elapsed_s).toBe("number");
     expect(String(mid.started_at)).toBeTruthy();
     const preparingFile = await readPackFile(started.content_id);
@@ -643,7 +653,7 @@ describe("writer pack 异步备料", () => {
     const ready = await settle(started.content_id);
     expect(ready).toMatchObject({ ok: true, status: "ready", pack_id: started.pack_id });
     expect(String(ready.pack_md)).toContain("写作包");
-    expect(ready.budget).toEqual({ find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
+    expect(ready.budget).toEqual({ evidence_mode: "host", host_evidence_left: 12, find_evidence_left: 3, repair_rounds_left: expect.any(Number) });
     expect((await readPackFile(started.content_id)).state).toBe("ready");
     // ready 之后就能正常交稿（同一个 pack_id，不必重新领）
     expect((await run(submitArgs(started.content_id, started.pack_id, 1))).status).toBe("accepted_unreviewed");
@@ -656,7 +666,11 @@ describe("writer pack 异步备料", () => {
       { action: "pack", topic_id: first.topicId, platform: "douyin" },
       { buildContextImpl: gathering.impl },
     );
-    expect(again).toMatchObject({ status: "preparing", pack_id: first.pack_id, content_id: first.content_id });
+    expect(again).toMatchObject({
+      status: "preparing", pack_id: first.pack_id, content_id: first.content_id,
+      preparation: JSON.parse(JSON.stringify(first.preparation)), writing_source: first.writing_source,
+      next_action: first.next_action, poll_after_seconds: 30,
+    });
     expect(gathering.calls()).toBe(1);
 
     gathering.release();
@@ -665,6 +679,41 @@ describe("writer pack 异步备料", () => {
     const third = await run({ action: "pack", topic_id: first.topicId, platform: "douyin" });
     expect(third).toMatchObject({ status: "ready", pack_id: first.pack_id });
     expect(gathering.calls()).toBe(1);
+  });
+
+  it("新调研完成后，即使手写角度没变也不能复用旧材料包", async () => {
+    const started = await issue({ direction: "从返工经历解释", requirements: "保留这个完整规划" });
+    await settle(started.content_id);
+    const latest = makeBrief({ revision: 2, summary: "新的调研发现", creativeTask: createCreativeTask({ platform: "douyin", direction: "从返工经历解释", requirements: "保留这个完整规划" }) });
+    await saveBrief(started.topicId, latest, testDir);
+    await upsertJob({ topicId: started.topicId, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: 2, topicHash: topicHashOf(TITLE, DESC) }, testDir);
+    const result = await run({ action: "pack", topic_id: started.topicId, platform: "douyin" });
+    expect(result).toMatchObject({ ok: false, code: "pack_request_changed", next_action: { params: { force: true, requirements: "保留这个完整规划", direction: "从返工经历解释" } } });
+    expect((await readPackFile(started.content_id)).briefHash).not.toBe(result.preparation.research.briefHash);
+  });
+
+  it("异步备料读到新简报时拒绝把旧准备快照贴到新材料上", async () => {
+    const gathering = deferredContext();
+    const first = await issue({ direction: "从返工经历解释", requirements: "我的完整规划" }, { buildContextImpl: gathering.impl });
+    await saveBrief(first.topicId, makeBrief({ revision: 2, summary: "新简报" }), testDir);
+    await upsertJob({ topicId: first.topicId, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: 2, topicHash: topicHashOf(TITLE, DESC) }, testDir);
+    gathering.release();
+    const result = await settle(first.content_id);
+    expect(result).toMatchObject({ status: "failed", preparation: JSON.parse(JSON.stringify(first.preparation)), writing_source: first.writing_source, next_action: { params: { action: "pack", force: true, requirements: "我的完整规划", direction: "从返工经历解释" } } });
+    expect(String(result.error)).toContain("准备状态与实际材料不一致");
+    expect((await readPackFile(first.content_id)).context).toBeUndefined();
+  });
+
+  it("材料装配后规划变化也停止旧结果，不伪称已按最新规划备好", async () => {
+    const changedDuringBuild: typeof buildWritingContext = async (req, dataDir, warn, deps) => {
+      const context = await buildWritingContext(req, dataDir, warn, deps);
+      await updateTopic(req.topicId!, { description: "刚刚更新的规划" }, dataDir);
+      return context;
+    };
+    const first = await issue({ requirements: "完整规划" }, { buildContextImpl: changedDuringBuild });
+    const result = await settle(first.content_id);
+    expect(result.status).toBe("failed");
+    expect(String(result.error)).toContain("旧准备结果已停止");
   });
 
   it("force 重来：旧号当场作废，迟到的旧备料不许覆盖新包", async () => {
@@ -751,7 +800,7 @@ describe("writer find_evidence", () => {
     const res = await packWithSearch();
     const call = (n: number) =>
       run(
-        { action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id, need: `返工工时数据 ${n}` },
+        { action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id, need: `返工工时数据 ${n}` },
         { runLoopImpl: emptyResearchLoop },
       );
 
@@ -776,7 +825,7 @@ describe("writer find_evidence", () => {
     const res = await packWithSearch();
     for (const n of [1, 2]) {
       await run(
-        { action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id, need: `需求 ${n}` },
+        { action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id, need: `需求 ${n}` },
         { runLoopImpl: emptyResearchLoop },
       );
     }
@@ -789,7 +838,7 @@ describe("writer find_evidence", () => {
     const res = await packWithSearch();
     const hang = (): Promise<LoopResult> => new Promise<LoopResult>(() => {}); // 永不返回的补证
     const out = await run(
-      { action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id, need: "返工工时数据" },
+      { action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id, need: "返工工时数据" },
       { runLoopImpl: hang, findDeadlineMs: 20 },
     );
     expect(out.ok).toBe(true);
@@ -802,15 +851,15 @@ describe("writer find_evidence", () => {
 
   it("need 为空、稿件不存在、搜索没配好各自拒绝并说明", async () => {
     const res = await packWithSearch();
-    expect(await run({ action: "find_evidence", content_id: res.content_id, pack_id: res.pack_id })).toMatchObject({
+    expect(await run({ action: "find_evidence", execution: "engine", content_id: res.content_id, pack_id: res.pack_id })).toMatchObject({
       ok: false,
     });
-    expect(await run({ action: "find_evidence", content_id: "content-nope", pack_id: res.pack_id })).toMatchObject({
+    expect(await run({ action: "find_evidence", execution: "engine", content_id: "content-nope", pack_id: res.pack_id })).toMatchObject({
       ok: false,
     });
     await fs.rm(path.join(testDir, "search.json"));
     const noSearch = await run({
-      action: "find_evidence",
+      action: "find_evidence", execution: "engine",
       content_id: res.content_id,
       pack_id: res.pack_id,
       need: "返工工时",
@@ -970,6 +1019,15 @@ describe("writer submit 审稿", () => {
     const res = await pack();
     const out = await run(submitArgs(res.content_id, res.pack_id, 1));
     expect(out.status).toBe("accepted_unreviewed");
+    expect(out).toMatchObject({
+      saved: true,
+      quality_status: "unreviewed",
+      needs_attention: true,
+      writing_source: { kind: "host", host: "local-user" },
+      next_action: { action: "disclose_review_gap" },
+    });
+    expect(String(out.human_next_step)).toContain("尚未经过产品审稿");
+    expect(String(out.note)).not.toContain("收工");
     expect(out.content_status).toBe("draft_ready");
     expect(String(out.review_skipped_reason)).toBeTruthy();
     expect(reviewInFlight(res.content_id)).toBeUndefined();
@@ -983,11 +1041,69 @@ describe("writer submit 审稿", () => {
     expect(content?.writtenBy).toEqual({ kind: "host", host: "local-user" });
   });
 
+  it("自然完整正文不必硬拆开头和 CTA，空 hashtags 可原样提交", async () => {
+    const res = await pack();
+    const naturalBody = "我们把返工记录摊在桌上。看完才发现，代码写得快了，回头确认的活依然不少。先把这件事说清楚，下一次才知道哪里值得改。";
+    const out = await run(submitArgs(res.content_id, res.pack_id, 1, {
+      hook: undefined,
+      body: naturalBody,
+      cta: undefined,
+      hashtags: [],
+    }));
+    expect(out).toMatchObject({ status: "accepted_unreviewed", saved: true, quality_status: "unreviewed" });
+    expect((await getContent(res.content_id, testDir))?.body).toBe(naturalBody);
+  });
+
+  it("旧包没有流程快照时回执明确 unknown，不根据有材料追认已完成调研", async () => {
+    const res = await pack();
+    const legacy = await readPackFile(res.content_id);
+    delete legacy.context!.readiness;
+    await fs.writeFile(path.join(testDir, "contents", res.content_id, PACK_JSON), JSON.stringify(legacy));
+    const out = await run(submitArgs(res.content_id, res.pack_id, 1));
+    expect(out.preparation).toMatchObject({
+      status: "unknown",
+      available_materials: { research_brief: true, selected_angle: true },
+    });
+    expect((out.preparation as { note: string }).note).toContain("材料存在不等于已完成调研");
+  });
+
+  it("旧提交重放与状态查询也显示质量缺口，不保留让宿主直接收工的旧回执", async () => {
+    const res = await pack();
+    await run(submitArgs(res.content_id, res.pack_id, 1));
+    const legacy = await readPackFile(res.content_id);
+    delete legacy.context!.readiness;
+    legacy.attempts["1"]!.result = {
+      status: "accepted_unreviewed",
+      content_id: res.content_id,
+      review: { status: "skipped", rounds: 0, issues: [] },
+      note: "稿子收下了，收工。",
+    };
+    await fs.writeFile(path.join(testDir, "contents", res.content_id, PACK_JSON), JSON.stringify(legacy));
+    const replay = await run(submitArgs(res.content_id, res.pack_id, 1));
+    const status = await run({ action: "submit_status", content_id: res.content_id });
+    for (const out of [replay, status]) {
+      expect(out).toMatchObject({ status: "accepted_unreviewed", saved: true, quality_status: "unreviewed", needs_attention: true, preparation: { status: "unknown" } });
+      expect(String(out.note)).not.toContain("收工");
+      expect(String(out.human_next_step)).toContain("不代表你已认可");
+    }
+    expect(replay.replayed).toBe(true);
+  });
+
+  it("写作包说明完整正文可直接提交，同时区分保存、AI 审稿与作者认可", async () => {
+    const res = await pack();
+    expect(String(res.pack_md)).toContain("`body` 可以直接放自然完整的正文");
+    expect(String(res.pack_md)).toContain("`hook`、`cta` 可省略或留空");
+    expect(String(res.pack_md)).toContain("`hashtags` 可省略或传空数组");
+    expect(String(res.pack_md)).toContain("尚不代表创作者认可");
+    expect(String(res.pack_md)).not.toContain("稿子收下了，收工");
+  });
+
   it("审稿线没配（引擎读不出来）→ 当场 accepted_unreviewed，不挂一个等不到头的「审稿中」", async () => {
     const res = await pack();
     await fs.rm(path.join(testDir, "engine.json"));
     const out = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }));
     expect(out.status).toBe("accepted_unreviewed");
+    expect(out).toMatchObject({ saved: true, quality_status: "unreviewed", needs_attention: true });
     expect(String(out.review_skipped_reason)).toBeTruthy();
     expect(reviewInFlight(res.content_id)).toBeUndefined();
     expect((await getContent(res.content_id, testDir))?.status).toBe("draft_ready");
@@ -1001,6 +1117,7 @@ describe("writer submit 审稿", () => {
     const { first, final } = await submitAndWait(res.content_id, res.pack_id, 1, {}, { runLoopImpl: boom });
     expect(first.status).toBe("reviewing");
     expect(final.status).toBe("accepted_unreviewed");
+    expect(final).toMatchObject({ saved: true, quality_status: "unreviewed", needs_attention: true });
     // P2 翻译器：说的是「审稿这条线怎么了、这次做了什么」，不是复述 ECONNRESET
     expect(String(final.review_skipped_reason)).toContain("审稿");
     expect(String(final.review_skipped_reason)).toContain("连不上");
@@ -1016,6 +1133,12 @@ describe("writer submit 审稿", () => {
     const first = await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: impl });
     expect(Object.keys(first)[0]).toBe("status");
     expect(first).toMatchObject({ status: "reviewing", attempt: 1, content_id: res.content_id });
+    expect(first).toMatchObject({
+      saved: true,
+      quality_status: "reviewing",
+      needs_attention: true,
+      next_action: { action: "wait_for_review", params: { action: "submit_status", content_id: res.content_id } },
+    });
     expect(String(first.note)).toContain("submit_status");
     // 「稿已落盘」不是口号：这一刻正文、归属、submittedAt 都已经在盘上
     const mid = await getContent(res.content_id, testDir);
@@ -1027,6 +1150,8 @@ describe("writer submit 审稿", () => {
     await reviewInFlight(res.content_id);
     const final = await run({ action: "submit_status", content_id: res.content_id });
     expect(final).toMatchObject({ ok: true, status: "accepted", attempt: 1, content_status: "draft_ready" });
+    expect(final).toMatchObject({ saved: true, quality_status: "passed_with_notes", needs_attention: true, audience_review: { status: "unavailable" }, next_action: { action: "present_draft" } });
+    expect(String(final.human_next_step)).toContain("不等于你已认可");
     expect(typeof final.elapsed_s).toBe("number");
     expect(final.title).toBe(GOOD.title);
     expect((await getContent(res.content_id, testDir))?.review?.status).toBe("passed");
@@ -1048,6 +1173,7 @@ describe("writer submit 审稿", () => {
     const one = await submitAndWait(res.content_id, res.pack_id, 1, {}, { runLoopImpl: impl });
     expect(one.first.status).toBe("reviewing");
     expect(one.final.status).toBe("review_required");
+    expect(one.final).toMatchObject({ saved: true, quality_status: "needs_revision", needs_attention: true, next_action: { action: "revise_and_resubmit" } });
     expect(one.final.round).toBe(1);
     expect((one.final.issues as any[])[0].rule).toBe("论点只是材料复述");
     expect((await getContent(res.content_id, testDir))?.status).toBe("revision");
@@ -1087,6 +1213,8 @@ describe("writer submit 审稿", () => {
     expect((await submitAndWait(res.content_id, res.pack_id, 2, {}, opts)).final.status).toBe("review_required");
     const third = await submitAndWait(res.content_id, res.pack_id, 3, {}, opts);
     expect(third.final.status).toBe("accepted_with_issues");
+    expect(third.final).toMatchObject({ saved: true, quality_status: "issues_remaining", needs_attention: true, next_action: { action: "resolve_review_issues" } });
+    expect(String(third.final.note)).toContain("质量未通过");
     expect(third.final.issues as any[]).toHaveLength(1);
 
     const content = await getContent(res.content_id, testDir);
@@ -1151,7 +1279,7 @@ describe("writer submit 审稿", () => {
             pending: {
               host: "local-user",
               payload: { ...GOOD, hashtags: [...GOOD.hashtags] },
-              humanizedText: GOOD.body,
+              humanizedText: (await getContent(res.content_id, testDir))!.body,
               needsHuman: [],
               gateNotes: [],
             },
@@ -1281,5 +1409,118 @@ describe("门禁输入快照：内部写手 vs 宿主", () => {
     expect(execResults[0]).toContain(hostDetail);
     // 4) 内部路径这一轮同样被硬门拦下（判据没有单边放松）
     expect(internal.needsEvidence).toBe(true);
+  });
+});
+
+
+describe("draft feedback re-enters the host writing pack", () => {
+  it("reopens the exact submitted draft and injects its feedback without changing the saved body", async () => {
+    const first = await pack();
+    const submitted = await run(submitArgs(first.content_id, first.pack_id, 1));
+    expect(submitted.status).toBe("accepted_unreviewed");
+    const before = await getContent(first.content_id, testDir);
+    const inspect = await executeEditorial({ action: "inspect", content_id: first.content_id, _dataDir: testDir });
+    const feedback = "保留第一段的真实经历，第二段不要突然讲大道理。";
+    const captured = await executeEditorial({ action: "feedback", content_id: first.content_id, draft_hash: inspect.draft_hash, event_id: "writer-feedback-reopen", feedback, user_confirmed: true, _dataDir: testDir });
+    expect(captured).toMatchObject({ ok: true, status: "recorded" });
+    const next = (captured.next_action as { params: Record<string, unknown> }).params;
+    const reissued = await run(next);
+    expect(reissued).toMatchObject({ ok: true, content_id: first.content_id, status: "preparing" });
+    expect(reissued.pack_id).not.toBe(first.pack_id);
+    const prepared = await settle(first.content_id);
+    expect(prepared.status).toBe("ready");
+    const newPack = await readPackFile(first.content_id);
+    expect(newPack.context?.prompts.user).toContain(feedback);
+    expect(newPack.context?.prompts.user).toContain(GOOD.body);
+    expect(newPack.context?.writingContract).toContain(feedback);
+    const current = await getContent(first.content_id, testDir);
+    expect(current?.body).toBe(before?.body);
+    expect(current?.status).toBe("drafting");
+  });
+
+  it("invalidates a prepared pack when the creator adds more feedback", async () => {
+    const first = await pack();
+    const inspect = await executeEditorial({ action: "inspect", content_id: first.content_id, _dataDir: testDir });
+    await executeEditorial({ action: "feedback", content_id: first.content_id, draft_hash: inspect.draft_hash, event_id: "writer-feedback-invalidates", feedback: "不套营销口号", user_confirmed: true, _dataDir: testDir });
+    const stale = await run({ action: "pack", content_id: first.content_id, topic_id: first.topicId, platform: "douyin" });
+    expect(stale).toMatchObject({ ok: false, code: "pack_request_changed" });
+    expect(String(stale.error)).toContain("修改反馈");
+  });
+
+  it("rejects a mismatched explicit draft target instead of guessing a replacement", async () => {
+    const first = await pack();
+    const other = await seed();
+    const wrong = await run({ action: "pack", content_id: first.content_id, topic_id: other.id, platform: "douyin", force: true });
+    expect(wrong).toMatchObject({ ok: false });
+    expect(String(wrong.error)).toContain("必须属于本次");
+    expect((await readPackFile(first.content_id)).packId).toBe(first.pack_id);
+  });
+});
+
+describe("persisted creative task reaches writing and review", () => {
+  it("recovers omitted requirements from the research brief and preserves the original wording", async () => {
+    const task = createCreativeTask({ platform: "douyin", requirements: "  写给门店老板\n保留犹豫过程，不要营销口号。  ", direction: "从一次返工经历展开" });
+    const topic = await seed(makeBrief({ creativeTask: task }));
+    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin" });
+    expect(started.ok).toBe(true);
+    const ready = await settle(started.content_id as string);
+    expect(ready.status).toBe("ready");
+    const frozen = await readPackFile(started.content_id as string);
+    expect(frozen.context?.req.requirements).toBe(task.requirements);
+    expect(frozen.context?.req.direction).toBe(task.direction);
+    expect(frozen.context?.prompts.user).toContain(task.requirements!.trim());
+    expect(frozen.context?.writingContract).toContain(task.requirements);
+    expect(frozen.context?.readiness?.creativeTask).toEqual(task);
+  });
+});
+
+
+describe("audience review in the host writing flow", () => {
+  const audience = { coreStops: false, verdicts: [{ tier: "core", name: "仓管", wouldStop: false, why: "结尾太泛", losesAt: [] }], suggestions: ["把结尾留在具体工作场景"], personaUsed: "仓管" };
+  it("默认交稿同时返回真实受众建议，保留同稿任务，不把不满写成通过", async () => {
+    await updateProfile({ audiencePersona: { core: { name: "仓管" }, calibratedAt: "2026-09-22" } }, testDir);
+    const res = await pack();
+    const { impl } = reviewLoop([{ verdict: "pass", issues: [] }]);
+    let input: Record<string, unknown> = {};
+    const { final } = await submitAndWait(res.content_id, res.pack_id, 1, {}, { runLoopImpl: impl, audienceReviewImpl: async (seen: Record<string, unknown>) => { input = seen; return audience; } });
+    expect(final).toMatchObject({ status: "accepted", quality_status: "passed_with_notes", needs_attention: true, audience_review: { status: "reviewed", result: audience } });
+    expect(input.body).toBe((await getContent(res.content_id, testDir))?.body);
+    expect(input.writingContract).toBe((await readPackFile(res.content_id)).context?.writingContract);
+    expect((await run({ action: "submit_status", content_id: res.content_id })).audience_review).toEqual(final.audience_review);
+  });
+  it("受众点评故障明确缺口；review=none明确未执行", async () => {
+    await updateProfile({ audiencePersona: { core: { name: "仓管" }, calibratedAt: "2026-09-22" } }, testDir);
+    const res = await pack();
+    const { impl } = reviewLoop([{ verdict: "pass", issues: [] }]);
+    const { final } = await submitAndWait(res.content_id, res.pack_id, 1, {}, { runLoopImpl: impl, audienceReviewImpl: async () => { throw new Error("受众点评临时不可用"); } });
+    expect(final).toMatchObject({ audience_review: { status: "unavailable", reason: "受众点评临时不可用" }, needs_attention: true });
+    const next = await pack();
+    const noReview = await run(submitArgs(next.content_id, next.pack_id, 1, { review: "none" }));
+    expect(noReview).toMatchObject({ audience_review: { status: "skipped" }, quality_status: "unreviewed" });
+  });
+  it("审稿时编辑器修改正文，迟到结论不覆盖新稿或推进状态", async () => {
+    const res = await pack();
+    const held = heldReviewLoop([{ verdict: "pass", issues: [] }]);
+    await run(submitArgs(res.content_id, res.pack_id, 1, { review: "engine" }), { runLoopImpl: held.impl });
+    await updateContent(res.content_id, { body: "用户在编辑器改过的新正文" }, testDir);
+    held.release();
+    await reviewInFlight(res.content_id);
+    expect(await run({ action: "submit_status", content_id: res.content_id })).toMatchObject({ quality_status: "stale_review", needs_attention: true });
+    expect(await getContent(res.content_id, testDir)).toMatchObject({ body: "用户在编辑器改过的新正文", status: "drafting" });
+  });
+});
+
+describe("provided materials do not inherit stale research", () => {
+  it("can refresh from explicit materials after the topic changes without mixing the old brief", async () => {
+    const first = await pack({ direction: "从返工经历展开" });
+    await updateTopic(first.topicId, { description: "换成门店自己的复盘" }, testDir);
+    const next = await run({ action: "pack", topic_id: first.topicId, platform: "douyin", force: true, research_mode: "provided", research: "门店主理人的口述经历", direction: "从返工经历展开" });
+    expect(next.ok).toBe(true);
+    const ready = await settle(first.content_id);
+    expect(ready.status).toBe("ready");
+    const frozen = await readPackFile(first.content_id);
+    expect(frozen.briefHash).toBe("");
+    expect(frozen.context?.researchSlot).toContain("门店主理人的口述经历");
+    expect(frozen.context?.readiness?.research.autoResearched).toBe(false);
   });
 });

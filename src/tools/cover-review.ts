@@ -9,6 +9,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import { ensureClaim } from "../storage/claims.js";
 import {
@@ -47,12 +48,13 @@ type PrimaryRatio = "3:4" | "16:9" | "4:3" | "2.35:1";
 type CoverLabel = "a" | "b" | "c";
 
 export const coverReviewSchema = Type.Object({
-  action: Type.Unsafe<"create_candidates" | "get" | "approve" | "revise" | "platform_ratios" | "generate_ratios">({
+  action: Type.Unsafe<"create_candidates" | "get" | "approve" | "revise" | "platform_ratios" | "draft_ratios" | "generate_ratios">({
     type: "string",
-    enum: ["create_candidates", "get", "approve", "revise", "platform_ratios", "generate_ratios"],
+    enum: ["create_candidates", "get", "approve", "revise", "platform_ratios", "draft_ratios", "generate_ratios"],
     description:
       "Cover action: create_candidates (generate 3 covers), get (view review), approve (pick one), " +
       "revise (full redraw or local masked edit via edit_mode), platform_ratios (identity-locked outpaint for personal IP; 2.35:1/16:9/4:3/3:4), " +
+      "draft_ratios (selected unapproved 3:4 candidate to identity-locked 4:3 draft; requires label, does not approve), " +
       "generate_ratios (legacy alias: 16:9 + 4:3).",
   }),
   content_id: Type.String({ description: "AutoCrew content id." }),
@@ -159,7 +161,7 @@ export async function executeCoverReview(params: Record<string, unknown>) {
 
   if (!contentId) return { ok: false, error: "content_id is required" };
 
-  // get 是只读的，其余五个动作都改盘：先过令牌门，再动手
+  // get 是只读的，其余动作都改盘：先过令牌门，再动手
   if (action !== "get") {
     const denied = await gateCoverWrite(params, contentId, dataDir);
     if (denied) return denied;
@@ -185,6 +187,7 @@ export async function executeCoverReview(params: Record<string, unknown>) {
   if (action === "create_candidates") return createCandidates(params, contentId, dataDir);
   if (action === "revise") return reviseVariant(params, contentId, dataDir);
   if (action === "platform_ratios") return platformRatios(params, contentId, dataDir);
+  if (action === "draft_ratios") return draftRatios(params, contentId, dataDir);
 
   // --- GENERATE RATIOS(legacy MCP 动作名) ---
   // V5.6.1 创始人裁决:横屏(16:9/4:3)是一等需求,不再过 Pro 门——委托给 platform_ratios
@@ -563,6 +566,7 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
   if ("error" in generated) return { ok: false, error: generated.error };
 
   const idx = review.variants.findIndex((v) => v.label === label);
+  delete generated.variant.draftPair;
   review.variants[idx] = generated.variant;
   review.feedback = [
     ...(review.feedback ?? []),
@@ -594,6 +598,63 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
     ...(statusNote ? { statusNote } : {}),
     ...(generated.warning ? { warnings: [generated.warning] } : {}),
   };
+}
+
+async function draftRatios(params: Record<string, unknown>, contentId: string, dataDir: string) {
+  const label = params.label;
+  if (label !== "a" && label !== "b" && label !== "c") return { ok: false, error: "draft_ratios requires an explicit label (a/b/c)" };
+  if (!Array.isArray(params.ratios) || params.ratios.length !== 1 || params.ratios[0] !== "4:3") {
+    return { ok: false, error: 'draft_ratios supports only ratios=["4:3"]' };
+  }
+  const review = await getCoverReview(contentId, dataDir);
+  if (!review || (review.primaryRatio ?? "3:4") !== "3:4") return { ok: false, error: "A 3:4 candidate review is required" };
+  if (review.approvedLabel === label) return { ok: false, error: "This candidate is already approved; use platform_ratios" };
+  const expectedReviewSha256 = createHash("sha256").update(JSON.stringify(review)).digest("hex");
+  const candidate = review.variants.find((variant) => variant.label === label);
+  const master = candidate?.imagePaths["3:4"];
+  if (!candidate?.imagePrompt || !master || candidate.model !== "gpt-image-2") {
+    return { ok: false, error: "draft_ratios requires an existing gpt-image-2 master" };
+  }
+  const stamp = coverStamp(review);
+  const sourceSha256 = createHash("sha256").update(await fs.readFile(master)).digest("hex");
+  if (candidate.draftPair?.sourceSha256 === sourceSha256 && candidate.draftPair.sourceRevision === (candidate.revision ?? 1)) {
+    const derived = candidate.imagePaths["4:3"];
+    if (derived && createHash("sha256").update(await fs.readFile(derived)).digest("hex") === candidate.draftPair.derivedSha256) {
+      return { ok: true, status: "review_pending", reused: true, label, paths: { "3:4": master, "4:3": derived } };
+    }
+  }
+  const ctx = await resolveProviderCtx(params, dataDir);
+  if ("error" in ctx) return ctx;
+  if (ctx.provider !== "relay" || ctx.relay?.model !== "gpt-image-2") {
+    return { ok: false, error: "draft_ratios requires the gpt-image-2 relay with mask support" };
+  }
+  const outputPath = path.join(dataDir, "contents", contentId, "assets", "covers", `cover-${label}-r${candidate.revision ?? 1}-draft-4x3-${randomUUID()}`);
+  let workDir: string | undefined;
+  let result: Awaited<ReturnType<typeof renderCoverImage>>;
+  try {
+    const assets = await prepareIdentityLockedOutpaint(master, "4:3");
+    workDir = assets.workDir;
+    result = await renderCoverImage(identityLockedOutpaintPrompt(candidate.imagePrompt, "4:3"), "4:3", outputPath,
+      ctx, [assets.canvasPath, ...ctx.referencePhotos].slice(0, 3), assets.maskPath);
+  } finally {
+    if (workDir) await fs.rm(workDir, { recursive: true, force: true });
+  }
+  if (!result.ok || !result.imagePath || result.model !== "gpt-image-2" || result.warning) {
+    return { ok: false, error: result.error ?? result.warning ?? "Draft extension did not return verified Image 2 output" };
+  }
+  if (await coverReviewChanged(contentId, stamp, dataDir)) return { ok: false, error: COVER_CAS_ERROR };
+  if (createHash("sha256").update(await fs.readFile(master)).digest("hex") !== sourceSha256) {
+    return { ok: false, error: "Cover master changed during extension; review the current candidate" };
+  }
+  candidate.imagePaths["4:3"] = result.imagePath;
+  candidate.draftPair = {
+    sourceSha256, sourceRevision: candidate.revision ?? 1,
+    derivedSha256: createHash("sha256").update(await fs.readFile(result.imagePath)).digest("hex"),
+    model: "gpt-image-2", generatedAt: new Date().toISOString(),
+  };
+  const saved = await saveCoverReview(contentId, review, dataDir, expectedReviewSha256);
+  if (!saved) return { ok: false, error: COVER_CAS_ERROR };
+  return { ok: true, status: "review_pending", label, paths: { "3:4": master, "4:3": result.imagePath }, review: saved };
 }
 
 async function platformRatios(params: Record<string, unknown>, contentId: string, dataDir: string) {

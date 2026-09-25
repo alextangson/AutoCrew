@@ -154,6 +154,7 @@ export interface CoreEvidenceItem {
   claim?: string;
   quote: string;
   sourceUrl?: string;
+  source?: "verified_quote" | "own_claim" | "user_claim";
 }
 
 /**
@@ -169,7 +170,7 @@ export function renderCoreEvidence(items: readonly CoreEvidenceItem[]): string {
     .map(
       (e) =>
         `- ${e.id}【${sanitizeExternal(e.claim ?? "", CLAIM_MAX) || "（无主张）"}】` +
-        `「${sanitizeExternal(e.quote, QUOTE_MAX)}」——${domainOf(e.sourceUrl)}`,
+        `「${sanitizeExternal(e.quote, QUOTE_MAX)}」——${domainOf(e.sourceUrl)}｜${e.source ?? "verified_quote"}${e.source === "user_claim" ? "（未核验用户陈述，不得当作已查证事实）" : e.source === "own_claim" ? "（创作者材料，非外部核验）" : ""}`,
     );
   if (lines.length === 0) return "";
   const body = [

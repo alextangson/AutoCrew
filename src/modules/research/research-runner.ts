@@ -10,6 +10,8 @@
  * full 与 angles 共用这一道门），跨进程/重启靠 job 的 claimedAt lease（30 分钟）
  * ——台账那一眼拦不住「上一个进程崩在半路」，租约过期的 running 才允许被捡回重排。
  */
+import { createCreativeTask, creativeTaskHash, creativeTaskMatches, type CreativeTask } from "../writing/creative-task.js";
+import { resolveEffectiveBrief } from "./brief-snapshot.js";
 import { getTopic, updateTopic } from "../../storage/local-store.js";
 import {
   getJob,
@@ -76,7 +78,7 @@ export interface ResearchRunner {
    * 同选题已有在途任务 → **拒绝**（不合并、不排队）：两种 kind 共用这一道门，
    * angles job 因此永远不会和 full job 抢同一条选题的简报指针（§3.5）。
    */
-  trigger(topicId: string, kind?: ResearchJobKind): Promise<TriggerResult>;
+  trigger(topicId: string, kind?: ResearchJobKind, creativeTask?: CreativeTask): Promise<TriggerResult>;
   /** 启动用：回收 lease 过期的 running（→ queued）并把所有非终态 job 重新排队，返回被回收的项 */
   reclaimStaleJobs(): Promise<ResearchJob[]>;
   /** 队列排空且无在途任务时 resolve（测试与优雅停机用） */
@@ -105,6 +107,7 @@ function leaseAlive(job: ResearchJob, nowMs: number): boolean {
 
 /** claim 门：终态不重跑（重跑走 trigger 落新 job），租约未过期的 running 不抢 */
 function isClaimable(job: ResearchJob, nowMs: number): boolean {
+  if (job.executedBy?.kind === "host") return false;
   if (job.status === "queued") return true;
   if (job.status === "running") return !leaseAlive(job, nowMs);
   return false;
@@ -178,7 +181,7 @@ class SerialResearchRunner implements ResearchRunner {
         console.error(`[research-runner] ${ctx.phase} 失败（${ctx.topicId ?? "-"}）：${errText(err)}`));
   }
 
-  async trigger(topicId: string, kind: ResearchJobKind = "full"): Promise<TriggerResult> {
+  async trigger(topicId: string, kind: ResearchJobKind = "full", creativeTask?: CreativeTask): Promise<TriggerResult> {
     const { dataDir } = this.deps;
     const topic = await getTopic(topicId, dataDir);
     if (!topic) return { accepted: false, reason: `选题不存在：${topicId}` };
@@ -187,12 +190,25 @@ class SerialResearchRunner implements ResearchRunner {
     }
 
     const existing = await getJob(topicId, dataDir);
+    const snapshot = kind === "angles" ? await resolveEffectiveBrief(topicId, dataDir) : null;
+    const inheritedTask = kind === "angles" ? snapshot?.brief.creativeTask : existing?.creativeTask;
+    const task = creativeTask ? createCreativeTask(creativeTask) : inheritedTask ? createCreativeTask(inheritedTask) : undefined;
+    if (kind === "angles" && !creativeTaskMatches(task ?? createCreativeTask({}), snapshot?.brief.creativeTask)) {
+      return { accepted: false, reason: "创作任务已变化；仅重新立意不能补齐新要求需要的事实，请先重跑完整调研。" };
+    }
+    if (existing?.executedBy?.kind === "host" && !isTerminalJobStatus(existing.status)) {
+      return { accepted: false, reason: "本轮研究由宿主进行，请继续 autocrew_scout；不会自动切换后台模型。", inFlight: true };
+    }
     if (existing && !isTerminalJobStatus(existing.status)) {
       // 真的有人在跑（排队中 / 租约还活着）：**拒**，两种 kind 同一道门（§3.5）——
       // 合并成同一条 job 会让「重新立意」悄悄变成「深调研」（反之亦然），
       // 而并排两条 job 又会让两轮结算抢同一个简报指针
       if (existing.status === "queued" || leaseAlive(existing, this.now())) {
-        return { accepted: false, reason: inFlightReason(existing), inFlight: true };
+        return { accepted: false, reason: creativeTaskHash(task) !== creativeTaskHash(existing.creativeTask)
+          ? `${inFlightReason(existing)}；该轮使用另一份创作任务，尚未应用本次要求` : inFlightReason(existing), inFlight: true };
+      }
+      if (creativeTaskHash(task) !== creativeTaskHash(existing.creativeTask)) {
+        return { accepted: false, reason: "已有待恢复调研使用另一份创作任务；先恢复该轮，再按本次要求重新调研。", inFlight: true };
       }
       // running 但租约过期 = 跑它的进程已经死了：把这条捡回队列重跑，不新开一轮
       // （它自己的 kind 说了算——半路换 kind 等于凭空改写一条在册任务）
@@ -204,6 +220,7 @@ class SerialResearchRunner implements ResearchRunner {
     const job: ResearchJob = {
       topicId,
       status: "queued",
+      ...(task ? { creativeTask: task } : {}),
       ...(kind === "angles" ? { kind } : {}),
       startedAt: this.nowIso(),
       // angles job 不跑视角：空数组是它的正确形状，不是「四路都还没开始」
@@ -228,7 +245,7 @@ class SerialResearchRunner implements ResearchRunner {
     const nowMs = this.now();
     const reclaimed: ResearchJob[] = [];
     for (const job of await listJobs(this.deps.dataDir)) {
-      if (isTerminalJobStatus(job.status)) continue;
+      if (job.executedBy?.kind === "host" || isTerminalJobStatus(job.status)) continue;
       if (job.status === "running" && !leaseAlive(job, nowMs)) {
         reclaimed.push(
           await this.write({

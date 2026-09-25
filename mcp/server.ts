@@ -7,6 +7,7 @@
  * 入口是 `bin/autocrew.mjs mcp`，它把 stdin 上的 JSON-RPC 转发到那个端点——本文件
  * 不再自带 stdio 循环，全部宿主经同一个写进程（P3 §3）。
  */
+import { WRITING_INSTRUCTIONS } from "./writing-instructions.js";
 import { registerAutocrewCapabilities } from "../index.js";
 import { loadProfile } from "../src/modules/profile/creator-profile.js";
 import { createContext } from "../src/runtime/context.js";
@@ -41,9 +42,10 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set(["2025-03-26", "2025-06-18", "2025-1
 export const HOST_PARAM = "_host";
 export const DEFAULT_HOST = "local-user";
 const PROMPTS = [
+  { name: "write_content", title: "准备一篇内容", description: "从写作需求开始，检查材料、推荐立意，再由当前模型写稿", argument: "requirements" },
   { name: "write_wechat", title: "写公众号文章", description: "从明确选题生成公众号原生稿", argument: "topic" },
   { name: "revise_content", title: "按反馈修改稿件", description: "原地修改现有稿件并保存新版本", argument: "feedback" },
-  { name: "review_content", title: "审稿", description: "检查敏感词、内容质量与 AI 味", argument: "content_id" },
+  { name: "review_content", title: "检查稿件", description: "由当前宿主检查规划、事实与表达，并标明审稿来源", argument: "content_id" },
   { name: "weekly_retro", title: "本周复盘", description: "根据真实发布与回流数据生成周复盘", argument: "focus" },
 ] as const;
 
@@ -69,6 +71,7 @@ const CONTENT_ID = "content-\\d+-[a-z0-9]+";
 
 async function readResource(uri: string, runtime: ReturnType<typeof runtimeFor>): Promise<ResourcePayload | null> {
   const json = (value: unknown): ResourcePayload => ({ text: JSON.stringify(value, null, 2), mimeType: "application/json" });
+  if (uri === "autocrew://writing-guide") return { text: WRITING_INSTRUCTIONS, mimeType: "text/markdown" };
   if (uri === "autocrew://profile") return json(await loadProfile(runtime.ctx.dataDir));
   if (uri === "autocrew://topics") return json(await runtime.runner.execute("autocrew_topic", { action: "list" }));
   if (uri === "autocrew://contents") return json(await runtime.runner.execute("autocrew_content", { action: "list" }));
@@ -96,9 +99,10 @@ async function readResource(uri: string, runtime: ReturnType<typeof runtimeFor>)
 
 function promptMessages(name: string, args: Record<string, unknown>) {
   const value = (key: string) => String(args[key] ?? "").trim();
-  if (name === "write_wechat") return [{ role: "user", content: { type: "text", text: `用选题《${value("topic")}》写一篇公众号原生文章，并保存到 AutoCrew。` } }];
-  if (name === "revise_content") return [{ role: "user", content: { type: "text", text: `读取当前稿件，按以下反馈原地修改并保存新版本：${value("feedback")}` } }];
-  if (name === "review_content") return [{ role: "user", content: { type: "text", text: `审查 AutoCrew 稿件 ${value("content_id")}，给出问题并执行可安全自动修复的项目。` } }];
+  if (name === "write_content") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：${value("requirements")}` } }];
+  if (name === "write_wechat") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：用选题《${value("topic")}》写一篇公众号原生文章，先用 workflow prepare 准备材料与立意。` } }];
+  if (name === "revise_content") return [{ role: "user", content: { type: "text", text: `先用 autocrew_editorial inspect 读取当前稿件与 draft_hash，再用 feedback 保存用户本次已确认的修改要求；按返回的 writer pack 流程原地改稿、submit 和 review_desk 审稿。默认由当前宿主执行，不调用后台改稿模型。反馈：${value("feedback")}` } }];
+  if (name === "review_content") return [{ role: "user", content: { type: "text", text: `读取 AutoCrew 稿件 ${value("content_id")}，用 autocrew_review_desk pack 领取审稿任务，由当前宿主核对规划、事实与表达，再用 submit 交回具体问题与受众建议。不调用后台模型；按 review_source 说明审稿来源，host_self_review 是同宿主自审，不能称独立审稿。autocrew_review 仅做词表和阅读格式检查。没有写作包时如实说明需先领取 writer 包。不自动替创作者批准。` } }];
   if (name === "weekly_retro") return [{ role: "user", content: { type: "text", text: `基于 AutoCrew 中的真实数据生成本周复盘。重点：${value("focus") || "选题、内容质量、转化"}。不要编造缺失数据。` } }];
   return null;
 }
@@ -139,6 +143,7 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
     return resultResponse(id, {
       protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false }, resources: { listChanged: false }, prompts: { listChanged: false } },
+      instructions: WRITING_INSTRUCTIONS,
       serverInfo: { name: "autocrew", version: "0.1.0", description: "Local-first AI content operations crew" },
     });
   }
@@ -154,6 +159,7 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
   if (method === "resources/list") {
     return resultResponse(id, {
       resources: [
+        { uri: "autocrew://writing-guide", name: "写作默认流程与交付标准", mimeType: "text/markdown" },
         { uri: "autocrew://profile", name: "创作者档案", mimeType: "application/json" },
         { uri: "autocrew://topics", name: "选题库", mimeType: "application/json" },
         { uri: "autocrew://contents", name: "内容资产", mimeType: "application/json" },

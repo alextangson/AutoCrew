@@ -111,12 +111,12 @@ export function runQualityGate(spec: QualityGateSpec, input: GateInput): GateFai
   }
 
   if (spec.bannedHookPatterns?.length) {
-    const hookStart = input.hook.trim();
+    const hookStart = input.hook.trim() || input.body.trim();
     for (const src of spec.bannedHookPatterns) {
       if (new RegExp(src).test(hookStart)) {
         failures.push({
           check: "banned_hook",
-          detail: `开头命中反模式 /${src}/：用反常识判断、数据震撼或场景代入重写开头`,
+          detail: `开头命中反模式 /${src}/：按本次规划自然进入主题，不为修复添加反常识、夸大或提问`,
         });
         break;
       }

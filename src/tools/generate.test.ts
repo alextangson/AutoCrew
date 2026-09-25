@@ -4,7 +4,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { executeGenerate } from "./generate.js";
 import type { GeneratedScript } from "../modules/writing/generate-script.js";
 
@@ -17,6 +17,13 @@ const GOOD_RESULT: GeneratedScript = {
   hashtags: ["#AI技能", "#普通人逆袭"],
   violations: [],
   tokensUsed: 350,
+  gateFailures: [],
+  rulesApplied: 0,
+  wroteWithoutBrief: false,
+  wroteWithoutAngle: false,
+  review: { status: "passed", rounds: 0, fixed: 0, issues: [], reviewedAt: "2026-09-22T00:00:00.000Z" },
+  needsEvidence: false,
+  unverifiedNumbers: [],
 };
 
 function makeGenerateImpl(result: GeneratedScript | Error) {
@@ -36,7 +43,7 @@ describe("executeGenerate", () => {
       requirements: "  写给小白；按一天经历展开；不要工具清单。  ", direction: "  只讲返工成本  ",
     }, { generateScriptImpl: async (req) => { seen = { ...req }; return GOOD_RESULT; } });
     expect(seen).toMatchObject({
-      requirements: "写给小白；按一天经历展开；不要工具清单。", direction: "只讲返工成本", research: "用户的实测材料",
+      requirements: "  写给小白；按一天经历展开；不要工具清单。  ", direction: "  只讲返工成本  ", research: "用户的实测材料",
     });
   });
 
@@ -199,6 +206,109 @@ describe("executeGenerate", () => {
   });
 });
 
+describe("MCP 默认写作路径纠正", () => {
+  const request = {
+    action: "script", topic: "门店库存复盘", platform: "douyin", _host: "claude",
+    direction: "从一次盘点失败讲起", requirements: "自然叙事，不要工具清单",
+    research: "创作者提供的盘点记录与出处", research_mode: "provided",
+    research_reason: "沿用用户给的材料", skip_reason: "用户已明确这一稿的方向",
+  };
+  const continuation = {
+    platform: request.platform, direction: request.direction, requirements: request.requirements,
+    research: request.research, research_mode: request.research_mode,
+    research_reason: request.research_reason, skip_reason: request.skip_reason,
+  };
+
+  it("已有选题的纠正下一步完整保留材料、方向和调研选择，不调用引擎", async () => {
+    const generateScriptImpl = vi.fn(makeGenerateImpl(GOOD_RESULT));
+    const result = await executeGenerate({ ...request, topic_id: "topic-existing" }, { generateScriptImpl });
+    expect(result).toMatchObject({
+      ok: false, code: "host_writer_default",
+      continue_params: { topic_id: "topic-existing", ...continuation },
+      next_action: { tool: "autocrew_workflow", params: { action: "prepare", topic_id: "topic-existing", ...continuation } },
+    });
+    expect(generateScriptImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "", "   "])("无 topic_id（%s）时给可执行的创建选题下一步，并保存后续参数", async (topicId) => {
+    const generateScriptImpl = vi.fn(makeGenerateImpl(GOOD_RESULT));
+    const result = await executeGenerate({ ...request, topic_id: topicId }, { generateScriptImpl });
+    expect(result).toMatchObject({
+      ok: false, code: "host_writer_default",
+      next_action: { tool: "autocrew_topic", params: { action: "create", title: request.topic, description: request.topic, tags: [] } },
+      continue_params: continuation,
+      note: expect.stringContaining("topic.id"),
+    });
+    if (result.ok) throw new Error("应先建立选题");
+    expect(result.continue_params).not.toHaveProperty("topic_id");
+    expect(generateScriptImpl).not.toHaveBeenCalled();
+  });
+
+  it("用户明确后台代写但没选题时，也保留要求、材料及后台执行意图", async () => {
+    const generateScriptImpl = vi.fn(makeGenerateImpl(GOOD_RESULT));
+    const result = await executeGenerate({ ...request, execution: "engine" }, { generateScriptImpl });
+    expect(result).toMatchObject({
+      ok: false, code: "topic_required", requested_execution: "engine",
+      next_action: { tool: "autocrew_topic", params: { action: "create", title: request.topic } },
+      continue_params: continuation,
+    });
+    expect(generateScriptImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("后台代写质量回执", () => {
+  async function run(result: GeneratedScript) {
+    const response = await executeGenerate(
+      { action: "script", topic: "复盘", platform: "douyin" },
+      { generateScriptImpl: makeGenerateImpl(result) },
+    );
+    if (!response.ok) throw new Error(response.error);
+    return response.data;
+  }
+
+  it.each([
+    { gateFailures: ["max_chars"] },
+    { violations: ["需人工处理的词"] },
+    { unverifiedNumbers: ["几十个"] },
+  ])("审稿 passed 也不能隐藏其他检查残留：%j", async (remaining) => {
+    const data = await run({ ...GOOD_RESULT, ...remaining });
+    expect(data).toMatchObject({ ...remaining, quality_status: "passed_with_notes", needs_attention: true });
+  });
+
+  it("附带完整检查残留和被拦原因，硬门失败始终为 blocked", async () => {
+    const data = await run({
+      ...GOOD_RESULT, needsEvidence: true, blockedReason: "数字缺证据",
+      gateFailures: ["unverified_numbers"], unverifiedNumbers: ["45%"], violations: ["待处理词"],
+    });
+    expect(data).toMatchObject({
+      quality_status: "blocked", needs_attention: true, blockedReason: "数字缺证据",
+      gateFailures: ["unverified_numbers"], unverifiedNumbers: ["45%"], violations: ["待处理词"],
+    });
+  });
+
+  it.each(["passed", "revised"] as const)("审稿 %s 且无任何残留时才返回 passed", async (status) => {
+    expect(await run({ ...GOOD_RESULT, review: { ...GOOD_RESULT.review, status } })).toMatchObject({
+      quality_status: "passed", needs_attention: false, gateFailures: [], unverifiedNumbers: [],
+    });
+  });
+
+  it.each(["skipped", "stale", "failed"] as const)("审稿 %s 不能报告质量通过", async (status) => {
+    expect(await run({ ...GOOD_RESULT, review: { ...GOOD_RESULT.review, status } })).toMatchObject({
+      quality_status: status === "failed" ? "issues_remaining" : "unreviewed", needs_attention: true,
+    });
+  });
+
+  it("保留审稿建议，意外残留 blocker 时标为 issues_remaining", async () => {
+    const issue = { id: "i1", severity: "advisory" as const, quote: "具体片段", rule: "表达可更清楚", instruction: "补充所指" };
+    expect(await run({ ...GOOD_RESULT, review: { ...GOOD_RESULT.review, issues: [issue] } })).toMatchObject({
+      quality_status: "passed_with_notes", needs_attention: true,
+    });
+    expect(await run({ ...GOOD_RESULT, review: { ...GOOD_RESULT.review, issues: [{ ...issue, severity: "blocker" }] } })).toMatchObject({
+      quality_status: "issues_remaining", needs_attention: true,
+    });
+  });
+});
+
 describe("knowledge dedupe", () => {
   // 检索已下沉到生成管线(generate-script.ts runGeneration,那边的测试覆盖注入)。
   // 这里守住去重:入口层不再自行检索,否则 MCP 路径知识块双份注入。
@@ -221,5 +331,27 @@ describe("knowledge dedupe", () => {
     expect(capturedReq).not.toBeNull();
     expect((capturedReq as { research?: string }).research).toBe("用户给的资料");
     await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+});
+
+describe("engine entry keeps persisted creative intent", () => {
+  it("inherits omitted original requirements rather than clearing them with undefined fields", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "generate-creative-task-"));
+    try {
+      const { saveTopic } = await import("../storage/local-store.js");
+      const { saveBrief } = await import("../modules/research/brief-store.js");
+      const { topicHashOf, upsertJob } = await import("../modules/research/research-job-store.js");
+      const topic = await saveTopic({ title: "返工复盘", description: "真实经历", tags: [] }, dir);
+      const creativeTask = { version: 1 as const, platform: "douyin", requirements: "  保留完整经历\n不要口号  ", direction: "从失败原因展开" };
+      const topicHash = topicHashOf(topic.title, topic.description);
+      await saveBrief(topic.id, { schemaVersion: 1, summary: "已有素材", perspectives: [], tensions: [], angleSuggestions: [], angleCards: [], evidence: [], assetPicks: [], missingPerspectives: [], gaps: [], generatedAt: "2026-09-22T00:00:00Z", revision: 1, topicHash, creativeTask }, dir);
+      await upsertJob({ topicId: topic.id, topicHash, creativeTask, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: 1 }, dir);
+      const generateScriptImpl = vi.fn(async () => GOOD_RESULT);
+      const result = await executeGenerate({ action: "script", topic: topic.title, topic_id: topic.id, platform: "douyin", execution: "engine", _host: "claude_desktop", _dataDir: dir }, { generateScriptImpl });
+      expect(result.ok).toBe(true);
+      expect(generateScriptImpl).toHaveBeenCalledWith(expect.objectContaining({ requirements: creativeTask.requirements, direction: creativeTask.direction }), dir);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

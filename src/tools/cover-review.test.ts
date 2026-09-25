@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 vi.mock("../modules/cover/designer.js", () => ({
   designCoverPlan: vi.fn(),
@@ -605,6 +606,102 @@ describe("relay provider(V5.6.1 中转 image2)", () => {
     expect(call.referenceImagePaths[0]).toContain("identity-locked-canvas.png");
     expect(call.prompt).toContain("preserve every opaque master pixel exactly");
     await expect(fs.access(path.dirname(call.maskPath))).rejects.toThrow();
+  });
+});
+
+describe("draft_ratios — paired review without fake approval", () => {
+  async function prepareDraft() {
+    await switchToRelay();
+    const id = await seedContent("draft_ready", "douyin");
+    await createCandidates(id);
+    const review = (await getCoverReview(id, dir))!;
+    const master = review.variants[0].imagePaths["3:4"]!;
+    await fs.writeFile(master, encodePng(9, 12, 3, Array.from({ length: 12 }, () => Buffer.alloc(27, 128))));
+    relayMock.mockClear();
+    return { id, master };
+  }
+
+  async function draft(id: string, extra: Record<string, unknown> = {}) {
+    return await executeCoverReview({ action: "draft_ratios", content_id: id, label: "a", ratios: ["4:3"], _dataDir: dir, ...extra }) as {
+      ok: boolean; status?: string; reused?: boolean; error?: string; paths?: Record<string, string>;
+    };
+  }
+
+  it("extends selected master with a mask; remains unapproved; reuses identical pair", async () => {
+    const { id, master } = await prepareDraft();
+    const before = await getContent(id, dir);
+    const result = await draft(id);
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("review_pending");
+    expect(result.paths?.["3:4"]).toBe(master);
+    expect(relayMock.mock.calls[0][0].maskPath).toContain("identity-locked-mask.png");
+    expect(relayMock.mock.calls[0][0].referenceImagePaths[0]).toContain("identity-locked-canvas.png");
+    expect((await getCoverReview(id, dir))!.approvedLabel).toBeUndefined();
+    const after = (await getContent(id, dir))!;
+    expect(after.status).toBe(before!.status);
+    expect(after.handoffs).toEqual(before!.handoffs);
+    expect(after.body).toBe(before!.body);
+    await expect(fs.access(path.join(dir, "contents", id, "封面.png"))).rejects.toThrow();
+    relayMock.mockClear();
+    expect((await draft(id)).reused).toBe(true);
+    expect(relayMock).not.toHaveBeenCalled();
+    const approval = await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir }) as { ok: boolean };
+    expect(approval.ok).toBe(true);
+    for (const ratio of ["3x4", "4x3"]) {
+      await expect(fs.access(path.join(dir, "contents", id, `封面-${ratio}.png`))).resolves.toBeUndefined();
+    }
+  });
+
+  it.each(["3:4", "4:3"] as const)("changed %s pixels invalidate paired approval", async (ratio) => {
+    const { id } = await prepareDraft();
+    const result = await draft(id);
+    await fs.writeFile(result.paths![ratio], "changed");
+    const approval = await executeCoverReview({ action: "approve", content_id: id, label: "a", _dataDir: dir }) as { ok: boolean };
+    expect(approval.ok).toBe(false);
+    expect((await getCoverReview(id, dir))!.approvedLabel).toBeUndefined();
+  });
+
+  it("validates label, ratio and provider before paid generation", async () => {
+    const { id } = await prepareDraft();
+    expect((await draft(id, { label: undefined })).ok).toBe(false);
+    expect((await draft(id, { ratios: ["16:9"] })).ok).toBe(false);
+    await fs.writeFile(path.join(dir, "cover.json"), JSON.stringify({ provider: "gemini" }));
+    expect((await draft(id, { _geminiApiKey: "k" })).ok).toBe(false);
+    expect(relayMock).not.toHaveBeenCalled();
+  });
+
+  it("provider failure does not attach or approve a draft", async () => {
+    const { id } = await prepareDraft();
+    relayMock.mockResolvedValueOnce({ ok: false, error: "offline" });
+    expect((await draft(id)).ok).toBe(false);
+    const review = (await getCoverReview(id, dir))!;
+    expect(review.variants[0].draftPair).toBeUndefined();
+    expect(review.approvedLabel).toBeUndefined();
+  });
+
+  it("concurrent review edits reject stale extension results", async () => {
+    const { id } = await prepareDraft();
+    relayMock.mockImplementationOnce(async (opts) => {
+      const review = (await getCoverReview(id, dir))!;
+      review.variants[0].revision = 2;
+      await saveCoverReview(id, review, dir);
+      const imagePath = `${opts.outputPath}.png`;
+      await fs.writeFile(imagePath, "new-draft");
+      return { ok: true, imagePath, model: "gpt-image-2" };
+    });
+    expect((await draft(id)).ok).toBe(false);
+    expect((await getCoverReview(id, dir))!.variants[0].draftPair).toBeUndefined();
+  });
+
+  it("storage-level compare-and-swap rejects an outdated review under the write lock", async () => {
+    const { id } = await prepareDraft();
+    const old = (await getCoverReview(id, dir))!;
+    const hash = createHash("sha256").update(JSON.stringify(old)).digest("hex");
+    const changed = structuredClone(old);
+    changed.variants[0].revision = 2;
+    await saveCoverReview(id, changed, dir);
+    expect(await saveCoverReview(id, old, dir, hash)).toBeNull();
+    expect((await getCoverReview(id, dir))!.variants[0].revision).toBe(2);
   });
 });
 

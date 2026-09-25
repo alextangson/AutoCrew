@@ -1,9 +1,12 @@
+import { inheritCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * autocrew_generate — 进程内口播脚本生成工具（PRD §5 薄 loop 内层的宿主入口）。
  *
  * 调用生成管线（generate-script.ts），返回 {ok, data} 或 {ok, error}。
  * 引擎未配置的中文可执行提示必须原文透传，让用户知道如何修复。
  */
+import { inspectWritingReadiness, writingContinueParams, writingReadinessFailure } from "./writing-readiness.js";
+import { getDataDir } from "../storage/local-store.js";
 import { Type } from "@sinclair/typebox";
 import { generateScript } from "../modules/writing/generate-script.js";
 import type { GeneratedScript, ScriptRequest } from "../modules/writing/generate-script.js";
@@ -26,6 +29,10 @@ export const generateSchema = Type.Object({
         "Target platform (required for action=script). Valid values: douyin | xiaohongshu | wechat_mp | wechat_video | bilibili.",
     }),
   ),
+  execution: Type.Optional(Type.Literal("engine", { description: "仅用户明确选择后台模型代写时传 engine；普通请求用 workflow prepare 后由宿主 writer 写" })),
+  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided" | "skip">({ type: "string", enum: ["auto", "provided", "skip"] })),
+  research_reason: Type.Optional(Type.String({ description: "用户明确跳过研究的原因，skip 必填" })),
+  skip_reason: Type.Optional(Type.String({ description: "用户明确不选立意的原因，不能由模型自行假定" })),
   research: Type.Optional(
     Type.String({ description: "Optional research material to inject into the prompt." }),
   ),
@@ -38,7 +45,7 @@ export const generateSchema = Type.Object({
   topic_id: Type.Optional(
     Type.String({
       description:
-        "Optional topic id. Links the draft to its topic and injects the topic's research brief into the prompt when one exists.",
+        "MCP 必填：已准备的选题 id。没有研究和立意时先 workflow prepare，不允许裸写。",
     }),
   ),
 });
@@ -67,19 +74,55 @@ type GenerateSuccess = {
     body: string;
     hashtags: string[];
     violations: string[];
+    gateFailures: string[];
+    unverifiedNumbers: string[];
+    blockedReason?: string;
     /** IA v4.2 §B5：本稿注入的个人规则数，draft 卡标注「越用越像你」 */
     rulesApplied: number;
     tokensUsed: number;
+    writing_source: { kind: "engine" };
+    review?: GeneratedScript["review"];
+    quality_status: string;
+    needs_attention: boolean;
   };
 };
 
-type GenerateFailure = { ok: false; error: string };
+type GenerateFailure = { ok: false; error: string } & Record<string, unknown>;
 type GenerateResult = GenerateSuccess | GenerateFailure;
 
 // ─── Deps (for testability) ───────────────────────────────────────────────────
 
 export interface GenerateDeps {
   generateScriptImpl?: (req: ScriptRequest, dataDir?: string) => Promise<GeneratedScript>;
+}
+
+/** A recovery step must preserve the same request, including user-supplied materials. */
+function preparationHandoff(req: ScriptRequest): Record<string, unknown> {
+  const continuation = writingContinueParams(req.topicId ?? "", req);
+  if (req.topicId) return {
+    continue_params: continuation,
+    next_action: { tool: "autocrew_workflow", params: { ...continuation, action: "prepare" } },
+  };
+  delete continuation.topic_id;
+  return {
+    continue_params: continuation,
+    next_action: {
+      tool: "autocrew_topic",
+      params: { action: "create", title: req.topic, description: req.topic, tags: [] },
+    },
+    note: "先建立选题；将返回的 topic.id 填入 topic_id，再携带全部 continue_params 调用 workflow prepare。保留原始方向、要求与已有材料，不重新猜测调研方式。",
+  };
+}
+
+/** Saving a draft or passing semantic review alone does not clear other checks. */
+function generatedQualityStatus(result: GeneratedScript): string {
+  if (result.needsEvidence) return "blocked";
+  const review = result.review;
+  if (!review || review.status === "skipped" || review.status === "stale") return "unreviewed";
+  if (review.status === "failed" || review.issues.some((issue) => issue.severity === "blocker")) return "issues_remaining";
+  const hasNotes = review.issues.length > 0 || (result.gateFailures?.length ?? 0) > 0
+    || (result.violations?.length ?? 0) > 0 || (result.unverifiedNumbers?.length ?? 0) > 0;
+  return hasNotes ? "passed_with_notes" : "passed";
 }
 
 // ─── Core execute ─────────────────────────────────────────────────────────────
@@ -116,21 +159,42 @@ export async function executeGenerate(
 
   const dataDir = (params._dataDir as string) || undefined;
 
-  const req: ScriptRequest = {
+  let req: ScriptRequest = {
     topic: topic.trim(),
     platform: platformRaw,
     // 知识库检索已下沉到生成管线(runGeneration)统一做——这里再检索会让 MCP 路径双份注入
     research: (params.research as string) || undefined,
-    direction: typeof params.direction === "string" ? params.direction.trim() || undefined : undefined,
-    requirements: typeof params.requirements === "string" ? params.requirements.trim() || undefined : undefined,
+    ...(typeof params.direction === "string" ? { direction: params.direction } : {}),
+    ...(typeof params.requirements === "string" ? { requirements: params.requirements } : {}),
+    researchMode: params.research_mode as ScriptRequest["researchMode"],
+    ...(typeof params.research_reason === "string" ? { researchReason: params.research_reason } : {}),
+    ...(typeof params.skip_reason === "string" ? { angleSkipReason: params.skip_reason } : {}),
     // 简报注入与选题血缘都挂在 topicId 上——空串视为未提供，口径同桌面 IPC(ipc.ts)
-    topicId: typeof params.topic_id === "string" && params.topic_id ? params.topic_id : undefined,
+    topicId: typeof params.topic_id === "string" ? params.topic_id.trim() || undefined : undefined,
   };
 
+  // The MCP host must not silently replace itself with a configured engine.
+  if (typeof params._host === "string") {
+    if (params.execution !== "engine") return {
+      ok: false, code: "host_writer_default",
+      error: "默认由当前宿主写作。先用 workflow prepare 准备材料与立意，再走 writer；仅用户明确要后台代写时传 execution=engine。",
+      ...preparationHandoff(req),
+    };
+    if (!req.topicId) return {
+      ok: false, code: "topic_required",
+      error: "后台代写也需要已准备的 topic_id；先建立选题并调用 workflow prepare，准备完成后保留 execution=engine 继续后台代写。",
+      ...preparationHandoff(req),
+      requested_execution: "engine",
+    };
+    const preparation = await inspectWritingReadiness(req.topicId, req, getDataDir(dataDir));
+    if (!preparation.ready) return writingReadinessFailure(preparation);
+    req = inheritCreativeTask(req, preparation.creativeTask);
+  }
   const generateFn = deps.generateScriptImpl ?? generateScript;
 
   try {
     const result = await generateFn(req, dataDir);
+    const qualityStatus = generatedQualityStatus(result);
     return {
       ok: true,
       data: {
@@ -139,8 +203,15 @@ export async function executeGenerate(
         body: result.body,
         hashtags: result.hashtags,
         violations: result.violations,
+        gateFailures: result.gateFailures ?? [],
+        unverifiedNumbers: result.unverifiedNumbers ?? [],
+        ...(result.blockedReason ? { blockedReason: result.blockedReason } : {}),
         rulesApplied: result.rulesApplied ?? 0,
         tokensUsed: result.tokensUsed,
+        writing_source: { kind: "engine" },
+        review: result.review,
+        quality_status: qualityStatus,
+        needs_attention: qualityStatus !== "passed",
       },
     };
   } catch (err) {

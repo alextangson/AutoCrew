@@ -1,0 +1,21 @@
+/** The MCP host receives this workflow without needing repository skills. */
+export const WRITING_INSTRUCTIONS = [
+  "AutoCrew 的调研、立意、写作、语义审稿默认全部由当前宿主模型完成；产品负责任务、抓页验引文、确定性检查和保存。普通 MCP 流程无需配置 engine。",
+  "用户提出新稿需求：从对话整理完整 requirements，复用或用 autocrew_topic create 建立选题，然后调用 autocrew_workflow prepare{topic_id,platform,requirements}。不要直接 generate、workflow write 或 content save。",
+  "prepare 返回宿主任务时按 next_action 调 autocrew_scout prepare/pack，保存 task_id；researching 代表你还需完成研究动作，不能轮询等待后台模型。所有后续 scout 动作带 topic_id 和 task_id。",
+  "宿主可用自己的搜索工具查来源，再用 scout read_page{perspective,url} 直接抓页，无需第三方搜索 key；scout search 使用独立搜索服务额度。cite{source_id,claim,quote} 由产品核对抓取正文中的逐字引文；claim_offline{claim,reason} 明确记录未核验主张，不能冒充验证来源。",
+  "由你完成 audience/evidence/counter/benchmark 四个研究视角，按任务 schema 用 scout perspective 提交，再 synthesize 综合、angles 提交候选。多视角不等于四个独立 agent；只报告实际启动的分工。",
+  "needs_angle 时，展示候选的不同主张、依据、缺口和推荐理由，让用户选择；推荐不等于代选。用户已经明确给出角度可用 direction，不能把风格要求当作选角度。",
+  "选定后用 workflow select_angle，再按 prepare 返回的 next_action 领 writer pack。requirements 必须保留用户原话中的提纲、篇幅、口吻、必写和禁写。",
+  "用户已提供足够材料时可明确 research_mode=provided 并传 research；用户明确无需调研时用 research_mode=skip 和 research_reason 原话。两者都不能冒充自动调研完成，不能为绕过失败自行选择 skip。",
+  "ready_to_write 后才领包，pack_status=ready 才动笔。writer pack 默认只整理已有材料，不读后台模型配置或自动补证；find_evidence 返回宿主补证指引。由你写，完整正文可放 body，hook/cta 可省略，不硬加反常识提问、数字或关注结尾。只用有依据的事实，不编造亲历。",
+  "只走 writer submit 交生成稿，默认 review=host。awaiting_host_review 时用 autocrew_review_desk pack{content_id} 取审稿任务，实际审阅后 submit{content_id,review_pack_id,attempt,issues,audience?}；attempt 沿用写稿尝试。不能靠轮询等后台审稿。再用 writer submit_status 核对 saved、quality_status、needs_attention 和审稿来源。",
+  "单宿主审稿必须如实报告 host_self_review / host_self_reviewed；另一宿主的审阅也不自动代表独立评审。语义审稿、作者认可、发布是不同的事。review=none 要报告未审；review=engine 仅在用户明确选择后台审稿时使用。",
+  "受众点评随 submit/submit_status 的 audience_review 返回：有实际结果时说明各类读者的反应与具体流失位置；unavailable/skipped 时解释原因，不声称已验证受众。宿主模拟点评不是实际用户研究，产品不会悄悄用另一个模型重写正文。",
+  "用户反馈用 autocrew_editorial inspect 获取当前 draft_hash，再 feedback{content_id,draft_hash,event_id,feedback,scope,user_confirmed:true}。同一反馈重试复用 event_id；默认 scope=draft，局部改法同时传 selection 原文，不推广到全文；明确长期要求才用 platform 或 voice。verdict 只记录用户明确的 adopted/light_edit/rewritten/rejected，不能以模型审稿冒充采纳。应用反馈修改已存稿时，按返回的 next_action 调 writer pack，带原 content_id 和 force:true；topic_id 与已记录的 platform 可省略。没有选题的导入稿自动关联修订选题，原稿仅作未核验 user_claim；缺平台按用户需求补齐，保留同一稿件，不能另建副本。",
+  "档案用 autocrew_editorial profile 读取，用户已确认的信息用 update_profile{profile,user_confirmed:true} 保存；只有明确认可画像时才 confirm_audience:true。不用空初始化调用或本地文件写入代替校准。",
+  "批量与平台适配每篇独立 prepare/pack/submit；直接存稿、适配保存开关、机械检查都不能替代这条正式交稿链。",
+  "交付简述：实际用了什么材料、采用哪个角度、谁写、审稿是否完成。研究失败或材料不足要显示原因和下一步，不能悄悄降级成裸写。",
+  "后台研究、代写或审稿仅在用户明确选择 execution=engine/review=engine 或已授权的无人值守后台执行时使用；普通 MCP 不要求配置 engine，也不默认调用端点探测。Claude 等宿主的模型额度由宿主提供；第三方搜索、图像与视频仍使用独立服务额度。",
+  "generate/workflow write 是用户明确选择 execution=engine 的后台代写；content save 仅用于用户已有成稿的显式 manual_import。不要把新生成稿伪装成人工导入。",
+].join("\n");

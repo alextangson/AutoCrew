@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { isVideoPlatform, stageGuardError } from "./stage-guard.js";
@@ -161,7 +162,7 @@ export function normalizeLegacyStatus(s: string): ContentStatus {
 }
 
 /** 采纳裁决（PRD-v4 §8 北极星读数）：口径 = 主观判定，light_edit =「轻改即用」，rewritten =「推倒重写」（裁决 B） */
-export type AdoptionVerdict = "adopted" | "light_edit" | "rewritten";
+export type AdoptionVerdict = "adopted" | "light_edit" | "rewritten" | "rejected";
 
 /** 重写原因 chip（IA v4.2 §B6）——最强负信号的一次点击标注，可选，喂纠正路由 */
 export type RewriteReason = "style_mismatch" | "factual_error" | "structure_bad";
@@ -197,6 +198,8 @@ export interface VideoKit {
 
 export interface AdoptionRecord {
   verdict: AdoptionVerdict;
+  /** 本次明确裁决对应的标题/正文/平台指纹；历史裁决没有此字段。 */
+  draftHash?: string;
   /** 仅 rewritten 时可选携带（§10-B 低摩擦裁决不变：一次点击，可跳过） */
   reason?: RewriteReason;
   /** 自由文本原因（IA v5 V5.0:「哪里不行」不只选择题）——风格蒸馏的高价值负信号,与 chip 归类字段分开 */
@@ -325,7 +328,7 @@ export interface Content {
    * 稿卡据此说「写作包已发给 X，未收到稿（N 分钟）」而不是误报「还在后台写」。
    * `packId` 同时是写手侧的 fencing token：再领一次包换新号，旧号的提交一律被拒。
    */
-  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string };
+  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string; reviewMode?: "host" | "engine" | "none"; reviewPending?: boolean };
   /**
    * 谁在处理这一篇（P3 §6.1）。**认领是软门、令牌是硬门**：没有有效认领时任何宿主直接写
    * 并自动认领（单人单机不设卡）；有认领时别的宿主必须带匹配 `token`，否则被拒并告知持有者。
@@ -379,6 +382,14 @@ export interface CoverVariant {
     "4:3"?: string;
     /** 公众号横版(21:9/16:9 原生出图后垂直裁切) */
     "2.35:1"?: string;
+  };
+  /** A paired draft is not user approval. Hashes bind both reviewed sizes to one master. */
+  draftPair?: {
+    sourceSha256: string;
+    derivedSha256: string;
+    sourceRevision: number;
+    model: "gpt-image-2";
+    generatedAt: string;
   };
   /** 修订轮次(反馈重做递增;文件名带 -rN 防浏览器缓存旧图) */
   revision?: number;
@@ -744,6 +755,33 @@ export async function updateContent(id: string, updates: ContentUpdates, dataDir
   return serializeContentWrite(id, () => updateContentLocked(id, updates, dataDir));
 }
 
+export type DraftMatchResult =
+  | { ok: true; content: Content }
+  | { ok: false; reason: "stale" | "missing" };
+
+/**
+ * 针对用户看到的那版稿原子保存反馈/结论。核对与写入共享所有稿件写路径的锁，
+ * 避免校验后编辑器另存新稿，旧反馈却被套上去。只保证本进程并发（同 updateContent）。
+ */
+export async function updateContentIfDraftMatches(
+  id: string,
+  expected: Pick<Content, "title" | "body" | "platform">,
+  updates: ContentUpdates | ((current: Content) => ContentUpdates),
+  dataDir?: string,
+): Promise<DraftMatchResult> {
+  if (!isContentId(id)) return { ok: false, reason: "missing" };
+  return serializeContentWrite(id, async () => {
+    const current = await getContent(id, dataDir);
+    if (!current) return { ok: false, reason: "missing" };
+    if (current.title !== expected.title || current.body !== expected.body || current.platform !== expected.platform) {
+      return { ok: false, reason: "stale" };
+    }
+    const patch = typeof updates === "function" ? updates(current) : updates;
+    const updated = await updateContentLocked(id, patch, dataDir);
+    return updated ? { ok: true, content: updated } : { ok: false, reason: "missing" };
+  });
+}
+
 /** 缺省宿主身份：没有命名 token 的调用（工作台、老配置）一律记 `local-user`（§4.1） */
 export const LOCAL_HOST = "local-user";
 
@@ -822,6 +860,13 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     updatedAt: now,
   };
 
+  // 宿主结论只适用于其指纹绑定的稿件；改稿与失效同锁落盘，避免竞态留下旧的通过徽章。
+  // 核对合并后的新稿和新结论，不会把本次写入、已匹配新稿的审阅误标过期。
+  if (updated.review?.source?.draftHash && updated.review.status !== "stale") {
+    const draftHash = createHash("sha256").update(JSON.stringify([updated.title, updated.body, updated.platform])).digest("hex");
+    if (updated.review.source.draftHash !== draftHash) updated.review = { ...updated.review, status: "stale" };
+  }
+
   // draft.md 先写、meta.json 最后写 = 提交点：镜像超前可被下次成功写自愈，meta 不留中间态
   await writeTextAtomic(path.join(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
   await writeJsonAtomic(metaPath, updated);
@@ -852,7 +897,7 @@ export async function recordAdoption(
 }
 
 export interface AdoptionStats {
-  /** 已裁决稿数（分母） */
+  /** 已裁决稿数（分母），包括明确退稿 rejected */
   judged: number;
   adopted: number;
   lightEdit: number;
@@ -1101,6 +1146,7 @@ export async function saveCoverReview(
   contentId: string,
   review: Omit<CoverReview, "updatedAt">,
   dataDir?: string,
+  expectedReviewSha256?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
   return serializeContentWrite(contentId, async () => {
@@ -1116,6 +1162,17 @@ export async function saveCoverReview(
       throw err;
     }
     const content: Content = JSON.parse(raw);
+    if (expectedReviewSha256) {
+      let currentReview: string;
+      try {
+        currentReview = await fs.readFile(reviewPath, "utf-8");
+      } catch (err) {
+        if (isFileMissing(err)) return null;
+        throw err;
+      }
+      const currentHash = createHash("sha256").update(JSON.stringify(JSON.parse(currentReview))).digest("hex");
+      if (currentHash !== expectedReviewSha256) return null;
+    }
     const now = new Date().toISOString();
     // createdAt 保留首次值——反馈重做会反复保存,历史起点不许被覆盖
     const full: CoverReview = {
@@ -1177,6 +1234,15 @@ async function approveCoverVariantLocked(
   if (!selected) {
     return null;
   }
+  if (selected.draftPair) {
+    const pair = selected.draftPair;
+    const master = selected.imagePaths["3:4"];
+    const derived = selected.imagePaths["4:3"];
+    if (!master || !derived || pair.sourceRevision !== (selected.revision ?? 1)) return null;
+    const [masterBytes, derivedBytes] = await Promise.all([fs.readFile(master), fs.readFile(derived)]);
+    if (createHash("sha256").update(masterBytes).digest("hex") !== pair.sourceSha256 ||
+        createHash("sha256").update(derivedBytes).digest("hex") !== pair.derivedSha256) return null;
+  }
 
   const now = new Date().toISOString();
   review.status = "publish_ready";
@@ -1210,6 +1276,12 @@ async function approveCoverVariantLocked(
   if (review.approvedImagePath) {
     const ext = path.extname(review.approvedImagePath) || ".png";
     await fs.copyFile(review.approvedImagePath, path.join(projDir, `封面${ext}`)).catch(() => {});
+  }
+  if (selected.draftPair) {
+    for (const ratio of ["3:4", "4:3"] as const) {
+      const source = selected.imagePaths[ratio]!;
+      await fs.copyFile(source, path.join(projDir, `封面-${ratio.replace(":", "x")}${path.extname(source) || ".png"}`));
+    }
   }
   return review;
 }
@@ -1251,6 +1323,8 @@ export interface TransitionResult {
   error?: string;
   /** true = 被阶段门拦下（不是状态图形状不对）。调用方据此说「卡在阶段门」 */
   blocked?: boolean;
+  /** 稿件与调用方审阅的版本不符，状态和交接记录均未推进。 */
+  staleDraft?: boolean;
   /** If an auto-trigger fired, describes what happened */
   autoTriggered?: string;
 }
@@ -1263,6 +1337,8 @@ export interface TransitionOptions {
    * 推进按钮双击都靠它，人看到的是一句人话而不是被静默改掉的状态。
    */
   expectedStatus?: ContentStatus;
+  /** 在状态写锁内再次核对正文，避免审稿落盘后编辑器改稿再被旧结论推进。 */
+  expectedDraft?: Pick<Content, "title" | "body" | "platform">;
   diffNote?: string;
   /** 记这次交接的宿主（§4.1）。缺省时回落到当前认领人，再回落 `local-user` */
   host?: string;
@@ -1324,6 +1400,10 @@ async function transitionStatusLocked(
   const currentStatus = normalizeLegacyStatus(content.status);
   const label = (s: ContentStatus) => CONTENT_STATUS_LABEL[s] ?? s;
 
+  if (opts?.expectedDraft && (content.title !== opts.expectedDraft.title || content.body !== opts.expectedDraft.body || content.platform !== opts.expectedDraft.platform)) {
+    return { ok: false, staleDraft: true, error: "稿件已变化，本次状态推进未应用；请重新审阅当前稿" };
+  }
+
   if (opts?.expectedStatus && opts.expectedStatus !== currentStatus) {
     return {
       ok: false,
@@ -1332,6 +1412,9 @@ async function transitionStatusLocked(
         `——刷新一下再推进，免得盖掉别处刚做的改动`,
     };
   }
+
+  // 带版本约束的恢复重试已抵达同一站时直接收口，不重复记交接；旧调用语义保持不变。
+  if (opts?.expectedDraft && currentStatus === targetStatus) return { ok: true, content };
 
   if (!opts?.force) {
     const allowed = STATE_TRANSITIONS[currentStatus];

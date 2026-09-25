@@ -1,3 +1,4 @@
+import { createCreativeTask } from "../writing/creative-task.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -609,5 +610,35 @@ describe("串行与生命周期", () => {
     expect(getResearchRunner(deps)).toBe(first);
     resetResearchRunner();
     expect(getResearchRunner(deps)).not.toBe(first);
+  });
+});
+
+
+describe("creative task snapshot", () => {
+  it("freezes original intent and retains it on an explicit retry", async () => {
+    const topic = await newTopic();
+    const task = createCreativeTask({ platform: "wechat", requirements: "完整规划\n不做工具排行", direction: "一次失败复盘" });
+    const seen: ResearchJob[] = [];
+    const runner = makeRunner({ runJob: async (job) => { seen.push(job); return { status: "failed", perspectives: [], errorCode: "fixture" }; } });
+    const original = { ...task };
+    const first = acceptedJob(await runner.trigger(topic.id, "full", task));
+    task.requirements = "caller mutation";
+    await runner.idle();
+    expect(first.creativeTask).toEqual(original);
+    expect((await getJob(topic.id, dataDir))?.creativeTask).toEqual(original);
+    await runner.trigger(topic.id);
+    await runner.idle();
+    expect(seen.map(job => job.creativeTask)).toEqual([original, original]);
+  });
+
+  it("retains original intent when a crashed job is recovered", async () => {
+    const topic = await newTopic();
+    const creativeTask = createCreativeTask({ requirements: "崩溃前的完整任务" });
+    await upsertJob({ topicId: topic.id, status: "running", startedAt: new Date(AT - RESEARCH_LEASE_MS - 1).toISOString(), claimedAt: new Date(AT - RESEARCH_LEASE_MS - 1).toISOString(), perspectives: [], topicHash: "old", creativeTask }, dataDir);
+    let seen: ResearchJob | undefined;
+    const runner = makeRunner({ now: () => AT, runJob: async (job) => { seen = job; return { status: "succeeded", perspectives: [], briefRevision: 1 }; } });
+    await runner.reclaimStaleJobs();
+    await runner.idle();
+    expect(seen?.creativeTask).toEqual(creativeTask);
   });
 });

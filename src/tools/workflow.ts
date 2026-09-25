@@ -1,23 +1,10 @@
+import { inspectHostResearchTask } from "../modules/research/host-research-store.js";
+import { executeScout } from "./scout.js";
+import { createCreativeTask } from "../modules/writing/creative-task.js";
 /**
- * autocrew_workflow — 写作全流程的**宿主入口**（dsh 插件 spec §4，P1 spec §2）。
- *
- * 工作台今天能跑通「深调研 → 立意卡 → 创始人选卡 → 后台写稿 → 取稿」，靠的是
- * `src/desktop/*` 那套接线（research-runtime 的投递口、ipc 的选卡通道、chat-router 的
- * 角度闸口）。dsh / MCP / CLI 三个宿主一个都够不着它——desktop 那层拖着 server-only 依赖，
- * 不能反向 import。本文件是那三段语义在 core 层的**同构副本**：
- *
- * - 搜索 key 门只管 `full`（`angles` 不出网，它要的是引擎）——同 research-runtime.postJob；
- * - 选卡认 `resolveEffectiveBrief` 的快照版本、改写走 `parseAngleCard`——同 ipc.topicSelectAngleHandler；
- * - 有候选卡却没选就**不接单**——同 chat-router.angleGate。
- *
- * 三条纪律：
- * 1. **永不替创始人选卡**。卡按 `score` 排序，分只是排序不是推荐（P1 §3.1 codex #7）。
- *    闸口拒单时把候选原样交出去，让宿主 agent 回去问人——这一轮往返正是整条角度链的意义。
- * 2. **只投递，不阻塞**。research 与 write 都是分钟级后台任务，两个入口都当场返回，宿主轮询。
- * 3. **失败一律 `ok:false`**，不抛（dsh 桥按 `ok:false` 抛错才会把这轮标成失败——
- *    返回一个内含 error 的「成功」结果正是最贵的那类 bug，见 adapters/dsh/README.md）。
- *    桥只把 `error` 字符串带给模型，所以闸口的候选摘要**也写进 error 文本**，
- *    结构化的 `cards` 是给 MCP/CLI 这类能看全对象的宿主的。
+ * MCP creation entry: prepare material and direction before the host writes.
+ * Existing research jobs and brief snapshots are reused, with visible gaps and
+ * explicit retry after failure. Recommendations never mutate the creator's choice.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -25,12 +12,10 @@ import { Type } from "@sinclair/typebox";
 
 import { loadEngineConfig, ENGINE_DEFAULTS } from "../engine/config.js";
 import {
-  activeAngleCard,
-  angleCardsOf,
   findAngleCard,
   parseAngleCard,
 } from "../modules/research/angle-cards.js";
-import { resolveEffectiveBrief, type BriefSnapshot } from "../modules/research/brief-snapshot.js";
+import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { createDeepResearchRunJob } from "../modules/research/deep-research.js";
 import { getJob, topicHashOf, type ResearchJobKind } from "../modules/research/research-job-store.js";
 import { createResearchRunner, type ResearchRunner } from "../modules/research/research-runner.js";
@@ -38,22 +23,23 @@ import { SEARCH_NOT_CONFIGURED, searchAvailable } from "../modules/research/sear
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import { startGenerateScript, type ScriptRequest } from "../modules/writing/generate-script.js";
 import { getContent, getDataDir, getTopic, updateTopic } from "../storage/local-store.js";
-import { cardLine, cardView, draftingNote, draftOwnerView, draftView, jobView, sortedCards } from "./workflow-views.js";
+import { angleOptionsView, draftingNote, draftOwnerView, draftView, jobView } from "./workflow-views.js";
+import { inspectWritingReadiness, writingReadinessFailure, type WritingReadinessRequest } from "./writing-readiness.js";
 // 健康视图是桌面与 dsh 共用的那一个（spec §4.1「同一个视图函数」）——doctor 不另写一份
 import { buildEngineHealth, probeAllProviders } from "../desktop/engine-health.js";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
-const ACTIONS = ["research", "status", "select_angle", "write", "draft", "doctor"] as const;
+const ACTIONS = ["prepare", "research", "status", "select_angle", "write", "draft", "doctor"] as const;
 type WorkflowAction = (typeof ACTIONS)[number];
 
 export const workflowSchema = Type.Object({
   action: Type.Unsafe<WorkflowAction>({
     type: "string",
     enum: [...ACTIONS],
-    description: "research | status | select_angle | write | draft | doctor",
+    description: "prepare | research | status | select_angle | write | draft | doctor",
   }),
-  topic_id: Type.Optional(Type.String({ description: "选题 id（research / status / select_angle / write 必填）" })),
+  topic_id: Type.Optional(Type.String({ description: "选题 id（prepare / research / status / select_angle / write 必填；先查询或创建选题，避免重复）" })),
   kind: Type.Optional(
     Type.Unsafe<ResearchJobKind>({
       type: "string",
@@ -79,17 +65,24 @@ export const workflowSchema = Type.Object({
     }),
   ),
   platform: Type.Optional(
-    Type.String({ description: `write：目标平台。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}` }),
+    Type.String({ description: `prepare / write：目标平台。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}` }),
   ),
   direction: Type.Optional(
-    Type.String({ description: "write：创始人自己写的角度（优先级高于选中的卡），有它就不再要求选卡" }),
+    Type.String({ description: "prepare / write：创作者自己写的角度（优先级高于选中的卡），有它就不再要求选卡" }),
   ),
   requirements: Type.Optional(
-    Type.String({ description: "write：创作者本次完整写作要求，原样保留受众、提纲、必写/禁写、篇幅、口吻与修改反馈；补充选中立意，不绕过选卡。" }),
+    Type.String({ description: "prepare / write：创作者本次完整写作要求，原样保留受众、提纲、必写/禁写、篇幅、口吻与修改反馈；补充选中立意，不绕过选卡。" }),
   ),
   skip_reason: Type.Optional(
-    Type.String({ description: "write：创始人**明说**不选卡直接写时的原话转述；只进留痕，不进 prompt" }),
+    Type.String({ description: "prepare / write：创作者**明说**不选卡直接写时的原话转述；只进留痕，不进 prompt" }),
   ),
+  research_mode: Type.Optional(Type.Unsafe<"auto" | "provided" | "skip">({
+    type: "string", enum: ["auto", "provided", "skip"],
+    description: "prepare / write：默认 auto 要求有效研究；MCP由当前宿主执行scout任务；provided 明确使用已有 research 材料；skip 仅在创作者明确要求跳过调研时使用，必须给 research_reason。direction 不绕过研究。",
+  })),
+  research: Type.Optional(Type.String({ description: "research_mode=provided 时必填的已有材料、来源与摘录；不能伪称 AutoCrew 已调研。" })),
+  research_reason: Type.Optional(Type.String({ description: "research_mode=skip 的创作者明确要求；原样记录，不由 agent 猜测。" })),
+  execution: Type.Optional(Type.Union([Type.Literal("host"), Type.Literal("engine")], { description: "默认host：研究分析/立意交当前宿主完成，无后台模型调用；仅用户明确选择后台模式时engine，模型API与搜索服务使用独立额度。" })),
   content_id: Type.Optional(Type.String({ description: "draft：稿件 id（write 返回的 contentId）" })),
   probe: Type.Optional(
     Type.Boolean({
@@ -100,14 +93,14 @@ export const workflowSchema = Type.Object({
 });
 
 export const WORKFLOW_DESCRIPTION = [
-  "AutoCrew 写作全流程编排：深调研 → 立意候选 → 创始人选卡 → 后台写稿 → 取稿。按这个顺序用：",
-  "1) research{topic_id, kind}：投一轮任务。kind=full 是四视角深调研（要先配好搜索 key），kind=angles 是在现有简报上只重跑立意。**投递即返回**，真活在后台跑，通常 5–15 分钟。",
-  "2) status{topic_id}：轮询到 job.terminal=true 为止（1–2 分钟一次）。落定后 brief.cards 就是立意候选。",
-  "3) 把 cards **原样念给创始人听**，让他挑一张。cards 按 score 排序，score 只是排序、不是推荐；本工具永远不替他选卡，你也不要替他选。",
-  "4) select_angle{topic_id, angle_id, card?}：落他选的那张。他改了文字就把改写后的整张卡放进 card。",
-  "5) write{topic_id, platform, direction?, requirements?, skip_reason?}：开写。创作者的本次规划与修改反馈完整放进 requirements；只有明确改变立意才放 direction。**有候选卡却没选、也没给 direction/skip_reason 时会被拒**（needsAngle）——requirements 不绕过选卡。写稿也是后台的，通常 15–30 分钟。",
-  "6) draft{content_id}：轮询取稿。status=drafting = 还在写；needs_evidence = 数字硬门拦下了，看 unverifiedNumbers 和 blockedReason。",
-  "doctor{probe?}：引擎/搜索配没配好、数据目录在哪。跑不动时先看它；模型调用报错时用 doctor{probe:true} 真测一遍端点，回答创始人是哪条线坏了，别复述原始报错。",
+  "AutoCrew 创作统一入口。用户提出写作需求时，先查询或创建选题，再 prepare{topic_id,platform,requirements,direction?}；完整保留原始要求，不直接 write/generate。",
+  "prepare 检查材料和立意：默认返回awaiting_host_research和scout任务，由当前宿主分析与提交，不启动后台模型，不轮询等后台；只有显式execution=engine才启动后台调研。",
+  "needs_angle：展示各候选的主张、受众、证据差异和推荐理由，让创作者选择；推荐不会自动选卡。select_angle{topic_id,angle_id,brief_revision,card?} 保存选择，随后带 continue_params 再 prepare。",
+  "ready_to_write：调用 next_action 指向的 autocrew_writer pack，当前宿主结合已有对话与原始要求写稿并提交；AutoCrew 提供材料、检查和编辑帮助。",
+  "已有研究可显式用 research_mode=provided 并交 research；创作者明确免调研才用 skip 并交 research_reason。这两种都如实标注未自动调研，且仍需已选立意、direction 或明确 skip_reason。",
+  "research{topic_id,kind} 默认领取scout宿主任务；只有用户明确指定execution=engine才启动后台研究。宿主可自带搜索并将URL交scout read_page核验，scout search使用独立搜索服务额度。status只读状态。prepare 不替用户选卡，也不暗中代写。",
+  "write{...,execution:'engine'} 仅供用户明确要求后台模型代写；draft{content_id} 查看实际写作、审稿、证据阻塞状态。",
+  "doctor{probe?} 检查配置；probe:true 会实际访问端点。不能把配置检查当成真实调用成功。",
 ].join("\n");
 
 // ─── Result types ─────────────────────────────────────────────────────────────
@@ -196,6 +189,10 @@ async function doResearch(
   const rawKind = str(params.kind) || "full";
   if (rawKind !== "full" && rawKind !== "angles") return fail(`未知 kind：${rawKind}。有效值：full | angles`);
   const kind: ResearchJobKind = rawKind;
+  if (params.execution !== "engine") {
+    if (kind === "angles") return fail("宿主模式暂不支持仅重跑立意。可用scout force prepare重做完整调研与立意；只有用户明确要求后台执行时才用execution=engine。", { code: "host_angles_handoff", next_action: { tool: "autocrew_scout", params: { action: "prepare", topic_id: topicId, force: true } } });
+    return executeScout(scoutPrepareParams(params, dataDir)) as Promise<WorkflowResult>;
+  }
 
   // 搜索 key 门只管 full（angles 不出网）——口径同 research-runtime.postJob
   if (kind === "full" && !(await (deps.searchAvailableImpl ?? searchAvailable)(dataDir))) {
@@ -208,13 +205,66 @@ async function doResearch(
 
   const { runner, ready } = runnerFor(dataDir, deps, warn);
   await ready;
-  const res = await runner.trigger(topicId, kind);
+  const [priorJob, priorBrief] = await Promise.all([getJob(topicId, dataDir), resolveEffectiveBrief(topicId, dataDir, warn)]);
+  const task = createCreativeTask(readinessRequest(params), kind === "angles" ? priorBrief?.brief.creativeTask : priorJob?.creativeTask ?? priorBrief?.brief.creativeTask);
+  const res = await runner.trigger(topicId, kind, task);
   if (!res.accepted) return fail(res.reason, res.inFlight ? { inFlight: true } : {});
   return {
     ok: true,
     job: jobView(res.job),
     deduped: res.deduped,
     note: `${kind === "angles" ? "重新立意" : "深调研"}已在后台开始（通常 5–15 分钟）。用 status{topic_id} 轮询到 job.terminal=true，不要编造结果。`,
+  };
+}
+
+// ─── prepare ──────────────────────────────────────────────────────────────────
+
+function scoutPrepareParams(params: Record<string, unknown>, dataDir: string): Record<string, unknown> {
+  return { action: "prepare", topic_id: params.topic_id, _host: params._host, _dataDir: dataDir,
+    ...Object.fromEntries(["platform", "direction", "requirements", "force"].filter(key => params[key] !== undefined).map(key => [key, params[key]])) };
+}
+
+function readinessRequest(params: Record<string, unknown>): WritingReadinessRequest {
+  return {
+    ...(typeof params.platform === "string" ? { platform: params.platform } : {}),
+    ...(typeof params.direction === "string" ? { direction: params.direction } : {}),
+    // Keep the creator's wording intact across the prepare / pack handoff.
+    ...(typeof params.requirements === "string" ? { requirements: params.requirements } : {}),
+    ...(typeof params.skip_reason === "string" ? { angleSkipReason: params.skip_reason } : {}),
+    ...(typeof params.research === "string" ? { research: params.research } : {}),
+    researchMode: (str(params.research_mode) || "auto") as WritingReadinessRequest["researchMode"],
+    ...(typeof params.research_reason === "string" ? { researchReason: params.research_reason } : {}),
+  };
+}
+
+async function doPrepare(
+  params: Record<string, unknown>, dataDir: string, deps: WorkflowDeps, warn: (m: string) => void,
+): Promise<WorkflowResult> {
+  const topicId = str(params.topic_id);
+  if (!topicId) return fail("topic_id 必填；先查询或创建选题，再准备创作。");
+  const readiness = await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn);
+  if (params.execution !== "engine" && readiness.research.mode === "auto" && !["ready_to_write", "needs_angle"].includes(readiness.status)) {
+    const task = await executeScout(scoutPrepareParams({ ...readiness.continue_params, _host: params._host }, dataDir));
+    if (task.ok === false) return { ...task, ok: false, error: String(task.error ?? "宿主调研任务准备失败"), status: "needs_attention", preparation: readiness };
+    return { ok: true, status: "awaiting_host_research", preparation: readiness, creative_task: task.creative_task,
+      research_task: task, executed_by: { kind: "host", host: params._host ?? "local-user" }, model_api_calls: 0,
+      next_action: { tool: "autocrew_scout", params: { action: "pack", topic_id: topicId, task_id: task.task_id } },
+      note: "已准备当前宿主的调研/立意任务；后台没有模型在运行。现在领取scout任务，完成来源读取、观点分析与立意提交，不要轮询等待或直接裸写。" };
+  }
+  if (readiness.status !== "not_started") {
+    return { ok: true, ...readiness, ...(readiness.status === "researching" ? { poll_after_seconds: 30 } : {}) };
+  }
+  const started = await doResearch({ ...readiness.continue_params, topic_id: topicId, kind: "full", execution: "engine" }, dataDir, deps, warn);
+  if (!started.ok) {
+    if (started.inFlight) {
+      return { ok: true, ...readiness, status: "researching", research: { ...readiness.research, status: "running" }, poll_after_seconds: 30, note: "调研正在进行；请说明进度，并按间隔继续 prepare。" };
+    }
+    return { ok: false, ...readiness, status: "needs_attention", error: started.error, note: `尚未完成调研：${started.error}`, next_action: { tool: "autocrew_workflow", params: { ...readiness.continue_params, action: "research", kind: "full" } } };
+  }
+  return {
+    ok: true, ...readiness, status: "researching", poll_after_seconds: 30,
+    research: { ...readiness.research, status: "running", job: started.job },
+    note: "已启动调研，尚未完成；先告知创作者正在查什么和准备立意，按间隔继续 prepare，不能直接写成稿。",
   };
 }
 
@@ -232,12 +282,18 @@ async function doStatus(
 
   const job = await getJob(topicId, dataDir);
   const snap = await resolveEffectiveBrief(topicId, dataDir, warn);
-  const cards = snap ? sortedCards(angleCardsOf(snap.brief)) : [];
+  const options = snap ? angleOptionsView(snap.brief) : { cards: [] };
+  const readiness = await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn);
 
+  const hostTask = job?.executedBy?.kind === "host" ? await inspectHostResearchTask(topicId, dataDir) : null;
+  const waitingForHost = hostTask && hostTask.status !== "ready";
   return {
     ok: true,
     topicId,
     title: topic.title,
+    readiness,
+    next_action: waitingForHost ? { tool: "autocrew_scout", params: { action: "pack", topic_id: topicId, task_id: hostTask.taskId } } : readiness.next_action,
+    ...(waitingForHost ? { status: "awaiting_host_research", research_task: { task_id: hostTask.taskId, status: hostTask.status, executed_by: { kind: "host", host: hostTask.host } }, note: "正在等待宿主继续调研；后台没有模型运行，领取scout任务继续，不要轮询空等。" } : readiness.status === "researching" ? { poll_after_seconds: 30 } : {}),
     job: job ? jobView(job) : null,
     ...(snap
       ? {
@@ -246,8 +302,8 @@ async function doStatus(
             summary: snap.brief.summary,
             tensions: snap.brief.tensions,
             gaps: snap.brief.gaps,
-            cards: cards.map(cardView),
-            note: "cards 按 score 排序；分只用于排序，不是推荐——把候选原样念给创始人，由他选。",
+            ...options,
+            note: "score 只用于排序，不是推荐依据。推荐依据证据完整性，并列出缺口；由创作者选择。",
           },
         }
       : {}),
@@ -273,6 +329,9 @@ async function doSelectAngle(
   // 唯一「当前有效简报」入口（P1 §3.0）：认台账指针，不认磁盘最大版
   const snap = await resolveEffectiveBrief(topicId, dataDir, warn);
   if (!snap) return fail(NO_BRIEF);
+  if (snap.brief.topicHash !== topicHashOf(topic.title, topic.description)) {
+    return fail("选题已变化，旧立意候选已过期；请先 prepare 刷新调研。");
+  }
   const claimed = params.brief_revision;
   if (claimed !== undefined && claimed !== snap.revision) {
     return fail(`角度候选已更新（当前 v${snap.revision}，你手上是 v${String(claimed)}）——重新 status 一次再选`);
@@ -294,30 +353,16 @@ async function doSelectAngle(
 
 // ─── write ────────────────────────────────────────────────────────────────────
 
-/**
- * 角度闸口（角度卡 spec §1.6，同 chat-router.angleGate）。返回拒单回执 = 不接单，null = 放行。
- * 放行四条路：给了 direction、明说 skip_reason、之前选过且还作数、这条选题压根没有候选卡。
- */
+/** Shared preparation gate; direction never silently bypasses research. */
 export async function angleGate(
   topicId: string,
   req: ScriptRequest,
   dataDir: string,
   warn: (m: string) => void,
 ): Promise<WorkflowFail | null> {
-  const snap: BriefSnapshot | null = await resolveEffectiveBrief(topicId, dataDir, warn);
-  const cards = snap ? sortedCards(angleCardsOf(snap.brief)) : [];
-  if (!snap || cards.length === 0) return null; // 没有候选就没有闸口（§1.8 降级：不硬出角度）
-  if (req.direction?.trim() || req.angleSkipReason?.trim()) return null;
-  const topic = await getTopic(topicId, dataDir);
-  const hash = topic ? topicHashOf(topic.title, topic.description) : "";
-  if (topic && activeAngleCard(topic.selectedAngle, snap.brief, hash)) return null;
-
-  const head = `这条选题有 ${cards.length} 张立意候选（简报 v${snap.revision}），得先让创始人挑一张再开写。把候选原样念给他，让他选一张（select_angle）／说自己的角度（direction）／明说直接写（skip_reason）——不要替他选。`;
-  return fail(`${head}\n${cards.map(cardLine).join("\n")}`, {
-    needsAngle: true,
-    briefRevision: snap.revision,
-    cards: cards.map(cardView),
-  });
+  const readiness = await inspectWritingReadiness(topicId, req, dataDir, warn);
+  if (readiness.ready) return null;
+  return writingReadinessFailure(readiness);
 }
 
 async function doWrite(
@@ -328,6 +373,12 @@ async function doWrite(
 ): Promise<WorkflowResult> {
   const topicId = str(params.topic_id);
   if (!topicId) return fail("topic_id 必填");
+  if (params._host && params.execution !== "engine") {
+    return fail("MCP 默认由当前宿主写稿；请先 prepare 备好材料与立意，再领取 writer pack。只有用户明确要求后台代写时才传 execution=engine。", {
+      code: "host_writer_preferred",
+      next_action: { tool: "autocrew_workflow", params: { topic_id: topicId, ...Object.fromEntries(Object.entries(params).filter(([key]) => ["platform", "requirements", "direction", "skip_reason", "research", "research_mode", "research_reason"].includes(key))), action: "prepare" } },
+    });
+  }
   const platform = str(params.platform);
   if (!platform) return fail(`platform 必填。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}`);
   if (!(CLIPBOARD_PLATFORMS as readonly string[]).includes(platform)) {
@@ -336,10 +387,11 @@ async function doWrite(
   const topic = await getTopic(topicId, dataDir);
   if (!topic) return fail(`选题不存在：${topicId}`);
 
-  const direction = str(params.direction);
-  const requirements = str(params.requirements);
+  const direction = typeof params.direction === "string" ? params.direction : "";
+  const requirements = typeof params.requirements === "string" ? params.requirements : "";
   const skipReason = str(params.skip_reason);
   const req: ScriptRequest = {
+    ...readinessRequest(params),
     topic: topic.title,
     topicDescription: topic.description,
     platform: platform as ClipboardPlatform,
@@ -455,6 +507,8 @@ export async function executeWorkflow(
   const action = str(params.action);
   try {
     switch (action) {
+      case "prepare":
+        return await doPrepare(params, dataDir, deps, warn);
       case "research":
         return await doResearch(params, dataDir, deps, warn);
       case "status":

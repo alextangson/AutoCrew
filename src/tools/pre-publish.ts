@@ -118,8 +118,7 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
     }) as any;
 
     if (reviewResult.passed) {
-      const score = reviewResult.qualityScore?.total ?? "?";
-      checks.push({ name: "内容审核", status: "pass", detail: `通过 (质量 ${score}/100)` });
+      checks.push({ name: "内容审核", status: "pass", detail: "基础文字检查通过；不代表事实、规划、表达已过审，作者批准仍由稿件阶段单独检查" });
     } else {
       // 报出具体拦路项——只说「敏感词 ✗ 1 个」用户不知道是哪个词、改哪里,发布就成死胡同。
       const hits = (reviewResult.sensitiveWords?.hits ?? []) as Array<{ word: string; suggestion?: string }>;
@@ -128,15 +127,15 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
       if (hits.length > 0) {
         parts.push(`敏感词:${hits.map((h) => `「${h.word}」${h.suggestion ? "" : "(无自动替换,需手动改)"}`).join("、")}`);
       }
-      if (aiChanges.length > 0) parts.push(`AI 痕迹:${aiChanges.join("、")}`);
-      const manual = hits.some((h) => !h.suggestion);
+      if (aiChanges.length > 0) parts.push(`格式提示:${aiChanges.join("、")}`);
+      const manual = hits.length > 0;
       checks.push({
         name: "内容审核",
         status: "fail",
         detail: parts.length > 0 ? parts.join("；") : reviewResult.summary || "未通过",
         fix: manual
-          ? "无自动替换的敏感词请在编辑器里手动换词;其余可运行 autocrew_review action='auto_fix'"
-          : "运行 autocrew_review action='auto_fix' 自动修复",
+          ? "请按具体语境在编辑器核对并修改敏感词；auto_fix 只整理空白，不会自动改写原意"
+          : "核对检查详情；格式空白可使用 autocrew_review action='auto_fix'",
       });
     }
   } catch {

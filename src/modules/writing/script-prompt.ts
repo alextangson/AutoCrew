@@ -30,9 +30,15 @@ import { isVideoPlatform } from "../../storage/stage-guard.js";
 
 export interface ScriptRequest {
   topic: string;
+  /** 宿主领包显式为host：不读取引擎配置、不自动调用补证模型。内部无人值守生成默认engine。 */
+  modelExecution?: "host" | "engine";
   platform: ClipboardPlatform;
   /** 调研材料（可选，RAW 注入） */
   research?: string;
+  /** 调研路径：auto 默认按材料充足度调研；provided 必须携带 research；skip 必须提供用户理由。 */
+  researchMode?: "auto" | "provided" | "skip";
+  /** 用户明确跳过调研的原话或理由；不能由 agent 编造。 */
+  researchReason?: string;
   /** 显式指定赛道包；缺省按平台路由（wechat_mp → 公众号图文，其余 → 口播） */
   packId?: string;
   /** 灵感库血缘（V5.4c）:选题来自灵感库时携带——归因、过期保护、平台矩阵都靠它 */
@@ -110,7 +116,7 @@ function buildSystemPrompt(
 
   // Hooks with instruction
   parts.push("## 钩子（Hook）选择");
-  parts.push("从以下钩子类型中只选一种最强的来打开脚本：");
+  parts.push("已有开头规划时直接沿用；未指定时可参考以下方式，也可自然叙事，不必套钩子或提问：");
   parts.push("");
   for (const hook of pack.hooks) {
     parts.push(`- **${hook.type}**：${hook.whenToUse}`);
@@ -153,7 +159,7 @@ function buildSystemPrompt(
   // Tool submission requirement
   parts.push("## 输出要求");
   parts.push("**必须调用 submit_script 工具提交成品，不要把脚本写在普通回复里。**");
-  parts.push("工具需要以下字段：title（标题）、hook（开篇）、body（正文）、cta（行动号召）、hashtags（话题标签）。");
+  parts.push("title（标题）与 body（正文）必填。可把完整稿件放入 body；hook（开头）与 cta（结尾）可省略或留空，hashtags 可为空数组。旧的开头/正文/结尾分段提交仍可用，但不得重复同一段，不为填字段添加提问、行动号召或标签。");
 
   return parts.join("\n");
 }
@@ -387,21 +393,14 @@ export function buildAngleBlock(card: AngleCard, evidence: BriefEvidence[], tens
   return lines.join("\n");
 }
 
-/**
- * 一稿只有一个主张，所以这些规矩不是「建议」而是硬约束——从 P0c 那 3/6 可发稿里反推出来的
- * （实验版 `experiments/p0-inputs-vs-structure/lib/angle-stage.ts` 的 `renderDirection`）。
- *
- * 与实验版的**一处故意不同**：实验版允许「找不到就标 `[未证实]`」。生产版删掉这个出口——
- * 数字硬门（§4.4）按账本逐个数字对账，`[未证实]` 拦不下也放不行，写进正文只会让写手
- * 以为自己有一条合法的退路，然后交上来一稿被硬门整篇打回。
- */
+/** 立意负责主张与范围，表达按已选结构和用户规划；证据纪律不因去模板化放松。 */
 function angleHardRules(): string[] {
   return [
     "———— 这一稿的硬规矩 ————",
-    "前 3 秒必须点出上面那个误区或反常识并提问，不要「今天聊聊」「最近很多人问」这类开场。",
-    "全篇只讲这一个主张；讲第二个主张就是稀释，宁可这一个讲透。",
-    "结尾给观众今天就能做的那一步（上面的「最小动作」），不要「欢迎讨论」。",
-    "术语必须翻译：每个专业词第一次出现时用一句大白话解释，或者干脆不用。",
+    "开头按已选结构与创作者要求进入主题；不强制反常识、提问或固定秒数。亲历复盘可直接从真实经历讲起。",
+    "围绕已选主张组织内容，按本次要求展开；不为制造反差添造一个错误说法或反方。",
+    "结尾按本次规划自然收束。卡上的行动建议只在需要时采用，不强制 CTA、点赞关注或观众立即行动。",
+    "术语按目标受众需要解释；不机械替换专业词，也不把解释写成固定句式。",
     "证据纪律：每个数字、每个「某公司/某研究/某人说」都必须来自材料里带 id 的证据" +
       "（简报与补证的 ev-、内部语料的 om-）或 find_evidence 查回来的引文；" +
       "找不到就删掉那个数字或改成定性说法——不要编，也不要写「未证实」蒙混过去，代码会逐个数字对账。",
@@ -419,7 +418,7 @@ function anchorLine(card: AngleCardV3): string {
     return "第一手锚点：无——这一稿没有可用的亲历材料，不要虚构「我当时」「我试过」这类经历。";
   }
   const where = anchor.chunkId ? `（片段 ${sanitizeExternal(anchor.chunkId, 80)}）` : "";
-  return `第一手锚点${where}：「${angleField(anchor.quote, ANGLE_LONG_FIELD_MAX)}」——这是创作者本人说过的话，作为转折点用，可以改写口吻但不能改事实。`;
+  return `第一手锚点${where}：「${angleField(anchor.quote, ANGLE_LONG_FIELD_MAX)}」——这是创作者本人说过的话，按选定结构放在合适位置，可以改写口吻但不能改事实。`;
 }
 
 /**
@@ -435,18 +434,18 @@ export function buildAngleBlockV3(card: AngleCardV3, tensions: string[] = []): s
   const persona = DEFAULT_PERSONAS[card.primaryPersona];
   const lines = [
     "【本稿切入点（已选定，全稿按它写）】",
-    `主画像（这一稿写给谁）：${persona.name}——${persona.who}。他走进来时的处境：${persona.state}。`,
-    `他信的那个错的东西（误区）：${angleField(card.misconception)}`,
+    `内容目标：${persona.name}——${persona.who}。${persona.state}。受众以本次任务和创作者档案为准。`,
+    ...(card.misconception ? [`本稿相关误区（仅在选定方向需要时澄清）：${angleField(card.misconception)}`] : []),
     `为什么会这样（机制，正文要把这条因果讲透，不是打比方）：${angleField(card.mechanism, ANGLE_LONG_FIELD_MAX)}`,
     `核心主张（全稿必须论证它，不是复述材料）：${angleField(card.thesis)}`,
     `切入点：${angleField(card.angle)}`,
-    `他看完要做的最小动作：${angleField(card.nextAction)}`,
-    "三画像收益（写的时候心里有这三个人，但只对主画像说话）：",
-    ...PERSONA_KEYS.map(
+    `可选行动建议（不是必写 CTA）：${angleField(card.nextAction)}`,
+    "本稿有材料支持的目标收益（不补造其他收益）：",
+    ...PERSONA_KEYS.filter(k => card.personaGains[k]?.trim()).map(
       (k) => `- ${DEFAULT_PERSONAS[k].name}：${angleField(card.personaGains[k] ?? "")}`,
     ),
-    `要命中的网感元素：${card.elements.map((e) => angleField(e, 20)).join("、")}`,
-    `反方会说：${angleField(card.counterResponse)}——正文里要正面回应，不要绕开。`,
+    `可参考的表达元素（不按数量凑项）：${card.elements.map((e) => angleField(e, 20)).join("、")}`,
+    `可能的反方观点：${angleField(card.counterResponse)}——与选定主张相关且材料支持时回应，不虚构对立。`,
     anchorLine(card),
     `结构骨架：${STRUCTURE_MENU[card.structure]}。只用这一种骨架；措辞、节奏、案例展开你自己定。`,
     `收获感（正文必须兑现，用大白话）：${angleField(card.payoff, ANGLE_LONG_FIELD_MAX)}`,

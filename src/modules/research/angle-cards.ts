@@ -85,12 +85,12 @@ export function activeAngleCard(
  */
 export function cardAudiencePain(card: AngleCard): string {
   if (!isAngleCardV3(card)) return card.audiencePain;
-  return `${DEFAULT_PERSONAS[card.primaryPersona].name}｜他信的是：${card.misconception}`;
+  return `内容目标：${DEFAULT_PERSONAS[card.primaryPersona].name}${card.misconception ? `｜误区背景：${card.misconception}` : ""}`;
 }
 
 export function cardHoldTrigger(card: AngleCard): string {
   if (!isAngleCardV3(card)) return card.holdTrigger;
-  return `${DEFAULT_PERSONAS[card.primaryPersona].triggers}｜网感元素：${card.elements.join("、")}`;
+  return `${card.payoff}${card.elements.length ? `｜可用表达元素：${card.elements.join("、")}` : ""}`;
 }
 
 /**
@@ -178,9 +178,9 @@ function parseRewrittenV3(
     primaryPersona: (text("primaryPersona") || original.primaryPersona) as PersonaKey,
     structure: (text("structure") || original.structure) as AngleStructure,
     personaGains: {
-      grow: str(gains.grow) || original.personaGains.grow,
-      trust: str(gains.trust) || original.personaGains.trust,
-      convert: str(gains.convert) || original.personaGains.convert,
+      grow: typeof gains.grow === "string" ? gains.grow.trim() : original.personaGains.grow,
+      trust: typeof gains.trust === "string" ? gains.trust.trim() : original.personaGains.trust,
+      convert: typeof gains.convert === "string" ? gains.convert.trim() : original.personaGains.convert,
     },
     elements: src.elements === undefined ? original.elements : readElements(src.elements),
     evidenceNeeds: src.evidenceNeeds === undefined ? original.evidenceNeeds : strList(src.evidenceNeeds),
@@ -289,17 +289,25 @@ function readAngleCard(
 }
 
 /**
- * 任意两张卡的 thesis+antiScope 太像 = 同角度换皮，打回（§1.2 差异性校验）。
- * 立意 pass（v3 卡）复用同一把尺：两处各写一套差异标准，迟早分叉成两种「像」。
+ * v2 比较主张与禁区；v3 同时比较叙事入口、解释路径与结构。
+ * 用户已明确主张时，候选可以保持主张一致；完全重复的展开仍要打回。
  */
 export function checkDistinct(cards: AngleCard[], problems: string[]): void {
-  const grams = cards.map((c) => bigrams(`${c.thesis}${c.antiScope}`));
+  const baseGrams = cards.map(c => bigrams(`${c.thesis}${c.antiScope}`));
+  const pathGrams = cards.map(c => bigrams(isAngleCardV3(c)
+    ? `${c.angle}${c.mechanism}${c.structure}`
+    : `${c.thesis}${c.antiScope}`));
   for (let i = 0; i < cards.length; i += 1) {
     for (let j = i + 1; j < cards.length; j += 1) {
-      if (jaccard(grams[i], grams[j]) > ANGLE_SIMILARITY_MAX) {
+      // v3 将主张与展开分开比较：再长的用户原话，也不能淹没不同叙事路径。
+      // 涉及 v2 时沿用原有口径，因为旧卡没有机制和结构字段。
+      const bothV3 = isAngleCardV3(cards[i]) && isAngleCardV3(cards[j]);
+      const sameClaim = jaccard(baseGrams[i], baseGrams[j]) > ANGLE_SIMILARITY_MAX;
+      const samePath = jaccard(pathGrams[i], pathGrams[j]) > ANGLE_SIMILARITY_MAX;
+      if (sameClaim && (!bothV3 || samePath)) {
         problems.push(
-          `angle_cards 第 ${i + 1} 张与第 ${j + 1} 张是同一个角度换套说法（论点与禁区高度重合）——` +
-            "论点、受众痛点、叙事结构至少换一维，或者干脆少交一张",
+          `angle_cards 第 ${i + 1} 张与第 ${j + 1} 张是同一个角度换套说法（主张与展开路径高度重合）——` +
+            "保持用户已定的主张，给出真正不同的展开路径或材料侧重；不要为差异而改写用户意图",
         );
       }
     }

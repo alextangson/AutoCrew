@@ -25,13 +25,17 @@ export const BRIEF_SCHEMA_VERSION = 1;
 
 // ─── 视角产出（submit_perspective 的合法载荷，原样进简报） ───────────────────
 
+export type EvidenceSourceLevel = "verified_quote" | "own_claim" | "user_claim";
+
 export interface PerspectiveInsight {
+  source?: EvidenceSourceLevel;
   text: string;
   /** 至少一条：洞察必须挂在 broker 登记过的来源上（§4「成功判定」） */
   sourceIds: string[];
 }
 
 export interface PerspectiveEvidence {
+  source?: EvidenceSourceLevel;
   claim: string;
   /** 只能是已读页面（p*）——搜索摘要不足以支撑逐字引文 */
   sourceId: string;
@@ -75,6 +79,10 @@ export interface PerspectiveOutput {
 
 /** 简报级证据：sourceId 已由代码解析成可点的 URL，写稿注入时直接带域名 */
 export interface BriefEvidence {
+  /** Missing on legacy briefs means the old verified-page contract. Explicit claims must never be upgraded. */
+  source?: EvidenceSourceLevel;
+  sourceId?: string;
+  fetchedAt?: string;
   claim: string;
   quote: string;
   sourceUrl: string;
@@ -120,7 +128,7 @@ export interface AngleCardV2 {
   hookDraft: string;
 }
 
-/** 网感元素（P1 spec §3.1）：一张卡至少命中 2 个，且不能全靠「新奇点」 */
+/** 网感元素（P1 spec §3.1）：可选表达手段；不适合本次任务时可以为空 */
 export const ANGLE_ELEMENTS = ["新奇点", "爽点", "痛点→理想状态", "笑点", "泪点", "美点"] as const;
 export type AngleElement = (typeof ANGLE_ELEMENTS)[number];
 
@@ -164,9 +172,9 @@ export interface AngleCardV3 {
   tensionId?: string;
   antiScope: string;
   hookDraft: string;
-  /** 这一稿对谁说（账号的三项工作之一） */
+  /** 兼容性目标标签；实际受众以创作任务和创作者档案为准 */
   primaryPersona: PersonaKey;
-  /** 他走进来时信的那个错的东西——前 3 秒要点它 */
+  /** 纠偏内容才填写误区；其他结构可为空，不强行制造错误认知 */
   misconception: string;
   /** 一句话说清「为什么会这样」的因果；是不是比喻由审稿判，代码只校形状（codex #20） */
   mechanism: string;
@@ -174,13 +182,14 @@ export interface AngleCardV3 {
   payoff: string;
   nextAction: string;
   counterResponse: string;
+  /** 主目标必填，其余目标可空；不是每篇都要承担三类目标。 */
   personaGains: Record<PersonaKey, string>;
   elements: AngleElement[];
   firsthandAnchor?: FirsthandAnchor;
   /** 这个主张要落地还缺什么证据（1–3 条），写稿前定向补证按它去找 */
   evidenceNeeds: string[];
   structure: AngleStructure;
-  /** 代码打的分，**只用于展示与排序**，永不写 selectedAngle（codex #7） */
+  /** 证据支撑分，不代表传播潜力；永不自动写 selectedAngle */
   score?: number;
   scoreReasons?: string[];
 }
@@ -224,6 +233,9 @@ export function tensionByRef(tensions: string[], id: unknown): string | null {
 }
 
 export interface ResearchBrief {
+  executedBy?: { kind: "host"; host: string } | { kind: "engine" };
+  /** Original creator brief used by every stage of this revision. */
+  creativeTask?: import("../writing/creative-task.js").CreativeTask;
   schemaVersion: number;
   /** ≤200 字中文摘要 */
   summary: string;

@@ -1,3 +1,5 @@
+import { loadHostEvidence } from "../modules/research/host-evidence-store.js";
+import { inheritCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * 发包（P3 spec §5.1，2026-09-06 实机验收后改成异步）——`pack` 与 `pack_status` 的实现。
  *
@@ -18,7 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import { writeTextAtomic } from "../storage/json-atomic.js";
-import { getTopic, listContents, updateContent, type Content } from "../storage/local-store.js";
+import { getContent, getTopic, listContents, transitionStatus, updateContent, type Content } from "../storage/local-store.js";
 import { CLIPBOARD_PLATFORMS, type ClipboardPlatform } from "../modules/publish/clipboard-publisher.js";
 import {
   buildWritingContext,
@@ -27,11 +29,13 @@ import {
   type ScriptRequest,
   type WritingContext,
 } from "../modules/writing/generate-script.js";
+import { renderWritingFeedback } from "../modules/writing/writing-feedback.js";
+import { externalBlock, sanitizeExternal } from "../modules/research/research-prompt-kit.js";
 import { DEFAULT_REPAIR_ROUNDS } from "../modules/writing/script-payload.js";
 import { loadProfile, rulesForPlatform } from "../modules/profile/creator-profile.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
-import { angleGate } from "./workflow.js";
+import { inspectWritingReadiness, writingContinueParams, writingReadinessFailure, type WritingReadiness } from "./writing-readiness.js";
 import { describeWriterFailure } from "./writer-failure.js";
 import {
   isReadyPack,
@@ -42,6 +46,7 @@ import {
   serializeWriterCall,
   writePack,
   PACK_MD,
+  writerProgress,
   type PackState,
   type ReadyPack,
   type WritingPackFile,
@@ -75,11 +80,11 @@ export interface PackReadyResult extends Record<string, unknown> {
   content_id: string;
   pack_id: string;
   pack_md: string;
-  budget: { find_evidence_left: number; repair_rounds_left: number };
+  budget: ReturnType<typeof packBudget>;
   note: string;
 }
 
-const POLL_NOTE = "备料通常 1–6 分钟：用 pack_status{content_id} 轮询，status=ready 之后再动笔。";
+const POLL_NOTE = "正在装配本地写作材料：用 pack_status{content_id} 查看，status=ready 之后再动笔；宿主模式不会启动后台模型。";
 const FIRST_NOTE = "写完用 submit 交回来；数字要能指到证据编号，缺证据先 find_evidence。";
 const REISSUE_NOTE = "这条选题上原来那份包已作废（同一篇稿换了新 pack_id），旧包的提交会被拒。";
 
@@ -113,6 +118,20 @@ function readyResult(contentId: string, pack: ReadyPack): PackReadyResult {
     pack_md: renderPack(contentId, pack),
     budget: packBudget(pack),
     note: pack.note ?? FIRST_NOTE,
+    ...writerProgress(pack),
+  };
+}
+
+/** The same frozen facts must survive repeated pack calls and process restarts. */
+function preparationProgress(contentId: string, pack: WritingPackFile): Record<string, unknown> {
+  return {
+    preparation: pack.request?.readiness ?? {
+      status: "unknown",
+      note: "旧写作包未记录领包时的研究与立意状态，不能追认为已完成。",
+    },
+    writing_source: { kind: "host", host: pack.host },
+    next_action: { tool: "autocrew_writer", params: { action: "pack_status", content_id: contentId } },
+    poll_after_seconds: 30,
   };
 }
 
@@ -140,6 +159,9 @@ async function reusablePlaceholder(
 }
 
 export interface PackParams {
+  modelExecution?: "host" | "engine";
+  /** Explicit draft revision target; never guess among multiple submitted drafts. */
+  contentId?: string;
   topicId: string;
   platform: string;
   direction?: string;
@@ -147,6 +169,8 @@ export interface PackParams {
   skipReason?: string;
   /** 宿主自己查来的材料（原样注入 research 槽，并登记成 `user-research` 一条未核验账目） */
   research?: string;
+  researchMode?: "auto" | "provided" | "skip";
+  researchReason?: string;
   host: string;
   /** 作废手上这份包、重跑一次备料（宿主明说要重来时才给 true） */
   force: boolean;
@@ -158,13 +182,14 @@ function requestKey(req: ScriptRequest, topicDescription: string): string {
     req.topic.trim(), req.platform, req.topicId ?? "", topicDescription.trim(),
     req.direction?.trim() ?? "", req.requirements?.trim() ?? "",
     req.angleSkipReason?.trim() ?? "", req.research?.trim() ?? "",
-    req.packId ?? "", req.usePatterns ?? true,
+    req.packId ?? "", req.usePatterns ?? true, req.researchMode ?? "auto", req.researchReason?.trim() ?? "", req.modelExecution ?? "engine",
   ]);
 }
 
 /** 规划快照按值比较，JSON 对象键顺序变化不应触发重新备料；数组顺序仍有意义。 */
-function planningFingerprint(selectedAngle: unknown, profile: unknown): string {
-  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile }, (_key, value: unknown) =>
+function planningFingerprint(selectedAngle: unknown, profile: unknown, content?: Content | null): string {
+  const feedbackState = content?.writingFeedback?.length ? { writingFeedback: content.writingFeedback, sourceDraft: { title: content.title, body: content.body } } : {};
+  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile, ...feedbackState }, (_key, value: unknown) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
       : value,
@@ -183,26 +208,34 @@ export async function startPack(
   }
   const topic = await getTopic(params.topicId, dataDir);
   if (!topic) return { ok: false, error: `选题不存在：${params.topicId}` };
-  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir));
-
-  const existing = await reusablePlaceholder(
+  const existing = params.contentId ? await getContent(params.contentId, dataDir) : await reusablePlaceholder(
     params.topicId,
     params.platform,
     deps.listContentsImpl ?? (() => listContents(dataDir)),
   );
+  if (params.contentId) {
+    if (!existing) return { ok: false, error: `稿件不存在：${params.contentId}` };
+    if (existing.topicId !== params.topicId || existing.platform !== params.platform) return { ok: false, error: "content_id 必须属于本次 topic_id 和 platform，不能把另一篇稿件重领为本稿。" };
+    if (!["drafting", "revision", "draft_ready"].includes(existing.status)) return { ok: false, error: `本稿现在是 ${existing.status}，不能重开写作包；请先按稿件流程回到可修改阶段。` };
+    if ((existing.status === "draft_ready" || existing.pack?.submittedAt) && !params.force) return { ok: false, code: "pack_request_changed", error: "这是已交稿的草稿；修改时显式带 content_id 和 force:true 重领包，正文在新稿提交前保留。" };
+  }
+  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir), existing);
   const current = existing ? await readPack(existing.id, dataDir) : null;
   const previous = current?.request?.req ?? current?.context?.req ?? existing?.genRequest;
-  const req: ScriptRequest = {
+  let req: ScriptRequest = {
     ...previous,
+    modelExecution: params.modelExecution ?? "host",
     topic: topic.title,
     topicDescription: topic.description,
     platform: params.platform as ClipboardPlatform,
     topicId: params.topicId,
     // 未重提 = 继承；显式空串 = 清掉。不能把轮询重领误当成删除原来的规划和材料。
-    ...(params.direction !== undefined ? { direction: params.direction.trim() || undefined } : {}),
-    ...(params.requirements !== undefined ? { requirements: params.requirements.trim() || undefined } : {}),
-    ...(params.skipReason !== undefined ? { angleSkipReason: params.skipReason.trim() || undefined } : {}),
-    ...(params.research !== undefined ? { research: params.research.trim() || undefined } : {}),
+    ...(params.direction !== undefined ? { direction: params.direction } : {}),
+    ...(params.requirements !== undefined ? { requirements: params.requirements } : {}),
+    ...(params.skipReason !== undefined ? { angleSkipReason: params.skipReason.trim() ? params.skipReason : undefined } : {}),
+    ...(params.research !== undefined ? { research: params.research.trim() ? params.research : undefined } : {}),
+    ...(params.researchMode !== undefined ? { researchMode: params.researchMode } : {}),
+    ...(params.researchReason !== undefined ? { researchReason: params.researchReason.trim() ? params.researchReason : undefined } : {}),
   };
   const topicDescription = topic.description ?? "";
   // 旧包没存选题描述，无法反推历史值；其余已保存请求仍可比对，新包从领号起完整冻结。
@@ -214,15 +247,27 @@ export async function startPack(
     return {
       ok: false,
       code: "pack_request_changed",
-      error: "本次写作要求、材料、选题描述、已选立意或创作者档案与现有写作包不同，旧包没有应用这些变化。请带更新后的要求和 force:true 重新 pack，再按新包写作。若改用已选立意卡，显式传 direction:\"\" 清除旧手写角度。",
+      error: "本次写作要求、材料、选题描述、已选立意、修改反馈或创作者档案与现有写作包不同，旧包没有应用这些变化。请带更新后的要求和 force:true 重新 pack，再按新包写作。若改用已选立意卡，显式传 direction:\"\" 清除旧手写角度。",
       content_id: existing!.id,
       pack_id: current.packId,
     };
   }
   // 立意闸口与内部写作同一份（§5.1）：有候选卡却没选，宿主也得回去问创始人。
   // 它必须留在同步段——这是拒单，不是「先答应下来再后台失败」。
-  const gated = await angleGate(params.topicId, req, dataDir, warn);
-  if (gated) return gated as Fail;
+  const readiness = await inspectWritingReadiness(params.topicId, req, dataDir, warn);
+  if (!readiness.ready) return writingReadinessFailure(readiness);
+  // Persist the same original task as research, even when the host only supplies topic/platform.
+  req = inheritCreativeTask(req, readiness.creativeTask);
+  const frozenReadiness = current?.request?.readiness ?? current?.context?.readiness;
+  const previousBriefHash = isReadyPack(current) ? current.briefHash : frozenReadiness ? frozenReadiness.research.briefHash ?? "" : undefined;
+  if (!params.force && current && previousBriefHash !== undefined && previousBriefHash !== (readiness.research.briefHash ?? "")) {
+    return {
+      ok: false, code: "pack_request_changed", content_id: existing!.id, pack_id: current.packId,
+      error: "调研简报已更新，现有写作包仍使用旧材料；请保留完整要求并用 force:true 重新 pack。",
+      preparation: readiness,
+      next_action: { tool: "autocrew_writer", params: { ...readiness.continue_params, action: "pack", force: true } },
+    };
+  }
 
   const contentId = existing?.id ?? (await createPlaceholder(req, dataDir));
   const inFlight = preparing.has(contentId);
@@ -232,16 +277,16 @@ export async function startPack(
     if (isReadyPack(current)) return readyResult(contentId, current);
     // 还在跑：同一个号回第二遍，绝不起第二条后台任务
     if (current?.state === "preparing" && inFlight) {
-      return { ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE };
+      return { ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE, ...preparationProgress(contentId, current) };
     }
   }
   // 落到这里的三种情形都该重跑：force、没有包、以及「盘上写着 preparing 但没有任务在跑」
   // （进程重启留下的孤儿，不重跑它就永远 ready 不了）。
-  return startPreparation({ contentId, req, topicDescription, planningFingerprint: fingerprint, host: params.host, reissued: Boolean(current) }, dataDir, deps);
+  return startPreparation({ contentId, req, readiness, topicDescription, planningFingerprint: fingerprint, host: params.host, reissued: Boolean(current) }, dataDir, deps);
 }
 
 async function startPreparation(
-  args: { contentId: string; req: ScriptRequest; topicDescription: string; planningFingerprint: string; host: string; reissued: boolean },
+  args: { contentId: string; req: ScriptRequest; readiness: WritingReadiness; topicDescription: string; planningFingerprint: string; host: string; reissued: boolean },
   dataDir: string,
   deps: PackDeps,
 ): Promise<PackPreparingResult> {
@@ -251,7 +296,7 @@ async function startPreparation(
   const note = args.reissued ? REISSUE_NOTE : FIRST_NOTE;
   const placeholder: WritingPackFile = {
     packId,
-    request: { req: args.req, topicDescription: args.topicDescription, planningFingerprint: args.planningFingerprint },
+    request: { req: args.req, topicDescription: args.topicDescription, planningFingerprint: args.planningFingerprint, readiness: args.readiness },
     issuedAt,
     state: "preparing",
     note,
@@ -267,6 +312,12 @@ async function startPreparation(
   // 先落号再开工：宿主拿到的 pack_id 从这一刻起就是这篇稿的 fencing token。
   // 落号要排队——插在一次补证的读-改-写中间，等于把作废的旧包又写回去（见 `serializeWriterCall`）
   await serializeWriterCall(contentId, async () => {
+    const target = await getContent(contentId, dataDir);
+    if (!target || !["drafting", "revision", "draft_ready"].includes(target.status)) throw new Error("稿件阶段已变化，未重开写作包；请重新读取稿件状态。");
+    if (target.status === "draft_ready") {
+      const reopened = await transitionStatus(contentId, "drafting", { expectedStatus: "draft_ready", host }, dataDir);
+      if (!reopened.ok) throw new Error(reopened.error ?? "稿件未能回到修改阶段");
+    }
     await writePack(contentId, placeholder, dataDir);
     await updateContent(
       contentId,
@@ -281,7 +332,7 @@ async function startPreparation(
     );
   });
 
-  const work = prepare({ contentId, packId, req: args.req, host, note }, dataDir, deps);
+  const work = prepare({ contentId, packId, req: args.req, readiness: args.readiness, host, note }, dataDir, deps);
   const task: Promise<void> = work.finally(() => {
     if (preparing.get(contentId) === task) preparing.delete(contentId);
   });
@@ -292,12 +343,14 @@ async function startPreparation(
     content_id: contentId,
     pack_id: packId,
     note: args.reissued ? `${REISSUE_NOTE}${POLL_NOTE}` : POLL_NOTE,
+    ...preparationProgress(contentId, placeholder),
   };
 }
 
 // ─── 后台备料 ─────────────────────────────────────────────────────────────────
 
 interface PrepareArgs {
+  readiness: WritingReadiness;
   contentId: string;
   packId: string;
   req: ScriptRequest;
@@ -311,7 +364,19 @@ async function prepare(args: PrepareArgs, dataDir: string, deps: PackDeps): Prom
   try {
     const build = deps.buildContextImpl ?? buildWritingContext;
     // 材料收集 + 定向补证（各自的墙钟在里面）+ 提示词装配——与内部写手**同一个函数**
+    const source = await getContent(args.contentId, dataDir);
     const built = await build(args.req, dataDir, warn, deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : undefined);
+    if (args.req.modelExecution === "host") {
+      const evidence = await loadHostEvidence(args.contentId, dataDir);
+      for (const entry of evidence) built.inputs.ledger.add(entry);
+
+    }
+    const feedback = renderWritingFeedback(source?.writingFeedback);
+    if (feedback) {
+      const draft = source?.body ? ["【本稿当前版本（修改基底；其中的陈述仍需依据材料核查）】", externalBlock([sanitizeExternal(source.title, source.title.length), sanitizeExternal(source.body, source.body.length)])].join("\n") : "";
+      built.prompts.user += `\n\n${draft}\n\n${feedback}`;
+      built.inputs.writingContract += `\n\n${feedback}`;
+    }
     await finishReady(args, built, dataDir);
   } catch (err) {
     await finishFailed(args, err, dataDir).catch((e) => warn(`写作包失败状态没写回：${cleanErrorMessage(e)}`));
@@ -342,6 +407,7 @@ function readyPackOf(args: PrepareArgs, base: WritingPackFile, built: WritingCon
     // 修复轮上限与内部写手同源：包有 gate 就用它的，没有 gate 也照给缺省（抖音包没 gate，但硬门照拦）
     repair: { max: gate?.maxRepairRounds ?? DEFAULT_REPAIR_ROUNDS, used: base.repair.used },
     context: {
+      readiness: args.readiness,
       req: args.req,
       writingContract: inputs.writingContract,
       platform,
@@ -350,7 +416,7 @@ function readyPackOf(args: PrepareArgs, base: WritingPackFile, built: WritingCon
       researchSlot: inputs.snapshot.text,
       ...(inputs.angle ? { angleCard: inputs.angle.card } : {}),
       voiceSamples: inputs.profile?.voiceSamples ?? [],
-      canFindEvidence: Boolean(inputs.researcher),
+      canFindEvidence: args.req.modelExecution === "host" || Boolean(inputs.researcher),
       rulesApplied: inputs.profile ? rulesForPlatform(inputs.profile, platform).length : 0,
       wroteWithoutBrief: !inputs.attribution.usedBriefHash,
       wroteWithoutAngle: inputs.wroteWithoutAngle,
@@ -364,6 +430,22 @@ function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string):
   return serializeWriterCall(args.contentId, async () => {
     const base = await stillMine(args.contentId, args.packId, dataDir);
     if (!base) return;
+    // Preparation is asynchronous. Never label a pack with a readiness snapshot
+    // from one brief while its actual prompts/ledger came from another.
+    const actual = built.inputs.attribution;
+    if ((args.readiness.research.briefHash ?? "") !== (actual.usedBriefHash ?? "") ||
+        (args.readiness.angle.selectedAngleHash ?? "") !== (actual.usedAngle?.hash ?? "")) {
+      throw new Error("写作包准备期间调研或立意已变化，准备状态与实际材料不一致；请带原始要求和 force:true 重新 pack。");
+    }
+    const latest = await inspectWritingReadiness(args.req.topicId!, args.req, dataDir);
+    const topic = await getTopic(args.req.topicId!, dataDir);
+    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), await getContent(args.contentId, dataDir));
+    if (!latest.ready || latest.research.briefHash !== args.readiness.research.briefHash ||
+        latest.angle.selectedAngleHash !== args.readiness.angle.selectedAngleHash ||
+        !topic || topic.title !== args.req.topic || topic.description !== args.req.topicDescription ||
+        (base.request?.planningFingerprint && base.request.planningFingerprint !== fingerprint)) {
+      throw new Error("写作包准备期间调研、选题或创作者规划已更新，旧准备结果已停止；请带完整要求和 force:true 重新 pack。");
+    }
     const pack = readyPackOf(args, base, built);
     await writePack(args.contentId, pack, dataDir);
     await writeTextAtomic(packPath(args.contentId, dataDir, PACK_MD), renderPack(args.contentId, pack));
@@ -419,11 +501,14 @@ export async function packStatus(contentId: string, dataDir: string): Promise<Pa
   };
   if (isReadyPack(pack)) return { ...base, ...readyResult(contentId, pack), status: "ready" as const };
   if (pack.state === "failed") {
+    const req = pack.request?.req;
     return {
       ...base,
+      ...preparationProgress(contentId, pack),
       error: pack.error ?? "未记原因",
       note: "这份包没备成，别动笔——pack{force:true} 重来一次；连着失败就先跑 autocrew_workflow doctor 看线路。",
+      ...(req?.topicId ? { next_action: { tool: "autocrew_writer", params: { ...writingContinueParams(req.topicId, req), action: "pack", force: true } } } : {}),
     };
   }
-  return { ...base, note: POLL_NOTE };
+  return { ...base, ...preparationProgress(contentId, pack), note: POLL_NOTE };
 }

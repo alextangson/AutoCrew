@@ -205,3 +205,9 @@ describe("knowledgeBudgetFor — 预算表锁定（§6）", () => {
     expect(knowledgeBudgetFor({ briefChars: 2800, userResearchChars: 800 }, DEFAULT)).toBe(400);
   });
 });
+
+it("宿主离线声明在写作简报块保留未核验标签", () => {
+  const block = buildBriefBlock(makeBrief({ evidence: [{ claim: "创作者回忆", quote: "现场有二十人", sourceUrl: "", source: "user_claim" }] }), { topicStale: false });
+  expect(block).toContain("user_claim（未核验用户陈述");
+  expect(block).not.toContain("引文出自来源页");
+});

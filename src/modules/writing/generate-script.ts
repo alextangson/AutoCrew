@@ -1,3 +1,4 @@
+import { inheritCreativeTask, createCreativeTask, creativeTaskHash, creativeTaskMatches, renderCreativeTask } from "./creative-task.js";
 /**
  * 生成管线 — 进程内口播脚本生成（PRD §5 内层 loop）
  *
@@ -290,14 +291,23 @@ async function resolveResearch(
     const snapshot = await resolveEffectiveBrief(req.topicId, getDataDir(dataDir), warn);
     if (!snapshot) return { hasCards: false, ...found };
     const { brief } = snapshot;
+    const task = createCreativeTask(req, brief.creativeTask);
+    if ((brief.creativeTask || req.researchMode === "provided" || req.researchMode === "skip") && !creativeTaskMatches(task, brief.creativeTask)) {
+      warn("当前创作任务与旧简报不一致，旧研究和角度不注入本稿；请按本次任务准备材料。");
+      return { hasCards: false, ...found };
+    }
     const hasCards = angleCardsOf(brief).length > 0;
     if (!topic) warn(`选题 ${req.topicId} 已不在库中，简报按「基于旧版选题」标注注入`);
     const currentHash = topic ? topicHashOf(topic.title, topic.description) : "";
     // 核对不上就当过期：选题查不到时不给这份简报背书（§2 过期标注，注入照做）
     const topicStale = !topic || currentHash !== brief.topicHash;
+    if (topicStale && (req.researchMode === "provided" || req.researchMode === "skip")) {
+      warn("旧简报基于已变化的选题，本稿仅采用明确提供的材料，不混入旧调研。");
+      return { hasCards: false, ...found };
+    }
     const injected = { snapshot, topicStale };
     // 手写角度压过一切：卡照样算「有」，但这一轮不解析它（§1.3 手填时角度卡仍展示不注入）
-    if (req.direction?.trim()) return { brief: injected, hasCards, ...found };
+    if (createCreativeTask(req, brief.creativeTask).direction?.trim()) return { brief: injected, hasCards, ...found };
     // 「选中」现算是否还作数：选的不是快照那版、或简报因选题被改而过期，一律按没选处理
     const card = activeAngleCard(topic?.selectedAngle, brief, currentHash);
     if (!card) {
@@ -506,6 +516,7 @@ async function composeResearchSlot(
           id,
           ...(item.claim ? { claim: item.claim } : {}),
           quote: item.quote,
+          ...(item.source ? { source: item.source } : {}),
           ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
         })),
     ),
@@ -543,7 +554,7 @@ async function gatherInputs(
 ): Promise<GenerationInputs> {
   const [config, pack, profile, contrastPairs, patterns, picked] = await Promise.all([
     // 没配引擎也要能备料（P5 §1.6）：配坏了仍然照抛，只有「压根没配」返回 undefined
-    loadEngineConfigIfConfigured(dataDir),
+    req.modelExecution === "host" ? Promise.resolve(undefined) : loadEngineConfigIfConfigured(dataDir),
     Promise.resolve(req.packId ? getPack(req.packId) : getPackForPlatform(req.platform)),
     loadProfile(dataDir),
     // 改稿对比对(V5.7 活人感):读取失败不阻断写稿——样例是增强,不是依赖
@@ -556,9 +567,11 @@ async function gatherInputs(
     resolveResearch(req, dataDir, warn),
   ]);
 
+  const creativeTask = createCreativeTask(req, picked.brief?.snapshot.brief.creativeTask);
+  req = inheritCreativeTask(req, creativeTask);
   const ownMaterial = await gatherOwnMaterial(req, picked.topic, dataDir, warn);
   const ledger = seedLedger(req, picked, ownMaterial);
-  const phase = await runEvidencePhase({
+  const phase: EvidencePhase = req.modelExecution === "host" ? {} : await runEvidencePhase({
     req,
     ...(picked.angle ? { angle: picked.angle } : {}),
     config,
@@ -585,7 +598,7 @@ async function gatherInputs(
     contrastPairs,
     patterns,
     promptReq,
-    writingContract: buildWritingContract(profile, promptReq, picked.angle),
+    writingContract: [renderCreativeTask(creativeTask), buildWritingContract(profile, promptReq, picked.angle)].filter(Boolean).join("\n\n"),
     snapshot,
     ...(picked.angle ? { angle: picked.angle } : {}),
     wroteWithoutAngle: picked.hasCards && !picked.angle && !req.direction?.trim(),
@@ -646,6 +659,7 @@ export async function buildWritingContext(
     patterns: inputs.patterns,
     ...(inputs.angle ? { angle: inputs.angle } : {}),
   });
+  prompts.user += `\n\n本稿创作任务书标识：${creativeTaskHash(createCreativeTask(inputs.promptReq))}（写作与审稿按同一份本次要求核对）。`;
   return { inputs, prompts, gate: resolveQualityGate(inputs.pack, req.platform) };
 }
 

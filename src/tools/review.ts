@@ -1,304 +1,180 @@
 /**
- * autocrew_review tool — content review integrating:
- * 1. Sensitive word scanning
- * 2. De-AI check (humanizer-zh dry-run)
- * 3. Quality scoring (info density, hook strength, CTA clarity, readability)
- * 4. Auto-fix (apply suggestions)
- *
- * PRD §6: "autocrew review 命令整合敏感词检测"
+ * Legacy review entry: deterministic word-list and reading-format diagnostics.
+ * Semantic quality, factual correctness and creator approval require separate review.
  */
 import { Type } from "@sinclair/typebox";
 import { scanText, type ScanResult } from "../modules/filter/sensitive-words.js";
-import { humanizeZh, type HumanizeZhResult } from "../modules/humanizer/zh.js";
-import { getContent, updateContent, transitionStatus, normalizeLegacyStatus } from "../storage/local-store.js";
+import { humanizeZh } from "../modules/humanizer/zh.js";
+import { getContent, updateContent } from "../storage/local-store.js";
 
-// --- Types ---
+const REVIEW_SCOPE = {
+  quality_status: "mechanical_checks_only",
+  semantic_review: false,
+} as const;
 
 export interface QualityScore {
-  /** 0-100 overall */
+  /** Legacy name retained; 0–100 reading-format reference only, never a quality gate. */
   total: number;
-  /** Sub-scores, each 0-25 */
-  infoDensity: number;
-  hookStrength: number;
-  ctaClarity: number;
+  metric: "readability_only";
+  /** These dimensions cannot be inferred with a word-count heuristic. */
+  infoDensity: null;
+  hookStrength: null;
+  ctaClarity: null;
+  /** Reading-format reference, 0–25. */
   readability: number;
-  /** Per-dimension notes */
   notes: string[];
 }
 
 export type ReviewReport = {
   ok: boolean;
-  /** Did the content pass all checks? */
+  /** Only the deterministic word-list check; not semantic approval. */
   passed: boolean;
+  quality_status: "mechanical_checks_only";
+  semantic_review: false;
   sensitiveWords: ScanResult;
-  aiCheck: { hasAiTraces: boolean; changeCount: number; changes: string[] };
+  aiCheck: { assessed: false; hasAiTraces: null; changeCount: 0; changes: string[]; note: string };
+  formatting: { changeCount: number; changes: string[] };
   qualityScore: QualityScore;
-  /** Combined summary */
   summary: string;
-  /** Suggested fixes */
   fixes: string[];
-  /** Auto-fixed text (if available) */
+  suggestions: string[];
   autoFixedText?: string;
-}
-
-// --- Schema ---
+};
 
 export const reviewSchema = Type.Object({
   action: Type.Unsafe<"full_review" | "scan_only" | "quality_score" | "auto_fix">({
     type: "string",
     enum: ["full_review", "scan_only", "quality_score", "auto_fix"],
     description:
-      "Action: 'full_review' runs all checks, 'scan_only' runs sensitive word scan only, " +
-      "'quality_score' returns quality score only, 'auto_fix' applies all auto-fixable suggestions and saves.",
+      "Read-only mechanical diagnostics: 'full_review' scans sensitive words and reading format; " +
+      "'scan_only' scans words; 'quality_score' reports reading format only. These do not perform semantic review or approve content. " +
+      "'auto_fix' only normalizes whitespace and saves; wording suggestions are never applied automatically.",
   }),
-  content_id: Type.Optional(Type.String({ description: "AutoCrew content id to review." })),
-  text: Type.Optional(Type.String({ description: "Raw text to review directly (if no content_id)." })),
-  platform: Type.Optional(Type.String({ description: "Target platform for platform-specific checks." })),
+  content_id: Type.Optional(Type.String({ description: "AutoCrew content id to inspect." })),
+  text: Type.Optional(Type.String({ description: "Raw text to inspect directly (if no content_id)." })),
+  platform: Type.Optional(Type.String({ description: "Target platform for platform-specific word-list checks." })),
 });
 
-// --- Quality Scoring ---
-
-function scoreQuality(text: string, platform?: string): QualityScore {
+/** Formatting observations cannot grade the thesis, opening or ending. */
+function scoreReadability(text: string): QualityScore {
   const notes: string[] = [];
-
-  // --- Info Density (0-25) ---
-  // Penalize filler, reward concrete data points
-  const charCount = text.length;
-  const sentences = text.split(/[。！？\n]/).filter((s) => s.trim().length > 0);
-  const avgSentenceLen = charCount / Math.max(sentences.length, 1);
-  const dataPoints = (text.match(/\d+[%％万亿个条次天月年]/g) || []).length;
-  let infoDensity = 15; // baseline
-  if (dataPoints >= 3) infoDensity += 5;
-  else if (dataPoints >= 1) infoDensity += 2;
-  if (avgSentenceLen > 80) {
-    infoDensity -= 5;
-    notes.push("句子偏长，建议拆分");
-  }
-  if (avgSentenceLen < 15 && sentences.length > 3) {
-    infoDensity += 3;
-  }
-  // Penalize filler phrases
-  const fillerCount = (text.match(/值得一提|需要注意|综上所述|总而言之|可以说/g) || []).length;
-  if (fillerCount > 0) {
-    infoDensity -= Math.min(5, fillerCount * 2);
-    notes.push(`发现 ${fillerCount} 处套话，建议删除`);
-  }
-  infoDensity = clamp(infoDensity, 0, 25);
-
-  // --- Hook Strength (0-25) ---
-  const firstLine = sentences[0]?.trim() || "";
-  let hookStrength = 10;
-  // Question hook
-  if (/[？?]/.test(firstLine)) {
-    hookStrength += 5;
-    notes.push("开头用了提问式 hook ✓");
-  }
-  // Number hook
-  if (/\d/.test(firstLine)) {
-    hookStrength += 4;
-  }
-  // Emotional trigger
-  if (/别再|千万|后悔|真相|没想到|居然|竟然|震惊|绝了/.test(firstLine)) {
-    hookStrength += 5;
-  }
-  // Short punchy opening
-  if (firstLine.length <= 20 && firstLine.length > 0) {
-    hookStrength += 3;
-  }
-  // Penalty: generic opening
-  if (/大家好|今天我们|在当今社会|随着.*的发展/.test(firstLine)) {
-    hookStrength -= 8;
-    notes.push("开头太泛，建议用具体场景或数据切入");
-  }
-  hookStrength = clamp(hookStrength, 0, 25);
-
-  // --- CTA Clarity (0-25) ---
-  const lastThird = text.slice(Math.floor(text.length * 0.7));
-  let ctaClarity = 10;
-  // Explicit CTA
-  if (/关注|收藏|点赞|转发|评论|私信|留言|试试|赶紧|快去/.test(lastThird)) {
-    ctaClarity += 8;
-    notes.push("结尾有明确 CTA ✓");
-  }
-  // Question CTA
-  if (/[？?]/.test(lastThird)) {
-    ctaClarity += 4;
-  }
-  // No CTA at all
-  if (ctaClarity === 10) {
-    notes.push("结尾缺少 CTA，建议加引导互动的句子");
-  }
-  // Platform-specific CTA
-  if (platform === "xhs" || platform === "xiaohongshu") {
-    if (/收藏|关注/.test(lastThird)) ctaClarity += 3;
-  }
-  if (platform === "douyin") {
-    if (/关注|点赞/.test(lastThird)) ctaClarity += 3;
-  }
-  ctaClarity = clamp(ctaClarity, 0, 25);
-
-  // --- Readability (0-25) ---
-  let readability = 15;
-  // Paragraph count
-  const paragraphs = text.split(/\n{2,}/).filter((p) => p.trim());
-  if (paragraphs.length >= 3 && paragraphs.length <= 8) {
-    readability += 3;
-  }
-  // Emoji usage
-  const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
-  if (emojiCount >= 1 && emojiCount <= 10) {
-    readability += 3;
-  } else if (emojiCount > 15) {
-    readability -= 3;
-    notes.push("emoji 过多，建议精简");
-  }
-  // Line breaks
-  if (paragraphs.some((p) => p.length > 300)) {
+  const sentences = text.split(/[。！？\n]/).filter((sentence) => sentence.trim().length > 0);
+  const paragraphs = text.split(/\n{2,}/).filter((paragraph) => paragraph.trim());
+  let readability = 25;
+  if (text.length / Math.max(sentences.length, 1) > 80) {
     readability -= 5;
-    notes.push("有段落超过 300 字，建议拆分");
+    notes.push("平均句长超过 80 字，可检查是否需要拆分；按文体和创作者要求判断。");
   }
-  // Short paragraphs bonus
-  const shortParas = paragraphs.filter((p) => p.length <= 100).length;
-  if (shortParas / Math.max(paragraphs.length, 1) > 0.5) {
-    readability += 4;
+  if (paragraphs.some((paragraph) => paragraph.length > 300)) {
+    readability -= 5;
+    notes.push("有段落超过 300 字，可检查阅读负担；这不代表内容质量未通过。");
   }
-  readability = clamp(readability, 0, 25);
-
-  const total = infoDensity + hookStrength + ctaClarity + readability;
-
-  return { total, infoDensity, hookStrength, ctaClarity, readability, notes };
+  const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
+  if (emojiCount > 15) {
+    readability -= 3;
+    notes.push("表情符号较多，可按目标平台检查是否干扰阅读。");
+  }
+  return {
+    total: readability * 4,
+    metric: "readability_only",
+    infoDensity: null,
+    hookStrength: null,
+    ctaClarity: null,
+    readability,
+    notes,
+  };
 }
-
-function clamp(v: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, v));
-}
-
-// --- Execute ---
 
 export async function executeReview(params: Record<string, unknown>) {
   const action = (params.action as string) || "full_review";
   const dataDir = (params._dataDir as string) || undefined;
   const platform = (params.platform as string) || undefined;
   const contentId = params.content_id as string | undefined;
+  if (!["full_review", "scan_only", "quality_score", "auto_fix"].includes(action)) {
+    return { ok: false, ...REVIEW_SCOPE, error: `Unsupported review action: ${action}` };
+  }
 
-  // Resolve text
   let text = (params.text as string) || "";
   let title = "";
   if (!text && contentId) {
     const content = await getContent(contentId, dataDir);
-    if (!content) return { ok: false, error: `Content ${contentId} not found` };
+    if (!content) return { ok: false, ...REVIEW_SCOPE, error: `Content ${contentId} not found` };
     text = content.body;
     title = content.title;
   }
-  if (!text) return { ok: false, error: "text or content_id is required" };
-
+  if (!text) return { ok: false, ...REVIEW_SCOPE, error: "text or content_id is required" };
   const fullText = title ? `${title}\n\n${text}` : text;
 
-  // --- scan_only ---
   if (action === "scan_only") {
-    const scanResult = await scanText(fullText, platform, dataDir);
-    return { ok: true, action, sensitiveWords: scanResult };
+    const sensitiveWords = await scanText(fullText, platform, dataDir);
+    return { ok: true, action, ...REVIEW_SCOPE, sensitiveWords, summary: "仅完成词表扫描，尚未评估事实、表达质量或创作者规划。" };
   }
 
-  // --- quality_score ---
   if (action === "quality_score") {
-    const score = scoreQuality(fullText, platform);
-    return { ok: true, action, qualityScore: score };
-  }
-
-  // --- auto_fix ---
-  if (action === "auto_fix") {
-    // 1. Sensitive word auto-fix
-    const scanResult = await scanText(fullText, platform, dataDir);
-    let fixedText = scanResult.autoFixedText || fullText;
-
-    // 2. Humanizer pass
-    const humanResult = humanizeZh({ text: fixedText });
-    fixedText = humanResult.humanizedText;
-
-    // Save back if content_id provided
-    if (contentId) {
-      await updateContent(contentId, { body: fixedText }, dataDir);
-    }
-
-    // 无替换建议的敏感词修不了——必须如实报出来,否则调用方以为修好了、发布门禁却
-    // 继续拦,用户陷入「修了还是推不上去」的死循环。
-    const unfixedSensitiveWords = scanResult.hits.filter((h) => !h.suggestion).map((h) => h.word);
     return {
       ok: true,
       action,
-      autoFixedText: fixedText,
-      sensitiveWordsFixed: scanResult.hits.filter((h) => h.suggestion).length,
-      ...(unfixedSensitiveWords.length > 0 ? { unfixedSensitiveWords } : {}),
-      aiFixesApplied: humanResult.changeCount,
-      saved: !!contentId,
+      ...REVIEW_SCOPE,
+      qualityScore: scoreReadability(fullText),
+      summary: "仅提供阅读格式参考分；不评价立意、信息密度或开头结尾，不作为审稿通过依据。",
     };
   }
 
-  // --- full_review ---
-  // 1. Sensitive words
-  const sensitiveWords = await scanText(fullText, platform, dataDir);
-
-  // 2. AI check (dry-run humanizer)
-  const humanResult = humanizeZh({ text: fullText });
-  const aiCheck = {
-    hasAiTraces: humanResult.changeCount > 0,
-    changeCount: humanResult.changeCount,
-    changes: humanResult.changes,
-  };
-
-  // 3. Quality score
-  const qualityScore = scoreQuality(fullText, platform);
-
-  // 4. Build fixes list
-  const fixes: string[] = [];
-  if (sensitiveWords.hitCount > 0) {
-    fixes.push(`修复 ${sensitiveWords.hitCount} 个敏感词`);
-    for (const hit of sensitiveWords.hits.slice(0, 5)) {
-      const fix = hit.suggestion ? `"${hit.word}" → "${hit.suggestion}"` : `删除"${hit.word}"`;
-      fixes.push(`  - ${fix} (${hit.category})`);
+  if (action === "auto_fix") {
+    const scanResult = await scanText(fullText, platform, dataDir);
+    // Only normalize the body. The title participates in scans, never gets copied into body.
+    const humanResult = humanizeZh({ text });
+    const fixedText = humanResult.humanizedText;
+    if (contentId && fixedText !== text) {
+      await updateContent(contentId, { body: fixedText }, dataDir);
     }
-  }
-  if (aiCheck.hasAiTraces) {
-    fixes.push(`去 AI 味：${aiCheck.changeCount} 处需要修改`);
-  }
-  for (const note of qualityScore.notes) {
-    fixes.push(note);
-  }
-
-  // 5. Determine pass/fail
-  const passed =
-    sensitiveWords.hitCount === 0 &&
-    !aiCheck.hasAiTraces &&
-    qualityScore.total >= 60;
-
-  // 6. Build summary
-  const parts: string[] = [];
-  parts.push(passed ? "✅ 审核通过" : "⚠️ 审核未通过");
-  parts.push(`敏感词: ${sensitiveWords.hitCount === 0 ? "✓ 无" : `✗ ${sensitiveWords.hitCount} 个`}`);
-  parts.push(`AI 痕迹: ${aiCheck.hasAiTraces ? `✗ ${aiCheck.changeCount} 处` : "✓ 无"}`);
-  parts.push(`质量评分: ${qualityScore.total}/100 (信息密度${qualityScore.infoDensity} Hook${qualityScore.hookStrength} CTA${qualityScore.ctaClarity} 可读性${qualityScore.readability})`);
-  const summary = parts.join("\n");
-
-  // 7. Auto-transition if content_id provided
-  if (contentId) {
-    const targetStatus = passed ? "approved" : "revision";
-    const diffNote = passed ? undefined : fixes.join("; ");
-    // 非法流转（如不在 reviewing 态）走返回值 {ok:false}，照旧容忍丢弃；
-    // 写盘失败会 throw，交给工具错误边界——不能吞，否则审核过了状态没落盘也无人知道
-    await transitionStatus(contentId, normalizeLegacyStatus(targetStatus), { diffNote }, dataDir);
+    return {
+      ok: true,
+      action,
+      ...REVIEW_SCOPE,
+      autoFixedText: fixedText,
+      sensitiveWordsFixed: 0,
+      unfixedSensitiveWords: scanResult.hits.map((hit) => hit.word),
+      sensitiveWords: scanResult,
+      aiFixesApplied: 0,
+      formatFixesApplied: humanResult.changeCount,
+      suggestions: humanResult.suggestions,
+      saved: Boolean(contentId),
+      summary: "仅清理正文空白和换行，未自动改人称、术语或敏感词。词表命中和表达建议需结合语境核对，尚未进行语义审稿。",
+    };
   }
 
+  const sensitiveWords = await scanText(fullText, platform, dataDir);
+  const humanResult = humanizeZh({ text: fullText });
+  const qualityScore = scoreReadability(fullText);
+  const fixes = sensitiveWords.hits.map((hit) =>
+    `核对词表命中「${hit.word}」${hit.suggestion ? `（可参考替代表达「${hit.suggestion}」，未自动应用）` : "（需结合上下文判断）"}`,
+  );
+  if (humanResult.changeCount > 0) fixes.push("可清理首尾或行尾空白；空白变化不代表 AI 痕迹。");
+  fixes.push(...qualityScore.notes);
+  const passed = sensitiveWords.hitCount === 0;
   const report: ReviewReport = {
     ok: true,
     passed,
+    ...REVIEW_SCOPE,
     sensitiveWords,
-    aiCheck,
+    aiCheck: {
+      assessed: false,
+      hasAiTraces: null,
+      changeCount: 0,
+      changes: [],
+      note: "未评估 AI 痕迹；词表和空白规则不能判断文本作者或自然程度。",
+    },
+    formatting: { changeCount: humanResult.changeCount, changes: humanResult.changes },
     qualityScore,
-    summary,
+    summary: [
+      passed ? "机械检查未发现词表命中。" : `机械检查发现 ${sensitiveWords.hitCount} 项词表命中，需核对。`,
+      `阅读格式参考分：${qualityScore.total}/100，仅供排版与句长检查。`,
+      "尚未进行事实、立意、表达自然度或规划遵循的语义审稿；未更改稿件状态，不代表创作者认可。",
+    ].join("\n"),
     fixes,
-    autoFixedText: sensitiveWords.autoFixedText,
+    suggestions: humanResult.suggestions,
+    autoFixedText: humanResult.humanizedText,
   };
-
   return report;
 }

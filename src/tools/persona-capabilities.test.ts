@@ -94,12 +94,16 @@ describe("persona ↔ capability consistency", () => {
     expect(toolNamesIn("skills/research/SKILL.md")).toContain("autocrew_workflow");
   });
 
-  it("keeps the cover persona off the legacy ratio action and off other image models", () => {
+  it("keeps Codex covers on the subscription route with honest model provenance", () => {
     const text = personaBody("adapters/codex/AGENTS.cover.md");
     // 人设里提一个不该用的名字，等于把它变成一个可用选项（codex 评审 #14）
     expect(text).not.toContain("generate_ratios");
     expect(text.toLowerCase()).not.toContain("gemini");
-    expect(text).toContain("gpt-image-2");
+    expect(text).toContain("image_gen");
+    expect(text).toContain("订阅额度");
+    expect(text).toContain('model_requested="Image 2.5"');
+    expect(text).toContain("model_reported=null");
+    expect(text).toContain("只有用户明确选择另计费 API");
     expect(text).toContain('ratios:["4:3"]');
   });
 

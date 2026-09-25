@@ -240,3 +240,9 @@ describe("预算表常量（改数即改产品行为，锁住）", () => {
     }).toEqual({ total: 12000, core: 4000, brief: 2800, anchor: 2000, user: 2000, voice: 1500, knowledgeMin: 400 });
   });
 });
+
+it("核心证据也保留user_claim与own_claim等级，不通过角度选择洗成已核验材料", () => {
+  const block = renderCoreEvidence([{ id: "ev-1", quote: "现场有二十人", source: "user_claim" }, { id: "ev-2", quote: "这是创作者的旧稿", source: "own_claim" }]);
+  expect(block).toContain("user_claim（未核验用户陈述");
+  expect(block).toContain("own_claim（创作者材料，非外部核验）");
+});

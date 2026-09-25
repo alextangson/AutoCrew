@@ -4,8 +4,7 @@
  * 状态机不该被它撑到读不动。
  *
  * 判据两类：
- * - **AI 味**：humanizer-zh SKILL 的词表/句式升维而来。正则删词只能删「值得一提的是」这种
- *   字面痕迹，判不了「三段排比 + 总分总 + 每段等长」这种结构病——那正是审稿人存在的理由。
+ * - **表达**：结合用户规划、语境与声音样本判断；humanizer 只清理空白，不替审稿做语义改写。
  * - **洞察深度**：只有给了材料才判（§2.4「没给材料的维度不判」）。没有简报的稿子去问
  *   「证据支撑够不够」，等于逼模型编一个不存在的标准。
  */
@@ -13,6 +12,7 @@ import { isAngleCardV3, type AngleCard, type AngleCardV3 } from "../research/bri
 // v2/v3 联合卡的兼容读法（v3 判据是 P1c 的审稿第三类判据）
 import { cardAudiencePain, cardHoldTrigger } from "../research/angle-cards.js";
 import { DEFAULT_PERSONAS } from "../research/personas.js";
+import { STRUCTURE_MENU } from "../research/angle-stage.js";
 import type { SubmitPayload } from "./script-payload.js";
 import { WRITING_PRIORITY } from "./script-prompt.js";
 import type { ReviewIssue } from "./script-review.js";
@@ -25,14 +25,14 @@ const VOICE_SAMPLE_MAX_CHARS = 300;
 
 /** AI 味判据（rule 名进 issue，回看时一眼知道被判了哪一条） */
 const STYLE_RULES = [
-  "排比轰炸：三句以上同构短句连排，气势盖过信息",
-  "总分总：开头预告要讲三点、中间编号列举、结尾再总结一遍",
+  "排比盖过信息：重复句式没有带来内容增量；有目的的排比不单凭句式判错",
+  "重复预告与总结：开头、正文和结尾反复说同一内容；用户选定的清单或总分结构本身不是问题",
   "空转折：「值得一提的是」「不难发现」「换句话说」这类不带新信息的连接词",
-  "段落等长：每段字数齐得反常，读起来像模板填空（人写的段落长短参差）",
+  "模板填充：为维持段落形式加入重复或无关内容；不以段落是否等长作为判错依据",
   "观点对称摆放：凡事都「一方面…另一方面…」，把判断稀释成两边都对",
   "套话堆砌：赋能/闭环/生态/全方位/多维度这类没有具体所指的词",
   "结尾升华：最后一段脱离本文事实，拔高到时代与趋势",
-  "无人称的泛泛而谈：整段没有具体的人、事、数字、场景",
+  "泛泛而谈：抽象判断缺少必要的解释或相关材料，读者无法理解具体所指；不强制第一人称或数字",
 ];
 
 /** 洞察深度判据（只在给了调研材料时启用） */
@@ -75,35 +75,29 @@ function personaLine(card: AngleCardV3): string {
  */
 function angleExecutionSection(card: AngleCardV3, needsHumanNumbers: string[]): string[] {
   const blockers = [
-    "主画像动作没达成：以上面那个人的身份读完，答不出「看完我会做什么」，" +
-      `或者答出来的不是卡上那个最小动作「${card.nextAction}」`,
-    `误区没被点出或没被反驳：开头（前 3 秒，约头两句）没有点出误区「${card.misconception}」，` +
-      "或者正文只顾自己讲，从头到尾没有正面反驳它",
-    `收获感没兑现：正文没有用大白话讲清「为什么会这样」，或者读完拿不到一个观众今天能做的动作` +
-      `（卡上的收获感：${card.payoff}）`,
-    `主张不可反驳：全文在复述材料，没有论证「${card.thesis}」——` +
-      "一句没人会反对的话不是主张，要能想象出有人站出来反对它",
-    `机制只剩比喻：「${card.mechanism}」在稿里只用打比方带过，没有把「因为…所以…」的那条因果说出来`,
-    // v2 的加严表里唯一没被上面五条覆盖的那条：禁区。v3 卡照样有 antiScope，丢了就是判据倒退
+    `主张没有落实：全文没有解释或论证「${card.thesis}」，或擅自换成另一个主张`,
+    `收获感没兑现：读完没有获得卡上承诺的理解或判断「${card.payoff}」；收获不等于必须立即行动`,
+    `机制解释不足：「${card.mechanism}」只剩比喻，相关因果没有解释清楚，或因果说法与材料相矛盾`,
     `闯进禁区：写了卡上 antiScope 明说不写的东西「${card.antiScope}」（哪怕写得不错，也是跑题）`,
+    ...(card.structure === "myth-busting"
+      ? [`纠偏没有成立：选定结构要讨论误区「${card.misconception}」，却没有按材料解释它为何不成立；不规定开头位置、不要求反问`] : []),
   ];
   const advisories = [
-    `网感元素命中不足 2 个（这张卡要命中的是：${card.elements.join("、")}）`,
-    "结尾没有给观众一个最小动作（「欢迎讨论」「点赞关注」不算）",
-    "稿里出现「[未证实]」——这不是合法出口，该删的删、该找证据的找",
+    `表达参考（不按数量验收）：${card.elements.join("、")}；不为命中元素要求添加转折或数据`,
+    `可选行动建议：${card.nextAction}；用户未要求时，不因缺少 CTA 或最小动作扣分`,
+    "稿里出现「[未证实]」——这不是事实证据，该删的删、该找证据的找，不能靠标注放行错误主张",
     ...(needsHumanNumbers.length > 0
       ? [`稿里有需人工过目的模糊数量词：${needsHumanNumbers.join("、")}——提醒创作者核一下，不要自己改写成精确数字`]
       : []),
-    "身份表述：稿里用「不会写代码 / 不是科班 / 学历 / 出身」这类说法描述创作者本人，" +
-      "而这句话在创作者自己的材料（内部语料、声音样本）里并没有逐字出现过——" +
-      "自嘲只能嘲行为和判断，不嘲身份。**这一条只提醒，永远给 advisory，不要打回**",
+    "身份表述：没有来源支持的创作者身份、学历、出身或亲历须指出证据缺口；不得为塑造人设编造事实。",
   ];
   return [
     "",
     "## 判据三：立意执行（本稿写作前定了一张立意卡，见下方【立意卡】，按卡验收）",
     `先把自己代入这个人——主画像：${personaLine(card)}`,
-    "以他的身份从头到尾读一遍稿子，读完先回答一句「看完我会做什么」，再逐条判下面这些。",
-    "正文里的数字已经由代码逐个对账过（无据的数字进不到你这儿），**不要再复核数字真假**。",
+    `已选结构：${STRUCTURE_MENU[card.structure]}。按它的叙事或论证逻辑验收；本次写作约定优先。`,
+    "读完先回答「这篇让我理解或判断了什么」。不把所有结构都改成反常识开头、反问、固定转折和行动号召。",
+    "数字硬门只确认数值能在材料中找到，不能证明引用成立；仍须核查数字的对象、时间、范围、单位和上下文是否支撑原句。",
     "",
     "blocker（任一成立，这稿不该发）：",
     ruleLines(blockers),
@@ -148,6 +142,8 @@ export function buildReviewSystemPrompt(opts: ReviewPromptOptions): string {
     ] : []),
     "",
     "## 判据一：AI 味（结构与语感）",
+    "按已选结构、创作者要求和具体语境判断；词语命中、段落长度、没有提问或 CTA 本身不是缺陷。风格建议不得改变叙述者、事实主体、引文或专业术语的意思。",
+    "事实纪律独立于风格：检查与现有材料矛盾、夸大或无来源的事实性归因；材料不足时说明缺口，不凭印象认可，也不要求为风格凑数字。",
     ruleLines(STYLE_RULES),
     "",
     hasResearch
@@ -213,12 +209,13 @@ function angleBlockV3(card: AngleCardV3): string[] {
   return [
     "【立意卡（本稿切入点，写作前已选定；判据二与判据三都按它验收）】",
     `主画像（这一稿写给谁）：${personaLine(card)}`,
-    `他信的那个错的东西（误区，开头 3 秒要点它）：${card.misconception}`,
+    `误区背景（纠偏结构时需回应，不限定开头位置）：${card.misconception}`,
     `核心主张（全稿必须论证它）：${card.thesis}`,
     `机制（为什么会这样，正文要讲透这条因果）：${card.mechanism}`,
     `收获感（正文必须兑现）：${card.payoff}`,
-    `他看完要做的最小动作：${card.nextAction}`,
-    `要命中的网感元素：${card.elements.join("、")}`,
+    `可选行动建议：${card.nextAction}`,
+    `可参考的表达元素（不按数量验收）：${card.elements.join("、")}`,
+    `已选结构：${STRUCTURE_MENU[card.structure]}`,
     `禁区（这一稿明确不写）：${card.antiScope}`,
     "",
   ];
@@ -247,7 +244,7 @@ export function buildReviewUserMessage(input: ReviewUserInput): string {
   const parts = [
     `目标平台：${input.platform}`,
     "",
-    "【待审稿件·全文（正则去 AI 味后的终稿形态）】",
+    "【待审稿件·全文（仅清理空白，保留原文语义）】",
     `标题：${input.payload.title}`,
     input.humanizedText,
     "",

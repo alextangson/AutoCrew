@@ -30,10 +30,11 @@ describe("buildScriptPrompts", () => {
     }
   });
 
-  it("system prompt contains hook instruction: 只选一种最强", () => {
+  it("system prompt treats hooks as optional references and follows the existing plan", () => {
     const req: ScriptRequest = { topic: "AI技能", platform: "douyin" };
     const result = buildScriptPrompts(KOUBO_PACK, null, req);
-    expect(result.system).toContain("只选一种最强");
+    expect(result.system).toContain("已有开头规划时直接沿用");
+    expect(result.system).toContain("不必套钩子或提问");
   });
 
   it("system prompt contains all rules from pack.structure (hook/body/cta)", () => {
@@ -198,6 +199,15 @@ describe("buildScriptPrompts", () => {
     expect(result.system).toContain("启用的规则");
     expect(result.system).not.toContain("停用的规则");
   });
+  it("完整稿件可在 body 提交，不强加拆段和 CTA", () => {
+    const result = buildScriptPrompts(KOUBO_PACK, null, { topic: "一次试点复盘", platform: "douyin" });
+    expect(result.system).toContain("title（标题）与 body（正文）必填");
+    expect(result.system).toContain("可省略或留空");
+    expect(result.system).toContain("hashtags 可为空数组");
+    expect(result.system).not.toContain("至少 2 处来自调研的数据点");
+    expect(result.system).not.toContain("第二个放在 60% 之后");
+  });
+
 });
 
 describe("voice sections (V5.7 活人感)", () => {
@@ -446,7 +456,7 @@ describe("buildAngleBlock — v3 卡", () => {
 
   it("§4.4 的十一项字段都在：主画像/误区/机制/主张/动作/三画像收益/元素/反方/锚点/骨架/收获感", () => {
     const block = buildAngleBlock(v3, [], tensions);
-    expect(block).toContain("主画像");
+    expect(block).toContain("内容目标");
     expect(block).toContain(v3.misconception);
     expect(block).toContain(v3.mechanism);
     expect(block).toContain(v3.thesis);
@@ -461,12 +471,13 @@ describe("buildAngleBlock — v3 卡", () => {
     expect(block).toContain("厂商口径与独立评测差了四倍");
   });
 
-  it("八条硬规矩逐条在场（P0c 可发稿反推出来的那一套）", () => {
+  it("按已选结构自然展开，保留事实与格式纪律", () => {
     const block = buildAngleBlock(v3, [], tensions);
-    expect(block).toContain("前 3 秒");
-    expect(block).toContain("只讲这一个主张");
-    expect(block).toContain("今天就能做的那一步");
-    expect(block).toContain("术语必须翻译");
+    expect(block).toContain("开头按已选结构与创作者要求进入主题");
+    expect(block).toContain("不强制反常识、提问或固定秒数");
+    expect(block).toContain("不强制 CTA");
+    expect(block).not.toContain("前 3 秒必须");
+    expect(block).not.toContain("作为转折点用");
     expect(block).toContain("证据纪律");
     expect(block).toContain("自嘲只能嘲行为和判断");
     expect(block).toContain("不写任何镜头、画面、字幕条");

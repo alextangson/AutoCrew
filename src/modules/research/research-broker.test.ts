@@ -484,3 +484,25 @@ describe("normalizeWhitespace", () => {
     expect(normalizeWhitespace("a b")).toBe("a b");
   });
 });
+
+it("服务器快照恢复页缓存、来源ID和额度，且与旧对象无共享引用", async () => {
+  const fetched: string[] = [];
+  const deps = { fetchImpl: async (url: string) => { fetched.push(url); return { finalUrl: url, text: "原页上的真实文字", imageCandidates: [] }; }, quotas: { readPagePerJob: 2 } };
+  const first = createResearchBroker(deps);
+  await first.forPerspective("evidence").readPage("https://example.com/a");
+  const snapshot = first.snapshot();
+  const restored = createResearchBroker({ ...deps, snapshot });
+  snapshot.sources[0][1].normalized = "被修改的副本";
+  expect(restored.validateQuote("p1", "真实文字")).toMatchObject({ ok: true });
+  expect(await restored.forPerspective("counter").readPage("https://example.com/a")).toMatchObject({ cached: true, sourceId: "p1" });
+  expect(await restored.forPerspective("counter").readPage("https://example.com/b")).toMatchObject({ sourceId: "p2" });
+  await expect(restored.forPerspective("counter").readPage("https://example.com/c")).rejects.toThrow("上限 2 页");
+  expect(fetched).toHaveLength(2);
+});
+
+it("配额快照保存失败时不发出真实请求", async () => {
+  let network = 0;
+  const broker = createResearchBroker({ beforeNetwork: async snapshot => { expect(snapshot.jobReadPage).toBe(1); throw new Error("disk unavailable"); }, fetchImpl: async url => { network++; return { finalUrl: url, text: "不得读取", imageCandidates: [] }; } });
+  await expect(broker.forPerspective("evidence").readPage("https://example.com/a")).rejects.toThrow("disk unavailable");
+  expect(network).toBe(0);
+});

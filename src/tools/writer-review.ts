@@ -15,18 +15,24 @@
  * - **不留悬空的中间态**：进程重启后盘上那个 `reviewing` 由下一次 `submit_status` / `submit` 重跑
  *   （稿早就落盘了，重跑只是再审一次），而不是让创始人对着一张永远「审稿中」的卡等。
  */
+import { createHash } from "node:crypto";
+import { loadProfile } from "../modules/profile/creator-profile.js";
+import { reviewAudienceStay, type AudienceReviewResult } from "../modules/review/audience-review.js";
 import { loadEngineConfig, type EngineConfig } from "../engine/config.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
-import { reviewOnce, type ReviewInput, type ReviewIssue, type ReviewMeta } from "../modules/writing/script-review.js";
+import { reviewOnce, type ReviewInput, type ReviewIssue, type ReviewMeta, type HostReviewSource } from "../modules/writing/script-review.js";
 import { buildWritingContract } from "../modules/writing/script-prompt.js";
 import { scanText } from "../modules/filter/sensitive-words.js";
-import { getContent, transitionStatus, updateContent } from "../storage/local-store.js";
+import { getContent, transitionStatus, updateContent, updateContentIfDraftMatches, type ContentUpdates } from "../storage/local-store.js";
 import {
   isReadyPack,
   packGate,
   readPack,
+  renderHostEvidence,
   serializeWriterCall,
+  submissionVisibility,
+  writerProgress,
   writePack,
   type PendingReview,
   type ReadyPack,
@@ -34,7 +40,12 @@ import {
 } from "./writer-pack.js";
 import { describeWriterFailure } from "./writer-failure.js";
 
+export type AudienceAssessment =
+  | { status: "reviewed"; result: AudienceReviewResult }
+  | { status: "unavailable" | "skipped"; reason: string };
+
 export interface ReviewRunDeps {
+  audienceReviewImpl?: typeof reviewAudienceStay;
   runLoopImpl?: typeof runLoop;
   onWarn?: (message: string) => void;
 }
@@ -49,12 +60,12 @@ export interface ReviewJob {
 
 export type Settled = { status: SubmitStatus } & Record<string, unknown>;
 
-/** 审稿最多点两轮名（§5.3）：第三轮就是无限润色，按残留收下 */
+/** 自动修订最多两轮；达到上限只结束自动循环，不把残留问题判为通过。 */
 const MAX_REVIEW_ROUNDS = 2;
 
 export const REVIEW_NONE_REASON = "宿主明说这一稿不走产品审稿（review=none）";
 export const REVIEWING_NOTE =
-  "稿子收下并落盘了，审稿在后台跑（通常 1–3 分钟）：用 submit_status{content_id} 轮询到终态再收工——别重交同一稿。";
+  "正文已保存，审稿在后台跑（通常 1–3 分钟），尚无质量结论。用 submit_status{content_id} 轮询到终态，再说明审稿结果和待处理事项；别重交同一稿。";
 
 // ─── 在跑的审稿 ───────────────────────────────────────────────────────────────
 
@@ -91,7 +102,7 @@ export async function resumeReview(
   deps: ReviewRunDeps,
 ): Promise<void> {
   if (inFlight.has(contentId)) return;
-  const hit = Object.entries(pack.attempts).find(([, rec]) => rec.status === "reviewing");
+  const hit = Object.entries(pack.attempts).find(([, rec]) => rec.status === "reviewing" && rec.pending?.mode !== "host");
   if (!hit) return;
   const pending = hit[1].pending ?? (await pendingFromDraft(contentId, pack, dataDir));
   if (!pending) return;
@@ -114,8 +125,8 @@ async function pendingFromDraft(contentId: string, pack: ReadyPack, dataDir: str
 
 type ReviewTurn =
   | { kind: "stale" }
-  | { kind: "skipped"; reason: string }
-  | { kind: "judged"; issues: ReviewIssue[]; blockers: ReviewIssue[]; reviewedAt: string };
+  | { kind: "skipped"; reason: string; audience?: AudienceAssessment }
+  | { kind: "judged"; issues: ReviewIssue[]; blockers: ReviewIssue[]; reviewedAt: string; audience?: AudienceAssessment; source?: HostReviewSource };
 
 /** 后台任务**永不 reject**：审稿失败也是一个要落盘的终态，不是掉在地上的 rejection */
 async function runJob(job: ReviewJob, dataDir: string, deps: ReviewRunDeps): Promise<void> {
@@ -131,16 +142,33 @@ async function reviewTurn(job: ReviewJob, dataDir: string, deps: ReviewRunDeps):
     if (!isReadyPack(pack) || pack.packId !== job.packId) return { kind: "stale" };
     const line = await reviewLine(dataDir);
     if (!line.ok) return { kind: "skipped", reason: line.reason };
-    const outcome = await reviewOnce(reviewInput(pack, job), line.config, {
-      ...(deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
-      ...(deps.onWarn ? { onWarn: deps.onWarn } : {}),
-    });
+    const [outcome, audience] = await Promise.all([
+      reviewOnce(reviewInput(pack, job), line.config, {
+        ...(deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
+        ...(deps.onWarn ? { onWarn: deps.onWarn } : {}),
+      }),
+      audienceTurn(pack, job, dataDir, deps),
+    ]);
     if (!outcome.ok) {
-      return { kind: "skipped", reason: await describeWriterFailure(outcome.error, "reviewer", dataDir, outcome.reason) };
+      return { kind: "skipped", reason: await describeWriterFailure(outcome.error, "reviewer", dataDir, outcome.reason), audience };
     }
-    return { kind: "judged", issues: outcome.issues, blockers: outcome.blockers, reviewedAt: outcome.reviewedAt };
+    return { kind: "judged", issues: outcome.issues, blockers: outcome.blockers, reviewedAt: outcome.reviewedAt, audience };
   } catch (err) {
     return { kind: "skipped", reason: await describeWriterFailure(err, "reviewer", dataDir, cleanErrorMessage(err)) };
+  }
+}
+
+async function audienceTurn(pack: ReadyPack, job: ReviewJob, dataDir: string, deps: ReviewRunDeps): Promise<AudienceAssessment> {
+  try {
+    const profile = await loadProfile(dataDir);
+    if (!profile?.audiencePersona?.calibratedAt) return { status: "unavailable", reason: "尚无用户确认的受众画像，未进行受众点评；不把猜测的受众作为标准" };
+    const result = await (deps.audienceReviewImpl ?? reviewAudienceStay)({
+      title: job.pending.payload.title, body: job.pending.humanizedText,
+      platform: pack.context.platform, writingContract: packWritingContract(pack),
+    }, dataDir, { ...(deps.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}) });
+    return { status: "reviewed", result };
+  } catch (err) {
+    return { status: "unavailable", reason: cleanErrorMessage(err) };
   }
 }
 
@@ -155,22 +183,23 @@ export async function reviewLine(
   }
 }
 
-function packWritingContract(pack: ReadyPack): string {
+export function packWritingContract(pack: ReadyPack): string {
   const ctx = pack.context;
   return ctx.writingContract || buildWritingContract(null, ctx.req,
     ctx.angleCard ? { card: ctx.angleCard, evidence: [], tensions: [] } : undefined);
 }
 
-function reviewInput(pack: ReadyPack, job: ReviewJob): ReviewInput {
+export function reviewInput(pack: ReadyPack, job: ReviewJob): ReviewInput {
   const ctx = pack.context;
   const gate = packGate(pack);
+  const researchSlot = [ctx.researchSlot, renderHostEvidence(pack)].filter(Boolean).join("\n\n");
   return {
     payload: job.pending.payload,
     humanizedText: job.pending.humanizedText,
     system: ctx.prompts.system,
     user: ctx.prompts.user,
     writingContract: packWritingContract(pack),
-    ...(ctx.researchSlot ? { researchSlot: ctx.researchSlot } : {}),
+    ...(researchSlot ? { researchSlot } : {}),
     ...(ctx.angleCard ? { angle: ctx.angleCard } : {}),
     voiceSamples: ctx.voiceSamples ?? [],
     ...(gate ? { gate } : {}),
@@ -189,7 +218,11 @@ async function applyOutcome(job: ReviewJob, turn: ReviewTurn, dataDir: string): 
     const rec = pack.attempts[String(job.attempt)];
     // 这一次已经被结掉了（重启后重跑的另一条、或人为改盘）：不许把终态再翻一遍
     if (!rec || rec.status !== "reviewing") return;
-    const result = await settleReview(job, pack, turn, dataDir);
+    const current = await getContent(job.contentId, dataDir);
+    const changed = !current || current.platform !== pack.context.platform || current.title !== job.pending.payload.title || current.body !== job.pending.humanizedText;
+    const result: Settled = changed
+      ? { status: "accepted_unreviewed", saved: true, content_id: job.contentId, quality_status: "stale_review", needs_attention: true, note: "审稿期间正文已变化，本次结论不适用于当前稿；未覆盖新正文或推进状态" }
+      : await settleReview(job, pack, turn, dataDir);
     pack.attempts[String(job.attempt)] = {
       status: result.status,
       at: new Date().toISOString(),
@@ -213,26 +246,45 @@ export async function settleReview(
   turn: Exclude<ReviewTurn, { kind: "stale" }>,
   dataDir: string,
 ): Promise<Settled> {
+  const audience = turn.audience ?? { status: "skipped" as const, reason: turn.kind === "skipped" ? turn.reason : "此记录未包含受众点评" };
   const soft = job.pending.gateNotes;
   if (turn.kind === "skipped") {
     await updateContent(job.contentId, { lastError: turn.reason }, dataDir);
     return acceptDraft(job, pack, meta("skipped", pack, []), "accepted_unreviewed", {
       review_skipped_reason: turn.reason,
+      audience_review: audience,
       ...(soft.length ? { gate_notes: soft } : {}),
-      note: "稿子收下了，但这一稿没经过 AI 审稿——原因见 review_skipped_reason。",
+      next_action: {
+        action: "disclose_review_gap",
+        message: "展示正文并说明未完成审稿的原因和材料缺口；需要继续校验时进行宿主侧审阅或恢复审稿线路，不得将保存成功称为审稿通过。",
+      },
+      human_next_step: "这一稿尚未经过产品审稿，请在了解缺口后审阅正文；当前没有记录你的认可。",
+      note: "正文已保存，但未完成 AI 审稿，质量状态为待审；原因见 review_skipped_reason。",
     }, dataDir);
   }
   if (turn.blockers.length === 0) {
-    return acceptDraft(job, pack, meta("passed", pack, turn.issues, turn.reviewedAt), "accepted", {
+    return acceptDraft(job, pack, meta("passed", pack, turn.issues, turn.reviewedAt, turn.source), "accepted", {
+      audience_review: audience,
       ...(soft.length ? { gate_notes: soft } : {}),
-      note: "审稿没点 blocker，稿子收下了。advisory 在 review.issues 里，改不改由创始人定。",
+      next_action: {
+        action: "present_draft",
+        message: "向创作者展示正文、实际调研与立意状态，以及 review.issues / audience_review / gate_notes / unverified_numbers / violations 中的待核对事项。",
+      },
+      human_next_step: "请审阅正文是否符合你的意图；AI 审稿未发现阻断项，不等于你已认可或批准发布。",
+      note: "正文已保存，AI 审稿未发现阻断项；仍需呈现建议和待核对事项，等待创作者实际反馈。",
     }, dataDir);
   }
-  if (pack.reviewRounds < MAX_REVIEW_ROUNDS) return requireRevision(job, pack, turn, dataDir);
-  return acceptDraft(job, pack, meta("failed", pack, turn.issues, turn.reviewedAt), "accepted_with_issues", {
+  if (pack.reviewRounds < MAX_REVIEW_ROUNDS) return { ...(await requireRevision(job, pack, turn, dataDir)), audience_review: audience };
+  return acceptDraft(job, pack, meta("failed", pack, turn.issues, turn.reviewedAt, turn.source), "accepted_with_issues", {
+    audience_review: audience,
     issues: turn.blockers,
     ...(soft.length ? { gate_notes: soft } : {}),
-    note: `审稿点了 ${MAX_REVIEW_ROUNDS} 轮仍有 ${turn.blockers.length} 项没解决，按残留收下——创始人过稿时会看到这份清单。`,
+    next_action: {
+      action: "resolve_review_issues",
+      message: "逐条呈现未解决的问题和建议修改，结束自动修订循环；保留现有草稿，不得宣布合格或自动进入发布。",
+    },
+    human_next_step: "请查看残留问题并决定修改方向；这份草稿仍有阻断问题，尚未获得你的认可。",
+    note: `正文已保存；自动修订已到 ${MAX_REVIEW_ROUNDS} 轮上限，仍有 ${turn.blockers.length} 项阻断问题，质量未通过。`,
   }, dataDir);
 }
 
@@ -240,32 +292,68 @@ export async function settleReview(
 async function requireRevision(
   job: ReviewJob,
   pack: ReadyPack,
-  turn: { issues: ReviewIssue[]; blockers: ReviewIssue[]; reviewedAt: string },
+  turn: { issues: ReviewIssue[]; blockers: ReviewIssue[]; reviewedAt: string; source?: HostReviewSource },
   dataDir: string,
 ): Promise<Settled> {
   pack.reviewRounds += 1;
   pack.reviewFixed = (pack.reviewFixed ?? 0) + turn.blockers.length;
-  await updateContent(job.contentId, { review: meta("failed", pack, turn.issues, turn.reviewedAt) }, dataDir);
-  const moved = await transitionStatus(job.contentId, "revision", {}, dataDir);
+  await saveReviewedContent(job, pack, { review: meta("failed", pack, turn.issues, turn.reviewedAt, turn.source) }, dataDir);
+  const moved = await advanceReviewedContent(job, pack, "revision", dataDir);
   return {
     status: "review_required",
+    saved: true,
+    quality_status: "needs_revision",
+    needs_attention: true,
     content_id: job.contentId,
+    ...writerProgress(pack, job.pending.host),
+    ...(turn.source ? { review_source: turn.source } : {}),
     round: pack.reviewRounds,
     issues: turn.blockers,
     advisories: turn.issues.filter((i) => i.severity !== "blocker"),
-    note: "只改被点名的那几句，别重写整篇；改完 attempt 加一再交。",
+    next_action: {
+      action: "revise_and_resubmit",
+      tool: "autocrew_writer",
+      params: { action: "submit", content_id: job.contentId, pack_id: job.packId, attempt: job.attempt + 1 },
+      message: "按 issues 修订对应内容后再提交。规划缺项或结构问题可调整相关段落，保留无关内容。",
+    },
+    human_next_step: "当前由宿主继续修订，尚未进入请你确认成稿的阶段。",
+    note: "正文已保存，审稿发现需修订的问题。按问题范围修改并保留无关内容；改完 attempt 加一再交。",
     ...(moved.ok ? { content_status: "revision" } : { warning: `稿件状态推不动：${moved.error ?? "未推进"}` }),
   };
 }
 
-function meta(status: ReviewMeta["status"], pack: ReadyPack, issues: ReviewIssue[], at?: string): ReviewMeta {
+function meta(status: ReviewMeta["status"], pack: ReadyPack, issues: ReviewIssue[], at?: string, source?: HostReviewSource): ReviewMeta {
   return {
     status,
     rounds: pack.reviewRounds,
     fixed: pack.reviewFixed ?? 0,
     issues,
     reviewedAt: at ?? new Date().toISOString(),
+    ...(source ? { source } : {}),
   };
+}
+
+async function saveReviewedContent(job: ReviewJob, pack: ReadyPack, patch: ContentUpdates, dataDir: string): Promise<void> {
+  const settledPatch = (current: Awaited<ReturnType<typeof getContent>>): ContentUpdates => ({
+    ...patch,
+    ...(current?.pack?.packId === job.packId ? { pack: { ...current.pack, reviewPending: false } } : {}),
+  });
+  if (job.pending.mode !== "host") {
+    await updateContent(job.contentId, settledPatch(await getContent(job.contentId, dataDir)), dataDir);
+    return;
+  }
+  const saved = await updateContentIfDraftMatches(job.contentId, {
+    title: job.pending.payload.title, body: job.pending.humanizedText, platform: pack.context.platform,
+  }, settledPatch, dataDir);
+  if (!saved.ok) throw new Error("stale_review: 稿件已变化，本次宿主结论未应用；请重新领取当前稿的写作包和审稿包");
+}
+
+async function advanceReviewedContent(job: ReviewJob, pack: ReadyPack, status: "revision" | "draft_ready", dataDir: string) {
+  const result = await transitionStatus(job.contentId, status, job.pending.mode === "host" ? {
+    expectedDraft: { title: job.pending.payload.title, body: job.pending.humanizedText, platform: pack.context.platform },
+  } : {}, dataDir);
+  if (result.staleDraft) throw new Error("stale_review: 稿件已变化，本次宿主结论未推进状态；请重新领取当前稿的写作包和审稿包");
+  return result;
 }
 
 /** 收下这一稿：违禁词扫描 → 审稿结论落盘 → 转草稿就绪 */
@@ -279,8 +367,8 @@ async function acceptDraft(
 ): Promise<Settled> {
   const { payload, humanizedText } = job.pending;
   const scan = await scanText(`${payload.title}\n\n${humanizedText}`, pack.context.platform, dataDir);
-  await updateContent(
-    job.contentId,
+  await saveReviewedContent(
+    job, pack,
     {
       draftReadyAt: new Date().toISOString(),
       // 转正即清：成稿没有「中断」可重试，留一份过期的请求只是 meta 里一处会骗人的旧事实
@@ -292,14 +380,34 @@ async function acceptDraft(
     },
     dataDir,
   );
-  const promoted = await transitionStatus(job.contentId, "draft_ready", {}, dataDir);
+  const promoted = await advanceReviewedContent(job, pack, "draft_ready", dataDir);
+  const audience = extra.audience_review as AudienceAssessment | undefined;
+  const audienceNeedsAttention = !audience || audience.status !== "reviewed" || !audience.result.coreStops || audience.result.suggestions.length > 0;
+  const hasNotes = audienceNeedsAttention || review.issues.length > 0 || job.pending.gateNotes.length > 0 || job.pending.needsHuman.length > 0 || scan.hits.length > 0;
+  const qualityStatus = review.status === "skipped"
+    ? "unreviewed"
+    : review.status === "failed" ? "issues_remaining"
+      : review.source ? (review.source.kind === "host_self_review" ? "host_self_reviewed" : "host_reviewed")
+        : hasNotes ? "passed_with_notes" : "passed";
   return {
     status,
+    saved: true,
+    quality_status: qualityStatus,
+    needs_attention: qualityStatus !== "passed",
     content_id: job.contentId,
     title: payload.title,
-    review: { status: review.status, rounds: review.rounds, issues: review.issues },
+    ...writerProgress(pack, job.pending.host),
+    review: { status: review.status, rounds: review.rounds, issues: review.issues, ...(review.source ? { source: review.source } : {}) },
+    unverified_numbers: job.pending.needsHuman,
     violations: scan.hits.map((h) => h.word),
     ...extra,
+    ...(review.source ? {
+      review_source: review.source,
+      note: review.status === "failed" ? "稿件已保存，宿主审阅仍有阻断问题；自动修订已达上限，须向创作者说明。"
+        : review.source.kind === "host_self_review" ? "稿件已保存，同一宿主自审未报告阻断项；这不是独立评审，也不是创作者采纳。"
+          : "稿件已保存，另一MCP凭证主体未报告阻断项；不能据此保证不同模型或独立评审，也不是创作者采纳。",
+      human_next_step: "查看正文、问题建议和真实审稿来源，再由创作者作采纳决定；未批准发布。",
+    } : {}),
     ...(promoted.ok
       ? { content_status: "draft_ready" }
       : { warning: `稿件状态推不动：${promoted.error ?? "未推进"}（正文已保存）` }),
@@ -314,7 +422,7 @@ function versionNote(pack: ReadyPack, review: ReviewMeta): string {
     ...(pack.context.evidenceNote ? [pack.context.evidenceNote] : []),
   ];
   const judged =
-    review.status === "skipped" ? "未经AI审稿" : review.status === "failed" ? `审稿残留 ${review.issues.length} 项` : "已过AI审稿";
+    review.status === "skipped" ? "未经AI审稿" : review.status === "failed" ? `审稿残留 ${review.issues.length} 项` : review.source?.kind === "host_self_review" ? "宿主自审未报告阻断项" : review.source ? "另一凭证主体审阅未报告阻断项" : "AI审稿未发现阻断项";
   return `${pack.host} 写（${[judged, ...marks].join("，")}）`;
 }
 
@@ -350,8 +458,22 @@ export async function submitStatus(
   if (!rec) {
     return { ok: false, error: `没有 attempt ${want} 的提交记录——已记录的是 ${recorded.sort((a, b) => a - b).join(" / ")}` };
   }
+  if (rec.hostReview) {
+    const current = await getContent(contentId, dataDir);
+    const currentHash = current && createHash("sha256").update(JSON.stringify([current.title, current.body, current.platform])).digest("hex");
+    if (!current || current.pack?.packId !== pack.packId || currentHash !== rec.hostReview.draftHash || want !== Math.max(...recorded)) {
+      return {
+        ok: true, status: "stale_review", quality_status: "stale_review", needs_attention: true,
+        content_id: contentId, attempt: want, elapsed_s: elapsedSeconds(rec.startedAt ?? rec.at),
+        original_status: rec.status,
+        note: "稿件或提交版本已经变化，历史审稿回执不适用于当前稿；请重新领取写作包、提交并审阅当前稿。",
+        next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: contentId, force: true } },
+      };
+    }
+  }
   if (rec.status === "reviewing" && isReadyPack(pack)) await resumeReview(contentId, pack, dataDir, deps);
-  const { status: _drop, ...rest } = rec.result as { status?: unknown } & Record<string, unknown>;
+  const result = isReadyPack(pack) ? submissionVisibility(pack, rec.result) : rec.result;
+  const { status: _drop, ...rest } = result as { status?: unknown } & Record<string, unknown>;
   return {
     ok: true,
     status: rec.status,

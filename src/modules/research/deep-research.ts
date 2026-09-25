@@ -19,6 +19,7 @@ import { classifyEngineError } from "../../engine/error-kind.js";
 import { describeEngineFailure, isEngineFailure } from "../../engine/failure-text.js";
 import type { LoopFallbackInfo, runLoop } from "../../engine/loop.js";
 import { loadProfile } from "../profile/creator-profile.js";
+import { createCreativeTask, creativeTaskMatches, renderCreativeTask, type CreativeTask } from "../writing/creative-task.js";
 import { runAngleStage } from "./angle-stage.js";
 import { resolveEffectiveBrief } from "./brief-snapshot.js";
 import {
@@ -144,6 +145,8 @@ class PerspectiveProgress {
 }
 
 interface PerspectiveRunContext {
+  creativeTask?: CreativeTask;
+  ownMaterial?: OwnMaterial;
   topic: ResearchTopicRef;
   progress: PerspectiveProgress;
   warn: (message: string) => void;
@@ -176,6 +179,8 @@ async function runOne(
   const result = await runPerspective({
     name,
     topic: ctx.topic,
+    creativeTask: ctx.creativeTask,
+    ownMaterial: ctx.ownMaterial,
     profile,
     broker,
     dataDir: deps.dataDir,
@@ -272,6 +277,7 @@ async function publishBrief(
     const brief: ResearchBrief = {
       schemaVersion: BRIEF_SCHEMA_VERSION,
       ...payload,
+      ...(job.creativeTask ? { creativeTask: job.creativeTask } : {}),
       perspectives: outputs,
       // 归因：立意 pass 这一轮**实际读到**的内部语料片段（§3.2）；一段都没读到就是空数组
       ownMaterialRefs: ownMaterial.refs,
@@ -329,6 +335,7 @@ async function withAngleCards(
   topic: ResearchTopicRef,
   profile: Awaited<ReturnType<typeof loadProfile>>,
   ownMaterial: OwnMaterial,
+  creativeTask: CreativeTask | undefined,
   deps: DeepResearchDeps,
   warn: (message: string) => void,
 ): Promise<{ payload: SynthesisPayload; failure?: { errorCode: string; reason: string }; usedFallback?: LoopFallbackInfo }> {
@@ -337,6 +344,7 @@ async function withAngleCards(
     schemaVersion: BRIEF_SCHEMA_VERSION,
     ...payload,
     angleCards: undefined,
+    ...(creativeTask ? { creativeTask } : {}),
     // 视角全文一起给：立意要看到受众/反方视角的洞察，不只是综合后的摘要
     perspectives: outputs,
     missingPerspectives: [],
@@ -349,6 +357,7 @@ async function withAngleCards(
     topic,
     profile,
     ownMaterial,
+    creativeTask,
     dataDir: deps.dataDir,
     ...engineOverrides(deps),
   });
@@ -377,15 +386,16 @@ async function collectOwn(
   topic: { title: string; description: string },
   deps: DeepResearchDeps,
   warn: (message: string) => void,
+  creativeTask?: CreativeTask,
 ): Promise<OwnMaterial> {
   try {
     return await (deps.collectOwnMaterialImpl ?? collectOwnMaterial)(deps.dataDir, {
       id: topicId,
       title: topic.title,
-      description: topic.description,
+      description: [topic.description, renderCreativeTask(creativeTask)].filter(Boolean).join("\n"),
     });
   } catch (err) {
-    warn(`内部语料读取失败，本轮立意只有简报证据可引：${errText(err)}`);
+    warn(`内部语料读取失败，本轮以外部调研证据为主：${errText(err)}`);
     return EMPTY_OWN_MATERIAL;
   }
 }
@@ -412,6 +422,10 @@ async function runAnglesOnly(
     return failed([], "no_brief", "这条选题还没有生效简报——先跑一轮深调研，才有事实可以重新立意");
   }
   const { brief } = snapshot;
+  const creativeTask = job.creativeTask ?? brief.creativeTask;
+  if (!creativeTaskMatches(creativeTask ?? createCreativeTask({}), brief.creativeTask)) {
+    return failed([], "creative_task_changed", "创作任务与简报不一致，先重新调研，再生成立意；不能将旧事实标记为新任务的调研结果");
+  }
   const topicRef: ResearchTopicRef = { title: topic.title, description: topic.description };
   const profile = await loadProfile(deps.dataDir);
   const facts: SynthesisPayload = {
@@ -422,13 +436,14 @@ async function runAnglesOnly(
     assetPicks: brief.assetPicks,
     gaps: brief.gaps,
   };
-  const ownMaterial = await collectOwn(job.topicId, topic, deps, warn);
+  const ownMaterial = await collectOwn(job.topicId, topic, deps, warn, creativeTask);
   const { payload, failure, usedFallback } = await withAngleCards(
     facts,
     brief.perspectives,
     topicRef,
     profile,
     ownMaterial,
+    creativeTask,
     deps,
     warn,
   );
@@ -447,13 +462,15 @@ async function runAnglesOnly(
     const next: ResearchBrief = {
       ...brief,
       ...payload,
+      ...(creativeTask ? { creativeTask } : {}),
       // 这一版的卡是这一轮语料产的：上一版的归因绝不能顺着 ...brief 混进来
       ownMaterialRefs: ownMaterial.refs,
       gaps,
       missingPerspectives: brief.missingPerspectives,
       generatedAt: new Date().toISOString(),
       revision,
-      topicHash,
+      // Angles-only changes no researched facts: keep the original topic identity.
+      topicHash: brief.topicHash,
     };
     await saveBrief(job.topicId, next, deps.dataDir);
     return {
@@ -496,7 +513,10 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
       warn,
       deps.onProgress,
     );
-    const ctx: PerspectiveRunContext = { topic: topicRef, progress, warn, engineErrors: [] };
+    // First learn what the creator already has, then research the missing facts.
+    const creativeTask = job.creativeTask;
+    const ownMaterial = await collectOwn(job.topicId, topic, deps, warn, creativeTask);
+    const ctx: PerspectiveRunContext = { topic: topicRef, creativeTask, ownMaterial, progress, warn, engineErrors: [] };
 
     const outputs = await runAllPerspectives(ctx, deps, broker, profile);
     const perspectives = progress.snapshot();
@@ -518,6 +538,8 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
 
     const synthesis = await runSynthesis({
       topic: topicRef,
+      creativeTask,
+      ownMaterial,
       perspectiveResults: outputs,
       broker,
       dataDir: deps.dataDir,
@@ -527,9 +549,8 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
       return failed(perspectives, "synthesis_failed", `${synthesis.errorCode}：${synthesis.reason}`);
     }
     const payload = await withDownloadedAssets(synthesis.payload, job.topicId, deps, warn);
-    const ownMaterial = await collectOwn(job.topicId, topic, deps, warn);
     // full job：立意失败只记 gaps（failure 忽略），简报照出——写稿走无卡路径（§5 边界行为）
-    const withAngles = await withAngleCards(payload, outputs, topicRef, profile, ownMaterial, deps, warn);
+    const withAngles = await withAngleCards(payload, outputs, topicRef, profile, ownMaterial, creativeTask, deps, warn);
     if (withAngles.usedFallback) ctx.usedFallback = withAngles.usedFallback;
     const done = await publishBrief(job, topic, outputs, perspectives, withAngles.payload, ownMaterial, deps.dataDir);
     return ctx.usedFallback ? { ...done, usedFallback: ctx.usedFallback } : done;
