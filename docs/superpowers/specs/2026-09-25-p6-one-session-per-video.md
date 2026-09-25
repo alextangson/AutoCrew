@@ -85,7 +85,7 @@ Codex CLI 是 ChatGPT 登录态（`~/.codex/auth.json` 有 `tokens` 无 `OPENAI_
 |---|---|---|---|
 | draft_ready | reviewing / drafting | 现有 | 现有 |
 | **draft_ready** | **revision** | `writer submit{revision_of}`（§3.7） | 同一 `draft_hash`；修订周期预算未用尽 |
-| draft_ready / approved | **editing** | `handoff` | 审稿结论 = `accepted`（**`accepted_with_issues` 不放行**，须用户明确 `verdict:adopted` 后才可交接）；A-roll 有效；产物清单落盘 |
+| draft_ready / approved | **editing** | `handoff` | 审稿结论 = `accepted`（**`accepted_with_issues` 一律不放行**：P6-e 证明「用户采纳」这个 flag 模型会自填，所以没有采纳通道，改掉阻断再审）；A-roll 有效；产物清单落盘 |
 | editing | **draft_ready** | `handoff{revoke:true}` | 只有当前交接代次可撤；撤回后该代次永久失效 |
 | editing | **publish_ready** | `register` | 成片 + 两张封面 + 两份审批凭据全部核过；`videoDone` 与封面评审单同一事务内落盘，任一失败不推进 |
 | editing | cover_pending → publish_ready | 现有内置线 | 现有（保留，与新边并存） |
@@ -127,7 +127,7 @@ Codex CLI 是 ChatGPT 登录态（`~/.codex/auth.json` 有 `tokens` 无 `OPENAI_
 
 校验顺序：**先查重放**，再查阶段。
 1. 重放：`manifest_hash` 与当前交接一致 → 返回既有结果（即使状态已是 editing）。
-2. 阶段：`content.status ∈ {draft_ready, approved}`；最近审稿结论 = `accepted`，或 `accepted_with_issues` 且用户 `verdict:adopted`（`editorial feedback` 已有），否则 `not_accepted`。
+2. 阶段：`content.status ∈ {draft_ready, approved}`；最近审稿结论 = `accepted`，否则 `not_accepted`（`accepted_with_issues` 回阻断清单和 `submit{revision_of}` 的 next_action；**没有**模型可填的采纳通道——P6-e 行为 eval 里 3/3 trial 模型都在用户没看到阻断前替他点了 `adopted`）。
 3. A-roll：存在、可读、`ffprobe` 有视频流 + 音频流、≤30 min；**全文件 sha256**（一次性成本，几秒）。
 4. `project_root` 白名单 + 归属检查（上）；缺省 `YYYYMMDD <title>`（title 去路径非法字符，≤40 字）。
 5. 产物清单 `manifest = { content_id, generation, draft_hash, aroll_sha256, project_root, notes }`，`manifest_hash = sha256(manifest)`；`generation` 从 1 起，每次新交接 +1，撤回过的代次永久失效。
@@ -198,7 +198,7 @@ Codex CLI 是 ChatGPT 登录态（`~/.codex/auth.json` 有 `tokens` 无 `OPENAI_
 ### 3.8 写门：令牌是凭据，会话只是归因
 
 - **写门统一**：所有写动作（writer / review_desk / editorial / video / content transition）走同一个 `assertWriteAllowed(content, principal, claim_token)`：有活跃认领时，**必须**带匹配令牌；去掉 `claims.ts:92` 的「同宿主放行」；`local-user`（工作台）放行保留，但每次绕过在 `handoffs[]` 记 `override:true`。`host-review.ts:190` 的串行化不变。
-- **认领**：同宿主但不带令牌的再次 `claim` → `claim_held`，除非 `takeover:true`（记交接）；带令牌的续租照旧。交接（`handoff`）把认领从 `writer` 转给 `editor`（Codex），令牌换新并记录——P3b 的「交接即释放」改成「交接即转移」。
+- **认领**：同宿主但不带令牌的再次 `claim` → `claim_held`；`takeover:true` **只在持有会话最近一次带令牌写入距今 ≥10 分钟时生效**（`claim.lastWriteAt`；P6-e 里 3/3 trial 模型没问用户就 takeover，所以 flag 本身不是门），成功记交接；带令牌的续租照旧。交接（`handoff`）把认领从 `writer` 转给 `editor`（Codex），令牌换新并记录——P3b 的「交接即释放」改成「交接即转移」。
 - **会话归因（诊断，不做门禁）**：转发器每进程生成 nonce 作为 `_session` 注入（`mcp/server.ts:194` 与 `_host` 并列）；Codex HTTP 直连可带 `X-AutoCrew-Session` 头，缺省 `unknown`。写入时记到 `content.session`。MCP 重连、进程重启换 nonce 不影响写门。
 
 ### 3.9 引擎熔断与回退可见（给保留的可选引擎路径）
@@ -278,7 +278,7 @@ P6-a 与 P6-b 有共同前置（写门），先做 P6-b 的写门再做 P6-a 的
 ## 9. 待创始人确认
 
 1. **派工先手动后 CCB**（codex #18 建议，本篇采纳）：P6-a 用「在 broll 里说『接 <content_id>』」验收；CCB 放 P6-d。同意否？
-2. **`accepted_with_issues` 必须你点 `adopted` 才能交剪辑**——多一次确认，换来不把带 blocker 的稿送去剪。接受否？
+2. ~~**`accepted_with_issues` 必须你点 `adopted` 才能交剪辑**~~ → P6-e 证明这个确认会被模型代填，改为**一律不放行**：改掉阻断再审；真要带阻断发去工作台推进。接受否？
 3. **白名单根目录**只放 `~/Projects/broll`？还有别的剪辑目录就写进 `~/.autocrew/video.json`。
 4. **录 A-roll 在同一会话里等**；新 skill 名（暂名 `video-session`）。
 

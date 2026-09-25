@@ -307,7 +307,25 @@ describe("交接即释放（真机 2026-09-06）", () => {
   });
 });
 
+
+/** 把持有会话做成闲置满 11 分钟：接管门槛看的是 lastWriteAt */
+async function makeIdle(contentId: string, dir: string, minutes = 11) {
+  const c = (await getContent(contentId, dir))!;
+  await updateContent(contentId, { claim: { ...c.claim!, lastWriteAt: new Date(Date.now() - minutes * 60_000).toISOString() } }, dir);
+}
+
 describe("写门：令牌是凭据，同宿主不例外（P6 §3.8）", () => {
+  it("takeover 在持有会话 10 分钟内仍有写入时被拒（模型自填的 flag 不是门）", async () => {
+    const c = await seed();
+    const first = await claimContent(c.id, "writer", "claude-code", dir);
+    if (!first.ok) throw new Error("claim failed");
+    const r = await claimContent(c.id, "writer", "claude-code", dir, { takeover: true });
+    expect(r).toMatchObject({ ok: false, code: "claim_held" });
+    if (r.ok) return;
+    expect(r.error).toContain("闲置满 10 分钟");
+    expect((await getContent(c.id, dir))!.claim?.token).toBe(first.claim.token);
+  });
+
   it("同宿主第二个会话（不带令牌）：认领与写入都 claim_held，拒绝里不带令牌", async () => {
     const c = await seed();
     const first = await claimContent(c.id, "writer", "claude-code", dir);
@@ -328,6 +346,7 @@ describe("写门：令牌是凭据，同宿主不例外（P6 §3.8）", () => {
     const c = await seed();
     const first = await claimContent(c.id, "writer", "claude-code", dir);
     if (!first.ok) throw new Error("claim failed");
+    await makeIdle(c.id, dir);
     const taken = await claimContent(c.id, "writer", "claude-code", dir, { takeover: true });
     expect(taken.ok).toBe(true);
     if (!taken.ok) return;
@@ -459,7 +478,8 @@ describe("会话归因（P6 §3.8，只做诊断）", () => {
     expect(claimView(writer.claim)).toMatchObject({ session: "sess-1-aaa" });
     expect(claimView(writer.claim)).not.toHaveProperty("token");
 
-    // 同宿主另一个会话接管：新认领记新会话，交接账记发起接管的会话
+    // 同宿主另一个会话接管：新认领记新会话，交接账记发起接管的会话（先让持有会话闲置）
+    await makeIdle(c.id, dir);
     await withCallerSession("sess-2-bbb", () => claimContent(c.id, "writer", "claude-code", dir, { takeover: true }));
     const taken = (await getContent(c.id, dir))!;
     expect(taken.claim?.session).toBe("sess-2-bbb");

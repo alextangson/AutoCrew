@@ -57,7 +57,7 @@ CCB_CALLER=claude ask codex <<'EOF'
 EOF
 ```
 
-回 `not_accepted` 且 `review_status` 为 `accepted_with_issues`：把阻断问题逐条摆给用户，让他在「先修」和「就用这一版」之间选。只有他明说采纳，才 `autocrew_editorial inspect` 取 `draft_hash`，再 `feedback{content_id, draft_hash, event_id, feedback:<他的原话>, verdict:"adopted", scope:"draft", user_confirmed:true, claim_token}`，然后重交。不能替他点。其他 `not_accepted` 按 `next_action` 先把这一版审完。
+回 `not_accepted` 且 `review_status` 为 `accepted_with_issues`：把阻断逐条摆给用户，按 `next_action` 用 `submit{revision_of}` 改掉再审到 accepted。这里没有「就用这一版」的通道——采纳不能由你替他点，产品也不收；他坚持带着阻断发，让他去工作台推进。其他 `not_accepted` 按 `next_action` 先把这一版审完。
 
 ## 5. Codex 剪辑期间
 
@@ -74,7 +74,7 @@ EOF
 ## 7. 失败态
 
 - 主线路 / 中转挂了：与这条路无关，主路不调后台引擎。哪一步要你配 engine，就是走偏了，退回宿主路径。
-- `claim_held`：另一个会话握着这篇（回执给出持有者）。问用户这条视频归哪个会话；归这里才 `autocrew_desk {action:"claim", content_id, employee:"writer", takeover:true}`。持有者是 codex 说明正在剪，不是争抢。
+- `claim_held`：另一个会话握着这篇（回执给出持有者）。告诉用户并问这条视频归哪个会话；产品只在持有会话 10 分钟没写入后才接受 `takeover:true`，在那之前只能等它 release，不要反复试。持有者是 codex 说明正在剪，不是争抢。
 - `stale_handoff`：用到的不是当前代次。按回执的 `current_generation`，从 `autocrew_content get` 的 `video.handoff` 取当前交接包路径，重给用户派工那句。
 - `approval_mismatch`（`which` 指出哪份凭据）：Codex 登记的文件和闸门批准的不是同一份。请用户回 Codex 那道闸门重批；不替它重算哈希凑数。
 - `path_not_whitelisted` / `path_symlink` / `path_missing` / `project_owned_by_other` / `roots_unavailable`：项目目录必须是 `~/.autocrew/video.json` 里 `project_roots` 某根的直接子目录、无符号链接、归属本稿。把 `error` 原话给用户，由他给新目录或改配置，不自己换目录重试。

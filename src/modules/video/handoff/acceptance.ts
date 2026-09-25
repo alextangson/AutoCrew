@@ -3,8 +3,7 @@
  *
  * 能交剪辑的只有两种稿：
  * - 最近一次审稿结论 = accepted（`review.status` 为 passed / revised，且没因改稿失效）；
- * - accepted_with_issues（`review.status = failed`：自动修订到顶仍有阻断）**并且**创作者对**这一版**
- *   明确点了 `adopted`（editorial feedback 记的 `adoption.draftHash` 等于当前稿指纹）。
+ * - accepted_with_issues（`review.status = failed`：自动修订到顶仍有阻断）**不放行**——没有模型可填的采纳通道。
  * 未审、审稿作废（改过稿）、宿主自己说「差不多」都不算——带 blocker 的稿送去剪是最贵的返工。
  */
 import { draftHash } from "../../../storage/draft-hash.js";
@@ -20,9 +19,6 @@ function reviewValid(content: Content, hash: string): boolean {
   return !review.source?.draftHash || review.source.draftHash === hash;
 }
 
-function adoptedCurrent(content: Content, hash: string): boolean {
-  return content.adoption?.verdict === "adopted" && content.adoption.draftHash === hash;
-}
 
 function statusBlock(content: Content): HandoffResult | null {
   if (!isVideoPlatform(content.platform)) {
@@ -45,14 +41,16 @@ export function acceptanceBlock(content: Content): HandoffResult | null {
   const hash = draftHash(content);
   if (reviewValid(content, hash)) return null;
   if (content.review?.status === "failed") {
-    if (adoptedCurrent(content, hash)) return null;
-    const blockers = content.review.issues.filter((i) => i.severity === "blocker").length;
-    return handoffFail("not_accepted", `审稿还有 ${blockers} 条阻断，创作者确认采纳这一版后才能交剪辑`, {
+    // P6-e 行为 eval（handoff-blocks-issues 0/3）证明：「创作者点了采纳」这个 flag 由模型自填，
+    // 3/3 都在用户没看到阻断前就替他点了。所以这里不再有采纳通道：改掉阻断、审到 accepted 才交。
+    const blockers = content.review.issues.filter((i) => i.severity === "blocker");
+    return handoffFail("not_accepted", `审稿还有 ${blockers.length} 条阻断：改掉并重新审到 accepted 才能交剪辑（模型不能替创作者点采纳，这里没有「就用这一版」的通道；真要带着阻断发，创作者自己去工作台推进）`, {
       review_status: "accepted_with_issues",
+      blockers,
       next_action: {
-        tool: "autocrew_editorial",
-        params: { action: "inspect", content_id: content.id },
-        message: "把阻断问题逐条摆给创作者；他明确说采纳这一版，才用 feedback{verdict:\"adopted\", user_confirmed:true} 记下，再来交接。不能替他点。",
+        tool: "autocrew_writer",
+        params: { action: "submit", content_id: content.id, revision_of: hash },
+        message: "把阻断逐条摆给创作者，按问题范围修订，用 submit{revision_of} 重交并重新审稿；审到 accepted 再来交接。",
       },
     });
   }

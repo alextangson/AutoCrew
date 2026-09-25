@@ -30,6 +30,19 @@ import { callerSession } from "../runtime/run-log.js";
 /** 租约 30 分钟（§6.1 创始人裁决 4）。视频线的 runner 租约是 10 分钟，两条线各按各的节奏 */
 export const CLAIM_LEASE_MS = 30 * 60_000;
 
+/**
+ * 同宿主接管的闲置门槛（P6-e 行为 eval claim-held-asks 0/3）：`takeover:true` 是模型自填的 flag，
+ * 3/3 trial 都没问用户就接管了。所以接管不再看 flag 本身，而看持有会话是否真的闲置：
+ * 最近一次带令牌写入距今不足 10 分钟，一律 claim_held。
+ */
+export const CLAIM_IDLE_TAKEOVER_MS = 10 * 60_000;
+
+/** 持有会话闲置了多久（没有 lastWriteAt 的老认领按认领时刻算） */
+export function claimIdleMs(claim: ContentClaim, now: number = Date.now()): number {
+  const last = Date.parse(claim.lastWriteAt ?? claim.at);
+  return Number.isNaN(last) ? Number.POSITIVE_INFINITY : Math.max(0, now - last);
+}
+
 /** 视图里的认领：**没有 token**。工具回执与看板一律用这个形状 */
 export type ClaimView = Omit<ContentClaim, "token">;
 
@@ -90,8 +103,8 @@ function refusalMessage(claim: ContentClaim, host: string, now: number = Date.no
   if (claim.host !== host) return holderMessage(claim, now);
   return (
     `这篇由同宿主的另一个会话认领着（${EMPLOYEE_LABEL[claim.employee] ?? claim.employee}，` +
-    `还剩 ${claimMinutesLeft(claim, now)} 分钟），带上它的 claim_token，` +
-    `或用 autocrew_desk claim takeover:true 接管`
+    `还剩 ${claimMinutesLeft(claim, now)} 分钟，${Math.floor(claimIdleMs(claim, now) / 60_000)} 分钟没写入），带上它的 claim_token；` +
+    `takeover:true 只在它闲置满 ${CLAIM_IDLE_TAKEOVER_MS / 60_000} 分钟后才生效，否则问用户这条稿归哪个会话`
   );
 }
 
@@ -153,6 +166,7 @@ async function writeClaim(
     token: kept ? kept.token : newClaimToken(),
     at: kept ? kept.at : at,
     leaseUntil: leaseUntil(now),
+    lastWriteAt: at,
   });
   const handoff = write.handoff ?? expiredTakeover(content, current, write.host);
   const handoffs = handoff ? withHandoff(content, withSession({ ...handoff, at })) : undefined;
@@ -198,6 +212,8 @@ export async function claimContent(
     return { ok: true, claim: await writeClaim(content, { employee, host, renew: true }, dataDir, now) };
   }
   if (!opts.takeover) return held(current, host, now);
+  // 接管看的是持有会话是否真闲置，不是 flag：10 分钟内还在写就照样拒
+  if (claimIdleMs(current, now) < CLAIM_IDLE_TAKEOVER_MS) return held(current, host, now);
   const handoff = { from: current.host, to: host, by: host, note: "接管（同宿主另一会话）" };
   return { ok: true, claim: await writeClaim(content, { employee, host, renew: false, handoff }, dataDir, now) };
 }

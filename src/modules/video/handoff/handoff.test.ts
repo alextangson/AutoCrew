@@ -36,7 +36,7 @@ function handoff(extra: Record<string, unknown> = {}, host = "claude-code") {
 }
 
 describe.skipIf(!HAS_FFMPEG)("handoff 阶段门（handoff-blocks-issues）", () => {
-  it("accepted_with_issues 不放行；创作者对这一版点了 adopted 才放行", async () => {
+  it("accepted_with_issues 一律不放行——连 adoption 记录也不算（模型能自填）", async () => {
     await updateContent(contentId, {
       review: {
         status: "failed", rounds: 2, fixed: 1, reviewedAt: new Date().toISOString(),
@@ -46,16 +46,15 @@ describe.skipIf(!HAS_FFMPEG)("handoff 阶段门（handoff-blocks-issues）", () 
     const blocked = await handoff();
     expect(blocked).toMatchObject({ ok: false, code: "not_accepted", review_status: "accepted_with_issues" });
     expect(String(blocked.error)).toContain("1 条阻断");
-    expect((blocked.next_action as Record<string, unknown>).tool).toBe("autocrew_editorial");
+    const next = blocked.next_action as Record<string, unknown>;
+    expect(next.tool).toBe("autocrew_writer");
+    expect((next.params as Record<string, unknown>).revision_of).toBeTruthy();
     expect((await getContent(contentId, fx.dir))?.status).toBe("draft_ready");
 
-    // 采纳的是旧稿（指纹对不上）照样不放行
-    await updateContent(contentId, { adoption: { verdict: "adopted", draftHash: "0".repeat(64), recordedAt: "2026-09-25T00:00:00Z" } }, fx.dir);
-    expect(await handoff()).toMatchObject({ ok: false, code: "not_accepted" });
-
+    // 即便 adoption 记着「采纳这一版」也不放行：那个记录是模型可填的 flag，不是门
     const current = (await getContent(contentId, fx.dir))!;
     await updateContent(contentId, { adoption: { verdict: "adopted", draftHash: draftHash(current), recordedAt: "2026-09-25T00:00:00Z" } }, fx.dir);
-    expect(await handoff()).toMatchObject({ ok: true, status: "handed_off" });
+    expect(await handoff()).toMatchObject({ ok: false, code: "not_accepted", review_status: "accepted_with_issues" });
   });
 
   it("没审过 / 审后改过稿 / 非视频平台 一律拒", async () => {

@@ -56,7 +56,7 @@ export const deskSchema = Type.Object({
 export const DESK_DESCRIPTION = [
   "AutoCrew 待办桌：看自己这一岗有什么活、认领、干完释放。",
   "1) inbox{employee}：writer=已选立意卡还没稿的选题 + 退回修订的稿；cover=过审待做封面的稿（公众号稿在 approved、视频稿在成片审过之后、以及退回封面台的）；editor=在剪辑台且成片还没审过的稿。每项带 content_id/topic_id/title/platform/status/claim；写手那张桌上 content_id 为 null 的是「还没建稿」，用 autocrew_writer pack 领包就会建。",
-  "2) claim{content_id, employee, claim_token?, takeover?}：认领，拿 claim_token（租约 30 分钟）。别的宿主还握着未过期的租约会被拒并告诉你持有者是谁；带着令牌重复认领 = 续约、返回同一枚令牌；同宿主不带令牌 = claim_held，除非 takeover:true。",
+  "2) claim{content_id, employee, claim_token?, takeover?}：认领，拿 claim_token（租约 30 分钟）。别的宿主还握着未过期的租约会被拒并告诉你持有者是谁；带着令牌重复认领 = 续约、返回同一枚令牌；同宿主不带令牌 = claim_held；takeover:true 只在持有会话 10 分钟没写入后才生效，否则照样 claim_held（别替用户抢活，先问）。",
   "3) release{content_id, claim_token}：干完释放。忘了也不要紧——租约过期后别人可以接管，接管会记在交接台账里。",
   "纪律：认领之后的写操作（autocrew_writer submit / autocrew_cover_review 出图与批准 / autocrew_content update、transition）都带上 claim_token，那是防止两个宿主互相盖写的唯一凭据。",
 ].join("\n");

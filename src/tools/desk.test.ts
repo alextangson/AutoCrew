@@ -190,6 +190,10 @@ describe("claim / release", () => {
 
     expect(await claim({ claim_token: first.claim_token })).toMatchObject({ ok: true, claim_token: first.claim_token });
 
+    // 10 分钟内还在写：takeover 照样拒；闲置满 11 分钟后才换新令牌
+    expect(await claim({ takeover: true })).toMatchObject({ ok: false, code: "claim_held" });
+    const held = (await getContent(c.id, dir))!;
+    await updateContent(c.id, { claim: { ...held.claim!, lastWriteAt: new Date(Date.now() - 11 * 60_000).toISOString() } }, dir);
     const taken = (await claim({ takeover: true })) as { ok: boolean; claim_token: string };
     expect(taken.ok).toBe(true);
     expect(taken.claim_token).not.toBe(first.claim_token);

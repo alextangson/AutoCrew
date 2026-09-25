@@ -237,6 +237,8 @@ export interface ContentClaim {
   leaseUntil: string;
   /** 最近一次写这份认领的宿主会话（P6 §3.8 归因，只做诊断，不参与令牌门） */
   session?: string;
+  /** 最近一次带令牌写入的时刻：同宿主接管只在持有会话闲置满 10 分钟后才生效（P6-e claim-held-asks） */
+  lastWriteAt?: string;
 }
 
 /** 一次交接（P3 §6.1）：谁把活交给了谁、什么时候、由哪个宿主记的 */
