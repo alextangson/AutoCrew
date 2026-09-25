@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { intakeRadarTopics, rescoreExistingTopics } from "./radar-intake.js";
+import { intakeRadarTopics, rescoreExistingTopics, buildRadarPool, applyRadarResults } from "./radar-intake.js";
+import { loadRejects } from "./intake-gate.js";
 import type { TopicCache } from "./topic-radar.js";
 import { saveTopic, listTopics, softDeleteTopic } from "../../storage/local-store.js";
 import { saveProfile } from "../profile/creator-profile.js";
@@ -349,5 +350,93 @@ describe("rescoreExistingTopics", () => {
       originalTitle: "A new observability tool for AI agents",
       score: 81,
     });
+  });
+});
+
+describe("buildRadarPool(确定性建池,无模型)", () => {
+  it("没定位/没缓存 → 标明跳过原因,不给候选", async () => {
+    expect((await buildRadarPool(testDir)).skip).toBe("no_profile");
+    await saveProfile(profileWith("AI"), testDir);
+    expect((await buildRadarPool(testDir)).skip).toBe("no_cache");
+  });
+
+  it("candidate_id 跨次稳定;同链接只留一条;查重与落选记忆在建池时就排除", async () => {
+    await saveProfile(profileWith("AI"), testDir);
+    await saveTopic({ title: "AI 已入库", description: "d", tags: [], link: "https://a.example/1" }, testDir);
+    await seedCache([
+      { title: "AI 已入库", link: "https://a.example/1" },
+      { title: "AI 新候选", link: "https://a.example/2" },
+      { title: "AI 新候选(转载)", link: "https://a.example/2" },
+      { title: "AI 落选过", link: "https://a.example/3" },
+    ]);
+    const first = await buildRadarPool(testDir);
+    const rejectId = first.candidates.find((c) => c.item.link === "https://a.example/3")!.candidate_id;
+    await applyRadarResults(first.candidates, [{ candidate_id: rejectId, score: 20 }], testDir);
+
+    const second = await buildRadarPool(testDir);
+    expect(second.candidates.map((c) => c.item.title)).toEqual(["AI 新候选"]);
+    expect(second.candidates[0].candidate_id).toBe(first.candidates.find((c) => c.item.title === "AI 新候选")!.candidate_id);
+  });
+});
+
+describe("applyRadarResults(引擎与宿主共用的入库段)", () => {
+  async function poolOf(n: number) {
+    await saveProfile(profileWith("AI"), testDir);
+    await seedCache(Array.from({ length: n }, (_, i) => ({ title: `AI 候选 ${i}`, link: `https://a.example/${i}` })));
+    return (await buildRadarPool(testDir)).candidates;
+  }
+
+  it("≥70 按分数取前 3 入库;超额的不入库也不记落选;<70 记落选;没打分的原样不动", async () => {
+    const pool = await poolOf(7);
+    const [a, b, c, d, e, f] = pool.map((x) => x.candidate_id);
+    const out = await applyRadarResults(pool, [
+      { candidate_id: a, score: 72, title: "标题A", summary: "摘要A", angles: ["角度A"] },
+      { candidate_id: b, score: 95, title: "标题B", summary: "摘要B", angles: ["角度B"] },
+      { candidate_id: c, score: 88, title: "标题C", summary: "摘要C", angles: ["角度C"] },
+      { candidate_id: d, score: 70, title: "标题D", summary: "摘要D", angles: ["角度D"] },
+      { candidate_id: e, score: 69 },
+      { candidate_id: f, score: 0 },
+    ], testDir);
+
+    expect(out.saved.map((s) => s.topic.title)).toEqual(["标题B", "标题C", "标题A"]);
+    expect(out.notTopN).toEqual([d]);
+    expect(out.rejected.sort()).toEqual([e, f].sort());
+    expect(out.qualified).toBe(4);
+    const saved = out.saved[0].topic;
+    expect(saved).toMatchObject({
+      source: `radar:${pool[1].item.source}`,
+      score: 95,
+      angles: ["角度B"],
+      originalTitle: pool[1].item.title,
+      description: "摘要B",
+      link: pool[1].item.link,
+    });
+    const rejectedLinks = (await loadRejects(testDir)).map((r) => r.link);
+    expect(rejectedLinks.sort()).toEqual([pool[4].item.link, pool[5].item.link].sort());
+    expect(rejectedLinks).not.toContain(pool[6].item.link); // 没打分 → 不记落选
+    expect(await listTopics(testDir)).toHaveLength(3);
+  });
+
+  it("入库时撞上既有灵感 → 记为重复,名额让给下一条", async () => {
+    const pool = await poolOf(2);
+    await saveTopic({ title: "已有", description: "d", tags: [], link: pool[0].item.link }, testDir);
+    const out = await applyRadarResults(pool, pool.map((c) => ({ candidate_id: c.candidate_id, score: 90, title: `新 ${c.item.title}` })), testDir);
+    expect(out.duplicates).toEqual([pool[0].candidate_id]);
+    expect(out.saved.map((s) => s.candidate_id)).toEqual([pool[1].candidate_id]);
+  });
+
+  it("引擎路径:verdict 0-10 分换算成 100 分制入库线,旧口径 score≥7 不变", async () => {
+    await saveProfile(profileWith("AI"), testDir);
+    await seedCache([
+      { title: "AI 七分", link: "https://a.example/1" },
+      { title: "AI 六点九", link: "https://a.example/2" },
+    ]);
+    const judge = (async () => [
+      { index: 0, score: 7, reason: "够格" },
+      { index: 1, score: 6.9, reason: "差一点" },
+    ]) as unknown as typeof import("./relevance.js").judgeRelevance;
+    const result = await intakeRadarTopics(testDir, { judge });
+    expect(result.saved.map((t) => t.title)).toEqual(["AI 七分"]);
+    expect(result.saved[0].score).toBe(70);
   });
 });

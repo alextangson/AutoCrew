@@ -47,7 +47,10 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
   runner.register({
     name: "autocrew_topic",
     label: "AutoCrew Topic",
-    description: "Create or list content topics. Actions: create, list.",
+    description:
+      "Create or list content topics. Actions: create, list, radar_pool, radar_score. " +
+      "Radar intake scored by you: radar_pool freezes the deduped candidate pool and returns pool_id, candidates and the scoring rubric; " +
+      "score them on your own quota, then radar_score{pool_id, results} saves ≥70 (max 3 per pool) and returns a receipt — retrying the same results returns the same receipt.",
     parameters: topicCreateSchema,
     execute: executeTopicCreate,
   });

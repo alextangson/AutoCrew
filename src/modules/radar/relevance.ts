@@ -40,10 +40,21 @@ export interface TopicScoreBreakdown {
   timeliness: number;
 }
 
+/**
+ * 雷达入库线,统一在 100 分制(P6 §3.2 / codex #14)。
+ * 旧口径是入库侧 `score(=totalScore/10) ≥ 7`、精修侧 `totalScore ≥ 70`——两处本就等价,
+ * 这里收成一个常量:引擎两段路径与宿主 `radar_score` 路径共用同一条线。
+ */
+export const RADAR_PASS_SCORE = 70;
+
+/** 四维评分口径(引擎 Stage1 提示词与宿主打分说明共用,改这一行两边同时生效) */
+export const RADAR_RUBRIC_LINE =
+  "100 分制:受众/定位契合 0-30;材料支撑度 0-25(只有英文项目名或一句话、没有摘要的给低分);差异化空间 0-25;时效价值 0-20。";
+
 const STAGE1_MAX = 20; // 粗筛只产数字,可覆盖更多候选
 const STAGE2_MAX = 5; // 精修产富文案,只对高分少数,保证可靠提交
-// 精修门槛:对齐 radar-intake 的入库阈值(RELEVANCE_THRESHOLD 7 → 70),低于此不值得花精修,也不会入库。
-const STAGE2_MIN_SCORE = 70;
+// 精修门槛 = 入库线:低于此不值得花精修,也不会入库。
+const STAGE2_MIN_SCORE = RADAR_PASS_SCORE;
 
 interface Stage1Score {
   index: number;
@@ -209,7 +220,7 @@ export async function judgeRelevance(
       model: scout.model,
       systemPrompt: [
         "你是中文新媒体选题总监。为每条候选做四维评分,判断它对这个定位的创作者值不值得写。",
-        "100 分制:受众/定位契合 0-30;材料支撑度 0-25(只有英文项目名或一句话、没有摘要的给低分);差异化空间 0-25;时效价值 0-20。",
+        RADAR_RUBRIC_LINE,
         "宁缺勿滥:泛热点、与受众无关、没有材料可展开的都给低分。",
         "直接调用 submit_scores 一次性提交全部候选的四维数字分,不要输出任何分析文字。",
       ].join("\n"),
