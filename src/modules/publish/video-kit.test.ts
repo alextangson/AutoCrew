@@ -8,6 +8,7 @@ import path from "node:path";
 import { prepareVideoKit } from "./video-kit.js";
 import { generateImageViaRelay } from "./image-gen.js";
 import { saveContent, getContent } from "../../storage/local-store.js";
+import { editorialDraftHash } from "../../tools/editorial.js";
 import type { runLoop } from "../../engine/loop.js";
 
 let dir: string;
@@ -61,6 +62,9 @@ describe("prepareVideoKit", () => {
     expect(saved!.videoKit!.caption).toContain("#AI");
     expect(saved!.videoKit!.postTitle).toBe("删AI代码,周入1万美元");
     expect(saved!.videoKit!.generatedAt).toBeTruthy();
+    // 引擎做的包同样钉稿件指纹，改稿后预检照样判过期（P6 §3.6）
+    expect(saved!.videoKit!.source).toBe("engine");
+    expect(saved!.videoKit!.draftHash).toBe(editorialDraftHash(saved!));
   });
 
   it("平台标题硬门:小红书 >20 字被工具打回(不静默截断),模型未重交 → 失败", async () => {

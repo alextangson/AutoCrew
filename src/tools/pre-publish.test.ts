@@ -10,7 +10,9 @@ import {
   updateContent,
   getContent,
 } from "../storage/local-store.js";
-import { executePrePublish } from "./pre-publish.js";
+import { executePrePublish, executePrePublishTool } from "./pre-publish.js";
+import { editorialDraftHash } from "./editorial.js";
+import { claimContent } from "../storage/claims.js";
 
 vi.mock("./review.js", () => ({
   executeReview: vi.fn().mockResolvedValue({
@@ -156,5 +158,144 @@ describe("发布前检查 · 阶段门", () => {
     await transitionStatus(id, "published", { force: true }, dataDir);
     await executePrePublish({ action: "check", content_id: id, _dataDir: dataDir });
     expect((await getContent(id, dataDir))!.status).toBe("published");
+  });
+
+  it("写门（P6 §3.8）：会推进状态的预检是写——同宿主另一个会话不带令牌被拒且状态不动，带令牌推进并交回令牌", async () => {
+    const id = await readyVideo("cover_pending");
+    const claimed = await claimContent(id, "editor", "claude", dataDir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const run = (extra: Record<string, unknown> = {}) =>
+      executePrePublishTool({ action: "check", content_id: id, _dataDir: dataDir, _host: "claude", ...extra });
+    expect(await run()).toMatchObject({ ok: false, code: "claim_held", holder: { host: "claude", employee: "editor" } });
+    expect((await getContent(id, dataDir))!.status).toBe("cover_pending");
+    expect(await run({ _readOnly: true })).toMatchObject({ ok: true, allPassed: true });
+    expect(await run({ claim_token: claimed.claim.token })).toMatchObject({ ok: true, allPassed: true, claim_token: claimed.claim.token });
+    expect((await getContent(id, dataDir))!.status).toBe("publish_ready");
+  });
+});
+
+// --- video_kit：宿主交发布包（P6 §3.6，eval video-kit-stale / pre-publish-reads-caption）---
+
+describe("video_kit 宿主发布包", () => {
+  const KIT = { post_title: "不写代码也能用的AI", caption: "这期讲清楚普通人怎么把重复活交给 AI，看完就能上手。", cover_text: "别再手搬了" };
+  const mkVideo = (platform = "xiaohongshu", extra: Record<string, unknown> = {}) =>
+    saveContent({ title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], ...extra }, dataDir);
+  const saveKit = (id: string, platform: string, kit: Record<string, unknown> = KIT) =>
+    executePrePublishTool({ action: "video_kit", content_id: id, platform, kit, _dataDir: dataDir });
+  const check = (id: string) => executePrePublish({ action: "check", content_id: id, _dataDir: dataDir, _readOnly: true });
+
+  it("写门（P6 §3.8）：交发布包是写——同宿主另一个会话不带令牌被拒不落盘，带令牌照存并交回令牌；不推进状态的预检不设卡", async () => {
+    const c = await mkVideo();
+    const claimed = await claimContent(c.id, "writer", "claude", dataDir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const tool = (extra: Record<string, unknown>) =>
+      executePrePublishTool({ content_id: c.id, _dataDir: dataDir, _host: "claude", ...extra });
+    expect(await tool({ action: "video_kit", platform: "xiaohongshu", kit: KIT })).toMatchObject({ ok: false, code: "claim_held", holder: { host: "claude" } });
+    expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+    expect(await tool({ action: "check" })).toMatchObject({ ok: true, allPassed: false });
+    const saved = await tool({ action: "video_kit", platform: "xiaohongshu", kit: KIT, claim_token: claimed.claim.token });
+    expect(saved).toMatchObject({ ok: true, status: "kit_saved", claim_token: claimed.claim.token });
+    expect((await getContent(c.id, dataDir))!.videoKit).toMatchObject({ source: "host" });
+  });
+
+  it("保存到 videoKit：记当前稿指纹、source=host，标签并进简介末尾，下一步指向 check", async () => {
+    const c = await mkVideo();
+    const r = await saveKit(c.id, "xiaohongshu", { ...KIT, hashtags: ["AI工具", "#职场"] });
+    expect(r).toMatchObject({ ok: true, status: "kit_saved", next_action: { tool: "autocrew_pre_publish", params: { action: "check", content_id: c.id } } });
+    const saved = (await getContent(c.id, dataDir))!;
+    expect(saved.videoKit).toMatchObject({ platform: "xiaohongshu", postTitle: KIT.post_title, coverText: KIT.cover_text, source: "host" });
+    expect(saved.videoKit!.draftHash).toBe(editorialDraftHash(saved));
+    expect(saved.videoKit!.caption.startsWith(KIT.caption)).toBe(true);
+    expect(saved.videoKit!.caption.endsWith("#AI工具 #职场")).toBe(true);
+    // 已在简介里的标签不重复并入
+    await saveKit(c.id, "xiaohongshu", { ...KIT, caption: `${KIT.caption} #AI工具`, hashtags: ["AI工具"] });
+    expect((await getContent(c.id, dataDir))!.videoKit!.caption.match(/#AI工具/g)).toHaveLength(1);
+  });
+
+  const invalid: Array<[string, Record<string, unknown>, string]> = [
+    ["发布标题超出小红书 20 字", { post_title: "这是一个刻意写得非常非常长超过二十个字的小红书标题" }, "post_title"],
+    ["缺发布标题", { post_title: "  " }, "post_title"],
+    ["简介不足 20 字", { caption: "太短了" }, "caption"],
+    ["简介超出小红书 1000 字", { caption: "字".repeat(1001) }, "caption"],
+    ["封面大字超出 12 字", { cover_text: "这句封面大字明显超过了十二个字" }, "cover_text"],
+    ["标签带空格", { hashtags: ["AI 工具"] }, "hashtags"],
+    ["标签不是字符串数组", { hashtags: "AI" }, "hashtags"],
+  ];
+  for (const [label, patch, field] of invalid) {
+    it(`kit_invalid：${label} → 按字段打回，不落盘`, async () => {
+      const c = await mkVideo();
+      const r = await saveKit(c.id, "xiaohongshu", { ...KIT, ...patch });
+      expect(r).toMatchObject({ ok: false, code: "kit_invalid" });
+      const failures = (r as { failures: Array<{ field: string; detail: string }> }).failures;
+      expect(failures.map((f) => f.field)).toContain(field);
+      expect(failures.every((f) => f.detail.length > 0)).toBe(true);
+      expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+    });
+  }
+
+  it("标签并入后超限也算超限（按实际发出去的简介算）", async () => {
+    const c = await mkVideo();
+    const r = await saveKit(c.id, "xiaohongshu", { ...KIT, caption: "字".repeat(995), hashtags: ["AI工具"] });
+    expect(r).toMatchObject({ ok: false, code: "kit_invalid", failures: [{ field: "caption" }] });
+  });
+
+  it("platform 缺失或与稿件不符 → platform_mismatch；非视频平台 → not_video_platform", async () => {
+    const c = await mkVideo("douyin");
+    expect(await saveKit(c.id, "xiaohongshu")).toMatchObject({ ok: false, code: "platform_mismatch", expected_platform: "douyin" });
+    expect(await executePrePublishTool({ action: "video_kit", content_id: c.id, kit: KIT, _dataDir: dataDir })).toMatchObject({ ok: false, code: "platform_mismatch" });
+    const mp = await saveContent({ title: "公众号", body: "正文", platform: "wechat_mp", status: "approved" }, dataDir);
+    expect(await saveKit(mp.id, "wechat_mp")).toMatchObject({ ok: false, code: "not_video_platform" });
+    expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+  });
+
+  it("稿件改了之后 check 报 kit_stale，next_action 指回 video_kit", async () => {
+    const c = await mkVideo();
+    await saveKit(c.id, "xiaohongshu");
+    expect(await check(c.id)).toHaveProperty("checks");
+    await updateContent(c.id, { body: "改过的口播正文。".repeat(300) }, dataDir);
+    const r = await check(c.id);
+    expect(r).toMatchObject({
+      ok: false,
+      code: "kit_stale",
+      next_action: { tool: "autocrew_pre_publish", params: { action: "video_kit", content_id: c.id, platform: "xiaohongshu" } },
+    });
+    expect((r as { error: string }).error).toBeTruthy();
+    // 按新稿重交就恢复
+    await saveKit(c.id, "xiaohongshu");
+    expect(await check(c.id)).toHaveProperty("checks");
+  });
+
+  it("有发布包时标题 / 标签 / 字数读发布包，不读口播稿", async () => {
+    // 口播稿：标题超小红书上限、正文 3000 字超 1000、无标签——全是不会被发出去的东西
+    const c = await mkVideo("xiaohongshu", { title: "这是一个刻意写得非常非常长超过二十个字的口播稿标题" });
+    await saveKit(c.id, "xiaohongshu", { ...KIT, hashtags: ["AI工具"] });
+    const r = await check(c.id);
+    if (!("checks" in r)) throw new Error(`预检没跑成：${r.error}`);
+    const byName = (name: string) => r.checks.find((item) => item.name === name);
+    expect(byName("发布简介字数")).toMatchObject({ status: "pass" });
+    expect(byName("正文字数")).toBeUndefined();
+    expect(byName("标题规范")).toMatchObject({ status: "pass" });
+    expect(byName("标题规范")!.detail).toContain(KIT.post_title);
+    expect(byName("Hashtags")).toMatchObject({ status: "pass" });
+  });
+
+  it("交包的下限就是预检的下限：交得进去的短简介不会被正文下限打回", async () => {
+    const c = await mkVideo();
+    await saveKit(c.id, "xiaohongshu");
+    const r = await check(c.id);
+    if (!("checks" in r)) throw new Error(`预检没跑成：${r.error}`);
+    expect(KIT.caption.length).toBeLessThan(200);
+    expect(r.checks.find((item) => item.name === "发布简介字数")).toMatchObject({ status: "pass" });
+  });
+
+  it("没有发布包：照旧查正文，超限提示指向 video_kit 并带上参数", async () => {
+    const c = await mkVideo();
+    const r = await check(c.id);
+    if (!("checks" in r)) throw new Error(`预检没跑成：${r.error}`);
+    const item = r.checks.find((x) => x.name === "正文字数");
+    expect(item).toMatchObject({ status: "fail" });
+    expect(item!.fix).toContain("action='video_kit'");
+    expect(item!.fix).toContain("platform:'xiaohongshu'");
+    expect(item!.fix).toContain("post_title");
   });
 });

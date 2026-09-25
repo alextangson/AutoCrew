@@ -19,7 +19,7 @@ import { coverReviewSchema, executeCoverReview } from "./src/tools/cover-review.
 import { editorialSchema, executeEditorial, EDITORIAL_DESCRIPTION } from "./src/tools/editorial.js";
 import { memorySchema, executeMemory } from "./src/tools/memory.js";
 import { reviewSchema, executeReview } from "./src/tools/review.js";
-import { prePublishSchema, executePrePublish } from "./src/tools/pre-publish.js";
+import { prePublishSchema, executePrePublishTool } from "./src/tools/pre-publish.js";
 import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
 import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
 import { generateSchema, executeGenerate } from "./src/tools/generate.js";
@@ -110,7 +110,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
   runner.register({
     name: "autocrew_status",
     label: "AutoCrew Status",
-    description: "Pipeline status, quality baseline, performance tracking, learning report. Actions: overview, baseline, compare, track_performance, learning_report.",
+    description: "Pipeline status, quality baseline, performance tracking, learning report. Actions: overview, baseline, compare, track_performance, learning_report. overview with brief:true returns one line of to-dos (to write / awaiting A-roll / dispatched / ready to publish).",
     parameters: statusSchema,
     execute: executeStatus,
   });
@@ -192,9 +192,12 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
   runner.register({
     name: "autocrew_pre_publish",
     label: "AutoCrew Pre-Publish",
-    description: "Pre-publish gate: 6 checks before allowing publish. Actions: check.",
+    description:
+      "Pre-publish gate. check: 6 checks before allowing publish (video platforms read the saved video kit, not the script). " +
+      "video_kit{content_id, platform, kit:{post_title, caption, cover_text, hashtags?}}: the host writes the video publish kit; " +
+      "validated and saved, no model call. Editing the draft afterwards makes the kit stale (check returns kit_stale).",
     parameters: prePublishSchema,
-    execute: executePrePublish,
+    execute: executePrePublishTool,
   });
 
   runner.register({

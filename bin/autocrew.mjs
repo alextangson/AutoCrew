@@ -26,6 +26,7 @@ function printHelp() {
   autocrew stop           停止后台服务
   autocrew restart        重启并打开浏览器
   autocrew status         查看状态
+  autocrew status --brief 一行待办（SessionStart hook 用；任何情况都退出 0）
   autocrew logs           跟踪服务日志
   autocrew build          重新构建前端
   autocrew topics         列出选题
@@ -284,6 +285,22 @@ async function status() {
   process.exitCode = 1;
 }
 
+/**
+ * `status --brief`（P6 §3.2）：SessionStart hook 把这一行注入会话上下文。复用 mcp 转发器那条
+ * 「单次 POST /mcp」的路。hook 失败会搅乱会话开场：任何情况都退出 0，只印一句人话。
+ */
+async function statusBrief() {
+  if (!(await serverUp())) return console.log("AutoCrew 未运行（npm start）");
+  const { forwardMessage, resolveForwarderToken } = await import("./mcp-forwarder.mjs");
+  const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "autocrew_status", arguments: { brief: true } } };
+  const fetchImpl = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(5_000) });
+  const reply = await forwardMessage(call, { url: `${BASE_URL}mcp`, token: resolveForwarderToken(DATA_DIR), fetchImpl });
+  const result = reply?.result?.structuredContent;
+  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}`);
+  const failure = reply?.error?.message ?? (reply?.result?.isError ? reply.result.content?.[0]?.text : null);
+  console.log(failure ? `AutoCrew 待办读取失败（${failure}）` : "AutoCrew 运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
+}
+
 switch (command) {
   case "start":
     await start();
@@ -296,7 +313,8 @@ switch (command) {
     await start();
     break;
   case "status":
-    await status();
+    if (process.argv.includes("--brief")) await statusBrief();
+    else await status();
     break;
   case "logs": {
     await fsp.mkdir(DATA_DIR, { recursive: true });

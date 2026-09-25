@@ -14,6 +14,8 @@ import { VIDEO_PLATFORMS } from "../../storage/stage-guard.js";
 import { loadProfile, personaSummary, rulesForPlatform } from "../profile/creator-profile.js";
 import { loadWechatMpConfig } from "./wechat-config.js";
 import { generateImageViaRelay } from "./image-gen.js";
+// 稿件指纹只认一份算法（storage/draft-hash）：宿主发布包、引擎发布包、预检判过期都用它
+import { draftHash as editorialDraftHash } from "../../storage/draft-hash.js";
 
 // 事实源搬去 storage/stage-guard（阶段门要它，而那层不能 import 本文件——会成环）；
 // 这里再导出一次，既有调用方（ingest、publish）一个字不用改。
@@ -35,11 +37,26 @@ const TITLE_LIMITS: Record<string, number> = {
   bilibili: 40,
 };
 
+/** 发布标题上限——引擎 submit_video_kit 与宿主 pre_publish video_kit 共用这一份 */
+export function videoTitleLimit(platform: string): number {
+  return TITLE_LIMITS[platform] ?? 30;
+}
+
+/** 平台字数口径:中文 1 字,英文/数字按半字折算(平台后台普遍如此),空格不计 */
+export function publishTitleChars(title: string): number {
+  const cjkCount = (title.match(/[一-鿿]/g) ?? []).length;
+  const otherCount = title.replace(/[一-鿿]/g, "").replace(/\s/g, "").length;
+  return cjkCount + Math.ceil(otherCount / 2);
+}
+
+/** 封面大字上限(引擎侧超出截到这里;宿主侧超出直接打回) */
+export const COVER_TEXT_MAX = 12;
+
 function buildSubmitKitTool(
   captured: { kit: Omit<VideoKit, "platform" | "generatedAt"> | null },
   platform: string,
 ): LoopTool {
-  const titleLimit = TITLE_LIMITS[platform] ?? 30;
+  const titleLimit = videoTitleLimit(platform);
   return {
     name: "submit_video_kit",
     description: "提交视频发布件。所有字段必填。",
@@ -83,17 +100,14 @@ function buildSubmitKitTool(
         }))
         .filter((s) => s.shot && s.visual);
       if (!postTitle) return "Error: postTitle 缺失,请补全后重新调用 submit_video_kit";
-      // 平台字数口径:中文 1 字,英文/数字按半字折算(平台后台普遍如此),空格不计
-      const cjkCount = (postTitle.match(/[一-鿿]/g) ?? []).length;
-      const otherCount = postTitle.replace(/[一-鿿]/g, "").replace(/\s/g, "").length;
-      const titleChars = cjkCount + Math.ceil(otherCount / 2);
+      const titleChars = publishTitleChars(postTitle);
       if (titleChars > titleLimit) {
         return `Error: postTitle 超限(${titleChars} > ${titleLimit} 字),请压缩标题后重新调用——不要靠省略号硬截`;
       }
       if (!caption) return "Error: caption 缺失,请补全后重新调用 submit_video_kit";
       if (storyboard.length < 3) return "Error: storyboard 至少 3 行有效分镜,请补全后重新调用";
       if (!coverText || !coverPrompt) return "Error: coverText/coverPrompt 缺失,请补全后重新调用";
-      captured.kit = { postTitle, caption, storyboard, coverText: coverText.slice(0, 12), coverPrompt };
+      captured.kit = { postTitle, caption, storyboard, coverText: coverText.slice(0, COVER_TEXT_MAX), coverPrompt };
       return "已收到发布件";
     },
   };
@@ -137,7 +151,7 @@ export async function prepareVideoKit(
     systemPrompt:
       "你是短视频编导。给定一篇口播稿,产出发布件:平台发布文案(不是口播稿摘要,是让刷到的人停下的文案)、" +
       "分镜表(景别/画面/对应口播句/字幕提示,覆盖全稿)、竖版封面方案(大字 ≤8 字 + 生图 prompt)。" +
-      `平台文案纪律:${CAPTION_RULES[platform] ?? "≤300 字,首句钩子"};发布标题 ≤${TITLE_LIMITS[platform] ?? 30} 字(独立于口播稿标题,按平台习惯重拟)。` +
+      `平台文案纪律:${CAPTION_RULES[platform] ?? "≤300 字,首句钩子"};发布标题 ≤${videoTitleLimit(platform)} 字(独立于口播稿标题,按平台习惯重拟)。` +
       (audience ? `目标受众:${audience}。` : "") +
       (rules ? `\n创作者写作规则:\n${rules}` : "") +
       "\n完成后调用 submit_video_kit 提交。",
@@ -150,7 +164,11 @@ export async function prepareVideoKit(
     throw new Error("发布件生成失败:模型未调用 submit_video_kit 提交");
   }
 
-  const kit: VideoKit = { ...captured.kit, platform, generatedAt: new Date().toISOString() };
+  // 指纹取开工时读到的那版稿：生成期间稿件被改 → 落库即过期，预检报 kit_stale，不会把旧稿的文案当新稿的发
+  const kit: VideoKit = {
+    ...captured.kit, platform, generatedAt: new Date().toISOString(),
+    source: "engine", draftHash: editorialDraftHash(content),
+  };
 
   // 封面(可选):竖版 3:4,走原生中转生图;未配置/失败只透出,不阻断发布件落库
   let coverError: string | undefined;

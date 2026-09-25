@@ -8,6 +8,9 @@
  * 4. Title within platform length range
  * 5. Platform is set
  * 6. Body length within platform range (min, and max where the platform caps copy)
+ *
+ * 视频平台有本平台发布包（videoKit）时，3/4/6 读的是发布包——实际发出去的标题、简介与简介里的标签，
+ * 不再混读口播稿的标题、标签和正文（P6 §3.6）。另有 action=video_kit：宿主交发布包，只校验与保存。
  */
 import { Type } from "@sinclair/typebox";
 import {
@@ -16,11 +19,18 @@ import {
   transitionStatus,
   stageBlockReason,
   normalizeLegacyStatus,
+  updateContentIfDraftMatches,
   CONTENT_STATUS_LABEL,
+  LOCAL_HOST,
+  type Content,
+  type VideoKit,
 } from "../storage/local-store.js";
+import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
 import { executeReview } from "./review.js";
+import { editorialDraftHash } from "./editorial.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
-import { isVideoPlatform } from "../storage/stage-guard.js";
+import { COVER_TEXT_MAX, publishTitleChars, videoTitleLimit } from "../modules/publish/video-kit.js";
+import { isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
 
 // --- Types ---
 
@@ -40,7 +50,15 @@ export type PrePublishResult = {
   passCount: number;
   failCount: number;
   summary: string;
+  claim_token?: string; // 推进了状态且认领归调用宿主时交回（P6 §3.8）
 }
+
+export type PrePublishFailure = {
+  ok: false;
+  error: string;
+  code?: string;
+  next_action?: Record<string, unknown>;
+};
 
 // --- Platform body length minimums ---
 
@@ -53,7 +71,10 @@ const PLATFORM_MIN_BODY: Record<string, number> = {
   bilibili: 200,
 };
 
-/** 发布文案上限（创始人裁定：短文案平台 ≤1000）。douyin 不设——body 是口播脚本，发布文案在 videoKit 里另有 ≤300 约束 */
+/**
+ * 发布文案上限（创始人裁定：短文案平台 ≤1000）。douyin 不设——body 是口播脚本；
+ * 发布简介 ≤300 只是引擎 prompt 纪律（video-kit CAPTION_RULES），宿主发布包同样不设硬上限。
+ */
 const PLATFORM_MAX_BODY: Record<string, number> = {
   xiaohongshu: 1000,
   xhs: 1000,
@@ -62,23 +83,59 @@ const PLATFORM_MAX_BODY: Record<string, number> = {
   wechat_mp: 3000,
 };
 
+/** 发布简介下限（P6 §3.6）。交包与预检用同一对上下限：交得进去就查得过，不会存下再被预检打回 */
+const KIT_CAPTION_MIN = 20;
+
+function captionBounds(platform: string): [number, number | undefined] {
+  return [KIT_CAPTION_MIN, PLATFORM_MAX_BODY[platform]];
+}
+
 // --- Platforms that require cover review ---
 
 const COVER_REQUIRED_PLATFORMS = new Set(["xiaohongshu", "xhs", "douyin", "wechat_video", "bilibili"]);
 
 // --- Schema ---
 
+const ACTIONS = ["check", "video_kit"] as const;
+
+/** 各视频平台的上限直接从常量拼进工具说明，数字只有一份，不会说明写 20、代码判 22 */
+function kitLimitsText(): string {
+  const platforms = [...VIDEO_PLATFORMS];
+  const titles = platforms.map((p) => `${p} ${videoTitleLimit(p)}`).join(" / ");
+  const captions = platforms.map((p) => `${p} ${PLATFORM_MAX_BODY[p] ?? "不设"}`).join(" / ");
+  return `post_title 上限：${titles}（中文 1 字、英文数字半字、空格不计）；caption ≥${KIT_CAPTION_MIN} 字，上限：${captions}；cover_text ≤${COVER_TEXT_MAX} 字`;
+}
+
 export const prePublishSchema = Type.Object({
-  action: Type.Unsafe<"check">({
+  action: Type.Unsafe<(typeof ACTIONS)[number]>({
     type: "string",
-    enum: ["check"],
-    description: "Action. 'check' runs the full pre-publish checklist.",
+    enum: [...ACTIONS],
+    description:
+      "check = 跑发布前检查（全过自动推进到待发布）。video_kit = 宿主交视频发布包（发布标题/简介/封面大字），" +
+      "产品只校验并保存，不调模型；稿件之后再改，发布包作废，check 报 kit_stale。",
   }),
-  content_id: Type.String({ description: "AutoCrew content id to check." }),
+  content_id: Type.String({ description: "AutoCrew content id." }),
+  platform: Type.Optional(Type.String({ description: "video_kit 必填，须等于稿件平台。" })),
+  kit: Type.Optional(Type.Object({
+    post_title: Type.String({ description: "平台发布标题，独立于口播稿标题，按平台习惯重拟、自带钩子。" }),
+    caption: Type.String({ description: "平台发布简介，可直接粘贴；是让刷到的人停下的文案，不是口播稿摘要。" }),
+    cover_text: Type.String({ description: "封面大字。" }),
+    hashtags: Type.Optional(Type.Array(Type.String(), {
+      description: "话题标签（不带空格）。caption 里还没有的会并到 caption 末尾，字数按合并后的简介算。",
+    })),
+  }, { description: `video_kit 必填。${kitLimitsText()}。` })),
+  claim_token: Type.Optional(Type.String({ description: "video_kit 与会推进到待发布的 check 是写：这篇有活认领时必须带令牌（pack 或 autocrew_desk claim 回的），同宿主的另一个会话也一样。" })),
 });
 
 /** 已经在发布轨上（含已发/归档）：自动流转到此为止，重跑预检不许把已发布的稿倒拨回待发布 */
 const ON_PUBLISH_TRACK = new Set(["publish_ready", "publishing", "published", "archived"]);
+
+/** 写门（P6 §3.8）：交包、预检推进状态都是写。不带 `_host` 的内部调用（工作台、发布门）按 local-user 越门记账 */
+function gatePublishWrite(params: Record<string, unknown>, contentId: string, dataDir?: string): Promise<WriteGate> {
+  const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
+  const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
+  return gateClaimWrite(contentId, { host, token: token || undefined }, dataDir);
+}
 
 /**
  * 真正推进到「待发布」。返回 null = 进去了；返回一句话 = 拦下的原因。
@@ -94,9 +151,220 @@ async function runAutoTransition(contentId: string, dataDir?: string): Promise<s
   return `稿件还在「${label}」，先把前面的阶段走完才谈发布`;
 }
 
+// --- 实际发布文本（P6 §3.6：预检读发出去的那份，不混读口播稿） ---
+
+interface PublishSurface {
+  /** true = 视频平台且有本平台发布包，标题/简介/标签都从发布包取 */
+  fromKit: boolean;
+  title: string;
+  text: string;
+  hashtags: string[];
+}
+
+/** 简介里已有的话题标签（#xxx；小红书的 #xxx[话题]# 也认） */
+function captionTags(caption: string): string[] {
+  return (caption.match(/#[^\s#]+/g) ?? []).map((t) => t.slice(1).replace(/\[话题\]$/, "")).filter(Boolean);
+}
+
+/** 与剪贴板 / ego-lite 同口径：有发布包发的是发布包（没填发布标题才退回稿件标题），标签只算简介里的 */
+function publishSurface(content: Content, platform: string): PublishSurface {
+  const kit = content.videoKit;
+  if (isVideoPlatform(platform) && kit?.platform === platform && kit.caption?.trim()) {
+    return { fromKit: true, title: kit.postTitle?.trim() || content.title || "", text: kit.caption, hashtags: captionTags(kit.caption) };
+  }
+  return { fromKit: false, title: content.title || "", text: content.body || "", hashtags: content.hashtags || [] };
+}
+
+function videoKitNextAction(content: Content): Record<string, unknown> {
+  const platform = content.platform || "";
+  return {
+    tool: "autocrew_pre_publish",
+    params: { action: "video_kit", content_id: content.id, platform },
+    required_input: "kit",
+    message: `读当前稿，按平台重拟 kit{post_title, caption, cover_text, hashtags?}。${kitLimitsText()}。`,
+  };
+}
+
+/** 发布包带指纹且与当前稿对不上 = 按旧稿做的；旧发布包没有指纹，不判过期 */
+function staleKit(content: Content, platform: string): PrePublishFailure | null {
+  const kit = content.videoKit;
+  if (!isVideoPlatform(platform) || kit?.platform !== platform || !kit.draftHash) return null;
+  if (kit.draftHash === editorialDraftHash(content)) return null;
+  return {
+    ok: false,
+    code: "kit_stale",
+    error: "视频发布包是按旧稿做的（稿件后来改过），标题和简介可能对不上新稿：按当前稿重做发布包，再跑发布前检查",
+    next_action: videoKitNextAction(content),
+  };
+}
+
+function hashtagCheck(surface: PublishSurface, platform: string): CheckItem {
+  const name = "Hashtags";
+  if (platform === "wechat_mp") return { name, status: "skip", detail: "公众号文章无需话题标签" };
+  const count = surface.hashtags.length;
+  if (count >= 1) return { name, status: "pass", detail: `${count} 个标签${surface.fromKit ? "（发布简介内）" : ""}` };
+  return surface.fromKit
+    ? { name, status: "fail", detail: "发布简介里没有话题标签", fix: "用 autocrew_pre_publish video_kit 重交发布包，hashtags 会并进简介末尾" }
+    : { name, status: "fail", detail: "无标签", fix: "通过 autocrew_rewrite 生成标题和标签，或手动 update hashtags" };
+}
+
+function titleCheck(surface: PublishSurface, platform: string): CheckItem {
+  const title = surface.title;
+  if (!title) return { name: "标题规范", status: "fail", detail: "无标题", fix: "设置标题" };
+  if (!surface.fromKit) return draftTitleCheck(title, platform);
+  // 发布包标题按平台硬上限算（与交包时同一口径），超了平台会截断——截断等于改意
+  const chars = publishTitleChars(title);
+  const limit = videoTitleLimit(platform);
+  return chars > limit
+    ? { name: "标题规范", status: "fail", detail: `发布标题「${title}」(${chars}字，超出 ${limit} 上限)`, fix: "用 autocrew_pre_publish video_kit 重交更短的 post_title" }
+    : { name: "标题规范", status: "pass", detail: `发布标题「${title}」(${chars}字，≤${limit})` };
+}
+
+function draftTitleCheck(title: string, platform: string): CheckItem {
+  const rules = getPlatformRules(platform);
+  // No rules for this platform, just check title exists
+  if (!rules) return { name: "标题规范", status: "pass", detail: `「${title}」(${title.length}字)` };
+  const [minLen, maxLen] = rules.titleLengthRange;
+  const maxAbsolute = rules.maxTitleLength;
+  if (title.length > maxAbsolute) {
+    return {
+      name: "标题规范",
+      status: "warn",
+      detail: `「${title}」(${title.length}字，超出 ${maxAbsolute} 上限)`,
+      fix: "通过 autocrew_rewrite 生成更短的标题变体",
+    };
+  }
+  if (title.length < minLen) {
+    return { name: "标题规范", status: "warn", detail: `「${title}」(${title.length}字，低于建议 ${minLen} 下限)` };
+  }
+  return { name: "标题规范", status: "pass", detail: `「${title}」(${title.length}字，符合 ${minLen}-${maxLen} 范围)` };
+}
+
+function lengthCheck(surface: PublishSurface, platform: string): CheckItem {
+  const name = surface.fromKit ? "发布简介字数" : "正文字数";
+  const [minLen, maxLen] = surface.fromKit
+    ? captionBounds(platform)
+    : [PLATFORM_MIN_BODY[platform] || 100, PLATFORM_MAX_BODY[platform]];
+  const len = surface.text.length;
+  if (len < minLen) {
+    const fix = surface.fromKit ? "补全发布简介的内容价值与必要信息后重交发布包" : "扩充正文，增加案例或数据";
+    return { name, status: "fail", detail: `${len} 字 (不足 ${minLen})`, fix };
+  }
+  if (maxLen !== undefined && len > maxLen) {
+    return { name, status: "fail", detail: `${len} 字 (超出 ${maxLen} 上限)`, fix: overLimitFix(surface, platform) };
+  }
+  return { name, status: "pass", detail: `${len} 字 (≥${minLen}${maxLen !== undefined ? `，≤${maxLen}` : ""})` };
+}
+
+function overLimitFix(surface: PublishSurface, platform: string): string {
+  if (surface.fromKit) return "精简发布简介后重交发布包，保留口播全文";
+  if (!isVideoPlatform(platform)) return "编辑器里选段用「缩写」压缩，或 autocrew_rewrite 精简正文";
+  // 视频稿的正文是口播全文，超限不该压缩它——该做的是交发布包，预检改按发布简介校验
+  return `先交视频发布包：autocrew_pre_publish action='video_kit' {content_id, platform:'${platform}', ` +
+    "kit:{post_title, caption, cover_text, hashtags?}}，预检改按发布简介校验；不要压缩口播全文";
+}
+
+// --- video_kit：宿主交发布包（P6 §3.6，host-first，不调模型） ---
+
+type KitFailure = { field: string; detail: string };
+type KitFields = Pick<VideoKit, "postTitle" | "caption" | "coverText">;
+
+/** 标签去 #、去空白；含空格或 # 的发出去会断成两截，直接打回 */
+function readTags(raw: unknown, failures: KitFailure[]): string[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.some((t) => typeof t !== "string")) {
+    failures.push({ field: "hashtags", detail: "hashtags 要是字符串数组，如 [\"AI工具\", \"职场\"]" });
+    return [];
+  }
+  const tags = (raw as string[]).map((t) => t.trim().replace(/^#+/, "")).filter(Boolean);
+  const bad = tags.filter((t) => /[\s#]/.test(t));
+  if (bad.length > 0) failures.push({ field: "hashtags", detail: `标签「${bad.join("」「")}」里有空格或 #，发出去会断开：去掉后重交` });
+  return bad.length > 0 ? [] : [...new Set(tags)];
+}
+
+/** 发布路径（剪贴板 / ego-lite）只发简介，标签不在简介里等于没发——并到末尾，已有的不重复 */
+function mergeTags(caption: string, tags: string[]): string {
+  const present = new Set(captionTags(caption));
+  const missing = tags.filter((t) => !present.has(t));
+  return missing.length > 0 ? `${caption}\n\n${missing.map((t) => `#${t}`).join(" ")}` : caption;
+}
+
+function validateKit(raw: unknown, platform: string): { failures: KitFailure[]; fields: KitFields } {
+  const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const text = (key: string) => (typeof obj[key] === "string" ? (obj[key] as string).trim() : "");
+  const failures: KitFailure[] = [];
+  const postTitle = text("post_title");
+  const titleChars = publishTitleChars(postTitle);
+  const titleLimit = videoTitleLimit(platform);
+  if (!postTitle) failures.push({ field: "post_title", detail: "缺发布标题：按平台习惯重拟一句带钩子的标题，别照搬口播稿标题" });
+  else if (titleChars > titleLimit) failures.push({ field: "post_title", detail: `${titleChars} 字，超出 ${platform} 上限 ${titleLimit}（中文 1 字、英文数字半字）：压缩后重交，别靠省略号硬截` });
+  const tags = readTags(obj.hashtags, failures);
+  const caption = text("caption") ? mergeTags(text("caption"), tags) : "";
+  const [minLen, maxLen] = captionBounds(platform);
+  if (!caption) failures.push({ field: "caption", detail: "缺发布简介：写让刷到的人停下的文案，不是口播稿摘要" });
+  else if (caption.length < minLen) failures.push({ field: "caption", detail: `${caption.length} 字，不足 ${minLen}：补上这期讲什么、看完能带走什么` });
+  else if (maxLen !== undefined && caption.length > maxLen) failures.push({ field: "caption", detail: `${caption.length} 字（含并入的标签），超出 ${platform} 上限 ${maxLen}：精简后重交` });
+  const coverText = text("cover_text");
+  if (!coverText) failures.push({ field: "cover_text", detail: "缺封面大字：一眼能读完的一句话" });
+  else if (coverText.length > COVER_TEXT_MAX) failures.push({ field: "cover_text", detail: `${coverText.length} 字，超出 ${COVER_TEXT_MAX}：封面大字要一眼读完，压缩后重交` });
+  return { failures, fields: { postTitle, caption, coverText } };
+}
+
+/** 平台与稿件的前置核对：发布包按平台定字数，存错平台等于拿别的平台的规矩放行 */
+function kitPlatformError(content: Content, requested: unknown): Record<string, unknown> | null {
+  const platform = content.platform || "";
+  if (!isVideoPlatform(platform)) {
+    return { ok: false, code: "not_video_platform", error: `视频发布包只服务视频平台（${[...VIDEO_PLATFORMS].join(" / ")}），这篇是 ${platform || "未知平台"}` };
+  }
+  if (requested === platform) return null;
+  const got = typeof requested === "string" && requested ? requested : "空";
+  return { ok: false, code: "platform_mismatch", error: `platform 必须等于稿件平台 ${platform}（收到 ${got}）`, expected_platform: platform };
+}
+
+async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const contentId = typeof params.content_id === "string" ? params.content_id.trim() : "";
+  const dataDir = (params._dataDir as string) || undefined;
+  if (!contentId) return { ok: false, code: "missing_content_id", error: "content_id 必填" };
+  const content = await getContent(contentId, dataDir);
+  if (!content) return { ok: false, code: "not_found", error: `稿件不存在：${contentId}` };
+  const platformError = kitPlatformError(content, params.platform);
+  if (platformError) return platformError;
+  const platform = content.platform as string;
+  const { failures, fields } = validateKit(params.kit, platform);
+  if (failures.length > 0) {
+    return { ok: false, code: "kit_invalid", error: `发布包有 ${failures.length} 处要改：按 failures 逐条改完整包重交`, failures };
+  }
+  const gate = await gatePublishWrite(params, contentId, dataDir);
+  if ("denied" in gate) return gate.denied;
+  const kit: VideoKit = {
+    platform, ...fields, storyboard: [], coverPrompt: "",
+    generatedAt: new Date().toISOString(), source: "host", draftHash: editorialDraftHash(content),
+  };
+  // 指纹与落盘同锁核对：读稿到写包之间稿件被改，就不能把旧稿的指纹钉到新稿上
+  const saved = await updateContentIfDraftMatches(contentId, content, { videoKit: kit }, dataDir);
+  if (!saved.ok) {
+    return saved.reason === "stale"
+      ? { ok: false, code: "draft_changed", error: "保存时稿件刚被改过：重读当前稿，按新稿重做发布包", ...gate.grant }
+      : { ok: false, code: "not_found", error: `稿件不存在：${contentId}` };
+  }
+  return {
+    ok: true,
+    status: "kit_saved",
+    content_id: contentId,
+    video_kit: { platform, post_title: kit.postTitle, caption: kit.caption, cover_text: kit.coverText, draft_hash: kit.draftHash, source: kit.source },
+    next_action: { tool: "autocrew_pre_publish", params: { action: "check", content_id: contentId } },
+    ...gate.grant,
+  };
+}
+
+/** MCP 入口按 action 分派；GUI 与发布门只跑 check，直接调 executePrePublish */
+export async function executePrePublishTool(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return params.action === "video_kit" ? saveHostVideoKit(params) : executePrePublish(params);
+}
+
 // --- Execute ---
 
-export async function executePrePublish(params: Record<string, unknown>): Promise<PrePublishResult | { ok: false; error: string }> {
+export async function executePrePublish(params: Record<string, unknown>): Promise<PrePublishResult | PrePublishFailure> {
   const contentId = params.content_id as string;
   const dataDir = (params._dataDir as string) || undefined;
 
@@ -106,6 +374,9 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   if (!content) return { ok: false, error: `Content ${contentId} not found` };
 
   const platform = content.platform || "";
+  const stale = staleKit(content, platform);
+  if (stale) return stale;
+  const surface = publishSurface(content, platform);
   const checks: CheckItem[] = [];
 
   // --- Check 1: Content review ---
@@ -145,9 +416,7 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // --- Check 2: Cover review (all video platforms) ---
   if (COVER_REQUIRED_PLATFORMS.has(platform)) {
     const coverReview = await getCoverReview(contentId, dataDir);
-    if (coverReview && coverReview.status === "approved" && coverReview.approvedLabel) {
-      checks.push({ name: "封面审核", status: "pass", detail: `已选定 ${coverReview.approvedLabel.toUpperCase()} 方案` });
-    } else if (coverReview && coverReview.status === "publish_ready" && coverReview.approvedLabel) {
+    if (coverReview && (coverReview.status === "approved" || coverReview.status === "publish_ready") && coverReview.approvedLabel) {
       checks.push({ name: "封面审核", status: "pass", detail: `已选定 ${coverReview.approvedLabel.toUpperCase()} 方案` });
     } else {
       checks.push({
@@ -161,53 +430,9 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
     checks.push({ name: "封面审核", status: "skip", detail: `${platform || "未知"} 平台无需封面审核` });
   }
 
-  // --- Check 3: Hashtags ---
-  const hashtags = content.hashtags || [];
-  if (platform === "wechat_mp") {
-    checks.push({ name: "Hashtags", status: "skip", detail: "公众号文章无需话题标签" });
-  } else if (hashtags.length >= 1) {
-    checks.push({ name: "Hashtags", status: "pass", detail: `${hashtags.length} 个标签` });
-  } else {
-    checks.push({
-      name: "Hashtags",
-      status: "fail",
-      detail: "无标签",
-      fix: "通过 autocrew_rewrite 生成标题和标签，或手动 update hashtags",
-    });
-  }
-
-  // --- Check 4: Title length ---
-  const title = content.title || "";
-  const rules = getPlatformRules(platform);
-  if (!title) {
-    checks.push({ name: "标题规范", status: "fail", detail: "无标题", fix: "设置标题" });
-  } else if (rules) {
-    const [minLen, maxLen] = rules.titleLengthRange;
-    const maxAbsolute = rules.maxTitleLength;
-    if (title.length > maxAbsolute) {
-      checks.push({
-        name: "标题规范",
-        status: "warn",
-        detail: `「${title}」(${title.length}字，超出 ${maxAbsolute} 上限)`,
-        fix: "通过 autocrew_rewrite 生成更短的标题变体",
-      });
-    } else if (title.length < minLen) {
-      checks.push({
-        name: "标题规范",
-        status: "warn",
-        detail: `「${title}」(${title.length}字，低于建议 ${minLen} 下限)`,
-      });
-    } else {
-      checks.push({
-        name: "标题规范",
-        status: "pass",
-        detail: `「${title}」(${title.length}字，符合 ${minLen}-${maxLen} 范围)`,
-      });
-    }
-  } else {
-    // No rules for this platform, just check title exists
-    checks.push({ name: "标题规范", status: "pass", detail: `「${title}」(${title.length}字)` });
-  }
+  // --- Check 3: Hashtags / Check 4: Title length（有发布包读发布包） ---
+  checks.push(hashtagCheck(surface, platform));
+  checks.push(titleCheck(surface, platform));
 
   // --- Check 5: Platform set ---
   const supportedPlatforms = ["xiaohongshu", "xhs", "douyin", "wechat_mp", "wechat_video", "bilibili"];
@@ -219,35 +444,8 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
     checks.push({ name: "平台设置", status: "fail", detail: "未指定平台", fix: "通过 autocrew_content update 设置 platform" });
   }
 
-  // --- Check 6: Body length ---
-  const hasVideoCaption = isVideoPlatform(platform) && content.videoKit?.platform === platform && Boolean(content.videoKit.caption?.trim());
-  const bodyLen = (hasVideoCaption ? content.videoKit!.caption : content.body || "").length;
-  const lengthLabel = hasVideoCaption ? "发布简介字数" : "正文字数";
-  const minBody = PLATFORM_MIN_BODY[platform] || 100;
-  const maxBody = PLATFORM_MAX_BODY[platform];
-  if (bodyLen < minBody) {
-    checks.push({
-      name: lengthLabel,
-      status: "fail",
-      detail: `${bodyLen} 字 (不足 ${minBody})`,
-      fix: hasVideoCaption ? "补全发布简介的内容价值与必要信息" : "扩充正文，增加案例或数据",
-    });
-  } else if (maxBody !== undefined && bodyLen > maxBody) {
-    checks.push({
-      name: lengthLabel,
-      status: "fail",
-      detail: `${bodyLen} 字 (超出 ${maxBody} 上限)`,
-      fix: hasVideoCaption ? "精简发布简介，保留口播全文" : isVideoPlatform(platform)
-        ? "先生成视频发布件，用发布简介校验平台字数，不要压缩口播全文"
-        : "编辑器里选段用「缩写」压缩，或 autocrew_rewrite 精简正文",
-    });
-  } else {
-    checks.push({
-      name: lengthLabel,
-      status: "pass",
-      detail: `${bodyLen} 字 (≥${minBody}${maxBody !== undefined ? `，≤${maxBody}` : ""})`,
-    });
-  }
+  // --- Check 6: Body length（有发布包读发布简介） ---
+  checks.push(lengthCheck(surface, platform));
 
   // --- Check 7: 阶段门（阶段制 spec §1.2/§4 #1） ---
   // 六项全过之后才谈流转。**预检不许绕过阶段门**：视频稿卡在剪辑阶段时，
@@ -257,11 +455,14 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // `_readOnly`（内部参数，模型输入到不了这里）：对话面的 pre_publish_check 是纯查询，
   // 不许替用户跨过「待发布」这条人审关卡（设计 §总原则：人审关卡保留人手点击）——
   // 但门的判定照跑照报，只是不写盘。
+  // 真要推进才过令牌门（P6 §3.8）：推进是写，只读的预检谁都能跑
   const current = normalizeLegacyStatus(content.status);
+  let grant: { claim_token?: string } = {};
   if (checks.every((c) => c.status !== "fail") && !ON_PUBLISH_TRACK.has(current)) {
-    const blocked = params._readOnly === true
-      ? await stageBlockReason(content, "publish_ready", dataDir)
-      : await runAutoTransition(contentId, dataDir);
+    const gate = params._readOnly === true ? null : await gatePublishWrite(params, contentId, dataDir);
+    if (gate && "denied" in gate) return gate.denied;
+    grant = gate?.grant ?? {};
+    const blocked = gate ? await runAutoTransition(contentId, dataDir) : await stageBlockReason(content, "publish_ready", dataDir);
     if (blocked) {
       checks.push({
         name: "阶段门",
@@ -294,14 +495,5 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   }
   const summary = lines.join("\n");
 
-  return {
-    ok: true,
-    contentId,
-    platform,
-    checks,
-    allPassed,
-    passCount,
-    failCount,
-    summary,
-  };
+  return { ok: true, contentId, platform, checks, allPassed, passCount, failCount, summary, ...grant };
 }
