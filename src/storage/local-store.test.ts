@@ -396,8 +396,8 @@ describe("Status Transitions", () => {
     expect(getAllowedTransitions("editing")).toEqual(["cover_pending", "approved", "draft_ready", "publish_ready"]);
     // cover_pending 的出口从 approved 改为 editing——回的是剪辑台，不是文案页
     expect(getAllowedTransitions("cover_pending")).toEqual(["publish_ready", "editing"]);
-    // P6 §3.1：审过的草稿可以直接交剪辑（handoff）；阶段门另核视频平台
-    expect(getAllowedTransitions("draft_ready")).toEqual(["reviewing", "drafting", "editing"]);
+    // P6 §3.1：审过的草稿可以直接交剪辑（handoff）；阶段门另核视频平台。§3.7：宿主直接修订回 revision
+    expect(getAllowedTransitions("draft_ready")).toEqual(["reviewing", "drafting", "editing", "revision"]);
   });
 
   it("缺证据（P1 §4.4）：drafting 能进，出口是重写(drafting)/人工放行(draft_ready)/归档", () => {

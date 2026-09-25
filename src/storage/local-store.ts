@@ -109,6 +109,9 @@ export interface ContentVersion {
   body: string;
   note?: string;
   savedAt: string;
+  /** 宿主直接修订（P6 §3.7）开的版本：`revisionNote` 是宿主自己的修订说明，不是用户反馈，不进 writingFeedback */
+  source?: "host";
+  revisionNote?: string;
 }
 
 export type ContentStatus =
@@ -232,6 +235,8 @@ export interface ContentClaim {
   token: string;
   at: string;
   leaseUntil: string;
+  /** 最近一次写这份认领的宿主会话（P6 §3.8 归因，只做诊断，不参与令牌门） */
+  session?: string;
 }
 
 /** 一次交接（P3 §6.1）：谁把活交给了谁、什么时候、由哪个宿主记的 */
@@ -247,6 +252,8 @@ export interface ContentHandoff {
   note?: string;
   /** `local-user` 越过别人的活认领写入（P6 §3.8）：放行但留账，不静默 */
   override?: boolean;
+  /** 记这条账的那次调用来自哪个宿主会话（P6 §3.8 归因，只做诊断） */
+  session?: string;
 }
 
 export interface Content {
@@ -759,7 +766,11 @@ export async function getContent(id: string, dataDir?: string): Promise<Content 
  * 状态在类型上就不许从这里写（阶段制 spec §1.2 收口）：`status` 的唯一写入通道是
  * `transitionStatus`——只有它在写锁内跑过阶段门。放开这里等于让任何一处 update 跳阶段。
  */
-export type ContentUpdates = Partial<Omit<Content, "status">> & { _versionNote?: string };
+export type ContentUpdates = Partial<Omit<Content, "status">> & {
+  _versionNote?: string;
+  /** 只落到本次新版本上的来源标注，不进 meta 顶层 */
+  _versionMeta?: Pick<ContentVersion, "source" | "revisionNote">;
+};
 
 /** 收口通道内部用：全仓只有 `transitionStatusLocked` 能带 status 走这条路 */
 type StatusfulUpdates = ContentUpdates & { status?: ContentStatus };
@@ -858,14 +869,16 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
       body: updates.body ?? existing.body,
       note: updates._versionNote || `第 ${nextVersion} 版`,
       savedAt: now,
+      ...(updates._versionMeta ?? {}),
     };
     existing.versions = [...(existing.versions || []), versionEntry];
     await writeTextAtomic(path.join(projDir, "versions", `v${nextVersion}.md`), versionEntry.body);
   }
 
+  const { _versionMeta: _dropVersionMeta, ...fields } = updates;
   const updated: Content = {
     ...existing,
-    ...updates,
+    ...fields,
     id: existing.id,
     assets: updates.assets || existing.assets || [],
     versions: existing.versions,
@@ -1322,7 +1335,8 @@ const STATE_TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   // 允许直接放行——所以 draft_ready 留着，但它是人的动作，不是生成管线的出口。
   needs_evidence: ["drafting", "draft_ready", "archived"],
   // editing：P6 交接（`autocrew_video handoff`）——审过的稿直接交剪辑工位，阶段门另核平台
-  draft_ready: ["reviewing", "drafting", "editing"],
+  // revision：P6 §3.7 宿主直接修订（writer submit{revision_of}）——不重领包，开一个新的修订周期
+  draft_ready: ["reviewing", "drafting", "editing", "revision"],
   reviewing: ["revision", "approved", "draft_ready"],
   revision: ["reviewing", "approved", "draft_ready"],
   // 阶段制（spec §1.1）：视频稿定稿后走 editing → cover_pending → publish_ready。

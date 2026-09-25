@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { handleMcpRequest } from "./server.js";
 import { saveTopic, saveContent, getTopic, getContent, listContents, listTopics } from "../src/storage/local-store.js";
-import { packPreparation } from "../src/tools/writer-prepare.js";
 import * as engineConfig from "../src/engine/config.js";
 import * as engineLoop from "../src/engine/loop.js";
 import * as pages from "../src/modules/inbox/fetch-external.js";
@@ -15,13 +14,16 @@ import * as styleDistiller from "../src/modules/learnings/style-distiller.js";
 import { listDiffs } from "../src/modules/learnings/diff-tracker.js";
 
 let dataDir: string;
+/** MCP 往返计数（P6 §5 预算：首稿 ≤25） */
+let roundTrips = 0;
 const access = { principal: { subject: "claude-desktop-test", plan: "local" as const }, host: "claude-desktop-test" };
-beforeEach(async () => { dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-mcp-writing-flow-")); });
+beforeEach(async () => { dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-mcp-writing-flow-")); roundTrips = 0; });
 afterEach(async () => {
   vi.restoreAllMocks();
   await fs.rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 async function call(name: string, args: Record<string, unknown>) {
+  roundTrips += 1;
   const response = await handleMcpRequest({ id: 1, method: "tools/call", params: { name, arguments: args } }, access, dataDir);
   return (response!.result as { structuredContent: Record<string, any> }).structuredContent;
 }
@@ -81,11 +83,10 @@ describe("Claude MCP writing journey without external model calls", () => {
     // 记反馈是写，没人认领时顺手认领并回令牌（P6 §3.8）：接着领包要带上它
     expect(feedback.claim_token).toMatch(/^clm-/);
     const issued = await call(feedback.next_action.tool, { ...feedback.next_action.params, claim_token: feedback.claim_token });
-    // 领包即认领并回令牌（P6 §3.8）：之后对这篇的每次写都带上它
-    expect(issued).toMatchObject({ ok: true, status: "preparing", content_id: contentId, claim_token: expect.stringMatching(/^clm-/) });
-    await packPreparation(contentId);
-    const ready = await call("autocrew_writer", { action: "pack_status", content_id: contentId });
-    expect(ready).toMatchObject({ status: "ready", preparation: { research: { status: "provided", autoResearched: false } } });
+    // 领包即认领并回令牌（P6 §3.8）；宿主模式就地备完，不必再 pack_status（P6 §3.7）
+    expect(issued).toMatchObject({ ok: true, status: "ready", synchronous: true, content_id: contentId, claim_token: expect.stringMatching(/^clm-/) });
+    const ready = issued;
+    expect(ready).toMatchObject({ preparation: { research: { status: "provided", autoResearched: false } } });
     expect(ready.pack_md).toContain(original);
     expect(ready.pack_md).toContain(instruction);
     expect(ready.pack_md).toContain("user_claim");
@@ -93,12 +94,15 @@ describe("Claude MCP writing journey without external model calls", () => {
     expect(await listTopics(dataDir)).toHaveLength(1);
     const body = "想参加社区菜园的浇水，可以先看看公告板。原稿里提到，邻居们会共同浇水，轮班时间就写在那里。\n\n对刚接触园艺的人来说，先弄清安排，再决定自己能参与哪一班，这件事就具体了。至于实际参加的过程，还需要向当事人核对。";
     const submitted = await call("autocrew_writer", { action: "submit", content_id: contentId, pack_id: issued.pack_id, claim_token: issued.claim_token, attempt: 1, title: "先看看公告板上的安排", body });
-    expect(submitted).toMatchObject({ status: "awaiting_host_review", saved: true });
-    const review = await call(submitted.next_action.tool, submitted.next_action.params);
-    expect(review).toMatchObject({ status: "ready_for_host_review", review_source: { kind: "host_self_review", independent: false } });
-    expect(review.user).toContain(instruction);
-    const reviewed = await call("autocrew_review_desk", {
-      ...review.next_action.params, claim_token: issued.claim_token, issues: [],
+    // 审稿任务随交稿回执给出（P6 §3.7），下一步直接交结论，不再单独调 review_desk pack
+    expect(submitted).toMatchObject({
+      status: "awaiting_host_review", saved: true,
+      next_action: { tool: "autocrew_review_desk", params: { action: "submit", claim_token: issued.claim_token } },
+      review_pack: { status: "ready_for_host_review", review_source: { kind: "host_self_review", independent: false } },
+    });
+    expect(submitted.review_pack.user).toContain(instruction);
+    const reviewed = await call(submitted.next_action.tool, {
+      ...submitted.next_action.params, issues: [],
       audience: { audienceBasis: { source: "current_task", quote: "写给园艺新手" }, verdicts: [{ tier: "core", name: "园艺新手", wouldStop: true, why: "说明参与的具体入口，并披露原稿材料仍需核对。", losesAt: [] }], suggestions: [] },
     });
     expect(reviewed).toMatchObject({ ok: true, status: "accepted", quality_status: "host_self_reviewed" });
@@ -171,8 +175,10 @@ describe("Claude MCP writing journey without external model calls", () => {
       ok: true, status: "awaiting_host_research", model_api_calls: 0,
       executed_by: { kind: "host", host: access.host }, next_action: { tool: "autocrew_scout" },
     });
-    const task = await call(prepared.next_action.tool, prepared.next_action.params);
+    // prepare 已带回任务包：不再领一次 scout pack，下一步就是按包提交（P6 §3.7）
+    const task = prepared.research_task;
     expect(task).toMatchObject({ ok: true, status: "researching", pack: { stage: "perspective" } });
+    expect(prepared.next_action).toMatchObject({ tool: "autocrew_scout", params: { action: "perspective", task_id: task.task_id } });
     expect(JSON.stringify(task.pack)).toContain(GARDEN_REQUIREMENTS);
     const scout = (action: string, args: Record<string, unknown> = {}) => call("autocrew_scout", { action, topic_id: topic.id, task_id: task.task_id, ...args });
     const page = await scout("read_page", { perspective: "evidence", url: GARDEN_URL });
@@ -201,14 +207,13 @@ describe("Claude MCP writing journey without external model calls", () => {
     expect(choices.angle.recommendation).toMatchObject({ automaticSelection: false });
     expect((await getTopic(topic.id, dataDir))?.selectedAngle).toBeUndefined();
     const chosen = choices.angle.cards[0]; // This fixture simulates the creator choosing the displayed card.
-    expect(await call("autocrew_workflow", { action: "select_angle", topic_id: topic.id, angle_id: chosen.id, brief_revision: researched.brief_revision })).toMatchObject({ ok: true });
-    const readyToWrite = await call("autocrew_workflow", { ...choices.continue_params, action: "prepare" });
-    expect(readyToWrite).toMatchObject({ status: "ready_to_write", next_action: { tool: "autocrew_writer" } });
-    const started = await call(readyToWrite.next_action.tool, readyToWrite.next_action.params);
-    expect(started).toMatchObject({ status: "preparing", writing_source: { kind: "host" } });
-    await packPreparation(started.content_id);
-    const pack = await call("autocrew_writer", { action: "pack_status", content_id: started.content_id });
-    expect(pack).toMatchObject({ status: "ready" });
+    expect(choices.next_action).toMatchObject({ tool: "autocrew_workflow", params: { action: "select_angle", brief_revision: researched.brief_revision } });
+    // 选定即回 writer pack 的参数，不再 prepare 第二次；pack 就地备完，不再 pack_status（P6 §3.7）
+    const selected = await call(choices.next_action.tool, { ...choices.next_action.params, angle_id: chosen.id });
+    expect(selected).toMatchObject({ ok: true, status: "ready_to_write", next_action: { tool: "autocrew_writer", params: { action: "pack", requirements: GARDEN_REQUIREMENTS } } });
+    const started = await call(selected.next_action.tool, selected.next_action.params);
+    expect(started).toMatchObject({ status: "ready", synchronous: true, writing_source: { kind: "host" } });
+    const pack = started;
     expect(pack.pack_md).toContain(GARDEN_REQUIREMENTS);
     expect(pack.pack_md).toContain(GARDEN_QUOTE);
     expect(pack.pack_md).toContain("ev-1");
@@ -217,16 +222,18 @@ describe("Claude MCP writing journey without external model calls", () => {
       action: "submit", content_id: started.content_id, pack_id: started.pack_id, claim_token: started.claim_token,
       attempt: 1, title: "从共同浇水开始", body,
     });
-    expect(submitted).toMatchObject({ status: "awaiting_host_review", saved: true, next_action: { tool: "autocrew_review_desk" } });
+    expect(submitted).toMatchObject({ status: "awaiting_host_review", saved: true, next_action: { tool: "autocrew_review_desk", params: { action: "submit" } } });
     expect(reviewInFlight(started.content_id)).toBeUndefined();
     expect(await call("autocrew_writer", { action: "submit_status", content_id: started.content_id })).toMatchObject({ status: "awaiting_host_review" });
-    const review = await call(submitted.next_action.tool, submitted.next_action.params);
+    // 审稿任务随交稿回执给出（P6 §3.7）：与 review_desk pack 同一份产物，省掉一次往返
+    const review = submitted.review_pack;
     expect(review).toMatchObject({ status: "ready_for_host_review", attempt: 1, writing_pack_id: started.pack_id, review_source: { kind: "host_self_review", independent: false } });
     expect(review.user).toContain(GARDEN_REQUIREMENTS);
     expect(review.user).toContain(body);
-    // 审稿结论是写：同宿主也要带领包回的令牌（P6 §3.8）
-    const reviewed = await call("autocrew_review_desk", {
-      ...review.next_action.params, claim_token: started.claim_token, issues: [],
+    // 审稿结论是写：同宿主也要带领包回的令牌（P6 §3.8）——令牌已随 next_action 带上
+    expect(submitted.next_action.params.claim_token).toBe(started.claim_token);
+    const reviewed = await call(submitted.next_action.tool, {
+      ...submitted.next_action.params, issues: [],
       audience: {
         audienceBasis: { source: "current_task", quote: "写给园艺新手" },
         verdicts: [{ tier: "core", name: "园艺新手", wouldStop: true, why: "给出可行动的参与线索，并保留事实边界。", losesAt: [] }],
@@ -239,6 +246,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     expect(saved).toMatchObject({ body, status: "draft_ready", writtenBy: { kind: "host", host: access.host }, review: { source: { kind: "host_self_review", independent: false } } });
     expect(saved?.adoption).toBeUndefined();
     expect(await listContents(dataDir)).toHaveLength(1);
+    expect(roundTrips).toBeLessThanOrEqual(25); // 含两次故意的查验（假引文、submit_status），真实首稿更少
     expect(pageFetch).toHaveBeenCalledTimes(1);
     expect(pageFetch).toHaveBeenCalledWith(GARDEN_URL, { collectImages: true });
     expect(searchWeb).not.toHaveBeenCalled();
@@ -301,10 +309,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     const prepared = await call("autocrew_workflow", { ...request, action: "prepare" });
     expect(prepared).toMatchObject({ status: "ready_to_write", research: { status: "provided", autoResearched: false } });
     const started = await call("autocrew_writer", { ...request, action: "pack" });
-    expect(started).toMatchObject({ status: "preparing", writing_source: { kind: "host" } });
-    await packPreparation(started.content_id);
-    const ready = await call("autocrew_writer", { action: "pack_status", content_id: started.content_id });
-    expect(ready).toMatchObject({ status: "ready", preparation: { research: { status: "provided" } } });
+    expect(started).toMatchObject({ status: "ready", synchronous: true, writing_source: { kind: "host" }, preparation: { research: { status: "provided" } } });
     const body = "我们先走访门店。\n\n我们其次检查交接记录。\n\n我们发现责任不清，流程还没有形成闭环。";
     const submitted = await call("autocrew_writer", {
       action: "submit", content_id: started.content_id, pack_id: started.pack_id, claim_token: started.claim_token,
@@ -337,9 +342,7 @@ describe("Claude MCP writing journey without external model calls", () => {
       const prepared = await call("autocrew_workflow", { action: "prepare", ...request });
       expect(prepared).toMatchObject({ status: "ready_to_write", research: { status: "provided" } });
       const started = await call(prepared.next_action.tool, prepared.next_action.params);
-      await packPreparation(started.content_id);
-      const ready = await call("autocrew_writer", { action: "pack_status", content_id: started.content_id });
-      expect(ready.status).toBe("ready");
+      expect(started).toMatchObject({ status: "ready", synchronous: true });
       const body = "我们先走访门店。\n\n我们其次检查交接记录。\n\n我们发现记录没有写清责任人，交接的事情还没有落实。";
       const submitted = await call("autocrew_writer", {
         action: "submit", content_id: started.content_id, pack_id: started.pack_id, claim_token: started.claim_token,
@@ -366,9 +369,8 @@ describe("Claude MCP writing journey without external model calls", () => {
       const reissued = await call(recorded.next_action.tool, { ...recorded.next_action.params, claim_token: recorded.claim_token });
       expect(reissued.content_id).toBe(started.content_id);
       expect(reissued.pack_id).not.toBe(started.pack_id);
-      await packPreparation(reissued.content_id);
-      const revisedPack = await call("autocrew_writer", { action: "pack_status", content_id: reissued.content_id });
-      expect(revisedPack.status).toBe("ready");
+      const revisedPack = reissued;
+      expect(revisedPack).toMatchObject({ status: "ready", synchronous: true });
       expect(revisedPack.pack_md).toContain(requirements);
       expect(revisedPack.pack_md).toContain(feedback);
       expect(revisedPack.pack_md).toContain(body);

@@ -28,7 +28,7 @@ import {
 } from "../modules/research/research-job-store.js";
 import type { ResearchRunner, TriggerResult } from "../modules/research/research-runner.js";
 import { SEARCH_NOT_CONFIGURED } from "../modules/research/search-provider.js";
-import { saveTopic, updateTopic, updateContent, saveContent, type Topic } from "../storage/local-store.js";
+import { getTopic, saveTopic, updateTopic, updateContent, saveContent, type Topic } from "../storage/local-store.js";
 
 let testDir: string;
 
@@ -164,6 +164,11 @@ describe("workflow prepare", () => {
     const createRunnerImpl = vi.fn(() => { throw new Error("不能启动后台模型"); });
     const result = await run({ action: "prepare", topic_id: topic.id, platform: "douyin", requirements: "原样保留本次规划" }, { createRunnerImpl });
     expect(result).toMatchObject({ ok: true, status: "awaiting_host_research", model_api_calls: 0, creative_task: { requirements: "原样保留本次规划" }, next_action: { tool: "autocrew_scout" } });
+    // 任务包已随 prepare 返回：下一步直接是按包提交，不再领一次 scout pack（P6 §3.7）
+    const researchTask = result.research_task as Record<string, any>;
+    expect(researchTask.pack).toMatchObject({ stage: "perspective" });
+    expect(result.next_action).toEqual(researchTask.pack.submit);
+    expect(result.next_action).toMatchObject({ params: { action: "perspective", task_id: researchTask.task_id } });
     const again = await run({ action: "status", topic_id: topic.id });
     expect(again).toMatchObject({ status: "awaiting_host_research", next_action: { tool: "autocrew_scout", params: { task_id: (result.research_task as Record<string, unknown>).task_id } } });
     expect(again).not.toHaveProperty("poll_after_seconds");
@@ -213,7 +218,7 @@ describe("workflow prepare", () => {
 
   it("清空旧手写方向的意图经过 prepare 仍传给 writer，而未传参数不变成清空", async () => {
     const topic = await seed();
-    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" });
+    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1", brief_revision: 1 });
     const cleared = await run({ action: "prepare", topic_id: topic.id, platform: "douyin", direction: "", requirements: "" });
     expect(cleared).toMatchObject({ status: "ready_to_write", next_action: { params: { direction: "", requirements: "" } } });
     const omitted = await run({ action: "prepare", topic_id: topic.id, platform: "douyin" });
@@ -359,7 +364,7 @@ describe("workflow status", () => {
 describe("workflow select_angle", () => {
   it("点选原卡落进 topic.selectedAngle", async () => {
     const topic = await seed();
-    const res = (await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" })) as Record<string, any>;
+    const res = (await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1", brief_revision: 1 })) as Record<string, any>;
     expect(res.ok).toBe(true);
     expect(res.topic.selectedAngle).toMatchObject({ angleId: "angle-1", briefRevision: 1 });
   });
@@ -373,7 +378,7 @@ describe("workflow select_angle", () => {
 
   it("卡不在简报里就拒", async () => {
     const topic = await seed();
-    const res = await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-9" });
+    const res = await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-9", brief_revision: 1 });
     expect(res).toMatchObject({ ok: false });
   });
 
@@ -401,15 +406,47 @@ describe("workflow select_angle", () => {
       action: "select_angle",
       topic_id: topic.id,
       angle_id: "angle-1",
+      brief_revision: 1,
       card: { ...card(), coreEvidenceIds: ["ev-2"] },
     });
     expect(res.ok).toBe(false);
     expect((res as { error: string }).error).toContain("coreEvidenceIds");
   });
 
+  it("不带 brief_revision → brief_revision_required，附当前版本与候选 id，不按当前简报静默落选", async () => {
+    const topic = await seed();
+    const res = await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" });
+    expect(res).toMatchObject({ ok: false, code: "brief_revision_required", current_brief_revision: 1, angles: ["angle-1"] });
+    expect((await getTopic(topic.id, testDir))?.selectedAngle).toBeUndefined();
+  });
+
+  it("选定即回下一步：ready_to_write 的 writer pack 参数与再 prepare 一次完全相同", async () => {
+    const requirements = "写给小白；按一天经历展开；不要工具清单。";
+    const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", requirements }) }));
+    const choices = (await run({ action: "prepare", topic_id: topic.id, platform: "douyin", requirements })) as Record<string, any>;
+    expect(choices).toMatchObject({ status: "needs_angle", next_action: { tool: "autocrew_workflow", params: { action: "select_angle", brief_revision: 1 } } });
+    const selected = (await run({ ...choices.next_action.params, angle_id: "angle-1" })) as Record<string, any>;
+    expect(selected).toMatchObject({
+      ok: true, ready: true, status: "ready_to_write", topic: { selectedAngle: { angleId: "angle-1", briefRevision: 1 } },
+      next_action: { tool: "autocrew_writer", params: { action: "pack", topic_id: topic.id, platform: "douyin", requirements } },
+    });
+    const second = (await run({ ...choices.continue_params, action: "prepare" })) as Record<string, any>;
+    expect(second.status).toBe("ready_to_write");
+    expect(selected.next_action).toEqual(second.next_action);
+    expect(selected.continue_params).toEqual(second.continue_params);
+  });
+
+  it("选定已保存但写前检查未就绪 → 回就绪检查的 needs_* 结果与下一步，不给 writer pack", async () => {
+    const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", requirements: "原规划" }) }));
+    const res = (await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1", brief_revision: 1, platform: "douyin", requirements: "换了一份规划" })) as Record<string, any>;
+    expect(res).toMatchObject({ ok: true, ready: false, research: { status: "stale" }, next_action: { tool: "autocrew_workflow", params: { action: "prepare", requirements: "换了一份规划" } } });
+    expect(res.status).not.toBe("ready_to_write");
+    expect(res.topic.selectedAngle).toMatchObject({ angleId: "angle-1" });
+  });
+
   it("没有生效简报时不给选", async () => {
     const topic = await seed(null);
-    const res = await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" });
+    const res = await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1", brief_revision: 1 });
     expect((res as { error: string }).error).toContain("先跑一轮深调研");
   });
 });
@@ -425,7 +462,7 @@ describe("workflow write", () => {
     const params = { action: "write", topic_id: topic.id, platform: "douyin", requirements: "写给小白；按一天经历展开；不要工具清单。" };
     expect(await run(params, { startGenerateScriptImpl: start })).toMatchObject({ ok: false, needsAngle: true });
     expect(start).not.toHaveBeenCalled();
-    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" });
+    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1", brief_revision: 1 });
     expect(await run(params, { startGenerateScriptImpl: start })).toMatchObject({ ok: true });
     expect(start.mock.calls[0][0]).toMatchObject({ requirements: params.requirements, topicDescription: DESC });
     expect(start.mock.calls[0][0].direction).toBeUndefined();
@@ -476,7 +513,7 @@ describe("workflow write", () => {
 
   it("选过卡之后放行", async () => {
     const topic = await seed();
-    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1" });
+    await run({ action: "select_angle", topic_id: topic.id, angle_id: "angle-1", brief_revision: 1 });
     const start = startStub();
     const res = await run({ action: "write", topic_id: topic.id, platform: "douyin" }, { startGenerateScriptImpl: start });
     expect(res).toMatchObject({ ok: true, contentId: "c-new" });

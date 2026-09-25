@@ -28,6 +28,16 @@ export interface HostCitation {
   fetchedAt: string;
   source: "verified_quote";
 }
+/** 锁外在途的一次读页（P6 §3.7）：锁内已预扣额度，合并时按它认领；进程崩了留下的由过期清掉 */
+export interface HostPageRead {
+  id: string;
+  perspective: string;
+  url: string;
+  /** 规范化 URL：同一页同时只许一次在途，后到的等它入账后直接命中缓存 */
+  key: string;
+  pid: number;
+  at: string;
+}
 export interface HostResearchTask {
   version: 1;
   taskId: string;
@@ -49,16 +59,25 @@ export interface HostResearchTask {
   /** Saved before publishing; permits crash recovery without allocating another revision. */
   brief?: ResearchBrief;
   briefRevision?: number;
+  /** 锁外在途的读页（同选题至多 4 个）；入账或失败时移除 */
+  pageReads?: HostPageRead[];
+  /** 持有者闲置超 30 分钟被接管的记录：旧持有者的迟到写入据此回 lease_lost */
+  takeovers?: Array<{ from: string; to: string; at: string }>;
 }
 
 export class HostResearchError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    /** 随错误一起回给宿主的机读字段（retry_after_seconds、holder…） */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
 }
+/** 活着的持有者只让后来者稍等：读页的锁内两段都是毫秒级，等不到才回 task_busy */
+const LOCK_WAIT_MS = 1_500;
+const BUSY = { retry_after_seconds: 2 };
 const TASK_ID = /^rt-[a-f0-9-]{36}$/;
 function directory(topicId: string, dataDir: string): string {
   if (!isTopicId(topicId)) throw new HostResearchError("invalid_topic", "topic_id 格式无效");
@@ -82,13 +101,80 @@ export async function inspectHostResearchTask(topicId: string, dataDir: string):
     throw new HostResearchError("task_corrupt", "研究任务快照损坏或缺失，不能冒充空任务重新开始");
   return task;
 }
-function processAlive(pid: number): boolean {
+/** 持有进程是否还活着（租约与在途读页共用；查不到权限的进程按活着算，绝不误抢） */
+export function processAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return true;
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+type Lease = { pid: number; token: string; at: string };
+type Acquired = { handle: Awaited<ReturnType<typeof fs.open>>; recoveryFile?: string };
+
+async function acquireLease(dir: string, file: string, lease: Lease): Promise<Acquired> {
+  try {
+    return { handle: await fs.open(file, "wx") };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, "utf-8");
+  } catch (err) {
+    // 持有者恰好在 EEXIST 与读取之间放了锁：不是故障，下一轮重试就能拿到
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") throw new HostResearchError("task_busy", "研究租约刚刚释放，请重试", BUSY);
+    throw err;
+  }
+  let previous: { pid: number; token: string };
+  try {
+    previous = JSON.parse(raw);
+  } catch {
+    throw new HostResearchError("task_busy", "研究任务正在取得租约，请稍后重试", BUSY);
+  }
+  if (processAlive(previous.pid))
+    throw new HostResearchError("task_busy", "同选题另一次研究操作尚未完成，请稍后重试同一调用", BUSY);
+  // Serialize stale-owner recovery too: two recoverers must never rename a fresh live lease.
+  const recoveryFile = path.join(dir, "lease-recovery.json");
+  let recovery: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    recovery = await fs.open(recoveryFile, "wx");
+  } catch {
+    throw new HostResearchError(
+      "task_busy",
+      "研究租约正在恢复；如恢复进程也已中断，需检查lease-recovery记录后再恢复，不能强抢活跃调用",
+      BUSY,
+    );
+  }
+  try {
+    await recovery.writeFile(JSON.stringify(lease));
+    await recovery.close();
+    const latest = await json<{ pid: number; token: string }>(file);
+    if (latest?.token !== previous.token || processAlive(latest.pid))
+      throw new HostResearchError("task_busy", "研究租约已由另一进程恢复，请稍后重试", BUSY);
+    await fs.rm(file);
+    return { handle: await fs.open(file, "wx"), recoveryFile };
+  } catch (error) {
+    await recovery.close().catch(() => undefined);
+    await fs.rm(recoveryFile, { force: true });
+    throw error;
+  }
+}
+
+/** 撞上活租约不立刻失败：退避重试到 LOCK_WAIT_MS，仍拿不到才把 task_busy 交回宿主 */
+async function acquireWithin(dir: string, file: string, lease: Lease): Promise<Acquired> {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (let delay = 10; ; delay = Math.min(delay * 2, 120)) {
+    try {
+      return await acquireLease(dir, file, lease);
+    } catch (err) {
+      const busy = err instanceof HostResearchError && err.code === "task_busy";
+      if (!busy || Date.now() + delay > deadline) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delay + Math.random() * delay));
+    }
   }
 }
 
@@ -103,46 +189,7 @@ export async function withHostResearchLock<T>(
   const file = path.join(dir, "lease.json");
   const token = crypto.randomUUID();
   const lease = { pid: process.pid, token, at: new Date().toISOString() };
-  let recoveryFile: string | undefined;
-  let handle: Awaited<ReturnType<typeof fs.open>>;
-  try {
-    handle = await fs.open(file, "wx");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    const raw = await fs.readFile(file, "utf-8");
-    let previous: { pid: number; token: string };
-    try {
-      previous = JSON.parse(raw);
-    } catch {
-      throw new HostResearchError("task_busy", "研究任务正在取得租约，请稍后重试");
-    }
-    if (processAlive(previous.pid))
-      throw new HostResearchError("task_busy", "同选题另一次研究操作尚未完成，请稍后重试同一调用");
-    // Serialize stale-owner recovery too: two recoverers must never rename a fresh live lease.
-    recoveryFile = path.join(dir, "lease-recovery.json");
-    let recovery: Awaited<ReturnType<typeof fs.open>>;
-    try {
-      recovery = await fs.open(recoveryFile, "wx");
-    } catch {
-      throw new HostResearchError(
-        "task_busy",
-        "研究租约正在恢复；如恢复进程也已中断，需检查lease-recovery记录后再恢复，不能强抢活跃调用",
-      );
-    }
-    try {
-      await recovery.writeFile(JSON.stringify(lease));
-      await recovery.close();
-      const latest = await json<{ pid: number; token: string }>(file);
-      if (latest?.token !== previous.token || processAlive(latest.pid))
-        throw new HostResearchError("task_busy", "研究租约已由另一进程恢复，请稍后重试");
-      await fs.rm(file);
-      handle = await fs.open(file, "wx");
-    } catch (error) {
-      await recovery.close().catch(() => undefined);
-      await fs.rm(recoveryFile, { force: true });
-      throw error;
-    }
-  }
+  const { handle, recoveryFile } = await acquireWithin(dir, file, lease);
   try {
     await handle.writeFile(JSON.stringify(lease));
     await handle.sync();

@@ -61,7 +61,7 @@ export const workflowSchema = Type.Object({
   brief_revision: Type.Optional(
     Type.Integer({
       description:
-        "select_angle：你读到这批候选时的 brief.revision。带上就会校验候选是否已经被重跑换过一批；不带则按当前生效简报落。",
+        "select_angle 必填：你读到这批候选时的 brief.revision（needs_angle 的 next_action 里就有）。缺省或与当前简报对不上都会被拒，防止选到已被重跑换掉的卡。",
     }),
   ),
   platform: Type.Optional(
@@ -95,7 +95,7 @@ export const workflowSchema = Type.Object({
 export const WORKFLOW_DESCRIPTION = [
   "AutoCrew 创作统一入口。用户提出写作需求时，先查询或创建选题，再 prepare{topic_id,platform,requirements,direction?}；完整保留原始要求，不直接 write/generate。",
   "prepare 检查材料和立意：默认返回awaiting_host_research和scout任务，由当前宿主分析与提交，不启动后台模型，不轮询等后台；只有显式execution=engine才启动后台调研。",
-  "needs_angle：展示各候选的主张、受众、证据差异和推荐理由，让创作者选择；推荐不会自动选卡。select_angle{topic_id,angle_id,brief_revision,card?} 保存选择，随后带 continue_params 再 prepare。",
+  "needs_angle：展示各候选的主张、受众、证据差异和推荐理由，让创作者选择；推荐不会自动选卡。按 next_action 带 angle_id（改写时加 card）调 select_angle 保存选择，它直接回下一步：ready_to_write 时 next_action 就是 writer pack。",
   "ready_to_write：调用 next_action 指向的 autocrew_writer pack，当前宿主结合已有对话与原始要求写稿并提交；AutoCrew 提供材料、检查和编辑帮助。",
   "已有研究可显式用 research_mode=provided 并交 research；创作者明确免调研才用 skip 并交 research_reason。这两种都如实标注未自动调研，且仍需已选立意、direction 或明确 skip_reason。",
   "research{topic_id,kind} 默认领取scout宿主任务；只有用户明确指定execution=engine才启动后台研究。宿主可自带搜索并将URL交scout read_page核验，scout search使用独立搜索服务额度。status只读状态。prepare 不替用户选卡，也不暗中代写。",
@@ -248,8 +248,9 @@ async function doPrepare(
     if (task.ok === false) return { ...task, ok: false, error: String(task.error ?? "宿主调研任务准备失败"), status: "needs_attention", preparation: readiness };
     return { ok: true, status: "awaiting_host_research", preparation: readiness, creative_task: task.creative_task,
       research_task: task, executed_by: { kind: "host", host: params._host ?? "local-user" }, model_api_calls: 0,
-      next_action: { tool: "autocrew_scout", params: { action: "pack", topic_id: topicId, task_id: task.task_id } },
-      note: "已准备当前宿主的调研/立意任务；后台没有模型在运行。现在领取scout任务，完成来源读取、观点分析与立意提交，不要轮询等待或直接裸写。" };
+      // 本阶段任务包已在 research_task.pack：下一步直接是按它提交，不必再领一次 scout pack（P6 §3.7）
+      next_action: (task.pack as { submit?: unknown } | undefined)?.submit ?? { tool: "autocrew_scout", params: { action: "pack", topic_id: topicId, task_id: task.task_id } },
+      note: "已准备当前宿主的调研/立意任务，本阶段任务包就在 research_task.pack；后台没有模型在运行。照它完成来源读取与分析，按 next_action 提交，不要轮询等待或直接裸写。" };
   }
   if (readiness.status !== "not_started") {
     return { ok: true, ...readiness, ...(readiness.status === "researching" ? { poll_after_seconds: 30 } : {}) };
@@ -333,7 +334,12 @@ async function doSelectAngle(
     return fail("选题已变化，旧立意候选已过期；请先 prepare 刷新调研。");
   }
   const claimed = params.brief_revision;
-  if (claimed !== undefined && claimed !== snap.revision) {
+  if (claimed === undefined) {
+    return fail(`brief_revision 必填：带上你读到这批候选时的版本（当前 v${snap.revision}），不按当前简报静默落选。`, {
+      code: "brief_revision_required", current_brief_revision: snap.revision, angles: (snap.brief.angleCards ?? []).map((c) => c.id),
+    });
+  }
+  if (claimed !== snap.revision) {
     return fail(`角度候选已更新（当前 v${snap.revision}，你手上是 v${String(claimed)}）——重新 status 一次再选`);
   }
   const original = findAngleCard(snap.brief, angleId);
@@ -348,7 +354,8 @@ async function doSelectAngle(
     dataDir,
   );
   if (!updated) return fail(`选题不存在：${topicId}`);
-  return { ok: true, topic: updated };
+  // 选完直接给下一步（P6 §3.7）：与再调一次 prepare 同一份就绪检查，ready_to_write 时 next_action 就是 writer pack
+  return { ok: true, topic: updated, ...(await inspectWritingReadiness(topicId, readinessRequest(params), dataDir, warn)) };
 }
 
 // ─── write ────────────────────────────────────────────────────────────────────

@@ -33,7 +33,7 @@ description: |
 
 收齐视角后，由你综合，再 `action:"synthesize"` 提交 `payload`；有离线主张时按工具 schema 明确传 `offline_claim_ids`。没有明确方向时继续 `action:"angles"` 提交不同立意候选的 `payload`，不能只想出一张然后自选。所有提交字段以当前任务包与工具 schema 为准；已完成阶段不可直接覆盖，要重做用新任务。
 
-展示各候选的主张、读者收获、依据、缺口及推荐理由。推荐不等于代选；创作者明确选择后通过 `autocrew_workflow {action:"select_angle", topic_id, angle_id}` 保存。已有明确 `direction` 时沿用，不重复选卡。
+展示各候选的主张、读者收获、依据、缺口及推荐理由。推荐不等于代选；创作者明确选择后通过 `autocrew_workflow {action:"select_angle", topic_id, angle_id, brief_revision}` 保存。已有明确 `direction` 时沿用，不重复选卡。
 
 然后回 `autocrew_workflow {action:"prepare", topic_id, platform, requirements}`，按实际 `next_action` 交给写作包。用户已有足够材料可用 `research_mode=provided` 并传 `research`；明确无需调研才用 `skip` 和 `research_reason`，不得为绕过失败自行跳过。两者均需披露材料是否验证。
 

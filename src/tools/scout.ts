@@ -54,11 +54,12 @@ import {
   type PerspectiveName,
 } from "../modules/research/research-job-store.js";
 import { restoreEvidenceLedger, type LedgerEntry } from "../modules/research/evidence-ledger.js";
-import { externalBlock, sanitizeExternal } from "../modules/research/research-prompt-kit.js";
 import { isReadyPack, readPack, writePack, serializeWriterCall, renderPack, packPath, PACK_MD } from "./writer-pack.js";
+import { holdTask, taskChangedError } from "./scout-task-guard.js";
+import { DeferredPageRead, finishPageRead, renderPage, reservePageRead } from "./scout-read-page.js";
 
 export const SCOUT_DESCRIPTION =
-  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every action after prepare requires topic_id/task_id. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
+  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every action after prepare requires topic_id/task_id. Changed requirements never silently replace a task: prepare returns task_changed{diff, keep_current} until you confirm with confirm_task_change:true. Another host's in-flight task can be taken over only after 30 idle minutes (else task_owned); the displaced owner's late writes get lease_lost. Up to 4 read_page calls per topic may run concurrently (5th: task_busy + retry_after_seconds); quota is charged before fetching, so a failed fetch still uses its slot. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
 const text = Type.String();
 const actions = [
   "prepare",
@@ -81,6 +82,9 @@ export const scoutSchema = Type.Object(
     requirements: Type.Optional(text),
     direction: Type.Optional(text),
     force: Type.Optional(Type.Boolean()),
+    confirm_task_change: Type.Optional(
+      Type.Boolean({ description: "prepare：要求与当前任务不同时，确认按新要求新建任务（先向创作者说明 task_changed 的 diff）" }),
+    ),
     perspective: Type.Optional(Type.Union(PERSPECTIVE_NAMES.map((v) => Type.Literal(v)))),
     query: Type.Optional(text),
     url: Type.Optional(text),
@@ -139,6 +143,15 @@ function perspectiveOf(value: unknown): PerspectiveName {
     throw new HostResearchError("invalid_perspective", "perspective 必须是 audience/evidence/counter/benchmark");
   return value as PerspectiveName;
 }
+
+/** 下一阶段的提交入口：任务书已随回执的 pack 字段带回，不再让宿主为了拿任务书多跑一次 pack */
+function nextStageTarget(task: HostResearchTask, missing: PerspectiveName[]) {
+  if (missing[0]) return target(task, "perspective", { perspective: missing[0] });
+  if (!task.brief) return target(task, "synthesize");
+  return target(task, "angles");
+}
+
+
 function target(task: HostResearchTask, action: string, extra: Record<string, unknown> = {}) {
   return { tool: "autocrew_scout", params: { action, topic_id: task.topicId, task_id: task.taskId, ...extra } };
 }
@@ -169,11 +182,11 @@ function view(task: HostResearchTask): Record<string, unknown> {
               ...Object.fromEntries(Object.entries(task.creativeTask).filter(([k]) => k !== "version")),
             },
           }
-        : target(task, "pack", missing[0] ? { perspective: missing[0] } : {}),
+        : nextStageTarget(task, missing),
     note:
       task.status === "ready"
         ? "本轮研究由当前宿主分析，来源和引文由工具核验；未调用后台模型。未核验材料仍按 user_claim 标注。"
-        : "等待当前宿主完成研究分析；此任务不会在后台自行调用模型，请按返回的任务书继续。",
+        : "等待当前宿主完成研究分析；此任务不会在后台自行调用模型。下一阶段的任务书在本回执的 pack 字段里（status 不带 pack，先调 pack 取），读完直接按 next_action 提交。",
   };
 }
 function brokerWithClaims(broker: ResearchBroker, task: HostResearchTask): ResearchBroker {
@@ -387,7 +400,7 @@ export async function executeScout(
   const topicId = str(args.topic_id),
     action = str(args.action);
   try {
-    return await withHostResearchLock(topicId, dir, async (current, save) => {
+    const outcome = await withHostResearchLock(topicId, dir, async (current, save): Promise<Record<string, unknown> | DeferredPageRead> => {
       if (args.task_id && args.task_id !== current?.taskId)
         throw new HostResearchError("stale_task", "task_id 已过期，迟到结果未采纳；请读取当前任务并沿用新任务号");
       if (action === "prepare" || action === "pack") {
@@ -405,8 +418,10 @@ export async function executeScout(
           current &&
           current.topicHash === topicHash &&
           creativeTaskHash(current.creativeTask) === creativeTaskHash(creativeTask);
-        if (current && current.host !== host && current.status !== "ready")
-          throw new HostResearchError("task_owned", `当前研究任务由 ${current.host} 持有；不能静默接管其在途研究`);
+        // 在途任务：持有者闲置满 30 分钟才可接管（接管当场落盘）；要求变了先让宿主确认，不静默换任务
+        if (current && current.status !== "ready" && (await holdTask(current, host, dir))) await save(current);
+        const confirmed = args.force === true || args.confirm_task_change === true;
+        if (current && !same && current.topicHash === topicHash && !confirmed) throw taskChangedError(current, creativeTask);
         let task = current;
         if (!same || args.force === true) {
           const now = new Date().toISOString();
@@ -488,14 +503,10 @@ export async function executeScout(
         },
         task.creativeTask,
       );
-      if (creativeTaskHash(suppliedTask) !== creativeTaskHash(task.creativeTask))
-        throw new HostResearchError(
-          "task_changed",
-          "本轮任务已冻结；变更要求请重新prepare，不能把旧来源分析静默用于新任务",
-        );
+      // 本轮任务已冻结：带着新要求的研究动作不能把旧来源分析静默套到新任务上，回差异让宿主确认
+      if (creativeTaskHash(suppliedTask) !== creativeTaskHash(task.creativeTask)) throw taskChangedError(task, suppliedTask);
       if (action === "status") return view(task);
-      if (task.host !== host)
-        throw new HostResearchError("task_owned", `此任务由 ${task.host} 持有，当前宿主不能改写其结果`);
+      await holdTask(task, host, dir);
       await guardEngine(topicId, dir);
       const broker = createResearchBroker({
         ...deps.brokerDeps,
@@ -525,24 +536,12 @@ export async function executeScout(
           const url = str(args.url) || source?.finalUrl || source?.url || "";
           if (!/^https?:\/\//i.test(url))
             throw new HostResearchError("invalid_url", "read_page需要有效HTTP(S) url或已登记的source_id");
-          const page = await broker.forPerspective(perspectiveOf(args.perspective)).readPage(url);
-          await assertTopic(task, dir);
-          task.broker = broker.snapshot();
-          const clean = Array.from(sanitizeExternal(page.text, page.text.length));
           const offset = typeof args.offset === "number" ? args.offset : 0;
-          return {
-            ...view(task),
-            source_id: page.sourceId,
-            final_url: page.finalUrl,
-            fetched_at: broker.getSource(page.sourceId)?.fetchedAt,
-            source: "verified_quote",
-            page: externalBlock([clean.slice(offset, offset + 12000).join("")]),
-            ...(offset + 12000 < clean.length ? { next_offset: offset + 12000 } : {}),
-            asset_candidates: page.assetCandidates,
-            cached: page.cached,
-            usage: broker.usage(),
-            note: "已抓取页面快照；cite只核验引文逐字存在，不证明宿主对该引文的解释为真。",
-          };
+          // 缓存命中当场给页；没命中只在锁内预扣并记在途，出网放到锁外（收尾的 save 把扣额落盘）
+          const read = reservePageRead(task, broker, perspectiveOf(args.perspective), url, offset);
+          if (read instanceof DeferredPageRead) return read;
+          task.broker = broker.snapshot();
+          return renderPage(task, broker, read, offset, view);
         }
         if (action === "cite") {
           const sourceId = nonempty(args.source_id, "source_id"),
@@ -730,11 +729,16 @@ export async function executeScout(
         await save(task);
       }
     });
+    if (!(outcome instanceof DeferredPageRead)) return outcome;
+    return await finishPageRead(outcome, {
+      topicId, dir, host, brokerDeps: deps.brokerDeps, view, assertTopic: (task) => assertTopic(task, dir),
+    });
   } catch (err) {
     return {
       ok: false,
       code: err instanceof HostResearchError ? err.code : "research_operation_failed",
       error: err instanceof Error ? err.message : String(err),
+      ...(err instanceof HostResearchError ? err.details : {}),
       ...(err instanceof ClaimHeldError && err.denial.holder ? { holder: err.denial.holder } : {}),
       note: "操作失败已如实返回；未调用备用模型，也未把来源自动降为离线声明。",
     };

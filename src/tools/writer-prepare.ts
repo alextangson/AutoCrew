@@ -1,22 +1,21 @@
 import { loadHostEvidence } from "../modules/research/host-evidence-store.js";
 import { inheritCreativeTask } from "../modules/writing/creative-task.js";
 /**
- * 发包（P3 spec §5.1，2026-09-06 实机验收后改成异步）——`pack` 与 `pack_status` 的实现。
+ * 发包（P3 spec §5.1；P6 §3.7 宿主模式改同步）——`pack` 与 `pack_status` 的实现。
  *
- * 为什么不能同步发包：备料（材料收集 + 定向补证）要跑**几分钟**，而 MCP 宿主把工具调用
- * 卡在 60 秒（TS SDK 默认值；Codex 是 `tool_timeout_sec`）。实机上发生的事是：客户端超时
- * 放弃 → 服务端照跑不误 → 几分钟后用一个**新 pack_id** 覆盖了 `writing-pack.json` →
- * 宿主后来的 submit 全部打在另一个包上，而且没有任何一方报错。所以这一版把发包切成两段：
- *
- *   `pack` 立刻回 `{status:"preparing", content_id, pack_id}`（只跑立意闸口 + 建占位稿 + 领号）
- *   后台备料 →（成功）整份包原子落盘 `state:"ready"` ／（失败）`state:"failed"` + 人话原因
- *   `pack_status` 轮询，ready 之后回的就是老版同步 `pack` 的那份完整回执
+ * 为什么切两段：备料曾经要跑几分钟，而 MCP 宿主 60 秒就掐工具调用。实机上客户端超时放弃 →
+ * 服务端照跑 → 几分钟后用**新 pack_id** 覆盖了 `writing-pack.json` → 宿主的 submit 全打在
+ * 另一个包上，没有任何一方报错。所以发包是「领号（立意闸口 + 占位稿 + 号）→ 后台备料 →
+ * 原子落盘 `ready` / `failed`」。宿主模式不调用模型、几秒就备完，`pack` 就地等至多 15 秒
+ * （从工具调用开始算）直接回 ready（`synchronous:true`）；engine 模式或到点才回 `preparing`，
+ * 走 `pack_status` 轮询。每个等待有终点：轮询第 4 次起回 `pack_stalled`；进程重启留下的孤儿由
+ * `pack` / `pack_status` 按原请求重跑，超 2 分钟的由启动清扫判死（`failStalePreparingPacks`）。
  *
  * 两条纪律让它不再互相覆盖：
  * - **同一篇稿同时只有一次备料**：模块级 `preparing` 表按 content_id 挡重入，
  *   `pack` 再来一次拿到的是**同一个** pack_id，绝不起第二条后台任务；
- * - **落盘前认号**：后台任务写回之前先读盘对 `packId`，号被 `force` 换掉了就把自己的结果丢掉。
- *   这正是实机那条 bug 的堵口——迟到的备料不许覆盖现行的包。
+ * - **落盘前认号**：后台任务写回之前先读盘对 `packId`，号被 `force` 换掉、或包已被判死，
+ *   就把自己的结果丢掉——迟到的备料不许覆盖现行的包。
  */
 import { createHash } from "node:crypto";
 import { writeTextAtomic } from "../storage/json-atomic.js";
@@ -35,22 +34,31 @@ import { DEFAULT_REPAIR_ROUNDS } from "../modules/writing/script-payload.js";
 import { loadProfile, rulesForPlatform } from "../modules/profile/creator-profile.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
-import { inspectWritingReadiness, writingContinueParams, writingReadinessFailure, type WritingReadiness } from "./writing-readiness.js";
+import { inspectWritingReadiness, writingReadinessFailure, type WritingReadiness } from "./writing-readiness.js";
 import { describeWriterFailure } from "./writer-failure.js";
 import {
   isReadyPack,
-  packBudget,
   packPath,
   readPack,
   renderPack,
   serializeWriterCall,
   writePack,
   PACK_MD,
-  writerProgress,
-  type PackState,
+  stalePackError,
   type ReadyPack,
   type WritingPackFile,
 } from "./writer-pack.js";
+import {
+  countPoll,
+  packView,
+  preparationProgress,
+  readyResult,
+  stalledResult,
+  FIRST_NOTE,
+  POLL_NOTE,
+  type Fail,
+  type PackResult,
+} from "./writer-pack-view.js";
 
 export interface PackDeps {
   /** 测试注入（默认 listContents）：复用判定要读全量稿件 */
@@ -59,33 +67,11 @@ export interface PackDeps {
   runLoopImpl?: typeof runLoop;
   /** 测试注入的备料替身：让「还在准备中」这个中间态可被确定地观测，生产不传 */
   buildContextImpl?: typeof buildWritingContext;
+  /** 宿主模式 `pack` 就地等备料的总时限，缺省 15 秒；测试用它缩短或归零 */
+  packSyncDeadlineMs?: number;
   onWarn?: (message: string) => void;
 }
 
-type Fail = { ok: false; error: string } & Record<string, unknown>;
-
-/** 领号回执（备料还在跑） */
-export interface PackPreparingResult extends Record<string, unknown> {
-  ok: true;
-  status: "preparing";
-  content_id: string;
-  pack_id: string;
-  note: string;
-}
-
-/** 备料完成的完整回执——**与改异步之前那份同步 `pack` 的返回体逐字段相同** */
-export interface PackReadyResult extends Record<string, unknown> {
-  ok: true;
-  status: "ready";
-  content_id: string;
-  pack_id: string;
-  pack_md: string;
-  budget: ReturnType<typeof packBudget>;
-  note: string;
-}
-
-const POLL_NOTE = "正在装配本地写作材料：用 pack_status{content_id} 查看，status=ready 之后再动笔；宿主模式不会启动后台模型。";
-const FIRST_NOTE = "写完用 submit 交回来；数字要能指到证据编号，缺证据先 find_evidence。";
 const REISSUE_NOTE = "这条选题上原来那份包已作废（同一篇稿换了新 pack_id），旧包的提交会被拒。";
 
 /**
@@ -94,7 +80,12 @@ const REISSUE_NOTE = "这条选题上原来那份包已作废（同一篇稿换�
  */
 const preparing = new Map<string, Promise<void>>();
 
-/** 测试与桌面端等一次备料落地用（生产链路一律轮询 `pack_status`，不 await 它） */
+/** 宿主模式 `pack` 就地等备料的总时限（从工具调用开始算，含语料扫描；P6 §5） */
+export const PACK_SYNC_DEADLINE_MS = 15_000;
+/** `preparing` 期间最多轮询几次，再查回 `pack_stalled`（P6 §5） */
+const MAX_PACK_POLLS = 3;
+
+/** 测试与桌面端等一次备料落地用（宿主链路靠 `pack` 的同步等待或 `pack_status`，不 await 它） */
 export function packPreparation(contentId: string): Promise<void> | undefined {
   return preparing.get(contentId);
 }
@@ -103,36 +94,26 @@ function newPackId(): string {
   return `wp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function elapsedSeconds(iso: string): number {
-  const started = Date.parse(iso);
-  if (Number.isNaN(started)) return 0;
-  return Math.max(0, Math.round((Date.now() - started) / 1000));
+/** 等备料至多到 `deadlineAt`；到点回 false，任务照跑，宿主改走轮询 */
+async function settleWithin(task: Promise<void>, deadlineAt: number): Promise<boolean> {
+  const left = deadlineAt - Date.now();
+  if (left <= 0) return false;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), left); });
+  try {
+    return await Promise.race([task.then(() => true as const), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-function readyResult(contentId: string, pack: ReadyPack): PackReadyResult {
-  return {
-    ok: true,
-    status: "ready",
-    content_id: contentId,
-    pack_id: pack.packId,
-    pack_md: renderPack(contentId, pack),
-    budget: packBudget(pack),
-    note: pack.note ?? FIRST_NOTE,
-    ...writerProgress(pack),
-  };
-}
-
-/** The same frozen facts must survive repeated pack calls and process restarts. */
-function preparationProgress(contentId: string, pack: WritingPackFile): Record<string, unknown> {
-  return {
-    preparation: pack.request?.readiness ?? {
-      status: "unknown",
-      note: "旧写作包未记录领包时的研究与立意状态，不能追认为已完成。",
-    },
-    writing_source: { kind: "host", host: pack.host },
-    next_action: { tool: "autocrew_writer", params: { action: "pack_status", content_id: contentId } },
-    poll_after_seconds: 30,
-  };
+/** 宿主模式就地等在跑的那次备料；落地了回 `pack_status` 同一份回执 + `synchronous:true`，到点回 null */
+async function awaitPreparation(contentId: string, packId: string, deadlineAt: number, dataDir: string): Promise<PackResult | null> {
+  const task = preparing.get(contentId);
+  if (!task || !(await settleWithin(task, deadlineAt))) return null;
+  const pack = await readPack(contentId, dataDir);
+  if (!pack || pack.packId !== packId) return { ok: false, code: "stale_pack", error: stalePackError(pack?.packId, packId) };
+  return { ...packView(contentId, pack), synchronous: true };
 }
 
 // ─── pack ─────────────────────────────────────────────────────────────────────
@@ -174,6 +155,8 @@ export interface PackParams {
   host: string;
   /** 作废手上这份包、重跑一次备料（宿主明说要重来时才给 true） */
   force: boolean;
+  /** 工具调用开始的时刻（毫秒）：同步等待的 15 秒从这里算，缺省为进入 startPack 时 */
+  startedAt?: number;
 }
 
 /** 固定字段顺序，空串与未设置等价；不把宿主或 force 这种调用参数当写作要求。 */
@@ -201,8 +184,9 @@ export async function startPack(
   params: PackParams,
   dataDir: string,
   deps: PackDeps,
-): Promise<PackPreparingResult | PackReadyResult | Fail> {
+): Promise<PackResult> {
   const warn = deps.onWarn ?? ((m: string) => console.warn(`[writer] ${m}`));
+  const deadlineAt = (params.startedAt ?? Date.now()) + (deps.packSyncDeadlineMs ?? PACK_SYNC_DEADLINE_MS);
   if (!(CLIPBOARD_PLATFORMS as readonly string[]).includes(params.platform)) {
     return { ok: false, error: `无效 platform「${params.platform}」。有效值：${CLIPBOARD_PLATFORMS.join(" | ")}` };
   }
@@ -270,26 +254,28 @@ export async function startPack(
   }
 
   const contentId = existing?.id ?? (await createPlaceholder(req, dataDir));
-  const inFlight = preparing.has(contentId);
+  const reused = params.force ? null : await reuseCurrent(contentId, current, deadlineAt, dataDir);
+  if (reused) return reused;
+  // 其余都重跑：force、没有包、备料失败，以及盘上 preparing 却没有任务在跑的孤儿（不重跑就永远 ready 不了）
+  return startPreparation({ contentId, req, readiness, topicDescription, planningFingerprint: fingerprint, host: params.host, reissued: Boolean(current), deadlineAt }, dataDir, deps);
+}
 
-  if (!params.force) {
-    // 已经备好了就原样还给他（不重跑：备料花的是真钱）
-    if (isReadyPack(current)) return readyResult(contentId, current);
-    // 还在跑：同一个号回第二遍，绝不起第二条后台任务
-    if (current?.state === "preparing" && inFlight) {
-      return { ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE, ...preparationProgress(contentId, current) };
-    }
-  }
-  // 落到这里的三种情形都该重跑：force、没有包、以及「盘上写着 preparing 但没有任务在跑」
-  // （进程重启留下的孤儿，不重跑它就永远 ready 不了）。
-  return startPreparation({ contentId, req, readiness, topicDescription, planningFingerprint: fingerprint, host: params.host, reissued: Boolean(current) }, dataDir, deps);
+/**
+ * 非 force 的重复领包：已经备好了就原样还给他（不重跑：备料花的是真钱）；
+ * 还在跑就同一个号回第二遍，绝不起第二条后台任务——宿主模式顺手等到时限。
+ */
+async function reuseCurrent(contentId: string, current: WritingPackFile | null, deadlineAt: number, dataDir: string): Promise<PackResult | null> {
+  if (isReadyPack(current)) return readyResult(contentId, current);
+  if (current?.state !== "preparing" || !preparing.has(contentId)) return null;
+  const settled = current.request?.req.modelExecution === "host" ? await awaitPreparation(contentId, current.packId, deadlineAt, dataDir) : null;
+  return settled ?? { ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE, ...preparationProgress(contentId, current) };
 }
 
 async function startPreparation(
-  args: { contentId: string; req: ScriptRequest; readiness: WritingReadiness; topicDescription: string; planningFingerprint: string; host: string; reissued: boolean },
+  args: { contentId: string; req: ScriptRequest; readiness: WritingReadiness; topicDescription: string; planningFingerprint: string; host: string; reissued: boolean; deadlineAt: number },
   dataDir: string,
   deps: PackDeps,
-): Promise<PackPreparingResult> {
+): Promise<PackResult> {
   const { contentId, host } = args;
   const packId = newPackId();
   const issuedAt = new Date().toISOString();
@@ -337,7 +323,9 @@ async function startPreparation(
     if (preparing.get(contentId) === task) preparing.delete(contentId);
   });
   preparing.set(contentId, task);
-  return {
+  // 宿主模式不调用模型（generate-script 跳过引擎配置与补证），几秒就备完：就地等，省掉轮询
+  const settled = args.req.modelExecution === "host" ? await awaitPreparation(contentId, packId, args.deadlineAt, dataDir) : null;
+  return settled ?? {
     ok: true,
     status: "preparing",
     content_id: contentId,
@@ -377,9 +365,9 @@ async function prepare(args: PrepareArgs, dataDir: string, deps: PackDeps): Prom
       built.prompts.user += `\n\n${draft}\n\n${feedback}`;
       built.inputs.writingContract += `\n\n${feedback}`;
     }
-    await finishReady(args, built, dataDir);
+    await finishReady(args, built, dataDir, warn);
   } catch (err) {
-    await finishFailed(args, err, dataDir).catch((e) => warn(`写作包失败状态没写回：${cleanErrorMessage(e)}`));
+    await finishFailed(args, err, dataDir, warn).catch((e) => warn(`写作包失败状态没写回：${cleanErrorMessage(e)}`));
   }
 }
 
@@ -387,9 +375,15 @@ async function prepare(args: PrepareArgs, dataDir: string, deps: PackDeps): Prom
  * 号还是我的吗？`force` 重发之后旧任务的结果**必须丢掉**——
  * 覆盖现行的包正是这次要修的那条实机 bug。
  */
-async function stillMine(contentId: string, packId: string, dataDir: string): Promise<WritingPackFile | null> {
+async function stillMine(contentId: string, packId: string, dataDir: string, warn: (m: string) => void): Promise<WritingPackFile | null> {
   const current = await readPack(contentId, dataDir);
-  return current?.packId === packId ? current : null;
+  if (current?.packId !== packId) return null;
+  // 已判死（守护进程重启清扫、或本任务早先失败）的包不收迟到写回
+  if (current.state === "failed") {
+    warn(`stale_pack：写作包 ${packId} 已判失败（${current.reason ?? current.error ?? "未记原因"}），迟到的备料结果已丢弃`);
+    return null;
+  }
+  return current;
 }
 
 function readyPackOf(args: PrepareArgs, base: WritingPackFile, built: WritingContext): ReadyPack {
@@ -426,9 +420,9 @@ function readyPackOf(args: PrepareArgs, base: WritingPackFile, built: WritingCon
 }
 
 /** 认号 + 写回是一个不可分的动作，所以整段进队列（同 `find_evidence` 那条队） */
-function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string): Promise<void> {
+function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string, warn: (m: string) => void): Promise<void> {
   return serializeWriterCall(args.contentId, async () => {
-    const base = await stillMine(args.contentId, args.packId, dataDir);
+    const base = await stillMine(args.contentId, args.packId, dataDir, warn);
     if (!base) return;
     // Preparation is asynchronous. Never label a pack with a readiness snapshot
     // from one brief while its actual prompts/ledger came from another.
@@ -463,10 +457,10 @@ function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string):
   });
 }
 
-async function finishFailed(args: PrepareArgs, err: unknown, dataDir: string): Promise<void> {
+async function finishFailed(args: PrepareArgs, err: unknown, dataDir: string, warn: (m: string) => void): Promise<void> {
   const reason = await describeWriterFailure(err, "scout", dataDir, cleanErrorMessage(err));
   await serializeWriterCall(args.contentId, async () => {
-    const base = await stillMine(args.contentId, args.packId, dataDir);
+    const base = await stillMine(args.contentId, args.packId, dataDir, warn);
     if (!base) return;
     await writePack(args.contentId, { ...base, state: "failed", error: reason }, dataDir);
     // 稿件上也留一句：没有这一句，创始人在工作台只看到一张不动的「写作中」卡
@@ -476,39 +470,30 @@ async function finishFailed(args: PrepareArgs, err: unknown, dataDir: string): P
 
 // ─── pack_status ──────────────────────────────────────────────────────────────
 
-export interface PackStatusResult extends Record<string, unknown> {
-  ok: true;
-  status: PackState;
-  pack_id: string;
-  started_at: string;
-  elapsed_s: number;
+/** 孤儿重跑：与非 force 的重复 pack 同一条路（同一套请求比对与立意闸口），宿主身份沿用包上的 */
+async function restartOrphan(contentId: string, pack: WritingPackFile, dataDir: string, deps: PackDeps, startedAt: number): Promise<PackResult> {
+  const req = pack.request?.req;
+  if (!req?.topicId) return packView(contentId, pack); // 老包没存请求快照，无从按原请求重跑
+  const restarted = await startPack(
+    { contentId, topicId: req.topicId, platform: req.platform, modelExecution: req.modelExecution === "engine" ? "engine" : "host", host: pack.host, force: false, startedAt },
+    dataDir,
+    deps,
+  );
+  return restarted.ok === false || restarted.pack_id === pack.packId ? restarted : { ...restarted, restarted: true };
 }
 
 /**
  * 轮询口。`ready` 时回的**就是**备料完成的那份完整回执（宿主不必再 pack 一次）；
  * `failed` 仍然 `ok:true`——查状态这件事成功了，坏消息在 `status` 与 `error` 里，
  * 而且 submit/find_evidence 那头还有一道硬拦，漏看不会写出一篇没材料的稿。
+ * 每个等待有终点：盘上 preparing 却没有任务在跑（孤儿）就地重跑；第 4 次起回 `pack_stalled`。
  */
-export async function packStatus(contentId: string, dataDir: string): Promise<PackStatusResult | Fail> {
+export async function packStatus(contentId: string, dataDir: string, deps: PackDeps = {}): Promise<PackResult> {
+  const startedAt = Date.now();
   const pack = await readPack(contentId, dataDir);
   if (!pack) return { ok: false, error: `这篇没有写作包（${contentId}）——先 pack 一次` };
-  const base = {
-    ok: true as const,
-    status: pack.state,
-    pack_id: pack.packId,
-    started_at: pack.issuedAt,
-    elapsed_s: elapsedSeconds(pack.issuedAt),
-  };
-  if (isReadyPack(pack)) return { ...base, ...readyResult(contentId, pack), status: "ready" as const };
-  if (pack.state === "failed") {
-    const req = pack.request?.req;
-    return {
-      ...base,
-      ...preparationProgress(contentId, pack),
-      error: pack.error ?? "未记原因",
-      note: "这份包没备成，别动笔——pack{force:true} 重来一次；连着失败就先跑 autocrew_workflow doctor 看线路。",
-      ...(req?.topicId ? { next_action: { tool: "autocrew_writer", params: { ...writingContinueParams(req.topicId, req), action: "pack", force: true } } } : {}),
-    };
-  }
-  return { ...base, ...preparationProgress(contentId, pack), note: POLL_NOTE };
+  if (pack.state === "preparing" && !preparing.has(contentId)) return restartOrphan(contentId, pack, dataDir, deps, startedAt);
+  const seen = pack.state === "preparing" ? (await countPoll(contentId, dataDir)) ?? pack : pack;
+  if (seen.state === "preparing" && (seen.polls ?? 0) > MAX_PACK_POLLS) return stalledResult(contentId, seen);
+  return packView(contentId, seen);
 }

@@ -47,7 +47,7 @@ export const reviewDeskSchema = Type.Object({
   claim_token: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "submit：这篇有活认领时必须带（writer pack/submit 或 autocrew_desk claim 回的令牌），同宿主的另一个会话也一样；pack 只读不用带。" })),
 }, { additionalProperties: false });
 
-export const REVIEW_DESK_DESCRIPTION = "Host-executed review, no backend LLM call. pack{content_id} returns the saved draft, shared review criteria/creative task, review_pack_id and attempt. The current host reviews it and submits{content_id,review_pack_id,attempt,issues,audience?,claim_token?}; submit is a write, so a claimed draft needs the matching claim_token (same host included) or it returns claim_held. Issues require exact 6-60 character quotes plus rule/severity/instruction. Same authenticated host as the writer is host_self_review; another credential principal is not proof of another model or independent review. Retries with identical payload are idempotent; edited drafts and superseded writing packs are fenced. Review is not user adoption or permission to publish.";
+export const REVIEW_DESK_DESCRIPTION = "Host-executed review, no backend LLM call. writer submit (review=host) already returns this task as review_pack with next_action=review_desk submit; pack{content_id} re-fetches it (same review_pack_id for the same draft and attempt): the saved draft, shared review criteria/creative task, review_pack_id and attempt. The current host reviews it and submits{content_id,review_pack_id,attempt,issues,audience?,claim_token?}; submit is a write, so a claimed draft needs the matching claim_token (same host included) or it returns claim_held. Issues require exact 6-60 character quotes plus rule/severity/instruction. Same authenticated host as the writer is host_self_review; another credential principal is not proof of another model or independent review. Retries with identical payload are idempotent; edited drafts and superseded writing packs are fenced. Review is not user adoption or permission to publish.";
 
 function hashDraft(title: string, body: string, platform?: string): string {
   return createHash("sha256").update(JSON.stringify([title, body, platform])).digest("hex");
@@ -82,7 +82,12 @@ async function freezeAudience(pack: ReadyPack, rec: PackAttempt, dataDir: string
   };
 }
 
-async function reviewPack(contentId: string, pack: ReadyPack, reviewerHost: string, dataDir: string): Promise<Record<string, unknown>> {
+/**
+ * 审稿包本体（P6 §3.7）：冻结并保存受众依据、签好的 `review_pack_id` 绑定原写稿 attempt 与 draft_hash、组装审稿提示词。
+ * `review_desk pack` 与 `writer submit{review:"host"}` 共用这一份，产物逐字相同；同稿同 attempt 重取还是同一个 id。
+ * **调用方必须已在本稿的写手队列里**（`serializeWriterCall`）：这里不取锁，嵌套取同一把就是自己等自己。
+ */
+export async function hostReviewPack(contentId: string, pack: ReadyPack, reviewerHost: string, dataDir: string): Promise<Record<string, unknown>> {
   const latest = latestAttempt(pack);
   if (!latest) return fail("先用autocrew_writer submit保存稿件，才能领取审稿包");
   const [attempt, rec] = latest;
@@ -202,7 +207,7 @@ export async function executeReviewDesk(params: Record<string, unknown>): Promis
     const result = await serializeWriterCall(contentId, async () => {
       const pack = await readPack(contentId, dataDir);
       if (!isReadyPack(pack)) return fail("稿件没有可用的写作包，先完成writer pack与submit");
-      return params.action === "pack" ? reviewPack(contentId, pack, reviewerHost, dataDir) : submitReview(params, pack, reviewerHost, dataDir, grant);
+      return params.action === "pack" ? hostReviewPack(contentId, pack, reviewerHost, dataDir) : submitReview(params, pack, reviewerHost, dataDir, grant);
     });
     return withTokenInNextAction({ ...result, ...grant });
   } catch (err) {

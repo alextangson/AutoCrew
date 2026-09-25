@@ -23,6 +23,8 @@ import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
+import { listWorkspaces } from "../src/desktop/workspace-store.js";
+import { failStalePreparingPacks } from "../src/tools/writer-pack.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { startDigestScheduler, stopDigestScheduler } from "../src/desktop/digest-scheduler.js";
@@ -39,7 +41,7 @@ import { initEngineHealth, probeAllProviders } from "../src/desktop/engine-healt
 import { createRadarCycle, RADAR_CYCLE_INTERVAL_MS } from "../src/desktop/radar-cycle.js";
 import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.js";
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
-import { handleMcpRequest, MCP_PROTOCOL_VERSION } from "../mcp/server.js";
+import { handleMcpRequest, MCP_PROTOCOL_VERSION, normalizeSession } from "../mcp/server.js";
 import { hostAuthorize } from "../mcp/host-policy.js";
 
 const HOST = "127.0.0.1";
@@ -228,10 +230,12 @@ const server = http.createServer(async (req, res) => {
     let mcpDataDir: string;
     try { mcpDataDir = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { mcpDataDir = getDataDir(); }
     const host = identity?.subject ?? LOCAL_SUBJECT;
-    // 按宿主限权（P6 §3.4）：codex 剪辑工位只放行登记与只读查询，其余宿主不受限
+    // 按宿主限权（P6 §3.4）：codex 剪辑工位只放行登记与只读查询，其余宿主不受限。
+    // 会话归因（P6 §3.8）：转发器每进程一个 nonce，Codex 直连可带可不带——只做诊断，缺省 unknown
     const response = await handleMcpRequest(request, {
       principal: { subject: host, plan: "local" },
       host,
+      session: normalizeSession(req.headers["x-autocrew-session"]),
       authorize: hostAuthorize(host),
     }, mcpDataDir);
     if (!response) {
@@ -435,6 +439,22 @@ try {
   }
 } catch (err) {
   console.error("[reconcile] 孤儿稿清理失败:", err instanceof Error ? err.message : err);
+}
+
+// 写作包备料不跨进程续跑(P6 §3.7):上个进程留下、超 2 分钟的 `preparing` 包标 failed(daemon_restarted),
+// 迟到写回一律丢弃;宿主下一次 pack / pack_status 按 next_action 重领。单个工作区失败不阻断启动。
+try {
+  const dirs = new Set([getDataDir(), ...(await listWorkspaces()).workspaces.map((ws) => ws.dataDir)]);
+  let stalePacks = 0;
+  for (const dir of dirs) {
+    stalePacks += (await failStalePreparingPacks(dir).catch((err) => {
+      console.error(`[writer] 写作包清扫失败(${dir}):`, err instanceof Error ? err.message : err);
+      return [];
+    })).length;
+  }
+  if (stalePacks > 0) console.log(`  [writer] ${stalePacks} 份中断的写作包已标失败,宿主重新 pack 即可`);
+} catch (err) {
+  console.error("[writer] 写作包清扫失败:", err instanceof Error ? err.message : err);
 }
 
 // 灵感库过期清理(V5.4c 创始人裁决):3 天未选用自动入回收站;有稿件血缘的永不清理

@@ -233,7 +233,13 @@ describe("truthful provenance and durable quotas", () => {
       expect((await inspectHostResearchTask(topicId, dir))?.broker.jobReadPage).toBe(1);
       throw new Error("fixture network unavailable");
     });
-    expect(await readPage()).toMatchObject({ ok: false, error: "fixture network unavailable" });
+    // 失败照实报，并明说这一格额度已扣、不退（P6 §3.7）
+    expect(await readPage()).toMatchObject({
+      ok: false,
+      code: "page_fetch_failed",
+      quota_consumed: true,
+      error: expect.stringMatching(/fixture network unavailable.*额度.*不退回/),
+    });
     expect(await readPage()).toMatchObject({ ok: false, error: expect.stringContaining("上限 1 页") });
     expect(deps.brokerDeps!.fetchImpl).toHaveBeenCalledTimes(1);
     expect((await inspectHostResearchTask(topicId, dir))?.broker.sources).toEqual([]);
@@ -462,7 +468,7 @@ it("真实writer force重领同稿恢复宿主补证，来源等级、额度和�
     requirements: REQUIREMENTS,
     direction: "从清晨浇水的经历自然展开",
   });
-  expect(first).toMatchObject({ ok: true, status: "preparing" });
+  expect(first).toMatchObject({ ok: true, status: "ready", synchronous: true }); // 宿主模式 pack 就地备完（P6 §3.7）
   const contentId = first.content_id as string;
   await packPreparation(contentId);
   expect(await writer({ action: "pack_status", content_id: contentId })).toMatchObject({
@@ -502,7 +508,7 @@ it("真实writer force重领同稿恢复宿主补证，来源等级、额度和�
     // 重领同篇也是写：带上首次领包回的令牌（P6 §3.8 同宿主不再免检）
     claim_token: first.claim_token,
   });
-  expect(reissued).toMatchObject({ ok: true, content_id: contentId, status: "preparing" });
+  expect(reissued).toMatchObject({ ok: true, content_id: contentId, status: "ready", synchronous: true });
   expect(reissued.pack_id).not.toBe(first.pack_id);
   await packPreparation(contentId);
   const ready = await writer({ action: "pack_status", content_id: contentId });

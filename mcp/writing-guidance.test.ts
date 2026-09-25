@@ -20,6 +20,7 @@ const SKILLS = [
   "calibrate", "style-calibration", "topic-ideas", "spawn-planner", "research",
   "spawn-writer", "write-script", "spawn-batch-writer", "platform-rewrite",
   "humanizer-zh", "content-review", "memory-distill", "pre-publish", "manage-pipeline", "onboarding",
+  "video-session",
 ];
 const skill = (name: string) => readFileSync(path.join(ROOT, "skills", name, "SKILL.md"), "utf8");
 const harness = (name: string) => skill(name).split("\n## GUI")[0].split("\n## Changelog")[0];

@@ -20,7 +20,7 @@ import path from "node:path";
 
 import { externalBlock, sanitizeExternal } from "../modules/research/research-prompt-kit.js";
 import { readJson, writeJsonAtomic } from "../storage/json-atomic.js";
-import { contentDir } from "../storage/local-store.js";
+import { contentDir, listContents, updateContent } from "../storage/local-store.js";
 import { getPack } from "../modules/packs/index.js";
 import { resolveQualityGate } from "../modules/writing/quality-gate.js";
 import type { QualityGateSpec } from "../modules/packs/pack-schema.js";
@@ -125,6 +125,10 @@ export interface WritingPackFile {
   state: PackState;
   /** `state=failed` 时的人话原因（线路故障走 P2 翻译器） */
   error?: string;
+  /** `state=failed` 的机器可读原因：守护进程重启清扫判死的包（P6 §3.7） */
+  reason?: "daemon_restarted";
+  /** 本包 `preparing` 期间被 `pack_status` 查过几次；超过上限回 `pack_stalled`（P6 §5） */
+  polls?: number;
   /** 回执里那句话：`pack` 与 `pack_status` 说同一句，不各写一份 */
   note?: string;
   host: string;
@@ -195,7 +199,7 @@ export function packNotReadyError(pack: WritingPackFile): string {
   if (pack.state === "failed") {
     return `写作包准备失败：${pack.error ?? "未记原因"}，pack{force:true} 重新 pack 一次再写。`;
   }
-  return "写作包还在准备中，先 pack_status 等它 ready（通常 1–6 分钟）再动笔。";
+  return "写作包还在准备中，先 pack_status 等它 ready（宿主模式通常几秒内就绪）再动笔。";
 }
 
 /**
@@ -241,6 +245,41 @@ export async function readPack(contentId: string, dataDir?: string): Promise<Wri
 /** 原子写回（temp + rename）：补证与提交都会改它，写到一半崩掉不许留半份账本 */
 export async function writePack(contentId: string, pack: WritingPackFile, dataDir?: string): Promise<void> {
   await writeJsonAtomic(packPath(contentId, dataDir, PACK_JSON), pack);
+}
+
+/** 启动清扫的判死门槛：上一进程留下、超过它的 `preparing` 不会再有任务写回（P6 §3.7） */
+export const STALE_PREPARING_MS = 2 * 60_000;
+
+const DAEMON_RESTARTED = "守护进程重启，备料中断（daemon_restarted）";
+
+/** 判死一份包：只认仍是同一个号、仍在 preparing 的那份，排在写手队列里与备料写回互斥 */
+function failIfStale(contentId: string, dataDir: string, now: number): Promise<boolean> {
+  return serializeWriterCall(contentId, async () => {
+    const pack = await readPack(contentId, dataDir);
+    const issued = Date.parse(pack?.issuedAt ?? "");
+    if (pack?.state !== "preparing" || Number.isNaN(issued) || now - issued < STALE_PREPARING_MS) return false;
+    await writePack(contentId, { ...pack, state: "failed", reason: "daemon_restarted", error: DAEMON_RESTARTED }, dataDir);
+    await updateContent(contentId, { lastError: `写作包准备失败：${DAEMON_RESTARTED}` }, dataDir);
+    return true;
+  });
+}
+
+/**
+ * 守护进程启动清扫：备料不跨进程续跑，上一进程没备完的包标 `failed`（reason=daemon_restarted）。
+ * 判死之后迟到的写回一律丢弃（`writer-prepare` 认号时不收 failed 包），宿主下一次
+ * pack / pack_status 拿到 next_action 重领。2 分钟内的留给可能还活着的并行进程。
+ */
+export async function failStalePreparingPacks(dataDir: string, now = Date.now()): Promise<string[]> {
+  const failed: string[] = [];
+  for (const content of await listContents(dataDir)) {
+    try {
+      if (await failIfStale(content.id, dataDir, now)) failed.push(content.id);
+    } catch (err) {
+      // 单篇坏数据不阻断其余稿件的清扫
+      console.warn(`[writer] 写作包清扫 ${content.id} 失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return failed;
 }
 
 /** 包已作废的人话（fencing token 被换掉时唯一的说法） */

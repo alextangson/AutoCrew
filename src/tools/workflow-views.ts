@@ -183,7 +183,7 @@ export function reviewOutstanding(content: Content): boolean {
 
 /**
  * `drafting` 的那一句话。三种「写作中」的成因完全不同，说错就是让人白等：
- * 内部写手 = 真有个后台任务在跑；宿主写稿 = 除了发包那几分钟的备料，球都在宿主模型那边；
+ * 内部写手 = 真有个后台任务在跑；宿主写稿 = 除了发包那十几秒的备料，球都在宿主模型那边；
  * 交了稿的按实际 reviewMode 指向宿主审阅或明确启用的后台线。这里不读盘（纯函数）。
  */
 export function draftingNote(content: Content): string {
@@ -198,7 +198,7 @@ export function draftingNote(content: Content): string {
     return "还在后台写（通常 15–30 分钟），过一会儿再查。正文此刻是占位，别拿去用。";
   }
   const pack = content.pack!;
-  return `写作包已发给 ${pack.host}，未收到稿（${minutesSince(pack.issuedAt)} 分钟）。刚发包的头几分钟产品还在备料（\`autocrew_writer pack_status\` 看得到）；备好之后球就在宿主那边——催他提交，或 pack{force:true} 再领一次（旧包作废）。`;
+  return `写作包已发给 ${pack.host}，未收到稿（${minutesSince(pack.issuedAt)} 分钟）。刚发包那十几秒产品还在备料（\`autocrew_writer pack_status\` 看得到）；备好之后球就在宿主那边——催他提交，或 pack{force:true} 再领一次（旧包作废）。`;
 }
 
 /** 「谁在写、领的哪份包、谁在拿着它」——`drafting` 的占位回执与成稿视图都带上它 */

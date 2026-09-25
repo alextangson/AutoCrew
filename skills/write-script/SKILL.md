@@ -12,7 +12,7 @@ description: |
 
 ## 写前准备
 
-复用或建立选题，调 `autocrew_workflow {action:"prepare", topic_id, platform, requirements}`。按 `next_action` 到 `autocrew_scout` 完成宿主研究；研究阶段不是后台模型任务，不能靠轮询等它自动完成。`needs_angle` 时展示候选主张、依据、缺口和推荐理由，用户选择后用 `select_angle` 保存。已有明确角度用 `direction`，不重复要求选卡。
+复用或建立选题，调 `autocrew_workflow {action:"prepare", topic_id, platform, requirements}`。按 `next_action` 到 `autocrew_scout` 完成宿主研究；研究阶段不是后台模型任务，不能靠轮询等它自动完成。`needs_angle` 时展示候选主张、依据、缺口和推荐理由，用户选择后用 `select_angle{topic_id, angle_id, brief_revision}` 保存（`brief_revision` 取 prepare 返回的那个，缺它会被拒），它直接回 `ready_to_write` 和领包参数。已有明确角度用 `direction`，不重复要求选卡。
 
 已有材料可明确 `research_mode:"provided"` + `research`；用户明确不需研究才 `research_mode:"skip"` + `research_reason`。不得为绕过失败自行跳过。`needs_attention` 说明缺口，`ready_to_write` 后才按返回动作领包。
 

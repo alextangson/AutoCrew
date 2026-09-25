@@ -3,8 +3,9 @@ import { createCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * writer.test.ts — `autocrew_writer` 四个动作（P3 spec §5）。
  *
- * 备料与审稿**两头都是异步的**（`pack`/`pack_status`、`submit`/`submit_status`），所以这里额外钉住三件事：
- * 中间态不许被当成能写的包或能收工的稿、重入不许起第二条后台任务、被 `force` 顶掉的旧任务不许覆盖新包。
+ * 备料与审稿**两头都是异步的**（`pack`/`pack_status`、`submit`/`submit_status`；宿主模式 `pack` 就地等至多 15 秒），
+ * 所以这里额外钉住：中间态不许被当成能写的包或能收工的稿、重入不许起第二条后台任务、被 `force` 顶掉或
+ * 被判死的旧任务不许覆盖现行的包、每个等待都有终点（轮询上限、孤儿重跑、启动清扫）。
  *
  * 这条链的要害是**闭包状态落了盘还作不作数**：修复计数、证据账本、`find_evidence` 配额
  * 全部跨调用，任何一样没续上都是静默的门禁失效（额度重置 = 没有上限，账本没续 = 新证据被吞）。
@@ -19,7 +20,7 @@ import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { executeWriter } from "./writer.js";
-import { PACK_JSON, PACK_MD, type WritingPackFile } from "./writer-pack.js";
+import { failStalePreparingPacks, PACK_JSON, PACK_MD, STALE_PREPARING_MS, type WritingPackFile } from "./writer-pack.js";
 import { packPreparation } from "./writer-prepare.js";
 import { forgetReview, reviewInFlight } from "./writer-review.js";
 import { executeWorkflow } from "./workflow.js";
@@ -176,7 +177,7 @@ function submitArgs(contentId: string, packId: string, attempt: number, over: Re
   };
 }
 
-/** 领一份包，**不等**备料（`pack` 现在是秒回的领号动作） */
+/** 领一份包（宿主模式通常就地备好；卡住的备料替身要带 `deps` 把同步等待归零） */
 async function issue(over: Record<string, unknown> = {}, deps = {}): Promise<Record<string, any>> {
   const topic = await seed(makeBrief({ creativeTask: createCreativeTask({ platform: "douyin", ...over }) }));
   await pickAngle(topic.id);
@@ -199,10 +200,12 @@ async function pack(over: Record<string, unknown> = {}, deps = {}): Promise<Reco
 
 /**
  * 可控备料替身：`gate` 卡住的这段时间就是「还在准备中」，`release()` 之后才真去装配材料。
- * 这样中间态是**确定**可观测的，不靠 sleep。
+ * 这样中间态是**确定**可观测的，不靠 sleep。`deps` 顺带把 `pack` 的同步等待归零——
+ * 否则卡住的备料会让每次 pack 都干等满 15 秒。
  */
 function deferredContext(): {
   impl: typeof buildWritingContext;
+  deps: { buildContextImpl: typeof buildWritingContext; packSyncDeadlineMs: number };
   release: () => void;
   calls: () => number;
 } {
@@ -216,7 +219,7 @@ function deferredContext(): {
     await gate;
     return buildWritingContext(req, dataDir, warn, deps);
   };
-  return { impl, release: () => open(), calls: () => calls };
+  return { impl, deps: { buildContextImpl: impl, packSyncDeadlineMs: 0 }, release: () => open(), calls: () => calls };
 }
 
 async function readPackFile(contentId: string): Promise<WritingPackFile> {
@@ -496,6 +499,8 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
     await fs.writeFile(path.join(testDir, "engine.json"), "{broken");
     const topic = await manualTopic();
     const started = await run({ action: "pack", execution, topic_id: topic.id, platform: "douyin", research_mode: "provided", research: MANUAL_DESC, direction: "按现有实测材料解释返工" });
+    // engine 模式仍是异步领号（30 秒回查），宿主模式就地备完
+    expect(started).toMatchObject(execution === "host" ? { status: "ready", synchronous: true } : { status: "preparing", poll_after_seconds: 30 });
     const status = await settle(started.content_id as string);
     expect(status.status).toBe(execution === "host" ? "ready" : "failed");
     if (execution === "engine") expect(String(status.error)).toContain("engine.json");
@@ -507,10 +512,10 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
 describe("writer pack 异步备料", () => {
   it("备料中新要求不静默复用旧包，也不重复启动备料", async () => {
     const gathering = deferredContext();
-    const first = await issue({ requirements: "先讲真实返工，再解释原因。" }, { buildContextImpl: gathering.impl });
+    const first = await issue({ requirements: "先讲真实返工，再解释原因。" }, gathering.deps);
     const changed = await run({
       action: "pack", topic_id: first.topicId, platform: "douyin", requirements: "按一天的经历展开。",
-    }, { buildContextImpl: gathering.impl });
+    }, gathering.deps);
     expect(changed).toMatchObject({ ok: false, code: "pack_request_changed", pack_id: first.pack_id });
     expect(String(changed.error)).toContain("force:true");
     expect(gathering.calls()).toBe(1);
@@ -616,10 +621,13 @@ describe("writer pack 异步备料", () => {
     expect((await readPackFile(first.content_id)).request?.planningFingerprint).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("pack 秒回 preparing → 备料期间不许写 → pack_status 变 ready 才拿到材料", async () => {
+  it("宿主模式到点没备完 → 回 preparing（5 秒回查）→ 备料期间不许写 → pack_status 变 ready 才拿到材料", async () => {
     const gathering = deferredContext();
-    const started = await issue({}, { buildContextImpl: gathering.impl });
-    expect(started).toMatchObject({ ok: true, status: "preparing" });
+    const t0 = Date.now();
+    const started = await issue({}, { ...gathering.deps, packSyncDeadlineMs: 30 });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(25); // 真在等，只是到点了
+    expect(started).toMatchObject({ ok: true, status: "preparing", poll_after_seconds: 5 });
+    expect(started.synchronous).toBeUndefined();
     expect(started.pack_id).toMatch(/^wp-/);
     expect(started.pack_md).toBeUndefined(); // 材料还没有，绝不能先给一份空包
     expect(String(started.note)).toContain("pack_status");
@@ -628,7 +636,7 @@ describe("writer pack 异步备料", () => {
     expect(mid).toMatchObject({
       ok: true, status: "preparing", pack_id: started.pack_id,
       preparation: JSON.parse(JSON.stringify(started.preparation)), writing_source: started.writing_source,
-      next_action: started.next_action, poll_after_seconds: 30,
+      next_action: started.next_action, poll_after_seconds: 5,
     });
     expect(typeof mid.elapsed_s).toBe("number");
     expect(String(mid.started_at)).toBeTruthy();
@@ -661,15 +669,15 @@ describe("writer pack 异步备料", () => {
 
   it("备料中再 pack 一次：同号返回，绝不起第二条后台任务", async () => {
     const gathering = deferredContext();
-    const first = await issue({}, { buildContextImpl: gathering.impl });
+    const first = await issue({}, gathering.deps);
     const again = await run(
       { action: "pack", topic_id: first.topicId, platform: "douyin" },
-      { buildContextImpl: gathering.impl },
+      gathering.deps,
     );
     expect(again).toMatchObject({
       status: "preparing", pack_id: first.pack_id, content_id: first.content_id,
       preparation: JSON.parse(JSON.stringify(first.preparation)), writing_source: first.writing_source,
-      next_action: first.next_action, poll_after_seconds: 30,
+      next_action: first.next_action, poll_after_seconds: 5,
     });
     expect(gathering.calls()).toBe(1);
 
@@ -694,7 +702,7 @@ describe("writer pack 异步备料", () => {
 
   it("异步备料读到新简报时拒绝把旧准备快照贴到新材料上", async () => {
     const gathering = deferredContext();
-    const first = await issue({ direction: "从返工经历解释", requirements: "我的完整规划" }, { buildContextImpl: gathering.impl });
+    const first = await issue({ direction: "从返工经历解释", requirements: "我的完整规划" }, gathering.deps);
     await saveBrief(first.topicId, makeBrief({ revision: 2, summary: "新简报" }), testDir);
     await upsertJob({ topicId: first.topicId, status: "succeeded", startedAt: "2026-09-22T00:00:00Z", perspectives: [], briefRevision: 2, topicHash: topicHashOf(TITLE, DESC) }, testDir);
     gathering.release();
@@ -718,13 +726,13 @@ describe("writer pack 异步备料", () => {
 
   it("force 重来：旧号当场作废，迟到的旧备料不许覆盖新包", async () => {
     const slow = deferredContext();
-    const first = await issue({}, { buildContextImpl: slow.impl });
+    const first = await issue({}, slow.deps);
     const firstTask = packPreparation(first.content_id)!;
 
     const fresh = deferredContext();
     const second = await run(
       { action: "pack", topic_id: first.topicId, platform: "douyin", force: true },
-      { buildContextImpl: fresh.impl },
+      fresh.deps,
     );
     expect(second.status).toBe("preparing");
     expect(second.pack_id).not.toBe(first.pack_id);
@@ -750,6 +758,8 @@ describe("writer pack 异步备料", () => {
       throw new Error("relay 断流：ECONNRESET");
     };
     const started = await issue({}, { buildContextImpl: boom });
+    // 宿主模式就地等到了结果：失败也当场说，不先给一个要轮询的 preparing
+    expect(started).toMatchObject({ ok: true, status: "failed", synchronous: true, next_action: { params: { action: "pack", force: true } } });
     const failed = await settle(started.content_id);
     expect(failed.status).toBe("failed");
     // P2 翻译器：说的是「哪条线怎么了」，不是复述 ECONNRESET
@@ -764,7 +774,7 @@ describe("writer pack 异步备料", () => {
     expect(String(rejected.error)).toContain("force");
 
     const retry = await run({ action: "pack", topic_id: started.topicId, platform: "douyin", force: true });
-    expect(retry.status).toBe("preparing");
+    expect(retry).toMatchObject({ status: "ready", synchronous: true });
     expect((await settle(started.content_id)).status).toBe("ready");
   });
 
@@ -779,6 +789,73 @@ describe("writer pack 异步备料", () => {
     );
     expect((await run({ action: "pack_status", content_id: res.content_id })).status).toBe("ready");
     expect((await run(submitArgs(res.content_id, res.pack_id, 1))).status).toBe("accepted_unreviewed");
+  });
+
+  it("宿主模式 pack 就地备完：直接回 ready（synchronous:true），与 pack_status 同一份回执", async () => {
+    const started = await issue();
+    expect(started).toMatchObject({ ok: true, status: "ready", synchronous: true, content_id: expect.any(String), pack_id: expect.stringMatching(/^wp-/) });
+    expect(String(started.pack_md)).toContain("写作包");
+    expect(packPreparation(started.content_id)).toBeUndefined(); // 没有留在后台的任务
+    expect(await run({ action: "pack_status", content_id: started.content_id })).toMatchObject({
+      status: "ready", pack_id: started.pack_id, pack_md: started.pack_md, budget: started.budget, preparation: started.preparation,
+    });
+    expect((await run(submitArgs(started.content_id, started.pack_id, 1))).status).toBe("accepted_unreviewed");
+  });
+
+  it("preparing 期间第 4 次轮询 → pack_stalled，给出带原请求的 force 重领；备完后照常回 ready", async () => {
+    const gathering = deferredContext();
+    const started = await issue({ requirements: "保留完整规划" }, gathering.deps);
+    for (let i = 1; i <= 3; i += 1) {
+      expect(await run({ action: "pack_status", content_id: started.content_id }), `poll ${i}`).toMatchObject({ ok: true, status: "preparing" });
+    }
+    const stalled = await run({ action: "pack_status", content_id: started.content_id });
+    expect(stalled).toMatchObject({
+      ok: false, code: "pack_stalled", status: "needs_review", error: "备料超过预期仍未就绪", pack_id: started.pack_id, polls: 4,
+      next_action: { tool: "autocrew_writer", params: { action: "pack", force: true, topic_id: started.topicId, platform: "douyin", requirements: "保留完整规划" } },
+    });
+    expect((await readPackFile(started.content_id)).polls).toBe(4);
+    expect(gathering.calls()).toBe(1); // 轮询不会起第二条备料
+    gathering.release();
+    expect(await settle(started.content_id)).toMatchObject({ status: "ready", pack_id: started.pack_id });
+  });
+
+  it("盘上 preparing 却没有任务在跑（进程重启的孤儿）→ pack_status 按原请求重跑，换新号直接备好", async () => {
+    const first = await pack({ requirements: "保留完整规划" });
+    const orphan = await readPackFile(first.content_id);
+    delete orphan.context;
+    await fs.writeFile(path.join(testDir, "contents", first.content_id, PACK_JSON), JSON.stringify({ ...orphan, state: "preparing" }));
+    expect(packPreparation(first.content_id)).toBeUndefined();
+
+    const status = await run({ action: "pack_status", content_id: first.content_id });
+    expect(status).toMatchObject({ ok: true, status: "ready", synchronous: true, restarted: true, content_id: first.content_id });
+    expect(status.pack_id).not.toBe(first.pack_id);
+    const file = await readPackFile(first.content_id);
+    expect(file).toMatchObject({ state: "ready", packId: status.pack_id, host: "local-user" });
+    expect(file.context?.req.requirements).toBe("保留完整规划");
+    expect(String((await run(submitArgs(first.content_id, first.pack_id, 1))).error)).toContain("写作包已作废");
+  });
+
+  it("启动清扫：超 2 分钟的 preparing 标 failed(daemon_restarted)，迟到的备料写回被拒，pack_status 给出重领", async () => {
+    const gathering = deferredContext();
+    const warnings: string[] = [];
+    const started = await issue({}, { ...gathering.deps, onWarn: (m: string) => warnings.push(m) });
+    const task = packPreparation(started.content_id)!;
+    expect(await failStalePreparingPacks(testDir)).toEqual([]); // 2 分钟内的留给可能还活着的并行进程
+    expect(await failStalePreparingPacks(testDir, Date.now() + STALE_PREPARING_MS + 1000)).toEqual([started.content_id]);
+    expect(await readPackFile(started.content_id)).toMatchObject({ state: "failed", reason: "daemon_restarted", packId: started.pack_id });
+
+    // 判死之前起的任务这时才备完：结果必须丢掉，不许把包改回 ready
+    gathering.release();
+    await task;
+    const after = await readPackFile(started.content_id);
+    expect(after).toMatchObject({ state: "failed", reason: "daemon_restarted" });
+    expect(after.context).toBeUndefined();
+    expect(warnings.some((w) => w.includes("stale_pack"))).toBe(true);
+    expect(String((await getContent(started.content_id, testDir))?.lastError)).toContain("daemon_restarted");
+    expect(await run({ action: "pack_status", content_id: started.content_id })).toMatchObject({
+      ok: true, status: "failed", reason: "daemon_restarted", next_action: { params: { action: "pack", force: true } },
+    });
+    expect((await run(submitArgs(started.content_id, started.pack_id, 1))).ok).toBe(false);
   });
 
   it("pack_status 查一篇没领过包的稿 → ok:false，不编一个状态出来", async () => {
@@ -1190,8 +1267,9 @@ describe("writer submit 审稿", () => {
     const content = await getContent(res.content_id, testDir);
     expect(content?.status).toBe("draft_ready");
     expect(content?.review?.rounds).toBe(1);
-    // 真机 2026-09-06：稿已 draft_ready 后宿主重发同一 attempt，要拿回「已收下」的原结果，不是「不收稿」
-    const again = (await run(submitArgs(res.content_id, res.pack_id, 2, { review: "engine" }), { runLoopImpl: impl })) as Record<string, any>;
+    // 真机 2026-09-06：稿已 draft_ready 后宿主重发同一 attempt（同一份正文），要拿回「已收下」的原结果，不是「不收稿」
+    const revisedBody = { body: "那天他上线前又通宵了一次，敲字确实快了，回头看的活一点没少。" };
+    const again = (await run(submitArgs(res.content_id, res.pack_id, 2, { review: "engine", ...revisedBody }), { runLoopImpl: impl })) as Record<string, any>;
     expect(again).toMatchObject({ status: "accepted", replayed: true });
   });
 
@@ -1447,7 +1525,7 @@ describe("draft feedback re-enters the host writing pack", () => {
     expect(captured).toMatchObject({ ok: true, status: "recorded" });
     const next = (captured.next_action as { params: Record<string, unknown> }).params;
     const reissued = await run(next);
-    expect(reissued).toMatchObject({ ok: true, content_id: first.content_id, status: "preparing" });
+    expect(reissued).toMatchObject({ ok: true, content_id: first.content_id, status: "ready", synchronous: true });
     expect(reissued.pack_id).not.toBe(first.pack_id);
     const prepared = await settle(first.content_id);
     expect(prepared.status).toBe("ready");
