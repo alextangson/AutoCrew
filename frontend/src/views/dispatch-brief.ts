@@ -7,11 +7,15 @@
  * - 「直接写」那句点名「请把这句原样放进 skip_reason 参数」——§1.6 明令跳过角度必须
  *   是显式动作 + 原话转述,落 run-log 可回溯,不是模型自己猜的一个布尔。
  */
-import { platformLabel, type Topic } from "../lib";
+import { platformLabel, type Content, type Topic } from "../lib";
 
 export interface DispatchBriefInput {
   title: string;
   topic: Topic | null;
+  /** 选题记录缺失时，仍沿用稿件上留存的血缘；真实 topic.id 优先。 */
+  topicId?: string;
+  /** 复用已有稿件时只传引用，由总编辑读取当前完整正文。 */
+  source?: Pick<Content, "id" | "title" | "platform">;
   platform: string;
   direction: string;
   /** 用户在工作台显式点了「直接写」(§1.6 四选之一) */
@@ -32,6 +36,19 @@ export function buildDispatchBrief(input: DispatchBriefInput): string {
   const { title, topic, direction } = input;
   let brief = `用选题《${title}》写一篇${platformLabel(input.platform)}原生版本`;
   const ctx = topic ? topicContext(topic, title) : [];
+  if (!topic && input.topicId?.trim()) {
+    ctx.push(`选题编号：${input.topicId.trim()}（选题记录暂缺，开写时仍带上原 topic_id,血缘别断）`);
+  }
+  if (input.source) {
+    const source = input.source;
+    ctx.push(
+      `复用源稿：《${source.title}》（${platformLabel(source.platform)}，稿件编号 ${source.id}）。` +
+      `先调用 get_draft（id：${source.id}）读取完整源稿，再调用 generate_script，` +
+      `将源稿材料放入 research 参数，基于原稿事实和立意改写成${platformLabel(input.platform)}原生内容。` +
+      "保留上述原 topic_id（如有），另存目标平台新稿，不覆盖源稿；" +
+      "沿用现有写前角度选择、证据检查和审稿流程，不调用 adapt_platform",
+    );
+  }
   if (direction.trim()) {
     ctx.push(`创作者手写角度(请原样放进 direction 参数)：${direction.trim()}（这是最高优先级的角度指引）`);
   }

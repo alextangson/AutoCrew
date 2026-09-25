@@ -52,4 +52,59 @@ describe("buildDispatchBrief", () => {
     const brief = buildDispatchBrief({ ...base, topic: topic({ description: "直播带货的退货率" }) });
     expect(brief).not.toContain("背景：");
   });
+
+  it("已有稿件派生新平台稿时先读取源稿，沿用写稿管线并保留原稿", () => {
+    const brief = buildDispatchBrief({
+      ...base,
+      topic: topic(),
+      platform: "douyin",
+      source: { id: "content-source", title: "退货率原稿", platform: "wechat_mp" },
+    });
+    expect(brief).toContain("抖音原生版本");
+    expect(brief).toContain("《退货率原稿》（公众号");
+    expect(brief).toContain("get_draft（id：content-source）");
+    expect(brief).toContain("再调用 generate_script");
+    expect(brief).toContain("research 参数");
+    expect(brief).toContain("基于原稿事实和立意");
+    expect(brief).toContain("topic-1");
+    expect(brief).toContain("保留上述原 topic_id");
+    expect(brief).toContain("另存目标平台新稿，不覆盖源稿");
+    expect(brief).toContain("写前角度选择、证据检查和审稿流程");
+    expect(brief).toContain("不调用 adapt_platform");
+    expect(brief).not.toContain("skip_reason");
+  });
+
+  it("复用源稿仍保留用户 direction 和显式跳过角度的原话", () => {
+    const brief = buildDispatchBrief({
+      ...base,
+      topic: topic(),
+      source: { id: "content-source", title: "退货率原稿", platform: "wechat_mp" },
+      direction: " 只写消费者退货这一条线 ",
+      skipAngle: true,
+    });
+    expect(brief).toContain("direction 参数)：只写消费者退货这一条线");
+    expect(brief).toContain("最高优先级");
+    expect(brief).toContain("用户已在工作台点了「直接写」");
+    expect(brief).toContain("skip_reason 参数");
+  });
+
+  it("选题记录缺失时使用稿件留存的 topicId，原有血缘不断", () => {
+    const brief = buildDispatchBrief({ ...base, topic: null, topicId: " topic-missing " });
+    expect(brief).toContain("选题编号：topic-missing");
+    expect(brief).toContain("仍带上原 topic_id");
+    expect(brief).not.toContain(" topic-missing ");
+  });
+
+  it("真实 topic.id 优先，不让备用 topicId 改写血缘", () => {
+    const brief = buildDispatchBrief({ ...base, topic: topic(), topicId: "topic-wrong" });
+    expect(brief).toContain("topic-1");
+    expect(brief).not.toContain("topic-wrong");
+  });
+
+  it("没有源稿、没有有效备用编号时保持原有派稿内容", () => {
+    expect(buildDispatchBrief({ ...base, topic: null, topicId: "  " }))
+      .toBe("用选题《直播带货的退货率》写一篇公众号原生版本");
+    expect(buildDispatchBrief({ ...base, topic: topic() }))
+      .toBe("用选题《直播带货的退货率》写一篇公众号原生版本。选题上下文——灵感库编号：topic-1（开写时带上 topic_id,血缘别断）");
+  });
 });

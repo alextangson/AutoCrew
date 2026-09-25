@@ -226,10 +226,11 @@ export interface Content {
   writtenBy?: { kind: string; host?: string; provider?: string; model?: string };
   claim?: { employee: string; host: string; at: string; leaseUntil: string };
   handoffs?: Array<{ from: string; to: string; at: string; by: string }>;
-  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string };
+  pack?: { packId: string; issuedAt: string; host: string; submittedAt?: string; reviewMode?: "host" | "engine" | "none"; reviewPending?: boolean };
   adoption?: { verdict: string; reason?: string; reasonNote?: string; derived?: boolean };
   /** AI 审稿结论(审稿 spec §2.5):稿卡徽章读它;旧稿无此字段 = 不显示徽章 */
   review?: {
+    source?: { kind: "host_self_review" | "host_other_principal_review"; reviewerHost: string; writerHost: string; independent: false; draftHash: string };
     status: "passed" | "revised" | "failed" | "skipped" | "stale";
     rounds: number;
     fixed: number;
@@ -309,7 +310,7 @@ export function publishUrlPlatformWarning(raw: string, platform: string | null |
   return `这个链接看着不像${platformLabel(platform)}的地址(${host})——确认没贴错平台就继续。`;
 }
 
-/** 原子分组(与 vanilla 同构):topicId 为脊椎;孤稿自成原子;纯灵感单列 */
+/** 原子分组：有 topicId 即属同一主题（主题记录可缺失）；无 topicId 的稿件各自成组。 */
 export interface Atom {
   key: string;
   topic: Topic | null;
@@ -321,7 +322,7 @@ export function groupAtoms(topics: Topic[], contents: Content[]): Atom[] {
   const byTopic = new Map<string, Content[]>();
   const solo: Content[] = [];
   for (const c of contents) {
-    if (c.topicId && topicById.has(c.topicId)) {
+    if (c.topicId) {
       const list = byTopic.get(c.topicId) ?? [];
       list.push(c);
       byTopic.set(c.topicId, list);

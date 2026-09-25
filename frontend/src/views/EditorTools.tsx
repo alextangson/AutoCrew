@@ -36,7 +36,7 @@ const ADOPT: Array<[string, string]> = [
 const ADOPT_LABEL = new Map(ADOPT);
 
 function adoptionLabel(verdict?: string): string {
-  return (verdict && ADOPT_LABEL.get(verdict)) || verdict || "";
+  return verdict === "rejected" ? "未采纳" : (verdict && ADOPT_LABEL.get(verdict)) || verdict || "";
 }
 
 export interface EditorToolsProps {
@@ -95,6 +95,7 @@ export function EditorTools(props: EditorToolsProps) {
   };
 
   const doClipboard = async () => {
+    if (dirty) return toast("先保存修改，再生成发布文案");
     if (isVideo) {
       const gate = await invoke("publish:preflight", { content_id: contentId });
       const checked = gate as unknown as { ok: boolean; allPassed?: boolean; summary?: string; error?: string };
@@ -149,6 +150,7 @@ export function EditorTools(props: EditorToolsProps) {
   // 发布前检查:六项内容检查 + 阶段门。还没到「待发布」的稿子全过会被后端顺手推进去;
   // 被阶段门拦下时结果里有「卡在阶段门」那一条,照样报出来,绝不谎报全过
   const runPreCheck = async () => {
+    if (dirty) return toast("先保存修改，再做发布前检查");
     setCheckBusy(true);
     try {
       const r = await invoke("publish:pre_check", { content_id: contentId });
@@ -171,6 +173,7 @@ export function EditorTools(props: EditorToolsProps) {
   };
 
   const pushWechat = async () => {
+    if (dirty) return toast("先保存修改，再推送到公众号草稿箱");
     const yes = await confirmDialog({
       title: "推送到公众号草稿箱?",
       body: "会复用你在「正文配图」里已经确认的图片并调用发布脚本；只进草稿箱，最后群发仍由你在公众号后台确认。",
@@ -192,7 +195,7 @@ export function EditorTools(props: EditorToolsProps) {
   };
 
   return (
-    <>
+    <div className="ed-publishing-tools">
       {/* 采纳判定:发布确认时由系统按改动量自动判一次,这里只做展示 + 改判入口 */}
       {c.adoption && (
         <div className="ed-section adoption-verdict">
@@ -215,27 +218,42 @@ export function EditorTools(props: EditorToolsProps) {
       )}
 
       <details className="ed-tools" open>
-        <summary>发布与分发</summary>
-        <div className="ed-section">
-          <button onClick={() => void doClipboard()}>排版发布文案</button>
+        <summary>发布准备</summary>
+        {dirty && <p className="ed-tool-notice">先保存正文修改，再准备发布材料。</p>}
+        <div className="ed-tool-actions">
+          <button className="ed-tool-action" disabled={dirty} onClick={() => void doClipboard()}>
+            <strong>生成发布文案</strong><span>整理成可复制到平台的发布内容</span>
+          </button>
+          {isVideo && <button className="ed-tool-action" disabled={dirty} onClick={() => void send(`给稿件 ${contentId} 备视频发布件(平台标题+发布文案+分镜+封面)`).then((receipt) => {
+            toast(receipt.ok ? "视频发布包任务已受理，请在总编辑对话中查看" : (receipt.error ?? "派活失败"));
+          })}>
+            <strong>{c.videoKit ? "重新准备视频发布包" : "准备视频发布包"}</strong>
+            <span>包含平台标题、文案、分镜与封面</span>
+          </button>}
+          <button className="ed-tool-action" disabled={checkBusy || dirty} onClick={() => void runPreCheck()}>
+            <strong>{checkBusy ? "检查中…" : "发布前检查"}</strong><span>检查内容、素材与当前发布条件</span>
+          </button>
+        </div>
+        <div className="ed-publish-settings">
           {c.platform === "wechat_mp" && themes.length > 0 && (
             <div className="ed-digest">
-              <span className="mono muted">排版主题(推草稿时生效)</span>
-              <select className="sel-input" value={pubTheme} onChange={(e) => setPubTheme(e.target.value)}>
+              <label htmlFor={`publish-theme-${contentId}`}>公众号排版主题</label>
+              <select id={`publish-theme-${contentId}`} className="sel-input" value={pubTheme} onChange={(e) => setPubTheme(e.target.value)}>
                 <option value="">跟随全局设置({defaultTheme || "newspaper"})</option>
                 {themes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
           )}
-          {c.platform === "wechat_mp" && <button onClick={() => void pushWechat()}>推公众号草稿箱</button>}
           {c.platform === "wechat_mp" && (
             <div className="ed-digest">
-              <span className="mono muted">公众号摘要(≤20 字·分享卡/列表标题下显示;留空微信自动截正文前 54 字)</span>
+              <label htmlFor={`publish-digest-${contentId}`}>公众号摘要</label>
+              <span className="muted">显示在分享卡和文章列表中，建议 20 字以内。</span>
               <input
+                id={`publish-digest-${contentId}`}
                 className="sel-input"
                 maxLength={30}
                 value={digestText}
-                placeholder="一句钩子,≤20 字"
+                placeholder="一句话概括这篇内容"
                 onChange={(e) => setDigestText(e.target.value)}
               />
               <div className="row-actions">
@@ -251,7 +269,7 @@ export function EditorTools(props: EditorToolsProps) {
                       toast("摘要已生成并保存");
                     } finally { setDigestBusy(false); }
                   }}
-                >{digestBusy ? "生成中…" : "AI 生成"}</button>
+                >{digestBusy ? "生成中…" : "AI 生成摘要"}</button>
                 <button
                   disabled={digestText.trim() === (c.digest ?? "")}
                   onClick={async () => {
@@ -259,28 +277,18 @@ export function EditorTools(props: EditorToolsProps) {
                     toast(r.ok ? "摘要已保存" : (r.error ?? "保存失败"));
                     if (r.ok) void reload();
                   }}
-                >保存</button>
+                >保存摘要</button>
               </div>
             </div>
           )}
-          {isVideo && (
-            <button onClick={() => void send(`给稿件 ${contentId} 备视频发布件(平台标题+发布文案+分镜+封面)`).then((receipt) => {
-              toast(receipt.ok ? "发布件任务已受理——看总编辑对话" : (receipt.error ?? "派活失败"));
-            })}>
-              备视频发布件{c.videoKit ? "(已有,重新生成)" : ""}
-            </button>
-          )}
         </div>
+        {c.platform === "wechat_mp" && <div className="ed-publish-delivery">
+          <button disabled={dirty} onClick={() => void pushWechat()}>推送到公众号草稿箱</button>
+          <span className="muted">推送前会再次确认，最终群发在公众号后台完成。</span>
+        </div>}
         {/* 发布前检查明细:由「排版发布文案」触发,结果留在发布区里 */}
         {preflightSummary && <pre className="publish-preflight mono">{preflightSummary}</pre>}
       </details>
-
-      {/* 预检是发布台的活:阶段推进归顶栏推进按钮,这里只回答「这篇现在能不能发」 */}
-      <div className="ed-section">
-        <button disabled={checkBusy} onClick={() => void runPreCheck()}>
-          {checkBusy ? "检查中…" : "跑发布前检查"}
-        </button>
-      </div>
 
       {clip && (
         <div className="pending-edit">
@@ -297,7 +305,7 @@ export function EditorTools(props: EditorToolsProps) {
                   toast("剪贴板写入失败,请手动复制");
                 }
               }}
-            >复制</button>
+            >复制发布文案</button>
             <a href={clip.publishUrl} target="_blank" rel="noreferrer"><button>打开平台后台 ↗</button></a>
           </div>
         </div>
@@ -318,7 +326,7 @@ export function EditorTools(props: EditorToolsProps) {
             {urlWarning && <span className="muted">{urlWarning}</span>}
           </div>
           <div className="row-actions">
-            <button className="primary" onClick={() => void confirmPublished()}>我已发布,确认</button>
+            <button className="primary" onClick={() => void confirmPublished()}>确认已在平台发布</button>
           </div>
         </div>
       )}
@@ -383,7 +391,7 @@ export function EditorTools(props: EditorToolsProps) {
       {/* 视频稿的素材挂接在剪辑台（阶段制 spec §2）；这里只服务文字平台的配图与附件 */}
       {!isVideo && (
         <details className="ed-tools">
-          <summary>素材附件</summary>
+          <summary>配图与附件</summary>
           <AssetsSection contentId={contentId} assets={c.assets ?? []} reload={reload} />
         </details>
       )}
@@ -417,12 +425,12 @@ export function EditorTools(props: EditorToolsProps) {
                     {v.version !== versions.length && (
                       <button
                         onClick={async () => {
-                          if (dirty) return toast("有未保存的改动——先保存再回滚");
+                          if (dirty) return toast("先保存当前修改，再恢复历史版本");
                           const r = await invoke("content:revert", { id: contentId, version: v.version });
-                          toast(r.ok ? `已回滚到 v${v.version}(生成新版本快照)` : (r.error ?? "回滚失败"));
+                          toast(r.ok ? `已恢复第 ${v.version} 版内容，并保存为新版本` : (r.error ?? "恢复失败"));
                           if (r.ok) void reload();
                         }}
-                      >回滚</button>
+                      >恢复这版</button>
                     )}
                   </div>
                   {expanded && (
@@ -444,6 +452,6 @@ export function EditorTools(props: EditorToolsProps) {
           </div>
         </details>
       )}
-    </>
+    </div>
   );
 }

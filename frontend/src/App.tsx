@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dashboard } from "./views/Dashboard";
 import { Board } from "./views/Board";
 import { Editor } from "./views/Editor";
+import { TopicNavigator } from "./views/TopicNavigator";
 import { Calibration } from "./views/Calibration";
 import { Settings } from "./views/Settings";
 import { ReportView } from "./views/Report";
@@ -22,21 +23,10 @@ import {
 import { ToastHost, DialogHost, toast, openDialog } from "./ui";
 import { invoke } from "./transport";
 import { useRevisionFocus } from "./revision";
+import { useAppRoute } from "./use-route";
+import type { Route } from "./routes";
 
-/** 编辑器里的面板锚点（对话卡片深链用：开哪块面板） */
-export type EditorPanel = "cover" | "images" | "video";
-
-export type Route =
-  | { view: "dashboard" }
-  | { view: "board" }
-  | { view: "editor"; id: string; panel?: EditorPanel }
-  | { view: "calibration" }
-  | { view: "report" }
-  | { view: "library" }
-  | { view: "logs" }
-  | { view: "campaigns" }
-  | { view: "inbox" }
-  | { view: "settings"; tab?: "models" | "integrations" };
+export type { Route, EditorPanel } from "./routes";
 
 const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
   { view: "dashboard", label: "今日" },
@@ -54,7 +44,7 @@ const SECONDARY_NAV: Array<{ view: Route["view"]; label: string }> = [
 ];
 
 export function App() {
-  const [route, setRoute] = useState<Route>({ view: "dashboard" });
+  const [route, setRoute] = useAppRoute();
   const [gate, setGate] = useState<"checking" | "onboarding" | "ready">("checking");
   // 总编辑默认展开(设计 §Phase 3):对话是控制面,藏起来的控制面等于没有。
   // 只翻转「没表态」那一支——手动收起过的老用户(存了 "0")照旧收起。
@@ -64,7 +54,8 @@ export function App() {
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const focus = useRevisionFocus();
-  const active = route.view === "editor" ? "board" : route.view;
+  const active = route.view === "editor" || route.view === "topic" ? "board" : route.view;
+  const boardRoute = route.view === "board" || route.view === "topic";
 
   useEffect(() => {
     if (focus) setDockOpen(true);
@@ -103,7 +94,7 @@ export function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={boardRoute ? "shell shell-board" : route.view === "editor" ? "shell shell-editor" : "shell"}>
       <header className="topbar">
         <span
           className="brand serif"
@@ -167,11 +158,28 @@ export function App() {
       {/* 线路报病（P2 spec §4.3）：坏了才在，恢复即消失——不占位、不轮询 */}
       <EngineBanner onSettings={() => setRoute({ view: "settings", tab: "models" })} />
       <div className="body">
-        <main className="main">
+        <main className={boardRoute ? "main main-board" : "main"}>
           {route.view === "dashboard" && <Dashboard nav={setRoute} />}
-          {route.view === "board" && <Board openEditor={(id) => setRoute({ view: "editor", id })} />}
+          {(route.view === "board" || route.view === "topic") && (
+            <Board
+              {...(route.view === "topic" ? { atomKey: route.key } : {})}
+              openTopic={(key) => setRoute({ view: "topic", key })}
+              backToBoard={() => setRoute({ view: "board" })}
+              openEditor={(id) => setRoute({ view: "editor", id })}
+            />
+          )}
           {route.view === "editor" && (
-            <Editor id={route.id} {...(route.panel ? { panel: route.panel } : {})} back={() => setRoute({ view: "board" })} />
+            <Editor
+              key={route.id}
+              id={route.id}
+              {...(route.panel ? { panel: route.panel } : {})}
+              back={() => setRoute({ view: "board" })}
+              context={<TopicNavigator
+                contentId={route.id}
+                openTopic={(key) => setRoute({ view: "topic", key })}
+                openEditor={(id) => setRoute({ view: "editor", id })}
+              />}
+            />
           )}
           {route.view === "calibration" && <Calibration />}
           {route.view === "report" && <ReportView />}
@@ -215,7 +223,7 @@ export function App() {
           />
           <ChatDock
             contentContext={route.view === "editor" ? { contentId: route.id } : undefined}
-            view={{ route: route.view, ...(route.view === "campaigns" && campaignId ? { campaignId } : {}) }}
+            view={{ route: route.view === "topic" ? "board" : route.view, ...(route.view === "campaigns" && campaignId ? { campaignId } : {}) }}
             nav={setRoute}
             // 聊天回 needsSetup = 引擎压根没配（不是这条线坏了）：直接把首次开机卡请回来
             onNeedsSetup={() => setGate("onboarding")}

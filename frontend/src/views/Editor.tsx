@@ -11,13 +11,13 @@
  * (applySpan)、[IMAGE:] 解析、localStorage 暂存这些逻辑全部原样保留。
  * CodeMirror 挂不起来时降级回 textarea 并提示,不白屏。
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 // 中文写作常见的「**小标题。**正文」在 CommonMark 里闭合失败（标点+汉字紧邻），此插件修正
 import remarkCjkFriendly from "remark-cjk-friendly";
 import { type EditorView } from "@codemirror/view";
-import { invoke, subscribeEvents } from "../transport";
+import { invoke, subscribeEvents, type InvokeResult } from "../transport";
 import { toast } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { SelectionBar } from "./SelectionBar";
@@ -44,8 +44,12 @@ import { fallbackTitle } from "./engine-lib";
 import { HostBadges } from "./HostBadges";
 import type { EditorPanel } from "../App";
 import { type VersionLike } from "../version-diff";
+import {
+  contentDraft, editEditorState, editorDirty, emptyEditorState, readEditorBuffer,
+  reconcileEditorState, restoreEditorState, type EditorBuffer, type EditorDraft, type EditorState,
+} from "./editor-sync";
+import "./editor-workspace.css";
 
-const DRAWER_KEY = "ed-drawer-open";
 const IMAGES_KEY = "ed-images-open";
 
 /** 标题:textarea 才能换行(长标题很常见),高度跟着内容长；回车不换行,标题是单行语义 */
@@ -72,10 +76,16 @@ function TitleInput(props: { value: string; onChange: (value: string) => void })
   );
 }
 
-export function Editor(props: { id: string; back: () => void; panel?: EditorPanel }) {
-  const [c, setC] = useState<Content | null>(null);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+export function Editor(props: { id: string; back: () => void; panel?: EditorPanel; context?: ReactNode }) {
+  const [editor, setEditor] = useState(emptyEditorState);
+  const currentEditor = useRef(editor);
+  const { content: c, draft: { title, body }, remoteChanged } = editor;
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const savingRef = useRef(false);
+  const activeRef = useRef(true);
+  const requestRef = useRef(0);
+  const loadingRef = useRef(false);
   const [note, setNote] = useState("");
   const [transitions, setTransitions] = useState<AllowedTransition[]>([]);
   const [versions, setVersions] = useState<VersionLike[]>([]);
@@ -85,55 +95,96 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const proposal = useRevisionProposal();
   const focus = useRevisionFocus();
-  // 抽屉/配图面板的开合是用户偏好,记住它——每次进来都要重开是最烦人的那种细节
-  const [drawerOpen, setDrawerOpen] = useState(() => localStorage.getItem(DRAWER_KEY) === "1");
+  // 每次打开稿件先留出完整写作空间，发布工具在需要时再打开。
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [articleImagesOpen, setArticleImagesOpen] = useState(() => localStorage.getItem(IMAGES_KEY) === "1");
   const [fallback, setFallback] = useState<string | null>(null);
   const imagesRef = useRef<HTMLDetailsElement | null>(null);
+  const proposalRef = useRef<HTMLDivElement | null>(null);
   const cmRef = useRef<EditorView | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const send = useChatSend();
 
   const bufKey = `v2-draft-${props.id}`;
-  const dirty = c !== null && (body !== c.body || title.trim() !== (c.title || ""));
+  const backupKey = `${bufKey}-backup`;
+  const [backup, setBackup] = useState(() => readEditorBuffer(localStorage.getItem(backupKey)));
+  const dirty = editorDirty(editor);
 
-  const load = async () => {
-    const r = await invoke("content:get", { id: props.id });
-    if (!r.ok) return toast(r.error ?? "加载稿件失败");
-    const content = (r as unknown as { content: Content }).content;
-    setC(content);
-    // 本地暂存恢复:比 store 新才提示(防呆——刷新/崩溃不丢打了一半的字)
-    let restored = false;
+  const updateEditor = useCallback((next: EditorState) => {
+    // Update the ref synchronously: an async receipt must see keystrokes from this event.
+    currentEditor.current = next;
+    setEditor(next);
+  }, []);
+  const setTitle = (value: string) => updateEditor(editEditorState(currentEditor.current, { title: value }));
+  const setBody = (value: string) => updateEditor(editEditorState(currentEditor.current, { body: value }));
+
+  const persistDraft = useCallback(() => {
+    const state = currentEditor.current;
+    if (!state.content) return;
     try {
-      const buf = JSON.parse(localStorage.getItem(bufKey) ?? "null") as { title: string; body: string; at: number } | null;
-      if (buf && buf.at > new Date(content.updatedAt).getTime() && (buf.body !== content.body || buf.title !== content.title)) {
-        setTitle(buf.title);
-        setBody(buf.body);
-        restored = true;
-        toast("已恢复未保存的本地改动(未落库)——点保存才算数");
+      if (editorDirty(state)) {
+        const buffer: EditorBuffer = {
+          ...state.draft, at: Date.now(), baseUpdatedAt: state.content.updatedAt, remoteChanged: state.remoteChanged,
+        };
+        localStorage.setItem(bufKey, JSON.stringify(buffer));
+      } else {
+        localStorage.removeItem(bufKey);
       }
-    } catch { /* 坏暂存忽略 */ }
-    if (!restored) {
-      setTitle(content.title ?? "");
-      setBody(content.body ?? "");
+    } catch { /* 本地空间不足时仍保留当前编辑内容 */ }
+  }, [bufKey]);
+
+  const load = useCallback(async (options: { quiet?: boolean; contentOnly?: boolean } = {}) => {
+    if (savingRef.current || (options.quiet && loadingRef.current)) return;
+    const request = ++requestRef.current;
+    loadingRef.current = true;
+    const current = () => activeRef.current && request === requestRef.current;
+    const r = await invoke("content:get", { id: props.id });
+    if (!current()) return;
+    if (!r.ok) {
+      loadingRef.current = false;
+      if (!currentEditor.current.content) setLoadError(r.error ?? "加载稿件失败");
+      if (!options.quiet) toast(r.error ?? "加载稿件失败");
+      return;
     }
-    const [at, vr] = await Promise.all([
+    setLoadError(null);
+    const content = (r as unknown as { content: Content }).content;
+    const previous = currentEditor.current;
+    if (!previous.content) {
+      const next = restoreEditorState(content, readEditorBuffer(localStorage.getItem(bufKey)));
+      updateEditor(next);
+      if (editorDirty(next)) toast("已恢复未保存的本地改动，点保存后才会存为新版本");
+    } else {
+      updateEditor(reconcileEditorState(previous, content));
+    }
+    // The fallback poll reads only this draft. Pull supporting data when it actually changes.
+    const changed = !previous.content || JSON.stringify(previous.content) !== JSON.stringify(content);
+    if (options.contentOnly && !changed) {
+      loadingRef.current = false;
+      return;
+    }
+    const [at, vr, vs] = await Promise.all([
       invoke("content:allowed_transitions", { id: props.id }),
       invoke("content:versions", { id: props.id }),
+      VIDEO_PLATFORMS.has(content.platform) ? videoStatus(props.id) : Promise.resolve(null),
     ]);
+    if (!current()) return;
+    loadingRef.current = false;
     // transitions 带阶段门预判(后端算);界面不自己推演规则,灰显与原因都来自这一份
     setTransitions(((at as Record<string, unknown>).transitions ?? []) as AllowedTransition[]);
     setVersions((((vr as Record<string, unknown>).data ?? {}) as { versions?: VersionLike[] }).versions ?? []);
-    if (VIDEO_PLATFORMS.has(content.platform)) {
-      const vs = await videoStatus(props.id);
-      setVideoStarted(Boolean(vs.ok && vs.data?.state));
-    }
-  };
+    setVideoStarted(Boolean(vs?.ok && vs.data?.state));
+  }, [props.id, bufKey, updateEditor]);
 
   useEffect(() => {
+    activeRef.current = true;
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.id]);
+    return () => {
+      persistDraft();
+      activeRef.current = false;
+      ++requestRef.current;
+      loadingRef.current = false;
+    };
+  }, [load, persistDraft]);
 
   /**
    * 焦点的生命周期绑在这个编辑器上：切稿件或离开编辑器时，属于本稿的焦点自动退。
@@ -150,17 +201,32 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
 
   useEffect(() => {
     let timer: number | undefined;
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      void load({ quiet: true, contentOnly: true });
+    };
     const off = subscribeEvents((event) => {
-      if (event.kind !== "engine" || event.data.contentId !== props.id) return;
+      if (event.kind !== "reconnect" &&
+        !((event.kind === "engine" || event.kind === "video:updated") && event.data.contentId === props.id)) return;
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void load(), 180);
+      timer = window.setTimeout(refresh, 180);
     });
+    // Generic content updates intentionally do not all enter the engine event log.
+    const poll = window.setInterval(refresh, 3000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pagehide", persistDraft);
+    window.addEventListener("beforeunload", persistDraft);
     return () => {
       if (timer) window.clearTimeout(timer);
+      window.clearInterval(poll);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pagehide", persistDraft);
+      window.removeEventListener("beforeunload", persistDraft);
       off();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.id]);
+  }, [props.id, load, persistDraft]);
 
   /**
    * 卡片深链（设计 §Phase 3）。阶段制之后封面/成片各自是整页工作台,深链只剩两件事:
@@ -173,7 +239,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     const here = workspaceForStatus(c.status);
     if (panel === "cover" || panel === "video") {
       const want = panel === "cover" ? "cover" : "editing";
-      if (here !== want) toast(`这篇现在在「${WORKSPACE_LABEL[here]}」——用顶栏「推进」才能到${panel === "cover" ? "封面" : "剪辑"}阶段`);
+      if (here !== want) toast(`这篇现在在「${WORKSPACE_LABEL[here]}」，可在顶栏选择「去${panel === "cover" ? "封面" : "剪辑"}」进入对应阶段`);
       return;
     }
     setArticleImagesOpen(true);
@@ -187,40 +253,98 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.panel, props.id, c !== null]);
 
-  // 本地暂存(1s 防抖)
+  // 输入防抖落本地；刷新、离页和保存回执都同步冲刷，最后一秒也不丢字。
   useEffect(() => {
-    if (!c || !dirty) return;
-    const t = setTimeout(() => {
-      try {
-        localStorage.setItem(bufKey, JSON.stringify({ title, body, at: Date.now() }));
-      } catch { /* 存不下就算了 */ }
-    }, 1000);
+    const t = setTimeout(persistDraft, 400);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, body]);
+  }, [editor, persistDraft]);
 
-  const toggleDrawer = () => {
-    setDrawerOpen((open) => {
-      localStorage.setItem(DRAWER_KEY, open ? "0" : "1");
-      return !open;
-    });
+  if (!c) return loadError ? (
+    <div className="pad">
+      <p role="alert">{loadError}</p>
+      <div className="row-actions"><button onClick={props.back}>← 返回看板</button><button onClick={() => void load()}>重试</button></div>
+    </div>
+  ) : <p className="muted pad">加载稿件…</p>;
+
+  const saveMutation = async (channel: string, payload: Record<string, unknown>, submitted: Partial<EditorDraft>): Promise<InvokeResult | null> => {
+    if (savingRef.current) return null;
+    savingRef.current = true;
+    setSaving(true);
+    ++requestRef.current; // A read started before this write may no longer update the editor.
+    loadingRef.current = false;
+    persistDraft();
+    const r = await invoke(channel, payload);
+    if (!activeRef.current) return null;
+    if (r.ok) {
+      const receipt = r.content ? r : await invoke("content:get", { id: props.id });
+      if (!activeRef.current) return null;
+      if (receipt.ok && receipt.content) {
+        updateEditor(reconcileEditorState(currentEditor.current, receipt.content as Content, submitted));
+        persistDraft();
+      } else {
+        toast("稿件已保存，暂时未能读取最新内容；本地输入仍保留");
+      }
+    } else {
+      toast(r.error ?? "保存失败");
+    }
+    savingRef.current = false;
+    setSaving(false);
+    if (r.ok) void load({ quiet: true });
+    return r;
   };
-
-  if (!c) return <p className="muted pad">加载稿件…</p>;
 
   const save = async () => {
     if (!dirty) return toast("没有改动");
-    const payload: Record<string, unknown> = { id: props.id, body };
-    const newTitle = title.trim();
+    const submitted = { ...currentEditor.current.draft };
+    const submittedNote = note;
+    const payload: Record<string, unknown> = { id: props.id, body: submitted.body };
+    const newTitle = submitted.title.trim();
     if (newTitle && newTitle !== (c.title || "")) payload.title = newTitle;
     if (note.trim()) payload.diff_note = note.trim().slice(0, 200);
-    const r = await invoke("content:update", payload);
-    if (!r.ok) return toast(r.error ?? "保存失败");
-    localStorage.removeItem(bufKey);
-    setNote("");
+    const r = await saveMutation("content:update", payload, {
+      body: submitted.body,
+      ...(newTitle ? { title: submitted.title } : {}),
+    });
+    if (!r?.ok) return;
+    setNote((current) => current === submittedNote ? "" : current);
     const learned = (r as { styleLearned?: { summary?: string } }).styleLearned;
     toast("已存为新版本" + (learned?.summary ? " · " + learned.summary : ""));
-    void load();
+    if (r.warning) toast(String(r.warning));
+  };
+
+  const loadLatest = () => {
+    const state = currentEditor.current;
+    if (!state.content || savingRef.current) return;
+    const buffer: EditorBuffer = { ...state.draft, at: Date.now(), baseUpdatedAt: state.content.updatedAt };
+    try {
+      localStorage.setItem(backupKey, JSON.stringify(buffer));
+    } catch {
+      toast("本地备份未能写入，请先复制保存自己的改动，再载入最新内容");
+      return;
+    }
+    setBackup(buffer);
+    updateEditor({ content: state.content, draft: contentDraft(state.content), remoteChanged: false });
+    persistDraft();
+    setSel(null);
+    toast("已载入最新内容；原来的本地改动可以恢复");
+  };
+
+  const restoreBackup = () => {
+    if (!backup || savingRef.current) return;
+    // Swap rather than discard: edits made after loading the latest version remain recoverable too.
+    const state = currentEditor.current;
+    const replacement: EditorBuffer = { ...state.draft, at: Date.now(), baseUpdatedAt: state.content!.updatedAt };
+    try {
+      localStorage.setItem(backupKey, JSON.stringify(replacement));
+    } catch {
+      toast("本地备份未能写入，当前内容已保留");
+      return;
+    }
+    updateEditor(editEditorState({ ...state, remoteChanged: true }, { title: backup.title, body: backup.body }));
+    setBackup(replacement);
+    persistDraft();
+    setSel(null);
+    toast("已恢复本地备份，保存后才会存为新版本");
   };
 
   /**
@@ -272,7 +396,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       newBody = activeProposal.body ?? body;
       newTitle = activeProposal.title;
     }
-    const r = await invoke("draft:adopt_revision", {
+    const submitted = { ...currentEditor.current.draft };
+    const r = await saveMutation("draft:adopt_revision", {
       content_id: props.id,
       scope: activeProposal.scope,
       ...(activeProposal.scope === "selection" && activeProposal.selection ? { selection: activeProposal.selection.text } : {}),
@@ -280,13 +405,16 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       ...(newTitle ? { title: newTitle } : {}),
       before,
       ...(activeProposal.feedback ? { feedback: activeProposal.feedback } : {}),
+    }, {
+      body: submitted.body,
+      // A body-only proposal does not consent to discarding an unsaved local title.
+      ...(newTitle || submitted.title.trim() === (c.title || "") ? { title: submitted.title } : {}),
     });
-    if (!r.ok) return toast((r as { error?: string }).error ?? "收下失败");
+    if (!r?.ok) return;
     clearFocus();
     const receipt = r as { styleLearned?: { summary?: string }; warning?: string };
     toast("已收下并存为新版本" + (receipt.styleLearned?.summary ? " · " + receipt.styleLearned.summary : ""));
     if (receipt.warning) toast(receipt.warning);
-    void load();
   };
 
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
@@ -294,40 +422,56 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
 
   const workspace = workspaceForStatus(c.status);
   const stageBar = (
-    <div className="ed-topbar">
-      <button onClick={props.back}>← 看板</button>
-      <span className="mono muted">
-        {platformLabel(c.platform)} · {VARIANT_STATUS[c.status] ?? c.status}
-        {workspace !== "draft" ? ` · ${WORKSPACE_LABEL[workspace]}` : ""}
-      </span>
-      <span className="ed-topbar-right">
-        {workspace === "draft" && !activeProposal && <button onClick={startDraftFocus}>改这篇 →</button>}
-        {workspace === "draft" && (
-          <button onClick={() => setMode(mode === "edit" ? "preview" : "edit")}>
-            {mode === "edit" ? "预览" : "回到编辑"}
-          </button>
-        )}
-        <StageAdvance
-          contentId={props.id}
-          currentStatus={c.status}
-          transitions={transitions}
-          dirty={workspace === "draft" && dirty}
-          reload={load}
-        />
-        {workspace === "draft" && (
-          <button className={drawerOpen ? "on" : ""} onClick={toggleDrawer}>
-            {drawerOpen ? "收起工具 ›" : "‹ 工具"}
-          </button>
-        )}
-      </span>
+    <div className="ed-topbar ed-workspace-header">
+      <div className="ed-header-context">
+        <button className="ed-quiet-button ed-back-button" onClick={props.back}>← 管线看板</button>
+        <div className="ed-current-draft">
+          <strong>{platformLabel(c.platform)}</strong>
+          <span className="ed-status-label">{VARIANT_STATUS[c.status] ?? c.status}</span>
+          {workspace !== "draft" && <span className="muted">{WORKSPACE_LABEL[workspace]}</span>}
+        </div>
+        {workspace === "draft" && <button
+          className={"ed-quiet-button ed-tools-trigger" + (drawerOpen ? " is-open" : "")}
+          aria-expanded={drawerOpen}
+          aria-controls="editor-publishing-tools"
+          onClick={() => setDrawerOpen(true)}
+        >发布与版本</button>}
+      </div>
+      <div className="ed-header-actions">
+        {workspace === "draft" && <div className="ed-mode-switch" aria-label="正文显示模式">
+          <button aria-pressed={mode === "edit"} className={mode === "edit" ? "is-active" : ""} onClick={() => setMode("edit")}>编辑</button>
+          <button aria-pressed={mode === "preview"} className={mode === "preview" ? "is-active" : ""} onClick={() => setMode("preview")}>预览</button>
+        </div>}
+        <div className="ed-primary-actions">
+          {workspace === "draft" && <button
+            className="ed-ai-action"
+            aria-pressed={!!activeFocus}
+            onClick={() => activeProposal ? proposalRef.current?.scrollIntoView({ block: "center" }) : startDraftFocus()}
+          >{activeProposal ? "查看 AI 提案" : "AI 改稿"}</button>}
+          <StageAdvance
+            contentId={props.id}
+            currentStatus={c.status}
+            transitions={transitions}
+            dirty={workspace === "draft" && (dirty || saving)}
+            reload={load}
+          />
+          {workspace === "draft" && <button
+            className={"ed-save-action" + (dirty ? " primary" : " is-saved")}
+            disabled={saving || !dirty}
+            onClick={() => void save()}
+            title={remoteChanged ? "保存你保留的本地版本" : "保存当前标题和正文"}
+          >{saving ? "保存中…" : dirty ? "保存修改" : "✓ 已保存"}</button>}
+        </div>
+      </div>
     </div>
   );
 
   // 工作台随状态（spec §2）：文案之外的三张台子是整页，不带写作画布与抽屉
   if (workspace !== "draft") {
     return (
-      <div className="editor">
+      <div className="editor editor-workspace">
         {stageBar}
+        {props.context}
         <div className="ed-main-row">
           {workspace === "editing" && <EditingWorkspace content={c} reload={load} />}
           {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
@@ -340,17 +484,30 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   }
 
   return (
-    <div className={"editor" + (drawerOpen ? " ed-with-drawer" : "")}>
+    <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
+      {props.context}
 
       <div className="ed-main-row">
       <div className="ed-stage">
         <div className="ed-canvas">
+          {remoteChanged && (
+            <div className="pending-edit" role="status">
+              <p>这篇稿件已有新内容。你尚未保存的本地改动已保留；载入最新内容会先备份这些改动。</p>
+              <button onClick={loadLatest} disabled={saving}>备份本地改动并载入最新</button>
+            </div>
+          )}
+          {backup && (
+            <div className="ed-focus-bar muted">
+              <span>有一份切换版本前的本地备份</span>
+              <button onClick={restoreBackup} disabled={saving}>恢复本地备份</button>
+            </div>
+          )}
           {/* 旧稿在途 / 从剪辑回文案改稿：剪辑进度一个字都没丢，说清楚，不让人以为白剪了（spec §3①③） */}
           {isVideo && (videoStarted || c.videoReadyAt) && (
             <div className="vid-warn">
               这篇已经有剪辑进度（决策与成片都留着，回文案改稿不会丢）——
-              用顶栏「推进」到「剪辑」接着做。
+              用顶栏的下一阶段动作进入剪辑，接着制作。
             </div>
           )}
 
@@ -387,7 +544,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <TitleInput value={title} onChange={setTitle} />
 
           {activeProposal && (
-            <div className="pending-edit">
+            <div className="pending-edit" ref={proposalRef}>
               <div className="mono muted">
                 总编辑的修改提案{activeProposal.scope === "selection" ? "（这一段）" : "（整篇）"}——收下才落库,旧版进版本记录;不满意就在总编辑里继续说
               </div>
@@ -400,7 +557,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
                 <pre className="pe-after">{activeProposal.body}</pre>
               )}
               <div className="row-actions">
-                <button className="primary" onClick={() => void adoptProposal()}>收下这版</button>
+                <button className="primary" disabled={saving} onClick={() => void adoptProposal()}>收下这版</button>
                 <button onClick={() => clearProposal()}>放弃这版</button>
                 <button onClick={() => clearFocus()}>退出修改</button>
               </div>
@@ -461,6 +618,17 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           )}
         </div>
 
+        <div className="ed-writing-footer">
+          <details className="ed-change-note">
+            <summary>{note.trim() ? "修改说明已填写" : "添加修改说明"}<span>可选</span></summary>
+            <label>
+              <span className="muted">简单说明这次改了什么，保存时一起记入版本。</span>
+              <textarea rows={2} maxLength={200} placeholder="例如：缩短开头，补充实际使用体验" value={note} onChange={(e) => setNote(e.target.value)} />
+            </label>
+          </details>
+          <span className="muted ed-writing-hint">选中文字可让 AI 只改这一段</span>
+        </div>
+
         {/* 配图要宽度,不进窄抽屉——沉到正文下方,默认折叠,不打扰写作。
             成片向导与封面折叠区已搬去各自的工作台（阶段制 spec §2）。 */}
         <div className="ed-below">
@@ -481,32 +649,27 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       </div>
 
       {drawerOpen && (
-        <aside className="ed-drawer">
-          <div className="ed-drawer-head">
-            <strong>工具</strong>
-            <button onClick={toggleDrawer}>收起 ›</button>
-          </div>
-          <div className="ed-drawer-body">
-            <EditorTools
-              contentId={props.id}
-              content={c}
-              versions={versions}
-              dirty={dirty}
-              reload={load}
-              send={send}
-            />
-          </div>
-        </aside>
+        <div className="ed-drawer-layer">
+          <aside className="ed-drawer" id="editor-publishing-tools" aria-label="发布与版本">
+            <div className="ed-drawer-head">
+              <div><strong>发布与版本</strong><p>准备发布材料，查看修改记录</p></div>
+              <button className="ed-quiet-button ed-drawer-close" aria-label="关闭发布与版本" onClick={() => setDrawerOpen(false)}>×</button>
+            </div>
+            <div className="ed-drawer-body">
+              <EditorTools
+                contentId={props.id}
+                content={c}
+                versions={versions}
+                dirty={dirty}
+                reload={load}
+                send={send}
+              />
+            </div>
+          </aside>
+        </div>
       )}
       </div>
 
-      <div className="ed-savebar">
-        <span className="muted ed-hint">✎ 选中一段 →「改这段」,或右上「改这篇」整篇改</span>
-        <input className="sel-input" placeholder="为什么这么改?(可选,一句话——教团队学你)" value={note} onChange={(e) => setNote(e.target.value)} />
-        <button className="primary" onClick={() => void save()}>
-          保存{dirty ? " ●" : ""}
-        </button>
-      </div>
     </div>
   );
 }

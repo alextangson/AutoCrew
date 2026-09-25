@@ -158,39 +158,94 @@ h2.serif { font-size: 20px; margin-bottom: 8px; }
 /* 整段话当选题名很常见——标题必须可收缩,两边按钮不能被挤成竖排 */
 .board-bar > button, .board-bar > select, .board-bar > a { flex: none; white-space: nowrap; }
 .board-title { flex: 1; min-width: 0; font-size: 20px; font-weight: 700; line-height: 1.45; }
-.kanban { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; flex: 1; min-width: 0; }
-
-/* V5.6.2 看板重排:左灵感面板(行式高密度) + 右管线四列 */
-.board-split { display: flex; gap: 14px; align-items: flex-start; }
-.idea-pane { flex: 0 0 380px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px; max-height: calc(100vh - 160px); overflow-y: auto; }
-.idea-row { position: relative; padding: 7px 26px 7px 8px; border-bottom: 1px dashed var(--border); cursor: pointer; }
-.idea-row:hover { background: var(--card); }
-.idea-row:last-child { border-bottom: none; }
-/* 按词断行三件套（与 views/phrase-break.ts 配套）：标题渲染前已按中文词典插零宽空格当断点，
-   keep-all 禁掉字中间的断行（否则「拦截」照样被劈），anywhere 是保险阀——万一某标题没走
-   phraseBreak（无断点 + keep-all = 撑破卡片），允许紧急任意断。CSS 的 auto-phrase 只认日文，
-   中文下整条被忽略，别回头再试。带 line-clamp 的标题不能加 balance——先均衡再截断会多丢字 */
-.idea-title { font-size: 13px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere; }
-.topic-score { display: inline-block; min-width: 25px; margin-right: 6px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--muted); font: 700 10px/17px var(--mono); text-align: center; vertical-align: 1px; }
-.topic-score-high { color: var(--surface); background: var(--ink); border-color: var(--ink); }
-.idea-sub { margin-top: 2px; font-size: 11px; }
-.idea-row .acard-del { position: absolute; top: 6px; right: 4px; }
-@media (max-width: 1280px) { .idea-pane { flex-basis: 300px; } }
-.kcol { flex: 1; min-width: 180px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px; }
-.kcol-over { border-color: var(--ink); background: var(--card); }
-.kcol-head { margin-bottom: 6px; color: var(--muted); }
-.acard { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
-.acard:hover { border-color: var(--ink); }
-.acard-head { display: flex; gap: 6px; align-items: baseline; }
-/* balance 均衡各行长度，行尾不挂单字；不截断的标题才可用（截断场景见 .idea-title 注释） */
-.acard-title { flex: 1; font-weight: 700; font-size: 13px; word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance; }
-.acard-del { border: none; background: none; color: var(--muted); padding: 0 2px; }
+/* 流程列保持可读宽度；横向查看阶段，列内独立滚动。 */
+.main-board:has(.board-workspace) { overflow: hidden; }
+.board-workspace { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.board-toolbar { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; flex: none; }
+.board-heading { min-width: 0; }
+.board-heading .board-title { font-family: inherit; font-size: 22px; line-height: 1.5; }
+.board-title > span { display: inline-block; margin-left: 10px; color: #737269; font-size: 12px; font-weight: 400; vertical-align: middle; }
+.board-help { margin-top: 4px; font-size: 12px; color: #737269; }
+.board-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.board-tools button { font-size: 12px; padding: 6px 10px; }
+.board-count { display: inline-flex; align-items: center; justify-content: center; min-width: 23px; height: 22px; padding: 0 6px; border-radius: 5px; background: #e8e7e1; color: #656459; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.board-scroll-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 0 8px; color: #737269; font-size: 11px; flex: none; }
+.board-scroll-tools > div { display: flex; gap: 5px; }
+.board-scroll-tools button { padding: 0 10px; font-size: 16px; line-height: 25px; }
+.kanban { display: flex; align-items: stretch; gap: 16px; flex: 1; min-height: 0; min-width: 0; overflow-x: auto; overflow-y: hidden; padding-bottom: 10px; overscroll-behavior-x: contain; scrollbar-color: #aaa99d transparent; }
+.kcol { --stage-color: #68666b; display: flex; flex-direction: column; flex: 0 0 316px; max-width: calc(100vw - 44px); min-width: 272px; min-height: 0; border: 1px solid #e0dfd7; border-radius: 10px; background: #efeee8; overflow: hidden; }
+.kcol-idea { --stage-color: #8c8062; }
+.kcol-writing { --stage-color: #686393; }
+.kcol-review { --stage-color: #a07735; }
+.kcol-producing { --stage-color: #57798d; }
+.kcol-ready { --stage-color: #538573; }
+.kcol-published { --stage-color: #787970; }
+.kcol-over { border-color: var(--stage-color); box-shadow: inset 0 0 0 1px var(--stage-color); background: #e9ede6; }
+.kcol-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 14px 12px; flex: none; }
+.kcol-head h2 { display: flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 650; }
+.kcol-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--stage-color); }
+.kcol-note { flex: none; margin: -4px 14px 12px; color: #77766c; font-size: 11px; }
+.kcol-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 10px; scrollbar-width: thin; scrollbar-color: #b9b8ad transparent; overscroll-behavior-y: contain; }
+.kcol-empty { min-height: 170px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 1px dashed #d4d3ca; border-radius: 6px; color: #77766c; font-size: 13px; }
+.kcol-empty small { font-size: 11px; }
+.kcol-over .kcol-empty { color: var(--ink); border-color: var(--stage-color); }
+.acard { background: var(--card); border: 1px solid #deded6; border-radius: 7px; padding: 12px; margin-bottom: 10px; cursor: grab; overflow-wrap: anywhere; }
+.acard:last-child { margin-bottom: 0; }
+.acard:hover { border-color: #a3a497; }
+.acard:active { cursor: grabbing; }
+.acard-dragging { opacity: .42; border-style: dashed; }
+.acard-moving { opacity: .6; cursor: progress; }
+.acard-meta { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; font-size: 11px; }
+.acard-grip { color: #aaa99d; font-size: 21px; line-height: 18px; user-select: none; }
+.acard-platform { font-weight: 650; }
+.acard-status { padding: 1px 6px; border-radius: 4px; color: #777369; background: #f3f3ef; }
+.acard-meta .acard-del { margin-left: auto; }
+/* 标题可直接打开当前稿，悬停能看全文；长标题不再撑成十几行。 */
+.acard-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; width: 100%; padding: 0; border: none; background: none; text-align: left; font-size: 15px; line-height: 1.65; font-weight: 650; word-break: keep-all; overflow-wrap: anywhere; }
+.acard-title:hover { color: #494a3f; }
+.acard-del { flex: none; border: none; background: none; color: var(--muted); padding: 0 3px; font-size: 16px; line-height: 22px; }
 .acard-del:hover { color: var(--danger); }
-.acard-sub { margin-top: 2px; }
-.acard-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.acard-details { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; color: #79766c; font-size: 11px; margin-top: 8px; }
+.acard-details:empty { display: none; }
+.acard-updated { color: #858277; font-size: 11px; margin-top: 8px; }
+.acard-updated:empty { display: none; }
+.acard-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid #efeee8; margin-top: 10px; padding-top: 8px; }
+.acard-actions button, .acard-actions select { font: inherit; font-size: 11px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); color: #666357; max-width: 55%; cursor: pointer; }
+.acard-actions button { border-color: transparent; padding-left: 0; }
+.acard-actions button:hover { color: var(--ink); }
+.acard-err { margin-top: 8px; padding: 5px 7px; background: #fcf1ed; border-radius: 4px; color: var(--danger); font-size: 11px; }
+.kcol-idea-empty { padding: 12px; text-align: center; }
+.idea-row { position: relative; padding: 12px 29px 12px 12px; margin-bottom: 10px; border: 1px solid #deded6; border-radius: 7px; background: var(--card); }
+.idea-row:last-child { margin-bottom: 0; }
+.idea-row:hover { border-color: #a3a497; }
+.idea-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; width: 100%; padding: 0; border: none; background: none; font-size: 14px; line-height: 1.65; text-align: left; word-break: keep-all; overflow-wrap: anywhere; }
+.topic-score { display: inline-block; min-width: 25px; margin-right: 6px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--muted); font: 700 10px/17px var(--font-mono); text-align: center; vertical-align: 1px; }
+.topic-score-high { color: var(--surface); background: var(--ink); border-color: var(--ink); }
+.idea-sub { margin-top: 5px; font-size: 11px; }
+.idea-row .acard-del { position: absolute; top: 8px; right: 6px; }
 .chip { font-size: 11px; padding: 1px 6px; font-family: var(--font-mono); }
 .chip-pub { background: var(--ink); color: var(--accent-text); border-color: var(--ink); }
-.acard-err { margin-top: 6px; color: var(--danger); font-size: 12px; }
+@media (max-width: 640px) {
+  :is(.shell-board, .shell-editor) .topbar { flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
+  :is(.shell-board, .shell-editor) .brand { white-space: nowrap; }
+  :is(.shell-board, .shell-editor) .topnav { margin-left: 0; width: 100%; gap: 4px; overflow-x: auto; }
+  :is(.shell-board, .shell-editor) .topnav > * { flex: none; white-space: nowrap; }
+  :is(.shell-board, .shell-editor) .dock-rail { width: 100%; padding: 2px; writing-mode: horizontal-tb; }
+  .main-board { padding: 12px; }
+  .board-heading .board-title { font-size: 20px; }
+  .board-tools { gap: 4px; }
+  .board-tools button { padding: 4px 7px; }
+  .board-workspace .kanban { gap: 12px; }
+}
+@media (max-height: 760px), (max-width: 900px) {
+  .main-board:has(.board-workspace) { overflow-y: auto; }
+  .board-workspace { min-height: min-content; }
+  .board-workspace .kanban { min-height: 280px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-workspace * { transition: none; scroll-behavior: auto; }
+}
+
 /* 缺证据徽章(P1 §4.4):贴在稿卡 chip 里,不能带 acard-err 的块级外边距 */
 .chip-blocked { color: var(--danger); font-weight: 600; }
 

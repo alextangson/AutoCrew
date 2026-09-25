@@ -1,6 +1,6 @@
 /**
  * 管线看板(B 期,qingmo 设计细节原生重实现):
- * 列=灵感库→在写→待审→待发布→已发布;卡=内容原子(idea+平台变体)。
+ * 流程列按主题归组，每个平台保留当前稿及其他稿件。
  * 拖拽换列=content:transition;卡可入回收站(软删)+回收站恢复;
  * 点原子→平台矩阵(灵感详情/方向补充/有稿点开/无稿生成)。
  */
@@ -15,8 +15,10 @@ import { buildDispatchBrief } from "./dispatch-brief";
 import { phraseBreak } from "./phrase-break";
 import { fallbackTitle } from "./engine-lib";
 import { HostBadges } from "./HostBadges";
+import { boardColumns, boardMoveTarget, boardPlatforms, type BoardPlatform } from "./board-model";
+import "./topic-workspace.css";
 import {
-  BOARD_COLUMNS, DROP_TARGET_STATUS, STATUS_COLUMN, VARIANT_STATUS, PLATFORM_CATALOG,
+  BOARD_COLUMNS, VARIANT_STATUS, PLATFORM_CATALOG,
   platformLabel, sourceLabel, groupAtoms, atomRep, type Atom, type Content, type Topic,
 } from "../lib";
 
@@ -39,7 +41,11 @@ function ideaAge(anchor?: string): string {
  */
 function reviewBadge(review: Content["review"]): string | null {
   if (!review) return null;
-  if (review.status === "passed") return "✓已审稿";
+  if (review.status === "passed") {
+    if (review.source?.kind === "host_self_review") return "已自审";
+    if (review.source?.kind === "host_other_principal_review") return "已由其他宿主审阅";
+    return "✓已审稿";
+  }
   if (review.status === "revised") return `✓审稿修订${review.fixed}`;
   if (review.status === "failed") {
     return `⚠残留${review.issues.filter((i) => i.severity === "blocker").length}项`;
@@ -53,18 +59,41 @@ interface TrashData {
   contents: Content[];
 }
 
-export function Board(props: { openEditor: (id: string) => void }) {
+export function Board(props: {
+  atomKey?: string;
+  openTopic: (key: string) => void;
+  backToBoard: () => void;
+  openEditor: (id: string) => void;
+}) {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [contents, setContents] = useState<Content[]>([]);
   const [seats, setSeats] = useState<string[]>(["wechat_mp"]);
-  const [mode, setMode] = useState<{ kind: "columns" } | { kind: "matrix"; atomKey: string } | { kind: "trash" }>({ kind: "columns" });
+  const [mode, setMode] = useState<"columns" | "trash">("columns");
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [trash, setTrash] = useState<TrashData>({ topics: [], contents: [] });
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<{ id: string; message: string } | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const movingRef = useRef(false);
+  const dragRef = useRef<string | null>(null);
+  const scrollFrame = useRef<number | null>(null);
+  const scrollSpeed = useRef(0);
+  const loadRevision = useRef(0);
+  const loadingRef = useRef(false);
   const [radarBusy, setRadarBusy] = useState<"more" | "rescore" | null>(null);
   const send = useChatSend();
 
   const load = async () => {
+    const revision = ++loadRevision.current;
+    loadingRef.current = true;
     const [tr, cr, ob] = await Promise.all([invoke("topics:list"), invoke("content:list"), invoke("onboarding:status")]);
+    if (revision !== loadRevision.current) return;
+    loadingRef.current = false;
+    setLoaded(true);
+    setLoadError(!tr.ok || !cr.ok ? tr.error ?? cr.error ?? "主题加载失败，请重试" : null);
     if (tr.ok) setTopics(((tr as Record<string, unknown>).topics ?? (tr as { data?: { topics?: Topic[] } }).data?.topics ?? []) as Topic[]);
     if (cr.ok) setContents(((cr as Record<string, unknown>).contents ?? []) as Content[]);
     const platforms = (ob as { platforms?: string[] }).platforms ?? (ob as { data?: { platforms?: string[] } }).data?.platforms;
@@ -72,32 +101,81 @@ export function Board(props: { openEditor: (id: string) => void }) {
   };
   useEffect(() => {
     void load();
+    return () => { loadRevision.current++; };
   }, []);
   useEffect(() => {
     let timer: number | undefined;
+    const refresh = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void load(), 180);
+    };
     const off = subscribeEvents((event) => {
+      if (event.kind === "reconnect") return refresh();
       if (event.kind !== "engine") return;
       const kind = String(event.data.kind ?? "");
       if (!event.data.contentId && !["radar", "trash", "transition", "run_done", "run_failed"].includes(kind)) return;
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void load(), 180);
+      refresh();
     });
+    const visible = () => { if (!document.hidden) refresh(); };
+    const poll = window.setInterval(() => {
+      if (!document.hidden && !loadingRef.current) void load();
+    }, 3000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
     return () => {
       if (timer) window.clearTimeout(timer);
+      window.clearInterval(poll);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
       off();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const atoms = useMemo(() => groupAtoms(topics, contents), [topics, contents]);
-  const cols = useMemo(() => {
-    const c: Atom[][] = BOARD_COLUMNS.map(() => []);
-    for (const atom of atoms) {
-      const rep = atomRep(atom);
-      c[rep ? (STATUS_COLUMN[rep.status] ?? 1) : 0].push(atom);
+  const cols = useMemo(() => boardColumns(atoms), [atoms]);
+
+  const stopAutoScroll = () => {
+    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
+    scrollFrame.current = null;
+    scrollSpeed.current = 0;
+  };
+  useEffect(() => () => stopAutoScroll(), []);
+
+  const endCardDrag = () => {
+    dragRef.current = null;
+    setDraggingId(null);
+    setDragOver(null);
+    stopAutoScroll();
+  };
+
+  const moveContent = async (content: Content, columnKey: string) => {
+    const target = boardMoveTarget(content, columnKey);
+    if (!target || movingRef.current) return;
+    movingRef.current = true;
+    setMovingId(content.id);
+    setMoveError(null);
+    try {
+      const r = await invoke("content:transition", {
+        id: content.id, from_status: content.status, target_status: target, force: true,
+      });
+      if (!r.ok) {
+        const message = r.error ?? "移动失败，请重试";
+        setMoveError({ id: content.id, message });
+        toast(message);
+      } else {
+        const saved = r.content as Content | undefined;
+        if (saved?.id === content.id) setContents((current) => current.map((c) => c.id === saved.id ? { ...c, ...saved } : c));
+        const label = BOARD_COLUMNS.find((column) => column.key === columnKey)?.label;
+        toast(target === "published" ? `${platformLabel(content.platform)}已标记为已发布（未向平台推送）` : `${platformLabel(content.platform)}已移到「${label}」；主题按各平台进度归列`);
+      }
+      // 以服务器为准，失败也刷新，避免旧页面覆盖其他编辑的新状态。
+      await load();
+    } finally {
+      movingRef.current = false;
+      setMovingId(null);
     }
-    return c;
-  }, [atoms]);
+  };
 
   const trashAtom = async (atom: Atom) => {
     if (atom.members.length === 0 && atom.topic) {
@@ -118,7 +196,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
     if (!r.ok) return toast(r.error ?? "回收站加载失败");
     const d = ((r as Record<string, unknown>).data ?? r) as unknown as TrashData;
     setTrash({ topics: d.topics ?? [], contents: d.contents ?? [] });
-    setMode({ kind: "trash" });
+    setMode("trash");
   };
 
   const collectMore = async () => {
@@ -151,18 +229,19 @@ export function Board(props: { openEditor: (id: string) => void }) {
     }
   };
 
-  // ── 平台矩阵 ──
-  if (mode.kind === "matrix") {
-    const atom = atoms.find((a) => a.key === mode.atomKey);
-    if (!atom) {
-      setMode({ kind: "columns" });
-      return null;
-    }
-    return <Matrix atom={atom} seats={seats} back={() => setMode({ kind: "columns" })} openEditor={props.openEditor} send={send} reload={load} />;
+  // 主题位置跟随路由，首次加载期间保留深链。
+  if (props.atomKey) {
+    const atom = atoms.find((a) => a.key === props.atomKey);
+    if (!loaded || loadError || !atom) return <div className="topic-load-state">
+      <button onClick={props.backToBoard}>← 管线看板</button>
+      <p role={loadError ? "alert" : undefined}>{!loaded ? "正在加载主题…" : loadError ?? "这个主题不存在，或已移入回收站。"}</p>
+      {loaded && <button onClick={() => void load()}>重新加载</button>}
+    </div>;
+    return <Matrix key={atom.key} atom={atom} seats={seats} back={props.backToBoard} openEditor={props.openEditor} send={send} reload={load} />;
   }
 
   // ── 回收站 ──
-  if (mode.kind === "trash") {
+  if (mode === "trash") {
     const restore = async (channel: string, id: string) => {
       const r = await invoke(channel, { id });
       toast(r.ok ? "已恢复" : (r.error ?? "恢复失败"));
@@ -171,7 +250,7 @@ export function Board(props: { openEditor: (id: string) => void }) {
     return (
       <div>
         <div className="board-bar">
-          <button onClick={() => setMode({ kind: "columns" })}>← 看板</button>
+          <button onClick={() => setMode("columns")}>← 看板</button>
           <span className="serif board-title">回收站</span>
         </div>
         {trash.topics.length + trash.contents.length === 0 && <p className="muted pad">回收站是空的。</p>}
@@ -193,156 +272,162 @@ export function Board(props: { openEditor: (id: string) => void }) {
     );
   }
 
-  // ── 列视图:左灵感面板(独立滚动、行式高密度) + 右管线四列(V5.6.2 重排) ──
-  const ideaAtoms = [...cols[0]].sort((a, b) => (b.topic?.score ?? -1) - (a.topic?.score ?? -1));
+  // 灵感保留在首列；一个主题只出现一次，拖动平台行只更新该平台当前稿。
+  const ideaAtoms = atoms.filter((atom) => atom.members.length === 0)
+    .sort((a, b) => (b.topic?.score ?? -1) - (a.topic?.score ?? -1));
   return (
-    <div>
-      <div className="board-bar">
-        <span className="serif board-title">管线看板</span>
-        <span className="muted">点灵感/卡片进平台矩阵 · 拖卡换列</span>
-        <button disabled={radarBusy !== null} onClick={() => void collectMore()}>
-          {radarBusy === "more" ? "侦察员继续搜…" : "再找 5 条"}
-        </button>
-        <button disabled={radarBusy !== null} onClick={() => void rescore()}>
-          {radarBusy === "rescore" ? "选题总监重评中…" : "重评现有选题"}
-        </button>
-        <button onClick={() => void openTrash()}>回收站</button>
-      </div>
-      <div className="board-split">
-        <div className="idea-pane">
-          <div className="kcol-head mono">
-            灵感库 <span className="muted">{ideaAtoms.length} · 3 天未选用自动清</span>
-          </div>
-          {ideaAtoms.length === 0 && <p className="muted">灵感库空——工作台「派侦查员搜灵感」,或顶栏「＋新想法」。</p>}
-          {ideaAtoms.map((atom) => (
-            <div key={atom.key} className="idea-row" onClick={() => setMode({ kind: "matrix", atomKey: atom.key })}>
-              <div className="idea-title">
-                {typeof atom.topic?.score === "number" && (
-                  <span className={"topic-score" + (atom.topic.score >= 80 ? " topic-score-high" : "")}>{atom.topic.score}</span>
-                )}
-                {phraseBreak(atom.topic?.title ?? atomRep(atom)?.title ?? "（无标题）")}
-              </div>
-              <div className="idea-sub mono muted">
-                {[typeof atom.topic?.score === "number" ? "综合评分" : "待评分", sourceLabel(atom.topic?.source), ideaAge(atom.topic?.renewedAt ?? atom.topic?.createdAt)].filter(Boolean).join(" · ")}
-              </div>
-              <button
-                className="acard-del"
-                title="移入回收站"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void trashAtom(atom);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+    <div className="board-workspace">
+      <div className="board-toolbar">
+        <div className="board-heading">
+          <h1 className="board-title">管线看板 <span>{atoms.filter((atom) => atom.members.length > 0).length} 个主题 · {contents.length} 篇稿件</span></h1>
+          <p className="board-help">按主题推进，各平台分别创作。拖动平台行换阶段，或点状态选择。</p>
         </div>
-        <div className="kanban">
-          {BOARD_COLUMNS.map((col, i) => i === 0 ? null : (
-          <div
+        <div className="board-tools">
+          <button disabled={radarBusy !== null} onClick={() => void collectMore()}>
+            {radarBusy === "more" ? "继续搜集中…" : "再找 5 条"}
+          </button>
+          <button disabled={radarBusy !== null} onClick={() => void rescore()}>
+            {radarBusy === "rescore" ? "重评中…" : "重评选题"}
+          </button>
+          <button onClick={() => void openTrash()}>回收站</button>
+        </div>
+      </div>
+      {loadError && <p className="acard-err" role="alert">{loadError} <button onClick={() => void load()}>重试</button></p>}
+      <div className="board-scroll-tools">
+        <span>横向滚动查看全部阶段</span>
+        <div>
+          <button aria-label="向左查看流程" onClick={() => boardRef.current?.scrollBy({ left: -332 })}>←</button>
+          <button aria-label="向右查看流程" onClick={() => boardRef.current?.scrollBy({ left: 332 })}>→</button>
+        </div>
+      </div>
+      <div
+        className="kanban"
+        ref={boardRef}
+        role="region"
+        aria-label="主题流程看板，可横向滚动"
+        tabIndex={0}
+        onDragOver={(e) => {
+          if (!dragRef.current || !boardRef.current) return;
+          const bounds = boardRef.current.getBoundingClientRect();
+          scrollSpeed.current = e.clientX > bounds.right - 56 ? 12 : e.clientX < bounds.left + 56 ? -12 : 0;
+          if (!scrollSpeed.current) return stopAutoScroll();
+          if (scrollFrame.current !== null) return;
+          const step = () => {
+            boardRef.current?.scrollBy({ left: scrollSpeed.current });
+            scrollFrame.current = requestAnimationFrame(step);
+          };
+          scrollFrame.current = requestAnimationFrame(step);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) stopAutoScroll();
+        }}
+        onDrop={endCardDrag}
+      >
+        <section className="kcol kcol-idea" data-column="idea" aria-label="灵感库">
+          <div className="kcol-head">
+            <h2><span className="kcol-dot" />灵感库</h2>
+            <span className="board-count">{ideaAtoms.length}</span>
+          </div>
+          <p className="kcol-note">3 天未选用自动清理</p>
+          <div className="kcol-body">
+            {ideaAtoms.length === 0 && (
+              <div className="kcol-empty kcol-idea-empty">
+                <span>还没有灵感</span>
+                <small>点击「再找 5 条」或顶栏「＋新想法」</small>
+              </div>
+            )}
+            {ideaAtoms.map((atom) => (
+              <div key={atom.key} className="idea-row">
+                <button className="idea-title" title={atom.topic?.title} onClick={() => props.openTopic(atom.key)}>
+                  {typeof atom.topic?.score === "number" && <span className={"topic-score" + (atom.topic.score >= 80 ? " topic-score-high" : "")}>{atom.topic.score}</span>}
+                  {phraseBreak(atom.topic?.title ?? "（无标题）")}
+                </button>
+                <div className="idea-sub muted">{[sourceLabel(atom.topic?.source), ideaAge(atom.topic?.renewedAt ?? atom.topic?.createdAt)].filter(Boolean).join(" · ")}</div>
+                <button className="acard-del" title="将灵感移入回收站" aria-label="将灵感移入回收站" onClick={() => void trashAtom(atom)}>×</button>
+              </div>
+            ))}
+          </div>
+        </section>
+        {BOARD_COLUMNS.map((col, i) => i === 0 ? null : (
+          <section
             key={col.key}
-            className={"kcol" + (dragOver === col.key && DROP_TARGET_STATUS[col.key] ? " kcol-over" : "")}
+            data-column={col.key}
+            aria-label={col.label}
+            className={"kcol kcol-" + col.key + (dragOver === col.key ? " kcol-over" : "")}
             onDragOver={(e) => {
-              if (!DROP_TARGET_STATUS[col.key]) return;
+              if (movingRef.current || !dragRef.current) return;
+              const content = contents.find((c) => c.id === dragRef.current);
+              if (!content || !boardMoveTarget(content, col.key)) return;
               e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
               setDragOver(col.key);
             }}
-            onDragLeave={() => setDragOver((d) => (d === col.key ? null : d))}
-            onDrop={async (e) => {
-              setDragOver(null);
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver((d) => d === col.key ? null : d);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
               const id = e.dataTransfer.getData("text/autocrew-content");
-              if (!id || !DROP_TARGET_STATUS[col.key]) return;
-              // 同列拖拽是整理动作不是流转:多状态列(如制作中)的落点是列的入口状态,
-              // 在剪辑的卡于本列内拖一下会被静默拉回已过审(创始人真机踩中)
-              const fromStatus = e.dataTransfer.getData("text/autocrew-status");
-              if (fromStatus && STATUS_COLUMN[fromStatus] === i) return;
-              // 看板是人工工具:force 直落目标状态,允许自由拖(前进/跳阶/回退),不受流水线单步状态机约束。
-              // 拖到「已发布」只标记状态(+publishedAt),不触发真实推送——推送仍走「推 →」。
-              const r = await invoke("content:transition", { id, target_status: DROP_TARGET_STATUS[col.key], force: true });
-              if (!r.ok) return toast(r.error ?? "流转失败");
-              toast("已流转到「" + col.label + "」");
-              void load();
+              const content = id === dragRef.current ? contents.find((c) => c.id === id) : undefined;
+              endCardDrag();
+              if (content) void moveContent({ ...content, status: e.dataTransfer.getData("text/autocrew-status") || content.status }, col.key);
             }}
           >
-            <div className="kcol-head mono">
-              {col.label} <span className="muted">{cols[i].length}</span>
+            <div className="kcol-head">
+              <h2><span className="kcol-dot" />{col.label}</h2>
+              <span className="board-count">{cols[i].length}</span>
             </div>
-            {cols[i].map((atom) => {
-              const rep = atomRep(atom);
-              return (
-                <div
-                  key={atom.key}
-                  className="acard"
-                  draggable={Boolean(rep)}
-                  onDragStart={(e) => {
-                    if (rep) {
-                      e.dataTransfer.setData("text/autocrew-content", rep.id);
-                      // 给 onDrop 的同列防呆用:拖拽起点的状态决定它属于哪一列
-                      e.dataTransfer.setData("text/autocrew-status", rep.status);
-                    }
-                  }}
-                  onClick={() => setMode({ kind: "matrix", atomKey: atom.key })}
-                >
-                  <div className="acard-head">
-                    <span className="acard-title">{phraseBreak(atom.topic?.title ?? rep?.title ?? "（无标题）")}</span>
-                    <button
-                      className="acard-del"
-                      title="移入回收站"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void trashAtom(atom);
-                      }}
-                    >
-                      ×
+            <div className="kcol-body">
+              {cols[i].length === 0 && <div className="kcol-empty"><span>{draggingId ? "松开放到这里" : "暂无主题"}</span><small>拖入平台稿件，移到{col.label}</small></div>}
+              {cols[i].map((card) => {
+                const platformRow = (entry: BoardPlatform) => {
+                  const content = entry.current;
+                  return <div
+                    key={entry.platform}
+                    data-content-id={content.id}
+                    className={"topic-platform-row" + (draggingId === content.id ? " acard-dragging" : "")}
+                    draggable={movingId === null}
+                    aria-busy={movingId === content.id}
+                    onDragStart={(e) => {
+                      if (movingRef.current) return e.preventDefault();
+                      dragRef.current = content.id;
+                      setDraggingId(content.id);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/autocrew-content", content.id);
+                      e.dataTransfer.setData("text/autocrew-status", content.status);
+                      e.dataTransfer.setData("text/plain", content.title);
+                    }}
+                    onDragEnd={endCardDrag}
+                  >
+                    <span className="topic-drag-grip" aria-hidden="true" title="拖动这个平台换阶段">⠿</span>
+                    <button className="topic-platform-open" title={content.title} onClick={() => props.openEditor(content.id)}>
+                      <strong>{platformLabel(entry.platform)}{entry.contents.length > 1 && <small> +{entry.contents.length - 1} 篇</small>}</strong>
+                      <span>{content.title || "（无标题）"}</span>
                     </button>
-                  </div>
-                  {atom.topic && atom.members.length === 0 && atom.topic.source && (
-                    <div className="muted mono acard-sub">{sourceLabel(atom.topic.source)}</div>
-                  )}
-                  {atom.members.length > 0 && (
-                    <div className="acard-chips">
-                      {atom.members.map((m) => {
-                        const badge = reviewBadge(m.review);
-                        // 缺证据（P1 §4.4）是硬门拦下的稿：红徽章 + 悬浮列出没出处的数字，
-                        // 混在灰色审稿徽章里会被当成又一条「还行」的提示
-                        const blocked = m.status === "needs_evidence";
-                        return (
-                          <button
-                            key={m.id}
-                            className={"chip" + (m.status === "published" ? " chip-pub" : "")}
-                            title={
-                              blocked
-                                ? m.blockedReason ?? (m.unverifiedNumbers ?? []).join("、") ?? undefined
-                                : m.review?.issues.map((i) => i.rule).join("、") || undefined
-                            }
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              props.openEditor(m.id);
-                            }}
-                          >
-                            {platformLabel(m.platform)} {VARIANT_STATUS[m.status] ?? m.status}
-                            {blocked && <span className="chip-blocked"> 缺证据</span>}
-                            {!blocked && badge && <span className="muted"> {badge}</span>}
-                            {/* 兜底留痕（P2 §4.3）：这一稿由备用端点顶完，hover 说主线为什么失败 */}
-                            {m.usedFallback && <span className="chip-fallback" title={fallbackTitle(m.usedFallback)}> 备用顶上</span>}
-                            {/* 多宿主留痕（P3 §6.1）：谁写的 / 谁在动 / 领了包没交稿，hover 是详情 */}
-                            <HostBadges content={m} inline />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {atom.members.some((m) => m.lastError) && <div className="acard-err">⚠ 生成中断,点开可重试</div>}
-                  {atom.members.some((m) => m.status === "needs_evidence") && (
-                    <div className="acard-err">⚠ 数字没有出处,点开补材料后重新生成</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                    <select
+                      className={content.status === "needs_evidence" ? "chip-blocked" : ""}
+                      aria-label={`移动${platformLabel(entry.platform)}「${content.title}」到`}
+                      value=""
+                      disabled={movingId !== null}
+                      onChange={(e) => void moveContent(content, e.target.value)}
+                    >
+                      <option value="">{movingId === content.id ? "移动中…" : VARIANT_STATUS[content.status] ?? "草稿"}</option>
+                      {BOARD_COLUMNS.filter((column) => column.key !== "idea").map((column) => <option key={column.key} value={column.key} disabled={!boardMoveTarget(content, column.key)}>{column.key === "published" ? "标记已发布" : `移到${column.label}`}</option>)}
+                    </select>
+                    {moveError?.id === content.id && <div className="acard-err topic-platform-error" role="alert">{moveError?.message}</div>}
+                  </div>;
+                };
+                return <article key={card.atomKey} className="acard topic-card" data-topic-key={card.atomKey}>
+                  <button className="acard-title" title={card.title} onClick={() => props.openTopic(card.atomKey)}>{phraseBreak(card.title)}</button>
+                  <div className="topic-platforms">{card.platforms.slice(0, 3).map(platformRow)}</div>
+                  {card.platforms.length > 3 && <details className="topic-more-platforms"><summary>另外 {card.platforms.length - 3} 个平台</summary>{card.platforms.slice(3).map(platformRow)}</details>}
+                  <div className="topic-card-footer"><span>{card.platforms.length} 个平台 · {card.members.length} 篇稿件</span><button onClick={() => props.openTopic(card.atomKey)}>管理平台</button></div>
+                </article>;
+              })}
+            </div>
+          </section>
         ))}
-        </div>
       </div>
     </div>
   );
@@ -358,6 +443,10 @@ function Matrix(props: {
 }) {
   const { atom, seats } = props;
   const [direction, setDirection] = useState("");
+  const [addedPlatforms, setAddedPlatforms] = useState<string[]>([]);
+  const [sourceId, setSourceId] = useState(() => boardPlatforms(atom).find((entry) => entry.current.body?.trim())?.current.id ?? "");
+  const [researchOpen, setResearchOpen] = useState(atom.members.length === 0);
+  const [dispatching, setDispatching] = useState<string | null>(null);
   /** 角度闸口的事实由 ResearchPanel 上报(它才有简报);这里只用来决定拦不拦 */
   const [gate, setGate] = useState<AngleGate>(NO_ANGLE_GATE);
   /** 非 null = 这个平台的「生成」被角度闸口拦下了,正等创始人四选其一(§1.6) */
@@ -365,11 +454,20 @@ function Matrix(props: {
   const directionRef = useRef<HTMLInputElement | null>(null);
   const t = atom.topic;
   const title = t?.title ?? atomRep(atom)?.title ?? "（无标题）";
-  const byPlatform = new Map(atom.members.map((m) => [m.platform, m]));
-  const shown = PLATFORM_CATALOG.filter((c) => seats.includes(c.id) || byPlatform.has(c.id));
+  const platformGroups = boardPlatforms(atom);
+  const byPlatform = new Map(platformGroups.map((entry) => [entry.platform, entry]));
+  const hasTheme = Boolean(t || atom.members.some((member) => member.topicId));
+  const suggestedPlatforms = platformGroups.length === 0 ? seats.slice(0, 3) : [];
+  const shown = [
+    ...PLATFORM_CATALOG.filter((c) => (hasTheme && (suggestedPlatforms.includes(c.id) || addedPlatforms.includes(c.id))) || byPlatform.has(c.id)),
+    ...platformGroups.filter((entry) => !PLATFORM_CATALOG.some((c) => c.id === entry.platform)).map((entry) => ({ id: entry.platform, label: platformLabel(entry.platform), gen: false })),
+  ];
+  const available = PLATFORM_CATALOG.filter((c) => c.gen && !shown.some((shown) => shown.id === c.id));
+  const source = atom.members.find((m) => m.id === sourceId);
+  const topicId = t?.id ?? atom.members.find((m) => m.topicId)?.topicId;
   const retentionLeft = (() => {
     if (!t || atom.members.length > 0) return null;
-    const age = (Date.now() - new Date(t.createdAt).getTime()) / 86400000;
+    const age = (Date.now() - new Date(t.renewedAt ?? t.createdAt).getTime()) / 86400000;
     return isFinite(age) ? Math.max(0, Math.ceil(3 - age)) : null;
   })();
 
@@ -379,7 +477,8 @@ function Matrix(props: {
   }, []);
 
   const scrollToAngles = () => {
-    document.getElementById(ANGLE_SECTION_ID)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setResearchOpen(true);
+    requestAnimationFrame(() => document.getElementById(ANGLE_SECTION_ID)?.scrollIntoView({ behavior: "smooth", block: "center" }));
   };
 
   const focusDirection = () => {
@@ -392,21 +491,37 @@ function Matrix(props: {
    * 「直接写」是显式按钮——点了才走,并把这句话原样带进 brief 让总编辑落成 skip_reason。
    */
   const dispatch = async (platform: string, skipAngle = false) => {
+    if (dispatching) return;
     if (!skipAngle && needsAnglePick(gate, direction)) {
       setAsking(platform);
       scrollToAngles();
       return;
     }
     setAsking(null);
-    const receipt = await props.send(buildDispatchBrief({ title, topic: t ?? null, platform, direction, skipAngle }));
-    toast(receipt.ok ? `已受理${receipt.actionId ? ` · ${receipt.actionId}` : ""}` : (receipt.error ?? "派活失败"));
+    setDispatching(platform);
+    try {
+      const receipt = await props.send(buildDispatchBrief({ title, topic: t ?? null, topicId, source, platform, direction, skipAngle }));
+      toast(receipt.ok ? "已交给总编辑，请查看对话反馈" : (receipt.error ?? "派活失败"));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const removeDraft = async (content: Content) => {
+    const confirmed = await openDialog({ title: "将这篇稿件移入回收站？", body: `《${content.title}》可以在回收站恢复。其他平台和稿件不受影响。`, confirmLabel: "移入回收站", fields: [] });
+    if (!confirmed) return;
+    const result = await invoke("content:delete", { id: content.id });
+    if (!result.ok) return toast(result.error ?? "移入回收站失败");
+    toast("已移入回收站，可恢复");
+    await props.reload();
+    if (atom.members.length === 1 && !atom.topic) props.back();
   };
 
   const renameTopic = async () => {
     if (!t) return;
     const v = await openDialog({
       title: "改选题标题",
-      body: "改的是灵感库这条选题的标题(看板卡片显示用);不改已写稿件的正文标题。",
+      body: "改的是这组选题的标题；不改各篇稿件的标题和正文。",
       fields: [{ key: "title", label: "标题", initial: t.title, required: true, multiline: true }],
       confirmLabel: "保存",
     });
@@ -420,14 +535,49 @@ function Matrix(props: {
   };
 
   return (
-    <div>
-      <div className="board-bar">
-        <button onClick={props.back}>← 看板</button>
-        <span className="serif board-title">{title}</span>
-        {t && <button onClick={() => void renameTopic()}>改标题</button>}
+    <div className="topic-workspace">
+      <div className="topic-page-heading">
+        <button className="topic-back" onClick={props.back}>← 管线看板</button>
+        <div className="topic-heading-line"><h1>{title}</h1>{t && <button onClick={() => void renameTopic()}>编辑主题</button>}</div>
+        <p>{platformGroups.length} 个平台 · {atom.members.length} 篇稿件<span>{hasTheme ? "围绕同一个主题，为每个平台写适合它的内容。" : "这是一篇独立稿，尚未关联主题。"}</span></p>
       </div>
+      <div className="topic-section-heading">
+        <h2>平台内容</h2>
+        {hasTheme && available.length > 0 && <select aria-label="添加平台" value="" onChange={(e) => setAddedPlatforms((current) => [...current, e.target.value])}>
+          <option value="">＋ 添加平台</option>{available.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>}
+      </div>
+      {hasTheme && <div className="topic-dispatch-settings">
+        {atom.members.length > 0 && <label>参考稿<select aria-label="参考稿" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+          <option value="">从主题材料重新写</option>
+          {platformGroups.flatMap((entry) => entry.contents).map((m) => <option key={m.id} value={m.id}>{platformLabel(m.platform)} · {m.title || "无标题"}</option>)}
+        </select></label>}
+        <label className="topic-direction-label">创作方向<input ref={directionRef} placeholder="补充这次想讲的角度（可选）" value={direction} onChange={(e) => setDirection(e.target.value)} /></label>
+      </div>}
+      <div className="topic-platform-grid">
+        {shown.map((platform) => {
+          const group = byPlatform.get(platform.id);
+          const current = group?.current;
+          const badge = current ? reviewBadge(current.review) : null;
+          return <section key={platform.id} data-platform={platform.id} className={"topic-platform-card" + (!current ? " topic-platform-empty" : "")}>
+            <header><h3>{platform.label}</h3>{current && <><span className={"acard-status" + (current.status === "needs_evidence" ? " chip-blocked" : "")}>{VARIANT_STATUS[current.status] ?? current.status}</span><details className="topic-draft-menu"><summary aria-label={`${platform.label}稿件操作`}>⋯</summary><button onClick={() => void removeDraft(current)}>移入回收站</button></details></>}</header>
+            {current ? <>
+              <button className="topic-draft-title" onClick={() => props.openEditor(current.id)}>{current.title || "（无标题）"}</button>
+              <div className="topic-draft-detail">当前稿 · 最近修改 {new Date(current.updatedAt).toLocaleDateString("zh-CN")}</div>
+              <div className="acard-details">{badge && <span>{badge}</span>}<HostBadges content={current} inline />{current.usedFallback && <span title={fallbackTitle(current.usedFallback)}>备用顶上</span>}</div>
+              {(current.blockedReason || current.lastError) && <p className="acard-err">{current.blockedReason || "生成中断，打开稿件查看"}</p>}
+              <button className="topic-open-draft" onClick={() => props.openEditor(current.id)}>打开{platform.label}稿</button>
+              {group.contents.length > 1 && <details className="topic-other-drafts"><summary>其他稿件（{group.contents.length - 1}）</summary>{group.contents.slice(1).map((m) => <div className="topic-other-draft" key={m.id}><button onClick={() => props.openEditor(m.id)}><span>{m.title || "（无标题）"}</span><small>{VARIANT_STATUS[m.status] ?? m.status}</small></button><button className="topic-remove-draft" aria-label={`将「${m.title}」移入回收站`} onClick={() => void removeDraft(m)}>×</button></div>)}</details>}
+            </> : <>
+              <p>{source ? `参考${platformLabel(source.platform)}稿，改写适合${platform.label}的内容。` : "沿用主题材料和创作方向，开始这个平台的内容。"}</p>
+              {platform.gen ? <button className="topic-create-draft" disabled={dispatching !== null} onClick={() => void dispatch(platform.id)}>{dispatching === platform.id ? "正在安排…" : `写${platform.label}稿`}</button> : <span className="muted">暂不支持自动创作</span>}
+            </>}
+          </section>;
+        })}
+      </div>
+      {asking && <AngleGuide platform={asking} cards={gate.cards} ready={!needsAnglePick(gate, direction)} onGoPick={scrollToAngles} onWriteOwn={focusDirection} onSkip={() => void dispatch(asking, true)} onGo={() => void dispatch(asking)} onCancel={() => setAsking(null)} />}
       {t && (
-        <div className="matrix-detail">
+        <details className="topic-research" open={researchOpen} onToggle={(event) => setResearchOpen(event.currentTarget.open)}><summary>主题材料与写作角度</summary><div className="matrix-detail">
           {typeof t.score === "number" && (
             <div className="topic-score-panel">
               <strong className="serif">综合评分 {t.score}/100</strong>
@@ -464,13 +614,6 @@ function Matrix(props: {
               </button>
             </p>
           )}
-          <input
-            ref={directionRef}
-            className="matrix-direction"
-            placeholder="你想写的方向/角度(可选,派活时带给写手——手写角度优先级最高)"
-            value={direction}
-            onChange={(e) => setDirection(e.target.value)}
-          />
           {/* 深调研:四视角简报 + 写前角度卡,写这条选题时自动注入(deep-research spec §8 / 角度卡 spec §1.4) */}
           <ResearchPanel
             topic={t}
@@ -478,40 +621,9 @@ function Matrix(props: {
             onSelectionChange={() => void props.reload()}
             focusAngles={asking !== null}
           />
-        </div>
+        </div></details>
       )}
-      {asking && (
-        <AngleGuide
-          platform={asking}
-          cards={gate.cards}
-          ready={!needsAnglePick(gate, direction)}
-          onGoPick={scrollToAngles}
-          onWriteOwn={focusDirection}
-          onSkip={() => void dispatch(asking, true)}
-          onGo={() => void dispatch(asking)}
-          onCancel={() => setAsking(null)}
-        />
-      )}
-      <div className="mono muted" style={{ margin: "8px 0 6px" }}>平台矩阵 · 有稿点开,无稿生成</div>
-      <div className="matrix-grid">
-        {shown.map((c) => {
-          const m = byPlatform.get(c.id);
-          return (
-            <div key={c.id} className={"mcell" + (m ? " mcell-filled" : "")}>
-              <div className="mono">{c.label}</div>
-              {m ? (
-                <button className="chip" onClick={() => props.openEditor(m.id)}>
-                  {VARIANT_STATUS[m.status] ?? m.status} →
-                </button>
-              ) : c.gen ? (
-                <button onClick={() => void dispatch(c.id)}>生成</button>
-              ) : (
-                <span className="muted mono">席位未开通</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+
     </div>
   );
 }
