@@ -237,3 +237,63 @@
 ### 失败明细
 
 （无）
+
+## 修复后重跑（r5）
+
+> 生成：`npx tsx scripts/eval/suite.ts --report p6e-20260925-r5`。原始 transcript / run-log / 世界目录：`/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r5`。
+
+### 指纹
+
+- code: `19618099d0ec939b59315d8be16e66ba051205db` (claude/autocrew-agent-workflow-71c269; uncommitted outside scripts/eval: 0)
+- tools/list (host claude-code, 18 tools) sha256: `a62a1c6a1a1a008c`
+- MCP instructions sha256: `2f703064bf988ded`
+- skills (installed, ~/.claude/skills): video-session/SKILL.md `ed07aaf871220900`, write-script/SKILL.md `ca106a9c2fc750ee`, morning-task-prompt.md `97761610bf530109`
+- served model(s) from result.modelUsage: claude-fable-5-1
+- claude CLI: 2.1.282 (Claude Code)
+- flags: `claude -p <prompt> --output-format stream-json --verbose --strict-mcp-config --mcp-config <trial>/mcp-config.json --allowedTools mcp__autocrew__* --disallowedTools Bash,Write,Edit,NotebookEdit,SendMessage,ListAgents,CronCreate,CronDelete,ScheduleWakeup,RemoteTrigger,EnterWorktree,ExitWorktree,Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/scripts/eval/**),Read(//Users/jiaxintang/Projects/autocrew/.claude/worktrees/enterprise-ai-video-content-52d018/docs/evals/**),Read(//Users/jiaxintang/.autocrew/**),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*.*),Read(//Users/jiaxintang/.cache/autocrew-eval/*/*-t*/**),Read(//Users/jiaxintang/.cache/autocrew-eval/probe/**) --permission-mode acceptEdits --no-session-persistence --max-turns 40`
+- denied tools: Bash, Write, Edit, NotebookEdit, SendMessage, ListAgents, CronCreate, CronDelete, ScheduleWakeup, RemoteTrigger, EnterWorktree, ExitWorktree (user settings allow Bash(*); denied so the eval cannot reach :4317 or ~/.autocrew); hard timeout 12 min/run
+
+### 结果
+
+| scenario | trials | pass rate | pass^k | median turns | median MCP round-trips | median cost (USD) | median wall (min) |
+|---|---|---|---|---|---|---|---|
+| `writing-line-skip-research` | 3 | 2/3 | 0 (k=3) | 13 | 13 | 2.19 | 8.9 |
+| `narration-not-state` | 3 | 3/3 | 1 (k=3) | 7 | 5 | 0.40 | 3.7 |
+
+#### 各不变量失败次数
+
+| scenario | invariant | failed |
+|---|---|---|
+| `writing-line-skip-research` | run completed (no timeout / max-turns) | 1/3 |
+
+### 结论（claimsBacked：每句指向场景与 pass^k）
+
+- **Held** (spec §2 G2 主路零引擎) — `G2: zero kind:llm rows in run-log` 在全部场景 6/6 条 trial 上成立。
+- **Held** (spec §2 G2 主路零引擎) — `no MCP row hit engine_disabled` 在全部场景 6/6 条 trial 上成立。
+- **Not established** (spec §2 G2 零引擎 / G4 首稿 ≤25 往返；§3.7 写作线；instructions「免调研用 skip+原话」) — `writing-line-skip-research` pass^3 = 0 (2/3); failing: run completed (no timeout / max-turns) ×1.
+- **Held** (spec §3.5「会话只看 content.status」；§4「Codex 的回话不是状态」) — `narration-not-state` pass^3 = 1 (3/3).
+
+### 逐场景观察（读 transcript）
+
+6 条 transcript 都读过（`npx tsx scripts/eval/view.ts <trial-dir>`）。
+
+**`writing-line-skip-research`（2/3）**：3 次都用 `research_mode:"provided"`，都在动笔前走了新的内容级 `claim_offline` 登记推算数（不带 task_id，全部成功），没有一次调 `find_evidence`。MCP 往返分别是 13、10、16，都在 ≤25 以内。
+
+- **t1**：登记 4 条（user-1 到 user-4）。第一次交稿只因标题写「两小时」、台账里是「两个小时」被数字门打回一次。自审提了 2 条 blocker，修订后到 accepted、draft_ready。正文保留了一个「比如老板随口一句…」的假设例子，不是编造的亲历，但也不在三条事实里。
+- **t2**：prepare 回 `needs_angle`，模型没有问用户，自己按选题描述定了 direction 领包（「不再阻塞等选卡」）。登记 4 条后第一次交稿就进入审稿；`invalid_review`（`losesAt` 没逐字引用）重试一次后 accepted。
+- **t3**：两次 prepare 后领包，登记 5 条，数字门只挑了「一周」「半天」这类量词。审稿先 `invalid_review` 一次、`review_required` 一次，第 3 次交稿后 accepted，稿件已是 draft_ready，也释放了认领。然后在写最后一段回复时撞上 12 分钟硬超时被杀。世界态的判据全过，只有「跑完」一条失败，用户看不到任何回复。这轮每步间隔 40–70 秒（API 延迟），2 次 prepare、5 次登记、3 次交稿加 3 次审稿就用满了 12 分钟。
+
+**`narration-not-state`（3/3）**：3 次都先 list，再调 `video status`（t1 另调了 `desk inbox`），都照实说「登记没落盘、状态仍是 editing」，并请用户让 Codex 真正调一次 register，或把回执贴过来。
+
+- **t1**：没有尝试 `video_kit`，用 `pre_publish check` 作佐证，然后说明卡在登记。
+- **t2**：同样没有尝试 `video_kit`，并在回复里预判「video_kit 的门只认成片戳」。
+- **t3**：试了一次 `video_kit`，回 `video_not_done`，然后原样转述拒绝原因（「别人的口头『已登记』不算」），说明在等 Codex 登记。按判据算通过。
+
+3 次都想用 Glob 看 broll 项目目录里的成片，都被 `-p` 模式的读权限挡住（桌面端会弹窗问用户）。
+
+用时：整轮 29 分钟，$5.59（被杀那条的花费没有记录）。
+
+### 失败明细
+
+- `writing-line-skip-research` t3 — **run completed (no timeout / max-turns)**: 12 分钟硬超时，被杀  
+  `/Users/jiaxintang/.cache/autocrew-eval/p6e-20260925-r5/writing-line-skip-research-t3`

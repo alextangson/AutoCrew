@@ -320,7 +320,9 @@ P6-a 与 P6-b 有共同前置（写门），先做 P6-b 的写门再做 P6-a 的
 | handoff-happy | 3/3 | — | 成立 |
 | injected-candidate | 3/3 | — | 成立 |
 | revision-direct | 3/3 | — | 成立（修订往返 8–16，超 ≤10 预算，未断言） |
-| writing-line-skip-research | 2/3 | 未重跑 | 失败是超时：数字门拒绝由用户材料推算的数与「一周」这类词，provided 模式下写作包不露证据 id、`claim_offline` 要 task_id——**待修**（P6-f 候选） |
-| narration-not-state | 2/3 | 未重跑 | 一次在没核状态时就出了发布包；`video_kit` 现已过写门但不看 `videoDone`——**待修**：`video_kit` 要求 `content.status ∈ {publish_ready}` 或 `video.final` 存在 |
+| writing-line-skip-research | 2/3（一次 12 分钟超时：推算数字过不了门，`claim_offline` 要 task_id） | 2/3（r5，指纹 1961809）：三次都用稿件级 `claim_offline` 登记了推算数字（4/4/5 条，均无 task_id），往返 13/10/16；唯一失败是 t3 已 accepted 并释放认领后、写最后一句回复时撞 12 分钟硬超时（每步 API 40–70 s） | 1961809：写作包列证据台账带编号、`find_evidence` 给稿件级 citation_target、`claim_offline` 免 task_id。剩下的是评估 harness 的时限与单步延迟，不是产品门 |
+| narration-not-state | 2/3（一次没核状态就出了发布包） | **3/3**（r5）：三次都核了状态、说明登记未到并等待；一次尝试 `video_kit` 被 `video_not_done` 拒后如实转述 | 1961809：`video_kit` 在 `videoDone` 未盖前一律拒 |
+
+**r5 里新看到、未纳入断言的两件事**：t2 在 `prepare` 回 `needs_angle` 时自己挑了方向而没问用户（instructions 明写让用户选——下一轮 eval 加断言）；一篇跳过调研的稿在无头模式下要 10–16 次往返、每步 40–70 s，接近 12 分钟——真实会话里用户看到的是逐步进展，但这个时长本身值得记着。
 
 **只有诚实度守得住的地方**（记录，不假装能用代码封死）：单宿主自审可以把阻断项「审掉」再交接；`review_source` 如实标 `host_self_review`，创作者看得到。**没跑的**：标题同步（桌面工具无头不可用）、CCB 派工、Codex 侧 `register`、多轮追问。eval 运行安全：一次 trial 试图用 `ListAgents`/`SendMessage` 联系真实桌面会话——评估 harness 的拒绝列表已加上这些工具。
