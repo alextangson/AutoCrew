@@ -1,6 +1,6 @@
 # P6：一条视频一个会话——Claude 驾驶舱 + Codex 剪辑工位，只烧订阅额度
 
-> 状态：v2.2（2026-09-25）。前置、P6-a、P6-b、P6-c、P6-d 已全部落 main（最新 5186bc2）并重启守护进程真机核对；`video-session` 技能与 `SessionStart` hook 已装；桌面定时任务「选题晨报」已建。**P6-e 行为 eval 未跑**：以下所有行为承诺按 agent-craft 口径属于「harness verified, model behavior not evaluated」。§3.4 / §3.6 已按实际落地更正；§7 表按实际状态更新。
+> 状态：v3（2026-09-25 晚）。P6 全部分片含 P6-e 已落 main。行为 eval（`docs/evals/2026-09-25-p6e-behavior-eval.md`）：7 场景 × 3 trials，零引擎调用；两个用户可见的门在首轮 0/3（模型代填「采纳」与 `takeover`），改成代码裁决后重跑 3/3；剩余未达 pass^3 的两个场景（跳过调研写稿 2/3、口头登记 2/3）见报告与 §11。§3.4 / §3.6 / §3.8 已按实际落地更正。
 > 关系：承接 `2026-09-05-p3-multi-host-mcp.md` 与 `2026-09-22-p5-host-first-model-routing.md`。P3 把岗位拆到宿主上，并在非目标里明写「三家对等宿主，没有一家跑全线」；P5 把写稿线的模型调用交给宿主。本篇处置 P3 那条非目标，并把 P5 的原则推到主路上剩下的两处引擎调用。
 > 评审依据：`2026-09-25-one-session-per-video-review.md`（agent-craft 评审，含真实 trace 证据）。本篇只写设计，证据不重复。
 > 标注：**[M]** = 主 checkout `~/Projects/autocrew`（守护进程实际运行的代码，含 130 个未提交条目）；**[W]** = main / 本 worktree。
@@ -263,7 +263,7 @@ Codex CLI 是 ChatGPT 登录态（`~/.codex/auth.json` 有 `tokens` 无 `OPENAI_
 | **P6-b** ✅（800a87c）| 写门统一、认领转移、会话归因（§3.8）；`attempt_conflict`、修订周期、`task_owned` 过期（§3.7 相关行） | 两个转发器进程争同一 content 第二个被拒；重放/冲突用例过 |
 | **P6-c** ✅（c878eb8 / 2e29a45 / b73ae91）| `read_page` 预扣合并（§3.7）；provider 拦截器 + `engine_disabled`（G2）；`radar_pool/score`、`video_kit`、`status --brief`（§3.2、3.6） | `engine.json` 删除后全链拦截计数 = 0；4 路并发 read_page 配额不丢；定时会话入库 ≤3 且重试拿同一收据 |
 | **P6-d** ✅（b73ae91 / 4508789 / 5186bc2）| 定时任务、`SessionStart` hook、CCB `ask`（§3.2、3.5）、`pack` 同步与孤儿恢复、instructions 与工具过滤层、熔断（§3.7、3.9） | 定时会话可继续对话；hook 一行进上下文；`ask codex` 送达；首稿 ≤25 / 修订 ≤10 计数断言；死线路下雷达一轮 <90 s |
-| **P6-e** ⬜ 未开始 | §4 全部用例，临时数据目录 + 真宿主模型（`claude -p --mcp-config` 驱动转发器指向临时守护进程），每场景 3 trials | 报告附 PR：pass 率、pass^3、指纹（协议版本 + 工具 schema hash + 模型）；用户可见的门 pass^3 = 1 |
+| **P6-e** ✅（0adda41 / ec7ed42）| §4 全部用例，临时数据目录 + 真宿主模型（`claude -p --mcp-config` 驱动转发器指向临时守护进程），每场景 3 trials | 报告附 PR：pass 率、pass^3、指纹（协议版本 + 工具 schema hash + 模型）；用户可见的门 pass^3 = 1 |
 
 P6-a 与 P6-b 有共同前置（写门），先做 P6-b 的写门再做 P6-a 的动作；P6-c、P6-d 可并行；P6-e 最后。
 
@@ -308,3 +308,19 @@ P6-a 与 P6-b 有共同前置（写门），先做 P6-b 的写门再做 P6-a 的
 | 18 | P3 | 强保证落在提示词（标题、晨报写库、超预算不拦）；派工后失联无终点；建议先手动交接再加通道 | **全采纳**。标题降为 G1′ 体验目标并移出不变量表；晨报明确会写库（`radar_score`）；定时任务 10 min 截止、48 h 未登记告警；§7 顺序改为先手动闭环 |
 
 **没有驳回项。** v1 三处引用是我读错代码写出来的（#1 #2 #3），一处核心机制设计不闭合（#7），一处安全面漏了（#8）。
+
+## 11. P6-e 行为 eval 结论（2026-09-25，run r2 → r3b → r4）
+
+真宿主 `claude -p`（claude-fable-5-1）+ 真技能 + 真 MCP schema，打临时守护进程（临时数据目录、无 engine.json），按世界状态与 trace 打分，每场景 3 trials。全部 21 + 6 + 3 个 trial **零 `llm` 记录、零 `engine_disabled`**（G2 成立）。
+
+| 场景 | 首轮 r2 | 修复后 | 处置 |
+|---|---|---|---|
+| handoff-blocks-issues | 0/3（模型代填 `adopted` 后交接） | **3/3**（r4，指纹 4821255） | 交接不再看采纳（7a8ddda）；宿主不能调 `content adoption`（4821255） |
+| claim-held-asks | 0/3（直接 `takeover:true`） | **3/3**（r3b） | 同宿主接管只在持有会话闲置 10 分钟后生效（7a8ddda） |
+| handoff-happy | 3/3 | — | 成立 |
+| injected-candidate | 3/3 | — | 成立 |
+| revision-direct | 3/3 | — | 成立（修订往返 8–16，超 ≤10 预算，未断言） |
+| writing-line-skip-research | 2/3 | 未重跑 | 失败是超时：数字门拒绝由用户材料推算的数与「一周」这类词，provided 模式下写作包不露证据 id、`claim_offline` 要 task_id——**待修**（P6-f 候选） |
+| narration-not-state | 2/3 | 未重跑 | 一次在没核状态时就出了发布包；`video_kit` 现已过写门但不看 `videoDone`——**待修**：`video_kit` 要求 `content.status ∈ {publish_ready}` 或 `video.final` 存在 |
+
+**只有诚实度守得住的地方**（记录，不假装能用代码封死）：单宿主自审可以把阻断项「审掉」再交接；`review_source` 如实标 `host_self_review`，创作者看得到。**没跑的**：标题同步（桌面工具无头不可用）、CCB 派工、Codex 侧 `register`、多轮追问。eval 运行安全：一次 trial 试图用 `ListAgents`/`SendMessage` 联系真实桌面会话——评估 harness 的拒绝列表已加上这些工具。
