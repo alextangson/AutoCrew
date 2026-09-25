@@ -2,7 +2,7 @@
 
 **面向中文内容团队的本地优先 AI 编辑部。**
 
-AutoCrew 把选题、写稿、修改、封面、正文配图、发布前检查和数据回流放进同一个本地工作台。内容与密钥默认保存在你的电脑 `~/.autocrew/`，模型调用只会发送完成任务所需的提示词和稿件内容到你配置的模型服务。
+AutoCrew 把选题、写稿、修改、封面、正文配图、发布前检查和数据回流放进同一个本地工作台。内容与密钥默认保存在你的电脑 `~/.autocrew/`，MCP 默认由当前宿主完成调研、立意、写作和审稿；只有明确选择后台执行时才调用另外配置的模型服务。取材或图像、视频生成仍会访问相应服务。
 
 ## 你能用它完成什么
 
@@ -53,6 +53,8 @@ npm run restart
 > `~/.autocrew/` 是每台电脑各自的本地工作数据和密钥目录，不会随 Git 同步。需要迁移历史稿件时，请自行安全复制该目录，且不要把 `engine.json`、`publish.json` 或 `server-token` 提交到仓库。
 
 ## 配置模型
+
+**通过 Claude Desktop、Claude Code 或 Codex 的 MCP 写作不需要配置后台模型。** 默认使用当前宿主的模型能力与额度，AutoCrew 保存任务、资料与稿件，并执行引文和格式检查。下面的配置仅供 AutoCrew 工作台、显式 `execution=engine` / `review=engine` 或已授权的无人值守后台任务使用。第三方搜索及图像、视频服务仍有各自的额度和计费，不包含在宿主模型订阅中。
 
 配置只有**一张端点表**：填过的每个端点（地址 + Key + 模型清单）在里面存一份，主端点、备用端点、四个岗位、对话里的模型切换器全部指向它——同一把 Key 不用填四遍。
 
@@ -202,6 +204,35 @@ autocrew host codex
 ## MCP 与 OpenClaw
 
 AutoCrew 的网页、CLI、OpenClaw 和 MCP 使用同一套能力注册表。
+
+### MCP 写作默认流程
+
+新稿从 `autocrew_workflow prepare` 开始，先复用或建立选题，保留完整 `requirements`。按返回动作领取 `autocrew_scout` 任务，由当前宿主完成取材、四个研究视角、综合和不同立意；产品保存阶段结果并核验抓取页中的逐字引文。用户看到材料、缺口和候选理由后选角，已有明确 `direction` 则直接沿用。
+
+宿主可用自己的搜索工具找网址，再调 `scout read_page` 抓取，不需要第三方搜索 key；`scout search` 使用独立搜索服务。无法抓取的材料明确记作离线未核验声明，不伪装成已验证来源。研究阶段交给宿主执行，不能轮询等待不存在的后台研究模型。
+
+研究与方向就绪后领取 `autocrew_writer pack`，它默认只整理已有资料，不读后台模型配置或自动补证。当前宿主写作并 `submit`，默认 `review=host`；收到 `awaiting_host_review` 后用 `autocrew_review_desk pack/submit` 领取和提交宿主审稿结果，最后用 `submit_status` 核对状态。单宿主自审标记 `host_self_review` / `host_self_reviewed`；另一宿主审阅也不会自动证明独立性。保存、自审、作者认可和发布必须分别说明。
+
+MCP 初始化自带流程说明，亦可读取 `autocrew://writing-guide` 或使用 `write_content` prompt，无需依赖宿主发现仓库技能。已有材料须明确 `research_mode=provided` 并提供 `research`；用户明确不需研究才用 `skip` 和 `research_reason`。批量与平台适配也逐篇走完整链路。
+
+只有明确选择 `execution=engine` 的后台调研/代写、`review=engine` 的后台审稿或已授权的无人值守任务才用额外模型 API。普通 MCP 不要求配置 `engine.json`。`review=none` 必须披露未审；`content save` 仅用于 `source=manual_import` 加 `import_reason` 的已有稿件导入，不能绕过生成稿检查。第三方搜索、图像与视频使用各自服务额度。
+
+`audience_review` 按实际审阅结果解释读者可能停留或流失的位置；未点评或画像不足时说明限制。宿主模拟受众不是实际读者测试，不会让另一个后台模型自动重写正文。完整边界见 [宿主驱动的 MCP 写作](docs/2026-09-22-host-driven-mcp.md)。
+
+`autocrew_editorial profile` 读取档案，`update_profile` 保存用户已确认的定位、受众、表达与样本。用户反馈先 `inspect` 取得当前 `draft_hash`，再通过 `feedback` 保存原话与稳定 `event_id`：默认只影响本篇，用户明确的长期要求才进入平台或跨平台声音规则。用户的采纳评价和模型审稿分别记录。应用反馈修改已有稿时，writer pack 带原 content_id 和 force:true，保留同一稿件。纯 MCP 不需要编辑本地档案文件或用初始化调用校准。
+
+写作相关技能按职责使用：
+
+| 环节 | 技能 |
+| --- | --- |
+| 定位与声音 | `calibrate`、`style-calibration` |
+| 找题与备料 | `topic-ideas`、`spawn-planner`、`research` |
+| 编排与写稿 | `spawn-writer`、`write-script`、`spawn-batch-writer` |
+| 改写与把关 | `platform-rewrite`、`humanizer-zh`、`content-review` |
+| 用户反馈 | `memory-distill` |
+| 后续流程 | `pre-publish`、`manage-pipeline` |
+
+这些技能是操作指引，不意味着同名独立 agent 已经运行。实际分工由工具的任务、材料包、审稿结果和交接记录证明。
 
 ### 接宿主（Claude Code / Codex / dsh）
 

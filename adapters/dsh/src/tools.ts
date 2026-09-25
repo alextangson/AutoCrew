@@ -44,6 +44,9 @@ export const PORTED_TOOLS: readonly string[] = [
   // 写
   "autocrew_generate",
   "autocrew_style",
+  "autocrew_editorial",
+  "autocrew_scout",
+  "autocrew_review_desk",
   // 审 → 改 → 发布前门禁
   "autocrew_review",
   "autocrew_humanize",

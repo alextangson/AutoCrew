@@ -4,86 +4,30 @@ description: |
   Learn from user feedback to improve future content. Activate when user approves, rejects, edits, or gives feedback on topics or content drafts. Also runs periodically to consolidate learnings.
 ---
 
-# Memory Distill
+# 记录创作者反馈
 
-> Utility skill. Captures user preferences and writing feedback into persistent memory.
+把用户对这篇稿的真实评价与修改要求保留下来，避免下一轮又犯同样的问题。模型审稿结论不能冒充用户反馈。
 
-## Memory Architecture
-
-- **L1 — ~/.autocrew/MEMORY.md** (≤120 lines): Working memory. Brand profile, audience, account status, writing preferences summary.
-- **L2 — ~/.autocrew/memory/**: Detailed logs and digests. Referenced on demand.
-
-## When to Activate
-
-- User approves or rejects a topic
-- User edits a draft significantly
-- User gives explicit feedback ("太正式了", "多用emoji", "短一点")
-- User shares performance data ("这条笔记1000赞")
-
-## Steps
-
-### Feedback Capture
-
-1. Identify the feedback signal:
-   - Approval: user says "好" / "可以" / "就这个" → positive signal
-   - Rejection: user says "不行" / "太..." / "换一个" → negative signal
-   - Edit: user provides a rewrite → compare original vs edit
-   - Performance: user shares metrics → high/low performance signal
-
-2. Analyze what the user liked or disliked. Be specific:
-   - Bad: "user likes emoji"
-   - Good: "user prefers 3-5 emoji per XHS post, placed at paragraph starts, favorites: 🔥 💡 ✨"
-
-3. Formulate a learning as a concise preference statement.
-
-4. Read `~/.autocrew/MEMORY.md`. Append the learning to the appropriate section:
-
-Prefer using `autocrew_memory`:
+1. 用户说“好”时先识别对象：可能是在同意继续、选角或确认理解，不自动当作成稿采纳。仅明确评价当前稿件时记录 verdict。
+2. 对目标稿调用 `autocrew_editorial {action:"inspect", content_id}`，读取当前 `draft_hash` 与已有反馈，确保意见指向用户正在看的版本。
+3. 使用一次稳定的 `event_id`，带原话与准确范围提交：
 
 ```json
 {
-  "action": "capture_feedback",
-  "content_id": "content-xxx",
-  "signal_type": "edit",
-  "feedback": "太正式了",
-  "modified_text": "用户改后的版本"
+  "action":"feedback",
+  "content_id":"…",
+  "draft_hash":"…",
+  "event_id":"feedback-20260922-01",
+  "feedback":"用户的原话",
+  "scope":"draft",
+  "user_confirmed":true
 }
 ```
 
-   ```markdown
-   ## Writing Preferences
-   - [Date] XHS posts: user prefers casual tone, 3-5 emoji, short paragraphs
-   - [Date] Titles: user likes curiosity-gap style, dislikes clickbait
+调用 `autocrew_editorial`，event_id 只用字母、数字、下划线或连字符；示例标识应换成这次反馈的唯一稳定值。重试复用同一 event_id 和同一载荷；不要每轮轮询都造新反馈。稿件已经变化时重新 inspect 并确认意见仍对应新版本，不把旧稿认可套到新稿。
 
-   ## Content Edit Preferences
-   - [Date] Shortened opening from 3 sentences to 1 — user prefers immediate hooks
-   - [Date] Replaced formal "综上所述" with casual "所以说" — user wants conversational tone
+4. 范围：默认 `draft`，只约束当前文章。“以后小红书都这样”才用 `platform` 并带正确 platform；用户明确说跨平台的长期表达才用 `voice`。本篇“短一点”不能自动变成永久偏好。
+5. 仅按用户明确结果设置 `verdict`：`adopted`（直接能用）、`light_edit`（小改能用）、`rewritten`（基本重写）、`rejected`（打回）。不从模型分数、工具成功或发布数据推定采纳。
+6. 读取返回结果，说明记录了哪条、作用哪里；如没有成功，不能说“我已记住”。反馈不自动等于改稿或批准发布；需要改稿时保留该反馈进完整 requirements，带原 content_id、topic_id、platform 和 force:true 重新领包并按 `write-script` 提交，保留同一篇稿件。
 
-   ## Performance Insights
-   - [Date] "AI工具真香清单" got 1000 likes on XHS — list format + "真香" hook works
-   ```
-
-### Capacity Check
-
-If MEMORY.md exceeds 150 lines:
-1. Identify entries that can be consolidated (similar learnings → one summary)
-2. Move detailed case studies to `~/.autocrew/memory/archive-{date}.md`
-3. Replace with a one-line summary in MEMORY.md
-
-## Guidelines
-
-- Be specific — actionable preferences, not vague observations
-- Don't overwrite previous learnings, accumulate them
-- Date every entry for tracking evolution
-- Consolidate when file gets long, don't let it grow unbounded
-
-## Error Handling
-
-| Failure | Action |
-|---------|--------|
-| MEMORY.md doesn't exist | Create it with initial structure |
-| File write fails | Log error, continue without saving |
-
-## Changelog
-
-- 2026-03-31: v1 — Adapted from Qingmo memory-distill.md v3. Simplified to two-layer architecture (no LanceDB dependency). File-based storage only.
+创作者档案和校准走 `autocrew_editorial profile/update_profile`；不直接追加本地 MEMORY 或 profile 文件。性能表现只作为带来源的数据事实，单篇高赞不能证明某种写法普遍有效。
