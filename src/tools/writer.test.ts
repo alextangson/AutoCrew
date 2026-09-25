@@ -20,6 +20,7 @@ import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { executeWriter } from "./writer.js";
+import { executeScout } from "./scout.js";
 import { failStalePreparingPacks, PACK_JSON, PACK_MD, STALE_PREPARING_MS, type WritingPackFile } from "./writer-pack.js";
 import { packPreparation } from "./writer-prepare.js";
 import { forgetReview, reviewInFlight } from "./writer-review.js";
@@ -504,6 +505,62 @@ describe("writer pack — 手工建的选题（没有简报）", () => {
     const status = await settle(started.content_id as string);
     expect(status.status).toBe(execution === "host" ? "ready" : "failed");
     if (execution === "engine") expect(String(status.error)).toContain("engine.json");
+  });
+});
+
+// ─── provided 模式：推算出来的数怎么进账（§11 待修第一条，P6-e 行为 eval 场景 1） ──────
+
+describe("writer provided 模式：证据台账带编号，推算数走写手侧登记", () => {
+  const FACTS = "每周开 3 场例会；每场会后整理纪要要 40 分钟，用了自动纪要后每场只要 10 分钟。";
+  const BODY = "以前每场会后整理纪要要 40 分钟，现在 10 分钟，一场省三十分钟。";
+
+  async function providedPack(): Promise<Record<string, any>> {
+    const topic = await saveTopic({ title: "例会纪要", description: "", tags: [] }, testDir);
+    const started = await run({ action: "pack", topic_id: topic.id, platform: "douyin", research_mode: "provided", research: FACTS, direction: "讲自动纪要省下的时间" });
+    expect(started).toMatchObject({ ok: true, status: "ready" });
+    return started;
+  }
+
+  it("pack_md 在数字纪律前列出证据台账编号，结构化回执给 ledger_ids", async () => {
+    const res = await providedPack();
+    const md = String(res.pack_md);
+    expect(md).toContain("## 证据台账");
+    expect(md).toContain("- user-research（用户材料）：每周开 3 场例会");
+    expect(md.indexOf("## 证据台账")).toBeLessThan(md.indexOf("数字必须能指到证据编号"));
+    expect(md).toContain("claim_offline");
+    expect(res.ledger_ids).toContain("user-research");
+  });
+
+  it("find_evidence 不另起研究任务，给 claim_offline 入口；登记「一场省三十分钟」后数字门放行", async () => {
+    const res = await providedPack();
+    const contentId = res.content_id as string;
+    const packId = res.pack_id as string;
+    const before = await run(submitArgs(contentId, packId, 1, { body: BODY }));
+    expect(before.status).toBe("repair");
+    expect(JSON.stringify(before.failures)).toContain("三十分钟");
+
+    const found = await run({ action: "find_evidence", content_id: contentId, pack_id: packId, claim_token: res.claim_token, need: "一场省多少时间" });
+    expect(found).toMatchObject({
+      ok: true, status: "awaiting_host_evidence", model_api_calls: 0,
+      citation_target: { content_id: contentId, pack_id: packId },
+      next_action: { tool: "autocrew_scout", params: { action: "claim_offline", content_id: contentId, pack_id: packId, claim_token: res.claim_token } },
+    });
+    expect(found.task_id).toBeUndefined();
+    expect(String(found.note)).toContain("推算出来的数先登记成 user_claim，说明推算依据");
+
+    const registered = await executeScout({
+      ...(found.next_action as { params: Record<string, unknown> }).params,
+      claim: "一场省三十分钟", reason: "user-research：40 分钟减去 10 分钟", _dataDir: testDir,
+    });
+    expect(registered).toMatchObject({ ok: true, claim_id: "user-1", verified: false });
+
+    const after = await run(submitArgs(contentId, packId, 2, { body: BODY, claim_token: res.claim_token }));
+    const failures = (after.failures as Array<{ check: string }> | undefined) ?? [];
+    expect(failures.some((f) => f.check === "unverified_numbers")).toBe(false);
+    expect(after.status).toBe("accepted_unreviewed");
+    const status = await run({ action: "pack_status", content_id: contentId });
+    expect(String(status.pack_md)).toContain("- user-1（用户材料）：一场省三十分钟");
+    expect(status.budget).toMatchObject({ host_evidence_left: 11 });
   });
 });
 

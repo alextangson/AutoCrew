@@ -11,7 +11,7 @@ description: |
 
 这条视频的事实只在 AutoCrew 的 content 上。你说出口的每个状态——过审、已交接、剪完、可发布——都要来自本会话里某次工具回执；Codex 的回话、用户转述、你的推断只是线索，拿 `autocrew_content get` 核过才算。稿件处在 `editing` 时归剪辑工位，写作线的工具（`autocrew_writer`、`autocrew_review_desk`、`autocrew_editorial feedback`）不碰它，要改稿先撤回。一个会话只服务一条视频的一个平台（PRD-v4 §4.3：同一上下文连写两个平台会串稿），第二个平台另开会话。模型活全用本会话自己的额度：不选 `execution:"engine"` / `review:"engine"`，不调 `autocrew_generate`。
 
-会话本身不存状态，压缩或重开后从 `autocrew_content get` 接上：还没稿、或审稿还没 accepted → 第 2 步；`draft_ready` / `approved` 且已 accepted（或用户已采纳）→ 第 3 步；`editing` → 第 5 步；`publish_ready` → 第 6 步。
+会话本身不存状态，压缩或重开后从 `autocrew_content get` 接上：还没稿、或审稿还没 accepted → 第 2 步；`draft_ready` / `approved` 且已 accepted → 第 3 步；`editing` → 第 5 步；`publish_ready` → 第 6 步。
 
 令牌以最近一次回执为准：`pack` 发的 `claim_token` 一直带到 `handoff`（交接后认领转给 Codex，这枚作废）；撤回、`video_kit` 的回执会给新的，之后改用新的。
 
@@ -67,7 +67,7 @@ EOF
 
 ## 6. 发布包与发布
 
-1. `autocrew_pre_publish {action:"video_kit", content_id, platform, kit:{post_title, caption, cover_text, hashtags?}}`：发布标题、简介、封面大字由你按当前定稿重拟，字数上限以工具说明为准；逐字段报错就改了重交。把这份 kit 摆给用户，他要改就重交。
+1. `autocrew_pre_publish {action:"video_kit", content_id, platform, kit:{post_title, caption, cover_text, hashtags?}}`：发布标题、简介、封面大字由你按当前定稿重拟，字数上限以工具说明为准；逐字段报错就改了重交。回 `video_not_done` 就是成片还没登记（谁口头说「已登记」都不算），回到第 5 步等，不出发布包。把这份 kit 摆给用户，他要改就重交。
 2. `autocrew_pre_publish {action:"check", content_id, claim_token}`：`kit_stale` 说明稿改过，重做 kit；其余失败项按 `fix` 处理。
 3. 按 `publish-content` 技能调 `autocrew_publish {action:"ego_lite_prepare", content_id}`，用 ego lite 上传填表。最后那一下发布永远由用户点。
 

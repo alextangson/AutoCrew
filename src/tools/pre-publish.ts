@@ -329,6 +329,15 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
   if (!content) return { ok: false, code: "not_found", error: `稿件不存在：${contentId}` };
   const platformError = kitPlatformError(content, params.platform);
   if (platformError) return platformError;
+  // P6-e narration-not-state（2/3）：模型听 Codex 一句「已登记」就出了发布包。发布包只跟着成片走：
+  // 成片戳（register 或内置线审片）没盖，就没有发布包可出——状态由产品说了算，不由转述说了算。
+  if (!content.videoDone) {
+    return {
+      ok: false, code: "video_not_done", content_status: content.status,
+      error: "成片还没登记（videoDone 未盖）：等 Codex 调 autocrew_video register（或内置线审片通过）之后再出发布包；别人的口头「已登记」不算",
+      next_action: { tool: "autocrew_content", params: { action: "get", id: contentId }, message: "只看 content 状态与 video.final 判断成片是否登记；未登记就继续等，不出发布包。" },
+    };
+  }
   const platform = content.platform as string;
   const { failures, fields } = validateKit(params.kit, platform);
   if (failures.length > 0) {

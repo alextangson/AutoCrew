@@ -32,6 +32,8 @@ export interface LedgerEntry {
   sourceUrl?: string;
   /** 由哪条「证据需求」查来的——仅补证/写手查证有 */
   need?: string;
+  /** 写手侧登记的 user_claim 才有：为什么只能按未核验材料用（如推算依据） */
+  reason?: string;
 }
 
 /** 一次定向补证/写手查证的过程记录。找不到也要留痕：落盘后看得出「问过、没有」 */
@@ -96,6 +98,7 @@ function compact(entry: LedgerEntry): LedgerEntry {
   if (entry.sourceId) out.sourceId = entry.sourceId;
   if (entry.sourceUrl) out.sourceUrl = entry.sourceUrl;
   if (entry.need) out.need = entry.need;
+  if (entry.reason) out.reason = entry.reason;
   return out;
 }
 

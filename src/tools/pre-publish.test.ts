@@ -179,7 +179,7 @@ describe("发布前检查 · 阶段门", () => {
 describe("video_kit 宿主发布包", () => {
   const KIT = { post_title: "不写代码也能用的AI", caption: "这期讲清楚普通人怎么把重复活交给 AI，看完就能上手。", cover_text: "别再手搬了" };
   const mkVideo = (platform = "xiaohongshu", extra: Record<string, unknown> = {}) =>
-    saveContent({ title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], ...extra }, dataDir);
+    saveContent({ title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" }, ...extra }, dataDir);
   const saveKit = (id: string, platform: string, kit: Record<string, unknown> = KIT) =>
     executePrePublishTool({ action: "video_kit", content_id: id, platform, kit, _dataDir: dataDir });
   const check = (id: string) => executePrePublish({ action: "check", content_id: id, _dataDir: dataDir, _readOnly: true });
@@ -246,6 +246,13 @@ describe("video_kit 宿主发布包", () => {
     const mp = await saveContent({ title: "公众号", body: "正文", platform: "wechat_mp", status: "approved" }, dataDir);
     expect(await saveKit(mp.id, "wechat_mp")).toMatchObject({ ok: false, code: "not_video_platform" });
     expect((await getContent(c.id, dataDir))!.videoKit).toBeUndefined();
+  });
+
+  it("成片没登记（videoDone 未盖）就不出发布包：video_not_done，next_action 是看状态（P6-e narration-not-state）", async () => {
+    const c = await mkVideo("xiaohongshu", { videoDone: undefined, status: "editing" });
+    const r = await saveKit(c.id, "xiaohongshu");
+    expect(r).toMatchObject({ ok: false, code: "video_not_done", content_status: "editing", next_action: { tool: "autocrew_content", params: { action: "get", id: c.id } } });
+    expect((await getContent(c.id, dataDir))?.videoKit).toBeUndefined();
   });
 
   it("稿件改了之后 check 报 kit_stale，next_action 指回 video_kit", async () => {

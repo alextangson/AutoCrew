@@ -37,6 +37,7 @@ export interface PackReadyResult extends Record<string, unknown> {
   pack_id: string;
   pack_md: string;
   budget: ReturnType<typeof packBudget>;
+  ledger_ids: string[];
   note: string;
 }
 
@@ -67,6 +68,8 @@ export function readyResult(contentId: string, pack: ReadyPack): PackReadyResult
     pack_id: pack.packId,
     pack_md: renderPack(contentId, pack),
     budget: packBudget(pack),
+    // 数字门认的编号全集（pack_md 的证据台账只列前 40 条节选）
+    ledger_ids: pack.ledger.entries.map((e) => e.id),
     note: pack.note ?? FIRST_NOTE,
     ...writerProgress(pack),
   };

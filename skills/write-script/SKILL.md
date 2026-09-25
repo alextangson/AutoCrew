@@ -28,7 +28,7 @@ description: |
 
 完整正文可放 `body`，`hook` / `cta` 可省略，`hashtags` 可空。不为填字段硬加数字、反常识问句、关注结尾或虚构亲历。按原规划组织论证，逐项检查提纲与必写禁写。
 
-数字与引语须能指到实际证据编号，并按写作包的引用要求标注。缺料时可调用 `autocrew_writer {action:"find_evidence", content_id, pack_id, claim_token, need}` 获取宿主补证指引；它默认不会代你调用后台研究模型。按返回动作由宿主查来源，用 `autocrew_scout` 抓页；`cite` 带返回的 `citation_target` 中 `content_id` / `pack_id`（外加 `claim_token`），将核验引文写入本稿。再读 `pack_status` 获取更新的材料包，不把聊天里的材料当作已经进入台账。本稿补证上限以回执为准，重领包不会重置。无法支撑的数字或引语要删去或说明限制；离线声明仍是未核验材料。
+数字与引语须能指到实际证据编号，并按写作包的引用要求标注。缺料时可调用 `autocrew_writer {action:"find_evidence", content_id, pack_id, claim_token, need}` 获取宿主补证指引；它默认不会代你调用后台研究模型。按返回动作由宿主查来源，用 `autocrew_scout` 抓页；`cite` 带返回的 `citation_target` 中 `content_id` / `pack_id`（外加 `claim_token`），将核验引文写入本稿。再读 `pack_status` 获取更新的材料包，不把聊天里的材料当作已经进入台账。本稿补证上限以回执为准，重领包不会重置。无法支撑的数字或引语要删去或说明限制；离线声明仍是未核验材料。`research_mode` 为 `provided` / `skip` 时，用户给的事实就是包里证据台账的 `user-…` 条目；由它们推算出来的数先用 `autocrew_scout {action:"claim_offline", topic_id, content_id, pack_id, claim, reason, claim_token}`（不带 `task_id`，`reason` 写推算依据）登记再写，「一周」「大半」这类不承载真实数据的量词改成定性说法，不必登记。
 
 ## 提交与宿主审稿
 

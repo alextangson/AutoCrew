@@ -1,12 +1,8 @@
 /** Host-driven research desk: deterministic fetching, validation and storage, never an LLM call. */
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { getContent, getDataDir, getTopic, updateContent } from "../storage/local-store.js";
-import { gateClaimWrite, type ClaimDenial } from "../storage/claims.js";
-import { writeJsonAtomic, writeTextAtomic } from "../storage/json-atomic.js";
+import { getDataDir, getTopic } from "../storage/local-store.js";
 import { createCreativeTask, creativeTaskHash, renderCreativeTask } from "../modules/writing/creative-task.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
 import {
@@ -53,13 +49,13 @@ import {
   upsertJob,
   type PerspectiveName,
 } from "../modules/research/research-job-store.js";
-import { restoreEvidenceLedger, type LedgerEntry } from "../modules/research/evidence-ledger.js";
-import { isReadyPack, readPack, writePack, serializeWriterCall, renderPack, packPath, PACK_MD } from "./writer-pack.js";
+import type { LedgerEntry } from "../modules/research/evidence-ledger.js";
+import { attachContentEvidence, routeContentEvidence } from "./scout-content-evidence.js";
 import { holdTask, taskChangedError } from "./scout-task-guard.js";
 import { DeferredPageRead, finishPageRead, renderPage, reservePageRead } from "./scout-read-page.js";
 
 export const SCOUT_DESCRIPTION =
-  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every action after prepare requires topic_id/task_id. Changed requirements never silently replace a task: prepare returns task_changed{diff, keep_current} until you confirm with confirm_task_change:true. Another host's in-flight task can be taken over only after 30 idle minutes (else task_owned); the displaced owner's late writes get lease_lost. Up to 4 read_page calls per topic may run concurrently (5th: task_busy + retry_after_seconds); quota is charged before fetching, so a failed fetch still uses its slot. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
+  "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every research action after prepare requires topic_id/task_id; the one exception is claim_offline with content_id+pack_id and no task_id (provided/skip writing has no research task): it registers a number derived from the user's material as user_claim user-<n> in that draft's ledger, reason required. Changed requirements never silently replace a task: prepare returns task_changed{diff, keep_current} until you confirm with confirm_task_change:true. Another host's in-flight task can be taken over only after 30 idle minutes (else task_owned); the displaced owner's late writes get lease_lost. Up to 4 read_page calls per topic may run concurrently (5th: task_busy + retry_after_seconds); quota is charged before fetching, so a failed fetch still uses its slot. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
 const text = Type.String();
 const actions = [
   "prepare",
@@ -77,7 +73,7 @@ export const scoutSchema = Type.Object(
   {
     action: Type.Union(actions.map((v) => Type.Literal(v))),
     topic_id: text,
-    task_id: Type.Optional(text),
+    task_id: Type.Optional(Type.String({ description: "prepare 之后的研究动作必填；claim_offline 带 content_id+pack_id 往稿里登记推算数时不带" })),
     platform: Type.Optional(text),
     requirements: Type.Optional(text),
     direction: Type.Optional(text),
@@ -127,12 +123,6 @@ const digest = (value: unknown) =>
     )
     .digest("hex");
 const str = (v: unknown) => (typeof v === "string" ? v : "");
-/** 补证入稿被写门拒绝（P6 §3.8）：走研究台的错误通道，但把持有者原样带回去 */
-class ClaimHeldError extends HostResearchError {
-  constructor(readonly denial: ClaimDenial) {
-    super(denial.code ?? "claim_held", denial.error);
-  }
-}
 const nonempty = (v: unknown, name: string) => {
   const s = str(v);
   if (!s.trim()) throw new HostResearchError("missing_argument", `${name} 必填`);
@@ -301,20 +291,7 @@ async function publish(
   await save(task);
 }
 
-/** 写门（P6 §3.8）：往稿件证据账本里写 = 写这篇稿，和写稿同一道令牌门；拒绝时带回持有者 */
-async function gateEvidenceWrite(
-  contentId: string,
-  host: string,
-  args: Record<string, unknown>,
-  dir: string,
-): Promise<{ claim_token?: string }> {
-  const token = str(args.claim_token).trim();
-  const gate = await gateClaimWrite(contentId, { host, employee: "writer", token: token || undefined }, dir);
-  if ("denied" in gate) throw new ClaimHeldError(gate.denied);
-  return gate.grant;
-}
-
-/** Citation insertion is fenced by the active writer pack, with a lifetime quota per content. */
+/** 研究任务补证入稿：条目号按内容摘要定（`ev-H…`）；检查、写门与额度走稿件台账的同一入口 */
 async function attachEvidence(
   task: HostResearchTask,
   evidence: HostCitation | HostOfflineClaim,
@@ -325,67 +302,21 @@ async function attachEvidence(
     packId = str(args.pack_id);
   if (!contentId && !packId) return {};
   if (!contentId || !packId) throw new HostResearchError("missing_pack", "补证入稿需要同时提供content_id和pack_id");
-  return serializeWriterCall(contentId, async () => {
-    const content = await getContent(contentId, dir);
-    if (!content || content.topicId !== task.topicId)
-      throw new HostResearchError("wrong_content", "补证目标不属于本次选题");
-    if (!["drafting", "revision", "needs_evidence"].includes(content.status))
-      throw new HostResearchError("content_not_writable", "稿件当前不在写作/修订/补证阶段，不能改写该稿证据账本");
-    const pack = await readPack(contentId, dir);
-    if (
-      !pack ||
-      !isReadyPack(pack) ||
-      pack.packId !== packId ||
-      content.pack?.packId !== packId ||
-      pack.host !== task.host
-    )
-      throw new HostResearchError("stale_pack", "写作包已失效、尚未就绪或属于另一宿主，补证未入稿");
-    if (Object.values(pack.attempts).some((a) => ["reviewing", "awaiting_host_review"].includes(a.status)))
-      throw new HostResearchError("review_in_progress", "本稿正在审阅，先完成该次审稿再补证，避免修改审稿快照");
-    const folder = path.join(dir, "research", "host-evidence");
-    await fs.mkdir(folder, { recursive: true });
-    const file = path.join(folder, `${contentId}.json`);
-    let history: Record<string, LedgerEntry> = {};
-    try {
-      history = JSON.parse(await fs.readFile(file, "utf-8"));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    }
-    const key = digest({
-      source: evidence.source,
-      quote: evidence.quote,
-      claim: evidence.claim,
-      sourceUrl: "sourceUrl" in evidence ? evidence.sourceUrl : "",
-    });
-    const id = `ev-H${key.slice(0, 20)}`;
-    if (!history[id] && Object.keys(history).length >= 12)
-      throw new HostResearchError("evidence_quota", "本稿宿主补证累计已满12条；重领包不会重置额度，请用已有材料收束");
-    // 核对全过才过门：作废的补证不该顺手认领一篇稿
-    const grant = await gateEvidenceWrite(contentId, task.host, args, dir);
-    const entry: LedgerEntry = {
-      id,
-      source: evidence.source,
-      quote: evidence.quote,
-      claim: evidence.claim,
-      ...(evidence.source === "verified_quote" ? { sourceId: evidence.sourceId, sourceUrl: evidence.sourceUrl } : {}),
-    };
-    history[id] ??= entry;
-    await writeJsonAtomic(file, history); // quota survives crashes and force reissues
-    const ledger = restoreEvidenceLedger(pack.ledger);
-    for (const item of Object.values(history)) ledger.add(item);
-    pack.ledger = ledger.snapshot();
-    await writePack(contentId, pack, dir);
-    await writeTextAtomic(packPath(contentId, dir, PACK_MD), renderPack(contentId, pack));
-    await updateContent(contentId, { evidenceLedger: pack.ledger, _versionNote: "宿主补证登记（保留来源等级）" }, dir);
-    return {
-      content_id: contentId,
-      pack_id: packId,
-      evidence_entry: entry,
-      host_evidence_used: Object.keys(history).length,
-      host_evidence_limit: 12,
-      ...grant,
-    };
+  const key = digest({
+    source: evidence.source,
+    quote: evidence.quote,
+    claim: evidence.claim,
+    sourceUrl: "sourceUrl" in evidence ? evidence.sourceUrl : "",
   });
+  const entry: LedgerEntry = {
+    id: `ev-H${key.slice(0, 20)}`,
+    source: evidence.source,
+    quote: evidence.quote,
+    claim: evidence.claim,
+    ...(evidence.source === "verified_quote" ? { sourceId: evidence.sourceId, sourceUrl: evidence.sourceUrl } : {}),
+  };
+  const target = { contentId, packId, topicId: task.topicId, host: task.host, claimToken: str(args.claim_token), dir };
+  return attachContentEvidence(target, () => entry);
 }
 
 export async function executeScout(
@@ -491,6 +422,9 @@ export async function executeScout(
           pack: promptPack(task, broker, args.perspective ? perspectiveOf(args.perspective) : undefined),
         };
       }
+      // 没有研究任务时 claim_offline 可带稿件目标直接登记进稿件台账（provided/skip 写稿推算数的入口，§11）
+      const routed = await routeContentEvidence(action, args, { topicId, host, dir });
+      if (routed) return routed;
       if (!current || !args.task_id)
         throw new HostResearchError("task_required", "先 prepare 获取 task_id；后续每次调用须带 topic_id/task_id");
       const task = current;
@@ -739,7 +673,6 @@ export async function executeScout(
       code: err instanceof HostResearchError ? err.code : "research_operation_failed",
       error: err instanceof Error ? err.message : String(err),
       ...(err instanceof HostResearchError ? err.details : {}),
-      ...(err instanceof ClaimHeldError && err.denial.holder ? { holder: err.denial.holder } : {}),
       note: "操作失败已如实返回；未调用备用模型，也未把来源自动降为离线声明。",
     };
   }
