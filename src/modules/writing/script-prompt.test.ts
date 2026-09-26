@@ -12,6 +12,7 @@ import { KOUBO_PACK } from "../packs/koubo.js";
 import type { CreatorProfile } from "../profile/creator-profile.js";
 import type { PatternCard } from "../patterns/pattern-store.js";
 import type { AngleCard, AngleCardV3, BriefEvidence } from "../research/brief-store.js";
+import { OWN_MATERIAL_USAGE_RULE } from "../research/own-material.js";
 
 describe("buildScriptPrompts", () => {
   it("system prompt contains 口播脚本编剧 role + pack name", () => {
@@ -516,6 +517,58 @@ describe("buildAngleBlock — v3 卡", () => {
     expect(withAnchor).toContain("om:content-1:transcript:3:0");
 
     expect(buildAngleBlock(v3, [], [])).toContain("不要虚构");
+  });
+
+  it("锚的是调研引文（brief_evidence）→ 标成调研引文、要带 ev id，绝不说成创作者本人的话", () => {
+    // 2026-09-26 写作包第 289 行：Anthropic 文章里的一句被写成「这是创作者本人说过的话」
+    const researchAnchored = {
+      ...v3,
+      firsthandAnchor: {
+        kind: "brief_evidence" as const,
+        chunkId: "ev-1",
+        excerptHash: "abc123",
+        quote: "picked the wrong reading 25 → 47",
+      },
+    };
+    const block = buildAngleBlock(researchAnchored, [], []);
+
+    expect(block).toContain("第一手锚点（调研引文 ev-1）：「picked the wrong reading 25 → 47」");
+    expect(block).toContain("不是创作者本人说的话，也不能当他的亲身经历讲");
+    expect(block).toContain("带上 ev-1");
+    expect(block).not.toContain("创作者本人说过的话");
+    expect(block).not.toContain("片段 ev-1");
+  });
+
+  it("锚的是调研引文 → 硬规矩不再把它叫「第一手材料」，也不再说转写能当亲历", () => {
+    const researchAnchored = {
+      ...v3,
+      firsthandAnchor: { kind: "brief_evidence" as const, chunkId: "ev-1", excerptHash: "abc123", quote: "25 → 47" },
+    };
+    const block = buildAngleBlock(researchAnchored, [], []);
+
+    expect(block).toContain("本稿没有可当亲历讲的创作者材料（第一手锚点是调研引文）");
+    expect(block).toContain("创作者材料只供口吻参考，不得当案例讲");
+    expect(block).not.toContain("第一手材料只用上面「第一手锚点」指定的那一处");
+    expect(block).not.toContain("转写可作『我亲身经历的转折』");
+  });
+
+  it("只有转写 / 放行稿锚点才是创作者本人的话，硬规矩照旧", () => {
+    for (const kind of ["transcript", "approved_draft"] as const) {
+      const anchored = {
+        ...v3,
+        firsthandAnchor: {
+          kind,
+          contentId: "content-1",
+          chunkId: `om:content-1:${kind}:3:0`,
+          excerptHash: "abc123",
+          quote: "我自己做插件那次，卡住的不是模型",
+        },
+      };
+      const block = buildAngleBlock(anchored, [], []);
+      expect(block).toContain(`第一手锚点（片段 om:content-1:${kind}:3:0）：「我自己做插件那次，卡住的不是模型」——这是创作者本人说过的话`);
+      expect(block).toContain(`第一手材料只用上面「第一手锚点」指定的那一处；其余创作者材料只供口吻参考，不得当案例讲。${OWN_MATERIAL_USAGE_RULE}。`);
+      expect(block).not.toContain("调研引文");
+    }
   });
 
   it("综述级卡多一句提醒：没有第一手证据的判断不许伪装成事实", () => {
