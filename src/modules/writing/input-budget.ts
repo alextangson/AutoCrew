@@ -20,6 +20,7 @@
  */
 import { clampChars, externalBlock, sanitizeExternal } from "../research/research-prompt-kit.js";
 import { domainOf } from "../research/brief-inject.js";
+import { ownChunkHeading, type OwnMaterialChunk } from "../research/own-material.js";
 
 // ─── 预算表（测试锁定） ──────────────────────────────────────────────────────
 
@@ -69,8 +70,11 @@ export interface ResearchInputs {
   ownAnchor?: string;
   /** 优先级 4：创始人自己贴的材料 */
   userResearch?: string;
-  /** 优先级 5：其余内部语料，只供口吻参考 */
-  voiceReference?: string;
+  /**
+   * 优先级 5：其余内部语料，只供口吻参考。它是唯一可能拿不满自己那一档的段（前四档装满时只剩
+   * 1200），所以可以给函数：装配时按**实际**剩余预算现渲染，定界块就不会被硬截断切开。
+   */
+  voiceReference?: string | ((room: number) => string);
 }
 
 /** 知识库补位：`defaultChars` 是它自己的默认上限，实际给的是它与剩余预算的较小者 */
@@ -111,10 +115,11 @@ export async function assembleResearchInput(
   let used = 0;
 
   for (const [name, key, cap] of ORDER) {
-    const raw = inputs[key]?.trim();
-    if (!raw) continue;
     const room = Math.min(cap, INPUT_TOTAL_BUDGET - used);
     if (room <= 0) continue;
+    const input = inputs[key];
+    const raw = (typeof input === "function" ? input(room) : input)?.trim();
+    if (!raw) continue;
     const text = hardClamp(raw, room);
     if (!text.trim()) continue;
     chunks.push(text);
@@ -186,4 +191,37 @@ export function renderCoreEvidence(items: readonly CoreEvidenceItem[]): string {
  */
 export function joinCoreEvidence(coreBlock: string, targetedBlock: string): string {
   return [coreBlock, targetedBlock].map((s) => s.trim()).filter(Boolean).join("\n\n");
+}
+
+// ─── 口吻参考块（优先级 5） ──────────────────────────────────────────────────
+
+const VOICE_HEADING = "【口吻参考（只学他怎么说话，不得当案例讲，也不要说成「我做过」）】";
+/** 与挑片段时（own-material）的截断标记同一写法 */
+const TRUNCATION_MARK = "…（截断）";
+/** 节选短于这个数就不塞了：几十个字学不出说话方式，只会稀释块（同挑片段的 MIN_ROOM） */
+const VOICE_MIN_EXCERPT = 400;
+
+/**
+ * 口吻参考块：其余内部语料只学他怎么说话。和锚点块（`renderOwnMaterial` 装不下整段丢）不同，
+ * 这里装不下就**截断**并标「…（截断）」：片段最长 4500 字，这一档只有 1500，整段丢的结果是
+ * 标题下面空着——2026-09-26 那份写作包第 327 行，一段 3604 字的转写就这么无声没了。
+ *
+ * `room` 管**整块**（标题、定界符都算，UTF-16 长度，与装配层硬截断同一把尺），装配层因此永远
+ * 切不到结束定界符。块里不放用法说明：用法在块外标题里，锚点块那句「转写可作亲身经历」放到
+ * 这里就是反话。连一段节选都放不下时返回空串——不留空标题，由调用方省略整块并告警。
+ */
+export function renderVoiceReference(chunks: readonly OwnMaterialChunk[], room: number): string {
+  const render = (entries: string[]): string =>
+    `${VOICE_HEADING}\n${externalBlock(entries.flatMap((e, i) => (i ? ["", e] : [e])))}`;
+  const entries: string[] = [];
+  for (const c of chunks) {
+    const head = `${ownChunkHeading(c)}\n`;
+    const spare = room - render([...entries, head]).length;
+    if (c.text.length <= spare) {
+      entries.push(head + c.text);
+    } else if (spare - TRUNCATION_MARK.length >= VOICE_MIN_EXCERPT) {
+      entries.push(head + hardClamp(c.text, spare - TRUNCATION_MARK.length).trimEnd() + TRUNCATION_MARK);
+    }
+  }
+  return entries.length > 0 ? render(entries) : "";
 }

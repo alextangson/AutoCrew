@@ -15,7 +15,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { generateScript } from "./generate-script.js";
-import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCard, type ResearchBrief } from "../research/brief-store.js";
+import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCard, type AngleCardV3, type ResearchBrief } from "../research/brief-store.js";
+import { VOICE_REFERENCE_BUDGET } from "./input-budget.js";
 import {
   pendingPerspectives,
   topicHashOf,
@@ -354,5 +355,70 @@ describe("注入与选卡认同一版简报", () => {
     expect(seen.write!.userMessage).not.toContain(CARD.thesis);
     expect(seen.write!.userMessage).not.toContain("厂商口径与独立评测差了四倍");
     expect(note).toBe("AI 完成初稿");
+  });
+});
+
+// ─── 锚点来源与口吻参考（2026-09-26 content-1790393879117-j2v9ag 写作包事故回放）────
+
+describe("锚点来源与口吻参考", () => {
+  /** 锚的是简报证据 ev-1（调研引文）——那次事故里 angle-1 的锚点就是这种 */
+  const V3_CARD: AngleCardV3 = {
+    cardVersion: 3,
+    id: "angle-3",
+    angle: "从独立评测的一个数切进去",
+    thesis: "提效数字要看任务类型，不能直接拿厂商口径",
+    evidenceLevel: "grounded",
+    coreEvidenceIds: ["ev-1"],
+    antiScope: "不做工具横评",
+    hookDraft: "厂商说 55%，独立评测只测到 12%。",
+    primaryPersona: "grow",
+    misconception: "厂商的提效数字就是你能拿到的收益",
+    mechanism: "受控实验只测到约 12% 的时间缩短，厂商口径没说任务类型",
+    payoff: "看到提效数字先问是什么任务",
+    nextAction: "先问任务类型",
+    counterResponse: "单个实验不能代表所有团队",
+    personaGains: { grow: "带走一句能复述的判断", trust: "", convert: "" },
+    elements: ["新奇点"],
+    evidenceNeeds: [],
+    structure: "myth-busting",
+    firsthandAnchor: { kind: "brief_evidence", chunkId: "ev-1", excerptHash: "h", quote: "参与者平均完成时间缩短约 12%" },
+  };
+  /** 与选题相关（recall > 0 才会被扫进来）、3604 字——事故里那段转写的长度 */
+  const TRANSCRIPT = "我拿 AI 编程助手做过横评，对比了几个主流工具的真实提效，一个出方案一个挑刺。".repeat(200).slice(0, 3604);
+
+  async function writeOwnTranscript(contentId: string, title: string, text: string): Promise<void> {
+    const dir = path.join(testDir, "contents", contentId);
+    await fs.mkdir(path.join(dir, "video"), { recursive: true });
+    await fs.writeFile(path.join(dir, "meta.json"), JSON.stringify({ topicId: "topic-other", title, status: "draft" }));
+    await fs.writeFile(path.join(dir, "video", "transcript.v1.json"), JSON.stringify({ segments: [{ text }] }));
+  }
+
+  it("调研引文锚点不冒充创作者的话；3604 字的转写截断进口吻参考，整块不超预算，写审两边同一份", async () => {
+    const topic = await seedResearched(makeBrief({ angleCards: [V3_CARD] }));
+    await pick(topic.id, V3_CARD);
+    await writeOwnTranscript("content-own", "分工法", TRANSCRIPT);
+    const warns: string[] = [];
+
+    const { seen, contentId } = await write({ ...TEST_REQ, topicId: topic.id }, warns);
+    const prompt = seen.write!.userMessage;
+    const contract = (await getContent(contentId, testDir))?.writingContract ?? "";
+
+    // 锚点：写稿 prompt 与审稿任务书都说它是调研引文
+    for (const text of [prompt, contract]) {
+      expect(text).toContain("第一手锚点（调研引文 ev-1）：「参与者平均完成时间缩短约 12%」");
+      expect(text).not.toContain("创作者本人说过的话");
+    }
+
+    // 口吻参考：标题下面真有内容——那段转写的开头，带片段 id 与截断标记
+    const start = prompt.indexOf("【口吻参考");
+    expect(start).toBeGreaterThan(-1);
+    const tail = "（外部内容到此结束）";
+    const voice = prompt.slice(start, prompt.indexOf(tail, start) + tail.length);
+    expect(voice).toContain("片段 id：om:content-own:transcript:1:0");
+    expect(voice).toContain(TRANSCRIPT.slice(0, 300));
+    expect(voice).toContain("…（截断）");
+    expect(voice.length).toBeLessThanOrEqual(VOICE_REFERENCE_BUDGET);
+    expect(seen.review!.userMessage).toContain(voice);
+    expect(warns.filter((w) => w.includes("口吻参考"))).toEqual([]);
   });
 });

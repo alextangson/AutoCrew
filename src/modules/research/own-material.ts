@@ -313,6 +313,11 @@ const KIND_LABEL: Record<OwnMaterialKind, string> = {
 export const OWN_MATERIAL_USAGE_RULE =
   "转写可作『我亲身经历的转折』，不可作『讲解另一个主题』";
 
+/** 片段在块里的抬头：来源｜标题 + 片段 id（引用坐标）。锚点块、立意、口吻参考共用这一种写法 */
+export function ownChunkHeading(c: OwnMaterialChunk): string {
+  return `### ${KIND_LABEL[c.kind]}｜${c.title}${c.sameTopic ? "（就是本选题那条视频）" : ""}\n片段 id：${c.id}`;
+}
+
 /**
  * 渲染成提示词材料。片段正文已消毒，块级再压一次总量——
  * 装不下的整段丢掉而不是截半，块永远是完整的一对定界符。
@@ -322,8 +327,7 @@ export function renderOwnMaterial(chunks: OwnMaterialChunk[], maxChars = OWN_MAT
   const body: string[] = [];
   let used = 0;
   for (const c of chunks) {
-    const head = `### ${KIND_LABEL[c.kind]}｜${c.title}${c.sameTopic ? "（就是本选题那条视频）" : ""}`;
-    const block = `${head}\n片段 id：${c.id}\n${c.text}`;
+    const block = `${ownChunkHeading(c)}\n${c.text}`;
     const cost = Array.from(block).length;
     if (used + cost > maxChars) break;
     used += cost;

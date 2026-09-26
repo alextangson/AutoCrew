@@ -10,6 +10,7 @@ import {
   assembleResearchInput,
   joinCoreEvidence,
   renderCoreEvidence,
+  renderVoiceReference,
   ANCHOR_BUDGET,
   BRIEF_SLOT_BUDGET,
   CORE_EVIDENCE_BUDGET,
@@ -19,6 +20,7 @@ import {
   VOICE_REFERENCE_BUDGET,
 } from "./input-budget.js";
 import { EXTERNAL_BLOCK_END, EXTERNAL_BLOCK_START } from "../research/research-prompt-kit.js";
+import { excerptHashOf, type OwnMaterialChunk } from "../research/own-material.js";
 
 const KNOWLEDGE_DEFAULT = 2000;
 
@@ -245,4 +247,105 @@ it("核心证据也保留user_claim与own_claim等级，不通过角度选择洗
   const block = renderCoreEvidence([{ id: "ev-1", quote: "现场有二十人", source: "user_claim" }, { id: "ev-2", quote: "这是创作者的旧稿", source: "own_claim" }]);
   expect(block).toContain("user_claim（未核验用户陈述");
   expect(block).toContain("own_claim（创作者材料，非外部核验）");
+});
+
+// ─── 口吻参考块（2026-09-26 写作包第 327 行：标题下面是空的） ────────────────
+
+/** 片段替身：id、类别、标题与真实扫盘产物同形；正文就是模型看到的那份 */
+function ownChunk(text: string, over: Partial<OwnMaterialChunk> = {}): OwnMaterialChunk {
+  return {
+    id: "om:content-a:transcript:1:0",
+    kind: "transcript",
+    contentId: "content-a",
+    sourceRevision: 1,
+    chunkIndex: 0,
+    title: "分工法",
+    score: 0.5,
+    sameTopic: false,
+    excerptHash: excerptHashOf(text),
+    text,
+    ...over,
+  };
+}
+
+/** 那份写作包实际扫到的三段：转写 3604 字、两篇放行稿 2801 / 1600 字——每段都比这一档大 */
+const INCIDENT_CHUNKS = [
+  ownChunk("转".repeat(3604)),
+  ownChunk("稿".repeat(2801), { id: "om:content-b:approved_draft:7:0", kind: "approved_draft", contentId: "content-b", title: "放行稿 B" }),
+  ownChunk("文".repeat(1600), { id: "om:content-c:approved_draft:7:0", kind: "approved_draft", contentId: "content-c", title: "放行稿 C" }),
+];
+
+const count = (s: string, ch: string) => s.split(ch).length - 1;
+
+describe("renderVoiceReference — 口吻参考不再只剩一个空标题", () => {
+  it("事故回放：三段都超这一档 → 第一段截断进块，带片段 id 与截断标记；整块不超预算，定界完整", () => {
+    const block = renderVoiceReference(INCIDENT_CHUNKS, VOICE_REFERENCE_BUDGET);
+
+    expect(block.startsWith("【口吻参考")).toBe(true);
+    expect(block.length).toBeLessThanOrEqual(VOICE_REFERENCE_BUDGET);
+    expect(block).toContain(`${EXTERNAL_BLOCK_START}\n`);
+    expect(block.split(EXTERNAL_BLOCK_END)).toHaveLength(2);
+    expect(block.endsWith("（外部内容到此结束）")).toBe(true);
+    expect(block).toContain("片段 id：om:content-a:transcript:1:0");
+    expect(block).toContain("…（截断）");
+    // 节选占了这一档的大半，够学口吻；后两段不硬塞几十个字的残片
+    expect(count(block, "转")).toBeGreaterThan(VOICE_REFERENCE_BUDGET / 2);
+    expect(block).not.toContain("om:content-b");
+    expect(block).not.toContain("om:content-c");
+  });
+
+  it("块里不放「转写可作亲历」那套说明：用法只在块外标题里，块内是数据", () => {
+    const block = renderVoiceReference(INCIDENT_CHUNKS, VOICE_REFERENCE_BUDGET);
+    expect(block).toContain("只学他怎么说话，不得当案例讲");
+    expect(block).not.toContain("我亲身经历的转折");
+    expect(block).not.toContain("firsthandAnchor");
+  });
+
+  it("放得下的段整段进、不带截断标记；截断只落在装不下的那一段", () => {
+    const short = ownChunk("短".repeat(200), { id: "om:content-s:transcript:2:0", contentId: "content-s", title: "短转写" });
+    const block = renderVoiceReference([short, INCIDENT_CHUNKS[1]], VOICE_REFERENCE_BUDGET);
+
+    expect(block).toContain(`片段 id：om:content-s:transcript:2:0\n${"短".repeat(200)}\n`);
+    expect(block).toContain("om:content-b:approved_draft:7:0");
+    expect(count(block, "…（截断）")).toBe(1);
+    expect(block.length).toBeLessThanOrEqual(VOICE_REFERENCE_BUDGET);
+  });
+
+  it("一段节选都放不下 → 空串，不留一个下面空着的标题（调用方据此省略并告警）", () => {
+    expect(renderVoiceReference(INCIDENT_CHUNKS, 300)).toBe("");
+    expect(renderVoiceReference([], VOICE_REFERENCE_BUDGET)).toBe("");
+  });
+
+  it("预算按 UTF-16 算（与装配层硬截断同一把尺）：emoji 撑不出预算，也不被切成半个字", () => {
+    const block = renderVoiceReference([ownChunk("😀".repeat(2000))], VOICE_REFERENCE_BUDGET);
+    expect(block.length).toBeLessThanOrEqual(VOICE_REFERENCE_BUDGET);
+    expect(block).toContain("😀…（截断）");
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(block)).toBe(false);
+  });
+
+  it("装配层按实际剩余现渲染：前四档装满只剩 1200，口吻参考装进 1200 且结束定界没被硬截断切掉", async () => {
+    const rooms: number[] = [];
+    const snapshot = await assembleResearchInput({
+      coreEvidence: "证".repeat(9000),
+      brief: "简".repeat(9000),
+      ownAnchor: "锚".repeat(9000),
+      userResearch: "用".repeat(9000),
+      voiceReference: (room) => {
+        rooms.push(room);
+        return renderVoiceReference(INCIDENT_CHUNKS, room);
+      },
+    });
+
+    expect(rooms).toEqual([INPUT_TOTAL_BUDGET - CORE_EVIDENCE_BUDGET - BRIEF_SLOT_BUDGET - ANCHOR_BUDGET - USER_RESEARCH_BUDGET]);
+    const voice = snapshot.text.slice(snapshot.text.indexOf("【口吻参考"));
+    expect(voice.length).toBeLessThanOrEqual(rooms[0]);
+    expect(snapshot.parts.at(-1)).toEqual({ name: "voice_reference", chars: voice.length });
+    expect(voice.endsWith(`${EXTERNAL_BLOCK_END}\n（外部内容到此结束）`)).toBe(true);
+    expect(voice).toContain("…（截断）");
+  });
+
+  it("渲染函数返回空串 → 这一档整段省略，与没给一样", async () => {
+    const snapshot = await assembleResearchInput({ userResearch: "用户材料", voiceReference: () => "" });
+    expect(snapshot).toEqual({ text: "用户材料", parts: [{ name: "user_research", chars: 4 }] });
+  });
 });

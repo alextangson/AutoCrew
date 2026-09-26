@@ -46,8 +46,8 @@ import {
   assembleResearchInput,
   joinCoreEvidence,
   renderCoreEvidence,
+  renderVoiceReference,
   ANCHOR_BUDGET,
-  VOICE_REFERENCE_BUDGET,
   type ResearchSnapshot,
 } from "./input-budget.js";
 import { reviewAndConverge } from "./script-review.js";
@@ -358,12 +358,18 @@ function renderAnchorBlock(anchor: OwnMaterialChunk | null): string {
   ].join("\n");
 }
 
-function renderVoiceBlock(rest: OwnMaterialChunk[]): string {
-  if (rest.length === 0) return "";
-  return [
-    "【口吻参考（只学他怎么说话，不得当案例讲，也不要说成「我做过」）】",
-    renderOwnMaterial(rest, VOICE_REFERENCE_BUDGET - BLOCK_HEADING_ROOM),
-  ].join("\n");
+/**
+ * 口吻参考按装配层给的**实际**剩余预算现渲染（前四档装满时只剩 1200，不是 1500）。
+ * 有语料却一段节选都放不下 → 整块省略并告警，不留一个下面空着的标题。
+ */
+function renderVoiceBlock(rest: OwnMaterialChunk[], warn: (message: string) => void): (room: number) => string {
+  return (room) => {
+    const block = renderVoiceReference(rest, room);
+    if (!block && rest.length > 0) {
+      warn(`口吻参考整块省略：剩余 ${room} 字放不下任何一段节选（${rest.length} 段内部语料没进写作材料）`);
+    }
+    return block;
+  };
 }
 
 /** 内部语料只在带 topicId 时收：`collectOwnMaterial` 的同选题泄漏防线靠 topicId 认，没有它就形同虚设 */
@@ -502,6 +508,7 @@ async function composeResearchSlot(
   picked: ResolvedResearch,
   ledger: EvidenceLedger,
   ownMaterial: OwnMaterial,
+  warn: (message: string) => void,
   dataDir?: string,
 ): Promise<ResearchSnapshot> {
   const card = activeV3(picked.angle);
@@ -536,7 +543,7 @@ async function composeResearchSlot(
       brief,
       ownAnchor: renderAnchorBlock(anchor),
       ...(req.research ? { userResearch: req.research } : {}),
-      voiceReference: renderVoiceBlock(rest),
+      voiceReference: renderVoiceBlock(rest, warn),
     },
     {
       defaultChars: KNOWLEDGE_DEFAULT_CHARS,
@@ -580,7 +587,7 @@ async function gatherInputs(
     warn,
     ...(deps?.runLoopImpl ? { runLoopImpl: deps.runLoopImpl } : {}),
   });
-  const snapshot = await composeResearchSlot(req, picked, ledger, ownMaterial, dataDir);
+  const snapshot = await composeResearchSlot(req, picked, ledger, ownMaterial, warn, dataDir);
   const { anchor, rest } = splitOwnMaterial(ownMaterial, picked.angle);
   const injectedChunks = [...(anchor ? [anchor] : []), ...rest];
   const lookupIds = ledger.lookups().flatMap((l) => l.itemIds);
