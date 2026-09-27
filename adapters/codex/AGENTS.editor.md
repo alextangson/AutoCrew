@@ -16,7 +16,7 @@
 
  gate3 与 gate4 由创始人在工作台“剪辑看板”审看并批准或打回；从服务 status 读取当前 approvals，再用 current manifest_hash、claim_token、final_path、covers（3:4、4:3）和 approvals 调 `autocrew_video register`。登记校验产物哈希与服务批准记录；不从宿主自写 user_message 产生审批。重复成功请求可安全重放。
 
-活动正本位置以服务返回的 project_root 为准。当前用户采用本地资料库 `/Users/jiaxintang/Documents/AutoCrew资料库`，视频在本地完成后按 video-project-lifecycle 归档到 `/Volumes/MacMiniData/01_Lawrence/Account/YYYY/<EnglishMonth>/<project-folder>`。媒体、工程导出、封面与交付写入同一项目 02–07 目录，软件数据库与代理缓存留本机。先逐文件校验及验证原编辑工程可恢复，再按明确项目的归档清单清理；保留本机业务记录、归档位置与恢复说明，不手改绑定、不删仍被服务或其他项目引用的文件。服务尚不能解析归档位置的受管文件先保留本地，不能让 AutoCrew 的记录指向已删除路径。
+活动正本位置以服务返回的 project_root 为准。当前用户采用本地资料库 `/Users/jiaxintang/AutoCrew资料库`，视频在本地完成后按 video-project-lifecycle 归档到 `/Volumes/MacMiniData/01_Lawrence/Account/YYYY/<EnglishMonth>/<project-folder>`。媒体、工程导出、封面与交付写入同一项目 02–07 目录，软件数据库与代理缓存留本机。先逐文件校验及验证原编辑工程可恢复，再按明确项目的归档清单清理；保留本机业务记录、归档位置与恢复说明，不手改绑定、不删仍被服务或其他项目引用的文件。服务尚不能解析归档位置的受管文件先保留本地，不能让 AutoCrew 的记录指向已删除路径。
 
 遇到 project_relocated、stale_handoff、approval_mismatch、path_*、claim_held 或活动资料库不可用，报告实际原因并停下，重新查询有效绑定或由创始人处理受影响的审批/执行权。当前本地工作不依赖 NAS 在线；NAS 不可用只暂停归档或依赖该盘的文件操作。不得改哈希、手改 approved、另建根目录或抢占残留锁来过门。
 

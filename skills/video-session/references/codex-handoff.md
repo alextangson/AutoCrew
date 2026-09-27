@@ -13,7 +13,7 @@
 7. 创始人在 AutoCrew 工作台“剪辑看板”中审看成片及封面并通过后，Codex 从 autocrew_video status 读取服务的 approvals，连同当前 manifest_hash、claim_token、final_path、covers 调 register；两张封面分别为 3:4 与 4:3。成功才算已登记，发布仍由原发布流程处理。
 8. 会话恢复先查服务，保持原编辑器 project/timeline ID。项目信息、导航、workflow-state 是生成的只读视图，不手改状态。活动资料库未连接、绑定改变、stale_handoff、approval_mismatch、claim_held 时报告原因并停下，不建替代目录或自行补审批。
 
-当前用户以本地 `/Users/jiaxintang/Documents/AutoCrew资料库` 为活动资料库，NAS 仅作完成项目的归档目的地。开工路径始终取服务回执，写稿和剪辑共用一个活动项目；完成后按 video-project-lifecycle 复制到 `/Volumes/MacMiniData/01_Lawrence/Account/YYYY/<EnglishMonth>/<project-folder>`，逐文件校验并验证工程恢复后再处理已授权的冗余文件。AutoCrew 业务记录、归档位置和恢复说明留本机；不能先删文件再留下失效绑定。当前服务尚不能解析的归档引用先保留本地文件。NAS 断开不阻止本地写稿和剪辑，只阻止归档及依赖 NAS 的读取。
+当前用户以本地 `/Users/jiaxintang/AutoCrew资料库` 为活动资料库，NAS 仅作完成项目的归档目的地。开工路径始终取服务回执，写稿和剪辑共用一个活动项目；完成后按 video-project-lifecycle 复制到 `/Volumes/MacMiniData/01_Lawrence/Account/YYYY/<EnglishMonth>/<project-folder>`，逐文件校验并验证工程恢复后再处理已授权的冗余文件。AutoCrew 业务记录、归档位置和恢复说明留本机；不能先删文件再留下失效绑定。当前服务尚不能解析的归档引用先保留本地文件。NAS 断开不阻止本地写稿和剪辑，只阻止归档及依赖 NAS 的读取。
 
 产品仍支持其他用户把资料库直接放 NAS；其正本以 storage 配置和项目绑定为准。未迁移的历史 v1 包仅用于原流程兼容；必须通过迁移清单切换，不能直接改旧包或沿用已撤销凭据。
 
