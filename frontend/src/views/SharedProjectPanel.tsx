@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 type Artifact = { path: string; sha256: string; role: string };
 type State = { enabled: boolean; title: string; platform: string; draft_hash: string; manifest_hash?: string;
-  decisions?: { cover_text: string; target_seconds: number }; execution?: { files: Artifact[]; next_action: string };
+  decisions?: { cover_text: string; target_seconds: number }; execution?: { artifacts: Artifact[]; heartbeat: { next_action: string } };
   approvals?: { final_cut?: unknown; covers?: unknown }; error?: string };
 
 export function SharedProjectPanel({ contentId }: { contentId: string }) {
@@ -30,9 +30,9 @@ export function SharedProjectPanel({ contentId }: { contentId: string }) {
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
   if (!state?.enabled) return error ? <p role="alert">项目读取失败：{error}</p> : null;
-  const files = state.execution?.files ?? [];
-  const final = files.find(f => f.role === "final");
-  const cover34 = files.find(f => f.role === "cover34"), cover43 = files.find(f => f.role === "cover43");
+  const files = state.execution?.artifacts ?? [];
+  const final = files.find(f => f.role === "final-cut");
+  const cover34 = files.find(f => f.role === "cover:3:4"), cover43 = files.find(f => f.role === "cover:4:3");
   const assetUrl = (f: Artifact) => `/api/project-artifact?content_id=${encodeURIComponent(contentId)}&path=${encodeURIComponent(f.path)}&sha256=${f.sha256}`;
   return <details className="panel" style={{ margin: "12px 24px", padding: 12 }}>
     <summary>项目交接与确认</summary>
@@ -40,7 +40,7 @@ export function SharedProjectPanel({ contentId }: { contentId: string }) {
     <label>封面字 <input value={cover} onChange={e => setCover(e.target.value)} /></label>{" "}
     <label>目标时长（秒）<input type="number" min="1" value={seconds} onChange={e => setSeconds(Number(e.target.value))} /></label>{" "}
     <button disabled={busy || !cover.trim() || seconds <= 0} onClick={() => void submit({ action: "decisions", title: state.title, cover_text: cover, target_seconds: seconds, draft_hash: state.draft_hash })}>确认交接信息</button>
-    {state.execution?.next_action && <p>剪辑报告的下一步：{state.execution.next_action}</p>}
+    {state.execution?.heartbeat.next_action && <p>剪辑报告的下一步：{state.execution.heartbeat.next_action}</p>}
     {files.filter(f => f.role === "rough_cut" || f.role === "storyboard").map(f => <div key={f.sha256}>
       <p>{f.role === "rough_cut" ? "粗剪" : "分镜与生成方案"}</p>
       {f.role === "rough_cut" ? <video src={assetUrl(f)} controls preload="metadata" style={{ maxWidth: "100%", maxHeight: 400 }} /> : <img src={assetUrl(f)} alt="分镜与生成方案" style={{ maxWidth: "100%", maxHeight: 600, objectFit: "contain" }} />}
@@ -51,7 +51,7 @@ export function SharedProjectPanel({ contentId }: { contentId: string }) {
       <p><button disabled={busy} onClick={() => void submit({ action: "approve", which: "final_cut", files: [final], manifest_hash: state.manifest_hash })}>已完整审看并批准这版成片</button></p>
     </div>}
     {cover34 && cover43 && <div>
-      {[cover34, cover43].map(f => <img key={f.sha256} src={assetUrl(f)} alt={f.role === "cover34" ? "竖版封面" : "横版封面"} style={{ maxWidth: "45%", maxHeight: 350, objectFit: "contain", margin: 8 }} />)}
+      {[cover34, cover43].map(f => <img key={f.sha256} src={assetUrl(f)} alt={f.role === "cover:3:4" ? "竖版封面" : "横版封面"} style={{ maxWidth: "45%", maxHeight: 350, objectFit: "contain", margin: 8 }} />)}
       <p><button disabled={busy} onClick={() => void submit({ action: "approve", which: "covers", files: [cover34, cover43], manifest_hash: state.manifest_hash })}>批准这两张封面</button></p>
     </div>}
     {error && <p role="alert">{error}</p>}

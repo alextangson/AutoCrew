@@ -7,6 +7,7 @@ import { projectFile, resolveContentProject, isMissing, safeProjectPath } from "
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { portableProjectRecord } from "./project-record.js";
 import { assertManagedPathAvailable } from "./storage-roots.js";
+import { normalizeExecution } from "../modules/video/handoff/execution-index.js";
 
 function contentRevision(content: Content, root: string): string {
   return createHash("sha256").update(JSON.stringify(portableProjectRecord(content, root))).digest("hex");
@@ -43,7 +44,7 @@ export async function exportProjectViews(content: Content, root: string): Promis
     ["工程", "04-edit"], ["声音", "05-audio"], ["封面", "05-cover"], ["发布与回流", "06-publish"], ["交付", "07-delivery"],
   ].map(([label, href]) => `- [${label}](${href}/)`).join("\n") + "\n");
   let execution: unknown = null;
-  try { execution = JSON.parse(await fs.readFile(projectFile(root, "execution.json"), "utf8")); }
+  try { execution = normalizeExecution(JSON.parse(await fs.readFile(projectFile(root, "execution.json"), "utf8"))); }
   catch (e) { if (!isMissing(e)) throw e; }
   let approvals: unknown = null;
   try { approvals = JSON.parse(await fs.readFile(projectFile(root, "approvals.json"), "utf8")); }

@@ -10,7 +10,7 @@
 
 剪辑方案以工作区登记的版本为准：按 [制作版本采用规则](../../skills/video-session/references/editing-profile.md) 读取项目已固定的 production-adoption.json，首次采用才读取工作区 production/adopted-profile.json；验证共享包全部哈希后读取其规则、Skill 和视觉母本。没有登记的工作区不套用其他创作者的身份素材。旧包和进行中的工程不因默认版本更新而自动重剪。
 
-通过受限 `autocrew_video report` 保存执行事实：request_id、generation、binding_revision、真实 session_id、files（项目相对路径、sha256、role）、result、next_action，以及 editor_project_id、timeline_id、job_ids、费用和错误。role 使用 final / cover34 / cover43 / srt 等具体用途。报告不能写 status、gates、稿件或发布状态。workflow-state.json 与项目信息是 AutoCrew 的只读生成视图。
+通过受限 `autocrew_video report` 保存执行事实：request_id、generation、binding_revision、真实 session_id、files（项目相对路径、sha256、role，封面带 version）、result、next_action，以及 editor_project_id、timeline_id、jianying_draft、job_ids、费用和错误。role 使用 final-cut-candidate / final-cut / cover:3:4 / cover:4:3 / rough_cut / storyboard / srt 等具体用途。result、next_action 只保留最新一次；files 按次累计进产物索引，挪位置后用同一 sha256 再报一次即可更新路径，旧版本不会被覆盖。报告不能写 status、gates、稿件或发布状态。workflow-state.json 与项目信息是 AutoCrew 的只读生成视图。
 
  gate3 与 gate4 由创始人在工作台“项目交接与确认”审看并批准；从服务 status 读取当前 approvals，再用 current manifest_hash、claim_token、final_path、covers（3:4、4:3）和 approvals 调 `autocrew_video register`。登记校验产物哈希与服务批准记录；不从宿主自写 user_message 产生审批。重复成功请求可安全重放。
 

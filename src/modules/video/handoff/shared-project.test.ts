@@ -40,7 +40,7 @@ it("freezes exact approved text, replays handoff, reports without approving, and
   const final = await makeMp4(path.join(binding.project_root, "07-delivery/final.mp4"));
   const cover34 = await writePng(path.join(binding.project_root, "05-cover/34.png"), "34");
   const cover43 = await writePng(path.join(binding.project_root, "05-cover/43.png"), "43");
-  const files = await Promise.all([[final, "final"], [cover34, "cover34"], [cover43, "cover43"]].map(async ([file, role]) => ({ path: path.relative(binding.project_root, file), sha256: await sha256File(file), role })));
+  const files = await Promise.all([[final, "final-cut"], [cover34, "cover:3:4"], [cover43, "cover:4:3"]].map(async ([file, role]) => ({ path: path.relative(binding.project_root, file), sha256: await sha256File(file), role, ...(role.startsWith("cover:") ? { version: 1 } : {}) })));
   const report = { request_id: "report-1", generation: 1, binding_revision: 1, session_id: "real-editor-session", editor_project_id: "original-editor-project", timeline_id: "original-timeline", files, result: "导出完成，等待审阅", next_action: "请审片" };
   const reported = await callVideo(env.dir, { action: "report", content_id: content.id, claim_token: claim.claim.token, _session: "real-editor-session", report }, "codex");
   expect(reported.ok, JSON.stringify(reported)).toBe(true);
