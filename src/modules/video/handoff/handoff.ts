@@ -230,7 +230,7 @@ async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<
 }
 
 async function handoffChecked(content: Content, input: HandoffInput, ctx: HandoffContext, plan: Plan, confirmation?: ConfirmationRecord): Promise<HandoffResult> {
-  const blocked = acceptanceBlock(content) ?? await evidenceBlock(content, ctx.dataDir);
+  const blocked = acceptanceBlock(content, confirmation, plan.base.aroll_sha256) ?? await evidenceBlock(content, ctx.dataDir);
   if (blocked) return blocked;
   const probed = await probeAroll(plan.arollPath);
   if (!probed.ok) return handoffFail("aroll_invalid", probed.reason);

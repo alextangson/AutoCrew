@@ -34,12 +34,32 @@ function statusBlock(content: Content): HandoffResult | null {
     editing ? { next_action: { tool: "autocrew_video", params: { action: "revoke", content_id: content.id } } } : {});
 }
 
+/** 导入稿快速通道要看的那份确认记录（服务端写的，不是宿主转述） */
+export interface AsIsConfirmation {
+  source: string;
+  recorded_as_is?: boolean;
+  draft_hash: string;
+  aroll_sha256: string;
+}
+
+/**
+ * 导入稿快速通道（P6 §13.4-B）：已录的导入稿以录音为准，免「审稿 accepted」。四样同时成立才免：
+ * 稿子是 manual_import；确认记录带 recorded_as_is；来源是本机弹窗或工作台；记录绑定当前 draft_hash 与这段原片。
+ * 出处覆盖照旧必需（在 evidenceBlock 里查，不在这里放宽）。
+ */
+export function recordedAsIs(content: Content, hash: string, confirmation?: AsIsConfirmation, arollSha?: string): boolean {
+  return content.writingSource?.kind === "manual_import" && confirmation?.recorded_as_is === true &&
+    (confirmation.source === "native-dialog" || confirmation.source === "founder-workbench") &&
+    confirmation.draft_hash === hash && Boolean(arollSha) && confirmation.aroll_sha256 === arollSha;
+}
+
 /** null = 放行；否则是可原样回给宿主的拒绝（带 next_action） */
-export function acceptanceBlock(content: Content): HandoffResult | null {
+export function acceptanceBlock(content: Content, confirmation?: AsIsConfirmation, arollSha?: string): HandoffResult | null {
   const blocked = statusBlock(content);
   if (blocked) return blocked;
   const hash = draftHash(content);
   if (reviewValid(content, hash)) return null;
+  if (recordedAsIs(content, hash, confirmation, arollSha)) return null;
   if (content.review?.status === "failed") {
     // P6-e 行为 eval（handoff-blocks-issues 0/3）证明：「创作者点了采纳」这个 flag 由模型自填，
     // 3/3 都在用户没看到阻断前就替他点了。所以这里不再有采纳通道：改掉阻断、审到 accepted 才交。
