@@ -2,6 +2,7 @@ import { createProjectReviewHandler } from "../src/desktop/project-review-route.
 import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
+import { syncMyContentView } from "../src/storage/my-content-view.js";
 /**
  * AutoCrew 本地 server（PRD-v4 §11）——引擎跑在用户本机,前端搬进浏览器 tab。
  * 取代 desktop/main.ts 的 Electron 主进程:复用同一套 buildIpcHandlers,
@@ -429,12 +430,14 @@ server.timeout = 0;
 let stopCampaignHost: (() => void) | undefined;
 let stopMetricsPull: (() => void) | undefined;
 let radarTimer: NodeJS.Timeout | undefined;
+let myContentTimer: NodeJS.Timeout | undefined;
 let videoService: VideoService | null = null;
 server.on("close", () => {
   stopCampaignHost?.();
   stopMetricsPull?.();
   stopDigestScheduler();
   if (radarTimer) clearInterval(radarTimer);
+  if (myContentTimer) clearInterval(myContentTimer);
   // 视频 runner 会拿着 ffmpeg/remotion 子进程,停机要给它机会收尾(job lease 也在这层解)
   const running = videoService;
   videoService = null;
@@ -562,6 +565,21 @@ server.listen(PORT, HOST, () => {
   tickRadar();
   radarTimer = setInterval(tickRadar, RADAR_CYCLE_INTERVAL_MS);
   radarTimer.unref(); // 定时器不该成为进程退不掉的理由(stop 路径另见 server "close")
+
+  // 「我的内容」视图(storage-layout.md 2026-09-27):启动对账一次 + 每 60 秒一次。
+  // 单飞:上一轮没跑完就跳过本 tick;出错只记日志,单条错误由对账自己写进 ⚠️ 同步出错.txt。
+  let myContentRunning = false;
+  const tickMyContent = () => {
+    if (myContentRunning) return;
+    myContentRunning = true;
+    void syncMyContentView()
+      .then((r) => { if (r.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
+      .catch((err) => console.error("[my-content] 对账失败:", err instanceof Error ? err.message : err))
+      .finally(() => { myContentRunning = false; });
+  };
+  tickMyContent();
+  myContentTimer = setInterval(tickMyContent, 60_000);
+  myContentTimer.unref();
 
   // 三平台自动回流(回流 spec §4.3):启动跑一轮 + 每 30 分钟一轮。真正的节奏由每平台的
   // TTL(12h)与退避状态机决定——tick 只是把"到点了自动抓"补上;三平台默认全关,
