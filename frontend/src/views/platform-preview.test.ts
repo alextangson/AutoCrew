@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { CoverVersion } from "./cover-board";
 import {
-  centerCrop, clampXhsRatio, durationBadge, previewSections, profilePlatformsOf, R169, R34, R43, surfaceImage,
+  activeTab, APP_CHROME, centerCrop, clampXhsRatio, durationBadge, phonePlaceholders, previewSections, profilePlatformsOf,
+  R169, R34, R43, stepTab, surfaceImage, surfaceLayout,
 } from "./platform-preview";
 
 const art = (r: string) => ({ path: `05-cover/v001/${r}.png`, sha256: r, role: `cover:${r}`, version: 1, reported_at: "t" });
@@ -79,5 +80,39 @@ describe("durationBadge / profilePlatformsOf", () => {
     expect(profilePlatformsOf({ ok: true, data: { platforms: ["bilibili", 3] } })).toEqual(["bilibili"]);
     expect(profilePlatformsOf({ ok: true })).toEqual([]);
     expect(profilePlatformsOf({ ok: false, error: "x" })).toBeNull();
+  });
+});
+
+describe("标签与外壳布局", () => {
+  const ids = ["douyin", "bilibili", "wechat_video"] as const;
+  it("记住的标签还在就用，不在或没选回到第一个", () => {
+    expect(activeTab(ids, "bilibili")).toBe("bilibili");
+    expect(activeTab(ids, "xiaohongshu")).toBe("douyin");
+    expect(activeTab(ids, null)).toBe("douyin");
+    expect(activeTab([], "douyin")).toBeNull();
+  });
+  it("←/→ 首尾循环", () => {
+    expect(stepTab(ids, "douyin", 1)).toBe("bilibili");
+    expect(stepTab(ids, "douyin", -1)).toBe("wechat_video");
+    expect(stepTab(ids, "wechat_video", 1)).toBe("douyin");
+  });
+  it("B站网页两处进浏览器，其余进手机", () => {
+    const all = previewSections(["douyin", "xiaohongshu", "bilibili", "wechat_video"]);
+    const frames = all.flatMap((p) => p.surfaces.map((s) => [s.id, surfaceLayout(p.id, s).frame]));
+    expect(frames.filter(([, f]) => f === "browser").map(([id]) => id)).toEqual(["bili-web", "bili-space"]);
+  });
+  it("灰卡填满一屏：抖音推荐 2 列 3 行、主页网格 3 列带头部、浏览器固定行数", () => {
+    const [dy] = previewSections(["douyin"]), [bili] = previewSections(["bilibili"]);
+    expect(surfaceLayout("douyin", dy.surfaces[0])).toEqual({ frame: "phone", columns: 2, profile: false, placeholders: 5 });
+    const grid = surfaceLayout("douyin", dy.surfaces[2]);
+    expect([grid.columns, grid.profile]).toEqual([3, true]);
+    expect(grid.placeholders).toBeGreaterThanOrEqual(5);
+    expect(surfaceLayout("bilibili", bili.surfaces[1]).placeholders).toBe(7);
+  });
+  it("扁卡比高卡一屏摆得多；视频号没底栏", () => {
+    const o = { profile: false, bottomBar: true, text: true };
+    expect(phonePlaceholders(2, R43, o)).toBeGreaterThan(phonePlaceholders(2, R34, o));
+    expect(APP_CHROME.wechat_video.tabs).toEqual([]);
+    expect(APP_CHROME.douyin.tabs).toEqual(["首页", "朋友", "＋", "消息", "我"]);
   });
 });
