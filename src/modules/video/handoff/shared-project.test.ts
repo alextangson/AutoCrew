@@ -5,7 +5,7 @@ import { makeFixture, seedAccepted, callVideo, makeMp4, writePng, approvalsFor }
 import { initializeProjectLayout, resolveContentProject, contentFile } from "../../../storage/content-project.js";
 import { getContent, updateContent } from "../../../storage/local-store.js";
 import { draftHash } from "../../../storage/draft-hash.js";
-import { founderProjectReview } from "./project-execution.js";
+import { founderProjectReview } from "./founder-review.js";
 import { saveCoverage } from "./project-evidence.js";
 import { claimContent } from "../../../storage/claims.js";
 import { withCallerSession } from "../../../runtime/run-log.js";

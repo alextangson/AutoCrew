@@ -8,6 +8,8 @@ import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { portableProjectRecord } from "./project-record.js";
 import { assertManagedPathAvailable } from "./storage-roots.js";
 import { normalizeExecution } from "../modules/video/handoff/execution-index.js";
+import { gateStates, normalizeApprovals, type CoverSelection } from "../modules/video/handoff/gate-state.js";
+import { draftHash } from "./draft-hash.js";
 
 function contentRevision(content: Content, root: string): string {
   return createHash("sha256").update(JSON.stringify(portableProjectRecord(content, root))).digest("hex");
@@ -19,6 +21,17 @@ async function rawMeta(file: string): Promise<string | null> {
 async function text(file: string, value: string): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await writeTextAtomic(file, value);
+}
+/** 看板与 workflow-state.json 共用的四道门投影：待批 / 已批 / 已打回 / 已失效 */
+async function gateProjection(content: Content, root: string) {
+  const read = async (name: string): Promise<unknown> => {
+    try { return JSON.parse(await fs.readFile(projectFile(root, name), "utf8")); } catch (e) { if (isMissing(e)) return null; throw e; }
+  };
+  const execution = normalizeExecution(await read("execution.json")), approvals = normalizeApprovals(await read("approvals.json"));
+  const handoff = content.video?.handoff;
+  const live = handoff && !content.video?.revoked?.includes(handoff.hash) ? { generation: handoff.generation, hash: handoff.hash } : null;
+  const gates = gateStates({ handoff: live, draftHash: draftHash(content), approvals, execution, selection: await read("cover-selection.json") as CoverSelection | null });
+  return { execution, approvals, gates };
 }
 export async function exportProjectViews(content: Content, root: string): Promise<void> {
   const files: Record<string, string> = {};
@@ -43,19 +56,9 @@ export async function exportProjectViews(content: Content, root: string): Promis
     ["证据与出处", "01-script/evidence"], ["交接包", "01-script/handoff"], ["口播", "02-aroll"], ["画面素材", "03-broll"],
     ["工程", "04-edit"], ["声音", "05-audio"], ["封面", "05-cover"], ["发布与回流", "06-publish"], ["交付", "07-delivery"],
   ].map(([label, href]) => `- [${label}](${href}/)`).join("\n") + "\n");
-  let execution: unknown = null;
-  try { execution = normalizeExecution(JSON.parse(await fs.readFile(projectFile(root, "execution.json"), "utf8"))); }
-  catch (e) { if (!isMissing(e)) throw e; }
-  let approvals: unknown = null;
-  try { approvals = JSON.parse(await fs.readFile(projectFile(root, "approvals.json"), "utf8")); }
-  catch (e) { if (!isMissing(e)) throw e; }
-  const stored = approvals as Record<string, unknown> | null;
-  const gateRecord = stored?.source === "founder-workbench" && stored.manifest_hash === content.video?.handoff?.hash && stored.generation === content.video?.handoff?.generation ? stored : null;
-  const gates = Object.fromEntries(["rough_cut", "storyboard", "final_cut", "covers"].map((name, i) => [
-    `gate${i + 1}`, { status: gateRecord?.[name] ? "approved" : "pending", approval: gateRecord?.[name] ?? null },
-  ]));
+  const { execution, approvals, gates } = await gateProjection(content, root);
   await projection(path.join(root, "00-project/notes/workflow-state.json"), JSON.stringify({ generated: true, revision,
-    content_id: content.id, status: content.status, generation: content.video?.handoff?.generation ?? null, execution, approvals: gateRecord, gates }, null, 2));
+    content_id: content.id, status: content.status, generation: content.video?.handoff?.generation ?? null, execution, approvals, gates }, null, 2));
   await writeJsonAtomic(projectFile(root, "view-manifest.json"), { revision, files });
 }
 export async function commitProjectContent(content: Content, dataDir?: string): Promise<boolean> {

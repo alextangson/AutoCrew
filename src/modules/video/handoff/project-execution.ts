@@ -1,18 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { getContent, type Content } from "../../../storage/local-store.js";
+import { getContent } from "../../../storage/local-store.js";
 import { contentFile, resolveContentProject } from "../../../storage/content-project.js";
 import { writeJsonAtomic } from "../../../storage/json-atomic.js";
-import { exportProjectViews, repairProjectViews } from "../../../storage/project-commit.js";
-import { draftHash } from "../../../storage/draft-hash.js";
+import { exportProjectViews } from "../../../storage/project-commit.js";
 import { resolveProjectFile } from "./paths.js";
-import { sha256File, sha256Text, coverPairHash } from "./manifest.js";
-import { readProjectJson, type ProjectDecisions } from "./project-evidence.js";
+import { sha256File, sha256Text } from "./manifest.js";
+import { readProjectJson } from "./project-evidence.js";
 import type { HandoffContext } from "./handoff.js";
-import type { RegisterApprovals } from "./types.js";
 import { serializeVideoLine } from "./lock.js";
-import { COVER_ROLES, type CoverRatio, mergeArtifacts, normalizeExecution, type StoredExecution } from "./execution-index.js";
+import { COVER_ROLES, mergeArtifacts, normalizeExecution, type StoredExecution } from "./execution-index.js";
 
 export interface ExecutionReport {
   request_id: string; generation: number; binding_revision: number; session_id: string;
@@ -84,73 +82,4 @@ function nextExecution(prev: StoredExecution | null, input: ExecutionReport, fil
     heartbeat: { request_id, session_id, result, next_action, ...(error ? { error } : {}), reported_at: at },
     artifacts: mergeArtifacts(prev?.artifacts ?? [], files, input.generation, at),
   };
-}
-export interface StoredApprovals {
-  generation: number; manifest_hash: string; final_cut?: RegisterApprovals["final_cut"]; covers?: RegisterApprovals["covers"];
-  rough_cut?: RegisterApprovals["final_cut"]; storyboard?: RegisterApprovals["final_cut"];
-  source: "founder-workbench";
-}
-export async function verifyStoredApprovals(content: Content, requested: RegisterApprovals, dataDir: string): Promise<void> {
-  if (!resolveContentProject(content.id, dataDir)) return; // v1 compatibility only
-  const stored = await readProjectJson<StoredApprovals>(content.id, "approvals.json", dataDir);
-  if (!stored || stored.source !== "founder-workbench" || stored.generation !== content.video?.handoff?.generation || stored.manifest_hash !== content.video?.handoff?.hash ||
-      JSON.stringify(stored.final_cut) !== JSON.stringify(requested.final_cut) || JSON.stringify(stored.covers) !== JSON.stringify(requested.covers)) throw new Error("approval_mismatch: 未找到与当前代次及产物一致的创始人批准记录");
-}
-/** Only the browser-session route calls this; no MCP action can create founder decisions/approvals. */
-export async function founderProjectReview(id: string, dataDir: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return serializeVideoLine(id, async () => {
-    const content = await getContent(id, dataDir), binding = resolveContentProject(id, dataDir);
-    if (!content || (!binding && !content.video?.handoff)) return { ok: true, enabled: false };
-    const projectRoot = binding?.project_root ?? content.video!.handoff!.project_root;
-    if (params?.action === "decisions") {
-      if (params.draft_hash !== draftHash(content)) throw new Error("稿件已更新，请重新确认");
-      const { title, cover_text, target_seconds } = params;
-      if (!content.platform || typeof title !== "string" || !title.trim() || title !== content.title || typeof cover_text !== "string" || !cover_text.trim() || typeof target_seconds !== "number" || !Number.isFinite(target_seconds) || target_seconds <= 0) throw new Error("请填写当前标题、封面字、平台与目标时长");
-      const decisions: ProjectDecisions = { draft_hash: draftHash(content), title, cover_text, platform: content.platform, target_seconds,
-        confirmed_at: new Date().toISOString(), source: "founder-workbench" };
-      await writeJsonAtomic(contentFile(id, dataDir, "decisions.json"), decisions);
-    } else if (params?.action === "approve") {
-      const handoff = content.video?.handoff;
-      if (!handoff || handoff.hash !== params.manifest_hash || content.video?.revoked?.includes(handoff.hash)) throw new Error("交接代次已变化");
-      const which = params.which;
-      if (which !== "final_cut" && which !== "covers" && which !== "rough_cut" && which !== "storyboard") throw new Error("无效的制作闸门");
-      const files = params.files;
-      if (!Array.isArray(files) || files.length !== (which === "covers" ? 2 : 1)) throw new Error("缺少批准产物");
-      const hashes: string[] = [];
-      for (const file of files) {
-        if (!file || typeof file.path !== "string" || typeof file.sha256 !== "string") throw new Error("缺少产物哈希");
-        const checked = await resolveProjectFile(path.join(projectRoot, file.path), projectRoot, which);
-        if (!checked.ok) throw new Error(String(checked.result.error));
-        const sha = await sha256File(checked.value);
-        if (sha !== file.sha256) throw new Error("产物已变化，请重新审阅");
-        hashes.push(sha);
-      }
-      const existing = await readProjectJson<StoredApprovals>(id, "approvals.json", dataDir);
-      const record: StoredApprovals = existing?.manifest_hash === handoff.hash ? existing : { generation: handoff.generation, manifest_hash: handoff.hash, source: "founder-workbench" };
-      record[which] = { artifact_sha256: which === "covers" ? coverPairHash(hashes[0], hashes[1]) : hashes[0], approved_at: new Date().toISOString(), user_message: "创始人在 AutoCrew 工作台确认本次展示的产物" };
-      await writeJsonAtomic(contentFile(id, dataDir, "approvals.json"), record);
-      if (binding) await exportProjectViews(content, binding.project_root);
-    } else if (params?.action === "select_cover") {
-      await selectCover(id, dataDir, params);
-    } else if (params) throw new Error("不支持的审核动作");
-    const repaired = binding ? await repairProjectViews(content, binding.project_root) : [];
-    return { ok: true, enabled: true, repaired_views: repaired, project: binding, draft_hash: draftHash(content), title: content.title, platform: content.platform,
-      generation: content.video?.handoff?.generation, handoff: content.video?.handoff,
-      manifest_hash: content.video?.handoff?.hash, decisions: await readProjectJson(id, "decisions.json", dataDir),
-      execution: normalizeExecution(await readProjectJson<unknown>(id, "execution.json", dataDir)),
-      cover_selection: await readProjectJson(id, "cover-selection.json", dataDir), approvals: await readProjectJson(id, "approvals.json", dataDir) };
-  });
-}
-
-export type CoverSelection = Partial<Record<CoverRatio, { sha256: string; path: string; version?: number; selected_at: string }>>;
-/** 创始人每个尺寸挑一张；只能挑产物索引里登记过的该尺寸封面。选择单独存，report 改不到。 */
-async function selectCover(id: string, dataDir: string, params: Record<string, unknown>): Promise<void> {
-  const ratio = params.ratio as CoverRatio;
-  if (!(ratio in COVER_ROLES)) throw new Error("封面尺寸只有 3:4 和 4:3");
-  const execution = normalizeExecution(await readProjectJson<unknown>(id, "execution.json", dataDir));
-  const picked = execution?.artifacts.find(a => a.role === COVER_ROLES[ratio] && a.sha256 === params.sha256);
-  if (!picked) throw new Error("这一版封面不在产物记录里，请刷新后再选");
-  const current = (await readProjectJson<CoverSelection>(id, "cover-selection.json", dataDir)) ?? {};
-  current[ratio] = { sha256: picked.sha256, path: picked.path, ...(picked.version ? { version: picked.version } : {}), selected_at: new Date().toISOString() };
-  await writeJsonAtomic(contentFile(id, dataDir, "cover-selection.json"), current);
 }

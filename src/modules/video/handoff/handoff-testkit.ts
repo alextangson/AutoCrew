@@ -14,6 +14,13 @@ import { executeVideo } from "../../../tools/video.js";
 import { runProcess } from "../proc.js";
 import { ensureArollFixture } from "../testkit.js";
 import { coverPairHash, sha256File } from "./manifest.js";
+import { getContent } from "../../../storage/local-store.js";
+import { resolveContentProject } from "../../../storage/content-project.js";
+import { draftHash } from "../../../storage/draft-hash.js";
+import { claimContent } from "../../../storage/claims.js";
+import { withCallerSession } from "../../../runtime/run-log.js";
+import { founderProjectReview } from "./founder-review.js";
+import { saveCoverage } from "./project-evidence.js";
 
 export const HAS_FFMPEG =
   spawnSync("ffmpeg", ["-version"]).status === 0 && spawnSync("ffprobe", ["-version"]).status === 0;
@@ -106,3 +113,24 @@ export async function approvalsFor(final: string, cover34: string, cover43: stri
     },
   };
 }
+
+/** 一条已交接、剪辑工位已认领的视频 */
+export async function handedOff(dir: string, aroll: string) {
+  const seeded = await seedAccepted(dir);
+  const content = (await getContent(seeded.id, dir))!;
+  await founderProjectReview(content.id, dir, { action: "decisions", draft_hash: draftHash(content), title: content.title, cover_text: "封面字", target_seconds: 90 });
+  await saveCoverage(content, { draft_hash: draftHash(content), citations: [{ start: 0, end: content.body.indexOf("。") + 1, excerpt: content.body.slice(0, content.body.indexOf("。") + 1), evidence_id: "creator", sourceType: "creator_opinion", quote: "", verification: "创作者亲历（测试夹具）" }], reviewed_by: "writer", reviewed_at: new Date().toISOString() }, dir);
+  const handoff = await callVideo(dir, { action: "handoff", content_id: content.id, aroll_path: aroll });
+  if (!handoff.ok) throw new Error(JSON.stringify(handoff));
+  const claim = await withCallerSession("editor-session", () => claimContent(content.id, "editor", "codex", dir));
+  if (!claim.ok) throw new Error("claim failed");
+  const root = resolveContentProject(content.id, dir)!.project_root;
+  let n = 0;
+  const report = async (files: Array<{ file: string; role: string; version?: number }>, extra: Record<string, unknown> = {}) => callVideo(dir, {
+    action: "report", content_id: content.id, claim_token: claim.claim.token, _session: "editor-session",
+    report: { request_id: `r-${++n}`, generation: 1, binding_revision: 1, session_id: "editor-session", result: `第 ${n} 次`, next_action: "继续",
+      files: await Promise.all(files.map(async f => ({ path: path.relative(root, f.file), sha256: await sha256File(f.file), role: f.role, ...(f.version ? { version: f.version } : {}) }))), ...extra },
+  }, "codex");
+  return { id: content.id, root, manifestHash: String(handoff.manifest_hash), report };
+}
+

@@ -1,5 +1,5 @@
 import { readProjectRegistry } from "../storage/content-project.js";
-import { founderProjectReview } from "../modules/video/handoff/project-execution.js";
+import { founderProjectReview } from "../modules/video/handoff/founder-review.js";
 /**
  * `autocrew_video` —— 剪辑师那张桌上的全部动作（P3c spec §14.2）。
  *

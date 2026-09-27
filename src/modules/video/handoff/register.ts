@@ -1,4 +1,4 @@
-import { verifyStoredApprovals } from "./project-execution.js";
+import { verifyStoredApprovals } from "./founder-review.js";
 import { resolveContentProject } from "../../../storage/content-project.js";
 /**
  * `autocrew_video register`：Codex 剪辑工位把成片与封面登记回来（P6 spec §3.4）。Codex 唯一的写动作。

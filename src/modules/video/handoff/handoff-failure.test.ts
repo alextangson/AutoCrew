@@ -10,7 +10,7 @@ import { initializeProjectLayout, resolveContentProject } from "../../../storage
 import { getContent, type Content } from "../../../storage/local-store.js";
 import * as store from "../../../storage/local-store.js";
 import { draftHash } from "../../../storage/draft-hash.js";
-import { founderProjectReview } from "./project-execution.js";
+import { founderProjectReview } from "./founder-review.js";
 import { saveCoverage } from "./project-evidence.js";
 import { claimContent } from "../../../storage/claims.js";
 import { executeContentSave } from "../../../tools/content-save.js";

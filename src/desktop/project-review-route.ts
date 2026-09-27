@@ -6,7 +6,7 @@ import path from "node:path";
 import { resolveContentProject } from "../storage/content-project.js";
 import { resolveProjectFile } from "../modules/video/handoff/paths.js";
 import { sha256File } from "../modules/video/handoff/manifest.js";
-import { founderProjectReview } from "../modules/video/handoff/project-execution.js";
+import { founderProjectReview } from "../modules/video/handoff/founder-review.js";
 import { parseRangeHeader } from "./video-media.js";
 
 export interface ProjectReviewRouteDeps {

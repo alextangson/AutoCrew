@@ -54,3 +54,13 @@ it("serves only the exact reviewed bytes, supports ranges and rejects escape pat
   await fs.symlink(dir, path.join(root, "escape"));
   expect((await fetch(`${base}/api/project-artifact?content_id=${content.id}&path=escape/private.mp4`, { headers: { cookie: "fixture-session" } })).status).toBe(403);
 });
+
+it("打回、选封面和批准一样只认浏览器会话；业务错误原样回给页面", async () => {
+  const url = `${base}/api/project-review?content_id=${content.id}`;
+  const body = JSON.stringify({ action: "reject", which: "final_cut", manifest_hash: "0".repeat(64), note: "重剪", artifact_sha256: "0".repeat(64) });
+  const json = { "content-type": "application/json", origin: base };
+  expect((await fetch(url, { method: "POST", headers: { ...json, authorization: "Bearer fixture-editor" }, body })).status).toBe(403);
+  const refused = await fetch(url, { method: "POST", headers: { ...json, cookie: "fixture-session" }, body });
+  expect(refused.status).toBe(400);
+  expect((await refused.json()).error).toContain("交接代次已变化");
+});

@@ -1,39 +1,14 @@
 import { beforeEach, afterEach, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { makeFixture, seedAccepted, callVideo, writePng } from "./handoff-testkit.js";
-import { initializeProjectLayout, resolveContentProject, contentFile } from "../../../storage/content-project.js";
-import { getContent } from "../../../storage/local-store.js";
-import { draftHash } from "../../../storage/draft-hash.js";
-import { founderProjectReview } from "./project-execution.js";
-import { saveCoverage } from "./project-evidence.js";
-import { claimContent } from "../../../storage/claims.js";
-import { withCallerSession } from "../../../runtime/run-log.js";
+import { makeFixture, handedOff, writePng } from "./handoff-testkit.js";
+import { initializeProjectLayout, contentFile } from "../../../storage/content-project.js";
+import { founderProjectReview } from "./founder-review.js";
 import { sha256File } from "./manifest.js";
 
 let env: Awaited<ReturnType<typeof makeFixture>>;
 beforeEach(async () => { env = await makeFixture(); await fs.unlink(path.join(env.dir, "video.json")); await initializeProjectLayout(env.dir, "lib-deadbeef", "default"); });
 afterEach(async () => { await env.cleanup(); });
-
-/** 一条已交接、剪辑工位已认领的视频 */
-async function handedOff(dir: string, aroll: string) {
-  const seeded = await seedAccepted(dir);
-  const content = (await getContent(seeded.id, dir))!;
-  await founderProjectReview(content.id, dir, { action: "decisions", draft_hash: draftHash(content), title: content.title, cover_text: "封面字", target_seconds: 90 });
-  await saveCoverage(content, { draft_hash: draftHash(content), citations: [{ start: 0, end: content.body.indexOf("。") + 1, excerpt: content.body.slice(0, content.body.indexOf("。") + 1), evidence_id: "creator", sourceType: "creator_opinion", quote: "", verification: "创作者亲历（测试夹具）" }], reviewed_by: "writer", reviewed_at: new Date().toISOString() }, dir);
-  const handoff = await callVideo(dir, { action: "handoff", content_id: content.id, aroll_path: aroll });
-  if (!handoff.ok) throw new Error(JSON.stringify(handoff));
-  const claim = await withCallerSession("editor-session", () => claimContent(content.id, "editor", "codex", dir));
-  if (!claim.ok) throw new Error("claim failed");
-  const root = resolveContentProject(content.id, dir)!.project_root;
-  let n = 0;
-  const report = async (files: Array<{ file: string; role: string; version?: number }>, extra: Record<string, unknown> = {}) => callVideo(dir, {
-    action: "report", content_id: content.id, claim_token: claim.claim.token, _session: "editor-session",
-    report: { request_id: `r-${++n}`, generation: 1, binding_revision: 1, session_id: "editor-session", result: `第 ${n} 次`, next_action: "继续",
-      files: await Promise.all(files.map(async f => ({ path: path.relative(root, f.file), sha256: await sha256File(f.file), role: f.role, ...(f.version ? { version: f.version } : {}) }))), ...extra },
-  }, "codex");
-  return { id: content.id, root, manifestHash: String(handoff.manifest_hash), report };
-}
 
 it("心跳只留最新，产物累计：封面新一批和一次纯心跳都挤不掉成片和旧版封面", async () => {
   const v = await handedOff(env.dir, env.aroll);

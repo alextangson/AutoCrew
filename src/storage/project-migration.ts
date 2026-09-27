@@ -5,6 +5,7 @@ import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { digestFile } from "./library-manager.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
+import { normalizeApprovals } from "../modules/video/handoff/gate-state.js";
 import { PROJECT_LAYOUT, PROJECT_REGISTRY, PROJECT_MIGRATION, PROJECT_RULES, PRODUCTION_RULES, projectName, projectRelativeFile, isMissing,
   assertRelative, safeProjectPath, type ProjectBinding, type ProjectRegistry } from "./content-project.js";
 import { isContentId } from "./entity-id.js";
@@ -240,7 +241,12 @@ export async function applyProjectMigration(plan: ProjectMigrationPlan, resume =
           content.video = { ...content.video, handoff: record, revoked: [...(content.video?.revoked ?? []), old.hash] };
           if (content.claim) content.claim = { ...content.claim, token: `clm-${Date.now()}-${randomUUID()}`, machine: os.hostname(), bindingRevision: p.binding.binding_revision, pendingHandoff: true };
           const approvals = await json<Record<string, unknown>>(path.join(root, "00-project/autocrew/approvals.json"));
-          if (approvals?.source === "founder-workbench" && approvals.manifest_hash === old.hash) await writeJsonAtomic(path.join(root, "00-project/autocrew/approvals.json"), { ...approvals, generation, manifest_hash: record.hash });
+          const stored = normalizeApprovals(approvals);
+          if (stored) {
+            // 搬家换代不改稿不改产物：原代次的批准随搬家改绑到新代次
+            for (const bound of Object.values(stored.bindings)) if (bound?.manifest_hash === old.hash) Object.assign(bound, { generation, manifest_hash: record.hash });
+            await writeJsonAtomic(path.join(root, "00-project/autocrew/approvals.json"), stored);
+          }
         }
         // Old immutable records and final-script prose stay byte-for-byte in the recovery copy.
         await exportProjectViews(content, root);
