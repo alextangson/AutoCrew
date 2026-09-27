@@ -43,6 +43,7 @@ import { getContent, saveTopic, updateTopic, updateContent, type Topic } from ".
 import { updateProfile } from "../modules/profile/creator-profile.js";
 import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
+import { hashClaimToken } from "../storage/claim-token.js";
 
 let testDir: string;
 
@@ -1455,7 +1456,7 @@ describe("写门：令牌是凭据（P6 §3.8）", () => {
   it("pack 把 claim_token 交给认领者；同宿主不带令牌的 submit 被拒，带上就放行", async () => {
     const res = await pack({ _host: "claude-code" });
     expect(res.claim_token).toMatch(/^clm-/);
-    expect((await getContent(res.content_id, testDir))?.claim).toMatchObject({ host: "claude-code", token: res.claim_token });
+    expect((await getContent(res.content_id, testDir))?.claim).toMatchObject({ host: "claude-code", token: hashClaimToken(String(res.claim_token)) });
 
     // 同宿主的另一个会话：手里没令牌 → claim_held，稿子不动
     const denied = await run(submitArgs(res.content_id, res.pack_id, 1, { _host: "claude-code" }));

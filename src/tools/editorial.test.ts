@@ -8,6 +8,7 @@ import { loadProfile, updateProfile } from "../modules/profile/creator-profile.j
 import { buildScriptPrompts } from "../modules/writing/script-prompt.js";
 import { KOUBO_PACK } from "../modules/packs/koubo.js";
 import { claimContent } from "../storage/claims.js";
+import { hashClaimToken } from "../storage/claim-token.js";
 let dir: string;
 const run = (args: Record<string, unknown>) => executeEditorial({ ...args, _dataDir: dir });
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "editorial-")); });
@@ -133,7 +134,7 @@ describe("写门（P6 §3.8）", () => {
     expect(recorded).not.toHaveProperty("claim_token");
     const saved = await getContent(content.id, dir);
     expect(saved?.writingFeedback).toHaveLength(1);
-    expect(saved?.claim).toMatchObject({ host: "claude", token: claimed.claim.token });
+    expect(saved?.claim).toMatchObject({ host: "claude", token: hashClaimToken(claimed.claim.token) });
     expect(saved?.handoffs).toEqual([expect.objectContaining({ from: "claude", to: "local-user", override: true })]);
   });
 });

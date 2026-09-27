@@ -22,6 +22,7 @@ import { videoStatusHandler } from "../desktop/video-handlers.js";
 import type { VideoService } from "../modules/video/service.js";
 import type { VideoState } from "../modules/video/types.js";
 import { executeVideo } from "./video.js";
+import { hashClaimToken } from "../storage/claim-token.js";
 
 const STATE: VideoState = {
   schemaVersion: 1,
@@ -156,7 +157,7 @@ describe("令牌门（§14.2：宿主层认领，与 runner 租约各管各的�
     const started = await call({ action: "start" });
     const first = (await getContent(contentId, dir))!.claim!;
     // 首次写自动认领，令牌随回执交回（下一次写就靠它）
-    expect(started.claim_token).toBe(first.token);
+    expect(hashClaimToken(String(started.claim_token))).toBe(first.token);
 
     // 同宿主不再免检：宿主名下可能是另一个会话
     const bare = await call({ action: "start" });
@@ -164,8 +165,10 @@ describe("令牌门（§14.2：宿主层认领，与 runner 租约各管各的�
     expect(JSON.stringify(bare)).not.toContain(first.token);
 
     await new Promise((r) => setTimeout(r, 5));
-    const renewed = await call({ action: "start", claim_token: first.token });
-    expect(renewed).toMatchObject({ ok: true, claim_token: first.token });
+    // 记录里只有哈希：拿哈希当令牌不放行，得用回执里的明文
+    expect(await call({ action: "start", claim_token: first.token })).toMatchObject({ ok: false, code: "claim_held" });
+    const renewed = await call({ action: "start", claim_token: started.claim_token });
+    expect(renewed).toMatchObject({ ok: true, claim_token: started.claim_token });
     const second = (await getContent(contentId, dir))!.claim!;
     expect(second.token).toBe(first.token);
     expect(Date.parse(second.leaseUntil)).toBeGreaterThan(Date.parse(first.leaseUntil));

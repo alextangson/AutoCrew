@@ -37,6 +37,7 @@ import {
   type ContentStatus,
 } from "./local-store.js";
 import { withCallerSession } from "../runtime/run-log.js";
+import { hashClaimToken } from "./claim-token.js";
 
 let dir: string;
 
@@ -328,7 +329,7 @@ describe("写门：令牌是凭据，同宿主不例外（P6 §3.8）", () => {
     expect(r).toMatchObject({ ok: false, code: "claim_held" });
     if (r.ok) return;
     expect(r.error).toContain("闲置满 10 分钟");
-    expect((await getContent(c.id, dir))!.claim?.token).toBe(first.claim.token);
+    expect((await getContent(c.id, dir))!.claim?.token).toBe(hashClaimToken(first.claim.token));
   });
 
   it("同宿主第二个会话（不带令牌）：认领与写入都 claim_held，拒绝里不带令牌", async () => {
@@ -344,7 +345,7 @@ describe("写门：令牌是凭据，同宿主不例外（P6 §3.8）", () => {
 
     const write = await ensureClaim(c.id, { host: "claude-code" }, dir);
     expect(write).toMatchObject({ ok: false, code: "claim_held" });
-    expect((await getContent(c.id, dir))!.claim?.token).toBe(first.claim.token);
+    expect((await getContent(c.id, dir))!.claim?.token).toBe(hashClaimToken(first.claim.token));
   });
 
   it("takeover:true：换新令牌、记一条交接，旧令牌随即失效", async () => {
@@ -385,7 +386,7 @@ describe("写门：令牌是凭据，同宿主不例外（P6 §3.8）", () => {
     expect(claimGrant(guard, "local-user")).toEqual({});
     const after = (await getContent(c.id, dir))!;
     expect(after.claim?.host).toBe("codex");
-    expect(after.claim?.token).toBe(held.claim.token);
+    expect(after.claim?.token).toBe(hashClaimToken(held.claim.token));
     expect(after.handoffs?.at(-1)).toMatchObject({
       from: "codex",
       to: "local-user",
@@ -431,7 +432,7 @@ describe("transferClaim：交接即转移（P6 §3.8）", () => {
     expect(moved.claim.token).not.toBe(writer.claim.token);
 
     const after = (await getContent(c.id, dir))!;
-    expect(after.claim).toMatchObject({ employee: "editor", host: "codex", token: moved.claim.token });
+    expect(after.claim).toMatchObject({ employee: "editor", host: "codex", token: hashClaimToken(moved.claim.token) });
     expect(after.handoffs?.at(-1)).toMatchObject({ from: "writer", to: "editor", by: "claude-code" });
     expect(after.handoffs?.at(-1)?.note).toContain("claude-code → codex");
     // 旧令牌的迟到写入被拒；新令牌放行
@@ -485,13 +486,14 @@ describe("会话归因（P6 §3.8，只做诊断）", () => {
 
     // 同宿主另一个会话接管：新认领记新会话，交接账记发起接管的会话（先让持有会话闲置）
     await makeIdle(c.id, dir);
-    await withCallerSession("sess-2-bbb", () => claimContent(c.id, "writer", "claude-code", dir, { takeover: true }));
+    const takeover = await withCallerSession("sess-2-bbb", () => claimContent(c.id, "writer", "claude-code", dir, { takeover: true }));
+    if (!takeover.ok) throw new Error("takeover failed");
     const taken = (await getContent(c.id, dir))!;
     expect(taken.claim?.session).toBe("sess-2-bbb");
     expect(taken.handoffs?.at(-1)).toMatchObject({ note: "接管（同宿主另一会话）", session: "sess-2-bbb" });
 
     await withCallerSession("sess-2-bbb", () =>
-      transferClaim(c.id, { token: taken.claim!.token, host: "claude-code", toEmployee: "editor", toHost: "codex" }, dir),
+      transferClaim(c.id, { token: takeover.claim.token, host: "claude-code", toEmployee: "editor", toHost: "codex" }, dir),
     );
     const moved = (await getContent(c.id, dir))!;
     expect(moved.handoffs?.at(-1)).toMatchObject({ to: "editor", session: "sess-2-bbb" });

@@ -26,6 +26,7 @@ import {
 } from "../modules/video/testkit.js";
 import type { VideoState } from "../modules/video/types.js";
 import { executeVideo } from "./video.js";
+import { hashClaimToken } from "../storage/claim-token.js";
 
 let dir: string;
 let contentId: string;
@@ -112,7 +113,7 @@ describe("剪辑师从工具入口走完一条片子（§14.5）", () => {
     const started = await call({ action: "start" });
     expect(started.ok).toBe(true);
     // 首次写自动认领剪辑师桌，令牌随回执交回；后面每一次写都靠它过门
-    expect(started.claim_token).toBe((await getContent(contentId, dir))?.claim?.token);
+    expect(hashClaimToken(String(started.claim_token))).toBe((await getContent(contentId, dir))?.claim?.token);
     expect(String(started.next)).toContain("轮询");
     expect(ref(await settled())).toBe("cut/awaiting_human");
 

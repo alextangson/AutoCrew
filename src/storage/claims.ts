@@ -28,6 +28,9 @@ import {
 import { callerSession } from "../runtime/run-log.js";
 import os from "node:os";
 import { resolveContentProject } from "./content-project.js";
+import { hashClaimToken, isHashedToken, tokenMatches } from "./claim-token.js";
+import fs from "node:fs/promises";
+import { contentFile, contentIds } from "./content-project.js";
 
 /** 租约 30 分钟（§6.1 创始人裁决 4）。视频线的 runner 租约是 10 分钟，两条线各按各的节奏 */
 export const CLAIM_LEASE_MS = 30 * 60_000;
@@ -128,7 +131,7 @@ export type ClaimGate =
 export function assertClaimToken(content: Pick<Content, "claim">, host: string, token?: string): ClaimGate {
   const claim = activeClaim(content);
   if (!claim) return { ok: true };
-  if (token && token === claim.token) return { ok: true };
+  if (tokenMatches(claim.token, token)) return { ok: true };
   if (host === LOCAL_HOST) return claim.host === LOCAL_HOST ? { ok: true } : { ok: true, override: true };
   return { ok: false, code: "claim_held", error: refusalMessage(claim, host), holder: claimView(claim)! };
 }
@@ -142,6 +145,8 @@ interface ClaimWrite {
   handoff?: Omit<ContentHandoff, "at">;
   /** 交接签发的剪辑认领（心跳续租 48 小时）；续租时沿用原认领的这一项 */
   heartbeat?: boolean;
+  /** 续租时调用方出示的明文令牌：记录里只有哈希，回执要还给他就只能用他带来的这枚 */
+  presented?: string;
 }
 
 /**
@@ -169,6 +174,8 @@ async function writeClaim(
 ): Promise<ContentClaim> {
   const current = activeClaim(content, now);
   const kept = write.renew ? current : null;
+  // 新令牌 / 续租时出示的令牌才有明文；续租但没出示（工作台越权续自己的）就只有哈希，回执不给令牌
+  const plaintext = kept ? (tokenMatches(kept.token, write.presented) ? write.presented : undefined) : newClaimToken();
   const heartbeat = write.heartbeat ?? Boolean(kept?.heartbeat);
   const at = new Date(now).toISOString();
   const project = resolveContentProject(content.id, dataDir);
@@ -176,7 +183,7 @@ async function writeClaim(
     ...(project ? { machine: os.hostname(), bindingRevision: project.binding_revision } : {}),
     employee: write.employee,
     host: write.host,
-    token: kept ? kept.token : newClaimToken(),
+    token: plaintext ?? kept!.token,
     at: kept ? kept.at : at,
     leaseUntil: leaseUntil(now, heartbeat),
     lastWriteAt: at,
@@ -184,8 +191,9 @@ async function writeClaim(
   });
   const handoff = write.handoff ?? expiredTakeover(content, current, write.host);
   const handoffs = handoff ? withHandoff(content, withSession({ ...handoff, at })) : undefined;
-  await updateContent(content.id, { claim, ...(handoffs ? { handoffs } : {}) }, dataDir);
-  return claim;
+  await updateContent(content.id, { claim: { ...claim, token: hashClaimToken(claim.token) }, ...(handoffs ? { handoffs } : {}) }, dataDir);
+  // 明文只回给这次调用方；拿不到明文时回空串，claimGrant 据此不交令牌
+  return { ...claim, token: plaintext ?? "" };
 }
 
 export type ClaimResult =
@@ -235,8 +243,8 @@ async function claimContentLocked(contentId: string, employee: ClaimEmployee, ho
   const current = activeClaim(content, now);
   if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
   if (current.host !== host) return held(current, host, now);
-  if (opts.token && opts.token === current.token) {
-    return { ok: true, claim: await writeClaim(content, { employee, host, renew: true }, dataDir, now) };
+  if (tokenMatches(current.token, opts.token)) {
+    return { ok: true, claim: await writeClaim(content, { employee, host, renew: true, presented: opts.token }, dataDir, now) };
   }
   if (!opts.takeover) return held(current, host, now);
   if (current.heartbeat) {
@@ -260,7 +268,7 @@ export async function releaseClaim(
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   if (!content.claim) return { ok: true, released: false };
-  if (content.claim.token !== token) {
+  if (!tokenMatches(content.claim.token, token)) {
     return {
       ok: false,
       error: `claim_token 对不上：这篇现在记在 ${content.claim.host} 名下，只有他手上那枚令牌能释放`,
@@ -322,8 +330,8 @@ export async function restoreClaim(
   dataDir?: string,
 ): Promise<boolean> {
   const content = await getContent(contentId, dataDir);
-  if (!content?.claim || content.claim.token !== heldToken) return false;
-  if (prior && prior.token === heldToken && prior.host === content.claim.host && prior.employee === content.claim.employee) return true;
+  if (!content?.claim || !tokenMatches(content.claim.token, heldToken)) return false;
+  if (prior && tokenMatches(prior.token, heldToken) && prior.host === content.claim.host && prior.employee === content.claim.employee) return true;
   const handoff = withSession({
     from: content.claim.employee,
     to: prior?.employee ?? content.claim.employee,
@@ -376,12 +384,12 @@ export async function ensureClaim(
   const employee = input.employee ?? current?.employee ?? content.claim?.employee ?? "writer";
   // 续租沿用原持有者：带着别人令牌来的宿主接手的是那份认领，别把账记到自己头上
   const host = current ? current.host : input.host;
-  return { ok: true, claim: await writeClaim(content, { employee, host, renew: Boolean(current) }, dataDir, now) };
+  return { ok: true, claim: await writeClaim(content, { employee, host, renew: Boolean(current), presented: input.token }, dataDir, now) };
 }
 
 /** 写操作回执里的令牌：认领落在调用宿主名下才回给他（新认领 / 带令牌续租）；越门的工作台拿不到别人的令牌 */
 export function claimGrant(result: ClaimResult, host: string): { claim_token?: string } {
-  if (!result.ok || result.override || result.claim.host !== host) return {};
+  if (!result.ok || result.override || result.claim.host !== host || !result.claim.token || result.claim.token.startsWith("sha256:")) return {};
   return { claim_token: result.claim.token };
 }
 
@@ -407,4 +415,23 @@ export async function gateClaimWrite(contentId: string, input: ClaimGuardInput, 
       ...(claimed.holder ? { holder: claimed.holder } : {}),
     },
   };
+}
+
+/**
+ * 启动时把旧记录里的明文认领令牌落成哈希（上线后共享项目文件夹里立刻不再有明文）。
+ * 读路径本来就把明文换成哈希比较，这里只是让不再被写的记录也改过来；持有者手里的明文照样有效。
+ */
+export async function migratePlaintextClaims(dataDir?: string): Promise<number> {
+  let migrated = 0;
+  for (const id of await contentIds(dataDir)) {
+    let raw: { claim?: { token?: unknown } };
+    try { raw = JSON.parse(await fs.readFile(contentFile(id, dataDir, "meta.json"), "utf8")); } catch { continue; }
+    const token = raw.claim?.token;
+    if (typeof token !== "string" || isHashedToken(token)) continue;
+    const content = await getContent(id, dataDir);
+    if (!content?.claim) continue;
+    await updateContent(id, { claim: { ...content.claim, token: hashClaimToken(token) } }, dataDir);
+    migrated++;
+  }
+  return migrated;
 }

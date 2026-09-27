@@ -8,6 +8,7 @@
  *   Downloads 里的原路径不在了，也不重新生成交接包。
  * - 令牌只存在服务自己的请求记录里（`<dataDir>/video/pull/`），不进项目文件夹、不进交接包。
  */
+import { tokenMatches } from "../../../storage/claim-token.js";
 import { draftHash } from "../../../storage/draft-hash.js";
 import { getContent, type Content } from "../../../storage/local-store.js";
 import { confirmationFile, readConfirmation, type ConfirmationRecord } from "./confirm.js";
@@ -44,7 +45,7 @@ export async function requestReplay(dataDir: string, requestId: string, confirma
     return handoffFail("invalid_params", "这个 request_id 已经用在另一份确认上：换一个新的 request_id");
   }
   const content = await getContent(record.content_id, dataDir);
-  const live = content?.claim?.token === record.claim_token;
+  const live = tokenMatches(content?.claim?.token, record.claim_token);
   const fresh = pullDeps().now() - Date.parse(record.at) <= REPLAY_WINDOW_MS;
   if (fresh && live) return { ...record.result, replayed: true, claim_token: record.claim_token };
   return { ...record.result, replayed: true, holder: { content_id: record.content_id, generation: record.generation },

@@ -28,6 +28,7 @@ import {
   type Content,
   type ContentStatus,
 } from "../storage/local-store.js";
+import { hashClaimToken } from "../storage/claim-token.js";
 
 let dir: string;
 
@@ -265,7 +266,7 @@ describe("令牌门（autocrew_writer / autocrew_content）", () => {
     expect(r.ok).toBe(false);
     expect(r.error).not.toContain("正由");
     const after = (await getContent(c.id, dir))!.claim!;
-    expect(after.token).toBe(claimed.claim.token);
+    expect(after.token).toBe(hashClaimToken(claimed.claim.token));
     expect(Date.parse(after.leaseUntil)).toBeGreaterThan(before);
   });
 

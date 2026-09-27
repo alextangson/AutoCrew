@@ -27,6 +27,7 @@ import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
+import { migratePlaintextClaims } from "../src/storage/claims.js";
 import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
 import { pullDeps } from "../src/modules/video/handoff/pull-deps.js";
 import { listWorkspaces } from "../src/desktop/workspace-store.js";
@@ -484,6 +485,17 @@ try {
   }
 } catch (err) {
   console.error("[handoff] 原片挪动核定失败:", err instanceof Error ? err.message : err);
+}
+
+// 认领令牌只存哈希(P6 §12.4-D):旧记录里的明文启动时落成哈希,持有者手里的令牌照样能用
+try {
+  const dirs = new Set([getDataDir(), ...(await listWorkspaces()).workspaces.map((ws) => ws.dataDir)]);
+  for (const dir of dirs) {
+    const n = await migratePlaintextClaims(dir).catch((err) => { console.error(`[claims] 令牌哈希迁移失败(${dir}):`, err instanceof Error ? err.message : err); return 0; });
+    if (n > 0) console.log(`  [claims] ${n} 条认领的明文令牌已换成哈希`);
+  }
+} catch (err) {
+  console.error("[claims] 令牌哈希迁移失败:", err instanceof Error ? err.message : err);
 }
 
 // 灵感库过期清理(V5.4c 创始人裁决):3 天未选用自动入回收站;有稿件血缘的永不清理

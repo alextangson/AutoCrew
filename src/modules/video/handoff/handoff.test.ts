@@ -18,6 +18,7 @@ import {
   tokenIn,
   type HandoffFixture,
 } from "./handoff-testkit.js";
+import { hashClaimToken } from "../../../storage/claim-token.js";
 
 let fx: HandoffFixture;
 let contentId: string;
@@ -104,8 +105,8 @@ describe.skipIf(!HAS_FFMPEG)("handoff 落盘（handoff-complete）", () => {
     expect(text).toContain(expected);
     expect(text).toContain('"action": "register"');
     expect(content.claim).toMatchObject({ employee: "editor", host: "codex" });
-    expect(await tokenIn(String(res.handoff_path))).toBe(content.claim!.token);
-    expect(JSON.stringify(res)).not.toContain(content.claim!.token);
+    expect(hashClaimToken(await tokenIn(String(res.handoff_path)))).toBe(content.claim!.token);
+    expect(JSON.stringify(res)).not.toContain(await tokenIn(String(res.handoff_path)));
 
     // 派工话术：固定模板，≤400 字，不嵌正文与备注
     const dispatch = String(res.dispatch_text);
@@ -166,7 +167,7 @@ describe.skipIf(!HAS_FFMPEG)("重放与代次", () => {
     expect(revoked).toMatchObject({ ok: true, status: "revoked" });
     // 认领回到交接方的写手桌，新令牌随回执交回
     const content = (await getContent(contentId, fx.dir))!;
-    expect(content.claim).toMatchObject({ employee: "writer", host: "claude-code", token: revoked.claim_token });
+    expect(content.claim).toMatchObject({ employee: "writer", host: "claude-code", token: hashClaimToken(String(revoked.claim_token)) });
     expect(content.video?.revoked).toEqual([first.manifest_hash]);
     expect(await callVideo(fx.dir, { action: "revoke", content_id: contentId })).toMatchObject({ ok: true, replayed: true });
 

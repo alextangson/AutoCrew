@@ -19,6 +19,7 @@ import { setPullDeps } from "./pull-deps.js";
 import { arollLockOf } from "./pull-store.js";
 import { sha256File } from "./manifest.js";
 import { executeDesk } from "../../../tools/desk.js";
+import { hashClaimToken } from "../../../storage/claim-token.js";
 
 let fx: HandoffFixture;
 let pick = "";
@@ -87,7 +88,7 @@ describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", () => {
     const res = await pull(c, aroll, cfm, "h-1");
     expect(res).toMatchObject({ ok: true, status: "handed_off", content_status: "editing", claim_token: expect.stringMatching(/^clm-/) });
     const after = (await getContent(c.id, fx.dir))!;
-    expect(after.claim).toMatchObject({ employee: "editor", host: "codex", token: res.claim_token, heartbeat: true });
+    expect(after.claim).toMatchObject({ employee: "editor", host: "codex", token: hashClaimToken(String(res.claim_token)), heartbeat: true });
     expect(await grep(path.join(String(res.project_root), "01-script"), String(res.claim_token))).toEqual([]);
     const again = await pull(c, aroll, cfm, "h-1");
     expect(again).toMatchObject({ replayed: true, claim_token: res.claim_token, manifest_hash: res.manifest_hash });

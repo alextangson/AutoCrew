@@ -2,6 +2,7 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { safeProjectPath } from "./content-project.js";
+import { withHashedClaim } from "./claim-token.js";
 
 const PATH_FIELDS = new Set(["project_root", "aroll_path", "handoff_path", "project_handoff_path", "path", "srt_path", "imagePath", "approvedImagePath", "jianying_draft", "coverImagePath", "sourcePath", "filePath"]);
 const PATH_MAPS = new Set(["covers", "cover_copies", "imagePaths"]);
@@ -26,7 +27,8 @@ export function portableProjectRecord<T>(value: T, root: string, decode = false)
     if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, item]) => [k, visit(item, k, PATH_MAPS.has(key))]));
     return v;
   }
-  return visit(value) as T;
+  // 认领令牌只以哈希出现在项目文件夹里（Codex 共享这个文件夹）；读入时也换，旧明文随下一次写盘消失
+  return withHashedClaim(visit(value) as T);
 }
 
 /** Resolve a historical Markdown/media reference without modifying the authored text. */

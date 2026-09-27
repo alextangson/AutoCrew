@@ -17,6 +17,7 @@ import { executeContentSave } from "../../../tools/content-save.js";
 import { sha256File } from "./manifest.js";
 import { arollLockOf } from "./pull-store.js";
 import { recoverArollMoves } from "./aroll-move.js";
+import { hashClaimToken } from "../../../storage/claim-token.js";
 
 vi.mock("../../../storage/local-store.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../../storage/local-store.js")>();
@@ -80,7 +81,7 @@ describe.skipIf(!HAS_FFMPEG)("交接缺料在认领写入之前拒绝", () => {
     expect(r).toMatchObject({ ok: false, code: "missing_citations", failure_class: "handoff_rejected" });
     expect(r.uncovered_sentences).toEqual([expect.objectContaining({ start: 0, text: expect.stringContaining("每天两小时") })]);
     expect(String(r.next_action)).toContain("citations");
-    expect((await getContent(c.id, env.dir))!.claim?.token).toBe(token);
+    expect((await getContent(c.id, env.dir))!.claim?.token).toBe(hashClaimToken(token));
   });
 });
 
@@ -99,7 +100,7 @@ describe.skipIf(!HAS_FFMPEG)("认领转交之后的失败", () => {
     const r = await handoff(c, { claim_token: token });
     expect(r).toMatchObject({ ok: false, code: "handoff_not_committed", failure_class: "handoff_not_committed", claim_restored: true });
     const after = (await getContent(c.id, env.dir))!;
-    expect(after.claim).toMatchObject({ token, host: before!.host, employee: before!.employee });
+    expect(after.claim).toMatchObject({ token: hashClaimToken(token), host: before!.host, employee: before!.employee });
     expect(after.status).toBe("draft_ready");
     await expect(fs.access(path.join(root, "01-script/handoff/g0001/handoff.md"))).rejects.toThrow();
     // 原片挪回原处，不留在项目里（slice 1 遗留）；原片锁释放
