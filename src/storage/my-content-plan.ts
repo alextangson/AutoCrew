@@ -8,6 +8,10 @@ import { isVideoPlatform } from "./stage-guard.js";
 import { listRetros, readRetro } from "../modules/retro/retro.js";
 import { renderCheckList, unverifiedAdditions } from "../modules/video/handoff/spoken.js";
 import { spokenRel } from "../modules/video/handoff/register-spoken.js";
+import { readArchiveLog, renderArchiveLog } from "./nas-archive-log.js";
+
+/** 已发布栏只留最近几条；NAS 归档也不动这几条 */
+export const KEEP_PUBLISHED = 5;
 
 export const COLUMNS = ["写稿中", "待录制", "剪辑中", "待发布", "已发布", "复盘"] as const;
 export type Column = (typeof COLUMNS)[number];
@@ -35,7 +39,7 @@ export const GUIDE = `# 我的内容 · 使用说明
 - 待录制：视频稿已经定了，等你录口播。
 - 剪辑中：放口播稿和「成片放这里」。剪映直接导出到「成片放这里」就行，它指向这条稿件的项目目录。
 - 待发布：成片、两张封面、口播稿、发布文案都在一个文件夹里，拖去上传即可。缺什么写在「还缺什么.txt」里。登记过成片的还有「口播稿-实拍版.md」（按成片字幕还原的实际说法）；实拍时新说了定稿里没有的数字或出处，会列在「发布前核对.txt」里，发布前看一眼，不挡发布。
-- 已发布：只留最近 5 条。
+- 已发布：只留最近 5 条。发布满 7 天、又不在最近 5 条里的，素材会搬到 NAS，搬了什么、腾出多少空间记在「归档记录.md」。
 - 复盘：最新一份复盘报告。
 
 口播稿、发布文案是副本，AI 改稿后会自动更新。写稿中、待录制里的口播稿你可以直接改，下一次对账会把你的改稿存成稿件新版本，AI 以后写稿也会学你的改法。这几种情况不会同步：AI 正在写这篇、文件被清空、稿子已经交剪辑、你改的同时 AI 也改了——这时你的文件另存成「口播稿（我改过的 时间）.md」保留，原因写在「⚠️ 同步出错.txt」里。其它栏目的副本是只读的，改了也不会同步，同样另存保留。
@@ -218,6 +222,10 @@ export async function buildPlan(dataDir: string, keepPublished: number): Promise
       }
     }
   }
+  try {
+    const log = await readArchiveLog(dataDir);
+    if (log.length) plan.entries.push({ rel: "归档记录.md", owner: "_archive", kind: "copy", text: renderArchiveLog(log) });
+  } catch (e) { plan.failed.add("_archive"); plan.errors.push(`归档记录：${e instanceof Error ? e.message : String(e)}`); }
   try { await addRetro(plan, dataDir); }
   catch (e) { plan.failed.add("_retro"); plan.errors.push(`复盘：${e instanceof Error ? e.message : String(e)}`); }
   return plan;

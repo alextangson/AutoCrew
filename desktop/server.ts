@@ -3,6 +3,8 @@ import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
 import { syncMyContentView } from "../src/storage/my-content-view.js";
+import { archivePublished } from "../src/storage/nas-archive.js";
+import { runExclusive } from "../src/storage/storage-mutex.js";
 /**
  * AutoCrew 本地 server（PRD-v4 §11）——引擎跑在用户本机,前端搬进浏览器 tab。
  * 取代 desktop/main.ts 的 Electron 主进程:复用同一套 buildIpcHandlers,
@@ -431,6 +433,8 @@ let stopCampaignHost: (() => void) | undefined;
 let stopMetricsPull: (() => void) | undefined;
 let radarTimer: NodeJS.Timeout | undefined;
 let myContentTimer: NodeJS.Timeout | undefined;
+let archiveStartTimer: NodeJS.Timeout | undefined;
+let archiveTimer: NodeJS.Timeout | undefined;
 let videoService: VideoService | null = null;
 server.on("close", () => {
   stopCampaignHost?.();
@@ -438,6 +442,8 @@ server.on("close", () => {
   stopDigestScheduler();
   if (radarTimer) clearInterval(radarTimer);
   if (myContentTimer) clearInterval(myContentTimer);
+  if (archiveStartTimer) clearTimeout(archiveStartTimer);
+  if (archiveTimer) clearInterval(archiveTimer);
   // 视频 runner 会拿着 ffmpeg/remotion 子进程,停机要给它机会收尾(job lease 也在这层解)
   const running = videoService;
   videoService = null;
@@ -572,7 +578,7 @@ server.listen(PORT, HOST, () => {
   const tickMyContent = () => {
     if (myContentRunning) return;
     myContentRunning = true;
-    void syncMyContentView()
+    void runExclusive(() => syncMyContentView())
       .then((r) => { if (r.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
       .catch((err) => console.error("[my-content] 对账失败:", err instanceof Error ? err.message : err))
       .finally(() => { myContentRunning = false; });
@@ -580,6 +586,27 @@ server.listen(PORT, HOST, () => {
   tickMyContent();
   myContentTimer = setInterval(tickMyContent, 60_000);
   myContentTimer.unref();
+
+  // NAS 归档(storage-layout.md「NAS 归档」):启动 2 分钟后一轮,之后每 24 小时一轮。
+  // 单飞;和「我的内容」对账共用进程内互斥,不同时碰同一个项目;出错只记日志,不让守护进程退出。
+  let archiveRunning = false;
+  const tickArchive = () => {
+    if (archiveRunning) return;
+    archiveRunning = true;
+    void runExclusive(() => archivePublished())
+      .then((r) => {
+        if (r.archived.length) console.log(`[nas-archive] 归档 ${r.archived.length} 条`);
+        if (r.errors.length) console.error(`[nas-archive] ${r.errors.length} 处问题:${r.errors[0]}`);
+      })
+      .catch((err) => console.error("[nas-archive] 归档失败:", err instanceof Error ? err.message : err))
+      .finally(() => { archiveRunning = false; });
+  };
+  archiveStartTimer = setTimeout(() => {
+    tickArchive();
+    archiveTimer = setInterval(tickArchive, 24 * 60 * 60_000);
+    archiveTimer.unref();
+  }, 2 * 60_000);
+  archiveStartTimer.unref();
 
   // 三平台自动回流(回流 spec §4.3):启动跑一轮 + 每 30 分钟一轮。真正的节奏由每平台的
   // TTL(12h)与退避状态机决定——tick 只是把"到点了自动抓"补上;三平台默认全关,

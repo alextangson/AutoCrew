@@ -9,12 +9,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
 import { readProjectRegistry, isMissing } from "./content-project.js";
-import { buildPlan, type Desired, type Plan } from "./my-content-plan.js";
+import { buildPlan, KEEP_PUBLISHED, type Desired, type Plan } from "./my-content-plan.js";
+import { writeErrorSection, ERROR_FILE } from "./my-content-errors.js";
 import { syncBackFounderEdits, isEditable } from "./my-content-sync-back.js";
 
 export const VIEW_DIR = "我的内容";
 export const VIEW_MANIFEST = ".autocrew-view.json";
-export const ERROR_FILE = "⚠️ 同步出错.txt";
+export { ERROR_FILE };
 const KEEP_VISIBLE = new Set([VIEW_DIR, "AutoCrew资料库说明.md"]);
 const LINK_FALLBACK = new Set(["EXDEV", "ENOTSUP", "EPERM"]);
 
@@ -183,12 +184,6 @@ async function hideLibraryEntries(libRoot: string, report: SyncReport): Promise<
   }
 }
 
-async function writeErrorFile(root: string, errors: string[]): Promise<void> {
-  const file = path.join(root, ERROR_FILE);
-  if (!errors.length) { await fs.rm(file, { force: true }); return; }
-  await fs.writeFile(file, `「我的内容」上一次对账有 ${errors.length} 处出错（其它条目照常更新）：\n\n${errors.map((e) => `- ${e}`).join("\n")}\n\n下一次全部成功后这个文件会自动消失。\n`);
-}
-
 export async function syncMyContentView(dataDir?: string, opts: SyncOptions = {}): Promise<SyncReport> {
   const report: SyncReport = { created: 0, updated: 0, removed: 0, preservedEdits: 0, errors: [] };
   if (!readLibraryLocation()) return { ...report, skipped: "没有配置资料库（旧版 ~/.autocrew），不生成「我的内容」" };
@@ -202,7 +197,7 @@ export async function syncMyContentView(dataDir?: string, opts: SyncOptions = {}
     const prev = await readManifest(root);
     const keepAside = async (file: string) => { await displace(file, ctx.now); report.preservedEdits++; };
     report.errors.push(...(await syncBackFounderEdits(root, prev.entries, data, keepAside)));
-    const plan = await buildPlan(data, opts.keepPublished ?? 5);
+    const plan = await buildPlan(data, opts.keepPublished ?? KEEP_PUBLISHED);
     report.errors.push(...plan.errors);
     const next = await applyPlan(plan, prev, ctx);
     await fs.writeFile(path.join(root, VIEW_MANIFEST), JSON.stringify(next, null, 2));
@@ -210,6 +205,6 @@ export async function syncMyContentView(dataDir?: string, opts: SyncOptions = {}
     report.errors.push(`对账中断：${errMsg(e)}`);
   }
   await hideLibraryEntries(libRoot, report).catch((e) => report.errors.push(`隐藏资料库条目失败：${errMsg(e)}`));
-  await writeErrorFile(root, report.errors);
+  await writeErrorSection(root, "sync", report.errors);
   return report;
 }
