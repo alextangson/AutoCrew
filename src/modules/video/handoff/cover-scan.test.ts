@@ -38,7 +38,9 @@ it("有清单的版本只认清单里的图，参考照片按比例筛掉；没�
   await png(path.join(v1, "草稿-没进清单.png"), 1086, 1448, "c");
   await png(path.join(v1, "identity-current-aroll.png"), 1080, 1920, "d");
   await fs.writeFile(path.join(v1, "cover-manifest.json"), JSON.stringify({ outputs: [
-    { path: path.join(v1, "深度思考-封面-3x4-待审核.png") }, { path: path.join(v1, "深度思考-封面-4x3-待审核.png") }, { path: "../../outside.png" },
+    // 3x4 那条是资料库搬家前的旧绝对路径：按文件名仍要认；清单里指向别处且本文件夹没有的文件不算
+    { path: path.join("/Users/old/Documents/AutoCrew资料库/projects/x/05-cover/v001", "深度思考-封面-3x4-待审核.png") },
+    { path: path.join(v1, "深度思考-封面-4x3-待审核.png") }, { path: "../../outside.png" },
   ] }));
   await png(path.join(v.root, "05-cover/v002/横版-文件名写错成3x4.png"), 1448, 1086, "e");
   await png(path.join(v.root, "05-cover/refs/不是版本文件夹.png"), 1086, 1448, "f");

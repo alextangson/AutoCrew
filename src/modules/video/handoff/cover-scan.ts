@@ -50,17 +50,17 @@ async function cachedSha(file: string, size: number, mtimeMs: number): Promise<s
   return sha256;
 }
 
-/** 清单里列出的、确实在本版本文件夹里的文件名；没有清单或读不懂 → null（退回扫整个文件夹） */
+/**
+ * 清单里列出的文件名；没有清单或读不懂 → null（退回扫整个文件夹）。
+ * 按文件名认、不按整条路径认：Codex 写的是绝对路径，资料库一搬家（09-27 从 ~/Documents 迁出、
+ * 以后归档 NAS）整条路径就对不上了。只认本版本文件夹里真实存在的同名文件，清单指向别处的一律不算。
+ */
 async function manifestNames(dir: string): Promise<Set<string> | null> {
   let raw: unknown;
   try { raw = JSON.parse(await fs.readFile(path.join(dir, "cover-manifest.json"), "utf8")); } catch { return null; }
   const outputs = (raw as { outputs?: Array<{ path?: unknown }> })?.outputs;
   if (!Array.isArray(outputs)) return null;
-  const names = outputs
-    .map((o) => (typeof o?.path === "string" ? path.resolve(dir, o.path) : null))
-    .filter((p): p is string => p !== null && path.dirname(p) === dir)
-    .map((p) => path.basename(p));
-  return new Set(names);
+  return new Set(outputs.filter((o) => typeof o?.path === "string").map((o) => path.basename(o.path as string)));
 }
 
 async function coverEntry(projectRoot: string, file: string, version: number, generation: number): Promise<ArtifactEntry | null> {
