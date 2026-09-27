@@ -36,6 +36,10 @@ export interface StageGuardSubject {
   videoDone?: { renderedRevision: number; at: string };
 }
 
+/** 「剪辑中」只能由交接进入（P6 §13.4-C）：手动切换、改状态、直接建在剪辑中一律拒绝 */
+export const EDITING_VIA_HANDOFF =
+  "「剪辑中」只能由交接进入，不能手动切换。稿定、口播录好后，在这条视频的写稿会话里说「交剪辑」，由它调 autocrew_video handoff 把稿和原片交给剪辑工位。";
+
 /**
  * 返回人话拒绝原因；`null` = 这一步阶段门放行。
  *
@@ -46,18 +50,20 @@ export async function stageGuardError(
   from: ContentStatus,
   to: ContentStatus,
   coverApproved: () => Promise<boolean>,
+  opts: { viaHandoff?: boolean } = {},
 ): Promise<string | null> {
   const video = isVideoPlatform(subject.platform);
 
   if (to === "editing" && !video) {
     return "剪辑阶段只属于视频平台稿件";
   }
+  if (to === "editing" && !opts.viaHandoff) return EDITING_VIA_HANDOFF;
   // 不变量写目标不写来路：视频稿进「待发布」只有两个入口——封面台，或剪辑工位登记
   // （P6 §3.4：成片戳与封面定稿同一次登记落盘，`editing → publish_ready` 两样都在才放行）。
   // 只挡 approved 一条边挡不住看板从「待审」直拖到「待发布」——force 越得过形状，但阶段是产品事实
   if (video && to === "publish_ready" && from !== "cover_pending") {
     const registered = from === "editing" && Boolean(subject.videoDone) && (await coverApproved());
-    if (!registered) return "视频稿要先过剪辑与封面（推进到剪辑）";
+    if (!registered) return "视频稿要先过剪辑与封面（交接给剪辑工位）";
   }
   if (from === "editing" && to === "cover_pending" && !subject.videoDone) {
     return "成片还没审通过——先在剪辑台把片子审过，再推进到封面";

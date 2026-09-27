@@ -19,6 +19,7 @@ import {
   type ContentUpdates,
 } from "../storage/local-store.js";
 import type { AdoptionVerdict } from "../storage/local-store.js";
+import { EDITING_VIA_HANDOFF } from "../storage/stage-guard.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
@@ -203,7 +204,7 @@ export async function executeContentSave(
       if (target !== updated.status) {
         const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
         const moved = await transitionStatus(id, target, { host }, dataDir);
-        if (!moved.ok) return { ok: false, error: moved.error, ...(moved.blocked ? { blocked: true } : {}), ...grant };
+        if (!moved.ok) return { ok: false, error: moved.error, ...(moved.blocked ? { blocked: true } : {}), ...(moved.code ? { code: moved.code } : {}), ...grant };
         updated = moved.content ?? updated;
       }
     }
@@ -371,6 +372,8 @@ export async function executeContentSave(
   }
 
   const rawStatus = manualImport ? "draft_ready" : (params.status as string) || "draft_ready";
+  // 「剪辑中」只能由交接进入（§13.4-C）：直接建在剪辑中和 update/transition 一样拒绝，说清怎么交接
+  if (normalizeLegacyStatus(rawStatus) === "editing") return { ok: false, code: "editing_requires_handoff", error: EDITING_VIA_HANDOFF };
   const content = await saveContent({
     title,
     body,

@@ -592,3 +592,23 @@ describe("MCP content storage cannot bypass writer submission", () => {
     expect(internalVariant.ok).toBe(true);
   });
 });
+
+describe("「剪辑中」只能经交接进入（§13.4-C）", () => {
+  const seedApproved = () => saveContent({ title: "口播稿", body: "正文", platform: "douyin", status: "approved", tags: [] }, testDir);
+
+  it.each([{}, { _host: "claude" }])("transition / update{status} / save{status} 都拒绝并说明怎么交接（%o）", async (via) => {
+    const c = await seedApproved();
+    const base = { _dataDir: testDir, ...via };
+    const moved = await executeContentSave({ ...base, action: "transition", id: c.id, target_status: "editing", from_status: "approved", force: true });
+    expect(moved).toMatchObject({ ok: false, code: "editing_requires_handoff", blocked: true });
+    expect(String((moved as { error: string }).error)).toContain("autocrew_video handoff");
+    const token = (moved as { claim_token?: string }).claim_token;
+    const updated = await executeContentSave({ ...base, action: "update", id: c.id, title: "新标题", status: "editing", ...(token ? { claim_token: token } : {}) });
+    expect(updated).toMatchObject({ ok: false, code: "editing_requires_handoff" });
+    expect((await getContent(c.id, testDir))?.status).toBe("approved");
+    const saved = await executeContentSave({ ...base, action: "save", title: "直接建", body: "正文", platform: "douyin", status: "editing", ...(via._host ? { source: "manual_import", import_reason: "x" } : {}) });
+    if (via._host) expect(saved).toMatchObject({ ok: true, content: { status: "draft_ready" } });
+    else expect(saved).toMatchObject({ ok: false, code: "editing_requires_handoff" });
+    expect((await listContents(testDir)).filter((x) => x.status === "editing")).toEqual([]);
+  });
+});

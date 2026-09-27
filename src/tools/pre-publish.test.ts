@@ -116,7 +116,7 @@ describe("发布前检查 · 阶段门", () => {
     await approveCoverVariant(c.id, "a", dataDir);
     if (status === "cover_pending") {
       await updateContent(c.id, { videoDone: { renderedRevision: 1, at: "2026-08-25T00:00:00.000Z" } }, dataDir);
-      await transitionStatus(c.id, "editing", undefined, dataDir);
+      await transitionStatus(c.id, "editing", { viaHandoff: true }, dataDir);
       await transitionStatus(c.id, "cover_pending", undefined, dataDir);
     }
     return c.id;
@@ -130,7 +130,7 @@ describe("发布前检查 · 阶段门", () => {
     expect(result.allPassed).toBe(false);
     expect(result.checks.find((c) => c.name === "阶段门")).toMatchObject({ status: "fail" });
     expect(result.summary).toContain("卡在阶段门");
-    expect(result.summary).toContain("推进到剪辑");
+    expect(result.summary).toContain("交接给剪辑工位");
     // 被拦下就是没进——状态一个字都不许动
     expect((await getContent(id, dataDir))!.status).toBe("approved");
   });
@@ -178,8 +178,14 @@ describe("发布前检查 · 阶段门", () => {
 
 describe("video_kit 宿主发布包", () => {
   const KIT = { post_title: "不写代码也能用的AI", caption: "这期讲清楚普通人怎么把重复活交给 AI，看完就能上手。", cover_text: "别再手搬了" };
-  const mkVideo = (platform = "xiaohongshu", extra: Record<string, unknown> = {}) =>
-    saveContent({ title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" }, ...extra }, dataDir);
+  // 「剪辑中」只能经交接进入（§13.4-C）：要 editing 的先建在已过审，再按交接的方式推进
+  const mkVideo = async (platform = "xiaohongshu", extra: Record<string, unknown> = {}) => {
+    const c = await saveContent({ title: "口播稿标题", body: "口播正文。".repeat(600), platform, status: "approved", hashtags: [], videoDone: { renderedRevision: 1, at: "2026-09-25T00:00:00.000Z" }, ...extra, ...(extra.status === "editing" ? { status: "approved" } : {}) }, dataDir);
+    if (extra.status !== "editing") return c;
+    const moved = await transitionStatus(c.id, "editing", { viaHandoff: true }, dataDir);
+    if (!moved.content) throw new Error(moved.error);
+    return moved.content;
+  };
   const saveKit = (id: string, platform: string, kit: Record<string, unknown> = KIT) =>
     executePrePublishTool({ action: "video_kit", content_id: id, platform, kit, _dataDir: dataDir });
   const check = (id: string) => executePrePublish({ action: "check", content_id: id, _dataDir: dataDir, _readOnly: true });

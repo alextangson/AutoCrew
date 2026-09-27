@@ -3,7 +3,7 @@
  * 不掺状态图形状、不掺 I/O——那两件事各有各的测试。
  */
 import { describe, it, expect, vi } from "vitest";
-import { stageGuardError, isVideoPlatform, VIDEO_PLATFORMS } from "./stage-guard.js";
+import { EDITING_VIA_HANDOFF, stageGuardError, isVideoPlatform, VIDEO_PLATFORMS } from "./stage-guard.js";
 
 const video = { platform: "douyin" };
 const text = { platform: "wechat_mp" };
@@ -24,13 +24,17 @@ describe("stage guard", () => {
     expect(await stageGuardError({}, "approved", "editing", noCover)).toBeTruthy();
   });
 
-  it("视频稿可以进剪辑阶段", async () => {
-    expect(await stageGuardError(video, "approved", "editing", noCover)).toBeNull();
+  it("视频稿只能经交接进剪辑阶段（§13.4-C）：手动切换一律拒绝并说清怎么交接", async () => {
+    expect(await stageGuardError(video, "approved", "editing", noCover, { viaHandoff: true })).toBeNull();
+    expect(await stageGuardError(video, "draft_ready", "editing", noCover, { viaHandoff: true })).toBeNull();
+    for (const from of ["approved", "draft_ready", "cover_pending", "editing"] as const)
+      expect(await stageGuardError(video, from, "editing", noCover), from).toBe(EDITING_VIA_HANDOFF);
+    expect(EDITING_VIA_HANDOFF).toContain("autocrew_video handoff");
   });
 
   it("视频稿不许从已过审直通待发布", async () => {
     expect(await stageGuardError(video, "approved", "publish_ready", hasCover)).toBe(
-      "视频稿要先过剪辑与封面（推进到剪辑）",
+      "视频稿要先过剪辑与封面（交接给剪辑工位）",
     );
   });
 
@@ -67,10 +71,10 @@ describe("stage guard", () => {
     const withDone = { ...video, videoDone: done };
     expect(await stageGuardError(withDone, "editing", "publish_ready", hasCover)).toBeNull();
     // 少一样都维持旧话术：登记是同一次落盘写两样，缺一样说明没走登记
-    expect(await stageGuardError(withDone, "editing", "publish_ready", noCover)).toBe("视频稿要先过剪辑与封面（推进到剪辑）");
-    expect(await stageGuardError(video, "editing", "publish_ready", hasCover)).toBe("视频稿要先过剪辑与封面（推进到剪辑）");
+    expect(await stageGuardError(withDone, "editing", "publish_ready", noCover)).toBe("视频稿要先过剪辑与封面（交接给剪辑工位）");
+    expect(await stageGuardError(video, "editing", "publish_ready", hasCover)).toBe("视频稿要先过剪辑与封面（交接给剪辑工位）");
     // 这条新边只开给 editing：别的来路有戳有封面也照拦
-    expect(await stageGuardError(withDone, "approved", "publish_ready", hasCover)).toBe("视频稿要先过剪辑与封面（推进到剪辑）");
+    expect(await stageGuardError(withDone, "approved", "publish_ready", hasCover)).toBe("视频稿要先过剪辑与封面（交接给剪辑工位）");
   });
 
   it("剪辑 → 待发布：没有成片戳时不去读封面评审单", async () => {
@@ -83,9 +87,9 @@ describe("stage guard", () => {
     expect(await stageGuardError(video, "editing", "draft_ready", noCover)).toBeNull();
   });
 
-  it("回退边一律不设门：退回改稿/回剪辑随时可走", async () => {
+  it("回退边不设门：退回改稿随时可走；回剪辑也算进剪辑，只能经交接", async () => {
     expect(await stageGuardError(video, "editing", "approved", noCover)).toBeNull();
-    expect(await stageGuardError(video, "cover_pending", "editing", noCover)).toBeNull();
+    expect(await stageGuardError(video, "cover_pending", "editing", noCover)).toBe(EDITING_VIA_HANDOFF);
   });
 });
 

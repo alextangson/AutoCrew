@@ -72,10 +72,15 @@ async function seedContent(
   platform = "wechat_mp",
   topicId?: string,
 ): Promise<Content> {
-  return saveContent(
-    { title: `稿-${status}`, body: "正文", platform, status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}) },
+  // 「剪辑中」只能经交接进入（§13.4-C）：先建在已过审，再按交接的方式推进
+  const c = await saveContent(
+    { title: `稿-${status}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}) },
     dir,
   );
+  if (status !== "editing") return c;
+  const moved = await transitionStatus(c.id, "editing", { viaHandoff: true }, dir);
+  if (!moved.content) throw new Error(moved.error);
+  return moved.content;
 }
 
 describe("inbox writer", () => {
@@ -357,7 +362,7 @@ describe("封面桌按状态机的真实路径（真机 2026-09-06）", () => {
       const wx = await saveContent({ title: "公众号稿", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
       for (const st of ["reviewing", "approved"] as const) expect((await transitionStatus(wx.id, st, {}, dir)).ok).toBe(true);
       const vid = await saveContent({ title: "视频稿", body: "正文", platform: "douyin", status: "draft_ready" }, dir);
-      for (const st of ["reviewing", "approved", "editing"] as const) expect((await transitionStatus(vid.id, st, {}, dir)).ok).toBe(true);
+      for (const st of ["reviewing", "approved", "editing"] as const) expect((await transitionStatus(vid.id, st, { viaHandoff: st === "editing" }, dir)).ok).toBe(true);
       await saveContent({ title: "还没过审", body: "正文", platform: "wechat", status: "draft_ready" }, dir);
       let r = (await executeDesk({ action: "inbox", employee: "cover", _dataDir: dir })) as { items: Array<{ content_id: string }> };
       expect(r.items.map((i) => i.content_id)).toEqual([wx.id]);

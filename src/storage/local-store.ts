@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { resolveDataDir } from "./storage-roots.js";
-import { isVideoPlatform, stageGuardError } from "./stage-guard.js";
+import { EDITING_VIA_HANDOFF, isVideoPlatform, stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
 import type { ReviewMeta } from "../modules/writing/script-review.js";
@@ -1387,6 +1387,8 @@ export interface TransitionResult {
   error?: string;
   /** true = 被阶段门拦下（不是状态图形状不对）。调用方据此说「卡在阶段门」 */
   blocked?: boolean;
+  /** 机器可读的拒绝原因（目前只有 `editing_requires_handoff`） */
+  code?: string;
   /** 稿件与调用方审阅的版本不符，状态和交接记录均未推进。 */
   staleDraft?: boolean;
   /** If an auto-trigger fired, describes what happened */
@@ -1411,6 +1413,8 @@ export interface TransitionOptions {
    * 「状态推进了、记录没落」的中间态）。函数形式拿锁内读到的当前稿件算补丁。不许带 status。
    */
   patch?: ContentUpdates | ((current: Content) => ContentUpdates);
+  /** 只有 P6 交接置 true：「剪辑中」只能由交接进入（§13.4-C），其余入口一律被阶段门拒绝 */
+  viaHandoff?: boolean;
 }
 
 /** 封面是否已定稿：复用既有判定（选用即写 approvedLabel，revise 掉它即作废） */
@@ -1498,8 +1502,8 @@ async function transitionStatusLocked(
   // 阶段门在写锁内、force 之后——它是产品事实，强推不得（spec §1.2）
   const blocked = await stageGuardError(content, currentStatus, targetStatus, () =>
     coverApproved(contentId, dataDir),
-  );
-  if (blocked) return { ok: false, blocked: true, error: blocked };
+  { viaHandoff: opts?.viaHandoff });
+  if (blocked) return { ok: false, blocked: true, error: blocked, ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
 
   const now = new Date().toISOString();
   const patch = typeof opts?.patch === "function" ? opts.patch(content) : opts?.patch;

@@ -49,10 +49,15 @@ afterEach(async () => {
 });
 
 async function seed(status: ContentStatus = "drafting", platform = "wechat_mp"): Promise<Content> {
-  return saveContent(
-    { title: "AI 写码的账", body: "正文", platform, status, tags: [], hashtags: [] },
+  // 「剪辑中」只能经交接进入（§13.4-C）：先建在已过审，再按交接的方式推进
+  const saved = await saveContent(
+    { title: "AI 写码的账", body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [] },
     dir,
   );
+  if (status !== "editing") return saved;
+  const moved = await transitionStatus(saved.id, "editing", { viaHandoff: true }, dir);
+  if (!moved.ok || !moved.content) throw new Error(moved.error);
+  return moved.content;
 }
 
 /** 把租约手动推到过去——测过期不许靠 sleep */

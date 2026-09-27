@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { EDITING_VIA_HANDOFF } from "./stage-guard.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -443,7 +444,7 @@ describe("阶段门 · 收口通道", () => {
     const r = await transitionStatus(c.id, "publish_ready", undefined, testDir);
     expect(r.ok).toBe(false);
     expect(r.blocked).toBe(true);
-    expect(r.error).toContain("推进到剪辑");
+    expect(r.error).toContain("交接给剪辑工位");
     expect((await getContent(c.id, testDir))!.status).toBe("approved");
   });
 
@@ -462,14 +463,14 @@ describe("阶段门 · 收口通道", () => {
 
   it("文字稿进不了剪辑阶段", async () => {
     const c = await text();
-    const r = await transitionStatus(c.id, "editing", undefined, testDir);
+    const r = await transitionStatus(c.id, "editing", { viaHandoff: true }, testDir);
     expect(r.blocked).toBe(true);
     expect(r.error).toContain("只属于视频平台");
   });
 
   it("editing → cover_pending 只认 videoDone：videoReadyAt 有值也拦", async () => {
     const c = await video();
-    await transitionStatus(c.id, "editing", undefined, testDir);
+    await transitionStatus(c.id, "editing", { viaHandoff: true }, testDir);
     // 首次达成的指标戳在，但这一版成片没审过——不许放行过时成片
     await updateContent(c.id, { videoReadyAt: new Date().toISOString() }, testDir);
     expect((await transitionStatus(c.id, "cover_pending", undefined, testDir)).blocked).toBe(true);
@@ -481,7 +482,7 @@ describe("阶段门 · 收口通道", () => {
   it("cover_pending → publish_ready 要封面已批准", async () => {
     const c = await video();
     await updateContent(c.id, { videoDone: { renderedRevision: 1, at: "x" } }, testDir);
-    await transitionStatus(c.id, "editing", undefined, testDir);
+    await transitionStatus(c.id, "editing", { viaHandoff: true }, testDir);
     await transitionStatus(c.id, "cover_pending", undefined, testDir);
     expect((await transitionStatus(c.id, "publish_ready", undefined, testDir)).blocked).toBe(true);
 
@@ -494,6 +495,19 @@ describe("阶段门 · 收口通道", () => {
     expect((await transitionStatus(c.id, "publish_ready", undefined, testDir)).ok).toBe(true);
   });
 
+  it("进剪辑只能经交接（§13.4-C）：普通流转、force 都拒绝，带码且状态不动", async () => {
+    const c = await video();
+    for (const opts of [undefined, { force: true }]) {
+      const r = await transitionStatus(c.id, "editing", opts, testDir);
+      expect(r).toMatchObject({ ok: false, blocked: true, code: "editing_requires_handoff", error: EDITING_VIA_HANDOFF });
+    }
+    expect((await getContent(c.id, testDir))!.status).toBe("approved");
+    await expect(
+      saveContent({ title: "x", body: "b", tags: [], platform: "douyin", status: "editing" }, testDir),
+    ).rejects.toThrow(/只能由交接进入/);
+    expect((await transitionStatus(c.id, "editing", { viaHandoff: true }, testDir)).ok).toBe(true);
+  });
+
   it("saveContent 也过门：公众号稿建不进剪辑阶段", async () => {
     await expect(
       saveContent({ title: "x", body: "b", tags: [], platform: "wechat_mp", status: "editing" }, testDir),
@@ -502,10 +516,10 @@ describe("阶段门 · 收口通道", () => {
 
   it("expectedStatus 对不上就拒绝、不覆盖（旧标签页 / 双击）", async () => {
     const c = await video();
-    const first = await transitionStatus(c.id, "editing", { expectedStatus: "approved" }, testDir);
+    const first = await transitionStatus(c.id, "editing", { expectedStatus: "approved", viaHandoff: true }, testDir);
     expect(first.ok).toBe(true);
     // 第二次带的还是那一屏看到的 approved——盘上已经是 editing 了
-    const second = await transitionStatus(c.id, "editing", { expectedStatus: "approved" }, testDir);
+    const second = await transitionStatus(c.id, "editing", { expectedStatus: "approved", viaHandoff: true }, testDir);
     expect(second.ok).toBe(false);
     expect(second.error).toContain("刷新");
     expect((await getContent(c.id, testDir))!.status).toBe("editing");
@@ -514,7 +528,7 @@ describe("阶段门 · 收口通道", () => {
   it("并发推进只成一次：校验与写入在同一把锁里（无 CAS 时两边都会读到旧状态）", async () => {
     const c = await video();
     const [a, b] = await Promise.all([
-      transitionStatus(c.id, "editing", undefined, testDir),
+      transitionStatus(c.id, "editing", { viaHandoff: true }, testDir),
       transitionStatus(c.id, "reviewing", undefined, testDir),
     ]);
     expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
@@ -525,16 +539,16 @@ describe("阶段门 · 收口通道", () => {
   it("stageBlockReason 是不写盘的同一判定", async () => {
     const c = await video();
     const content = (await getContent(c.id, testDir))!;
-    expect(await stageBlockReason(content, "publish_ready", testDir)).toContain("推进到剪辑");
-    expect(await stageBlockReason(content, "editing", testDir)).toBeNull();
+    expect(await stageBlockReason(content, "publish_ready", testDir)).toContain("交接给剪辑工位");
+    expect(await stageBlockReason(content, "editing", testDir)).toBe(EDITING_VIA_HANDOFF);
     expect((await getContent(c.id, testDir))!.status).toBe("approved"); // 预判不落盘
   });
 
   it("describeAllowedTransitions 把被拦的那一条标出原因（推进下拉灰显）", async () => {
     const c = await video();
     const list = await describeAllowedTransitions((await getContent(c.id, testDir))!, testDir);
-    expect(list.find((t) => t.status === "editing")?.blockedReason).toBeUndefined();
-    expect(list.find((t) => t.status === "publish_ready")?.blockedReason).toContain("推进到剪辑");
+    expect(list.find((t) => t.status === "editing")?.blockedReason).toBe(EDITING_VIA_HANDOFF);
+    expect(list.find((t) => t.status === "publish_ready")?.blockedReason).toContain("交接给剪辑工位");
   });
 });
 

@@ -23,7 +23,6 @@ const ACTION_LABELS: Record<string, string> = {
   reviewing: "提交审核",
   revision: "返回修订",
   approved: "进入制作",
-  editing: "去剪辑",
   cover_pending: "去封面",
   publish_ready: "准备发布",
   publishing: "标记发布中",
@@ -67,14 +66,16 @@ export function StageAdvance(props: {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [open]);
-  if (props.transitions.length === 0) return null;
+  // 「剪辑中」只能由交接进入（P6 §13.4-C）：推进下拉不给这一站，后端同样拒绝手动切换
+  const transitions = props.transitions.filter((t) => t.status !== "editing");
+  if (transitions.length === 0) return null;
 
   // 默认指向管线前进方向——表序第一位在「待审」恰好是「修订」,推进按钮默认后退是真机踩过的陷阱
-  const fallback = defaultAdvanceTarget(props.currentStatus, props.transitions);
+  const fallback = defaultAdvanceTarget(props.currentStatus, transitions);
   const chosen =
-    props.transitions.find((t) => t.status === target) ??
-    props.transitions.find((t) => t.status === fallback) ??
-    props.transitions[0];
+    transitions.find((t) => t.status === target) ??
+    transitions.find((t) => t.status === fallback) ??
+    transitions[0];
   const blocked = chosen.blockedReason;
   const actionLabel = actionFor(chosen.status, props.currentStatus);
   const disabledReason = props.dirty ? "先保存修改，再进入下一阶段" : blocked;
@@ -106,12 +107,7 @@ export function StageAdvance(props: {
         from_status: props.currentStatus,
       });
       if (!r.ok) return toast(r.error ?? "阶段切换失败");
-      // 进剪辑要多说一句:工作台就地切换,创始人第一次走到这儿找不到上传口(真机反馈)
-      toast(
-        chosen.status === "editing"
-          ? "已进入剪辑工作台，可在「素材挂接」上传口播视频"
-          : "已进入「" + (VARIANT_STATUS[chosen.status] ?? chosen.status) + "」",
-      );
+      toast("已进入「" + (VARIANT_STATUS[chosen.status] ?? chosen.status) + "」");
       await props.reload();
     } finally {
       busyRef.current = false;
@@ -137,7 +133,7 @@ export function StageAdvance(props: {
       </div>
       {open && <div className="ed-stage-menu" id={`stage-actions-${props.contentId}`}>
         <div className="ed-stage-menu-heading">选择下一步</div>
-        {props.transitions.map((transition) => <button
+        {transitions.map((transition) => <button
           key={transition.status}
           className={transition.status === chosen.status ? "is-selected" : ""}
           disabled={!!transition.blockedReason}

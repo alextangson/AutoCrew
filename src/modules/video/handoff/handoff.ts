@@ -268,6 +268,7 @@ async function landHandoff(
       expectedStatus: plan.content.status,
       expectedDraft: { title: plan.content.title, body: plan.content.body, platform: plan.content.platform },
       host: input.host,
+      viaHandoff: true,
       patch: (current) => ({ video: { ...current.video, handoff: record }, ...(record.v2 && current.claim ? { claim: { ...current.claim, pendingHandoff: true } } : {}) }),
     }, ctx.dataDir);
     if (moved.ok) return handedOffResult(record, { content_status: "editing" });
