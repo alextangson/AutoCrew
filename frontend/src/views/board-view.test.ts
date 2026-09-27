@@ -32,6 +32,12 @@ describe("nowKind + stepperStates", () => {
 });
 
 describe("codexLine", () => {
+  it("轮到创始人时（成片和封面都批了）不提醒 Codex 卡住", () => {
+    const old = { session_id: "s", heartbeat: { result: "导出第 1 版", next_action: "等审", reported_at: "2026-09-27T07:00:00Z", session_id: "s" }, artifacts: [] };
+    const approved = { gate1: gate("pending"), gate2: gate("pending"), gate3: gate("approved"), gate4: gate("approved") };
+    expect(codexLine(review({ execution: old, gates: approved }), now).stale).toBeNull();
+    expect(codexLine(review({ execution: old }), now).stale).not.toBeNull();
+  });
   it("相对时间 + 结果，下一步单列", () => {
     expect(codexLine(review(), now)).toEqual({ text: "Codex · 3 分钟前：粗剪完成", next: "等你审", stale: null });
   });

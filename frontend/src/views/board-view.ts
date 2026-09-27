@@ -28,7 +28,8 @@ export function stepperStates(kind: NowKind): Array<{ label: string; state: Step
 /** Codex 一行：「Codex · 3 分钟前：<结果>」+ 下一步；超过 30 分钟没报告给一行安静的提醒 */
 export function codexLine(review: ProjectReview, now: number): { text: string; next: string | null; stale: string | null } {
   const beat = review.execution?.heartbeat;
-  const stale = heartbeatStale(review, now) ? "超过 30 分钟没有报告进度，可以去 Codex 看看它是不是卡住了" : null;
+  // 只在轮到 Codex 干活（剪辑中）时提醒；成片待审、封面、待发布都是在等创始人，Codex 本来就不会报进度
+  const stale = currentStep(review) === "cutting" && heartbeatStale(review, now) ? "超过 30 分钟没有报告进度，可以去 Codex 看看它是不是卡住了" : null;
   if (!beat?.reported_at) return { text: "Codex 还没报告过进度", next: null, stale };
   return { text: `Codex · ${relativeLabel(beat.reported_at, now)}：${beat.result}`, next: beat.next_action || null, stale };
 }
