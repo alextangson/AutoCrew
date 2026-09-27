@@ -29,7 +29,7 @@ export function stepperStates(kind: NowKind): Array<{ label: string; state: Step
 export function codexLine(review: ProjectReview, now: number): { text: string; next: string | null; stale: string | null } {
   const beat = review.execution?.heartbeat;
   const stale = heartbeatStale(review, now) ? "超过 30 分钟没有报告进度，可以去 Codex 看看它是不是卡住了" : null;
-  if (!beat) return { text: "Codex 还没报告过进度", next: null, stale };
+  if (!beat?.reported_at) return { text: "Codex 还没报告过进度", next: null, stale };
   return { text: `Codex · ${relativeLabel(beat.reported_at, now)}：${beat.result}`, next: beat.next_action || null, stale };
 }
 

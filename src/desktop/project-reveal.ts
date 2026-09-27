@@ -11,8 +11,7 @@ import { getContent } from "../storage/local-store.js";
 import { resolveContentProject } from "../storage/content-project.js";
 import { resolveProjectFile } from "../modules/video/handoff/paths.js";
 import { resolveReportedFile } from "../modules/video/handoff/jianying-root.js";
-import { readProjectJson } from "../modules/video/handoff/project-evidence.js";
-import { normalizeExecution } from "../modules/video/handoff/execution-index.js";
+import { executionWithCovers } from "../modules/video/handoff/founder-review.js";
 
 export const REVEAL_DIRS = { project_root: "", covers_dir: "05-cover", delivery_dir: "07-delivery" } as const;
 const MISSING = "文件找不到了（可能已挪走）";
@@ -43,7 +42,7 @@ async function locate(id: string, target: string, dataDir: string): Promise<Loca
     if (!aroll) return { ok: false, code: "file_missing", error: "还没有交接原片" };
     checked = await resolveProjectFile(aroll, root, "原片");
   } else if (/^[0-9a-f]{64}$/.test(target)) {
-    const execution = normalizeExecution(await readProjectJson<unknown>(id, "execution.json", dataDir));
+    const execution = await executionWithCovers(content, dataDir, content.video?.handoff?.generation ?? 1);
     const entry = execution?.artifacts.find((a) => a.sha256 === target);
     if (!entry) return { ok: false, code: "not_allowed", error: "这件产物不属于这条稿" };
     const at = await resolveReportedFile(entry.path, root, entry.role, dataDir);

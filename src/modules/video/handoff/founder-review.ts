@@ -16,10 +16,18 @@ import { readProjectJson, type ProjectDecisions } from "./project-evidence.js";
 import type { RegisterApprovals } from "./types.js";
 import { serializeVideoLine } from "./lock.js";
 import { COVER_ROLES, normalizeExecution, type CoverRatio } from "./execution-index.js";
+import { scanCoverFolder, withFolderCovers } from "./cover-scan.js";
 import { GATES, approvalInvalidReason, approvalTarget, gateStates, gateView, normalizeApprovals, rejectionTarget,
   type CoverSelection, type GateContext, type GateName, type GateRejection, type StoredApprovals } from "./gate-state.js";
 
 const APPROVAL_MESSAGE = "创始人在 AutoCrew 工作台确认本次展示的产物";
+
+/** 产物索引 + 05-cover/ 文件夹里的封面（封面以文件夹为准，见 cover-scan） */
+export async function executionWithCovers(content: Content, dataDir: string, generation: number) {
+  const execution = normalizeExecution(await readProjectJson<unknown>(content.id, "execution.json", dataDir));
+  const root = resolveContentProject(content.id, dataDir)?.project_root;
+  return root ? withFolderCovers(execution, await scanCoverFolder(root, generation), generation) : execution;
+}
 
 export async function loadGateContext(content: Content, dataDir: string): Promise<GateContext> {
   const handoff = content.video?.handoff;
@@ -27,7 +35,7 @@ export async function loadGateContext(content: Content, dataDir: string): Promis
   return {
     handoff: live, draftHash: draftHash(content),
     approvals: normalizeApprovals(await readProjectJson<unknown>(content.id, "approvals.json", dataDir)),
-    execution: normalizeExecution(await readProjectJson<unknown>(content.id, "execution.json", dataDir)),
+    execution: await executionWithCovers(content, dataDir, live?.generation ?? handoff?.generation ?? 1),
     selection: await readProjectJson<CoverSelection>(content.id, "cover-selection.json", dataDir),
   };
 }

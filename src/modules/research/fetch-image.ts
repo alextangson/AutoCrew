@@ -197,7 +197,8 @@ function webpDimensions(b: Buffer): Dimensions | null {
   return null;
 }
 
-function dimensionsOf(format: ImageFormat, bytes: Buffer): Dimensions | null {
+/** 只读格式头的像素尺寸；封面文件夹扫描（video/handoff/cover-scan）也用它按比例认 3:4 / 4:3 */
+export function dimensionsOf(format: ImageFormat, bytes: Buffer): Dimensions | null {
   const size =
     format === "png"
       ? pngDimensions(bytes)
