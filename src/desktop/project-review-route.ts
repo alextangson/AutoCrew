@@ -8,12 +8,14 @@ import { resolveProjectFile } from "../modules/video/handoff/paths.js";
 import { sha256File } from "../modules/video/handoff/manifest.js";
 import { founderProjectReview } from "../modules/video/handoff/founder-review.js";
 import { parseRangeHeader } from "./video-media.js";
+import { revealProjectPath, type RevealDeps } from "./project-reveal.js";
 
 export interface ProjectReviewRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
   originAllowed: (req: http.IncomingMessage) => boolean;
   resolveDataDir: () => Promise<string>;
   readBody: (req: http.IncomingMessage) => Promise<string>;
+  reveal?: RevealDeps;
 }
 export function createProjectReviewHandler(deps: ProjectReviewRouteDeps) {
   const authorize = deps.authorize, activeDataDir = deps.resolveDataDir, readBody = deps.readBody;
@@ -53,6 +55,17 @@ export function createProjectReviewHandler(deps: ProjectReviewRouteDeps) {
       const result = await founderProjectReview(id, await activeDataDir(), payload);
       res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-store" }).end(JSON.stringify(result));
     } catch (e) { res.writeHead(400, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ ok: false, error: String(e) })); }
+    return true;
+  }
+
+  // 「在访达中显示」：同样只给浏览器会话；只收稿件 id + 目标名/产物指纹，不收路径
+  if (p === "/api/project-reveal" && req.method === "POST") {
+    if (authorize(req) !== "session" || !browserWriteAllowed(req, "session")) { res.writeHead(403).end(); return true; }
+    try {
+      const body = JSON.parse(await readBody(req)) as { content_id?: unknown; target?: unknown };
+      const result = await revealProjectPath(String(body.content_id ?? ""), String(body.target ?? ""), await activeDataDir(), deps.reveal);
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-store" }).end(JSON.stringify(result));
+    } catch (e) { res.writeHead(400, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ ok: false, code: "bad_request", error: String(e) })); }
     return true;
   }
 

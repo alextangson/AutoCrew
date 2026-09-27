@@ -19,6 +19,7 @@ beforeEach(async () => {
     originAllowed: req => req.headers.origin === base,
     resolveDataDir: async () => dir,
     readBody: async req => { let body = ""; for await (const chunk of req) body += chunk; return body; },
+    reveal: { platform: "linux" },
   });
   server = http.createServer((req, res) => { void route(req, res, new URL(req.url!, base)).then(handled => { if (!handled) res.writeHead(404).end(); }); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -63,4 +64,13 @@ it("打回、选封面和批准一样只认浏览器会话；业务错误原样�
   const refused = await fetch(url, { method: "POST", headers: { ...json, cookie: "fixture-session" }, body });
   expect(refused.status).toBe(400);
   expect((await refused.json()).error).toContain("交接代次已变化");
+});
+
+it("在访达中显示只给浏览器会话，且要同源", async () => {
+  const url = `${base}/api/project-reveal`, body = JSON.stringify({ content_id: content.id, target: "project_root" });
+  expect((await fetch(url, { method: "POST", headers: { authorization: "Bearer x", origin: base }, body })).status).toBe(403);
+  expect((await fetch(url, { method: "POST", headers: { cookie: "fixture-session" }, body })).status).toBe(403);
+  const r = await fetch(url, { method: "POST", headers: { cookie: "fixture-session", origin: base, "content-type": "application/json" }, body });
+  expect(r.status).toBe(200);
+  expect((await r.json()).ok).toBe(true);
 });
