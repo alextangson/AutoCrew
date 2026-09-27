@@ -351,6 +351,11 @@ export interface Content {
    */
   writtenBy?: { kind: "host"; host: string } | { kind: "engine"; provider: string; model: string };
   /**
+   * 稿子从哪来（P6 §13.4-B）。目前只记用户已有成稿的导入：`content save source=manual_import`
+   * 落在稿件上，而不只在回执里——导入稿补证入口（与后续交接快速通道）只认这里。
+   */
+  writingSource?: { kind: "manual_import"; importedAt: string; reason: string };
+  /**
    * 发出去的写作包（P3 §5.2）。`submittedAt` 缺席 + 状态 `drafting` = **包发出去了、稿没回来**，
    * 稿卡据此说「写作包已发给 X，未收到稿（N 分钟）」而不是误报「还在后台写」。
    * `packId` 同时是写手侧的 fencing token：再领一次包换新号，旧号的提交一律被拒。

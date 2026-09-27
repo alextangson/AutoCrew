@@ -16,7 +16,7 @@ import { getContent, updateContent } from "../storage/local-store.js";
 import { gateClaimWrite, type ClaimDenial } from "../storage/claims.js";
 import { writeJsonAtomic, writeTextAtomic } from "../storage/json-atomic.js";
 import { HostResearchError } from "../modules/research/host-research-store.js";
-import { restoreEvidenceLedger, type LedgerEntry } from "../modules/research/evidence-ledger.js";
+import { DEFAULT_MAX_LOOKUPS, restoreEvidenceLedger, type EvidenceLedgerSnapshot, type LedgerEntry } from "../modules/research/evidence-ledger.js";
 import { isReadyPack, readPack, writePack, serializeWriterCall, renderPack, packPath, PACK_MD, type ReadyPack } from "./writer-pack.js";
 
 /** 每稿宿主补证的终身上限：重领包、换研究任务都不重置 */
@@ -38,6 +38,7 @@ class ClaimHeldError extends HostResearchError {
 
 export interface EvidenceTarget {
   contentId: string;
+  /** 空串 = 导入稿（§13.4-B）：没有写作包，直接记进稿件自己的证据台账 */
   packId: string;
   topicId: string;
   /** 包必须属于这个宿主；研究任务路径传任务宿主，写手侧传调用方 */
@@ -54,9 +55,32 @@ async function gateEvidenceWrite(t: EvidenceTarget): Promise<{ claim_token?: str
   return gate.grant;
 }
 
-/** 稿件与包号都对得上、没在审，才允许改这篇稿的账本 */
-async function loadWritableTarget(t: EvidenceTarget): Promise<ReadyPack> {
+/** 导入稿补证入口（§13.4-B）：用户已有成稿导入、停在 draft_ready，没有写作包也能补证 */
+export async function isImportDraft(contentId: string, dir: string): Promise<boolean> {
+  const content = await getContent(contentId, dir);
+  return content?.writingSource?.kind === "manual_import" && content.status === "draft_ready";
+}
+
+interface WritableTarget {
+  ledger: EvidenceLedgerSnapshot;
+  /** 导入稿没有写作包 */
+  pack?: ReadyPack;
+}
+
+const EMPTY_LEDGER: EvidenceLedgerSnapshot = { entries: [], lookups: [], budget: { max: DEFAULT_MAX_LOOKUPS, used: 0 } };
+
+/**
+ * 稿件与包号都对得上、没在审，才允许改这篇稿的账本。
+ * 导入稿（不带包号）按 content_id 认：只看来源与 draft_ready；没挂选题的导入稿不核选题。
+ */
+async function loadWritableTarget(t: EvidenceTarget): Promise<WritableTarget> {
   const content = await getContent(t.contentId, t.dir);
+  if (!t.packId) {
+    if (!content || content.writingSource?.kind !== "manual_import" || content.status !== "draft_ready")
+      throw new HostResearchError("missing_pack", "补证入稿需要同时提供content_id和pack_id（只有 draft_ready 的导入稿可以不带包号）");
+    if (content.topicId && content.topicId !== t.topicId) throw new HostResearchError("wrong_content", "补证目标不属于本次选题");
+    return { ledger: content.evidenceLedger ?? EMPTY_LEDGER };
+  }
   if (!content || content.topicId !== t.topicId) throw new HostResearchError("wrong_content", "补证目标不属于本次选题");
   if (!["drafting", "revision", "needs_evidence"].includes(content.status))
     throw new HostResearchError("content_not_writable", "稿件当前不在写作/修订/补证阶段，不能改写该稿证据账本");
@@ -65,7 +89,7 @@ async function loadWritableTarget(t: EvidenceTarget): Promise<ReadyPack> {
     throw new HostResearchError("stale_pack", "写作包已失效、尚未就绪或属于另一宿主，补证未入稿");
   if (Object.values(pack.attempts).some((a) => ["reviewing", "awaiting_host_review"].includes(a.status)))
     throw new HostResearchError("review_in_progress", "本稿正在审阅，先完成该次审稿再补证，避免修改审稿快照");
-  return pack;
+  return { ledger: pack.ledger, pack };
 }
 
 async function readHistory(file: string): Promise<Record<string, LedgerEntry>> {
@@ -87,25 +111,28 @@ export function attachContentEvidence(
   draft: (known: LedgerEntry[]) => LedgerEntry,
 ): Promise<Record<string, unknown>> {
   return serializeWriterCall(t.contentId, async () => {
-    const pack = await loadWritableTarget(t);
+    const target = await loadWritableTarget(t);
     const file = hostEvidencePath(t.contentId, t.dir);
     await fs.mkdir(path.dirname(file), { recursive: true });
     const history = await readHistory(file);
-    const entry = draft([...Object.values(history), ...pack.ledger.entries]);
+    const entry = draft([...Object.values(history), ...target.ledger.entries]);
     if (!history[entry.id] && Object.keys(history).length >= HOST_EVIDENCE_LIMIT)
       throw new HostResearchError("evidence_quota", "本稿宿主补证累计已满12条；重领包不会重置额度，请用已有材料收束");
     const grant = await gateEvidenceWrite(t);
     history[entry.id] ??= entry;
     await writeJsonAtomic(file, history);
-    const ledger = restoreEvidenceLedger(pack.ledger);
+    const ledger = restoreEvidenceLedger(target.ledger);
     for (const item of Object.values(history)) ledger.add(item);
-    pack.ledger = ledger.snapshot();
-    await writePack(t.contentId, pack, t.dir);
-    await writeTextAtomic(packPath(t.contentId, t.dir, PACK_MD), renderPack(t.contentId, pack));
-    await updateContent(t.contentId, { evidenceLedger: pack.ledger, _versionNote: "宿主补证登记（保留来源等级）" }, t.dir);
+    const snapshot = ledger.snapshot();
+    if (target.pack) {
+      target.pack.ledger = snapshot;
+      await writePack(t.contentId, target.pack, t.dir);
+      await writeTextAtomic(packPath(t.contentId, t.dir, PACK_MD), renderPack(t.contentId, target.pack));
+    }
+    await updateContent(t.contentId, { evidenceLedger: snapshot, _versionNote: "宿主补证登记（保留来源等级）" }, t.dir);
     return {
       content_id: t.contentId,
-      pack_id: t.packId,
+      ...(t.packId ? { pack_id: t.packId } : {}),
       evidence_entry: entry,
       host_evidence_used: Object.keys(history).length,
       host_evidence_limit: HOST_EVIDENCE_LIMIT,
@@ -138,7 +165,9 @@ export async function routeContentEvidence(
   if (args.task_id || (action !== "claim_offline" && action !== "cite")) return null;
   const contentId = str(args.content_id),
     packId = str(args.pack_id);
-  if (action === "cite" || !contentId || !packId) throw new HostResearchError("task_required", TASK_REQUIRED);
+  // 导入稿（§13.4-B）没有写作包：带 content_id 不带 pack_id 的 claim_offline 也按稿件台账登记
+  if (action === "cite" || !contentId || (!packId && !(await isImportDraft(contentId, ctx.dir))))
+    throw new HostResearchError("task_required", TASK_REQUIRED);
   const claim = nonempty(args.claim, "claim"),
     reason = nonempty(args.reason, "reason"),
     quote = str(args.quote) || claim;

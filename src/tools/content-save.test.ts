@@ -525,6 +525,22 @@ describe("MCP content storage cannot bypass writer submission", () => {
     expect("content" in result && result.content).toMatchObject({ body: "用户亲写的原稿", status: "topic_saved" });
   });
 
+  it("manual_import 导入把来源落在稿件上，get/list 都看得到（§13.4-B）", async () => {
+    const saved = await run({ action: "save", title: "导入稿", body: "已录口播原文", platform: "douyin", source: "manual_import", import_reason: " 创作者要求导入本地稿 " });
+    expect(saved).toMatchObject({ ok: true, writing_source: { kind: "manual_import" } });
+    const id = (saved as { content: { id: string } }).content.id;
+    const expected = { kind: "manual_import", reason: "创作者要求导入本地稿", importedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) };
+    expect(await getContent(id, testDir)).toMatchObject({ status: "draft_ready", writingSource: expected });
+    expect(await run({ action: "get", id })).toMatchObject({ content: { writingSource: expected } });
+    const listed = await run({ action: "list" }) as { contents: Array<{ id: string; writingSource?: unknown }> };
+    expect(listed.contents.find((c) => c.id === id)?.writingSource).toEqual(expected);
+  });
+
+  it("非导入的 save 不带来源", async () => {
+    const saved = await executeContentSave({ action: "save", title: "工作台稿", body: "正文", _dataDir: testDir });
+    expect(await getContent((saved as { content: { id: string } }).content.id, testDir)).not.toHaveProperty("writingSource");
+  });
+
   it("无正文可建平台占位，但不能再用 update 填正文绕过 submit", async () => {
     const topic = await saveTopic({ title: "返工记录", description: "这里只是选题描述", tags: [] }, testDir);
     const placeholder = await run({ action: "create_variant", topicId: topic.id, platform: "wechat_mp" });

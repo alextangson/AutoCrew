@@ -131,3 +131,51 @@ describe("claim_offline 带稿件目标、不带 task_id", () => {
     expect(await loadHostEvidence(contentId, dir)).toHaveLength(1);
   });
 });
+
+describe("导入稿补证入口（§13.4-B）：manual_import 的 draft_ready 稿按 content_id 记账", () => {
+  const IMPORT = { kind: "manual_import" as const, importedAt: "2026-09-27T00:00:00.000Z", reason: "本地稿导入" };
+  const seedImport = (extra: Record<string, unknown> = {}) =>
+    saveContent({ title: "导入稿", body: "已录口播：一场省三十分钟", topicId, platform: "douyin", status: "draft_ready", tags: [], writingSource: IMPORT, ...extra }, dir);
+
+  it("不带包号的 claim_offline 记进稿件台账，不造写作包", async () => {
+    const content = await seedImport();
+    const r = await scout({ action: "claim_offline", content_id: content.id, claim: "一场省三十分钟", reason: "已录原话、非数据" });
+    expect(r).toMatchObject({ ok: true, claim_id: "user-1", verified: false, content_id: content.id, host_evidence_used: 1 });
+    expect(r).not.toHaveProperty("pack_id");
+    expect((await getContent(content.id, dir))?.evidenceLedger?.entries).toEqual([
+      expect.objectContaining({ id: "user-1", source: "user_claim", reason: "已录原话、非数据" }),
+    ]);
+    expect(await readPack(content.id, dir)).toBeNull();
+    const again = await scout({ action: "claim_offline", content_id: content.id, claim: "一场省三十分钟", reason: "已录原话、非数据", claim_token: r.claim_token });
+    expect(again).toMatchObject({ ok: true, claim_id: "user-1", host_evidence_used: 1 });
+  });
+
+  it("没挂选题的导入稿也能登记；写门照拦", async () => {
+    const content = await seedImport({ topicId: undefined });
+    const claimed = await claimContent(content.id, "writer", "claude", dir);
+    if (!claimed.ok) throw new Error(claimed.error);
+    const args = { action: "claim_offline", content_id: content.id, claim: "推算", reason: "已录原话" };
+    expect(await scout(args)).toMatchObject({ ok: false, code: "claim_held" });
+    expect(await scout({ ...args, claim_token: claimed.claim.token })).toMatchObject({ ok: true, claim_id: "user-1" });
+  });
+
+  it("带研究任务的补证也可只给 content_id 记进导入稿", async () => {
+    const content = await seedImport();
+    const prepared = await scout({ action: "prepare", platform: "douyin", requirements: "核导入稿出处" });
+    const r = await scout({ action: "claim_offline", task_id: prepared.task_id, content_id: content.id, claim: "口述", reason: "无原页" });
+    expect(r).toMatchObject({ ok: true, host_evidence_used: 1 });
+    expect((await getContent(content.id, dir))?.evidenceLedger?.entries[0].id).toMatch(/^ev-H/);
+  });
+
+  it("其余拒绝不变：非导入稿不带包号、导入稿已离开 draft_ready、cite 不带任务", async () => {
+    const plain = await saveContent({ title: "普通稿", body: "正文", topicId, platform: "douyin", status: "draft_ready", tags: [] }, dir);
+    expect(await scout({ action: "claim_offline", content_id: plain.id, claim: "x", reason: "y" })).toMatchObject({ code: "task_required" });
+    const prepared = await scout({ action: "prepare", platform: "douyin", requirements: "核出处" });
+    expect(await scout({ action: "claim_offline", task_id: prepared.task_id, content_id: plain.id, claim: "x", reason: "y" })).toMatchObject({ code: "missing_pack" });
+    const moved = await seedImport({ status: "approved" });
+    expect(await scout({ action: "claim_offline", content_id: moved.id, claim: "x", reason: "y" })).toMatchObject({ code: "task_required" });
+    const imported = await seedImport();
+    expect(await scout({ action: "cite", content_id: imported.id, source_id: "p1", claim: "x", quote: "y" })).toMatchObject({ code: "task_required" });
+    for (const id of [plain.id, moved.id, imported.id]) expect(await loadHostEvidence(id, dir)).toEqual([]);
+  });
+});

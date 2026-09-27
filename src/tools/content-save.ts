@@ -379,6 +379,7 @@ export async function executeContentSave(
     status: normalizeLegacyStatus(rawStatus),
     tags: (params.tags as string[]) || [],
     hashtags: (params.hashtags as string[]) || [],
+    ...(manualImport ? { writingSource: { kind: "manual_import" as const, importedAt: new Date().toISOString(), reason: (params.import_reason as string).trim() } } : {}),
   }, dataDir);
 
   return { ok: true, content, ...(manualImport ? importReceipt : {}) };
