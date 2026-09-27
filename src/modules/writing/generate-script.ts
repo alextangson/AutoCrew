@@ -87,7 +87,7 @@ import { topicHashOf } from "../research/research-job-store.js";
 import { getContent, getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
 import type { Content, Topic } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
-import { selectEditorialExperiment, renderEditorialExperiment } from "../retro/editorial-experiments.js";
+import { selectEditorialExperiment, renderEditorialExperiment, type EditorialExperiment } from "../retro/editorial-experiments.js";
 
 export type { ScriptRequest };
 
@@ -643,6 +643,8 @@ export interface WritingContext {
   inputs: GenerationInputs;
   prompts: { system: string; user: string };
   gate: QualityGateSpec | undefined;
+  /** 本稿执行的复盘实验（有的话由备料方把稿挂到对应假设上） */
+  experiment?: EditorialExperiment;
 }
 
 export async function buildWritingContext(
@@ -667,7 +669,7 @@ export async function buildWritingContext(
     prompts.user += `\n\n${reference}`;
     inputs.writingContract += `\n\n${reference}`;
   }
-  return { inputs, prompts, gate: resolveQualityGate(inputs.pack, req.platform) };
+  return { inputs, prompts, gate: resolveQualityGate(inputs.pack, req.platform), ...(experiment ? { experiment } : {}) };
 }
 
 /** 这稿是引擎哪条线写的（P3 §5.3）：宿主稿写 `{kind:"host"}`，两者在稿件上可区分 */

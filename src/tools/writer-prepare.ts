@@ -36,6 +36,7 @@ import { cleanErrorMessage } from "../desktop/error-clean.js";
 import type { runLoop } from "../engine/loop.js";
 import { inspectWritingReadiness, writingReadinessFailure, type WritingReadiness } from "./writing-readiness.js";
 import { describeWriterFailure } from "./writer-failure.js";
+import { bindContentToHypothesis } from "../modules/retro/hypotheses.js";
 import {
   isReadyPack,
   packPath,
@@ -360,6 +361,12 @@ async function prepare(args: PrepareArgs, dataDir: string, deps: PackDeps): Prom
       const evidence = await loadHostEvidence(args.contentId, dataDir);
       for (const entry of evidence) built.inputs.ledger.add(entry);
 
+    }
+    if (built.experiment) {
+      const { hypothesisId } = built.experiment;
+      // 挂不上不挡写稿，但要留痕：否则这篇稿永远进不了假设裁决
+      await bindContentToHypothesis(hypothesisId, args.contentId, dataDir)
+        .catch((e) => warn(`复盘实验 ${built.experiment!.id} 没能把本稿挂到假设 ${hypothesisId}：${cleanErrorMessage(e)}`));
     }
     const feedback = renderWritingFeedback(source?.writingFeedback);
     if (feedback) {
