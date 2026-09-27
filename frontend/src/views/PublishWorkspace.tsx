@@ -7,6 +7,9 @@
  */
 import { EditorTools } from "./EditorTools";
 import { ScriptPeek } from "./ScriptPeek";
+import { CodexPublishButton } from "./CodexPublish";
+import { showCodexPublish } from "./codex-publish";
+import { useProjectReview } from "./use-project-review";
 import type { Content } from "../lib";
 import type { VersionLike } from "../version-diff";
 
@@ -21,6 +24,7 @@ export function PublishWorkspace(props: {
       <div className="ed-below" style={{ marginTop: 0 }}>
         <h2 className="serif">发布台 · {props.content.title || "无标题"}</h2>
         <p className="muted">排好文案去平台发，发完回来点确认——回流数据靠那一下认领。</p>
+        <CodexPublishSlot content={props.content} />
         <EditorTools
           contentId={props.content.id}
           content={props.content}
@@ -33,4 +37,13 @@ export function PublishWorkspace(props: {
       </div>
     </div>
   );
+}
+
+/** 已登记、待发布的视频稿：次要位置再给一次「让 Codex 发布」 */
+function CodexPublishSlot({ content }: { content: Content }) {
+  const { review } = useProjectReview(content.id, false);
+  if (!review || !showCodexPublish("publish_page", content.status, review)) return null;
+  return <div className="pb-actions" style={{ margin: "8px 0" }}>
+    <CodexPublishButton contentId={content.id} title={review.title || content.title} status={content.status} review={review} />
+  </div>;
 }

@@ -256,3 +256,7 @@
 .pp-row { display: flex; gap: 10px; align-items: flex-start; }
 .pp-row > .pp-frame { width: 160px; flex: none; }
 .pp-row .pp-title, .pp-row .pp-bar { flex: 1; }
+
+/* 让 Codex 发布：沿用 .pb-viewer/.pp-body 浮层 */
+.cx-body { width: min(720px, 96vw); margin-top: 8vh; }
+.cx-text { width: 100%; box-sizing: border-box; font: 13px/1.6 var(--mono, ui-monospace, monospace); resize: vertical; }

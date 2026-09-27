@@ -19,7 +19,7 @@ beforeEach(async () => {
     originAllowed: req => req.headers.origin === base,
     resolveDataDir: async () => dir,
     readBody: async req => { let body = ""; for await (const chunk of req) body += chunk; return body; },
-    reveal: { platform: "linux" },
+    reveal: { platform: "linux" }, codex: { platform: "linux" },
   });
   server = http.createServer((req, res) => { void route(req, res, new URL(req.url!, base)).then(handled => { if (!handled) res.writeHead(404).end(); }); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -73,4 +73,12 @@ it("在访达中显示只给浏览器会话，且要同源", async () => {
   const r = await fetch(url, { method: "POST", headers: { cookie: "fixture-session", origin: base, "content-type": "application/json" }, body });
   expect(r.status).toBe(200);
   expect((await r.json()).ok).toBe(true);
+});
+
+it("打开 Codex 只给同源浏览器会话，链接由服务端定，浏览器传的链接不理", async () => {
+  const url = `${base}/api/open-codex`, body = JSON.stringify({ content_id: content.id, link: "codex://threads/evil" });
+  expect((await fetch(url, { method: "POST", headers: { authorization: "Bearer x", origin: base }, body })).status).toBe(403);
+  expect((await fetch(url, { method: "POST", headers: { cookie: "fixture-session" }, body })).status).toBe(403);
+  const r = await fetch(url, { method: "POST", headers: { cookie: "fixture-session", origin: base, "content-type": "application/json" }, body });
+  expect(await r.json()).toEqual({ ok: true, link: "codex://threads/new", thread: false, opened: false });
 });

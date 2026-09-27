@@ -9,6 +9,7 @@ import { sha256File } from "../modules/video/handoff/manifest.js";
 import { founderProjectReview } from "../modules/video/handoff/founder-review.js";
 import { parseRangeHeader } from "./video-media.js";
 import { revealProjectPath, type RevealDeps } from "./project-reveal.js";
+import { openCodexForContent, type CodexOpenDeps } from "./codex-open.js";
 
 export interface ProjectReviewRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
@@ -16,6 +17,7 @@ export interface ProjectReviewRouteDeps {
   resolveDataDir: () => Promise<string>;
   readBody: (req: http.IncomingMessage) => Promise<string>;
   reveal?: RevealDeps;
+  codex?: CodexOpenDeps;
 }
 export function createProjectReviewHandler(deps: ProjectReviewRouteDeps) {
   const authorize = deps.authorize, activeDataDir = deps.resolveDataDir, readBody = deps.readBody;
@@ -64,6 +66,17 @@ export function createProjectReviewHandler(deps: ProjectReviewRouteDeps) {
     try {
       const body = JSON.parse(await readBody(req)) as { content_id?: unknown; target?: unknown };
       const result = await revealProjectPath(String(body.content_id ?? ""), String(body.target ?? ""), await activeDataDir(), deps.reveal);
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-store" }).end(JSON.stringify(result));
+    } catch (e) { res.writeHead(400, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ ok: false, code: "bad_request", error: String(e) })); }
+    return true;
+  }
+
+  // 「让 Codex 发布」：只收稿件 id，对话 id 服务端从执行记录取；只打开对话，不发消息
+  if (p === "/api/open-codex" && req.method === "POST") {
+    if (authorize(req) !== "session" || !browserWriteAllowed(req, "session")) { res.writeHead(403).end(); return true; }
+    try {
+      const body = JSON.parse(await readBody(req)) as { content_id?: unknown };
+      const result = await openCodexForContent(String(body.content_id ?? ""), await activeDataDir(), deps.codex);
       res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-store" }).end(JSON.stringify(result));
     } catch (e) { res.writeHead(400, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ ok: false, code: "bad_request", error: String(e) })); }
     return true;
