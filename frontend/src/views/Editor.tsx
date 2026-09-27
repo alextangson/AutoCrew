@@ -473,7 +473,6 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       <div className="editor editor-workspace">
         {stageBar}
         {props.context}
-      <SharedProjectPanel contentId={props.id} />
         <div className="ed-main-row">
           {workspace === "editing" && <EditingWorkspace content={c} reload={load} />}
           {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
@@ -489,7 +488,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
       {props.context}
-      <SharedProjectPanel contentId={props.id} />
+      <SharedProjectPanel contentId={props.id} status={c.status} isVideo={isVideo} reload={load} />
 
       <div className="ed-main-row">
       <div className="ed-stage">

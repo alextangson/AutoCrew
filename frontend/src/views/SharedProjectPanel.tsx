@@ -1,59 +1,41 @@
-import { useEffect, useState } from "react";
+/**
+ * 共享内容项目面板（P6 §13.4-C）：
+ * - 交接前（draft_ready/approved 的视频稿）：只有一句怎么交接 + 交接信息确认，没有剪辑界面；
+ * - 剪辑中（editing）：整页看板，数据来自 /api/project-review，打开期间每 15 秒自动刷新。
+ * 路由错误原样显示，不静默。
+ */
+import { useState } from "react";
+import { ProjectBoard } from "./ProjectBoard";
+import { useProjectReview } from "./use-project-review";
 
-type Artifact = { path: string; sha256: string; role: string };
-type State = { enabled: boolean; title: string; platform: string; draft_hash: string; manifest_hash?: string;
-  decisions?: { cover_text: string; target_seconds: number }; execution?: { artifacts: Artifact[]; heartbeat: { next_action: string } };
-  approvals?: { final_cut?: unknown; covers?: unknown }; error?: string };
+const PRE_HANDOFF = new Set(["draft_ready", "approved"]);
 
-export function SharedProjectPanel({ contentId }: { contentId: string }) {
-  const [state, setState] = useState<State | null>(null);
-  const [cover, setCover] = useState("");
-  const [seconds, setSeconds] = useState(0);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const url = `/api/project-review?content_id=${encodeURIComponent(contentId)}`;
-  useEffect(() => {
-    let live = true;
-    fetch(url).then(r => r.json()).then((s: State) => {
-      if (!live) return;
-      setState(s); setCover(s.decisions?.cover_text ?? ""); setSeconds(s.decisions?.target_seconds ?? 0);
-    }).catch(e => { if (live) setError(String(e)); });
-    return () => { live = false; };
-  }, [url]);
-  async function submit(payload: Record<string, unknown>) {
-    setBusy(true); setError("");
-    try {
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const s = await r.json();
-      if (!r.ok || s.ok === false) throw new Error(s.error ?? "确认未保存");
-      setState(s);
-    } catch (e) { setError(String(e)); } finally { setBusy(false); }
-  }
-  if (!state?.enabled) return error ? <p role="alert">项目读取失败：{error}</p> : null;
-  const files = state.execution?.artifacts ?? [];
-  const final = files.find(f => f.role === "final-cut");
-  const cover34 = files.find(f => f.role === "cover:3:4"), cover43 = files.find(f => f.role === "cover:4:3");
-  const assetUrl = (f: Artifact) => `/api/project-artifact?content_id=${encodeURIComponent(contentId)}&path=${encodeURIComponent(f.path)}&sha256=${f.sha256}`;
-  return <details className="panel" style={{ margin: "12px 24px", padding: 12 }}>
-    <summary>项目交接与确认</summary>
-    <p>当前标题：{state.title} · 平台：{state.platform}</p>
-    <label>封面字 <input value={cover} onChange={e => setCover(e.target.value)} /></label>{" "}
-    <label>目标时长（秒）<input type="number" min="1" value={seconds} onChange={e => setSeconds(Number(e.target.value))} /></label>{" "}
-    <button disabled={busy || !cover.trim() || seconds <= 0} onClick={() => void submit({ action: "decisions", title: state.title, cover_text: cover, target_seconds: seconds, draft_hash: state.draft_hash })}>确认交接信息</button>
-    {state.execution?.heartbeat.next_action && <p>剪辑报告的下一步：{state.execution.heartbeat.next_action}</p>}
-    {files.filter(f => f.role === "rough_cut" || f.role === "storyboard").map(f => <div key={f.sha256}>
-      <p>{f.role === "rough_cut" ? "粗剪" : "分镜与生成方案"}</p>
-      {f.role === "rough_cut" ? <video src={assetUrl(f)} controls preload="metadata" style={{ maxWidth: "100%", maxHeight: 400 }} /> : <img src={assetUrl(f)} alt="分镜与生成方案" style={{ maxWidth: "100%", maxHeight: 600, objectFit: "contain" }} />}
-      <button disabled={busy} onClick={() => void submit({ action: "approve", which: f.role, files: [f], manifest_hash: state.manifest_hash })}>确认这一版{f.role === "rough_cut" ? "粗剪" : "分镜方案"}</button>
-    </div>)}
-    {final && <div>
-      <video key={final.sha256} src={assetUrl(final)} controls preload="metadata" style={{ maxWidth: "100%", maxHeight: 480 }} />
-      <p><button disabled={busy} onClick={() => void submit({ action: "approve", which: "final_cut", files: [final], manifest_hash: state.manifest_hash })}>已完整审看并批准这版成片</button></p>
-    </div>}
-    {cover34 && cover43 && <div>
-      {[cover34, cover43].map(f => <img key={f.sha256} src={assetUrl(f)} alt={f.role === "cover:3:4" ? "竖版封面" : "横版封面"} style={{ maxWidth: "45%", maxHeight: 350, objectFit: "contain", margin: 8 }} />)}
-      <p><button disabled={busy} onClick={() => void submit({ action: "approve", which: "covers", files: [cover34, cover43], manifest_hash: state.manifest_hash })}>批准这两张封面</button></p>
-    </div>}
-    {error && <p role="alert">{error}</p>}
-  </details>;
+export function SharedProjectPanel(props: { contentId: string; status: string; isVideo: boolean; reload: () => Promise<void> }) {
+  const board = props.isVideo && (props.status === "editing" || props.status === "cover_pending");
+  const pre = props.isVideo && PRE_HANDOFF.has(props.status);
+  if (board) return <ProjectBoard contentId={props.contentId} status={props.status} reload={props.reload} />;
+  if (pre) return <PreHandoff contentId={props.contentId} />;
+  return null;
+}
+
+function PreHandoff({ contentId }: { contentId: string }) {
+  const { review, error, busy, submit } = useProjectReview(contentId, false);
+  const [cover, setCover] = useState<string | null>(null);
+  const [seconds, setSeconds] = useState<number | null>(null);
+  const coverText = cover ?? review?.decisions?.cover_text ?? "";
+  const target = seconds ?? review?.decisions?.target_seconds ?? 0;
+  const confirmed = review?.decisions;
+  return <section className="panel" style={{ margin: "12px 24px", padding: 12 }}>
+    <p><strong>录完按标题命名放进 Downloads，在 Codex 里说『剪这条』</strong></p>
+    {!review && !error && <p className="muted">正在读取交接信息…</p>}
+    {review?.enabled && <>
+      {confirmed && <p className="muted">已确认的交接信息：封面字「{confirmed.cover_text}」· 目标 {confirmed.target_seconds} 秒 · {confirmed.confirmed_at.slice(0, 16).replace("T", " ")}</p>}
+      <label>封面字 <input value={coverText} onChange={(e) => setCover(e.target.value)} /></label>{" "}
+      <label>目标时长（秒）<input type="number" min="1" value={target} onChange={(e) => setSeconds(Number(e.target.value))} /></label>{" "}
+      <button disabled={busy || !coverText.trim() || target <= 0} onClick={() => void submit({ action: "decisions", title: review.title, cover_text: coverText, target_seconds: target, draft_hash: review.draft_hash })}>
+        {confirmed ? "更新交接信息" : "确认交接信息"}
+      </button>
+    </>}
+    {error && <p role="alert" className="ed-error">{error}</p>}
+  </section>;
 }

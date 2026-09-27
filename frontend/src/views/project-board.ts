@@ -1,0 +1,90 @@
+/**
+ * 剪辑看板的纯逻辑（P6 §13.4-C / G）：步骤、异常态、心跳是否过期、封面分组。
+ *
+ * 四道门的状态由服务端算好（/api/project-review 的 gates），这里不重推批准规则，
+ * 只决定「页面该展开哪一步、该提示什么」。步骤是 status=editing 里的展示步骤，不是状态。
+ */
+
+export type Artifact = { path: string; sha256: string; role: string; version?: number; reported_at: string; generation?: number };
+export type GateStatus = "pending" | "approved" | "rejected" | "invalidated";
+export type GateView = {
+  gate: string; status: GateStatus; artifact_sha256: string | null; reason?: string;
+  approval: { artifact_sha256: string; approved_at: string } | null;
+  rejection: { note: string; artifact_sha256: string; rejected_at: string } | null;
+};
+export type CoverPick = { sha256: string; path: string; version?: number };
+export type ProjectReview = {
+  ok?: boolean; enabled: boolean; status?: string | null; error?: string;
+  title?: string; platform?: string; draft_hash?: string; manifest_hash?: string; generation?: number;
+  handoff_valid?: boolean; project?: { project_root: string } | null;
+  handoff?: { generation: number; at: string; aroll_path: string; draft_hash: string; hash: string } | null;
+  decisions?: { title: string; cover_text: string; target_seconds: number; confirmed_at: string } | null;
+  execution?: {
+    session_id: string; jianying_draft?: string;
+    heartbeat: { result: string; next_action: string; reported_at: string; session_id: string; error?: string };
+    artifacts: Artifact[];
+  } | null;
+  cover_selection?: Partial<Record<CoverRatio, CoverPick>> | null;
+  gates?: Record<"gate1" | "gate2" | "gate3" | "gate4", GateView>;
+};
+
+export const COVER_RATIOS = ["3:4", "4:3"] as const;
+export type CoverRatio = (typeof COVER_RATIOS)[number];
+export const REFRESH_MS = 15_000;
+export const HEARTBEAT_STALE_MS = 30 * 60_000;
+
+export const BOARD_STEPS = ["cutting", "final_review", "covers", "ready"] as const;
+export type BoardStep = (typeof BOARD_STEPS)[number];
+export const STEP_LABEL: Record<BoardStep, string> = { cutting: "剪辑中", final_review: "成片待审", covers: "封面", ready: "待发布" };
+export const GATE_STATUS_LABEL: Record<GateStatus, string> = { pending: "待批", approved: "已批", rejected: "已打回", invalidated: "已失效，需重新批准" };
+
+const latest = (artifacts: readonly Artifact[], roles: readonly string[]) =>
+  artifacts.filter((a) => roles.includes(a.role)).reduce<Artifact | null>((best, a) => (!best || a.reported_at >= best.reported_at ? a : best), null);
+
+/** 成片待审卡看的那一件。slice 3 在这里接上项目外的剪映导出候选（带导出时间、草稿名）。 */
+export function finalCutArtifact(artifacts: readonly Artifact[]): Artifact | null {
+  return latest(artifacts, ["final-cut", "final-cut-candidate"]);
+}
+export function roughCutArtifact(artifacts: readonly Artifact[], role: "rough_cut" | "storyboard"): Artifact | null {
+  return latest(artifacts, [role]);
+}
+
+/** 当前该展开的步骤：成片没批 → 剪辑中/成片待审；封面没批 → 封面；都批了 → 待发布 */
+export function currentStep(review: ProjectReview): BoardStep {
+  const gates = review.gates;
+  if (gates?.gate3.status !== "approved") return finalCutArtifact(review.execution?.artifacts ?? []) ? "final_review" : "cutting";
+  if (gates.gate4.status !== "approved") return "covers";
+  return "ready";
+}
+
+export type Anomaly = "no_handoff" | "draft_changed";
+/** 异常态要可见：剪辑中却没有有效交接包；稿子在交接后被改过 */
+export function boardAnomalies(status: string, review: ProjectReview | null): Anomaly[] {
+  const out: Anomaly[] = [];
+  const valid = Boolean(review?.enabled && review.handoff_valid && review.handoff);
+  if (status === "editing" && !valid) out.push("no_handoff");
+  if (valid && review?.handoff?.draft_hash && review.draft_hash && review.handoff.draft_hash !== review.draft_hash) out.push("draft_changed");
+  return out;
+}
+
+/** Codex 超过 30 分钟没 report（从未报过就从交接时间算）→ 交接卡标黄 */
+export function heartbeatStale(review: ProjectReview, now: number): boolean {
+  const last = review.execution?.heartbeat?.reported_at ?? review.handoff?.at;
+  if (!last) return false;
+  const t = Date.parse(last);
+  return Number.isFinite(t) && now - t > HEARTBEAT_STALE_MS;
+}
+
+/** 已完成步骤折叠后的一行摘要 */
+export function stepSummary(step: BoardStep, review: ProjectReview): string {
+  const gates = review.gates;
+  if (step === "cutting") return finalCutArtifact(review.execution?.artifacts ?? []) ? "成片已交" : "还在剪";
+  if (step === "final_review") return gates?.gate3.approval ? `成片已批 · ${gates.gate3.approval.approved_at.slice(0, 16).replace("T", " ")}` : "成片待批";
+  if (step === "covers") {
+    const s = review.cover_selection;
+    return gates?.gate4.status === "approved" ? `封面已批 · 3:4 v${s?.["3:4"]?.version ?? "?"} / 4:3 v${s?.["4:3"]?.version ?? "?"}` : "封面待批";
+  }
+  return "等 Codex 登记，登记后进入待发布";
+}
+
+export const fileName = (p: string) => p.split("/").pop() ?? p;
