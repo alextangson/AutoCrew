@@ -12,7 +12,7 @@ import { LOCAL_HOST } from "../src/storage/local-store.js";
 
 export type PolicyDecision = { ok: true } | { ok: false; error: string };
 
-export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/confirm/handoff(带确认)/register/report/status/revoke 与只读查询；写稿与发布在 Claude 会话里做";
+export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/confirm/handoff(带确认)/register/report/status/revoke、asset add（登记素材路径）与只读查询；写稿与发布在 Claude 会话里做";
 
 /** 工具 → 放行的 action（`*` = 整个工具放行） */
 type Allowlist = Readonly<Record<string, ReadonlySet<string> | "*">>;
@@ -21,6 +21,8 @@ const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
   codex: {
     autocrew_video: new Set(["register", "status", "revoke", "report", "match", "confirm"]),
     autocrew_content: new Set(["get"]),
+    // 素材只写路径（§13.4-F）：库内记相对路径，库外挪进项目再记
+    autocrew_asset: new Set(["add"]),
     autocrew_desk: new Set(["inbox", "claim", "release"]),
     autocrew_status: "*",
   },

@@ -221,7 +221,7 @@ describe("工具表面瘦身：tools/list 按宿主过滤（P6 §3.7）", () => 
 
   it("codex 只列它调得动的：等于宿主白名单，列外的工具任何 action 都被拒", async () => {
     const names = await listedNames("codex");
-    expect([...names].sort()).toEqual(["autocrew_content", "autocrew_desk", "autocrew_status", "autocrew_video"]);
+    expect([...names].sort()).toEqual(["autocrew_asset", "autocrew_content", "autocrew_desk", "autocrew_status", "autocrew_video"]);
     for (const tool of runner.getTools().map((t) => t.name).filter((name) => !names.includes(name))) {
       for (const action of ["", "list", "get", "status", "register"]) expect(hostPolicy("codex", tool, { action }).ok).toBe(false);
     }

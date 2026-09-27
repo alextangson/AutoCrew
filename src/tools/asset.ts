@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { addAsset, listAssets, removeAsset, listVersions, getVersion, revertToVersion } from "../storage/local-store.js";
+import { addAsset, addAssetByPath, listAssets, removeAsset, listVersions, getVersion, revertToVersion } from "../storage/local-store.js";
 
 /**
  * autocrew_asset — manage media files (covers, B-Roll, images, videos, subtitles)
@@ -24,7 +24,7 @@ export const assetSchema = Type.Object({
   ),
   description: Type.Optional(Type.String({ description: "Asset description (for add)" })),
   source_path: Type.Optional(
-    Type.String({ description: "Absolute path to source file to copy into the project (for add)" }),
+    Type.String({ description: "Absolute path of the file (for add). Inside the library it is recorded in place by relative path; outside the library it is MOVED into the content project folder (not copied), then recorded." }),
   ),
   version: Type.Optional(Type.Number({ description: "Version number (for get_version/revert)" })),
 });
@@ -44,17 +44,10 @@ export async function executeAsset(params: Record<string, unknown>) {
     const filename = params.filename as string;
     const assetType = (params.asset_type as string) || "other";
     if (!filename) return { ok: false, error: "filename is required for add" };
-    const result = await addAsset(
-      contentId,
-      {
-        filename,
-        type: assetType as any,
-        description: (params.description as string) || undefined,
-        sourcePath: (params.source_path as string) || undefined,
-      },
-      dataDir,
-    );
-    return result;
+    const base = { filename, type: assetType as any, description: (params.description as string) || undefined };
+    const source = (params.source_path as string) || "";
+    // 失败照旧向上抛（存储类错误由外层统一成 storage_unavailable），不在这里吞成泛化失败
+    return source ? addAssetByPath(contentId, base, source, dataDir) : addAsset(contentId, base, dataDir);
   }
 
   if (action === "list") {

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { resolveDataDir } from "./storage-roots.js";
+import { moveFileVerified } from "./move-file.js";
 import { EDITING_VIA_HANDOFF, isVideoPlatform, stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
@@ -89,6 +90,10 @@ export interface Asset {
    * 有它就按它找文件，filename 只作显示与去重。
    */
   projectPath?: string;
+  /** 在资料库（工作区）里别处的素材：只记相对工作区的路径，不挪不拷（P6 §13.4-F） */
+  libraryPath?: string;
+  /** 跨卷挪入后删源失败：原件还在这里（照实告诉创始人，不当失败） */
+  sourceLeftAt?: string;
   type: "cover" | "broll" | "image" | "video" | "audio" | "subtitle" | "other";
   /** 一行内容说明；挂接 UI 用素材库 name/tags 预填——不靠人记得改文件名 */
   description?: string;
@@ -1045,6 +1050,53 @@ export async function addAsset(
 
     return { ok: true, asset: newAsset };
   });
+}
+
+/**
+ * `autocrew_asset add{source_path}`：素材只写路径（P6 §13.4-F，评审 #9），不上传、不复制。
+ * 项目内 → projectPath；资料库内别处 → libraryPath；库外 → 挪进项目的 assets（03-broll/assets）再记，
+ * 挪前挪后核 sha256、不覆盖同名。工作台从素材库挂接仍走 addAsset 的硬链接，不受影响。
+ */
+export async function addAssetByPath(
+  contentId: string,
+  asset: Omit<Asset, "addedAt" | "projectPath" | "libraryPath" | "sourceLeftAt">,
+  sourcePath: string,
+  dataDir?: string,
+): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
+  if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
+  if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
+  return serializeContentWrite(contentId, async () => {
+    const projDir = contentDir(contentId, dataDir);
+    const metaPath = projectFile(projDir, "meta.json");
+    let raw: string;
+    try { raw = await fs.readFile(metaPath, "utf-8"); }
+    catch (err) { if (isFileMissing(err)) return { ok: false, error: `Content ${contentId} not found` }; throw err; }
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
+    if ((content.assets ?? []).some(a => a.filename === asset.filename)) return { ok: false, error: `已有同名素材：${asset.filename}，换个 filename` };
+    const located = await placeSource(sourcePath, projDir, projectFile(projDir, "assets", asset.filename), dataDir);
+    const now = new Date().toISOString();
+    const newAsset: Asset = { ...asset, ...located, addedAt: now };
+    content.assets = [...(content.assets || []), newAsset];
+    content.updatedAt = now;
+    if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
+    return { ok: true, asset: newAsset };
+  });
+}
+
+async function placeSource(source: string, projDir: string, dest: string, dataDir?: string): Promise<Pick<Asset, "projectPath" | "libraryPath" | "sourceLeftAt">> {
+  if (!path.isAbsolute(source)) throw new Error(`source_path 必须是绝对路径：${source}`);
+  const abs = await fs.realpath(source);
+  if (!(await fs.stat(abs)).isFile()) throw new Error(`source_path 不是文件：${source}`);
+  const [project, library] = await Promise.all([fs.realpath(projDir), fs.realpath(resolveDataDir(dataDir))]);
+  if (isWithinDir(project, abs)) return { projectPath: path.relative(project, abs) };
+  if (isWithinDir(library, abs)) return { libraryPath: path.relative(library, abs) };
+  await fs.mkdir(path.dirname(dest), { recursive: true });
+  const moved = await moveFileVerified(source, dest);
+  return moved.sourceLeft ? { sourceLeftAt: source } : {};
+}
+function isWithinDir(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
 /**

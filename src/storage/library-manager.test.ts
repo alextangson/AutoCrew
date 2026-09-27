@@ -58,13 +58,15 @@ describe("portable libraries", () => {
     expect((await loadProjectRoots(resolveDataDir())).roots).toEqual([path.join(resolveDataDir(), "projects")]);
   });
 
-  it("managed imports survive source deletion, updates preserve relative paths, workspaces isolate config", async () => {
+  it("managed imports move library-external files in (not copy), updates preserve relative paths, workspaces isolate config", async () => {
     await queueStorage({ action: "create", target }); await applyPendingStorage();
     acquireLibraryLock();
     const source = path.join(temp, "shot.mp4"); await put(source, "original bytes");
     const { added } = await addAssets([source], null);
     expect(added[0].path).not.toBe(source);
-    await fs.unlink(source);
+    // 库外文件挪入不复制（P6 §13.4-F）：原位置不再有这份字节，资料库那份核过同一个 sha256
+    await expect(fs.access(source)).rejects.toThrow();
+    expect(await fs.readFile(added[0].path, "utf8")).toBe("original bytes");
     await updateAsset(added[0].id, { name: "renamed", tags: ["demo"] });
     expect((await listLibrary()).assets[0].missing).toBe(false);
     const workspace = await createWorkspace("另一个账号");

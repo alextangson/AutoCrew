@@ -24,6 +24,7 @@ import { getDataDir } from "./local-store.js";
 import { writeJsonAtomic, readJson } from "./json-atomic.js";
 import { getConfigDir, isWithin } from "./storage-roots.js";
 import { digestFile } from "./library-manager.js";
+import { moveFileVerified } from "./move-file.js";
 
 export type LibraryAssetType = "video" | "image" | "audio" | "other";
 
@@ -240,18 +241,13 @@ async function importOne(
   if (!p) return null;
   const workspace = path.dirname(root);
   if (getConfigDir(workspace) !== workspace) {
-    asset.checksum = await digestFile(abs);
     if (!isWithin(workspace, abs)) {
+      // 库外文件挪入，不复制（P6 §13.4-F「素材只写路径」）：挪前挪后都核 sha256
       const managed = path.join(root, "media", asset.id + path.extname(abs));
-      assertManagedPathAvailable(managed);
       await fs.mkdir(path.dirname(managed), { recursive: true });
-      await fs.copyFile(abs, managed, fs.constants.COPYFILE_EXCL);
-      if (await digestFile(managed) !== asset.checksum || await digestFile(abs) !== asset.checksum) {
-        await fs.rm(managed, { force: true });
-        throw new Error("素材在导入时发生变化，请重新导入");
-      }
+      asset.checksum = (await moveFileVerified(abs, managed)).sha256;
       asset.path = managed;
-    }
+    } else asset.checksum = await digestFile(abs);
     asset.storage = "managed";
   }
   await writeJsonAtomic(p, storedAsset(root, asset));
