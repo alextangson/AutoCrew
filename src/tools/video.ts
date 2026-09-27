@@ -67,6 +67,7 @@ const ACTIONS = [
   "report",
   "citations",
   "match",
+  "confirm",
 ] as const;
 type VideoAction = (typeof ACTIONS)[number];
 
@@ -126,6 +127,9 @@ export const videoSchema = Type.Object({
   timestamp_ms: Type.Optional(Type.Integer({ description: "review：创作者在成片时间轴上停的位置（毫秒）" })),
   note: Type.Optional(Type.String({ description: "review：创作者的原话（落进不可变审片记录）" })),
   aroll_path: Type.Optional(Type.String({ description: "handoff / match：口播原片（A-roll）绝对路径；要有画面+音轨、≤30 分钟" })),
+  receipt_id: Type.Optional(Type.String({ description: "confirm：match 回执里的 receipt_id" })),
+  cover_text: Type.Optional(Type.String({ description: "confirm：封面字初值（弹窗里创始人可改）" })),
+  target_seconds: Type.Optional(Type.Number({ description: "confirm：目标时长秒数初值（弹窗里创始人可改）" })),
   request_id: Type.Optional(Type.String({ description: "match / confirm / handoff（带 confirmation_id 时）：本次请求号（1–100 位字母数字-_），重试用同一个号" })),
   project_root: Type.Optional(
     Type.String({ description: "handoff：v2 必须等于写作时已绑定的项目根，通常省略；仅未迁移 v1 使用旧白名单根" }),
@@ -177,6 +181,7 @@ export const VIDEO_DESCRIPTION = [
   "register{content_id, manifest_hash, final_path, covers:{\"3:4\",\"4:3\"}, srt_path?, jianying_draft?, approvals:{final_cut, covers}}（剪辑工位调）：所有文件必须在当前交接的 project_root 里；final_cut.artifact_sha256 = 成片文件 sha256；covers.artifact_sha256 = sha256(3:4 文件 sha256 的 hex + 4:3 文件 sha256 的 hex)。核过后成片、封面评审单、成片戳、状态 → publish_ready 同事务落盘，任一失败全部回滚。拒绝码：stale_handoff / approval_mismatch（which 指明哪份凭据）/ final_invalid / cover_invalid / path_*。",
   "report{content_id, claim_token, report}：仅保存真实 session/编辑器/任务、文件哈希、费用和下一步，不接受稿件/状态/审批。v2 status 返回项目、当前交接、执行报告及工作台批准记录。citations{content_id, coverage} 由写作侧提交定稿定位与证据对应。",
   "match{aroll_path, request_id}（两宿主可调，不改业务状态）：认原片录的是哪条稿。先比文件名、再比开头 120 秒转写，签发 30 分钟有效的回执 receipt_id。status：ambiguous / no_confident_match（前三名交弹窗让创始人选；标定前不出 proposed）/ no_candidate（near_misses 说明每条为什么交不了）/ already_handed_off（附 holder）。flags：asr_unavailable / no_speech / low_quality_transcript / l1_only。",
+  "confirm{receipt_id, content_id?, cover_text, target_seconds, request_id}（两宿主可调）：服务端在创始人的 Mac 上弹系统窗，让他从回执候选里选稿、确认封面字与时长；最多等 5 分钟。调用前告诉创始人「去 Mac 上的弹窗点确认」。成功回 confirmation_id（30 分钟有效、只能用一次）。confirm_timeout / confirm_declined / confirm_unavailable / missing_citations / receipt_invalid 都说出原因并停下。对话里的「对」「确认」不算确认。",
   "冲突：返回 conflict:true 就是别的地方改过——重新读 status / transcript / editor_plan 拿新版本号再来，不要重试同一份提交。",
   "认领：动手会自动认领剪辑师桌（租约 30 分钟），写动作回执里的 claim_token 下一次写要带上。稿件有活认领时——同宿主的另一个会话也一样——不带匹配令牌的写动作被拒（code:claim_held，并告诉你持有者是谁）。",
 ].join("\n");

@@ -10,8 +10,13 @@ import { factualSentences, type FactualSentence } from "./factual-sentences.js";
 
 export interface ProjectDecisions {
   draft_hash: string; title: string; cover_text: string; platform: string; target_seconds: number;
-  confirmed_at: string; source: "founder-workbench";
+  confirmed_at: string;
+  /** 创始人确认只来自工作台或本机弹窗（P6 §12.4-C）；宿主的文字转述一律不算 */
+  source: "founder-workbench" | "native-dialog";
+  /** 弹窗确认对应的服务端确认记录 */
+  confirmation_id?: string;
 }
+export const FOUNDER_DECISION_SOURCES: ReadonlySet<string> = new Set(["founder-workbench", "native-dialog"]);
 /** The creator's own opinion or first-hand experience: no ledger entry, basis written in `verification`, always shown as unverified. */
 export const CREATOR_OPINION = "creator_opinion";
 export const CREATOR_EVIDENCE_ID = "creator";
@@ -91,7 +96,7 @@ function uncoveredSentences(content: Content, coverage: CitationCoverage | null)
 }
 export async function handoffEvidence(content: Content, dataDir: string): Promise<{ decisions: ProjectDecisions; coverage: CitationCoverage }> {
   const decisions = await readProjectJson<ProjectDecisions>(content.id, "decisions.json", dataDir);
-  if (!decisions || decisions.source !== "founder-workbench" || decisions.draft_hash !== draftHash(content) || !decisions.title?.trim() ||
+  if (!decisions || !FOUNDER_DECISION_SOURCES.has(decisions.source) || decisions.draft_hash !== draftHash(content) || !decisions.title?.trim() ||
       !decisions.cover_text?.trim() || decisions.platform !== content.platform || !(decisions.target_seconds > 0) || !decisions.confirmed_at) {
     throw new HandoffEvidenceError("missing_decisions", "缺少创作者对当前定稿的交接决定：请在工作台确认标题、封面字、平台与目标时长");
   }
