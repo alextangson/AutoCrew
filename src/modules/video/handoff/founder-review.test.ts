@@ -74,9 +74,11 @@ it("gate4：批准哈希沿用 sha256(3:4 hex + 4:3 hex)；整批打回后出 v2
   expect((ok.gates as Gates).gate4.status).toBe("approved");
   expect((ok.cover_selection as Record<string, { version: number }>)["3:4"].version).toBe(2);
   expect((ok.execution as StoredExecution).artifacts.filter(x => x.role.startsWith("cover:"))).toHaveLength(4);
-  // 改选另一版 → 批准失效
-  await founderProjectReview(v.id, env.dir, { action: "select_cover", ratio: "3:4", sha256: await sha256File(a) });
-  expect(((await founderProjectReview(v.id, env.dir)).gates as Gates).gate4.status).toBe("invalidated");
+  // 登记前改用另一版 → 直接批准那一对，选择随之换
+  const old = [{ path: rel(v.root, a), sha256: await sha256File(a) }, { path: rel(v.root, b), sha256: await sha256File(b) }];
+  const switched = await founderProjectReview(v.id, env.dir, { action: "approve", which: "covers", manifest_hash: v.manifestHash, files: old });
+  expect((switched.gates as Gates).gate4.status).toBe("approved");
+  expect((switched.cover_selection as Record<string, { version: number }>)["3:4"].version).toBe(1);
 });
 
 it("稿子在批准后被改：批准失效", async () => {

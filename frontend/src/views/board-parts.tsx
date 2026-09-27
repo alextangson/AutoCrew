@@ -32,11 +32,11 @@ export function RevealLink(props: { contentId: string; target: string; label?: s
 }
 
 /** 「打回，写原话…」：就地展开输入框，原话必填，错误就地显示 */
-export function RejectInline(props: { busy: boolean; disabled?: boolean; onReject: (note: string) => Promise<boolean> }) {
+export function RejectInline(props: { busy: boolean; disabled?: boolean; label?: string; onReject: (note: string) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  if (!open) return <button disabled={props.busy || props.disabled} onClick={() => setOpen(true)}>打回，写原话…</button>;
+  if (!open) return <button disabled={props.busy || props.disabled} onClick={() => setOpen(true)}>{props.label ?? "打回，写原话…"}</button>;
   const send = async () => {
     const problem = rejectNoteError(note);
     setErr(problem);

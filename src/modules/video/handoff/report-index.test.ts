@@ -45,14 +45,15 @@ it("挪文件（同指纹新路径）只改路径；封面缺 version、项目�
   expect((await v.report([], { approvals: {} })).ok).toBe(false);
 });
 
-it("创始人选封面单独记录，只能选索引里该尺寸的版本", async () => {
+it("批准封面时选择单独记录，只能批索引里对应尺寸的那一对", async () => {
   const v = await handedOff(env.dir, env.aroll);
-  const c1 = await writePng(path.join(v.root, "05-cover/v01/3x4.png"), "v1");
-  await v.report([{ file: c1, role: "cover:3:4", version: 1 }]);
-  const sha = await sha256File(c1);
-  await expect(founderProjectReview(v.id, env.dir, { action: "select_cover", ratio: "4:3", sha256: sha })).rejects.toThrow(/不在产物记录/);
-  await expect(founderProjectReview(v.id, env.dir, { action: "select_cover", ratio: "1:1", sha256: sha })).rejects.toThrow(/只有 3:4 和 4:3/);
-  const r = await founderProjectReview(v.id, env.dir, { action: "select_cover", ratio: "3:4", sha256: sha });
+  const c1 = await writePng(path.join(v.root, "05-cover/v01/3x4.png"), "v1"), c2 = await writePng(path.join(v.root, "05-cover/v01/4x3.png"), "v2");
+  await v.report([{ file: c1, role: "cover:3:4", version: 1 }, { file: c2, role: "cover:4:3", version: 1 }]);
+  const f1 = { path: path.relative(v.root, c1), sha256: await sha256File(c1) }, f2 = { path: path.relative(v.root, c2), sha256: await sha256File(c2) };
+  const approve = (files: unknown[]) => founderProjectReview(v.id, env.dir, { action: "approve", which: "covers", manifest_hash: v.manifestHash, files });
+  await expect(approve([f2, f1])).rejects.toThrow(/不在产物记录/);
+  await expect(founderProjectReview(v.id, env.dir, { action: "select_cover", ratio: "3:4", sha256: f1.sha256 })).rejects.toThrow(/不支持/);
+  const r = await approve([f1, f2]);
   expect((r.cover_selection as Record<string, { version: number }>)["3:4"].version).toBe(1);
   await v.report([]);
   const exec = JSON.parse(await fs.readFile(contentFile(v.id, env.dir, "execution.json"), "utf8"));

@@ -63,6 +63,7 @@ it("Codex 一次没 report，文件夹里的封面照样能选、能批准；rep
   expect((await v.report([{ file: c34, role: "cover:3:4", version: 1 }])).ok).toBe(true);
   const after = await founderProjectReview(v.id, env.dir);
   expect((after.execution as { artifacts: unknown[] }).artifacts).toHaveLength(2);
-  const r = await founderProjectReview(v.id, env.dir, { action: "select_cover", ratio: "4:3", sha256: await sha256File(c43) });
+  const files = [{ path: path.relative(v.root, c34), sha256: await sha256File(c34) }, { path: path.relative(v.root, c43), sha256: await sha256File(c43) }];
+  const r = await founderProjectReview(v.id, env.dir, { action: "approve", which: "covers", manifest_hash: v.manifestHash, files });
   expect((r.cover_selection as Record<string, { version: number }>)["4:3"].version).toBe(1);
 });

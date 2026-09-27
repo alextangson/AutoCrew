@@ -15,7 +15,7 @@ import { sha256File, coverPairHash } from "./manifest.js";
 import { readProjectJson, type ProjectDecisions } from "./project-evidence.js";
 import type { RegisterApprovals } from "./types.js";
 import { serializeVideoLine } from "./lock.js";
-import { COVER_ROLES, normalizeExecution, type CoverRatio } from "./execution-index.js";
+import { COVER_ROLES, normalizeExecution } from "./execution-index.js";
 import { scanCoverFolder, withFolderCovers } from "./cover-scan.js";
 import { GATES, approvalInvalidReason, approvalTarget, gateStates, gateView, normalizeApprovals, rejectionTarget,
   type CoverSelection, type GateContext, type GateName, type GateRejection, type StoredApprovals } from "./gate-state.js";
@@ -58,7 +58,6 @@ export async function founderProjectReview(id: string, dataDir: string, params?:
     if (params?.action === "decisions") await saveDecisions(content, dataDir, params);
     else if (params?.action === "approve") decision = await approveGate(content, projectRoot, dataDir, params);
     else if (params?.action === "reject") decision = await rejectGate(content, dataDir, params);
-    else if (params?.action === "select_cover") await selectCover(content, dataDir, params);
     else if (params) throw new Error("不支持的审核动作");
     if (params && binding) await exportProjectViews(content, binding.project_root);
     const repaired = binding ? await repairProjectViews(content, binding.project_root) : [];
@@ -159,16 +158,4 @@ function coverPick(ctx: GateContext, hashes: string[]): CoverSelection {
     if (selection[ratio]?.sha256 !== hit.sha256) selection[ratio] = { sha256: hit.sha256, path: hit.path, ...(hit.version ? { version: hit.version } : {}), selected_at: new Date().toISOString() };
   });
   return selection;
-}
-
-/** 创始人每个尺寸挑一张；只能挑产物索引里登记过的该尺寸封面。选择单独存，report 改不到。 */
-async function selectCover(content: Content, dataDir: string, params: Record<string, unknown>): Promise<void> {
-  const ratio = params.ratio as CoverRatio;
-  if (!(ratio in COVER_ROLES)) throw new Error("封面尺寸只有 3:4 和 4:3");
-  const ctx = await loadGateContext(content, dataDir);
-  const picked = ctx.execution?.artifacts.find(a => a.role === COVER_ROLES[ratio] && a.sha256 === params.sha256);
-  if (!picked) throw new Error("这一版封面不在产物记录里，请刷新后再选");
-  const current = ctx.selection ?? {};
-  current[ratio] = { sha256: picked.sha256, path: picked.path, ...(picked.version ? { version: picked.version } : {}), selected_at: new Date().toISOString() };
-  await writeJsonAtomic(contentFile(content.id, dataDir, "cover-selection.json"), current);
 }
