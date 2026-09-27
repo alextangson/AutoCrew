@@ -27,7 +27,7 @@ import { journalBySource, markCommitted, moveArollBack, moveArollIn, readJournal
 import { readArollInput } from "./aroll-input.js";
 import type { ConfirmationRecord } from "./confirm.js";
 import { pullDeps } from "./pull-deps.js";
-import { checkConfirmation, markConfirmation, requestReplay, saveRequestRecord, validRequestId } from "./pull-handoff.js";
+import { checkConfirmation, dropRequestRecord, markConfirmation, requestReplay, saveRequestRecord, validRequestId, type HandoffRequestRecord } from "./pull-handoff.js";
 import { arollLockOf, putArollLock, releaseArollLock, withGlobalHandoffLock } from "./pull-store.js";
 import {
   buildManifest,
@@ -312,12 +312,15 @@ async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContex
 }
 
 /** 令牌直接交给这次交接的调用方（P6 §12.4-D）：Codex 发起 = 它自己拿着；Claude 推送 = 随派工交给接手的那个 Codex 会话 */
-async function committed(plan: Plan, input: HandoffInput, ctx: HandoffContext, record: VideoHandoffRecord, token: string, confirmation: ConfirmationRecord | undefined, extra: Record<string, unknown>): Promise<HandoffResult> {
-  const base = handedOffResult(record, { content_status: "editing", ...extra });
+function requestRecord(plan: Plan, requestId: string, confirmation: ConfirmationRecord, record: VideoHandoffRecord, token: string, result: HandoffResult, pending: boolean): HandoffRequestRecord {
+  return { request_id: requestId, confirmation_id: confirmation.confirmation_id, content_id: plan.content.id, generation: record.generation,
+    manifest_hash: record.hash, claim_token: token, at: new Date(pullDeps().now()).toISOString(), result, ...(pending ? { pending: true } : {}) };
+}
+
+async function committed(plan: Plan, input: HandoffInput, ctx: HandoffContext, record: VideoHandoffRecord, token: string, confirmation: ConfirmationRecord | undefined, base: HandoffResult): Promise<HandoffResult> {
   if (confirmation && input.requestId) {
     await markConfirmation(ctx.dataDir, confirmation, { used_at: new Date().toISOString(), used_by_request: input.requestId });
-    await saveRequestRecord(ctx.dataDir, { request_id: input.requestId, confirmation_id: confirmation.confirmation_id, content_id: plan.content.id,
-      generation: record.generation, manifest_hash: record.hash, claim_token: token, at: new Date(pullDeps().now()).toISOString(), result: base });
+    await saveRequestRecord(ctx.dataDir, requestRecord(plan, input.requestId, confirmation, record, token, base, false));
   }
   if (input.host === EDITOR_HOST) return { ...base, claim_token: token, note: "交接已提交，剪辑认领在你手上：后续 report / register 带这枚 claim_token，每 10 分钟用 report 报一次进度（心跳）。令牌不要贴进聊天或写进文件。" };
   // v1 老路的令牌照旧写在交接包里，回执不再重复
@@ -347,6 +350,10 @@ async function landHandoff(
       if (wrote === null) throw Object.assign(new Error(`交接包已存在且内容不同，不覆盖：${file}`), { code: "handoff_file_exists" });
       if (wrote) created.push(file);
     }
+    const base = handedOffResult(record, { content_status: "editing", ...arollNote(journal) });
+    // 请求记录先于提交落盘：崩在提交之后、回执之前，重试凭它按冻结结果交还同一枚令牌
+    if (confirmation && input.requestId) await saveRequestRecord(ctx.dataDir, requestRecord(plan, input.requestId, confirmation, record, editorToken, base, true));
+    pullDeps().checkpoint("handoff_before_commit");
     const moved = await transitionStatus(plan.content.id, "editing", {
       expectedStatus: plan.content.status,
       expectedDraft: { title: plan.content.title, body: plan.content.body, platform: plan.content.platform },
@@ -355,8 +362,9 @@ async function landHandoff(
       patch: (current) => ({ video: { ...current.video, handoff: record } }),
     }, ctx.dataDir);
     if (moved.ok) {
+      pullDeps().checkpoint("handoff_committed");
       if (journal) await markCommitted(ctx.dataDir, journal).catch(() => undefined);
-      return committed(plan, input, ctx, record, editorToken, confirmation, arollNote(journal));
+      return committed(plan, input, ctx, record, editorToken, confirmation, base);
     }
     failure = handoffFail("handoff_not_committed", `状态没推进：${moved.error ?? "未知原因"}`);
   } catch (err) {
@@ -365,6 +373,7 @@ async function landHandoff(
     failure = handoffFail(failureCode(err, "handoff_not_committed"), err instanceof Error ? err.message : String(err));
   }
   for (const file of created) await fs.rm(file, { force: true }).catch(() => undefined);
+  if (confirmation && input.requestId) await dropRequestRecord(ctx.dataDir, input.requestId).catch(() => undefined);
   const aroll = await putArollBack(plan, record, ctx.dataDir);
   return withClaimRestored({ ...failure, ...aroll }, "handoff_not_committed", held);
 }

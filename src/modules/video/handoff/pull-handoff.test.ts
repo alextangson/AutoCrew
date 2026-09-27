@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { callVideo, HAS_FFMPEG, makeFixture, makeMp4, seedAccepted, type HandoffFixture } from "./handoff-testkit.js";
 import { contentFile, initializeProjectLayout } from "../../../storage/content-project.js";
@@ -15,7 +16,7 @@ import { claimContent } from "../../../storage/claims.js";
 import { withCallerSession } from "../../../runtime/run-log.js";
 import { saveCoverage } from "./project-evidence.js";
 import { founderProjectReview } from "./founder-review.js";
-import { setPullDeps } from "./pull-deps.js";
+import { pullDeps, setPullDeps } from "./pull-deps.js";
 import { arollLockOf } from "./pull-store.js";
 import { sha256File } from "./manifest.js";
 import { executeDesk } from "../../../tools/desk.js";
@@ -99,6 +100,53 @@ describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", () => {
     const late = await pull(c, aroll, cfm, "h-1");
     expect(late).toMatchObject({ replayed: true, holder: { content_id: c.id, generation: 1 } });
     expect(late.claim_token).toBeUndefined();
+  });
+
+  it("lost-response-after-crash：进程死在交接提交之后、回执之前，同一 request_id 重试交还同一枚令牌", async () => {
+    const c = await ready("第一条长长的标题");
+    const aroll = await makeMp4(path.join(fx.outside, "第一条长长的标题.mp4"));
+    const cfm = await confirmed(aroll, c.title);
+    let issued = "";
+    pullDeps().checkpoint = (step) => {
+      if (step !== "handoff_committed") return;
+      issued = "crashed";
+      throw Object.assign(new Error("模拟进程在提交后死掉"), { code: "PROJECT_COMMIT_UNCERTAIN" });
+    };
+    const crashed = await pull(c, aroll, cfm, "h-crash");
+    expect(crashed).toMatchObject({ ok: false, code: "handoff_pending_recovery" });
+    expect(issued).toBe("crashed");
+    const stored = (await getContent(c.id, fx.dir))!;
+    expect(stored.status).toBe("editing");
+    pullDeps().checkpoint = () => undefined;
+
+    const retry = await pull(c, aroll, cfm, "h-crash");
+    expect(retry).toMatchObject({ ok: true, replayed: true, status: "handed_off", manifest_hash: stored.video?.handoff?.hash, claim_token: expect.stringMatching(/^clm-/) });
+    expect(hashClaimToken(String(retry.claim_token))).toBe(stored.claim?.token);
+    // 确认记录补记为已用：别的请求号拿同一份确认进不来
+    expect(await pull(c, aroll, cfm, "h-other")).toMatchObject({ ok: false, code: "confirmation_used" });
+    expect(await pull(c, aroll, cfm, "h-crash")).toMatchObject({ replayed: true, claim_token: retry.claim_token });
+  });
+
+  it("没提交就失败：先落的请求记录一并删掉，同一 request_id 重试照常交接而不是重放", async () => {
+    const c = await ready("第一条长长的标题");
+    const aroll = await makeMp4(path.join(fx.outside, "第一条长长的标题.mp4"));
+    const cfm = await confirmed(aroll, c.title);
+    const record = path.join(fx.dir, "video/pull/handoff-requests/h-x.json");
+    let seen = false;
+    pullDeps().checkpoint = (step) => {
+      if (step !== "handoff_before_commit") return;
+      seen = true;
+      expect(JSON.parse(readFileSync(record, "utf8"))).toMatchObject({ pending: true });
+      throw new Error("模拟提交前失败");
+    };
+    expect(await pull(c, aroll, cfm, "h-x")).toMatchObject({ ok: false, code: "handoff_not_committed" });
+    expect(seen).toBe(true);
+    await expect(fs.access(record)).rejects.toThrow();
+    expect((await getContent(c.id, fx.dir))?.status).not.toBe("editing");
+    pullDeps().checkpoint = () => undefined;
+    const retry = await pull(c, aroll, cfm, "h-x");
+    expect(retry).toMatchObject({ ok: true, status: "handed_off" });
+    expect(retry.replayed).toBeUndefined();
   });
 
   it("replay-after-materials-change：重放按冻结结果，不读源文件、不重生成交接包", async () => {

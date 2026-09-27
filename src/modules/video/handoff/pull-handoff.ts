@@ -9,6 +9,7 @@
  * - 令牌只存在服务自己的请求记录里（`<dataDir>/video/pull/`），不进项目文件夹、不进交接包。
  */
 import { tokenMatches } from "../../../storage/claim-token.js";
+import fs from "node:fs/promises";
 import { draftHash } from "../../../storage/draft-hash.js";
 import { getContent, type Content } from "../../../storage/local-store.js";
 import { confirmationFile, readConfirmation, type ConfirmationRecord } from "./confirm.js";
@@ -27,6 +28,8 @@ export interface HandoffRequestRecord {
   claim_token: string;
   at: string;
   result: HandoffResult;
+  /** 提交前先落的请求记录：提交成没成要按稿件上的交接核定（崩在提交与回执之间时，重试靠它重放） */
+  pending?: boolean;
 }
 
 function requestRecordFile(dataDir: string, requestId: string): string {
@@ -37,13 +40,35 @@ export async function saveRequestRecord(dataDir: string, record: HandoffRequestR
   await writeRecord(requestRecordFile(dataDir, record.request_id), record);
 }
 
+export async function dropRequestRecord(dataDir: string, requestId: string): Promise<void> {
+  await fs.rm(requestRecordFile(dataDir, requestId), { force: true });
+}
+
+/**
+ * 未定的请求记录：稿件上的当前交接就是这份清单（且没撤回）= 已提交，补记确认已用、转成定稿记录；
+ * 否则 = 没提交，删掉记录，这次请求照常走（原片挪动由启动核定处理）。
+ */
+async function settlePending(dataDir: string, record: HandoffRequestRecord): Promise<HandoffRequestRecord | null> {
+  const content = await getContent(record.content_id, dataDir);
+  const handoff = content?.video?.handoff;
+  const committed = handoff?.hash === record.manifest_hash && !content?.video?.revoked?.includes(record.manifest_hash);
+  if (!committed) { await dropRequestRecord(dataDir, record.request_id); return null; }
+  const confirmation = await readConfirmation(dataDir, record.confirmation_id);
+  if (confirmation && !confirmation.used_at) await markConfirmation(dataDir, confirmation, { used_at: record.at, used_by_request: record.request_id });
+  const { pending: _p, ...settled } = record;
+  await saveRequestRecord(dataDir, settled);
+  return settled;
+}
+
 /** null = 不是重放，照常往下走 */
 export async function requestReplay(dataDir: string, requestId: string, confirmationId: string): Promise<HandoffResult | null> {
-  const record = await readRecord<HandoffRequestRecord>(requestRecordFile(dataDir, requestId));
-  if (!record) return null;
-  if (record.confirmation_id !== confirmationId) {
+  const stored = await readRecord<HandoffRequestRecord>(requestRecordFile(dataDir, requestId));
+  if (!stored) return null;
+  if (stored.confirmation_id !== confirmationId) {
     return handoffFail("invalid_params", "这个 request_id 已经用在另一份确认上：换一个新的 request_id");
   }
+  const record = stored.pending ? await settlePending(dataDir, stored) : stored;
+  if (!record) return null;
   const content = await getContent(record.content_id, dataDir);
   const live = tokenMatches(content?.claim?.token, record.claim_token);
   const fresh = pullDeps().now() - Date.parse(record.at) <= REPLAY_WINDOW_MS;

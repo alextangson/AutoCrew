@@ -13,6 +13,8 @@ export interface PullDeps {
   /** 撤回时原路径被占就放回这里（加后缀） */
   downloadsDir: string;
   now: () => number;
+  /** 测试专用崩溃点：在给定步骤抛错模拟进程死掉（生产是空操作） */
+  checkpoint: (step: string) => void;
 }
 
 const defaults = (): PullDeps => ({
@@ -20,6 +22,7 @@ const defaults = (): PullDeps => ({
   dialog: osascriptDialog,
   downloadsDir: path.join(os.homedir(), "Downloads"),
   now: Date.now,
+  checkpoint: () => undefined,
 });
 
 let current: PullDeps | null = null;
