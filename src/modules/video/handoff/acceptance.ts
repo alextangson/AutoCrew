@@ -13,7 +13,7 @@ import { handoffFail, type HandoffResult } from "./types.js";
 
 export const HANDOFF_FROM: ReadonlySet<ContentStatus> = new Set<ContentStatus>(["draft_ready", "approved"]);
 
-function reviewValid(content: Content, hash: string): boolean {
+export function reviewValid(content: Content, hash: string = draftHash(content)): boolean {
   const review = content.review;
   if (!review || (review.status !== "passed" && review.status !== "revised")) return false;
   return !review.source?.draftHash || review.source.draftHash === hash;

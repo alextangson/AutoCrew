@@ -67,16 +67,26 @@ function sidecarArgs(extra: readonly string[]): string[] {
 // ---------------------------------------------------------------------------
 
 /** 16k 单声道 wav —— Paraformer 的输入规格；顺带把视频轨扔掉，省得 sidecar 再解一遍 */
+export interface ExtractOptions {
+  /** 只截前 N 秒（认稿 L2 只要开头 120 秒）；缺省整条 */
+  maxSeconds?: number;
+  timeoutMs?: number;
+  abortSignal?: AbortSignal;
+}
+
 export async function extractAsrWav(
   source: string,
   out: string,
   deps?: VideoDeps,
+  opts: ExtractOptions = {},
 ): Promise<{ ok: true } | { ok: false; errorCode: string; reason: string }> {
   await fs.mkdir(path.dirname(out), { recursive: true });
+  const clip = opts.maxSeconds ? ["-t", String(opts.maxSeconds)] : [];
   const result = await runProcess({
     command: "ffmpeg",
-    args: ["-y", "-hide_banner", "-nostdin", "-v", "error", "-i", source, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out],
-    timeoutMs: 10 * 60_000,
+    args: ["-y", "-hide_banner", "-nostdin", "-v", "error", "-i", source, ...clip, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out],
+    timeoutMs: opts.timeoutMs ?? 10 * 60_000,
+    ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(deps?.spawnImpl ? { spawnImpl: deps.spawnImpl } : {}),
   });
   if (result.spawnError) {

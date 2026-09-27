@@ -12,14 +12,14 @@ import { LOCAL_HOST } from "../src/storage/local-store.js";
 
 export type PolicyDecision = { ok: true } | { ok: false; error: string };
 
-export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 register/report/status/revoke 与只读查询；写稿与发布在 Claude 会话里做";
+export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/register/report/status/revoke 与只读查询；写稿与发布在 Claude 会话里做";
 
 /** 工具 → 放行的 action（`*` = 整个工具放行） */
 type Allowlist = Readonly<Record<string, ReadonlySet<string> | "*">>;
 
 const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
   codex: {
-    autocrew_video: new Set(["register", "status", "revoke", "report"]),
+    autocrew_video: new Set(["register", "status", "revoke", "report", "match"]),
     autocrew_content: new Set(["get"]),
     autocrew_desk: new Set(["inbox", "claim", "release"]),
     autocrew_status: "*",

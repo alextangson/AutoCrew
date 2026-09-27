@@ -19,8 +19,19 @@ import { isRegisterInput, parseRegisterInput, registerVideo } from "../modules/v
 import { handoffFail } from "../modules/video/handoff/types.js";
 import { hostOf, videoFail, type VideoToolResult } from "./video-gates.js";
 import { storageFailure } from "../storage/storage-error.js";
+import { matchAroll } from "../modules/video/handoff/match.js";
 
-export const HANDOFF_ACTIONS = ["handoff", "revoke", "register", "report", "citations"] as const;
+async function guarded(action: string, fn: () => Promise<VideoToolResult>): Promise<VideoToolResult> {
+  try {
+    return await fn();
+  } catch (err) {
+    const storage = storageFailure(err);
+    if (storage) return { ...storage };
+    return videoFail(`${action} 执行失败：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+export const HANDOFF_ACTIONS = ["handoff", "revoke", "register", "report", "citations", "match"] as const;
 export type HandoffAction = (typeof HANDOFF_ACTIONS)[number];
 
 export function isHandoffAction(action: string): action is HandoffAction {
@@ -32,9 +43,11 @@ function str(v: unknown): string {
 }
 
 export async function executeVideoHandoff(action: HandoffAction, params: Record<string, unknown>): Promise<VideoToolResult> {
+  const dataDir = getDataDir(typeof params._dataDir === "string" ? params._dataDir : undefined);
+  // 认稿不针对某一篇：content_id 正是它要找出来的东西
+  if (action === "match") return guarded(action, () => matchAroll({ arollPath: str(params.aroll_path), requestId: str(params.request_id) }, dataDir));
   const contentId = str(params.content_id);
   if (!isContentId(contentId)) return videoFail("需要合法 content_id");
-  const dataDir = getDataDir(typeof params._dataDir === "string" ? params._dataDir : undefined);
   const host = hostOf(params);
   const claimToken = str(params.claim_token) || undefined;
   // 交接/撤回是写手那一侧的写；登记是剪辑师的写

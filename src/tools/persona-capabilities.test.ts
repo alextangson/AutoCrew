@@ -145,6 +145,7 @@ describe("host policy: codex editing station is register/status + read-only", ()
     ["codex", "autocrew_video", "register", true],
     ["codex", "autocrew_video", "status", true],
     ["codex", "autocrew_video", "revoke", true],
+    ["codex", "autocrew_video", "match", true],
     ["codex", "autocrew_video", "handoff", false],
     ["codex", "autocrew_video", "start", false],
     ["codex", "autocrew_video", "review", false],

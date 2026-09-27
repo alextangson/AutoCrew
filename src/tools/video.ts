@@ -66,6 +66,7 @@ const ACTIONS = [
   "register",
   "report",
   "citations",
+  "match",
 ] as const;
 type VideoAction = (typeof ACTIONS)[number];
 
@@ -124,7 +125,8 @@ export const videoSchema = Type.Object({
   ),
   timestamp_ms: Type.Optional(Type.Integer({ description: "review：创作者在成片时间轴上停的位置（毫秒）" })),
   note: Type.Optional(Type.String({ description: "review：创作者的原话（落进不可变审片记录）" })),
-  aroll_path: Type.Optional(Type.String({ description: "handoff：口播原片（A-roll）绝对路径；要有画面+音轨、≤30 分钟" })),
+  aroll_path: Type.Optional(Type.String({ description: "handoff / match：口播原片（A-roll）绝对路径；要有画面+音轨、≤30 分钟" })),
+  request_id: Type.Optional(Type.String({ description: "match / confirm / handoff（带 confirmation_id 时）：本次请求号（1–100 位字母数字-_），重试用同一个号" })),
   project_root: Type.Optional(
     Type.String({ description: "handoff：v2 必须等于写作时已绑定的项目根，通常省略；仅未迁移 v1 使用旧白名单根" }),
   ),
@@ -174,6 +176,7 @@ export const VIDEO_DESCRIPTION = [
   "revoke{content_id, manifest_hash?}（或 handoff{revoke:true}）：撤回当前代次，状态回 draft_ready，此后带它的 register 一律 stale_handoff。交接后 30 分钟内认领还在 codex 手上，撤回由当前持有会话携带有效 claim_token。",
   "register{content_id, manifest_hash, final_path, covers:{\"3:4\",\"4:3\"}, srt_path?, jianying_draft?, approvals:{final_cut, covers}}（剪辑工位调）：所有文件必须在当前交接的 project_root 里；final_cut.artifact_sha256 = 成片文件 sha256；covers.artifact_sha256 = sha256(3:4 文件 sha256 的 hex + 4:3 文件 sha256 的 hex)。核过后成片、封面评审单、成片戳、状态 → publish_ready 同事务落盘，任一失败全部回滚。拒绝码：stale_handoff / approval_mismatch（which 指明哪份凭据）/ final_invalid / cover_invalid / path_*。",
   "report{content_id, claim_token, report}：仅保存真实 session/编辑器/任务、文件哈希、费用和下一步，不接受稿件/状态/审批。v2 status 返回项目、当前交接、执行报告及工作台批准记录。citations{content_id, coverage} 由写作侧提交定稿定位与证据对应。",
+  "match{aroll_path, request_id}（两宿主可调，不改业务状态）：认原片录的是哪条稿。先比文件名、再比开头 120 秒转写，签发 30 分钟有效的回执 receipt_id。status：ambiguous / no_confident_match（前三名交弹窗让创始人选；标定前不出 proposed）/ no_candidate（near_misses 说明每条为什么交不了）/ already_handed_off（附 holder）。flags：asr_unavailable / no_speech / low_quality_transcript / l1_only。",
   "冲突：返回 conflict:true 就是别的地方改过——重新读 status / transcript / editor_plan 拿新版本号再来，不要重试同一份提交。",
   "认领：动手会自动认领剪辑师桌（租约 30 分钟），写动作回执里的 claim_token 下一次写要带上。稿件有活认领时——同宿主的另一个会话也一样——不带匹配令牌的写动作被拒（code:claim_held，并告诉你持有者是谁）。",
 ].join("\n");
