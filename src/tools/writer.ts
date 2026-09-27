@@ -46,6 +46,7 @@ import { packStatus, startPack, type PackDeps } from "./writer-prepare.js";
 import { runSubmit, type SubmitDeps } from "./writer-submit.js";
 import { submitStatus } from "./writer-review.js";
 import { prepareExistingRevision } from "./writer-revision.js";
+import { storageFailure } from "../storage/storage-error.js";
 
 const ACTIONS = ["pack", "pack_status", "find_evidence", "submit", "submit_status"] as const;
 type WriterAction = (typeof ACTIONS)[number];
@@ -359,6 +360,8 @@ export async function executeWriter(
     }
   } catch (err) {
     // 意料之外的故障也照实说，绝不假装成功（dsh 桥靠 ok:false 才把这轮标成失败）
+    const storage = storageFailure(err);
+    if (storage) return storage;
     return fail(`${action || "writer"} 执行失败：${err instanceof Error ? err.message : String(err)}`);
   }
 }

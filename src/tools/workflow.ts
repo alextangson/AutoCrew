@@ -28,6 +28,7 @@ import { angleOptionsView, draftingNote, draftOwnerView, draftView, jobView } fr
 import { inspectWritingReadiness, writingReadinessFailure, type WritingReadinessRequest } from "./writing-readiness.js";
 // 健康视图是桌面与 dsh 共用的那一个（spec §4.1「同一个视图函数」）——doctor 不另写一份
 import { buildEngineHealth, probeAllProviders } from "../desktop/engine-health.js";
+import { storageFailure } from "../storage/storage-error.js";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -534,6 +535,8 @@ export async function executeWorkflow(
     }
   } catch (err) {
     // 意料之外的故障也照实说，绝不假装成功（dsh 桥靠 ok:false 才把这轮标成失败）
+    const storage = storageFailure(err);
+    if (storage) return storage;
     return fail(`${action || "workflow"} 执行失败：${errText(err)}`);
   }
 }

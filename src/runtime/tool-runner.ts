@@ -17,6 +17,7 @@ import {
 import { type EventBus, createEvent } from "./events.js";
 import { appendRunLog } from "./run-log.js";
 import { executePrePublish } from "../tools/pre-publish.js";
+import { storageFailure } from "../storage/storage-error.js";
 
 // --- Types ---
 
@@ -130,6 +131,8 @@ const errorBoundaryMiddleware: Middleware = async (_ctx, toolName, _params, next
   try {
     return await next();
   } catch (err: unknown) {
+    const storage = storageFailure(err);
+    if (storage) return storage;
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: `[${toolName}] ${message}` };
   }

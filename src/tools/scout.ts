@@ -53,6 +53,7 @@ import type { LedgerEntry } from "../modules/research/evidence-ledger.js";
 import { attachContentEvidence, routeContentEvidence } from "./scout-content-evidence.js";
 import { holdTask, taskChangedError } from "./scout-task-guard.js";
 import { DeferredPageRead, finishPageRead, renderPage, reservePageRead } from "./scout-read-page.js";
+import { storageFailure } from "../storage/storage-error.js";
 
 export const SCOUT_DESCRIPTION =
   "Host-driven research; all analysis uses the current conversation model, never a configured LLM API. prepare/pack freezes the complete task and returns task_id + role instructions. search is optional; use host search then read_page{url} when no search key is configured. cite accepts only exact quotes from server-fetched pages. claim_offline explicitly records an unverified user_claim with a reason, never a fallback that pretends research succeeded. Submit four perspective payloads, synthesize facts, then angles; all use returned schemas. Every research action after prepare requires topic_id/task_id; the one exception is claim_offline with content_id+pack_id and no task_id (provided/skip writing has no research task): it registers a number derived from the user's material as user_claim user-<n> in that draft's ledger, reason required. Changed requirements never silently replace a task: prepare returns task_changed{diff, keep_current} until you confirm with confirm_task_change:true. Another host's in-flight task can be taken over only after 30 idle minutes (else task_owned); the displaced owner's late writes get lease_lost. Up to 4 read_page calls per topic may run concurrently (5th: task_busy + retry_after_seconds); quota is charged before fetching, so a failed fetch still uses its slot. cite/claim_offline can attach evidence to matching content_id/pack_id (plus claim_token when the draft is claimed, same host included, else claim_held); the per-content 12-item lifetime quota survives force reissues. Changed tasks reject old submissions.";
@@ -668,6 +669,8 @@ export async function executeScout(
       topicId, dir, host, brokerDeps: deps.brokerDeps, view, assertTopic: (task) => assertTopic(task, dir),
     });
   } catch (err) {
+    const storage = storageFailure(err);
+    if (storage) return storage;
     return {
       ok: false,
       code: err instanceof HostResearchError ? err.code : "research_operation_failed",

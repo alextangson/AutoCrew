@@ -15,6 +15,7 @@ export const WRITING_INSTRUCTIONS = [
   "用户反馈用 autocrew_editorial inspect 获取当前 draft_hash，再 feedback{content_id,draft_hash,event_id,feedback,scope,user_confirmed:true}。同一反馈重试复用 event_id；默认 scope=draft，局部改法同时传 selection 原文，不推广到全文；明确长期要求才用 platform 或 voice。verdict 只记录用户明确的 adopted/light_edit/rewritten/rejected，不能以模型审稿冒充采纳。应用反馈修改已存稿时，按返回的 next_action 调 writer pack，带原 content_id 和 force:true；topic_id 与已记录的 platform 可省略。没有选题的导入稿自动关联修订选题，原稿仅作未核验 user_claim；缺平台按用户需求补齐，保留同一稿件，不能另建副本。",
   "档案用 autocrew_editorial profile 读取，用户已确认的信息用 update_profile{profile,user_confirmed:true} 保存；只有明确认可画像时才 confirm_audience:true。不用空初始化调用或本地文件写入代替校准。",
   "批量与平台适配每篇独立 prepare/pack/submit；直接存稿、适配保存开关、机械检查都不能替代这条正式交稿链。",
+  "存盘失败（code=storage_unavailable 或其他写库错误）就停下，向创作者报告原始错误；不得把稿子写成库外文件继续推进。",
   "交付简述：实际用了什么材料、采用哪个角度、谁写、审稿是否完成。研究失败或材料不足要显示原因和下一步，不能悄悄降级成裸写。",
   "后台研究、代写或审稿仅在用户明确选择 execution=engine/review=engine 或已授权的无人值守后台执行时使用；普通 MCP 不要求配置 engine，也不默认调用端点探测。Claude 等宿主的模型额度由宿主提供；第三方搜索、图像与视频仍使用独立服务额度。",
   "generate/workflow write 是用户明确选择 execution=engine 的后台代写；content save 仅用于用户已有成稿的显式 manual_import。不要把新生成稿伪装成人工导入。",

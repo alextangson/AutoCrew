@@ -18,6 +18,7 @@ import { revokeHandoff } from "../modules/video/handoff/revoke.js";
 import { isRegisterInput, parseRegisterInput, registerVideo } from "../modules/video/handoff/register.js";
 import { handoffFail } from "../modules/video/handoff/types.js";
 import { hostOf, videoFail, type VideoToolResult } from "./video-gates.js";
+import { storageFailure } from "../storage/storage-error.js";
 
 export const HANDOFF_ACTIONS = ["handoff", "revoke", "register", "report", "citations"] as const;
 export type HandoffAction = (typeof HANDOFF_ACTIONS)[number];
@@ -61,6 +62,8 @@ export async function executeVideoHandoff(action: HandoffAction, params: Record<
     if (!isRegisterInput(parsed)) return parsed;
     return await registerVideo(parsed, { dataDir, gate: gate("editor") });
   } catch (err) {
+    const storage = storageFailure(err);
+    if (storage) return { ...storage };
     return videoFail(`${action} 执行失败：${err instanceof Error ? err.message : String(err)}`);
   }
 }

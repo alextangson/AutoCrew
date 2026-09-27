@@ -39,6 +39,8 @@ description: |
 
 `attempt` 从 1 起；新修改加一，同一尝试的重放按工具的幂等结果处理。`repair` 按问题范围修订并重交，`blocked` 报告具体缺料与继续入口。三道确定性检查通过后，默认回 `awaiting_host_review`，不能轮询等待后台审稿。
 
+任何一步回 `storage_unavailable` 或其他存盘失败，就停下向创作者报告原始错误；不得把稿子写成库外文件（如本地 `docs/drafts/*.md`）继续推进，库外那份下游谁都不认。
+
 此时调用 `autocrew_review_desk {action:"pack", content_id}`，读取返回的 `review_pack_id`、写稿 `attempt`、`draft_hash`、`system` / `user` 和审稿资料。由宿主核对规划、事实、表达与受众，再按 schema 用 `action:"submit"` 交 `content_id`、`review_pack_id`、原写稿 `attempt`、`issues` 与可选 `audience`。问题必须引用当前稿原句与具体理由，不能泛泛打分；没有实际审阅不能提交空意见冒充审完。
 
 只有一个宿主时允许自审，结果标记 `host_self_review` / `host_self_reviewed`；另一宿主审阅也只记录实际来源，不自动构成独立评审。报告不能把自审说成独立审稿，更不能当作作者认可或真实受众验证。

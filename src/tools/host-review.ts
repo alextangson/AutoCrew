@@ -13,6 +13,7 @@ import { cleanErrorMessage } from "../desktop/error-clean.js";
 import { gateClaimWrite } from "../storage/claims.js";
 import { DEFAULT_HOST, isReadyPack, readPack, serializeWriterCall, writePack, type PackAttempt, type ReadyPack } from "./writer-pack.js";
 import { packWritingContract, reviewInput, settleReview, type AudienceAssessment, type ReviewJob } from "./writer-review.js";
+import { storageFailure } from "../storage/storage-error.js";
 
 const nonempty = Type.String({ minLength: 1, maxLength: 12000 });
 const issue = Type.Object({
@@ -211,6 +212,8 @@ export async function executeReviewDesk(params: Record<string, unknown>): Promis
     });
     return withTokenInNextAction({ ...result, ...grant });
   } catch (err) {
+    const storage = storageFailure(err);
+    if (storage) return { ...storage, ...grant };
     const error = cleanErrorMessage(err);
     return { ...fail(error, error.includes("stale_review") ? "stale_review" : undefined), ...grant };
   }

@@ -81,6 +81,7 @@ EOF
 - `stale_handoff`：用到的不是当前代次。按回执的 `current_generation`，从 `autocrew_content get` 的 `video.handoff` 取当前交接包路径，重给用户派工那句。
 - `approval_mismatch`（`which` 指出哪份凭据）：Codex 登记的文件和闸门批准的不是同一份。请用户在 AutoCrew 工作台重新审阅受影响的产物；不替它重算哈希凑数。
 - `path_not_whitelisted` / `path_symlink` / `path_missing` / `project_owned_by_other` / `roots_unavailable`：受管项目必须使用资料库内的正式绑定、无符号链接且归属一致。把 `error` 原话给用户，修复原资料库或迁移映射；不能自行换根。
+- `storage_unavailable`（存盘失败：资料库写不进、不支持、满了或不可用）：停下，把 `error` 原文报告给创作者，等资料库恢复；不得把稿子或产物写成库外文件继续推进。
 - 守护进程没起（工具报「AutoCrew 服务没有运行」，或 autocrew 工具不在）：原话转告，等用户起好再继续，不重试。
 
 晨报定时任务的 prompt 在 `references/morning-task-prompt.md`。

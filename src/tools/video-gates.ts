@@ -13,6 +13,7 @@ import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
 import { LOCAL_HOST } from "../storage/local-store.js";
 import { VideoConflictError } from "../modules/video/errors.js";
 import { resolveVideoService, type ResolvedVideoService } from "../modules/video/service-registry.js";
+import { storageFailure } from "../storage/storage-error.js";
 
 export type VideoToolResult = Record<string, unknown>;
 
@@ -25,6 +26,8 @@ export function videoFail(error: string, extra: VideoToolResult = {}): VideoTool
  * 而不是重试同一份提交——重试只会再撞一次同一道乐观锁。
  */
 export function videoError(err: unknown): VideoToolResult {
+  const storage = storageFailure(err);
+  if (storage) return { ...storage };
   if (err instanceof VideoConflictError) {
     return {
       ok: false,

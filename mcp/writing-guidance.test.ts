@@ -65,6 +65,13 @@ describe("writing guidance matches callable product capabilities", () => {
     expect(harness("pre-publish")).toContain("不是作者批准");
   });
 
+  it("存盘失败就停下报告，不许写库外文件兜底（§13.4-A）", () => {
+    for (const text of [harness("write-script"), harness("video-session"), WRITING_INSTRUCTIONS]) {
+      expect(text).toContain("storage_unavailable");
+      expect(text).toMatch(/不得把稿子.{0,8}写成库外文件/);
+    }
+  });
+
   it("published editorial JSON examples satisfy the actual schema", () => {
     for (const name of ["style-calibration", "memory-distill"]) {
       const blocks = [...harness(name).matchAll(/```json\s*\n([\s\S]*?)\n```/g)];

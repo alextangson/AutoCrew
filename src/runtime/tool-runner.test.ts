@@ -200,3 +200,23 @@ describe("ToolRunner", () => {
     await fs.rm(uncalDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
+
+describe("ToolRunner 存储故障口径（§13.4-A）", () => {
+  it("工具抛出的存储类错误统一回 storage_unavailable，附原文和停下报告的 next_action", async () => {
+    const runner = new ToolRunner({ ctx: createContext({ dataDir: os.tmpdir() }), eventBus: new EventBus() });
+    const tool = makeTool("autocrew_content");
+    tool.execute = vi.fn(async () => { throw Object.assign(new Error("ENOTSUP: operation not supported on socket, link"), { code: "ENOTSUP" }); });
+    runner.register(tool);
+    const out = await runner.execute("autocrew_content", { action: "save" });
+    expect(out).toMatchObject({ ok: false, code: "storage_unavailable", error: "ENOTSUP: operation not supported on socket, link" });
+    expect(String(out.next_action)).toContain("停下");
+  });
+
+  it("非存储错误仍走原来的泛化错误", async () => {
+    const runner = new ToolRunner({ ctx: createContext({ dataDir: os.tmpdir() }), eventBus: new EventBus() });
+    const tool = makeTool("autocrew_content");
+    tool.execute = vi.fn(async () => { throw new Error("稿件不存在"); });
+    runner.register(tool);
+    expect(await runner.execute("autocrew_content", {})).toEqual({ ok: false, error: "[autocrew_content] 稿件不存在" });
+  });
+});
