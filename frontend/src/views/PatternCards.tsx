@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { toast, confirmDialog } from "../ui";
 import { PLATFORM_CATALOG, platformLabel } from "../lib";
+import { dateLabel } from "../time-format";
 
 interface PatternCard {
   id: string;
@@ -96,7 +97,7 @@ export function PatternCards() {
             <span className="card-title">{c.title}</span>
             <span className="muted mono">
               {SOURCE_PLATFORM_LABEL[c.sourcePlatform] ?? c.sourcePlatform}
-              {c.author ? ` · ${c.author}` : ""} · {c.updatedAt.slice(0, 10)}
+              {c.author ? ` · ${c.author}` : ""} · {dateLabel(c.updatedAt)}
             </span>
           </div>
           <p className="pattern-hook">钩子:{c.hook}</p>

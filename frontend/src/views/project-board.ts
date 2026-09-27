@@ -4,6 +4,7 @@
  * 四道门的状态由服务端算好（/api/project-review 的 gates），这里不重推批准规则，
  * 只决定「页面该展开哪一步、该提示什么」。步骤是 status=editing 里的展示步骤，不是状态。
  */
+import { clockLabel, durationText } from "../time-format";
 
 export type Artifact = { path: string; sha256: string; role: string; version?: number; reported_at: string; generation?: number };
 export type GateStatus = "pending" | "approved" | "rejected" | "invalidated";
@@ -84,7 +85,7 @@ export function heartbeatStale(review: ProjectReview, now: number): boolean {
 export function stepSummary(step: BoardStep, review: ProjectReview): string {
   const gates = review.gates;
   if (step === "cutting") return finalCutArtifact(review.execution?.artifacts ?? []) ? "成片已交" : "还在剪";
-  if (step === "final_review") return gates?.gate3.approval ? `成片已批 · ${gates.gate3.approval.approved_at.slice(0, 16).replace("T", " ")}` : "成片待批";
+  if (step === "final_review") return gates?.gate3.approval ? `成片已批 · ${clockLabel(gates.gate3.approval.approved_at)}` : "成片待批";
   if (step === "covers") {
     const s = review.cover_selection;
     return gates?.gate4.status === "approved" ? `封面已批 · 3:4 v${s?.["3:4"]?.version ?? "?"} / 4:3 v${s?.["4:3"]?.version ?? "?"}` : "封面待批";
@@ -92,11 +93,7 @@ export function stepSummary(step: BoardStep, review: ProjectReview): string {
   return "等 Codex 登记，登记后进入待发布";
 }
 
-/** 时长 mm:ss；读不出就明说 */
-export function durationLabel(ms: number | null): string {
-  if (ms === null) return "时长读不出";
-  const total = Math.round(ms / 1000);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
+/** 时长「8 分 43 秒」；读不出就明说 */
+export const durationLabel = durationText;
 
 export const fileName = (p: string) => p.split("/").pop() ?? p;

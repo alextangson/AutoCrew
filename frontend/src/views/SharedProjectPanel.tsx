@@ -5,6 +5,7 @@
  * 路由错误原样显示，不静默。
  */
 import { useState } from "react";
+import { clockLabel } from "../time-format";
 import { ProjectBoard } from "./ProjectBoard";
 import { useProjectReview } from "./use-project-review";
 
@@ -29,7 +30,7 @@ function PreHandoff({ contentId }: { contentId: string }) {
     <p><strong>录完按标题命名放进 Downloads，在 Codex 里说『剪这条』</strong></p>
     {!review && !error && <p className="muted">正在读取交接信息…</p>}
     {review?.enabled && <>
-      {confirmed && <p className="muted">已确认的交接信息：封面字「{confirmed.cover_text}」· 目标 {confirmed.target_seconds} 秒 · {confirmed.confirmed_at.slice(0, 16).replace("T", " ")}</p>}
+      {confirmed && <p className="muted">已确认的交接信息：封面字「{confirmed.cover_text}」· 目标 {confirmed.target_seconds} 秒 · {clockLabel(confirmed.confirmed_at)}</p>}
       <label>封面字 <input value={coverText} onChange={(e) => setCover(e.target.value)} /></label>{" "}
       <label>目标时长（秒）<input type="number" min="1" value={target} onChange={(e) => setSeconds(Number(e.target.value))} /></label>{" "}
       <button disabled={busy || !coverText.trim() || target <= 0} onClick={() => void submit({ action: "decisions", title: review.title, cover_text: coverText, target_seconds: target, draft_hash: review.draft_hash })}>

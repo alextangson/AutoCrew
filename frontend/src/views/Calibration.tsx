@@ -7,6 +7,7 @@ import { invoke } from "../transport";
 import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { PLATFORM_CATALOG } from "../lib";
+import { dateLabel } from "../time-format";
 
 interface Rule {
   rule: string;
@@ -194,7 +195,7 @@ export function Calibration() {
         <div className="persona-card">
           <div className="mono muted">
             {persona.calibrated ? "✓ 已校准" : "提案态,待确认"}
-            {persona.tiers.calibratedAt ? ` · ${persona.tiers.calibratedAt.slice(0, 10)}` : ""}
+            {persona.tiers.calibratedAt ? ` · ${dateLabel(persona.tiers.calibratedAt)}` : ""}
           </div>
           <TierView label="核心受众" tier={persona.tiers.core} />
           <TierView label="邻近受众" tier={persona.tiers.adjacent} />

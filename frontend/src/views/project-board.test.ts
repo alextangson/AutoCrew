@@ -26,7 +26,7 @@ describe("currentStep", () => {
     expect(currentStep({ ...withFinal, gates: { ...g, gate3: gate("invalidated"), gate4: gate("approved") } })).toBe("final_review");
   });
   it("摘要：批准时间折成一行", () => {
-    expect(stepSummary("final_review", review({ gates: { ...review().gates!, gate3: gate("approved") } }))).toBe("成片已批 · 2026-09-27 08:00");
+    expect(stepSummary("final_review", review({ gates: { ...review().gates!, gate3: gate("approved") } }))).toMatch(/^成片已批 · (今天|昨天|\d+月\d+日) \d\d:\d\d$/);
   });
 });
 
@@ -62,9 +62,9 @@ describe("heartbeatStale", () => {
 });
 
 describe("成片待审卡", () => {
-  it("时长按 分:秒 显示，读不出就明说", () => {
-    expect(durationLabel(83_400)).toBe("1:23");
-    expect(durationLabel(5_000)).toBe("0:05");
+  it("时长按「N 分 N 秒」显示，读不出就明说", () => {
+    expect(durationLabel(83_400)).toBe("1 分 23 秒");
+    expect(durationLabel(5_000)).toBe("5 秒");
     expect(durationLabel(null)).toBe("时长读不出");
   });
 });

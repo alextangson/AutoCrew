@@ -8,6 +8,7 @@
  */
 import { useState } from "react";
 import { invoke } from "../transport";
+import { clockLabel } from "../time-format";
 import { toast } from "../ui";
 import type { Route } from "../App";
 import {
@@ -312,7 +313,7 @@ function VersionsCard({ data }: { data: CardData }) {
         <div key={i} className="row">
           <span className="mono">v{String(v.version ?? "?")}</span>
           <span className="row-title">{str(v.title) || str(v.note) || "（无备注）"}</span>
-          <span className="muted mono">{str(v.savedAt).slice(0, 16).replace("T", " ")}</span>
+          <span className="muted mono">{clockLabel(str(v.savedAt))}</span>
         </div>
       ))}
       <p className="muted">要回到某一版，去编辑器的版本面板点「回到这版」。</p>
