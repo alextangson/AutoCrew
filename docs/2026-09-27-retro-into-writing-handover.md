@@ -51,3 +51,20 @@ Split the library into a human "我的内容" view and a hidden AI workspace:
 - Each video gets an empty folder before export, and the founder drops the final cut into it.
 - The voiceover script stays reachable during editing.
 - Only the latest 3–5 published items stay locally. The rest are archived to the NAS.
+
+## Update (later 2026-09-27): 我的内容 view + 实拍版 — live on main (58ea245), daemon restarted
+
+What changes for Codex:
+
+- **`autocrew_video register` now requires `srt_path` for video platforms.** Pass the subtitle file of the final cut, inside the project, as an absolute path. Missing → `invalid_params` with `which: "srt_path"`. Unparseable → `srt_invalid`. The handoff bundle's register template already lists it.
+- On register, AutoCrew rebuilds the spoken text from that SRT into `01-script/spoken/gNNNN-spoken.md`, and records a script → spoken contrast pair that the writer learns from.
+- If saving the spoken version fails after the final cut is registered, the receipt carries a `warning`. Surface it; don't retry the register.
+- **The founder exports finished cuts into `07-delivery/export/`.** The "成片放这里" folder in the view points there. `PROJECT_RULES` says so, but existing projects' `AGENTS.md` weren't rewritten.
+- **The founder's view** lives at `~/AutoCrew资料库/我的内容/` (1 写稿中 … 6 复盘).
+  - The daemon reconciles it every 60s. Never write into it; it is a view.
+  - Library-root entries other than `我的内容` are Finder-hidden (`chflags hidden`). Paths are unchanged.
+- **Founder edits to `口播稿.md` under 1 写稿中 / 2 待录制 flow back as a new content version.** This is skipped while an AI claim is held, while a pack is preparing, after handoff, or when the AI changed the draft concurrently. Skipped edits are kept as `口播稿（我改过的 …）.md`.
+
+Not done yet: NAS archive of published items (step 2; the founder confirms what gets deleted locally first).
+
+The item registered before this change ("深度思考", publish_ready) has no 实拍版. If you want one, re-register it with `srt_path`. The founder hasn't asked for that.
