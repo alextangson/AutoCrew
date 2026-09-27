@@ -38,7 +38,7 @@ export interface StageGuardSubject {
 
 /** 「剪辑中」只能由交接进入（P6 §13.4-C）：手动切换、改状态、直接建在剪辑中一律拒绝 */
 export const EDITING_VIA_HANDOFF =
-  "「剪辑中」只能由交接进入，不能手动切换。稿定、口播录好后，在这条视频的写稿会话里说「交剪辑」，由它调 autocrew_video handoff 把稿和原片交给剪辑工位。";
+  "「剪辑中」只能由交接进入，不能手动切换。录完按标题命名放进 Downloads，在 Codex 里说「剪这条」，由 Codex 认稿后弹窗确认交接（autocrew_video handoff）。";
 
 /**
  * 返回人话拒绝原因；`null` = 这一步阶段门放行。
