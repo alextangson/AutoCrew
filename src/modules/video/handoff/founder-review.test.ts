@@ -61,8 +61,9 @@ it("gate4：批准哈希沿用 sha256(3:4 hex + 4:3 hex)；整批打回后出 v2
   const a = await writePng(path.join(v.root, "05-cover/v01/3x4.png"), "a"), b = await writePng(path.join(v.root, "05-cover/v01/4x3.png"), "b");
   await v.report([{ file: a, role: "cover:3:4", version: 1 }, { file: b, role: "cover:4:3", version: 1 }]);
   const review = await founderProjectReview(v.id, env.dir);
-  const batch = (review.gates as Record<string, { artifact_sha256: string | null }>).gate4.artifact_sha256;
-  expect(batch).toBeNull(); // 还没选，批准目标为空
+  const g4 = (review.gates as Record<string, { artifact_sha256: string | null; reject_sha256: string | null }>).gate4;
+  expect(g4.artifact_sha256).toBeNull(); // 还没选，批准目标为空
+  expect(g4.reject_sha256).toBe(await batchHash(v.id)); // 打回针对整批
   const rejected = await founderProjectReview(v.id, env.dir, { action: "reject", which: "covers", manifest_hash: v.manifestHash, note: "字太小", artifact_sha256: await batchHash(v.id) });
   expect((rejected.gates as Gates).gate4.status).toBe("rejected");
   const c = await writePng(path.join(v.root, "05-cover/v02/3x4.png"), "c"), d = await writePng(path.join(v.root, "05-cover/v02/4x3.png"), "d");

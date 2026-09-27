@@ -22,6 +22,8 @@ export interface StoredApprovals extends Partial<Record<GateName, RegisterApprov
 export type CoverSelection = Partial<Record<keyof typeof COVER_ROLES, { sha256: string; path: string; version?: number; selected_at: string }>>;
 export interface GateView {
   gate: GateName; status: GateStatus; artifact_sha256: string | null;
+  /** 打回时页面要带的指纹（封面是整批，其余同 artifact_sha256） */
+  reject_sha256: string | null;
   approval: RegisterApproval | null; rejection: GateRejection | null; reason?: string;
 }
 export interface GateContext {
@@ -80,10 +82,11 @@ export function gateView(gate: GateName, ctx: GateContext): GateView {
   const target = rejectionTarget(gate, ctx.execution, ctx.selection);
   const rejection = [...(ctx.approvals?.rejections ?? [])].reverse().find(r => r.gate === gate && r.artifact_sha256 === target && r.manifest_hash === ctx.handoff?.hash) ?? null;
   const artifact = approvalTarget(gate, ctx.execution, ctx.selection);
-  if (approval && invalid === "") return { gate, status: "approved", artifact_sha256: artifact, approval, rejection: null };
-  if (rejection) return { gate, status: "rejected", artifact_sha256: target, approval: null, rejection };
-  if (approval) return { gate, status: "invalidated", artifact_sha256: artifact, approval, rejection: null, reason: invalid ?? undefined };
-  return { gate, status: "pending", artifact_sha256: artifact, approval: null, rejection: null };
+  const base = { gate, artifact_sha256: artifact, reject_sha256: target };
+  if (approval && invalid === "") return { ...base, status: "approved", approval, rejection: null };
+  if (rejection) return { ...base, status: "rejected", approval: null, rejection };
+  if (approval) return { ...base, status: "invalidated", approval, rejection: null, reason: invalid ?? undefined };
+  return { ...base, status: "pending", approval: null, rejection: null };
 }
 /** 投影给看板和 workflow-state.json：gate1–gate4 */
 export function gateStates(ctx: GateContext): Record<string, GateView> {

@@ -475,7 +475,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
         {props.context}
         <div className="ed-main-row">
           {workspace === "editing" && <EditingWorkspace content={c} reload={load} />}
-          {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
+          {/* 视频稿的封面在看板封面步里挑 Codex 交的版本，不走 AutoCrew 自己的出图（cover:create/revise）；公众号稿照旧 */}
+          {workspace === "cover" && (isVideo ? <EditingWorkspace content={c} reload={load} /> : <CoverWorkspace content={c} reload={load} />)}
           {workspace === "publish" && (
             <PublishWorkspace content={c} versions={versions} reload={load} send={send} />
           )}

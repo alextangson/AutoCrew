@@ -12,7 +12,9 @@
 
 通过受限 `autocrew_video report` 保存执行事实：request_id、generation、binding_revision、真实 session_id、files（项目相对路径、sha256、role，封面带 version）、result、next_action，以及 editor_project_id、timeline_id、jianying_draft、job_ids、费用和错误。role 使用 final-cut-candidate / final-cut / cover:3:4 / cover:4:3 / rough_cut / storyboard / srt 等具体用途。result、next_action 只保留最新一次；files 按次累计进产物索引，挪位置后用同一 sha256 再报一次即可更新路径，旧版本不会被覆盖。报告不能写 status、gates、稿件或发布状态。workflow-state.json 与项目信息是 AutoCrew 的只读生成视图。
 
- gate3 与 gate4 由创始人在工作台“项目交接与确认”审看并批准；从服务 status 读取当前 approvals，再用 current manifest_hash、claim_token、final_path、covers（3:4、4:3）和 approvals 调 `autocrew_video register`。登记校验产物哈希与服务批准记录；不从宿主自写 user_message 产生审批。重复成功请求可安全重放。
+ 封面只做 3:4 和 4:3 两种尺寸，每个尺寸默认出 3 版（创始人或工作区制作约定另给数目时照改），文件放 `05-cover/vNN/3x4.png`、`05-cover/vNN/4x3.png`。用 Codex 自带出图，不调 AutoCrew 的出图接口。每出一批用 report 登记，role 为 `cover:3:4` / `cover:4:3`，version 为 NN。创始人在剪辑看板每个尺寸选一张通过；被打回就按原话出下一批 vNN+1，旧版保留。
+
+ gate3 与 gate4 由创始人在工作台“剪辑看板”审看并批准或打回；从服务 status 读取当前 approvals，再用 current manifest_hash、claim_token、final_path、covers（3:4、4:3）和 approvals 调 `autocrew_video register`。登记校验产物哈希与服务批准记录；不从宿主自写 user_message 产生审批。重复成功请求可安全重放。
 
 活动正本位置以服务返回的 project_root 为准。当前用户采用本地资料库 `/Users/jiaxintang/Documents/AutoCrew资料库`，视频在本地完成后按 video-project-lifecycle 归档到 `/Volumes/MacMiniData/01_Lawrence/Account/YYYY/<EnglishMonth>/<project-folder>`。媒体、工程导出、封面与交付写入同一项目 02–07 目录，软件数据库与代理缓存留本机。先逐文件校验及验证原编辑工程可恢复，再按明确项目的归档清单清理；保留本机业务记录、归档位置与恢复说明，不手改绑定、不删仍被服务或其他项目引用的文件。服务尚不能解析归档位置的受管文件先保留本地，不能让 AutoCrew 的记录指向已删除路径。
 

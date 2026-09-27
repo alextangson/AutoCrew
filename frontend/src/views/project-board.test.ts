@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { boardAnomalies, currentStep, finalCutArtifact, heartbeatStale, stepSummary, type GateView, type ProjectReview } from "./project-board";
 
 const gate = (status: GateView["status"], approved_at = "2026-09-27T08:00:00Z"): GateView =>
-  ({ gate: "x", status, artifact_sha256: null, approval: status === "approved" ? { artifact_sha256: "a", approved_at } : null, rejection: null });
+  ({ gate: "x", status, artifact_sha256: null, reject_sha256: null, approval: status === "approved" ? { artifact_sha256: "a", approved_at } : null, rejection: null });
 function review(over: Partial<ProjectReview> = {}): ProjectReview {
   return {
     enabled: true, handoff_valid: true, draft_hash: "d1",

@@ -6,13 +6,14 @@ import { useEffect, useState } from "react";
 import { invoke } from "../transport";
 import { confirmDialog, openDialog, toast } from "../ui";
 import { useProjectReview } from "./use-project-review";
+import { CoverStep } from "./CoverStep";
+import { artifactUrl, GateBadge, when } from "./board-parts";
 import {
   BOARD_STEPS, GATE_STATUS_LABEL, STEP_LABEL, boardAnomalies, currentStep, fileName, finalCutArtifact, heartbeatStale, roughCutArtifact, stepSummary,
   type Artifact, type BoardStep, type GateView, type ProjectReview,
 } from "./project-board";
 
 type Submit = (payload: Record<string, unknown>) => Promise<boolean>;
-const when = (iso?: string) => (iso ? iso.slice(0, 16).replace("T", " ") : "—");
 
 export function ProjectBoard(props: { contentId: string; status: string; reload: () => Promise<void> }) {
   const { review, error, busy, submit } = useProjectReview(props.contentId, true);
@@ -79,17 +80,8 @@ function StepBody(props: { step: BoardStep; review: ProjectReview; contentId: st
     {card("分镜与生成方案（gate2）", "storyboard", gates?.gate2, roughCutArtifact(artifacts, "storyboard"))}
   </>;
   if (step === "final_review") return card("成片（gate3）", "final_cut", gates?.gate3, finalCutArtifact(artifacts));
-  if (step === "covers") return <CoverStepSeam review={review} />;
+  if (step === "covers") return <CoverStep review={review} contentId={props.contentId} busy={props.busy} submit={props.submit} />;
   return <p className="muted">成片和封面都批了。等 Codex 用 register 登记，登记后这篇进入待发布。</p>;
-}
-
-/** slice 2 的封面步占位：只显示门状态，封面挑选见 CoverStep */
-function CoverStepSeam({ review }: { review: ProjectReview }) {
-  return <p>封面（gate4）：{review.gates ? GATE_STATUS_LABEL[review.gates.gate4.status] : "—"}</p>;
-}
-
-export function artifactUrl(contentId: string, a: { path: string; sha256: string }) {
-  return `/api/project-artifact?content_id=${encodeURIComponent(contentId)}&path=${encodeURIComponent(a.path)}&sha256=${a.sha256}`;
 }
 
 function GateCard(props: { label: string; which: string; view?: GateView; artifact: Artifact | null; review: ProjectReview; contentId: string; busy: boolean; submit: Submit }) {
@@ -98,7 +90,7 @@ function GateCard(props: { label: string; which: string; view?: GateView; artifa
   const reject = async () => {
     const r = await openDialog({ title: `打回${props.label}`, body: "写给剪辑的原话，Codex 按这个出下一版。", fields: [{ key: "note", label: "原话", multiline: true, required: true }], confirmLabel: "打回" });
     if (!r?.note?.trim()) return;
-    await props.submit({ action: "reject", which: props.which, note: r.note, artifact_sha256: view?.artifact_sha256 ?? artifact.sha256, manifest_hash: props.review.manifest_hash });
+    await props.submit({ action: "reject", which: props.which, note: r.note, artifact_sha256: view?.reject_sha256 ?? artifact.sha256, manifest_hash: props.review.manifest_hash });
   };
   const video = /\.mp4$/i.test(artifact.path);
   return <div style={{ margin: "8px 0" }}>
@@ -113,8 +105,3 @@ function GateCard(props: { label: string; which: string; view?: GateView; artifa
   </div>;
 }
 
-export function GateBadge({ view }: { view?: GateView }) {
-  if (!view) return <span className="muted">—</span>;
-  const extra = view.status === "approved" ? ` · ${when(view.approval?.approved_at)}` : view.status === "rejected" ? ` · 「${view.rejection?.note}」` : view.reason ? ` · ${view.reason}` : "";
-  return <span>{GATE_STATUS_LABEL[view.status]}{extra}</span>;
-}

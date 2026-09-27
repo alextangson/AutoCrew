@@ -8,7 +8,7 @@
 export type Artifact = { path: string; sha256: string; role: string; version?: number; reported_at: string; generation?: number };
 export type GateStatus = "pending" | "approved" | "rejected" | "invalidated";
 export type GateView = {
-  gate: string; status: GateStatus; artifact_sha256: string | null; reason?: string;
+  gate: string; status: GateStatus; artifact_sha256: string | null; reject_sha256: string | null; reason?: string;
   approval: { artifact_sha256: string; approved_at: string } | null;
   rejection: { note: string; artifact_sha256: string; rejected_at: string } | null;
 };
@@ -28,8 +28,7 @@ export type ProjectReview = {
   gates?: Record<"gate1" | "gate2" | "gate3" | "gate4", GateView>;
 };
 
-export const COVER_RATIOS = ["3:4", "4:3"] as const;
-export type CoverRatio = (typeof COVER_RATIOS)[number];
+type CoverRatio = "3:4" | "4:3";
 export const REFRESH_MS = 15_000;
 export const HEARTBEAT_STALE_MS = 30 * 60_000;
 
