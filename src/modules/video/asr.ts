@@ -18,6 +18,7 @@
  * 这一步属于「准备 ASR 输入」，故留在本模块，不散到 assemble 去。
  */
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "../../storage/json-atomic.js";
 import { commandExists, nowIso, REPO_ROOT, runProcess, stderrTail, type VideoDeps } from "./proc.js";
@@ -32,7 +33,8 @@ export const ASR_SIDECAR_DIR = path.join(REPO_ROOT, "sidecars", "asr");
 export const ASR_SIDECAR_SCRIPT = path.join(ASR_SIDECAR_DIR, "asr.py");
 
 const INSTALL_UV = "未装 uv（ASR sidecar 的运行器）。装法：brew install uv，装好后重试";
-const NEED_WARMUP = "ASR 模型还没下载（约 1GB）。到设置里点一次「预热 ASR 模型」，下完再重试";
+export const ASR_WARMUP_WHERE = "AutoCrew 设置 →「模型」页 →「语音转写模型」里的「预热 ASR 模型」";
+const NEED_WARMUP = `ASR 模型还没下载（约 1GB）。到 ${ASR_WARMUP_WHERE} 点一次，下完再重试`;
 
 export type AsrStatusValue = "absent" | "warming" | "ready" | "failed";
 
@@ -256,6 +258,37 @@ export async function readAsrStatus(dataDir: string): Promise<AsrStatusRecord> {
   } catch {
     return { status: "absent" };
   }
+}
+
+// asr.py 的 MODEL_REPOS / modelscope_cache_roots 同一口径：模型从命令行预热过、或别的资料库预热过，
+// 缓存就在本机共享目录里，不能因为这个资料库没有 asr-status.json 就说「没下载」。
+const MODEL_REPOS: Record<string, string> = {
+  "paraformer-zh": "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+  "fsmn-vad": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+  "ct-punc": "iic/punc_ct-transformer_cn-en-common-vocab471067-large",
+};
+
+/** 三个模型都在共享缓存里（自定义模型名无从判断，跟 asr.py 一样放行） */
+export async function asrModelsCached(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  const base = env.MODELSCOPE_CACHE || path.join(os.homedir(), ".cache", "modelscope");
+  const roots = [path.join(base, "hub", "models"), path.join(base, "hub"), path.join(base, "models"), base];
+  const names = [env.AUTOCREW_ASR_MODEL || "paraformer-zh", env.AUTOCREW_ASR_VAD_MODEL || "fsmn-vad", env.AUTOCREW_ASR_PUNC_MODEL || "ct-punc"];
+  for (const name of names) {
+    const repo = MODEL_REPOS[name];
+    if (!repo) continue;
+    const candidates = roots.flatMap((r) => [path.join(r, repo), path.join(r, repo.replace("/", "--"))]);
+    const found = await Promise.all(candidates.map((c) => fs.stat(c).then((st) => st.isDirectory(), () => false)));
+    if (!found.some(Boolean)) return false;
+  }
+  return true;
+}
+
+/** 状态文件说了算，除非它没说 ready 而模型其实已在共享缓存里 */
+export async function effectiveAsrStatus(dataDir: string, env: NodeJS.ProcessEnv = process.env): Promise<AsrStatusRecord> {
+  const record = await readAsrStatus(dataDir);
+  if (record.status === "ready" || record.status === "warming") return record;
+  if (await asrModelsCached(env)) return { status: "ready", detail: "模型已在本机缓存里" };
+  return record;
 }
 
 /** 同一进程内只许有一次预热在跑——1GB 下载重复两遍纯属浪费带宽 */

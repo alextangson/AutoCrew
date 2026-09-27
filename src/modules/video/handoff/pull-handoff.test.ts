@@ -21,6 +21,7 @@ import { arollLockOf } from "./pull-store.js";
 import { sha256File } from "./manifest.js";
 import { executeDesk } from "../../../tools/desk.js";
 import { hashClaimToken } from "../../../storage/claim-token.js";
+import { getConfigDir } from "../../../storage/storage-roots.js";
 
 let fx: HandoffFixture;
 let pick = "";
@@ -114,6 +115,40 @@ describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", () => {
     const late = await pull(c, aroll, cfm, "h-1");
     expect(late).toMatchObject({ replayed: true, holder: { content_id: c.id, generation: 1 } });
     expect(late.claim_token).toBeUndefined();
+  });
+
+  it("请求记录只存令牌哈希；明文在本机私有目录（0600）；重放只把令牌交还给 codex 宿主", async () => {
+    const c = await ready("第一条长长的标题");
+    const aroll = await makeMp4(path.join(fx.outside, "第一条长长的标题.mp4"));
+    const cfm = await confirmed(aroll, c.title);
+    const res = await pull(c, aroll, cfm, "h-priv");
+    const token = String(res.claim_token);
+    const record = path.join(fx.dir, "video/pull/handoff-requests/h-priv.json");
+    const stored = JSON.parse(readFileSync(record, "utf8"));
+    expect(stored.claim_token).toBeUndefined();
+    expect(stored.claim_token_hash).toBe(hashClaimToken(token));
+    expect(await grep(path.join(fx.dir, "video/pull"), token)).toEqual([]);
+    const priv = path.join(getConfigDir(fx.dir), "video", "handoff-tokens", "h-priv.json");
+    expect(readFileSync(priv, "utf8")).toContain(token);
+    expect((await fs.stat(priv)).mode & 0o777).toBe(0o600);
+    const fromClaude = await callVideo(fx.dir, { action: "handoff", content_id: c.id, aroll_path: aroll, confirmation_id: cfm, request_id: "h-priv" }, "claude-code");
+    expect(fromClaude).toMatchObject({ replayed: true, holder: { content_id: c.id, generation: 1 } });
+    expect(JSON.stringify(fromClaude)).not.toContain(token);
+    expect(await pull(c, aroll, cfm, "h-priv")).toMatchObject({ replayed: true, claim_token: token });
+  });
+
+  it("旧版请求记录里的明文令牌：读到就挪进私有目录、记录换成哈希，重放照样交还", async () => {
+    const c = await ready("第一条长长的标题");
+    const aroll = await makeMp4(path.join(fx.outside, "第一条长长的标题.mp4"));
+    const cfm = await confirmed(aroll, c.title);
+    const res = await pull(c, aroll, cfm, "h-old");
+    const token = String(res.claim_token);
+    const record = path.join(fx.dir, "video/pull/handoff-requests/h-old.json");
+    const { claim_token_hash: _h, ...legacy } = JSON.parse(readFileSync(record, "utf8"));
+    await fs.writeFile(record, JSON.stringify({ ...legacy, claim_token: token }));
+    await fs.rm(path.join(getConfigDir(fx.dir), "video", "handoff-tokens", "h-old.json"));
+    expect(await pull(c, aroll, cfm, "h-old")).toMatchObject({ replayed: true, claim_token: token });
+    expect(readFileSync(record, "utf8")).not.toContain(token);
   });
 
   it("lost-response-after-crash：进程死在交接提交之后、回执之前，同一 request_id 重试交还同一枚令牌", async () => {

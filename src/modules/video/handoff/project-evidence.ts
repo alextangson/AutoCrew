@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { contentFile, resolveContentProject, isMissing } from "../../../storage/content-project.js";
-import { writeJsonAtomic } from "../../../storage/json-atomic.js";
+import { writeJsonAtomicMkdir as writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { draftHash } from "../../../storage/draft-hash.js";
 import type { Content } from "../../../storage/local-store.js";
 import type { LedgerEntry, LedgerSource } from "../../research/evidence-ledger.js";

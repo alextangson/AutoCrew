@@ -90,4 +90,26 @@ describe.skipIf(!HAS_FFMPEG)("register 原地核验", () => {
     expect(await sha256File(delivered)).toBe(before);
     expect((await getContent(v.id, env.dir))?.status).toBe("editing");
   });
+
+  it("report 故障都带码：代次不对回 stale_handoff 码，不是裸的「执行失败」", async () => {
+    const v = await handedOff(env.dir, env.aroll);
+    const res = await callVideo(env.dir, { action: "report", content_id: v.id, claim_token: v.token, _session: "editor-session",
+      report: { request_id: "bad-gen", generation: 9, binding_revision: 1, session_id: "editor-session", result: "x", next_action: "y", files: [] } }, "codex");
+    expect(res).toMatchObject({ ok: false, code: "stale_handoff" });
+  });
+
+  it("登记即交还认领：之后旧令牌再 report 回 already_registered，不重新认领；05-cover 里不多出「封面*」副本", async () => {
+    const v = await handedOff(env.dir, env.aroll);
+    const { delivered, register } = await approvedAndMoved(v);
+    expect((await callVideo(env.dir, register, "codex")).ok).toBe(true);
+    expect((await getContent(v.id, env.dir))?.claim).toBeUndefined();
+    const late = await report(v, delivered, "final-cut");
+    expect(late).toMatchObject({ ok: false, code: "already_registered" });
+    expect(late).not.toHaveProperty("claim_token");
+    expect((await getContent(v.id, env.dir))?.claim).toBeUndefined();
+    const covers = (await fs.readdir(path.join(v.root, "05-cover"), { recursive: true })).map(String);
+    expect(covers.filter((f) => path.basename(f).startsWith("封面"))).toEqual([]);
+    // 重放同一份登记照样拿回结果
+    expect(await callVideo(env.dir, register, "codex")).toMatchObject({ ok: true, replayed: true });
+  });
 });

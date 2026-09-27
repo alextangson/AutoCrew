@@ -75,6 +75,10 @@ describe("confirm", () => {
     expect(res).toMatchObject({ ok: true, status: "confirmed", source: "native-dialog", content_id: c.id, cover_text: "三招省时", target_seconds: 90 });
     expect(shown.map((s) => s.kind)).toEqual(["choose", "ask"]);
     expect(shown[1].prompt).toContain("原片：AI 工具分享.mov");
+    // 平台给创始人看中文名，不露内部 id
+    expect(shown[1].prompt).toMatch(/平台：(抖音|小红书|B站|视频号)/);
+    expect(shown[1].prompt).not.toMatch(/douyin|xiaohongshu|bilibili|wechat_video/);
+    expect(shown[0].items!.join("\n")).not.toMatch(/douyin|xiaohongshu|bilibili|wechat_video/);
     const record = await readConfirmation(fx.dir, String(res.confirmation_id));
     expect(record).toMatchObject({ draft_hash: draftHash(c), aroll_sha256: expect.any(String), receipt_id: expect.any(String) });
     expect(Date.parse(record!.expires_at) - Date.parse(record!.clicked_at)).toBe(30 * 60_000);

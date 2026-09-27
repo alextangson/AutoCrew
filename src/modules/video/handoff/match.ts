@@ -16,6 +16,7 @@ import { reviewValid } from "./acceptance.js";
 import { readArollInput } from "./aroll-input.js";
 import { matchL1, type L1Hit } from "./match-l1.js";
 import { MIN_SPEECH_CHARS, scoreTranscript, speechChars } from "./match-l2.js";
+import { ASR_WARMUP_WHERE } from "../asr.js";
 import { pullDeps } from "./pull-deps.js";
 import { arollLockOf, lastRevokeAt, newId, pullDir, readRecord, REQUEST_ID_RE, requestFile, writeRecord } from "./pull-store.js";
 import { handoffFail, type HandoffResult } from "./types.js";
@@ -130,7 +131,7 @@ function applyL1(cands: ReceiptCandidate[], hits: L1Hit[]): void {
   });
 }
 
-export const ASR_WARMUP_ACTION = "请创始人到 AutoCrew 设置里点「预热 ASR 模型」（约 1GB），下完再重新 match 就能按开头转写认稿";
+export const ASR_WARMUP_ACTION = `请创始人到 ${ASR_WARMUP_WHERE} 点一次（约 1GB），下完再重新 match 就能按开头转写认稿`;
 
 async function scoreCandidates(arollPath: string, cands: ReceiptCandidate[], hits: L1Hit[], bodies: string[], dataDir: string): Promise<Scored> {
   applyL1(cands, hits);

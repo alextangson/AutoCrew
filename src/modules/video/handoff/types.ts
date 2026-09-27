@@ -117,7 +117,8 @@ export type HandoffCode =
   | "confirmation_invalid"
   | "confirmation_used"
   | "aroll_in_use"
-  | "project_migration_required";
+  | "project_migration_required"
+  | "already_registered";
 
 export type HandoffResult = Record<string, unknown>;
 

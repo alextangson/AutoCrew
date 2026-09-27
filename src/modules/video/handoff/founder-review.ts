@@ -5,7 +5,7 @@
 import path from "node:path";
 import { getContent, type Content } from "../../../storage/local-store.js";
 import { contentFile, resolveContentProject } from "../../../storage/content-project.js";
-import { writeJsonAtomic } from "../../../storage/json-atomic.js";
+import { writeJsonAtomicMkdir as writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { exportProjectViews, repairProjectViews } from "../../../storage/project-commit.js";
 import { draftHash } from "../../../storage/draft-hash.js";
 import { resolveProjectFile } from "./paths.js";

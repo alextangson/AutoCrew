@@ -21,7 +21,7 @@ import { contentFile, resolveContentProject } from "../storage/content-project.j
 import path from "node:path";
 
 import { externalBlock, sanitizeExternal } from "../modules/research/research-prompt-kit.js";
-import { readJson, writeJsonAtomic, writeTextAtomic } from "../storage/json-atomic.js";
+import { readJson, writeJsonAtomic, writeJsonAtomicMkdir, writeTextAtomic } from "../storage/json-atomic.js";
 import { contentDir, listContents, updateContent } from "../storage/local-store.js";
 import { getPack } from "../modules/packs/index.js";
 import { resolveQualityGate } from "../modules/writing/quality-gate.js";
@@ -252,7 +252,7 @@ export async function writePack(contentId: string, pack: WritingPackFile, dataDi
     await fs.mkdir(snapshot, { recursive: true });
     await writeJsonAtomic(path.join(snapshot, "adopted-materials.json"), { pack_id: pack.packId, context: pack.context, ledger: pack.ledger });
     await writeTextAtomic(path.join(snapshot, "brief.md"), pack.context.researchSlot ?? "");
-    await writeJsonAtomic(path.join(binding.project_root, "01-script/references", `${pack.packId}.json`), pack.ledger.entries);
+    await writeJsonAtomicMkdir(path.join(binding.project_root, "01-script/references", `${pack.packId}.json`), pack.ledger.entries);
   }
   await writeJsonAtomic(packPath(contentId, dataDir, PACK_JSON), pack);
 }

@@ -88,6 +88,10 @@ export function projectRelativeFile(logical: string): string {
   if (logical.startsWith("封面")) return `05-cover/${logical}`;
   return `00-project/autocrew/${logical}`;
 }
+/** 资料库共享项目（layout v2）：文件按 00-project/01-script/05-cover… 分区 */
+export function isLayoutV2(root: string): boolean {
+  return read<ProjectBinding>(path.join(root, ".autocrew-owner"))?.layout_version === 2;
+}
 export function projectFile(root: string, ...segments: string[]): string {
   const logical = segments.join("/");
   const owner = read<ProjectBinding>(path.join(root, ".autocrew-owner"));

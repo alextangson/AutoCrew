@@ -3,13 +3,14 @@ import path from "node:path";
 import os from "node:os";
 import { getContent } from "../../../storage/local-store.js";
 import { contentFile, resolveContentProject } from "../../../storage/content-project.js";
-import { writeJsonAtomic } from "../../../storage/json-atomic.js";
+import { writeJsonAtomicMkdir as writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { exportProjectViews } from "../../../storage/project-commit.js";
 import { resolveReportedFile, type ReportedLocation } from "./jianying-root.js";
 import { sha256File, sha256Text } from "./manifest.js";
 import { readProjectJson } from "./project-evidence.js";
 import type { HandoffContext } from "./handoff.js";
 import { serializeVideoLine } from "./lock.js";
+import { handoffFail } from "./types.js";
 import { COVER_ROLES, mergeArtifacts, normalizeExecution, type ExecutionTransfer, type StoredExecution } from "./execution-index.js";
 
 export interface ExecutionReport {
@@ -47,6 +48,10 @@ export async function reportExecution(id: string, input: unknown, ctx: HandoffCo
     if (input.binding_revision !== binding.binding_revision) throw new Error("project_relocated: 请读取当前绑定");
     const handoff = content.video?.handoff;
     if (!handoff || input.generation !== handoff.generation || content.video?.revoked?.includes(handoff.hash)) throw new Error("stale_handoff");
+    // 登记即交还认领：这一代已登记，旧令牌不能再靠心跳把剪辑认领抢回来（会挡住待发布稿的发布包）
+    if (content.video?.final?.generation === handoff.generation) {
+      return handoffFail("already_registered", `第 ${handoff.generation} 代成片已登记、剪辑认领已交还，不再收剪辑汇报；要换成片或封面，直接用新审批重新 register`);
+    }
     const execution = normalizeExecution(await readProjectJson<unknown>(id, "execution.json", ctx.dataDir));
     // 执行权跟着剪辑认领走：写门放行 = 调用方握着这条稿唯一有效的剪辑认领（别的会话还握着就是 claim_held）。
     // 换机器（hostname 变）、创始人新开 Codex 对话都在这里把执行方转过来并记一笔，不再卡死在不存在的「转移手续」上。

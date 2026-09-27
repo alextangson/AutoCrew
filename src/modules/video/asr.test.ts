@@ -7,7 +7,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { extractAsrWav, readAsrStatus, runAsr, scriptMatchRatio, warmupAsr } from "./asr.js";
+import { ASR_WARMUP_WHERE, asrModelsCached, effectiveAsrStatus, extractAsrWav, readAsrStatus, runAsr, scriptMatchRatio, warmupAsr } from "./asr.js";
+import { ASR_WARMUP_ACTION } from "./handoff/match.js";
 import { probeMedia } from "./ingest.js";
 import { ensureArollFixture, fakeChild, fakeUvSpawn, fixtureTranscript, routedSpawn } from "./testkit.js";
 
@@ -145,6 +146,23 @@ describe("extractAsrWav（真 ffmpeg）", () => {
 });
 
 describe("预热与状态", () => {
+  it("没有状态文件但模型在共享缓存里（命令行预热过）→ 算就绪；缺一个就不算", async () => {
+    const cache = path.join(dir, "modelscope");
+    const env = { MODELSCOPE_CACHE: cache } as NodeJS.ProcessEnv;
+    const repos = ["iic--speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch", "iic--speech_fsmn_vad_zh-cn-16k-common-pytorch"];
+    for (const r of repos) await fs.mkdir(path.join(cache, "models", r), { recursive: true });
+    expect(await asrModelsCached(env)).toBe(false);
+    expect((await effectiveAsrStatus(dir, env)).status).toBe("absent");
+    await fs.mkdir(path.join(cache, "hub", "iic", "punc_ct-transformer_cn-en-common-vocab471067-large"), { recursive: true });
+    expect(await asrModelsCached(env)).toBe(true);
+    expect((await effectiveAsrStatus(dir, env)).status).toBe("ready");
+  });
+
+  it("拒绝话术指向设置页里真实存在的「预热 ASR 模型」", () => {
+    expect(ASR_WARMUP_WHERE).toContain("语音转写模型");
+    expect(ASR_WARMUP_ACTION).toContain("预热 ASR 模型");
+  });
+
   it("没预热过 → absent", async () => {
     expect(await readAsrStatus(dir)).toEqual({ status: "absent" });
   });

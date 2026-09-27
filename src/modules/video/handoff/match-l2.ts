@@ -12,7 +12,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ASR_SIDECAR_DIR, extractAsrWav, readAsrStatus, runAsr } from "../asr.js";
+import { ASR_SIDECAR_DIR, effectiveAsrStatus, extractAsrWav, runAsr } from "../asr.js";
 import { commandExists } from "../proc.js";
 import type { VideoDeps } from "../proc.js";
 import { compareKey } from "./match-l1.js";
@@ -68,12 +68,12 @@ export function funasrTranscriber(deps?: VideoDeps): MatchTranscriber {
   };
 }
 
-/** 运行器、依赖环境、模型三样都在才算就绪；模型只有预热成功才会落 ready */
+/** 运行器、依赖环境、模型三样都在才算就绪；模型 = 预热落了 ready，或共享缓存里已经有 */
 async function funasrNotReady(dataDir: string, deps?: VideoDeps): Promise<string | null> {
   if (!(await commandExists("uv", deps))) return "未装 uv（ASR 的运行器）";
   const venv = await fs.access(path.join(ASR_SIDECAR_DIR, ".venv")).then(() => true, () => false);
   if (!venv) return "ASR 依赖环境还没装好";
-  const status = await readAsrStatus(dataDir);
+  const status = await effectiveAsrStatus(dataDir);
   if (status.status === "ready") return null;
   const label = { absent: "ASR 模型还没下载（约 1GB）", warming: "ASR 模型正在预热", failed: "ASR 模型上次预热失败" }[status.status];
   return status.detail ? `${label}：${status.detail}` : label;

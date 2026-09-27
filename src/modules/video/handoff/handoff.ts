@@ -28,6 +28,7 @@ import { readArollInput } from "./aroll-input.js";
 import type { ConfirmationRecord } from "./confirm.js";
 import { pullDeps } from "./pull-deps.js";
 import { checkConfirmation, dropRequestRecord, markConfirmation, requestReplay, saveRequestRecord, validRequestId, type HandoffRequestRecord } from "./pull-handoff.js";
+import { hashClaimToken } from "../../../storage/claim-token.js";
 import { arollLockOf, putArollLock, releaseArollLock, withGlobalHandoffLock } from "./pull-store.js";
 import {
   buildManifest,
@@ -132,20 +133,21 @@ async function nextGeneration(content: Content, dataDir: string): Promise<number
   let max = content.video?.handoff?.generation ?? 0;
   const binding = resolveContentProject(content.id, dataDir);
   if (binding) {
-    for (const name of await fs.readdir(path.join(binding.project_root, "01-script/handoff"))) {
+    // 空的 01-script/handoff 常被同步盘/迁移丢掉，手动导入的项目也没有它：缺目录 = 还没有旧代次
+    for (const name of await readdirOrEmpty(path.join(binding.project_root, "01-script/handoff"))) {
       const m = /^g(\d+)$/.exec(name); if (m) max = Math.max(max, Number(m[1]));
     }
     return max + 1;
   }
-  try {
-    for (const name of await fs.readdir(handoffDir(content.id, dataDir))) {
-      const m = /^editor-g(\d+)\.md$/.exec(name);
-      if (m) max = Math.max(max, Number(m[1]));
-    }
-  } catch {
-    /* 目录还没有 = 第一次交接 */
+  for (const name of await readdirOrEmpty(handoffDir(content.id, dataDir))) {
+    const m = /^editor-g(\d+)\.md$/.exec(name);
+    if (m) max = Math.max(max, Number(m[1]));
   }
   return max + 1;
+}
+
+async function readdirOrEmpty(dir: string): Promise<string[]> {
+  try { return await fs.readdir(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return []; throw e; }
 }
 
 /** 不可变写：独占创建；已存在且内容不同 → null（冲突），相同 → false（没新建） */
@@ -203,7 +205,7 @@ async function movedSourceReplay(content: Content, input: HandoffInput): Promise
 async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<HandoffResult> {
   if (input.confirmationId) {
     if (!validRequestId(input.requestId)) return handoffFail("invalid_params", "带 confirmation_id 的交接需要 request_id（1–100 位字母、数字、-、_）");
-    const replayed = await requestReplay(ctx.dataDir, input.requestId, input.confirmationId);
+    const replayed = await requestReplay(ctx.dataDir, input.requestId, input.confirmationId, input.host);
     if (replayed) return replayed;
   }
   const content = await getContent(input.contentId, ctx.dataDir);
@@ -314,13 +316,13 @@ async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContex
 /** 令牌直接交给这次交接的调用方（P6 §12.4-D）：Codex 发起 = 它自己拿着；Claude 推送 = 随派工交给接手的那个 Codex 会话 */
 function requestRecord(plan: Plan, requestId: string, confirmation: ConfirmationRecord, record: VideoHandoffRecord, token: string, result: HandoffResult, pending: boolean): HandoffRequestRecord {
   return { request_id: requestId, confirmation_id: confirmation.confirmation_id, content_id: plan.content.id, generation: record.generation,
-    manifest_hash: record.hash, claim_token: token, at: new Date(pullDeps().now()).toISOString(), result, ...(pending ? { pending: true } : {}) };
+    manifest_hash: record.hash, claim_token_hash: hashClaimToken(token), at: new Date(pullDeps().now()).toISOString(), result, ...(pending ? { pending: true } : {}) };
 }
 
 async function committed(plan: Plan, input: HandoffInput, ctx: HandoffContext, record: VideoHandoffRecord, token: string, confirmation: ConfirmationRecord | undefined, base: HandoffResult): Promise<HandoffResult> {
   if (confirmation && input.requestId) {
     await markConfirmation(ctx.dataDir, confirmation, { used_at: new Date().toISOString(), used_by_request: input.requestId });
-    await saveRequestRecord(ctx.dataDir, requestRecord(plan, input.requestId, confirmation, record, token, base, false));
+    await saveRequestRecord(ctx.dataDir, requestRecord(plan, input.requestId, confirmation, record, token, base, false), token);
   }
   if (input.host === EDITOR_HOST) return { ...base, claim_token: token, note: "交接已提交，剪辑认领在你手上：后续 report / register 带这枚 claim_token，每 10 分钟用 report 报一次进度（心跳）。令牌不要贴进聊天或写进文件。" };
   // v1 老路的令牌照旧写在交接包里，回执不再重复
@@ -352,7 +354,7 @@ async function landHandoff(
     }
     const base = handedOffResult(record, { content_status: "editing", ...arollNote(journal) });
     // 请求记录先于提交落盘：崩在提交之后、回执之前，重试凭它按冻结结果交还同一枚令牌
-    if (confirmation && input.requestId) await saveRequestRecord(ctx.dataDir, requestRecord(plan, input.requestId, confirmation, record, editorToken, base, true));
+    if (confirmation && input.requestId) await saveRequestRecord(ctx.dataDir, requestRecord(plan, input.requestId, confirmation, record, editorToken, base, true), editorToken);
     pullDeps().checkpoint("handoff_before_commit");
     const moved = await transitionStatus(plan.content.id, "editing", {
       expectedStatus: plan.content.status,

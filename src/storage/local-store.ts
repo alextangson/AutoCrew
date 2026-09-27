@@ -1,6 +1,6 @@
 import { assertManagedPathAvailable } from "./storage-roots.js";
 import { portableProjectRecord } from "./project-record.js";
-import { contentRoot, projectFile, contentFile, ensureContentProject, readProjectRegistry, contentIds } from "./content-project.js";
+import { contentRoot, isLayoutV2, projectFile, contentFile, ensureContentProject, readProjectRegistry, contentIds } from "./content-project.js";
 import { commitProjectContent, recoverProjectContent } from "./project-commit.js";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -1391,6 +1391,8 @@ async function approveCoverVariantLocked(
 
   await writeJsonAtomic(reviewPath, readProjectRegistry(dataDir) ? portableProjectRecord(review, projDir) : review);
   if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
+  // 共享项目里 Codex 登记的配对封面本来就在 05-cover/vNNN 里：再复制「封面*.png」只会在版本目录旁边多出无主副本
+  if (selected.draftPair && isLayoutV2(projDir)) return review;
   // 人机协同(V5.6.1):选定封面在文件夹根留一份「拿了就走」的副本(重选自动覆盖)
   if (review.approvedImagePath) {
     const ext = path.extname(review.approvedImagePath) || ".png";

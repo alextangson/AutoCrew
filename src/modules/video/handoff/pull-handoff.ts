@@ -6,9 +6,12 @@
  * - 请求身份重放：同一 request_id + 同一 confirmation_id 在 10 分钟内重试 → 原样返回首次提交冻结的回执，
  *   并**重新交还同一枚令牌**（「回执丢了」的恢复路径）。重放**先于读源文件**：原片已经挪进项目，
  *   Downloads 里的原路径不在了，也不重新生成交接包。
- * - 令牌只存在服务自己的请求记录里（`<dataDir>/video/pull/`），不进项目文件夹、不进交接包。
+ * - 资料库里的请求记录只存令牌哈希；明文令牌存本机私有目录（getConfigDir 下 video/handoff-tokens，0600），
+ *   不进资料库、不进项目文件夹、不进交接包。重放只把令牌交还给 codex 宿主（会话号只作诊断，不作凭据）。
  */
-import { tokenMatches } from "../../../storage/claim-token.js";
+import { hashClaimToken, tokenMatches } from "../../../storage/claim-token.js";
+import path from "node:path";
+import { getConfigDir } from "../../../storage/storage-roots.js";
 import fs from "node:fs/promises";
 import { draftHash } from "../../../storage/draft-hash.js";
 import { getContent, type Content } from "../../../storage/local-store.js";
@@ -18,6 +21,8 @@ import { readRecord, requestFile, REQUEST_ID_RE, writeRecord } from "./pull-stor
 import { handoffFail, type HandoffResult } from "./types.js";
 
 export const REPLAY_WINDOW_MS = 10 * 60_000;
+/** 与 handoff.ts 的 EDITOR_HOST 同值（那边引用本模块，这里不反向 import） */
+const REPLAY_TOKEN_HOST = "codex";
 
 export interface HandoffRequestRecord {
   request_id: string;
@@ -25,7 +30,8 @@ export interface HandoffRequestRecord {
   content_id: string;
   generation: number;
   manifest_hash: string;
-  claim_token: string;
+  /** 资料库里只留哈希；明文在本机私有目录 */
+  claim_token_hash: string;
   at: string;
   result: HandoffResult;
   /** 提交前先落的请求记录：提交成没成要按稿件上的交接核定（崩在提交与回执之间时，重试靠它重放） */
@@ -36,12 +42,45 @@ function requestRecordFile(dataDir: string, requestId: string): string {
   return requestFile(dataDir, "handoff-requests", requestId);
 }
 
-export async function saveRequestRecord(dataDir: string, record: HandoffRequestRecord): Promise<void> {
+/** 本机私有：按资料库+工作区隔开（getConfigDir），不在资料库里 */
+function privateTokenFile(dataDir: string, requestId: string): string {
+  if (!REQUEST_ID_RE.test(requestId)) throw new Error("request_id 不合法");
+  return path.join(getConfigDir(dataDir), "video", "handoff-tokens", `${requestId}.json`);
+}
+
+async function savePrivateToken(dataDir: string, requestId: string, token: string): Promise<void> {
+  const file = privateTokenFile(dataDir, requestId);
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(tmp, JSON.stringify({ request_id: requestId, claim_token: token }), { mode: 0o600 });
+  await fs.chmod(tmp, 0o600);
+  await fs.rename(tmp, file);
+}
+
+async function readPrivateToken(dataDir: string, requestId: string): Promise<string | null> {
+  const stored = await readRecord<{ claim_token?: unknown }>(privateTokenFile(dataDir, requestId)).catch(() => null);
+  return typeof stored?.claim_token === "string" ? stored.claim_token : null;
+}
+
+/** 令牌明文进本机私有目录，资料库记录只存哈希 */
+export async function saveRequestRecord(dataDir: string, record: HandoffRequestRecord, token?: string): Promise<void> {
+  if (token) await savePrivateToken(dataDir, record.request_id, token);
   await writeRecord(requestRecordFile(dataDir, record.request_id), record);
 }
 
 export async function dropRequestRecord(dataDir: string, requestId: string): Promise<void> {
   await fs.rm(requestRecordFile(dataDir, requestId), { force: true });
+  await fs.rm(privateTokenFile(dataDir, requestId), { force: true });
+}
+
+/** 旧版记录把明文令牌写在资料库里：读到就挪进本机私有目录、记录里换成哈希 */
+async function readRequestRecord(dataDir: string, requestId: string): Promise<HandoffRequestRecord | null> {
+  const stored = await readRecord<HandoffRequestRecord & { claim_token?: string }>(requestRecordFile(dataDir, requestId));
+  if (!stored || typeof stored.claim_token !== "string") return stored;
+  const { claim_token: token, ...rest } = stored;
+  const record = { ...rest, claim_token_hash: hashClaimToken(token) };
+  await saveRequestRecord(dataDir, record, token);
+  return record;
 }
 
 /**
@@ -61,8 +100,8 @@ async function settlePending(dataDir: string, record: HandoffRequestRecord): Pro
 }
 
 /** null = 不是重放，照常往下走 */
-export async function requestReplay(dataDir: string, requestId: string, confirmationId: string): Promise<HandoffResult | null> {
-  const stored = await readRecord<HandoffRequestRecord>(requestRecordFile(dataDir, requestId));
+export async function requestReplay(dataDir: string, requestId: string, confirmationId: string, host: string): Promise<HandoffResult | null> {
+  const stored = await readRequestRecord(dataDir, requestId);
   if (!stored) return null;
   if (stored.confirmation_id !== confirmationId) {
     return handoffFail("invalid_params", "这个 request_id 已经用在另一份确认上：换一个新的 request_id");
@@ -70,11 +109,15 @@ export async function requestReplay(dataDir: string, requestId: string, confirma
   const record = stored.pending ? await settlePending(dataDir, stored) : stored;
   if (!record) return null;
   const content = await getContent(record.content_id, dataDir);
-  const live = tokenMatches(content?.claim?.token, record.claim_token);
+  const token = await readPrivateToken(dataDir, requestId);
+  const live = Boolean(token) && hashClaimToken(token!) === record.claim_token_hash && tokenMatches(content?.claim?.token, token!);
   const fresh = pullDeps().now() - Date.parse(record.at) <= REPLAY_WINDOW_MS;
-  if (fresh && live) return { ...record.result, replayed: true, claim_token: record.claim_token };
-  return { ...record.result, replayed: true, holder: { content_id: record.content_id, generation: record.generation },
-    note: fresh ? "这次交接的认领已经不在原令牌手上（撤回或接管过），不再交还令牌。" : "超过 10 分钟的重放只回持有者和代次，不再交还令牌。" };
+  // 回执丢了的恢复（§12.6）：同一 request_id + confirmation_id、10 分钟内、认领还在原令牌手上，只交还给 codex 宿主
+  if (fresh && live && host === REPLAY_TOKEN_HOST) return { ...record.result, replayed: true, claim_token: token };
+  const note = !fresh ? "超过 10 分钟的重放只回持有者和代次，不再交还令牌。"
+    : !live ? "这次交接的认领已经不在原令牌手上（撤回、登记或接管过），不再交还令牌。"
+      : "令牌只交还给发起这次交接的 Codex，不交给其他宿主。";
+  return { ...record.result, replayed: true, holder: { content_id: record.content_id, generation: record.generation }, note };
 }
 
 export function validRequestId(requestId: string | undefined): requestId is string {

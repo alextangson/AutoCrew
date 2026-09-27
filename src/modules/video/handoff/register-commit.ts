@@ -11,7 +11,7 @@ import { contentFile } from "../../../storage/content-project.js";
  *
  * (d) 是提交点：状态与 `video.final` 同一次写（`transitionStatus` 的 patch），
  * 阶段门在写锁里核 (b)(c) 两样都在（`editing → publish_ready` 只在成片戳 + 封面定稿时放行）。
- * 已知不还原的：封面定稿顺手复制到稿件根目录的「封面*.png」便携副本（下一次定稿会覆盖）。
+ * 已知不还原的：旧版（非共享项目）封面定稿顺手复制到稿件根目录的「封面*.png」便携副本（下一次定稿会覆盖）；共享项目不再复制。
  */
 import fs from "node:fs/promises";
 import path from "node:path";

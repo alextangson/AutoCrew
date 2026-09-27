@@ -10,7 +10,7 @@
  * 非 macOS / 没有图形会话 → confirm_unavailable。同一 request_id 重试返回同一条记录，不重复弹窗。
  */
 import path from "node:path";
-import { writeJsonAtomic } from "../../../storage/json-atomic.js";
+import { writeJsonAtomicMkdir as writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { contentFile } from "../../../storage/content-project.js";
 import { draftHash } from "../../../storage/draft-hash.js";
 import { getContent, type Content } from "../../../storage/local-store.js";
@@ -78,8 +78,14 @@ function dialogFailure(outcome: DialogOutcome<unknown>): HandoffResult | null {
     next_action: "停下，告诉创始人去工作台确认标题、封面字、目标时长；不要把对话里的原话当确认。" };
 }
 
+/** 弹窗是给创始人看的：平台写中文名，不露内部 id */
+const PLATFORM_NAMES: Record<string, string> = { douyin: "抖音", xiaohongshu: "小红书", bilibili: "B站", wechat_video: "视频号", wechat_mp: "公众号" };
+export function platformName(platform: string | null | undefined): string {
+  return platform ? PLATFORM_NAMES[platform] ?? platform : "未定";
+}
+
 function label(c: ReceiptCandidate, i: number): string {
-  return `${i + 1}. ${c.title}（${c.platform}）${c.unreviewed_import ? "［导入稿］" : ""}`;
+  return `${i + 1}. ${c.title}（${platformName(c.platform)}）${c.unreviewed_import ? "［导入稿］" : ""}`;
 }
 
 /** 弹窗能列的候选：回执前三名（外加点名的那条）里材料齐的；一条都不齐就不弹窗，直接回拒绝 */
@@ -129,7 +135,7 @@ async function materialsProblem(content: Content, dataDir: string): Promise<Hand
 }
 
 function summary(file: string, content: Content, v: Values, unreviewed: boolean): string {
-  return [`原片：${file}`, `稿件：${content.title}`, `平台：${content.platform}`, `封面字：${v.cover}`, `目标时长：${v.seconds} 秒`,
+  return [`原片：${file}`, `稿件：${content.title}`, `平台：${platformName(content.platform)}`, `封面字：${v.cover}`, `目标时长：${v.seconds} 秒`,
     ...(unreviewed ? [IMPORT_LINE] : [])].join("\n");
 }
 

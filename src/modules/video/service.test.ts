@@ -2,7 +2,7 @@
  * service.test.ts —— 门面契约与全链状态走查。
  * 一条 content 从 startBuild 走到 done：每一步的 phase/state、产物版本链、乐观锁、事件。
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -411,9 +411,12 @@ describe("查询口", () => {
   }, 60_000);
 
   it("ASR 预热状态可查", async () => {
+    // 与本机真实模型缓存隔离：共享缓存里有模型时 asrStatus 会直接回 ready
+    vi.stubEnv("MODELSCOPE_CACHE", path.join(os.tmpdir(), "autocrew-no-modelscope-cache"));
     expect(await service.asrStatus()).toEqual({ status: "absent" });
     expect((await service.warmupAsr()).status).toBe("warming");
     await expect.poll(async () => (await service.asrStatus()).status, { timeout: 5000 }).toBe("ready");
+    vi.unstubAllEnvs();
   });
 });
 
