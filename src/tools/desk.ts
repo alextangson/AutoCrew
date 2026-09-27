@@ -28,6 +28,25 @@ import {
   type ContentStatus,
 } from "../storage/local-store.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
+import { activeClaim } from "../storage/claims.js";
+import { getContent } from "../storage/local-store.js";
+import { pullDeps } from "../modules/video/handoff/pull-deps.js";
+
+/**
+ * 剪辑认领（交接签发、心跳续租）的接管要创始人在本机弹窗点确认（P6 §12.4-D）：
+ * 模型自填的 takeover:true 不算数。不是剪辑认领就不弹，照旧走闲置规则。
+ */
+async function founderApprovesTakeover(contentId: string, host: string, dataDir: string): Promise<boolean> {
+  const content = await getContent(contentId, dataDir);
+  const current = content ? activeClaim(content) : null;
+  if (!content || !current?.heartbeat) return false;
+  const idleMin = Math.floor((Date.now() - Date.parse(current.lastWriteAt ?? current.at)) / 60_000);
+  const answer = await pullDeps().dialog.ask({
+    title: "AutoCrew 接管剪辑", timeoutSec: 300, buttons: ["取消", "接管"], defaultButton: "取消", cancelButton: "取消",
+    prompt: `${host} 的另一个会话要接管「${content.title}」的剪辑。\n原会话 ${idleMin} 分钟没有报进度。\n接管后原会话的 report、register 都会被拒。`,
+  });
+  return answer.kind === "ok" && answer.value === "接管";
+}
 
 const ACTIONS = ["inbox", "claim", "release"] as const;
 
@@ -56,7 +75,7 @@ export const deskSchema = Type.Object({
 export const DESK_DESCRIPTION = [
   "AutoCrew 待办桌：看自己这一岗有什么活、认领、干完释放。",
   "1) inbox{employee}：writer=已选立意卡还没稿的选题 + 退回修订的稿；cover=过审待做封面的稿（公众号稿在 approved、视频稿在成片审过之后、以及退回封面台的）；editor=在剪辑台且成片还没审过的稿。每项带 content_id/topic_id/title/platform/status/claim；写手那张桌上 content_id 为 null 的是「还没建稿」，用 autocrew_writer pack 领包就会建。",
-  "2) claim{content_id, employee, claim_token?, takeover?}：认领，拿 claim_token（租约 30 分钟）。别的宿主还握着未过期的租约会被拒并告诉你持有者是谁；带着令牌重复认领 = 续约、返回同一枚令牌；同宿主不带令牌 = claim_held；takeover:true 只在持有会话 10 分钟没写入后才生效，否则照样 claim_held（别替用户抢活，先问）。",
+  "2) claim{content_id, employee, claim_token?, takeover?}：认领，拿 claim_token（租约 30 分钟）。别的宿主还握着未过期的租约会被拒并告诉你持有者是谁；带着令牌重复认领 = 续约、返回同一枚令牌；同宿主不带令牌 = claim_held；takeover:true 只在持有会话 10 分钟没写入后才生效，否则照样 claim_held（别替用户抢活，先问）；交接签发的剪辑认领不看闲置，takeover 会在创始人的 Mac 上弹窗，他点「接管」才换人、旧令牌作废。",
   "3) release{content_id, claim_token}：干完释放。忘了也不要紧——租约过期后别人可以接管，接管会记在交接台账里。",
   "纪律：认领之后的写操作（autocrew_writer submit / autocrew_cover_review 出图与批准 / autocrew_content update、transition）都带上 claim_token，那是防止两个宿主互相盖写的唯一凭据。",
 ].join("\n");
@@ -154,9 +173,11 @@ export async function executeDesk(params: Record<string, unknown>): Promise<Desk
       const contentId = str(params.content_id);
       if (!contentId) return fail("content_id 必填");
       if (!isClaimEmployee(employee)) return fail("employee 必填：writer | cover | editor");
+      const takeover = params.takeover === true;
       const result = await claimContent(contentId, employee, host, dataDir, {
         token: str(params.claim_token) || undefined,
-        takeover: params.takeover === true,
+        takeover,
+        ...(takeover ? { founderConfirmed: await founderApprovesTakeover(contentId, host, dataDir) } : {}),
       });
       if (!result.ok) {
         return fail(result.error, { ...(result.code ? { code: result.code } : {}), ...(result.holder ? { holder: result.holder } : {}) });

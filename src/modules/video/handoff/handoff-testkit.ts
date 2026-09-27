@@ -17,8 +17,6 @@ import { coverPairHash, sha256File } from "./manifest.js";
 import { getContent } from "../../../storage/local-store.js";
 import { resolveContentProject } from "../../../storage/content-project.js";
 import { draftHash } from "../../../storage/draft-hash.js";
-import { claimContent } from "../../../storage/claims.js";
-import { withCallerSession } from "../../../runtime/run-log.js";
 import { founderProjectReview } from "./founder-review.js";
 import { saveCoverage } from "./project-evidence.js";
 
@@ -122,8 +120,8 @@ export async function handedOff(dir: string, aroll: string) {
   await saveCoverage(content, { draft_hash: draftHash(content), citations: [{ start: 0, end: content.body.indexOf("。") + 1, excerpt: content.body.slice(0, content.body.indexOf("。") + 1), evidence_id: "creator", sourceType: "creator_opinion", quote: "", verification: "创作者亲历（测试夹具）" }], reviewed_by: "writer", reviewed_at: new Date().toISOString() }, dir);
   const handoff = await callVideo(dir, { action: "handoff", content_id: content.id, aroll_path: aroll });
   if (!handoff.ok) throw new Error(JSON.stringify(handoff));
-  const claim = await withCallerSession("editor-session", () => claimContent(content.id, "editor", "codex", dir));
-  if (!claim.ok) throw new Error("claim failed");
+  // 剪辑认领的令牌由交接直接交给派工方（不再由第一个来的 Codex 会话兑换）
+  const claim = { claim: { token: String(handoff.editor_claim_token) } };
   const root = resolveContentProject(content.id, dir)!.project_root;
   let n = 0;
   const report = async (files: Array<{ file: string; role: string; version?: number }>, extra: Record<string, unknown> = {}) => callVideo(dir, {

@@ -33,8 +33,9 @@ it("freezes exact approved text, replays handoff, reports without approving, and
   const manifest = await fs.readFile(path.join(path.dirname(frozen), "manifest.json"), "utf8");
   expect(manifest).not.toContain(binding.project_root);
   expect((await callVideo(env.dir, { action: "handoff", content_id: content.id, aroll_path: env.aroll })).replayed).toBe(true);
-  const claim = await withCallerSession("real-editor-session", () => claimContent(content.id, "editor", "codex", env.dir));
-  expect(claim.ok).toBe(true); if (!claim.ok) return;
+  // 令牌直接交给交接方（P6 §12.4-D）：别的 Codex 会话认领不到
+  const claim = { claim: { token: String(handoff.editor_claim_token) } };
+  expect(claim.claim.token).toMatch(/^clm-/);
   const other = await withCallerSession("different-session", () => claimContent(content.id, "editor", "codex", env.dir));
   expect(other.ok).toBe(false);
   const final = await makeMp4(path.join(binding.project_root, "07-delivery/final.mp4"));

@@ -23,6 +23,11 @@ import { contentDir, getContent, transitionStatus, type Content, type ContentCla
 import { probeAroll } from "../ingest.js";
 import { acceptanceBlock, HANDOFF_FROM } from "./acceptance.js";
 import { serializeVideoLine } from "./lock.js";
+import { readArollInput } from "./aroll-input.js";
+import type { ConfirmationRecord } from "./confirm.js";
+import { pullDeps } from "./pull-deps.js";
+import { checkConfirmation, markConfirmation, requestReplay, saveRequestRecord, validRequestId } from "./pull-handoff.js";
+import { arollLockOf, putArollLock, releaseArollLock, withGlobalHandoffLock } from "./pull-store.js";
 import {
   buildManifest,
   dispatchText,
@@ -33,7 +38,7 @@ import {
   type HandoffFileInput,
 } from "./manifest.js";
 import { claimProjectDir, defaultProjectName, resolveProjectRoot, SCRIPT_DIR } from "./paths.js";
-import { expandHome, usableRoots, type ProjectRoots } from "./roots.js";
+import { usableRoots, type ProjectRoots } from "./roots.js";
 import { handoffFail, type HandoffManifest, type HandoffResult, type VideoHandoffRecord } from "./types.js";
 
 /** 剪辑工位的宿主名（命名 token 的主体）：交接把认领转给它 */
@@ -47,6 +52,9 @@ export interface HandoffInput {
   host: string;
   session?: string;
   claimToken?: string;
+  /** Codex 发起的交接（P6 §12.4-D）：服务端确认记录 + 本次请求号 */
+  confirmationId?: string;
+  requestId?: string;
 }
 
 export interface HandoffContext {
@@ -82,21 +90,11 @@ export function handedOffResult(record: VideoHandoffRecord, extra: Record<string
   };
 }
 
-async function readableFile(file: string): Promise<boolean> {
-  try {
-    await fs.access(file, fs.constants.R_OK);
-    return (await fs.stat(file)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/** 算出这次请求对应的清单（代次待定）：重放比对与正式交接用同一份 */
+/** 算出这次请求对应的清单（代次待定）：重放比对与正式交接用同一份。原片全文件哈希在这里重算 */
 async function planHandoff(content: Content, input: HandoffInput, roots: ProjectRoots, dataDir: string): Promise<Planned> {
-  const arollPath = path.resolve(expandHome(input.arollPath.trim()));
-  if (!(await readableFile(arollPath))) {
-    return { ok: false, result: handoffFail("aroll_invalid", `找不到 A-roll 或读不了：${arollPath}`) };
-  }
+  const aroll = await readArollInput(input.arollPath);
+  if (!aroll.ok) return { ok: false, result: handoffFail("aroll_invalid", aroll.reason) };
+  const arollPath = aroll.value.path;
   const binding = resolveContentProject(content.id, dataDir);
   if (binding && input.projectRoot && path.resolve(input.projectRoot) !== path.resolve(binding.project_root)) return { ok: false, result: handoffFail("project_binding_conflict", "必须复用写稿时的项目目录") };
   const requested = binding?.project_root || input.projectRoot?.trim()
@@ -107,7 +105,7 @@ async function planHandoff(content: Content, input: HandoffInput, roots: Project
   const base = {
     content_id: content.id,
     draft_hash: draftHash(content),
-    aroll_sha256: await sha256File(arollPath),
+    aroll_sha256: aroll.value.sha256,
     project_root: resolved.value,
     notes: binding ? (input.notes ?? "") : (input.notes ?? "").trim(),
   };
@@ -163,34 +161,67 @@ async function writeImmutable(file: string, text: string): Promise<boolean | nul
 }
 
 export async function handoffVideo(input: HandoffInput, ctx: HandoffContext): Promise<HandoffResult> {
-  return serializeVideoLine(input.contentId, () => handoffLocked(input, ctx));
+  // 全局交接锁在外、稿件交接线锁在里：原片锁的「查 + 占」跨稿件原子
+  return withGlobalHandoffLock(() => serializeVideoLine(input.contentId, () => handoffLocked(input, ctx)));
+}
+
+/** Codex 发起的交接：先按请求身份重放（不读源文件），再核确认记录 */
+async function pullGate(input: HandoffInput, content: Content, dataDir: string): Promise<{ ok: true; value?: ConfirmationRecord } | { ok: false; result: HandoffResult }> {
+  if (!input.confirmationId) {
+    if (input.host !== EDITOR_HOST) return { ok: true };
+    return { ok: false, result: handoffFail("confirmation_required", "剪辑工位发起交接必须带 confirmation_id：先 match、再 confirm 让创始人在 Mac 弹窗里点确认") };
+  }
+  if (!resolveContentProject(content.id, dataDir)) {
+    return { ok: false, result: handoffFail("project_migration_required", "这条稿还没迁移到项目（v2）：只能由 Claude 写稿会话推送交接") };
+  }
+  return checkConfirmation(input.confirmationId, content, dataDir);
 }
 
 async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<HandoffResult> {
+  if (input.confirmationId) {
+    if (!validRequestId(input.requestId)) return handoffFail("invalid_params", "带 confirmation_id 的交接需要 request_id（1–100 位字母、数字、-、_）");
+    const replayed = await requestReplay(ctx.dataDir, input.requestId, input.confirmationId);
+    if (replayed) return replayed;
+  }
   const content = await getContent(input.contentId, ctx.dataDir);
   if (!content) return handoffFail("invalid_params", `稿件不存在：${input.contentId}`);
+  const pulled = await pullGate(input, content, ctx.dataDir);
+  if (!pulled.ok) return pulled.result;
+  const confirmation = pulled.value;
   const roots = await usableRoots(ctx.dataDir);
   if (!roots.ok) return roots.result;
-  const planned = await planHandoff(content, input, roots.value, ctx.dataDir);
+  const planned = await planHandoff(content, { ...input, arollPath: input.arollPath || confirmation?.aroll_path || "" }, roots.value, ctx.dataDir);
   if (!planned.ok) return planned.result;
+  if (confirmation && planned.plan.base.aroll_sha256 !== confirmation.aroll_sha256) {
+    await markConfirmation(ctx.dataDir, confirmation, { voided_at: new Date().toISOString() });
+    return handoffFail("confirmation_invalid", "原片和弹窗确认时不是同一个文件了：这次确认作废，重新 match / confirm");
+  }
   const replay = await replayOf(content, planned.plan.base, ctx.dataDir);
   if (replay) return handedOffResult(replay, { replayed: true, content_status: content.status });
+  return handoffChecked(content, input, ctx, planned.plan, confirmation);
+}
 
+async function handoffChecked(content: Content, input: HandoffInput, ctx: HandoffContext, plan: Plan, confirmation?: ConfirmationRecord): Promise<HandoffResult> {
   const blocked = acceptanceBlock(content) ?? await evidenceBlock(content, ctx.dataDir);
   if (blocked) return blocked;
-  const probed = await probeAroll(planned.plan.arollPath);
+  const probed = await probeAroll(plan.arollPath);
   if (!probed.ok) return handoffFail("aroll_invalid", probed.reason);
+  const lock = await arollLockOf(ctx.dataDir, plan.base.aroll_sha256);
+  if (lock && lock.content_id !== content.id) {
+    return handoffFail("aroll_in_use", "这段原片已经交给另一条稿了：同一段原片同时只归一条未撤回交接", { holder: { content_id: lock.content_id, generation: lock.generation } });
+  }
   // 写门放在只读核验之后、第一次落盘之前：被拒的请求不留认领这种副作用
   const prior = content.claim;
   const gate = await ctx.gate();
   if ("denied" in gate) return gate.denied;
   const held = { contentId: content.id, prior, heldToken: gate.grant.claim_token ?? input.claimToken, dataDir: ctx.dataDir };
   try {
-    return await commitHandoff(planned.plan, input, ctx, gate.grant, prior);
+    return await commitHandoff(plan, input, ctx, gate.grant, prior, confirmation);
   } catch (err) {
     // 认领转交之前抛出的故障（算代次、打包、占目录）：提交前失败，认领恢复原样
     if (isCommitUncertain(err)) return pendingRecovery(err);
     const code = failureCode(err, "handoff_rejected");
+    await releaseArollLock(ctx.dataDir, plan.base.aroll_sha256, content.id);
     return withClaimRestored(handoffFail(code, err instanceof Error ? err.message : String(err)), "handoff_rejected", held);
   }
 }
@@ -227,7 +258,7 @@ async function prepareCommit(plan: Plan, input: HandoffInput, dataDir: string): 
   return { manifest, record, fileInput, ...(bundle ? { bundle: bundle.files } : {}) };
 }
 
-async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContext, grant: Grant, prior: ContentClaim | undefined): Promise<HandoffResult> {
+async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContext, grant: Grant, prior: ContentClaim | undefined, confirmation?: ConfirmationRecord): Promise<HandoffResult> {
   const held = { contentId: plan.content.id, prior, heldToken: grant.claim_token ?? input.claimToken, dataDir: ctx.dataDir };
   const prepared = await prepareCommit(plan, input, ctx.dataDir);
   // 令牌长度固定量级，拿占位令牌先量一次：超限就别动认领
@@ -237,17 +268,35 @@ async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContex
   }
   const owned = await claimProjectDir(plan.projectRoot, plan.content.id);
   if (!owned.ok) return withClaimRestored(owned.result, "handoff_rejected", held);
+  const sha = plan.base.aroll_sha256;
+  await putArollLock(ctx.dataDir, sha, { content_id: plan.content.id, generation: prepared.record.generation, ...(input.requestId ? { request_id: input.requestId } : {}), at: new Date().toISOString() });
   const moved = await transferClaim(plan.content.id, {
     token: grant.claim_token ?? input.claimToken,
     host: input.host,
     toEmployee: "editor",
     toHost: EDITOR_HOST,
     note: `交接剪辑 g${prepared.record.generation}`,
+    heartbeat: true,
   }, ctx.dataDir);
   if (!moved.ok) {
+    await releaseArollLock(ctx.dataDir, sha, plan.content.id);
     return withClaimRestored(handoffFail("handoff_rejected", moved.error, moved.holder ? { holder: moved.holder } : {}), "handoff_rejected", held);
   }
-  return landHandoff(plan, input, ctx, prepared, { ...held, heldToken: moved.claim.token });
+  return landHandoff(plan, input, ctx, prepared, { ...held, heldToken: moved.claim.token }, confirmation);
+}
+
+/** 令牌直接交给这次交接的调用方（P6 §12.4-D）：Codex 发起 = 它自己拿着；Claude 推送 = 随派工交给接手的那个 Codex 会话 */
+async function committed(plan: Plan, input: HandoffInput, ctx: HandoffContext, record: VideoHandoffRecord, token: string, confirmation?: ConfirmationRecord): Promise<HandoffResult> {
+  const base = handedOffResult(record, { content_status: "editing" });
+  if (confirmation && input.requestId) {
+    await markConfirmation(ctx.dataDir, confirmation, { used_at: new Date().toISOString(), used_by_request: input.requestId });
+    await saveRequestRecord(ctx.dataDir, { request_id: input.requestId, confirmation_id: confirmation.confirmation_id, content_id: plan.content.id,
+      generation: record.generation, manifest_hash: record.hash, claim_token: token, at: new Date(pullDeps().now()).toISOString(), result: base });
+  }
+  if (input.host === EDITOR_HOST) return { ...base, claim_token: token, note: "交接已提交，剪辑认领在你手上：后续 report / register 带这枚 claim_token，每 10 分钟用 report 报一次进度（心跳）。令牌不要贴进聊天或写进文件。" };
+  // v1 老路的令牌照旧写在交接包里，回执不再重复
+  if (!record.v2) return base;
+  return { ...base, editor_claim_token: token, note: "交接已提交。editor_claim_token 是剪辑认领：只随派工交给接手的那一个 Codex 会话，不写进任何文件；登记回来之前本稿不可改。" };
 }
 
 /** 写两份交接包 → 状态与记录同一次落盘；确认没提交就删包、认领恢复原样、状态不动 */
@@ -257,6 +306,7 @@ async function landHandoff(
   ctx: HandoffContext,
   prepared: Prepared,
   held: Parameters<typeof withClaimRestored>[2] & { heldToken: string },
+  confirmation?: ConfirmationRecord,
 ): Promise<HandoffResult> {
   const { record } = prepared;
   const editorToken = held.heldToken;
@@ -283,9 +333,9 @@ async function landHandoff(
       expectedDraft: { title: plan.content.title, body: plan.content.body, platform: plan.content.platform },
       host: input.host,
       viaHandoff: true,
-      patch: (current) => ({ video: { ...current.video, handoff: record }, ...(record.v2 && current.claim ? { claim: { ...current.claim, pendingHandoff: true } } : {}) }),
+      patch: (current) => ({ video: { ...current.video, handoff: record } }),
     }, ctx.dataDir);
-    if (moved.ok) return handedOffResult(record, { content_status: "editing" });
+    if (moved.ok) return committed(plan, input, ctx, record, editorToken, confirmation);
     failure = handoffFail("handoff_not_committed", `状态没推进：${moved.error ?? "未知原因"}`);
   } catch (err) {
     // 结果不确定：交接包、认领、事务日志原样留着，等重启核定
@@ -293,5 +343,6 @@ async function landHandoff(
     failure = handoffFail(failureCode(err, "handoff_not_committed"), err instanceof Error ? err.message : String(err));
   }
   for (const file of created) await fs.rm(file, { force: true }).catch(() => undefined);
+  await releaseArollLock(ctx.dataDir, record.aroll_sha256, plan.content.id);
   return withClaimRestored(failure, "handoff_not_committed", held);
 }

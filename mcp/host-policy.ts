@@ -12,7 +12,7 @@ import { LOCAL_HOST } from "../src/storage/local-store.js";
 
 export type PolicyDecision = { ok: true } | { ok: false; error: string };
 
-export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/confirm/register/report/status/revoke 与只读查询；写稿与发布在 Claude 会话里做";
+export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/confirm/handoff(带确认)/register/report/status/revoke 与只读查询；写稿与发布在 Claude 会话里做";
 
 /** 工具 → 放行的 action（`*` = 整个工具放行） */
 type Allowlist = Readonly<Record<string, ReadonlySet<string> | "*">>;
@@ -36,8 +36,17 @@ const DENIED_MESSAGE: Readonly<Record<string, string>> = { codex: CODEX_EDITOR_D
 export const ADOPTION_HOST_DENIED = "采纳是创作者自己的动作：只在工作台记，或发布时隐式推导；宿主不能代填 autocrew_content adoption";
 const HOST_DENIED_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = { autocrew_content: new Set(["adoption"]) };
 
+export const CODEX_HANDOFF_NEEDS_CONFIRMATION = "剪辑工位发起交接必须带 confirmation_id：先 autocrew_video match、再 confirm 让创始人在 Mac 弹窗里点确认";
+
+/** codex 的 handoff 只在带着确认记录（或撤回）时放行；记录是否有效由 handoff 自己核 */
+function codexHandoff(args: Record<string, unknown>): PolicyDecision {
+  const confirmed = typeof args.confirmation_id === "string" && args.confirmation_id.trim() !== "";
+  return confirmed || args.revoke === true ? { ok: true } : { ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION };
+}
+
 export function hostPolicy(host: string, tool: string, args: Record<string, unknown>): PolicyDecision {
   const action = typeof args.action === "string" ? args.action.trim() : "";
+  if (host === "codex" && tool === "autocrew_video" && action === "handoff") return codexHandoff(args);
   if (host !== LOCAL_HOST && HOST_DENIED_ACTIONS[tool]?.has(action)) return { ok: false, error: ADOPTION_HOST_DENIED };
   const allowlist = HOST_ALLOWLISTS[host];
   if (!allowlist) return { ok: true };

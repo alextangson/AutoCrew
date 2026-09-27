@@ -108,7 +108,12 @@ export type HandoffCode =
   | "missing_citations"
   | "handoff_rejected"
   | "handoff_not_committed"
-  | "handoff_pending_recovery";
+  | "handoff_pending_recovery"
+  | "confirmation_required"
+  | "confirmation_invalid"
+  | "confirmation_used"
+  | "aroll_in_use"
+  | "project_migration_required";
 
 export type HandoffResult = Record<string, unknown>;
 

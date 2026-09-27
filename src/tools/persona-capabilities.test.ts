@@ -21,7 +21,7 @@ import { registerAutocrewCapabilities } from "../../index.js";
 import { createContext } from "../runtime/context.js";
 import { EventBus } from "../runtime/events.js";
 import { ToolRunner } from "../runtime/tool-runner.js";
-import { ADOPTION_HOST_DENIED, CODEX_EDITOR_DENIED, hostPolicy } from "../../mcp/host-policy.js";
+import { ADOPTION_HOST_DENIED, CODEX_EDITOR_DENIED, CODEX_HANDOFF_NEEDS_CONFIRMATION, hostPolicy } from "../../mcp/host-policy.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -147,7 +147,6 @@ describe("host policy: codex editing station is register/status + read-only", ()
     ["codex", "autocrew_video", "revoke", true],
     ["codex", "autocrew_video", "match", true],
     ["codex", "autocrew_video", "confirm", true],
-    ["codex", "autocrew_video", "handoff", false],
     ["codex", "autocrew_video", "start", false],
     ["codex", "autocrew_video", "review", false],
     ["codex", "autocrew_content", "get", true],
@@ -184,6 +183,12 @@ describe("host policy: codex editing station is register/status + read-only", ()
     }
     expect(hostPolicy("local-user", "autocrew_content", { action: "adoption" }).ok).toBe(true);
     expect(hostPolicy("claude-code", "autocrew_content", { action: "get" }).ok).toBe(true);
+  });
+
+  it("codex 的 handoff 只在带 confirmation_id（或撤回）时放行", () => {
+    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", content_id: "c" })).toEqual({ ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION });
+    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", confirmation_id: "cfm-1" }).ok).toBe(true);
+    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", revoke: true }).ok).toBe(true);
   });
 
   it("action 带空白照样按原词判；缺 action 的受限工具一律拒", () => {

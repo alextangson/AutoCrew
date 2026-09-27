@@ -202,7 +202,8 @@ describe.skipIf(!HAS_FFMPEG)("路径门（交接侧）", () => {
     const project = path.join(fx.root, "20260925 共用目录");
     expect(await handoff({ project_root: project })).toMatchObject({ ok: true });
     const other = (await seedAccepted(fx.dir, "另一条")).id;
-    const res = await callVideo(fx.dir, { action: "handoff", content_id: other, aroll_path: fx.aroll, project_root: project });
+    const otherAroll = await makeMp4(path.join(fx.outside, "other.mp4"), { freq: 660 });
+    const res = await callVideo(fx.dir, { action: "handoff", content_id: other, aroll_path: otherAroll, project_root: project });
     expect(res).toMatchObject({ ok: false, code: "project_owned_by_other", owner: contentId });
     expect((await getContent(other, fx.dir))?.status).toBe("draft_ready");
     expect(await fs.readdir(path.join(project, "01-script"))).toEqual(["autocrew-handoff-g1.md"]);

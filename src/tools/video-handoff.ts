@@ -65,7 +65,9 @@ export async function executeVideoHandoff(action: HandoffAction, params: Record<
     if (action === "citations") {
       const allowed = await gate("writer")(); if ("denied" in allowed) return allowed.denied;
       const content = await getContent(contentId, dataDir); if (!content) return videoFail("稿件不存在");
-      await saveCoverage(content, params.coverage as CitationCoverage, dataDir); return { ok: true, ...allowed.grant };
+      await saveCoverage(content, params.coverage as CitationCoverage, dataDir);
+      // §12.4-A：出处交齐后写稿侧显式放手，Codex 认稿自接才不会被一个闲着的写稿认领挡成 claim_held
+      return { ok: true, ...allowed.grant, next_action: { tool: "autocrew_desk", params: { action: "release", content_id: contentId }, message: "出处已交齐：带上 claim_token 调 autocrew_desk release 释放写稿认领，录好的原片由 Codex 认稿后自接。还要改稿就先别释放。" } };
     }
     if (action === "revoke" || (action === "handoff" && (params.revoke === true || params.revoke === "true"))) {
       const manifestHash = str(params.manifest_hash) || undefined;
@@ -73,9 +75,11 @@ export async function executeVideoHandoff(action: HandoffAction, params: Record<
     }
     if (action === "handoff") {
       const arollPath = str(params.aroll_path);
-      if (!arollPath) return handoffFail("invalid_params", "handoff 需要 aroll_path（口播原片的绝对路径）");
+      if (!arollPath && !str(params.confirmation_id)) return handoffFail("invalid_params", "handoff 需要 aroll_path（口播原片的绝对路径）");
       const session = str(params._session) || undefined;
-      const input = { contentId, arollPath, projectRoot: str(params.project_root) || undefined, notes: str(params.notes), host, session, claimToken };
+      const confirmationId = str(params.confirmation_id) || undefined;
+      const input = { contentId, arollPath, projectRoot: str(params.project_root) || undefined, notes: str(params.notes), host, session, claimToken,
+        ...(confirmationId ? { confirmationId, requestId: str(params.request_id) } : {}) };
       return await handoffVideo(input, { dataDir, gate: gate("writer") });
     }
     const parsed = parseRegisterInput(params, contentId, host);

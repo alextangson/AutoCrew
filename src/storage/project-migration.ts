@@ -239,7 +239,8 @@ export async function applyProjectMigration(plan: ProjectMigrationPlan, resume =
           const record = { ...old, ...bundle.manifest, hash: manifestHash(bundle.manifest), project_root: root, handoff_path: handoffPath, project_handoff_path: handoffPath,
             aroll_path: path.join(root, `02-aroll/${old.aroll_sha256}${path.extname(old.aroll_path).toLowerCase()}`), supersedes: { hash: old.hash, generation: old.generation, reason: "storage-relocation" as const } };
           content.video = { ...content.video, handoff: record, revoked: [...(content.video?.revoked ?? []), old.hash] };
-          if (content.claim) content.claim = { ...content.claim, token: `clm-${Date.now()}-${randomUUID()}`, machine: os.hostname(), bindingRevision: p.binding.binding_revision, pendingHandoff: true };
+          // 旧令牌随迁移作废；新令牌不交给任何人（P6 §12.4-D 取消「第一个来的会话兑换」），租约到期后由剪辑工位重新认领
+          if (content.claim) content.claim = { ...content.claim, token: `clm-${Date.now()}-${randomUUID()}`, machine: os.hostname(), bindingRevision: p.binding.binding_revision };
           const approvals = await json<Record<string, unknown>>(path.join(root, "00-project/autocrew/approvals.json"));
           const stored = normalizeApprovals(approvals);
           if (stored) {

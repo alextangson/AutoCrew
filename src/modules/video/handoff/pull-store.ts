@@ -89,8 +89,8 @@ export async function lastRevokeAt(dataDir: string): Promise<string | null> {
   return (await readRecord<{ at: string }>(pullDir(dataDir, "revoke-epoch.json")))?.at ?? null;
 }
 
-export async function bumpRevokeEpoch(dataDir: string): Promise<void> {
-  await writeRecord(pullDir(dataDir, "revoke-epoch.json"), { at: new Date().toISOString() });
+export async function bumpRevokeEpoch(dataDir: string, at: string): Promise<void> {
+  await writeRecord(pullDir(dataDir, "revoke-epoch.json"), { at });
 }
 
 // ---------------------------------------------------------------------------

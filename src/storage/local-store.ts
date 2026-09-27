@@ -235,7 +235,8 @@ export type ClaimEmployee = "writer" | "cover" | "editor";
 export interface ContentClaim {
   machine?: string;
   bindingRevision?: number;
-  pendingHandoff?: boolean;
+  /** 交接签发的剪辑认领：`report` 心跳续租 48 小时，接管要创始人弹窗确认（P6 §12.4-D） */
+  heartbeat?: boolean;
   employee: ClaimEmployee;
   /** 认领方的宿主身份（§4.1 命名 token 的主体：codex / claude-code / dsh / local-user） */
   host: string;

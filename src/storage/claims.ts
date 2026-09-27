@@ -39,6 +39,12 @@ export const CLAIM_LEASE_MS = 30 * 60_000;
  */
 export const CLAIM_IDLE_TAKEOVER_MS = 10 * 60_000;
 
+/**
+ * 交接签发的剪辑认领（P6 §12.4-D）：持有者靠 `report` 心跳续租，48 小时没心跳才过期（进 stale）。
+ * 不走 10 分钟闲置接管；接管必须创始人在弹窗里确认，旧令牌随即作废。
+ */
+export const EDITING_LEASE_MS = 48 * 60 * 60_000;
+
 /** 持有会话闲置了多久（没有 lastWriteAt 的老认领按认领时刻算） */
 export function claimIdleMs(claim: ContentClaim, now: number = Date.now()): number {
   const last = Date.parse(claim.lastWriteAt ?? claim.at);
@@ -62,8 +68,8 @@ function newClaimToken(): string {
   return `clm-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function leaseUntil(fromMs: number): string {
-  return new Date(fromMs + CLAIM_LEASE_MS).toISOString();
+function leaseUntil(fromMs: number, heartbeat = false): string {
+  return new Date(fromMs + (heartbeat ? EDITING_LEASE_MS : CLAIM_LEASE_MS)).toISOString();
 }
 
 /** 还活着的认领；过期 = 等于没人认领（判定只有这一处，别处不许自己算） */
@@ -134,6 +140,8 @@ interface ClaimWrite {
   renew: boolean;
   /** 非常规换人的账；缺省只在「租约过期、换了宿主」时自动记一条 */
   handoff?: Omit<ContentHandoff, "at">;
+  /** 交接签发的剪辑认领（心跳续租 48 小时）；续租时沿用原认领的这一项 */
+  heartbeat?: boolean;
 }
 
 /**
@@ -161,6 +169,7 @@ async function writeClaim(
 ): Promise<ContentClaim> {
   const current = activeClaim(content, now);
   const kept = write.renew ? current : null;
+  const heartbeat = write.heartbeat ?? Boolean(kept?.heartbeat);
   const at = new Date(now).toISOString();
   const project = resolveContentProject(content.id, dataDir);
   const claim: ContentClaim = withSession({
@@ -169,8 +178,9 @@ async function writeClaim(
     host: write.host,
     token: kept ? kept.token : newClaimToken(),
     at: kept ? kept.at : at,
-    leaseUntil: leaseUntil(now),
+    leaseUntil: leaseUntil(now, heartbeat),
     lastWriteAt: at,
+    ...(heartbeat ? { heartbeat: true } : {}),
   });
   const handoff = write.handoff ?? expiredTakeover(content, current, write.host);
   const handoffs = handoff ? withHandoff(content, withSession({ ...handoff, at })) : undefined;
@@ -191,6 +201,8 @@ export interface ClaimOptions {
   token?: string;
   /** 同宿主另一个会话明说要接手：发新令牌并记一条交接，旧令牌随即作废 */
   takeover?: boolean;
+  /** 剪辑认领的接管：创始人已在本机弹窗里点了确认（只由 desk 工具在真弹窗之后传） */
+  founderConfirmed?: boolean;
 }
 
 /**
@@ -223,14 +235,16 @@ async function claimContentLocked(contentId: string, employee: ClaimEmployee, ho
   const current = activeClaim(content, now);
   if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
   if (current.host !== host) return held(current, host, now);
-  // A v2 handoff reserves the editor slot. Only the first authenticated editor session redeems it.
-  if (current.pendingHandoff && host === "codex" && current.machine === os.hostname() && callerSession() && callerSession() !== "unknown") {
-    return { ok: true, claim: await writeClaim(content, { employee: "editor", host, renew: false }, dataDir, now) };
-  }
   if (opts.token && opts.token === current.token) {
     return { ok: true, claim: await writeClaim(content, { employee, host, renew: true }, dataDir, now) };
   }
   if (!opts.takeover) return held(current, host, now);
+  if (current.heartbeat) {
+    // 剪辑认领不看闲置：只有创始人在弹窗里点了确认才换人，旧令牌当场作废
+    if (!opts.founderConfirmed) return held(current, host, now);
+    const handoff = { from: current.host, to: host, by: host, note: "接管剪辑认领（创始人弹窗确认）" };
+    return { ok: true, claim: await writeClaim(content, { employee, host, renew: false, handoff, heartbeat: true }, dataDir, now) };
+  }
   // 接管看的是持有会话是否真闲置，不是 flag：10 分钟内还在写就照样拒
   if (claimIdleMs(current, now) < CLAIM_IDLE_TAKEOVER_MS) return held(current, host, now);
   const handoff = { from: current.host, to: host, by: host, note: "接管（同宿主另一会话）" };
@@ -265,6 +279,8 @@ export interface TransferInput {
   toEmployee: ClaimEmployee;
   toHost: string;
   note?: string;
+  /** 交接签发的剪辑认领：心跳续租 48 小时，不走闲置接管 */
+  heartbeat?: boolean;
 }
 
 /**
@@ -288,7 +304,7 @@ export async function transferClaim(contentId: string, input: TransferInput, dat
     note: input.note ? `${input.note}（${route}）` : `认领转交（${route}）`,
     ...(gate.override ? { override: true } : {}),
   };
-  const write = { employee: input.toEmployee, host: input.toHost, renew: false, handoff };
+  const write = { employee: input.toEmployee, host: input.toHost, renew: false, handoff, ...(input.heartbeat ? { heartbeat: true } : {}) };
   return { ok: true, claim: await writeClaim(content, write, dataDir, now) };
 }
 

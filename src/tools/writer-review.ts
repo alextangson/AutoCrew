@@ -15,6 +15,7 @@
  * - **不留悬空的中间态**：进程重启后盘上那个 `reviewing` 由下一次 `submit_status` / `submit` 重跑
  *   （稿早就落盘了，重跑只是再审一次），而不是让创始人对着一张永远「审稿中」的卡等。
  */
+import { isVideoPlatform } from "../storage/stage-guard.js";
 import { createHash } from "node:crypto";
 import { loadProfile } from "../modules/profile/creator-profile.js";
 import { reviewAudienceStay, type AudienceReviewResult } from "../modules/review/audience-review.js";
@@ -240,6 +241,9 @@ async function applyOutcome(job: ReviewJob, turn: ReviewTurn, dataDir: string): 
  *   审稿线没配/坏了 → accepted_unreviewed；无 blocker → accepted；
  *   有 blocker 且轮数 < 2 → review_required（稿件退 revision）；轮数 = 2 → accepted_with_issues。
  */
+/** P6 §12.4-A：视频稿审到 accepted 后当轮备料并放手，Codex 认稿自接才不会被闲着的写稿认领挡住 */
+const HANDOFF_PREP = "视频稿：创作者认可这一版后，当轮用 autocrew_video citations 交出处，再带 claim_token 调 autocrew_desk release 释放写稿认领；录好的原片由 Codex 认稿、弹窗确认后自接。";
+
 export async function settleReview(
   job: ReviewJob,
   pack: ReadyPack,
@@ -272,6 +276,7 @@ export async function settleReview(
       },
       human_next_step: "请审阅正文是否符合你的意图；AI 审稿未发现阻断项，不等于你已认可或批准发布。",
       note: "正文已保存，AI 审稿未发现阻断项；仍需呈现建议和待核对事项，等待创作者实际反馈。",
+      ...(isVideoPlatform(pack.context.platform) ? { handoff_prep: HANDOFF_PREP } : {}),
     }, dataDir);
   }
   if (pack.reviewRounds < MAX_REVIEW_ROUNDS) return { ...(await requireRevision(job, pack, turn, dataDir)), audience_review: audience };

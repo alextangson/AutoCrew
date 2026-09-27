@@ -12,6 +12,8 @@ import { transferClaim } from "../../../storage/claims.js";
 import { CONTENT_STATUS_LABEL, getContent, transitionStatus, updateContent, withHandoff } from "../../../storage/local-store.js";
 import type { Grant, HandoffContext } from "./handoff.js";
 import { serializeVideoLine } from "./lock.js";
+import { pullDeps } from "./pull-deps.js";
+import { bumpRevokeEpoch, releaseArollLock, withGlobalHandoffLock } from "./pull-store.js";
 import { handoffFail, type HandoffResult, type VideoHandoffRecord } from "./types.js";
 
 export interface RevokeInput {
@@ -56,7 +58,7 @@ async function returnClaim(record: VideoHandoffRecord, input: RevokeInput, grant
 }
 
 export async function revokeHandoff(input: RevokeInput, ctx: HandoffContext): Promise<HandoffResult> {
-  return serializeVideoLine(input.contentId, () => revokeLocked(input, ctx));
+  return withGlobalHandoffLock(() => serializeVideoLine(input.contentId, () => revokeLocked(input, ctx)));
 }
 
 async function revokeLocked(input: RevokeInput, ctx: HandoffContext): Promise<HandoffResult> {
@@ -85,5 +87,8 @@ async function revokeLocked(input: RevokeInput, ctx: HandoffContext): Promise<Ha
     patch: (current) => ({ video: { ...current.video, revoked: [...(current.video?.revoked ?? []), record.hash] } }),
   }, ctx.dataDir);
   if (!moved.ok) return { ...handoffFail("handoff_failed", `撤回没落盘：${moved.error ?? "未知原因"}`), ...gate.grant };
+  // 之前签发的认稿回执一律作废；原片锁随撤回释放（认错稿撤回后，这段原片可以交给对的那条）
+  await bumpRevokeEpoch(ctx.dataDir, new Date(pullDeps().now()).toISOString());
+  await releaseArollLock(ctx.dataDir, record.aroll_sha256, content.id);
   return revokedResult(record, "draft_ready", await returnClaim(record, input, gate.grant, ctx.dataDir));
 }
