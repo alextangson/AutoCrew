@@ -16,10 +16,14 @@
 
  封面只做 3:4 和 4:3 两种尺寸，每个尺寸默认出 3 版（创始人或工作区制作约定另给数目时照改），文件放 `05-cover/vNN/3x4.png`、`05-cover/vNN/4x3.png`。用 Codex 自带出图，不调 AutoCrew 的出图接口。每出一批用 report 登记，role 为 `cover:3:4` / `cover:4:3`，version 为 NN。创始人在剪辑看板每个尺寸选一张通过；被打回就按原话出下一批 vNN+1，旧版保留。
 
- gate3 与 gate4 由创始人在工作台“剪辑看板”审看并批准或打回；从服务 status 读取当前 approvals，再用 current manifest_hash、claim_token、final_path、covers（3:4、4:3）和 approvals 调 `autocrew_video register`。登记校验产物哈希与服务批准记录；不从宿主自写 user_message 产生审批。重复成功请求可安全重放。
+成片在剪映里审：粗剪做成剪映草稿，创始人在剪映里改、审、导出（落在剪映自己的导出目录）。用 report 报这个导出文件，role 为 `final-cut-candidate`，带 jianying_draft（草稿名）；项目外只认创始人在设置里登记的剪映导出目录，没登记回 jianying_dir_unset，照原话转告创始人去设置，别换路径。创始人在看板点「通过成片」后，把这个文件挪进 `07-delivery/`（挪，不复制；sha256 不变），再用同一 sha256 报一次新路径，然后出封面。通过后又重新导出会让指纹变掉，登记回 approval_mismatch，要创始人重新通过。
+
+素材只写路径：用 `autocrew_asset add{content_id, filename, asset_type, source_path}` 登记。资料库里的文件原地记相对路径；库外文件（比如 Downloads 里的空镜）会被挪进项目，不再上传或复制。
+
+ gate3 与 gate4 由创始人在工作台“剪辑看板”审看并批准或打回；从服务 status 读取当前 approvals，再用 current manifest_hash、claim_token、final_path（`07-delivery/` 里那份）、covers（3:4、4:3）和 approvals 调 `autocrew_video register`。登记在项目里原地核字节、不复制，校验产物哈希与服务批准记录；不从宿主自写 user_message 产生审批。重复成功请求可安全重放。
 
 活动正本位置以服务返回的 project_root 为准。当前用户采用本地资料库 `/Users/jiaxintang/AutoCrew资料库`，视频在本地完成后按 video-project-lifecycle 归档到 `/Volumes/MacMiniData/01_Lawrence/Account/YYYY/<EnglishMonth>/<project-folder>`。媒体、工程导出、封面与交付写入同一项目 02–07 目录，软件数据库与代理缓存留本机。先逐文件校验及验证原编辑工程可恢复，再按明确项目的归档清单清理；保留本机业务记录、归档位置与恢复说明，不手改绑定、不删仍被服务或其他项目引用的文件。服务尚不能解析归档位置的受管文件先保留本地，不能让 AutoCrew 的记录指向已删除路径。
 
 遇到 project_relocated、stale_handoff、approval_mismatch、aroll_in_use、confirmation_*、path_*、claim_held 或活动资料库不可用，报告实际原因并停下，重新查询有效绑定或由创始人处理受影响的审批/执行权。当前本地工作不依赖 NAS 在线；NAS 不可用只暂停归档或依赖该盘的文件操作。不得改哈希、手改 approved、另建根目录或抢占残留锁来过门。
 
-服务只向 Codex 开放 match/confirm/handoff（必须带 confirmation_id）/register/status/revoke/report、只读 content get、desk inbox/claim/release 与 status；不开放写稿、审稿或发布。登记成功后回写作侧准备发布包；“报告完成”和文件存在都不代表已发布。
+服务只向 Codex 开放 match/confirm/handoff（必须带 confirmation_id）/register/status/revoke/report、asset add、只读 content get、desk inbox/claim/release 与 status；不开放写稿、审稿或发布。登记成功后回写作侧准备发布包；“报告完成”和文件存在都不代表已发布。
