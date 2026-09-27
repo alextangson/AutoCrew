@@ -523,6 +523,8 @@ describe("MCP content storage cannot bypass writer submission", () => {
     });
     expect(result).toMatchObject({ ok: true, saved: true, quality_status: "unreviewed", needs_attention: true, writing_source: { kind: "manual_import" } });
     expect("content" in result && result.content).toMatchObject({ body: "用户亲写的原稿", status: "topic_saved" });
+    const id = (result as { content: { id: string } }).content.id;
+    expect(await getContent(id, testDir)).toMatchObject({ writingSource: { kind: "manual_import", reason: "用户提供了已有成稿并要求整理进平台变体" } });
   });
 
   it("manual_import 导入把来源落在稿件上，get/list 都看得到（§13.4-B）", async () => {
@@ -610,5 +612,29 @@ describe("「剪辑中」只能经交接进入（§13.4-C）", () => {
     if (via._host) expect(saved).toMatchObject({ ok: true, content: { status: "draft_ready" } });
     else expect(saved).toMatchObject({ ok: false, code: "editing_requires_handoff" });
     expect((await listContents(testDir)).filter((x) => x.status === "editing")).toEqual([]);
+  });
+
+  it.each([{}, { _host: "claude" }])("被阶段门拒绝的流转不新占也不续约认领（%o）", async (via) => {
+    const c = await seedApproved();
+    const base = { _dataDir: testDir, ...via };
+    const moved = await executeContentSave({ ...base, action: "transition", id: c.id, target_status: "editing", force: true });
+    expect(moved).toMatchObject({ ok: false, code: "editing_requires_handoff" });
+    expect(moved).not.toHaveProperty("claim_token");
+    const updated = await executeContentSave({ ...base, action: "update", id: c.id, title: "新标题", status: "editing" });
+    expect(updated).toMatchObject({ ok: false, code: "editing_requires_handoff" });
+    const after = (await getContent(c.id, testDir))!;
+    expect(after.claim).toBeUndefined();
+    expect(after.title).toBe("口播稿");
+  });
+
+  it("已有认领时被拒的流转不改认领（不续约）", async () => {
+    const c = await seedApproved();
+    const first = await executeContentSave({ _dataDir: testDir, _host: "claude", action: "update", id: c.id, title: "认领一下" });
+    const before = (await getContent(c.id, testDir))!.claim;
+    expect(before).toBeDefined();
+    await new Promise((r) => setTimeout(r, 5));
+    const token = (first as { claim_token?: string }).claim_token;
+    await executeContentSave({ _dataDir: testDir, _host: "claude", action: "transition", id: c.id, target_status: "editing", claim_token: token });
+    expect((await getContent(c.id, testDir))!.claim).toEqual(before);
   });
 });

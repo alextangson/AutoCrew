@@ -7,6 +7,7 @@ import {
   getContent,
   updateContent,
   transitionStatus,
+  transitionPreflight,
   createPlatformVariant,
   listSiblings,
   getAllowedTransitions,
@@ -131,6 +132,13 @@ function gateContentWrite(
   return gateClaimWrite(id, { host, token: token || undefined }, dataDir);
 }
 
+function importSource(params: Record<string, unknown>) {
+  return { kind: "manual_import" as const, importedAt: new Date().toISOString(), reason: String(params.import_reason).trim() };
+}
+function rejectedTransition(pre: { error?: string; blocked?: boolean; code?: string }) {
+  return { ok: false, error: pre.error, ...(pre.blocked ? { blocked: true } : {}), ...(pre.code ? { code: pre.code } : {}) };
+}
+
 export async function executeContentSave(
   params: Record<string, unknown>,
   deps?: {
@@ -188,6 +196,11 @@ export async function executeContentSave(
       error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
       next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
     };
+    // 带 status 的 update 先预检流转：被拒就原样返回，认领门和正文都不动
+    if (params.status) {
+      const pre = await transitionPreflight(id, normalizeLegacyStatus(params.status as string), undefined, dataDir);
+      if (!pre.ok) return rejectedTransition(pre);
+    }
     const gate = await gateContentWrite(params, id, dataDir);
     if ("denied" in gate) return gate.denied;
     const { grant } = gate;
@@ -287,6 +300,9 @@ export async function executeContentSave(
     const targetStatus = params.target_status as string;
     if (!id) return { ok: false, error: "id is required for transition" };
     if (!targetStatus) return { ok: false, error: "target_status is required for transition" };
+    // 状态机和阶段门先于认领门：被拒的流转不新占、不续约认领
+    const pre = await transitionPreflight(id, normalizeLegacyStatus(targetStatus), { force: params.force as boolean }, dataDir);
+    if (!pre.ok) return rejectedTransition(pre);
     const gate = await gateContentWrite(params, id, dataDir);
     if ("denied" in gate) return gate.denied;
     // from_status：调用方手里那一版的状态。旧标签页/双击推进时后端据此人话拒绝，不硬盖
@@ -333,7 +349,7 @@ export async function executeContentSave(
     const result = await createPlatformVariant(
       topicId,
       platform,
-      { title: params.title as string, body: params.body as string },
+      { title: params.title as string, body: params.body as string, ...(hasBody && manualImport ? { writingSource: importSource(params) } : {}) },
       dataDir,
     );
     return result.ok && hasBody && manualImport ? { ...result, ...importReceipt } : result;
@@ -382,7 +398,7 @@ export async function executeContentSave(
     status: normalizeLegacyStatus(rawStatus),
     tags: (params.tags as string[]) || [],
     hashtags: (params.hashtags as string[]) || [],
-    ...(manualImport ? { writingSource: { kind: "manual_import" as const, importedAt: new Date().toISOString(), reason: (params.import_reason as string).trim() } } : {}),
+    ...(manualImport ? { writingSource: importSource(params) } : {}),
   }, dataDir);
 
   return { ok: true, content, ...(manualImport ? importReceipt : {}) };

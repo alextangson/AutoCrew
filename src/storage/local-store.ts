@@ -1451,6 +1451,29 @@ export async function stageBlockReason(
  * now owns the revision-edit cycle.  The param is kept because review.ts:283 passes it
  * and removing it would be a breaking API change with no immediate gain.
  */
+/**
+ * 只读预检：这次流转会不会被状态机或阶段门拒绝。写口在过认领门之前先跑它，
+ * 被拒的流转就不会留下新占或续约的认领（P6 §13.4-D 同一原则）。锁内的正式检查照旧。
+ */
+export async function transitionPreflight(
+  contentId: string,
+  targetStatus: ContentStatus,
+  opts?: Pick<TransitionOptions, "force" | "viaHandoff">,
+  dataDir?: string,
+): Promise<Pick<TransitionResult, "ok" | "error" | "blocked" | "code">> {
+  const content = isContentId(contentId) ? await getContent(contentId, dataDir) : null;
+  if (!content) return { ok: false, error: `Content ${contentId} not found` };
+  const currentStatus = normalizeLegacyStatus(content.status);
+  if (currentStatus === targetStatus) return { ok: true };
+  const allowed = STATE_TRANSITIONS[currentStatus];
+  if (!opts?.force && (!allowed || !allowed.includes(targetStatus))) {
+    return { ok: false, error: `Invalid transition: ${currentStatus} → ${targetStatus}. Allowed: ${(allowed || []).join(", ") || "none"}` };
+  }
+  const blocked = await stageGuardError(content, currentStatus, targetStatus, () => coverApproved(contentId, dataDir), { viaHandoff: opts?.viaHandoff });
+  if (blocked) return { ok: false, blocked: true, error: blocked, ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
+  return { ok: true };
+}
+
 export async function transitionStatus(
   contentId: string,
   targetStatus: ContentStatus,
@@ -1578,7 +1601,7 @@ export async function describeAllowedTransitions(
 export async function createPlatformVariant(
   topicId: string,
   platform: string,
-  opts?: { title?: string; body?: string },
+  opts?: { title?: string; body?: string; writingSource?: Content["writingSource"] },
   dataDir?: string,
 ): Promise<{ ok: boolean; content?: Content; error?: string }> {
   const topic = await getTopic(topicId, dataDir);
@@ -1605,6 +1628,7 @@ export async function createPlatformVariant(
       topicId,
       status: "topic_saved",
       tags: [...topic.tags],
+      ...(opts?.writingSource ? { writingSource: opts.writingSource } : {}),
     },
     dataDir,
   );
