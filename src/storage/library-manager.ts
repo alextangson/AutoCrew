@@ -24,6 +24,12 @@ const DATA_FILES = new Set(["STYLE.md", "cover-style.json", "creator-profile.jso
   "events.jsonl", "hypotheses.jsonl", "outcomes.jsonl", "radar-rejects.json", "radar-sources.json", "recent-actions.json",
   "recent-turns.json", "topic-radar.json", "platform-items.json", "hooks.json"]);
 
+/**
+ * 剪辑工程（剪映等）是其他软件的私有格式，部分 draft_info.json 还是加密的：按 storage-layout
+ * 约定由该软件自己重定位，迁移只做校验复制、不改写里面的路径。
+ */
+const EDITOR_PROJECT = /(^|[/\\])04-edit[/\\]/;
+
 type Operation = "create" | "open" | "migrate";
 export interface StorageRequest { action: Operation; target: string }
 export interface StoragePlan extends StorageRequest {
@@ -207,10 +213,12 @@ export async function applyPendingStorage(onProgress?: (copied: number, total: n
         await fs.copyFile(item.source, dest, fs.constants.COPYFILE_EXCL);
         if (item.config) await fs.chmod(dest, 0o600);
         if (await digestFile(dest) !== before || await digestFile(item.source) !== before) throw new Error(`文件校验失败或源文件仍在变化：${item.relative}`);
-        if (!item.config && /\.jsonl?$/.test(dest)) {
+        if (!item.config && /\.jsonl?$/.test(dest) && !EDITOR_PROJECT.test(item.relative)) {
           const text = await fs.readFile(dest, "utf8");
           const remap = (s: string): string => {
-            const original = JSON.parse(s);
+            let original: unknown;
+            // 扩展名是 .json 却不是 JSON（加密、截断）：原字节已校验复制，不改写
+            try { original = JSON.parse(s); } catch { return s; }
             const mapped = relocate(original, plan.source, target, !old);
             // Relocating a library must not reformat immutable briefs, versions
             // or receipts that contain no affected path. Keep their exact bytes.

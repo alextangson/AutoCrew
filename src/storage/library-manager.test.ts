@@ -156,6 +156,21 @@ describe("portable libraries", () => {
     expect(readLibraryLocation()).toBeNull();
   });
 
+  it("copies editor projects and non-JSON .json files byte-for-byte instead of failing the move", async () => {
+    // 2026-09-27：剪映快照 draft_info.json 是加密内容，迁移逐个 JSON.parse 直接中止
+    const draft = path.join(local, "projects", "p1", "04-edit", "project", "snapshots", "g1", "draft_info.json");
+    const editorMeta = path.join(local, "projects", "p1", "04-edit", "project", "draft_meta_info.json");
+    const broken = path.join(local, "projects", "p1", "03-broll", "ledger.json");
+    await put(draft, "c7eJtT7Geh-encrypted-bytes");
+    await put(editorMeta, JSON.stringify({ draft_fold_path: path.join(local, "projects", "p1", "04-edit") }));
+    await put(broken, "{truncated");
+    await queueStorage({ action: "migrate", target }); await applyPendingStorage();
+    const moved = (file: string) => path.join(target, "workspaces", "default", path.relative(local, file));
+    for (const file of [draft, editorMeta, broken]) {
+      expect(await fs.readFile(moved(file), "utf8")).toBe(await fs.readFile(file, "utf8"));
+    }
+  });
+
   it("migrates the current library back to local storage without reverting new work or reformatting immutable files", async () => {
     await put(path.join(local, "publish.json"), { wechatMp: { wechatAppSecret: "fixture-private" } });
     const c = await saveContent({ title: "Before NAS", body: "original", status: "drafting", tags: [] }, local);
