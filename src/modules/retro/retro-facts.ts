@@ -1,3 +1,4 @@
+import { contentFile } from "../../storage/content-project.js";
 /**
  * 复盘事实层（spec §5.2/§5.4）——**证据由代码选择与聚合，模型只读摘要**。
  *
@@ -194,7 +195,7 @@ async function videoActiveIds(ids: string[], dataDir?: string): Promise<string[]
   const hits = await Promise.all(
     ids.map(async (id) => {
       try {
-        await fs.access(path.join(base, "contents", id, "video", "state.json"));
+        await fs.access(contentFile(id, base, "video", "state.json"));
         return id;
       } catch {
         return null;

@@ -1,161 +1,102 @@
 ---
 name: publish-content
-description: |
-  发布已审核的视频内容。用户说“发布”“发到小红书/抖音/视频号/B站”“帮我同步发”时启用。
-  浏览器执行统一使用 ego lite；支持视频号、小红书、抖音、Bilibili，并保留公众号草稿与手工复制路径。
+description: >
+  用 ego lite 发布已审核的视频到抖音、视频号、小红书和 B 站，匹配当期活动、安排定时发布，
+  并在作品公开后回填已授权的活动收集表、保存回执。用于发布、排期、活动参与和发布后跟进；
+  普通制作或封面审核不自动授权投稿。
 ---
 
-# Publish Content
+# 视频发布与活动回填
 
-AutoCrew 是内容、素材、阶段门和结果状态的事实源；ego lite 只负责登录态复用、上传、填表和发布后页面核验。
+同一条视频的四个平台共享已批准成片，各自保留标题、文案、封面、活动、排期和结果。
+所有网页访问、搜索、上传、表单回填和核验统一用 `ego-browser`（ego lite）。先读该 Skill
+及用户的 managed skill overrides，按它当前提供的 API 操作；不调用旧版浏览器方法。
 
-## 支持范围
+## 本用户的发布默认值
 
-| 平台 | AutoCrew 值 | 浏览器方式 |
-|---|---|---|
-| 视频号 | `wechat_video` | ego lite |
-| 小红书 | `xiaohongshu` | ego lite |
-| 抖音 | `douyin` | ego lite |
-| Bilibili | `bilibili` | ego lite |
-| 微信公众号 | `wechat_mp` | `wechat_mp_draft` 或 clipboard，不走本 Skill 的视频流 |
+- 用户于 2026-09-25 明确提供：四个平台统一昵称为 **哈姆雷鹿**。将其作为目标昵称和表单
+  默认资料，不重复询问已知昵称，不自行改成近似字，也不执行账号改名。发布时仍核对真实账号
+  与已有公开主页/稳定 ID；页面昵称不同则核对差异，不能仅凭相近昵称认定账户。
+- 作品/笔记 ID 由 agent 在公开后通过 ego lite 从作品管理、公开页面或规范分享链接自行取得，
+  核对账号和视频身份后填写；不要默认让用户找 ID。定时/审核中只等待，不把提前拿到 ID 当公开。
+- 活动子话题由 agent 读取本条视频内容后自动选择最符合核心内容的一个，并在发布计划记录理由，
+  不随机选择、不把全部子话题堆上，也不把常规话题选择变成新的人工审核节点。
 
-## 不可突破的边界
+## 稿件与文件来源
 
-1. 浏览器操作前必须加载并遵守 `ego-browser` Skill；不要改用内置 Browser、Chrome 或临时 Playwright。
-2. `ego_lite_prepare` 只生成发布包，不代表已经上传，更不代表已经发布。
-3. 上传、填文案、选封面可以自动执行；点击平台最终“发布/投稿”按钮前必须得到用户针对本次发布的明确确认。
-4. 登录、扫码、验证码、身份确认或平台风控出现时，调用 `handOffTaskSpace(taskId)` 把控制权交给用户。用户明确说“继续”后才能 `takeOverTaskSpace(taskId)`。
-5. 只有看到平台成功页、作品管理中的新作品，或可访问的作品 URL，才能调用 `confirm_published`。按钮点击成功、上传进度 100%、进入审核页面都不是发布成功证据。
-6. 不输出或记录 Cookie、二维码内容、验证码、账号标识等敏感信息。
-7. 不静默截断标题或文案；平台拒绝时回到 AutoCrew 修改发布件。
+- **AutoCrew 稿件**：用 `autocrew_content` 读取当前版本，用 `pre-publish` 的产品检查；
+  `autocrew_publish` 的 `ego_lite_prepare` 只准备发布包。保留返回的 `contentId`、平台、
+  标题、文案、`videoPath`、`coverPath`、排期；prepare 不代表上传或发布成功。
+- **个人视频项目**：从 `personal-ip-video-loop` / `video-project-lifecycle` 交付时，读取
+  项目现存的成片与双尺寸封面审批、文件清单和哈希，引用 `07-delivery/` 与已登记封面。
+  不为发布复制成片，也不强制新建 AutoCrew 稿件；保存可恢复的本地发布记录即可。
+- 恢复同一任务时沿用原来源，不能因 MCP 断连改用未审核本地文件。AutoCrew 不可用则报告
+  连接缺口；已保存且可验证的原发布包可继续获授权的浏览器工作，产品回写记为待同步。
+- 缺少成片/封面批准、真实文件或明确目标账号时，只补缺项；封面通过不等于发布授权。
 
-## 标准流程
+| 平台值 | 网页入口 |
+|---|---|
+| `douyin` | https://creator.douyin.com/creator-micro/content/upload |
+| `wechat_video` | https://channels.weixin.qq.com/platform/post/create |
+| `xiaohongshu` | https://creator.xiaohongshu.com/publish/publish |
+| `bilibili` | https://member.bilibili.com/platform/upload/video/frame |
 
-### 0. 找到目标稿件
+公众号沿用原 `wechat_mp_draft` / clipboard 路径，不套用本视频流程。
 
-使用 `autocrew_content` 获取用户指定稿件。只接受目标平台为上述四个视频平台的稿件。
+## 发布前：活动、排期和一次汇总
 
-确认它至少具备：
+1. 读取完整脚本/成片摘要，按 [campaigns-and-followup.md](references/campaigns-and-followup.md)
+   核查四个平台当前官方活动。每次核对有效期、题材、准确话题、官方账号、报名入口、
+   首发/独家要求和发布后收集表；不要把上月话题或搜索摘要当当期规则。
+2. 各平台独立准备发布件，保存到同名项目 `06-publish/`。活动必须符合实际内容：不伪造
+   第一人称体验，不为活动改写视频中没有的故事。无合适活动时正常发布，不强行凑话题。
+3. 从 [publish-plan.example.json](references/publish-plan.example.json) 按实际任务建立
+   `06-publish/publish-plan.json`，替换示例、删除不用的项。已有记录就地更新，不覆盖回执。
+   每个平台独立一个条目；若关联 AutoCrew，使用自己的 `content_id`，不能四平台共用一个。
+4. 用户给了排期就记录带时区的具体时间；没给时间则不猜，也不默认立即发布。检查计划
+   公开时间是否在活动投稿期内，另记收集表截止期；未知截止时刻不能凭空补成 23:59。
+5. 同一批四平台发布使用一个 ego task space，保存实际 `spaceId` 和页面 label，按 ID 恢复；
+   不每个平台另建空间。发布包中的历史 `taskSpaceName` 仅作关联信息，不改变一任务一空间。
+6. 核对登录账号。扫码、验证码或用户接管时用当前 `task.handOff()`，用户明确恢复后才
+   `takeOverTaskSpace(id)`。不记录 Cookie、二维码或验证码。公开账号名/主页只在匹配与
+   表单必需时保存在项目私有记录，不扩散联系方式等私人信息。
+7. 用当前 `page.snapshot()` 定位，`page.setInputFiles()` 或 `waitForFileChooser()` 上传。
+   读取真实上传与转码结果后填文案、选封面和排期。选择原生话题/@账号候选、活动组件；
+   单纯出现 `#文字` / `@文字` 不代表平台已关联。缺少新增声明、商业属性等事实时集中补问，
+   不擅自承诺独家、收费推广或品牌合作。
+8. 汇总四个平台的账号、标题、封面、准确发布时间、活动及回填目标，供用户**一次确认**。
+   点击最终发布/定时投稿前需本次明确授权；已有覆盖同一发布件的确认就继续，不重复问。
+   用户只要草稿就停在草稿。报名/表单有额外义务时先准备具体内容，只澄清增量范围。
 
-- 审片通过的成片
-- 已批准封面
-- 平台发布标题和发布文案（优先读取 `videoKit`）
-- 发布前检查可通过
+## 提交与真实状态
 
-缺素材或未过阶段门时停止，明确告诉用户缺什么，不要绕过。
+获授权后，再读回正确稿件、账号、封面、活动、排期和警告，每个平台只点击一次最终提交。
+保存稿件 ID、回执时间、页面证据和真实状态：
 
-### 1. 生成 ego lite 发布包
+- `scheduled`：平台已接受未来排期；不是公开发布。
+- `submitted` / `reviewing`：已提交/审核中；不能填要求公开作品的活动表。
+- `published`：作品确实公开可访问，且账号、标题/视频与本任务一致；记录规范 URL 和作品 ID。
+- `rejected` / `failed`：保留平台原因；不把其他平台一起标成失败或成功。
+- `submission_unknown`：点击后结果不明；先查作品管理，不重复点发布或重新上传。
 
-调用：
+AutoCrew 旧 `confirm_published` 无法准确表达全部中间状态：中间状态记在项目发布计划，
+确认公开作品和 URL 后才调用该动作。产品断连时保存待回写记录，不虚构工具成功。
 
-```json
-{
-  "action": "ego_lite_prepare",
-  "content_id": "content-xxx",
-  "schedule": "可选，平台当地时间"
-}
-```
+## 定时发布后继续完成
 
-返回的 `data` 是唯一上传输入：
+读取 [campaigns-and-followup.md](references/campaigns-and-followup.md)，完成调度、公开状态
+核验、活动关联和表单回填。用户已于 2026-09-25 明确希望 AI 完成已授权活动的发布后回填：
+对已确认发布件中列明的活动/表单，使用有来源的必要资料完成提交，不再例行索要二次确认。
+目标、额外隐私资料、付费、独家条款等实质范围改变时，补足缺失授权后再执行相关部分。
 
-```json
-{
-  "provider": "ego-lite",
-  "platform": "douyin",
-  "taskSpaceName": "autocrew-publish-douyin-content-xxx",
-  "publishUrl": "https://...",
-  "title": "平台标题",
-  "caption": "平台发布文案",
-  "videoPath": "/absolute/path/final-v2.mp4",
-  "coverPath": "/absolute/path/cover.png",
-  "requiresFinalConfirmation": true,
-  "nextAction": "open_and_fill_only"
-}
-```
+完成标准：各目标平台有真实结果，所选活动关联有证据，要求的表单有成功回执，或明确列出
+单个平台/表单的阻碍。**表单提交成功不等于官方批准投流，更不等于流量到账。**
 
-任何字段缺失或文件不存在都要失败关闭，不能自行猜另一个文件。
+状态、活动来源、发布件、作品链接、回填内容和脱敏回执都保存在 `06-publish/`，随项目归档。
+归档时保留尚未完成回填的轻量本地记录与调度指向，按 lifecycle 规则清理大文件；
+不把“必须先发布”加成 NAS 归档门槛。
 
-### 2. 用 ego lite 打开并检查登录态
-
-使用发布包的 `taskSpaceName` 创建或复用同一 task space，然后打开 `publishUrl`。先读取 `pageInfo()` 和 `snapshotText()`。
-
-登录判断：
-
-- 小红书：URL 出现 `/login`，或页面要求登录
-- 抖音：跳转到 `sso.douyin.com`，或页面要求扫码/手机号登录
-- 视频号：跳转到 `/login.html`
-- Bilibili：跳转到 `passport.bilibili.com`
-
-命中时立即 handoff，不要尝试读取、代填或绕过验证信息。
-
-### 3. 上传并填表，但停在最终发布前
-
-每次以最新 `snapshotText()` 为准定位控件；优先语义 locator，其次截图+坐标，最后才使用 DOM/CDP。不要把历史 ref 当稳定 selector。
-
-1. 用 `uploadFile()` 上传 `videoPath`。
-2. 等待平台明确显示视频处理完成或进入编辑表单。
-3. 填写 `title`、`caption`。
-4. 上传 `coverPath`，并验证预览确实变成该封面。
-5. 用户要求定时发布且发布包有 `schedule` 时，设置并读回页面显示的时间。
-6. Bilibili 若要求分区、转载声明等发布包没有的必填项，停下让用户选择，不擅自决定。
-7. 用截图或 `snapshotText()` 复核标题、文案、封面、定时设置和所有必填项。
-8. 不点击最终发布按钮；告诉用户当前准备状态并请求确认。
-
-### 4. 获得确认后发布
-
-用户确认后复用原 task space。若此前 handoff 给用户，必须先 `takeOverTaskSpace(taskId)`；否则用原 id/name 恢复。
-
-发布前再检查一次：
-
-- 当前仍是正确平台和正确稿件
-- 视频处理完成
-- 标题、文案、封面未丢失
-- 定时设置与用户要求一致
-- 没有新增平台警告或必填项
-
-然后点击一次最终发布按钮。遇到不确定响应不要重复点击。
-
-### 5. 核验并回写 AutoCrew
-
-优先取得作品 URL；若平台先进入审核，读取作品管理页中与本次标题/时间匹配的新条目并记录其真实状态。
-
-只有确认作品已提交成功时才调用：
-
-```json
-{
-  "action": "confirm_published",
-  "content_id": "content-xxx",
-  "publish_url": "https://平台作品地址"
-}
-```
-
-如果只能确认“已提交审核”而暂时没有公开 URL，要如实说明，不能宣称公开可见。若点击结果不明，保持 AutoCrew 未确认状态，先读取平台作品列表再决定。
-
-任务真正完成后，在独立的最后一次 ego-browser 调用中执行 `completeTaskSpace(taskId, { keep: false })`；只有用户需要继续人工查看页面时才使用 `keep: true`。
-
-## 多平台同步发布
-
-同一内容发布到多个平台时，每个平台必须有自己的 AutoCrew 平台稿件和 `content_id`，分别生成发布包。不要把一个平台的标题、封面比例或作品 URL 写回另一个平台稿件。
-
-顺序执行并逐个平台收口：
-
-1. 准备四个平台发布包。
-2. 分别完成上传和填表。
-3. 汇总四个平台的待发布预览，请用户确认。
-4. 获得确认后逐个平台点击一次。
-5. 每个平台独立核验、回写成功或失败状态。
-
-某个平台失败不应让其他平台被标记成功；也不要为追求“全成功”而自动重发响应不明确的平台。
-
-## 失败处理
-
-- 页面结构变化：重新 snapshot；必要时切换视觉操作，不盲点坐标。
-- 用户接管：硬停止，等用户明确说继续。
-- 上传失败：保留页面证据和平台错误，不调用 `confirm_published`。
-- 发布响应不明：先查作品管理页，不重复点击。
-- 平台要求新必填项：让用户决定，不能代替用户选择声明、商业属性或内容分类。
-
-## Changelog
-
-- 2026-08-31: v3 — Browser publishing standardized on ego lite; added approval-gated upload packages for 视频号、小红书、抖音、Bilibili and live-result verification.
-- 2026-04-01: v2 — Added clipboard-first publishing flow and platform formatting.
+Skill 本身不定时唤醒。只有宿主自动化工具返回真实 ID 并记入计划，才能报告后台跟进已启用。
+需登录时保留准确待办；没有具体视频与排期时只配置流程，不创建空轮询。
+一次浏览器工作结束按 ego Skill `task.finish({keep:[]})` 收尾；交给用户登录时保持 handoff，
+不关闭登录页面或自行恢复。未来独立唤醒沿用仍有效的空间，否则为该次跟进新建一次并记录。

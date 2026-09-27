@@ -20,7 +20,7 @@ import readline from "node:readline";
 export const DAEMON_DOWN_MESSAGE = "AutoCrew 服务没有运行，先在仓库里执行 npm start";
 
 export function dataDirOf(env = process.env) {
-  return env.AUTOCREW_DATA_DIR || path.join(os.homedir(), ".autocrew");
+  return env.AUTOCREW_LOCAL_DIR || env.AUTOCREW_DATA_DIR || path.join(os.homedir(), ".autocrew");
 }
 
 export function portOf(env = process.env) {

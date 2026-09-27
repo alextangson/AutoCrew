@@ -1,3 +1,5 @@
+import { verifyStoredApprovals } from "./project-execution.js";
+import { resolveContentProject } from "../../../storage/content-project.js";
 /**
  * `autocrew_video register`：Codex 剪辑工位把成片与封面登记回来（P6 spec §3.4）。Codex 唯一的写动作。
  *
@@ -167,6 +169,10 @@ async function registerLocked(input: RegisterInput, ctx: RegisterContext): Promi
   const blocked = handoffBlock(content, input.manifestHash);
   if (blocked) return blocked;
   const record = content.video!.handoff!;
+  const binding = resolveContentProject(content.id, ctx.dataDir);
+  if (binding && (!record.v2 || record.v2.binding_revision !== binding.binding_revision || record.project_root !== binding.project_root)) return handoffFail("stale_handoff", "项目定位已变化，请读取当前交接");
+  try { await verifyStoredApprovals(content, input.approvals, ctx.dataDir); }
+  catch (e) { return handoffFail("approval_mismatch", String(e)); }
   const files = await resolveFiles(content, record, input, ctx.dataDir);
   if (!files.ok) return files.result;
   const staged = await stageArtifacts(content.id, ctx.dataDir, files.value, input.approvals);

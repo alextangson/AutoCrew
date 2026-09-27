@@ -1,3 +1,4 @@
+import { SharedProjectPanel } from "./SharedProjectPanel";
 /**
  * 稿件编辑器 = **工作台分派点 + 文案工作台**（阶段制 spec §2）。
  *
@@ -472,6 +473,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
       <div className="editor editor-workspace">
         {stageBar}
         {props.context}
+      <SharedProjectPanel contentId={props.id} />
         <div className="ed-main-row">
           {workspace === "editing" && <EditingWorkspace content={c} reload={load} />}
           {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
@@ -487,6 +489,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
       {props.context}
+      <SharedProjectPanel contentId={props.id} />
 
       <div className="ed-main-row">
       <div className="ed-stage">

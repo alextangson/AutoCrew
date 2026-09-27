@@ -1,3 +1,4 @@
+import { contentIds } from "../../storage/content-project.js";
 /**
  * 成片收尾清理的调度那一半（lifecycle spec §3.3）——runner 的一块，
  * 单独成文件与 `runner-preview.ts` 同款：让「它只动 cleanup 三字段、不动 phase/state」看得见。
@@ -52,7 +53,7 @@ export function createCleanupRunner(ctx: CleanupRunnerDeps): CleanupRunner {
   async function resume(): Promise<number> {
     let ids: string[];
     try {
-      ids = await fs.readdir(path.join(ctx.dataDir, "contents"));
+      ids = await contentIds(ctx.dataDir);
     } catch {
       return 0;
     }

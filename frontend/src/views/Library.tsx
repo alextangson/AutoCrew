@@ -20,6 +20,7 @@ interface LibAsset {
   description?: string;
   folderId?: string | null;
   missing?: boolean;
+  unavailableReason?: "missing" | "unreadable";
   /** 常备素材池成员(视频线 lifecycle §1):进每条视频的剪辑师目录 */
   reusable?: boolean;
   /** 直传进工作区的副本——移除会连文件一起删,确认框得照实说 */
@@ -165,7 +166,7 @@ export function Library() {
       />
 
       <details className="ed-tools">
-        <summary>高级:按路径导入(引用不复制,原文件不动)</summary>
+        <summary>高级：按路径导入（新资料库自动保存副本，原文件保留）</summary>
         <textarea rows={3} style={{ width: "100%" }} value={paths} placeholder={"/Users/you/Movies/broll-01.mp4\n/Users/you/Pictures/cover.png"} onChange={(e) => setPaths(e.target.value)} />
         <div className="row-actions">
           <button className="primary" disabled={importing} onClick={() => void doImport()}>
@@ -181,7 +182,7 @@ export function Library() {
           <span>{TYPE_ICON[a.type] ?? "📄"}</span>
           <span className="row-title">
             {a.name}
-            {a.missing ? "(源文件丢失)" : ""}
+            {a.missing ? (a.unavailableReason === "unreadable" ? "(文件无法访问)" : "(源文件丢失，待重定位)") : ""}
             {a.reusable ? <span className="chip">常备</span> : null}
             {a.description ? <span className="mono muted"> · {a.description}</span> : null}
           </span>

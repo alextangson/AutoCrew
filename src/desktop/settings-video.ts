@@ -12,7 +12,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getDataDir } from "../storage/local-store.js";
+import { getConfigDir } from "../storage/storage-roots.js";
 
 export interface VideoSettings {
   /**
@@ -32,7 +32,7 @@ const VIDEO_FIELDS = ["render_concurrency", "snapshot_copy"];
 const MAX_RENDER_CONCURRENCY = 16;
 
 function videoFilePath(dataDir?: string): string {
-  return path.join(getDataDir(dataDir), VIDEO_FILE);
+  return path.join(getConfigDir(dataDir), VIDEO_FILE);
 }
 
 async function readVideoJson(dataDir?: string): Promise<Partial<VideoSettings>> {

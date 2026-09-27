@@ -1,8 +1,13 @@
+import { assertManagedPathAvailable } from "./storage-roots.js";
+import { portableProjectRecord } from "./project-record.js";
+import { contentRoot, projectFile, contentFile, ensureContentProject, readProjectRegistry, contentIds } from "./content-project.js";
+import { commitProjectContent, recoverProjectContent } from "./project-commit.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
+import { resolveDataDir } from "./storage-roots.js";
 import { isVideoPlatform, stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
@@ -228,6 +233,9 @@ export type ClaimEmployee = "writer" | "cover" | "editor";
 
 /** 认领（P3 §6.1）。租约与令牌的判定全在 `claims.ts`，这里只定形状 */
 export interface ContentClaim {
+  machine?: string;
+  bindingRevision?: number;
+  pendingHandoff?: boolean;
   employee: ClaimEmployee;
   /** 认领方的宿主身份（§4.1 命名 token 的主体：codex / claude-code / dsh / local-user） */
   host: string;
@@ -468,11 +476,7 @@ export interface CoverReview {
 }
 
 export function getDataDir(customDir?: string): string {
-  if (customDir) return customDir;
-  // 工作区可重定向：冒烟/测试用隔离目录，多工作区切换的地基（IA v4.2 工程线）
-  if (process.env.AUTOCREW_DATA_DIR) return process.env.AUTOCREW_DATA_DIR;
-  const home = process.env.HOME || process.env.USERPROFILE || "~";
-  return path.join(home, ".autocrew");
+  return resolveDataDir(customDir);
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -600,14 +604,15 @@ async function contentsDir(dataDir?: string): Promise<string> {
 /** 稿件目录（`contents/<id>`）的路径。写作包等**稿件同级**的附属文件从这里取，不各拼各的 */
 export function contentDir(id: string, dataDir?: string): string {
   if (!isContentId(id)) throw new Error("Invalid content id");
-  return path.join(getDataDir(dataDir), "contents", id);
+  return contentRoot(id, dataDir);
 }
 
-async function contentProjectDir(id: string, dataDir?: string): Promise<string> {
-  const dir = contentDir(id, dataDir);
+async function contentProjectDir(id: string, title: string, dataDir?: string, initial?: Content): Promise<string> {
+  const dir = await ensureContentProject(id, title, dataDir, initial);
+  if (readProjectRegistry(dataDir)) return dir;
   await ensureDir(dir);
-  await ensureDir(path.join(dir, "assets"));
-  await ensureDir(path.join(dir, "versions"));
+  await ensureDir(projectFile(dir, "assets"));
+  await ensureDir(projectFile(dir, "versions"));
   return dir;
 }
 
@@ -623,7 +628,6 @@ export async function saveContent(
 
   const id = `content-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const now = new Date().toISOString();
-  const projDir = await contentProjectDir(id, dataDir);
 
   const full: Content = {
     ...content,
@@ -639,10 +643,13 @@ export async function saveContent(
     updatedAt: now,
   };
 
+  const projDir = await contentProjectDir(id, content.title, dataDir, full);
+  if (await commitProjectContent(full, dataDir)) return full;
+
   // meta.json 最后写 = 提交点：中途崩溃只留一个没有 meta 的孤儿目录（读侧会跳过），不留半份稿
-  await writeTextAtomic(path.join(projDir, "draft.md"), `# ${content.title}\n\n${content.body}\n`);
-  await writeTextAtomic(path.join(projDir, "versions", "v1.md"), content.body);
-  await writeJsonAtomic(path.join(projDir, "meta.json"), full);
+  await writeTextAtomic(projectFile(projDir, "draft.md"), `# ${content.title}\n\n${content.body}\n`);
+  await writeTextAtomic(projectFile(projDir, "versions", "v1.md"), content.body);
+  await writeJsonAtomic(projectFile(projDir, "meta.json"), full);
 
   return full;
 }
@@ -659,6 +666,7 @@ function withNormalizedStatus(c: Content): Content {
 }
 
 export async function listContents(dataDir?: string): Promise<Content[]> {
+  if (readProjectRegistry(dataDir)) return (await listContentsRaw(dataDir)).filter(c => !c.deletedAt);
   const dir = path.join(getDataDir(dataDir), "contents");
   await ensureDir(dir);
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -699,6 +707,10 @@ export async function listContents(dataDir?: string): Promise<Content[]> {
 
 /** 读全量含已删(回收站专用)。日常读侧一律走 listContents(已过滤) */
 async function listContentsRaw(dataDir?: string): Promise<Content[]> {
+  if (readProjectRegistry(dataDir)) {
+    const all = await Promise.all((await contentIds(dataDir)).map(id => getContent(id, dataDir)));
+    return all.filter((c): c is Content => c !== null).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
   const dir = path.join(getDataDir(dataDir), "contents");
   await ensureDir(dir);
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -747,9 +759,13 @@ export async function listTrash(dataDir?: string): Promise<TrashList> {
 
 export async function getContent(id: string, dataDir?: string): Promise<Content | null> {
   if (!isContentId(id)) return null;
-  const projDir = path.join(getDataDir(dataDir), "contents", id);
+  if (readProjectRegistry(dataDir)) {
+    await recoverProjectContent(id, dataDir);
+    return withNormalizedStatus(portableProjectRecord(JSON.parse(await fs.readFile(contentFile(id, dataDir, "meta.json"), "utf8")), contentDir(id, dataDir), true));
+  }
+  const projDir = contentDir(id, dataDir);
   try {
-    const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
+    const raw = await fs.readFile(projectFile(projDir, "meta.json"), "utf-8");
     return withNormalizedStatus(JSON.parse(raw));
   } catch {
     // Legacy flat file fallback (DEPRECATED — will be removed in v0.3.0)
@@ -841,8 +857,9 @@ function handoffForStatus(content: Content, target: ContentStatus): { from: stri
 }
 
 async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDir?: string): Promise<Content | null> {
-  const projDir = path.join(getDataDir(dataDir), "contents", id);
-  const metaPath = path.join(projDir, "meta.json");
+  await recoverProjectContent(id, dataDir);
+  const projDir = contentDir(id, dataDir);
+  const metaPath = projectFile(projDir, "meta.json");
   let raw: string;
   try {
     raw = await fs.readFile(metaPath, "utf-8");
@@ -850,7 +867,7 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     if (isFileMissing(err)) return null;
     throw err;
   }
-  const existing: Content = JSON.parse(raw);
+  const existing: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
   const now = new Date().toISOString();
 
   // 成片审过 = 剪辑师把活交给封面师（§6.1 五处之一）。账记在这里而不是视频线里：
@@ -874,7 +891,7 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
       ...(updates._versionMeta ?? {}),
     };
     existing.versions = [...(existing.versions || []), versionEntry];
-    await writeTextAtomic(path.join(projDir, "versions", `v${nextVersion}.md`), versionEntry.body);
+    if (!readProjectRegistry(dataDir)) await writeTextAtomic(projectFile(projDir, "versions", `v${nextVersion}.md`), versionEntry.body);
   }
 
   const { _versionMeta: _dropVersionMeta, ...fields } = updates;
@@ -901,8 +918,10 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     if (updated.review.source.draftHash !== draftHash) updated.review = { ...updated.review, status: "stale" };
   }
 
+  if (await commitProjectContent(updated, dataDir)) return updated;
+
   // draft.md 先写、meta.json 最后写 = 提交点：镜像超前可被下次成功写自愈，meta 不留中间态
-  await writeTextAtomic(path.join(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
+  await writeTextAtomic(projectFile(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
   await writeJsonAtomic(metaPath, updated);
 
   return updated;
@@ -967,6 +986,7 @@ export async function adoptionStats(dataDir?: string): Promise<AdoptionStats> {
  * （半途失败留下的孤儿字节重挂时要能盖掉）。
  */
 async function linkOrCopyFile(src: string, dest: string): Promise<void> {
+  assertManagedPathAvailable(dest);
   await fs.rm(dest, { force: true });
   try {
     await fs.link(src, dest);
@@ -985,8 +1005,8 @@ export async function addAsset(
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
   return serializeContentWrite(contentId, async () => {
-    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-    const metaPath = path.join(projDir, "meta.json");
+    const projDir = contentDir(contentId, dataDir);
+    const metaPath = projectFile(projDir, "meta.json");
 
     let raw: string;
     try {
@@ -995,12 +1015,13 @@ export async function addAsset(
       if (isFileMissing(err)) return { ok: false, error: `Content ${contentId} not found` };
       throw err;
     }
-    const content: Content = JSON.parse(raw);
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
     const now = new Date().toISOString();
 
     // Link (or copy) source file into assets/ if provided（失败向上抛，不再伪装成 not found）
     if (asset.sourcePath) {
-      const destPath = path.join(projDir, "assets", asset.filename);
+      const destPath = projectFile(projDir, "assets", asset.filename);
+      await fs.mkdir(path.dirname(destPath), { recursive: true });
       await linkOrCopyFile(asset.sourcePath, destPath);
     }
 
@@ -1009,7 +1030,7 @@ export async function addAsset(
 
     content.assets = [...(content.assets || []), newAsset];
     content.updatedAt = now;
-    await writeJsonAtomic(metaPath, content);
+    if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
 
     return { ok: true, asset: newAsset };
   });
@@ -1030,8 +1051,8 @@ export async function upsertAsset(
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
   return serializeContentWrite(contentId, async () => {
-    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-    const metaPath = path.join(projDir, "meta.json");
+    const projDir = contentDir(contentId, dataDir);
+    const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
     try {
       raw = await fs.readFile(metaPath, "utf-8");
@@ -1039,11 +1060,13 @@ export async function upsertAsset(
       if (isFileMissing(err)) return { ok: false, error: `Content ${contentId} not found` };
       throw err;
     }
-    const content: Content = JSON.parse(raw);
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
     if (asset.sourcePath) {
-      await fs.mkdir(path.join(projDir, "assets"), { recursive: true });
-      const destPath = path.join(projDir, "assets", asset.filename);
+      await fs.mkdir(projectFile(projDir, "assets"), { recursive: true });
+      const destPath = projectFile(projDir, "assets", asset.filename);
+      await fs.mkdir(path.dirname(destPath), { recursive: true });
       // 先断链再拷：dest 若是挂接留下的硬链接，copyFile 的截断写会穿透改写素材库那份共享字节
+      assertManagedPathAvailable(destPath);
       await fs.rm(destPath, { force: true });
       await fs.copyFile(asset.sourcePath, destPath);
     }
@@ -1053,7 +1076,7 @@ export async function upsertAsset(
     const next: Asset = { ...fields, addedAt: existing?.addedAt ?? now };
     content.assets = [...(content.assets || []).filter((a) => a.filename !== asset.filename), next];
     content.updatedAt = now;
-    await writeJsonAtomic(metaPath, content);
+    if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
     return { ok: true, asset: next };
   });
 }
@@ -1072,8 +1095,8 @@ export async function removeManagedFinalAsset(
 ): Promise<boolean> {
   if (!isContentId(contentId) || !Number.isInteger(renderedRevision)) return false;
   return serializeContentWrite(contentId, async () => {
-    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-    const metaPath = path.join(projDir, "meta.json");
+    const projDir = contentDir(contentId, dataDir);
+    const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
     try {
       raw = await fs.readFile(metaPath, "utf-8");
@@ -1081,7 +1104,7 @@ export async function removeManagedFinalAsset(
       if (isFileMissing(err)) return false;
       throw err;
     }
-    const content: Content = JSON.parse(raw);
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
     const owned = (content.assets || []).filter(
       (a) => a.managedBy === "video-pipeline" && a.renderedRevision === renderedRevision,
     );
@@ -1089,11 +1112,11 @@ export async function removeManagedFinalAsset(
     const doomed = new Set(owned.map((a) => a.filename));
     content.assets = (content.assets || []).filter((a) => !doomed.has(a.filename));
     content.updatedAt = new Date().toISOString();
-    await writeJsonAtomic(metaPath, content);
+    if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
     for (const filename of doomed) {
       if (!isSafeFilename(filename)) continue;
       try {
-        await fs.unlink(path.join(projDir, "assets", filename));
+        await fs.unlink(projectFile(projDir, "assets", filename));
       } catch {
         /* 文件已被人手删掉：登记清干净就算完成 */
       }
@@ -1104,10 +1127,10 @@ export async function removeManagedFinalAsset(
 
 export async function listAssets(contentId: string, dataDir?: string): Promise<Asset[]> {
   if (!isContentId(contentId)) return [];
-  const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+  const projDir = contentDir(contentId, dataDir);
   try {
-    const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
-    const content: Content = JSON.parse(raw);
+    const raw = await fs.readFile(projectFile(projDir, "meta.json"), "utf-8");
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
     return content.assets || [];
   } catch {
     return [];
@@ -1117,8 +1140,8 @@ export async function listAssets(contentId: string, dataDir?: string): Promise<A
 export async function removeAsset(contentId: string, filename: string, dataDir?: string): Promise<boolean> {
   if (!isContentId(contentId) || !isSafeFilename(filename)) return false;
   return serializeContentWrite(contentId, async () => {
-    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-    const metaPath = path.join(projDir, "meta.json");
+    const projDir = contentDir(contentId, dataDir);
+    const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
     try {
       raw = await fs.readFile(metaPath, "utf-8");
@@ -1126,12 +1149,12 @@ export async function removeAsset(contentId: string, filename: string, dataDir?:
       if (isFileMissing(err)) return false; // false 只表示稿件不存在；写失败向上抛
       throw err;
     }
-    const content: Content = JSON.parse(raw);
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
     content.assets = (content.assets || []).filter(a => a.filename !== filename);
     content.updatedAt = new Date().toISOString();
-    await writeJsonAtomic(metaPath, content);
+    if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
     // Also delete the file
-    try { await fs.unlink(path.join(projDir, "assets", filename)); } catch { /* ok */ }
+    try { await fs.unlink(projectFile(projDir, "assets", filename)); } catch { /* ok */ }
     return true;
   });
 }
@@ -1140,10 +1163,10 @@ export async function removeAsset(contentId: string, filename: string, dataDir?:
 
 export async function listVersions(contentId: string, dataDir?: string): Promise<ContentVersion[]> {
   if (!isContentId(contentId)) return [];
-  const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+  const projDir = contentDir(contentId, dataDir);
   try {
-    const raw = await fs.readFile(path.join(projDir, "meta.json"), "utf-8");
-    const content: Content = JSON.parse(raw);
+    const raw = await fs.readFile(projectFile(projDir, "meta.json"), "utf-8");
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
     return content.versions || [];
   } catch {
     return [];
@@ -1152,9 +1175,10 @@ export async function listVersions(contentId: string, dataDir?: string): Promise
 
 export async function getVersion(contentId: string, version: number, dataDir?: string): Promise<string | null> {
   if (!isContentId(contentId) || !Number.isInteger(version) || version < 1) return null;
-  const projDir = path.join(getDataDir(dataDir), "contents", contentId);
+  if (readProjectRegistry(dataDir)) return (await getContent(contentId, dataDir))?.versions.find(v => v.version === version)?.body ?? null;
+  const projDir = contentDir(contentId, dataDir);
   try {
-    return await fs.readFile(path.join(projDir, "versions", `v${version}.md`), "utf-8");
+    return await fs.readFile(projectFile(projDir, "versions", `v${version}.md`), "utf-8");
   } catch {
     return null;
   }
@@ -1184,9 +1208,9 @@ export async function saveCoverReview(
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
   return serializeContentWrite(contentId, async () => {
-    const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-    const metaPath = path.join(projDir, "meta.json");
-    const reviewPath = path.join(projDir, "cover-review.json");
+    const projDir = contentDir(contentId, dataDir);
+    const metaPath = projectFile(projDir, "meta.json");
+    const reviewPath = projectFile(projDir, "cover-review.json");
 
     let raw: string;
     try {
@@ -1195,7 +1219,7 @@ export async function saveCoverReview(
       if (isFileMissing(err)) return null; // null 只表示稿件不存在；写失败向上抛
       throw err;
     }
-    const content: Content = JSON.parse(raw);
+    const content: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
     if (expectedReviewSha256) {
       let currentReview: string;
       try {
@@ -1215,19 +1239,19 @@ export async function saveCoverReview(
       updatedAt: now,
     };
 
-    await writeJsonAtomic(reviewPath, full);
+    await writeJsonAtomic(reviewPath, readProjectRegistry(dataDir) ? portableProjectRecord(full, projDir) : full);
     content.updatedAt = now;
-    await writeJsonAtomic(metaPath, content);
+    if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
     return full;
   });
 }
 
 export async function getCoverReview(contentId: string, dataDir?: string): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  const reviewPath = path.join(getDataDir(dataDir), "contents", contentId, "cover-review.json");
+  const reviewPath = contentFile(contentId, dataDir, "cover-review.json");
   try {
     const raw = await fs.readFile(reviewPath, "utf-8");
-    return JSON.parse(raw);
+    return portableProjectRecord(JSON.parse(raw), contentDir(contentId, dataDir), true);
   } catch {
     return null;
   }
@@ -1247,9 +1271,9 @@ async function approveCoverVariantLocked(
   label: CoverVariantLabel,
   dataDir?: string,
 ): Promise<CoverReview | null> {
-  const projDir = path.join(getDataDir(dataDir), "contents", contentId);
-  const reviewPath = path.join(projDir, "cover-review.json");
-  const metaPath = path.join(projDir, "meta.json");
+  const projDir = contentDir(contentId, dataDir);
+  const reviewPath = projectFile(projDir, "cover-review.json");
+  const metaPath = projectFile(projDir, "meta.json");
 
   let reviewRaw: string;
   let metaRaw: string;
@@ -1262,8 +1286,8 @@ async function approveCoverVariantLocked(
     if (isFileMissing(err)) return null; // 稿件或评审单不存在；其余失败向上抛
     throw err;
   }
-  const review: CoverReview = JSON.parse(reviewRaw);
-  const content: Content = JSON.parse(metaRaw);
+  const review: CoverReview = portableProjectRecord(JSON.parse(reviewRaw), projDir, true);
+  const content: Content = portableProjectRecord(JSON.parse(metaRaw), projDir, true);
   const selected = review.variants.find((variant) => variant.label === label);
   if (!selected) {
     return null;
@@ -1302,19 +1326,17 @@ async function approveCoverVariantLocked(
   });
   content.updatedAt = now;
 
-  await Promise.all([
-    writeJsonAtomic(reviewPath, review),
-    writeJsonAtomic(metaPath, content),
-  ]);
+  await writeJsonAtomic(reviewPath, readProjectRegistry(dataDir) ? portableProjectRecord(review, projDir) : review);
+  if (!(await commitProjectContent(content, dataDir))) await writeJsonAtomic(metaPath, content);
   // 人机协同(V5.6.1):选定封面在文件夹根留一份「拿了就走」的副本(重选自动覆盖)
   if (review.approvedImagePath) {
     const ext = path.extname(review.approvedImagePath) || ".png";
-    await fs.copyFile(review.approvedImagePath, path.join(projDir, `封面${ext}`)).catch(() => {});
+    await fs.copyFile(review.approvedImagePath, projectFile(projDir, `封面${ext}`)).catch(() => {});
   }
   if (selected.draftPair) {
     for (const ratio of ["3:4", "4:3"] as const) {
       const source = selected.imagePaths[ratio]!;
-      await fs.copyFile(source, path.join(projDir, `封面-${ratio.replace(":", "x")}${path.extname(source) || ".png"}`));
+      await fs.copyFile(source, projectFile(projDir, `封面-${ratio.replace(":", "x")}${path.extname(source) || ".png"}`));
     }
   }
   return review;

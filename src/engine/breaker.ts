@@ -1,3 +1,4 @@
+import { getConfigDir } from "../storage/storage-roots.js";
 /**
  * 引擎熔断（P6 spec §3.9）——死线路不占用等待。
  *
@@ -63,7 +64,7 @@ export function trippedReason(entry: ProviderHealth | undefined, now: number = D
 
 async function readProviders(dataDir: string): Promise<Record<string, ProviderHealth>> {
   try {
-    const parsed = JSON.parse(await fs.readFile(path.join(dataDir, HEALTH_FILE), "utf-8")) as { providers?: unknown };
+    const parsed = JSON.parse(await fs.readFile(path.join(getConfigDir(dataDir), HEALTH_FILE), "utf-8")) as { providers?: unknown };
     const providers = parsed?.providers;
     return providers && typeof providers === "object" ? (providers as Record<string, ProviderHealth>) : {};
   } catch {

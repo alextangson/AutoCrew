@@ -1,12 +1,14 @@
+import { assertManagedPathAvailable } from "./storage-roots.js";
 // src/storage/library-store.ts
 /**
- * Library store — 引用式素材库（S2.9）。
+ * Library store — 素材索引与受管文件。
  *
- * 「库是索引，项目是快照」：只存元数据 JSON，原文件留在原地不复制；
- * 删除素材 = 删记录，永不碰原文件。挂接到稿件时由 ipc 层走 local-store
+ * 「库是索引，项目是快照」：旧目录保留外部引用；配置资料库后，导入时
+ * 复制并校验文件，索引保存相对路径。删除素材记录保留原文件；直传副本
+ * 沿用 uploads 的清理规则。挂接到稿件时由 ipc 层走 local-store
  * addAsset 的硬链接语义（同卷共享字节，跨卷退回复制）。
  *
- * ~/.autocrew/library/
+ * <工作区>/library/
  *   folders.json        — LibraryFolder[]（扁平，v1 不嵌套）
  *   assets/<id>.json    — 每素材一文件（原子写；损坏跳过 + warn）
  *
@@ -20,6 +22,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { getDataDir } from "./local-store.js";
 import { writeJsonAtomic, readJson } from "./json-atomic.js";
+import { getConfigDir, isWithin } from "./storage-roots.js";
+import { digestFile } from "./library-manager.js";
 
 export type LibraryAssetType = "video" | "image" | "audio" | "other";
 
@@ -40,8 +44,10 @@ export interface LibraryAssetMedia {
 export interface LibraryAsset {
   id: string;
   name: string;
-  /** 原文件绝对路径（引用，不复制） */
+  /** API 返回绝对路径；新资料库的磁盘索引保存工作区相对路径。 */
   path: string;
+  storage?: "managed" | "external";
+  checksum?: string;
   type: LibraryAssetType;
   ext: string;
   /** 入库时记录的字节数 */
@@ -63,6 +69,7 @@ export interface LibraryAsset {
 
 export interface LibraryAssetView extends LibraryAsset {
   missing: boolean;
+  unavailableReason?: "missing" | "unreadable";
   /**
    * 字节是直传进工作区的副本（`library/uploads/` 里那份），不是对外部原件的引用。
    * 移除它会连文件一起删——所以这个事实必须能传到 UI，让确认框说真话。
@@ -141,6 +148,20 @@ function isValidAssetRecord(record: LibraryAsset | null): record is LibraryAsset
   );
 }
 
+function storedAsset(root: string, record: LibraryAsset): LibraryAsset {
+  const workspace = path.dirname(root);
+  return getConfigDir(workspace) !== workspace && isWithin(workspace, record.path)
+    ? { ...record, path: path.relative(workspace, record.path), storage: "managed" }
+    : record;
+}
+
+function resolvedAsset(root: string, record: LibraryAsset): LibraryAsset {
+  if (path.isAbsolute(record.path)) return record;
+  const workspace = path.dirname(root), file = path.resolve(workspace, record.path);
+  if (!isWithin(workspace, file)) throw new Error("素材路径超出资料库");
+  return { ...record, path: file, storage: "managed" };
+}
+
 /** 读全部素材记录（损坏/半残跳过 + warn）；不算 missing——纯磁盘视图 */
 async function loadAssetRecords(root: string): Promise<LibraryAsset[]> {
   const entries = await fs.readdir(path.join(root, "assets"));
@@ -152,7 +173,7 @@ async function loadAssetRecords(root: string): Promise<LibraryAsset[]> {
       console.warn(`[library-store] 跳过损坏素材：${e}`);
       continue;
     }
-    records.push(record);
+    records.push(resolvedAsset(root, record));
   }
   return records;
 }
@@ -182,7 +203,7 @@ export async function removeFolder(id: string, dataDir?: string): Promise<boolea
   for (const record of records) {
     if (record.folderId === id) {
       const p = safeAssetPath(root, record.id);
-      if (p) await writeJsonAtomic(p, { ...record, folderId: null });
+      if (p) await writeJsonAtomic(p, storedAsset(root, { ...record, folderId: null }));
     }
   }
   await writeJsonAtomic(path.join(root, "folders.json"), folders.filter((f) => f.id !== id));
@@ -217,7 +238,23 @@ async function importOne(
   };
   const p = safeAssetPath(root, asset.id);
   if (!p) return null;
-  await writeJsonAtomic(p, asset);
+  const workspace = path.dirname(root);
+  if (getConfigDir(workspace) !== workspace) {
+    asset.checksum = await digestFile(abs);
+    if (!isWithin(workspace, abs)) {
+      const managed = path.join(root, "media", asset.id + path.extname(abs));
+      assertManagedPathAvailable(managed);
+      await fs.mkdir(path.dirname(managed), { recursive: true });
+      await fs.copyFile(abs, managed, fs.constants.COPYFILE_EXCL);
+      if (await digestFile(managed) !== asset.checksum || await digestFile(abs) !== asset.checksum) {
+        await fs.rm(managed, { force: true });
+        throw new Error("素材在导入时发生变化，请重新导入");
+      }
+      asset.path = managed;
+    }
+    asset.storage = "managed";
+  }
+  await writeJsonAtomic(p, storedAsset(root, asset));
   return asset;
 }
 
@@ -258,12 +295,14 @@ export async function listLibrary(dataDir?: string): Promise<LibraryView> {
   const assets: LibraryAssetView[] = [];
   for (const record of records) {
     let missing = false;
+    let unavailableReason: "missing" | "unreadable" | undefined;
     try {
       await fs.access(record.path);
-    } catch {
+    } catch (e) {
       missing = true;
+      unavailableReason = (e as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unreadable";
     }
-    assets.push({ ...record, missing, uploaded: isUploadedCopy(record.path, dataDir) });
+    assets.push({ ...record, missing, ...(unavailableReason ? { unavailableReason } : {}), uploaded: isUploadedCopy(record.path, dataDir) });
   }
   assets.sort((a, b) => b.addedAt.localeCompare(a.addedAt));
   return { folders, assets };
@@ -274,7 +313,7 @@ export async function getAsset(id: string, dataDir?: string): Promise<LibraryAss
   const p = safeAssetPath(root, id);
   if (!p) return null;
   const record = await readJson<LibraryAsset>(p);
-  return isValidAssetRecord(record) ? record : null;
+  return isValidAssetRecord(record) ? resolvedAsset(root, record) : null;
 }
 
 export interface LibraryAssetPatch {
@@ -323,7 +362,7 @@ export async function updateAsset(
   }
   const file = safeAssetPath(root, id);
   if (!file) return null;
-  await writeJsonAtomic(file, next);
+  await writeJsonAtomic(file, storedAsset(root, next));
   return next;
 }
 
@@ -370,7 +409,8 @@ export async function removeAsset(id: string, dataDir?: string): Promise<boolean
   const root = await libraryRoot(dataDir);
   const p = safeAssetPath(root, id);
   if (!p) return false;
-  const record = await readJson<LibraryAsset>(p);
+  const raw = await readJson<LibraryAsset>(p);
+  const record = raw ? resolvedAsset(root, raw) : null;
   try {
     await fs.unlink(p);
   } catch {

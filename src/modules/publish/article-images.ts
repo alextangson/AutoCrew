@@ -1,3 +1,6 @@
+import { portableProjectRecord } from "../../storage/project-record.js";
+import { writeJsonAtomic } from "../../storage/json-atomic.js";
+import { contentRoot, projectFile, readProjectRegistry } from "../../storage/content-project.js";
 /**
  * 正文配图工作区：把稿件内 [IMAGE: ...] 变成可单独生成、预览、重做的持久资产。
  * 发布阶段只复用这里确认过的图片，不再把“排版/推草稿”变成一个看不见的生图黑箱。
@@ -62,17 +65,18 @@ export function parseArticleImageMarkers(body: string): ArticleImageMarker[] {
 }
 
 function locations(contentId: string, dataDir?: string) {
-  const root = path.join(getDataDir(dataDir), "contents", contentId);
+  const root = contentRoot(contentId, dataDir);
   return {
     root,
-    meta: path.join(root, "article-images.json"),
-    assets: path.join(root, "assets", "article-images"),
+    meta: projectFile(root, "article-images.json"),
+    assets: projectFile(root, "assets", "article-images"),
   };
 }
 
 async function readReview(contentId: string, dataDir?: string): Promise<ArticleImageReview | null> {
   try {
-    return JSON.parse(await fs.readFile(locations(contentId, dataDir).meta, "utf-8")) as ArticleImageReview;
+    const loc = locations(contentId, dataDir);
+    return portableProjectRecord(JSON.parse(await fs.readFile(loc.meta, "utf-8")), loc.root, true) as ArticleImageReview;
   } catch {
     return null;
   }
@@ -86,7 +90,7 @@ async function writeReview(
   const loc = locations(contentId, dataDir);
   await fs.mkdir(loc.root, { recursive: true });
   const saved = { ...review, updatedAt: new Date().toISOString() };
-  await fs.writeFile(loc.meta, JSON.stringify(saved, null, 2), "utf-8");
+  await writeJsonAtomic(loc.meta, readProjectRegistry(dataDir) ? portableProjectRecord(saved, loc.root) : saved);
   return saved;
 }
 

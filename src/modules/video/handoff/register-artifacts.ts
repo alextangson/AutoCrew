@@ -1,3 +1,5 @@
+import { assertManagedPathAvailable } from "../../../storage/storage-roots.js";
+import { contentFile } from "../../../storage/content-project.js";
 /**
  * 登记的产物核验（P6 spec §3.4 register 第 4 步；codex 评审 #5）：**核的就是要登记的那份字节**。
  *
@@ -37,6 +39,7 @@ type Staged<T> = { ok: true; value: T } | { ok: false; result: HandoffResult };
 
 /** 写时复制优先（APFS 克隆），文件系统不支持时退回普通拷贝 */
 async function cloneCopy(src: string, dest: string): Promise<void> {
+  assertManagedPathAvailable(dest);
   await fs.copyFile(src, dest, fs.constants.COPYFILE_FICLONE);
 }
 
@@ -111,7 +114,7 @@ export async function stageArtifacts(
   paths: ArtifactPaths,
   approvals: RegisterApprovals,
 ): Promise<Staged<StagedArtifacts>> {
-  const dir = path.join(contentDir(contentId, dataDir), "assets", `.register-staging-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const dir = contentFile(contentId, dataDir, "assets", `.register-staging-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   await fs.mkdir(dir, { recursive: true });
   try {
     const final = await stageFinal(paths.final, dir, approvals.final_cut);

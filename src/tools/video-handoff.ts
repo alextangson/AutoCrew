@@ -1,3 +1,6 @@
+import { reportExecution } from "../modules/video/handoff/project-execution.js";
+import { saveCoverage, type CitationCoverage } from "../modules/video/handoff/project-evidence.js";
+import { getContent } from "../storage/local-store.js";
 /**
  * `autocrew_video` 的交接—登记三个动作（P6 spec §3.4）：handoff / revoke / register。
  *
@@ -16,7 +19,7 @@ import { isRegisterInput, parseRegisterInput, registerVideo } from "../modules/v
 import { handoffFail } from "../modules/video/handoff/types.js";
 import { hostOf, videoFail, type VideoToolResult } from "./video-gates.js";
 
-export const HANDOFF_ACTIONS = ["handoff", "revoke", "register"] as const;
+export const HANDOFF_ACTIONS = ["handoff", "revoke", "register", "report", "citations"] as const;
 export type HandoffAction = (typeof HANDOFF_ACTIONS)[number];
 
 export function isHandoffAction(action: string): action is HandoffAction {
@@ -37,6 +40,12 @@ export async function executeVideoHandoff(action: HandoffAction, params: Record<
   const gate = (employee: ClaimEmployee) => () =>
     gateClaimWrite(contentId, { host, employee, ...(claimToken ? { token: claimToken } : {}) }, dataDir);
   try {
+    if (action === "report") return await reportExecution(contentId, params.report, { dataDir, gate: gate("editor") }, host, str(params._session) || undefined);
+    if (action === "citations") {
+      const allowed = await gate("writer")(); if ("denied" in allowed) return allowed.denied;
+      const content = await getContent(contentId, dataDir); if (!content) return videoFail("稿件不存在");
+      await saveCoverage(content, params.coverage as CitationCoverage, dataDir); return { ok: true, ...allowed.grant };
+    }
     if (action === "revoke" || (action === "handoff" && (params.revoke === true || params.revoke === "true"))) {
       const manifestHash = str(params.manifest_hash) || undefined;
       return await revokeHandoff({ contentId, host, manifestHash, claimToken }, { dataDir, gate: gate("writer") });

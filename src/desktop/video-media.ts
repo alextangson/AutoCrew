@@ -1,3 +1,4 @@
+import { contentFile } from "../storage/content-project.js";
 /**
  * 成片播放端点（设计 spec §6.4 / codex #3）：`GET /api/video/media/<contentId>/<file>`。
  *
@@ -64,10 +65,11 @@ export function parseMediaPath(pathname: string): Target | null {
 /** 在两个白名单目录里找文件；realpath 之后仍在目录内才算数（防软链接逃逸） */
 async function resolveMediaFile(dataDir: string, target: Target): Promise<string | null> {
   for (const sub of MEDIA_DIRS) {
-    const base = path.join(dataDir, "contents", target.contentId, sub);
+    const candidate = contentFile(target.contentId, dataDir, sub, target.file);
+    const base = path.dirname(candidate);
     try {
       const realBase = await fs.realpath(base);
-      const real = await fs.realpath(path.join(base, target.file));
+      const real = await fs.realpath(candidate);
       if (real !== realBase && !real.startsWith(realBase + path.sep)) continue;
       if ((await fs.stat(real)).isFile()) return real;
     } catch {

@@ -52,6 +52,7 @@ import {
   countPoll,
   packView,
   preparationProgress,
+  projectReceipt,
   readyResult,
   stalledResult,
   FIRST_NOTE,
@@ -113,7 +114,7 @@ async function awaitPreparation(contentId: string, packId: string, deadlineAt: n
   if (!task || !(await settleWithin(task, deadlineAt))) return null;
   const pack = await readPack(contentId, dataDir);
   if (!pack || pack.packId !== packId) return { ok: false, code: "stale_pack", error: stalePackError(pack?.packId, packId) };
-  return { ...packView(contentId, pack), synchronous: true };
+  return { ...packView(contentId, pack, dataDir), synchronous: true };
 }
 
 // ─── pack ─────────────────────────────────────────────────────────────────────
@@ -265,10 +266,10 @@ export async function startPack(
  * 还在跑就同一个号回第二遍，绝不起第二条后台任务——宿主模式顺手等到时限。
  */
 async function reuseCurrent(contentId: string, current: WritingPackFile | null, deadlineAt: number, dataDir: string): Promise<PackResult | null> {
-  if (isReadyPack(current)) return readyResult(contentId, current);
+  if (isReadyPack(current)) return readyResult(contentId, current, dataDir);
   if (current?.state !== "preparing" || !preparing.has(contentId)) return null;
   const settled = current.request?.req.modelExecution === "host" ? await awaitPreparation(contentId, current.packId, deadlineAt, dataDir) : null;
-  return settled ?? { ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE, ...preparationProgress(contentId, current) };
+  return settled ?? { ...projectReceipt(contentId, dataDir), ok: true, status: "preparing", content_id: contentId, pack_id: current.packId, note: POLL_NOTE, ...preparationProgress(contentId, current) };
 }
 
 async function startPreparation(
@@ -326,6 +327,7 @@ async function startPreparation(
   // 宿主模式不调用模型（generate-script 跳过引擎配置与补证），几秒就备完：就地等，省掉轮询
   const settled = args.req.modelExecution === "host" ? await awaitPreparation(contentId, packId, args.deadlineAt, dataDir) : null;
   return settled ?? {
+    ...projectReceipt(contentId, dataDir),
     ok: true,
     status: "preparing",
     content_id: contentId,
@@ -473,7 +475,7 @@ async function finishFailed(args: PrepareArgs, err: unknown, dataDir: string, wa
 /** 孤儿重跑：与非 force 的重复 pack 同一条路（同一套请求比对与立意闸口），宿主身份沿用包上的 */
 async function restartOrphan(contentId: string, pack: WritingPackFile, dataDir: string, deps: PackDeps, startedAt: number): Promise<PackResult> {
   const req = pack.request?.req;
-  if (!req?.topicId) return packView(contentId, pack); // 老包没存请求快照，无从按原请求重跑
+  if (!req?.topicId) return packView(contentId, pack, dataDir); // 老包没存请求快照，无从按原请求重跑
   const restarted = await startPack(
     { contentId, topicId: req.topicId, platform: req.platform, modelExecution: req.modelExecution === "engine" ? "engine" : "host", host: pack.host, force: false, startedAt },
     dataDir,
@@ -495,5 +497,5 @@ export async function packStatus(contentId: string, dataDir: string, deps: PackD
   if (pack.state === "preparing" && !preparing.has(contentId)) return restartOrphan(contentId, pack, dataDir, deps, startedAt);
   const seen = pack.state === "preparing" ? (await countPoll(contentId, dataDir)) ?? pack : pack;
   if (seen.state === "preparing" && (seen.polls ?? 0) > MAX_PACK_POLLS) return stalledResult(contentId, seen);
-  return packView(contentId, seen);
+  return packView(contentId, seen, dataDir);
 }

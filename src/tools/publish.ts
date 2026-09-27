@@ -1,3 +1,6 @@
+import { projectMarkdownExport } from "../storage/project-record.js";
+import { writeTextAtomic } from "../storage/json-atomic.js";
+import { contentFile, resolveContentProject } from "../storage/content-project.js";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { Type } from "@sinclair/typebox";
@@ -208,8 +211,10 @@ export async function executePublish(
     const content = await getContent(contentId, dataDir);
     if (!content) return { ok: false, error: `Content not found: ${contentId}` };
     // 发布时从 store 新鲜落盘 draft.md——工作台编辑只更新 store，旧 draft.md 不得被推送
-    articlePath = path.join(dataDir, "contents", content.id, "draft.md");
-    await fs.writeFile(articlePath, `# ${content.title}\n\n${content.body}\n`, "utf-8");
+    const project = resolveContentProject(content.id, dataDir);
+    articlePath = contentFile(content.id, dataDir, project ? "publish-export.md" : "draft.md");
+    const exportedBody = project ? projectMarkdownExport(content.body, project.project_root) : content.body;
+    await writeTextAtomic(articlePath, `# ${content.title}\n\n${exportedBody}\n`);
     gateText = `${content.title}\n\n${content.body}`;
     digest = content.digest;
     const bodyImages = await preparedArticleImages(contentId, dataDir);

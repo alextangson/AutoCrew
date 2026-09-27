@@ -37,6 +37,7 @@ export function sha256File(file: string): Promise<string> {
 /** 键序固定（声明顺序），哈希才可复算 */
 export function buildManifest(m: HandoffManifest): HandoffManifest {
   return {
+    ...(m.v2 ? { v2: m.v2 } : {}),
     content_id: m.content_id,
     generation: m.generation,
     draft_hash: m.draft_hash,
@@ -47,6 +48,10 @@ export function buildManifest(m: HandoffManifest): HandoffManifest {
 }
 
 export function manifestHash(m: HandoffManifest): string {
+  if (m.v2) return sha256Text(JSON.stringify({ version: 2, library_id: m.v2.library_id, workspace_id: m.v2.workspace_id,
+    project_id: m.v2.project_id, content_id: m.content_id, generation: m.generation, binding_revision: m.v2.binding_revision,
+    draft_hash: m.draft_hash, aroll_sha256: m.aroll_sha256, notes_sha256: sha256Text(m.notes),
+    files: [...m.v2.files].sort((a, b) => a.path.localeCompare(b.path)) }));
   return sha256Text(JSON.stringify(buildManifest(m)));
 }
 

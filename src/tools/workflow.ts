@@ -1,3 +1,4 @@
+import { getConfigDir } from "../storage/storage-roots.js";
 import { inspectHostResearchTask } from "../modules/research/host-research-store.js";
 import { executeScout } from "./scout.js";
 import { createCreativeTask } from "../modules/writing/creative-task.js";
@@ -440,7 +441,7 @@ async function doDraft(params: Record<string, unknown>, dataDir: string): Promis
 
 /** engine.json 缺席 + 环境变量有 key 时的处置：默认只给建议，`AUTOCREW_SEED_ENGINE=1` 才落盘 */
 async function engineSeed(dataDir: string, hints: string[]): Promise<Record<string, unknown>> {
-  const filePath = path.join(dataDir, "engine.json");
+  const filePath = path.join(getConfigDir(dataDir), "engine.json");
   if (await fs.access(filePath).then(() => true, () => false)) return {};
   const key = process.env.DEEPSEEK_API_KEY;
   if (!key) return {};

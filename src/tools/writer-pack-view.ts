@@ -1,3 +1,5 @@
+import { resolveContentProject, contentFile } from "../storage/content-project.js";
+import path from "node:path";
 /**
  * 写作包回执的形状——`pack` 与 `pack_status` 说同一份话（P3 §5.1、P6 §3.7）。
  *
@@ -60,8 +62,9 @@ function elapsedSeconds(iso: string): number {
   return Math.max(0, Math.round((Date.now() - started) / 1000));
 }
 
-export function readyResult(contentId: string, pack: ReadyPack): PackReadyResult {
+export function readyResult(contentId: string, pack: ReadyPack, dataDir?: string): PackReadyResult {
   return {
+    ...projectReceipt(contentId, dataDir),
     ok: true,
     status: "ready",
     content_id: contentId,
@@ -96,9 +99,9 @@ function repackAction(pack: WritingPackFile): Record<string, unknown> {
 }
 
 /** 三态回执（`pack` 同步等到结果时回的也是这一份，外加 `synchronous:true`） */
-export function packView(contentId: string, pack: WritingPackFile): PackStatusResult {
-  const base = { ok: true as const, status: pack.state, content_id: contentId, pack_id: pack.packId, started_at: pack.issuedAt, elapsed_s: elapsedSeconds(pack.issuedAt) };
-  if (isReadyPack(pack)) return { ...base, ...readyResult(contentId, pack), status: "ready" as const };
+export function packView(contentId: string, pack: WritingPackFile, dataDir?: string): PackStatusResult {
+  const base = { ...projectReceipt(contentId, dataDir), ok: true as const, status: pack.state, content_id: contentId, pack_id: pack.packId, started_at: pack.issuedAt, elapsed_s: elapsedSeconds(pack.issuedAt) };
+  if (isReadyPack(pack)) return { ...base, ...readyResult(contentId, pack, dataDir), status: "ready" as const };
   if (pack.state === "failed") {
     return {
       ...base,
@@ -137,4 +140,9 @@ export function countPoll(contentId: string, dataDir: string): Promise<WritingPa
     await writePack(contentId, counted, dataDir);
     return counted;
   });
+}
+
+export function projectReceipt(id: string, dataDir?: string): Record<string, unknown> {
+  const binding = resolveContentProject(id, dataDir);
+  return binding ? { project: binding, project_root: binding.project_root, manuscript_path: contentFile(id, dataDir, "draft.md"), rules_path: path.join(binding.project_root, "AGENTS.md") } : {};
 }

@@ -1,3 +1,4 @@
+import { contentRoot, projectFile } from "../storage/content-project.js";
 /**
  * 打开稿件文件夹(V5.6.1 人机协同):darwin 用 Finder 打开,其他平台返回路径。
  * 文件夹本就自描述——draft.md(每次存稿常新)+ 封面.png(选定副本)+
@@ -24,9 +25,9 @@ export async function openContentFolder(
   deps?: { spawnImpl?: typeof spawn; platform?: NodeJS.Platform },
 ): Promise<OpenFolderResult> {
   if (!CONTENT_ID_RE.test(id)) return { ok: false, error: "非法稿件 id" };
-  const projDir = path.join(getDataDir(dataDir), "contents", id);
+  const projDir = contentRoot(id, dataDir);
   try {
-    await fs.access(path.join(projDir, "meta.json"));
+    await fs.access(projectFile(projDir, "meta.json"));
   } catch {
     return { ok: false, error: "稿件不存在" };
   }

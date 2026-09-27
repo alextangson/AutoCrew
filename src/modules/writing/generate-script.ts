@@ -87,6 +87,7 @@ import { topicHashOf } from "../research/research-job-store.js";
 import { getContent, getDataDir, getTopic, saveContent, updateContent } from "../../storage/local-store.js";
 import type { Content, Topic } from "../../storage/local-store.js";
 import { rulesForPlatform } from "../profile/creator-profile.js";
+import { selectEditorialExperiment, renderEditorialExperiment } from "../retro/editorial-experiments.js";
 
 export type { ScriptRequest };
 
@@ -650,6 +651,7 @@ export async function buildWritingContext(
   warn: (message: string) => void,
   deps?: GenerationDeps,
 ): Promise<WritingContext> {
+  const experiment = await selectEditorialExperiment(req, dataDir);
   const inputs = await gatherInputs(req, dataDir, warn, deps);
   // 跳过角度是**用户的显式动作**（§1.6 不许模型猜布尔），所以它的原话要落 run-log 可回溯
   if (req.angleSkipReason?.trim()) warn(`用户明说跳过角度点选：${req.angleSkipReason.trim()}`);
@@ -660,6 +662,11 @@ export async function buildWritingContext(
     ...(inputs.angle ? { angle: inputs.angle } : {}),
   });
   prompts.user += `\n\n本稿创作任务书标识：${creativeTaskHash(createCreativeTask(inputs.promptReq))}（写作与审稿按同一份本次要求核对）。`;
+  if (experiment) {
+    const reference = renderEditorialExperiment(experiment);
+    prompts.user += `\n\n${reference}`;
+    inputs.writingContract += `\n\n${reference}`;
+  }
   return { inputs, prompts, gate: resolveQualityGate(inputs.pack, req.platform) };
 }
 

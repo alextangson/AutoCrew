@@ -11,6 +11,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
+import { getConfigDir } from "../storage/storage-roots.js";
 import { parseProviderTable, type EngineConfig, type EngineProviderConfig, type EngineRouteName } from "./config-schema.js";
 import { migrateEngineConfig } from "./config-migrate.js";
 import { projectEngineConfig, validateEngineGraph } from "./config-validate.js";
@@ -113,7 +114,7 @@ export function resolveEngineRoute(
  * 两处都没有文件时返回本工作区的路径——那正是保存时会写入的位置。
  */
 export async function resolveEngineConfigPath(dataDir?: string): Promise<string> {
-  const filePath = path.join(getDataDir(dataDir), "engine.json");
+  const filePath = path.join(getConfigDir(dataDir), "engine.json");
   try {
     await fs.access(filePath);
     return filePath;
@@ -121,8 +122,8 @@ export async function resolveEngineConfigPath(dataDir?: string): Promise<string>
     /* 本工作区没有,看看能不能继承默认工作区 */
   }
   const workspacesRoot = path.join(getDataDir(), "workspaces") + path.sep;
-  if (getDataDir(dataDir).startsWith(workspacesRoot)) {
-    const defaultPath = path.join(getDataDir(), "engine.json");
+  if (getDataDir(dataDir).startsWith(workspacesRoot) || (getConfigDir(dataDir) !== getDataDir(dataDir) && getConfigDir(dataDir) !== getConfigDir())) {
+    const defaultPath = path.join(getConfigDir(), "engine.json");
     try {
       await fs.access(defaultPath);
       return defaultPath;

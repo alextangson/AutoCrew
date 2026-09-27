@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DATA_DIR = process.env.AUTOCREW_DATA_DIR || path.join(os.homedir(), ".autocrew");
+const DATA_DIR = process.env.AUTOCREW_LOCAL_DIR || process.env.AUTOCREW_DATA_DIR || path.join(os.homedir(), ".autocrew");
 const PID_FILE = path.join(DATA_DIR, "autocrew.pid");
 const LOG_FILE = path.join(DATA_DIR, "server.log");
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
@@ -41,6 +41,7 @@ function printHelp() {
   autocrew host           接入宿主（codex|claude-code|dsh），打印接入步骤
                           --dir <path> 把人设写进该目录的 AGENTS.md/CLAUDE.md
                           --role editor-writer|cover 选哪一份人设
+  autocrew storage        资料库位置、预览和迁移（status|cancel|preview|create|open|migrate）
   autocrew doctor         检查本地运行环境
 
 选项:
@@ -229,6 +230,9 @@ async function start() {
     process.exit(1);
   }
 
+  const storageApply = spawnSync(tsx, [path.join(ROOT, "scripts", "storage.mts"), "apply"], { stdio: "inherit", env: process.env });
+  if (storageApply.status !== 0) throw new Error("资料库准备失败；未启动服务，原资料保持不变");
+
   const logOffset = fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE).size : 0;
   const logFd = fs.openSync(LOG_FILE, "a", 0o600);
   fs.chmodSync(LOG_FILE, 0o600);
@@ -270,6 +274,7 @@ async function stop() {
   while (Date.now() < deadline && processAlive(pid)) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  if (processAlive(pid)) throw new Error("AutoCrew 尚未退出；不会迁移仍在写入的资料，请稍后重试");
   await fsp.rm(PID_FILE, { force: true });
   console.log("AutoCrew 已停止");
 }
@@ -429,16 +434,21 @@ switch (command) {
     // 三项都是**纯检查**——doctor 不装东西、不预热（预热是分钟级下载，要用户自己按下）。
     // uv 复用上面那一项，不重复探测：ASR sidecar 与公众号发布共用同一个运行器。
     const binOk = (cmd) => !spawnSync(cmd, ["-version"], { stdio: "ignore" }).error;
+    const storageResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "storage.mts"), "status"], { encoding: "utf8", env: process.env });
+    let storage = {};
+    try { storage = JSON.parse(storageResult.stdout || "{}"); } catch {}
+    const configDir = storage.configRoot;
+    const contentDir = storage.dataRoot;
     let asrStatus = "absent";
     try {
-      asrStatus = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "video", "asr-status.json"), "utf-8")).status || "absent";
+      asrStatus = JSON.parse(fs.readFileSync(path.join(contentDir, "video", "asr-status.json"), "utf-8")).status || "absent";
     } catch {}
     const asrSidecarOk = fs.existsSync(path.join(ROOT, "sidecars", "asr", "asr.py"));
     // 生图就绪:配了中转(原生 HTTP 生图,自包含)→ 封面/正文图不依赖 ~/.openclaw 外部脚本。
     let imageRelay = false;
     let apiProxySet = false;
     try {
-      const pub = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "publish.json"), "utf-8")).wechatMp || {};
+      const pub = JSON.parse(fs.readFileSync(path.join(configDir, "publish.json"), "utf-8")).wechatMp || {};
       imageRelay = Boolean(pub.imageBaseUrl && pub.imageApiKey);
       apiProxySet = Boolean(pub.apiProxy);
     } catch {}
@@ -448,8 +458,10 @@ switch (command) {
       server: await serverUp(),
       frontendBuilt: fs.existsSync(path.join(ROOT, "frontend", "dist", "index.html")),
       dependencies: fs.existsSync(path.join(ROOT, "node_modules", ".bin", "tsx")),
-      dataDir: DATA_DIR,
-      engineConfigured: fs.existsSync(path.join(DATA_DIR, "engine.json")),
+      dataDir: storage.root ?? "资料库不可用",
+      machineDir: DATA_DIR,
+      storageConnected: storage.connected === true,
+      engineConfigured: Boolean(configDir && fs.existsSync(path.join(configDir, "engine.json"))),
       mcpServer: fs.existsSync(path.join(ROOT, "mcp", "server.ts")),
       uv: uvOk,
       wechatPublishScript: fs.existsSync(wechatScript),
@@ -483,6 +495,12 @@ switch (command) {
     );
     if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
       || !checks.uv || !checks.wechatPublishScript || inbox.failed) process.exitCode = 1;
+    break;
+  }
+  case "storage": {
+    const taskArgs = process.argv.slice(process.argv.indexOf("storage") + 1);
+    const result = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "storage.mts"), ...(taskArgs.length ? taskArgs : ["status"])], { stdio: "inherit", env: process.env });
+    process.exitCode = result.status ?? 1;
     break;
   }
   case "help":

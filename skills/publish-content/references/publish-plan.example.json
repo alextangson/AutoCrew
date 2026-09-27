@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "example_only": true,
+  "project_id": null,
+  "project_root": null,
+  "source_system": null,
+  "final_video": {
+    "path": null,
+    "sha256": null,
+    "approval_receipt": null
+  },
+  "approved_covers": [],
+  "platforms": [
+    {
+      "platform": "xiaohongshu",
+      "content_id": null,
+      "account_public_profile": null,
+      "title": null,
+      "caption": null,
+      "cover_path": null,
+      "scheduled_at": null,
+      "timezone": "Asia/Shanghai",
+      "authorization": {
+        "user_message": null,
+        "approved_package_sha256": null,
+        "confirmed_at": null,
+        "includes_listed_activity_forms": false
+      },
+      "publication": {
+        "status": "not_prepared",
+        "post_id": null,
+        "public_url": null,
+        "published_at": null,
+        "evidence_path": null
+      },
+      "campaigns": [
+        {
+          "id": "xiaohongshu-who-ai-work-2026",
+          "selected": false,
+          "official_url": "https://fe.xiaohongshu.com/ditto/vincent/c7df19c3fdb34f9e86f562d767221784?naviHidden=yes&fullscreen=true&source=shequn",
+          "checked_at": null,
+          "rules_path": null,
+          "fit_reason": null,
+          "start_date": "2026-09-04",
+          "end_date": "2026-10-15",
+          "deadline_at": null,
+          "required_main_topic": "谁AI上班",
+          "selected_subtopic": null,
+          "required_mentions": [],
+          "association": {
+            "status": "not_checked",
+            "evidence_path": null
+          },
+          "form_ids": [
+            "ANAAyQcbAAgAXkABAbtALMCNVlCVwJ6ef"
+          ],
+          "selected_subtopic_reason": null
+        }
+      ],
+      "form_submissions": [
+        {
+          "form_id": "ANAAyQcbAAgAXkABAbtALMCNVlCVwJ6ef",
+          "url": "https://doc.weixin.qq.com/forms/ANAAyQcbAAgAXkABAbtALMCNVlCVwJ6ef?page=1",
+          "status": "not_prepared",
+          "authorized": false,
+          "fields_verified_at": null,
+          "field_values_with_sources": [],
+          "deadline_at": null,
+          "dedupe_key": null,
+          "attempt_started_at": null,
+          "submitted_at": null,
+          "receipt_id": null,
+          "evidence_path": null,
+          "official_support_status": "not_applied"
+        }
+      ],
+      "account_display_name": "哈姆雷鹿",
+      "account_identity_verified_at": null
+    }
+  ],
+  "browser": {
+    "space_id": null,
+    "page_labels": {},
+    "handed_off": false
+  },
+  "followup": {
+    "automation_id": null,
+    "status": "not_created",
+    "next_check_at": null,
+    "next_action": null,
+    "last_notified_blocker": null
+  },
+  "archive": {
+    "nas_project_path": null,
+    "local_resume_path": null,
+    "receipts_sync_pending": false
+  }
+}

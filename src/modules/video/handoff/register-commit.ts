@@ -1,3 +1,5 @@
+import { assertManagedPathAvailable } from "../../../storage/storage-roots.js";
+import { contentFile } from "../../../storage/content-project.js";
 /**
  * 登记的四样落盘（P6 spec §3.4 register 第 5 步）：(a) 成片素材 (b) 封面评审单 (c) 成片戳
  * (d) 状态 + `video.final`。**任一失败，全部回滚，状态不推进。**
@@ -95,11 +97,11 @@ export function registeredResult(contentId: string, final: VideoFinalRecord, ext
 }
 
 function journalPath(contentId: string, dataDir: string): string {
-  return path.join(contentDir(contentId, dataDir), "handoff", "register-journal.json");
+  return contentFile(contentId, dataDir, "handoff", "register-journal.json");
 }
 
 function coverReviewPath(contentId: string, dataDir: string): string {
-  return path.join(contentDir(contentId, dataDir), "cover-review.json");
+  return contentFile(contentId, dataDir, "cover-review.json");
 }
 
 async function readOrNull(file: string): Promise<string | null> {
@@ -119,13 +121,12 @@ const NAME_SHA_CHARS = 16;
 
 function destinations(a: CommitArgs): Destinations {
   const gen = a.record.generation;
-  const assets = path.join(contentDir(a.content.id, a.dataDir), "assets");
   const finalName = `final-g${gen}-${a.staged.final.sha.slice(0, NAME_SHA_CHARS)}${a.staged.final.ext}`;
   const cover = (ratio: "3:4" | "4:3") => {
     const c = a.staged.covers[ratio];
-    return path.join(assets, "covers", `codex-g${gen}-${c.sha.slice(0, NAME_SHA_CHARS)}-${ratio.replace(":", "x")}${c.ext}`);
+    return contentFile(a.content.id, a.dataDir, "assets", "covers", `codex-g${gen}-${c.sha.slice(0, NAME_SHA_CHARS)}-${ratio.replace(":", "x")}${c.ext}`);
   };
-  return { finalName, finalDest: path.join(assets, finalName), cover34: cover("3:4"), cover43: cover("4:3") };
+  return { finalName, finalDest: contentFile(a.content.id, a.dataDir, "assets", finalName), cover34: cover("3:4"), cover43: cover("4:3") };
 }
 
 /** 动手前的快照；日志先落盘，之后任何一步崩掉都找得回「改之前」 */
@@ -178,6 +179,7 @@ export async function recoverRegisterJournal(contentId: string, dataDir: string)
 
 async function placeFiles(staged: StagedArtifacts, dests: Destinations): Promise<void> {
   await fs.mkdir(path.dirname(dests.cover34), { recursive: true });
+  await fs.mkdir(path.dirname(dests.finalDest), { recursive: true });
   // 文件名带内容哈希前缀：已存在 = 同一份字节（重登记同一版成片），不必再搬
   const moves: Array<[string, string]> = [
     [staged.final.tmp, dests.finalDest],
@@ -185,6 +187,7 @@ async function placeFiles(staged: StagedArtifacts, dests: Destinations): Promise
     [staged.covers["4:3"].tmp, dests.cover43],
   ];
   for (const [from, to] of moves) {
+    assertManagedPathAvailable(to);
     if (!(await exists(to))) await fs.rename(from, to);
   }
 }
@@ -275,6 +278,9 @@ export async function commitRegister(a: CommitArgs): Promise<HandoffResult> {
     return registeredResult(a.content.id, final, { content_status: "publish_ready" });
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err);
+    if ((err as { code?: string }).code === "PROJECT_COMMIT_UNCERTAIN") {
+      return handoffFail("register_failed", `登记结果待恢复：${why}；日志已保留，下一次 register 会先核验提交结果，不重复登记。`);
+    }
     try {
       await rollbackJournal(a.content.id, journal, a.dataDir);
     } catch (undo) {

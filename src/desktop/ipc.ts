@@ -1,3 +1,4 @@
+import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelStorageSettings } from "./settings-storage.js";
 /**
  * IPC contract + handler registry for the Electron desktop shell.
  *
@@ -1324,6 +1325,10 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "today:summary": todaySummaryHandler,
     "dashboard:summary": dashboardSummaryHandler,
     "events:recent": eventsRecentHandler,
+    "storage:status": getStorageSettings,
+    "storage:preview": previewStorageSettings,
+    "storage:configure": setStorageSettings,
+    "storage:cancel": cancelStorageSettings,
     "workspace:list": workspaceListHandler,
     "workspace:create": workspaceCreateHandler,
     "workspace:switch": workspaceSwitchHandler,

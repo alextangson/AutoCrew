@@ -4,8 +4,8 @@
  * 三条硬约束：
  * 1. **版本不可变**：一个 revision 写下去就永不改写。`usedBriefRevision` 记在 run-log 与
  *    content 元数据里，回溯时必须能拿到**当初那份**输入（P1-12）；覆盖写等于毁证。
- *    发布用 `link(tmp → dest)`：目标已存在时内核直接 EEXIST，比「先 access 再 rename」
- *    少一个 TOCTOU 窗口，也不会像 rename 那样默默盖掉旧版本。
+ *    发布用目录锁 + 检查已存在 + 完整文件 rename；支持 SMB，所有写入者共用同一把锁，
+ *    不会像无锁的「先 access 再 rename」那样竞态覆盖旧版本。
  * 2. **读侧永不抛**：坏 JSON / 未知 schemaVersion → 当作「没有简报」并从 onWarn 冒出来
  *    （§5「损坏可见降级，不崩」）——写稿宁可少一块材料，也不该整条链断掉。
  * 3. **dataDir 由调用方传入**：简报落在选题所在工作区，不跟随「当前工作区」。
@@ -16,6 +16,8 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeJsonOnce } from "../../storage/file-once.js";
+import { assertManagedPathAvailable } from "../../storage/storage-roots.js";
 import { isTopicId } from "../../storage/entity-id.js";
 import type { PersonaKey } from "./personas.js";
 import type { PerspectiveName } from "./research-job-store.js";
@@ -336,7 +338,7 @@ export async function nextBriefRevision(topicId: string, dataDir: string): Promi
 
 /**
  * 落一份简报。已存在同版本 → 抛 `BriefExistsError`，**绝不覆盖**。
- * 先写 tmp 再 `link` 发布：读者要么看不到文件，要么看到完整的一份。
+ * 独占版本后以完整临时文件发布：读者要么看不到文件，要么看到完整的一份。
  */
 export async function saveBrief(
   topicId: string,
@@ -344,20 +346,13 @@ export async function saveBrief(
   dataDir: string,
 ): Promise<string> {
   const dest = briefPath(topicId, brief.revision, dataDir);
+  assertManagedPathAvailable(dest);
   await fs.mkdir(briefsDir(dataDir), { recursive: true });
-  const tmp = `${dest}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   try {
-    await fs.writeFile(tmp, JSON.stringify(brief, null, 2), "utf-8");
-    try {
-      await fs.link(tmp, dest);
-    } catch (err) {
-      if ((err as { code?: string }).code === "EEXIST") throw new BriefExistsError(dest);
-      throw err;
-    }
-  } finally {
-    await fs.unlink(tmp).catch(() => {
-      /* best-effort：tmp 残留不影响正确性，版本扫描也不认它 */
-    });
+    await writeJsonOnce(dest, brief);
+  } catch (err) {
+    if ((err as { code?: string }).code === "EEXIST") throw new BriefExistsError(dest);
+    throw err;
   }
   return dest;
 }

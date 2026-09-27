@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import { contentFile, resolveContentProject } from "../storage/content-project.js";
 /**
  * 写作包（P3 spec §5.1–5.2）——把写手循环翻过来的那一半：**发料**。
  *
@@ -19,7 +21,7 @@
 import path from "node:path";
 
 import { externalBlock, sanitizeExternal } from "../modules/research/research-prompt-kit.js";
-import { readJson, writeJsonAtomic } from "../storage/json-atomic.js";
+import { readJson, writeJsonAtomic, writeTextAtomic } from "../storage/json-atomic.js";
 import { contentDir, listContents, updateContent } from "../storage/local-store.js";
 import { getPack } from "../modules/packs/index.js";
 import { resolveQualityGate } from "../modules/writing/quality-gate.js";
@@ -228,7 +230,7 @@ export function serializeWriterCall<T>(id: string, fn: () => Promise<T>): Promis
 }
 
 export function packPath(contentId: string, dataDir: string | undefined, file: string): string {
-  return path.join(contentDir(contentId, dataDir), file);
+  return contentFile(contentId, dataDir, file);
 }
 
 /**
@@ -244,6 +246,14 @@ export async function readPack(contentId: string, dataDir?: string): Promise<Wri
 
 /** 原子写回（temp + rename）：补证与提交都会改它，写到一半崩掉不许留半份账本 */
 export async function writePack(contentId: string, pack: WritingPackFile, dataDir?: string): Promise<void> {
+  const binding = resolveContentProject(contentId, dataDir);
+  if (binding && pack.context) {
+    const snapshot = path.join(binding.project_root, "01-script/research", pack.packId);
+    await fs.mkdir(snapshot, { recursive: true });
+    await writeJsonAtomic(path.join(snapshot, "adopted-materials.json"), { pack_id: pack.packId, context: pack.context, ledger: pack.ledger });
+    await writeTextAtomic(path.join(snapshot, "brief.md"), pack.context.researchSlot ?? "");
+    await writeJsonAtomic(path.join(binding.project_root, "01-script/references", `${pack.packId}.json`), pack.ledger.entries);
+  }
   await writeJsonAtomic(packPath(contentId, dataDir, PACK_JSON), pack);
 }
 

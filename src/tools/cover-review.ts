@@ -1,3 +1,4 @@
+import { contentFile, contentRoot, projectFile } from "../storage/content-project.js";
 /**
  * Cover Review Tool — generate, review, and approve cover images.
  *
@@ -405,7 +406,7 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
     }
   }
 
-  const assetsDir = path.join(dataDir, "contents", contentId, "assets", "covers");
+  const assetsDir = contentFile(contentId, dataDir, "assets", "covers");
   const variants: CoverVariant[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -499,7 +500,7 @@ async function reviseVariant(params: Record<string, unknown>, contentId: string,
 
   const primaryRatio: PrimaryRatio = review.primaryRatio ?? "3:4";
   const revision = (variant.revision ?? 1) + 1;
-  const assetsDir = path.join(dataDir, "contents", contentId, "assets", "covers");
+  const assetsDir = contentFile(contentId, dataDir, "assets", "covers");
   let generated: Awaited<ReturnType<typeof generateVariant>>;
   if (params.edit_mode === "local") {
     if (ctx.provider !== "relay" || !ctx.relay) {
@@ -632,7 +633,7 @@ async function draftRatios(params: Record<string, unknown>, contentId: string, d
   if (ctx.provider !== "relay" || ctx.relay?.model !== "gpt-image-2") {
     return { ok: false, error: "draft_ratios requires the gpt-image-2 relay with mask support" };
   }
-  const outputPath = path.join(dataDir, "contents", contentId, "assets", "covers", `cover-${label}-r${candidate.revision ?? 1}-draft-4x3-${randomUUID()}`);
+  const outputPath = contentFile(contentId, dataDir, "assets", "covers", `cover-${label}-r${candidate.revision ?? 1}-draft-4x3-${randomUUID()}`);
   let workDir: string | undefined;
   let result: Awaited<ReturnType<typeof renderCoverImage>>;
   try {
@@ -697,7 +698,7 @@ async function platformRatios(params: Record<string, unknown>, contentId: string
     approved.imagePaths["16:9"] ??
     approved.imagePaths["4:3"] ??
     approved.imagePaths["2.35:1"];
-  const assetsDir = path.join(dataDir, "contents", contentId, "assets", "covers");
+  const assetsDir = contentFile(contentId, dataDir, "assets", "covers");
   const baseName = `cover-${approved.label}-r${approved.revision ?? 1}`;
   const paths: Record<string, string> = {};
   const warnings: string[] = [];
@@ -756,10 +757,10 @@ async function platformRatios(params: Record<string, unknown>, contentId: string
   await saveCoverReview(contentId, review, dataDir);
 
   // 人机协同(V5.6.1):适配比例也在文件夹根留「拿了就走」副本(封面-16x9.png 等)
-  const projDir = path.join(dataDir, "contents", contentId);
+  const projDir = contentRoot(contentId, dataDir);
   for (const [ratio, p] of Object.entries(paths)) {
     const suffix = ratio === "2.35:1" ? "235x1" : ratio.replace(":", "x");
-    await fs.copyFile(p, path.join(projDir, `封面-${suffix}${path.extname(p) || ".png"}`)).catch(() => {});
+    await fs.copyFile(p, projectFile(projDir, `封面-${suffix}${path.extname(p) || ".png"}`)).catch(() => {});
   }
 
   return {

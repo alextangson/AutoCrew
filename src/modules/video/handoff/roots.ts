@@ -1,14 +1,15 @@
+import { readProjectRegistry } from "../../../storage/content-project.js";
 /**
  * 剪辑项目根目录白名单（P6 spec §3.4）：`<dataDir>/video.json` 的 `project_roots`。
  *
- * 文件缺失 = 默认 `["~/Projects/broll"]`（创始人实际用的那个剪辑目录）。每个根展开 `~` 后
+ * 仅 ENOENT 可用约定默认根：受管资料库为工作区 projects；未迁移的本机旧模式才用 broll。每个根展开 `~` 后
  * `realpath`——之后所有路径比较都在真实路径上按段比，别名、`..`、大小写之外的花样都绕不过去。
  * 不存在的根照实报出来（交接时一个可用根都没有就拒绝），不静默跳过。
  */
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { getDataDir } from "../../../storage/local-store.js";
+import { getConfigDir, resolveDataDir } from "../../../storage/storage-roots.js";
 import { handoffFail, type HandoffResult } from "./types.js";
 
 export const DEFAULT_PROJECT_ROOTS = ["~/Projects/broll"];
@@ -27,16 +28,23 @@ export function expandHome(p: string): string {
 }
 
 async function configuredRoots(dataDir: string): Promise<string[]> {
-  const file = path.join(getDataDir(dataDir), "video.json");
+  const file = path.join(getConfigDir(dataDir), "video.json");
   let raw: string;
   try {
     raw = await fs.readFile(file, "utf-8");
-  } catch {
-    return DEFAULT_PROJECT_ROOTS;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return readProjectRegistry(dataDir) || getConfigDir(dataDir) !== resolveDataDir(dataDir)
+      ? [path.join(resolveDataDir(dataDir), "projects")]
+      : DEFAULT_PROJECT_ROOTS;
   }
   // 配置写坏了要响：静默回落默认根会把项目建到用户没想到的地方
   const parsed = JSON.parse(raw) as { project_roots?: unknown };
   if (!Array.isArray(parsed.project_roots)) throw new Error(`${file} 缺 project_roots 数组`);
+  if (readProjectRegistry(dataDir)) {
+    const managed = path.join(resolveDataDir(dataDir), "projects");
+    if (parsed.project_roots.length !== 1 || path.resolve(expandHome(String(parsed.project_roots[0]))) !== path.resolve(managed)) throw new Error("共享项目必须使用资料库的 projects 根目录；请更新本机 video.json");
+  }
   return parsed.project_roots.filter((r): r is string => typeof r === "string" && r.trim() !== "");
 }
 
@@ -70,7 +78,7 @@ export async function usableRoots(
     ok: false,
     result: handoffFail("roots_unavailable",
       `没有可用的剪辑根目录：配置的 ${roots.missing.join("、") || "（空）"} 都不存在。` +
-      `在 ${path.join(getDataDir(dataDir), "video.json")} 的 project_roots 里写一个存在的目录`,
+      `在 ${path.join(getConfigDir(dataDir), "video.json")} 的 project_roots 里写一个存在的目录`,
       { missing: roots.missing }),
   };
 }

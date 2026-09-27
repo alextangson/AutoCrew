@@ -1,3 +1,7 @@
+import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
+import { contentFile } from "../src/storage/content-project.js";
+import { acquireLibraryLock } from "../src/storage/library-lock.js";
+import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
 /**
  * AutoCrew 本地 server（PRD-v4 §11）——引擎跑在用户本机,前端搬进浏览器 tab。
  * 取代 desktop/main.ts 的 Electron 主进程:复用同一套 buildIpcHandlers,
@@ -43,6 +47,11 @@ import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.j
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
 import { handleMcpRequest, MCP_PROTOCOL_VERSION, normalizeSession } from "../mcp/server.js";
 import { hostAuthorize } from "../mcp/host-policy.js";
+
+const releaseLibraryLock = acquireLibraryLock();
+process.once("exit", releaseLibraryLock);
+process.once("SIGTERM", () => { releaseLibraryLock(); process.exit(0); });
+process.once("SIGINT", () => { releaseLibraryLock(); process.exit(0); });
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.AUTOCREW_PORT) || 4317;
@@ -149,13 +158,9 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 // ── 视频线接线（视频 spec §8）────────────────────────────────────────────────
-/** 当前工作区 dataDir;注册表异常一律回退默认工作区(与 /api/asset、/mcp 同款) */
+/** 当前工作区 dataDir；注册表损坏或资料库断连时传播错误，避免写入错误位置。 */
 async function activeDataDir(): Promise<string> {
-  try {
-    return (await activeWorkspaceDataDir()) ?? getDataDir();
-  } catch {
-    return getDataDir();
-  }
+  return (await activeWorkspaceDataDir()) ?? getDataDir();
 }
 const videoMedia = createVideoMediaHandler({
   resolveDataDir: activeDataDir,
@@ -173,11 +178,14 @@ const uploadRoute = createUploadHandler({
   },
 });
 
-const server = http.createServer(async (req, res) => {
+const projectReview = createProjectReviewHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+
+const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
   if (!hostAllowed(req)) { res.writeHead(403).end("bad host"); return; }
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
   const p = url.pathname;
+  if ((p === "/mcp" || p.startsWith("/api/")) && !["/api/session", "/api/invoke", "/api/events"].includes(p) && authorize(req)) assertLibraryAvailable();
 
   if (p === "/favicon.ico") { res.writeHead(204).end(); return; }
 
@@ -227,8 +235,7 @@ const server = http.createServer(async (req, res) => {
     }
     let request: Record<string, unknown>;
     try { request = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end("bad json"); return; }
-    let mcpDataDir: string;
-    try { mcpDataDir = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { mcpDataDir = getDataDir(); }
+    const mcpDataDir = await activeDataDir();
     const host = identity?.subject ?? LOCAL_SUBJECT;
     // 按宿主限权（P6 §3.4）：codex 剪辑工位只放行登记与只读查询，其余宿主不受限。
     // 会话归因（P6 §3.8）：转发器每进程一个 nonce，Codex 直连可带可不带——只做诊断，缺省 unknown
@@ -293,11 +300,9 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(400).end("bad params");
       return;
     }
-    let base: string;
-    try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
+    const base = await activeDataDir();
     const assetFolder = kind === "article" ? "article-images" : "covers";
-    const file = path.join(base, "contents", contentId, "assets", assetFolder, name);
-    if (!file.startsWith(path.join(base, "contents"))) { res.writeHead(403).end(); return; }
+    const file = contentFile(contentId, base, "assets", assetFolder, name);
     try { await fs.access(file); } catch { res.writeHead(404).end(); return; }
     res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable" });
     createReadStream(file).pipe(res);
@@ -306,8 +311,7 @@ const server = http.createServer(async (req, res) => {
 
   // 个人形象库含真实人脸照片，只允许本地已认证会话读取，且不使用公共 immutable 缓存。
   if (p === "/api/cover-identity-asset") {
-    let base: string;
-    try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
+    const base = await activeDataDir();
     const served = await serveCoverIdentityAsset({
       authorized: Boolean(authorize(req)),
       dataDir: base,
@@ -323,8 +327,7 @@ const server = http.createServer(async (req, res) => {
   // 研究素材只读端点(深调研 §7):同 /api/asset 的鉴权纪律,但路径一律经存储层的越界闸
   // (index.jsonl 是可篡改文本,不在这里拼路径)。文件名是内容 hash → immutable 缓存安全。
   if (p === "/api/research-asset") {
-    let base: string;
-    try { base = (await activeWorkspaceDataDir()) ?? getDataDir(); } catch { base = getDataDir(); }
+    const base = await activeDataDir();
     const served = await serveResearchAsset({
       assetId: url.searchParams.get("asset_id") || "",
       authorized: Boolean(authorize(req)),
@@ -356,6 +359,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (await projectReview(req, res, url)) return;
+
   // 统一调用端点:{channel, payload} → handler
   if (p === "/api/invoke" && req.method === "POST") {
     const authMethod = authorize(req);
@@ -374,10 +379,11 @@ const server = http.createServer(async (req, res) => {
     const contractError = validatePayload(channel, clean);
     if (contractError) { res.writeHead(200, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ ok: false, error: contractError })); return; }
     // 多工作区:active 的 dataDir 由 server 端从注册表解析注入（sanitize 已剥前端伪造,此处注入可信）
-    try {
+    if (!channel.startsWith("storage:")) {
+      assertLibraryAvailable();
       const wsDir = await activeWorkspaceDataDir();
       if (wsDir) clean._dataDir = wsDir;
-    } catch { /* 注册表异常 → 默认工作区,不阻断 */ }
+    }
     const ctx: IpcHandlerContext = {
       requestApproval: (binding) => APPROVALS.issue(binding),
       consumeApproval: (token, binding) => APPROVALS.consume(token, binding),
@@ -409,6 +415,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   await serveApp(res, p);
+};
+const server = http.createServer((req, res) => {
+  void handleRequest(req, res).catch((err) => {
+    if (!res.headersSent) res.writeHead(503, { "Content-Type": MIME[".json"] });
+    res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+  });
 });
 
 // 防呆 P3:写长文是分钟级任务——本地单用户 server 不许因超时掐断慢请求

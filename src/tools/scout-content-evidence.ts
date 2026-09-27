@@ -1,3 +1,4 @@
+import { hostEvidencePath } from "../modules/research/host-evidence-store.js";
 /**
  * 稿件证据台账的写入口（P6 §3.8 写门 + §11 待修第一条）。
  *
@@ -87,9 +88,8 @@ export function attachContentEvidence(
 ): Promise<Record<string, unknown>> {
   return serializeWriterCall(t.contentId, async () => {
     const pack = await loadWritableTarget(t);
-    const folder = path.join(t.dir, "research", "host-evidence");
-    await fs.mkdir(folder, { recursive: true });
-    const file = path.join(folder, `${t.contentId}.json`);
+    const file = hostEvidencePath(t.contentId, t.dir);
+    await fs.mkdir(path.dirname(file), { recursive: true });
     const history = await readHistory(file);
     const entry = draft([...Object.values(history), ...pack.ledger.entries]);
     if (!history[entry.id] && Object.keys(history).length >= HOST_EVIDENCE_LIMIT)

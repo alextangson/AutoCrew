@@ -26,7 +26,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { getDataDir } from "../storage/local-store.js";
+import { getHostStateDir } from "../storage/storage-roots.js";
 
 /** 宿主名同时是文件名，所以限死小写字母开头的 kebab，路径穿越无从谈起。 */
 export const HOST_NAME_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
@@ -42,7 +42,7 @@ export interface HostTokenInfo {
 }
 
 export function tokensDir(dataDir?: string): string {
-  return path.join(getDataDir(dataDir), "tokens");
+  return path.join(getHostStateDir(dataDir), "tokens");
 }
 
 function assertHost(host: string): string {

@@ -1,3 +1,4 @@
+import { contentRoot, contentIds, projectFile } from "../../storage/content-project.js";
 /**
  * 内部语料（P1 spec §3.2）：创作者**自己产出过**的东西，按与选题的相关度挑出来喂给立意与写手。
  *
@@ -172,7 +173,7 @@ async function readJson(file: string): Promise<unknown | null> {
 async function latestTranscript(dir: string): Promise<{ revision: number; text: string } | null> {
   let names: string[];
   try {
-    names = await fs.readdir(path.join(dir, "video"));
+    names = await fs.readdir(projectFile(dir, "video"));
   } catch {
     return null;
   }
@@ -188,7 +189,7 @@ async function latestTranscript(dir: string): Promise<{ revision: number; text: 
     }
   }
   if (best < 0) return null;
-  const parsed = (await readJson(path.join(dir, "video", bestName))) as { segments?: { text?: unknown }[] } | null;
+  const parsed = (await readJson(projectFile(dir, "video", bestName))) as { segments?: { text?: unknown }[] } | null;
   const text = (parsed?.segments ?? [])
     .map((s) => (typeof s.text === "string" ? s.text.trim() : ""))
     .filter(Boolean)
@@ -213,8 +214,8 @@ async function scanContent(
   query: Set<string>,
   scanned: OwnMaterialScan,
 ): Promise<SourceDoc[]> {
-  const dir = path.join(contentsDir, contentId);
-  const meta = (await readJson(path.join(dir, "meta.json"))) as ContentMeta | null;
+  const dir = contentRoot(contentId, contentsDir);
+  const meta = (await readJson(projectFile(dir, "meta.json"))) as ContentMeta | null;
   if (!meta) return [];
   const title = typeof meta.title === "string" && meta.title.trim() ? meta.title.trim() : contentId;
   const sameTopic = meta.topicId === topic.id;
@@ -242,7 +243,7 @@ async function scanContent(
     }
     let draft: string;
     try {
-      draft = await fs.readFile(path.join(dir, "draft.md"), "utf-8");
+      draft = await fs.readFile(projectFile(dir, "draft.md"), "utf-8");
     } catch {
       return docs;
     }
@@ -357,12 +358,12 @@ export async function collectOwnMaterial(
     excludedSameTopic: 0,
     skippedForeignTranscripts: 0,
   };
-  const contentsDir = path.join(dataDir, "contents");
+  const contentsDir = dataDir;
   const query = bigrams(`${topic.title}${topic.description ?? ""}`);
 
   let ids: string[];
   try {
-    ids = (await fs.readdir(contentsDir)).filter((n) => !n.startsWith("."));
+    ids = await contentIds(dataDir);
   } catch {
     return { chunks: [], rendered: "", refs: [], scanned };
   }

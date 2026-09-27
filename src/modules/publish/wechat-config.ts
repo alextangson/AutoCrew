@@ -5,7 +5,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getDataDir } from "../../storage/local-store.js";
+import { getConfigDir } from "../../storage/storage-roots.js";
 
 export interface ImageFallbackConfig {
   /** 显示名,留空则由域名推出来(codex 通道留空则叫 codex) */
@@ -50,7 +50,7 @@ export interface WechatMpPublishConfig {
 }
 
 export async function loadWechatMpConfig(dataDir?: string): Promise<WechatMpPublishConfig> {
-  const filePath = path.join(getDataDir(dataDir), "publish.json");
+  const filePath = path.join(getConfigDir(dataDir), "publish.json");
   let raw: string;
   try {
     raw = await fs.readFile(filePath, "utf-8");

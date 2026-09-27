@@ -27,7 +27,7 @@ import {
   type EngineRouteName,
 } from "../engine/config.js";
 import { inferProtocol, mergeModels, slugFromHost, uniqueProviderId } from "../engine/config-schema.js";
-import { getDataDir } from "../storage/local-store.js";
+import { getConfigDir } from "../storage/storage-roots.js";
 import { mergeProviders } from "./settings-providers.js";
 
 export function maskKey(key: string): string {
@@ -115,7 +115,7 @@ export async function getEngineSettings(payload: Record<string, unknown>): Promi
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;
-    const raw = await readEngineFile(path.join(getDataDir(dataDir), "engine.json"));
+    const raw = await readEngineFile(path.join(getConfigDir(dataDir), "engine.json"));
     const migrated = migrateEngineConfig(raw, engineEnv());
     const outcome = validateEngineGraph(migrated.draft);
     const cfg = outcome.config;
@@ -364,7 +364,7 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;
-    const filePath = path.join(getDataDir(dataDir), "engine.json");
+    const filePath = path.join(getConfigDir(dataDir), "engine.json");
     const raw = await readEngineFile(filePath); // 1. 读原文件
     const { draft } = migrateEngineConfig(raw, engineEnv()); // 2. 迁移成 v2
     const previous = draft.providers.map((p) => ({ ...p })); // 保存后要知道哪几条被改了（探针只探它们）

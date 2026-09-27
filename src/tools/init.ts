@@ -1,3 +1,4 @@
+import { readProjectRegistry } from "../storage/content-project.js";
 /**
  * AutoCrew Init — Initialize the ~/.autocrew/ data directory.
  *
@@ -43,7 +44,9 @@ export async function executeInit(options?: { dataDir?: string }): Promise<InitR
   }
 
   // Create all subdirectories
+  const sharedProjects = readProjectRegistry(dataDir);
   for (const sub of SUBDIRS) {
+    if (sub === "contents" && sharedProjects) continue;
     const dir = path.join(dataDir, sub);
     try {
       await fs.mkdir(dir, { recursive: true });

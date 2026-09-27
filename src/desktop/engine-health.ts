@@ -19,7 +19,7 @@ import { setEngineFallbackSink, setEngineHealthSink, type EngineFallbackRecord, 
 import { probeEngineRoute } from "../engine/probe.js";
 import { describeEngineFailure, describeProbeFailure, isEngineFailure, type FailureRole } from "../engine/failure-text.js";
 import { classifyEngineError } from "../engine/error-kind.js";
-import { getDataDir } from "../storage/local-store.js";
+import { getConfigDir } from "../storage/storage-roots.js";
 import { cleanErrorMessage } from "./error-clean.js";
 import { emitEngineEvent } from "./event-hub.js";
 import { onEngineSettingsChanged } from "./settings-engine.js";
@@ -69,7 +69,7 @@ export const EMPTY_HEALTH: EngineHealthState = { providers: {} };
 
 export async function loadHealthState(dataDir?: string): Promise<EngineHealthState> {
   try {
-    const raw = await fs.readFile(path.join(getDataDir(dataDir), HEALTH_FILE), "utf-8");
+    const raw = await fs.readFile(path.join(getConfigDir(dataDir), HEALTH_FILE), "utf-8");
     const parsed = JSON.parse(raw) as EngineHealthState;
     if (!parsed || typeof parsed !== "object" || typeof parsed.providers !== "object" || !parsed.providers) {
       return { providers: {} };
@@ -82,7 +82,7 @@ export async function loadHealthState(dataDir?: string): Promise<EngineHealthSta
 
 export async function saveHealthState(state: EngineHealthState, dataDir?: string): Promise<void> {
   try {
-    const dir = getDataDir(dataDir);
+    const dir = getConfigDir(dataDir);
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(dir, HEALTH_FILE);
     const tmp = `${file}.tmp-${process.pid}`;
@@ -98,7 +98,7 @@ export async function saveHealthState(state: EngineHealthState, dataDir?: string
 const memory = new Map<string, EngineHealthState>();
 
 async function stateFor(dataDir?: string): Promise<EngineHealthState> {
-  const key = getDataDir(dataDir);
+  const key = getConfigDir(dataDir);
   const hit = memory.get(key);
   if (hit) return hit;
   const loaded = await loadHealthState(dataDir);

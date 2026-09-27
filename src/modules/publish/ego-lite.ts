@@ -1,3 +1,4 @@
+import { contentFile } from "../../storage/content-project.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent, getCoverReview, getDataDir, type Asset } from "../../storage/local-store.js";
@@ -87,7 +88,7 @@ export async function prepareEgoLitePublish(
 
   const video = preferredVideoAsset(content.assets ?? [], content.videoDone?.renderedRevision);
   if (!video) throw new Error("没有可发布的视频成片；请先完成剪辑并登记 video 素材");
-  const videoPath = path.join(root, "contents", contentId, "assets", video.filename);
+  const videoPath = contentFile(contentId, root, "assets", video.filename);
   if (!(await existingFile(videoPath))) {
     throw new Error(`视频成片文件不存在：${videoPath}`);
   }
@@ -97,7 +98,7 @@ export async function prepareEgoLitePublish(
   if (!approvedCover) throw new Error("没有已批准的封面；请先完成封面评审");
   const coverPath = path.isAbsolute(approvedCover)
     ? approvedCover
-    : path.join(root, "contents", contentId, approvedCover);
+    : contentFile(contentId, root, approvedCover);
   if (!(await existingFile(coverPath))) {
     throw new Error(`已批准的封面文件不存在：${coverPath}`);
   }

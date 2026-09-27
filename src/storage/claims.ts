@@ -26,6 +26,8 @@ import {
   type ContentHandoff,
 } from "./local-store.js";
 import { callerSession } from "../runtime/run-log.js";
+import os from "node:os";
+import { resolveContentProject } from "./content-project.js";
 
 /** 租约 30 分钟（§6.1 创始人裁决 4）。视频线的 runner 租约是 10 分钟，两条线各按各的节奏 */
 export const CLAIM_LEASE_MS = 30 * 60_000;
@@ -160,7 +162,9 @@ async function writeClaim(
   const current = activeClaim(content, now);
   const kept = write.renew ? current : null;
   const at = new Date(now).toISOString();
+  const project = resolveContentProject(content.id, dataDir);
   const claim: ContentClaim = withSession({
+    ...(project ? { machine: os.hostname(), bindingRevision: project.binding_revision } : {}),
     employee: write.employee,
     host: write.host,
     token: kept ? kept.token : newClaimToken(),
@@ -202,12 +206,27 @@ export async function claimContent(
   dataDir?: string,
   opts: ClaimOptions = {},
 ): Promise<ClaimResult> {
+  return serializeClaim(contentId, () => claimContentLocked(contentId, employee, host, dataDir, opts));
+}
+const claimQueues = new Map<string, Promise<unknown>>();
+function serializeClaim<T>(id: string, task: () => Promise<T>): Promise<T> {
+  const next = (claimQueues.get(id) ?? Promise.resolve()).then(task, task);
+  claimQueues.set(id, next);
+  const done = () => { if (claimQueues.get(id) === next) claimQueues.delete(id); };
+  next.then(done, done);
+  return next;
+}
+async function claimContentLocked(contentId: string, employee: ClaimEmployee, host: string, dataDir: string | undefined, opts: ClaimOptions): Promise<ClaimResult> {
   const content = await getContent(contentId, dataDir);
   if (!content) return { ok: false, error: `稿件不存在：${contentId}` };
   const now = Date.now();
   const current = activeClaim(content, now);
   if (!current) return { ok: true, claim: await writeClaim(content, { employee, host, renew: false }, dataDir, now) };
   if (current.host !== host) return held(current, host, now);
+  // A v2 handoff reserves the editor slot. Only the first authenticated editor session redeems it.
+  if (current.pendingHandoff && host === "codex" && current.machine === os.hostname() && callerSession() && callerSession() !== "unknown") {
+    return { ok: true, claim: await writeClaim(content, { employee: "editor", host, renew: false }, dataDir, now) };
+  }
   if (opts.token && opts.token === current.token) {
     return { ok: true, claim: await writeClaim(content, { employee, host, renew: true }, dataDir, now) };
   }

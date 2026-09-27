@@ -7,7 +7,7 @@
  * 游标，worker 只能是 server 进程内的全局单例。消息固定落 targetWorkspaceId 指定的
  * 工作区，换目标 = 改配置，而不是切「当前工作区」。
  *
- * 根目录解析与 workspace-store 同款：getDataDir() 不带参 = AUTOCREW_DATA_DIR 或
+ * 根目录解析与 workspace-store 同款：getMachineDir() 不带参 = AUTOCREW_DATA_DIR 或
  * ~/.autocrew（workspace-store 也拿它当注册表与子工作区的父目录）。rootDir/_rootDir
  * 仅供测试注入——下划线前缀键在 IPC 边界被 sanitizePayload 剥掉，前端伪造不进来。
  *
@@ -16,7 +16,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getDataDir } from "../storage/local-store.js";
+import { getMachineDir } from "../storage/storage-roots.js";
 
 /** 与 settings.ts / cover-handlers.ts 同款格式（各模块自持一份，既有惯例） */
 function maskKey(key: string): string {
@@ -65,7 +65,7 @@ const TG_USER_ID_RE = /^\d{1,20}$/;
 const PROXY_CRED_RE = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#@]+@/i;
 
 function inboxFilePath(rootDir?: string): string {
-  return path.join(getDataDir(rootDir), INBOX_FILE);
+  return path.join(getMachineDir(rootDir), INBOX_FILE);
 }
 
 /** 代理串凭证段脱敏（spec §3.2）；无凭证或不成串则原样回——它不是密钥，不瞎猜 */

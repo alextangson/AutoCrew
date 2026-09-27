@@ -255,11 +255,11 @@ describe("addAsset 硬链接语义", () => {
     expect(d.nlink).toBe(2);
   });
 
-  it("link 失败（如跨卷 EXDEV）退回复制，挂接照常成功", async () => {
+  it.each(["EXDEV", "ENOTSUP", "EOPNOTSUPP"])("link 失败（%s）退回复制，挂接照常成功", async (code) => {
     const { content, src, dest } = await seedContentAndSource("cross.mp4", "cross-volume-bytes");
     const spy = vi
       .spyOn(fs, "link")
-      .mockRejectedValueOnce(Object.assign(new Error("EXDEV: cross-device link"), { code: "EXDEV" }));
+      .mockRejectedValueOnce(Object.assign(new Error(`${code}: hard link unavailable`), { code }));
     try {
       const r = await addAsset(content.id, { filename: "cross.mp4", type: "video", sourcePath: src }, testDir);
       expect(r.ok).toBe(true);

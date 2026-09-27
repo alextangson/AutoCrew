@@ -12,6 +12,7 @@ import { invoke } from "../transport";
 import { toast, openDialog } from "../ui";
 import { Section } from "./settings-kit";
 import { EngineSection } from "./SettingsEngine";
+import { SettingsStorage } from "./SettingsStorage";
 import { Integrations } from "./Integrations";
 
 export type SettingsTab = "models" | "integrations";
@@ -58,6 +59,7 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
         <Integrations />
       ) : (
         <>
+          <SettingsStorage />
           <EngineSection />
 
           <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>

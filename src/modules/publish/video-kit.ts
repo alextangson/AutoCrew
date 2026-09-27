@@ -1,3 +1,4 @@
+import { contentFile } from "../../storage/content-project.js";
 /**
  * 视频发布件（IA v5 V5.4b）——口播稿是"读的",发布件是"发的":
  * 平台原生发布文案 + 分镜表 + 竖版封面。approved 后按需生成(不塞进生成管线,
@@ -186,7 +187,7 @@ export async function prepareVideoKit(
           prompt: `${kit.coverPrompt}\n竖版封面,顶部留白放大字「${kit.coverText}」,画面简洁高对比。`,
           size: "3:4",
         });
-        const imagesDir = path.join(getDataDir(dataDir), "contents", contentId, "images");
+        const imagesDir = contentFile(contentId, dataDir, "images");
         await fs.mkdir(imagesDir, { recursive: true });
         await fs.writeFile(path.join(imagesDir, "video-cover.png"), png);
         kit.coverPath = "images/video-cover.png";

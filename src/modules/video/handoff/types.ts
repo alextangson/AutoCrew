@@ -7,6 +7,10 @@
 
 /** 交接产物清单：`manifest_hash = sha256(JSON.stringify(本对象))`，键序即下面的声明顺序 */
 export interface HandoffManifest {
+  v2?: {
+    version: 2; library_id: string; workspace_id: string; project_id: string; binding_revision: number;
+    files: Array<{ path: string; sha256: string }>;
+  };
   content_id: string;
   /** 交接代次：从 1 起，每次新交接 +1；撤回过的代次永久失效 */
   generation: number;
@@ -20,6 +24,7 @@ export interface HandoffManifest {
 
 /** 当前交接（`content.video.handoff`）：清单 + 哈希 + 落点，重放直接从这里还原回执 */
 export interface VideoHandoffRecord extends HandoffManifest {
+  supersedes?: { hash: string; generation: number; reason: "storage-relocation" };
   hash: string;
   at: string;
   /** 交接的宿主（撤回时认领还给它） */
@@ -79,6 +84,7 @@ export interface ContentVideoLink {
 
 /** 拒绝码（宿主据此决定停下还是改参数重来；人话在 error 里） */
 export type HandoffCode =
+  | "project_binding_conflict"
   | "not_accepted"
   | "not_handoffable"
   | "aroll_invalid"

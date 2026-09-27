@@ -165,7 +165,8 @@ export async function executeContentSave(
     if (!id) return { ok: false, error: "id is required for get" };
     const content = await getContent(id, dataDir);
     if (!content) return { ok: false, error: `Content ${id} not found` };
-    return { ok: true, content: redactClaim(content) };
+    const { resolveContentProject } = await import("../storage/content-project.js");
+    return { ok: true, content: redactClaim(content), project: resolveContentProject(id, dataDir) };
   }
 
   if (action === "update") {

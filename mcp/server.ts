@@ -1,3 +1,4 @@
+import { contentFile } from "../src/storage/content-project.js";
 /**
  * AutoCrew — MCP 协议处理器（纯 JSON-RPC，无传输层）。
  *
@@ -59,6 +60,7 @@ export function normalizeSession(raw: unknown): string {
   return SESSION_RE.test(trimmed) ? trimmed : UNKNOWN_SESSION;
 }
 const PROMPTS = [
+  { name: "insights", title: "账号洞察与团队下一步", description: "分析现有内容和平台数据，输出账号报告及明确团队行动建议", argument: "focus" },
   { name: "write_content", title: "准备一篇内容", description: "从写作需求开始，检查材料、推荐立意，再由当前模型写稿", argument: "requirements" },
   { name: "write_wechat", title: "写公众号文章", description: "从明确选题生成公众号原生稿", argument: "topic" },
   { name: "revise_content", title: "按反馈修改稿件", description: "原地修改现有稿件并保存新版本", argument: "feedback" },
@@ -96,7 +98,7 @@ async function readResource(uri: string, runtime: ReturnType<typeof runtimeFor>)
   // 写作包（P3 §4.2）：宿主模型领包就是读这条资源，正文是 markdown 不是 JSON。
   const pack = uri.match(new RegExp(`^autocrew://contents/(${CONTENT_ID})/writing-pack$`));
   if (pack) {
-    const file = path.join(runtime.ctx.dataDir, "contents", pack[1], "writing-pack.md");
+    const file = contentFile(pack[1], runtime.ctx.dataDir, "writing-pack.md");
     try {
       return { text: await fsp.readFile(file, "utf-8"), mimeType: "text/markdown" };
     } catch {
@@ -116,6 +118,7 @@ async function readResource(uri: string, runtime: ReturnType<typeof runtimeFor>)
 
 function promptMessages(name: string, args: Record<string, unknown>) {
   const value = (key: string) => String(args[key] ?? "").trim();
+  if (name === "insights") return [{ role: "user", content: { type: "text", text: `请生成AutoCrew账号洞察报告。先调用autocrew_insights prepare（默认近30天，用户另有范围则遵从），读取现有内容、定位、回流数据和生产进度；由当前宿主分析并调用submit保存，不调用后台模型。给出有证据的账号判断，以及新媒体团队各相关岗位的具体动作、交付物、验证指标和优先级。必须完成submit并把报告交给我，不停在备料。保存建议不等于执行建议，不自动改稿或发布。重点：${value("focus") || "账号表现、内容机会与下一批团队行动"}。` } }];
   if (name === "write_content") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：${value("requirements")}` } }];
   if (name === "write_wechat") return [{ role: "user", content: { type: "text", text: `${WRITING_INSTRUCTIONS}\n\n本次需求：用选题《${value("topic")}》写一篇公众号原生文章，先用 workflow prepare 准备材料与立意。` } }];
   if (name === "revise_content") return [{ role: "user", content: { type: "text", text: `先用 autocrew_editorial inspect 读取当前稿件与 draft_hash，再用 feedback 保存用户本次已确认的修改要求；按返回的 writer pack 流程原地改稿、submit 和 review_desk 审稿。默认由当前宿主执行，不调用后台改稿模型。反馈：${value("feedback")}` } }];
@@ -250,7 +253,7 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
         name: prompt.name,
         title: prompt.title,
         description: prompt.description,
-        arguments: [{ name: prompt.argument, required: prompt.name !== "weekly_retro" }],
+        arguments: [{ name: prompt.argument, required: !["weekly_retro", "insights"].includes(prompt.name) }],
       })),
     });
   }

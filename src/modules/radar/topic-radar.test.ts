@@ -149,6 +149,15 @@ describe("rankCandidatesScored + 雷达关键词（focusKeywords 粗筛）", () 
 });
 
 describe("refreshTopicRadar + cache + getTopicCandidates", () => {
+  beforeEach(async () => {
+    // Cache tests inject RSS fetch only. Default overseas adapters use their own
+    // network clients, so explicitly scope these fixtures to the mocked source.
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "36kr", kind: "rss", name: "36氪", enabled: true, config: { url: "https://36kr.com/feed" } },
+    ], testDir);
+  });
+
   it("fetches all sources, tolerates per-source failure, writes cache", async () => {
     // 固定两个 RSS 源,与「默认开哪些海外源」解耦——本用例只测 RSS 单源失败的容错
     const { saveRadarSources } = await import("./topic-radar.js");

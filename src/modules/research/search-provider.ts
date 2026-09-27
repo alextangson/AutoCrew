@@ -7,7 +7,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getDataDir } from "../../storage/local-store.js";
+import { getConfigDir } from "../../storage/storage-roots.js";
 
 export type SearchProviderId = "bocha" | "tavily";
 
@@ -35,7 +35,7 @@ const TIMEOUT_MS = 15_000;
 
 export async function loadSearchConfig(dataDir?: string): Promise<SearchConfig | null> {
   try {
-    const raw = await fs.readFile(path.join(getDataDir(dataDir), SEARCH_FILE), "utf-8");
+    const raw = await fs.readFile(path.join(getConfigDir(dataDir), SEARCH_FILE), "utf-8");
     const parsed = JSON.parse(raw) as Partial<SearchConfig>;
     if ((parsed.provider === "bocha" || parsed.provider === "tavily") && typeof parsed.apiKey === "string" && parsed.apiKey.trim()) {
       return { provider: parsed.provider, apiKey: parsed.apiKey.trim(), ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}) };
@@ -47,7 +47,7 @@ export async function loadSearchConfig(dataDir?: string): Promise<SearchConfig |
 }
 
 export async function saveSearchConfig(config: SearchConfig, dataDir?: string): Promise<void> {
-  const dir = getDataDir(dataDir);
+  const dir = getConfigDir(dataDir);
   await fs.mkdir(dir, { recursive: true });
   const p = path.join(dir, SEARCH_FILE);
   await fs.writeFile(p, JSON.stringify(config, null, 2) + "\n", "utf-8");

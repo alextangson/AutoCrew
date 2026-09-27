@@ -22,6 +22,7 @@ import { reviewSchema, executeReview } from "./src/tools/review.js";
 import { prePublishSchema, executePrePublishTool } from "./src/tools/pre-publish.js";
 import { dashboardSchema, executeDashboard } from "./src/tools/dashboard.js";
 import { flywheelSchema, executeFlywheel } from "./src/tools/flywheel.js";
+import { insightsSchema, executeInsights, INSIGHTS_DESCRIPTION } from "./src/tools/insights.js";
 import { generateSchema, executeGenerate } from "./src/tools/generate.js";
 import { styleSchema, executeHostStyle } from "./src/tools/style.js";
 import { workflowSchema, executeWorkflow, WORKFLOW_DESCRIPTION } from "./src/tools/workflow.js";
@@ -211,6 +212,14 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
       "Actions: overview, calendar, pending, batch_review, batch_transition.",
     parameters: dashboardSchema,
     execute: executeDashboard,
+  });
+
+  runner.register({
+    name: "autocrew_insights",
+    label: "AutoCrew Account Insights",
+    description: INSIGHTS_DESCRIPTION,
+    parameters: insightsSchema,
+    execute: executeInsights,
   });
 
   runner.register({

@@ -1,3 +1,4 @@
+import { contentFile } from "../../storage/content-project.js";
 /**
  * 视频生产线存储层（设计 spec §2.1 / §2.3 / §2.6 / §3）。
  *
@@ -24,6 +25,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isContentId, isSafeFilename } from "../../storage/entity-id.js";
 import { readJson, writeJsonAtomic } from "../../storage/json-atomic.js";
+import { writeJsonOnce } from "../../storage/file-once.js";
+import { assertManagedPathAvailable } from "../../storage/storage-roots.js";
 import { getAsset } from "../../storage/library-store.js";
 import { assertTransition, type VideoStateRef } from "./state-machine.js";
 import type {
@@ -47,13 +50,9 @@ const GENESIS: VideoStateRef = { phase: "ingest", state: "idle" };
 // 路径
 // ---------------------------------------------------------------------------
 
-function contentRoot(dataDir: string, contentId: string): string {
-  if (!isContentId(contentId)) throw new Error(`非法 contentId：${String(contentId)}`);
-  return path.join(dataDir, "contents", contentId);
-}
-
 export function videoDir(dataDir: string, contentId: string): string {
-  return path.join(contentRoot(dataDir, contentId), "video");
+  if (!isContentId(contentId)) throw new Error(`非法 contentId：${String(contentId)}`);
+  return contentFile(contentId, dataDir, "video");
 }
 
 /** 本线生成物落这里（AI 镜头 / 程序化画面），与稿件既有 assets/ 分开 */
@@ -227,8 +226,7 @@ function versionedName(base: string, revision: number): string {
 /**
  * 写一版不可变产物。目标已存在 → 拒绝（不是覆盖，也不是静默成功）。
  *
- * 用 `link` 而不是 `rename` 落位：rename 会无声覆盖，link 遇到已存在直接 EEXIST，
- * 「不可覆盖」这条纪律因此是原子的，两个进程同时写同一 revision 也只有一个能赢。
+ * 与简报共用目录锁 + 完整文件发布，支持 SMB；同一 revision 并发只有一个能赢。
  */
 export async function writeVersioned(
   dir: string,
@@ -239,19 +237,16 @@ export async function writeVersioned(
   if (!Number.isInteger(revision) || revision < 1) {
     throw new Error(`revision 必须是 ≥1 的整数，当前是 ${String(revision)}`);
   }
-  await fs.mkdir(dir, { recursive: true });
   const target = path.join(dir, versionedName(base, revision));
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf-8");
+  assertManagedPathAvailable(target);
+  await fs.mkdir(dir, { recursive: true });
   try {
-    await fs.link(tmp, target);
+    await writeJsonOnce(target, data);
   } catch (err) {
     if ((err as { code?: string }).code === "EEXIST") {
       throw new Error(`${versionedName(base, revision)} 已存在：版本化产物不可覆盖，请写下一个 revision`);
     }
     throw err;
-  } finally {
-    await fs.unlink(tmp).catch(() => {});
   }
   return target;
 }
@@ -393,7 +388,7 @@ export async function resolveAssetRef(
   }
   if (ref.kind === "content") {
     if (!isSafeFilename(ref.filename)) throw new Error(`非法素材文件名：${String(ref.filename)}`);
-    return path.join(contentRoot(dataDir, contentId), "assets", ref.filename);
+    return contentFile(contentId, dataDir, "assets", ref.filename);
   }
   if (!isSafeFilename(ref.file)) throw new Error(`非法素材文件名：${String(ref.file)}`);
   return path.join(videoAssetsDir(dataDir, contentId), ref.file);

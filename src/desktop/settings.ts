@@ -228,8 +228,8 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;
-    const { getDataDir } = await import("../storage/local-store.js");
-    const filePath = path.join(getDataDir(dataDir), "publish.json");
+    const { getConfigDir } = await import("../storage/storage-roots.js");
+    const filePath = path.join(getConfigDir(dataDir), "publish.json");
     let existing: Record<string, unknown> = {};
     try {
       existing = JSON.parse(await fs.readFile(filePath, "utf-8")) as Record<string, unknown>;

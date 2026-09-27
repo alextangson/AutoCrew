@@ -1,3 +1,4 @@
+import { contentIds } from "../../storage/content-project.js";
 /**
  * 启动回收（设计 spec §3 纪律 3）——runner 的一块，与 runner-preview / runner-cleanup 同款切法。
  *
@@ -48,7 +49,7 @@ async function requeueJob(ctx: RecoverDeps, job: VideoJob): Promise<void> {
 async function recoverStuckStates(ctx: RecoverDeps, skip: Set<string>): Promise<number> {
   let ids: string[];
   try {
-    ids = await fs.readdir(path.join(ctx.dataDir, "contents"));
+    ids = await contentIds(ctx.dataDir);
   } catch {
     return 0;
   }

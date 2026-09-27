@@ -4,12 +4,15 @@
  * 写入 temp+rename：进程中断不留半个 JSON；失败 best-effort 清理 tmp。
  */
 import fs from "node:fs/promises";
+import { assertManagedPathAvailable } from "./storage-roots.js";
 
 export async function writeTextAtomic(filePath: string, content: string): Promise<void> {
+  assertManagedPathAvailable(filePath);
   const rnd = Math.random().toString(36).slice(2, 6);
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${rnd}`;
   try {
     await fs.writeFile(tmp, content, "utf-8");
+    assertManagedPathAvailable(filePath);
     await fs.rename(tmp, filePath);
   } catch (err) {
     try {
@@ -22,10 +25,12 @@ export async function writeTextAtomic(filePath: string, content: string): Promis
 }
 
 export async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  assertManagedPathAvailable(filePath);
   const rnd = Math.random().toString(36).slice(2, 6);
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${rnd}`;
   try {
     await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf-8");
+    assertManagedPathAvailable(filePath);
     await fs.rename(tmp, filePath);
   } catch (err) {
     try {

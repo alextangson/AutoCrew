@@ -1,3 +1,4 @@
+import { initializeProjectLayout } from "../storage/content-project.js";
 /**
  * 多工作区注册表（IA v4.2 工程线:一人多 IP——Muse 与新号各自独立的编辑部）。
  *
@@ -10,6 +11,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
+import { getLibraryRoot, readLibraryLocation } from "../storage/storage-roots.js";
+import { writeJsonAtomic } from "../storage/json-atomic.js";
 
 export interface Workspace {
   id: string;
@@ -28,24 +31,30 @@ const REGISTRY_FILE = "workspaces.json";
 const DEFAULT_ID = "default";
 
 function registryPath(): string {
-  return path.join(getDataDir(), REGISTRY_FILE);
+  return path.join(getLibraryRoot(), REGISTRY_FILE);
 }
 
 function workspaceDataDir(id: string): string {
-  return id === DEFAULT_ID ? getDataDir() : path.join(getDataDir(), "workspaces", id);
+  if (id !== DEFAULT_ID && !/^ws-[a-z0-9]+$/.test(id)) throw new Error("无效的工作区编号");
+  return id === DEFAULT_ID ? getDataDir() : path.join(getLibraryRoot(), "workspaces", id);
 }
 
 async function readRegistry(): Promise<Registry> {
   try {
     const raw = JSON.parse(await fs.readFile(registryPath(), "utf-8")) as Registry;
-    if (Array.isArray(raw.workspaces) && raw.workspaces.some((w) => w.id === DEFAULT_ID)) return raw;
-  } catch { /* 首次:落默认 */ }
+    if (raw.version === 1 && Array.isArray(raw.workspaces) && raw.workspaces.some((w) => w.id === DEFAULT_ID) &&
+      raw.workspaces.every((w) => (w.id === DEFAULT_ID || /^ws-[a-z0-9]+$/.test(w.id)) && typeof w.name === "string") &&
+      raw.workspaces.some((w) => w.id === raw.active)) return raw;
+    throw new Error("工作区注册表损坏");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
   return { version: 1, active: DEFAULT_ID, workspaces: [{ id: DEFAULT_ID, name: "默认工作区" }] };
 }
 
 async function writeRegistry(reg: Registry): Promise<void> {
   await fs.mkdir(getDataDir(), { recursive: true });
-  await fs.writeFile(registryPath(), JSON.stringify(reg, null, 2) + "\n", "utf-8");
+  await writeJsonAtomic(registryPath(), reg);
 }
 
 export async function listWorkspaces(): Promise<{ active: string; workspaces: Workspace[] }> {
@@ -71,6 +80,13 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   const id = `ws-${Date.now().toString(36)}`;
   const dir = workspaceDataDir(id);
   await fs.mkdir(dir, { recursive: true });
+  if (readLibraryLocation()) {
+    for (const folder of ["topics", "library", "research", "reports", "projects"]) {
+      await fs.mkdir(path.join(dir, folder), { recursive: true });
+    }
+  }
+  const library = readLibraryLocation();
+  if (library) await initializeProjectLayout(dir, library.id, id);
   reg.workspaces.push({ id, name: clean });
   reg.active = id; // 新建即切换——建它就是为了用它
   await writeRegistry(reg);

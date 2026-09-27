@@ -8,7 +8,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import path from "node:path";
-import { getDataDir } from "../storage/local-store.js";
+import { getHostStateDir } from "../storage/storage-roots.js";
 
 const TOKEN_FILE = "server-token";
 
@@ -16,7 +16,7 @@ export function resolveServerToken(dataDir?: string): string {
   const fromEnv = process.env.AUTOCREW_TOKEN;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
 
-  const dir = getDataDir(dataDir);
+  const dir = getHostStateDir(dataDir);
   const tokenPath = path.join(dir, TOKEN_FILE);
   try {
     const existing = readFileSync(tokenPath, "utf-8").trim();

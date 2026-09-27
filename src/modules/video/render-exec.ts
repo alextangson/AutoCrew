@@ -1,3 +1,4 @@
+import { contentFile } from "../../storage/content-project.js";
 /**
  * Render 执行与事务边界（设计 spec §6.1 / §6.2 / §6.4）。
  *
@@ -132,7 +133,7 @@ export async function registerFinalAsset(
   revision: number,
 ): Promise<{ ok: true; filename: string } | { ok: false; reason: string }> {
   const filename = finalAssetFilename(revision);
-  await fs.mkdir(path.join(dataDir, "contents", contentId, "assets"), { recursive: true });
+  await fs.mkdir(contentFile(contentId, dataDir, "assets"), { recursive: true });
   const result = await upsertAsset(
     contentId,
     {

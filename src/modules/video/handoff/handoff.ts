@@ -1,3 +1,6 @@
+import { projectBundle } from "./project-bundle.js";
+import { assertManagedPathAvailable } from "../../../storage/storage-roots.js";
+import { contentFile, resolveContentProject, safeProjectPath } from "../../../storage/content-project.js";
 /**
  * `autocrew_video handoff`：Claude 会话把一条审过的稿交给 Codex 剪辑工位（P6 spec §3.4）。
  *
@@ -71,7 +74,7 @@ export function handedOffResult(record: VideoHandoffRecord, extra: Record<string
     handoff_path: record.handoff_path,
     project_handoff_path: record.project_handoff_path,
     dispatch_text: dispatchText(record, record.project_handoff_path),
-    note: "认领已转给剪辑工位（codex）；在 ~/Projects/broll 对 Codex 说 dispatch_text 里那段即可。登记回来之前本稿不可改。",
+    note: "认领已转给剪辑工位（codex）；在 project_root 读取 AGENTS.md 与当前交接包。登记回来之前本稿不可改。",
     ...extra,
   };
 }
@@ -86,12 +89,14 @@ async function readableFile(file: string): Promise<boolean> {
 }
 
 /** 算出这次请求对应的清单（代次待定）：重放比对与正式交接用同一份 */
-async function planHandoff(content: Content, input: HandoffInput, roots: ProjectRoots): Promise<Planned> {
+async function planHandoff(content: Content, input: HandoffInput, roots: ProjectRoots, dataDir: string): Promise<Planned> {
   const arollPath = path.resolve(expandHome(input.arollPath.trim()));
   if (!(await readableFile(arollPath))) {
     return { ok: false, result: handoffFail("aroll_invalid", `找不到 A-roll 或读不了：${arollPath}`) };
   }
-  const requested = input.projectRoot?.trim()
+  const binding = resolveContentProject(content.id, dataDir);
+  if (binding && input.projectRoot && path.resolve(input.projectRoot) !== path.resolve(binding.project_root)) return { ok: false, result: handoffFail("project_binding_conflict", "必须复用写稿时的项目目录") };
+  const requested = binding?.project_root || input.projectRoot?.trim()
     || content.video?.handoff?.project_root
     || path.join(roots.roots[0], defaultProjectName(content.title));
   const resolved = await resolveProjectRoot(requested, roots);
@@ -101,26 +106,35 @@ async function planHandoff(content: Content, input: HandoffInput, roots: Project
     draft_hash: draftHash(content),
     aroll_sha256: await sha256File(arollPath),
     project_root: resolved.value,
-    notes: (input.notes ?? "").trim(),
+    notes: binding ? (input.notes ?? "") : (input.notes ?? "").trim(),
   };
   return { ok: true, plan: { content, arollPath, projectRoot: resolved.value, base } };
 }
 
 /** 重放：当前交接未撤回、状态已离开可交接态、同一份清单 → 原样返回（不重写任何东西） */
-function replayOf(content: Content, base: Plan["base"]): VideoHandoffRecord | null {
+async function replayOf(content: Content, base: Plan["base"], dataDir: string): Promise<VideoHandoffRecord | null> {
   const current = content.video?.handoff;
   if (!current || (content.video?.revoked ?? []).includes(current.hash)) return null;
   if (HANDOFF_FROM.has(content.status)) return null;
-  return manifestHash({ ...base, generation: current.generation }) === current.hash ? current : null;
+  const manifest = { ...base, generation: current.generation };
+  const bundle = await projectBundle(content, manifest, dataDir);
+  return manifestHash(bundle?.manifest ?? manifest) === current.hash ? current : null;
 }
 
 function handoffDir(contentId: string, dataDir: string): string {
-  return path.join(contentDir(contentId, dataDir), "handoff");
+  return contentFile(contentId, dataDir, "handoff");
 }
 
 /** 下一代次 = 已提交代次与盘上已有交接包代次的最大值 + 1（孤儿包占住的号不复用） */
 async function nextGeneration(content: Content, dataDir: string): Promise<number> {
   let max = content.video?.handoff?.generation ?? 0;
+  const binding = resolveContentProject(content.id, dataDir);
+  if (binding) {
+    for (const name of await fs.readdir(path.join(binding.project_root, "01-script/handoff"))) {
+      const m = /^g(\d+)$/.exec(name); if (m) max = Math.max(max, Number(m[1]));
+    }
+    return max + 1;
+  }
   try {
     for (const name of await fs.readdir(handoffDir(content.id, dataDir))) {
       const m = /^editor-g(\d+)\.md$/.exec(name);
@@ -134,6 +148,7 @@ async function nextGeneration(content: Content, dataDir: string): Promise<number
 
 /** 不可变写：独占创建；已存在且内容不同 → null（冲突），相同 → false（没新建） */
 async function writeImmutable(file: string, text: string): Promise<boolean | null> {
+  assertManagedPathAvailable(file);
   await fs.mkdir(path.dirname(file), { recursive: true });
   try {
     await fs.writeFile(file, text, { encoding: "utf-8", flag: "wx" });
@@ -153,9 +168,9 @@ async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<
   if (!content) return handoffFail("invalid_params", `稿件不存在：${input.contentId}`);
   const roots = await usableRoots(ctx.dataDir);
   if (!roots.ok) return roots.result;
-  const planned = await planHandoff(content, input, roots.value);
+  const planned = await planHandoff(content, input, roots.value, ctx.dataDir);
   if (!planned.ok) return planned.result;
-  const replay = replayOf(content, planned.plan.base);
+  const replay = await replayOf(content, planned.plan.base, ctx.dataDir);
   if (replay) return handedOffResult(replay, { replayed: true, content_status: content.status });
 
   const blocked = acceptanceBlock(content);
@@ -169,6 +184,7 @@ async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<
 }
 
 interface Prepared {
+  bundle?: Record<string, string>;
   manifest: HandoffManifest;
   record: VideoHandoffRecord;
   fileInput: HandoffFileInput;
@@ -176,7 +192,8 @@ interface Prepared {
 
 async function prepareCommit(plan: Plan, input: HandoffInput, dataDir: string): Promise<Prepared> {
   const generation = await nextGeneration(plan.content, dataDir);
-  const manifest = buildManifest({ ...plan.base, generation });
+  const bundle = await projectBundle(plan.content, buildManifest({ ...plan.base, generation }), dataDir);
+  const manifest = bundle?.manifest ?? buildManifest({ ...plan.base, generation });
   const hash = manifestHash(manifest);
   const record: VideoHandoffRecord = {
     ...manifest,
@@ -189,15 +206,20 @@ async function prepareCommit(plan: Plan, input: HandoffInput, dataDir: string): 
     handoff_path: path.join(handoffDir(plan.content.id, dataDir), `editor-g${generation}.md`),
     project_handoff_path: path.join(plan.projectRoot, SCRIPT_DIR, `autocrew-handoff-g${generation}.md`),
   };
+  if (bundle) {
+    const bundleFile = path.join(plan.projectRoot, `01-script/handoff/g${String(generation).padStart(4, "0")}/handoff.md`);
+    record.handoff_path = bundleFile; record.project_handoff_path = bundleFile;
+    record.aroll_path = path.join(plan.projectRoot, "02-aroll", `${manifest.aroll_sha256}${path.extname(plan.arollPath).toLowerCase()}`);
+  }
   const fileInput = { title: plan.content.title, manifest, hash, body: plan.content.body, arollPath: plan.arollPath };
-  return { manifest, record, fileInput };
+  return { manifest, record, fileInput, ...(bundle ? { bundle: bundle.files } : {}) };
 }
 
 async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContext, grant: Grant): Promise<HandoffResult> {
   const prepared = await prepareCommit(plan, input, ctx.dataDir);
   // 令牌长度固定量级，拿占位令牌先量一次：超限就别动认领
   const sized = renderHandoffFile({ ...prepared.fileInput, claimToken: "clm-0000000000000-00000000" });
-  if (Buffer.byteLength(sized) > MAX_HANDOFF_BYTES) {
+  if (!prepared.bundle && Buffer.byteLength(sized) > MAX_HANDOFF_BYTES) {
     return { ...handoffFail("handoff_too_large", `交接包超过 ${MAX_HANDOFF_BYTES / 1024} KB（正文或备注太长）`), ...grant };
   }
   const owned = await claimProjectDir(plan.projectRoot, plan.content.id);
@@ -228,8 +250,17 @@ async function landHandoff(
   const created: string[] = [];
   let failure: HandoffResult;
   try {
-    for (const file of [record.handoff_path, record.project_handoff_path]) {
-      const wrote = await writeImmutable(file, text);
+    if (prepared.bundle) {
+      assertManagedPathAvailable(record.aroll_path);
+      safeProjectPath(plan.projectRoot, path.relative(plan.projectRoot, record.aroll_path));
+      await fs.mkdir(path.dirname(record.aroll_path), { recursive: true });
+      try { await fs.copyFile(plan.arollPath, record.aroll_path, fs.constants.COPYFILE_EXCL); }
+      catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+      if (await sha256File(record.aroll_path) !== record.aroll_sha256) throw new Error("A-roll 校验失败");
+    }
+    const files = prepared.bundle ? Object.entries(prepared.bundle).map(([p, t]) => [safeProjectPath(plan.projectRoot, p), t]) : [[record.handoff_path, text], [record.project_handoff_path, text]];
+    for (const [file, body] of files) {
+      const wrote = await writeImmutable(file, body);
       if (wrote === null) throw Object.assign(new Error(`交接包已存在且内容不同，不覆盖：${file}`), { code: "handoff_file_exists" });
       if (wrote) created.push(file);
     }
@@ -237,7 +268,7 @@ async function landHandoff(
       expectedStatus: plan.content.status,
       expectedDraft: { title: plan.content.title, body: plan.content.body, platform: plan.content.platform },
       host: input.host,
-      patch: (current) => ({ video: { ...current.video, handoff: record } }),
+      patch: (current) => ({ video: { ...current.video, handoff: record }, ...(record.v2 && current.claim ? { claim: { ...current.claim, pendingHandoff: true } } : {}) }),
     }, ctx.dataDir);
     if (moved.ok) return handedOffResult(record, { content_status: "editing" });
     failure = handoffFail("handoff_failed", `状态没推进：${moved.error ?? "未知原因"}`);

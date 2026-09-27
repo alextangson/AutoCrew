@@ -6,7 +6,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getDataDir } from "../../storage/local-store.js";
+import { getConfigDir } from "../../storage/storage-roots.js";
 import { loadWechatMpConfig } from "../publish/wechat-config.js";
 
 export type CoverProvider = "relay" | "gemini";
@@ -25,14 +25,14 @@ const FILE = "cover.json";
 
 export async function loadCoverSettings(dataDir?: string): Promise<CoverSettings> {
   try {
-    return JSON.parse(await fs.readFile(path.join(getDataDir(dataDir), FILE), "utf-8")) as CoverSettings;
+    return JSON.parse(await fs.readFile(path.join(getConfigDir(dataDir), FILE), "utf-8")) as CoverSettings;
   } catch {
     return {};
   }
 }
 
 export async function saveCoverSettings(updates: CoverSettings, dataDir?: string): Promise<CoverSettings> {
-  const dir = getDataDir(dataDir);
+  const dir = getConfigDir(dataDir);
   await fs.mkdir(dir, { recursive: true });
   const filePath = path.join(dir, FILE);
   const merged = { ...(await loadCoverSettings(dataDir)), ...updates };

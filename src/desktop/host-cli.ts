@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getDataDir } from "../storage/local-store.js";
+import { getHostStateDir } from "../storage/storage-roots.js";
 import { ensureHostToken } from "./host-tokens.js";
 
 export const KNOWN_HOSTS = ["codex", "claude-code", "dsh"] as const;
@@ -170,7 +170,7 @@ export function hostInstructions(host: string, options: HostCliOptions = {}): st
   if (!isKnownHost(host)) {
     return `未知宿主：${host}\n可用：${KNOWN_HOSTS.join(" / ")}`;
   }
-  const dataDir = getDataDir(options.dataDir);
+  const dataDir = getHostStateDir(options.dataDir);
   const home = options.home ?? os.homedir();
   const port = options.port ?? 4317;
   const endpoint = `http://127.0.0.1:${port}/mcp`;
