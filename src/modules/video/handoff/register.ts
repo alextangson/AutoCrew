@@ -17,7 +17,7 @@ import type { HandoffContext } from "./handoff.js";
 import { serializeVideoLine } from "./lock.js";
 import { registerHash, sha256File } from "./manifest.js";
 import { recheckProjectRoot, resolveProjectFile } from "./paths.js";
-import { stageArtifacts, type ArtifactPaths } from "./register-artifacts.js";
+import { stageArtifacts, verifyInPlace, type ArtifactPaths } from "./register-artifacts.js";
 import { commitRegister, recoverRegisterJournal, registeredResult, type StampFn } from "./register-commit.js";
 import { expandHome, usableRoots } from "./roots.js";
 import { handoffFail, type HandoffResult, type RegisterApprovals, type VideoHandoffRecord } from "./types.js";
@@ -175,7 +175,8 @@ async function registerLocked(input: RegisterInput, ctx: RegisterContext): Promi
   catch (e) { return handoffFail("approval_mismatch", String(e)); }
   const files = await resolveFiles(content, record, input, ctx.dataDir);
   if (!files.ok) return files.result;
-  const staged = await stageArtifacts(content.id, ctx.dataDir, files.value, input.approvals);
+  // 资料库里的项目（v2）：文件本来就在项目里，原地核验不复制；旧 v1 项目照旧暂存进稿件目录
+  const staged = binding ? await verifyInPlace(files.value, input.approvals) : await stageArtifacts(content.id, ctx.dataDir, files.value, input.approvals);
   if (!staged.ok) return staged.result;
   try {
     // 写门在核验之后、四样落盘之前：核验失败不留认领副作用，重试时交接包里的令牌照样有效
@@ -188,6 +189,6 @@ async function registerLocked(input: RegisterInput, ctx: RegisterContext): Promi
     });
     return result.ok ? result : { ...result, ...gate.grant };
   } finally {
-    await fs.rm(staged.value.dir, { recursive: true, force: true });
+    if (staged.value.dir) await fs.rm(staged.value.dir, { recursive: true, force: true });
   }
 }

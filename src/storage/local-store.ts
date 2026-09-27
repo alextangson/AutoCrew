@@ -84,6 +84,11 @@ export interface AssetMedia {
 
 export interface Asset {
   filename: string;
+  /**
+   * 文件原地留在项目里时的项目内相对路径（P6 §13.4-F：登记的成片在 07-delivery 原地，不再复制进 assets）。
+   * 有它就按它找文件，filename 只作显示与去重。
+   */
+  projectPath?: string;
   type: "cover" | "broll" | "image" | "video" | "audio" | "subtitle" | "other";
   /** 一行内容说明；挂接 UI 用素材库 name/tags 预填——不靠人记得改文件名 */
   description?: string;

@@ -120,6 +120,8 @@ async function exists(file: string): Promise<boolean> {
 const NAME_SHA_CHARS = 16;
 
 function destinations(a: CommitArgs): Destinations {
+  // 原地登记：登记的就是项目里那几份文件本身
+  if (a.staged.dir === null) return { finalName: path.basename(a.files.final), finalDest: a.files.final, cover34: a.files.cover34, cover43: a.files.cover43 };
   const gen = a.record.generation;
   const finalName = `final-g${gen}-${a.staged.final.sha.slice(0, NAME_SHA_CHARS)}${a.staged.final.ext}`;
   const cover = (ratio: "3:4" | "4:3") => {
@@ -133,7 +135,8 @@ function destinations(a: CommitArgs): Destinations {
 async function openJournal(a: CommitArgs, dests: Destinations): Promise<RegisterJournal> {
   const current = (await getContent(a.content.id, a.dataDir)) ?? a.content;
   const created: string[] = [];
-  for (const file of [dests.finalDest, dests.cover34, dests.cover43]) {
+  // 原地登记不新建文件：回滚绝不能删项目里的成片和封面
+  for (const file of a.staged.dir === null ? [] : [dests.finalDest, dests.cover34, dests.cover43]) {
     if (!(await exists(file))) created.push(file);
   }
   const journal: RegisterJournal = {
@@ -178,6 +181,7 @@ export async function recoverRegisterJournal(contentId: string, dataDir: string)
 }
 
 async function placeFiles(staged: StagedArtifacts, dests: Destinations): Promise<void> {
+  if (staged.dir === null) return;
   await fs.mkdir(path.dirname(dests.cover34), { recursive: true });
   await fs.mkdir(path.dirname(dests.finalDest), { recursive: true });
   // 文件名带内容哈希前缀：已存在 = 同一份字节（重登记同一版成片），不必再搬
@@ -197,6 +201,7 @@ async function registerAsset(a: CommitArgs, dests: Destinations): Promise<void> 
   const gen = a.record.generation;
   const up = await upsertAsset(a.content.id, {
     filename: dests.finalName,
+    ...(a.staged.dir === null ? { projectPath: path.relative(a.record.project_root, a.files.final) } : {}),
     type: "video",
     role: "other",
     renderedRevision: gen,

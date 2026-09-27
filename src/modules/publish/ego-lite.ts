@@ -1,4 +1,4 @@
-import { contentFile } from "../../storage/content-project.js";
+import { contentFile, contentRoot, safeProjectPath } from "../../storage/content-project.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent, getCoverReview, getDataDir, type Asset } from "../../storage/local-store.js";
@@ -88,7 +88,8 @@ export async function prepareEgoLitePublish(
 
   const video = preferredVideoAsset(content.assets ?? [], content.videoDone?.renderedRevision);
   if (!video) throw new Error("没有可发布的视频成片；请先完成剪辑并登记 video 素材");
-  const videoPath = contentFile(contentId, root, "assets", video.filename);
+  // 原地登记的成片留在项目的 07-delivery 里（P6 §13.4-F），按项目内路径找
+  const videoPath = video.projectPath ? safeProjectPath(contentRoot(contentId, root), video.projectPath) : contentFile(contentId, root, "assets", video.filename);
   if (!(await existingFile(videoPath))) {
     throw new Error(`视频成片文件不存在：${videoPath}`);
   }

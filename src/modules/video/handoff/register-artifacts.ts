@@ -23,7 +23,8 @@ export interface StagedFile {
 }
 
 export interface StagedArtifacts {
-  dir: string;
+  /** 暂存目录；null = 原地核验（文件本来就在资料库的项目里，§13.4-F 第 4 步，不复制） */
+  dir: string | null;
   final: StagedFile & { durationMs: number };
   covers: { "3:4": StagedFile; "4:3": StagedFile };
   coversSha: string;
@@ -43,10 +44,10 @@ async function cloneCopy(src: string, dest: string): Promise<void> {
   await fs.copyFile(src, dest, fs.constants.COPYFILE_FICLONE);
 }
 
-async function stageFinal(src: string, dir: string, approval: RegisterApproval): Promise<Staged<StagedArtifacts["final"]>> {
+async function stageFinal(src: string, dir: string | null, approval: RegisterApproval): Promise<Staged<StagedArtifacts["final"]>> {
   const ext = path.extname(src).toLowerCase() || ".mp4";
-  const tmp = path.join(dir, `final${ext}`);
-  await cloneCopy(src, tmp);
+  const tmp = dir ? path.join(dir, `final${ext}`) : src;
+  if (dir) await cloneCopy(src, tmp);
   const probed = await probeMedia(tmp);
   const invalid = (why: string): Staged<never> => ({ ok: false, result: handoffFail("final_invalid", `成片不合格：${why}`) });
   if (!probed.ok) return invalid(probed.reason);
@@ -58,7 +59,7 @@ async function stageFinal(src: string, dir: string, approval: RegisterApproval):
     return {
       ok: false,
       result: handoffFail("approval_mismatch",
-        "成片文件的 sha256 与 gate3 批准凭据不符——被批准的不是这个文件。登记被批准的那一版，或重新走 gate3",
+        "成片文件的 sha256 与 gate3 批准凭据不符——导出文件变了，需要重新通过：登记被批准的那一版，或让创始人在看板上重新通过成片",
         { which: "final_cut" }),
     };
   }
@@ -80,9 +81,9 @@ async function imageExt(file: string): Promise<".png" | ".jpg" | null> {
   }
 }
 
-async function stageCover(src: string, dir: string, ratio: "3:4" | "4:3"): Promise<Staged<StagedFile>> {
-  const tmp = path.join(dir, `cover-${ratio.replace(":", "x")}`);
-  await cloneCopy(src, tmp);
+async function stageCover(src: string, dir: string | null, ratio: "3:4" | "4:3"): Promise<Staged<StagedFile>> {
+  const tmp = dir ? path.join(dir, `cover-${ratio.replace(":", "x")}`) : src;
+  if (dir) await cloneCopy(src, tmp);
   const ext = await imageExt(tmp);
   if (!ext) {
     return { ok: false, result: handoffFail("cover_invalid", `${ratio} 封面不是 PNG / JPEG：${src}`, { which: ratio }) };
@@ -90,7 +91,7 @@ async function stageCover(src: string, dir: string, ratio: "3:4" | "4:3"): Promi
   return { ok: true, value: { tmp, sha: await sha256File(tmp), ext } };
 }
 
-async function stageCovers(paths: ArtifactPaths, dir: string, approval: RegisterApproval): Promise<Staged<Pick<StagedArtifacts, "covers" | "coversSha">>> {
+async function stageCovers(paths: ArtifactPaths, dir: string | null, approval: RegisterApproval): Promise<Staged<Pick<StagedArtifacts, "covers" | "coversSha">>> {
   const c34 = await stageCover(paths.cover34, dir, "3:4");
   if (!c34.ok) return c34;
   const c43 = await stageCover(paths.cover43, dir, "4:3");
@@ -128,4 +129,17 @@ export async function stageArtifacts(
     await fs.rm(dir, { recursive: true, force: true });
     throw err;
   }
+}
+
+/**
+ * 原地核验（§13.4-F 第 4 步，评审 #9）：文件已经在资料库的项目里（成片由 Codex 挪进 07-delivery），
+ * 不再暂存复制、也不再放第二份正式副本。核的仍是要登记的那份实际字节：ffprobe / 魔数 / sha256
+ * 都对着项目里的文件做，和批准凭据比对；对不上回 approval_mismatch。
+ */
+export async function verifyInPlace(paths: ArtifactPaths, approvals: RegisterApprovals): Promise<Staged<StagedArtifacts>> {
+  const final = await stageFinal(paths.final, null, approvals.final_cut);
+  if (!final.ok) return final;
+  const covers = await stageCovers(paths, null, approvals.covers);
+  if (!covers.ok) return covers;
+  return { ok: true, value: { dir: null, final: final.value, ...covers.value } };
 }
