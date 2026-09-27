@@ -8,15 +8,18 @@ import { contentFile, resolveContentProject, safeProjectPath } from "../../../st
  * 重放必须在阶段门之前——交出去之后状态已是 editing、认领已在 codex 手上，同一份请求重发
  * （网络抖动、双击）不该被拒成「不能交接」或 claim_held。
  *
+ * 缺料（决定、出处）在写门之前查（§13.4-D），缺什么回什么，不留认领。
  * 落盘顺序：认领转给剪辑工位（新令牌要写进交接包）→ 两份交接包 → 状态 + 交接记录同一次写。
- * 后两步任一失败都退回：删掉刚写的交接包、认领退回调用方，状态从未推进。
+ * 失败按 handoff-failure 的三类处理：提交前 / 确认未提交都把认领恢复成调用前那一份
+ * （原持有者、原令牌），并删掉刚写的交接包；提交结果不确定就原样留着等恢复。
  * 进程在中途崩掉留下的孤儿交接包不会被覆盖（文件不可变），下一次交接自动跳到更高代次。
  */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { transferClaim, type WriteGate } from "../../../storage/claims.js";
+import { evidenceBlock, failureCode, isCommitUncertain, pendingRecovery, withClaimRestored } from "./handoff-failure.js";
 import { draftHash } from "../../../storage/draft-hash.js";
-import { contentDir, getContent, transitionStatus, type Content } from "../../../storage/local-store.js";
+import { contentDir, getContent, transitionStatus, type Content, type ContentClaim } from "../../../storage/local-store.js";
 import { probeAroll } from "../ingest.js";
 import { acceptanceBlock, HANDOFF_FROM } from "./acceptance.js";
 import { serializeVideoLine } from "./lock.js";
@@ -173,14 +176,23 @@ async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<
   const replay = await replayOf(content, planned.plan.base, ctx.dataDir);
   if (replay) return handedOffResult(replay, { replayed: true, content_status: content.status });
 
-  const blocked = acceptanceBlock(content);
+  const blocked = acceptanceBlock(content) ?? await evidenceBlock(content, ctx.dataDir);
   if (blocked) return blocked;
   const probed = await probeAroll(planned.plan.arollPath);
   if (!probed.ok) return handoffFail("aroll_invalid", probed.reason);
   // 写门放在只读核验之后、第一次落盘之前：被拒的请求不留认领这种副作用
+  const prior = content.claim;
   const gate = await ctx.gate();
   if ("denied" in gate) return gate.denied;
-  return commitHandoff(planned.plan, input, ctx, gate.grant);
+  const held = { contentId: content.id, prior, heldToken: gate.grant.claim_token ?? input.claimToken, dataDir: ctx.dataDir };
+  try {
+    return await commitHandoff(planned.plan, input, ctx, gate.grant, prior);
+  } catch (err) {
+    // 认领转交之前抛出的故障（算代次、打包、占目录）：提交前失败，认领恢复原样
+    if (isCommitUncertain(err)) return pendingRecovery(err);
+    const code = failureCode(err, "handoff_rejected");
+    return withClaimRestored(handoffFail(code, err instanceof Error ? err.message : String(err)), "handoff_rejected", held);
+  }
 }
 
 interface Prepared {
@@ -215,15 +227,16 @@ async function prepareCommit(plan: Plan, input: HandoffInput, dataDir: string): 
   return { manifest, record, fileInput, ...(bundle ? { bundle: bundle.files } : {}) };
 }
 
-async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContext, grant: Grant): Promise<HandoffResult> {
+async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContext, grant: Grant, prior: ContentClaim | undefined): Promise<HandoffResult> {
+  const held = { contentId: plan.content.id, prior, heldToken: grant.claim_token ?? input.claimToken, dataDir: ctx.dataDir };
   const prepared = await prepareCommit(plan, input, ctx.dataDir);
   // 令牌长度固定量级，拿占位令牌先量一次：超限就别动认领
   const sized = renderHandoffFile({ ...prepared.fileInput, claimToken: "clm-0000000000000-00000000" });
   if (!prepared.bundle && Buffer.byteLength(sized) > MAX_HANDOFF_BYTES) {
-    return { ...handoffFail("handoff_too_large", `交接包超过 ${MAX_HANDOFF_BYTES / 1024} KB（正文或备注太长）`), ...grant };
+    return withClaimRestored(handoffFail("handoff_too_large", `交接包超过 ${MAX_HANDOFF_BYTES / 1024} KB（正文或备注太长）`), "handoff_rejected", held);
   }
   const owned = await claimProjectDir(plan.projectRoot, plan.content.id);
-  if (!owned.ok) return { ...owned.result, ...grant };
+  if (!owned.ok) return withClaimRestored(owned.result, "handoff_rejected", held);
   const moved = await transferClaim(plan.content.id, {
     token: grant.claim_token ?? input.claimToken,
     host: input.host,
@@ -232,20 +245,21 @@ async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContex
     note: `交接剪辑 g${prepared.record.generation}`,
   }, ctx.dataDir);
   if (!moved.ok) {
-    return { ...handoffFail("handoff_failed", moved.error, moved.holder ? { holder: moved.holder } : {}), ...grant };
+    return withClaimRestored(handoffFail("handoff_rejected", moved.error, moved.holder ? { holder: moved.holder } : {}), "handoff_rejected", held);
   }
-  return landHandoff(plan, input, ctx, prepared, moved.claim.token);
+  return landHandoff(plan, input, ctx, prepared, { ...held, heldToken: moved.claim.token });
 }
 
-/** 写两份交接包 → 状态与记录同一次落盘；失败就删包、认领退回、状态不动 */
+/** 写两份交接包 → 状态与记录同一次落盘；确认没提交就删包、认领恢复原样、状态不动 */
 async function landHandoff(
   plan: Plan,
   input: HandoffInput,
   ctx: HandoffContext,
   prepared: Prepared,
-  editorToken: string,
+  held: Parameters<typeof withClaimRestored>[2] & { heldToken: string },
 ): Promise<HandoffResult> {
   const { record } = prepared;
+  const editorToken = held.heldToken;
   const text = renderHandoffFile({ ...prepared.fileInput, claimToken: editorToken });
   const created: string[] = [];
   let failure: HandoffResult;
@@ -272,22 +286,12 @@ async function landHandoff(
       patch: (current) => ({ video: { ...current.video, handoff: record }, ...(record.v2 && current.claim ? { claim: { ...current.claim, pendingHandoff: true } } : {}) }),
     }, ctx.dataDir);
     if (moved.ok) return handedOffResult(record, { content_status: "editing" });
-    failure = handoffFail("handoff_failed", `状态没推进：${moved.error ?? "未知原因"}`);
+    failure = handoffFail("handoff_not_committed", `状态没推进：${moved.error ?? "未知原因"}`);
   } catch (err) {
-    const code = (err as { code?: string }).code === "handoff_file_exists" ? "handoff_file_exists" : "handoff_failed";
-    failure = handoffFail(code, err instanceof Error ? err.message : String(err));
+    // 结果不确定：交接包、认领、事务日志原样留着，等重启核定
+    if (isCommitUncertain(err)) return pendingRecovery(err);
+    failure = handoffFail(failureCode(err, "handoff_not_committed"), err instanceof Error ? err.message : String(err));
   }
-  return { ...failure, ...(await undoHandoff(plan.content.id, created, editorToken, input, ctx.dataDir)) };
-}
-
-async function undoHandoff(contentId: string, created: string[], editorToken: string, input: HandoffInput, dataDir: string): Promise<Grant> {
   for (const file of created) await fs.rm(file, { force: true }).catch(() => undefined);
-  const back = await transferClaim(contentId, {
-    token: editorToken,
-    host: input.host,
-    toEmployee: "writer",
-    toHost: input.host,
-    note: "交接未完成，认领退回",
-  }, dataDir);
-  return back.ok ? { claim_token: back.claim.token } : {};
+  return withClaimRestored(failure, "handoff_not_committed", held);
 }

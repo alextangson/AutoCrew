@@ -103,7 +103,12 @@ export type HandoffCode =
   | "cover_invalid"
   | "approval_mismatch"
   | "register_failed"
-  | "handoff_failed";
+  | "handoff_failed"
+  | "missing_decisions"
+  | "missing_citations"
+  | "handoff_rejected"
+  | "handoff_not_committed"
+  | "handoff_pending_recovery";
 
 export type HandoffResult = Record<string, unknown>;
 

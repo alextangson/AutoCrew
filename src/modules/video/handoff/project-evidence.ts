@@ -73,17 +73,37 @@ export async function saveCoverage(content: Content, coverage: CitationCoverage,
   await writeJsonAtomic(contentFile(content.id, dataDir, "citations.json"), coverage);
   if (binding) await writeJsonAtomic(path.join(binding.project_root, "01-script/evidence/citations.json"), coverage);
 }
+/**
+ * 交接缺料（§13.4-D）：缺决定、缺/错出处映射。带码与缺覆盖的句子，交接在认领写入之前据此拒绝，
+ * 回执说清缺什么、谁去补，而不是泛化的「handoff 执行失败」。
+ */
+export class HandoffEvidenceError extends Error {
+  constructor(readonly code: "missing_decisions" | "missing_citations", message: string, readonly details: Record<string, unknown> = {}) {
+    super(message);
+  }
+}
+/** 当前定稿里没被任何出处覆盖的数字/归因句 */
+function uncoveredSentences(content: Content, coverage: CitationCoverage | null): Array<{ start: number; end: number; text: string }> {
+  const citations = Array.isArray(coverage?.citations) ? coverage.citations : [];
+  return factualSentences(content.body)
+    .filter(s => !citations.some(c => c.start <= s.start && c.end >= s.end))
+    .map(s => ({ start: s.start, end: s.end, text: content.body.slice(s.start, s.end) }));
+}
 export async function handoffEvidence(content: Content, dataDir: string): Promise<{ decisions: ProjectDecisions; coverage: CitationCoverage }> {
   const decisions = await readProjectJson<ProjectDecisions>(content.id, "decisions.json", dataDir);
   if (!decisions || decisions.source !== "founder-workbench" || decisions.draft_hash !== draftHash(content) || !decisions.title?.trim() ||
       !decisions.cover_text?.trim() || decisions.platform !== content.platform || !(decisions.target_seconds > 0) || !decisions.confirmed_at) {
-    throw new Error("handoff_decisions_missing: 请在工作台确认当前稿件的标题、封面字、平台与目标时长");
+    throw new HandoffEvidenceError("missing_decisions", "缺少创作者对当前定稿的交接决定：请在工作台确认标题、封面字、平台与目标时长");
   }
   const coverage = await readProjectJson<CitationCoverage>(content.id, "citations.json", dataDir);
-  if (!coverage) throw new Error("handoff_citations_missing: 写稿侧需提交当前定稿的逐句出处映射");
-  const errors = validateCoverage(content, coverage);
-  if (errors.length) throw new Error(`handoff_citations_invalid: ${errors.join("；")}`);
-  return { decisions, coverage };
+  const problems = coverage ? validateCoverage(content, coverage) : ["还没有提交出处映射"];
+  if (problems.length) {
+    throw new HandoffEvidenceError("missing_citations", `出处映射缺失或不覆盖当前定稿：${problems.join("；")}`, {
+      problems,
+      uncovered_sentences: uncoveredSentences(content, coverage?.draft_hash === draftHash(content) ? coverage : null),
+    });
+  }
+  return { decisions, coverage: coverage! };
 }
 export function renderSources(coverage: CitationCoverage): string {
   return "# 出处清单\n\n结构覆盖已检查；语义支持以写稿侧核查为准。\n\n" + coverage.citations.map(c => c.sourceType === CREATOR_OPINION

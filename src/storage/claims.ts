@@ -292,6 +292,33 @@ export async function transferClaim(contentId: string, input: TransferInput, dat
   return { ok: true, claim: await writeClaim(content, write, dataDir, now) };
 }
 
+/**
+ * 失败的交接把认领恢复成调用前那一份（P6 §13.4-D）：原持有者、原令牌原样放回，
+ * 不是再「转交」一次——转交会发新令牌，调用方手里那枚就作废了（09-26 实测的 claim_held）。
+ * 只在认领仍是这次交接写下的那一枚（`heldToken`）时才恢复；别人已经改过就不碰，返回 false。
+ * 调用前没有认领 → 清掉这次写下的认领。交接台账记一条，不静默。
+ */
+export async function restoreClaim(
+  contentId: string,
+  prior: ContentClaim | undefined,
+  heldToken: string,
+  note: string,
+  dataDir?: string,
+): Promise<boolean> {
+  const content = await getContent(contentId, dataDir);
+  if (!content?.claim || content.claim.token !== heldToken) return false;
+  if (prior && prior.token === heldToken && prior.host === content.claim.host && prior.employee === content.claim.employee) return true;
+  const handoff = withSession({
+    from: content.claim.employee,
+    to: prior?.employee ?? content.claim.employee,
+    by: content.claim.host,
+    note: `${note}（认领恢复为交接前${prior ? `：${prior.host}` : "：无人认领"}）`,
+    at: new Date().toISOString(),
+  });
+  await updateContent(contentId, { claim: prior, handoffs: withHandoff(content, handoff) }, dataDir);
+  return true;
+}
+
 export interface ClaimGuardInput {
   host: string;
   /** 缺省 = 沿用现有认领的岗位，再缺省 `writer`（`autocrew_content` 这类跨岗位的写口用它） */

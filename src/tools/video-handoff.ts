@@ -64,6 +64,8 @@ export async function executeVideoHandoff(action: HandoffAction, params: Record<
   } catch (err) {
     const storage = storageFailure(err);
     if (storage) return { ...storage };
+    // 交接在写门之后的故障都在交接内部分类收口；漏到这里的只可能发生在认领写入之前
+    if (action === "handoff") return handoffFail("handoff_rejected", `handoff 没有执行：${err instanceof Error ? err.message : String(err)}`, { failure_class: "handoff_rejected" });
     return videoFail(`${action} 执行失败：${err instanceof Error ? err.message : String(err)}`);
   }
 }
