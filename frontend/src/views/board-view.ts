@@ -53,6 +53,8 @@ export function finalCutMeta(card: FinalCutCard, now: number = Date.now()): stri
   const parts = [durationText(card.duration_ms)];
   if (card.exported_at) parts.push(`${clockLabel(card.exported_at, now)}${card.external ? " 从剪映导出" : " 进了项目"}`);
   if (card.jianying_draft) parts.push(`草稿「${card.jianying_draft}」`);
+  // §13.4-F.3：指纹前 8 位，创始人拿它对「通过的就是这一份」
+  if (card.sha8 || card.sha256) parts.push(`指纹 ${card.sha8 || card.sha256.slice(0, 8)}`);
   return parts.join(" · ");
 }
 

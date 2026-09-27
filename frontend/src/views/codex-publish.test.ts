@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codexTargetLine, codexThreadId, finalCutPath, publishMessage, showCodexPublish, videoPlatforms } from "./codex-publish";
+import { codexTargetLine, codexThreadId, finalCutPath, finalCutPlan, publishMessage, publishPlatforms, showCodexPublish, videoPlatforms } from "./codex-publish";
 import type { GateView, ProjectReview } from "./project-board";
 
 const S = (c: string) => c.repeat(64);
@@ -53,7 +53,10 @@ it("平台只留视频平台，去重保序", () => {
 });
 
 describe("成片路径", () => {
-  it("没挪进项目 → 剪映导出候选", () => { expect(finalCutPath(review())).toBe("/jy/export.mp4"); });
+  it("还是剪映导出候选 → 目标写 07-delivery/<原名>，并记下从哪挪", () => {
+    expect(finalCutPath(review())).toBe("/lib/p1/07-delivery/export.mp4");
+    expect(finalCutPlan(review())).toEqual({ path: "/lib/p1/07-delivery/export.mp4", moveFrom: "/jy/export.mp4" });
+  });
   it("挪进 07-delivery 后优先项目内那份", () => {
     const r = review(); r.execution!.artifacts.push({ path: "07-delivery/final.mp4", sha256: S("f"), role: "final-cut", reported_at: at });
     expect(finalCutPath(r)).toBe("/lib/p1/07-delivery/final.mp4");
@@ -64,7 +67,7 @@ describe("发布指令", () => {
   const base = { contentId: "content-1-abc", title: "标题", review: review(), platforms: ["抖音", "B站"] };
   it("带 content_id、成片、两张封面路径、平台和授权说明，不超过 12 行", () => {
     const m = publishMessage({ ...base, status: "editing" });
-    for (const s of ["content-1-abc", "/jy/export.mp4", "/lib/p1/05-cover/v2-34.png", "/lib/p1/05-cover/v2-43.png", "抖音、B站", "授权", "立即发布", "publish-content"]) expect(m).toContain(s);
+    for (const s of ["content-1-abc", "/lib/p1/07-delivery/export.mp4", "/lib/p1/05-cover/v2-34.png", "/lib/p1/05-cover/v2-43.png", "抖音、B站", "授权", "立即发布", "publish-content"]) expect(m).toContain(s);
     expect(m.split("\n")[0]).toContain("发布这条视频：标题");
     expect(m).toContain("autocrew_video register");
     expect(m.split("\n").length).toBeLessThanOrEqual(12);
@@ -72,4 +75,27 @@ describe("发布指令", () => {
   it("已登记就不再让它 register", () => {
     expect(publishMessage({ ...base, status: "publish_ready" })).not.toContain("register");
   });
+});
+
+describe("成片还在剪映导出目录", () => {
+  const base = { contentId: "content-1-abc", title: "标题", review: review(), platforms: ["抖音"] };
+  it("未登记：第一步先挪进 07-delivery 再登记，成片行写目标路径", () => {
+    const m = publishMessage({ ...base, status: "editing" });
+    expect(m).toContain("成片：/lib/p1/07-delivery/export.mp4");
+    const steps = m.split("\n").filter((l) => /^\d\./.test(l));
+    expect(steps[0]).toContain("先把成片挪进 07-delivery 再登记");
+    expect(steps[0]).toContain("/jy/export.mp4");
+    expect(steps[1]).toContain("register");
+  });
+  it("已挪进项目就没有挪动这一步", () => {
+    const r = review(); r.execution!.artifacts.push({ path: "07-delivery/final.mp4", sha256: S("f"), role: "final-cut", reported_at: at });
+    expect(publishMessage({ ...base, review: r, status: "editing" })).not.toContain("挪进 07-delivery");
+  });
+});
+
+it("发布平台默认只是这条稿自己的（和兄弟变体的），其余运营平台只列为可选", () => {
+  expect(publishPlatforms(["douyin"], ["xiaohongshu", "douyin", "bilibili", "wechat_video", "wechat_mp"]))
+    .toEqual({ defaults: ["抖音"], optional: ["小红书", "B站", "视频号"] });
+  expect(publishPlatforms(["douyin", "xiaohongshu"], ["douyin"])).toEqual({ defaults: ["抖音", "小红书"], optional: [] });
+  expect(publishPlatforms([], ["douyin"])).toEqual({ defaults: [], optional: ["抖音"] });
 });

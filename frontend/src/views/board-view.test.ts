@@ -69,8 +69,8 @@ describe("finalCutMeta", () => {
   it("时长用中文单位，导出时间按本地时区", () => {
     const exported = new Date(2026, 8, 27, 17, 50).toISOString();
     expect(finalCutMeta({ ...card, external: true, exported_at: exported }, new Date(2026, 8, 27, 18, 0).getTime()))
-      .toBe("8 分 43 秒 · 今天 17:50 从剪映导出 · 草稿「纠正AI」");
-    expect(finalCutMeta({ ...card, duration_ms: null, jianying_draft: null })).toBe("时长读不出");
+      .toBe("8 分 43 秒 · 今天 17:50 从剪映导出 · 草稿「纠正AI」 · 指纹 ffffffff");
+    expect(finalCutMeta({ ...card, duration_ms: null, jianying_draft: null })).toBe("时长读不出 · 指纹 ffffffff");
   });
 });
 

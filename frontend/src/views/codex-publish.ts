@@ -38,15 +38,35 @@ export function videoPlatforms(platforms: readonly string[]): string[] {
   return out;
 }
 
-const join = (root: string | undefined, p: string) => (p.startsWith("/") || !root ? p : `${root.replace(/\/$/, "")}/${p}`);
+/** 发布默认平台 = 这条稿自己的平台（+ 兄弟变体的平台）；账号运营的其他视频平台只列成可选，不默认授权 */
+export function publishPlatforms(own: readonly string[], operated: readonly string[]): { defaults: string[]; optional: string[] } {
+  const defaults = videoPlatforms(own);
+  return { defaults, optional: videoPlatforms(operated).filter((p) => !defaults.includes(p)) };
+}
 
-/** 成片路径：批准的那份字节，已挪进项目（final-cut）优先，否则剪映导出候选 */
-export function finalCutPath(review: ProjectReview): string | null {
+const join = (root: string | undefined, p: string) => (p.startsWith("/") || !root ? p : `${root.replace(/\/$/, "")}/${p}`);
+const baseName = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+
+export type FinalCutPlan = { path: string; moveFrom?: string };
+/**
+ * 成片：批准的那份字节。已挪进项目（final-cut）就用它；还只是剪映导出候选时，
+ * 登记只收项目内的文件，所以目标写 07-delivery/<原名>，并记下要从哪挪过来。
+ */
+export function finalCutPlan(review: ProjectReview): FinalCutPlan | null {
+  const root = review.project?.project_root ?? undefined;
   const sha = review.gates?.gate3.approval?.artifact_sha256;
   const hits = (review.execution?.artifacts ?? []).filter((a: Artifact) => a.sha256 === sha && (a.role === "final-cut" || a.role === "final-cut-candidate"));
-  const pick = hits.find((a) => a.role === "final-cut") ?? hits[0];
-  const p = pick?.path ?? review.final_cut?.path;
-  return p ? join(review.project?.project_root ?? undefined, p) : null;
+  const inProject = hits.find((a) => a.role === "final-cut");
+  if (inProject) return { path: join(root, inProject.path) };
+  const p = hits[0]?.path ?? review.final_cut?.path;
+  if (!p) return null;
+  const at = join(root, p);
+  if (!root) return { path: at };
+  return { path: join(root, `07-delivery/${baseName(at)}`), moveFrom: at };
+}
+
+export function finalCutPath(review: ProjectReview): string | null {
+  return finalCutPlan(review)?.path ?? null;
 }
 
 export type PublishMessageInput = { contentId: string; title: string; status: string; review: ProjectReview; platforms: string[] };
@@ -56,17 +76,19 @@ export function publishMessage(i: PublishMessageInput): string {
   const versions = coverVersions(i.review.execution?.artifacts ?? []);
   const approved = approvedVersion(versions, i.review.cover_selection, i.review.gates?.gate4);
   const pick = i.review.cover_selection ?? {};
+  const plan = finalCutPlan(i.review);
   const cover = (r: "3:4" | "4:3") => (pick[r]?.path ? join(root, pick[r]!.path) : "（没找到）");
   const lines = [
     `发布这条视频：${i.title}。这条消息就是我对发布的授权。`,
     `content_id：${i.contentId}`,
-    `成片：${finalCutPath(i.review) ?? "（没找到）"}`,
+    `成片：${plan?.path ?? "（没找到）"}`,
     `封面：${approved === null ? "已批准的那一版" : versionLabel(approved)}；3:4 ${cover("3:4")}；4:3 ${cover("4:3")}`,
     `平台：${i.platforms.length ? i.platforms.join("、") : "（请填写）"}`,
     "发布时间：立即发布",
     "步骤：",
   ];
   let n = 1;
+  if (i.status !== "publish_ready" && plan?.moveFrom) lines.push(`${n++}. 先把成片挪进 07-delivery 再登记：把 ${plan.moveFrom} 挪到 ${plan.path}，用 autocrew_video report 报 final-cut`);
   if (i.status !== "publish_ready") lines.push(`${n++}. 还没登记：先用 autocrew_video status 取两道批准，再 autocrew_video register 登记`);
   lines.push(`${n++}. 用 publish-content 技能发到上面的平台，按技能说明匹配当前活动`);
   lines.push(`${n++}. 按技能说明把各平台回执回报给 AutoCrew`);
