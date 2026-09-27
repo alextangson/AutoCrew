@@ -110,7 +110,7 @@ const LAYOUT: Record<string, LayoutSpec> = {
   "dy-profile": { frame: "phone", columns: 3, profile: true },
   "xhs-explore": { frame: "phone", columns: 2 }, "xhs-profile": { frame: "phone", columns: 2, profile: true },
   "bili-app": { frame: "phone", columns: 2 },
-  "bili-web": { frame: "browser", columns: 4, rows: 2 }, "bili-space": { frame: "browser", columns: 1, rows: 4 },
+  "bili-web": { frame: "browser", columns: 3, rows: 2 }, "bili-space": { frame: "browser", columns: 1, rows: 4 },
   "wx-profile": { frame: "phone", columns: 2, profile: true }, "wx-share": { frame: "phone", columns: 1 },
 };
 

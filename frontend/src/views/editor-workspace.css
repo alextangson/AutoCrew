@@ -224,7 +224,7 @@
 .pp-profile { display: flex; align-items: center; gap: 10px; height: 80px; margin-bottom: 16px; padding: 0 6px; border-bottom: 1px solid #eee; font-size: 14px; }
 .pp-feed { display: grid; gap: 8px; align-items: start; }
 /* 浏览器窗口：B站网页两处 */
-.pp-browser { width: min(560px, 90vw); border: 1px solid #ccc; border-radius: 10px; overflow: hidden; background: #fff; color: #222; box-shadow: 0 4px 18px rgba(0,0,0,0.12); }
+.pp-browser { width: min(720px, 90vw); border: 1px solid #ccc; border-radius: 10px; overflow: hidden; background: #fff; color: #222; box-shadow: 0 4px 18px rgba(0,0,0,0.12); }
 .pp-browser-bar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; background: #efefef; border-bottom: 1px solid #ddd; }
 .pp-browser-bar i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
 .pp-browser-bar i:nth-child(2) { background: #febc2e; }
@@ -240,8 +240,10 @@
 .pp-bar.is-short { width: 55%; }
 .pp-shade { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
 .pp-on-img { position: absolute; color: #fff; font-size: 11px; line-height: 1; }
-.pp-bl { left: 6px; bottom: 6px; }
-.pp-br { right: 6px; bottom: 6px; }
+.pp-bl { left: 6px; bottom: 6px; white-space: nowrap; }
+/* 网页卡右下有时长：左下统计给它留出位置，放不下就省略，别撞成「弹幕 3560:20」 */
+.pp-browser .pp-bl { max-width: calc(100% - 52px); overflow: hidden; text-overflow: ellipsis; }
+.pp-br { right: 6px; bottom: 6px; white-space: nowrap; }
 .pp-tr { right: 6px; top: 6px; background: rgba(0, 0, 0, 0.35); border-radius: 50%; padding: 4px 5px; font-size: 10px; }
 .pp-kept { position: absolute; left: 0; right: 0; outline: 2px solid #fff; }
 .pp-cut { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff;

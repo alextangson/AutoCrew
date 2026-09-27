@@ -107,7 +107,8 @@ describe("标签与外壳布局", () => {
     const grid = surfaceLayout("douyin", dy.surfaces[2]);
     expect([grid.columns, grid.profile]).toEqual([3, true]);
     expect(grid.placeholders).toBeGreaterThanOrEqual(5);
-    expect(surfaceLayout("bilibili", bili.surfaces[1]).placeholders).toBe(7);
+    // B站网页卡 3 列 × 2 行（4 列时卡太窄，左下统计和右下时长会挤在一起）减去我们那张
+    expect(surfaceLayout("bilibili", bili.surfaces[1]).placeholders).toBe(5);
   });
   it("扁卡比高卡一屏摆得多；视频号没底栏", () => {
     const o = { profile: false, bottomBar: true, text: true };
