@@ -21,6 +21,13 @@ export interface StoredExecution {
   job_ids?: string[]; process_ids?: number[]; costs?: unknown[];
   heartbeat: ExecutionHeartbeat;
   artifacts: ArtifactEntry[];
+  /** 执行方换机器 / 换会话的记录：只追加，不改写 */
+  transfers?: ExecutionTransfer[];
+}
+export interface ExecutionTransfer {
+  from: { machine: string; session_id: string };
+  to: { machine: string; session_id: string };
+  at: string;
 }
 export const COVER_ROLES = { "3:4": "cover:3:4", "4:3": "cover:4:3" } as const;
 export type CoverRatio = keyof typeof COVER_ROLES;

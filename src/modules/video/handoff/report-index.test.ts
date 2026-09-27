@@ -1,7 +1,8 @@
 import { beforeEach, afterEach, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { makeFixture, handedOff, writePng } from "./handoff-testkit.js";
+import os from "node:os";
+import { makeFixture, handedOff, writePng, callVideo } from "./handoff-testkit.js";
 import { initializeProjectLayout, contentFile } from "../../../storage/content-project.js";
 import { founderProjectReview } from "./founder-review.js";
 import { sha256File } from "./manifest.js";
@@ -69,4 +70,27 @@ it("存量旧形状 execution.json 读出来就是新形状，下一次 report �
   expect((await v.report([{ file: c, role: "cover:3:4", version: 1 }])).ok).toBe(true);
   const exec = JSON.parse(await fs.readFile(contentFile(v.id, env.dir, "execution.json"), "utf8"));
   expect(exec.artifacts.map((a: { role: string }) => a.role)).toEqual(["final-cut", "cover:3:4"]);
+});
+
+it("执行权跟着剪辑认领走：换机器、换会话后握着认领的一方照常汇报，转移留记录；没认领的会话被拒", async () => {
+  // 2026-09-27：换新 Mac 后 hostname 变了，「请先办理执行权转移」指向一个不存在的手续，汇报被卡死
+  const v = await handedOff(env.dir, env.aroll);
+  expect((await v.report([])).ok).toBe(true);
+  const execFile = contentFile(v.id, env.dir, "execution.json");
+  const before = JSON.parse(await fs.readFile(execFile, "utf8"));
+  await fs.writeFile(execFile, JSON.stringify({ ...before, machine: "old-mac.local" }));
+  const moved = await callVideo(env.dir, {
+    action: "report", content_id: v.id, claim_token: v.token, _session: "new-session",
+    report: { request_id: "r-new", generation: 1, binding_revision: 1, session_id: "new-session", result: "新 Mac 上接着剪", next_action: "继续", files: [] },
+  }, "codex");
+  expect(moved.ok).toBe(true);
+  const after = JSON.parse(await fs.readFile(execFile, "utf8"));
+  expect(after).toMatchObject({ session_id: "new-session", machine: os.hostname() });
+  expect(after.transfers).toEqual([{ from: { machine: "old-mac.local", session_id: "editor-session" }, to: { machine: os.hostname(), session_id: "new-session" }, at: expect.any(String) }]);
+  const intruder = await callVideo(env.dir, {
+    action: "report", content_id: v.id, _session: "intruder",
+    report: { request_id: "r-x", generation: 1, binding_revision: 1, session_id: "intruder", result: "抢", next_action: "抢", files: [] },
+  }, "codex");
+  expect(intruder).toMatchObject({ ok: false, code: "claim_held" });
+  expect(JSON.parse(await fs.readFile(execFile, "utf8")).session_id).toBe("new-session");
 });

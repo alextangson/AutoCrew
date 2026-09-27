@@ -10,7 +10,7 @@ import { sha256File, sha256Text } from "./manifest.js";
 import { readProjectJson } from "./project-evidence.js";
 import type { HandoffContext } from "./handoff.js";
 import { serializeVideoLine } from "./lock.js";
-import { COVER_ROLES, mergeArtifacts, normalizeExecution, type StoredExecution } from "./execution-index.js";
+import { COVER_ROLES, mergeArtifacts, normalizeExecution, type ExecutionTransfer, type StoredExecution } from "./execution-index.js";
 
 export interface ExecutionReport {
   request_id: string; generation: number; binding_revision: number; session_id: string;
@@ -48,9 +48,13 @@ export async function reportExecution(id: string, input: unknown, ctx: HandoffCo
     const handoff = content.video?.handoff;
     if (!handoff || input.generation !== handoff.generation || content.video?.revoked?.includes(handoff.hash)) throw new Error("stale_handoff");
     const execution = normalizeExecution(await readProjectJson<unknown>(id, "execution.json", ctx.dataDir));
-    if (execution && execution.generation === input.generation && (execution.machine !== os.hostname() || execution.session_id !== input.session_id)) throw new Error("execution_owned_by_other: 请先办理执行权转移");
+    // 执行权跟着剪辑认领走：写门放行 = 调用方握着这条稿唯一有效的剪辑认领（别的会话还握着就是 claim_held）。
+    // 换机器（hostname 变）、创始人新开 Codex 对话都在这里把执行方转过来并记一笔，不再卡死在不存在的「转移手续」上。
     const gate = await ctx.gate();
     if ("denied" in gate) return gate.denied;
+    const transfer = execution && execution.generation === input.generation && (execution.machine !== os.hostname() || execution.session_id !== input.session_id)
+      ? { from: { machine: execution.machine, session_id: execution.session_id }, to: { machine: os.hostname(), session_id: input.session_id }, at: new Date().toISOString() }
+      : null;
     const files: IndexedFile[] = [];
     for (const file of input.files) {
       const checked = await resolveReportedFile(file.path, binding.project_root, file.role, ctx.dataDir);
@@ -67,7 +71,7 @@ export async function reportExecution(id: string, input: unknown, ctx: HandoffCo
     const reportedAt = new Date().toISOString();
     if (!previous) await writeJsonAtomic(file, { ...record, fingerprint, recorded_at: reportedAt });
     // Repeating a historical report must not overwrite newer recovery facts.
-    if (!previous) await writeJsonAtomic(contentFile(id, ctx.dataDir, "execution.json"), nextExecution(execution, input, files, host, transport, reportedAt));
+    if (!previous) await writeJsonAtomic(contentFile(id, ctx.dataDir, "execution.json"), nextExecution(execution, input, files, host, transport, reportedAt, transfer));
     await exportProjectViews((await getContent(id, ctx.dataDir))!, binding.project_root);
     return { ok: true, replayed: Boolean(previous), request_id: input.request_id, project_root: binding.project_root, ...gate.grant };
   });
@@ -82,12 +86,13 @@ async function indexedFile(file: ExecutionReport["files"][number], at: ReportedL
   return { ...file, path: path.relative(projectRoot, at.file), ...facts };
 }
 /** 心跳整条替换；产物索引累计追加（旧版本不丢，挪位置只改路径）。 */
-function nextExecution(prev: StoredExecution | null, input: ExecutionReport, files: ExecutionReport["files"], host: string, transport: string | null, at: string): StoredExecution {
+function nextExecution(prev: StoredExecution | null, input: ExecutionReport, files: ExecutionReport["files"], host: string, transport: string | null, at: string, transfer: ExecutionTransfer | null): StoredExecution {
   const { request_id, session_id, result, next_action, error, files: _f, binding_revision: _b, ...facts } = input;
   return {
     ...facts, schema: 2, session_id, machine: os.hostname(), host, transport_session: transport,
     ...(prev?.jianying_draft && !input.jianying_draft ? { jianying_draft: prev.jianying_draft } : {}),
     heartbeat: { request_id, session_id, result, next_action, ...(error ? { error } : {}), reported_at: at },
     artifacts: mergeArtifacts(prev?.artifacts ?? [], files, input.generation, at),
+    ...(prev?.transfers || transfer ? { transfers: [...(prev?.transfers ?? []), ...(transfer ? [transfer] : [])] } : {}),
   };
 }
