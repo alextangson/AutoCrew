@@ -5,7 +5,7 @@ import { RATIO_LABEL, versionLabel, viewerStep, type ViewerItem } from "./cover-
 
 export function CoverViewer(props: {
   contentId: string; order: ViewerItem[]; item: ViewerItem; confirm: string | null; busy: boolean;
-  onMove: (sha: string) => void; onClose: () => void; onConfirm: () => void;
+  onMove: (sha: string) => void; onClose: () => void; onConfirm: () => void; onPreview?: () => void;
 }) {
   const { order, item, onMove, onClose } = props;
   const move = (delta: -1 | 1) => { const next = viewerStep(order, item.artifact.sha256, delta); if (next) onMove(next.artifact.sha256); };
@@ -26,6 +26,7 @@ export function CoverViewer(props: {
         <span>{versionLabel(item.version)} · {RATIO_LABEL[item.ratio]} · {i + 1}/{order.length}</span>
         <button disabled={i >= order.length - 1} onClick={() => move(1)} aria-label="下一张">→</button>
         {props.confirm && <button className="primary" disabled={props.busy || props.confirm === "已选用"} onClick={props.onConfirm}>{props.confirm}</button>}
+        {props.onPreview && <button className="pb-link" onClick={props.onPreview}>在平台上看看</button>}
         <button className="pb-link" onClick={onClose}>关闭</button>
       </div>
     </div>

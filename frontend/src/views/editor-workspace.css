@@ -192,3 +192,33 @@
 .pb-viewer-body { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 96vw; }
 .pb-viewer-body img { max-width: 96vw; max-height: calc(100vh - 80px); object-fit: contain; display: block; }
 .pb-viewer-bar { display: flex; gap: 10px; align-items: center; color: #fff; font-size: 13px; }
+
+/* 在平台上看看（PlatformPreview）：沿用 .pb-viewer 浮层，内容区可滚 */
+.pp-overlay { align-items: flex-start; overflow-y: auto; padding: 24px 0; }
+.pp-body { background: var(--bg, #fff); color: var(--ink); width: min(960px, 94vw); padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+.pp-head { display: flex; justify-content: space-between; align-items: baseline; }
+.pp-platform { border-top: 1px solid var(--border); padding-top: 10px; }
+.pp-platform h3 { margin: 0 0 4px; font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
+.pp-platform.is-unverified { opacity: 0.92; }
+.pp-badge { font-size: 12px; font-weight: normal; color: var(--muted); border: 1px dashed var(--border); padding: 0 6px; }
+.pp-surfaces { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; margin-top: 8px; }
+.pp-surface { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.pp-surface figcaption { font-size: 12px; color: var(--muted); }
+.pp-card { display: flex; flex-direction: column; gap: 4px; }
+.pp-frame { position: relative; overflow: hidden; background: #eee; border-radius: 6px; }
+.pp-frame img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; display: block; }
+.pp-frame.is-missing { display: flex; align-items: center; justify-content: center; padding: 8px; background: #e5e5e5; color: #666; font-size: 12px; text-align: center; }
+.pp-shade { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.pp-on-img { position: absolute; color: #fff; font-size: 12px; line-height: 1; }
+.pp-bl { left: 6px; bottom: 6px; }
+.pp-br { right: 6px; bottom: 6px; }
+.pp-tr { right: 6px; top: 6px; background: rgba(0, 0, 0, 0.35); border-radius: 50%; padding: 4px 5px; font-size: 10px; }
+.pp-kept { position: absolute; left: 0; right: 0; outline: 2px solid #fff; }
+.pp-cut { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff;
+  background: repeating-linear-gradient(45deg, rgba(0,0,0,0.55) 0 6px, rgba(0,0,0,0.3) 6px 12px); }
+.pp-title { margin: 0; font-size: 13px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pp-author { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pp-avatar { width: 18px; height: 18px; border-radius: 50%; background: #ccc; flex: none; }
+.pp-right { margin-left: auto; }
+.pp-row { display: flex; gap: 8px; align-items: flex-start; width: 300px; }
+.pp-row .pp-title { flex: 1; }

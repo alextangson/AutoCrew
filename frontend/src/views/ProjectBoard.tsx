@@ -29,7 +29,7 @@ export function ProjectBoard(props: { content: BoardContent; reload: () => Promi
     {boardAnomalies(status, review).includes("draft_changed") && <p className="pb-warn">交接之后稿子又改过，和 Codex 手里那版不一致</p>}
     <section className="pb-now" aria-label="现在轮到你">
       <div className="pb-now-kicker">现在轮到你</div>
-      {kind === "no_handoff" ? <NoHandoff contentId={id} status={status} reload={props.reload} /> : live && <NowBody kind={kind} review={live} contentId={id} busy={busy} submit={submit} />}
+      {kind === "no_handoff" ? <NoHandoff contentId={id} status={status} reload={props.reload} /> : live && <NowBody kind={kind} review={live} contentId={id} busy={busy} submit={submit} title={live.title || props.content.title} />}
       {error && <p role="alert" className="pb-inline-error">{error}</p>}
     </section>
     {live && <CodexLine review={live} now={now} />}
@@ -57,9 +57,9 @@ export function Stepper({ kind }: { kind: NowKind }) {
 }
 
 type Submit = (payload: Record<string, unknown>) => Promise<boolean>;
-function NowBody(props: { kind: NowKind; review: ProjectReview; contentId: string; busy: boolean; submit: Submit }) {
+function NowBody(props: { kind: NowKind; review: ProjectReview; contentId: string; busy: boolean; submit: Submit; title: string }) {
   if (props.kind === "final_review") return <FinalCutStep {...props} />;
-  if (props.kind === "covers") return <CoverStep {...props} />;
+  if (props.kind === "covers") return <CoverStep {...props} durationMs={props.review.final_cut?.duration_ms} />;
   if (props.kind === "ready") return <NowTitle title="成片和封面都定了" sub="等 Codex 登记，登记后这一页会切到发布。" />;
   const beat = props.review.execution?.heartbeat;
   return <NowTitle title="Codex 正在剪，暂时不用你操作" sub={beat ? undefined : "Codex 还没报告过进度。"} />;

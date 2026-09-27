@@ -1,7 +1,7 @@
 /**
  * 「现在轮到你」· 封面（P6 §13.4-G）：一版一张卡（3:4 + 4:3 并排，新版在前），点「用这一版」直接批准这一对；
  * 点图看大图。都不行就整批打回写原话，Codex 出下一版，旧版留着对比。
- * 平台预览（下一片）从 renderPreview 插进每张版本卡，现在没人传就不显示任何东西。
+ * 每张版本卡和大图都有「在平台上看看」，打开 PlatformPreview 浮层；外面也可以用 renderPreview 换掉卡上的入口。
  */
 import { useCallback, useState, type ReactNode } from "react";
 import { artifactUrl, RejectInline, RevealLink, when } from "./board-parts";
@@ -10,6 +10,7 @@ import {
   type CoverRatio, type CoverVersion,
 } from "./cover-board";
 import { CoverViewer } from "./CoverViewer";
+import { PlatformPreview } from "./PlatformPreview";
 import { NowTitle } from "./FinalCutStep";
 import type { Artifact, ProjectReview } from "./project-board";
 
@@ -17,10 +18,11 @@ type Submit = (payload: Record<string, unknown>) => Promise<boolean>;
 /** 平台预览窗口的插槽：拿到一版封面，返回要挂在卡片里的东西 */
 export type CoverPreviewSlot = (version: CoverVersion) => ReactNode;
 
-export function CoverStep(props: { review: ProjectReview; contentId: string; busy: boolean; submit: Submit; renderPreview?: CoverPreviewSlot }) {
+export function CoverStep(props: { review: ProjectReview; contentId: string; busy: boolean; submit: Submit; title?: string; durationMs?: number | null; renderPreview?: CoverPreviewSlot }) {
   const { review, contentId, busy, submit } = props;
   const [viewing, setViewing] = useState<string | null>(null);
   const [gone, setGone] = useState(false);
+  const [previewing, setPreviewing] = useState<number | null>(null);
   const versions = coverVersions(review.execution?.artifacts ?? []), view = review.gates?.gate4;
   const order = viewerOrder(versions), item = viewing ? order.find((x) => x.artifact.sha256 === viewing) ?? null : null;
   if (viewing && !item) { setViewing(null); setGone(true); }
@@ -32,6 +34,9 @@ export function CoverStep(props: { review: ProjectReview; contentId: string; bus
   const labelOf = (v: CoverVersion) => (rejected ? null : confirmLabel(v, approved));
   const approve = (v: CoverVersion) => void submit({ action: "approve", which: "covers", files: approveFiles(v), manifest_hash: review.manifest_hash });
   const reject = (note: string) => submit({ action: "reject", which: "covers", note, artifact_sha256: view?.reject_sha256, manifest_hash: review.manifest_hash });
+  const preview = previewing === null ? null : versions.find((v) => v.version === previewing) ?? null;
+  const closePreview = useCallback(() => setPreviewing(null), []);
+  const slot: CoverPreviewSlot = props.renderPreview ?? ((v) => <button className="pb-link" onClick={() => setPreviewing(v.version)}>在平台上看看</button>);
   const viewed = item ? versions.find((v) => v.version === item.version) ?? null : null;
   return <>
     <NowTitle title={rejected ? "这批封面已打回，等 Codex 出下一版" : approved !== null ? `封面用 ${versionLabel(approved)}` : "挑一版封面"}
@@ -40,14 +45,15 @@ export function CoverStep(props: { review: ProjectReview; contentId: string; bus
     {gone && <p className="muted">刚才看的那张已经不在了（刷新后被换掉），大图已关。</p>}
     <div className="pb-cover-versions">
       {versions.map((v) => <VersionCard key={v.version} v={v} contentId={contentId} busy={busy} label={labelOf(v)}
-        onOpen={open} onConfirm={() => approve(v)} extra={props.renderPreview?.(v)} />)}
+        onOpen={open} onConfirm={() => approve(v)} extra={slot(v)} />)}
     </div>
     <div className="pb-actions">
       <RejectInline busy={busy} label="都不行，打回写原话…" disabled={!view?.reject_sha256 || rejected || view?.status === "approved"} onReject={reject} />
       {folder}
     </div>
     {item && viewed && <CoverViewer contentId={contentId} order={order} item={item} confirm={labelOf(viewed)} busy={busy}
-      onMove={open} onClose={close} onConfirm={() => approve(viewed)} />}
+      onMove={open} onClose={close} onConfirm={() => approve(viewed)} onPreview={() => setPreviewing(viewed.version)} />}
+    {preview && <PlatformPreview contentId={contentId} v={preview} title={props.title ?? ""} durationMs={props.durationMs} onClose={closePreview} />}
   </>;
 }
 
