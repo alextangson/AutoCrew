@@ -186,7 +186,7 @@ describe("host policy: codex editing station is register/status + read-only", ()
   });
 
   it("codex 的 handoff 只在带 confirmation_id（或撤回）时放行", () => {
-    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", content_id: "c" })).toEqual({ ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION });
+    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", content_id: "c" })).toMatchObject({ ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION, result: { code: "confirmation_required" } });
     expect(hostPolicy("codex", "autocrew_video", { action: "handoff", confirmation_id: "cfm-1" }).ok).toBe(true);
     expect(hostPolicy("codex", "autocrew_video", { action: "handoff", revoke: true }).ok).toBe(true);
   });

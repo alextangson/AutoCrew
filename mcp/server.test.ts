@@ -46,6 +46,17 @@ describe("MCP protocol adapters", () => {
     expect((allowed?.result as { content: Array<{ text: string }> }).content[0].text).not.toBe(CODEX_EDITOR_DENIED);
   });
 
+  it("codex 不带 confirmation_id 调 handoff：协议层回结构化 confirmation_required 和 match → confirm 的下一步", async () => {
+    const response = await handleMcpRequest(
+      { id: 7, method: "tools/call", params: { name: "autocrew_video", arguments: { action: "handoff", content_id: "content-1", aroll_path: "/tmp/a.mov" } } },
+      { principal: { subject: "codex", plan: "local" }, host: "codex", authorize: hostAuthorize("codex") },
+    );
+    const result = response?.result as { isError: boolean; structuredContent: Record<string, unknown>; content: Array<{ text: string }> };
+    expect(result).toMatchObject({ isError: true, structuredContent: { ok: false, code: "confirmation_required" } });
+    expect(String(result.structuredContent.next_action)).toMatch(/match[\s\S]*confirm/);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ code: "confirmation_required" });
+  });
+
   it("records usage for an allowed tool call", async () => {
     const recordUsage = vi.fn();
     const response = await handleMcpRequest(

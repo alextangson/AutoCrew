@@ -10,7 +10,8 @@
 import type { McpAccessContext, McpPrincipal } from "./access.js";
 import { LOCAL_HOST } from "../src/storage/local-store.js";
 
-export type PolicyDecision = { ok: true } | { ok: false; error: string };
+/** `result`：拒绝时要回给宿主的结构化回执（带 code / next_action），没有就只回一句话 */
+export type PolicyDecision = { ok: true } | { ok: false; error: string; result?: Record<string, unknown> };
 
 export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/confirm/handoff(带确认)/register/report/status/revoke、asset add（登记素材路径）与只读查询；写稿与发布在 Claude 会话里做";
 
@@ -43,7 +44,11 @@ export const CODEX_HANDOFF_NEEDS_CONFIRMATION = "剪辑工位发起交接必须�
 /** codex 的 handoff 只在带着确认记录（或撤回）时放行；记录是否有效由 handoff 自己核 */
 function codexHandoff(args: Record<string, unknown>): PolicyDecision {
   const confirmed = typeof args.confirmation_id === "string" && args.confirmation_id.trim() !== "";
-  return confirmed || args.revoke === true ? { ok: true } : { ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION };
+  if (confirmed || args.revoke === true) return { ok: true };
+  return { ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION, result: {
+    ok: false, code: "confirmation_required", error: CODEX_HANDOFF_NEEDS_CONFIRMATION,
+    next_action: "先调 autocrew_video match{aroll_path, request_id} 拿回执，再调 confirm{receipt_id, cover_text, target_seconds, request_id} 让创始人在弹窗里点确认，最后带 confirmation_id 调 handoff。",
+  } };
 }
 
 export function hostPolicy(host: string, tool: string, args: Record<string, unknown>): PolicyDecision {

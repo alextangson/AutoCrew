@@ -178,7 +178,12 @@ async function callTool(
   if (!runtime.runner.getTool(toolName)) return errorResponse(id, -32601, `Unknown tool: ${toolName}`);
   if (access?.authorize) {
     const permission = await access.authorize(access.principal, toolName, toolArgs);
-    if (!permission.ok) return resultResponse(id, { content: [{ type: "text", text: permission.error }], isError: true });
+    if (!permission.ok) {
+      const body = permission.result;
+      return resultResponse(id, body
+        ? { content: [{ type: "text", text: JSON.stringify(body, null, 2) }], structuredContent: body, isError: true }
+        : { content: [{ type: "text", text: permission.error }], isError: true });
+    }
   }
   const startedAt = Date.now();
   try {

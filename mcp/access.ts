@@ -36,6 +36,6 @@ export interface McpAccessContext {
     principal: McpPrincipal,
     tool: string,
     args: Record<string, unknown>,
-  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  ) => Promise<{ ok: true } | { ok: false; error: string; result?: Record<string, unknown> }>;
   recordUsage?: (event: McpUsageEvent) => Promise<void> | void;
 }
