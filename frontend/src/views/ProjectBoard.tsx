@@ -7,9 +7,10 @@ import { invoke } from "../transport";
 import { confirmDialog, openDialog, toast } from "../ui";
 import { useProjectReview } from "./use-project-review";
 import { CoverStep } from "./CoverStep";
+import { FinalCutStep } from "./FinalCutStep";
 import { artifactUrl, GateBadge, when } from "./board-parts";
 import {
-  BOARD_STEPS, GATE_STATUS_LABEL, STEP_LABEL, boardAnomalies, currentStep, fileName, finalCutArtifact, heartbeatStale, roughCutArtifact, stepSummary,
+  BOARD_STEPS, GATE_STATUS_LABEL, STEP_LABEL, boardAnomalies, currentStep, fileName, heartbeatStale, roughCutArtifact, stepSummary,
   type Artifact, type BoardStep, type GateView, type ProjectReview,
 } from "./project-board";
 
@@ -79,7 +80,7 @@ function StepBody(props: { step: BoardStep; review: ProjectReview; contentId: st
     {card("粗剪（gate1）", "rough_cut", gates?.gate1, roughCutArtifact(artifacts, "rough_cut"))}
     {card("分镜与生成方案（gate2）", "storyboard", gates?.gate2, roughCutArtifact(artifacts, "storyboard"))}
   </>;
-  if (step === "final_review") return card("成片（gate3）", "final_cut", gates?.gate3, finalCutArtifact(artifacts));
+  if (step === "final_review") return <FinalCutStep review={review} contentId={props.contentId} busy={props.busy} submit={props.submit} />;
   if (step === "covers") return <CoverStep review={review} contentId={props.contentId} busy={props.busy} submit={props.submit} />;
   return <p className="muted">成片和封面都批了。等 Codex 用 register 登记，登记后这篇进入待发布。</p>;
 }

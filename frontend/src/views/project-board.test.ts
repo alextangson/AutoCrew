@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boardAnomalies, currentStep, finalCutArtifact, heartbeatStale, stepSummary, type GateView, type ProjectReview } from "./project-board";
+import { boardAnomalies, currentStep, durationLabel, finalCutArtifact, heartbeatStale, stepSummary, type GateView, type ProjectReview } from "./project-board";
 
 const gate = (status: GateView["status"], approved_at = "2026-09-27T08:00:00Z"): GateView =>
   ({ gate: "x", status, artifact_sha256: null, reject_sha256: null, approval: status === "approved" ? { artifact_sha256: "a", approved_at } : null, rejection: null });
@@ -58,5 +58,13 @@ describe("heartbeatStale", () => {
     expect(heartbeatStale(review(), at("2026-09-27T09:31:00Z"))).toBe(true);
     expect(heartbeatStale(review({ execution: null }), at("2026-09-27T08:31:00Z"))).toBe(true);
     expect(heartbeatStale({ enabled: true }, at("2026-09-27T08:31:00Z"))).toBe(false);
+  });
+});
+
+describe("成片待审卡", () => {
+  it("时长按 分:秒 显示，读不出就明说", () => {
+    expect(durationLabel(83_400)).toBe("1:23");
+    expect(durationLabel(5_000)).toBe("0:05");
+    expect(durationLabel(null)).toBe("时长读不出");
   });
 });

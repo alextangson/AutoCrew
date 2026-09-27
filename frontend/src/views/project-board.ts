@@ -12,6 +12,11 @@ export type GateView = {
   approval: { artifact_sha256: string; approved_at: string } | null;
   rejection: { note: string; artifact_sha256: string; rejected_at: string } | null;
 };
+/** 成片待审卡（服务端读出的事实；指纹只在点「通过成片」时重算） */
+export type FinalCutCard = {
+  path: string; name: string; sha256: string; sha8: string; role: string; external: boolean;
+  duration_ms: number | null; exported_at: string | null; jianying_draft: string | null; missing: boolean; changed: boolean;
+};
 export type CoverPick = { sha256: string; path: string; version?: number };
 export type ProjectReview = {
   ok?: boolean; enabled: boolean; status?: string | null; error?: string;
@@ -26,6 +31,7 @@ export type ProjectReview = {
   } | null;
   cover_selection?: Partial<Record<CoverRatio, CoverPick>> | null;
   gates?: Record<"gate1" | "gate2" | "gate3" | "gate4", GateView>;
+  final_cut?: FinalCutCard | null;
 };
 
 type CoverRatio = "3:4" | "4:3";
@@ -40,7 +46,7 @@ export const GATE_STATUS_LABEL: Record<GateStatus, string> = { pending: "待批"
 const latest = (artifacts: readonly Artifact[], roles: readonly string[]) =>
   artifacts.filter((a) => roles.includes(a.role)).reduce<Artifact | null>((best, a) => (!best || a.reported_at >= best.reported_at ? a : best), null);
 
-/** 成片待审卡看的那一件。slice 3 在这里接上项目外的剪映导出候选（带导出时间、草稿名）。 */
+/** 成片待审看的那一件（成片或剪映导出候选）；卡片上的时长、导出时间、草稿名由服务端的 final_cut 给。 */
 export function finalCutArtifact(artifacts: readonly Artifact[]): Artifact | null {
   return latest(artifacts, ["final-cut", "final-cut-candidate"]);
 }
@@ -84,6 +90,13 @@ export function stepSummary(step: BoardStep, review: ProjectReview): string {
     return gates?.gate4.status === "approved" ? `封面已批 · 3:4 v${s?.["3:4"]?.version ?? "?"} / 4:3 v${s?.["4:3"]?.version ?? "?"}` : "封面待批";
   }
   return "等 Codex 登记，登记后进入待发布";
+}
+
+/** 时长 mm:ss；读不出就明说 */
+export function durationLabel(ms: number | null): string {
+  if (ms === null) return "时长读不出";
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 export const fileName = (p: string) => p.split("/").pop() ?? p;

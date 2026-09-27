@@ -9,6 +9,8 @@ import { writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { exportProjectViews, repairProjectViews } from "../../../storage/project-commit.js";
 import { draftHash } from "../../../storage/draft-hash.js";
 import { resolveProjectFile } from "./paths.js";
+import { FINAL_CUT_CANDIDATE, resolveReportedFile } from "./jianying-root.js";
+import { finalCutCard } from "./final-cut.js";
 import { sha256File, coverPairHash } from "./manifest.js";
 import { readProjectJson, type ProjectDecisions } from "./project-evidence.js";
 import type { RegisterApprovals } from "./types.js";
@@ -53,7 +55,9 @@ export async function founderProjectReview(id: string, dataDir: string, params?:
     if (params && binding) await exportProjectViews(content, binding.project_root);
     const repaired = binding ? await repairProjectViews(content, binding.project_root) : [];
     const ctx = await loadGateContext(content, dataDir);
-    return { ok: true, enabled: true, ...(decision ? { decision } : {}), repaired_views: repaired, project: binding, status: content.status,
+    const finalCut = await finalCutCard(ctx.execution, projectRoot, dataDir);
+    ctx.finalCutChanged = Boolean(finalCut?.changed);
+    return { ok: true, enabled: true, final_cut: finalCut, ...(decision ? { decision } : {}), repaired_views: repaired, project: binding, status: content.status,
       draft_hash: ctx.draftHash, title: content.title, platform: content.platform,
       generation: content.video?.handoff?.generation, handoff: content.video?.handoff, handoff_valid: Boolean(ctx.handoff),
       manifest_hash: content.video?.handoff?.hash, decisions: await readProjectJson(id, "decisions.json", dataDir),
@@ -81,16 +85,21 @@ function gateOf(which: unknown): GateName {
 }
 const emptyApprovals = (): StoredApprovals => ({ schema: 2, source: "founder-workbench", bindings: {}, rejections: [] });
 
-/** 页面展示的文件逐个重算指纹，必须和页面带来的一致 */
-async function rehash(files: unknown, count: number, projectRoot: string, gate: GateName): Promise<string[]> {
+/** 成片点击时重算发现字节和页面不一致 = 点击前又导出过一次（§13.4-F 第 3 步） */
+const FINAL_CUT_MOVED_ON = "导出文件变了，刷新后再看";
+
+/** 页面展示的文件逐个重算指纹，必须和页面带来的一致。成片可以是剪映导出目录里的候选 */
+async function rehash(files: unknown, count: number, projectRoot: string, gate: GateName, dataDir: string): Promise<string[]> {
   if (!Array.isArray(files) || files.length !== count) throw new Error("缺少批准产物");
   const hashes: string[] = [];
   for (const file of files) {
     if (!file || typeof file.path !== "string" || typeof file.sha256 !== "string") throw new Error("缺少产物哈希");
-    const checked = await resolveProjectFile(path.join(projectRoot, file.path), projectRoot, gate);
+    const checked = gate === "final_cut"
+      ? await resolveReportedFile(file.path, projectRoot, FINAL_CUT_CANDIDATE, dataDir)
+      : await resolveProjectFile(path.join(projectRoot, file.path), projectRoot, gate).then(r => r.ok ? { ok: true as const, value: { file: r.value } } : r);
     if (!checked.ok) throw new Error(String(checked.result.error));
-    const sha = await sha256File(checked.value);
-    if (sha !== file.sha256) throw new Error("产物已变化，请刷新后再看");
+    const sha = await sha256File(checked.value.file);
+    if (sha !== file.sha256) throw new Error(gate === "final_cut" ? FINAL_CUT_MOVED_ON : "产物已变化，请刷新后再看");
     hashes.push(sha);
   }
   return hashes;
@@ -98,11 +107,11 @@ async function rehash(files: unknown, count: number, projectRoot: string, gate: 
 
 async function approveGate(content: Content, projectRoot: string, dataDir: string, params: Record<string, unknown>) {
   const handoff = liveHandoff(content, params.manifest_hash), gate = gateOf(params.which);
-  const hashes = await rehash(params.files, gate === "covers" ? 2 : 1, projectRoot, gate);
+  const hashes = await rehash(params.files, gate === "covers" ? 2 : 1, projectRoot, gate, dataDir);
   const ctx = await loadGateContext(content, dataDir);
   if (gate === "covers") ctx.selection = coverPick(ctx, hashes);
   const target = gate === "covers" ? coverPairHash(hashes[0], hashes[1]) : hashes[0];
-  if (approvalTarget(gate, ctx.execution, ctx.selection) !== target) throw new Error("产物已变化，请刷新后再看");
+  if (approvalTarget(gate, ctx.execution, ctx.selection) !== target) throw new Error(gate === "final_cut" ? FINAL_CUT_MOVED_ON : "产物已变化，请刷新后再看");
   const record = ctx.approvals ?? emptyApprovals();
   // 幂等键（门, 产物指纹）：重复点击返回原记录，不重写时间
   if (record[gate]?.artifact_sha256 === target && approvalInvalidReason(gate, ctx) === "") return record[gate];

@@ -29,7 +29,10 @@ export interface GateView {
 export interface GateContext {
   handoff: { generation: number; hash: string } | null; draftHash: string;
   approvals: StoredApprovals | null; execution: StoredExecution | null; selection: CoverSelection | null;
+  /** 看板读时发现成片文件的大小/修改时间和 report 时不一样（导出文件被覆盖过）；登记另核实际字节 */
+  finalCutChanged?: boolean;
 }
+export const FINAL_CUT_CHANGED = "导出文件变了，需要重新通过";
 
 
 /** 旧形状（顶层 generation/manifest_hash，无 draft 绑定）→ 新形状。旧批准证明不了当时的稿，一律按失效处理。 */
@@ -45,9 +48,13 @@ export function normalizeApprovals(raw: unknown): StoredApprovals | null {
   return out;
 }
 
-/** 成片门当前看的是哪一件。slice 3 在这里接上项目外的成片候选（剪映导出目录）。 */
-export function finalCutArtifact(index: readonly ArtifactEntry[]): ArtifactEntry | null {
-  return latestArtifact(index, ["final-cut", "final-cut-candidate"]);
+/**
+ * 成片门当前看的是哪一件：本代次最新报到的成片或剪映导出候选（§13.4-F）。
+ * 候选可能在项目外（剪映导出目录），索引里记着它绑定的项目与代次；上一代次的候选不算。
+ */
+export function finalCutArtifact(index: readonly ArtifactEntry[], generation?: number): ArtifactEntry | null {
+  const scoped = generation === undefined ? index : index.filter(a => a.generation === generation);
+  return latestArtifact(scoped, ["final-cut", "final-cut-candidate"]);
 }
 /** 封面这一批的指纹：打回针对「当前展示的全部版本」，Codex 交了新一批就回到待批。 */
 export function coverBatchHash(index: readonly ArtifactEntry[]): string | null {
@@ -58,7 +65,7 @@ export function coverBatchHash(index: readonly ArtifactEntry[]): string | null {
 export function approvalTarget(gate: GateName, execution: StoredExecution | null, selection: CoverSelection | null): string | null {
   const index = execution?.artifacts ?? [];
   if (gate === "covers") return selection?.["3:4"] && selection["4:3"] ? coverPair(selection["3:4"].sha256, selection["4:3"].sha256) : null;
-  if (gate === "final_cut") return finalCutArtifact(index)?.sha256 ?? null;
+  if (gate === "final_cut") return finalCutArtifact(index, execution?.generation)?.sha256 ?? null;
   return latestArtifact(index, [gate])?.sha256 ?? null;
 }
 /** 打回比对的指纹：封面是整批，其余同批准。 */
@@ -72,7 +79,8 @@ export function approvalInvalidReason(gate: GateName, ctx: GateContext): string 
   const bound = ctx.approvals?.bindings?.[gate];
   if (!ctx.handoff || !bound || bound.generation !== ctx.handoff.generation || bound.manifest_hash !== ctx.handoff.hash) return "交接代次已变化";
   if (bound.draft_hash !== ctx.draftHash) return "稿件已改";
-  if (approval.artifact_sha256 !== approvalTarget(gate, ctx.execution, ctx.selection)) return "产物已变化";
+  const changed = approval.artifact_sha256 !== approvalTarget(gate, ctx.execution, ctx.selection) || (gate === "final_cut" && ctx.finalCutChanged);
+  if (changed) return gate === "final_cut" ? FINAL_CUT_CHANGED : "产物已变化";
   return "";
 }
 

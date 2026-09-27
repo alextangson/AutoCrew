@@ -33,7 +33,7 @@ it("批准幂等：同一门同一指纹重复点返回原记录、不改时间�
   const state = JSON.parse(await fs.readFile(path.join(v.root, "00-project/notes/workflow-state.json"), "utf8"));
   expect(state.gates.gate3.status).toBe("invalidated");
   // 页面上还挂着旧文件就去批：服务端认的是当前那一件
-  await expect(founderProjectReview(v.id, env.dir, { action: "approve", which: "final_cut", manifest_hash: v.manifestHash, files })).rejects.toThrow(/产物已变化/);
+  await expect(founderProjectReview(v.id, env.dir, { action: "approve", which: "final_cut", manifest_hash: v.manifestHash, files })).rejects.toThrow(/导出文件变了，刷新后再看/);
 });
 
 it("打回：必须带原话、记录不可改、重复点返回原记录；被打回的这一版不能再批，新版本回到待批", async () => {
