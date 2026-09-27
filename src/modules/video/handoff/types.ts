@@ -34,6 +34,8 @@ export interface VideoHandoffRecord extends HandoffManifest {
   /** 交接时稿件的版本号（versions 条数） */
   version: number;
   aroll_path: string;
+  /** A-roll 挪进项目之前的原路径（§13.4-F）：撤回时按日志挪回；推送重放在源已挪走时认它 */
+  aroll_source_path?: string;
   handoff_path: string;
   project_handoff_path: string;
 }

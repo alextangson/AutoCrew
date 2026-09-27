@@ -14,6 +14,9 @@ import { founderProjectReview } from "./founder-review.js";
 import { saveCoverage } from "./project-evidence.js";
 import { claimContent } from "../../../storage/claims.js";
 import { executeContentSave } from "../../../tools/content-save.js";
+import { sha256File } from "./manifest.js";
+import { arollLockOf } from "./pull-store.js";
+import { recoverArollMoves } from "./aroll-move.js";
 
 vi.mock("../../../storage/local-store.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../../storage/local-store.js")>();
@@ -91,6 +94,7 @@ describe.skipIf(!HAS_FFMPEG)("认领转交之后的失败", () => {
   it("确认没提交 → handoff_not_committed：认领回到原持有者和原令牌，交接包删掉", async () => {
     const { c, token, root } = await ready();
     const before = (await getContent(c.id, env.dir))!.claim;
+    const sha = await sha256File(env.aroll);
     vi.mocked(store.transitionStatus).mockResolvedValueOnce({ ok: false, error: "模拟没推进" });
     const r = await handoff(c, { claim_token: token });
     expect(r).toMatchObject({ ok: false, code: "handoff_not_committed", failure_class: "handoff_not_committed", claim_restored: true });
@@ -98,6 +102,11 @@ describe.skipIf(!HAS_FFMPEG)("认领转交之后的失败", () => {
     expect(after.claim).toMatchObject({ token, host: before!.host, employee: before!.employee });
     expect(after.status).toBe("draft_ready");
     await expect(fs.access(path.join(root, "01-script/handoff/g0001/handoff.md"))).rejects.toThrow();
+    // 原片挪回原处，不留在项目里（slice 1 遗留）；原片锁释放
+    expect(r.aroll_restored_to).toBe(env.aroll);
+    expect(await sha256File(env.aroll)).toBe(sha);
+    expect(await fs.readdir(path.join(root, "02-aroll")).catch(() => [])).toEqual([]);
+    expect(await arollLockOf(env.dir, sha)).toBeNull();
     expect(await handoff(after, { claim_token: token })).toMatchObject({ ok: true, content_status: "editing" });
   });
 
@@ -108,5 +117,16 @@ describe.skipIf(!HAS_FFMPEG)("认领转交之后的失败", () => {
     expect(r).toMatchObject({ ok: false, code: "handoff_pending_recovery", failure_class: "handoff_pending_recovery", claim_restored: false });
     expect((await getContent(c.id, env.dir))!.claim?.host).toBe("codex");
     await expect(fs.access(path.join(root, "01-script/handoff/g0001/handoff.md"))).resolves.toBeUndefined();
+    // 结果不确定：日志与原片锁都留着，原片留在项目里；重启核定——没提交就挪回原处并释放锁
+    const sha = (await readdirJournals())[0];
+    expect(await arollLockOf(env.dir, sha)).toMatchObject({ content_id: c.id });
+    await expect(fs.access(env.aroll)).rejects.toThrow();
+    const out = await recoverArollMoves(env.dir, env.outside);
+    expect(out).toEqual([{ sha256: sha, outcome: `returned:${env.aroll}` }]);
+    expect(await arollLockOf(env.dir, sha)).toBeNull();
   });
+
+  async function readdirJournals(): Promise<string[]> {
+    return (await fs.readdir(path.join(env.dir, "video/pull/move-journals"))).map((n) => n.replace(/\.json$/, ""));
+  }
 });

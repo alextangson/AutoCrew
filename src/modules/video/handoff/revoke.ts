@@ -13,6 +13,7 @@ import { CONTENT_STATUS_LABEL, getContent, transitionStatus, updateContent, with
 import type { Grant, HandoffContext } from "./handoff.js";
 import { serializeVideoLine } from "./lock.js";
 import { pullDeps } from "./pull-deps.js";
+import { moveArollBack, readJournal } from "./aroll-move.js";
 import { bumpRevokeEpoch, releaseArollLock, withGlobalHandoffLock } from "./pull-store.js";
 import { handoffFail, type HandoffResult, type VideoHandoffRecord } from "./types.js";
 
@@ -57,6 +58,20 @@ async function returnClaim(record: VideoHandoffRecord, input: RevokeInput, grant
   return {};
 }
 
+/** 撤回把原片挪回原路径（被占就回 Downloads 加后缀），校验后才释放原片锁（§13.4-F） */
+async function returnAroll(record: VideoHandoffRecord, contentId: string, dataDir: string): Promise<Record<string, unknown>> {
+  const journal = await readJournal(dataDir, record.aroll_sha256);
+  if (!journal || journal.content_id !== contentId) {
+    await releaseArollLock(dataDir, record.aroll_sha256, contentId);
+    return {};
+  }
+  try {
+    return { aroll_restored_to: await moveArollBack(dataDir, journal, pullDeps().downloadsDir) };
+  } catch (err) {
+    return { aroll_restore_failed: `${err instanceof Error ? err.message : String(err)}；原片锁保留，重启 AutoCrew 后自动再试` };
+  }
+}
+
 export async function revokeHandoff(input: RevokeInput, ctx: HandoffContext): Promise<HandoffResult> {
   return withGlobalHandoffLock(() => serializeVideoLine(input.contentId, () => revokeLocked(input, ctx)));
 }
@@ -89,6 +104,6 @@ async function revokeLocked(input: RevokeInput, ctx: HandoffContext): Promise<Ha
   if (!moved.ok) return { ...handoffFail("handoff_failed", `撤回没落盘：${moved.error ?? "未知原因"}`), ...gate.grant };
   // 之前签发的认稿回执一律作废；原片锁随撤回释放（认错稿撤回后，这段原片可以交给对的那条）
   await bumpRevokeEpoch(ctx.dataDir, new Date(pullDeps().now()).toISOString());
-  await releaseArollLock(ctx.dataDir, record.aroll_sha256, content.id);
-  return revokedResult(record, "draft_ready", await returnClaim(record, input, gate.grant, ctx.dataDir));
+  const aroll = await returnAroll(record, content.id, ctx.dataDir);
+  return revokedResult(record, "draft_ready", { ...aroll, ...(await returnClaim(record, input, gate.grant, ctx.dataDir)) });
 }

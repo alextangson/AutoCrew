@@ -23,6 +23,7 @@ import { contentDir, getContent, transitionStatus, type Content, type ContentCla
 import { probeAroll } from "../ingest.js";
 import { acceptanceBlock, HANDOFF_FROM } from "./acceptance.js";
 import { serializeVideoLine } from "./lock.js";
+import { journalBySource, markCommitted, moveArollBack, moveArollIn, readJournal, type MoveJournal } from "./aroll-move.js";
 import { readArollInput } from "./aroll-input.js";
 import type { ConfirmationRecord } from "./confirm.js";
 import { pullDeps } from "./pull-deps.js";
@@ -38,7 +39,7 @@ import {
   type HandoffFileInput,
 } from "./manifest.js";
 import { claimProjectDir, defaultProjectName, resolveProjectRoot, SCRIPT_DIR } from "./paths.js";
-import { usableRoots, type ProjectRoots } from "./roots.js";
+import { expandHome, usableRoots, type ProjectRoots } from "./roots.js";
 import { handoffFail, type HandoffManifest, type HandoffResult, type VideoHandoffRecord } from "./types.js";
 
 /** 剪辑工位的宿主名（命名 token 的主体）：交接把认领转给它 */
@@ -177,6 +178,28 @@ async function pullGate(input: HandoffInput, content: Content, dataDir: string):
   return checkConfirmation(input.confirmationId, content, dataDir);
 }
 
+function inUse(holder: { content_id: string; generation: number }): HandoffResult {
+  return handoffFail("aroll_in_use", "这段原片已经交给另一条稿了：同一段原片同时只归一条未撤回交接", { holder: { content_id: holder.content_id, generation: holder.generation } });
+}
+
+/** 读源文件之前先认锁：原片可能已被别的交接挪进项目，原路径空了 */
+async function arollTaken(dataDir: string, contentId: string, sha: string | undefined, arollPath: string): Promise<HandoffResult | null> {
+  const lock = sha ? await arollLockOf(dataDir, sha) : null;
+  if (lock && lock.content_id !== contentId) return inUse(lock);
+  const moved = arollPath ? await journalBySource(dataDir, path.resolve(expandHome(arollPath.trim()))) : null;
+  return moved && moved.content_id !== contentId ? inUse(moved) : null;
+}
+
+/** 推送路重放：原片已经挪进项目、原路径空了，同一份请求重发照样认（§13.8 #3：先查记录、再读源文件） */
+async function movedSourceReplay(content: Content, input: HandoffInput): Promise<VideoHandoffRecord | null> {
+  const current = content.video?.handoff;
+  if (input.confirmationId || !current?.aroll_source_path || HANDOFF_FROM.has(content.status)) return null;
+  if ((content.video?.revoked ?? []).includes(current.hash)) return null;
+  const asked = path.resolve(expandHome(input.arollPath.trim()));
+  if (asked !== current.aroll_source_path) return null;
+  return (await fs.lstat(asked).then(() => true, () => false)) ? null : current;
+}
+
 async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<HandoffResult> {
   if (input.confirmationId) {
     if (!validRequestId(input.requestId)) return handoffFail("invalid_params", "带 confirmation_id 的交接需要 request_id（1–100 位字母、数字、-、_）");
@@ -187,10 +210,15 @@ async function handoffLocked(input: HandoffInput, ctx: HandoffContext): Promise<
   if (!content) return handoffFail("invalid_params", `稿件不存在：${input.contentId}`);
   const pulled = await pullGate(input, content, ctx.dataDir);
   if (!pulled.ok) return pulled.result;
+  const early = await movedSourceReplay(content, input);
+  if (early) return handedOffResult(early, { replayed: true, content_status: content.status });
   const confirmation = pulled.value;
   const roots = await usableRoots(ctx.dataDir);
   if (!roots.ok) return roots.result;
-  const planned = await planHandoff(content, { ...input, arollPath: input.arollPath || confirmation?.aroll_path || "" }, roots.value, ctx.dataDir);
+  const arollPath = input.arollPath || confirmation?.aroll_path || "";
+  const taken = await arollTaken(ctx.dataDir, content.id, confirmation?.aroll_sha256, arollPath);
+  if (taken) return taken;
+  const planned = await planHandoff(content, { ...input, arollPath }, roots.value, ctx.dataDir);
   if (!planned.ok) return planned.result;
   if (confirmation && planned.plan.base.aroll_sha256 !== confirmation.aroll_sha256) {
     await markConfirmation(ctx.dataDir, confirmation, { voided_at: new Date().toISOString() });
@@ -207,9 +235,7 @@ async function handoffChecked(content: Content, input: HandoffInput, ctx: Handof
   const probed = await probeAroll(plan.arollPath);
   if (!probed.ok) return handoffFail("aroll_invalid", probed.reason);
   const lock = await arollLockOf(ctx.dataDir, plan.base.aroll_sha256);
-  if (lock && lock.content_id !== content.id) {
-    return handoffFail("aroll_in_use", "这段原片已经交给另一条稿了：同一段原片同时只归一条未撤回交接", { holder: { content_id: lock.content_id, generation: lock.generation } });
-  }
+  if (lock && lock.content_id !== content.id) return inUse(lock);
   // 写门放在只读核验之后、第一次落盘之前：被拒的请求不留认领这种副作用
   const prior = content.claim;
   const gate = await ctx.gate();
@@ -252,7 +278,7 @@ async function prepareCommit(plan: Plan, input: HandoffInput, dataDir: string): 
   if (bundle) {
     const bundleFile = path.join(plan.projectRoot, `01-script/handoff/g${String(generation).padStart(4, "0")}/handoff.md`);
     record.handoff_path = bundleFile; record.project_handoff_path = bundleFile;
-    record.aroll_path = path.join(plan.projectRoot, "02-aroll", `${manifest.aroll_sha256}${path.extname(plan.arollPath).toLowerCase()}`);
+    record.aroll_path = path.join(plan.projectRoot, "02-aroll", path.basename(plan.arollPath));
   }
   const fileInput = { title: plan.content.title, manifest, hash, body: plan.content.body, arollPath: plan.arollPath };
   return { manifest, record, fileInput, ...(bundle ? { bundle: bundle.files } : {}) };
@@ -286,8 +312,8 @@ async function commitHandoff(plan: Plan, input: HandoffInput, ctx: HandoffContex
 }
 
 /** 令牌直接交给这次交接的调用方（P6 §12.4-D）：Codex 发起 = 它自己拿着；Claude 推送 = 随派工交给接手的那个 Codex 会话 */
-async function committed(plan: Plan, input: HandoffInput, ctx: HandoffContext, record: VideoHandoffRecord, token: string, confirmation?: ConfirmationRecord): Promise<HandoffResult> {
-  const base = handedOffResult(record, { content_status: "editing" });
+async function committed(plan: Plan, input: HandoffInput, ctx: HandoffContext, record: VideoHandoffRecord, token: string, confirmation: ConfirmationRecord | undefined, extra: Record<string, unknown>): Promise<HandoffResult> {
+  const base = handedOffResult(record, { content_status: "editing", ...extra });
   if (confirmation && input.requestId) {
     await markConfirmation(ctx.dataDir, confirmation, { used_at: new Date().toISOString(), used_by_request: input.requestId });
     await saveRequestRecord(ctx.dataDir, { request_id: input.requestId, confirmation_id: confirmation.confirmation_id, content_id: plan.content.id,
@@ -314,14 +340,7 @@ async function landHandoff(
   const created: string[] = [];
   let failure: HandoffResult;
   try {
-    if (prepared.bundle) {
-      assertManagedPathAvailable(record.aroll_path);
-      safeProjectPath(plan.projectRoot, path.relative(plan.projectRoot, record.aroll_path));
-      await fs.mkdir(path.dirname(record.aroll_path), { recursive: true });
-      try { await fs.copyFile(plan.arollPath, record.aroll_path, fs.constants.COPYFILE_EXCL); }
-      catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
-      if (await sha256File(record.aroll_path) !== record.aroll_sha256) throw new Error("A-roll 校验失败");
-    }
+    const journal = prepared.bundle ? await moveIntoProject(plan, input, record, ctx.dataDir) : null;
     const files = prepared.bundle ? Object.entries(prepared.bundle).map(([p, t]) => [safeProjectPath(plan.projectRoot, p), t]) : [[record.handoff_path, text], [record.project_handoff_path, text]];
     for (const [file, body] of files) {
       const wrote = await writeImmutable(file, body);
@@ -335,7 +354,10 @@ async function landHandoff(
       viaHandoff: true,
       patch: (current) => ({ video: { ...current.video, handoff: record } }),
     }, ctx.dataDir);
-    if (moved.ok) return committed(plan, input, ctx, record, editorToken, confirmation);
+    if (moved.ok) {
+      if (journal) await markCommitted(ctx.dataDir, journal).catch(() => undefined);
+      return committed(plan, input, ctx, record, editorToken, confirmation, arollNote(journal));
+    }
     failure = handoffFail("handoff_not_committed", `状态没推进：${moved.error ?? "未知原因"}`);
   } catch (err) {
     // 结果不确定：交接包、认领、事务日志原样留着，等重启核定
@@ -343,6 +365,37 @@ async function landHandoff(
     failure = handoffFail(failureCode(err, "handoff_not_committed"), err instanceof Error ? err.message : String(err));
   }
   for (const file of created) await fs.rm(file, { force: true }).catch(() => undefined);
-  await releaseArollLock(ctx.dataDir, record.aroll_sha256, plan.content.id);
-  return withClaimRestored(failure, "handoff_not_committed", held);
+  const aroll = await putArollBack(plan, record, ctx.dataDir);
+  return withClaimRestored({ ...failure, ...aroll }, "handoff_not_committed", held);
+}
+
+/** 挪进 `02-aroll/<原文件名>`：日志先落盘再动文件（aroll-move.ts） */
+async function moveIntoProject(plan: Plan, input: HandoffInput, record: VideoHandoffRecord, dataDir: string): Promise<MoveJournal> {
+  const dir = path.join(plan.projectRoot, "02-aroll");
+  assertManagedPathAvailable(dir);
+  const journal = await moveArollIn(dataDir, { ...(input.requestId ? { request_id: input.requestId } : {}), content_id: plan.content.id,
+    generation: record.generation, source: plan.arollPath, sha256: record.aroll_sha256 }, dir);
+  record.aroll_path = journal.target;
+  record.aroll_source_path = plan.arollPath;
+  return journal;
+}
+
+function arollNote(journal: MoveJournal | null): Record<string, unknown> {
+  if (!journal) return {};
+  return { aroll_moved_to: journal.target, ...(journal.source_left ? { aroll_original_left_at: journal.source,
+    aroll_note: `原片已复制进项目并校验一致，但 Downloads 里的原件没删掉，还在 ${journal.source}` } : {}) };
+}
+
+/** 确认没提交：按日志把原片挪回原处，校验后才释放原片锁；挪不回就留着锁和日志，重启再试 */
+async function putArollBack(plan: Plan, record: VideoHandoffRecord, dataDir: string): Promise<Record<string, unknown>> {
+  const journal = await readJournal(dataDir, record.aroll_sha256);
+  if (!journal || journal.content_id !== plan.content.id || journal.generation !== record.generation) {
+    await releaseArollLock(dataDir, record.aroll_sha256, plan.content.id);
+    return {};
+  }
+  try {
+    return { aroll_restored_to: await moveArollBack(dataDir, journal, pullDeps().downloadsDir) };
+  } catch (err) {
+    return { aroll_restore_failed: `${err instanceof Error ? err.message : String(err)}；原片锁保留，重启 AutoCrew 后自动再试` };
+  }
 }

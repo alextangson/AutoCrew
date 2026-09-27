@@ -169,4 +169,26 @@ describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", () => {
       report: { request_id: "r1", generation: 1, binding_revision: 1, session_id: "s1", files: [], result: "x", next_action: "y" } }, "codex");
     expect(stale).toMatchObject({ ok: false, code: "claim_held" });
   });
+
+  it("原片挪进 02-aroll/<原文件名>，同名加 (2)；撤回挪回原处，原处被占就回 Downloads 加后缀", async () => {
+    const a = await ready("第一条长长的标题");
+    const aroll = await makeMp4(path.join(fx.outside, "第一条长长的标题.mp4"));
+    const sha = await sha256File(aroll);
+    const root = (await import("../../../storage/content-project.js")).resolveContentProject(a.id, fx.dir)!.project_root;
+    await fs.mkdir(path.join(root, "02-aroll"), { recursive: true });
+    await fs.writeFile(path.join(root, "02-aroll/第一条长长的标题.mp4"), "旧文件");
+    const res = await pull(a, aroll, await confirmed(aroll, a.title), "h-1");
+    const inside = path.join(root, "02-aroll/第一条长长的标题 (2).mp4");
+    expect(res).toMatchObject({ ok: true, aroll_moved_to: inside });
+    expect((await getContent(a.id, fx.dir))!.video!.handoff).toMatchObject({ aroll_path: inside, aroll_source_path: aroll, aroll_sha256: sha });
+    await expect(fs.access(aroll)).rejects.toThrow();
+    await fs.writeFile(aroll, "有人在原处放了别的文件");
+    const downloads = path.join(fx.outside, "Downloads");
+    setPullDeps({ downloadsDir: downloads });
+    const revoked = await callVideo(fx.dir, { action: "revoke", content_id: a.id, claim_token: res.claim_token }, "codex");
+    expect(revoked).toMatchObject({ ok: true, aroll_restored_to: path.join(downloads, "第一条长长的标题.mp4") });
+    expect(await sha256File(path.join(downloads, "第一条长长的标题.mp4"))).toBe(sha);
+    await expect(fs.access(inside)).rejects.toThrow();
+    expect(await arollLockOf(fx.dir, sha)).toBeNull();
+  });
 });

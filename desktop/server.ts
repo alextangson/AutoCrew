@@ -27,6 +27,8 @@ import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
+import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
+import { pullDeps } from "../src/modules/video/handoff/pull-deps.js";
 import { listWorkspaces } from "../src/desktop/workspace-store.js";
 import { failStalePreparingPacks } from "../src/tools/writer-pack.js";
 import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
@@ -467,6 +469,21 @@ try {
   if (stalePacks > 0) console.log(`  [writer] ${stalePacks} 份中断的写作包已标失败,宿主重新 pack 即可`);
 } catch (err) {
   console.error("[writer] 写作包清扫失败:", err instanceof Error ? err.message : err);
+}
+
+// A-roll 挪动日志核定(P6 §13.4-F):交接提交结果不确定、或挪回没完成的原片,启动时按日志核定——
+// 已提交留在项目里,没提交挪回原处,校验后才释放原片锁。单个工作区失败不阻断启动。
+try {
+  const dirs = new Set([getDataDir(), ...(await listWorkspaces()).workspaces.map((ws) => ws.dataDir)]);
+  for (const dir of dirs) {
+    const outcomes = await recoverArollMoves(dir, pullDeps().downloadsDir).catch((err) => {
+      console.error(`[handoff] 原片挪动核定失败(${dir}):`, err instanceof Error ? err.message : err);
+      return [];
+    });
+    for (const o of outcomes.filter((x) => x.outcome !== "committed")) console.log(`  [handoff] 原片 ${o.sha256.slice(0, 8)} → ${o.outcome}`);
+  }
+} catch (err) {
+  console.error("[handoff] 原片挪动核定失败:", err instanceof Error ? err.message : err);
 }
 
 // 灵感库过期清理(V5.4c 创始人裁决):3 天未选用自动入回收站;有稿件血缘的永不清理
