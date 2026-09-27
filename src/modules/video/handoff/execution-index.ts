@@ -7,6 +7,10 @@
 export interface ArtifactEntry {
   path: string; sha256: string; role: string; version?: number; timeline_id?: string;
   generation: number; reported_at: string;
+  /** report 时文件的大小与修改时间：看板据此不重算哈希也能看出「导出文件变了」 */
+  size?: number; mtime_ms?: number;
+  /** 项目外的成片候选（剪映导出目录）：绑定到哪个项目，path 是绝对路径 */
+  external?: "jianying"; project_id?: string;
 }
 export interface ExecutionHeartbeat {
   request_id: string; session_id: string; result: string; next_action: string; error?: string; reported_at: string;
@@ -23,16 +27,27 @@ export type CoverRatio = keyof typeof COVER_ROLES;
 /** 一期旧角色名 → 新角色名（面板与登记都只认新名） */
 const LEGACY_ROLES: Record<string, string> = { final: "final-cut", cover34: COVER_ROLES["3:4"], cover43: COVER_ROLES["4:3"] };
 
-type ReportedFile = { path: string; sha256: string; role: string; version?: number; timeline_id?: string };
+type ReportedFile = { path: string; sha256: string; role: string; version?: number; timeline_id?: string } & Partial<Pick<ArtifactEntry, "size" | "mtime_ms" | "external" | "project_id">>;
+const FACTS = ["size", "mtime_ms", "external", "project_id"] as const;
+
+/** 同一件产物挪了位置：路径和位置事实一起换（挪进 07-delivery 后就不再是项目外候选） */
+function relocate(entry: ArtifactEntry, f: ReportedFile): void {
+  entry.path = f.path;
+  for (const k of FACTS) {
+    if (f[k] === undefined) delete entry[k];
+    else (entry as unknown as Record<string, unknown>)[k] = f[k];
+  }
+}
 
 /** 追加一次 report 的文件：同 (sha256, role) 视为同一件产物，只更新路径与时间。 */
 export function mergeArtifacts(index: readonly ArtifactEntry[], files: readonly ReportedFile[], generation: number, reportedAt: string): ArtifactEntry[] {
   const next = index.map(a => ({ ...a }));
   for (const f of files) {
     const same = next.find(a => a.sha256 === f.sha256 && a.role === f.role);
-    if (same) { same.path = f.path; same.reported_at = reportedAt; same.generation = generation; if (f.version !== undefined) same.version = f.version; continue; }
+    if (same) { relocate(same, f); same.reported_at = reportedAt; same.generation = generation; if (f.version !== undefined) same.version = f.version; continue; }
     next.push({ path: f.path, sha256: f.sha256, role: f.role, ...(f.version !== undefined ? { version: f.version } : {}),
-      ...(f.timeline_id ? { timeline_id: f.timeline_id } : {}), generation, reported_at: reportedAt });
+      ...(f.timeline_id ? { timeline_id: f.timeline_id } : {}), generation, reported_at: reportedAt,
+      ...Object.fromEntries(FACTS.filter(k => f[k] !== undefined).map(k => [k, f[k]])) });
   }
   return next;
 }

@@ -756,13 +756,15 @@ export const videoAsrWarmup = () => videoInvoke<{ status: string }>("video:asr_w
 /** absent | warming | ready | failed */
 export const videoAsrStatus = () => videoInvoke<{ status: string; detail?: string }>("video:asr_status");
 
-export const videoSettingsGet = () =>
-  videoInvoke<{ renderConcurrency: number | null; snapshotCopy: boolean }>("video:settings_get");
+export type VideoSettingsView = { renderConcurrency: number | null; snapshotCopy: boolean; jianyingExportDir: string | null };
 
-export const videoSettingsSet = (patch: { renderConcurrency?: number | null; snapshotCopy?: boolean }) =>
-  videoInvoke<{ renderConcurrency: number | null; snapshotCopy: boolean }>("video:settings_set", {
+export const videoSettingsGet = () => videoInvoke<VideoSettingsView>("video:settings_get");
+
+export const videoSettingsSet = (patch: { renderConcurrency?: number | null; snapshotCopy?: boolean; jianyingExportDir?: string | null }) =>
+  videoInvoke<VideoSettingsView>("video:settings_set", {
     ...(patch.renderConcurrency !== undefined ? { render_concurrency: patch.renderConcurrency } : {}),
     ...(patch.snapshotCopy !== undefined ? { snapshot_copy: patch.snapshotCopy } : {}),
+    ...(patch.jianyingExportDir !== undefined ? { jianying_export_dir: patch.jianyingExportDir } : {}),
   });
 
 // ── 人话层:phase×state 全枚举都有说法(§10 边界清单 1) ──────────────────────

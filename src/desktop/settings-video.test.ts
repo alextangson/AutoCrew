@@ -33,14 +33,14 @@ describe("video:settings_get / set", () => {
   it("没配置过：读到全默认，不报错也不建文件", async () => {
     expect(await getVideoSettings({ _dataDir: dir })).toEqual({
       ok: true,
-      data: { renderConcurrency: null, snapshotCopy: false },
+      data: { renderConcurrency: null, snapshotCopy: false, jianyingExportDir: null },
     });
     await expect(fs.access(file())).rejects.toThrow();
   });
 
   it("写入后回读一致，落盘是 600（配置文件将来要放密钥）", async () => {
     const res = await setVideoSettings({ _dataDir: dir, render_concurrency: 4, snapshot_copy: true });
-    expect(res).toEqual({ ok: true, data: { renderConcurrency: 4, snapshotCopy: true } });
+    expect(res).toEqual({ ok: true, data: { renderConcurrency: 4, snapshotCopy: true, jianyingExportDir: null } });
     expect(await getVideoSettingsRaw(dir)).toEqual({ renderConcurrency: 4, snapshotCopy: true });
     expect((await fs.stat(file())).mode & 0o777).toBe(0o600);
   });
@@ -55,7 +55,7 @@ describe("video:settings_get / set", () => {
     await setVideoSettings({ _dataDir: dir, render_concurrency: 8 });
     expect(await setVideoSettings({ _dataDir: dir, render_concurrency: null })).toEqual({
       ok: true,
-      data: { renderConcurrency: null, snapshotCopy: false },
+      data: { renderConcurrency: null, snapshotCopy: false, jianyingExportDir: null },
     });
   });
 

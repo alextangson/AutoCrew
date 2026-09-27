@@ -24,10 +24,16 @@ export interface VideoSettings {
    * A-roll 快照拷贝（§4.2）。默认关：素材是**引用不复制**，开了才为强可复现付出磁盘代价。
    */
   snapshotCopy?: boolean;
+  /**
+   * 剪映的导出目录（P6 §13.4-F 成片第 2 步）：成片候选唯一允许落在项目外的根。
+   * 不猜缺省值——没设就拒绝项目外的成片候选，并告诉创始人在哪里设。
+   */
+  jianyingExportDir?: string;
 }
 
 const VIDEO_FILE = "video.json";
-const VIDEO_FIELDS = ["render_concurrency", "snapshot_copy"];
+const VIDEO_FIELDS = ["render_concurrency", "snapshot_copy", "jianying_export_dir"];
+const KNOWN_KEYS = ["renderConcurrency", "snapshotCopy", "jianyingExportDir"];
 /** 单机渲染，超过这个数只会互相抢 CPU；上限是防呆不是性能建议 */
 const MAX_RENDER_CONCURRENCY = 16;
 
@@ -57,6 +63,7 @@ function normalizeVideo(raw: Partial<VideoSettings>): VideoSettings {
   return {
     ...(concurrency !== undefined ? { renderConcurrency: concurrency } : {}),
     ...(raw.snapshotCopy === true ? { snapshotCopy: true } : {}),
+    ...(typeof raw.jianyingExportDir === "string" && path.isAbsolute(raw.jianyingExportDir) ? { jianyingExportDir: raw.jianyingExportDir } : {}),
   };
 }
 
@@ -77,6 +84,7 @@ export async function getVideoSettings(payload: Record<string, unknown>): Promis
       data: {
         renderConcurrency: cfg.renderConcurrency ?? null,
         snapshotCopy: cfg.snapshotCopy === true,
+        jianyingExportDir: cfg.jianyingExportDir ?? null,
       },
     };
   } catch (err) {
@@ -84,8 +92,24 @@ export async function getVideoSettings(payload: Record<string, unknown>): Promis
   }
 }
 
+/** 剪映导出目录：完整路径、存在、是目录（不是链接到别处的假目录也行——比较时一律 realpath） */
+async function exportDirError(v: unknown): Promise<string | null> {
+  if (typeof v !== "string" || !path.isAbsolute(v.trim())) return "jianying_export_dir 必须是完整的绝对路径（清空传 null）";
+  const st = await fs.stat(v.trim()).catch(() => null);
+  return st?.isDirectory() ? null : `剪映导出目录不存在或不是文件夹：${v.trim()}`;
+}
+
 /** 增量应用到 next（就地改），返回错误串或 null。清空 = 传 null / 0 / 空串 */
-function applyVideoUpdates(next: VideoSettings, payload: Record<string, unknown>): string | null {
+async function applyVideoUpdates(next: VideoSettings, payload: Record<string, unknown>): Promise<string | null> {
+  const dir = payload.jianying_export_dir;
+  if (dir !== undefined) {
+    if (dir === null || dir === "") delete next.jianyingExportDir;
+    else {
+      const bad = await exportDirError(dir);
+      if (bad) return bad;
+      next.jianyingExportDir = String(dir).trim();
+    }
+  }
   if (payload.render_concurrency !== undefined) {
     const v = payload.render_concurrency;
     if (v === null || v === "" || v === 0) delete next.renderConcurrency;
@@ -112,14 +136,17 @@ export async function setVideoSettings(payload: Record<string, unknown>): Promis
   }
   const dataDir = (payload._dataDir as string) || undefined;
   try {
-    const next = normalizeVideo(await readVideoJson(dataDir));
+    const raw = await readVideoJson(dataDir);
+    const next = normalizeVideo(raw);
     const before = JSON.stringify(next);
-    const error = applyVideoUpdates(next, payload);
+    const error = await applyVideoUpdates(next, payload);
     if (error) return { ok: false, error };
 
     const filePath = videoFilePath(dataDir);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+    // 同一个文件里还有别的模块的键（交接白名单 project_roots）：原样保留，只改自己的字段
+    const others = Object.fromEntries(Object.entries(raw).filter(([k]) => !KNOWN_KEYS.includes(k)));
+    await fs.writeFile(filePath, JSON.stringify({ ...others, ...next }, null, 2) + "\n", { mode: 0o600 });
     await fs.chmod(filePath, 0o600); // 已存在的松权限文件也要收紧
     if (JSON.stringify(next) !== before) notifyVideoSettingsChanged(next);
     return getVideoSettings({ _dataDir: dataDir });

@@ -129,6 +129,6 @@ export async function handedOff(dir: string, aroll: string) {
     report: { request_id: `r-${++n}`, generation: 1, binding_revision: 1, session_id: "editor-session", result: `第 ${n} 次`, next_action: "继续",
       files: await Promise.all(files.map(async f => ({ path: path.relative(root, f.file), sha256: await sha256File(f.file), role: f.role, ...(f.version ? { version: f.version } : {}) }))), ...extra },
   }, "codex");
-  return { id: content.id, root, manifestHash: String(handoff.manifest_hash), report };
+  return { id: content.id, root, manifestHash: String(handoff.manifest_hash), token: claim.claim.token, report };
 }
 

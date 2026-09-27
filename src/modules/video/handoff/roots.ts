@@ -2,7 +2,7 @@ import { readProjectRegistry } from "../../../storage/content-project.js";
 /**
  * 剪辑项目根目录白名单（P6 spec §3.4）：`<dataDir>/video.json` 的 `project_roots`。
  *
- * 仅 ENOENT 可用约定默认根：受管资料库为工作区 projects；未迁移的本机旧模式才用 broll。每个根展开 `~` 后
+ * 没有文件、或文件里没有 project_roots 键时才用约定默认根：受管资料库为工作区 projects；未迁移的本机旧模式才用 broll。每个根展开 `~` 后
  * `realpath`——之后所有路径比较都在真实路径上按段比，别名、`..`、大小写之外的花样都绕不过去。
  * 不存在的根照实报出来（交接时一个可用根都没有就拒绝），不静默跳过。
  */
@@ -29,18 +29,21 @@ export function expandHome(p: string): string {
 
 async function configuredRoots(dataDir: string): Promise<string[]> {
   const file = path.join(getConfigDir(dataDir), "video.json");
+  const conventional = () => readProjectRegistry(dataDir) || getConfigDir(dataDir) !== resolveDataDir(dataDir)
+    ? [path.join(resolveDataDir(dataDir), "projects")]
+    : DEFAULT_PROJECT_ROOTS;
   let raw: string;
   try {
     raw = await fs.readFile(file, "utf-8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return readProjectRegistry(dataDir) || getConfigDir(dataDir) !== resolveDataDir(dataDir)
-      ? [path.join(resolveDataDir(dataDir), "projects")]
-      : DEFAULT_PROJECT_ROOTS;
+    return conventional();
   }
   // 配置写坏了要响：静默回落默认根会把项目建到用户没想到的地方
   const parsed = JSON.parse(raw) as { project_roots?: unknown };
-  if (!Array.isArray(parsed.project_roots)) throw new Error(`${file} 缺 project_roots 数组`);
+  // 设置页只写了别的视频字段（渲染并发、剪映导出目录）= 没配白名单，照约定默认根
+  if (!("project_roots" in parsed)) return conventional();
+  if (!Array.isArray(parsed.project_roots)) throw new Error(`${file} 的 project_roots 必须是数组`);
   if (readProjectRegistry(dataDir)) {
     const managed = path.join(resolveDataDir(dataDir), "projects");
     if (parsed.project_roots.length !== 1 || path.resolve(expandHome(String(parsed.project_roots[0]))) !== path.resolve(managed)) throw new Error("共享项目必须使用资料库的 projects 根目录；请更新本机 video.json");

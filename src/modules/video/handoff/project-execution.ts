@@ -5,7 +5,7 @@ import { getContent } from "../../../storage/local-store.js";
 import { contentFile, resolveContentProject } from "../../../storage/content-project.js";
 import { writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { exportProjectViews } from "../../../storage/project-commit.js";
-import { resolveProjectFile } from "./paths.js";
+import { resolveReportedFile, type ReportedLocation } from "./jianying-root.js";
 import { sha256File, sha256Text } from "./manifest.js";
 import { readProjectJson } from "./project-evidence.js";
 import type { HandoffContext } from "./handoff.js";
@@ -51,12 +51,11 @@ export async function reportExecution(id: string, input: unknown, ctx: HandoffCo
     if (execution && execution.generation === input.generation && (execution.machine !== os.hostname() || execution.session_id !== input.session_id)) throw new Error("execution_owned_by_other: 请先办理执行权转移");
     const gate = await ctx.gate();
     if ("denied" in gate) return gate.denied;
-    const files = [];
+    const files: IndexedFile[] = [];
     for (const file of input.files) {
-      const checked = await resolveProjectFile(path.isAbsolute(file.path) ? file.path : path.join(binding.project_root, file.path), binding.project_root, file.role);
+      const checked = await resolveReportedFile(file.path, binding.project_root, file.role, ctx.dataDir);
       if (!checked.ok) return checked.result;
-      if (await sha256File(checked.value) !== file.sha256) throw new Error(`report_file_changed: ${file.role}`);
-      files.push({ ...file, path: path.relative(binding.project_root, checked.value) });
+      files.push(await indexedFile(file, checked.value, binding.project_root, binding.project_id));
     }
     const transport = authenticatedSession ?? content.claim?.session ?? null;
     const record = { ...input, files, machine: os.hostname(), host, transport_session: transport };
@@ -72,6 +71,15 @@ export async function reportExecution(id: string, input: unknown, ctx: HandoffCo
     await exportProjectViews((await getContent(id, ctx.dataDir))!, binding.project_root);
     return { ok: true, replayed: Boolean(previous), request_id: input.request_id, project_root: binding.project_root, ...gate.grant };
   });
+}
+type IndexedFile = ExecutionReport["files"][number] & { size: number; mtime_ms: number; external?: "jianying"; project_id?: string };
+/** 核字节并记下位置事实；项目外的成片候选存绝对路径并绑定项目（代次由产物索引那一层记） */
+async function indexedFile(file: ExecutionReport["files"][number], at: ReportedLocation, projectRoot: string, projectId: string): Promise<IndexedFile> {
+  if (await sha256File(at.file) !== file.sha256) throw new Error(`report_file_changed: ${file.role}`);
+  const st = await fs.stat(at.file);
+  const facts = { size: st.size, mtime_ms: Math.trunc(st.mtimeMs) };
+  if (at.external) return { ...file, path: at.file, ...facts, external: "jianying", project_id: projectId };
+  return { ...file, path: path.relative(projectRoot, at.file), ...facts };
 }
 /** 心跳整条替换；产物索引累计追加（旧版本不丢，挪位置只改路径）。 */
 function nextExecution(prev: StoredExecution | null, input: ExecutionReport, files: ExecutionReport["files"], host: string, transport: string | null, at: string): StoredExecution {

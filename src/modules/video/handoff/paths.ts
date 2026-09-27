@@ -132,7 +132,7 @@ export async function claimProjectDir(projectRoot: string, contentId: string): P
   }
 }
 
-/** 找到给定路径里「落到项目目录」的那一段前缀的长度；找不到 = 不在项目里 */
+/** 找到给定路径里「落到根目录」的那一段前缀的长度；找不到 = 不在根里 */
 async function projectPrefixLength(segments: string[], projectRoot: string): Promise<number> {
   for (let i = segments.length - 1; i >= 1; i--) {
     const prefix = segments.slice(0, i).join(path.sep) || path.sep;
@@ -147,15 +147,21 @@ async function projectPrefixLength(segments: string[], projectRoot: string): Pro
  * 返回文件的真实绝对路径。
  */
 export async function resolveProjectFile(file: string, projectRoot: string, label: string): Promise<PathCheck<string>> {
+  return resolveFileUnder(file, projectRoot, label, (expanded) => handoffFail("path_not_whitelisted",
+    `${label} 必须在当前交接的项目目录里（${projectRoot}）：${expanded}`, { which: label }));
+}
+
+/**
+ * 同一套规则落到任意一个已 realpath 的根上（项目目录；成片候选另有剪映导出目录，见 jianying-root.ts）：
+ * 规范化、按段找根、根之下逐段禁符号链接、必须是文件。
+ */
+export async function resolveFileUnder(file: string, root: string, label: string, outside: (expanded: string) => HandoffResult): Promise<PathCheck<string>> {
   const expanded = path.resolve(expandHome(file.trim()));
   const st = await lstatOrNull(expanded);
   if (!st) return fail(handoffFail("path_missing", `${label} 不存在或读不了：${expanded}`, { which: label }));
   const segments = expanded.split(path.sep);
-  const at = await projectPrefixLength(segments, projectRoot);
-  if (at === 0) {
-    return fail(handoffFail("path_not_whitelisted",
-      `${label} 必须在当前交接的项目目录里（${projectRoot}）：${expanded}`, { which: label }));
-  }
+  const at = await projectPrefixLength(segments, root);
+  if (at === 0) return fail(outside(expanded));
   for (let i = at + 1; i <= segments.length; i++) {
     const seg = segments.slice(0, i).join(path.sep);
     if ((await lstatOrNull(seg))?.isSymbolicLink()) {
@@ -163,7 +169,7 @@ export async function resolveProjectFile(file: string, projectRoot: string, labe
     }
   }
   if (!st.isFile()) return fail(handoffFail("path_missing", `${label} 不是文件：${expanded}`, { which: label }));
-  return { ok: true, value: path.join(projectRoot, ...segments.slice(at)) };
+  return { ok: true, value: path.join(root, ...segments.slice(at)) };
 }
 
 /** 登记时复核项目目录：仍是白名单根的直接子目录、不是链接、归属还是这条稿 */

@@ -92,6 +92,7 @@ export type HandoffCode =
   | "aroll_invalid"
   | "roots_unavailable"
   | "path_not_whitelisted"
+  | "jianying_dir_unset"
   | "path_symlink"
   | "path_missing"
   | "project_owned_by_other"
