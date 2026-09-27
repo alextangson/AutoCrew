@@ -1,36 +1,103 @@
 /**
- * 剪辑看板（P6 §13.4-C）：剪辑中 → 成片待审 → 封面 → 待发布。
- * 当前步骤展开，已完成的折成一行摘要（点开还能看）。这些是展示步骤，不改稿件状态。
+ * 剪辑看板（P6 §13.4-C）：一眼回答「这条视频在哪」「现在要我做什么」。
+ * 从上到下：步骤条 → 「现在轮到你」卡（全页唯一醒目的卡）→ Codex 一行 → 折叠的文件 / 交接详情 / 文案。
+ * 步骤是 status=editing 里的展示步骤，不改稿件状态。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "../transport";
-import { confirmDialog, openDialog, toast } from "../ui";
+import { confirmDialog, toast } from "../ui";
 import { useProjectReview } from "./use-project-review";
 import { CoverStep } from "./CoverStep";
-import { FinalCutStep } from "./FinalCutStep";
-import { artifactUrl, GateBadge, when } from "./board-parts";
-import {
-  BOARD_STEPS, GATE_STATUS_LABEL, STEP_LABEL, boardAnomalies, currentStep, fileName, heartbeatStale, roughCutArtifact, stepSummary,
-  type Artifact, type BoardStep, type GateView, type ProjectReview,
-} from "./project-board";
+import { FinalCutStep, NowTitle } from "./FinalCutStep";
+import { ScriptPeek } from "./ScriptPeek";
+import { RevealLink, when } from "./board-parts";
+import { boardFiles, codexLine, nowKind, refreshFailedLine, stepperStates, type NowKind } from "./board-view";
+import { boardAnomalies, fileName, type ProjectReview } from "./project-board";
+
+type BoardContent = { id: string; status: string; title: string; body: string };
+
+export function ProjectBoard(props: { content: BoardContent; reload: () => Promise<void> }) {
+  const { id, status } = props.content;
+  const { review, error, refreshError, lastOkAt, busy, submit } = useProjectReview(id, true);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(t); }, []);
+  if (!review && !error) return <BoardSkeleton />;
+  const kind = nowKind(status, review);
+  const live = review?.enabled && review.handoff_valid ? review : null;
+  return <div className="pb-board">
+    <Stepper kind={kind} />
+    {boardAnomalies(status, review).includes("draft_changed") && <p className="pb-warn">交接之后稿子又改过，和 Codex 手里那版不一致</p>}
+    <section className="pb-now" aria-label="现在轮到你">
+      <div className="pb-now-kicker">现在轮到你</div>
+      {kind === "no_handoff" ? <NoHandoff contentId={id} status={status} reload={props.reload} /> : live && <NowBody kind={kind} review={live} contentId={id} busy={busy} submit={submit} />}
+      {error && <p role="alert" className="pb-inline-error">{error}</p>}
+    </section>
+    {live && <CodexLine review={live} now={now} />}
+    {refreshError && <p className="pb-muted-line">{refreshFailedLine(refreshError, lastOkAt, now)}</p>}
+    {live && <FilesSection review={live} contentId={id} />}
+    {live && <HandoffDetails review={live} />}
+    <ScriptPeek title={props.content.title} body={props.content.body} summary="文案" hint="只读；剪辑阶段不改字。" />
+  </div>;
+}
+
+function BoardSkeleton() {
+  return <div className="pb-board" aria-busy="true">
+    <p className="muted">正在读取交接和剪辑进度…</p>
+    <div className="pb-skeleton" style={{ height: 28 }} />
+    <div className="pb-skeleton" style={{ height: 140 }} />
+  </div>;
+}
+
+export function Stepper({ kind }: { kind: NowKind }) {
+  return <ol className="pb-stepper">
+    {stepperStates(kind).map((s) => <li key={s.label} className={`is-${s.state}`} aria-current={s.state === "current" ? "step" : undefined}>
+      {s.state === "done" ? "✓ " : ""}{s.label}
+    </li>)}
+  </ol>;
+}
 
 type Submit = (payload: Record<string, unknown>) => Promise<boolean>;
+function NowBody(props: { kind: NowKind; review: ProjectReview; contentId: string; busy: boolean; submit: Submit }) {
+  if (props.kind === "final_review") return <FinalCutStep {...props} />;
+  if (props.kind === "covers") return <CoverStep {...props} />;
+  if (props.kind === "ready") return <NowTitle title="成片和封面都定了" sub="等 Codex 登记，登记后这一页会切到发布。" />;
+  const beat = props.review.execution?.heartbeat;
+  return <NowTitle title="Codex 正在剪，暂时不用你操作" sub={beat ? undefined : "Codex 还没报告过进度。"} />;
+}
 
-export function ProjectBoard(props: { contentId: string; status: string; reload: () => Promise<void> }) {
-  const { review, error, busy, submit } = useProjectReview(props.contentId, true);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 60_000); return () => window.clearInterval(t); }, []);
-  if (!review && !error) return <section className="panel ed-board" aria-busy="true" style={{ margin: "12px 0", padding: 12 }}><p className="muted">正在读取交接和剪辑进度…</p><div style={{ height: 120, background: "var(--surface)", borderRadius: 6 }} /></section>;
-  const anomalies = boardAnomalies(props.status, review);
-  return <section className="panel ed-board" style={{ margin: "12px 0", padding: 12 }}>
-    {error && <p role="alert" className="ed-error">{error}</p>}
-    {anomalies.includes("no_handoff") && <NoHandoff contentId={props.contentId} status={props.status} reload={props.reload} />}
-    {anomalies.includes("draft_changed") && <p className="vid-warn">稿已改，和交接版不一致</p>}
-    {review?.enabled && review.handoff_valid && <>
-      <HandoffCard review={review} stale={heartbeatStale(review, now)} />
-      <Steps review={review} contentId={props.contentId} busy={busy} submit={submit} />
-    </>}
-  </section>;
+function CodexLine({ review, now }: { review: ProjectReview; now: number }) {
+  const line = codexLine(review, now);
+  return <div className="pb-codex">
+    <div className="pb-muted-line" title={line.next ? `下一步：${line.next}` : undefined}>{line.text}</div>
+    {line.next && <div className="pb-muted-line">下一步：{line.next}</div>}
+    {line.stale && <div className="pb-warn">{line.stale}</div>}
+  </div>;
+}
+
+function FilesSection({ review, contentId }: { review: ProjectReview; contentId: string }) {
+  return <details className="pb-section">
+    <summary>文件</summary>
+    <ul className="pb-files">
+      {boardFiles(review).map((f) => <li key={f.label}>
+        <span className="pb-files-label">{f.label}</span>
+        {f.path ? <><code className="pb-path" title={f.path}>{f.path}</code><RevealLink contentId={contentId} target={f.target} /></> : <span className="muted">{f.missingText}</span>}
+      </li>)}
+    </ul>
+  </details>;
+}
+
+function HandoffDetails({ review }: { review: ProjectReview }) {
+  const h = review.handoff!;
+  return <details className="pb-section">
+    <summary>交接详情</summary>
+    <dl className="pb-facts">
+      <dt>交接代次</dt><dd>第 {h.generation} 代</dd>
+      <dt>交接时间</dt><dd>{when(h.at)}</dd>
+      <dt>持有会话</dt><dd>{review.execution?.session_id || "还没有剪辑会话报到"}</dd>
+      <dt>指纹</dt><dd className="mono">{h.hash.slice(0, 8)}</dd>
+      <dt>原片</dt><dd>{fileName(h.aroll_path)}</dd>
+    </dl>
+  </details>;
 }
 
 function NoHandoff(props: { contentId: string; status: string; reload: () => Promise<void> }) {
@@ -45,64 +112,8 @@ function NoHandoff(props: { contentId: string; status: string; reload: () => Pro
       await props.reload();
     } finally { setBusy(false); }
   };
-  return <div className="ed-error">
-    状态异常：剪辑中但没有交接包{" "}
-    <button disabled={busy} onClick={() => void back()}>退回待交接</button>
-  </div>;
-}
-
-function HandoffCard({ review, stale }: { review: ProjectReview; stale: boolean }) {
-  const h = review.handoff!, beat = review.execution?.heartbeat;
-  return <div className={stale ? "vid-warn" : "muted"} style={{ padding: 8, borderRadius: 6 }}>
-    <strong>交接 第 {h.generation} 代</strong> · {when(h.at)} · A-roll「{fileName(h.aroll_path)}」 ·
-    持有会话 {review.execution?.session_id || "还没有剪辑会话报到"}
-    <div>{beat ? <>最近报告 {when(beat.reported_at)}：{beat.result} → 下一步：{beat.next_action}</> : "剪辑还没报告过进度"}
-      {stale && " · 超过 30 分钟没有报告"}</div>
-  </div>;
-}
-
-function Steps(props: { review: ProjectReview; contentId: string; busy: boolean; submit: Submit }) {
-  const current = currentStep(props.review), at = BOARD_STEPS.indexOf(current);
-  return <ol style={{ listStyle: "none", padding: 0 }}>
-    {BOARD_STEPS.map((step, i) => {
-      if (i === at) return <li key={step}><h3>{STEP_LABEL[step]}</h3><StepBody step={step} {...props} /></li>;
-      if (i < at) return <li key={step}><details><summary>✓ {STEP_LABEL[step]} · {stepSummary(step, props.review)}</summary><StepBody step={step} {...props} /></details></li>;
-      return <li key={step} className="muted">{STEP_LABEL[step]}</li>;
-    })}
-  </ol>;
-}
-
-function StepBody(props: { step: BoardStep; review: ProjectReview; contentId: string; busy: boolean; submit: Submit }) {
-  const { review, step } = props, artifacts = review.execution?.artifacts ?? [], gates = review.gates;
-  const card = (label: string, which: string, view: GateView | undefined, artifact: Artifact | null) =>
-    <GateCard key={which} label={label} which={which} view={view} artifact={artifact} {...props} />;
-  if (step === "cutting") return <>
-    {card("粗剪（gate1）", "rough_cut", gates?.gate1, roughCutArtifact(artifacts, "rough_cut"))}
-    {card("分镜与生成方案（gate2）", "storyboard", gates?.gate2, roughCutArtifact(artifacts, "storyboard"))}
+  return <>
+    <NowTitle title="这篇在剪辑中，但找不到有效的交接" sub="退回待交接后，在 Codex 里说「剪这条」重新交接。" />
+    <div className="pb-actions"><button disabled={busy} onClick={() => void back()}>退回待交接</button></div>
   </>;
-  if (step === "final_review") return <FinalCutStep review={review} contentId={props.contentId} busy={props.busy} submit={props.submit} />;
-  if (step === "covers") return <CoverStep review={review} contentId={props.contentId} busy={props.busy} submit={props.submit} />;
-  return <p className="muted">成片和封面都批了。等 Codex 用 register 登记，登记后这篇进入待发布。</p>;
 }
-
-function GateCard(props: { label: string; which: string; view?: GateView; artifact: Artifact | null; review: ProjectReview; contentId: string; busy: boolean; submit: Submit }) {
-  const { view, artifact } = props;
-  if (!artifact) return <p className="muted">{props.label}：还没交上来</p>;
-  const reject = async () => {
-    const r = await openDialog({ title: `打回${props.label}`, body: "写给剪辑的原话，Codex 按这个出下一版。", fields: [{ key: "note", label: "原话", multiline: true, required: true }], confirmLabel: "打回" });
-    if (!r?.note?.trim()) return;
-    await props.submit({ action: "reject", which: props.which, note: r.note, artifact_sha256: view?.reject_sha256 ?? artifact.sha256, manifest_hash: props.review.manifest_hash });
-  };
-  const video = /\.mp4$/i.test(artifact.path);
-  return <div style={{ margin: "8px 0" }}>
-    <p><strong>{props.label}</strong> · {fileName(artifact.path)} · 指纹 {artifact.sha256.slice(0, 8)} · <GateBadge view={view} /></p>
-    {video
-      ? <video key={artifact.sha256} src={artifactUrl(props.contentId, artifact)} controls preload="metadata" style={{ maxWidth: "100%", maxHeight: 480 }} />
-      : <img key={artifact.sha256} src={artifactUrl(props.contentId, artifact)} alt={props.label} style={{ maxWidth: "100%", maxHeight: 600, objectFit: "contain" }} />}
-    {view?.status !== "approved" && view?.status !== "rejected" && <p>
-      <button disabled={props.busy} onClick={() => void props.submit({ action: "approve", which: props.which, files: [{ path: artifact.path, sha256: artifact.sha256 }], manifest_hash: props.review.manifest_hash })}>通过</button>{" "}
-      <button disabled={props.busy} onClick={() => void reject()}>打回</button>
-    </p>}
-  </div>;
-}
-

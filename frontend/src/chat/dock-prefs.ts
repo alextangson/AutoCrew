@@ -69,3 +69,13 @@ export function writeDockWidth(width: number, store: PrefStore | null = defaultS
     /* 同上 */
   }
 }
+
+/**
+ * 某一页要求「默认收起总编辑」（剪辑看板）：不写偏好，只在这一页生效。
+ * 返回的清理函数在离开页面时调用，App 据此回到用户存的偏好。
+ */
+export const DOCK_PAGE_EVENT = "autocrew:dock-page-default";
+export function requestDockCollapsed(target: EventTarget = window): () => void {
+  target.dispatchEvent(new CustomEvent(DOCK_PAGE_EVENT, { detail: { collapsed: true } }));
+  return () => target.dispatchEvent(new CustomEvent(DOCK_PAGE_EVENT, { detail: { collapsed: false } }));
+}

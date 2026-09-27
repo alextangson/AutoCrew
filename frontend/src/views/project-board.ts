@@ -4,7 +4,7 @@
  * 四道门的状态由服务端算好（/api/project-review 的 gates），这里不重推批准规则，
  * 只决定「页面该展开哪一步、该提示什么」。步骤是 status=editing 里的展示步骤，不是状态。
  */
-import { clockLabel, durationText } from "../time-format";
+import { durationText } from "../time-format";
 
 export type Artifact = { path: string; sha256: string; role: string; version?: number; reported_at: string; generation?: number };
 export type GateStatus = "pending" | "approved" | "rejected" | "invalidated";
@@ -41,8 +41,6 @@ export const HEARTBEAT_STALE_MS = 30 * 60_000;
 
 export const BOARD_STEPS = ["cutting", "final_review", "covers", "ready"] as const;
 export type BoardStep = (typeof BOARD_STEPS)[number];
-export const STEP_LABEL: Record<BoardStep, string> = { cutting: "剪辑中", final_review: "成片待审", covers: "封面", ready: "待发布" };
-export const GATE_STATUS_LABEL: Record<GateStatus, string> = { pending: "待批", approved: "已批", rejected: "已打回", invalidated: "已失效，需重新批准" };
 
 const latest = (artifacts: readonly Artifact[], roles: readonly string[]) =>
   artifacts.filter((a) => roles.includes(a.role)).reduce<Artifact | null>((best, a) => (!best || a.reported_at >= best.reported_at ? a : best), null);
@@ -50,9 +48,6 @@ const latest = (artifacts: readonly Artifact[], roles: readonly string[]) =>
 /** 成片待审看的那一件（成片或剪映导出候选）；卡片上的时长、导出时间、草稿名由服务端的 final_cut 给。 */
 export function finalCutArtifact(artifacts: readonly Artifact[]): Artifact | null {
   return latest(artifacts, ["final-cut", "final-cut-candidate"]);
-}
-export function roughCutArtifact(artifacts: readonly Artifact[], role: "rough_cut" | "storyboard"): Artifact | null {
-  return latest(artifacts, [role]);
 }
 
 /** 当前该展开的步骤：成片没批 → 剪辑中/成片待审；封面没批 → 封面；都批了 → 待发布 */
@@ -79,18 +74,6 @@ export function heartbeatStale(review: ProjectReview, now: number): boolean {
   if (!last) return false;
   const t = Date.parse(last);
   return Number.isFinite(t) && now - t > HEARTBEAT_STALE_MS;
-}
-
-/** 已完成步骤折叠后的一行摘要 */
-export function stepSummary(step: BoardStep, review: ProjectReview): string {
-  const gates = review.gates;
-  if (step === "cutting") return finalCutArtifact(review.execution?.artifacts ?? []) ? "成片已交" : "还在剪";
-  if (step === "final_review") return gates?.gate3.approval ? `成片已批 · ${clockLabel(gates.gate3.approval.approved_at)}` : "成片待批";
-  if (step === "covers") {
-    const s = review.cover_selection;
-    return gates?.gate4.status === "approved" ? `封面已批 · 3:4 v${s?.["3:4"]?.version ?? "?"} / 4:3 v${s?.["4:3"]?.version ?? "?"}` : "封面待批";
-  }
-  return "等 Codex 登记，登记后进入待发布";
 }
 
 /** 时长「8 分 43 秒」；读不出就明说 */

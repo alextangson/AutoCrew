@@ -134,3 +134,50 @@
   .ed-drawer-layer { right: 10px; width: calc(100% - 20px); }
   .editor-workspace .ed-drawer { top: 164px; max-height: calc(100vh - 215px); }
 }
+
+/* ── 剪辑看板（pb-*）：一行顶栏 → 步骤条 → 唯一醒目的「现在轮到你」卡 → 淡的 Codex 行 → 折叠区 ── */
+.pb-header { display: flex; align-items: baseline; gap: 12px; }
+.pb-header-title { font-family: var(--font-display); font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pb-page { max-width: 780px; margin-inline: auto; }
+.pb-board { display: flex; flex-direction: column; gap: 14px; }
+.pb-pre { max-width: 780px; margin: 16px auto 0; padding-inline: 24px; }
+.pb-stepper { list-style: none; display: flex; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.pb-stepper li { color: var(--muted); }
+.pb-stepper li + li::before { content: "→"; margin-right: 6px; color: var(--border); }
+.pb-stepper li.is-done { color: var(--text); }
+.pb-stepper li.is-current { color: var(--text); font-weight: 600; }
+.pb-now { background: var(--card); border: 1px solid var(--ink); border-radius: var(--radius-card); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.pb-now-kicker { font-family: var(--font-mono); font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.pb-now-title { font-family: var(--font-display); font-size: 18px; font-weight: 600; line-height: 1.4; }
+.pb-now-sub { color: #686458; font-size: 13px; }
+.pb-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.pb-actions label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.pb-file { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-card); }
+.pb-file-icon { flex: none; color: var(--muted); }
+.pb-file-text { flex: 1; min-width: 0; }
+.pb-file-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pb-file-meta { font-size: 12px; color: var(--muted); }
+.pb-link { border: none; background: none; padding: 0; color: var(--text); text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.pb-link:hover { color: var(--hot); }
+.pb-reveal { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.pb-inline-error { color: var(--danger); font-size: 12px; }
+.pb-warn { border-left: 2px solid var(--hot); padding: 4px 10px; font-size: 13px; }
+.pb-reject { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.pb-reject textarea { width: 100%; resize: vertical; font: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.pb-cover-row { display: flex; flex-direction: column; gap: 6px; }
+.pb-cover-label { font-size: 13px; font-weight: 600; }
+.pb-cover-tiles { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.pb-tile { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px; background: transparent; border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.pb-tile img { height: 128px; object-fit: contain; display: block; }
+.pb-tile.is-chosen { border: 2px solid var(--ink); color: var(--text); }
+.pb-codex { display: flex; flex-direction: column; gap: 2px; }
+.pb-muted-line { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pb-section { border-top: 1px solid var(--border); padding-top: 8px; }
+.pb-section > summary { cursor: pointer; font-size: 13px; color: #686458; }
+.pb-files { list-style: none; display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
+.pb-files li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 13px; }
+.pb-files-label { width: 72px; flex: none; color: var(--muted); }
+.pb-path { font-family: var(--font-mono); font-size: 12px; word-break: break-all; flex: 1; min-width: 200px; }
+.pb-facts { display: grid; grid-template-columns: 72px 1fr; gap: 4px 8px; padding-top: 8px; font-size: 13px; }
+.pb-facts dt { color: var(--muted); }
+.pb-skeleton { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); }

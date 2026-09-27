@@ -468,15 +468,29 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   );
 
   // 工作台随状态（spec §2）：文案之外的三张台子是整页，不带写作画布与抽屉
+  // 视频剪辑看板（剪辑中 / 视频封面）：顶栏只剩一行「← 看板 · 标题 · 平台」；
+  // 写作阶段的主题行、推进下拉都不放——剪辑阶段只能经 Codex 登记离开
+  if (workspace === "editing" || (workspace === "cover" && isVideo)) {
+    return (
+      <div className="editor editor-workspace">
+        <div className="ed-topbar ed-workspace-header pb-header">
+          <button className="ed-quiet-button ed-back-button" onClick={props.back}>← 看板</button>
+          <strong className="pb-header-title">{c.title || "无标题"}</strong>
+          <span className="muted">{platformLabel(c.platform)}</span>
+        </div>
+        <div className="ed-main-row"><EditingWorkspace content={c} reload={load} /></div>
+      </div>
+    );
+  }
+
   if (workspace !== "draft") {
     return (
       <div className="editor editor-workspace">
         {stageBar}
         {props.context}
         <div className="ed-main-row">
-          {workspace === "editing" && <EditingWorkspace content={c} reload={load} />}
-          {/* 视频稿的封面在看板封面步里挑 Codex 交的版本，不走 AutoCrew 自己的出图（cover:create/revise）；公众号稿照旧 */}
-          {workspace === "cover" && (isVideo ? <EditingWorkspace content={c} reload={load} /> : <CoverWorkspace content={c} reload={load} />)}
+          {/* 视频稿的封面在剪辑看板里挑 Codex 交的版本（见上），这里只剩公众号稿的封面台 */}
+          {workspace === "cover" && <CoverWorkspace content={c} reload={load} />}
           {workspace === "publish" && (
             <PublishWorkspace content={c} versions={versions} reload={load} send={send} />
           )}
@@ -489,7 +503,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
       {props.context}
-      <SharedProjectPanel contentId={props.id} status={c.status} isVideo={isVideo} reload={load} />
+      <SharedProjectPanel contentId={props.id} status={c.status} isVideo={isVideo} />
 
       <div className="ed-main-row">
       <div className="ed-stage">

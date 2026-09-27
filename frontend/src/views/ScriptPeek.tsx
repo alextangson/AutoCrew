@@ -10,12 +10,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 
-export function ScriptPeek(props: { title: string; body: string }) {
+export function ScriptPeek(props: { title: string; body: string; summary?: string; hint?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <details className="ed-tools" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>查看文案 · 只读</summary>
-      <p className="mono muted">要改文案就用顶栏「推进」回到文案阶段——这里只给你对着稿子干活，不改字。</p>
+      <summary>{props.summary ?? "查看文案 · 只读"}</summary>
+      <p className="mono muted">{props.hint ?? "要改文案就用顶栏「推进」回到文案阶段——这里只给你对着稿子干活，不改字。"}</p>
       <div className="md-preview">
         <h1>{props.title}</h1>
         <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{props.body}</ReactMarkdown>

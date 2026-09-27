@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  DOCK_WIDTH_DEFAULT, DOCK_WIDTH_MAX, DOCK_WIDTH_MIN,
+  DOCK_PAGE_EVENT, DOCK_WIDTH_DEFAULT, DOCK_WIDTH_MAX, DOCK_WIDTH_MIN, requestDockCollapsed,
   clampDockWidth, readDockOpen, readDockWidth, writeDockOpen, writeDockWidth, type PrefStore,
 } from "./dock-prefs";
 
@@ -78,5 +78,15 @@ describe("dock 宽度 clamp 与记忆", () => {
     writeDockWidth(10_000, store);
     expect(store.data["dock-width"]).toBe(String(DOCK_WIDTH_MAX));
     expect(readDockWidth(store)).toBe(DOCK_WIDTH_MAX);
+  });
+});
+
+describe("requestDockCollapsed", () => {
+  it("进页面发「收起」，离开发「回偏好」，不写存储", () => {
+    const target = new EventTarget(), seen: boolean[] = [];
+    target.addEventListener(DOCK_PAGE_EVENT, (e) => seen.push((e as CustomEvent<{ collapsed: boolean }>).detail.collapsed));
+    const release = requestDockCollapsed(target);
+    release();
+    expect(seen).toEqual([true, false]);
   });
 });

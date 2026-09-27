@@ -18,7 +18,7 @@ import { Onboarding } from "./views/Onboarding";
 import { EngineBanner } from "./views/EngineBanner";
 import { ChatDock } from "./chat/ChatDock";
 import {
-  DOCK_WIDTH_DEFAULT, clampDockWidth, readDockOpen, readDockWidth, writeDockOpen, writeDockWidth,
+  DOCK_PAGE_EVENT, DOCK_WIDTH_DEFAULT, clampDockWidth, readDockOpen, readDockWidth, writeDockOpen, writeDockWidth,
 } from "./chat/dock-prefs";
 import { ToastHost, DialogHost, toast, openDialog } from "./ui";
 import { invoke } from "./transport";
@@ -60,6 +60,13 @@ export function App() {
   useEffect(() => {
     if (focus) setDockOpen(true);
   }, [focus]);
+
+  // 剪辑看板默认收起总编辑（不改存下的偏好）；离开看板回到偏好
+  useEffect(() => {
+    const onPage = (e: Event) => setDockOpen((e as CustomEvent<{ collapsed: boolean }>).detail.collapsed ? false : readDockOpen());
+    window.addEventListener(DOCK_PAGE_EVENT, onPage);
+    return () => window.removeEventListener(DOCK_PAGE_EVENT, onPage);
+  }, []);
 
   /** 拖拽收尾：松手/被打断都走这里——释放捕获 + 把当前宽度记下来 */
   const endDrag = (el: HTMLElement, pointerId: number) => {

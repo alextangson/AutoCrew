@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boardAnomalies, currentStep, durationLabel, finalCutArtifact, heartbeatStale, stepSummary, type GateView, type ProjectReview } from "./project-board";
+import { boardAnomalies, currentStep, durationLabel, finalCutArtifact, heartbeatStale, type GateView, type ProjectReview } from "./project-board";
 
 const gate = (status: GateView["status"], approved_at = "2026-09-27T08:00:00Z"): GateView =>
   ({ gate: "x", status, artifact_sha256: null, reject_sha256: null, approval: status === "approved" ? { artifact_sha256: "a", approved_at } : null, rejection: null });
@@ -24,9 +24,6 @@ describe("currentStep", () => {
     expect(currentStep({ ...withFinal, gates: { ...g, gate3: gate("approved"), gate4: gate("approved") } })).toBe("ready");
     // 成片批准失效 → 回到成片待审
     expect(currentStep({ ...withFinal, gates: { ...g, gate3: gate("invalidated"), gate4: gate("approved") } })).toBe("final_review");
-  });
-  it("摘要：批准时间折成一行", () => {
-    expect(stepSummary("final_review", review({ gates: { ...review().gates!, gate3: gate("approved") } }))).toMatch(/^成片已批 · (今天|昨天|\d+月\d+日) \d\d:\d\d$/);
   });
 });
 
