@@ -113,6 +113,7 @@ export type HandoffCode =
   | "handoff_not_committed"
   | "handoff_pending_recovery"
   | "confirmation_required"
+  | "request_conflict"
   | "confirmation_invalid"
   | "confirmation_used"
   | "aroll_in_use"

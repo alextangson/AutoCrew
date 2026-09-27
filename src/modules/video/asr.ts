@@ -145,12 +145,16 @@ function parseTranscript(raw: string): { ok: true; transcript: VideoTranscript }
   return { ok: true, transcript: { schemaVersion: 1, source: "funasr", segments: obj.segments } };
 }
 
+function timeoutLabel(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000} 分钟` : `${Math.round(ms / 1000)} 秒`;
+}
+
 function classifyExit(result: { code: number | null; timedOut: boolean; stderr: string }, timeoutMs: number): AsrOutcome {
   if (result.timedOut) {
     return {
       ok: false,
       errorCode: "asr_timeout",
-      reason: `转写超时（${Math.round(timeoutMs / 60_000)} 分钟未返回），已终止进程组：${stderrTail(result.stderr, 3) || "无输出"}`,
+      reason: `转写超时（${timeoutLabel(timeoutMs)}未返回），已终止进程组：${stderrTail(result.stderr, 3) || "无输出"}`,
     };
   }
   if (result.code === ASR_EXIT_MODEL_NOT_READY) {

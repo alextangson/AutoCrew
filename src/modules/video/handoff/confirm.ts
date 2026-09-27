@@ -1,7 +1,8 @@
 /**
  * `autocrew_video confirm{receipt_id, content_id?, cover_text, target_seconds, request_id}`（P6 §12.4-C）。
  *
- * 服务端核回执 → 在创始人的 Mac 上弹系统窗让他从回执前三名里选稿 → 实时核材料（审稿或导入稿条件、出处覆盖）
+ * 服务端核回执与原片（有音轨、不超 30 分钟）→ 按回执前三名逐条实时核材料（审稿或导入稿条件、出处覆盖），
+ * 只把材料齐的交弹窗、一条都不齐就直接拒不弹窗 → 在创始人的 Mac 上弹系统窗让他选稿（选后再核一遍材料）
  * → 再弹一个确认窗列出文件名、稿件、平台、封面字、目标时长（导入稿多一行说明；工作台已有不同的决定就并列两套值，
  * 由创始人选，不静默覆盖）。点了「确认」才由服务端写确认记录和 decisions.json（source:"native-dialog"）。
  *
@@ -81,11 +82,28 @@ function label(c: ReceiptCandidate, i: number): string {
   return `${i + 1}. ${c.title}（${c.platform}）${c.unreviewed_import ? "［导入稿］" : ""}`;
 }
 
-async function pickCandidate(receipt: MatchReceipt, input: ConfirmInput, deadline: number): Promise<{ ok: true; value: ReceiptCandidate } | { ok: false; result: HandoffResult }> {
+/** 弹窗能列的候选：回执前三名（外加点名的那条）里材料齐的；一条都不齐就不弹窗，直接回拒绝 */
+async function offerable(receipt: MatchReceipt, input: ConfirmInput, dataDir: string): Promise<{ ok: true; value: ReceiptCandidate[] } | { ok: false; result: HandoffResult }> {
   const top = receipt.candidates.slice(0, DIALOG_TOP_N);
   const named = input.contentId ? receipt.candidates.find((c) => c.content_id === input.contentId) : undefined;
   if (input.contentId && !named) return { ok: false, result: handoffFail("invalid_params", "content_id 不在这张回执的候选里：候选只能取自回执") };
-  const shown = named && !top.includes(named) ? [...top, named] : top;
+  const pool = named && !top.includes(named) ? [...top, named] : top;
+  const refused: Array<{ candidate: ReceiptCandidate; result: HandoffResult }> = [];
+  const ready: ReceiptCandidate[] = [];
+  for (const cand of pool) {
+    const content = await getContent(cand.content_id, dataDir);
+    const result = content ? await materialsProblem(content, dataDir) : handoffFail("not_accepted", `候选稿不存在了：${cand.content_id}`);
+    if (result) refused.push({ candidate: cand, result });
+    else ready.push(cand);
+  }
+  if (ready.length) return { ok: true, value: ready };
+  if (refused.length === 1) return { ok: false, result: refused[0].result };
+  const details = refused.map(({ candidate, result }) => ({ content_id: candidate.content_id, title: candidate.title, code: result.code, error: result.error }));
+  return { ok: false, result: { ...refused[0].result, error: `候选稿都还交不了：${details.map((d) => `「${d.title}」${String(d.error)}`).join("；")}`, candidates: details } };
+}
+
+async function pickCandidate(receipt: MatchReceipt, shown: ReceiptCandidate[], input: ConfirmInput, deadline: number): Promise<{ ok: true; value: ReceiptCandidate } | { ok: false; result: HandoffResult }> {
+  const named = input.contentId ? shown.find((c) => c.content_id === input.contentId) : undefined;
   const items = shown.map(label);
   const picked = await pullDeps().dialog.choose({
     title: TITLE, prompt: `原片「${path.basename(receipt.aroll_path)}」录的是哪一条稿？`, items,
@@ -188,15 +206,21 @@ export async function confirmHandoff(input: ConfirmInput, dataDir: string): Prom
   const aroll = await readArollInput(receipt.aroll_path);
   if (!aroll.ok) return handoffFail("aroll_invalid", aroll.reason);
   if (aroll.value.sha256 !== receipt.aroll_sha256) return { ok: false, code: "receipt_invalid", error: "认稿之后原片变了，重新 match" };
-  return confirmOnDialog(input, receipt, dataDir, index);
+  const probed = await pullDeps().probe(aroll.value.path);
+  if (!probed.ok) return handoffFail("aroll_invalid", probed.reason);
+  // §12.4-C：先核回执与材料，齐了才弹窗
+  const offer = await offerable(receipt, input, dataDir);
+  if (!offer.ok) return offer.result;
+  return confirmOnDialog(input, receipt, offer.value, dataDir, index);
 }
 
-async function confirmOnDialog(input: ConfirmInput, receipt: MatchReceipt, dataDir: string, index: string): Promise<HandoffResult> {
+async function confirmOnDialog(input: ConfirmInput, receipt: MatchReceipt, shown: ReceiptCandidate[], dataDir: string, index: string): Promise<HandoffResult> {
   const deadline = pullDeps().now() + CONFIRM_TIMEOUT_MS;
-  const picked = await pickCandidate(receipt, input, deadline);
+  const picked = await pickCandidate(receipt, shown, input, deadline);
   if (!picked.ok) return picked.result;
   const content = await getContent(picked.value.content_id, dataDir);
   if (!content || draftHash(content) !== picked.value.draft_hash) return { ok: false, code: "receipt_invalid", error: "选中的稿改过了，重新 match" };
+  // 弹窗开着的几分钟里材料可能又变了：选中之后再核一遍
   const missing = await materialsProblem(content, dataDir);
   if (missing) return missing;
   const unreviewed = Boolean(picked.value.unreviewed_import);

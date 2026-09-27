@@ -17,6 +17,9 @@ import type { DialogOutcome, DialogRunner } from "./dialog.js";
 import { IMPORT_LINE, readConfirmation } from "./confirm.js";
 import { executeVideo } from "../../../tools/video.js";
 
+/** 假原片只是几个字节：媒体探测换成放行，真探测在 verify-edges / pull-handoff 用真 mp4 测 */
+const okProbe = async () => ({ ok: true as const });
+
 type Script = Array<DialogOutcome<string> | "first">;
 
 /** 按顺序回放的假弹窗；记下每次弹了什么 */
@@ -31,7 +34,7 @@ function fakeDialog(script: Script) {
     ask: async (o) => { shown.push({ kind: "ask", prompt: o.prompt }); return next(); },
     input: async (o) => { shown.push({ kind: "input", prompt: o.prompt }); return next(); },
   };
-  setPullDeps({ dialog, transcriber: { transcribe: async () => ({ ok: false, unavailable: true, reason: "测试不转写" }) } });
+  setPullDeps({ probe: okProbe, dialog, transcriber: { transcribe: async () => ({ ok: false, unavailable: true, reason: "测试不转写" }) } });
   return shown;
 }
 
@@ -43,6 +46,7 @@ beforeEach(async () => {
   await initializeProjectLayout(fx.dir, "lib-deadbeef", "default");
   file = path.join(fx.outside, "AI 工具分享.mov");
   await fs.writeFile(file, "fake aroll");
+  fakeDialog([]);
 });
 afterEach(async () => { setPullDeps(null); await fx.cleanup(); });
 
@@ -132,6 +136,25 @@ describe("confirm", () => {
     const fresh = await receipt();
     await fs.writeFile(file, "换了一段");
     expect(await confirm(fresh, { request_id: "c-3" })).toMatchObject({ ok: false, code: "receipt_invalid" });
+  });
+
+  it("先核材料再弹窗：弹窗只列材料齐的候选", async () => {
+    const good = await cited(await seedAccepted(fx.dir, "AI 工具分享 第一条"));
+    await seedAccepted(fx.dir, "AI 工具分享 第二条");
+    const shown = fakeDialog(["first", { kind: "ok", value: "确认" }]);
+    const res = await confirm(await receipt());
+    expect(res).toMatchObject({ ok: true, content_id: good.id });
+    expect(shown[0].items).toEqual([expect.stringContaining(good.title)]);
+  });
+
+  it("候选都缺材料：不弹窗，拒绝里逐条说明每条为什么交不了", async () => {
+    await seedAccepted(fx.dir, "AI 工具分享 第一条");
+    await seedAccepted(fx.dir, "AI 工具分享 第二条");
+    const shown = fakeDialog(["first", { kind: "ok", value: "确认" }]);
+    const res = await confirm(await receipt());
+    expect(res).toMatchObject({ ok: false, code: "missing_citations", candidates: [
+      expect.objectContaining({ code: "missing_citations" }), expect.objectContaining({ code: "missing_citations" })] });
+    expect(shown).toEqual([]);
   });
 
   it("chat-text-is-not-confirmation：宿主转述写成的 decisions 过不了交接材料检查", async () => {

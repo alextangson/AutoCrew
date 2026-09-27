@@ -15,6 +15,9 @@ import { setPullDeps } from "./pull-deps.js";
 import { putArollLock } from "./pull-store.js";
 import { executeVideo } from "../../../tools/video.js";
 
+/** 假原片只是几个字节：媒体探测换成放行，真探测在 verify-edges / pull-handoff 用真 mp4 测 */
+const okProbe = async () => ({ ok: true as const });
+
 const LONG = "今天我想认真聊一聊怎么把重复的工作交给 AI 助手去做，这样每天能省下两个小时去陪家人。";
 
 describe("L1 文件名归一化", () => {
@@ -63,7 +66,7 @@ beforeEach(async () => {
   await initializeProjectLayout(fx.dir, "lib-deadbeef", "default");
   file = path.join(fx.outside, "IMG_1234.MOV");
   await fs.writeFile(file, "fake aroll bytes");
-  setPullDeps({ transcriber: { transcribe: async () => heard } });
+  setPullDeps({ probe: okProbe, transcriber: { transcribe: async () => heard } });
 });
 afterEach(async () => { setPullDeps(null); await fx.cleanup(); });
 
@@ -90,7 +93,7 @@ describe("match", () => {
   it("唯一强命中也不出 proposed，且不跑转写", async () => {
     await seedAccepted(fx.dir, "独一无二的长标题呀");
     let called = 0;
-    setPullDeps({ transcriber: { transcribe: async () => { called++; return heard; } } });
+    setPullDeps({ probe: okProbe, transcriber: { transcribe: async () => { called++; return heard; } } });
     await fs.rename(file, file = path.join(fx.outside, "独一无二的长标题呀_口播.mov"));
     const res = await match();
     expect(res).toMatchObject({ status: "ambiguous" });
@@ -100,7 +103,7 @@ describe("match", () => {
   it("asr-failure-visible：转写不可用 → 弱命中不升级、降级原因可见", async () => {
     await seedAccepted(fx.dir, "独一无二的长标题呀｜上");
     await fs.rename(file, file = path.join(fx.outside, "独一无二的长标题呀.mov"));
-    setPullDeps({ transcriber: { transcribe: async () => ({ ok: false, unavailable: true, reason: "未装 uv" }) } });
+    setPullDeps({ probe: okProbe, transcriber: { transcribe: async () => ({ ok: false, unavailable: true, reason: "未装 uv" }) } });
     const res = await match();
     expect(res).toMatchObject({ status: "no_confident_match", flags: ["asr_unavailable", "l1_only"] });
     expect(String((res.candidates as Array<{ evidence: string }>)[0].evidence)).toContain("未装 uv");
@@ -108,9 +111,9 @@ describe("match", () => {
 
   it("转写太短 → low_quality_transcript；没声音 → no_speech", async () => {
     await seedAccepted(fx.dir, "某条稿子");
-    setPullDeps({ transcriber: { transcribe: async () => ({ ok: true, text: "把重复的工作交给" }) } });
+    setPullDeps({ probe: okProbe, transcriber: { transcribe: async () => ({ ok: true, text: "把重复的工作交给" }) } });
     expect(await match()).toMatchObject({ status: "no_confident_match", flags: ["low_quality_transcript"] });
-    setPullDeps({ transcriber: { transcribe: async () => ({ ok: true, text: "……" }) } });
+    setPullDeps({ probe: okProbe, transcriber: { transcribe: async () => ({ ok: true, text: "……" }) } });
     expect(await match({ request_id: "m-2" })).toMatchObject({ flags: ["no_speech", "l1_only"] });
   });
 
@@ -139,8 +142,29 @@ describe("match", () => {
     expect(await receiptProblem(receipt, fx.dir)).toBeNull();
     await updateContent(a.id, { body: "改过的正文" }, fx.dir);
     expect(await receiptProblem(receipt, fx.dir)).toContain("改过");
-    setPullDeps({ now: () => Date.now() + 31 * 60_000 });
+    setPullDeps({ probe: okProbe, now: () => Date.now() + 31 * 60_000 });
     expect(await receiptProblem(receipt, fx.dir)).toContain("过期");
+  });
+
+  it("同 request_id 重发：同原片回原回执不另签；换了原片拒 request_conflict", async () => {
+    await seedAccepted(fx.dir);
+    const first = await match();
+    const again = await match();
+    expect(again).toMatchObject({ ok: true, replayed: true, receipt_id: first.receipt_id });
+    const other = path.join(fx.outside, "IMG_9999.MOV");
+    await fs.writeFile(other, "另一段原片");
+    expect(await match({ aroll_path: other })).toMatchObject({ ok: false, code: "request_conflict" });
+  });
+
+  it("转写没就绪：不去跑转写、立刻回 asr_unavailable，next_action 指向预热", async () => {
+    await seedAccepted(fx.dir, "某条稿子");
+    let called = 0;
+    setPullDeps({ probe: okProbe, transcriber: { transcribe: async () => { called++; return heard; }, notReady: async () => "ASR 模型还没下载（约 1GB）" } });
+    const res = await match();
+    expect(called).toBe(0);
+    expect(res).toMatchObject({ ok: true, status: "no_confident_match", flags: expect.arrayContaining(["asr_unavailable"]) });
+    expect(String(res.next_action)).toContain("预热 ASR 模型");
+    expect(String((res.candidates as Array<{ evidence: string }>)[0].evidence)).toContain("模型还没下载");
   });
 
   it("输入先行：不存在、符号链接、坏 request_id 都拒", async () => {

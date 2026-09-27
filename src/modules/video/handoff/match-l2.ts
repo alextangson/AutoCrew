@@ -12,7 +12,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { extractAsrWav, runAsr } from "../asr.js";
+import { ASR_SIDECAR_DIR, extractAsrWav, readAsrStatus, runAsr } from "../asr.js";
+import { commandExists } from "../proc.js";
 import type { VideoDeps } from "../proc.js";
 import { compareKey } from "./match-l1.js";
 
@@ -27,6 +28,8 @@ export type TranscribeOutcome =
 
 export interface MatchTranscriber {
   transcribe(arollPath: string, signal?: AbortSignal): Promise<TranscribeOutcome>;
+  /** 转写还没就绪的原因（null = 就绪）。认稿先问这一句，没就绪立刻降级，不去等 90 秒超时 */
+  notReady?(dataDir: string): Promise<string | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +62,21 @@ async function clipAndTranscribe(arollPath: string, deps: VideoDeps | undefined,
 
 /** 默认转写器：本机 FunASR sidecar（`asr.ts` 的同一条调用路） */
 export function funasrTranscriber(deps?: VideoDeps): MatchTranscriber {
-  return { transcribe: (arollPath, signal) => oneAtATime(() => clipAndTranscribe(arollPath, deps, signal)) };
+  return {
+    transcribe: (arollPath, signal) => oneAtATime(() => clipAndTranscribe(arollPath, deps, signal)),
+    notReady: (dataDir) => funasrNotReady(dataDir, deps),
+  };
+}
+
+/** 运行器、依赖环境、模型三样都在才算就绪；模型只有预热成功才会落 ready */
+async function funasrNotReady(dataDir: string, deps?: VideoDeps): Promise<string | null> {
+  if (!(await commandExists("uv", deps))) return "未装 uv（ASR 的运行器）";
+  const venv = await fs.access(path.join(ASR_SIDECAR_DIR, ".venv")).then(() => true, () => false);
+  if (!venv) return "ASR 依赖环境还没装好";
+  const status = await readAsrStatus(dataDir);
+  if (status.status === "ready") return null;
+  const label = { absent: "ASR 模型还没下载（约 1GB）", warming: "ASR 模型正在预热", failed: "ASR 模型上次预热失败" }[status.status];
+  return status.detail ? `${label}：${status.detail}` : label;
 }
 
 // ---------------------------------------------------------------------------

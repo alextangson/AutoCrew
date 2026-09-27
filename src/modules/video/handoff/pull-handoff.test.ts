@@ -71,6 +71,20 @@ async function grep(dir: string, needle: string): Promise<string[]> {
   return hits;
 }
 
+describe.skipIf(!HAS_FFMPEG)("交接会拒的原片在认稿就拒（§12.6）", () => {
+  it("无音轨：match 就回 aroll_invalid，不签回执、不弹窗", async () => {
+    let dialogs = 0;
+    const count = async () => { dialogs++; return { kind: "timeout" as const }; };
+    setPullDeps({ transcriber: { transcribe: async () => ({ ok: false, unavailable: true, reason: "测试不转写" }) }, dialog: { choose: count, ask: count, input: count } });
+    await ready("第一条长长的标题");
+    const good = await makeMp4(path.join(fx.outside, "第一条长长的标题.mp4"));
+    expect(await callVideo(fx.dir, { action: "match", aroll_path: good, request_id: "m-good" }, "codex")).toMatchObject({ ok: true, receipt_id: expect.any(String) });
+    const silent = await makeMp4(path.join(fx.outside, "第一条长长的标题 take 2.mp4"), { audio: false });
+    expect(await callVideo(fx.dir, { action: "match", aroll_path: silent, request_id: "m-silent" }, "codex")).toMatchObject({ ok: false, code: "aroll_invalid" });
+    expect(dialogs).toBe(0);
+  });
+});
+
 describe.skipIf(!HAS_FFMPEG)("Codex 发起交接", () => {
   it("codex-handoff-needs-confirmation-record：没带、造的、用过的确认都不放行", async () => {
     const c = await ready("第一条长长的标题");

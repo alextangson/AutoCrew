@@ -17,7 +17,7 @@ import { readArollInput } from "./aroll-input.js";
 import { matchL1, type L1Hit } from "./match-l1.js";
 import { MIN_SPEECH_CHARS, scoreTranscript, speechChars } from "./match-l2.js";
 import { pullDeps } from "./pull-deps.js";
-import { arollLockOf, lastRevokeAt, newId, pullDir, readRecord, REQUEST_ID_RE, writeRecord } from "./pull-store.js";
+import { arollLockOf, lastRevokeAt, newId, pullDir, readRecord, REQUEST_ID_RE, requestFile, writeRecord } from "./pull-store.js";
 import { handoffFail, type HandoffResult } from "./types.js";
 
 export const RECEIPT_TTL_MS = 30 * 60_000;
@@ -130,10 +130,14 @@ function applyL1(cands: ReceiptCandidate[], hits: L1Hit[]): void {
   });
 }
 
-async function scoreCandidates(arollPath: string, cands: ReceiptCandidate[], hits: L1Hit[], bodies: string[]): Promise<Scored> {
+export const ASR_WARMUP_ACTION = "请创始人到 AutoCrew 设置里点「预热 ASR 模型」（约 1GB），下完再重新 match 就能按开头转写认稿";
+
+async function scoreCandidates(arollPath: string, cands: ReceiptCandidate[], hits: L1Hit[], bodies: string[], dataDir: string): Promise<Scored> {
   applyL1(cands, hits);
   if (hits.filter((h) => h.kind === "strong").length === 1) return { candidates: cands, flags: [], confident: true };
-  const heard = await pullDeps().transcriber.transcribe(arollPath);
+  const transcriber = pullDeps().transcriber;
+  const notReady = transcriber.notReady ? await transcriber.notReady(dataDir) : null;
+  const heard = notReady ? { ok: false as const, unavailable: true, reason: `转写没就绪：${notReady}` } : await transcriber.transcribe(arollPath);
   if (!heard.ok) {
     const flags: MatchFlag[] = heard.unavailable ? ["asr_unavailable", "l1_only"] : ["l1_only"];
     cands.forEach((c) => { c.evidence += `；转写失败：${heard.reason}`; });
@@ -161,12 +165,17 @@ export async function matchAroll(input: MatchInput, dataDir: string): Promise<Ha
   if (!REQUEST_ID_RE.test(input.requestId)) return handoffFail("invalid_params", "match 需要 request_id（1–100 位字母、数字、-、_）");
   const aroll = await readArollInput(input.arollPath);
   if (!aroll.ok) return handoffFail("aroll_invalid", aroll.reason);
+  const replayed = await matchReplay(input.requestId, aroll.value.sha256, dataDir);
+  if (replayed) return replayed;
   const all = (await listContents(dataDir)).filter((c) => isVideoPlatform(c.platform));
   const holder = await handedOffHolder(aroll.value.sha256, all, dataDir);
   if (holder) {
     return { ok: true, status: "already_handed_off", holder, aroll_sha256: aroll.value.sha256,
       note: "这段原片已经交接过：同一段原片同时只归一条未撤回交接。认错了稿就先撤回那条。" };
   }
+  // 交接会拒的文件（没音轨、超 30 分钟）在这里就拒，别让创始人先点完弹窗
+  const probed = await pullDeps().probe(aroll.value.path);
+  if (!probed.ok) return handoffFail("aroll_invalid", probed.reason);
   const eligible: Array<{ c: Content; unreviewed: boolean }> = [];
   const others: Array<{ c: Content; reason: string }> = [];
   for (const c of all) {
@@ -182,7 +191,7 @@ export async function matchAroll(input: MatchInput, dataDir: string): Promise<Ha
   }
   const subjects = await Promise.all(eligible.map(async (e) => ({ title: e.c.title, oldTitles: await oldTitles(e.c, dataDir) })));
   const cands = eligible.map((e) => candidateOf(e.c, dataDir, e.unreviewed));
-  const scored = await scoreCandidates(aroll.value.path, cands, matchL1(file, subjects), eligible.map((e) => e.c.body));
+  const scored = await scoreCandidates(aroll.value.path, cands, matchL1(file, subjects), eligible.map((e) => e.c.body), dataDir);
   return issueReceipt(input, aroll.value, scored, dataDir);
 }
 
@@ -198,10 +207,26 @@ async function issueReceipt(input: MatchInput, aroll: { path: string; sha256: st
     issued_at: new Date(now).toISOString(), expires_at: new Date(now + RECEIPT_TTL_MS).toISOString(),
   };
   await writeRecord(receiptFile(dataDir, receipt.receipt_id), receipt);
-  return {
-    ok: true, ...receipt, candidates: candidates.slice(0, DIALOG_TOP_N),
-    next_action: "调 autocrew_video confirm{receipt_id, cover_text, target_seconds, request_id}，并告诉创始人去 Mac 上的弹窗选稿、点确认。",
-  };
+  await writeRecord(requestFile(dataDir, "match-requests", input.requestId), { receipt_id: receipt.receipt_id, aroll_sha256: aroll.sha256 });
+  return receiptView(receipt);
+}
+
+const CONFIRM_ACTION = "调 autocrew_video confirm{receipt_id, cover_text, target_seconds, request_id}，并告诉创始人去 Mac 上的弹窗选稿、点确认。";
+
+function receiptView(receipt: MatchReceipt, extra: Record<string, unknown> = {}): HandoffResult {
+  const warm = receipt.flags.includes("asr_unavailable") ? `转写没就绪，这次只按文件名认：${ASR_WARMUP_ACTION}。现在也可以直接` : "";
+  return { ok: true, ...receipt, candidates: receipt.candidates.slice(0, DIALOG_TOP_N), ...extra, next_action: warm + CONFIRM_ACTION };
+}
+
+/** §12.6 回执丢失凭请求号取回：同号同原片回原回执，同号换了原片拒 */
+async function matchReplay(requestId: string, sha: string, dataDir: string): Promise<HandoffResult | null> {
+  const seen = await readRecord<{ receipt_id: string; aroll_sha256: string }>(requestFile(dataDir, "match-requests", requestId));
+  if (!seen) return null;
+  if (seen.aroll_sha256 !== sha) {
+    return handoffFail("request_conflict", "这个 request_id 已经用来认过另一段原片：换一段原片要换新的 request_id");
+  }
+  const receipt = await readReceipt(dataDir, seen.receipt_id);
+  return receipt ? receiptView(receipt, { replayed: true }) : null;
 }
 
 /** 回执作废条件（§12.4-B）：过期、候选稿改过、项目迁移、之后有交接被撤回。原片哈希在 confirm 里重算 */

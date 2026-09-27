@@ -6,10 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { osascriptDialog, type DialogRunner } from "./dialog.js";
 import { funasrTranscriber, type MatchTranscriber } from "./match-l2.js";
+import { probeAroll } from "../ingest.js";
 
 export interface PullDeps {
   transcriber: MatchTranscriber;
   dialog: DialogRunner;
+  /** 原片媒体探测（有画面、有音轨、不超 30 分钟）：认稿与弹窗确认前先挡掉交接会拒的文件 */
+  probe: (file: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   /** 撤回时原路径被占就放回这里（加后缀） */
   downloadsDir: string;
   now: () => number;
@@ -20,6 +23,7 @@ export interface PullDeps {
 const defaults = (): PullDeps => ({
   transcriber: funasrTranscriber(),
   dialog: osascriptDialog,
+  probe: (file) => probeAroll(file),
   downloadsDir: path.join(os.homedir(), "Downloads"),
   now: Date.now,
   checkpoint: () => undefined,
