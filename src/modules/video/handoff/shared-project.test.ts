@@ -77,7 +77,10 @@ it("relocates an active v1 handoff to g+1 without changing the draft, task or ed
   expect(handoff.ok).toBe(true);
   const current = (await getContent(c.id, data))!;
   await founderProjectReview(c.id, data, { action: "decisions", draft_hash: draftHash(current), title: current.title, cover_text: "已确认", target_seconds: 90 });
-  await saveCoverage(current, { draft_hash: draftHash(current), citations: [], reviewed_by: "writer", reviewed_at: new Date().toISOString() }, data);
+  // 「每天两小时」是真实数字，台账里没有 → 记成创作者亲历
+  const firstSentence = current.body.slice(0, current.body.indexOf("。") + 1);
+  const citations = [{ start: 0, end: firstSentence.length, excerpt: firstSentence, evidence_id: "creator", sourceType: "creator_opinion" as const, quote: "", verification: "创作者亲历（测试夹具）" }];
+  await saveCoverage(current, { draft_hash: draftHash(current), citations, reviewed_by: "writer", reviewed_at: new Date().toISOString() }, data);
   const oldBytes = await fs.readFile(String(handoff.handoff_path));
   const plan = await planProjectMigration(data, [env.root]);
   expect(plan.projects[0].blockers).toEqual([]);
@@ -92,4 +95,5 @@ it("relocates an active v1 handoff to g+1 without changing the draft, task or ed
   expect(moved.claim?.token).not.toBe(current.claim?.token);
   expect(await fs.readFile(path.join(data, ".project-recovery", plan.migration_id, "contents", c.id, "handoff/editor-g1.md"))).toEqual(oldBytes);
   expect(await fs.readFile(path.join(path.dirname(moved.video!.handoff!.handoff_path), "final-script.md"), "utf8")).toBe(current.body);
+  expect(await fs.readFile(path.join(path.dirname(moved.video!.handoff!.handoff_path), "sources.md"), "utf8")).toContain("来源：creator_opinion（创作者本人观点／亲历，不在证据台账）");
 });

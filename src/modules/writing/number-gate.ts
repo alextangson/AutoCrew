@@ -376,7 +376,8 @@ export function extractNumbers(text: string): NumberMention[] {
   return state.out;
 }
 
-const EXEMPT_ROLES = new Set<NumberRole>(["ordinal", "version", "list"]);
+/** 有明确语法角色、不算数据点的数字；交接出处门也按这一份口径判「真实数字」 */
+export const EXEMPT_ROLES: ReadonlySet<NumberRole> = new Set<NumberRole>(["ordinal", "version", "list"]);
 
 /** 单位兼容表：数值相等还不够，口径不同就是两个数（codex #17：`30%` ≠ `30 元`） */
 function unitCompatible(mention: NumberMention, quote: NumberMention): boolean {

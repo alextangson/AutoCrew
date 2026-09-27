@@ -74,7 +74,7 @@ const READ_ONLY = new Set<VideoAction>(["status", "transcript", "editor_plan", "
 
 export const videoSchema = Type.Object({
   report: Type.Optional(Type.Unknown({ description: "report：request_id、generation、binding_revision、session_id、files[{path,sha256,role}]、result、next_action；可附 editor_project_id、timeline_id、job_ids、process_ids、costs、error。不接受状态或审批。" })),
-  coverage: Type.Optional(Type.Unknown({ description: "citations：draft_hash、reviewed_by、reviewed_at、citations[{start,end,excerpt,evidence_id,sourceType,sourceUrl,quote,verification}]；start/end 为定稿 UTF-16 定位，每个数字/归因句必须覆盖。" })),
+  coverage: Type.Optional(Type.Unknown({ description: "citations：draft_hash、reviewed_by、reviewed_at、citations[{start,end,excerpt,evidence_id,sourceType,sourceUrl,quote,verification}]；start/end 为定稿 UTF-16 定位，每个数字/归因句必须覆盖。台账条目按原字段引用；台账里没有出处的创作者本人观点或亲历用 sourceType creator_opinion、evidence_id creator、不带 sourceUrl，verification 写明依据（哪次反馈、哪段亲历）。" })),
   action: Type.Unsafe<VideoAction>({
     type: "string",
     enum: [...ACTIONS],

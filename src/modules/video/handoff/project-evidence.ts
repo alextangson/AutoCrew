@@ -4,46 +4,66 @@ import { contentFile, resolveContentProject, isMissing } from "../../../storage/
 import { writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { draftHash } from "../../../storage/draft-hash.js";
 import type { Content } from "../../../storage/local-store.js";
-import type { LedgerSource } from "../../research/evidence-ledger.js";
+import type { LedgerEntry, LedgerSource } from "../../research/evidence-ledger.js";
+import { verifyNumbers } from "../../writing/number-gate.js";
+import { factualSentences, type FactualSentence } from "./factual-sentences.js";
 
 export interface ProjectDecisions {
   draft_hash: string; title: string; cover_text: string; platform: string; target_seconds: number;
   confirmed_at: string; source: "founder-workbench";
 }
+/** The creator's own opinion or first-hand experience: no ledger entry, basis written in `verification`, always shown as unverified. */
+export const CREATOR_OPINION = "creator_opinion";
+export const CREATOR_EVIDENCE_ID = "creator";
 export interface Citation {
   start: number; end: number; excerpt: string; evidence_id: string;
-  sourceType: LedgerSource; sourceUrl?: string; quote: string; verification: string;
+  sourceType: LedgerSource | typeof CREATOR_OPINION; sourceUrl?: string; quote: string; verification: string;
 }
 export interface CitationCoverage { draft_hash: string; citations: Citation[]; reviewed_by: string; reviewed_at: string }
 export async function readProjectJson<T>(id: string, file: string, dataDir: string): Promise<T | null> {
   try { return JSON.parse(await fs.readFile(contentFile(id, dataDir, file), "utf8")) as T; }
   catch (e) { if (isMissing(e)) return null; throw e; }
 }
+const clip = (text: string, max = 20) => (text.length > max ? `${text.slice(0, max)}…` : text);
+const reasonOf = (s: FactualSentence) => [s.numbers.length ? `数字 ${s.numbers.join("、")}` : "", s.attribution ? `归因「${clip(s.attribution)}」` : ""].filter(Boolean).join("，");
 /** Structural coverage only. Source entailment still requires the writer's review. */
 export function validateCoverage(content: Content, coverage: CitationCoverage): string[] {
-  const errors: string[] = [];
   if (coverage.draft_hash !== draftHash(content)) return ["出处映射不属于当前定稿"];
   if (!Array.isArray(coverage.citations) || !coverage.reviewed_by || !coverage.reviewed_at) return ["缺少出处映射或写稿侧核查记录"];
   const entries = content.evidenceLedger?.entries ?? [];
-  for (const c of coverage.citations) {
-    if (!Number.isInteger(c.start) || !Number.isInteger(c.end) || c.start < 0 || c.end <= c.start ||
-        c.end > content.body.length || content.body.slice(c.start, c.end) !== c.excerpt) { errors.push("出处正文定位不匹配"); continue; }
-    const evidence = entries.find(e => e.id === c.evidence_id);
-    if (!evidence || evidence.source !== c.sourceType || evidence.quote !== c.quote || evidence.sourceUrl !== c.sourceUrl) {
-      errors.push(`证据字段不匹配：${c.evidence_id}`); continue;
-    }
-    if (!c.verification?.trim()) errors.push(`缺少核查结论：${c.evidence_id}`);
-    if (c.sourceType === "verified_quote" && (!/^https?:\/\//.test(c.sourceUrl ?? "") || !c.quote.trim())) errors.push(`缺少原文链接/原话：${c.evidence_id}`);
-    if (c.sourceType !== "verified_quote" && !evidence.reason && !evidence.claim) errors.push(`个人/用户材料缺少依据：${c.evidence_id}`);
-  }
+  const errors = coverage.citations.flatMap(c => citationErrors(c, content.body, entries));
+  // A number the ledger can back must cite the ledger: the creator slot is for claims that have no ledger source.
+  const backed = verifyNumbers({ title: "", hook: "", body: content.body, cta: "" }, entries).verified;
   // Treat an entire factual sentence as the coverage unit, not an isolated digit.
-  const factual = /\d|[一二三四五六七八九十百千万亿]+[个次人年月日秒分倍%％]|(?:说|表示|指出|认为|声称|宣布|称[，：:「“])/;
-  for (const match of content.body.matchAll(/[^。！？!?\n]+[。！？!?]?/g)) {
-    if (!factual.test(match[0])) continue;
-    const start = match.index! + (match[0].length - match[0].trimStart().length);
-    const end = match.index! + match[0].trimEnd().length;
-    if (!coverage.citations.some(c => c.start <= start && c.end >= end)) errors.push(`缺少数字/归因出处定位：${start}–${end}`);
+  for (const s of factualSentences(content.body)) {
+    const covering = coverage.citations.filter(c => c.start <= s.start && c.end >= s.end);
+    const at = `${s.start}–${s.end}「${clip(content.body.slice(s.start, s.end))}」`;
+    if (!covering.length) { errors.push(`缺少数字/归因出处定位：${at}（${reasonOf(s)}）`); continue; }
+    const number = backed.find(v => v.mention.index >= s.start && v.mention.index < s.end);
+    if (number && covering.every(c => c.sourceType === CREATOR_OPINION)) {
+      errors.push(`数字「${number.mention.raw.trim()}」在台账 ${number.entryId} 有出处，须引用台账条目，不能只记创作者观点：${at}`);
+    }
   }
+  return errors;
+}
+function citationErrors(c: Citation, body: string, entries: readonly LedgerEntry[]): string[] {
+  if (!Number.isInteger(c.start) || !Number.isInteger(c.end) || c.start < 0 || c.end <= c.start ||
+      c.end > body.length || body.slice(c.start, c.end) !== c.excerpt) return ["出处正文定位不匹配"];
+  if (c.sourceType === CREATOR_OPINION) return creatorErrors(c);
+  const evidence = entries.find(e => e.id === c.evidence_id);
+  if (!evidence || evidence.source !== c.sourceType || evidence.quote !== c.quote || evidence.sourceUrl !== c.sourceUrl) return [`证据字段不匹配：${c.evidence_id}`];
+  const errors: string[] = [];
+  if (!c.verification?.trim()) errors.push(`缺少核查结论：${c.evidence_id}`);
+  if (c.sourceType === "verified_quote" && (!/^https?:\/\//.test(c.sourceUrl ?? "") || !c.quote.trim())) errors.push(`缺少原文链接/原话：${c.evidence_id}`);
+  // Seeded material (the topic description `user-topic`, transcripts `om:…`) carries only its own text; that text is the basis.
+  if (c.sourceType !== "verified_quote" && !evidence.reason && !evidence.claim && !evidence.quote.trim()) errors.push(`个人/用户材料缺少依据：${c.evidence_id}`);
+  return errors;
+}
+function creatorErrors(c: Citation): string[] {
+  const errors: string[] = [];
+  if (c.evidence_id !== CREATOR_EVIDENCE_ID) errors.push(`创作者观点的 evidence_id 写 ${CREATOR_EVIDENCE_ID}；台账条目按它自己的来源等级引用：${c.evidence_id}`);
+  if (c.sourceUrl) errors.push(`创作者观点不带外部链接；有外部原文请引用台账条目：${c.sourceUrl}`);
+  if (!c.verification?.trim()) errors.push("创作者观点缺少核查说明：写明出自哪次反馈或哪段亲历");
   return errors;
 }
 export async function saveCoverage(content: Content, coverage: CitationCoverage, dataDir: string): Promise<void> {
@@ -66,6 +86,7 @@ export async function handoffEvidence(content: Content, dataDir: string): Promis
   return { decisions, coverage };
 }
 export function renderSources(coverage: CitationCoverage): string {
-  return "# 出处清单\n\n结构覆盖已检查；语义支持以写稿侧核查为准。\n\n" + coverage.citations.map(c =>
-    `## ${c.start}–${c.end} · ${c.evidence_id}\n\n正文：${c.excerpt}\n\n来源：${c.sourceType}\n\n${c.sourceUrl ?? "无外部原文／未外部核验"}\n\n原话：${c.quote}\n\n核查：${c.verification}\n`).join("\n");
+  return "# 出处清单\n\n结构覆盖已检查；语义支持以写稿侧核查为准。\n\n" + coverage.citations.map(c => c.sourceType === CREATOR_OPINION
+    ? `## ${c.start}–${c.end} · ${c.evidence_id}\n\n正文：${c.excerpt}\n\n来源：creator_opinion（创作者本人观点／亲历，不在证据台账）\n\n无外部原文／未外部核验\n\n原话：${String(c.quote ?? "").trim() || "（无，正文即创作者本人表述）"}\n\n核查：${c.verification}\n`
+    : `## ${c.start}–${c.end} · ${c.evidence_id}\n\n正文：${c.excerpt}\n\n来源：${c.sourceType}\n\n${c.sourceUrl ?? "无外部原文／未外部核验"}\n\n原话：${c.quote}\n\n核查：${c.verification}\n`).join("\n");
 }

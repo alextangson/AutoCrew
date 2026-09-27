@@ -45,7 +45,7 @@ description: |
 { "action": "handoff", "content_id": "…", "aroll_path": "/abs/path/A-roll.MOV", "notes": "可选", "claim_token": "…" }
 ```
 
-调 `autocrew_video`。`notes` 只放用户对剪辑说过的话，不替他写分镜。`project_root` 由写作时的绑定确定；通常省略，兼容传入也必须等于绑定根，不另建目录。先用 `autocrew_video citations` 提交与当前 draft_hash 绑定的正文定位、证据 id、来源等级、URL 和原话；每个数字/归因句需要覆盖，个人经历按 own_claim 保留真实等级。让创始人在工作台确认当前标题、封面字、平台与目标时长。缺项就补齐，不代替创始人拍板。
+调 `autocrew_video`。`notes` 只放用户对剪辑说过的话，不替他写分镜。`project_root` 由写作时的绑定确定；通常省略，兼容传入也必须等于绑定根，不另建目录。先用 `autocrew_video citations` 提交与当前 draft_hash 绑定的正文定位、证据 id、来源等级、URL 和原话；每个数字/归因句需要覆盖；台账里没有条目的个人观点或亲历记成 creator_opinion 并写明依据，不挂到无关的证据上。让创始人在工作台确认当前标题、封面字、平台与目标时长。缺项就补齐，不代替创始人拍板。
 
 成功回 `status:"handed_off"`（同一请求重发会带 `replayed:true` 原样返回）。给用户看第几代（`generation`）、`project_root`、`project_handoff_path`，再给派工方式：
 
