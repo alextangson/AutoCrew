@@ -326,3 +326,380 @@ P6-a 与 P6-b 有共同前置（写门），先做 P6-b 的写门再做 P6-a 的
 **r5 里新看到、未纳入断言的两件事**：t2 在 `prepare` 回 `needs_angle` 时自己挑了方向而没问用户（instructions 明写让用户选——下一轮 eval 加断言）；一篇跳过调研的稿在无头模式下要 10–16 次往返、每步 40–70 s，接近 12 分钟——真实会话里用户看到的是逐步进展，但这个时长本身值得记着。
 
 **只有诚实度守得住的地方**（记录，不假装能用代码封死）：单宿主自审可以把阻断项「审掉」再交接；`review_source` 如实标 `host_self_review`，创作者看得到。**没跑的**：标题同步（桌面工具无头不可用）、CCB 派工、Codex 侧 `register`、多轮追问。eval 运行安全：一次 trial 试图用 `ListAgents`/`SendMessage` 联系真实桌面会话——评估 harness 的拒绝列表已加上这些工具。
+
+## 12. P6.1：Codex 认稿自接（v2，2026-09-26；v1 经 codex 评审 15 条后改写，处置见 12.9）
+
+### 12.1 一句话
+
+创始人录完把 A-roll 扔进 Downloads，在 Codex 新开对话说「剪一下」。Codex 调服务认稿，服务在创始人的 Mac 上弹出系统确认窗：是哪条稿、封面字、目标时长。创始人点「确认」后，Codex 发起交接并拿到**只属于自己**的剪辑认领，然后开剪。Claude 会话不再是交接的必经站；Claude 推送交接的旧路保留。
+
+### 12.2 创始人决定（2026-09-26，两轮 AskUserQuestion）
+
+1. **交接可以由 Codex 发起**：给 codex 宿主开 `handoff`，但只能带着服务端签发的确认记录（12.4-C）。
+2. **创始人的确认走本机系统弹窗**：不开网页；对话里的「对」「封面字写 X」**一律不算确认**，因为模型也能写出这些字，服务端分辨不出。gate3（成片）和 gate4（封面）仍只认工作台。
+   - 这条改了第一轮定的「对话里确认」。评审 #1 指出非空原话挡不住模型代填，创始人第二轮改选弹窗。
+3. **分层认稿**：先比文件名，再比转写相似度；结果只作为候选呈现给弹窗，不静默绑定。
+
+### 12.3 现状（主仓库 main，含未提交改动；行号会随三分改造移动，以函数名为准）
+
+- codex 宿主只放行 `register/status/revoke/report`、`content get`、`desk inbox/claim/release`、`autocrew_status`（`mcp/host-policy.ts` 放行表）。
+- `handoffEvidence`（`project-evidence.ts`）交接前要两份前置材料：
+  - 创始人确认 `decisions.json`：只认 `source:"founder-workbench"`，写入口只有浏览器会话路由，拒绝 bearer（`project-review-route.ts` 的 `/api/project-review`）。
+  - 出处 `citations.json`：`validateCoverage` 只做**结构覆盖**，即稿件哈希、UTF-16 定位、证据字段一致、事实句整句覆盖。它不证明来源在语义上支持陈述。
+  - 这两份材料以及 `verifyStoredApprovals` 的强校验**只对已绑定项目（v2）生效**，未绑定项目直接跳过。
+- 现行 v2 交接把认领转给笼统的 `toHost:"codex"`，并设 `pendingHandoff:true`（`handoff.ts`），第一个来兑换的 Codex 会话拿走（`claims.ts`）。交接回执不返回剪辑令牌。
+- 会话 nonce 只作诊断，重连会变（`bin/mcp-forwarder.mjs`）；认领只核令牌，不核会话（`claims.ts`）。
+- 同宿主闲置 10 分钟可接管，租约 30 分钟（`claims.ts`）；交 `citations` 会续写稿认领（`video-handoff.ts`）。
+- 转写：本机 FunASR（`src/modules/video/asr.ts`）。音频抽取不限时长，会写目录，默认 10 分钟超时，不是现成的「只读前 120 秒」接口。现有 `scriptMatchRatio` 的分母是稿件二元组，本节要的是转写侧口径，不能直接复用。
+- 事故（2026-09-26）：同一条稿同时被两个 Codex 接走。一个是创始人在桌面端开的，一个是 Claude 用插件派的后台任务 `task-mui6410d-j58ahx`。后台那个因为沙箱连不上 `127.0.0.1:4317`、拿不到认领，只做了只读核对。
+  - 证据：Codex 作业日志 `~/.claude/plugins/data/codex-openai-codex/state/…/jobs/task-mui6410d-j58ahx.log` 及其结果「目前卡在认领前……尚未开始剪辑」。
+  - 这次没出事是运气，不是设计。
+
+### 12.4 设计
+
+**适用范围**：只支持已绑定项目（v2）。未绑定的稿回 `project_migration_required`，交接照走 Claude 推送旧路。
+
+**A. 收稿即备料（写稿侧）**
+- 审稿 accepted 后，Claude 当轮交 `citations`，随后**显式释放写稿认领**（`autocrew_desk release`）。这样后续的 Codex 自接不会被一个仍在租约期、实际已经闲置的写稿认领挡住。
+- 「材料齐」不存状态，每次都按**当前** `draft_hash` 实时算：`validateCoverage` 通过，且有有效的确认记录（C）或工作台确认。改稿后材料自动失效，需要重交。
+- 出处规则不因 P6.1 放宽：来源等级、创作者观点的限制，都按出处收紧任务（task_08e6d2a3）的结论执行，两边共同验收。
+
+**B. 认稿 `autocrew_video match{aroll_path, request_id}`（两宿主可调）**
+- 「只读」的含义：不改任何业务状态；允许受控的临时产物。
+- 输入先行：
+  - 路径存在、可读、不是符号链接；
+  - 两次 `stat` 的大小和修改时间一致（防止文件还在拷贝）；
+  - 算**全文件** sha256。
+- 候选范围：
+  - 已绑定项目、视频平台、未进回收站、`status ∈ {draft_ready, approved}`、审稿 accepted。
+  - 同一选题的跨平台兄弟稿各算一个候选，弹窗标出平台。
+- 查重：原片哈希命中任何**未撤回**的交接（无论状态是 editing、publish_ready 还是 published）→ 回 `already_handed_off`，附持有者和代次。这一步只是提示，真正的强制在 C 的原片锁。
+- L1 文件名：
+  - NFKC 归一、全半角统一、去扩展名；
+  - 只去掉已识别的拍摄尾缀：aroll、a-roll、a roll、口播、原片、take N、第 N 条、日期 8 位；
+  - 保留标题内有语义的数字，比如「GPT-5」「第 12 期」。
+  - 强命中只认**当前标题**，并且去掉「｜」后的副标题也要一致。
+  - 历史标题、选题标题命中只算提示，同时标「可能录的是旧版」。
+  - 标题少于 6 个字、只命中系列前缀、多条候选同时命中 → 不算强命中，进 L2。
+- L2 转写：
+  - ffmpeg 只截前 120 秒，放独立临时目录，用完清理；
+  - FunASR 90 秒超时，全局并发 1，可取消；
+  - 有效语音少于 80 字 → `low_quality_transcript`。
+  - 评分：在每条候选稿上按转写长度滑动窗口，取最佳窗口的**信息量加权字二元组相似度**（权重按候选集合内的 IDF），这样长稿不会天然占优。
+- 回执状态：`proposed | ambiguous | no_confident_match | no_candidate | already_handed_off`，外加降级标记 `asr_unavailable`（缺 uv 或模型）、`no_speech`、`low_quality_transcript`、`l1_only`。**转写失败不能把 L1 弱命中升级成强命中。**
+- **回执由服务端签发并保存**：`{receipt_id, request_id, library_id, aroll_path, aroll_sha256, candidates:[{content_id, project_id, draft_hash, platform, title, layer, score, evidence}], algo_version, issued_at, expires_at(+30 分钟)}`。
+  - 以下任一发生，回执即作废：过期、候选 `draft_hash` 变了、原片哈希变了、项目迁移、有交接被撤回。
+- **标定前一律保守**：只有一条真片时，不输出 `proposed`，一律把前三名交给弹窗让创始人选。
+  - 标定集：历史原片（已知 content_id）加同题难负例、无对应稿的原片、重录、噪声样本。
+  - 按主题划分标定集和留出集，用误配率、拒判率、正确候选召回率定阈值和差值，写进测试后才开放 `proposed`。
+
+**C. 本机弹窗确认 `autocrew_video confirm{receipt_id, content_id?, cover_text, target_seconds, request_id}`（两宿主可调）**
+- 服务端核回执有效，候选只能取自回执；再按**当前**稿实时核材料（A）。然后在创始人的 GUI 会话里弹窗：
+  - `proposed`：`display dialog`，列文件名、稿件标题、平台、封面字、目标时长，按钮是「确认」「改一下」「取消」。
+  - 其余情况：`choose from list` 让创始人从前三名里选。
+  - 「改一下」：接着弹 `display dialog … default answer` 让创始人直接改封面字和时长。
+  - 已有工作台确认、且值不同 → 弹窗并列两套值，由创始人选定。**不静默覆盖。**
+- 调用最多阻塞 5 分钟：
+  - 没人点 → `confirm_timeout`，什么都不记；
+  - 点了「取消」→ `confirm_declined`；
+  - 非 macOS 或没有 GUI 会话 → `confirm_unavailable`，退回工作台确认。
+- 点了「确认」，服务端写**确认记录** `{confirmation_id, source:"native-dialog", content_id, draft_hash, aroll_sha256, receipt_id, cover_text, target_seconds, clicked_at, dialog_text}`，并据此写 `decisions.json`（`source:"native-dialog"`）。
+  - `handoffEvidence` 接受 `founder-workbench` 和 `native-dialog` 两种来源，不接受任何宿主文字转述。
+  - 同一 `request_id` 重试 → 返回同一条记录，不重复弹窗。
+
+**D. Codex 发起交接 `handoff{content_id, aroll_path, confirmation_id, request_id}`**
+- host-policy 放行 codex 的 `handoff`，但**必须**带 `confirmation_id`：记录存在、未用过、没过期（30 分钟），且 `content_id`、`draft_hash`、`aroll_sha256` 与本次一致。
+- 交接时重算原片全文件哈希，跟确认记录对比；不一致就作废这次确认。
+- 在**同一个受保护提交**里（全局交接锁，不是按稿件的锁）完成下面几件事：
+  - 核写稿认领：未释放且未过期 → `claim_held`。
+  - 占**原片锁** `aroll_locks[sha256] = {content_id, generation}`：已被别的未撤回交接占用 → `aroll_in_use`，附持有者。
+  - 冻结交接包：决定、出处、清单一次成型，之后不能原地改，要改就撤回、交新一代。
+  - 签发剪辑认领：**直接把新令牌回给调用方**。不设 `pendingHandoff`，交接文件里也不写令牌。
+- 同一 `request_id` 带同一 `confirmation_id` 重试 → 按首次提交时冻结的清单重放，**重新交还同一枚令牌**。这是给「回执丢了」的恢复路径，时限 10 分钟。
+  - 别的请求命中已占用 → 只回持有者和代次，不给令牌。
+  - 重放**不重新生成**交接包：以请求身份和冻结的清单哈希为准。
+- 剪辑认领不走 10 分钟闲置接管：
+  - 持有者用 `report` 每 10 分钟心跳；
+  - 48 小时没有心跳进 `stale`（沿用 §3.5）；
+  - 接管必须创始人弹窗确认；旧令牌立即作废，旧会话之后的 `report`、`register` 都会被拒。
+- Claude 推送（§3.4）保留，同样要占原片锁；v2 推送也改成直接把令牌发给接收方的会话，不再由第一个来的 Codex 兑换。
+
+**E. Codex 剪辑人设（`adapters/codex/AGENTS.editor.md`）开工第一步**
+
+对话里没给 content_id 时：
+1. 取创始人给的路径；没给就列出 Downloads 里最近的三个视频让创始人说是哪个。
+2. 调 `match`，拿到回执。
+3. 调 `confirm`，并告诉创始人「去 Mac 上的弹窗点确认」。
+4. 拿到确认后调 `handoff`，拿到令牌再往下走 §3.4。
+
+任何拒绝码、连不上服务、`confirm_timeout` 或 `confirm_declined`，都要说出实际原因并停下。**不从文件夹名或聊天记录猜 content_id，也不把对话里的原话当确认。**
+
+### 12.5 不变量（eval case 待建）
+
+| 必须成立 | 强制点 | eval case |
+|---|---|---|
+| `match` 不改业务状态；回执由服务端签发，可作废 | match 实现 + 回执存储 | `match-is-read-only`、`receipt-invalidated-on-draft-change` |
+| 创始人确认只来自工作台或本机弹窗，宿主文字转述一律不算 | `handoffEvidence` 来源白名单 | `chat-text-is-not-confirmation` |
+| codex 发起的交接必须带未用过、匹配的确认记录 | handoff 校验 | `codex-handoff-needs-confirmation-record` |
+| 同一原片同时只归一条未撤回交接 | 全局锁内的原片锁 | `aroll-lock-concurrent-pull`、`aroll-lock-release-on-revoke` |
+| 剪辑令牌只交给发起方；重放不外泄令牌 | 提交内签发 + 重放规则 | `token-only-to-initiator`、`replay-no-token-leak`、`lost-response-recovers-token` |
+| 交接后材料冻结，重放不重新生成交接包 | 冻结清单 + 请求身份 | `replay-after-materials-change` |
+| 写稿侧没释放认领时接不走 | 提交内检查写稿认领 | `writer-claim-blocks-pull` |
+| 剪辑认领不被闲置接管；接管要弹窗确认，旧令牌作废 | 心跳 + 接管规则 | `editing-claim-no-idle-takeover` |
+| gate3、gate4 仍只认工作台（v2） | `verifyStoredApprovals` 不变 | `approvals-still-workbench` |
+| 转写失败不升级弱命中，降级原因可见 | 回执标记 | `asr-failure-visible` |
+
+### 12.6 边界（product-sense 五问，已并入 codex #15）
+
+- **状态**：
+  - `no_candidate` 附最接近但不可交接的稿和原因；
+  - 只有一条候选也要弹窗；
+  - 全部低分 → `no_confident_match`，前三名进弹窗手选；
+  - `already_handed_off`、`aroll_in_use` → 回持有者；
+  - 材料不齐 → 说清缺什么；缺出处要回 Claude。
+- **最坏输入**：
+  - 文件名是 `IMG_1234.MOV` → 走 L2；
+  - 前两分钟是试音或寒暄、从中段开录、方言或英文术语识别错 → 低分，进手选；
+  - 无音轨、超过 30 分钟 → `aroll_invalid`；
+  - 文件还在拷贝、同大小被替换、路径消失、认稿和交接之间原片变了 → 按哈希和 `stat` 拒绝并说明。
+- **误用**：
+  - 两个 Codex 对话剪同一段 → 原片锁；
+  - 确认错了稿 → 撤回，锁随之释放；
+  - Claude 还在改稿 → `claim_held`；
+  - 录的是旧版稿 → 提示，本期不做逐句对比；
+  - 对话里自称「创始人已确认」→ 不算。
+- **失败可见**：
+  - FunASR 缺依赖 → `asr_unavailable`；
+  - 弹窗超时、被取消、不可用都有单独的码；
+  - 回执丢失 → 凭请求号取回；
+  - 服务重启 → 回执和确认记录都在持久存储里；
+  - 剪辑会话失联 → 48 小时 `stale`。
+- **刻意不做**：
+  - 一段原片对应多条稿；
+  - 后台盯 Downloads 自动发起；
+  - 未迁移的旧项目（v1）；
+  - 成片、封面批准搬出工作台；
+  - 原片和定稿逐句对比、字幕跟着实际念的来（下一期）；
+  - 防本机自动点击工具去点弹窗（记录，不承诺）。
+
+### 12.7 依赖与顺序
+
+- 在资料库三分改造落 main 之后动工。评审 #9 指出，三分改造让重放依赖了可变材料，这是语义冲突，不只是文件冲突，D 的冻结清单要跟它一起落。
+- 出处收紧任务（task_08e6d2a3）跟 A 共同验收。
+- 顺序：本 v2 给创始人过目 → 实现（按 AGENTS.md 交 Codex 或 builder）→ 12.5、12.6 逐条验收 → verifier。标定集和阈值单独一步，开放 `proposed` 之前完成。
+
+### 12.8 待创始人确认
+
+1. 弹窗超时 5 分钟、确认记录有效期 30 分钟，行不行？
+2. Downloads 里没指定文件时，列最近三个视频让你选，不按时间自动取最新的一个，行不行？
+
+### 12.9 codex 评审处置表（2026-09-26，codex 线程 `01a0dd25-9b1f-74c3-a78a-3da632ed2b0b`，15 条）
+
+| # | 严重度 | 问题 | 处置 |
+|---|---|---|---|
+| 1 | P1 | 匹配回执加非空原话挡不住模型自说自话 | 采纳。创始人改选本机弹窗（12.2-2），确认记录由服务端写（C），文字转述一律不算 |
+| 2 | P1 | 「以最后一次为准」会让模型覆盖工作台决定 | 采纳。确认绑定 `draft_hash`、原片哈希、请求号；和工作台冲突时弹窗并列，不静默覆盖；交接后冻结（C、D） |
+| 3 | P1 | gate3/gate4 的保证只对 v2 成立 | 采纳。P6.1 只支持 v2，v1 回 `project_migration_required`（12.4 适用范围） |
+| 4 | P1 | 现行交接给笼统的 codex、由第一个来的会话兑换 | 采纳。提交内直接给发起方签发令牌，取消 `pendingHandoff`；推送路也照改（D） |
+| 5 | P1 | 会话 nonce 只作诊断，不是身份 | 采纳。执行权只认令牌；令牌在提交里签发、只回发起方、不写进共享文件；靠请求号取回（D） |
+| 6 | P1 | 事前查重加按稿件重放保证不了唯一 | 采纳。在全局交接锁内按原片哈希原子占锁，撤回才释放；查重只作提示（B、D） |
+| 7 | P1 | 租约和闲置接管会误挡、误抢 | 采纳。收稿后显式释放写稿认领（A）；剪辑认领用心跳，不走 10 分钟接管，接管要弹窗（D） |
+| 8 | P1 | 回执没有 id，也没绑定稿件版本 | 采纳。服务端签发并持久化回执，字段和作废条件见 B |
+| 9 | P1 | 重放依赖可变材料 | 采纳。重放认请求身份加冻结清单，不重新生成交接包；和三分改造一起落（D、12.7） |
+| 10 | P2 | 出处行号、适用范围、验证能力写得不准 | 采纳。12.3 改成按函数名引用；注明结构覆盖不等于真实性；事故附作业日志出处 |
+| 11 | P1 | 材料齐要实时算，出处规则不能放宽 | 采纳。「材料齐」按当前稿实时算，出处规则不放宽，与出处收紧任务共同验收（A） |
+| 12 | P2 | L1 容易被短标题、系列名、历史标题误导 | 采纳。归一化与尾缀规则写死；强命中只认当前标题；短标题、系列前缀、多条命中进 L2（B） |
+| 13 | P2 | L2 单向覆盖率偏向长稿，四个样本不够标定 | 采纳。改成滑动窗口、IDF 加权；标定集按主题划分；标定前不输出 `proposed`（B） |
+| 14 | P2 | FunASR 不是现成的前 120 秒接口 | 采纳。独立分流、限时、限并发、临时目录、降级码；「不花钱」改成「不调计费模型 API」（B） |
+| 15 | P2 | 边界漏了候选范围、输入稳定、恢复 | 采纳，已并入 12.6 |
+
+## 13. 交接链路补丁（2026-09-27）：稿子必须进库、导入稿快速通道、文件流转、待剪辑页改看板、封面
+
+### 13.1 一句话
+
+§12 解决「Codex 怎么认稿」，本节补 §12 没管的几件事：稿子为什么会不在库里、已录的导入稿怎么交接、文件怎么流转、待剪辑页和封面页怎么配合「在 Codex 对话里剪、在剪映里改」这个真实习惯。
+
+原则：**一条视频的所有文件只有一个家，就是库内的项目文件夹。** 搬文件由 Codex 发起；AutoCrew 只记相对路径和 sha256，不存第二份，负责给创始人看和点头。操作台是 Codex 对话和剪映。
+
+### 13.2 事故与证据（2026-09-26）
+
+- 14:48–16:06 共 11 篇口播稿在 `scout angles` 存简报时报 `ENOTSUP: operation not supported on socket, link …`。当时资料库在 SMB 盘 `/Volumes/MacMiniData/01_Lawrence/Account`，存简报用硬链接发布。
+  - 证据：各写稿会话 transcript，例如 worktree `brave-sinoussi-d4ccad` 会话 `447bb9af` 06:50:18Z 的报错原文。
+- 批量派活的指令里写着「撞上就把稿子写到本地 `docs/drafts/*.md`」，11 篇因此全在各 worktree 本地，AutoCrew 一篇都没收到。
+- 15:39 资料库迁到本机 `~/Documents/AutoCrew资料库`，只迁了「深度思考」一条；学院批次的选题留在 NAS 旧库。
+- Codex 17:08 起接四条原片，报告「编辑收件箱目前只有 max」，其余三条「尚未正式交接」。19:16 创始人让它「别跟 autocrew 交接了」，改为直剪（`~/Movies/AutoCrew直派/`）。
+  - 证据：Codex 会话 `01a0dcf8-302b-7eb2-87c2-9903ff314d03`。
+- 「纠正 AI」（content-1790419041372-2g2bzh）卡死：`status=editing`，但 `decisions=null`、`01-script/handoff/` 为空。
+  - 认领记录 host=`local-user`，时间 11:14:59Z，推断是网页 `StageAdvance`「去剪辑」干的：它只改状态、不交接。
+  - 此时 handoff 说已交接，revoke 又回 `nothing_to_revoke`，进退不得。
+- 同一分钟（11:15:20Z），创始人在剪辑页点「传文件」挂 A-roll：
+  - 1.1 GB 原片经浏览器传进 `library/uploads/`，再硬链到项目 `03-broll/assets/`，落进了**画面素材**文件夹，而不是口播文件夹。
+  - Downloads 里的原件还在，盘上共两份。
+  - 交接不读这份挂接，它要的是对话里给的 `aroll_path`。
+  - 证据：`library/assets/asset-1790421320846-330w2c.json`，以及项目 `03-broll/assets/` 下同名文件（链接数 2）。
+- 已处理：
+  - 存盘：资料库已在本机 APFS。`src/storage/file-once.ts`（三分改造未提交部分）改成 mkdir 锁 + rename，不再依赖硬链接。新库 18:36 的简报正常落盘。
+  - 10 篇本地稿已按创始人 09-27 决定用 `content save source=manual_import` 导入，均为 `draft_ready`、`quality_status=unreviewed`，标签 `本地稿导入-20260926`，正文与本地稿逐字一致。
+  - 原文件含出处清单、待确认项和续接步骤，备份在 `~/.cache/autocrew-yt/local-drafts-20260926/`，对照表是 `import-log.json`。
+  - 09-27「纠正 AI」退回 `draft_ready`（审稿记录仍为 passed，写稿认领已随退回交还创作者），不再卡死。
+  - 09-27 按创始人决定删掉网页挂接留下的重复原片：
+    - 删之前核对过，与 Downloads 原件 sha256 一致；
+    - 两个硬链接都移进废纸篓，没有永久删除；
+    - 用 `library:remove` 和 `content:asset_remove` 清掉了记录。
+
+### 13.3 创始人决定（2026-09-27，AskUserQuestion）
+
+1. 10 篇本地稿**全部导入**（已完成，见 13.2）。
+2. 已录 A-roll 的导入稿**以录音为准，走快速通道**：不重审文字，只核数字和出处。
+3. 剪辑期间的「通过成片」「通过封面」**留在网页看板**点，与 §12.2-2 一致。
+4. 素材挂载**不传文件、只写路径**；Codex 把 Downloads 的原片挪进这条视频的口播文件夹再开剪。
+5. 成片**在剪映里审、审完再挪**进项目。网页不播成片，只点「通过」。我提过「先挪再审」，创始人选了这条；批准仍绑定文件指纹，做法见 F。
+6. 封面由 Codex 做多版，**只要 3:4 和 4:3 两种尺寸**。文件放在项目里，网页按尺寸看版本、挑一张。
+7. 平台活动信息**不跟单条视频走**：定期扫一批带起止时间的活动。本期只摸底，各平台一起看，结论在 `docs/research/2026-09-27-platform-activities-survey.md`，另行立项。
+
+### 13.4 设计
+
+**A. 稿子必须进库（去掉本地兜底）**
+- 规则：AutoCrew 存盘失败时，宿主停下，向创始人报原始错误，**不得把稿子写成库外文件**继续推进。
+  - 本地文件会把同一篇稿分成库里、库外两份真相，下游（Codex、看板、发布包）只认库里那份。
+- 落点：
+  - `skills/write-script`、`skills/video-session` 的失败处置段；
+  - MCP server instructions 加一句。
+- 服务端对存储类错误（`ENOTSUP`、`EACCES`、`ENOSPC`、`EWRITELOCKED`、资料库不可用）统一回 `code: storage_unavailable`，附原始错误和 `next_action: 停下报告创始人`。不再只回泛化的 `research_operation_failed`。
+
+**B. 导入稿快速通道（接 §12 的 B/C/D）**
+- 适用：`writing_source.kind = manual_import` 且 `draft_ready` 的视频平台稿。
+- `match` 候选范围在 §12.4-B 的基础上，放进这类稿，并在回执候选里标 `unreviewed_import: true`。
+- 弹窗额外显示一行「这篇是导入稿，没过文字审稿，按录音为准交接」。创始人点确认，确认记录就写 `recorded_as_is: true`。
+- handoff 的 acceptance 规则：
+  - 只有满足以下全部条件，才免掉「审稿 accepted」：
+    - 稿子是 `manual_import`；
+    - 确认记录带 `recorded_as_is: true`；
+    - 确认来源是 `native-dialog` 或 `founder-workbench`。
+  - `citations.json` 覆盖**照旧必需**，规则不放宽（§12.4-A）。这就是「只核数字和出处」。
+- 录音里的数字改不了。示意、修辞里的数照现有做法用 `scout claim_offline` 登记，reason 写「已录原话、非数据」。
+- 出处由写稿侧（Claude 会话）交。导入稿的出处清单在备份原文件里，逐条转成 `citations` 格式。
+
+**C. 待剪辑页改成看板（`editing` 阶段）**
+- 删掉：
+  - 剪辑阶段的内置剪辑线界面（`EditingWorkspace` 里的 `AssetsSection` 视频挂接、`VideoPanel` 及选段、计划、审片三步入口）。后端 `video:*` 与 MCP 内置动作本期不动，另开清理任务。
+  - `StageAdvance` 里的「去剪辑」按钮。
+- 规则：`→ editing` 只能由 handoff 产生，`content:transition` 目标为 `editing` 一律拒绝，并告诉创始人怎么交接。
+- 看板内容（`SharedProjectPanel` 升为页面主体，默认展开）：
+  1. **交接卡**：代次、交接时间、A-roll 文件名、持有会话、最近一次 `report` 的时间、`result` 和 `next_action`。
+  2. **产物**：
+     - 成片待审时不播放，显示剪映导出文件的文件名、时长、导出时间、剪映草稿名（见 F）；
+     - 成片挪进项目后，可以在页面内播放；
+     - 封面在封面步（见 G）。
+     - 项目内文件一律走 `/api/project-artifact` 哈希校验。
+  3. **四道门状态**：gate1–gate4 各自显示待批、已批（时间和批准的文件哈希）、已失效三种状态。
+  4. **两个按钮**：「通过成片」（gate3）和「通过封面」（gate4），各配一个带原话的「打回」。重复点击幂等。
+  5. **自动刷新**：看板打开时每 15 秒拉一次 `/api/project-review`，或者改用现有事件推送。不必手动刷新。
+- 交接前（`draft_ready`/`approved` 的视频稿）不显示剪辑界面，只显示一句提示：「录完按标题命名放进 Downloads，在 Codex 里说『剪这条』」，外加已确认的交接信息。
+- 异常态要可见：
+  - `status=editing` 但没有有效交接代次时，显示「状态异常：剪辑中但没有交接包」和一个「退回待交接」按钮（`editing → draft_ready`，要二次确认）。不静默。
+  - 稿子在交接后被改过（当前 `draft_hash` ≠ 交接代次的 `draft_hash`）时，显示「稿已改，和交接版不一致」。
+
+- 剪辑阶段的「素材挂接」区（`AssetsSection` 的上传、从素材库挂接）一并删除。A-roll 只经交接进项目（见 F）。
+- 看板按步骤推进：剪辑中 → 成片待审 → 封面 → 待发布。当前步骤展开，已完成的步骤折叠成一行摘要。
+
+**D. 交接失败不留副作用、原因说清**
+- `handoffEvidence` 的 decisions、citations 检查挪到写门（认领写入）**之前**。缺什么回什么：
+  - `missing_decisions`，附 `next_action`：弹窗或工作台确认；
+  - `missing_citations`，附缺覆盖的句子和 `next_action`：写稿侧交 citations。
+- 失败的 handoff 不新占、不续约任何认领（09-26 实测：缺决定的 handoff 失败后仍占住认领，新令牌没回给调用方，后续写操作被报 `claim_held`）。
+
+**E. 一次性修复**
+- 「纠正 AI」已退回 `draft_ready`（09-27 完成）。之后走 §12 正常路径重新交接：它不是导入稿，已有审稿记录。
+- 两条直派视频（「AI 最气人的 3 个瞬间」「客户问 AI」）已导入为 `manual_import`。
+  - 要出发布包，就走 B 的快速通道补交接。
+  - `register` 要求文件在交接的 `project_root` 里，所以 Codex 要把 `~/Movies/AutoCrew直派/…` 的成片、封面、字幕拷进库内项目后再登记。
+- 项目目录名里的占位前缀「［生成中］」：建目录时改用选题标题，不用占位标题；已存在的目录不改名（「状态变化不搬目录」）。
+
+**F. 文件流转**
+- **A-roll 进项目用「挪」不用「复制」**：
+  - 在 §12-D 的受保护交接提交里，服务端把原片**移动**到 `02-aroll/<原文件名>`。
+    - 保留创始人按标题起的文件名，不再改成哈希名；sha256 记在交接清单里。
+    - 同名冲突时加 ` (2)` 后缀。
+  - 同一个卷：直接 rename，瞬间完成，不占双份。
+  - 跨卷（比如以后资料库上 NAS）：先复制，校验 sha256，然后删源。
+    - 删源失败不算交接失败，回执里写明「原件还在 X」。
+  - 提交中任一步失败：把原片移回原路径，然后照 §12 回滚。
+  - 撤回交接：原片移回原路径；原路径已被占用时，放回 Downloads 并加后缀。原片锁随之释放。
+- **素材只写路径**：
+  - Codex 或 Claude 用 `autocrew_asset add{source_path}` 登记素材：
+    - 路径在资料库内：只记相对路径；
+    - 路径在库外：先挪进项目的对应文件夹，或共享素材目录，再记路径。
+  - 浏览器不再上传大文件。
+- **成片：剪映里审，审完再挪（13.3-5）**：
+  1. Codex 出粗剪，做成剪映草稿。创始人在剪映里修改、审看，然后导出，导出位置是剪映自己的导出目录。
+  2. Codex 用 `report` 报导出文件：`files[{path, sha256, role:"final-cut-candidate"}]`，外加 `jianying_draft`。
+     - 设置里登记剪映导出目录为**唯一一个允许 report 引用的库外根**。
+  3. 看板「成片待审」卡显示文件名、时长、导出时间、剪映草稿名。创始人点「通过成片」时：
+     - **服务端当场重算该文件的 sha256**，不信 Codex 报的值；
+     - gate3 批准绑定这个指纹。
+  4. Codex 把这个文件挪进 `07-delivery/`，指纹不变。`register` 时指纹必须等于批准的指纹，否则回 `approval_mismatch`。
+  - 通过之后又重新导出：指纹变了，登记被拒，看板提示「导出文件变了，需要重新通过」。
+  - 剪映草稿本身留在剪映里，AutoCrew 只记草稿名（沿用 `register.jianying_draft`）。
+
+**G. 封面（成片通过后的下一步）**
+- 规格写进项目模板（项目 `AGENTS.md` 模板，加 `shared-assets/editing-profiles/personal-ip/…/RULES.md`）：
+  - 尺寸只有 3:4、4:3（13.3-6）；
+  - 每个尺寸默认出 3 版；
+  - 文件放 `05-cover/vNN/3x4.png`、`05-cover/vNN/4x3.png`。
+  - Codex 用自带出图（订阅额度），不调 AutoCrew 的出图接口。
+- Codex 每出一批，就用 `report` 登记：`files[{path, sha256, role:"cover:3:4" | "cover:4:3"}]`。不需要新的上传通道。
+- 封面页（`cover_pending` / 看板封面步）：
+  - 显示内容：左边是已挪进项目的成片，右边按尺寸分两组列出各版。
+  - 选择与批准：创始人每个尺寸选一张，点「通过封面」。gate4 批准 = `sha256(3:4 文件 sha256 hex + 4:3 文件 sha256 hex)`，沿用现有 register 规则。
+  - 打回：带创始人原话，Codex 出下一批 `vNN+1`。旧版保留可对比。
+- 视频稿的封面台不再调用 `cover:create` / `cover:revise`（AutoCrew 自己调图片模型、走 API 计费）；公众号稿（2.35:1）本期不动。
+
+### 13.5 边界（product-sense 五问）
+
+- **状态**：
+  - 看板的空态是交接前的提示；加载态显示骨架；错误态显示路由的真实错误。
+  - Codex 超过 30 分钟没有 `report`，交接卡标黄；超过 48 小时进 `stale`（§12.4-D）。
+- **最坏输入**：
+  - 导入稿没有 `topicId` 也能进候选（按标题和转写认）。
+  - 导入稿正文里夹了非朗读段（比如开场二选一），认稿会低分，走手选。
+  - 挪原片时文件正被占用，或者还在拷贝：沿用 §12 的两次 `stat` 检查，并拒绝说明原因。
+  - 剪映导出目录里有多个导出文件：以 Codex `report` 指名的那一个为准，看板显示它的导出时间，方便创始人核对。
+  - 封面只交了一个尺寸：「通过封面」置灰，写明缺哪个尺寸。
+- **误用**：
+  - 没录的导入稿被交接：只能通过 match 加弹窗、并且要有真实原片才可能，可接受。
+  - 快速通道只免文字审稿，不免出处。
+  - 在网页上想把稿子手动改成剪辑中：已禁止，并提示交接方法。
+  - 认错稿后撤回：原片移回原处，不会困在错的项目里。
+  - Codex 报一个剪映导出目录以外的库外路径：拒绝，`path_not_whitelisted`。
+- **失败可见**：
+  - 存储错误统一 `storage_unavailable`。
+  - handoff 缺料回具体的码。
+  - 看板对异常态显式提示，不静默。
+- **刻意不做**：
+  - 后台自动盯 Downloads（同 §12）；
+  - 把 gate3、gate4 搬出网页（13.3-3）；
+  - 删除内置剪辑线的后端（另开任务）；
+  - 导入稿自动补审稿；
+  - 素材库页面的小文件上传（本期只删剪辑阶段的挂接）；
+  - 自动盯剪映导出目录；
+  - 平台活动（只摸底，另行立项）。
+
+### 13.6 依赖与顺序
+
+- 与 §12 合成一期实现。依赖同 §12.7：等资料库三分改造（主 checkout 当前 118 项未提交）落 main 后动工，否则 `handoff/*`、`Editor.tsx` 直接冲突。
+- A 的规则文字和 E 的「纠正 AI」退回，可以在三分改造落地前先做，不碰代码。
+- 顺序：§12 + §13 给创始人过目 → codex consult → 终稿 → 实现（builder）→ §12.5、§12.6、13.5 逐条验收 → verifier。
+
+### 13.7 待创始人确认
+
+1. §12.8 的两条仍然待定：弹窗超时 5 分钟、确认有效期 30 分钟；没指定文件时列最近三个视频让你选。
+2. 看板自动刷新 15 秒一次，行不行？
+3. ~~「纠正 AI」退回待交接~~：创始人同意，已完成。
+4. ~~删重复原片~~：创始人同意，已移入废纸篓。
+5. **资料库在 iCloud 同步目录里**（09-27 发现）：
+   - 现状：`~/Documents` 开着 iCloud「桌面与文稿」同步（`MobileMeAccounts` 里 `CLOUDDESKTOP` 为 active），废纸篓也落在 iCloud 的 `.Trash`。
+   - F 把每条 1–2 GB 的原片挪进库，这些原片都会上传 iCloud。
+   - 如果开了「优化 Mac 储存空间」，旧文件会被换成只在云端的占位。之后 Codex、剪映、哈希校验一读它就会卡住，甚至失败。
+   - 09-27 查过，库里还没有这种占位文件，库大小 2.9 GB。
+   - 选项：把资料库挪出 `~/Documents`，或者让这个文件夹不参与 iCloud 同步。这属于存储配置，由创始人定，由三分改造那边执行。
