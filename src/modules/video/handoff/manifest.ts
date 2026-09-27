@@ -79,7 +79,7 @@ function registerTemplate(m: HandoffManifest, hash: string, token: string | unde
     ...(token ? { claim_token: token } : {}),
     final_path: "<project_root 里成片的绝对路径>",
     covers: { "3:4": "<3:4 封面绝对路径>", "4:3": "<4:3 封面绝对路径>" },
-    srt_path: "<可选：字幕绝对路径>",
+    srt_path: "<必填（视频平台）：成片最终版字幕 SRT 的绝对路径，在 project_root 里>",
     jianying_draft: "<可选：剪映草稿名或路径>",
     approvals: {
       final_cut: { artifact_sha256: "<成片文件的 sha256>", approved_at: "<gate3 批准时间 ISO>", user_message: "<创作者批准时的原话>" },

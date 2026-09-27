@@ -101,6 +101,7 @@ export type HandoffCode =
   | "invalid_params"
   | "final_invalid"
   | "cover_invalid"
+  | "srt_invalid"
   | "approval_mismatch"
   | "register_failed"
   | "handoff_failed";

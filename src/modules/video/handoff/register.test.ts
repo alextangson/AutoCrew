@@ -6,11 +6,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent, getCoverReview, updateContent } from "../../../storage/local-store.js";
+import { listDiffs } from "../../learnings/diff-tracker.js";
 import { prepareEgoLitePublish } from "../../publish/ego-lite.js";
 import { isRegisterInput, parseRegisterInput, registerVideo } from "./register.js";
 import type { RegisterJournal } from "./register-commit.js";
 import {
   approvalsFor,
+  BODY,
   callVideo,
   HAS_FFMPEG,
   makeFixture,
@@ -30,6 +32,13 @@ let token: string;
 let final: string;
 let cover34: string;
 let cover43: string;
+let srt: string;
+
+const SRT = [
+  "1", "00:00:00,000 --> 00:00:02,000", "今天聊聊我怎么用 AI 工具省下每天两小时。", "",
+  "2", "00:00:02,100 --> 00:00:04,000", "据麦肯锡报告，能省 30%。", "",
+  "3", "00:00:06,000 --> 00:00:08,000", "第一步，把重复的事交出去。", "",
+].join("\n");
 
 async function handedOff(): Promise<Record<string, unknown>> {
   const res = await callVideo(fx.dir, { action: "handoff", content_id: contentId, aroll_path: fx.aroll });
@@ -48,6 +57,8 @@ beforeEach(async () => {
   final = await makeMp4(path.join(project, "05-export", "final.mp4"));
   cover34 = await writePng(path.join(project, "06-cover", "cover-3x4.png"), "three-four");
   cover43 = await writeJpeg(path.join(project, "06-cover", "cover-4x3.jpg"), "four-three");
+  srt = path.join(project, "05-export", "final.srt");
+  await fs.writeFile(srt, SRT);
 });
 
 afterEach(async () => {
@@ -62,6 +73,7 @@ async function registerParams(over: Record<string, unknown> = {}): Promise<Recor
     claim_token: token,
     final_path: final,
     covers: { "3:4": cover34, "4:3": cover43 },
+    srt_path: srt,
     approvals: await approvalsFor(final, cover34, cover43),
     ...over,
   };
@@ -85,7 +97,7 @@ async function assertUntouched(): Promise<void> {
 
 describe.skipIf(!HAS_FFMPEG)("登记成功（register-to-ego-lite）", () => {
   it("四样落盘、状态到待发布、发布包解析到成片与封面；重发 = 重放", async () => {
-    const res = await register({ srt_path: await writePng(path.join(project, "05-export", "sub.srt"), "1\n00:00") });
+    const res = await register();
     expect(res).toMatchObject({ ok: true, status: "registered", generation: 1, content_status: "publish_ready" });
     expect(res.next_action).toMatchObject({ tool: "autocrew_pre_publish", params: { action: "video_kit", content_id: contentId } });
     expect(res.video_ready_at).toBeTruthy();
@@ -112,8 +124,34 @@ describe.skipIf(!HAS_FFMPEG)("登记成功（register-to-ego-lite）", () => {
     expect(pkg.coverPath).toBe(review.approvedImagePath);
     expect(await fs.readFile(pkg.videoPath)).toEqual(await fs.readFile(final));
 
-    const again = await register({ srt_path: path.join(project, "05-export", "sub.srt") });
+    const again = await register();
     expect(again).toMatchObject({ ok: true, replayed: true, register_hash: res.register_hash });
+  });
+
+  it("字幕还原成实拍版口播存进项目，记一条「定稿 → 实拍」差异；重放不重复记", async () => {
+    const res = await register();
+    expect(res).toMatchObject({ ok: true, status: "registered" });
+    expect(res.warning).toBeUndefined();
+    const spoken = await fs.readFile(path.join(project, "01-script/spoken/g0001-spoken.md"), "utf-8");
+    expect(spoken).toBe("今天聊聊我怎么用 AI 工具省下每天两小时。据麦肯锡报告，能省 30%。\n\n第一步，把重复的事交出去。\n");
+    const diffs = (await listDiffs({ contentId }, fx.dir)).filter((d) => d.changeType === "实拍口播与定稿的差异");
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0]).toMatchObject({ field: "body", before: BODY, after: spoken, platform: "douyin" });
+    expect(await register()).toMatchObject({ ok: true, replayed: true });
+    expect((await listDiffs({ contentId }, fx.dir)).filter((d) => d.changeType === "实拍口播与定稿的差异")).toHaveLength(1);
+  });
+
+  it("视频稿不带 srt_path → invalid_params，说清要成片字幕；字幕格式不对 → srt_invalid，什么都不落", async () => {
+    const missing = await register({ srt_path: undefined });
+    expect(missing).toMatchObject({ ok: false, code: "invalid_params", which: "srt_path" });
+    expect(String(missing.error)).toContain("字幕");
+    const bad = path.join(project, "05-export", "bad.srt");
+    await fs.writeFile(bad, "1\n00:00\n你好\n");
+    const malformed = await register({ srt_path: bad });
+    expect(malformed).toMatchObject({ ok: false, code: "srt_invalid", which: "srt_path" });
+    expect(String(malformed.error)).toContain("时间轴");
+    await assertUntouched();
+    await expect(fs.access(path.join(project, "01-script/spoken"))).rejects.toThrow();
   });
 
   it("同代次只换封面 = 新登记（v2），旧的进 history，代次不变", async () => {

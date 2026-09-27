@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
 import { readProjectRegistry, isMissing } from "./content-project.js";
 import { buildPlan, type Desired, type Plan } from "./my-content-plan.js";
+import { syncBackFounderEdits, isEditable } from "./my-content-sync-back.js";
 
 export const VIEW_DIR = "我的内容";
 export const VIEW_MANIFEST = ".autocrew-view.json";
@@ -49,10 +50,11 @@ async function readManifest(root: string): Promise<Manifest> {
   }
 }
 
-async function writeReadOnly(file: string, text: string): Promise<void> {
+/** 写稿中 / 待录制的口播稿可写（改了会回流），其余副本只读 */
+async function writeCopy(file: string, text: string, rel: string): Promise<void> {
   if (await lstatOrNull(file)) await fs.chmod(file, 0o644);
   await fs.writeFile(file, text);
-  await fs.chmod(file, 0o444);
+  await fs.chmod(file, isEditable(rel) ? 0o644 : 0o444);
 }
 
 /** 把创始人改过/放进来的同名条目挪开：口播稿.md → 口播稿（我改过的 20260927-1430）.md */
@@ -85,12 +87,18 @@ async function applyCopy(file: string, d: Extract<Desired, { kind: "copy" }>, ol
   const st = await lstatOrNull(file);
   if (st && old?.kind === "copy" && st.isFile() && sha(await fs.readFile(file)) === old.hash) {
     if (old.hash === hash) return entry;
-    await writeReadOnly(file, d.text);
+    await writeCopy(file, d.text, d.rel);
+    ctx.report.updated++;
+    return entry;
+  }
+  // 已经是目标内容（创始人的改稿刚写回稿件）：收下，恢复应有权限
+  if (st?.isFile() && !st.isSymbolicLink() && sha(await fs.readFile(file)) === hash) {
+    await writeCopy(file, d.text, d.rel);
     ctx.report.updated++;
     return entry;
   }
   const existed = await clearSlot(file, undefined, ctx);
-  await writeReadOnly(file, d.text);
+  await writeCopy(file, d.text, d.rel);
   ctx.report[existed ? "updated" : "created"]++;
   return entry;
 }
@@ -191,9 +199,12 @@ export async function syncMyContentView(dataDir?: string, opts: SyncOptions = {}
   await fs.mkdir(root, { recursive: true });
   const ctx: Ctx = { root, now: opts.now ?? new Date(), link: opts.linkImpl ?? fs.link, report };
   try {
+    const prev = await readManifest(root);
+    const keepAside = async (file: string) => { await displace(file, ctx.now); report.preservedEdits++; };
+    report.errors.push(...(await syncBackFounderEdits(root, prev.entries, data, keepAside)));
     const plan = await buildPlan(data, opts.keepPublished ?? 5);
     report.errors.push(...plan.errors);
-    const next = await applyPlan(plan, await readManifest(root), ctx);
+    const next = await applyPlan(plan, prev, ctx);
     await fs.writeFile(path.join(root, VIEW_MANIFEST), JSON.stringify(next, null, 2));
   } catch (e) {
     report.errors.push(`对账中断：${errMsg(e)}`);

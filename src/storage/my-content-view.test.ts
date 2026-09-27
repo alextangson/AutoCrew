@@ -46,7 +46,9 @@ async function setState(c: Content, patch: Partial<Content>): Promise<Content> {
   return next;
 }
 const root = (c: Content) => resolveContentProject(c.id, data)!.project_root;
-const folder = (col: string, title: string) => path.join(view, col, `0920 ${title}`);
+const COLS = ["写稿中", "待录制", "剪辑中", "待发布", "已发布", "复盘"];
+const colDir = (col: string) => `${COLS.indexOf(col) + 1} ${col}`;
+const folder = (col: string, title: string) => path.join(view, colDir(col), `0920 ${title}`);
 
 async function withFinal(c: Content, bytes = "video-1"): Promise<{ c: Content; file: string }> {
   const name = "final-g1-0123456789abcdef.mp4";
@@ -79,7 +81,7 @@ describe("我的内容视图", () => {
     expect(await exists(path.join(folder("待录制", "录制一"), "口播稿.md"))).toBe(true);
     expect(await exists(path.join(folder("待发布", "公众号一"), "口播稿.md"))).toBe(true);
     expect(await exists(path.join(view, "使用说明.md"))).toBe(true);
-    expect((await fs.stat(path.join(folder("写稿中", "写稿一"), "口播稿.md"))).mode & 0o777).toBe(0o444);
+    expect((await fs.stat(path.join(folder("写稿中", "写稿一"), "口播稿.md"))).mode & 0o777).toBe(0o644);
     const second = await sync();
     expect([second.created, second.updated, second.removed]).toEqual([0, 0, 0]);
   });
@@ -105,7 +107,7 @@ describe("我的内容视图", () => {
     const linked = path.join(folder("待发布", "跨盘"), "成片.mp4");
     expect(await fs.readlink(linked)).toBe(file);
     const manifest = JSON.parse(await fs.readFile(path.join(view, VIEW_MANIFEST), "utf8"));
-    expect(manifest.entries["待发布/0920 跨盘/成片.mp4"]).toMatchObject({ kind: "symlink", target: file });
+    expect(manifest.entries["4 待发布/0920 跨盘/成片.mp4"]).toMatchObject({ kind: "symlink", target: file });
     const again = await sync({ linkImpl });
     expect([again.created, again.updated, again.removed]).toEqual([0, 0, 0]);
   });
@@ -124,14 +126,14 @@ describe("我的内容视图", () => {
     expect(await exists(path.join(folder("写稿中", "另一条"), "口播稿.md"))).toBe(false);
   });
 
-  it("keeps a founder-edited script aside and writes a fresh copy", async () => {
-    await make("改稿", "drafting");
+  it("keeps a founder-edited script aside and writes a fresh copy (columns without sync-back)", async () => {
+    await make("改稿", "editing");
     await sync();
-    const file = path.join(folder("写稿中", "改稿"), "口播稿.md");
+    const file = path.join(folder("剪辑中", "改稿"), "口播稿.md");
     await fs.chmod(file, 0o644); await fs.writeFile(file, "我自己改的");
     const r = await sync();
     expect(r.preservedEdits).toBe(1);
-    expect(await fs.readFile(path.join(folder("写稿中", "改稿"), "口播稿（我改过的 20260927-1430）.md"), "utf8")).toBe("我自己改的");
+    expect(await fs.readFile(path.join(folder("剪辑中", "改稿"), "口播稿（我改过的 20260927-1430）.md"), "utf8")).toBe("我自己改的");
     expect(await fs.readFile(file, "utf8")).toBe("改稿 的正文");
     const manifest = JSON.parse(await fs.readFile(path.join(view, VIEW_MANIFEST), "utf8"));
     expect(Object.keys(manifest.entries).some((k) => k.includes("我改过的"))).toBe(false);
@@ -140,7 +142,7 @@ describe("我的内容视图", () => {
   it("shows only the newest 5 published items", async () => {
     for (let i = 1; i <= 6; i++) await make(`发布${i}`, "published", { publishedAt: `2026-09-0${i}T00:00:00.000Z` });
     await sync();
-    const names = await fs.readdir(path.join(view, "已发布"));
+    const names = await fs.readdir(path.join(view, colDir("已发布")));
     expect(names.sort()).toEqual(["0920 发布2", "0920 发布3", "0920 发布4", "0920 发布5", "0920 发布6"]);
   });
 
@@ -211,7 +213,7 @@ describe("我的内容视图", () => {
     const y = await make("同名", "drafting", { createdAt: new Date(2026, 8, 20, 13).toISOString() });
     await make(long, "drafting");
     await sync();
-    const names = await fs.readdir(path.join(view, "写稿中"));
+    const names = await fs.readdir(path.join(view, colDir("写稿中")));
     expect(names).toContain("0920 abc");
     expect(names).toContain(`0920 ${"长".repeat(40)}`);
     expect(names).toContain("0920 同名");

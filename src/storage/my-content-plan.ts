@@ -6,9 +6,13 @@ import { listContents } from "./local-store.js";
 import { resolveContentProject, projectRelativeFile, isMissing } from "./content-project.js";
 import { isVideoPlatform } from "./stage-guard.js";
 import { listRetros, readRetro } from "../modules/retro/retro.js";
+import { renderCheckList, unverifiedAdditions } from "../modules/video/handoff/spoken.js";
+import { spokenRel } from "../modules/video/handoff/register-spoken.js";
 
 export const COLUMNS = ["写稿中", "待录制", "剪辑中", "待发布", "已发布", "复盘"] as const;
 export type Column = (typeof COLUMNS)[number];
+/** 视图里的栏目目录名：阿拉伯数字打头，Finder 按流程顺序排（中文数字会按拼音排） */
+export function columnDir(col: Column): string { return `${COLUMNS.indexOf(col) + 1} ${col}`; }
 
 export type Desired =
   | { rel: string; owner: string; kind: "copy"; text: string }
@@ -25,16 +29,16 @@ export interface Plan {
 
 export const GUIDE = `# 我的内容 · 使用说明
 
-这里是 AutoCrew 按稿件进度自动整理出来的文件夹，每分钟对一次账。
+这里是 AutoCrew 按稿件进度自动整理出来的文件夹，每分钟对一次账。栏目文件夹前面的数字（1 写稿中 … 6 复盘）只是让它们按流程顺序排。
 
 - 写稿中：还在写、在审、在改的稿子，只放口播稿。
 - 待录制：视频稿已经定了，等你录口播。
 - 剪辑中：放口播稿和「成片放这里」。剪映直接导出到「成片放这里」就行，它指向这条稿件的项目目录。
-- 待发布：成片、两张封面、口播稿、发布文案都在一个文件夹里，拖去上传即可。缺什么写在「还缺什么.txt」里。
+- 待发布：成片、两张封面、口播稿、发布文案都在一个文件夹里，拖去上传即可。缺什么写在「还缺什么.txt」里。登记过成片的还有「口播稿-实拍版.md」（按成片字幕还原的实际说法）；实拍时新说了定稿里没有的数字或出处，会列在「发布前核对.txt」里，发布前看一眼，不挡发布。
 - 已发布：只留最近 5 条。
 - 复盘：最新一份复盘报告。
 
-口播稿、发布文案是只读副本，AI 改稿后会自动更新。你要是自己改了，原文件会另存成「口播稿（我改过的 时间）.md」，不会被覆盖，也不会同步回 AutoCrew。
+口播稿、发布文案是副本，AI 改稿后会自动更新。写稿中、待录制里的口播稿你可以直接改，下一次对账会把你的改稿存成稿件新版本，AI 以后写稿也会学你的改法。这几种情况不会同步：AI 正在写这篇、文件被清空、稿子已经交剪辑、你改的同时 AI 也改了——这时你的文件另存成「口播稿（我改过的 时间）.md」保留，原因写在「⚠️ 同步出错.txt」里。其它栏目的副本是只读的，改了也不会同步，同样另存保留。
 
 你自己放进来的文件永远不会被删；有你自己文件的文件夹也会原样保留。
 `;
@@ -78,7 +82,8 @@ async function readIfExists(file: string): Promise<string | null> {
   try { return await fs.readFile(file, "utf8"); } catch (e) { if (isMissing(e)) return null; throw e; }
 }
 
-async function scriptText(c: Content, root: string): Promise<string | null> {
+/** 视图里「口播稿.md」的原文：交接后是冻结的定稿，之前是当前稿 */
+export async function scriptText(c: Content, root: string): Promise<string | null> {
   const gen = c.video?.handoff?.generation;
   if (gen) {
     const handoff = await readIfExists(path.join(root, `01-script/handoff/g${String(gen).padStart(4, "0")}/final-script.md`));
@@ -146,6 +151,18 @@ async function deliveryFiles(c: Content, root: string): Promise<ItemFile[]> {
   return files;
 }
 
+/** 实拍版口播（登记时从成片字幕还原）+ 实拍时新说、还没核验的数字和出处 */
+async function spokenFiles(c: Content, root: string, script: string): Promise<ItemFile[]> {
+  const gen = c.video?.final?.generation;
+  if (!gen) return [];
+  const spoken = await readIfExists(path.join(root, spokenRel(gen)));
+  if (spoken === null) return [];
+  const files: ItemFile[] = [{ name: "口播稿-实拍版.md", kind: "copy", text: spoken }];
+  const added = unverifiedAdditions(script, spoken);
+  if (added.length) files.push({ name: "发布前核对.txt", kind: "copy", text: renderCheckList(added) });
+  return files;
+}
+
 /** 一条稿件在视图里的文件；没有稿子返回 null（不出现） */
 async function itemFiles(c: Content, column: Column, dataDir: string): Promise<ItemFile[] | null> {
   const binding = resolveContentProject(c.id, dataDir);
@@ -154,6 +171,7 @@ async function itemFiles(c: Content, column: Column, dataDir: string): Promise<I
   const script = await scriptText(c, root);
   if (script === null) return null;
   const files: ItemFile[] = [{ name: "口播稿.md", kind: "copy", text: script }];
+  if (column === "待发布" || column === "已发布") files.push(...(await spokenFiles(c, root, script)));
   if (column === "剪辑中") {
     const exportDir = path.join(root, "07-delivery/export");
     await fs.mkdir(exportDir, { recursive: true });
@@ -178,12 +196,12 @@ function visible(contents: Content[], keepPublished: number): Map<Column, Conten
 async function addRetro(plan: Plan, dataDir: string): Promise<void> {
   const latest = (await listRetros(dataDir))[0];
   const text = latest ? await readRetro(dataDir, latest.file) : null;
-  if (text !== null) plan.entries.push({ rel: "复盘/最新复盘.md", owner: "_retro", kind: "copy", text });
+  if (text !== null) plan.entries.push({ rel: `${columnDir("复盘")}/最新复盘.md`, owner: "_retro", kind: "copy", text });
 }
 
 export async function buildPlan(dataDir: string, keepPublished: number): Promise<Plan> {
   const plan: Plan = { entries: [], dirs: {}, failed: new Set(), errors: [] };
-  for (const col of COLUMNS) plan.dirs[col] = "_column";
+  for (const col of COLUMNS) plan.dirs[columnDir(col)] = "_column";
   plan.entries.push({ rel: "使用说明.md", owner: "_guide", kind: "copy", text: GUIDE });
   for (const [col, items] of visible(await listContents(dataDir), keepPublished)) {
     const names = folderNames(items);
@@ -191,7 +209,7 @@ export async function buildPlan(dataDir: string, keepPublished: number): Promise
       try {
         const files = await itemFiles(c, col, dataDir);
         if (!files) continue;
-        const dir = `${col}/${names.get(c.id)}`;
+        const dir = `${columnDir(col)}/${names.get(c.id)}`;
         plan.dirs[dir] = c.id;
         for (const f of files) plan.entries.push({ ...f, rel: `${dir}/${f.name}`, owner: c.id } as Desired);
       } catch (e) {
