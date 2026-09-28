@@ -974,20 +974,25 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
   // 快照 id 只进指纹不单独记版本：补审换快照不是改稿
   const contextChanged = (["outline", "technique_ids"] as const).some((key) =>
     key in updates && JSON.stringify(updates[key]) !== JSON.stringify(existing[key]));
-  const draftAfter = { title: updates.title ?? existing.title, body: updates.body ?? existing.body, platform: updates.platform ?? existing.platform };
+  // 「没传」和「显式传 undefined（=清掉）」要分开：用 ?? 会把清掉当成沿用旧值，而后面的展开又把它删了，
+  // 稿件、版本记录、指纹三方就对不上（Codex 评审 P2）。一律按合并后的实际状态算。
+  const merged = <K extends keyof Content>(key: K): Content[K] => (key in updates ? (updates as Partial<Content>)[key] : existing[key]) as Content[K];
+  const draftAfter = { title: merged("title"), body: merged("body"), platform: merged("platform") };
   if (updates.outline !== undefined) {
     updates.outlineVersion = (existing.outlineVersion ?? 0) + 1;
     updates.outlineDraftHash = contentDraftHash(draftAfter);
+  } else if ("outline" in updates) {
+    updates.outlineDraftHash = undefined;
   }
   const ctx = {
-    outline: updates.outline ?? existing.outline, outlineDraftHash: updates.outlineDraftHash ?? existing.outlineDraftHash,
-    technique_ids: updates.technique_ids ?? existing.technique_ids, seriesSnapshotId: updates.seriesSnapshotId ?? existing.seriesSnapshotId,
+    outline: merged("outline"), outlineDraftHash: merged("outlineDraftHash"),
+    technique_ids: merged("technique_ids"), seriesSnapshotId: merged("seriesSnapshotId"),
   };
-  if (ctx.outline || ctx.technique_ids || ctx.seriesSnapshotId) updates.reviewContextHash = reviewContextHash(draftAfter, ctx);
+  updates.reviewContextHash = ctx.outline || ctx.technique_ids || ctx.seriesSnapshotId ? reviewContextHash(draftAfter, ctx) : undefined;
   if (bodyChanged || titleChanged || contextChanged) {
     const nextVersion = (existing.versions?.length || 0) + 1;
     const versionEntry: ContentVersion = {
-      ...(ctx.outline ? { outline: ctx.outline, outlineDraftHash: ctx.outlineDraftHash, outlineVersion: updates.outlineVersion ?? existing.outlineVersion } : {}),
+      ...(ctx.outline ? { outline: ctx.outline, outlineDraftHash: ctx.outlineDraftHash, outlineVersion: merged("outlineVersion") } : {}),
       ...(ctx.technique_ids ? { technique_ids: ctx.technique_ids } : {}),
       ...(ctx.seriesSnapshotId ? { seriesSnapshotId: ctx.seriesSnapshotId } : {}),
       ...(updates.reviewContextHash ? { reviewContextHash: updates.reviewContextHash } : {}),
