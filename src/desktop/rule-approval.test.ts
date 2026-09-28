@@ -224,3 +224,31 @@ describe("stale promotion proposals (Codex round 2 P2)", () => {
     expect(ruleStatus(profile.writingRules.find((x) => x.promotes)!)).toBe("pending");
   });
 });
+
+describe("a completed promotion is an ordinary global rule afterwards (Codex round 3 P2)", () => {
+  it("disable → re-enable and edit → re-approve of the promoted rule both work and never touch the platform original again", async () => {
+    await withServer("session", true, async (url) => {
+      const base = await addWritingRule({ rule: "结尾不上价值", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" }, dir);
+      const original = base.writingRules.find((x) => x.rule === "结尾不上价值")!;
+      await post(url, { ruleId: original.id, revision: original.revision, decision: "active", eventId: "evt-r3-orig1" });
+      const proposed = await addWritingRule({ rule: "结尾不上价值", source: "auto_distilled", confidence: 0.8, scope: "platform:douyin" }, dir);
+      let global = proposed.writingRules.find((x) => x.promotes)!;
+      expect((await post(url, { ruleId: global.id, revision: global.revision, decision: "active", eventId: "evt-r3-promo" })).status).toBe(200);
+      const get = async () => (await loadProfile(dir))!.writingRules.find((x) => x.id === global.id)!;
+      global = await get();
+      expect((await post(url, { ruleId: global.id, revision: global.revision, decision: "disabled", eventId: "evt-r3-disable" })).status).toBe(200);
+      global = await get();
+      expect((await post(url, { ruleId: global.id, revision: global.revision, decision: "active", eventId: "evt-r3-enable" })).status).toBe(200);
+      global = await get();
+      const edited = await updateWritingRule({ id: global.id!, revision: global.revision! }, { rule: "结尾给一个能照做的动作" }, dir);
+      global = edited.writingRules.find((x) => x.id === global.id)!;
+      expect((await post(url, { ruleId: global.id, revision: global.revision, decision: "active", eventId: "evt-r3-reapprov" })).status).toBe(200);
+    });
+    const profile = (await loadProfile(dir))!;
+    expect(profile.writingRules.map((x) => [x.rule, x.scope, ruleStatus(x)])).toEqual([
+      [PENDING, undefined, "pending"],
+      ["结尾不上价值", "platform:wechat_mp", "disabled"],
+      ["结尾给一个能照做的动作", "voice_core", "active"],
+    ]);
+  });
+});

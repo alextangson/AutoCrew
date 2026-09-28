@@ -36,6 +36,8 @@ export interface WritingRule {
   promotes?: string;
   /** 提案针对的原平台规则 revision；原规则之后被改过/重新批过，这份提案就过时了 */
   promotesRevision?: number;
+  /** 已完成的升级：来自哪条平台规则（只作记录，不再参与审批） */
+  promotedFrom?: string;
   rule: string;
   /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly,
    *  "calibrated" = produced by the calibration skills (A/B-verified during onboarding) */

@@ -70,7 +70,7 @@ export type AddRuleOutcome = "created_pending" | "promotion_proposed" | "already
  * - 否则新建 pending。
  */
 export async function addWritingRule(
-  rule: Omit<WritingRule, "createdAt" | "id" | "revision" | "status" | "disabled" | "promotes" | "promotesRevision">,
+  rule: Omit<WritingRule, "createdAt" | "id" | "revision" | "status" | "disabled" | "promotes" | "promotesRevision" | "promotedFrom">,
   dataDir?: string,
   opts: { promote?: boolean } = {},
 ): Promise<CreatorProfile & { lastRuleOutcome?: AddRuleOutcome }> {
@@ -155,6 +155,10 @@ export async function decideWritingRule(input: RuleDecisionEvent, dataDir?: stri
         throw new Error("升级提案已过时（promotion_stale）：原平台规则已被修改或不再生效，请丢弃这份提案，等下次重新提出");
       }
       setStatus(original, "disabled");
+      // 提案完成：之后它就是一条普通的全局规则，停用/再启用/改文本都不再碰原平台规则（Codex 第三轮 P2）
+      r.promotedFrom = r.promotes;
+      delete r.promotes;
+      delete r.promotesRevision;
     }
     setStatus(r, input.decision);
     profile.ruleDecisions = [...(profile.ruleDecisions ?? []), { ...input, at: new Date().toISOString() }].slice(-DECISIONS_KEPT);
