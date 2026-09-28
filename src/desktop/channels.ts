@@ -42,6 +42,10 @@ export const IPC_CHANNELS = [
   "chat:turn_status",
   // 右栏模型切换器的只读数据源：模型名 + 档位字，绝不含 apiKey/baseUrl
   "chat:model_options",
+  // 总编辑接本机 agent（2026-09-28 spec）：切换器就绪状态 / 刷新后重挂进行中轮次与待处理卡 / 审批与权限卡应答
+  "agent:backends",
+  "agent:pending",
+  "agent:answer",
   "settings:get",
   "settings:set",
   // 端点配置的逃生门（设计 §Phase 4）：用系统默认应用打开实际生效的 engine.json

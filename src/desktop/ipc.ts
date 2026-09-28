@@ -74,6 +74,8 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  *   content:asset_remove { content_id, filename }
  *   today:summary       {}
  */
+import { getChiefEditor } from "./chief-editor/service.js";
+import { maybeRunLocalTurn, agentBackendsHandler, agentPendingHandler, agentAnswerHandler } from "./chief-editor/ipc-handlers.js";
 import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
@@ -593,6 +595,9 @@ async function chatTurnHandler(
   if (typeof message !== "string" || message.trim() === "") {
     return { ok: false, error: "chat:turn 需要非空 message" };
   }
+  // 本机 agent 后端（总编辑接本机 agent spec）：对话后端以服务端记录为准，本机后端不走下面的内置引擎链
+  const local = await maybeRunLocalTurn(payload, ctx);
+  if (local) return local;
   const conversationId =
     typeof payload.conversation_id === "string" && payload.conversation_id !== "" ? payload.conversation_id : undefined;
   const dataDir = (payload._dataDir as string) || undefined;
@@ -751,6 +756,11 @@ async function chatTurnStatusHandler(payload: Record<string, unknown>): Promise<
   const turnId = typeof payload.turn_id === "string" ? payload.turn_id : "";
   if (!turnId) return { ok: false, error: "chat:turn_status 需要 turn_id" };
   const view = await getTurnStatus(turnId, (payload._dataDir as string) || undefined);
+  // 本机 agent 轮次在守护进程重启后已被标中断（对话里留了一句）：按 done 让前端重载那段对话
+  if (view.status === "unknown") {
+    const run = getChiefEditor()?.runs.get(turnId);
+    if (run && run.status !== "running" && run.status !== "awaiting_approval") return { ok: true, data: { status: "done", conversationId: run.conversationId } };
+  }
   return { ok: true, data: view };
 }
 
@@ -1230,6 +1240,9 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "article_images:remove_slot": articleImagesRemoveSlotHandler,
     "article_images:upload": articleImagesUploadHandler,
     "chat:turn": chatTurnHandler,
+    "agent:backends": (p) => agentBackendsHandler(p, async (dir) => chatModelOptions(await loadEngineConfig(dir)).length > 0),
+    "agent:pending": agentPendingHandler,
+    "agent:answer": agentAnswerHandler,
     "chat:abort": chatAbortHandler,
     "chat:turn_status": chatTurnStatusHandler,
     "chat:model_options": chatModelOptionsHandler,

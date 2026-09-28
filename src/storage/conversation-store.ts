@@ -26,6 +26,13 @@ export interface ConversationMeta {
    * 有意不做硬隔离：跨稿件聊（「借鉴抖音那篇的开头」）必须仍然可行。
    */
   contentId?: string;
+  /**
+   * 总编辑后端（总编辑接本机 agent spec §地基 12）：对话的后端以这里为准，localStorage 只作新对话默认值。
+   * 缺席 = 内置引擎（旧会话）。additive 扩展。
+   */
+  backend?: string;
+  /** 本机 agent 的 ACP session id：下一轮 session/load 续上它，续不上就新开并在回复里说一句 */
+  acpSessionId?: string;
 }
 
 export interface ConversationMessage {
@@ -80,6 +87,7 @@ export async function createConversation(
   firstUserMessage: string,
   dataDir?: string,
   contentId?: string,
+  extra?: { backend?: string },
 ): Promise<ConversationMeta> {
   const root = await conversationsRoot(dataDir);
   const id = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -92,6 +100,7 @@ export async function createConversation(
     turns: 0,
     // 空串不写：没绑定和绑了个空 id 在读取侧是两回事
     ...(contentId ? { contentId } : {}),
+    ...(extra?.backend ? { backend: extra.backend } : {}),
   };
   const convDir = path.join(root, id);
   await fs.mkdir(convDir, { recursive: true });
@@ -142,6 +151,21 @@ export async function appendTurn(
   });
   const meta: ConversationMeta = { ...existing.meta, turns: existing.meta.turns + 1, updatedAt: now };
   await writeJsonAtomic(path.join(convDir, "messages.json"), messages);
+  await writeJsonAtomic(path.join(convDir, "meta.json"), meta);
+  return meta;
+}
+
+/** 只改 meta 里的后端绑定字段（ACP session id 拿到即落盘，不等本轮结束） */
+export async function updateConversationAgent(
+  id: string,
+  patch: { acpSessionId?: string },
+  dataDir?: string,
+): Promise<ConversationMeta | null> {
+  const existing = await getConversation(id, dataDir);
+  if (!existing) return null;
+  const convDir = safeConvDir(await conversationsRoot(dataDir), id);
+  if (!convDir) return null;
+  const meta: ConversationMeta = { ...existing.meta, ...patch };
   await writeJsonAtomic(path.join(convDir, "meta.json"), meta);
   return meta;
 }

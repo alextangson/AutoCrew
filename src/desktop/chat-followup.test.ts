@@ -19,7 +19,7 @@ import {
   type FollowupReport,
 } from "./chat-followup.js";
 import type { runPersistedChatTurn } from "./chat-persist.js";
-import { createConversation } from "../storage/conversation-store.js";
+import { createConversation, getConversation } from "../storage/conversation-store.js";
 import { saveTopic } from "../storage/local-store.js";
 import { readRecentEvents } from "./event-hub.js";
 import { saveBrief, type AngleCard, type ResearchBrief } from "../modules/research/brief-store.js";
@@ -160,6 +160,17 @@ function stubTurn() {
 }
 
 describe("runResearchFollowup", () => {
+  it("本机 agent 的对话：只追加结果卡，不启动任何模型轮（总编辑接本机 agent §地基 11）", async () => {
+    const conv = await createConversation("派活那段", dir, undefined, { backend: "claude" });
+    const job = await settledJob({ originConversationId: conv.id });
+    const runTurn = stubTurn();
+    expect(await runResearchFollowup(job, { dataDir: dir, runTurn, isBusy: () => false })).toBe("delivered");
+    expect(runTurn).not.toHaveBeenCalled();
+    const saved = await getConversation(conv.id, dir);
+    expect(saved?.messages.at(-1)?.cards?.[0]).toMatchObject({ type: "agent_task" });
+    expect((await getJob(job.topicId, dir))?.followupAt).toBeTruthy();
+  });
+
   it("正常路径：以系统身份跑一轮、盖已回报戳、把落点报给 SSE 出口", async () => {
     const conv = await createConversation("派活那段", dir);
     const job = await settledJob({ originConversationId: conv.id });

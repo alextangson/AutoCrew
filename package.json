@@ -30,6 +30,8 @@
     }
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.81.2",
+    "@agentclientprotocol/sdk": "1.5.1",
     "@earendil-works/pi-ai": "0.80.10",
     "@earendil-works/pi-coding-agent": "0.80.10",
     "@sinclair/typebox": "0.34.48",
