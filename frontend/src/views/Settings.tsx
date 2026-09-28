@@ -2,7 +2,8 @@
  * 设置中心（P2 spec §5.3 重排）——两个标签，一条分界线：
  *
  *   「模型」= 必填的那把钥匙（端点表 / 主端点 / 备用 / 岗位）+ 工作区 + 知识库；
- *   「接入更多」= 全部可选接入，各自写明解锁什么、不配会怎样、现在什么状态。
+ *   「接入更多」= 全部可选接入，各自写明解锁什么、不配会怎样、现在什么状态；
+ *   「数据回流」= 导入 CSV / 公众号拉取 / 自动回流开关（数据页规格 §G.42 从数据页挪来）。
  *
  * 不新增路由（spec §10 第 13 条）：标签是 `Route.tab`，「去设置」的深链能直接落到
  * 「模型」页，浏览器前进后退不会掉进一个没有导航的孤岛。
@@ -16,13 +17,15 @@ import { SettingsStorage } from "./SettingsStorage";
 import { SettingsJianying } from "./SettingsJianying";
 import { SettingsAsr } from "./SettingsAsr";
 import { Integrations } from "./Integrations";
+import { SettingsData } from "./SettingsData";
 import type { Route } from "../routes";
 
-export type SettingsTab = "models" | "integrations";
+export type SettingsTab = "models" | "integrations" | "data";
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "models", label: "模型" },
   { id: "integrations", label: "接入更多" },
+  { id: "data", label: "数据回流" },
 ];
 
 /** 从主导航收进来的几页（看板规格 §27）：路由照旧，入口在这里 */
@@ -75,9 +78,9 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
         ))}
       </nav>
 
-      {tab === "integrations" ? (
-        <Integrations />
-      ) : (
+      {tab === "data" && <SettingsData />}
+      {tab === "integrations" && <Integrations />}
+      {tab === "models" && (
         <>
           {props.nav && <MorePages nav={props.nav} />}
           <SettingsStorage />

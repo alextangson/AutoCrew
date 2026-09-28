@@ -47,7 +47,7 @@ describe("页面导航兼容", () => {
     expect(parseRouteHash(routeHash({ view }))).toEqual({ view });
   });
 
-  it.each(["models", "integrations"] as const)("还原设置标签 %s", (tab) => {
+  it.each(["models", "integrations", "data"] as const)("还原设置标签 %s", (tab) => {
     expect(parseRouteHash(routeHash({ view: "settings", tab }))).toEqual({ view: "settings", tab });
   });
 

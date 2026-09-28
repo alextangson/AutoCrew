@@ -11,7 +11,7 @@ export type Route =
   | { view: "logs" }
   | { view: "campaigns" }
   | { view: "inbox" }
-  | { view: "settings"; tab?: "models" | "integrations" };
+  | { view: "settings"; tab?: "models" | "integrations" | "data" };
 
 const PAGES = new Set(["board", "calibration", "report", "library", "logs", "campaigns", "inbox"]);
 const PANELS = new Set(["cover", "images", "video"]);
@@ -44,7 +44,7 @@ export function parseRouteHash(hash: string): Route {
   }
   if (path === "settings") {
     const tab = query.get("tab");
-    return { view: "settings", ...(tab === "models" || tab === "integrations" ? { tab } : {}) };
+    return { view: "settings", ...(tab === "models" || tab === "integrations" || tab === "data" ? { tab } : {}) };
   }
   if (PAGES.has(path)) return { view: path } as Route;
   // 坏深链回到可操作的看板，不带空 id 请求编辑器。
