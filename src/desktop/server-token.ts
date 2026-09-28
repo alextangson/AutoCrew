@@ -35,3 +35,29 @@ export function resolveServerToken(dataDir?: string): string {
   }
   return token;
 }
+
+const SESSION_SECRET_FILE = "session-secret";
+
+/**
+ * 浏览器会话签名密钥：与 server-token 分开存，任何自动化客户端（MCP 转发器、CLI）都不读它。
+ * 持久化是为了重启后浏览器会话不掉；落盘失败退化为内存值（重启要重新打开启动链接）。
+ */
+export function resolveSessionSecret(dataDir?: string): string {
+  const dir = getHostStateDir(dataDir);
+  const file = path.join(dir, SESSION_SECRET_FILE);
+  try {
+    const existing = readFileSync(file, "utf-8").trim();
+    if (existing) return existing;
+  } catch {
+    /* 首次生成 */
+  }
+  const secret = randomBytes(32).toString("hex");
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, secret + "\n", { mode: 0o600 });
+    chmodSync(file, 0o600);
+  } catch {
+    /* 退化为内存密钥 */
+  }
+  return secret;
+}

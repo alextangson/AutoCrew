@@ -63,6 +63,12 @@ export class LocalSessionAuth {
      * 注进来而不是直接读盘：这个类是纯逻辑、有单测，不该长出文件系统依赖。
      */
     private readonly lookupHost: (token: string) => string | null = () => null,
+    /**
+     * 会话签名密钥（spec 2026-09-28 §3 D）：不能是交给自动化客户端的 server-token——
+     * 否则拿到 server-token 的任何进程都能伪造浏览器会话，冒充创始人在工作台批规则。
+     * 缺省是本进程随机值（重启后旧会话失效）；服务端从 host 状态目录读一份持久的独立密钥注入。
+     */
+    private readonly sessionSecret: string = randomBytes(32).toString("hex"),
   ) {}
 
   originAllowed(origin: string | undefined): boolean {
@@ -73,8 +79,8 @@ export class LocalSessionAuth {
     if (!this.bootTokenAvailable || !constantTimeEqual(token, this.bootToken)) return null;
     this.bootTokenAvailable = false;
     const expires = this.now() + this.ttlMs;
-    // 会话改成由持久 automation token 签名的短期凭证。服务重启时内存会清空，
-    // 但同一浏览器 cookie 仍可验证；显式轮换 server-token 则会立即让旧会话失效。
+    // 会话由持久的独立会话密钥签名（不是交给自动化客户端的 server-token）。服务重启后同一浏览器 cookie
+    // 仍可验证；轮换 server-token 或会话密钥都会让旧会话立即失效。
     const payload = `${randomBytes(32).toString("hex")}.${expires}`;
     const signature = this.sign(payload);
     const sessionId = `${payload}.${signature}`;
@@ -113,6 +119,7 @@ export class LocalSessionAuth {
   }
 
   private sign(payload: string): string {
-    return createHmac("sha256", this.automationToken).update(payload).digest("base64url");
+    // 密钥 = 独立会话密钥 + server-token：伪造需要会话密钥；轮换 server-token 仍让旧会话全部失效
+    return createHmac("sha256", `${this.sessionSecret}\0${this.automationToken}`).update(payload).digest("base64url");
   }
 }

@@ -9,7 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { AddressInfo } from "node:net";
+import { createHmac } from "node:crypto";
 import { createRuleApprovalHandler } from "./rule-approval.js";
+import { LocalSessionAuth, SESSION_COOKIE } from "./server-auth.js";
 import { buildIpcHandlers } from "./ipc.js";
 import { buildChatTools, type ChatCard } from "./chat-router.js";
 import { addWritingRule, loadProfile, rulesForPlatform, ruleStatus, updateProfile, type WritingRule } from "../modules/profile/creator-profile.js";
@@ -100,10 +102,12 @@ describe("a model cannot activate a pending rule through any existing entry", ()
 
 // ─── 工作台路由 ───────────────────────────────────────────────────────────────
 
-async function withServer(auth: "session" | "bearer" | null, originOk: boolean, fn: (url: string) => Promise<void>): Promise<void> {
+async function withServer(auth: "session" | "bearer" | null | LocalSessionAuth, originOk: boolean, fn: (url: string) => Promise<void>): Promise<void> {
   const handler = createRuleApprovalHandler({
-    authorize: () => auth,
-    originAllowed: () => originOk,
+    authorize: (req) => auth instanceof LocalSessionAuth
+      ? auth.authenticate({ authorization: req.headers.authorization, cookie: req.headers.cookie })
+      : auth,
+    originAllowed: (req) => auth instanceof LocalSessionAuth ? auth.originAllowed(req.headers.origin as string | undefined) : originOk,
     resolveDataDir: async () => dir,
     readBody: (req) => new Promise((resolve) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => resolve(b)); }),
   });
@@ -113,6 +117,9 @@ async function withServer(auth: "session" | "bearer" | null, originOk: boolean, 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try { await fn(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/rules/decision`); } finally { server.close(); }
 }
+const ORIGIN = "http://127.0.0.1:4317";
+const postAs = (url: string, body: unknown, headers: Record<string, string>) =>
+  fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Origin: ORIGIN, ...headers }, body: JSON.stringify(body) });
 const post = (url: string, body: unknown) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 describe("founder workbench decision route", () => {
@@ -170,5 +177,27 @@ describe("founder workbench decision route", () => {
     const texts = profile.writingRules.filter((x) => x.rule === "结尾不上价值");
     expect(texts.map((x) => [x.scope, ruleStatus(x)])).toEqual([["platform:wechat_mp", "disabled"], ["voice_core", "active"]]);
     expect(rulesForPlatform(profile, "douyin").filter((x) => x.rule === "结尾不上价值")).toHaveLength(1);
+  });
+});
+
+describe("founder workbench route with the real session auth", () => {
+  it("a holder of the automation server-token cannot forge a workbench session cookie; only a browser-issued session approves", async () => {
+    const SERVER_TOKEN = "automation-server-token-given-to-mcp-forwarder";
+    const auth = new LocalSessionAuth("one-time-boot", new Set([ORIGIN]), undefined, undefined, SERVER_TOKEN, undefined, "separate-session-secret");
+    const r = await pendingRule();
+    const body = { ruleId: r.id, revision: r.revision, decision: "active", eventId: "evt-forged-01" };
+    // 攻击者只有 server-token：按会话格式用它签一个 cookie
+    const payload = `${"a".repeat(64)}.${Date.now() + 3_600_000}`;
+    const forged = `${payload}.${createHmac("sha256", SERVER_TOKEN).update(payload).digest("base64url")}`;
+    await withServer(auth, true, async (url) => {
+      expect((await postAs(url, body, { Cookie: `${SESSION_COOKIE}=${encodeURIComponent(forged)}` })).status).toBe(403);
+      expect((await postAs(url, body, { Authorization: `Bearer ${SERVER_TOKEN}` })).status).toBe(403);
+    });
+    await expectStillPending();
+    const session = auth.issueSession("one-time-boot")!;
+    await withServer(auth, true, async (url) => {
+      expect((await postAs(url, { ...body, eventId: "evt-browser-01" }, { Cookie: `${SESSION_COOKIE}=${encodeURIComponent(session.sessionId)}` })).status).toBe(200);
+    });
+    expect(ruleStatus((await pendingRule()))).toBe("active");
   });
 });

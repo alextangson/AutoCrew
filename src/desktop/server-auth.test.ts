@@ -42,6 +42,8 @@ describe("LocalSessionAuth", () => {
       undefined,
       undefined,
       "persistent-server-token",
+      undefined,
+      "persistent-session-secret",
     );
     const issued = firstProcess.issueSession("first-boot-token")!;
 
@@ -51,14 +53,16 @@ describe("LocalSessionAuth", () => {
       undefined,
       undefined,
       "persistent-server-token",
+      undefined,
+      "persistent-session-secret",
     );
     expect(restartedProcess.authenticate({ cookie: `${SESSION_COOKIE}=${issued.sessionId}` })).toBe("session");
   });
 
   it("invalidates browser sessions when the persistent server token is rotated", () => {
-    const firstProcess = new LocalSessionAuth("boot", new Set(), undefined, undefined, "old-server-token");
+    const firstProcess = new LocalSessionAuth("boot", new Set(), undefined, undefined, "old-server-token", undefined, "secret");
     const issued = firstProcess.issueSession("boot")!;
-    const rotatedProcess = new LocalSessionAuth("next-boot", new Set(), undefined, undefined, "new-server-token");
+    const rotatedProcess = new LocalSessionAuth("next-boot", new Set(), undefined, undefined, "new-server-token", undefined, "secret");
     expect(rotatedProcess.authenticate({ cookie: `${SESSION_COOKIE}=${issued.sessionId}` })).toBeNull();
   });
 });

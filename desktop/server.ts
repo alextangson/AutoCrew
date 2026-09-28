@@ -28,7 +28,7 @@ import { buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js"
 import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
-import { resolveServerToken } from "../src/desktop/server-token.js";
+import { resolveServerToken, resolveSessionSecret } from "../src/desktop/server-token.js";
 import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
@@ -75,6 +75,8 @@ const AUTH = new LocalSessionAuth(
   TOKEN,
   // 命名宿主 token（P3 §4.1）：主体 = 宿主名；撤销 = 删文件，下一次调用立刻 401。
   (token) => lookupHostToken(token),
+  // 会话签名用独立密钥，不用交给自动化客户端的 server-token（否则持 token 者可伪造工作台会话批规则）
+  resolveSessionSecret(),
 );
 const APPROVALS = new ApprovalGate();
 // D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
