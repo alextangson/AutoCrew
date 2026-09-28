@@ -277,6 +277,13 @@ export interface ContentHandoff {
   session?: string;
 }
 
+/** 一条「我发了」：哪个平台、什么时候标的、可选的作品链接 */
+export interface ManualPublication {
+  platform: string;
+  at: string;
+  url?: string;
+}
+
 export interface Content {
   id: string;
   title: string;
@@ -314,6 +321,11 @@ export interface Content {
   publishedAt: string | null;
   /** URL on the target platform after publishing */
   publishUrl: string | null;
+  /**
+   * 创始人自己在平台上发的（看板规格 §22「我发了」）：按平台一条，可撤销。
+   * 与 Codex 写的 publish-plan.json 分开记，看板上标「手动」。
+   */
+  manualPublications?: ManualPublication[];
   /** Platform performance metrics (views, likes, comments, shares, etc.) */
   performanceData: Record<string, number>;
   /** 采纳裁决（三键落库；未裁决 = 不参与采纳率分母） */

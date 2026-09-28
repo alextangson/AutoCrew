@@ -1,4 +1,5 @@
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
+import { createBoardHandler } from "../src/desktop/board-route.js";
 import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
@@ -185,6 +186,7 @@ const uploadRoute = createUploadHandler({
 });
 
 const projectReview = createProjectReviewHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
@@ -366,6 +368,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   }
 
   if (await projectReview(req, res, url)) return;
+  if (await board(req, res, url)) return;
 
   // 统一调用端点:{channel, payload} → handler
   if (p === "/api/invoke" && req.method === "POST") {
