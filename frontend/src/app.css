@@ -237,10 +237,7 @@ h2.serif { font-size: var(--fs-2xl); line-height: 1.3; margin-bottom: var(--s3);
 .chat-md code { font-family: var(--font-mono); font-size: var(--fs-xs); background: var(--surface); padding: 0 var(--s1); }
 .chat-md h1, .chat-md h2, .chat-md h3 { font-size: var(--fs-md); margin: var(--s2) 0 var(--s1); }
 .chat-md blockquote { border-left: 2px solid var(--border); padding-left: var(--s2); color: var(--muted); margin: var(--s1) 0; }
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--s3); margin: var(--s3) 0; }
-.stat-tile { border: 1px solid var(--border); background: var(--card); border-radius: var(--radius-card); padding: var(--s3) var(--s3); text-align: center; }
 .report-card { margin: var(--s3) 0; }
-.work-metrics { white-space: nowrap; }
 
 /* 自动回流状态区(回流 spec §4.4):徽标只报状态,细节走行内一句话;浏览器未连接一条横幅说完 */
 .pull-note { font-size: var(--fs-xs); margin: var(--s1) 0 var(--s2); max-width: 860px; line-height: 1.5; }

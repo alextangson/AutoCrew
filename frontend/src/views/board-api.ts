@@ -1,5 +1,6 @@
-/** 看板的服务端调用：读看板、开始写、我发了 / 撤销。失败一律回人话，不抛。 */
+/** 看板与数据页的服务端调用：读看板、开始写、我发了 / 撤销；读数据页、关联 / 撤销。失败一律回人话，不抛。 */
 import type { BoardData } from "./board-columns";
+import type { DataPageData } from "./data-lib";
 
 type Json = Record<string, unknown>;
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -26,3 +27,10 @@ export const markPublished = (contentId: string, platform: string, url?: string)
   post<Json>("/api/board/mark-published", { content_id: contentId, platform, ...(url ? { url } : {}) });
 export const unmarkPublished = (contentId: string, platform: string) =>
   post<Json>("/api/board/mark-published", { content_id: contentId, platform, undo: true });
+
+/* 数据页（数据页规格 §F / §G）：读数据、手动关联 / 合并 / 拆开、撤销 */
+export const loadDataPage = () => call<DataPageData>("/api/data");
+export interface LinkReply { id: string }
+export const linkWorks = (payload: { op: "link" | "merge" | "split"; works: string[]; content_id?: string; target?: string }) =>
+  post<LinkReply>("/api/data/link", payload);
+export const undoLink = (id: string) => post<{ removed: boolean }>("/api/data/undo", { id });

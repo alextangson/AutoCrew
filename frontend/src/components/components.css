@@ -47,13 +47,9 @@
 .pb-skeleton-line { height: var(--h-sm); }
 .pb-skeleton-block { height: 140px; }
 .cover-title-input { max-width: 220px; }
-.hyp-row { padding: var(--s2) 0; border-bottom: 1px dashed var(--border); }
-.hyp-row-head { border-bottom: none; }
-.hyp-judged { margin-top: var(--s2); }
 .chip-file { display: inline-flex; align-items: center; height: var(--h-sm); padding: 0 var(--s3); font-size: var(--fs-sm); border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); cursor: pointer; }
 .chip-file:hover { border-color: var(--ink); }
 .chip-file.is-busy { cursor: wait; }
 .md-preview-inline { min-height: auto; margin: var(--s2) 0; }
-.report-foot { margin-top: var(--s3); }
 .report .board-bar { align-items: center; }
 .report .board-bar .row-actions { align-items: center; }

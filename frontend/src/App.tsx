@@ -55,15 +55,16 @@ export function App() {
     if (focus) setDockOpen(true);
   }, [focus]);
 
-  // 数据页默认收起总编辑（§28）；看板自己发同一个信号
-  useEffect(() => (route.view === "report" ? requestDockCollapsed() : undefined), [route.view]);
-
   // 剪辑看板默认收起总编辑（不改存下的偏好）；离开看板回到偏好
   useEffect(() => {
     const onPage = (e: Event) => setDockOpen((e as CustomEvent<{ collapsed: boolean }>).detail.collapsed ? false : readDockOpen());
     window.addEventListener(DOCK_PAGE_EVENT, onPage);
     return () => window.removeEventListener(DOCK_PAGE_EVENT, onPage);
   }, []);
+
+  // 数据页默认收起总编辑（§28）；看板自己发同一个信号。必须排在监听之后：
+  // 直接刷新在数据页时，先发信号后挂监听，信号就丢了
+  useEffect(() => (route.view === "report" ? requestDockCollapsed() : undefined), [route.view]);
 
   /** 拖拽收尾：松手/被打断都走这里——释放捕获 + 把当前宽度记下来 */
   const endDrag = (el: HTMLElement, pointerId: number) => {
@@ -149,7 +150,9 @@ export function App() {
             />
           )}
           {route.view === "calibration" && <Calibration />}
-          {route.view === "report" && <ReportView />}
+          {route.view === "report" && (
+            <ReportView openEditor={(id) => setRoute({ view: "editor", id })} openSettings={() => setRoute({ view: "settings", tab: "data" })} />
+          )}
           {route.view === "library" && <Library />}
           {route.view === "logs" && <Logs />}
           {route.view === "campaigns" && <Campaigns onSelect={setCampaignId} />}
