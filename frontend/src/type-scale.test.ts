@@ -1,5 +1,6 @@
 /**
- * 字号尺子守门（组件样张 F-system）：frontend/src 下的 CSS 只能用 6 个字号。
+ * 字号尺子守门（组件样张 F-system）：frontend/src 下的 CSS 只能用 7 个字号。
+ * 20px（--fs-answer）是 2026-09-28 加的：数据页问答卡的结论句要比证据（14）明显大、又不抢页面标题（28），全站只有那里用（数据页规格 §H.53）。
  * 豁免 views/platform-mock.css——它照抄第三方 App 的真实字号，用来模拟平台预览。
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -8,8 +9,8 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = join(__dirname);
 const EXEMPT = new Set(["views/platform-mock.css"]);
-const ALLOWED_PX = new Set([12, 13, 14, 16, 22, 28]);
-const ALLOWED_VARS = new Set(["--fs-xs", "--fs-sm", "--fs-md", "--fs-lg", "--fs-xl", "--fs-2xl"]);
+const ALLOWED_PX = new Set([12, 13, 14, 16, 20, 22, 28]);
+const ALLOWED_VARS = new Set(["--fs-xs", "--fs-sm", "--fs-md", "--fs-lg", "--fs-answer", "--fs-xl", "--fs-2xl"]);
 
 function cssFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -48,7 +49,7 @@ describe("frontend type scale", () => {
     expect(isAllowedSize("14px")).toBe(true);
   });
 
-  it("every CSS file in frontend/src uses only the six sizes", () => {
+  it("every CSS file in frontend/src uses only the seven sizes", () => {
     const bad: string[] = [];
     for (const file of cssFiles(ROOT)) {
       const rel = relative(ROOT, file);
@@ -58,5 +59,11 @@ describe("frontend type scale", () => {
       }
     }
     expect(bad).toEqual([]);
+  });
+
+  it("20px 只给数据页的结论句用", () => {
+    const users = cssFiles(ROOT).map((f) => relative(ROOT, f)).filter((rel) =>
+      rel !== "tokens.css" && !EXEMPT.has(rel) && fontSizeTokens(readFileSync(join(ROOT, rel), "utf8")).some((t) => t === "var(--fs-answer)" || t === "20px"));
+    expect(users.every((rel) => rel === "views/data.css")).toBe(true);
   });
 });
