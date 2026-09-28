@@ -39,7 +39,7 @@ export const editorialSchema = Type.Object({
 }, { additionalProperties: false });
 type Args = Static<typeof editorialSchema>;
 
-export const EDITORIAL_DESCRIPTION = "Read/calibrate the writing profile and persist explicit user feedback. profile reads current style/audience; update_profile saves confirmed fields (confirm_audience only after user approval). inspect{content_id} returns draft_hash and feedback receipts. feedback{content_id,draft_hash,event_id,feedback,scope?,verdict?,claim_token?,user_confirmed:true} keeps exact words; it writes onto the draft, so a claimed draft needs the matching claim_token (same host included) or it returns claim_held, defaults to this draft, and records actual user adoption/rejection. Long-term rules require explicit platform/voice scope; no automatic generalization. Reuse event_id on retries. Feedback does not rewrite the draft: force a new writer pack to apply it.";
+export const EDITORIAL_DESCRIPTION = "Read/calibrate the writing profile and persist explicit user feedback. profile reads current style/audience; update_profile saves confirmed fields (confirm_audience only after user approval). inspect{content_id} returns draft_hash and feedback receipts. feedback{content_id,draft_hash,event_id,feedback,scope?,verdict?,claim_token?,user_confirmed:true} keeps exact words; platform/voice scope only records a PENDING rule that the founder must approve in the workbench (user_confirmed is not approval); it writes onto the draft, so a claimed draft needs the matching claim_token (same host included) or it returns claim_held, defaults to this draft, and records actual user adoption/rejection. Long-term rules require explicit platform/voice scope; no automatic generalization. Reuse event_id on retries. Feedback does not rewrite the draft: force a new writer pack to apply it.";
 
 const queues = new Map<string, Promise<unknown>>();
 async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
@@ -103,7 +103,7 @@ async function capture(a: Args, dir: string, host: string): Promise<Record<strin
     if (!content) return { ok: false, error: "稿件不存在" };
     if (editorialDraftHash(content) !== a.draft_hash) return { ok: false, status: "stale_draft", error: "正文已变化，先inspect并核对用户评价的是哪一版；未把反馈套到新稿" };
     if (a.selection && !content.body.includes(a.selection)) return { ok: false, error: "selection必须逐字引用当前正文中的原选区" };
-    const existingProfile = scope === "draft" ? null : await checkedProfile(dir);
+    if (scope !== "draft") await checkedProfile(dir); // 档案损坏时在写任何东西之前拒绝
     // 写门（P6 §3.8）：核对完才过门，免得一次作废的反馈也把稿认领走；工作台 local-user 越门记账
     const gate = await gateClaimWrite(content.id, { host, employee: "writer", token: a.claim_token?.trim() || undefined }, dir);
     if ("denied" in gate) return gate.denied;
@@ -116,14 +116,20 @@ async function capture(a: Args, dir: string, host: string): Promise<Record<strin
       ...(a.verdict ? { adoption: { verdict: a.verdict, recordedAt: receipt.at, draftHash: a.draft_hash } } : {}),
     }), dir);
     if (!applied.ok) return { ok: false, status: "stale_draft", error: "保存反馈前正文已变化，反馈未套到新稿；先inspect核对版本", ...gate.grant };
+    let ruleOutcome: string | undefined;
     if (scope !== "draft") {
       const ruleScope = scope === "voice" ? "voice_core" : `platform:${a.platform}` as const;
-      await addWritingRule({ rule: a.feedback!, scope: ruleScope, source: "user_explicit", confidence: 1,
-        evidence: [`feedback:${content.id}:${a.draft_hash}:${a.feedback}`] }, dir);
+      const written = await addWritingRule({ rule: a.feedback!, scope: ruleScope, source: "user_explicit", confidence: 1,
+        evidence: [`稿件 ${content.id}（draft_hash ${a.draft_hash.slice(0, 12)}）用户反馈：${a.feedback}`] }, dir, { promote: false });
+      ruleOutcome = written.lastRuleOutcome;
     }
     receipt.state = "applied";
     await writeReceipt(file, receipt);
-    return withTokenInNextAction({ ok: true, status: "recorded", receipt, next_action: await revisionNextAction(applied.content, dir), ...gate.grant });
+    return withTokenInNextAction({
+      ok: true, status: "recorded", receipt, next_action: await revisionNextAction(applied.content, dir), ...gate.grant,
+      ...(scope !== "draft" ? { long_term_rule: { status: ruleOutcome === "blocked_by_tombstone" ? "blocked_by_tombstone" : "pending",
+        note: "长期规则只记为待批，user_confirmed 不算批准；请提醒创始人去工作台「校准」页批准，批准前不进写作要求" } } : {}),
+    });
   });
 }
 export async function executeEditorial(params: Record<string, unknown>): Promise<Record<string, unknown>> {

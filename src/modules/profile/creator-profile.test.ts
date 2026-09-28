@@ -13,8 +13,10 @@ import {
   addVoiceSamples,
   detectMissingInfo,
   rulesForPlatform,
+  ruleStatus,
   type CreatorProfile,
 } from "../profile/creator-profile.js";
+import { addApprovedRuleForTest } from "./rule-fixtures.js";
 
 let testDir: string;
 
@@ -119,64 +121,49 @@ describe("addWritingRule", () => {
   });
 });
 
-describe("rule scope routing (PRD-v4 §4.3)", () => {
-  it("promotes a rule to voice_core when the same text recurs from another platform", async () => {
-    await addWritingRule(
-      { rule: "开头不用问候语", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" },
-      testDir,
-    );
+describe("rule scope routing (PRD-v4 §4.3 + spec 2026-09-28 §3 D)", () => {
+  it("same text from another platform becomes a pending promotion proposal; the platform rule keeps working", async () => {
+    await addApprovedRuleForTest({ rule: "开头不用问候语", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" }, testDir);
     const profile = await addWritingRule(
       { rule: "开头不用问候语", source: "auto_distilled", confidence: 0.8, scope: "platform:douyin" },
       testDir,
     );
-    expect(profile.writingRules).toHaveLength(1);
-    expect(profile.writingRules[0].scope).toBe("voice_core");
+    expect(profile.writingRules).toHaveLength(2);
+    const [original, proposal] = profile.writingRules;
+    expect(original.scope).toBe("platform:wechat_mp");
+    expect(ruleStatus(original)).toBe("active");
+    expect(proposal).toMatchObject({ scope: "voice_core", status: "pending", promotes: original.id });
+    expect(rulesForPlatform(profile, "douyin").map((r) => r.rule)).toEqual([]);
   });
 
-  it("does not promote when the same platform corrects twice", async () => {
-    await addWritingRule(
-      { rule: "结尾加一句反问", source: "auto_distilled", confidence: 0.7, scope: "platform:wechat_mp" },
-      testDir,
-    );
-    const profile = await addWritingRule(
-      { rule: "结尾加一句反问", source: "auto_distilled", confidence: 0.7, scope: "platform:wechat_mp" },
-      testDir,
-    );
+  it("does not propose anything when the same platform corrects twice", async () => {
+    await addWritingRule({ rule: "结尾加一句反问", source: "auto_distilled", confidence: 0.7, scope: "platform:wechat_mp" }, testDir);
+    const profile = await addWritingRule({ rule: "结尾加一句反问", source: "auto_distilled", confidence: 0.7, scope: "platform:wechat_mp" }, testDir);
     expect(profile.writingRules).toHaveLength(1);
     expect(profile.writingRules[0].scope).toBe("platform:wechat_mp");
   });
 
   it("keeps voice_core scope when a platform-scoped duplicate arrives", async () => {
     await addWritingRule({ rule: "多用短句", source: "user_explicit", confidence: 1 }, testDir);
-    const profile = await addWritingRule(
-      { rule: "多用短句", source: "auto_distilled", confidence: 0.6, scope: "platform:douyin" },
-      testDir,
-    );
+    const profile = await addWritingRule({ rule: "多用短句", source: "auto_distilled", confidence: 0.6, scope: "platform:douyin" }, testDir);
     expect(profile.writingRules).toHaveLength(1);
-    // undefined scope = voice_core：已是内核，不降级
     expect(profile.writingRules[0].scope ?? "voice_core").toBe("voice_core");
   });
 
-  it("rulesForPlatform injects voice_core + own platform, isolates other platforms", async () => {
-    await addWritingRule({ rule: "内核规则", source: "user_explicit", confidence: 1, scope: "voice_core" }, testDir);
-    await addWritingRule({ rule: "历史无scope规则", source: "user_explicit", confidence: 1 }, testDir);
-    await addWritingRule(
-      { rule: "公众号规则", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" },
-      testDir,
-    );
-    await addWritingRule(
-      { rule: "抖音规则", source: "auto_distilled", confidence: 0.8, scope: "platform:douyin" },
-      testDir,
-    );
+  it("rulesForPlatform injects active voice_core + own platform, isolates other platforms", async () => {
+    await addApprovedRuleForTest({ rule: "内核规则", source: "user_explicit", confidence: 1, scope: "voice_core" }, testDir);
+    await addApprovedRuleForTest({ rule: "历史无scope规则", source: "user_explicit", confidence: 1 }, testDir);
+    await addApprovedRuleForTest({ rule: "公众号规则", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" }, testDir);
+    await addApprovedRuleForTest({ rule: "抖音规则", source: "auto_distilled", confidence: 0.8, scope: "platform:douyin" }, testDir);
+    await addWritingRule({ rule: "待批规则", source: "auto_distilled", confidence: 0.8 }, testDir);
     const profile = (await loadProfile(testDir))!;
-
-    const wechatRules = rulesForPlatform(profile, "wechat_mp").map((r) => r.rule);
-    expect(wechatRules).toEqual(["内核规则", "历史无scope规则", "公众号规则"]);
+    expect(rulesForPlatform(profile, "wechat_mp").map((r) => r.rule)).toEqual(["内核规则", "历史无scope规则", "公众号规则"]);
   });
 
   it("rulesForPlatform excludes disabled rules", async () => {
-    await addWritingRule({ rule: "被停用的规则", source: "user_explicit", confidence: 1 }, testDir);
-    await updateWritingRule(0, { disabled: true }, testDir);
+    const added = await addApprovedRuleForTest({ rule: "被停用的规则", source: "user_explicit", confidence: 1 }, testDir);
+    const r = added.writingRules[0];
+    await updateWritingRule({ id: r.id!, revision: r.revision! }, { disabled: true }, testDir);
     const profile = (await loadProfile(testDir))!;
     expect(rulesForPlatform(profile, "wechat_mp")).toHaveLength(0);
   });
@@ -244,22 +231,29 @@ describe("detectMissingInfo", () => {
 });
 
 describe("updateWritingRule", () => {
-  it("edits rule text and toggles disabled", async () => {
-    await addWritingRule({ rule: "原规则", source: "user_explicit", confidence: 1 }, testDir);
-    let profile = await updateWritingRule(0, { rule: "新规则" }, testDir);
-    expect(profile.writingRules[0].rule).toBe("新规则");
+  it("edits by stable id + revision; text edits and re-enabling go back to pending, never active", async () => {
+    let profile = await addApprovedRuleForTest({ rule: "原规则", source: "user_explicit", confidence: 1 }, testDir);
+    let r = profile.writingRules[0];
+    profile = await updateWritingRule({ id: r.id!, revision: r.revision! }, { rule: "新规则" }, testDir);
+    r = profile.writingRules[0];
+    expect(r.rule).toBe("新规则");
+    expect(ruleStatus(r)).toBe("pending");
 
-    profile = await updateWritingRule(0, { disabled: true }, testDir);
-    expect(profile.writingRules[0].disabled).toBe(true);
+    profile = await updateWritingRule({ id: r.id!, revision: r.revision! }, { disabled: true }, testDir);
+    r = profile.writingRules[0];
+    expect(ruleStatus(r)).toBe("disabled");
+    expect(r.disabled).toBe(true);
 
-    profile = await updateWritingRule(0, { disabled: false }, testDir);
-    expect(profile.writingRules[0].disabled).toBe(false);
+    profile = await updateWritingRule({ id: r.id!, revision: r.revision! }, { disabled: false }, testDir);
+    expect(ruleStatus(profile.writingRules[0])).toBe("pending");
   });
 
-  it("throws on bad index and empty rule text", async () => {
-    await addWritingRule({ rule: "x", source: "user_explicit", confidence: 1 }, testDir);
-    await expect(updateWritingRule(99, { disabled: true }, testDir)).rejects.toThrow("规则不存在");
-    await expect(updateWritingRule(0, { rule: "  " }, testDir)).rejects.toThrow("不能为空");
+  it("throws on unknown id, stale revision and empty rule text", async () => {
+    const profile = await addWritingRule({ rule: "x", source: "user_explicit", confidence: 1 }, testDir);
+    const r = profile.writingRules[0];
+    await expect(updateWritingRule({ id: "nope", revision: 1 }, { disabled: true }, testDir)).rejects.toThrow("规则不存在");
+    await expect(updateWritingRule({ id: r.id!, revision: r.revision! + 5 }, { disabled: true }, testDir)).rejects.toThrow("rule_revision_conflict");
+    await expect(updateWritingRule({ id: r.id!, revision: r.revision! }, { rule: "  " }, testDir)).rejects.toThrow("不能为空");
   });
 });
 

@@ -178,10 +178,11 @@ describe("buildChatTools", () => {
     await tool!.execute({ rule: "口语化，不用书面腔" });
 
     expect(addRule).toHaveBeenCalledWith(
-      { rule: "口语化，不用书面腔", source: "user_explicit", confidence: 1 },
+      expect.objectContaining({ rule: "口语化，不用书面腔", source: "user_explicit", confidence: 1 }),
       testDir,
     );
     expect(sink[0].type).toBe("style");
+    expect(JSON.stringify(sink[0].data)).toContain("待批");
   });
 
   it("revise_draft updates the current content in place and returns the saved version", async () => {

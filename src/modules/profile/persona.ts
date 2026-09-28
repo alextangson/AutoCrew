@@ -169,7 +169,7 @@ export async function generateAudiencePersonaProposal(
     throw new Error("先在校准中心填写定位(行业/赛道),画像需要以定位为锚");
   }
 
-  const rules = (profile ? rulesForPlatform(profile, "") : [])
+  const rules = (profile ? rulesForPlatform(profile, null) : [])
     .slice(0, 8)
     .map((r) => `- ${r.rule}`)
     .join("\n");

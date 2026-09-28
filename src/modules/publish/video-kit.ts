@@ -140,7 +140,7 @@ export async function prepareVideoKit(
 
   const [config, profile] = await Promise.all([loadEngineConfig(dataDir), loadProfile(dataDir)]);
   const rules = profile
-    ? rulesForPlatform(profile, platform as never).filter((r) => !r.disabled).slice(0, 6).map((r) => `- ${r.rule}`).join("\n")
+    ? rulesForPlatform(profile, platform).slice(0, 6).map((r) => `- ${r.rule}`).join("\n")
     : "";
   const audience = personaSummary(profile?.audiencePersona);
 

@@ -67,7 +67,7 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "settings:search_set": ["provider", "api_key"],
   "settings:publish_get": [],
   "settings:publish_set": [],
-  "style:update_rule": [],
+  "style:update_rule": ["rule_id", "revision"],
   "persona:generate": [],
   "persona:save": ["persona"],
   "cover:create": ["content_id"],

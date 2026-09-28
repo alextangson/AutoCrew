@@ -1033,7 +1033,7 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
     },
     {
       name: "add_style_rule",
-      description: "把用户的风格偏好记录为永久写作规则（如：口语化、别用排比、开头直接抛结论）。",
+      description: "把用户的风格偏好记成一条待批写作规则（如：口语化、别用排比、开头直接抛结论）。规则不会立即生效，要创始人在工作台「校准」页批准；回复里如实告诉用户去工作台批。",
       parameters: {
         type: "object",
         properties: { rule: { type: "string", description: "一句话规则" } },
@@ -1043,12 +1043,12 @@ export function buildChatTools(sink: ChatCard[], dataDir?: string, deps?: ChatTo
         const text = String(args.rule ?? "").trim();
         if (!text) return fail("规则内容不能为空");
         try {
-          await d.addRule({ rule: text, source: "user_explicit", confidence: 1 }, dataDir);
+          await d.addRule({ rule: text, source: "user_explicit", confidence: 1, evidence: [`对话记录：${text}`] }, dataDir);
         } catch (err) {
           return fail(err instanceof Error ? err.message : err);
         }
-        sink.push({ type: "style", data: { rule: text, message: "已记住该偏好" } });
-        return JSON.stringify({ ok: true, rule: text });
+        sink.push({ type: "style", data: { rule: text, message: "已记为待批规则，去工作台「校准」页批准后生效" } });
+        return JSON.stringify({ ok: true, rule: text, status: "pending", note: "规则待批：只有创始人在工作台批准后才生效，对话里不能批准" });
       },
     },
     {

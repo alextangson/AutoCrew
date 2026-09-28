@@ -1,4 +1,5 @@
 import { createRuleApprovalHandler } from "../src/desktop/rule-approval.js";
+import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock.js";
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
 import { contentFile } from "../src/storage/content-project.js";
@@ -578,6 +579,12 @@ try {
 }
 
 server.listen(PORT, HOST, () => {
+  // 单写者检查（spec 2026-09-28 §3 D）：同一资料目录两个进程同时写会互相覆盖档案与审批
+  void activeDataDir().then(async (dir) => {
+    const lock = await acquireWriterLock(dir);
+    if (!lock.ok) console.error(`\n  [警告] 资料目录 ${dir} 已被另一个 AutoCrew 进程（pid ${lock.holder.pid}，${lock.holder.startedAt} 启动）占用写入。两个进程同时写会互相覆盖，请先停掉另一个。\n`);
+    else process.once("exit", () => releaseWriterLock(dir));
+  }).catch((err) => console.error("[writer-lock] 单写者检查失败:", err instanceof Error ? err.message : err));
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
   console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${BROWSER_BOOT_TOKEN}\x1b[0m\n`);
   console.log("  (链接中的启动 token 仅本进程首次打开有效；认证后会从地址栏移除)\n");

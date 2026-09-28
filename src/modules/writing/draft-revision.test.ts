@@ -5,7 +5,7 @@ import path from "node:path";
 import { reviseDraft } from "./draft-revision.js";
 import { getContent, saveContent } from "../../storage/local-store.js";
 import { listDiffs } from "../learnings/diff-tracker.js";
-import { addWritingRule } from "../profile/creator-profile.js";
+import { addApprovedRuleForTest } from "../profile/rule-fixtures.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
 
@@ -144,8 +144,8 @@ describe("reviseDraft", () => {
       { title: "标题", body: "原正文", platform: "wechat_mp", status: "draft_ready", tags: [] },
       testDir,
     );
-    await addWritingRule({ rule: "公众号正文用空行分段", source: "user_explicit", confidence: 1, scope: "platform:wechat_mp" }, testDir);
-    await addWritingRule({ rule: "小红书标题带 emoji", source: "user_explicit", confidence: 1, scope: "platform:xiaohongshu" }, testDir);
+    await addApprovedRuleForTest({ rule: "公众号正文用空行分段", source: "user_explicit", confidence: 1, scope: "platform:wechat_mp" }, testDir);
+    await addApprovedRuleForTest({ rule: "小红书标题带 emoji", source: "user_explicit", confidence: 1, scope: "platform:xiaohongshu" }, testDir);
 
     let systemPrompt = "";
     const runLoopImpl = async (_config: EngineConfig, options: LoopOptions): Promise<LoopResult> => {
