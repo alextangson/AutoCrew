@@ -5,6 +5,7 @@ import {
 } from "../modules/writing/series-memory.js";
 import { reviewContextHash, updateContentIfDraftMatches } from "../storage/local-store.js";
 import { withTokenInNextAction } from "./claim-grant.js";
+import { gapRefusal } from "./writer-submit.js";
 /** 宿主审稿台：只发材料和收结构化结论，永远不运行后台模型。 */
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
@@ -218,6 +219,7 @@ async function submitReview(params: Record<string, unknown>, pack: ReadyPack, re
   const ticket = rec?.hostReview;
   if (!Number.isInteger(attempt) || !ticket || params.review_pack_id !== ticket.reviewPackId) return fail("审稿包编号或attempt不匹配；使用pack返回的参数", "stale_review");
   if (latestAttempt(pack)?.[0] !== attempt) return stale();
+  if (pack.gapRecord) return gapRefusal(contentId, pack);
   const current = await getContent(contentId, dataDir);
   if (!current || current.pack?.packId !== pack.packId || hashDraft(current.title, current.body, current.platform) !== ticket.draftHash) return stale();
   if (!Array.isArray(params.issues)) return fail("submit必须提供issues数组，无问题时显式传[]");

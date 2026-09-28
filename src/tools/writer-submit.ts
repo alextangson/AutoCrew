@@ -349,6 +349,8 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
   const loaded = await loadForSubmit(args, dataDir, deps);
   if ("ok" in loaded) return loaded;
   if ("replay" in loaded) return loaded.replay as SubmitResult;
+  // 交过缺口记录的包不再收稿：补料后必须 force 重领，拿新包新快照（Codex 第三轮 P2）
+  if (loaded.pack.gapRecord) return gapRefusal(args.contentId, loaded.pack);
   const { pack } = loaded;
   let content = loaded.content;
 
@@ -492,4 +494,12 @@ async function startEngineReview(args: SubmitArgs, pack: ReadyPack, job: ReviewJ
   await record(args, pack, result, dataDir, job.pending);
   startReview(job, dataDir, deps);
   return result;
+}
+
+/** 缺口记录挡住旧包：回 pack_request_changed，指向 force 重领 */
+export function gapRefusal(contentId: string, pack: { packId: string; gapRecord?: unknown }): SubmitFailure {
+  return fail("这个写作包已交回缺口记录（材料不足），不再收稿。补了材料或改了要求后带 force:true 重新 pack，按新包写。", {
+    code: "pack_request_changed", content_id: contentId, pack_id: pack.packId, gap: pack.gapRecord,
+    next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: contentId, force: true } },
+  });
 }

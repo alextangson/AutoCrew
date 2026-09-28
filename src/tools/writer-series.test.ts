@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeWriter } from "./writer.js";
+import { executeReviewDesk } from "./host-review.js";
 import { PACK_JSON, type WritingPackFile } from "./writer-pack.js";
 import { packPreparation } from "./writer-prepare.js";
 import { BRIEF_SCHEMA_VERSION, saveBrief, type AngleCardV3, type ResearchBrief } from "../modules/research/brief-store.js";
@@ -222,5 +223,33 @@ describe("gap record (spec §3 A)", () => {
     const ok = await submit(resumed, 1);
     expect(ok.status).toBe("accepted_unreviewed");
     expect((await getContent(p.content_id, dir))?.gapRecord).toBeUndefined();
+  });
+});
+
+describe("a pack with a gap record takes no more drafts (Codex round 3 P2)", () => {
+  const gap = { available: "一份独立评测", missing: "一手返工工时", questions: ["上周返工了几小时？"] };
+
+  it("submit on the old pack after needs_material is refused with pack_request_changed; the gap stays", async () => {
+    const p = await pack(await freshTopic());
+    await run({ action: "gap", content_id: p.content_id, pack_id: p.pack_id, claim_token: p.claim_token, gap });
+    const res = await submit(p, 1);
+    expect(res).toMatchObject({ ok: false, code: "pack_request_changed", pack_id: p.pack_id });
+    const c = (await getContent(p.content_id, dir))!;
+    expect(c.status).toBe("drafting");
+    expect(c.gapRecord).toMatchObject(gap);
+  });
+
+  it("an in-flight host review cannot land after a gap was recorded", async () => {
+    const p = await pack(await freshTopic());
+    const submitted = await submit(p, 1, { review: "host" });
+    expect(submitted.status).toBe("awaiting_host_review");
+    await run({ action: "gap", content_id: p.content_id, pack_id: p.pack_id, claim_token: p.claim_token, gap });
+    const snap = submitted.review_pack.series_snapshot;
+    const verdict = await executeReviewDesk({
+      _dataDir: dir, action: "submit", content_id: p.content_id, review_pack_id: submitted.review_pack_id, attempt: 1, issues: [], claim_token: p.claim_token,
+      series_review: { snapshot_id: snap.id, checked: [], insufficient: [], findings: [] },
+    });
+    expect(verdict).toMatchObject({ ok: false, code: "pack_request_changed" });
+    expect((await getContent(p.content_id, dir))?.status).toBe("drafting");
   });
 });
