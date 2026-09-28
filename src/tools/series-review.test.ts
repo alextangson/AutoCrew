@@ -5,7 +5,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as seriesMemory from "../modules/writing/series-memory.js";
 import { createEvidenceLedger } from "../modules/research/evidence-ledger.js";
 import { saveContent, getContent, updateContent, transitionStatus } from "../storage/local-store.js";
 import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
@@ -16,7 +17,7 @@ import { techniqueCatalog } from "../modules/writing/technique-store.js";
 
 let dir: string;
 beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-series-review-")); });
-afterEach(async () => { await fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }); });
+afterEach(async () => { vi.restoreAllMocks(); await fs.rm(dir, { recursive: true, force: true, maxRetries: 3 }); });
 
 const body = "清晨我们一起给菜苗浇水。邻居递过水壶，告诉我这一排土还湿着。以前我们只在电梯里点头，现在开始商量谁来照顾菜园。";
 const OUTLINE: Outline = {
@@ -128,5 +129,22 @@ describe("series review on the host review desk", () => {
     const review = (saved as { review_pack: Record<string, any> }).review_pack;
     expect(review.series_snapshot).toBeUndefined();
     expect(await desk({ action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [] })).toMatchObject({ ok: true, status: "accepted" });
+  });
+});
+
+describe("series review lands only on the reviewed draft version (Codex P1)", () => {
+  it("a draft edited after the entry check keeps no series verdict and no accepted status", async () => {
+    const { content, review } = await seedNewContractPack();
+    const real = seriesMemory.loadSeriesSnapshot;
+    // 审稿台已过入口的 draft_hash 核对、正在核对快照时，编辑器改了正文
+    vi.spyOn(seriesMemory, "loadSeriesSnapshot").mockImplementationOnce(async (...args) => {
+      await updateContent(content.id, { body: "审稿期间编辑器改过的正文。" }, dir);
+      return real(...args);
+    });
+    const res = await desk({ action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [], series_review: coverAll(review.series_snapshot) });
+    expect(res).toMatchObject({ ok: false, status: "stale_review" });
+    const after = (await getContent(content.id, dir))!;
+    expect(after.seriesReview).toBeUndefined();
+    expect(after.status).toBe("drafting");
   });
 });

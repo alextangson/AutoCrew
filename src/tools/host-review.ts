@@ -3,7 +3,7 @@ import {
   SERIES_REVIEW_RULES, digest as seriesDigest, loadSeriesSnapshot, renderSnapshot, seriesReviewSchema, snapshotAdditions, validateSeriesReview,
   type SeriesReview, type SeriesSnapshot,
 } from "../modules/writing/series-memory.js";
-import { updateContent } from "../storage/local-store.js";
+import { reviewContextHash, updateContentIfDraftMatches } from "../storage/local-store.js";
 import { withTokenInNextAction } from "./claim-grant.js";
 /** 宿主审稿台：只发材料和收结构化结论，永远不运行后台模型。 */
 import { createHash } from "node:crypto";
@@ -242,9 +242,13 @@ async function submitReview(params: Record<string, unknown>, pack: ReadyPack, re
   Object.assign(grant, gate.grant);
   if (ticket.seriesSnapshot) {
     // 系列比对结果随这一版落盘，绑定审稿上下文指纹；状态本身不证明去重通过（spec §3 B「状态不能当证明」）
+    // 一次原子写、且只在稿件仍是被审的那一版时落：审稿期间正文被改就不留任何比对结论（Codex 评审 P1）
     const review = params.series_review as SeriesReview;
-    const updated = await updateContent(contentId, { seriesSnapshotId: review.snapshot_id }, dataDir);
-    await updateContent(contentId, { seriesReview: { ...review, reviewContextHash: updated?.reviewContextHash ?? "", recordedAt: new Date().toISOString() } }, dataDir);
+    const bound = await updateContentIfDraftMatches(contentId, current, (latest) => ({
+      seriesSnapshotId: review.snapshot_id,
+      seriesReview: { ...review, reviewContextHash: reviewContextHash(latest, { ...latest, seriesSnapshotId: review.snapshot_id }), recordedAt: new Date().toISOString() },
+    }), dataDir);
+    if (!bound.ok) return stale();
   }
   const source = sourceOf(reviewerHost, rec.pending.host, ticket.draftHash);
   // 先钉住这次提交，再改变内容状态。重启后同一载荷可恢复，不允许另一份结论抢写。
