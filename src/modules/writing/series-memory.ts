@@ -173,22 +173,12 @@ export async function loadSeriesSnapshot(platform: string, exclude: SeriesExclud
 }
 
 /**
- * 补审用的快照：冻结快照 + 新进入范围（或正文变了）的稿，按同一口径重排（时间倒序、再按 id）、
- * 同选题只留最新一版、截到最多 10 条——发出去的补审任务永远交得上（Codex 评审 P1）。
+ * 补审用的快照：成员以现读的快照为准（它已按口径排序、同选题去重、截到 10 条），
+ * 冻结快照里没变的成员原样沿用。已离开范围的稿不再留着，新进来的一定在里面——
+ * 发出去的补审任务永远交得上，也不会因为一条离场的旧稿永远判过时（Codex 评审 P1 / 第二轮 P2）。
  */
-export function mergeSnapshot(frozen: SeriesSnapshot, additions: SeriesItem[]): SeriesSnapshot {
-  const replaced = new Set(additions.map((i) => i.content_id));
-  const all = [...frozen.items.filter((i) => !replaced.has(i.content_id)), ...additions]
-    .sort((a, b) => b.enteredAt.localeCompare(a.enteredAt) || a.content_id.localeCompare(b.content_id));
-  const seen = new Set<string>();
-  const items: SeriesItem[] = [];
-  for (const item of all) {
-    const key = item.topic_key ?? `content:${item.content_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push(item);
-    if (items.length === SERIES_MAX_ITEMS) break;
-  }
+export function mergeSnapshot(frozen: SeriesSnapshot, live: SeriesSnapshot): SeriesSnapshot {
+  const items = live.items.map((i) => frozen.items.find((o) => o.content_id === i.content_id && o.draft_hash === i.draft_hash) ?? i);
   return { id: digest({ platform: frozen.platform, items }), platform: frozen.platform, builtAt: new Date().toISOString(), items };
 }
 

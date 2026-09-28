@@ -166,7 +166,7 @@ async function checkSeriesReview(
   const live = await loadSeriesSnapshot(pack.context.platform, { contentId, topicId: pack.context.req.topicId }, dataDir);
   const additions = snapshotAdditions(frozen, live);
   if (!additions.length) return null;
-  ticket.seriesSnapshot = mergeSnapshot(frozen, additions);
+  ticket.seriesSnapshot = mergeSnapshot(frozen, live);
   // 旧钉子（pending、确认未登记）绑的是旧快照上的比对，作废；已完成的提交（applied）在入口就原样重放了，到不了这里
   if (ticket.submission?.state === "pending") ticket.submission = undefined;
   await writePack(contentId, pack, dataDir);

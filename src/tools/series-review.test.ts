@@ -224,3 +224,23 @@ describe("recovery only skips the snapshot check after the draft really entered 
     expect(done).toMatchObject({ ok: true, status: "accepted" });
   });
 });
+
+describe("re-review membership follows the live range (Codex round 2 P2)", () => {
+  it("a newer draft leaving a full snapshot pulls in the old #11, and the re-review converges instead of staying stale", async () => {
+    const neighbours = [];
+    for (let i = 0; i < 11; i++) neighbours.push(await publishedNeighbour(`邻居${i}`));
+    const { content, review } = await seedNewContractPack();
+    expect(review.series_snapshot.items.map((i: { content_id: string }) => i.content_id)).not.toContain(neighbours[0].id);
+    // 最新那条退回修改，离开范围；第 11 条旧稿因此回到前 10
+    await transitionStatus(neighbours[10].id, "revision", { force: true }, dir);
+    const base = { action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [] };
+    const stale = await desk({ ...base, series_review: coverAll(review.series_snapshot) }) as { status: string; additions: string[]; series_snapshot: { id: string; items: Array<{ content_id: string; insufficient: boolean }> } };
+    expect(stale.status).toBe("series_snapshot_stale");
+    expect(stale.additions).toEqual([neighbours[0].id]);
+    const ids = stale.series_snapshot.items.map((i) => i.content_id);
+    expect(ids).toContain(neighbours[0].id);
+    expect(ids).not.toContain(neighbours[10].id);
+    expect(ids).toHaveLength(10);
+    expect(await desk({ ...base, series_review: coverAll(stale.series_snapshot) })).toMatchObject({ ok: true, status: "accepted" });
+  });
+});
