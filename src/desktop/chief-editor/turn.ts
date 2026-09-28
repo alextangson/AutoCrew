@@ -49,7 +49,7 @@ function acquire(svc: ChiefEditor, input: LocalTurnInput): { ok: true; turn: Act
   if (!reg.ok) return reg;
   const turn: ActiveTurn = {
     turnId: input.turnId, clientId: input.clientId, conversationId: input.conversationId ?? "",
-    dataDir: input.dataDir, backend: input.backend, status: "running", cards: [], writes: [], aborted: false,
+    dataDir: input.dataDir, backend: input.backend, status: "running", cards: [], writes: [], inFlight: new Map(), aborted: false,
   };
   svc.active = turn;
   return { ok: true, turn, signal: reg.signal };
@@ -65,39 +65,66 @@ async function prepareConversation(input: LocalTurnInput): Promise<{ id: string;
   return { id: conv.meta.id, ...(conv.meta.acpSessionId ? { acpSessionId: conv.meta.acpSessionId } : {}) };
 }
 
-function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, text: string[]): AgentHandlers {
+/** 工具调用的可读标签：shell 带上命令本身（「Terminal」一个词说明不了做了什么） */
+function toolLabel(u: { title?: string; rawInput?: unknown }): string {
+  const cmd = (u.rawInput as { command?: unknown } | undefined)?.command;
+  const title = u.title ?? "工具调用";
+  return typeof cmd === "string" && !title.includes(cmd) ? `${title}：${cmd}` : title;
+}
+
+/** session/load 会把历史对话当 update 重放一遍：重放期间的更新一律不算本轮输出 */
+interface StreamGate { replaying: boolean }
+
+function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, text: string[], gate: StreamGate): AgentHandlers {
   const calls = new Map<string, { title: string; kind?: string }>();
   return {
     onUpdate(u) {
+      if (gate.replaying) return;
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && u.content.text) {
         text.push(u.content.text);
         input.onDelta?.({ ev: "delta", text: u.content.text });
       } else if (u.sessionUpdate === "tool_call" && u.toolCallId) {
-        calls.set(u.toolCallId, { title: u.title ?? "工具调用", ...(u.kind ? { kind: u.kind } : {}) });
-        input.onProgress?.({ phase: "start", label: redactAndTruncate(u.title ?? "工具调用", 60) });
-      } else if (u.sessionUpdate === "tool_call_update" && u.toolCallId && u.status === "completed") {
+        // 工具调用前后的两段话分开，不要拼成一句
+        if (text.length && text[text.length - 1] !== "\n\n") text.push("\n\n");
+        const title = toolLabel(u);
+        calls.set(u.toolCallId, { title, ...(u.kind ? { kind: u.kind } : {}) });
+        if (u.kind && WRITE_KINDS.has(u.kind)) turn.inFlight.set(u.toolCallId, title);
+        input.onProgress?.({ phase: "start", label: redactAndTruncate(title, 60) });
+      } else if (u.sessionUpdate === "tool_call_update" && u.toolCallId) {
         const call = calls.get(u.toolCallId);
+        // 命令参数常在后续 update 里才到：补进标签
+        if (call && u.rawInput) call.title = toolLabel({ title: u.title ?? call.title.split("：")[0], rawInput: u.rawInput });
+        if (call && turn.inFlight.has(u.toolCallId)) turn.inFlight.set(u.toolCallId, call.title);
+        if (u.status !== "completed" && u.status !== "failed") return;
+        turn.inFlight.delete(u.toolCallId);
+        if (u.status !== "completed") return;
         if (call?.kind && WRITE_KINDS.has(call.kind)) turn.writes.push(redactAndTruncate(call.title, 60));
       }
     },
     async requestPermission(req) {
       const ask = svc.asks.requestPermission({ turnId: turn.turnId, conversationId: turn.conversationId, title: "允许本机 agent 执行？", detail: req.title });
-      return pickPermissionOption(req.options, await ask.decision);
+      const decision = await ask.decision;
+      // 没获准（拒绝 / 超时 / 停止作废）的调用根本没跑，不算「仍在执行」
+      if (decision === "deny" && req.toolCallId) turn.inFlight.delete(req.toolCallId);
+      return pickPermissionOption(req.options, decision);
     },
   };
 }
 
 /** 起进程、续会话（续不上就新开并说一句）。ACP session id 拿到即落盘 */
-async function openSession(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, prior?: string): Promise<{ sessionId: string; notice?: string }> {
+async function openSession(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate, prior?: string): Promise<{ sessionId: string; notice?: string }> {
   const mcp = { url: svc.deps.mcpUrl, token: turn.token! };
   const init = await withTimeout(proc.initialize(), SESSION_TIMEOUT_MS, "适配器初始化");
   let notice: string | undefined;
   if (prior && init.loadSession) {
+    gate.replaying = true;
     try {
       await withTimeout(proc.loadSession(prior, svc.deps.home, mcp, adapter.sessionMeta()), SESSION_TIMEOUT_MS, "续会话");
       return { sessionId: prior };
     } catch {
       notice = "上次的会话续不上，已新开（之前的上下文 agent 看不到了）";
+    } finally {
+      gate.replaying = false;
     }
   } else if (prior) {
     notice = "这个后端不支持续会话，已新开";
@@ -122,16 +149,17 @@ function followupText(asks: AskView[]): string {
     : `approval_id=${a.id} 没有获批（${STATUS_TEXT[a.status]}）：不要执行这个动作，简短告诉创始人你停在哪。`).join("\n");
 }
 
-/** prompt → 有待批审批就挂着等（状态 awaiting_approval，整轮持锁）→ 发一句继续 → 循环 */
+/** prompt → 本轮有没告诉过 agent 的审批就挂着等它们落定（状态 awaiting_approval，整轮持锁）→ 发一句继续 → 循环 */
 async function promptLoop(svc: ChiefEditor, turn: ActiveTurn, proc: AgentProcess, sessionId: string, message: string): Promise<string> {
   let r = await promptOrCrash(proc, sessionId, message);
   for (;;) {
-    const pending = svc.asks.pendingApprovals(turn.turnId);
-    if (pending.length === 0 || turn.aborted) return r.stopReason;
-    svc.setStatus(turn, "awaiting_approval");
-    const settled = await svc.asks.settledApprovals(turn.turnId, pending.map((a) => a.id));
+    const open = svc.asks.unreportedApprovals(turn.turnId);
+    if (open.length === 0 || turn.aborted) return r.stopReason;
+    if (open.some((a) => a.status === "pending")) svc.setStatus(turn, "awaiting_approval");
+    const settled = await svc.asks.settledApprovals(turn.turnId, open.map((a) => a.id));
     if (turn.aborted) return "cancelled";
-    svc.setStatus(turn, "running");
+    svc.asks.markReported(settled.map((a) => a.id));
+    if (turn.status !== "running") svc.setStatus(turn, "running");
     r = await promptOrCrash(proc, sessionId, followupText(settled));
   }
 }
@@ -160,12 +188,14 @@ function failureText(adapter: BackendAdapter, svc: ChiefEditor, err: unknown, pr
 interface Outcome { ok: boolean; reply: string; stopReason?: string; notice?: string }
 
 /** 停止时列出停之前已完成的写动作（§边界 2） */
-export function stopSummary(writes: string[]): string {
-  return `已停。${writes.length ? `停之前已完成的写动作：${writes.join("；")}` : "停之前没有完成任何写动作"}。`;
+export function stopSummary(writes: string[], inFlight: string[] = []): string {
+  const done = writes.length ? `停之前已完成的写动作：${writes.join("；")}` : "停之前没有完成任何写动作";
+  const partial = inFlight.length ? `停止时仍在执行、可能已部分生效：${inFlight.map((t) => redactAndTruncate(t, 60)).join("；")}。` : "";
+  return `已停。${done}。${partial}`;
 }
 
 function replyText(turn: ActiveTurn, out: Outcome): string {
-  const parts = [out.notice, out.reply || "（agent 没有返回文字，结果见卡片）", turn.aborted ? stopSummary(turn.writes) : ""];
+  const parts = [out.notice, out.reply || "（agent 没有返回文字，结果见卡片）", turn.aborted ? stopSummary(turn.writes, [...turn.inFlight.values()]) : ""];
   return parts.filter(Boolean).join("\n\n");
 }
 
@@ -185,12 +215,13 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   ensurePersona(svc.deps.home, turn.backend);
   turn.token = svc.issueToken({ backend: turn.backend, dataDir: turn.dataDir, conversationId: conv.id, turnId: turn.turnId });
   const text: string[] = [];
-  const proc = svc.deps.spawnAgent(launch, svc.deps.home, makeHandlers(svc, turn, input, text));
+  const gate: StreamGate = { replaying: false };
+  const proc = svc.deps.spawnAgent(launch, svc.deps.home, makeHandlers(svc, turn, input, text, gate));
   turn.process = proc;
   svc.runs.patch(turn.turnId, { ...(proc.pid ? { pid: proc.pid } : {}), command: proc.command });
   signal.addEventListener("abort", () => stopAgent(svc, turn), { once: true });
   try {
-    const session = await openSession(svc, turn, adapter, proc, conv.acpSessionId);
+    const session = await openSession(svc, turn, adapter, proc, gate, conv.acpSessionId);
     turn.sessionId = session.sessionId;
     if (signal.aborted) stopAgent(svc, turn);
     const stopReason = turn.aborted ? "cancelled" : await promptLoop(svc, turn, proc, session.sessionId, input.message);

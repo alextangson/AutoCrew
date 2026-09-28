@@ -74,7 +74,8 @@ export const CLAUDE_ADAPTER: BackendAdapter = {
     return {
       claudeCode: {
         options: {
-          settings: { permissions: { ask: CLAUDE_ASK_TOOLS, defaultMode: "default" } },
+          // AutoCrew 自己的 MCP 工具不弹权限卡：它们的门在服务端（执行前审批、认领、限权）
+          settings: { permissions: { ask: CLAUDE_ASK_TOOLS, allow: ["mcp__autocrew"], defaultMode: "default" } },
           allowDangerouslySkipPermissions: false,
         },
       },

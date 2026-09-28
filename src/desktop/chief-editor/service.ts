@@ -51,6 +51,8 @@ export interface ActiveTurn {
   cards: Record<string, unknown>[];
   /** 已完成的写动作（停止时列给人看，§边界 2） */
   writes: string[];
+  /** 已开始、还没完成的写类工具（停止时如实说「可能已部分生效」） */
+  inFlight: Map<string, string>;
   aborted: boolean;
 }
 

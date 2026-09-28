@@ -65,8 +65,11 @@ async function gate(svc: ChiefEditor, b: TokenBinding, turnId: string | null, to
   return { proceed: rest };
 }
 
+/** 整个工具都是只读的 */
+const READ_TOOLS = new Set(["autocrew_status", "autocrew_dashboard"]);
+
 function writeLabel(tool: string, action: string, result: Json): string | undefined {
-  if (result.ok === false || READ_ACTIONS.has(action)) return undefined;
+  if (result.ok === false || READ_ACTIONS.has(action) || READ_TOOLS.has(tool)) return undefined;
   return `${tool}${action ? ` ${action}` : ""}`;
 }
 

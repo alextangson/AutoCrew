@@ -35,6 +35,8 @@ export class FakeAgent implements AgentProcess {
   async loadSession(id: string, _cwd: string, mcp: McpServerSpec) {
     this.mcp = mcp;
     if (this.loadFails) throw new Error("Resource not found");
+    // 真适配器 load 时会把历史重放成 update
+    this.say("（历史重放）");
     this.loaded.push(id);
   }
   async prompt(_s: string, text: string) { this.prompts.push(text); return this.onPrompt(this, text); }

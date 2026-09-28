@@ -27,6 +27,8 @@ export interface AskView {
 }
 
 interface AskRecord extends AskView {
+  /** 审批结果是否已经告诉过 agent（批准可能在 agent 还在说话时就到了，收尾后要补一句） */
+  reported?: boolean;
   binding?: ApprovalBinding;
   approvalToken?: string;
   onSettle?: (status: AskStatus) => void;
@@ -113,6 +115,15 @@ export class AskRegistry {
     return [...this.asks.values()]
       .filter((r) => r.status === "pending" && (!filter?.conversationId || r.conversationId === filter.conversationId))
       .map((r) => this.view(r));
+  }
+
+  /** 本轮还没告诉过 agent 结果的审批卡（含仍在等的） */
+  unreportedApprovals(turnId: string): AskView[] {
+    return [...this.asks.values()].filter((r) => r.turnId === turnId && r.kind === "approval" && !r.reported).map((r) => this.view(r));
+  }
+
+  markReported(ids: string[]): void {
+    for (const id of ids) { const r = this.asks.get(id); if (r) r.reported = true; }
   }
 
   pendingApprovals(turnId: string): AskView[] {

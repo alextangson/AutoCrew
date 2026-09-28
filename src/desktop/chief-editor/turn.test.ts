@@ -89,6 +89,37 @@ describe("边界 2：停止", () => {
   });
 });
 
+describe("边界 2：停止时仍在执行的命令", () => {
+  it("如实说「可能已部分生效」，不说成没做任何事（真机回归）", async () => {
+    const turnId = "t-stop-inflight";
+    h.script = async (a) => {
+      a.handlers.onUpdate({ sessionUpdate: "tool_call", toolCallId: "tc1", title: "Terminal", kind: "execute", rawInput: { command: "echo start > s.txt && sleep 120" } });
+      return a.untilCancelled();
+    };
+    const running = runLocalTurn(h.svc, input({ turnId }));
+    await until(() => (h.svc.active?.inFlight.size ?? 0) > 0);
+    abortTurn(turnId, "c1");
+    const data = (await running).data as { reply: string };
+    expect(data.reply).toContain("停止时仍在执行、可能已部分生效：Terminal：echo start > s.txt && sleep 120");
+  });
+});
+
+describe("边界 2：停止时还在等权限的命令", () => {
+  it("没获准就没跑，不算「可能已部分生效」（真机回归）", async () => {
+    const turnId = "t-stop-perm";
+    h.script = async (a) => {
+      a.handlers.onUpdate({ sessionUpdate: "tool_call", toolCallId: "tc9", title: "sleep 60", kind: "execute" });
+      void a.handlers.requestPermission({ title: "sleep 60", toolCallId: "tc9", options: [{ optionId: "y", kind: "allow_once" }, { optionId: "n", kind: "reject_once" }] });
+      return a.untilCancelled();
+    };
+    const running = runLocalTurn(h.svc, input({ turnId }));
+    await until(() => h.svc.asks.pending().length === 1);
+    abortTurn(turnId, "c1");
+    const data = (await running).data as { reply: string };
+    expect(data.reply).not.toContain("可能已部分生效");
+  });
+});
+
 describe("边界 3 / 4：对话锁与全局一个 agent", () => {
   it("同对话第二个请求被拒；别的对话也被拒且不排队", async () => {
     const conv = await createConversation("x", h.dataDir, undefined, { backend: "claude" });
@@ -133,8 +164,11 @@ describe("边界 6：守护进程重启", () => {
     expect(killed).toEqual([4242]);
     expect(h.svc.runs.get("t-old")?.status).toBe("interrupted");
     expect((await getConversation(conv.id, h.dataDir))?.messages.at(-1)?.content).toContain("被中断了");
-    await runLocalTurn(h.svc, input({ conversationId: conv.id }));
+    h.script = async (a) => { a.say("新回复"); return { stopReason: "end_turn" }; };
+    const r = await runLocalTurn(h.svc, input({ conversationId: conv.id }));
     expect(h.agents[0].loaded).toEqual(["sess-old"]);
+    // 续会话时适配器重放的历史不算本轮输出（真机回归）
+    expect((r.data as { reply: string }).reply).toBe("新回复");
   });
 
   it("续不上就新开，并在回复里说一句「已新开」", async () => {

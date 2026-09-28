@@ -43,6 +43,19 @@ describe("§地基 2：发布类动作执行前审批", () => {
     expect(h.agents[0].prompts[2]).toContain("没有获批");
   });
 
+  it("agent 还在说话时审批就被批了：收尾后照样补发「已批准」那句（真机回归）", async () => {
+    h.contents.set("content-1-a", DRAFT);
+    h.script = async (a, text) => {
+      if (text.startsWith("已批准")) return { stopReason: "end_turn" };
+      await h.callTool(a, "autocrew_content", { action: "delete", id: "content-1-a" });
+      h.svc.asks.answer(h.svc.asks.pending()[0].id, "allow");
+      return { stopReason: "end_turn" };
+    };
+    await runLocalTurn(h.svc, input());
+    expect(h.agents[0].prompts).toHaveLength(2);
+    expect(h.agents[0].prompts[1]).toMatch(/^已批准 approval_id=ask-/);
+  });
+
   it("边界 8：批准后稿件又被改过，指纹不符，要求重新确认", async () => {
     h.contents.set("content-1-a", DRAFT);
     let retry: Record<string, unknown> = {};

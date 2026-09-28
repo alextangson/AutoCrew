@@ -17,12 +17,13 @@ export interface SessionUpdateLike {
   title?: string;
   kind?: string;
   status?: string;
+  rawInput?: unknown;
 }
 
 export interface AgentHandlers {
   onUpdate(update: SessionUpdateLike): void;
   /** 返回选中的 optionId；null = 取消（按拒绝处理） */
-  requestPermission(req: { title: string; kind?: string; options: PermissionOptionLike[] }): Promise<string | null>;
+  requestPermission(req: { title: string; kind?: string; toolCallId?: string; options: PermissionOptionLike[] }): Promise<string | null>;
 }
 
 export interface McpServerSpec {
@@ -80,7 +81,7 @@ export const spawnAcpAgent: SpawnAgent = (launch, cwd, handlers) => {
   const stream = acp.ndJsonStream(Writable.toWeb(child.stdin) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>);
   const conn = new acp.ClientSideConnection(() => ({
     async requestPermission(p) {
-      const optionId = await handlers.requestPermission({ title: toolTitle(p), kind: p.toolCall.kind ?? undefined, options: p.options });
+      const optionId = await handlers.requestPermission({ title: toolTitle(p), kind: p.toolCall.kind ?? undefined, toolCallId: p.toolCall.toolCallId, options: p.options });
       return { outcome: optionId ? { outcome: "selected", optionId } : { outcome: "cancelled" } };
     },
     async sessionUpdate(n) {
