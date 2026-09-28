@@ -167,6 +167,8 @@ async function checkSeriesReview(
   const additions = snapshotAdditions(frozen, live);
   if (!additions.length) return null;
   ticket.seriesSnapshot = mergeSnapshot(frozen, additions);
+  // 旧钉子（pending、确认未登记）绑的是旧快照上的比对，作废；已完成的提交（applied）在入口就原样重放了，到不了这里
+  if (ticket.submission?.state === "pending") ticket.submission = undefined;
   await writePack(contentId, pack, dataDir);
   return {
     ok: false, status: "series_snapshot_stale",
@@ -174,6 +176,12 @@ async function checkSeriesReview(
     additions: additions.map((i) => i.content_id), series_snapshot: ticket.seriesSnapshot,
     next_action: { tool: "autocrew_review_desk", params: { action: "submit", content_id: contentId, review_pack_id: ticket.reviewPackId, attempt: Number(params.attempt) } },
   };
+}
+
+/** 本审稿单的结论是否已经登记到稿件上：同一稿、宿主来源、审于本单签发之后 */
+function verdictLanded(current: { review?: { reviewedAt?: string; source?: { draftHash?: string } } }, ticket: NonNullable<PackAttempt["hostReview"]>): boolean {
+  const r = current.review;
+  return Boolean(r?.source?.draftHash === ticket.draftHash && r.reviewedAt && r.reviewedAt >= ticket.issuedAt);
 }
 
 function parseAudience(raw: unknown, rec: PackAttempt, haystack: string): AudienceAssessment | string {
@@ -226,14 +234,17 @@ async function submitReview(params: Record<string, unknown>, pack: ReadyPack, re
   if (!checked.ok) return fail(checked.problems.join("；"), "invalid_review");
   const audience = parseAudience(params.audience, rec, haystack);
   if (typeof audience === "string") return fail(audience, "invalid_review");
-  const seriesRejected = await checkSeriesReview(params, pack, ticket, contentId, haystack, dataDir);
+  // 钉住过（pending）但进程在落地中途退出：结论已经登记了就只补完落地，不再核对快照；
+  // 没登记就照常核对，过时则作废旧钉子，让按新快照补审的结论能交上来（Codex 评审 P2）
+  const landed = ticket.submission?.state === "pending" && verdictLanded(current, ticket);
+  const seriesRejected = landed ? null : await checkSeriesReview(params, pack, ticket, contentId, haystack, dataDir);
   if (seriesRejected) return seriesRejected;
   // 写门（P6 §3.8）：核对全过、真要落盘才过门——被拒的审稿不认领也不续租，重放不写盘也不设卡
   const token = typeof params.claim_token === "string" ? params.claim_token.trim() : "";
   const gate = await gateClaimWrite(contentId, { host: reviewerHost, employee: "writer", token: token || undefined }, dataDir);
   if ("denied" in gate) return gate.denied;
   Object.assign(grant, gate.grant);
-  if (ticket.seriesSnapshot) {
+  if (ticket.seriesSnapshot && !landed) {
     // 系列比对结果随这一版落盘，绑定审稿上下文指纹；状态本身不证明去重通过（spec §3 B「状态不能当证明」）
     // 一次原子写、且只在稿件仍是被审的那一版时落：审稿期间正文被改就不留任何比对结论（Codex 评审 P1）
     const review = params.series_review as SeriesReview;

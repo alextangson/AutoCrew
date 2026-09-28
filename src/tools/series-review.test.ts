@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as seriesMemory from "../modules/writing/series-memory.js";
+import * as writerReview from "./writer-review.js";
 import { createEvidenceLedger } from "../modules/research/evidence-ledger.js";
 import { saveContent, getContent, updateContent, transitionStatus } from "../storage/local-store.js";
 import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
@@ -112,7 +113,7 @@ describe("series review on the host review desk", () => {
     expect(await desk({ ...base, series_review: coverAll(review.series_snapshot) })).toMatchObject({ ok: false, status: "invalid_series_review" });
     const fresh = (stale as { series_snapshot: { id: string; items: Array<{ content_id: string; insufficient: boolean }> } }).series_snapshot;
     const done = await desk({ ...base, series_review: coverAll(fresh) });
-    expect(done).toMatchObject({ ok: true, status: "accepted" });
+    expect(done, JSON.stringify(done).slice(0, 300)).toMatchObject({ ok: true, status: "accepted" });
     expect((await getContent(content.id, dir))?.seriesReview?.snapshot_id).toBe(fresh.id);
     // 审稿单里存的就是补审后的快照，重放同一载荷原样返回
     expect((await readPack(content.id, dir))?.attempts["1"].hostReview?.seriesSnapshot?.id).toBe(fresh.id);
@@ -161,5 +162,42 @@ describe("re-review snapshot stays submittable (Codex P1)", () => {
     expect(stale.series_snapshot.items).toHaveLength(10);
     expect(stale.series_snapshot.items[0].content_id).toBe(newcomer.id);
     expect(await desk({ ...base, series_review: coverAll(stale.series_snapshot) })).toMatchObject({ ok: true, status: "accepted" });
+  });
+});
+
+describe("pinned-but-not-landed review recovers through a re-review (Codex P2)", () => {
+  it("process dies after pinning, a draft enters scope, the original retry is sent to re-review and the re-review is accepted", async () => {
+    const { content, review } = await seedNewContractPack();
+    const base = { action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [] };
+    const first = { ...base, series_review: coverAll(review.series_snapshot) };
+    vi.spyOn(writerReview, "settleReview").mockRejectedValueOnce(new Error("进程在落地中途退出"));
+    const crashed = await desk(first) as { ok: boolean; claim_token?: string };
+    expect(crashed.ok).toBe(false);
+    expect(crashed.claim_token).toBeTruthy();
+    expect((await readPack(content.id, dir))?.attempts["1"].hostReview?.submission?.state).toBe("pending");
+    Object.assign(base, { claim_token: crashed.claim_token });
+    Object.assign(first, { claim_token: crashed.claim_token });
+
+    await publishedNeighbour("恢复前进入范围的稿");
+    const stale = await desk(first) as { status: string; series_snapshot: { id: string; items: Array<{ content_id: string; insufficient: boolean }> } };
+    expect(stale.status).toBe("series_snapshot_stale");
+    const done = await desk({ ...base, series_review: coverAll(stale.series_snapshot) });
+    expect(done, JSON.stringify(done).slice(0, 300)).toMatchObject({ ok: true, status: "accepted" });
+    expect(await desk({ ...base, series_review: coverAll(stale.series_snapshot) })).toMatchObject({ ok: true, replayed: true });
+  });
+
+  it("a pinned submission whose verdict already landed just finishes on retry (no snapshot re-check)", async () => {
+    const { content, review } = await seedNewContractPack();
+    const first = { action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [], series_review: coverAll(review.series_snapshot) };
+    const beforeLanding = (await readPack(content.id, dir)) as ReadyPack;
+    expect(await desk(first)).toMatchObject({ ok: true, status: "accepted" });
+    // 模拟「结论已登记到稿件、但审稿单还停在钉住未完成」（落地后、写回执前进程退出）
+    const pack = (await readPack(content.id, dir)) as ReadyPack;
+    pack.attempts["1"] = { ...beforeLanding.attempts["1"], hostReview: { ...pack.attempts["1"].hostReview!, submission: { ...pack.attempts["1"].hostReview!.submission!, state: "pending", result: undefined } } };
+    await writePack(content.id, pack, dir);
+    await publishedNeighbour("之后进来的稿");
+    const retried = await desk(first);
+    expect(retried.status).not.toBe("series_snapshot_stale");
+    expect(retried, JSON.stringify(retried).slice(0, 300)).toMatchObject({ ok: true });
   });
 });
