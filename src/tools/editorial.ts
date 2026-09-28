@@ -6,7 +6,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getContent, getDataDir, updateContentIfDraftMatches, LOCAL_HOST, type Content } from "../storage/local-store.js";
 import { gateClaimWrite } from "../storage/claims.js";
-import { initProfile, loadProfile, saveProfile, type CreatorProfile } from "../modules/profile/creator-profile.js";
+import { initProfile, loadProfile, saveProfile, addWritingRule, type CreatorProfile } from "../modules/profile/creator-profile.js";
 import { appendWritingFeedback } from "../modules/writing/writing-feedback.js";
 import { serializeWriterCall } from "./writer-pack.js";
 import { cleanErrorMessage } from "../desktop/error-clean.js";
@@ -117,12 +117,9 @@ async function capture(a: Args, dir: string, host: string): Promise<Record<strin
     }), dir);
     if (!applied.ok) return { ok: false, status: "stale_draft", error: "保存反馈前正文已变化，反馈未套到新稿；先inspect核对版本", ...gate.grant };
     if (scope !== "draft") {
-      const profile = existingProfile ?? await initProfile(dir);
       const ruleScope = scope === "voice" ? "voice_core" : `platform:${a.platform}` as const;
-      const existing = profile.writingRules.find(r => r.rule === a.feedback && (r.scope ?? "voice_core") === ruleScope);
-      if (existing) { existing.disabled = false; existing.source = "user_explicit"; existing.confidence = 1; }
-      else profile.writingRules.push({ rule: a.feedback!, scope: ruleScope, source: "user_explicit", confidence: 1, createdAt: receipt.at });
-      await saveProfile(profile, dir);
+      await addWritingRule({ rule: a.feedback!, scope: ruleScope, source: "user_explicit", confidence: 1,
+        evidence: [`feedback:${content.id}:${a.draft_hash}:${a.feedback}`] }, dir);
     }
     receipt.state = "applied";
     await writeReceipt(file, receipt);

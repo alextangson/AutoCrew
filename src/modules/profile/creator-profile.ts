@@ -5,6 +5,8 @@
  * and style calibration. It's initialized during onboarding (from host MEMORY or
  * by asking the user) and continuously enriched by the Learnings system.
  */
+import { createHash, randomUUID } from "node:crypto";
+import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
@@ -18,6 +20,11 @@ import { getDataDir } from "../../storage/local-store.js";
 export type RuleScope = "voice_core" | `platform:${string}`;
 
 export interface WritingRule {
+  id?: string;
+  revision?: number;
+  status?: "active" | "pending" | "rejected" | "disabled";
+  evidence?: string[];
+  promotes?: string;
   rule: string;
   /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly,
    *  "calibrated" = produced by the calibration skills (A/B-verified during onboarding) */
@@ -139,6 +146,8 @@ export interface PerformanceEntry {
 }
 
 export interface CreatorProfile {
+  revision?: number;
+  ruleDecisions?: Array<{ eventId: string; ruleId: string; revision: number; decision: string; at: string }>;
   /** User's content industry/niche */
   industry: string;
   /** 创作者保存的表达定位；不能只保存在档案里而不交给写手。 */
@@ -220,6 +229,7 @@ export async function loadProfile(dataDir?: string): Promise<CreatorProfile | nu
     const profile = JSON.parse(raw) as CreatorProfile;
     // 读侧归一(V5.1):历史扁平画像/老 muse 遗产形状 → 三层结构;坏形状置 null 而非带病传播
     profile.audiencePersona = normalizeAudiencePersona(profile.audiencePersona);
+    profile.writingRules = profile.writingRules.map((r, i) => ({ ...r, id: r.id ?? legacyRuleId(r, i), revision: r.revision ?? 1 }));
     return profile;
   } catch {
     return null;
@@ -229,11 +239,75 @@ export async function loadProfile(dataDir?: string): Promise<CreatorProfile | nu
 /**
  * Save the full creator profile (overwrite).
  */
-export async function saveProfile(profile: CreatorProfile, dataDir?: string): Promise<void> {
-  const dir = getDataDir(dataDir);
-  await fs.mkdir(dir, { recursive: true });
+const profileQueues = new Map<string, Promise<unknown>>();
+function serializeProfile<T>(dir: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const key = path.resolve(getDataDir(dir));
+  const next = (profileQueues.get(key) ?? Promise.resolve()).then(fn, fn);
+  const tail = next.then(() => {}, () => {});
+  profileQueues.set(key, tail);
+  void tail.then(() => { if (profileQueues.get(key) === tail) profileQueues.delete(key); });
+  return next;
+}
+function legacyRuleId(rule: WritingRule, index: number): string {
+  return createHash("sha256").update(JSON.stringify([index, rule.rule, rule.createdAt, rule.scope])).digest("hex").slice(0, 24);
+}
+async function writeProfile(profile: CreatorProfile, dataDir?: string): Promise<void> {
+  profile.revision = (profile.revision ?? 0) + 1;
   profile.updatedAt = new Date().toISOString();
-  await fs.writeFile(path.join(dir, PROFILE_FILE), JSON.stringify(profile, null, 2), "utf-8");
+  await writeJsonAtomicMkdir(path.join(getDataDir(dataDir), PROFILE_FILE), profile);
+}
+/** Full saves use compare-and-swap; they cannot approve or erase existing rules. */
+async function saveProfileLocked(profile: CreatorProfile, dataDir?: string): Promise<void> {
+    const current = await loadProfile(dataDir);
+    if (current && (profile.revision ?? 0) !== (current.revision ?? 0)) throw new Error("profile_revision_conflict: reload profile");
+    if (current) {
+      const incoming = profile.writingRules;
+      profile.writingRules = current.writingRules.map(old => {
+        const next = incoming.find(r => r.id === old.id);
+        if (!next || old.status === "rejected") return old;
+        if (JSON.stringify(next) === JSON.stringify(old)) return old;
+        return { ...next, id: old.id, revision: (old.revision ?? 1) + 1,
+          status: next.disabled ? "disabled" as const : "pending" as const,
+          disabled: old.disabled || next.disabled };
+      });
+      for (const rule of incoming.filter(r => !current.writingRules.some(old => old.id === r.id || old.rule === r.rule))) {
+        profile.writingRules.push({ ...rule, id: randomUUID(), revision: 1, status: "pending" });
+      }
+      profile.ruleDecisions = current.ruleDecisions;
+    }
+    await writeProfile(profile, dataDir);
+}
+export async function saveProfile(profile: CreatorProfile, dataDir?: string): Promise<void> {
+  return serializeProfile(dataDir, () => saveProfileLocked(profile, dataDir));
+}
+async function mutateProfile(fn: (profile: CreatorProfile) => void, dataDir?: string): Promise<CreatorProfile> {
+  return serializeProfile(dataDir, async () => {
+    const profile = await loadProfile(dataDir) ?? emptyProfile();
+    fn(profile);
+    await writeProfile(profile, dataDir);
+    return profile;
+  });
+}
+/** Only called by the authenticated same-origin workbench route, never IPC/MCP. */
+export async function decideWritingRule(input: { ruleId: string; revision: number; decision: "active" | "rejected" | "disabled"; eventId: string }, dataDir: string): Promise<CreatorProfile> {
+  return mutateProfile(profile => {
+    const prior = profile.ruleDecisions?.find(e => e.eventId === input.eventId);
+    if (prior) {
+      if (prior.ruleId !== input.ruleId || prior.revision !== input.revision || prior.decision !== input.decision) throw new Error("approval_event_conflict");
+      return;
+    }
+    const rule = profile.writingRules.find(r => r.id === input.ruleId);
+    if (!rule || rule.revision !== input.revision) throw new Error("rule_revision_conflict");
+    if (rule.status === "rejected") throw new Error("rule_rejected_tombstone");
+    if (rule.promotes && input.decision === "active") {
+      const original = profile.writingRules.find(r => r.id === rule.promotes);
+      if (original) { original.status = "disabled"; original.disabled = true; original.revision = (original.revision ?? 1) + 1; }
+    }
+    rule.status = input.decision;
+    rule.disabled = input.decision !== "active";
+    rule.revision++;
+    (profile.ruleDecisions ??= []).push({ ...input, at: new Date().toISOString() });
+  }, dataDir);
 }
 
 /**
@@ -255,6 +329,7 @@ export async function updateProfile(
   updates: Partial<Omit<CreatorProfile, "createdAt" | "updatedAt">>,
   dataDir?: string,
 ): Promise<CreatorProfile> {
+  return serializeProfile(dataDir, async () => {
   let profile = await loadProfile(dataDir);
   if (!profile) profile = emptyProfile();
 
@@ -270,8 +345,9 @@ export async function updateProfile(
     updatedAt: new Date().toISOString(),
   };
 
-  await saveProfile(merged, dataDir);
+  await saveProfileLocked(merged, dataDir);
   return merged;
+  });
 }
 
 /**
@@ -281,19 +357,18 @@ export async function updateProfile(
  * （= 同一模式在 ≥2 个平台被纠正）→ 升格进声音内核（scope 改 voice_core）。
  */
 export async function addWritingRule(rule: Omit<WritingRule, "createdAt">, dataDir?: string): Promise<CreatorProfile> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
-  const existing = profile.writingRules.find((r) => r.rule === rule.rule);
-  if (existing) {
-    const existingScope = existing.scope ?? "voice_core";
-    const incomingScope = rule.scope ?? "voice_core";
-    if (existingScope !== "voice_core" && incomingScope !== existingScope) {
-      existing.scope = "voice_core";
+  return mutateProfile(profile => {
+    const matches = profile.writingRules.filter(r => r.rule === rule.rule);
+    if (matches.some(r => r.status === "rejected" || r.disabled || r.status === "disabled")) return;
+    const existing = matches[0];
+    if (existing) {
+      if ((existing.scope ?? "voice_core") === "voice_core" || (existing.scope ?? "voice_core") === (rule.scope ?? "voice_core") || matches.some(r => r.promotes)) return;
+      profile.writingRules.push({ ...rule, id: randomUUID(), revision: 1, status: "pending", disabled: false,
+        scope: "voice_core", promotes: existing.id, createdAt: new Date().toISOString() });
+    } else {
+      profile.writingRules.push({ ...rule, id: randomUUID(), revision: 1, status: "pending", createdAt: new Date().toISOString() });
     }
-  } else {
-    profile.writingRules.push({ ...rule, createdAt: new Date().toISOString() });
-  }
-  await saveProfile(profile, dataDir);
-  return profile;
+  }, dataDir);
 }
 
 /** 声音样本上限:再多注意力摊薄,且写稿 prompt 的 token 预算要留给调研材料 */
@@ -303,15 +378,14 @@ const VOICE_SAMPLES_CAP = 5;
  * 追加声音样本(逐字段落):按文本去重,超上限保留最新——最近的爆款最能代表当前声音。
  */
 export async function addVoiceSamples(samples: string[], dataDir?: string): Promise<CreatorProfile> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
+  return mutateProfile(profile => {
   const merged = [...(profile.voiceSamples ?? [])];
   for (const s of samples) {
     const text = s.trim();
     if (text && !merged.includes(text)) merged.push(text);
   }
   profile.voiceSamples = merged.slice(-VOICE_SAMPLES_CAP);
-  await saveProfile(profile, dataDir);
-  return profile;
+  }, dataDir);
 }
 
 /**
@@ -319,7 +393,7 @@ export async function addVoiceSamples(samples: string[], dataDir?: string): Prom
  */
 export function rulesForPlatform(profile: CreatorProfile, platform: string): WritingRule[] {
   return profile.writingRules.filter((r) => {
-    if (r.disabled) return false;
+    if (r.disabled || (r.status !== undefined && r.status !== "active")) return false;
     const scope = r.scope ?? "voice_core";
     return scope === "voice_core" || scope === `platform:${platform}`;
   });
@@ -332,48 +406,47 @@ export function rulesForPlatform(profile: CreatorProfile, platform: string): Wri
  * 的 saveProfile-direct 模式不同但等价（updateProfile 对 writingRules 是整体替换语义，
  * 单线程无 yield 点，无并发窗口）。
  */
-export async function updateWritingRule(
-  index: number,
-  patch: { rule?: string; disabled?: boolean },
-  dataDir?: string,
-): Promise<CreatorProfile> {
-  const profile = await loadProfile(dataDir);
-  if (!profile) throw new Error("尚无创作者档案");
-  const target = profile.writingRules[index];
-  if (!target) throw new Error(`规则不存在：index ${index}`);
-  if (patch.rule !== undefined) {
-    const text = patch.rule.trim();
-    if (text === "") throw new Error("规则内容不能为空");
-    target.rule = text;
-  }
-  if (patch.disabled !== undefined) target.disabled = patch.disabled;
-  return updateProfile({ writingRules: profile.writingRules }, dataDir);
+export async function updateWritingRule(index: number | { id: string; revision: number }, patch: { rule?: string; disabled?: boolean }, dataDir?: string): Promise<CreatorProfile> {
+  return mutateProfile(profile => {
+    const target = typeof index === "number" ? profile.writingRules[index] : profile.writingRules.find(r => r.id === index.id);
+    if (typeof index !== "number" && target?.revision !== index.revision) throw new Error("rule_revision_conflict");
+    if (!target) throw new Error(`规则不存在：index ${index}`);
+    if (target.status === "rejected") throw new Error("rule_rejected_tombstone");
+    if (patch.rule !== undefined) {
+      if (!patch.rule.trim()) throw new Error("规则内容不能为空");
+      target.rule = patch.rule.trim();
+      target.status = "pending";
+    }
+    if (patch.disabled === true) { target.disabled = true; target.status = "disabled"; }
+    // A model-accessible toggle cannot activate any rule.
+    if (patch.disabled === false) target.status = "pending";
+    target.revision = (target.revision ?? 1) + 1;
+  }, dataDir);
 }
 
 /**
  * Add a competitor account (deduplicates by profileUrl).
  */
 export async function addCompetitor(account: Omit<CompetitorAccount, "addedAt">, dataDir?: string): Promise<CreatorProfile> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
+  return mutateProfile(profile => {
   const exists = profile.competitorAccounts.some((c) => c.profileUrl === account.profileUrl);
   if (!exists) {
     profile.competitorAccounts.push({ ...account, addedAt: new Date().toISOString() });
   }
-  await saveProfile(profile, dataDir);
-  return profile;
+  }, dataDir);
 }
 
 /**
  * Record a performance data point.
  */
 export async function addPerformanceEntry(entry: Omit<PerformanceEntry, "recordedAt">, dataDir?: string): Promise<void> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
+  await mutateProfile(profile => {
   profile.performanceHistory.push({ ...entry, recordedAt: new Date().toISOString() });
   // Keep last 100 entries
   if (profile.performanceHistory.length > 100) {
     profile.performanceHistory = profile.performanceHistory.slice(-100);
   }
-  await saveProfile(profile, dataDir);
+  }, dataDir);
 }
 
 /**

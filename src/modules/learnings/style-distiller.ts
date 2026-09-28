@@ -247,6 +247,7 @@ async function persistRules(
   rules: RuleInput[],
   dataDir?: string,
   forceScope?: RuleScope,
+  evidence: string[] = [],
 ): Promise<{ newRules: WritingRule[]; skipped: number }> {
   const profile = await loadProfile(dataDir);
   const existingTexts = new Set((profile?.writingRules ?? []).map((r) => r.rule));
@@ -259,14 +260,14 @@ async function persistRules(
     if (existingTexts.has(r.rule)) {
       // 仍走 addWritingRule：同文本跨平台重现会触发升格路由（§4.3），不是简单跳过
       await addWritingRule(
-        { rule: r.rule, source: "auto_distilled", confidence: r.confidence, ...(scope ? { scope } : {}) },
+        { rule: r.rule, source: "auto_distilled", confidence: r.confidence, evidence, ...(scope ? { scope } : {}) },
         dataDir,
       );
       skipped++;
       continue;
     }
     const written = await addWritingRule(
-      { rule: r.rule, source: "auto_distilled", confidence: r.confidence, ...(scope ? { scope } : {}) },
+      { rule: r.rule, source: "auto_distilled", confidence: r.confidence, evidence, ...(scope ? { scope } : {}) },
       dataDir,
     );
     const added = written.writingRules.find((w) => w.rule === r.rule);
@@ -327,7 +328,7 @@ export async function distillStyleRules(
     throw new Error("风格蒸馏失败：模型未调用 submit_rules 工具提交规则");
   }
 
-  const { newRules, skipped } = await persistRules(captured.rules, dataDir);
+  const { newRules, skipped } = await persistRules(captured.rules, dataDir, undefined, newDiffs.map(d => JSON.stringify(d)));
 
   // Update state to latest diff timestamp
   const latestTs = newDiffs.reduce((max, d) => (d.createdAt > max ? d.createdAt : max), "");
@@ -375,7 +376,7 @@ export async function analyzeStyleSamples(
   }
 
   // 校准样本产出 = 声音内核种子（PRD-v4 §4.3：代表作蒸馏的是"你的声音"，非平台规范）
-  const { newRules, skipped } = await persistRules(captured.rules, dataDir, "voice_core");
+  const { newRules, skipped } = await persistRules(captured.rules, dataDir, "voice_core", samples.map(s => JSON.stringify(s)));
   // V5.1:代表作吸收成功 = 声音校准完成。此前 styleCalibrated 全库无写入路径,
   // "已校准"态不可达,dashboard 校准卡永远停在未完成。
   if (newRules.length > 0 || skipped > 0) {

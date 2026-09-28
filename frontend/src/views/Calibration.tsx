@@ -10,6 +10,10 @@ import { PLATFORM_CATALOG } from "../lib";
 import { dateLabel } from "../time-format";
 
 interface Rule {
+  id: string;
+  revision: number;
+  status?: "pending" | "active" | "rejected" | "disabled";
+  evidence?: string[];
   rule: string;
   source: string;
   confidence: number;
@@ -123,8 +127,17 @@ export function Calibration() {
   };
 
   const updateRule = async (index: number, updates: { rule?: string; disabled?: boolean }) => {
-    const r = await invoke("style:update_rule", { index, ...updates });
+    const r = await invoke("style:update_rule", { rule_id: rules[index].id, revision: rules[index].revision, ...updates });
     if (!r.ok) return toast(r.error ?? "更新失败");
+    void load();
+  };
+
+  const decideRule = async (rule: Rule, decision: "active" | "rejected" | "disabled") => {
+    const response = await fetch("/api/rules/decision", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ruleId: rule.id, revision: rule.revision, decision, eventId: crypto.randomUUID() }) });
+    const result = await response.json();
+    if (!result.ok) return toast(result.error ?? "审批失败");
+    toast("已保存规则决定；生效配置变化后请重新领取写作包");
     void load();
   };
 
@@ -225,18 +238,18 @@ export function Calibration() {
         </div>
       )}
 
-      <h3 className="serif calib-h3">写作规则（{rules.filter((r) => !r.disabled).length} 条生效）</h3>
+      <h3 className="serif calib-h3">写作规则（{rules.filter((r) => !r.disabled && (!r.status || r.status === "active")).length} 条生效）</h3>
       {rules.length === 0 && <p className="muted">还没有规则——贴代表作吸收,或在编辑器里改稿让它自己学。</p>}
       {rules.map((r, i) => (
-        <div key={i} className={"row" + (r.disabled ? " rule-off" : "")}>
+        <div key={r.id} className={"row" + (r.disabled ? " rule-off" : "")}>
           <span className="mono pri">{SOURCE_LABEL[r.source] ?? r.source}</span>
-          <span className="row-title">{r.rule}</span>
+          <span className="row-title">{r.rule}<small> · {r.status ?? (r.disabled ? "disabled" : "active")}</small>{r.evidence?.map((e, n) => <details key={n}><summary>来源证据 {n + 1}</summary><pre>{e}</pre></details>)}</span>
           <span className="muted mono">{r.scope && r.scope !== "voice_core" ? r.scope.replace("platform:", "") : "内核"}</span>
           <button
             onClick={async () => {
               const v = await openDialog({
                 title: "修改写作规则",
-                body: "改完立即生效——之后的写稿和审稿都按新规则执行。",
+                body: "修改会形成待批规则，批准后生效。",
                 fields: [{ key: "rule", label: "规则内容", initial: r.rule, required: true, multiline: true }],
                 confirmLabel: "保存",
               });
@@ -245,7 +258,10 @@ export function Calibration() {
           >
             改
           </button>
-          <button onClick={() => void updateRule(i, { disabled: !r.disabled })}>{r.disabled ? "启用" : "停用"}</button>
+          {r.status !== "rejected" && <>
+            <button onClick={() => void decideRule(r, r.disabled || r.status === "pending" ? "active" : "disabled")}>{r.disabled || r.status === "pending" ? "批准生效" : "停用"}</button>
+            {r.status === "pending" && <button onClick={() => void decideRule(r, "rejected")}>丢弃</button>}
+          </>}
         </div>
       ))}
 

@@ -1,3 +1,5 @@
+import { seriesSnapshot, SERIES_INSTRUCTIONS, type SeriesSnapshot } from "../writing/series-memory.js";
+import { techniqueCatalog, type TechniqueCard } from "../writing/technique-store.js";
 /**
  * 立意 pass（P1 spec §4.1）：**独立于调研综合**的一次 LLM 运行，产出角度卡 v3。
  *
@@ -92,6 +94,8 @@ export const STRUCTURE_MENU: Record<AngleStructure, string> = {
 // ─── 契约 ────────────────────────────────────────────────────────────────────
 
 export interface RunAngleStageInput {
+  series?: SeriesSnapshot;
+  techniques?: TechniqueCard[];
   /** 只用它的**事实字段**（摘要/张力/证据/缺口）；卡是本 pass 的产出，传进来的一律忽略 */
   brief: ResearchBrief;
   topic: ResearchTopicRef;
@@ -451,6 +455,7 @@ function briefFacts(brief: ResearchBrief): string {
 export function buildAngleUserMessage(input: RunAngleStageInput): string {
   const own = renderOwnMaterial(input.ownMaterial?.chunks ?? [], OWN_MATERIAL_MAX);
   return [
+    ...(input.series ? [SERIES_INSTRUCTIONS, `系列快照：${JSON.stringify(input.series)}`, `已审手法目录：${JSON.stringify(input.techniques?.map(({ id, version, title, summary }) => ({ id, version, title, summary })) ?? [])}`, "候选立意须使用不同打法；手法仅作可选参考，不能覆盖创始人要求。"] : []),
     "本次选题（来自我们自己的灵感库，可信）：",
     `标题：${clampChars(input.topic.title.trim(), 120) || "(无标题)"}`,
     `描述：${clampChars(input.topic.description.trim(), 600) || "(无描述)"}`,
@@ -617,6 +622,7 @@ export async function runAngleStage(input: RunAngleStageInput): Promise<AngleSta
   const capture = newCapture<AngleStagePayload>();
   const deadlineMs = input.deadlineMs ?? DEFAULT_ANGLE_DEADLINE_MS;
 
+  input = { ...input, series: await seriesSnapshot(input.creativeTask?.platform ?? "", "", input.dataDir), techniques: (await techniqueCatalog(input.dataDir)).cards };
   const work: Promise<LoopOutcome> = (input.runLoopImpl ?? runLoop)(scout.config, {
     model: scout.model,
     systemPrompt: buildAngleSystemPrompt(input.profile, input.creativeTask),

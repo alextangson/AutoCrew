@@ -763,8 +763,8 @@ async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
-  const index = payload.index;
-  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+  const index = typeof payload.rule_id === "string" && Number.isInteger(payload.revision) ? { id: payload.rule_id, revision: Number(payload.revision) } : payload.index;
+  if (typeof index !== "object" && (typeof index !== "number" || !Number.isInteger(index) || index < 0)) {
     return { ok: false, error: "需要合法的规则 index（非负整数）" };
   }
   const patch: { rule?: string; disabled?: boolean } = {};
@@ -774,7 +774,7 @@ async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise
     return { ok: false, error: "rule 或 disabled 至少提供一个" };
   }
   try {
-    const profile = await updateWritingRule(index, patch, (payload._dataDir as string) || undefined);
+    const profile = await updateWritingRule(index as number | { id: string; revision: number }, patch, (payload._dataDir as string) || undefined);
     return { ok: true, data: { rules: profile.writingRules, boundaries: profile.styleBoundaries } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -877,6 +877,7 @@ async function rewriteSelectionHandler(payload: Record<string, unknown>): Promis
   }
   return rewriteSelection(
     {
+      contentId: String(payload.content_id ?? payload.id ?? ""),
       body: String(payload.body ?? ""),
       selection: String(payload.selection ?? ""),
       instruction: String(payload.instruction ?? ""),

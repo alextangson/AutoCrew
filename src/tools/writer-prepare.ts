@@ -1,3 +1,6 @@
+import { seriesSnapshot } from "../modules/writing/series-memory.js";
+import { techniqueCatalog } from "../modules/writing/technique-store.js";
+import type { CreatorProfile } from "../modules/profile/creator-profile.js";
 import { loadHostEvidence } from "../modules/research/host-evidence-store.js";
 import { inheritCreativeTask } from "../modules/writing/creative-task.js";
 /**
@@ -172,9 +175,9 @@ function requestKey(req: ScriptRequest, topicDescription: string): string {
 }
 
 /** 规划快照按值比较，JSON 对象键顺序变化不应触发重新备料；数组顺序仍有意义。 */
-function planningFingerprint(selectedAngle: unknown, profile: unknown, content?: Content | null): string {
+function planningFingerprint(selectedAngle: unknown, profile: CreatorProfile | null, content?: Content | null, platform = content?.platform ?? ""): string {
   const feedbackState = content?.writingFeedback?.length ? { writingFeedback: content.writingFeedback, sourceDraft: { title: content.title, body: content.body } } : {};
-  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile, ...feedbackState }, (_key, value: unknown) =>
+  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile: profile ? { industry: profile.industry, expressionPersona: profile.expressionPersona, contentFormat: profile.contentFormat, audiencePersona: profile.audiencePersona, goal: profile.goal, styleBoundaries: profile.styleBoundaries, voiceSamples: profile.voiceSamples, writingRules: rulesForPlatform(profile, platform).map(r => ({ rule: r.rule, scope: r.scope ?? "voice_core" })) } : null, ...feedbackState }, (_key, value: unknown) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
       : value,
@@ -205,7 +208,7 @@ export async function startPack(
     if (!["drafting", "revision", "draft_ready"].includes(existing.status)) return { ok: false, error: `本稿现在是 ${existing.status}，不能重开写作包；请先按稿件流程回到可修改阶段。` };
     if ((existing.status === "draft_ready" || existing.pack?.submittedAt) && !params.force) return { ok: false, code: "pack_request_changed", error: "这是已交稿的草稿；修改时显式带 content_id 和 force:true 重领包，正文在新稿提交前保留。" };
   }
-  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir), existing);
+  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir), existing, params.platform);
   const current = existing ? await readPack(existing.id, dataDir) : null;
   const previous = current?.request?.req ?? current?.context?.req ?? existing?.genRequest;
   let req: ScriptRequest = {
@@ -284,6 +287,8 @@ async function startPreparation(
   const note = args.reissued ? REISSUE_NOTE : FIRST_NOTE;
   const placeholder: WritingPackFile = {
     packId,
+    series: await seriesSnapshot(args.req.platform, contentId, dataDir),
+    techniques: await techniqueCatalog(dataDir),
     request: { req: args.req, topicDescription: args.topicDescription, planningFingerprint: args.planningFingerprint, readiness: args.readiness },
     issuedAt,
     state: "preparing",
@@ -442,7 +447,7 @@ function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string, 
     }
     const latest = await inspectWritingReadiness(args.req.topicId!, args.req, dataDir);
     const topic = await getTopic(args.req.topicId!, dataDir);
-    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), await getContent(args.contentId, dataDir));
+    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), await getContent(args.contentId, dataDir), args.req.platform);
     if (!latest.ready || latest.research.briefHash !== args.readiness.research.briefHash ||
         latest.angle.selectedAngleHash !== args.readiness.angle.selectedAngleHash ||
         !topic || topic.title !== args.req.topic || topic.description !== args.req.topicDescription ||

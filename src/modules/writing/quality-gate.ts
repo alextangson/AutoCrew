@@ -70,26 +70,6 @@ export function runQualityGate(spec: QualityGateSpec, input: GateInput): GateFai
   const failures: GateFailure[] = [];
   const fullText = `${input.hook}\n${input.body}\n${input.cta}`;
 
-  if (spec.minChars !== undefined) {
-    const chars = (fullText.match(CJK_RE) ?? []).length;
-    if (chars < spec.minChars) {
-      failures.push({
-        check: "min_chars",
-        detail: `中文字符 ${chars} < ${spec.minChars}：补充案例、数据、行业对比或方法论框架，不要注水`,
-      });
-    }
-  }
-
-  if (spec.maxChars !== undefined) {
-    const chars = (fullText.match(CJK_RE) ?? []).length;
-    if (chars > spec.maxChars) {
-      failures.push({
-        check: "max_chars",
-        detail: `中文字符 ${chars} > ${spec.maxChars}：压缩到上限内——删次要案例与重复论证，保住核心论点和结构`,
-      });
-    }
-  }
-
   if (spec.minDataPoints !== undefined) {
     const n = (fullText.match(DATA_POINT_RE) ?? []).length;
     if (n < spec.minDataPoints) {

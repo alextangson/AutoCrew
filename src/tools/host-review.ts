@@ -1,3 +1,6 @@
+import { seriesTransaction } from "../storage/series-transaction.js";
+import { seriesReviewSchema, validateSeriesReview, seriesSnapshot, SERIES_INSTRUCTIONS, type SeriesReview } from "../modules/writing/series-memory.js";
+import { updateContent } from "../storage/local-store.js";
 import { withTokenInNextAction } from "./claim-grant.js";
 /** 宿主审稿台：只发材料和收结构化结论，永远不运行后台模型。 */
 import { createHash } from "node:crypto";
@@ -45,6 +48,7 @@ export const reviewDeskSchema = Type.Object({
   attempt: Type.Optional(Type.Integer({ minimum: 1, description: "必须使用审稿包里的原写稿attempt，不是审稿重试次数。" })),
   issues: Type.Optional(Type.Array(issue, { maxItems: 40 })),
   audience: Type.Optional(audienceSchema),
+  series_review: Type.Optional(seriesReviewSchema),
   claim_token: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "submit：这篇有活认领时必须带（writer pack/submit 或 autocrew_desk claim 回的令牌），同宿主的另一个会话也一样；pack 只读不用带。" })),
 }, { additionalProperties: false });
 
@@ -97,6 +101,7 @@ export async function hostReviewPack(contentId: string, pack: ReadyPack, reviewe
   }
   const current = await getContent(contentId, dataDir);
   if (!current || current.pack?.packId !== pack.packId || hashDraft(current.title, current.body, current.platform) !== rec.hostReview.draftHash) return stale();
+  if (pack.series && !rec.hostReview.seriesSnapshot) rec.hostReview.seriesSnapshot = structuredClone(pack.series);
   await freezeAudience(pack, rec, dataDir);
   await writePack(contentId, pack, dataDir);
   const input = reviewInput(pack, { contentId, packId: pack.packId, attempt, pending: rec.pending });
@@ -116,9 +121,13 @@ export async function hostReviewPack(contentId: string, pack: ReadyPack, reviewe
       ...(input.angle ? { angle: input.angle } : {}), canFindEvidence: input.canFindEvidence,
       needsHumanNumbers: input.needsHumanNumbers,
     }).replaceAll("submit_review", "autocrew_review_desk submit") + "\n\n本轮由当前宿主执行，不会另起后台模型。若你也是写作者，必须明确这是自审，不能声称独立审阅。提交issues，服务端按blocker计算结论，无需自行填verdict。受众点评是待验证的编辑判断，不是观众实验或爆款预测。",
-    user: buildReviewUserMessage(input).replaceAll("submit_review", "autocrew_review_desk submit") +
+    user: (pack.series ? SERIES_INSTRUCTIONS + "\n" + JSON.stringify(rec.hostReview.seriesSnapshot) + "\n" : "") + buildReviewUserMessage(input).replaceAll("submit_review", "autocrew_review_desk submit") +
       `\n\n【受众点评依据】\n本次任务明确受众优先：${basis.writingContract || "未提供"}\n已确认账号画像：${basis.profileSummary || "未设置；不要编造画像"}\n` +
       "可以随结论提交audience。采用本次受众时audienceBasis.source=current_task并逐字引用受众要求，只交core；采用已确认画像时source=profile并覆盖实际层次。无法确定受众时省略audience并如实说明未评。wouldStop=false须用losesAt指明原文位置，建议不应违背创作者规划。",
+    series_snapshot: rec.hostReview.seriesSnapshot,
+    outline: rec.pending.payload.outline,
+    technique_ids: rec.pending.payload.technique_ids,
+    review_context_hash: current.reviewContextHash,
     audience_context: basis,
     evidence_ledger: pack.ledger,
     submit_schema: reviewDeskSchema,
@@ -163,7 +172,7 @@ async function submitReview(params: Record<string, unknown>, pack: ReadyPack, re
   const current = await getContent(contentId, dataDir);
   if (!current || current.pack?.packId !== pack.packId || hashDraft(current.title, current.body, current.platform) !== ticket.draftHash) return stale();
   if (!Array.isArray(params.issues)) return fail("submit必须提供issues数组，无问题时显式传[]");
-  const digest = createHash("sha256").update(canonicalJson({ issues: params.issues, audience: params.audience ?? null, reviewerHost })).digest("hex");
+  const digest = createHash("sha256").update(canonicalJson({ issues: params.issues, audience: params.audience ?? null, series_review: params.series_review ?? null, reviewerHost })).digest("hex");
   if (ticket.submission) {
     if (ticket.submission.digest !== digest) return fail("此审稿包已经提交另一份结论，不能覆盖；相同重试须保持相同内容与凭证主体", "review_conflict");
     if (ticket.submission.result) return { ...ticket.submission.result, replayed: true };
@@ -180,6 +189,20 @@ async function submitReview(params: Record<string, unknown>, pack: ReadyPack, re
   const gate = await gateClaimWrite(contentId, { host: reviewerHost, employee: "writer", token: token || undefined }, dataDir);
   if ("denied" in gate) return gate.denied;
   Object.assign(grant, gate.grant);
+  if (pack.series) {
+    const problem = validateSeriesReview(params.series_review, ticket.seriesSnapshot ?? pack.series, params.issues as Array<{ id?: string; severity?: string }>, haystack);
+    if (problem) return fail(problem, "invalid_series_review");
+    const live = await seriesSnapshot(pack.context.platform, contentId, dataDir);
+    const additions = live.items.filter(i => !(ticket.seriesSnapshot ?? pack.series)!.items.some(old => old.content_id === i.content_id && old.draft_hash === i.draft_hash && old.outline_version === i.outline_version && old.label === i.label));
+    if (additions.length) {
+      ticket.seriesSnapshot = live;
+      ticket.submission = undefined;
+      await writePack(contentId, pack, dataDir);
+      await updateContent(contentId, { seriesSnapshotId: live.id }, dataDir);
+      return { ok: false, status: "series_snapshot_stale", error: "同平台有新增或改动稿件，补审后重交", additions, series_snapshot: live };
+    }
+    await updateContent(contentId, { seriesReview: params.series_review as SeriesReview }, dataDir);
+  }
   const source = sourceOf(reviewerHost, rec.pending.host, ticket.draftHash);
   // 先钉住这次提交，再改变内容状态。重启后同一载荷可恢复，不允许另一份结论抢写。
   ticket.submission = { digest, reviewerHost, state: "pending" };
@@ -208,7 +231,7 @@ export async function executeReviewDesk(params: Record<string, unknown>): Promis
     const result = await serializeWriterCall(contentId, async () => {
       const pack = await readPack(contentId, dataDir);
       if (!isReadyPack(pack)) return fail("稿件没有可用的写作包，先完成writer pack与submit");
-      return params.action === "pack" ? hostReviewPack(contentId, pack, reviewerHost, dataDir) : submitReview(params, pack, reviewerHost, dataDir, grant);
+      return params.action === "pack" ? hostReviewPack(contentId, pack, reviewerHost, dataDir) : seriesTransaction(() => submitReview(params, pack, reviewerHost, dataDir, grant));
     });
     return withTokenInNextAction({ ...result, ...grant });
   } catch (err) {

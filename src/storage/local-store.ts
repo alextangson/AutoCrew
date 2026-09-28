@@ -1,3 +1,5 @@
+import { seriesTransaction } from "./series-transaction.js";
+import { SERIES_STATES, draftHash, digest, type Outline, type TechniqueRef, type GapRecord, type SeriesReview } from "../modules/writing/series-memory.js";
 import { assertManagedPathAvailable } from "./storage-roots.js";
 import { portableProjectRecord } from "./project-record.js";
 import { contentRoot, isLayoutV2, projectFile, contentFile, ensureContentProject, readProjectRegistry, contentIds } from "./content-project.js";
@@ -118,6 +120,15 @@ export interface Asset {
 }
 
 export interface ContentVersion {
+  outline?: Outline;
+  outlineDraftHash?: string;
+  outlineVersion?: number;
+  technique_ids?: TechniqueRef[];
+  reviewContextHash?: string;
+  seriesSnapshotId?: string;
+  seriesReview?: SeriesReview;
+  gapRecord?: GapRecord;
+
   version: number;
   /** 该版本对应的标题；旧数据可能缺失。 */
   title?: string;
@@ -285,6 +296,16 @@ export interface ManualPublication {
 }
 
 export interface Content {
+  outline?: Outline;
+  outlineDraftHash?: string;
+  outlineVersion?: number;
+  technique_ids?: TechniqueRef[];
+  reviewContextHash?: string;
+  seriesSnapshotId?: string;
+  seriesReview?: SeriesReview;
+  gapRecord?: GapRecord;
+  seriesEnteredAt?: string;
+
   id: string;
   title: string;
   body: string;
@@ -523,15 +544,8 @@ function isFileMissing(err: unknown): boolean {
  */
 const contentWriteChains = new Map<string, Promise<unknown>>();
 
-export function serializeContentWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
-  const prev = contentWriteChains.get(id) ?? Promise.resolve();
-  const next = prev.then(fn, fn); // 前一步失败也不许卡住后一步
-  const tail = next.then(() => undefined, () => undefined);
-  contentWriteChains.set(id, tail);
-  void tail.then(() => {
-    if (contentWriteChains.get(id) === tail) contentWriteChains.delete(id);
-  });
-  return next;
+export function serializeContentWrite<T>(_id: string, fn: () => Promise<T>): Promise<T> {
+  return seriesTransaction(fn);
 }
 
 // --- Topics ---
@@ -666,6 +680,7 @@ export async function saveContent(
     publishUrl: content.publishUrl ?? null,
     performanceData: content.performanceData ?? {},
     assets: [],
+    ...(SERIES_STATES.has(content.status) ? { seriesEnteredAt: now } : {}),
     versions: [{ version: 1, title: content.title, body: content.body, note: "初稿", savedAt: now }],
     createdAt: now,
     updatedAt: now,
@@ -908,9 +923,25 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
   // 正文或标题变化都形成新版本；版本不再只记录 body，标题优化也可追溯。
   const bodyChanged = updates.body !== undefined && updates.body !== existing.body;
   const titleChanged = updates.title !== undefined && updates.title !== existing.title;
-  if (bodyChanged || titleChanged) {
+  const contextChanged = ["outline", "technique_ids", "gapRecord", "seriesSnapshotId"].some(key =>
+    key in updates && JSON.stringify(updates[key as keyof typeof updates]) !== JSON.stringify(existing[key as keyof Content]));
+  if ((bodyChanged || titleChanged) && updates.outline === undefined) updates.outlineDraftHash = "";
+  if (updates.outline !== undefined) {
+    updates.outlineVersion = (existing.outlineVersion ?? 0) + 1;
+    updates.outlineDraftHash = draftHash({ title: updates.title ?? existing.title, body: updates.body ?? existing.body, platform: updates.platform ?? existing.platform });
+  }
+  if (bodyChanged || titleChanged || contextChanged) {
+    updates.reviewContextHash = digest({ outline: updates.outline ?? existing.outline, outlineDraftHash: updates.outlineDraftHash ?? existing.outlineDraftHash,
+      snapshot: updates.seriesSnapshotId ?? existing.seriesSnapshotId, techniques: updates.technique_ids ?? existing.technique_ids });
     const nextVersion = (existing.versions?.length || 0) + 1;
     const versionEntry: ContentVersion = {
+      outline: updates.outline ?? existing.outline,
+      outlineDraftHash: updates.outlineDraftHash ?? existing.outlineDraftHash,
+      outlineVersion: updates.outlineVersion ?? existing.outlineVersion,
+      technique_ids: updates.technique_ids ?? existing.technique_ids,
+      reviewContextHash: updates.reviewContextHash ?? existing.reviewContextHash,
+      seriesSnapshotId: updates.seriesSnapshotId ?? existing.seriesSnapshotId,
+      gapRecord: updates.gapRecord ?? existing.gapRecord,
       version: nextVersion,
       title: updates.title ?? existing.title,
       body: updates.body ?? existing.body,
@@ -1602,7 +1633,7 @@ async function transitionStatusLocked(
 
   const now = new Date().toISOString();
   const patch = typeof opts?.patch === "function" ? opts.patch(content) : opts?.patch;
-  const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus };
+  const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus, ...(SERIES_STATES.has(targetStatus) && targetStatus !== currentStatus ? { seriesEnteredAt: now } : {}) };
 
   // 交接台账（§6.1）：五处里的三处是状态转换。写在锁内、与状态同一次落盘——
   // 分两次写就会出现「状态已推进但账没记」的中间态。

@@ -1,3 +1,4 @@
+import { rulesForPlatform } from "./creator-profile.js";
 /**
  * 受众画像生成与校准（IA v5 V5.1,继承 PRD-v2 Phase 0.5 设计）。
  *
@@ -168,8 +169,7 @@ export async function generateAudiencePersonaProposal(
     throw new Error("先在校准中心填写定位(行业/赛道),画像需要以定位为锚");
   }
 
-  const rules = (profile?.writingRules ?? [])
-    .filter((r) => !r.disabled)
+  const rules = (profile ? rulesForPlatform(profile, "") : [])
     .slice(0, 8)
     .map((r) => `- ${r.rule}`)
     .join("\n");

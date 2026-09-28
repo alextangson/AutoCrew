@@ -1,3 +1,5 @@
+import { lengthHint, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
+import { loadProfile } from "../modules/profile/creator-profile.js";
 /**
  * 宿主交稿（P3 spec §5.3）——把写手循环翻过来的另一半：**收稿**。
  *
@@ -69,6 +71,8 @@ export type SubmitFailure = { ok: false; error: string } & Record<string, unknow
 export type SubmitResult = ({ status: SubmitPhase } & Record<string, unknown>) | SubmitFailure;
 
 export interface SubmitArgs {
+  outline?: Outline;
+  technique_ids?: TechniqueRef[];
   contentId: string;
   packId: string;
   attempt: number;
@@ -100,7 +104,7 @@ function fail(error: string, extra: Record<string, unknown> = {}): SubmitFailure
 type PayloadHashes = { payloadHashes?: Record<string, string> };
 
 function payloadDigest(args: SubmitArgs): string {
-  return createHash("sha256").update(JSON.stringify([args.title, args.hook ?? "", args.body, args.cta ?? "", args.hashtags ?? []])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([args.title, args.hook ?? "", args.body, args.cta ?? "", args.hashtags ?? [], args.outline ?? null, args.technique_ids ?? []])).digest("hex");
 }
 
 function notePayload(pack: WritingPackFile, args: SubmitArgs): void {
@@ -209,6 +213,7 @@ async function record(
   pending?: PendingReview,
 ): Promise<{ status: SubmitPhase } & Record<string, unknown>> {
   const at = new Date().toISOString();
+  result.length_hint = lengthHint(args.body, pack.context?.req.requirements, (await loadProfile(dataDir))?.contentFormat?.wordCount);
   pack.attempts[String(args.attempt)] = { status: result.status, at, startedAt: at, result, ...(pending ? { pending } : {}) };
   notePayload(pack, args);
   await writePack(args.contentId, pack, dataDir);
@@ -239,6 +244,9 @@ async function persistDraft(
   await updateContent(
     args.contentId,
     {
+      outline: payload.outline,
+      technique_ids: payload.technique_ids,
+      seriesSnapshotId: (await readPack(args.contentId, dataDir))?.series?.id,
       title: payload.title,
       body: humanizedText,
       hashtags: payload.hashtags.map((t) => t.trim()).filter(Boolean),
@@ -325,9 +333,13 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
   let content = loaded.content;
 
   // 长度门在这里（§5.1）：形状不对/正文超 12000 字是**拒收**，不是「写得不好」，不扣修复轮
-  const validated = validateSubmitArgs({ title: args.title, hook: args.hook, body: args.body, cta: args.cta, hashtags: args.hashtags });
+  const validated = validateSubmitArgs({ title: args.title, hook: args.hook, body: args.body, cta: args.cta, hashtags: args.hashtags, outline: args.outline, technique_ids: args.technique_ids });
   if (!validated.ok) return fail(validated.error);
   const payload = validated.payload;
+  if (pack.series && !payload.outline) return fail("outline_required: 新写作包必须附摘要；材料不足请提交 gap");
+  for (const ref of payload.technique_ids ?? []) {
+    if (!pack.techniques?.cards.some(c => c.id === ref.id && c.version === ref.version)) return fail("unknown_technique_version: 只能使用本包冻结的已审卡片");
+  }
   // 形状合格才开修订周期：被长度门拒收的稿不该白白耗掉一个周期、也不该把稿件推离草稿就绪
   if (loaded.opensCycle) {
     const opened = await openRevisionCycle(content, pack, args, dataDir);
@@ -406,6 +418,7 @@ async function awaitHostReview(args: SubmitArgs, pack: ReadyPack, job: ReviewJob
   const draftHash = draftHashOf(job.pending.payload.title, job.pending.humanizedText, pack.context.platform);
   const result = {
     status: "awaiting_host_review" as const,
+    length_hint: lengthHint(args.body, pack.context.req.requirements, (await loadProfile(dataDir))?.contentFormat?.wordCount),
     saved: true,
     quality_status: "awaiting_host_review",
     needs_attention: true,

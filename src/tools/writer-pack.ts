@@ -1,3 +1,6 @@
+import { SERIES_INSTRUCTIONS, type SeriesSnapshot, type GapRecord } from "../modules/writing/series-memory.js";
+import type { TechniqueCard } from "../modules/writing/technique-store.js";
+import type { SubmitPayload } from "../modules/writing/script-payload.js";
 import fs from "node:fs/promises";
 import { contentFile, resolveContentProject } from "../storage/content-project.js";
 /**
@@ -60,7 +63,7 @@ export interface PendingReview {
   /** 缺席是旧版engine记录；新宿主审稿必须显式落host，重启不触发API。 */
   mode?: "host" | "engine";
   host: string;
-  payload: { title: string; hook: string; body: string; cta: string; hashtags: string[] };
+  payload: SubmitPayload;
   humanizedText: string;
   needsHuman: string[];
   /** 软门的打回文案（终态回执里的 `gate_notes`，跨进程也要还得出来） */
@@ -68,6 +71,7 @@ export interface PendingReview {
 }
 
 export interface HostReviewTicket {
+  seriesSnapshot?: SeriesSnapshot;
   reviewPackId: string;
   draftHash: string;
   issuedAt: string;
@@ -119,6 +123,9 @@ export interface PackContext {
 export type PackState = "preparing" | "ready" | "failed";
 
 export interface WritingPackFile {
+  series?: SeriesSnapshot;
+  techniques?: { version: string; cards: TechniqueCard[] };
+  gapRecord?: GapRecord;
   packId: string;
   /** 同步领包时冻结请求，备料期间也能识别新要求；旧包从 context.req 兼容读取。 */
   request?: { req: ScriptRequest; topicDescription: string; planningFingerprint?: string; readiness?: WritingReadiness };
@@ -445,7 +452,7 @@ export function renderPack(contentId: string, pack: ReadyPack): string {
     packId: pack.packId,
     topicTitle: pack.context.req.topic,
     platform: pack.context.platform,
-    prompts: { ...pack.context.prompts, user: [pack.context.prompts.user, renderHostEvidence(pack)].filter(Boolean).join("\n\n") },
+    prompts: { ...pack.context.prompts, user: [pack.context.prompts.user, ...(pack.series ? [SERIES_INSTRUCTIONS, `系列快照（空数组表示暂无）：${JSON.stringify(pack.series)}`, `已审手法目录：${JSON.stringify(pack.techniques?.cards.map(({ id, version, title, summary }) => ({ id, version, title, summary })) ?? [])}；用 writer technique{id,version} 读取全文`] : []), renderHostEvidence(pack)].filter(Boolean).join("\n\n") },
     hostEvidenceLeft: budget.host_evidence_left,
     ledgerBudgetLeft: budget.find_evidence_left,
     repairLeft: budget.repair_rounds_left,

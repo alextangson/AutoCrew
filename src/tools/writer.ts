@@ -1,3 +1,7 @@
+import { updateContent } from "../storage/local-store.js";
+import { Value } from "@sinclair/typebox/value";
+import { outlineSchema, techniqueRefsSchema, gapSchema, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
+import { expandTechnique } from "../modules/writing/technique-store.js";
 import { withTokenInNextAction } from "./claim-grant.js";
 /**
  * `autocrew_writer` — 宿主写稿的五个动作（P3 spec §5.1）。
@@ -48,10 +52,15 @@ import { submitStatus } from "./writer-review.js";
 import { prepareExistingRevision } from "./writer-revision.js";
 import { storageFailure } from "../storage/storage-error.js";
 
-const ACTIONS = ["pack", "pack_status", "find_evidence", "submit", "submit_status"] as const;
+const ACTIONS = ["pack", "pack_status", "find_evidence", "submit", "submit_status", "gap", "technique"] as const;
 type WriterAction = (typeof ACTIONS)[number];
 
 export const writerSchema = Type.Object({
+  outline: Type.Optional(outlineSchema),
+  technique_ids: Type.Optional(techniqueRefsSchema),
+  gap: Type.Optional(gapSchema),
+  id: Type.Optional(Type.String()),
+  version: Type.Optional(Type.Integer({ minimum: 1 })),
   action: Type.Unsafe<WriterAction>({
     type: "string",
     enum: [...ACTIONS],
@@ -318,6 +327,27 @@ export async function executeWriter(
         const found = params.execution === "engine" ? await serializeWriterCall(contentId, find) : await find();
         return withTokenInNextAction({ ...found, ...gate.grant });
       }
+      case "technique": {
+        const card = await expandTechnique(str(params.id), Number(params.version), dataDir);
+        return card ? { ok: true, card } : fail("technique_not_found");
+      }
+      case "gap": {
+        const contentId = str(params.content_id);
+        if (!Value.Check(gapSchema, params.gap)) return fail("invalid_gap");
+        const gap = params.gap;
+        return serializeWriterCall(contentId, async () => {
+          const pack = await readPack(contentId, dataDir);
+          const content = await getContent(contentId, dataDir);
+          if (!isReadyPack(pack) || pack.packId !== params.pack_id || !content || !["drafting", "revision"].includes(content.status)) return fail("stale_pack_or_state");
+          const gate = await gateWrite(contentId, params, host, dataDir);
+          if ("denied" in gate) return gate.denied;
+          pack.gapRecord = { ...gap, packId: pack.packId, at: new Date().toISOString() };
+          await updateContent(contentId, { gapRecord: pack.gapRecord }, dataDir);
+          await writePack(contentId, pack, dataDir);
+          return { ok: true, status: "needs_material", gap: pack.gapRecord, ...gate.grant,
+            next_action: { message: "请创始人补充；要求或材料变化后按 pack_request_changed → force 重领新包" } };
+        });
+      }
       case "submit": {
         const contentId = str(params.content_id);
         const packId = str(params.pack_id);
@@ -337,6 +367,8 @@ export async function executeWriter(
               body: typeof params.body === "string" ? params.body : "",
               cta: str(params.cta),
               hashtags: params.hashtags,
+              outline: params.outline as Outline | undefined,
+              technique_ids: params.technique_ids as TechniqueRef[] | undefined,
               review,
               ...(str(params.revision_of) ? { revisionOf: str(params.revision_of) } : {}),
               ...(typeof params.revision_note === "string" ? { revisionNote: params.revision_note } : {}),
