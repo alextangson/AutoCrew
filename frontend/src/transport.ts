@@ -129,33 +129,75 @@ let source: EventSource | null = null;
 const listeners = new Set<SseListener>();
 
 /** 订阅引擎/对话事件流。全应用单连接;返回退订函数。 */
+const SSE_KINDS = ["engine", "chat", "chat_delta", "chat_followup", "inbox", "research", "video:updated"] as const;
+/** 标签页藏起来多久后断开事件流（给正在流式回复的对话留余地） */
+const HIDDEN_CLOSE_MS = 60_000;
+let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
+let closedWhileHidden = false;
+
+function emit(ev: SseEvent): void {
+  for (const l of listeners) l(ev);
+}
+
+function openSource(): void {
+  if (source || listeners.size === 0) return;
+  source = new EventSource("/api/events");
+  // EventSource 自己会重连,但断线那几秒的事件不会补发。第一次 open 是首连
+  // (各视图挂载时本来就拉过一次),之后每次 open 都是重连 → 广播一条合成
+  // reconnect,订阅方无条件重拉,免得界面停在断线前那一帧。
+  let everOpened = false;
+  source.addEventListener("open", () => {
+    if (everOpened) emit({ kind: "reconnect", data: {} });
+    everOpened = true;
+  });
+  for (const kind of SSE_KINDS) {
+    source.addEventListener(kind, (ev) => {
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse((ev as MessageEvent).data as string) as Record<string, unknown>;
+      } catch {
+        /* 坏帧丢弃 */
+      }
+      emit({ kind, data });
+    });
+  }
+}
+
+/**
+ * 浏览器对同一站点只给 6 条 HTTP/1.1 连接，每个标签页的事件流常驻占一条。
+ * 开到第 6 个 AutoCrew 标签页，新请求就排队到永远（页面停在「载入中」，2026-09-28 实测）。
+ * 所以藏起来的标签页一分钟后让出连接；回到前台重新接上，并广播 reconnect 让各视图重拉。
+ */
+function onVisibility(): void {
+  if (document.hidden) {
+    if (!source || hiddenTimer) return;
+    hiddenTimer = setTimeout(() => {
+      hiddenTimer = null;
+      if (!document.hidden || !source) return;
+      source.close();
+      source = null;
+      closedWhileHidden = true;
+    }, HIDDEN_CLOSE_MS);
+    return;
+  }
+  if (hiddenTimer) { clearTimeout(hiddenTimer); hiddenTimer = null; }
+  if (!closedWhileHidden) return;
+  closedWhileHidden = false;
+  openSource();
+  emit({ kind: "reconnect", data: {} });
+}
+
+let visibilityHooked = false;
+
 export function subscribeEvents(fn: SseListener): () => void {
   listeners.add(fn);
-  if (!source) {
+  if (!visibilityHooked && typeof document !== "undefined") {
+    visibilityHooked = true;
+    document.addEventListener("visibilitychange", onVisibility);
+  }
+  if (!source && !(document.hidden && closedWhileHidden)) {
     void ensureSession()
-      .then(() => {
-        if (source || listeners.size === 0) return;
-        source = new EventSource("/api/events");
-        // EventSource 自己会重连,但断线那几秒的事件不会补发。第一次 open 是首连
-        // (各视图挂载时本来就拉过一次),之后每次 open 都是重连 → 广播一条合成
-        // reconnect,订阅方无条件重拉,免得界面停在断线前那一帧。
-        let everOpened = false;
-        source.addEventListener("open", () => {
-          if (everOpened) for (const l of listeners) l({ kind: "reconnect", data: {} });
-          everOpened = true;
-        });
-        for (const kind of ["engine", "chat", "chat_delta", "chat_followup", "inbox", "research", "video:updated"] as const) {
-          source.addEventListener(kind, (ev) => {
-            let data: Record<string, unknown> = {};
-            try {
-              data = JSON.parse((ev as MessageEvent).data as string) as Record<string, unknown>;
-            } catch {
-              /* 坏帧丢弃 */
-            }
-            for (const l of listeners) l({ kind, data });
-          });
-        }
-      })
+      .then(openSource)
       .catch(() => {
         /* invoke 会把认证错误展示给用户；事件流静默等待重载 */
       });
