@@ -3,7 +3,8 @@
  *
  * 两处来源，都只读 approved 目录，drafts 永不进写作包：
  * - 产品内置：本文件旁的 techniques/approved/*.json，只收书籍卡（随产品发给所有用户）；
- * - 资料目录：<dataDir>/techniques/approved/*.json，可以放创始人经验卡（作用范围只限这个资料目录）。
+ * - 资料目录：getDataDir()/techniques/approved/*.json（工作区数据目录，默认工作区是 ~/AutoCrew资料库/workspaces/default/，
+ *   不是资料库根目录），可以放创始人经验卡（作用范围只限这个资料目录）。
  * 卡片有稳定 id + 整数 version；写作包冻结整份目录，交稿时 technique_ids 按冻结版本校验。
  */
 import fs from "node:fs/promises";

@@ -236,8 +236,8 @@
 
 **C 手法库**
 - 卡片格式：`src/modules/writing/technique-store.ts` 的 `techniqueCardSchema`（id、version、name、purpose、source{book|founder_experience}、verification{status: 已核|部分待核, note, links}、fits、notFor、moves、illustration{label:"示意，不是事实材料", text}、misuse、pairing）。
-- 已审目录有两处来源：产品内置 `src/modules/writing/techniques/approved/`（只许书籍卡，混进创始人卡直接报错）+ 资料目录 `<library>/techniques/approved/`。`drafts/` 永不加载。
-- 2026-09-28 创始人批准的 15 张已转换：12 张书籍卡进内置已审目录；3 张创始人经验卡按 §3 C「只限这个资料目录」放在 `src/modules/writing/techniques/founder-library/`，**没有写进创始人的资料库**（实现时不碰 `~/AutoCrew资料库`）。要启用这 3 张，把这三个 json 复制到 `~/AutoCrew资料库/techniques/approved/` 即可，这一步留给创始人。
+- 已审目录有两处来源：产品内置 `src/modules/writing/techniques/approved/`（只许书籍卡，混进创始人卡直接报错）+ 当前工作区的数据目录 `getDataDir()/techniques/approved/`（默认工作区即 `~/AutoCrew资料库/workspaces/default/techniques/approved/`，不是资料库根目录）。`drafts/` 永不加载。
+- 2026-09-28 创始人批准的 15 张已转换：12 张书籍卡进内置已审目录；3 张创始人经验卡按 §3 C「只限这个资料目录」放在 `src/modules/writing/techniques/founder-library/`，**没有写进创始人的资料库**（实现时不碰 `~/AutoCrew资料库`）。启用方式是把这三个 json 复制到 `~/AutoCrew资料库/workspaces/default/techniques/approved/`（`getDataDir()` 解析到工作区目录）；创始人已于 2026-09-28 自行复制完成。
 - 标「部分待核」的卡原样保留核对状态，不因批准改成「已核」。
 - 读全文：`autocrew_writer technique{content_id?,id,version}`，有 content_id 时读该稿写作包冻结的那一版。
 - 立意阶段：宿主路径（scout angles 任务包）和 engine 路径（runAngleStage，仅在明确给了资料目录时）都会带上系列快照和手法目录。
