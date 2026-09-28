@@ -4,25 +4,34 @@
 运行环境：`env -i HOME PATH USER`（去掉宿主会话继承的 CLAUDE_CODE_* / ANTHROPIC_BASE_URL，模拟守护进程环境）。
 客户端：`@agentclientprotocol/sdk` 1.5.1。
 
-## 结论：阶段 1 被挡住——本机 Claude 登录已过期
+## 结论（更新）
 
-`claude -p "say hi"`（CLI 2.1.282，干净环境）同样报 `Failed to authenticate: OAuth session expired and could not be refreshed`。
-钥匙串里有 `Claude Code-credentials` 条目，但刷新失败。需要创始人在终端跑一次 `claude` 重新登录（我不代为登录）。
-登录前 Claude 的权限 / cancel / session/load 全部无法验证，按约定停在这里。
+- **Claude：阶段 1 可开建。** 登录已由创始人恢复；重跑除权限外全过。权限问题已解（见下）。
+- **Codex：已定案**，锁 `@zed-industries/codex-acp` 0.16.0，每个会话强制 `-c approval_policy="untrusted" -c sandbox_mode="workspace-write"`（不管用户全局配置），界面滤掉“总是允许”，session/new 超时 ≥90 s。阶段 2 接。
+- **WorkBuddy：推迟到阶段 2 待决策。** App 自带 CLI 只能无头运行（交互模式回落到不存在的 `dist/codebuddy`），创始人无法 `/login`；`ACC_PRODUCT_CONFIG_PATH=product.json` 仍报需登录。两条路待定：装独立的 `@tencent-ai/codebuddy-code`（自带登录）；或像 ChatCut 那样反向“复制提示词”。未读取任何已存令牌。
 
 ## Claude — `@agentclientprotocol/claude-agent-acp` 0.81.2
 
 | 检查 | 结果 |
 |---|---|
-| initialize | 通过；agentInfo 0.81.2，loadSession=true，mcpCapabilities.http=true，authMethods=[]（空） |
-| session/new 带 http MCP + Authorization 头 | 通过（不需要登录即可建会话） |
-| prompt 流式 + MCP 调用 | 未验证：登录过期 |
-| request_permission 允许/拒绝 | 未验证：登录过期 |
-| cancel | 未验证：登录过期 |
-| 杀进程后 session/load 续 | 未验证：登录过期 |
-| 认证失败长什么样 | **已观察**：initialize、session/new 都成功；第一次 `session/prompt` 才失败，JSON-RPC 错误 `Internal error: Failed to authenticate: OAuth session expired and could not be refreshed`。authMethods 为空，客户端无法走 ACP authenticate，只能提示用户在终端跑 `claude` 登录。就绪检测因此不能只靠 initialize。 |
+| initialize | 通过；loadSession=true，mcp http=true，authMethods=[] |
+| session/new 带 http MCP + Authorization | 通过 |
+| prompt 流式 + MCP 调用 | 通过（登录恢复后重跑） |
+| cancel | 通过 |
+| 杀进程后 session/load | 通过 |
+| request_permission 允许/拒绝 | 默认**不发**；按下法修复后**通过** |
+| 认证失败 | initialize、session/new 都成功，第一次 `session/prompt` 才报 JSON-RPC `Internal error: Failed to authenticate: OAuth session expired and could not be refreshed`。authMethods 为空，只能提示用户在终端跑 `claude` 登录；就绪检测不能只靠 initialize |
 
-怪癖：从 Claude Code 会话里直接起适配器会继承 `ANTHROPIC_BASE_URL` 等宿主变量；守护进程起 agent 时要给干净环境。
+**权限不发的根因**：创始人 `~/.claude/settings.json` 里 `permissions.allow = ["Bash(*)","Read(*)","Write(*)","Edit(*)"]`，默认 mode=default 下这些工具直接放行，canUseTool 根本不被调用。
+（协调方试过的项目级 `.claude/settings.json` 放在 spike 暂存目录里，而 `spike.mjs` 每次启动会 `rmSync` 清空该目录——试验大概率被自己删掉了，不能据此判定项目级无效。）
+
+**修法（已验证，`probe-claude-perm.mjs flag-ask allow|reject`）**：session/new 时传
+`_meta.claudeCode.options.settings = { permissions: { ask: ["Bash","Write","Edit","MultiEdit","NotebookEdit"] } }`。
+适配器把它作为 SDK 的 flag settings（最高优先级来源）转发，`ask` 压过用户的 `allow`：
+- 拒绝：收到 `allow-once:allow_once / reject:reject_once`，选 reject → 文件未写出；
+- 允许：同样选项，选 allow-once → 文件写出；
+- 不改全局设置，`settingSources` 仍是 user/project/local：agent 仍看得到创始人全局 CLAUDE.md（实测回答 yes 并引用“默认用中文回复”），技能/记忆不丢，登录（钥匙串）不受影响。无需单独 CLAUDE_CONFIG_DIR。
+- 可用 modes 含 bypassPermissions，守护进程永不 setSessionMode；另传 `allowDangerouslySkipPermissions:false` 关掉旁路模式。
 
 ## Codex — `@zed-industries/codex-acp` 0.16.0（npm 已标 deprecated，改名 `@agentclientprotocol/codex-acp`）
 
@@ -60,6 +69,5 @@ ACP 里未登录的表现：initialize、session/new 成功，每次 prompt 立�
 
 ## 未做
 
-- Claude：等创始人终端跑 `claude` 重新登录后重跑 `node spike.mjs claude`，再决定是否开建阶段 1。
 - WorkBuddy：等 CLI `/login` 后重跑。
 - Codex 1.13.1 的审批开关没查到底。
