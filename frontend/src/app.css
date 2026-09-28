@@ -315,6 +315,7 @@ h2.serif { font-size: var(--fs-2xl); line-height: 1.3; margin-bottom: var(--s3);
 /* 键盘光标与鼠标 hover 是同一种高亮——两套输入不该有两种"当前行" */
 .picker-row-cursor { background: rgba(22, 21, 15, .06); }
 .picker-row-on .picker-label { font-weight: 700; }
+.picker-row-off { opacity: 0.45; cursor: not-allowed; }
 .picker-tick { flex: none; width: 8px; font-size: var(--fs-xs); }
 .picker-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-hint { flex: none; }

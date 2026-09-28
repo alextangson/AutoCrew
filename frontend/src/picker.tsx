@@ -19,6 +19,8 @@ export interface PickerItem {
   onDelete?: () => void;
   /** 参与搜索但不显示（如会话 id） */
   keywords?: string;
+  /** 置灰不可选（仍显示，hint 里说原因） */
+  disabled?: boolean;
 }
 
 export interface PickerGroup {
@@ -100,6 +102,7 @@ export function PickerButton(props: {
   }, [open, cursor, query]);
 
   const pick = (id: string) => {
+    if (props.groups.some((g) => g.items.some((it) => it.id === id && it.disabled))) return;
     setOpen(false);
     props.onPick(id);
   };
@@ -174,7 +177,7 @@ export function PickerButton(props: {
                   return (
                     <div
                       key={it.id}
-                      className={"picker-row" + (active ? " picker-row-on" : "") + (at === cursor ? " picker-row-cursor" : "")}
+                      className={"picker-row" + (active ? " picker-row-on" : "") + (it.disabled ? " picker-row-off" : "") + (at === cursor ? " picker-row-cursor" : "")}
                       data-cursor={at === cursor ? "1" : "0"}
                       role="option"
                       aria-selected={active}

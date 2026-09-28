@@ -116,10 +116,12 @@ export interface SseEvent {
    *   只是「正在生成的样子」，事实源仍是 chat:turn 的 invoke 返回（到达后全量覆盖）
    * - chat_followup：总编辑往某段会话里落了一轮**调研回报**（{conversationId, topicId}）——
    *   后台任务回来了,不是用户发起的一轮;右栏据此重载当前会话或提示去会话列表看
+   * - agent：总编辑本机 agent 的审批/权限卡（ask / ask_resolved）、本轮卡片（card）、轮次状态（turn）、
+   *   轮次结束后才返回的后台结果（background）——卡片字段都经服务端白名单，令牌不进这条流
    * - reconnect：**客户端合成**事件，不来自服务端。SSE 断线期间的事件已经永久丢失，
    *   重连后订阅方必须无条件重拉一次（同 spec §8.3 之四）
    */
-  kind: "engine" | "chat" | "chat_delta" | "chat_followup" | "inbox" | "research" | "video:updated" | "reconnect";
+  kind: "engine" | "chat" | "chat_delta" | "chat_followup" | "agent" | "inbox" | "research" | "video:updated" | "reconnect";
   data: Record<string, unknown>;
 }
 
@@ -129,7 +131,7 @@ let source: EventSource | null = null;
 const listeners = new Set<SseListener>();
 
 /** 订阅引擎/对话事件流。全应用单连接;返回退订函数。 */
-const SSE_KINDS = ["engine", "chat", "chat_delta", "chat_followup", "inbox", "research", "video:updated"] as const;
+const SSE_KINDS = ["engine", "chat", "chat_delta", "chat_followup", "agent", "inbox", "research", "video:updated"] as const;
 /** 标签页藏起来多久后断开事件流（给正在流式回复的对话留余地） */
 const HIDDEN_CLOSE_MS = 60_000;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;

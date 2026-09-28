@@ -1,0 +1,41 @@
+/**
+ * 本机 agent 的待处理卡（审批 / 权限）在前端的状态：SSE `agent` 事件 + agent:pending 重放合成一份列表。
+ * 纯函数，便于测：卡片只看服务端 id，重复事件、已落定的卡都不会重复出现。
+ */
+
+export interface AskView {
+  id: string;
+  kind: "approval" | "permission";
+  turnId: string;
+  conversationId: string;
+  status: string;
+  expiresAt: string;
+  title: string;
+  detail: string;
+}
+
+function isAsk(v: unknown): v is AskView {
+  const a = v as AskView | null;
+  return Boolean(a) && typeof a!.id === "string" && (a!.kind === "approval" || a!.kind === "permission") && typeof a!.title === "string";
+}
+
+/** agent:pending 的回包 → 待处理卡 + 进行中的轮次 */
+export function parsePending(raw: unknown): { asks: AskView[]; running: { turnId: string; conversationId: string; status: string } | null } {
+  const data = (raw as { data?: { asks?: unknown; running?: unknown } } | null)?.data;
+  const asks = Array.isArray(data?.asks) ? data!.asks.filter(isAsk) : [];
+  const r = data?.running as { turnId?: unknown; conversationId?: unknown; status?: unknown } | null | undefined;
+  const running = r && typeof r.turnId === "string" && typeof r.conversationId === "string"
+    ? { turnId: r.turnId, conversationId: r.conversationId, status: String(r.status ?? "running") }
+    : null;
+  return { asks, running };
+}
+
+/** SSE `agent` 事件并入列表：ask 加入（去重），ask_resolved 移除；只留当前对话的 */
+export function applyAgentEvent(list: AskView[], event: Record<string, unknown>, conversationId?: string): AskView[] {
+  const ask = event.ask;
+  if (!isAsk(ask)) return list;
+  if (event.type === "ask_resolved") return list.filter((a) => a.id !== ask.id);
+  if (event.type !== "ask" || ask.status !== "pending") return list;
+  if (conversationId && ask.conversationId !== conversationId) return list;
+  return list.some((a) => a.id === ask.id) ? list : [...list, ask];
+}

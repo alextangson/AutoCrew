@@ -131,10 +131,15 @@ export function Onboarding(props: { onDone: () => void }) {
         <button className="primary" disabled={busy} onClick={() => void submit()}>
           {busy ? "测试中…" : "测试并进入"}
         </button>
-        {result?.probeError && (
+        {result?.probeError ? (
           // 不锁门（§9 第 2 条）：进去之后顶栏横幅会一直说这条线还坏着
           <button className="onboard-skip" onClick={props.onDone}>
             先进去再说
+          </button>
+        ) : (
+          // 内置引擎没配置不挡本机 agent（总编辑接本机 agent 边界 14）：总编辑可以直接用本机 Claude
+          <button className="onboard-skip" onClick={props.onDone}>
+            先不配，用本机 Claude 当总编辑
           </button>
         )}
       </div>

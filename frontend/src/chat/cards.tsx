@@ -7,6 +7,7 @@
  * 落点走壳的 setRoute(nav),没有 nav 时按钮整个不渲染(壳没接线就不假装能跳)。
  */
 import { useState } from "react";
+import { AgentDraftCard, AgentTaskCard, AgentTextCard } from "./agent-cards";
 import { invoke } from "../transport";
 import { clockLabel } from "../time-format";
 import { toast } from "../ui";
@@ -400,6 +401,10 @@ export function ChatCard({ card, nav }: { card: ChatCardShape; nav?: (route: Rou
     case "versions": return <VersionsCard data={card.data} />;
     case "angle_cards": return <AngleCardsCard data={card.data} />;
     case "focus_cleared": return <FocusClearedCard />;
+    // 本机 agent 的 v1 卡片（agent-cards.tsx）
+    case "agent_draft": return <AgentDraftCard data={card.data} nav={nav} background={Boolean((card as { background?: unknown }).background)} />;
+    case "agent_task": return <AgentTaskCard data={card.data} />;
+    case "agent_text": return <AgentTextCard data={{ ...card.data, background: (card as { background?: unknown }).background }} />;
     default:
       return (
         <div className="ccard">

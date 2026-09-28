@@ -39,6 +39,9 @@ import {
   type ConversationSummary,
 } from "./conversation-list";
 import { PickerButton } from "../picker";
+import { AgentAskCard } from "./agent-cards";
+import { backendHint, decideBackendPick, isBackendId, markNoticeSeen, noticeSeen, selectable, TRUST_NOTICE, type BackendId } from "./backend-choice";
+import { useAgentBackend } from "./use-agent-backend";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
 interface Msg {
@@ -64,7 +67,20 @@ function msgClass(m: Msg): string {
  * 每标签页一个 clientId（模块级随机，会话期驻内存）——turn 归属的命名空间：
  * 别的标签页拿到 turnId 也停不了本页的轮（对话控制面设计 §Phase 3）。
  */
-const CLIENT_ID = randomId();
+const CLIENT_ID = tabClientId();
+
+/** clientId 存 sessionStorage：刷新后还是同一个标签页，进行中那轮的停止按钮仍然归它（本机 agent spec 边界 5） */
+function tabClientId(): string {
+  try {
+    const saved = globalThis.sessionStorage?.getItem("autocrew.chat.clientId");
+    if (saved) return saved;
+    const id = randomId();
+    globalThis.sessionStorage?.setItem("autocrew.chat.clientId", id);
+    return id;
+  } catch {
+    return randomId();
+  }
+}
 
 /** 中止 ≠ 取消：已投递的后台任务（封面、配图、深调研、成片）继续跑，文案不许暗示它们停了 */
 const ABORT_NOTE = "已停。已投递的后台任务会继续跑，进度看对应卡片。";
@@ -138,6 +154,14 @@ export function ChatDock(props: {
   const modelChoiceRef = useRef(modelChoice);
   modelChoiceRef.current = modelChoice;
   const focus = useRevisionFocus();
+  /** 当前对话的后端（服务端记录为准）；新对话时是 undefined，用 agent.newBackend */
+  const [convBackend, setConvBackend] = useState<BackendId | undefined>();
+  const agent = useAgentBackend(activeConversationId);
+  const effectiveBackend: BackendId = activeConversationId ? (convBackend ?? "builtin") : agent.newBackend;
+  const backendRef = useRef(effectiveBackend);
+  backendRef.current = effectiveBackend;
+  /** 刷新后重新挂上的进行中轮次：本页没有它的 invoke 返回，靠轮询收尾 */
+  const reattachedRef = useRef(false);
 
   useEffect(() => {
     void invoke("chat:model_options").then((r) => {
@@ -188,8 +212,9 @@ export function ChatDock(props: {
   const loadConversation = async (id: string) => {
     const r = await invoke("conversations:get", { id });
     if (!r.ok) return toast(r.error ?? "这段会话打开失败");
-    const d = (r as unknown as { data: { messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[]; origin?: "system" }> } }).data;
+    const d = (r as unknown as { data: { meta?: { backend?: unknown }; messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[]; origin?: "system" }> } }).data;
     setActiveConversationId(id);
+    setConvBackend(isBackendId(d.meta?.backend) ? d.meta.backend : "builtin");
     setMsgs(
       d.messages
         .map((m) => ({
@@ -234,9 +259,9 @@ export function ChatDock(props: {
    * 三态各有明确出口，绝不假装「还在跑」——服务端重启后 turn_status 就是 unknown。
    */
   const recoverPendingTurn = async () => {
-    // turnIdRef 有值 = 本标签页正跑着一轮，那一轮由 invoke 返回收尾，不归恢复管
+    // turnIdRef 有值 = 本标签页正跑着一轮，那一轮由 invoke 返回收尾，不归恢复管（重新挂上的除外）
     const pending = readPendingTurn();
-    if (!pending || turnIdRef.current) return;
+    if (!pending || (turnIdRef.current && !reattachedRef.current)) return;
     const r = await invoke("chat:turn_status", { turn_id: pending.turnId });
     if (!r.ok) return; // 查不动就保留 pending，下次重连再查
     const view = ((r as unknown as { data?: TurnStatusView }).data ?? { status: "unknown" }) as TurnStatusView;
@@ -245,17 +270,44 @@ export function ChatDock(props: {
     if (decision.action === "reload") {
       clearPendingTurn();
       setRecoveryNotice("");
+      if (reattachedRef.current) {
+        reattachedRef.current = false;
+        turnIdRef.current = null;
+        setBusy(false);
+        void agent.refresh();
+      }
       if (decision.conversationId) await loadConversation(decision.conversationId);
       void refreshConversations();
       return;
     }
-    if (decision.action === "lost") clearPendingTurn();
-    else {
+    if (decision.action === "lost") {
+      clearPendingTurn();
+      if (reattachedRef.current) { reattachedRef.current = false; turnIdRef.current = null; setBusy(false); }
+    } else {
+      // 刷新后重新挂上：停止按钮可用（clientId 存在 sessionStorage，仍归本标签页）
+      if (!turnIdRef.current || reattachedRef.current) {
+        reattachedRef.current = true;
+        turnIdRef.current = pending.turnId;
+        setBusy(true);
+      }
       // 还在跑：本页不是发起方，拿不到 invoke 返回——只能轮询到它收尾，
       // 否则「上一轮还在跑」会一直挂在那里，用户永远等不到结果
       pollRef.current = setTimeout(() => void recoverPendingTurn(), 3000);
     }
     setRecoveryNotice(decision.notice);
+  };
+
+  /**
+   * 本机 agent 的轮次在服务端跑、不依赖本页请求：刷新时那次 invoke 被掐断，本地记忆也会被清掉。
+   * 所以另问一次服务端「有没有进行中的本机轮次」，有就按恢复契约重新挂上（停止按钮可用）。
+   */
+  const reattachAgentTurn = async () => {
+    if (turnIdRef.current && !reattachedRef.current) return;
+    const { running } = await agent.refresh();
+    if (!running) return;
+    if (activeConvRef.current !== running.conversationId) await loadConversation(running.conversationId);
+    writePendingTurn({ turnId: running.turnId, conversationId: running.conversationId });
+    await recoverPendingTurn();
   };
 
   useEffect(() => () => {
@@ -274,6 +326,7 @@ export function ChatDock(props: {
         if (list && list.length > 0) await loadConversation(list[0].id);
       }
       await recoverPendingTurn();
+      await reattachAgentTurn();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -295,6 +348,13 @@ export function ChatDock(props: {
     const message = text.trim();
     if (!message) return { ok: false, error: "消息不能为空" };
     if (busy) return { ok: false, error: "总编辑正在处理上一项任务，请等它受理后再派" };
+    const backend = backendRef.current;
+    // 信任模型首次使用时明说（spec §信任模型）；不同意就不发
+    if (backend !== "builtin" && !noticeSeen()) {
+      const yes = await confirmDialog({ title: "本机 agent 的权限说明", body: TRUST_NOTICE, confirmLabel: "知道了，继续" });
+      if (!yes) return { ok: false, error: "已取消" };
+      markNoticeSeen();
+    }
     setMsgs((m) => [...m, { role: "user", text: message }]);
     setInput("");
     setBusy(true);
@@ -322,8 +382,11 @@ export function ChatDock(props: {
       client_id: CLIENT_ID,
       ...(activeConversationId ? { conversation_id: activeConversationId } : {}),
       ...(ctx ? { context: ctx } : {}),
-      ...(choice && choice !== DEFAULT_CHAT_MODEL ? { model_choice: choice } : {}),
+      ...(choice && choice !== DEFAULT_CHAT_MODEL && backend === "builtin" ? { model_choice: choice } : {}),
+      // 新对话才带后端；已有对话的后端以服务端记录为准
+      ...(!activeConversationId && backend !== "builtin" ? { backend } : {}),
     });
+    void agent.refresh();
     // invoke 返回 = 本轮真的 settle 了（服务端注册表同刻解锁）——停止按钮与输入框在这里一起解锁
     setBusy(false);
     setStopping(false);
@@ -333,6 +396,13 @@ export function ChatDock(props: {
     // 事实源规则：响应到达 = 流式气泡下岗，回复以下面 setMsgs 的完整内容为准（全量覆盖）
     setStream(clearStream());
     if (!r.ok) {
+      // 本机后端首轮失败也已建好对话（先落盘再起 agent）：认下它，别让下一次发送再新建一段
+      const failedConv = (r as { data?: { conversationId?: unknown } }).data?.conversationId;
+      if (!activeConversationId && typeof failedConv === "string") {
+        setConvBackend(backend);
+        setActiveConversationId(failedConv);
+        void refreshConversations();
+      }
       setMsgs((m) => [...m, { role: "assistant", text: "出错了：" + (r.error ?? "未知错误") }]);
       // needsSetup = 还没有可用的主端点（P2 spec §4.2）：这不是「这条线坏了」，是「还没配」，
       // 报错留在会话里，人直接被送回首次开机卡
@@ -341,6 +411,7 @@ export function ChatDock(props: {
     }
     const parsed = parseChatTurnResponse(r);
     if (parsed.conversationId) {
+      if (!activeConversationId) setConvBackend(backend);
       setActiveConversationId(parsed.conversationId);
     }
     const proposalCard = parsed.cards.find((c) => c.type === "revision_proposal");
@@ -373,7 +444,7 @@ export function ChatDock(props: {
         role: "assistant",
         text: parsed.reply,
         cards: visibleCards,
-        ...(parsed.stopReason === "aborted" ? { note: ABORT_NOTE } : {}),
+        ...(parsed.stopReason === "aborted" && backend === "builtin" ? { note: ABORT_NOTE } : {}),
       },
     ]);
     void refreshConversations();
@@ -432,7 +503,7 @@ export function ChatDock(props: {
     () =>
       subscribeEvents((e) => {
         if (e.kind === "reconnect") {
-          void recoverPendingTurn();
+          void recoverPendingTurn().then(reattachAgentTurn);
           return;
         }
         // 正文增量：turnId 过滤与 seq 去重都在 delta-stream 里判（本页只管渲染）
@@ -475,6 +546,23 @@ export function ChatDock(props: {
     items: g.options.map((o) => ({ id: o.id, label: o.model, ...(o.tier ? { hint: o.tier } : {}) })),
   }));
 
+  const backendGroups = [{
+    items: agent.backends.map((b) => ({ id: b.id, label: b.label, hint: backendHint(b), disabled: !selectable(b) })),
+  }];
+  const pickBackend = (id: string) => {
+    if (!isBackendId(id)) return;
+    const target = agent.backends.find((b) => b.id === id);
+    if (target && !selectable(target)) return toast(target.detail ?? "这个后端现在不能用");
+    agent.setNewBackend(id);
+    // 对话中途换后端 = 新开一段对话，旧的保留（边界 13）
+    if (decideBackendPick({ ...(activeConversationId ? { conversationId: activeConversationId } : {}), backend: effectiveBackend }, id) === "new_conversation") {
+      setActiveConversationId(undefined);
+      setConvBackend(undefined);
+      setMsgs([]);
+      toast("换后端已新开一段对话，旧对话保留在会话列表里");
+    }
+  };
+  const backendLabel = agent.backends.find((b) => b.id === effectiveBackend)?.label ?? (effectiveBackend === "builtin" ? "内置引擎" : effectiveBackend);
   const now = Date.now();
   const sessionGroups = conversationGroups(convs, now).map((g) => ({
     name: g.name,
@@ -514,6 +602,7 @@ export function ChatDock(props: {
             disabled={busy}
             onClick={() => {
               setActiveConversationId(undefined);
+              setConvBackend(undefined);
               setMsgs([]);
             }}
           >
@@ -558,6 +647,8 @@ export function ChatDock(props: {
             {m.note && <p className="muted">{m.note}</p>}
           </div>
         ))}
+        {agent.running?.otherLibrary && <p className="muted run-line">后台 agent 仍在处理旧库（它的写入落在原资料库）</p>}
+        {agent.asks.map((a) => <AgentAskCard key={a.id} ask={a} />)}
         {recoveryNotice && <p className="muted run-line">{recoveryNotice}</p>}
         {/* 流式气泡：视觉与最终回复一致（同一套 markdown 渲染），不做打字机动画 */}
         {busy && stream.text && (
@@ -604,7 +695,21 @@ export function ChatDock(props: {
         />
         <div className="chat-compose-bar">
           {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置；但读取失败要留着并说原因 */}
-          {(modelOptions.length > 1 || modelError) && (
+          {(agent.backends.length > 0 || agent.error) && (
+            <PickerButton
+              className="chat-model-picker"
+              label={agent.error ? "后端清单读不到" : backendLabel}
+              title={agent.error || (agent.running?.otherLibrary ? "后台 agent 仍在处理旧库" : "总编辑用哪个后端")}
+              disabled={busy}
+              placement="up"
+              groups={backendGroups}
+              value={effectiveBackend}
+              onPick={pickBackend}
+              error={agent.error}
+              footer={agent.running?.otherLibrary ? "后台 agent 仍在处理旧库" : "对话中途换后端会新开一段对话；内置引擎只在你手动选时用"}
+            />
+          )}
+          {effectiveBackend === "builtin" && (modelOptions.length > 1 || modelError) && (
             <PickerButton
               className="chat-model-picker"
               label={modelError ? "模型清单读不到" : modelTriggerLabel(modelOptions, modelChoice)}

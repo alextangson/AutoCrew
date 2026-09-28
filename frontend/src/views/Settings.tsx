@@ -18,6 +18,7 @@ import { SettingsJianying } from "./SettingsJianying";
 import { SettingsAsr } from "./SettingsAsr";
 import { Integrations } from "./Integrations";
 import { SettingsData } from "./SettingsData";
+import { TRUST_NOTICE } from "../chat/backend-choice";
 import type { Route } from "../routes";
 
 export type SettingsTab = "models" | "integrations" | "data";
@@ -87,6 +88,11 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
           <SettingsJianying />
           <SettingsAsr />
           <EngineSection />
+
+          <Section title="总编辑用本机 agent" status="本机 Claude" on>
+            <p className="muted">{TRUST_NOTICE}</p>
+            <p className="muted">在右栏输入框下方切换后端。本机 Claude 用你的 Claude 订阅；Codex、WorkBuddy 即将支持。内置引擎只在你手动选它时用，本机 agent 出错不会自动换过去。</p>
+          </Section>
 
           <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>
             <p className="muted">一人多 IP：每个工作区是独立编辑部（定位/灵感/稿件/画像全隔离）。</p>
