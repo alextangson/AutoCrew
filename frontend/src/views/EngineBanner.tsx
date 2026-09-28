@@ -1,5 +1,5 @@
 /**
- * 引擎健康的订阅口 + 顶栏横幅（P2 spec §4.1 推送、§4.3 横幅）。
+ * 引擎健康的订阅口 + 顶栏红点（P2 spec §4.1 推送；看板规格 §26 把横幅收成红点）。
  *
  * **不轮询**（spec §2「不做」）：只有三个重拉时机——应用加载、SSE `engine` 里
  * `kind === "engine_health"`、SSE `reconnect`。多一个 setInterval 就等于每分钟
@@ -30,19 +30,18 @@ export function useEngineHealth(): { health: EngineHealthView | null; reload: ()
   return { health, reload };
 }
 
-/** 顶栏那条窄横幅：坏了才在，恢复即消失，永远配一个「去设置」 */
-export function EngineBanner(props: { onSettings: () => void }) {
+/** 顶栏线路红点（看板规格 §26）：正常什么都不显示；坏了一个红点 +「线路异常」，点开看是哪条 + 去设置 */
+export function EngineDot(props: { onSettings: () => void }) {
   const { health } = useEngineHealth();
   const lines = engineBannerLines(health, Date.now());
   if (lines.length === 0) return null;
   return (
-    <div className="engine-banner">
-      <div className="engine-banner-lines">
-        {lines.map((l) => (
-          <p key={l.providerId}>{l.text}</p>
-        ))}
+    <details className="engine-alert">
+      <summary>{lines.length > 1 ? `${lines.length} 条线路异常` : "线路异常"}</summary>
+      <div className="engine-alert-panel" role="alert">
+        {lines.map((l) => <p key={l.providerId}>{l.text}</p>)}
+        <button onClick={(e) => { (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); props.onSettings(); }}>去设置</button>
       </div>
-      <button onClick={props.onSettings}>去设置</button>
-    </div>
+    </details>
   );
 }

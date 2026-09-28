@@ -3,8 +3,8 @@
  * 原生视图:工作台/看板/编辑器/校准中心/数据回流/设置;素材库回 vanilla(D 期前迁)。
  */
 import { useEffect, useRef, useState } from "react";
-import { Dashboard } from "./views/Dashboard";
 import { Board } from "./views/Board";
+import { TopicPage } from "./views/TopicMatrix";
 import { Editor } from "./views/Editor";
 import { TopicNavigator } from "./views/TopicNavigator";
 import { Calibration } from "./views/Calibration";
@@ -15,12 +15,13 @@ import { Logs } from "./views/Logs";
 import { Campaigns } from "./views/Campaigns";
 import { Inbox } from "./views/Inbox";
 import { Onboarding } from "./views/Onboarding";
-import { EngineBanner } from "./views/EngineBanner";
+import { EngineDot } from "./views/EngineBanner";
 import { ChatDock } from "./chat/ChatDock";
 import {
-  DOCK_PAGE_EVENT, DOCK_WIDTH_DEFAULT, clampDockWidth, readDockOpen, readDockWidth, writeDockOpen, writeDockWidth,
+  DOCK_PAGE_EVENT, DOCK_WIDTH_DEFAULT, clampDockWidth, readDockOpen, readDockWidth, requestDockCollapsed, writeDockOpen, writeDockWidth,
 } from "./chat/dock-prefs";
-import { ToastHost, DialogHost, toast, openDialog } from "./ui";
+import { ToastHost, DialogHost } from "./ui";
+import { newIdea } from "./new-idea";
 import { invoke } from "./transport";
 import { useRevisionFocus } from "./revision";
 import { useAppRoute } from "./use-route";
@@ -28,19 +29,11 @@ import type { Route } from "./routes";
 
 export type { Route, EditorPanel } from "./routes";
 
+/** 主导航只留三个（看板规格 §27）；灵感收件箱、品牌校准、任务日志、素材库收进设置页，增长不露出但路由保留 */
 const PRIMARY_NAV: Array<{ view: Route["view"]; label: string }> = [
-  { view: "dashboard", label: "今日" },
-  { view: "board", label: "内容" },
-  { view: "campaigns", label: "增长" },
+  { view: "board", label: "看板" },
+  { view: "report", label: "数据" },
   { view: "settings", label: "设置" },
-];
-
-const SECONDARY_NAV: Array<{ view: Route["view"]; label: string }> = [
-  { view: "inbox", label: "灵感收件箱" },
-  { view: "calibration", label: "品牌校准" },
-  { view: "report", label: "数据回流" },
-  { view: "logs", label: "任务日志" },
-  { view: "library", label: "素材库" },
 ];
 
 export function App() {
@@ -54,12 +47,16 @@ export function App() {
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const focus = useRevisionFocus();
-  const active = route.view === "editor" || route.view === "topic" ? "board" : route.view;
+  const IN_SETTINGS = new Set(["inbox", "calibration", "logs", "library", "campaigns"]);
+  const active = route.view === "editor" || route.view === "topic" ? "board" : IN_SETTINGS.has(route.view) ? "settings" : route.view;
   const boardRoute = route.view === "board" || route.view === "topic";
 
   useEffect(() => {
     if (focus) setDockOpen(true);
   }, [focus]);
+
+  // 数据页默认收起总编辑（§28）；看板自己发同一个信号
+  useEffect(() => (route.view === "report" ? requestDockCollapsed() : undefined), [route.view]);
 
   // 剪辑看板默认收起总编辑（不改存下的偏好）；离开看板回到偏好
   useEffect(() => {
@@ -108,13 +105,13 @@ export function App() {
           role="button"
           tabIndex={0}
           style={{ cursor: "pointer" }}
-          title="回到今日主页"
-          onClick={() => setRoute({ view: "dashboard" })}
+          title="回到看板"
+          onClick={() => setRoute({ view: "board" })}
           onKeyDown={(e) => {
-            if ((e.key === "Enter" || e.key === " ") && !e.nativeEvent.isComposing) setRoute({ view: "dashboard" });
+            if ((e.key === "Enter" || e.key === " ") && !e.nativeEvent.isComposing) setRoute({ view: "board" });
           }}
         >
-          AutoCrew 编辑部
+          AutoCrew
         </span>
         <nav className="topnav">
           {PRIMARY_NAV.map((n) => (
@@ -122,58 +119,22 @@ export function App() {
               {n.label}
             </button>
           ))}
-          <details className="topnav-more">
-            <summary className={SECONDARY_NAV.some((n) => n.view === active) ? "nav-on" : ""}>更多</summary>
-            <div className="topnav-menu">
-              {SECONDARY_NAV.map((n) => (
-                <button key={n.view} className={active === n.view ? "nav-on" : ""} onClick={() => setRoute({ view: n.view } as Route)}>
-                  {n.label}
-                </button>
-              ))}
-            </div>
-          </details>
-          <button
-            className="nav-cta"
-            onClick={async () => {
-              const v = await openDialog({
-                title: "新想法",
-                body: "写一句标题,或直接丢一段碎片想法——AI 会帮你提炼成选题,原文留作材料。",
-                fields: [
-                  { key: "title", label: "选题", placeholder: "一句话说清写什么,如:Claude Code 的 10 个隐藏用法;或直接粘一段碎片想法", required: true, multiline: true },
-                  { key: "reason", label: "为什么值得写", placeholder: "如:后台好多人在问 / 热点窗口期" },
-                ],
-                confirmLabel: "落进灵感库",
-              });
-              if (!v) return;
-              // 长输入要等一次 LLM 提炼(几秒),中间不能全无反馈;短输入这条会被结果 toast 秒替换
-              toast("正在整理这条想法…");
-              const r = await invoke("topic:create", { title: v.title.trim(), ...(v.reason.trim() ? { reason: v.reason.trim() } : {}) });
-              if (!r.ok) {
-                toast((r as { error?: string }).error ?? "入库失败");
-                return;
-              }
-              // 提炼过的要让用户看见 AI 把标题改成了什么;失败的要说清原文已保存、需自己改标题
-              const d = r as { distilled?: boolean; warning?: string; topic?: { title?: string } };
-              if (d.distilled) toast(`已提炼为「${d.topic?.title ?? ""}」落进灵感库`);
-              else toast(d.warning ?? "已落进灵感库(看板第一列)");
-            }}
-          >
-            ＋新想法
-          </button>
+          <span className="topnav-spacer" />
+          <EngineDot onSettings={() => setRoute({ view: "settings", tab: "models" })} />
+          <button className="nav-cta" onClick={() => void newIdea()}>＋新想法</button>
         </nav>
       </header>
-      {/* 线路报病（P2 spec §4.3）：坏了才在，恢复即消失——不占位、不轮询 */}
-      <EngineBanner onSettings={() => setRoute({ view: "settings", tab: "models" })} />
       <div className="body">
         <main className={boardRoute ? "main main-board" : "main"}>
-          {route.view === "dashboard" && <Dashboard nav={setRoute} />}
-          {(route.view === "board" || route.view === "topic") && (
+          {route.view === "board" && (
             <Board
-              {...(route.view === "topic" ? { atomKey: route.key } : {})}
               openTopic={(key) => setRoute({ view: "topic", key })}
-              backToBoard={() => setRoute({ view: "board" })}
               openEditor={(id) => setRoute({ view: "editor", id })}
+              openData={() => setRoute({ view: "report" })}
             />
+          )}
+          {route.view === "topic" && (
+            <TopicPage atomKey={route.key} back={() => setRoute({ view: "board" })} openEditor={(id) => setRoute({ view: "editor", id })} />
           )}
           {route.view === "editor" && (
             <Editor
@@ -195,7 +156,7 @@ export function App() {
           {route.view === "campaigns" && <Campaigns onSelect={setCampaignId} />}
           {route.view === "inbox" && <Inbox nav={setRoute} />}
           {route.view === "settings" && (
-            <Settings {...(route.tab ? { tab: route.tab } : {})} onTab={(tab) => setRoute({ view: "settings", tab })} />
+            <Settings {...(route.tab ? { tab: route.tab } : {})} onTab={(tab) => setRoute({ view: "settings", tab })} nav={setRoute} />
           )}
         </main>
         {/* 收起时用 CSS 隐藏而不是卸载——卸载会丢掉正在进行的对话 */}

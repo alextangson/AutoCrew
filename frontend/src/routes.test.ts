@@ -39,11 +39,11 @@ describe("刷新保留稿件与编辑面板", () => {
 });
 
 describe("页面导航兼容", () => {
-  it.each(["", "#", "#/"])("旧入口 %s 仍打开今日", (hash) => {
-    expect(parseRouteHash(hash)).toEqual({ view: "dashboard" });
+  it.each(["", "#", "#/", "#/dashboard"])("根路径与旧今日页书签 %s 都进看板", (hash) => {
+    expect(parseRouteHash(hash)).toEqual({ view: "board" });
   });
 
-  it.each(["dashboard", "board", "calibration", "report", "library", "logs", "campaigns", "inbox"] as const)("前后退可还原 %s", (view) => {
+  it.each(["board", "calibration", "report", "library", "logs", "campaigns", "inbox"] as const)("前后退可还原 %s", (view) => {
     expect(parseRouteHash(routeHash({ view }))).toEqual({ view });
   });
 

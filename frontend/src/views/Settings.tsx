@@ -16,6 +16,7 @@ import { SettingsStorage } from "./SettingsStorage";
 import { SettingsJianying } from "./SettingsJianying";
 import { SettingsAsr } from "./SettingsAsr";
 import { Integrations } from "./Integrations";
+import type { Route } from "../routes";
 
 export type SettingsTab = "models" | "integrations";
 
@@ -24,7 +25,24 @@ const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "integrations", label: "接入更多" },
 ];
 
-export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) => void }) {
+/** 从主导航收进来的几页（看板规格 §27）：路由照旧，入口在这里 */
+const MORE_PAGES: Array<{ view: "inbox" | "calibration" | "logs" | "library"; label: string; note: string }> = [
+  { view: "inbox", label: "灵感收件箱", note: "随手记、转发进来的碎片" },
+  { view: "calibration", label: "品牌校准", note: "口吻、受众、写作规则" },
+  { view: "logs", label: "任务日志", note: "AI 做过的每一件事" },
+  { view: "library", label: "素材库", note: "图片、视频、参考文件" },
+];
+
+function MorePages(props: { nav: (route: Route) => void }) {
+  return <Section title="更多" status="" on>
+    {MORE_PAGES.map((p) => <div key={p.view} className="row">
+      <span className="row-title">{p.label} <span className="muted">· {p.note}</span></span>
+      <button onClick={() => props.nav({ view: p.view })}>打开</button>
+    </div>)}
+  </Section>;
+}
+
+export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) => void; nav?: (route: Route) => void }) {
   const [local, setLocal] = useState<SettingsTab>(props.tab ?? "models");
   const tab = props.tab ?? local;
   const setTab = (next: SettingsTab) => {
@@ -61,6 +79,7 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
         <Integrations />
       ) : (
         <>
+          {props.nav && <MorePages nav={props.nav} />}
           <SettingsStorage />
           <SettingsJianying />
           <SettingsAsr />

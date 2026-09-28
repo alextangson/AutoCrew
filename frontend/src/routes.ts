@@ -2,7 +2,6 @@
 export type EditorPanel = "cover" | "images" | "video";
 
 export type Route =
-  | { view: "dashboard" }
   | { view: "board" }
   | { view: "topic"; key: string }
   | { view: "editor"; id: string; panel?: EditorPanel }
@@ -14,11 +13,12 @@ export type Route =
   | { view: "inbox" }
   | { view: "settings"; tab?: "models" | "integrations" };
 
-const PAGES = new Set(["dashboard", "board", "calibration", "report", "library", "logs", "campaigns", "inbox"]);
+const PAGES = new Set(["board", "calibration", "report", "library", "logs", "campaigns", "inbox"]);
 const PANELS = new Set(["cover", "images", "video"]);
 
 export function parseRouteHash(hash: string): Route {
-  if (!hash || hash === "#" || hash === "#/") return { view: "dashboard" };
+  // 今日页撤了（看板规格 §27）：根路径与旧 #/dashboard 书签都进看板
+  if (!hash || hash === "#" || hash === "#/") return { view: "board" };
   const raw = hash.replace(/^#\/?/, "");
   const queryAt = raw.indexOf("?");
   const path = queryAt < 0 ? raw : raw.slice(0, queryAt);

@@ -8,7 +8,8 @@
 }
 .brand { font-size: 16px; font-weight: 700; }
 .v2-badge { border: 1px solid var(--border); padding: 1px 6px; color: var(--muted); }
-.topnav { margin-left: auto; display: flex; gap: 6px; }
+.topnav { margin-left: 24px; flex: 1; display: flex; gap: 6px; align-items: center; }
+.topnav-spacer { flex: 1; }
 .topnav button { border-color: transparent; background: transparent; }
 .topnav button:hover { border-color: var(--border); }
 .topnav .nav-on { border-color: var(--ink); font-weight: 700; }
@@ -809,14 +810,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .vid-player { width: 100%; max-width: 640px; aspect-ratio: 16 / 9; background: var(--ink); border: 1px solid var(--border); border-radius: var(--radius-card); }
 
 /* P2 一把钥匙开机：线路报病（顶栏横幅 / 状态点 / 兜底徽章）+ 设置两标签 + 首次开机卡 */
-.engine-banner {
-  display: flex; gap: 10px; align-items: baseline;
-  border-bottom: 1px solid var(--danger); background: var(--card); color: var(--danger);
-  padding: 6px 14px; font-size: 12px; line-height: 1.6;
-}
-.engine-banner-lines { flex: 1; }
-.engine-banner p { margin: 1px 0; overflow-wrap: anywhere; }
-.engine-banner button { flex: none; font-size: 11px; padding: 1px 8px; }
 /* 状态点：未测是灰的中性态,绝不用红色——没测过不是坏了 */
 .engine-dot { font-size: 11px; padding: 0 6px; border: 1px solid var(--border); white-space: nowrap; cursor: help; }
 .engine-dot-idle { color: var(--muted); }
@@ -856,3 +849,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .onboard-optional { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px; }
 .onboard-optional p { font-size: 12px; margin: 2px 0 6px; line-height: 1.6; }
 .onboard-skip { width: 100%; margin-top: 8px; padding: 6px; }
+
+/* 顶栏线路红点（§26） */
+.engine-alert { position: relative; }
+.engine-alert > summary { list-style: none; cursor: pointer; color: var(--danger); font-size: 13px; white-space: nowrap; }
+.engine-alert > summary::-webkit-details-marker { display: none; }
+.engine-alert > summary::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); margin-right: 5px; vertical-align: 1px; }
+.engine-alert-panel { position: absolute; right: 0; top: 26px; z-index: 20; width: 360px; background: var(--card); border: 1px solid var(--ink); padding: 10px 12px; font-size: 12px; }
+.engine-alert-panel p { margin-bottom: 6px; }
