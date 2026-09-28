@@ -1,4 +1,5 @@
 /** 看板上的卡：选题卡（开始写）、稿件卡（⋯ 往回退）、发布行（我发了 / 撤销）。 */
+import { Button } from "../components/Button";
 import { useState } from "react";
 import { invoke } from "../transport";
 import { confirmDialog, openDialog, toast } from "../ui";
@@ -36,7 +37,7 @@ export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean;
     </div>
     <div className="bcard-meta">{meta}</div>
     <div className="bcard-actions">
-      <button className="bcard-start" disabled={props.busy} onClick={props.onStart}>{props.busy ? "正在开始…" : "开始写"}</button>
+      <Button size="sm" className="bcard-start" disabled={props.busy} onClick={props.onStart}>{props.busy ? "正在开始…" : "开始写"}</Button>
     </div>
   </article>;
 }

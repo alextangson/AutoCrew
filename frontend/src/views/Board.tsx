@@ -100,7 +100,7 @@ export function Board(props: Nav) {
   if (!data && error) return <div className="board-fail" role="alert">看板读不出来：{error} <button onClick={() => void reload()}>重试</button></div>;
 
   const allEmpty = cards !== null && COLUMNS.every((c) => cards[c].length === 0);
-  return <div className="board2">
+  return <div className="board2 page-board">
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
     </div>
@@ -128,7 +128,7 @@ export function Board(props: Nav) {
 /** 空列窄，有卡的宽；待发布 / 已发布的卡带发布行，给得更宽（§3） */
 function colWidth(col: BoardColumn, cards: Record<BoardColumn, Card[]> | null): string {
   if (!cards) return "minmax(0, 1fr)";
-  if (cards[col].length === 0) return "minmax(120px, 0.55fr)";
+  if (cards[col].length === 0) return "minmax(132px, 0.6fr)";  // 12px 列说明（字号尺子）一行放得下
   return col === "待发布" || col === "已发布" ? "minmax(0, 1.5fr)" : "minmax(0, 1.1fr)";
 }
 
