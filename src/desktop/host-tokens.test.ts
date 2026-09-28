@@ -90,7 +90,16 @@ describe("host tokens", () => {
     expect(auth.identify({ authorization: `Bearer ${codex}` })).toEqual({ method: "bearer", subject: "codex" });
     expect(auth.identify({ authorization: "Bearer legacy-token" })).toEqual({ method: "bearer", subject: LOCAL_SUBJECT });
     expect(auth.identify({ authorization: "Bearer nope" })).toBeNull();
-    expect(auth.authenticate({ authorization: `Bearer ${codex}` })).toBe("bearer");
+    // 命名宿主只属于 /mcp（host-policy 在那里限权）；/api/* 的门 authenticate 不认它
+    expect(auth.authenticate({ authorization: `Bearer ${codex}` })).toBeNull();
+  });
+
+  it("never lets a named token pose as the local subject", () => {
+    expect(() => ensureHostToken(LOCAL_SUBJECT)).toThrow(/保留名/);
+    // 手工放进 tokens/ 的 local-user.token 也不能换来本地权限
+    const auth = new LocalSessionAuth("boot", new Set(), undefined, undefined, "legacy-token", () => LOCAL_SUBJECT);
+    expect(auth.identify({ authorization: "Bearer planted" })).toBeNull();
+    expect(auth.authenticate({ authorization: "Bearer planted" })).toBeNull();
   });
 });
 
