@@ -149,6 +149,27 @@ describe("submit contract with outline (spec §4)", () => {
     expect(changedTechniques).toMatchObject({ ok: false, code: "attempt_conflict" });
   });
 
+  it("same-attempt retry with only object key order changed replays; array order still matters (Codex P2)", async () => {
+    const p = await pack(await freshTopic());
+    const first = await submit(p, 1, { technique_ids: [{ id: "minto-scq-intro", version: 1 }] });
+    expect(first.status).toBe("accepted_unreviewed");
+    const reordered = {
+      said: OUTLINE.said.map((x) => ({ text: x.text, kind: x.kind, id: x.id })),
+      structure: { ending: OUTLINE.structure.ending, progression: OUTLINE.structure.progression, opening: OUTLINE.structure.opening },
+      points: OUTLINE.points.map((x) => ({ seconds: x.seconds, kind: x.kind, text: x.text })),
+      thesis: OUTLINE.thesis,
+    };
+    const replay = await submit(p, 1, { outline: reordered, technique_ids: [{ version: 1, id: "minto-scq-intro" }] });
+    expect(replay.code).toBeUndefined();
+    expect(replay.status).toBe("accepted_unreviewed");
+    // 数组顺序仍算内容：多一个信息点（或换序）就是另一份载荷
+    const twoPoints = { ...OUTLINE, points: [...OUTLINE.points, { text: "第二点", kind: "cause", seconds: 30 }] };
+    expect(await submit(p, 1, { outline: twoPoints, technique_ids: [{ id: "minto-scq-intro", version: 1 }] })).toMatchObject({ ok: false, code: "attempt_conflict" });
+    const q = await pack(await freshTopic());
+    await submit(q, 1, { outline: twoPoints });
+    expect(await submit(q, 1, { outline: { ...twoPoints, points: [...twoPoints.points].reverse() } })).toMatchObject({ ok: false, code: "attempt_conflict" });
+  });
+
   it("a body edit after submit invalidates the outline for the series snapshot (no silent reuse)", async () => {
     const p = await pack(await freshTopic());
     await submit(p, 1);
@@ -168,6 +189,10 @@ describe("submit contract with outline (spec §4)", () => {
     const res = await run({ action: "submit", content_id: p.content_id, pack_id: p.pack_id, claim_token: p.claim_token, attempt: 1, ...GOOD, review: "none" });
     expect(res.status).toBe("accepted_unreviewed");
     expect((await getContent(p.content_id, dir))?.outline).toBeUndefined();
+    // 不带新字段时沿用旧指纹算法：同号重放原样返回
+    const replay = await run({ action: "submit", content_id: p.content_id, pack_id: p.pack_id, claim_token: p.claim_token, attempt: 1, ...GOOD, review: "none" });
+    expect(replay.code).toBeUndefined();
+    expect(replay.status).toBe("accepted_unreviewed");
   });
 });
 

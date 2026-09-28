@@ -1,5 +1,6 @@
 import { lengthHint, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
 import { findCard } from "../modules/writing/technique-store.js";
+import { canonicalJson } from "../modules/research/brief-snapshot.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
 /**
  * 宿主交稿（P3 spec §5.3）——把写手循环翻过来的另一半：**收稿**。
@@ -110,8 +111,9 @@ type PayloadHashes = { payloadHashes?: Record<string, string> };
  */
 function payloadDigest(args: SubmitArgs): string {
   const base: unknown[] = [args.title, args.hook ?? "", args.body, args.cta ?? "", args.hashtags ?? []];
-  if (args.outline !== undefined || args.technique_ids !== undefined) base.push(args.outline ?? null, args.technique_ids ?? []);
-  return createHash("sha256").update(JSON.stringify(base)).digest("hex");
+  if (args.outline === undefined && args.technique_ids === undefined) return createHash("sha256").update(JSON.stringify(base)).digest("hex");
+  // 嵌套对象按 canonicalJson 归一键序（数组顺序保留）：只换了键顺序的同号重试不算冲突（Codex 评审 P2）
+  return createHash("sha256").update(canonicalJson([...base, args.outline ?? null, args.technique_ids ?? []])).digest("hex");
 }
 
 function notePayload(pack: WritingPackFile, args: SubmitArgs): void {
