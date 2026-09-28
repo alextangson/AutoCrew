@@ -14,7 +14,7 @@ import { createRuleApprovalHandler } from "./rule-approval.js";
 import { LocalSessionAuth, SESSION_COOKIE } from "./server-auth.js";
 import { buildIpcHandlers } from "./ipc.js";
 import { buildChatTools, type ChatCard } from "./chat-router.js";
-import { addWritingRule, loadProfile, rulesForPlatform, ruleStatus, updateProfile, type WritingRule } from "../modules/profile/creator-profile.js";
+import { addWritingRule, loadProfile, rulesForPlatform, ruleStatus, updateProfile, updateWritingRule, type WritingRule } from "../modules/profile/creator-profile.js";
 import { executeEditorial } from "../tools/editorial.js";
 import { saveContent } from "../storage/local-store.js";
 import { draftHash } from "../storage/draft-hash.js";
@@ -199,5 +199,28 @@ describe("founder workbench route with the real session auth", () => {
       expect((await postAs(url, { ...body, eventId: "evt-browser-01" }, { Cookie: `${SESSION_COOKIE}=${encodeURIComponent(session.sessionId)}` })).status).toBe(200);
     });
     expect(ruleStatus((await pendingRule()))).toBe("active");
+  });
+});
+
+describe("stale promotion proposals (Codex round 2 P2)", () => {
+  it("approving a proposal after the original platform rule was edited and re-approved is refused and disables nothing", async () => {
+    await withServer("session", true, async (url) => {
+      const base = await addWritingRule({ rule: "结尾不上价值", source: "auto_distilled", confidence: 0.8, scope: "platform:wechat_mp" }, dir);
+      let original = base.writingRules.find((x) => x.rule === "结尾不上价值")!;
+      await post(url, { ruleId: original.id, revision: original.revision, decision: "active", eventId: "evt-orig-0001" });
+      const proposed = await addWritingRule({ rule: "结尾不上价值", source: "auto_distilled", confidence: 0.8, scope: "platform:douyin" }, dir);
+      const proposal = proposed.writingRules.find((x) => x.promotes)!;
+      // 创始人改了原平台规则并重新批准
+      original = (await loadProfile(dir))!.writingRules.find((x) => x.id === original.id)!;
+      const edited = await updateWritingRule({ id: original.id!, revision: original.revision! }, { rule: "公众号结尾给一个能照做的动作" }, dir);
+      original = edited.writingRules.find((x) => x.id === original.id)!;
+      expect((await post(url, { ruleId: original.id, revision: original.revision, decision: "active", eventId: "evt-reapprove1" })).status).toBe(200);
+      const res = await post(url, { ruleId: proposal.id, revision: proposal.revision, decision: "active", eventId: "evt-stale-promo" });
+      expect(res.status).toBe(409);
+    });
+    const profile = (await loadProfile(dir))!;
+    const edited = profile.writingRules.find((x) => x.rule === "公众号结尾给一个能照做的动作")!;
+    expect(ruleStatus(edited)).toBe("active");
+    expect(ruleStatus(profile.writingRules.find((x) => x.promotes)!)).toBe("pending");
   });
 });

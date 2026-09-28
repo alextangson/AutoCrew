@@ -34,6 +34,8 @@ export interface WritingRule {
   evidence?: string[];
   /** 「升级为全局」提案：指向被升级的平台规则 id；批准后原规则停用、本条生效 */
   promotes?: string;
+  /** 提案针对的原平台规则 revision；原规则之后被改过/重新批过，这份提案就过时了 */
+  promotesRevision?: number;
   rule: string;
   /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly,
    *  "calibrated" = produced by the calibration skills (A/B-verified during onboarding) */

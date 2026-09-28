@@ -70,7 +70,7 @@ export type AddRuleOutcome = "created_pending" | "promotion_proposed" | "already
  * - 否则新建 pending。
  */
 export async function addWritingRule(
-  rule: Omit<WritingRule, "createdAt" | "id" | "revision" | "status" | "disabled" | "promotes">,
+  rule: Omit<WritingRule, "createdAt" | "id" | "revision" | "status" | "disabled" | "promotes" | "promotesRevision">,
   dataDir?: string,
   opts: { promote?: boolean } = {},
 ): Promise<CreatorProfile & { lastRuleOutcome?: AddRuleOutcome }> {
@@ -94,7 +94,7 @@ export async function addWritingRule(
       if (matches.some((r) => r.promotes === platformRule.id)) return "already_exists";
       profile.writingRules.push({
         ...rule, rule: text, evidence, id: randomUUID(), revision: 1, status: "pending", disabled: true,
-        scope: "voice_core", promotes: platformRule.id, createdAt: now,
+        scope: "voice_core", promotes: platformRule.id, promotesRevision: platformRule.revision, createdAt: now,
       });
       return "promotion_proposed";
     }
@@ -149,8 +149,12 @@ export async function decideWritingRule(input: RuleDecisionEvent, dataDir?: stri
     if (ruleStatus(r) === "rejected") throw new Error("这条规则已丢弃（墓碑），不能再改决定");
     if (input.decision === "rejected" && ruleStatus(r) !== "pending") throw new Error("只有待批规则可以丢弃；已生效的请停用");
     if (input.decision === "active" && r.promotes) {
+      // 只停用提案点名的那一版原规则：原规则之后被改过或重新批过，提案就过时了，不能去停用一条它没见过的规则
       const original = profile.writingRules.find((x) => x.id === r.promotes);
-      if (original && ruleStatus(original) !== "rejected") setStatus(original, "disabled");
+      if (!original || original.revision !== r.promotesRevision || !isRuleActive(original)) {
+        throw new Error("升级提案已过时（promotion_stale）：原平台规则已被修改或不再生效，请丢弃这份提案，等下次重新提出");
+      }
+      setStatus(original, "disabled");
     }
     setStatus(r, input.decision);
     profile.ruleDecisions = [...(profile.ruleDecisions ?? []), { ...input, at: new Date().toISOString() }].slice(-DECISIONS_KEPT);
