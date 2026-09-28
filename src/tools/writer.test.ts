@@ -1,4 +1,5 @@
 import { executeEditorial } from "./editorial.js";
+import { appendHypotheses, listHypotheses } from "../modules/retro/hypotheses.js";
 import { createCreativeTask } from "../modules/writing/creative-task.js";
 /**
  * writer.test.ts — `autocrew_writer` 四个动作（P3 spec §5）。
@@ -809,6 +810,25 @@ describe("writer pack 异步备料", () => {
     const stale = await run(submitArgs(first.content_id, first.pack_id, 1));
     expect(stale.ok).toBe(false);
     expect(String(stale.error)).toContain("写作包已作废");
+  });
+
+  it("本稿用到复盘实验 → 备好后稿件挂到对应假设上，重领不重复挂", async () => {
+    await appendHypotheses([{
+      id: "hyp-bind", statement: "先给结果的开头完播更高", metricFocus: "completion5s", direction: "up",
+      scope: { platform: "douyin" }, contentIds: [], proposedAt: "2026-09-27T00:00:00Z",
+      retroRunId: "retro-weekly-2026-09-27T000000", status: "open", nextAction: "前 5 秒先给结果",
+    }], testDir);
+    await fs.writeFile(path.join(testDir, "editorial-experiments.json"), JSON.stringify({ version: 1, experiments: [{
+      id: "exp-hyp-bind", hypothesisId: "hyp-bind", status: "active", platform: "douyin", topicIds: [],
+      expiresAt: "2099-01-01T00:00:00Z", observation: "开头流失高", action: "前 5 秒先给结果",
+      metricFocus: "completion5s", sourceReport: "retro-weekly-2026-09-27T000000.md",
+    }] }));
+    const ready = await pack();
+    expect(ready.status).toBe("ready");
+    await run({ action: "pack", topic_id: ready.topicId, platform: "douyin", force: true });
+    await settle(ready.content_id);
+    const bound = (await listHypotheses(testDir)).find((h) => h.id === "hyp-bind");
+    expect(bound?.contentIds).toEqual([ready.content_id]);
   });
 
   it("备料炸了 → state failed，人话原因进 pack_status 与稿件，force 能重来", async () => {

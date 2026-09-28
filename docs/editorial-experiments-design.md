@@ -4,9 +4,16 @@
 
 这是已有写稿工作流的只读装配步骤，不新增 Agent、模型调用、后台采集或发布工具。输入是工作区 `editorial-experiments.json`；观察和建议均为低于本次创作要求的候选，不是事实材料或长期人设。
 
+2026-09-27 修订（闭环）：只按 topicId 匹配时，复盘出来的实验永远碰不到复盘之后才建的新选题，首轮 3 个实验在新资料库里零命中。现改为：
+- `topicIds` 可空，空 = 平台级实验，对该平台所有新稿生效；点名选题的实验优先于平台级。
+- 复盘（`generateRetro`）落账的新假设自动转成平台级实验（`recordRetroExperiments`），有效 21 天；同平台一期只取一条，并停用该平台旧的平台级实验。无平台、按标签、缺下一步动作、超长的假设跳过，原因写进报告尾部。
+- 领包用到实验时，备料方把稿件 ID 挂到对应假设的 `contentIds`（`bindContentToHypothesis`），下期复盘才有试验稿可裁决。挂不上只记 warn，不挡写稿。
+
 | 不变量 | 代码落点 | 验证 |
 | --- | --- | --- |
-| 仅明确 topicId 与平台匹配才注入 | selectEditorialExperiment | 范围与别名测试 |
+| 平台匹配才注入；点名选题优先于平台级 | selectEditorialExperiment | 范围、别名与优先级测试 |
+| 复盘新假设 → 平台级实验，每平台一个主要变量 | deriveRetroExperiments / recordRetroExperiments | 转换与复盘落盘测试 |
+| 用到实验的稿挂到假设上，只挂一次 | bindContentToHypothesis（writer-prepare 备料后） | 挂假设与领包测试 |
 | 过期、停用、缺文件不注入 | selectEditorialExperiment | 期限及空态测试 |
 | 每稿最多一个实验，重叠配置显式报错 | selectEditorialExperiment | 重叠配置测试 |
 | 配置坏了不静默装作无建议 | readEditorialExperiments | 无效 JSON/schema 测试 |
@@ -20,4 +27,4 @@
 
 验收：运行隔离临时目录的选择、配置与领包测试，以及相关写作回归、类型检查和 lint。测试不读生产配置、不调用真实模型。模型质量与指标改善未评估，需后续真实稿件和同龄快照判断；本次不做胜负裁决。
 
-操作：配置置 inactive 可停用；新增选题必须显式登记 topicId，不能靠关键词扩散。现有服务在自然重启后加载代码，不中断活跃写作。永久画像、旧稿、发布排期、定时采集不在本次范围内。
+操作：配置置 inactive 可停用；要限定到具体选题就显式登记 topicId，不靠关键词扩散。现有服务在自然重启后加载代码，不中断活跃写作。永久画像、旧稿、发布排期、定时采集不在本次范围内。

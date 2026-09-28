@@ -1,5 +1,7 @@
 import { verifyStoredApprovals } from "./founder-review.js";
 import { resolveContentProject } from "../../../storage/content-project.js";
+import { isVideoPlatform } from "../../../storage/stage-guard.js";
+import { landSpoken, readSpoken, SRT_REQUIRED } from "./register-spoken.js";
 /**
  * `autocrew_video register`：Codex 剪辑工位把成片与封面登记回来（P6 spec §3.4）。Codex 唯一的写动作。
  *
@@ -173,8 +175,11 @@ async function registerLocked(input: RegisterInput, ctx: RegisterContext): Promi
   if (binding && (!record.v2 || record.v2.binding_revision !== binding.binding_revision || record.project_root !== binding.project_root)) return handoffFail("stale_handoff", "项目定位已变化，请读取当前交接");
   try { await verifyStoredApprovals(content, input.approvals, ctx.dataDir); }
   catch (e) { return handoffFail("approval_mismatch", String(e)); }
+  if (isVideoPlatform(content.platform) && !input.srtPath) return handoffFail("invalid_params", SRT_REQUIRED, { which: "srt_path" });
   const files = await resolveFiles(content, record, input, ctx.dataDir);
   if (!files.ok) return files.result;
+  const spoken = files.value.srt ? await readSpoken(files.value.srt) : undefined;
+  if (spoken && !spoken.ok) return spoken.result;
   // 资料库里的项目（v2）：文件本来就在项目里，原地核验不复制；旧 v1 项目照旧暂存进稿件目录
   const staged = binding ? await verifyInPlace(files.value, input.approvals) : await stageArtifacts(content.id, ctx.dataDir, files.value, input.approvals);
   if (!staged.ok) return staged.result;
@@ -187,7 +192,9 @@ async function registerLocked(input: RegisterInput, ctx: RegisterContext): Promi
       approvals: input.approvals, registerHash: hash, host: input.host, dataDir: ctx.dataDir,
       stamp: ctx.stamp ?? stampVideoReady,
     });
-    return result.ok ? result : { ...result, ...gate.grant };
+    if (!result.ok) return { ...result, ...gate.grant };
+    const warning = spoken ? await landSpoken(content, record, spoken.text, ctx.dataDir) : undefined;
+    return warning ? { ...result, warning } : result;
   } finally {
     if (staged.value.dir) await fs.rm(staged.value.dir, { recursive: true, force: true });
   }

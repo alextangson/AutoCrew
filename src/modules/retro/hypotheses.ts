@@ -251,3 +251,17 @@ export async function appendHypotheses(items: Hypothesis[], dataDir?: string): P
     await fs.appendFile(hypothesesPath(dataDir), payload, "utf-8");
   });
 }
+
+/**
+ * 写稿用到了某条假设的实验 → 把这篇稿挂到假设上，下期复盘才有试验稿可裁决。
+ * 只挂开放中的假设；已挂过、已终裁或台账里没有都原样返回 false。
+ */
+export async function bindContentToHypothesis(hypothesisId: string, contentId: string, dataDir?: string): Promise<boolean> {
+  return serializeHypothesisWrite(dataDir, async () => {
+    const current = (await listHypotheses(dataDir)).find((h) => h.id === hypothesisId);
+    if (!current || current.status !== "open" || current.contentIds.includes(contentId)) return false;
+    const next = { ...current, contentIds: [...current.contentIds, contentId] };
+    await fs.appendFile(hypothesesPath(dataDir), JSON.stringify(next) + "\n", "utf-8");
+    return true;
+  });
+}

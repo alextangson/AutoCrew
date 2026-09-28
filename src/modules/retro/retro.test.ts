@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { generateRetro, listRetros, readRetro } from "./retro.js";
 import { appendHypotheses, listHypotheses, type Hypothesis } from "./hypotheses.js";
+import { readEditorialExperiments, selectEditorialExperiment } from "./editorial-experiments.js";
 import { setGoal } from "../profile/goal.js";
 import { saveContent, updateContent, recordAdoption } from "../../storage/local-store.js";
 import type { runLoop } from "../../engine/loop.js";
@@ -280,6 +281,31 @@ describe("假设裁决与台账(P2c)", () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({ status: "open", retroRunId: result.runId, metricFocus: "completionRate" });
     expect(stored[0].nextAction).toBeTruthy();
+  });
+
+  it("新假设自动进写稿:平台级实验落盘,报告写明进了哪些、跳过哪些", async () => {
+    const proposals = JSON.stringify([
+      { statement: "问题式开头完播率更高", metricFocus: "completionRate", direction: "up", scope: { platform: "douyin" }, nextAction: "开头先抛问题" },
+      { statement: "同平台第二条", metricFocus: "likes", direction: "up", scope: { platform: "douyin" }, nextAction: "另一个变量" },
+      { statement: "不限平台的假设", metricFocus: "likes", direction: "up", scope: {}, nextAction: "随便" },
+    ]);
+    const result = await generateRetro("weekly", dir, { runLoopImpl: mockSubmits([{ hypotheses: proposals }]) });
+    expect(result.experiments.added).toHaveLength(1);
+    expect(result.experiments.added[0]).toMatchObject({ platform: "douyin", topicIds: [], action: "开头先抛问题", sourceReport: result.file });
+    expect(result.experiments.skipped).toHaveLength(2);
+    const stored = await readEditorialExperiments(dir);
+    expect(stored.map((e) => e.hypothesisId)).toEqual([result.experiments.added[0].hypothesisId]);
+    expect(await selectEditorialExperiment({ topicId: "topic-any", platform: "douyin" }, dir)).toMatchObject({ action: "开头先抛问题" });
+    const report = await fs.readFile(path.join(dir, "reports", result.file), "utf-8");
+    expect(report).toContain("已进写稿");
+    expect(report).toContain("同平台本期已有一个实验");
+    expect(report).toContain("没有限定平台");
+  });
+
+  it("没有新假设就不动写稿实验", async () => {
+    const result = await generateRetro("weekly", dir, { runLoopImpl: mockSubmits([{}]) });
+    expect(result.experiments).toEqual({ added: [], skipped: [] });
+    expect(await readEditorialExperiments(dir)).toEqual([]);
   });
 
   it("假设块不合格:先给一次重试;第二次仍不合格 → 只出文字复盘 + 报告与结果双明示", async () => {

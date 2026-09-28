@@ -147,7 +147,7 @@ export const videoSchema = Type.Object({
       { description: "register：两张封面的绝对路径（PNG/JPEG，都在 project_root 里）" },
     ),
   ),
-  srt_path: Type.Optional(Type.String({ description: "register：可选，字幕绝对路径（在 project_root 里）" })),
+  srt_path: Type.Optional(Type.String({ description: "register：成片（最终剪辑版）字幕 SRT 的绝对路径（在 project_root 里）；视频平台稿件必填，AutoCrew 据此存实拍版口播" })),
   jianying_draft: Type.Optional(Type.String({ description: "register：可选，剪映草稿名或路径（只记录）" })),
   approvals: Type.Optional(
     Type.Object(
@@ -180,7 +180,7 @@ export const VIDEO_DESCRIPTION = [
   "handoff{content_id, aroll_path, confirmation_id, request_id}（剪辑工位发起）：必须带 confirm 给的 confirmation_id；成功回 claim_token（剪辑认领只交给你，report 每 10 分钟心跳一次）。同 request_id 重试 10 分钟内拿回同一结果和令牌。拒绝码：confirmation_required / confirmation_invalid / confirmation_used / aroll_in_use（附 holder）/ claim_held（写稿侧还没释放）/ missing_citations / project_migration_required。",
   "handoff{content_id, aroll_path, project_root?, notes?}（Claude 推送）：审稿通过的草稿就绪 / 已过审稿交给剪辑工位：v2 复用写作时的项目，冻结 01-script/handoff/gNNNN（定稿原字节、创始人决定、出处和清单；缺项先补齐），状态 → editing，占原片锁，剪辑认领的令牌以 editor_claim_token 只回给你，随派工交给接手的那一个 Codex 会话。返回 generation、manifest_hash、handoff_path、project_handoff_path、dispatch_text（派工话术，照原样给 Codex）。同一份请求重发 = 原样返回。拒绝码：not_accepted / not_handoffable / aroll_invalid / roots_unavailable / path_not_whitelisted / path_symlink / project_owned_by_other。",
   "revoke{content_id, manifest_hash?}（或 handoff{revoke:true}）：撤回当前代次，状态回 draft_ready，此后带它的 register 一律 stale_handoff。交接后 30 分钟内认领还在 codex 手上，撤回由当前持有会话携带有效 claim_token。",
-  "register{content_id, manifest_hash, final_path, covers:{\"3:4\",\"4:3\"}, srt_path?, jianying_draft?, approvals:{final_cut, covers}}（剪辑工位调）：所有文件必须在当前交接的 project_root 里；final_cut.artifact_sha256 = 成片文件 sha256；covers.artifact_sha256 = sha256(3:4 文件 sha256 的 hex + 4:3 文件 sha256 的 hex)。核过后成片、封面评审单、成片戳、状态 → publish_ready 同事务落盘，任一失败全部回滚。拒绝码：stale_handoff / approval_mismatch（which 指明哪份凭据）/ final_invalid / cover_invalid / path_*。",
+  "register{content_id, manifest_hash, final_path, covers:{\"3:4\",\"4:3\"}, srt_path, jianying_draft?, approvals:{final_cut, covers}}（剪辑工位调）：所有文件必须在当前交接的 project_root 里；final_cut.artifact_sha256 = 成片文件 sha256；covers.artifact_sha256 = sha256(3:4 文件 sha256 的 hex + 4:3 文件 sha256 的 hex)。核过后成片、封面评审单、成片戳、状态 → publish_ready 同事务落盘，任一失败全部回滚。srt_path 是成片最终版的字幕，视频平台稿件缺了按 invalid_params 拒，格式不对回 srt_invalid。拒绝码：stale_handoff / approval_mismatch（which 指明哪份凭据）/ final_invalid / cover_invalid / srt_invalid / path_*。",
   "report{content_id, claim_token, report}：仅保存真实 session/编辑器/任务、文件哈希、费用和下一步，不接受稿件/状态/审批。v2 status 返回项目、当前交接、执行报告及工作台批准记录。citations{content_id, coverage} 由写作侧提交定稿定位与证据对应。",
   "match{aroll_path, request_id}（两宿主可调，不改业务状态）：认原片录的是哪条稿。先比文件名、再比开头 120 秒转写，签发 30 分钟有效的回执 receipt_id。status：ambiguous / no_confident_match（前三名交弹窗让创始人选；标定前不出 proposed）/ no_candidate（near_misses 说明每条为什么交不了）/ already_handed_off（附 holder）。flags：asr_unavailable / no_speech / low_quality_transcript / l1_only。",
   "confirm{receipt_id, content_id?, cover_text, target_seconds, request_id}（两宿主可调）：服务端在创始人的 Mac 上弹系统窗，让他从回执候选里选稿、确认封面字与时长；最多等 5 分钟。调用前告诉创始人「去 Mac 上的弹窗点确认」。成功回 confirmation_id（30 分钟有效、只能用一次）。confirm_timeout / confirm_declined / confirm_unavailable / missing_citations / receipt_invalid 都说出原因并停下。对话里的「对」「确认」不算确认。",

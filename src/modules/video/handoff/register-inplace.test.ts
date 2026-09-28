@@ -51,8 +51,11 @@ async function approvedAndMoved(v: V) {
   const approved = await founderProjectReview(v.id, env.dir, { action: "approve", which: "covers", manifest_hash: v.manifestHash,
     files: [{ path: rel(c34), sha256: await sha256File(c34) }, { path: rel(c43), sha256: await sha256File(c43) }] });
   const a = approved.approvals as Record<string, unknown>;
+  // main 05ca987 起视频登记必须带成片字幕
+  const srt = path.join(v.root, "07-delivery/final.srt");
+  await fs.writeFile(srt, "1\n00:00:00,000 --> 00:00:01,000\n测试字幕\n");
   const register = { action: "register", content_id: v.id, manifest_hash: v.manifestHash, claim_token: v.token, final_path: delivered,
-    covers: { "3:4": c34, "4:3": c43 }, jianying_draft: "纠正AI-0927", approvals: { final_cut: a.final_cut, covers: a.covers } };
+    covers: { "3:4": c34, "4:3": c43 }, srt_path: srt, jianying_draft: "纠正AI-0927", approvals: { final_cut: a.final_cut, covers: a.covers } };
   return { delivered, c34, c43, register, sha: card.sha256 };
 }
 

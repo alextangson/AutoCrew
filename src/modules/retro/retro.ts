@@ -20,6 +20,7 @@ import { gatherFacts, type RetroFacts } from "./retro-facts.js";
 import { appendHypotheses, parseHypothesisProposals, METRIC_FOCUS_KEYS, type Hypothesis } from "./hypotheses.js";
 import { applyJudgement } from "./hypothesis-judge.js";
 import type { ProductionTiming } from "./production-timing.js";
+import { recordRetroExperiments, RETRO_EXPERIMENT_DAYS, type RetroExperimentResult } from "./editorial-experiments.js";
 
 export type RetroMode = "weekly" | "monthly";
 
@@ -48,6 +49,8 @@ export interface RetroResult {
   /** 生产用时（代码算的事实，与报告正文同源；调用方可直接展示，不必从 markdown 里抠） */
   timing: ProductionTiming;
   hypotheses: RetroHypothesisResult;
+  /** 新假设转成的写稿实验；台账没写成时不转 */
+  experiments: RetroExperimentResult & { error?: string };
 }
 
 /** 同日重跑不覆盖:日期后可带 T+6 位时分秒(老报告没有这段,照旧可列可读) */
@@ -183,7 +186,7 @@ async function persist(
   facts: RetroFacts,
   captured: Captured,
   dataDir?: string,
-): Promise<{ file: string; markdown: string; hypotheses: RetroHypothesisResult }> {
+): Promise<{ file: string; markdown: string; hypotheses: RetroHypothesisResult; experiments: RetroResult["experiments"] }> {
   const dir = path.join(getDataDir(dataDir), "reports");
   await fs.mkdir(dir, { recursive: true });
   const file = `${runId}.md`;
@@ -196,7 +199,39 @@ async function persist(
     markdown += note;
     await fs.appendFile(path.join(dir, file), note, "utf-8").catch(() => {});
   }
-  return { file, markdown, hypotheses };
+  const experiments = await linkExperiments(captured, hypotheses, file, dataDir);
+  const note = experimentNote(experiments);
+  if (note) {
+    markdown += note;
+    await fs.appendFile(path.join(dir, file), note, "utf-8").catch(() => {});
+  }
+  return { file, markdown, hypotheses, experiments };
+}
+
+/** 新假设进写稿：只转已落账的假设，否则写稿引用的假设在台账里查不到 */
+async function linkExperiments(
+  captured: Captured,
+  ledger: RetroHypothesisResult,
+  file: string,
+  dataDir?: string,
+): Promise<RetroResult["experiments"]> {
+  if (!ledger.proposed) return { added: [], skipped: [] };
+  try {
+    return await recordRetroExperiments(captured.proposals, file, dataDir);
+  } catch (err) {
+    return { added: [], skipped: [], error: `写稿实验未更新:${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+function experimentNote(e: RetroResult["experiments"]): string {
+  const lines: string[] = [];
+  if (e.added.length) {
+    lines.push(`> 已进写稿:以下实验接下来 ${RETRO_EXPERIMENT_DAYS} 天在对应平台的新稿里执行,用到它的稿会自动挂到假设上等裁决。`);
+    for (const x of e.added) lines.push(`> - ${x.platform}:${x.action}`);
+  }
+  if (e.skipped.length) lines.push(`> 未进写稿:${e.skipped.join("；")}`);
+  if (e.error) lines.push(`> ⚠️ ${e.error}`);
+  return lines.length ? `\n${lines.join("\n")}\n` : "";
 }
 
 export async function generateRetro(
@@ -226,7 +261,7 @@ export async function generateRetro(
     throw new Error("复盘生成失败:模型未调用 submit_retro 提交报告");
   }
 
-  const { file, markdown, hypotheses } = await persist(runId, captured.markdown, facts, captured, dataDir);
+  const { file, markdown, hypotheses, experiments } = await persist(runId, captured.markdown, facts, captured, dataDir);
 
   return {
     mode,
@@ -238,6 +273,7 @@ export async function generateRetro(
     tokensUsed: result.totalTokens,
     timing: facts.timing,
     hypotheses,
+    experiments,
   };
 }
 

@@ -48,7 +48,9 @@ it("freezes exact approved text, replays handoff, reports without approving, and
   expect((await getContent(content.id, env.dir))?.status).toBe("editing");
   const bad = await callVideo(env.dir, { action: "report", content_id: content.id, report: { ...report, gates: { approved: true } } }, "codex");
   expect(bad.ok).toBe(false);
-  const register = { action: "register", content_id: content.id, manifest_hash: handoff.manifest_hash, claim_token: claim.claim.token, final_path: final, covers: { "3:4": cover34, "4:3": cover43 }, approvals: await approvalsFor(final, cover34, cover43) };
+  const srt = path.join(binding.project_root, "07-delivery/final.srt");
+  await fs.writeFile(srt, "1\n00:00:00,000 --> 00:00:01,000\n实拍的话\n");
+  const register = { action: "register", content_id: content.id, manifest_hash: handoff.manifest_hash, claim_token: claim.claim.token, final_path: final, covers: { "3:4": cover34, "4:3": cover43 }, srt_path: srt, approvals: await approvalsFor(final, cover34, cover43) };
   expect((await callVideo(env.dir, register, "codex")).code).toBe("approval_mismatch");
   await founderProjectReview(content.id, env.dir, { action: "approve", which: "final_cut", manifest_hash: handoff.manifest_hash, files: [files[0]] });
   const approved = await founderProjectReview(content.id, env.dir, { action: "approve", which: "covers", manifest_hash: handoff.manifest_hash, files: [files[1], files[2]] });
@@ -56,6 +58,7 @@ it("freezes exact approved text, replays handoff, reports without approving, and
   const result = await callVideo(env.dir, { ...register, approvals: { final_cut: a.final_cut, covers: a.covers } }, "codex");
   expect(result.ok, String(result.error ?? result.code)).toBe(true);
   expect((await getContent(content.id, env.dir))?.status).toBe("publish_ready");
+  expect(await fs.readFile(path.join(binding.project_root, "01-script/spoken/g0001-spoken.md"), "utf8")).toBe("实拍的话\n");
   expect(await fs.readFile(contentFile(content.id, env.dir, "draft.md"), "utf8")).toBe(content.body);
   await expect(fs.access(path.join(env.dir, "contents"))).rejects.toThrow();
 });
