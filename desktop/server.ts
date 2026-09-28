@@ -193,6 +193,15 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if (!hostAllowed(req)) { res.writeHead(403).end("bad host"); return; }
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
   const p = url.pathname;
+  // 命名宿主 token 只属于 /mcp（host-policy 在那里按宿主限权）。在 /api/* 上明确回 403，
+  // 而不是让各路由各自当「未认证」处理——宿主配错了地址时能看懂原因。
+  if (p.startsWith("/api/")) {
+    const identity = AUTH.identify({ authorization: req.headers.authorization, cookie: req.headers.cookie });
+    if (identity && identity.subject !== LOCAL_SUBJECT) {
+      res.writeHead(403, { "Content-Type": MIME[".json"] }).end(JSON.stringify({ ok: false, error: "host token is only valid on /mcp" }));
+      return;
+    }
+  }
   if ((p === "/mcp" || p.startsWith("/api/")) && !["/api/session", "/api/invoke", "/api/events"].includes(p) && authorize(req)) assertLibraryAvailable();
 
   if (p === "/favicon.ico") { res.writeHead(204).end(); return; }
