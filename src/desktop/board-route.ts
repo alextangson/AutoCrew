@@ -1,9 +1,12 @@
 /**
- * 看板的浏览器会话端点（不是 MCP 能力）：读看板、「开始写」、「我发了」/撤销。
+ * 看板与数据页的浏览器会话端点（不是 MCP 能力）：读看板、「开始写」、「我发了」/撤销；
+ * 读数据页、数据↔稿件的手动关联 / 合并 / 拆开及撤销（数据页规格 §F）。
  * 写操作只给浏览器会话 + 同源；打开 Claude 桌面版的命令由服务端拼，浏览器传不进链接。
  */
 import type http from "node:http";
 import { boardData } from "./board-data.js";
+import { dataPage } from "./data-page.js";
+import { addDecision, removeDecision, type LinkOp } from "../modules/flywheel/outcome-links.js";
 import { markPublished, startWriting, unmarkPublished, type OpenDeps } from "./board-actions.js";
 
 export interface BoardRouteDeps {
@@ -39,6 +42,25 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
       try { send(res, 200, { ok: true, data: await boardData(await deps.resolveDataDir()) }); }
       catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    if (p === "/api/data" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      try { send(res, 200, { ok: true, data: await dataPage(await deps.resolveDataDir()) }); }
+      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    if (p === "/api/data/link" && req.method === "POST") {
+      await post(req, res, async (b, dir) => ({ ok: true, data: await addDecision({
+        op: String(b.op ?? "") as LinkOp,
+        works: Array.isArray(b.works) ? b.works.map(String) : [],
+        ...(typeof b.content_id === "string" ? { contentId: b.content_id } : {}),
+        ...(typeof b.target === "string" ? { target: b.target } : {}),
+      }, dir) }));
+      return true;
+    }
+    if (p === "/api/data/undo" && req.method === "POST") {
+      await post(req, res, async (b, dir) => ({ ok: true, data: await removeDecision(String(b.id ?? ""), dir) }));
       return true;
     }
     if (p === "/api/board/start-writing" && req.method === "POST") {

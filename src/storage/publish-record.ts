@@ -33,6 +33,9 @@ export interface PlatformPublication {
   url: string | null;
   campaigns: string[];
   manual: ManualPublication | null;
+  /** 该平台上用的标题 / 平台作品 id：数据关联（§33）的额外匹配键 */
+  title?: string | null;
+  postId?: string | null;
 }
 
 export type PublishRecord =
@@ -89,6 +92,7 @@ export function parsePlatformEntry(entry: unknown, now: number): PlatformPublica
     reason: state === "rejected" ? str(pub?.reject_reason) ?? str(pub?.reason) ?? str(pub?.evidence) : null,
     url: str(pub?.url) ?? str(pub?.post_url),
     campaigns: campaignsOf(entry), manual: null,
+    title: str(entry.title), postId: str(pub?.post_id) ?? str(entry.post_id),
   };
 }
 
