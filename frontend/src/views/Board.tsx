@@ -114,7 +114,7 @@ export function Board(props: Nav) {
               <button className="bcard-link" disabled={radarBusy} onClick={() => void collectMore()}>{radarBusy ? "找选题中…" : "再找 5 条"}</button>
               <button className="bcard-link" onClick={() => setTrash(true)}>回收站</button>
             </span>}</h2>
-          <p>{COLUMN_HINT[col]}</p>
+          <p title={COLUMN_HINT[col]}>{COLUMN_HINT[col]}</p>
         </header>
         {cards === null ? <p className="bcol-note">读取中</p>
           : <ColumnBody col={col} cards={cards[col]} data={data!} expanded={expanded.has(col)} allEmpty={allEmpty} starting={starting}

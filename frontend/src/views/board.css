@@ -15,7 +15,7 @@
 .bcol-head h2 { font-size: var(--fs-md); font-weight: 700; display: flex; gap: var(--s2); align-items: baseline; margin: 0; }
 .bcol-count { font-weight: 400; color: var(--muted); font-size: var(--fs-xs); }
 .bcol-tools { margin-left: auto; display: flex; gap: var(--s3); font-weight: 400; }
-.bcol-head p { font-size: var(--fs-xs); color: var(--muted); margin: var(--s1) 0 0; line-height: 1.5; }
+.bcol-head p { font-size: var(--fs-xs); color: var(--muted); margin: var(--s1) 0 0; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bcol-note { font-size: var(--fs-xs); color: var(--muted); padding: var(--s1) var(--s1); line-height: 1.6; }
 .bcol-body { display: flex; flex-direction: column; gap: var(--s2); }
 .bcol-more { align-self: flex-start; border: none; background: none; padding: var(--s1); font-size: var(--fs-xs); color: var(--ink); text-decoration: underline; }
