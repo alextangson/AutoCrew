@@ -41,6 +41,7 @@ export interface BoardTopic {
   id: string;
   title: string;
   source: string | null;
+  link: string | null;
   score: number | null;
   createdAt: string;
   renewedAt: string | null;
@@ -121,7 +122,7 @@ async function itemOf(c: Content, column: Exclude<BoardColumn, "选题">, dataDi
 }
 
 function topicOf(t: Topic): BoardTopic {
-  return { id: t.id, title: t.title, source: t.source ?? null, score: typeof t.score === "number" ? t.score : null, createdAt: t.createdAt, renewedAt: t.renewedAt ?? null };
+  return { id: t.id, title: t.title, source: t.source ?? null, link: t.link ?? null, score: typeof t.score === "number" ? t.score : null, createdAt: t.createdAt, renewedAt: t.renewedAt ?? null };
 }
 
 export async function boardData(dataDir: string): Promise<BoardData> {

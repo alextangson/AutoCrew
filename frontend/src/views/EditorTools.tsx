@@ -312,7 +312,8 @@ export function EditorTools(props: EditorToolsProps) {
       )}
 
       {/* 确认区块不跟着「排版发布文案」走:推草稿箱、视频发布件、直接去平台发,都要能确认 */}
-      {CONFIRMABLE_STATUSES.has(c.status) && (
+      {/* 视频稿的「发了」收敛到看板卡片的「我发了」（看板规格 §25），这里只留给图文 */}
+      {CONFIRMABLE_STATUSES.has(c.status) && !VIDEO_PLATFORMS.has(c.platform) && (
         <div className="pending-edit">
           <div className="mono muted">发完了就回来点确认——回流数据靠它认领</div>
           <div className="ed-digest">

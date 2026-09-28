@@ -44,15 +44,6 @@ export const BOARD_COLUMNS = [
 export const STATUS_COLUMN: Record<string, number> = {};
 BOARD_COLUMNS.forEach((c, i) => c.statuses.forEach((s) => (STATUS_COLUMN[s] = i)));
 
-/** 拖到某列 = 流转到该列代表状态(状态机校验,非法拒绝;拖进制作中 = 过审放行) */
-export const DROP_TARGET_STATUS: Record<string, string> = {
-  writing: "draft_ready",
-  review: "reviewing",
-  producing: "approved",
-  ready: "publish_ready",
-  published: "published",
-};
-
 export const VARIANT_STATUS: Record<string, string> = {
   topic_saved: "选题", drafting: "写中", needs_evidence: "缺证据", draft_ready: "草稿", revision: "修订",
   reviewing: "待审", approved: "已过审", editing: "剪辑", cover_pending: "封面设计",

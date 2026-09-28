@@ -6,7 +6,7 @@
  * 漏进任何一张表，看板上的表现就是一张**看不见的卡**——状态不在任何一列里，稿子凭空消失。
  */
 import { describe, expect, it } from "vitest";
-import { BOARD_COLUMNS, STATUS_COLUMN, VARIANT_STATUS, DROP_TARGET_STATUS, workspaceForStatus } from "./lib";
+import { BOARD_COLUMNS, STATUS_COLUMN, VARIANT_STATUS, workspaceForStatus } from "./lib";
 
 describe("needs_evidence（P1 §4.4）在看板上有位置", () => {
   it("落在「在写」列——稿子还没成，人要在这一列看到它", () => {
@@ -20,10 +20,6 @@ describe("needs_evidence（P1 §4.4）在看板上有位置", () => {
 
   it("打开它进文案台（不是剪辑/封面/发布台）", () => {
     expect(workspaceForStatus("needs_evidence")).toBe("draft");
-  });
-
-  it("拖回「在写」列不会把它拖成 needs_evidence：落点仍是草稿就绪", () => {
-    expect(DROP_TARGET_STATUS["writing"]).toBe("draft_ready");
   });
 });
 

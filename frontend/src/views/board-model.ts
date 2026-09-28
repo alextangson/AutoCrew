@@ -1,26 +1,9 @@
-import {
-  BOARD_COLUMNS,
-  DROP_TARGET_STATUS,
-  PLATFORM_CATALOG,
-  STATUS_COLUMN,
-  type Atom,
-  type Content,
-  type Topic,
-} from "../lib";
+import { PLATFORM_CATALOG, type Atom, type Content } from "../lib";
 
 export interface BoardPlatform {
   platform: string;
   current: Content;
   contents: Content[];
-}
-
-export interface BoardTopic {
-  atomKey: string;
-  topic: Topic | null;
-  title: string;
-  platforms: BoardPlatform[];
-  members: Content[];
-  columnIndex: number;
 }
 
 function timestamp(value: string): number {
@@ -30,11 +13,6 @@ function timestamp(value: string): number {
 
 function compareId(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function contentColumn(status: string): number {
-  const index = STATUS_COLUMN[status];
-  return typeof index === "number" ? index : 1;
 }
 
 /** 最近修改优先；同一时刻按创建时间、最后按 id 升序，避免接口顺序改变当前稿。 */
@@ -60,33 +38,4 @@ export function boardPlatforms(atom: Atom): BoardPlatform[] {
     (order.get(left.platform) ?? PLATFORM_CATALOG.length) - (order.get(right.platform) ?? PLATFORM_CATALOG.length) ||
     compareId(left.platform, right.platform),
   );
-}
-
-/** 一主题只出现一次；按各平台当前稿中最早未完成阶段落列，历史稿不拖住进度。 */
-export function boardColumns(atoms: Atom[]): BoardTopic[][] {
-  const columns: BoardTopic[][] = BOARD_COLUMNS.map(() => []);
-  for (const atom of atoms) {
-    const platforms = boardPlatforms(atom);
-    const columnIndex = platforms.length === 0 ? 0 : platforms.reduce(
-      (earliest, platform) => Math.min(earliest, contentColumn(platform.current.status)),
-      BOARD_COLUMNS.length - 1,
-    );
-    const newest = platforms.map((platform) => platform.current).sort(compareContent)[0];
-    columns[columnIndex].push({
-      atomKey: atom.key,
-      topic: atom.topic,
-      title: atom.topic?.title || newest?.title || "（无标题）",
-      platforms,
-      members: [...atom.members],
-      columnIndex,
-    });
-  }
-  return columns;
-}
-
-/** 同列移动只改变位置意图，不将剪辑等细分状态重置为该列入口。 */
-export function boardMoveTarget(content: Pick<Content, "status">, columnKey: string): string | null {
-  const columnIndex = BOARD_COLUMNS.findIndex((column) => column.key === columnKey);
-  if (columnIndex < 0 || columnIndex === contentColumn(content.status)) return null;
-  return DROP_TARGET_STATUS[columnKey] ?? null;
 }

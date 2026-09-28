@@ -1,0 +1,57 @@
+/* 看板（2026-09-28 改版）：六列一屏，空列窄、有卡的宽，1440 宽不横向滚动 */
+.board2 { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.board2-tools { display: flex; justify-content: flex-end; align-items: baseline; gap: 14px; font-size: 12px; }
+.board2-stale { color: var(--danger); margin-right: auto; }
+.board2-cols { display: grid; gap: 10px; align-items: start; min-width: 0; }
+.board-fail { padding: 24px; color: var(--danger); }
+.board-fail button { margin-left: 8px; }
+
+.bcol { background: #EFEDE6; padding: 10px; min-height: 70vh; min-width: 0; border: 1px solid transparent; }
+.bcol-ok { border-color: var(--ink); }
+.bcol-no { border-color: var(--danger); border-style: dashed; }
+.bcol-head h2 { font-size: 13px; font-weight: 700; display: flex; gap: 6px; align-items: baseline; margin: 2px 2px 2px; }
+.bcol-count { font-weight: 400; color: var(--muted); }
+.bcol-head p { font-size: 11px; color: var(--muted); margin: 0 2px 10px; line-height: 1.5; }
+.bcol-note { font-size: 12px; color: var(--muted); padding: 4px 2px; line-height: 1.6; }
+.bcol-body { display: flex; flex-direction: column; gap: 7px; }
+.bcol-more { align-self: flex-start; border: none; background: none; padding: 2px; font-size: 12px; color: var(--ink); text-decoration: underline; }
+.bcol-tip { font-size: 11px; color: var(--muted); padding: 2px; }
+
+.bcard { background: var(--card); border: 1px solid var(--border); padding: 9px 11px; font-size: 13px; line-height: 1.5; min-width: 0; }
+.bcard[draggable="true"] { cursor: grab; }
+.bcard-main { display: flex; gap: 10px; align-items: flex-start; }
+.bcard-text { flex: 1; min-width: 0; }
+.bcard-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-align: left;
+  border: none; background: none; padding: 0; font-size: 13px; line-height: 1.5; color: var(--ink); width: 100%; }
+.bcard-title:hover { text-decoration: underline; }
+.bcard-score { font-family: var(--font-mono); font-size: 11px; border: 1px solid var(--ink); padding: 0 4px; margin-right: 5px; }
+.bcard-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.bcard-red { color: var(--danger); }
+.bcard-when { font-size: 11px; color: var(--muted); letter-spacing: .04em; margin-bottom: 6px; }
+.bcard-cover { width: 54px; height: 72px; object-fit: cover; flex: none; background: #EFEDE6; }
+.bcard-actions { display: flex; gap: 10px; align-items: center; margin-top: 7px; flex-wrap: wrap; }
+.bcard-actions button { font-size: 12px; padding: 2px 10px; }
+.bcard-link { border: none; background: none; padding: 0; font-size: 12px; color: var(--muted); text-decoration: underline; cursor: pointer; }
+.bcard-link:hover { color: var(--ink); }
+.bcard-trash { margin-left: auto; }
+
+.bcard-menu { position: relative; flex: none; }
+.bcard-menu > summary { list-style: none; cursor: pointer; color: var(--muted); padding: 0 4px; line-height: 1.2; }
+.bcard-menu > summary::-webkit-details-marker { display: none; }
+.bcard-menu-list { position: absolute; right: 0; top: 20px; z-index: 5; background: var(--card); border: 1px solid var(--ink); display: flex; flex-direction: column; min-width: 120px; }
+.bcard-menu-list button { border: none; text-align: left; padding: 6px 10px; font-size: 12px; white-space: nowrap; }
+
+.prows { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.prow { display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; align-items: baseline; }
+.prow-red, .prow-red .prow-state { color: var(--danger); }
+.prow-muted .prow-state, .prow.prow-muted { color: var(--muted); }
+.prow-note { font-size: 12px; }
+.prow-note.prow-red { color: var(--danger); }
+.prow-note.prow-muted { color: var(--muted); }
+.prow-name { color: var(--ink); }
+.prow-state { min-width: 0; }
+.prow-side { display: flex; gap: 8px; color: var(--muted); white-space: nowrap; }
+.prow-camp { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.prow-more summary { font-size: 11px; color: var(--muted); cursor: pointer; margin-top: 4px; }
+.prow-more button { display: block; margin: 3px 0; }
+

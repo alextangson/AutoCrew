@@ -52,6 +52,8 @@ import {
 import "./editor-workspace.css";
 
 const IMAGES_KEY = "ed-images-open";
+/** 视频稿往前跳（标记发布中 / 已发布）只走看板卡片的「我发了」（看板规格 §16/§25） */
+const VIDEO_SKIP_AHEAD = new Set(["publishing", "published"]);
 
 /** 标题:textarea 才能换行(长标题很常见),高度跟着内容长；回车不换行,标题是单行语义 */
 function TitleInput(props: { value: string; onChange: (value: string) => void }) {
@@ -452,7 +454,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <StageAdvance
             contentId={props.id}
             currentStatus={c.status}
-            transitions={transitions}
+            transitions={VIDEO_PLATFORMS.has(c.platform) ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
             dirty={workspace === "draft" && (dirty || saving)}
             reload={load}
           />
