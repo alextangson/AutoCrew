@@ -21,7 +21,9 @@ import {
   type PullPlatform,
 } from "../modules/flywheel/pull-state.js";
 import { importPerformanceRows } from "../modules/flywheel/row-import.js";
-import type { PullResult, PullStatus } from "../adapters/browser/pull-types.js";
+import { saveAutoCover, type FetchLike } from "../modules/flywheel/data-covers.js";
+import { getDataDir } from "../storage/local-store.js";
+import type { PullResult, PullStatus, TypedRow } from "../adapters/browser/pull-types.js";
 import { emitEngineEvent } from "./event-hub.js";
 
 /** 30 分钟一 tick：比 12h TTL 密得多（错过窗口最多迟到半小时），又不至于让 tick 变噪音 */
@@ -63,6 +65,8 @@ export interface MetricsPullDeps {
   gapMs?: number;
   sleep?: (ms: number) => Promise<void>;
   warn?: (msg: string) => void;
+  /** 封面下载的注入点（测试不联网）；默认全局 fetch */
+  fetchCover?: FetchLike;
 }
 
 export interface PullNowOptions extends MetricsPullDeps {
@@ -103,6 +107,7 @@ interface Landing {
   errorCode?: string;
   batchId?: string;
   hasMore?: boolean;
+  coverError?: string;
 }
 
 /** 结果 → 下一份平台状态。退避语义全在这里，一个 switch 看全（spec §4.3） */
@@ -132,6 +137,8 @@ export function applyPullOutcome(
     next.failureDate = null;
     next.nextEligibleAt = new Date(now.getTime() + ttlMs).toISOString();
     if (landing.batchId) next.lastBatchId = landing.batchId;
+    if (landing.coverError) next.lastCoverError = landing.coverError;
+    else delete next.lastCoverError;
     return next;
   }
   // needs_login 不算失败（等人扫码）；risk_control 当日不再碰这家——两者都锚到次日 09:00
@@ -191,6 +198,25 @@ async function callFetcher(platform: PullPlatform, opts: PullNowOptions): Promis
   }
 }
 
+/**
+ * 顺手抓封面（数据页规格 §I.57）：只下平台给了地址、又有作品 id 的；手动补过 / 已抓过的跳过。
+ * 下载失败不影响这次入库，但要记进回流状态（返回错误码），不吞。
+ */
+export async function captureCovers(platform: PullPlatform, rows: TypedRow[], opts: PullNowOptions): Promise<string | undefined> {
+  const todo = rows.filter((r) => r.coverUrl && r.platformItemId);
+  if (!todo.length) return undefined;
+  const dataDir = opts.dataDir ?? getDataDir();
+  const fetchImpl = opts.fetchCover ?? ((url: string) => fetch(url));
+  let failed = 0, firstError = "";
+  for (const r of todo) {
+    try { await saveAutoCover(dataDir, `${platform}#${r.platformItemId}`, r.coverUrl!, fetchImpl); }
+    catch (err) { failed += 1; firstError ||= err instanceof Error ? err.message.slice(0, 40) : "unknown"; }
+  }
+  if (!failed) return undefined;
+  opts.warn?.(`[metrics-pull] ${platform} 封面 ${failed}/${todo.length} 张没下载成：${firstError}`);
+  return `cover_download_failed:${failed}/${todo.length}:${firstError}`;
+}
+
 /** 先入库后写状态：入库失败就当整次抓取失败（零写入），不给「抓到了但没落地」留模糊地带 */
 async function land(platform: PullPlatform, result: PullResult, now: Date, opts: PullNowOptions): Promise<Landing> {
   const base: Landing = {
@@ -214,7 +240,8 @@ async function land(platform: PullPlatform, result: PullResult, now: Date, opts:
         errorCode: report.rejected.length > 0 ? "all_rows_rejected" : "zero_rows_imported",
       };
     }
-    return { ...base, imported: report.imported, batchId };
+    const coverError = await captureCovers(platform, result.rows, opts);
+    return { ...base, imported: report.imported, batchId, ...(coverError ? { coverError } : {}) };
   } catch (err) {
     opts.warn?.(`[metrics-pull] ${platform} 入库失败：${err instanceof Error ? err.message : String(err)}`);
     return { status: "error", rowCount: 0, errorCode: "import_failed" };

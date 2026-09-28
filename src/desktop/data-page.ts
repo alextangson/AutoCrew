@@ -9,11 +9,23 @@ import { readDecisions } from "../modules/flywheel/outcome-links.js";
 import { buildWorks, shanghaiDay, type ContentRef, type DataRow } from "../modules/flywheel/data-rows.js";
 import { buildRows } from "../modules/flywheel/data-assemble.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
+import { findCover } from "../modules/flywheel/data-covers.js";
+import { coverOf } from "./board-data.js";
 
 /** 短视频四个平台的默认列顺序（§39） */
 export const DEFAULT_COLUMNS = ["douyin", "wechat_video", "xiaohongshu", "bilibili"];
 const PUBLISH_STATUSES = new Set(["publish_ready", "publishing", "published"]);
 const LIVE_STATES = new Set(["public", "manual", "overdue"]);
+/** 「下一条」：定时了还没到 / 到点了还没确认公开 / 审核中 */
+const PENDING_STATES = new Set(["scheduled", "overdue", "reviewing"]);
+
+/** 一行的封面（§I）：手动补的 > AutoCrew 里选的 3:4 封面 > 自动回流抓的；key = 手动补 / 移除用的标识 */
+export type RowCover =
+  | { kind: "manual"; file: string; key: string }
+  | { kind: "autocrew"; contentId: string; path: string; sha256: string }
+  | { kind: "auto"; file: string };
+
+export interface Upcoming { contentId: string; title: string; time: string | null; state: string; platforms: string[] }
 
 export interface DataPage {
   columns: string[];
@@ -24,6 +36,9 @@ export interface DataPage {
   asOf: string | null;
   /** 最新快照里出现过的来源（csv / auto_pull / …） */
   sources: string[];
+  /** 行 id → 封面；没有封面的行不在里面 */
+  covers: Record<string, RowCover>;
+  upcoming: Upcoming | null;
 }
 
 function contentRef(c: Content, record: PublishRecord | null): ContentRef {
@@ -44,22 +59,57 @@ export function pickColumns(profilePlatforms: string[] | null, withData: Set<str
   return cols.length ? cols : DEFAULT_COLUMNS;
 }
 
+/** 手动补的先按行找，再按行里每条作品找（合并 / 关联之后，原来那行补的封面还跟着作品走） */
+export async function rowCover(row: DataRow, dataDir: string): Promise<RowCover | null> {
+  for (const key of [row.id, ...row.works.map((w) => `w:${w.key}`)]) {
+    const file = await findCover(dataDir, "manual", key);
+    if (file) return { kind: "manual", file, key };
+  }
+  if (row.contentId) {
+    const c = await coverOf(row.contentId, dataDir).catch(() => null);
+    if (c) return { kind: "autocrew", contentId: row.contentId, ...c };
+  }
+  for (const w of row.works) {
+    const file = await findCover(dataDir, "auto", w.key);
+    if (file) return { kind: "auto", file };
+  }
+  return null;
+}
+
+/** 最早的一条「定时 / 待公开」 */
+export function pickUpcoming(items: Array<{ c: Content; record: PublishRecord | null }>): Upcoming | null {
+  const cands: Upcoming[] = [];
+  for (const { c, record } of items) {
+    if (!record || record.kind === "none") continue;
+    const pending = record.platforms.filter((p) => PENDING_STATES.has(p.state));
+    if (!pending.length) continue;
+    const times = pending.map((p) => p.time).filter((t): t is string => Boolean(t)).sort();
+    cands.push({ contentId: c.id, title: c.title, time: times[0] ?? null, state: pending[0].state, platforms: pending.map((p) => p.platform) });
+  }
+  return cands.sort((a, b) => (a.time ?? "9999").localeCompare(b.time ?? "9999"))[0] ?? null;
+}
+
 export async function dataPage(dataDir: string): Promise<DataPage> {
   const [outcomes, contents, decisions, profile] = await Promise.all([
     listOutcomes(dataDir), listContents(dataDir), readDecisions(dataDir), loadProfile(dataDir).catch(() => null),
   ]);
   const refs: ContentRef[] = [];
+  const records: Array<{ c: Content; record: PublishRecord | null }> = [];
   for (const c of contents) {
     const record = PUBLISH_STATUSES.has(c.status) ? await readPublishRecord(c.id, c.manualPublications, dataDir) : null;
     refs.push(contentRef(c, record));
+    records.push({ c, record });
   }
   const works = buildWorks(outcomes.map((o) => ({ ...o, metrics: o.metrics as unknown as Record<string, number | null> })));
   const asOf = outcomes.map((o) => o.metricDate).sort().pop() ?? null;
   const sources = [...new Set(works.map((w) => w.snapshots[w.snapshots.length - 1].source))].sort();
+  const rows = buildRows(works, refs, decisions);
+  const covers: Record<string, RowCover> = {};
+  for (const r of rows) { const cv = await rowCover(r, dataDir); if (cv) covers[r.id] = cv; }
   return {
     columns: pickColumns(profile?.platforms ?? null, new Set(works.map((w) => w.platform))),
-    rows: buildRows(works, refs, decisions),
+    rows,
     contents: refs.map((r) => ({ id: r.id, title: r.title, day: r.day })).sort((a, b) => (b.day ?? "").localeCompare(a.day ?? "")),
-    asOf, sources,
+    asOf, sources, covers, upcoming: pickUpcoming(records),
   };
 }

@@ -12,6 +12,7 @@ import {
   parseDouyinItemList,
   protectBigIntIds,
   pullDouyinStats,
+  coverUrlOf,
   type DouyinCdp,
 } from "./douyin-stats.js";
 
@@ -301,5 +302,22 @@ describe("脱敏红线(spec §6:lastError 永不含原始响应)", () => {
 describe("常量", () => {
   it("导航目标是作品管理页", () => {
     expect(DOUYIN_MANAGE_URL).toBe("https://creator.douyin.com/creator-micro/content/manage");
+  });
+});
+
+describe("coverUrlOf（真实 work_list 响应的封面字段，2026-09-27 抓包）", () => {
+  it("旧路 aweme_list[].Cover、主路 items[].cover 都认；只要 https", () => {
+    expect(coverUrlOf({ Cover: { uri: "u", url_list: ["https://p11-sign.douyinpic.com/a.webp"] } })).toBe("https://p11-sign.douyinpic.com/a.webp");
+    expect(coverUrlOf({ cover: { url_list: ["http://x", "https://p3-sign.douyinpic.com/b.webp"] } })).toBe("https://p3-sign.douyinpic.com/b.webp");
+    expect(coverUrlOf({ cover: "https://nope" })).toBeUndefined();
+    expect(coverUrlOf({})).toBeUndefined();
+  });
+
+  it("解析出的行带上 coverUrl", () => {
+    const body = JSON.stringify({ status_code: 0, has_more: false, items: [
+      { id: "7412345678901234567", item_title: "有封面", create_time: 1726000000, metrics: { view_count: "10" }, cover: { url_list: ["https://p3-sign.douyinpic.com/c.webp"] } },
+    ] });
+    const parsed = parseDouyinItemList(body);
+    expect(parsed.kind === "ok" && parsed.rows[0].coverUrl).toBe("https://p3-sign.douyinpic.com/c.webp");
   });
 });

@@ -50,6 +50,8 @@ export interface PlatformPullState {
   /** 最近一次成功真正入账的行数，不是抓取器返回的原始行数 */
   lastRowCount?: number;
   lastBatchId?: string;
+  /** 最近一次成功抓取里封面下载失败的情况（如 cover_download_failed:2/12）；数据页规格 §I.57，不静默 */
+  lastCoverError?: string;
   /**
    * 「单平台自动抓取 ≤2 次/天」红线的当日计数锚（spec §4.3）。
    * 手动触发不计入——人明确要抓的时候，红线不该拦人。
@@ -122,6 +124,7 @@ function normalizePlatform(raw: unknown): PlatformPullState {
     ...(str(r.lastErrorCode) ? { lastErrorCode: str(r.lastErrorCode) as string } : {}),
     ...(typeof r.lastRowCount === "number" ? { lastRowCount: num(r.lastRowCount) } : {}),
     ...(str(r.lastBatchId) ? { lastBatchId: str(r.lastBatchId) as string } : {}),
+    ...(str(r.lastCoverError) ? { lastCoverError: str(r.lastCoverError) as string } : {}),
     autoAttemptDate: str(r.autoAttemptDate),
     autoAttemptCount: num(r.autoAttemptCount),
   };

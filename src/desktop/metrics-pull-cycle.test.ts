@@ -484,3 +484,31 @@ describe("startMetricsPullCycle — 生命周期", () => {
     spy.mockRestore();
   });
 });
+
+describe("顺手抓封面（数据页规格 §I.57）", () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+  const withCover: TypedRow[] = [
+    { ...ROWS[0], coverUrl: "https://img/1.png" },
+    { title: "视频二", publishedAt: null, platformItemId: "i2", metrics: { views: 5 }, coverUrl: "https://img/2.png" },
+    { title: "没 id", publishedAt: null, metrics: { views: 5 }, coverUrl: "https://img/3.png" },
+  ];
+
+  it("下载成功存进 data-covers；没作品 id 的不下", async () => {
+    await seed("douyin");
+    const fetchCover = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => PNG.buffer.slice(0) as ArrayBuffer }));
+    await pullPlatformNow("douyin", { ...deps({ registry: { douyin: async () => okResult(withCover) }, fetchCover }), dataDir: dir });
+    expect(fetchCover).toHaveBeenCalledTimes(2);
+    expect((await fs.readdir(path.join(dir, "data-covers"))).filter((n) => n.startsWith("auto-"))).toHaveLength(2);
+    expect((await stateOf("douyin")).lastCoverError).toBeUndefined();
+  });
+
+  it("下载失败：数据照常入账，失败记进回流状态", async () => {
+    await seed("douyin");
+    const fetchCover = vi.fn(async () => ({ ok: false, status: 403, arrayBuffer: async () => new ArrayBuffer(0) }));
+    const attempt = await pullPlatformNow("douyin", { ...deps({ registry: { douyin: async () => okResult(withCover) }, fetchCover }), dataDir: dir });
+    expect(attempt.status).toBe("ok");
+    const st = await stateOf("douyin");
+    expect(st.lastStatus).toBe("ok");
+    expect(st.lastCoverError).toBe("cover_download_failed:2/2:http_403");
+  });
+});

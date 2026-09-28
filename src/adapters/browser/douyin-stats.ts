@@ -79,12 +79,28 @@ function mapItem(base: Bag, metricBags: Bag[]): TypedRow {
   assign(metrics, "completionRate", pick("completion_rate"));
   assign(metrics, "completion5s", pick("completion_rate_5s"));
   const id = idOf(base.id, base.item_id, base.aweme_id);
+  const coverUrl = coverUrlOf(base);
   return {
     title: firstString(base.item_title, base.description, base.desc, base.title),
     publishedAt: isoFromSeconds(base.create_time),
     ...(id ? { platformItemId: id } : {}),
     metrics,
+    ...(coverUrl ? { coverUrl } : {}),
   };
+}
+
+/**
+ * 竖封面（3:4）地址。字段来自 2026-09-27 创始人后台的真实 work_list 响应
+ * （docs/research/2026-09-27-platform-cover-surfaces.md）：旧路 `aweme_list[].Cover.url_list`，
+ * 现行主路 `items[].cover.url_list`。拿不到就不填，不猜别的字段。
+ */
+export function coverUrlOf(base: Bag): string | undefined {
+  for (const bag of [base.Cover, base.cover]) {
+    const list = isRecord(bag) && Array.isArray(bag.url_list) ? bag.url_list : [];
+    const url = list.find((u): u is string => typeof u === "string" && u.startsWith("https://"));
+    if (url) return url;
+  }
+  return undefined;
 }
 
 function bagOf(v: unknown): Bag {

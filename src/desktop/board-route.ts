@@ -6,6 +6,7 @@
 import type http from "node:http";
 import { boardData } from "./board-data.js";
 import { dataPage } from "./data-page.js";
+import { createCoverHandler } from "./data-cover-route.js";
 import { addDecision, removeDecision, type LinkOp } from "../modules/flywheel/outcome-links.js";
 import { markPublished, startWriting, unmarkPublished, type OpenDeps } from "./board-actions.js";
 
@@ -36,8 +37,10 @@ export function createBoardHandler(deps: BoardRouteDeps) {
     try { send(res, 200, await act(await jsonBody(req, deps.readBody), await deps.resolveDataDir())); }
     catch (e) { send(res, 400, { ok: false, code: "bad_request", error: e instanceof Error ? e.message : String(e) }); }
   };
+  const covers = createCoverHandler(deps);
   return async (req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> => {
     const p = url.pathname;
+    if (await covers(req, res, url)) return true;
     if (p === "/api/board" && req.method === "GET") {
       if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
       try { send(res, 200, { ok: true, data: await boardData(await deps.resolveDataDir()) }); }

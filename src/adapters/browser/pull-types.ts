@@ -24,6 +24,11 @@ export interface TypedRow {
   /** 行自带数据日期 YYYY-MM-DD(CSV 的「数据日期」列);缺省用批次默认值 */
   metricDate?: string;
   metrics: Partial<OutcomeMetrics>;
+  /**
+   * 平台返回的封面地址（数据页规格 §I.57）。只有抓包核实过字段的平台才填：
+   * 目前只有抖音（2026-09-27 真实 work_list 响应里的 `Cover` / `cover`）。
+   */
+  coverUrl?: string;
 }
 
 export interface PullResult {
