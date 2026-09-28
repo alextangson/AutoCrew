@@ -1,4 +1,4 @@
-import { seriesTransaction, SERIES_STATES } from "./series-transaction.js";
+import { holdsSeriesLock, seriesTransaction, SERIES_STATES } from "./series-transaction.js";
 import { draftHash as contentDraftHash } from "./draft-hash.js";
 import type { Outline, TechniqueRef, GapRecord, SeriesReview } from "../modules/writing/series-memory.js";
 import { assertManagedPathAvailable } from "./storage-roots.js";
@@ -562,6 +562,29 @@ export function serializeContentWrite<T>(id: string, fn: () => Promise<T>): Prom
   return next;
 }
 
+const RETRY_UNDER_SERIES_LOCK = Symbol("retry-under-series-lock");
+
+async function inSeriesScope(id: string, dataDir?: string): Promise<boolean> {
+  const c = await getContent(id, dataDir).catch(() => null);
+  return Boolean(c && SERIES_STATES.has(c.status));
+}
+
+/**
+ * 稿件写锁的统一入口（spec §3 B「核对加登记要一步完成」）：处在系列范围内的稿，任何写入（改正文、
+ * 改标题、改状态、回滚……）都先取系列锁再取单稿锁，这样审稿台「核对快照 + 登记结论」期间，
+ * 快照里的邻居稿不会被改掉。范围外的稿只取单稿锁；在单稿锁里复核一次，期间进了范围就改走系列锁重来。
+ */
+function contentWrite<T>(id: string, dataDir: string | undefined, fn: () => Promise<T>): Promise<T> {
+  if (holdsSeriesLock()) return serializeContentWrite(id, fn);
+  return (async () => {
+    if (!(await inSeriesScope(id, dataDir))) {
+      const out = await serializeContentWrite(id, async () => (await inSeriesScope(id, dataDir)) ? RETRY_UNDER_SERIES_LOCK : fn());
+      if (out !== RETRY_UNDER_SERIES_LOCK) return out as T;
+    }
+    return seriesTransaction(() => serializeContentWrite(id, fn));
+  })();
+}
+
 // --- Topics ---
 
 async function topicsDir(dataDir?: string): Promise<string> {
@@ -867,7 +890,7 @@ export function reviewContextHash(
  */
 export async function updateContent(id: string, updates: ContentUpdates, dataDir?: string): Promise<Content | null> {
   if (!isContentId(id)) return null;
-  return serializeContentWrite(id, () => updateContentLocked(id, updates, dataDir));
+  return contentWrite(id, dataDir, () => updateContentLocked(id, updates, dataDir));
 }
 
 export type DraftMatchResult =
@@ -885,7 +908,7 @@ export async function updateContentIfDraftMatches(
   dataDir?: string,
 ): Promise<DraftMatchResult> {
   if (!isContentId(id)) return { ok: false, reason: "missing" };
-  return serializeContentWrite(id, async () => {
+  return contentWrite(id, dataDir, async () => {
     const current = await getContent(id, dataDir);
     if (!current) return { ok: false, reason: "missing" };
     if (current.title !== expected.title || current.body !== expected.body || current.platform !== expected.platform) {
@@ -1089,7 +1112,7 @@ export async function addAsset(
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
 
@@ -1134,7 +1157,7 @@ export async function addAssetByPath(
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1182,7 +1205,7 @@ export async function upsertAsset(
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1226,7 +1249,7 @@ export async function removeManagedFinalAsset(
   dataDir?: string,
 ): Promise<boolean> {
   if (!isContentId(contentId) || !Number.isInteger(renderedRevision)) return false;
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1271,7 +1294,7 @@ export async function listAssets(contentId: string, dataDir?: string): Promise<A
 
 export async function removeAsset(contentId: string, filename: string, dataDir?: string): Promise<boolean> {
   if (!isContentId(contentId) || !isSafeFilename(filename)) return false;
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1339,7 +1362,7 @@ export async function saveCoverReview(
   expectedReviewSha256?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     const reviewPath = projectFile(projDir, "cover-review.json");
@@ -1395,7 +1418,7 @@ export async function approveCoverVariant(
   dataDir?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  return serializeContentWrite(contentId, () => approveCoverVariantLocked(contentId, label, dataDir));
+  return contentWrite(contentId, dataDir, () => approveCoverVariantLocked(contentId, label, dataDir));
 }
 
 async function approveCoverVariantLocked(
@@ -1610,7 +1633,7 @@ export async function transitionStatus(
   dataDir?: string,
 ): Promise<TransitionResult> {
   if (!isContentId(contentId)) return { ok: false, error: `Content ${contentId} not found` };
-  const run = () => serializeContentWrite(contentId, () => transitionStatusLocked(contentId, targetStatus, opts, dataDir));
+  const run = () => contentWrite(contentId, dataDir, () => transitionStatusLocked(contentId, targetStatus, opts, dataDir));
   // 进入系列范围与「审稿核对快照+登记」互斥（series-transaction）；其余转换不取这把锁
   return SERIES_STATES.has(targetStatus) ? seriesTransaction(run) : run();
 }

@@ -15,6 +15,11 @@ export const SERIES_STATES: ReadonlySet<string> = new Set(["draft_ready", "appro
 const owner = new AsyncLocalStorage<true>();
 let tail: Promise<unknown> = Promise.resolve();
 
+/** 当前异步调用链是否已持有系列锁 */
+export function holdsSeriesLock(): boolean {
+  return owner.getStore() === true;
+}
+
 export function seriesTransaction<T>(fn: () => Promise<T>): Promise<T> {
   if (owner.getStore()) return fn();
   const run = () => owner.run(true, fn);
