@@ -156,7 +156,14 @@ export function ChatDock(props: {
   const focus = useRevisionFocus();
   /** 当前对话的后端（服务端记录为准）；新对话时是 undefined，用 agent.newBackend */
   const [convBackend, setConvBackend] = useState<BackendId | undefined>();
-  const agent = useAgentBackend(activeConversationId);
+  const agent = useAgentBackend(activeConversationId, {
+    clientId: CLIENT_ID,
+    // 轮次结束后才返回的结果：正看着那段就重载，否则提示（评审 P2-13）
+    onBackground: (id) => {
+      if (id === activeConvRef.current && !busyRef.current) void loadConversation(id);
+      else if (id !== activeConvRef.current) toast("本机 agent 有一条后台结果，在会话列表里");
+    },
+  });
   const effectiveBackend: BackendId = activeConversationId ? (convBackend ?? "builtin") : agent.newBackend;
   const backendRef = useRef(effectiveBackend);
   backendRef.current = effectiveBackend;
@@ -306,6 +313,11 @@ export function ChatDock(props: {
     const { running } = await agent.refresh();
     if (!running) return;
     if (activeConvRef.current !== running.conversationId) await loadConversation(running.conversationId);
+    // 别的标签页发起的轮：只旁观，不接管（停止按钮归发起方，评审 P2-14）
+    if (!running.owner) {
+      setRecoveryNotice("这一轮是另一个标签页发起的，正在跑；要停止请回到那个标签页");
+      return;
+    }
     writePendingTurn({ turnId: running.turnId, conversationId: running.conversationId });
     await recoverPendingTurn();
   };
@@ -506,6 +518,14 @@ export function ChatDock(props: {
           void recoverPendingTurn().then(reattachAgentTurn);
           return;
         }
+        // 旁观的标签页：别处发起的本机轮次结束了，重载这段对话看结果
+        if (e.kind === "agent" && e.data.type === "turn" && (e.data.status === "done" || e.data.status === "failed")) {
+          if (e.data.conversationId === activeConvRef.current && !turnIdRef.current) {
+            setRecoveryNotice("");
+            void loadConversation(String(e.data.conversationId));
+          }
+          return;
+        }
         // 正文增量：turnId 过滤与 seq 去重都在 delta-stream 里判（本页只管渲染）
         if (e.kind === "chat_delta") {
           const frame = parseDeltaFrame(e.data);
@@ -648,6 +668,7 @@ export function ChatDock(props: {
           </div>
         ))}
         {agent.running?.otherLibrary && <p className="muted run-line">后台 agent 仍在处理旧库（它的写入落在原资料库）</p>}
+        {agent.liveCards.map((c, i) => <ChatCard key={c.callId ?? `live-${i}`} card={c} {...(props.nav ? { nav: props.nav } : {})} />)}
         {agent.asks.map((a) => <AgentAskCard key={a.id} ask={a} />)}
         {recoveryNotice && <p className="muted run-line">{recoveryNotice}</p>}
         {/* 流式气泡：视觉与最终回复一致（同一套 markdown 渲染），不做打字机动画 */}

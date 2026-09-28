@@ -20,12 +20,16 @@ function isAsk(v: unknown): v is AskView {
 }
 
 /** agent:pending 的回包 → 待处理卡 + 进行中的轮次 */
-export function parsePending(raw: unknown): { asks: AskView[]; running: { turnId: string; conversationId: string; status: string } | null } {
+export interface RunningTurn { turnId: string; conversationId: string; status: string; owner: boolean; cards: LiveCard[] }
+
+export interface LiveCard { type: string; callId?: string; data: Record<string, unknown>; background?: boolean }
+
+export function parsePending(raw: unknown): { asks: AskView[]; running: RunningTurn | null } {
   const data = (raw as { data?: { asks?: unknown; running?: unknown } } | null)?.data;
   const asks = Array.isArray(data?.asks) ? data!.asks.filter(isAsk) : [];
-  const r = data?.running as { turnId?: unknown; conversationId?: unknown; status?: unknown } | null | undefined;
+  const r = data?.running as { turnId?: unknown; conversationId?: unknown; status?: unknown; owner?: unknown; cards?: unknown } | null | undefined;
   const running = r && typeof r.turnId === "string" && typeof r.conversationId === "string"
-    ? { turnId: r.turnId, conversationId: r.conversationId, status: String(r.status ?? "running") }
+    ? { turnId: r.turnId, conversationId: r.conversationId, status: String(r.status ?? "running"), owner: r.owner === true, cards: mergeCards([], Array.isArray(r.cards) ? r.cards : []) }
     : null;
   return { asks, running };
 }
@@ -38,4 +42,20 @@ export function applyAgentEvent(list: AskView[], event: Record<string, unknown>,
   if (event.type !== "ask" || ask.status !== "pending") return list;
   if (conversationId && ask.conversationId !== conversationId) return list;
   return list.some((a) => a.id === ask.id) ? list : [...list, ask];
+}
+
+function isCard(v: unknown): v is LiveCard {
+  const c = v as LiveCard | null;
+  return Boolean(c) && typeof c!.type === "string" && typeof c!.data === "object" && c!.data !== null;
+}
+
+/** 本轮卡片按 callId 合并（SSE 实时帧 + 刷新后的快照可能重叠），顺序按首次出现 */
+export function mergeCards(list: LiveCard[], incoming: unknown[]): LiveCard[] {
+  const out = [...list];
+  for (const c of incoming) {
+    if (!isCard(c)) continue;
+    if (c.callId && out.some((x) => x.callId === c.callId)) continue;
+    out.push(c);
+  }
+  return out;
 }
