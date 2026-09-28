@@ -116,7 +116,8 @@ function toRow(g: Group, contents: Map<string, ContentRef>): DataRow {
     id: c ? `c:${c.id}` : `w:${[...g.works].map((w) => w.key).sort()[0]}`,
     contentId: c?.id ?? null, contentTitle: c?.title ?? null,
     title: c?.title ?? byViews[0]?.title ?? "",
-    day: c?.day ?? days[0] ?? null,
+    // 按真实发布时间排：有平台数据就取最早那条的发布日，没有才用稿件自己的日期
+    day: days[0] ?? c?.day ?? null,
     works: g.works,
     publishedOn: c ? c.platforms.filter((p) => p.published).map((p) => p.platform) : [],
     link: !c ? "none" : g.manual ? "manual" : "auto",
