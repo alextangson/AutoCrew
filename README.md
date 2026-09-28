@@ -3,9 +3,9 @@
 **面向中文内容团队的本地优先 AI 编辑部。**
 
 <p align="center">
-  <a href="https://s-tello.com/autocrew/"><img src="docs/assets/autocrew-film-cover.jpg" alt="AutoCrew 宣传片：一个 agent，顶一个新媒体部门" width="860"></a>
+  <a href="https://s-tello.com/autocrew/"><img src="docs/assets/autocrew-film-cover.jpg" alt="AutoCrew 宣传片：你的 Agent 新媒体团队，让创作回归创作本身" width="860"></a>
 </p>
-<p align="center"><a href="https://s-tello.com/autocrew/">▶ 看 72 秒宣传片</a> · 一个 agent，顶一个新媒体部门</p>
+<p align="center"><a href="https://s-tello.com/autocrew/">▶ 看 60 秒宣传片</a> · 让创作，回归创作本身</p>
 
 AutoCrew 把选题、写稿、修改、封面、正文配图、发布前检查和数据回流放进同一个本地工作台。运营资料可保存到你指定的本地或 NAS 资料库，密钥与连接配置留在本机；未设置资料库时兼容原来的 `~/.autocrew/`。MCP 默认由当前宿主完成调研、立意、写作和审稿；只有明确选择后台执行时才调用另外配置的模型服务。取材或图像、视频生成仍会访问相应服务。
 
