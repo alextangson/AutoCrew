@@ -18,6 +18,8 @@ export interface PullPlatformStatus {
   lastErrorCode?: string;
   lastRowCount?: number;
   lastBatchId?: string;
+  /** 封面下载失败（数据页规格 §I.57），如 cover_download_failed:2/12:http_403 */
+  lastCoverError?: string;
 }
 
 export type PullTone = "ok" | "warn" | "bad" | "idle";

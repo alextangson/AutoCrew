@@ -34,3 +34,8 @@ export interface LinkReply { id: string }
 export const linkWorks = (payload: { op: "link" | "merge" | "split"; works: string[]; content_id?: string; target?: string }) =>
   post<LinkReply>("/api/data/link", payload);
 export const undoLink = (id: string) => post<{ removed: boolean }>("/api/data/undo", { id });
+
+/* 数据页封面（§I.56）：请求体就是图片字节 */
+export const uploadCover = (key: string, file: Blob) =>
+  call<{ file: string }>(`/api/data/cover?key=${encodeURIComponent(key)}`, { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+export const removeCover = (key: string) => post<{ removed: boolean }>("/api/data/cover-remove", { key });

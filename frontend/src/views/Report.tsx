@@ -1,21 +1,24 @@
 /**
- * 数据页（数据页规格 §G）：按月看，一行一条视频；右上一行写数据截至 / 来源 / 自动回流，导入与开关在设置页。
- * 数据同源 GET /api/data（每条作品全部快照 + 与稿件的关联），月份、中位数、加粗都在 data-lib 纯算。
+ * 数据页（数据页规格 §H / §G）：第一屏四张问答卡（2×2），全部作品的按月表格折叠在底部。
+ * 右上一行写数据截至 / 来源 / 自动回流 / 「平时」口径，导入与开关在设置页。
+ * 数据同源 GET /api/data；结论句在 data-answers、月份中位数加粗在 data-lib，都是纯算。
  */
 import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import { invoke, subscribeEvents } from "../transport";
+import { toast } from "../ui";
 import { platformLabel } from "../lib";
 import { PageShell } from "../components/PageShell";
 import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { loadDataPage } from "./board-api";
 import { DataTable } from "./DataTable";
-import { HypothesesList, RetroPanel } from "./DataAside";
+import { ExperimentsCard, useRetros } from "./DataAside";
+import { LatestCard, NextCard, TrendCard } from "./DataQuestions";
 import {
-  boldThresholds, fmtViews, monthLabel, pickMonth, platformCards, pullLine, rowsInPeriod, sourceLabel,
+  COVER_CAPTURE_PLATFORMS, boldThresholds, fmtViews, monthLabel, pickMonth, platformCards, pullLine, rowsInPeriod, sourceLabel,
   type DataPageData, type Period,
 } from "./data-lib";
 import type { PullPlatformStatus } from "../pull-lib";
@@ -47,7 +50,7 @@ function StatusLine(props: { data: DataPageData; openSettings: () => void }) {
   const src = props.data.sources.map(sourceLabel).join(" + ");
   const settings = <button className="data-link" onClick={props.openSettings}>去设置</button>;
   if (pull.problem) return <p className="data-status is-bad" role="alert">{pull.problem} · {settings}</p>;
-  return <p className="data-status">{asOf}{src ? ` · ${src}` : ""} · {pull.state} · {settings}</p>;
+  return <p className="data-status">{asOf}{src ? ` · ${src}` : ""} · {pull.state} · 平时 = 这个平台所有作品的播放中位数 · {settings}</p>;
 }
 
 function RetroView({ file, onClose }: { file: string; onClose: () => void }) {
@@ -86,11 +89,43 @@ function Cards({ data, rows }: { data: DataPageData; rows: DataPageData["rows"] 
   );
 }
 
+function AllWorks(props: { data: DataPageData; onChanged: () => void; openEditor: (id: string) => void }) {
+  const { data } = props;
+  const [open, setOpen] = useState(false);
+  const [period, setPeriod] = useState<Period>("month");
+  const { month, fallback } = pickMonth(data.rows, Date.now());
+  const rows = rowsInPeriod(data.rows, period, month);
+  return (
+    <Card className="data-all">
+      <button className="data-all-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span>全部作品 · {data.rows.length} 条（按月、一行一条视频）</span>
+        <span className="muted">{open ? "收起 ▴" : "展开 ▾"}</span>
+      </button>
+      {open && (
+        <div className="data-all-body">
+          <div className="data-seg" role="tablist">
+            {(["month", "all"] as const).map((p) => (
+              <button key={p} role="tab" aria-selected={period === p} className={period === p ? "is-on" : ""} onClick={() => setPeriod(p)}>{p === "month" ? "本月" : "全部"}</button>
+            ))}
+          </div>
+          {period === "month" && fallback && month && <p className="data-note">本月还没有数据，下面是最近有数据的 {monthLabel(month)}。</p>}
+          <Cards data={data} rows={rows} />
+          {rows.length === 0
+            ? <p className="muted data-empty">还没有任何平台数据。去设置页导入 CSV 或打开自动回流。</p>
+            : <DataTable rows={rows} columns={data.columns} thresholds={boldThresholds(data.rows)} contents={data.contents} covers={data.covers} onChanged={props.onChanged} openEditor={props.openEditor} />}
+          <p className="muted data-foot">粗体 = 高于这个平台全部历史的播放中位数。「—」= 这个平台没发；「未回流」= 发了，数据还没回来。点一行看各次快照。
+            封面：自动回流会顺手抓{COVER_CAPTURE_PLATFORMS.map(platformLabel).join("、")}的封面；{data.columns.filter((p) => !COVER_CAPTURE_PLATFORMS.includes(p)).map(platformLabel).join("、")}该平台暂未抓封面，可点封面位或拖图进去手动补。</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function ReportView(props: { openEditor: (id: string) => void; openSettings: () => void }) {
   const [data, setData] = useState<DataPageData | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [period, setPeriod] = useState<Period>("month");
   const [retro, setRetro] = useState<string | null>(null);
+  const retros = useRetros();
   const load = useCallback(() => {
     void loadDataPage().then((r) => (r.ok ? (setData(r.data), setErr(null)) : setErr(r.error)));
   }, []);
@@ -99,35 +134,28 @@ export function ReportView(props: { openEditor: (id: string) => void; openSettin
   if (err && !data) return <PageShell kind="data"><p className="data-err">数据页加载失败：{err}</p></PageShell>;
   if (!data) return <PageShell kind="data"><p className="muted">载入中…</p></PageShell>;
 
-  const { month, fallback } = pickMonth(data.rows, Date.now());
-  const rows = rowsInPeriod(data.rows, period, month);
+  const now = Date.now();
+  const { month } = pickMonth(data.rows, now);
+  const openLatestRetro = () => {
+    const first = retros.retros?.[0]?.file;
+    if (first) setRetro(first);
+    else toast("还没有复盘：先在「写法实验」卡里生成本月复盘");
+  };
   return (
     <PageShell kind="data" className="data-page">
       <div className="data-bar">
         <h1 className="page-title">数据</h1>
-        <div className="data-seg" role="tablist">
-          {(["month", "all"] as const).map((p) => (
-            <button key={p} role="tab" aria-selected={period === p} className={period === p ? "is-on" : ""} onClick={() => setPeriod(p)}>{p === "month" ? "本月" : "全部"}</button>
-          ))}
-        </div>
         <StatusLine data={data} openSettings={props.openSettings} />
       </div>
       {err && <p className="data-err">刷新失败：{err}</p>}
-      <div className="data-grid">
-        <div className="data-main">
-          {period === "month" && fallback && month && <p className="data-note">本月还没有数据，下面是最近有数据的 {monthLabel(month)}。</p>}
-          {retro && <RetroView file={retro} onClose={() => setRetro(null)} />}
-          <Cards data={data} rows={rows} />
-          {rows.length === 0
-            ? <Card className="data-empty"><p className="muted">还没有任何平台数据。去设置页导入 CSV 或打开自动回流。</p></Card>
-            : <DataTable rows={rows} columns={data.columns} thresholds={boldThresholds(data.rows)} contents={data.contents} onChanged={load} openEditor={props.openEditor} />}
-          <p className="muted data-foot">粗体 = 高于这个平台全部历史的播放中位数。「—」= 这个平台没发；「未回流」= 发了，数据还没回来。点一行看各次快照。</p>
-        </div>
-        <aside className="data-side">
-          <RetroPanel open={retro} onOpen={setRetro} />
-          <HypothesesList />
-        </aside>
+      <div className="dq-grid">
+        <LatestCard data={data} now={now} onChanged={load} />
+        <TrendCard data={data} month={month} />
+        <NextCard data={data} now={now} onChanged={load} openRetro={openLatestRetro} />
+        <ExperimentsCard retro={retro} onOpenRetro={setRetro} retros={retros} />
       </div>
+      {retro && <RetroView file={retro} onClose={() => setRetro(null)} />}
+      <AllWorks data={data} onChanged={load} openEditor={props.openEditor} />
     </PageShell>
   );
 }

@@ -8,9 +8,10 @@ import { toast } from "../ui";
 import { Button } from "../components/Button";
 import { Tag } from "../components/Tag";
 import { linkWorks, undoLink } from "./board-api";
+import { DataCover } from "./DataCover";
 import {
   cellOf, dayLabel, fmtRate, fmtViews, groupByMonth, monthLabel, sourceLabel,
-  type DataPageData, type DataRow,
+  type DataPageData, type DataRow, type RowCover,
 } from "./data-lib";
 
 export interface TableProps {
@@ -18,6 +19,7 @@ export interface TableProps {
   columns: string[];
   thresholds: Map<string, number>;
   contents: DataPageData["contents"];
+  covers: Record<string, RowCover>;
   onChanged: () => void;
   openEditor: (id: string) => void;
 }
@@ -118,8 +120,11 @@ function Row(props: TableProps & { row: DataRow; prev: DataRow | null; open: boo
       <div className={"data-row" + (props.open ? " is-open" : "")} role="button" tabIndex={0} onClick={props.onToggle}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); props.onToggle(); } }}>
         <span className="data-title">
-          <span className="data-title-text" title={row.title}>{row.title}</span>
-          <span className="data-sub">{dayLabel(row.day)} {row.link !== "none" && <Tag>{LINK_TAG[row.link]}</Tag>}</span>
+          <DataCover rowId={row.id} cover={props.covers[row.id] ?? null} onChanged={props.onChanged} />
+          <span className="data-title-body">
+            <span className="data-title-text" title={row.title}>{row.title}</span>
+            <span className="data-sub">{dayLabel(row.day)} {row.link !== "none" && <Tag>{LINK_TAG[row.link]}</Tag>}</span>
+          </span>
         </span>
         {props.columns.map((p) => <CellView key={p} row={row} platform={p} thresholds={props.thresholds} />)}
       </div>

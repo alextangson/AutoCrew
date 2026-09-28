@@ -1,6 +1,6 @@
-/* 数据页（数据页规格 §G；样稿 E-data，按月）。只用尺子里的字号 / 间距。 */
-.data-page { padding: var(--s5) 0 var(--s6); }
-.data-bar { display: flex; align-items: center; gap: var(--s4); margin-bottom: var(--s4); }
+/* 数据页（数据页规格 §H / §G；样稿 E3-data：四张问答卡 + 折叠的按月表格）。只用尺子里的字号 / 间距；数字一律无衬线 + 等宽数字。 */
+.data-page { padding: var(--s5) 0 var(--s6); font-variant-numeric: tabular-nums; }
+.data-bar { display: flex; align-items: baseline; gap: var(--s4); margin-bottom: var(--s4); }
 .data-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .data-seg button { border: none; border-radius: 0; padding: var(--btn-sm-pad); font-size: var(--fs-sm); background: var(--card); }
 .data-seg button.is-on { background: var(--accent); color: var(--accent-text); }
@@ -11,11 +11,9 @@ button.data-link { border: none; background: none; padding: 0; font-size: var(--
 .data-err { font-size: var(--fs-sm); color: var(--danger); margin: var(--s2) 0; }
 .data-warn { font-size: var(--fs-xs); color: var(--danger); }
 
-.data-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: var(--s5); align-items: start; }
-.data-main { min-width: 0; }
 .data-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
 .data-card { font-size: var(--fs-xs); }
-.data-card-n { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; line-height: 1.4; color: var(--ink); }
+.data-card-n { font-size: var(--fs-lg); font-weight: 600; line-height: 1.4; color: var(--ink); }
 .data-card-n.is-thin { font-family: inherit; font-size: var(--fs-md); font-weight: 500; color: var(--muted); }
 
 .card.data-table { padding: 0; --data-cols: 4; overflow: hidden; }
@@ -45,12 +43,70 @@ button.data-link { border: none; background: none; padding: 0; font-size: var(--
 .data-retro { margin-bottom: var(--s4); }
 .data-retro-head { display: flex; align-items: center; justify-content: space-between; }
 
-.data-side { display: flex; flex-direction: column; gap: var(--s5); }
-.data-side-block { display: flex; flex-direction: column; }
-.data-side-title { font-size: var(--fs-sm); color: var(--muted); padding-bottom: var(--s2); border-bottom: 1px solid var(--border); }
-button.data-side-row { display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%; text-align: left; border: none; border-bottom: 1px solid var(--border); border-radius: 0; background: none; padding: var(--s2) 0; font-size: var(--fs-sm); }
-button.data-side-row:hover, button.data-side-row.is-on { background: var(--card); }
-button.data-side-row .muted { font-size: var(--fs-xs); }
-.data-hyp-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.data-hyp-more { font-size: var(--fs-xs); padding: var(--s2) 0; line-height: 1.6; border-bottom: 1px solid var(--border); }
-.data-gen { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s1); padding-top: var(--s3); }
+
+/* 标题格：封面 + 标题 */
+.data-title { flex-direction: row; align-items: center; gap: var(--s3); }
+.data-title-body { display: flex; flex-direction: column; min-width: 0; }
+.data-row { align-items: center; }
+
+/* 折叠的「全部作品」 */
+.card.data-all { margin-top: var(--s4); padding: 0; }
+button.data-all-head { display: flex; justify-content: space-between; align-items: center; width: 100%; border: none; background: none; border-radius: 0; padding: var(--s3) var(--s5); font-size: var(--fs-md); text-align: left; }
+button.data-all-head .muted { font-size: var(--fs-xs); }
+.data-all-body { padding: 0 var(--s5) var(--s4); display: flex; flex-direction: column; gap: var(--s3); align-items: stretch; }
+.data-all-body .data-seg { align-self: flex-start; }
+.data-all-body .data-cards { margin-bottom: 0; }
+.data-retro { margin-top: var(--s4); }
+.data-gen { display: inline-flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+button.data-link.is-on { color: var(--ink); }
+
+/* 四张问答卡：问题 13 muted → 结论 20/600 → 证据 14 → 说明 12 */
+.dq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); align-items: stretch; }
+.card.dq { padding: var(--s5); display: flex; flex-direction: column; min-width: 0; }
+.dq-q { font-size: var(--fs-sm); color: var(--muted); }
+.dq-a { font-size: var(--fs-answer); font-weight: 600; line-height: 1.45; margin: var(--s1) 0 var(--s4); color: var(--ink); }
+.dq-a em { font-style: normal; color: var(--hot); }
+.dq-note { font-size: var(--fs-xs); color: var(--muted); padding-top: var(--s3); line-height: 1.6; }
+.dq-title { font-size: var(--fs-md); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dq-meta { font-size: var(--fs-xs); color: var(--muted); }
+.dq-latest { display: flex; gap: var(--s4); align-items: flex-start; margin-bottom: var(--s2); min-width: 0; }
+.dq-latest > div:last-child { min-width: 0; }
+
+.dq-line { display: grid; grid-template-columns: 56px 96px 120px minmax(0, 1fr); gap: var(--s3); align-items: center; padding: 6px 0; border-top: 1px solid var(--lane); font-size: var(--fs-md); }
+.dq-line-trend { grid-template-columns: 56px 168px minmax(0, 1fr); }
+.dq-line-head { grid-template-columns: 56px 168px minmax(0, 1fr); border-top: none; padding-top: 0; }
+.dq-line-head .dq-v { font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
+.dq-name { font-size: var(--fs-sm); color: var(--muted); }
+.dq-v { font-weight: 600; text-align: right; white-space: nowrap; }
+.dq-w { font-size: var(--fs-sm); }
+.is-hot { color: var(--hot); }
+.is-muted { color: var(--muted); font-weight: 400; }
+.dq-bar { position: relative; display: block; height: 8px; border-radius: 4px; background: var(--lane); }
+.dq-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--line-2); }
+.dq-bar i.is-up { background: var(--ink); }
+.dq-bar b { position: absolute; left: calc(100% / 3 - 1px); top: -3px; bottom: -3px; width: 2px; background: var(--hot); }
+.dq-bar.is-none { background: none; }
+
+.dq-group { font-size: var(--fs-sm); font-weight: 600; margin: var(--s3) 0 2px; }
+.dq-group:first-of-type { margin-top: 0; }
+.dq-pick { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; padding: var(--s2) 0; border-top: 1px solid var(--lane); }
+.dq-pick-t { min-width: 0; }
+.dq-x { font-size: var(--fs-lg); font-weight: 600; }
+
+.dq-hyp { border-top: 1px solid var(--lane); }
+button.dq-hyp-head { display: flex; flex-direction: column; align-items: flex-start; width: 100%; border: none; border-radius: 0; background: none; padding: var(--s2) 0; text-align: left; font-size: var(--fs-md); max-width: 100%; }
+button.dq-hyp-head .dq-title { max-width: 100%; }
+.dq-hyp-more { font-size: var(--fs-xs); color: var(--muted); line-height: 1.6; padding-bottom: var(--s2); }
+.dq-retros { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; }
+
+/* 封面位（§I）：3:4；没封面 = 灰色占位 + 「补封面」，拖图进来高亮 */
+.dcover { position: relative; flex: none; width: 36px; height: 48px; border-radius: 3px; background: var(--lane); overflow: hidden; }
+.dcover-md { width: 54px; height: 72px; }
+.dcover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dcover.is-over { outline: 2px dashed var(--ink); outline-offset: 1px; }
+.dcover.is-busy { opacity: 0.6; }
+button.dcover-add { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1px dashed var(--line-2); border-radius: 3px; background: none; padding: 0; font-size: var(--fs-xs); line-height: 1.2; color: var(--muted); white-space: normal; }
+button.dcover-add:hover { color: var(--ink); border-color: var(--ink); }
+.dcover-ops { position: absolute; inset: auto 0 0 0; display: none; flex-direction: column; background: rgba(22, 21, 15, 0.72); }
+.dcover:hover .dcover-ops, .dcover:focus-within .dcover-ops { display: flex; }
+.dcover-ops button { border: none; border-radius: 0; background: none; color: #fff; padding: 1px 0; font-size: var(--fs-xs); line-height: 1.3; }

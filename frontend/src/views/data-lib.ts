@@ -17,12 +17,35 @@ export interface DataRow {
   link: "manual" | "auto" | "none";
   decisionId: string | null;
 }
+/** 一行的封面（§I）：手动补的 > AutoCrew 已选 3:4 封面 > 自动回流抓的 */
+export type RowCover =
+  | { kind: "manual"; file: string; key: string }
+  | { kind: "autocrew"; contentId: string; path: string; sha256: string }
+  | { kind: "auto"; file: string };
+export interface Upcoming { contentId: string; title: string; time: string | null; state: string; platforms: string[] }
 export interface DataPageData {
   columns: string[];
   rows: DataRow[];
   contents: Array<{ id: string; title: string; day: string | null }>;
   asOf: string | null;
   sources: string[];
+  covers: Record<string, RowCover>;
+  upcoming: Upcoming | null;
+}
+
+export function coverSrc(c: RowCover): string {
+  if (c.kind === "autocrew") return `/api/project-artifact?content_id=${encodeURIComponent(c.contentId)}&path=${encodeURIComponent(c.path)}&sha256=${c.sha256}`;
+  return `/api/data/cover-file?name=${encodeURIComponent(c.file)}`;
+}
+
+/** 自动回流会抓封面的平台：只有字段经真实抓包核实过的（抖音 work_list 的 Cover / cover） */
+export const COVER_CAPTURE_PLATFORMS = ["douyin"];
+
+/** 手动补封面：前端先挡一遍（服务端还会再按文件头校验） */
+export function coverFileProblem(f: { type: string; size: number }): string | null {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(f.type)) return "只收 png / jpg / webp 图片";
+  if (f.size > 10 * 1024 * 1024) return "图片超过 10MB，换一张小一点的";
+  return null;
 }
 
 export type Period = "month" | "all";
@@ -148,7 +171,8 @@ export function pullLine(rows: PullPlatformStatus[] | null, err: string | null):
   if (err) return { state: "自动回流状态读不出来", problem: `自动回流状态读不出来：${err}` };
   if (!rows) return { state: "自动回流状态读取中", problem: null };
   const on = rows.filter((r) => r.enabled);
-  const state = on.length ? `自动回流已开（${on.map((r) => r.label).join("、")}）` : "自动回流没开";
+  const covers = on.flatMap((r) => { const m = r.lastCoverError?.match(/^cover_download_failed:(\d+)\/(\d+)/); return m ? [`${r.label}封面 ${m[1]}/${m[2]} 张没下载成`] : []; });
+  const state = (on.length ? `自动回流已开（${on.map((r) => r.label).join("、")}）` : "自动回流没开") + (covers.length ? `（${covers.join("；")}）` : "");
   if (on.length && browserUnreachable(rows)) return { state, problem: "自动回流连不上浏览器（chrome-cdp），数据停在上次" };
   const bad = on.filter((r) => { const t = pullBadge(r).tone; return t === "bad" || t === "warn"; });
   if (!bad.length) return { state, problem: null };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  boldThresholds, cellOf, dayLabel, fmtRate, groupByMonth, median, pickMonth, platformCards, pullLine, rowsInPeriod,
+  boldThresholds, cellOf, dayLabel, fmtRate, groupByMonth, median, pickMonth, platformCards, pullLine, rowsInPeriod, coverFileProblem, coverSrc,
   type DataRow, type Work,
 } from "./data-lib";
 
@@ -85,5 +85,21 @@ describe("回流状态行（§42 / §43）", () => {
     expect(pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: true, lastStatus: "ok" }], null).problem).toBeNull();
     expect(pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: true, lastStatus: "needs_login" }], null).problem).toMatch(/抖音.*扫码/);
     expect(pullLine(null, "boom").problem).toMatch(/boom/);
+  });
+  it("封面没下载成写进状态行（§I.57）", () => {
+    const r = pullLine([{ ...base, platform: "douyin", label: "抖音", enabled: true, lastStatus: "ok", lastCoverError: "cover_download_failed:2/12:http_403" }], null);
+    expect(r.state).toBe("自动回流已开（抖音）（抖音封面 2/12 张没下载成）");
+  });
+});
+
+describe("封面（§I.56）", () => {
+  it("只收 png / jpg / webp，≤10MB", () => {
+    expect(coverFileProblem({ type: "image/png", size: 1 })).toBeNull();
+    expect(coverFileProblem({ type: "image/gif", size: 1 })).toMatch(/png/);
+    expect(coverFileProblem({ type: "image/webp", size: 10 * 1024 * 1024 + 1 })).toMatch(/10MB/);
+  });
+  it("地址：AutoCrew 封面走稿件产物，其它走数据页封面端点", () => {
+    expect(coverSrc({ kind: "manual", file: "manual-a.png", key: "w:x" })).toBe("/api/data/cover-file?name=manual-a.png");
+    expect(coverSrc({ kind: "autocrew", contentId: "c1", path: "05-cover/封面-3x4.png", sha256: "ab" })).toContain("/api/project-artifact?content_id=c1");
   });
 });
