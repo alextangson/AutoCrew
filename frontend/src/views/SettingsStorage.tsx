@@ -36,11 +36,11 @@ export function SettingsStorage() {
   };
   return <Section title="用户资料库" on={status?.connected ?? false} status={status?.connected ? "已连接" : "未连接"}>
     <p>账号定位、选题、稿件、素材和运营数据保存在你选择的位置，软件升级不会移动这些资料。</p>
-    <p style={{ overflowWrap: "anywhere" }}>当前位置：{status?.root || "读取中…"}</p>
+    <p className="wrap-anywhere">当前位置：{status?.root || "读取中…"}</p>
     {status?.error && <p role="alert">{status.error}</p>}
     <p className="muted">密钥、登录凭据和服务日志保留在本机。NAS 同一时间由一台电脑的 AutoCrew 服务写入。</p>
     {status?.pending && <div role="status">
-      <p style={{ overflowWrap: "anywhere" }}>待切换到：{status.pending.target}</p>
+      <p className="wrap-anywhere">待切换到：{status.pending.target}</p>
       <p>重启 AutoCrew 后执行。迁移会先复制、校验，再切换；原资料保留。校验失败则继续保留原位置。</p>
       <button onClick={async () => { const r = await invoke("storage:cancel"); if (r.ok) await load(); else toast(r.error || "取消失败"); }}>取消待切换</button>
     </div>}
@@ -50,7 +50,7 @@ export function SettingsStorage() {
     <label>资料库完整路径<input value={target} disabled={busy} placeholder="本地文件夹或已挂载的 NAS 文件夹" onChange={(e) => { setTarget(e.target.value); setPlan(null); }} /></label>
     <button disabled={busy || !target.trim()} onClick={() => void preview()}>{busy ? "检查中…" : "检查此位置"}</button>
     {plan && <div role="status">
-      <p style={{ overflowWrap: "anywhere" }}>目标：{plan.target}</p>
+      <p className="wrap-anywhere">目标：{plan.target}</p>
       {plan.action === "migrate" && <p>{plan.files} 个文件，约 {(plan.bytes / 1024 ** 3).toFixed(2)} GB；{plan.externalReferences} 个外部素材引用将纳入资料库。</p>}
       {plan.retained.length > 0 && <p>另有 {plan.retained.length} 项无法自动分类，将保留在原位置并记入迁移报告。</p>}
       <p>目标中已有的其他项目保持原样；遇到同名目录会停止。</p>

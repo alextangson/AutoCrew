@@ -128,26 +128,26 @@ export function ReportView() {
   ];
 
   return (
-    <div className="report">
+    <div className="report page-data">
       <div className="board-bar">
-        <h2 className="serif board-title" style={{ margin: 0 }}>数据回流</h2>
+        <h1 className="page-title">数据回流</h1>
         <span className="muted">发布后回填数据——支撑基线洞察、复盘与受众画像校准</span>
-        <span style={{ marginLeft: "auto" }} className="row-actions">
-          <button className="chip" disabled={pulling} onClick={() => void pullWechat()}>
+        <span className="row-actions push-right">
+          <button className="btn-sm" disabled={pulling} onClick={() => void pullWechat()}>
             {pulling ? "拉取中…" : "从公众号后台拉取"}
           </button>
-          <select value={impPlatform} onChange={(e) => setImpPlatform(e.target.value)}>
+          <select className="in-sm" value={impPlatform} onChange={(e) => setImpPlatform(e.target.value)}>
             <option value="wechat_mp">公众号</option>
             <option value="douyin">抖音</option>
             <option value="xiaohongshu">小红书</option>
             <option value="wechat_video">视频号</option>
           </select>
-          <label className="chip" style={{ cursor: importing ? "wait" : "pointer" }}>
+          <label className={"chip-file" + (importing ? " is-busy" : "")}>
             {importing ? "导入中…" : "导入创作者中心 CSV"}
             <input
               type="file"
               accept=".csv,text/csv"
-              style={{ display: "none" }}
+              hidden
               disabled={importing}
               onChange={(e) => {
                 void importCsvFile(e.target.files?.[0]);
@@ -158,7 +158,7 @@ export function ReportView() {
         </span>
       </div>
 
-      <p className="muted pull-note" style={{ marginTop: -4 }}>
+      <p className="muted pull-note">
         手动导入（CSV / 抖音扩展）与自动抓取同源幂等——同一批数据重复导入无害，数字不会翻倍。
       </p>
 
@@ -180,7 +180,7 @@ export function ReportView() {
             <span className="mono muted">每篇取最新快照 · 近 {items.length} 篇</span>
           </div>
           {items.map((it, i) => (
-            <div key={i} className="row" style={{ cursor: "default" }}>
+            <div key={i} className="row row-static">
               <span className="mono pri">{platformLabel(it.platform)}</span>
               <span className="row-title" title={it.title}>{it.title}</span>
               <span className="muted mono work-metrics">{metricsLine(it.metrics)}</span>
@@ -212,7 +212,7 @@ export function ReportView() {
               <span className="muted mono">{openFile === r.file ? "收起" : "展开"}</span>
             </div>
             {openFile === r.file && (
-              <div className="md-preview" style={{ minHeight: "auto", margin: "6px 0" }}>
+              <div className="md-preview md-preview-inline">
                 <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{retroMd}</ReactMarkdown>
               </div>
             )}
@@ -220,7 +220,7 @@ export function ReportView() {
         ))}
       </div>
 
-      <p className="muted" style={{ marginTop: 10 }}>
+      <p className="muted report-foot">
         回填入口在编辑器(已发布稿)——数据支撑复盘与受众画像校准提案,确认后画像才会越来越准。
       </p>
     </div>

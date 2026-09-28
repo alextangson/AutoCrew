@@ -104,7 +104,6 @@ export function App() {
           className="brand serif"
           role="button"
           tabIndex={0}
-          style={{ cursor: "pointer" }}
           title="回到看板"
           onClick={() => setRoute({ view: "board" })}
           onKeyDown={(e) => {

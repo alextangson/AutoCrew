@@ -18,7 +18,7 @@ export function CoverWorkspace(props: { content: Content; reload: () => Promise<
 
   return (
     <div className="ed-stage">
-      <div className="ed-below" style={{ marginTop: 0 }}>
+      <div className="ed-below ed-below-flush">
         <div className="cover-stage-head">
           {rendered !== null && !filmMissing ? (
             <video

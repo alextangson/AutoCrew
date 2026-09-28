@@ -13,7 +13,7 @@ export function EditingWorkspace(props: { content: Content; reload: () => Promis
   useEffect(() => requestDockCollapsed(), []);
   return (
     <div className="ed-stage">
-      <div className="ed-below pb-page" style={{ marginTop: 0 }}>
+      <div className="ed-below ed-below-flush pb-page">
         <ProjectBoard content={props.content} reload={props.reload} />
       </div>
     </div>

@@ -154,7 +154,7 @@ export function AssetsSection(props: {
   };
 
   return (
-    <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
+    <div className="ed-section ed-section-stack">
       <div>
         <span className="mono muted ed-label">素材（{props.assets.length}）：</span>
         <button onClick={() => void openPicker()}>{picking ? "收起" : "从素材库挂接"}</button>

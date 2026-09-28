@@ -21,7 +21,7 @@ export function PublishWorkspace(props: {
 }) {
   return (
     <div className="ed-stage">
-      <div className="ed-below" style={{ marginTop: 0 }}>
+      <div className="ed-below ed-below-flush">
         <h2 className="serif">发布台 · {props.content.title || "无标题"}</h2>
         <p className="muted">排好文案去平台发，发完回来点确认——回流数据靠那一下认领。</p>
         <CodexPublishSlot content={props.content} />
@@ -43,7 +43,7 @@ export function PublishWorkspace(props: {
 function CodexPublishSlot({ content }: { content: Content }) {
   const { review } = useProjectReview(content.id, false);
   if (!review || !showCodexPublish("publish_page", content.status, review)) return null;
-  return <div className="pb-actions" style={{ margin: "8px 0" }}>
+  return <div className="pb-actions pb-actions-spaced">
     <CodexPublishButton contentId={content.id} title={review.title || content.title} status={content.status} review={review} />
   </div>;
 }

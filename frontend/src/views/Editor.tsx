@@ -50,6 +50,7 @@ import {
   reconcileEditorState, restoreEditorState, type EditorBuffer, type EditorDraft, type EditorState,
 } from "./editor-sync";
 import "./editor-workspace.css";
+import "./platform-mock.css";
 
 const IMAGES_KEY = "ed-images-open";
 /** 视频稿往前跳（标记发布中 / 已发布）只走看板卡片的「我发了」（看板规格 §16/§25） */

@@ -32,7 +32,7 @@ function PullRow(props: {
   const hint = pullHint(row);
   return (
     <div>
-      <div className="row" style={{ cursor: "default" }}>
+      <div className="row row-static">
         <input
           type="checkbox"
           checked={row.enabled}
@@ -43,7 +43,7 @@ function PullRow(props: {
         <span className="row-title">{row.label}</span>
         <span className="muted mono">最近成功 {formatPullTime(row.lastSuccessAt)}</span>
         <span className="muted mono">上次入账 {row.lastRowCount ?? 0} 行</span>
-        <button className="chip" disabled={busy || row.inFlight} onClick={props.onPull}>
+        <button className="btn-sm" disabled={busy || row.inFlight} onClick={props.onPull}>
           {busy || row.inFlight ? "抓取中…" : "立即抓取"}
         </button>
       </div>

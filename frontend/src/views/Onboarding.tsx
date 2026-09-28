@@ -57,8 +57,8 @@ export function Onboarding(props: { onDone: () => void }) {
         <p className="onboard-hint mono muted">{preset.hint}</p>
 
         {preset.needsAddress && (
-          <label className="dlg-field">
-            <span className="mono muted">端点地址</span>
+          <label className="field">
+            <span className="field-label">端点地址</span>
             <input
               type="text"
               value={form.baseUrl}
@@ -67,8 +67,8 @@ export function Onboarding(props: { onDone: () => void }) {
             />
           </label>
         )}
-        <label className="dlg-field">
-          <span className="mono muted">API Key</span>
+        <label className="field">
+          <span className="field-label">API Key</span>
           <input
             type="password"
             value={form.apiKey}
@@ -77,8 +77,8 @@ export function Onboarding(props: { onDone: () => void }) {
           />
         </label>
         <div className="onboard-pair">
-          <label className="dlg-field">
-            <span className="mono muted">强模型</span>
+          <label className="field">
+            <span className="field-label">强模型</span>
             <input
               type="text"
               value={form.strong}
@@ -86,8 +86,8 @@ export function Onboarding(props: { onDone: () => void }) {
               onChange={(e) => setForm((f) => ({ ...f, strong: e.target.value }))}
             />
           </label>
-          <label className="dlg-field">
-            <span className="mono muted">快模型</span>
+          <label className="field">
+            <span className="field-label">快模型</span>
             <input
               type="text"
               value={form.fast}
@@ -102,8 +102,8 @@ export function Onboarding(props: { onDone: () => void }) {
           <div className="mono muted">搜索 Key · 可选</div>
           <p className="muted">不填也能写，但深调研不可用、稿子不会补证据。之后在「设置 · 接入更多」里随时补。</p>
           <div className="onboard-pair">
-            <label className="dlg-field">
-              <span className="mono muted">来源</span>
+            <label className="field">
+              <span className="field-label">来源</span>
               <select
                 value={form.searchProvider}
                 onChange={(e) => setForm((f) => ({ ...f, searchProvider: e.target.value as "bocha" | "tavily" }))}
@@ -112,8 +112,8 @@ export function Onboarding(props: { onDone: () => void }) {
                 <option value="tavily">Tavily（英文圈）</option>
               </select>
             </label>
-            <label className="dlg-field">
-              <span className="mono muted">搜索 Key</span>
+            <label className="field">
+              <span className="field-label">搜索 Key</span>
               <input
                 type="password"
                 value={form.searchKey}

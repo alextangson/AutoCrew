@@ -78,7 +78,7 @@ export function ResearchAssetPicker(props: {
 
   return (
     <div className="dlg-overlay" onClick={props.onClose}>
-      <div className="dlg ra-dlg" onClick={(e) => e.stopPropagation()}>
+      <div className="dlg dlg-lg" onClick={(e) => e.stopPropagation()}>
         <div className="dlg-title">研究素材 · 放进配图 {props.index + 1}</div>
         <p className="dlg-body muted">
           深调研过程中从真实网页抓到的图。<strong>授权需自查</strong>——用之前先看来源页允不允许转载。

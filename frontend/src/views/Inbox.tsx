@@ -119,7 +119,7 @@ function RuntimeBar({ st, nav, onRefresh }: { st: RuntimeStatus | null; nav: (r:
           去设置页重选工作区
         </button>
       )}
-      <button style={{ marginLeft: "auto" }} onClick={onRefresh}>
+      <button className="push-right" onClick={onRefresh}>
         刷新
       </button>
     </div>

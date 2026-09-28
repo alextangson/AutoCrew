@@ -241,7 +241,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
   const adaptRatios = ratioOptions.filter((r) => r !== primary);
 
   return (
-    <div className="ed-section" style={{ flexDirection: "column", alignItems: "stretch" }}>
+    <div className="ed-section ed-section-stack">
       <IdentityLibraryPanel onReadyChange={setIdentityReady} />
       <div className="cover-create-head">
         <div>
@@ -255,7 +255,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
         <span>局部修订不重画整张</span>
         <span>横版只延展背景</span>
       </div>
-      <div className="row-actions" style={{ alignItems: "baseline" }}>
+      <div className="row-actions row-actions-baseline">
         <span className="mono muted ed-label">封面(设计师)：</span>
         {review && (
           <span className="mono muted">
@@ -274,8 +274,7 @@ export function CoverPanel(props: { contentId: string; platform: string }) {
           ))}
         </select>
         <input
-          className="sel-input"
-          style={{ maxWidth: 220 }}
+          className="sel-input cover-title-input"
           placeholder="指定封面大字(可选,2-9 字)"
           value={customTitle}
           onChange={(e) => setCustomTitle(e.target.value)}

@@ -23,8 +23,8 @@ function focusLine(h: HypothesisView): string {
 function HypothesisRow({ h }: { h: HypothesisView }) {
   const evidence = evidenceSummary(h.evidence);
   return (
-    <div style={{ padding: "6px 0", borderBottom: "1px dashed var(--border)" }}>
-      <div className="row" style={{ cursor: "default", borderBottom: "none" }}>
+    <div className="hyp-row">
+      <div className="row row-static hyp-row-head">
         <span className="mono pri">{HYPOTHESIS_STATUS_LABELS[h.status] ?? h.status}</span>
         <span className="row-title" title={h.statement}>{h.statement}</span>
         <span className="muted mono">{focusLine(h)}</span>
@@ -74,7 +74,7 @@ export function HypothesesPanel() {
       )}
       {judged.length > 0 && (
         <>
-          <p className="muted mono" style={{ marginTop: 8 }}>已裁决 {judged.length} 条</p>
+          <p className="muted mono hyp-judged">已裁决 {judged.length} 条</p>
           {judged.map((h) => (
             <HypothesisRow key={h.id} h={h} />
           ))}

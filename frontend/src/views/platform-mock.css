@@ -1,0 +1,54 @@
+/* 平台预览里的「仿手机 / 仿浏览器」外壳：照抄第三方 App 的真实字号与间距（缩小后的手机屏），
+   刻意不走 AutoCrew 的字号/间距尺子——套尺子会让预览不像平台本身。frontend-type-scale 测试豁免本文件。 */
+/* 手机外壳：宽度夹住，面板窄时整机缩小而不是溢出 */
+.pp-phone { width: min(300px, 86vw); box-sizing: border-box; padding: 10px; background: #1c1c1e; border-radius: 42px; box-shadow: 0 4px 18px rgba(0,0,0,0.18); }
+.pp-screen { aspect-ratio: 9 / 19.5; background: #fff; border-radius: 32px; overflow: hidden; display: flex; flex-direction: column; color: #222; }
+.pp-status { flex: none; height: 28px; display: flex; justify-content: space-between; align-items: center; padding: 0 22px; font-size: 12px; font-weight: 600; }
+.pp-glyphs { display: flex; gap: 5px; align-items: center; }
+.pp-signal { width: 14px; height: 9px; background: linear-gradient(90deg, #222 0 3px, transparent 3px 5px, #222 5px 8px, transparent 8px 10px, #222 10px 14px); clip-path: polygon(0 100%, 100% 0, 100% 100%); }
+.pp-battery { width: 20px; height: 9px; border: 1.5px solid #222; border-radius: 3px; box-sizing: border-box; background: linear-gradient(90deg, #222 70%, transparent 70%); background-clip: content-box; padding: 1px; }
+.pp-appbar { flex: none; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #eee; position: relative; }
+.pp-appbar.is-wechat { background: #ededed; }
+.pp-back { position: absolute; left: 14px; font-size: 20px; font-weight: normal; }
+.pp-scroll { flex: 1; min-height: 0; overflow: hidden; padding: 8px; }
+.pp-tabbar { flex: none; height: 48px; display: flex; justify-content: space-around; align-items: center; border-top: 1px solid #eee; font-size: 11px; color: #888; }
+.pp-tabbar .is-on { color: #222; font-weight: 600; }
+.pp-plus { border: 1.5px solid #555; border-radius: 7px; padding: 0 8px; font-size: 13px; color: #555; }
+.pp-profile { display: flex; align-items: center; gap: 10px; height: 80px; margin-bottom: 16px; padding: 0 6px; border-bottom: 1px solid #eee; font-size: 14px; }
+.pp-feed { display: grid; gap: 8px; align-items: start; }
+/* 浏览器窗口：B站网页两处 */
+.pp-browser { width: min(720px, 90vw); border: 1px solid #ccc; border-radius: 10px; overflow: hidden; background: #fff; color: #222; box-shadow: 0 4px 18px rgba(0,0,0,0.12); }
+.pp-browser-bar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; background: #efefef; border-bottom: 1px solid #ddd; }
+.pp-browser-bar i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
+.pp-browser-bar i:nth-child(2) { background: #febc2e; }
+.pp-browser-bar i:nth-child(3) { background: #28c840; }
+.pp-url { flex: 1; margin-left: 10px; background: #fff; border-radius: 6px; padding: 2px 10px; font-size: 11px; color: #666; }
+.pp-browser-page { padding: 12px; }
+.pp-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pp-frame { position: relative; overflow: hidden; background: #eee; border-radius: 6px; width: 100%; }
+.pp-frame img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; display: block; }
+.pp-frame.is-missing { display: flex; align-items: center; justify-content: center; box-sizing: border-box; padding: 8px; background: #e5e5e5; color: #666; font-size: 11px; text-align: center; }
+.pp-ghost { background: #e6e6e6; }
+.pp-bar { display: block; height: 9px; border-radius: 4px; background: #eaeaea; }
+.pp-bar.is-short { width: 55%; }
+.pp-shade { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.pp-on-img { position: absolute; color: #fff; font-size: 11px; line-height: 1; }
+.pp-bl { left: 6px; bottom: 6px; white-space: nowrap; }
+/* 网页卡右下有时长：左下统计给它留出位置，放不下就省略，别撞成「弹幕 3560:20」 */
+.pp-browser .pp-bl { max-width: calc(100% - 52px); overflow: hidden; text-overflow: ellipsis; }
+.pp-br { right: 6px; bottom: 6px; white-space: nowrap; }
+.pp-tr { right: 6px; top: 6px; background: rgba(0, 0, 0, 0.35); border-radius: 50%; padding: 4px 5px; font-size: 10px; }
+.pp-kept { position: absolute; left: 0; right: 0; outline: 2px solid #fff; }
+.pp-cut { position: absolute; left: 0; right: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff;
+  background: repeating-linear-gradient(45deg, rgba(0,0,0,0.55) 0 6px, rgba(0,0,0,0.3) 6px 12px); }
+.pp-title { margin: 0; font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pp-author { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #888; min-width: 0; }
+.pp-avatar { width: 16px; height: 16px; border-radius: 50%; background: #ccc; flex: none; }
+.pp-avatar.is-big { width: 48px; height: 48px; }
+.pp-right { margin-left: auto; }
+.pp-row { display: flex; gap: 10px; align-items: flex-start; }
+.pp-row > .pp-frame { width: 160px; flex: none; }
+.pp-row .pp-title, .pp-row .pp-bar { flex: 1; }
+
+.pp-shade-light { height: 20%; background: linear-gradient(transparent, rgba(0,0,0,0.5)); }
+.pp-shade-dark { height: 26%; background: linear-gradient(transparent, rgba(0,0,0,0.8)); }

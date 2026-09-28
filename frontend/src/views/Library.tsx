@@ -167,7 +167,7 @@ export function Library() {
 
       <details className="ed-tools">
         <summary>高级：按路径导入（新资料库自动保存副本，原文件保留）</summary>
-        <textarea rows={3} style={{ width: "100%" }} value={paths} placeholder={"/Users/you/Movies/broll-01.mp4\n/Users/you/Pictures/cover.png"} onChange={(e) => setPaths(e.target.value)} />
+        <textarea rows={3} className="full-width" value={paths} placeholder={"/Users/you/Movies/broll-01.mp4\n/Users/you/Pictures/cover.png"} onChange={(e) => setPaths(e.target.value)} />
         <div className="row-actions">
           <button className="primary" disabled={importing} onClick={() => void doImport()}>
             {importing ? "导入中…" : "导入"}

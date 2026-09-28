@@ -171,7 +171,6 @@ export function Calibration() {
         <span className="mono muted">雷达关键词：</span>
         <input
           className="sel-input"
-          style={{ flex: 1 }}
           value={focusKeywords}
           placeholder="如：AI、Agent、FDE、部署——逗号或顿号分隔"
           onChange={(e) => setFocusKeywords(e.target.value)}
@@ -204,7 +203,7 @@ export function Calibration() {
       ) : (
         <p className="muted">未建立——生成三层画像并确认一次,之后审稿、写作、选题都按它来。</p>
       )}
-      <div className="row-actions" style={{ margin: "6px 0" }}>
+      <div className="row-actions row-actions-spaced">
         <button disabled={personaBusy} onClick={() => void generatePersona()}>
           {personaBusy ? "研究员生成中…(约半分钟)" : persona.tiers ? "重新生成提案" : "生成画像提案"}
         </button>
@@ -258,8 +257,8 @@ export function Calibration() {
 
       <h3 className="serif calib-h3">爆款吸收</h3>
       <p className="muted">贴 1-5 篇你最满意的作品(空行分隔),蒸馏你的声音内核——完成后「已校准」点亮。</p>
-      <textarea rows={6} style={{ width: "100%" }} value={samples} onChange={(e) => setSamples(e.target.value)} placeholder="第一篇…&#10;&#10;第二篇…" />
-      <div className="row-actions" style={{ marginTop: 6 }}>
+      <textarea rows={6} className="full-width" value={samples} onChange={(e) => setSamples(e.target.value)} placeholder="第一篇…&#10;&#10;第二篇…" />
+      <div className="row-actions row-actions-spaced">
         <button className="primary" disabled={busy} onClick={() => void absorb()}>
           {busy ? "吸收中…" : "吸收进声音内核"}
         </button>

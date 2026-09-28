@@ -45,8 +45,8 @@ export function ProjectBoard(props: { content: BoardContent; reload: () => Promi
 function BoardSkeleton() {
   return <div className="pb-board" aria-busy="true">
     <p className="muted">正在读取交接和剪辑进度…</p>
-    <div className="pb-skeleton" style={{ height: 28 }} />
-    <div className="pb-skeleton" style={{ height: 140 }} />
+    <div className="pb-skeleton pb-skeleton-line" />
+    <div className="pb-skeleton pb-skeleton-block" />
   </div>;
 }
 

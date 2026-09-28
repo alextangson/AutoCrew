@@ -16,13 +16,13 @@ export function SurfaceCard({ x, mock }: { x: Surface; mock: Mock }) {
   if (x.style === "bili-web") return <BiliWebCard x={x} mock={mock}>{pic}</BiliWebCard>;
   if (x.style === "row") return <div className="pp-row"><div className="pp-frame" style={{ aspectRatio: String(x.ratio) }}>{pic}</div><Title text={mock.title} /></div>;
   if (x.style === "grid") return <div className="pp-frame" style={{ aspectRatio: String(x.ratio) }}>{pic}
-    <div className="pp-shade" style={{ height: "20%", background: "linear-gradient(transparent, rgba(0,0,0,0.5))" }} />
+    <div className="pp-shade pp-shade-light" />
     <span className="pp-on-img pp-bl">▷ 1.2万</span>
   </div>;
   return <div className="pp-card">
     <div className="pp-frame" style={{ aspectRatio: String(x.ratio) }}>{pic}
       {x.playTopRight && <span className="pp-on-img pp-tr">▶</span>}
-      {x.playStats && <><div className="pp-shade" style={{ height: "26%", background: "linear-gradient(transparent, rgba(0,0,0,0.8))" }} /><span className="pp-on-img pp-bl">▷ 1.2万 · 弹幕 356</span></>}
+      {x.playStats && <><div className="pp-shade pp-shade-dark" /><span className="pp-on-img pp-bl">▷ 1.2万 · 弹幕 356</span></>}
     </div>
     <Title text={mock.title} /><Author right={x.id.startsWith("bili") ? "9-27" : "♡ 1024"} />
   </div>;
@@ -35,7 +35,7 @@ function BiliWebCard({ x, mock, children }: { x: Surface; mock: Mock; children: 
     <div className="pp-frame" style={{ aspectRatio: String(ratioValue(x.cover)) }}>{children}
       {band({ top: 0 })}{band({ bottom: 0 })}
       <div className="pp-kept" style={{ top: pct(cutEach), height: pct(keptHeight) }}>
-        <div className="pp-shade" style={{ height: "26%", background: "linear-gradient(transparent, rgba(0,0,0,0.8))" }} />
+        <div className="pp-shade pp-shade-dark" />
         <span className="pp-on-img pp-bl">▷ 1.2万 · 弹幕 356</span>
         {mock.duration && <span className="pp-on-img pp-br">{mock.duration}</span>}
       </div>

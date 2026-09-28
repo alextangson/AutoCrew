@@ -243,7 +243,7 @@ export function ArticleImagesPanel(props: {
         ref={fileInputRef}
         type="file"
         accept="image/png,image/jpeg"
-        style={{ display: "none" }}
+        hidden
         onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = "";

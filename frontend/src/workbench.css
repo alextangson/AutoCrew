@@ -1,0 +1,163 @@
+/* 工作台部件：封面 / 人物库 / 配图 / 画像 / 深调研 / 角度卡 / 成片线（自 app.css 拆出） */
+
+/* C 期:校准中心/设置/任务卡 */
+.calib h2, .settings h2 { margin-bottom: var(--s2); }
+.cover-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3); margin-top: var(--s2); }
+.cover-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
+.cover-card-on { border-color: var(--ink); }
+.cover-image-wrap { position: relative; width: 100%; overflow: hidden; border: 1px solid var(--border); background: var(--surface); touch-action: none; user-select: none; }
+.cover-image-wrap-local { cursor: crosshair; box-shadow: inset 0 0 0 2px var(--ink); }
+.cover-image-wrap .cover-img { display: block; height: 100%; border: 0; pointer-events: none; }
+.cover-img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border: 1px solid var(--border); }
+.cover-mask-selection { position: absolute; z-index: 2; box-sizing: border-box; border: 2px solid #1ea7fd; background: rgba(30, 167, 253, 0.18); box-shadow: 0 0 0 9999px rgba(18, 17, 13, 0.2); pointer-events: none; }
+.cover-mask-hint { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: var(--s1) var(--s2); border-radius: 999px; background: rgba(18, 17, 13, 0.8); color: #fff; font: var(--fs-xs)/1.2 var(--mono); white-space: nowrap; pointer-events: none; }
+.cover-missing { display: flex; align-items: center; justify-content: center; }
+.cover-reason { font-size: var(--fs-xs); }
+.cover-concept { font-size: var(--fs-sm); line-height: 1.45; }
+.cover-meta { font-size: var(--fs-xs); line-height: 1.4; }
+.cover-method-strip { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s1) 0 var(--s2); }
+.cover-method-strip span { padding: var(--s1) var(--s2); border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--muted); font: var(--fs-xs)/1.3 var(--mono); }
+.cover-ratio-strip { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-top: var(--s2); }
+.cover-adapt-thumbs { display: flex; gap: var(--s2); flex-wrap: wrap; width: 100%; margin-top: var(--s2); }
+.cover-thumb { max-width: 240px; object-fit: cover; border: 1px solid var(--border); }
+.identity-panel { display: flex; flex-direction: column; gap: var(--s4); padding-bottom: var(--s4); margin-bottom: var(--s4); border-bottom: 1px solid var(--border); }
+.identity-head, .identity-stage-head, .cover-create-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s4); }
+.identity-head strong, .cover-create-head strong { display: block; margin-top: var(--s1); font-size: var(--fs-lg); }
+.identity-head p { max-width: 570px; margin: var(--s1) 0 0; line-height: 1.55; }
+.identity-kicker { font-size: var(--fs-xs); letter-spacing: .08em; text-transform: uppercase; }
+.identity-stage { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3) var(--s3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); }
+.identity-stage-head > div { display: flex; flex-direction: column; gap: var(--s1); }
+.identity-stage-head .muted { font-size: var(--fs-xs); }
+.identity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: var(--s2); }
+.identity-card { margin: 0; overflow: hidden; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); }
+.identity-card-primary, .identity-card-selected { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.identity-card img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; background: var(--surface); }
+.identity-card figcaption { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s2); font-size: var(--fs-xs); }
+.identity-actions { display: flex; gap: var(--s1); flex-wrap: wrap; }
+.identity-actions button { font-size: var(--fs-sm); padding: var(--btn-sm-pad); }
+.identity-empty { padding: var(--s5); color: var(--muted); border: 1px dashed var(--border); text-align: center; line-height: 1.55; }
+.identity-note { margin: 0; font-size: var(--fs-xs); }
+.cover-create-head { margin: 0 0 var(--s1); }
+.publish-preflight { max-height: 240px; overflow: auto; padding: var(--s2); margin: var(--s2) 0 0; border: 1px solid var(--border); background: var(--surface); white-space: pre-wrap; font-size: var(--fs-xs); line-height: 1.5; }
+@media (max-width: 620px) {
+  .identity-head, .identity-stage-head, .cover-create-head { flex-direction: column; }
+  .identity-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.article-images-panel { display: flex; flex-direction: column; gap: var(--s3); }
+.article-images-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.article-images-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+.article-image-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+.article-image-card-head { display: flex; gap: var(--s2); align-items: baseline; flex-wrap: wrap; }
+.article-image-card-head .chip { margin-left: auto; }
+.article-image-card img, .article-image-placeholder { width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--border); object-fit: cover; background: var(--surface); }
+.article-image-placeholder { display: flex; align-items: center; justify-content: center; }
+.article-image-card label span { display: block; margin-bottom: var(--s1); }
+.article-image-card textarea { width: 100%; min-height: 78px; resize: vertical; line-height: 1.45; }
+.article-image-status-ready { border-color: var(--success); color: var(--success); }
+.article-image-status-error { border-color: var(--danger); color: var(--danger); }
+.article-image-status-generating { border-color: var(--ink); }
+.article-images-empty { border-left: 2px solid var(--border); padding: var(--s1) var(--s3); }
+@media (max-width: 760px) { .article-images-grid { grid-template-columns: 1fr; } }
+.persona-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: var(--s3) var(--s3); margin: var(--s2) 0; }
+.persona-proposal { border-left: 2px solid var(--ink); }
+.pt-grid { display: flex; gap: var(--s2); margin: var(--s1) 0; }
+.pt-grid input { flex: 1; }
+.pt-wide { width: 100%; margin: var(--s1) 0; }
+.calib-h3 { margin: var(--s4) 0 var(--s1); font-size: var(--fs-md); }
+.rule-off { opacity: 0.45; }
+
+/* 深调研:选题卡的研究状态区 + 简报展开 */
+.research-panel { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px dashed var(--border); }
+.research-head { display: flex; gap: var(--s2); align-items: baseline; flex-wrap: wrap; }
+.research-head .row-actions { margin-left: auto; }
+.research-head .row-actions button { font-size: var(--fs-sm); padding: var(--btn-sm-pad); }
+.research-stale { border-color: var(--danger); color: var(--danger); }
+.research-steps { display: flex; flex-wrap: wrap; gap: var(--s3); margin: var(--s2) 0 var(--s1); font-size: var(--fs-xs); }
+.research-step-pending { color: var(--muted); }
+.research-step-succeeded { color: var(--success); }
+.research-step-failed { color: var(--danger); }
+.research-brief { border-left: 2px solid var(--border); padding: var(--s1) var(--s3); margin-top: var(--s2); font-size: var(--fs-sm); }
+.research-block { margin-top: var(--s2); }
+.research-block ul, .research-block ol { margin: var(--s1) 0 0; padding-left: var(--s5); }
+.research-block li { margin: var(--s1) 0; }
+.research-src { font-size: var(--fs-xs); margin-left: var(--s2); }
+/* 素材候选:已入库的显缩略图,仅链接的显降级原因——两类同一网格,一眼看得出差别 */
+.research-assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--s2); margin-top: var(--s2); }
+.research-asset { margin: 0; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: var(--s2); }
+.research-asset img, .research-asset-ph { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--border); background: var(--surface); }
+.research-asset-ph { display: flex; align-items: center; justify-content: center; font-size: var(--fs-xs); }
+.research-asset-link { border-style: dashed; }
+.research-asset figcaption { display: flex; flex-direction: column; gap: 0; font-size: var(--fs-xs); margin-top: var(--s1); }
+.research-asset-cap { font-size: var(--fs-xs); }
+.research-asset-err { color: var(--danger); }
+.research-asset figcaption .research-src { margin-left: 0; }
+/* 角度卡:写前的品味闸口(角度卡 spec §1.4)。沿用简报区的发丝线语言,选中态用墨线加粗左边 */
+.angle-section { margin-top: var(--s3); padding: var(--s2) 0 var(--s1); border-top: 1px dashed var(--border); }
+.angle-section-focus { border-left: 2px solid var(--hot); padding-left: var(--s3); background: var(--card); }
+.angle-card { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); padding: var(--s2) var(--s3); margin-top: var(--s2); font-size: var(--fs-sm); }
+.angle-card-on { border-left: 3px solid var(--ink); }
+.angle-card-head { display: flex; gap: var(--s2); align-items: baseline; flex-wrap: wrap; }
+.angle-angle { font-size: var(--fs-md); }
+.angle-chip-on { background: var(--ink); color: var(--accent-text); border-color: var(--ink); }
+.angle-thesis { margin-top: var(--s1); }
+.angle-hook { margin-top: var(--s1); font-family: var(--font-display); }
+.angle-evidence { margin: var(--s2) 0 0; padding-left: var(--s4); font-size: var(--fs-xs); color: var(--muted); }
+.angle-evidence li { margin: var(--s1) 0; }
+/* 卡 v3(P1 spec §4.6):待补证据 / 元素与骨架 / 证据档次与展示分——分只排序,不选卡 */
+.angle-needs { margin-top: var(--s2); font-size: var(--fs-xs); }
+.angle-needs ul { margin: var(--s1) 0 0; padding-left: var(--s4); color: var(--muted); }
+.angle-needs li { margin: var(--s1) 0; }
+.angle-chips { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s2); }
+.angle-element { font-size: var(--fs-xs); }
+.angle-structure { font-size: var(--fs-xs); background: var(--card); }
+.angle-level { font-size: var(--fs-xs); }
+
+.angle-score { font-size: var(--fs-xs); cursor: help; }
+.angle-card-actions { margin-top: var(--s2); }
+.angle-card-actions button { font-size: var(--fs-sm); padding: var(--btn-sm-pad); }
+.angle-edit { margin-top: var(--s2); border-top: 1px dashed var(--border); padding-top: var(--s2); }
+.angle-edit-field { display: block; margin-bottom: var(--s2); }
+.angle-edit-field textarea { width: 100%; resize: vertical; margin-top: var(--s1); }
+/* 派活被拦下时的引导条:窄条不是弹层——要选的卡就在同一页上面,盖住它就本末倒置了 */
+.angle-guide { display: flex; gap: var(--s3); align-items: baseline; flex-wrap: wrap; margin: var(--s3) 0 0; padding: var(--s2) var(--s3); border: 1px solid var(--hot); border-radius: var(--radius-card); background: var(--card); font-size: var(--fs-sm); }
+.angle-guide > span:first-child { flex: 1; min-width: 220px; }
+.angle-guide-ready { border-color: var(--success); }
+.angle-guide button { font-size: var(--fs-sm); padding: var(--btn-sm-pad); }
+/* 对话里的角度候选卡:紧凑三行一张,只报事实不给动作(选哪张由用户在对话里说) */
+.angle-mini { margin-top: var(--s2); font-size: var(--fs-sm); }
+.angle-mini + .angle-mini { padding-top: var(--s2); border-top: 1px dashed var(--border); }
+
+/* 研究素材选图弹层:复用 .dlg 报纸风外框,只加一层网格 */
+.ra-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s2); margin-top: var(--s3); max-height: 46vh; overflow-y: auto; }
+.ra-item { display: flex; flex-direction: column; gap: var(--s1); align-items: stretch; text-align: left; padding: var(--s2); height: auto; font-size: var(--fs-xs); }
+.ra-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--border); background: var(--surface); }
+.ra-cap { font-size: var(--fs-xs); }
+/* 视频生产线 V0a:成片卡 + 选段视图 + 审片视图(复用 .ed-tools/.row-actions/.chip,不另起设计) */
+/* 阶段制:成片卡是剪辑工作台的主体(整页),不再是文案页底下的折叠区 */
+
+/* 封面台头:左边成片首帧,右边标题——封面是对着片子做的 */
+.cover-stage-head { display: flex; gap: var(--s4); align-items: flex-start; flex-wrap: wrap; margin-bottom: var(--s3); }
+.cover-stage-head h2 { margin: 0 0 var(--s1); }
+.cover-stage-head p { margin: 0 0 var(--s2); }
+.cover-stage-head > div { flex: 1; min-width: 240px; }
+.cover-stage-film {
+  flex: 0 0 auto; width: 240px; aspect-ratio: 16 / 9; background: var(--ink);
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+}
+.cover-stage-film.cover-missing { display: grid; place-items: center; background: var(--surface); font-size: var(--fs-xs); }
+
+.vid-warn { border-left: 2px solid var(--ink); background: var(--surface); padding: var(--s2) var(--s3); font-size: var(--fs-xs); }
+
+/* 勾选区与操作区并列:label 只包 checkbox 那一段,否则点「改字」会顺带切掉勾选 */
+
+/* 划掉的是「这句不留」,不是操作区:按钮跟着划线会看不清 */
+
+/* 审片打回时点名的那一句/那一段。色条用 inset box-shadow 而非 border-left:不占布局,
+   行内文字不会跟着错位;底色由 --danger 兑出,不引入新色值 */
+
+/* .vid-seg:hover 的 --surface 同为 0,2,0 优先级,不跟在它后面重申一次,鼠标一扫底色就没了 */
+
+/* 编排页的行没有 .vid-seg-row 那层内边距(时间码直接挂在 li 下),不让位色条会压住时间码 */
+
+/* 「不留」把整段文字压到 0.42,而被点名那句的正文恰恰是人要读的;抬到 0.62——
+   仍明显淡于常规行,划掉的语义还在,但「你打回时指的就是这一句」读得出来 */

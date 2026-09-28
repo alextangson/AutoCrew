@@ -93,7 +93,7 @@ function DigestBlock(props: { configured: boolean; digest?: DigestView | null; r
   };
   return (
     <>
-      <div className="row" style={{ cursor: "default" }}>
+      <div className="row row-static">
         <input
           type="checkbox"
           disabled={!props.configured}
@@ -111,7 +111,7 @@ function DigestBlock(props: { configured: boolean; digest?: DigestView | null; r
             <option key={h} value={String(h)}>{digestHourLabel(h)}</option>
           ))}
         </select>
-        <button className="chip" disabled={!props.configured || busy} onClick={() => void sendNow()}>
+        <button className="btn-sm" disabled={!props.configured || busy} onClick={() => void sendNow()}>
           {busy ? "发送中…" : "现在发一份"}
         </button>
       </div>
