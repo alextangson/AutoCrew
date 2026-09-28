@@ -13,9 +13,29 @@
   --hot: #C63D00;
   --success: #14523F;
   --danger: #A32D2D;
-  --radius: 2px;
-  --radius-card: 2px;
-  --gap: 16px;
+  --lane: #ECEAE2;
+  --line-2: #B9B5A8;
+  --danger-line: #E5C2B5;
+  --ok-line: #B7D3C7;
+
+  /* 一把尺子（组件样张 F-system）：6 个字号、6 档间距、2 种控件高度、3 种弹窗宽度 */
+  --fs-xs: 12px;   /* 辅助信息 */
+  --fs-sm: 13px;   /* 表单标签 / 小按钮 */
+  --fs-md: 14px;   /* 正文 / 卡片标题 */
+  --fs-lg: 16px;   /* 弹窗 / 区块标题 */
+  --fs-xl: 22px;   /* 稿件标题（衬线） */
+  --fs-2xl: 28px;  /* 页面大标题（衬线） */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  --h-sm: 28px;    /* 卡片内控件 */
+  --h-md: 36px;    /* 默认控件 */
+  --btn-pad: calc((var(--h-md) - 22px) / 2) var(--s4);
+  --btn-sm-pad: calc((var(--h-sm) - 22px) / 2) var(--s3);
+  --radius: 4px;
+  --radius-card: 4px;
+  --radius-dialog: 6px;
+  --dlg-sm: 400px; --dlg-md: 560px; --dlg-lg: 880px;
+  --w-data: 1120px; --w-form: 720px; --w-draft: 760px;  /* 页面骨架内容宽 */
+  --gap: var(--s4);
 
   --font-display: Georgia, "Songti SC", "STSong", "Noto Serif SC", serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "PingFang SC", monospace;
@@ -37,26 +57,32 @@ body {
   background: var(--bg);
 }
 
+/* 裸 button / input 默认就是样张里的「次按钮 36」「输入框 36」。
+   高度靠 行高 20 + 上下内边距 + 1px 边框 凑出 36/28，不设 min-height：
+   链接式按钮（padding: 0、无边框）自然缩回文字高度，文字对齐也照旧可用 text-align。 */
 button {
-  font: inherit;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  background: var(--card);
-  border-radius: var(--radius);
-  padding: 4px 10px;
+  font: inherit; font-size: var(--fs-md); line-height: 20px; cursor: pointer; color: var(--ink);
+  padding: var(--btn-pad);
+  border: 1px solid var(--border); background: var(--card); border-radius: var(--radius);
 }
 button:hover { border-color: var(--ink); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.btn-ghost { border-color: transparent; background: none; color: var(--muted); }
+button.btn-ghost:hover { color: var(--ink); }
+button.btn-danger { color: var(--hot); border-color: var(--danger-line); background: var(--card); }
+button.btn-danger:hover { border-color: var(--hot); }
+button.btn-sm { padding: var(--btn-sm-pad); font-size: var(--fs-sm); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-input, textarea {
-  font: inherit;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
-  padding: 6px 10px;
+input, textarea, select {
+  font: inherit; font-size: var(--fs-md); color: var(--ink);
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--card);
 }
-input:focus, textarea:focus { outline: none; border-color: var(--ink); }
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), select { height: var(--h-md); padding: 0 var(--s3); }
+textarea { padding: var(--s2) var(--s3); line-height: 1.6; }
+:is(input, select).in-sm { height: var(--h-sm); font-size: var(--fs-sm); padding: 0 var(--s2); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--ink); }
 
 .muted { color: var(--muted); }
-.mono { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; }
+.mono { font-family: var(--font-mono); font-size: var(--fs-xs); letter-spacing: 0.04em; }
 .serif { font-family: var(--font-display); }

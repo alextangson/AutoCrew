@@ -4,6 +4,7 @@
  * 危险操作红色确认且默认焦点在「取消」。
  */
 import { useEffect, useRef, useState } from "react";
+import { Field } from "./components/Field";
 
 let pushToast: (msg: string) => void = () => {};
 
@@ -31,6 +32,9 @@ export function ToastHost() {
 
 /* ── 弹窗 ─────────────────────────────────────────────────────────────── */
 
+/** 三种宽度：sm 400 确认/一两个字段，md 560 表单，lg 880 看图/预览。 */
+export type DialogSize = "sm" | "md" | "lg";
+
 export interface DialogField {
   key: string;
   label: string;
@@ -38,6 +42,7 @@ export interface DialogField {
   initial?: string;
   multiline?: boolean;
   required?: boolean;
+  hint?: string;
 }
 
 interface FormSpec {
@@ -45,6 +50,7 @@ interface FormSpec {
   body?: string;
   fields: DialogField[];
   confirmLabel?: string;
+  size?: DialogSize;
 }
 
 interface ConfirmSpec {
@@ -52,6 +58,7 @@ interface ConfirmSpec {
   body?: string;
   confirmLabel?: string;
   danger?: boolean;
+  size?: DialogSize;
 }
 
 type Active =
@@ -60,23 +67,53 @@ type Active =
 
 let openActive: (a: Active) => void = () => {};
 
-/** 表单弹窗:确认返回 {key: 值},取消返回 null。 */
+/** 表单弹窗:确认返回 {key: 值},取消返回 null。默认宽度：一两个单行字段 sm，否则 md。 */
 export function openDialog(spec: FormSpec): Promise<Record<string, string> | null> {
   return new Promise((resolve) => openActive({ kind: "form", spec, resolve }));
 }
 
-/** 确认弹窗:danger 时确认键红色、默认焦点在取消。 */
+/** 确认弹窗:danger 时确认键红字描边、默认焦点在取消。默认宽度 sm。 */
 export function confirmDialog(spec: ConfirmSpec): Promise<boolean> {
   return new Promise((resolve) => openActive({ kind: "confirm", spec, resolve }));
 }
 
-export function DialogHost() {
+export function dialogSize(a: Active): DialogSize {
+  if (a.spec.size) return a.spec.size;
+  if (a.kind === "confirm") return "sm";
+  return a.spec.fields.length <= 2 && !a.spec.fields.some((f) => f.multiline) ? "sm" : "md";
+}
+
+/** 标签自带「选填/可选」时不再重复追加。 */
+export function fieldLabel(f: DialogField): string {
+  if (f.required || /选填|可选/.test(f.label)) return f.label;
+  return `${f.label}（可选）`;
+}
+
+type FieldRef = React.MutableRefObject<HTMLInputElement | HTMLTextAreaElement | null>;
+
+function DialogFields(props: { fields: DialogField[]; values: Record<string, string>; setValue: (k: string, v: string) => void; firstField: FieldRef }) {
+  return (
+    <>
+      {props.fields.map((f, i) => {
+        const common = {
+          ref: i === 0 ? (el: HTMLInputElement | HTMLTextAreaElement | null) => (props.firstField.current = el) : undefined,
+          value: props.values[f.key] ?? "",
+          placeholder: f.placeholder,
+          onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => props.setValue(f.key, e.target.value),
+        };
+        return (
+          <Field key={f.key} label={fieldLabel(f)} hint={f.hint} className="dlg-field">
+            {f.multiline ? <textarea rows={3} {...common} /> : <input type="text" {...common} />}
+          </Field>
+        );
+      })}
+    </>
+  );
+}
+
+function useDialogState() {
   const [active, setActive] = useState<Active | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
-  const firstField = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
-  const confirmBtn = useRef<HTMLButtonElement | null>(null);
-  const cancelBtn = useRef<HTMLButtonElement | null>(null);
-
   useEffect(() => {
     openActive = (a) => {
       setValues(a.kind === "form" ? Object.fromEntries(a.spec.fields.map((f) => [f.key, f.initial ?? ""])) : {});
@@ -90,6 +127,14 @@ export function DialogHost() {
       openActive = () => {};
     };
   }, []);
+  return { active, setActive, values, setValues };
+}
+
+export function DialogHost() {
+  const { active, setActive, values, setValues } = useDialogState();
+  const firstField = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const confirmBtn = useRef<HTMLButtonElement | null>(null);
+  const cancelBtn = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -103,59 +148,32 @@ export function DialogHost() {
   if (!active) return null;
 
   const valid = active.kind === "confirm" || active.spec.fields.every((f) => !f.required || (values[f.key] ?? "").trim() !== "");
-
   const close = (submit: boolean) => {
     if (active.kind === "form") active.resolve(submit && valid ? { ...values } : null);
     else active.resolve(submit);
     setActive(null);
   };
-
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") return close(false);
     // 输入法合成中回车用于上屏候选,不触发提交。
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-    const inTextarea = e.target instanceof HTMLTextAreaElement;
-    if (e.metaKey || e.ctrlKey || !inTextarea) {
+    if (e.metaKey || e.ctrlKey || !(e.target instanceof HTMLTextAreaElement)) {
       e.preventDefault();
       if (valid) close(true);
     }
   };
-
   const danger = active.kind === "confirm" && active.spec.danger;
 
   return (
     <div className="dlg-overlay" onMouseDown={(e) => e.target === e.currentTarget && close(false)} onKeyDown={onKey}>
-      <div className="dlg" role="dialog" aria-modal="true">
-        <div className="dlg-title serif">{active.spec.title}</div>
-        {active.spec.body && <p className="dlg-body muted">{active.spec.body}</p>}
-        {active.kind === "form" &&
-          active.spec.fields.map((f, i) => (
-            <label key={f.key} className="dlg-field">
-              <span className="mono muted">
-                {f.label}
-                {f.required ? "" : "(可选)"}
-              </span>
-              {f.multiline ? (
-                <textarea
-                  ref={i === 0 ? (el) => (firstField.current = el) : undefined}
-                  rows={2}
-                  value={values[f.key] ?? ""}
-                  placeholder={f.placeholder}
-                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                />
-              ) : (
-                <input
-                  ref={i === 0 ? (el) => (firstField.current = el) : undefined}
-                  type="text"
-                  value={values[f.key] ?? ""}
-                  placeholder={f.placeholder}
-                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                />
-              )}
-            </label>
-          ))}
+      <div className={`dlg dlg-${dialogSize(active)}`} role="dialog" aria-modal="true">
+        <div className="dlg-title">{active.spec.title}</div>
+        {active.spec.body && <p className="dlg-body">{active.spec.body}</p>}
+        {active.kind === "form" && (
+          <DialogFields fields={active.spec.fields} values={values} firstField={firstField} setValue={(k, v) => setValues((s) => ({ ...s, [k]: v }))} />
+        )}
         <div className="dlg-actions">
-          <button ref={cancelBtn} onClick={() => close(false)}>
+          <button ref={cancelBtn} className="btn-ghost" onClick={() => close(false)}>
             取消
           </button>
           <button ref={confirmBtn} className={danger ? "btn-danger" : "primary"} disabled={!valid} onClick={() => close(true)}>
