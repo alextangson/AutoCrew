@@ -119,7 +119,7 @@ function Row(props: TableProps & { row: DataRow; prev: DataRow | null; open: boo
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); props.onToggle(); } }}>
         <span className="data-title">
           <span className="data-title-text" title={row.title}>{row.title}</span>
-          <span className="data-sub">{dayLabel(row.day)} <Tag>{LINK_TAG[row.link]}</Tag></span>
+          <span className="data-sub">{dayLabel(row.day)} {row.link !== "none" && <Tag>{LINK_TAG[row.link]}</Tag>}</span>
         </span>
         {props.columns.map((p) => <CellView key={p} row={row} platform={p} thresholds={props.thresholds} />)}
       </div>
