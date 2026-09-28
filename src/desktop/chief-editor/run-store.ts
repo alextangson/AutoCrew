@@ -27,6 +27,8 @@ export interface RunRecord {
   pid?: number;
   /** 启动命令全文：清孤儿前核对 pid 没被别的进程复用 */
   command?: string;
+  /** 进程组还没清干净：下次启动继续清 */
+  cleanupPending?: boolean;
   /** 本轮已入账的卡片（先落这里再推 SSE，刷新/重启后可回放） */
   cards?: Record<string, unknown>[];
   writes?: string[];
@@ -86,10 +88,14 @@ export class RunStore {
   recoverOnStartup(killGroup: (pid: number, command: string) => boolean = killRecordedGroup): RunRecord[] {
     const records = this.list();
     const leftovers = records.filter((r) => r.status === "running" || r.status === "awaiting_approval");
-    if (leftovers.length === 0) return [];
+    const dirty = records.filter((r) => r.cleanupPending || leftovers.includes(r));
+    if (dirty.length === 0) return [];
     const now = new Date().toISOString();
+    for (const r of dirty) {
+      r.cleanupPending = Boolean(r.pid && r.command) && !killGroup(r.pid!, r.command!);
+      if (!r.cleanupPending) delete r.cleanupPending;
+    }
     for (const r of leftovers) {
-      if (r.pid && r.command) killGroup(r.pid, r.command);
       r.status = "interrupted";
       r.endedAt = now;
     }
@@ -98,19 +104,33 @@ export class RunStore {
   }
 }
 
-/** pid 还活着且命令对得上才杀整组——pid 复用时绝不误杀别的进程 */
-export function killRecordedGroup(pid: number, command: string): boolean {
-  let actual = "";
+export interface ProcRow { pid: number; pgid: number; command: string }
+
+function listProcesses(): ProcRow[] {
   try {
-    actual = execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf-8" }).trim();
+    return execFileSync("ps", ["-A", "-o", "pid=,pgid=,command="], { encoding: "utf-8" })
+      .split("\n")
+      .map((l) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l))
+      .filter((m): m is RegExpExecArray => Boolean(m))
+      .map((m) => ({ pid: Number(m[1]), pgid: Number(m[2]), command: m[3] }));
   } catch {
-    return false; // 进程已不在
+    return [];
   }
-  if (!actual || !command.split(" ").slice(0, 2).every((part) => actual.includes(part))) return false;
-  try {
-    process.kill(-pid, "SIGKILL");
-    return true;
-  } catch {
-    return false;
+}
+
+/**
+ * 按进程组清孤儿（评审 P2-7）：组长死了、组员（shell、sleep、ffmpeg…）可能还活着，不能只看组长。
+ * - 组长还在但命令对不上 → pid 已被复用，这不是我们的组，不动；
+ * - 否则 SIGKILL 整组，重查直到组里没人；清不干净返回 false，记录保留待下次启动再清。
+ */
+export function killRecordedGroup(pid: number, command: string, list: () => ProcRow[] = listProcesses, kill: (pgid: number) => void = (g) => process.kill(-g, "SIGKILL")): boolean {
+  const expected = command.split(" ").slice(0, 2);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const members = list().filter((p) => p.pgid === pid);
+    if (members.length === 0) return true;
+    const leader = members.find((p) => p.pid === pid);
+    if (leader && !expected.every((part) => leader.command.includes(part))) return true;
+    try { kill(pid); } catch { /* 已退出 */ }
   }
+  return list().every((p) => p.pgid !== pid);
 }

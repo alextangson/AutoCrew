@@ -10,6 +10,9 @@ const SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [/("?(?:claim_token|approval_token|token|api[_-]?key|secret|password|authorization)"?\s*[:=]\s*)"[^"]*"/gi, '$1"[已隐藏]"'],
   [/((?:claim_token|approval_token|api[_-]?key|secret|password)\s*[:=]\s*)[^\s,;"'}]+/gi, "$1[已隐藏]"],
   [/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [已隐藏]"],
+  // 认领令牌（clm-<毫秒>-<随机>）与总编辑会话令牌（ce_…）：agent 在正文里复述时也要挡住
+  [/\bclm-\d{10,}-[a-z0-9]{4,}/g, "[已隐藏]"],
+  [/\bce_[A-Za-z0-9_-]{8,}/g, "[已隐藏]"],
   [/\bsk-[A-Za-z0-9_-]{8,}/g, "[已隐藏]"],
   // 32 位以上十六进制/base64url 串：令牌、会话 id、审批凭证都长这样
   [/\b[A-Fa-f0-9]{32,}\b/g, "[已隐藏]"],
@@ -20,6 +23,32 @@ export function redactText(input: string): string {
   let out = input;
   for (const [re, rep] of SECRET_PATTERNS) out = out.replace(re, rep);
   return out;
+}
+
+/**
+ * 流式正文脱敏：令牌可能被切在两个分块之间，所以末尾留一段不发，等后文到了再判。
+ * 每次对全文重新脱敏，只把「已稳定」的前缀增量发出去；finish 时把剩下的全发。
+ */
+export class StreamRedactor {
+  private raw = "";
+  private sent = 0;
+  constructor(private readonly holdback = 160) {}
+
+  push(chunk: string): string {
+    this.raw += chunk;
+    const clean = redactText(this.raw);
+    const stable = Math.max(this.sent, clean.length - this.holdback);
+    const out = clean.slice(this.sent, stable);
+    this.sent = stable;
+    return out;
+  }
+
+  finish(): string {
+    const clean = redactText(this.raw);
+    const out = clean.slice(this.sent);
+    this.sent = clean.length;
+    return out;
+  }
 }
 
 /** 脱敏后按码点截断，超长补 … */

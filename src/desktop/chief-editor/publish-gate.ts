@@ -15,6 +15,7 @@
  */
 import { createHash } from "node:crypto";
 import type { ApprovalBinding } from "../approval-gate.js";
+import { normalizeLegacyStatus } from "../../storage/local-store.js";
 
 export interface GateTarget {
   action: `${string}.${string}`;
@@ -27,26 +28,45 @@ export interface GateTarget {
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
-export function classifyPublishAction(tool: string, args: Record<string, unknown>): GateTarget | null {
-  const action = str(args.action);
-  const contentId = str(args.content_id) || str(args.id);
-  if (tool === "autocrew_publish" && (action === "wechat_mp_draft" || action === "confirm_published")) {
-    const label = action === "wechat_mp_draft" ? "推送到公众号草稿箱" : "标记为已发布";
-    return { action: `${tool}.${action}`, targetId: contentId, contentId, label };
-  }
-  if (tool === "autocrew_content" && action === "transition" && str(args.target_status) === "published") {
-    return { action: `${tool}.transition_published`, targetId: contentId, contentId, label: "转入已发布" };
-  }
-  if (tool === "autocrew_content" && action === "delete") {
-    return { action: `${tool}.delete`, targetId: contentId, contentId, label: "删除稿件" };
-  }
-  if (tool === "autocrew_asset" && action === "remove") {
-    return { action: `${tool}.remove`, targetId: contentId, contentId, label: "删除素材" };
-  }
-  if (tool === "autocrew_pipeline" && action === "delete") {
-    return { action: `${tool}.delete`, targetId: str(args.id) || str(args.name), label: "删除流水线" };
-  }
+export type Classified = GateTarget | { refuse: string } | null;
+
+/**
+ * 目标解析与执行器同一口径：autocrew_content / autocrew_pipeline 认 `id`，
+ * autocrew_publish / autocrew_asset 认 `content_id`。两个别名同时给且不一致 → 直接拒，
+ * 否则审批的是 A、执行的是 B。
+ */
+function resolveTarget(tool: string, args: Record<string, unknown>): { id: string } | { refuse: string } {
+  const id = str(args.id);
+  const contentId = str(args.content_id);
+  if (id && contentId && id !== contentId) return { refuse: `id（${id}）和 content_id（${contentId}）不一致，发布类动作只能指向一个目标` };
+  const primary = tool === "autocrew_content" || tool === "autocrew_pipeline" ? id || contentId : contentId || id;
+  return { id: primary };
+}
+
+/** 任何把稿件状态推到「已发布」的参数（transition 的 target_status、update/save 的 status） */
+function toPublished(args: Record<string, unknown>): boolean {
+  return [args.target_status, args.status].some((v) => typeof v === "string" && normalizeLegacyStatus(v.trim()) === "published");
+}
+
+function publishKind(tool: string, action: string, args: Record<string, unknown>): { key: string; label: string } | null {
+  if (tool === "autocrew_publish" && action === "wechat_mp_draft") return { key: action, label: "推送到公众号草稿箱" };
+  if (tool === "autocrew_publish" && action === "confirm_published") return { key: action, label: "标记为已发布" };
+  if (tool === "autocrew_content" && action === "delete") return { key: "delete", label: "删除稿件" };
+  if (tool === "autocrew_content" && toPublished(args)) return { key: "to_published", label: "转入已发布" };
+  if (tool === "autocrew_asset" && action === "remove") return { key: "remove", label: "删除素材" };
+  if (tool === "autocrew_pipeline" && action === "delete") return { key: "delete", label: "删除流水线" };
   return null;
+}
+
+export function classifyPublishAction(tool: string, args: Record<string, unknown>): Classified {
+  const kind = publishKind(tool, str(args.action), args);
+  if (!kind) return null;
+  // article_path 发布读的是任意文件，批准后改文件无从察觉：本机 agent 一律走 content_id
+  if (kind.key === "wechat_mp_draft" && str(args.article_path)) return { refuse: "本机 agent 推草稿箱只能用 content_id，不能用 article_path（文件内容无法绑定到审批）" };
+  const target = resolveTarget(tool, args);
+  if ("refuse" in target) return target;
+  const isContent = tool !== "autocrew_pipeline";
+  return { action: `${tool}.${kind.key}`, targetId: target.id, ...(isContent ? { contentId: target.id } : {}), label: kind.label };
 }
 
 /** 参与指纹的参数：去掉归因/审批/认领这些不属于「要做什么」的键 */

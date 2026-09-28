@@ -47,22 +47,24 @@ async function requireApproval(svc: ChiefEditor, b: TokenBinding, turnId: string
  * 发布类动作的执行前门。返回 `{ proceed: args }` 放行（approval_id 已剥掉），否则返回要回给 agent 的结果。
  * 批准后稿件又被改过 → 指纹不符，审批失效，重新要一张审批卡（§边界 8）。
  */
-async function gate(svc: ChiefEditor, b: TokenBinding, turnId: string | null, tool: string, args: Json): Promise<{ proceed: Json } | { reply: Json }> {
+async function gate(svc: ChiefEditor, b: TokenBinding, turnId: string | null, tool: string, args: Json): Promise<{ proceed: Json; gated?: boolean } | { reply: Json }> {
   const target = classifyPublishAction(tool, args);
   if (!target) return { proceed: args };
+  if ("refuse" in target) return { reply: { ok: false, code: "refused", error: target.refuse } };
   if (!turnId) return { reply: { ok: false, code: "no_live_turn", error: "这一轮已经结束，发布类动作不能在后台发起；请创始人重新发话" } };
   const { approval_id: rawId, ...rest } = args;
   const approvalId = typeof rawId === "string" ? rawId.trim() : "";
   if (!approvalId) return { reply: await requireApproval(svc, b, turnId, target, rest) };
   const approved = svc.asks.approvedToken(approvalId);
-  if (!approved || approved.conversationId !== b.conversationId) {
+  // 审批只在批出它的那一轮有效：停止 / 收尾后没用掉的 id 带不进下一轮
+  if (!approved || approved.conversationId !== b.conversationId || approved.turnId !== turnId) {
     return { reply: await requireApproval(svc, b, turnId, target, rest, "这个 approval_id 无效、未获批准或已经用过") };
   }
   const content = target.contentId ? await svc.deps.getContent(target.contentId, b.dataDir) : null;
   const consumed = svc.deps.approvals.consume(approved.token, approvalBindingFor(target, rest, b.dataDir, content));
   svc.asks.consumed(approvalId);
   if (!consumed.ok) return { reply: await requireApproval(svc, b, turnId, target, rest, "批准之后稿件或参数又变了，原审批已失效") };
-  return { proceed: rest };
+  return { proceed: rest, gated: true };
 }
 
 /** 整个工具都是只读的 */
@@ -87,6 +89,13 @@ export async function handleAgentMcp(svc: ChiefEditor, b: TokenBinding, request:
   if ("reply" in gated) {
     await svc.recordCard(entryTurn, b, cardFromToolResult(tool, action, gated.reply, callId, args));
     return toolResponse(request.id, gated.reply);
+  }
+  // 门里有异步读：执行前再核一次——令牌已撤销、或发布类动作所属的轮已停，就不执行
+  const stale = !svc.tokenLive(b.token) || (gated.gated && svc.liveTurnFor(b) !== entryTurn);
+  if (stale) {
+    const reply = { ok: false, code: "no_live_turn", error: "这一轮已经停止或结束，没有执行；请创始人重新发话" };
+    await svc.recordCard(entryTurn, b, cardFromToolResult(tool, action, reply, callId, args));
+    return toolResponse(request.id, reply);
   }
   const response = await svc.deps.execMcp({ ...request, params: { ...params, arguments: gated.proceed } }, b.dataDir, b.turnId);
   const result = resultObject(response);

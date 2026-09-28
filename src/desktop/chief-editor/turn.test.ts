@@ -145,8 +145,8 @@ describe("边界 5：刷新 / 断线后重新挂上", () => {
     };
     const running = runLocalTurn(h.svc, input({ turnId }));
     await until(() => h.svc.asks.pending().length === 1);
-    const view = h.svc.pendingView();
-    expect(view.running).toMatchObject({ turnId, status: "running" });
+    const view = h.svc.pendingView({ dataDir: h.dataDir, clientId: "c1" });
+    expect(view.running).toMatchObject({ turnId, status: "running", owner: true });
     expect(view.asks[0]).toMatchObject({ kind: "permission", title: "允许本机 agent 执行？" });
     expect((await getTurnStatus(turnId)).status).toBe("running");
     h.svc.asks.answer(view.asks[0].id, "allow");

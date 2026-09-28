@@ -6,14 +6,14 @@
  * 有审批就挂着等（整轮持锁）→ 批准后给 agent 发一句继续 → 收尾撤令牌、杀进程组、落对话。
  * 停止 = ACP cancel，宽限 5 秒后杀整组；结果不明的写操作绝不自动重放。
  */
-import { createConversation, getConversation, appendTurn, updateConversationAgent } from "../../storage/conversation-store.js";
+import { createConversation, getConversation, updateConversationAgent } from "../../storage/conversation-store.js";
 import { registerTurn, settleTurn } from "../turn-registry.js";
 import { STATUS_TEXT, type AskView } from "./asks.js";
 import { ADAPTERS, pickPermissionOption, type BackendAdapter, type LocalBackendId } from "./backends.js";
 import type { AgentHandlers, AgentProcess } from "./acp-process.js";
 import { ensurePersona } from "./persona.js";
-import { redactAndTruncate, redactedTail } from "./redact.js";
-import type { ActiveTurn, ChiefEditor } from "./service.js";
+import { redactAndTruncate, redactedTail, redactText, StreamRedactor } from "./redact.js";
+import { appendConversation, type ActiveTurn, type ChiefEditor } from "./service.js";
 
 export interface LocalTurnInput {
   message: string;
@@ -23,6 +23,8 @@ export interface LocalTurnInput {
   dataDir: string;
   conversationId?: string;
   contentId?: string;
+  /** 视图上下文前缀：只拼进发给 agent 的 prompt，对话历史存原话 */
+  promptContext?: string;
   onDelta?: (e: { ev: "delta" | "reset" | "done"; text?: string }) => void;
   onProgress?: (e: Record<string, unknown>) => void;
 }
@@ -73,19 +75,23 @@ function toolLabel(u: { title?: string; rawInput?: unknown }): string {
 }
 
 /** session/load 会把历史对话当 update 重放一遍：重放期间的更新一律不算本轮输出 */
-interface StreamGate { replaying: boolean }
+interface StreamGate { replaying: boolean; flush?: () => void }
 
 function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, text: string[], gate: StreamGate): AgentHandlers {
   const calls = new Map<string, { title: string; kind?: string }>();
+  // agent 可能在正文里复述认领令牌：推 SSE 前脱敏（跨分块也挡得住），落盘另做一次全文脱敏
+  const redactor = new StreamRedactor();
+  const emit = (t: string) => { if (t) input.onDelta?.({ ev: "delta", text: t }); };
+  gate.flush = () => emit(redactor.finish());
   return {
     onUpdate(u) {
       if (gate.replaying) return;
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && u.content.text) {
         text.push(u.content.text);
-        input.onDelta?.({ ev: "delta", text: u.content.text });
+        emit(redactor.push(u.content.text));
       } else if (u.sessionUpdate === "tool_call" && u.toolCallId) {
         // 工具调用前后的两段话分开，不要拼成一句
-        if (text.length && text[text.length - 1] !== "\n\n") text.push("\n\n");
+        if (text.length && text[text.length - 1] !== "\n\n") { text.push("\n\n"); emit(redactor.push("\n\n")); }
         const title = toolLabel(u);
         calls.set(u.toolCallId, { title, ...(u.kind ? { kind: u.kind } : {}) });
         if (u.kind && WRITE_KINDS.has(u.kind)) turn.inFlight.set(u.toolCallId, title);
@@ -136,11 +142,16 @@ async function openSession(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendA
 }
 
 /** 进程先退出就当崩溃（§边界 12），不让 prompt 挂死 */
-async function promptOrCrash(proc: AgentProcess, sessionId: string, text: string): Promise<{ stopReason: string }> {
-  const crashed = proc.exited.then(({ code, signal }) => {
+/** 进程退出即抛：prompt 与「等审批」都要和它赛跑，适配器死了不能挂着锁等 10 分钟（§边界 12） */
+function orCrash<T>(proc: AgentProcess, work: Promise<T>): Promise<T> {
+  const crashed = proc.exited.then(({ code, signal }): never => {
     throw new Error(`适配器进程退出了（code=${code ?? "-"}${signal ? `，signal=${signal}` : ""}）`);
   });
-  return Promise.race([proc.prompt(sessionId, text), crashed]);
+  return Promise.race([work, crashed]);
+}
+
+function promptOrCrash(proc: AgentProcess, sessionId: string, text: string): Promise<{ stopReason: string }> {
+  return orCrash(proc, proc.prompt(sessionId, text));
 }
 
 function followupText(asks: AskView[]): string {
@@ -150,13 +161,14 @@ function followupText(asks: AskView[]): string {
 }
 
 /** prompt → 本轮有没告诉过 agent 的审批就挂着等它们落定（状态 awaiting_approval，整轮持锁）→ 发一句继续 → 循环 */
-async function promptLoop(svc: ChiefEditor, turn: ActiveTurn, proc: AgentProcess, sessionId: string, message: string): Promise<string> {
+async function promptLoop(svc: ChiefEditor, turn: ActiveTurn, proc: AgentProcess, sessionId: string, message: string, flush?: () => void): Promise<string> {
   let r = await promptOrCrash(proc, sessionId, message);
   for (;;) {
+    flush?.(); // 等审批前把已说完的话全部推出去
     const open = svc.asks.unreportedApprovals(turn.turnId);
     if (open.length === 0 || turn.aborted) return r.stopReason;
     if (open.some((a) => a.status === "pending")) svc.setStatus(turn, "awaiting_approval");
-    const settled = await svc.asks.settledApprovals(turn.turnId, open.map((a) => a.id));
+    const settled = await orCrash(proc, svc.asks.settledApprovals(turn.turnId, open.map((a) => a.id)));
     if (turn.aborted) return "cancelled";
     svc.asks.markReported(settled.map((a) => a.id));
     if (turn.status !== "running") svc.setStatus(turn, "running");
@@ -199,12 +211,6 @@ function replyText(turn: ActiveTurn, out: Outcome): string {
   return parts.filter(Boolean).join("\n\n");
 }
 
-async function persistOutcome(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, out: Outcome): Promise<void> {
-  const content = out.ok ? replyText(turn, out) : `⚠️ ${out.reply}`;
-  await appendTurn(turn.conversationId, { content: input.message }, { content, cards: turn.cards, turnId: turn.turnId }, turn.dataDir)
-    .catch((err) => console.warn(`[chief-editor] 本轮落盘失败：${err instanceof Error ? err.message : String(err)}`));
-}
-
 async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, adapter: BackendAdapter, signal: AbortSignal): Promise<Outcome> {
   const launch = adapter.launch();
   if (!launch) return { ok: false, reply: `${adapter.label}没装上：在 AutoCrew 目录运行 npm install。不会自动改用内置引擎。` };
@@ -224,27 +230,50 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
     const session = await openSession(svc, turn, adapter, proc, gate, conv.acpSessionId);
     turn.sessionId = session.sessionId;
     if (signal.aborted) stopAgent(svc, turn);
-    const stopReason = turn.aborted ? "cancelled" : await promptLoop(svc, turn, proc, session.sessionId, input.message);
+    const stopReason = turn.aborted ? "cancelled" : await promptLoop(svc, turn, proc, session.sessionId, `${input.promptContext ?? ""}${input.message}`, gate.flush);
     svc.authFailed.delete(adapter.id);
-    return { ok: true, reply: text.join("").trim(), stopReason, ...(session.notice ? { notice: session.notice } : {}) };
+    gate.flush?.();
+    return { ok: true, reply: redactText(text.join("")).trim(), stopReason, ...(session.notice ? { notice: session.notice } : {}) };
   } catch (err) {
-    if (turn.aborted) return { ok: true, reply: text.join("").trim(), stopReason: "cancelled" };
+    gate.flush?.();
+    if (turn.aborted) return { ok: true, reply: redactText(text.join("")).trim(), stopReason: "cancelled" };
     return { ok: false, reply: failureText(adapter, svc, err, proc) };
   }
 }
 
-async function finish(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, out: Outcome): Promise<void> {
-  svc.revokeToken(turn.token);
-  svc.asks.cancelTurn(turn.turnId);
-  turn.process?.kill();
-  if (turn.conversationId) {
-    svc.runs.patch(turn.turnId, { status: out.ok ? "done" : "failed", endedAt: new Date().toISOString(), cards: turn.cards, writes: turn.writes });
-    await persistOutcome(svc, turn, input, out);
+/** 本轮落进对话（走按会话串行队列）。失败就抛：完成状态只能在落盘成功之后才提交 */
+async function persistOutcome(turn: ActiveTurn, input: LocalTurnInput, out: Outcome): Promise<void> {
+  const content = out.ok ? replyText(turn, out) : `⚠️ ${out.reply}`;
+  const meta = await appendConversation(turn.conversationId, { content: input.message }, { content, cards: turn.cards, turnId: turn.turnId }, turn.dataDir);
+  if (!meta) throw new Error("对话在本轮进行中被删除了");
+}
+
+/**
+ * 先落对话、再把 run 标 done/failed：落盘失败 run 保持未完成，守护进程下次启动按中断补写（带卡片与写动作）。
+ * 解锁（active=null、settleTurn）放 finally，任何持久化异常都不能把全局锁永远卡住。
+ */
+async function finish(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, out: Outcome): Promise<string | null> {
+  let persistError: string | null = null;
+  try {
+    svc.revokeToken(turn.token);
+    svc.asks.endTurn(turn.turnId);
+    turn.process?.kill();
+    if (turn.conversationId) {
+      await persistOutcome(turn, input, out);
+      svc.runs.patch(turn.turnId, { status: out.ok ? "done" : "failed", endedAt: new Date().toISOString(), cards: turn.cards, writes: turn.writes });
+    }
+  } catch (err) {
+    persistError = err instanceof Error ? err.message : String(err);
+    console.warn(`[chief-editor] 本轮收尾落盘失败：${persistError}`);
+  } finally {
+    svc.active = null;
+    try {
+      svc.deps.emit({ type: "turn", turnId: turn.turnId, conversationId: turn.conversationId, status: out.ok ? "done" : "failed" });
+      input.onDelta?.({ ev: "done" });
+    } catch { /* 推送失败不影响解锁 */ }
+    await settleTurn(turn.turnId, { ...(turn.conversationId ? { conversationId: turn.conversationId } : {}), dataDir: turn.dataDir });
   }
-  svc.deps.emit({ type: "turn", turnId: turn.turnId, conversationId: turn.conversationId, status: out.ok ? "done" : "failed" });
-  input.onDelta?.({ ev: "done" });
-  svc.active = null;
-  await settleTurn(turn.turnId, { ...(turn.conversationId ? { conversationId: turn.conversationId } : {}), dataDir: turn.dataDir });
+  return persistError;
 }
 
 export async function runLocalTurn(svc: ChiefEditor, input: LocalTurnInput): Promise<Result> {
@@ -254,13 +283,15 @@ export async function runLocalTurn(svc: ChiefEditor, input: LocalTurnInput): Pro
   if (!lock.ok) return { ok: false, error: lock.error };
   const { turn } = lock;
   let out: Outcome = { ok: false, reply: "未知错误" };
+  let persistError: string | null = null;
   try {
     out = await execute(svc, turn, input, adapter, lock.signal);
   } catch (err) {
     out = { ok: false, reply: failureText(adapter, svc, err) };
   } finally {
-    await finish(svc, turn, input, out);
+    persistError = await finish(svc, turn, input, out);
   }
+  if (persistError) out = { ok: false, reply: `这一轮的结果没能写进对话：${redactAndTruncate(persistError, 120)}。记录已保留，守护进程下次启动会按中断补写。` };
   if (!out.ok) return { ok: false, error: out.reply, ...(turn.conversationId ? { data: { conversationId: turn.conversationId } } : {}) };
   const stopReason = turn.aborted ? "aborted" : out.stopReason;
   return { ok: true, data: { reply: replyText(turn, out), cards: turn.cards, conversationId: turn.conversationId, backend: turn.backend, writes: turn.writes, ...(stopReason ? { stopReason } : {}) } };

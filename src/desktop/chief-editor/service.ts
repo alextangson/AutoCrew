@@ -6,7 +6,8 @@
  * - 卡片按调用 id 去重，先落盘（run 记录）再推送。
  */
 import { randomBytes } from "node:crypto";
-import { appendTurn } from "../../storage/conversation-store.js";
+import { appendTurn, type ConversationMeta } from "../../storage/conversation-store.js";
+import { enqueueConversationWrite } from "../chat-persist.js";
 import type { ApprovalBinding } from "../approval-gate.js";
 import { AskRegistry, type AskView } from "./asks.js";
 import { backendStatuses, type BackendStatus, type LocalBackendId } from "./backends.js";
@@ -82,6 +83,10 @@ export class ChiefEditor {
     if (token) this.tokens.delete(token);
   }
 
+  tokenLive(token: string): boolean {
+    return this.tokens.has(token);
+  }
+
   /** `Authorization: Bearer ce_…` → 绑定；未知/已撤销返回 null（调用方按普通鉴权走，最终 401） */
   bindingFor(authorization: string | string[] | undefined): TokenBinding | null {
     const header = Array.isArray(authorization) ? authorization[0] : authorization;
@@ -116,17 +121,22 @@ export class ChiefEditor {
       return;
     }
     const bg = { ...card, background: true };
-    await appendTurn(binding.conversationId, { content: "（后台结果）", origin: "system" }, { content: "本机 agent 在轮次结束后返回了一条结果：", cards: [bg] }, binding.dataDir)
+    await appendConversation(binding.conversationId, { content: "（后台结果）", origin: "system" }, { content: "本机 agent 在轮次结束后返回了一条结果：", cards: [bg] }, binding.dataDir)
       .catch((err) => console.warn(`[chief-editor] 后台结果落盘失败：${err instanceof Error ? err.message : String(err)}`));
     this.deps.emit({ type: "background", conversationId: binding.conversationId, card: bg });
   }
 
-  pendingView(conversationId?: string): { running: Record<string, unknown> | null; asks: AskView[] } {
+  /**
+   * 刷新/重连后的重挂视图。只给本资料库的：别的库里跑着的 agent 只经 statuses().running.otherLibrary 提示，
+   * 它的卡不能在这边被批（评审 P2-15）。owner = 请求方就是发起这一轮的标签页；其余标签页只旁观（P2-14）。
+   */
+  pendingView(opts: { conversationId?: string; dataDir: string; clientId?: string }): { running: Record<string, unknown> | null; asks: AskView[] } {
     const a = this.active;
-    const running = a && (!conversationId || a.conversationId === conversationId)
-      ? { turnId: a.turnId, conversationId: a.conversationId, status: a.status, backend: a.backend, cards: a.cards }
+    if (!a || a.dataDir !== opts.dataDir) return { running: null, asks: [] };
+    const running = !opts.conversationId || a.conversationId === opts.conversationId
+      ? { turnId: a.turnId, conversationId: a.conversationId, status: a.status, backend: a.backend, cards: a.cards, owner: Boolean(opts.clientId) && opts.clientId === a.clientId }
       : null;
-    return { running, asks: this.asks.pending(conversationId ? { conversationId } : undefined) };
+    return { running, asks: this.asks.pending(opts.conversationId ? { conversationId: opts.conversationId } : undefined) };
   }
 
   statuses(builtinConfigured: boolean, activeDataDir: string): { backends: BackendStatus[]; running: Record<string, unknown> | null } {
@@ -137,19 +147,30 @@ export class ChiefEditor {
     };
   }
 
-  /** 守护进程启动：残留轮标中断、清孤儿进程组，并在各自对话里留一句（不自动重放） */
+  /**
+   * 守护进程启动：残留轮标中断、清孤儿进程组，并在各自对话里留一句（不自动重放）。
+   * 这一轮已入账的卡片和写动作一起写进去——结果没来得及落盘的轮，在这里补上。
+   */
   async recoverOnStartup(killGroup?: (pid: number, command: string) => boolean): Promise<RunRecord[]> {
     const leftovers = this.runs.recoverOnStartup(killGroup);
     for (const r of leftovers) {
-      await appendTurn(
-        r.conversationId,
-        { content: r.message },
-        { content: "⚠️ 这一轮被中断了（守护进程重启）。已完成的写动作不会自动重做；需要的话直接重发，能续上原会话就续，续不上会说一句「已新开」。", turnId: r.turnId },
-        r.dataDir,
-      ).catch(() => { /* 对话已删：记录照样标中断 */ });
+      const writes = r.writes?.length ? `中断前已完成的写动作：${r.writes.join("；")}。` : "中断前没有记录到完成的写动作。";
+      const content = `⚠️ 这一轮被中断了（守护进程重启）。${writes}已完成的写动作不会自动重做；需要的话直接重发，能续上原会话就续，续不上会说一句「已新开」。`;
+      await appendConversation(r.conversationId, { content: r.message }, { content, cards: r.cards ?? [], turnId: r.turnId }, r.dataDir)
+        .catch(() => { /* 对话已删：记录照样标中断 */ });
     }
     return leftovers;
   }
+}
+
+/** 会话写入一律走 chat-persist 的按会话串行队列 */
+export function appendConversation(
+  id: string,
+  user: { content: string; origin?: "system" },
+  assistant: { content: string; cards?: Record<string, unknown>[]; turnId?: string },
+  dataDir: string,
+): Promise<ConversationMeta | null> {
+  return enqueueConversationWrite(id, () => appendTurn(id, user, assistant, dataDir));
 }
 
 let instance: ChiefEditor | null = null;

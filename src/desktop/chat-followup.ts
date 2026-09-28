@@ -32,7 +32,7 @@ import {
   type ResearchJobKind,
 } from "../modules/research/research-job-store.js";
 import { PERSPECTIVE_TASK_BOOKS } from "../modules/research/research-perspectives.js";
-import { runPersistedChatTurn } from "./chat-persist.js";
+import { enqueueConversationWrite, runPersistedChatTurn } from "./chat-persist.js";
 import { emitEngineEvent } from "./event-hub.js";
 import { hasActiveTurnForConversation } from "./turn-registry.js";
 
@@ -237,7 +237,7 @@ export async function runResearchFollowup(job: ResearchJob, deps: FollowupDeps):
 /** 本机后端对话的回流：一张调研结果卡，落盘即告知前端；不经任何模型 */
 async function appendResultCard(job: ResearchJob, conversationId: string, deps: FollowupDeps): Promise<FollowupOutcome> {
   const card = { type: "agent_task", data: { tool: "autocrew_research", action: "deep_dive", taskId: job.topicId, status: "调研已完成，简报在选题卡上" } };
-  const meta = await appendTurn(conversationId, { content: "【调研回报】", origin: "system" }, { content: `选题 ${job.topicId} 的调研已完成。需要继续的话直接跟我说。`, cards: [card] }, deps.dataDir);
+  const meta = await enqueueConversationWrite(conversationId, () => appendTurn(conversationId, { content: "【调研回报】", origin: "system" }, { content: `选题 ${job.topicId} 的调研已完成。需要继续的话直接跟我说。`, cards: [card] }, deps.dataDir));
   if (!meta) return "skipped";
   await markJobFollowedUp(job.topicId, new Date().toISOString(), deps.dataDir);
   deps.onDelivered?.({ conversationId, topicId: job.topicId });

@@ -142,10 +142,19 @@ export class AskRegistry {
   }
 
   /** agent 带 approval_id 重调时取回审批（只认已批准、未消费的） */
-  approvedToken(approvalId: string): { token: string; binding: ApprovalBinding; conversationId: string } | null {
+  approvedToken(approvalId: string): { token: string; binding: ApprovalBinding; conversationId: string; turnId: string } | null {
     const r = this.asks.get(approvalId);
     if (!r || r.kind !== "approval" || r.status !== "approved" || !r.approvalToken || !r.binding) return null;
-    return { token: r.approvalToken, binding: r.binding, conversationId: r.conversationId };
+    return { token: r.approvalToken, binding: r.binding, conversationId: r.conversationId, turnId: r.turnId };
+  }
+
+  /** 轮次结束（停止 / 收尾 / 进程退出）：待处理卡作废，已批未用的凭证一并吊销 */
+  endTurn(turnId: string): void {
+    for (const r of this.asks.values()) {
+      if (r.turnId !== turnId) continue;
+      this.settle(r, "cancelled");
+      r.approvalToken = undefined;
+    }
   }
 
   /** 凭证用过一次就作废（ApprovalGate 本身也是单次，这里同步清掉，别让它重复出现在视图里） */

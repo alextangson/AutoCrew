@@ -25,6 +25,14 @@ const HISTORY_WINDOW = 12;
 /** Per-conversation write queue — prevents interleaved read-modify-write on appendTurn */
 const writeQueues = new Map<string, Promise<unknown>>();
 
+/**
+ * 同一段会话的所有写（内置引擎轮、本机 agent 轮、后台结果、恢复留痕、调研回流卡）走这一条串行队列，
+ * 否则并发的 read-modify-write 会互相覆盖（总编辑接本机 agent 评审 P2-9）。
+ */
+export function enqueueConversationWrite<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
+  return enqueue(conversationId, task);
+}
+
 function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   const prev = writeQueues.get(key) ?? Promise.resolve();
   const next = prev.then(task, task);
