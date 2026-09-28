@@ -110,3 +110,16 @@ button.dcover-add:hover { color: var(--ink); border-color: var(--ink); }
 .dcover-ops { position: absolute; inset: auto 0 0 0; display: none; flex-direction: column; background: rgba(22, 21, 15, 0.72); }
 .dcover:hover .dcover-ops, .dcover:focus-within .dcover-ops { display: flex; }
 .dcover-ops button { border: none; border-radius: 0; background: none; color: #fff; padding: 1px 0; font-size: var(--fs-xs); line-height: 1.3; }
+
+/* 作品列表放大（创始人 09-28：列表整体偏小）：封面 3:4 大一档、标题 16、主数字 16，行距拉开 */
+.data-table .data-head, .data-table .data-row { grid-template-columns: minmax(0, 1fr) repeat(var(--data-cols), 120px); gap: var(--s3); padding: var(--s3) var(--s5); }
+.data-table .data-head { font-size: var(--fs-sm); }
+.data-table .data-row { min-height: 96px; }
+.data-table .data-title { gap: var(--s4); }
+.data-table .data-title-text { font-size: var(--fs-lg); font-weight: 500; }
+.data-table .data-sub { font-size: var(--fs-sm); margin-top: var(--s1); }
+.data-table .data-num { font-size: var(--fs-lg); font-weight: 600; }
+.data-table .data-num.is-bold { font-weight: 700; }
+.data-table .data-rate { font-size: var(--fs-sm); font-weight: 400; }
+.data-table .dcover { width: 54px; height: 72px; }
+.data-table .data-group { font-size: var(--fs-sm); padding: var(--s2) var(--s5); }
