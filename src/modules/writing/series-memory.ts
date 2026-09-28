@@ -73,6 +73,8 @@ export function digest(value: unknown): string {
 export interface SeriesEntry { id: string; text: string }
 export interface SeriesItem {
   content_id: string;
+  /** 同选题只取最新一版的判定键（选题 id；没有选题时是 content:<id>） */
+  topic_key?: string;
   draft_hash: string;
   /** 摘要版本号；0 = 没有有效摘要 */
   outline_version: number;
@@ -126,6 +128,7 @@ function toItem(c: Content, at: string): SeriesItem {
   const { entries, truncated } = outline ? outlineEntries(outline) : excerptEntries(c.body);
   return {
     content_id: c.id,
+    topic_key: c.topicId ?? `content:${c.id}`,
     draft_hash: draftHash(c),
     outline_version: outline ? c.outlineVersion ?? 1 : 0,
     title: c.title.slice(0, 120),
@@ -167,6 +170,26 @@ export function buildSeriesSnapshot(contents: Content[], platform: string, exclu
 /** 从资料目录现读一份快照（领包冻结、审稿前核对过时都用它） */
 export async function loadSeriesSnapshot(platform: string, exclude: SeriesExclude, dataDir?: string, now = Date.now()): Promise<SeriesSnapshot> {
   return buildSeriesSnapshot(await listContents(dataDir), platform, exclude, now);
+}
+
+/**
+ * 补审用的快照：冻结快照 + 新进入范围（或正文变了）的稿，按同一口径重排（时间倒序、再按 id）、
+ * 同选题只留最新一版、截到最多 10 条——发出去的补审任务永远交得上（Codex 评审 P1）。
+ */
+export function mergeSnapshot(frozen: SeriesSnapshot, additions: SeriesItem[]): SeriesSnapshot {
+  const replaced = new Set(additions.map((i) => i.content_id));
+  const all = [...frozen.items.filter((i) => !replaced.has(i.content_id)), ...additions]
+    .sort((a, b) => b.enteredAt.localeCompare(a.enteredAt) || a.content_id.localeCompare(b.content_id));
+  const seen = new Set<string>();
+  const items: SeriesItem[] = [];
+  for (const item of all) {
+    const key = item.topic_key ?? `content:${item.content_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(item);
+    if (items.length === SERIES_MAX_ITEMS) break;
+  }
+  return { id: digest({ platform: frozen.platform, items }), platform: frozen.platform, builtAt: new Date().toISOString(), items };
 }
 
 /** 冻结之后有没有新稿进入范围（或范围内的稿正文变了）：这些条目需要补审 */

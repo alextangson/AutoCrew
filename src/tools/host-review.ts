@@ -1,6 +1,6 @@
 import { seriesTransaction } from "../storage/series-transaction.js";
 import {
-  SERIES_REVIEW_RULES, digest as seriesDigest, loadSeriesSnapshot, renderSnapshot, seriesReviewSchema, snapshotAdditions, validateSeriesReview,
+  SERIES_REVIEW_RULES, loadSeriesSnapshot, mergeSnapshot, renderSnapshot, seriesReviewSchema, snapshotAdditions, validateSeriesReview,
   type SeriesReview, type SeriesSnapshot,
 } from "../modules/writing/series-memory.js";
 import { reviewContextHash, updateContentIfDraftMatches } from "../storage/local-store.js";
@@ -149,13 +149,6 @@ function seriesReviewBlock(rec: PackAttempt): string {
     "", "", SERIES_REVIEW_RULES, renderSnapshot(snapshot),
     outline ? `【新稿作者自报的摘要（只帮你定位，按正文判断）】\n${JSON.stringify(outline)}` : "",
   ].filter((x, i) => i < 2 || x).join("\n");
-}
-
-/** 快照过时：把新进入范围（或正文变了）的稿并进审稿单的快照，要求补审后重交 */
-function mergeSnapshot(frozen: SeriesSnapshot, additions: SeriesSnapshot["items"]): SeriesSnapshot {
-  const ids = new Set(additions.map((i) => i.content_id));
-  const items = [...frozen.items.filter((i) => !ids.has(i.content_id)), ...additions];
-  return { id: seriesDigest({ platform: frozen.platform, items }), platform: frozen.platform, builtAt: new Date().toISOString(), items };
 }
 
 /**

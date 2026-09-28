@@ -148,3 +148,18 @@ describe("series review lands only on the reviewed draft version (Codex P1)", ()
     expect(after.status).toBe("drafting");
   });
 });
+
+describe("re-review snapshot stays submittable (Codex P1)", () => {
+  it("a full frozen snapshot (10) plus a newcomer re-trims to the newest 10 and the re-review can be submitted", async () => {
+    for (let i = 0; i < 10; i++) await publishedNeighbour(`邻居${i}`);
+    const { content, review } = await seedNewContractPack();
+    expect(review.series_snapshot.items).toHaveLength(10);
+    const newcomer = await publishedNeighbour("审稿期间进来的第 11 条");
+    const base = { action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [] };
+    const stale = await desk({ ...base, series_review: coverAll(review.series_snapshot) }) as { status: string; series_snapshot: { id: string; items: Array<{ content_id: string; insufficient: boolean }> } };
+    expect(stale.status).toBe("series_snapshot_stale");
+    expect(stale.series_snapshot.items).toHaveLength(10);
+    expect(stale.series_snapshot.items[0].content_id).toBe(newcomer.id);
+    expect(await desk({ ...base, series_review: coverAll(stale.series_snapshot) })).toMatchObject({ ok: true, status: "accepted" });
+  });
+});
