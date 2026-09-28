@@ -20,7 +20,7 @@
 |---|---|---|
 | Claude | `@agentclientprotocol/claude-agent-acp`（npm 0.81.x） | ChatCut 数据目录里 `acp-agents/provider-config/claude-acp` |
 | Codex | `@zed-industries/codex-acp`（npm 0.16.x） | ChatCut 同目录 `codex-acp` |
-| WorkBuddy | App 自带 CLI `…/WorkBuddy.app/…/cli/bin/codebuddy --acp` | `--help` 里原生 `--acp`（stdio ndJson） |
+| ~~WorkBuddy~~ | 改为反向接，见下节 | 自带 CLI 仅 headless、无法独立登录 |
 
 版本锁死。守护进程是 ACP client，三家共用一套：initialize → session/new（带 mcpServers、cwd）→ prompt → 流式 update / tool_call / request_permission → cancel → session/load。
 
@@ -30,6 +30,30 @@
 - **阶段 1：Claude 端到端**，把下面的地基全做完。
 - **阶段 2：接 Codex、WorkBuddy**——地基复用，每家只是启动命令 + 差异适配 + 过 spike。
 - **v2（不在本期）**：模型选择器、完整卡片映射、多 agent 并发。
+
+## WorkBuddy：反向接（2026-09-28 创始人定）
+
+WorkBuddy App 自带 CLI 只有 headless 模式、登录态由 App 内部注入，网页驱动不了它。改成 ChatCut 同款的反方向：
+**WorkBuddy 当宿主，自己连 AutoCrew MCP；AutoCrew 网页只负责「一键接入」和「复制指令」。** 网页后端切换器里不出现 WorkBuddy。
+
+- **接入**：`workbuddy` 成为新的命名宿主（`src/desktop/host-cli.ts` KNOWN_HOSTS），权限同 claude-code（采纳硬拒照旧）。
+  `npx autocrew host workbuddy` 与集成页「宿主」卡上的「连接 WorkBuddy」按钮做同一件事：发令牌，并往 `~/.workbuddy/mcp.json`
+  合并写入一条 stdio 条目 `autocrew`（走现有 `bin/autocrew.mjs mcp` 转发器，同 Claude Code）。ChatCut 也是这样把自己写进这份文件的。
+- **复制指令**：稿件页与对话栏各一个「复制给 WorkBuddy」按钮，复制一句话，例如：
+  「通过 autocrew MCP 调用 autocrew_desk 打开《<标题>》（id: <id>），总结这篇现在在哪一步、卡在哪，然后等我指示，先不要改任何东西。」
+  （中文，WorkBuddy 用国产模型；措辞待创始人认。）
+- **边界**
+  | # | 场景 | 行为 |
+  |---|---|---|
+  | W1 | 没装 WorkBuddy | 连接按钮置灰，说明「没找到 WorkBuddy」；复制按钮照常可用（指令本身不依赖安装） |
+  | W2 | `mcp.json` 不存在 | 新建，只含 autocrew 一条 |
+  | W3 | `mcp.json` 已有别的条目（ChatCut 等） | 只合并 autocrew 一条，别的原样保留；写前备份到同目录 `mcp.json.autocrew-bak` |
+  | W4 | `mcp.json` 解析失败 | 不写，报错说文件坏了在哪，让用户手修；绝不覆盖 |
+  | W5 | 已有 autocrew 条目 | 更新为当前路径（仓库挪过位置也能修好），不重复加 |
+  | W6 | 写完 WorkBuddy 还开着 | 提示「重启 WorkBuddy 后生效」 |
+  | W7 | 撤销令牌 | 同其他宿主：之后调用 401；`mcp.json` 条目保留，提示可一并删除 |
+  | W8 | AutoCrew 服务没运行 | 转发器照现有行为回「AutoCrew 服务没有运行」 |
+- 放在阶段 2，和 Codex 一起做；不依赖 ACP。
 
 ## 地基设计（对应 Codex P1/P2）
 
