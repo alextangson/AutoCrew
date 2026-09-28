@@ -121,7 +121,7 @@ function AllWorks(props: { data: DataPageData; onChanged: () => void; openEditor
           {rows.length === 0
             ? <p className="muted data-empty">还没有任何平台数据。去设置页导入 CSV 或打开自动回流。</p>
             : <DataTable rows={rows} columns={data.columns} metric={metric} thresholds={metricThresholds(data.rows, metric)} avail={availability(data.rows)} contents={data.contents} covers={data.covers} onChanged={props.onChanged} openEditor={props.openEditor} />}
-          <p className="muted data-foot">粗体 = 高于这个平台全部历史在这个指标上的中位数。「—」= 这个平台没发；「未回流」= 发了，数据还没回来；「平台不提供」= 这个平台的数据里从来没有这项。点击率 = 播放 ÷ 曝光，只有带曝光数的平台能算。点一行看各次快照。
+          <p className="muted data-foot">粗体 = 高于这个平台全部历史在这个指标上的中位数。「—」= 这个平台没发；「未回流」= 发了，数据还没回来；「没有这项」= 这个平台目前收到的数据里没有这项。点击率：抖音用后台给的封面点击率（开自动回流后才有），小红书用 播放 ÷ 曝光。点一行看各次快照。
             封面：自动回流会顺手抓{COVER_CAPTURE_PLATFORMS.map(platformLabel).join("、")}的封面；{data.columns.filter((p) => !COVER_CAPTURE_PLATFORMS.includes(p)).map(platformLabel).join("、")}该平台暂未抓封面，可点封面位或拖图进去手动补。</p>
         </div>
       )}

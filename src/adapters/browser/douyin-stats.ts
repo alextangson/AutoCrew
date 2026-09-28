@@ -78,6 +78,7 @@ function mapItem(base: Bag, metricBags: Bag[]): TypedRow {
   assign(metrics, "favorites", pick("favorite_count", "collect_count"));
   assign(metrics, "completionRate", pick("completion_rate"));
   assign(metrics, "completion5s", pick("completion_rate_5s"));
+  assign(metrics, "coverClickRate", pick("cover_click_rate"));
   const id = idOf(base.id, base.item_id, base.aweme_id);
   const coverUrl = coverUrlOf(base);
   return {

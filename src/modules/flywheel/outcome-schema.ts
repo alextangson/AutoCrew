@@ -13,6 +13,9 @@ export interface OutcomeMetrics {
   completionRate?: number;
   /** 5 秒完播率，百分比 0-100（抖音独有，对钩子质量更敏感） */
   completion5s?: number;
+  /** 封面点击率，百分比 0-100：平台直接给的（抖音 metrics.cover_click_rate，09-27 真实接口核实）。
+   *  有它就用它；没有时展示层才退回 播放 ÷ 曝光 推算 */
+  coverClickRate?: number;
   likes?: number;
   comments?: number;
   shares?: number;
@@ -55,6 +58,7 @@ export interface OutcomeValidation {
 const RATE_METRICS = [
   ["completionRate", "完播率"],
   ["completion5s", "5s完播率"],
+  ["coverClickRate", "封面点击率"],
 ] as const;
 
 /** 完播类指标检查：超出 0-100 拒收，(0,1) 疑似小数比例转人工 */

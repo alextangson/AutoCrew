@@ -13,6 +13,9 @@ describe("点击率（播放 ÷ 曝光）", () => {
     expect(metricValue(w("xiaohongshu", { views: 50, impressions: 1000 }), "ctr")).toBeCloseTo(5);
     expect(metricValue(w("xiaohongshu", { views: 50, impressions: 0 }), "ctr")).toBeNull();
     expect(metricValue(w("douyin", { views: 50 }), "ctr")).toBeNull();
+    // 平台直接给的封面点击率优先于 播放 ÷ 曝光
+    expect(metricValue(w("douyin", { views: 50, coverClickRate: 24.3 }), "ctr")).toBeCloseTo(24.3);
+    expect(metricValue(w("xiaohongshu", { views: 50, impressions: 1000, coverClickRate: 7 }), "ctr")).toBeCloseTo(7);
   });
 });
 
@@ -43,7 +46,7 @@ describe("按指标的中位数与加粗", () => {
 describe("单元格空态", () => {
   const rows = [row([w("douyin", { views: 5 }), w("xiaohongshu", { views: 5, impressions: 100 })], ["wechat_video"])];
   const avail = availability(rows);
-  it("没发「—」/ 发了没回流「未回流」/ 平台从不报「平台不提供」", () => {
+  it("没发「—」/ 发了没回流「未回流」/ 目前没有这项数据「没有这项」", () => {
     expect(metricCell(rows[0], "bilibili", "views", new Map(), avail).kind).toBe("none");
     expect(metricCell(rows[0], "wechat_video", "views", new Map(), avail).kind).toBe("missing");
     expect(metricCell(rows[0], "douyin", "ctr", new Map(), avail).kind).toBe("unsupported");

@@ -30,12 +30,12 @@ export interface TableProps {
 
 type CellArgs = { row: DataRow; platform: string; metric: MetricId; thresholds: Map<string, number>; avail: Map<string, Set<MetricId>> };
 
-/** 四态：数值 /「—」没发 /「未回流」/「平台不提供」 */
+/** 四态：数值 /「—」没发 /「未回流」/「没有这项」 */
 function CellView({ row, platform, metric, thresholds, avail }: CellArgs) {
   const c = metricCell(row, platform, metric, thresholds, avail);
   if (c.kind === "none") return <span className="data-num data-none" title="这个平台没发">—</span>;
   if (c.kind === "missing") return <span className="data-num data-missing" title="发了，数据还没回来">未回流</span>;
-  if (c.kind === "unsupported") return <span className="data-num data-na" title="这个平台的数据里没有这项指标">平台不提供</span>;
+  if (c.kind === "unsupported") return <span className="data-num data-na" title="这个平台目前收到的数据里没有这项指标">没有这项</span>;
   return <span className={"data-num" + (c.bold ? " is-bold" : "")}>{fmtMetric(metric, c.value)}</span>;
 }
 

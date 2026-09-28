@@ -106,6 +106,19 @@ describe("精度保护(端点文档 §1 坑 ①)", () => {
   });
 });
 
+describe("封面点击率（09-27 真实接口字段 metrics.cover_click_rate，比例字符串）", () => {
+  it("比例归一成百分比；没有这个字段就不落键", () => {
+    const body = JSON.stringify({ items: [
+      { id: "1", item_title: "有点击率", create_time: 1783600000, metrics: { view_count: "100", cover_click_rate: "0.243243", cover_show: "111" } },
+      { id: "2", item_title: "没有点击率", create_time: 1783600000, metrics: { view_count: "50" } },
+    ], has_more: false });
+    const parsed = parseDouyinItemList(body);
+    if (parsed.kind !== "ok") throw new Error("应解析成功");
+    expect(parsed.rows[0].metrics.coverClickRate).toBeCloseTo(24.3243, 3);
+    expect(parsed.rows[1].metrics).not.toHaveProperty("coverClickRate");
+  });
+});
+
 describe("parseDouyinItemList(fixture 锚定)", () => {
   it("现行主路:字符串数值转数字,率类归一到 0-100,标题优先 item_title", () => {
     const parsed = parseDouyinItemList(ITEM_LIST);

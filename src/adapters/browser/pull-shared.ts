@@ -126,7 +126,7 @@ export function normalizeRate(raw: unknown): number | undefined {
 
 /** 只在有值时落键:Partial<OutcomeMetrics> 里 undefined 键与不存在等价,但别写进去 */
 export function assign(metrics: Partial<OutcomeMetrics>, key: keyof OutcomeMetrics, raw: unknown): void {
-  const v = key === "completionRate" || key === "completion5s" ? normalizeRate(raw) : toCount(raw);
+  const v = key === "completionRate" || key === "completion5s" || key === "coverClickRate" ? normalizeRate(raw) : toCount(raw);
   if (v !== undefined) metrics[key] = v;
 }
 

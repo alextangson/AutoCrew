@@ -24,6 +24,8 @@ export const isMetricId = (v: unknown): v is MetricId => METRICS.some((m) => m.i
 export function metricValue(w: Work, id: MetricId): number | null {
   const m = latest(w).metrics;
   if (id === "ctr") {
+    // 平台直接给的封面点击率优先（抖音）；没有才用 播放 ÷ 曝光 推（小红书）
+    if (typeof m.coverClickRate === "number") return m.coverClickRate;
     const v = m.views, imp = m.impressions;
     return typeof v === "number" && typeof imp === "number" && imp > 0 ? (v / imp) * 100 : null;
   }
@@ -63,7 +65,7 @@ export type MetricCell =
   | { kind: "data"; value: number; bold: boolean }
   | { kind: "none" } // 这个平台没发：「—」
   | { kind: "missing" } // 发了，数据还没回来：「未回流」
-  | { kind: "unsupported" }; // 这个平台从不报这个指标：「平台不提供」
+  | { kind: "unsupported" }; // 这个平台目前收到的数据里没有这个指标：「没有这项」
 
 export function metricCell(row: DataRow, platform: string, id: MetricId, thresholds: Map<string, number>, avail: Map<string, Set<MetricId>>): MetricCell {
   const w = row.works.find((x) => x.platform === platform);
