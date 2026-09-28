@@ -37,7 +37,8 @@ describe("writes to in-scope content wait for the series lock", () => {
     const revert = revertToVersion(neighbour.id, 1, dir);
     const leave = transitionStatus(neighbour.id, "revision", { force: true }, dir);
     const unrelated = updateContent(outside.id, { body: "范围外随便改" }, dir);
-    expect(await settledWithin(unrelated)).toBe(true);
+    // 「应当完成」给宽裕窗口：全量并发时单次落盘可能超过 50ms；若它真被系列锁挡住，锁不放就永远不会完成
+    expect(await settledWithin(unrelated, 5000)).toBe(true);
     expect(await settledWithin(edit)).toBe(false);
     expect(await settledWithin(matched)).toBe(false);
     expect(await settledWithin(revert)).toBe(false);
