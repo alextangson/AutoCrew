@@ -123,3 +123,12 @@ button.dcover-add:hover { color: var(--ink); border-color: var(--ink); }
 .data-table .data-rate { font-size: var(--fs-sm); font-weight: 400; }
 .data-table .dcover { width: 54px; height: 72px; }
 .data-table .data-group { font-size: var(--fs-sm); padding: var(--s2) var(--s5); }
+
+/* 指标切换 + 单元格空态 + 展开后的全部指标格 */
+.data-metric-seg { align-self: flex-start; flex-wrap: wrap; }
+.data-table .data-num.data-none { color: var(--muted); font-weight: 400; }
+.data-table .data-num.data-missing { font-size: var(--fs-xs); color: var(--hot); font-weight: 400; }
+.data-table .data-num.data-na { font-size: var(--fs-xs); color: var(--line-2); font-weight: 400; }
+.data-mgrid { display: grid; grid-template-columns: 80px repeat(var(--data-cols), 96px); gap: 2px var(--s2); align-items: center; }
+.data-mgrid-h { font-size: var(--fs-xs); color: var(--muted); text-align: right; }
+.data-table .data-mgrid .data-num { font-size: var(--fs-sm); font-weight: 400; }

@@ -15,10 +15,11 @@ import { Card } from "../components/Card";
 import { Button } from "../components/Button";
 import { loadDataPage } from "./board-api";
 import { DataTable } from "./DataTable";
+import { METRICS, availability, loadMetric, metricThresholds, saveMetric, type MetricId } from "./data-metrics";
 import { ExperimentsCard, useRetros } from "./DataAside";
 import { LatestCard, NextCard, TrendCard } from "./DataQuestions";
 import {
-  COVER_CAPTURE_PLATFORMS, boldThresholds, fmtViews, monthLabel, pickMonth, platformCards, pullLine, rowsInPeriod, sourceLabel,
+  COVER_CAPTURE_PLATFORMS, fmtViews, monthLabel, pickMonth, platformCards, pullLine, rowsInPeriod, sourceLabel,
   type DataPageData, type Period,
 } from "./data-lib";
 import type { PullPlatformStatus } from "../pull-lib";
@@ -93,6 +94,8 @@ function AllWorks(props: { data: DataPageData; onChanged: () => void; openEditor
   const { data } = props;
   const [open, setOpen] = useState(false);
   const [period, setPeriod] = useState<Period>("month");
+  const [metric, setMetricState] = useState<MetricId>(loadMetric);
+  const setMetric = (m: MetricId) => { setMetricState(m); saveMetric(m); };
   const { month, fallback } = pickMonth(data.rows, Date.now());
   const rows = rowsInPeriod(data.rows, period, month);
   return (
@@ -108,12 +111,17 @@ function AllWorks(props: { data: DataPageData; onChanged: () => void; openEditor
               <button key={p} role="tab" aria-selected={period === p} className={period === p ? "is-on" : ""} onClick={() => setPeriod(p)}>{p === "month" ? "本月" : "全部"}</button>
             ))}
           </div>
+          <div className="data-seg data-metric-seg" role="tablist" aria-label="表格显示哪个指标">
+            {METRICS.map((m) => (
+              <button key={m.id} role="tab" aria-selected={metric === m.id} className={metric === m.id ? "is-on" : ""} onClick={() => setMetric(m.id)}>{m.label}</button>
+            ))}
+          </div>
           {period === "month" && fallback && month && <p className="data-note">本月还没有数据，下面是最近有数据的 {monthLabel(month)}。</p>}
           <Cards data={data} rows={rows} />
           {rows.length === 0
             ? <p className="muted data-empty">还没有任何平台数据。去设置页导入 CSV 或打开自动回流。</p>
-            : <DataTable rows={rows} columns={data.columns} thresholds={boldThresholds(data.rows)} contents={data.contents} covers={data.covers} onChanged={props.onChanged} openEditor={props.openEditor} />}
-          <p className="muted data-foot">粗体 = 高于这个平台全部历史的播放中位数。「—」= 这个平台没发；「未回流」= 发了，数据还没回来。点一行看各次快照。
+            : <DataTable rows={rows} columns={data.columns} metric={metric} thresholds={metricThresholds(data.rows, metric)} avail={availability(data.rows)} contents={data.contents} covers={data.covers} onChanged={props.onChanged} openEditor={props.openEditor} />}
+          <p className="muted data-foot">粗体 = 高于这个平台全部历史在这个指标上的中位数。「—」= 这个平台没发；「未回流」= 发了，数据还没回来；「平台不提供」= 这个平台的数据里从来没有这项。点击率 = 播放 ÷ 曝光，只有带曝光数的平台能算。点一行看各次快照。
             封面：自动回流会顺手抓{COVER_CAPTURE_PLATFORMS.map(platformLabel).join("、")}的封面；{data.columns.filter((p) => !COVER_CAPTURE_PLATFORMS.includes(p)).map(platformLabel).join("、")}该平台暂未抓封面，可点封面位或拖图进去手动补。</p>
         </div>
       )}

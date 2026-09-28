@@ -10,29 +10,49 @@ import { Tag } from "../components/Tag";
 import { linkWorks, undoLink } from "./board-api";
 import { DataCover } from "./DataCover";
 import {
-  cellOf, dayLabel, fmtRate, fmtViews, groupByMonth, monthLabel, sourceLabel,
+  dayLabel, fmtRate, fmtViews, groupByMonth, monthLabel, sourceLabel,
   type DataPageData, type DataRow, type RowCover,
 } from "./data-lib";
+import { METRICS, fmtMetric, metricCell, type MetricId } from "./data-metrics";
 
 export interface TableProps {
   rows: DataRow[];
   columns: string[];
+  /** 当前指标 + 该指标的加粗门槛（全部历史中位数）+ 各平台实际报过的指标 */
+  metric: MetricId;
   thresholds: Map<string, number>;
+  avail: Map<string, Set<MetricId>>;
   contents: DataPageData["contents"];
   covers: Record<string, RowCover>;
   onChanged: () => void;
   openEditor: (id: string) => void;
 }
 
-function CellView({ row, platform, thresholds }: { row: DataRow; platform: string; thresholds: Map<string, number> }) {
-  const c = cellOf(row, platform, thresholds);
-  if (c.kind === "none") return <span className="data-num muted" title="这个平台没发">—</span>;
+type CellArgs = { row: DataRow; platform: string; metric: MetricId; thresholds: Map<string, number>; avail: Map<string, Set<MetricId>> };
+
+/** 四态：数值 /「—」没发 /「未回流」/「平台不提供」 */
+function CellView({ row, platform, metric, thresholds, avail }: CellArgs) {
+  const c = metricCell(row, platform, metric, thresholds, avail);
+  if (c.kind === "none") return <span className="data-num data-none" title="这个平台没发">—</span>;
   if (c.kind === "missing") return <span className="data-num data-missing" title="发了，数据还没回来">未回流</span>;
+  if (c.kind === "unsupported") return <span className="data-num data-na" title="这个平台的数据里没有这项指标">平台不提供</span>;
+  return <span className={"data-num" + (c.bold ? " is-bold" : "")}>{fmtMetric(metric, c.value)}</span>;
+}
+
+/** 展开后：这条视频全部指标 × 平台（最新快照） */
+function MetricGrid({ row, columns, avail }: { row: DataRow; columns: string[]; avail: Map<string, Set<MetricId>> }) {
+  const cols = { "--data-cols": columns.length } as CSSProperties;
   return (
-    <span className={"data-num" + (c.bold ? " is-bold" : "")}>
-      <span>{c.views === null ? "—" : fmtViews(c.views)}</span>
-      {c.rate !== null && <span className="data-rate">{fmtRate(c.rate)}</span>}
-    </span>
+    <div className="data-mgrid" style={cols}>
+      <span />
+      {columns.map((p) => <span key={p} className="data-mgrid-h">{platformLabel(p)}</span>)}
+      {METRICS.map((m) => (
+        <Fragment key={m.id}>
+          <span className="data-mgrid-h">{m.label}</span>
+          {columns.map((p) => <CellView key={p} row={row} platform={p} metric={m.id} thresholds={new Map()} avail={avail} />)}
+        </Fragment>
+      ))}
+    </div>
   );
 }
 
@@ -126,11 +146,12 @@ function Row(props: TableProps & { row: DataRow; prev: DataRow | null; open: boo
             <span className="data-sub">{dayLabel(row.day)} {row.link !== "none" && <Tag>{LINK_TAG[row.link]}</Tag>}</span>
           </span>
         </span>
-        {props.columns.map((p) => <CellView key={p} row={row} platform={p} thresholds={props.thresholds} />)}
+        {props.columns.map((p) => <CellView key={p} row={row} platform={p} metric={props.metric} thresholds={props.thresholds} avail={props.avail} />)}
       </div>
       {props.open && (
         <div className="data-detail">
           <RowActions row={row} prev={props.prev} contents={props.contents} onChanged={props.onChanged} openEditor={props.openEditor} />
+          <MetricGrid row={row} columns={props.columns} avail={props.avail} />
           <Snapshots row={row} />
         </div>
       )}
