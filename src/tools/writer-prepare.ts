@@ -1,4 +1,4 @@
-import { seriesSnapshot } from "../modules/writing/series-memory.js";
+import { loadSeriesSnapshot } from "../modules/writing/series-memory.js";
 import { techniqueCatalog } from "../modules/writing/technique-store.js";
 import type { CreatorProfile } from "../modules/profile/creator-profile.js";
 import { loadHostEvidence } from "../modules/research/host-evidence-store.js";
@@ -174,10 +174,22 @@ function requestKey(req: ScriptRequest, topicDescription: string): string {
   ]);
 }
 
+/**
+ * 档案里真正进写作包的配置（spec §3 D「不因待批规则重领包」）：只算本平台实际生效的规则，
+ * 不算待批/停用规则、审批日志、档案 revision 和 updatedAt——这些变了不代表写作要求变了。
+ */
+function effectiveWritingConfig(profile: CreatorProfile, platform: string): Record<string, unknown> {
+  return {
+    industry: profile.industry, expressionPersona: profile.expressionPersona, contentFormat: profile.contentFormat,
+    audiencePersona: profile.audiencePersona, goal: profile.goal, styleBoundaries: profile.styleBoundaries, voiceSamples: profile.voiceSamples,
+    writingRules: rulesForPlatform(profile, platform).map((r) => ({ rule: r.rule, scope: r.scope ?? "voice_core" })),
+  };
+}
+
 /** 规划快照按值比较，JSON 对象键顺序变化不应触发重新备料；数组顺序仍有意义。 */
-function planningFingerprint(selectedAngle: unknown, profile: CreatorProfile | null, content?: Content | null, platform = content?.platform ?? ""): string {
+function planningFingerprint(selectedAngle: unknown, profile: CreatorProfile | null, platform: string, content?: Content | null): string {
   const feedbackState = content?.writingFeedback?.length ? { writingFeedback: content.writingFeedback, sourceDraft: { title: content.title, body: content.body } } : {};
-  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile: profile ? { industry: profile.industry, expressionPersona: profile.expressionPersona, contentFormat: profile.contentFormat, audiencePersona: profile.audiencePersona, goal: profile.goal, styleBoundaries: profile.styleBoundaries, voiceSamples: profile.voiceSamples, writingRules: rulesForPlatform(profile, platform).map(r => ({ rule: r.rule, scope: r.scope ?? "voice_core" })) } : null, ...feedbackState }, (_key, value: unknown) =>
+  const stable = JSON.stringify({ selectedAngle: selectedAngle ?? null, profile: profile ? effectiveWritingConfig(profile, platform) : null, ...feedbackState }, (_key, value: unknown) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
       : value,
@@ -208,8 +220,16 @@ export async function startPack(
     if (!["drafting", "revision", "draft_ready"].includes(existing.status)) return { ok: false, error: `本稿现在是 ${existing.status}，不能重开写作包；请先按稿件流程回到可修改阶段。` };
     if ((existing.status === "draft_ready" || existing.pack?.submittedAt) && !params.force) return { ok: false, code: "pack_request_changed", error: "这是已交稿的草稿；修改时显式带 content_id 和 force:true 重领包，正文在新稿提交前保留。" };
   }
-  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir), existing, params.platform);
+  const fingerprint = planningFingerprint(topic.selectedAngle, await loadProfile(dataDir), params.platform, existing);
   const current = existing ? await readPack(existing.id, dataDir) : null;
+  // 缺口记录（spec §3 A）：交回缺口的包不再原样复用；创始人补了材料或改了要求后 force 重领，拿新包、新快照
+  if (!params.force && current?.gapRecord) {
+    return {
+      ok: false, code: "pack_request_changed", content_id: existing!.id, pack_id: current.packId,
+      error: "这个写作包已交回缺口记录（材料不足）。请创始人补材料或改要求，再带完整要求和 force:true 重新 pack；新包会重新冻结系列快照。",
+      gap: current.gapRecord,
+    };
+  }
   const previous = current?.request?.req ?? current?.context?.req ?? existing?.genRequest;
   let req: ScriptRequest = {
     ...previous,
@@ -287,7 +307,8 @@ async function startPreparation(
   const note = args.reissued ? REISSUE_NOTE : FIRST_NOTE;
   const placeholder: WritingPackFile = {
     packId,
-    series: await seriesSnapshot(args.req.platform, contentId, dataDir),
+    // 系列快照与手法目录在领号这一刻冻结（spec §3 B）；同一包重复领取不会悄悄换掉比较依据
+    series: await loadSeriesSnapshot(args.req.platform, { contentId, topicId: args.req.topicId }, dataDir),
     techniques: await techniqueCatalog(dataDir),
     request: { req: args.req, topicDescription: args.topicDescription, planningFingerprint: args.planningFingerprint, readiness: args.readiness },
     issuedAt,
@@ -447,7 +468,7 @@ function finishReady(args: PrepareArgs, built: WritingContext, dataDir: string, 
     }
     const latest = await inspectWritingReadiness(args.req.topicId!, args.req, dataDir);
     const topic = await getTopic(args.req.topicId!, dataDir);
-    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), await getContent(args.contentId, dataDir), args.req.platform);
+    const fingerprint = planningFingerprint(topic?.selectedAngle, await loadProfile(dataDir), args.req.platform, await getContent(args.contentId, dataDir));
     if (!latest.ready || latest.research.briefHash !== args.readiness.research.briefHash ||
         latest.angle.selectedAngleHash !== args.readiness.angle.selectedAngleHash ||
         !topic || topic.title !== args.req.topic || topic.description !== args.req.topicDescription ||

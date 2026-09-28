@@ -1,5 +1,5 @@
-import { SERIES_INSTRUCTIONS, type SeriesSnapshot, type GapRecord } from "../modules/writing/series-memory.js";
-import type { TechniqueCard } from "../modules/writing/technique-store.js";
+import { SERIES_WRITING_RULES, renderSnapshot, type SeriesSnapshot, type GapRecord } from "../modules/writing/series-memory.js";
+import { catalogLines, type TechniqueCatalog } from "../modules/writing/technique-store.js";
 import type { SubmitPayload } from "../modules/writing/script-payload.js";
 import fs from "node:fs/promises";
 import { contentFile, resolveContentProject } from "../storage/content-project.js";
@@ -71,6 +71,7 @@ export interface PendingReview {
 }
 
 export interface HostReviewTicket {
+  /** 本审稿单比对用的快照：取审稿包时从写作包冻结版复制；快照过时补审时并入新稿 */
   seriesSnapshot?: SeriesSnapshot;
   reviewPackId: string;
   draftHash: string;
@@ -123,8 +124,14 @@ export interface PackContext {
 export type PackState = "preparing" | "ready" | "failed";
 
 export interface WritingPackFile {
+  /**
+   * 领包时冻结的近期同平台稿件快照（spec §3 B）。有它 = 新契约包：交稿必须带 outline、审稿必须交 series_review。
+   * 旧包没有这个字段，走兼容路径。同一个包重复领取拿到的仍是这一份。
+   */
   series?: SeriesSnapshot;
-  techniques?: { version: string; cards: TechniqueCard[] };
+  /** 领包时冻结的已审手法目录（全文），交稿的 technique_ids 按它校验 */
+  techniques?: TechniqueCatalog;
+  /** 本包交回的缺口记录（材料补不上）；有它时重领须 force，拿新包新快照 */
   gapRecord?: GapRecord;
   packId: string;
   /** 同步领包时冻结请求，备料期间也能识别新要求；旧包从 context.req 兼容读取。 */
@@ -444,6 +451,16 @@ export function renderHostEvidence(pack: ReadyPack): string {
   return "【本稿已补充来源（逐字引文不等于事实成立）】\n" + externalBlock([sanitizeExternal(material, material.length)]);
 }
 
+/** 新契约包的系列记忆 + 手法目录 + 规划流程（旧包返回空串） */
+export function seriesBlock(pack: WritingPackFile): string {
+  if (!pack.series) return "";
+  return [
+    SERIES_WRITING_RULES,
+    renderSnapshot(pack.series),
+    `【已审手法目录（可选打法，可以一张不用；用 autocrew_writer technique{content_id,id,version} 读全文）】\n${catalogLines(pack.techniques)}`,
+  ].join("\n\n");
+}
+
 /** markdown 渲染的唯一入口（备料完成与「重读一次包」共用同一份文本） */
 export function renderPack(contentId: string, pack: ReadyPack): string {
   const budget = packBudget(pack);
@@ -452,7 +469,7 @@ export function renderPack(contentId: string, pack: ReadyPack): string {
     packId: pack.packId,
     topicTitle: pack.context.req.topic,
     platform: pack.context.platform,
-    prompts: { ...pack.context.prompts, user: [pack.context.prompts.user, ...(pack.series ? [SERIES_INSTRUCTIONS, `系列快照（空数组表示暂无）：${JSON.stringify(pack.series)}`, `已审手法目录：${JSON.stringify(pack.techniques?.cards.map(({ id, version, title, summary }) => ({ id, version, title, summary })) ?? [])}；用 writer technique{id,version} 读取全文`] : []), renderHostEvidence(pack)].filter(Boolean).join("\n\n") },
+    prompts: { ...pack.context.prompts, user: [pack.context.prompts.user, seriesBlock(pack), renderHostEvidence(pack)].filter(Boolean).join("\n\n") },
     hostEvidenceLeft: budget.host_evidence_left,
     ledgerBudgetLeft: budget.find_evidence_left,
     repairLeft: budget.repair_rounds_left,

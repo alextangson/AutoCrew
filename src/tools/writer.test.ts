@@ -41,7 +41,8 @@ import {
 } from "../modules/research/research-job-store.js";
 import { EXTERNAL_BLOCK_END, EXTERNAL_BLOCK_START } from "../modules/inbox/triage.js";
 import { getContent, saveTopic, updateTopic, updateContent, type Topic } from "../storage/local-store.js";
-import { updateProfile } from "../modules/profile/creator-profile.js";
+import { addWritingRule, updateProfile } from "../modules/profile/creator-profile.js";
+import { addApprovedRuleForTest } from "../modules/profile/rule-fixtures.js";
 import type { EngineConfig } from "../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool, runLoop } from "../engine/loop.js";
 import { hashClaimToken } from "../storage/claim-token.js";
@@ -168,6 +169,14 @@ const GOOD = {
   hashtags: ["#AI编程", "#提效"],
 };
 
+/** 新写作包交稿必带的稿件摘要（spec 2026-09-28 §3 A） */
+const OUTLINE = {
+  thesis: "AI 省下的是敲字时间，返工时间记在另一本账上。",
+  points: [{ text: "同事写得快但通宵没少", kind: "case", seconds: 60 }, { text: "两本账为什么看起来像赚了", kind: "cause", seconds: 90 }],
+  structure: { opening: "同事写得飞快的反差", progression: "拆两本账", ending: "今晚记一次返工时间" },
+  said: [{ id: "two-ledgers", kind: "metaphor", text: "敲字时间和回头看的时间是两本账" }],
+};
+
 function submitArgs(contentId: string, packId: string, attempt: number, over: Record<string, unknown> = {}) {
   return {
     action: "submit",
@@ -175,6 +184,7 @@ function submitArgs(contentId: string, packId: string, attempt: number, over: Re
     pack_id: packId,
     attempt,
     ...GOOD,
+    outline: OUTLINE,
     review: "none",
     ...over,
   };
@@ -586,7 +596,7 @@ describe("writer pack 异步备料", () => {
   it("已备包继承未重提要求；新要求先拒绝，force 刷新请求并保留旧材料", async () => {
     const first = await pack({ requirements: "按一天经历展开。", direction: "只讲维护成本", research: "用户实测材料", research_mode: "provided" });
     const again = await run({ action: "pack", topic_id: first.topicId, platform: "douyin" });
-    expect(again).toMatchObject({ status: "ready", pack_id: first.pack_id });
+    expect(again, JSON.stringify(again).slice(0, 400)).toMatchObject({ status: "ready", pack_id: first.pack_id });
     const changedArgs = { action: "pack", topic_id: first.topicId, platform: "douyin", requirements: "保留经历，开头先说结果。" };
     expect(await run(changedArgs)).toMatchObject({ ok: false, code: "pack_request_changed" });
     expect((await getContent(first.content_id, testDir))?.genRequest?.requirements).toBe("按一天经历展开。");
@@ -646,7 +656,7 @@ describe("writer pack 异步备料", () => {
     const first = await pack();
     const original = await readPackFile(first.content_id);
     const rule = "先说观众今天能做什么，不要讲师式开场";
-    await updateProfile({ writingRules: [{ rule, source: "user_explicit", confidence: 1, createdAt: "2026-09-22" }] }, testDir);
+    await addApprovedRuleForTest({ rule, source: "user_explicit", confidence: 1 }, testDir);
     expect(await run({ action: "pack", topic_id: first.topicId, platform: "douyin" }))
       .toMatchObject({ ok: false, code: "pack_request_changed", pack_id: first.pack_id });
     expect((await readPackFile(first.content_id)).request?.planningFingerprint).toBe(original.request?.planningFingerprint);
@@ -655,6 +665,18 @@ describe("writer pack 异步备料", () => {
     const refreshed = await readPackFile(first.content_id);
     expect(refreshed.request?.planningFingerprint).not.toBe(original.request?.planningFingerprint);
     expect(refreshed.context?.writingContract).toContain(rule);
+  });
+
+  it("新增待批规则、审批日志和别的平台规则都不改变写作包指纹，不触发 pack_request_changed（spec §3 D）", async () => {
+    await updateProfile({ industry: "真实 AI 实操" }, testDir);
+    const first = await pack();
+    const original = await readPackFile(first.content_id);
+    await addWritingRule({ rule: "自动提炼出来还没批的规则", source: "auto_distilled", confidence: 0.9, evidence: ["改稿 A"] }, testDir);
+    await addApprovedRuleForTest({ rule: "只管小红书的规则", source: "user_explicit", confidence: 1, scope: "platform:xiaohongshu" }, testDir);
+    const again = await run({ action: "pack", topic_id: first.topicId, platform: "douyin" });
+    expect(again, JSON.stringify(again).slice(0, 400)).toMatchObject({ status: "ready", pack_id: first.pack_id });
+    expect((await readPackFile(first.content_id)).request?.planningFingerprint).toBe(original.request?.planningFingerprint);
+    expect(String(again.pack_md)).not.toContain("自动提炼出来还没批的规则");
   });
 
   it("相同规划快照即使对象键顺序改变也复用原包", async () => {

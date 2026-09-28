@@ -1,4 +1,5 @@
 import { lengthHint, type Outline, type TechniqueRef } from "../modules/writing/series-memory.js";
+import { findCard } from "../modules/writing/technique-store.js";
 import { loadProfile } from "../modules/profile/creator-profile.js";
 /**
  * 宿主交稿（P3 spec §5.3）——把写手循环翻过来的另一半：**收稿**。
@@ -103,8 +104,14 @@ function fail(error: string, extra: Record<string, unknown> = {}): SubmitFailure
 /** writing-pack.json 上每个 attempt 的载荷指纹；单独一格，审稿落终态改写 attempt 记录时不会被抹掉 */
 type PayloadHashes = { payloadHashes?: Record<string, string> };
 
+/**
+ * 同号提交的指纹：摘要和手法卡也算载荷（spec §4）——同号换了 outline 同样是 attempt_conflict。
+ * 两者都没带时保持旧算法，升级前记下的 attempt 重放不会被误判成冲突。
+ */
 function payloadDigest(args: SubmitArgs): string {
-  return createHash("sha256").update(JSON.stringify([args.title, args.hook ?? "", args.body, args.cta ?? "", args.hashtags ?? [], args.outline ?? null, args.technique_ids ?? []])).digest("hex");
+  const base: unknown[] = [args.title, args.hook ?? "", args.body, args.cta ?? "", args.hashtags ?? []];
+  if (args.outline !== undefined || args.technique_ids !== undefined) base.push(args.outline ?? null, args.technique_ids ?? []);
+  return createHash("sha256").update(JSON.stringify(base)).digest("hex");
 }
 
 function notePayload(pack: WritingPackFile, args: SubmitArgs): void {
@@ -204,6 +211,12 @@ function admissible(args: SubmitArgs, content: Content, pack: ReadyPack): Loaded
 
 // ─── 落盘 ─────────────────────────────────────────────────────────────────────
 
+/** 长度只是提示（spec §3 A）：跟门禁结果完全分开，不打回、不扣修复轮 */
+async function hintFor(args: SubmitArgs, pack: WritingPackFile, dataDir: string) {
+  const text = [args.hook ?? "", args.body, args.cta ?? ""].join("\n");
+  return lengthHint(text, pack.context?.req.requirements ?? pack.request?.req.requirements, (await loadProfile(dataDir))?.contentFormat?.wordCount);
+}
+
 async function record(
   args: SubmitArgs,
   pack: WritingPackFile,
@@ -213,7 +226,8 @@ async function record(
   pending?: PendingReview,
 ): Promise<{ status: SubmitPhase } & Record<string, unknown>> {
   const at = new Date().toISOString();
-  result.length_hint = lengthHint(args.body, pack.context?.req.requirements, (await loadProfile(dataDir))?.contentFormat?.wordCount);
+  // 长度只是提示（spec §3 A）：跟门禁结果完全分开，不打回、不扣修复轮
+  result.length_hint ??= await hintFor(args, pack, dataDir);
   pack.attempts[String(args.attempt)] = { status: result.status, at, startedAt: at, result, ...(pending ? { pending } : {}) };
   notePayload(pack, args);
   await writePack(args.contentId, pack, dataDir);
@@ -222,6 +236,7 @@ async function record(
 
 type DraftExtra = {
   ledger: EvidenceLedger;
+  seriesSnapshotId?: string;
   needsHuman: string[];
   versionNote: string;
   reviewPending?: boolean;
@@ -244,9 +259,11 @@ async function persistDraft(
   await updateContent(
     args.contentId,
     {
+      // 新契约包：摘要、手法卡、比对用的快照随这一版落盘；旧包三者都为空（显式清掉上一版遗留）
       outline: payload.outline,
       technique_ids: payload.technique_ids,
-      seriesSnapshotId: (await readPack(args.contentId, dataDir))?.series?.id,
+      seriesSnapshotId: extra.seriesSnapshotId,
+      gapRecord: undefined,
       title: payload.title,
       body: humanizedText,
       hashtags: payload.hashtags.map((t) => t.trim()).filter(Boolean),
@@ -289,6 +306,7 @@ async function finalizeBlocked(
   const reason = hard[0]?.detail ?? "硬门未通过";
   await persistDraft(args, content, gates.payload, humanizedText, {
     ledger: gates.ledger,
+    seriesSnapshotId: pack.series?.id,
     needsHuman: unverified,
     versionNote: `${args.host} 交稿被硬门拦下（缺证据，未转草稿）`,
     revision: takeRevisionVersion(pack, args.host, args.attempt),
@@ -336,9 +354,14 @@ export async function runSubmit(args: SubmitArgs, dataDir: string, deps: SubmitD
   const validated = validateSubmitArgs({ title: args.title, hook: args.hook, body: args.body, cta: args.cta, hashtags: args.hashtags, outline: args.outline, technique_ids: args.technique_ids });
   if (!validated.ok) return fail(validated.error);
   const payload = validated.payload;
-  if (pack.series && !payload.outline) return fail("outline_required: 新写作包必须附摘要；材料不足请提交 gap");
+  // 新契约包（有冻结快照）必须带摘要；旧包走兼容路径（spec §3 A、§4）。拒收不扣修复轮
+  if (pack.series && !payload.outline) {
+    return fail("outline 必填：这是新写作包，交稿要附稿件摘要（中心思想、信息点、骨架、说过的东西）。材料撑不满就用 gap 交缺口记录，别交凑出来的稿。", { code: "outline_required" });
+  }
   for (const ref of payload.technique_ids ?? []) {
-    if (!pack.techniques?.cards.some(c => c.id === ref.id && c.version === ref.version)) return fail("unknown_technique_version: 只能使用本包冻结的已审卡片");
+    if (!findCard(pack.techniques, ref.id, ref.version)) {
+      return fail(`technique_ids 里的 ${ref.id}@v${ref.version} 不在本包冻结的已审手法目录里；只能用目录里的卡，可以一张都不用`, { code: "unknown_technique" });
+    }
   }
   // 形状合格才开修订周期：被长度门拒收的稿不该白白耗掉一个周期、也不该把稿件推离草稿就绪
   if (loaded.opensCycle) {
@@ -385,6 +408,7 @@ async function acceptForReview(args: SubmitArgs, content: Content, pack: ReadyPa
   const humanizedText = assembleAndHumanize(gates.payload);
   await persistDraft(args, content, gates.payload, humanizedText, {
     ledger: gates.ledger,
+    seriesSnapshotId: pack.series?.id,
     needsHuman: gates.needsHuman,
     versionNote: `${args.host} 交稿（第 ${args.attempt} 次）`,
     reviewPending: args.review !== "none",
@@ -418,7 +442,7 @@ async function awaitHostReview(args: SubmitArgs, pack: ReadyPack, job: ReviewJob
   const draftHash = draftHashOf(job.pending.payload.title, job.pending.humanizedText, pack.context.platform);
   const result = {
     status: "awaiting_host_review" as const,
-    length_hint: lengthHint(args.body, pack.context.req.requirements, (await loadProfile(dataDir))?.contentFormat?.wordCount),
+    length_hint: await hintFor(args, pack, dataDir),
     saved: true,
     quality_status: "awaiting_host_review",
     needs_attention: true,

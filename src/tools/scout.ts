@@ -1,4 +1,4 @@
-import { seriesSnapshot } from "../modules/writing/series-memory.js";
+import { loadSeriesSnapshot } from "../modules/writing/series-memory.js";
 import { techniqueCatalog } from "../modules/writing/technique-store.js";
 /** Host-driven research desk: deterministic fetching, validation and storage, never an LLM call. */
 import crypto from "node:crypto";
@@ -242,7 +242,11 @@ async function promptPack(
   return {
     stage: task.status === "ready" ? "complete" : "angles",
     system: buildAngleSystemPrompt(task.profile, task.creativeTask),
-    user: buildAngleUserMessage({ ...common, brief: task.brief, series: await seriesSnapshot(task.creativeTask?.platform ?? "", "", dataDir), techniques: (await techniqueCatalog(dataDir)).cards }),
+    // 立意阶段就给系列快照和手法目录（spec §3 C）：换骨架要在生成候选卡时发生，只换写作包菜单不够
+    user: buildAngleUserMessage({
+      ...common, brief: task.brief,
+      ...(dataDir ? { series: await loadSeriesSnapshot(task.creativeTask?.platform ?? "", { topicId: task.topicId }, dataDir), techniques: await techniqueCatalog(dataDir) } : {}),
+    }),
     submit_schema: ANGLE_SCHEMA,
     submit: target(task, "angles"),
   };

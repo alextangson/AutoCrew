@@ -1,4 +1,4 @@
-import { outlineSchema, techniqueRefsSchema, type Outline, type TechniqueRef } from "./series-memory.js";
+import { checkOutline, techniqueRefsSchema, type Outline, type TechniqueRef } from "./series-memory.js";
 import { Value } from "@sinclair/typebox/value";
 /**
  * 成稿载荷（submit_script）—— 定义、校验、收束工具、组装。
@@ -64,6 +64,8 @@ export const MAX_HASHTAGS = 10;
 
 /** 超长是**拒收**不是修复轮：它不是「写得不好」，是这一份根本不该收下 */
 function lengthError(payload: SubmitPayload): string | null {
+  const body = Array.from(assembleScript(payload)).length;
+  if (body > MAX_BODY_CHARS) return `Error: 完整正文（含开头与结尾）${body} 字，超过上限 ${MAX_BODY_CHARS} 字——删到限内再提交`;
   const title = Array.from(payload.title).length;
   if (title > MAX_TITLE_CHARS) return `Error: 标题 ${title} 字，超过上限 ${MAX_TITLE_CHARS} 字——改短再提交`;
   if (payload.hashtags.length > MAX_HASHTAGS) {
@@ -93,8 +95,11 @@ export function validateSubmitArgs(args: Record<string, unknown>): SubmitValidat
   if (!isStringArray(hashtags)) {
     return { ok: false, error: "Error: 字段 hashtags 应为字符串数组，请修正后重新调用 submit_script" };
   }
-  if (args.outline !== undefined && (!Value.Check(outlineSchema, args.outline) || new Set(args.outline.said.map(s => s.id)).size !== args.outline.said.length)) return { ok: false, error: "invalid_outline" };
-  if (args.technique_ids !== undefined && !Value.Check(techniqueRefsSchema, args.technique_ids)) return { ok: false, error: "invalid_technique_ids" };
+  const outlineError = args.outline === undefined ? null : checkOutline(args.outline);
+  if (outlineError) return { ok: false, error: `Error: outline 不合格——${outlineError}` };
+  if (args.technique_ids !== undefined && !Value.Check(techniqueRefsSchema, args.technique_ids)) {
+    return { ok: false, error: "Error: technique_ids 应为 [{id,version}]，最多 10 张；不用卡就传 [] 或不传" };
+  }
   const payload: SubmitPayload = { ...(args.outline !== undefined ? { outline: args.outline as Outline } : {}), ...(args.technique_ids !== undefined ? { technique_ids: args.technique_ids as TechniqueRef[] } : {}), title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags };
   const tooLong = lengthError(payload);
   if (tooLong) return { ok: false, error: tooLong };

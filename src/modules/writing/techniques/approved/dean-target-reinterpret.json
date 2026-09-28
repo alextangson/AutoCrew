@@ -1,0 +1,43 @@
+{
+  "id": "dean-target-reinterpret",
+  "version": 1,
+  "name": "先让观众往一个方向想，再换一种理解",
+  "purpose": "开头自嘲 / 段尾 / 讲透区别",
+  "source": {
+    "kind": "book",
+    "title": "Step by Step to Stand-Up Comedy（未查到中译本）",
+    "author": "Greg Dean（格雷格·迪恩）",
+    "edition": "初版 Heinemann（Portsmouth, NH），2000，ISBN 9780325001791，Steve Allen 作序；后有作者自办公司出版的修订版（2013，Greg Dean's Comedy System；2018 年修订版）",
+    "location": "修订版第 1 章讲笑话结构（Secrets of Joke Structure），据二手来源整理，章节名待核。术语定义以作者官网词汇表为准：目标假设（Target Assumption）是铺垫让观众默认的理解；连接点（Connector）是一个可以有两种解读的东西；重新解读（Reinterpretation）是笑点揭示的另一种解读，让原来的假设落空。"
+  },
+  "verification": {
+    "status": "部分待核",
+    "note": "部分待核（术语已由作者官网核实、初版书目已核；修订版章节名待核；无中译本）",
+    "links": [
+      "https://stand-upcomedy.com/glossary/target-assumption/ （作者官网：Target Assumption、Connector、Reinterpretation 定义）",
+      "https://stand-upcomedy.com/glossary/joke-structure/ （作者官网：笑话结构）",
+      "https://openlibrary.org/books/OL6785636M/Step_by_step_to_stand-up_comedy （2000 年 Heinemann 版书目）",
+      "https://archive.org/details/stepbysteptostan0000dean （2000 年版馆藏记录）",
+      "https://www.goodreads.com/book/show/213045.Step_by_Step_to_Stand_Up_Comedy （读者评述修订版结构，二手来源）"
+    ]
+  },
+  "fits": "开头的自嘲、段尾想留一句有意思的话；讲一个常见词在 AI 语境下的另一层意思（比如「记忆」「听话」「聪明」）；讲透两个易混概念，其中一个就是被误解的那个词。",
+  "notFor": "严肃话题（出错成本高、涉及损失）；全篇当结构用。这是局部手法，一篇用一两处就够。",
+  "moves": [
+    "先找连接点：一个词或一个说法，观众会默认一种理解，但它还有另一种成立的理解。",
+    "铺垫要让观众稳稳站在默认理解上，不要提前暗示。",
+    "笑点或反转只用最短的话揭示另一种理解。揭示的那个关键词尽量放在句尾。",
+    "反转之后，下一句要把它接回主线（这个误解在工作里意味着什么）。否则只是抖了个机灵。",
+    "这是口语里的笑点，要具体、带东西，不能是对仗金句。"
+  ],
+  "illustration": {
+    "label": "示意，不是事实材料",
+    "text": "我一开始特别满意，因为这个 AI 特别听话。我说写短点，它就写短；我说活泼点，它就活泼。后来我才发现，它听话到什么程度呢？我顺手打了句「随便写写」，它真的就随便写了。你看，我们说的「听话」，其实是希望它听懂没说出口的那部分……"
+  },
+  "misuse": [
+    "写成「不是 X，是 Y」「得自己挣」式的对仗金句。这不是重新解读，是 AI 腔。",
+    "每段结尾都强行抖一个包袱，节奏变油。",
+    "连接点太牵强，观众要想两秒才懂，笑点就没了。"
+  ],
+  "pairing": "可以配 `founder-resonance-insight-solution`（在共鸣段开头自嘲），也可以配 `sticky-curiosity-gap`（坑的答案用一次重新解读揭晓）。别和 `sticky-schema-analogy` 在同一段混用。"
+}

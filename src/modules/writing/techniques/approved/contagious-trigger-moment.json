@@ -1,0 +1,39 @@
+{
+  "id": "contagious-trigger-moment",
+  "version": 1,
+  "name": "把结论钉在观众明天一定会碰到的那个瞬间上",
+  "purpose": "收尾",
+  "source": {
+    "kind": "book",
+    "title": "Contagious，《疯传》",
+    "author": "Jonah Berger（乔纳·伯杰）",
+    "edition": "英文版 Simon & Schuster，2013（ISBN 9781451686579）；中译本 电子工业出版社，2014 年初版刘生敏、廖建桥 译，2016 年修订版乔迪、王晋 译",
+    "location": "第 2 章 Triggers（诱因）。核心说法是「想得起来，才说得出来」（top of mind, tip of tongue）：让信息挂在环境里经常出现的线索上。页码待核。"
+  },
+  "verification": {
+    "status": "已核",
+    "note": "已核（书目、作者访谈）；页码待核",
+    "links": [
+      "https://knowledge.wharton.upenn.edu/article/contagious-jonah-berger-on-why-things-catch-on/ （作者本人对 Triggers 的表述）",
+      "https://www.simonandschuster.com/books/Contagious/Jonah-Berger/9781451686579"
+    ]
+  },
+  "fits": "希望观众以后真的改变一个动作的稿；讲一个习惯、一个判断时机；收尾需要一个不说教的落点。",
+  "notFor": "一次性的新闻解读；观众工作里找不到高频瞬间的冷门场景。",
+  "moves": [
+    "找一个观众每天或每周必然遇到的具体瞬间：打开企业微信看到客户消息、周一复盘会前、老板在群里 @ 你。",
+    "把全篇的核心判断压缩成「在那个瞬间做什么」，一句话。",
+    "这个瞬间最好在稿里早一点出现过（开头或中段的一个场景），收尾时再回来，形成呼应。这是结构，不是重复。",
+    "瞬间要够常见，不然挂不住；也要够具体，不能是「当你用 AI 的时候」。"
+  ],
+  "illustration": {
+    "label": "示意，不是事实材料",
+    "text": "所以下次你在老板群里看到「这个方案再优化一下」，先别急着把它丢给 AI。先回自己一句：他说的优化，是要更短、更稳，还是更敢？想清楚这一个字，再去打开 AI。"
+  },
+  "misuse": [
+    "瞬间选得太泛（「每次打开 AI 的时候」），挂不住。",
+    "每篇结尾都是「下次你在……的时候」，成了固定收尾句式。",
+    "把诱因写成营销口号，有 AI 腔。"
+  ],
+  "pairing": "适合配 `mckee-gap-turning`、`founder-resonance-insight-solution` 当收尾。别和 `contagious-practical-value` 在收尾叠用。"
+}

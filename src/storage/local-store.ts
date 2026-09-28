@@ -1,5 +1,6 @@
-import { seriesTransaction } from "./series-transaction.js";
-import { SERIES_STATES, draftHash, digest, type Outline, type TechniqueRef, type GapRecord, type SeriesReview } from "../modules/writing/series-memory.js";
+import { seriesTransaction, SERIES_STATES } from "./series-transaction.js";
+import { draftHash as contentDraftHash } from "./draft-hash.js";
+import type { Outline, TechniqueRef, GapRecord, SeriesReview } from "../modules/writing/series-memory.js";
 import { assertManagedPathAvailable } from "./storage-roots.js";
 import { portableProjectRecord } from "./project-record.js";
 import { contentRoot, isLayoutV2, projectFile, contentFile, ensureContentProject, readProjectRegistry, contentIds } from "./content-project.js";
@@ -120,15 +121,13 @@ export interface Asset {
 }
 
 export interface ContentVersion {
+  /** 这一版对应的稿件摘要与上下文（spec §4）；旧版本没有 */
   outline?: Outline;
   outlineDraftHash?: string;
   outlineVersion?: number;
   technique_ids?: TechniqueRef[];
-  reviewContextHash?: string;
   seriesSnapshotId?: string;
-  seriesReview?: SeriesReview;
-  gapRecord?: GapRecord;
-
+  reviewContextHash?: string;
   version: number;
   /** 该版本对应的标题；旧数据可能缺失。 */
   title?: string;
@@ -296,14 +295,22 @@ export interface ManualPublication {
 }
 
 export interface Content {
+  /** 稿件摘要（spec §3 A）：只对 outlineDraftHash 那版正文有效，正文一改即失效（见 series-memory.validOutline） */
   outline?: Outline;
   outlineDraftHash?: string;
+  /** 摘要版本号，每写一次 +1 */
   outlineVersion?: number;
+  /** 交稿时用了哪些手法卡（冻结版本） */
   technique_ids?: TechniqueRef[];
-  reviewContextHash?: string;
+  /** 这一稿比对用的冻结快照 id */
   seriesSnapshotId?: string;
-  seriesReview?: SeriesReview;
+  /** 审稿上下文指纹：draft_hash + 有效摘要 + 快照 id + 手法卡版本。draft_hash 含义不变，另算这一份 */
+  reviewContextHash?: string;
+  /** 最近一次宿主审稿提交的系列比对结果（绑定 reviewContextHash）；没有 = 这一版没做过系列比对 */
+  seriesReview?: SeriesReview & { reviewContextHash: string; recordedAt: string };
+  /** 未结的缺口记录（材料补不上时交回，不交凑出来的稿） */
   gapRecord?: GapRecord;
+  /** 最后一次进入系列白名单状态的时间（快照按它取最近 30 天） */
   seriesEnteredAt?: string;
 
   id: string;
@@ -544,8 +551,15 @@ function isFileMissing(err: unknown): boolean {
  */
 const contentWriteChains = new Map<string, Promise<unknown>>();
 
-export function serializeContentWrite<T>(_id: string, fn: () => Promise<T>): Promise<T> {
-  return seriesTransaction(fn);
+export function serializeContentWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = contentWriteChains.get(id) ?? Promise.resolve();
+  const next = prev.then(fn, fn); // 前一步失败也不许卡住后一步
+  const tail = next.then(() => undefined, () => undefined);
+  contentWriteChains.set(id, tail);
+  void tail.then(() => {
+    if (contentWriteChains.get(id) === tail) contentWriteChains.delete(id);
+  });
+  return next;
 }
 
 // --- Topics ---
@@ -836,6 +850,16 @@ export type ContentUpdates = Partial<Omit<Content, "status">> & {
 /** 收口通道内部用：全仓只有 `transitionStatusLocked` 能带 status 走这条路 */
 type StatusfulUpdates = ContentUpdates & { status?: ContentStatus };
 
+/** 审稿上下文指纹（spec §4）：正文指纹 + 有效摘要 + 快照 id + 手法卡版本 */
+export function reviewContextHash(
+  draft: Pick<Content, "title" | "body" | "platform">,
+  ctx: Pick<Content, "outline" | "outlineDraftHash" | "technique_ids" | "seriesSnapshotId">,
+): string {
+  const draftHash = contentDraftHash(draft);
+  const outline = ctx.outline && ctx.outlineDraftHash === draftHash ? ctx.outline : null;
+  return createHash("sha256").update(JSON.stringify([draftHash, outline, ctx.seriesSnapshotId ?? null, (ctx.technique_ids ?? []).map((t) => [t.id, t.version])])).digest("hex");
+}
+
 /**
  * 契约（codex 2026-07-27 评审后收紧）：null 只表示「稿件不存在」；
  * 坏 JSON、写盘失败等一律向上抛——吞成 null 会让并发覆盖与磁盘故障都不可见。
@@ -923,25 +947,27 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
   // 正文或标题变化都形成新版本；版本不再只记录 body，标题优化也可追溯。
   const bodyChanged = updates.body !== undefined && updates.body !== existing.body;
   const titleChanged = updates.title !== undefined && updates.title !== existing.title;
-  const contextChanged = ["outline", "technique_ids", "gapRecord", "seriesSnapshotId"].some(key =>
-    key in updates && JSON.stringify(updates[key as keyof typeof updates]) !== JSON.stringify(existing[key as keyof Content]));
-  if ((bodyChanged || titleChanged) && updates.outline === undefined) updates.outlineDraftHash = "";
+  // 摘要/手法卡/快照也算这一版的一部分（spec §4）：它们变了同样记新版本，否则同一版本号对应两份审稿依据
+  // 快照 id 只进指纹不单独记版本：补审换快照不是改稿
+  const contextChanged = (["outline", "technique_ids"] as const).some((key) =>
+    key in updates && JSON.stringify(updates[key]) !== JSON.stringify(existing[key]));
+  const draftAfter = { title: updates.title ?? existing.title, body: updates.body ?? existing.body, platform: updates.platform ?? existing.platform };
   if (updates.outline !== undefined) {
     updates.outlineVersion = (existing.outlineVersion ?? 0) + 1;
-    updates.outlineDraftHash = draftHash({ title: updates.title ?? existing.title, body: updates.body ?? existing.body, platform: updates.platform ?? existing.platform });
+    updates.outlineDraftHash = contentDraftHash(draftAfter);
   }
+  const ctx = {
+    outline: updates.outline ?? existing.outline, outlineDraftHash: updates.outlineDraftHash ?? existing.outlineDraftHash,
+    technique_ids: updates.technique_ids ?? existing.technique_ids, seriesSnapshotId: updates.seriesSnapshotId ?? existing.seriesSnapshotId,
+  };
+  if (ctx.outline || ctx.technique_ids || ctx.seriesSnapshotId) updates.reviewContextHash = reviewContextHash(draftAfter, ctx);
   if (bodyChanged || titleChanged || contextChanged) {
-    updates.reviewContextHash = digest({ outline: updates.outline ?? existing.outline, outlineDraftHash: updates.outlineDraftHash ?? existing.outlineDraftHash,
-      snapshot: updates.seriesSnapshotId ?? existing.seriesSnapshotId, techniques: updates.technique_ids ?? existing.technique_ids });
     const nextVersion = (existing.versions?.length || 0) + 1;
     const versionEntry: ContentVersion = {
-      outline: updates.outline ?? existing.outline,
-      outlineDraftHash: updates.outlineDraftHash ?? existing.outlineDraftHash,
-      outlineVersion: updates.outlineVersion ?? existing.outlineVersion,
-      technique_ids: updates.technique_ids ?? existing.technique_ids,
-      reviewContextHash: updates.reviewContextHash ?? existing.reviewContextHash,
-      seriesSnapshotId: updates.seriesSnapshotId ?? existing.seriesSnapshotId,
-      gapRecord: updates.gapRecord ?? existing.gapRecord,
+      ...(ctx.outline ? { outline: ctx.outline, outlineDraftHash: ctx.outlineDraftHash, outlineVersion: updates.outlineVersion ?? existing.outlineVersion } : {}),
+      ...(ctx.technique_ids ? { technique_ids: ctx.technique_ids } : {}),
+      ...(ctx.seriesSnapshotId ? { seriesSnapshotId: ctx.seriesSnapshotId } : {}),
+      ...(updates.reviewContextHash ? { reviewContextHash: updates.reviewContextHash } : {}),
       version: nextVersion,
       title: updates.title ?? existing.title,
       body: updates.body ?? existing.body,
@@ -1584,7 +1610,9 @@ export async function transitionStatus(
   dataDir?: string,
 ): Promise<TransitionResult> {
   if (!isContentId(contentId)) return { ok: false, error: `Content ${contentId} not found` };
-  return serializeContentWrite(contentId, () => transitionStatusLocked(contentId, targetStatus, opts, dataDir));
+  const run = () => serializeContentWrite(contentId, () => transitionStatusLocked(contentId, targetStatus, opts, dataDir));
+  // 进入系列范围与「审稿核对快照+登记」互斥（series-transaction）；其余转换不取这把锁
+  return SERIES_STATES.has(targetStatus) ? seriesTransaction(run) : run();
 }
 
 async function transitionStatusLocked(
@@ -1633,7 +1661,9 @@ async function transitionStatusLocked(
 
   const now = new Date().toISOString();
   const patch = typeof opts?.patch === "function" ? opts.patch(content) : opts?.patch;
-  const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus, ...(SERIES_STATES.has(targetStatus) && targetStatus !== currentStatus ? { seriesEnteredAt: now } : {}) };
+  // 从范围外进入系列白名单状态才记时间；白名单内部流转（draft_ready→approved…）不算重新进入
+  const entersSeries = SERIES_STATES.has(targetStatus) && !SERIES_STATES.has(currentStatus);
+  const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus, ...(entersSeries ? { seriesEnteredAt: now } : {}) };
 
   // 交接台账（§6.1）：五处里的三处是状态转换。写在锁内、与状态同一次落盘——
   // 分两次写就会出现「状态已推进但账没记」的中间态。

@@ -1,0 +1,39 @@
+{
+  "id": "sticky-schema-analogy",
+  "version": 1,
+  "name": "借一个观众早就懂的东西，把新概念讲透",
+  "purpose": "讲透区别",
+  "source": {
+    "kind": "book",
+    "title": "Made to Stick，《让创意更有黏性》",
+    "author": "Chip Heath、Dan Heath（奇普·希思、丹·希思）",
+    "edition": "英文版 Random House，2007；中译本 中信出版社，姜奕晖 译，2014（ISBN 9787508642796）",
+    "location": "第 1 章 Simple（简单）。概念是借用已有的认知框架（schema），以及「生成式类比」（generative analogy）：好的类比能让人自己推出新的结论。页码待核。"
+  },
+  "verification": {
+    "status": "部分待核",
+    "note": "部分待核（同上）",
+    "links": [
+      "https://engineerguy.com/white-papers/made-to-stick.htm （Simple 章概念：Commander's Intent、schemas、generative analogy，二手来源）",
+      "https://books.google.com/books/about/Made_to_Stick.html?id=Yfp79AAohiMC"
+    ]
+  },
+  "fits": "讲一组容易混的概念，比如提示词、记忆、技能、知识库分别是什么，谁在什么时候起作用；讲一个观众完全没概念的新东西。",
+  "notFor": "观众已经很熟的概念，硬加类比反而显得居高临下；需要精确区分技术细节、类比会带偏的地方。",
+  "moves": [
+    "类比物要来自观众的日常工作（新人入职、交接文档、客服话术本），不要用我们自己的系统当类比物。",
+    "好类比的检验标准：观众能用它自己推出下一条结论。推不出来，就只是个比喻，不是框架。",
+    "一个类比贯穿到底，逐层对应：谁写的、什么时候生效、靠不靠得住。中途不要换类比。",
+    "必须说明类比在哪里失效。这一段也是实打实的内容，不是凑数。"
+  ],
+  "illustration": {
+    "label": "示意，不是事实材料",
+    "text": "你把 AI 想成一个新来的实习生。提示词，就是你今天早上在微信上交代他的那几句话，说完就过去了。记忆，是他自己记在小本子上的，下次还在，但记什么是他自己挑的。技能呢，更像你给他的一本操作手册，遇到这类活他才翻开。所以你会发现，同一句「语气活泼点」，放在哪一层，效果完全不一样……"
+  },
+  "misuse": [
+    "类比只在开头说了一句，后面没再用，就成了装饰。",
+    "一篇里换三个类比，观众要记三套框架。",
+    "同一个类比物（比如「实习生」）在系列里反复当主菜。系列记忆会把它判成重复。"
+  ],
+  "pairing": "可以配 `founder-name-terms-first`（先点名词，再用类比逐个讲）。别和 `dean-target-reinterpret` 在同一段混用：一段在搭框架，一段在拆框架，观众会乱。"
+}

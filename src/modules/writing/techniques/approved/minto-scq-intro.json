@@ -1,0 +1,41 @@
+{
+  "id": "minto-scq-intro",
+  "version": 1,
+  "name": "从观众认的现状讲起：情境、冲突、问题",
+  "purpose": "开头",
+  "source": {
+    "kind": "book",
+    "title": "The Pyramid Principle: Logic in Writing and Thinking（另有版本名 The Minto Pyramid Principle: Logic in Writing, Thinking and Problem Solving），中译名《金字塔原理》",
+    "author": "Barbara Minto（芭芭拉·明托）",
+    "edition": "英文版见美国国会图书馆目录记录 2009396730（搜索结果称为 Pearson 2009 版，出版社与年份待核）；中译本 南海出版公司（新经典文化出品），汪洱、高愉 译，2019 全新精装修订版（ISBN 9787544294829）",
+    "location": "国会图书馆目录所列英文版第 2 章 The substructures within the pyramid（p.17 起，「导言的叙事流程」即 introductory flow 在 p.22）、第 4 章 Fine points of introductions（p.37 起，含「什么是冲突」等小节）。中译本据豆瓣条目，第 2 章为「金字塔内部的结构」，第 4 章为「序言的具体写法」，页码待核。"
+  },
+  "verification": {
+    "status": "部分待核",
+    "note": "部分待核（国会图书馆目录已核；英文版出版社与年份、中译本页码待核）",
+    "links": [
+      "https://catdir.loc.gov/catdir/toc/fy0906/2009396730.html （国会图书馆目录：章节与页码）",
+      "https://book.douban.com/subject/33391219/ （中译本 2019 版信息与章节，通过搜索结果核对）",
+      "https://deepread.com/the-pyramid-principle/ （SCQA 位于第 2 章，二手来源）"
+    ]
+  },
+  "fits": "分析类、判断类选题；企业向、FDE 视角的「上 AI 前先想清楚什么」；观众对现状有共识，但没意识到变化的选题。",
+  "notFor": "情绪稿、亲历故事稿。开头一板一眼会压住情绪。也不适合观众对现状本来就没有共识的新概念稿。",
+  "moves": [
+    "情境只说观众会点头的事，不下判断。观众在这里产生分歧，后面就进不去。",
+    "冲突是「情况变了」，要具体到一件事。它必须自然引出一个问题；引不出，就是冲突选错了。",
+    "问题一句话说死，它就是这条稿要回答的问题，也是中心思想的反面。",
+    "紧接着给答案（先说结论），全篇剩下的部分都在支撑它。",
+    "开头的四步合起来要短。情境部分拖长，就是在凑数。"
+  ],
+  "illustration": {
+    "label": "示意，不是事实材料",
+    "text": "这两年，大部分公司的做法差不多：买个 AI 账号，发给大家，让大家自己用。（情境）可最近我去几家公司，老板跟我说的是同一件事：账号开了半年，真正天天用的不到三个人。（冲突）那问题就来了，到底是工具不行，还是公司少做了什么？（问题）我的答案是：少做了一件事，就是没人定义「这件活 AI 做到什么程度算合格」。（答案）"
+  },
+  "misuse": [
+    "情境写成「随着 AI 的飞速发展……」这种套话，AI 腔严重。",
+    "把问题写成设问句的钩子，然后迟迟不给答案。那是 `sticky-curiosity-gap` 的打法，这张卡要求马上给答案。",
+    "每篇都是这四拍，开头听着一样。"
+  ],
+  "pairing": "可以配 `minto-qa-ladder`（开头给了答案，中段按问答往下展开）。别和 `sticky-curiosity-gap` 同时当开头。"
+}
