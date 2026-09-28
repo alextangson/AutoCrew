@@ -840,6 +840,7 @@ describe("认领令牌门", () => {
         _dataDir: dir,
         _geminiApiKey: "k",
         _host: "claude-code",
+        confirm_paid_api: true,
       })) as { ok: boolean; error: string };
       expect(r.ok).toBe(false);
       expect(r.error).toContain("codex");
@@ -861,6 +862,86 @@ describe("认领令牌门", () => {
     const r = (await executeCoverReview({ action: "get", content_id: id, _dataDir: dir, _host: "claude-code" })) as {
       ok: boolean;
     };
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("宿主出图护栏", () => {
+  const hostCall = (id: string, extra: Record<string, unknown>) =>
+    executeCoverReview({ content_id: id, _dataDir: dir, _geminiApiKey: "k", _host: "claude-code", ...extra }) as Promise<
+      Record<string, unknown>
+    >;
+
+  it("宿主没带 confirm_paid_api → 拒绝、指向封面技能，不出图也不占封面师桌", async () => {
+    const id = await seedContent("draft_ready", "douyin");
+    for (const action of ["create_candidates", "revise", "platform_ratios", "draft_ratios"]) {
+      const r = await hostCall(id, { action, label: "a", feedback: "改", ratios: ["4:3"] });
+      expect(r.ok).toBe(false);
+      expect(r.needs_confirmation).toBe("paid_api");
+      expect(String(r.error)).toContain("skills/cover-generator");
+    }
+    expect(genMock).not.toHaveBeenCalled();
+    expect(relayMock).not.toHaveBeenCalled();
+    expect(await getCoverReview(id, dir)).toBeNull();
+    expect((await getContent(id, dir))!.claim).toBeFalsy();
+  });
+
+  it("宿主要 16:9 → 就算确认了付费也拒", async () => {
+    const id = await seedContent("draft_ready", "douyin");
+    const cases = [
+      { action: "create_candidates", ratio: "16:9" },
+      { action: "platform_ratios", ratios: ["16:9", "4:3"] },
+      { action: "generate_ratios" },
+    ];
+    for (const c of cases) {
+      const r = await hostCall(id, { ...c, confirm_paid_api: true });
+      expect(r.ok).toBe(false);
+      expect(r.rejected_ratios).toEqual(["16:9"]);
+    }
+    expect(genMock).not.toHaveBeenCalled();
+  });
+
+  it("存量 16:9 评审单 → 宿主修订也拒", async () => {
+    const id = await seedContent();
+    await executeCoverReview({ action: "create_candidates", content_id: id, ratio: "16:9", _dataDir: dir, _geminiApiKey: "k" });
+    genMock.mockClear();
+    const r = await hostCall(id, { action: "revise", label: "a", feedback: "换个配色", confirm_paid_api: true });
+    expect(r.ok).toBe(false);
+    expect(r.rejected_ratios).toEqual(["16:9"]);
+    expect(genMock).not.toHaveBeenCalled();
+  });
+
+  it("宿主确认付费 + 3:4 → 照常出图", async () => {
+    const id = await seedContent();
+    const r = await hostCall(id, { action: "create_candidates", confirm_paid_api: true });
+    expect(r.ok).toBe(true);
+  });
+
+  it("get / approve 不花钱，宿主不用确认", async () => {
+    const id = await seedContent();
+    await createCandidates(id);
+    expect((await hostCall(id, { action: "get" })).ok).toBe(true);
+    expect((await hostCall(id, { action: "approve", label: "a" })).needs_confirmation).toBeUndefined();
+  });
+
+  it("OpenClaw 模型调用（_modelCall）同样要确认付费，且认领仍归本机", async () => {
+    const id = await seedContent();
+    const call = (extra: Record<string, unknown>) =>
+      executeCoverReview({ action: "create_candidates", content_id: id, _dataDir: dir, _geminiApiKey: "k", _modelCall: true, ...extra }) as Promise<Record<string, unknown>>;
+    expect((await call({})).needs_confirmation).toBe("paid_api");
+    expect((await call({ confirm_paid_api: true })).ok).toBe(true);
+    expect((await getContent(id, dir))!.claim).toMatchObject({ employee: "cover", host: "local-user" });
+  });
+
+  it("工作台（不带 _host）不受护栏影响，16:9 照出", async () => {
+    const id = await seedContent();
+    const r = (await executeCoverReview({
+      action: "create_candidates",
+      content_id: id,
+      ratio: "16:9",
+      _dataDir: dir,
+      _geminiApiKey: "k",
+    })) as { ok: boolean };
     expect(r.ok).toBe(true);
   });
 });
