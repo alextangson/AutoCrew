@@ -134,6 +134,13 @@ export function recordTime(record: PublishRecord): string | null {
   return times.sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
 }
 
+/** 最早投出去的时间：稿件 publishedAt 用它（首次公开/提交的时刻，只盖一次） */
+export function firstPublishTime(record: PublishRecord): string | null {
+  if (record.kind === "none") return null;
+  const times = record.platforms.filter((p) => p.submitted && p.time).map((p) => p.time!);
+  return times.sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
+}
+
 export async function readPublishPlanRaw(contentId: string, dataDir: string): Promise<string | null> {
   const binding = resolveContentProject(contentId, dataDir);
   if (!binding) return null;

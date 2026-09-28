@@ -49,7 +49,10 @@ it("发布计划里任一平台已提交 → 稿件同步为已发布并进已�
   const item = (await boardData(dir)).items.find((i) => i.id === c.id)!;
   expect(item.column).toBe("已发布");
   expect(item.publishTime).toBe("2099-10-02T18:00:00+08:00");
-  expect((await getContent(c.id, dir))?.status).toBe("published");
+  const saved = await getContent(c.id, dir);
+  expect(saved?.status).toBe("published");
+  // 发布时间取平台上的时间，不是看板刷到它的时刻
+  expect(saved?.publishedAt).toBe("2099-10-02T18:00:00+08:00");
 });
 
 it("发布计划格式坏：留在待发布，记录标成读不到", async () => {

@@ -1626,7 +1626,7 @@ async function transitionStatusLocked(
   }
 
   // Set publishedAt when transitioning to published
-  if (targetStatus === "published" && !content.publishedAt) {
+  if (targetStatus === "published" && !content.publishedAt && !updates.publishedAt) {
     updates.publishedAt = now;
   }
 

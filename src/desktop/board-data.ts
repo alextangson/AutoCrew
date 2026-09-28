@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { listContents, listTopics, transitionStatus, type Content, type Topic } from "../storage/local-store.js";
 import { columnOf, scriptText, type Column } from "../storage/my-content-plan.js";
 import { isMissing, resolveContentProject } from "../storage/content-project.js";
-import { anySubmitted, readPublishRecord, recordTime, type PublishRecord } from "../storage/publish-record.js";
+import { anySubmitted, firstPublishTime, readPublishRecord, recordTime, type PublishRecord } from "../storage/publish-record.js";
 
 export type BoardColumn = "选题" | Exclude<Column, "复盘">;
 
@@ -99,7 +99,9 @@ export async function wordsPerMinute(contents: Content[], dataDir: string): Prom
 /** 任一平台已提交 → 稿件同步为已发布（§18）；只从待发布同步，状态以盘上为准 */
 async function syncPublished(c: Content, record: PublishRecord, dataDir: string): Promise<Content> {
   if (!SYNC_FROM.has(c.status) || !anySubmitted(record)) return c;
-  const r = await transitionStatus(c.id, "published", { force: true, expectedStatus: c.status }, dataDir);
+  // 发布时间以平台上的实际/定时时间为准，不是看板刷到它的时刻——NAS 归档和数据关联都按它算
+  const at = firstPublishTime(record);
+  const r = await transitionStatus(c.id, "published", { force: true, expectedStatus: c.status, ...(at ? { patch: { publishedAt: at } } : {}) }, dataDir);
   return r.ok && r.content ? r.content : c;
 }
 
