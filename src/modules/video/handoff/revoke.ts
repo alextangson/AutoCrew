@@ -40,7 +40,9 @@ function revokedResult(record: VideoHandoffRecord, contentStatus: string, extra:
 
 async function returnClaim(record: VideoHandoffRecord, input: RevokeInput, grant: Grant, dataDir: string): Promise<Grant> {
   const note = `撤回交接 g${record.generation}`;
-  if (input.host === record.by) {
+  // 写稿侧（Claude 推送的交接）自己撤回 = 要回去改稿，写手认领交回给它；
+  // Codex 撤回（认稿自接或剪辑工位）一律释放：改稿的是写稿侧，重新交接时 handoff 会另发令牌（09-28 真机第三轮）
+  if (input.host === record.by && input.host !== "codex") {
     const back = await transferClaim(record.content_id, {
       token: grant.claim_token ?? input.claimToken,
       host: input.host,
