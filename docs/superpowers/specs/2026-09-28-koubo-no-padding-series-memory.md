@@ -200,3 +200,47 @@
 | 12 | P2 | 档案读改写有并发丢写风险 | D 节：统一存储接口、带 revision、串行写、单写者约束 |
 | 13 | P2 | 创始人覆盖条款太宽；验收把软提示变成了硬要求 | 第 5 节第 1 条限定覆盖范围；第 6 节不按手法卡 ID 判 |
 | 14 | P3 | 手法库的内容治理没写清 | C 节：书籍卡和经验卡分开、ID 加版本、草稿和已审分开、不挡 A/B/D 上线 |
+
+## Implementation notes（2026-09-28 实现时的取舍，按节记）
+
+**接手说明**：在 Codex 中途取消的 19d9ebc 上继续。保留了它的大方向（规则状态字段、工作台审批路由、快照冻结进写作包、outline/technique_ids 字段），改掉了四处不对的地方：删掉了公众号 `min_chars/max_chars` 门禁和 12000 字拒收（口播本来就没有字数门，那两处是别的平台的现有行为，删了是越界）；把「所有稿件写入改成全局一把锁」退回按稿件 id 串行，只在「进入系列范围」和「审稿核对+登记」两处取系列锁；`saveProfile` 不再偷偷把规则改成待批（模型可达的入口本来就不经过它）；摘要失效改成按正文指纹现算，而不是写时清空。
+
+**D 规则**
+- 规则状态由 `ruleStatus()` 统一判定：有 `status` 按 `status`；没有的存量规则 `disabled:true` → 停用，否则生效。新代码每次写规则都把 `disabled` 跟状态对齐（非 active 一律 `disabled:true`），这样还在跑旧代码的进程（例如没重启的 :4317）读到待批规则也会跳过。
+- 存量规则的稳定 id 在读侧按「下标+文本+创建时间+作用域」算出来，第一次写入时落盘；不改它们的状态。
+- 唯一生效入口：`POST /api/rules/decision`（`src/desktop/rule-approval.ts`），只认浏览器会话 cookie + 同源 + JSON，具名 MCP bearer 和 `/api/invoke` 都进不来；绑定 `ruleId + revision + decision`，`eventId` 幂等，同一 eventId 换内容报冲突。`style:update_rule`（IPC，bearer 可达）只能改文本（回到待批）、停用、或申请启用（待批），不能批准。
+- 升级提案：自动提炼的同一文本在**另一个平台已生效**时才起提案；原平台规则待批或停用时不起（免得给创始人堆重复待批项）。用户在 editorial 里明确点名平台的长期偏好（`scope:"platform"`）按他说的平台另记一条待批规则，不走升级。批准提案 → 提案生效为全局、原平台规则停用。
+- 丢弃只能丢「待批」的规则；已生效的走停用。丢弃是墓碑，以后同文本（不论作用域）再提直接挡掉。
+- 写档案：`mutateProfile` 读改写整段进同一资料目录的队列，temp+rename 原子写，`revision` 每写 +1；`saveProfile` 整份保存时比对 revision（读出来的档案一定带 revision；从零构造的整份档案按覆盖处理）。`updateProfile` 不再接受 `writingRules`。
+- 单写者：`desktop/server.ts` 启动时在资料目录写 `.autocrew-writer.lock`（pid）；另一个活进程占着就**告警不拒绝启动**（误判把创始人挡在门外代价更大）；持有者进程已不在就接管。
+- 画像生成用 `rulesForPlatform(profile, null)`（所有平台的生效规则），选区改写按目标稿件平台取，没传 content_id 时只给声音内核。
+- 测试夹具 `src/modules/profile/rule-fixtures.ts` 里有 `addApprovedRuleForTest`（记一条 + 以工作台决定批准），只给测试用，产品路径不调用。
+
+**B 系列记忆**
+- 「进入上述状态的时间」取 `seriesEnteredAt`：从白名单外转入白名单时记（白名单内部流转如 draft_ready→approved 不刷新）；老稿没有这个字段时退到 `publishedAt`（已发）/`draftReadyAt`/`updatedAt`。
+- 同选题的**其他版本**不进本篇的快照（那是这篇自己的前身，不是系列里的另一条）；其他选题同平台多版本仍按「只取最新一版」。
+- 每条摘要进快照的上限 1500 字符，按 thesis → 骨架三项 → said 顺序装，装不下的截断并标 `truncated`；points（估时规划）不进快照。没有有效摘要的老稿只放首段/末段各 300 字，标覆盖不足。
+- 摘要有效性按正文指纹现算：`outlineDraftHash` 等于当前 `draftHash` 才有效。编辑器改稿、选区改写、回滚到别的版本都会让它自动失效、退回原文节选，不需要写时清空。
+- 快照过时的判定：冻结之后有**新稿进入范围**，或范围内已有的稿**正文变了**（draft_hash 变化）。「待发→已发」这种标签变化不算。
+- 补审方式：服务端把新增的几条并进审稿单的快照（新 snapshot_id），审稿人重交时 `checked` 要覆盖新快照全部条目，已查过的可以沿用原结论。这比「只交新增几条」多一点重复，但结构校验保持一种口径。
+- 原子性：`transitionStatus` 目标是白名单状态时，先取系列锁再取单稿锁；审稿台 `submit` 整段在系列锁内（写手队列 → 系列锁 → 单稿锁，顺序固定）。`saveContent` 直接把新稿建在白名单状态（手工导入）这条路没有取系列锁，窗口极小，首版不处理。
+- 系列比对结果存在 `Content.seriesReview`，带 `reviewContextHash` 与记录时间；审稿通过/草稿就绪本身不代表去重通过。engine 审稿（显式 `review:"engine"`）和 `review:"none"` 不产出系列比对，`seriesReview` 为空即「这一版没做过」。
+- 快照、手法目录冻结在写作包里；同一包重复领取原样返回。有缺口记录的包不再原样复用，force 重领时重新冻结。
+
+**A / §4 提交契约**
+- 新契约包 = 写作包里有 `series` 字段。交稿缺 `outline` 是拒收（`code:"outline_required"`），不记 attempt、不扣修复轮。旧包没有该字段，照旧可不带。
+- 同号提交指纹：带了 outline 或 technique_ids 才把它们加进指纹；两者都没带时沿用旧算法，升级前记下的 attempt 重放不会被误判成冲突。审稿台的提交指纹同理（带了 series_review 才算进去）。
+- 审稿上下文指纹 `reviewContextHash = sha256(draft_hash, 有效摘要, 快照 id, 手法卡 id@version)`，`draft_hash` 含义不变。摘要或手法卡变化会记新版本，并把这几项写进版本记录；快照 id 变化只进指纹，不单独记版本（补审换快照不是改稿）。
+- 长度提示 `length_hint` 出现在每个交稿回执里，`advisory:true`。字数口径是 hook+body+cta 去空白后的字符数；上下限只认「N-M 字」这种写法，先看本次要求再看档案 `wordCount`，写成「7–10 分钟」这类没有字数的就是 unknown。
+- 缺口记录：`autocrew_writer gap{content_id,pack_id,gap:{available,missing,questions},claim_token}`，走原有写门（认领令牌）和写手队列，写进写作包和稿件；稿件保持 drafting/revision。之后同包 `pack` 返回 `pack_request_changed`（带 gap），force 重领拿新包新快照；下一次成功交稿清掉稿件上的 gapRecord。
+
+**C 手法库**
+- 卡片格式：`src/modules/writing/technique-store.ts` 的 `techniqueCardSchema`（id、version、name、purpose、source{book|founder_experience}、verification{status: 已核|部分待核, note, links}、fits、notFor、moves、illustration{label:"示意，不是事实材料", text}、misuse、pairing）。
+- 已审目录有两处来源：产品内置 `src/modules/writing/techniques/approved/`（只许书籍卡，混进创始人卡直接报错）+ 资料目录 `<library>/techniques/approved/`。`drafts/` 永不加载。
+- 2026-09-28 创始人批准的 15 张已转换：12 张书籍卡进内置已审目录；3 张创始人经验卡按 §3 C「只限这个资料目录」放在 `src/modules/writing/techniques/founder-library/`，**没有写进创始人的资料库**（实现时不碰 `~/AutoCrew资料库`）。要启用这 3 张，把这三个 json 复制到 `~/AutoCrew资料库/techniques/approved/` 即可，这一步留给创始人。
+- 标「部分待核」的卡原样保留核对状态，不因批准改成「已核」。
+- 读全文：`autocrew_writer technique{content_id?,id,version}`，有 content_id 时读该稿写作包冻结的那一版。
+- 立意阶段：宿主路径（scout angles 任务包）和 engine 路径（runAngleStage，仅在明确给了资料目录时）都会带上系列快照和手法目录。
+
+**其他**
+- `eslint.config.js` 给 bin 脚本补了 `AbortSignal` 全局：main 上 `npm run lint` 本来就因为它报错，`npm run check` 跑不到测试。
