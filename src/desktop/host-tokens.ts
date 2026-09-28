@@ -27,6 +27,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { getHostStateDir } from "../storage/storage-roots.js";
+import { LOCAL_SUBJECT } from "./server-auth.js";
 
 /** 宿主名同时是文件名，所以限死小写字母开头的 kebab，路径穿越无从谈起。 */
 export const HOST_NAME_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
@@ -49,6 +50,8 @@ function assertHost(host: string): string {
   if (!HOST_NAME_PATTERN.test(host)) {
     throw new Error(`宿主名不合法：${host}（只允许小写字母开头的 2-32 位 a-z0-9-）`);
   }
+  // 本地主体名保留给浏览器会话与 server-token，命名宿主不能叫这个
+  if (host === LOCAL_SUBJECT) throw new Error(`宿主名 ${host} 是保留名`);
   return host;
 }
 

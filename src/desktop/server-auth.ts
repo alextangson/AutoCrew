@@ -87,8 +87,14 @@ export class LocalSessionAuth {
     return { sessionId, expiresAt: new Date(expires).toISOString() };
   }
 
+  /**
+   * 看板与 /api/* 的门：只认本地主体（浏览器会话 + server-token）。
+   * 命名宿主 token 只属于 /mcp——那里有 host-policy 按宿主限权；放它进 /api/invoke
+   * 等于让受限的 codex 工位绕过白名单直接调任意 IPC 通道。/mcp 走 `identify`。
+   */
   authenticate(headers: SessionHeaders): AuthMethod | null {
-    return this.identify(headers)?.method ?? null;
+    const identity = this.identify(headers);
+    return identity?.subject === LOCAL_SUBJECT ? identity.method : null;
   }
 
   /** 与 `authenticate` 同一套判定，另外回答「这是谁」——MCP 归因的唯一来源。 */
@@ -98,7 +104,8 @@ export class LocalSessionAuth {
       const token = authorization.slice(7);
       if (constantTimeEqual(token, this.automationToken)) return { method: "bearer", subject: LOCAL_SUBJECT };
       const host = this.lookupHost(token);
-      if (host) return { method: "bearer", subject: host };
+      // 命名 token 永远不能冒充本地主体：tokens/local-user.token 这种文件不给本地权限
+      if (host && host !== LOCAL_SUBJECT) return { method: "bearer", subject: host };
     }
 
     const sessionId = readCookie(headerValue(headers.cookie), SESSION_COOKIE);
