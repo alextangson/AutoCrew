@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as seriesMemory from "../modules/writing/series-memory.js";
 import * as writerReview from "./writer-review.js";
+import * as localStore from "../storage/local-store.js";
 import { createEvidenceLedger } from "../modules/research/evidence-ledger.js";
 import { saveContent, getContent, updateContent, transitionStatus } from "../storage/local-store.js";
 import { writePack, readPack, type ReadyPack } from "./writer-pack.js";
@@ -199,5 +200,27 @@ describe("pinned-but-not-landed review recovers through a re-review (Codex P2)",
     const retried = await desk(first);
     expect(retried.status).not.toBe("series_snapshot_stale");
     expect(retried, JSON.stringify(retried).slice(0, 300)).toMatchObject({ ok: true });
+  });
+});
+
+describe("recovery only skips the snapshot check after the draft really entered scope (Codex round 2 P1)", () => {
+  it("review written but status never advanced: a newcomer must still be re-reviewed before accepting", async () => {
+    const { content, review } = await seedNewContractPack();
+    const first = { action: "submit", content_id: content.id, review_pack_id: review.review_pack_id, attempt: review.attempt, issues: [], series_review: coverAll(review.series_snapshot) };
+    // 进程在审稿元数据写完之后、推进到 draft_ready 之前退出
+    vi.spyOn(localStore, "transitionStatus").mockRejectedValueOnce(new Error("进程退出"));
+    const crashed = await desk(first) as { ok: boolean; claim_token?: string };
+    expect(crashed.ok).toBe(false);
+    const mid = (await getContent(content.id, dir))!;
+    expect(mid.status).toBe("drafting");
+    expect(mid.review?.source).toBeTruthy();
+    Object.assign(first, { claim_token: crashed.claim_token });
+
+    const newcomer = await publishedNeighbour("恢复前完成审稿的邻居");
+    const retried = await desk(first) as { status?: string; additions?: string[]; series_snapshot?: { id: string; items: Array<{ content_id: string; insufficient: boolean }> } };
+    expect(retried.status).toBe("series_snapshot_stale");
+    expect(retried.additions).toEqual([newcomer.id]);
+    const done = await desk({ ...first, series_review: coverAll(retried.series_snapshot!) });
+    expect(done).toMatchObject({ ok: true, status: "accepted" });
   });
 });

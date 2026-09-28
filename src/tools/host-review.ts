@@ -1,6 +1,6 @@
 import { seriesTransaction } from "../storage/series-transaction.js";
 import {
-  SERIES_REVIEW_RULES, loadSeriesSnapshot, mergeSnapshot, renderSnapshot, seriesReviewSchema, snapshotAdditions, validateSeriesReview,
+  SERIES_REVIEW_RULES, SERIES_STATES, loadSeriesSnapshot, mergeSnapshot, renderSnapshot, seriesReviewSchema, snapshotAdditions, validateSeriesReview,
   type SeriesReview, type SeriesSnapshot,
 } from "../modules/writing/series-memory.js";
 import { reviewContextHash, updateContentIfDraftMatches } from "../storage/local-store.js";
@@ -236,7 +236,8 @@ async function submitReview(params: Record<string, unknown>, pack: ReadyPack, re
   if (typeof audience === "string") return fail(audience, "invalid_review");
   // 钉住过（pending）但进程在落地中途退出：结论已经登记了就只补完落地，不再核对快照；
   // 没登记就照常核对，过时则作废旧钉子，让按新快照补审的结论能交上来（Codex 评审 P2）
-  const landed = ticket.submission?.state === "pending" && verdictLanded(current, ticket);
+  // 「已登记」必须是真的进了系列范围（状态已在系列锁下推进）；只有审稿元数据、状态还没推进的，照常核对快照（Codex 第二轮 P1）
+  const landed = ticket.submission?.state === "pending" && verdictLanded(current, ticket) && SERIES_STATES.has(current.status);
   const seriesRejected = landed ? null : await checkSeriesReview(params, pack, ticket, contentId, haystack, dataDir);
   if (seriesRejected) return seriesRejected;
   // 写门（P6 §3.8）：核对全过、真要落盘才过门——被拒的审稿不认领也不续租，重放不写盘也不设卡
