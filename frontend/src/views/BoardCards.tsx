@@ -22,14 +22,21 @@ export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean;
   return <article className="bcard" draggable={!props.busy} aria-busy={props.busy}
     onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.title); props.onDragStart("选题", t.id); }}
     onDragEnd={props.onDragEnd}>
-    <button className="bcard-title" title={t.title} onClick={props.onOpen}>
-      {t.score !== null && <span className="bcard-score">{t.score}</span>}{t.title}
-    </button>
+    <div className="bcard-top">
+      <button className="bcard-title" title={t.title} onClick={props.onOpen}>
+        {t.score !== null && <span className="bcard-score">{t.score}</span>}{t.title}
+      </button>
+      <details className="bcard-menu">
+        <summary aria-label="更多操作">⋯</summary>
+        <div className="bcard-menu-list">
+          {t.link && isHttpUrl(t.link) && <a href={t.link} target="_blank" rel="noreferrer">看来源</a>}
+          <button onClick={(e) => { const d = e.currentTarget.closest("details"); if (d) d.open = false; props.onTrash(); }}>移入回收站</button>
+        </div>
+      </details>
+    </div>
     <div className="bcard-meta">{meta}</div>
     <div className="bcard-actions">
-      <button className="primary" disabled={props.busy} onClick={props.onStart}>{props.busy ? "正在开始…" : "开始写"}</button>
-      {t.link && isHttpUrl(t.link) && <a className="bcard-link" href={t.link} target="_blank" rel="noreferrer">看来源</a>}
-      <button className="bcard-link bcard-trash" title="将选题移入回收站" onClick={props.onTrash}>移入回收站</button>
+      <button className="bcard-start" disabled={props.busy} onClick={props.onStart}>{props.busy ? "正在开始…" : "开始写"}</button>
     </div>
   </article>;
 }
@@ -110,7 +117,7 @@ async function undoMark(item: BoardItem, platform: string, reload: () => Promise
 
 function PublishRow(props: { item: BoardItem; p: PlatformPublication; reload: () => Promise<void> }) {
   const { p, item } = props;
-  const line = publishLine(p);
+  const line = publishLine(p, Date.now(), item.publishTime);
   const url = p.url && isHttpUrl(p.url) ? p.url : null;
   return <div className={"prow prow-" + line.tone}>
     <span className="prow-name">{platformName(p.platform)}</span>

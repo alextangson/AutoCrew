@@ -165,9 +165,13 @@ function reviewText(review: string | null): string {
 }
 
 /** 一个平台一行（§18–§22）：没投的不标红；定时过了写「应已公开」；不认识的写原值 */
-export function publishLine(p: PlatformPublication, now: number = Date.now()): PublishLine {
+/** headTime = 卡片顶上已写的发布时间；与它相同就不在每行重复 */
+export function publishLine(p: PlatformPublication, now: number = Date.now(), headTime: string | null = null): PublishLine {
   switch (p.state) {
-    case "scheduled": return { text: `定时 ${clockLabel(p.time, now)}${reviewText(p.review)}`, tone: "ok" };
+    case "scheduled": {
+      const same = headTime !== null && p.time !== null && Date.parse(headTime) === Date.parse(p.time);
+      return { text: `定时${same ? "" : ` ${clockLabel(p.time, now)}`}${reviewText(p.review)}`, tone: "ok" };
+    }
     case "overdue": return { text: "应已公开（等数据回流确认）", tone: "ok" };
     case "public": return { text: p.time ? `已公开 · ${relativeLabel(p.time, now)}` : "已公开", tone: "ok" };
     case "reviewing": return { text: `已提交${reviewText(p.review) || " · 审核中"}`, tone: "ok" };

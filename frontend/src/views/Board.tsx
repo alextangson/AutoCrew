@@ -103,15 +103,17 @@ export function Board(props: Nav) {
   return <div className="board2">
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
-      <button className="bcard-link" disabled={radarBusy} onClick={() => void collectMore()}>{radarBusy ? "找选题中…" : "再找 5 条选题"}</button>
-      <button className="bcard-link" onClick={() => setTrash(true)}>回收站</button>
     </div>
     <div className="board2-cols" style={{ gridTemplateColumns: COLUMNS.map((c) => colWidth(c, cards)).join(" ") }}>
       {COLUMNS.map((col) => <section key={col} aria-label={col} className={"bcol" + (over === col ? (drag.current && canDrop(drag.current.from, col) ? " bcol-ok" : " bcol-no") : "")}
         onDragOver={(e) => { if (!drag.current) return; e.preventDefault(); e.dataTransfer.dropEffect = canDrop(drag.current.from, col) ? "move" : "none"; setOver(col); }}
         onDrop={(e) => { e.preventDefault(); onDrop(col); }}>
         <header className="bcol-head">
-          <h2>{col}{cards && <span className="bcol-count">{col === "已发布" ? "最近 5 条" : cards[col].length}</span>}</h2>
+          <h2>{col}{cards && <span className="bcol-count">{col === "已发布" ? "最近 5 条" : cards[col].length}</span>}
+            {col === "选题" && <span className="bcol-tools">
+              <button className="bcard-link" disabled={radarBusy} onClick={() => void collectMore()}>{radarBusy ? "找选题中…" : "再找 5 条"}</button>
+              <button className="bcard-link" onClick={() => setTrash(true)}>回收站</button>
+            </span>}</h2>
           <p>{COLUMN_HINT[col]}</p>
         </header>
         {cards === null ? <p className="bcol-note">读取中</p>

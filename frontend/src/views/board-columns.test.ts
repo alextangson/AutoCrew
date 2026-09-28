@@ -67,6 +67,7 @@ describe("文案", () => {
   it("发布行：定时带审核、没投的不标红、没通过标红带原因、不认识的写原值", () => {
     expect(publishLine(pub({ time: "2026-10-02T10:00:00Z", review: "reviewing" }), NOW)).toMatchObject({ tone: "ok" });
     expect(publishLine(pub({ time: "2026-10-02T10:00:00Z", review: "reviewing" }), NOW).text).toContain("审核中");
+    expect(publishLine(pub({ time: "2026-10-02T10:00:00Z", review: "reviewing" }), NOW, "2026-10-02T18:00:00+08:00").text).toBe("定时 · 审核中");
     expect(publishLine(pub({ state: "overdue" }), NOW).text).toContain("应已公开");
     expect(publishLine(pub({ state: "not_submitted", submitted: false }), NOW).tone).toBe("muted");
     expect(publishLine(pub({ state: "rejected", reason: "封面违规" }), NOW)).toEqual({ text: "没通过：封面违规", tone: "red" });
