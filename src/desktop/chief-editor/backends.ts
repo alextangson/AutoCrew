@@ -41,20 +41,28 @@ const ROUTING_ENV_KEY = /^(ANTHROPIC_|CLAUDE_CODE_)/;
 /**
  * 减负后不再加载全局 settings，但线路必须照旧走创始人的代理（2026-09-29 创始人：必须经过代理）。
  * 只从 settings 文件取，不从宿主进程取（宿主会话自己的 ANTHROPIC_BASE_URL 会让认证失败，spike 实测）。
- * 文件不存在 = 没配代理；文件坏了 = 报错，绝不静默直连。
+ * 文件不存在 = 这台机器没配代理（别的用户的常态），照常直连；
+ * 文件在但读不出 / 结构不对 / 线路变量不是字符串 = 报错，绝不静默直连。
+ * 报错不带解析器原文：JSON.parse 的报错会夹带附近的配置片段（可能是别的密钥）。
  */
 export function claudeRoutingEnv(settingsPath = path.join(os.homedir(), ".claude", "settings.json")): { env: Record<string, string> } | { error: string } {
   if (!existsSync(settingsPath)) return { env: {} };
+  const bad = (why: string) => ({ error: `${settingsPath} ${why}，不知道该走哪条代理，这一轮不发。修好这个文件再重发。` });
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(settingsPath, "utf-8"));
-  } catch (err) {
-    return { error: `读不了 ${settingsPath}（${err instanceof Error ? err.message : String(err)}），不知道该走哪条代理，这一轮不发。修好这个文件再重发。` };
+  } catch {
+    return bad("读不了或不是合法 JSON");
   }
-  const block = (parsed as { env?: unknown } | null)?.env;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return bad("的顶层不是对象");
+  const block = (parsed as { env?: unknown }).env;
+  if (block === undefined) return { env: {} };
+  if (!block || typeof block !== "object" || Array.isArray(block)) return bad("的 env 不是对象");
   const env: Record<string, string> = {};
-  if (block && typeof block === "object") {
-    for (const [k, v] of Object.entries(block)) if (ROUTING_ENV_KEY.test(k) && typeof v === "string") env[k] = v;
+  for (const [k, v] of Object.entries(block)) {
+    if (!ROUTING_ENV_KEY.test(k)) continue;
+    if (typeof v !== "string") return bad(`的 env.${k} 不是字符串`);
+    env[k] = v;
   }
   return { env };
 }
@@ -70,7 +78,9 @@ export async function proxyUnreachable(env: Record<string, string>, timeoutMs = 
   try { url = new URL(raw); } catch { return `代理地址 ${raw} 写得不对（~/.claude/settings.json 的 ANTHROPIC_BASE_URL），这一轮不发。`; }
   const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
   const ok = await new Promise<boolean>((resolve) => {
-    const sock = net.connect({ host: url.hostname, port });
+    // WHATWG URL 给 IPv6 留着方括号（[::1]），net.connect 要裸地址
+    const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+    const sock = net.connect({ host, port });
     const done = (v: boolean) => { sock.destroy(); resolve(v); };
     sock.setTimeout(timeoutMs, () => done(false));
     sock.once("connect", () => done(true));
@@ -88,7 +98,8 @@ export interface BackendAdapter {
   /** 线路环境（代理等）；读不出来就回 error，调用方不许退回直连 */
   routingEnv?(settingsPath?: string): { env: Record<string, string> } | { error: string };
   /** session/new 与 session/load 的 _meta（强制权限提示等差异适配） */
-  sessionMeta(): Record<string, unknown>;
+  /** env：线路变量，写进最高优先级的会话 settings，项目 settings 盖不掉 */
+  sessionMeta(env?: Record<string, string>): Record<string, unknown>;
   /** 认证失败的认法：命中就标「未登录」并给修法 */
   isAuthError(message: string): boolean;
   loginFix: string;
@@ -123,15 +134,16 @@ export const CLAUDE_ADAPTER: BackendAdapter = {
     return entry ? { command: process.execPath, args: [entry], env: { ENABLE_TOOL_SEARCH: "true" } } : null;
   },
   routingEnv: (settingsPath) => claudeRoutingEnv(settingsPath),
-  sessionMeta() {
+  sessionMeta(env = {}) {
     return {
       claudeCode: {
         options: {
           // AutoCrew 自己的 MCP 工具不弹权限卡：它们的门在服务端（执行前审批、认领、限权）
-          settings: { permissions: { ask: CLAUDE_ASK_TOOLS, allow: ["mcp__autocrew"], defaultMode: "default" } },
+          // env 同时写进这里：Claude Code 会在进程环境之后套用 settings.env，只放进程环境会被项目 settings 盖掉
+          settings: { permissions: { ask: CLAUDE_ASK_TOOLS, allow: ["mcp__autocrew"], defaultMode: "default" }, env },
           allowDangerouslySkipPermissions: false,
           // 减负（v1.1）：只读本目录（人设 + AutoCrew 自带技能），不加载创始人全局的技能/插件/MCP；
-          // 全局 settings 里的线路变量（代理）另由 routingEnv 带进进程环境，必须经过代理；
+          // 全局 settings 里的线路变量（代理）另由 routingEnv 取出，进程环境 + 上面 settings.env 各放一份，必须经过代理；
           // 登录走钥匙串，不受影响。实测首轮上下文 75k→18k，全局 model=opus 带来的 200k 窗口也不再生效
           settingSources: ["project"],
           strictMcpConfig: true,

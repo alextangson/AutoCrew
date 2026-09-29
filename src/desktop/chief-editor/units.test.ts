@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createConversation } from "../../storage/conversation-store.js";
 import { cleanAgentEnv } from "./acp-process.js";
 import { AskRegistry } from "./asks.js";
-import { backendStatuses, claudeRoutingEnv, pickPermissionOption } from "./backends.js";
+import { backendStatuses, claudeRoutingEnv, pickPermissionOption, proxyUnreachable } from "./backends.js";
 import { maybeRunLocalTurn, resolveTurnBackend } from "./ipc-handlers.js";
 import { ensurePersona } from "./persona.js";
 import { classifyPublishAction } from "./publish-gate.js";
@@ -99,6 +99,27 @@ describe("线路：必须经过创始人的代理（2026-09-29）", () => {
   it("settings 坏了就报错，不静默直连", () => {
     const r = claudeRoutingEnv(write("{ not json"));
     expect("error" in r && r.error).toContain("不知道该走哪条代理");
+  });
+  it("结构不对也报错：顶层 null、env 不是对象、线路变量不是字符串", () => {
+    for (const body of ["null", JSON.stringify({ env: 42 }), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 8787 } })]) {
+      expect("error" in claudeRoutingEnv(write(body))).toBe(true);
+    }
+  });
+  it("报错不带解析器原文，旁边的密钥不会漏进对话", () => {
+    const r = claudeRoutingEnv(write('{"env":{"UNRELATED_PASSWORD":fakepass}}'));
+    expect("error" in r && r.error).not.toContain("fakepass");
+  });
+  it("IPv6 本机代理（[::1]）连得上就不误报", async () => {
+    const net = await import("node:net");
+    const server = net.createServer((sock) => sock.end());
+    const listening = await new Promise<boolean>((r) => { server.once("error", () => r(false)); server.listen(0, "::1", () => r(true)); });
+    if (!listening) return; // 这台机器没开 IPv6 回环就跳过
+    try {
+      const port = (server.address() as { port: number }).port;
+      expect(await proxyUnreachable({ ANTHROPIC_BASE_URL: `http://[::1]:${port}` })).toBeNull();
+    } finally {
+      server.close();
+    }
   });
 });
 

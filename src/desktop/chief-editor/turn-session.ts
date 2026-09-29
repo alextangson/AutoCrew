@@ -19,14 +19,14 @@ export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise
   });
 }
 
-async function resumeOrNew(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate, prior?: string): Promise<{ info: SessionInfo; notice?: string; fresh: boolean }> {
+async function resumeOrNew(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate, env: Record<string, string>, prior?: string): Promise<{ info: SessionInfo; notice?: string; fresh: boolean }> {
   const mcp = { url: svc.deps.mcpUrl, token: turn.token! };
   const init = await withTimeout(proc.initialize(), SESSION_TIMEOUT_MS, "适配器初始化");
   let notice: string | undefined;
   if (prior && init.loadSession) {
     gate.replaying = true;
     try {
-      const info = await withTimeout(proc.loadSession(prior, svc.deps.home, mcp, adapter.sessionMeta()), SESSION_TIMEOUT_MS, "续会话");
+      const info = await withTimeout(proc.loadSession(prior, svc.deps.home, mcp, adapter.sessionMeta(env)), SESSION_TIMEOUT_MS, "续会话");
       return { info, fresh: false };
     } catch {
       notice = "上次的会话续不上，已新开（之前的上下文 agent 看不到了）";
@@ -36,15 +36,15 @@ async function resumeOrNew(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendA
   } else if (prior) {
     notice = "这个后端不支持续会话，已新开";
   }
-  const info = await withTimeout(proc.newSession(svc.deps.home, mcp, adapter.sessionMeta()), SESSION_TIMEOUT_MS, "新建会话");
+  const info = await withTimeout(proc.newSession(svc.deps.home, mcp, adapter.sessionMeta(env)), SESSION_TIMEOUT_MS, "新建会话");
   return { info, fresh: true, ...(notice ? { notice } : {}) };
 }
 
 export async function openSession(
   svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate,
-  opts: { prior?: string; settings: AgentSettings },
+  opts: { prior?: string; settings: AgentSettings; env?: Record<string, string> },
 ): Promise<{ sessionId: string; notice?: string }> {
-  const { info, notice, fresh } = await resumeOrNew(svc, turn, adapter, proc, gate, opts.prior);
+  const { info, notice, fresh } = await resumeOrNew(svc, turn, adapter, proc, gate, opts.env ?? {}, opts.prior);
   if (fresh) {
     // 走按会话串行队列、只补这一个字段：别和并发的改名 / 设置变更互相覆盖（评审 v1.1 P1-1）
     await enqueueConversationWrite(turn.conversationId, () => updateConversationAgent(turn.conversationId, { acpSessionId: info.sessionId }, turn.dataDir));

@@ -231,6 +231,9 @@ describe("线路：必须经过创始人的代理（2026-09-29）", () => {
       const r = await runLocalTurn(h.svc, input());
       expect(r.ok).toBe(true);
       expect(h.launches[0].env).toEqual({ ENABLE_TOOL_SEARCH: "true", ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` });
+      // 同一份线路变量也写进最高优先级的会话 settings：项目 settings 盖不掉代理
+      const meta = h.agents[0].meta[0] as { claudeCode: { options: { settings: { env: Record<string, string> } } } };
+      expect(meta.claudeCode.options.settings.env).toEqual({ ENABLE_TOOL_SEARCH: "true", ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` });
     } finally {
       server.close();
     }

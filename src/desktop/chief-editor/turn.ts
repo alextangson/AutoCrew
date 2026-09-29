@@ -177,7 +177,7 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   svc.runs.patch(turn.turnId, { ...(proc.pid ? { pid: proc.pid } : {}), command: proc.command });
   signal.addEventListener("abort", () => stopAgent(svc, turn), { once: true });
   try {
-    const session = await openSession(svc, turn, adapter, proc, gate, { settings: conv.settings, ...(conv.acpSessionId ? { prior: conv.acpSessionId } : {}) });
+    const session = await openSession(svc, turn, adapter, proc, gate, { settings: conv.settings, env: launch.env, ...(conv.acpSessionId ? { prior: conv.acpSessionId } : {}) });
     turn.sessionId = session.sessionId;
     if (signal.aborted) stopAgent(svc, turn);
     const stopReason = turn.aborted ? "cancelled" : await promptLoop(svc, turn, proc, session.sessionId, `${input.promptContext ?? ""}${input.message}`, gate.flush);
