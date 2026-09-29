@@ -401,6 +401,7 @@ export function ChatDock(props: {
     });
     // 缺省档不带 model_choice：默认路径的 payload 与切换器上线前逐字一致
     const choice = modelChoiceRef.current;
+    if (!activeConversationId) conv.markSent();
     const r = await invoke("chat:turn", {
       message,
       turn_id: turnId,
@@ -427,6 +428,7 @@ export function ChatDock(props: {
       const failedConv = (r as { data?: { conversationId?: unknown } }).data?.conversationId;
       if (!activeConversationId && typeof failedConv === "string") {
         setConvBackend(backend);
+        conv.keepForNew(failedConv);
         setActiveConversationId(failedConv);
         void refreshConversations();
       }
@@ -440,7 +442,7 @@ export function ChatDock(props: {
     if (parsed.conversationId) {
       if (!activeConversationId) {
         setConvBackend(backend);
-        conv.keepForNew();
+        conv.keepForNew(parsed.conversationId);
       }
       setActiveConversationId(parsed.conversationId);
     }

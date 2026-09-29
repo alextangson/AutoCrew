@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { controlState, settingsFromServer, settingsPayload } from "./conv-settings";
+import { changedSinceSend, controlState, DEFAULT_SETTINGS, enteringNewConversation, settingsFromServer, settingsPayload, snapshotFromSave } from "./conv-settings";
 
 describe("对话级设置（v1.1）", () => {
   it("U2：适配器没上报 → 只有「默认」且不可点", () => {
@@ -16,5 +16,23 @@ describe("对话级设置（v1.1）", () => {
     expect(settingsFromServer({ permissionMode: "bypass" }, false).permissionMode).toBe("bypass");
     expect(settingsFromServer(undefined, false)).toEqual({ model: "default", effort: "default", permissionMode: "ask" });
     expect(settingsPayload({ model: "sonnet", effort: "high", permissionMode: "conversation" })).toEqual({ model: "sonnet", effort: "high", permission_mode: "conversation" });
+  });
+});
+
+describe("评审 v1.1 前端回归", () => {
+  it("P1-2：从有对话切到没有对话（任何入口）就重置设置；新对话首轮拿到 id 不重置", () => {
+    expect(enteringNewConversation("conv-1-a", undefined)).toBe(true);
+    expect(enteringNewConversation(undefined, "conv-1-a")).toBe(false);
+    expect(enteringNewConversation(undefined, undefined)).toBe(false);
+  });
+  it("P2-4：保存后用回执刷新快照，之后重建不会退回旧值", () => {
+    const snap = snapshotFromSave({ ok: true, data: { settings: { permissionMode: "bypass" }, conversationAllow: false } });
+    expect(settingsFromServer(snap!.meta, snap!.conversationAllow).permissionMode).toBe("bypass");
+    expect(snapshotFromSave({ ok: false })).toBeNull();
+  });
+  it("P2-5：首轮进行中改过设置，拿到 id 后要补存", () => {
+    expect(changedSinceSend(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, permissionMode: "conversation" })).toBe(true);
+    expect(changedSinceSend(DEFAULT_SETTINGS, DEFAULT_SETTINGS)).toBe(false);
+    expect(changedSinceSend(null, DEFAULT_SETTINGS)).toBe(false);
   });
 });

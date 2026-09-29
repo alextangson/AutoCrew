@@ -56,3 +56,20 @@ export function controlState(backend: BackendId, choices: Choice[]): { hidden: b
 export function choiceLabel(items: Choice[], value: string): string {
   return items.find((c) => c.value === value)?.label ?? (value === "default" ? "默认" : value);
 }
+
+/** 进入新对话（任何入口：＋、打开没聊过的稿件、换后端、删掉当前对话）→ 设置回默认，旧对话的放行档不带过来（评审 v1.1 P1-2） */
+export function enteringNewConversation(prev: string | undefined, next: string | undefined): boolean {
+  return Boolean(prev) && !next;
+}
+
+/** 新对话首轮进行中又改了设置：首轮带走的是发送那一刻的，拿到对话 id 后要把后来的改动补存（评审 v1.1 P2-5） */
+export function changedSinceSend(sent: ConvSettings | null, current: ConvSettings): boolean {
+  return Boolean(sent) && JSON.stringify(sent) !== JSON.stringify(current);
+}
+
+/** agent:settings 保存成功后的回执 → 新的 meta 快照与「本对话都允许」（评审 v1.1 P2-4） */
+export function snapshotFromSave(resp: unknown): { meta: unknown; conversationAllow: boolean } | null {
+  const d = (resp as { ok?: boolean; data?: { settings?: unknown; conversationAllow?: unknown } } | null);
+  if (!d?.ok || !d.data) return null;
+  return { meta: d.data.settings ?? {}, conversationAllow: d.data.conversationAllow === true };
+}
