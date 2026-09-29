@@ -1,22 +1,21 @@
 /**
- * 发布回执（spec §6、E35）——**不可变观察 + 纯函数求值**。
+ * 发布回执（spec §6、E35）——**每条稿、每一轮、每个平台只有一个发布槽**（创始人 2026-09-29 拍板）。
  *
- * 前三轮评审都栽在「合并可变回执」上（轮次串、声明与可信回执互相改、身份变化）。这一版没有合并、没有就地修改：
+ * 前四轮评审都栽在「跨来源认同一件作品」（链接 / 作品 id / 时间）上；这一版不再认作品：
  *
- * 1. 每次读到的发布信息都是一条**观察**（publish 事实），按（来源, 平台, 作品身份, 状态, 发布时间, 原因）算
- *    `obs_key`；同键已在就不再写（所以反复对账收敛，不累积）。状态变了（审核中 → 驳回）就是一条新观察。
- *    来源四种：plan（发布计划）、metrics_id（数据回流按作品 id 绑上）= 可信；metrics_title（按标题猜）、claim（模型说）= 待核。
- * 2. 轮次在写入时按证据盖一次：有发布时间 → 按历次「重开文稿」切出所属轮；没有时间且不在第一轮 → round_unsure，
- *    永远不会被自动核实，只能等创始人认。
- * 3. **作品**是纯函数分组：同平台、共有链接或作品 id 的观察是同一件作品（先有链接后有 id，会被同一件作品吸收）；
- *    没有身份的只按自身的观察键成组，绝不按「平台 + 时间」凑在一起。
- * 4. 作品状态按固定优先级求：可信观察（最后一条可信的状态为准；驳回 ≠ 已发布） > 创始人确认 > 待核声明。
- *    纠正是创始人决定、指向某条观察 id；被纠正的作品整件不算。
- * 创始人「我发了」是另一种决定（decisions.ts），不在这里。
+ * 1. 观察只追加：每次读到的发布信息是一条 publish 事实（来源、平台、状态、证据时间、原因；链接 / 作品 id 只作显示）。
+ *    收敛规则：同一（来源, 平台, 轮次）流里，和**最后一条**完全一样就不写；变了（审核中 → 驳回 → 申诉恢复）就追加。
+ * 2. 轮次在写入时盖一次：有发布时间 → 按历次「重开文稿」切；没有时间 → 同平台历史上见过同一链接 / 作品 id 就沿用那一轮
+ *    （数据回流晚到的绑定不把旧作品算进新一轮），否则算当前轮；创始人可以「纠正」。
+ * 3. 槽的状态：本轮该平台出现过的最可信的一类里，**最后一条**说了算——
+ *    可信（发布计划、数据回流按作品 id）> 创始人（「我发了」、确认 AI 的说法）> 待核（AI 说发了、数据回流按标题猜）。
+ *    删了重发 → 最新的算，早的留作历史。AI 的说法从不靠身份匹配自动核实：同平台同轮来了可信观察就被顶掉，或创始人确认。
+ * 4. 纠正指向槽（`slot:<轮次>:<平台>`）：纠正时刻之前槽里的一切作废，之后新来的照算。
+ * 已知代价（创始人认可）：同一轮在同一平台发了两件不同作品，只算最新的那件。
  */
 import type { Content } from "../../storage/local-store.js";
 import { newId } from "../../storage/production-store.js";
-import type { Fact, ProductionDoc, PublicationState } from "../../storage/production-types.js";
+import type { Decision, Fact, ProductionDoc, PublicationState } from "../../storage/production-types.js";
 import { readPublishRecord, type PlatformPublication } from "../../storage/publish-record.js";
 import { bindingsForContent } from "../flywheel/platform-items.js";
 
@@ -35,15 +34,13 @@ export interface Observation {
   account?: string;
   by?: Fact["by"];
   evidence: string;
+  /** 发布前把关记录（发布审查闸门的 check_id） */
+  check_id?: string;
 }
 
 const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
   scheduled: "scheduled", overdue: "overdue", public: "public", reviewing: "reviewing", rejected: "rejected", unknown: "reviewing",
 };
-
-export function obsKey(o: Pick<Observation, "source" | "platform" | "url" | "item_id" | "pub_state" | "published_at" | "reason">): string {
-  return [o.source, o.platform, o.item_id ?? o.url ?? "-", o.pub_state, o.published_at ?? "-", o.reason ?? ""].join("|");
-}
 
 /** 可信来源读出来的观察：发布计划（不含创始人「我发了」）+ 数据回流绑定 */
 export async function trustedObservations(content: Content, dataDir: string): Promise<Observation[]> {
@@ -53,23 +50,25 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
     for (const p of record.platforms) {
       const state = STATE[p.state];
       if (!state || (!p.submitted && p.state !== "rejected")) continue;
+      const checkId = (p as { checkId?: string | null }).checkId ?? undefined;
       out.push({ source: "plan", platform: p.platform, pub_state: state, evidence: "发布计划里的记录",
-        ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}), ...(p.time ? { published_at: p.time } : {}) });
+        ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
+        ...(p.time ? { published_at: p.time } : {}), ...(checkId ? { check_id: checkId } : {}) });
     }
   }
   for (const b of await bindingsForContent(content.id, dataDir).catch(() => [])) {
     const [platform, ...rest] = b.key.split(":");
-    // 只有按作品 id（链接解析）绑上的才算已核实；按标题相似绑上的留给创始人确认（创始人拍板 2026-09-29）
+    // 只有按作品 id（链接解析）绑上的才算可信；按标题相似绑上的留给创始人确认（创始人拍板 2026-09-29）。
+    // 绑定时间是发现时间不是发布时间，不当作轮次证据
     const byId = b.via === "url";
-    out.push({ source: byId ? "metrics_id" : "metrics_title", platform, item_id: rest.join(":"), pub_state: "public", published_at: b.boundAt,
+    out.push({ source: byId ? "metrics_id" : "metrics_title", platform, item_id: rest.join(":"), pub_state: "public",
       evidence: byId ? "数据回流按作品 id 对上了这条" : "数据回流按标题猜是这条" });
   }
   return out;
 }
 
-// ---- 旧形状兼容（在 production.json 里已经有的 publish 事实，读成观察；不改盘） ----
+// ---- 读：把 publish 事实（含旧形状）读成观察 ----
 
-/** 旧事实的来源：record = 模型声明；数据回流按标题 / 按 id；其余 = 发布计划 */
 function legacySource(f: Fact): ObsSource {
   if (f.obs_source) return f.obs_source;
   if (f.source === "record") return "claim";
@@ -78,131 +77,142 @@ function legacySource(f: Fact): ObsSource {
   return "plan";
 }
 
-/** 旧事实的发布时间：新形状直接有；旧 receipt_key 末尾「@时间」是当时的发布时间（空 = 不知道） */
-function legacyPublishedAt(f: Fact): string | undefined {
-  if (f.published_at) return f.published_at;
-  const m = f.receipt_key ? /@([^|]*)$/.exec(f.receipt_key) : null;
-  if (m) return m[1] || undefined;
-  return f.receipt_key ? undefined : f.at;
-}
-
-export interface ObsFact extends Observation { id: string; round: number; round_unsure: boolean; order: number }
+export interface ObsFact extends Observation { id: string; round: number; order: number; seen_at: string }
 
 export function observationsOf(doc: ProductionDoc): ObsFact[] {
   return doc.facts.flatMap((f, order) => (f.kind !== "publish" || f.state === "rejected" ? [] : [{
-    id: f.id, order, round: f.round, round_unsure: Boolean(f.round_unsure), source: legacySource(f), platform: f.platform ?? "?",
+    // 旧形状没有观察时间（at 可能是定时发布的未来时间）：当作「很早以前」，只按写入顺序排，任何纠正都能盖过它
+    id: f.id, order, round: f.round, seen_at: f.seen_at ?? "1970-01-01T00:00:00.000Z", source: legacySource(f), platform: f.platform ?? "?",
     ...(f.url ? { url: f.url } : {}), ...(f.item_id ? { item_id: f.item_id } : {}), pub_state: f.pub_state ?? "reviewing",
-    ...(legacyPublishedAt(f) ? { published_at: legacyPublishedAt(f) } : {}), ...(f.reason ? { reason: f.reason } : {}),
-    ...(f.by ? { by: f.by } : {}), evidence: f.evidence ?? "",
+    ...(f.published_at ? { published_at: f.published_at } : {}), ...(f.reason ? { reason: f.reason } : {}),
+    ...(f.by ? { by: f.by } : {}), ...(f.check_id ? { check_id: f.check_id } : {}), evidence: f.evidence ?? "",
   }]));
 }
 
-// ---- 写入：只追加，同键不重写 ----
+// ---- 写：只追加，和流里最后一条一样就不写 ----
 
-/** 发布时间落在哪一轮：按每次「重开文稿」的时间切 */
 function roundAt(doc: ProductionDoc, at: string): number {
   const t = Date.parse(at);
   if (Number.isNaN(t)) return doc.round;
   return Math.min(doc.round, 1 + doc.decisions.filter((d) => d.type === "reopen" && Date.parse(d.at) <= t).length);
 }
 
-export function observationFact(doc: ProductionDoc, o: Observation, extra: Partial<Fact> = {}): Fact {
-  const unsure = !o.published_at && doc.round > 1;
+/** 轮次证据：发布时间 → 切轮；否则同平台见过同一链接 / 作品 id → 沿用那一轮；否则当前轮 */
+function stampRound(doc: ProductionDoc, o: Observation, known: ObsFact[]): number {
+  if (o.published_at) return roundAt(doc, o.published_at);
+  const seen = known.find((k) => k.platform === o.platform && ((o.item_id && k.item_id === o.item_id) || (o.url && k.url === o.url)));
+  return seen ? seen.round : doc.round;
+}
+
+const same = (a: Observation, b: Observation) =>
+  a.pub_state === b.pub_state && (a.published_at ?? "") === (b.published_at ?? "") && (a.url ?? "") === (b.url ?? "")
+  && (a.item_id ?? "") === (b.item_id ?? "") && (a.reason ?? "") === (b.reason ?? "") && (a.check_id ?? "") === (b.check_id ?? "");
+
+export function observationFact(doc: ProductionDoc, o: Observation, round: number): Fact {
+  const now = new Date().toISOString();
   return {
-    id: newId("fact"), kind: "publish", round: o.published_at ? roundAt(doc, o.published_at) : doc.round, state: "accepted", availability: "present",
-    source: o.source === "claim" ? "record" : "reconcile", at: o.published_at ?? new Date().toISOString(), obs_source: o.source,
-    receipt_key: obsKey(o), platform: o.platform, pub_state: o.pub_state, verified: TRUSTED.has(o.source), evidence: o.evidence,
-    ...(o.published_at ? { published_at: o.published_at } : {}), ...(unsure ? { round_unsure: true as const } : {}),
-    ...(o.url ? { url: o.url } : {}), ...(o.item_id ? { item_id: o.item_id } : {}), ...(o.reason ? { reason: o.reason } : {}),
-    ...(o.account ? { account: o.account } : {}), ...(o.by ? { by: o.by } : {}), ...extra,
+    id: newId("fact"), kind: "publish", round, state: "accepted", availability: "present", source: o.source === "claim" ? "record" : "reconcile",
+    at: o.published_at ?? now, seen_at: now, obs_source: o.source, platform: o.platform, pub_state: o.pub_state, verified: TRUSTED.has(o.source), evidence: o.evidence,
+    ...(o.published_at ? { published_at: o.published_at } : {}), ...(o.url ? { url: o.url } : {}), ...(o.item_id ? { item_id: o.item_id } : {}),
+    ...(o.reason ? { reason: o.reason } : {}), ...(o.account ? { account: o.account } : {}), ...(o.by ? { by: o.by } : {}), ...(o.check_id ? { check_id: o.check_id } : {}),
   };
 }
 
-/** 把观察追加进 doc；与已有观察（含旧形状）同键的跳过。返回新增条数 */
+/** 追加观察；同（来源, 平台, 轮次）流里和最后一条完全一样的跳过。返回新增条数 */
 export function importObservations(doc: ProductionDoc, obs: Observation[]): number {
-  const known = new Set(observationsOf(doc).map((o) => obsKey(o)));
   let added = 0;
   for (const o of obs) {
-    if (known.has(obsKey(o))) continue;
-    doc.facts.push(observationFact(doc, o));
-    known.add(obsKey(o));
+    const known = observationsOf(doc);
+    const round = stampRound(doc, o, known);
+    const lastInStream = known.filter((k) => k.source === o.source && k.platform === o.platform && k.round === round).at(-1);
+    if (lastInStream && same(lastInStream, o)) continue;
+    // 没有发布时间、又和上一轮流里最后一条一模一样：是重开前那份旧记录被再读到，不算进新一轮
+    const lastEarlier = known.filter((k) => k.source === o.source && k.platform === o.platform && k.round < round).at(-1);
+    if (!o.published_at && lastEarlier && same(lastEarlier, o)) continue;
+    doc.facts.push(observationFact(doc, o, round));
     added++;
   }
   return added;
 }
 
-// ---- 求值：作品分组 + 固定优先级 ----
+// ---- 求值：每个平台一个槽 ----
 
-export interface Work {
-  /** 这件作品里最新的一条观察 id：纠正 / 确认都指向它（明确的事实 id） */
+export type SlotClass = "trusted" | "founder" | "pending";
+
+export interface Slot {
+  /** 纠正的目标：`slot:<轮次>:<平台>` */
   id: string;
-  ids: string[];
+  round: number;
   platform: string;
-  url?: string;
-  item_id?: string;
   pub_state: PublicationState;
-  /** 所属轮次；null = 分不清（只能等创始人认） */
-  round: number | null;
   verified: boolean;
-  /** 作品状态由谁定：trusted（可信观察）/ founder（创始人确认）/ pending（待核） */
-  by: "trusted" | "founder" | "pending";
-  source: ObsSource;
+  by: SlotClass;
+  /** 决定槽状态的那条观察（待核时是 AI 那条，创始人确认要指向它） */
+  fact_id: string | null;
+  source: ObsSource | "founder";
   evidence: string;
   host?: string;
+  url?: string;
+  item_id?: string;
   reason?: string;
-  /** 发布时间或观察时间（排序与显示用） */
+  check_id?: string;
+  /** 证据时间（排序与显示） */
   at: string;
+  /** 被顶掉的早先观察（删了重发、AI 说法被可信观察顶掉…） */
+  history: string[];
 }
 
-function groups(obs: ObsFact[]): ObsFact[][] {
-  const parent = obs.map((_, i) => i);
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  const ids = new Map<string, number>();
-  obs.forEach((o, i) => {
-    const keys = [o.url && `u:${o.platform}:${o.url}`, o.item_id && `i:${o.platform}:${o.item_id}`].filter(Boolean) as string[];
-    if (!keys.length) keys.push(`k:${obsKey(o)}`);
-    for (const k of keys) {
-      const j = ids.get(k);
-      if (j === undefined) ids.set(k, i);
-      else parent[find(i)] = find(j);
-    }
-  });
-  const out = new Map<number, ObsFact[]>();
-  obs.forEach((o, i) => out.set(find(i), [...(out.get(find(i)) ?? []), o]));
-  return [...out.values()].map((g) => g.sort((a, b) => a.order - b.order));
+export const slotId = (round: number, platform: string) => `slot:${round}:${platform}`;
+
+/** 槽被纠正的时刻（最后一次纠正）；之前的观察与决定全部作废 */
+function correctedAt(doc: ProductionDoc, id: string): number {
+  const ds = doc.decisions.filter((d) => d.type === "publish_correction" && d.target_id === id);
+  return ds.length ? Math.max(...ds.map((d) => Date.parse(d.at))) : -Infinity;
 }
 
-function evaluate(doc: ProductionDoc, g: ObsFact[], confirmed: Set<string>): Work {
-  const last = g[g.length - 1];
-  const trusted = g.filter((o) => TRUSTED.has(o.source));
-  const decider = trusted.at(-1);
-  const knownRound = [...trusted].reverse().find((o) => !o.round_unsure)?.round ?? null;
-  const founderOk = g.some((o) => confirmed.has(o.id));
-  const base = { id: last.id, ids: g.map((o) => o.id), platform: last.platform, ...(g.find((o) => o.url)?.url ? { url: g.find((o) => o.url)!.url } : {}),
-    ...(g.find((o) => o.item_id)?.item_id ? { item_id: g.find((o) => o.item_id)!.item_id } : {}), host: g.find((o) => o.by?.host)?.by?.host,
-    at: (decider ?? last).published_at ?? doc.facts[(decider ?? last).order].at };
-  if (decider && knownRound !== null) {
-    return { ...base, pub_state: decider.pub_state, round: knownRound, verified: true, by: "trusted", source: decider.source, evidence: decider.evidence, ...(decider.reason ? { reason: decider.reason } : {}) };
-  }
-  if (founderOk) return { ...base, pub_state: decider?.pub_state ?? "public", round: doc.round, verified: true, by: "founder", source: last.source, evidence: last.evidence };
-  const round = g.every((o) => o.round_unsure) ? null : [...g].reverse().find((o) => !o.round_unsure)!.round;
-  return { ...base, pub_state: last.pub_state, round, verified: false, by: "pending", source: last.source, evidence: last.evidence };
+type Entry = { cls: SlotClass; at: number; pub_state: PublicationState; fact_id: string | null; source: ObsSource | "founder"; evidence: string; o?: ObsFact; d?: Decision };
+
+function entriesOf(doc: ProductionDoc, round: number, platform: string): Entry[] {
+  const obs = observationsOf(doc).filter((o) => o.round === round && o.platform === platform);
+  const byId = new Map(obs.map((o) => [o.id, o]));
+  const decisions = doc.decisions.filter((d) => d.round === round);
+  // 旧版纠正指向具体事实 / 决定 id：那一条作废
+  const killed = new Set(doc.decisions.filter((d) => d.type === "publish_correction" && d.target_id && !d.target_id.startsWith("slot:")).map((d) => d.target_id!));
+  return [
+    ...obs.map((o): Entry => ({ cls: TRUSTED.has(o.source) ? "trusted" : "pending", at: Date.parse(o.seen_at) + o.order / 1e6, pub_state: o.pub_state, fact_id: o.id, source: o.source, evidence: o.evidence, o })),
+    ...decisions.filter((d) => d.type === "i_published" && d.platform === platform)
+      .map((d): Entry => ({ cls: "founder", at: Date.parse(d.at), pub_state: "public", fact_id: null, source: "founder", evidence: "你标了已发布", d })),
+    // 创始人确认 AI 的说法：保留那条说法里的提交状态（确认真实性 ≠ 确认已公开）
+    ...decisions.filter((d) => d.type === "publish_confirm" && byId.has(d.fact_id ?? ""))
+      .map((d): Entry => { const o = byId.get(d.fact_id!)!; return { cls: "founder", at: Date.parse(d.at), pub_state: o.pub_state, fact_id: o.id, source: "founder", evidence: "你确认过 AI 说的发布", o, d }; }),
+  ].filter((e) => !killed.has(e.fact_id ?? "") && !killed.has(e.d?.id ?? ""));
 }
 
-/** 全部作品（纯函数）；被纠正的作品（任一观察被纠正）整件剔除 */
-export function worksOf(doc: ProductionDoc): Work[] {
-  const corrected = new Set(doc.decisions.filter((d) => d.type === "publish_correction").map((d) => d.target_id));
-  const confirmed = new Set(doc.decisions.filter((d) => d.type === "publish_confirm" && d.round === doc.round).map((d) => d.fact_id as string));
-  return groups(observationsOf(doc)).filter((g) => !g.some((o) => corrected.has(o.id))).map((g) => evaluate(doc, g, confirmed));
-}
-
-/** 本轮：已投出 / 被驳回 / 待你确认（轮次不明的也列进待确认） */
-export function receiptsOfRound(doc: ProductionDoc): { live: Work[]; rejected: Work[]; pending: Work[] } {
-  const ws = worksOf(doc);
-  const now = (w: Work) => w.round === doc.round;
+export function slotOf(doc: ProductionDoc, round: number, platform: string): Slot | null {
+  const cut = correctedAt(doc, slotId(round, platform));
+  const entries = entriesOf(doc, round, platform).filter((e) => e.at > cut).sort((a, b) => a.at - b.at);
+  if (!entries.length) return null;
+  const pick = (["trusted", "founder", "pending"] as const).map((c) => entries.filter((e) => e.cls === c).at(-1)).find(Boolean)!;
+  const o = pick.o;
   return {
-    live: ws.filter((w) => w.verified && now(w) && w.pub_state !== "rejected"),
-    rejected: ws.filter((w) => w.verified && now(w) && w.pub_state === "rejected"),
-    pending: ws.filter((w) => !w.verified && (now(w) || w.round === null)),
+    id: slotId(round, platform), round, platform, pub_state: pick.pub_state, verified: pick.cls !== "pending", by: pick.cls, fact_id: pick.fact_id,
+    source: pick.source, evidence: pick.evidence, ...(o?.by?.host ? { host: o.by.host } : {}), ...(o?.url ? { url: o.url } : {}),
+    ...(o?.item_id ? { item_id: o.item_id } : {}), ...(o?.reason ? { reason: o.reason } : {}), ...(o?.check_id ? { check_id: o.check_id } : {}),
+    at: o?.published_at ?? o?.seen_at ?? pick.d?.at ?? new Date(pick.at).toISOString(),
+    history: entries.filter((e) => e !== pick && e.fact_id).map((e) => e.fact_id!),
+  };
+}
+
+/** 本轮每个平台的槽：已投出 / 被驳回 / 待你确认 */
+export function receiptsOfRound(doc: ProductionDoc): { live: Slot[]; rejected: Slot[]; pending: Slot[] } {
+  const platforms = new Set([
+    ...observationsOf(doc).filter((o) => o.round === doc.round).map((o) => o.platform),
+    ...doc.decisions.filter((d) => d.round === doc.round && d.type === "i_published" && d.platform).map((d) => d.platform!),
+  ]);
+  const slots = [...platforms].map((p) => slotOf(doc, doc.round, p)).filter((s): s is Slot => Boolean(s));
+  return {
+    live: slots.filter((s) => s.verified && s.pub_state !== "rejected"),
+    rejected: slots.filter((s) => s.verified && s.pub_state === "rejected"),
+    pending: slots.filter((s) => !s.verified),
   };
 }

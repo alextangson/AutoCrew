@@ -72,7 +72,7 @@ export function withLegacyDecisions(doc: ProductionDoc | null, content: ExplainI
   const anyScript = d.decisions.some((x) => x.round === round && (x.type === "script_approval" || x.type === "script_revoke"));
   if (!anyScript) d.decisions.push({ id: `legacy-script-${round}`, type: "script_approval", round, at, source: "legacy", body_hash: bh });
   if (content.status === "published" && !d.decisions.some((x) => x.round === round && x.type === "i_published")) {
-    d.decisions.push({ id: `legacy-published-${round}`, type: "i_published", round, at, source: "legacy", note: "旧状态是已发布" });
+    d.decisions.push({ id: `legacy-published-${round}`, type: "i_published", round, at, source: "legacy", platform: content.platform, note: "旧状态是已发布" });
   }
   if (legacy?.registrations.length && !d.registrations.some((r) => r.round === round)) {
     for (const f of legacy.facts) if (!d.facts.some((x) => x.kind === f.kind && x.sha256 === f.sha256 && x.round === round)) d.facts.push(f);

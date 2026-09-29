@@ -8,7 +8,7 @@
  */
 import { bodyHash } from "../../storage/production-store.js";
 import { platformLabel } from "../../desktop/platform-label.js";
-import { receiptsOfRound, type Work } from "./receipts.js";
+import { receiptsOfRound, type Slot } from "./receipts.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
@@ -93,14 +93,8 @@ export function srtFor(doc: ProductionDoc, cutSha: string | undefined): Fact | n
   return latest(accepted(doc).filter((f) => f.kind === "srt" && f.for_cut === cutSha && !f.replaced_at));
 }
 
-function validPublished(doc: ProductionDoc): Decision | null {
-  const corrected = revokedIds(doc, "publish_correction");
-  return latest(inRound(doc, doc.decisions).filter((d) => d.type === "i_published" && !corrected.has(d.id)));
-}
-
-
-/** 本轮的发布回执（§6）：不可变观察按作品求值，见 receipts.ts */
-export function publishReceipts(doc: ProductionDoc): { live: Work[]; rejected: Work[]; pending: Work[] } {
+/** 本轮的发布回执（§6）：每个平台一个发布槽，见 receipts.ts */
+export function publishReceipts(doc: ProductionDoc): { live: Slot[]; rejected: Slot[]; pending: Slot[] } {
   return receiptsOfRound(doc);
 }
 
@@ -114,17 +108,18 @@ function receiptNotes(r: ReturnType<typeof publishReceipts>): { badges: string[]
   };
 }
 
-/** 已发布的人话原因：按状态把平台归在一起（「抖音、B站 已定时投出」） */
 /** 待你确认的那一句：谁说的、发到哪、哪件作品 */
-function pendingText(w: Work): string {
+function pendingText(w: Slot): string {
   const what = w.url ? `：${w.url}` : w.item_id ? `（作品 ${w.item_id}）` : "";
   if (w.source === "claim") return `${w.host ?? "AI"} 说已发到${label(w.platform)}${what}，是吗？`;
   if (w.source === "metrics_title") return `数据回流猜这条发到了${label(w.platform)}${what}，是吗？`;
-  return `发布计划里有${label(w.platform)}的发布记录${what}，但分不清是不是这一轮发的，是吗？`;
+  return `${label(w.platform)}有一条发布记录${what}，是吗？`;
 }
 
-function publishedReason(live: Work[], founder: boolean): string {
-  if (!live.length) return founder ? "你标了已发布" : "发布记录显示已投出";
+/** 已发布的人话原因：按状态把平台归在一起（「抖音、B站 已定时投出」「B站 你标了已发布」） */
+function publishedReason(live: Slot[]): string {
+  if (!live.length) return "发布记录显示已投出";
+  if (live.every((s) => s.by === "founder")) return `${[...new Set(live.map((s) => label(s.platform)))].join("、")} 你标了已发布`;
   const by = new Map<string, string[]>();
   for (const f of live) by.set(f.pub_state, [...(by.get(f.pub_state) ?? []), label(f.platform)]);
   const text: Record<string, string> = { scheduled: "已定时投出", reviewing: "已投出、审核中", public: "已公开", overdue: "应已公开" };
@@ -188,15 +183,14 @@ function editingReason(missing: string[]): string {
 export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEvidence): Derived {
   const candidates = candidatesOf(doc);
   const base = { candidates, publishable: false, badges: [] as string[], missing: [] as string[], alerts: [] as string[] };
-  const published = validPublished(doc);
   const receipts = publishReceipts(doc);
-  if (publish.verified || published || receipts.live.length) {
+  if (publish.verified || receipts.live.length) {
     // 各平台状态已经收进原因句（「抖音、B站 已定时投出」），不再逐条重复成徽章
-    const badges = receipts.live.length ? [] : [...(publish.badge ? [publish.badge] : []), ...(published && !publish.badge ? ["你标了已发布"] : [])];
-    const evidence = [...receipts.live.map((f) => `回执 ${f.id}`), ...(publish.verified ? ["发布记录：已投出"] : []), ...(published ? [`决定 ${published.id}：我发了`] : [])];
+    const badges = receipts.live.length ? [] : publish.badge ? [publish.badge] : [];
+    const evidence = [...receipts.live.map((f) => `槽 ${f.id}（${f.by}）`), ...(publish.verified ? ["发布记录：已投出"] : [])];
     // 本轮没有登记记录就发出去了（agent 直接发）：发出去的成片没人核过
     const alerts = inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH];
-    return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live, Boolean(published)) };
+    return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live) };
   }
   const notes = receiptNotes(receipts);
   base.badges = notes.badges;

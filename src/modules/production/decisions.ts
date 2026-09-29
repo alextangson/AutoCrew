@@ -16,6 +16,7 @@ import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/
 import { isModelCall } from "../../storage/stage-guard.js";
 import { withFileOwnership } from "./mutex.js";
 import { validCoverApproval, validCutApproval } from "./derive.js";
+import { slotId, slotOf } from "./receipts.js";
 import { adoptCandidate } from "./record.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
 import { explainContent } from "./read.js";
@@ -122,8 +123,10 @@ async function published(ctx: Ctx): Promise<Result> {
   const platform = str(ctx.params.platform) || ctx.content.platform || "";
   if (!platform) return fail("platform_required", "说一下发在哪个平台");
   const url = str(ctx.params.url);
+  // 幂等只对「这个槽现在就是你标的那条」：纠正过之后再点，要落一条新的
+  const slot = slotOf(ctx.doc, ctx.doc.round, platform);
   const same = sameDecision(ctx.doc, "i_published", (d) => d.platform === platform && (d.note ?? "") === url);
-  if (same) return { ok: true, decision: same };
+  if (same && slot?.by === "founder" && slot.fact_id === null) return { ok: true, decision: same };
   return { ok: true, decision: await push(ctx, { type: "i_published", platform, ...(url ? { note: url } : {}) }, "founder_published") };
 }
 
@@ -134,11 +137,18 @@ async function confirmReceipt(ctx: Ctx): Promise<Result> {
   return { ok: true, decision: same ?? (await push(ctx, { type: "publish_confirm", fact_id: f.id }, "receipt_confirmed")) };
 }
 
+/**
+ * 纠正发布记录：目标是本轮某个平台的发布槽 `slot:<轮次>:<平台>`（或页面给的那条观察 / 决定 id，按它所在的槽算）。
+ * 槽里纠正之前的一切作废；之后新来的照算。槽已经空了再点 = 幂等。
+ */
 async function correct(ctx: Ctx): Promise<Result> {
-  const id = str(ctx.params.target_id);
-  const exists = ctx.doc.decisions.some((d) => d.id === id && d.type === "i_published") || ctx.doc.facts.some((f) => f.id === id && f.kind === "publish");
-  if (!exists) return fail("stale", "要纠正的发布记录不在，刷新再看");
-  const same = sameDecision(ctx.doc, "publish_correction", (d) => d.target_id === id);
+  const raw = str(ctx.params.target_id);
+  const fact = ctx.doc.facts.find((f) => f.id === raw && f.kind === "publish");
+  const dec = ctx.doc.decisions.find((d) => d.id === raw && d.type === "i_published");
+  const id = raw.startsWith("slot:") ? raw : fact ? slotId(fact.round, fact.platform ?? "?") : dec ? slotId(dec.round, dec.platform ?? "?") : "";
+  const m = /^slot:(\d+):(.+)$/.exec(id);
+  if (!m || Number(m[1]) !== ctx.doc.round) return fail("stale", "要纠正的发布记录不在这一轮，刷新再看");
+  const same = slotOf(ctx.doc, ctx.doc.round, m[2]) ? null : sameDecision(ctx.doc, "publish_correction", (d) => d.target_id === id);
   return { ok: true, decision: same ?? (await push(ctx, { type: "publish_correction", target_id: id, ...(str(ctx.params.note) ? { note: str(ctx.params.note) } : {}) }, "publish_corrected")) };
 }
 

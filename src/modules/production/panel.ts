@@ -10,12 +10,12 @@ import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/produc
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { spokenRel } from "../video/handoff/register-spoken.js";
 import { publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
-import type { Work } from "./receipts.js";
+import type { Slot } from "./receipts.js";
 import { explainContent } from "./read.js";
 
-/** 这件作品的状态由谁定、证据是什么：给创始人看的来源说法 */
-function workLabel(w: Work): string {
-  if (w.by === "founder") return "你确认过的发布";
+/** 这个槽的状态由谁定：给创始人看的来源说法 */
+function slotLabel(w: Slot): string {
+  if (w.by === "founder") return w.source === "founder" && w.fact_id ? "你确认过 AI 说的发布" : "你标了已发布";
   if (w.source === "metrics_id") return "数据回流按作品 id 对上";
   return "发布计划里的记录";
 }
@@ -30,20 +30,16 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   if (!active) return base;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
   const receipts = publishReceipts(doc);
-  const corrected = new Set(doc.decisions.filter((d) => d.type === "publish_correction").map((d) => d.target_id));
-  // 一行 = 一件作品（按作品身份分组，不按平台 + 时间凑），纠正指向那件作品的明确事实 id；按真实时间新的在前
-  const published = [
-    ...doc.decisions.filter((d) => d.round === doc.round && d.type === "i_published" && !corrected.has(d.id))
-      .map((d) => ({ id: d.id, kind: "decision", platform: d.platform ?? null, url: d.note ?? null, work: null as string | null, label: "你标了已发布", at: d.at })),
-    ...receipts.live.map((w) => ({ id: w.id, kind: "receipt", platform: w.platform, url: w.url ?? null, work: w.item_id ?? null, label: workLabel(w), at: w.at })),
-  ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  // 一行 = 一个平台的发布槽（本轮每个平台只有一个）；纠正指向槽 id；按真实时间新的在前
+  const published = receipts.live.map((w) => ({ id: w.id, kind: "slot", platform: w.platform, url: w.url ?? null, work: w.item_id ?? null, label: slotLabel(w), at: w.at }))
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const n = doc.registrations.length;
   const checklistRel = n ? spokenRel(n).replace(/-spoken\.md$/, "-checklist.json") : null;
   const checklist = checklistRel && (await fs.stat(path.join(contentRoot(contentId, dataDir), checklistRel)).then(() => true, () => false)) ? checklistRel : null;
   const cut = validCutApproval(doc, content.body), cover = validCoverApproval(doc, content.body);
   return {
     ...base, round: doc.round,
-    pending_receipts: receipts.pending.map((w) => ({ fact_id: w.id, platform: w.platform, url: w.url ?? (w.item_id ? `作品 ${w.item_id}` : null), host: w.source === "claim" ? w.host ?? "AI" : w.source === "metrics_title" ? "数据回流" : "发布计划" })),
+    pending_receipts: receipts.pending.map((w) => ({ fact_id: w.fact_id, slot_id: w.id, platform: w.platform, url: w.url ?? (w.item_id ? `作品 ${w.item_id}` : null), host: w.source === "claim" ? w.host ?? "AI" : "数据回流" })),
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
     checklist,

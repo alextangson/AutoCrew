@@ -67,6 +67,10 @@ export interface Fact {
   obs_source?: "plan" | "metrics_id" | "metrics_title" | "claim";
   /** 平台上的发布时间（证据），轮次按它盖 */
   published_at?: string;
+  /** 这条观察被读到的时间（纠正按它切：纠正之前读到的作废） */
+  seen_at?: string;
+  /** 发布前把关记录（发布审查闸门的 check_id） */
+  check_id?: string;
   note?: string;
 }
 

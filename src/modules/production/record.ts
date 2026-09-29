@@ -24,7 +24,7 @@ import fs from "node:fs/promises";
 import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { commitRegistration } from "./registration.js";
-import { obsKey, observationFact } from "./receipts.js";
+import { observationFact } from "./receipts.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn, type TxnOp } from "./txn.js";
 
 type Receipt = Record<string, unknown>;
@@ -43,9 +43,9 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
     // 模型声明是一条独立的观察（不可变，不与可信回执合并）；是本轮刚说的，所以属于本轮
     const obs = { source: "claim" as const, platform, pub_state: "reviewing" as const, evidence: `${a.host} 说已发布`, by: { host: a.host },
       ...(a.account ? { account: a.account } : {}), ...(a.url ? { url: a.url } : {}), ...(a.item_id ? { item_id: a.item_id } : {}) };
-    const key = obsKey(obs);
-    const same = doc.facts.find((f) => f.kind === "publish" && f.round === doc.round && f.receipt_key === key);
-    const fact = same ?? observationFact(doc, obs, { round: doc.round, round_unsure: undefined, request_id: a.request_id });
+    // 同一个 request_id 重放不再写；否则追加一条（AI 的说法只能被同平台的可信观察顶掉或创始人确认）
+    const same = doc.facts.find((f) => f.kind === "publish" && f.request_id === a.request_id);
+    const fact = same ?? { ...observationFact(doc, obs, doc.round), request_id: a.request_id };
     if (!same) doc.facts.push(fact);
     doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
     return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url } }] };
