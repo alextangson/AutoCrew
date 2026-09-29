@@ -76,12 +76,14 @@ describe("发布槽：状态", () => {
 });
 
 describe("发布槽：轮次", () => {
-  it("[seg2 P2] 发布时间早于重开 → 算上一轮；没有时间 → 当前轮（创始人可纠正）", () => {
+  it("[seg2 P2 / 09-30 保守规则] 重开后：发布时间早于重开 → 上一轮；没有实际提交时间 → 也留上一轮；提交时间晚于重开 → 本轮", () => {
     const doc = round2();
     importObservations(doc, [plan({ published_at: "2026-09-10T00:00:00Z" })]);
     expect(receiptsOfRound(doc).live).toEqual([]);
     importObservations(doc, [plan({ platform: "bilibili" })]);
-    expect(receiptsOfRound(doc).live.map((s) => s.platform)).toEqual(["bilibili"]);
+    expect(receiptsOfRound(doc).live).toEqual([]);
+    importObservations(doc, [plan({ platform: "xiaohongshu", submitted_at: "2026-09-21T00:00:00Z" })]);
+    expect(receiptsOfRound(doc).live.map((s) => s.platform)).toEqual(["xiaohongshu"]);
   });
 
   it("[seg3 P1] 本轮 AI 已说发了，同平台可信回执发布时间早于重开 → 回执算上一轮，本轮的 AI 说法仍待核", () => {

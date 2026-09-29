@@ -13,9 +13,10 @@ import { explainContent, explainContext, type ExplainContext } from "../modules/
 import { registeredPackage } from "../modules/production/publish-gate.js";
 import { KEPT_DIR, locateProjectFile } from "./nas-kept.js";
 import { publishedFiles } from "./my-content-published.js";
+import { publishedSet } from "./round-publish-time.js";
 
 /** 已发布栏只留最近几条；NAS 归档也不动这几条 */
-export const KEEP_PUBLISHED = 5;
+export { KEEP_PUBLISHED } from "./round-publish-time.js";
 
 export const COLUMNS = ["写稿中", "待录制", "剪辑中", "待发布", "已发布", "复盘"] as const;
 export type Column = (typeof COLUMNS)[number];
@@ -228,8 +229,8 @@ async function visible(contents: Content[], keepPublished: number, dataDir: stri
       plan.errors.push(`${c.title}（${c.id}）：${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  const published = new Set(contents.filter((c) => columns.get(c.id) === "已发布")
-    .sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "")).slice(0, keepPublished).map((c) => c.id));
+  // 与 NAS 归档同一份保留名单（按本轮发布时间）
+  const published = (await publishedSet(contents.filter((c) => columns.get(c.id) === "已发布"), dataDir, keepPublished)).keep;
   const byColumn = new Map<Column, Content[]>();
   for (const c of contents) {
     const col = columns.get(c.id);

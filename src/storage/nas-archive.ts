@@ -10,14 +10,13 @@ import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
 import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
 import { productionServiceDir, readProductionDoc } from "./production-store.js";
 import { writeJsonAtomic } from "./json-atomic.js";
-import { KEEP_PUBLISHED } from "./my-content-plan.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { withFileOwnership } from "./file-ownership.js";
 import { copyProject, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
 import { KEPT_DIR } from "./nas-kept.js";
-import { withRoundPublishTime } from "./round-publish-time.js";
+import { publishedSet, type PublishedSet } from "./round-publish-time.js";
 
 export const DEFAULT_ARCHIVE_ROOT = "/Volumes/MacMiniData/01_Lawrence/Account";
 export const MEDIA_DIRS = ["02-aroll", "03-broll", "04-edit", "05-audio", "05-cover", "07-delivery"] as const;
@@ -46,16 +45,14 @@ async function volumeFree(dir: string): Promise<number> {
 }
 
 /**
- * 发布满 7 天、不在最近 KEEP_PUBLISHED 条已发布里的稿件（「已归档」「还在动」另行判断）。
+ * 发布满 7 天、不在保留名单（最近 KEEP_PUBLISHED 条，与「5 已发布」视图同一份）里的稿件（「已归档」「还在动」另行判断）。
  * 本体 §7：排除条件从「活认领」改成「本条有未完成的文件归属事务，或 30 分钟内有 record」（见 busyInProduction）。
+ * 定不出本轮发布时间的不归档（归档会删本机文件，宁可不删），报告里列「待确认发布时间」。
  */
-export function archiveCandidates(contents: Content[], now: Date): Content[] {
-  const published = contents.filter((c) => c.status === "published")
-    .sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
-  return published.slice(KEEP_PUBLISHED).filter((c) => {
-    const at = c.publishedAt ? Date.parse(c.publishedAt) : NaN;
-    return !Number.isNaN(at) && now.getTime() - at >= ARCHIVE_MIN_AGE_MS;
-  });
+export function archiveCandidates(set: PublishedSet, now: Date): { due: Content[]; unknown: Content[] } {
+  const rest = set.published.filter((c) => !set.keep.has(c.id));
+  const due = rest.filter((c) => c.publishedAt && now.getTime() - Date.parse(c.publishedAt) >= ARCHIVE_MIN_AGE_MS);
+  return { due, unknown: rest.filter((c) => !c.publishedAt) };
 }
 
 export const RECENT_RECORD_MS = 30 * 60_000;
@@ -169,9 +166,12 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
 
 async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]> {
   const out: Content[] = [];
-  // 本体稿按本轮发布时间判到点、定 NAS 月份（与发布即备份同一口径）
-  const contents = await Promise.all((await listContents(ctx.data)).map((c) => withRoundPublishTime(c, ctx.data)));
-  for (const c of archiveCandidates(contents, ctx.now)) {
+  // 本体稿按本轮发布时间判到点、定 NAS 月份；保留名单与视图同一份；逐条读失败只跳过那一条
+  const set = await publishedSet(await listContents(ctx.data), ctx.data);
+  for (const { content, error } of set.errors) report.errors.push(`${content.title}（${content.id}）：读不了发布记录，这次跳过：${error}`);
+  const { due, unknown } = archiveCandidates(set, ctx.now);
+  for (const c of unknown) report.errors.push(`${c.title}（${c.id}）：待确认发布时间（本轮没有可信的公开 / 定时时间），这次不归档`);
+  for (const c of due) {
     try {
       const binding = resolveContentProject(c.id, ctx.data);
       const busy = binding ? await busyInProduction(c.id, ctx.data, ctx.now) : null;

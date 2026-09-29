@@ -280,7 +280,7 @@ describe("seg10", () => {
 });
 
 describe("seg11", () => {
-  it("[P2 receipts] 重开后新计划只有新作品 id 和新发布时间（没 submitted_at）：算新一轮，不被钉到旧轮", async () => {
+  it("[seg12 / 09-30 保守规则] 重开后新作品没写 submitted_at：留在旧轮（已知代价，创始人点「我发了」）；带晚于重开的 submitted_at 才算新一轮", async () => {
     const { emptyProductionDoc } = await import("../../storage/production-types.js");
     const { importObservations, slotOf } = await import("./receipts.js");
     const doc = emptyProductionDoc();
@@ -288,11 +288,23 @@ describe("seg11", () => {
     doc.decisions.push({ id: "r1", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
     doc.round = 2;
     importObservations(doc, [{ source: "plan", platform: "douyin", item_id: "NEW", pub_state: "public", published_at: "2026-09-25T00:00:00Z", evidence: "计划" }]);
+    expect(slotOf(doc, 2, "douyin")).toBeNull();
+    importObservations(doc, [{ source: "plan", platform: "douyin", item_id: "NEW", pub_state: "public", published_at: "2026-09-25T00:00:00Z", submitted_at: "2026-09-24T00:00:00Z", evidence: "计划" }]);
     expect(slotOf(doc, 2, "douyin")).toMatchObject({ item_id: "NEW" });
-    // 旧那条（同 id）再读到仍钉在第 1 轮
-    importObservations(doc, [{ source: "plan", platform: "douyin", item_id: "OLD", pub_state: "rejected", published_at: "2026-09-10T00:00:00Z", evidence: "计划" }]);
-    expect(doc.facts.filter((f) => f.item_id === "OLD").every((f) => f.round === 1)).toBe(true);
   });
+
+  it("[seg12 P1] 旧定时帖（没作品 id、提交早于重开）重开后公开时才补上 id、公开时间略有出入：仍留旧轮", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    importObservations(doc, [{ source: "plan", platform: "douyin", pub_state: "scheduled", published_at: "2026-10-10T10:00:00Z", submitted_at: "2026-09-10T00:00:00Z", evidence: "计划" }]);
+    doc.decisions.push({ id: "r1", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
+    doc.round = 2;
+    importObservations(doc, [{ source: "plan", platform: "douyin", item_id: "7123", pub_state: "public", published_at: "2026-10-10T10:03:00Z", submitted_at: "2026-09-10T00:00:00Z", evidence: "计划" }]);
+    expect(slotOf(doc, 2, "douyin")).toBeNull();
+    expect(slotOf(doc, 1, "douyin")).toMatchObject({ pub_state: "public", item_id: "7123" });
+  });
+
 
   it("[P2 nas-backup] 本体稿重开后再定时：备份按本轮发布时间判到点（publishedAt 还是上一轮的）", async () => {
     await enable();
@@ -322,5 +334,62 @@ describe("seg11", () => {
     const r = await registeredVideo(env);
     const files = await publishedFiles((await getContent(r.id, env.dir))!, r.root, env.dir);
     expect(files.map((f) => f.name)).toContain("原片.mov");
+  });
+});
+
+describe("seg12 归档口径", () => {
+  async function publishedWithPlan(title?: string, pub: Record<string, unknown> = { status: "public", published_at: "2026-09-01T00:00:00Z", submitted_at: "2026-09-01T00:00:00Z" }) {
+    await enable();
+    const r = await registeredVideo(env, title);
+    await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [{ platform: "douyin", publication: pub }] }));
+    const { reconcileAll } = await import("./reconcile.js");
+    await reconcileAll(env.dir);
+    return r;
+  }
+
+  it("[2] 本轮时间只认可信观察里真实的公开 / 定时时间：只有「我发了」或占位时间 → 定不出，归档列「待确认发布时间」、不归档也不备份", async () => {
+    await enable();
+    const { roundPublishTime, publishedSet } = await import("../../storage/round-publish-time.js");
+    const { archiveCandidates } = await import("../../storage/nas-archive.js");
+    const { backupCandidates } = await import("../../storage/nas-backup.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const r = await registeredVideo(env);
+    await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
+    // 旧形状回执：只有 at（排序占位会变成 1970）
+    const { mutateProduction } = await import("./service.js");
+    await mutateProduction(r.id, env.dir, (d) => { d.facts.push({ id: "legacy-pub", kind: "publish", round: d.round, state: "accepted", availability: "present", source: "reconcile", at: "2026-10-10T00:00:00Z", platform: "bilibili", pub_state: "public", verified: true, evidence: "发布计划里的记录" }); return { value: null, events: [] }; });
+    const c = (await getContent(r.id, env.dir))!;
+    expect(await roundPublishTime(c, env.dir)).toBeNull();
+    const set = await publishedSet([c], env.dir, 0);
+    expect(archiveCandidates(set, new Date("2026-12-01T00:00:00Z"))).toMatchObject({ due: [], unknown: [expect.objectContaining({ id: r.id })] });
+    expect(backupCandidates(set.published, new Date("2026-12-01T00:00:00Z"))).toEqual([]);
+  });
+
+  it("[3] 视图与归档同一份保留名单：视图显示的就是 keep，归档候选与它不相交", async () => {
+    const a = await publishedWithPlan();
+    const { publishedSet } = await import("../../storage/round-publish-time.js");
+    const { archiveCandidates } = await import("../../storage/nas-archive.js");
+    const { listContents } = await import("../../storage/local-store.js");
+    const set = await publishedSet(await listContents(env.dir), env.dir, 1);
+    expect([...set.keep]).toEqual([a.id]);
+    expect(archiveCandidates(set, new Date("2026-12-01T00:00:00Z")).due.map((c) => c.id)).not.toContain(a.id);
+    const { buildPlan } = await import("../../storage/my-content-plan.js");
+    const plan = await buildPlan(env.dir, 1);
+    expect(Object.values(plan.dirs)).toContain(a.id);
+  });
+
+  it("[4] 一条稿的 production.json 坏了：只跳过它，别的已发布稿照常进名单", async () => {
+    const good = await publishedWithPlan();
+    const bad = await videoContent(env, "坏草稿");
+    const { productionFile } = await import("../../storage/production-store.js");
+    const file = productionFile(bad.id, env.dir);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, "{ not json");
+    const { publishedSet } = await import("../../storage/round-publish-time.js");
+    const { listContents, getContent, updateContent } = await import("../../storage/local-store.js");
+    await updateContent(bad.id, { status: "published" } as never, env.dir);
+    const set = await publishedSet(await listContents(env.dir), env.dir);
+    expect(set.published.map((c) => c.id)).toContain(good.id);
+    expect((await getContent(bad.id, env.dir))).toBeTruthy();
   });
 });

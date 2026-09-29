@@ -11,7 +11,7 @@ import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
 import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { withFileOwnership } from "./file-ownership.js";
-import { withRoundPublishTime } from "./round-publish-time.js";
+import { publishedSet } from "./round-publish-time.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { copyProject, keptName, sha256File, walkProject, type ArchivedFile, type CopyImpl, type ProjectLink } from "./nas-archive-copy.js";
 import { safeNasPath, assertInside } from "./nas-safe-path.js";
@@ -138,8 +138,10 @@ async function copyOnce(projectRoot: string, target: string, ctx: Ctx, full: boo
 }
 
 async function runBackup(data: string, ctx: Ctx, report: BackupReport): Promise<void> {
-  const contents = await Promise.all((await listContents(data)).map((c) => withRoundPublishTime(c, data)));
-  for (const c of backupCandidates(contents, ctx.now)) {
+  // 与归档同一口径（不比归档宽）：本轮可信发布时间，逐条读失败只跳过那一条
+  const set = await publishedSet(await listContents(data), data);
+  for (const { content, error } of set.errors) report.errors.push(`${content.title}（${content.id}）：读不了发布记录，这次跳过：${error}`);
+  for (const c of backupCandidates(set.published, ctx.now)) {
     try {
       const binding = resolveContentProject(c.id, data);
       if (!binding) throw new Error("没有项目目录");

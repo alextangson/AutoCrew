@@ -114,31 +114,23 @@ function roundAt(doc: ProductionDoc, at: string): number {
   return Math.min(doc.round, 1 + doc.decisions.filter((d) => d.type === "reopen" && Date.parse(d.at) <= t).length);
 }
 
-/** 轮次证据：发布时间 → 切轮；否则同平台见过同一链接 / 作品 id → 沿用那一轮；否则当前轮 */
-function stampRound(doc: ProductionDoc, o: Observation, known: ObsFact[]): number {
-  const pinned = pinnedRound(doc, o, known);
-  if (pinned !== null) return pinned;
-  if (o.published_at) return roundAt(doc, o.published_at);
-  const seen = known.find((k) => k.platform === o.platform && ((o.item_id && k.item_id === o.item_id) || (o.url && k.url === o.url)));
-  return seen ? seen.round : doc.round;
-}
-
 /**
- * 重开之后，发布计划里这个平台的那条还是上一轮的记录（定时帖公开时间可能晚于重开）：钉在它原来那一轮，
- * 除非它带着晚于最近一次重开的实际提交时间（= 这一轮真提交了新的）。已发布的卡重开后旧槽永远不算进新一轮（seg10 P1）。
+ * 轮次证据（创始人 09-30 定，保守）：
+ * - AI 的说法（claim）是本轮刚说的：有发布时间按时间切，否则同作品沿用、再否则本轮。
+ * - 其余（发布计划、数据回流）在重开之后：**只有带着晚于最近一次重开的实际提交时间（submitted_at）才进新一轮**；
+ *   其他一律留在旧轮——包括旧定时帖到点公开、以及没写 submitted_at 的新作品。
+ *   已知代价：新一轮真发了但计划没写 submitted_at，不会自动算已发布，创始人点「我发了」（看得见；改口补丁 02 要求写 submitted_at）。
  */
-function pinnedRound(doc: ProductionDoc, o: Observation, known: ObsFact[]): number | null {
-  if (o.source !== "plan" || doc.round === 1) return null;
-  const lastReopen = Math.max(...doc.decisions.filter((d) => d.type === "reopen").map((d) => Date.parse(d.at)));
-  if (o.submitted_at && Date.parse(o.submitted_at) > lastReopen) return null;
-  // 只钉认得出是旧那条的：作品 id / 链接相同，或没有冲突的身份且发布时间一样（定时帖到点公开）；新作品带新 id 或新时间照常按证据定轮
-  const same = (k: Pick<ObsFact, "item_id" | "url" | "published_at">) => {
-    if ((o.item_id && k.item_id === o.item_id) || (o.url && k.url === o.url)) return true;
-    const conflict = Boolean((o.item_id && k.item_id && o.item_id !== k.item_id) || (o.url && k.url && o.url !== k.url));
-    return !conflict && (o.published_at ?? "") === (k.published_at ?? "");
-  };
-  const old = known.filter((k) => k.source === "plan" && k.platform === o.platform && k.round < doc.round && same(k as ObsFact)).at(-1);
-  return old ? old.round : null;
+function stampRound(doc: ProductionDoc, o: Observation, known: ObsFact[]): number {
+  const seen = known.find((k) => k.platform === o.platform && ((o.item_id && k.item_id === o.item_id) || (o.url && k.url === o.url)));
+  if (o.source === "claim" || doc.round === 1) {
+    if (o.published_at) return roundAt(doc, o.published_at);
+    return seen ? seen.round : doc.round;
+  }
+  if (o.submitted_at && !Number.isNaN(Date.parse(o.submitted_at))) return roundAt(doc, o.submitted_at);
+  const old = doc.round - 1;
+  if (seen) return Math.min(seen.round, old);
+  return o.published_at ? Math.min(roundAt(doc, o.published_at), old) : old;
 }
 
 const same = (a: Observation, b: Observation) =>
