@@ -88,9 +88,26 @@ export function parseJevBody(body: unknown, questions: Record<string, JevQuestio
   for (const [id, q] of Object.entries(questions)) {
     if (!validAnswer(q, b.answers[id])) throw new JevError(`返回形状不对：问题 ${id} 的答案缺失或类型不对`);
   }
-  const input = Number(b.usage?.input_tokens ?? NaN), output = Number(b.usage?.output_tokens ?? 0);
-  if (!Number.isFinite(input)) throw new JevError("返回形状不对：没有 usage.input_tokens");
-  return { model: typeof b.model === "string" ? b.model : JEV_MODEL, answers: b.answers as Record<string, JevAnswer>, usage: { input_tokens: input, output_tokens: output }, ms };
+  const input = b.usage?.input_tokens, output = b.usage?.output_tokens ?? 0;
+  if (!isCount(input)) throw new JevError("返回形状不对：没有 usage.input_tokens");
+  if (!isCount(output)) throw new JevError("返回形状不对：usage.output_tokens 不是数");
+  const model = b.model === undefined ? JEV_MODEL : b.model;
+  if (typeof model !== "string" || !MODEL_ID.test(model)) throw new JevError("返回形状不对：模型标识不认识");
+  // 只按白名单重建：每个问题只留类型与已校验的字段，响应里别的东西（额外字段、多出来的答案）一律丢掉
+  const answers: Record<string, JevAnswer> = {};
+  for (const [id, q] of Object.entries(questions)) answers[id] = cleanAnswer(q, b.answers[id] as JevAnswer);
+  return { model, answers, usage: { input_tokens: input, output_tokens: output }, ms };
+}
+
+const MODEL_ID = /^jev-\d+\.\d+\.\d+$/;
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+function cleanAnswer(q: JevQuestion, a: JevAnswer): JevAnswer {
+  if (q.type === "noul" || a.type === "noul") return { type: "noul", noul: (a as { noul: number }).noul };
+  const probabilities: Record<string, number> = {};
+  for (const k of Object.keys(q.criteria)) if (Object.hasOwn(a.probabilities, k)) probabilities[k] = a.probabilities[k];
+  const confidence = isProb(a.confidence) ? a.confidence : probabilities[a.choice];
+  return { type: "choice", choice: a.choice, probabilities, confidence };
 }
 
 function httpReason(status: number): string {

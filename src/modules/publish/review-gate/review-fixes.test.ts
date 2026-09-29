@@ -70,6 +70,37 @@ describe("[P1] 密钥不外泄", () => {
   });
 });
 
+describe("[复审] 响应只按白名单重建", () => {
+  it("响应里的额外字段（含假密钥）、多出来的答案、怪模型名都进不了返回与留档", async () => {
+    const r = await registeredVideo(env);
+    const FAKE = "sk-FAKE-IN-RESPONSE-987654";
+    const saved = process.env.TYPESAFE_API_KEY;
+    process.env.TYPESAFE_API_KEY = "k-test-12345678";
+    const respond = (model: string) => (async (_u: string, init: RequestInit) => {
+      const { questions } = JSON.parse(String(init.body)) as { questions: Record<string, JevQuestion> };
+      const answers: Record<string, unknown> = { zz_extra: { type: "noul", noul: 0.5, note: FAKE } };
+      for (const [id, q] of Object.entries(questions)) {
+        if (q.type === "noul") answers[id] = { type: "noul", noul: id.startsWith("v") ? 0.05 : 0.9, note: FAKE };
+        else { const k = Object.keys(q.criteria)[0]; answers[id] = { type: "choice", choice: k, probabilities: { [k]: 1 }, confidence: 0.9, rationale: FAKE }; }
+      }
+      return new Response(JSON.stringify({ model, answers, usage: { input_tokens: 10, output_tokens: 1, trace: FAKE }, debug: { echo: FAKE } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const out = await run({ content_id: r.id, founder_quotes: ["发抖音"], plan: planOf(r, [planEntry(r, "douyin", ["3:4", "4:3"])]) }, makeJevCaller({ fetchImpl: respond("jev-1.13.0") }));
+      expect(JSON.stringify(out)).not.toContain(FAKE);
+      expect(JSON.stringify(out)).not.toContain("zz_extra");
+      for (const f of await allFiles(path.join(r.root, "06-publish"))) {
+        const text = await fs.readFile(f, "utf8");
+        expect(text).not.toContain(FAKE);
+        expect(text).not.toContain("zz_extra");
+      }
+      const odd = await makeJevCaller({ fetchImpl: respond(FAKE) })({}, { n: { type: "noul", instructions: "?" } }).catch((e) => e);
+      expect(odd.reason).toMatch(/模型标识不认识/);
+      expect(JSON.stringify(odd.reason)).not.toContain(FAKE);
+    } finally { if (saved === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = saved; }
+  });
+});
+
 describe("[P1] 指纹覆盖 Jev B 的全部输入", () => {
   it("原话「不要参加任何活动」，只加一个选中的活动：指纹变、重问 Jev（payload_hash 不变）", async () => {
     const r = await registeredVideo(env);
