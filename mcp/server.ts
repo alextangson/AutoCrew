@@ -10,6 +10,7 @@ import { contentFile } from "../src/storage/content-project.js";
  */
 import { WRITING_INSTRUCTIONS, MCP_INSTRUCTIONS } from "./writing-instructions.js";
 import { mcpToolView, TOOL_GUIDE_PREFIX } from "./tool-docs.js";
+import { withMisuseGuide } from "./misuse-guide.js";
 import { registerAutocrewCapabilities } from "../index.js";
 import { loadProfile } from "../src/modules/profile/creator-profile.js";
 import { createContext } from "../src/runtime/context.js";
@@ -194,7 +195,8 @@ async function callTool(
   const startedAt = Date.now();
   try {
     // 会话挂在这次调用的异步上下文上：run-log 与认领/交接账顺手记上它，不经参数层层传
-    const executed = await withCallerSession(session, () => runtime.runner.execute(toolName, toolArgs));
+    // 被拒又没带 next_action 的，补一个指向正确动作的（v1.3 M2：说明变短后流程靠返回兜住）
+    const executed = withMisuseGuide(toolName, rawArgs, await withCallerSession(session, () => runtime.runner.execute(toolName, toolArgs)));
     const note = hiddenToolNote(host, toolName);
     const result = note ? { ...executed, host_note: note } : executed;
     await recordUsage(access, toolName, result.ok !== false, startedAt);
