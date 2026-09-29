@@ -169,7 +169,10 @@ describe("发布前检查 · 阶段门", () => {
     expect(await run()).toMatchObject({ ok: false, code: "claim_held", holder: { host: "claude", employee: "editor" } });
     expect((await getContent(id, dataDir))!.status).toBe("cover_pending");
     expect(await run({ _readOnly: true })).toMatchObject({ ok: true, allPassed: true });
-    expect(await run({ claim_token: claimed.claim.token })).toMatchObject({ ok: true, allPassed: true, claim_token: claimed.claim.token });
+    // 本体 §2.1：带令牌的模型预检只给结论、推不动认稿之后的状态；推进由创始人（工作台，不带 _host）做
+    expect(await run({ claim_token: claimed.claim.token })).toMatchObject({ ok: true, allPassed: false, claim_token: claimed.claim.token });
+    expect((await getContent(id, dataDir))!.status).toBe("cover_pending");
+    await executePrePublishTool({ action: "check", content_id: id, _dataDir: dataDir, claim_token: claimed.claim.token });
     expect((await getContent(id, dataDir))!.status).toBe("publish_ready");
   });
 });

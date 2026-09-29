@@ -9,17 +9,19 @@
 import path from "node:path";
 import { getContent, getDataDir, type Content } from "../../storage/local-store.js";
 import { contentRoot } from "../../storage/content-project.js";
-import { newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { Explanation } from "./explain.js";
 import { cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./files.js";
 import { withFileOwnership } from "./mutex.js";
 import { normalizeRecordArgs, type RecordArgs } from "./record-args.js";
-import { planFileRecord, type FilePlan } from "./record-plan.js";
+import { checkTargetDir, planFileRecord, targetDirOf, type FilePlan } from "./record-plan.js";
+import { isWithin } from "../../storage/storage-roots.js";
+import fs from "node:fs/promises";
 import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
-import { dropTxn, rollbackTxn, runMove, saveTxn, type Txn, type TxnOp } from "./txn.js";
+import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn, type TxnOp } from "./txn.js";
 
 type Receipt = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ ok: false, code, error, ...extra });
@@ -41,32 +43,34 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   const content = await getContent(a.content_id, dataDir);
   if (!content || content.deletedAt) return fail("not_found", `找不到这篇稿（${a.content_id}）：不存在或已删除`);
   if (!isVideoPlatform(content.platform)) return fail("not_video", "图文稿不走制作段，没有原片 / 成片可报");
+  // 影子模式边界（§4.1，Codex 审 P1）：没启用（或这条被排除）之前不写事实、不搬文件
+  if (!(await isOntologyActive(dataDir, content.id))) return fail("ontology_not_enabled", ONTOLOGY_NOT_ENABLED);
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   const replay = doc.requests?.[a.request_id];
   if (replay) return { ...(await receiptFor(content, dataDir, replay.receipt as unknown as ReceiptCore)), replayed: true };
   if (a.kind === "chatcut_project") return recordChatcut(a, content, doc, dataDir);
   const plan = await planFileRecord(a, content, doc, dataDir);
   if (!plan.ok) return fail(plan.code, plan.error);
-  try {
-    return await commitFile(a, content, plan.value, dataDir);
-  } catch (err) {
-    return fail("place_failed", `落位失败，原件没动：${err instanceof Error ? err.message : String(err)}`);
-  }
+  return commitFile(a, content, plan.value, dataDir);
 }
+
+export const ONTOLOGY_NOT_ENABLED =
+  "本体还没启用（或这条在启用时被排除了）：record 现在不写事实、不搬文件。请创始人先在看板顶部看差异清单并确认启用；在那之前照旧流程走。";
 
 interface ReceiptCore { fact_id: string; kind: Fact["kind"]; state: Fact["state"]; path?: string }
 
 // ---- 落位 ----
 
-function coverDir(version: number): string {
-  return `05-cover/v${String(version).padStart(3, "0")}`;
-}
-
 async function reserveFor(p: FilePlan, content: Content): Promise<string> {
   const ext = path.extname(p.source).toLowerCase();
-  if (p.kind === "aroll") return reserveTarget(path.join(p.projectRoot, "02-aroll"), `${safeStem(content.title)}-原片`, ext);
-  if (p.kind === "cover") return reserveTarget(path.join(p.projectRoot, coverDir(p.version!)), `封面-${p.ratio === "3:4" ? "3x4" : "4x3"}`, ext);
-  return reserveTarget(path.join(p.projectRoot, "04-edit"), path.basename(p.source, path.extname(p.source)), ext);
+  const rel = targetDirOf(p.kind, p.version);
+  const again = await checkTargetDir(p.projectRoot, rel);
+  if (!again.ok) throw new Error(again.error);
+  const dir = path.join(p.projectRoot, rel);
+  await fs.mkdir(dir, { recursive: true });
+  if (!isWithin(p.projectRoot, await fs.realpath(dir))) throw new Error(`目标目录出了项目：${rel}`);
+  const stem = p.kind === "aroll" ? `${safeStem(content.title)}-原片` : p.kind === "cover" ? `封面-${p.ratio === "3:4" ? "3x4" : "4x3"}` : path.basename(p.source, path.extname(p.source));
+  return reserveTarget(dir, stem, ext);
 }
 
 /** 第 7 步：先落事务日志再动文件；返回落位后的项目内相对路径 */
@@ -107,6 +111,30 @@ function upsertFact(doc: ProductionDoc, fact: Fact, existing: Fact | undefined):
   return target;
 }
 
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** 放文件失败：撤回成功才说「原件没动」，撤不回就照实说日志留着 */
+async function placeFailed(dataDir: string, txn: Txn, err: unknown): Promise<Receipt> {
+  const undone = await rollbackTxn(dataDir, txn).then(() => true, () => false);
+  return fail("place_failed", undone ? `落位失败，已撤回、原件没动：${errMsg(err)}` : `落位失败，且没能自动撤回（事务日志留着，重启时按事务 id 核定）：${errMsg(err)}`);
+}
+
+/** 写事实那一步抛错：按持久提交点核定（Codex 审 P1），已提交补回执，确定未提交才撤回，不确定就留日志 */
+async function commitFailed(a: RecordArgs, content: Content, dataDir: string, txn: Txn, moves: boolean, err: unknown): Promise<Receipt> {
+  if (!moves) return fail("record_failed", `事实没记上：${errMsg(err)}`);
+  const committed = await isCommitted(dataDir, content.id, txn.id);
+  if (committed === true) {
+    await dropTxn(dataDir, txn.id);
+    const core = (await readProductionDocOrEmpty(content.id, dataDir)).requests?.[a.request_id]?.receipt as unknown as ReceiptCore;
+    return { ...(await receiptFor(content, dataDir, core)), warning: `事实已记下，但之后的派生写入（投影 / 时间线 / 索引）失败：${errMsg(err)}` };
+  }
+  if (committed === false) {
+    const undone = await rollbackTxn(dataDir, txn).then(() => true, () => false);
+    return fail("record_failed", undone ? `事实没记上，已把文件撤回原处：${errMsg(err)}` : `事实没记上，文件也没能自动撤回（日志留着，重启时核定）：${errMsg(err)}`);
+  }
+  return fail("record_uncertain", `结果不确定（读不了制作记录）：事务日志留着，重启时按事务 id 核定。${errMsg(err)}`);
+}
+
 async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir: string): Promise<Receipt> {
   const reuse = p.action === "existing" || (p.action === "candidate" && p.existing);
   const moves = p.action === "move" || p.action === "clone";
@@ -114,15 +142,20 @@ async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir:
   let rel: string | null = p.action === "in_place" && p.location === "project" ? path.relative(p.projectRoot, p.source) : null;
   if (moves) {
     try { rel = await place(p, content, txn, dataDir); }
-    catch (err) { await rollbackTxn(dataDir, txn).catch(() => undefined); throw err; }
+    catch (err) { return placeFailed(dataDir, txn, err); }
   }
-  const r = await mutateProduction(content.id, dataDir, (doc) => {
-    const fact = reuse ? p.existing! : upsertFact(doc, factFrom(a, p, doc, rel, moves ? txn.id : undefined), p.existing);
-    const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}) };
-    doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { ...core } } };
-    if (moves) doc.txns = [...(doc.txns ?? []), txn.id];
-    return { value: core, events: reuse ? [] : [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
-  });
+  let r;
+  try {
+    r = await mutateProduction(content.id, dataDir, (doc) => {
+      const fact = reuse ? doc.facts.find((f) => f.id === p.existing!.id)! : upsertFact(doc, factFrom(a, p, doc, rel, moves ? txn.id : undefined), p.existing);
+      // 已有字幕没绑成片、这次报了 for_cut：补上绑定，不丢新信息（Codex 审 P2）
+      if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
+      const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}) };
+      doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { ...core } } };
+      if (moves) doc.txns = [...(doc.txns ?? []), txn.id];
+      return { value: core, events: reuse ? [] : [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
+    });
+  } catch (err) { return commitFailed(a, content, dataDir, txn, moves, err); }
   if (moves) await dropTxn(dataDir, txn.id);
   return receipt(r.value, r.explanation, content, p.projectRoot, reuse ? "同一文件已经记过，这次没有新动作" : undefined);
 }

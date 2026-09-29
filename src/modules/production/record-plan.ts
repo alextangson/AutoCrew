@@ -97,29 +97,52 @@ function referencedByChatcut(doc: ProductionDoc, fact: Fact | undefined): boolea
   return Boolean(fact && inRound(doc).some((f) => f.kind === "chatcut_project" && f.uses_aroll?.includes(fact.id)));
 }
 
-/** A-roll 从可搬入根来：文件名前缀对上本条标题、且没对上别的在制视频稿（现有 L1 前缀规则） */
-async function arollNameCheck(file: string, content: Content, dataDir: string): Promise<Parsed<void>> {
+/** A-roll 从收件箱来：文件名前缀对上本条标题、且没对上别的在制视频稿（现有前缀规则）才算授权搬入；否则 null + 原因 */
+async function arollNameMiss(file: string, content: Content, dataDir: string): Promise<string | null> {
   const name = path.basename(file);
-  if (!exportMatchesTitle(name, content.title)) {
-    return deny("aroll_name_mismatch", `文件名「${name}」对不上这条的标题「${content.title}」：请按标题改名（标题-原片.mov）再报，或让创始人在卡片上挂载。后台转写比对还没上线。`);
-  }
+  if (!exportMatchesTitle(name, content.title)) return `文件名「${name}」对不上标题，等创始人在卡片上确认是不是这条`;
   const others = (await listContents(dataDir)).filter((c) => c.id !== content.id && isVideoPlatform(c.platform) && !c.deletedAt
     && c.status !== "archived" && c.status !== "published" && exportMatchesTitle(name, c.title));
-  if (others.length) return deny("aroll_ambiguous", `文件名「${name}」同时对得上《${others.map((c) => c.title).join("》《")}》：请按完整标题改名，或让创始人挂载`);
-  return { ok: true, value: undefined };
+  return others.length ? `文件名同时对得上《${others.map((c) => c.title).join("》《")}》，等创始人确认` : null;
 }
 
+/**
+ * 搬入授权（§3-5/6）。被 ChatCut 引用只改变「已授权文件的落位方式」（留原位不挪），**不赋予归属**（Codex 审 P1）：
+ * 不可搬入的路径、对不上标题的收件箱原片一律只记候选，等创始人确认。
+ */
 async function decideAction(a: RecordArgs, content: Content, doc: ProductionDoc, file: string, location: Location, existing: Fact | undefined, dataDir: string): Promise<Parsed<{ action: Action; evidence: string }>> {
   if (location === "project") return { ok: true, value: { action: "in_place", evidence: "已在本条项目里" } };
-  if (a.kind === "aroll" && referencedByChatcut(doc, existing)) return { ok: true, value: { action: "in_place", evidence: "被 ChatCut 工程引用，留原位不挪" } };
   const movable = location === "inbox" || (location === "export" && a.kind !== "aroll");
   if (!movable) return { ok: true, value: { action: "candidate", evidence: `在可搬入目录之外（${path.dirname(file)}），等创始人确认` } };
   if (a.kind === "aroll") {
-    const named = await arollNameCheck(file, content, dataDir);
-    if (!named.ok) return named;
+    const miss = await arollNameMiss(file, content, dataDir);
+    if (miss) return { ok: true, value: { action: "candidate", evidence: `原片收件箱：${miss}` } };
+    if (referencedByChatcut(doc, existing)) return { ok: true, value: { action: "in_place", evidence: "收件箱原片对上标题；已被 ChatCut 工程引用，留原位不挪" } };
     return { ok: true, value: { action: "move", evidence: "收件箱里的原片，文件名对上标题" } };
   }
   return { ok: true, value: { action: "clone", evidence: location === "inbox" ? "收件箱" : "剪辑软件导出目录" } };
+}
+
+/** 落位目标目录（项目内相对） */
+export function targetDirOf(kind: Fact["kind"], version?: number): string {
+  if (kind === "aroll") return "02-aroll";
+  if (kind === "cover") return `05-cover/v${String(version).padStart(3, "0")}`;
+  return "04-edit";
+}
+
+/**
+ * 目标目录每一级都不能是符号链接、真实路径不能出项目（Codex 审 P1：02-aroll 指向库外时会搬到库外还报项目内路径）。
+ * 只读检查，落位时（mkdir 之后）再核一次。
+ */
+export async function checkTargetDir(projectRoot: string, rel: string): Promise<Parsed<void>> {
+  let current = projectRoot;
+  for (const part of rel.split("/")) {
+    current = path.join(current, part);
+    const st = await fs.lstat(current).catch(() => null);
+    if (!st) break;
+    if (st.isSymbolicLink() || !st.isDirectory()) return deny("target_unsafe", `项目里的 ${path.relative(projectRoot, current)} 是符号链接或不是目录，不往那里放：请先改回普通文件夹`);
+  }
+  return { ok: true, value: undefined };
 }
 
 export async function planFileRecord(a: RecordArgs, content: Content, doc: ProductionDoc, dataDir: string): Promise<Parsed<FilePlan>> {
@@ -141,5 +164,9 @@ export async function planFileRecord(a: RecordArgs, content: Content, doc: Produ
   if (existing?.state === "accepted") return { ok: true, value: { ...base, location, action: "existing", evidence: "同一文件已经记过" } };
   const decided = await decideAction(a, content, doc, file.value.source, location, existing, dataDir);
   if (!decided.ok) return decided;
+  if (decided.value.action === "move" || decided.value.action === "clone") {
+    const safe = await checkTargetDir(projectRoot, targetDirOf(a.kind, version.value));
+    if (!safe.ok) return safe;
+  }
   return { ok: true, value: { ...base, location, ...decided.value } };
 }

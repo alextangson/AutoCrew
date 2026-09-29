@@ -7,10 +7,11 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { contentTransaction, type Content, type ContentTx } from "../../storage/local-store.js";
+import { contentTransaction, getDataDir, type Content, type ContentTx } from "../../storage/local-store.js";
+import { registerProjector } from "../../storage/production-hooks.js";
 import { contentRoot, isLayoutV2 } from "../../storage/content-project.js";
 import {
-  appendTimeline, bodyHash, isFrozen, isOntologyEnabled, readProductionDocOrEmpty, stampEvents, writeProductionDoc,
+  appendTimeline, bodyHash, isFrozen, isOntologyActive, readProductionDocOrEmpty, stampEvents, writeProductionDoc,
 } from "../../storage/production-store.js";
 import type { ProductionDoc, TimelineEvent } from "../../storage/production-types.js";
 import { writeTextAtomicMkdir } from "../../storage/json-atomic.js";
@@ -69,10 +70,11 @@ function projectedStatus(content: Content, exp: Explanation): Content["status"] 
  * 在稿件写锁内把推导结果投影成 status 缓存并冻结正文。未启用本体（影子模式）时什么都不写。
  * 返回写完的 doc 与稿件。
  */
-export async function refreshProductionProjection(tx: ContentTx, content: Content, doc: ProductionDoc, dataDir: string): Promise<{ content: Content; doc: ProductionDoc; explanation: Explanation; events: TimelineEvent[] }> {
-  const publish = await publishEvidenceOf(content, dataDir);
+export async function refreshProductionProjection(tx: ContentTx, content: Content, doc: ProductionDoc, dataDir: string, opts: { force?: boolean } = {}): Promise<{ content: Content; doc: ProductionDoc; explanation: Explanation; events: TimelineEvent[] }> {
+  const publish = await publishEvidenceOf(content, dataDir, undefined, doc.round_started_at);
   const exp = deriveExplanation({ content, doc, enabled: true, publish });
-  if (!(await isOntologyEnabled(dataDir))) return { content, doc, explanation: exp, events: [] };
+  // 启用事务进行中（force）或这一条已按本体走，才投影；影子模式 / 被排除的稿什么都不写
+  if (!opts.force && !(await isOntologyActive(dataDir, content.id))) return { content, doc, explanation: exp, events: [] };
   const next = structuredClone(doc);
   const pending: NewEvent[] = [];
   if (await freezeIfNeeded(content, next, exp, dataDir)) pending.push({ type: "script_frozen", detail: { body_hash: next.frozen!.body_hash } });
@@ -118,16 +120,25 @@ export async function mutateProduction<T>(
 }
 
 /** 只投影不改事实（对账后、启用时逐条刷新） */
-export async function refreshContent(contentId: string, dataDir: string): Promise<Explanation> {
+export async function refreshContent(contentId: string, dataDir: string, opts: { force?: boolean } = {}): Promise<Explanation> {
   return contentTransaction(contentId, dataDir, async (tx) => {
     const content = await tx.read();
     if (!content) throw new Error(`Content ${contentId} not found`);
     const doc = await readProductionDocOrEmpty(contentId, dataDir);
-    const r = await refreshProductionProjection(tx, content, doc, dataDir);
+    const r = await refreshProductionProjection(tx, content, doc, dataDir, opts);
     await appendTimeline(contentId, dataDir, r.events);
     return r.explanation;
   });
 }
+
+// 认稿 / 重绑落盘后，storage 在同一把稿件写锁里回调这里投影（不取锁）
+registerProjector(async (id, dataDir, tx) => {
+  const content = await tx.read();
+  if (!content) return;
+  const dir = dataDir ?? getDataDir();
+  const r = await refreshProductionProjection(tx, content, await readProductionDocOrEmpty(id, dir), dir);
+  await appendTimeline(id, dir, r.events);
+});
 
 /** 冻结副本存在性自检用（测试 / 诊断） */
 export async function frozenCopy(contentId: string, dataDir: string, doc: ProductionDoc): Promise<string | null> {

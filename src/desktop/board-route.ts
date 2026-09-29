@@ -85,7 +85,7 @@ export function createBoardHandler(deps: BoardRouteDeps) {
     }
     if (p === "/api/board/ontology/enable" && req.method === "POST") {
       await post(req, res, async (b, dir) => (b.confirm === true
-        ? enableOntology(dir)
+        ? enableOntology(dir, { exclude: Array.isArray(b.exclude) ? b.exclude.map(String).filter(isContentId) : [] })
         : { ok: false, code: "confirmation_required", error: "启用前先看差异清单并确认" }));
       return true;
     }

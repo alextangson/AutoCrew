@@ -8,13 +8,30 @@
  * - 状态流转：推到「认稿」及之后是创始人决定，模型一律拒；创始人认稿即写认稿决定（绑正文哈希），
  *   创始人把认过的稿拉回写稿段即写撤回。
  */
-import type { ContentStatus } from "./local-store.js";
+import type { Content, ContentStatus, ContentTx } from "./local-store.js";
 import {
-  appendTimeline, bodyHash, isFrozen, isOntologyEnabled, latestScriptDecision, newId, readProductionDoc, readProductionDocOrEmpty,
+  appendTimeline, bodyHash, isFrozen, isOntologyActive, latestScriptDecision, newId, readProductionDoc, readProductionDocOrEmpty,
   ScriptFrozenError, stampEvents, writeProductionDoc,
 } from "./production-store.js";
 import type { ProductionDoc } from "./production-types.js";
 import { isVideoPlatform } from "./stage-guard.js";
+
+// ---- 锁内投影（Codex 审 P1：认稿落盘时同步完成投影与冻结，不等下一条新事实）----
+
+/** 由 modules/production/service 在加载时注册；storage 不在运行时反向 import modules */
+export type Projector = (id: string, dataDir: string | undefined, tx: ContentTx) => Promise<void>;
+let projector: Projector | null = null;
+
+export function registerProjector(fn: Projector): void {
+  projector = fn;
+}
+
+/** 认稿 / 重绑之后在同一把稿件写锁里投影；本体已对这条生效却没接上投影器 = 程序错误，要响 */
+export async function projectInLock(id: string, dataDir: string | undefined, tx: ContentTx): Promise<void> {
+  if (!(await isOntologyActive(dataDir, id))) return;
+  if (!projector) throw new Error("本体投影器没有接上（modules/production/service 未加载），认稿已写但没投影");
+  await projector(id, dataDir, tx);
+}
 
 /** 模型不能推到的状态：认稿及之后（§2.1，Codex P1-2） */
 export const FOUNDER_ONLY_STATUSES: ReadonlySet<ContentStatus> = new Set([
@@ -49,18 +66,19 @@ export async function planScriptEdit(
   const d = latestScriptDecision(doc);
   if (d?.type !== "script_approval" || d.body_hash !== bodyHash(existing.body)) return none;
   if (editor === "founder") return { rebind: { doc, hash: bodyHash(nextBody) }, status: null };
-  const enabled = await isOntologyEnabled(dataDir);
+  const enabled = await isOntologyActive(dataDir, id);
   return { rebind: null, status: enabled && existing.status === "approved" ? "draft_ready" : null };
 }
 
-export async function applyScriptEdit(id: string, dataDir: string | undefined, plan: ScriptEditPlan): Promise<void> {
-  if (!plan.rebind) return;
+export async function applyScriptEdit(id: string, dataDir: string | undefined, plan: ScriptEditPlan): Promise<boolean> {
+  if (!plan.rebind) return false;
   const { doc, hash } = plan.rebind;
   const next = structuredClone(doc);
   next.decisions.push({ id: newId("dec"), type: "script_approval", round: next.round, at: new Date().toISOString(), source: "founder", body_hash: hash, note: "创始人改稿，认稿重绑新正文" });
   const events = stampEvents(next, [{ type: "script_rebound", detail: { body_hash: hash } }]);
   await writeProductionDoc(id, dataDir, next, doc.revision);
   await appendTimeline(id, dataDir, events);
+  return true;
 }
 
 /** 流转进锁前的硬门：模型推到认稿及之后一律拒（force 也不行） */
@@ -71,12 +89,12 @@ export function modelTransitionRefusal(target: ContentStatus, decidedBy: Editor 
 /** 创始人流转落盘后：认稿写决定；从认过稿的状态拉回写稿段写撤回 */
 export async function recordScriptTransition(
   id: string, dataDir: string | undefined,
-  content: { platform?: string; body: string }, from: ContentStatus, to: ContentStatus, decidedBy: Editor | undefined,
-): Promise<void> {
-  if (decidedBy !== "founder" || !isVideoPlatform(content.platform)) return;
+  content: Pick<Content, "platform" | "body">, from: ContentStatus, to: ContentStatus, decidedBy: Editor | undefined,
+): Promise<boolean> {
+  if (decidedBy !== "founder" || !isVideoPlatform(content.platform)) return false;
   const approving = to === "approved" && from !== "approved";
   const revoking = WRITING_BACK.has(to) && FOUNDER_ONLY_STATUSES.has(from);
-  if (!approving && !revoking) return;
+  if (!approving && !revoking) return false;
   const doc = await readProductionDocOrEmpty(id, dataDir);
   const next = structuredClone(doc);
   const at = new Date().toISOString();
@@ -87,4 +105,5 @@ export async function recordScriptTransition(
   const events = stampEvents(next, [{ type: approving ? "script_approved" : "script_revoked", detail: { body_hash: hash, from, to } }], at);
   await writeProductionDoc(id, dataDir, next, doc.revision);
   await appendTimeline(id, dataDir, events);
+  return true;
 }

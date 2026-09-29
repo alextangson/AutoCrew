@@ -9,6 +9,7 @@ import { acquireLibraryLock } from "./library-lock.js";
 import { portableProjectRecord } from "./project-record.js";
 import { syncMyContentView, VIEW_DIR, ERROR_FILE } from "./my-content-view.js";
 import { archivePublished, type ArchiveOptions } from "./nas-archive.js";
+import { withFileOwnership } from "./file-ownership.js";
 
 let release: () => void;
 let temp: string, lib: string, data: string, view: string, nas: string;
@@ -58,6 +59,20 @@ async function fiveRecent(): Promise<void> { for (let i = 1; i <= 5; i++) await 
 const nasDir = (c: Content) => path.join(nas, "2026", "September", path.basename(root(c)));
 
 describe("NAS 归档", () => {
+  it("[Codex P1 mutex.ts:17] 与 record 落位同排文件归属事务：锁被占着时归档等着，不并发删", async () => {
+    await fiveRecent();
+    await published("旧稿", 8);
+    let release!: () => void;
+    const held = withFileOwnership(() => new Promise<void>((r) => { release = r; }));
+    let done = false;
+    const run = archive().then((r) => { done = true; return r; });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(done).toBe(false);
+    release();
+    await held;
+    expect((await run).archived.map((a) => a.title)).toEqual(["旧稿"]);
+  });
+
   it("archives only the 6th-newest+ published ≥7 days, unclaimed", async () => {
     await fiveRecent();
     const old = await published("旧稿", 8);

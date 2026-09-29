@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deriveStage } from "./derive.js";
-import { BODY, BH, DERIVE_CASES, doc, fact, fullFacts, SHA, decision } from "./derive-fixtures.js";
+import { BODY, BH, DERIVE_CASES, coverOk, cutOk, doc, fact, fullFacts, registrationFor, SHA, decision } from "./derive-fixtures.js";
 import { explain, withLegacyDecisions } from "./explain.js";
 import { emptyProductionDoc } from "../../storage/production-types.js";
 
@@ -82,13 +82,42 @@ describe("影子模式（§4.1）", () => {
     expect(r.shadow).toMatchObject({ column: "待录制", rule: "D5" });
   });
 
-  it("旧状态等价决定：认过稿之后补 legacy 认稿；已发布补「我发了」；已登记补 legacy 登记", () => {
+  it("旧状态等价决定：认过稿之后补 legacy 认稿；已发布补「我发了」；已登记但没带完整旧批准 → 不补登记", () => {
     const d = withLegacyDecisions(null, { ...video({ status: "published" }), video: undefined });
     expect(d.decisions.map((x) => [x.type, x.source])).toEqual([["script_approval", "legacy"], ["i_published", "legacy"]]);
     expect(d.decisions[0].body_hash).toBe(BH);
-    const reg = withLegacyDecisions(null, { ...video({ status: "publish_ready" }), video: { final: { sha256: SHA.cut, covers: { "3:4": SHA.c34, "4:3": SHA.c43 } } } as never });
-    expect(reg.registrations).toMatchObject([{ source: "legacy", cut_sha: SHA.cut, body_hash: BH }]);
-    expect(explain({ content: { ...video({ status: "publish_ready" }), video: { final: { sha256: SHA.cut, covers: { "3:4": SHA.c34, "4:3": SHA.c43 } } } as never }, doc: null, enabled: false, publish: { verified: false } }).shadow?.column).toBe("待发布");
+    const bare = withLegacyDecisions(null, { ...video({ status: "publish_ready" }), video: { final: { sha256: SHA.cut } } as never });
+    expect(bare.registrations).toEqual([]);
+  });
+
+  it("[Codex P1 derive.ts:94] 带齐旧批准 + 字幕的 legacy 组合命中 D2；本轮新批准会顶掉它", () => {
+    const cut = { ...cutOk(), id: "legacy-cut", source: "legacy" as const }, cover = { ...coverOk(), id: "legacy-cover", source: "legacy" as const };
+    const legacy = { facts: fullFacts(), decisions: [cut, cover], registrations: [{ ...registrationFor(cut, cover), source: "legacy" as const }] };
+    const d = withLegacyDecisions(null, video({ status: "publish_ready" }), undefined, legacy);
+    expect(deriveStage(d, BODY, { verified: false })).toMatchObject({ stage: "待发布", rule: "D2", publishable: true });
+    d.decisions.push(cutOk(SHA.cut, { at: "2026-09-30T00:00:00.000Z" }));
+    expect(deriveStage(d, BODY, { verified: false })).toMatchObject({ stage: "剪辑中", rule: "D3" });
+    // 旧登记没有豁免：同样的登记，缺了 legacy 批准就不命中
+    const noApprovals = doc(fullFacts(), [], [{ ...registrationFor(cut, cover), source: "legacy" }]);
+    expect(deriveStage(noApprovals, BODY, { verified: false }).rule).toBe("D4");
+  });
+
+  it("[Codex P1 derive.ts:59] 撤销当前批准后不回退到更早的批准（旧包立即不可发）", () => {
+    const a = cutOk(SHA.cut), cover = coverOk();
+    const d = doc([...fullFacts(), fact("cut", SHA.cut2, { at: "2026-09-29T05:00:00.000Z" })], [a, cover], [registrationFor(a, cover)]);
+    expect(deriveStage(d, BODY, { verified: false }).rule).toBe("D2");
+    const b = cutOk(SHA.cut2, { at: "2026-09-29T06:00:00.000Z" });
+    d.decisions.push(b, decision("approval_revoke", { target_id: b.id, at: "2026-09-29T07:00:00.000Z" }));
+    const r = deriveStage(d, BODY, { verified: false });
+    expect(r).toMatchObject({ stage: "剪辑中", rule: "D4", publishable: false });
+    expect(r.missing).toContain("成片待你审");
+    const revokedCover = doc(fullFacts(), [a, cover, coverOk({ at: "2026-09-29T08:00:00.000Z", id: "c2" }), decision("approval_revoke", { target_id: "c2", at: "2026-09-29T09:00:00.000Z" })], [registrationFor(a, cover)]);
+    expect(deriveStage(revokedCover, BODY, { verified: false }).rule).not.toBe("D2");
+  });
+
+  it("E4：文件名候选全列（不截前三）", () => {
+    const d = doc([1, 2, 3, 4, 5].map((i) => fact("aroll", String(i).repeat(64), { state: "candidate" })), []);
+    expect(deriveStage(d, BODY, { verified: false }).candidates).toHaveLength(5);
   });
 
   it("写稿段、真决定存在时不补 legacy", () => {

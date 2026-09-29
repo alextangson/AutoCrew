@@ -52,20 +52,26 @@ function liveFact(doc: ProductionDoc, kind: Fact["kind"], sha: string | undefine
   return accepted(doc).find((f) => f.kind === kind && f.sha256 === sha && !f.replaced_at && (!ratio || f.ratio === ratio)) ?? null;
 }
 
-/** 当前有效的成片批准：最近一条未撤、正文未变、文件未被替换、之后没被打回 */
+/**
+ * 当前选定的批准 = 本轮最近一条该类批准；先定选中哪条，再验它是否有效（Codex 审：撤销 / 打回 / 失效后
+ * **不回退**到更早的批准——撤批后旧包立即不可发，§5）。
+ */
+function selected(doc: ProductionDoc, type: "cut_approval" | "cover_approval"): Decision | null {
+  return latest(inRound(doc, doc.decisions).filter((d) => d.type === type));
+}
+
+/** 当前有效的成片批准：选中的那条未撤、之后没被打回、正文未变、文件未被替换 */
 export function validCutApproval(doc: ProductionDoc, body: string): Decision | null {
-  const bh = bodyHash(body), revoked = revokedIds(doc, "approval_revoke");
-  const ds = inRound(doc, doc.decisions);
-  const ok = ds.filter((d) => d.type === "cut_approval" && !revoked.has(d.id) && d.body_hash === bh && liveFact(doc, "cut", d.sha256)
-    && !ds.some((r) => r.type === "cut_reject" && r.sha256 === d.sha256 && r.at > d.at));
-  return latest(ok);
+  const d = selected(doc, "cut_approval");
+  if (!d || revokedIds(doc, "approval_revoke").has(d.id) || d.body_hash !== bodyHash(body) || !liveFact(doc, "cut", d.sha256)) return null;
+  const rejected = inRound(doc, doc.decisions).some((r) => r.type === "cut_reject" && r.sha256 === d.sha256 && r.at > d.at);
+  return rejected ? null : d;
 }
 
 export function validCoverApproval(doc: ProductionDoc, body: string): Decision | null {
-  const bh = bodyHash(body), revoked = revokedIds(doc, "approval_revoke");
-  const ok = inRound(doc, doc.decisions).filter((d) => d.type === "cover_approval" && !revoked.has(d.id) && d.body_hash === bh
-    && liveFact(doc, "cover", d.cover_3x4_sha, "3:4") && liveFact(doc, "cover", d.cover_4x3_sha, "4:3"));
-  return latest(ok);
+  const d = selected(doc, "cover_approval");
+  if (!d || revokedIds(doc, "approval_revoke").has(d.id) || d.body_hash !== bodyHash(body)) return null;
+  return liveFact(doc, "cover", d.cover_3x4_sha, "3:4") && liveFact(doc, "cover", d.cover_4x3_sha, "4:3") ? d : null;
 }
 
 /** 某版成片的字幕：for_cut = 成片 sha 的最近一条 accepted srt */
@@ -79,24 +85,24 @@ function validPublished(doc: ProductionDoc): Decision | null {
   return latest(inRound(doc, doc.decisions).filter((d) => d.type === "i_published" && !corrected.has(d.id)));
 }
 
-function candidatesOf(doc: ProductionDoc): CandidateView[] {
+export function candidatesOf(doc: ProductionDoc): CandidateView[] {
   return inRound(doc, doc.facts)
     .filter((f) => f.state === "candidate" || f.state === "pending_match")
     .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, 3)
+    // 文件名规则得出的候选全列（E4）；只有 1b 的转写打分候选才截前三
     .map((f) => ({ fact_id: f.id, kind: f.kind, state: f.state, ...(f.path ? { path: f.path } : {}), ...(f.evidence ? { evidence: f.evidence } : {}), ...(f.post_publish ? { post_publish: true } : {}) }));
 }
 
-/** 登记记录与当前有效批准组合完全一致（D2）；legacy 登记只在本轮没有任何新批准时算数 */
-function matchingRegistration(doc: ProductionDoc, body: string, cut: Decision | null, cover: Decision | null): Registration | null {
+/**
+ * 登记记录与当前有效批准组合完全一致（D2）。legacy 登记没有豁免：它只有在迁移时带进了旧 register 核过的
+ * gate3 / gate4 批准与字幕（都成了本轮的 legacy 决定 / 事实）时才对得上；本轮任何新批准都会顶掉它。
+ */
+export function matchingRegistration(doc: ProductionDoc, body: string, cut: Decision | null, cover: Decision | null): Registration | null {
+  if (!cut || !cover) return null;
   const bh = bodyHash(body);
   const regs = inRound(doc, doc.registrations).filter((r) => r.body_hash === bh).reverse();
-  if (!cut || !cover) {
-    const anyApproval = inRound(doc, doc.decisions).some((d) => d.type === "cut_approval" || d.type === "cover_approval");
-    return anyApproval ? null : regs.find((r) => r.source === "legacy") ?? null;
-  }
   const srt = srtFor(doc, cut.sha256);
-  return regs.find((r) => r.source === "commit" && r.cut_approval_id === cut.id && r.cut_sha === cut.sha256
+  return regs.find((r) => r.cut_approval_id === cut.id && r.cut_sha === cut.sha256
     && r.cover_approval_id === cover.id && r.cover_3x4_sha === cover.cover_3x4_sha && r.cover_4x3_sha === cover.cover_4x3_sha
     && r.cover_text === cover.cover_text && Boolean(srt) && r.srt_sha === srt!.sha256 && r.srt_for_cut === cut.sha256) ?? null;
 }

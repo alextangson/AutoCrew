@@ -58,20 +58,10 @@ export async function writeProductionDoc(contentId: string, dataDir: string | un
   const current = await readProductionDoc(contentId, dataDir);
   const actual = current?.revision ?? 0;
   if (actual !== expected) throw new ProductionConflictError(contentId, expected, actual);
-  const next: ProductionDoc = {
-    ...doc,
-    revision: expected + 1,
-    requests: trimRecord(doc.requests ?? {}, 200),
-    txns: (doc.txns ?? []).slice(-200),
-  };
+  // requests / txns 不裁剪（Codex 审 P2）：request_id 重放与事务提交判定都靠它们，裁掉就会把已搬走的请求判成路径不存在
+  const next: ProductionDoc = { ...doc, revision: expected + 1 };
   await writeJsonAtomicMkdir(productionFile(contentId, dataDir), next);
   return next;
-}
-
-function trimRecord<T extends { at: string }>(rec: Record<string, T>, max: number): Record<string, T> {
-  const entries = Object.entries(rec);
-  if (entries.length <= max) return rec;
-  return Object.fromEntries(entries.sort((a, b) => a[1].at.localeCompare(b[1].at)).slice(-max));
 }
 
 /** 追加时间线（审计投影）：调用方先把 seq 记进 doc 再写 doc，失败了下次重放也不会重号 */
@@ -113,19 +103,31 @@ export function newId(prefix: string): string {
 
 // ---- 启用版本（§4.1 影子模式）----
 
-interface EnabledMarker { version: number; enabledAt: string }
+/** excluded：启用时对账失败、创始人明确排除的稿——它们留在旧行为（影子），卡片上标出来 */
+export interface EnabledMarker { version: number; enabledAt: string; excluded: string[] }
 
-export async function readEnabledVersion(dataDir?: string): Promise<number | null> {
-  try { return (JSON.parse(await fs.readFile(productionServiceDir(dataDir, "enabled.json"), "utf8")) as EnabledMarker).version ?? null; }
+export async function readEnabledMarker(dataDir?: string): Promise<EnabledMarker | null> {
+  try { const m = JSON.parse(await fs.readFile(productionServiceDir(dataDir, "enabled.json"), "utf8")) as EnabledMarker; return { ...m, excluded: m.excluded ?? [] }; }
   catch (e) { if (isMissing(e)) return null; throw e; }
 }
 
+export async function readEnabledVersion(dataDir?: string): Promise<number | null> {
+  return (await readEnabledMarker(dataDir))?.version ?? null;
+}
+
+/** 资料库级：本体启用了没有 */
 export async function isOntologyEnabled(dataDir?: string): Promise<boolean> {
   return (await readEnabledVersion(dataDir)) === DERIVE_VERSION;
 }
 
-export async function writeEnabledVersion(dataDir: string | undefined, version = DERIVE_VERSION): Promise<void> {
-  await writeJsonAtomicMkdir(productionServiceDir(dataDir, "enabled.json"), { version, enabledAt: new Date().toISOString() } satisfies EnabledMarker);
+/** 这一条是否按本体规则走（启用了、且没被排除） */
+export async function isOntologyActive(dataDir: string | undefined, contentId: string): Promise<boolean> {
+  const m = await readEnabledMarker(dataDir);
+  return m?.version === DERIVE_VERSION && !m.excluded.includes(contentId);
+}
+
+export async function writeEnabledVersion(dataDir: string | undefined, version = DERIVE_VERSION, excluded: string[] = []): Promise<void> {
+  await writeJsonAtomicMkdir(productionServiceDir(dataDir, "enabled.json"), { version, enabledAt: new Date().toISOString(), excluded } satisfies EnabledMarker);
 }
 
 // ---- 冻结（§2.5）----

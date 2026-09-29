@@ -13,7 +13,8 @@ import { enableOntology } from "./enable.js";
 import { reconcileAll, readReconcileReport } from "./reconcile.js";
 import { recoverTxns, saveTxn } from "./txn.js";
 import { resetProductionReady } from "./service.js";
-import { exists, founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
+import { sha256File } from "../video/handoff/manifest.js";
+import { exists, founderApprove, makeEnv, setContent, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv(); });
@@ -68,12 +69,25 @@ describe("影子模式（§4.1）：只算不写，给差异清单", () => {
     expect((await reconcileAll(env.dir)).moves).toEqual([]);
   });
 
-  it("启用：已登记的待发布（video.final）补 legacy 登记，留在待发布；已发布补「我发了」；归档不动", async () => {
-    const reg = await videoContent(env, "已登记的稿", "publish_ready", undefined, { video: { final: { sha256: "c".repeat(64), covers: { "3:4": "3".repeat(64), "4:3": "4".repeat(64) } } } as never });
+  it("[Codex P1 derive.ts:94] 旧登记缺 approvals.json 批准：不借 legacy 登记进待发布，卡上说要重新通过", async () => {
+    const reg = await videoContent(env, "已登记的稿", "publish_ready", undefined, { video: { final: { sha256: "c".repeat(64), asset_filename: "final.mp4", covers: { "3:4": "a", "4:3": "b" } } } as never });
+    await put(path.join(projectRoot(env, reg.id), "02-aroll/raw.mov"), "raw");
+    const report = await reconcileAll(env.dir);
+    expect(report.moves.find((m) => m.id === reg.id)).toMatchObject({ from: "待发布", to: "剪辑中" });
+    expect(report.moves.find((m) => m.id === reg.id)!.evidence.join("")).toContain("旧登记没迁移");
+    expect((await enableOntology(env.dir)).ok).toBe(true);
+    expect((await getContent(reg.id, env.dir))!.status).toBe("editing");
+  });
+
+  it("旧登记带齐创始人 gate3/gate4 批准 + 字幕、字节都对：迁成完整的 legacy 组合，留在待发布；新批准顶掉它", async () => {
+    const reg = await legacyRegistered();
     const pub = await videoContent(env, "已发布的稿", "published");
     const arc = await videoContent(env, "归档的稿", "archived");
+    expect((await reconcileAll(env.dir)).moves.find((m) => m.id === reg.id)).toBeUndefined();
     expect((await enableOntology(env.dir)).ok).toBe(true);
     expect((await getContent(reg.id, env.dir))!.status).toBe("publish_ready");
+    const doc = (await readProductionDoc(reg.id, env.dir))!;
+    expect(doc.registrations).toMatchObject([{ source: "legacy", cover_text: "AI 又忘了？" }]);
     expect((await getContent(pub.id, env.dir))!.status).toBe("published");
     expect((await getContent(arc.id, env.dir))!.status).toBe("archived");
   });
@@ -85,6 +99,24 @@ describe("影子模式（§4.1）：只算不写，给差异清单", () => {
     expect((await getContent(c.id, env.dir))!.status).toBe("editing");
   });
 });
+
+/** 一条旧库里「已登记」的稿：registered 成片 + 选中的两张封面 + 字幕 + approvals.json / cover-selection / decisions.json */
+async function legacyRegistered() {
+  const c = await videoContent(env, "已登记的稿", "approved");
+  const root = projectRoot(env, c.id);
+  const cut = await put(path.join(root, "07-delivery/registered/final-g1.mp4"), "registered-cut");
+  const c34 = await put(path.join(root, "05-cover/v001/a.png"), png(900, 1200, "a"));
+  const c43 = await put(path.join(root, "05-cover/v001/b.png"), png(1200, 900, "b"));
+  const srt = await put(path.join(root, "04-edit/final.srt"), SRT);
+  const [sCut, s34, s43] = [await sha256File(cut), await sha256File(c34), await sha256File(c43)];
+  const auto = path.join(root, "00-project/autocrew");
+  const { coverPairHash } = await import("../video/handoff/manifest.js");
+  await fs.writeFile(path.join(auto, "approvals.json"), JSON.stringify({ schema: 2, source: "founder-workbench", bindings: {}, rejections: [],
+    final_cut: { artifact_sha256: sCut, approved_at: "x", user_message: "" }, covers: { artifact_sha256: coverPairHash(s34, s43), approved_at: "x", user_message: "" } }));
+  await fs.writeFile(path.join(auto, "cover-selection.json"), JSON.stringify({ "3:4": { sha256: s34, path: "05-cover/v001/a.png", selected_at: "x" }, "4:3": { sha256: s43, path: "05-cover/v001/b.png", selected_at: "x" } }));
+  await fs.writeFile(path.join(auto, "decisions.json"), JSON.stringify({ cover_text: "AI 又忘了？" }));
+  return setContent(env, c.id, { status: "publish_ready", video: { final: { sha256: sCut, asset_filename: "final-g1.mp4", srt_path: srt, covers: { "3:4": c34, "4:3": c43 } } } as never });
+}
 
 describe("对账（§4）：启用之后", () => {
   it("旧存法导入：execution.json 报到的产物、meta.assets 的封面附件（source=legacy）", async () => {
@@ -163,15 +195,30 @@ describe("对账（§4）：启用之后", () => {
 });
 
 describe("事务恢复（§7，E23/E28）", () => {
+  beforeEach(async () => { await writeEnabledVersion(env.dir); });
+
   it("record 克隆到一半进程没了：恢复时按事务 id 判未提交，删掉项目里那份，源不动", async () => {
     const c = await videoContent(env, TITLE);
     const src = await put(path.join(env.chatcut, "x.mp4"), "cut");
     const dst = await put(path.join(projectRoot(env, c.id), "04-edit/x.mp4"), "cut");
-    await saveTxn(env.dir, { id: "txn-crash-2", kind: "record", content_id: c.id, round: 1, at: "x", ops: [{ op: "clone", source: src, target: dst, sha256: "f".repeat(64), step: "placed" }] });
+    await saveTxn(env.dir, { id: "txn-crash-2", kind: "record", content_id: c.id, round: 1, at: "x", ops: [{ op: "clone", source: src, target: dst, sha256: await sha256File(dst), step: "placed" }] });
     resetProductionReady();
     expect(await recoverTxns(env.dir)).toMatchObject([{ outcome: "rolled_back" }]);
     expect(await exists(dst)).toBe(false);
     expect(await exists(src)).toBe(true);
+  });
+
+  it("[Codex P1 txn.ts:78] 崩溃后目标被人改过：恢复不删这份唯一的新版本，报冲突、日志留着", async () => {
+    const c = await videoContent(env, TITLE);
+    const src = await put(path.join(env.chatcut, "x.mp4"), "cut");
+    const dst = await put(path.join(projectRoot(env, c.id), "04-edit/x.mp4"), "cut");
+    const sha = await sha256File(dst);
+    await fs.writeFile(dst, "编辑器改过的新版本");
+    await saveTxn(env.dir, { id: "txn-crash-3", kind: "record", content_id: c.id, round: 1, at: "x", ops: [{ op: "clone", source: src, target: dst, sha256: sha, step: "placed" }] });
+    const [r] = await recoverTxns(env.dir);
+    expect(r.outcome).toMatch(/^failed:恢复冲突/);
+    expect(await fs.readFile(dst, "utf8")).toBe("编辑器改过的新版本");
+    expect(await exists(path.join(env.dir, "production/txns/txn-crash-3.json"))).toBe(true);
   });
 
   it("已提交的事务（production.json 里有事务 id）恢复时只删日志", async () => {

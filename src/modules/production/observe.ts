@@ -10,7 +10,8 @@ import path from "node:path";
 import type { Content } from "../../storage/local-store.js";
 import { projectFile } from "../../storage/content-project.js";
 import type { Availability, Fact, ProductionDoc } from "../../storage/production-types.js";
-import { newId } from "../../storage/production-store.js";
+import { newId, productionServiceDir } from "../../storage/production-store.js";
+import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import { scanCoverFolder } from "../video/handoff/cover-scan.js";
 import { COVER_ROLES, normalizeExecution } from "../video/handoff/execution-index.js";
 import { sha256File } from "../video/handoff/manifest.js";
@@ -25,14 +26,36 @@ const VERSION_DIR = /^v0*(\d+)$/i;
 export type Seen = Omit<Fact, "id" | "round" | "at" | "state" | "availability"> & { state: Fact["state"] };
 export interface Observations { seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true }> }
 
+/**
+ * 哈希缓存：按（dev, ino, 大小, 修改时间）认同一份字节。落盘到工作区服务目录的 hash-cache.json，
+ * 重启后不必把每个 A-roll 重算一遍。它只是缓存：键对不上就重算，坏了当空。
+ */
 const hashCache = new Map<string, { key: string; sha: string }>();
+let cacheDirty = false;
+
+function cacheFile(dataDir: string): string {
+  return productionServiceDir(dataDir, "hash-cache.json");
+}
+
+export async function loadHashCache(dataDir: string): Promise<void> {
+  try {
+    const raw = JSON.parse(await fs.readFile(cacheFile(dataDir), "utf8")) as Record<string, { key: string; sha: string }>;
+    for (const [k, v] of Object.entries(raw)) if (!hashCache.has(k) && typeof v?.key === "string" && /^[a-f0-9]{64}$/.test(v.sha)) hashCache.set(k, v);
+  } catch { /* 没有或坏了：当空缓存，照常重算 */ }
+}
+
+export async function saveHashCache(dataDir: string): Promise<void> {
+  if (!cacheDirty) return;
+  await writeJsonAtomicMkdir(cacheFile(dataDir), Object.fromEntries(hashCache));
+  cacheDirty = false;
+}
 
 export async function cachedSha(file: string): Promise<{ sha256: string; size: number; mtime_ms: number }> {
   const st = await fs.stat(file);
   const key = `${st.dev}:${st.ino}:${st.size}:${Math.trunc(st.mtimeMs)}`;
   const hit = hashCache.get(file);
   const sha256 = hit?.key === key ? hit.sha : await sha256File(file);
-  hashCache.set(file, { key, sha: sha256 });
+  if (hit?.key !== key) { hashCache.set(file, { key, sha: sha256 }); cacheDirty = true; }
   return { sha256, size: st.size, mtime_ms: Math.trunc(st.mtimeMs) };
 }
 
@@ -172,7 +195,9 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
   const added: Fact[] = [];
   for (const s of obs.seen) {
     // 任何一轮记过都算：重开文稿后旧轮的成片 / 封面还在盘上，它们属于历史，不再导进新一轮
-    const dup = doc.facts.some((f) => f.kind === s.kind && f.sha256 === s.sha256);
+    const dup = doc.facts.find((f) => f.kind === s.kind && f.sha256 === s.sha256);
+    // 去重时不丢新信息（Codex 审 P2）：本轮已有字幕没绑成片，这次算出了绑定就补上
+    if (dup && dup.kind === "srt" && dup.round === doc.round && !dup.for_cut && s.for_cut) { dup.for_cut = s.for_cut; changed++; }
     if (dup || added.some((f) => f.kind === s.kind && f.sha256 === s.sha256)) continue;
     const state = s.kind === "aroll" && s.state === "accepted" && arollOwned(s.sha256!) ? "candidate" : s.state;
     added.push({ ...s, state, id: newId("fact"), round: doc.round, at, availability: "present" });

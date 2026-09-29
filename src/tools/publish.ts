@@ -1,3 +1,4 @@
+import { isModelCall } from "../storage/stage-guard.js";
 import { projectMarkdownExport } from "../storage/project-record.js";
 import { writeTextAtomic } from "../storage/json-atomic.js";
 import { contentFile, resolveContentProject } from "../storage/content-project.js";
@@ -168,7 +169,8 @@ export async function executePublish(
     // 阶段门 force 也越不过，但它对「→ 已发布」本就没有规则，行为一字未变。
     // 发布时刻只盖一次:重复确认(手滑双击/助手重跑)不许把首次发布时间冲成现在,
     // 否则「稿成→发布」的用时会被越算越短——这条纪律现在由 transitionStatus 统一守。
-    const marked = await transitionStatus(contentId, "published", { force: true }, dataDir);
+    // 本体 §2.1 / §6：模型说「发了」不算数，推不动状态（创始人点「我发了」或发布器 / 数据回流核实）
+    const marked = await transitionStatus(contentId, "published", { force: true, ...(isModelCall(params) ? { decidedBy: "agent" as const } : {}) }, dataDir);
     if (!marked.ok) {
       return { ok: false, error: marked.error ?? `Failed to update content: ${contentId}` };
     }

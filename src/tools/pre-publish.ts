@@ -30,7 +30,7 @@ import { executeReview } from "./review.js";
 import { editorialDraftHash } from "./editorial.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 import { COVER_TEXT_MAX, publishTitleChars, videoTitleLimit } from "../modules/publish/video-kit.js";
-import { isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
+import { isModelCall, isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
 
 // --- Types ---
 
@@ -141,8 +141,9 @@ function gatePublishWrite(params: Record<string, unknown>, contentId: string, da
  * 真正推进到「待发布」。返回 null = 进去了；返回一句话 = 拦下的原因。
  * 写盘失败照旧向上 throw 到工具错误边界——吞掉等于报了「可以发布」但状态没落盘。
  */
-async function runAutoTransition(contentId: string, dataDir?: string): Promise<string | null> {
-  const moved = await transitionStatus(contentId, "publish_ready", {}, dataDir);
+async function runAutoTransition(contentId: string, dataDir?: string, modelCall = false): Promise<string | null> {
+  // 本体 §2.1：认稿之后的推进只归创始人；模型跑的预检只给结论，不推状态（Codex 审 P1 审计模型可达入口）
+  const moved = await transitionStatus(contentId, "publish_ready", modelCall ? { decidedBy: "agent" } : {}, dataDir);
   if (moved.ok) return null;
   if (moved.blocked) return moved.error ?? "阶段门拒绝";
   // 形状不对（比如稿子还在「草稿就绪」）：状态机的英文原文对创始人没意义，换人话
@@ -471,7 +472,7 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
     const gate = params._readOnly === true ? null : await gatePublishWrite(params, contentId, dataDir);
     if (gate && "denied" in gate) return gate.denied;
     grant = gate?.grant ?? {};
-    const blocked = gate ? await runAutoTransition(contentId, dataDir) : await stageBlockReason(content, "publish_ready", dataDir);
+    const blocked = gate ? await runAutoTransition(contentId, dataDir, isModelCall(params)) : await stageBlockReason(content, "publish_ready", dataDir);
     if (blocked) {
       checks.push({
         name: "阶段门",

@@ -28,8 +28,18 @@ export const markPublished = (contentId: string, platform: string, url?: string)
 export const unmarkPublished = (contentId: string, platform: string) =>
   post<Json>("/api/board/mark-published", { content_id: contentId, platform, undo: true });
 
-/** 启用本体（§4.1）：创始人看过差异清单后确认 */
-export const enableOntology = () => post<Json>("/api/board/ontology/enable", { confirm: true });
+/** 启用本体（§4.1）：创始人看过差异清单后确认；exclude = 看过失败清单后明确排除的稿 */
+export interface EnableFailure { id: string; title: string; step: string; error: string }
+export async function enableOntology(exclude: string[] = []): Promise<{ ok: boolean; error?: string; failures: EnableFailure[] }> {
+  try {
+    const r = await fetch("/api/board/ontology/enable", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, exclude }) });
+    const body = await r.json().catch(() => null) as { ok?: boolean; error?: string; failures?: EnableFailure[] } | null;
+    if (!r.ok || !body) return { ok: false, error: r.status === 403 ? "没有权限（登录过期？刷新页面试试）" : `服务没响应（HTTP ${r.status}）`, failures: [] };
+    return { ok: body.ok === true, ...(body.error ? { error: body.error } : {}), failures: body.failures ?? [] };
+  } catch (e) {
+    return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}`, failures: [] };
+  }
+}
 
 /* 数据页（数据页规格 §F / §G）：读数据、手动关联 / 合并 / 拆开、撤销 */
 export const loadDataPage = () => call<DataPageData>("/api/data");

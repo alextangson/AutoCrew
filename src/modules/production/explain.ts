@@ -8,7 +8,8 @@ import type { Content, ContentStatus } from "../../storage/local-store.js";
 import { bodyHash, scriptApprovalFor } from "../../storage/production-store.js";
 import { emptyProductionDoc, type ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
-import { deriveStage, writingBadge, type CandidateView, type PublishEvidence, type Rule, type Stage } from "./derive.js";
+import type { LegacyImport } from "./legacy.js";
+import { candidatesOf, deriveStage, writingBadge, type CandidateView, type PublishEvidence, type Rule, type Stage } from "./derive.js";
 
 export type Column = "写稿中" | "待录制" | "剪辑中" | "待发布" | "已发布";
 
@@ -55,10 +56,11 @@ export function legacyColumn(c: Pick<Content, "status" | "platform">, publish: P
 }
 
 /**
- * 旧状态等价的决定（§4.1 迁移规则）：认过稿之后的状态补 legacy 认稿；已发布补 legacy「我发了」；
- * 已登记（待发布 / 发布中且有 video.final）补一条 legacy 登记记录。只补缺的，不覆盖真决定。
+ * 旧状态等价的决定（§4.1 迁移规则）：认过稿之后的状态补 legacy 认稿；已发布补 legacy「我发了」。
+ * 已登记的待发布稿只有在 `legacy`（legacy.ts 从旧 register 核过的批准 + 字幕导入的完整组合）齐全时才补登记；
+ * 否则不补，卡片按 D3 / D4 显示需要重新通过的那几项。只补缺的，不覆盖真决定。
  */
-export function withLegacyDecisions(doc: ProductionDoc | null, content: ExplainInput["content"], at = "1970-01-01T00:00:00.000Z"): ProductionDoc {
+export function withLegacyDecisions(doc: ProductionDoc | null, content: ExplainInput["content"], at = "1970-01-01T00:00:00.000Z", legacy?: LegacyImport): ProductionDoc {
   const d: ProductionDoc = structuredClone(doc ?? emptyProductionDoc());
   if (!isVideoPlatform(content.platform) || !POST_APPROVAL.has(content.status)) return d;
   const bh = bodyHash(content.body ?? "");
@@ -68,11 +70,10 @@ export function withLegacyDecisions(doc: ProductionDoc | null, content: ExplainI
   if (content.status === "published" && !d.decisions.some((x) => x.round === round && x.type === "i_published")) {
     d.decisions.push({ id: `legacy-published-${round}`, type: "i_published", round, at, source: "legacy", note: "旧状态是已发布" });
   }
-  const registered = (content.status === "publish_ready" || content.status === "publishing") && content.video?.final;
-  if (registered && !d.registrations.some((r) => r.round === round)) {
-    const f = content.video!.final!;
-    d.registrations.push({ id: `legacy-reg-${round}`, round, at, source: "legacy", body_hash: bh, ...(f.sha256 ? { cut_sha: f.sha256 } : {}),
-      ...(f.covers?.["3:4"] ? { cover_3x4_sha: f.covers["3:4"] } : {}), ...(f.covers?.["4:3"] ? { cover_4x3_sha: f.covers["4:3"] } : {}) });
+  if (legacy?.registrations.length && !d.registrations.some((r) => r.round === round)) {
+    for (const f of legacy.facts) if (!d.facts.some((x) => x.kind === f.kind && x.sha256 === f.sha256 && x.round === round)) d.facts.push(f);
+    for (const x of legacy.decisions) if (!d.decisions.some((y) => y.id === x.id)) d.decisions.push(x);
+    d.registrations.push(...legacy.registrations);
   }
   return d;
 }
@@ -87,7 +88,8 @@ export function deriveExplanation(input: ExplainInput): Explanation {
   if (content.deletedAt || content.status === "archived" || content.status === "topic_saved") return nonProduction(null, "other", null);
   if (!isVideoPlatform(content.platform)) return nonProduction(legacyColumn(content, publish), "other", null);
   const d = doc ?? emptyProductionDoc();
-  if (!scriptApprovalFor(d, content.body ?? "")) return nonProduction("写稿中", "writing", writingBadge(d));
+  // 写稿段也把候选带出来：认稿前发现的疑似 A-roll 要在卡上看得见（E4）
+  if (!scriptApprovalFor(d, content.body ?? "")) return { ...nonProduction("写稿中", "writing", writingBadge(d)), candidates: candidatesOf(d) };
   const r = deriveStage(d, content.body ?? "", publish);
   const badges = content.status === "publishing" && r.stage !== "已发布" ? [...r.badges, "发布中"] : r.badges;
   return { column: r.stage, phase: "production", stage: r.stage, rule: r.rule, status: STAGE_STATUS[r.stage], missing: r.missing, badges, candidates: r.candidates, publishable: r.publishable, evidence: r.evidence };

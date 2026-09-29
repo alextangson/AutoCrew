@@ -23,7 +23,7 @@ import type { AngleCard } from "../modules/research/brief-store.js";
 // 证据账本的落盘形状归账本模块定义（P1 §3.3），这里同样只引用
 import type { EvidenceLedgerSnapshot } from "../modules/research/evidence-ledger.js";
 import type { ContentVideoLink } from "../modules/video/handoff/types.js";
-import { applyScriptEdit, modelTransitionRefusal, planScriptEdit, recordScriptTransition, type Editor } from "./production-hooks.js";
+import { applyScriptEdit, modelTransitionRefusal, planScriptEdit, projectInLock, recordScriptTransition, type Editor } from "./production-hooks.js";
 
 /**
  * 创始人选定的写作角度（角度卡 spec §1.3）。指针 + **生效卡快照**两样都存：
@@ -592,9 +592,13 @@ export interface ContentTx {
   write(updates: ContentUpdates & { status?: ContentStatus }): Promise<Content | null>;
 }
 
+function lockedTx(id: string, dataDir: string | undefined): ContentTx {
+  return { read: () => getContent(id, dataDir), write: (u) => updateContentLocked(id, u, dataDir) };
+}
+
 export function contentTransaction<T>(id: string, dataDir: string | undefined, fn: (tx: ContentTx) => Promise<T>): Promise<T> {
   if (!isContentId(id)) throw new Error(`Content ${id} not found`);
-  return contentWrite(id, dataDir, () => fn({ read: () => getContent(id, dataDir), write: (u) => updateContentLocked(id, u, dataDir) }));
+  return contentWrite(id, dataDir, () => fn(lockedTx(id, dataDir)));
 }
 
 // --- Topics ---
@@ -1079,7 +1083,10 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     await writeTextAtomic(projectFile(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
     await writeJsonAtomic(metaPath, updated);
   }
-  if (scriptPlan) await applyScriptEdit(id, dataDir, scriptPlan);
+  if (scriptPlan && (await applyScriptEdit(id, dataDir, scriptPlan))) {
+    await projectInLock(id, dataDir, lockedTx(id, dataDir));
+    return (await getContent(id, dataDir)) ?? updated;
+  }
   return updated;
 }
 
@@ -1780,8 +1787,11 @@ async function transitionStatusLocked(
 
   const updated = await updateContentLocked(contentId, updates, dataDir);
   if (!updated) return { ok: false, error: "Failed to update content" };
-  await recordScriptTransition(contentId, dataDir, updated, currentStatus, targetStatus, opts?.decidedBy);
-
+  // 认稿 / 撤回落盘后在同一把锁里投影与冻结（写稿段已有制作事实时，认稿即进剪辑中并冻结）
+  if (await recordScriptTransition(contentId, dataDir, updated, currentStatus, targetStatus, opts?.decidedBy)) {
+    await projectInLock(contentId, dataDir, lockedTx(contentId, dataDir));
+    return { ok: true, content: (await getContent(contentId, dataDir)) ?? updated, autoTriggered };
+  }
   return { ok: true, content: updated, autoTriggered };
 }
 

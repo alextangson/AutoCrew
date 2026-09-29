@@ -73,16 +73,25 @@ export async function runMove(dataDir: string, txn: Txn, op: TxnOp, beforeUnlink
   if (!(await hashIs(op.target, op.sha256))) throw new Error("原片在挪动过程中被改动过（挪后校验不一致）");
 }
 
-/** 撤一步：源还完好 → 删项目里那份；源没了 → 把项目里那份挪回原处（原处被占就加后缀） */
+/** 目标还是这次事务放下的东西：不存在、是 0 字节占位（还没落位）、或字节就是事务记的那份 */
+async function targetIsOurs(op: TxnOp): Promise<"absent" | "placeholder" | "ours" | "changed"> {
+  const st = await fs.lstat(op.target).catch(() => null);
+  if (!st) return "absent";
+  if (st.isFile() && st.size === 0 && op.step === "planned") return "placeholder";
+  return (await hashIs(op.target, op.sha256)) ? "ours" : "changed";
+}
+
+/**
+ * 撤一步（只对确定未提交的事务）：先核目标仍是本事务放下的那份——被人改过就停下报冲突，绝不删唯一的新版本（Codex 审 P1）。
+ * 源还完好 → 删项目里那份；源没了 → 把项目里那份挪回原处（原处被占就加后缀）。
+ */
 async function undoOp(op: TxnOp): Promise<void> {
-  if (op.source !== op.target && await hashIs(op.source, op.sha256)) {
+  const target = await targetIsOurs(op);
+  if (target === "changed") throw new Error(`恢复冲突：${op.target} 在崩溃后被改过，不删不挪，请人工核对（原片记录 sha ${op.sha256.slice(0, 12)}）`);
+  if (target === "absent") return;
+  if (target === "placeholder" || op.op === "clone" || (op.source !== op.target && await hashIs(op.source, op.sha256))) {
     await fs.rm(op.target, { force: true });
     return;
-  }
-  if (op.op === "clone") { await fs.rm(op.target, { force: true }); return; }
-  if (!(await hashIs(op.target, op.sha256))) {
-    if (await exists(op.target) && (await fs.stat(op.target)).size === 0) { await fs.rm(op.target, { force: true }); return; }
-    throw new Error(`找不到完好的原片：原路径 ${op.source}、项目 ${op.target} 都对不上 sha256`);
   }
   let dest = op.source;
   for (let n = 2; await exists(dest); n++) {
@@ -96,6 +105,11 @@ async function undoOp(op: TxnOp): Promise<void> {
 export async function rollbackTxn(dataDir: string, txn: Txn): Promise<void> {
   for (const op of [...txn.ops].reverse()) await undoOp(op);
   await dropTxn(dataDir, txn.id);
+}
+
+/** 提交点核定：production.json 里记了这个事务 id = 已提交；读不了 = 不确定（null） */
+export async function isCommitted(dataDir: string, contentId: string, txnId: string): Promise<boolean | null> {
+  try { return Boolean((await readProductionDoc(contentId, dataDir))?.txns?.includes(txnId)); } catch { return null; }
 }
 
 export interface RecoveryOutcome { id: string; content_id: string; outcome: "committed" | "rolled_back" | `failed:${string}` }

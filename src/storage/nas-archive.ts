@@ -13,6 +13,7 @@ import { writeJsonAtomic } from "./json-atomic.js";
 import { KEEP_PUBLISHED } from "./my-content-plan.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
+import { withFileOwnership } from "./file-ownership.js";
 import { copyProject, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
 
@@ -152,7 +153,8 @@ export async function archivePublished(dataDir?: string, opts: ArchiveOptions = 
     data, root: path.join(libRoot, VIEW_DIR), now: opts.now ?? new Date(), copy: opts.copyImpl ?? ((s, d) => fs.copyFile(s, d)),
     free: opts.freeSpace ?? volumeFree, margin: opts.marginBytes ?? ARCHIVE_MARGIN_BYTES,
   };
-  try { await runArchive(opts.archiveRoot ?? DEFAULT_ARCHIVE_ROOT, ctx, report); }
+  // 与 record 落位、重开文稿同排文件归属事务（本体 §7）：归档核验到删除之间不许有新文件搬进来
+  try { await withFileOwnership(() => runArchive(opts.archiveRoot ?? DEFAULT_ARCHIVE_ROOT, ctx, report)); }
   catch (e) { report.errors.push(`归档中断：${errMsg(e)}`); }
   await fs.mkdir(ctx.root, { recursive: true });
   await writeErrorSection(ctx.root, "archive", report.errors);

@@ -10,12 +10,14 @@ import { getContent, saveContent, type Content, type ContentStatus } from "../..
 import { commitProjectContent } from "../../storage/project-commit.js";
 import { executeContentSave } from "../../tools/content-save.js";
 import { setProductionDeps } from "./roots.js";
+import { writeEnabledVersion } from "../../storage/production-store.js";
 import { resetProductionReady } from "./service.js";
 import { forgetShaIndex } from "./sha-index.js";
 
 export interface Env { dir: string; inbox: string; chatcut: string; jianying: string; outside: string; cleanup: () => Promise<void> }
 
-export async function makeEnv(): Promise<Env> {
+/** enabled：本体已对这个临时库启用（record / 重开文稿只在启用后工作） */
+export async function makeEnv(opts: { enabled?: boolean } = {}): Promise<Env> {
   const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "autocrew-ontology-")));
   const dir = path.join(temp, "workspace");
   const [inbox, chatcut, jianying, outside] = ["inbox", "chatcut", "jianying", "outside"].map((d) => path.join(temp, d));
@@ -29,6 +31,7 @@ export async function makeEnv(): Promise<Env> {
     probe: async (file) => (path.basename(file).includes("broken") ? { error: "moov atom not found" } : { durationMs: 12_000 }),
     now: () => Date.now(),
   });
+  if (opts.enabled) await writeEnabledVersion(dir);
   return { dir, inbox, chatcut, jianying, outside, cleanup: async () => { setProductionDeps(null); resetProductionReady(); forgetShaIndex(); await fs.rm(temp, { recursive: true, force: true }); } };
 }
 
@@ -63,6 +66,13 @@ export async function videoContent(env: Env, title: string, status: ContentStatu
   const c = await saveContent({ title, body, platform: "douyin", status: CREATABLE.has(status) ? status : "approved", tags: [] }, env.dir);
   if (CREATABLE.has(status) && !Object.keys(extra).length) return c;
   const next = { ...(await getContent(c.id, env.dir))!, status, ...extra };
+  await commitProjectContent(next, env.dir);
+  return next;
+}
+
+/** 直接改 meta（模拟旧库现状，绕开阶段门） */
+export async function setContent(env: Env, id: string, patch: Partial<Content>): Promise<Content> {
+  const next = { ...(await getContent(id, env.dir))!, ...patch };
   await commitProjectContent(next, env.dir);
   return next;
 }

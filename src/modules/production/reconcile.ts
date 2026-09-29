@@ -13,7 +13,8 @@ import path from "node:path";
 import { getContent, listContents, transitionStatus, type Content } from "../../storage/local-store.js";
 import { anySubmitted, firstPublishTime, readPublishRecord } from "../../storage/publish-record.js";
 import { contentRoot } from "../../storage/content-project.js";
-import { isOntologyEnabled, productionServiceDir, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { DERIVE_VERSION, isOntologyActive, productionServiceDir, readEnabledMarker, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { importLegacyRegistration } from "./legacy.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import { readArchiveLog } from "../../storage/nas-archive-log.js";
@@ -22,10 +23,10 @@ import { exportMatchesTitle } from "../video/unregistered-cut.js";
 import { explain, withLegacyDecisions, type Column } from "./explain.js";
 import { STABLE_MS } from "./files.js";
 import { withFileOwnership } from "./mutex.js";
-import { applyObservations, cachedSha, observeProject, VIDEO_EXT, type Observations, type Seen } from "./observe.js";
+import { applyObservations, cachedSha, loadHashCache, observeProject, saveHashCache, VIDEO_EXT, type Observations, type Seen } from "./observe.js";
 import { publishEvidenceOf } from "./read.js";
 import { movableRoots, now } from "./roots.js";
-import { ensureProductionReady, mutateProduction } from "./service.js";
+import { ensureProductionReady, mutateProduction, refreshContent } from "./service.js";
 import { shaIndex } from "./sha-index.js";
 
 export interface ExternalFile { file: string; name: string; from: "inbox" | "export"; sha256: string; size: number; mtime_ms: number }
@@ -83,7 +84,12 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
   const owned = await ownedElsewhere(dataDir, content.id);
   const preview = structuredClone(doc);
   const { changed } = applyObservations(preview, obs, owned);
-  if (!opts.write || !changed) return preview;
+  if (!opts.write) return preview;
+  if (!changed) {
+    // 事实没变也补一次投影（认稿之类在别处落的决定，保证 status 与冻结跟上推导）
+    await refreshContent(content.id, dataDir);
+    return preview;
+  }
   const r = await mutateProduction(content.id, dataDir, (d) => {
     const { added, changed: n } = applyObservations(d, obs, owned);
     return { value: n, events: added.map((f) => ({ type: "fact_imported", detail: { fact_id: f.id, kind: f.kind, state: f.state, source: f.source, evidence: f.evidence } })) };
@@ -92,11 +98,13 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
 }
 
 async function shadowMove(content: Content, doc: ProductionDoc, dataDir: string): Promise<ShadowMove | null> {
-  const publish = await publishEvidenceOf(content, dataDir);
+  const publish = await publishEvidenceOf(content, dataDir, undefined, doc.round_started_at);
   const legacy = explain({ content, doc, enabled: false, publish });
-  const derived = explain({ content, doc: withLegacyDecisions(doc, content), enabled: true, publish });
+  const imported = await importLegacyRegistration(content, doc.round, dataDir, "1970-01-01T00:00:00.000Z");
+  const derived = explain({ content, doc: withLegacyDecisions(doc, content, undefined, imported), enabled: true, publish });
   if (legacy.column === derived.column) return null;
-  return { id: content.id, title: content.title, from: legacy.column, to: derived.column, rule: derived.rule, evidence: [...derived.evidence, ...derived.badges] };
+  const why = imported.reason && content.video?.final ? [`旧登记没迁移：${imported.reason}`] : [];
+  return { id: content.id, title: content.title, from: legacy.column, to: derived.column, rule: derived.rule, evidence: [...derived.evidence, ...derived.badges, ...why, ...derived.missing.map((m) => `还差：${m}`)] };
 }
 
 /**
@@ -120,35 +128,42 @@ export async function readReconcileReport(dataDir: string): Promise<ReconcileRep
   try { return JSON.parse(await fs.readFile(reportFile(dataDir), "utf8")) as ReconcileReport; } catch { return null; }
 }
 
-/** 全库对账：已启用 → 落盘；未启用 → 只算影子差异。报告落在工作区服务目录（不是制作真相） */
-export async function reconcileAll(dataDir: string, opts: { write?: boolean } = {}): Promise<ReconcileReport> {
+/**
+ * 全库对账：按本体走的稿 → 落盘；影子模式 / 启用时被排除的稿 → 只算（被排除的不进「要挪」清单，卡上另有标记）。
+ * `write` 只给启用事务用：把尚未启用的库里、未被排除的稿都落盘。报告落在工作区服务目录（不是制作真相）。
+ */
+export async function reconcileAll(dataDir: string, opts: { write?: boolean; exclude?: ReadonlySet<string> } = {}): Promise<ReconcileReport> {
   await ensureProductionReady(dataDir);
-  const enabled = await isOntologyEnabled(dataDir);
-  const write = opts.write ?? enabled;
+  const marker = await readEnabledMarker(dataDir);
+  const enabled = marker?.version === DERIVE_VERSION;
+  const excluded = new Set([...(marker?.excluded ?? []), ...(opts.exclude ?? [])]);
   const report: ReconcileReport = { at: new Date().toISOString(), enabled, errors: [], moves: [], warnings: [] };
+  await loadHashCache(dataDir);
   await withFileOwnership(async () => {
     const externals = await listExternal(dataDir, report.warnings);
     const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
     for (const c of await listContents(dataDir)) {
       if (c.deletedAt) continue;
+      const active = !excluded.has(c.id) && (opts.write ?? enabled);
       try {
-        await syncSubmitted(c, dataDir, enabled);
+        await syncSubmitted(c, dataDir, enabled && !excluded.has(c.id));
         if (!isVideoPlatform(c.platform)) continue;
-        const doc = await reconcileOne(c, dataDir, { write, externals, archived });
-        const move = enabled ? null : await shadowMove(c, doc, dataDir);
+        const doc = await reconcileOne(c, dataDir, { write: active, externals, archived });
+        const move = enabled || excluded.has(c.id) ? null : await shadowMove(c, doc, dataDir);
         if (move) report.moves.push(move);
       } catch (e) {
         report.errors.push({ id: c.id, title: c.title, error: e instanceof Error ? e.message : String(e) });
       }
     }
   });
+  await saveHashCache(dataDir).catch((e: unknown) => report.warnings.push(`哈希缓存没存上：${e instanceof Error ? e.message : String(e)}`));
   await writeJsonAtomicMkdir(reportFile(dataDir), report);
   return report;
 }
 
 /** content get / record 后的本条快扫：只看项目内，不看外部目录；只在启用后写 */
 export async function reconcileContent(contentId: string, dataDir: string): Promise<void> {
-  if (!(await isOntologyEnabled(dataDir))) return;
+  if (!(await isOntologyActive(dataDir, contentId))) return;
   await ensureProductionReady(dataDir);
   await withFileOwnership(async () => {
     const c = await getContent(contentId, dataDir);

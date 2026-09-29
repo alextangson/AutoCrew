@@ -7,14 +7,15 @@
  */
 import path from "node:path";
 import { contentRoot } from "../../storage/content-project.js";
-import { newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { isOntologyActive, newId, readProductionDoc, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { checkTargetDir } from "./record-plan.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { reserveTarget } from "./files.js";
 import { withFileOwnership } from "./mutex.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { dropTxn, rollbackTxn, runMove, saveTxn, type Txn } from "./txn.js";
 
-export interface ReopenResult { ok: boolean; round?: number; moved?: string[]; error?: string; code?: string }
+export interface ReopenResult { ok: boolean; round?: number; moved?: string[]; error?: string; code?: string; warning?: string }
 
 function arollsToRetire(doc: ProductionDoc): Fact[] {
   const referenced = new Set(doc.facts.filter((f) => f.round === doc.round && f.kind === "chatcut_project").flatMap((f) => f.uses_aroll ?? []));
@@ -28,6 +29,8 @@ async function moveRetired(contentId: string, dataDir: string, doc: ProductionDo
   for (const fact of arollsToRetire(doc)) {
     const source = path.join(root, fact.path!);
     const ext = path.extname(source);
+    const safe = await checkTargetDir(root, `02-aroll/_作废-${doc.round}`);
+    if (!safe.ok) throw new Error(safe.error);
     const target = await reserveTarget(path.join(root, "02-aroll", `_作废-${doc.round}`), path.basename(source, ext), ext);
     const op = { op: "move" as const, source, target, sha256: fact.sha256!, step: "planned" as const };
     txn.ops.push(op);
@@ -38,8 +41,28 @@ async function moveRetired(contentId: string, dataDir: string, doc: ProductionDo
   return moved;
 }
 
+/**
+ * 重开写 production.json（提交点）之后，投影 / 时间线 / 索引还会写；那几步失败不能撤回已提交的重开（Codex 审 P1）。
+ * 按提交点核定：已提交 → 只报派生写入失败；确定未提交 → 撤回挪动；读不了 → 留日志，重启时核定。
+ */
+async function commitFailed(contentId: string, dataDir: string, txn: Txn, round: number, moved: Map<string, string>, err: unknown): Promise<ReopenResult> {
+  const msg = err instanceof Error ? err.message : String(err);
+  const doc = await readProductionDoc(contentId, dataDir).catch(() => undefined);
+  const committed = doc === undefined ? null : Boolean(doc && doc.round > round);
+  if (committed) {
+    await dropTxn(dataDir, txn.id);
+    return { ok: true, round: doc!.round, moved: [...moved.values()], warning: `重开已提交，但之后的派生写入失败：${msg}` };
+  }
+  if (committed === false) {
+    const undone = await rollbackTxn(dataDir, txn).then(() => true, () => false);
+    return { ok: false, code: "reopen_failed", error: undone ? `重开没提交，原片已挪回：${msg}` : `重开没提交，原片也没能自动挪回（日志留着，重启时核定）：${msg}` };
+  }
+  return { ok: false, code: "reopen_uncertain", error: `重开结果不确定（读不了制作记录），事务日志留着，重启时核定：${msg}` };
+}
+
 export async function reopenScript(contentId: string, dataDir: string, note?: string): Promise<ReopenResult> {
   await ensureProductionReady(dataDir);
+  if (!(await isOntologyActive(dataDir, contentId))) return { ok: false, code: "ontology_not_enabled", error: "本体还没启用（或这条被排除），没有可重开的制作轮次" };
   return withFileOwnership(async () => {
     const doc = await readProductionDocOrEmpty(contentId, dataDir);
     const txn: Txn = { id: newId("txn"), kind: "reopen", content_id: contentId, round: doc.round, ops: [], at: new Date().toISOString() };
@@ -55,6 +78,7 @@ export async function reopenScript(contentId: string, dataDir: string, note?: st
       const ended = d.round;
       d.decisions.push({ id: newId("dec"), type: "reopen", round: ended, at: new Date().toISOString(), source: "founder", ...(note ? { note } : {}) });
       d.round = ended + 1;
+      d.round_started_at = new Date().toISOString();
       d.frozen = null;
       d.commit_failure = null;
       if (txn.ops.length) d.txns = [...(d.txns ?? []), txn.id];
@@ -62,10 +86,7 @@ export async function reopenScript(contentId: string, dataDir: string, note?: st
     });
     let round: number;
     try { round = (await commit()).value; }
-    catch (err) {
-      await rollbackTxn(dataDir, txn).catch(() => undefined);
-      return { ok: false, code: "reopen_failed", error: `重开没提交，原片已挪回：${err instanceof Error ? err.message : String(err)}` };
-    }
+    catch (err) { return commitFailed(contentId, dataDir, txn, doc.round, moved, err); }
     await dropTxn(dataDir, txn.id);
     return { ok: true, round, moved: [...moved.values()] };
   });

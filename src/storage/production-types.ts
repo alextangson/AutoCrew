@@ -114,6 +114,8 @@ export interface ProductionDoc {
   facts: Fact[];
   decisions: Decision[];
   registrations: Registration[];
+  /** 本轮开始的时间（重开文稿时写）：更早的外部发布证据属于历史轮，不算本轮 D1 */
+  round_started_at?: string;
   /** 本轮进入剪辑中时冻结的正文 */
   frozen?: { round: number; body_hash: string; path: string; at: string } | null;
   /** record 的 request_id → 上次回执（重放用，只留最近 200 条） */
