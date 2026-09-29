@@ -561,3 +561,41 @@ describe("per-source minIntervalHours (付费源一天一次)", () => {
     expect(calls).toEqual(["youtube"]);
   });
 });
+
+describe("per-source interval: clock and TTL bookkeeping", () => {
+  it("a temporarily disabled X keeps its clock, so re-enabling it within 24h does not re-fetch", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    const x = { id: "x", kind: "x" as const, name: "X", config: { minIntervalHours: 24 } };
+    const yt = { id: "yt", kind: "youtube" as const, name: "YouTube", enabled: true, config: {} };
+    const calls: string[] = [];
+    const fetcher = async (kind: string) => { calls.push(kind); return [{ title: kind, url: `https://${kind}/${calls.length}` }]; };
+    await saveRadarSources([{ ...x, enabled: true }, yt], testDir);
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: fetcher });
+    await saveRadarSources([{ ...x, enabled: false }, yt], testDir);
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: fetcher });
+    await saveRadarSources([{ ...x, enabled: true }, yt], testDir);
+    calls.length = 0;
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: fetcher });
+    expect(calls).toEqual(["youtube"]);
+  });
+
+  it("a round that only carried X (everything else failed) does not reset the 6h TTL", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "x", kind: "x", name: "X", enabled: true, config: { minIntervalHours: 24 } },
+      { id: "yt", kind: "youtube", name: "YouTube", enabled: true, config: {} },
+    ], testDir);
+    await refreshTopicRadar(testDir, globalThis.fetch, {
+      overseasFetch: async (kind: string) => [{ title: kind, url: `https://${kind}/1` }],
+    });
+    const cache = (await loadTopicCache(testDir))!;
+    const old = new Date(Date.now() - 7 * 3600_000).toISOString();
+    cache.fetchedAt = old;
+    await fs.writeFile(path.join(testDir, "topic-radar.json"), JSON.stringify(cache));
+    const r = await refreshTopicRadar(testDir, globalThis.fetch, {
+      overseasFetch: async () => { throw new Error("down"); },
+    });
+    expect(r.failedSources).toEqual(["YouTube"]);
+    expect((await loadTopicCache(testDir))!.fetchedAt).toBe(old);
+  });
+});
