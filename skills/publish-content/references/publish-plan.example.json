@@ -17,7 +17,11 @@
       "account_public_profile": null,
       "title": null,
       "caption": null,
-      "cover_path": null,
+      "tags": [],
+      "cover_text": null,
+      "covers": [
+        { "usage": "竖版封面（上传槽 3:4）", "ratio": "3:4", "path": null }
+      ],
       "scheduled_at": null,
       "timezone": "Asia/Shanghai",
       "authorization": {
