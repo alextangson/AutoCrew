@@ -56,7 +56,10 @@ export class FakeAgent implements AgentProcess {
   async setConfigOption(_s: string, id: string, value: string) {
     if (this.rejectConfig === value) throw new Error(`model ${value} is not available`);
     this.configSet.push([id, value]);
+    return this.afterSet?.(id, value) ?? null;
   }
+  /** 模拟适配器换模型后回新清单 */
+  afterSet?: (id: string, value: string) => ConfigOptionInfo[] | null;
   async prompt(_s: string, text: string) { this.prompts.push(text); return this.onPrompt(this, text); }
   async cancel() { this.cancelled++; for (const w of this.cancelWaiters.splice(0)) w(); }
   kill() { this.killed++; this.exit({ code: null, signal: "SIGKILL" }); }

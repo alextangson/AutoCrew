@@ -43,7 +43,8 @@ export interface AgentProcess {
   newSession(cwd: string, mcp: McpServerSpec, meta: Record<string, unknown>): Promise<SessionInfo>;
   loadSession(sessionId: string, cwd: string, mcp: McpServerSpec, meta: Record<string, unknown>): Promise<SessionInfo>;
   /** 会话配置项（模型 / 思考强度）：适配器上报的 configOptions 里有才设 */
-  setConfigOption(sessionId: string, configId: string, value: string): Promise<void>;
+  /** 返回适配器回的新配置清单（换模型后强度清单会重算）；没回就 null */
+  setConfigOption(sessionId: string, configId: string, value: string): Promise<ConfigOptionInfo[] | null>;
   prompt(sessionId: string, text: string): Promise<{ stopReason: string }>;
   cancel(sessionId: string): Promise<void>;
   /** 整个进程组 SIGKILL */
@@ -135,7 +136,9 @@ export const spawnAcpAgent: SpawnAgent = (launch, cwd, handlers) => {
       return { sessionId, configOptions: parseConfigOptions((r as { configOptions?: unknown } | null)?.configOptions) };
     },
     async setConfigOption(sessionId, configId, value) {
-      await conn.setSessionConfigOption({ sessionId, configId, value } as acp.SetSessionConfigOptionRequest);
+      const r = await conn.setSessionConfigOption({ sessionId, configId, value } as acp.SetSessionConfigOptionRequest);
+      const opts = parseConfigOptions((r as { configOptions?: unknown } | null)?.configOptions);
+      return opts.length ? opts : null;
     },
     async prompt(sessionId, text) {
       const r = await conn.prompt({ sessionId, prompt: [{ type: "text", text }] });

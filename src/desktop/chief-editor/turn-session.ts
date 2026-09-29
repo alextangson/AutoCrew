@@ -3,6 +3,7 @@
  * 按对话设置设模型/强度（清单里没有就报错点名，U3）。ACP session id 拿到即落盘。
  */
 import { updateConversationAgent } from "../../storage/conversation-store.js";
+import { enqueueConversationWrite } from "../chat-persist.js";
 import type { AgentProcess, SessionInfo } from "./acp-process.js";
 import { applySettings, reportedChoices, type AgentSettings } from "./agent-settings.js";
 import type { BackendAdapter } from "./backends.js";
@@ -45,10 +46,12 @@ export async function openSession(
 ): Promise<{ sessionId: string; notice?: string }> {
   const { info, notice, fresh } = await resumeOrNew(svc, turn, adapter, proc, gate, opts.prior);
   if (fresh) {
-    await updateConversationAgent(turn.conversationId, { acpSessionId: info.sessionId }, turn.dataDir);
+    // 走按会话串行队列、只补这一个字段：别和并发的改名 / 设置变更互相覆盖（评审 v1.1 P1-1）
+    await enqueueConversationWrite(turn.conversationId, () => updateConversationAgent(turn.conversationId, { acpSessionId: info.sessionId }, turn.dataDir));
     svc.runs.patch(turn.turnId, { acpSessionId: info.sessionId });
   }
   if (info.configOptions.length) svc.rememberChoices(adapter.id, reportedChoices(info.configOptions));
-  await applySettings(proc, info.sessionId, info.configOptions, opts.settings);
+  const finalOptions = await applySettings(proc, info.sessionId, info.configOptions, opts.settings);
+  if (finalOptions.length) svc.rememberChoices(adapter.id, reportedChoices(finalOptions));
   return { sessionId: info.sessionId, ...(notice ? { notice } : {}) };
 }

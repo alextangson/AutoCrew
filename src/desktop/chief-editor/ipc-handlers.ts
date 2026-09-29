@@ -138,6 +138,10 @@ export async function agentAnswerHandler(payload: Json): Promise<Json> {
   const target = svc.asks.pending().find((a) => a.id === id);
   if (decision === "allow_conversation" && target?.kind !== "permission") return { ok: false, error: "业务审批不能「始终允许」，每次都要单独批准" };
   const r = svc.asks.answer(id, decision === "deny" ? "deny" : "allow");
-  if (r.ok && decision === "allow_conversation") svc.setConversationAllow(r.ask.conversationId, true);
+  if (r.ok && decision === "allow_conversation") {
+    svc.setConversationAllow(r.ask.conversationId, true);
+    // 卡上点的「始终允许」是唯一在本轮内立刻生效的路（输入框下方的档位要下一轮才生效，U1）
+    if (svc.active?.conversationId === r.ask.conversationId) svc.active.allowConversation = true;
+  }
   return r.ok ? { ok: true, data: { ask: r.ask } } : r;
 }

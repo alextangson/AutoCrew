@@ -76,6 +76,8 @@ export interface ActiveTurn {
   worklog: WorkItem[];
   /** 这段对话是「全部放行」档（轮次开始时读定，U1） */
   bypass: boolean;
+  /** 「本对话都允许」：轮次开始时读定（U1）；只有权限卡上的「始终允许（本对话）」能在本轮内立刻打开 */
+  allowConversation: boolean;
   /** 最近一次 usage_update：上下文用量 */
   usage?: { used: number; size?: number };
 }

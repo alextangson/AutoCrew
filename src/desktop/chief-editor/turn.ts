@@ -8,6 +8,7 @@
  */
 import { createConversation, getConversation, updateConversationAgent } from "../../storage/conversation-store.js";
 import { registerTurn, settleTurn } from "../turn-registry.js";
+import { enqueueConversationWrite } from "../chat-persist.js";
 import { STATUS_TEXT, type AskView } from "./asks.js";
 import { ADAPTERS, proxyUnreachable, type BackendAdapter, type LocalBackendId } from "./backends.js";
 import type { AgentProcess } from "./acp-process.js";
@@ -50,7 +51,7 @@ function acquire(svc: ChiefEditor, input: LocalTurnInput): { ok: true; turn: Act
   const turn: ActiveTurn = {
     turnId: input.turnId, clientId: input.clientId, conversationId: input.conversationId ?? "",
     dataDir: input.dataDir, backend: input.backend, status: "running", cards: [], writes: [], inFlight: new Map(), aborted: false,
-    worklog: [], bypass: false,
+    worklog: [], bypass: false, allowConversation: false,
   };
   svc.active = turn;
   return { ok: true, turn, signal: reg.signal };
@@ -61,7 +62,7 @@ async function prepareConversation(input: LocalTurnInput): Promise<{ id: string;
   if (!input.conversationId) {
     const meta = await createConversation(input.message, input.dataDir, input.contentId, { backend: input.backend });
     const settings = input.newSettings ?? {};
-    if (Object.keys(settings).length) await updateConversationAgent(meta.id, { agentSettings: settings }, input.dataDir);
+    if (Object.keys(settings).length) await enqueueConversationWrite(meta.id, () => updateConversationAgent(meta.id, { agentSettings: settings }, input.dataDir));
     if (input.newConversationAllow) getChiefEditor()?.setConversationAllow(meta.id, true);
     return { id: meta.id, settings };
   }
@@ -165,6 +166,7 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   if ("error" in conv) return { ok: false, reply: conv.error };
   turn.conversationId = conv.id;
   turn.bypass = conv.settings.permissionMode === "bypass";
+  turn.allowConversation = svc.conversationAllowed(conv.id);
   svc.runs.put({ turnId: turn.turnId, clientId: turn.clientId, conversationId: conv.id, dataDir: turn.dataDir, backend: turn.backend, message: input.message, status: "running", startedAt: new Date().toISOString() });
   ensurePersona(svc.deps.home, turn.backend);
   turn.token = svc.issueToken({ backend: turn.backend, dataDir: turn.dataDir, conversationId: conv.id, turnId: turn.turnId });

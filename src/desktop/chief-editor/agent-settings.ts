@@ -38,10 +38,12 @@ export function parseSettings(raw: unknown): AgentSettings & { conversationAllow
 const LABEL: Record<string, string> = { model: "模型", effort: "思考强度" };
 
 /**
- * 把对话设置应用到刚打开的会话。清单里没有 / 适配器拒绝 → 抛错点名（U3），绝不静默换成别的。
+ * 把对话设置应用到刚打开的会话，返回最终的配置清单。清单里没有 / 适配器拒绝 → 抛错点名（U3），绝不静默换成别的。
  * 没设的项保持适配器默认。
  */
-export async function applySettings(proc: AgentProcess, sessionId: string, options: ConfigOptionInfo[], s: AgentSettings): Promise<void> {
+export async function applySettings(proc: AgentProcess, sessionId: string, initial: ConfigOptionInfo[], s: AgentSettings): Promise<ConfigOptionInfo[]> {
+  // 先设模型再设强度：换模型后适配器会重算强度清单，后面的校验与上报都用它回的新清单（评审 v1.1 P2-6）
+  let options = initial;
   for (const id of ["model", "effort"] as const) {
     const want = s[id];
     if (!want) continue;
@@ -51,11 +53,12 @@ export async function applySettings(proc: AgentProcess, sessionId: string, optio
       throw new SettingError(`选的${LABEL[id]}「${want}」现在不可用（适配器可选：${allowed.join("、") || "无"}）。没有换成别的，请在输入框下方重新选一个再发。`);
     }
     try {
-      await proc.setConfigOption(sessionId, id, want);
+      options = (await proc.setConfigOption(sessionId, id, want)) ?? options;
     } catch (err) {
       throw new SettingError(`${LABEL[id]}「${want}」设置失败：${err instanceof Error ? err.message : String(err)}。没有换成别的，请重新选一个再发。`);
     }
   }
+  return options;
 }
 
 export class SettingError extends Error {}

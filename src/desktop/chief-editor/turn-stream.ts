@@ -63,7 +63,7 @@ export function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSi
     },
     async requestPermission(req) {
       // 本对话都允许 / 全部放行：shell、文件直接放行（记进工作记录）；业务审批不走这里，照样弹卡
-      if (turn.bypass || svc.conversationAllowed(turn.conversationId)) {
+      if (turn.bypass || turn.allowConversation) {
         upsertWork(svc, turn, { id: `perm-${req.toolCallId ?? Date.now()}`, name: `自动放行：${redactAndTruncate(req.title.replace(/\s*\{[\s\S]*$/, ""), 60)}`, status: "done" });
         return pickPermissionOption(req.options, "allow");
       }
