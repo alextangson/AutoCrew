@@ -10,6 +10,7 @@
 import { getConversation, renameConversation, updateConversationAgent } from "../../storage/conversation-store.js";
 import { enqueueConversationWrite } from "../chat-persist.js";
 import { parseSettings } from "./agent-settings.js";
+import { readRecentActions, recentActionsBlock } from "../recent-actions.js";
 import { getDataDir } from "../../storage/local-store.js";
 import { isBackendId, isLocalBackend } from "./backends.js";
 import { getChiefEditor } from "./service.js";
@@ -56,7 +57,7 @@ export async function maybeRunLocalTurn(payload: Json, ctx?: ChatTurnCtx): Promi
     dataDir: getDataDir(dataDir),
     ...(str(payload.conversation_id) ? { conversationId: str(payload.conversation_id) } : {}),
     ...(viewContext?.contentId ? { contentId: viewContext.contentId } : {}),
-    promptContext: `${agentContextBlock(viewContext)}${str(payload._dispatch_context)}`,
+    promptContext: `${await actionsBlock(dataDir)}${agentContextBlock(viewContext)}${str(payload._dispatch_context)}`,
     ...newConversationSettings(payload),
     onDelta: (e) => { try { ctx?.onChatDelta?.({ turnId, seq: seq++, ...e }); } catch { /* 推送失败不影响本轮 */ } },
     onProgress: (e) => { try { ctx?.onProgress?.({ ...e, runId }); } catch { /* 同上 */ } },
@@ -77,6 +78,12 @@ export function agentContextBlock(ctx: ChatViewContext | undefined): string {
     : "";
   const lines = [draft, focus, viewContextLine(ctx)].filter(Boolean);
   return lines.length ? `【当前上下文】${lines.join("\n")}\n\n` : "";
+}
+
+/** 最近工作区动作（与内置引擎同一块，bug A2）：只进 prompt，读失败当没有 */
+async function actionsBlock(dataDir?: string): Promise<string> {
+  const block = recentActionsBlock(await readRecentActions(dataDir).catch(() => []));
+  return block ? `${block}\n\n` : "";
 }
 
 /** 新对话随首轮带来的设置（已有对话以 meta 为准，这里不看） */

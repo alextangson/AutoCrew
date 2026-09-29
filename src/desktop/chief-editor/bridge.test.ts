@@ -100,11 +100,12 @@ describe("边界 10 / §地基 13：认领被占、卡片脱敏", () => {
     h = await makeHarness({
       mcpResult: () => ({ ok: false, code: "claim_held", error: "这篇现在记在 codex 名下（还剩 20 分钟），带上它的 claim_token=deadbeefdeadbeefdeadbeefdeadbeef00；", claim_token: "secret-claim-token-value" }),
     });
-    h.script = async (a) => { await h.callTool(a, "autocrew_writer", { action: "submit", content_id: "content-1-a" }); return { stopReason: "end_turn" }; };
+    let reply: Record<string, unknown> = {};
+    h.script = async (a) => { reply = await h.callTool(a, "autocrew_writer", { action: "submit", content_id: "content-1-a" }); return { stopReason: "end_turn" }; };
     const r = await runLocalTurn(h.svc, input());
+    // 占用者原样回给 agent（由它转述）；失败不单独成卡，只在工作记录里红字（bug B）
+    expect(String(reply.error)).toContain("codex 名下");
     const cards = JSON.stringify((r.data as { cards: unknown[] }).cards);
-    expect(cards).toContain("codex 名下");
-    expect(cards).not.toContain("deadbeef");
     expect(cards).not.toContain("secret-claim-token-value");
     expect(JSON.stringify(h.events)).not.toContain("secret-claim-token-value");
   });

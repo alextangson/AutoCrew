@@ -169,16 +169,21 @@ export class ChiefEditor {
    * 工具结果入账：调用进入时所属的轮仍在跑 → 进本轮卡片（先写 run 记录再推 SSE）；
    * 否则（停止后才返回、或根本没有进行中的轮）→ 记为后台结果追加到对话，不串到下一轮。
    */
-  async recordCard(entryTurnId: string | null, binding: TokenBinding, card: Record<string, unknown>, write?: string): Promise<void> {
+  async recordCard(entryTurnId: string | null, binding: TokenBinding, card: Record<string, unknown> | null, write?: string, fallback?: Record<string, unknown>): Promise<void> {
     const a = this.active;
     if (entryTurnId && a && a.turnId === entryTurnId && !a.aborted) {
-      if (a.cards.some((c) => c.callId === card.callId)) return;
-      a.cards.push(card);
-      if (write) a.writes.push(write);
+      if (write) { a.writes.push(write); this.runs.patch(a.turnId, { writes: a.writes }); }
+      // 只有稿件结果与后台长任务成卡；其余工具调用只在「工作记录」里（bug B）
+      const c = card;
+      if (!c || a.cards.some((x) => x.callId === c.callId)) return;
+      a.cards.push(c);
       this.runs.patch(a.turnId, { cards: a.cards, writes: a.writes });
-      this.deps.emit({ type: "card", turnId: a.turnId, conversationId: a.conversationId, card });
+      this.deps.emit({ type: "card", turnId: a.turnId, conversationId: a.conversationId, card: c });
       return;
     }
+    // 轮次结束后才返回：没有工作记录可挂，必须留一张卡让人看见
+    card = card ?? fallback ?? null;
+    if (!card) return;
     const bg = { ...card, background: true };
     await appendConversation(binding.conversationId, { content: "（后台结果）", origin: "system" }, { content: "本机 agent 在轮次结束后返回了一条结果：", cards: [bg] }, binding.dataDir)
       .catch((err) => console.warn(`[chief-editor] 后台结果落盘失败：${err instanceof Error ? err.message : String(err)}`));

@@ -36,6 +36,8 @@ const ACTION_LABELS: Record<string, string> = {
   published: "确认已发布",
   video_cut: "确认了成片分句",
   video_reviewed: "审片通过",
+  angle_selected: "在选题页选定了角度",
+  angle_cleared: "清掉了选题的角度",
 };
 
 function ringPath(dataDir?: string): string {

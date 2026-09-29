@@ -76,7 +76,8 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  */
 import { getChiefEditor } from "./chief-editor/service.js";
 import { buildDispatchContext, parseDispatch } from "./dispatch-context.js";
-import { maybeRunLocalTurn, agentBackendsHandler, agentPendingHandler, agentAnswerHandler, agentSettingsHandler, conversationRenameHandler } from "./chief-editor/ipc-handlers.js";
+import { isLocalBackend } from "./chief-editor/backends.js";
+import { resolveTurnBackend, maybeRunLocalTurn, agentBackendsHandler, agentPendingHandler, agentAnswerHandler, agentSettingsHandler, conversationRenameHandler } from "./chief-editor/ipc-handlers.js";
 import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
@@ -600,7 +601,9 @@ async function chatTurnHandler(
   if (payload.dispatch !== undefined) {
     const dispatch = parseDispatch(payload.dispatch);
     if (!dispatch) return { ok: false, error: "派活信息不完整，没有发出" };
-    const built = await buildDispatchContext(dispatch, (payload._dataDir as string) || undefined);
+    const dispatchDir = (payload._dataDir as string) || undefined;
+    const target = isLocalBackend(await resolveTurnBackend(payload, dispatchDir)) ? "local" : "builtin";
+    const built = await buildDispatchContext(dispatch, dispatchDir, target);
     if (!built.ok) return { ok: false, error: built.error };
     payload = { ...payload, _dispatch_context: built.text };
   }
@@ -1619,6 +1622,8 @@ async function topicSelectAngleHandler(payload: Record<string, unknown>): Promis
       { selectedAngle: { briefRevision: snap.revision, angleId, card, selectedAt: new Date().toISOString() } },
       dataDir,
     );
+    // 两个后端都从「最近工作区动作」得知创作者选了哪个角度（bug A3）
+    await appendAction(dataDir, { kind: "angle_selected", title: topic.title, detail: `${angleId}「${card.angle}」` });
     return { ok: true, topic: updated };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1632,6 +1637,7 @@ async function topicClearAngleHandler(payload: Record<string, unknown>): Promise
   try {
     const topic = await updateTopic(topicId, { selectedAngle: undefined }, (payload._dataDir as string) || undefined);
     if (!topic) return { ok: false, error: `Topic ${topicId} not found` };
+    await appendAction((payload._dataDir as string) || undefined, { kind: "angle_cleared", title: topic.title });
     return { ok: true, topic };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

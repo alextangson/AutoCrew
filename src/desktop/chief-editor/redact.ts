@@ -102,3 +102,25 @@ export function cardFromToolResult(tool: string, action: string, result: Json, c
     : str(result.error) ?? "调用失败";
   return { type: "agent_text", callId, data: { tool, action, ok, text: redactAndTruncate(text, 200) } };
 }
+
+/** 真的改了稿件的动作：出稿件结果卡（打开稿件）；读取、列表这类不出卡 */
+const DRAFT_WRITES: Record<string, ReadonlySet<string>> = {
+  autocrew_writer: new Set(["submit"]),
+  autocrew_review_desk: new Set(["submit"]),
+  autocrew_content: new Set(["save", "update", "transition", "create_variant", "restore"]),
+  autocrew_editorial: new Set(["feedback", "revise", "apply"]),
+};
+/** 真正在后台跑的长任务：出任务状态卡；调研中间步骤（scout / workflow 各动作）只进工作记录 */
+const BACKGROUND_TASK_TOOLS = new Set(["autocrew_research", "autocrew_video"]);
+
+/**
+ * 本轮里哪些工具结果值得单独成卡（bug B）：只有稿件结果与后台长任务；其余一律只进「工作记录」，
+ * 失败也只在工作记录里红字显示——不然调研一轮能刷出几十张「任务 · autocrew_scout」卡。
+ */
+export function resultCard(tool: string, action: string, result: Json, callId: string, args: Json = {}): Json | null {
+  if (result.ok === false) return null;
+  const card = cardFromToolResult(tool, action, result, callId, args);
+  if (card.type === "agent_draft" && DRAFT_WRITES[tool]?.has(action)) return card;
+  if (card.type === "agent_task" && BACKGROUND_TASK_TOOLS.has(tool)) return card;
+  return null;
+}

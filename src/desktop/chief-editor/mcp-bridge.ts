@@ -6,7 +6,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { approvalBindingFor, approvalRequiredResult, classifyPublishAction, type GateTarget } from "./publish-gate.js";
-import { cardFromToolResult } from "./redact.js";
+import { cardFromToolResult, resultCard } from "./redact.js";
 import type { ChiefEditor, TokenBinding } from "./service.js";
 
 type Json = Record<string, unknown>;
@@ -94,18 +94,18 @@ export async function handleAgentMcp(svc: ChiefEditor, b: TokenBinding, request:
   const callId = `call-${randomBytes(6).toString("hex")}`;
   const gated = await gate(svc, b, entryTurn, tool, args);
   if ("reply" in gated) {
-    await svc.recordCard(entryTurn, b, cardFromToolResult(tool, action, gated.reply, callId, args));
+    await svc.recordCard(entryTurn, b, null, undefined, cardFromToolResult(tool, action, gated.reply, callId, args));
     return toolResponse(request.id, gated.reply);
   }
   // 门里有异步读：执行前再核一次——令牌已撤销、或发布类动作所属的轮已停，就不执行
   const stale = !svc.tokenLive(b.token) || (gated.gated && svc.liveTurnFor(b) !== entryTurn);
   if (stale) {
     const reply = { ok: false, code: "no_live_turn", error: "这一轮已经停止或结束，没有执行；请创始人重新发话" };
-    await svc.recordCard(entryTurn, b, cardFromToolResult(tool, action, reply, callId, args));
+    await svc.recordCard(entryTurn, b, null, undefined, cardFromToolResult(tool, action, reply, callId, args));
     return toolResponse(request.id, reply);
   }
   const response = await svc.deps.execMcp({ ...request, params: { ...params, arguments: gated.proceed } }, b.dataDir, b.turnId);
   const result = resultObject(response);
-  await svc.recordCard(entryTurn, b, cardFromToolResult(tool, action, result, callId, args), writeLabel(tool, action, result));
+  await svc.recordCard(entryTurn, b, resultCard(tool, action, result, callId, args), writeLabel(tool, action, result), cardFromToolResult(tool, action, result, callId, args));
   return response;
 }
