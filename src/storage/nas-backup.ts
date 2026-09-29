@@ -11,10 +11,11 @@ import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
 import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
-import { copyProject, sha256File, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
+import { copyProject, sha256File, walkProject, type ArchivedFile, type CopyImpl, type ProjectLink } from "./nas-archive-copy.js";
+import { safeNasPath, assertInside } from "./nas-safe-path.js";
 import { archiveTarget, isReachable, DEFAULT_ARCHIVE_ROOT } from "./nas-archive.js";
 import {
-  BACKUP_FAIL_LIMIT, isBackupBookkeeping, latestBackupFiles, readBackupState, writeBackupRecord, writeBackupState,
+  BACKUP_FAIL_LIMIT, LINKS_NOTE, isBackupBookkeeping, latestBackupRecord, latestBackupFiles, readBackupState, writeBackupRecord, writeBackupState,
 } from "./nas-backup-state.js";
 
 export interface BackupOptions { archiveRoot?: string; now?: Date; copyImpl?: CopyImpl }
@@ -64,6 +65,18 @@ async function markUnmounted(projectRoot: string, target: string, ctx: Ctx): Pro
  * 归档过的项目：本机素材已删，只有 NAS 上那份。按归档记录核对这些文件还在、大小一致（不每天重算整份哈希，
  * 与 NAS 侧增量跳过的取舍一致）；缺了或大小不对就报出来，这一轮不算备份完成。
  */
+/** 只剩 NAS 上那份的文件：不经过链接读（路径上有链接直接算问题） */
+async function checkNasOnly(target: string, f: ArchivedFile, full: boolean): Promise<string | null> {
+  const file = path.join(target, f.rel);
+  const st = await fs.lstat(file).catch(() => null);
+  if (!st) return "NAS 上也不见了";
+  try { await assertInside(target, f.rel); } catch (e) { return errMsg(e); }
+  if (!st.isFile()) return "NAS 上那份不是普通文件";
+  if (st.size !== f.size) return `NAS 上那份大小不对（记录 ${f.size}，现在 ${st.size}）`;
+  if (full && (await sha256File(file)) !== f.sha256) return "NAS 上那份内容校验不一致（完整核对）";
+  return null;
+}
+
 async function checkArchivedOnNas(projectRoot: string, full: boolean): Promise<string[]> {
   const notes = path.join(projectRoot, "00-project/notes");
   let names: string[] = [];
@@ -73,25 +86,31 @@ async function checkArchivedOnNas(projectRoot: string, full: boolean): Promise<s
     const record = JSON.parse(await fs.readFile(path.join(notes, name), "utf8")) as { target: string; files: ArchivedFile[] };
     for (const f of record.files) {
       if (await fs.stat(path.join(projectRoot, f.rel)).then(() => true, () => false)) continue; // 本机还在，照常备份
-      const st = await fs.stat(path.join(record.target, f.rel)).catch(() => null);
-      if (!st) problems.push(`${f.rel}：本机已归档删除，NAS 上也不见了`);
-      else if (st.size !== f.size) problems.push(`${f.rel}：本机已归档删除，NAS 上那份大小不对（记录 ${f.size}，现在 ${st.size}）`);
-      else if (full && (await sha256File(path.join(record.target, f.rel))) !== f.sha256) problems.push(`${f.rel}：本机已归档删除，NAS 上那份内容校验不一致（完整核对）`);
+      const problem = await checkNasOnly(record.target, f, full);
+      if (problem) problems.push(`${f.rel}：本机已归档删除，${problem}`);
     }
   }
   return problems;
 }
 
+/** 链接只登记：NAS 项目根写一份清单（落点同样不经过链接） */
+async function writeLinksNote(target: string, links: ProjectLink[]): Promise<void> {
+  const dest = await safeNasPath(target, LINKS_NOTE);
+  await fs.writeFile(dest, JSON.stringify({ note: "项目里的符号链接（NAS 上不建链接，只记指向）", links }, null, 2));
+}
+
 /** full = 每周一次的完整核对：不走增量跳过，NAS 上每个文件都重读算 sha256；不一致从本机重拷 */
 async function copyOnce(projectRoot: string, target: string, ctx: Ctx, full: boolean): Promise<ArchivedFile[]> {
   const prev = await latestBackupFiles(projectRoot, target);
-  const { files, errors } = await copyProject(projectRoot, target, ctx.copy, [], {
-    previous: prev, skipUnchanged: !full, exclude: isBackupBookkeeping, copySymlinks: true,
+  const { files, errors, links } = await copyProject(projectRoot, target, ctx.copy, [], {
+    previous: prev, skipUnchanged: !full, exclude: isBackupBookkeeping, recordSymlinks: true,
   });
   errors.push(...(await checkArchivedOnNas(projectRoot, full)));
   if (errors.length) throw new Error(`复制或核对出错：${errors.join("；")}`);
-  if (!sameFiles(files, prev)) {
-    await writeBackupRecord(projectRoot, { version: 1, backedUpAt: ctx.now.toISOString(), target, files });
+  const prevLinks = (await latestBackupRecord(projectRoot))?.links ?? [];
+  if (links.length || prevLinks.length) await writeLinksNote(target, links);
+  if (!sameFiles(files, prev) || JSON.stringify(links) !== JSON.stringify(prevLinks)) {
+    await writeBackupRecord(projectRoot, { version: 1, backedUpAt: ctx.now.toISOString(), target, files, links });
   }
   return files;
 }

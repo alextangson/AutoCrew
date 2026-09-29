@@ -196,12 +196,14 @@ describe("发布即备份 NAS", () => {
     expect(await exists(keptName(dest, v2).replace(/\.mov$/, "-2.mov"))).toBe(false);
   });
 
-  it("copies symlinks in the project as symlinks", async () => {
+  it("records project symlinks instead of creating links on the NAS", async () => {
     const c = await published("稿", 1);
     await fs.symlink("../02-aroll/raw.mov", path.join(root(c), "03-broll-link.mov"));
     const r = await backup();
     expect(r.backedUp).toEqual(["稿"]);
-    expect(await fs.readlink(path.join(nasDir(c), "03-broll-link.mov"))).toBe("../02-aroll/raw.mov");
+    expect(await exists(path.join(nasDir(c), "03-broll-link.mov"))).toBe(false);
+    const note = JSON.parse(await read(path.join(nasDir(c), "符号链接清单.json")));
+    expect(note.links).toEqual([{ rel: "03-broll-link.mov", target: "../02-aroll/raw.mov" }]);
   });
 
   it("marks items unmounted when the NAS is missing, without errors, and catches up once mounted", async () => {
@@ -275,6 +277,40 @@ describe("7 天腾空间前核对 NAS", () => {
     expect(state.status).toBe("failed");
     expect(state.reason).toContain("02-aroll/raw.mov");
     expect(state.reason).toContain("NAS 上也不见了");
+  });
+
+  it("never writes through an old NAS dir link back into local media, so archive cannot lose unique files (Codex repro)", async () => {
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    const old = await published("旧稿", 8);
+    await fs.rm(path.join(root(old), "03-broll"), { recursive: true, force: true });
+    await fs.symlink(path.join(root(old), "02-aroll"), path.join(root(old), "03-broll"));
+    await backup();
+    expect(await exists(path.join(nasDir(old), "03-broll"))).toBe(false);
+    // 旧版会在 NAS 上建的链接：03-broll → 本机 02-aroll
+    await fs.symlink(path.join(root(old), "02-aroll"), path.join(nasDir(old), "03-broll"));
+    await fs.rm(path.join(root(old), "03-broll"));
+    await put(old, "03-broll/unique.mov", "独有素材");
+    await backup();
+    expect(await exists(path.join(root(old), "02-aroll/unique.mov"))).toBe(false);
+    expect((await fs.lstat(path.join(nasDir(old), "03-broll"))).isDirectory()).toBe(true);
+    expect((await fs.lstat(path.join(nasDir(old), "03-broll.link-moved-1"))).isSymbolicLink()).toBe(true);
+    const r = await archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });
+    expect(r.archived.map((a) => a.title)).toEqual(["旧稿"]);
+    expect(await read(path.join(nasDir(old), "03-broll/unique.mov"))).toBe("独有素材");
+    expect(await read(path.join(nasDir(old), "02-aroll/raw.mov"))).toBe("旧稿-raw");
+  });
+
+  it("moves aside a pre-existing NAS dir link pointing outside the NAS root and writes a real dir", async () => {
+    const c = await published("稿", 1);
+    const outside = path.join(temp, "outside");
+    await fs.mkdir(outside);
+    await fs.mkdir(nasDir(c), { recursive: true });
+    await fs.symlink(outside, path.join(nasDir(c), "02-aroll"));
+    expect((await backup()).backedUp).toEqual(["稿"]);
+    expect(await fs.readdir(outside)).toEqual([]);
+    expect((await fs.lstat(path.join(nasDir(c), "02-aroll"))).isDirectory()).toBe(true);
+    expect(await read(path.join(nasDir(c), "02-aroll/raw.mov"))).toBe("稿-raw");
+    expect(await fs.readlink(path.join(nasDir(c), "02-aroll.link-moved-1"))).toBe(outside);
   });
 
   it("deletes nothing when the NAS copy cannot be verified", async () => {

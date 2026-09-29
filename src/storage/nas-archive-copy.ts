@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { safeNasPath, assertInside } from "./nas-safe-path.js";
 
 export interface ArchivedFile {
   rel: string; sha256: string; size: number; mtimeMs?: number;
@@ -17,8 +18,8 @@ export interface CopyProjectOptions {
   previous?: Map<string, ArchivedFile>;
   /** 本机和 NAS 副本的大小、修改时间都跟上次记录一样才跳过，否则重新哈希核对（增量备份用；归档删本机前不开） */
   skipUnchanged?: boolean;
-  /** 符号链接照原样在 NAS 上建成符号链接（备份用）；其它特殊条目记为出错 */
-  copySymlinks?: boolean;
+  /** 备份用：项目里的符号链接不在 NAS 上建，只登记（路径+指向）交调用方写进记录；其它特殊条目记为出错 */
+  recordSymlinks?: boolean;
   /** 不复制的文件（备份自己的记录和状态文件） */
   exclude?: (rel: string) => boolean;
 }
@@ -88,63 +89,59 @@ async function keepAside(dest: string, have: string): Promise<void> {
   const first = keptName(dest, have), ext = path.extname(first);
   for (let i = 1; ; i++) {
     const name = i === 1 ? first : `${first.slice(0, first.length - ext.length)}-${i}${ext}`;
-    const kept = await hashOrNull(name);
+    const st = await lstatOrNull(name);
+    if (st?.isSymbolicLink()) continue;
+    const kept = st ? await sha256File(name) : null;
     if (kept === null) { await fs.rename(dest, name); return; }
     if (kept === have) { await fs.rm(dest, { force: true }); return; }
   }
-}
-
-async function statOrNull(file: string) {
-  try { return await fs.stat(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
-}
-
-/** 本机没变，且 NAS 副本还在、大小和修改时间跟记录一致 */
-async function unchangedBoth(f: { size: number; mtimeMs: number }, prev: ArchivedFile | undefined, dest: string): Promise<boolean> {
-  if (!prev || prev.size !== f.size || prev.mtimeMs !== f.mtimeMs || prev.destMtimeMs === undefined) return false;
-  const st = await statOrNull(dest);
-  return !!st && st.size === prev.size && st.mtimeMs === prev.destMtimeMs;
 }
 
 async function lstatOrNull(file: string) {
   try { return await fs.lstat(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
 }
 
-/** 符号链接在 NAS 上照建（目标一样就不动；原位是别的东西先挪开留底）；非链接的特殊条目报出来 */
-async function copySpecials(root: string, target: string, special: string[]): Promise<string[]> {
-  const errors: string[] = [];
+/** 本机没变，且 NAS 副本还在、大小和修改时间跟记录一致 */
+async function unchangedBoth(f: { size: number; mtimeMs: number }, prev: ArchivedFile | undefined, dest: string): Promise<boolean> {
+  if (!prev || prev.size !== f.size || prev.mtimeMs !== f.mtimeMs || prev.destMtimeMs === undefined) return false;
+  const st = await lstatOrNull(dest);
+  return !!st && st.isFile() && st.size === prev.size && st.mtimeMs === prev.destMtimeMs;
+}
+
+export interface ProjectLink { rel: string; target: string }
+
+/** 项目里的符号链接只登记（NAS 上不建链接）；链接以外的特殊条目报出来 */
+async function recordSpecials(root: string, special: string[]): Promise<{ links: ProjectLink[]; errors: string[] }> {
+  const links: ProjectLink[] = [], errors: string[] = [];
   for (const rel of special) {
-    try {
-      const src = path.join(root, rel), dest = path.join(target, rel);
-      if (!(await fs.lstat(src)).isSymbolicLink()) { errors.push(`${rel}：不是普通文件也不是链接，没法备份`); continue; }
-      const link = await fs.readlink(src), st = await lstatOrNull(dest);
-      if (st?.isSymbolicLink() && (await fs.readlink(dest)) === link) continue;
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      if (st?.isSymbolicLink()) await fs.rm(dest);
-      else if (st) await fs.rename(dest, `${dest}.replaced-${Date.now()}`);
-      await fs.symlink(link, dest);
-    } catch (e) { errors.push(`${rel}：链接没建成（${e instanceof Error ? e.message : String(e)}）`); }
+    const src = path.join(root, rel);
+    if ((await fs.lstat(src)).isSymbolicLink()) links.push({ rel, target: await fs.readlink(src) });
+    else errors.push(`${rel}：不是普通文件也不是链接，没法备份`);
   }
-  return errors;
+  return { links, errors };
 }
 
 /** 整个项目复制 + 逐个核对。任何一个文件出错都记下来，调用方据此决定一律不删本机。 */
 export async function copyProject(
   root: string, target: string, copy: CopyImpl, mediaDirs: readonly string[], opts: CopyProjectOptions = {},
-): Promise<{ files: ArchivedFile[]; errors: string[] }> {
+): Promise<{ files: ArchivedFile[]; errors: string[]; links: ProjectLink[] }> {
   const { files, special } = await walkProject(root);
   // 要删的目录里有链接就不删（复制不了）；其它目录里的链接留在本机，不影响
   const blocking = special.filter((rel) => mediaDirs.some((d) => rel.startsWith(`${d}/`)));
   const out: ArchivedFile[] = [], errors = blocking.map((rel) => `${rel}：不是普通文件（链接等），没法归档`);
-  if (opts.copySymlinks) errors.push(...(await copySpecials(root, target, special.filter((rel) => !opts.exclude?.(rel)))));
+  const recorded = opts.recordSymlinks ? await recordSpecials(root, special.filter((rel) => !opts.exclude?.(rel))) : { links: [], errors: [] };
+  errors.push(...recorded.errors);
   for (const f of files) {
     if (opts.exclude?.(f.rel)) continue;
-    const prev = opts.previous?.get(f.rel), dest = path.join(target, f.rel);
+    const prev = opts.previous?.get(f.rel);
     try {
+      const dest = await safeNasPath(target, f.rel);
       if (opts.skipUnchanged && (await unchangedBoth(f, prev, dest))) { out.push(prev!); continue; }
       const sha256 = await copyVerified(path.join(root, f.rel), dest, copy);
-      out.push({ rel: f.rel, size: f.size, mtimeMs: f.mtimeMs, sha256, destMtimeMs: (await fs.stat(dest)).mtimeMs });
+      await assertInside(target, f.rel);
+      out.push({ rel: f.rel, size: f.size, mtimeMs: f.mtimeMs, sha256, destMtimeMs: (await fs.lstat(dest)).mtimeMs });
     }
     catch (e) { errors.push(`${f.rel}：${e instanceof Error ? e.message : String(e)}`); }
   }
-  return { files: out, errors };
+  return { files: out, errors, links: recorded.links };
 }

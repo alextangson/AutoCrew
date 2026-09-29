@@ -8,7 +8,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isMissing } from "./content-project.js";
 import { writeJsonAtomic } from "./json-atomic.js";
-import type { ArchivedFile } from "./nas-archive-copy.js";
+import type { ArchivedFile, ProjectLink } from "./nas-archive-copy.js";
 import { formatBytes } from "./nas-archive-log.js";
 
 const NOTES = "00-project/notes";
@@ -16,7 +16,11 @@ export const BACKUP_STATE = `${NOTES}/backup-state.json`;
 /** 连续失败到这个次数，状态文件写明原因、⚠️ 同步出错.txt 也报出来 */
 export const BACKUP_FAIL_LIMIT = 3;
 
-export interface BackupRecord { version: 1; backedUpAt: string; target: string; files: ArchivedFile[] }
+export interface BackupRecord {
+  version: 1; backedUpAt: string; target: string; files: ArchivedFile[];
+  /** 项目里的符号链接（NAS 上不建链接，只登记路径和指向，另写一份到 NAS 项目的 符号链接清单.json） */
+  links?: ProjectLink[];
+}
 export interface BackupState {
   status: "backed_up" | "unmounted" | "failed";
   lastAttempt: string;
@@ -43,6 +47,9 @@ export async function latestBackupRecord(projectRoot: string): Promise<BackupRec
 }
 
 /** 上次备份到同一个 target 的文件清单；目标换了（或没有记录）就是空的，全部重新核对 */
+/** NAS 项目根下的符号链接清单 */
+export const LINKS_NOTE = "符号链接清单.json";
+
 export async function latestBackupFiles(projectRoot: string, target: string): Promise<Map<string, ArchivedFile>> {
   const record = await latestBackupRecord(projectRoot);
   return new Map(record?.target === target ? record.files.map((f) => [f.rel, f]) : []);
