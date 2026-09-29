@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { listContents, type Content } from "../../storage/local-store.js";
 import { contentRoot } from "../../storage/content-project.js";
+import { readLibraryLocation } from "../../storage/storage-roots.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
@@ -45,9 +46,9 @@ async function checkSrt(file: string): Promise<Parsed<void>> {
 }
 
 /** 形状 + 完整性（第 2–3 步）：返回真实路径、指纹、时长 / 比例 */
-async function inspectFile(a: RecordArgs): Promise<Parsed<Pick<FilePlan, "source" | "sha256" | "id" | "duration_ms" | "ratio">>> {
+async function inspectFile(a: RecordArgs, bases: string[]): Promise<Parsed<Pick<FilePlan, "source" | "sha256" | "id" | "duration_ms" | "ratio">>> {
   if (!a.path) return deny("bad_param", `kind=${a.kind} 要带 path`);
-  const at = await resolveLocalFile(a.path, "path");
+  const at = await resolveLocalFile(a.path, "path", bases);
   if (!at.ok) return at;
   let ratio: Fact["ratio"];
   if (a.kind === "cover") {
@@ -146,7 +147,8 @@ export async function checkTargetDir(projectRoot: string, rel: string): Promise<
 }
 
 export async function planFileRecord(a: RecordArgs, content: Content, doc: ProductionDoc, dataDir: string): Promise<Parsed<FilePlan>> {
-  const file = await inspectFile(a);
+  const library = readLibraryLocation()?.root;
+  const file = await inspectFile(a, [contentRoot(content.id, dataDir), ...(library ? [library] : [])]);
   if (!file.ok) return file;
   const existing = inRound(doc).find((f) => f.kind === a.kind && f.sha256 === file.value.sha256);
   if (existing?.state === "rejected") return deny("rejected_before", "创始人已经说过这个文件「不是这条」，不再收");

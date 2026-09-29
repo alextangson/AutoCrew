@@ -7,6 +7,8 @@
  */
 import path from "node:path";
 import { contentRoot } from "../../storage/content-project.js";
+import { getContent } from "../../storage/local-store.js";
+import { receiptsOfRound } from "./receipts.js";
 import { isOntologyActive, newId, readProductionDoc, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { checkTargetDir } from "./record-plan.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
@@ -14,6 +16,8 @@ import { reserveTarget } from "./files.js";
 import { withFileOwnership } from "./mutex.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { dropTxn, rollbackTxn, runMove, saveTxn, type Txn } from "./txn.js";
+
+export const PUBLISHED_NO_REOPEN = "这条已经发布了，不能重开文稿：发出去的那一版要留着对得上数据。要改内容，另起一个新版本。";
 
 export interface ReopenResult { ok: boolean; round?: number; moved?: string[]; error?: string; code?: string; warning?: string }
 
@@ -75,6 +79,9 @@ export async function reopenScript(contentId: string, dataDir: string, note?: st
         ? { ok: true, round: doc.round, moved: [], warning: `第 ${expectedRound} 轮已经重开过，现在是第 ${doc.round} 轮，这次没有再结束新的一轮` }
         : { ok: false, code: "stale", error: "这条的轮次和你看到的不一样，刷新后再看" };
     }
+    // 已发布的稿不能重开（创始人 09-29）：发出去的那一版要留着对得上数据；要改就另起新版本
+    const content = await getContent(contentId, dataDir);
+    if (content?.status === "published" || receiptsOfRound(doc).live.length) return { ok: false, code: "published", error: PUBLISHED_NO_REOPEN };
     const txn: Txn = { id: newId("txn"), kind: "reopen", content_id: contentId, round: doc.round, ops: [], at: new Date().toISOString() };
     let moved: Map<string, string>;
     try { moved = await moveRetired(contentId, dataDir, doc, txn); }

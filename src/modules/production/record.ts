@@ -267,7 +267,7 @@ function receipt(core: ReceiptCore, exp: Explanation, content: Content, projectR
  * 候选 → accepted：库外的按 §3-7 落位（原片挪、其余克隆；被 ChatCut 引用的原片留原位），项目内的原地收。
  * 核验照 record 的顺序全部先做：路径、完整性、字节还是当初那份、A-roll 独占、目标目录安全。调用方持有文件归属事务。
  */
-export async function adoptCandidate(content: Content, fact: Fact, dataDir: string): Promise<Receipt> {
+export async function adoptCandidate(content: Content, fact: Fact, dataDir: string, opts: { reassign?: boolean } = {}): Promise<Receipt> {
   const a: RecordArgs = { content_id: content.id, kind: fact.kind, request_id: `confirm-${fact.id}`, host: "founder", ...(fact.path ? { path: fact.path } : {}), ...(fact.ratio ? { ratio: fact.ratio } : {}) };
   if (!fact.path || !fact.sha256) return fail("bad_request", "这条候选没有文件");
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
@@ -279,8 +279,8 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "候选文件在发现之后被改过，刷新再看");
   if (fact.kind === "aroll") {
-    const owner = await arollOwnerElsewhere(dataDir, fact.sha256, content.id);
-    if (owner) return fail("aroll_conflict", `这个原片已经是另一条稿（${owner}）的 A-roll`);
+    const owner = await arollOwnerElsewhere(dataDir, fact.sha256, content.id, { allowHistorical: opts.reassign === true });
+    if (owner) return fail("aroll_conflict", `这个原片已经是另一条稿（${owner}）的 A-roll（重开前那一轮的也算）；要改挂到这条，创始人在卡片上带「改挂」再确认一次`);
   }
   const referenced = doc.facts.some((f) => f.round === doc.round && f.kind === "chatcut_project" && f.uses_aroll?.includes(fact.id));
   const inProject = isWithin(projectRoot, checked.value);

@@ -30,8 +30,23 @@ async function lstatOrNull(p: string) {
 }
 
 /** 规范化 + 逐段禁链接 + 必须是本机的普通文件；返回真实绝对路径 */
-export async function resolveLocalFile(input: string, label: string): Promise<Checked<string>> {
-  const expanded = path.resolve(expandHome(input.trim()));
+/**
+ * 相对路径只按给定的根（本条项目目录、资料库根）解析，从不按服务进程的工作目录（Codex / 验收：会解析错、还会把服务路径泄露给调用方）。
+ * 没给根的相对路径直接拒。
+ */
+async function firstExisting(candidates: string[]): Promise<string | null> {
+  for (const c of candidates) if (await lstatOrNull(c)) return c;
+  return null;
+}
+
+export async function resolveLocalFile(input: string, label: string, bases: string[] = []): Promise<Checked<string>> {
+  const raw = expandHome(input.trim());
+  let expanded = raw;
+  if (!path.isAbsolute(raw)) {
+    const hit = await firstExisting(bases.map((b) => path.resolve(b, raw)).filter((p) => bases.some((b) => p === path.resolve(b) || p.startsWith(path.resolve(b) + path.sep))));
+    if (!hit) return fail("path_relative", `${label} 要写绝对路径，或相对本条项目目录 / 资料库根的路径：${input.trim()}`);
+    expanded = hit;
+  }
   const st = await lstatOrNull(expanded);
   if (!st) return fail("path_missing", `${label} 不存在或读不了：${expanded}`);
   const segments = expanded.split(path.sep);

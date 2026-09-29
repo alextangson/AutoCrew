@@ -29,7 +29,7 @@ import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
-import { isOntologyEnabled, ScriptFrozenError } from "../storage/production-store.js";
+import { isFrozen, isOntologyEnabled, readProductionDoc, ScriptFrozenError } from "../storage/production-store.js";
 import { executeRecord } from "../modules/production/record.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
 
@@ -265,6 +265,11 @@ export async function executeContentSave(
     if (params.status) {
       const pre = await transitionPreflight(id, normalizeLegacyStatus(params.status as string), { decidedBy: decidedBy(params) }, dataDir);
       if (!pre.ok) return rejectedTransition(pre);
+    }
+    // 正文冻结（剪辑中）先判：被拒的改稿不能顺手拿走 30 分钟写稿认领
+    if (typeof params.body === "string" && params.body !== oldContent.body && isFrozen(await readProductionDoc(id, dataDir))) {
+      const e = new ScriptFrozenError();
+      return { ok: false, code: e.code, error: e.message };
     }
     const gate = await gateContentWrite(params, id, dataDir);
     if ("denied" in gate) return gate.denied;

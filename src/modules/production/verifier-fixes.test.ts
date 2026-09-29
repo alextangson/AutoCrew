@@ -98,3 +98,60 @@ describe("P2-7 启用后不再指向旧交接流程", () => {
     expect(String(s.next)).toContain("check_ids");
   });
 });
+
+describe("P3 #14 / #15 与创始人决定 1、3", () => {
+  it("[#14] 冻结后改正文被拒，且不留写稿认领", async () => {
+    await enable();
+    const { executeContentSave } = await import("../../tools/content-save.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const { record } = await import("./testkit.js");
+    const { founderApprove } = await import("./testkit.js");
+    const c = await videoContent(env, "AI 又忘了怎么办");
+    await founderApprove(env, c.id);
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "a" });
+    const before = (await getContent(c.id, env.dir))!.claim;
+    const res = await executeContentSave({ _dataDir: env.dir, action: "update", id: c.id, body: "改一个字", _host: "claude-code" });
+    expect(res).toMatchObject({ ok: false, code: "script_frozen" });
+    expect((await getContent(c.id, env.dir))!.claim).toEqual(before);
+  });
+
+  it("[#15] 相对路径不按服务工作目录解析，报错不带服务路径", async () => {
+    await enable();
+    const { record, founderApprove } = await import("./testkit.js");
+    const c = await videoContent(env, "AI 又忘了怎么办");
+    await founderApprove(env, c.id);
+    const res = await record(env, { content_id: c.id, kind: "aroll", path: "package.json", request_id: "rel" });
+    expect(res).toMatchObject({ ok: false, code: "path_relative" });
+    expect(JSON.stringify(res)).not.toContain(process.cwd());
+  });
+
+  it("[决定 1] 已发布：不能重开，面板不给重开按钮", async () => {
+    await enable();
+    const r = await registeredVideo(env);
+    await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
+    const { reopenScript } = await import("./reopen.js");
+    const { cardPanel } = await import("./panel.js");
+    expect(await reopenScript(r.id, env.dir)).toMatchObject({ ok: false, code: "published" });
+    expect((await cardPanel(r.id, env.dir)).can_reopen).toBe(false);
+  });
+
+  it("[决定 3] 重开后上一轮的原片仍归原稿：别条稿 record 不能占；创始人改挂才放", async () => {
+    await enable();
+    const { record, founderApprove } = await import("./testkit.js");
+    const { reopenScript } = await import("./reopen.js");
+    const a = await videoContent(env, "AI 又忘了怎么办");
+    await founderApprove(env, a.id);
+    const raw = await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw-shared");
+    await record(env, { content_id: a.id, kind: "aroll", path: raw, request_id: "a1" });
+    expect(await reopenScript(a.id, env.dir)).toMatchObject({ ok: true });
+    const doc = (await readProductionDoc(a.id, env.dir))!;
+    const moved = doc.facts.find((f) => f.kind === "aroll")!;
+    const b = await videoContent(env, "另一条稿");
+    await founderApprove(env, b.id);
+    const abs = path.join((await import("./testkit.js")).projectRoot(env, a.id), moved.path!);
+    expect(await record(env, { content_id: b.id, kind: "aroll", path: abs, request_id: "b1" })).toMatchObject({ ok: false, code: "aroll_conflict" });
+    const attach = await founderDecision(b.id, "attach_aroll", { path: abs, confirm_other: true }, env.dir);
+    expect(attach).toMatchObject({ ok: false, code: "aroll_conflict" });
+    expect(await founderDecision(b.id, "attach_aroll", { path: abs, confirm_other: true, reassign: true }, env.dir)).toMatchObject({ ok: true });
+  });
+});

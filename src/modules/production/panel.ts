@@ -45,6 +45,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
     checklist,
-    can_reopen: doc.facts.some((f) => f.round === doc.round && f.state === "accepted") || doc.decisions.some((d) => d.round === doc.round && d.type === "script_approval"),
+    // 已发布（本轮有投出的槽或状态已发布）不给重开（创始人 09-29）
+    can_reopen: !receipts.live.length && content.status !== "published" && (doc.facts.some((f) => f.round === doc.round && f.state === "accepted") || doc.decisions.some((d) => d.round === doc.round && d.type === "script_approval")),
   };
 }

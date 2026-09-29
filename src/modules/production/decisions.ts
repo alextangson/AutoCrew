@@ -5,6 +5,8 @@
  *
  * 写完决定：成片 / 封面批准齐了就在同一个文件归属事务里跑登记提交（§5 批准即登记）。
  */
+import { contentRoot } from "../../storage/content-project.js";
+import { readLibraryLocation } from "../../storage/storage-roots.js";
 import path from "node:path";
 import { getContent, getDataDir, listContents, type Content } from "../../storage/local-store.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
@@ -118,7 +120,7 @@ async function candidate(ctx: Ctx, confirm: boolean): Promise<Result> {
   if (typeof f === "string") return fail("stale", f);
   if (f.state !== "candidate" && f.state !== "pending_match") return { ok: true, fact_id: f.id, state: f.state, note: "这条已经定过了" };
   if (!confirm) return { ok: true, decision: await push(ctx, { type: "candidate_reject", fact_id: f.id, sha256: f.sha256 }, "candidate_rejected", (doc) => { doc.facts.find((x) => x.id === f.id)!.state = "rejected"; }) };
-  const adopted = await adoptCandidate(ctx.content, f, ctx.dataDir);
+  const adopted = await adoptCandidate(ctx.content, f, ctx.dataDir, { reassign: ctx.params.reassign === true });
   if (!adopted.ok) return adopted;
   return { ...adopted, decision: await push(ctx, { type: "candidate_confirm", fact_id: f.id, sha256: f.sha256 }, "candidate_confirmed") };
 }
@@ -168,7 +170,8 @@ async function correct(ctx: Ctx): Promise<Result> {
 async function attachAroll(ctx: Ctx): Promise<Result> {
   const input = str(ctx.params.path);
   if (!input) return fail("path_required", "贴一个原片的完整路径");
-  const at = await resolveLocalFile(input, "原片");
+  const library = readLibraryLocation()?.root;
+  const at = await resolveLocalFile(input, "原片", [contentRoot(ctx.content.id, ctx.dataDir), ...(library ? [library] : [])]);
   if (!at.ok) return fail(at.code, at.error);
   const fp = await stableFingerprint(at.value, Date.now());
   if (!fp.ok) return fail(fp.code, fp.error);
@@ -189,7 +192,7 @@ async function attachAroll(ctx: Ctx): Promise<Result> {
     doc.facts.push(f);
     return { value: f, events: [] };
   })).value;
-  const adopted = await adoptCandidate(ctx.content, fact, ctx.dataDir);
+  const adopted = await adoptCandidate(ctx.content, fact, ctx.dataDir, { reassign: ctx.params.reassign === true });
   if (!adopted.ok) return adopted;
   return { ...adopted, decision: await push(ctx, { type: "candidate_confirm", fact_id: fact.id, sha256: fact.sha256, note: "卡片挂载" }, "aroll_attached") };
 }

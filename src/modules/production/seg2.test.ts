@@ -207,7 +207,7 @@ describe("发布回执（§6）", () => {
     expect(await decide(s.c.id, "confirm_receipt", { fact_id: claim.id })).toMatchObject({ ok: true, stage: "已发布" });
   });
 
-  it("「我发了」可纠正；回执绑在轮次上，重开之后旧回执不算（Codex P2）", async () => {
+  it("「我发了」可纠正；已发布之后不能重开文稿（创始人 09-29）", async () => {
     const s = await registered();
     const r = await decide(s.c.id, "i_published", { platform: "douyin" });
     expect(r).toMatchObject({ ok: true, stage: "已发布" });
@@ -215,10 +215,9 @@ describe("发布回执（§6）", () => {
     await writePlan(s.c.id, "public");
     await reconcileAll(env.dir);
     expect((await getContent(s.c.id, env.dir))!.status).toBe("published");
-    await reopenScript(s.c.id, env.dir);
-    await founderApprove(env, s.c.id);
-    await reconcileAll(env.dir);
-    expect((await getContent(s.c.id, env.dir))!.status).not.toBe("published");
+    // 创始人 09-29：已发布的稿不能重开（原来这里测的是重开后旧回执不算；那条路已经不存在）
+    expect(await reopenScript(s.c.id, env.dir)).toMatchObject({ ok: false, code: "published" });
+    expect((await getContent(s.c.id, env.dir))!.status).toBe("published");
   });
 });
 

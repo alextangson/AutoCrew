@@ -63,13 +63,17 @@ export async function reindexContent(dataDir: string, contentId: string, doc: Pr
   await writeJsonAtomicMkdir(indexFile(dataDir), { version: 1, rebuiltAt: new Date().toISOString(), ...idx });
 }
 
-/** 这份原片已是别条稿本轮 accepted 的 A-roll → 返回那条稿的 id */
-export async function arollOwnerElsewhere(dataDir: string, sha: string, contentId: string): Promise<string | null> {
+/**
+ * 这份原片归别条稿 → 那条稿的 id。本轮 accepted 的是硬归属；重开文稿之后上一轮的原片仍归那条稿（创始人 09-29 默认），
+ * 只有创始人明确改挂（`allowHistorical`）才放过历史归属。
+ */
+export async function arollOwnerElsewhere(dataDir: string, sha: string, contentId: string, opts: { allowHistorical?: boolean } = {}): Promise<string | null> {
   const list = (await shaIndex(dataDir)).entries[sha] ?? [];
   for (const e of list) {
     if (e.content_id === contentId || e.kind !== "aroll" || e.state !== "accepted") continue;
     const doc = await readProductionDoc(e.content_id, dataDir).catch(() => null);
-    if (doc && doc.round === e.round) return e.content_id;
+    if (!doc) continue;
+    if (doc.round === e.round || !opts.allowHistorical) return e.content_id;
   }
   return null;
 }
