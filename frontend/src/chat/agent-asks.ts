@@ -59,3 +59,12 @@ export function mergeCards(list: LiveCard[], incoming: unknown[]): LiveCard[] {
   }
   return out;
 }
+
+/**
+ * agent:pending 的查询参数（评审 v1.2 P2-7）：undefined = 查右栏当前那段；null = 不限对话；
+ * 给了 id 就查那段——重挂别处发起的轮（如看板重试）时右栏开着的可能是别的对话。
+ */
+export function pendingQuery(clientId: string, forConversation: string | null | undefined, current: string | undefined): Record<string, string> {
+  const conv = forConversation === undefined ? current : forConversation ?? undefined;
+  return { client_id: clientId, ...(conv ? { conversation_id: conv } : {}) };
+}

@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
-import { applyAgentEvent, mergeCards, parsePending, type AskView, type LiveCard, type RunningTurn } from "./agent-asks";
+import { applyAgentEvent, mergeCards, parsePending, pendingQuery, type AskView, type LiveCard, type RunningTurn } from "./agent-asks";
 import { mergeWork, parseWorkItems, type WorkItem } from "./WorkLog";
 import { defaultBackend, parseBackends, rememberBackend, type BackendId, type BackendStatus, type RunningAgent } from "./backend-choice";
 
@@ -24,7 +24,8 @@ export interface AgentBackendState {
   /** 当前对话是否处于「本对话都允许」（服务端内存态） */
   conversationAllow: boolean;
   /** 重拉就绪清单与待处理卡（挂载、换对话、重连、一轮结束时）。running.owner = 本标签页发起的 */
-  refresh: () => Promise<{ running: RunningTurn | null }>;
+  /** forConversation：查哪段对话的进行中轮次；null = 不限对话（重挂时找本库任何在跑的轮，评审 v1.2 P2-7） */
+  refresh: (forConversation?: string | null) => Promise<{ running: RunningTurn | null }>;
 }
 
 export function useAgentBackend(
@@ -45,8 +46,9 @@ export function useAgentBackend(
   const convRef = useRef(conversationId);
   convRef.current = conversationId;
 
-  const refresh = async () => {
-    const [b, p] = await Promise.all([invoke("agent:backends"), invoke("agent:pending", { client_id: optsRef.current.clientId, ...(convRef.current ? { conversation_id: convRef.current } : {}) })]);
+  const refresh = async (forConversation?: string | null) => {
+
+    const [b, p] = await Promise.all([invoke("agent:backends"), invoke("agent:pending", pendingQuery(optsRef.current.clientId, forConversation, convRef.current))]);
     if (b.ok) {
       const parsed = parseBackends(b);
       setBackends(parsed.backends);

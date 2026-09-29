@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyAgentEvent, mergeCards, parsePending, type AskView } from "./agent-asks";
+import { applyAgentEvent, mergeCards, parsePending, pendingQuery, type AskView } from "./agent-asks";
 
 const ask = (over: Partial<AskView> = {}): AskView => ({
   id: "ask-1", kind: "approval", turnId: "t", conversationId: "conv-1-a", status: "pending", expiresAt: "", title: "批准「推送到公众号草稿箱」？", detail: "《标题》", ...over,
@@ -33,5 +33,13 @@ describe("评审 P2-13 / P2-14：本轮卡片与发起方", () => {
   });
   it("没带 owner 的快照按旁观处理（不是自己的轮不接管）", () => {
     expect(parsePending({ data: { running: { turnId: "t", conversationId: "c" } } }).running?.owner).toBe(false);
+  });
+});
+
+describe("评审 v1.2 P2-7：重挂按事件里的对话查", () => {
+  it("事件带的对话优先；null 不限对话；缺省查当前那段", () => {
+    expect(pendingQuery("c", "conv-2-b", "conv-1-a")).toEqual({ client_id: "c", conversation_id: "conv-2-b" });
+    expect(pendingQuery("c", null, "conv-1-a")).toEqual({ client_id: "c" });
+    expect(pendingQuery("c", undefined, "conv-1-a")).toEqual({ client_id: "c", conversation_id: "conv-1-a" });
   });
 });

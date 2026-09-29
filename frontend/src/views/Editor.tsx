@@ -20,7 +20,7 @@ import remarkCjkFriendly from "remark-cjk-friendly";
 import { type EditorView } from "@codemirror/view";
 import { invoke, subscribeEvents, type InvokeResult } from "../transport";
 import { toast } from "../ui";
-import { useChatSend } from "../chat/ChatDock";
+import { chatClientId, useChatSend } from "../chat/ChatDock";
 import { SelectionBar } from "./SelectionBar";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { EditorTools } from "./EditorTools";
@@ -356,7 +356,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
    * 总编辑再调 generate_script 新建一篇——中断稿就此成僵尸卡,每点一次多一张重复卡。
    */
   const retryGenerate = async () => {
-    const r = await invoke("generate:retry", { content_id: props.id });
+    const r = await invoke("generate:retry", { content_id: props.id, client_id: chatClientId() });
     if (!r.ok) return toast(r.error ?? "重写没起来");
     // 本机 agent 写的稿：服务端已把「继续写」发回原对话（v1.2），进度在右栏那段对话里
     toast((r as { routed?: string }).routed === "local" ? "已交回原来那段对话，由本机 agent 接着写——进度看右栏" : "重写已开始,1-3 分钟");

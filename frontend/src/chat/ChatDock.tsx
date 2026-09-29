@@ -72,6 +72,11 @@ function msgClass(m: Msg): string {
  */
 const CLIENT_ID = tabClientId();
 
+/** 本标签页的 clientId：看板「重试」交回本机 agent 时带上，这一轮就归发起的标签页（可停止，评审 v1.2 P2-4） */
+export function chatClientId(): string {
+  return CLIENT_ID;
+}
+
 /** clientId 存 sessionStorage：刷新后还是同一个标签页，进行中那轮的停止按钮仍然归它（本机 agent spec 边界 5） */
 function tabClientId(): string {
   try {
@@ -317,9 +322,10 @@ export function ChatDock(props: {
    * 本机 agent 的轮次在服务端跑、不依赖本页请求：刷新时那次 invoke 被掐断，本地记忆也会被清掉。
    * 所以另问一次服务端「有没有进行中的本机轮次」，有就按恢复契约重新挂上（停止按钮可用）。
    */
-  const reattachAgentTurn = async () => {
+  const reattachAgentTurn = async (conversationId?: string) => {
     if (turnIdRef.current && !reattachedRef.current) return;
-    const { running } = await agent.refresh();
+    // 按事件里那段对话去查（或不限对话）：右栏此刻开着的可能是别的对话（评审 v1.2 P2-7）
+    const { running } = await agent.refresh(conversationId ?? null);
     if (!running) return;
     if (activeConvRef.current !== running.conversationId) await loadConversation(running.conversationId);
     // 别的标签页发起的轮：只旁观，不接管（停止按钮归发起方，评审 P2-14）
@@ -533,12 +539,12 @@ export function ChatDock(props: {
     () =>
       subscribeEvents((e) => {
         if (e.kind === "reconnect") {
-          void recoverPendingTurn().then(reattachAgentTurn);
+          void recoverPendingTurn().then(() => reattachAgentTurn());
           return;
         }
         // 别处发起的本机轮次（如看板「重试」交回原对话，v1.2）：挂上来旁观
         if (e.kind === "agent" && e.data.type === "turn" && e.data.status === "running" && !turnIdRef.current) {
-          void reattachAgentTurn();
+          void reattachAgentTurn(typeof e.data.conversationId === "string" ? e.data.conversationId : undefined);
           return;
         }
         // 旁观的标签页：别处发起的本机轮次结束了，重载这段对话看结果
