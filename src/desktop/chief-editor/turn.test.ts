@@ -221,7 +221,7 @@ describe("线路：必须经过创始人的代理（2026-09-29）", () => {
   };
   const withSettings = (body: string) => { h.svc.deps.claudeSettingsPath = settingsWith(body); };
 
-  it("代理开着：ANTHROPIC_BASE_URL 带进 agent 环境，别的令牌不带", async () => {
+  it("代理开着：ANTHROPIC_BASE_URL 带进 agent 环境，别的令牌不带；工具说明按需加载强制打开", async () => {
     const net = await import("node:net");
     const server = net.createServer((s) => s.end());
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -230,7 +230,7 @@ describe("线路：必须经过创始人的代理（2026-09-29）", () => {
       withSettings(JSON.stringify({ env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, GITHUB_PERSONAL_ACCESS_TOKEN: "gho_x" } }));
       const r = await runLocalTurn(h.svc, input());
       expect(r.ok).toBe(true);
-      expect(h.launches[0].env).toEqual({ ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` });
+      expect(h.launches[0].env).toEqual({ ENABLE_TOOL_SEARCH: "true", ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` });
     } finally {
       server.close();
     }

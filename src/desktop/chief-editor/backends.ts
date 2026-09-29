@@ -118,7 +118,9 @@ export const CLAUDE_ADAPTER: BackendAdapter = {
   billing: "用你的 Claude 订阅",
   launch() {
     const entry = resolveClaudeAdapter();
-    return entry ? { command: process.execPath, args: [entry] } : null;
+    // 走代理（Headroom）时 Claude 会关掉工具说明按需加载，AutoCrew 全部工具说明开局就占满；
+    // 强制打开：2026-09-29 实测经 Headroom 首轮 67,616 → 30,847 token，工具照样能找到并调用
+    return entry ? { command: process.execPath, args: [entry], env: { ENABLE_TOOL_SEARCH: "true" } } : null;
   },
   routingEnv: (settingsPath) => claudeRoutingEnv(settingsPath),
   sessionMeta() {
