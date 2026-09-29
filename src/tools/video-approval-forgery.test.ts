@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { saveContent, getContent, getCoverReview, saveCoverReview, transitionStatus } from "../storage/local-store.js";
+import { saveContent, getContent, getCoverReview, saveCoverReview, transitionStatus, updateContent, type ContentUpdates } from "../storage/local-store.js";
 import { claimContent } from "../storage/claims.js";
 import { setVideoService } from "../modules/video/service-registry.js";
 import type { VideoService } from "../modules/video/service.js";
@@ -98,5 +98,36 @@ describe("MCP 宿主不能伪造视频稿的创始人批准", () => {
     const c = await saveContent({ title: "长文", body: "正文。".repeat(200), platform: "wechat_mp", status: "approved" }, dir);
     expect((await transitionStatus(c.id, "publish_ready", {}, dir)).ok).toBe(true);
     expect(await executeContentSave({ _dataDir: dir, _host: "claude", action: "update", id: c.id, platform: "douyin" })).toMatchObject({ ok: false, code: "platform_locked" });
+  });
+
+  it("退回已过审也解不开平台锁：交接过的视频稿，宿主改平台照样被拒", async () => {
+    const { id, token } = await editingVideo();
+    const host = { _dataDir: dir, _host: "claude", claim_token: token };
+    // 真交接会留下交接记录（这里只补上记录本身，形状见 VideoHandoffRecord）
+    await updateContent(id, { video: { handoff: { generation: 1, hash: "a".repeat(64) } } } as unknown as ContentUpdates, dir);
+    expect(await executeContentSave({ ...host, action: "transition", id, target_status: "approved" })).toMatchObject({ ok: true });
+    expect(await executeContentSave({ ...host, action: "update", id, platform: "wechat_mp" })).toMatchObject({ ok: false, code: "platform_locked" });
+  });
+
+  it("交接前：公众号身份下选了封面，就不能再改回视频平台", async () => {
+    const c = await saveContent({ title: "长文", body: "正文。".repeat(200), platform: "wechat_mp", status: "approved" }, dir);
+    await saveCoverReview(c.id, { platform: "wechat_mp", status: "review_pending", variants: [{ label: "a", imagePaths: { "3:4": "/tmp/a.png" } }] }, dir);
+    const host = { _dataDir: dir, _host: "claude" };
+    const approved = await executeCoverReview({ ...host, content_id: c.id, action: "approve", label: "a" });
+    expect(approved).toMatchObject({ ok: true });
+    const token = approved.claim_token as string;
+    expect(await executeContentSave({ ...host, claim_token: token, action: "update", id: c.id, platform: "douyin" })).toMatchObject({ ok: false, code: "platform_locked" });
+  });
+
+  it("没有成片戳：宿主 force 从已过审直推封面台被阶段门拦下", async () => {
+    const c = await saveContent({ title: "口播稿", body: "口播正文。".repeat(200), platform: "douyin", status: "approved" }, dir);
+    const moved = await executeContentSave({ _dataDir: dir, _host: "claude", action: "transition", id: c.id, target_status: "cover_pending", force: true });
+    expect(moved).toMatchObject({ ok: false, blocked: true });
+    expect((await getContent(c.id, dir))!.status).toBe("approved");
+  });
+
+  it("OpenClaw 模型调用（只带 _modelCall）同样改不了平台", async () => {
+    const { id, token } = await editingVideo();
+    expect(await executeContentSave({ _dataDir: dir, _modelCall: true, claim_token: token, action: "update", id, platform: "wechat_mp" })).toMatchObject({ ok: false, code: "platform_locked" });
   });
 });

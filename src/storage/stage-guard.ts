@@ -80,7 +80,9 @@ export async function stageGuardError(
     const registered = from === "editing" && Boolean(subject.videoDone) && (await coverApproved());
     if (!registered) return "视频稿要先过剪辑与封面（交接给剪辑工位）";
   }
-  if (from === "editing" && to === "cover_pending" && !subject.videoDone) {
+  // 成片戳只有创始人审片或带工作台批准的登记才盖得出（P6 §14.7 #1）。视频稿进封面台、进待发布都要它，
+  // 不看来路：force 能从「已过审」直推封面台，只挡 editing 那条边就等于封面台后面没人看成片
+  if (video && (to === "cover_pending" || to === "publish_ready") && !subject.videoDone) {
     return "成片还没审通过——先在剪辑台把片子审过，再推进到封面";
   }
   if (from === "cover_pending" && to === "publish_ready" && !(await coverApproved())) {

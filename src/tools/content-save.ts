@@ -17,6 +17,7 @@ import {
   adoptionStats,
   softDeleteContent,
   restoreContent,
+  getCoverReview,
   type ContentUpdates,
 } from "../storage/local-store.js";
 import type { AdoptionVerdict, Content } from "../storage/local-store.js";
@@ -121,16 +122,19 @@ function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
 const PLATFORM_LOCKED = new Set(["editing", "cover_pending", "publish_ready", "publishing", "published", "archived"]);
 
 /**
- * 模型调用不许在剪辑之后把稿件在视频 / 图文之间改来改去：阶段门和创始人批准（gate3 / gate4）都按平台判定，
- * 临时改成公众号就能绕过去再改回来（P6 §14.7 #1）。视频平台之间互换、图文平台之间互换不受影响。
+ * 模型调用不许把稿件在视频 / 图文之间改来改去：阶段门和创始人批准（gate3 / gate4）都按平台判定，
+ * 临时改成公众号就能选封面、推进，再改回来（P6 §14.7 #1）。锁看的是回退状态也抹不掉的事实——
+ * 交接过、盖过成片戳、封面定过稿——再加上剪辑之后的阶段。视频平台之间、图文平台之间互换不受影响。
  */
-function platformFlipRefusal(params: Record<string, unknown>, content: Content): Record<string, unknown> | null {
+async function platformFlipRefusal(params: Record<string, unknown>, content: Content, dataDir?: string): Promise<Record<string, unknown> | null> {
   if (!isModelCall(params) || typeof params.platform !== "string") return null;
-  if (!PLATFORM_LOCKED.has(normalizeLegacyStatus(content.status))) return null;
   if (isVideoPlatform(params.platform) === isVideoPlatform(content.platform)) return null;
+  const locked = PLATFORM_LOCKED.has(normalizeLegacyStatus(content.status)) || Boolean(content.video?.handoff) || Boolean(content.videoDone)
+    || Boolean((await getCoverReview(content.id, dataDir))?.approvedLabel);
+  if (!locked) return null;
   return {
     ok: false, code: "platform_locked",
-    error: "稿件进了剪辑之后不能在视频和图文平台之间改：视频稿的审片和封面要创始人在工作台批。要换形态，请创作者在工作台处理。",
+    error: "这篇已经交接过、审过片、定过封面或进了剪辑之后的阶段，不能在视频和图文平台之间改：视频稿的审片和封面要创始人在工作台批。要换形态，请创作者在工作台处理，或另建一篇。",
   };
 }
 
@@ -213,7 +217,7 @@ export async function executeContentSave(
       error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
       next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
     };
-    const platformFlip = platformFlipRefusal(params, oldContent);
+    const platformFlip = await platformFlipRefusal(params, oldContent, dataDir);
     if (platformFlip) return platformFlip;
     // 带 status 的 update 先预检流转：被拒就原样返回，认领门和正文都不动
     if (params.status) {

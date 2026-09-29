@@ -12,8 +12,9 @@ describe("OpenClaw 模型调用桥", () => {
     expect(openclawModelParams("autocrew_video", { action: "review", _modelCall: false })._modelCall).toBe(true);
   });
 
-  it("其它工具参数原样透传", () => {
-    const params = { action: "list" };
-    expect(openclawModelParams("autocrew_content", params)).toBe(params);
+  it("内容工具同样打标记：剪辑之后改平台只许人来（覆盖自报值、不改原对象）", () => {
+    const params = { action: "update", _modelCall: false };
+    expect(openclawModelParams("autocrew_content", params)._modelCall).toBe(true);
+    expect(params._modelCall).toBe(false);
   });
 });

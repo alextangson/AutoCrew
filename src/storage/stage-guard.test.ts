@@ -51,11 +51,19 @@ describe("stage guard", () => {
   });
 
   it("封面设计 → 待发布：封面没定稿就拦下", async () => {
-    expect(await stageGuardError(video, "cover_pending", "publish_ready", noCover)).toBe("封面还没定稿");
+    expect(await stageGuardError({ ...video, videoDone: done }, "cover_pending", "publish_ready", noCover)).toBe("封面还没定稿");
   });
 
   it("封面设计 → 待发布：封面定稿即放行", async () => {
-    expect(await stageGuardError(video, "cover_pending", "publish_ready", hasCover)).toBeNull();
+    expect(await stageGuardError({ ...video, videoDone: done }, "cover_pending", "publish_ready", hasCover)).toBeNull();
+  });
+
+  // P6 §14.7 #1：成片戳是创始人审片的唯一痕迹。force 能从任意列推进封面台，不看来路才挡得住
+  it("视频稿没有成片戳：从哪进封面台、从封面台进待发布都拦下（封面定稿了也不行）", async () => {
+    for (const from of ["approved", "draft_ready", "publish_ready", "editing"] as const)
+      expect(await stageGuardError(video, from, "cover_pending", hasCover), from).toContain("成片还没审通过");
+    expect(await stageGuardError(video, "cover_pending", "publish_ready", hasCover)).toContain("成片还没审通过");
+    expect(await stageGuardError(text, "approved", "cover_pending", hasCover)).toBeNull();
   });
 
   it("封面评审单只在真要判它的那一条边上读——别的边不该多花一次 I/O", async () => {
@@ -63,7 +71,7 @@ describe("stage guard", () => {
     await stageGuardError(video, "approved", "editing", read);
     await stageGuardError({ ...video, videoDone: done }, "editing", "cover_pending", read);
     expect(read).not.toHaveBeenCalled();
-    await stageGuardError(video, "cover_pending", "publish_ready", read);
+    await stageGuardError({ ...video, videoDone: done }, "cover_pending", "publish_ready", read);
     expect(read).toHaveBeenCalledTimes(1);
   });
 
@@ -115,7 +123,7 @@ d2("stageGuardError · 视频稿进待发布的唯一入口", () => {
     e2(err).toContain("先过剪辑与封面");
   });
   i2("cover_pending → publish_ready 走封面判定,不撞此规则", async () => {
-    const err = await stageGuardError(subject, "cover_pending", "publish_ready", () => Promise.resolve(true));
+    const err = await stageGuardError({ ...subject, videoDone: { renderedRevision: 1, at: "2026-09-29T00:00:00.000Z" } }, "cover_pending", "publish_ready", () => Promise.resolve(true));
     e2(err).toBeNull();
   });
   i2("文字平台 approved → publish_ready 不受影响", async () => {
