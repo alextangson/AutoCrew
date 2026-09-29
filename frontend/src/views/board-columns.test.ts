@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  backMoves, boardCards, dropAction, estimateText, statusColumn, itemMeta, ontologyNotice, publishLine, topicSourceLabel, visibleCards,
+  backMoves, boardCards, dropAction, estimateText, itemMeta, ontologyNotice, publishLine, topicSourceLabel, visibleCards,
   type BoardItem, type BoardTopic, type PlatformPublication,
 } from "./board-columns";
 
@@ -77,11 +77,25 @@ describe("拖动与往回退", () => {
     expect(kind("写稿中", video("drafting", "写稿中"), "选题")).toEqual({ kind: "refuse", reason: "这张卡不能往回退" });
   });
 
-  it("状态落列与服务端同表：没认的稿在写稿中，认过的视频待录制、非视频待发布", () => {
-    expect(statusColumn("draft_ready", true)).toBe("写稿中");
-    expect(statusColumn("draft_ready", false)).toBe("写稿中");
-    expect(statusColumn("approved", true)).toBe("待录制");
-    expect(statusColumn("approved", false)).toBe("待发布");
+  it("往回退的目标列写在退路本身上（前端不再有状态→列的表）", () => {
+    expect(backMoves(item("x", { status: "draft_ready", column: "写稿中" }))[0].column).toBe("写稿中");
+    expect(backMoves(item("x", { status: "publish_ready", column: "待发布" }))[0].column).toBe("待录制");
+    expect(backMoves(item("x", { status: "publish_ready", column: "待发布", platform: "wechat_mp" }))[0].column).toBe("待发布");
+  });
+
+  it("本体（spec §10）：视频卡只有认稿与我发了是真动作，其余前向拖开面板；往回拖对应具体撤销、先确认", () => {
+    const v = (column: BoardItem["column"], status = "approved") => item("x", { column, status });
+    expect(dropAction("写稿中", v("写稿中", "draft_ready"), "待录制", true)).toEqual({ kind: "approve" });
+    expect(dropAction("待发布", v("待发布"), "已发布", true)).toEqual({ kind: "publish" });
+    expect(dropAction("待录制", v("待录制"), "剪辑中", true)).toEqual({ kind: "panel" });
+    expect(dropAction("剪辑中", v("剪辑中"), "待发布", true)).toEqual({ kind: "panel" });
+    expect(dropAction("待录制", v("待录制"), "写稿中", true)).toMatchObject({ kind: "undo", undo: { action: "unapprove" } });
+    expect(dropAction("剪辑中", v("剪辑中"), "待录制", true)).toMatchObject({ kind: "undo", undo: { action: "reopen" } });
+    expect(dropAction("待发布", v("待发布"), "剪辑中", true)).toMatchObject({ kind: "undo", undo: { action: "revoke_cut" } });
+    expect(dropAction("已发布", v("已发布"), "待发布", true)).toMatchObject({ kind: "undo", undo: { action: "correct_publish" } });
+    expect(dropAction("已发布", v("已发布"), "写稿中", true)).toMatchObject({ kind: "refuse" });
+    // 没启用本体：照旧的交接流程
+    expect(dropAction("待录制", v("待录制"), "剪辑中")).toEqual({ kind: "open-handoff" });
   });
 
   it("往回退只给状态机允许的那一步，撤回交接要说清后果；往前跳不在菜单里", () => {

@@ -56,10 +56,14 @@ export async function verifyStoredApprovals(content: Content, requested: Registe
 
 export async function founderProjectReview(id: string, dataDir: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
   // 撤回自己排队（全局交接锁 + 这条视频线），不能套在下面的 serializeVideoLine 里，否则自锁
-  if (params?.action === "revoke") return founderRevoke(id, dataDir, params);
-  // 本体（spec 2026-09-29 §8 适配）：按本体走的视频稿，成片 / 封面的批准与打回写成创始人决定，不要交接代次
+  // 本体（spec 2026-09-29 §8 适配）：按本体走的视频稿，成片 / 封面的批准与打回写成创始人决定，不要交接代次；
+  // 撤回交接也关了——往回拖改走「撤销批准 / 重开文稿」
   const current = await getContent(id, dataDir);
-  if (current && isVideoPlatform(current.platform) && await isOntologyActive(dataDir, id)) return ontologyReview(current, dataDir, params);
+  if (current && isVideoPlatform(current.platform) && await isOntologyActive(dataDir, id)) {
+    if (params?.action === "revoke") return { ok: false, code: "entry_closed", error: "本体已启用：没有交接可撤。要回到写稿，在卡片上点「重开文稿」；要撤某个批准，在卡片上点「撤销批准」" };
+    return ontologyReview(current, dataDir, params);
+  }
+  if (params?.action === "revoke") return founderRevoke(id, dataDir, params);
   return serializeVideoLine(id, async () => {
     const content = await getContent(id, dataDir), binding = resolveContentProject(id, dataDir);
     if (!content || (!binding && !content.video?.handoff)) return { ok: true, enabled: false, status: content?.status ?? null };

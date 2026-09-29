@@ -1,7 +1,10 @@
+import path from "node:path";
+import { closedResult, oldEntryClosed } from "../modules/production/closed.js";
+import { isWithin, readLibraryLocation } from "../storage/storage-roots.js";
 import { Type } from "@sinclair/typebox";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { COVER_ASSET_WARNING } from "../modules/video/unregistered-cut.js";
-import { addAsset, addAssetByPath, getContent, listAssets, removeAsset, listVersions, getVersion, revertToVersion } from "../storage/local-store.js";
+import { addAsset, addAssetByPath, getContent, getDataDir, listAssets, removeAsset, listVersions, getVersion, revertToVersion } from "../storage/local-store.js";
 
 /**
  * autocrew_asset — manage media files (covers, B-Roll, images, videos, subtitles)
@@ -37,6 +40,11 @@ async function coverBypassesGate(contentId: string, dataDir?: string): Promise<b
   return Boolean(c && isVideoPlatform(c.platform) && c.status !== "editing" && c.status !== "publish_ready");
 }
 
+/** 资料库根（没配资料库时退回工作区目录）：库内路径只登记不挪 */
+function getLibraryRootOrData(dataDir?: string): string {
+  return readLibraryLocation()?.root ?? getDataDir(dataDir);
+}
+
 export async function executeAsset(params: Record<string, unknown>) {
   const action = params.action as string;
   const contentId = params.content_id as string;
@@ -54,6 +62,11 @@ export async function executeAsset(params: Record<string, unknown>) {
     if (!filename) return { ok: false, error: "filename is required for add" };
     const base = { filename, type: assetType as any, description: (params.description as string) || undefined };
     const source = (params.source_path as string) || "";
+    // 本体启用后（§8）：封面分支与「把库外文件挪进项目」关闭，改走 autocrew_content record；库内素材登记照旧
+    if (await oldEntryClosed(getDataDir(dataDir), contentId)) {
+      const external = Boolean(source) && !isWithin(getLibraryRootOrData(dataDir), path.resolve(source));
+      if (assetType === "cover" || external) return closedResult(contentId);
+    }
     // 失败照旧向上抛（存储类错误由外层统一成 storage_unavailable），不在这里吞成泛化失败
     const result = source ? await addAssetByPath(contentId, base, source, dataDir) : await addAsset(contentId, base, dataDir);
     return result.ok && assetType === "cover" && (await coverBypassesGate(contentId, dataDir))

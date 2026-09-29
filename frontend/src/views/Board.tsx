@@ -9,14 +9,16 @@ import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { requestDockCollapsed } from "../chat/dock-prefs";
 import { newIdea } from "../new-idea";
-import { loadBoard, markPublished, startWriting } from "./board-api";
+import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting } from "./board-api";
+import { CardPanel } from "./CardPanel";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
 import {
   COLUMNS, COLUMN_HINT, EMPTY_NOTE, FINAL_NOTE, HANDOFF_NOTE, boardCards, dropAction, platformName, visibleCards,
-  type BoardColumn, type BoardData, type BoardItem, type Card, type DropAction,
+  type BoardColumn, type BoardData, type BoardItem, type Card, type DropAction, type UndoMove,
 } from "./board-columns";
+import { VIDEO_PLATFORMS } from "../lib";
 import "./board.css";
 
 const POLL_MS = 3000;
@@ -65,6 +67,8 @@ export function Board(props: Nav) {
   const drag = useRef<{ from: BoardColumn; id: string; item: BoardItem | null } | null>(null);
   const [moving, setMoving] = useState<Set<string>>(new Set());
   const [over, setOver] = useState<BoardColumn | null>(null);
+  const [panel, setPanel] = useState<string | null>(null);
+  const ontology = Boolean(data?.ontology?.enabled);
   const cards = useMemo(() => (data ? boardCards(data) : null), [data]);
   // 看板默认收起总编辑（§28），离开回到偏好
   useEffect(() => requestDockCollapsed(), []);
@@ -92,7 +96,7 @@ export function Board(props: Nav) {
     const d = drag.current;
     endDrag();
     if (!d || moving.has(d.id)) return;
-    const act = dropAction(d.from, d.item, to);
+    const act = dropAction(d.from, d.item, to, ontology);
     if (act.kind === "start") return void start(d.id);
     if (act.kind === "refuse") return toast(act.reason);
     if (d.item) void runDrop(act, d.item);
@@ -100,13 +104,13 @@ export function Board(props: Nav) {
   /** 同一张卡在途时再拖一律忽略（§双击），结束后解锁 */
   const runDrop = async (act: DropAction, item: BoardItem) => {
     setMoving((s) => new Set(s).add(item.id));
-    try { await applyDrop(act, item, props.openEditor, reload); } finally {
+    try { await applyDrop(act, item, props.openEditor, reload, setPanel); } finally {
       setMoving((s) => { const n = new Set(s); n.delete(item.id); return n; });
     }
   };
   const beginDrag = (from: BoardColumn, id: string, item: BoardItem | null) => { drag.current = { from, id, item }; pause(true); };
   const endDrag = () => { if (drag.current) pause(false); drag.current = null; setOver(null); };
-  const verdict = (col: BoardColumn) => (drag.current ? dropAction(drag.current.from, drag.current.item, col) : null);
+  const verdict = (col: BoardColumn) => (drag.current ? dropAction(drag.current.from, drag.current.item, col, ontology) : null);
 
   if (trash) return <BoardTrash back={() => { setTrash(false); void reload(); }} />;
   if (!data && error) return <div className="board-fail" role="alert">看板读不出来：{error} <button onClick={() => void reload()}>重试</button></div>;
@@ -135,9 +139,10 @@ export function Board(props: Nav) {
         {cards === null ? <p className="bcol-note">读取中</p>
           : <ColumnBody col={col} cards={cards[col]} data={data!} expanded={expanded.has(col)} allEmpty={allEmpty} starting={starting}
             onExpand={() => setExpanded((s) => new Set(s).add(col))} nav={props} start={start} trashTopic={trashTopic}
-            beginDrag={beginDrag} endDrag={endDrag} pause={pause} reload={reload} moving={moving} />}
+            beginDrag={beginDrag} endDrag={endDrag} pause={pause} reload={reload} moving={moving} openPanel={ontology ? setPanel : null} />}
       </section>; })}
     </div>
+    {panel && <CardPanel contentId={panel} onClose={() => setPanel(null)} openEditor={props.openEditor} reload={reload} />}
   </div>;
 }
 
@@ -153,6 +158,8 @@ function ColumnBody(p: {
   onExpand: () => void; nav: Nav; start: (id: string) => Promise<void>; trashTopic: (id: string) => Promise<void>;
   beginDrag: (from: BoardColumn, id: string, item: BoardItem | null) => void; endDrag: () => void; pause: (on: boolean) => void; reload: () => Promise<void>;
   moving: Set<string>;
+  /** 本体已启用：点视频卡开卡片面板（§10）；没启用照旧打开稿件 */
+  openPanel: ((id: string) => void) | null;
 }) {
   if (p.cards.length === 0) {
     if (p.col === "选题" && p.allEmpty) return <div className="bcol-note"><button className="primary" onClick={() => void newIdea().then(p.reload)}>＋新想法</button></div>;
@@ -164,7 +171,7 @@ function ColumnBody(p: {
     {shown.map((c) => c.kind === "topic"
       ? <TopicCard key={c.topic.id} {...drag} topic={c.topic} busy={p.starting === c.topic.id}
         onStart={() => void p.start(c.topic.id)} onOpen={() => p.nav.openTopic(`t-${c.topic.id}`)} onTrash={() => void p.trashTopic(c.topic.id)} />
-      : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => p.nav.openEditor(c.item.id)} onMenu={p.pause} reload={p.reload} />)}
+      : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => (p.openPanel && VIDEO_PLATFORMS.has(c.item.platform ?? "") ? p.openPanel(c.item.id) : p.nav.openEditor(c.item.id))} onMenu={p.pause} reload={p.reload} />)}
     {hidden > 0 && <button className="bcol-more" onClick={p.onExpand}>还有 {hidden} 条 ▾</button>}
     {p.col === "选题" && <p className="bcol-tip">拖到「写稿中」或点「开始写」</p>}
     {p.col === "已发布" && <button className="bcol-more" onClick={p.nav.openData}>更早的在数据页 ›</button>}
@@ -172,8 +179,10 @@ function ColumnBody(p: {
 }
 
 /** 拖放落地：认稿 / 标已发布走状态流转（force 只越状态图形状、越不过阶段门）；交剪辑、成片只打开工作台 */
-async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: string) => void, reload: () => Promise<void>): Promise<void> {
+async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: string) => void, reload: () => Promise<void>, openPanel: (id: string) => void): Promise<void> {
   switch (act.kind) {
+    case "panel": return openPanel(item.id);
+    case "undo": return runUndo(act.undo, item, reload);
     case "approve": return runTransition(item, "approved", "已认稿", reload, true);
     case "back": return confirmBackMove(item, act.move, reload);
     case "publish": {
@@ -187,6 +196,27 @@ async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: stri
     case "open-final": toast(FINAL_NOTE); return openEditor(item.id);
     default: return;
   }
+}
+
+/** 本体下往回拖（§10、E14）：先确认，再落对应的撤销决定 / 重开文稿 */
+async function runUndo(undo: UndoMove, item: BoardItem, reload: () => Promise<void>): Promise<void> {
+  if (!(await confirmDialog({ title: undo.title, body: undo.body, confirmLabel: "确定", danger: true }))) return;
+  try {
+    if (undo.action === "unapprove") return await runTransition(item, "reviewing", "已撤回认稿", async () => undefined);
+    if (undo.action === "reopen") { const r = await reopenScript(item.id); toast(r.ok ? "已重开文稿" : r.error); return; }
+    const card = await loadCard(item.id);
+    if (!card.ok) return toast(card.error);
+    if (undo.action === "revoke_cut") {
+      const id = card.data.approvals?.cut?.id;
+      if (!id) return toast("这版成片没有有效的批准可撤");
+      const r = await decide(item.id, "revoke_approval", { decision_id: id });
+      return toast(r.ok ? "已撤销成片批准" : r.error);
+    }
+    const last = card.data.published?.[0];
+    if (!last) return toast("没有可纠正的发布记录");
+    const r = await decide(item.id, "correct_publish", { target_id: last.id });
+    toast(r.ok ? "已纠正发布记录" : r.error);
+  } finally { await reload(); }
 }
 
 /** 「开始写」的收尾：已开写就打开那篇；打不开 Claude 就退回剪贴板，一行提示不静默（§9/§11/§12） */

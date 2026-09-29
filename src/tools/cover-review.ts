@@ -14,6 +14,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
 import { FOUNDER_APPROVAL_ONLY, isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
+import { oldEntryClosed } from "../modules/production/closed.js";
 import {
   LOCAL_HOST,
   getContent,
@@ -540,6 +541,8 @@ async function createCandidates(params: Record<string, unknown>, contentId: stri
 async function downgradeAfterRevoke(contentId: string, dataDir: string): Promise<string | null> {
   const content = await getContent(contentId, dataDir);
   if (!content || normalizeLegacyStatus(content.status) !== "publish_ready") return null;
+  // 本体启用后（§8）：视频稿的阶段由推导投影，旧封面评审单撤销不再改状态
+  if (await oldEntryClosed(dataDir, contentId)) return null;
   const moved = await transitionStatus(contentId, "cover_pending", { force: true }, dataDir);
   return moved.ok
     ? "封面选用已作废，这篇退回「封面设计」"

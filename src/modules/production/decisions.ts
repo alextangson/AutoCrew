@@ -5,7 +5,11 @@
  *
  * 写完决定：成片 / 封面批准齐了就在同一个文件归属事务里跑登记提交（§5 批准即登记）。
  */
-import { getContent, getDataDir, type Content } from "../../storage/local-store.js";
+import path from "node:path";
+import { getContent, getDataDir, listContents, type Content } from "../../storage/local-store.js";
+import { isVideoPlatform } from "../../storage/stage-guard.js";
+import { exportMatchesTitle } from "../video/unregistered-cut.js";
+import { resolveLocalFile, stableFingerprint } from "./files.js";
 import { bodyHash, isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isModelCall } from "../../storage/stage-guard.js";
@@ -18,11 +22,11 @@ import { ensureProductionReady, mutateProduction } from "./service.js";
 
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
-  | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish";
+  | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
-  "revoke_approval", "i_published", "confirm_receipt", "correct_publish",
+  "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll",
 ];
 
 type Result = Record<string, unknown>;
@@ -137,10 +141,41 @@ async function correct(ctx: Ctx): Promise<Result> {
   return { ok: true, decision: same ?? (await push(ctx, { type: "publish_correction", target_id: id, ...(str(ctx.params.note) ? { note: str(ctx.params.note) } : {}) }, "publish_corrected")) };
 }
 
+/**
+ * 卡片挂载 A-roll（§9.1-3）：创始人贴路径 / 选文件 = 决定，直接 accepted 并按 §3-7 落位。
+ * 匹配器只做不花钱的那一步：文件名对得上别条在制稿的标题 → 先提醒「更像《X》」，创始人再点一次（confirm_other）才挂。
+ */
+async function attachAroll(ctx: Ctx): Promise<Result> {
+  const input = str(ctx.params.path);
+  if (!input) return fail("path_required", "贴一个原片的完整路径");
+  const at = await resolveLocalFile(input, "原片");
+  if (!at.ok) return fail(at.code, at.error);
+  const fp = await stableFingerprint(at.value, Date.now());
+  if (!fp.ok) return fail(fp.code, fp.error);
+  if (ctx.params.confirm_other !== true) {
+    const name = path.basename(at.value);
+    const other = (await listContents(ctx.dataDir)).find((c) => c.id !== ctx.content.id && isVideoPlatform(c.platform) && !c.deletedAt
+      && c.status !== "archived" && exportMatchesTitle(name, c.title) && !exportMatchesTitle(name, ctx.content.title));
+    if (other) return { ok: false, code: "looks_like_other", error: `这个视频更像《${other.title}》，确定挂到这条？`, other_id: other.id };
+  }
+  const existing = ctx.doc.facts.find((f) => f.round === ctx.doc.round && f.kind === "aroll" && f.sha256 === fp.value.sha256);
+  if (existing?.state === "accepted") return { ok: true, fact_id: existing.id, state: "accepted", note: "这个原片已经挂过了" };
+  const fact = existing ?? (await mutateProduction(ctx.content.id, ctx.dataDir, (doc) => {
+    const f: Fact = { id: newId("fact"), kind: "aroll", round: doc.round, state: "candidate", availability: "present", source: "founder", at: new Date().toISOString(),
+      path: at.value, sha256: fp.value.sha256, size: fp.value.id.size, mtime_ms: fp.value.id.mtime_ms, evidence: "创始人在卡片上挂载" };
+    doc.facts.push(f);
+    return { value: f, events: [] };
+  })).value;
+  const adopted = await adoptCandidate(ctx.content, fact, ctx.dataDir);
+  if (!adopted.ok) return adopted;
+  return { ...adopted, decision: await push(ctx, { type: "candidate_confirm", fact_id: fact.id, sha256: fact.sha256, note: "卡片挂载" }, "aroll_attached") };
+}
+
 const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   confirm_candidate: (c) => candidate(c, true), reject_candidate: (c) => candidate(c, false),
   approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
   pick_cover: pickCover, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
+  attach_aroll: attachAroll,
 };
 
 /**

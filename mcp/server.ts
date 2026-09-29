@@ -10,6 +10,7 @@ import { contentFile } from "../src/storage/content-project.js";
  */
 import { WRITING_INSTRUCTIONS, MCP_INSTRUCTIONS } from "./writing-instructions.js";
 import { mcpToolView, TOOL_GUIDE_PREFIX, toolGuideText } from "./tool-docs.js";
+import { isOntologyEnabled } from "../src/storage/production-store.js";
 import { withMisuseGuide } from "./misuse-guide.js";
 import { registerAutocrewCapabilities } from "../index.js";
 import { loadProfile } from "../src/modules/profile/creator-profile.js";
@@ -236,10 +237,12 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
     // 按宿主过滤（P6 §3.7）：只减 Claude/Codex 会话的上下文，注册表与 tools/call 一个不动
     const host = access?.host ?? DEFAULT_HOST;
     const listed = runtime.runner.getTools().filter((tool) => hostListsTool(host, tool.name));
+    // 说明跟着资料库的本体启用状态走（§8 同步改口）；读不了启用状态就按未启用给旧说明
+    const ontology = await isOntologyEnabled(runtime.ctx.dataDir).catch(() => false);
     return resultResponse(id, {
       // TypeBox schema 上挂着 own symbol，直接吐出去在传输里会静默丢字段——先过 lossless。
       // 给宿主的是瘦身版说明（mcp/tool-docs.ts）；参数结构只做等价压缩，契约不变
-      tools: toLosslessJson(listed.map((tool) => mcpToolView({ name: tool.name, description: tool.description, parameters: toLosslessJson(tool.parameters) }))),
+      tools: toLosslessJson(listed.map((tool) => mcpToolView({ name: tool.name, description: tool.description, parameters: toLosslessJson(tool.parameters) }, ontology))),
     });
   }
   if (method === "resources/list") {

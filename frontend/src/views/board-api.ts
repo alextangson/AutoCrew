@@ -57,3 +57,17 @@ export const removeCover = (key: string) => post<{ removed: boolean }>("/api/dat
 export interface RevokeReply { ok: boolean; error?: string; aroll_restored_to?: string; aroll_restore_failed?: string }
 export const revokeHandoff = (contentId: string, manifestHash: string) =>
   post<RevokeReply>(`/api/project-review?content_id=${encodeURIComponent(contentId)}`, { action: "revoke", manifest_hash: manifestHash });
+
+/* 本体卡片面板（spec §10）：读面板、创始人决定、重开文稿 */
+export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean }
+export interface CardPanelData {
+  id: string; title: string; platform: string | null; status: string; active: boolean;
+  column: string | null; stage: string | null; missing: string[]; badges: string[]; candidates: CardCandidate[];
+  round?: number; checklist?: string | null; can_reopen?: boolean;
+  pending_receipts?: Array<{ fact_id: string; platform: string | null; url: string | null; host: string }>;
+  published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; label: string }>;
+  approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };
+}
+export const loadCard = (contentId: string) => call<CardPanelData>(`/api/board/card?content_id=${encodeURIComponent(contentId)}`);
+export const decide = (contentId: string, action: string, params: Json = {}) => post<Json>("/api/board/decision", { content_id: contentId, action, ...params });
+export const reopenScript = (contentId: string) => post<Json>("/api/board/reopen-script", { content_id: contentId, confirm: true });

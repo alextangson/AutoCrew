@@ -15,7 +15,7 @@ export type Rule = "D1" | "D2" | "D3" | "D4" | "D5";
 /** D1 的外部输入：AutoCrew 发布器写的 publish-plan / 数据回流 = 已核实回执（§6） */
 export interface PublishEvidence { verified: boolean; badge?: string; /** 最早投出的时间（投影到 published 时盖 publishedAt） */ at?: string }
 
-export interface CandidateView { fact_id: string; kind: Fact["kind"]; path?: string; evidence?: string; post_publish?: boolean; state: Fact["state"] }
+export interface CandidateView { fact_id: string; kind: Fact["kind"]; path?: string; evidence?: string; post_publish?: boolean; state: Fact["state"]; sha256?: string }
 
 export interface Derived {
   stage: Stage;
@@ -120,7 +120,7 @@ export function candidatesOf(doc: ProductionDoc): CandidateView[] {
     .filter((f) => f.state === "candidate" || f.state === "pending_match")
     .sort((a, b) => b.at.localeCompare(a.at))
     // 文件名规则得出的候选全列（E4）；只有 1b 的转写打分候选才截前三
-    .map((f) => ({ fact_id: f.id, kind: f.kind, state: f.state, ...(f.path ? { path: f.path } : {}), ...(f.evidence ? { evidence: f.evidence } : {}), ...(f.post_publish ? { post_publish: true } : {}) }));
+    .map((f) => ({ fact_id: f.id, kind: f.kind, state: f.state, ...(f.sha256 ? { sha256: f.sha256 } : {}), ...(f.path ? { path: f.path } : {}), ...(f.evidence ? { evidence: f.evidence } : {}), ...(f.post_publish ? { post_publish: true } : {}) }));
 }
 
 /**

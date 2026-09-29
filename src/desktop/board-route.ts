@@ -12,6 +12,7 @@ import { markPublished, startWriting, unmarkPublished, type OpenDeps } from "./b
 import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { founderDecision } from "../modules/production/decisions.js";
+import { cardPanel } from "../modules/production/panel.js";
 import { isContentId } from "../storage/entity-id.js";
 
 export interface BoardRouteDeps {
@@ -48,6 +49,15 @@ export function createBoardHandler(deps: BoardRouteDeps) {
     if (p === "/api/board" && req.method === "GET") {
       if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
       try { send(res, 200, { ok: true, data: await boardData(await deps.resolveDataDir()) }); }
+      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    // 卡片面板（本体 §10）：阶段、还差什么、候选、待核回执、我发了、核对清单
+    if (p === "/api/board/card" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      const id = url.searchParams.get("content_id") ?? "";
+      if (!isContentId(id)) { send(res, 400, { ok: false, code: "bad_request", error: "content_id 不对" }); return true; }
+      try { send(res, 200, await cardPanel(id, await deps.resolveDataDir())); }
       catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }

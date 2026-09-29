@@ -21,6 +21,7 @@ import { hostOf, videoFail, type VideoToolResult } from "./video-gates.js";
 import { storageFailure } from "../storage/storage-error.js";
 import { matchAroll } from "../modules/video/handoff/match.js";
 import { confirmHandoff } from "../modules/video/handoff/confirm.js";
+import { closedResult, oldEntryClosed } from "../modules/production/closed.js";
 
 async function guarded(action: string, fn: () => Promise<VideoToolResult>): Promise<VideoToolResult> {
   try {
@@ -52,6 +53,11 @@ function str(v: unknown): string {
 
 export async function executeVideoHandoff(action: HandoffAction, params: Record<string, unknown>): Promise<VideoToolResult> {
   const dataDir = getDataDir(typeof params._dataDir === "string" ? params._dataDir : undefined);
+  // 本体启用后，交接 / 认稿 / 汇报 / 登记 / 撤回都关（§8）；citations 是出处映射，不是制作状态，照旧
+  if (action !== "citations") {
+    const cid = str(params.content_id) || undefined;
+    if (await oldEntryClosed(dataDir, cid)) return closedResult(cid) as unknown as VideoToolResult;
+  }
   // 认稿不针对某一篇：content_id 正是它要找出来的东西
   if (action === "match") return guarded(action, () => matchAroll({ arollPath: str(params.aroll_path), requestId: str(params.request_id) }, dataDir));
   if (action === "confirm") {

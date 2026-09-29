@@ -8,6 +8,7 @@ import { generateLearningReport } from "../modules/learnings/visible-learning.js
 import { engineFallbackStats } from "../runtime/run-log.js";
 import { explainAll } from "../modules/production/read.js";
 import { readReconcileReport } from "../modules/production/reconcile.js";
+import { isOntologyEnabled } from "../storage/production-store.js";
 
 export const statusSchema = Type.Object({
   action: Type.Optional(Type.Unsafe<"overview" | "baseline" | "compare" | "track_performance" | "learning_report">({
@@ -85,8 +86,37 @@ export async function executeStatus(params: Record<string, unknown>) {
  * 待写与已派工直接复用写手桌 / 剪辑师桌的判据，不另起一套会和桌子各说各的口径。
  * 剪完未登记（外面导出了没交接）从待认稿 / 等 A-roll 里扣出来单算，不重复计数。
  */
+/**
+ * 本体启用后的晨报桶（spec §8 同步改口）：待写 / 待认稿 / 等 A-roll / 剪辑中 / 等你审 / 待发布，候选待确认不为 0 才出现。
+ * 全部来自 explain()：「等你审」= 剪辑中且还差「成片待你审 / 封面待你选」或有待核发布回执。
+ */
+async function ontologyBrief(dir: string) {
+  const [writer, contents] = await Promise.all([deskInbox("writer", dir), listContents(dir)]);
+  const exp = await explainAll(contents, dir);
+  const report = await readReconcileReport(dir);
+  const e = (c: { id: string }) => exp.get(c.id);
+  const REVIEW = new Set(["成片待你审", "封面待你选"]);
+  const pendingClaim = (c: { id: string }) => (e(c)?.badges ?? []).some((b) => b.endsWith("是吗？"));
+  const waitingYou = (c: { id: string }) => e(c)?.column === "剪辑中" && e(c)!.missing.some((m) => REVIEW.has(m));
+  const counts = {
+    to_write: writer.length + contents.filter((c) => c.status === "drafting").length,
+    awaiting_approval: contents.filter((c) => c.status === "draft_ready" && e(c)?.column === "写稿中").length,
+    awaiting_aroll: contents.filter((c) => e(c)?.column === "待录制").length,
+    editing: contents.filter((c) => e(c)?.column === "剪辑中" && !waitingYou(c)).length,
+    your_review: contents.filter(waitingYou).length,
+    publish_ready: contents.filter((c) => e(c)?.column === "待发布").length,
+    // 候选待确认：文件候选（是不是这条）与待核发布回执（AI 说发了，是吗？）
+    candidates: contents.filter((c) => (e(c)?.candidates.length ?? 0) > 0 || pendingClaim(c)).length,
+  };
+  const warnings = (report?.errors ?? []).map((x) => `对账失败：${x.title}（${x.id}）${x.error}`);
+  const brief = `${counts.to_write} 待写 / ${counts.awaiting_approval} 待认稿 / ${counts.awaiting_aroll} 等 A-roll / ${counts.editing} 剪辑中 / ${counts.your_review} 等你审 / ${counts.publish_ready} 待发布`
+    + (counts.candidates ? ` / ${counts.candidates} 候选待确认` : "") + (warnings.length ? `（${warnings.length} 条对账失败）` : "");
+  return { ok: true, action: "overview", brief, counts, ...(warnings.length ? { warnings } : {}) };
+}
+
 async function briefStatus(dataDir?: string, opts: CutScanOptions = {}) {
   const dir = getDataDir(dataDir);
+  if (await isOntologyEnabled(dir).catch(() => false)) return ontologyBrief(dir);
   const [writer, dispatched, contents] = await Promise.all([deskInbox("writer", dir), dispatchedInbox(dir), listContents(dir)]);
   const video = contents.filter((c) => isVideoPlatform(c.platform));
   const scan = await scanUnregisteredCuts(contents, dir, opts);

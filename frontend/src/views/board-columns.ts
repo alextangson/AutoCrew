@@ -144,18 +144,6 @@ export function visibleCards(cards: Card[], expanded: boolean): { shown: Card[];
 
 const isVideo = (platform: string | null) => VIDEO_PLATFORMS.has(platform ?? "");
 
-/** 状态落在哪列：与服务端 my-content-plan.columnOf 同一张表（往回拖时对「⋯」退路的目标列） */
-export function statusColumn(status: string, video: boolean): ItemColumn | null {
-  switch (status) {
-    case "drafting": case "needs_evidence": case "reviewing": case "revision": case "draft_ready": return "写稿中";
-    case "approved": return video ? "待录制" : "待发布";
-    case "editing": case "cover_pending": return "剪辑中";
-    case "publish_ready": case "publishing": return "待发布";
-    case "published": return "已发布";
-    default: return null;
-  }
-}
-
 export type DropAction =
   | { kind: "none" }
   | { kind: "start" }
@@ -164,21 +152,52 @@ export type DropAction =
   | { kind: "open-final" }
   | { kind: "publish" }
   | { kind: "back"; move: BackMove }
+  /** 本体（spec §10）：其余前向拖只打开卡片面板，不改状态 */
+  | { kind: "panel" }
+  /** 本体：往回拖 = 撤销具体决定 / 重开文稿 / 纠正发布，先确认 */
+  | { kind: "undo"; undo: UndoMove }
   | { kind: "refuse"; reason: string };
 
 export type DragCard = Pick<BoardItem, "status" | "platform" | "column" | "publish">;
 
-/** 拖动规则（纯函数，dragover 时也用）：from 列 + 被拖的卡（选题卡传 null）→ 该做什么，或为什么不行 */
-export function dropAction(from: BoardColumn, item: DragCard | null, to: BoardColumn): DropAction {
+/**
+ * 拖动规则（纯函数，dragover 时也用）：from 列 + 被拖的卡（选题卡传 null）→ 该做什么，或为什么不行。
+ * `ontology` = 资料库已启用本体：视频卡按 §10 的规则（真动作只有认稿与我发了，往回拖撤具体决定）；没启用照旧。
+ */
+export function dropAction(from: BoardColumn, item: DragCard | null, to: BoardColumn, ontology = false): DropAction {
   if (from === to) return { kind: "none" };
   if (from === "选题" || !item) return to === "写稿中" ? { kind: "start" } : { kind: "refuse", reason: "选题先拖到「写稿中」开始写" };
+  if (ontology && isVideo(item.platform)) return ontologyDrop(from, item, to);
   if (COLUMNS.indexOf(to) < COLUMNS.indexOf(from)) return backDrop(item, to);
   return forwardDrop(from, item, to);
 }
 
+/** 本体下往回拖对应的撤销（§10、E14）：每一种都先弹确认 */
+export interface UndoMove { action: "unapprove" | "reopen" | "revoke_cut" | "correct_publish"; title: string; body: string }
+
+export const UNDO: Record<UndoMove["action"], UndoMove> = {
+  unapprove: { action: "unapprove", title: "撤回认稿？", body: "稿子回到「写稿中」，你认过才能再录。" },
+  reopen: { action: "reopen", title: "重开文稿？", body: "结束这一轮：本轮的原片挪进 02-aroll/_作废-<轮次>/，成片、批准、登记转入历史（文件不删），正文解冻、回到写稿中。" },
+  revoke_cut: { action: "revoke_cut", title: "撤销成片批准？", body: "这版成片的批准撤掉，已登记的发布包立刻不能发；要重新审成片。" },
+  correct_publish: { action: "correct_publish", title: "纠正发布记录？", body: "撤掉最近一条「已发布」记录（你标的或回执），卡片回到待发布。平台上已经发出去的不会被撤下。" },
+};
+
+function ontologyDrop(from: BoardColumn, item: DragCard, to: BoardColumn): DropAction {
+  const back = COLUMNS.indexOf(to) < COLUMNS.indexOf(from);
+  if (!back) {
+    if (from === "写稿中") return forwardDrop(from, item, to);
+    if (from === "待发布" && to === "已发布") return { kind: "publish" };
+    return { kind: "panel" };
+  }
+  if (from === "待录制" && to === "写稿中") return { kind: "undo", undo: UNDO.unapprove };
+  if ((from === "剪辑中" || from === "待发布") && (to === "待录制" || to === "写稿中")) return { kind: "undo", undo: UNDO.reopen };
+  if (from === "待发布" && to === "剪辑中") return { kind: "undo", undo: UNDO.revoke_cut };
+  if (from === "已发布" && to === "待发布") return { kind: "undo", undo: UNDO.correct_publish };
+  return { kind: "refuse", reason: "往回拖一次只退一步：从已发布只能拖回待发布" };
+}
+
 function backDrop(item: DragCard, to: BoardColumn): DropAction {
-  const video = isVideo(item.platform);
-  const move = backMoves(item).find((m) => statusColumn(m.target, video) === to);
+  const move = backMoves(item).find((m) => m.column === to);
   if (move) return { kind: "back", move };
   return { kind: "refuse", reason: backMoves(item).length ? `这张卡退不到「${to}」，看卡片上的「⋯」` : "这张卡不能往回退" };
 }
@@ -205,28 +224,28 @@ function forwardDrop(from: BoardColumn, item: DragCard, to: BoardColumn): DropAc
 export const HANDOFF_NOTE = "交剪辑要 A-roll、工作台四项决定、出处映射齐了由 Codex 自接；已打开工作台";
 export const FINAL_NOTE = "成片、封面在这里点通过后由 Codex 登记，卡片会自动进待发布";
 
-/** revoke = 撤回交接：走服务端真正的撤回（作废代次、还原片、放认领），不是普通状态流转 */
-export interface BackMove { label: string; target: string; title: string; body: string; revoke?: true }
+/** revoke = 撤回交接：走服务端真正的撤回（作废代次、还原片、放认领），不是普通状态流转；column = 退到哪一列 */
+export interface BackMove { label: string; target: string; column: ItemColumn; title: string; body: string; revoke?: true }
 
 /** 卡片「⋯」里的往回退（§15）：只走状态机本来就允许的那条退路，写明会发生什么 */
 export function backMoves(item: Pick<BoardItem, "status" | "column" | "publish" | "platform">): BackMove[] {
   switch (item.status) {
     case "draft_ready":
-      return [{ label: "退回重写", target: "drafting", title: "退回重写？", body: "稿子回到「在写」，改完要重新写完、你认过，才能再录。" }];
+      return [{ label: "退回重写", target: "drafting", column: "写稿中", title: "退回重写？", body: "稿子回到「在写」，改完要重新写完、你认过，才能再录。" }];
     case "approved":
-      return [{ label: "退回写稿中", target: "reviewing", title: "退回写稿中？", body: "稿子回到审稿，审过才能再录、再交剪辑。" }];
+      return [{ label: "退回写稿中", target: "reviewing", column: "写稿中", title: "退回写稿中？", body: "稿子回到审稿，审过才能再录、再交剪辑。" }];
     case "editing":
     case "cover_pending":
-      return item.status === "editing" ? [{ label: "撤回交接", target: "draft_ready", revoke: true, title: "撤回交接？",
+      return item.status === "editing" ? [{ label: "撤回交接", target: "draft_ready", column: "写稿中", revoke: true, title: "撤回交接？",
         body: "交接会被撤回：Codex 手上这一代作废，剪到一半的活停下。稿子回到「写稿中」等你认稿，认过、重录后要在 Codex 里重新说「剪这条」。" }] : [];
     case "publish_ready":
-      return [{ label: "退回待录制", target: "approved", title: "退回待录制（重录）？",
+      return [{ label: "退回待录制", target: "approved", column: isVideo(item.platform) ? "待录制" : "待发布", title: "退回待录制（重录）？",
         body: "这条回到「待录制」。已登记的成片留在历史里，重录后要重新交接剪辑、重新挑封面。" }];
     case "published":
       // 视频稿的阶段门不放 published → publish_ready，别给一条必败的退路
       if (isVideo(item.platform)) return [];
       if (item.publish && item.publish.kind !== "none" && item.publish.platforms.some((p) => p.submitted && !p.manual)) return [];
-      return [{ label: "退回待发布", target: "publish_ready", title: "退回待发布？", body: "这条标回「待发布」，发布时间清掉。平台上已经发出去的不会被撤下。" }];
+      return [{ label: "退回待发布", target: "publish_ready", column: "待发布", title: "退回待发布？", body: "这条标回「待发布」，发布时间清掉。平台上已经发出去的不会被撤下。" }];
     default:
       return [];
   }

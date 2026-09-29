@@ -13,7 +13,7 @@ import { writeJsonAtomicMkdir } from "./json-atomic.js";
 import { resolveDataDir } from "./storage-roots.js";
 import { emptyProductionDoc, type Decision, type ProductionDoc, type TimelineEvent } from "./production-types.js";
 
-/** 推导表版本：升级时同样先影子后启用（§4.1） */
+/** 推导表版本：升级时同样先影子后启用（§4.1）。改它时同步 content-project.ontologyEnabledIn */
 export const DERIVE_VERSION = 1;
 
 export class ProductionConflictError extends Error {

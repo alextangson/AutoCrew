@@ -8,6 +8,8 @@
  * 卡片上标「未纳入本体」——从不静默跳过。进程中途退出（日志还在）：启动时按同一份排除清单续跑。
  */
 import fs from "node:fs/promises";
+import path from "node:path";
+import { contentRoot, ONTOLOGY_PROJECT_RULES, PROJECT_RULES } from "../../storage/content-project.js";
 import { listContents } from "../../storage/local-store.js";
 import { DERIVE_VERSION, isOntologyEnabled, productionServiceDir, readEnabledMarker, writeEnabledVersion } from "../../storage/production-store.js";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
@@ -56,6 +58,16 @@ async function projectAll(dataDir: string, skip: ReadonlySet<string>, failures: 
   }
 }
 
+/** 项目 AGENTS.md 改成一行指向（§8）：只替换没被手改过的旧约定；替换失败不挡启用，照实记日志 */
+async function pointProjectRules(dataDir: string, skip: ReadonlySet<string>): Promise<void> {
+  for (const c of await listContents(dataDir)) {
+    if (!isVideoPlatform(c.platform) || skip.has(c.id)) continue;
+    const file = path.join(contentRoot(c.id, dataDir), "AGENTS.md");
+    const text = await fs.readFile(file, "utf8").catch(() => null);
+    if (text === PROJECT_RULES) await fs.writeFile(file, ONTOLOGY_PROJECT_RULES).catch((e: unknown) => console.warn(`[production] ${c.id} 的 AGENTS.md 没改成指向：${e instanceof Error ? e.message : String(e)}`));
+  }
+}
+
 async function run(dataDir: string, exclude: string[]): Promise<EnableResult> {
   const skip = new Set(exclude);
   const failures: EnableFailure[] = [];
@@ -72,6 +84,7 @@ async function run(dataDir: string, exclude: string[]): Promise<EnableResult> {
     return done(false, report);
   }
   await writeEnabledVersion(dataDir, DERIVE_VERSION, exclude);
+  await pointProjectRules(dataDir, skip);
   await fs.rm(txnFile(dataDir), { force: true });
   return done(true, report);
 }

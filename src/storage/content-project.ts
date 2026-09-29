@@ -153,7 +153,8 @@ export function ensureContentProject(id: string, title: string, dataDir?: string
     for (const dir of ["00-project/autocrew", "00-project/notes/execution-reports", "01-script/references", "01-script/research",
       "01-script/evidence", "01-script/manuscripts/versions", "01-script/reviews", "01-script/handoff",
       "06-publish/copy", "06-publish/packages", "06-publish/receipts", "06-publish/metrics"]) await fs.mkdir(path.join(root, dir), { recursive: true });
-    await writeTextAtomic(path.join(root, "AGENTS.md"), PROJECT_RULES);
+    // 本体启用后的新项目：约定只剩一行指向（§8 同步改口），流程以工具回执与 content summary 为准
+    await writeTextAtomic(path.join(root, "AGENTS.md"), ontologyEnabledIn(data) ? ONTOLOGY_PROJECT_RULES : PROJECT_RULES);
     // Publish the binding only once a complete recoverable first snapshot exists.
     await writeJsonAtomic(safeProjectPath(root, "00-project/autocrew/content-pending.json"), { version: 1, content: reservation.content });
     reg.projects[id] = binding;
@@ -192,6 +193,17 @@ AutoCrew 独占管理 00-project/autocrew、项目信息.md、项目导航.md �
 
 仅当前 AutoCrew 写服务所在执行机器可写。活动资料库不可用、认领或绑定已变化就停写；本地资料库工作不依赖 NAS 连接，NAS 不可用只暂停归档；不自行另建根目录、抢占残留锁或重复提交付费任务。缓存和编辑软件数据库放本机；共享资产使用资料库 shared-assets 的明确版本与哈希，缺少实际资产或制作约定时报告缺项，不猜旧 broll 相对路径。
 `;
+
+/**
+ * 本体启用后的项目约定（spec 2026-09-29 §8：项目 AGENTS.md 改为一行指向）。启用时对未手改过的旧约定原地替换。
+ */
+export const ONTOLOGY_PROJECT_RULES = `# AutoCrew 内容项目\n\n这条稿的进度和下一步只看 \`autocrew_content summary\`（id 见 00-project/autocrew/meta.json）的 next_action；做出来的原片 / 成片 / 字幕 / 封面 / ChatCut 工程用 \`autocrew_content record\` 报上来，认稿、成片通过、选封面、我发了只归创始人点。\n`;
+
+/** 本体启用标记（与 production-store.readEnabledMarker 同一份文件；这里同步读，建项目时用） */
+export function ontologyEnabledIn(dataDir: string): boolean {
+  const marker = read<{ version?: number }>(path.join(dataDir, "production", "enabled.json"));
+  return marker?.version === 1;
+}
 
 export const PRODUCTION_RULES = `# 工作区制作约定 v1
 
