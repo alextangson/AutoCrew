@@ -135,7 +135,7 @@ describe("P3 #14 / #15 与创始人决定 1、3", () => {
     expect((await cardPanel(r.id, env.dir)).can_reopen).toBe(false);
   });
 
-  it("[决定 3] 重开后上一轮的原片仍归原稿：别条稿 record 不能占；创始人改挂才放", async () => {
+  it("[决定 3 / seg9] 重开后上一轮的原片仍归原稿：别条稿 record 不能占；创始人改挂 = 持久转移", async () => {
     await enable();
     const { record, founderApprove } = await import("./testkit.js");
     const { reopenScript } = await import("./reopen.js");
@@ -151,8 +151,16 @@ describe("P3 #14 / #15 与创始人决定 1、3", () => {
     const abs = path.join((await import("./testkit.js")).projectRoot(env, a.id), moved.path!);
     expect(await record(env, { content_id: b.id, kind: "aroll", path: abs, request_id: "b1" })).toMatchObject({ ok: false, code: "aroll_conflict" });
     const attach = await founderDecision(b.id, "attach_aroll", { path: abs, confirm_other: true }, env.dir);
-    expect(attach).toMatchObject({ ok: false, code: "aroll_conflict" });
+    // 卡片据此弹「改挂到这条？」：说清现在归谁、能不能改挂
+    expect(attach).toMatchObject({ ok: false, code: "aroll_conflict", owner_id: a.id, owner_title: "AI 又忘了怎么办", reassignable: true });
     expect(await founderDecision(b.id, "attach_aroll", { path: abs, confirm_other: true, reassign: true }, env.dir)).toMatchObject({ ok: true });
+    // seg9 P2：改挂是持久的归属转移——原稿那条标成已改挂，之后 B 再报同一原片不再冲突
+    const aDoc = (await readProductionDoc(a.id, env.dir))!;
+    expect(aDoc.facts.find((f) => f.id === moved.id)?.released_to).toBe(b.id);
+    const bDoc = (await readProductionDoc(b.id, env.dir))!;
+    const bAroll = bDoc.facts.find((f) => f.kind === "aroll" && f.state === "accepted")!;
+    const inB = path.join((await import("./testkit.js")).projectRoot(env, b.id), bAroll.path!);
+    expect(await record(env, { content_id: b.id, kind: "aroll", path: path.isAbsolute(bAroll.path!) ? bAroll.path! : inB, request_id: "b2" })).toMatchObject({ ok: true });
   });
 });
 
@@ -179,5 +187,18 @@ describe("seg9", () => {
     expect(slotOf(doc, 1, "wechat_video")).not.toBeNull();
     doc.decisions.push({ id: "c1", type: "publish_correction", target_id: "slot:1:视频号", round: 1, at: "2026-09-02T00:00:00Z", source: "founder" });
     expect(slotOf(doc, 1, "wechat_video")).toBeNull();
+  });
+});
+
+describe("seg9 小项", () => {
+  it("入口关闭的报错指向 summary 真有的字段 next", async () => {
+    const { ENTRY_CLOSED } = await import("./closed.js");
+    const { contentSummary } = await import("../../tools/content-summary.js");
+    await enable();
+    const c = await videoContent(env, "AI 又忘了怎么办");
+    const s = await contentSummary(c.id, env.dir);
+    expect(ENTRY_CLOSED).toContain("next 字段");
+    expect(s).toHaveProperty("next");
+    expect(s).not.toHaveProperty("next_action");
   });
 });

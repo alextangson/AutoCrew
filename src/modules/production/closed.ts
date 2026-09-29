@@ -7,7 +7,7 @@ import { isOntologyActive, isOntologyEnabled } from "../../storage/production-st
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 
 export const ENTRY_CLOSED =
-  "本体已启用，这个入口关了：原片 / 成片 / 字幕 / 封面 / ChatCut 工程一律改用 autocrew_content record 报事实；下一步看 autocrew_content summary 的 next_action。认稿、成片通过、选封面、我发了只归创始人点。";
+  "本体已启用，这个入口关了：原片 / 成片 / 字幕 / 封面 / ChatCut 工程一律改用 autocrew_content record 报事实；下一步看 autocrew_content summary 返回的 next 字段。认稿、成片通过、选封面、我发了只归创始人点。";
 
 export interface ClosedResult extends Record<string, unknown> { ok: false; code: "entry_closed"; error: string; next_action: { tool: string; params: Record<string, unknown> } }
 

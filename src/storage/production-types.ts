@@ -39,6 +39,9 @@ export interface Fact {
   duration_ms?: number;
   /** 同一路径的字节被外部覆盖：记录的 sha 已被替换，绑它的批准随之失效（E13） */
   replaced_at?: string;
+  /** 历史原片被创始人改挂到别条稿（归属转移，持久）：这条稿不再拥有它 */
+  released_to?: string;
+  released_at?: string;
   /** cover */
   ratio?: CoverRatio;
   version?: number;

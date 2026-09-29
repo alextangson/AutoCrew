@@ -160,7 +160,7 @@ export async function planFileRecord(a: RecordArgs, content: Content, doc: Produ
   const base = { ...file.value, kind: a.kind, projectRoot, existing, ...(forCut.value ? { for_cut: forCut.value } : {}), ...(version.value ? { version: version.value } : {}) };
   if (a.kind === "aroll") {
     const owner = await arollOwnerElsewhere(dataDir, file.value.sha256, content.id);
-    if (owner) return deny("aroll_conflict", `这个原片已经是另一条稿（${owner}）的 A-roll，一个原片只能属于一条稿`);
+    if (owner) return deny("aroll_conflict", `这个原片已经是另一条稿（${owner}）的 A-roll，一个原片只能属于一条稿；要改挂只能创始人在卡片上确认`);
   }
   const location = classify(file.value.source, projectRoot, await movableRoots(dataDir));
   if (existing?.state === "accepted") return { ok: true, value: { ...base, location, action: "existing", evidence: "同一文件已经记过" } };

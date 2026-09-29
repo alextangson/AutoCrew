@@ -3,13 +3,14 @@ import type { BoardData } from "./board-columns";
 import type { DataPageData } from "./data-lib";
 
 type Json = Record<string, unknown>;
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
+/** 失败时 body 原样带回（code、改挂要的归属信息等），界面按 code 决定下一步 */
+export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; body?: Json };
 
 async function call<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
     const r = await fetch(url, { credentials: "same-origin", ...init });
     const body = await r.json().catch(() => null) as (Json & { ok?: boolean; error?: string; data?: T }) | null;
-    if (!r.ok || !body || body.ok === false) return { ok: false, error: body?.error ?? (r.status === 403 ? "没有权限（登录过期？刷新页面试试）" : `服务没响应（HTTP ${r.status}）`) };
+    if (!r.ok || !body || body.ok === false) return { ok: false, error: body?.error ?? (r.status === 403 ? "没有权限（登录过期？刷新页面试试）" : `服务没响应（HTTP ${r.status}）`), ...(body ? { body } : {}) };
     return { ok: true, data: (body.data ?? body) as T };
   } catch (e) {
     return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };

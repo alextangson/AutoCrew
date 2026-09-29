@@ -267,6 +267,28 @@ function receipt(core: ReceiptCore, exp: Explanation, content: Content, projectR
  * 候选 → accepted：库外的按 §3-7 落位（原片挪、其余克隆；被 ChatCut 引用的原片留原位），项目内的原地收。
  * 核验照 record 的顺序全部先做：路径、完整性、字节还是当初那份、A-roll 独占、目标目录安全。调用方持有文件归属事务。
  */
+/**
+ * 原片归属（创始人 09-29 默认：重开前那一轮的原片仍归原稿）。本轮在用 → 硬冲突；只是历史归属 → 创始人明确改挂时
+ * 把原稿那条事实标成「已改挂」（持久的归属转移，之后索引与查询都按它），否则回冲突并带上归属信息供卡片确认。
+ */
+async function arollOwnershipBlock(content: Content, sha: string, dataDir: string, reassign: boolean): Promise<Receipt | null> {
+  const owner = await arollOwnerElsewhere(dataDir, sha, content.id);
+  if (!owner) return null;
+  const current = await arollOwnerElsewhere(dataDir, sha, content.id, { allowHistorical: true });
+  const title = (await getContent(owner, dataDir))?.title ?? owner;
+  if (current || !reassign) {
+    return fail("aroll_conflict", current ? `这个原片是《${title}》本轮正在用的 A-roll，一个原片只能属于一条稿` : `这个原片归《${title}》（它重开文稿前那一轮用过）；创始人确认改挂后才能挂到这条`,
+      { owner_id: owner, owner_title: title, reassignable: !current });
+  }
+  const at = new Date().toISOString();
+  await mutateProduction(owner, dataDir, (doc) => {
+    const released = doc.facts.filter((f) => f.kind === "aroll" && f.sha256 === sha && f.state === "accepted" && !f.released_to);
+    for (const f of released) { f.released_to = content.id; f.released_at = at; }
+    return { value: released.length, events: [{ type: "aroll_reassigned", detail: { sha256: sha, to: content.id, facts: released.map((f) => f.id) } }] };
+  });
+  return null;
+}
+
 export async function adoptCandidate(content: Content, fact: Fact, dataDir: string, opts: { reassign?: boolean } = {}): Promise<Receipt> {
   const a: RecordArgs = { content_id: content.id, kind: fact.kind, request_id: `confirm-${fact.id}`, host: "founder", ...(fact.path ? { path: fact.path } : {}), ...(fact.ratio ? { ratio: fact.ratio } : {}) };
   if (!fact.path || !fact.sha256) return fail("bad_request", "这条候选没有文件");
@@ -279,8 +301,8 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "候选文件在发现之后被改过，刷新再看");
   if (fact.kind === "aroll") {
-    const owner = await arollOwnerElsewhere(dataDir, fact.sha256, content.id, { allowHistorical: opts.reassign === true });
-    if (owner) return fail("aroll_conflict", `这个原片已经是另一条稿（${owner}）的 A-roll（重开前那一轮的也算）；要改挂到这条，创始人在卡片上带「改挂」再确认一次`);
+    const blocked = await arollOwnershipBlock(content, fact.sha256, dataDir, opts.reassign === true);
+    if (blocked) return blocked;
   }
   const referenced = doc.facts.some((f) => f.round === doc.round && f.kind === "chatcut_project" && f.uses_aroll?.includes(fact.id));
   const inProject = isWithin(projectRoot, checked.value);

@@ -73,6 +73,8 @@ export async function arollOwnerElsewhere(dataDir: string, sha: string, contentI
     if (e.content_id === contentId || e.kind !== "aroll" || e.state !== "accepted") continue;
     const doc = await readProductionDoc(e.content_id, dataDir).catch(() => null);
     if (!doc) continue;
+    // 创始人明确改挂过（归属已转移）：这条稿不再拥有它
+    if (doc.facts.find((f) => f.id === e.fact_id)?.released_to) continue;
     if (doc.round === e.round || !opts.allowHistorical) return e.content_id;
   }
   return null;
