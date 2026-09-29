@@ -9,19 +9,47 @@ import { artifactUrl } from "./board-parts";
 import { CodexPublishButton } from "./CodexPublish";
 import { showCodexPublish } from "./codex-publish";
 import { useProjectReview } from "./use-project-review";
-import { markPublished, unmarkPublished } from "./board-api";
+import { markPublished, revokeHandoff, unmarkPublished } from "./board-api";
 import {
   backMoves, itemMeta, platformName, publishHeadline, publishLine, topicSourceLabel,
-  type BoardColumn, type BoardItem, type BoardTopic, type PlatformPublication,
+  type BackMove, type BoardColumn, type BoardItem, type BoardTopic, type PlatformPublication,
 } from "./board-columns";
 
-export interface DragProps { onDragStart: (from: BoardColumn, id: string) => void; onDragEnd: () => void }
+export interface DragProps { onDragStart: (from: BoardColumn, id: string, item: BoardItem | null) => void; onDragEnd: () => void }
+
+/** 改阶段的共用调用：带 from_status 挡旧看板；失败原样说服务端的话，结束一律刷新让卡回到真实列 */
+export async function runTransition(item: BoardItem, target: string, doneText: string, reload: () => Promise<void>, force = false): Promise<void> {
+  try {
+    const r = await invoke("content:transition", { id: item.id, from_status: item.status, target_status: target, ...(force ? { force: true } : {}) });
+    toast(r.ok ? doneText : r.error ?? "没改成，刷新一下再试");
+  } finally { await reload(); }
+}
+
+/** 往回退：「⋯」菜单和往回拖共用同一个确认框与调用 */
+export async function confirmBackMove(item: BoardItem, move: BackMove, reload: () => Promise<void>): Promise<void> {
+  const yes = await confirmDialog({ title: move.title, body: move.body, confirmLabel: move.label, danger: true });
+  if (!yes) return;
+  if (move.revoke) return runRevoke(item, reload);
+  await runTransition(item, move.target, `已${move.label}`, reload);
+}
+
+/** 撤回交接的回执：原片挪回哪、挪失败都要说出来 */
+export function revokeText(r: { ok: true; data: { aroll_restored_to?: string; aroll_restore_failed?: string } } | { ok: false; error: string }): string {
+  if (!r.ok) return r.error;
+  if (r.data.aroll_restore_failed) return `已撤回交接，但原片没挪回：${r.data.aroll_restore_failed}`;
+  return r.data.aroll_restored_to ? `已撤回交接，原片放回 ${r.data.aroll_restored_to}` : "已撤回交接";
+}
+
+async function runRevoke(item: BoardItem, reload: () => Promise<void>): Promise<void> {
+  if (!item.handoffHash) { toast("看板上没有这条的交接代次，刷新一下再撤"); return reload(); }
+  try { toast(revokeText(await revokeHandoff(item.id, item.handoffHash))); } finally { await reload(); }
+}
 
 export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean; onStart: () => void; onOpen: () => void; onTrash: () => void }) {
   const t = props.topic;
   const meta = [topicSourceLabel(t.source), relativeLabel(t.renewedAt ?? t.createdAt)].join(" · ");
   return <article className="bcard" draggable={!props.busy} aria-busy={props.busy}
-    onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.title); props.onDragStart("选题", t.id); }}
+    onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", t.title); props.onDragStart("选题", t.id, null); }}
     onDragEnd={props.onDragEnd}>
     <div className="bcard-top">
       <button className="bcard-title" title={t.title} onClick={props.onOpen}>
@@ -42,19 +70,20 @@ export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean;
   </article>;
 }
 
-export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | null; onOpen: () => void; onMenu: (open: boolean) => void; reload: () => Promise<void> }) {
+export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | null; busy: boolean; onOpen: () => void; onMenu: (open: boolean) => void; reload: () => Promise<void> }) {
   const item = props.item;
   const publishing = item.column === "待发布" || item.column === "已发布";
   const meta = itemMeta(item, props.wpm);
   const head = item.column === "已发布" ? publishHeadline(item) : null;
-  return <article className={"bcard" + (publishing ? " bcard-wide" : "")} draggable
-    onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.title); props.onDragStart(item.column, item.id); }}
+  return <article className={"bcard" + (publishing ? " bcard-wide" : "")} draggable={!props.busy} aria-busy={props.busy}
+    onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.title); props.onDragStart(item.column, item.id, item); }}
     onDragEnd={props.onDragEnd}>
     {head && <div className="bcard-when">{head}</div>}
     <div className="bcard-main">
       {publishing && item.cover && <img className="bcard-cover" alt="已选封面" src={artifactUrl(item.id, item.cover)} />}
       <div className="bcard-text">
-        <button className="bcard-title" title={item.title} onClick={props.onOpen}>{item.title || "（无标题）"}</button>
+        <button className="bcard-title" title={item.title} onClick={props.onOpen}>
+          {item.status === "draft_ready" && <span className="bcard-score bcard-badge">等你认稿</span>}{item.title || "（无标题）"}</button>
         {meta && <div className={"bcard-meta" + (item.status === "needs_evidence" ? " bcard-red" : "")}>{meta}</div>}
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
       </div>
@@ -76,16 +105,10 @@ function BackMenu(props: { item: BoardItem; onMenu: (open: boolean) => void; rel
   const moves = backMoves(props.item);
   const [busy, setBusy] = useState(false);
   if (moves.length === 0) return null;
-  const run = async (move: (typeof moves)[number], el: HTMLDetailsElement | null) => {
+  const run = async (move: BackMove, el: HTMLDetailsElement | null) => {
     if (el) el.open = false;
-    const yes = await confirmDialog({ title: move.title, body: move.body, confirmLabel: move.label, danger: true });
-    if (!yes) return;
     setBusy(true);
-    try {
-      const r = await invoke("content:transition", { id: props.item.id, from_status: props.item.status, target_status: move.target });
-      toast(r.ok ? `已${move.label}` : r.error ?? "没退回去，刷新后再试");
-      await props.reload();
-    } finally { setBusy(false); }
+    try { await confirmBackMove(props.item, move, props.reload); } finally { setBusy(false); }
   };
   return <details className="bcard-menu" onToggle={(e) => props.onMenu(e.currentTarget.open)}>
     <summary aria-label="改阶段">⋯</summary>

@@ -39,3 +39,8 @@ export const undoLink = (id: string) => post<{ removed: boolean }>("/api/data/un
 export const uploadCover = (key: string, file: Blob) =>
   call<{ file: string }>(`/api/data/cover?key=${encodeURIComponent(key)}`, { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
 export const removeCover = (key: string) => post<{ removed: boolean }>("/api/data/cover-remove", { key });
+
+/* 撤回交接：创始人会话走 /api/project-review 的 revoke，服务端跑完整撤回 */
+export interface RevokeReply { ok: boolean; error?: string; aroll_restored_to?: string; aroll_restore_failed?: string }
+export const revokeHandoff = (contentId: string, manifestHash: string) =>
+  post<RevokeReply>(`/api/project-review?content_id=${encodeURIComponent(contentId)}`, { action: "revoke", manifest_hash: manifestHash });

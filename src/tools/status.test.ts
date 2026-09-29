@@ -67,20 +67,21 @@ async function seedPublishReady(platform: string): Promise<string> {
 }
 
 describe("autocrew_status brief", () => {
-  it("空数据目录：五个桶都是 0", async () => {
+  it("空数据目录：六个桶都是 0", async () => {
     const r = await executeStatus({ brief: true, _dataDir: dir, _chatcutExportDir: path.join(dir, "no-chatcut") });
-    expect(r).toMatchObject({ ok: true, brief: "0 待写 / 0 等 A-roll / 0 剪完未登记 / 0 已派工待登记 / 0 待发布" });
+    expect(r).toMatchObject({ ok: true, brief: "0 待写 / 0 待认稿 / 0 等 A-roll / 0 剪完未登记 / 0 已派工待登记 / 0 待发布" });
   });
 
-  it("按判据分桶：待写 / 等 A-roll / 已派工待登记 / 待发布", async () => {
+  it("按判据分桶：待写 / 待认稿 / 等 A-roll / 已派工待登记 / 待发布", async () => {
     // 待写：已选立意没稿（含只剩归档稿的）+ 退回修订 + 包已发出没回稿
     await seedTopic("有立意没稿");
     await seedContent("archived", "douyin", await seedTopic("只剩归档稿"));
     await seedTopic("没选立意", false);
     await seedContent("revision", "wechat_mp");
     await seedContent("drafting", "douyin");
-    // 等 A-roll：视频稿 draft_ready / approved；公众号的 approved 不算
+    // 待认稿：AI 写完、创始人没认（draft_ready），不分平台；不算等 A-roll
     await seedContent("draft_ready", "douyin", await seedTopic("已有稿的选题"));
+    // 等 A-roll：只算认过的视频稿（approved）；公众号的 approved 不算
     await seedContent("approved", "xiaohongshu");
     await seedContent("approved", "wechat_mp");
     // 已派工待登记：在剪辑台、这一版成片还没审过；审过片的不算
@@ -96,8 +97,8 @@ describe("autocrew_status brief", () => {
     const r = await executeStatus({ brief: true, _dataDir: dir, _chatcutExportDir: path.join(dir, "no-chatcut") });
     expect(r).toMatchObject({
       ok: true,
-      brief: "4 待写 / 2 等 A-roll / 0 剪完未登记 / 1 已派工待登记 / 2 待发布",
-      counts: { to_write: 4, awaiting_aroll: 2, cut_unregistered: 0, dispatched: 1, publish_ready: 2 },
+      brief: "4 待写 / 1 待认稿 / 1 等 A-roll / 0 剪完未登记 / 1 已派工待登记 / 2 待发布",
+      counts: { to_write: 4, awaiting_approval: 1, awaiting_aroll: 1, cut_unregistered: 0, dispatched: 1, publish_ready: 2 },
     });
   });
 

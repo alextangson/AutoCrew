@@ -35,8 +35,8 @@ export const GUIDE = `# 我的内容 · 使用说明
 
 这里是 AutoCrew 按稿件进度自动整理出来的文件夹，每分钟对一次账。栏目文件夹前面的数字（1 写稿中 … 6 复盘）只是让它们按流程顺序排。
 
-- 写稿中：还在写、在审、在改的稿子，只放口播稿。
-- 待录制：视频稿已经定了，等你录口播。
+- 写稿中：还在写、在审、在改的稿子，以及 AI 已写完、等你认稿的稿子，只放口播稿。
+- 待录制：你认过的视频稿，等你录口播。
 - 剪辑中：放口播稿和「成片放这里」。剪映直接导出到「成片放这里」就行，它指向这条稿件的项目目录。
 - 待发布：成片、两张封面、口播稿、发布文案都在一个文件夹里，拖去上传即可。缺什么写在「还缺什么.txt」里。登记过成片的还有「口播稿-实拍版.md」（按成片字幕还原的实际说法）；实拍时新说了定稿里没有的数字或出处，会列在「发布前核对.txt」里，发布前看一眼，不挡发布。
 - 已发布：只留最近 5 条。发布满 7 天、又不在最近 5 条里的，素材会搬到 NAS，搬了什么、腾出多少空间记在「归档记录.md」。
@@ -50,8 +50,9 @@ export const GUIDE = `# 我的内容 · 使用说明
 export function columnOf(c: Content): Column | null {
   const video = isVideoPlatform(c.platform);
   switch (c.status) {
-    case "drafting": case "needs_evidence": case "reviewing": case "revision": return "写稿中";
-    case "draft_ready": case "approved": return video ? "待录制" : "待发布";
+    // draft_ready = AI 写完自审过、你还没认，仍在写稿中；你认过（approved）才进待录制
+    case "drafting": case "needs_evidence": case "reviewing": case "revision": case "draft_ready": return "写稿中";
+    case "approved": return video ? "待录制" : "待发布";
     case "editing": case "cover_pending": return "剪辑中";
     case "publish_ready": case "publishing": return "待发布";
     case "published": return "已发布";

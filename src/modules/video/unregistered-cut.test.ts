@@ -56,14 +56,14 @@ const brief = () => executeStatus({ brief: true, _dataDir: dir, _chatcutExportDi
 const editorDesk = () => executeDesk({ action: "inbox", employee: "editor", _dataDir: dir, _chatcutExportDir: chatcut }) as Promise<Record<string, any>>;
 
 describe("信号与分桶", () => {
-  it("导出文件命中：从等 A-roll 扣掉，单独成桶，不进已派工；总数守恒", async () => {
+  it("导出文件命中：从待认稿 / 等 A-roll 扣掉，单独成桶，不进已派工；总数守恒", async () => {
     const hit = await seed(T1);
     await seed("另一条还没剪的视频稿", "draft_ready");
     await seed("正在剪的视频稿", "editing");
     await exportFile("客户问一句你们用AI吗-长版-1080p.mp4");
     const r = await brief();
-    expect(r.counts).toMatchObject({ awaiting_aroll: 1, cut_unregistered: 1, dispatched: 1 });
-    expect(r.brief).toBe("0 待写 / 1 等 A-roll / 1 剪完未登记 / 1 已派工待登记 / 0 待发布");
+    expect(r.counts).toMatchObject({ awaiting_approval: 1, awaiting_aroll: 0, cut_unregistered: 1, dispatched: 1 });
+    expect(r.brief).toBe("0 待写 / 1 待认稿 / 0 等 A-roll / 1 剪完未登记 / 1 已派工待登记 / 0 待发布");
     expect(r).not.toHaveProperty("warnings");
     const desk = await editorDesk();
     const item = desk.items.find((i: any) => i.content_id === hit);

@@ -17,7 +17,7 @@ export const statusSchema = Type.Object({
   })),
   verbose: Type.Optional(Type.Boolean({ description: "Show detailed counts" })),
   brief: Type.Optional(Type.Boolean({
-    description: "overview only: one line 'N 待写 / N 等 A-roll / N 剪完未登记 / N 已派工待登记 / N 待发布' plus counts (SessionStart hook).",
+    description: "overview only: one line 'N 待写 / N 待认稿 / N 等 A-roll / N 剪完未登记 / N 已派工待登记 / N 待发布' plus counts (SessionStart hook).",
   })),
   content_id: Type.Optional(Type.String({ description: "Content ID for compare/track_performance." })),
   metrics: Type.Optional(Type.Record(Type.String(), Type.Number(), {
@@ -81,7 +81,7 @@ export async function executeStatus(params: Record<string, unknown>) {
 /**
  * SessionStart hook 的一行待办（P6 §3.2）：只数数，清单在 autocrew_desk inbox。
  * 待写与已派工直接复用写手桌 / 剪辑师桌的判据，不另起一套会和桌子各说各的口径。
- * 剪完未登记（外面导出了没交接）从等 A-roll 里扣出来单算，不重复计数。
+ * 剪完未登记（外面导出了没交接）从待认稿 / 等 A-roll 里扣出来单算，不重复计数。
  */
 async function briefStatus(dataDir?: string, opts: CutScanOptions = {}) {
   const dir = getDataDir(dataDir);
@@ -91,8 +91,10 @@ async function briefStatus(dataDir?: string, opts: CutScanOptions = {}) {
   const counts = {
     // 写手桌 = 已选立意没稿的选题 + 退回修订；再加包已发出、稿没回来的 drafting
     to_write: writer.length + contents.filter((c) => c.status === "drafting").length,
-    // 视频稿写完了、还没进剪辑台：handoff 把它推到 editing，revoke 又推回 draft_ready
-    awaiting_aroll: video.filter((c) => (c.status === "draft_ready" || c.status === "approved") && !scan.hits.has(c.id)).length,
+    // AI 写完、等创始人认稿（剪完未登记的视频稿扣出去单算）
+    awaiting_approval: contents.filter((c) => c.status === "draft_ready" && !scan.hits.has(c.id)).length,
+    // 创始人认过的视频稿、还没进剪辑台：handoff 把它推到 editing
+    awaiting_aroll: video.filter((c) => c.status === "approved" && !scan.hits.has(c.id)).length,
     // 同样没交接，但外面已经导出成片 / 做了封面
     cut_unregistered: scan.hits.size,
     // 在剪辑台、这一版成片还没审过（P6-a 之前「已派工」就是它）
@@ -100,6 +102,6 @@ async function briefStatus(dataDir?: string, opts: CutScanOptions = {}) {
     publish_ready: contents.filter((c) => c.status === "publish_ready").length,
   };
   const warnSuffix = scan.warnings.length ? "（读不了导出目录）" : "";
-  const brief = `${counts.to_write} 待写 / ${counts.awaiting_aroll} 等 A-roll / ${counts.cut_unregistered} 剪完未登记 / ${counts.dispatched} 已派工待登记 / ${counts.publish_ready} 待发布${warnSuffix}`;
+  const brief = `${counts.to_write} 待写 / ${counts.awaiting_approval} 待认稿 / ${counts.awaiting_aroll} 等 A-roll / ${counts.cut_unregistered} 剪完未登记 / ${counts.dispatched} 已派工待登记 / ${counts.publish_ready} 待发布${warnSuffix}`;
   return { ok: true, action: "overview", brief, counts, ...(scan.warnings.length ? { warnings: scan.warnings } : {}) };
 }

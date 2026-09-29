@@ -91,6 +91,14 @@ describe("stage guard", () => {
     expect(await stageGuardError(video, "editing", "approved", noCover)).toBeNull();
     expect(await stageGuardError(video, "cover_pending", "editing", noCover)).toBe(EDITING_VIA_HANDOFF);
   });
+
+  it("看板拖动的几条边：认稿、标已发布不设门；视频稿已发布退不回待发布（看板因此不给这条退路）", async () => {
+    expect(await stageGuardError(video, "draft_ready", "approved", noCover)).toBeNull();
+    expect(await stageGuardError(video, "publish_ready", "published", noCover)).toBeNull();
+    expect(await stageGuardError(text, "approved", "published", noCover)).toBeNull();
+    expect(await stageGuardError(video, "published", "publish_ready", hasCover)).not.toBeNull();
+    expect(await stageGuardError(text, "published", "publish_ready", noCover)).toBeNull();
+  });
 });
 
 // 收紧后的不变量:视频稿进「待发布」只有封面台与剪辑工位登记两个入口——挡住看板从任意列直拖(force 越形状不越阶段门)

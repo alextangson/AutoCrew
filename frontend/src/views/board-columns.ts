@@ -2,7 +2,7 @@
  * 看板页面模型（看板规格 A–E，纯函数）：六列、卡片排序与折叠、拖动规则、往回退的菜单、
  * 发布行文案、估时长。列归属由服务端按「我的内容」同一张表算好，这里不再推一遍。
  */
-import { platformLabel } from "../lib";
+import { VIDEO_PLATFORMS, platformLabel } from "../lib";
 import { clockLabel, durationText, relativeLabel } from "../time-format";
 
 export const COLUMNS = ["选题", "写稿中", "待录制", "剪辑中", "待发布", "已发布"] as const;
@@ -17,7 +17,7 @@ export const PUBLISHED_LIMIT = 5;
 /** 列头下面一行说明 */
 export const COLUMN_HINT: Record<BoardColumn, string> = {
   选题: "雷达 · 收件箱 · 你建的",
-  写稿中: "AI 在调研 / 写 / 审",
+  写稿中: "AI 在写 / 审 · 写完等你认稿",
   待录制: "按上一条语速估时长 · 点开看稿",
   剪辑中: "Codex 在剪",
   待发布: "成片、封面都过了",
@@ -28,7 +28,7 @@ export const COLUMN_HINT: Record<BoardColumn, string> = {
 export const EMPTY_NOTE: Record<BoardColumn, string> = {
   选题: "雷达找到的、你记下的想法会出现在这",
   写稿中: "点选题的「开始写」，稿子会出现在这",
-  待录制: "稿子定了会出现在这，等你录",
+  待录制: "你认过的稿会出现在这，等你录",
   剪辑中: "Codex 在剪的会出现在这",
   待发布: "成片和封面都过了会出现在这",
   已发布: "发出去的会出现在这",
@@ -64,6 +64,7 @@ export interface BoardItem {
   draftReadyAt: string | null;
   chars: number;
   finalDurationMs: number | null;
+  handoffHash?: string | null;
   cover: { path: string; sha256: string } | null;
   publish: PublishRecord | null;
   publishTime: string | null;
@@ -123,30 +124,89 @@ export function visibleCards(cards: Card[], expanded: boolean): { shown: Card[];
   return { shown: cards.slice(0, VISIBLE_LIMIT), hidden: cards.length - VISIBLE_LIMIT };
 }
 
-/** 只允许一种拖动：选题 → 写稿中（§14） */
-export function canDrop(from: BoardColumn, to: BoardColumn): boolean {
-  return from === "选题" && to === "写稿中";
+const isVideo = (platform: string | null) => VIDEO_PLATFORMS.has(platform ?? "");
+
+/** 状态落在哪列：与服务端 my-content-plan.columnOf 同一张表（往回拖时对「⋯」退路的目标列） */
+export function statusColumn(status: string, video: boolean): ItemColumn | null {
+  switch (status) {
+    case "drafting": case "needs_evidence": case "reviewing": case "revision": case "draft_ready": return "写稿中";
+    case "approved": return video ? "待录制" : "待发布";
+    case "editing": case "cover_pending": return "剪辑中";
+    case "publish_ready": case "publishing": return "待发布";
+    case "published": return "已发布";
+    default: return null;
+  }
 }
 
-export const DROP_REFUSED = "这一步由 Codex 交接 / 发布推进，不能拖；要往回退用卡片上的「⋯」";
+export type DropAction =
+  | { kind: "none" }
+  | { kind: "start" }
+  | { kind: "approve" }
+  | { kind: "open-handoff" }
+  | { kind: "open-final" }
+  | { kind: "publish" }
+  | { kind: "back"; move: BackMove }
+  | { kind: "refuse"; reason: string };
 
-export interface BackMove { label: string; target: string; title: string; body: string }
+export type DragCard = Pick<BoardItem, "status" | "platform" | "column" | "publish">;
+
+/** 拖动规则（纯函数，dragover 时也用）：from 列 + 被拖的卡（选题卡传 null）→ 该做什么，或为什么不行 */
+export function dropAction(from: BoardColumn, item: DragCard | null, to: BoardColumn): DropAction {
+  if (from === to) return { kind: "none" };
+  if (from === "选题" || !item) return to === "写稿中" ? { kind: "start" } : { kind: "refuse", reason: "选题先拖到「写稿中」开始写" };
+  if (COLUMNS.indexOf(to) < COLUMNS.indexOf(from)) return backDrop(item, to);
+  return forwardDrop(from, item, to);
+}
+
+function backDrop(item: DragCard, to: BoardColumn): DropAction {
+  const video = isVideo(item.platform);
+  const move = backMoves(item).find((m) => statusColumn(m.target, video) === to);
+  if (move) return { kind: "back", move };
+  return { kind: "refuse", reason: backMoves(item).length ? `这张卡退不到「${to}」，看卡片上的「⋯」` : "这张卡不能往回退" };
+}
+
+function forwardDrop(from: BoardColumn, item: DragCard, to: BoardColumn): DropAction {
+  const video = isVideo(item.platform);
+  switch (from) {
+    case "写稿中":
+      if (item.status !== "draft_ready") return { kind: "refuse", reason: "AI 还在写，写完再认" };
+      if (to === (video ? "待录制" : "待发布")) return { kind: "approve" };
+      return { kind: "refuse", reason: video ? "先认稿，再录制：拖到「待录制」" : "先认稿：拖到「待发布」" };
+    case "待录制":
+      return to === "剪辑中" ? { kind: "open-handoff" } : { kind: "refuse", reason: "要先交剪辑" };
+    case "剪辑中":
+      return to === "待发布" ? { kind: "open-final" } : { kind: "refuse", reason: "成片、封面通过了才到待发布" };
+    case "待发布":
+      return to === "已发布" ? { kind: "publish" } : { kind: "refuse", reason: "这一步拖不了" };
+    default:
+      return { kind: "refuse", reason: "这一步拖不了" };
+  }
+}
+
+/** 拖放后给人的一句话（打开工作台的两种） */
+export const HANDOFF_NOTE = "交剪辑要 A-roll、工作台四项决定、出处映射齐了由 Codex 自接；已打开工作台";
+export const FINAL_NOTE = "成片、封面在这里点通过后由 Codex 登记，卡片会自动进待发布";
+
+/** revoke = 撤回交接：走服务端真正的撤回（作废代次、还原片、放认领），不是普通状态流转 */
+export interface BackMove { label: string; target: string; title: string; body: string; revoke?: true }
 
 /** 卡片「⋯」里的往回退（§15）：只走状态机本来就允许的那条退路，写明会发生什么 */
-export function backMoves(item: Pick<BoardItem, "status" | "column" | "publish">): BackMove[] {
+export function backMoves(item: Pick<BoardItem, "status" | "column" | "publish" | "platform">): BackMove[] {
   switch (item.status) {
     case "draft_ready":
-      return [{ label: "退回写稿中", target: "drafting", title: "退回写稿中？", body: "稿子回到「写稿中」，改完要重新定稿，才能再录。" }];
+      return [{ label: "退回重写", target: "drafting", title: "退回重写？", body: "稿子回到「在写」，改完要重新写完、你认过，才能再录。" }];
     case "approved":
       return [{ label: "退回写稿中", target: "reviewing", title: "退回写稿中？", body: "稿子回到审稿，审过才能再录、再交剪辑。" }];
     case "editing":
     case "cover_pending":
-      return item.status === "editing" ? [{ label: "退回待录制", target: "draft_ready", title: "退回待录制（撤回交接）？",
-        body: "交接会被撤回：Codex 手上这一代作废，剪到一半的活停下。重录后要在 Codex 里重新说「剪这条」。" }] : [];
+      return item.status === "editing" ? [{ label: "撤回交接", target: "draft_ready", revoke: true, title: "撤回交接？",
+        body: "交接会被撤回：Codex 手上这一代作废，剪到一半的活停下。稿子回到「写稿中」等你认稿，认过、重录后要在 Codex 里重新说「剪这条」。" }] : [];
     case "publish_ready":
       return [{ label: "退回待录制", target: "approved", title: "退回待录制（重录）？",
         body: "这条回到「待录制」。已登记的成片留在历史里，重录后要重新交接剪辑、重新挑封面。" }];
     case "published":
+      // 视频稿的阶段门不放 published → publish_ready，别给一条必败的退路
+      if (isVideo(item.platform)) return [];
       if (item.publish && item.publish.kind !== "none" && item.publish.platforms.some((p) => p.submitted && !p.manual)) return [];
       return [{ label: "退回待发布", target: "publish_ready", title: "退回待发布？", body: "这条标回「待发布」，发布时间清掉。平台上已经发出去的不会被撤下。" }];
     default:
@@ -201,7 +261,8 @@ export function estimateText(chars: number, wpm: number | null): string | null {
 /** 卡片副标题 */
 export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date.now()): string {
   const parts: string[] = [];
-  if (item.column === "写稿中") parts.push(item.status === "needs_evidence" ? "缺证据" : item.status === "reviewing" ? "在审" : "在写", `更新 ${relativeLabel(item.updatedAt, now)}`);
+  if (item.column === "写稿中" && item.status === "draft_ready") parts.push(`写完 ${relativeLabel(item.draftReadyAt ?? item.updatedAt, now)}`);
+  else if (item.column === "写稿中") parts.push(item.status === "needs_evidence" ? "缺证据" : item.status === "reviewing" ? "在审" : "在写", `更新 ${relativeLabel(item.updatedAt, now)}`);
   if (item.column === "待录制") {
     const est = estimateText(item.chars, wpm);
     if (est) parts.push(est);
