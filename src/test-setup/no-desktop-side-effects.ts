@@ -7,7 +7,7 @@ import { vi } from "vitest";
 
 vi.mock("../modules/video/handoff/desktop-open.js", () => ({
   systemOpener: async () => ({ ok: false, reason: "测试里不真打开" }),
-  osascriptNotifier: () => ({ ok: true }),
+  osascriptNotifier: async () => ({ ok: true }),
   benchReachable: async () => false,
   mediaDuration: async () => null,
 }));

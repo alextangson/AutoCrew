@@ -12,7 +12,7 @@ import { draftHash } from "../../../storage/draft-hash.js";
 import { writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { founderProjectReview } from "./founder-review.js";
 import { handoffEvidence, saveCoverage } from "./project-evidence.js";
-import { setPullDeps } from "./pull-deps.js";
+import { pullDeps, setPullDeps } from "./pull-deps.js";
 import type { DialogOutcome, DialogRunner } from "./dialog.js";
 import { IMPORT_LINE, readConfirmation } from "./confirm.js";
 import { executeVideo } from "../../../tools/video.js";
@@ -111,11 +111,25 @@ describe("confirm", () => {
   it("工作台已有不同决定：并列两套值由创始人选，不静默覆盖", async () => {
     const c = await cited(await seedAccepted(fx.dir));
     await founderProjectReview(c.id, fx.dir, { action: "decisions", draft_hash: draftHash(c), title: c.title, cover_text: "工作台封面", target_seconds: 60 });
-    const shown = fakeDialog(["first", { kind: "ok", value: "用工作台的" }]);
+    const shown = fakeDialog(["first", { kind: "ok", value: "用工作台的" }, { kind: "ok", value: "确认" }]);
     const res = await confirm(await receipt());
     expect(shown[1].prompt).toContain("工作台已确认：封面字「工作台封面」，60 秒");
     expect(shown[1].prompt).toContain("本次：封面字「三招省时」，90 秒");
+    // 选完进同一个确认窗，显示选中的那套
+    expect(shown[2].prompt).toContain("封面字：工作台封面");
     expect(res).toMatchObject({ ok: true, cover_text: "工作台封面", target_seconds: 60 });
+  });
+
+  it("工作台决定冲突时选完仍能进「查看 / 修改…」预览，预览不写记录", async () => {
+    const c = await cited(await seedAccepted(fx.dir));
+    await founderProjectReview(c.id, fx.dir, { action: "decisions", draft_hash: draftHash(c), title: c.title, cover_text: "工作台封面", target_seconds: 60 });
+    const opened: string[] = [];
+    const shown = fakeDialog(["first", { kind: "ok", value: "用本次的" }, { kind: "ok", value: "查看 / 修改…" }, { kind: "ok", value: "预览原片" }, { kind: "ok", value: "确认" }]);
+    setPullDeps({ ...pullDeps(), opener: async (t) => { opened.push(t); return { ok: true }; } });
+    const res = await confirm(await receipt());
+    expect(opened).toHaveLength(1);
+    expect(shown.some((x) => x.kind === "choose" && x.items?.includes("预览原片"))).toBe(true);
+    expect(res).toMatchObject({ ok: true, cover_text: "三招省时", target_seconds: 90 });
   });
 
   it("导入稿：弹窗多一行说明，确认记录带 recorded_as_is", async () => {

@@ -9,7 +9,7 @@ import { probeMedia } from "../ingest.js";
 
 export type OpenOutcome = { ok: true } | { ok: false; reason: string };
 export type Opener = (target: string) => Promise<OpenOutcome>;
-export type Notifier = (opts: { title: string; message: string; url: string }) => OpenOutcome;
+export type Notifier = (opts: { title: string; message: string; url: string }) => Promise<OpenOutcome>;
 
 /** `open <路径或网址>`：交给系统默认程序；失败（文件没了、没有默认程序）带原因回来 */
 export const systemOpener: Opener = async (target) => {
@@ -28,17 +28,30 @@ const NOTICE_SCRIPT = [
   "end run",
 ];
 
-/** 分离的 osascript 子进程，不等它；数据经 argv 传，不拼进脚本。只能发现「起不来」，窗里点什么不回报 */
+/** 起窗后观察这么久：起不来（找不到 osascript）或没有图形会话会在这段时间内报错退出 */
+const NOTICE_WATCH_MS = 1500;
+
+/**
+ * 分离的 osascript 子进程：数据经 argv 传，不拼进脚本。只观察开头一小段——
+ * 这段里报错或非零退出就回失败原因；还开着 = 窗已弹出，放手不等创始人点。
+ */
 export const osascriptNotifier: Notifier = ({ title, message, url }) => {
-  if (process.platform !== "darwin") return { ok: false, reason: "不是 macOS" };
-  try {
-    const child = spawn("osascript", [...NOTICE_SCRIPT.flatMap((l) => ["-e", l]), title, message, url], { detached: true, stdio: "ignore" });
-    child.on("error", () => undefined);
-    child.unref();
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, reason: `osascript 起不来：${e instanceof Error ? e.message : String(e)}` };
-  }
+  if (process.platform !== "darwin") return Promise.resolve({ ok: false, reason: "不是 macOS" });
+  return new Promise((resolve) => {
+    let stderr = "";
+    let settled = false;
+    const finish = (r: OpenOutcome) => { if (!settled) { settled = true; resolve(r); } };
+    const child = spawn("osascript", [...NOTICE_SCRIPT.flatMap((l) => ["-e", l]), title, message, url], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    child.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+    child.on("error", (e) => finish({ ok: false, reason: `osascript 起不来：${e.message}` }));
+    child.on("exit", (code) => finish(code === 0 ? { ok: true } : { ok: false, reason: stderr.trim().slice(0, 200) || `osascript 退出码 ${String(code)}` }));
+    const timer = setTimeout(() => {
+      child.stderr?.destroy();
+      child.unref();
+      finish({ ok: true });
+    }, NOTICE_WATCH_MS);
+    timer.unref?.();
+  });
 };
 
 /** 工作台是否在跑：根路径有任何响应就算通 */

@@ -172,7 +172,7 @@ describe.skipIf(!HAS_FFMPEG)("交接成功通知", () => {
 
   it("真正提交触发一次，重放不触发", async () => {
     const calls: Array<{ message: string; url: string }> = [];
-    setPullDeps({ notifier: (o) => { calls.push(o); return { ok: true }; } });
+    setPullDeps({ notifier: async (o) => { calls.push(o); return { ok: true }; } });
     const res = await handoff();
     expect(res).toMatchObject({ ok: true, status: "handed_off" });
     expect(res.warnings).toBeUndefined();
@@ -184,7 +184,7 @@ describe.skipIf(!HAS_FFMPEG)("交接成功通知", () => {
   });
 
   it("通知弹不出来只进 warnings，交接仍 ok", async () => {
-    setPullDeps({ notifier: () => ({ ok: false, reason: "没有图形会话" }) });
+    setPullDeps({ notifier: async () => ({ ok: false, reason: "没有图形会话" }) });
     const res = await handoff();
     expect(res).toMatchObject({ ok: true, status: "handed_off", warnings: [expect.stringContaining("没有图形会话")] });
     expect((await getContent(id, hx.dir))?.status).toBe("editing");

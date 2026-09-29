@@ -213,7 +213,12 @@ async function confirmValues(ctx: ConfirmCtx, start: Values, bench: Values | nul
   let v = start;
   let notice: string | null = null;
   let edits = 0;
-  if (bench && (bench.cover !== v.cover || bench.seconds !== v.seconds)) return resolveConflict(summary(ctx, v), v, bench, clock);
+  // 工作台已有不同的决定：先选用哪套，再进同一个确认窗（照样能预览、能改）
+  if (bench && (bench.cover !== v.cover || bench.seconds !== v.seconds)) {
+    const chosen = await resolveConflict(summary(ctx, v), v, bench, clock);
+    if (!chosen.ok) return chosen;
+    v = chosen.values;
+  }
   for (;;) {
     if (secondsLeft(clock) <= 0) return { ok: false, result: dialogFailure({ kind: "timeout" }, clock)! };
     const text = summary(ctx, v, notice);
