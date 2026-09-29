@@ -28,21 +28,14 @@ export function sourceLabel(s: string | null | undefined): string {
   return s;
 }
 
-export const BOARD_COLUMNS = [
-  { key: "idea", label: "灵感库", statuses: [] as string[] },
-  // needs_evidence（P1 §4.4）留在「在写」列:稿子还没成,人要在这一列看到它并去补材料
-  { key: "writing", label: "在写", statuses: ["topic_saved", "drafting", "needs_evidence", "draft_ready", "revision"] },
-  { key: "review", label: "待审", statuses: ["reviewing"] },
-  // 制作中单独成列（创始人 2026-08-24 真机反馈）:剪辑/封面折进「待发布」时,
-  // 片子还没剪的稿顶着「待发布」的列名,创始人在板上找不到它——列名对阶段撒谎。
-  // approved 也算制作中:它是生产段的入口(视频等着进剪辑,图文等着排版发布)。
-  { key: "producing", label: "制作中", statuses: ["approved", "editing", "cover_pending"] },
-  { key: "ready", label: "待发布", statuses: ["publish_ready", "publishing"] },
-  { key: "published", label: "已发布", statuses: ["published"] },
-] as const;
-
-export const STATUS_COLUMN: Record<string, number> = {};
-BOARD_COLUMNS.forEach((c, i) => c.statuses.forEach((s) => (STATUS_COLUMN[s] = i)));
+/**
+ * 状态的推进顺序（只用于「一个选题下几篇稿里谁走得最远」）。看板列不再由前端按状态分：
+ * 列归属以服务端 explain()（/api/board 的 column）为准，前端不另存一张状态→列的表。
+ */
+const STATUS_ORDER = [
+  "topic_saved", "drafting", "needs_evidence", "draft_ready", "revision", "reviewing",
+  "approved", "editing", "cover_pending", "publish_ready", "publishing", "published",
+];
 
 export const VARIANT_STATUS: Record<string, string> = {
   topic_saved: "选题", drafting: "写中", needs_evidence: "缺证据", draft_ready: "草稿", revision: "修订",
@@ -336,7 +329,7 @@ export function groupAtoms(topics: Topic[], contents: Content[]): Atom[] {
 export function atomRep(atom: Atom): Content | null {
   let rep: Content | null = null;
   for (const m of atom.members) {
-    if (!rep || (STATUS_COLUMN[m.status] ?? 0) > (STATUS_COLUMN[rep.status] ?? 0)) rep = m;
+    if (!rep || STATUS_ORDER.indexOf(m.status) > STATUS_ORDER.indexOf(rep.status)) rep = m;
   }
   return rep;
 }

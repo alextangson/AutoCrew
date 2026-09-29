@@ -9,6 +9,7 @@ import { listRetros, readRetro } from "../modules/retro/retro.js";
 import { renderCheckList, unverifiedAdditions } from "../modules/video/handoff/spoken.js";
 import { spokenRel } from "../modules/video/handoff/register-spoken.js";
 import { readArchiveLog, renderArchiveLog } from "./nas-archive-log.js";
+import { explainContent, explainContext, type ExplainContext } from "../modules/production/read.js";
 
 /** 已发布栏只留最近几条；NAS 归档也不动这几条 */
 export const KEEP_PUBLISHED = 5;
@@ -47,17 +48,12 @@ export const GUIDE = `# 我的内容 · 使用说明
 你自己放进来的文件永远不会被删；有你自己文件的文件夹也会原样保留。
 `;
 
-export function columnOf(c: Content): Column | null {
-  const video = isVideoPlatform(c.platform);
-  switch (c.status) {
-    // draft_ready = AI 写完自审过、你还没认，仍在写稿中；你认过（approved）才进待录制
-    case "drafting": case "needs_evidence": case "reviewing": case "revision": case "draft_ready": return "写稿中";
-    case "approved": return video ? "待录制" : "待发布";
-    case "editing": case "cover_pending": return "剪辑中";
-    case "publish_ready": case "publishing": return "待发布";
-    case "published": return "已发布";
-    default: return null;
-  }
+/**
+ * 这条稿在哪一栏：与看板、晨报、desk 同一个 explain()（本体 spec §2.6）。本体未启用时按旧状态给（影子模式）。
+ * 复盘栏不属于任何稿件。
+ */
+export async function columnOf(c: Content, dataDir: string, ctx?: ExplainContext): Promise<Column | null> {
+  return (await explainContent(c, dataDir, ctx)).column;
 }
 
 function pad2(n: number): string { return String(n).padStart(2, "0"); }
@@ -186,12 +182,23 @@ async function itemFiles(c: Content, column: Column, dataDir: string): Promise<I
   return files;
 }
 
-function visible(contents: Content[], keepPublished: number): Map<Column, Content[]> {
-  const published = new Set(contents.filter((c) => c.status === "published")
+async function visible(contents: Content[], keepPublished: number, dataDir: string, plan: Plan): Promise<Map<Column, Content[]>> {
+  const ctx = await explainContext(dataDir);
+  const columns = new Map<string, Column>();
+  for (const c of contents) {
+    try {
+      const col = await columnOf(c, dataDir, ctx);
+      if (col) columns.set(c.id, col);
+    } catch (e) {
+      plan.failed.add(c.id);
+      plan.errors.push(`${c.title}（${c.id}）：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const published = new Set(contents.filter((c) => columns.get(c.id) === "已发布")
     .sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "")).slice(0, keepPublished).map((c) => c.id));
   const byColumn = new Map<Column, Content[]>();
   for (const c of contents) {
-    const col = columnOf(c);
+    const col = columns.get(c.id);
     if (!col || (col === "已发布" && !published.has(c.id))) continue;
     byColumn.set(col, [...(byColumn.get(col) ?? []), c]);
   }
@@ -208,7 +215,7 @@ export async function buildPlan(dataDir: string, keepPublished: number): Promise
   const plan: Plan = { entries: [], dirs: {}, failed: new Set(), errors: [] };
   for (const col of COLUMNS) plan.dirs[columnDir(col)] = "_column";
   plan.entries.push({ rel: "使用说明.md", owner: "_guide", kind: "copy", text: GUIDE });
-  for (const [col, items] of visible(await listContents(dataDir), keepPublished)) {
+  for (const [col, items] of await visible(await listContents(dataDir), keepPublished, dataDir, plan)) {
     const names = folderNames(items);
     for (const c of items) {
       try {

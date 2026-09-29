@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { getContent, updateContent, LOCAL_HOST, type Content } from "./local-store.js";
+import { ScriptFrozenError } from "./production-store.js";
 import { activeClaim } from "./claims.js";
 import { resolveContentProject } from "./content-project.js";
 import { columnDir, columnOf, scriptText } from "./my-content-plan.js";
@@ -24,7 +25,7 @@ const sha = (text: string | Buffer) => createHash("sha256").update(text).digest(
 /** 能不能把创始人的改稿写回：返回 null = 能，否则是不能的人话原因 */
 async function blockReason(c: Content, text: string, viewHash: string, dataDir: string): Promise<string | null> {
   if (!text.trim()) return "改后的文件是空的，按误操作处理";
-  const col = columnOf(c);
+  const col = await columnOf(c, dataDir);
   if (col !== "写稿中" && col !== "待录制") return "稿子已经交剪辑或更往后了，定稿锁定，不再改";
   const claim = activeClaim(c);
   if (claim && claim.host !== LOCAL_HOST) return `AI（${claim.host}）正在处理这篇稿，等它做完再改`;
@@ -41,7 +42,10 @@ async function syncOne(id: string, text: string, viewHash: string, dataDir: stri
   if (!c) return "稿件已经不在了";
   const blocked = await blockReason(c, text, viewHash, dataDir);
   if (blocked) return blocked;
-  const updated = await updateContent(id, { body: text, _versionNote: FOUNDER_EDIT_NOTE }, dataDir);
+  // 创始人自己改的（§13-C）：待录制时认稿随改稿重绑；已冻结的会被写口拒，照原因保留他的文件
+  let updated: Content | null;
+  try { updated = await updateContent(id, { body: text, _versionNote: FOUNDER_EDIT_NOTE, _editor: "founder" }, dataDir); }
+  catch (e) { if (e instanceof ScriptFrozenError) return e.message; throw e; }
   if (!updated) return "稿件已经不在了";
   await recordDiff(id, "body", c.body, text, dataDir, FOUNDER_EDIT_NOTE, c.platform);
   return null;

@@ -6,6 +6,8 @@ import { scanUnregisteredCuts, type CutScanOptions } from "../modules/video/unre
 import { buildBaseline, compareToBaseline, trackPerformance } from "../modules/analytics/quality-baseline.js";
 import { generateLearningReport } from "../modules/learnings/visible-learning.js";
 import { engineFallbackStats } from "../runtime/run-log.js";
+import { explainAll } from "../modules/production/read.js";
+import { readReconcileReport } from "../modules/production/reconcile.js";
 
 export const statusSchema = Type.Object({
   action: Type.Optional(Type.Unsafe<"overview" | "baseline" | "compare" | "track_performance" | "learning_report">({
@@ -88,20 +90,27 @@ async function briefStatus(dataDir?: string, opts: CutScanOptions = {}) {
   const [writer, dispatched, contents] = await Promise.all([deskInbox("writer", dir), dispatchedInbox(dir), listContents(dir)]);
   const video = contents.filter((c) => isVideoPlatform(c.platform));
   const scan = await scanUnregisteredCuts(contents, dir, opts);
+  // 列归属用 explain()（本体 §2.6，与看板、我的内容同一个）；未启用本体时按旧状态给
+  const exp = await explainAll(contents, dir);
+  const col = (c: { id: string }) => exp.get(c.id)?.column ?? null;
+  const report = await readReconcileReport(dir);
   const counts = {
     // 写手桌 = 已选立意没稿的选题 + 退回修订；再加包已发出、稿没回来的 drafting
     to_write: writer.length + contents.filter((c) => c.status === "drafting").length,
     // AI 写完、等创始人认稿（剪完未登记的视频稿扣出去单算）
-    awaiting_approval: contents.filter((c) => c.status === "draft_ready" && !scan.hits.has(c.id)).length,
-    // 创始人认过的视频稿、还没进剪辑台：handoff 把它推到 editing
-    awaiting_aroll: video.filter((c) => c.status === "approved" && !scan.hits.has(c.id)).length,
+    awaiting_approval: contents.filter((c) => c.status === "draft_ready" && col(c) === "写稿中" && !scan.hits.has(c.id)).length,
+    // 创始人认过的视频稿、还没有任何制作事实（待录制）
+    awaiting_aroll: video.filter((c) => col(c) === "待录制" && !scan.hits.has(c.id)).length,
     // 同样没交接，但外面已经导出成片 / 做了封面
     cut_unregistered: scan.hits.size,
     // 在剪辑台、这一版成片还没审过（P6-a 之前「已派工」就是它）
     dispatched: dispatched.filter((item) => isVideoPlatform(item.platform)).length,
-    publish_ready: contents.filter((c) => c.status === "publish_ready").length,
+    // 视频稿按 explain 的列；图文照旧只数 publish_ready（图文的「已过审」在旧列里也归待发布，但还没排版）
+    publish_ready: contents.filter((c) => (isVideoPlatform(c.platform) ? col(c) === "待发布" : c.status === "publish_ready")).length,
   };
-  const warnSuffix = scan.warnings.length ? "（读不了导出目录）" : "";
+  // 对账失败要看得见（§4 逐条隔离）：晨报 warnings 带上
+  const warnings = [...scan.warnings, ...(report?.errors ?? []).map((e) => `对账失败：${e.title}（${e.id}）${e.error}`)];
+  const warnSuffix = scan.warnings.length ? "（读不了导出目录）" : report?.errors.length ? `（${report.errors.length} 条对账失败）` : "";
   const brief = `${counts.to_write} 待写 / ${counts.awaiting_approval} 待认稿 / ${counts.awaiting_aroll} 等 A-roll / ${counts.cut_unregistered} 剪完未登记 / ${counts.dispatched} 已派工待登记 / ${counts.publish_ready} 待发布${warnSuffix}`;
-  return { ok: true, action: "overview", brief, counts, ...(scan.warnings.length ? { warnings: scan.warnings } : {}) };
+  return { ok: true, action: "overview", brief, counts, ...(warnings.length ? { warnings } : {}) };
 }

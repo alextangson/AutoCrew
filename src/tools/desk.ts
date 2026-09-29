@@ -28,6 +28,7 @@ import {
   type ContentStatus,
 } from "../storage/local-store.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
+import { explainAll } from "../modules/production/read.js";
 import { activeClaim } from "../storage/claims.js";
 import { getContent } from "../storage/local-store.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
@@ -142,14 +143,16 @@ async function writerInbox(dataDir: string): Promise<DeskItem[]> {
  * 真机 2026-09-06：状态机里非视频稿走 approved → publish_ready，根本不经过 cover_pending，
  * 只盯 cover_pending 的桌子对公众号稿永远是空的——封面在 approved 就该做；视频稿要等成片审过。
  */
-function wantsCover(c: Content): boolean {
-  if (c.status === "cover_pending") return true;
-  if (c.status === "approved") return !isVideoPlatform(c.platform);
-  return c.status === "editing" && Boolean(c.videoDone);
+function wantsCover(c: Content, column: string | null): boolean {
+  if (!isVideoPlatform(c.platform)) return c.status === "approved";
+  // 列归属用 explain()（本体 §2.6）：视频稿在剪辑中、且成片已审过（或旧封面台）才轮到封面
+  return column === "剪辑中" && (c.status === "cover_pending" || Boolean(c.videoDone));
 }
 
 async function coverInbox(dataDir: string): Promise<DeskItem[]> {
-  const contents = (await listContents(dataDir)).filter(wantsCover);
+  const all = await listContents(dataDir);
+  const exp = await explainAll(all, dataDir);
+  const contents = all.filter((c) => wantsCover(c, exp.get(c.id)?.column ?? null));
   const pending = await Promise.all(
     contents.map(async (c) => ((await getCoverReview(c.id, dataDir))?.approvedLabel ? null : itemOf(c))),
   );
@@ -158,7 +161,9 @@ async function coverInbox(dataDir: string): Promise<DeskItem[]> {
 
 /** 已派工：在剪辑台且这一版成片还没审过（`videoDone` 是阶段门唯一认的凭据） */
 export async function dispatchedInbox(dataDir: string): Promise<DeskItem[]> {
-  return (await listContents(dataDir)).filter((c) => c.status === "editing" && !c.videoDone).map(itemOf);
+  const all = await listContents(dataDir);
+  const exp = await explainAll(all, dataDir);
+  return all.filter((c) => exp.get(c.id)?.column === "剪辑中" && !c.videoDone).map(itemOf);
 }
 
 /**

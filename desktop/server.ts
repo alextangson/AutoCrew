@@ -35,6 +35,8 @@ import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { migratePlaintextClaims } from "../src/storage/claims.js";
 import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
+import { ensureProductionReady } from "../src/modules/production/service.js";
+import { reconcileAll } from "../src/modules/production/reconcile.js";
 import { pullDeps } from "../src/modules/video/handoff/pull-deps.js";
 import { listWorkspaces } from "../src/desktop/workspace-store.js";
 import { failStalePreparingPacks } from "../src/tools/writer-pack.js";
@@ -521,6 +523,22 @@ try {
   console.error("[handoff] 原片挪动核定失败:", err instanceof Error ? err.message : err);
 }
 
+// 内容本体(spec 2026-09-29 §2.2/§7):开放写入前先恢复未完成的文件归属事务、再重建字节索引。
+// 单个工作区失败不阻断启动,但要看得见。
+try {
+  const dirs = new Set([getDataDir(), ...(await listWorkspaces()).workspaces.map((ws) => ws.dataDir)]);
+  for (const dir of dirs) {
+    const r = await ensureProductionReady(dir).catch((err) => {
+      console.error(`[production] 事务恢复 / 索引重建失败(${dir}):`, err instanceof Error ? err.message : err);
+      return null;
+    });
+    for (const o of r?.recovered ?? []) console.log(`  [production] 事务 ${o.id}(${o.content_id}) → ${o.outcome}`);
+    for (const c of r?.index.conflicts ?? []) console.error(`  [production] 字节索引冲突:${c}`);
+  }
+} catch (err) {
+  console.error("[production] 启动恢复失败:", err instanceof Error ? err.message : err);
+}
+
 // 认领令牌只存哈希(P6 §12.4-D):旧记录里的明文启动时落成哈希,持有者手里的令牌照样能用
 try {
   const dirs = new Set([getDataDir(), ...(await listWorkspaces()).workspaces.map((ws) => ws.dataDir)]);
@@ -638,7 +656,15 @@ server.listen(PORT, HOST, () => {
   const tickMyContent = () => {
     if (myContentRunning) return;
     myContentRunning = true;
-    void runExclusive(() => syncMyContentView())
+    // 先对账再排文件夹(本体 §4):未启用本体时对账只算影子差异、不写
+    void runExclusive(async () => {
+      const r = await reconcileAll(getDataDir()).catch((err) => {
+        console.error("[production] 对账失败:", err instanceof Error ? err.message : err);
+        return null;
+      });
+      if (r?.errors.length) console.error(`[production] 对账有 ${r.errors.length} 条失败:${r.errors[0].title} ${r.errors[0].error}`);
+      return syncMyContentView();
+    })
       .then((r) => { if (r.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
       .catch((err) => console.error("[my-content] 对账失败:", err instanceof Error ? err.message : err))
       .finally(() => { myContentRunning = false; });

@@ -17,7 +17,7 @@ export const VIEW_ROUTES = [
 ] as const;
 export type ViewRoute = (typeof VIEW_ROUTES)[number];
 
-/** 看板列 key 的终集（frontend/src/lib.ts BOARD_COLUMNS）——两边改动同步 */
+/** 聊天视图上下文里看板列 key 的终集（前端 chat/view-context 透传 boardColumn；与 /api/board 的中文列无关） */
 export const BOARD_COLUMNS = ["idea", "writing", "review", "ready", "published"] as const;
 export type BoardColumn = (typeof BOARD_COLUMNS)[number];
 

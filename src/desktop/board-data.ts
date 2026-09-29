@@ -1,17 +1,21 @@
 /**
- * 看板数据（看板规格 A/D/E）：一次读出看板要的全部事实。
- * 列归属沿用「我的内容」同一张表（my-content-plan.columnOf），不另立一套口径；
- * 发布状态读 Codex 写的 publish-plan.json，任一平台已提交就把稿件同步成 published（§18）。
+ * 看板数据（看板规格 A/D/E）：一次读出看板要的全部事实。**只读，零写入**（本体 spec §4）。
+ * 列归属一律用 explain()（与我的内容、晨报、desk 同一个），不另立口径；本体未启用时 explain 按旧状态给列（影子模式）。
+ * 发布记录已投出的待发布稿由 explain 直接归到已发布——从前在这里读时改状态（syncPublished），现已删除。
  */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { listContents, listTopics, transitionStatus, type Content, type Topic } from "../storage/local-store.js";
-import { columnOf, scriptText, type Column } from "../storage/my-content-plan.js";
+import { listContents, listTopics, type Content, type Topic } from "../storage/local-store.js";
+import { scriptText } from "../storage/my-content-plan.js";
+import { explainContent, explainContext, type ExplainContext } from "../modules/production/read.js";
+import { readReconcileReport, type ReconcileReport } from "../modules/production/reconcile.js";
+import type { CandidateView } from "../modules/production/derive.js";
+import type { Column } from "../modules/production/explain.js";
 import { isMissing, resolveContentProject } from "../storage/content-project.js";
-import { anySubmitted, firstPublishTime, readPublishRecord, recordTime, type PublishRecord } from "../storage/publish-record.js";
+import { readPublishRecord, recordTime, type PublishRecord } from "../storage/publish-record.js";
 
-export type BoardColumn = "选题" | Exclude<Column, "复盘">;
+export type BoardColumn = "选题" | Column;
 
 export interface BoardCover { path: string; sha256: string }
 
@@ -37,6 +41,10 @@ export interface BoardItem {
   publishTime: string | null;
   lastError: string | null;
   blockedReason: string | null;
+  /** explain()：还差什么、徽章、候选（未启用本体时是影子结果之外的旧列，这三样为空） */
+  missing: string[];
+  badges: string[];
+  candidates: CandidateView[];
 }
 
 export interface BoardTopic {
@@ -54,6 +62,8 @@ export interface BoardData {
   topics: BoardTopic[];
   /** 上一条已登记成片的「字数 ÷ 分钟」；没有登记过成片 = null（不显示估时，§29） */
   wordsPerMinute: number | null;
+  /** 本体状态（§4.1）：是否已启用；未启用时给最近一次对账算出的「要挪 N 张卡」清单；对账失败逐条列出 */
+  ontology: { enabled: boolean; report: ReconcileReport | null };
 }
 
 /** 数字数：去掉空白与 markdown 标题记号，中文按字、英文按字母 */
@@ -62,7 +72,6 @@ export function countChars(text: string): number {
 }
 
 const PUBLISH_STATUSES = new Set(["publish_ready", "publishing", "published"]);
-const SYNC_FROM = new Set(["publish_ready", "publishing"]);
 
 const shaCache = new Map<string, { mtimeMs: number; size: number; sha: string }>();
 async function cachedSha(file: string): Promise<string> {
@@ -98,22 +107,14 @@ export async function wordsPerMinute(contents: Content[], dataDir: string): Prom
   return chars / (last.video!.final!.duration_ms / 60_000);
 }
 
-/** 任一平台已提交 → 稿件同步为已发布（§18）；只从待发布同步，状态以盘上为准 */
-async function syncPublished(c: Content, record: PublishRecord, dataDir: string): Promise<Content> {
-  if (!SYNC_FROM.has(c.status) || !anySubmitted(record)) return c;
-  // 发布时间以平台上的实际/定时时间为准，不是看板刷到它的时刻——NAS 归档和数据关联都按它算
-  const at = firstPublishTime(record);
-  const r = await transitionStatus(c.id, "published", { force: true, expectedStatus: c.status, ...(at ? { patch: { publishedAt: at } } : {}) }, dataDir);
-  return r.ok && r.content ? r.content : c;
-}
-
-async function itemOf(c: Content, column: Exclude<BoardColumn, "选题">, dataDir: string): Promise<BoardItem> {
-  let current = c, publish: PublishRecord | null = null;
-  if (PUBLISH_STATUSES.has(c.status)) {
-    publish = await readPublishRecord(c.id, c.manualPublications, dataDir);
-    current = await syncPublished(c, publish, dataDir);
-  }
-  const col = (columnOf(current) ?? column) as Exclude<BoardColumn, "选题">;
+async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise<BoardItem | null> {
+  const current = c;
+  const publish: PublishRecord | null = PUBLISH_STATUSES.has(c.status) || c.manualPublications?.length
+    ? await readPublishRecord(c.id, c.manualPublications, dataDir) : null;
+  const exp = await explainContent(c, dataDir, ctx, publish);
+  const col = exp.column;
+  // 归档 / 未知状态 / 选题占位不进任何列（§6）
+  if (!col) return null;
   return {
     id: current.id, title: current.title, platform: current.platform ?? null, status: current.status,
     topicId: current.topicId ?? null, column: col, createdAt: current.createdAt, updatedAt: current.updatedAt,
@@ -123,6 +124,7 @@ async function itemOf(c: Content, column: Exclude<BoardColumn, "选题">, dataDi
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
+    missing: exp.missing, badges: exp.error ? [...exp.badges, `制作记录读不了：${exp.error}`] : exp.badges, candidates: exp.candidates,
   };
 }
 
@@ -131,18 +133,17 @@ function topicOf(t: Topic): BoardTopic {
 }
 
 export async function boardData(dataDir: string): Promise<BoardData> {
-  const [contents, topics] = await Promise.all([listContents(dataDir), listTopics(dataDir)]);
+  const [contents, topics, ctx] = await Promise.all([listContents(dataDir), listTopics(dataDir), explainContext(dataDir)]);
   const items: BoardItem[] = [];
   for (const c of contents) {
-    const column = columnOf(c);
-    // 归档 / 未知状态不进任何列（§6）
-    if (!column || column === "复盘") continue;
-    items.push(await itemOf(c, column, dataDir));
+    const item = await itemOf(c, dataDir, ctx);
+    if (item) items.push(item);
   }
   const started = new Set(contents.filter((c) => c.topicId).map((c) => c.topicId!));
   return {
     items,
     topics: topics.filter((t) => !started.has(t.id)).map(topicOf),
     wordsPerMinute: await wordsPerMinute(contents, dataDir),
+    ontology: { enabled: ctx.enabled, report: await readReconcileReport(dataDir) },
   };
 }

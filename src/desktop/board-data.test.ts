@@ -5,6 +5,11 @@ import path from "node:path";
 import { initializeProjectLayout, resolveContentProject } from "../storage/content-project.js";
 import { getContent, saveContent, saveTopic, transitionStatus } from "../storage/local-store.js";
 import { boardData, countChars } from "./board-data.js";
+import { reconcileAll } from "../modules/production/reconcile.js";
+import { setProductionDeps } from "../modules/production/roots.js";
+
+// 对账只看注入的根：不碰真实 ~/Movies/ChatCut 与资料库收件箱
+setProductionDeps({ roots: async () => ({ inbox: null, chatcut: null, jianying: null }) });
 
 let dir: string;
 beforeEach(async () => {
@@ -44,18 +49,22 @@ it("已开写的选题不再出现在选题列", async () => {
   expect(data.topics[0]).toMatchObject({ source: "radar:爱范儿", score: 71 });
 });
 
-it("发布计划里任一平台已提交 → 稿件同步为已发布并进已发布列", async () => {
+it("发布计划里任一平台已提交 → 看板归已发布列，但读看板不写状态（本体 §4 看板读零写入）；对账循环再同步状态", async () => {
   const c = await saveContent({ title: "图文", body: "正文", status: "publish_ready", platform: "wechat_mp", tags: [] }, dir);
   await writePlan(c.id, JSON.stringify({ platforms: [
     { platform: "douyin", publication: { status: "scheduled", scheduled_at: "2099-10-02T18:00:00+08:00" } },
     { platform: "wechat_video", publication: { status: "not_submitted" } },
   ] }));
+  const before = await fs.readFile(path.join(resolveContentProject(c.id, dir)!.project_root, "00-project/autocrew/meta.json"), "utf8");
   const item = (await boardData(dir)).items.find((i) => i.id === c.id)!;
   expect(item.column).toBe("已发布");
   expect(item.publishTime).toBe("2099-10-02T18:00:00+08:00");
+  expect(await fs.readFile(path.join(resolveContentProject(c.id, dir)!.project_root, "00-project/autocrew/meta.json"), "utf8")).toBe(before);
+  expect((await getContent(c.id, dir))?.status).toBe("publish_ready");
+  await reconcileAll(dir);
   const saved = await getContent(c.id, dir);
   expect(saved?.status).toBe("published");
-  // 发布时间取平台上的时间，不是看板刷到它的时刻
+  // 发布时间取平台上的时间，不是对账跑到它的时刻
   expect(saved?.publishedAt).toBe("2099-10-02T18:00:00+08:00");
 });
 

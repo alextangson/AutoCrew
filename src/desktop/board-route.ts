@@ -9,6 +9,9 @@ import { dataPage } from "./data-page.js";
 import { createCoverHandler } from "./data-cover-route.js";
 import { addDecision, removeDecision, type LinkOp } from "../modules/flywheel/outcome-links.js";
 import { markPublished, startWriting, unmarkPublished, type OpenDeps } from "./board-actions.js";
+import { reopenScript } from "../modules/production/reopen.js";
+import { enableOntology } from "../modules/production/enable.js";
+import { isContentId } from "../storage/entity-id.js";
 
 export interface BoardRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
@@ -68,6 +71,22 @@ export function createBoardHandler(deps: BoardRouteDeps) {
     }
     if (p === "/api/board/start-writing" && req.method === "POST") {
       await post(req, res, (b, dir) => startWriting(String(b.topic_id ?? ""), typeof b.platform === "string" ? b.platform : undefined, dir, deps.open));
+      return true;
+    }
+    // 本体（spec 2026-09-29）：两个创始人决定只走浏览器会话——重开文稿（§2.5）与启用本体（§4.1）
+    if (p === "/api/board/reopen-script" && req.method === "POST") {
+      await post(req, res, async (b, dir) => {
+        const id = String(b.content_id ?? "");
+        if (!isContentId(id)) return { ok: false, code: "bad_request", error: "content_id 不对" };
+        if (b.confirm !== true) return { ok: false, code: "confirmation_required", error: "重开文稿会把本轮的原片、成片、批准转入历史，需要确认" };
+        return reopenScript(id, dir, typeof b.note === "string" ? b.note.slice(0, 200) : undefined);
+      });
+      return true;
+    }
+    if (p === "/api/board/ontology/enable" && req.method === "POST") {
+      await post(req, res, async (b, dir) => (b.confirm === true
+        ? enableOntology(dir)
+        : { ok: false, code: "confirmation_required", error: "启用前先看差异清单并确认" }));
       return true;
     }
     if (p === "/api/board/mark-published" && req.method === "POST") {
