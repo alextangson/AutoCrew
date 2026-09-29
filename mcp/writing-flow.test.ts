@@ -288,11 +288,12 @@ describe("Claude MCP writing journey without external model calls", () => {
     expect(editorial!.inputSchema).toMatchObject({
       type: "object",
       properties: {
-        action: { anyOf: [{ const: "profile" }, { const: "update_profile" }, { const: "inspect" }, { const: "feedback" }] },
+        // v1.3：几选一常量以等价的 enum 形式列出（接受的值不变，见 tool-surface.test 契约快照）
+        action: { type: "string", enum: ["profile", "update_profile", "inspect", "feedback"] },
         draft_hash: { type: "string" },
         event_id: { type: "string" },
         user_confirmed: { type: "boolean" },
-        scope: { anyOf: [{ const: "draft" }, { const: "platform" }, { const: "voice" }] },
+        scope: { type: "string", enum: ["draft", "platform", "voice"] },
       },
     });
   });
