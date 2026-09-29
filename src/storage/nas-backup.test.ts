@@ -202,8 +202,21 @@ describe("发布即备份 NAS", () => {
     const r = await backup();
     expect(r.backedUp).toEqual(["稿"]);
     expect(await exists(path.join(nasDir(c), "03-broll-link.mov"))).toBe(false);
-    const note = JSON.parse(await read(path.join(nasDir(c), "符号链接清单.json")));
+    const note = JSON.parse(await read(path.join(nasDir(c), ".autocrew-backup/links.json")));
     expect(note.links).toEqual([{ rel: "03-broll-link.mov", target: "../02-aroll/raw.mov" }]);
+  });
+
+  it("keeps a real project file named like the link manifest intact next to a symlink", async () => {
+    const c = await published("稿", 1);
+    await put(c, "符号链接清单.json", "创始人自己的文件");
+    await put(c, "links.json", "也是自己的");
+    await fs.symlink("../02-aroll/raw.mov", path.join(root(c), "03-broll-link.mov"));
+    expect((await backup()).backedUp).toEqual(["稿"]);
+    expect(await read(path.join(nasDir(c), "符号链接清单.json"))).toBe("创始人自己的文件");
+    expect(await read(path.join(nasDir(c), "links.json"))).toBe("也是自己的");
+    const full = await backup({ now: new Date(NOW.getTime() + 8 * 86400_000) });
+    expect(full.backedUp).toEqual(["稿"]);
+    expect(await read(path.join(nasDir(c), "符号链接清单.json"))).toBe("创始人自己的文件");
   });
 
   it("marks items unmounted when the NAS is missing, without errors, and catches up once mounted", async () => {

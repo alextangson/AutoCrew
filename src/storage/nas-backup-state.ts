@@ -47,8 +47,12 @@ export async function latestBackupRecord(projectRoot: string): Promise<BackupRec
 }
 
 /** 上次备份到同一个 target 的文件清单；目标换了（或没有记录）就是空的，全部重新核对 */
-/** NAS 项目根下的符号链接清单 */
-export const LINKS_NOTE = "符号链接清单.json";
+/**
+ * NAS 项目里备份自用的保留目录（只在 NAS 侧存在）：符号链接清单放这里，不放项目根，免得跟项目里同名的真文件撞上。
+ * 本机项目若也有这个目录，备份直接报错，不让两边混在一起。
+ */
+export const NAS_META_DIR = ".autocrew-backup";
+export const LINKS_NOTE = `${NAS_META_DIR}/links.json`;
 
 export async function latestBackupFiles(projectRoot: string, target: string): Promise<Map<string, ArchivedFile>> {
   const record = await latestBackupRecord(projectRoot);

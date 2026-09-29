@@ -15,7 +15,7 @@ import { copyProject, sha256File, walkProject, type ArchivedFile, type CopyImpl,
 import { safeNasPath, assertInside } from "./nas-safe-path.js";
 import { archiveTarget, isReachable, DEFAULT_ARCHIVE_ROOT } from "./nas-archive.js";
 import {
-  BACKUP_FAIL_LIMIT, LINKS_NOTE, isBackupBookkeeping, latestBackupRecord, latestBackupFiles, readBackupState, writeBackupRecord, writeBackupState,
+  BACKUP_FAIL_LIMIT, LINKS_NOTE, NAS_META_DIR, isBackupBookkeeping, latestBackupRecord, latestBackupFiles, readBackupState, writeBackupRecord, writeBackupState,
 } from "./nas-backup-state.js";
 
 export interface BackupOptions { archiveRoot?: string; now?: Date; copyImpl?: CopyImpl }
@@ -102,6 +102,9 @@ async function writeLinksNote(target: string, links: ProjectLink[]): Promise<voi
 /** full = 每周一次的完整核对：不走增量跳过，NAS 上每个文件都重读算 sha256；不一致从本机重拷 */
 async function copyOnce(projectRoot: string, target: string, ctx: Ctx, full: boolean): Promise<ArchivedFile[]> {
   const prev = await latestBackupFiles(projectRoot, target);
+  if (await fs.lstat(path.join(projectRoot, NAS_META_DIR)).then(() => true, () => false)) {
+    throw new Error(`项目里有 ${NAS_META_DIR}，跟 NAS 备份的保留目录重名，请改名`);
+  }
   const { files, errors, links } = await copyProject(projectRoot, target, ctx.copy, [], {
     previous: prev, skipUnchanged: !full, exclude: isBackupBookkeeping, recordSymlinks: true,
   });
