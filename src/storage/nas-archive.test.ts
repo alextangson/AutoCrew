@@ -10,6 +10,8 @@ import { portableProjectRecord } from "./project-record.js";
 import { syncMyContentView, VIEW_DIR, ERROR_FILE } from "./my-content-view.js";
 import { archivePublished, type ArchiveOptions } from "./nas-archive.js";
 import { withFileOwnership } from "./file-ownership.js";
+import { writeProductionDoc } from "./production-store.js";
+import { emptyProductionDoc } from "./production-types.js";
 
 let release: () => void;
 let temp: string, lib: string, data: string, view: string, nas: string;
@@ -59,6 +61,16 @@ async function fiveRecent(): Promise<void> { for (let i = 1; i <= 5; i++) await 
 const nasDir = (c: Content) => path.join(nas, "2026", "September", path.basename(root(c)));
 
 describe("NAS 归档", () => {
+  it("E36：核对之后新出现的文件留着不删，下一轮再归档", async () => {
+    await fiveRecent();
+    const old = await published("旧稿", 8);
+    const late = path.join(root(old), "02-aroll/late.mov");
+    const r = await archive({ copyImpl: async (s, d) => { await fs.copyFile(s, d); if (s.endsWith("raw.mov")) await fs.writeFile(late, "新来的"); } });
+    expect(r.archived.map((a) => a.title)).toEqual(["旧稿"]);
+    expect(await fs.readFile(late, "utf8")).toBe("新来的");
+    expect(await exists(path.join(root(old), "02-aroll/raw.mov"))).toBe(false);
+  });
+
   it("[Codex P1 mutex.ts:17] 与 record 落位同排文件归属事务：锁被占着时归档等着，不并发删", async () => {
     await fiveRecent();
     await published("旧稿", 8);
@@ -73,18 +85,21 @@ describe("NAS 归档", () => {
     expect((await run).archived.map((a) => a.title)).toEqual(["旧稿"]);
   });
 
-  it("archives only the 6th-newest+ published ≥7 days, unclaimed", async () => {
+  it("archives only the 6th-newest+ published ≥7 days, not busy in production（本体 §7：排除改成未完成事务 / 30 分钟内 record）", async () => {
     await fiveRecent();
     const old = await published("旧稿", 8);
     const young = await published("三天稿", 3.5);
     const draft = await make("未发布", { status: "publish_ready" });
+    // 活认领不再挡归档；30 分钟内有 record 的才挡
     const claim = { token: "clm-x", host: "codex", leaseUntil: new Date(NOW.getTime() + 3600_000).toISOString() } as unknown as Content["claim"];
-    const claimed = await published("认领中", 9, { claim });
+    const claimedOnly = await published("只有认领", 10, { claim });
+    const claimed = await published("刚报过产物", 9);
+    await writeProductionDoc(claimed.id, data, { ...emptyProductionDoc(), facts: [{ id: "f1", kind: "cut", round: 1, state: "accepted", availability: "present", source: "record", at: new Date(NOW.getTime() - 5 * 60_000).toISOString() }] }, 0);
     const r = await archive();
-    expect(r.errors).toEqual([]);
-    expect(r.archived.map((a) => a.title)).toEqual(["旧稿"]);
-    expect(r.archived[0].target).toBe(nasDir(old));
-    expect(r.archived[0].freedBytes).toBe(Buffer.byteLength("旧稿-raw") + Buffer.byteLength("旧稿-cover"));
+    expect(r.errors).toEqual([expect.stringContaining("30 分钟内有新报的产物")]);
+    expect(r.archived.map((a) => a.title).sort()).toEqual(["只有认领", "旧稿"].sort());
+    expect(r.archived.find((a) => a.title === "旧稿")!.target).toBe(nasDir(old));
+    expect(r.archived.find((a) => a.title === "旧稿")!.freedBytes).toBe(Buffer.byteLength("旧稿-raw") + Buffer.byteLength("旧稿-cover"));
     expect(await fs.readFile(path.join(nasDir(old), "02-aroll/raw.mov"), "utf8")).toBe("旧稿-raw");
     expect(await exists(path.join(nasDir(old), "01-script/manuscripts/current.md"))).toBe(true);
     expect(await fs.readdir(path.join(root(old), "02-aroll"))).toEqual([]);

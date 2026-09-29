@@ -24,6 +24,7 @@ import {
   LOCAL_HOST,
   type Content,
   type VideoKit,
+  getDataDir,
 } from "../storage/local-store.js";
 import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
 import { executeReview } from "./review.js";
@@ -31,6 +32,8 @@ import { editorialDraftHash } from "./editorial.js";
 import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 import { COVER_TEXT_MAX, publishTitleChars, videoTitleLimit } from "../modules/publish/video-kit.js";
 import { isModelCall, isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
+import { KIT_BEHIND_REGISTER, kitBehindRegister, kitRegisterHash } from "../modules/publish/kit-stale.js";
+import { registeredPackage } from "../modules/production/publish-gate.js";
 
 // --- Types ---
 
@@ -189,7 +192,9 @@ function videoKitNextAction(content: Content): Record<string, unknown> {
 /** 发布包带指纹且与当前稿对不上 = 按旧稿做的；旧发布包没有指纹，不判过期 */
 function staleKit(content: Content, platform: string): PrePublishFailure | null {
   const kit = content.videoKit;
-  if (!isVideoPlatform(platform) || kit?.platform !== platform || !kit.draftHash) return null;
+  if (!isVideoPlatform(platform) || kit?.platform !== platform) return null;
+  if (kitBehindRegister(content, kit)) return { ok: false, code: "kit_stale", error: KIT_BEHIND_REGISTER, next_action: videoKitNextAction(content) };
+  if (!kit.draftHash) return null;
   if (kit.draftHash === editorialDraftHash(content)) return null;
   return {
     ok: false,
@@ -348,7 +353,7 @@ async function saveHostVideoKit(params: Record<string, unknown>): Promise<Record
   if ("denied" in gate) return gate.denied;
   const kit: VideoKit = {
     platform, ...fields, storyboard: [], coverPrompt: "",
-    generatedAt: new Date().toISOString(), source: "host", draftHash: editorialDraftHash(content),
+    generatedAt: new Date().toISOString(), source: "host", draftHash: editorialDraftHash(content), ...kitRegisterHash(content),
   };
   // 指纹与落盘同锁核对：读稿到写包之间稿件被改，就不能把旧稿的指纹钉到新稿上
   const saved = await updateContentIfDraftMatches(contentId, content, { videoKit: kit }, dataDir);
@@ -456,6 +461,12 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
 
   // --- Check 6: Body length（有发布包读发布简介） ---
   checks.push(lengthCheck(surface, platform));
+
+  // --- Check 6b: 发布出口（本体 §5）：按本体走的视频稿只发当前有效登记记录里的成片与封面 ---
+  const gated = isVideoPlatform(platform) ? await registeredPackage(content, getDataDir(dataDir)) : null;
+  if (gated) checks.push(gated.ok
+    ? { name: "登记（发布出口）", status: "pass", detail: `发当前登记的成片与封面（${gated.files.registration.id}）` }
+    : { name: "登记（发布出口）", status: "fail", detail: gated.error, fix: "在工作台重新通过成片 / 封面，登记会自动完成" });
 
   // --- Check 7: 阶段门（阶段制 spec §1.2/§4 #1） ---
   // 六项全过之后才谈流转。**预检不许绕过阶段门**：视频稿卡在剪辑阶段时，

@@ -97,7 +97,7 @@ export const contentSaveSchema = Type.Object({
   kind: Type.Optional(Type.Unsafe<string>({
     type: "string",
     enum: ["aroll", "cut", "srt", "cover", "chatcut_project", "publish"],
-    description: "record：事实种类。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程（publish 暂未开放）.",
+    description: "record：事实种类。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（记为待核，等创始人确认或数据回流核实）.",
   })),
   request_id: Type.Optional(Type.String({ description: "record：这次报告的请求号；重试用同一个，服务端直接重放上次结果." })),
   path: Type.Optional(Type.String({ description: "record：文件的本机路径（可 ~ 开头）。项目内原地收；原片收件箱、ChatCut / 剪映导出目录会挪 / 克隆进项目；其他位置只记候选." })),
@@ -109,6 +109,9 @@ export const contentSaveSchema = Type.Object({
   chatcut_project_id: Type.Optional(Type.String({ description: "record kind=chatcut_project：ChatCut 工程 id." })),
   timeline_id: Type.Optional(Type.String({ description: "record kind=chatcut_project：时间线 id（可选）." })),
   note: Type.Optional(Type.String({ description: "record：一句备注（可选）." })),
+  account: Type.Optional(Type.String({ description: "record kind=publish：发布账号（可选）." })),
+  url: Type.Optional(Type.String({ description: "record kind=publish：作品链接（或填 item_id）." })),
+  item_id: Type.Optional(Type.String({ description: "record kind=publish：平台作品 id（或填 url）." })),
   claim_token: Type.Optional(Type.String({
     description:
       "认领令牌（写操作回执或 autocrew_desk claim 给的）。这篇有活认领时 update / transition 必须带它，同宿主的另一个会话也一样；没人认领就不用带，写下去会自动认领并回令牌。",

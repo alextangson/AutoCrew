@@ -49,8 +49,23 @@ export interface Fact {
   project_id?: string;
   timeline_id?: string;
   uses_aroll?: string[];
+  /** publish（发布回执，§6）：平台、账号、作品身份（url 或 item_id）、提交状态、是否已核实 */
+  platform?: string;
+  account?: string;
+  url?: string;
+  item_id?: string;
+  pub_state?: PublicationState;
+  /** 可信来源（AutoCrew 发布器 / 数据回流 / 创始人确认）= true；模型说的 = false（待核，§13-E） */
+  verified?: boolean;
+  /** 被驳回的原因 */
+  reason?: string;
+  /** 回执的作品身份（跨轮去重键） */
+  receipt_key?: string;
   note?: string;
 }
+
+/** 回执的提交状态（沿用 publish-record.ts 的语义）：scheduled / reviewing / public / overdue 算已投出，rejected 不算 */
+export type PublicationState = "scheduled" | "reviewing" | "public" | "overdue" | "rejected";
 
 export type DecisionType =
   | "script_approval" // 认稿：绑正文哈希
@@ -60,9 +75,11 @@ export type DecisionType =
   | "cut_approval"
   | "cut_reject"
   | "cover_approval"
+  | "cover_reject" // 只进时间线（E15），不影响推导
   | "approval_revoke"
   | "reopen" // 重开文稿：结束本轮
   | "i_published"
+  | "publish_confirm" // 创始人确认一条待核回执（模型说的「发了」）
   | "publish_correction";
 
 export interface Decision {
@@ -99,6 +116,8 @@ export interface Registration {
   cover_text?: string;
   srt_sha?: string;
   srt_for_cut?: string;
+  /** 落文件的那次事务（commit 来源） */
+  txn_id?: string;
 }
 
 export interface StoredReceipt { at: string; receipt: Record<string, unknown> }

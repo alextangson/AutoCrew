@@ -152,6 +152,9 @@
    "name": "autocrew_content",
    "shape": {
     "properties": {
+     "account": {
+      "type": "string"
+     },
      "action": {
       "enum": [
        "save",
@@ -224,6 +227,9 @@
       "type": "string"
      },
      "import_reason": {
+      "type": "string"
+     },
+     "item_id": {
       "type": "string"
      },
      "kind": {
@@ -337,6 +343,9 @@
       "type": "string"
      },
      "topicId": {
+      "type": "string"
+     },
+     "url": {
       "type": "string"
      },
      "uses_aroll": {
@@ -2741,6 +2750,9 @@
    "name": "autocrew_content",
    "shape": {
     "properties": {
+     "account": {
+      "type": "string"
+     },
      "action": {
       "enum": [
        "save",
@@ -2813,6 +2825,9 @@
       "type": "string"
      },
      "import_reason": {
+      "type": "string"
+     },
+     "item_id": {
       "type": "string"
      },
      "kind": {
@@ -2926,6 +2941,9 @@
       "type": "string"
      },
      "topicId": {
+      "type": "string"
+     },
+     "url": {
       "type": "string"
      },
      "uses_aroll": {
@@ -4884,6 +4902,9 @@
    "name": "autocrew_content",
    "shape": {
     "properties": {
+     "account": {
+      "type": "string"
+     },
      "action": {
       "enum": [
        "save",
@@ -4956,6 +4977,9 @@
       "type": "string"
      },
      "import_reason": {
+      "type": "string"
+     },
+     "item_id": {
       "type": "string"
      },
      "kind": {
@@ -5069,6 +5093,9 @@
       "type": "string"
      },
      "topicId": {
+      "type": "string"
+     },
+     "url": {
       "type": "string"
      },
      "uses_aroll": {

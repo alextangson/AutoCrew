@@ -231,6 +231,8 @@ export interface VideoKit {
   draftHash?: string;
   /** 谁做的：host = 宿主经 pre_publish video_kit 提交；engine = GUI 聊天里 prepareVideoKit 生成 */
   source?: "host" | "engine";
+  /** 做包时当前登记（video.final.register_hash）：换版后旧包作废（本体 §5 发布出口） */
+  registerHash?: string;
 }
 
 export interface AdoptionRecord {

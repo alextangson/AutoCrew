@@ -1,0 +1,160 @@
+/**
+ * 创始人决定（spec §2.4）：只由浏览器会话路由（看板 / 工作台）写入；MCP 没有任何动作能到这里，
+ * 模型调用在入口一律拒。每个决定带它针对的指纹（fact id + sha、封面两张 sha + 字……），**不带 expectedStatus**；
+ * 幂等键 = (决定类型, 指纹)：重复点击返回原决定，不重写时间。
+ *
+ * 写完决定：成片 / 封面批准齐了就在同一个文件归属事务里跑登记提交（§5 批准即登记）。
+ */
+import { getContent, getDataDir, type Content } from "../../storage/local-store.js";
+import { bodyHash, isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/production-types.js";
+import { isModelCall } from "../../storage/stage-guard.js";
+import { withFileOwnership } from "./mutex.js";
+import { adoptCandidate } from "./record.js";
+import { commitRegistration, type CommitResult } from "./registration.js";
+import { explainContent } from "./read.js";
+import { ensureProductionReady, mutateProduction } from "./service.js";
+
+export type DecisionAction =
+  | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
+  | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish";
+
+export const DECISION_ACTIONS: readonly DecisionAction[] = [
+  "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
+  "revoke_approval", "i_published", "confirm_receipt", "correct_publish",
+];
+
+type Result = Record<string, unknown>;
+const fail = (code: string, error: string): Result => ({ ok: false, code, error });
+const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
+
+export const FOUNDER_ONLY = "这是创始人的决定，只能在看板 / 工作台上点，AI 宿主不能代做。";
+
+interface Ctx { content: Content; doc: ProductionDoc; dataDir: string; params: Record<string, unknown> }
+
+const inRound = (doc: ProductionDoc) => doc.facts.filter((f) => f.round === doc.round);
+
+function factBy(doc: ProductionDoc, params: Record<string, unknown>, kind?: Fact["kind"]): Fact | string {
+  const id = str(params.fact_id), sha = str(params.sha256);
+  const f = inRound(doc).find((x) => x.id === id && (!kind || x.kind === kind));
+  if (!f) return "这条记录不在本轮里（可能刷新前已变），刷新再看";
+  if (f.sha256 && f.sha256 !== sha) return "页面上的文件和记录对不上（文件换过），刷新再看";
+  return f;
+}
+
+/** 幂等：同类型、同指纹、本轮最近一条还有效（没被撤）就直接返回它 */
+function sameDecision(doc: ProductionDoc, type: DecisionType, fp: (d: Decision) => boolean): Decision | null {
+  const revoked = new Set(doc.decisions.filter((d) => d.type === "approval_revoke" || d.type === "publish_correction").map((d) => d.target_id));
+  const latest = [...doc.decisions].reverse().find((d) => d.round === doc.round && d.type === type);
+  return latest && fp(latest) && !revoked.has(latest.id) ? latest : null;
+}
+
+async function push(ctx: Ctx, d: Omit<Decision, "id" | "round" | "at" | "source">, event: string, fact?: (doc: ProductionDoc) => void): Promise<Decision> {
+  return (await mutateProduction(ctx.content.id, ctx.dataDir, (doc) => {
+    const full: Decision = { id: newId("dec"), round: doc.round, at: new Date().toISOString(), source: "founder", ...d };
+    doc.decisions.push(full);
+    fact?.(doc);
+    return { value: full, events: [{ type: event, detail: { decision_id: full.id, ...d } }] };
+  })).value;
+}
+
+async function approveCut(ctx: Ctx): Promise<Result> {
+  const f = factBy(ctx.doc, ctx.params, "cut");
+  if (typeof f === "string") return fail("stale", f);
+  if (f.state !== "accepted") return fail("not_accepted", "这版成片还是候选：先确认它是这条的成片");
+  const bh = bodyHash(ctx.content.body);
+  const same = sameDecision(ctx.doc, "cut_approval", (d) => d.sha256 === f.sha256 && d.body_hash === bh);
+  return { ok: true, decision: same ?? (await push(ctx, { type: "cut_approval", fact_id: f.id, sha256: f.sha256, body_hash: bh }, "cut_approved")) };
+}
+
+async function rejectWith(ctx: Ctx, type: "cut_reject" | "cover_reject", kind: Fact["kind"]): Promise<Result> {
+  const note = str(ctx.params.note);
+  if (!note) return fail("note_required", "打回要写原话，告诉剪辑哪里要改");
+  // 封面打回针对「当前展示的整批」：带整批指纹即可，不指某一张
+  const f = type === "cover_reject" && !str(ctx.params.fact_id) ? { id: undefined, sha256: str(ctx.params.sha256) } : factBy(ctx.doc, ctx.params, kind);
+  if (typeof f === "string") return fail("stale", f);
+  if (!f.sha256) return fail("stale", "页面上没有可打回的产物，刷新再看");
+  const same = sameDecision(ctx.doc, type, (d) => d.sha256 === f.sha256 && d.note === note);
+  return { ok: true, decision: same ?? (await push(ctx, { type, ...(f.id ? { fact_id: f.id } : {}), sha256: f.sha256, note }, type === "cut_reject" ? "cut_rejected" : "cover_rejected")) };
+}
+
+/** 用这一版封面：两个比例都得有（E10），封面字当场要有（E9：没写就用报上来的默认字，都没有就要创始人补） */
+async function pickCover(ctx: Ctx): Promise<Result> {
+  const a = factBy(ctx.doc, { fact_id: ctx.params.cover_3x4_fact_id, sha256: ctx.params.cover_3x4_sha }, "cover");
+  const b = factBy(ctx.doc, { fact_id: ctx.params.cover_4x3_fact_id, sha256: ctx.params.cover_4x3_sha }, "cover");
+  if (typeof a === "string" || typeof b === "string") return fail("both_ratios_required", "两个比例（3:4 和 4:3）都选了才能用这一版封面");
+  if (a.ratio !== "3:4" || b.ratio !== "4:3" || a.state !== "accepted" || b.state !== "accepted") return fail("both_ratios_required", "要一张 3:4、一张 4:3，且都已确认是这条的封面");
+  const text = str(ctx.params.cover_text) || a.text || b.text || "";
+  if (!text) return fail("cover_text_required", "选封面时要写封面字");
+  const bh = bodyHash(ctx.content.body);
+  const same = sameDecision(ctx.doc, "cover_approval", (d) => d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh);
+  return { ok: true, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, cover_text: text, body_hash: bh }, "cover_picked")) };
+}
+
+async function revoke(ctx: Ctx): Promise<Result> {
+  const id = str(ctx.params.decision_id);
+  const target = ctx.doc.decisions.find((d) => d.id === id && d.round === ctx.doc.round && (d.type === "cut_approval" || d.type === "cover_approval"));
+  if (!target) return fail("stale", "要撤的批准不在本轮里，刷新再看");
+  const same = sameDecision(ctx.doc, "approval_revoke", (d) => d.target_id === id);
+  return { ok: true, decision: same ?? (await push(ctx, { type: "approval_revoke", target_id: id }, "approval_revoked")) };
+}
+
+async function candidate(ctx: Ctx, confirm: boolean): Promise<Result> {
+  const f = factBy(ctx.doc, ctx.params);
+  if (typeof f === "string") return fail("stale", f);
+  if (f.state !== "candidate" && f.state !== "pending_match") return { ok: true, fact_id: f.id, state: f.state, note: "这条已经定过了" };
+  if (!confirm) return { ok: true, decision: await push(ctx, { type: "candidate_reject", fact_id: f.id, sha256: f.sha256 }, "candidate_rejected", (doc) => { doc.facts.find((x) => x.id === f.id)!.state = "rejected"; }) };
+  const adopted = await adoptCandidate(ctx.content, f, ctx.dataDir);
+  if (!adopted.ok) return adopted;
+  return { ...adopted, decision: await push(ctx, { type: "candidate_confirm", fact_id: f.id, sha256: f.sha256 }, "candidate_confirmed") };
+}
+
+async function published(ctx: Ctx): Promise<Result> {
+  const platform = str(ctx.params.platform) || ctx.content.platform || "";
+  if (!platform) return fail("platform_required", "说一下发在哪个平台");
+  const url = str(ctx.params.url);
+  const same = sameDecision(ctx.doc, "i_published", (d) => d.platform === platform && (d.note ?? "") === url);
+  if (same) return { ok: true, decision: same };
+  return { ok: true, decision: await push(ctx, { type: "i_published", platform, ...(url ? { note: url } : {}) }, "founder_published") };
+}
+
+async function confirmReceipt(ctx: Ctx): Promise<Result> {
+  const f = factBy(ctx.doc, ctx.params, "publish");
+  if (typeof f === "string") return fail("stale", f);
+  const same = sameDecision(ctx.doc, "publish_confirm", (d) => d.fact_id === f.id);
+  return { ok: true, decision: same ?? (await push(ctx, { type: "publish_confirm", fact_id: f.id }, "receipt_confirmed")) };
+}
+
+async function correct(ctx: Ctx): Promise<Result> {
+  const id = str(ctx.params.target_id);
+  const exists = ctx.doc.decisions.some((d) => d.id === id && d.type === "i_published") || ctx.doc.facts.some((f) => f.id === id && f.kind === "publish");
+  if (!exists) return fail("stale", "要纠正的发布记录不在，刷新再看");
+  const same = sameDecision(ctx.doc, "publish_correction", (d) => d.target_id === id);
+  return { ok: true, decision: same ?? (await push(ctx, { type: "publish_correction", target_id: id, ...(str(ctx.params.note) ? { note: str(ctx.params.note) } : {}) }, "publish_corrected")) };
+}
+
+const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
+  confirm_candidate: (c) => candidate(c, true), reject_candidate: (c) => candidate(c, false),
+  approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
+  pick_cover: pickCover, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
+};
+
+/**
+ * 创始人决定的唯一入口。`params` 里带了模型标记（_host / _modelCall）一律拒——路由层已只放浏览器会话，这里再挡一道。
+ */
+export async function founderDecision(contentId: string, action: string, params: Record<string, unknown>, dataDir = getDataDir()): Promise<Result> {
+  if (isModelCall(params)) return fail("founder_only", FOUNDER_ONLY);
+  if (!DECISION_ACTIONS.includes(action as DecisionAction)) return fail("bad_request", `不认识的决定：${action}`);
+  if (!(await isOntologyActive(dataDir, contentId))) return fail("ontology_not_enabled", "本体还没启用（或这条被排除），这个决定还不能在这里做");
+  await ensureProductionReady(dataDir);
+  return withFileOwnership(async () => {
+    const content = await getContent(contentId, dataDir);
+    if (!content || content.deletedAt) return fail("not_found", "这条稿不在了");
+    const ctx: Ctx = { content, doc: await readProductionDocOrEmpty(contentId, dataDir), dataDir, params };
+    const r = await HANDLERS[action as DecisionAction](ctx);
+    const commit: CommitResult | null = r.ok ? await commitRegistration(contentId, dataDir) : null;
+    const exp = await explainContent((await getContent(contentId, dataDir)) ?? content, dataDir);
+    return { ...r, ...(commit && !commit.ok ? { registration_failed: commit.reason } : {}), ...(commit?.ok && commit.registration ? { registration: commit.registration.id } : {}),
+      ...(commit?.ok && commit.warnings ? { warnings: commit.warnings } : {}), stage: exp.stage ?? exp.column, missing: exp.missing, badges: exp.badges };
+  });
+}

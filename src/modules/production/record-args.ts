@@ -20,6 +20,11 @@ export interface RecordArgs {
   chatcut_project_id?: string;
   timeline_id?: string;
   note?: string;
+  /** kind=publish（模型报的发布回执 = 待核） */
+  platform?: string;
+  account?: string;
+  url?: string;
+  item_id?: string;
   host: string;
   session?: string;
 }
@@ -77,7 +82,8 @@ export function normalizeRecordArgs(params: Record<string, unknown>): Parsed<Rec
   if (!uses.ok) return uses;
   const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : "local-user";
   const out: RecordArgs = { content_id, kind, request_id, host };
-  const opt = { path: str(params.path), cover_text: str(params.cover_text), for_cut: str(params.for_cut), chatcut_project_id: str(params.chatcut_project_id), timeline_id: str(params.timeline_id), note: str(params.note), session: str(params._session) };
+  const opt = { path: str(params.path), cover_text: str(params.cover_text), for_cut: str(params.for_cut), chatcut_project_id: str(params.chatcut_project_id), timeline_id: str(params.timeline_id), note: str(params.note), session: str(params._session),
+    platform: str(params.platform), account: str(params.account), url: str(params.url), item_id: str(params.item_id) };
   for (const [k, v] of Object.entries(opt)) if (v !== undefined) (out as unknown as Record<string, unknown>)[k] = v;
   if (ratio.value) out.ratio = ratio.value;
   if (version.value) out.version = version.value;

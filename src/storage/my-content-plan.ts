@@ -10,6 +10,7 @@ import { renderCheckList, unverifiedAdditions } from "../modules/video/handoff/s
 import { spokenRel } from "../modules/video/handoff/register-spoken.js";
 import { readArchiveLog, renderArchiveLog } from "./nas-archive-log.js";
 import { explainContent, explainContext, type ExplainContext } from "../modules/production/read.js";
+import { registeredPackage } from "../modules/production/publish-gate.js";
 
 /** 已发布栏只留最近几条；NAS 归档也不动这几条 */
 export const KEEP_PUBLISHED = 5;
@@ -134,7 +135,27 @@ async function coverFiles(root: string): Promise<Record<"封面-3x4" | "封面-4
 
 type ItemFile = { name: string } & ({ kind: "copy"; text: string } | { kind: "link"; source: string } | { kind: "symlink"; target: string });
 
-async function deliveryFiles(c: Content, root: string): Promise<ItemFile[]> {
+/** 按本体走的视频稿：只放当前有效登记记录里的成片与封面（发布出口 §5），不放旧包 */
+async function gatedFiles(c: Content, dataDir: string): Promise<{ files: ItemFile[]; missing: string[] } | null> {
+  const gated = await registeredPackage(c, dataDir);
+  if (!gated) return null;
+  if (!gated.ok) return { files: [], missing: [`成片与封面：${gated.error}`] };
+  const f = gated.files;
+  return { files: [
+    { name: `成片${path.extname(f.video)}`, kind: "link", source: f.video },
+    { name: `封面-3x4${path.extname(f.cover34)}`, kind: "link", source: f.cover34 },
+    { name: `封面-4x3${path.extname(f.cover43)}`, kind: "link", source: f.cover43 },
+  ], missing: [] };
+}
+
+async function deliveryFiles(c: Content, root: string, dataDir: string): Promise<ItemFile[]> {
+  const gated = await gatedFiles(c, dataDir);
+  if (gated) {
+    const copy = await publishCopy(c, root);
+    const missing = [...gated.missing, ...(copy ? [] : ["发布文案：还没有做发布包"])];
+    return [...gated.files, ...(copy ? [{ name: "发布文案.md", kind: "copy" as const, text: copy }] : []),
+      ...(missing.length ? [{ name: "还缺什么.txt", kind: "copy" as const, text: `这条稿件发布前还缺：\n\n${missing.map((m) => `- ${m}`).join("\n")}\n` }] : [])];
+  }
   const files: ItemFile[] = [], missing: string[] = [];
   const final = c.video?.final;
   const finalPath = final ? path.join(root, projectRelativeFile(`assets/${final.asset_filename}`)) : null;
@@ -178,7 +199,7 @@ async function itemFiles(c: Content, column: Column, dataDir: string): Promise<I
     await fs.mkdir(exportDir, { recursive: true });
     files.push({ name: "成片放这里", kind: "symlink", target: exportDir });
   }
-  if (column === "待发布" || column === "已发布") files.push(...(await deliveryFiles(c, root)));
+  if (column === "待发布" || column === "已发布") files.push(...(await deliveryFiles(c, root, dataDir)));
   return files;
 }
 

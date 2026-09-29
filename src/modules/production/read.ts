@@ -50,8 +50,10 @@ export async function explainContent(content: Content, dataDir: string, ctx?: Ex
   const doc = isVideoPlatform(content.platform)
     ? await readProductionDoc(content.id, dataDir).catch((e: unknown) => { error = e instanceof Error ? e.message : String(e); return null; })
     : null;
-  const publish = await publishEvidenceOf(content, dataDir, record, doc?.round_started_at);
-  const exp = explain({ content, doc, enabled: c.enabled && !excluded, publish });
+  const active = c.enabled && !excluded;
+  // 按本体走的稿只认本轮回执（§6）；影子 / 旧行为照旧读发布记录给旧列
+  const publish = active && isVideoPlatform(content.platform) ? { verified: false } : await publishEvidenceOf(content, dataDir, record, doc?.round_started_at);
+  const exp = explain({ content, doc, enabled: active, publish });
   // 启用时被排除的稿：照旧行为，卡片上标出来（从不静默跳过）
   const flagged = excluded ? { ...exp, badges: [...exp.badges, "未纳入本体（启用时对账失败，已排除）"] } : exp;
   return { ...flagged, ...(error ? { error } : {}) };

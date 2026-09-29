@@ -17,23 +17,45 @@ import { cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./
 import { withFileOwnership } from "./mutex.js";
 import { normalizeRecordArgs, type RecordArgs } from "./record-args.js";
 import { checkTargetDir, planFileRecord, targetDirOf, type FilePlan } from "./record-plan.js";
+import { resolveLocalFile, stableFingerprint } from "./files.js";
+import { arollOwnerElsewhere } from "./sha-index.js";
 import { isWithin } from "../../storage/storage-roots.js";
 import fs from "node:fs/promises";
 import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
+import { commitRegistration } from "./registration.js";
+import { receiptFact } from "./receipts.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn, type TxnOp } from "./txn.js";
 
 type Receipt = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ ok: false, code, error, ...extra });
 
-export const PUBLISH_NOT_YET =
-  "发布回执（kind=publish）这一版还没开：发完照旧由 AutoCrew 发布器记录，或请创始人在看板上点「我发了」。";
+/**
+ * 模型报的「发了」（record kind=publish、模型调 confirm_published）：记成本轮一条**待核**回执（§6，§13-E），
+ * 不动阶段；卡上问创始人「是吗？」，数据回流对上或创始人确认后才算已发布。调用方持有文件归属事务或不需要（只写事实）。
+ */
+export async function recordPublishClaim(content: Content, dataDir: string, a: Pick<RecordArgs, "platform" | "account" | "url" | "item_id" | "host" | "request_id" | "note">): Promise<Receipt> {
+  const platform = a.platform || content.platform;
+  if (!platform) return fail("bad_param", "kind=publish 要带 platform");
+  if (!a.url && !a.item_id) return fail("bad_param", "kind=publish 要带作品链接 url 或平台作品 id item_id");
+  if (a.url && !/^https?:\/\//.test(a.url)) return fail("bad_param", `url 只接受 http/https：${a.url.slice(0, 80)}`);
+  const r = await mutateProduction(content.id, dataDir, (doc) => {
+    const key = `${platform}|${a.item_id ?? a.url}`;
+    const same = doc.facts.find((f) => f.kind === "publish" && f.round === doc.round && f.receipt_key === key);
+    const fact = same ?? { ...receiptFact(doc, { platform, pub_state: "reviewing", verified: false, source: "record", evidence: `${a.host} 说已发布`, by: { host: a.host },
+      ...(a.account ? { account: a.account } : {}), ...(a.url ? { url: a.url } : {}), ...(a.item_id ? { item_id: a.item_id } : {}) }), receipt_key: key, request_id: a.request_id };
+    if (!same) doc.facts.push(fact);
+    doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
+    return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url } }] };
+  });
+  return { ok: true, content_id: content.id, fact_id: r.value.id, kind: "publish", verified: false, stage: r.explanation.stage ?? r.explanation.column, badges: r.explanation.badges,
+    next_action: "已记成待核的发布回执：卡上会问创始人「是吗？」，数据回流对上或创始人确认后才算已发布。不要再改状态。" };
+}
 
 export async function executeRecord(params: Record<string, unknown>): Promise<Receipt> {
   const parsed = normalizeRecordArgs(params);
   if (!parsed.ok) return fail(parsed.code, parsed.error);
   const a = parsed.value;
-  if (a.kind === "publish") return fail("publish_not_supported", PUBLISH_NOT_YET);
   const dataDir = getDataDir(params._dataDir as string | undefined);
   await ensureProductionReady(dataDir);
   return withFileOwnership(() => recordLocked(a, dataDir));
@@ -49,9 +71,17 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   const replay = doc.requests?.[a.request_id];
   if (replay) return { ...(await receiptFor(content, dataDir, replay.receipt as unknown as ReceiptCore)), replayed: true };
   if (a.kind === "chatcut_project") return recordChatcut(a, content, doc, dataDir);
+  if (a.kind === "publish") return recordPublishClaim(content, dataDir, a);
   const plan = await planFileRecord(a, content, doc, dataDir);
   if (!plan.ok) return fail(plan.code, plan.error);
-  return commitFile(a, content, plan.value, dataDir);
+  const r = await commitFile(a, content, plan.value, dataDir);
+  // 字幕等后到时，补齐事实就自动完成登记（§5：两个判断已给过，不算替创始人判断）
+  if (r.ok) {
+    const commit = await commitRegistration(content.id, dataDir);
+    if (!commit.ok) return { ...r, registration_failed: commit.reason };
+    if (commit.registration) return { ...r, registration: commit.registration.id };
+  }
+  return r;
 }
 
 export const ONTOLOGY_NOT_ENABLED =
@@ -207,4 +237,38 @@ function receipt(core: ReceiptCore, exp: Explanation, content: Content, projectR
     ...(exp.shadow ? { shadow: true } : {}), ...(note ? { note } : {}),
     next_action: nextAction(core, view),
   };
+}
+
+// ---- 创始人确认候选（§2.4「是这条」）：创始人的决定就是搬入授权 ----
+
+/**
+ * 候选 → accepted：库外的按 §3-7 落位（原片挪、其余克隆；被 ChatCut 引用的原片留原位），项目内的原地收。
+ * 核验照 record 的顺序全部先做：路径、完整性、字节还是当初那份、A-roll 独占、目标目录安全。调用方持有文件归属事务。
+ */
+export async function adoptCandidate(content: Content, fact: Fact, dataDir: string): Promise<Receipt> {
+  const a: RecordArgs = { content_id: content.id, kind: fact.kind, request_id: `confirm-${fact.id}`, host: "founder", ...(fact.path ? { path: fact.path } : {}), ...(fact.ratio ? { ratio: fact.ratio } : {}) };
+  if (!fact.path || !fact.sha256) return fail("bad_request", "这条候选没有文件");
+  const doc = await readProductionDocOrEmpty(content.id, dataDir);
+  const projectRoot = await fs.realpath(contentRoot(content.id, dataDir));
+  const abs = path.isAbsolute(fact.path) ? fact.path : path.join(projectRoot, fact.path);
+  const checked = await resolveLocalFile(abs, "候选文件");
+  if (!checked.ok) return fail(checked.code, checked.error);
+  const fp = await stableFingerprint(checked.value, Date.now());
+  if (!fp.ok) return fail(fp.code, fp.error);
+  if (fp.value.sha256 !== fact.sha256) return fail("stale", "候选文件在发现之后被改过，刷新再看");
+  if (fact.kind === "aroll") {
+    const owner = await arollOwnerElsewhere(dataDir, fact.sha256, content.id);
+    if (owner) return fail("aroll_conflict", `这个原片已经是另一条稿（${owner}）的 A-roll`);
+  }
+  const referenced = doc.facts.some((f) => f.round === doc.round && f.kind === "chatcut_project" && f.uses_aroll?.includes(fact.id));
+  const inProject = isWithin(projectRoot, checked.value);
+  const action = inProject || (fact.kind === "aroll" && referenced) ? "in_place" : fact.kind === "aroll" ? "move" : "clone";
+  const version = fact.kind === "cover" ? fact.version ?? Math.max(0, ...doc.facts.filter((f) => f.kind === "cover" && f.version).map((f) => f.version!)) + 1 : undefined;
+  const plan: FilePlan = { action, kind: fact.kind, source: checked.value, sha256: fact.sha256, id: fp.value.id, projectRoot, location: inProject ? "project" : "other",
+    evidence: "创始人确认是这条", existing: fact, ...(fact.ratio ? { ratio: fact.ratio } : {}), ...(version ? { version } : {}), ...(fact.for_cut ? { for_cut: fact.for_cut } : {}) };
+  if (action !== "in_place") {
+    const safe = await checkTargetDir(projectRoot, targetDirOf(fact.kind, version));
+    if (!safe.ok) return fail(safe.code, safe.error);
+  }
+  return commitFile(a, content, plan, dataDir);
 }

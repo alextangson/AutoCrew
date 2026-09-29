@@ -11,6 +11,7 @@ import { addDecision, removeDecision, type LinkOp } from "../modules/flywheel/ou
 import { markPublished, startWriting, unmarkPublished, type OpenDeps } from "./board-actions.js";
 import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
+import { founderDecision } from "../modules/production/decisions.js";
 import { isContentId } from "../storage/entity-id.js";
 
 export interface BoardRouteDeps {
@@ -80,6 +81,17 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         if (!isContentId(id)) return { ok: false, code: "bad_request", error: "content_id 不对" };
         if (b.confirm !== true) return { ok: false, code: "confirmation_required", error: "重开文稿会把本轮的原片、成片、批准转入历史，需要确认" };
         return reopenScript(id, dir, typeof b.note === "string" ? b.note.slice(0, 200) : undefined);
+      });
+      return true;
+    }
+    // 创始人决定（§2.4）：确认候选 / 不是这条、成片通过 / 打回、用这一版封面、撤销批准、我发了 / 确认回执 / 纠正
+    if (p === "/api/board/decision" && req.method === "POST") {
+      await post(req, res, async (b, dir) => {
+        const id = String(b.content_id ?? "");
+        if (!isContentId(id)) return { ok: false, code: "bad_request", error: "content_id 不对" };
+        // 浏览器请求体里的 _host / _modelCall 不许借来冒充什么：剥掉内部键，决定只认会话本身
+        const params = Object.fromEntries(Object.entries(b).filter(([k]) => !k.startsWith("_")));
+        return founderDecision(id, String(b.action ?? ""), params, dir);
       });
       return true;
     }

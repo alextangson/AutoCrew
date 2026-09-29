@@ -4,6 +4,9 @@
  */
 import path from "node:path";
 import { getContent, type Content } from "../../../storage/local-store.js";
+import { isOntologyActive } from "../../../storage/production-store.js";
+import { isVideoPlatform } from "../../../storage/stage-guard.js";
+import { workbenchDecision, workbenchOverlay } from "../../production/workbench.js";
 import { contentFile, resolveContentProject } from "../../../storage/content-project.js";
 import { writeJsonAtomicMkdir as writeJsonAtomic } from "../../../storage/json-atomic.js";
 import { exportProjectViews, repairProjectViews } from "../../../storage/project-commit.js";
@@ -54,6 +57,9 @@ export async function verifyStoredApprovals(content: Content, requested: Registe
 export async function founderProjectReview(id: string, dataDir: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
   // 撤回自己排队（全局交接锁 + 这条视频线），不能套在下面的 serializeVideoLine 里，否则自锁
   if (params?.action === "revoke") return founderRevoke(id, dataDir, params);
+  // 本体（spec 2026-09-29 §8 适配）：按本体走的视频稿，成片 / 封面的批准与打回写成创始人决定，不要交接代次
+  const current = await getContent(id, dataDir);
+  if (current && isVideoPlatform(current.platform) && await isOntologyActive(dataDir, id)) return ontologyReview(current, dataDir, params);
   return serializeVideoLine(id, async () => {
     const content = await getContent(id, dataDir), binding = resolveContentProject(id, dataDir);
     if (!content || (!binding && !content.video?.handoff)) return { ok: true, enabled: false, status: content?.status ?? null };
@@ -175,4 +181,25 @@ function coverPick(ctx: GateContext, hashes: string[]): CoverSelection {
     if (selection[ratio]?.sha256 !== hit.sha256) selection[ratio] = { sha256: hit.sha256, path: hit.path, ...(hit.version ? { version: hit.version } : {}), selected_at: new Date().toISOString() };
   });
   return selection;
+}
+
+/** 本体下的工作台：决定走 workbenchDecision，页面形状照旧（产物索引 / gate3 / gate4 来自制作记录） */
+async function ontologyReview(content: Content, dataDir: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const binding = resolveContentProject(content.id, dataDir);
+  let decision: unknown;
+  if (params?.action === "decisions") await saveDecisions(content, dataDir, params);
+  else if (params?.action === "approve" || params?.action === "reject") {
+    const r = await workbenchDecision(content, dataDir, params);
+    if (!r.ok) throw new Error(String(r.error ?? "没记上"));
+    decision = r.decision;
+  } else if (params) throw new Error("不支持的审核动作");
+  const fresh = (await getContent(content.id, dataDir)) ?? content;
+  const overlay = await workbenchOverlay(fresh, dataDir);
+  const legacy = await loadGateContext(fresh, dataDir);
+  const projectRoot = binding?.project_root ?? "";
+  return { ok: true, enabled: true, ontology: true, final_cut: projectRoot ? await finalCutCard(overlay.execution, projectRoot, dataDir) : null, ...(decision ? { decision } : {}),
+    project: binding, status: fresh.status, draft_hash: legacy.draftHash, title: fresh.title, platform: fresh.platform,
+    generation: overlay.handoff.generation, handoff: overlay.handoff, handoff_valid: true, manifest_hash: overlay.handoff.hash,
+    decisions: await readProjectJson(content.id, "decisions.json", dataDir), execution: overlay.execution, cover_selection: overlay.selection,
+    approvals: null, gates: { ...gateStates(legacy), ...overlay.gates } };
 }

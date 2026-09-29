@@ -17,7 +17,9 @@ import { sha256File } from "../video/handoff/manifest.js";
 export type OpStep = "planned" | "copying" | "placed";
 
 export interface TxnOp {
-  op: "move" | "clone";
+  /** replace：克隆到一个已有文件的位置（登记拷封面），原文件先挪到 backup；撤回时放回 */
+  op: "move" | "clone" | "replace";
+  backup?: string;
   source: string;
   target: string;
   sha256: string;
@@ -28,7 +30,7 @@ export interface TxnOp {
 
 export interface Txn {
   id: string;
-  kind: "record" | "reopen";
+  kind: "record" | "reopen" | "register";
   content_id: string;
   round: number;
   ops: TxnOp[];
@@ -86,6 +88,7 @@ async function targetIsOurs(op: TxnOp): Promise<"absent" | "placeholder" | "ours
  * 源还完好 → 删项目里那份；源没了 → 把项目里那份挪回原处（原处被占就加后缀）。
  */
 async function undoOp(op: TxnOp): Promise<void> {
+  if (op.op === "replace") return undoReplace(op);
   const target = await targetIsOurs(op);
   if (target === "changed") throw new Error(`恢复冲突：${op.target} 在崩溃后被改过，不删不挪，请人工核对（原片记录 sha ${op.sha256.slice(0, 12)}）`);
   if (target === "absent") return;
@@ -100,6 +103,19 @@ async function undoOp(op: TxnOp): Promise<void> {
   }
   await fs.mkdir(path.dirname(dest), { recursive: true });
   await relocate(op.target, dest, op.sha256, async () => undefined);
+}
+
+/** 撤回 replace：目标是我们放的就删掉，再把备份挪回；目标被人改过就停 */
+async function undoReplace(op: TxnOp): Promise<void> {
+  const target = await targetIsOurs(op);
+  if (target === "changed") throw new Error(`恢复冲突：${op.target} 在崩溃后被改过，不删不换，请人工核对`);
+  if (target !== "absent") await fs.rm(op.target, { force: true });
+  if (op.backup && (await exists(op.backup))) await fs.rename(op.backup, op.target);
+}
+
+/** 提交后清掉 replace 留下的备份 */
+export async function dropBackups(txn: Txn): Promise<void> {
+  for (const op of txn.ops) if (op.backup) await fs.rm(op.backup, { force: true }).catch(() => undefined);
 }
 
 export async function rollbackTxn(dataDir: string, txn: Txn): Promise<void> {
@@ -125,6 +141,7 @@ export async function recoverTxns(dataDir: string): Promise<RecoveryOutcome[]> {
       txn = JSON.parse(await fs.readFile(path.join(dir, name), "utf8")) as Txn;
       const doc = await readProductionDoc(txn.content_id, dataDir);
       if (doc?.txns?.includes(txn.id)) {
+        await dropBackups(txn);
         await dropTxn(dataDir, txn.id);
         out.push({ id: txn.id, content_id: txn.content_id, outcome: "committed" });
       } else {

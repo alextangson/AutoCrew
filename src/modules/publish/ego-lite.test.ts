@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import {
   addAsset,
   approveCoverVariant,
@@ -75,6 +76,8 @@ async function readyContent(platform: EgoLiteVideoPlatform) {
     content.id,
     {
       videoDone: { renderedRevision: 2, at: "2026-08-31T00:00:00.000Z" },
+      // 发布器只认登记记录的素材身份（本体 §5 删了「最新视频素材」回退）
+      video: { final: { asset_filename: "final-v2.mp4", sha256: createHash("sha256").update("video").digest("hex") } } as never,
       videoKit: {
         platform,
         postTitle: "平台标题",
@@ -135,11 +138,16 @@ describe("prepareEgoLitePublish", () => {
       },
       dir,
     );
-    await expect(prepareEgoLitePublish(content.id, dir)).rejects.toThrow(/视频成片/);
+    await expect(prepareEgoLitePublish(content.id, dir)).rejects.toThrow(/登记过的成片/);
 
+    // 挂了视频素材但没登记：不再拿最新的视频素材顶上（本体 §5）
     const sourceVideo = path.join(dir, "only-video.mp4");
     await fs.writeFile(sourceVideo, "video");
     await addAsset(content.id, { filename: "only-video.mp4", type: "video", sourcePath: sourceVideo }, dir);
+    await expect(prepareEgoLitePublish(content.id, dir)).rejects.toThrow(/不再拿最新的视频素材顶上/);
+
+    // 登记了成片、但没有批准的封面
+    await updateContent(content.id, { video: { final: { asset_filename: "only-video.mp4", sha256: createHash("sha256").update("video").digest("hex") } } as never }, dir);
     await expect(prepareEgoLitePublish(content.id, dir)).rejects.toThrow(/已批准的封面/);
   });
 

@@ -1,7 +1,9 @@
 import { contentFile, contentRoot, safeProjectPath } from "../../storage/content-project.js";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getContent, getCoverReview, getDataDir, type Asset } from "../../storage/local-store.js";
+import { getContent, getCoverReview, getDataDir, type Asset, type Content } from "../../storage/local-store.js";
+import { sha256File } from "../video/handoff/manifest.js";
+import { registeredPackage } from "../production/publish-gate.js";
 import { formatForClipboard } from "./clipboard-publisher.js";
 
 export const EGO_LITE_VIDEO_PLATFORMS = [
@@ -48,19 +50,40 @@ async function existingFile(file: string): Promise<string | null> {
   }
 }
 
-function preferredVideoAsset(assets: Asset[], renderedRevision?: number): Asset | undefined {
-  if (renderedRevision !== undefined) {
-    const exact = assets.find(
-      (asset) =>
-        asset.type === "video" &&
-        asset.managedBy === "video-pipeline" &&
-        asset.renderedRevision === renderedRevision,
-    );
-    if (exact) return exact;
-  }
-  return assets
-    .filter((asset) => asset.type === "video")
-    .sort((a, b) => b.addedAt.localeCompare(a.addedAt))[0];
+function assetPath(contentId: string, root: string, video: Asset): string {
+  // 原地登记的成片留在项目的 07-delivery 里（P6 §13.4-F），按项目内路径找
+  return video.projectPath ? safeProjectPath(contentRoot(contentId, root), video.projectPath) : contentFile(contentId, root, "assets", video.filename);
+}
+
+/**
+ * 旧路径（没按本体走的稿）发哪一份成片：只认登记记录（video.final）的素材身份并核 sha（摘自 confident-raman 7c2d5f2）。
+ * 「最新视频素材」回退已删（本体 §5）：没登记过就不发。
+ */
+async function legacyVideoPath(content: Content, root: string): Promise<string> {
+  const final = content.video?.final;
+  if (!final) throw new Error("没有登记过的成片：先登记（成片与封面由创始人批准）再发；不再拿最新的视频素材顶上");
+  const asset = (content.assets ?? []).find((a) => a.type === "video" && a.filename === final.asset_filename);
+  if (!asset) throw new Error(`登记的成片素材不见了（${final.asset_filename}）：重新登记后再发`);
+  const file = assetPath(content.id, root, asset);
+  if (!(await existingFile(file))) throw new Error(`视频成片文件不存在：${file}`);
+  if ((await sha256File(file)) !== final.sha256) throw new Error(`登记的成片字节变了（sha256 与登记记录不符）：${file}——重新登记确认过的那一版再发`);
+  return file;
+}
+
+async function legacyCoverPath(contentId: string, root: string): Promise<string> {
+  const approvedCover = (await getCoverReview(contentId, root))?.approvedImagePath;
+  if (!approvedCover) throw new Error("没有已批准的封面；请先完成封面评审");
+  const coverPath = path.isAbsolute(approvedCover) ? approvedCover : contentFile(contentId, root, approvedCover);
+  if (!(await existingFile(coverPath))) throw new Error(`已批准的封面文件不存在：${coverPath}`);
+  return coverPath;
+}
+
+/** 按本体走的稿：只取当前有效登记记录里的成片与 3:4 封面，发前核批准与字节（§5） */
+async function publishFiles(content: Content, root: string): Promise<{ videoPath: string; coverPath: string }> {
+  const gated = await registeredPackage(content, root);
+  if (gated && !gated.ok) throw new Error(gated.error);
+  if (gated?.ok) return { videoPath: gated.files.video, coverPath: gated.files.cover34 };
+  return { videoPath: await legacyVideoPath(content, root), coverPath: await legacyCoverPath(content.id, root) };
 }
 
 /**
@@ -86,23 +109,7 @@ export async function prepareEgoLitePublish(
     );
   }
 
-  const video = preferredVideoAsset(content.assets ?? [], content.videoDone?.renderedRevision);
-  if (!video) throw new Error("没有可发布的视频成片；请先完成剪辑并登记 video 素材");
-  // 原地登记的成片留在项目的 07-delivery 里（P6 §13.4-F），按项目内路径找
-  const videoPath = video.projectPath ? safeProjectPath(contentRoot(contentId, root), video.projectPath) : contentFile(contentId, root, "assets", video.filename);
-  if (!(await existingFile(videoPath))) {
-    throw new Error(`视频成片文件不存在：${videoPath}`);
-  }
-
-  const coverReview = await getCoverReview(contentId, root);
-  const approvedCover = coverReview?.approvedImagePath;
-  if (!approvedCover) throw new Error("没有已批准的封面；请先完成封面评审");
-  const coverPath = path.isAbsolute(approvedCover)
-    ? approvedCover
-    : contentFile(contentId, root, approvedCover);
-  if (!(await existingFile(coverPath))) {
-    throw new Error(`已批准的封面文件不存在：${coverPath}`);
-  }
+  const { videoPath, coverPath } = await publishFiles(content, root);
 
   const kit = content.videoKit;
   const fallback = formatForClipboard(platform, content.title, content.body, content.hashtags ?? []);

@@ -8,13 +8,13 @@ import type { Content } from "./local-store.js";
 import { listContents } from "./local-store.js";
 import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
 import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
-import { activeClaim } from "./claims.js";
+import { productionServiceDir, readProductionDoc } from "./production-store.js";
 import { writeJsonAtomic } from "./json-atomic.js";
 import { KEEP_PUBLISHED } from "./my-content-plan.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { withFileOwnership } from "./file-ownership.js";
-import { copyProject, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
+import { copyProject, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
 
 export const DEFAULT_ARCHIVE_ROOT = "/Volumes/MacMiniData/01_Lawrence/Account";
@@ -43,14 +43,31 @@ async function volumeFree(dir: string): Promise<number> {
   return s.bavail * s.bsize;
 }
 
-/** 发布满 7 天、不在最近 KEEP_PUBLISHED 条已发布里、没有活认领的稿件（「已归档」另行判断） */
+/**
+ * 发布满 7 天、不在最近 KEEP_PUBLISHED 条已发布里的稿件（「已归档」「还在动」另行判断）。
+ * 本体 §7：排除条件从「活认领」改成「本条有未完成的文件归属事务，或 30 分钟内有 record」（见 busyInProduction）。
+ */
 export function archiveCandidates(contents: Content[], now: Date): Content[] {
   const published = contents.filter((c) => c.status === "published")
     .sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
   return published.slice(KEEP_PUBLISHED).filter((c) => {
     const at = c.publishedAt ? Date.parse(c.publishedAt) : NaN;
-    return !Number.isNaN(at) && now.getTime() - at >= ARCHIVE_MIN_AGE_MS && !activeClaim(c, now.getTime());
+    return !Number.isNaN(at) && now.getTime() - at >= ARCHIVE_MIN_AGE_MS;
   });
+}
+
+export const RECENT_RECORD_MS = 30 * 60_000;
+
+/** 这条还在动：有未完成的文件归属事务日志，或 30 分钟内有 agent record 的事实 */
+export async function busyInProduction(contentId: string, dataDir: string, now: Date): Promise<string | null> {
+  const dir = productionServiceDir(dataDir, "txns");
+  for (const name of await fs.readdir(dir).catch(() => [] as string[])) {
+    const txn = JSON.parse(await fs.readFile(path.join(dir, name), "utf8").catch(() => "{}")) as { content_id?: string };
+    if (txn.content_id === contentId) return "有没完成的文件事务";
+  }
+  const doc = await readProductionDoc(contentId, dataDir).catch(() => null);
+  const recent = doc?.facts.some((f) => f.source === "record" && now.getTime() - Date.parse(f.at) < RECENT_RECORD_MS);
+  return recent ? "30 分钟内有新报的产物" : null;
 }
 
 async function isEmptyDir(dir: string): Promise<boolean> {
@@ -93,12 +110,28 @@ async function writeRecord(projectRoot: string, target: string, files: ArchivedF
   await writeJsonAtomic(relFile, relocations);
 }
 
-async function deleteMedia(projectRoot: string): Promise<void> {
-  for (const d of MEDIA_DIRS) {
-    const dir = path.join(projectRoot, d);
-    await fs.rm(dir, { recursive: true, force: true });
-    await fs.mkdir(dir, { recursive: true });
+/**
+ * 只删逐文件核对过、且此刻字节仍是核对时那份的文件（本体 §7，E36）；核对之后新出现 / 被改过的文件留着，
+ * 下一轮归档再带走。删完清掉空目录，素材目录本身保留。
+ */
+async function deleteMedia(projectRoot: string, files: ArchivedFile[]): Promise<number> {
+  let kept = 0;
+  const verified = new Map(files.filter((f) => isMedia(f.rel)).map((f) => [f.rel, f]));
+  const { files: now } = await walkProject(projectRoot);
+  for (const f of now.filter((x) => isMedia(x.rel))) {
+    const v = verified.get(f.rel);
+    if (v && v.size === f.size && (await nasSha(path.join(projectRoot, f.rel)).catch(() => null)) === v.sha256) await fs.rm(path.join(projectRoot, f.rel), { force: true });
+    else kept++;
   }
+  for (const d of MEDIA_DIRS) await pruneEmpty(path.join(projectRoot, d), true);
+  return kept;
+}
+
+async function pruneEmpty(dir: string, keepSelf: boolean): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => null);
+  if (!entries) { if (keepSelf) await fs.mkdir(dir, { recursive: true }); return; }
+  for (const e of entries) if (e.isDirectory()) await pruneEmpty(path.join(dir, e.name), false);
+  if (!keepSelf && (await fs.readdir(dir)).length === 0) await fs.rmdir(dir).catch(() => undefined);
 }
 
 async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<ArchivedItem> {
@@ -112,8 +145,9 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
   const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS);
   if (errors.length) throw new Error(`复制或核对出错，本机一个文件都没删，下次重试：${errors.join("；")}`);
   await writeRecord(projectRoot, target, files, ctx.now);
-  await deleteMedia(projectRoot);
+  const kept = await deleteMedia(projectRoot, files);
   const freedBytes = files.filter((f) => isMedia(f.rel)).reduce((n, f) => n + f.size, 0);
+  if (kept) console.warn(`[nas-archive] ${c.title}：${kept} 个文件是核对之后才出现 / 被改过的，留在本机，下一轮再归档`);
   await appendArchiveLog(ctx.data, { contentId: c.id, title: c.title, target, freedBytes, archivedAt: ctx.now.toISOString() });
   return { title: c.title, target, freedBytes };
 }
@@ -123,6 +157,8 @@ async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]>
   for (const c of archiveCandidates(await listContents(ctx.data), ctx.now)) {
     try {
       const binding = resolveContentProject(c.id, ctx.data);
+      const busy = binding ? await busyInProduction(c.id, ctx.data, ctx.now) : null;
+      if (busy) { report.errors.push(`${c.title}（${c.id}）：这次不归档，${busy}`); continue; }
       if (binding && !(await isArchived(binding.project_root))) out.push(c);
     } catch (e) { report.errors.push(`${c.title}（${c.id}）：${errMsg(e)}`); }
   }

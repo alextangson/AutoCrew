@@ -155,9 +155,12 @@ describe("record：检查先于副作用（§3，E5/E7/E21/E24）", () => {
     expect(await record(env, { content_id: c.id, kind: "chatcut_project", chatcut_project_id: "p1", uses_aroll: "{{{", request_id: "r4" })).toMatchObject({ ok: false, code: "bad_param" });
   });
 
-  it("kind=publish 这一段明确拒，指路", async () => {
+  it("kind=publish：模型报的发布回执记成待核，不动阶段（§6，§13-E）", async () => {
     const c = await videoContent(env, TITLE);
-    expect(await record(env, { content_id: c.id, kind: "publish", request_id: "r1" })).toMatchObject({ ok: false, code: "publish_not_supported" });
+    expect(await record(env, { content_id: c.id, kind: "publish", request_id: "r0" })).toMatchObject({ ok: false, code: "bad_param" });
+    const r = await record(env, { content_id: c.id, kind: "publish", platform: "douyin", url: "https://v.douyin.com/abc", request_id: "r1" });
+    expect(r).toMatchObject({ ok: true, kind: "publish", verified: false });
+    expect((await readProductionDoc(c.id, env.dir))!.facts).toMatchObject([{ kind: "publish", verified: false, pub_state: "reviewing" }]);
   });
 });
 

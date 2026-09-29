@@ -38,3 +38,12 @@ it("重开文稿：确认后 round+1", async () => {
   expect((await call("/api/board/reopen-script", { content_id: c.id, confirm: true })).json).toMatchObject({ ok: true, round: 2 });
   expect((await readProductionDoc(c.id, env.dir))!.round).toBe(2);
 });
+
+it("创始人决定只走浏览器会话：宿主令牌 403；请求体里的 _host 被剥掉，不影响也借不到身份", async () => {
+  await call("/api/board/ontology/enable", { confirm: true });
+  const c = await videoContent(env, "AI 又忘了怎么办");
+  expect((await call("/api/board/decision", { content_id: c.id, action: "i_published", platform: "douyin" }, "bearer")).status).toBe(403);
+  expect((await call("/api/board/decision", { content_id: c.id, action: "nope" })).json).toMatchObject({ ok: false, code: "bad_request" });
+  await founderApprove(env, c.id);
+  expect((await call("/api/board/decision", { content_id: c.id, action: "i_published", platform: "douyin", _host: "codex" })).json).toMatchObject({ ok: true, stage: "已发布" });
+});

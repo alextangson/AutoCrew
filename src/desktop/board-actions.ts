@@ -15,6 +15,8 @@ import {
 import { isContentId, isTopicId } from "../storage/entity-id.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { anySubmitted, readPublishRecord } from "../storage/publish-record.js";
+import { isOntologyActive, readProductionDocOrEmpty } from "../storage/production-store.js";
+import { founderDecision } from "../modules/production/decisions.js";
 
 export const PROGRAM_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -93,6 +95,7 @@ export async function markPublished(id: string, platform: string, url: unknown, 
   if (link === null) return { ok: false, code: "bad_request", error: "链接要是 http(s) 地址" };
   const content = await getContent(id, dataDir);
   if (!content) return { ok: false, code: "not_found", error: "找不到这条稿" };
+  if (await ontologyVideo(content, dataDir)) return ontologyMark(content, platform, link, dataDir);
   // 非视频稿认过（approved）就在「待发布」列，也能记「我发了」；视频稿仍要走完剪辑与封面
   const markable = MARKABLE.has(content.status) || (content.status === "approved" && !isVideoPlatform(content.platform));
   if (!markable) return { ok: false, code: "wrong_stage", error: "这条还没到发布这一步" };
@@ -110,6 +113,7 @@ export async function unmarkPublished(id: string, platform: string, dataDir: str
   if (!isContentId(id) || !/^[a-z_]{2,32}$/.test(platform)) return { ok: false, code: "bad_request", error: "参数不对" };
   const content = await getContent(id, dataDir);
   if (!content) return { ok: false, code: "not_found", error: "找不到这条稿" };
+  if (await ontologyVideo(content, dataDir)) return ontologyUnmark(content, platform, dataDir);
   const rest = (content.manualPublications ?? []).filter((m) => m.platform !== platform);
   const record = await readPublishRecord(id, rest, dataDir);
   const patch = { manualPublications: rest };
@@ -118,4 +122,34 @@ export async function unmarkPublished(id: string, platform: string, dataDir: str
     : { ok: true, content: await updateContent(id, patch, dataDir) };
   if (!r.ok || !r.content) return { ok: false, code: "failed", error: ("error" in r && r.error) || "没撤销成功，刷新后再试" };
   return { ok: true, content: r.content };
+}
+
+// ---- 本体（spec 2026-09-29 §6）：按本体走的视频稿，「我发了」/ 撤销是创始人决定，状态由推导投影 ----
+
+async function ontologyVideo(content: Content, dataDir: string): Promise<boolean> {
+  return isVideoPlatform(content.platform) && (await isOntologyActive(dataDir, content.id));
+}
+
+async function done(r: Record<string, unknown>, id: string, dataDir: string): Promise<MarkResult> {
+  if (!r.ok) return { ok: false, code: "failed", error: String(r.error ?? "没记上，刷新后再试") };
+  return { ok: true, content: (await getContent(id, dataDir))! };
+}
+
+async function ontologyMark(content: Content, platform: string, link: string | undefined, dataDir: string): Promise<MarkResult> {
+  const r = await founderDecision(content.id, "i_published", { platform, ...(link ? { url: link } : {}) }, dataDir);
+  if (r.ok) {
+    const mark: ManualPublication = { platform, at: new Date().toISOString(), ...(link ? { url: link } : {}) };
+    await updateContent(content.id, { manualPublications: [...(content.manualPublications ?? []).filter((m) => m.platform !== platform), mark] }, dataDir);
+  }
+  return done(r, content.id, dataDir);
+}
+
+/** 撤销：纠正这个平台最近一条「我发了」决定 */
+async function ontologyUnmark(content: Content, platform: string, dataDir: string): Promise<MarkResult> {
+  const doc = await readProductionDocOrEmpty(content.id, dataDir);
+  const target = [...doc.decisions].reverse().find((d) => d.round === doc.round && d.type === "i_published" && d.platform === platform);
+  if (!target) return { ok: false, code: "not_found", error: "这个平台本轮没有「我发了」可撤" };
+  const r = await founderDecision(content.id, "correct_publish", { target_id: target.id }, dataDir);
+  if (r.ok) await updateContent(content.id, { manualPublications: (content.manualPublications ?? []).filter((m) => m.platform !== platform) }, dataDir);
+  return done(r, content.id, dataDir);
 }

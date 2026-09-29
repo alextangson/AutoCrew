@@ -17,7 +17,8 @@ import type { ProductionDoc, TimelineEvent } from "../../storage/production-type
 import { writeTextAtomicMkdir } from "../../storage/json-atomic.js";
 import { deriveExplanation, POST_APPROVAL, type Explanation } from "./explain.js";
 import { withFileOwnership } from "./mutex.js";
-import { publishEvidenceOf } from "./read.js";
+import { matchingRegistration, publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
+import { registrationPatch } from "./registration.js";
 import { rebuildShaIndex, reindexContent, type ShaIndex } from "./sha-index.js";
 import { recoverTxns, type RecoveryOutcome } from "./txn.js";
 
@@ -60,6 +61,10 @@ async function freezeIfNeeded(content: Content, doc: ProductionDoc, exp: Explana
   return true;
 }
 
+function currentRegistration(doc: ProductionDoc, content: Content) {
+  return matchingRegistration(doc, content.body, validCutApproval(doc, content.body), validCoverApproval(doc, content.body));
+}
+
 function projectedStatus(content: Content, exp: Explanation): Content["status"] | null {
   if (content.status === "publishing" || content.status === "archived" || content.deletedAt) return null;
   const target = exp.status ?? (exp.phase === "writing" && POST_APPROVAL.has(content.status) ? "draft_ready" : null);
@@ -71,7 +76,8 @@ function projectedStatus(content: Content, exp: Explanation): Content["status"] 
  * 返回写完的 doc 与稿件。
  */
 export async function refreshProductionProjection(tx: ContentTx, content: Content, doc: ProductionDoc, dataDir: string, opts: { force?: boolean } = {}): Promise<{ content: Content; doc: ProductionDoc; explanation: Explanation; events: TimelineEvent[] }> {
-  const publish = await publishEvidenceOf(content, dataDir, undefined, doc.round_started_at);
+  // 按本体走的稿，已发布只认本轮的回执与「我发了」决定（§6），不再直接读外部发布记录
+  const publish = { verified: false };
   const exp = deriveExplanation({ content, doc, enabled: true, publish });
   // 启用事务进行中（force）或这一条已按本体走，才投影；影子模式 / 被排除的稿什么都不写
   if (!opts.force && !(await isOntologyActive(dataDir, content.id))) return { content, doc, explanation: exp, events: [] };
@@ -80,9 +86,17 @@ export async function refreshProductionProjection(tx: ContentTx, content: Conten
   if (await freezeIfNeeded(content, next, exp, dataDir)) pending.push({ type: "script_frozen", detail: { body_hash: next.frozen!.body_hash } });
   const target = projectedStatus(content, exp);
   let written = content;
+  // 命中 D2 的登记记录落到稿件上（video.final / videoDone / 成片素材），幂等
+  const reg = exp.rule === "D2" ? currentRegistration(next, content) : null;
+  const regPatch = reg ? await registrationPatch(content, next, reg, dataDir) : null;
+  if (regPatch) {
+    written = (await tx.write(regPatch)) ?? written;
+    pending.push({ type: "registration_projected", detail: { registration_id: reg!.id } });
+  }
   if (target) {
     // 投影到已发布时盖一次发布时间（只盖一次，取平台上的实际/定时时间）
-    const stamp = target === "published" && !content.publishedAt ? { publishedAt: publish.at ?? new Date().toISOString() } : {};
+    const firstLive = publishReceipts(doc).live.map((f) => f.at).sort()[0];
+    const stamp = target === "published" && !content.publishedAt ? { publishedAt: firstLive ?? new Date().toISOString() } : {};
     written = (await tx.write({ status: target, ...stamp })) ?? content;
     pending.push({ type: "stage_projected", detail: { from: content.status, to: target, rule: exp.rule } });
   }
