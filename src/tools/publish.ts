@@ -19,12 +19,14 @@ import { generateAndSaveDigest } from "../modules/publish/digest.js";
 import { bindByPublishUrl } from "../modules/flywheel/platform-items.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
 import { prepareEgoLitePublish } from "../modules/publish/ego-lite.js";
+import { executePublishCheck, type CheckDeps } from "../modules/publish/review-gate/check.js";
+import { proposePreference } from "../modules/publish/review-gate/preferences.js";
 
 export const publishSchema = Type.Object({
-  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "ego_lite_prepare" | "confirm_published" | "digest">({
+  action: Type.Unsafe<"wechat_mp_draft" | "clipboard" | "ego_lite_prepare" | "confirm_published" | "digest" | "check" | "propose_preference">({
     type: "string",
-    enum: ["wechat_mp_draft", "clipboard", "ego_lite_prepare", "confirm_published", "digest"],
-    description: "Publish action. 'ego_lite_prepare' resolves a browser upload package for 视频号/小红书/抖音/Bilibili without clicking Publish; 'wechat_mp_draft' for WeChat MP; 'clipboard' for copy-paste; 'confirm_published' marks a live result; 'digest' generates/saves a ≤20-char WeChat 摘要.",
+    enum: ["wechat_mp_draft", "clipboard", "ego_lite_prepare", "confirm_published", "digest", "check", "propose_preference"],
+    description: "Publish action. 'check' reviews a video publish plan per platform before the one-time founder confirmation (deterministic cover/cut/text rules + TypeSafe semantic warnings); paste its summary_table verbatim and never submit a blocked platform. 'propose_preference' proposes a new cover-ratio or publish rule the founder confirms in the workbench. 'ego_lite_prepare' resolves a browser upload package for 视频号/小红书/抖音/Bilibili without clicking Publish; 'wechat_mp_draft' for WeChat MP; 'clipboard' for copy-paste; 'confirm_published' marks a live result; 'digest' generates/saves a ≤20-char WeChat 摘要.",
   }),
   article_path: Type.Optional(Type.String({ description: "Absolute or relative path to the markdown article file." })),
   content_id: Type.Optional(Type.String({ description: "AutoCrew content id. If provided, draft.md will be used." })),
@@ -43,6 +45,14 @@ export const publishSchema = Type.Object({
   force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
   digest: Type.Optional(Type.String({ description: "For 'digest' action: manual 摘要 to save (empty clears it). Omit to AI-generate." })),
   schedule: Type.Optional(Type.String({ description: "Optional platform-local scheduled time carried into the ego lite browser hand-off." })),
+  plan: Type.Optional(Type.Unknown({ description: "For 'check': the publish plan JSON object, or a project-relative path such as 06-publish/publish-plan.json. Each platform entry: platform, content_id, account_display_name, title, caption, tags, covers:[{usage, ratio, path}], cover_text, scheduled_at, timezone, campaigns; final_video.path at top level." })),
+  founder_quotes: Type.Optional(Type.Array(Type.String(), { description: "For 'check': every thing the founder said about this publish in this conversation, verbatim." })),
+  instruction_id: Type.Optional(Type.String({ description: "For 'check': the ins-… id from the last line of the workbench 「让 Codex 发布」 text, if the founder pasted one. Omit when there is none." })),
+  overrides: Type.Optional(Type.Unknown({ description: "For 'check': [{platform, rule, founder_quote}] — only when the founder explicitly asked to break a blocked rule (rule = the blocked item's rule name, founder_quote verbatim); shown verbatim in summary_table." })),
+  kind: Type.Optional(Type.String({ description: "For 'propose_preference': cover_ratio (platform + ratio list) or rule (free-text publish rule)." })),
+  platform: Type.Optional(Type.String({ description: "For 'propose_preference': platform the preference applies to (required for cover_ratio)." })),
+  value: Type.Optional(Type.Unknown({ description: "For 'propose_preference': ratio list like [\"3:4\",\"4:3\"] for cover_ratio, or the rule text for rule." })),
+  founder_quote: Type.Optional(Type.String({ description: "For 'propose_preference': the founder's exact words behind this preference." })),
 });
 
 /** 平台链接白名单:只认 http(s)。javascript:/file: 之类既不是发布地址,也不该被界面渲染成可点链接 */
@@ -90,12 +100,21 @@ async function deriveAdoption(contentId: string, dataDir: string) {
 
 export async function executePublish(
   params: Record<string, unknown>,
-  deps?: { publishImpl?: typeof publishWechatMpDraft },
+  deps?: { publishImpl?: typeof publishWechatMpDraft; check?: CheckDeps },
 ) {
   const action = params.action as string;
   // getDataDir 统一解析(session-8 收编私有副本的第七处漏网):认 AUTOCREW_DATA_DIR 重定向,
   // 否则隔离工作区/smoke 里 clipboard 会去真实 ~/.autocrew 找稿件
   const dataDir = getDataDir((params._dataDir as string) || undefined);
+
+  // --- check: 发布前把关（只写检查留档，不改业务状态）；propose_preference: 只记提议，创始人在网页确认 ---
+  if (action === "check") return executePublishCheck({ ...params, _dataDir: dataDir }, deps?.check);
+  if (action === "propose_preference") {
+    const r = await proposePreference(params, typeof params._host === "string" ? params._host : "local-user", dataDir);
+    return r.ok
+      ? { ok: true, proposal: r.proposal, duplicate: r.duplicate, note: "已记为待确认提议：创始人在工作台顶部点「确认」才生效；在那之前 check 仍按现行规则判" }
+      : r;
+  }
 
   // --- clipboard: format content for manual copy-paste publishing ---
   if (action === "clipboard") {
@@ -120,6 +139,8 @@ export async function executePublish(
   }
 
   // --- ego_lite_prepare: resolve upload files/copy, but never click the external Publish button ---
+  // TODO(发布前把关 §11 集成轮)：改为按平台出包，必须带该平台有效 check_id（readCheckRecord + 重算指纹一致、
+  // 无未例外 block），包内 covers[] 取检查记录里的 covers；过期或被拦的平台不出包（modules/publish/ego-lite.ts）。
   if (action === "ego_lite_prepare") {
     const contentId = params.content_id as string | undefined;
     if (!contentId) {
@@ -152,6 +173,8 @@ export async function executePublish(
   }
 
   // --- confirm_published: mark content as published after manual paste ---
+  // TODO(发布前把关 §11 集成轮)：回执引用该平台 check_id（检查时间早于提交、当时无未例外 block），
+  // 找不到 → 卡片与时间线「发布前未把关」；事后补检不抹历史（modules/production/receipts.ts）。
   if (action === "confirm_published") {
     const contentId = params.content_id as string | undefined;
     if (!contentId) {

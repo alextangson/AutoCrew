@@ -11,7 +11,7 @@ const AUTOCREW: Record<string, Record<string, string> | string> = {
   autocrew_review_desk: { pack: "领审稿任务", submit: "交审稿意见", _: "审稿" },
   autocrew_scout: { search: "搜资料", read_page: "读网页", cite: "核对引文", _: "调研" },
   autocrew_research: "调研",
-  autocrew_publish: { wechat_mp_draft: "推送公众号草稿箱", confirm_published: "标记已发布", clipboard: "复制发布内容", ego_lite_prepare: "准备上传包", digest: "生成摘要", _: "发布" },
+  autocrew_publish: { wechat_mp_draft: "推送公众号草稿箱", confirm_published: "标记已发布", clipboard: "复制发布内容", ego_lite_prepare: "准备上传包", digest: "生成摘要", check: "发布前把关", propose_preference: "提议发布偏好", _: "发布" },
   autocrew_pre_publish: "发布前检查",
   autocrew_status: "查看编辑部状态",
   autocrew_dashboard: "查看数据",

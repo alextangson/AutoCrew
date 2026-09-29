@@ -232,10 +232,26 @@ describe("工具表面瘦身：tools/list 按宿主过滤（P6 §3.7）", () => 
 
   it("codex 只列它调得动的：等于宿主白名单，列外的工具任何 action 都被拒", async () => {
     const names = await listedNames("codex");
-    expect([...names].sort()).toEqual(["autocrew_asset", "autocrew_content", "autocrew_desk", "autocrew_status", "autocrew_video"]);
+    expect([...names].sort()).toEqual(["autocrew_asset", "autocrew_content", "autocrew_desk", "autocrew_publish", "autocrew_status", "autocrew_video"]);
     for (const tool of runner.getTools().map((t) => t.name).filter((name) => !names.includes(name))) {
       for (const action of ["", "list", "get", "status", "register"]) expect(hostPolicy("codex", tool, { action }).ok).toBe(false);
     }
+  });
+
+  it("发布前把关 §2：codex 能调 publish check / propose_preference，调不了其他发布动作（协议层拒，工具不执行）", async () => {
+    for (const action of ["check", "propose_preference"]) expect(hostPolicy("codex", "autocrew_publish", { action }).ok).toBe(true);
+    for (const action of ["ego_lite_prepare", "wechat_mp_draft", "confirm_published", "clipboard", "digest", ""]) {
+      expect(hostPolicy("codex", "autocrew_publish", { action })).toMatchObject({ ok: false, error: CODEX_EDITOR_DENIED });
+    }
+    const codex = { principal: { subject: "codex", plan: "local" as const }, host: "codex", authorize: hostAuthorize("codex") };
+    const denied = await handleMcpRequest({ id: 81, method: "tools/call", params: { name: "autocrew_publish", arguments: { action: "ego_lite_prepare", content_id: "content-1-abc" } } }, codex);
+    expect(denied?.result).toMatchObject({ isError: true, content: [{ type: "text", text: CODEX_EDITOR_DENIED }] });
+    // check 真的走到了工具（不是被协议层拒）：内容不存在时回工具自己的 not_found
+    const allowed = await handleMcpRequest({ id: 82, method: "tools/call", params: { name: "autocrew_publish", arguments: { action: "check", content_id: "content-1-nosuch", plan: {} } } }, codex);
+    const structured = (allowed?.result as { structuredContent: Record<string, unknown> }).structuredContent;
+    expect(structured).toMatchObject({ ok: false, code: "not_found" });
+    const proposed = await handleMcpRequest({ id: 83, method: "tools/call", params: { name: "autocrew_publish", arguments: { action: "propose_preference", kind: "bogus", founder_quote: "x" } } }, codex);
+    expect((proposed?.result as { structuredContent: Record<string, unknown> }).structuredContent).toMatchObject({ ok: false, code: "bad_kind" });
   });
 
   it("不列 ≠ 不能调：claude-code 硬调隐藏工具照常执行，回执多一句 host_note；local-user 没有这句", async () => {

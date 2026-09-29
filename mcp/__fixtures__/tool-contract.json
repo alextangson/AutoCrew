@@ -1486,7 +1486,9 @@
        "clipboard",
        "ego_lite_prepare",
        "confirm_published",
-       "digest"
+       "digest",
+       "check",
+       "propose_preference"
       ],
       "type": "string"
      },
@@ -1507,6 +1509,15 @@
      },
      "force": {
       "type": "boolean"
+     },
+     "founder_quote": {
+      "type": "string"
+     },
+     "founder_quotes": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "hashtags": {
       "items": {
@@ -1529,6 +1540,17 @@
      "image_size": {
       "type": "string"
      },
+     "instruction_id": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "overrides": {},
+     "plan": {},
+     "platform": {
+      "type": "string"
+     },
      "publish_url": {
       "type": "string"
      },
@@ -1541,6 +1563,7 @@
      "theme": {
       "type": "string"
      },
+     "value": {},
      "wechat_publish_script": {
       "type": "string"
      }
@@ -4084,7 +4107,9 @@
        "clipboard",
        "ego_lite_prepare",
        "confirm_published",
-       "digest"
+       "digest",
+       "check",
+       "propose_preference"
       ],
       "type": "string"
      },
@@ -4105,6 +4130,15 @@
      },
      "force": {
       "type": "boolean"
+     },
+     "founder_quote": {
+      "type": "string"
+     },
+     "founder_quotes": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "hashtags": {
       "items": {
@@ -4127,6 +4161,17 @@
      "image_size": {
       "type": "string"
      },
+     "instruction_id": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "overrides": {},
+     "plan": {},
+     "platform": {
+      "type": "string"
+     },
      "publish_url": {
       "type": "string"
      },
@@ -4139,6 +4184,7 @@
      "theme": {
       "type": "string"
      },
+     "value": {},
      "wechat_publish_script": {
       "type": "string"
      }
@@ -5471,6 +5517,104 @@
     "required": [
      "action",
      "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_publish",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "wechat_mp_draft",
+       "clipboard",
+       "ego_lite_prepare",
+       "confirm_published",
+       "digest",
+       "check",
+       "propose_preference"
+      ],
+      "type": "string"
+     },
+     "article_path": {
+      "type": "string"
+     },
+     "author": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "digest": {
+      "type": "string"
+     },
+     "dry_run": {
+      "type": "boolean"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "founder_quote": {
+      "type": "string"
+     },
+     "founder_quotes": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "image_api_key": {
+      "type": "string"
+     },
+     "image_base_url": {
+      "type": "string"
+     },
+     "image_generator_script": {
+      "type": "string"
+     },
+     "image_model": {
+      "type": "string"
+     },
+     "image_size": {
+      "type": "string"
+     },
+     "instruction_id": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "overrides": {},
+     "plan": {},
+     "platform": {
+      "type": "string"
+     },
+     "publish_url": {
+      "type": "string"
+     },
+     "schedule": {
+      "type": "string"
+     },
+     "skip_images": {
+      "type": "boolean"
+     },
+     "theme": {
+      "type": "string"
+     },
+     "value": {},
+     "wechat_publish_script": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
     ],
     "type": "object"
    }

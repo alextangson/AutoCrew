@@ -141,7 +141,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_publish",
     label: "AutoCrew Publish",
     description:
-      "Run approval-gated publishing flows. Use action='ego_lite_prepare' for 视频号/小红书/抖音/Bilibili browser upload packages, or action='wechat_mp_draft' for WeChat MP drafts.",
+      "Run approval-gated publishing flows. Before the one-time founder confirmation of a video publish, run action='check' with the plan, the founder's verbatim quotes and any instruction_id: it checks each platform's covers (by pixels, against the registered pair), cut, cover text, title/caption limits and schedule, plus TypeSafe semantic warnings; paste summary_table verbatim and never submit a blocked platform. action='propose_preference' records a cover-ratio / publish-rule proposal the founder confirms in the workbench. Use action='ego_lite_prepare' for 视频号/小红书/抖音/Bilibili browser upload packages, or action='wechat_mp_draft' for WeChat MP drafts.",
     parameters: publishSchema,
     execute: executePublish,
   });
