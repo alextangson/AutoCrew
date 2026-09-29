@@ -52,25 +52,56 @@ export function chiefEditorHome(machineDir = getMachineDir()): string {
   return path.join(machineDir, "chief-editor");
 }
 
-/** 进程身份：pid + 启动时刻（ps lstart）——pid 会被复用，两样都对上才算同一个进程 */
-export interface ProcessIdentity { pid: number; lstart: string }
-
-export function processIdentity(pid = process.pid): ProcessIdentity {
-  return { pid, lstart: psField(pid, "lstart") };
-}
+/**
+ * 进程身份：pid + 启动时刻——pid 会被复用，两样都对上才算同一个进程。
+ * 启动时刻存成 UTC 秒（评审 v1.3 P1）：`ps lstart` 的文字随 TZ / 语言变，两个 TZ 不同的服务会把同一个活进程认成「另一个」，
+ * 进而杀掉它的进程组。这里强制 TZ=UTC、LC_ALL=C 读，再解析成秒比；`lstart` 只是本修复前写下的旧记录才有。
+ */
+export interface ProcessIdentity { pid: number; start?: number; lstart?: string }
 
 function psField(pid: number, field: string): string {
   try {
-    return execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf-8" }).trim();
+    return execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], { encoding: "utf-8", env: { ...process.env, TZ: "UTC", LC_ALL: "C" } }).trim();
   } catch {
     return "";
   }
 }
 
-/** 记录这一轮的那个服务还活着吗：pid 在、且启动时刻对得上 */
-export function ownerAlive(owner: ProcessIdentity, lookup: (pid: number) => string = (p) => psField(p, "lstart")): boolean {
+/** 进程启动时刻（UTC 秒）；进程不在就是 null */
+export function startEpoch(pid: number): number | null {
+  const raw = psField(pid, "lstart");
+  const t = raw ? Date.parse(`${raw} GMT`) : NaN;
+  return Number.isFinite(t) ? Math.round(t / 1000) : null;
+}
+
+export function processIdentity(pid = process.pid): ProcessIdentity {
+  return { pid, start: startEpoch(pid) ?? 0 };
+}
+
+/** 记录这一轮的那个服务还活着吗：pid 在、且启动时刻（秒，容差 1 秒）对得上 */
+export function ownerAlive(owner: ProcessIdentity, lookup: (pid: number) => number | null = startEpoch): boolean {
   const now = lookup(owner.pid);
-  return Boolean(now) && now === owner.lstart;
+  if (now === null) return false;
+  if (typeof owner.start === "number") return Math.abs(now - owner.start) <= 1;
+  // 修复前写下的旧记录：lstart 是写入那台服务本地时区的文字，按本进程时区解析（尽力而为）
+  const legacy = owner.lstart ? Date.parse(owner.lstart) : NaN;
+  return Number.isFinite(legacy) && Math.abs(now - Math.round(legacy / 1000)) <= 1;
+}
+
+/**
+ * 没有主人信息的旧记录：它记下的 agent 进程还在、而且还是那条命令，才算「可能还有人在跑」（评审 v1.3 P2）。
+ * pid 被无关进程复用 → 对这条记录来说 agent 已经不在了；那个无关进程绝不碰（杀组前 killRecordedGroup 还会再核命令）。
+ */
+export function agentStillThere(pid: number | undefined, command: string | undefined, lookup: (pid: number) => string = (p) => psField(p, "command")): boolean {
+  if (!pid) return false;
+  const actual = lookup(pid);
+  if (!actual) return false;
+  const expected = (command ?? "").split(" ").slice(0, 2).filter(Boolean);
+  return expected.length > 0 && expected.every((part) => actual.includes(part));
+}
+
+function sameProcess(a: ProcessIdentity, b: ProcessIdentity): boolean {
+  return a.pid === b.pid && a.start === b.start && a.lstart === b.lstart;
 }
 
 export class RunStore {
@@ -122,13 +153,14 @@ export class RunStore {
   recoverOnStartup(
     killGroup: (pid: number, command: string) => boolean = killRecordedGroup,
     isOwnerAlive: (owner: ProcessIdentity) => boolean = ownerAlive,
+    isAgentThere: (pid: number | undefined, command: string | undefined) => boolean = agentStillThere,
   ): RunRecord[] {
     const records = this.list();
     // 只收拾「主人已经不在」的轮：别的服务（或同一台机器上另一个仍活着的实例）的轮一律不碰
     // 旧记录没有主人信息：只有它的 agent 进程已经不在了才算孤儿（agent 还活着 = 可能是别的服务正在跑的轮，不碰）
     const orphaned = (r: RunRecord) => r.owner
-      ? (r.owner.pid !== this.owner.pid || r.owner.lstart !== this.owner.lstart) && !isOwnerAlive(r.owner)
-      : !r.pid || !isOwnerAlive({ pid: r.pid, lstart: psField(r.pid, "lstart") || "gone" });
+      ? !sameProcess(r.owner, this.owner) && !isOwnerAlive(r.owner)
+      : !isAgentThere(r.pid, r.command);
     const leftovers = records.filter((r) => (r.status === "running" || r.status === "awaiting_approval") && orphaned(r));
     const dirty = records.filter((r) => (r.cleanupPending && orphaned(r)) || leftovers.includes(r));
     if (dirty.length === 0) return [];
