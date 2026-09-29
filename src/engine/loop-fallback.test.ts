@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
 import { runLoop, type LoopEvent, type LoopStreamEvent } from "./loop.js";
 import { shutdownObserver } from "./observer.js";
 import { bodyText, openaiSse, openaiSseTextParts, sseResponse } from "./sse-fixtures.js";
-import { readRun } from "../runtime/run-log.js";
+import { flushRunLogs, readRun } from "../runtime/run-log.js";
 import type { EngineConfig } from "./config.js";
 
 const PRIMARY = "https://primary.invalid";
@@ -25,6 +25,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await flushRunLogs(); // 迟到的追加会在 rm 途中重建 logs/runs
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
@@ -119,7 +120,7 @@ describe("主端点烧完 → 备用顶上", () => {
     });
     expect((events[0] as { error: string }).error).toMatch(/429/);
 
-    await new Promise((r) => setTimeout(r, 60));
+    await flushRunLogs(); // run-log 是 fire-and-forget 追加：等在途写落定再读
     const all = await readRun(dir, "run-fb-ok");
     // P6 §3.9：换线本身也是一条 kind:"fallback"（从哪条线到哪条线、为什么）
     expect(all.filter((r) => r.kind === "fallback")).toEqual([
@@ -258,7 +259,7 @@ describe("两端都倒", () => {
     expect(legs.primary).toBe(4);
     expect(legs.fallback).toBe(2); // 备用只给一次重试机会
 
-    await new Promise((r) => setTimeout(r, 60));
+    await flushRunLogs(); // run-log 是 fire-and-forget 追加：等在途写落定再读
     const all = await readRun(dir, "run-fb-both");
     // 备用也倒了：换线记录照样有，ok:false
     expect(all.filter((r) => r.kind === "fallback")).toEqual([expect.objectContaining({ from: "main", to: "fallback", ok: false })]);

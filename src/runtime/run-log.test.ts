@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { appendRunLog, listRuns, readRun, redactSecrets, createRunRecorder, withCallerSession } from "./run-log.js";
+import { appendRunLog, flushRunLogs, listRuns, readRun, redactSecrets, createRunRecorder, withCallerSession } from "./run-log.js";
 
 let dir: string;
 
@@ -14,6 +14,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await flushRunLogs(); // 迟到的追加会在 rm 途中重建 logs/runs
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
@@ -83,6 +84,15 @@ describe("appendRunLog / listRuns / readRun", () => {
     await expect(appendRunLog("/dev/null/nope", { ...base, runId: "x" })).resolves.toBeUndefined();
   });
 
+  it("flushRunLogs:某条写自己抛错也恒 resolve,拒绝只归那条写的调用方(不派生未处理拒绝)", async () => {
+    const bad = { ...base, runId: "run-throw", get session(): string { throw new Error("坏入参"); } };
+    const failing = appendRunLog(dir, bad);
+    void appendRunLog(dir, { ...base, runId: "run-flushed" });
+    await expect(flushRunLogs()).resolves.toBeUndefined();
+    await expect(failing).rejects.toThrow("坏入参");
+    expect(await readRun(dir, "run-flushed")).toHaveLength(1);
+  });
+
   it("坏行不清空读视图", async () => {
     await appendRunLog(dir, { ...base, runId: "run-ok" });
     const today = new Date().toISOString().slice(0, 10);
@@ -105,7 +115,7 @@ describe("createRunRecorder", () => {
   it("dataDir 缺省 → no-op(不建目录不写文件)", async () => {
     const rec = createRunRecorder(undefined, { runId: "run-x" });
     rec.llm({ model: "m", durationMs: 1, ok: true, input: "i", output: "o" });
-    await new Promise((r) => setTimeout(r, 20));
+    await flushRunLogs();
     await expect(fs.access(path.join(dir, "logs"))).rejects.toThrow();
   });
 
@@ -114,7 +124,7 @@ describe("createRunRecorder", () => {
       .llm({ model: "m1", durationMs: 5, ok: true, input: "in", output: "out" });
     createRunRecorder(dir, { runId: "run-nopat", agent: "writer", usedPatternIds: [] })
       .llm({ model: "m1", durationMs: 5, ok: true, input: "in", output: "out" });
-    await new Promise((r) => setTimeout(r, 50));
+    await flushRunLogs();
 
     const [withCards] = await readRun(dir, "run-pat");
     expect(withCards.usedPatternIds).toEqual(["pat-1", "pat-2"]);
@@ -127,7 +137,7 @@ describe("createRunRecorder", () => {
       .llm({ model: "m1", durationMs: 5, ok: true, input: "in", output: "out" });
     createRunRecorder(dir, { runId: "run-nobrief", agent: "writer" })
       .llm({ model: "m1", durationMs: 5, ok: true, input: "in", output: "out" });
-    await new Promise((r) => setTimeout(r, 50));
+    await flushRunLogs();
 
     const [withBrief] = await readRun(dir, "run-brief");
     expect(withBrief.usedBriefRevision).toBe(2);
@@ -139,7 +149,7 @@ describe("createRunRecorder", () => {
     const rec = createRunRecorder(dir, { runId: "run-rec", agent: "cover-designer" });
     rec.llm({ model: "m1", durationMs: 5, ok: true, tokens: 9, input: "in", output: "out" });
     rec.tool({ name: "submit_cover_plan", durationMs: 2, ok: true, input: "{}", output: "已收到" });
-    await new Promise((r) => setTimeout(r, 50));
+    await flushRunLogs();
     const records = await readRun(dir, "run-rec");
     expect(records).toHaveLength(2);
     expect(records.every((r) => r.agent === "cover-designer")).toBe(true);
@@ -160,7 +170,7 @@ describe("会话归因与回退记录（P6 §3.8 / §3.9）", () => {
   it("recorder.fallback 落 kind:fallback，listRuns 不把它算成工具调用或错误", async () => {
     const rec = createRunRecorder(dir, { runId: "run-fb", agent: "writer" });
     rec.fallback({ from: "newcli", to: "none", reason: "熔断", skipped: true, ok: false });
-    await new Promise((r) => setTimeout(r, 50));
+    await flushRunLogs();
     const [record] = await readRun(dir, "run-fb");
     expect(record).toMatchObject({ kind: "fallback", from: "newcli", to: "none", reason: "熔断", skipped: true, action: "newcli→none" });
     const [summary] = await listRuns(dir);

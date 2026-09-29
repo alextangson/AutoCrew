@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { runLoop, type LoopTool } from "./loop.js";
 import { openaiSseResponse } from "./sse-fixtures.js";
-import { readRun, listRuns } from "../runtime/run-log.js";
+import { flushRunLogs, readRun, listRuns } from "../runtime/run-log.js";
 import type { EngineConfig } from "./config.js";
 
 let dir: string;
@@ -19,6 +19,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await flushRunLogs(); // 迟到的追加会在 rm 途中重建 logs/runs
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
@@ -75,7 +76,7 @@ describe("runLoop × run-log", () => {
       logMeta: { runId: "run-loop-test", agent: "writer" },
     });
     expect(result.finalMessage).toBe("全部搞定");
-    await new Promise((r) => setTimeout(r, 60));
+    await flushRunLogs();
 
     const records = await readRun(dir, "run-loop-test");
     expect(records.map((r) => r.kind)).toEqual(["llm", "tool", "llm"]);
@@ -98,7 +99,7 @@ describe("runLoop × run-log", () => {
       userMessage: "u",
       fetchImpl: makeFetch([finalTurn]),
     });
-    await new Promise((r) => setTimeout(r, 60));
+    await flushRunLogs();
     const runs = await listRuns(dir);
     expect(runs).toHaveLength(1);
     expect(runs[0].runId).toMatch(/^run-eng-/);
@@ -112,7 +113,7 @@ describe("runLoop × run-log", () => {
       fetchImpl: makeFetch([finalTurn]),
       logMeta: { runId: "run-nolog" },
     });
-    await new Promise((r) => setTimeout(r, 60));
+    await flushRunLogs();
     await expect(fs.access(path.join(dir, "logs"))).rejects.toThrow();
   });
 
@@ -129,7 +130,7 @@ describe("runLoop × run-log", () => {
         logMeta: { runId: "run-fail" },
       }),
     ).rejects.toThrow("relay 断流");
-    await new Promise((r) => setTimeout(r, 60));
+    await flushRunLogs();
     const records = await readRun(dir, "run-fail");
     expect(records).toHaveLength(1);
     expect(records[0].ok).toBe(false);
