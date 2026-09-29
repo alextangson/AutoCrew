@@ -365,6 +365,29 @@ describe("seg12 归档口径", () => {
     expect(backupCandidates(set.published, new Date("2026-12-01T00:00:00Z"))).toEqual([]);
   });
 
+  it("[seg13 P2] 保留名单里定不出发布时间的也列进「待确认」，但仍不归档", async () => {
+    await enable();
+    const { publishedSet } = await import("../../storage/round-publish-time.js");
+    const { archiveCandidates } = await import("../../storage/nas-archive.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const r = await registeredVideo(env);
+    await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
+    const set = await publishedSet([(await getContent(r.id, env.dir))!], env.dir);
+    expect(set.keep.has(r.id)).toBe(true);
+    const out = archiveCandidates(set, new Date("2026-12-01T00:00:00Z"));
+    expect(out.due).toEqual([]);
+    expect(out.unknown.map((c) => c.id)).toContain(r.id);
+  });
+
+  it("[seg13 P1] 实际提交时间只认 submitted_at：只有授权时间的计划条目不算提交过", async () => {
+    const { parsePlatformEntry } = await import("../../storage/publish-record.js");
+    const now = Date.parse("2026-10-01T00:00:00Z");
+    const onlyAuth = parsePlatformEntry({ platform: "douyin", publication: { status: "public", published_at: "2026-09-30T10:00:00Z", authorized_at: "2026-09-30T09:00:00Z", authorization_at: "2026-09-30T09:00:00Z" } }, now);
+    expect(onlyAuth?.submittedAt).toBeNull();
+    const real = parsePlatformEntry({ platform: "douyin", publication: { status: "public", published_at: "2026-09-30T10:00:00Z", submitted_at: "2026-09-30T09:30:00Z", authorized_at: "2026-09-30T09:00:00Z" } }, now);
+    expect(real?.submittedAt).toBe("2026-09-30T09:30:00Z");
+  });
+
   it("[3] 视图与归档同一份保留名单：视图显示的就是 keep，归档候选与它不相交", async () => {
     const a = await publishedWithPlan();
     const { publishedSet } = await import("../../storage/round-publish-time.js");

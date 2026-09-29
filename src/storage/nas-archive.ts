@@ -52,7 +52,8 @@ async function volumeFree(dir: string): Promise<number> {
 export function archiveCandidates(set: PublishedSet, now: Date): { due: Content[]; unknown: Content[] } {
   const rest = set.published.filter((c) => !set.keep.has(c.id));
   const due = rest.filter((c) => c.publishedAt && now.getTime() - Date.parse(c.publishedAt) >= ARCHIVE_MIN_AGE_MS);
-  return { due, unknown: rest.filter((c) => !c.publishedAt) };
+  // 待确认要报全：保留名单里的也列（它们这次不归档，但定不出发布时间同样要让创始人看见）
+  return { due, unknown: set.published.filter((c) => !c.publishedAt) };
 }
 
 export const RECENT_RECORD_MS = 30 * 60_000;
