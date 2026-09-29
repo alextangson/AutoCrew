@@ -358,7 +358,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const retryGenerate = async () => {
     const r = await invoke("generate:retry", { content_id: props.id });
     if (!r.ok) return toast(r.error ?? "重写没起来");
-    toast("重写已开始,1-3 分钟");
+    // 本机 agent 写的稿：服务端已把「继续写」发回原对话（v1.2），进度在右栏那段对话里
+    toast((r as { routed?: string }).routed === "local" ? "已交回原来那段对话，由本机 agent 接着写——进度看右栏" : "重写已开始,1-3 分钟");
     void load();
   };
 

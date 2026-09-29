@@ -8,7 +8,7 @@
  */
 import { useState } from "react";
 import { AgentDraftCard, AgentTaskCard, AgentTextCard } from "./agent-cards";
-import { WorkLog, parseWorkItems } from "./WorkLog";
+import { WorkLog, parseWorkItems, type WorkMeta } from "./WorkLog";
 import { invoke } from "../transport";
 import { clockLabel } from "../time-format";
 import { toast } from "../ui";
@@ -405,7 +405,7 @@ export function ChatCard({ card, nav }: { card: ChatCardShape; nav?: (route: Rou
     // 本机 agent 的 v1 卡片（agent-cards.tsx）
     case "agent_draft": return <AgentDraftCard data={card.data} nav={nav} background={Boolean((card as { background?: unknown }).background)} />;
     case "agent_task": return <AgentTaskCard data={card.data} />;
-    case "agent_worklog": return <WorkLog items={parseWorkItems(card.data.items)} />;
+    case "agent_worklog": return <WorkLog items={parseWorkItems(card.data.items)} meta={card.data as WorkMeta} />;
     case "agent_text": return <AgentTextCard data={{ ...card.data, background: (card as { background?: unknown }).background }} />;
     default:
       return (

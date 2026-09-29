@@ -4,9 +4,7 @@
  * useChatSend:任意视图把 brief 派进对话(与 vanilla sendChat 同语义)。
  */
 import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkCjkFriendly from "remark-cjk-friendly";
+import { ChatMarkdown } from "./markdown";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
@@ -538,6 +536,11 @@ export function ChatDock(props: {
           void recoverPendingTurn().then(reattachAgentTurn);
           return;
         }
+        // 别处发起的本机轮次（如看板「重试」交回原对话，v1.2）：挂上来旁观
+        if (e.kind === "agent" && e.data.type === "turn" && e.data.status === "running" && !turnIdRef.current) {
+          void reattachAgentTurn();
+          return;
+        }
         // 旁观的标签页：别处发起的本机轮次结束了，重载这段对话看结果
         if (e.kind === "agent" && e.data.type === "turn" && (e.data.status === "done" || e.data.status === "failed")) {
           if (e.data.conversationId === activeConvRef.current && !turnIdRef.current) {
@@ -671,16 +674,16 @@ export function ChatDock(props: {
           <div key={i} className={msgClass(m)}>
             {/* 系统消息（后台任务回报）不画成用户气泡：回看时不该以为这话是自己说的 */}
             {m.origin === "system" && <p className="muted mono">{SYSTEM_MSG_LABEL}</p>}
+            {/* 「已处理」过程块在最终回复之上（v1.2，与主流 agent 一致） */}
+            {(m.cards ?? []).filter((c) => c.type === "agent_worklog").map((c, j) => <ChatCard key={`w${j}`} card={c} />)}
             {m.text &&
               (m.role === "user" && m.origin !== "system" ? (
                 <p>{m.text}</p>
               ) : (
                 // 总编辑回复渲染 markdown(与编辑器预览同栈)——裸 ** 不再示人
-                <div className="chat-md">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{m.text}</ReactMarkdown>
-                </div>
+                <ChatMarkdown text={m.text} />
               ))}
-            {(m.cards ?? []).map((c, j) => (
+            {(m.cards ?? []).filter((c) => c.type !== "agent_worklog").map((c, j) => (
               <ChatCard key={j} card={c} {...(props.nav ? { nav: props.nav } : {})} />
             ))}
             {m.note && <p className="muted">{m.note}</p>}
@@ -694,9 +697,7 @@ export function ChatDock(props: {
         {/* 流式气泡：视觉与最终回复一致（同一套 markdown 渲染），不做打字机动画 */}
         {busy && stream.text && (
           <div className="msg">
-            <div className="chat-md">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkFriendly]}>{stream.text}</ReactMarkdown>
-            </div>
+            <ChatMarkdown text={stream.text} />
           </div>
         )}
         {busy && (

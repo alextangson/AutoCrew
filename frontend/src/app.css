@@ -122,6 +122,14 @@
 .worklog-list { list-style: none; margin: var(--s1) 0 0; padding-left: var(--s3); }
 .worklog-item { line-height: 1.6; }
 .worklog-failed { color: var(--danger); }
+.worklog-recovered { color: var(--ok, #2f7d3a); }
+.worklog-thought { font-style: italic; opacity: .8; white-space: pre-wrap; }
+.worklog-note { white-space: pre-wrap; }
+.worklog-unresolved { display: block; border: none; background: none; padding: var(--s1) 0 0; color: var(--danger); font-size: var(--fs-xs); cursor: pointer; }
+/* 回复排版（v1.2）：宽表格在自己的区域里横向滚动，不撑破对话栏（X4） */
+.chat-md table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.chat-md th, .chat-md td { border: 1px solid var(--border); padding: 2px var(--s2); white-space: nowrap; }
+.chat-md pre { max-width: 100%; overflow-x: auto; }
 
 /* Chat cards */
 .ccard { border: 1px solid var(--border); border-radius: var(--radius-card); padding: var(--s2) var(--s3); margin-top: var(--s2); background: var(--card); color: var(--text); }
