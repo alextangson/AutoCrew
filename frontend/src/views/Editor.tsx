@@ -506,7 +506,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
       {props.context}
-      <SharedProjectPanel contentId={props.id} status={c.status} isVideo={isVideo} />
+      <SharedProjectPanel status={c.status} isVideo={isVideo} />
 
       <div className="ed-main-row">
       <div className="ed-stage">

@@ -1,3 +1,5 @@
+import { loadSeriesSnapshot, renderSnapshot, type SeriesSnapshot } from "../writing/series-memory.js";
+import { catalogLines, techniqueCatalog, type TechniqueCatalog } from "../writing/technique-store.js";
 /**
  * 立意 pass（P1 spec §4.1）：**独立于调研综合**的一次 LLM 运行，产出角度卡 v3。
  *
@@ -92,6 +94,11 @@ export const STRUCTURE_MENU: Record<AngleStructure, string> = {
 // ─── 契约 ────────────────────────────────────────────────────────────────────
 
 export interface RunAngleStageInput {
+  /** 同平台近期稿件快照 + 已审手法目录（spec §3 C）：立意阶段就让不同候选卡用不同打法、避开近期撞车的中心思想 */
+  series?: SeriesSnapshot;
+  techniques?: TechniqueCatalog;
+  /** 本选题 id：同选题的其他版本不算系列里的另一条 */
+  topicId?: string;
   /** 只用它的**事实字段**（摘要/张力/证据/缺口）；卡是本 pass 的产出，传进来的一律忽略 */
   brief: ResearchBrief;
   topic: ResearchTopicRef;
@@ -448,9 +455,21 @@ function briefFacts(brief: ResearchBrief): string {
   return clampChars(externalBlock(lines), RESEARCH_BLOCK_MAX);
 }
 
+/** 立意阶段的系列记忆：只作去重参考，不是事实证据 */
+function angleSeriesBlock(series: SeriesSnapshot, techniques: TechniqueCatalog | undefined): string {
+  return [
+    "【系列记忆（只作去重参考，不是事实证据，也不是观众已知前提）】",
+    "每张候选卡的中心思想都要能一句话说出和下面每一条的区别；最近用过的开头、收尾和骨架换一种。几张候选卡之间也要用不同打法，不要只换说法。",
+    "优先级：创作者本次明确要求 > 候选卡骨架 > 手法卡。手法卡是可选打法，可以不用。",
+    renderSnapshot(series),
+    `【已审手法目录】\n${catalogLines(techniques)}`,
+  ].join("\n");
+}
+
 export function buildAngleUserMessage(input: RunAngleStageInput): string {
   const own = renderOwnMaterial(input.ownMaterial?.chunks ?? [], OWN_MATERIAL_MAX);
   return [
+    ...(input.series ? [angleSeriesBlock(input.series, input.techniques), ""] : []),
     "本次选题（来自我们自己的灵感库，可信）：",
     `标题：${clampChars(input.topic.title.trim(), 120) || "(无标题)"}`,
     `描述：${clampChars(input.topic.description.trim(), 600) || "(无描述)"}`,
@@ -617,6 +636,10 @@ export async function runAngleStage(input: RunAngleStageInput): Promise<AngleSta
   const capture = newCapture<AngleStagePayload>();
   const deadlineMs = input.deadlineMs ?? DEFAULT_ANGLE_DEADLINE_MS;
 
+  // 只在明确给了资料目录时现读（不去碰默认目录）；平台未定时快照为空
+  if (!input.series && input.dataDir) {
+    input = { ...input, series: await loadSeriesSnapshot(input.creativeTask?.platform ?? "", { topicId: input.topicId }, input.dataDir), techniques: await techniqueCatalog(input.dataDir) };
+  }
   const work: Promise<LoopOutcome> = (input.runLoopImpl ?? runLoop)(scout.config, {
     model: scout.model,
     systemPrompt: buildAngleSystemPrompt(input.profile, input.creativeTask),

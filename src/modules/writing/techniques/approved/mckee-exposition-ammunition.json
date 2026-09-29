@@ -1,0 +1,40 @@
+{
+  "id": "mckee-exposition-ammunition",
+  "version": 1,
+  "name": "背景知识等到用得上时再讲",
+  "purpose": "推进 / 删凑数",
+  "source": {
+    "kind": "book",
+    "title": "Story，《故事》",
+    "author": "Robert McKee（罗伯特·麦基）",
+    "edition": "英文版 ReganBooks / HarperCollins，1997；中译本 天津人民出版社（果麦文化出品），周铁东 译，2014",
+    "location": "英文版第 15 章 Exposition（p.334 起）；中译本第 15 章「解说」（p.357 起）。书中的口诀是把解说变成弹药（convert exposition to ammunition）：人物知道的背景，要在冲突中当武器用出来，不单独摆出来讲。读者摘录标注为 p.334–335，待对书核。"
+  },
+  "verification": {
+    "status": "已核",
+    "note": "已核（章节与起始页码）；口诀页码 p.334–335 待对书",
+    "links": [
+      "https://archive.org/stream/RobertMcKeeStorypdf/Robert%20McKee%20-%20Story%20(pdf)_djvu.txt （第 15 章 Exposition p.334）",
+      "https://compassioninpolitics.wordpress.com/2012/03/30/robert-mckee-quotes-from-story/ （读者摘录标注 p.334–335，二手来源）",
+      "https://jamesdangerblog.wordpress.com/2017/04/23/story-substance-structure-style-and-the-principles-of-screenwriting-by-robert-mckee/ （章节笔记，二手来源）"
+    ]
+  },
+  "fits": "需要先铺很多背景才能讲到重点的选题；概念多、术语多的稿；创始人反感的「开头先科普三分钟」的稿。",
+  "notFor": "纯科普稿，观众就是来听解释的；只有一个概念、背景很短的稿。",
+  "moves": [
+    "列出稿里所有需要解释的背景和概念，逐个标注：观众在哪一刻非得知道它不可？",
+    "把解释挪到那一刻。开头只留理解第一个场景所需的最少背景。",
+    "每段解释都要在当场被用上：解释完马上用它说明刚才的现象，或推出下一步。",
+    "讲完不用的解释，删掉。这是「凑数段」判据里最常见的一类。"
+  ],
+  "illustration": {
+    "label": "示意，不是事实材料",
+    "text": "（改写前是开头先讲一分钟「什么是上下文窗口」）\n改成：她把三个月的客户聊天记录一股脑贴给 AI，让它总结这个客户在意什么。它总结得头头是道，但全是最近两周的事。为什么前面的全丢了？这里就得说一个词，叫上下文窗口……"
+  },
+  "misuse": [
+    "把解释推到后面，可前面没有能引出它的场景，结果解释突然冒出来。",
+    "为了用这张卡去编场景。",
+    "一个场景后面挂了三段解释，又变成了科普块。"
+  ],
+  "pairing": "几乎总能配 `mckee-gap-turning`，也可以配 `sticky-schema-analogy`（到了需要的时候，用类比讲）。别和 `founder-name-terms-first` 同时用：那张卡要求开头先亮名词，这张要求背景后置，两者方向相反，写手要二选一，并在 outline 里说明。"
+}

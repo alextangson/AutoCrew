@@ -1,3 +1,5 @@
+import { checkOutline, techniqueRefsSchema, type Outline, type TechniqueRef } from "./series-memory.js";
+import { Value } from "@sinclair/typebox/value";
 /**
  * 成稿载荷（submit_script）—— 定义、校验、收束工具、组装。
  *
@@ -21,6 +23,8 @@ import { verifyNumbers } from "./number-gate.js";
 import type { LedgerEntry } from "./number-gate.js";
 
 export interface SubmitPayload {
+  outline?: Outline;
+  technique_ids?: TechniqueRef[];
   title: string;
   hook: string;
   body: string;
@@ -91,7 +95,12 @@ export function validateSubmitArgs(args: Record<string, unknown>): SubmitValidat
   if (!isStringArray(hashtags)) {
     return { ok: false, error: "Error: 字段 hashtags 应为字符串数组，请修正后重新调用 submit_script" };
   }
-  const payload = { title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags };
+  const outlineError = args.outline === undefined ? null : checkOutline(args.outline);
+  if (outlineError) return { ok: false, error: `Error: outline 不合格——${outlineError}` };
+  if (args.technique_ids !== undefined && !Value.Check(techniqueRefsSchema, args.technique_ids)) {
+    return { ok: false, error: "Error: technique_ids 应为 [{id,version}]，最多 10 张；不用卡就传 [] 或不传" };
+  }
+  const payload: SubmitPayload = { ...(args.outline !== undefined ? { outline: args.outline as Outline } : {}), ...(args.technique_ids !== undefined ? { technique_ids: args.technique_ids as TechniqueRef[] } : {}), title: text.title, hook: text.hook, body: text.body, cta: text.cta, hashtags };
   const tooLong = lengthError(payload);
   if (tooLong) return { ok: false, error: tooLong };
   return { ok: true, payload };

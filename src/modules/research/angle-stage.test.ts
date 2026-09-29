@@ -5,6 +5,10 @@
  * 断言只压确定性层——校验打回的理由、引用校验、代码打分、错误码；不对模型文案做精确断言。
  */
 import { describe, it, expect } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { techniqueCatalog } from "../writing/technique-store.js";
 
 import {
   DEFAULT_ANGLE_DEADLINE_MS,
@@ -215,6 +219,19 @@ describe("立意 pass 成功路径", () => {
     expect(user).toContain("ev-1");
     expect(user).toContain(EV_QUOTE); // 锚点要逐字回引，引文不能被改写
     expect(user).toContain("tension-1");
+  });
+
+  it("立意阶段就看到系列快照和已审手法目录（spec 2026-09-28 §3 C）", async () => {
+    const series = { id: "snap-1", platform: "douyin", builtAt: "2026-09-28T00:00:00Z", items: [{
+      content_id: "content-9", draft_hash: "h", outline_version: 1, title: "上周那条", label: "已发" as const, enteredAt: "2026-09-27T00:00:00Z",
+      entries: [{ id: "thesis", text: "AI 要听的是你图什么" }], insufficient: false, truncated: false,
+    }] };
+    const techniques = await techniqueCatalog(await fs.mkdtemp(path.join(os.tmpdir(), "angle-tech-")));
+    const user = buildAngleUserMessage({ brief: makeBrief(), topic: TOPIC, profile: PROFILE, series, techniques });
+    expect(user).toContain("AI 要听的是你图什么");
+    expect(user).toContain("候选卡之间也要用不同打法");
+    expect(user).toContain("minto-scq-intro@v1");
+    expect(buildAngleUserMessage({ brief: makeBrief(), topic: TOPIC, profile: PROFILE })).not.toContain("系列记忆");
   });
 
   it("公众号非AI自然叙事完整保留任务书，明确方向高于账号默认", async () => {

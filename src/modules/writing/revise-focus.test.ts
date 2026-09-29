@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { reviseFocus } from "./revise-focus.js";
 import { getContent, saveContent } from "../../storage/local-store.js";
-import { addWritingRule, updateProfile } from "../profile/creator-profile.js";
+import { updateProfile } from "../profile/creator-profile.js";
+import { addApprovedRuleForTest } from "../profile/rule-fixtures.js";
 import type { EngineConfig } from "../../engine/config.js";
 import type { LoopOptions, LoopResult, LoopTool } from "../../engine/loop.js";
 
@@ -35,8 +36,8 @@ describe("reviseFocus 的品牌上下文", () => {
   // 改稿与写初稿吃同一块上下文:此前这里只拼全量规则(跨平台污染),受众/风格边界一个字都不给
   it("注入本平台规则+受众+风格边界，别的平台的规则不进上下文", async () => {
     const c = await mkContent();
-    await addWritingRule({ rule: "公众号正文用空行分段", source: "user_explicit", confidence: 1, scope: "platform:wechat_mp" }, testDir);
-    await addWritingRule({ rule: "小红书标题带 emoji", source: "user_explicit", confidence: 1, scope: "platform:xiaohongshu" }, testDir);
+    await addApprovedRuleForTest({ rule: "公众号正文用空行分段", source: "user_explicit", confidence: 1, scope: "platform:wechat_mp" }, testDir);
+    await addApprovedRuleForTest({ rule: "小红书标题带 emoji", source: "user_explicit", confidence: 1, scope: "platform:xiaohongshu" }, testDir);
     await updateProfile({ styleBoundaries: { never: ["赋能"], always: ["具体案例"] } }, testDir);
 
     let systemPrompt = "";

@@ -12,7 +12,7 @@
  * This module generates human-readable messages, not raw data.
  */
 import { listDiffs, detectPatterns, type EditDiff } from "../learnings/diff-tracker.js";
-import { loadProfile, type WritingRule } from "../profile/creator-profile.js";
+import { loadProfile, isRuleActive, type WritingRule } from "../profile/creator-profile.js";
 import { listContents } from "../../storage/local-store.js";
 
 // --- Pattern descriptions for user-facing messages ---
@@ -96,7 +96,7 @@ export async function generateLearningReport(dataDir?: string): Promise<Learning
     loadProfile(dataDir),
   ]);
 
-  const allRules = profile?.writingRules || [];
+  const allRules = (profile?.writingRules || []).filter(isRuleActive); // 待批/停用/丢弃的不算「学到」
 
   // Count pattern frequencies
   const freq = new Map<string, number>();

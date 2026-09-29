@@ -167,7 +167,7 @@ export function registerAutocrewCapabilities(runner: ToolRunner): void {
     name: "autocrew_cover_review",
     label: "AutoCrew Cover Review",
     description:
-      "Create personal-IP covers from real identity photos plus at most one AI pose reference. Actions: create_candidates (3 content-driven directions), get, revise (full redraw or local masked edit), approve, and platform_ratios/generate_ratios (identity-locked outpaint for personal-IP masters).",
+      "PAID image API (relay/Gemini) for personal-IP covers. Default cover work does NOT start here: read skills/cover-generator first — covers are a 3:4 + 4:3 pair with the creator's real identity, generated on the Codex subscription (image_gen); Claude and other hosts dispatch that to Codex. Generating actions (create_candidates, revise, platform_ratios, draft_ratios, generate_ratios) from a host require confirm_paid_api:true after the creator explicitly chose the paid API, and 16:9 is refused. get/approve are free.",
     parameters: coverReviewSchema,
     execute: executeCoverReview,
     needsGemini: true,
@@ -356,7 +356,7 @@ const autocrewPlugin = {
           description: def.description,
           parameters: def.parameters,
           async execute(_id: string, params: Record<string, unknown>) {
-            return runner.execute(def.name, params);
+            return runner.execute(def.name, openclawModelParams(def.name, params));
           },
         }),
         { names: [def.name] },
@@ -949,5 +949,13 @@ const autocrewPlugin = {
     );
   },
 };
+
+/**
+ * OpenClaw 里模型发起的工具调用：封面工具打上 `_modelCall`（覆盖模型自报的同名值），付费出图护栏才拦得住。
+ * 只标来源、不动 `_host`，认领归属照旧；用户手敲的 /cover 斜杠命令不经过这里，等同工作台操作。
+ */
+export function openclawModelParams(toolName: string, params: Record<string, unknown>): Record<string, unknown> {
+  return toolName === "autocrew_cover_review" ? { ...params, _modelCall: true } : params;
+}
 
 export default autocrewPlugin;

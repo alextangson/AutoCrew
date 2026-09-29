@@ -1,3 +1,5 @@
+import { loadSeriesSnapshot } from "../modules/writing/series-memory.js";
+import { techniqueCatalog } from "../modules/writing/technique-store.js";
 /** Host-driven research desk: deterministic fetching, validation and storage, never an LLM call. */
 import crypto from "node:crypto";
 import { Type } from "@sinclair/typebox";
@@ -190,11 +192,12 @@ function brokerWithClaims(broker: ResearchBroker, task: HostResearchTask): Resea
         : null),
   };
 }
-function promptPack(
+async function promptPack(
   task: HostResearchTask,
   broker: ResearchBroker,
   perspective?: PerspectiveName,
-): Record<string, unknown> {
+  dataDir?: string,
+): Promise<Record<string, unknown>> {
   const common = {
     topic: task.topic,
     creativeTask: task.creativeTask,
@@ -239,7 +242,11 @@ function promptPack(
   return {
     stage: task.status === "ready" ? "complete" : "angles",
     system: buildAngleSystemPrompt(task.profile, task.creativeTask),
-    user: buildAngleUserMessage({ ...common, brief: task.brief }),
+    // 立意阶段就给系列快照和手法目录（spec §3 C）：换骨架要在生成候选卡时发生，只换写作包菜单不够
+    user: buildAngleUserMessage({
+      ...common, brief: task.brief,
+      ...(dataDir ? { series: await loadSeriesSnapshot(task.creativeTask?.platform ?? "", { topicId: task.topicId }, dataDir), techniques: await techniqueCatalog(dataDir) } : {}),
+    }),
     submit_schema: ANGLE_SCHEMA,
     submit: target(task, "angles"),
   };
@@ -421,7 +428,7 @@ export async function executeScout(
         const broker = createResearchBroker({ ...deps.brokerDeps, dataDir: dir, snapshot: task.broker });
         return {
           ...view(task),
-          pack: promptPack(task, broker, args.perspective ? perspectiveOf(args.perspective) : undefined),
+          pack: await promptPack(task, broker, args.perspective ? perspectiveOf(args.perspective) : undefined, dir),
         };
       }
       // 没有研究任务时 claim_offline 可带稿件目标直接登记进稿件台账（provided/skip 写稿推算数的入口，§11）
@@ -659,7 +666,7 @@ export async function executeScout(
           task.submissionHashes[key] = payloadHash;
           await publish(task, save, dir);
         }
-        return { ...view(task), ...(view(task).status !== "ready" ? { pack: promptPack(task, broker) } : {}) };
+        return { ...view(task), ...(view(task).status !== "ready" ? { pack: await promptPack(task, broker, undefined, dir) } : {}) };
       } finally {
         task.broker = broker.snapshot();
         await save(task);

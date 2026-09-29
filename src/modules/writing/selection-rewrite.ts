@@ -7,9 +7,11 @@
  */
 import { loadEngineConfig, resolveEngineRoute } from "../../engine/config.js";
 import { runLoop } from "../../engine/loop.js";
-import { loadProfile } from "../profile/creator-profile.js";
+import { getContent } from "../../storage/local-store.js";
+import { loadProfile, rulesForPlatform } from "../profile/creator-profile.js";
 
 export interface RewriteSelectionParams {
+  contentId?: string;
   body: string;
   selection: string;
   instruction: string;
@@ -47,7 +49,8 @@ export async function rewriteSelection(
   let rules: string[] = [];
   try {
     const profile = await loadProfile(dataDir);
-    rules = (profile?.writingRules ?? []).filter((r) => !r.disabled).map((r) => r.rule);
+    const content = params.contentId ? await getContent(params.contentId, dataDir) : null;
+    rules = profile ? rulesForPlatform(profile, content?.platform ?? "").map(r => r.rule) : [];
   } catch {
     /* 无档案不阻断 */
   }

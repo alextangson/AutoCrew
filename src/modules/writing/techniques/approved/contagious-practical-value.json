@@ -1,0 +1,41 @@
+{
+  "id": "contagious-practical-value",
+  "version": 1,
+  "name": "做成观众想转给同事的那一段",
+  "purpose": "收尾 / 撑长度（靠演示）",
+  "source": {
+    "kind": "book",
+    "title": "Contagious: Why Things Catch On，中译名《疯传：让你的产品、思想、行为像病毒一样入侵》",
+    "author": "Jonah Berger（乔纳·伯杰）",
+    "edition": "英文版 Simon & Schuster，2013（ISBN 9781451686579）；中译本 电子工业出版社，2014 年初版刘生敏、廖建桥 译，2016 年修订版乔迪、王晋 译",
+    "location": "第 5 章 Practical Value（实用价值）。核心是「有用的消息」（news you can use）：人们分享信息，是为了帮别人。页码待核。"
+  },
+  "verification": {
+    "status": "已核",
+    "note": "已核（书目、章节、作者访谈）；页码待核",
+    "links": [
+      "https://www.simonandschuster.com/books/Contagious/Jonah-Berger/9781451686579 （出版社官方页，通过搜索结果核对）",
+      "https://knowledge.wharton.upenn.edu/article/contagious-jonah-berger-on-why-things-catch-on/ （作者访谈，STEPPS 六原则）",
+      "https://readingraphics.com/book-summary-contagious-why-things-catch-on/ （第 5、6 章小节标题，二手来源）",
+      "https://book.douban.com/subject/25804890/ （中译本信息，通过搜索结果核对，页面直接打开失败）"
+    ]
+  },
+  "fits": "方法类、工具类、避坑类选题；受众是运营、市场这类会在工作群里转东西的人。",
+  "notFor": "观点稿、洞察稿。硬塞一段「实用清单」会把主线打断，这种稿更适合 `sticky-testable-credentials` 或 `founder-isolated-vs-connected`。",
+  "moves": [
+    "自问：观众看完，会把哪一段截图或转发到工作群？如果答不上来，就是实用价值还没做出来。",
+    "可转发的那一段要能独立成立：离开前后文也看得懂，有具体原话、步骤或判断标准。",
+    "要说清楚「这条对谁、在什么情况下有用」。窄而准，比泛泛的「人人适用」更容易被转发。",
+    "实用段的篇幅来自演示和讲清适用条件，不是来自多列几条。3 条讲透胜过 7 条带过。"
+  ],
+  "illustration": {
+    "label": "示意，不是事实材料",
+    "text": "下面这段，你可以直接截图发你们组。以后让 AI 写小红书，开头先给它三样东西：这篇要卖给谁、上一篇数据好的那条原文、这次绝对不能说的词。就这三样。第三样最容易漏，漏了它就会写出你们品牌不让用的说法。"
+  },
+  "misuse": [
+    "每篇都写「这段可以直接截图」，成了口头禅。",
+    "为了显得实用，列出很长的清单，每条一句带过。这正是硬凑。",
+    "实用段和中心思想无关，是从通用技巧库里搬来的。"
+  ],
+  "pairing": "可以配 `sticky-concrete-human-scale` 和 `minto-qa-ladder`。别和 `sticky-testable-credentials` 同时收尾。"
+}

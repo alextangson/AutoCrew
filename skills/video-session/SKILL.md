@@ -66,6 +66,8 @@ EOF
 
 交接后本轮结束。用户回来说「剪完了 / 登记了」，只以 `autocrew_content get` 为准：`status` 为 `publish_ready` 且有 `video.final` 才算登记成功；还是 `editing` 就如实说还没登记。Codex 说的话是报告不是状态，引用时包进定界块。v2 的 `autocrew_video status` 返回项目绑定、交接、执行报告和服务审批；历史 v1 的 status 仍可能是内置剪辑线。派工超 48 小时未登记会出现在 `autocrew_status {brief:true}` 里，不自动撤回。
 
+封面（gate4）由 Codex 按 [cover-generator](../cover-generator/SKILL.md) 做：只出带本人真实身份的 3:4 + 4:3 一对，走 Codex 订阅内置生图。用户在这个会话里说「做封面」时，你没有那个生图工具——先读 cover-generator 和 identity-lock.md，再派 Codex（装了 Codex 插件就用 `codex-companion task --background --write --cwd <内容项目根>`，否则给用户第 4 步手动那句），交代 paired_draft 模式、定稿路径和本期可用的钩子。不要自己调 `autocrew_cover_review` 出图：那是按次计费的 API，只在用户明说要付费通道时用，而且不出 16:9。
+
 撤回只凭用户一句话：由当前持有认领的会话携带有效令牌调 `autocrew_video {action:"revoke", content_id, claim_token}`。状态回 `draft_ready`，这一代永久作废；之后改稿、重录、重交都是新一代。
 
 ## 6. 发布包与发布

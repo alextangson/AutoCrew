@@ -54,9 +54,9 @@ export const coverReviewSchema = Type.Object({
     enum: ["create_candidates", "get", "approve", "revise", "platform_ratios", "draft_ratios", "generate_ratios"],
     description:
       "Cover action: create_candidates (generate 3 covers), get (view review), approve (pick one), " +
-      "revise (full redraw or local masked edit via edit_mode), platform_ratios (identity-locked outpaint for personal IP; 2.35:1/16:9/4:3/3:4), " +
+      "revise (full redraw or local masked edit via edit_mode), platform_ratios (identity-locked outpaint for personal IP; 4:3/3:4, 2.35:1 for wechat_mp), " +
       "draft_ratios (selected unapproved 3:4 candidate to identity-locked 4:3 draft; requires label, does not approve), " +
-      "generate_ratios (legacy alias: 16:9 + 4:3).",
+      "generate_ratios (legacy alias: 16:9 + 4:3; refused for hosts). All generating actions are paid API calls.",
   }),
   content_id: Type.String({ description: "AutoCrew content id." }),
   label: Type.Optional(
@@ -70,11 +70,11 @@ export const coverReviewSchema = Type.Object({
     Type.String({ description: "Override the auto-extracted cover title (2-9 Chinese chars)." }),
   ),
   ratio: Type.Optional(
-    Type.Unsafe<"3:4" | "16:9" | "4:3" | "2.35:1">({
+    Type.Unsafe<"3:4" | "4:3" | "2.35:1">({
       type: "string",
-      enum: ["3:4", "16:9", "4:3", "2.35:1"],
+      enum: ["3:4", "4:3", "2.35:1"],
       description:
-        "Primary ratio for create_candidates: 3:4 vertical (default); 16:9/4:3 landscape (bilibili, douyin PC); 2.35:1 ultra-wide banner (wechat_mp 公众号).",
+        "Primary ratio for create_candidates: 3:4 vertical (default) or 4:3 landscape; 2.35:1 only for wechat_mp article banners. Hosts are refused 16:9 — covers ship as a 3:4 + 4:3 pair.",
     }),
   ),
   feedback: Type.Optional(Type.String({ description: "Revision feedback in Chinese (for revise action)." })),
@@ -94,7 +94,13 @@ export const coverReviewSchema = Type.Object({
     }),
   ),
   ratios: Type.Optional(
-    Type.Array(Type.String(), { description: 'Ratios for platform_ratios, e.g. ["2.35:1"] or ["16:9","4:3"].' }),
+    Type.Array(Type.String(), { description: 'Ratios for platform_ratios, e.g. ["4:3"] or ["2.35:1"]. Hosts are refused 16:9.' }),
+  ),
+  confirm_paid_api: Type.Optional(
+    Type.Boolean({
+      description:
+        "出图动作（create_candidates/revise/platform_ratios/draft_ratios/generate_ratios）都是付费 API。宿主调用必须带 true，且只在创始人本次对话里明确同意付费后才带；默认封面走 skills/cover-generator（Codex 订阅生图）。",
+    }),
   ),
   claim_token: Type.Optional(
     Type.String({
@@ -153,6 +159,48 @@ async function coverReviewChanged(contentId: string, seen: CoverStamp, dataDir: 
 
 const COVER_CAS_ERROR = "封面评审单已被更新，重新 get";
 
+const GENERATING_ACTIONS = new Set(["create_candidates", "revise", "platform_ratios", "draft_ratios", "generate_ratios"]);
+
+const COVER_SKILL_HINT =
+  "封面默认按 skills/cover-generator 做：只出带本人的 3:4 + 4:3 一对，由 Codex 订阅内置 image_gen 生成（Claude 等宿主派 Codex 去做）。";
+
+/**
+ * 宿主（MCP 注入 `_host`；OpenClaw 模型调用注入 `_modelCall`）调出图动作的两道护栏；工作台的人手点击都不带，不受影响。
+ * 2026-09-28 事故：宿主没读封面技能，直接在这里出了 16:9、无人物、走付费中转的三张图。
+ * 1) 比例：宿主只能出 3:4 / 4:3（公众号文章头图 2.35:1 例外），16:9 一律拒。
+ * 2) 付费：本工具只有按次计费的通道（中转 / Gemini），必须带创始人明确同意的 confirm_paid_api:true。
+ */
+async function hostGenerationRefusal(
+  action: string,
+  params: Record<string, unknown>,
+  contentId: string,
+  dataDir: string,
+): Promise<Record<string, unknown> | null> {
+  const fromModel = typeof params._host === "string" || params._modelCall === true;
+  if (!fromModel || !GENERATING_ACTIONS.has(action)) return null;
+  // revise 沿用评审单现有主比例重画，存量 16:9 候选也得拦
+  const requested =
+    action === "generate_ratios" ? ["16:9", "4:3"]
+    : action === "create_candidates" ? [typeof params.ratio === "string" ? params.ratio : "3:4"]
+    : action === "platform_ratios" && Array.isArray(params.ratios) ? (params.ratios as unknown[]).map(String)
+    : action === "revise" ? [(await getCoverReview(contentId, dataDir))?.primaryRatio ?? "3:4"]
+    : [];
+  const banned = requested.filter((r) => r === "16:9");
+  if (banned.length > 0) {
+    return { ok: false, error: `封面不出 16:9。${COVER_SKILL_HINT}`, rejected_ratios: banned };
+  }
+  if (params.confirm_paid_api !== true) {
+    return {
+      ok: false,
+      error:
+        `这个工具只走按次计费的生图 API（中转 / Gemini），每张都花钱。${COVER_SKILL_HINT}` +
+        "只有创始人在本次对话里明确选了付费 API，才带 confirm_paid_api:true 重试。",
+      needs_confirmation: "paid_api",
+    };
+  }
+  return null;
+}
+
 export async function executeCoverReview(params: Record<string, unknown>) {
   const action = params.action as string;
   const contentId = params.content_id as string;
@@ -166,6 +214,10 @@ export async function executeCoverReview(params: Record<string, unknown>) {
     if (!review) return { ok: false, error: `No cover review found for ${contentId}` };
     return { ok: true, review };
   }
+
+  // 宿主出图护栏在令牌门之前：被拒的调用不该顺手占走封面师桌
+  const refused = await hostGenerationRefusal(action, params, contentId, dataDir);
+  if (refused) return refused;
 
   // 其余动作都改盘：先过令牌门，再动手；认领归你时令牌随回执交回（同宿主不再免检）
   const gate = await gateCoverWrite(params, contentId, dataDir);

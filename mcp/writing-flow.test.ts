@@ -31,6 +31,18 @@ async function call(name: string, args: Record<string, unknown>) {
 // Host analysis is fixture-authored; fetching is mocked at the external-page
 // boundary. MCP routing, provenance checks, stage validation and storage are real.
 const GARDEN_URL = "https://example.com/community-garden";
+/** 新写作包交稿必带的稿件摘要（spec 2026-09-28 §3 A） */
+const OUTLINE = {
+  thesis: "先弄清轮班安排，再决定参与哪一班。",
+  points: [{ text: "公告板上的轮班", kind: "case", seconds: 40 }],
+  structure: { opening: "从公告板说起", progression: "先共同浇水再讲轮班", ending: "自己选一班" },
+  said: [{ id: "rota", kind: "concept", text: "轮班时间写在公告板上" }],
+};
+/** 审稿台的系列比对：快照为空也要显式交（spec §3 B） */
+function seriesReviewOf(reviewPack: { series_snapshot?: { id: string; items: Array<{ content_id: string; insufficient: boolean }> } }) {
+  const snap = reviewPack.series_snapshot!;
+  return { snapshot_id: snap.id, checked: snap.items.map(i => i.content_id), insufficient: snap.items.filter(i => i.insufficient).map(i => i.content_id), findings: [] };
+}
 const GARDEN_QUOTE = "邻居们每周共同浇水，轮班时间写在公告板上。";
 const GARDEN_REQUIREMENTS = "抖音口播，写给园艺新手；先介绍共同浇水，再解释轮班。只写有出处的材料，不反问，不强加关注结尾。";
 function gardenPerspective(sourceId: string) {
@@ -93,7 +105,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     expect((await getContent(contentId, dataDir))?.body).toBe(original);
     expect(await listTopics(dataDir)).toHaveLength(1);
     const body = "想参加社区菜园的浇水，可以先看看公告板。原稿里提到，邻居们会共同浇水，轮班时间就写在那里。\n\n对刚接触园艺的人来说，先弄清安排，再决定自己能参与哪一班，这件事就具体了。至于实际参加的过程，还需要向当事人核对。";
-    const submitted = await call("autocrew_writer", { action: "submit", content_id: contentId, pack_id: issued.pack_id, claim_token: issued.claim_token, attempt: 1, title: "先看看公告板上的安排", body });
+    const submitted = await call("autocrew_writer", { action: "submit", content_id: contentId, pack_id: issued.pack_id, claim_token: issued.claim_token, attempt: 1, title: "先看看公告板上的安排", body, outline: OUTLINE });
     // 审稿任务随交稿回执给出（P6 §3.7），下一步直接交结论，不再单独调 review_desk pack
     expect(submitted).toMatchObject({
       status: "awaiting_host_review", saved: true,
@@ -102,7 +114,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     });
     expect(submitted.review_pack.user).toContain(instruction);
     const reviewed = await call(submitted.next_action.tool, {
-      ...submitted.next_action.params, issues: [],
+      ...submitted.next_action.params, issues: [], series_review: seriesReviewOf(submitted.review_pack),
       audience: { audienceBasis: { source: "current_task", quote: "写给园艺新手" }, verdicts: [{ tier: "core", name: "园艺新手", wouldStop: true, why: "说明参与的具体入口，并披露原稿材料仍需核对。", losesAt: [] }], suggestions: [] },
     });
     expect(reviewed).toMatchObject({ ok: true, status: "accepted", quality_status: "host_self_reviewed" });
@@ -220,7 +232,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     const body = `社区菜园的记录写着：“${GARDEN_QUOTE}”（ev-1）\n\n对想参与的新手来说，这份记录先说明了大家共同做什么，又交代了去哪里看轮班安排。它提供了具体的参与线索；至于邻居能否持续参与，还需要后续记录，不能从这段材料直接得出结论。`;
     const submitted = await call("autocrew_writer", {
       action: "submit", content_id: started.content_id, pack_id: started.pack_id, claim_token: started.claim_token,
-      attempt: 1, title: "从共同浇水开始", body,
+      attempt: 1, title: "从共同浇水开始", body, outline: OUTLINE,
     });
     expect(submitted).toMatchObject({ status: "awaiting_host_review", saved: true, next_action: { tool: "autocrew_review_desk", params: { action: "submit" } } });
     expect(reviewInFlight(started.content_id)).toBeUndefined();
@@ -233,7 +245,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     // 审稿结论是写：同宿主也要带领包回的令牌（P6 §3.8）——令牌已随 next_action 带上
     expect(submitted.next_action.params.claim_token).toBe(started.claim_token);
     const reviewed = await call(submitted.next_action.tool, {
-      ...submitted.next_action.params, issues: [],
+      ...submitted.next_action.params, issues: [], series_review: seriesReviewOf(submitted.review_pack),
       audience: {
         audienceBasis: { source: "current_task", quote: "写给园艺新手" },
         verdicts: [{ tier: "core", name: "园艺新手", wouldStop: true, why: "给出可行动的参与线索，并保留事实边界。", losesAt: [] }],
@@ -313,7 +325,7 @@ describe("Claude MCP writing journey without external model calls", () => {
     const body = "我们先走访门店。\n\n我们其次检查交接记录。\n\n我们发现责任不清，流程还没有形成闭环。";
     const submitted = await call("autocrew_writer", {
       action: "submit", content_id: started.content_id, pack_id: started.pack_id, claim_token: started.claim_token,
-      attempt: 1, title: "交接记录里的问题", body, hashtags: [], review: "none",
+      attempt: 1, title: "交接记录里的问题", body, hashtags: [], review: "none", outline: OUTLINE,
     });
     expect(submitted).toMatchObject({ status: "accepted_unreviewed", saved: true, needs_attention: true });
     expect(submitted.quality_status).not.toBe("passed");
@@ -346,7 +358,7 @@ describe("Claude MCP writing journey without external model calls", () => {
       const body = "我们先走访门店。\n\n我们其次检查交接记录。\n\n我们发现记录没有写清责任人，交接的事情还没有落实。";
       const submitted = await call("autocrew_writer", {
         action: "submit", content_id: started.content_id, pack_id: started.pack_id, claim_token: started.claim_token,
-        attempt: 1, title: "交接责任还没写清", body, review: "none",
+        attempt: 1, title: "交接责任还没写清", body, review: "none", outline: OUTLINE,
       });
       expect(submitted).toMatchObject({ status: "accepted_unreviewed", saved: true, audience_review: { status: "skipped" } });
       const inspected = await call("autocrew_editorial", { action: "inspect", content_id: started.content_id });

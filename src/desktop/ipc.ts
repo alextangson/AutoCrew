@@ -44,7 +44,7 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  *   settings:search_set { provider, api_key, base_url? }
  *   settings:publish_get {}
  *   settings:publish_set { image_api_key?, image_base_url?, image_model?, theme?, author? }
- *   style:update_rule  { index, rule?, disabled? }
+ *   style:update_rule  { rule_id, revision, rule?, disabled? }（不能批准生效）
  *   onboarding:status  {}
  *   onboarding:init    { industry?, platforms? }
  *   flywheel:import_csv { platform, csv_path, metric_date? }
@@ -58,7 +58,7 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  *   content:allowed_transitions { id }
  *   content:versions   { id }
  *   content:revert     { id, version }
- *   draft:rewrite_selection { body, selection, instruction }
+ *   draft:rewrite_selection { content_id?, body, selection, instruction }（规则按该稿平台取生效规则）
  *   style:record_edit  { content_id?, before, after }    (field 固定 body)
  *   conversations:list   {}
  *   conversations:get    { id }
@@ -766,16 +766,15 @@ async function chatTurnStatusHandler(payload: Record<string, unknown>): Promise<
 
 // ── style:update_rule — 个性化中心：编辑/停用规则 ─────────────────────────────
 
-// NOTE: index 寻址。单面板使用安全；若对话中 add_style_rule 与面板编辑并发，
-// index 可能漂移（越界会报错，移位会改错条目）。稳定 rule ID 是正解，推迟到
-// 数据模型演进；renderer 侧通过每次操作后整列表刷新缓解。
+// 按稳定 rule id + revision 寻址。/api/invoke 也接受具名 bearer（模型可达），所以这里只能改文本（回到待批）、
+// 停用、或申请启用（待批）；批准生效只走浏览器会话路由 /api/rules/decision（desktop/rule-approval）。
 async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return { ok: false, error: "Invalid payload: expected object" };
   }
-  const index = payload.index;
-  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
-    return { ok: false, error: "需要合法的规则 index（非负整数）" };
+  const ruleId = payload.rule_id, revision = payload.revision;
+  if (typeof ruleId !== "string" || !ruleId || typeof revision !== "number" || !Number.isInteger(revision) || revision < 1) {
+    return { ok: false, error: "需要 rule_id 和 revision（刷新规则列表后再改）" };
   }
   const patch: { rule?: string; disabled?: boolean } = {};
   if (typeof payload.rule === "string") patch.rule = payload.rule;
@@ -784,7 +783,7 @@ async function styleUpdateRuleHandler(payload: Record<string, unknown>): Promise
     return { ok: false, error: "rule 或 disabled 至少提供一个" };
   }
   try {
-    const profile = await updateWritingRule(index, patch, (payload._dataDir as string) || undefined);
+    const profile = await updateWritingRule({ id: ruleId, revision }, patch, (payload._dataDir as string) || undefined);
     return { ok: true, data: { rules: profile.writingRules, boundaries: profile.styleBoundaries } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -887,6 +886,7 @@ async function rewriteSelectionHandler(payload: Record<string, unknown>): Promis
   }
   return rewriteSelection(
     {
+      contentId: String(payload.content_id ?? payload.id ?? ""),
       body: String(payload.body ?? ""),
       selection: String(payload.selection ?? ""),
       instruction: String(payload.instruction ?? ""),

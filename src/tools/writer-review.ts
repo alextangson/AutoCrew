@@ -250,6 +250,11 @@ export async function settleReview(
   turn: Exclude<ReviewTurn, { kind: "stale" }>,
   dataDir: string,
 ): Promise<Settled> {
+  // 在途审稿落地前复核：这个包期间交了缺口记录，就不再推进（后台审稿手里的 pack 是旧内存副本，读盘为准）
+  const onDisk = await readPack(job.contentId, dataDir);
+  if (onDisk?.packId === job.packId && onDisk.gapRecord) {
+    throw new Error("stale_review: 这个写作包已交回缺口记录，审稿结论不再落地；补料后带 force:true 重新 pack（pack_request_changed）");
+  }
   const audience = turn.audience ?? { status: "skipped" as const, reason: turn.kind === "skipped" ? turn.reason : "此记录未包含受众点评" };
   const soft = job.pending.gateNotes;
   if (turn.kind === "skipped") {

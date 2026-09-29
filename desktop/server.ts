@@ -1,3 +1,5 @@
+import { createRuleApprovalHandler } from "../src/desktop/rule-approval.js";
+import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock.js";
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
 import { contentFile } from "../src/storage/content-project.js";
@@ -26,7 +28,7 @@ import { buildIpcHandlers, type IpcHandlerContext } from "../src/desktop/ipc.js"
 import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
-import { resolveServerToken } from "../src/desktop/server-token.js";
+import { resolveServerToken, resolveSessionSecret } from "../src/desktop/server-token.js";
 import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
@@ -75,6 +77,8 @@ const AUTH = new LocalSessionAuth(
   TOKEN,
   // 命名宿主 token（P3 §4.1）：主体 = 宿主名；撤销 = 删文件，下一次调用立刻 401。
   (token) => lookupHostToken(token),
+  // 会话签名用独立密钥，不用交给自动化客户端的 server-token（否则持 token 者可伪造工作台会话批规则）
+  resolveSessionSecret(),
 );
 const APPROVALS = new ApprovalGate();
 // D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
@@ -188,6 +192,7 @@ const uploadRoute = createUploadHandler({
 });
 
 const projectReview = createProjectReviewHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+const ruleApproval = createRuleApprovalHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -382,6 +387,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
 
   if (await projectReview(req, res, url)) return;
   if (await board(req, res, url)) return;
+  if (await ruleApproval(req, res, url)) return;
 
   // 统一调用端点:{channel, payload} → handler
   if (p === "/api/invoke" && req.method === "POST") {
@@ -591,6 +597,12 @@ try {
 }
 
 server.listen(PORT, HOST, () => {
+  // 单写者检查（spec 2026-09-28 §3 D）：同一资料目录两个进程同时写会互相覆盖档案与审批
+  void activeDataDir().then(async (dir) => {
+    const lock = await acquireWriterLock(dir);
+    if (!lock.ok) console.error(`\n  [警告] 资料目录 ${dir} 已被另一个 AutoCrew 进程（pid ${lock.holder.pid}，${lock.holder.startedAt} 启动）占用写入。两个进程同时写会互相覆盖，请先停掉另一个。\n`);
+    else process.once("exit", () => releaseWriterLock(dir));
+  }).catch((err) => console.error("[writer-lock] 单写者检查失败:", err instanceof Error ? err.message : err));
   console.log("\n  AutoCrew 编辑部已启动 —— 在浏览器打开:\n");
   console.log(`  \x1b[1mhttp://${HOST}:${PORT}/?token=${BROWSER_BOOT_TOKEN}\x1b[0m\n`);
   console.log("  (链接中的启动 token 仅本进程首次打开有效；认证后会从地址栏移除)\n");

@@ -1,0 +1,39 @@
+{
+  "id": "sticky-concrete-human-scale",
+  "version": 1,
+  "name": "把数字和抽象说法换算成手边的东西",
+  "purpose": "撑长度（靠换算过程）",
+  "source": {
+    "kind": "book",
+    "title": "Made to Stick，《让创意更有黏性》",
+    "author": "Chip Heath、Dan Heath（奇普·希思、丹·希思）",
+    "edition": "英文版 Random House，2007；中译本 中信出版社，姜奕晖 译，2014（ISBN 9787508642796）",
+    "location": "第 3 章 Concrete（具体），讲「魔术贴记忆理论」（Velcro theory of memory：挂钩越多越容易记住）；第 4 章 Credible（可信），讲「人类尺度原则」（human scale principle：把大数字换算成人能感知的尺度）。页码待核。"
+  },
+  "verification": {
+    "status": "部分待核",
+    "note": "部分待核（概念已由 Google Books 简介确认；归章靠二手来源）",
+    "links": [
+      "https://books.google.com/books/about/Made_to_Stick.html?id=Yfp79AAohiMC （简介提到 human scale principle、Velcro Theory of Memory）",
+      "https://engineerguy.com/white-papers/made-to-stick.htm"
+    ]
+  },
+  "fits": "稿里有数字、有规模、有效率提升的说法；讲「省了多少时间」「贵了多少」；材料本身偏抽象的趋势类选题。",
+  "notFor": "本身已经很具体的操作演示，再换算一遍就啰嗦。数字没核实的，换算只会把未核实的东西包装得更可信，这时候先去补证。",
+  "moves": [
+    "找出稿里最抽象的那一两处（「效率提升 40%」「越来越重要」），只换算这几处，不要每个数字都换。",
+    "换算目标要选观众每周真实经历的单位：一次周会、一篇笔记、一个客户的来回、一个加班晚上。",
+    "换算本身就是补料：写出换算过程（假设了什么、按什么算），它就是有信息量的内容，不是凑数。",
+    "换算用的假设要当场说出来，数字要能在写作包的证据台账里找到。"
+  ],
+  "illustration": {
+    "label": "示意，不是事实材料",
+    "text": "「每周省两小时」听着不多。你换个算法：你们组每周一的复盘会，从整理数据到出结论要一个半小时，差不多就是这两小时。也就是说，这件事做对了，等于你每周一早上多了一整场会的时间，用来干别的。"
+  },
+  "misuse": [
+    "每个数字都换算一遍，整篇变成算术课，换算成了新的凑数手段。",
+    "换算物夸张到离谱（「省下的时间够你环游世界」），这就是 AI 腔的夸张。",
+    "为了换算好听去改原始数字。"
+  ],
+  "pairing": "几乎能和所有卡搭，是局部手法。最适合配 `contagious-practical-value`。"
+}

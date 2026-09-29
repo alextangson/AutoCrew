@@ -7,7 +7,7 @@
  * 它决定「有没有待办」，静默当空会造假待办（发布闭环 spec §3.4）。
  * 红线：一切数字来自真实 store，无引擎事件不造活性（PRD-v4 §7.4）。
  */
-import { loadProfile, personaSummary } from "../modules/profile/creator-profile.js";
+import { loadProfile, personaSummary, isRuleActive } from "../modules/profile/creator-profile.js";
 import { listContents, listTopics, normalizeLegacyStatus, type Content } from "../storage/local-store.js";
 import { listOutcomes } from "../modules/flywheel/outcome-store.js";
 import type { PerformanceOutcome } from "../modules/flywheel/outcome-schema.js";
@@ -186,7 +186,7 @@ export async function buildDashboardSummary(dataDir?: string, now = Date.now()):
 
   // ── 校准状态卡 ──
   const rules = profile?.writingRules ?? [];
-  const activeRules = rules.filter((r) => !r.disabled);
+  const activeRules = rules.filter(isRuleActive);
   const calibration: DashboardSummary["calibration"] = {
     styleCalibrated: profile?.styleCalibrated ?? false,
     industry: profile?.industry ?? "",

@@ -9,7 +9,13 @@ import { useChatSend } from "../chat/ChatDock";
 import { PLATFORM_CATALOG } from "../lib";
 import { dateLabel } from "../time-format";
 
+type RuleStatus = "pending" | "active" | "rejected" | "disabled";
 interface Rule {
+  id: string;
+  revision: number;
+  status?: RuleStatus;
+  evidence?: string[];
+  promotes?: string;
   rule: string;
   source: string;
   confidence: number;
@@ -33,6 +39,12 @@ interface Persona {
   calibratedAt?: string;
 }
 
+const STATUS_LABEL: Record<RuleStatus, string> = { active: "生效", pending: "待批", disabled: "停用", rejected: "已丢弃" };
+/** 与服务端 ruleStatus 同口径：缺 status 的存量规则按 disabled 判 */
+function ruleStatusOf(r: Rule): RuleStatus {
+  return r.status ?? (r.disabled ? "disabled" : "active");
+}
+
 const SOURCE_LABEL: Record<string, string> = {
   auto_distilled: "改稿学的",
   user_explicit: "你说的",
@@ -53,6 +65,8 @@ export function Calibration() {
   const [basis, setBasis] = useState("");
   const [personaBusy, setPersonaBusy] = useState(false);
   const [rules, setRules] = useState<Rule[]>([]);
+  const [busyRule, setBusyRule] = useState<string | null>(null);
+  const pendingCount = rules.filter((r) => ruleStatusOf(r) === "pending").length;
   const [samples, setSamples] = useState("");
   const [busy, setBusy] = useState(false);
   const send = useChatSend();
@@ -122,10 +136,35 @@ export function Calibration() {
     void load();
   };
 
-  const updateRule = async (index: number, updates: { rule?: string; disabled?: boolean }) => {
-    const r = await invoke("style:update_rule", { index, ...updates });
+  const updateRule = async (rule: Rule, updates: { rule?: string; disabled?: boolean }) => {
+    setBusyRule(rule.id);
+    const r = await invoke("style:update_rule", { rule_id: rule.id, revision: rule.revision, ...updates });
+    setBusyRule(null);
     if (!r.ok) return toast(r.error ?? "更新失败");
     void load();
+  };
+
+  /** 批准/停用/丢弃只走工作台会话路由；eventId 让网络重试不重复落两次决定 */
+  const decideRule = async (rule: Rule, decision: "active" | "rejected" | "disabled") => {
+    if (decision === "rejected") {
+      const ok = await openDialog({ title: "丢弃这条规则？", body: "丢弃后以后再提炼出同一条会被直接挡掉，不能撤回。", fields: [], confirmLabel: "丢弃" });
+      if (!ok) return;
+    }
+    setBusyRule(rule.id);
+    try {
+      const response = await fetch("/api/rules/decision", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ruleId: rule.id, revision: rule.revision, decision, eventId: crypto.randomUUID() }),
+      });
+      const result = (await response.json().catch(() => ({ ok: false, error: `审批失败（HTTP ${response.status}）` }))) as { ok: boolean; error?: string };
+      if (!result.ok) return toast(result.error ?? "审批失败");
+      toast(decision === "active" ? "已批准生效；已领的写作包需要重新领取才会用上" : decision === "disabled" ? "已停用" : "已丢弃");
+    } catch (e) {
+      toast(`审批失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusyRule(null);
+      void load();
+    }
   };
 
   const distill = async () => {
@@ -225,29 +264,42 @@ export function Calibration() {
         </div>
       )}
 
-      <h3 className="serif calib-h3">写作规则（{rules.filter((r) => !r.disabled).length} 条生效）</h3>
+      <h3 className="serif calib-h3">写作规则（{rules.filter((r) => ruleStatusOf(r) === "active").length} 条生效{pendingCount ? `，${pendingCount} 条待批` : ""}）</h3>
       {rules.length === 0 && <p className="muted">还没有规则——贴代表作吸收,或在编辑器里改稿让它自己学。</p>}
-      {rules.map((r, i) => (
-        <div key={i} className={"row" + (r.disabled ? " rule-off" : "")}>
-          <span className="mono pri">{SOURCE_LABEL[r.source] ?? r.source}</span>
-          <span className="row-title">{r.rule}</span>
-          <span className="muted mono">{r.scope && r.scope !== "voice_core" ? r.scope.replace("platform:", "") : "内核"}</span>
-          <button
-            onClick={async () => {
-              const v = await openDialog({
-                title: "修改写作规则",
-                body: "改完立即生效——之后的写稿和审稿都按新规则执行。",
-                fields: [{ key: "rule", label: "规则内容", initial: r.rule, required: true, multiline: true }],
-                confirmLabel: "保存",
-              });
-              if (v && v.rule.trim() !== r.rule) void updateRule(i, { rule: v.rule.trim() });
-            }}
-          >
-            改
-          </button>
-          <button onClick={() => void updateRule(i, { disabled: !r.disabled })}>{r.disabled ? "启用" : "停用"}</button>
-        </div>
-      ))}
+      {pendingCount > 0 && <p className="muted">自动提炼、对话里记下的规则都先待批，只有你在这里点「批准生效」才进写作要求；批准后已领的写作包需要重新领取。</p>}
+      {[...rules].filter((r) => ruleStatusOf(r) !== "rejected").sort((a, b) => Number(ruleStatusOf(b) === "pending") - Number(ruleStatusOf(a) === "pending")).map((r) => {
+        const st = ruleStatusOf(r);
+        const promoted = r.promotes ? rules.find((x) => x.id === r.promotes) : undefined;
+        return (
+          <div key={r.id} className={"row" + (st !== "active" ? " rule-off" : "")}>
+            <span className="mono pri">{SOURCE_LABEL[r.source] ?? r.source}</span>
+            <span className="row-title">
+              {r.rule}
+              <small> · {STATUS_LABEL[st]}{promoted ? `（提案：把平台规则升级为全局，批准后原平台规则停用）` : ""}</small>
+              {r.evidence?.map((e, n) => <details key={n}><summary>来源证据 {n + 1}</summary><pre>{e}</pre></details>)}
+            </span>
+            <span className="muted mono">{r.scope && r.scope !== "voice_core" ? r.scope.replace("platform:", "") : "内核"}</span>
+            <button
+              disabled={busyRule === r.id}
+              onClick={async () => {
+                const v = await openDialog({
+                  title: "修改写作规则",
+                  body: "修改后这条规则回到待批，你批准后才生效。",
+                  fields: [{ key: "rule", label: "规则内容", initial: r.rule, required: true, multiline: true }],
+                  confirmLabel: "保存",
+                });
+                if (v && v.rule.trim() !== r.rule) void updateRule(r, { rule: v.rule.trim() });
+              }}
+            >
+              改
+            </button>
+            {st === "active"
+              ? <button disabled={busyRule === r.id} onClick={() => void decideRule(r, "disabled")}>停用</button>
+              : <button disabled={busyRule === r.id} className={st === "pending" ? "primary" : ""} onClick={() => void decideRule(r, "active")}>批准生效</button>}
+            {st === "pending" && <button disabled={busyRule === r.id} onClick={() => void decideRule(r, "rejected")}>丢弃</button>}
+          </div>
+        );
+      })}
 
       <h3 className="serif calib-h3">从编辑中学习</h3>
       <p className="muted">把你在编辑器里的改动(含"为什么改")蒸馏成规则——攒够 3 条新改动才有产出。</p>

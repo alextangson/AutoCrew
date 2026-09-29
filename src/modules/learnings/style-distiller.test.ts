@@ -153,6 +153,9 @@ describe("distillStyleRules", () => {
     expect(profile!.writingRules).toHaveLength(2);
     expect(profile!.writingRules.every((r) => r.source === "auto_distilled")).toBe(true);
     expect(profile!.writingRules[0].confidence).toBe(0.9);
+    // spec 2026-09-28 §3 D：提炼出的规则显式待批，并带落盘的依据（哪几处改稿）
+    expect(profile!.writingRules.every((r) => r.status === "pending")).toBe(true);
+    expect(profile!.writingRules[0].evidence?.some((e) => e.includes("改稿"))).toBe(true);
 
     // State written
     const state = await readDistillState();

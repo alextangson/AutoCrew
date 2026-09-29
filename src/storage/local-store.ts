@@ -1,3 +1,6 @@
+import { holdsSeriesLock, seriesTransaction, SERIES_STATES } from "./series-transaction.js";
+import { draftHash as contentDraftHash } from "./draft-hash.js";
+import type { Outline, TechniqueRef, GapRecord, SeriesReview } from "../modules/writing/series-memory.js";
 import { assertManagedPathAvailable } from "./storage-roots.js";
 import { portableProjectRecord } from "./project-record.js";
 import { contentRoot, isLayoutV2, projectFile, contentFile, ensureContentProject, readProjectRegistry, contentIds } from "./content-project.js";
@@ -118,6 +121,13 @@ export interface Asset {
 }
 
 export interface ContentVersion {
+  /** 这一版对应的稿件摘要与上下文（spec §4）；旧版本没有 */
+  outline?: Outline;
+  outlineDraftHash?: string;
+  outlineVersion?: number;
+  technique_ids?: TechniqueRef[];
+  seriesSnapshotId?: string;
+  reviewContextHash?: string;
   version: number;
   /** 该版本对应的标题；旧数据可能缺失。 */
   title?: string;
@@ -285,6 +295,24 @@ export interface ManualPublication {
 }
 
 export interface Content {
+  /** 稿件摘要（spec §3 A）：只对 outlineDraftHash 那版正文有效，正文一改即失效（见 series-memory.validOutline） */
+  outline?: Outline;
+  outlineDraftHash?: string;
+  /** 摘要版本号，每写一次 +1 */
+  outlineVersion?: number;
+  /** 交稿时用了哪些手法卡（冻结版本） */
+  technique_ids?: TechniqueRef[];
+  /** 这一稿比对用的冻结快照 id */
+  seriesSnapshotId?: string;
+  /** 审稿上下文指纹：draft_hash + 有效摘要 + 快照 id + 手法卡版本。draft_hash 含义不变，另算这一份 */
+  reviewContextHash?: string;
+  /** 最近一次宿主审稿提交的系列比对结果（绑定 reviewContextHash）；没有 = 这一版没做过系列比对 */
+  seriesReview?: SeriesReview & { reviewContextHash: string; recordedAt: string };
+  /** 未结的缺口记录（材料补不上时交回，不交凑出来的稿） */
+  gapRecord?: GapRecord;
+  /** 最后一次进入系列白名单状态的时间（快照按它取最近 30 天） */
+  seriesEnteredAt?: string;
+
   id: string;
   title: string;
   body: string;
@@ -534,6 +562,29 @@ export function serializeContentWrite<T>(id: string, fn: () => Promise<T>): Prom
   return next;
 }
 
+const RETRY_UNDER_SERIES_LOCK = Symbol("retry-under-series-lock");
+
+async function inSeriesScope(id: string, dataDir?: string): Promise<boolean> {
+  const c = await getContent(id, dataDir).catch(() => null);
+  return Boolean(c && SERIES_STATES.has(c.status));
+}
+
+/**
+ * 稿件写锁的统一入口（spec §3 B「核对加登记要一步完成」）：处在系列范围内的稿，任何写入（改正文、
+ * 改标题、改状态、回滚……）都先取系列锁再取单稿锁，这样审稿台「核对快照 + 登记结论」期间，
+ * 快照里的邻居稿不会被改掉。范围外的稿只取单稿锁；在单稿锁里复核一次，期间进了范围就改走系列锁重来。
+ */
+function contentWrite<T>(id: string, dataDir: string | undefined, fn: () => Promise<T>): Promise<T> {
+  if (holdsSeriesLock()) return serializeContentWrite(id, fn);
+  return (async () => {
+    if (!(await inSeriesScope(id, dataDir))) {
+      const out = await serializeContentWrite(id, async () => (await inSeriesScope(id, dataDir)) ? RETRY_UNDER_SERIES_LOCK : fn());
+      if (out !== RETRY_UNDER_SERIES_LOCK) return out as T;
+    }
+    return seriesTransaction(() => serializeContentWrite(id, fn));
+  })();
+}
+
 // --- Topics ---
 
 async function topicsDir(dataDir?: string): Promise<string> {
@@ -666,6 +717,7 @@ export async function saveContent(
     publishUrl: content.publishUrl ?? null,
     performanceData: content.performanceData ?? {},
     assets: [],
+    ...(SERIES_STATES.has(content.status) ? { seriesEnteredAt: now } : {}),
     versions: [{ version: 1, title: content.title, body: content.body, note: "初稿", savedAt: now }],
     createdAt: now,
     updatedAt: now,
@@ -821,6 +873,16 @@ export type ContentUpdates = Partial<Omit<Content, "status">> & {
 /** 收口通道内部用：全仓只有 `transitionStatusLocked` 能带 status 走这条路 */
 type StatusfulUpdates = ContentUpdates & { status?: ContentStatus };
 
+/** 审稿上下文指纹（spec §4）：正文指纹 + 有效摘要 + 快照 id + 手法卡版本 */
+export function reviewContextHash(
+  draft: Pick<Content, "title" | "body" | "platform">,
+  ctx: Pick<Content, "outline" | "outlineDraftHash" | "technique_ids" | "seriesSnapshotId">,
+): string {
+  const draftHash = contentDraftHash(draft);
+  const outline = ctx.outline && ctx.outlineDraftHash === draftHash ? ctx.outline : null;
+  return createHash("sha256").update(JSON.stringify([draftHash, outline, ctx.seriesSnapshotId ?? null, (ctx.technique_ids ?? []).map((t) => [t.id, t.version])])).digest("hex");
+}
+
 /**
  * 契约（codex 2026-07-27 评审后收紧）：null 只表示「稿件不存在」；
  * 坏 JSON、写盘失败等一律向上抛——吞成 null 会让并发覆盖与磁盘故障都不可见。
@@ -828,7 +890,7 @@ type StatusfulUpdates = ContentUpdates & { status?: ContentStatus };
  */
 export async function updateContent(id: string, updates: ContentUpdates, dataDir?: string): Promise<Content | null> {
   if (!isContentId(id)) return null;
-  return serializeContentWrite(id, () => updateContentLocked(id, updates, dataDir));
+  return contentWrite(id, dataDir, () => updateContentLocked(id, updates, dataDir));
 }
 
 export type DraftMatchResult =
@@ -846,7 +908,7 @@ export async function updateContentIfDraftMatches(
   dataDir?: string,
 ): Promise<DraftMatchResult> {
   if (!isContentId(id)) return { ok: false, reason: "missing" };
-  return serializeContentWrite(id, async () => {
+  return contentWrite(id, dataDir, async () => {
     const current = await getContent(id, dataDir);
     if (!current) return { ok: false, reason: "missing" };
     if (current.title !== expected.title || current.body !== expected.body || current.platform !== expected.platform) {
@@ -908,9 +970,32 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
   // 正文或标题变化都形成新版本；版本不再只记录 body，标题优化也可追溯。
   const bodyChanged = updates.body !== undefined && updates.body !== existing.body;
   const titleChanged = updates.title !== undefined && updates.title !== existing.title;
-  if (bodyChanged || titleChanged) {
+  // 摘要/手法卡/快照也算这一版的一部分（spec §4）：它们变了同样记新版本，否则同一版本号对应两份审稿依据
+  // 快照 id 只进指纹不单独记版本：补审换快照不是改稿
+  const contextChanged = (["outline", "technique_ids"] as const).some((key) =>
+    key in updates && JSON.stringify(updates[key]) !== JSON.stringify(existing[key]));
+  // 「没传」和「显式传 undefined（=清掉）」要分开：用 ?? 会把清掉当成沿用旧值，而后面的展开又把它删了，
+  // 稿件、版本记录、指纹三方就对不上（Codex 评审 P2）。一律按合并后的实际状态算。
+  const merged = <K extends keyof Content>(key: K): Content[K] => (key in updates ? (updates as Partial<Content>)[key] : existing[key]) as Content[K];
+  const draftAfter = { title: merged("title"), body: merged("body"), platform: merged("platform") };
+  if (updates.outline !== undefined) {
+    updates.outlineVersion = (existing.outlineVersion ?? 0) + 1;
+    updates.outlineDraftHash = contentDraftHash(draftAfter);
+  } else if ("outline" in updates) {
+    updates.outlineDraftHash = undefined;
+  }
+  const ctx = {
+    outline: merged("outline"), outlineDraftHash: merged("outlineDraftHash"),
+    technique_ids: merged("technique_ids"), seriesSnapshotId: merged("seriesSnapshotId"),
+  };
+  updates.reviewContextHash = ctx.outline || ctx.technique_ids || ctx.seriesSnapshotId ? reviewContextHash(draftAfter, ctx) : undefined;
+  if (bodyChanged || titleChanged || contextChanged) {
     const nextVersion = (existing.versions?.length || 0) + 1;
     const versionEntry: ContentVersion = {
+      ...(ctx.outline ? { outline: ctx.outline, outlineDraftHash: ctx.outlineDraftHash, outlineVersion: merged("outlineVersion") } : {}),
+      ...(ctx.technique_ids ? { technique_ids: ctx.technique_ids } : {}),
+      ...(ctx.seriesSnapshotId ? { seriesSnapshotId: ctx.seriesSnapshotId } : {}),
+      ...(updates.reviewContextHash ? { reviewContextHash: updates.reviewContextHash } : {}),
       version: nextVersion,
       title: updates.title ?? existing.title,
       body: updates.body ?? existing.body,
@@ -1032,7 +1117,7 @@ export async function addAsset(
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
 
@@ -1077,7 +1162,7 @@ export async function addAssetByPath(
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1125,7 +1210,7 @@ export async function upsertAsset(
 ): Promise<{ ok: boolean; asset?: Asset; error?: string }> {
   if (!isContentId(contentId)) return { ok: false, error: "Invalid content id" };
   if (!isSafeFilename(asset.filename)) return { ok: false, error: "Invalid asset filename" };
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1169,7 +1254,7 @@ export async function removeManagedFinalAsset(
   dataDir?: string,
 ): Promise<boolean> {
   if (!isContentId(contentId) || !Number.isInteger(renderedRevision)) return false;
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1214,7 +1299,7 @@ export async function listAssets(contentId: string, dataDir?: string): Promise<A
 
 export async function removeAsset(contentId: string, filename: string, dataDir?: string): Promise<boolean> {
   if (!isContentId(contentId) || !isSafeFilename(filename)) return false;
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     let raw: string;
@@ -1282,7 +1367,7 @@ export async function saveCoverReview(
   expectedReviewSha256?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  return serializeContentWrite(contentId, async () => {
+  return contentWrite(contentId, dataDir, async () => {
     const projDir = contentDir(contentId, dataDir);
     const metaPath = projectFile(projDir, "meta.json");
     const reviewPath = projectFile(projDir, "cover-review.json");
@@ -1338,7 +1423,7 @@ export async function approveCoverVariant(
   dataDir?: string,
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  return serializeContentWrite(contentId, () => approveCoverVariantLocked(contentId, label, dataDir));
+  return contentWrite(contentId, dataDir, () => approveCoverVariantLocked(contentId, label, dataDir));
 }
 
 async function approveCoverVariantLocked(
@@ -1553,7 +1638,9 @@ export async function transitionStatus(
   dataDir?: string,
 ): Promise<TransitionResult> {
   if (!isContentId(contentId)) return { ok: false, error: `Content ${contentId} not found` };
-  return serializeContentWrite(contentId, () => transitionStatusLocked(contentId, targetStatus, opts, dataDir));
+  const run = () => contentWrite(contentId, dataDir, () => transitionStatusLocked(contentId, targetStatus, opts, dataDir));
+  // 进入系列范围与「审稿核对快照+登记」互斥（series-transaction）；其余转换不取这把锁
+  return SERIES_STATES.has(targetStatus) ? seriesTransaction(run) : run();
 }
 
 async function transitionStatusLocked(
@@ -1602,7 +1689,9 @@ async function transitionStatusLocked(
 
   const now = new Date().toISOString();
   const patch = typeof opts?.patch === "function" ? opts.patch(content) : opts?.patch;
-  const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus };
+  // 从范围外进入系列白名单状态才记时间；白名单内部流转（draft_ready→approved…）不算重新进入
+  const entersSeries = SERIES_STATES.has(targetStatus) && !SERIES_STATES.has(currentStatus);
+  const updates: StatusfulUpdates = { ...(patch ?? {}), status: targetStatus, ...(entersSeries ? { seriesEnteredAt: now } : {}) };
 
   // 交接台账（§6.1）：五处里的三处是状态转换。写在锁内、与状态同一次落盘——
   // 分两次写就会出现「状态已推进但账没记」的中间态。

@@ -4,7 +4,7 @@ import path from "node:path";
 import { beforeEach, afterEach, describe, it, expect } from "vitest";
 import { executeEditorial } from "./editorial.js";
 import { getContent, saveContent, updateContent, adoptionStats } from "../storage/local-store.js";
-import { loadProfile, updateProfile } from "../modules/profile/creator-profile.js";
+import { decideWritingRule, loadProfile, updateProfile } from "../modules/profile/creator-profile.js";
 import { buildScriptPrompts } from "../modules/writing/script-prompt.js";
 import { KOUBO_PACK } from "../modules/packs/koubo.js";
 import { claimContent } from "../storage/claims.js";
@@ -31,12 +31,17 @@ describe("editorial user feedback", () => {
     expect(await loadProfile(dir)).toBeNull();
     expect(await run({ ...args, feedback: "改了事件内容" })).toMatchObject({ ok: false });
   });
-  it("用户明确长期平台偏好进入实际写作规则，重复平台规则不自动升格", async () => {
+  it("用户明确长期平台偏好只记成待批规则（user_confirmed 不算批准），批准后才进本平台写作要求；重复平台规则不自动升格", async () => {
     const { args } = await draft();
-    await run({ ...args, scope: "platform", platform: "wechat_mp" });
+    const first = await run({ ...args, scope: "platform", platform: "wechat_mp" });
+    expect(first).toMatchObject({ ok: true, long_term_rule: { status: "pending" } });
     await run({ ...args, event_id: "event-2", scope: "platform", platform: "douyin" });
-    const p = await loadProfile(dir);
-    expect(p?.writingRules.map(r => r.scope)).toEqual(["platform:wechat_mp", "platform:douyin"]);
+    let p = await loadProfile(dir);
+    expect(p?.writingRules.map(r => [r.scope, r.status])).toEqual([["platform:wechat_mp", "pending"], ["platform:douyin", "pending"]]);
+    expect(buildScriptPrompts(KOUBO_PACK, p, { topic: "库存", platform: "wechat_mp" }).system).not.toContain(args.feedback);
+    const wechat = p!.writingRules[0];
+    await decideWritingRule({ ruleId: wechat.id!, revision: wechat.revision!, decision: "active", eventId: "founder-click-1" }, dir);
+    p = await loadProfile(dir);
     expect(buildScriptPrompts(KOUBO_PACK, p, { topic: "库存", platform: "wechat_mp" }).system).toContain(args.feedback);
     expect(buildScriptPrompts(KOUBO_PACK, p, { topic: "库存", platform: "bilibili" }).system).not.toContain(args.feedback);
   });

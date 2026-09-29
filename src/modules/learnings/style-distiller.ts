@@ -243,10 +243,17 @@ export function fallbackExcerpts(samples: string[], want: number): string[] {
 
 // ─── Persist helpers ──────────────────────────────────────────────────────────
 
+/** 蒸馏依据落盘（spec §3 D）：创始人审批时看得到这条规则是从哪几处改稿来的 */
+function diffEvidence(d: EditDiff): string {
+  const clip = (t: string) => t.replace(/\s+/g, " ").trim().slice(0, 160);
+  return `改稿 ${d.contentId}${d.platform ? `（${d.platform}）` : ""} ${d.createdAt.slice(0, 10)}：「${clip(d.before)}」→「${clip(d.after)}」`;
+}
+
 async function persistRules(
   rules: RuleInput[],
   dataDir?: string,
   forceScope?: RuleScope,
+  evidence: string[] = [],
 ): Promise<{ newRules: WritingRule[]; skipped: number }> {
   const profile = await loadProfile(dataDir);
   const existingTexts = new Set((profile?.writingRules ?? []).map((r) => r.rule));
@@ -256,17 +263,18 @@ async function persistRules(
 
   for (const r of rules) {
     const scope = forceScope ?? r.scope;
+    const ruleEvidence = [...(r.evidence ? [`归纳依据：${r.evidence}`] : []), ...evidence];
     if (existingTexts.has(r.rule)) {
       // 仍走 addWritingRule：同文本跨平台重现会触发升格路由（§4.3），不是简单跳过
       await addWritingRule(
-        { rule: r.rule, source: "auto_distilled", confidence: r.confidence, ...(scope ? { scope } : {}) },
+        { rule: r.rule, source: "auto_distilled", confidence: r.confidence, evidence: ruleEvidence, ...(scope ? { scope } : {}) },
         dataDir,
       );
       skipped++;
       continue;
     }
     const written = await addWritingRule(
-      { rule: r.rule, source: "auto_distilled", confidence: r.confidence, ...(scope ? { scope } : {}) },
+      { rule: r.rule, source: "auto_distilled", confidence: r.confidence, evidence: ruleEvidence, ...(scope ? { scope } : {}) },
       dataDir,
     );
     const added = written.writingRules.find((w) => w.rule === r.rule);
@@ -285,7 +293,7 @@ function buildSummary(newRules: WritingRule[], evidenceByRule: Map<string, strin
   const lines = newRules
     .map((r) => `${r.rule}（依据：${evidenceByRule.get(r.rule) ?? ""}）`)
     .join("；");
-  return `🎯 学到 ${newRules.length} 条新偏好：${lines}`;
+  return `🎯 提炼出 ${newRules.length} 条新偏好（待批，你在校准页批准后才生效）：${lines}`;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -327,7 +335,7 @@ export async function distillStyleRules(
     throw new Error("风格蒸馏失败：模型未调用 submit_rules 工具提交规则");
   }
 
-  const { newRules, skipped } = await persistRules(captured.rules, dataDir);
+  const { newRules, skipped } = await persistRules(captured.rules, dataDir, undefined, newDiffs.slice(-10).map(diffEvidence));
 
   // Update state to latest diff timestamp
   const latestTs = newDiffs.reduce((max, d) => (d.createdAt > max ? d.createdAt : max), "");
@@ -375,7 +383,7 @@ export async function analyzeStyleSamples(
   }
 
   // 校准样本产出 = 声音内核种子（PRD-v4 §4.3：代表作蒸馏的是"你的声音"，非平台规范）
-  const { newRules, skipped } = await persistRules(captured.rules, dataDir, "voice_core");
+  const { newRules, skipped } = await persistRules(captured.rules, dataDir, "voice_core", samples.map((x) => `代表作样本：${x.trim().slice(0, 240)}`));
   // V5.1:代表作吸收成功 = 声音校准完成。此前 styleCalibrated 全库无写入路径,
   // "已校准"态不可达,dashboard 校准卡永远停在未完成。
   if (newRules.length > 0 || skipped > 0) {

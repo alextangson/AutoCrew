@@ -5,9 +5,12 @@
  * and style calibration. It's initialized during onboarding (from host MEMORY or
  * by asking the user) and continuously enriched by the Learnings system.
  */
+import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../../storage/local-store.js";
+import { normalizeRules } from "./writing-rules.js";
+export { rulesForPlatform, ruleStatus, isRuleActive, addWritingRule, updateWritingRule, decideWritingRule, type RuleStatus, type RuleDecision } from "./writing-rules.js";
 
 /**
  * 规则作用域（PRD-v4 §4.3 声音内核/平台包分层）：
@@ -18,6 +21,23 @@ import { getDataDir } from "../../storage/local-store.js";
 export type RuleScope = "voice_core" | `platform:${string}`;
 
 export interface WritingRule {
+  /** 稳定 ID；存量规则缺失时读侧按内容补一个，下次写入落盘 */
+  id?: string;
+  /** 每次内容或状态变化 +1；审批事件绑定 id+revision */
+  revision?: number;
+  /**
+   * active 生效 / pending 待批 / rejected 丢弃（墓碑：以后蒸馏再提同一条直接挡掉）/ disabled 停用。
+   * 缺省按存量规则处理：disabled:true → 停用，否则生效。新写入的规则一律显式带 status。
+   */
+  status?: "active" | "pending" | "rejected" | "disabled";
+  /** 蒸馏/记录时依据的证据摘录（哪几处改稿、哪条用户原话），给创始人审批时看 */
+  evidence?: string[];
+  /** 「升级为全局」提案：指向被升级的平台规则 id；批准后原规则停用、本条生效 */
+  promotes?: string;
+  /** 提案针对的原平台规则 revision；原规则之后被改过/重新批过，这份提案就过时了 */
+  promotesRevision?: number;
+  /** 已完成的升级：来自哪条平台规则（只作记录，不再参与审批） */
+  promotedFrom?: string;
   rule: string;
   /** "auto_distilled" = extracted from user edits, "user_explicit" = user stated directly,
    *  "calibrated" = produced by the calibration skills (A/B-verified during onboarding) */
@@ -139,6 +159,10 @@ export interface PerformanceEntry {
 }
 
 export interface CreatorProfile {
+  /** 档案写入序号（CAS 用） */
+  revision?: number;
+  /** 工作台审批事件（幂等键 eventId） */
+  ruleDecisions?: Array<{ eventId: string; ruleId: string; revision: number; decision: string; at: string }>;
   /** User's content industry/niche */
   industry: string;
   /** 创作者保存的表达定位；不能只保存在档案里而不交给写手。 */
@@ -212,6 +236,7 @@ export async function profileExists(dataDir?: string): Promise<boolean> {
 
 /**
  * Load the creator profile. Returns null if it doesn't exist.
+ * 读侧给存量规则补稳定 id 与 revision（只在内存里；下一次写入才落盘），不改它们的生效状态。
  */
 export async function loadProfile(dataDir?: string): Promise<CreatorProfile | null> {
   const filePath = path.join(getDataDir(dataDir), PROFILE_FILE);
@@ -220,6 +245,8 @@ export async function loadProfile(dataDir?: string): Promise<CreatorProfile | nu
     const profile = JSON.parse(raw) as CreatorProfile;
     // 读侧归一(V5.1):历史扁平画像/老 muse 遗产形状 → 三层结构;坏形状置 null 而非带病传播
     profile.audiencePersona = normalizeAudiencePersona(profile.audiencePersona);
+    profile.writingRules = normalizeRules(profile.writingRules ?? []);
+    profile.revision ??= 0; // 读出来的档案总带 revision，整份保存时据此做 CAS
     return profile;
   } catch {
     return null;
@@ -227,13 +254,56 @@ export async function loadProfile(dataDir?: string): Promise<CreatorProfile | nu
 }
 
 /**
- * Save the full creator profile (overwrite).
+ * 档案写入统一走这里（spec §3 D「写档案要串行」）：同一资料目录一条队列、带预期 revision、temp+rename 原子落盘。
+ * 单写者约束：同一资料目录只允许一个 AutoCrew 进程写（见 profile-writer-lock）；进程内由这条队列串行。
+ */
+const profileQueues = new Map<string, Promise<unknown>>();
+function serializeProfile<T>(dataDir: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const key = path.resolve(getDataDir(dataDir));
+  const next = (profileQueues.get(key) ?? Promise.resolve()).then(fn, fn);
+  const tail = next.then(() => {}, () => {});
+  profileQueues.set(key, tail);
+  void tail.then(() => { if (profileQueues.get(key) === tail) profileQueues.delete(key); });
+  return next;
+}
+
+async function writeProfile(profile: CreatorProfile, dataDir?: string): Promise<void> {
+  profile.revision = (profile.revision ?? 0) + 1;
+  profile.updatedAt = new Date().toISOString();
+  await writeJsonAtomicMkdir(path.join(getDataDir(dataDir), PROFILE_FILE), profile);
+}
+
+/**
+ * 比对预期 revision：拿着旧快照整份覆盖会丢掉别人刚写的东西（例如创始人刚批的规则），直接报冲突。
+ * 读出来的档案一定带 revision；不带 revision 的是调用方从零构造的整份档案（初始化、测试夹具），按覆盖处理。
+ */
+async function casWrite(profile: CreatorProfile, dataDir?: string): Promise<void> {
+  const current = await loadProfile(dataDir);
+  if (current && profile.revision !== undefined && (current.revision ?? 0) !== profile.revision) {
+    throw new Error("档案已被其他操作更新（profile_revision_conflict），请重新读取后再保存");
+  }
+  await writeProfile(profile, dataDir);
+}
+
+/**
+ * Save the full creator profile (compare-and-swap on revision).
+ * 内部可信接口：模型可达的入口（MCP editorial、对话、IPC）都不把 writingRules 透传到这里，规则只能走 writing-rules 的函数。
  */
 export async function saveProfile(profile: CreatorProfile, dataDir?: string): Promise<void> {
-  const dir = getDataDir(dataDir);
-  await fs.mkdir(dir, { recursive: true });
-  profile.updatedAt = new Date().toISOString();
-  await fs.writeFile(path.join(dir, PROFILE_FILE), JSON.stringify(profile, null, 2), "utf-8");
+  return serializeProfile(dataDir, () => casWrite(profile, dataDir));
+}
+
+/** 读-改-写一次完成，全程在队列里，不会跟审批或后台蒸馏互相覆盖 */
+export async function mutateProfile<T = void>(
+  fn: (profile: CreatorProfile) => T,
+  dataDir?: string,
+): Promise<{ profile: CreatorProfile; result: T }> {
+  return serializeProfile(dataDir, async () => {
+    const profile = (await loadProfile(dataDir)) ?? emptyProfile();
+    const result = fn(profile);
+    await writeProfile(profile, dataDir);
+    return { profile, result };
+  });
 }
 
 /**
@@ -241,58 +311,27 @@ export async function saveProfile(profile: CreatorProfile, dataDir?: string): Pr
  * Returns the profile (existing or newly created).
  */
 export async function initProfile(dataDir?: string): Promise<CreatorProfile> {
-  const existing = await loadProfile(dataDir);
-  if (existing) return existing;
-  const profile = emptyProfile();
-  await saveProfile(profile, dataDir);
-  return profile;
+  return serializeProfile(dataDir, async () => {
+    const existing = await loadProfile(dataDir);
+    if (existing) return existing;
+    const profile = emptyProfile();
+    await writeProfile(profile, dataDir);
+    return profile;
+  });
 }
 
 /**
- * Partially update the profile (merge fields).
+ * Partially update the profile (merge fields). 不接受 writingRules：规则的增改审批只走 writing-rules。
  */
 export async function updateProfile(
-  updates: Partial<Omit<CreatorProfile, "createdAt" | "updatedAt">>,
+  updates: Partial<Omit<CreatorProfile, "createdAt" | "updatedAt" | "writingRules" | "revision" | "ruleDecisions">>,
   dataDir?: string,
 ): Promise<CreatorProfile> {
-  let profile = await loadProfile(dataDir);
-  if (!profile) profile = emptyProfile();
-
-  const merged: CreatorProfile = {
-    ...profile,
-    ...updates,
-    // Arrays: replace entirely if provided, keep existing otherwise
-    writingRules: updates.writingRules ?? profile.writingRules,
-    competitorAccounts: updates.competitorAccounts ?? profile.competitorAccounts,
-    performanceHistory: updates.performanceHistory ?? profile.performanceHistory,
-    // Preserve immutable fields
-    createdAt: profile.createdAt,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await saveProfile(merged, dataDir);
-  return merged;
-}
-
-/**
- * Add a writing rule (deduplicates by rule text).
- *
- * 升格路由（PRD-v4 §4.3）：同一规则文本以另一个平台 scope 再次出现
- * （= 同一模式在 ≥2 个平台被纠正）→ 升格进声音内核（scope 改 voice_core）。
- */
-export async function addWritingRule(rule: Omit<WritingRule, "createdAt">, dataDir?: string): Promise<CreatorProfile> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
-  const existing = profile.writingRules.find((r) => r.rule === rule.rule);
-  if (existing) {
-    const existingScope = existing.scope ?? "voice_core";
-    const incomingScope = rule.scope ?? "voice_core";
-    if (existingScope !== "voice_core" && incomingScope !== existingScope) {
-      existing.scope = "voice_core";
-    }
-  } else {
-    profile.writingRules.push({ ...rule, createdAt: new Date().toISOString() });
-  }
-  await saveProfile(profile, dataDir);
+  const { profile } = await mutateProfile((profile) => {
+    const safe = { ...updates } as Record<string, unknown>;
+    delete safe.writingRules; delete safe.revision; delete safe.ruleDecisions; delete safe.createdAt;
+    Object.assign(profile, safe);
+  }, dataDir);
   return profile;
 }
 
@@ -303,63 +342,25 @@ const VOICE_SAMPLES_CAP = 5;
  * 追加声音样本(逐字段落):按文本去重,超上限保留最新——最近的爆款最能代表当前声音。
  */
 export async function addVoiceSamples(samples: string[], dataDir?: string): Promise<CreatorProfile> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
-  const merged = [...(profile.voiceSamples ?? [])];
-  for (const s of samples) {
-    const text = s.trim();
-    if (text && !merged.includes(text)) merged.push(text);
-  }
-  profile.voiceSamples = merged.slice(-VOICE_SAMPLES_CAP);
-  await saveProfile(profile, dataDir);
+  const { profile } = await mutateProfile((profile) => {
+    const merged = [...(profile.voiceSamples ?? [])];
+    for (const s of samples) {
+      const text = s.trim();
+      if (text && !merged.includes(text)) merged.push(text);
+    }
+    profile.voiceSamples = merged.slice(-VOICE_SAMPLES_CAP);
+  }, dataDir);
   return profile;
-}
-
-/**
- * 生成时注入的规则 = 声音内核 + 当前平台包，其余平台的规则隔离在外（PRD-v4 §4.3）。
- */
-export function rulesForPlatform(profile: CreatorProfile, platform: string): WritingRule[] {
-  return profile.writingRules.filter((r) => {
-    if (r.disabled) return false;
-    const scope = r.scope ?? "voice_core";
-    return scope === "voice_core" || scope === `platform:${platform}`;
-  });
-}
-
-/**
- * Edit or toggle a writing rule by index (个性化中心：可编辑、可停用).
- *
- * 注：直接 mutate loadProfile 返回对象后经 updateProfile 整组落盘——与 addWritingRule
- * 的 saveProfile-direct 模式不同但等价（updateProfile 对 writingRules 是整体替换语义，
- * 单线程无 yield 点，无并发窗口）。
- */
-export async function updateWritingRule(
-  index: number,
-  patch: { rule?: string; disabled?: boolean },
-  dataDir?: string,
-): Promise<CreatorProfile> {
-  const profile = await loadProfile(dataDir);
-  if (!profile) throw new Error("尚无创作者档案");
-  const target = profile.writingRules[index];
-  if (!target) throw new Error(`规则不存在：index ${index}`);
-  if (patch.rule !== undefined) {
-    const text = patch.rule.trim();
-    if (text === "") throw new Error("规则内容不能为空");
-    target.rule = text;
-  }
-  if (patch.disabled !== undefined) target.disabled = patch.disabled;
-  return updateProfile({ writingRules: profile.writingRules }, dataDir);
 }
 
 /**
  * Add a competitor account (deduplicates by profileUrl).
  */
 export async function addCompetitor(account: Omit<CompetitorAccount, "addedAt">, dataDir?: string): Promise<CreatorProfile> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
-  const exists = profile.competitorAccounts.some((c) => c.profileUrl === account.profileUrl);
-  if (!exists) {
-    profile.competitorAccounts.push({ ...account, addedAt: new Date().toISOString() });
-  }
-  await saveProfile(profile, dataDir);
+  const { profile } = await mutateProfile((profile) => {
+    const exists = profile.competitorAccounts.some((c) => c.profileUrl === account.profileUrl);
+    if (!exists) profile.competitorAccounts.push({ ...account, addedAt: new Date().toISOString() });
+  }, dataDir);
   return profile;
 }
 
@@ -367,13 +368,11 @@ export async function addCompetitor(account: Omit<CompetitorAccount, "addedAt">,
  * Record a performance data point.
  */
 export async function addPerformanceEntry(entry: Omit<PerformanceEntry, "recordedAt">, dataDir?: string): Promise<void> {
-  const profile = (await loadProfile(dataDir)) || emptyProfile();
-  profile.performanceHistory.push({ ...entry, recordedAt: new Date().toISOString() });
-  // Keep last 100 entries
-  if (profile.performanceHistory.length > 100) {
-    profile.performanceHistory = profile.performanceHistory.slice(-100);
-  }
-  await saveProfile(profile, dataDir);
+  await mutateProfile((profile) => {
+    profile.performanceHistory.push({ ...entry, recordedAt: new Date().toISOString() });
+    // Keep last 100 entries
+    if (profile.performanceHistory.length > 100) profile.performanceHistory = profile.performanceHistory.slice(-100);
+  }, dataDir);
 }
 
 /**
