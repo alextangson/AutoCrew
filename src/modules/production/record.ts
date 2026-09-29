@@ -25,7 +25,8 @@ import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { commitRegistration } from "./registration.js";
 import { canonPlatform, observationFact } from "./receipts.js";
-import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn, type TxnOp } from "./txn.js";
+import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type ReleaseOp, type Txn, type TxnOp } from "./txn.js";
+import { applyRelease } from "./release.js";
 
 type Receipt = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ ok: false, code, error, ...extra });
@@ -171,6 +172,7 @@ async function commitFailed(a: RecordArgs, content: Content, dataDir: string, tx
   if (!moves) return fail("record_failed", `事实没记上：${errMsg(err)}`);
   const committed = await isCommitted(dataDir, content.id, txn.id);
   if (committed === true) {
+    if (txn.release) await applyRelease(dataDir, txn.release);
     await dropTxn(dataDir, txn.id);
     const core = (await readProductionDocOrEmpty(content.id, dataDir)).requests?.[a.request_id]?.receipt as unknown as ReceiptCore;
     return { ...(await receiptFor(content, dataDir, core)), warning: `事实已记下，但之后的派生写入（投影 / 时间线 / 索引）失败：${errMsg(err)}` };
@@ -182,10 +184,13 @@ async function commitFailed(a: RecordArgs, content: Content, dataDir: string, tx
   return fail("record_uncertain", `结果不确定（读不了制作记录）：事务日志留着，重启时按事务 id 核定。${errMsg(err)}`);
 }
 
-async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir: string): Promise<Receipt> {
+async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir: string, release?: ReleaseOp): Promise<Receipt> {
   const reuse = p.action === "existing" || (p.action === "candidate" && p.existing);
   const moves = p.action === "move" || p.action === "clone";
-  const txn: Txn = { id: newId("txn"), kind: "record", content_id: content.id, round: 0, ops: [], at: new Date().toISOString() };
+  // 改挂：释放原稿记进同一份事务日志，接收方提交之后才执行（崩了由启动恢复按提交点补做或放弃）
+  const journaled = moves || Boolean(release);
+  const txn: Txn = { id: newId("txn"), kind: "record", content_id: content.id, round: 0, ops: [], at: new Date().toISOString(), ...(release ? { release } : {}) };
+  if (release) await saveTxn(dataDir, txn);
   let rel: string | null = p.action === "in_place" && p.location === "project" ? path.relative(p.projectRoot, p.source) : null;
   let placed: { size: number; mtime_ms: number } | null = null;
   if (moves) {
@@ -204,11 +209,12 @@ async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir:
       if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
       const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}), ...(fact.state === "candidate" ? { reason: p.evidence } : {}) };
       doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { ...core } } };
-      if (moves) doc.txns = [...(doc.txns ?? []), txn.id];
+      if (journaled) doc.txns = [...(doc.txns ?? []), txn.id];
       return { value: core, events: reuse ? [] : [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
     });
-  } catch (err) { return commitFailed(a, content, dataDir, txn, moves, err); }
-  if (moves) await dropTxn(dataDir, txn.id);
+  } catch (err) { return commitFailed(a, content, dataDir, txn, journaled, err); }
+  if (release) await applyRelease(dataDir, release);
+  if (journaled) await dropTxn(dataDir, txn.id);
   return receipt(r.value, r.explanation, content, p.projectRoot, reuse ? "同一文件已经记过，这次没有新动作" : undefined);
 }
 
@@ -268,25 +274,19 @@ function receipt(core: ReceiptCore, exp: Explanation, content: Content, projectR
  * 核验照 record 的顺序全部先做：路径、完整性、字节还是当初那份、A-roll 独占、目标目录安全。调用方持有文件归属事务。
  */
 /**
- * 原片归属（创始人 09-29 默认：重开前那一轮的原片仍归原稿）。本轮在用 → 硬冲突；只是历史归属 → 创始人明确改挂时
- * 把原稿那条事实标成「已改挂」（持久的归属转移，之后索引与查询都按它），否则回冲突并带上归属信息供卡片确认。
+ * 原片归属（创始人 09-29 默认：重开前那一轮的原片仍归原稿）。本轮在用 → 硬冲突；只是历史归属 → 没确认改挂就回冲突
+ * （带归属信息供卡片确认）；确认了就返回要释放的原稿——释放和接收在同一个可恢复事务里做（commitFile）。
  */
-async function arollOwnershipBlock(content: Content, sha: string, dataDir: string, reassign: boolean): Promise<Receipt | null> {
+async function arollOwnership(content: Content, sha: string, dataDir: string, reassign: boolean): Promise<{ block: Receipt } | { release?: ReleaseOp }> {
   const owner = await arollOwnerElsewhere(dataDir, sha, content.id);
-  if (!owner) return null;
+  if (!owner) return {};
   const current = await arollOwnerElsewhere(dataDir, sha, content.id, { allowHistorical: true });
   const title = (await getContent(owner, dataDir))?.title ?? owner;
   if (current || !reassign) {
-    return fail("aroll_conflict", current ? `这个原片是《${title}》本轮正在用的 A-roll，一个原片只能属于一条稿` : `这个原片归《${title}》（它重开文稿前那一轮用过）；创始人确认改挂后才能挂到这条`,
-      { owner_id: owner, owner_title: title, reassignable: !current });
+    return { block: fail("aroll_conflict", current ? `这个原片是《${title}》本轮正在用的 A-roll，一个原片只能属于一条稿` : `这个原片归《${title}》（它重开文稿前那一轮用过）；创始人确认改挂后才能挂到这条`,
+      { owner_id: owner, owner_title: title, reassignable: !current }) };
   }
-  const at = new Date().toISOString();
-  await mutateProduction(owner, dataDir, (doc) => {
-    const released = doc.facts.filter((f) => f.kind === "aroll" && f.sha256 === sha && f.state === "accepted" && !f.released_to);
-    for (const f of released) { f.released_to = content.id; f.released_at = at; }
-    return { value: released.length, events: [{ type: "aroll_reassigned", detail: { sha256: sha, to: content.id, facts: released.map((f) => f.id) } }] };
-  });
-  return null;
+  return { release: { owner, sha256: sha, to: content.id } };
 }
 
 export async function adoptCandidate(content: Content, fact: Fact, dataDir: string, opts: { reassign?: boolean } = {}): Promise<Receipt> {
@@ -300,9 +300,11 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   const fp = await stableFingerprint(checked.value, Date.now());
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "候选文件在发现之后被改过，刷新再看");
+  let release: ReleaseOp | undefined;
   if (fact.kind === "aroll") {
-    const blocked = await arollOwnershipBlock(content, fact.sha256, dataDir, opts.reassign === true);
-    if (blocked) return blocked;
+    const own = await arollOwnership(content, fact.sha256, dataDir, opts.reassign === true);
+    if ("block" in own) return own.block;
+    release = own.release;
   }
   const referenced = doc.facts.some((f) => f.round === doc.round && f.kind === "chatcut_project" && f.uses_aroll?.includes(fact.id));
   const inProject = isWithin(projectRoot, checked.value);
@@ -314,5 +316,5 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
     const safe = await checkTargetDir(projectRoot, targetDirOf(fact.kind, version));
     if (!safe.ok) return fail(safe.code, safe.error);
   }
-  return commitFile(a, content, plan, dataDir);
+  return commitFile(a, content, plan, dataDir, release);
 }

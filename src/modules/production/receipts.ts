@@ -116,9 +116,24 @@ function roundAt(doc: ProductionDoc, at: string): number {
 
 /** 轮次证据：发布时间 → 切轮；否则同平台见过同一链接 / 作品 id → 沿用那一轮；否则当前轮 */
 function stampRound(doc: ProductionDoc, o: Observation, known: ObsFact[]): number {
+  const pinned = pinnedRound(doc, o, known);
+  if (pinned !== null) return pinned;
   if (o.published_at) return roundAt(doc, o.published_at);
   const seen = known.find((k) => k.platform === o.platform && ((o.item_id && k.item_id === o.item_id) || (o.url && k.url === o.url)));
   return seen ? seen.round : doc.round;
+}
+
+/**
+ * 重开之后，发布计划里这个平台的那条还是上一轮的记录（定时帖公开时间可能晚于重开）：钉在它原来那一轮，
+ * 除非它带着晚于最近一次重开的实际提交时间（= 这一轮真提交了新的）。已发布的卡重开后旧槽永远不算进新一轮（seg10 P1）。
+ */
+function pinnedRound(doc: ProductionDoc, o: Observation, known: ObsFact[]): number | null {
+  if (o.source !== "plan" || doc.round === 1) return null;
+  const earlier = known.filter((k) => k.source === "plan" && k.platform === o.platform && k.round < doc.round).at(-1);
+  if (!earlier) return null;
+  const lastReopen = Math.max(...doc.decisions.filter((d) => d.type === "reopen").map((d) => Date.parse(d.at)));
+  const fresh = o.submitted_at && Date.parse(o.submitted_at) > lastReopen;
+  return fresh ? null : earlier.round;
 }
 
 const same = (a: Observation, b: Observation) =>
@@ -139,11 +154,11 @@ export function observationFact(doc: ProductionDoc, o: Observation, round: numbe
 /** 同一批里同（来源, 平台, 轮次）只留最后一条：静态快照里的多条历史绑定不能每次对账轮流冒充新事件 */
 function collapseBatch(doc: ProductionDoc, obs: Observation[]): Array<{ o: Observation; round: number }> {
   // 同批较早的观察也算身份证据：重开后同时读到旧计划（按时间归上一轮）与它的作品 id 绑定，绑定要跟着归上一轮
-  const known: Array<Pick<ObsFact, "platform" | "item_id" | "url" | "round">> = observationsOf(doc);
+  const known: Array<Pick<ObsFact, "source" | "platform" | "item_id" | "url" | "round">> = observationsOf(doc);
   const last = new Map<string, { o: Observation; round: number }>();
   for (const o of obs) {
     const round = stampRound(doc, o, known as ObsFact[]);
-    known.push({ platform: o.platform, item_id: o.item_id, url: o.url, round });
+    known.push({ source: o.source, platform: o.platform, item_id: o.item_id, url: o.url, round });
     const key = `${o.source}\u0000${o.platform}\u0000${round}`;
     last.delete(key);
     last.set(key, { o, round });

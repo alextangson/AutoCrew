@@ -211,3 +211,70 @@ describe("seg9 小项", () => {
     expect(s).not.toHaveProperty("next_action");
   });
 });
+
+describe("seg10", () => {
+  it("[P1 reopen] 已定时投出（公开时间晚于重开）后重开：旧计划记录钉在第 1 轮，新一轮不算已发布", async () => {
+    await enable();
+    const { founderApprove } = await import("./testkit.js");
+    const { reopenScript } = await import("./reopen.js");
+    const { reconcileAll } = await import("./reconcile.js");
+    const { cardPanel } = await import("./panel.js");
+    const r = await registeredVideo(env);
+    const future = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const plan = (pub: Record<string, unknown>) => put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [{ platform: "douyin", publication: pub }] }));
+    await plan({ status: "scheduled", scheduled_at: future, submitted_at: new Date().toISOString() });
+    await reconcileAll(env.dir);
+    expect((await cardPanel(r.id, env.dir)).stage).toBe("已发布");
+    expect(await reopenScript(r.id, env.dir)).toMatchObject({ ok: true, round: 2 });
+    await founderApprove(env, r.id);
+    await reconcileAll(env.dir);
+    await plan({ status: "public", published_at: future, submitted_at: new Date(Date.now() - 60_000).toISOString() });
+    await reconcileAll(env.dir);
+    const p = await cardPanel(r.id, env.dir) as { stage: string; published: unknown[] };
+    expect(p.stage).not.toBe("已发布");
+    expect(p.published).toEqual([]);
+    const doc = (await readProductionDoc(r.id, env.dir))!;
+    expect(doc.facts.filter((f) => f.kind === "publish").every((f) => f.round === 1)).toBe(true);
+  });
+
+  it("[P2 pre-publish] 非视频平台（xhs）带内部跳过参数：封面审核照拦", async () => {
+    await enable();
+    const { saveContent } = await import("../../storage/local-store.js");
+    const { executePrePublish } = await import("../../tools/pre-publish.js");
+    const c = await saveContent({ title: "小红书图文", body: "正文".repeat(80), platform: "xhs", status: "approved", tags: [] } as never, env.dir);
+    const res = await executePrePublish({ _dataDir: env.dir, content_id: c.id, _ontologyGated: true, _readOnly: true }) as { checks?: Array<{ name: string; status: string }> };
+    expect(res.checks?.find((x) => x.name === "封面审核")?.status).toBe("fail");
+  });
+
+  it("[P2 record] 改挂接收失败（目标目录不安全）：原稿照旧独占；提交后崩在释放前，启动恢复补做释放", async () => {
+    await enable();
+    const { record, founderApprove, projectRoot } = await import("./testkit.js");
+    const { reopenScript } = await import("./reopen.js");
+    const { arollOwnerElsewhere, forgetShaIndex } = await import("./sha-index.js");
+    const a = await videoContent(env, "AI 又忘了怎么办");
+    await founderApprove(env, a.id);
+    await record(env, { content_id: a.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw-shared"), request_id: "a1" });
+    await reopenScript(a.id, env.dir);
+    const moved = (await readProductionDoc(a.id, env.dir))!.facts.find((f) => f.kind === "aroll")!;
+    const abs = path.join(projectRoot(env, a.id), moved.path!);
+    const b = await videoContent(env, "另一条稿");
+    await founderApprove(env, b.id);
+    // 目标稿的 02-aroll 换成符号链接 → target_unsafe
+    const bRoot = projectRoot(env, b.id);
+    await fs.rm(path.join(bRoot, "02-aroll"), { recursive: true, force: true });
+    await fs.mkdir(env.outside, { recursive: true });
+    await fs.symlink(env.outside, path.join(bRoot, "02-aroll"));
+    const res = await founderDecision(b.id, "attach_aroll", { path: abs, confirm_other: true, reassign: true }, env.dir);
+    expect(res.ok).toBe(false);
+    forgetShaIndex(env.dir);
+    expect(await arollOwnerElsewhere(env.dir, moved.sha256!, b.id)).toBe(a.id);
+    expect((await readProductionDoc(a.id, env.dir))!.facts.find((f) => f.id === moved.id)?.released_to).toBeUndefined();
+    // 恢复：接收方已提交（production.json 里有事务 id）而释放没做 → 启动时补做
+    const { saveTxn, recoverTxns } = await import("./txn.js");
+    const { mutateProduction } = await import("./service.js");
+    await mutateProduction(b.id, env.dir, (d) => { d.txns = [...(d.txns ?? []), "txn-rel-1"]; return { value: null, events: [] }; });
+    await saveTxn(env.dir, { id: "txn-rel-1", kind: "record", content_id: b.id, round: 0, ops: [], at: new Date().toISOString(), release: { owner: a.id, sha256: moved.sha256!, to: b.id } });
+    expect(await recoverTxns(env.dir)).toEqual([expect.objectContaining({ id: "txn-rel-1", outcome: "committed" })]);
+    expect((await readProductionDoc(a.id, env.dir))!.facts.find((f) => f.id === moved.id)?.released_to).toBe(b.id);
+  });
+});

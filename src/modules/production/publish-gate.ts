@@ -32,8 +32,13 @@ async function fileOf(root: string, f: Fact | undefined, label: string): Promise
 }
 
 /** 按本体走的视频稿 → 当前登记的发布文件或阻止原因；不按本体走 → null */
+/** 这条稿按本体走：资料库启用、没被排除、且是视频稿（卡片 active、登记出口、explain 用的同一组条件） */
+export async function ontologyApplies(content: Pick<Content, "id" | "platform">, dataDir: string): Promise<boolean> {
+  return isVideoPlatform(content.platform) && (await isOntologyActive(dataDir, content.id));
+}
+
 export async function registeredPackage(content: Content, dataDir: string): Promise<GateResult | null> {
-  if (!isVideoPlatform(content.platform) || !(await isOntologyActive(dataDir, content.id))) return null;
+  if (!(await ontologyApplies(content, dataDir))) return null;
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   if (!scriptApprovalFor(doc, content.body)) return { ok: false, code: "not_approved", error: "这条的认稿已失效（正文改过或重开了），先认稿、剪辑、批准再发" };
   const cut = validCutApproval(doc, content.body), cover = validCoverApproval(doc, content.body);

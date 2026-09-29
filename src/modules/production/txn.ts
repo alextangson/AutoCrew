@@ -35,7 +35,11 @@ export interface Txn {
   round: number;
   ops: TxnOp[];
   at: string;
+  /** 改挂（归属转移）：接收方提交成功之后才释放原稿；提交点之前崩了 = 原稿照旧独占 */
+  release?: ReleaseOp;
 }
+
+export interface ReleaseOp { owner: string; sha256: string; to: string }
 
 function txnFile(dataDir: string, id: string): string {
   if (!/^txn-[a-z0-9-]+$/.test(id)) throw new Error(`事务 id 不合法：${id}`);
@@ -141,6 +145,7 @@ export async function recoverTxns(dataDir: string): Promise<RecoveryOutcome[]> {
       txn = JSON.parse(await fs.readFile(path.join(dir, name), "utf8")) as Txn;
       const doc = await readProductionDoc(txn.content_id, dataDir);
       if (doc?.txns?.includes(txn.id)) {
+        if (txn.release) await (await import("./release.js")).applyRelease(dataDir, txn.release);
         await dropBackups(txn);
         await dropTxn(dataDir, txn.id);
         out.push({ id: txn.id, content_id: txn.content_id, outcome: "committed" });

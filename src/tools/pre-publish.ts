@@ -1,4 +1,3 @@
-import { isOntologyActive } from "../storage/production-store.js";
 /**
  * autocrew_pre_publish tool — Pre-publish checklist gate.
  *
@@ -34,7 +33,7 @@ import { getPlatformRules } from "../modules/writing/title-hashtag.js";
 import { COVER_TEXT_MAX, publishTitleChars, videoTitleLimit } from "../modules/publish/video-kit.js";
 import { isModelCall, isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
 import { KIT_BEHIND_REGISTER, kitBehindRegister, kitRegisterHash } from "../modules/publish/kit-stale.js";
-import { registeredPackage } from "../modules/production/publish-gate.js";
+import { ontologyApplies, registeredPackage } from "../modules/production/publish-gate.js";
 import { captionBounds, captionTags, KIT_CAPTION_MIN, mergeTags, PLATFORM_MAX_BODY, PLATFORM_MIN_BODY } from "../modules/publish/publish-limits.js";
 
 // --- Types ---
@@ -393,7 +392,7 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   // --- Check 2: Cover review (all video platforms) ---
   // 启用本体的稿出包（_ontologyGated，只由 ToolRunner 内部带）：封面由登记记录 + 发布前把关（槽位 / 登记那一对）核，旧封面审核不再适用
   // 参数本身不可信（模型也能带下划线参数）：只有这条真按本体走才生效
-  const ontologyGated = params._ontologyGated === true && COVER_REQUIRED_PLATFORMS.has(platform) && (await isOntologyActive(dataDir, contentId));
+  const ontologyGated = params._ontologyGated === true && COVER_REQUIRED_PLATFORMS.has(platform) && (await ontologyApplies(content, getDataDir(dataDir)));
   if (ontologyGated) {
     checks.push({ name: "封面审核", status: "skip", detail: "本体稿：封面由登记记录与发布前把关核对" });
   } else if (COVER_REQUIRED_PLATFORMS.has(platform)) {
