@@ -50,6 +50,24 @@ describe("buildSeriesSnapshot scope (spec §3 B)", () => {
     expect(snap.items.map((i) => i.content_id)).not.toContain(v1.id);
   });
 
+  it("a published draft with a scheduled (future) publishedAt still enters, dated by when it was written", () => {
+    const scheduled = content({ status: "published", seriesEnteredAt: undefined, publishedAt: new Date(NOW + 3 * 86_400_000).toISOString(), draftReadyAt: day(3) });
+    const snap = buildSeriesSnapshot([scheduled], "douyin", {}, NOW);
+    expect(snap.items.map((i) => i.content_id)).toEqual([scheduled.id]);
+    expect(snap.items[0].enteredAt).toBe(day(3));
+    expect(snap.items[0].label).toBe("已发");
+  });
+
+  it("when over 10, published drafts keep their seats ahead of newer pending ones, output still newest first", () => {
+    const pending = Array.from({ length: 10 }, (_, i) => content({ seriesEnteredAt: day(1 + i) }));
+    const pub = content({ status: "published", seriesEnteredAt: day(20) });
+    const snap = buildSeriesSnapshot([...pending, pub], "douyin", {}, NOW);
+    const ids = snap.items.map((i) => i.content_id);
+    expect(ids).toHaveLength(10);
+    expect(ids[9]).toBe(pub.id);
+    expect(ids).not.toContain(pending[9].id);
+  });
+
   it("uses a valid outline; without one (or after the body changed) falls back to opening/ending excerpts marked insufficient", () => {
     const good = withOutline(content());
     const stale = { ...withOutline(content()), body: "改过的正文" };
