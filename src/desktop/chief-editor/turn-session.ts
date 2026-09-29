@@ -1,0 +1,54 @@
+/**
+ * 起会话：initialize → 续原 session（续不上新开并说一句）→ 记下适配器上报的模型/强度清单 →
+ * 按对话设置设模型/强度（清单里没有就报错点名，U3）。ACP session id 拿到即落盘。
+ */
+import { updateConversationAgent } from "../../storage/conversation-store.js";
+import type { AgentProcess, SessionInfo } from "./acp-process.js";
+import { applySettings, reportedChoices, type AgentSettings } from "./agent-settings.js";
+import type { BackendAdapter } from "./backends.js";
+import type { ActiveTurn, ChiefEditor } from "./service.js";
+import type { StreamGate } from "./turn-stream.js";
+
+export const SESSION_TIMEOUT_MS = 90_000;
+
+export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what}超过 ${Math.round(ms / 1000)} 秒没有响应`)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+async function resumeOrNew(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate, prior?: string): Promise<{ info: SessionInfo; notice?: string; fresh: boolean }> {
+  const mcp = { url: svc.deps.mcpUrl, token: turn.token! };
+  const init = await withTimeout(proc.initialize(), SESSION_TIMEOUT_MS, "适配器初始化");
+  let notice: string | undefined;
+  if (prior && init.loadSession) {
+    gate.replaying = true;
+    try {
+      const info = await withTimeout(proc.loadSession(prior, svc.deps.home, mcp, adapter.sessionMeta()), SESSION_TIMEOUT_MS, "续会话");
+      return { info, fresh: false };
+    } catch {
+      notice = "上次的会话续不上，已新开（之前的上下文 agent 看不到了）";
+    } finally {
+      gate.replaying = false;
+    }
+  } else if (prior) {
+    notice = "这个后端不支持续会话，已新开";
+  }
+  const info = await withTimeout(proc.newSession(svc.deps.home, mcp, adapter.sessionMeta()), SESSION_TIMEOUT_MS, "新建会话");
+  return { info, fresh: true, ...(notice ? { notice } : {}) };
+}
+
+export async function openSession(
+  svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate,
+  opts: { prior?: string; settings: AgentSettings },
+): Promise<{ sessionId: string; notice?: string }> {
+  const { info, notice, fresh } = await resumeOrNew(svc, turn, adapter, proc, gate, opts.prior);
+  if (fresh) {
+    await updateConversationAgent(turn.conversationId, { acpSessionId: info.sessionId }, turn.dataDir);
+    svc.runs.patch(turn.turnId, { acpSessionId: info.sessionId });
+  }
+  if (info.configOptions.length) svc.rememberChoices(adapter.id, reportedChoices(info.configOptions));
+  await applySettings(proc, info.sessionId, info.configOptions, opts.settings);
+  return { sessionId: info.sessionId, ...(notice ? { notice } : {}) };
+}

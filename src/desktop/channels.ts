@@ -46,6 +46,9 @@ export const IPC_CHANNELS = [
   "agent:backends",
   "agent:pending",
   "agent:answer",
+  // v1.1：对话级模型 / 思考强度 / 权限模式；对话改名
+  "agent:settings",
+  "conversations:rename",
   "settings:get",
   "settings:set",
   // 端点配置的逃生门（设计 §Phase 4）：用系统默认应用打开实际生效的 engine.json

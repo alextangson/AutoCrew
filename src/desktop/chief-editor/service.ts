@@ -6,6 +6,8 @@
  * - 卡片按调用 id 去重，先落盘（run 记录）再推送。
  */
 import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { appendTurn, type ConversationMeta } from "../../storage/conversation-store.js";
 import { enqueueConversationWrite } from "../chat-persist.js";
 import type { ApprovalBinding } from "../approval-gate.js";
@@ -35,8 +37,19 @@ export interface ChiefEditorDeps {
   /** SSE `agent` 事件出口 */
   emit: (data: Record<string, unknown>) => void;
   getContent: (id: string, dataDir: string) => Promise<ContentSnapshot | null>;
+  /** 选题快照（删选题审批的指纹用）：title + 其余字段序列化进 body */
+  getTopic?: (id: string, dataDir: string) => Promise<ContentSnapshot | null>;
   killGraceMs?: number;
   askTtlMs?: number;
+}
+
+/** 工作记录的一条（工具调用 / 自动放行 / 压缩） */
+export interface WorkItem {
+  id: string;
+  name: string;
+  status: "running" | "done" | "failed";
+  error?: string;
+  kind?: "compact";
 }
 
 export interface ActiveTurn {
@@ -55,6 +68,12 @@ export interface ActiveTurn {
   /** 已开始、还没完成的写类工具（停止时如实说「可能已部分生效」） */
   inFlight: Map<string, string>;
   aborted: boolean;
+  /** 工作记录：工具调用、自动放行、压缩——收尾时作为一张卡落进对话 */
+  worklog: WorkItem[];
+  /** 这段对话是「全部放行」档（轮次开始时读定，U1） */
+  bypass: boolean;
+  /** 最近一次 usage_update：上下文用量 */
+  usage?: { used: number; size?: number };
 }
 
 export class ChiefEditor {
@@ -62,10 +81,42 @@ export class ChiefEditor {
   readonly asks: AskRegistry;
   readonly authFailed = new Set<LocalBackendId>();
   private readonly tokens = new Map<string, TokenBinding>();
+  /** 「本对话都允许」：只在内存，换对话 / 守护进程重启即回到每次问（U5） */
+  private readonly allowAll = new Set<string>();
+  /** 适配器最近一次上报的模型 / 思考强度清单（按后端），切换器据此显示；没报就空 */
+  readonly reported = new Map<LocalBackendId, { models: Array<{ value: string; label: string }>; efforts: Array<{ value: string; label: string }> }>();
+
+  /** 记下适配器上报的清单并落盘：守护进程重启后切换器还能显示（没报过就只有「默认」，U2） */
+  rememberChoices(backend: LocalBackendId, choices: { models: Array<{ value: string; label: string }>; efforts: Array<{ value: string; label: string }> }): void {
+    this.reported.set(backend, choices);
+    try {
+      fs.mkdirSync(this.deps.home, { recursive: true });
+      fs.writeFileSync(path.join(this.deps.home, "reported.json"), JSON.stringify(Object.fromEntries(this.reported)), "utf-8");
+    } catch { /* 记不下来只影响下次启动前的显示 */ }
+  }
+
+  private loadReported(): void {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(this.deps.home, "reported.json"), "utf-8")) as Record<string, { models?: unknown; efforts?: unknown }>;
+      for (const [k, v] of Object.entries(raw)) {
+        if (Array.isArray(v.models) && Array.isArray(v.efforts)) this.reported.set(k as LocalBackendId, { models: v.models as never, efforts: v.efforts as never });
+      }
+    } catch { /* 没有记录 = 没上报过 */ }
+  }
+
+  conversationAllowed(conversationId: string): boolean {
+    return this.allowAll.has(conversationId);
+  }
+
+  setConversationAllow(conversationId: string, on: boolean): void {
+    if (on) this.allowAll.add(conversationId);
+    else this.allowAll.delete(conversationId);
+  }
   active: ActiveTurn | null = null;
 
   constructor(readonly deps: ChiefEditorDeps) {
     this.runs = new RunStore(deps.home);
+    this.loadReported();
     this.asks = new AskRegistry({
       issueApproval: (b) => deps.approvals.issue(b),
       emit: (e) => deps.emit(e),
@@ -142,7 +193,10 @@ export class ChiefEditor {
   statuses(builtinConfigured: boolean, activeDataDir: string): { backends: BackendStatus[]; running: Record<string, unknown> | null } {
     const a = this.active;
     return {
-      backends: backendStatuses({ authFailed: this.authFailed, builtinConfigured }),
+      backends: backendStatuses({ authFailed: this.authFailed, builtinConfigured }).map((b) => {
+        const r = this.reported.get(b.id as LocalBackendId);
+        return r ? { ...b, models: r.models, efforts: r.efforts } : b;
+      }),
       running: a ? { conversationId: a.conversationId, backend: a.backend, otherLibrary: a.dataDir !== activeDataDir } : null,
     };
   }

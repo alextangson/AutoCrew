@@ -80,6 +80,8 @@ export async function runPersistedChatTurn(params: {
   message: string;
   conversationId?: string;
   dataDir?: string;
+  /** 按钮派活的结构化上下文拼成的那段话（v1.1）：只拼进发给模型的消息，历史里存人话原文 */
+  modelPrefix?: string;
   /** §C1 上下文只发给模型,不进持久历史（回放显示原文） */
   viewContext?: ChatViewContext;
   /** 任务动态/运行日志归属(chatTurnHandler 注入,透传到 runLoop logMeta) */
@@ -113,7 +115,7 @@ export async function runPersistedChatTurn(params: {
   }
 
   const result = await run({
-    message,
+    message: `${params.modelPrefix ?? ""}${message}`,
     history,
     dataDir,
     ...(params.viewContext ? { viewContext: params.viewContext } : {}),

@@ -7,6 +7,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { applyPersonaSection } from "../host-cli.js";
 import type { LocalBackendId } from "./backends.js";
 
@@ -19,6 +20,7 @@ export const CHIEF_EDITOR_PERSONA = `# AutoCrew 总编辑
 - 发布类动作（推草稿箱、标记已发布、删稿、删素材、删流水线）会先回 approval_required：停下来告诉创始人在等他批准，别换别的办法执行。收到「已批准 approval_id=…」后，用完全相同的参数加上 approval_id 重调。
 - 工具回 claim_held（稿件被别的会话占着）时，如实告诉创始人是谁占着，不要绕过、不要抢。
 - 跑 shell 或写文件前系统会弹权限卡；被拒绝就停下说明，不要换一种方式硬做。
+- 你只接了 AutoCrew 的 MCP 和 AutoCrew 自带的技能。创始人要你用别的工具（如 ChatCut、浏览器、其他 MCP）时，直说这里做不到，不要想办法另外加载。
 - 结果不确定的写操作不要自己重试；说清楚做到哪一步了。`;
 
 const PERSONA_FILE: Record<LocalBackendId, string> = {
@@ -27,7 +29,28 @@ const PERSONA_FILE: Record<LocalBackendId, string> = {
   workbuddy: "CODEBUDDY.md",
 };
 
+/** AutoCrew 自带技能目录（仓库 skills/） */
+export function repoSkillsDir(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "skills");
+}
+
+/**
+ * 只给 agent 挂 AutoCrew 自己的技能：`<cwd>/.claude/skills` 软链到仓库 skills/（项目级来源，
+ * 减负后唯一加载的技能来源）。已有同名的真实目录不动，免得覆盖用户放进去的东西。
+ */
+export function ensureSkills(home: string, skillsDir = repoSkillsDir()): void {
+  const dir = path.join(home, ".claude");
+  const link = path.join(dir, "skills");
+  fs.mkdirSync(dir, { recursive: true });
+  const stat = fs.lstatSync(link, { throwIfNoEntry: false });
+  if (stat && !stat.isSymbolicLink()) return;
+  if (stat && fs.readlinkSync(link) === skillsDir) return;
+  if (stat) fs.unlinkSync(link);
+  fs.symlinkSync(skillsDir, link, "dir");
+}
+
 export function ensurePersona(home: string, backend: LocalBackendId): string {
+  if (backend === "claude") ensureSkills(home);
   fs.mkdirSync(home, { recursive: true });
   const file = path.join(home, PERSONA_FILE[backend]);
   const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";

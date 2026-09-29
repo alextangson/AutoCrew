@@ -4,7 +4,7 @@
  */
 import { handleMcpRequest, normalizeSession } from "../../../mcp/server.js";
 import { hostAuthorize } from "../../../mcp/host-policy.js";
-import { getContent } from "../../storage/local-store.js";
+import { getContent, getTopic } from "../../storage/local-store.js";
 import type { ApprovalBinding } from "../approval-gate.js";
 import { spawnAcpAgent } from "./acp-process.js";
 import { chiefEditorHome } from "./run-store.js";
@@ -36,6 +36,10 @@ export async function startChiefEditor(opts: {
     getContent: async (id, dataDir) => {
       const c = await getContent(id, dataDir);
       return c ? { title: c.title, body: c.body, platform: c.platform ?? "", status: c.status } : null;
+    },
+    getTopic: async (id, dataDir) => {
+      const t = await getTopic(id, dataDir);
+      return t && !t.deletedAt ? { title: t.title, body: JSON.stringify(t) } : null;
     },
   });
   try {

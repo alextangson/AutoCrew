@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { ApprovalGate } from "../approval-gate.js";
 import { resetActiveTurns } from "../turn-registry.js";
-import type { AgentHandlers, AgentProcess, McpServerSpec, SpawnAgent } from "./acp-process.js";
+import type { AgentHandlers, AgentProcess, ConfigOptionInfo, McpServerSpec, SpawnAgent } from "./acp-process.js";
 import { handleAgentMcp } from "./mcp-bridge.js";
 import { initChiefEditor, resetChiefEditor, type ChiefEditor } from "./service.js";
 
@@ -31,13 +31,30 @@ export class FakeAgent implements AgentProcess {
   constructor(public onPrompt: (a: FakeAgent, text: string) => Promise<{ stopReason: string }>) {}
 
   async initialize() { return { loadSession: true }; }
-  async newSession(_cwd: string, mcp: McpServerSpec) { this.mcp = mcp; return `sess-${Math.random().toString(36).slice(2, 8)}`; }
+  /** 适配器上报的配置项（模拟真实 claude-agent-acp 的 model / effort） */
+  configOptions: ConfigOptionInfo[] = [
+    { id: "model", current: "default", values: [{ value: "default", label: "Default" }, { value: "sonnet", label: "Sonnet" }] },
+    { id: "effort", current: "default", values: [{ value: "default", label: "Default" }, { value: "high", label: "High" }] },
+  ];
+  configSet: Array<[string, string]> = [];
+  meta: Record<string, unknown>[] = [];
+  rejectConfig?: string;
+  async newSession(_cwd: string, mcp: McpServerSpec, meta: Record<string, unknown>) {
+    this.mcp = mcp;
+    this.meta.push(meta);
+    return { sessionId: `sess-${Math.random().toString(36).slice(2, 8)}`, configOptions: this.configOptions };
+  }
   async loadSession(id: string, _cwd: string, mcp: McpServerSpec) {
     this.mcp = mcp;
     if (this.loadFails) throw new Error("Resource not found");
     // 真适配器 load 时会把历史重放成 update
     this.say("（历史重放）");
     this.loaded.push(id);
+    return { sessionId: id, configOptions: this.configOptions };
+  }
+  async setConfigOption(_s: string, id: string, value: string) {
+    if (this.rejectConfig === value) throw new Error(`model ${value} is not available`);
+    this.configSet.push([id, value]);
   }
   async prompt(_s: string, text: string) { this.prompts.push(text); return this.onPrompt(this, text); }
   async cancel() { this.cancelled++; for (const w of this.cancelWaiters.splice(0)) w(); }

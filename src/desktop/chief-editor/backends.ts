@@ -77,6 +77,10 @@ export const CLAUDE_ADAPTER: BackendAdapter = {
           // AutoCrew 自己的 MCP 工具不弹权限卡：它们的门在服务端（执行前审批、认领、限权）
           settings: { permissions: { ask: CLAUDE_ASK_TOOLS, allow: ["mcp__autocrew"], defaultMode: "default" } },
           allowDangerouslySkipPermissions: false,
+          // 减负（v1.1）：只读本目录（人设 + AutoCrew 自带技能），不加载创始人全局的技能/插件/MCP/环境；
+          // 登录走钥匙串，不受影响。实测首轮上下文 75k→18k，全局 model=opus 带来的 200k 窗口也不再生效
+          settingSources: ["project"],
+          strictMcpConfig: true,
         },
       },
     };

@@ -18,6 +18,11 @@ export interface SessionUpdateLike {
   kind?: string;
   status?: string;
   rawInput?: unknown;
+  rawOutput?: unknown;
+  /** usage_update：上下文用量；compaction_update：压缩状态 */
+  used?: number;
+  size?: number;
+  compactionId?: string;
 }
 
 export interface AgentHandlers {
@@ -35,8 +40,10 @@ export interface AgentProcess {
   pid?: number;
   command: string;
   initialize(): Promise<{ loadSession: boolean }>;
-  newSession(cwd: string, mcp: McpServerSpec, meta: Record<string, unknown>): Promise<string>;
-  loadSession(sessionId: string, cwd: string, mcp: McpServerSpec, meta: Record<string, unknown>): Promise<void>;
+  newSession(cwd: string, mcp: McpServerSpec, meta: Record<string, unknown>): Promise<SessionInfo>;
+  loadSession(sessionId: string, cwd: string, mcp: McpServerSpec, meta: Record<string, unknown>): Promise<SessionInfo>;
+  /** 会话配置项（模型 / 思考强度）：适配器上报的 configOptions 里有才设 */
+  setConfigOption(sessionId: string, configId: string, value: string): Promise<void>;
   prompt(sessionId: string, text: string): Promise<{ stopReason: string }>;
   cancel(sessionId: string): Promise<void>;
   /** 整个进程组 SIGKILL */
@@ -44,6 +51,30 @@ export interface AgentProcess {
   /** 进程退出时落定（崩溃检测） */
   exited: Promise<{ code: number | null; signal: string | null }>;
   stderrTail(): string;
+}
+
+export interface ConfigOptionInfo {
+  id: string;
+  current?: string;
+  values: Array<{ value: string; label: string }>;
+}
+
+export interface SessionInfo {
+  sessionId: string;
+  /** 适配器上报的会话配置项（model / effort 等）；没报就是空数组 */
+  configOptions: ConfigOptionInfo[];
+}
+
+/** ACP configOptions → 只留 select 类型的 {id, current, values}（没上报就空，不编造） */
+export function parseConfigOptions(raw: unknown): ConfigOptionInfo[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((o): ConfigOptionInfo[] => {
+    const opt = o as { id?: unknown; currentValue?: unknown; options?: unknown };
+    if (typeof opt.id !== "string" || !Array.isArray(opt.options)) return [];
+    const values = (opt.options as Array<{ value?: unknown; name?: unknown }>).flatMap((v) =>
+      typeof v?.value === "string" ? [{ value: v.value, label: typeof v.name === "string" ? v.name : v.value }] : []);
+    return [{ id: opt.id, ...(typeof opt.currentValue === "string" ? { current: opt.currentValue } : {}), values }];
+  });
 }
 
 export type SpawnAgent = (launch: LaunchSpec, cwd: string, handlers: AgentHandlers) => AgentProcess;
@@ -92,14 +123,19 @@ export const spawnAcpAgent: SpawnAgent = (launch, cwd, handlers) => {
     pid: child.pid,
     command: [launch.command, ...launch.args].join(" "),
     async initialize() {
-      const init = await conn.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+      const init = await conn.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { compaction: {} } } as acp.ClientCapabilities });
       return { loadSession: Boolean(init.agentCapabilities?.loadSession) };
     },
     async newSession(sessionCwd, mcp, meta) {
-      return (await conn.newSession({ cwd: sessionCwd, mcpServers: mcpServers(mcp), _meta: meta })).sessionId;
+      const r = await conn.newSession({ cwd: sessionCwd, mcpServers: mcpServers(mcp), _meta: meta });
+      return { sessionId: r.sessionId, configOptions: parseConfigOptions(r.configOptions) };
     },
     async loadSession(sessionId, sessionCwd, mcp, meta) {
-      await conn.loadSession({ sessionId, cwd: sessionCwd, mcpServers: mcpServers(mcp), _meta: meta });
+      const r = await conn.loadSession({ sessionId, cwd: sessionCwd, mcpServers: mcpServers(mcp), _meta: meta });
+      return { sessionId, configOptions: parseConfigOptions((r as { configOptions?: unknown } | null)?.configOptions) };
+    },
+    async setConfigOption(sessionId, configId, value) {
+      await conn.setSessionConfigOption({ sessionId, configId, value } as acp.SetSessionConfigOptionRequest);
     },
     async prompt(sessionId, text) {
       const r = await conn.prompt({ sessionId, prompt: [{ type: "text", text }] });

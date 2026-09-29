@@ -23,6 +23,8 @@ export interface GateTarget {
   targetId: string;
   /** 目标是稿件时，指纹要把稿件当前版本算进去 */
   contentId?: string;
+  /** 目标是选题时，指纹算选题当前版本（删选题审批后选题被改 → 失效） */
+  topicId?: string;
   label: string;
 }
 
@@ -39,7 +41,7 @@ function resolveTarget(tool: string, args: Record<string, unknown>): { id: strin
   const id = str(args.id);
   const contentId = str(args.content_id);
   if (id && contentId && id !== contentId) return { refuse: `id（${id}）和 content_id（${contentId}）不一致，发布类动作只能指向一个目标` };
-  const primary = tool === "autocrew_content" || tool === "autocrew_pipeline" ? id || contentId : contentId || id;
+  const primary = tool === "autocrew_content" || tool === "autocrew_pipeline" || tool === "autocrew_topic" ? id || contentId : contentId || id;
   return { id: primary };
 }
 
@@ -55,6 +57,7 @@ function publishKind(tool: string, action: string, args: Record<string, unknown>
   if (tool === "autocrew_content" && toPublished(args)) return { key: "to_published", label: "转入已发布" };
   if (tool === "autocrew_asset" && action === "remove") return { key: "remove", label: "删除素材" };
   if (tool === "autocrew_pipeline" && action === "delete") return { key: "delete", label: "删除流水线" };
+  if (tool === "autocrew_topic" && action === "delete") return { key: "delete", label: "删除选题" };
   return null;
 }
 
@@ -65,8 +68,8 @@ export function classifyPublishAction(tool: string, args: Record<string, unknown
   if (kind.key === "wechat_mp_draft" && str(args.article_path)) return { refuse: "本机 agent 推草稿箱只能用 content_id，不能用 article_path（文件内容无法绑定到审批）" };
   const target = resolveTarget(tool, args);
   if ("refuse" in target) return target;
-  const isContent = tool !== "autocrew_pipeline";
-  return { action: `${tool}.${kind.key}`, targetId: target.id, ...(isContent ? { contentId: target.id } : {}), label: kind.label };
+  const ref = tool === "autocrew_topic" ? { topicId: target.id } : tool === "autocrew_pipeline" ? {} : { contentId: target.id };
+  return { action: `${tool}.${kind.key}`, targetId: target.id, ...ref, label: kind.label };
 }
 
 /** 参与指纹的参数：去掉归因/审批/认领这些不属于「要做什么」的键 */

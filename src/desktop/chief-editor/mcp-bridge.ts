@@ -31,8 +31,15 @@ export function resultObject(response: Json | null): Json {
   return result?.isError || error ? { ok: false, error: error ?? text } : { ok: true, message: text };
 }
 
+/** 审批指纹要绑的那份目标快照：稿件或选题的当前版本 */
+async function snapshotFor(svc: ChiefEditor, target: GateTarget, dataDir: string) {
+  if (target.contentId) return svc.deps.getContent(target.contentId, dataDir);
+  if (target.topicId) return (await svc.deps.getTopic?.(target.topicId, dataDir)) ?? null;
+  return null;
+}
+
 async function requireApproval(svc: ChiefEditor, b: TokenBinding, turnId: string, target: GateTarget, args: Json, reason?: string): Promise<Json> {
-  const content = target.contentId ? await svc.deps.getContent(target.contentId, b.dataDir) : null;
+  const content = await snapshotFor(svc, target, b.dataDir);
   const ask = svc.asks.requestApproval({
     turnId,
     conversationId: b.conversationId,
@@ -60,7 +67,7 @@ async function gate(svc: ChiefEditor, b: TokenBinding, turnId: string | null, to
   if (!approved || approved.conversationId !== b.conversationId || approved.turnId !== turnId) {
     return { reply: await requireApproval(svc, b, turnId, target, rest, "这个 approval_id 无效、未获批准或已经用过") };
   }
-  const content = target.contentId ? await svc.deps.getContent(target.contentId, b.dataDir) : null;
+  const content = await snapshotFor(svc, target, b.dataDir);
   const consumed = svc.deps.approvals.consume(approved.token, approvalBindingFor(target, rest, b.dataDir, content));
   svc.asks.consumed(approvalId);
   if (!consumed.ok) return { reply: await requireApproval(svc, b, turnId, target, rest, "批准之后稿件或参数又变了，原审批已失效") };

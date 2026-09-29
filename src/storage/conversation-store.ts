@@ -33,6 +33,8 @@ export interface ConversationMeta {
   backend?: string;
   /** 本机 agent 的 ACP session id：下一轮 session/load 续上它，续不上就新开并在回复里说一句 */
   acpSessionId?: string;
+  /** 本机 agent 的对话级设置（模型 / 思考强度 / 全部放行），轮次开始时读一次 */
+  agentSettings?: { model?: string; effort?: string; permissionMode?: "ask" | "bypass" };
 }
 
 export interface ConversationMessage {
@@ -158,7 +160,7 @@ export async function appendTurn(
 /** 只改 meta 里的后端绑定字段（ACP session id 拿到即落盘，不等本轮结束） */
 export async function updateConversationAgent(
   id: string,
-  patch: { acpSessionId?: string },
+  patch: { acpSessionId?: string; agentSettings?: ConversationMeta["agentSettings"] },
   dataDir?: string,
 ): Promise<ConversationMeta | null> {
   const existing = await getConversation(id, dataDir);
@@ -166,6 +168,24 @@ export async function updateConversationAgent(
   const convDir = safeConvDir(await conversationsRoot(dataDir), id);
   if (!convDir) return null;
   const meta: ConversationMeta = { ...existing.meta, ...patch };
+  await writeJsonAtomic(path.join(convDir, "meta.json"), meta);
+  return meta;
+}
+
+export const TITLE_EDIT_MAX = 40;
+
+/**
+ * 改对话标题（v1.1 U6）：去空白后为空 → 不保存（返回 null，调用方保留原名）；按码点截到 40 字；
+ * 两个标签页同时改就是后写覆盖，别处刷新后看到新名。
+ */
+export async function renameConversation(id: string, title: string, dataDir?: string): Promise<ConversationMeta | null> {
+  const clean = title.replace(/\s+/g, " ").trim();
+  if (!clean) return null;
+  const existing = await getConversation(id, dataDir);
+  if (!existing) return null;
+  const convDir = safeConvDir(await conversationsRoot(dataDir), id);
+  if (!convDir) return null;
+  const meta: ConversationMeta = { ...existing.meta, title: Array.from(clean).slice(0, TITLE_EDIT_MAX).join("") };
   await writeJsonAtomic(path.join(convDir, "meta.json"), meta);
   return meta;
 }

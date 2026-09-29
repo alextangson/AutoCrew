@@ -9,11 +9,14 @@
 import { createConversation, getConversation, updateConversationAgent } from "../../storage/conversation-store.js";
 import { registerTurn, settleTurn } from "../turn-registry.js";
 import { STATUS_TEXT, type AskView } from "./asks.js";
-import { ADAPTERS, pickPermissionOption, type BackendAdapter, type LocalBackendId } from "./backends.js";
-import type { AgentHandlers, AgentProcess } from "./acp-process.js";
+import { ADAPTERS, type BackendAdapter, type LocalBackendId } from "./backends.js";
+import type { AgentProcess } from "./acp-process.js";
+import { SettingError, type AgentSettings } from "./agent-settings.js";
+import { makeHandlers, type StreamGate } from "./turn-stream.js";
+import { openSession } from "./turn-session.js";
 import { ensurePersona } from "./persona.js";
-import { redactAndTruncate, redactedTail, redactText, StreamRedactor } from "./redact.js";
-import { appendConversation, type ActiveTurn, type ChiefEditor } from "./service.js";
+import { redactAndTruncate, redactedTail, redactText } from "./redact.js";
+import { appendConversation, getChiefEditor, type ActiveTurn, type ChiefEditor } from "./service.js";
 
 export interface LocalTurnInput {
   message: string;
@@ -25,20 +28,15 @@ export interface LocalTurnInput {
   contentId?: string;
   /** 视图上下文前缀：只拼进发给 agent 的 prompt，对话历史存原话 */
   promptContext?: string;
+  /** 新对话的设置（网页选的模型 / 强度 / 权限模式）；已有对话以 meta 为准 */
+  newSettings?: AgentSettings;
+  /** 新对话开头就选了「本对话都允许」（只进内存） */
+  newConversationAllow?: boolean;
   onDelta?: (e: { ev: "delta" | "reset" | "done"; text?: string }) => void;
   onProgress?: (e: Record<string, unknown>) => void;
 }
 
 type Result = Record<string, unknown>;
-const SESSION_TIMEOUT_MS = 90_000;
-const WRITE_KINDS = new Set(["edit", "delete", "move", "execute"]);
-
-function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`${what}超过 ${Math.round(ms / 1000)} 秒没有响应`)), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
-  });
-}
 
 /** 同步加锁：check-and-set 之间没有 await，两个标签页同时发只有一个进得来（§边界 3 / 4） */
 function acquire(svc: ChiefEditor, input: LocalTurnInput): { ok: true; turn: ActiveTurn; signal: AbortSignal } | { ok: false; error: string } {
@@ -52,93 +50,24 @@ function acquire(svc: ChiefEditor, input: LocalTurnInput): { ok: true; turn: Act
   const turn: ActiveTurn = {
     turnId: input.turnId, clientId: input.clientId, conversationId: input.conversationId ?? "",
     dataDir: input.dataDir, backend: input.backend, status: "running", cards: [], writes: [], inFlight: new Map(), aborted: false,
+    worklog: [], bypass: false,
   };
   svc.active = turn;
   return { ok: true, turn, signal: reg.signal };
 }
 
-async function prepareConversation(input: LocalTurnInput): Promise<{ id: string; acpSessionId?: string } | { error: string }> {
+/** 新对话建起来就把网页选的设置记上；已有对话读它自己的设置（轮次开始时读一次，U1） */
+async function prepareConversation(input: LocalTurnInput): Promise<{ id: string; acpSessionId?: string; settings: AgentSettings } | { error: string }> {
   if (!input.conversationId) {
     const meta = await createConversation(input.message, input.dataDir, input.contentId, { backend: input.backend });
-    return { id: meta.id };
+    const settings = input.newSettings ?? {};
+    if (Object.keys(settings).length) await updateConversationAgent(meta.id, { agentSettings: settings }, input.dataDir);
+    if (input.newConversationAllow) getChiefEditor()?.setConversationAllow(meta.id, true);
+    return { id: meta.id, settings };
   }
   const conv = await getConversation(input.conversationId, input.dataDir);
   if (!conv) return { error: "会话不存在或已损坏，请新建对话" };
-  return { id: conv.meta.id, ...(conv.meta.acpSessionId ? { acpSessionId: conv.meta.acpSessionId } : {}) };
-}
-
-/** 工具调用的可读标签：shell 带上命令本身（「Terminal」一个词说明不了做了什么） */
-function toolLabel(u: { title?: string; rawInput?: unknown }): string {
-  const cmd = (u.rawInput as { command?: unknown } | undefined)?.command;
-  const title = u.title ?? "工具调用";
-  return typeof cmd === "string" && !title.includes(cmd) ? `${title}：${cmd}` : title;
-}
-
-/** session/load 会把历史对话当 update 重放一遍：重放期间的更新一律不算本轮输出 */
-interface StreamGate { replaying: boolean; flush?: () => void }
-
-function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, text: string[], gate: StreamGate): AgentHandlers {
-  const calls = new Map<string, { title: string; kind?: string }>();
-  // agent 可能在正文里复述认领令牌：推 SSE 前脱敏（跨分块也挡得住），落盘另做一次全文脱敏
-  const redactor = new StreamRedactor();
-  const emit = (t: string) => { if (t) input.onDelta?.({ ev: "delta", text: t }); };
-  gate.flush = () => emit(redactor.finish());
-  return {
-    onUpdate(u) {
-      if (gate.replaying) return;
-      if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && u.content.text) {
-        text.push(u.content.text);
-        emit(redactor.push(u.content.text));
-      } else if (u.sessionUpdate === "tool_call" && u.toolCallId) {
-        // 工具调用前后的两段话分开，不要拼成一句
-        if (text.length && text[text.length - 1] !== "\n\n") { text.push("\n\n"); emit(redactor.push("\n\n")); }
-        const title = toolLabel(u);
-        calls.set(u.toolCallId, { title, ...(u.kind ? { kind: u.kind } : {}) });
-        if (u.kind && WRITE_KINDS.has(u.kind)) turn.inFlight.set(u.toolCallId, title);
-        input.onProgress?.({ phase: "start", label: redactAndTruncate(title, 60) });
-      } else if (u.sessionUpdate === "tool_call_update" && u.toolCallId) {
-        const call = calls.get(u.toolCallId);
-        // 命令参数常在后续 update 里才到：补进标签
-        if (call && u.rawInput) call.title = toolLabel({ title: u.title ?? call.title.split("：")[0], rawInput: u.rawInput });
-        if (call && turn.inFlight.has(u.toolCallId)) turn.inFlight.set(u.toolCallId, call.title);
-        if (u.status !== "completed" && u.status !== "failed") return;
-        turn.inFlight.delete(u.toolCallId);
-        if (u.status !== "completed") return;
-        if (call?.kind && WRITE_KINDS.has(call.kind)) turn.writes.push(redactAndTruncate(call.title, 60));
-      }
-    },
-    async requestPermission(req) {
-      const ask = svc.asks.requestPermission({ turnId: turn.turnId, conversationId: turn.conversationId, title: "允许本机 agent 执行？", detail: req.title });
-      const decision = await ask.decision;
-      // 没获准（拒绝 / 超时 / 停止作废）的调用根本没跑，不算「仍在执行」
-      if (decision === "deny" && req.toolCallId) turn.inFlight.delete(req.toolCallId);
-      return pickPermissionOption(req.options, decision);
-    },
-  };
-}
-
-/** 起进程、续会话（续不上就新开并说一句）。ACP session id 拿到即落盘 */
-async function openSession(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate, prior?: string): Promise<{ sessionId: string; notice?: string }> {
-  const mcp = { url: svc.deps.mcpUrl, token: turn.token! };
-  const init = await withTimeout(proc.initialize(), SESSION_TIMEOUT_MS, "适配器初始化");
-  let notice: string | undefined;
-  if (prior && init.loadSession) {
-    gate.replaying = true;
-    try {
-      await withTimeout(proc.loadSession(prior, svc.deps.home, mcp, adapter.sessionMeta()), SESSION_TIMEOUT_MS, "续会话");
-      return { sessionId: prior };
-    } catch {
-      notice = "上次的会话续不上，已新开（之前的上下文 agent 看不到了）";
-    } finally {
-      gate.replaying = false;
-    }
-  } else if (prior) {
-    notice = "这个后端不支持续会话，已新开";
-  }
-  const sessionId = await withTimeout(proc.newSession(svc.deps.home, mcp, adapter.sessionMeta()), SESSION_TIMEOUT_MS, "新建会话");
-  await updateConversationAgent(turn.conversationId, { acpSessionId: sessionId }, turn.dataDir);
-  svc.runs.patch(turn.turnId, { acpSessionId: sessionId });
-  return { sessionId, ...(notice ? { notice } : {}) };
+  return { id: conv.meta.id, settings: conv.meta.agentSettings ?? {}, ...(conv.meta.acpSessionId ? { acpSessionId: conv.meta.acpSessionId } : {}) };
 }
 
 /** 进程先退出就当崩溃（§边界 12），不让 prompt 挂死 */
@@ -187,8 +116,16 @@ function stopAgent(svc: ChiefEditor, turn: ActiveTurn): void {
   t.unref?.();
 }
 
+/** 每轮记一次上下文用量（v1.1：核实减负后首轮不再压缩） */
+function logUsage(turn: ActiveTurn): void {
+  if (!turn.usage) return;
+  const { used, size } = turn.usage;
+  console.log(`[chief-editor] 上下文 ${used}${size ? ` / ${size}（${Math.round((used / size) * 100)}%）` : ""} · 对话 ${turn.conversationId} · 轮次 ${turn.turnId}`);
+}
+
 function failureText(adapter: BackendAdapter, svc: ChiefEditor, err: unknown, proc?: AgentProcess): string {
   const msg = err instanceof Error ? err.message : String(err);
+  if (err instanceof SettingError) return msg;
   if (adapter.isAuthError(msg)) {
     svc.authFailed.add(adapter.id);
     return `${adapter.label}未登录或登录已过期：${adapter.loginFix}。不会自动改用内置引擎。`;
@@ -206,6 +143,11 @@ export function stopSummary(writes: string[], inFlight: string[] = []): string {
   return `已停。${done}。${partial}`;
 }
 
+/** 本轮卡片：工作记录（有就放最前，一张）+ 工具结果卡 */
+export function turnCards(turn: ActiveTurn): Record<string, unknown>[] {
+  return turn.worklog.length ? [{ type: "agent_worklog", data: { items: turn.worklog } }, ...turn.cards] : turn.cards;
+}
+
 function replyText(turn: ActiveTurn, out: Outcome): string {
   const parts = [out.notice, out.reply || "（agent 没有返回文字，结果见卡片）", turn.aborted ? stopSummary(turn.writes, [...turn.inFlight.values()]) : ""];
   return parts.filter(Boolean).join("\n\n");
@@ -217,6 +159,7 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   const conv = await prepareConversation(input);
   if ("error" in conv) return { ok: false, reply: conv.error };
   turn.conversationId = conv.id;
+  turn.bypass = conv.settings.permissionMode === "bypass";
   svc.runs.put({ turnId: turn.turnId, clientId: turn.clientId, conversationId: conv.id, dataDir: turn.dataDir, backend: turn.backend, message: input.message, status: "running", startedAt: new Date().toISOString() });
   ensurePersona(svc.deps.home, turn.backend);
   turn.token = svc.issueToken({ backend: turn.backend, dataDir: turn.dataDir, conversationId: conv.id, turnId: turn.turnId });
@@ -227,12 +170,13 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   svc.runs.patch(turn.turnId, { ...(proc.pid ? { pid: proc.pid } : {}), command: proc.command });
   signal.addEventListener("abort", () => stopAgent(svc, turn), { once: true });
   try {
-    const session = await openSession(svc, turn, adapter, proc, gate, conv.acpSessionId);
+    const session = await openSession(svc, turn, adapter, proc, gate, { settings: conv.settings, ...(conv.acpSessionId ? { prior: conv.acpSessionId } : {}) });
     turn.sessionId = session.sessionId;
     if (signal.aborted) stopAgent(svc, turn);
     const stopReason = turn.aborted ? "cancelled" : await promptLoop(svc, turn, proc, session.sessionId, `${input.promptContext ?? ""}${input.message}`, gate.flush);
     svc.authFailed.delete(adapter.id);
     gate.flush?.();
+    logUsage(turn);
     return { ok: true, reply: redactText(text.join("")).trim(), stopReason, ...(session.notice ? { notice: session.notice } : {}) };
   } catch (err) {
     gate.flush?.();
@@ -244,7 +188,7 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
 /** 本轮落进对话（走按会话串行队列）。失败就抛：完成状态只能在落盘成功之后才提交 */
 async function persistOutcome(turn: ActiveTurn, input: LocalTurnInput, out: Outcome): Promise<void> {
   const content = out.ok ? replyText(turn, out) : `⚠️ ${out.reply}`;
-  const meta = await appendConversation(turn.conversationId, { content: input.message }, { content, cards: turn.cards, turnId: turn.turnId }, turn.dataDir);
+  const meta = await appendConversation(turn.conversationId, { content: input.message }, { content, cards: turnCards(turn), turnId: turn.turnId }, turn.dataDir);
   if (!meta) throw new Error("对话在本轮进行中被删除了");
 }
 
@@ -294,5 +238,5 @@ export async function runLocalTurn(svc: ChiefEditor, input: LocalTurnInput): Pro
   if (persistError) out = { ok: false, reply: `这一轮的结果没能写进对话：${redactAndTruncate(persistError, 120)}。记录已保留，守护进程下次启动会按中断补写。` };
   if (!out.ok) return { ok: false, error: out.reply, ...(turn.conversationId ? { data: { conversationId: turn.conversationId } } : {}) };
   const stopReason = turn.aborted ? "aborted" : out.stopReason;
-  return { ok: true, data: { reply: replyText(turn, out), cards: turn.cards, conversationId: turn.conversationId, backend: turn.backend, writes: turn.writes, ...(stopReason ? { stopReason } : {}) } };
+  return { ok: true, data: { reply: replyText(turn, out), cards: turnCards(turn), conversationId: turn.conversationId, backend: turn.backend, writes: turn.writes, ...(stopReason ? { stopReason } : {}) } };
 }

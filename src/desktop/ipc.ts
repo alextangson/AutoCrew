@@ -75,7 +75,8 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  *   today:summary       {}
  */
 import { getChiefEditor } from "./chief-editor/service.js";
-import { maybeRunLocalTurn, agentBackendsHandler, agentPendingHandler, agentAnswerHandler } from "./chief-editor/ipc-handlers.js";
+import { buildDispatchContext, parseDispatch } from "./dispatch-context.js";
+import { maybeRunLocalTurn, agentBackendsHandler, agentPendingHandler, agentAnswerHandler, agentSettingsHandler, conversationRenameHandler } from "./chief-editor/ipc-handlers.js";
 import { buildTodaySummary } from "./today-summary.js";
 import { buildDashboardSummary } from "./dashboard-summary.js";
 import { executeFlywheel } from "../tools/flywheel.js";
@@ -595,6 +596,14 @@ async function chatTurnHandler(
   if (typeof message !== "string" || message.trim() === "") {
     return { ok: false, error: "chat:turn 需要非空 message" };
   }
+  // 按钮派活（v1.1）：气泡是人话，选题编号等结构化上下文在这里拼成给模型的那段话；选题已删则不发（U8）
+  if (payload.dispatch !== undefined) {
+    const dispatch = parseDispatch(payload.dispatch);
+    if (!dispatch) return { ok: false, error: "派活信息不完整，没有发出" };
+    const built = await buildDispatchContext(dispatch, (payload._dataDir as string) || undefined);
+    if (!built.ok) return { ok: false, error: built.error };
+    payload = { ...payload, _dispatch_context: built.text };
+  }
   // 本机 agent 后端（总编辑接本机 agent spec）：对话后端以服务端记录为准，本机后端不走下面的内置引擎链
   const local = await maybeRunLocalTurn(payload, ctx);
   if (local) return local;
@@ -637,6 +646,7 @@ async function chatTurnHandler(
   try {
     const result = await runPersistedChatTurn({
       message: message.trim(),
+      ...(typeof payload._dispatch_context === "string" ? { modelPrefix: payload._dispatch_context } : {}),
       ...(conversationId ? { conversationId } : {}),
       ...(viewContext ? { viewContext } : {}),
       ...(modelChoice ? { modelChoice } : {}),
@@ -1243,6 +1253,8 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "agent:backends": (p) => agentBackendsHandler(p, async (dir) => chatModelOptions(await loadEngineConfig(dir)).length > 0),
     "agent:pending": agentPendingHandler,
     "agent:answer": agentAnswerHandler,
+    "agent:settings": agentSettingsHandler,
+    "conversations:rename": conversationRenameHandler,
     "chat:abort": chatAbortHandler,
     "chat:turn_status": chatTurnStatusHandler,
     "chat:model_options": chatModelOptionsHandler,
