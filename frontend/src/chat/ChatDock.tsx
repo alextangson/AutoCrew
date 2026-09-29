@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ChatMarkdown } from "./markdown";
+import { copyForWorkbuddy } from "./workbuddy";
 import { invoke, subscribeEvents } from "../transport";
 import { confirmDialog, toast } from "../ui";
 import { ChatCard, type ChatCardShape } from "./cards";
@@ -667,6 +668,7 @@ export function ChatDock(props: {
         props.contentContext && (
           <div className="chat-context" title={props.contentContext.contentId}>
             当前稿件：{contextTitle || "正在读取…"} · 修改建议会保存为新版本
+            {contextTitle && <button className="chat-copy-wb" title="复制一句话，粘到 WorkBuddy 里让它通过 AutoCrew 打开这篇" onClick={() => void copyForWorkbuddy(contextTitle, props.contentContext!.contentId)}>复制给 WorkBuddy</button>}
           </div>
         )
       )}

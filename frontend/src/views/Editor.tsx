@@ -21,6 +21,7 @@ import { type EditorView } from "@codemirror/view";
 import { invoke, subscribeEvents, type InvokeResult } from "../transport";
 import { toast } from "../ui";
 import { chatClientId, useChatSend } from "../chat/ChatDock";
+import { copyForWorkbuddy } from "../chat/workbuddy";
 import { SelectionBar } from "./SelectionBar";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { EditorTools } from "./EditorTools";
@@ -435,6 +436,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <span className="ed-status-label">{VARIANT_STATUS[c.status] ?? c.status}</span>
           {workspace !== "draft" && <span className="muted">{WORKSPACE_LABEL[workspace]}</span>}
         </div>
+        <button className="ed-quiet-button" title="复制一句话，粘到 WorkBuddy 里让它通过 AutoCrew 打开这篇" onClick={() => void copyForWorkbuddy(c.title, props.id)}>复制给 WorkBuddy</button>
         {workspace === "draft" && <button
           className={"ed-quiet-button ed-tools-trigger" + (drawerOpen ? " is-open" : "")}
           aria-expanded={drawerOpen}
