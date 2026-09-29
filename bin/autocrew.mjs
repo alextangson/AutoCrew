@@ -38,7 +38,7 @@ function printHelp() {
   autocrew runs           查看最近任务事件
   autocrew call           调用任意内部能力（channel --payload JSON）
   autocrew mcp            stdio ↔ 守护进程 /mcp 转发器（Claude Code 用）
-  autocrew host           接入宿主（codex|claude-code|dsh），打印接入步骤
+  autocrew host           接入宿主（codex|claude-code|dsh|workbuddy），打印接入步骤
                           --dir <path> 把人设写进该目录的 AGENTS.md/CLAUDE.md
                           --role editor-writer|cover 选哪一份人设
   autocrew storage        资料库位置、预览和迁移（status|cancel|preview|create|open|migrate）
@@ -401,7 +401,7 @@ switch (command) {
     if (!host || !fs.existsSync(tsx)) {
       console.error(host
         ? `缺少依赖。请先在 ${ROOT} 执行 npm install`
-        : "用法：autocrew host <codex|claude-code|dsh> [--dir <path>] [--role editor-writer|cover]");
+        : "用法：autocrew host <codex|claude-code|dsh|workbuddy> [--dir <path>] [--role editor-writer|cover]");
       process.exitCode = 1;
       break;
     }
