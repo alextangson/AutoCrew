@@ -8,6 +8,7 @@ import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
 import { syncMyContentView } from "../src/storage/my-content-view.js";
 import { archivePublished } from "../src/storage/nas-archive.js";
+import { backupPublished } from "../src/storage/nas-backup.js";
 import { runExclusive } from "../src/storage/storage-mutex.js";
 /**
  * AutoCrew 本地 server（PRD-v4 §11）——引擎跑在用户本机,前端搬进浏览器 tab。
@@ -680,13 +681,19 @@ server.listen(PORT, HOST, () => {
   myContentTimer = setInterval(tickMyContent, 60_000);
   myContentTimer.unref();
 
-  // NAS 归档(storage-layout.md「NAS 归档」):启动 2 分钟后一轮,之后每 24 小时一轮。
+  // NAS 备份 + 归档(storage-layout.md「NAS 归档」;docs/specs/2026-09-29-nas-backup-on-publish.md):
+  // 启动 2 分钟后一轮,之后每 24 小时一轮。每轮先把到点的已发布稿增量备份到 NAS,再做 7 天腾空间。
   // 单飞;和「我的内容」对账共用进程内互斥,不同时碰同一个项目;出错只记日志,不让守护进程退出。
   let archiveRunning = false;
   const tickArchive = () => {
     if (archiveRunning) return;
     archiveRunning = true;
-    void runExclusive(() => archivePublished())
+    void runExclusive(async () => {
+      const b = await backupPublished();
+      if (b.backedUp.length) console.log(`[nas-backup] 备份 ${b.backedUp.length} 条`);
+      if (b.errors.length) console.error(`[nas-backup] ${b.errors.length} 处问题:${b.errors[0]}`);
+      return archivePublished();
+    })
       .then((r) => {
         if (r.archived.length) console.log(`[nas-archive] 归档 ${r.archived.length} 条`);
         if (r.errors.length) console.error(`[nas-archive] ${r.errors.length} 处问题:${r.errors[0]}`);

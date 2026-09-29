@@ -69,18 +69,34 @@ const p = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
 
 const configureSearch = (): Promise<void> => saveSearchConfig({ provider: "tavily", apiKey: "k-test" }, dataDir);
 
-/** 启动运行时但塞一个不出网的假管线：投递路径要真跑，四视角不能真跑 */
-async function startRuntime(): Promise<void> {
+/**
+ * 启动运行时但塞一个不出网的假管线：投递路径要真跑，四视角不能真跑。
+ * 传 `gate` 则假管线等它放行才落定——要测「在途」就得把任务卡住，否则串行队列随时可能先跑完。
+ */
+async function startRuntime(gate?: Promise<void>): Promise<void> {
   await startResearchRuntime({
     rootDir: dataDir,
     onError: () => {},
-    createRunJobImpl: () => async (job: ResearchJob) => ({
-      status: "failed" as const,
-      perspectives: job.perspectives,
-      errorCode: "test_stub",
-      failReason: "测试桩不跑真管线",
-    }),
+    createRunJobImpl: () => async (job: ResearchJob) => {
+      await gate;
+      return {
+        status: "failed" as const,
+        perspectives: job.perspectives,
+        errorCode: "test_stub",
+        failReason: "测试桩不跑真管线",
+      };
+    },
   });
+}
+
+/** 轮询等条件成立（runner 是异步串行队列，落定时刻不可预测） */
+async function waitFor(check: () => Promise<boolean>, timeoutMs = 8000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((r) => setTimeout(r, 15));
+  }
+  throw new Error("等待超时");
 }
 
 function seedJob(over: Partial<ResearchJob> = {}): Promise<ResearchJob> {
@@ -204,25 +220,37 @@ describe("research:deep_dive", () => {
 
   it("happy：投递即返回 queued job；在途时再投递被拒（研究进行中）", async () => {
     await configureSearch();
-    await startRuntime();
-    const first = await researchDeepDiveHandler(p());
-    expect(first.ok).toBe(true);
-    const d = first.data as { job: ResearchJob; deduped: boolean };
-    expect(d.job.topicId).toBe(topic.id);
-    expect(d.deduped).toBe(false);
-    expect(["queued", "running", "failed"]).toContain(d.job.status); // 串行队列可能已经消化掉
+    // 闸门卡住第一条：不卡的话它可能在第二次投递前就落定，第二次投递就合法地排上新一轮
+    // （终态可再投，见 runner 测试），「在途被拒」这条反而测不到
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    await startRuntime(gate);
+    try {
+      const first = await researchDeepDiveHandler(p());
+      expect(first.ok).toBe(true);
+      const d = first.data as { job: ResearchJob; deduped: boolean };
+      expect(d.job.topicId).toBe(topic.id);
+      expect(d.deduped).toBe(false);
+      expect(d.job.status).toBe("queued");
 
-    // 投递即给选题续期一次（§2）：正在深调研的选题不该被 3 天回收扫走
-    expect((await getTopic(topic.id, dataDir))?.renewedAt).toBeTruthy();
+      // 投递即给选题续期一次（§2）：正在深调研的选题不该被 3 天回收扫走
+      expect((await getTopic(topic.id, dataDir))?.renewedAt).toBeTruthy();
 
-    // 串行队列可能已经把它消化完（终态可再投），只有还在途时才该被拒
-    const again = await researchDeepDiveHandler(p());
-    const still = await getJob(topic.id, dataDir);
-    if (still && !isTerminalJobStatus(still.status)) {
+      await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "running");
+      const again = await researchDeepDiveHandler(p());
       expect(again.ok).toBe(false);
       expect(String(again.error)).toContain("研究进行中");
+      // 台账上还是第一条在跑：没排第二条
+      expect(await getJob(topic.id, dataDir)).toMatchObject({ status: "running", startedAt: d.job.startedAt });
+    } finally {
+      // 断言成败都放行并等落定：stop 不打断在途任务，迟到的写账不能撞上 afterEach 删目录
+      release();
+      await waitFor(async () => {
+        const job = await getJob(topic.id, dataDir);
+        return job === null || isTerminalJobStatus(job.status);
+      });
     }
-  });
+  }, 20_000); // 两段轮询各至多 8 秒：超时要在用例内报出来，不能拖进 afterEach
 
   it("非对象 payload / 缺 topic_id → 守卫拦下", async () => {
     expect((await researchDeepDiveHandler(null as unknown as Record<string, unknown>)).ok).toBe(false);

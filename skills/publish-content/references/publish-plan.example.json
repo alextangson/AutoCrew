@@ -94,5 +94,11 @@
     "nas_project_path": null,
     "local_resume_path": null,
     "receipts_sync_pending": false
+  },
+  "campaign_disclosure": {
+    "disclosed_at": null,
+    "summary": null,
+    "platform_plans": [],
+    "changes_since_disclosure": []
   }
 }

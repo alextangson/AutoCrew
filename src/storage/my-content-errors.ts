@@ -8,11 +8,12 @@ import { isMissing } from "./content-project.js";
 
 export const ERROR_FILE = "⚠️ 同步出错.txt";
 const ERROR_STATE = ".autocrew-errors.json";
-export type ErrorSection = "sync" | "archive";
+export type ErrorSection = "sync" | "backup" | "archive";
 type ErrorState = Partial<Record<ErrorSection, string[]>>;
 
 const HEADINGS: Record<ErrorSection, string> = {
   sync: "「我的内容」上一次对账",
+  backup: "NAS 备份",
   archive: "NAS 归档",
 };
 
@@ -23,7 +24,7 @@ async function readState(root: string): Promise<ErrorState> {
 
 function render(state: ErrorState): string {
   const parts: string[] = [];
-  for (const section of ["sync", "archive"] as const) {
+  for (const section of ["sync", "backup", "archive"] as const) {
     const errors = state[section] ?? [];
     if (!errors.length) continue;
     parts.push(`${HEADINGS[section]}有 ${errors.length} 处问题（其它条目照常处理）：\n\n${errors.map((e) => `- ${e}`).join("\n")}\n`);
