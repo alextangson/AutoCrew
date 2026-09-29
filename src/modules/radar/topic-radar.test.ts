@@ -60,6 +60,14 @@ describe("parseRssItems", () => {
     expect(items[0].title).toBe("t49");
     expect(items[29].title).toBe("t20");
   });
+
+  it("undated feed keeps its own order when capped (head items survive)", () => {
+    const body = Array.from({ length: 1000 }, (_, i) =>
+      `<item><title>u${i}</title><link>https://a.com/u${i}</link></item>`,
+    ).join("");
+    const items = parseRssItems(`<rss><channel>${body}</channel></rss>`);
+    expect(items.map((x) => x.title)).toEqual(Array.from({ length: 30 }, (_, i) => `u${i}`));
+  });
 });
 
 describe("rankCandidates", () => {
