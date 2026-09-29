@@ -8,7 +8,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { appendTurn, type ConversationMeta } from "../../storage/conversation-store.js";
+import { appendTurn, getConversation, type ConversationMeta } from "../../storage/conversation-store.js";
 import { enqueueConversationWrite } from "../chat-persist.js";
 import type { ApprovalBinding } from "../approval-gate.js";
 import { AskRegistry, type AskView } from "./asks.js";
@@ -77,6 +77,8 @@ export interface ActiveTurn {
   /** 已开始、还没完成的写类工具（停止时如实说「可能已部分生效」） */
   inFlight: Map<string, string>;
   aborted: boolean;
+  /** 编辑器里正开着的那篇（视图上下文）：不为它出稿件卡 */
+  openContentId?: string;
   /** 工作记录：工具调用、自动放行、压缩——收尾时作为一张卡落进对话 */
   worklog: WorkItem[];
   /** 这段对话是「全部放行」档（轮次开始时读定，U1） */
@@ -179,16 +181,22 @@ export class ChiefEditor {
     if (entryTurnId && a && a.turnId === entryTurnId && !a.aborted) {
       if (write) { a.writes.push(write); this.runs.patch(a.turnId, { writes: a.writes }); }
       // 只有稿件结果与后台长任务成卡；其余工具调用只在「工作记录」里（bug B）
-      const c = card;
-      if (!c || a.cards.some((x) => x.callId === c.callId)) return;
-      a.cards.push(c);
+      const c = card ? draftKeyed(card) : null;
+      if (!c || a.cards.some((x) => x.callId === c.callId && !isDraft(x))) return;
+      // 编辑器里正开着的那篇不出稿件卡：人就在看它（创始人反馈 2）
+      if (isDraft(c) && draftContent(c) === a.openContentId) return;
+      // 一轮里同一篇只留一张稿件卡，显示最新状态（交稿 / 修补 / 审稿会连着出好几次）
+      const i = a.cards.findIndex((x) => x.callId === c.callId);
+      if (i >= 0) a.cards[i] = c;
+      else a.cards.push(c);
       this.runs.patch(a.turnId, { cards: a.cards, writes: a.writes });
       this.deps.emit({ type: "card", turnId: a.turnId, conversationId: a.conversationId, card: c });
       return;
     }
     // 轮次结束后才返回：没有工作记录可挂，必须留一张卡让人看见
-    card = card ?? fallback ?? null;
+    card = card ? draftKeyed(card) : fallback ?? null;
     if (!card) return;
+    if (isDraft(card) && (await this.sameDraftAlreadyShown(binding, card))) return;
     const bg = { ...card, background: true };
     await appendConversation(binding.conversationId, { content: "（后台结果）", origin: "system" }, { content: "本机 agent 在轮次结束后返回了一条结果：", cards: [bg] }, binding.dataDir)
       .catch((err) => console.warn(`[chief-editor] 后台结果落盘失败：${err instanceof Error ? err.message : String(err)}`));
@@ -199,6 +207,16 @@ export class ChiefEditor {
    * 刷新/重连后的重挂视图。只给本资料库的：别的库里跑着的 agent 只经 statuses().running.otherLibrary 提示，
    * 它的卡不能在这边被批（评审 P2-15）。owner = 请求方就是发起这一轮的标签页；其余标签页只旁观（P2-14）。
    */
+  /**
+   * 迟到的稿件卡去重：只丢「同一次调用」重复送达的那张（评审 P2-10）。
+   * 同一篇、同一状态但来自另一次调用的是真的新结果（比如又改了一版），照样追加。
+   */
+  private async sameDraftAlreadyShown(binding: TokenBinding, card: Record<string, unknown>): Promise<boolean> {
+    const conv = await getConversation(binding.conversationId, binding.dataDir).catch(() => null);
+    const last = conv?.messages.at(-1)?.cards ?? [];
+    return last.some((x) => isDraft(x) && x.sourceCallId !== undefined && x.sourceCallId === card.sourceCallId);
+  }
+
   pendingView(opts: { conversationId?: string; dataDir: string; clientId?: string }): { running: Record<string, unknown> | null; asks: AskView[] } {
     const a = this.active;
     if (!a || a.dataDir !== opts.dataDir) return { running: null, asks: [] };
@@ -246,6 +264,22 @@ export function appendConversation(
   dataDir: string,
 ): Promise<ConversationMeta | null> {
   return enqueueConversationWrite(id, () => appendTurn(id, user, assistant, dataDir));
+}
+
+function isDraft(c: Record<string, unknown>): boolean {
+  return c.type === "agent_draft";
+}
+
+function draftContent(c: Record<string, unknown>): string | undefined {
+  const id = (c.data as { contentId?: unknown } | undefined)?.contentId;
+  return typeof id === "string" ? id : undefined;
+}
+
+/** 稿件卡的调用 id 换成按稿件定的键：前端与本轮卡片列表都按它替换成最新状态 */
+function draftKeyed(c: Record<string, unknown>): Record<string, unknown> {
+  const id = isDraft(c) ? draftContent(c) : undefined;
+  // 原调用 id 留在 sourceCallId：迟到结果按「是不是同一次调用」去重，不按状态（评审 P2-10）
+  return id ? { ...c, callId: `draft-${id}`, sourceCallId: c.sourceCallId ?? c.callId } : c;
 }
 
 let instance: ChiefEditor | null = null;

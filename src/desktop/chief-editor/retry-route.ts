@@ -32,6 +32,8 @@ async function preflight(svc: ChiefEditor, backend: LocalBackendId): Promise<str
   const adapter = ADAPTERS[backend];
   if (!adapter) return `${backend} 即将支持，这篇没法由它接着写`;
   if (!adapter.launch()) return `${adapter.label}没装上：在 AutoCrew 目录运行 npm install。不会改用内置引擎。`;
+  const problem = adapter.launchProblem?.();
+  if (problem) return problem;
   // 「上次报未登录」只是提示不是禁令：创始人可能已经重新登录了，让这一轮真去试（评审 v1.2 P2-9）
   const routing = adapter.routingEnv?.(svc.deps.claudeSettingsPath) ?? { env: {} };
   if ("error" in routing) return routing.error;

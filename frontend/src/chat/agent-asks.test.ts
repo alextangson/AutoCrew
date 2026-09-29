@@ -43,3 +43,10 @@ describe("评审 v1.2 P2-7：重挂按事件里的对话查", () => {
     expect(pendingQuery("c", undefined, "conv-1-a")).toEqual({ client_id: "c", conversation_id: "conv-1-a" });
   });
 });
+
+describe("反馈 2：稿件卡按稿件替换成最新状态", () => {
+  it("同一 callId 新卡替换旧卡", () => {
+    const merged = mergeCards([{ type: "agent_draft", callId: "draft-x", data: { status: "repair" } }], [{ type: "agent_draft", callId: "draft-x", data: { status: "accepted" } }]);
+    expect(merged).toEqual([{ type: "agent_draft", callId: "draft-x", data: { status: "accepted" } }]);
+  });
+});

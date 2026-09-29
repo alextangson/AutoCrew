@@ -176,6 +176,16 @@ function IntegrationCard(props: {
  * 最后一次调用时间，和一个撤销键（撤销 = 删文件，那个宿主下一次调用 401）。
  */
 function HostsCard(props: { hosts: HostTokenView[]; reload: () => void }) {
+  // WorkBuddy 反向接入（spec W1）：没装就置灰并说明；装了一键发令牌 + 写它的 mcp.json
+  const [wbInstalled, setWbInstalled] = useState<boolean | null>(null);
+  useEffect(() => {
+    void invoke("hosts:workbuddy_status").then((r) => setWbInstalled(Boolean((r as { data?: { installed?: boolean } }).data?.installed)));
+  }, []);
+  const connectWorkbuddy = async () => {
+    const r = await invoke("hosts:workbuddy_connect");
+    toast(r.ok ? String((r as { message?: string }).message ?? "已连接") : (r.error ?? "连接失败"));
+    props.reload();
+  };
   const now = Date.now();
   const revoke = async (host: string) => {
     const ok = await confirmDialog({
@@ -195,7 +205,7 @@ function HostsCard(props: { hosts: HostTokenView[]; reload: () => void }) {
 
   return (
     <IntegrationCard
-      title="宿主 · Claude Code / Codex / dsh"
+      title="宿主 · Claude Code / Codex / dsh / WorkBuddy"
       unlocks="别的 AI 客户端直接当你的员工：Claude 写稿、Codex 做封面，稿件与证据仍然落在这里的案卷。"
       ifMissing="只有工作台自己能写；Codex / Claude Code 那边调用会连不上或 401。"
       status={integrationStatus({
@@ -224,6 +234,11 @@ function HostsCard(props: { hosts: HostTokenView[]; reload: () => void }) {
           ))}
         </>
       )}
+      <div className="row">
+        <span className="row-title">WorkBuddy</span>
+        <span className="muted">{wbInstalled === false ? "没找到 WorkBuddy（/Applications/WorkBuddy.app）" : "在 WorkBuddy 里直接调用 AutoCrew：写进它的 ~/.workbuddy/mcp.json（写前备份）"}</span>
+        <button disabled={!wbInstalled} onClick={() => void connectWorkbuddy()}>连接 WorkBuddy</button>
+      </div>
       <p className="muted mono">
         令牌文件等于你的编辑部钥匙——能读到它的人能调用全部 AutoCrew 工具。撤销就是删掉它，下一次调用立刻 401。
         加 <code>--dir &lt;工作目录&gt;</code> 还能把员工人设写进那个目录的 AGENTS.md / CLAUDE.md。

@@ -31,6 +31,8 @@ export function finalSegment(text: string[], gate: StreamGate): string {
 }
 
 export interface StreamSinks {
+  cleanText?: (chunk: string) => string;
+  isOwnMcpCall?: (rawInput: unknown) => boolean;
   onDelta?: (e: { ev: "delta" | "reset" | "done"; text?: string }) => void;
   onProgress?: (e: Record<string, unknown>) => void;
 }
@@ -84,8 +86,10 @@ export function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSi
       }
       closeThought();
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && u.content.text) {
-        text.push(u.content.text);
-        emit(redactor.push(u.content.text));
+        const chunk = sinks.cleanText ? sinks.cleanText(u.content.text) : u.content.text;
+        if (!chunk) return;
+        text.push(chunk);
+        emit(redactor.push(chunk));
       } else if (u.sessionUpdate === "tool_call" && u.toolCallId) {
         // 工具调用之前那段话是过渡文字：收进「已处理」块，最终回复只留最后一段（v1.2）
         const between = text.slice(gate.segStart ?? 0).join("").trim();
@@ -102,6 +106,7 @@ export function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSi
       }
     },
     async requestPermission(req) {
+      if (sinks.isOwnMcpCall?.(req.rawInput)) return pickPermissionOption(req.options, "allow");
       // 本对话都允许 / 全部放行：shell、文件直接放行（记进工作记录）；业务审批不走这里，照样弹卡
       if (turn.bypass || turn.allowConversation) {
         upsertWork(svc, turn, { id: `perm-${req.toolCallId ?? Date.now()}`, name: `自动放行：${redactAndTruncate(req.title.replace(/\s*\{[\s\S]*$/, ""), 60)}`, status: "done" });

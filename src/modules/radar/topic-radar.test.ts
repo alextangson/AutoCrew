@@ -479,3 +479,123 @@ describe("unified intel layer v2 (adapter kinds + migration)", () => {
     expect(result.failedSources).toContain("Hacker News");
   });
 });
+
+describe("per-source minIntervalHours (付费源一天一次)", () => {
+  async function setup() {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "x", kind: "x", name: "X", enabled: true, config: { minIntervalHours: 24 } },
+      { id: "yt", kind: "youtube", name: "YouTube", enabled: true, config: {} },
+    ], testDir);
+  }
+  const counting = (calls: string[], fail?: string) => async (kind: string) => {
+    calls.push(kind);
+    if (kind === fail) throw new Error("boom");
+    return [{ title: `${kind} ${calls.length}`, url: `https://${kind}.example/${calls.length}` }];
+  };
+
+  it("within the interval: X is not re-fetched and its last items are carried over", async () => {
+    await setup();
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    const first = (await loadTopicCache(testDir))!.items.find((i) => i.source === "X")!;
+    calls.length = 0;
+    const r = await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toEqual(["youtube"]);
+    expect(r.itemCount).toBe(2);
+    expect((await loadTopicCache(testDir))!.items.find((i) => i.source === "X")).toEqual(first);
+  });
+
+  it("after the interval: X is fetched again", async () => {
+    await setup();
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting([]) });
+    const cache = (await loadTopicCache(testDir))!;
+    cache.sourceFetchedAt!.x = new Date(Date.now() - 25 * 3600_000).toISOString();
+    await fs.writeFile(path.join(testDir, "topic-radar.json"), JSON.stringify(cache));
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls.sort()).toEqual(["x", "youtube"]);
+  });
+
+  it("a failed X fetch records no timestamp, so the next round retries", async () => {
+    await setup();
+    const r1 = await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting([], "x") });
+    expect(r1.failedSources).toEqual(["X"]);
+    expect((await loadTopicCache(testDir))!.sourceFetchedAt?.x).toBeUndefined();
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toContain("x");
+  });
+
+  it("X alone returning nothing still records its clock (no other source to force a cache write)", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([{ id: "x", kind: "x", name: "X", enabled: true, config: { minIntervalHours: 24 } }], testDir);
+    const calls: string[] = [];
+    const empty = async (kind: string) => { calls.push(kind); return []; };
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: empty });
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: empty });
+    expect(calls).toEqual(["x"]);
+  });
+
+  it("renaming a source keeps its carried items (matched by id, not display name)", async () => {
+    await setup();
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting([]) });
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "x", kind: "x", name: "X 关注清单", enabled: true, config: { minIntervalHours: 24 } },
+      { id: "yt", kind: "youtube", name: "YouTube", enabled: true, config: {} },
+    ], testDir);
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toEqual(["youtube"]);
+    expect((await loadTopicCache(testDir))!.items.filter((i) => i.sourceId === "x")).toHaveLength(1);
+  });
+
+  it("a successful but empty X fetch still counts, so a quiet day doesn't trigger paid rescans", async () => {
+    await setup();
+    await refreshTopicRadar(testDir, globalThis.fetch, {
+      overseasFetch: async (kind: string) => (kind === "x" ? [] : [{ title: "yt", url: "https://yt/1" }]),
+    });
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toEqual(["youtube"]);
+  });
+});
+
+describe("per-source interval: clock and TTL bookkeeping", () => {
+  it("a temporarily disabled X keeps its clock, so re-enabling it within 24h does not re-fetch", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    const x = { id: "x", kind: "x" as const, name: "X", config: { minIntervalHours: 24 } };
+    const yt = { id: "yt", kind: "youtube" as const, name: "YouTube", enabled: true, config: {} };
+    const calls: string[] = [];
+    const fetcher = async (kind: string) => { calls.push(kind); return [{ title: kind, url: `https://${kind}/${calls.length}` }]; };
+    await saveRadarSources([{ ...x, enabled: true }, yt], testDir);
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: fetcher });
+    await saveRadarSources([{ ...x, enabled: false }, yt], testDir);
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: fetcher });
+    await saveRadarSources([{ ...x, enabled: true }, yt], testDir);
+    calls.length = 0;
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: fetcher });
+    expect(calls).toEqual(["youtube"]);
+  });
+
+  it("a round that only carried X (everything else failed) does not reset the 6h TTL", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "x", kind: "x", name: "X", enabled: true, config: { minIntervalHours: 24 } },
+      { id: "yt", kind: "youtube", name: "YouTube", enabled: true, config: {} },
+    ], testDir);
+    await refreshTopicRadar(testDir, globalThis.fetch, {
+      overseasFetch: async (kind: string) => [{ title: kind, url: `https://${kind}/1` }],
+    });
+    const cache = (await loadTopicCache(testDir))!;
+    const old = new Date(Date.now() - 7 * 3600_000).toISOString();
+    cache.fetchedAt = old;
+    await fs.writeFile(path.join(testDir, "topic-radar.json"), JSON.stringify(cache));
+    const r = await refreshTopicRadar(testDir, globalThis.fetch, {
+      overseasFetch: async () => { throw new Error("down"); },
+    });
+    expect(r.failedSources).toEqual(["YouTube"]);
+    expect((await loadTopicCache(testDir))!.fetchedAt).toBe(old);
+  });
+});

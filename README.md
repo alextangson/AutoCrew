@@ -69,22 +69,24 @@ npm run restart
 
 **通过 Claude Desktop、Claude Code 或 Codex 的 MCP 写作不需要配置后台模型。** 默认使用当前宿主的模型能力与额度，AutoCrew 保存任务、资料与稿件，并执行引文和格式检查。下面的配置仅供 AutoCrew 工作台、显式 `execution=engine` / `review=engine` 或已授权的无人值守后台任务使用。第三方搜索及图像、视频服务仍有各自的额度和计费，不包含在宿主模型订阅中。
 
-### 用本机 Claude 当总编辑（不配端点也能用）
+### 用本机 Claude 或 Codex 当总编辑（不配端点也能用）
 
-工作台右栏的总编辑可以直接交给你电脑上的 Claude Code 来跑：用你自己的 Claude 订阅，设置页一个端点都不用填。
+工作台右栏的总编辑可以直接交给你电脑上的 Claude Code 或 Codex 来跑：用你自己的订阅，设置页一个端点都不用填。
 
-1. 装好并登录 Claude Code：终端运行 `claude`，按提示登录一次。
-2. 在 AutoCrew 目录运行 `npm install`（会装上 ACP 适配器 `@agentclientprotocol/claude-agent-acp`），再 `npm start`。
-3. 首次开机卡点「先不配，用本机 Claude 当总编辑」；之后在右栏输入框下方选「本机 Claude」。第一次使用会先弹一段权限说明。
+1. 装好并登录：Claude Code 在终端运行 `claude` 按提示登录；Codex 运行 `codex login`。两个都装也行，按对话切换。
+2. 在 AutoCrew 目录运行 `npm install`（会装上 ACP 适配器 `@agentclientprotocol/claude-agent-acp` 和 `@zed-industries/codex-acp`），再 `npm start`。
+3. 首次开机卡点「先不配，用本机 Claude 当总编辑」；之后在右栏输入框下方的后端切换器里选「本机 Claude」或「本机 Codex」。第一次使用会先弹一段权限说明。
 
 须知：
 
-- **怎么跑**：每轮在本机起一个 Claude，通过 AutoCrew 的 MCP 调工具。工作目录是 `~/.autocrew/chief-editor/`，只加载 AutoCrew 的 MCP 和仓库自带技能，不加载你全局的其他 MCP 和插件。
+- **怎么跑**：每轮在本机起一个 agent，通过 AutoCrew 的 MCP 调工具。工作目录是 `~/.autocrew/chief-editor/`，只挂 AutoCrew 的 MCP，不加载你全局配置的其他 MCP 和插件；Claude 还会带上仓库自带技能。
 - **按对话设置**：输入框下方可以选模型、思考强度和权限模式（每次问 / 本对话都允许 / 全部放行），改了下一轮生效。
 - **权限**：本机 agent 和你自己开 Claude Code 一样，能读写文件、跑 shell。AutoCrew 只防误操作：跑命令、写文件先弹卡问你；发布、删稿、删选题在任何权限模式下都要你在卡片上批准。它防不住网页或资料里的恶意指令诱导。
 - **代理**：如果 `~/.claude/settings.json` 的 `env` 里配了 `ANTHROPIC_BASE_URL`，本机 agent 也走这个代理（只带 `ANTHROPIC_*` 和 `CLAUDE_CODE_*` 两类变量）。代理没开会直接报错，不会绕过它直连。代理是 Headroom 时，会自动挂上它的 MCP，让 agent 能取回被压缩的原文。
+- **Codex 的额外约束**：不管 `~/.codex/config.toml` 怎么写，每个会话都强制「跑命令前先问」和「只能写工作目录、shell 不联网」；`config.toml` 里的 MCP 服务一个都不启动，登录和模型提供方照常使用；AutoCrew 只用启动参数覆盖，不改你的配置文件。
+- **Codex 的已知限制**：当前适配器版本不上报思考强度，这一项显示「默认」；`~/.codex/AGENTS.md` 仍会加载；`config.toml` 里有名字带点号、空格或引号的 MCP 服务时会拒绝启动并说明原因（没法可靠地关掉它们）。
 - **出问题时**：没装、没登录会在切换器上标出来，发送时给修法；绝不自动改用内置引擎。
-- **暂未接入**：本机 Codex 和 WorkBuddy 在切换器里显示「即将支持」。
+- **WorkBuddy**：不在切换器里，走反方向接入——让 WorkBuddy 自己连 AutoCrew，见下文「接宿主」。
 
 ### 内置引擎：端点表
 
@@ -274,7 +276,7 @@ MCP 初始化自带流程说明，亦可读取 `autocrew://writing-guide` 或使
 
 这些技能是操作指引，不意味着同名独立 agent 已经运行。实际分工由工具的任务、材料包、审稿结果和交接记录证明。
 
-### 接宿主（Claude Code / Codex / dsh）
+### 接宿主（Claude Code / Codex / WorkBuddy / dsh）
 
 **只有一个进程写盘。** `http://127.0.0.1:4317/mcp` 是唯一的 MCP 传输：Codex 的远端客户端直连它，
 Claude Code 的 `autocrew mcp` 只是一个 stdio 转发器（把 JSON-RPC 原样转发到同一个端点）。
@@ -285,7 +287,7 @@ Claude Code 的 `autocrew mcp` 只是一个 stdio 转发器（把 JSON-RPC 原�
 
 ```bash
 npm start                 # 先起服务（令牌目录由它创建）
-autocrew host codex       # 或 claude-code / dsh
+autocrew host codex       # 或 claude-code / workbuddy / dsh
 ```
 
 命令会建好 `~/.autocrew/tokens/<host>.token`（0600）并打印接入步骤。**这个文件等于你的编辑部钥匙**
@@ -296,6 +298,7 @@ autocrew host codex       # 或 claude-code / dsh
 | --- | --- |
 | Claude Code | 仓库里的 `.mcp.json` 已经指向转发器，起了服务就能用 |
 | Codex | `export AUTOCREW_MCP_TOKEN=$(cat ~/.autocrew/tokens/codex.token)`，再 `codex mcp add autocrew --url http://127.0.0.1:4317/mcp --bearer-token-env-var AUTOCREW_MCP_TOKEN` |
+| WorkBuddy | `autocrew host workbuddy`，或工作台「设置 → 接入更多」的宿主卡上点「连接 WorkBuddy」：发令牌，并把一条 `autocrew` 合并进 `~/.workbuddy/mcp.json`（写前备份到 `mcp.json.autocrew-bak`，别的条目原样保留，文件读不懂就不写）。重启 WorkBuddy 后生效。之后在稿件页或对话栏点「复制给 WorkBuddy」，把那句话粘进 WorkBuddy 就能接着处理这篇稿 |
 | dsh | 走进程内工具桥，见 `adapters/dsh/README.md` |
 
 Codex 提醒：`codex exec`（非交互）会自动取消 MCP 工具调用，除非加

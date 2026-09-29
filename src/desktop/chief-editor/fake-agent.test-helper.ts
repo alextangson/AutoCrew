@@ -14,6 +14,9 @@ import { initChiefEditor, resetChiefEditor, type ChiefEditor } from "./service.j
 
 type Json = Record<string, unknown>;
 
+/** 与后端无关的边界测试对每个本机后端各跑一遍（阶段 2：Claude + Codex） */
+export const TEST_BACKENDS = ["claude", "codex"] as const;
+
 export class FakeAgent implements AgentProcess {
   pid = undefined;
   command = "fake-agent --acp";
@@ -93,6 +96,9 @@ export async function makeHarness(opts: { launchable?: boolean; askTtlMs?: numbe
   resetActiveTurns();
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "chief-editor-home-"));
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "chief-editor-data-"));
+  // Codex 会读 CODEX_HOME/config.toml：测试里指到临时目录，绝不读创始人真的 ~/.codex
+  const prevCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.join(home, "codex-home");
   const h = { home, dataDir, events: [] as Json[], mcpCalls: [] as Array<{ request: Json; dataDir: string }>, agents: [] as FakeAgent[], launches: [] as LaunchSpec[], gate: new ApprovalGate(), contents: new Map() } as Harness;
   h.script = async () => ({ stopReason: "end_turn" });
   const spawnAgent: SpawnAgent = (launch, _cwd, handlers) => {
@@ -126,6 +132,8 @@ export async function makeHarness(opts: { launchable?: boolean; askTtlMs?: numbe
     return ((res?.result as Json)?.structuredContent ?? {}) as Json;
   };
   h.cleanup = async () => {
+    if (prevCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = prevCodexHome;
     resetChiefEditor();
     resetActiveTurns();
     await fs.rm(home, { recursive: true, force: true });

@@ -56,6 +56,7 @@ const HOST_LABEL: Record<string, string> = {
   "claude-code": "Claude",
   codex: "Codex",
   dsh: "dsh",
+  workbuddy: "WorkBuddy",
   "local-user": "工作台",
 };
 

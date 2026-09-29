@@ -56,7 +56,7 @@ export async function maybeRunLocalTurn(payload: Json, ctx?: ChatTurnCtx): Promi
     clientId,
     dataDir: getDataDir(dataDir),
     ...(str(payload.conversation_id) ? { conversationId: str(payload.conversation_id) } : {}),
-    ...(viewContext?.contentId ? { contentId: viewContext.contentId } : {}),
+    ...(viewContext?.contentId ? { contentId: viewContext.contentId, openContentId: viewContext.contentId } : {}),
     promptContext: `${await actionsBlock(dataDir)}${agentContextBlock(viewContext)}${str(payload._dispatch_context)}`,
     ...newConversationSettings(payload),
     onDelta: (e) => { try { ctx?.onChatDelta?.({ turnId, seq: seq++, ...e }); } catch { /* 推送失败不影响本轮 */ } },

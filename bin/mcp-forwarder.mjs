@@ -34,10 +34,17 @@ export function portOf(env = process.env) {
  * 稿子才能记上 `writtenBy.host`（§4.1）。两个都没有也照样发——让服务端回 401，
  * 比在这里编一条「没找到凭证」的错误更接近真相。
  */
-export function resolveForwarderToken(dataDir, env = process.env, host = "claude-code") {
-  const fromEnv = env.AUTOCREW_TOKEN;
+export function resolveForwarderToken(dataDir, env = process.env, host = env.AUTOCREW_HOST || "claude-code") {
+  // 点名了宿主（WorkBuddy 的 mcp.json）就只认那个宿主的令牌文件：继承来的 AUTOCREW_TOKEN 不作数，
+  // 否则撤销 workbuddy 的令牌后，环境里的通用令牌照样放行（spec W7，评审 P2-8）。没点名的老路径不变
+  const fromEnv = env.AUTOCREW_HOST ? "" : env.AUTOCREW_TOKEN;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  for (const file of [path.join(dataDir, "tokens", `${host}.token`), path.join(dataDir, "server-token")]) {
+  // 显式点名宿主（WorkBuddy 的 mcp.json 带 AUTOCREW_HOST=workbuddy）：只认它的令牌；
+  // 撤销后回落到本机全能的 server-token 等于撤销无效（spec W7）
+  const candidates = env.AUTOCREW_HOST
+    ? [path.join(dataDir, "tokens", `${host}.token`)]
+    : [path.join(dataDir, "tokens", `${host}.token`), path.join(dataDir, "server-token")];
+  for (const file of candidates) {
     try {
       const value = fs.readFileSync(file, "utf-8").trim();
       if (value) return value;
@@ -66,7 +73,7 @@ function jsonRpcError(id, code, message) {
 /**
  * 转发一条已解析的 JSON-RPC 消息，返回该写回 stdout 的对象（通知与 202 返回 null）。
  */
-export async function forwardMessage(message, { url, token, session, fetchImpl = fetch }) {
+export async function forwardMessage(message, { url, token, session, host = "claude-code", fetchImpl = fetch }) {
   const id = message?.id;
   const isNotification = id === undefined || id === null;
   let response;
@@ -90,7 +97,7 @@ export async function forwardMessage(message, { url, token, session, fetchImpl =
   if (!response.ok) {
     // 401 是撤销 token 后的正常结局；其它非 2xx 一律照实说，不静默降级。
     const hint = response.status === 401
-      ? "AutoCrew 拒绝了这个令牌（可能已被撤销），重新执行 autocrew host claude-code"
+      ? `AutoCrew 拒绝了这个令牌（可能已被撤销），重新执行 autocrew host ${host}`
       : `AutoCrew 服务返回 HTTP ${response.status}`;
     return jsonRpcError(id, -32000, hint);
   }
@@ -123,7 +130,7 @@ export function runForwarder({
       return;
     }
     inflight.push(
-      forwardMessage(message, { url, token, session, fetchImpl }).then((reply) => {
+      forwardMessage(message, { url, token, session, host: env.AUTOCREW_HOST || "claude-code", fetchImpl }).then((reply) => {
         if (reply) output.write(`${JSON.stringify(reply)}\n`);
       }),
     );
