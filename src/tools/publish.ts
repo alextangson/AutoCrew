@@ -18,7 +18,7 @@ import { scanText } from "../modules/filter/sensitive-words.js";
 import { generateAndSaveDigest } from "../modules/publish/digest.js";
 import { bindByPublishUrl } from "../modules/flywheel/platform-items.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
-import { prepareEgoLitePublish } from "../modules/publish/ego-lite.js";
+import { prepareCheckedPublish } from "../modules/publish/ego-lite.js";
 import { executePublishCheck, type CheckDeps } from "../modules/publish/review-gate/check.js";
 import { proposePreference } from "../modules/publish/review-gate/preferences.js";
 
@@ -45,6 +45,7 @@ export const publishSchema = Type.Object({
   force: Type.Optional(Type.Boolean({ description: "Bypass the pre-publish checklist gate. Use only when the user explicitly insists." })),
   digest: Type.Optional(Type.String({ description: "For 'digest' action: manual 摘要 to save (empty clears it). Omit to AI-generate." })),
   schedule: Type.Optional(Type.String({ description: "Optional platform-local scheduled time carried into the ego lite browser hand-off." })),
+  check_ids: Type.Optional(Type.Array(Type.String(), { description: "For 'ego_lite_prepare': the check_id of each platform to package, from the latest 'check'. Stale or blocked platforms get no package." })),
   plan: Type.Optional(Type.Unknown({ description: "For 'check': the publish plan JSON object, or a project-relative path such as 06-publish/publish-plan.json. Each platform entry: platform, content_id, account_display_name, title, caption, tags, covers:[{usage, ratio, path}], cover_text, scheduled_at, timezone, campaigns; final_video.path at top level." })),
   founder_quotes: Type.Optional(Type.Array(Type.String(), { description: "For 'check': every thing the founder said about this publish in this conversation, verbatim." })),
   instruction_id: Type.Optional(Type.String({ description: "For 'check': the ins-… id from the last line of the workbench 「让 Codex 发布」 text, if the founder pasted one. Omit when there is none." })),
@@ -98,6 +99,14 @@ async function deriveAdoption(contentId: string, dataDir: string) {
   }
 }
 
+/** check_ids：数组 / JSON 字符串 / 逗号分隔都认（模型参数不保证类型） */
+function checkIdsOf(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String).map((x) => x.trim()).filter(Boolean);
+  if (typeof v !== "string" || !v.trim()) return [];
+  try { const p = JSON.parse(v) as unknown; if (Array.isArray(p)) return p.map(String).filter(Boolean); } catch { /* 按逗号拆 */ }
+  return v.split(/[,，\s]+/).map((x) => x.replace(/^["'[]+|["'\]]+$/g, "")).filter(Boolean);
+}
+
 export async function executePublish(
   params: Record<string, unknown>,
   deps?: { publishImpl?: typeof publishWechatMpDraft; check?: CheckDeps },
@@ -138,16 +147,17 @@ export async function executePublish(
     return { ok: true, data: output };
   }
 
-  // --- ego_lite_prepare: resolve upload files/copy, but never click the external Publish button ---
-  // TODO(发布前把关 §11 集成轮)：改为按平台出包，必须带该平台有效 check_id（readCheckRecord + 重算指纹一致、
-  // 无未例外 block），包内 covers[] 取检查记录里的 covers；过期或被拦的平台不出包（modules/publish/ego-lite.ts）。
+  // --- ego_lite_prepare：按平台出包，每个平台必须带当前有效的 check_id（发布前把关 spec §11）；从不点发布 ---
   if (action === "ego_lite_prepare") {
     const contentId = params.content_id as string | undefined;
     if (!contentId) {
       return { ok: false, error: "content_id is required for ego_lite_prepare action" };
     }
+    const ids = checkIdsOf(params.check_ids ?? params.check_id);
+    if (!ids.length) return { ok: false, code: "check_required", error: "出发布包要带每个平台的 check_id：先跑 autocrew_publish check，把返回的各平台 check_id 带上（被拦或过期的平台不出包）" };
     try {
-      const data = await prepareEgoLitePublish(contentId, dataDir, params.schedule as string | undefined);
+      const data = await prepareCheckedPublish(contentId, ids, dataDir, params.schedule as string | undefined);
+      if (!data.packages.length) return { ok: false, code: "no_valid_check", error: data.refused.map((r) => r.error).join("；"), refused: data.refused };
       return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -173,8 +183,7 @@ export async function executePublish(
   }
 
   // --- confirm_published: mark content as published after manual paste ---
-  // TODO(发布前把关 §11 集成轮)：回执引用该平台 check_id（检查时间早于提交、当时无未例外 block），
-  // 找不到 → 卡片与时间线「发布前未把关」；事后补检不抹历史（modules/production/receipts.ts）。
+  // 回执与发布前检查的绑定在发布槽里做（modules/production/publish-check-link.ts）：「我发了」盖把关结论，AI 说法记待核
   if (action === "confirm_published") {
     const contentId = params.content_id as string | undefined;
     if (!contentId) {

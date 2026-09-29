@@ -4,6 +4,7 @@ import path from "node:path";
 import { getContent, getCoverReview, getDataDir, type Asset, type Content } from "../../storage/local-store.js";
 import { sha256File } from "../video/handoff/manifest.js";
 import { registeredPackage } from "../production/publish-gate.js";
+import { verifyCheck } from "./review-gate/check.js";
 import { formatForClipboard } from "./clipboard-publisher.js";
 
 export const EGO_LITE_VIDEO_PLATFORMS = [
@@ -130,4 +131,44 @@ export async function prepareEgoLitePublish(
     requiresFinalConfirmation: true,
     nextAction: "open_and_fill_only",
   };
+}
+
+// ---- 按平台出包，必须带该平台当前有效的检查（发布前把关 spec §11） ----
+
+export interface CheckedPackage extends Omit<EgoLitePublishPackage, "coverPath"> {
+  checkId: string;
+  /** 检查记录里的封面：用途槽 + 文件 + sha（发的就是检查过的那几张） */
+  covers: Array<{ usage: string; ratio: string; slot?: string; path: string; sha256: string | null }>;
+  tags: string[];
+  /** 检查时创始人的原话例外（逐字） */
+  overrides: Array<{ rule: string; founder_quote: string }>;
+}
+
+export interface CheckedPublishResult { packages: CheckedPackage[]; refused: Array<{ check_id: string; platform: string | null; code: string; error: string }> }
+
+/**
+ * 每个 check_id 出一个平台的包：检查仍有效（指纹 / payload 重算一致、没有未例外的拦截）才出；
+ * 过期或被拦的平台不出包，给指路错误。成片仍按登记记录取（本体发布出口），标题 / 文案 / 标签 / 排期 / 封面取检查过的计划条目。
+ */
+export async function prepareCheckedPublish(contentId: string, checkIds: string[], dataDir?: string, schedule?: string): Promise<CheckedPublishResult> {
+  const root = getDataDir(dataDir);
+  const content = await getContent(contentId, root);
+  if (!content) throw new Error(`稿件不存在：${contentId}`);
+  const out: CheckedPublishResult = { packages: [], refused: [] };
+  const video = (await publishFiles(content, root).catch((e: unknown) => e instanceof Error ? e : new Error(String(e))));
+  for (const checkId of checkIds) {
+    const v = await verifyCheck(contentId, checkId, root);
+    if (!v.ok) { out.refused.push({ check_id: checkId, platform: null, code: v.code, error: v.error }); continue; }
+    const c = v.checked;
+    if (!isEgoLitePlatform(c.platform)) { out.refused.push({ check_id: checkId, platform: c.platform, code: "platform_unsupported", error: `ego lite 视频发布不支持 ${c.platform}` }); continue; }
+    if (video instanceof Error) { out.refused.push({ check_id: checkId, platform: c.platform, code: "video_unavailable", error: video.message }); continue; }
+    const when = schedule?.trim() || c.entry.scheduled_at || undefined;
+    out.packages.push({
+      provider: "ego-lite", contentId, platform: c.platform, taskSpaceName: `autocrew-publish-${c.platform}-${contentId}`, publishUrl: EGO_LITE_PUBLISH_URLS[c.platform],
+      title: c.entry.title, caption: c.entry.caption, tags: c.entry.tags, videoPath: video.videoPath, checkId, covers: c.covers,
+      overrides: c.overrides.map((o) => ({ rule: o.rule, founder_quote: o.founder_quote })),
+      ...(when ? { schedule: when } : {}), requiresFinalConfirmation: true, nextAction: "open_and_fill_only",
+    });
+  }
+  return out;
 }

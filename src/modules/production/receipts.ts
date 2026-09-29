@@ -15,7 +15,8 @@
  */
 import type { Content } from "../../storage/local-store.js";
 import { newId } from "../../storage/production-store.js";
-import type { Decision, Fact, ProductionDoc, PublicationState } from "../../storage/production-types.js";
+import type { Decision, Fact, GateStamp, ProductionDoc, PublicationState } from "../../storage/production-types.js";
+import { gateStamp } from "./publish-check-link.js";
 import { readPublishRecord, type PlatformPublication } from "../../storage/publish-record.js";
 import { bindingsForContent } from "../flywheel/platform-items.js";
 
@@ -36,6 +37,8 @@ export interface Observation {
   evidence: string;
   /** 发布前把关记录（发布审查闸门的 check_id） */
   check_id?: string;
+  /** 写入时盖的把关结论（publish-check-link） */
+  gate?: GateStamp;
 }
 
 const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
@@ -50,7 +53,7 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
     for (const p of record.platforms) {
       const state = STATE[p.state];
       if (!state || (!p.submitted && p.state !== "rejected")) continue;
-      const checkId = (p as { checkId?: string | null }).checkId ?? undefined;
+      const checkId = p.checkId ?? undefined;
       out.push({ source: "plan", platform: p.platform, pub_state: state, evidence: "发布计划里的记录",
         ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
         ...(p.time ? { published_at: p.time } : {}), ...(checkId ? { check_id: checkId } : {}) });
@@ -64,6 +67,8 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
     out.push({ source: byId ? "metrics_id" : "metrics_title", platform, item_id: rest.join(":"), pub_state: "public",
       evidence: byId ? "数据回流按作品 id 对上了这条" : "数据回流按标题猜是这条" });
   }
+  // 可信观察在读到时盖把关结论（引用的 check_id 或提交前最近的有效检查），写进事实后不再变
+  for (const o of out) if (TRUSTED.has(o.source)) o.gate = await gateStamp(content.id, o.platform, o.published_at, o.check_id, dataDir);
   return out;
 }
 
@@ -85,7 +90,7 @@ export function observationsOf(doc: ProductionDoc): ObsFact[] {
     id: f.id, order, round: f.round, seen_at: f.seen_at ?? "1970-01-01T00:00:00.000Z", source: legacySource(f), platform: f.platform ?? "?",
     ...(f.url ? { url: f.url } : {}), ...(f.item_id ? { item_id: f.item_id } : {}), pub_state: f.pub_state ?? "reviewing",
     ...(f.published_at ? { published_at: f.published_at } : {}), ...(f.reason ? { reason: f.reason } : {}),
-    ...(f.by ? { by: f.by } : {}), ...(f.check_id ? { check_id: f.check_id } : {}), evidence: f.evidence ?? "",
+    ...(f.by ? { by: f.by } : {}), ...(f.check_id ? { check_id: f.check_id } : {}), ...(f.gate ? { gate: f.gate } : {}), evidence: f.evidence ?? "",
   }]));
 }
 
@@ -115,6 +120,7 @@ export function observationFact(doc: ProductionDoc, o: Observation, round: numbe
     at: o.published_at ?? now, seen_at: now, obs_source: o.source, platform: o.platform, pub_state: o.pub_state, verified: TRUSTED.has(o.source), evidence: o.evidence,
     ...(o.published_at ? { published_at: o.published_at } : {}), ...(o.url ? { url: o.url } : {}), ...(o.item_id ? { item_id: o.item_id } : {}),
     ...(o.reason ? { reason: o.reason } : {}), ...(o.account ? { account: o.account } : {}), ...(o.by ? { by: o.by } : {}), ...(o.check_id ? { check_id: o.check_id } : {}),
+    ...(o.gate ? { gate: o.gate } : {}),
   };
 }
 
@@ -156,6 +162,8 @@ export interface Slot {
   item_id?: string;
   reason?: string;
   check_id?: string;
+  /** 决定槽状态那一条的把关结论；没有（旧数据 / AI 说法）= 没把关 */
+  gate?: GateStamp;
   /** 证据时间（排序与显示） */
   at: string;
   /** 被顶掉的早先观察（删了重发、AI 说法被可信观察顶掉…） */
@@ -198,6 +206,7 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
     id: slotId(round, platform), round, platform, pub_state: pick.pub_state, verified: pick.cls !== "pending", by: pick.cls, fact_id: pick.fact_id,
     source: pick.source, evidence: pick.evidence, ...(o?.by?.host ? { host: o.by.host } : {}), ...(o?.url ? { url: o.url } : {}),
     ...(o?.item_id ? { item_id: o.item_id } : {}), ...(o?.reason ? { reason: o.reason } : {}), ...(o?.check_id ? { check_id: o.check_id } : {}),
+    ...(pick.d?.gate ?? o?.gate ? { gate: pick.d?.gate ?? o!.gate } : {}),
     at: o?.published_at ?? o?.seen_at ?? pick.d?.at ?? new Date(pick.at).toISOString(),
     history: entries.filter((e) => e !== pick && e.fact_id).map((e) => e.fact_id!),
   };

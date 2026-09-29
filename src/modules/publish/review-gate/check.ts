@@ -4,12 +4,8 @@
  * 只写检查留档（`06-publish/checks/`）与 Jev 缓存，不改任何业务状态；不调旧预检执行器（它会推进状态）。
  * 每平台单独判（E1），一个被拦不影响其他。
  *
- * TODO(发布前把关 §11 集成轮)：
- * - `ego_lite_prepare` 按平台出包时，用 `readCheckRecord` 取该平台 check_id，重算 payload_hash / 指纹一致、
- *   无未例外 block 才出包，包内 covers[] 取记录里的 covers（src/modules/publish/ego-lite.ts）；
- * - 发布回执（confirm_published、本体发布回执事实、发布计划状态、手动登记）引用 check_id，检查时间早于提交时间，
- *   找不到 → 卡片与时间线「发布前未把关」（src/modules/production/receipts.ts、publish-gate.ts、看板卡片）；
- * - 例外写进卡片与时间线「发布前例外」（本体时间线）。
+ * §11 集成：`verifyCheck` 供 `ego_lite_prepare` 按平台出包前核检查仍有效（ego-lite.prepareCheckedPublish）；
+ * 发布回执引用 check_id、「发布前未把关」与「发布前例外」在本体发布槽里做（production/publish-check-link.ts）。
  */
 import { getContent, getDataDir, type Content } from "../../../storage/local-store.js";
 import { contentRoot } from "../../../storage/content-project.js";
@@ -26,7 +22,7 @@ import { prefsVersion, readPublishPrefs, type PublishPrefs } from "./preferences
 import { buildA, buildB, type BEntryView, type Instruction } from "./semantic.js";
 import { runSemantic, type CallRecord } from "./semantic-run.js";
 import { loadBasis, type Basis } from "./subtitles.js";
-import { newCheckId, writeCheckRecord } from "./check-store.js";
+import { newCheckId, readCheckRecord, writeCheckRecord } from "./check-store.js";
 import { summaryMarkdown, summaryRows } from "./summary.js";
 import { platformVerdict, type CheckItem, type Override, type SummaryRow, type Verdict } from "./types.js";
 
@@ -113,7 +109,8 @@ async function writeRecord(ctx: Ctx, r: PlatformResult, extra: Record<string, un
   }, ctx.dataDir);
 }
 
-async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]): Promise<Detail> {
+/** 一个平台的检查身份（确定性项 + payload 哈希 + 指纹）：出包前重算它来核对检查没过期，不调 Jev */
+async function identityFor(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]) {
   const det = await deterministicChecks({
     contentId: ctx.content.id, siblings: ctx.content.siblings ?? [], projectRoot: ctx.root, entry, videoPath: entry.video_path ?? ctx.plan.final_video_path,
     allowedRatios: effectiveCoverRatios(entry.platform, ctx.prefs.coverRatios), cropChecks: COVER_CROP_CHECKS[entry.platform] ?? [], registration: ctx.registration,
@@ -133,7 +130,11 @@ async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]):
     // Jev 的判定只取决于它收到的 state 与问题：两份请求整体进指纹（活动、平台集合、封面文件名、指令列表都在里面）
     requests_sha: textSha([a.request, b].map((r) => (r ? { state: r.state, questions: r.questions } : null))),
   };
-  const fp = fingerprint(parts);
+  return { det, detItems, payload, instructions, basis, a, b, parts, fp: fingerprint(parts) };
+}
+
+async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]): Promise<Detail> {
+  const { det, detItems, payload, instructions, basis, a, b, parts, fp } = await identityFor(ctx, entry, named);
   const sem = await runSemantic({ contentId: ctx.content.id, dataDir: ctx.dataDir, fingerprint: fp, requests: [a.request, b].filter((x): x is NonNullable<typeof x> => x !== null), basis, instructions, caller: ctx.caller });
   const semItems = [...a.codeItems, ...sem.items];
   if (!instructions.length) semItems.push({ check: "B 执行符合指令", result: "info", basis: "没有可核对的原话 / 规则（不算失败；agent 漏交原话就查不到）" });
@@ -160,6 +161,33 @@ function tableOf(ctx: Ctx, details: Detail[]): SummaryRow[] {
     rows.push({ 平台: p.platform ?? "计划", 账号: "—", 封面文件: "—", 比例: "—", 用途槽: "—", 是否符合: "被拦（不得提交）", 例外: "—", 其他提醒: `拦：${p.field}：${p.detail}` });
   }
   return rows;
+}
+
+export interface CheckedPlatform {
+  check_id: string; platform: string; checked_at: string; verdict: Verdict; entry: PlanEntry;
+  covers: Array<{ usage: string; ratio: string; slot?: string; path: string; sha256: string | null }>;
+  overrides: Override[];
+}
+
+/**
+ * 出包前核一次检查（spec §11）：检查记录在、属于这条稿、没被拦（被拦的项都有原话例外），
+ * 并且按当时的输入重算 payload 哈希与指纹仍一致（计划、文件、登记、偏好、原话任何一样变了都算过期）。
+ */
+export async function verifyCheck(contentId: string, checkId: string, dataDir?: string): Promise<{ ok: true; checked: CheckedPlatform } | Fail> {
+  const record = await readCheckRecord(contentId, checkId, dataDir) as (Record<string, unknown> & { platform?: string; verdict?: Verdict; payload_hash?: string; fingerprint?: string; checked_at?: string; covers?: CheckedPlatform["covers"]; inputs?: { plan_source?: string; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } }) | null;
+  if (!record || record.content_id !== contentId) return { ok: false, code: "check_missing", error: `找不到这次检查（${checkId}）：先跑 autocrew_publish check` };
+  if (record.verdict === "block") return { ok: false, code: "check_blocked", error: `${platformLabel(record.platform ?? "")}上次检查被拦了（${checkId}）：改好计划重跑 check，或创始人明确破例时带 overrides 重跑` };
+  const inputs = record.inputs ?? {};
+  const ctx = await buildCtx({ _dataDir: dataDir, content_id: contentId, plan: inputs.plan_source && inputs.plan_source !== "inline" ? inputs.plan_source : "06-publish/publish-plan.json",
+    founder_quotes: inputs.founder_quotes ?? [], overrides: inputs.overrides ?? [], ...(inputs.instruction_id ? { instruction_id: inputs.instruction_id } : {}) }, {});
+  if ("ok" in ctx) return ctx;
+  const entry = ctx.plan.entries.find((e) => e.platform === record.platform);
+  if (!entry) return { ok: false, code: "check_stale", error: `发布计划里已经没有${platformLabel(record.platform ?? "")}了：重跑 check` };
+  const now = await identityFor(ctx, entry, namedPlatforms(ctx));
+  if (now.payload !== record.payload_hash || now.fp !== record.fingerprint) {
+    return { ok: false, code: "check_stale", error: `${platformLabel(entry.platform)}的计划、文件或依据在检查之后变了（${checkId} 已过期）：重跑 check` };
+  }
+  return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers: record.covers ?? [], overrides: inputs.overrides ?? [] } };
 }
 
 export async function executePublishCheck(params: Record<string, unknown>, deps: CheckDeps = {}): Promise<Record<string, unknown>> {

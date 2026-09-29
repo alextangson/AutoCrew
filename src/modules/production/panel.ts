@@ -31,7 +31,8 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
   const receipts = publishReceipts(doc);
   // 一行 = 一个平台的发布槽（本轮每个平台只有一个）；纠正指向槽 id；按真实时间新的在前
-  const published = receipts.live.map((w) => ({ id: w.id, kind: "slot", platform: w.platform, url: w.url ?? null, work: w.item_id ?? null, label: slotLabel(w), at: w.at }))
+  const published = receipts.live.map((w) => ({ id: w.id, kind: "slot", platform: w.platform, url: w.url ?? null, work: w.item_id ?? null,
+    label: `${slotLabel(w)}${w.gate?.ok ? "" : " · 发布前未把关"}`, ungated: !w.gate?.ok, overrides: w.gate?.overrides ?? [], at: w.at }))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const n = doc.registrations.length;
   const checklistRel = n ? spokenRel(n).replace(/-spoken\.md$/, "-checklist.json") : null;

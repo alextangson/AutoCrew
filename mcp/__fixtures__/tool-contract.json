@@ -1498,6 +1498,12 @@
      "author": {
       "type": "string"
      },
+     "check_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
      "content_id": {
       "type": "string"
      },
@@ -4119,6 +4125,12 @@
      "author": {
       "type": "string"
      },
+     "check_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
      "content_id": {
       "type": "string"
      },
@@ -5542,6 +5554,12 @@
      },
      "author": {
       "type": "string"
+     },
+     "check_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "content_id": {
       "type": "string"

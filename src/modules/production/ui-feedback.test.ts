@@ -32,9 +32,10 @@ describe("Part F", () => {
     const c = await publishedByAgent();
     const p = await cardPanel(c.id, env.dir);
     expect(p).toMatchObject({ stage: "已发布", reason: "抖音、B站 已定时投出" });
-    expect(p.alerts).toEqual(["未登记就发布：发出去的成片没有登记记录可核对"]);
+    // 这两条是 agent 直接发的，发布前也没跑检查：两样都标出来
+    expect(p.alerts).toEqual(["未登记就发布：发出去的成片没有登记记录可核对", "抖音发布前未把关", "B站发布前未把关"]);
     for (const b of p.badges as string[]) expect(b).not.toMatch(KEYS);
-    expect((p.published as Array<{ label: string }>).every((x) => x.label === "发布计划里的记录")).toBe(true);
+    expect((p.published as Array<{ label: string }>).every((x) => x.label.startsWith("发布计划里的记录"))).toBe(true);
   });
 
   it("启用前的「要挪」清单：依据是人话，不带规则代码、不露平台键名", async () => {

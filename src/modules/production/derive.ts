@@ -108,6 +108,16 @@ function receiptNotes(r: ReturnType<typeof publishReceipts>): { badges: string[]
   };
 }
 
+/** 发布前没有有效检查就发了（发布审查闸门 §11、E15）：按平台标出来；结论是写入时盖的，事后补检不改 */
+export function gateAlerts(live: Slot[]): string[] {
+  return live.filter((s) => !s.gate?.ok).map((s) => `${label(s.platform)}发布前未把关`);
+}
+
+/** 检查里创始人的原话例外：逐字显示 */
+export function overrideBadges(live: Slot[]): string[] {
+  return [...new Set(live.flatMap((s) => (s.gate?.overrides ?? []).map((q) => `${label(s.platform)}发布前例外：『${q}』`)))];
+}
+
 /** 待你确认的那一句：谁说的、发到哪、哪件作品 */
 function pendingText(w: Slot): string {
   const what = w.url ? `：${w.url}` : w.item_id ? `（作品 ${w.item_id}）` : "";
@@ -189,7 +199,8 @@ export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEv
     const badges = receipts.live.length ? [] : publish.badge ? [publish.badge] : [];
     const evidence = [...receipts.live.map((f) => `槽 ${f.id}（${f.by}）`), ...(publish.verified ? ["发布记录：已投出"] : [])];
     // 本轮没有登记记录就发出去了（agent 直接发）：发出去的成片没人核过
-    const alerts = inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH];
+    const alerts = [...(inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH]), ...gateAlerts(receipts.live)];
+    badges.push(...overrideBadges(receipts.live));
     return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live) };
   }
   const notes = receiptNotes(receipts);

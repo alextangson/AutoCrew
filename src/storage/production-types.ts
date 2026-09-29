@@ -71,10 +71,15 @@ export interface Fact {
   seen_at?: string;
   /** 发布前把关记录（发布审查闸门的 check_id） */
   check_id?: string;
+  /** 写入时盖的把关结论 */
+  gate?: GateStamp;
   note?: string;
 }
 
 /** 回执的提交状态（沿用 publish-record.ts 的语义）：scheduled / reviewing / public / overdue 算已投出，rejected 不算 */
+/** 发布回执写入时盖的把关结论（发布审查闸门 §11）：不可变，事后补检抹不掉 */
+export interface GateStamp { ok: boolean; check_id?: string; overrides: string[]; note?: string }
+
 export type PublicationState = "scheduled" | "reviewing" | "public" | "overdue" | "rejected";
 
 export type DecisionType =
@@ -111,6 +116,8 @@ export interface Decision {
   target_id?: string;
   platform?: string;
   note?: string;
+  /** i_published：点「我发了」时盖的把关结论 */
+  gate?: GateStamp;
 }
 
 /** 登记记录：某一组决定提交成功的不可变凭据（§5）。D2 只认与当前有效批准完全一致的那条 */

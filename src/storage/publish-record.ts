@@ -36,6 +36,8 @@ export interface PlatformPublication {
   /** 该平台上用的标题 / 平台作品 id：数据关联（§33）的额外匹配键 */
   title?: string | null;
   postId?: string | null;
+  /** 发布前把关的 check_id（发布审查闸门：技能在计划里每个平台带上） */
+  checkId?: string | null;
 }
 
 export type PublishRecord =
@@ -92,7 +94,7 @@ export function parsePlatformEntry(entry: unknown, now: number): PlatformPublica
     reason: state === "rejected" ? str(pub?.reject_reason) ?? str(pub?.reason) ?? str(pub?.evidence) : null,
     url: str(pub?.url) ?? str(pub?.post_url),
     campaigns: campaignsOf(entry), manual: null,
-    title: str(entry.title), postId: str(pub?.post_id) ?? str(entry.post_id),
+    title: str(entry.title), postId: str(pub?.post_id) ?? str(entry.post_id), checkId: str(entry.check_id) ?? str(pub?.check_id),
   };
 }
 

@@ -95,8 +95,14 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
   }
   const r = await mutateProduction(content.id, dataDir, (d) => {
     const { added, changed: n } = applyObservations(d, obs, owned);
+    const before = d.facts.length;
     importObservations(d, receipts);
-    return { value: n, events: added.map((f) => ({ type: "fact_imported", detail: { fact_id: f.id, kind: f.kind, state: f.state, source: f.source, evidence: f.evidence } })) };
+    // 新写入的可信发布观察：没把关 / 有原话例外都进时间线（发布审查闸门 §11）
+    const gateEvents = d.facts.slice(before).filter((f) => f.gate).flatMap((f) => [
+      ...(f.gate!.ok ? [] : [{ type: "publish_ungated", detail: { fact_id: f.id, platform: f.platform, note: `发布前未把关：${f.gate!.note ?? ""}` } }]),
+      ...f.gate!.overrides.map((q) => ({ type: "publish_override", detail: { fact_id: f.id, platform: f.platform, note: `发布前例外：『${q}』`, check_id: f.gate!.check_id } })),
+    ]);
+    return { value: n, events: [...added.map((f) => ({ type: "fact_imported", detail: { fact_id: f.id, kind: f.kind, state: f.state, source: f.source, evidence: f.evidence } })), ...gateEvents] };
   });
   return r.doc;
 }
