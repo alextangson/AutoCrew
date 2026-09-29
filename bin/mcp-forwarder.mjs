@@ -35,7 +35,9 @@ export function portOf(env = process.env) {
  * 比在这里编一条「没找到凭证」的错误更接近真相。
  */
 export function resolveForwarderToken(dataDir, env = process.env, host = env.AUTOCREW_HOST || "claude-code") {
-  const fromEnv = env.AUTOCREW_TOKEN;
+  // 点名了宿主（WorkBuddy 的 mcp.json）就只认那个宿主的令牌文件：继承来的 AUTOCREW_TOKEN 不作数，
+  // 否则撤销 workbuddy 的令牌后，环境里的通用令牌照样放行（spec W7，评审 P2-8）。没点名的老路径不变
+  const fromEnv = env.AUTOCREW_HOST ? "" : env.AUTOCREW_TOKEN;
   if (fromEnv && fromEnv.trim()) return fromEnv.trim();
   // 显式点名宿主（WorkBuddy 的 mcp.json 带 AUTOCREW_HOST=workbuddy）：只认它的令牌；
   // 撤销后回落到本机全能的 server-token 等于撤销无效（spec W7）

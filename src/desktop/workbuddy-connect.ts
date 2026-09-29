@@ -6,7 +6,8 @@
  * 文件纪律：不存在就新建；解析失败绝不覆盖，报错让人手修；写前备份到 `mcp.json.autocrew-bak`；
  * 已有 autocrew 就原地更新（仓库挪了位置也能修好）；别的条目（ChatCut 等）一个字不动。
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,8 +35,10 @@ export function stableNodePath(exec = process.execPath, candidates = ["/opt/home
   return exec;
 }
 
-export function autocrewEntry(root = repoRoot(), node = stableNodePath()): Record<string, unknown> {
-  return { type: "stdio", command: node, args: [path.join(root, "bin", "autocrew.mjs"), "mcp"], env: { AUTOCREW_HOST: WORKBUDDY_HOST } };
+export function autocrewEntry(root = repoRoot(), node = stableNodePath(), env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+  // 守护进程若跑在非默认端口 / 状态目录，WorkBuddy 起的转发器也得指过去（评审 P2-9）
+  const extra = Object.fromEntries((["AUTOCREW_PORT", "AUTOCREW_LOCAL_DIR"] as const).filter((k) => env[k]).map((k) => [k, env[k] as string]));
+  return { type: "stdio", command: node, args: [path.join(root, "bin", "autocrew.mjs"), "mcp"], env: { AUTOCREW_HOST: WORKBUDDY_HOST, ...extra } };
 }
 
 export type MergeOutcome = "created" | "added" | "updated";
@@ -48,35 +51,78 @@ function parseErrorWhere(err: unknown, raw: string): string {
   return `第 ${before.split("\n").length} 行附近`;
 }
 
-export function mergeWorkbuddyMcp(home: string, entry = autocrewEntry()): { ok: true; file: string; outcome: MergeOutcome; backup?: string } | { ok: false; error: string } {
-  const dir = path.join(home, ".workbuddy");
-  const file = path.join(dir, "mcp.json");
-  if (!existsSync(file)) {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(file, `${JSON.stringify({ mcpServers: { autocrew: entry } }, null, 2)}\n`, "utf-8");
-    return { ok: true, file, outcome: "created" };
-  }
-  const raw = readFileSync(file, "utf-8");
+type MergeResult = { ok: true; file: string; outcome: MergeOutcome; backup?: string } | { ok: false; error: string };
+
+/** 读 + 校验 + 合并，得到要写的新内容（纯计算，不落盘） */
+function planMerge(file: string, raw: string, entry: Record<string, unknown>): { next: string; outcome: MergeOutcome } | { error: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    return { ok: false, error: `${file} 解析失败（${parseErrorWhere(err, raw)}），没有写入。先手动修好这个文件再点连接。` };
+    return { error: `${file} 解析失败（${parseErrorWhere(err, raw)}），没有写入。先手动修好这个文件再点连接。` };
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: `${file} 不是一个 JSON 对象，没有写入。先手动修好再点连接。` };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: `${file} 不是一个 JSON 对象，没有写入。先手动修好再点连接。` };
   const doc = parsed as { mcpServers?: unknown };
   if (doc.mcpServers !== undefined && (typeof doc.mcpServers !== "object" || doc.mcpServers === null || Array.isArray(doc.mcpServers))) {
-    return { ok: false, error: `${file} 里的 mcpServers 不是对象，没有写入。先手动修好再点连接。` };
+    return { error: `${file} 里的 mcpServers 不是对象，没有写入。先手动修好再点连接。` };
   }
   const servers = { ...((doc.mcpServers as Record<string, unknown>) ?? {}) };
   const outcome: MergeOutcome = servers.autocrew ? "updated" : "added";
   servers.autocrew = entry;
+  return { next: `${JSON.stringify({ ...doc, mcpServers: servers }, null, 2)}\n`, outcome };
+}
+
+/** 软链一律拒绝：跟着链接写会改到别处的文件（评审 P2-6） */
+function isSymlink(p: string): boolean {
+  return lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink() ?? false;
+}
+
+/** 同目录随机名、独占创建（O_EXCL，不跟软链）、权限与原文件一致且只收不放（评审 P1-3 / P2-6） */
+function writeExclusive(dir: string, content: string, mode: number): string {
+  const tmp = path.join(dir, `.mcp.json.autocrew-${randomBytes(8).toString("hex")}.tmp`);
+  writeFileSync(tmp, content, { encoding: "utf-8", flag: "wx", mode });
+  chmodSync(tmp, mode);
+  return tmp;
+}
+
+function backupOf(file: string, raw: string, mode: number): string {
   const backup = `${file}.autocrew-bak`;
-  copyFileSync(file, backup);
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify({ ...doc, mcpServers: servers }, null, 2)}\n`, "utf-8");
+  if (isSymlink(backup)) throw new Error(`${backup} 是软链接，没有写入。删掉它再点连接。`);
+  rmSync(backup, { force: true });
+  writeFileSync(backup, raw, { encoding: "utf-8", flag: "wx", mode });
+  chmodSync(backup, mode);
+  return backup;
+}
+
+export function mergeWorkbuddyMcp(home: string, entry = autocrewEntry(), hooks: { beforeRename?: () => void } = {}): MergeResult {
+  const dir = path.join(home, ".workbuddy");
+  const file = path.join(dir, "mcp.json");
+  if (isSymlink(dir) || isSymlink(file)) return { ok: false, error: `${file} 或它所在的目录是软链接，没有写入（跟着链接写可能改到别的文件）。` };
+  if (!existsSync(file)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // 独占创建：刚好 WorkBuddy 同时建了这个文件就失败，不覆盖它
+    try {
+      writeFileSync(file, `${JSON.stringify({ mcpServers: { autocrew: entry } }, null, 2)}\n`, { encoding: "utf-8", flag: "wx", mode: 0o600 });
+    } catch {
+      return { ok: false, error: `${file} 刚被别的程序建出来了，没有写入。稍后再点连接。` };
+    }
+    return { ok: true, file, outcome: "created" };
+  }
+  const mode = statSync(file).mode & 0o777;
+  const raw = readFileSync(file, "utf-8");
+  const plan = planMerge(file, raw, entry);
+  if ("error" in plan) return { ok: false, error: plan.error };
+  let backup: string;
+  try { backup = backupOf(file, raw, mode); } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
+  const tmp = writeExclusive(dir, plan.next, mode);
+  hooks.beforeRename?.();
+  // 读到换名之间 WorkBuddy 自己存过这个文件：不覆盖它的改动，如实说（评审 P2-7）
+  if (readFileSync(file, "utf-8") !== raw) {
+    rmSync(tmp, { force: true });
+    return { ok: false, error: `${file} 在写入过程中被别的程序（多半是 WorkBuddy）改过了，没有覆盖。稍后再点一次连接。` };
+  }
   renameSync(tmp, file);
-  return { ok: true, file, outcome, backup };
+  return { ok: true, file, outcome: plan.outcome, backup };
 }
 
 const OUTCOME_TEXT: Record<MergeOutcome, string> = {

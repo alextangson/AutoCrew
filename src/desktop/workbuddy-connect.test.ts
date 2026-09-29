@@ -100,3 +100,50 @@ describe("W7 撤销后的提示按宿主", () => {
     expect(JSON.stringify(r)).toContain("autocrew host workbuddy");
   });
 });
+
+describe("评审 WorkBuddy P1-3 / P2-6 / P2-7 / P2-9 / P2-8", () => {
+  it("P1-3：0600 的 mcp.json 写完还是 0600，备份也不放宽；新建的文件是 0600", () => {
+    mergeWorkbuddyMcp(home, entry);
+    expect(fs.statSync(file()).mode & 0o777).toBe(0o600);
+    fs.chmodSync(file(), 0o600);
+    mergeWorkbuddyMcp(home, entry);
+    expect(fs.statSync(file()).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(`${file()}.autocrew-bak`).mode & 0o777).toBe(0o600);
+    fs.chmodSync(file(), 0o640);
+    mergeWorkbuddyMcp(home, entry);
+    expect(fs.statSync(file()).mode & 0o777).toBe(0o640);
+  });
+  it("P2-6：mcp.json 或备份是软链接 → 拒绝，不跟着链接写", () => {
+    const victim = path.join(home, "victim.txt");
+    fs.writeFileSync(victim, "untouched");
+    fs.mkdirSync(path.dirname(file()), { recursive: true });
+    fs.symlinkSync(victim, file());
+    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: false });
+    expect(fs.readFileSync(victim, "utf-8")).toBe("untouched");
+    fs.rmSync(file());
+    fs.writeFileSync(file(), "{}");
+    fs.symlinkSync(victim, `${file()}.autocrew-bak`);
+    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: false });
+    expect(fs.readFileSync(victim, "utf-8")).toBe("untouched");
+    expect(fs.readdirSync(path.dirname(file())).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+  it("P2-7：读到换名之间文件被 WorkBuddy 改了 → 不覆盖它的改动，报错", () => {
+    fs.mkdirSync(path.dirname(file()), { recursive: true });
+    fs.writeFileSync(file(), JSON.stringify({ mcpServers: { a: { command: "x" } } }));
+    const r = mergeWorkbuddyMcp(home, entry, { beforeRename: () => fs.writeFileSync(file(), JSON.stringify({ mcpServers: { a: { command: "x" }, b: { command: "new" } } })) });
+    expect(r).toMatchObject({ ok: false, error: expect.stringContaining("改过了") });
+    expect(JSON.parse(fs.readFileSync(file(), "utf-8")).mcpServers.b).toEqual({ command: "new" });
+    expect(fs.readdirSync(path.dirname(file())).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+  it("P2-9：守护进程跑在别的端口 / 状态目录时，条目里带上它们", () => {
+    const e = autocrewEntry("/repo", "/usr/bin/node", { AUTOCREW_PORT: "4327", AUTOCREW_LOCAL_DIR: "/data" });
+    expect(e.env).toEqual({ AUTOCREW_HOST: "workbuddy", AUTOCREW_PORT: "4327", AUTOCREW_LOCAL_DIR: "/data" });
+    expect(autocrewEntry("/repo", "/usr/bin/node", {}).env).toEqual({ AUTOCREW_HOST: "workbuddy" });
+  });
+  it("P2-8：点名宿主时继承来的 AUTOCREW_TOKEN 不作数；Claude Code 的老路径（没点名）照旧优先用它", () => {
+    connectWorkbuddy({ home, dataDir, installed: true, entry });
+    revokeHostToken("workbuddy", dataDir);
+    expect(resolveForwarderToken(dataDir, { AUTOCREW_HOST: "workbuddy", AUTOCREW_TOKEN: "generic" })).toBe("");
+    expect(resolveForwarderToken(dataDir, { AUTOCREW_TOKEN: "generic" })).toBe("generic");
+  });
+});
