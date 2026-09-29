@@ -68,6 +68,10 @@ async function seedTopicWithAngle(title: string): Promise<string> {
   return topic.id;
 }
 
+/** 视频稿进封面台 / 待发布必须有成片戳（阶段门，P6 §14.7 #1）：夹具按审过片的样子建 */
+const POST_CUT = new Set<string>(["cover_pending", "publish_ready", "publishing", "published"]);
+const CUT_DONE = { renderedRevision: 1, at: "2026-09-29T00:00:00.000Z" };
+
 async function seedContent(
   status: ContentStatus,
   platform = "wechat_mp",
@@ -75,7 +79,7 @@ async function seedContent(
 ): Promise<Content> {
   // 「剪辑中」只能经交接进入（§13.4-C）：先建在已过审，再按交接的方式推进
   const c = await saveContent(
-    { title: `稿-${status}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}) },
+    { title: `稿-${status}`, body: "正文", platform, status: status === "editing" ? "approved" : status, tags: [], hashtags: [], ...(topicId ? { topicId } : {}), ...(POST_CUT.has(status) ? { videoDone: CUT_DONE } : {}) },
     dir,
   );
   if (status !== "editing") return c;

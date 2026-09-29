@@ -893,6 +893,27 @@ export async function updateContent(id: string, updates: ContentUpdates, dataDir
   return contentWrite(id, dataDir, () => updateContentLocked(id, updates, dataDir));
 }
 
+/**
+ * 锁内先核再写：`check` 拿锁内读到的当前稿件判定，返回拒绝原因就不写。
+ * 调用方在锁外的预检挡不住并发——检查与写入之间别的写口（流转、选封面）可能已改了事实。
+ */
+export async function updateContentChecked(
+  id: string,
+  updates: ContentUpdates,
+  check: (current: Content) => Promise<string | null>,
+  dataDir?: string,
+): Promise<{ ok: true; content: Content } | { ok: false; reason: string } | null> {
+  if (!isContentId(id)) return null;
+  return contentWrite(id, dataDir, async () => {
+    const current = await getContent(id, dataDir);
+    if (!current) return null;
+    const refused = await check(current);
+    if (refused) return { ok: false, reason: refused };
+    const updated = await updateContentLocked(id, updates, dataDir);
+    return updated ? { ok: true, content: updated } : null;
+  });
+}
+
 export type DraftMatchResult =
   | { ok: true; content: Content }
   | { ok: false; reason: "stale" | "missing" };
@@ -1417,19 +1438,24 @@ export async function getCoverReview(contentId: string, dataDir?: string): Promi
   }
 }
 
+/** 模型调用想给视频稿定封面：锁内按当前平台判定（锁外预检挡不住并发改平台，P6 §14.7 #1） */
+export class VideoCoverApprovalRefused extends Error {}
+
 export async function approveCoverVariant(
   contentId: string,
   label: CoverVariantLabel,
   dataDir?: string,
+  opts: { modelCall?: boolean } = {},
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  return contentWrite(contentId, dataDir, () => approveCoverVariantLocked(contentId, label, dataDir));
+  return contentWrite(contentId, dataDir, () => approveCoverVariantLocked(contentId, label, dataDir, opts));
 }
 
 async function approveCoverVariantLocked(
   contentId: string,
   label: CoverVariantLabel,
-  dataDir?: string,
+  dataDir: string | undefined,
+  opts: { modelCall?: boolean },
 ): Promise<CoverReview | null> {
   const projDir = contentDir(contentId, dataDir);
   const reviewPath = projectFile(projDir, "cover-review.json");
@@ -1448,6 +1474,7 @@ async function approveCoverVariantLocked(
   }
   const review: CoverReview = portableProjectRecord(JSON.parse(reviewRaw), projDir, true);
   const content: Content = portableProjectRecord(JSON.parse(metaRaw), projDir, true);
+  if (opts.modelCall && isVideoPlatform(content.platform)) throw new VideoCoverApprovalRefused();
   const selected = review.variants.find((variant) => variant.label === label);
   if (!selected) {
     return null;

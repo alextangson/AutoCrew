@@ -36,6 +36,21 @@ export interface StageGuardSubject {
   videoDone?: { renderedRevision: number; at: string };
 }
 
+/**
+ * 模型发起的调用：MCP 服务端注入 `_host`，OpenClaw 注入 `_modelCall`（客户端自报的同名值都被覆盖）。
+ * 工作台 / 桌面 IPC 的人手点击两样都不带。
+ */
+export function isModelCall(params: Record<string, unknown>): boolean {
+  return typeof params._host === "string" || params._modelCall === true;
+}
+
+/**
+ * 阶段门信的两枚标记——成片戳 `videoDone`、封面定稿——对视频稿是创始人的 gate3 / gate4。
+ * 模型调用盖不出来（P6 §14.7 #1）：否则拿着令牌的宿主连调审片通过、选封面、推进，就能绕过工作台进「待发布」。
+ */
+export const FOUNDER_APPROVAL_ONLY =
+  "视频稿的审片通过与封面定稿是创始人的决定，只能由创作者在 AutoCrew 工作台上点，AI 宿主不能代批。把成片 / 封面交给创作者，请创作者在工作台审；有意见照常可以替创作者报打回。";
+
 /** 「剪辑中」只能由交接进入（P6 §13.4-C）：手动切换、改状态、直接建在剪辑中一律拒绝 */
 export const EDITING_VIA_HANDOFF =
   "「剪辑中」只能由交接进入，不能手动切换。录完按标题命名放进 Downloads，在 Codex 里说「剪这条」，由 Codex 认稿后弹窗确认交接（autocrew_video handoff）。";
@@ -65,7 +80,9 @@ export async function stageGuardError(
     const registered = from === "editing" && Boolean(subject.videoDone) && (await coverApproved());
     if (!registered) return "视频稿要先过剪辑与封面（交接给剪辑工位）";
   }
-  if (from === "editing" && to === "cover_pending" && !subject.videoDone) {
+  // 成片戳只有创始人审片或带工作台批准的登记才盖得出（P6 §14.7 #1）。视频稿进封面台、进待发布都要它，
+  // 不看来路：force 能从「已过审」直推封面台，只挡 editing 那条边就等于封面台后面没人看成片
+  if (video && (to === "cover_pending" || to === "publish_ready") && !subject.videoDone) {
     return "成片还没审通过——先在剪辑台把片子审过，再推进到封面";
   }
   if (from === "cover_pending" && to === "publish_ready" && !(await coverApproved())) {

@@ -132,3 +132,31 @@ export async function handedOff(dir: string, aroll: string) {
   return { id: content.id, root, manifestHash: String(handoff.manifest_hash), token: claim.claim.token, report };
 }
 
+
+type HandedOff = Awaited<ReturnType<typeof handedOff>>;
+const relTo = (v: HandedOff, f: string) => path.relative(v.root, f);
+
+/** 剪辑 report 成片 → 创始人在工作台通过成片；返回工作台记下的 approvals.json 全量 */
+export async function workbenchApproveFinal(dir: string, v: HandedOff, final: string): Promise<Record<string, unknown>> {
+  const reported = await v.report([{ file: final, role: "final-cut-candidate" }]);
+  if (!reported.ok) throw new Error(JSON.stringify(reported));
+  const res = await founderProjectReview(v.id, dir, { action: "approve", which: "final_cut", manifest_hash: v.manifestHash,
+    files: [{ path: relTo(v, final), sha256: await sha256File(final) }] });
+  return res.approvals as Record<string, unknown>;
+}
+
+/** 剪辑 report 一对封面（给定版本）→ 创始人在工作台通过这一对；返回 approvals.json 全量 */
+export async function workbenchApproveCovers(dir: string, v: HandedOff, cover34: string, cover43: string, version = 1): Promise<Record<string, unknown>> {
+  const reported = await v.report([{ file: cover34, role: "cover:3:4", version }, { file: cover43, role: "cover:4:3", version }]);
+  if (!reported.ok) throw new Error(JSON.stringify(reported));
+  const res = await founderProjectReview(v.id, dir, { action: "approve", which: "covers", manifest_hash: v.manifestHash,
+    files: [{ path: relTo(v, cover34), sha256: await sha256File(cover34) }, { path: relTo(v, cover43), sha256: await sha256File(cover43) }] });
+  return res.approvals as Record<string, unknown>;
+}
+
+/** 成片 + 封面都走工作台通过；返回 register 要带的那两份凭据（照工作台记录原样） */
+export async function workbenchApprovals(dir: string, v: HandedOff, final: string, cover34: string, cover43: string): Promise<Record<string, unknown>> {
+  await workbenchApproveFinal(dir, v, final);
+  const a = await workbenchApproveCovers(dir, v, cover34, cover43);
+  return { final_cut: a.final_cut, covers: a.covers };
+}

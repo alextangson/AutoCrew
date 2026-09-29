@@ -86,7 +86,7 @@ npx autocrew host codex --dir ~/work/autocrew-edit --role editor       # 剪辑�
 **剪辑**：`autocrew_desk inbox editor` → `claim` → `autocrew_video status` → `start`
 → 轮询到选段门 → `transcript` 摆建议给创作者 → `cut_confirm`
 → 轮询到素材规划门 → `editor_plan` 逐条问 → `editor_confirm`
-→ 轮询到审片门 → 创作者看片 → `review approve`（盖成片戳）→ `release`。
+→ 轮询到审片门 → 创作者看片并在工作台点通过（宿主报 `review approve` 会被拒；有意见用 `review revise` 替创作者打回）→ `release`。
 
 仅对工具返回的在途任务按建议间隔查询，例如备料、转写、渲染或显式后台审稿。宿主研究与 awaiting_host_review 需要你执行对应任务，不能空等轮询。内置生图按宿主工具合同等待，不虚构 AutoCrew 任务 ID。
 轮询之间该干别的就去干，不要原地空转。

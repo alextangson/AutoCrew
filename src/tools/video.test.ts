@@ -187,7 +187,7 @@ describe("status.next 的人话（§14.2 / §14.4）", () => {
   it("每道门、每种卡住都说得出下一步", async () => {
     expect(await nextFor({ phase: "cut", state: "awaiting_human" })).toContain("cut_confirm");
     expect(await nextFor({ phase: "edit", state: "awaiting_human" })).toContain("editor_confirm");
-    expect(await nextFor({ phase: "review", state: "awaiting_human" })).toContain("review approve");
+    expect(await nextFor({ phase: "review", state: "awaiting_human" })).toContain("工作台");
     // 真机 2026-09-06：审核门的 rendered_revision 直接端出来，宿主不用猜 revisions.rendered
     const review = (await statusFor({ phase: "review", state: "awaiting_human", revisions: { transcript: 1, clean: 1, cut: 3, editor: 2, timeline: 1, rendered: 1 } })) as Record<string, unknown>;
     expect(review.rendered_revision).toBe(1);

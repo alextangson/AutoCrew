@@ -13,12 +13,14 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import { gateClaimWrite, type WriteGate } from "../storage/claims.js";
+import { FOUNDER_APPROVAL_ONLY, isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
 import {
   LOCAL_HOST,
   getContent,
   getCoverReview,
   saveCoverReview,
   approveCoverVariant,
+  VideoCoverApprovalRefused,
   transitionStatus,
   normalizeLegacyStatus,
   type CoverReview,
@@ -176,8 +178,7 @@ async function hostGenerationRefusal(
   contentId: string,
   dataDir: string,
 ): Promise<Record<string, unknown> | null> {
-  const fromModel = typeof params._host === "string" || params._modelCall === true;
-  if (!fromModel || !GENERATING_ACTIONS.has(action)) return null;
+  if (!isModelCall(params) || !GENERATING_ACTIONS.has(action)) return null;
   // revise 沿用评审单现有主比例重画，存量 16:9 候选也得拦
   const requested =
     action === "generate_ratios" ? ["16:9", "4:3"]
@@ -218,6 +219,10 @@ export async function executeCoverReview(params: Record<string, unknown>) {
   // 宿主出图护栏在令牌门之前：被拒的调用不该顺手占走封面师桌
   const refused = await hostGenerationRefusal(action, params, contentId, dataDir);
   if (refused) return refused;
+  // 视频稿的封面定稿是 gate4，模型调用选不了；公众号等图文稿照旧。同样在令牌门之前拒
+  if (action === "approve" && isModelCall(params) && isVideoPlatform((await getContent(contentId, dataDir))?.platform)) {
+    return { ok: false, code: "founder_only", error: FOUNDER_APPROVAL_ONLY };
+  }
 
   // 其余动作都改盘：先过令牌门，再动手；认领归你时令牌随回执交回（同宿主不再免检）
   const gate = await gateCoverWrite(params, contentId, dataDir);
@@ -236,7 +241,12 @@ async function coverWriteAction(
     const label = params.label as CoverLabel;
     if (!label) return { ok: false, error: "label (a/b/c) is required for approve action" };
 
-    const result = await approveCoverVariant(contentId, label, dataDir);
+    // 锁外预检之后平台可能被并发改成视频平台：锁内再核一次
+    const result = await approveCoverVariant(contentId, label, dataDir, { modelCall: isModelCall(params) }).catch((err: unknown) => {
+      if (err instanceof VideoCoverApprovalRefused) return "founder_only" as const;
+      throw err;
+    });
+    if (result === "founder_only") return { ok: false, code: "founder_only", error: FOUNDER_APPROVAL_ONLY };
     if (!result) return { ok: false, error: `Failed to approve variant ${label} for ${contentId}` };
     return { ok: true, review: result };
   }

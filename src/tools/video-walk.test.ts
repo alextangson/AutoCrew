@@ -1,6 +1,6 @@
 /**
  * `autocrew_video` 走完一条真链（P3c spec §14.5 验收第一条）：
- * `start → cut_confirm → editor_confirm → review approve`，`Content.videoDone` 置位。
+ * `start → cut_confirm → editor_confirm → review revise`，再由创作者在工作台审片通过，`Content.videoDone` 置位。
  *
  * 全部经工具入口调用（不直接碰 service），因为要验的正是「宿主看到的那一面」——
  * 视图里有没有它需要的版本号、冲突长什么样、盖章有没有发生。
@@ -26,6 +26,7 @@ import {
 } from "../modules/video/testkit.js";
 import type { VideoState } from "../modules/video/types.js";
 import { executeVideo } from "./video.js";
+import { videoReviewConfirmHandler } from "../desktop/video-handlers.js";
 import { hashClaimToken } from "../storage/claim-token.js";
 
 let dir: string;
@@ -207,18 +208,22 @@ describe("剪辑师从工具入口走完一条片子（§14.5）", () => {
     const renderedV2 = (rerendered.state as VideoState).revisions.rendered!;
     expect(renderedV2).toBe(renderedV1 + 1);
 
-    const approved = await call({ action: "review", rendered_revision: renderedV2, verdict: "approve" });
-    expect(approved.ok).toBe(true);
-    expect(approved.video_ready_at).toBeTruthy();
-    expect(approved.stamp_warning).toBeUndefined();
-    // 阶段闸只认这枚戳：MCP 审完必须盖上，否则稿件永远推不进封面台（§14.1）
+    // 通过是创始人的 gate3（P6 §14.7 #1）：宿主报 approve 被拒、不盖戳；创作者在工作台点才盖
+    expect(await call({ action: "review", rendered_revision: renderedV2, verdict: "approve" })).toMatchObject({
+      ok: false,
+      code: "founder_only",
+    });
+    expect((await getContent(contentId, dir))?.videoDone).toBeUndefined();
+    const approve = { content_id: contentId, _dataDir: dir, rendered_revision: renderedV2, verdict: "approve" };
+    const approved = await videoReviewConfirmHandler(approve);
+    expect(approved).toMatchObject({ ok: true });
+    expect((approved.data as { videoReadyAt?: string }).videoReadyAt).toBeTruthy();
+    // 阶段闸只认这枚戳：审完必须盖上，否则稿件永远推不进封面台（§14.1）
     expect((await getContent(contentId, dir))?.videoDone).toMatchObject({ renderedRevision: renderedV2 });
     expect(String((await status()).next)).toContain("已完成");
 
     // 防呆：同一份 approve 重发不会再盖一次章
-    expect(await call({ action: "review", rendered_revision: renderedV2, verdict: "approve" })).toMatchObject({
-      ok: false,
-    });
+    expect(await videoReviewConfirmHandler(approve)).toMatchObject({ ok: false });
   }, 600_000);
 
   it("不是视频平台的稿子：start 被门面拒并说清原因（§14.4 状态边界）", async () => {

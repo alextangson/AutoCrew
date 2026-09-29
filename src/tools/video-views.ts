@@ -68,7 +68,7 @@ function gateText(state: VideoState): string {
     return "素材规划待你确认：用 editor_plan 读编排，逐条问过创作者（填库里的哪条 / 删）后 editor_confirm";
   }
   if (state.phase === "review") {
-    return "成片待审：把 status 里的 final_path 交给创作者看过，他说通过才 review approve（rendered_revision 照 status 里的 rendered_revision 填）；有意见就 review revise";
+    return "成片待审：把 status 里的 final_path 交给创作者看过，通过请创作者在 AutoCrew 工作台点（宿主不能代批）；有意见就 review revise（rendered_revision 照 status 里的 rendered_revision 填）";
   }
   return `停在 ${state.phase} 等人，但这道门没有对应动作——把状态原样告诉创作者`;
 }

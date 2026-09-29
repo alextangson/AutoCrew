@@ -23,6 +23,7 @@ import { Type } from "@sinclair/typebox";
 
 import { isContentId } from "../storage/entity-id.js";
 import { getDataDir } from "../storage/local-store.js";
+import { FOUNDER_APPROVAL_ONLY, isModelCall } from "../storage/stage-guard.js";
 import { parseArrayArg } from "../modules/video/tool-args.js";
 import {
   parseCutArgs,
@@ -114,7 +115,7 @@ export const videoSchema = Type.Object({
     Type.Unsafe<"approve" | "revise" | "reject">({
       type: "string",
       enum: ["approve", "revise", "reject"],
-      description: "review：approve 通过（会盖成片戳）｜revise / reject 打回",
+      description: "review：revise / reject 打回（带创作者原话）。approve 只有创作者在工作台能点，宿主调用会被拒",
     }),
   ),
   target: Type.Optional(
@@ -174,7 +175,7 @@ export const VIDEO_DESCRIPTION = [
   "4) cut_confirm{content_id, keeps, flags?, base_transcript_revision, base_cut_revision}：**创作者点头之后**才确认选段。transcript_edit 改错字、cut_preview 出一版低清预览、rough_cut_rerun 重跑建议。transcribe_rerun 会作废已改的字与这一版选段——先问创作者。",
   "5) editor_plan{content_id}：读素材规划（每段 overlay 的落位、时长、来源；generate 是还不存在的画面）。editor_slot_fill 填库里的素材、editor_slot_remove 删一段、editor_back_to_cut 退回选段、editor_rerun 重排。",
   "6) editor_confirm{content_id, plan_revision, kept_overlay_ids}：逐条问过创作者后确认；kept_overlay_ids 传 [] 是合法的「全删，出纯口播」。确认后自动组装渲染。",
-  "7) review{content_id, rendered_revision, verdict, target?, timestamp_ms?, note?}：**把成片路径交给创作者看过**再报裁决。approve = 通过并盖成片戳（阶段闸只认这枚戳）；revise = 打回，target 选 edit / cut，带上创作者的原话。",
+  "7) review{content_id, rendered_revision, verdict, target?, timestamp_ms?, note?}：**把成片路径交给创作者看过**。通过要创作者自己在 AutoCrew 工作台点（成片戳是创作者的批准，宿主报 approve 会被拒）；revise = 替创作者打回，target 选 edit / cut，带上创作者的原话。",
   "8) asr_status / retry / reassemble：转写引擎状态、失败重试、渲染死路时回组装重出一份。",
   "── 交接—登记（Claude 会话 ↔ Codex 剪辑工位，与上面的内置剪辑线并存，不需要视频服务在跑）──",
   "handoff{content_id, aroll_path, confirmation_id, request_id}（剪辑工位发起）：必须带 confirm 给的 confirmation_id；成功回 claim_token（剪辑认领只交给你，report 每 10 分钟心跳一次）。同 request_id 重试 10 分钟内拿回同一结果和令牌。拒绝码：confirmation_required / confirmation_invalid / confirmation_used / aroll_in_use（附 holder）/ claim_held（写稿侧还没释放）/ missing_citations / project_migration_required。",
@@ -389,6 +390,10 @@ export async function executeVideo(raw: Record<string, unknown>): Promise<VideoT
       return videoFail("需要合法 content_id（autocrew_desk inbox editor 那张桌上的 content_id）");
     }
     if (READ_ONLY.has(action)) return await readAction(action, contentId, params, service);
+    // 审片通过会盖成片戳（gate3）：模型调用只能替创作者报打回，通过要创作者在工作台点。令牌门之前拒，不留认领
+    if (action === "review" && params.verdict === "approve" && isModelCall(params)) {
+      return videoFail(FOUNDER_APPROVAL_ONLY, { code: "founder_only" });
+    }
     // 写动作先过令牌门（P6 §3.8）；认领归调用宿主时令牌随回执交回，下一次写要带上
     const gate = await gateVideoWriteGrant(params, contentId, dataDir);
     if ("denied" in gate) return gate.denied;
