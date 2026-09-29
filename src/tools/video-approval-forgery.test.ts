@@ -84,4 +84,19 @@ describe("MCP 宿主不能伪造视频稿的创始人批准", () => {
     expect(await executeCoverReview({ _dataDir: dir, _host: "claude", content_id: c.id, action: "approve", label: "a" })).toMatchObject({ ok: true });
     expect((await getCoverReview(c.id, dir))!.approvedLabel).toBe("a");
   });
+
+  it("剪辑之后宿主不能把视频稿临时改成公众号再绕回来（改平台被拒）", async () => {
+    const { id, token } = await editingVideo();
+    const host = { _dataDir: dir, _host: "claude", claim_token: token };
+    expect(await executeContentSave({ ...host, action: "update", id, platform: "wechat_mp" })).toMatchObject({ ok: false, code: "platform_locked" });
+    expect((await getContent(id, dir))!.platform).toBe("douyin");
+    // 视频平台之间互换不受影响
+    expect(await executeContentSave({ ...host, action: "update", id, platform: "xiaohongshu" })).toMatchObject({ ok: true });
+  });
+
+  it("已按公众号进了待发布的稿，宿主不能再改回视频平台", async () => {
+    const c = await saveContent({ title: "长文", body: "正文。".repeat(200), platform: "wechat_mp", status: "approved" }, dir);
+    expect((await transitionStatus(c.id, "publish_ready", {}, dir)).ok).toBe(true);
+    expect(await executeContentSave({ _dataDir: dir, _host: "claude", action: "update", id: c.id, platform: "douyin" })).toMatchObject({ ok: false, code: "platform_locked" });
+  });
 });

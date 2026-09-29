@@ -42,7 +42,8 @@ export async function loadGateContext(content: Content, dataDir: string): Promis
 }
 
 export async function verifyStoredApprovals(content: Content, requested: RegisterApprovals, dataDir: string): Promise<void> {
-  if (!resolveContentProject(content.id, dataDir)) return; // v1 compatibility only
+  // 没绑资料库项目的旧稿（v1）在工作台上没有批准入口，自报的凭据核不了：一律不收，先迁进资料库（P6 §14.7 #1）
+  if (!resolveContentProject(content.id, dataDir)) throw new Error("approval_mismatch: 这篇没有绑定资料库项目，工作台上没有创始人批准记录可核；先迁进资料库、在工作台批准后再登记");
   const ctx = await loadGateContext(content, dataDir);
   for (const gate of ["final_cut", "covers"] as const) {
     const view = gateView(gate, ctx);

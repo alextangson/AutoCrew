@@ -19,8 +19,8 @@ import {
   restoreContent,
   type ContentUpdates,
 } from "../storage/local-store.js";
-import type { AdoptionVerdict } from "../storage/local-store.js";
-import { EDITING_VIA_HANDOFF } from "../storage/stage-guard.js";
+import type { AdoptionVerdict, Content } from "../storage/local-store.js";
+import { EDITING_VIA_HANDOFF, isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
@@ -117,6 +117,23 @@ function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
   return updates;
 }
 
+/** 进了剪辑之后的阶段：视频 / 图文的身份在这里定死，阶段门按它判定 */
+const PLATFORM_LOCKED = new Set(["editing", "cover_pending", "publish_ready", "publishing", "published", "archived"]);
+
+/**
+ * 模型调用不许在剪辑之后把稿件在视频 / 图文之间改来改去：阶段门和创始人批准（gate3 / gate4）都按平台判定，
+ * 临时改成公众号就能绕过去再改回来（P6 §14.7 #1）。视频平台之间互换、图文平台之间互换不受影响。
+ */
+function platformFlipRefusal(params: Record<string, unknown>, content: Content): Record<string, unknown> | null {
+  if (!isModelCall(params) || typeof params.platform !== "string") return null;
+  if (!PLATFORM_LOCKED.has(normalizeLegacyStatus(content.status))) return null;
+  if (isVideoPlatform(params.platform) === isVideoPlatform(content.platform)) return null;
+  return {
+    ok: false, code: "platform_locked",
+    error: "稿件进了剪辑之后不能在视频和图文平台之间改：视频稿的审片和封面要创始人在工作台批。要换形态，请创作者在工作台处理。",
+  };
+}
+
 /**
  * 令牌门（P3 §6.1 / P6 §3.8）：`update` / `transition` 是跨岗位的写口，有活认领就得带令牌（同宿主也一样）。
  * 岗位不填 = 沿用现有认领的岗位（封面师改稿不该把自己变成写手），全新认领记 `writer`。
@@ -196,6 +213,8 @@ export async function executeContentSave(
       error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
       next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
     };
+    const platformFlip = platformFlipRefusal(params, oldContent);
+    if (platformFlip) return platformFlip;
     // 带 status 的 update 先预检流转：被拒就原样返回，认领门和正文都不动
     if (params.status) {
       const pre = await transitionPreflight(id, normalizeLegacyStatus(params.status as string), undefined, dataDir);
