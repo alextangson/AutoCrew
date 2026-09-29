@@ -34,6 +34,14 @@ export interface AgentHandlers {
 export interface McpServerSpec {
   url: string;
   token: string;
+  /** 线路附带的 stdio MCP（走 Headroom 时的 headroom_retrieve） */
+  extra?: StdioMcpSpec[];
+}
+
+export interface StdioMcpSpec {
+  name: string;
+  command: string;
+  args: string[];
 }
 
 export interface AgentProcess {
@@ -93,7 +101,10 @@ export function cleanAgentEnv(source: NodeJS.ProcessEnv = process.env, home = os
 }
 
 function mcpServers(mcp: McpServerSpec): acp.McpServer[] {
-  return [{ type: "http", name: "autocrew", url: mcp.url, headers: [{ name: "Authorization", value: `Bearer ${mcp.token}` }] }];
+  return [
+    { type: "http", name: "autocrew", url: mcp.url, headers: [{ name: "Authorization", value: `Bearer ${mcp.token}` }] },
+    ...(mcp.extra ?? []).map((m) => ({ name: m.name, command: m.command, args: m.args, env: [] })),
+  ];
 }
 
 function toolTitle(p: acp.RequestPermissionRequest): string {

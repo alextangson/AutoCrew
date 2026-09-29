@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import type { StdioMcpSpec } from "./acp-process.js";
 
 export const LOCAL_BACKENDS = ["claude", "codex", "workbuddy"] as const;
 export type LocalBackendId = (typeof LOCAL_BACKENDS)[number];
@@ -89,6 +90,37 @@ export async function proxyUnreachable(env: Record<string, string>, timeoutMs = 
   return ok ? null : `连不上代理 ${url.host}：先把代理开起来再重发。不会绕过代理直连。`;
 }
 
+/**
+ * Headroom 把大段工具结果压成摘要 + 标记，让模型要原文时调 headroom_retrieve——这个工具来自
+ * `headroom mcp serve`。减负后只挂 AutoCrew 的 MCP，模型照标记去调就报「No such tool」（2026-09-29 真机）。
+ * 所以代理是 Headroom 时把它的 MCP 一起挂上；是 Headroom 却找不到命令就报错，不让 agent 带着取不回的原文干活。
+ */
+export async function headroomMcp(
+  env: Record<string, string>,
+  findBin: () => string | null = findHeadroomBin,
+  timeoutMs = 1500,
+): Promise<{ server?: StdioMcpSpec } | { error: string }> {
+  const base = env.ANTHROPIC_BASE_URL;
+  if (!base) return {};
+  let service: unknown;
+  try {
+    const res = await fetch(new URL("/health", base), { signal: AbortSignal.timeout(timeoutMs) });
+    service = ((await res.json()) as { service?: unknown }).service;
+  } catch {
+    return {}; // 不是 Headroom（或没有 /health）：普通代理，不用挂
+  }
+  if (service !== "headroom-proxy") return {};
+  const bin = findBin();
+  if (!bin) return { error: "代理是 Headroom，但找不到 headroom 命令：没有它 agent 取不回被压缩的原文。装好 Headroom CLI（或确认它在 ~/.local/bin）再重发。" };
+  return { server: { name: "headroom", command: bin, args: ["mcp", "serve", "--proxy-url", base] } };
+}
+
+function findHeadroomBin(): string | null {
+  const dirs = [path.join(os.homedir(), ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", ...(process.env.PATH ?? "").split(":")];
+  for (const d of dirs) if (d && existsSync(path.join(d, "headroom"))) return path.join(d, "headroom");
+  return null;
+}
+
 export interface BackendAdapter {
   id: LocalBackendId;
   label: string;
@@ -140,7 +172,7 @@ export const CLAUDE_ADAPTER: BackendAdapter = {
         options: {
           // AutoCrew 自己的 MCP 工具不弹权限卡：它们的门在服务端（执行前审批、认领、限权）
           // env 同时写进这里：Claude Code 会在进程环境之后套用 settings.env，只放进程环境会被项目 settings 盖掉
-          settings: { permissions: { ask: CLAUDE_ASK_TOOLS, allow: ["mcp__autocrew"], defaultMode: "default" }, env },
+          settings: { permissions: { ask: CLAUDE_ASK_TOOLS, allow: ["mcp__autocrew", "mcp__headroom"], defaultMode: "default" }, env },
           allowDangerouslySkipPermissions: false,
           // 减负（v1.1）：只读本目录（人设 + AutoCrew 自带技能），不加载创始人全局的技能/插件/MCP；
           // 全局 settings 里的线路变量（代理）另由 routingEnv 取出，进程环境 + 上面 settings.env 各放一份，必须经过代理；

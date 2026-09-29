@@ -252,4 +252,20 @@ describe("线路：必须经过创始人的代理（2026-09-29）", () => {
     expect(JSON.stringify(r)).toContain("不知道该走哪条代理");
     expect(h.agents).toHaveLength(0);
   });
+
+  it("代理是 Headroom：会话里除了 AutoCrew 还挂上 headroom 的 MCP", async () => {
+    const http = await import("node:http");
+    const server = http.createServer((_req, res) => res.end(JSON.stringify({ service: "headroom-proxy" })));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      withSettings(JSON.stringify({ env: { ANTHROPIC_BASE_URL: base } }));
+      h.svc.deps.findHeadroomBin = () => "/x/headroom";
+      const r = await runLocalTurn(h.svc, input());
+      expect(r.ok).toBe(true);
+      expect(h.agents[0].mcp?.extra).toEqual([{ name: "headroom", command: "/x/headroom", args: ["mcp", "serve", "--proxy-url", base] }]);
+    } finally {
+      server.close();
+    }
+  });
 });

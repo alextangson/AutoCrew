@@ -4,11 +4,17 @@
  */
 import { updateConversationAgent } from "../../storage/conversation-store.js";
 import { enqueueConversationWrite } from "../chat-persist.js";
-import type { AgentProcess, SessionInfo } from "./acp-process.js";
+import type { AgentProcess, SessionInfo, StdioMcpSpec } from "./acp-process.js";
 import { applySettings, reportedChoices, type AgentSettings } from "./agent-settings.js";
 import type { BackendAdapter } from "./backends.js";
 import type { ActiveTurn, ChiefEditor } from "./service.js";
 import type { StreamGate } from "./turn-stream.js";
+
+/** 线路：代理变量 + 随代理挂的 MCP（Headroom） */
+export interface SessionRoute {
+  env: Record<string, string>;
+  extraMcp: StdioMcpSpec[];
+}
 
 export const SESSION_TIMEOUT_MS = 90_000;
 
@@ -19,8 +25,9 @@ export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise
   });
 }
 
-async function resumeOrNew(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate, env: Record<string, string>, prior?: string): Promise<{ info: SessionInfo; notice?: string; fresh: boolean }> {
-  const mcp = { url: svc.deps.mcpUrl, token: turn.token! };
+async function resumeOrNew(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate, route: SessionRoute, prior?: string): Promise<{ info: SessionInfo; notice?: string; fresh: boolean }> {
+  const mcp = { url: svc.deps.mcpUrl, token: turn.token!, extra: route.extraMcp };
+  const env = route.env;
   const init = await withTimeout(proc.initialize(), SESSION_TIMEOUT_MS, "适配器初始化");
   let notice: string | undefined;
   if (prior && init.loadSession) {
@@ -42,9 +49,9 @@ async function resumeOrNew(svc: ChiefEditor, turn: ActiveTurn, adapter: BackendA
 
 export async function openSession(
   svc: ChiefEditor, turn: ActiveTurn, adapter: BackendAdapter, proc: AgentProcess, gate: StreamGate,
-  opts: { prior?: string; settings: AgentSettings; env?: Record<string, string> },
+  opts: { prior?: string; settings: AgentSettings; route?: SessionRoute },
 ): Promise<{ sessionId: string; notice?: string }> {
-  const { info, notice, fresh } = await resumeOrNew(svc, turn, adapter, proc, gate, opts.env ?? {}, opts.prior);
+  const { info, notice, fresh } = await resumeOrNew(svc, turn, adapter, proc, gate, opts.route ?? { env: {}, extraMcp: [] }, opts.prior);
   if (fresh) {
     // 走按会话串行队列、只补这一个字段：别和并发的改名 / 设置变更互相覆盖（评审 v1.1 P1-1）
     await enqueueConversationWrite(turn.conversationId, () => updateConversationAgent(turn.conversationId, { acpSessionId: info.sessionId }, turn.dataDir));

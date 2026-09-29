@@ -10,7 +10,7 @@ import { createConversation, getConversation, updateConversationAgent } from "..
 import { registerTurn, settleTurn } from "../turn-registry.js";
 import { enqueueConversationWrite } from "../chat-persist.js";
 import { STATUS_TEXT, type AskView } from "./asks.js";
-import { ADAPTERS, proxyUnreachable, type BackendAdapter, type LocalBackendId } from "./backends.js";
+import { ADAPTERS, headroomMcp, proxyUnreachable, type BackendAdapter, type LocalBackendId } from "./backends.js";
 import type { AgentProcess } from "./acp-process.js";
 import { SettingError, type AgentSettings } from "./agent-settings.js";
 import { makeHandlers, type StreamGate } from "./turn-stream.js";
@@ -161,6 +161,8 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   if ("error" in routing) return { ok: false, reply: routing.error };
   const proxyDown = await proxyUnreachable(routing.env);
   if (proxyDown) return { ok: false, reply: proxyDown };
+  const headroom = await headroomMcp(routing.env, svc.deps.findHeadroomBin);
+  if ("error" in headroom) return { ok: false, reply: headroom.error };
   const launch = { ...base, env: { ...base.env, ...routing.env } };
   const conv = await prepareConversation(input);
   if ("error" in conv) return { ok: false, reply: conv.error };
@@ -177,7 +179,7 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   svc.runs.patch(turn.turnId, { ...(proc.pid ? { pid: proc.pid } : {}), command: proc.command });
   signal.addEventListener("abort", () => stopAgent(svc, turn), { once: true });
   try {
-    const session = await openSession(svc, turn, adapter, proc, gate, { settings: conv.settings, env: launch.env, ...(conv.acpSessionId ? { prior: conv.acpSessionId } : {}) });
+    const session = await openSession(svc, turn, adapter, proc, gate, { settings: conv.settings, route: { env: launch.env, extraMcp: headroom.server ? [headroom.server] : [] }, ...(conv.acpSessionId ? { prior: conv.acpSessionId } : {}) });
     turn.sessionId = session.sessionId;
     if (signal.aborted) stopAgent(svc, turn);
     const stopReason = turn.aborted ? "cancelled" : await promptLoop(svc, turn, proc, session.sessionId, `${input.promptContext ?? ""}${input.message}`, gate.flush);

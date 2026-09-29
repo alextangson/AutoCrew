@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createConversation } from "../../storage/conversation-store.js";
 import { cleanAgentEnv } from "./acp-process.js";
 import { AskRegistry } from "./asks.js";
-import { backendStatuses, claudeRoutingEnv, pickPermissionOption, proxyUnreachable } from "./backends.js";
+import { backendStatuses, claudeRoutingEnv, headroomMcp, pickPermissionOption, proxyUnreachable } from "./backends.js";
 import { maybeRunLocalTurn, resolveTurnBackend } from "./ipc-handlers.js";
 import { ensurePersona } from "./persona.js";
 import { classifyPublishAction } from "./publish-gate.js";
@@ -120,6 +120,36 @@ describe("线路：必须经过创始人的代理（2026-09-29）", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("走 Headroom 时挂上它的 MCP（headroom_retrieve 取原文）", () => {
+  const withHealth = async (body: unknown, fn: (base: string) => Promise<void>) => {
+    const http = await import("node:http");
+    const server = http.createServer((_req, res) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try { await fn(`http://127.0.0.1:${(server.address() as { port: number }).port}`); } finally { server.close(); }
+  };
+  it("没配代理：不挂", async () => {
+    expect(await headroomMcp({}, () => "/bin/headroom")).toEqual({});
+  });
+  it("代理是 Headroom 且找得到命令：挂 headroom mcp serve，指向同一个代理", async () => {
+    await withHealth({ service: "headroom-proxy" }, async (base) => {
+      expect(await headroomMcp({ ANTHROPIC_BASE_URL: base }, () => "/x/headroom")).toEqual({
+        server: { name: "headroom", command: "/x/headroom", args: ["mcp", "serve", "--proxy-url", base] },
+      });
+    });
+  });
+  it("代理是 Headroom 但找不到命令：报错，不带着取不回的原文干活", async () => {
+    await withHealth({ service: "headroom-proxy" }, async (base) => {
+      const r = await headroomMcp({ ANTHROPIC_BASE_URL: base }, () => null);
+      expect("error" in r && r.error).toContain("找不到 headroom 命令");
+    });
+  });
+  it("别的代理：不挂", async () => {
+    await withHealth({ service: "something-else" }, async (base) => {
+      expect(await headroomMcp({ ANTHROPIC_BASE_URL: base }, () => "/x/headroom")).toEqual({});
+    });
   });
 });
 
