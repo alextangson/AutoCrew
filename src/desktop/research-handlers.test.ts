@@ -225,30 +225,32 @@ describe("research:deep_dive", () => {
     let release = (): void => {};
     const gate = new Promise<void>((r) => (release = r));
     await startRuntime(gate);
-    const first = await researchDeepDiveHandler(p());
-    expect(first.ok).toBe(true);
-    const d = first.data as { job: ResearchJob; deduped: boolean };
-    expect(d.job.topicId).toBe(topic.id);
-    expect(d.deduped).toBe(false);
-    expect(d.job.status).toBe("queued");
+    try {
+      const first = await researchDeepDiveHandler(p());
+      expect(first.ok).toBe(true);
+      const d = first.data as { job: ResearchJob; deduped: boolean };
+      expect(d.job.topicId).toBe(topic.id);
+      expect(d.deduped).toBe(false);
+      expect(d.job.status).toBe("queued");
 
-    // 投递即给选题续期一次（§2）：正在深调研的选题不该被 3 天回收扫走
-    expect((await getTopic(topic.id, dataDir))?.renewedAt).toBeTruthy();
+      // 投递即给选题续期一次（§2）：正在深调研的选题不该被 3 天回收扫走
+      expect((await getTopic(topic.id, dataDir))?.renewedAt).toBeTruthy();
 
-    await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "running");
-    const again = await researchDeepDiveHandler(p());
-    expect(again.ok).toBe(false);
-    expect(String(again.error)).toContain("研究进行中");
-    // 台账上还是第一条在跑：没排第二条
-    expect(await getJob(topic.id, dataDir)).toMatchObject({ status: "running", startedAt: d.job.startedAt });
-
-    // 放行并等落定，免得迟到的写账撞上 afterEach 删目录
-    release();
-    await waitFor(async () => {
-      const job = await getJob(topic.id, dataDir);
-      return job !== null && isTerminalJobStatus(job.status);
-    });
-  });
+      await waitFor(async () => (await getJob(topic.id, dataDir))?.status === "running");
+      const again = await researchDeepDiveHandler(p());
+      expect(again.ok).toBe(false);
+      expect(String(again.error)).toContain("研究进行中");
+      // 台账上还是第一条在跑：没排第二条
+      expect(await getJob(topic.id, dataDir)).toMatchObject({ status: "running", startedAt: d.job.startedAt });
+    } finally {
+      // 断言成败都放行并等落定：stop 不打断在途任务，迟到的写账不能撞上 afterEach 删目录
+      release();
+      await waitFor(async () => {
+        const job = await getJob(topic.id, dataDir);
+        return job === null || isTerminalJobStatus(job.status);
+      });
+    }
+  }, 20_000); // 两段轮询各至多 8 秒：超时要在用例内报出来，不能拖进 afterEach
 
   it("非对象 payload / 缺 topic_id → 守卫拦下", async () => {
     expect((await researchDeepDiveHandler(null as unknown as Record<string, unknown>)).ok).toBe(false);
