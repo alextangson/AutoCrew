@@ -69,7 +69,7 @@ async function expectKeptAside(c: Content, col: string, text: string, reason: st
 }
 
 describe("我的内容 · 改稿回流", () => {
-  it.each([["drafting", "写稿中"], ["approved", "待录制"]] as const)("%s：改稿存成新版本并记差异，视图同一轮刷新，下一轮无变化", async (status, col) => {
+  it.each([["drafting", "写稿中"], ["draft_ready", "写稿中"], ["approved", "待录制"]] as const)("%s：改稿存成新版本并记差异，视图同一轮刷新，下一轮无变化", async (status, col) => {
     const c = await make("回流", status);
     await sync();
     const file = await edit(col, "回流", "创始人改过的口播\n");

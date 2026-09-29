@@ -19,13 +19,17 @@ const writePlan = async (id: string, text: string) => {
   await fs.writeFile(path.join(root, "06-publish/publish-plan.json"), text);
 };
 
-it("列沿用「我的内容」口径：视频定稿进待录制，非视频定稿进待发布，归档不进任何列", async () => {
-  const video = await saveContent({ title: "视频", body: "正文", status: "draft_ready", platform: "douyin", tags: [] }, dir);
-  const article = await saveContent({ title: "图文", body: "正文", status: "draft_ready", platform: "wechat_mp", tags: [] }, dir);
+it("列沿用「我的内容」口径：没认的稿留写稿中；认过的视频进待录制、非视频进待发布；归档不进任何列", async () => {
+  const unapproved = await saveContent({ title: "等认", body: "正文", status: "draft_ready", platform: "douyin", tags: [] }, dir);
+  const unapprovedArticle = await saveContent({ title: "等认图文", body: "正文", status: "draft_ready", platform: "wechat_mp", tags: [] }, dir);
+  const video = await saveContent({ title: "视频", body: "正文", status: "approved", platform: "douyin", tags: [] }, dir);
+  const article = await saveContent({ title: "图文", body: "正文", status: "approved", platform: "wechat_mp", tags: [] }, dir);
   const gone = await saveContent({ title: "归档", body: "正文", status: "needs_evidence", platform: "douyin", tags: [] }, dir);
   await transitionStatus(gone.id, "archived", {}, dir);
   const data = await boardData(dir);
   const col = Object.fromEntries(data.items.map((i) => [i.id, i.column]));
+  expect(col[unapproved.id]).toBe("写稿中");
+  expect(col[unapprovedArticle.id]).toBe("写稿中");
   expect(col[video.id]).toBe("待录制");
   expect(col[article.id]).toBe("待发布");
   expect(col[gone.id]).toBeUndefined();

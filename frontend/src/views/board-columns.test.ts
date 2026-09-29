@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  backMoves, boardCards, canDrop, estimateText, itemMeta, publishLine, topicSourceLabel, visibleCards,
+  backMoves, boardCards, dropAction, estimateText, statusColumn, itemMeta, publishLine, topicSourceLabel, visibleCards,
   type BoardItem, type BoardTopic, type PlatformPublication,
 } from "./board-columns";
 
 const NOW = Date.parse("2026-09-28T12:00:00+08:00");
 const item = (id: string, over: Partial<BoardItem> = {}): BoardItem => ({
-  id, title: `稿 ${id}`, platform: "douyin", status: "draft_ready", topicId: null, column: "待录制",
+  id, title: `稿 ${id}`, platform: "douyin", status: "approved", topicId: null, column: "待录制",
   createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", draftReadyAt: null, chars: 0, finalDurationMs: null,
   cover: null, publish: null, publishTime: null, lastError: null, blockedReason: null, ...over,
 });
@@ -32,15 +32,61 @@ describe("boardCards", () => {
 });
 
 describe("拖动与往回退", () => {
-  it("只有选题 → 写稿中能拖", () => {
-    expect(canDrop("选题", "写稿中")).toBe(true);
-    expect(canDrop("选题", "已发布")).toBe(false);
-    expect(canDrop("待录制", "已发布")).toBe(false);
-    expect(canDrop("剪辑中", "待录制")).toBe(false);
+  const kind = (from: Parameters<typeof dropAction>[0], it: BoardItem | null, to: Parameters<typeof dropAction>[2]) => dropAction(from, it, to);
+  const video = (status: string, column: BoardItem["column"]) => item("v", { status, column });
+  const article = (status: string, column: BoardItem["column"]) => item("a", { status, column, platform: "wechat_mp" });
+
+  it("选题只能拖到写稿中；同列放下什么都不做", () => {
+    expect(kind("选题", null, "写稿中")).toEqual({ kind: "start" });
+    expect(kind("选题", null, "待录制")).toMatchObject({ kind: "refuse" });
+    expect(kind("写稿中", video("draft_ready", "写稿中"), "写稿中")).toEqual({ kind: "none" });
+  });
+
+  it("写完等认的稿拖到下一站 = 认稿；没评审记录也照样能认（规则只看状态）", () => {
+    expect(kind("写稿中", video("draft_ready", "写稿中"), "待录制")).toEqual({ kind: "approve" });
+    expect(kind("写稿中", article("draft_ready", "写稿中"), "待发布")).toEqual({ kind: "approve" });
+  });
+
+  it("AI 还在写的稿不能认", () => {
+    for (const s of ["drafting", "needs_evidence", "reviewing", "revision"]) {
+      expect(kind("写稿中", video(s, "写稿中"), "待录制")).toEqual({ kind: "refuse", reason: "AI 还在写，写完再认" });
+    }
+  });
+
+  it("跳列一律拒，并说清先做哪步", () => {
+    expect(kind("写稿中", video("draft_ready", "写稿中"), "剪辑中")).toMatchObject({ kind: "refuse", reason: expect.stringContaining("先认稿") });
+    expect(kind("写稿中", video("draft_ready", "写稿中"), "待发布")).toMatchObject({ kind: "refuse", reason: expect.stringContaining("先认稿") });
+    expect(kind("写稿中", article("draft_ready", "写稿中"), "已发布")).toMatchObject({ kind: "refuse", reason: expect.stringContaining("先认稿") });
+    expect(kind("待录制", video("approved", "待录制"), "待发布")).toEqual({ kind: "refuse", reason: "要先交剪辑" });
+    expect(kind("剪辑中", video("editing", "剪辑中"), "已发布")).toMatchObject({ kind: "refuse" });
+  });
+
+  it("交剪辑、成片只打开工作台；待发布 → 已发布 是手动标记", () => {
+    expect(kind("待录制", video("approved", "待录制"), "剪辑中")).toEqual({ kind: "open-handoff" });
+    expect(kind("剪辑中", video("editing", "剪辑中"), "待发布")).toEqual({ kind: "open-final" });
+    expect(kind("待发布", video("publish_ready", "待发布"), "已发布")).toEqual({ kind: "publish" });
+    expect(kind("待发布", article("approved", "待发布"), "已发布")).toEqual({ kind: "publish" });
+  });
+
+  it("往回拖：落在「⋯」退路的目标列就走同一个退路，否则拒", () => {
+    expect(kind("待录制", video("approved", "待录制"), "写稿中")).toMatchObject({ kind: "back", move: { target: "reviewing" } });
+    expect(kind("待发布", video("publish_ready", "待发布"), "待录制")).toMatchObject({ kind: "back", move: { target: "approved" } });
+    expect(kind("已发布", article("published", "已发布"), "待发布")).toMatchObject({ kind: "back", move: { target: "publish_ready" } });
+    expect(kind("已发布", video("published", "已发布"), "待发布")).toEqual({ kind: "refuse", reason: "这张卡不能往回退" });
+    expect(kind("待发布", video("publish_ready", "待发布"), "写稿中")).toMatchObject({ kind: "refuse" });
+    expect(kind("写稿中", video("drafting", "写稿中"), "选题")).toEqual({ kind: "refuse", reason: "这张卡不能往回退" });
+  });
+
+  it("状态落列与服务端同表：没认的稿在写稿中，认过的视频待录制、非视频待发布", () => {
+    expect(statusColumn("draft_ready", true)).toBe("写稿中");
+    expect(statusColumn("draft_ready", false)).toBe("写稿中");
+    expect(statusColumn("approved", true)).toBe("待录制");
+    expect(statusColumn("approved", false)).toBe("待发布");
   });
 
   it("往回退只给状态机允许的那一步，撤回交接要说清后果；往前跳不在菜单里", () => {
-    expect(backMoves(item("x", { status: "editing", column: "剪辑中" }))[0]).toMatchObject({ target: "draft_ready" });
+    expect(backMoves(item("x", { status: "editing", column: "剪辑中" }))[0]).toMatchObject({ target: "draft_ready", revoke: true });
+    expect(kind("剪辑中", item("x", { status: "editing", column: "剪辑中" }), "写稿中")).toMatchObject({ kind: "back", move: { revoke: true } });
     expect(backMoves(item("x", { status: "editing", column: "剪辑中" }))[0].body).toContain("交接会被撤回");
     expect(backMoves(item("x", { status: "draft_ready" }))[0]).toMatchObject({ target: "drafting" });
     for (const status of ["draft_ready", "approved", "editing", "publish_ready", "published", "drafting"]) {
@@ -51,7 +97,7 @@ describe("拖动与往回退", () => {
   it("平台上已经真提交了：不给退回待发布；只有手动标记时可以退", () => {
     const submitted = item("x", { status: "published", column: "已发布", publish: { kind: "ok", platforms: [pub({})] } });
     expect(backMoves(submitted)).toEqual([]);
-    const manualOnly = item("y", { status: "published", column: "已发布", publish: { kind: "ok", platforms: [pub({ state: "manual", manual: { platform: "douyin", at: "2026-09-28T00:00:00Z" } })] } });
+    const manualOnly = item("y", { status: "published", column: "已发布", platform: "wechat_mp", publish: { kind: "ok", platforms: [pub({ state: "manual", manual: { platform: "douyin", at: "2026-09-28T00:00:00Z" } })] } });
     expect(backMoves(manualOnly)[0]).toMatchObject({ target: "publish_ready" });
   });
 });
@@ -79,5 +125,11 @@ describe("文案", () => {
     expect(estimateText(1890, 315)).toBe("约 6 分钟");
     expect(estimateText(2000, null)).toBeNull();
     expect(itemMeta(item("x", { chars: 2000 }), null, NOW)).not.toContain("约");
+  });
+
+  it("写稿中里等认的稿写「写完 X 前」，认过的在待录制写估时长和定稿时间", () => {
+    const at = "2026-09-28T10:00:00+08:00";
+    expect(itemMeta(item("x", { status: "draft_ready", column: "写稿中", draftReadyAt: at }), 315, NOW)).toMatch(/^写完 /);
+    expect(itemMeta(item("x", { chars: 630, draftReadyAt: at }), 315, NOW)).toMatch(/^约 2 分钟 · 定稿 /);
   });
 });

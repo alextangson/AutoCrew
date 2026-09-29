@@ -78,7 +78,8 @@ export function eligibility(c: Content, dataDir: string): Eligible {
   if (!resolveContentProject(c.id, dataDir)) return { ok: false, reason: "未迁移到项目（v2）：走 Claude 推送旧路（project_migration_required）" };
   if (c.status !== "draft_ready" && c.status !== "approved") return { ok: false, reason: `状态是「${CONTENT_STATUS_LABEL[c.status] ?? c.status}」` };
   if (reviewValid(c)) return { ok: true, unreviewed: false };
-  if (c.writingSource?.kind === "manual_import" && c.status === "draft_ready") return { ok: true, unreviewed: true };
+  // 导入稿没审稿记录：draft_ready 或创始人在看板认过（approved，信号更强）都进候选
+  if (c.writingSource?.kind === "manual_import") return { ok: true, unreviewed: true };
   return { ok: false, reason: "这一版还没通过审稿" };
 }
 

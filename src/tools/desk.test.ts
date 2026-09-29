@@ -48,7 +48,7 @@ interface InboxReply {
 }
 
 async function inbox(employee: string): Promise<InboxReply> {
-  return (await executeDesk({ action: "inbox", employee, _dataDir: dir })) as InboxReply;
+  return (await executeDesk({ action: "inbox", employee, _dataDir: dir, _chatcutExportDir: path.join(dir, "no-chatcut") })) as InboxReply;
 }
 
 async function seedTopicWithAngle(title: string): Promise<string> {

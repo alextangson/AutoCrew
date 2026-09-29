@@ -98,3 +98,10 @@ it("我发了：链接不是 http(s)、还没到发布阶段都拒", async () =>
   const early = await saveContent({ title: "草稿", body: "正文", status: "drafting", platform: "douyin", tags: [] }, dir);
   expect(await markPublished(early.id, "douyin", undefined, dir)).toMatchObject({ ok: false, code: "wrong_stage" });
 });
+
+it("我发了：非视频稿认过（approved，看板在待发布）可以记；视频稿 approved 还在待录制，拒", async () => {
+  const mp = await saveContent({ title: "图文", body: "正文", status: "approved", platform: "wechat_mp", tags: [] }, dir);
+  expect(await markPublished(mp.id, "wechat_mp", undefined, dir)).toMatchObject({ ok: true, content: { status: "published", manualPublications: [{ platform: "wechat_mp" }] } });
+  const video = await saveContent({ title: "口播", body: "正文", status: "approved", platform: "douyin", tags: [] }, dir);
+  expect(await markPublished(video.id, "douyin", undefined, dir)).toMatchObject({ ok: false, code: "wrong_stage" });
+});

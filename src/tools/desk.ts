@@ -31,6 +31,12 @@ import { isVideoPlatform } from "../storage/stage-guard.js";
 import { activeClaim } from "../storage/claims.js";
 import { getContent } from "../storage/local-store.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
+import {
+  CUT_UNREGISTERED_NEXT_ACTION,
+  scanUnregisteredCuts,
+  type CutScanOptions,
+  type CutSignals,
+} from "../modules/video/unregistered-cut.js";
 
 /**
  * 剪辑认领（交接签发、心跳续租）的接管要创始人在本机弹窗点确认（P6 §12.4-D）：
@@ -89,6 +95,10 @@ export interface DeskItem {
   status: ContentStatus;
   /** 已脱敏：令牌只回给认领者本人 */
   claim?: ClaimView;
+  /** 剪辑师桌上「剪完未登记」的条目才有：和已派工的活分开数 */
+  reason?: "cut_unregistered";
+  signals?: CutSignals;
+  next_action?: string;
 }
 
 type DeskResult = Record<string, unknown>;
@@ -146,15 +156,36 @@ async function coverInbox(dataDir: string): Promise<DeskItem[]> {
   return pending.filter((item): item is DeskItem => item !== null);
 }
 
-/** 剪辑师桌：在剪辑台且这一版成片还没审过（`videoDone` 是阶段门唯一认的凭据） */
-async function editorInbox(dataDir: string): Promise<DeskItem[]> {
+/** 已派工：在剪辑台且这一版成片还没审过（`videoDone` 是阶段门唯一认的凭据） */
+export async function dispatchedInbox(dataDir: string): Promise<DeskItem[]> {
   return (await listContents(dataDir)).filter((c) => c.status === "editing" && !c.videoDone).map(itemOf);
 }
 
-export async function deskInbox(employee: ClaimEmployee, dataDir: string): Promise<DeskItem[]> {
+/**
+ * 剪辑师桌 = 已派工 + 剪完未登记（带 reason，计数时按 reason 分开，两个桶互斥）。
+ * warnings：导出目录读不了（非 ENOENT）时不静默。
+ */
+export async function editorInbox(dataDir: string, opts: CutScanOptions = {}): Promise<{ items: DeskItem[]; warnings: string[] }> {
+  const contents = await listContents(dataDir);
+  const scan = await scanUnregisteredCuts(contents, dataDir, opts);
+  const cut: DeskItem[] = contents.filter((c) => scan.hits.has(c.id)).map((c) => ({
+    ...itemOf(c),
+    reason: "cut_unregistered",
+    signals: scan.hits.get(c.id),
+    next_action: CUT_UNREGISTERED_NEXT_ACTION,
+  }));
+  return { items: [...(await dispatchedInbox(dataDir)), ...cut], warnings: scan.warnings };
+}
+
+export async function deskInbox(employee: ClaimEmployee, dataDir: string, opts: CutScanOptions = {}): Promise<DeskItem[]> {
   if (employee === "writer") return writerInbox(dataDir);
   if (employee === "cover") return coverInbox(dataDir);
-  return editorInbox(dataDir);
+  return (await editorInbox(dataDir, opts)).items;
+}
+
+/** 测试注入 ChatCut 导出目录（`_chatcutExportDir`），和 `_dataDir` 一样不对外 */
+export function cutOpts(params: Record<string, unknown>): CutScanOptions {
+  return typeof params._chatcutExportDir === "string" ? { chatcutDir: params._chatcutExportDir } : {};
 }
 
 export async function executeDesk(params: Record<string, unknown>): Promise<DeskResult> {
@@ -166,6 +197,10 @@ export async function executeDesk(params: Record<string, unknown>): Promise<Desk
   try {
     if (action === "inbox") {
       if (!isClaimEmployee(employee)) return fail("employee 必填：writer | cover | editor");
+      if (employee === "editor") {
+        const { items, warnings } = await editorInbox(dataDir, cutOpts(params));
+        return { ok: true, employee, count: items.length, items, ...(warnings.length ? { warnings } : {}) };
+      }
       const items = await deskInbox(employee, dataDir);
       return { ok: true, employee, count: items.length, items };
     }

@@ -122,6 +122,10 @@ describe("match", () => {
       writingSource: { kind: "manual_import", importedAt: "2026-09-27T00:00:00Z", reason: "本地稿导入" } }, fx.dir);
     const res = await match();
     expect((res.candidates as Array<Record<string, unknown>>)[0]).toMatchObject({ content_id: imported.id, unreviewed_import: true });
+    // 创始人在看板认稿（draft_ready → approved）后照样是候选
+    await updateContent(imported.id, { status: "approved" }, fx.dir);
+    const approved = await match({ request_id: "m-approved" });
+    expect((approved.candidates as Array<Record<string, unknown>>)[0]).toMatchObject({ content_id: imported.id, unreviewed_import: true });
     await updateContent(imported.id, { writingSource: undefined }, fx.dir);
     const none = await match({ request_id: "m-3" });
     expect(none).toMatchObject({ status: "no_candidate" });
