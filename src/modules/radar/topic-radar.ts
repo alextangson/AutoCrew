@@ -39,9 +39,9 @@ export interface TopicCache {
  */
 export type RadarSourceKind =
   | "rss" | "hackernews" | "producthunt" | "github" | "arxiv" | "huggingface" | "x" | "youtube"
-  | "youtube_search" | "reddit";
+  | "youtube_search" | "reddit" | "aihot_hot";
 export const OVERSEAS_KINDS: RadarSourceKind[] = [
-  "hackernews", "producthunt", "github", "arxiv", "huggingface", "x", "youtube", "youtube_search", "reddit",
+  "hackernews", "producthunt", "github", "arxiv", "huggingface", "x", "youtube", "youtube_search", "reddit", "aihot_hot",
 ];
 /**
  * 清单型海外源:订阅的是「这批账号/频道/社区」,不吃检索词——关键词搜这三家捞的是全站噪声,
@@ -50,7 +50,7 @@ export const OVERSEAS_KINDS: RadarSourceKind[] = [
  * youtube_search 故意不在这里:它是搜索型,靠 This week + 播放量下限拦噪声(见 youtube-search.ts),
  * 缺词必须报失败——没有检索词它会去抓全站首页。
  */
-const LIST_KINDS = new Set<RadarSourceKind>(["x", "youtube", "reddit"]);
+const LIST_KINDS = new Set<RadarSourceKind>(["x", "youtube", "reddit", "aihot_hot"]);
 
 export interface RadarSource {
   id: string;

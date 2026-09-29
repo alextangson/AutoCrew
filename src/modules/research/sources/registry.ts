@@ -13,6 +13,7 @@ import { fetchX } from "./x.js";
 import { fetchYouTube } from "./youtube.js";
 import { fetchYouTubeSearch } from "./youtube-search.js";
 import { fetchReddit } from "./reddit.js";
+import { fetchAihotHot } from "./aihot.js";
 
 export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
   hackernews: (kw, lim) => fetchHackerNews(kw, lim),
@@ -27,6 +28,8 @@ export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
   youtube_search: (kw, lim) => fetchYouTubeSearch(kw, lim),
   reddit: (_kw, lim, opts) =>
     fetchReddit(lim, { clientId: opts?.redditClientId ?? "", clientSecret: opts?.redditClientSecret ?? "" }),
+  // 清单型:AIHOT 多源聚合热点榜,heat = 独立来源数
+  aihot_hot: (_kw, lim) => fetchAihotHot(lim),
 };
 
 export const ALL_SOURCES = Object.keys(SOURCE_REGISTRY);
