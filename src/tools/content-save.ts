@@ -6,6 +6,7 @@ import {
   listContents,
   getContent,
   updateContent,
+  updateContentChecked,
   transitionStatus,
   transitionPreflight,
   createPlatformVariant,
@@ -121,20 +122,23 @@ function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
 /** 进了剪辑之后的阶段：视频 / 图文的身份在这里定死，阶段门按它判定 */
 const PLATFORM_LOCKED = new Set(["editing", "cover_pending", "publish_ready", "publishing", "published", "archived"]);
 
+const PLATFORM_LOCKED_ERROR =
+  "这篇已经交接过、审过片、定过封面或进了剪辑之后的阶段，不能在视频和图文平台之间改：视频稿的审片和封面要创始人在工作台批。要换形态，请创作者在工作台处理，或另建一篇。";
+
 /**
  * 模型调用不许把稿件在视频 / 图文之间改来改去：阶段门和创始人批准（gate3 / gate4）都按平台判定，
  * 临时改成公众号就能选封面、推进，再改回来（P6 §14.7 #1）。锁看的是回退状态也抹不掉的事实——
  * 交接过、盖过成片戳、封面定过稿——再加上剪辑之后的阶段。视频平台之间、图文平台之间互换不受影响。
+ * 锁外预检一次（被拒不留认领），写入时在稿件写锁内再核一次（挡并发的流转 / 选封面）。
  */
-async function platformFlipRefusal(params: Record<string, unknown>, content: Content, dataDir?: string): Promise<Record<string, unknown> | null> {
+function platformLockCheck(params: Record<string, unknown>, dataDir?: string): ((current: Content) => Promise<string | null>) | null {
   if (!isModelCall(params) || typeof params.platform !== "string") return null;
-  if (isVideoPlatform(params.platform) === isVideoPlatform(content.platform)) return null;
-  const locked = PLATFORM_LOCKED.has(normalizeLegacyStatus(content.status)) || Boolean(content.video?.handoff) || Boolean(content.videoDone)
-    || Boolean((await getCoverReview(content.id, dataDir))?.approvedLabel);
-  if (!locked) return null;
-  return {
-    ok: false, code: "platform_locked",
-    error: "这篇已经交接过、审过片、定过封面或进了剪辑之后的阶段，不能在视频和图文平台之间改：视频稿的审片和封面要创始人在工作台批。要换形态，请创作者在工作台处理，或另建一篇。",
+  const target = params.platform;
+  return async (current) => {
+    if (isVideoPlatform(target) === isVideoPlatform(current.platform)) return null;
+    const locked = PLATFORM_LOCKED.has(normalizeLegacyStatus(current.status)) || Boolean(current.video?.handoff) || Boolean(current.videoDone)
+      || Boolean((await getCoverReview(current.id, dataDir))?.approvedLabel);
+    return locked ? PLATFORM_LOCKED_ERROR : null;
   };
 }
 
@@ -217,8 +221,8 @@ export async function executeContentSave(
       error: "这篇仍是空白稿或尚未交稿的写作占位，不能通过 content update 填正文绕过交稿。请走 writer pack/submit；已有成稿需要导入时请另用 save 并注明 manual_import。",
       next_action: { tool: "autocrew_writer", params: { action: "pack", content_id: id, topic_id: oldContent.topicId, platform: oldContent.platform } },
     };
-    const platformFlip = await platformFlipRefusal(params, oldContent, dataDir);
-    if (platformFlip) return platformFlip;
+    const platformLock = platformLockCheck(params, dataDir);
+    if (platformLock && await platformLock(oldContent)) return { ok: false, code: "platform_locked", error: PLATFORM_LOCKED_ERROR };
     // 带 status 的 update 先预检流转：被拒就原样返回，认领门和正文都不动
     if (params.status) {
       const pre = await transitionPreflight(id, normalizeLegacyStatus(params.status as string), undefined, dataDir);
@@ -230,7 +234,12 @@ export async function executeContentSave(
     const oldBody = oldContent.body;
     const newBody = params.body as string | undefined;
 
-    let updated = await updateContent(id, buildContentUpdates(params), dataDir);
+    let updated: Content | null;
+    if (platformLock) {
+      const checked = await updateContentChecked(id, buildContentUpdates(params), platformLock, dataDir);
+      if (checked && !checked.ok) return { ok: false, code: "platform_locked", error: checked.reason, ...grant };
+      updated = checked?.content ?? null;
+    } else updated = await updateContent(id, buildContentUpdates(params), dataDir);
     if (!updated) return { ok: false, error: `Content ${id} not found` };
 
     // 带 status 的 update 转成一次真流转：阶段门只有一条通道，直改状态跳阶段的路已封死。

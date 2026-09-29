@@ -130,4 +130,19 @@ describe("MCP 宿主不能伪造视频稿的创始人批准", () => {
     const { id, token } = await editingVideo();
     expect(await executeContentSave({ _dataDir: dir, _modelCall: true, claim_token: token, action: "update", id, platform: "wechat_mp" })).toMatchObject({ ok: false, code: "platform_locked" });
   });
+
+  it("并发：公众号身份推进待发布与改回抖音同时发，结局绝不是「抖音 + 待发布 + 没成片戳」", async () => {
+    for (let round = 0; round < 10; round++) {
+      const c = await saveContent({ title: `口播稿${round}`, body: "口播正文。".repeat(200), platform: "wechat_mp", status: "approved" }, dir);
+      const host = { _dataDir: dir, _host: "claude" };
+      const first = await executeContentSave({ ...host, action: "update", id: c.id, title: `口播稿${round}` });
+      const token = first.claim_token as string;
+      await Promise.all([
+        executeContentSave({ ...host, claim_token: token, action: "transition", id: c.id, target_status: "publish_ready" }),
+        executeContentSave({ ...host, claim_token: token, action: "update", id: c.id, platform: "douyin" }),
+      ]);
+      const after = (await getContent(c.id, dir))!;
+      expect(after.platform === "douyin" && after.status === "publish_ready" && !after.videoDone, `round ${round}`).toBe(false);
+    }
+  });
 });

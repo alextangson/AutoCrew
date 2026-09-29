@@ -893,6 +893,27 @@ export async function updateContent(id: string, updates: ContentUpdates, dataDir
   return contentWrite(id, dataDir, () => updateContentLocked(id, updates, dataDir));
 }
 
+/**
+ * 锁内先核再写：`check` 拿锁内读到的当前稿件判定，返回拒绝原因就不写。
+ * 调用方在锁外的预检挡不住并发——检查与写入之间别的写口（流转、选封面）可能已改了事实。
+ */
+export async function updateContentChecked(
+  id: string,
+  updates: ContentUpdates,
+  check: (current: Content) => Promise<string | null>,
+  dataDir?: string,
+): Promise<{ ok: true; content: Content } | { ok: false; reason: string } | null> {
+  if (!isContentId(id)) return null;
+  return contentWrite(id, dataDir, async () => {
+    const current = await getContent(id, dataDir);
+    if (!current) return null;
+    const refused = await check(current);
+    if (refused) return { ok: false, reason: refused };
+    const updated = await updateContentLocked(id, updates, dataDir);
+    return updated ? { ok: true, content: updated } : null;
+  });
+}
+
 export type DraftMatchResult =
   | { ok: true; content: Content }
   | { ok: false; reason: "stale" | "missing" };
