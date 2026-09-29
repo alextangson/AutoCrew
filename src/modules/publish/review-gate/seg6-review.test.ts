@@ -157,3 +157,49 @@ describe("seg6 UI", () => {
     expect((p.published as Array<{ ungated: boolean }>)[0].ungated).toBe(false);
   });
 });
+
+describe("seg7 发布槽的把关继承与轮次", () => {
+  it("[P1 receipts.ts:143] 首次未把关后补检并给计划补 check_id：不翻案；「我发了」的首次结论后来的可信观察也继承", async () => {
+    const r = await registeredVideo(env);
+    await writePlan(r, [douyin(r, { publication: { status: "submitted" } })]);
+    await reconcileAll(env.dir);
+    const { by } = await check(r);
+    await writePlan(r, [douyin(r, { check_id: by.douyin.check_id, publication: { status: "public" } })]);
+    await reconcileAll(env.dir);
+    expect((await cardPanel(r.id, env.dir)).alerts).toContain("1 个平台发布前未把关");
+    await founderDecision(r.id, "i_published", { platform: "bilibili" }, env.dir);
+    await check(r);
+    await writePlan(r, [douyin(r, { check_id: by.douyin.check_id, publication: { status: "public" } }), planEntry(r, "bilibili", ["3:4", "4:3"], { publication: { status: "public" } })]);
+    await reconcileAll(env.dir);
+    expect((await cardPanel(r.id, env.dir)).alerts).toContain("2 个平台发布前未把关");
+  });
+
+  it("[P1 receipts.ts:132] 重开后同批读到旧计划与它的作品 id 绑定：两条都归上一轮，新一轮不算已发布", () => {
+    const doc = emptyProductionDoc();
+    doc.decisions.push({ id: "reopen-1", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
+    doc.round = 2;
+    importObservations(doc, [
+      { source: "plan", platform: "douyin", item_id: "OLD", pub_state: "public", published_at: "2026-09-10T00:00:00Z", evidence: "计划" },
+      { source: "metrics_id", platform: "douyin", item_id: "OLD", pub_state: "public", evidence: "数据回流" },
+    ]);
+    expect(doc.facts.map((f) => f.round)).toEqual([1, 1]);
+    expect(slotOf(doc, 2, "douyin")).toBeNull();
+  });
+
+  it("[P2 receipts.ts:158] 纠正之后的新提交不继承纠正前的结论", () => {
+    const doc = emptyProductionDoc();
+    const old: Observation = { source: "plan", platform: "douyin", item_id: "A", pub_state: "public", evidence: "计划", gate: { ok: false, overrides: [], applies: false } };
+    importObservations(doc, [old]);
+    doc.decisions.push({ id: "c1", type: "publish_correction", target_id: slotId(1, "douyin"), round: 1, at: new Date(Date.now() - 2000).toISOString(), source: "founder" });
+    doc.facts[0].seen_at = new Date(Date.now() - 5000).toISOString();
+    importObservations(doc, [{ ...old, item_id: "B", gate: { ok: false, overrides: [], applies: true } }]);
+    expect(slotOf(doc, 1, "douyin")?.gate).toMatchObject({ applies: true });
+  });
+
+  it("[P2 receipts.ts:72] 启用后才发现、公开时间早于启用的历史作品：不标未把关", async () => {
+    const r = await registeredVideo(env);
+    await writePlan(r, [douyin(r, { publication: { status: "public", published_at: "2020-01-01T00:00:00Z" } })]);
+    await reconcileAll(env.dir);
+    expect((await cardPanel(r.id, env.dir)).alerts.some((a: string) => a.includes("发布前未把关"))).toBe(false);
+  });
+});

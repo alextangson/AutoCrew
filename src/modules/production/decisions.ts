@@ -16,7 +16,7 @@ import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/
 import { isModelCall } from "../../storage/stage-guard.js";
 import { withFileOwnership } from "./mutex.js";
 import { validCoverApproval, validCutApproval } from "./derive.js";
-import { slotId, slotOf } from "./receipts.js";
+import { slotGate, slotId, slotOf } from "./receipts.js";
 import { gateStamp, isUngated } from "./publish-check-link.js";
 import { adoptCandidate } from "./record.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
@@ -129,7 +129,8 @@ async function published(ctx: Ctx): Promise<Result> {
   const same = sameDecision(ctx.doc, "i_published", (d) => d.platform === platform && (d.note ?? "") === url);
   if (same && slot?.by === "founder" && slot.fact_id === null) return { ok: true, decision: same };
   // 点「我发了」时盖把关结论：之前有没有这个平台的有效检查（事后补检不改这条）
-  const gate = await gateStamp(ctx.content.id, platform, undefined, undefined, ctx.dataDir);
+  // 槽里已经盖过结论（纠正之后的首次）就继承，换成「我发了」翻不了案
+  const gate = slotGate(ctx.doc, ctx.doc.round, platform) ?? await gateStamp(ctx.content.id, platform, undefined, undefined, ctx.dataDir);
   return { ok: true, decision: await push(ctx, { type: "i_published", platform, gate, ...(url ? { note: url } : {}) }, isUngated(gate) ? "founder_published_ungated" : "founder_published") };
 }
 
@@ -137,7 +138,7 @@ async function confirmReceipt(ctx: Ctx): Promise<Result> {
   const f = factBy(ctx.doc, ctx.params, "publish");
   if (typeof f === "string") return fail("stale", f);
   const same = sameDecision(ctx.doc, "publish_confirm", (d) => d.fact_id === f.id);
-  const gate = same ? undefined : await gateStamp(ctx.content.id, f.platform ?? "?", f.seen_at, f.check_id, ctx.dataDir);
+  const gate = same ? undefined : slotGate(ctx.doc, f.round, f.platform ?? "?") ?? await gateStamp(ctx.content.id, f.platform ?? "?", f.seen_at, f.check_id, ctx.dataDir, f.published_at);
   return { ok: true, decision: same ?? (await push(ctx, { type: "publish_confirm", fact_id: f.id, platform: f.platform, ...(gate ? { gate } : {}) }, "receipt_confirmed")) };
 }
 

@@ -34,11 +34,14 @@ async function latestValid(contentId: string, platform: string, before: number, 
  * 写入时盖一次。`submittedAt` = 实际提交时间（计划里的 submitted_at / 授权时间，或观察写入时间）——从不传定时公开时间：
  * 提交之后、公开之前补跑的检查不能让这次发布算「把关过」。提交早于本体启用（闸门还不存在）→ applies=false，不标未把关。
  */
-export async function gateStamp(contentId: string, platform: string, submittedAt: string | undefined, checkId: string | undefined, dataDir: string): Promise<GateStamp> {
+export async function gateStamp(contentId: string, platform: string, submittedAt: string | undefined, checkId: string | undefined, dataDir: string, evidenceAt?: string): Promise<GateStamp> {
   const before = submittedAt && !Number.isNaN(Date.parse(submittedAt)) ? Math.min(Date.parse(submittedAt), Date.now()) : Date.now();
   const at = new Date(before).toISOString();
   const marker = await readEnabledMarker(dataDir).catch(() => null);
-  const applies = Boolean(marker && marker.version === DERIVE_VERSION && Date.parse(marker.enabledAt) <= before);
+  // 平台上的公开 / 定时时间只会晚于提交：它早于启用，就证明提交也早于启用（启用后才发现的历史作品不算未把关）
+  const evidence = evidenceAt ? Date.parse(evidenceAt) : NaN;
+  const latestSubmit = Number.isNaN(evidence) ? before : Math.min(before, evidence);
+  const applies = Boolean(marker && marker.version === DERIVE_VERSION && Date.parse(marker.enabledAt) <= latestSubmit);
   if (checkId) {
     const r = (await readCheckRecord(contentId, checkId, dataDir).catch(() => null)) as CheckRec | null;
     if (valid(r, platform, before)) return { ok: true, check_id: checkId, overrides: quotesOf(r), applies, submitted_at: at };
