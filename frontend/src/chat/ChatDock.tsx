@@ -42,6 +42,11 @@ import { PickerButton } from "../picker";
 import { AgentAskCard } from "./agent-cards";
 import { backendHint, decideBackendPick, isBackendId, markNoticeSeen, noticeSeen, selectable, TRUST_NOTICE, type BackendId } from "./backend-choice";
 import { useAgentBackend } from "./use-agent-backend";
+import { ComposeControls } from "./ComposeControls";
+import { WorkLog } from "./WorkLog";
+import { settingsPayload } from "./conv-settings";
+import { useConvSettings } from "./use-conv-settings";
+import { renameConversationDialog } from "./conversation-rename";
 import { useRevisionFocus, getFocus, setProposal, clearFocus } from "../revision";
 
 interface Msg {
@@ -91,13 +96,16 @@ export interface ChatDispatchReceipt {
   error?: string;
 }
 
-let sendImpl: (msg: string) => Promise<ChatDispatchReceipt> = async () => ({
+/** 派进对话的一条：纯文字，或「人话 + 结构化派活上下文」（v1.1 按钮派活） */
+export type ChatMessageInput = string | { text: string; dispatch: Record<string, unknown> };
+
+let sendImpl: (msg: ChatMessageInput) => Promise<ChatDispatchReceipt> = async () => ({
   ok: false,
   error: "总编辑还没准备好，请刷新页面后重试",
 });
 
 /** 视图层拿到"派活进对话"的入口(dock 挂载后生效) */
-export function useChatSend(): (msg: string) => Promise<ChatDispatchReceipt> {
+export function useChatSend(): (msg: ChatMessageInput) => Promise<ChatDispatchReceipt> {
   return (msg) => sendImpl(msg);
 }
 
@@ -167,6 +175,8 @@ export function ChatDock(props: {
   const effectiveBackend: BackendId = activeConversationId ? (convBackend ?? "builtin") : agent.newBackend;
   const backendRef = useRef(effectiveBackend);
   backendRef.current = effectiveBackend;
+  const conv = useConvSettings(activeConversationId, agent.conversationAllow);
+  const convSettings = conv.settings;
   /** 刷新后重新挂上的进行中轮次：本页没有它的 invoke 返回，靠轮询收尾 */
   const reattachedRef = useRef(false);
 
@@ -222,6 +232,7 @@ export function ChatDock(props: {
     const d = (r as unknown as { data: { meta?: { backend?: unknown }; messages: Array<{ role: "user" | "assistant"; content: string; cards?: ChatCardShape[]; origin?: "system" }> } }).data;
     setActiveConversationId(id);
     setConvBackend(isBackendId(d.meta?.backend) ? d.meta.backend : "builtin");
+    conv.fromMeta((d.meta as { agentSettings?: unknown } | undefined)?.agentSettings);
     setMsgs(
       d.messages
         .map((m) => ({
@@ -356,7 +367,9 @@ export function ChatDock(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.contentContext?.contentId, busy]);
 
-  const send = async (text: string): Promise<ChatDispatchReceipt> => {
+  const send = async (input: ChatMessageInput): Promise<ChatDispatchReceipt> => {
+    const text = typeof input === "string" ? input : input.text;
+    const dispatch = typeof input === "string" ? undefined : input.dispatch;
     const message = text.trim();
     if (!message) return { ok: false, error: "消息不能为空" };
     if (busy) return { ok: false, error: "总编辑正在处理上一项任务，请等它受理后再派" };
@@ -395,8 +408,10 @@ export function ChatDock(props: {
       ...(activeConversationId ? { conversation_id: activeConversationId } : {}),
       ...(ctx ? { context: ctx } : {}),
       ...(choice && choice !== DEFAULT_CHAT_MODEL && backend === "builtin" ? { model_choice: choice } : {}),
-      // 新对话才带后端；已有对话的后端以服务端记录为准
-      ...(!activeConversationId && backend !== "builtin" ? { backend } : {}),
+      // 新对话才带后端与设置；已有对话以服务端记录为准
+      ...(!activeConversationId && backend !== "builtin" ? { backend, agent_settings: settingsPayload(conv.ref.current) } : {}),
+      // 按钮派活：气泡是人话，选题编号等结构化上下文单独传（v1.1）
+      ...(dispatch ? { dispatch } : {}),
     });
     void agent.refresh();
     // invoke 返回 = 本轮真的 settle 了（服务端注册表同刻解锁）——停止按钮与输入框在这里一起解锁
@@ -423,7 +438,10 @@ export function ChatDock(props: {
     }
     const parsed = parseChatTurnResponse(r);
     if (parsed.conversationId) {
-      if (!activeConversationId) setConvBackend(backend);
+      if (!activeConversationId) {
+        setConvBackend(backend);
+        conv.keepForNew();
+      }
       setActiveConversationId(parsed.conversationId);
     }
     const proposalCard = parsed.cards.find((c) => c.type === "revision_proposal");
@@ -566,9 +584,6 @@ export function ChatDock(props: {
     items: g.options.map((o) => ({ id: o.id, label: o.model, ...(o.tier ? { hint: o.tier } : {}) })),
   }));
 
-  const backendGroups = [{
-    items: agent.backends.map((b) => ({ id: b.id, label: b.label, hint: backendHint(b), disabled: !selectable(b) })),
-  }];
   const pickBackend = (id: string) => {
     if (!isBackendId(id)) return;
     const target = agent.backends.find((b) => b.id === id);
@@ -582,7 +597,6 @@ export function ChatDock(props: {
       toast("换后端已新开一段对话，旧对话保留在会话列表里");
     }
   };
-  const backendLabel = agent.backends.find((b) => b.id === effectiveBackend)?.label ?? (effectiveBackend === "builtin" ? "内置引擎" : effectiveBackend);
   const now = Date.now();
   const sessionGroups = conversationGroups(convs, now).map((g) => ({
     name: g.name,
@@ -592,6 +606,7 @@ export function ChatDock(props: {
       hint: conversationHint(c, now),
       keywords: c.id,
       onDelete: () => void deleteConversationById(c.id),
+      onRename: () => void renameConversationDialog(c.id, c.title).then((ok) => { if (ok) void refreshConversations(); }),
     })),
   }));
   const activeTitle = activeConversationId
@@ -602,6 +617,7 @@ export function ChatDock(props: {
     <div className="chat">
       <div className="chat-head mono">
         总编辑
+        {effectiveBackend !== "builtin" && convSettings.permissionMode === "bypass" && <span className="chat-bypass-flag" title="跑命令、改文件不再问；发布、删除仍弹审批">全部放行</span>}
         <span className="chat-head-actions">
           <PickerButton
             className="chat-session-picker"
@@ -623,6 +639,7 @@ export function ChatDock(props: {
             onClick={() => {
               setActiveConversationId(undefined);
               setConvBackend(undefined);
+              conv.reset();
               setMsgs([]);
             }}
           >
@@ -668,6 +685,7 @@ export function ChatDock(props: {
           </div>
         ))}
         {agent.running?.otherLibrary && <p className="muted run-line">后台 agent 仍在处理旧库（它的写入落在原资料库）</p>}
+        {busy && <WorkLog items={agent.liveWork} live />}
         {agent.liveCards.map((c, i) => <ChatCard key={c.callId ?? `live-${i}`} card={c} {...(props.nav ? { nav: props.nav } : {})} />)}
         {agent.asks.map((a) => <AgentAskCard key={a.id} ask={a} />)}
         {recoveryNotice && <p className="muted run-line">{recoveryNotice}</p>}
@@ -716,21 +734,17 @@ export function ChatDock(props: {
         />
         <div className="chat-compose-bar">
           {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置；但读取失败要留着并说原因 */}
-          {(agent.backends.length > 0 || agent.error) && (
-            <PickerButton
-              className="chat-model-picker"
-              label={agent.error ? "后端清单读不到" : backendLabel}
-              title={agent.error || (agent.running?.otherLibrary ? "后台 agent 仍在处理旧库" : "总编辑用哪个后端")}
-              disabled={busy}
-              placement="up"
-              groups={backendGroups}
-              value={effectiveBackend}
-              onPick={pickBackend}
-              error={agent.error}
-              footer={agent.running?.otherLibrary ? "后台 agent 仍在处理旧库" : "对话中途换后端会新开一段对话；内置引擎只在你手动选时用"}
-            />
-          )}
-          {effectiveBackend === "builtin" && (modelOptions.length > 1 || modelError) && (
+          <ComposeControls
+            backends={agent.backends}
+            error={agent.error}
+            running={agent.running}
+            backend={effectiveBackend}
+            busy={busy}
+            settings={convSettings}
+            onPickBackend={pickBackend}
+            onChange={(next) => void conv.change(next)}
+            builtinModel={<>
+          {(modelOptions.length > 1 || modelError) && (
             <PickerButton
               className="chat-model-picker"
               label={modelError ? "模型清单读不到" : modelTriggerLabel(modelOptions, modelChoice)}
@@ -748,6 +762,8 @@ export function ChatDock(props: {
               footer="只影响总编辑对话；写稿 / 调研 / 复盘各走自己的专线"
             />
           )}
+            </>}
+          />
           {busy ? (
             <button
               title="停止这一轮（已投递的后台任务会继续跑）"

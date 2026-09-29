@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke, subscribeEvents } from "../transport";
 import { applyAgentEvent, mergeCards, parsePending, type AskView, type LiveCard, type RunningTurn } from "./agent-asks";
+import { mergeWork, parseWorkItems, type WorkItem } from "./WorkLog";
 import { defaultBackend, parseBackends, rememberBackend, type BackendId, type BackendStatus, type RunningAgent } from "./backend-choice";
 
 export interface AgentBackendState {
@@ -18,6 +19,10 @@ export interface AgentBackendState {
   asks: AskView[];
   /** 进行中这一轮已入账的卡片（SSE 实时 + 刷新快照，按 callId 合并）；轮次结束后以对话落盘为准 */
   liveCards: LiveCard[];
+  /** 进行中这一轮的工作记录（SSE work 帧 + 刷新快照） */
+  liveWork: WorkItem[];
+  /** 当前对话是否处于「本对话都允许」（服务端内存态） */
+  conversationAllow: boolean;
   /** 重拉就绪清单与待处理卡（挂载、换对话、重连、一轮结束时）。running.owner = 本标签页发起的 */
   refresh: () => Promise<{ running: RunningTurn | null }>;
 }
@@ -32,6 +37,8 @@ export function useAgentBackend(
   const [newBackend, setNew] = useState<BackendId>("builtin");
   const [asks, setAsks] = useState<AskView[]>([]);
   const [liveCards, setLiveCards] = useState<LiveCard[]>([]);
+  const [liveWork, setLiveWork] = useState<WorkItem[]>([]);
+  const [conversationAllow, setConversationAllow] = useState(false);
   const optsRef = useRef(opts);
   optsRef.current = opts;
   const seeded = useRef(false);
@@ -55,6 +62,9 @@ export function useAgentBackend(
     const pending = p.ok ? parsePending(p) : { asks: [], running: null };
     setAsks(pending.asks);
     setLiveCards(pending.running?.cards ?? []);
+    const snap = (p as { data?: { running?: { worklog?: unknown } | null; conversationAllow?: unknown } }).data;
+    setLiveWork(parseWorkItems(snap?.running?.worklog));
+    setConversationAllow(snap?.conversationAllow === true);
     return { running: pending.running };
   };
 
@@ -72,8 +82,9 @@ export function useAgentBackend(
         const conv = typeof e.data.conversationId === "string" ? e.data.conversationId : "";
         const mine = !convRef.current || conv === convRef.current;
         if (e.data.type === "card" && mine) setLiveCards((list) => mergeCards(list, [e.data.card]));
+        if (e.data.type === "work" && mine) setLiveWork((list) => mergeWork(list, e.data.item));
         if (e.data.type === "background" && conv) optsRef.current.onBackground?.(conv);
-        if (e.data.type === "turn" && e.data.status !== "running" && e.data.status !== "awaiting_approval" && mine) setLiveCards([]);
+        if (e.data.type === "turn" && e.data.status !== "running" && e.data.status !== "awaiting_approval" && mine) { setLiveCards([]); setLiveWork([]); }
         if (e.data.type === "turn") void invoke("agent:backends").then((b) => { if (b.ok) setRunning(parseBackends(b).running); });
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,6 +99,8 @@ export function useAgentBackend(
     setNewBackend: (id) => { setNew(id); rememberBackend(id); },
     asks,
     liveCards,
+    liveWork,
+    conversationAllow,
     refresh,
   };
 }

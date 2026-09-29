@@ -5,11 +5,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "../transport";
 import { toast, openDialog } from "../ui";
-import { useChatSend } from "../chat/ChatDock";
+import { useChatSend, type ChatMessageInput } from "../chat/ChatDock";
 import { ResearchPanel } from "./ResearchPanel";
 import { ANGLE_SECTION_ID, AngleGuide } from "./AngleCards";
 import { needsAnglePick, NO_ANGLE_GATE, type AngleGate } from "./angle-choice";
-import { buildDispatchBrief } from "./dispatch-brief";
+import { buildDispatch } from "./dispatch-brief";
 import { fallbackTitle } from "./engine-lib";
 import { HostBadges } from "./HostBadges";
 import { boardPlatforms } from "./board-model";
@@ -72,7 +72,7 @@ function Matrix(props: {
   seats: string[];
   back: () => void;
   openEditor: (id: string) => void;
-  send: (msg: string) => Promise<{ ok: boolean; error?: string; actionId?: string }>;
+  send: (msg: ChatMessageInput) => Promise<{ ok: boolean; error?: string; actionId?: string }>;
   reload: () => Promise<void>;
 }) {
   const { atom, seats } = props;
@@ -134,7 +134,7 @@ function Matrix(props: {
     setAsking(null);
     setDispatching(platform);
     try {
-      const receipt = await props.send(buildDispatchBrief({ title, topic: t ?? null, topicId, source, platform, direction, skipAngle }));
+      const receipt = await props.send(buildDispatch({ title, topic: t ?? null, topicId, source, platform, direction, skipAngle }));
       toast(receipt.ok ? "已交给总编辑，请查看对话反馈" : (receipt.error ?? "派活失败"));
     } finally {
       setDispatching(null);

@@ -110,6 +110,17 @@
 .chat-compose-bar > .picker { margin-right: auto; }
 .chat-compose-bar > button:first-child { margin-left: auto; }
 .chat-model-picker .picker-panel { width: 264px; }
+/* 后端下拉：标签不截断，状态与计费说明放右侧可换行（v1.1 修截断） */
+.chat-backend-picker .picker-panel { width: 340px; }
+.chat-backend-picker .picker-label { flex: none; overflow: visible; }
+.chat-backend-picker .picker-hint { flex: 1; min-width: 0; text-align: right; white-space: normal; }
+.chat-next-turn { font-size: var(--fs-xs); }
+.chat-bypass-flag { color: var(--danger); font-size: var(--fs-xs); margin-left: var(--s2); }
+.worklog { margin: var(--s1) 0; font-size: var(--fs-xs); color: var(--muted); }
+.worklog-toggle { border: none; background: none; padding: 0; color: var(--muted); font-size: var(--fs-xs); cursor: pointer; }
+.worklog-list { list-style: none; margin: var(--s1) 0 0; padding-left: var(--s3); }
+.worklog-item { line-height: 1.6; }
+.worklog-failed { color: var(--danger); }
 
 /* Chat cards */
 .ccard { border: 1px solid var(--border); border-radius: var(--radius-card); padding: var(--s2) var(--s3); margin-top: var(--s2); background: var(--card); color: var(--text); }

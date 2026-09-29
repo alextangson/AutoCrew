@@ -52,7 +52,7 @@ export function AgentTextCard({ data }: { data: CardData }) {
 /** 审批卡 / 权限卡：只有「允许一次 / 拒绝」；应答单次消费，别的标签页先点了就提示 */
 export function AgentAskCard({ ask }: { ask: AskView }) {
   const [sending, setSending] = useState(false);
-  const answer = async (decision: "allow" | "deny") => {
+  const answer = async (decision: "allow" | "deny" | "allow_conversation") => {
     setSending(true);
     const r = await invoke("agent:answer", { ask_id: ask.id, decision });
     setSending(false);
@@ -66,6 +66,7 @@ export function AgentAskCard({ ask }: { ask: AskView }) {
       <pre className="ccard-body">{ask.detail}</pre>
       <div className="ccard-actions">
         <button className="primary" disabled={sending} onClick={() => void answer("allow")}>{isApproval ? "批准" : "允许一次"}</button>
+        {!isApproval && <button disabled={sending} title="这段对话里之后的命令、改文件都不再问（发布、删除仍每次审批）；换对话或重启后恢复每次问" onClick={() => void answer("allow_conversation")}>始终允许（本对话）</button>}
         <button disabled={sending} onClick={() => void answer("deny")}>拒绝</button>
       </div>
     </div>

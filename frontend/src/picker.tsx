@@ -19,6 +19,8 @@ export interface PickerItem {
   onDelete?: () => void;
   /** 参与搜索但不显示（如会话 id） */
   keywords?: string;
+  /** 给了才渲染行内 ✎（会话改名用） */
+  onRename?: () => void;
   /** 置灰不可选（仍显示，hint 里说原因） */
   disabled?: boolean;
 }
@@ -187,6 +189,20 @@ export function PickerButton(props: {
                       <span className="picker-tick" aria-hidden="true">{active ? "▸" : ""}</span>
                       <span className="picker-label">{it.label}</span>
                       {it.hint && <span className="picker-hint mono muted">{it.hint}</span>}
+                      {it.onRename && (
+                        <button
+                          type="button"
+                          className="picker-del"
+                          title="改名"
+                          onClick={(e) => {
+                            e.stopPropagation(); // 改名不是选中
+                            setOpen(false);
+                            it.onRename?.();
+                          }}
+                        >
+                          ✎
+                        </button>
+                      )}
                       {it.onDelete && (
                         <button
                           type="button"

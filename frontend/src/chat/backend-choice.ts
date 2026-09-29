@@ -15,6 +15,9 @@ export interface BackendStatus {
   billing?: string;
   state: BackendState;
   detail?: string;
+  /** 适配器上报的模型 / 思考强度清单（没上报就没有，U2） */
+  models?: Array<{ value: string; label: string }>;
+  efforts?: Array<{ value: string; label: string }>;
 }
 
 export interface RunningAgent {
