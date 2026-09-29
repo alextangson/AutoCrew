@@ -19,11 +19,19 @@ import { boardAnomalies, fileName, type ProjectReview } from "./project-board";
 type BoardContent = { id: string; status: string; title: string; body: string };
 
 export function ProjectBoard(props: { content: BoardContent; reload: () => Promise<void> }) {
-  const { id, status } = props.content;
-  const { review, error, refreshError, lastOkAt, busy, submit } = useProjectReview(id, true);
+  const r = useProjectReview(props.content.id, true);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(t); }, []);
-  if (!review && !error) return <BoardSkeleton />;
+  if (!r.review && !r.error) return <BoardSkeleton />;
+  return <ProjectBoardView {...props} {...r} now={now} />;
+}
+
+type ReviewState = ReturnType<typeof useProjectReview>;
+
+/** 看板本体（纯渲染，给定 review）：旧交接与本体工作台共用；测试直接渲染它 */
+export function ProjectBoardView(props: { content: BoardContent; reload: () => Promise<void>; now: number } & Pick<ReviewState, "review" | "error" | "refreshError" | "lastOkAt" | "busy" | "submit">) {
+  const { id, status } = props.content;
+  const { review, error, refreshError, lastOkAt, busy, submit, now } = props;
   const kind = nowKind(status, review);
   const live = review?.enabled && review.handoff_valid ? review : null;
   return <div className="pb-board">
@@ -37,7 +45,7 @@ export function ProjectBoard(props: { content: BoardContent; reload: () => Promi
     {live && <CodexLine review={live} now={now} />}
     {refreshError && <p className="pb-muted-line">{refreshFailedLine(refreshError, lastOkAt, now)}</p>}
     {live && <FilesSection review={live} contentId={id} />}
-    {live && <HandoffDetails review={live} />}
+    {live?.handoff && <HandoffDetails review={live} />}
     <ScriptPeek title={props.content.title} body={props.content.body} summary="文案" hint="只读；剪辑阶段不改字。" />
   </div>;
 }
@@ -101,8 +109,8 @@ function HandoffDetails({ review }: { review: ProjectReview }) {
       <dt>交接代次</dt><dd>第 {h.generation} 代</dd>
       <dt>交接时间</dt><dd>{when(h.at)}</dd>
       <dt>持有会话</dt><dd>{review.execution?.session_id || "还没有剪辑会话报到"}</dd>
-      <dt>指纹</dt><dd className="mono">{h.hash.slice(0, 8)}</dd>
-      <dt>原片</dt><dd>{fileName(h.aroll_path)}</dd>
+      <dt>指纹</dt><dd className="mono">{(h.hash ?? "").slice(0, 8)}</dd>
+      <dt>原片</dt><dd>{h.aroll_path ? fileName(h.aroll_path) : "还没有收到原片"}</dd>
     </dl>
   </details>;
 }

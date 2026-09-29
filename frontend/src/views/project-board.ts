@@ -79,4 +79,4 @@ export function heartbeatStale(review: ProjectReview, now: number): boolean {
 /** 时长「8 分 43 秒」；读不出就明说 */
 export const durationLabel = durationText;
 
-export const fileName = (p: string) => p.split("/").pop() ?? p;
+export const fileName = (p?: string | null) => (p ? p.split("/").pop() ?? p : "");

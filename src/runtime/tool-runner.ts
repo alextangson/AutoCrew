@@ -17,6 +17,7 @@ import {
 import { type EventBus, createEvent } from "./events.js";
 import { appendRunLog } from "./run-log.js";
 import { executePrePublish } from "../tools/pre-publish.js";
+import { isOntologyActive } from "../storage/production-store.js";
 import { storageFailure } from "../storage/storage-error.js";
 
 // --- Types ---
@@ -61,7 +62,10 @@ const PUBLISH_GATE_EXEMPT_ACTIONS = new Set(["confirm_published", "check", "prop
  *
  * PRD v3 §10: blocking checks must be synchronous ToolRunner middleware —
  * EventBus/hooks are fire-and-forget and cannot block. Fails closed: if the
- * checker errors, publishing is blocked. Bypass with force=true.
+ * checker errors, publishing is blocked.
+ *
+ * 启用本体的资料库里，视频出包（ego_lite_prepare）由发布审查闸门把关（必须带有效 check_ids），旧预检不再跑：
+ * 本体登记的封面不走 cover_review，旧预检永远不过。报错不建议 force——那不是过闸门的办法。
  */
 const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next) => {
   if (toolName !== "autocrew_publish") return next();
@@ -71,6 +75,7 @@ const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next)
   // Unmanaged content (wechat_mp_draft via article_path) has no checklist to run
   const contentId = params.content_id as string | undefined;
   if (!contentId) return next();
+  if (params.action === "ego_lite_prepare" && (await isOntologyActive(ctx.dataDir, contentId))) return next();
 
   try {
     const check = await executePrePublish({
@@ -86,7 +91,7 @@ const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next)
         ok: false,
         error: "pre_publish_check_failed",
         message: `⚠️ 发布前检查无法完成：${check.error}`,
-        action_required: "修复后重试，或传 force=true 强制发布。",
+        action_required: "修复后重试；修不了就停下来告诉创始人。",
       };
     }
     if (!check.allPassed) {
@@ -96,7 +101,7 @@ const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next)
         message: check.summary,
         checks: check.checks,
         failCount: check.failCount,
-        action_required: "修复未通过项后重试，或传 force=true 强制发布。",
+        action_required: "修复未通过项后重试；修不了就停下来告诉创始人。",
       };
     }
   } catch (err: unknown) {
@@ -104,7 +109,7 @@ const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next)
       ok: false,
       error: "pre_publish_check_failed",
       message: `⚠️ 发布前检查执行出错：${err instanceof Error ? err.message : String(err)}`,
-      action_required: "修复检查错误后重试，或传 force=true 强制发布。",
+      action_required: "修复检查错误后重试；修不了就停下来告诉创始人。",
     };
   }
 

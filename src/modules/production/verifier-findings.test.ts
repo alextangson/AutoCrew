@@ -38,7 +38,7 @@ describe("工作台适配（§8）：本体稿打开工作台", () => {
   // `TypeError: Cannot read properties of undefined (reading 'split')`，出自 ProjectBoard.tsx HandoffDetails 的 fileName(h.aroll_path)。
   // workbench.ts workbenchOverlay 给的 handoff 只有 {generation, hash}；前端 ProjectReview.handoff 要 {generation, at, aroll_path, draft_hash, hash}。
   // 结果：启用后创始人在网页上没法审成片、选封面（只能直接调 /api/board/decision）。
-  it.skip("BUG: 返回的 handoff 满足前端 ProjectReview.handoff 形状（aroll_path / at 是字符串）", async () => {
+  it("返回的 handoff 满足前端 ProjectReview.handoff 形状（aroll_path / at 是字符串）", async () => {
     const c = await videoContent(env, "AI 又忘了怎么办");
     await founderApprove(env, c.id);
     await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "a" });
@@ -154,7 +154,7 @@ describe("启用后的出包（闸门 §11）：走真实 ToolRunner", () => {
   // 集成测试直接调 executePublish，绕开了 ToolRunner 的旧 prePublishGateMiddleware。真机经 MCP：带有效 check_ids 调
   // ego_lite_prepare → pre_publish_check_failed（「封面审核：未完成」「Hashtags：无标签」），本体登记的封面不走 cover_review，
   // 这一项永远不过；唯一出路是报错里建议的 force=true。
-  it.skip("BUG: 已登记 + 有效 check_id，不带 force 也能出包（旧 pre_publish 不该再挡本体稿）", async () => {
+  it("已登记 + 有效 check_id，不带 force 也能出包（旧 pre_publish 不该再挡本体稿）", async () => {
     const r = await registeredVideo(env);
     await writePlan(r, [planEntry(r, "douyin", ["3:4", "4:3"])]);
     const ids = await checkIds(r);

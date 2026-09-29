@@ -198,8 +198,8 @@ async function ontologyReview(content: Content, dataDir: string, params?: Record
     decision = r.decision;
   } else if (params) throw new Error("不支持的审核动作");
   const fresh = (await getContent(content.id, dataDir)) ?? content;
-  const overlay = await workbenchOverlay(fresh, dataDir);
   const legacy = await loadGateContext(fresh, dataDir);
+  const overlay = await workbenchOverlay(fresh, dataDir, legacy.draftHash ?? "");
   const projectRoot = binding?.project_root ?? "";
   return { ok: true, enabled: true, ontology: true, final_cut: projectRoot ? await finalCutCard(overlay.execution, projectRoot, dataDir) : null, ...(decision ? { decision } : {}),
     project: binding, status: fresh.status, draft_hash: legacy.draftHash, title: fresh.title, platform: fresh.platform,

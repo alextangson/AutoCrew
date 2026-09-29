@@ -54,13 +54,21 @@ function coverGate(doc: ProductionDoc, content: Content, exec: StoredExecution):
 }
 
 /** 页面读的覆盖项：交接视为有效（本体下不需要交接）、产物索引与 gate3 / gate4 来自制作记录 */
-export async function workbenchOverlay(content: Content, dataDir: string): Promise<{ execution: StoredExecution; gates: Record<string, GateView>; handoff: { generation: number; hash: string }; selection: unknown }> {
+/** 页面「交接详情」要的形状：本体下没有交接，取本轮收下的原片（没有就空串）与它的时间 */
+export interface OntologyHandoff { generation: number; hash: string; at: string; aroll_path: string; draft_hash: string }
+
+function handoffOf(doc: ProductionDoc, draftHash: string): OntologyHandoff {
+  const aroll = doc.facts.filter((f) => f.kind === "aroll" && f.state === "accepted" && !f.replaced_at).at(-1);
+  return { generation: doc.round, hash: `ontology-r${doc.round}`, at: aroll?.at ?? "", aroll_path: aroll?.path ?? "", draft_hash: draftHash };
+}
+
+export async function workbenchOverlay(content: Content, dataDir: string, draftHash = ""): Promise<{ execution: StoredExecution; gates: Record<string, GateView>; handoff: OntologyHandoff; selection: unknown }> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   const execution = executionFromFacts(doc);
   const ok = validCoverApproval(doc, content.body);
   const find = (sha?: string) => execution.artifacts.find((a) => a.sha256 === sha);
   const selection = ok ? { "3:4": { sha256: ok.cover_3x4_sha, path: find(ok.cover_3x4_sha)?.path, selected_at: ok.at }, "4:3": { sha256: ok.cover_4x3_sha, path: find(ok.cover_4x3_sha)?.path, selected_at: ok.at } } : null;
-  return { execution, gates: { gate3: cutGate(doc, content, execution), gate4: coverGate(doc, content, execution) }, handoff: { generation: doc.round, hash: `ontology-r${doc.round}` }, selection };
+  return { execution, gates: { gate3: cutGate(doc, content, execution), gate4: coverGate(doc, content, execution) }, handoff: handoffOf(doc, draftHash), selection };
 }
 
 type Files = Array<{ path?: unknown; sha256?: unknown }>;
