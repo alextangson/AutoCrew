@@ -28,6 +28,9 @@ export const markPublished = (contentId: string, platform: string, url?: string)
 export const unmarkPublished = (contentId: string, platform: string) =>
   post<Json>("/api/board/mark-published", { content_id: contentId, platform, undo: true });
 
+/** 启用本体（§4.1）：创始人看过差异清单后确认 */
+export const enableOntology = () => post<Json>("/api/board/ontology/enable", { confirm: true });
+
 /* 数据页（数据页规格 §F / §G）：读数据、手动关联 / 合并 / 拆开、撤销 */
 export const loadDataPage = () => call<DataPageData>("/api/data");
 export interface LinkReply { id: string }

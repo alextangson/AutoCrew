@@ -11,6 +11,7 @@ import { requestDockCollapsed } from "../chat/dock-prefs";
 import { newIdea } from "../new-idea";
 import { loadBoard, markPublished, startWriting } from "./board-api";
 import { BoardTrash } from "./BoardTrash";
+import { OntologyBanner } from "./OntologyBanner";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
 import {
   COLUMNS, COLUMN_HINT, EMPTY_NOTE, FINAL_NOTE, HANDOFF_NOTE, boardCards, dropAction, platformName, visibleCards,
@@ -114,6 +115,7 @@ export function Board(props: Nav) {
   return <div className="board2 page-board">
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
+      {data && <OntologyBanner ontology={data.ontology} reload={reload} />}
     </div>
     <div className="board2-cols" style={{ gridTemplateColumns: COLUMNS.map((c) => colWidth(c, cards)).join(" ") }}>
       {COLUMNS.map((col) => { const v = over === col ? verdict(col) : null; const refused = v?.kind === "refuse" ? v.reason : null;

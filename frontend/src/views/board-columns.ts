@@ -82,7 +82,25 @@ export interface BoardTopic {
   renewedAt: string | null;
 }
 
-export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null }
+/** 本体对账报告（服务端 /api/board 的 ontology，spec 2026-09-29 §4.1）：未启用时的「要挪」清单与逐条失败 */
+export interface OntologyMove { id: string; title: string; from: string | null; to: string | null; rule: string | null; evidence: string[] }
+export interface OntologyState {
+  enabled: boolean;
+  report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[] } | null;
+}
+
+export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null; ontology?: OntologyState }
+
+/** 看板顶部的本体提示：未启用且有要挪的卡 → 「要挪 N 张卡」；对账失败逐条可见；什么都没有 → null */
+export function ontologyNotice(o: OntologyState | undefined): { moves: OntologyMove[]; errors: number; text: string } | null {
+  const r = o?.report;
+  if (!o || !r) return null;
+  const moves = o.enabled ? [] : r.moves;
+  const errors = r.errors.length;
+  if (!moves.length && !errors) return null;
+  const parts = [moves.length ? `本体对账：要挪 ${moves.length} 张卡，看一下` : "", errors ? `${errors} 条对账失败` : ""].filter(Boolean);
+  return { moves, errors, text: parts.join("；") };
+}
 
 export type Card = { kind: "topic"; topic: BoardTopic } | { kind: "item"; item: BoardItem };
 

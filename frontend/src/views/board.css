@@ -3,6 +3,8 @@
 .board2-tools { display: flex; align-items: baseline; gap: var(--s4); font-size: var(--fs-xs); }
 .board2-tools:empty { display: none; }
 .board2-stale { color: var(--danger); margin-right: auto; }
+.board2-ontology { display: flex; flex-direction: column; gap: var(--s2); }
+.board2-ontology-list { display: flex; flex-direction: column; gap: var(--s1); max-height: 40vh; overflow: auto; }
 /* 列等高：底色板按最长那列一起拉齐，长列不再「溢出」背景 */
 .board2-cols { display: grid; gap: var(--s3); align-items: stretch; min-width: 0; flex: 1; }
 .board-fail { padding: var(--s5); color: var(--danger); }

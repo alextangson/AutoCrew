@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  backMoves, boardCards, dropAction, estimateText, statusColumn, itemMeta, publishLine, topicSourceLabel, visibleCards,
+  backMoves, boardCards, dropAction, estimateText, statusColumn, itemMeta, ontologyNotice, publishLine, topicSourceLabel, visibleCards,
   type BoardItem, type BoardTopic, type PlatformPublication,
 } from "./board-columns";
 
@@ -131,5 +131,21 @@ describe("文案", () => {
     const at = "2026-09-28T10:00:00+08:00";
     expect(itemMeta(item("x", { status: "draft_ready", column: "写稿中", draftReadyAt: at }), 315, NOW)).toMatch(/^写完 /);
     expect(itemMeta(item("x", { chars: 630, draftReadyAt: at }), 315, NOW)).toMatch(/^约 2 分钟 · 定稿 /);
+  });
+});
+
+describe("本体提示（spec 2026-09-29 §4.1）", () => {
+  const report = (moves: number, errors: number) => ({
+    at: "x", enabled: false, warnings: [],
+    moves: Array.from({ length: moves }, (_, i) => ({ id: `c${i}`, title: `稿${i}`, from: "待录制", to: "剪辑中", rule: "D4", evidence: ["事实 f1（aroll）"] })),
+    errors: Array.from({ length: errors }, (_, i) => ({ id: `e${i}`, title: `坏${i}`, error: "读不了" })),
+  });
+  it("未启用、有要挪的卡 → 要挪 N 张卡", () => {
+    expect(ontologyNotice({ enabled: false, report: report(2, 0) })?.text).toBe("本体对账：要挪 2 张卡，看一下");
+  });
+  it("启用后不再提要挪，只提对账失败；什么都没有就不显示", () => {
+    expect(ontologyNotice({ enabled: true, report: report(2, 1) })).toMatchObject({ moves: [], errors: 1, text: "1 条对账失败" });
+    expect(ontologyNotice({ enabled: false, report: report(0, 0) })).toBeNull();
+    expect(ontologyNotice(undefined)).toBeNull();
   });
 });
