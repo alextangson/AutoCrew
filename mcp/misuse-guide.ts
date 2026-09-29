@@ -13,6 +13,8 @@ const RULES: Rule[] = [
   { tool: "autocrew_review_desk", action: "submit", match: /写作包|writer pack/, next: { tool: "autocrew_writer", params: { action: "pack" }, why: "这篇还没走完写稿：先 writer pack → submit，submit 会直接带回审稿包" } },
   { tool: "autocrew_review_desk", action: "submit", next: { tool: "autocrew_review_desk", params: { action: "pack" }, why: "先 review_desk pack 领审稿材料，用它的 review_pack_id / attempt 再 submit" } },
   { tool: "autocrew_workflow", action: "select_angle", match: /简报|brief/, next: { tool: "autocrew_workflow", params: { action: "prepare" }, why: "还没有调研简报：先 prepare 并完成调研，拿到候选和 brief_revision 再选角度" } },
+  { tool: "autocrew_scout", match: /invalid_perspective/, next: { tool: "autocrew_scout", why: "perspective 填 audience / evidence / counter / benchmark 之一再调（search、read_page 都要带）" } },
+  { tool: "autocrew_scout", match: /搜索能力未配置/, next: { tool: "autocrew_scout", params: { action: "read_page" }, why: "没配搜索 key：用你自己的搜索找网址，再 read_page{perspective,url}" } },
   { tool: "autocrew_scout", match: /task_id|task_required/, next: { tool: "autocrew_scout", params: { action: "prepare" }, why: "先 prepare 领调研任务，之后每次都带 topic_id + task_id" } },
   { tool: "autocrew_editorial", match: /用户明确|确认/, next: { tool: "autocrew_editorial", why: "先向创作者确认，确认后带 user_confirmed:true 重调" } },
   { tool: "autocrew_video", action: "register", next: { tool: "autocrew_video", params: { action: "status" }, why: "先看 status：登记要用交接包里的 manifest_hash 等字段" } },

@@ -26,6 +26,7 @@ describe("M2 漏了步骤 → 报错 + next_action 指向正确动作", () => {
     ["review_desk submit 没写完稿", "autocrew_review_desk", () => ({ action: "submit", content_id: contentId, review_pack_id: "nope", attempt: 1, issues: [] }), "autocrew_writer", "pack"],
     ["select_angle 还没有简报", "autocrew_workflow", () => ({ action: "select_angle", topic_id: topicId, angle_id: "angle-1" }), "autocrew_workflow", "prepare"],
     ["scout 没带 task_id", "autocrew_scout", () => ({ action: "perspective", topic_id: topicId, payload: {} }), "autocrew_scout", "prepare"],
+    ["scout read_page 没带 perspective", "autocrew_scout", () => ({ action: "read_page", topic_id: topicId, task_id: "x", url: "https://example.com" }), "autocrew_scout", undefined],
     ["content save 直接存 AI 新稿", "autocrew_content", () => ({ action: "save", title: "新稿", body: "AI 写的", platform: "douyin" }), "autocrew_workflow", undefined],
     ["writer pack 没调研", "autocrew_writer", () => ({ action: "pack", topic_id: topicId, platform: "douyin" }), "autocrew_workflow", "prepare"],
     ["editorial feedback 没确认", "autocrew_editorial", () => ({ action: "feedback", content_id: contentId, draft_hash: "h", event_id: "e1", feedback: "改短" }), "autocrew_editorial", undefined],

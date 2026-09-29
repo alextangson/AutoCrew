@@ -14,7 +14,7 @@ async function toolsFor(host: string) {
   return (r!.result as { tools: Array<{ name: string; description: string; inputSchema: unknown }> }).tools;
 }
 
-/** 实测锁（2026-09-29）：总 27,202 / 单个最大 3,556（editorial）/ instructions 675；留一点余量 */
+/** 实测锁（2026-09-29）：总 27,322 / 单个最大 3,556（editorial）/ instructions 675；留一点余量 */
 export const BUDGET = { total: 28_000, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
