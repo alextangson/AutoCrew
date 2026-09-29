@@ -102,9 +102,9 @@ describe("confirm", () => {
     await expect(fs.access(contentFile(c.id, fx.dir, "decisions.json"))).rejects.toThrow();
   });
 
-  it("改一下：创始人在输入框里改封面字和时长", async () => {
+  it("查看 / 修改… → 改封面字和时长：创始人在输入框里改", async () => {
     await cited(await seedAccepted(fx.dir));
-    fakeDialog(["first", { kind: "ok", value: "改一下" }, { kind: "ok", value: "新封面字" }, { kind: "ok", value: "75" }, { kind: "ok", value: "确认" }]);
+    fakeDialog(["first", { kind: "ok", value: "查看 / 修改…" }, { kind: "ok", value: "改封面字和时长" }, { kind: "ok", value: "新封面字" }, { kind: "ok", value: "75" }, { kind: "ok", value: "确认" }]);
     expect(await confirm(await receipt())).toMatchObject({ ok: true, cover_text: "新封面字", target_seconds: 75 });
   });
 

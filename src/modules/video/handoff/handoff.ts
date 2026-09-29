@@ -26,6 +26,7 @@ import { serializeVideoLine } from "./lock.js";
 import { journalBySource, markCommitted, moveArollBack, moveArollIn, readJournal, type MoveJournal } from "./aroll-move.js";
 import { readArollInput } from "./aroll-input.js";
 import type { ConfirmationRecord } from "./confirm.js";
+import { announceHandoff } from "./confirm-preview.js";
 import { pullDeps } from "./pull-deps.js";
 import { checkConfirmation, dropRequestRecord, markConfirmation, requestReplay, saveRequestRecord, validRequestId, type HandoffRequestRecord } from "./pull-handoff.js";
 import { hashClaimToken } from "../../../storage/claim-token.js";
@@ -366,7 +367,9 @@ async function landHandoff(
     if (moved.ok) {
       pullDeps().checkpoint("handoff_committed");
       if (journal) await markCommitted(ctx.dataDir, journal).catch(() => undefined);
-      return committed(plan, input, ctx, record, editorToken, confirmation, base);
+      // 真正提交（非重放）才弹一次不阻塞的通知窗；弹不出来只进 warnings
+      const done = await committed(plan, input, ctx, record, editorToken, confirmation, base);
+      return { ...done, ...announceHandoff(plan.content.id, plan.content.title) };
     }
     failure = handoffFail("handoff_not_committed", `状态没推进：${moved.error ?? "未知原因"}`);
   } catch (err) {
