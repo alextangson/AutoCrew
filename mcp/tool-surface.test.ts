@@ -38,6 +38,26 @@ describe("M1 契约不变：工具名、参数名、类型、必填、枚举、�
   });
 });
 
+describe("M1 快照真的会拦住契约变化（评审 v1.3 P2）", () => {
+  const topicShape = async () => structuredClone((await toolsFor("workbuddy")).find((t) => t.name === "autocrew_topic")!.inputSchema) as { properties: Record<string, Record<string, unknown>>; required?: string[] };
+  const fixtureTopic = () => (JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__", "tool-contract.json"), "utf-8")).workbuddy as Array<{ name: string; shape: unknown }>).find((t) => t.name === "autocrew_topic")!.shape;
+  it("名叫 title / description 的真参数在快照里", async () => {
+    const shape = schemaShape(await topicShape()) as { properties: Record<string, unknown> };
+    expect(Object.keys(shape.properties)).toEqual(expect.arrayContaining(["title", "description"]));
+  });
+  it.each([
+    ["删掉一个参数", (s: { properties: Record<string, Record<string, unknown>> }) => { delete s.properties.title; }],
+    ["改参数类型", (s: { properties: Record<string, Record<string, unknown>> }) => { s.properties.description.type = "number"; }],
+    ["改长度限制", (s: { properties: Record<string, Record<string, unknown>> }) => { s.properties.title.maxLength = 1; }],
+    ["改枚举", (s: { properties: Record<string, Record<string, unknown>> }) => { (s.properties.action as { enum: string[] }).enum = ["create"]; }],
+  ])("%s → 快照不相等", async (_label, mutate) => {
+    const schema = await topicShape();
+    expect(schemaShape(schema)).toEqual(fixtureTopic());
+    mutate(schema);
+    expect(schemaShape(schema)).not.toEqual(fixtureTopic());
+  });
+});
+
 describe("长说明搬进按需资源", () => {
   it("每个工具的完整用法可按需读取（瘦身前的原文）", async () => {
     const r = await handleMcpRequest({ jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: `${TOOL_GUIDE_PREFIX}autocrew_writer` } }, access("workbuddy"));
@@ -46,6 +66,20 @@ describe("长说明搬进按需资源", () => {
     expect(text.length).toBeGreaterThan(1000);
     const missing = await handleMcpRequest({ jsonrpc: "2.0", id: 4, method: "resources/read", params: { uri: `${TOOL_GUIDE_PREFIX}nope` } }, access("workbuddy"));
     expect(missing!.error).toBeDefined();
+  });
+  it("评审 v1.3 P2：完整用法里有原参数结构与每个参数的原说明（如 video report 的 request_id / binding_revision）", async () => {
+    const r = await handleMcpRequest({ jsonrpc: "2.0", id: 6, method: "resources/read", params: { uri: `${TOOL_GUIDE_PREFIX}autocrew_video` } }, access("workbuddy"));
+    const text = (r!.result as { contents: Array<{ text: string }> }).contents[0].text;
+    for (const k of ["request_id", "binding_revision", "session_id", "files"]) expect(text).toContain(k);
+    expect(text).toContain("## 参数");
+  });
+  it("评审 v1.3 P3：resources/list 列的是每个工具真实的完整用法 URI，没有字面占位", async () => {
+    const r = await handleMcpRequest({ jsonrpc: "2.0", id: 7, method: "resources/list" }, access("workbuddy"));
+    const uris = (r!.result as { resources: Array<{ uri: string }> }).resources.map((x) => x.uri);
+    expect(uris).toContain(`${TOOL_GUIDE_PREFIX}autocrew_writer`);
+    expect(uris.some((u) => u.includes("<"))).toBe(false);
+    const codex = await handleMcpRequest({ jsonrpc: "2.0", id: 8, method: "resources/list" }, access("codex"));
+    expect((codex!.result as { resources: Array<{ uri: string }> }).resources.map((x) => x.uri)).not.toContain(`${TOOL_GUIDE_PREFIX}autocrew_writer`);
   });
   it("短说明点名资源；instructions 点名写作守则", async () => {
     const tools = await toolsFor("workbuddy");

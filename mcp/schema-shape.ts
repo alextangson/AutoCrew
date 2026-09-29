@@ -27,10 +27,20 @@ export function enumify(v: Json): Json {
   return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, enumify(x)]));
 }
 
+/** 说明类关键字：只在「schema 节点」上去掉；`properties` 这类「名字 → schema」的表里，键是参数名，一个都不许去 */
+const ANNOTATIONS = new Set(["description", "title", "examples"]);
+const NAME_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+
 /** 去掉说明，只留形状（键排序，便于快照比较） */
 export function schemaShape(v: Json): Json {
   if (Array.isArray(v)) return v.map(schemaShape);
   if (!v || typeof v !== "object") return v;
   const o = enumify(v) as Record<string, unknown>;
-  return Object.fromEntries(Object.keys(o).filter((k) => k !== "description" && k !== "title" && k !== "examples").sort().map((k) => [k, schemaShape(o[k])]));
+  return Object.fromEntries(Object.keys(o).filter((k) => !ANNOTATIONS.has(k)).sort().map((k) => [k, NAME_MAPS.has(k) ? namedSchemas(o[k]) : schemaShape(o[k])]));
+}
+
+function namedSchemas(v: Json): Json {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return schemaShape(v);
+  const o = v as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(o).sort().map((name) => [name, schemaShape(o[name])]));
 }

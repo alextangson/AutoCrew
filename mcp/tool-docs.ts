@@ -88,6 +88,11 @@ function shortenDescriptions(schema: unknown): unknown {
   return { ...(dropDescriptions({ ...s, properties: undefined }) as object), properties };
 }
 
+/** `autocrew://tool-guide/<工具名>` 的正文：瘦身前的工具说明原文 + 带原说明的完整参数结构 */
+export function toolGuideText(name: string, description: string, parameters: unknown): string {
+  return `# ${name}\n\n${description}\n\n## 参数（完整结构与每个参数的原说明）\n\n\`\`\`json\n${JSON.stringify(parameters, null, 1)}\n\`\`\`\n`;
+}
+
 /** tools/list 里给宿主看的那一份：短说明 + 等价压缩的参数结构 */
 export function mcpToolView(tool: { name: string; description: string; parameters: unknown }): { name: string; description: string; inputSchema: unknown } {
   const short = MCP_TOOL_DOCS[tool.name];

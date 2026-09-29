@@ -21,8 +21,22 @@ const RULES: Rule[] = [
   { tool: "autocrew_publish", match: /pre_publish/, next: { tool: "autocrew_pre_publish", params: { action: "check" }, why: "先跑发布前检查，全过再发布" } },
 ];
 
+/** autocrew_video report 的执行汇报必填字段（与 validateReport 同一份）：缺哪个就点名哪个 */
+const REPORT_REQUIRED = ["request_id", "generation", "binding_revision", "session_id", "files", "result", "next_action"];
+
+function reportGuide(args: Json): Json | null {
+  const report = args.report && typeof args.report === "object" && !Array.isArray(args.report) ? (args.report as Json) : {};
+  const missing = REPORT_REQUIRED.filter((k) => report[k] === undefined);
+  return {
+    resource: `${TOOL_GUIDE_PREFIX}autocrew_video`,
+    ...(missing.length ? { missing } : {}),
+    why: `report 的结构与每个字段的含义见完整用法资源（参数 report 一节）${missing.length ? `；这次缺：${missing.join("、")}` : "；字段类型或格式不对，照资源里的结构改"}`,
+  };
+}
+
 export function withMisuseGuide(tool: string, args: Json, result: Json): Json {
   if (result.ok !== false || result.next_action !== undefined) return result;
+  if (tool === "autocrew_video" && args.action === "report" && /report/.test(String(result.error ?? ""))) return { ...result, next_action: reportGuide(args) };
   const action = typeof args.action === "string" ? args.action : "";
   const text = `${String(result.error ?? "")} ${String(result.code ?? "")}`;
   const rule = RULES.find((r) => r.tool === tool && (!r.action || r.action === action) && (!r.match || r.match.test(text)));

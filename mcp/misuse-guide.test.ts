@@ -40,3 +40,12 @@ describe("M2 漏了步骤 → 报错 + next_action 指向正确动作", () => {
     if (nextAction) expect(next.params?.action).toBe(nextAction);
   });
 });
+
+describe("评审 v1.3 P2：video report 参数不全 → 点名缺哪些字段，指向带原参数说明的完整用法", () => {
+  it("next_action 列出缺的字段和资源 URI", async () => {
+    const r = await handleMcpRequest({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "autocrew_video", arguments: { action: "report", content_id: contentId, report: { result: "ok" } } } }, { principal: { subject: "codex", plan: "local" }, host: "codex" }, dir);
+    const body = (r!.result as { structuredContent: Record<string, unknown> }).structuredContent;
+    expect(body.ok).toBe(false);
+    expect(body.next_action).toMatchObject({ resource: "autocrew://tool-guide/autocrew_video", missing: expect.arrayContaining(["request_id", "binding_revision", "session_id", "files"]) });
+  });
+});

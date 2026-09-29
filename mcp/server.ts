@@ -9,7 +9,7 @@ import { contentFile } from "../src/storage/content-project.js";
  * 不再自带 stdio 循环，全部宿主经同一个写进程（P3 §3）。
  */
 import { WRITING_INSTRUCTIONS, MCP_INSTRUCTIONS } from "./writing-instructions.js";
-import { mcpToolView, TOOL_GUIDE_PREFIX } from "./tool-docs.js";
+import { mcpToolView, TOOL_GUIDE_PREFIX, toolGuideText } from "./tool-docs.js";
 import { withMisuseGuide } from "./misuse-guide.js";
 import { registerAutocrewCapabilities } from "../index.js";
 import { loadProfile } from "../src/modules/profile/creator-profile.js";
@@ -96,7 +96,8 @@ async function readResource(uri: string, runtime: ReturnType<typeof runtimeFor>)
   // 工具的完整用法（瘦身前的长说明原文）按需读取（spec v1.3 §2）
   if (uri.startsWith(TOOL_GUIDE_PREFIX)) {
     const tool = runtime.runner.getTool(uri.slice(TOOL_GUIDE_PREFIX.length));
-    return tool ? { text: tool.description, mimeType: "text/markdown" } : null;
+    // 原长说明 + 原参数结构（含每个参数的原说明、嵌套载荷的字段与单位）：tools/list 里删掉的都在这里（评审 v1.3 P2）
+    return tool ? { text: toolGuideText(tool.name, tool.description, toLosslessJson(tool.parameters)), mimeType: "text/markdown" } : null;
   }
   if (uri === "autocrew://profile") return json(await loadProfile(runtime.ctx.dataDir));
   if (uri === "autocrew://topics") return json(await runtime.runner.execute("autocrew_topic", { action: "list" }));
@@ -245,7 +246,9 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
     return resultResponse(id, {
       resources: [
         { uri: "autocrew://writing-guide", name: "写作默认流程与交付标准", mimeType: "text/markdown" },
-        { uri: `${TOOL_GUIDE_PREFIX}<工具名>`, name: "某个工具的完整用法（把 <工具名> 换成如 autocrew_writer）", mimeType: "text/markdown" },
+        // 每个本宿主能用的工具一条真实 URI（评审 v1.3 P3：不再挂一个字面的 <工具名> 占位）
+        ...runtime.runner.getTools().filter((tool) => hostListsTool(access?.host ?? DEFAULT_HOST, tool.name))
+          .map((tool) => ({ uri: `${TOOL_GUIDE_PREFIX}${tool.name}`, name: `${tool.name} 的完整用法`, mimeType: "text/markdown" })),
         { uri: "autocrew://profile", name: "创作者档案", mimeType: "application/json" },
         { uri: "autocrew://topics", name: "选题库", mimeType: "application/json" },
         { uri: "autocrew://contents", name: "内容资产", mimeType: "application/json" },

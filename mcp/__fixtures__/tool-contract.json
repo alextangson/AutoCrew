@@ -14,6 +14,9 @@
       ],
       "type": "string"
      },
+     "description": {
+      "type": "string"
+     },
      "id": {
       "type": "string"
      },
@@ -34,6 +37,9 @@
         },
         "summary": {
          "type": "string"
+        },
+        "title": {
+         "type": "string"
         }
        },
        "required": [
@@ -52,6 +58,9 @@
        "type": "string"
       },
       "type": "array"
+     },
+     "title": {
+      "type": "string"
      }
     },
     "required": [
@@ -105,6 +114,9 @@
       "items": {
        "properties": {
         "snippet": {
+         "type": "string"
+        },
+        "title": {
          "type": "string"
         },
         "url": {
@@ -283,6 +295,9 @@
        "draft",
        "review"
       ],
+      "type": "string"
+     },
+     "title": {
       "type": "string"
      },
      "topicId": {
@@ -999,6 +1014,9 @@
       "maxItems": 10,
       "type": "array"
      },
+     "title": {
+      "type": "string"
+     },
      "topic_id": {
       "type": "string"
      },
@@ -1345,6 +1363,9 @@
      "content_id": {
       "type": "string"
      },
+     "description": {
+      "type": "string"
+     },
      "filename": {
       "type": "string"
      },
@@ -1376,6 +1397,9 @@
        "delete",
        "templates"
       ],
+      "type": "string"
+     },
+     "description": {
       "type": "string"
      },
      "id": {
@@ -1550,6 +1574,9 @@
        "type": "string"
       },
       "type": "array"
+     },
+     "title": {
+      "type": "string"
      }
     },
     "required": [
@@ -2213,6 +2240,12 @@
            "minLength": 1,
            "pattern": "\\S",
            "type": "string"
+          },
+          "title": {
+           "maxLength": 100,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
           }
          },
          "required": [
@@ -2524,6 +2557,9 @@
       ],
       "type": "string"
      },
+     "description": {
+      "type": "string"
+     },
      "id": {
       "type": "string"
      },
@@ -2544,6 +2580,9 @@
         },
         "summary": {
          "type": "string"
+        },
+        "title": {
+         "type": "string"
         }
        },
        "required": [
@@ -2562,6 +2601,9 @@
        "type": "string"
       },
       "type": "array"
+     },
+     "title": {
+      "type": "string"
      }
     },
     "required": [
@@ -2615,6 +2657,9 @@
       "items": {
        "properties": {
         "snippet": {
+         "type": "string"
+        },
+        "title": {
          "type": "string"
         },
         "url": {
@@ -2793,6 +2838,9 @@
        "draft",
        "review"
       ],
+      "type": "string"
+     },
+     "title": {
       "type": "string"
      },
      "topicId": {
@@ -3509,6 +3557,9 @@
       "maxItems": 10,
       "type": "array"
      },
+     "title": {
+      "type": "string"
+     },
      "topic_id": {
       "type": "string"
      },
@@ -3855,6 +3906,9 @@
      "content_id": {
       "type": "string"
      },
+     "description": {
+      "type": "string"
+     },
      "filename": {
       "type": "string"
      },
@@ -3886,6 +3940,9 @@
        "delete",
        "templates"
       ],
+      "type": "string"
+     },
+     "description": {
       "type": "string"
      },
      "id": {
@@ -4594,6 +4651,12 @@
            "minLength": 1,
            "pattern": "\\S",
            "type": "string"
+          },
+          "title": {
+           "maxLength": 100,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
           }
          },
          "required": [
@@ -4872,6 +4935,9 @@
        "draft",
        "review"
       ],
+      "type": "string"
+     },
+     "title": {
       "type": "string"
      },
      "topicId": {
@@ -5222,6 +5288,9 @@
       "type": "string"
      },
      "content_id": {
+      "type": "string"
+     },
+     "description": {
       "type": "string"
      },
      "filename": {
