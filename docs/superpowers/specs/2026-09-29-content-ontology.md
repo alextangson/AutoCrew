@@ -184,8 +184,8 @@ Codex P1-1：旧工作台批准要求交接（`founder-review.ts:131`）、`gate
 
 ### 9.2 时间线与摘要
 
-- `content get` 默认返回摘要：阶段、missing、badges、候选、最近变化（调用方传 `since_seq`；不传给最近 10 条）、关键路径、正文前 300 字、next_action；`detail:"full"` 返回完整记录。
-- MCP 回执双发（`mcp/server.ts:196`）：结构化内容保留完整 schema，文本只给摘要；先把现有 get 消费方迁移到结构化字段再改默认（Codex §15-5）。
+- 复用 main 上已有的 `autocrew_content summary`（`src/tools/content-summary.ts`，只读、不带正文、≤1.5KB，445de12 起）：制作段稿件的 `stage`/`blockers`/`next` 改由 `explain()` 给出，另加 missing、badges、候选、最近变化（调用方传 `since_seq`；不传给最近 10 条）、关键路径。`content get` 行为不变，不用迁移消费方。
+- MCP 回执双发（`mcp/server.ts:196`）不在本 spec 处理。
 - 不做活动面板（X2）。
 
 ## 10 界面
@@ -197,7 +197,7 @@ Codex P1-1：旧工作台批准要求交接（`founder-review.ts:131`）、`gate
 ## 11 分期（§13 问题 3）
 
 - **1a 正确性内核**：production.json 存储 + 字节索引 + 事务日志与恢复；`deriveStage`/`explain` + 夹具测试；`ProductionService` 单一写入服务与锁顺序；认稿硬门；冻结与重开文稿；record（项目内、收件箱、ChatCut/剪映导出）；项目内与旧存法对账 + 影子模式启用；工作台批准适配；登记记录 + 提交；发布出口校验；发布回执；NAS 归档互斥；旧入口关闭 + 各处改口；最小面板与拖动。
-- **1b 入口与体验**：监视文件夹 + 后台转写匹配 + pending_match；卡片挂载的匹配提醒；已绑定稿新版本发现；content get 摘要 + 双发瘦身；网页登录跨重启。
+- **1b 入口与体验**：监视文件夹 + 后台转写匹配 + pending_match；卡片挂载的匹配提醒；已绑定稿新版本发现；`content summary` 接 `explain()`；网页登录跨重启。
 - **2**：批准搬进卡片面板，原生弹窗下主路。
 - **3**：删死代码。
 
