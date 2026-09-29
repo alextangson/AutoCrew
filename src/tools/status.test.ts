@@ -67,9 +67,9 @@ async function seedPublishReady(platform: string): Promise<string> {
 }
 
 describe("autocrew_status brief", () => {
-  it("空数据目录：四个桶都是 0", async () => {
-    const r = await executeStatus({ brief: true, _dataDir: dir });
-    expect(r).toMatchObject({ ok: true, brief: "0 待写 / 0 等 A-roll / 0 已派工待登记 / 0 待发布" });
+  it("空数据目录：五个桶都是 0", async () => {
+    const r = await executeStatus({ brief: true, _dataDir: dir, _chatcutExportDir: path.join(dir, "no-chatcut") });
+    expect(r).toMatchObject({ ok: true, brief: "0 待写 / 0 等 A-roll / 0 剪完未登记 / 0 已派工待登记 / 0 待发布" });
   });
 
   it("按判据分桶：待写 / 等 A-roll / 已派工待登记 / 待发布", async () => {
@@ -93,11 +93,11 @@ describe("autocrew_status brief", () => {
     const shipped = await seedPublishReady("douyin");
     expect(await transitionStatus(shipped, "published", { force: true }, dir)).toMatchObject({ ok: true });
 
-    const r = await executeStatus({ brief: true, _dataDir: dir });
+    const r = await executeStatus({ brief: true, _dataDir: dir, _chatcutExportDir: path.join(dir, "no-chatcut") });
     expect(r).toMatchObject({
       ok: true,
-      brief: "4 待写 / 2 等 A-roll / 1 已派工待登记 / 2 待发布",
-      counts: { to_write: 4, awaiting_aroll: 2, dispatched: 1, publish_ready: 2 },
+      brief: "4 待写 / 2 等 A-roll / 0 剪完未登记 / 1 已派工待登记 / 2 待发布",
+      counts: { to_write: 4, awaiting_aroll: 2, cut_unregistered: 0, dispatched: 1, publish_ready: 2 },
     });
   });
 

@@ -1,5 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { addAsset, addAssetByPath, listAssets, removeAsset, listVersions, getVersion, revertToVersion } from "../storage/local-store.js";
+import { isVideoPlatform } from "../storage/stage-guard.js";
+import { COVER_ASSET_WARNING } from "../modules/video/unregistered-cut.js";
+import { addAsset, addAssetByPath, getContent, listAssets, removeAsset, listVersions, getVersion, revertToVersion } from "../storage/local-store.js";
 
 /**
  * autocrew_asset — manage media files (covers, B-Roll, images, videos, subtitles)
@@ -29,6 +31,12 @@ export const assetSchema = Type.Object({
   version: Type.Optional(Type.Number({ description: "Version number (for get_version/revert)" })),
 });
 
+/** 视频稿没进剪辑台 / 封面台就回传封面：照存，但提醒它进不了封面审批 */
+async function coverBypassesGate(contentId: string, dataDir?: string): Promise<boolean> {
+  const c = await getContent(contentId, dataDir);
+  return Boolean(c && isVideoPlatform(c.platform) && c.status !== "editing" && c.status !== "publish_ready");
+}
+
 export async function executeAsset(params: Record<string, unknown>) {
   const action = params.action as string;
   const contentId = params.content_id as string;
@@ -47,7 +55,10 @@ export async function executeAsset(params: Record<string, unknown>) {
     const base = { filename, type: assetType as any, description: (params.description as string) || undefined };
     const source = (params.source_path as string) || "";
     // 失败照旧向上抛（存储类错误由外层统一成 storage_unavailable），不在这里吞成泛化失败
-    return source ? addAssetByPath(contentId, base, source, dataDir) : addAsset(contentId, base, dataDir);
+    const result = source ? await addAssetByPath(contentId, base, source, dataDir) : await addAsset(contentId, base, dataDir);
+    return result.ok && assetType === "cover" && (await coverBypassesGate(contentId, dataDir))
+      ? { ...result, warning: COVER_ASSET_WARNING }
+      : result;
   }
 
   if (action === "list") {
