@@ -1438,19 +1438,24 @@ export async function getCoverReview(contentId: string, dataDir?: string): Promi
   }
 }
 
+/** 模型调用想给视频稿定封面：锁内按当前平台判定（锁外预检挡不住并发改平台，P6 §14.7 #1） */
+export class VideoCoverApprovalRefused extends Error {}
+
 export async function approveCoverVariant(
   contentId: string,
   label: CoverVariantLabel,
   dataDir?: string,
+  opts: { modelCall?: boolean } = {},
 ): Promise<CoverReview | null> {
   if (!isContentId(contentId)) return null;
-  return contentWrite(contentId, dataDir, () => approveCoverVariantLocked(contentId, label, dataDir));
+  return contentWrite(contentId, dataDir, () => approveCoverVariantLocked(contentId, label, dataDir, opts));
 }
 
 async function approveCoverVariantLocked(
   contentId: string,
   label: CoverVariantLabel,
-  dataDir?: string,
+  dataDir: string | undefined,
+  opts: { modelCall?: boolean },
 ): Promise<CoverReview | null> {
   const projDir = contentDir(contentId, dataDir);
   const reviewPath = projectFile(projDir, "cover-review.json");
@@ -1469,6 +1474,7 @@ async function approveCoverVariantLocked(
   }
   const review: CoverReview = portableProjectRecord(JSON.parse(reviewRaw), projDir, true);
   const content: Content = portableProjectRecord(JSON.parse(metaRaw), projDir, true);
+  if (opts.modelCall && isVideoPlatform(content.platform)) throw new VideoCoverApprovalRefused();
   const selected = review.variants.find((variant) => variant.label === label);
   if (!selected) {
     return null;

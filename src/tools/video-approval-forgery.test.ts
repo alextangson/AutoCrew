@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { saveContent, getContent, getCoverReview, saveCoverReview, transitionStatus, updateContent, type ContentUpdates } from "../storage/local-store.js";
+import { saveContent, getContent, getCoverReview, saveCoverReview, transitionStatus, updateContent, approveCoverVariant, VideoCoverApprovalRefused, type ContentUpdates } from "../storage/local-store.js";
 import { claimContent } from "../storage/claims.js";
 import { setVideoService } from "../modules/video/service-registry.js";
 import type { VideoService } from "../modules/video/service.js";
@@ -144,5 +144,16 @@ describe("MCP 宿主不能伪造视频稿的创始人批准", () => {
       const after = (await getContent(c.id, dir))!;
       expect(after.platform === "douyin" && after.status === "publish_ready" && !after.videoDone, `round ${round}`).toBe(false);
     }
+  });
+
+  it("锁内复核：锁外按公众号放行后平台被改成抖音，模型调用的定封面在写锁里被拒", async () => {
+    const c = await saveContent({ title: "口播稿", body: "口播正文。".repeat(200), platform: "wechat_mp", status: "approved" }, dir);
+    await saveCoverReview(c.id, { platform: "wechat_mp", status: "review_pending", variants: [{ label: "a", imagePaths: { "3:4": "/tmp/a.png" } }] }, dir);
+    // 模拟并发：锁外预检之后、拿到写锁之前，平台已被另一个调用改成抖音
+    await updateContent(c.id, { platform: "douyin" }, dir);
+    await expect(approveCoverVariant(c.id, "a", dir, { modelCall: true })).rejects.toBeInstanceOf(VideoCoverApprovalRefused);
+    expect((await getCoverReview(c.id, dir))!.approvedLabel).toBeUndefined();
+    // 人手点击（工作台）照常
+    expect((await approveCoverVariant(c.id, "a", dir))?.approvedLabel).toBe("a");
   });
 });

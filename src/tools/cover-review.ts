@@ -20,6 +20,7 @@ import {
   getCoverReview,
   saveCoverReview,
   approveCoverVariant,
+  VideoCoverApprovalRefused,
   transitionStatus,
   normalizeLegacyStatus,
   type CoverReview,
@@ -240,7 +241,12 @@ async function coverWriteAction(
     const label = params.label as CoverLabel;
     if (!label) return { ok: false, error: "label (a/b/c) is required for approve action" };
 
-    const result = await approveCoverVariant(contentId, label, dataDir);
+    // 锁外预检之后平台可能被并发改成视频平台：锁内再核一次
+    const result = await approveCoverVariant(contentId, label, dataDir, { modelCall: isModelCall(params) }).catch((err: unknown) => {
+      if (err instanceof VideoCoverApprovalRefused) return "founder_only" as const;
+      throw err;
+    });
+    if (result === "founder_only") return { ok: false, code: "founder_only", error: FOUNDER_APPROVAL_ONLY };
     if (!result) return { ok: false, error: `Failed to approve variant ${label} for ${contentId}` };
     return { ok: true, review: result };
   }
