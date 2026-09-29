@@ -169,4 +169,15 @@ describe("seg9", () => {
     expect(by["封面审核"]).toBe("skip");
     expect(JSON.stringify(res)).not.toContain("force");
   });
+
+  it("[P2 receipts] 历史纠正存的是中文平台名槽（slot:1:视频号）：归一后照样作废那条回执", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    doc.facts.push({ id: "f1", kind: "publish", round: 1, state: "accepted", availability: "present", source: "reconcile", at: "2026-09-01T00:00:00Z",
+      seen_at: "2026-09-01T00:00:00Z", obs_source: "plan", platform: "视频号", pub_state: "public", verified: true, evidence: "计划" });
+    expect(slotOf(doc, 1, "wechat_video")).not.toBeNull();
+    doc.decisions.push({ id: "c1", type: "publish_correction", target_id: "slot:1:视频号", round: 1, at: "2026-09-02T00:00:00Z", source: "founder" });
+    expect(slotOf(doc, 1, "wechat_video")).toBeNull();
+  });
 });

@@ -18,7 +18,7 @@ import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/
 import { isModelCall } from "../../storage/stage-guard.js";
 import { withFileOwnership } from "./mutex.js";
 import { validCoverApproval, validCutApproval } from "./derive.js";
-import { canonPlatform, slotGate, slotId, slotOf } from "./receipts.js";
+import { canonPlatform, normSlotId, slotGate, slotId, slotOf } from "./receipts.js";
 import { gateFromPlan, isUngated } from "./publish-check-link.js";
 import { adoptCandidate } from "./record.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
@@ -156,10 +156,10 @@ async function correct(ctx: Ctx): Promise<Result> {
   const raw = str(ctx.params.target_id);
   const fact = ctx.doc.facts.find((f) => f.id === raw && f.kind === "publish");
   const dec = ctx.doc.decisions.find((d) => d.id === raw && d.type === "i_published");
-  const id = raw.startsWith("slot:") ? raw : fact ? slotId(fact.round, canonPlatform(fact.platform ?? "?")) : dec ? slotId(dec.round, canonPlatform(dec.platform ?? "?")) : "";
+  const id = raw.startsWith("slot:") ? normSlotId(raw) : fact ? slotId(fact.round, canonPlatform(fact.platform ?? "?")) : dec ? slotId(dec.round, canonPlatform(dec.platform ?? "?")) : "";
   const m = /^slot:(\d+):(.+)$/.exec(id);
   if (!m || Number(m[1]) !== ctx.doc.round) return fail("stale", "要纠正的发布记录不在这一轮，刷新再看");
-  const same = slotOf(ctx.doc, ctx.doc.round, m[2]) ? null : sameDecision(ctx.doc, "publish_correction", (d) => d.target_id === id);
+  const same = slotOf(ctx.doc, ctx.doc.round, m[2]) ? null : sameDecision(ctx.doc, "publish_correction", (d) => normSlotId(d.target_id ?? "") === id);
   return { ok: true, decision: same ?? (await push(ctx, { type: "publish_correction", target_id: id, ...(str(ctx.params.note) ? { note: str(ctx.params.note) } : {}) }, "publish_corrected")) };
 }
 

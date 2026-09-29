@@ -197,11 +197,17 @@ export interface Slot {
   history: string[];
 }
 
-export const slotId = (round: number, platform: string) => `slot:${round}:${platform}`;
+export const slotId = (round: number, platform: string) => `slot:${round}:${canonPlatform(platform)}`;
+
+/** 历史纠正存的槽 id 可能带中文平台名（`slot:1:视频号`）：按同一张别名表归一，旧纠正照样生效 */
+export function normSlotId(id: string): string {
+  const m = /^slot:(\d+):(.+)$/.exec(id);
+  return m ? slotId(Number(m[1]), m[2]) : id;
+}
 
 /** 槽被纠正的时刻（最后一次纠正）；之前的观察与决定全部作废 */
 function correctedAt(doc: ProductionDoc, id: string): number {
-  const ds = doc.decisions.filter((d) => d.type === "publish_correction" && d.target_id === id);
+  const ds = doc.decisions.filter((d) => d.type === "publish_correction" && d.target_id && normSlotId(d.target_id) === id);
   return ds.length ? Math.max(...ds.map((d) => Date.parse(d.at))) : -Infinity;
 }
 
