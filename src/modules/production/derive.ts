@@ -7,6 +7,7 @@
  * 不让批准失效、不让阶段倒退，只让 publishable=false（Codex P1-9）。
  */
 import { bodyHash } from "../../storage/production-store.js";
+import { platformLabel } from "../../desktop/platform-label.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
@@ -24,9 +25,15 @@ export interface Derived {
   badges: string[];
   candidates: CandidateView[];
   publishable: boolean;
-  /** 依据：命中这一行靠的是哪些事实 / 决定 */
+  /** 依据：命中这一行靠的是哪些事实 / 决定（id，给日志和 API，不给创始人看） */
   evidence: string[];
+  /** 给创始人看的一句人话原因（「有成片待你审」「抖音、B站 已定时投出」）；规则代码只留在 rule */
+  reason: string;
+  /** 真有问题的提示（界面标红）：文件不见了、被驳回、未登记就发布…；badges 只是中性信息 */
+  alerts: string[];
 }
+
+export const UNREGISTERED_PUBLISH = "未登记就发布：发出去的成片没有登记记录可核对";
 
 export const MISSING = {
   cut: "成片",
@@ -90,7 +97,6 @@ function validPublished(doc: ProductionDoc): Decision | null {
   return latest(inRound(doc, doc.decisions).filter((d) => d.type === "i_published" && !corrected.has(d.id)));
 }
 
-const PUB_LABEL: Record<string, string> = { scheduled: "已定时", reviewing: "审核中", public: "已公开", overdue: "应已公开", rejected: "被驳回" };
 
 /**
  * 本轮的发布回执（§6）。已核实 = AutoCrew 发布器 / 数据回流 / 创始人确认；模型报的是「待核」。
@@ -108,11 +114,23 @@ export function publishReceipts(doc: ProductionDoc): { live: Fact[]; rejected: F
   };
 }
 
-function receiptBadges(r: ReturnType<typeof publishReceipts>): string[] {
-  return [
-    ...r.pending.map((f) => `${f.by?.host ?? "AI"} 说已发到 ${f.platform ?? "平台"}${f.url ? `：${f.url}` : ""}，是吗？`),
-    ...r.rejected.map((f) => `${f.platform ?? "平台"} 被驳回${f.reason ? `：${f.reason}` : ""}`),
-  ];
+const label = (p?: string) => (p ? platformLabel(p) : "平台");
+
+/** 待核声明是要创始人确认的中性提示；被驳回是问题 */
+function receiptNotes(r: ReturnType<typeof publishReceipts>): { badges: string[]; alerts: string[] } {
+  return {
+    badges: r.pending.map((f) => `${f.by?.host ?? "AI"} 说已发到${label(f.platform)}${f.url ? `：${f.url}` : ""}，是吗？`),
+    alerts: r.rejected.map((f) => `${label(f.platform)}被驳回${f.reason ? `：${f.reason}` : ""}`),
+  };
+}
+
+/** 已发布的人话原因：按状态把平台归在一起（「抖音、B站 已定时投出」） */
+function publishedReason(live: Fact[], founder: boolean): string {
+  if (!live.length) return founder ? "你标了已发布" : "发布记录显示已投出";
+  const by = new Map<string, string[]>();
+  for (const f of live) by.set(f.pub_state ?? "public", [...(by.get(f.pub_state ?? "public") ?? []), label(f.platform)]);
+  const text: Record<string, string> = { scheduled: "已定时投出", reviewing: "已投出、审核中", public: "已公开", overdue: "应已公开" };
+  return [...by].map(([st, ps]) => `${[...new Set(ps)].join("、")} ${text[st] ?? "已投出"}`).join("；");
 }
 
 export function candidatesOf(doc: ProductionDoc): CandidateView[] {
@@ -162,37 +180,49 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   return { missing, badges };
 }
 
+function editingReason(missing: string[]): string {
+  if (missing.includes(MISSING.cutReview)) return "有成片待你审";
+  if (missing.includes(MISSING.coverPick)) return "有封面待你选";
+  return missing.length ? `剪辑中，还差：${missing.join("、")}` : "剪辑中";
+}
+
 /** 调用方保证：视频平台 + 有效认稿（`scriptApprovalFor`） */
 export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEvidence): Derived {
   const candidates = candidatesOf(doc);
-  const base = { candidates, publishable: false, badges: [] as string[], missing: [] as string[] };
+  const base = { candidates, publishable: false, badges: [] as string[], missing: [] as string[], alerts: [] as string[] };
   const published = validPublished(doc);
   const receipts = publishReceipts(doc);
   if (publish.verified || published || receipts.live.length) {
-    const live = receipts.live.map((f) => `${f.platform ?? "平台"} ${PUB_LABEL[f.pub_state ?? "public"] ?? f.pub_state}`);
-    const badges = [...(publish.badge ? [publish.badge] : []), ...live, ...(published && !live.length && !publish.badge ? ["你标了已发布"] : [])];
+    // 各平台状态已经收进原因句（「抖音、B站 已定时投出」），不再逐条重复成徽章
+    const badges = receipts.live.length ? [] : [...(publish.badge ? [publish.badge] : []), ...(published && !publish.badge ? ["你标了已发布"] : [])];
     const evidence = [...receipts.live.map((f) => `回执 ${f.id}`), ...(publish.verified ? ["发布记录：已投出"] : []), ...(published ? [`决定 ${published.id}：我发了`] : [])];
-    return { ...base, stage: "已发布", rule: "D1", badges, publishable: false, evidence };
+    // 本轮没有登记记录就发出去了（agent 直接发）：发出去的成片没人核过
+    const alerts = inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH];
+    return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live, Boolean(published)) };
   }
-  base.badges = receiptBadges(receipts);
+  const notes = receiptNotes(receipts);
+  base.badges = notes.badges;
+  base.alerts = notes.alerts;
   const cut = validCutApproval(doc, body), cover = validCoverApproval(doc, body);
   const reg = matchingRegistration(doc, body, cut, cover);
   if (reg) {
     const present = registrationFilesPresent(doc, reg);
-    return { ...base, stage: "待发布", rule: "D2", publishable: present, badges: [...base.badges, ...(present ? [] : ["文件不见了"])], evidence: [`登记记录 ${reg.id}`] };
+    return { ...base, stage: "待发布", rule: "D2", publishable: present, alerts: [...base.alerts, ...(present ? [] : ["文件不见了"])], evidence: [`登记记录 ${reg.id}`],
+      reason: present ? "成片和封面都通过了，已登记，可以发" : "已登记，但登记的文件不见了，先找回再发" };
   }
   if (cut && cover) {
     const failure = doc.commit_failure?.round === doc.round ? doc.commit_failure.reason : null;
     const why = srtFor(doc, cut.sha256) ? failure ?? "登记还没完成" : "缺这版成片的字幕";
-    return { ...base, stage: "剪辑中", rule: "D3", missing: [why], evidence: [`成片批准 ${cut.id}`, `封面批准 ${cover.id}`] };
+    return { ...base, stage: "剪辑中", rule: "D3", missing: [why], evidence: [`成片批准 ${cut.id}`, `封面批准 ${cover.id}`], reason: `成片和封面都通过了，${why}` };
   }
   const facts = accepted(doc).filter((f) => PRODUCTION_KINDS.has(f.kind));
   if (facts.length) {
     const { missing, badges } = editingMissing(doc, cut, cover);
-    return { ...base, stage: "剪辑中", rule: "D4", missing, badges: [...base.badges, ...badges], evidence: facts.slice(0, 5).map((f) => `事实 ${f.id}（${f.kind}）`) };
+    return { ...base, stage: "剪辑中", rule: "D4", missing, badges: [...base.badges, ...badges], evidence: facts.slice(0, 5).map((f) => `事实 ${f.id}（${f.kind}）`), reason: editingReason(missing) };
   }
   const suspect = candidates.some((c) => c.kind === "aroll");
-  return { ...base, stage: "待录制", rule: "D5", missing: [MISSING.aroll], badges: [...base.badges, ...(suspect ? ["发现疑似 A-roll"] : [])], evidence: ["有效认稿，本轮还没有制作事实"] };
+  return { ...base, stage: "待录制", rule: "D5", missing: [MISSING.aroll], badges: [...base.badges, ...(suspect ? ["发现疑似 A-roll"] : [])], evidence: ["有效认稿，本轮还没有制作事实"],
+    reason: suspect ? "认过稿，发现了疑似 A-roll 等你确认" : "认过稿，还没有原片" };
 }
 
 /** 写稿段稿件已有制作事实：仍在写稿中，只挂 badge（§2.1） */

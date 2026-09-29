@@ -86,6 +86,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
           {item.status === "draft_ready" && <span className="bcard-score bcard-badge">等你认稿</span>}{item.title || "（无标题）"}</button>
         {meta && <div className={"bcard-meta" + (item.status === "needs_evidence" ? " bcard-red" : "")}>{meta}</div>}
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
+        {(item.alerts ?? []).map((a) => <span key={a} className="bcard-alert">{a}</span>)}
       </div>
       <BackMenu item={item} onMenu={props.onMenu} reload={props.reload} />
     </div>

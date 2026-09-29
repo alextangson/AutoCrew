@@ -62,7 +62,7 @@ export const revokeHandoff = (contentId: string, manifestHash: string) =>
 export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean }
 export interface CardPanelData {
   id: string; title: string; platform: string | null; status: string; active: boolean;
-  column: string | null; stage: string | null; missing: string[]; badges: string[]; candidates: CardCandidate[];
+  column: string | null; stage: string | null; reason?: string; missing: string[]; badges: string[]; alerts?: string[]; candidates: CardCandidate[];
   round?: number; checklist?: string | null; can_reopen?: boolean;
   pending_receipts?: Array<{ fact_id: string; platform: string | null; url: string | null; host: string }>;
   published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; label: string; at: string }>;
@@ -70,4 +70,5 @@ export interface CardPanelData {
 }
 export const loadCard = (contentId: string) => call<CardPanelData>(`/api/board/card?content_id=${encodeURIComponent(contentId)}`);
 export const decide = (contentId: string, action: string, params: Json = {}) => post<Json>("/api/board/decision", { content_id: contentId, action, ...params });
+export const chooseFile = () => post<{ path: string }>("/api/board/choose-file", {});
 export const reopenScript = (contentId: string, round: number) => post<Json>("/api/board/reopen-script", { content_id: contentId, confirm: true, round });

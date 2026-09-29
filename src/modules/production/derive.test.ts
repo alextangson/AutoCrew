@@ -12,6 +12,9 @@ describe("推导表夹具（§2.6 每行正反例 + §16）", () => {
     if (want.missing) expect(r.missing).toEqual(want.missing);
     if (want.missingIncludes) expect(r.missing).toEqual(expect.arrayContaining(want.missingIncludes));
     if (want.badges) expect(r.badges).toEqual(want.badges);
+    if (want.alerts) expect(r.alerts).toEqual(want.alerts);
+    // 给创始人看的原因不带规则代码
+    expect(r.reason).not.toMatch(/D[1-5]/);
     if (want.publishable !== undefined) expect(r.publishable).toBe(want.publishable);
   });
 

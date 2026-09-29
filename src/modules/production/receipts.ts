@@ -31,8 +31,9 @@ const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
 };
 
 /** 作品身份：url / item_id；都没有就用（来源, 平台, 时间） */
-export function receiptIdentity(r: Pick<Fact, "platform" | "url" | "item_id" | "evidence" | "at">): string {
-  return `${r.platform ?? "?"}|${r.item_id ?? r.url ?? `${r.evidence ?? ""}@${r.at ?? ""}`}`;
+export function receiptIdentity(r: Pick<Fact, "platform" | "url" | "item_id" | "at">): string {
+  // 没有链接 / 作品 id 时按（平台, 发布时间）认；不拿来源说法当身份——说法改了不该变成另一件作品
+  return `${r.platform ?? "?"}|${r.item_id ?? r.url ?? `@${r.at ?? ""}`}`;
 }
 
 /** 从发布记录（发布器 + 我发了）与数据回流读出这条稿的可信回执 */
@@ -46,7 +47,8 @@ export async function trustedReceipts(content: Content, dataDir: string): Promis
       if (!state || p.state === "manual" || (!p.submitted && p.state !== "rejected")) continue;
       out.push({
         platform: p.platform, pub_state: state, verified: true, source: "reconcile",
-        evidence: "AutoCrew 发布器的发布记录", ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}),
+        // 发布计划可能是 agent 手写的，不一定出自 AutoCrew 发布器：照实叫「发布计划里的记录」
+        evidence: "发布计划里的记录", ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}),
         ...(p.reason ? { reason: p.reason } : {}), ...(p.time ? { at: p.time } : {}),
       });
     }
@@ -70,10 +72,11 @@ export function receiptFact(doc: ProductionDoc, r: ReceiptInput): Fact {
 }
 
 /** 同一件作品：同平台，且共同有的作品身份（链接 / 作品 id）明确一致；都没有身份时才退回来源键（Codex 审 seg2 P1） */
-export function sameWork(a: Pick<Fact, "platform" | "url" | "item_id" | "receipt_key">, b: Pick<Fact, "platform" | "url" | "item_id" | "receipt_key">): boolean {
+export function sameWork(a: Pick<Fact, "platform" | "url" | "item_id" | "receipt_key" | "at">, b: Pick<Fact, "platform" | "url" | "item_id" | "receipt_key" | "at">): boolean {
   if (a.platform !== b.platform) return false;
   if ((a.url && b.url && a.url === b.url) || (a.item_id && b.item_id && a.item_id === b.item_id)) return true;
-  return !a.url && !a.item_id && !b.url && !b.item_id && Boolean(a.receipt_key) && a.receipt_key === b.receipt_key;
+  if (a.url || a.item_id || b.url || b.item_id) return false;
+  return (Boolean(a.receipt_key) && a.receipt_key === b.receipt_key) || (Boolean(a.at) && a.at === b.at);
 }
 
 /** 发布时间落在哪一轮：按每次「重开文稿」的时间切（Codex 审 seg2 P2：首次发现 ≠ 本轮发布） */
@@ -91,7 +94,7 @@ function roundAt(doc: ProductionDoc, at: string): number {
  */
 function mergeOne(doc: ProductionDoc, r: ReceiptInput): number {
   const key = receiptIdentity({ ...r, at: r.at ?? "" });
-  const probe = { platform: r.platform, url: r.url, item_id: r.item_id, receipt_key: key };
+  const probe = { platform: r.platform, url: r.url, item_id: r.item_id, receipt_key: key, at: r.at ?? "" };
   const same = doc.facts.find((f) => f.kind === "publish" && f.source !== "record" && sameWork(f, probe));
   if (same) {
     if (same.round !== doc.round) return 0;

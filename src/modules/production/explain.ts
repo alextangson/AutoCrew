@@ -25,6 +25,10 @@ export interface Explanation {
   status: ContentStatus | null;
   missing: string[];
   badges: string[];
+  /** 真有问题的提示（界面标红） */
+  alerts: string[];
+  /** 一句人话原因（规则代码只在 rule 里） */
+  reason: string;
   candidates: CandidateView[];
   publishable: boolean;
   evidence: string[];
@@ -79,7 +83,7 @@ export function withLegacyDecisions(doc: ProductionDoc | null, content: ExplainI
 }
 
 function nonProduction(column: Column | null, phase: Explanation["phase"], badge: string | null): Explanation {
-  return { column, phase, stage: null, rule: null, status: null, missing: [], badges: badge ? [badge] : [], candidates: [], publishable: false, evidence: [] };
+  return { column, phase, stage: null, rule: null, status: null, missing: [], badges: badge ? [badge] : [], alerts: [], reason: phase === "writing" ? badge ?? "还没认稿" : "", candidates: [], publishable: false, evidence: [] };
 }
 
 /** 本体规则下的结果（不管启没启用） */
@@ -92,7 +96,7 @@ export function deriveExplanation(input: ExplainInput): Explanation {
   if (!scriptApprovalFor(d, content.body ?? "")) return { ...nonProduction("写稿中", "writing", writingBadge(d)), candidates: candidatesOf(d) };
   const r = deriveStage(d, content.body ?? "", publish);
   const badges = content.status === "publishing" && r.stage !== "已发布" ? [...r.badges, "发布中"] : r.badges;
-  return { column: r.stage, phase: "production", stage: r.stage, rule: r.rule, status: STAGE_STATUS[r.stage], missing: r.missing, badges, candidates: r.candidates, publishable: r.publishable, evidence: r.evidence };
+  return { column: r.stage, phase: "production", stage: r.stage, rule: r.rule, status: STAGE_STATUS[r.stage], missing: r.missing, badges, alerts: r.alerts, reason: r.reason, candidates: r.candidates, publishable: r.publishable, evidence: r.evidence };
 }
 
 export function explain(input: ExplainInput): Explanation {

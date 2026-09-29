@@ -30,7 +30,7 @@ export function OntologyBanner(props: { ontology: OntologyState | undefined; rel
   return <div className="board2-ontology" role="status">
     {notice && <button className="bcard-link" onClick={() => setOpen((v) => !v)}>{notice.text}</button>}
     {open && notice && <div className="board2-ontology-list">
-      {notice.moves.map((m) => <p key={m.id}>《{m.title}》{m.from ?? "（不在列里）"} → {m.to ?? "（不在列里）"}{m.rule ? `（${m.rule}）` : ""}：{m.evidence.join("；")}</p>)}
+      {notice.moves.map((m) => <p key={m.id}>《{m.title}》{m.from ?? "（不在列里）"} → {m.to ?? "（不在列里）"}：{m.evidence.join("；")}</p>)}
       {errors.map((e) => <p key={e.id} className="board2-stale">《{e.title}》对账失败：{e.error}</p>)}
       {notice.moves.length > 0 && <button disabled={busy} onClick={() => void enable([])}>{busy ? "启用中…" : "确认启用"}</button>}
     </div>}

@@ -72,6 +72,10 @@ export interface BoardItem {
   blockedReason: string | null;
   /** 这张卡按本体走（服务端 explain：已启用、没被排除的视频稿） */
   active?: boolean;
+  /** 真有问题的提示（卡上标红）；中性信息在 badges */
+  alerts?: string[];
+  badges?: string[];
+  reason?: string;
 }
 
 export interface BoardTopic {

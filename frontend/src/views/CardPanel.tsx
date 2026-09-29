@@ -5,7 +5,9 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
-import { decide, loadCard, reopenScript, type CardPanelData } from "./board-api";
+import { chooseFile, decide, loadCard, reopenScript, type CardPanelData } from "./board-api";
+
+const KIND_LABEL: Record<string, string> = { aroll: "原片", cut: "成片", srt: "字幕", cover: "封面", publish: "发布回执", chatcut_project: "ChatCut 工程" };
 import { UNDO } from "./board-columns";
 import { platformName } from "./board-columns";
 
@@ -31,11 +33,22 @@ export function CardPanel(p: Props) {
       return r;
     } finally { setBusy(false); }
   };
-  const attach = async () => {
-    const r = await act("attach_aroll", { path: arollPath.trim() }, "A-roll 已挂上、挪进项目");
+  const attach = async (file: string) => {
+    const r = await act("attach_aroll", { path: file.trim() }, "A-roll 已挂上、挪进项目");
     if (!r.ok && r.error.includes("更像《")) {
-      if (await confirmDialog({ title: "确定挂到这条？", body: r.error, confirmLabel: "挂到这条" })) await act("attach_aroll", { path: arollPath.trim(), confirm_other: true }, "A-roll 已挂上、挪进项目");
+      if (await confirmDialog({ title: "确定挂到这条？", body: r.error, confirmLabel: "挂到这条" })) await act("attach_aroll", { path: file.trim(), confirm_other: true }, "A-roll 已挂上、挪进项目");
     }
+  };
+  /** 「选择文件…」：服务端在这台 Mac 上弹访达选择窗；取消 / 弹不出都明说，贴路径留作退路 */
+  const pick = async () => {
+    setBusy(true);
+    let chosen: string | null = null;
+    try {
+      const r = await chooseFile();
+      if (r.ok) chosen = r.data.path;
+      else toast(r.error);
+    } finally { setBusy(false); }
+    if (chosen) { setArollPath(chosen); await attach(chosen); }
   };
   const reopen = async () => {
     if (!(await confirmDialog({ title: UNDO.reopen.title, body: UNDO.reopen.body, confirmLabel: "重开文稿", danger: true }))) return;
@@ -46,31 +59,40 @@ export function CardPanel(p: Props) {
 
   return <div className="card-panel-mask" role="dialog" aria-label="卡片详情" onClick={(e) => { if (e.target === e.currentTarget) p.onClose(); }}>
     <div className="card-panel">
-      <header><h2>{data?.title ?? "读取中"}</h2><button className="bcard-link" onClick={p.onClose}>关闭</button></header>
+      <header className="card-panel-head"><h2>{data?.title ?? "读取中"}</h2><button className="bcard-link card-panel-close" onClick={p.onClose}>关闭</button></header>
       {error && <p className="board2-stale" role="alert">{error}</p>}
-      {data && <PanelBody data={data} busy={busy} act={act} arollPath={arollPath} setArollPath={setArollPath} attach={attach} reopen={reopen} openEditor={() => p.openEditor(p.contentId)} />}
+      {data && <PanelBody data={data} busy={busy} act={act} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} openEditor={() => p.openEditor(p.contentId)} />}
     </div>
   </div>;
 }
 
 function PanelBody(p: {
   data: CardPanelData; busy: boolean; act: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
-  arollPath: string; setArollPath: (v: string) => void; attach: () => Promise<void>; reopen: () => Promise<void>; openEditor: () => void;
+  arollPath: string; setArollPath: (v: string) => void; attach: () => Promise<void>; pick: () => Promise<void>; reopen: () => Promise<void>; openEditor: () => void;
 }) {
   const d = p.data;
   return <>
-    <p className="card-panel-stage">{d.stage ?? d.column ?? "—"}{d.missing.length ? ` · 还差：${d.missing.join("、")}` : ""}</p>
-    {d.badges.map((b) => <p key={b} className="card-panel-badge">{b}</p>)}
+    <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason ? ` · ${d.reason}` : ""}</p>
+    {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.join("、")}</p>}
+    {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
+    {d.badges.map((b) => <p key={b} className="card-panel-note">{b}</p>)}
     {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
     {d.active && d.candidates.length > 0 && <section><h3>发现的候选</h3>{d.candidates.map((c) => <div key={c.fact_id} className="card-panel-row">
-      <span>{c.kind} · {c.path ?? ""}{c.evidence ? `（${c.evidence}）` : ""}</span>
+      <span>{KIND_LABEL[c.kind] ?? c.kind} · {c.path ?? ""}{c.evidence ? `（${c.evidence}）` : ""}</span>
       <button disabled={p.busy} onClick={() => void p.act("confirm_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "已确认是这条")}>是这条</button>
       <button disabled={p.busy} onClick={() => void p.act("reject_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "记住了：不是这条")}>不是这条</button>
     </div>)}</section>}
     {d.active && (d.column === "待录制" || d.missing.includes("A-roll")) && <section><h3>挂 A-roll</h3>
-      <p className="bcol-note">把原片的完整路径贴进来（访达里选中文件按 ⌥⌘C 复制路径）。浏览器拿不到拖进来的文件路径，所以这里只收路径。</p>
-      <input value={p.arollPath} onChange={(e) => p.setArollPath(e.target.value)} placeholder="/Users/…/原片.mov" />
-      <button disabled={p.busy || !p.arollPath.trim()} onClick={() => void p.attach()}>挂到这条</button>
+      <div className="card-panel-row">
+        <button className="primary" disabled={p.busy} onClick={() => void p.pick()}>选择文件…</button>
+        <span className="card-panel-note">在访达里选原片，选好就挂到这条</span>
+      </div>
+      <details><summary className="card-panel-note">或者贴路径</summary>
+        <div className="card-panel-row">
+          <input value={p.arollPath} onChange={(e) => p.setArollPath(e.target.value)} placeholder="/Users/…/原片.mov" />
+          <button disabled={p.busy || !p.arollPath.trim()} onClick={() => void p.attach()}>挂到这条</button>
+        </div>
+      </details>
     </section>}
     {d.active && (d.pending_receipts ?? []).length > 0 && <section><h3>待你确认的发布</h3>{d.pending_receipts!.map((r) => <div key={r.fact_id} className="card-panel-row">
       <span>{r.host} 说已发到 {platformName(r.platform ?? "")}{r.url ? `：${r.url}` : ""}，是吗？</span>
@@ -93,12 +115,13 @@ function PublishedSection(p: { d: CardPanelData; busy: boolean; act: (a: string,
     if (await confirmDialog({ title: UNDO.correct_publish.title, body: UNDO.correct_publish.body, confirmLabel: "纠正", danger: true })) await p.act("correct_publish", { target_id: id }, "已纠正发布记录");
   };
   if (d.column !== "待发布" && d.column !== "已发布") return null;
+  const published = d.column === "已发布";
   return <section><h3>发布</h3>
     {(d.published ?? []).map((x) => <div key={x.id} className="card-panel-row"><span>{platformName(x.platform ?? "")} · {x.label}{x.url ? ` · ${x.url}` : ""}</span>
       <button disabled={p.busy} onClick={() => void correct(x.id)}>纠正</button></div>)}
-    <div className="card-panel-row">
+    {!published && <div className="card-panel-row">
       <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="作品链接（可不填）" />
       <button disabled={p.busy} onClick={() => void p.act("i_published", { platform: d.platform, ...(url.trim() ? { url: url.trim() } : {}) }, "已记为你发了")}>我发了</button>
-    </div>
+    </div>}
   </section>;
 }

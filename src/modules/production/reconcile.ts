@@ -108,7 +108,9 @@ async function shadowMove(content: Content, doc: ProductionDoc, dataDir: string)
   const derived = explain({ content, doc: withLegacyDecisions(doc, content, undefined, imported), enabled: true, publish });
   if (legacy.column === derived.column) return null;
   const why = imported.reason && content.video?.final ? [`旧登记没迁移：${imported.reason}`] : [];
-  return { id: content.id, title: content.title, from: legacy.column, to: derived.column, rule: derived.rule, evidence: [...derived.evidence, ...derived.badges, ...why, ...derived.missing.map((m) => `还差：${m}`)] };
+  // 给创始人看的依据一律人话（平台中文名、原因句），规则代码只留在 rule 字段
+  return { id: content.id, title: content.title, from: legacy.column, to: derived.column, rule: derived.rule,
+    evidence: [derived.reason, ...derived.alerts, ...why].filter(Boolean) };
 }
 
 /**

@@ -52,7 +52,7 @@ export function registrationFor(cut: Decision, cover: Decision, extra: Partial<R
 export interface DeriveCase {
   name: string;
   build: () => { doc: ProductionDoc; body?: string; publish?: PublishEvidence };
-  expect: { stage: Stage; rule: Rule; missing?: string[]; missingIncludes?: string[]; badges?: string[]; publishable?: boolean };
+  expect: { stage: Stage; rule: Rule; missing?: string[]; missingIncludes?: string[]; badges?: string[]; alerts?: string[]; publishable?: boolean };
 }
 
 function registered(extra: { cut?: Partial<Decision>; reg?: Partial<Registration>; facts?: Parameters<typeof fullFacts>[0] } = {}) {
@@ -68,7 +68,7 @@ export const DERIVE_CASES: DeriveCase[] = [
   { name: "D1- 回执被驳回（未投出）→ 不命中 D1，回待发布", build: () => ({ doc: registered(), publish: { verified: false } }), expect: { stage: "待发布", rule: "D2", publishable: true } },
   // D2
   { name: "D2+ 登记记录与当前有效批准完全一致 → 待发布", build: () => ({ doc: registered() }), expect: { stage: "待发布", rule: "D2", publishable: true, badges: [] } },
-  { name: "D2+ 所绑文件不见了 → 阶段不倒退、publishable=false", build: () => ({ doc: registered({ facts: { cut: { availability: "missing" } } }) }), expect: { stage: "待发布", rule: "D2", publishable: false, badges: ["文件不见了"] } },
+  { name: "D2+ 所绑文件不见了 → 阶段不倒退、publishable=false", build: () => ({ doc: registered({ facts: { cut: { availability: "missing" } } }) }), expect: { stage: "待发布", rule: "D2", publishable: false, badges: [], alerts: ["文件不见了"] } },
   { name: "D2- 登记记录的字幕与当前不一致 → 不命中 D2", build: () => ({ doc: registered({ reg: { srt_sha: SHA.cut2 } }) }), expect: { stage: "剪辑中", rule: "D3" } },
   { name: "D2- 登记记录绑的是别的成片批准 → 不命中 D2", build: () => ({ doc: registered({ reg: { cut_approval_id: "d-old" } }) }), expect: { stage: "剪辑中", rule: "D3" } },
   { name: "D2- 登记后正文变了（批准随正文哈希失效）→ 不命中 D2", build: () => ({ doc: registered(), body: "改过的正文" }), expect: { stage: "剪辑中", rule: "D4" } },

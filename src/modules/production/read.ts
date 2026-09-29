@@ -2,6 +2,7 @@
  * 读方的 explain 入口：读 production.json + 发布记录 + 启用版本，交给纯函数 `explain`。只读，零写入。
  */
 import type { Content } from "../../storage/local-store.js";
+import { platformLabel } from "../../desktop/platform-label.js";
 import { DERIVE_VERSION, readEnabledMarker, readProductionDoc } from "../../storage/production-store.js";
 import { firstPublishTime, readPublishRecord, type PublishRecord } from "../../storage/publish-record.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
@@ -20,7 +21,7 @@ export function publishEvidenceFrom(record: PublishRecord | null, since?: string
   const inRound = (t: string | null) => !since || (t !== null && Date.parse(t) >= Date.parse(since));
   const submitted = record.platforms.filter((p) => p.submitted && p.state !== "rejected" && inRound(p.time));
   if (!submitted.length) return { verified: false };
-  const badges = [...new Set(submitted.map((p) => `${p.platform} ${STATE_BADGE[p.state] ?? p.state}`))];
+  const badges = [...new Set(submitted.map((p) => `${platformLabel(p.platform)} ${STATE_BADGE[p.state] ?? p.state}`))];
   const at = firstPublishTime(record);
   return { verified: true, badge: badges.join(" / "), ...(at ? { at } : {}) };
 }
@@ -55,8 +56,8 @@ export async function explainContent(content: Content, dataDir: string, ctx?: Ex
   const publish = active && isVideoPlatform(content.platform) ? { verified: false } : await publishEvidenceOf(content, dataDir, record, doc?.round_started_at);
   const exp = explain({ content, doc, enabled: active, publish });
   // 启用时被排除的稿：照旧行为，卡片上标出来（从不静默跳过）
-  const flagged = excluded ? { ...exp, badges: [...exp.badges, "未纳入本体（启用时对账失败，已排除）"] } : exp;
-  return { ...flagged, ...(error ? { error } : {}) };
+  const alerts = [...exp.alerts, ...(excluded ? ["未纳入本体（启用时对账失败，已排除）"] : []), ...(error ? [`制作记录读不了：${error}`] : [])];
+  return { ...exp, alerts, ...(error ? { error } : {}) };
 }
 
 /** 一批稿件的 explain（读方批量用：看板以外的晨报、desk）。单条读坏不挡别条，按「没有事实」算 */

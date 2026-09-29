@@ -22,6 +22,8 @@ export interface DialogRunner {
   ask(opts: { title: string; prompt: string; buttons: string[]; defaultButton: string; cancelButton: string; timeoutSec: number }): Promise<DialogOutcome<string>>;
   /** 带输入框的对话框：返回改过的文字 */
   input(opts: { title: string; prompt: string; defaultAnswer: string; timeoutSec: number }): Promise<DialogOutcome<string>>;
+  /** 访达的「选择文件」窗（本体卡片挂 A-roll）：返回选中文件的 POSIX 路径。可选：老的测试替身不实现它 */
+  chooseFile?(opts: { prompt: string; timeoutSec: number }): Promise<DialogOutcome<string>>;
 }
 
 const NO_GUI = /no user interaction allowed|-1713|not authorized|-1743|connection is invalid|can.t get application/i;
@@ -71,6 +73,14 @@ export const osascriptDialog: DialogRunner = {
     if (failed) return failed;
     if (field(raw.stdout, "gave up") === "true") return { kind: "timeout" };
     return { kind: "ok", value: field(raw.stdout, "button returned") ?? "" };
+  },
+  async chooseFile({ prompt, timeoutSec }) {
+    // 只列视频文件；选中后回 POSIX 路径。choose file 没有 giving up after：靠进程超时收掉窗口
+    const raw = await osa([
+      "set f to choose file with prompt (item 1 of argv) of type {\"public.movie\"}",
+      "return POSIX path of f",
+    ], [prompt], timeoutSec);
+    return classify(raw) ?? { kind: "ok", value: raw.stdout.trim() };
   },
   async input({ title, prompt, defaultAnswer, timeoutSec }) {
     const raw = await osa([

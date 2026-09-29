@@ -45,6 +45,10 @@ export interface BoardItem {
   /** explain()：还差什么、徽章、候选（未启用本体时是影子结果之外的旧列，这三样为空） */
   missing: string[];
   badges: string[];
+  /** 真有问题的提示（卡上标红）：未登记就发布、文件不见了、被驳回… */
+  alerts: string[];
+  /** 一句人话原因 */
+  reason: string;
   candidates: CandidateView[];
   /** 这张卡按本体走（资料库已启用、没被排除、视频稿）：点开面板、拖动按 §10 规则；否则走旧流程 */
   active: boolean;
@@ -128,7 +132,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
     active: ctx.enabled && !ctx.excluded.has(current.id) && isVideoPlatform(current.platform),
-    missing: exp.missing, badges: exp.error ? [...exp.badges, `制作记录读不了：${exp.error}`] : exp.badges, candidates: exp.candidates,
+    missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
   };
 }
 

@@ -93,7 +93,7 @@ describe("[Codex P1 enable.ts:45] 启用是可恢复事务：保护措施没完�
     expect((await readEnabledMarker(env.dir))!.excluded).toEqual([bad.id]);
     expect((await getContent(good.id, env.dir))!.status).toBe("editing");
     const item = (await boardData(env.dir)).items.find((i) => i.id === bad.id)!;
-    expect(item.badges.join("")).toContain("未纳入本体");
+    expect(item.alerts.join("")).toContain("未纳入本体");
     expect(await record(env, { content_id: bad.id, kind: "cut", path: await put(path.join(env.chatcut, "x.mp4"), "c"), request_id: "r" })).toMatchObject({ code: "ontology_not_enabled" });
   });
 });

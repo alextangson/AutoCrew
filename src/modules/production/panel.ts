@@ -12,13 +12,19 @@ import { spokenRel } from "../video/handoff/register-spoken.js";
 import { publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import { explainContent } from "./read.js";
 
+/** 旧版本写进事实的来源说法：发布计划可能是 agent 手写的，照实改叫「发布计划里的记录」 */
+function receiptLabel(evidence?: string): string {
+  if (!evidence) return "发布回执";
+  return evidence.replace("AutoCrew 发布器的发布记录", "发布计划里的记录");
+}
+
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
   const active = isVideoPlatform(content.platform) && (await isOntologyActive(dataDir, contentId));
   const exp = await explainContent(content, dataDir);
   const base = { ok: true, id: content.id, title: content.title, platform: content.platform ?? null, status: content.status, active,
-    column: exp.column, stage: exp.stage, missing: exp.missing, badges: exp.badges, candidates: exp.candidates };
+    column: exp.column, stage: exp.stage, reason: exp.reason, missing: exp.missing, badges: exp.badges, alerts: exp.alerts, candidates: exp.candidates };
   if (!active) return base;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
   const receipts = publishReceipts(doc);
@@ -26,8 +32,10 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   // 新的在前（Codex 审 seg3 P2：「纠正最近一条」要真是最近的那条），每条带时间
   const published = [
     ...doc.decisions.filter((d) => d.round === doc.round && d.type === "i_published" && !corrected.has(d.id)).map((d) => ({ id: d.id, kind: "decision", platform: d.platform ?? null, url: d.note ?? null, label: "你标了已发布", at: d.at })),
-    ...receipts.live.map((f) => ({ id: f.id, kind: "receipt", platform: f.platform ?? null, url: f.url ?? null, label: f.evidence ?? "发布回执", at: f.at })),
-  ].sort((a, b) => b.at.localeCompare(a.at));
+    ...receipts.live.map((f) => ({ id: f.id, kind: "receipt", platform: f.platform ?? null, url: f.url ?? null, label: receiptLabel(f.evidence), at: f.at })),
+  ].sort((a, b) => b.at.localeCompare(a.at))
+    // 同一平台同一时刻的重复记录只显示一条（旧版本按来源说法去重，改说法后会重导一份）
+    .filter((x, i, all) => all.findIndex((y) => y.platform === x.platform && y.url === x.url && y.at === x.at && y.label === x.label) === i);
   const n = doc.registrations.length;
   const checklistRel = n ? spokenRel(n).replace(/-spoken\.md$/, "-checklist.json") : null;
   const checklist = checklistRel && (await fs.stat(path.join(contentRoot(contentId, dataDir), checklistRel)).then(() => true, () => false)) ? checklistRel : null;

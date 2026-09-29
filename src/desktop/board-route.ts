@@ -13,6 +13,7 @@ import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { founderDecision } from "../modules/production/decisions.js";
 import { cardPanel } from "../modules/production/panel.js";
+import { pullDeps } from "../modules/video/handoff/pull-deps.js";
 import { isContentId } from "../storage/entity-id.js";
 
 export interface BoardRouteDeps {
@@ -104,6 +105,19 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         // 浏览器请求体里的 _host / _modelCall 不许借来冒充什么：剥掉内部键，决定只认会话本身
         const params = Object.fromEntries(Object.entries(b).filter(([k]) => !k.startsWith("_")));
         return founderDecision(id, String(b.action ?? ""), params, dir);
+      });
+      return true;
+    }
+    // 卡片挂 A-roll 的「选择文件…」（本体 §9.1-3）：服务端在创始人的 Mac 上弹访达选择窗，只回路径，挂载仍走 attach_aroll 决定
+    if (p === "/api/board/choose-file" && req.method === "POST") {
+      await post(req, res, async () => {
+        const chooser = pullDeps().dialog.chooseFile;
+        if (!chooser) return { ok: false, code: "unavailable", error: "这台机器上弹不出选择文件的窗口，请把路径贴进来" };
+        const r = await chooser({ prompt: "选这条的原片（A-roll）", timeoutSec: 300 });
+        if (r.kind === "ok") return { ok: true, path: r.value };
+        if (r.kind === "cancel") return { ok: false, code: "cancelled", error: "没选文件" };
+        if (r.kind === "timeout") return { ok: false, code: "timeout", error: "选择窗等太久关掉了，再点一次" };
+        return { ok: false, code: "unavailable", error: `弹不出选择文件的窗口（${r.reason}），请把路径贴进来` };
       });
       return true;
     }
