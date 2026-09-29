@@ -155,3 +155,18 @@ describe("P3 #14 / #15 与创始人决定 1、3", () => {
     expect(await founderDecision(b.id, "attach_aroll", { path: abs, confirm_other: true, reassign: true }, env.dir)).toMatchObject({ ok: true });
   });
 });
+
+describe("seg9", () => {
+  it("[P2 tool-runner] 启用后出包：旧预检里闸门没覆盖的项照拦（无标签、字数），只有旧封面审核跳过", async () => {
+    await enable();
+    const r = await registeredVideo(env);
+    const runner = new ToolRunner({ ctx: createContext({ data_dir: env.dir }), eventBus: new EventBus() });
+    runner.register({ name: "autocrew_publish", label: "publish", description: "", parameters: publishSchema, execute: executePublish });
+    const res = await runner.execute("autocrew_publish", { action: "ego_lite_prepare", content_id: r.id, check_ids: ["chk-x"], _host: "claude-code" }) as { ok: boolean; checks?: Array<{ name: string; status: string }> };
+    expect(res.ok).toBe(false);
+    const by = Object.fromEntries((res.checks ?? []).map((c) => [c.name, c.status]));
+    expect(by["Hashtags"]).toBe("fail");
+    expect(by["封面审核"]).toBe("skip");
+    expect(JSON.stringify(res)).not.toContain("force");
+  });
+});

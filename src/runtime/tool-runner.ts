@@ -64,8 +64,8 @@ const PUBLISH_GATE_EXEMPT_ACTIONS = new Set(["confirm_published", "check", "prop
  * EventBus/hooks are fire-and-forget and cannot block. Fails closed: if the
  * checker errors, publishing is blocked.
  *
- * 启用本体的资料库里，视频出包（ego_lite_prepare）由发布审查闸门把关（必须带有效 check_ids），旧预检不再跑：
- * 本体登记的封面不走 cover_review，旧预检永远不过。报错不建议 force——那不是过闸门的办法。
+ * 启用本体的资料库里，视频出包（ego_lite_prepare）另由发布审查闸门把关（必须带有效 check_ids）；旧预检照跑，
+ * 只有旧封面审核（cover_review）换成登记 + 闸门核封面——本体登记的封面不走 cover_review。报错不建议 force。
  */
 const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next) => {
   if (toolName !== "autocrew_publish") return next();
@@ -75,13 +75,15 @@ const prePublishGateMiddleware: Middleware = async (ctx, toolName, params, next)
   // Unmanaged content (wechat_mp_draft via article_path) has no checklist to run
   const contentId = params.content_id as string | undefined;
   if (!contentId) return next();
-  if (params.action === "ego_lite_prepare" && (await isOntologyActive(ctx.dataDir, contentId))) return next();
+  // 启用本体的稿出包：旧预检照跑（内容审核 / 标签 / 标题 / 字数 / 平台 / 登记出口 / 阶段门），只把旧封面审核换成登记 + 发布前把关
+  const ontologyGated = params.action === "ego_lite_prepare" && (await isOntologyActive(ctx.dataDir, contentId));
 
   try {
     const check = await executePrePublish({
       action: "check",
       content_id: contentId,
       _dataDir: ctx.dataDir,
+      ...(ontologyGated ? { _ontologyGated: true } : {}),
       // 预检会推状态，是写；带上发起宿主，别让宿主的发布被记成工作台越门
       ...(typeof params._host === "string" ? { _host: params._host } : {}),
       ...(typeof params.claim_token === "string" ? { claim_token: params.claim_token } : {}),

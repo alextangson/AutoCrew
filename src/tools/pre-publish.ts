@@ -1,3 +1,4 @@
+import { isOntologyActive } from "../storage/production-store.js";
 /**
  * autocrew_pre_publish tool — Pre-publish checklist gate.
  *
@@ -390,7 +391,12 @@ export async function executePrePublish(params: Record<string, unknown>): Promis
   }
 
   // --- Check 2: Cover review (all video platforms) ---
-  if (COVER_REQUIRED_PLATFORMS.has(platform)) {
+  // 启用本体的稿出包（_ontologyGated，只由 ToolRunner 内部带）：封面由登记记录 + 发布前把关（槽位 / 登记那一对）核，旧封面审核不再适用
+  // 参数本身不可信（模型也能带下划线参数）：只有这条真按本体走才生效
+  const ontologyGated = params._ontologyGated === true && COVER_REQUIRED_PLATFORMS.has(platform) && (await isOntologyActive(dataDir, contentId));
+  if (ontologyGated) {
+    checks.push({ name: "封面审核", status: "skip", detail: "本体稿：封面由登记记录与发布前把关核对" });
+  } else if (COVER_REQUIRED_PLATFORMS.has(platform)) {
     const coverReview = await getCoverReview(contentId, dataDir);
     if (coverReview && (coverReview.status === "approved" || coverReview.status === "publish_ready") && coverReview.approvedLabel) {
       checks.push({ name: "封面审核", status: "pass", detail: `已选定 ${coverReview.approvedLabel.toUpperCase()} 方案` });
