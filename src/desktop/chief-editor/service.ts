@@ -55,7 +55,10 @@ export interface WorkItem {
   error?: string;
   /** 旁注（如「等你批准」：业务审批拦下不算出错） */
   note?: string;
-  kind?: "compact";
+  kind?: "compact" | "thought" | "note";
+  /** 失败后同一动作又成功了：失败那条标 resolved，成功那条标 recovered（X6） */
+  resolved?: boolean;
+  recovered?: boolean;
 }
 
 export interface ActiveTurn {
@@ -80,6 +83,8 @@ export interface ActiveTurn {
   bypass: boolean;
   /** 「本对话都允许」：轮次开始时读定（U1）；只有权限卡上的「始终允许（本对话）」能在本轮内立刻打开 */
   allowConversation: boolean;
+  /** 轮次开始时刻（「已处理 · 用时」） */
+  startedAt?: number;
   /** 最近一次 usage_update：上下文用量 */
   usage?: { used: number; size?: number };
 }

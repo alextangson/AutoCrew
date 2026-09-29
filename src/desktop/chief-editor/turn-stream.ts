@@ -11,7 +11,17 @@ import { toolDisplayName } from "./tool-names.js";
 export const WRITE_KINDS = new Set(["edit", "delete", "move", "execute"]);
 
 /** session/load 会把历史对话当 update 重放一遍：重放期间的更新一律不算本轮输出 */
-export interface StreamGate { replaying: boolean; flush?: () => void }
+export interface StreamGate {
+  replaying: boolean;
+  flush?: () => void;
+  /** 当前这段正文从 text 的哪一格开始：工具调用把正文切段，最后一段才是最终回复（v1.2） */
+  segStart?: number;
+}
+
+/** 最终回复 = 最后一次工具调用之后的那段正文；之前的过渡文字已收进「已处理」块 */
+export function finalSegment(text: string[], gate: StreamGate): string {
+  return text.slice(gate.segStart ?? 0).join("");
+}
 
 export interface StreamSinks {
   onDelta?: (e: { ev: "delta" | "reset" | "done"; text?: string }) => void;
@@ -44,15 +54,28 @@ export function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSi
   const redactor = new StreamRedactor();
   const emit = (t: string) => { if (t) sinks.onDelta?.({ ev: "delta", text: t }); };
   gate.flush = () => emit(redactor.finish());
+  let thought: WorkItem | null = null;
   return {
     onUpdate(u) {
       if (gate.replaying) return;
+      if (u.sessionUpdate === "agent_thought_chunk" && u.content?.text) {
+        // 思考收进「已处理」块（v1.2）：连续的思考片段并成一条，脱敏后截断
+        thought = thought ?? { id: `thought-${turn.worklog.length}-${Date.now()}`, name: "", status: "done", kind: "thought" };
+        thought.name = redactAndTruncate(`${thought.name}${u.content.text}`, 400);
+        upsertWork(svc, turn, { ...thought });
+        return;
+      }
+      thought = null;
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && u.content.text) {
         text.push(u.content.text);
         emit(redactor.push(u.content.text));
       } else if (u.sessionUpdate === "tool_call" && u.toolCallId) {
+        // 工具调用之前那段话是过渡文字：收进「已处理」块，最终回复只留最后一段（v1.2）
+        const between = text.slice(gate.segStart ?? 0).join("").trim();
+        if (between) upsertWork(svc, turn, { id: `note-${u.toolCallId}`, name: redactAndTruncate(between, 400), status: "done", kind: "note" });
+        gate.segStart = text.length;
+        if (between) emit(redactor.push("\n\n"));
         onToolCall(svc, turn, sinks, calls, u);
-        if (text.length && text[text.length - 1] !== "\n\n") { text.push("\n\n"); emit(redactor.push("\n\n")); }
       } else if (u.sessionUpdate === "tool_call_update" && u.toolCallId) {
         onToolUpdate(svc, turn, calls, u);
       } else if (u.sessionUpdate === "compaction_update" && u.compactionId) {
@@ -102,6 +125,14 @@ function onToolUpdate(svc: ChiefEditor, turn: ActiveTurn, calls: Map<string, { t
   const err = u.status === "failed" ? errorText(u as never) : "";
   // 业务审批拦下不是出错：记成「等你批准」，不画红字
   if (err.includes("approval_required")) upsertWork(svc, turn, { id, status: "done", note: "等你批准" } as WorkItem);
-  else upsertWork(svc, turn, { id, status: u.status === "failed" ? "failed" : "done", ...(err ? { error: err } : {}) } as WorkItem);
+  else upsertWork(svc, turn, { id, status: u.status === "failed" ? "failed" : "done", ...(err ? { error: err } : {}), ...(u.status === "completed" && markRecovered(turn, id) ? { recovered: true } : {}) } as WorkItem);
   if (u.status === "completed" && call?.kind && WRITE_KINDS.has(call.kind)) turn.writes.push(redactAndTruncate(call.title, 60));
+}
+
+/** 同一动作先失败、后成功：失败那条标 resolved（外面不再报「未解决」），返回本条是否算「重试成功」（X6） */
+function markRecovered(turn: ActiveTurn, id: string): boolean {
+  const name = turn.worklog.find((w) => w.id === id)?.name;
+  const failed = name ? turn.worklog.filter((w) => w.status === "failed" && !w.resolved && w.name === name && w.id !== id) : [];
+  for (const f of failed) f.resolved = true;
+  return failed.length > 0;
 }

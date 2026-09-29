@@ -75,6 +75,7 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  *   today:summary       {}
  */
 import { getChiefEditor } from "./chief-editor/service.js";
+import { routeRetryToAgent } from "./chief-editor/retry-route.js";
 import { buildDispatchContext, parseDispatch } from "./dispatch-context.js";
 import { isLocalBackend } from "./chief-editor/backends.js";
 import { resolveTurnBackend, maybeRunLocalTurn, agentBackendsHandler, agentPendingHandler, agentAnswerHandler, agentSettingsHandler, conversationRenameHandler } from "./chief-editor/ipc-handlers.js";
@@ -566,6 +567,9 @@ async function generateRetryHandler(payload: Record<string, unknown>): Promise<R
   const contentId = typeof payload.content_id === "string" ? payload.content_id.trim() : "";
   if (!contentId) return { ok: false, error: "generate:retry 需要 content_id" };
   const dataDir = (payload._dataDir as string) || undefined;
+  // 本机 agent 写到一半中断的稿：回原对话由同一个本机后端接着写，不走内置引擎（v1.2 §4）
+  const routed = await routeRetryToAgent(contentId, getDataDir(dataDir));
+  if (routed) return routed;
   const key = GENERATE_JOB_KEY(contentId);
   if (!claimJob(key)) return { ok: false, error: "这篇已经在写了——等它跑完再重试" };
   let held = false;

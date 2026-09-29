@@ -13,7 +13,7 @@ import { STATUS_TEXT, type AskView } from "./asks.js";
 import { ADAPTERS, headroomMcp, proxyUnreachable, type BackendAdapter, type LocalBackendId } from "./backends.js";
 import type { AgentProcess } from "./acp-process.js";
 import { SettingError, type AgentSettings } from "./agent-settings.js";
-import { makeHandlers, type StreamGate } from "./turn-stream.js";
+import { finalSegment, makeHandlers, type StreamGate } from "./turn-stream.js";
 import { openSession } from "./turn-session.js";
 import { ensurePersona } from "./persona.js";
 import { redactAndTruncate, redactedTail, redactText } from "./redact.js";
@@ -51,7 +51,7 @@ function acquire(svc: ChiefEditor, input: LocalTurnInput): { ok: true; turn: Act
   const turn: ActiveTurn = {
     turnId: input.turnId, clientId: input.clientId, conversationId: input.conversationId ?? "",
     dataDir: input.dataDir, backend: input.backend, status: "running", cards: [], writes: [], inFlight: new Map(), aborted: false,
-    worklog: [], bypass: false, allowConversation: false,
+    worklog: [], bypass: false, allowConversation: false, startedAt: Date.now(),
   };
   svc.active = turn;
   return { ok: true, turn, signal: reg.signal };
@@ -146,7 +146,16 @@ export function stopSummary(writes: string[], inFlight: string[] = []): string {
 
 /** 本轮卡片：工作记录（有就放最前，一张）+ 工具结果卡 */
 export function turnCards(turn: ActiveTurn): Record<string, unknown>[] {
-  return turn.worklog.length ? [{ type: "agent_worklog", data: { items: turn.worklog } }, ...turn.cards] : turn.cards;
+  // 只有回复、没有任何过程（工具 / 思考 / 过渡文字）时不出过程块（X3）
+  if (!turn.worklog.length) return turn.cards;
+  const unresolved = turn.worklog.filter((w) => w.status === "failed" && !w.resolved).length;
+  const data = {
+    items: turn.worklog,
+    ...(turn.startedAt ? { durationMs: Date.now() - turn.startedAt } : {}),
+    ...(turn.aborted ? { stopped: true } : {}),
+    ...(unresolved ? { unresolved } : {}),
+  };
+  return [{ type: "agent_worklog", data }, ...turn.cards];
 }
 
 function replyText(turn: ActiveTurn, out: Outcome): string {
@@ -170,6 +179,8 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   turn.bypass = conv.settings.permissionMode === "bypass";
   turn.allowConversation = svc.conversationAllowed(conv.id);
   svc.runs.put({ turnId: turn.turnId, clientId: turn.clientId, conversationId: conv.id, dataDir: turn.dataDir, backend: turn.backend, message: input.message, status: "running", startedAt: new Date().toISOString() });
+  // 别的标签页 / 看板重试发起的轮：右栏据此挂上来旁观（v1.2）
+  svc.deps.emit({ type: "turn", turnId: turn.turnId, conversationId: conv.id, status: "running" });
   ensurePersona(svc.deps.home, turn.backend);
   turn.token = svc.issueToken({ backend: turn.backend, dataDir: turn.dataDir, conversationId: conv.id, turnId: turn.turnId });
   const text: string[] = [];
@@ -186,10 +197,10 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
     svc.authFailed.delete(adapter.id);
     gate.flush?.();
     logUsage(turn);
-    return { ok: true, reply: redactText(text.join("")).trim(), stopReason, ...(session.notice ? { notice: session.notice } : {}) };
+    return { ok: true, reply: redactText(finalSegment(text, gate)).trim(), stopReason, ...(session.notice ? { notice: session.notice } : {}) };
   } catch (err) {
     gate.flush?.();
-    if (turn.aborted) return { ok: true, reply: redactText(text.join("")).trim(), stopReason: "cancelled" };
+    if (turn.aborted) return { ok: true, reply: redactText(finalSegment(text, gate)).trim(), stopReason: "cancelled" };
     return { ok: false, reply: failureText(adapter, svc, err, proc) };
   }
 }
