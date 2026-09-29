@@ -98,14 +98,16 @@ export interface OntologyState {
 export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null; ontology?: OntologyState }
 
 /** 看板顶部的本体提示：未启用且有要挪的卡 → 「要挪 N 张卡」；对账失败逐条可见；什么都没有 → null */
-export function ontologyNotice(o: OntologyState | undefined): { moves: OntologyMove[]; errors: number; text: string } | null {
+export function ontologyNotice(o: OntologyState | undefined): { moves: OntologyMove[]; errors: number; warnings: string[]; text: string } | null {
   const r = o?.report;
   if (!o || !r) return null;
   const moves = o.enabled ? [] : r.moves;
   const errors = r.errors.length;
-  if (!moves.length && !errors) return null;
-  const parts = [moves.length ? `本体对账：要挪 ${moves.length} 张卡，看一下` : "", errors ? `${errors} 条对账失败` : ""].filter(Boolean);
-  return { moves, errors, text: parts.join("；") };
+  // 登记没完成 / 投影没写完这类提醒也要看得见（Codex 审 seg4 P2）
+  const warnings = r.warnings ?? [];
+  if (!moves.length && !errors && !warnings.length) return null;
+  const parts = [moves.length ? `本体对账：要挪 ${moves.length} 张卡，看一下` : "", errors ? `${errors} 条对账失败` : "", warnings.length ? `${warnings.length} 条提醒` : ""].filter(Boolean);
+  return { moves, errors, warnings, text: parts.join("；") };
 }
 
 export type Card = { kind: "topic"; topic: BoardTopic } | { kind: "item"; item: BoardItem };

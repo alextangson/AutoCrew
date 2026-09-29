@@ -95,7 +95,7 @@ export async function refreshProductionProjection(tx: ContentTx, content: Conten
   }
   if (target) {
     // 投影到已发布时盖一次发布时间（只盖一次，取平台上的实际/定时时间）
-    const firstLive = publishReceipts(doc).live.map((f) => f.at).sort()[0];
+    const firstLive = publishReceipts(doc).live.map((w) => w.at).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
     const stamp = target === "published" && !content.publishedAt ? { publishedAt: firstLive ?? new Date().toISOString() } : {};
     written = (await tx.write({ status: target, ...stamp })) ?? content;
     pending.push({ type: "stage_projected", detail: { from: content.status, to: target, rule: exp.rule } });

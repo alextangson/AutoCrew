@@ -65,7 +65,7 @@ export interface CardPanelData {
   column: string | null; stage: string | null; reason?: string; missing: string[]; badges: string[]; alerts?: string[]; candidates: CardCandidate[];
   round?: number; checklist?: string | null; can_reopen?: boolean;
   pending_receipts?: Array<{ fact_id: string; platform: string | null; url: string | null; host: string }>;
-  published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; label: string; at: string }>;
+  published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; work?: string | null; label: string; at: string }>;
   approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };
 }
 export const loadCard = (contentId: string) => call<CardPanelData>(`/api/board/card?content_id=${encodeURIComponent(contentId)}`);

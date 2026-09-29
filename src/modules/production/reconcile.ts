@@ -15,7 +15,7 @@ import { anySubmitted, firstPublishTime, readPublishRecord } from "../../storage
 import { contentRoot } from "../../storage/content-project.js";
 import { DERIVE_VERSION, isOntologyActive, productionServiceDir, readEnabledMarker, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { importLegacyRegistration } from "./legacy.js";
-import { mergeReceipts, trustedReceipts } from "./receipts.js";
+import { importObservations, trustedObservations } from "./receipts.js";
 import { commitRegistration } from "./registration.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
@@ -84,9 +84,9 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   const obs = await observe(content, doc, dataDir, opts.externals, opts.archived);
   const owned = await ownedElsewhere(dataDir, content.id);
-  const receipts = opts.write ? await trustedReceipts(content, dataDir) : [];
+  const receipts = opts.write ? await trustedObservations(content, dataDir) : [];
   const preview = structuredClone(doc);
-  const changed = applyObservations(preview, obs, owned).changed + mergeReceipts(preview, receipts);
+  const changed = applyObservations(preview, obs, owned).changed + importObservations(preview, receipts);
   if (!opts.write) return preview;
   if (!changed) {
     // 事实没变也补一次投影（认稿之类在别处落的决定，保证 status 与冻结跟上推导）
@@ -95,7 +95,7 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
   }
   const r = await mutateProduction(content.id, dataDir, (d) => {
     const { added, changed: n } = applyObservations(d, obs, owned);
-    mergeReceipts(d, receipts);
+    importObservations(d, receipts);
     return { value: n, events: added.map((f) => ({ type: "fact_imported", detail: { fact_id: f.id, kind: f.kind, state: f.state, source: f.source, evidence: f.evidence } })) };
   });
   return r.doc;

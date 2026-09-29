@@ -14,7 +14,6 @@ import { publishReceipts } from "./derive.js";
 import { enableOntology } from "./enable.js";
 import { cardPanel } from "./panel.js";
 import { reconcileAll } from "./reconcile.js";
-import { mergeReceipts } from "./receipts.js";
 import { reopenScript } from "./reopen.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
 
@@ -26,20 +25,6 @@ const TITLE = "AI 又忘了怎么办";
 const decide = (id: string, a: string, p: Record<string, unknown> = {}) => founderDecision(id, a, p, env.dir);
 
 describe("Codex 审 seg3", () => {
-  it("[P1 receipts.ts:89] 时间不明的回执重开后第二次对账也不自动核实；早于重开的可信回执不核实本轮声明", () => {
-    const doc = emptyProductionDoc();
-    doc.decisions.push({ id: "r", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
-    doc.round = 2;
-    const noTime = { platform: "douyin", item_id: "1", pub_state: "public" as const, verified: true, source: "reconcile" as const, evidence: "发布器" };
-    mergeReceipts(doc, [noTime]);
-    mergeReceipts(doc, [noTime]);
-    expect(doc.facts[0]).toMatchObject({ verified: false, round_unsure: true });
-    doc.facts.push({ id: "claim", kind: "publish", round: 2, state: "accepted", availability: "present", source: "record", at: "x", platform: "bilibili", url: "https://b", verified: false, pub_state: "reviewing" });
-    mergeReceipts(doc, [{ platform: "bilibili", url: "https://b", pub_state: "public", verified: true, source: "reconcile", evidence: "发布器", at: "2026-09-10T00:00:00Z" }]);
-    expect(doc.facts.find((f) => f.id === "claim")!.verified).toBe(false);
-    expect(publishReceipts(doc).live).toEqual([]);
-  });
-
   it("[P1 asset.ts:66] 库内路径夹着指向库外的符号链接：按真实路径算库外，关闭、不搬", async () => {
     const c = await videoContent(env, TITLE, "approved");
     const outside = await put(path.join(env.outside, "real", "b.mp4"), "v");
@@ -127,5 +112,16 @@ describe("Codex 审 seg3", () => {
     const report = await reconcileAll(env.dir);
     expect(report.warnings.join("")).toContain("注入的失败");
     expect((await getContent(c.id, env.dir))!.video?.final).toBeTruthy();
+  });
+});
+
+describe("[Codex 审 seg4 P2] 登记提醒进晨报", () => {
+  it("对账报告的 warnings 出现在晨报的 warnings 里", async () => {
+    const { writeJsonAtomicMkdir } = await import("../../storage/json-atomic.js");
+    const { reportFile } = await import("./reconcile.js");
+    const { executeStatus } = await import("../../tools/status.js");
+    await writeJsonAtomicMkdir(reportFile(env.dir), { at: "x", enabled: true, errors: [], moves: [], warnings: ["《A》登记没完成：注入"] });
+    const r = await executeStatus({ _dataDir: env.dir, brief: true }) as { warnings?: string[] };
+    expect(r.warnings).toContain("《A》登记没完成：注入");
   });
 });

@@ -8,6 +8,7 @@
  */
 import { bodyHash } from "../../storage/production-store.js";
 import { platformLabel } from "../../desktop/platform-label.js";
+import { receiptsOfRound, type Work } from "./receipts.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
@@ -98,20 +99,9 @@ function validPublished(doc: ProductionDoc): Decision | null {
 }
 
 
-/**
- * 本轮的发布回执（§6）。已核实 = AutoCrew 发布器 / 数据回流 / 创始人确认；模型报的是「待核」。
- * 被纠正的不算；被驳回的不算已投出（回到待发布并标原因）。回执有 round，重开后历史轮的不算。
- */
-export function publishReceipts(doc: ProductionDoc): { live: Fact[]; rejected: Fact[]; pending: Fact[] } {
-  const corrected = revokedIds(doc, "publish_correction");
-  const confirmed = new Set(inRound(doc, doc.decisions).filter((d) => d.type === "publish_confirm" && d.fact_id).map((d) => d.fact_id as string));
-  const receipts = inRound(doc, doc.facts).filter((f) => f.kind === "publish" && f.state !== "rejected" && !corrected.has(f.id));
-  const verified = (f: Fact) => f.verified === true || confirmed.has(f.id);
-  return {
-    live: receipts.filter((f) => verified(f) && f.pub_state !== "rejected"),
-    rejected: receipts.filter((f) => verified(f) && f.pub_state === "rejected"),
-    pending: receipts.filter((f) => !verified(f)),
-  };
+/** 本轮的发布回执（§6）：不可变观察按作品求值，见 receipts.ts */
+export function publishReceipts(doc: ProductionDoc): { live: Work[]; rejected: Work[]; pending: Work[] } {
+  return receiptsOfRound(doc);
 }
 
 const label = (p?: string) => (p ? platformLabel(p) : "平台");
@@ -119,16 +109,24 @@ const label = (p?: string) => (p ? platformLabel(p) : "平台");
 /** 待核声明是要创始人确认的中性提示；被驳回是问题 */
 function receiptNotes(r: ReturnType<typeof publishReceipts>): { badges: string[]; alerts: string[] } {
   return {
-    badges: r.pending.map((f) => `${f.by?.host ?? "AI"} 说已发到${label(f.platform)}${f.url ? `：${f.url}` : ""}，是吗？`),
+    badges: r.pending.map((w) => pendingText(w)),
     alerts: r.rejected.map((f) => `${label(f.platform)}被驳回${f.reason ? `：${f.reason}` : ""}`),
   };
 }
 
 /** 已发布的人话原因：按状态把平台归在一起（「抖音、B站 已定时投出」） */
-function publishedReason(live: Fact[], founder: boolean): string {
+/** 待你确认的那一句：谁说的、发到哪、哪件作品 */
+function pendingText(w: Work): string {
+  const what = w.url ? `：${w.url}` : w.item_id ? `（作品 ${w.item_id}）` : "";
+  if (w.source === "claim") return `${w.host ?? "AI"} 说已发到${label(w.platform)}${what}，是吗？`;
+  if (w.source === "metrics_title") return `数据回流猜这条发到了${label(w.platform)}${what}，是吗？`;
+  return `发布计划里有${label(w.platform)}的发布记录${what}，但分不清是不是这一轮发的，是吗？`;
+}
+
+function publishedReason(live: Work[], founder: boolean): string {
   if (!live.length) return founder ? "你标了已发布" : "发布记录显示已投出";
   const by = new Map<string, string[]>();
-  for (const f of live) by.set(f.pub_state ?? "public", [...(by.get(f.pub_state ?? "public") ?? []), label(f.platform)]);
+  for (const f of live) by.set(f.pub_state, [...(by.get(f.pub_state) ?? []), label(f.platform)]);
   const text: Record<string, string> = { scheduled: "已定时投出", reviewing: "已投出、审核中", public: "已公开", overdue: "应已公开" };
   return [...by].map(([st, ps]) => `${[...new Set(ps)].join("、")} ${text[st] ?? "已投出"}`).join("；");
 }

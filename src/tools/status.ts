@@ -108,9 +108,10 @@ async function ontologyBrief(dir: string) {
     // 候选待确认：文件候选（是不是这条）与待核发布回执（AI 说发了，是吗？）
     candidates: contents.filter((c) => (e(c)?.candidates.length ?? 0) > 0 || pendingClaim(c)).length,
   };
-  const warnings = (report?.errors ?? []).map((x) => `对账失败：${x.title}（${x.id}）${x.error}`);
+  // 对账失败与登记提醒（登记没完成、投影没写完…）都进晨报（Codex 审 seg4 P2）
+  const warnings = [...(report?.errors ?? []).map((x) => `对账失败：${x.title}（${x.id}）${x.error}`), ...(report?.warnings ?? [])];
   const brief = `${counts.to_write} 待写 / ${counts.awaiting_approval} 待认稿 / ${counts.awaiting_aroll} 等 A-roll / ${counts.editing} 剪辑中 / ${counts.your_review} 等你审 / ${counts.publish_ready} 待发布`
-    + (counts.candidates ? ` / ${counts.candidates} 候选待确认` : "") + (warnings.length ? `（${warnings.length} 条对账失败）` : "");
+    + (counts.candidates ? ` / ${counts.candidates} 候选待确认` : "") + (warnings.length ? `（${warnings.length} 条要看的对账问题）` : "");
   return { ok: true, action: "overview", brief, counts, ...(warnings.length ? { warnings } : {}) };
 }
 

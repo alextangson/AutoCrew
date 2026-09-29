@@ -163,3 +163,10 @@ describe("本体提示（spec 2026-09-29 §4.1）", () => {
     expect(ontologyNotice(undefined)).toBeNull();
   });
 });
+
+describe("[Codex 审 seg4 P2] 对账报告里的提醒（登记没完成、投影没写完）要显示在看板顶部", () => {
+  it("启用后只有提醒也出现", () => {
+    const n = ontologyNotice({ enabled: true, report: { at: "x", enabled: true, moves: [], errors: [], warnings: ["《A》登记没完成：缺这版成片的字幕"] } });
+    expect(n).toMatchObject({ text: "1 条提醒", warnings: ["《A》登记没完成：缺这版成片的字幕"] });
+  });
+});

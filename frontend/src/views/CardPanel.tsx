@@ -117,7 +117,7 @@ function PublishedSection(p: { d: CardPanelData; busy: boolean; act: (a: string,
   if (d.column !== "待发布" && d.column !== "已发布") return null;
   const published = d.column === "已发布";
   return <section><h3>发布</h3>
-    {(d.published ?? []).map((x) => <div key={x.id} className="card-panel-row"><span>{platformName(x.platform ?? "")} · {x.label}{x.url ? ` · ${x.url}` : ""}</span>
+    {(d.published ?? []).map((x) => <div key={x.id} className="card-panel-row"><span>{platformName(x.platform ?? "")} · {x.label}{x.url ? ` · ${x.url}` : x.work ? ` · 作品 ${x.work}` : ""}</span>
       <button disabled={p.busy} onClick={() => void correct(x.id)}>纠正</button></div>)}
     {!published && <div className="card-panel-row">
       <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="作品链接（可不填）" />

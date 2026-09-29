@@ -24,7 +24,7 @@ import fs from "node:fs/promises";
 import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { commitRegistration } from "./registration.js";
-import { receiptFact } from "./receipts.js";
+import { obsKey, observationFact } from "./receipts.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn, type TxnOp } from "./txn.js";
 
 type Receipt = Record<string, unknown>;
@@ -40,10 +40,12 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
   if (!a.url && !a.item_id) return fail("bad_param", "kind=publish 要带作品链接 url 或平台作品 id item_id");
   if (a.url && !/^https?:\/\//.test(a.url)) return fail("bad_param", `url 只接受 http/https：${a.url.slice(0, 80)}`);
   const r = await mutateProduction(content.id, dataDir, (doc) => {
-    const key = `${platform}|${a.item_id ?? a.url}`;
+    // 模型声明是一条独立的观察（不可变，不与可信回执合并）；是本轮刚说的，所以属于本轮
+    const obs = { source: "claim" as const, platform, pub_state: "reviewing" as const, evidence: `${a.host} 说已发布`, by: { host: a.host },
+      ...(a.account ? { account: a.account } : {}), ...(a.url ? { url: a.url } : {}), ...(a.item_id ? { item_id: a.item_id } : {}) };
+    const key = obsKey(obs);
     const same = doc.facts.find((f) => f.kind === "publish" && f.round === doc.round && f.receipt_key === key);
-    const fact = same ?? { ...receiptFact(doc, { platform, pub_state: "reviewing", verified: false, source: "record", evidence: `${a.host} 说已发布`, by: { host: a.host },
-      ...(a.account ? { account: a.account } : {}), ...(a.url ? { url: a.url } : {}), ...(a.item_id ? { item_id: a.item_id } : {}) }), receipt_key: key, request_id: a.request_id };
+    const fact = same ?? observationFact(doc, obs, { round: doc.round, round_unsure: undefined, request_id: a.request_id });
     if (!same) doc.facts.push(fact);
     doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
     return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url } }] };

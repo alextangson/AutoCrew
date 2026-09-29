@@ -13,7 +13,6 @@ import { revealProjectPath } from "../../desktop/project-reveal.js";
 import { founderDecision } from "./decisions.js";
 import { publishReceipts } from "./derive.js";
 import { registeredPackage } from "./publish-gate.js";
-import { mergeReceipts } from "./receipts.js";
 import { exists, founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
@@ -50,35 +49,6 @@ describe("Codex 审 seg2", () => {
     const s = await edited();
     const r = await revealProjectPath(s.c.id, s.cut.sha256, env.dir, { platform: "linux" });
     expect(r).not.toMatchObject({ code: "not_allowed" });
-  });
-
-  it("[P1 receipts.ts:89] 模型声明与可信回执身份不明确一致：不核实；可信回执被驳回：声明同步成驳回", () => {
-    const doc = emptyProductionDoc();
-    doc.facts.push({ id: "claim", kind: "publish", round: 1, state: "accepted", availability: "present", source: "record", at: "x", platform: "douyin", url: "https://a", verified: false, pub_state: "reviewing" });
-    mergeReceipts(doc, [{ platform: "douyin", item_id: "999", pub_state: "public", verified: true, source: "reconcile", evidence: "发布器", at: "2026-09-29T00:00:00Z" }]);
-    expect(doc.facts.find((f) => f.id === "claim")!.verified).toBe(false);
-    mergeReceipts(doc, [{ platform: "douyin", url: "https://a", pub_state: "rejected", verified: true, source: "reconcile", evidence: "发布器", at: "2026-09-29T00:00:00Z" }]);
-    const claim = doc.facts.find((f) => f.id === "claim")!;
-    expect(claim).toMatchObject({ verified: true, pub_state: "rejected" });
-    expect(publishReceipts(doc).live.map((f) => f.id)).not.toContain("claim");
-  });
-
-  it("[P1 receipts.ts:77] 同一作品先有链接后补作品 id、状态从审核中变驳回：更新原事实，不留两条", () => {
-    const doc = emptyProductionDoc();
-    mergeReceipts(doc, [{ platform: "douyin", url: "https://a", pub_state: "reviewing", verified: true, source: "reconcile", evidence: "发布器", at: "2026-09-29T00:00:00Z" }]);
-    mergeReceipts(doc, [{ platform: "douyin", url: "https://a", item_id: "777", pub_state: "rejected", verified: true, source: "reconcile", evidence: "发布器", at: "2026-09-29T00:00:00Z" }]);
-    expect(doc.facts).toHaveLength(1);
-    expect(doc.facts[0]).toMatchObject({ item_id: "777", pub_state: "rejected" });
-  });
-
-  it("[P2 receipts.ts:86] 首次导入的回执按发布时间归轮：重开之前发的不算本轮", () => {
-    const doc = emptyProductionDoc();
-    doc.decisions.push({ id: "r", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
-    doc.round = 2;
-    mergeReceipts(doc, [{ platform: "douyin", item_id: "1", pub_state: "public", verified: true, source: "reconcile", evidence: "发布器", at: "2026-09-10T00:00:00Z" }]);
-    expect(doc.facts[0].round).toBe(1);
-    mergeReceipts(doc, [{ platform: "bilibili", item_id: "2", pub_state: "public", verified: true, source: "reconcile", evidence: "发布器" }]);
-    expect(doc.facts[1]).toMatchObject({ round: 2, verified: false });
   });
 
   it("[P1 registration.ts:86] 07-delivery/registered 是指向库外的符号链接：登记拒，不往库外写", async () => {
