@@ -60,7 +60,8 @@ export function CardPanel(p: Props) {
     if (chosen) { setArollPath(chosen); await attach(chosen); }
   };
   const reopen = async () => {
-    if (!(await confirmDialog({ title: UNDO.reopen.title, body: UNDO.reopen.body, confirmLabel: "重开文稿", danger: true }))) return;
+    const undo = data?.published_now ? UNDO.reopen_published : UNDO.reopen;
+    if (!(await confirmDialog({ title: undo.title, body: undo.body, confirmLabel: "重开文稿", danger: true }))) return;
     const r = await reopenScript(p.contentId, data?.round ?? 1);
     toast(r.ok ? "已重开文稿" : r.error);
     await Promise.all([refresh(), p.reload()]);
@@ -115,6 +116,9 @@ function PanelBody(p: {
       <button disabled={p.busy} onClick={() => void p.act("correct_publish", { target_id: r.fact_id }, "已记为没发")}>没发</button>
     </div>)}</section>}
     {d.active && <PublishedSection d={d} busy={p.busy} act={p.act} />}
+    {d.active && (d.past_receipts ?? []).length > 0 && <details><summary className="card-panel-note">以前几轮的发布（历史，不算本轮）</summary>
+      {d.past_receipts!.map((r) => <p key={`${r.round}-${r.platform}`} className="card-panel-note">{platformName(r.platform)} · {r.label}{r.url ? `：${r.url}` : ""}</p>)}
+    </details>}
     {d.active && d.checklist && <p className="bcol-note">实拍版核对清单：项目里的 {d.checklist}</p>}
     <footer className="card-panel-actions">
       <button onClick={p.openEditor}>打开稿件 / 工作台（成片、封面在那里通过）</button>

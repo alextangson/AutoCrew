@@ -65,6 +65,7 @@ export interface CardPanelData {
   id: string; title: string; platform: string | null; status: string; active: boolean;
   column: string | null; stage: string | null; reason?: string; missing: string[]; badges: string[]; alerts?: string[]; candidates: CardCandidate[];
   round?: number; checklist?: string | null; can_reopen?: boolean;
+  published_now?: boolean; past_receipts?: Array<{ round: number; platform: string; label: string; url: string | null; at: string }>;
   pending_receipts?: Array<{ fact_id: string; platform: string | null; url: string | null; host: string }>;
   published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; work?: string | null; label: string; at: string }>;
   approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };

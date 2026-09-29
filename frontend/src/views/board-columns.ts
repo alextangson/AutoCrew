@@ -183,9 +183,11 @@ export function dropAction(from: BoardColumn, item: DragCard | null, to: BoardCo
 /** 本体下往回拖对应的撤销（§10、E14）：每一种都先弹确认 */
 export interface UndoMove { action: "unapprove" | "reopen" | "revoke_cut" | "correct_publish"; title: string; body: string }
 
-export const UNDO: Record<UndoMove["action"], UndoMove> = {
+export const UNDO: Record<UndoMove["action"] | "reopen_published", UndoMove> = {
   unapprove: { action: "unapprove", title: "撤回认稿？", body: "稿子回到「写稿中」，你认过才能再录。" },
   reopen: { action: "reopen", title: "重开文稿？", body: "结束这一轮：本轮的原片挪进 02-aroll/_作废-<轮次>/，成片、批准、登记转入历史（文件不删），正文解冻、回到写稿中。" },
+  /** 已发布的卡重开（创始人 09-30 定的说法） */
+  reopen_published: { action: "reopen", title: "重开文稿？", body: "这条已发布，重开后会移出已发布栏、回到写稿中；这次的发布记录留作历史" },
   revoke_cut: { action: "revoke_cut", title: "撤销成片批准？", body: "这版成片的批准撤掉，已登记的发布包立刻不能发；要重新审成片。" },
   correct_publish: { action: "correct_publish", title: "纠正发布记录？", body: "撤掉最近一条「已发布」记录（你标的或回执），卡片回到待发布。平台上已经发出去的不会被撤下。" },
 };

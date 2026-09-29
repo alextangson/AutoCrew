@@ -125,15 +125,24 @@ describe("P3 #14 / #15 与创始人决定 1、3", () => {
     expect(JSON.stringify(res)).not.toContain(process.cwd());
   });
 
-  it("[决定 1] 已发布：不能重开，面板不给重开按钮", async () => {
+  it("[决定 1 改为 09-30] 已发布也能重开：新一轮发布槽是空的，上一轮的回执留作历史；确认框说明白", async () => {
     await enable();
     const r = await registeredVideo(env);
-    await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
+    await founderDecision(r.id, "i_published", { platform: "douyin", url: "https://v.douyin.com/old" }, env.dir);
     const { reopenScript } = await import("./reopen.js");
     const { cardPanel } = await import("./panel.js");
-    expect(await reopenScript(r.id, env.dir)).toMatchObject({ ok: false, code: "published" });
-    expect((await cardPanel(r.id, env.dir)).can_reopen).toBe(false);
+    const before = await cardPanel(r.id, env.dir);
+    expect(before).toMatchObject({ stage: "已发布", can_reopen: true, published_now: true });
+    expect(await reopenScript(r.id, env.dir)).toMatchObject({ ok: true, round: 2 });
+    const after = await cardPanel(r.id, env.dir) as { stage: string; published: unknown[]; published_now: boolean; past_receipts: Array<{ round: number; platform: string; url: string | null }> };
+    expect(after.stage).not.toBe("已发布");
+    expect(after.published).toEqual([]);
+    expect(after.published_now).toBe(false);
+    expect(after.past_receipts).toEqual([expect.objectContaining({ round: 1, platform: "douyin", url: "https://v.douyin.com/old" })]);
+    const { UNDO } = await import("../../../frontend/src/views/board-columns");
+    expect(UNDO.reopen_published.body).toBe("这条已发布，重开后会移出已发布栏、回到写稿中；这次的发布记录留作历史");
   });
+
 
   it("[决定 3 / seg9] 重开后上一轮的原片仍归原稿：别条稿 record 不能占；创始人改挂 = 持久转移", async () => {
     await enable();

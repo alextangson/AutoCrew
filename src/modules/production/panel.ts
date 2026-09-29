@@ -10,7 +10,8 @@ import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/produc
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { spokenRel } from "../video/handoff/register-spoken.js";
 import { publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
-import type { Slot } from "./receipts.js";
+import { canonPlatform, slotOf, type Slot } from "./receipts.js";
+import type { ProductionDoc } from "../../storage/production-types.js";
 import { explainContent } from "./read.js";
 import { isUngated } from "./publish-check-link.js";
 
@@ -19,6 +20,21 @@ function slotLabel(w: Slot): string {
   if (w.by === "founder") return w.source === "founder" && w.fact_id ? "你确认过 AI 说的发布" : "你标了已发布";
   if (w.source === "metrics_id") return "数据回流按作品 id 对上";
   return "发布计划里的记录";
+}
+
+function pastSlots(doc: ProductionDoc): Array<{ round: number; platform: string; label: string; url: string | null; at: string }> {
+  const out: Array<{ round: number; platform: string; label: string; url: string | null; at: string }> = [];
+  const pairs = new Set(doc.facts.filter((f) => f.kind === "publish" && f.round < doc.round).map((f) => `${f.round}\u0000${f.platform ?? "?"}`));
+  for (const d of doc.decisions.filter((x) => x.type === "i_published" && x.round < doc.round && x.platform)) pairs.add(`${d.round}\u0000${d.platform}`);
+  const seen = new Set<string>();
+  for (const key of pairs) {
+    const [round, platform] = key.split("\u0000");
+    const s = slotOf(doc, Number(round), canonPlatform(platform));
+    if (!s || seen.has(s.id)) continue;
+    seen.add(s.id);
+    out.push({ round: s.round, platform: s.platform, label: `第 ${s.round} 轮 · ${slotLabel(s)}`, url: s.url ?? null, at: s.at });
+  }
+  return out.sort((a, b) => b.round - a.round || Date.parse(b.at) - Date.parse(a.at));
 }
 
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
@@ -45,7 +61,10 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
     checklist,
-    // 已发布（本轮有投出的槽或状态已发布）不给重开（创始人 09-29）
-    can_reopen: !receipts.live.length && content.status !== "published" && (doc.facts.some((f) => f.round === doc.round && f.state === "accepted") || doc.decisions.some((d) => d.round === doc.round && d.type === "script_approval")),
+    // 已发布的也能重开（创始人 09-30），确认框单独说明；published = 这张卡现在是已发布
+    can_reopen: doc.facts.some((f) => f.round === doc.round && f.state === "accepted") || doc.decisions.some((d) => d.round === doc.round && d.type === "script_approval"),
+    published_now: receipts.live.length > 0 || content.status === "published",
+    // 以前几轮的发布槽：留作历史，不算进本轮
+    past_receipts: pastSlots(doc),
   };
 }
