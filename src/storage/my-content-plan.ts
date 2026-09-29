@@ -212,7 +212,7 @@ async function itemFiles(c: Content, column: Column, dataDir: string): Promise<I
     files.push({ name: "成片放这里", kind: "symlink", target: exportDir });
   }
   if (column === "待发布" || column === "已发布") files.push(...(await deliveryFiles(c, root, dataDir)));
-  if (column === "已发布") files.push(...(await publishedFiles(c, root)));
+  if (column === "已发布") files.push(...(await publishedFiles(c, root, dataDir)));
   return files;
 }
 

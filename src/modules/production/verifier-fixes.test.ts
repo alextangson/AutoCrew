@@ -278,3 +278,49 @@ describe("seg10", () => {
     expect((await readProductionDoc(a.id, env.dir))!.facts.find((f) => f.id === moved.id)?.released_to).toBe(b.id);
   });
 });
+
+describe("seg11", () => {
+  it("[P2 receipts] 重开后新计划只有新作品 id 和新发布时间（没 submitted_at）：算新一轮，不被钉到旧轮", async () => {
+    const { emptyProductionDoc } = await import("../../storage/production-types.js");
+    const { importObservations, slotOf } = await import("./receipts.js");
+    const doc = emptyProductionDoc();
+    importObservations(doc, [{ source: "plan", platform: "douyin", item_id: "OLD", pub_state: "public", published_at: "2026-09-10T00:00:00Z", evidence: "计划" }]);
+    doc.decisions.push({ id: "r1", type: "reopen", round: 1, at: "2026-09-20T00:00:00Z", source: "founder" });
+    doc.round = 2;
+    importObservations(doc, [{ source: "plan", platform: "douyin", item_id: "NEW", pub_state: "public", published_at: "2026-09-25T00:00:00Z", evidence: "计划" }]);
+    expect(slotOf(doc, 2, "douyin")).toMatchObject({ item_id: "NEW" });
+    // 旧那条（同 id）再读到仍钉在第 1 轮
+    importObservations(doc, [{ source: "plan", platform: "douyin", item_id: "OLD", pub_state: "rejected", published_at: "2026-09-10T00:00:00Z", evidence: "计划" }]);
+    expect(doc.facts.filter((f) => f.item_id === "OLD").every((f) => f.round === 1)).toBe(true);
+  });
+
+  it("[P2 nas-backup] 本体稿重开后再定时：备份按本轮发布时间判到点（publishedAt 还是上一轮的）", async () => {
+    await enable();
+    const { founderApprove } = await import("./testkit.js");
+    const { reopenScript } = await import("./reopen.js");
+    const { reconcileAll } = await import("./reconcile.js");
+    const { withRoundPublishTime } = await import("../../storage/round-publish-time.js");
+    const { backupCandidates } = await import("../../storage/nas-backup.js");
+    const { getContent, updateContent } = await import("../../storage/local-store.js");
+    const r = await registeredVideo(env);
+    await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
+    await reopenScript(r.id, env.dir);
+    await founderApprove(env, r.id);
+    const future = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ platforms: [{ platform: "douyin", publication: { status: "scheduled", scheduled_at: future, submitted_at: new Date(Date.now() + 1000).toISOString() } }] }));
+    await reconcileAll(env.dir);
+    await updateContent(r.id, { status: "published", publishedAt: "2026-09-01T00:00:00Z" } as never, env.dir);
+    const c = await withRoundPublishTime((await getContent(r.id, env.dir))!, env.dir);
+    expect(c.publishedAt).toBe(future);
+    expect(backupCandidates([c], new Date())).toEqual([]);
+  });
+
+  it("[P2 my-content-published] 本体稿（record 出来的原片，没有旧交接）：已发布文件里有原片", async () => {
+    await enable();
+    const { publishedFiles } = await import("../../storage/my-content-published.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    const r = await registeredVideo(env);
+    const files = await publishedFiles((await getContent(r.id, env.dir))!, r.root, env.dir);
+    expect(files.map((f) => f.name)).toContain("原片.mov");
+  });
+});

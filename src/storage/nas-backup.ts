@@ -11,8 +11,9 @@ import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
 import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { withFileOwnership } from "./file-ownership.js";
+import { withRoundPublishTime } from "./round-publish-time.js";
 import { VIEW_DIR } from "./my-content-view.js";
-import { copyProject, sha256File, walkProject, type ArchivedFile, type CopyImpl, type ProjectLink } from "./nas-archive-copy.js";
+import { copyProject, keptName, sha256File, walkProject, type ArchivedFile, type CopyImpl, type ProjectLink } from "./nas-archive-copy.js";
 import { safeNasPath, assertInside } from "./nas-safe-path.js";
 import { archiveTarget, isReachable, DEFAULT_ARCHIVE_ROOT } from "./nas-archive.js";
 import {
@@ -78,6 +79,23 @@ async function checkNasOnly(target: string, f: ArchivedFile, full: boolean): Pro
   return null;
 }
 
+/**
+ * 历史归档记录可能指向被新版本替换过的固定路径（封面等）：旧那份被 keepAside 改名留底为 `<名>.<sha8>[-n].<扩展名>`。
+ * 按这条记录的版本（sha）找对应那份：原路径对得上就用它，否则找留底副本；都对不上才报问题（报原路径的问题）。
+ */
+async function checkNasVersion(target: string, f: ArchivedFile, full: boolean): Promise<string | null> {
+  const first = await checkNasOnly(target, f, full);
+  if (!first) return null;
+  const base = keptName(f.rel, f.sha256), ext = path.extname(base);
+  for (let i = 1; i <= 20; i++) {
+    const rel = i === 1 ? base : `${base.slice(0, base.length - ext.length)}-${i}${ext}`;
+    const st = await fs.lstat(path.join(target, rel)).catch(() => null);
+    if (!st) break;
+    if (!(await checkNasOnly(target, { ...f, rel }, full))) return null;
+  }
+  return first;
+}
+
 async function checkArchivedOnNas(projectRoot: string, full: boolean): Promise<string[]> {
   const notes = path.join(projectRoot, "00-project/notes");
   let names: string[] = [];
@@ -87,7 +105,7 @@ async function checkArchivedOnNas(projectRoot: string, full: boolean): Promise<s
     const record = JSON.parse(await fs.readFile(path.join(notes, name), "utf8")) as { target: string; files: ArchivedFile[] };
     for (const f of record.files) {
       if (await fs.stat(path.join(projectRoot, f.rel)).then(() => true, () => false)) continue; // 本机还在，照常备份
-      const problem = await checkNasOnly(record.target, f, full);
+      const problem = await checkNasVersion(record.target, f, full);
       if (problem) problems.push(`${f.rel}：本机已归档删除，${problem}`);
     }
   }
@@ -120,7 +138,8 @@ async function copyOnce(projectRoot: string, target: string, ctx: Ctx, full: boo
 }
 
 async function runBackup(data: string, ctx: Ctx, report: BackupReport): Promise<void> {
-  for (const c of backupCandidates(await listContents(data), ctx.now)) {
+  const contents = await Promise.all((await listContents(data)).map((c) => withRoundPublishTime(c, data)));
+  for (const c of backupCandidates(contents, ctx.now)) {
     try {
       const binding = resolveContentProject(c.id, data);
       if (!binding) throw new Error("没有项目目录");

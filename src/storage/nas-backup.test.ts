@@ -432,3 +432,20 @@ describe("已发布文件夹补三样", () => {
     for (const n of ["成片字幕.srt", "原片.mov", "原片在NAS.txt"]) expect(names).not.toContain(n);
   });
 });
+
+describe("seg11 历史归档记录按版本核对", () => {
+  const later = (d: number) => new Date(NOW.getTime() + d * 86400_000);
+  it("同一项目归档两次（封面换过版本）：完整核对按各自版本找留底，不报封面损坏", async () => {
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    const old = await published("旧稿", 8);
+    await backup();
+    await archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });
+    await put(old, "05-cover/封面-3x4.png", "旧稿-cover-v2-longer");
+    await backup({ now: later(1) });
+    await archivePublished(data, { now: later(1), archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });
+    const r = await backup({ now: later(8) });
+    const state = (await readBackupState(root(old)))!;
+    expect(state.reason ?? "").not.toContain("05-cover");
+    expect(r.backedUp).toContain("旧稿");
+  });
+});

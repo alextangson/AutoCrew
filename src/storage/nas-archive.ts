@@ -17,6 +17,7 @@ import { withFileOwnership } from "./file-ownership.js";
 import { copyProject, sha256File as nasSha, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
 import { KEPT_DIR } from "./nas-kept.js";
+import { withRoundPublishTime } from "./round-publish-time.js";
 
 export const DEFAULT_ARCHIVE_ROOT = "/Volumes/MacMiniData/01_Lawrence/Account";
 export const MEDIA_DIRS = ["02-aroll", "03-broll", "04-edit", "05-audio", "05-cover", "07-delivery"] as const;
@@ -168,7 +169,9 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
 
 async function pendingItems(ctx: Ctx, report: ArchiveReport): Promise<Content[]> {
   const out: Content[] = [];
-  for (const c of archiveCandidates(await listContents(ctx.data), ctx.now)) {
+  // 本体稿按本轮发布时间判到点、定 NAS 月份（与发布即备份同一口径）
+  const contents = await Promise.all((await listContents(ctx.data)).map((c) => withRoundPublishTime(c, ctx.data)));
+  for (const c of archiveCandidates(contents, ctx.now)) {
     try {
       const binding = resolveContentProject(c.id, ctx.data);
       const busy = binding ? await busyInProduction(c.id, ctx.data, ctx.now) : null;

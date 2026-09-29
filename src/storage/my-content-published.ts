@@ -9,6 +9,8 @@ import { isMissing } from "./content-project.js";
 import type { ItemFile } from "./my-content-plan.js";
 import { locateProjectFile } from "./nas-kept.js";
 import { readBackupState, renderBackupStatus } from "./nas-backup-state.js";
+import { readProductionDocOrEmpty } from "./production-store.js";
+import { ontologyApplies } from "../modules/production/publish-gate.js";
 
 async function readIfExists(file: string): Promise<string | null> {
   try { return await fs.readFile(file, "utf8"); } catch (e) { if (isMissing(e)) return null; throw e; }
@@ -61,7 +63,17 @@ async function linkOrNas(root: string, source: string, base: string): Promise<It
   return [];
 }
 
-export async function publishedFiles(c: Content, root: string): Promise<ItemFile[]> {
+/** 已发布原片：按本体走的稿取本轮有效的 A-roll 事实（record 出来的稿没有旧交接）；旧稿回退到交接记录 */
+async function arollPathOf(c: Content, root: string, dataDir?: string): Promise<string | null> {
+  if (dataDir && (await ontologyApplies(c, dataDir))) {
+    const doc = await readProductionDocOrEmpty(c.id, dataDir);
+    const f = doc.facts.filter((x) => x.round === doc.round && x.kind === "aroll" && x.state === "accepted" && !x.released_to && x.path).at(-1);
+    return f ? (path.isAbsolute(f.path!) ? f.path! : path.join(root, f.path!)) : null;
+  }
+  return c.video?.handoff?.aroll_path ?? null;
+}
+
+export async function publishedFiles(c: Content, root: string, dataDir?: string): Promise<ItemFile[]> {
   const files: ItemFile[] = [];
   const srt = c.video?.final?.srt_path;
   if (srt) {
@@ -70,7 +82,7 @@ export async function publishedFiles(c: Content, root: string): Promise<ItemFile
   }
   const receipt = await renderReceipt(root);
   if (receipt) files.push({ name: "发布回执.md", kind: "copy", text: receipt });
-  const aroll = c.video?.handoff?.aroll_path;
+  const aroll = await arollPathOf(c, root, dataDir);
   if (aroll) files.push(...(await linkOrNas(root, aroll, "原片")));
   const state = await readBackupState(root);
   if (state) files.push({ name: "NAS备份状态.txt", kind: "copy", text: renderBackupStatus(state) });
