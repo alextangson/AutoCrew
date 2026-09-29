@@ -10,6 +10,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { maskKey } from "./settings-engine.js";
+import { resolveTypesafeKey, writeTypesafeKey } from "../modules/publish/review-gate/jev-client.js";
 
 // 自定义端点的逃生门（打开实际生效的 engine.json）——设置页统一从 settings.ts 取
 export { openEngineConfigFile } from "./settings-providers.js";
@@ -114,6 +115,8 @@ export async function getPublishSettings(payload: Record<string, unknown>): Prom
         wechatConfigured: Boolean(cfg.wechatAppId && cfg.wechatAppSecret),
         wechatAppIdMasked: cfg.wechatAppId ? maskKey(cfg.wechatAppId) : null,
         openComment: cfg.openComment === true,
+        // 发布前把关（TypeSafe / Jev）：只回有没有、来自哪，值永不回显
+        typesafeKeySource: (await resolveTypesafeKey().catch(() => ({ source: "unreadable" as const }))).source,
       },
     };
   } catch (err) {
@@ -222,6 +225,13 @@ export async function setPublishSettings(payload: Record<string, unknown>): Prom
     if (v === "1" || v === true) updates.openComment = true;
     else if (v === "0" || v === false) updates.openComment = false;
     else return { ok: false, error: 'open_comment 必须是 "1"(开) 或 "0"(关)' };
+  }
+  // TypeSafe key 单独存本机 ~/.autocrew/secrets/typesafe-api-key（600），不进 publish.json（spec §12）
+  const typesafe = payload.typesafe_api_key;
+  if (typesafe !== undefined) {
+    if (typeof typesafe !== "string" || !typesafe.trim()) return { ok: false, error: "typesafe_api_key 必须是非空字符串" };
+    try { await writeTypesafeKey(typesafe); } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
+    if (Object.keys(updates).length === 0) return getPublishSettings({ _dataDir: payload._dataDir });
   }
   if (Object.keys(updates).length === 0) {
     return { ok: false, error: "没有可写入的字段（image_api_key / image_base_url / image_model / theme / author / wechat_app_id / wechat_app_secret / x_api_key / reddit_client_id / reddit_client_secret / open_comment）" };

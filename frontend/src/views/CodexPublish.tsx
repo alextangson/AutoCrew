@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { invoke } from "../transport";
 import { codexTargetLine, publishMessage, publishPlatforms } from "./codex-publish";
 import { profilePlatformsOf } from "./platform-preview";
+import { saveInstruction } from "./publish-prefs-api";
 import type { ProjectReview } from "./project-board";
 
 type Props = { contentId: string; title: string; status: string; review: ProjectReview; primary?: boolean };
@@ -60,14 +61,23 @@ function CodexPublishDialog(props: Props & { text: string; setText: (t: string) 
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(props.text); setCopyFailed(false); return true; }
-    catch { setCopyFailed(true); area.current?.select(); return false; }
+  const copy = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); setCopyFailed(false); return true; }
+    catch { setCopyFailed(true); requestAnimationFrame(() => area.current?.select()); return false; }
+  };
+  /** 发布前把关 §6：复制前先把编辑后的文本存到服务端，末行带上指令编号；存不上就不复制，免得 Codex 拿到查不到的指令 */
+  const saveAndCopy = async (via: "copy" | "copy_open"): Promise<boolean | null> => {
+    const saved = await saveInstruction(props.contentId, props.text, via);
+    if (!saved.ok) { setNote(`指令没存上，所以没复制：${saved.error}`); return null; }
+    props.setText(saved.data.copy_text);
+    return copy(saved.data.copy_text);
   };
   const run = async (thenOpen: boolean) => {
     if (busy) return;
     setBusy(true); setNote(null);
-    const copied = copyFailed && thenOpen ? false : await copy();
+    // 上次复制失败、已手动复制（文本里已带编号）→ 这次只打开，不再存一份
+    const copied = copyFailed && thenOpen ? false : await saveAndCopy(thenOpen ? "copy_open" : "copy");
+    if (copied === null) { setBusy(false); return; }
     const err = thenOpen ? await openCodex(props.contentId) : null;
     setBusy(false);
     if (err) setNote(err);

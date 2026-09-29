@@ -91,6 +91,7 @@ export function publishMessage(i: PublishMessageInput): string {
   if (i.status !== "publish_ready" && plan?.moveFrom) lines.push(`${n++}. 先把成片挪进 07-delivery 再登记：把 ${plan.moveFrom} 挪到 ${plan.path}，用 autocrew_video report 报 final-cut`);
   if (i.status !== "publish_ready") lines.push(`${n++}. 还没登记：先用 autocrew_video status 取两道批准，再 autocrew_video register 登记`);
   lines.push(`${n++}. 用 publish-content 技能发到上面的平台，按技能说明匹配当前活动`);
+  lines.push(`${n++}. 一次确认汇总前跑 autocrew_publish check（带发布计划、我的原话和末行的指令编号），summary_table 原样贴给我；被拦的平台不提交`);
   lines.push(`${n++}. 按技能说明把各平台回执回报给 AutoCrew`);
   return lines.join("\n");
 }

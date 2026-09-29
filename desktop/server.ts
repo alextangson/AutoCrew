@@ -1,4 +1,5 @@
 import { createRuleApprovalHandler } from "../src/desktop/rule-approval.js";
+import { createPublishPrefsHandler } from "../src/desktop/publish-prefs-route.js";
 import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock.js";
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
@@ -196,6 +197,7 @@ const uploadRoute = createUploadHandler({
 
 const projectReview = createProjectReviewHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const ruleApproval = createRuleApprovalHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+const publishPrefs = createPublishPrefsHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -391,6 +393,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if (await projectReview(req, res, url)) return;
   if (await board(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
+  if (await publishPrefs(req, res, url)) return;
 
   // 统一调用端点:{channel, payload} → handler
   if (p === "/api/invoke" && req.method === "POST") {

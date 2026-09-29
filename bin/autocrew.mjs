@@ -453,6 +453,11 @@ switch (command) {
       apiProxySet = Boolean(pub.apiProxy);
     } catch {}
 
+    // 发布前把关（TypeSafe / Jev）：有没有密钥、调一次通不通；密钥值不打印。可选项，不影响退出码
+    let typesafe = { configured: false, reachable: false };
+    const tsResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "typesafe-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
+    try { typesafe = JSON.parse((tsResult.stdout || "").trim().split("\n").pop() || "{}"); } catch { typesafe = { configured: false, reachable: false, error: "检查脚本没跑成" }; }
+
     const checks = {
       node: process.version,
       server: await serverUp(),
@@ -471,6 +476,8 @@ switch (command) {
       ffprobe: binOk("ffprobe"),
       asrSidecar: asrSidecarOk,
       asrModelReady: asrStatus === "ready",
+      typesafeKey: typesafe.configured === true,
+      typesafeReachable: typesafe.reachable === true,
     };
     // 灵感收件箱三项（spec §4）：心跳只存在于 server 进程内存，经 /api/invoke 读；
     // 绝不带外调 Telegram getUpdates（会抢正式消费者的游标 → 真丢消息）。
@@ -489,6 +496,9 @@ switch (command) {
       + (apiProxySet ? "\n  公众号 API 代理已配（固定出口 IP，动态 IP 变动免疫 40164）" : "")
       + (checks.ffmpeg && checks.ffprobe ? "" : "\n  → 成片渲染需要 ffmpeg/ffprobe：brew install ffmpeg")
       + (checks.asrSidecar ? "" : "\n  → 缺 ASR sidecar(sidecars/asr/asr.py)：仓库不完整，重新拉取")
+      + (typesafe.configured
+        ? (typesafe.reachable ? `\n  发布前把关语义检查（TypeSafe，密钥来自 ${typesafe.source === "env" ? "环境变量" : "本机设置"}）可用` : `\n  → TypeSafe 调不通：${typesafe.error ?? "未知原因"}（发布前把关的语义检查会标「没跑成」，确定性检查照常）`)
+        : "\n  → 发布前把关的语义检查需要 TypeSafe 密钥：设置→接入更多 填，或设环境变量 TYPESAFE_API_KEY（不配也能发，语义检查会标「没跑成」）")
       + (checks.asrModelReady
         ? ""
         : `\n  → ASR 模型未就绪(当前 ${asrStatus})：设置页点「预热 ASR 模型」或调 video:asr_warmup，首跑约 1GB 下载${uvOk ? "" : "；它也要 uv"}`),
