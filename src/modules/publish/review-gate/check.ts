@@ -30,7 +30,7 @@ export interface CheckDeps { jev?: JevCaller }
 
 interface Ctx {
   content: Content; dataDir: string; root: string; quotes: string[]; overrides: Override[];
-  instruction: StoredInstruction | null; plan: ParsedPlan; planSource: string; prefs: PublishPrefs;
+  instruction: StoredInstruction | null; plan: ParsedPlan; planSource: string; planRaw: Record<string, unknown>; prefs: PublishPrefs;
   registration: RegistrationState; basis: () => Promise<Basis>; caller: JevCaller;
 }
 
@@ -72,7 +72,7 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promi
   const registration = await registrationState(content, dataDir);
   let basis: Promise<Basis> | null = null;
   return {
-    content, dataDir, root, quotes: quotes.value, overrides: overrides.value, instruction, plan: parsePlan(loaded.plan), planSource: loaded.source,
+    content, dataDir, root, quotes: quotes.value, overrides: overrides.value, instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
     prefs: await readPublishPrefs(dataDir), registration, caller: deps.jev ?? makeJevCaller(),
     basis: () => (basis ??= loadBasis(registration.kind === "ok" ? registration.srt : null, content.body ?? "")),
   };
@@ -104,9 +104,14 @@ function shapeItems(ctx: Ctx, platform: string, named: GatePlatform[]): CheckIte
 async function writeRecord(ctx: Ctx, r: PlatformResult, extra: Record<string, unknown>): Promise<void> {
   await writeCheckRecord(ctx.content.id, r.check_id, {
     check_id: r.check_id, content_id: ctx.content.id, platform: r.platform, checked_at: new Date().toISOString(),
-    inputs: { plan_source: ctx.planSource, founder_quotes: ctx.quotes, instruction_id: ctx.instruction?.id ?? null, overrides: ctx.overrides.filter((o) => o.platform === r.platform), publish_rules: ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === r.platform) },
-    payload_hash: r.payload_hash, fingerprint: r.fingerprint, verdict: r.verdict, items: r.items, ...extra,
+    inputs: { plan_source: ctx.planSource, ...(ctx.planSource === "inline" ? { plan_snapshot: ctx.planRaw } : {}), founder_quotes: ctx.quotes, instruction_id: ctx.instruction?.id ?? null, overrides: ctx.overrides.filter((o) => o.platform === r.platform), publish_rules: ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === r.platform) },
+    payload_hash: r.payload_hash, fingerprint: r.fingerprint, verdict: r.verdict, items: r.items, plan_problems: planLevelProblems(ctx), ...extra,
   }, ctx.dataDir);
+}
+
+/** 归不到具体平台的计划级问题（空条目、没有平台…）：整份计划被拦，任何平台都不能凭这次检查出包 */
+function planLevelProblems(ctx: Ctx) {
+  return ctx.plan.problems.filter((p) => !p.platform || !ctx.plan.entries.some((e) => e.platform === p.platform));
 }
 
 /** 一个平台的检查身份（确定性项 + payload 哈希 + 指纹）：出包前重算它来核对检查没过期，不调 Jev */
@@ -133,6 +138,8 @@ async function identityFor(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]) {
   return { det, detItems, payload, instructions, basis, a, b, parts, fp: fingerprint(parts) };
 }
 
+const coverRows = (covers: CoverFact[]) => covers.map((c) => ({ usage: c.usage, ratio: c.pixel_ratio, slot: c.slot, path: c.path, sha256: c.fact.sha256 ?? null }));
+
 async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]): Promise<Detail> {
   const { det, detItems, payload, instructions, basis, a, b, parts, fp } = await identityFor(ctx, entry, named);
   const sem = await runSemantic({ contentId: ctx.content.id, dataDir: ctx.dataDir, fingerprint: fp, requests: [a.request, b].filter((x): x is NonNullable<typeof x> => x !== null), basis, instructions, caller: ctx.caller });
@@ -140,7 +147,7 @@ async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]):
   if (!instructions.length) semItems.push({ check: "B 执行符合指令", result: "info", basis: "没有可核对的原话 / 规则（不算失败；agent 漏交原话就查不到）" });
   const items = [...detItems, ...semItems];
   const result: PlatformResult = { platform: entry.platform, verdict: platformVerdict(items), check_id: newCheckId(entry.platform, fp), payload_hash: payload, fingerprint: fp, items, semantic: { cached: sem.cached, calls: sem.calls.length, failed: sem.failed } };
-  await writeRecord(ctx, result, { fingerprint_parts: parts, basis_note: basis.note, covers: det.covers.map((c) => ({ usage: c.usage, ratio: c.pixel_ratio, slot: c.slot, path: c.path, sha256: c.fact.sha256 ?? null })), video_sha256: det.video?.sha256 ?? null, jev: { cached: sem.cached, calls: sem.calls satisfies CallRecord[] } });
+  await writeRecord(ctx, result, { fingerprint_parts: parts, basis_note: basis.note, covers: coverRows(det.covers), video_sha256: det.video?.sha256 ?? null, jev: { cached: sem.cached, calls: sem.calls satisfies CallRecord[] } });
   return { result, covers: det.covers, account: entry.account };
 }
 
@@ -167,6 +174,19 @@ export interface CheckedPlatform {
   check_id: string; platform: string; checked_at: string; verdict: Verdict; entry: PlanEntry;
   covers: Array<{ usage: string; ratio: string; slot?: string; path: string; sha256: string | null }>;
   overrides: Override[];
+  /** 检查过的成片（绝对路径）：出包时必须就是它 */
+  video_path: string | null;
+}
+
+type Rec = Record<string, unknown> & { platform?: string; verdict?: Verdict; payload_hash?: string; fingerprint?: string; checked_at?: string; covers?: CheckedPlatform["covers"];
+  plan_problems?: unknown[]; inputs?: { plan_source?: string; plan_snapshot?: Record<string, unknown>; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } };
+
+/** 按留档的输入重建检查上下文：inline 计划用留档快照，文件计划重读文件 */
+function rebuild(contentId: string, record: Rec, dataDir?: string) {
+  const inputs = record.inputs ?? {};
+  const plan = inputs.plan_source === "inline" ? inputs.plan_snapshot ?? null : inputs.plan_source || "06-publish/publish-plan.json";
+  if (plan === null) return Promise.resolve({ ok: false as const, code: "check_stale", error: "这次检查用的是直接传入的计划，但没留快照：重跑 check" });
+  return buildCtx({ _dataDir: dataDir, content_id: contentId, plan, founder_quotes: inputs.founder_quotes ?? [], overrides: inputs.overrides ?? [], ...(inputs.instruction_id ? { instruction_id: inputs.instruction_id } : {}) }, {});
 }
 
 /**
@@ -174,20 +194,25 @@ export interface CheckedPlatform {
  * 并且按当时的输入重算 payload 哈希与指纹仍一致（计划、文件、登记、偏好、原话任何一样变了都算过期）。
  */
 export async function verifyCheck(contentId: string, checkId: string, dataDir?: string): Promise<{ ok: true; checked: CheckedPlatform } | Fail> {
-  const record = await readCheckRecord(contentId, checkId, dataDir) as (Record<string, unknown> & { platform?: string; verdict?: Verdict; payload_hash?: string; fingerprint?: string; checked_at?: string; covers?: CheckedPlatform["covers"]; inputs?: { plan_source?: string; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } }) | null;
+  const record = await readCheckRecord(contentId, checkId, dataDir) as Rec | null;
   if (!record || record.content_id !== contentId) return { ok: false, code: "check_missing", error: `找不到这次检查（${checkId}）：先跑 autocrew_publish check` };
-  if (record.verdict === "block") return { ok: false, code: "check_blocked", error: `${platformLabel(record.platform ?? "")}上次检查被拦了（${checkId}）：改好计划重跑 check，或创始人明确破例时带 overrides 重跑` };
-  const inputs = record.inputs ?? {};
-  const ctx = await buildCtx({ _dataDir: dataDir, content_id: contentId, plan: inputs.plan_source && inputs.plan_source !== "inline" ? inputs.plan_source : "06-publish/publish-plan.json",
-    founder_quotes: inputs.founder_quotes ?? [], overrides: inputs.overrides ?? [], ...(inputs.instruction_id ? { instruction_id: inputs.instruction_id } : {}) }, {});
+  const who = platformLabel(record.platform ?? "");
+  if (record.verdict === "block") return { ok: false, code: "check_blocked", error: `${who}上次检查被拦了（${checkId}）：改好计划重跑 check，或创始人明确破例时带 overrides 重跑` };
+  if (record.plan_problems?.length) return { ok: false, code: "check_blocked", error: `这次检查时计划本身有问题（${checkId}）：改好计划重跑 check` };
+  const ctx = await rebuild(contentId, record, dataDir);
   if ("ok" in ctx) return ctx;
   const entry = ctx.plan.entries.find((e) => e.platform === record.platform);
-  if (!entry) return { ok: false, code: "check_stale", error: `发布计划里已经没有${platformLabel(record.platform ?? "")}了：重跑 check` };
+  if (!entry) return { ok: false, code: "check_stale", error: `发布计划里已经没有${who}了：重跑 check` };
+  if (planLevelProblems(ctx).length) return { ok: false, code: "check_blocked", error: "发布计划现在有归不到平台的问题：改好计划重跑 check" };
   const now = await identityFor(ctx, entry, namedPlatforms(ctx));
   if (now.payload !== record.payload_hash || now.fp !== record.fingerprint) {
-    return { ok: false, code: "check_stale", error: `${platformLabel(entry.platform)}的计划、文件或依据在检查之后变了（${checkId} 已过期）：重跑 check` };
+    return { ok: false, code: "check_stale", error: `${who}的计划、文件或依据在检查之后变了（${checkId} 已过期）：重跑 check` };
   }
-  return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers: record.covers ?? [], overrides: inputs.overrides ?? [] } };
+  // 指纹不覆盖所有确定性项（封面字、重复平台条目…）：按现在的输入重判，有未例外的拦截就不出包
+  if (platformVerdict(now.detItems) === "block") return { ok: false, code: "check_blocked", error: `${who}按现在的计划重判被拦了（${checkId}）：重跑 check 看原因` };
+  // 返回的封面就是这次重新核过的文件（路径 + 字节），不是留档里当时的路径
+  const covers = coverRows(now.det.covers) as CheckedPlatform["covers"];
+  return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers, overrides: record.inputs?.overrides ?? [], video_path: now.det.video?.ok ? now.det.video.abs : null } };
 }
 
 export async function executePublishCheck(params: Record<string, unknown>, deps: CheckDeps = {}): Promise<Record<string, unknown>> {

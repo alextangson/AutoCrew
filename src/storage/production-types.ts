@@ -78,7 +78,11 @@ export interface Fact {
 
 /** 回执的提交状态（沿用 publish-record.ts 的语义）：scheduled / reviewing / public / overdue 算已投出，rejected 不算 */
 /** 发布回执写入时盖的把关结论（发布审查闸门 §11）：不可变，事后补检抹不掉 */
-export interface GateStamp { ok: boolean; check_id?: string; overrides: string[]; note?: string }
+/**
+ * 写入时盖的发布前把关结论。applies = 提交发生在这个资料库有闸门之后（本体启用之后）；
+ * 之前的发布没有闸门可跑，不标「发布前未把关」。submitted_at = 用来判的实际提交时间（从不取定时公开时间）。
+ */
+export interface GateStamp { ok: boolean; check_id?: string; overrides: string[]; note?: string; applies?: boolean; submitted_at?: string }
 
 export type PublicationState = "scheduled" | "reviewing" | "public" | "overdue" | "rejected";
 

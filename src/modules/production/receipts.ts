@@ -39,6 +39,8 @@ export interface Observation {
   check_id?: string;
   /** 写入时盖的把关结论（publish-check-link） */
   gate?: GateStamp;
+  /** 实际提交时间（只用于把关判定，不参与轮次与收敛） */
+  submitted_at?: string;
 }
 
 const STATE: Partial<Record<PlatformPublication["state"], PublicationState>> = {
@@ -56,7 +58,7 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
       const checkId = p.checkId ?? undefined;
       out.push({ source: "plan", platform: p.platform, pub_state: state, evidence: "发布计划里的记录",
         ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
-        ...(p.time ? { published_at: p.time } : {}), ...(checkId ? { check_id: checkId } : {}) });
+        ...(p.time ? { published_at: p.time } : {}), ...(checkId ? { check_id: checkId } : {}), ...(p.submittedAt ? { submitted_at: p.submittedAt } : {}) });
     }
   }
   for (const b of await bindingsForContent(content.id, dataDir).catch(() => [])) {
@@ -67,8 +69,9 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
     out.push({ source: byId ? "metrics_id" : "metrics_title", platform, item_id: rest.join(":"), pub_state: "public",
       evidence: byId ? "数据回流按作品 id 对上了这条" : "数据回流按标题猜是这条" });
   }
-  // 可信观察在读到时盖把关结论（引用的 check_id 或提交前最近的有效检查），写进事实后不再变
-  for (const o of out) if (TRUSTED.has(o.source)) o.gate = await gateStamp(content.id, o.platform, o.published_at, o.check_id, dataDir);
+  // 可信观察盖把关结论：按实际提交时间（没有就按现在 = 观察写入时间），从不按定时公开时间；
+  // 同槽已经盖过的首次结论由 importObservations 继承，事后补检翻不了案
+  for (const o of out) if (TRUSTED.has(o.source)) o.gate = await gateStamp(content.id, o.platform, o.submitted_at, o.check_id, dataDir);
   return out;
 }
 
@@ -124,18 +127,36 @@ export function observationFact(doc: ProductionDoc, o: Observation, round: numbe
   };
 }
 
+/** 同一批里同（来源, 平台, 轮次）只留最后一条：静态快照里的多条历史绑定不能每次对账轮流冒充新事件 */
+function collapseBatch(doc: ProductionDoc, obs: Observation[]): Array<{ o: Observation; round: number }> {
+  const known = observationsOf(doc);
+  const last = new Map<string, { o: Observation; round: number }>();
+  for (const o of obs) {
+    const round = stampRound(doc, o, known);
+    const key = `${o.source}\u0000${o.platform}\u0000${round}`;
+    last.delete(key);
+    last.set(key, { o, round });
+  }
+  return [...last.values()];
+}
+
+/** 同槽首次盖的把关结论（同一次提交：check_id 相同或都没带）：后来的状态观察继承它，补检不能把「未把关」翻成「把关过」 */
+function firstGate(known: ObsFact[], o: Observation, round: number): GateStamp | undefined {
+  return known.find((k) => k.round === round && k.platform === o.platform && TRUSTED.has(k.source) && k.gate && (k.check_id ?? "") === (o.check_id ?? ""))?.gate;
+}
+
 /** 追加观察；同（来源, 平台, 轮次）流里和最后一条完全一样的跳过。返回新增条数 */
 export function importObservations(doc: ProductionDoc, obs: Observation[]): number {
   let added = 0;
-  for (const o of obs) {
+  for (const { o: raw, round } of collapseBatch(doc, obs)) {
     const known = observationsOf(doc);
-    const round = stampRound(doc, o, known);
-    const lastInStream = known.filter((k) => k.source === o.source && k.platform === o.platform && k.round === round).at(-1);
-    if (lastInStream && same(lastInStream, o)) continue;
+    const lastInStream = known.filter((k) => k.source === raw.source && k.platform === raw.platform && k.round === round).at(-1);
+    if (lastInStream && same(lastInStream, raw)) continue;
     // 没有发布时间、又和上一轮流里最后一条一模一样：是重开前那份旧记录被再读到，不算进新一轮
-    const lastEarlier = known.filter((k) => k.source === o.source && k.platform === o.platform && k.round < round).at(-1);
-    if (!o.published_at && lastEarlier && same(lastEarlier, o)) continue;
-    doc.facts.push(observationFact(doc, o, round));
+    const lastEarlier = known.filter((k) => k.source === raw.source && k.platform === raw.platform && k.round < round).at(-1);
+    if (!raw.published_at && lastEarlier && same(lastEarlier, raw)) continue;
+    const inherited = raw.gate ? firstGate(known, raw, round) : undefined;
+    doc.facts.push(observationFact(doc, inherited ? { ...raw, gate: inherited } : raw, round));
     added++;
   }
   return added;
@@ -204,7 +225,9 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
   const o = pick.o;
   return {
     id: slotId(round, platform), round, platform, pub_state: pick.pub_state, verified: pick.cls !== "pending", by: pick.cls, fact_id: pick.fact_id,
-    source: pick.source, evidence: pick.evidence, ...(o?.by?.host ? { host: o.by.host } : {}), ...(o?.url ? { url: o.url } : {}),
+    source: pick.source, evidence: pick.evidence, ...(o?.by?.host ? { host: o.by.host } : {}),
+    // 「我发了」时创始人贴的作品链接存在决定的 note 里
+    ...(o?.url ? { url: o.url } : pick.d?.type === "i_published" && pick.d.note ? { url: pick.d.note } : {}),
     ...(o?.item_id ? { item_id: o.item_id } : {}), ...(o?.reason ? { reason: o.reason } : {}), ...(o?.check_id ? { check_id: o.check_id } : {}),
     ...(pick.d?.gate ?? o?.gate ? { gate: pick.d?.gate ?? o!.gate } : {}),
     at: o?.published_at ?? o?.seen_at ?? pick.d?.at ?? new Date(pick.at).toISOString(),

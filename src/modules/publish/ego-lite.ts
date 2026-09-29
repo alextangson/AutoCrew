@@ -4,7 +4,7 @@ import path from "node:path";
 import { getContent, getCoverReview, getDataDir, type Asset, type Content } from "../../storage/local-store.js";
 import { sha256File } from "../video/handoff/manifest.js";
 import { registeredPackage } from "../production/publish-gate.js";
-import { verifyCheck } from "./review-gate/check.js";
+import { verifyCheck, type CheckedPlatform } from "./review-gate/check.js";
 import { formatForClipboard } from "./clipboard-publisher.js";
 
 export const EGO_LITE_VIDEO_PLATFORMS = [
@@ -159,16 +159,31 @@ export async function prepareCheckedPublish(contentId: string, checkIds: string[
   for (const checkId of checkIds) {
     const v = await verifyCheck(contentId, checkId, root);
     if (!v.ok) { out.refused.push({ check_id: checkId, platform: null, code: v.code, error: v.error }); continue; }
-    const c = v.checked;
-    if (!isEgoLitePlatform(c.platform)) { out.refused.push({ check_id: checkId, platform: c.platform, code: "platform_unsupported", error: `ego lite 视频发布不支持 ${c.platform}` }); continue; }
-    if (video instanceof Error) { out.refused.push({ check_id: checkId, platform: c.platform, code: "video_unavailable", error: video.message }); continue; }
-    const when = schedule?.trim() || c.entry.scheduled_at || undefined;
-    out.packages.push({
-      provider: "ego-lite", contentId, platform: c.platform, taskSpaceName: `autocrew-publish-${c.platform}-${contentId}`, publishUrl: EGO_LITE_PUBLISH_URLS[c.platform],
-      title: c.entry.title, caption: c.entry.caption, tags: c.entry.tags, videoPath: video.videoPath, checkId, covers: c.covers,
-      overrides: c.overrides.map((o) => ({ rule: o.rule, founder_quote: o.founder_quote })),
-      ...(when ? { schedule: when } : {}), requiresFinalConfirmation: true, nextAction: "open_and_fill_only",
-    });
+    const refuse = checkedRefusal(v.checked, video, schedule);
+    if (refuse) { out.refused.push({ check_id: checkId, platform: v.checked.platform, ...refuse }); continue; }
+    out.packages.push(checkedPackage(contentId, checkId, v.checked, (video as { videoPath: string }).videoPath));
   }
   return out;
+}
+
+/** 出包前最后几道：平台支持、成片就是检查过的那一版、排期只能取检查过的计划（要改就改计划重跑 check） */
+function checkedRefusal(c: CheckedPlatform, video: { videoPath: string } | Error, schedule?: string): { code: string; error: string } | null {
+  if (!isEgoLitePlatform(c.platform)) return { code: "platform_unsupported", error: `ego lite 视频发布不支持 ${c.platform}` };
+  if (video instanceof Error) return { code: "video_unavailable", error: video.message };
+  if (!c.video_path || path.resolve(c.video_path) !== path.resolve(video.videoPath)) {
+    return { code: "video_not_checked", error: `${c.platform} 检查的成片（${c.video_path ?? "无"}）不是登记出口的成片（${video.videoPath}）：发布包不能换片，改计划指向登记成片后重跑 check` };
+  }
+  const s = schedule?.trim();
+  if (s && s !== (c.entry.scheduled_at ?? "")) return { code: "schedule_not_checked", error: "排期取检查过的计划；要改排期就改计划里的 scheduled_at 后重跑 check" };
+  return null;
+}
+
+function checkedPackage(contentId: string, checkId: string, c: CheckedPlatform, videoPath: string): CheckedPackage {
+  const platform = c.platform as EgoLiteVideoPlatform;
+  return {
+    provider: "ego-lite", contentId, platform, taskSpaceName: `autocrew-publish-${platform}-${contentId}`, publishUrl: EGO_LITE_PUBLISH_URLS[platform],
+    title: c.entry.title, caption: c.entry.caption, tags: c.entry.tags, videoPath, checkId, covers: c.covers,
+    overrides: c.overrides.map((o) => ({ rule: o.rule, founder_quote: o.founder_quote })),
+    ...(c.entry.scheduled_at ? { schedule: c.entry.scheduled_at } : {}), requiresFinalConfirmation: true, nextAction: "open_and_fill_only",
+  };
 }

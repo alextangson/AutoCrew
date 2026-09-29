@@ -1,5 +1,5 @@
 import { isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
-import { isOntologyActive } from "../storage/production-store.js";
+import { isOntologyActive, isOntologyEnabled } from "../storage/production-store.js";
 import { recordPublishClaim } from "../modules/production/record.js";
 import { founderDecision } from "../modules/production/decisions.js";
 import { projectMarkdownExport } from "../storage/project-record.js";
@@ -18,7 +18,7 @@ import { scanText } from "../modules/filter/sensitive-words.js";
 import { generateAndSaveDigest } from "../modules/publish/digest.js";
 import { bindByPublishUrl } from "../modules/flywheel/platform-items.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
-import { prepareCheckedPublish } from "../modules/publish/ego-lite.js";
+import { prepareCheckedPublish, prepareEgoLitePublish } from "../modules/publish/ego-lite.js";
 import { executePublishCheck, type CheckDeps } from "../modules/publish/review-gate/check.js";
 import { proposePreference } from "../modules/publish/review-gate/preferences.js";
 
@@ -147,13 +147,18 @@ export async function executePublish(
     return { ok: true, data: output };
   }
 
-  // --- ego_lite_prepare：按平台出包，每个平台必须带当前有效的 check_id（发布前把关 spec §11）；从不点发布 ---
+  // --- ego_lite_prepare：从不点发布。资料库启用本体之后（发布技能改口补丁在同一时刻套上）按平台出包、每个平台必须带当前有效的
+  // check_id（发布前把关 spec §11）；启用之前旧调用方不变：单包出，带了 check_ids 也照新契约出 ---
   if (action === "ego_lite_prepare") {
     const contentId = params.content_id as string | undefined;
     if (!contentId) {
       return { ok: false, error: "content_id is required for ego_lite_prepare action" };
     }
     const ids = checkIdsOf(params.check_ids ?? params.check_id);
+    if (!ids.length && !(await isOntologyEnabled(dataDir))) {
+      try { return { ok: true, data: await prepareEgoLitePublish(contentId, dataDir, params.schedule as string | undefined) }; }
+      catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
+    }
     if (!ids.length) return { ok: false, code: "check_required", error: "出发布包要带每个平台的 check_id：先跑 autocrew_publish check，把返回的各平台 check_id 带上（被拦或过期的平台不出包）" };
     try {
       const data = await prepareCheckedPublish(contentId, ids, dataDir, params.schedule as string | undefined);

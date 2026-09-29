@@ -9,6 +9,7 @@
 import { bodyHash } from "../../storage/production-store.js";
 import { platformLabel } from "../../desktop/platform-label.js";
 import { receiptsOfRound, type Slot } from "./receipts.js";
+import { isUngated } from "./publish-check-link.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
@@ -108,9 +109,13 @@ function receiptNotes(r: ReturnType<typeof publishReceipts>): { badges: string[]
   };
 }
 
-/** 发布前没有有效检查就发了（发布审查闸门 §11、E15）：按平台标出来；结论是写入时盖的，事后补检不改 */
+/**
+ * 闸门存在之后、没有有效检查就发了（发布审查闸门 §11、E15）：卡片上只汇总一句「N 个平台发布前未把关」，
+ * 哪个平台由面板的回执行标；结论是写入时盖的，事后补检不改
+ */
 export function gateAlerts(live: Slot[]): string[] {
-  return live.filter((s) => !s.gate?.ok).map((s) => `${label(s.platform)}发布前未把关`);
+  const n = live.filter((s) => isUngated(s.gate)).length;
+  return n ? [`${n} 个平台发布前未把关`] : [];
 }
 
 /** 检查里创始人的原话例外：逐字显示 */

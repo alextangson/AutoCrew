@@ -38,6 +38,8 @@ export interface PlatformPublication {
   postId?: string | null;
   /** 发布前把关的 check_id（发布审查闸门：技能在计划里每个平台带上） */
   checkId?: string | null;
+  /** 实际提交时间（submitted_at / 授权时间）；定时公开时间不算。发布前把关按它判 */
+  submittedAt?: string | null;
 }
 
 export type PublishRecord =
@@ -95,6 +97,7 @@ export function parsePlatformEntry(entry: unknown, now: number): PlatformPublica
     url: str(pub?.url) ?? str(pub?.post_url),
     campaigns: campaignsOf(entry), manual: null,
     title: str(entry.title), postId: str(pub?.post_id) ?? str(entry.post_id), checkId: str(entry.check_id) ?? str(pub?.check_id),
+    submittedAt: validTime(pub?.submitted_at) ?? validTime(pub?.authorized_at) ?? validTime(pub?.authorization_at),
   };
 }
 

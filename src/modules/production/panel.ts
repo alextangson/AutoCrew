@@ -12,6 +12,7 @@ import { spokenRel } from "../video/handoff/register-spoken.js";
 import { publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import type { Slot } from "./receipts.js";
 import { explainContent } from "./read.js";
+import { isUngated } from "./publish-check-link.js";
 
 /** 这个槽的状态由谁定：给创始人看的来源说法 */
 function slotLabel(w: Slot): string {
@@ -32,7 +33,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   const receipts = publishReceipts(doc);
   // 一行 = 一个平台的发布槽（本轮每个平台只有一个）；纠正指向槽 id；按真实时间新的在前
   const published = receipts.live.map((w) => ({ id: w.id, kind: "slot", platform: w.platform, url: w.url ?? null, work: w.item_id ?? null,
-    label: `${slotLabel(w)}${w.gate?.ok ? "" : " · 发布前未把关"}`, ungated: !w.gate?.ok, overrides: w.gate?.overrides ?? [], at: w.at }))
+    label: `${slotLabel(w)}${isUngated(w.gate) ? " · 发布前未把关" : ""}`, ungated: isUngated(w.gate), overrides: w.gate?.overrides ?? [], at: w.at }))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const n = doc.registrations.length;
   const checklistRel = n ? spokenRel(n).replace(/-spoken\.md$/, "-checklist.json") : null;

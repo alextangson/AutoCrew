@@ -61,30 +61,32 @@ describe("§11-2 发布槽引用检查 / §11-3 例外上卡", () => {
     await writePlan(r, [{ ...planEntry(r, "xiaohongshu", ["4:3"]), check_id: c.xiaohongshu.check_id, publication: { status: "submitted", submitted_at: new Date(Date.now() + 1000).toISOString() } }]);
     await reconcileAll(env.dir);
     const p = await cardPanel(r.id, env.dir);
-    expect(p.alerts).not.toContain("小红书发布前未把关");
+    expect((p.alerts as string[]).some((a) => a.includes("发布前未把关"))).toBe(false);
     expect(p.badges).toContain("小红书发布前例外：『这次小红书就用横版，我认』");
     expect((await readTimeline(r.id, env.dir)).some((e) => e.type === "publish_override")).toBe(true);
   });
 
   it("没有有效检查就发了 → 「发布前未把关」上卡与时间线；事后补跑的检查抹不掉", async () => {
     const r = await registeredVideo(env);
-    await writePlan(r, [{ ...planEntry(r, "douyin", ["3:4", "4:3"]), publication: { status: "submitted", submitted_at: "2026-09-01T00:00:00Z" } }]);
+    await writePlan(r, [{ ...planEntry(r, "douyin", ["3:4", "4:3"]), publication: { status: "submitted", submitted_at: new Date().toISOString() } }]);
     await reconcileAll(env.dir);
-    expect((await cardPanel(r.id, env.dir)).alerts).toContain("抖音发布前未把关");
+    expect((await cardPanel(r.id, env.dir)).alerts).toContain("1 个平台发布前未把关");
     expect((await readTimeline(r.id, env.dir)).some((e) => e.type === "publish_ungated")).toBe(true);
     await check(r);
     await reconcileAll(env.dir);
-    expect((await cardPanel(r.id, env.dir)).alerts).toContain("抖音发布前未把关");
+    expect((await cardPanel(r.id, env.dir)).alerts).toContain("1 个平台发布前未把关");
   });
 
   it("创始人「我发了」前跑过有效检查 → 不标未把关；没跑过 → 标", async () => {
     const r = await registeredVideo(env);
     await founderDecision(r.id, "i_published", { platform: "bilibili" }, env.dir);
-    expect((await cardPanel(r.id, env.dir)).alerts).toContain("B站发布前未把关");
+    expect((await cardPanel(r.id, env.dir)).alerts).toContain("1 个平台发布前未把关");
     await writePlan(r, [planEntry(r, "douyin", ["3:4", "4:3"])]);
     await check(r);
     await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
-    const alerts = (await cardPanel(r.id, env.dir)).alerts as string[];
-    expect(alerts).not.toContain("抖音发布前未把关");
+    const p = await cardPanel(r.id, env.dir);
+    // 只剩 B站 那一个
+    expect(p.alerts).toContain("1 个平台发布前未把关");
+    expect((p.published as Array<{ platform: string; ungated: boolean }>).find((x) => x.platform === "douyin")?.ungated).toBe(false);
   });
 });

@@ -6,6 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { GateStamp } from "../../storage/production-types.js";
+import { DERIVE_VERSION, readEnabledMarker } from "../../storage/production-store.js";
 import { checksDir, readCheckRecord } from "../publish/review-gate/check-store.js";
 
 interface CheckRec { check_id?: string; platform?: string; checked_at?: string; verdict?: string; inputs?: { overrides?: Array<{ founder_quote?: string }> } }
@@ -29,14 +30,24 @@ async function latestValid(contentId: string, platform: string, before: number, 
   return best;
 }
 
-/** 写入时盖一次：`submittedAt` = 提交 / 发布证据时间，没有就按现在 */
+/**
+ * 写入时盖一次。`submittedAt` = 实际提交时间（计划里的 submitted_at / 授权时间，或观察写入时间）——从不传定时公开时间：
+ * 提交之后、公开之前补跑的检查不能让这次发布算「把关过」。提交早于本体启用（闸门还不存在）→ applies=false，不标未把关。
+ */
 export async function gateStamp(contentId: string, platform: string, submittedAt: string | undefined, checkId: string | undefined, dataDir: string): Promise<GateStamp> {
   const before = submittedAt && !Number.isNaN(Date.parse(submittedAt)) ? Math.min(Date.parse(submittedAt), Date.now()) : Date.now();
+  const at = new Date(before).toISOString();
+  const marker = await readEnabledMarker(dataDir).catch(() => null);
+  const applies = Boolean(marker && marker.version === DERIVE_VERSION && Date.parse(marker.enabledAt) <= before);
   if (checkId) {
     const r = (await readCheckRecord(contentId, checkId, dataDir).catch(() => null)) as CheckRec | null;
-    if (valid(r, platform, before)) return { ok: true, check_id: checkId, overrides: quotesOf(r) };
-    return { ok: false, check_id: checkId, overrides: [], note: "引用的检查不在、平台不对、晚于提交或当时被拦" };
+    if (valid(r, platform, before)) return { ok: true, check_id: checkId, overrides: quotesOf(r), applies, submitted_at: at };
+    return { ok: false, check_id: checkId, overrides: [], note: "引用的检查不在、平台不对、晚于提交或当时被拦", applies, submitted_at: at };
   }
   const r = await latestValid(contentId, platform, before, dataDir);
-  return r ? { ok: true, check_id: r.check_id, overrides: quotesOf(r) } : { ok: false, overrides: [], note: "发布前没有有效的检查" };
+  return r ? { ok: true, check_id: r.check_id, overrides: quotesOf(r), applies, submitted_at: at }
+    : { ok: false, overrides: [], note: applies ? "发布前没有有效的检查" : "本体启用前发布，当时还没有发布前把关", applies, submitted_at: at };
 }
+
+/** 该标「发布前未把关」：闸门存在之后提交、且没有有效检查。旧版（没有 applies 字段）的结论不标 */
+export const isUngated = (g: GateStamp | undefined): boolean => Boolean(g && g.applies === true && !g.ok);

@@ -16,6 +16,7 @@ import { contentRoot } from "../../storage/content-project.js";
 import { DERIVE_VERSION, isOntologyActive, productionServiceDir, readEnabledMarker, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { importLegacyRegistration } from "./legacy.js";
 import { importObservations, trustedObservations } from "./receipts.js";
+import { isUngated } from "./publish-check-link.js";
 import { commitRegistration } from "./registration.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
@@ -99,7 +100,7 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
     importObservations(d, receipts);
     // 新写入的可信发布观察：没把关 / 有原话例外都进时间线（发布审查闸门 §11）
     const gateEvents = d.facts.slice(before).filter((f) => f.gate).flatMap((f) => [
-      ...(f.gate!.ok ? [] : [{ type: "publish_ungated", detail: { fact_id: f.id, platform: f.platform, note: `发布前未把关：${f.gate!.note ?? ""}` } }]),
+      ...(!isUngated(f.gate) ? [] : [{ type: "publish_ungated", detail: { fact_id: f.id, platform: f.platform, note: `发布前未把关：${f.gate!.note ?? ""}` } }]),
       ...f.gate!.overrides.map((q) => ({ type: "publish_override", detail: { fact_id: f.id, platform: f.platform, note: `发布前例外：『${q}』`, check_id: f.gate!.check_id } })),
     ]);
     return { value: n, events: [...added.map((f) => ({ type: "fact_imported", detail: { fact_id: f.id, kind: f.kind, state: f.state, source: f.source, evidence: f.evidence } })), ...gateEvents] };
