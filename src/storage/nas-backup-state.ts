@@ -27,6 +27,8 @@ export interface BackupState {
   backedUpAt?: string;
   fileCount?: number;
   totalBytes?: number;
+  /** 上次完整核对（NAS 上每个文件重读算 sha256）成功的时间；每 7 天一次 */
+  lastFullVerifyAt?: string;
 }
 
 /** 备份自己的记录和状态文件不参与备份比对，否则每轮都算「有变化」 */
@@ -64,11 +66,13 @@ export async function writeBackupState(projectRoot: string, state: BackupState):
 
 const localTime = (iso: string) => new Date(iso).toLocaleString("zh-CN", { hour12: false });
 
+const fullLine = (s: BackupState) => (s.lastFullVerifyAt ? `上次完整核对：${localTime(s.lastFullVerifyAt)}` : "还没做过完整核对");
+
 /** 「我的内容/5 已发布/<稿>/NAS备份状态.txt」的正文 */
 export function renderBackupStatus(s: BackupState): string {
-  const tried = `最后尝试：${localTime(s.lastAttempt)}`;
+  const tried = `最后尝试：${localTime(s.lastAttempt)}\n${fullLine(s)}`;
   if (s.status === "backed_up") {
-    return `已备份到 NAS\n\n时间：${localTime(s.backedUpAt ?? s.lastAttempt)}\nNAS 路径：${s.target}\n文件数：${s.fileCount ?? 0}，总大小：${formatBytes(s.totalBytes ?? 0)}\n`;
+    return `已备份到 NAS\n\n时间：${localTime(s.backedUpAt ?? s.lastAttempt)}\nNAS 路径：${s.target}\n文件数：${s.fileCount ?? 0}，总大小：${formatBytes(s.totalBytes ?? 0)}\n${fullLine(s)}\n`;
   }
   if (s.status === "unmounted") {
     return `还没备份到 NAS：${s.reason ?? "NAS 未挂载"}\n\n${tried}\n挂载 NAS 后，下一轮会自动补上。\n`;

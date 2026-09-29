@@ -303,6 +303,59 @@ describe("7 天腾空间前核对 NAS", () => {
   });
 });
 
+describe("每周完整核对", () => {
+  const later = (d: number) => new Date(NOW.getTime() + d * 86400_000);
+  const WHOLE = new Date(2026, 8, 20, 10, 0, 0);
+  /** NAS 副本的修改时间先对齐到整秒并让备份记下（utimes 精度不到亚毫秒），之后才能「改回原修改时间」 */
+  async function pinMtime(file: string, now: Date): Promise<void> {
+    await fs.utimes(file, WHOLE, WHOLE);
+    await backup({ now });
+  }
+  /** 同样大小、改回原修改时间的静默损坏：平时的大小+修改时间检查看不出来 */
+  async function rot(file: string, text: string): Promise<void> {
+    await fs.writeFile(file, text);
+    await fs.utimes(file, WHOLE, WHOLE);
+  }
+
+  it("skips the full re-read within 7 days, then catches a same-size same-mtime corruption and recopies", async () => {
+    const c = await published("稿", 1);
+    await backup();
+    expect((await readBackupState(root(c)))!.lastFullVerifyAt).toBe(NOW.toISOString());
+    const dest = path.join(nasDir(c), "02-aroll/raw.mov");
+    await pinMtime(dest, later(1));
+    await rot(dest, "稿-rax");
+    expect((await backup({ now: later(3) })).backedUp).toEqual(["稿"]);
+    expect(await read(dest)).toBe("稿-rax");
+    expect((await readBackupState(root(c)))!.lastFullVerifyAt).toBe(NOW.toISOString());
+    expect((await backup({ now: later(7) })).backedUp).toEqual(["稿"]);
+    expect(await read(dest)).toBe("稿-raw");
+    expect((await readBackupState(root(c)))!.lastFullVerifyAt).toBe(later(7).toISOString());
+    await syncMyContentView(data, { now: later(7) });
+    expect(await read(path.join(itemDir(c), "NAS备份状态.txt"))).toContain("上次完整核对：");
+  });
+
+  it("fails with the path named when the full verify finds an archived NAS-only file corrupted", async () => {
+    for (let i = 1; i <= 5; i++) await published(`新${i}`, i);
+    const old = await published("旧稿", 8);
+    await backup();
+    await archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });
+    await rot(path.join(nasDir(old), "02-aroll/raw.mov"), "旧稿-rax");
+    expect((await backup({ now: later(1) })).backedUp).toContain("旧稿");
+    const r = await backup({ now: later(7) });
+    expect(r.backedUp).not.toContain("旧稿");
+    const state = (await readBackupState(root(old)))!;
+    expect(state.status).toBe("failed");
+    expect(state.reason).toContain("02-aroll/raw.mov");
+    expect(state.reason).toContain("完整核对");
+    expect(state.lastFullVerifyAt).toBe(NOW.toISOString());
+  });
+
+  it("says no full verify has run yet when there is none", async () => {
+    const { renderBackupStatus } = await import("./nas-backup-state.js");
+    expect(renderBackupStatus({ status: "unmounted", lastAttempt: NOW.toISOString(), failures: 0, target: "/x" })).toContain("还没做过完整核对");
+  });
+});
+
 describe("已发布文件夹补三样", () => {
   it("adds 成片字幕.srt, 发布回执.md and 原片 to published items only", async () => {
     const pub = await published("已发", 1);
