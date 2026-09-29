@@ -15,6 +15,8 @@ import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { copyProject, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
+import { latestBackupFiles } from "./nas-backup-state.js";
+import { KEPT_DIR } from "./nas-kept.js";
 
 export const DEFAULT_ARCHIVE_ROOT = "/Volumes/MacMiniData/01_Lawrence/Account";
 export const MEDIA_DIRS = ["02-aroll", "03-broll", "04-edit", "05-audio", "05-cover", "07-delivery"] as const;
@@ -70,7 +72,7 @@ export function archiveTarget(archiveRoot: string, c: Content, projectRoot: stri
   return path.join(archiveRoot, String(at.getFullYear()), MONTHS[at.getMonth()], path.basename(projectRoot));
 }
 
-async function isReachable(dir: string): Promise<boolean> {
+export async function isReachable(dir: string): Promise<boolean> {
   try { return (await fs.stat(dir)).isDirectory(); } catch { return false; }
 }
 
@@ -92,6 +94,17 @@ async function writeRecord(projectRoot: string, target: string, files: ArchivedF
   await writeJsonAtomic(relFile, relocations);
 }
 
+/** 封面（05-cover 下的图）和登记字幕：删本机素材前留一份小副本 */
+async function keepSmallFiles(projectRoot: string, c: Content, files: ArchivedFile[]): Promise<void> {
+  const srt = c.video?.final?.srt_path ? path.relative(projectRoot, c.video.final.srt_path).split(path.sep).join("/") : null;
+  const keep = files.filter((f) => /^05-cover\/.+\.(png|jpe?g|webp)$/i.test(f.rel) || f.rel === srt);
+  for (const f of keep) {
+    const dest = path.join(projectRoot, KEPT_DIR, f.rel);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.copyFile(path.join(projectRoot, f.rel), dest);
+  }
+}
+
 async function deleteMedia(projectRoot: string): Promise<void> {
   for (const d of MEDIA_DIRS) {
     const dir = path.join(projectRoot, d);
@@ -108,8 +121,11 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
   if (free < size + ctx.margin) {
     throw new Error(`NAS 空间不够（要 ${formatBytes(size)} + 预留 ${formatBytes(ctx.margin)}，剩 ${formatBytes(free)}），这次跳过`);
   }
-  const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS);
+  // 逐文件核对 NAS（发布时已备份的，这里只是核对；缺或不一致先补拷），全部对上才删本机
+  const previous = await latestBackupFiles(projectRoot);
+  const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS, { previous });
   if (errors.length) throw new Error(`复制或核对出错，本机一个文件都没删，下次重试：${errors.join("；")}`);
+  await keepSmallFiles(projectRoot, c, files);
   await writeRecord(projectRoot, target, files, ctx.now);
   await deleteMedia(projectRoot);
   const freedBytes = files.filter((f) => isMedia(f.rel)).reduce((n, f) => n + f.size, 0);

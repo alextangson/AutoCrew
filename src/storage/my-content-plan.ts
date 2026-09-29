@@ -9,6 +9,8 @@ import { listRetros, readRetro } from "../modules/retro/retro.js";
 import { renderCheckList, unverifiedAdditions } from "../modules/video/handoff/spoken.js";
 import { spokenRel } from "../modules/video/handoff/register-spoken.js";
 import { readArchiveLog, renderArchiveLog } from "./nas-archive-log.js";
+import { KEPT_DIR, locateProjectFile } from "./nas-kept.js";
+import { publishedFiles } from "./my-content-published.js";
 
 /** 已发布栏只留最近几条；NAS 归档也不动这几条 */
 export const KEEP_PUBLISHED = 5;
@@ -83,7 +85,7 @@ export function folderNames(items: Content[]): Map<string, string> {
   return out;
 }
 
-async function readIfExists(file: string): Promise<string | null> {
+export async function readIfExists(file: string): Promise<string | null> {
   try { return await fs.readFile(file, "utf8"); } catch (e) { if (isMissing(e)) return null; throw e; }
 }
 
@@ -128,23 +130,33 @@ async function publishCopy(c: Content, root: string): Promise<string | null> {
   return kit ? renderKit(c, kit) : null;
 }
 
-async function coverFiles(root: string): Promise<Record<"封面-3x4" | "封面-4x3", string | null>> {
-  let names: string[] = [];
-  try { names = await fs.readdir(path.join(root, "05-cover")); } catch (e) { if (!isMissing(e)) throw e; }
-  const pick = (base: string) => names.find((n) => n.startsWith(`${base}.`)) ?? null;
-  const a = pick("封面-3x4"), b = pick("封面-4x3");
-  return { "封面-3x4": a && path.join(root, "05-cover", a), "封面-4x3": b && path.join(root, "05-cover", b) };
+async function listNames(dir: string): Promise<string[]> {
+  try { return await fs.readdir(dir); } catch (e) { if (isMissing(e)) return []; throw e; }
 }
 
-type ItemFile = { name: string } & ({ kind: "copy"; text: string } | { kind: "link"; source: string } | { kind: "symlink"; target: string });
+/** 定稿封面；归档腾空间后 05-cover 已空，读删前留的副本（00-project/kept/05-cover） */
+async function coverFiles(root: string): Promise<Record<"封面-3x4" | "封面-4x3", string | null>> {
+  const dirs = [path.join(root, "05-cover"), path.join(root, KEPT_DIR, "05-cover")];
+  const pick = async (base: string) => {
+    for (const dir of dirs) {
+      const name = (await listNames(dir)).find((n) => n.startsWith(`${base}.`));
+      if (name) return path.join(dir, name);
+    }
+    return null;
+  };
+  return { "封面-3x4": await pick("封面-3x4"), "封面-4x3": await pick("封面-4x3") };
+}
+
+export type ItemFile = { name: string } & ({ kind: "copy"; text: string } | { kind: "link"; source: string } | { kind: "symlink"; target: string });
 
 async function deliveryFiles(c: Content, root: string): Promise<ItemFile[]> {
   const files: ItemFile[] = [], missing: string[] = [];
   const final = c.video?.final;
   const finalPath = final ? path.join(root, projectRelativeFile(`assets/${final.asset_filename}`)) : null;
-  if (finalPath && (await fs.stat(finalPath).then(() => true, () => false))) {
-    files.push({ name: `成片${path.extname(finalPath)}`, kind: "link", source: finalPath });
-  } else if (isVideoPlatform(c.platform)) missing.push("成片：还没有登记的成片");
+  const located = finalPath ? await locateProjectFile(root, finalPath) : null;
+  if (located?.where === "local") files.push({ name: `成片${path.extname(finalPath!)}`, kind: "link", source: located.path });
+  else if (located?.where === "nas") files.push({ name: "成片在NAS.txt", kind: "copy", text: `成片已搬到 NAS：\n\n${located.path}\n` });
+  else if (isVideoPlatform(c.platform)) missing.push("成片：还没有登记的成片");
   for (const [base, source] of Object.entries(await coverFiles(root))) {
     if (source) files.push({ name: `${base}${path.extname(source)}`, kind: "link", source });
     else missing.push(`${base}：还没有定稿封面`);
@@ -183,6 +195,7 @@ async function itemFiles(c: Content, column: Column, dataDir: string): Promise<I
     files.push({ name: "成片放这里", kind: "symlink", target: exportDir });
   }
   if (column === "待发布" || column === "已发布") files.push(...(await deliveryFiles(c, root)));
+  if (column === "已发布") files.push(...(await publishedFiles(c, root)));
   return files;
 }
 
