@@ -735,6 +735,7 @@ export function ChatDock(props: {
           }}
         />
         <div className="chat-compose-bar">
+          <div className="chat-controls">
           {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置；但读取失败要留着并说原因 */}
           <ComposeControls
             backends={agent.backends}
@@ -766,6 +767,7 @@ export function ChatDock(props: {
           )}
             </>}
           />
+          </div>
           {busy ? (
             <button
               title="停止这一轮（已投递的后台任务会继续跑）"

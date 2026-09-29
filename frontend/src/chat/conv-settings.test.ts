@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedSinceSend, controlState, DEFAULT_SETTINGS, enteringNewConversation, settingsFromServer, settingsPayload, snapshotFromSave } from "./conv-settings";
+import { choiceLabel, changedSinceSend, controlState, DEFAULT_SETTINGS, enteringNewConversation, settingsFromServer, settingsPayload, snapshotFromSave } from "./conv-settings";
 
 describe("对话级设置（v1.1）", () => {
   it("U2：适配器没上报 → 只有「默认」且不可点", () => {
@@ -34,5 +34,12 @@ describe("评审 v1.1 前端回归", () => {
     expect(changedSinceSend(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, permissionMode: "conversation" })).toBe(true);
     expect(changedSinceSend(DEFAULT_SETTINGS, DEFAULT_SETTINGS)).toBe(false);
     expect(changedSinceSend(null, DEFAULT_SETTINGS)).toBe(false);
+  });
+});
+
+describe("bug C 窄右栏", () => {
+  it("默认档触发器只写「默认」，不带适配器的长名", () => {
+    expect(choiceLabel([{ value: "default", label: "Default (recommended)" }], "default")).toBe("默认");
+    expect(choiceLabel([{ value: "sonnet", label: "Sonnet 5" }], "sonnet")).toBe("Sonnet 5");
   });
 });

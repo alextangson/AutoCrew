@@ -53,8 +53,10 @@ export function controlState(backend: BackendId, choices: Choice[]): { hidden: b
   return { hidden: false, disabled: false, items: hasDefault ? choices : [{ value: "default", label: "默认" }, ...choices] };
 }
 
+/** 触发器上的短标签：默认档一律叫「默认」（适配器报的是 "Default (recommended)"，窄右栏会截断，bug C） */
 export function choiceLabel(items: Choice[], value: string): string {
-  return items.find((c) => c.value === value)?.label ?? (value === "default" ? "默认" : value);
+  if (value === "default") return "默认";
+  return items.find((c) => c.value === value)?.label ?? value;
 }
 
 /** 进入新对话（任何入口：＋、打开没聊过的稿件、换后端、删掉当前对话）→ 设置回默认，旧对话的放行档不带过来（评审 v1.1 P1-2） */

@@ -105,10 +105,11 @@
   padding: var(--s3) var(--s3); display: flex; flex-direction: column; gap: var(--s2);
 }
 .chat-input { width: 100%; resize: none; }
-.chat-compose-bar { display: flex; align-items: center; gap: var(--s2); }
-/* 模型档位靠左、发送靠右：没有切换器时发送键照样在右 */
-.chat-compose-bar > .picker { margin-right: auto; }
-.chat-compose-bar > button:first-child { margin-left: auto; }
+/* 设置一排可折行、发送键永不折（窄右栏 ~400px 实测，bug C）：控件靠左成组，发送键靠右 */
+.chat-compose-bar { display: flex; align-items: flex-end; gap: var(--s2); }
+.chat-controls { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
+.chat-controls .picker-trigger-label { max-width: 12em; }
+.chat-compose-bar > button { flex: none; white-space: nowrap; margin-left: auto; }
 .chat-model-picker .picker-panel { width: 264px; }
 /* 后端下拉：标签不截断，状态与计费说明放右侧可换行（v1.1 修截断） */
 .chat-backend-picker .picker-panel { width: 340px; }
