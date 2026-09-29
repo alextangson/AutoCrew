@@ -5,7 +5,7 @@ import { saveTopic } from "../storage/local-store.js";
 import { browserCdpAdapter } from "../adapters/browser/browser-cdp.js";
 import { researchWithTikHub } from "../adapters/research/tikhub.js";
 import { runFreeResearch, type SearchResult } from "../modules/research/free-engine.js";
-import { fetchFromSources, ALL_SOURCES } from "../modules/research/sources/registry.js";
+import { fetchFromSources, ALL_SOURCES, DEFAULT_SOURCES } from "../modules/research/sources/registry.js";
 import type { SourceItem } from "../modules/research/sources/types.js";
 import type { BrowserPlatform, ResearchItem } from "../adapters/browser/types.js";
 
@@ -16,13 +16,13 @@ export interface ResearchDeps {
   overseasFetch?: (sources: string[], keyword: string, limit: number) => Promise<SourceItem[]>;
 }
 
-/** Resolve the `sources` param to valid source keys, defaulting to all. */
+/** Resolve the `sources` param to valid source keys, defaulting to DEFAULT_SOURCES (opt-in sources excluded). */
 function parseSources(raw: unknown): string[] {
   let list: string[] | null = null;
   if (Array.isArray(raw)) list = raw.map((s) => String(s).trim());
   else if (typeof raw === "string" && raw.trim()) list = raw.split(",").map((s) => s.trim());
   const valid = (list ?? []).filter((s) => ALL_SOURCES.includes(s));
-  return valid.length > 0 ? valid : [...ALL_SOURCES];
+  return valid.length > 0 ? valid : [...DEFAULT_SOURCES];
 }
 
 export const researchSchema = Type.Object({

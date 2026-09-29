@@ -34,6 +34,11 @@ export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
 
 export const ALL_SOURCES = Object.keys(SOURCE_REGISTRY);
 
+/** 只在显式点名时才用的源:aihot.news 数据对外商用需书面授权,不能被「默认全部」悄悄带上 */
+const OPT_IN_SOURCES = new Set(["aihot_hot"]);
+/** 调用方没指定源时的默认集合 */
+export const DEFAULT_SOURCES = ALL_SOURCES.filter((s) => !OPT_IN_SOURCES.has(s));
+
 export interface FetchSourcesDeps {
   registry?: Record<string, SourceFetcher>;
   /** 运行时密钥,透传给需要的 fetcher(如 x → twitterapi.io key)。 */
