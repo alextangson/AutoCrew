@@ -24,7 +24,7 @@ const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg"]);
 const VERSION_DIR = /^v0*(\d+)$/i;
 
 export type Seen = Omit<Fact, "id" | "round" | "at" | "state" | "availability"> & { state: Fact["state"] };
-export interface Observations { seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true }> }
+export interface Observations { seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number } }> }
 
 /**
  * 哈希缓存：按（dev, ino, 大小, 修改时间）认同一份字节。落盘到工作区服务目录的 hash-cache.json，
@@ -157,8 +157,11 @@ async function availabilityOf(doc: ProductionDoc, root: string, archived: boolea
       await fs.access(file, fs.constants.R_OK);
       const st = await fs.stat(file);
       const same = st.size === f.size && Math.trunc(st.mtimeMs) === f.mtime_ms;
-      const replaced = !f.replaced_at && !same && (await cachedSha(file)).sha256 !== f.sha256;
-      out.set(f.id, { availability: "present", ...(replaced ? { replaced: true as const } : {}) });
+      const now = same ? f.sha256 : (await cachedSha(file)).sha256;
+      const replaced = !f.replaced_at && now !== f.sha256;
+      // 覆盖后又改回原字节（ABA）：这条事实恢复可用，绑它的批准按原样有效
+      const restored = f.replaced_at && now === f.sha256 ? { size: st.size, mtime_ms: Math.trunc(st.mtimeMs) } : undefined;
+      out.set(f.id, { availability: "present", ...(replaced ? { replaced: true as const } : {}), ...(restored ? { restored } : {}) });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       out.set(f.id, { availability: code === "ENOENT" ? (archived ? "archived" : "missing") : "unreadable" });
@@ -191,6 +194,7 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
     if (!a) continue;
     if (a.availability !== f.availability) { f.availability = a.availability; changed++; }
     if (a.replaced && !f.replaced_at) { f.replaced_at = at; changed++; }
+    if (a.restored && f.replaced_at) { delete f.replaced_at; f.size = a.restored.size; f.mtime_ms = a.restored.mtime_ms; changed++; }
   }
   const added: Fact[] = [];
   for (const s of obs.seen) {

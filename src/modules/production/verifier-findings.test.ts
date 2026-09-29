@@ -66,7 +66,7 @@ describe("封面被覆盖又改回（E13 的 ABA）", () => {
 
   // 真机复现：覆盖 05-cover/v001/封面-3x4.png 再改回，创始人对那张点「用这一版封面」→ ok:true、决定落盘，阶段仍是「封面待你选」，
   // 没有任何错误。pickCover 用 factBy 找到了已 replaced 的事实，validCoverApproval 又立刻判它失效。
-  it.skip("BUG: 对已被替换的封面事实点「用这一版」不能回 ok:true 然后什么都没发生", async () => {
+  it("对已被替换的封面事实点「用这一版」不能回 ok:true 然后什么都没发生", async () => {
     const { r, c34, c43 } = await registeredWithOverwrite();
     const res = await founderDecision(r.id, "pick_cover", {
       cover_3x4_fact_id: c34.id, cover_3x4_sha: c34.sha256, cover_4x3_fact_id: c43.id, cover_4x3_sha: c43.sha256, cover_text: "换个字",
@@ -78,7 +78,7 @@ describe("封面被覆盖又改回（E13 的 ABA）", () => {
   });
 
   // 真机：record 同一字节回 ok:true、fact_id 指向那条 replaced 的死事实；这张封面再也选不回来
-  it.skip("BUG: 改回原字节后重报这张封面，得到一条可用（未 replaced）的事实，而不是静默回放死事实", async () => {
+  it("改回原字节后重报这张封面，得到一条可用（未 replaced）的事实，而不是静默回放死事实", async () => {
     const { r, c34 } = await registeredWithOverwrite();
     const res = await record(env, { content_id: r.id, kind: "cover", ratio: "3:4", path: path.join(r.root, c34.path!), request_id: "again" });
     expect(res.ok).toBe(true);
@@ -87,7 +87,7 @@ describe("封面被覆盖又改回（E13 的 ABA）", () => {
   });
 
   // spec E13：「所批文件被覆盖 → 批准失效写原因」。真机卡片只写「有封面待你选」，alerts 为空，看不出批准为什么没了
-  it.skip("BUG: 所批封面被覆盖后，卡片说明批准因文件被覆盖而失效（E13 写原因）", async () => {
+  it("所批封面被覆盖后，卡片说明批准因文件被覆盖而失效（E13 写原因）", async () => {
     const r = await registeredVideo(env);
     const doc = (await readProductionDoc(r.id, env.dir))!;
     const c34 = doc.facts.find((f) => f.kind === "cover" && f.ratio === "3:4" && f.state === "accepted")!;
@@ -102,7 +102,7 @@ describe("封面被覆盖又改回（E13 的 ABA）", () => {
 describe("record 的 request_id（E6）", () => {
   // 真机：r-aroll-2 先报了 aroll，再用同一个 request_id 报 kind=cover 的另一张图 → ok:true、replayed:true、回的是 aroll 回执；
   // 封面没有入库，agent 以为报上了（AGENTS.md：不能静默丢结果还报成功）
-  it.skip("BUG: 同一 request_id 换了 kind / path 再报，要拒（或至少不回 ok:true）", async () => {
+  it("同一 request_id 换了 kind / path 再报，要拒（或至少不回 ok:true）", async () => {
     const c = await videoContent(env, "AI 又忘了怎么办");
     await founderApprove(env, c.id);
     await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "same" });
@@ -123,7 +123,7 @@ describe("record 的 request_id（E6）", () => {
 describe("发布槽与把关（§6 / 闸门 §11）", () => {
   // 真机：publish-plan.json 里平台写「视频号」、带着有效的 wechat_video check_id、提交晚于检查 →
   // 槽的平台是「视频号」，gateStamp 按「视频号」找检查对不上 → 卡片「发布前未把关」（误报）。check 本身认中文别名，回执不认
-  it.skip("BUG: 发布计划用中文平台名（视频号）+ 有效 check_id → 不标「发布前未把关」", async () => {
+  it("发布计划用中文平台名（视频号）+ 有效 check_id → 不标「发布前未把关」", async () => {
     const r = await registeredVideo(env);
     await writePlan(r, [planEntry(r, "wechat_video", ["3:4", "4:3"])]);
     const ids = await checkIds(r);
@@ -136,7 +136,7 @@ describe("发布槽与把关（§6 / 闸门 §11）", () => {
 
   // 真机：抖音 / 小红书 / 视频号已定时，B站 驳回「封面含二维码」→ 卡片面板 alerts 只有未把关，B站 驳回在面板里完全看不到
   // （derive.ts D1 分支只放 UNREGISTERED + gateAlerts，receipts.rejected 被丢掉）。spec E35「被驳回 → 标原因」
-  it.skip("BUG: 其他平台已投出时，某平台被驳回的原因仍要上卡（D1 不能吞掉驳回）", async () => {
+  it("其他平台已投出时，某平台被驳回的原因仍要上卡（D1 不能吞掉驳回）", async () => {
     const r = await registeredVideo(env);
     const now = new Date(Date.now() + 1000).toISOString();
     await writePlan(r, [

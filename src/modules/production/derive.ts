@@ -88,6 +88,18 @@ export function validCoverApproval(doc: ProductionDoc, body: string): Decision |
   return liveFact(doc, "cover", d.cover_3x4_sha, "3:4") && liveFact(doc, "cover", d.cover_4x3_sha, "4:3") ? d : null;
 }
 
+/** E13：选中的批准没被撤，但它绑的文件在盘上被覆盖了 → 批准失效，写原因 */
+function overwrittenAlerts(doc: ProductionDoc): string[] {
+  const out: string[] = [];
+  const revoked = revokedIds(doc, "approval_revoke");
+  const gone = (kind: Fact["kind"], sha?: string) => Boolean(sha) && !liveFact(doc, kind, sha)
+    && accepted(doc).some((f) => f.kind === kind && f.sha256 === sha && f.replaced_at);
+  const cut = selected(doc, "cut_approval"), cover = selected(doc, "cover_approval");
+  if (cut && !revoked.has(cut.id) && gone("cut", cut.sha256)) out.push("所批成片的文件被覆盖了，成片批准已失效：重新审这版成片");
+  if (cover && !revoked.has(cover.id) && (gone("cover", cover.cover_3x4_sha) || gone("cover", cover.cover_4x3_sha))) out.push("所选封面的文件被覆盖了，封面批准已失效：重新选封面");
+  return out;
+}
+
 /** 某版成片的字幕：for_cut = 成片 sha 的最近一条 accepted srt */
 export function srtFor(doc: ProductionDoc, cutSha: string | undefined): Fact | null {
   if (!cutSha) return null;
@@ -204,13 +216,14 @@ export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEv
     const badges = receipts.live.length ? [] : publish.badge ? [publish.badge] : [];
     const evidence = [...receipts.live.map((f) => `槽 ${f.id}（${f.by}）`), ...(publish.verified ? ["发布记录：已投出"] : [])];
     // 本轮没有登记记录就发出去了（agent 直接发）：发出去的成片没人核过
-    const alerts = [...(inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH]), ...gateAlerts(receipts.live)];
+    // 其他平台已投出时，被驳回平台的原因照样上卡（E35）
+    const alerts = [...(inRound(doc, doc.registrations).length ? [] : [UNREGISTERED_PUBLISH]), ...receiptNotes(receipts).alerts, ...gateAlerts(receipts.live)];
     badges.push(...overrideBadges(receipts.live));
     return { ...base, stage: "已发布", rule: "D1", badges, alerts, publishable: false, evidence, reason: publish.verified && !receipts.live.length && publish.badge ? publish.badge : publishedReason(receipts.live) };
   }
   const notes = receiptNotes(receipts);
   base.badges = notes.badges;
-  base.alerts = notes.alerts;
+  base.alerts = [...notes.alerts, ...overwrittenAlerts(doc)];
   const cut = validCutApproval(doc, body), cover = validCoverApproval(doc, body);
   const reg = matchingRegistration(doc, body, cut, cover);
   if (reg) {

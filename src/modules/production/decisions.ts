@@ -16,7 +16,7 @@ import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/
 import { isModelCall } from "../../storage/stage-guard.js";
 import { withFileOwnership } from "./mutex.js";
 import { validCoverApproval, validCutApproval } from "./derive.js";
-import { slotGate, slotId, slotOf } from "./receipts.js";
+import { canonPlatform, slotGate, slotId, slotOf } from "./receipts.js";
 import { gateStamp, isUngated } from "./publish-check-link.js";
 import { adoptCandidate } from "./record.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
@@ -70,6 +70,7 @@ async function approveCut(ctx: Ctx): Promise<Result> {
   const f = factBy(ctx.doc, ctx.params, "cut");
   if (typeof f === "string") return fail("stale", f);
   if (f.state !== "accepted") return fail("not_accepted", "这版成片还是候选：先确认它是这条的成片");
+  if (f.replaced_at) return fail("cut_replaced", "这版成片的文件被覆盖过，盘上已经不是它了：刷新看现在的成片再审");
   const bh = bodyHash(ctx.content.body);
   // 幂等重放只对仍然有效的批准（Codex 审 seg2 P2）：被打回之后再批，要落一条晚于打回的新决定
   const same = sameDecision(ctx.doc, "cut_approval", (d) => d.sha256 === f.sha256 && d.body_hash === bh && validCutApproval(ctx.doc, ctx.content.body)?.id === d.id);
@@ -94,6 +95,8 @@ async function pickCover(ctx: Ctx): Promise<Result> {
   const b = factBy(ctx.doc, { fact_id: ctx.params.cover_4x3_fact_id, sha256: ctx.params.cover_4x3_sha }, "cover");
   if (typeof a === "string" || typeof b === "string") return fail("both_ratios_required", "两个比例（3:4 和 4:3）都选了才能用这一版封面");
   if (a.ratio !== "3:4" || b.ratio !== "4:3" || a.state !== "accepted" || b.state !== "accepted") return fail("both_ratios_required", "要一张 3:4、一张 4:3，且都已确认是这条的封面");
+  // 被覆盖过（字节已不是这张）的封面选了也不会生效：直接说，不回「成功」
+  if (a.replaced_at || b.replaced_at) return fail("cover_replaced", "这张封面的文件被覆盖过，盘上已经不是这张图了：刷新看现在的封面再选");
   const text = str(ctx.params.cover_text) || a.text || b.text || "";
   if (!text) return fail("cover_text_required", "选封面时要写封面字");
   const bh = bodyHash(ctx.content.body);
@@ -121,9 +124,10 @@ async function candidate(ctx: Ctx, confirm: boolean): Promise<Result> {
 }
 
 async function published(ctx: Ctx): Promise<Result> {
-  const platform = str(ctx.params.platform) || ctx.content.platform || "";
+  const platform = canonPlatform(str(ctx.params.platform) || ctx.content.platform || "");
   if (!platform) return fail("platform_required", "说一下发在哪个平台");
   const url = str(ctx.params.url);
+  if (url && !/^https?:\/\//i.test(url)) return fail("bad_url", "作品链接只接受 http / https 开头的地址");
   // 幂等只对「这个槽现在就是你标的那条」：纠正过之后再点，要落一条新的
   const slot = slotOf(ctx.doc, ctx.doc.round, platform);
   const same = sameDecision(ctx.doc, "i_published", (d) => d.platform === platform && (d.note ?? "") === url);
@@ -150,7 +154,7 @@ async function correct(ctx: Ctx): Promise<Result> {
   const raw = str(ctx.params.target_id);
   const fact = ctx.doc.facts.find((f) => f.id === raw && f.kind === "publish");
   const dec = ctx.doc.decisions.find((d) => d.id === raw && d.type === "i_published");
-  const id = raw.startsWith("slot:") ? raw : fact ? slotId(fact.round, fact.platform ?? "?") : dec ? slotId(dec.round, dec.platform ?? "?") : "";
+  const id = raw.startsWith("slot:") ? raw : fact ? slotId(fact.round, canonPlatform(fact.platform ?? "?")) : dec ? slotId(dec.round, canonPlatform(dec.platform ?? "?")) : "";
   const m = /^slot:(\d+):(.+)$/.exec(id);
   if (!m || Number(m[1]) !== ctx.doc.round) return fail("stale", "要纠正的发布记录不在这一轮，刷新再看");
   const same = slotOf(ctx.doc, ctx.doc.round, m[2]) ? null : sameDecision(ctx.doc, "publish_correction", (d) => d.target_id === id);

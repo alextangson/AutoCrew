@@ -143,7 +143,8 @@ export interface Registration {
   txn_id?: string;
 }
 
-export interface StoredReceipt { at: string; receipt: Record<string, unknown> }
+/** args：这次请求的参数指纹；同一 request_id 只在参数一致时回放 */
+export interface StoredReceipt { at: string; receipt: Record<string, unknown>; args?: string }
 
 export interface ProductionDoc {
   schema: 1;

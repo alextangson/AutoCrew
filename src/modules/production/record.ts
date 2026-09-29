@@ -24,7 +24,7 @@ import fs from "node:fs/promises";
 import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { commitRegistration } from "./registration.js";
-import { observationFact } from "./receipts.js";
+import { canonPlatform, observationFact } from "./receipts.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn, type TxnOp } from "./txn.js";
 
 type Receipt = Record<string, unknown>;
@@ -35,7 +35,7 @@ const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ o
  * 不动阶段；卡上问创始人「是吗？」，数据回流对上或创始人确认后才算已发布。调用方持有文件归属事务或不需要（只写事实）。
  */
 export async function recordPublishClaim(content: Content, dataDir: string, a: Pick<RecordArgs, "platform" | "account" | "url" | "item_id" | "host" | "request_id" | "note">): Promise<Receipt> {
-  const platform = a.platform || content.platform;
+  const platform = a.platform || content.platform ? canonPlatform((a.platform || content.platform)!) : undefined;
   if (!platform) return fail("bad_param", "kind=publish 要带 platform");
   if (!a.url && !a.item_id) return fail("bad_param", "kind=publish 要带作品链接 url 或平台作品 id item_id");
   if (a.url && !/^https?:\/\//.test(a.url)) return fail("bad_param", `url 只接受 http/https：${a.url.slice(0, 80)}`);
@@ -44,14 +44,23 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
     const obs = { source: "claim" as const, platform, pub_state: "reviewing" as const, evidence: `${a.host} 说已发布`, by: { host: a.host },
       ...(a.account ? { account: a.account } : {}), ...(a.url ? { url: a.url } : {}), ...(a.item_id ? { item_id: a.item_id } : {}) };
     // 同一个 request_id 重放不再写；否则追加一条（AI 的说法只能被同平台的可信观察顶掉或创始人确认）
-    const same = doc.facts.find((f) => f.kind === "publish" && f.request_id === a.request_id);
+    // 同一轮、同平台、同一个 AI、同一链接 / 作品 id 已经说过：重复的「发了」不再追加（模型反复 confirm_published）
+    const same = doc.facts.find((f) => f.kind === "publish" && f.request_id === a.request_id)
+      ?? doc.facts.find((f) => f.kind === "publish" && f.obs_source === "claim" && f.round === doc.round && f.platform === platform
+        && f.by?.host === a.host && (f.url ?? "") === (a.url ?? "") && (f.item_id ?? "") === (a.item_id ?? ""));
     const fact = same ?? { ...observationFact(doc, obs, doc.round), request_id: a.request_id };
     if (!same) doc.facts.push(fact);
-    doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
+    doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs({ ...a, kind: "publish", content_id: content.id }), receipt: { fact_id: fact.id, kind: "publish", state: fact.state } } };
     return { value: fact, events: same ? [] : [{ type: "publish_claimed", detail: { fact_id: fact.id, platform, by: a.host, url: a.url } }] };
   });
   return { ok: true, content_id: content.id, fact_id: r.value.id, kind: "publish", verified: false, stage: r.explanation.stage ?? r.explanation.column, badges: r.explanation.badges,
     next_action: "已记成待核的发布回执：卡上会问创始人「是吗？」，数据回流对上或创始人确认后才算已发布。不要再改状态。" };
+}
+
+/** 请求参数指纹（kind / 路径 / 比例 / 平台 / 链接…）：同一 request_id 换了参数不是重试 */
+function requestArgs(a: RecordArgs): string {
+  return JSON.stringify([a.kind, a.path ?? "", a.ratio ?? "", a.version ?? "", a.for_cut ?? "", a.platform ?? "", a.url ?? "", a.item_id ?? "",
+    a.chatcut_project_id ?? "", a.timeline_id ?? "", [...(a.uses_aroll ?? [])].sort()]);
 }
 
 export async function executeRecord(params: Record<string, unknown>): Promise<Receipt> {
@@ -71,6 +80,9 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   if (!(await isOntologyActive(dataDir, content.id))) return fail("ontology_not_enabled", ONTOLOGY_NOT_ENABLED);
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   const replay = doc.requests?.[a.request_id];
+  if (replay && (replay.args ? replay.args !== requestArgs(a) : replay.receipt.kind !== a.kind)) {
+    return fail("request_conflict", `request_id「${a.request_id}」已经用来报过另一件东西（${String(replay.receipt.kind)}）：这次的参数不同，换一个新的 request_id 再报`);
+  }
   if (replay) return { ...(await receiptFor(content, dataDir, replay.receipt as unknown as ReceiptCore)), replayed: true };
   if (a.kind === "chatcut_project") return recordChatcut(a, content, doc, dataDir);
   if (a.kind === "publish") return recordPublishClaim(content, dataDir, a);
@@ -191,7 +203,7 @@ async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir:
       // 已有字幕没绑成片、这次报了 for_cut：补上绑定，不丢新信息（Codex 审 P2）
       if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
       const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}) };
-      doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { ...core } } };
+      doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { ...core } } };
       if (moves) doc.txns = [...(doc.txns ?? []), txn.id];
       return { value: core, events: reuse ? [] : [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
     });
@@ -217,7 +229,7 @@ async function recordChatcut(a: RecordArgs, content: Content, doc: ProductionDoc
     if (!same) d.facts.push(fact);
     fact.uses_aroll = [...new Set([...(fact.uses_aroll ?? []), ...(a.uses_aroll ?? [])])];
     const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state };
-    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), receipt: { ...core } } };
+    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { ...core } } };
     return { value: core, events: [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: "chatcut_project", uses_aroll: fact.uses_aroll } }] };
   });
   return receipt(r.value, r.explanation, content, null);

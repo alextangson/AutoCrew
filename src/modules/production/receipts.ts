@@ -19,6 +19,10 @@ import type { Decision, Fact, GateStamp, ProductionDoc, PublicationState } from 
 import { gateStamp } from "./publish-check-link.js";
 import { readPublishRecord, type PlatformPublication } from "../../storage/publish-record.js";
 import { bindingsForContent } from "../flywheel/platform-items.js";
+import { normalizePlatform } from "../publish/review-gate/platforms.js";
+
+/** 平台名按发布闸门同一张别名表归一（「视频号」= wechat_video）：认不出的原样 */
+export const canonPlatform = (p: string): string => normalizePlatform(p) ?? p;
 
 export type ObsSource = "plan" | "metrics_id" | "metrics_title" | "claim";
 const TRUSTED: ReadonlySet<ObsSource> = new Set(["plan", "metrics_id"]);
@@ -56,7 +60,7 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
       const state = STATE[p.state];
       if (!state || (!p.submitted && p.state !== "rejected")) continue;
       const checkId = p.checkId ?? undefined;
-      out.push({ source: "plan", platform: p.platform, pub_state: state, evidence: "发布计划里的记录",
+      out.push({ source: "plan", platform: canonPlatform(p.platform), pub_state: state, evidence: "发布计划里的记录",
         ...(p.url ? { url: p.url } : {}), ...(p.postId ? { item_id: p.postId } : {}), ...(p.reason ? { reason: p.reason } : {}),
         ...(p.time ? { published_at: p.time } : {}), ...(checkId ? { check_id: checkId } : {}), ...(p.submittedAt ? { submitted_at: p.submittedAt } : {}) });
     }
@@ -66,7 +70,7 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
     // 只有按作品 id（链接解析）绑上的才算可信；按标题相似绑上的留给创始人确认（创始人拍板 2026-09-29）。
     // 绑定时间是发现时间不是发布时间，不当作轮次证据
     const byId = b.via === "url";
-    out.push({ source: byId ? "metrics_id" : "metrics_title", platform, item_id: rest.join(":"), pub_state: "public",
+    out.push({ source: byId ? "metrics_id" : "metrics_title", platform: canonPlatform(platform), item_id: rest.join(":"), pub_state: "public",
       evidence: byId ? "数据回流按作品 id 对上了这条" : "数据回流按标题猜是这条" });
   }
   // 可信观察盖把关结论：按实际提交时间（没有就按现在 = 观察写入时间），从不按定时公开时间；
@@ -90,7 +94,7 @@ export interface ObsFact extends Observation { id: string; round: number; order:
 export function observationsOf(doc: ProductionDoc): ObsFact[] {
   return doc.facts.flatMap((f, order) => (f.kind !== "publish" || f.state === "rejected" ? [] : [{
     // 旧形状没有观察时间（at 可能是定时发布的未来时间）：当作「很早以前」，只按写入顺序排，任何纠正都能盖过它
-    id: f.id, order, round: f.round, seen_at: f.seen_at ?? "1970-01-01T00:00:00.000Z", source: legacySource(f), platform: f.platform ?? "?",
+    id: f.id, order, round: f.round, seen_at: f.seen_at ?? "1970-01-01T00:00:00.000Z", source: legacySource(f), platform: canonPlatform(f.platform ?? "?"),
     ...(f.url ? { url: f.url } : {}), ...(f.item_id ? { item_id: f.item_id } : {}), pub_state: f.pub_state ?? "reviewing",
     ...(f.published_at ? { published_at: f.published_at } : {}), ...(f.reason ? { reason: f.reason } : {}),
     ...(f.by ? { by: f.by } : {}), ...(f.check_id ? { check_id: f.check_id } : {}), ...(f.gate ? { gate: f.gate } : {}), evidence: f.evidence ?? "",
@@ -206,7 +210,7 @@ function entriesOf(doc: ProductionDoc, round: number, platform: string): Entry[]
   const killed = new Set(doc.decisions.filter((d) => d.type === "publish_correction" && d.target_id && !d.target_id.startsWith("slot:")).map((d) => d.target_id!));
   return [
     ...obs.map((o): Entry => ({ cls: TRUSTED.has(o.source) ? "trusted" : "pending", at: Date.parse(o.seen_at) + o.order / 1e6, pub_state: o.pub_state, fact_id: o.id, source: o.source, evidence: o.evidence, o })),
-    ...decisions.filter((d) => d.type === "i_published" && d.platform === platform)
+    ...decisions.filter((d) => d.type === "i_published" && canonPlatform(d.platform ?? "") === platform)
       .map((d): Entry => ({ cls: "founder", at: Date.parse(d.at), pub_state: "public", fact_id: null, source: "founder", evidence: "你标了已发布", d })),
     // 创始人确认 AI 的说法：保留那条说法里的提交状态（确认真实性 ≠ 确认已公开）
     ...decisions.filter((d) => d.type === "publish_confirm" && byId.has(d.fact_id ?? ""))
@@ -247,7 +251,7 @@ export function slotOf(doc: ProductionDoc, round: number, platform: string): Slo
 export function receiptsOfRound(doc: ProductionDoc): { live: Slot[]; rejected: Slot[]; pending: Slot[] } {
   const platforms = new Set([
     ...observationsOf(doc).filter((o) => o.round === doc.round).map((o) => o.platform),
-    ...doc.decisions.filter((d) => d.round === doc.round && d.type === "i_published" && d.platform).map((d) => d.platform!),
+    ...doc.decisions.filter((d) => d.round === doc.round && d.type === "i_published" && d.platform).map((d) => canonPlatform(d.platform!)),
   ]);
   const slots = [...platforms].map((p) => slotOf(doc, doc.round, p)).filter((s): s is Slot => Boolean(s));
   return {
