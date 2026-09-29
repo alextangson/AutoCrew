@@ -35,7 +35,7 @@ it("重开文稿：确认后 round+1", async () => {
   await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "r1" });
   expect((await call("/api/board/reopen-script", { content_id: c.id })).json).toMatchObject({ code: "confirmation_required" });
   expect((await call("/api/board/reopen-script", { content_id: c.id, confirm: true }, "bearer")).status).toBe(403);
-  expect((await call("/api/board/reopen-script", { content_id: c.id, confirm: true })).json).toMatchObject({ ok: true, round: 2 });
+  expect((await call("/api/board/reopen-script", { content_id: c.id, confirm: true, round: 1 })).json).toMatchObject({ ok: true, round: 2 });
   expect((await readProductionDoc(c.id, env.dir))!.round).toBe(2);
 });
 

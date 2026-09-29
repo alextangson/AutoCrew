@@ -9,7 +9,8 @@ import path from "node:path";
 import { getContent, getDataDir, listContents, type Content } from "../../storage/local-store.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
-import { resolveLocalFile, stableFingerprint } from "./files.js";
+import { checkDuration, resolveLocalFile, stableFingerprint } from "./files.js";
+import { probe } from "./roots.js";
 import { bodyHash, isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isModelCall } from "../../storage/stage-guard.js";
@@ -152,6 +153,9 @@ async function attachAroll(ctx: Ctx): Promise<Result> {
   if (!at.ok) return fail(at.code, at.error);
   const fp = await stableFingerprint(at.value, Date.now());
   if (!fp.ok) return fail(fp.code, fp.error);
+  // 与 record 同一套完整性核验（Codex 审 seg3 P2）：读不出时长的不收，不挪、不冻结
+  const dur = await checkDuration(at.value, probe);
+  if (!dur.ok) return fail(dur.code, dur.error);
   if (ctx.params.confirm_other !== true) {
     const name = path.basename(at.value);
     const other = (await listContents(ctx.dataDir)).find((c) => c.id !== ctx.content.id && isVideoPlatform(c.platform) && !c.deletedAt

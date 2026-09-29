@@ -83,23 +83,30 @@ function roundAt(doc: ProductionDoc, at: string): number {
   return Math.min(doc.round, 1 + ended);
 }
 
+/**
+ * 并一条可信回执（Codex 审 seg3 P1：新增与更新两条路径都守轮次）：
+ * - 可信回执各是各的事实，永远不并进模型的待核声明（声明由下面按同轮核实）；
+ * - 已有同一作品的可信回执：属于历史轮 → 不动；本轮的 → 只更新状态 / 别名，时间不明（round_unsure）的永不自动核实；
+ * - 新的：按发布时间归轮；时间不明又不在第一轮 → 记待核并标 round_unsure。
+ */
 function mergeOne(doc: ProductionDoc, r: ReceiptInput): number {
   const key = receiptIdentity({ ...r, at: r.at ?? "" });
   const probe = { platform: r.platform, url: r.url, item_id: r.item_id, receipt_key: key };
-  const same = doc.facts.find((f) => f.kind === "publish" && sameWork(f, probe));
+  const same = doc.facts.find((f) => f.kind === "publish" && f.source !== "record" && sameWork(f, probe));
   if (same) {
+    if (same.round !== doc.round) return 0;
     // 同一件作品补了别名（先有链接后有作品 id）：更新原事实，不新增（Codex 审 seg2 P1）
     const patch: Partial<Fact> = { ...(r.url && !same.url ? { url: r.url } : {}), ...(r.item_id && !same.item_id ? { item_id: r.item_id } : {}) };
     if (same.pub_state !== r.pub_state) patch.pub_state = r.pub_state;
-    if (r.verified && !same.verified) patch.verified = true;
+    if (r.verified && !same.verified && !same.round_unsure) patch.verified = true;
     if (r.reason && r.reason !== same.reason) patch.reason = r.reason;
     Object.assign(same, patch);
     return Object.keys(patch).length ? 1 : 0;
   }
-  // 时间不明又不在第一轮：分不清是哪一轮发的，先记待核让创始人认
   const round = r.at ? roundAt(doc, r.at) : doc.round;
   const unsure = !r.at && doc.round > 1;
-  doc.facts.push({ ...receiptFact(doc, { ...r, verified: r.verified && !unsure, ...(unsure ? { evidence: `${r.evidence}（发布时间不明，等你确认是不是这一轮）` } : {}) }), round, receipt_key: key });
+  doc.facts.push({ ...receiptFact(doc, { ...r, verified: r.verified && !unsure, ...(unsure ? { evidence: `${r.evidence}（发布时间不明，等你确认是不是这一轮）` } : {}) }),
+    round, receipt_key: key, ...(unsure ? { round_unsure: true as const } : {}) });
   return 1;
 }
 
@@ -110,7 +117,7 @@ function mergeOne(doc: ProductionDoc, r: ReceiptInput): number {
 export function mergeReceipts(doc: ProductionDoc, inputs: ReceiptInput[]): number {
   let changed = inputs.reduce((n, r) => n + mergeOne(doc, r), 0);
   const corrected = new Set(doc.decisions.filter((d) => d.type === "publish_correction").map((d) => d.target_id));
-  const trusted = doc.facts.filter((f) => f.kind === "publish" && f.verified && f.source !== "record" && !corrected.has(f.id));
+  const trusted = doc.facts.filter((f) => f.kind === "publish" && f.verified && f.source !== "record" && !f.round_unsure && !corrected.has(f.id));
   for (const p of doc.facts.filter((f) => f.kind === "publish" && f.round === doc.round && !f.verified && f.source === "record")) {
     const t = trusted.find((x) => x.round === p.round && sameWork(x, p));
     if (!t) continue;

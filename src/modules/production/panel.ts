@@ -23,10 +23,11 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
   const receipts = publishReceipts(doc);
   const corrected = new Set(doc.decisions.filter((d) => d.type === "publish_correction").map((d) => d.target_id));
+  // 新的在前（Codex 审 seg3 P2：「纠正最近一条」要真是最近的那条），每条带时间
   const published = [
-    ...doc.decisions.filter((d) => d.round === doc.round && d.type === "i_published" && !corrected.has(d.id)).map((d) => ({ id: d.id, kind: "decision", platform: d.platform ?? null, url: d.note ?? null, label: "你标了已发布" })),
-    ...receipts.live.map((f) => ({ id: f.id, kind: "receipt", platform: f.platform ?? null, url: f.url ?? null, label: f.evidence ?? "发布回执" })),
-  ];
+    ...doc.decisions.filter((d) => d.round === doc.round && d.type === "i_published" && !corrected.has(d.id)).map((d) => ({ id: d.id, kind: "decision", platform: d.platform ?? null, url: d.note ?? null, label: "你标了已发布", at: d.at })),
+    ...receipts.live.map((f) => ({ id: f.id, kind: "receipt", platform: f.platform ?? null, url: f.url ?? null, label: f.evidence ?? "发布回执", at: f.at })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
   const n = doc.registrations.length;
   const checklistRel = n ? spokenRel(n).replace(/-spoken\.md$/, "-checklist.json") : null;
   const checklist = checklistRel && (await fs.stat(path.join(contentRoot(contentId, dataDir), checklistRel)).then(() => true, () => false)) ? checklistRel : null;

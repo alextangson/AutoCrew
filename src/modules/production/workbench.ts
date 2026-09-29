@@ -92,7 +92,10 @@ export async function workbenchDecision(content: Content, dataDir: string, param
   }
   if (params.action === "reject" && which === "covers") {
     // 整批打回：把当时展示的全部封面 sha 记上，含在里面的已选封面随之失效
-    const shas = executionFromFacts(doc).artifacts.filter((a) => a.role !== "final-cut").map((a) => a.sha256);
+    const artifacts = executionFromFacts(doc).artifacts;
+    // 只打回页面上真看到的那一批（Codex 审 seg3 P2）：批次指纹对不上 = 页面过期，不许否决后来新出的封面
+    if (params.artifact_sha256 !== coverBatchHash(artifacts)) return { ok: false, error: "封面这一批已经变了（有新出的），刷新后再看再打回" };
+    const shas = artifacts.filter((a) => a.role !== "final-cut").map((a) => a.sha256);
     return founderDecision(content.id, "reject_cover", { sha256: params.artifact_sha256, cover_shas: shas, note: params.note }, dataDir);
   }
   return { ok: false, error: "这一步在本体下没有对应的决定（粗剪 / 分镜门照旧走交接）" };

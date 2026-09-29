@@ -156,6 +156,9 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
         if (active && enabled) {
           const commit = await commitRegistration(c.id, dataDir);
           if (commit.ok && commit.registration) doc = await readProductionDocOrEmpty(c.id, dataDir);
+          // 登记失败 / 警告进对账报告（看板顶部 + 晨报），不静默
+          if (!commit.ok) report.warnings.push(`${c.title}（${c.id}）登记没完成：${commit.reason}`);
+          for (const w of commit.ok ? commit.warnings ?? [] : []) report.warnings.push(`${c.title}（${c.id}）：${w}`);
         }
         const move = enabled || excluded.has(c.id) ? null : await shadowMove(c, doc, dataDir);
         if (move) report.moves.push(move);

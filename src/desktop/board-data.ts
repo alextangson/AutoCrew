@@ -14,6 +14,7 @@ import type { CandidateView } from "../modules/production/derive.js";
 import type { Column } from "../modules/production/explain.js";
 import { isMissing, resolveContentProject } from "../storage/content-project.js";
 import { readPublishRecord, recordTime, type PublishRecord } from "../storage/publish-record.js";
+import { isVideoPlatform } from "../storage/stage-guard.js";
 
 export type BoardColumn = "选题" | Column;
 
@@ -45,6 +46,8 @@ export interface BoardItem {
   missing: string[];
   badges: string[];
   candidates: CandidateView[];
+  /** 这张卡按本体走（资料库已启用、没被排除、视频稿）：点开面板、拖动按 §10 规则；否则走旧流程 */
+  active: boolean;
 }
 
 export interface BoardTopic {
@@ -124,6 +127,7 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
+    active: ctx.enabled && !ctx.excluded.has(current.id) && isVideoPlatform(current.platform),
     missing: exp.missing, badges: exp.error ? [...exp.badges, `制作记录读不了：${exp.error}`] : exp.badges, candidates: exp.candidates,
   };
 }

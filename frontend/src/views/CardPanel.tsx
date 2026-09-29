@@ -39,7 +39,7 @@ export function CardPanel(p: Props) {
   };
   const reopen = async () => {
     if (!(await confirmDialog({ title: UNDO.reopen.title, body: UNDO.reopen.body, confirmLabel: "重开文稿", danger: true }))) return;
-    const r = await reopenScript(p.contentId);
+    const r = await reopenScript(p.contentId, data?.round ?? 1);
     toast(r.ok ? "已重开文稿" : r.error);
     await Promise.all([refresh(), p.reload()]);
   };

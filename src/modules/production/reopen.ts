@@ -60,11 +60,21 @@ async function commitFailed(contentId: string, dataDir: string, txn: Txn, round:
   return { ok: false, code: "reopen_uncertain", error: `重开结果不确定（读不了制作记录），事务日志留着，重启时核定：${msg}` };
 }
 
-export async function reopenScript(contentId: string, dataDir: string, note?: string): Promise<ReopenResult> {
+/**
+ * `expectedRound` = 创始人在面板上看到的那一轮（Codex 审 seg3 P2）：锁内核对，别处已经重开过就不再结束新的一轮；
+ * 同一轮的重复确认幂等，返回已经开始的新轮。
+ */
+export async function reopenScript(contentId: string, dataDir: string, note?: string, expectedRound?: number): Promise<ReopenResult> {
   await ensureProductionReady(dataDir);
   if (!(await isOntologyActive(dataDir, contentId))) return { ok: false, code: "ontology_not_enabled", error: "本体还没启用（或这条被排除），没有可重开的制作轮次" };
   return withFileOwnership(async () => {
     const doc = await readProductionDocOrEmpty(contentId, dataDir);
+    if (expectedRound !== undefined && doc.round !== expectedRound) {
+      const already = doc.decisions.some((d) => d.type === "reopen" && d.round === expectedRound);
+      return already
+        ? { ok: true, round: doc.round, moved: [], warning: `第 ${expectedRound} 轮已经重开过，现在是第 ${doc.round} 轮，这次没有再结束新的一轮` }
+        : { ok: false, code: "stale", error: "这条的轮次和你看到的不一样，刷新后再看" };
+    }
     const txn: Txn = { id: newId("txn"), kind: "reopen", content_id: contentId, round: doc.round, ops: [], at: new Date().toISOString() };
     let moved: Map<string, string>;
     try { moved = await moveRetired(contentId, dataDir, doc, txn); }

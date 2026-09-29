@@ -90,7 +90,9 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         const id = String(b.content_id ?? "");
         if (!isContentId(id)) return { ok: false, code: "bad_request", error: "content_id 不对" };
         if (b.confirm !== true) return { ok: false, code: "confirmation_required", error: "重开文稿会把本轮的原片、成片、批准转入历史，需要确认" };
-        return reopenScript(id, dir, typeof b.note === "string" ? b.note.slice(0, 200) : undefined);
+        const round = Number(b.round);
+        if (!Number.isInteger(round) || round < 1) return { ok: false, code: "bad_request", error: "要带你看到的轮次（round），刷新后再点" };
+        return reopenScript(id, dir, typeof b.note === "string" ? b.note.slice(0, 200) : undefined, round);
       });
       return true;
     }

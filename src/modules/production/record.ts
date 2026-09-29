@@ -79,7 +79,10 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   if (r.ok) {
     const commit = await commitRegistration(content.id, dataDir);
     if (!commit.ok) return { ...r, registration_failed: commit.reason };
-    if (commit.registration) return { ...r, registration: commit.registration.id };
+    // 登记的 warning（投影没写完、实拍版没存上）一路带回回执（Codex 审 seg3 P2）
+    const warnings = commit.warnings?.length ? { warnings: commit.warnings } : {};
+    if (commit.registration) return { ...r, registration: commit.registration.id, ...warnings };
+    if (commit.warnings?.length) return { ...r, ...warnings };
   }
   return r;
 }

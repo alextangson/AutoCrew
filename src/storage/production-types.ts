@@ -59,6 +59,8 @@ export interface Fact {
   verified?: boolean;
   /** 被驳回的原因 */
   reason?: string;
+  /** 回执发布时间不明、又不在第一轮：分不清属于哪一轮，只能等创始人确认，对账永远不自动核实它 */
+  round_unsure?: true;
   /** 回执的作品身份（跨轮去重键） */
   receipt_key?: string;
   note?: string;

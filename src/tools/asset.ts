@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import { closedResult, oldEntryClosed } from "../modules/production/closed.js";
 import { isWithin, readLibraryLocation } from "../storage/storage-roots.js";
 import { Type } from "@sinclair/typebox";
@@ -64,7 +65,10 @@ export async function executeAsset(params: Record<string, unknown>) {
     const source = (params.source_path as string) || "";
     // 本体启用后（§8）：封面分支与「把库外文件挪进项目」关闭，改走 autocrew_content record；库内素材登记照旧
     if (await oldEntryClosed(getDataDir(dataDir), contentId)) {
-      const external = Boolean(source) && !isWithin(getLibraryRootOrData(dataDir), path.resolve(source));
+      // 按真实路径判断（Codex 审 seg3 P1）：库内路径里夹着指向库外的符号链接也算库外；解析不了的一律当库外
+      const real = source ? await fs.realpath(path.resolve(source)).catch(() => null) : null;
+      const root = await fs.realpath(getLibraryRootOrData(dataDir)).catch(() => getLibraryRootOrData(dataDir));
+      const external = Boolean(source) && (!real || !isWithin(root, real));
       if (assetType === "cover" || external) return closedResult(contentId);
     }
     // 失败照旧向上抛（存储类错误由外层统一成 storage_unavailable），不在这里吞成泛化失败

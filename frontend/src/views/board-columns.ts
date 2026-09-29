@@ -70,6 +70,8 @@ export interface BoardItem {
   publishTime: string | null;
   lastError: string | null;
   blockedReason: string | null;
+  /** 这张卡按本体走（服务端 explain：已启用、没被排除的视频稿） */
+  active?: boolean;
 }
 
 export interface BoardTopic {

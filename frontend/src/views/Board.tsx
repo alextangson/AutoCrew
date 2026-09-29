@@ -18,7 +18,6 @@ import {
   COLUMNS, COLUMN_HINT, EMPTY_NOTE, FINAL_NOTE, HANDOFF_NOTE, boardCards, dropAction, platformName, visibleCards,
   type BoardColumn, type BoardData, type BoardItem, type Card, type DropAction, type UndoMove,
 } from "./board-columns";
-import { VIDEO_PLATFORMS } from "../lib";
 import "./board.css";
 
 const POLL_MS = 3000;
@@ -96,7 +95,8 @@ export function Board(props: Nav) {
     const d = drag.current;
     endDrag();
     if (!d || moving.has(d.id)) return;
-    const act = dropAction(d.from, d.item, to, ontology);
+    // 按单张卡的启用状态分流（Codex 审 seg3 P2）：启用时被排除的稿照旧走交接流程
+    const act = dropAction(d.from, d.item, to, Boolean(d.item?.active));
     if (act.kind === "start") return void start(d.id);
     if (act.kind === "refuse") return toast(act.reason);
     if (d.item) void runDrop(act, d.item);
@@ -110,7 +110,7 @@ export function Board(props: Nav) {
   };
   const beginDrag = (from: BoardColumn, id: string, item: BoardItem | null) => { drag.current = { from, id, item }; pause(true); };
   const endDrag = () => { if (drag.current) pause(false); drag.current = null; setOver(null); };
-  const verdict = (col: BoardColumn) => (drag.current ? dropAction(drag.current.from, drag.current.item, col, ontology) : null);
+  const verdict = (col: BoardColumn) => (drag.current ? dropAction(drag.current.from, drag.current.item, col, Boolean(drag.current.item?.active)) : null);
 
   if (trash) return <BoardTrash back={() => { setTrash(false); void reload(); }} />;
   if (!data && error) return <div className="board-fail" role="alert">看板读不出来：{error} <button onClick={() => void reload()}>重试</button></div>;
@@ -171,7 +171,7 @@ function ColumnBody(p: {
     {shown.map((c) => c.kind === "topic"
       ? <TopicCard key={c.topic.id} {...drag} topic={c.topic} busy={p.starting === c.topic.id}
         onStart={() => void p.start(c.topic.id)} onOpen={() => p.nav.openTopic(`t-${c.topic.id}`)} onTrash={() => void p.trashTopic(c.topic.id)} />
-      : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => (p.openPanel && VIDEO_PLATFORMS.has(c.item.platform ?? "") ? p.openPanel(c.item.id) : p.nav.openEditor(c.item.id))} onMenu={p.pause} reload={p.reload} />)}
+      : <ItemCard key={c.item.id} {...drag} item={c.item} wpm={p.data.wordsPerMinute} busy={p.moving.has(c.item.id)} onOpen={() => (p.openPanel && c.item.active ? p.openPanel(c.item.id) : p.nav.openEditor(c.item.id))} onMenu={p.pause} reload={p.reload} />)}
     {hidden > 0 && <button className="bcol-more" onClick={p.onExpand}>还有 {hidden} 条 ▾</button>}
     {p.col === "选题" && <p className="bcol-tip">拖到「写稿中」或点「开始写」</p>}
     {p.col === "已发布" && <button className="bcol-more" onClick={p.nav.openData}>更早的在数据页 ›</button>}
@@ -200,19 +200,21 @@ async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: stri
 
 /** 本体下往回拖（§10、E14）：先确认，再落对应的撤销决定 / 重开文稿 */
 async function runUndo(undo: UndoMove, item: BoardItem, reload: () => Promise<void>): Promise<void> {
-  if (!(await confirmDialog({ title: undo.title, body: undo.body, confirmLabel: "确定", danger: true }))) return;
+  const card = await loadCard(item.id);
+  if (!card.ok) return toast(card.error);
+  // 纠正发布：确认框里写明撤的是哪一条（最新那条），不让人猜
+  const last = card.data.published?.[0];
+  const which = undo.action === "correct_publish" && last ? `\n\n要撤的是：${platformName(last.platform ?? "")} · ${last.label}${last.url ? ` · ${last.url}` : ""}` : "";
+  if (!(await confirmDialog({ title: undo.title, body: undo.body + which, confirmLabel: "确定", danger: true }))) return;
   try {
     if (undo.action === "unapprove") return await runTransition(item, "reviewing", "已撤回认稿", async () => undefined);
-    if (undo.action === "reopen") { const r = await reopenScript(item.id); toast(r.ok ? "已重开文稿" : r.error); return; }
-    const card = await loadCard(item.id);
-    if (!card.ok) return toast(card.error);
+    if (undo.action === "reopen") { const r = await reopenScript(item.id, card.data.round ?? 1); toast(r.ok ? "已重开文稿" : r.error); return; }
     if (undo.action === "revoke_cut") {
       const id = card.data.approvals?.cut?.id;
       if (!id) return toast("这版成片没有有效的批准可撤");
       const r = await decide(item.id, "revoke_approval", { decision_id: id });
       return toast(r.ok ? "已撤销成片批准" : r.error);
     }
-    const last = card.data.published?.[0];
     if (!last) return toast("没有可纠正的发布记录");
     const r = await decide(item.id, "correct_publish", { target_id: last.id });
     toast(r.ok ? "已纠正发布记录" : r.error);
