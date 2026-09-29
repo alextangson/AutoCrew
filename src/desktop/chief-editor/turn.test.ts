@@ -162,7 +162,7 @@ describe.each(TEST_BACKENDS)("后端 %s", (B) => {
     it("残留轮标中断、清进程组、对话留痕；重发时续原 session", async () => {
       const conv = await createConversation("旧消息", h.dataDir, undefined, { backend: B });
       await updateConversationAgent(conv.id, { acpSessionId: "sess-old" }, h.dataDir);
-      h.svc.runs.put({ turnId: "t-old", clientId: "c", conversationId: conv.id, dataDir: h.dataDir, backend: B, message: "旧消息", status: "running", startedAt: "2026-09-28T00:00:00Z", pid: 4242, command: "node adapter" });
+      h.svc.runs.put({ turnId: "t-old", clientId: "c", conversationId: conv.id, dataDir: h.dataDir, backend: B, message: "旧消息", status: "running", owner: { pid: 999999, lstart: "已退出的旧服务" }, startedAt: "2026-09-28T00:00:00Z", pid: 4242, command: "node adapter" });
       const killed: number[] = [];
       await h.svc.recoverOnStartup((pid) => { killed.push(pid); return true; });
       expect(killed).toEqual([4242]);
