@@ -94,8 +94,10 @@ export function validOutline(c: Pick<Content, "title" | "body" | "platform" | "o
   return c.outline && c.outlineDraftHash === draftHash(c) ? c.outline : null;
 }
 
-function enteredAt(c: Content): string {
-  return c.seriesEnteredAt ?? (c.status === "published" && c.publishedAt ? c.publishedAt : c.draftReadyAt) ?? c.updatedAt;
+/** 进入系列的时间：取第一个已经发生的时间点——排期发布的 publishedAt 在未来，不能让已发稿因此掉出快照 */
+function enteredAt(c: Content, now: number): string | undefined {
+  const candidates = [c.seriesEnteredAt, c.status === "published" ? c.publishedAt : undefined, c.draftReadyAt, c.updatedAt];
+  return candidates.find((at): at is string => { const t = at ? Date.parse(at) : NaN; return Number.isFinite(t) && t <= now; });
 }
 
 function outlineEntries(o: Outline): { entries: SeriesEntry[]; truncated: boolean } {
@@ -142,7 +144,7 @@ function toItem(c: Content, at: string): SeriesItem {
 }
 
 /**
- * 近期稿件快照（§3 B 口径）：同平台、白名单状态、最近 30 天进入这些状态、按时间倒序再按 id，同选题只取最新一版，最多 10 条。
+ * 近期稿件快照（§3 B 口径）：同平台、白名单状态、最近 30 天进入这些状态、按时间倒序再按 id，同选题只取最新一版，最多 10 条（超出时已发稿优先）。
  * 平台缺失的稿、本篇及同选题的其他版本（exclude：那是这篇自己的前身，不是系列里的另一条）、删除/归档稿都不进。
  */
 export interface SeriesExclude { contentId?: string; topicId?: string }
@@ -152,18 +154,16 @@ export function buildSeriesSnapshot(contents: Content[], platform: string, exclu
   const timed = contents
     .filter((c) => c.id !== exclude.contentId && !(exclude.topicId && c.topicId === exclude.topicId))
     .filter((c) => Boolean(platform) && c.platform === platform && SERIES_STATES.has(c.status))
-    .map((c) => ({ c, at: enteredAt(c) }))
-    .filter(({ at }) => { const t = Date.parse(at); return Number.isFinite(t) && t >= since && t <= now; })
+    .map((c) => ({ c, at: enteredAt(c, now) }))
+    .filter((x): x is { c: Content; at: string } => x.at !== undefined && Date.parse(x.at) >= since)
     .sort((a, b) => b.at.localeCompare(a.at) || a.c.id.localeCompare(b.c.id));
   const seen = new Set<string>();
-  const items: SeriesItem[] = [];
-  for (const { c, at } of timed) {
-    const key = c.topicId ?? `content:${c.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push(toItem(c, at));
-    if (items.length === SERIES_MAX_ITEMS) break;
-  }
+  const latest = timed.filter(({ c }) => { const key = c.topicId ?? `content:${c.id}`; if (seen.has(key)) return false; seen.add(key); return true; });
+  // 观众真看过的是已发稿：满 10 条时已发优先占位，剩下的名额再按时间给待发稿，最后仍按时间倒序排
+  const published = latest.filter(({ c }) => c.status === "published").slice(0, SERIES_MAX_ITEMS);
+  const pending = latest.filter(({ c }) => c.status !== "published").slice(0, SERIES_MAX_ITEMS - published.length);
+  const chosen = new Set([...published, ...pending]);
+  const items = latest.filter((x) => chosen.has(x)).map(({ c, at }) => toItem(c, at));
   return { id: digest({ platform, items }), platform, builtAt: new Date(now).toISOString(), items };
 }
 
