@@ -14,8 +14,12 @@ async function toolsFor(host: string) {
   return (r!.result as { tools: Array<{ name: string; description: string; inputSchema: unknown }> }).tools;
 }
 
-/** 实测锁（2026-09-29）：总 27,322 / 单个最大 3,556（editorial）/ instructions 675；留一点余量 */
-export const BUDGET = { total: 28_000, perTool: 4_000, instructions: 1_500 };
+/**
+ * 实测锁（2026-09-29）：总 27,322 / 单个最大 3,556（editorial）/ instructions 675；留一点余量。
+ * 同日发布前把关给 autocrew_publish 加 check / propose_preference 的参数（已压到最少：overrides、value 不展开嵌套），
+ * 实测 27,983 → 28,263，上限随之从 28,000 提到 28,500。
+ */
+export const BUDGET = { total: 28_500, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

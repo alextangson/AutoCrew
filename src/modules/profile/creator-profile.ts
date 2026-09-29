@@ -158,6 +158,21 @@ export interface PerformanceEntry {
   recordedAt: string;
 }
 
+export interface PublishRule { id: string; text: string; platform?: string; added_at: string }
+
+export interface PreferenceProposal {
+  id: string;
+  kind: "cover_ratio" | "rule";
+  platform?: string;
+  /** cover_ratio：比例列表；rule：规则原文 */
+  value: string[] | string;
+  founder_quote: string;
+  host: string;
+  at: string;
+  status: "pending" | "confirmed" | "dismissed";
+  decided_at?: string;
+}
+
 export interface CreatorProfile {
   /** 档案写入序号（CAS 用） */
   revision?: number;
@@ -196,6 +211,12 @@ export interface CreatorProfile {
   performanceHistory: PerformanceEntry[];
   /** Whether style calibration has been completed */
   styleCalibrated: boolean;
+  /** 发布前把关 §3：账号自己的封面上传槽（平台 → 比例），覆盖默认表；只在工作台改或确认提议 */
+  coverRatios?: Record<string, string[]>;
+  /** 发布前把关 §3：自由文本发布规则，check 的 Jev B 全部适用条都核对 */
+  publishRules?: PublishRule[];
+  /** agent 提议的新偏好（propose_preference），创始人在网页确认才写进上面两项 */
+  preferenceProposals?: PreferenceProposal[];
   /** Profile creation timestamp */
   createdAt: string;
   /** Last update timestamp */

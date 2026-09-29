@@ -34,6 +34,7 @@ import { COVER_TEXT_MAX, publishTitleChars, videoTitleLimit } from "../modules/p
 import { isModelCall, isVideoPlatform, VIDEO_PLATFORMS } from "../storage/stage-guard.js";
 import { KIT_BEHIND_REGISTER, kitBehindRegister, kitRegisterHash } from "../modules/publish/kit-stale.js";
 import { registeredPackage } from "../modules/production/publish-gate.js";
+import { captionBounds, captionTags, KIT_CAPTION_MIN, mergeTags, PLATFORM_MAX_BODY, PLATFORM_MIN_BODY } from "../modules/publish/publish-limits.js";
 
 // --- Types ---
 
@@ -63,35 +64,7 @@ export type PrePublishFailure = {
   next_action?: Record<string, unknown>;
 };
 
-// --- Platform body length minimums ---
-
-const PLATFORM_MIN_BODY: Record<string, number> = {
-  xiaohongshu: 200,
-  xhs: 200,
-  douyin: 100,
-  wechat_mp: 800,
-  wechat_video: 100,
-  bilibili: 200,
-};
-
-/**
- * 发布文案上限（创始人裁定：短文案平台 ≤1000）。douyin 不设——body 是口播脚本；
- * 发布简介 ≤300 只是引擎 prompt 纪律（video-kit CAPTION_RULES），宿主发布包同样不设硬上限。
- */
-const PLATFORM_MAX_BODY: Record<string, number> = {
-  xiaohongshu: 1000,
-  xhs: 1000,
-  wechat_video: 800,
-  bilibili: 2000,
-  wechat_mp: 3000,
-};
-
-/** 发布简介下限（P6 §3.6）。交包与预检用同一对上下限：交得进去就查得过，不会存下再被预检打回 */
-const KIT_CAPTION_MIN = 20;
-
-function captionBounds(platform: string): [number, number | undefined] {
-  return [KIT_CAPTION_MIN, PLATFORM_MAX_BODY[platform]];
-}
+// 平台上限与计数口径抽到 modules/publish/publish-limits.ts（check 与预检共用一份数字）
 
 // --- Platforms that require cover review ---
 
@@ -163,11 +136,6 @@ interface PublishSurface {
   title: string;
   text: string;
   hashtags: string[];
-}
-
-/** 简介里已有的话题标签（#xxx；小红书的 #xxx[话题]# 也认） */
-function captionTags(caption: string): string[] {
-  return (caption.match(/#[^\s#]+/g) ?? []).map((t) => t.slice(1).replace(/\[话题\]$/, "")).filter(Boolean);
 }
 
 /** 与剪贴板 / ego-lite 同口径：有发布包发的是发布包（没填发布标题才退回稿件标题），标签只算简介里的 */
@@ -286,13 +254,6 @@ function readTags(raw: unknown, failures: KitFailure[]): string[] {
   const bad = tags.filter((t) => /[\s#]/.test(t));
   if (bad.length > 0) failures.push({ field: "hashtags", detail: `标签「${bad.join("」「")}」里有空格或 #，发出去会断开：去掉后重交` });
   return bad.length > 0 ? [] : [...new Set(tags)];
-}
-
-/** 发布路径（剪贴板 / ego-lite）只发简介，标签不在简介里等于没发——并到末尾，已有的不重复 */
-function mergeTags(caption: string, tags: string[]): string {
-  const present = new Set(captionTags(caption));
-  const missing = tags.filter((t) => !present.has(t));
-  return missing.length > 0 ? `${caption}\n\n${missing.map((t) => `#${t}`).join(" ")}` : caption;
 }
 
 function validateKit(raw: unknown, platform: string): { failures: KitFailure[]; fields: KitFields } {

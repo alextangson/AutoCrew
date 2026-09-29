@@ -7,6 +7,9 @@
   padding: var(--s3) var(--s4); border-bottom: 1px solid var(--border); background: var(--surface);
 }
 .brand { font-size: var(--fs-lg); font-weight: 700; font-family: var(--font-display); }
+/* 发布偏好提议条（发布前把关 §3）：有待确认提议才出现 */
+.pref-banner { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s2) var(--s4); border-bottom: 1px solid var(--border); background: var(--surface); }
+.pref-banner-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 
 .topnav { margin-left: var(--s5); flex: 1; display: flex; gap: var(--s2); align-items: center; }
 .topnav-spacer { flex: 1; }

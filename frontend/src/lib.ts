@@ -339,14 +339,15 @@ export const VIDEO_PLATFORMS = new Set(["douyin", "wechat_video", "xiaohongshu",
 /**
  * 平台 → 封面比例(首项 = 默认生成比例)。下拉与适配条都读这张表;
  * 与后端 src/modules/cover/platform-ratios.ts 同源同值,改动两边同步。
- * 创始人裁决 2026-07-12:抖音封面同时要 3:4 与 4:3(选用后自动补齐)。
+ * 创始人 2026-09-29(发布前把关 §3):小红书 3:4;抖音、视频号 3:4+4:3;
+ * B站只 4:3(16:9「个人空间封面」框由平台从 4:3 裁出,发布时核对,不单独出图)。
  */
-const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = {
+export const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = {
   wechat_mp: ["2.35:1"],
   xiaohongshu: ["3:4"],
-  wechat_video: ["3:4"],
+  wechat_video: ["3:4", "4:3"],
   douyin: ["3:4", "4:3"],
-  bilibili: ["16:9", "4:3"],
+  bilibili: ["4:3"],
 };
 
 export function coverRatiosForPlatform(platform: string | null | undefined): string[] {

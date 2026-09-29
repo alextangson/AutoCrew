@@ -13,7 +13,7 @@ import { LOCAL_HOST } from "../src/storage/local-store.js";
 /** `result`：拒绝时要回给宿主的结构化回执（带 code / next_action），没有就只回一句话 */
 export type PolicyDecision = { ok: true } | { ok: false; error: string; result?: Record<string, unknown> };
 
-export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/confirm/handoff(带确认)/register/report/status/revoke、asset add（登记素材路径）与只读查询；写稿与发布在 Claude 会话里做";
+export const CODEX_EDITOR_DENIED = "剪辑工位（codex）只允许 match/confirm/handoff(带确认)/register/report/status/revoke、asset add（登记素材路径）、publish check / propose_preference 与只读查询；写稿与其他发布动作在 Claude 会话里做";
 
 /** 工具 → 放行的 action（`*` = 整个工具放行） */
 type Allowlist = Readonly<Record<string, ReadonlySet<string> | "*">>;
@@ -27,6 +27,8 @@ const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
     autocrew_asset: new Set(["add"]),
     autocrew_desk: new Set(["inbox", "claim", "release"]),
     autocrew_status: "*",
+    // 发布前把关 §2：Codex 发布时只能跑检查、提议偏好；其他发布动作（出包、推草稿、标已发布）照旧不给
+    autocrew_publish: new Set(["check", "propose_preference"]),
   },
 };
 

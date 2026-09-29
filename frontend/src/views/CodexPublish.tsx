@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { invoke } from "../transport";
 import { codexTargetLine, publishMessage, publishPlatforms } from "./codex-publish";
 import { profilePlatformsOf } from "./platform-preview";
+import { saveInstruction, skipResave } from "./publish-prefs-api";
 import type { ProjectReview } from "./project-board";
 
 type Props = { contentId: string; title: string; status: string; review: ProjectReview; primary?: boolean };
@@ -60,14 +61,27 @@ function CodexPublishDialog(props: Props & { text: string; setText: (t: string) 
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(props.text); setCopyFailed(false); return true; }
-    catch { setCopyFailed(true); area.current?.select(); return false; }
+  /** 最近一次存到服务端的文本（带编号行）：文本改过就必须重存，不能沿用旧编号 */
+  const [savedText, setSavedText] = useState<string | null>(null);
+  const openOnly = skipResave(copyFailed, props.text, savedText);
+  const copy = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); setCopyFailed(false); return true; }
+    catch { setCopyFailed(true); requestAnimationFrame(() => area.current?.select()); return false; }
+  };
+  /** 发布前把关 §6：复制前先把编辑后的文本存到服务端，末行带上指令编号；存不上就不复制，免得 Codex 拿到查不到的指令 */
+  const saveAndCopy = async (via: "copy" | "copy_open"): Promise<boolean | null> => {
+    const saved = await saveInstruction(props.contentId, props.text, via);
+    if (!saved.ok) { setNote(`指令没存上，所以没复制：${saved.error}`); return null; }
+    props.setText(saved.data.copy_text);
+    setSavedText(saved.data.copy_text);
+    return copy(saved.data.copy_text);
   };
   const run = async (thenOpen: boolean) => {
     if (busy) return;
     setBusy(true); setNote(null);
-    const copied = copyFailed && thenOpen ? false : await copy();
+    // 上次复制失败、手动复制的正是已存的那份（文本一字没改）→ 这次只打开；改过就重存重复制
+    const copied = openOnly && thenOpen ? false : await saveAndCopy(thenOpen ? "copy_open" : "copy");
+    if (copied === null) { setBusy(false); return; }
     const err = thenOpen ? await openCodex(props.contentId) : null;
     setBusy(false);
     if (err) setNote(err);
@@ -88,7 +102,7 @@ function CodexPublishDialog(props: Props & { text: string; setText: (t: string) 
       {copyFailed && <p className="pb-inline-error" role="alert">复制失败，请手动复制（⌘C）</p>}
       {note && <p className={note === "已复制" ? "muted" : "pb-inline-error"} role="status">{note}</p>}
       <div className="pb-actions">
-        <button className="primary" disabled={busy} onClick={() => void run(true)}>{copyFailed ? "打开 Codex" : "复制并打开 Codex"}</button>
+        <button className="primary" disabled={busy} onClick={() => void run(true)}>{openOnly ? "打开 Codex" : "复制并打开 Codex"}</button>
         <button disabled={busy} onClick={() => void run(false)}>只复制</button>
       </div>
     </div>

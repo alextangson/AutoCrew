@@ -16,6 +16,7 @@ import { Campaigns } from "./views/Campaigns";
 import { Inbox } from "./views/Inbox";
 import { Onboarding } from "./views/Onboarding";
 import { EngineDot } from "./views/EngineBanner";
+import { PreferenceBanner } from "./views/PreferenceBanner";
 import { ChatDock } from "./chat/ChatDock";
 import {
   DOCK_PAGE_EVENT, DOCK_WIDTH_DEFAULT, clampDockWidth, readDockOpen, readDockWidth, requestDockCollapsed, writeDockOpen, writeDockWidth,
@@ -124,6 +125,7 @@ export function App() {
           <button className="nav-cta" onClick={() => void newIdea()}>＋新想法</button>
         </nav>
       </header>
+      <PreferenceBanner />
       <div className="body">
         <main className={boardRoute ? "main main-board" : "main"}>
           {route.view === "board" && (

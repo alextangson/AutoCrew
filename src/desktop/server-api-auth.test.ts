@@ -124,9 +124,11 @@ describe("/api/* rejects named host tokens", () => {
   it("leaves /mcp open to the codex token, still under its host policy", async () => {
     const codexTools = await listedTools(codexToken);
     expect(codexTools).toContain("autocrew_status");
-    expect(codexTools).not.toContain("autocrew_publish");
-    expect(await listedTools(localToken)).toContain("autocrew_publish");
-    const denied = await mcp(codexToken, "tools/call", { name: "autocrew_publish", arguments: { action: "list" } });
+    // 发布前把关 §2：codex 列得到 autocrew_publish（只放行 check / propose_preference），写稿工具仍不列
+    expect(codexTools).toContain("autocrew_publish");
+    expect(codexTools).not.toContain("autocrew_writer");
+    expect(await listedTools(localToken)).toContain("autocrew_writer");
+    const denied = await mcp(codexToken, "tools/call", { name: "autocrew_publish", arguments: { action: "ego_lite_prepare" } });
     expect(denied.status).toBe(200);
     expect(((await denied.json()) as { result: { isError?: boolean } }).result.isError).toBe(true);
   });
