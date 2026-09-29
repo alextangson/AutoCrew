@@ -11,7 +11,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { benchMarkdown, buildBenchSet, runBench, summarizeBench, type BenchVideo } from "../src/modules/publish/review-gate/bench.js";
-import { makeJevCaller, resolveTypesafeKey, JEV_MODEL } from "../src/modules/publish/review-gate/jev-client.js";
+import { makeJevCaller, resolveTypesafeKey, safeReason, JEV_MODEL } from "../src/modules/publish/review-gate/jev-client.js";
 import { basisFromDraft, basisFromSrt } from "../src/modules/publish/review-gate/subtitles.js";
 import { platformLabel } from "../src/modules/publish/review-gate/platforms.js";
 
@@ -76,4 +76,4 @@ async function main() {
   for (const s of stats) console.log(`${s.question}: 正 ${s.positives} 反 ${s.negatives} 误报 ${s.false_positive} 漏报 ${s.false_negative} 弃权 ${s.abstain} 没跑成 ${s.not_run}`);
 }
 
-main().catch((e) => { console.error(e instanceof Error ? e.message : String(e)); process.exitCode = 1; });
+main().catch((e) => { console.error(`评测没跑完：${safeReason(e)}`); process.exitCode = 1; });

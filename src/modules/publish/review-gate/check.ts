@@ -130,6 +130,8 @@ async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]):
     payload_hash: payload, registration_id: reg?.id ?? null, approval_ids: [reg?.cut_approval_id ?? "", reg?.cover_approval_id ?? ""], prefs_version: prefsVersion(ctx.prefs),
     instruction_id: ctx.instruction?.id ?? null, srt_sha: reg?.srt_sha ?? null, question_set: QUESTION_SET_VERSION, model: JEV_MODEL,
     quotes_sha: textSha(ctx.quotes), overrides_sha: textSha(mine), basis_sha: textSha([basis.text, ctx.content.title, entry.cover_text, a.request?.state]),
+    // Jev 的判定只取决于它收到的 state 与问题：两份请求整体进指纹（活动、平台集合、封面文件名、指令列表都在里面）
+    requests_sha: textSha([a.request, b].map((r) => (r ? { state: r.state, questions: r.questions } : null))),
   };
   const fp = fingerprint(parts);
   const sem = await runSemantic({ contentId: ctx.content.id, dataDir: ctx.dataDir, fingerprint: fp, requests: [a.request, b].filter((x): x is NonNullable<typeof x> => x !== null), basis, instructions, caller: ctx.caller });
@@ -170,15 +172,18 @@ export async function executePublishCheck(params: Record<string, unknown>, deps:
   const rows = tableOf(ctx, details);
   const results = details.map((d) => d.result);
   const failed = [...new Set(results.flatMap((r) => r.semantic.failed))];
-  const blocked = results.filter((r) => r.verdict === "block").map((r) => r.platform);
+  // 计划级形状问题（没有平台、条目不是对象、认不出的平台）进结构化结果，不只进 Markdown
+  const planProblems = ctx.plan.problems.filter((x) => !x.platform || !results.some((r) => r.platform === x.platform));
+  if (!results.length) return { ok: false, code: "plan_invalid", error: `发布计划没法检查：${planProblems.map((p) => `${p.field}：${p.detail}`).join("；") || "没有平台"}`, plan_problems: planProblems };
+  const blocked = [...results.filter((r) => r.verdict === "block").map((r) => r.platform), ...(planProblems.length ? ["plan"] : [])];
   return {
     ok: true, content_id: ctx.content.id, plan_source: ctx.planSource,
-    platforms: results,
+    platforms: results, plan_problems: planProblems,
     summary_table: summaryMarkdown(rows), summary_rows: rows,
     semantic: failed.length ? { status: "not_run", reasons: failed } : { status: "ok" },
     blocked_platforms: blocked,
     next_action: blocked.length
-      ? `被拦的平台（${blocked.map(platformLabel).join("、")}）不得提交：改计划后重跑 check；创始人明确要破例时带 overrides[{platform, rule, founder_quote}] 重跑`
+      ? `被拦的平台（${blocked.map((p) => (p === "plan" ? "计划本身" : platformLabel(p))).join("、")}）不得提交：改计划后重跑 check；创始人明确要破例时带 overrides[{platform, rule, founder_quote}] 重跑`
       : "把 summary_table 原样贴进给创始人的一次确认汇总；计划改了就重跑 check；最终点击前逐字段读回页面与发布包比对",
   };
 }

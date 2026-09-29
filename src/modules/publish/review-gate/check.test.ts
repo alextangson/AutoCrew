@@ -174,8 +174,8 @@ describe("确定性：登记身份、封面字、字数、排期、归属（§5�
     expect(blockedRules(out, "douyin")).toEqual(["plan_shape"]);
     expect(blockedRules(out, "bilibili")).toEqual(["plan_shape"]);
     expect(out.summary_table).toContain("认不出平台");
-    const empty = await check({ content_id: r.id, plan: { platforms: [] } }, fakeJev().caller);
-    expect(empty.summary_table).toContain("计划里没有平台");
+    const empty = await executePublishCheck({ _dataDir: env.dir, content_id: r.id, plan: { platforms: [] } }, { jev: fakeJev().caller }) as { error: string };
+    expect(empty.error).toContain("计划里没有平台");
     expect(await executePublishCheck({ _dataDir: env.dir, content_id: r.id, plan: "../../etc/passwd" }, { jev: fakeJev().caller })).toMatchObject({ ok: false, code: "plan_outside_project" });
   });
 

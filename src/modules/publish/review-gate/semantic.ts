@@ -46,6 +46,14 @@ export function extractClaims(text: string): Array<{ claim: string; numeric: boo
 
 const squash = (s: string) => s.replace(/\s+/g, "").replace(/％/g, "%");
 
+/** 数字说法按完整数值匹配：前一个字符不能是数字或小数点（「3%」不能从「73%」里认出来） */
+export function containsWholeNumber(haystack: string, needle: string): boolean {
+  for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+    if (at === 0 || !/[0-9.]/.test(haystack[at - 1])) return true;
+  }
+  return false;
+}
+
 export interface AInput { platform: string; title: string; caption: string; coverText: string | null; scriptTitle: string; basis: Basis }
 
 /** 返回 Jev 请求（可能没有问题可问 → null）与代码直接判掉的数值说法 */
@@ -58,7 +66,7 @@ export function buildA(input: AInput): { request: SemanticRequest | null; codeIt
   const claims = extractClaims(`${input.title}\n${input.caption}`);
   const basisText = squash(input.basis.text);
   claims.forEach((c, i) => {
-    if (c.numeric && basisText.includes(squash(c.claim))) {
+    if (c.numeric && containsWholeNumber(basisText, squash(c.claim))) {
       codeItems.push({ check: "A2 说法有据", result: "pass", basis: `「${c.claim}」在${input.basis.kind === "srt" ? "字幕" : "定稿正文"}里逐字出现（代码直接判）`, field: "title/caption" });
       return;
     }

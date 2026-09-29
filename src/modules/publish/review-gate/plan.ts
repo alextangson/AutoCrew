@@ -43,12 +43,34 @@ export function missingAsNull(e: unknown): null {
   throw e;
 }
 
-/** 字符串里的 JSON（宿主把数组 / 对象序列化了）→ 值；不是 JSON 原样返回 */
+/** 看着是 JSON、修过引号也解析不了的结构化参数：调用方必须报错，不能当成原文或空数组 */
+export const UNPARSABLE: unique symbol = Symbol("unparsable-json");
+
+/**
+ * 中转端点序列化参数时常留下没转义的内部双引号（AGENTS.md 不变量）：
+ * 一个 `"` 前后（跳过空白）都不是结构字符（前 { [ , : / 后 } ] , :）时，按字符串内容转义。
+ */
+export function repairQuotes(t: string): string {
+  let out = "";
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (ch === "\\") { out += ch + (t[i + 1] ?? ""); i++; continue; }
+    if (ch !== '"') { out += ch; continue; }
+    let p = i - 1; while (p >= 0 && /\s/.test(t[p])) p--;
+    let n = i + 1; while (n < t.length && /\s/.test(t[n])) n++;
+    const structural = p < 0 || "{[,:".includes(t[p]) || n >= t.length || "}],:".includes(t[n]);
+    out += structural ? ch : '\\"';
+  }
+  return out;
+}
+
+/** 字符串里的 JSON（宿主把数组 / 对象序列化了）→ 值；先原样解析，再修引号重试，都不行回 UNPARSABLE。不像 JSON 的原样返回 */
 export function maybeJson(v: unknown): unknown {
   if (typeof v !== "string") return v;
   const t = v.trim();
   if (!(t.startsWith("{") || t.startsWith("["))) return v;
-  try { return JSON.parse(t); } catch { return v; }
+  try { return JSON.parse(t); } catch { /* 修引号重试 */ }
+  try { return JSON.parse(repairQuotes(t)); } catch { return UNPARSABLE; }
 }
 
 export type PlanLoad = { ok: true; plan: Obj; source: string } | { ok: false; code: string; error: string };
@@ -56,9 +78,9 @@ export type PlanLoad = { ok: true; plan: Obj; source: string } | { ok: false; co
 /** plan 参数：对象、JSON 字符串，或项目内路径（相对项目根，或项目内的绝对路径） */
 export async function loadPlan(raw: unknown, projectRoot: string): Promise<PlanLoad> {
   const v = maybeJson(raw);
+  if (v === UNPARSABLE) return { ok: false, code: "plan_unreadable", error: "plan 看着是 JSON，但修过引号也解析不了：检查括号与逗号" };
   if (isObj(v)) return { ok: true, plan: v, source: "inline" };
   if (typeof v !== "string" || !v.trim()) return { ok: false, code: "plan_required", error: "plan 必填：发布计划 JSON，或项目内的计划文件路径（如 06-publish/publish-plan.json）" };
-  if (v.trim().startsWith("{")) return { ok: false, code: "plan_unreadable", error: "plan 看着是 JSON 但解析不了：检查引号与逗号" };
   const resolved = resolveInProject(v.trim(), projectRoot);
   if ("error" in resolved) return { ok: false, code: "plan_outside_project", error: resolved.error };
   try {
@@ -102,6 +124,15 @@ function readTags(entry: Obj, label: string, problems: ShapeProblem[]): string[]
   return (raw as string[]).map((t) => t.trim()).filter(Boolean);
 }
 
+/** 活动：数组或它的 JSON 字符串；别的形状报计划形状错误，不当成「没有活动」 */
+function readCampaigns(entry: Obj, label: string, problems: ShapeProblem[]): unknown[] {
+  const raw = maybeJson(entry.campaigns);
+  if (raw === undefined || raw === null) return [];
+  if (Array.isArray(raw)) return raw;
+  problems.push({ platform: label, field: "campaigns", detail: "campaigns 要是数组（或它的 JSON 字符串），解析不了" });
+  return [];
+}
+
 function textField(entry: Obj, key: string, label: string, problems: ShapeProblem[]): string {
   const v = entry[key];
   if (v === undefined || v === null) return "";
@@ -121,7 +152,7 @@ function readEntry(e: unknown, i: number, problems: ShapeProblem[]): PlanEntry |
     platform, content_id: str(e.content_id), account: str(e.account_display_name) ?? str(e.account) ?? str(e.account_public_profile),
     title: textField(e, "title", platform, problems), caption: textField(e, "caption", platform, problems), tags: readTags(e, platform, problems),
     covers, legacy_cover: legacy, cover_text: str(e.cover_text), video_path: video,
-    scheduled_at: str(scheduled), timezone: str(e.timezone), campaigns: Array.isArray(e.campaigns) ? e.campaigns : [],
+    scheduled_at: str(scheduled), timezone: str(e.timezone), campaigns: readCampaigns(e, platform, problems),
   };
 }
 

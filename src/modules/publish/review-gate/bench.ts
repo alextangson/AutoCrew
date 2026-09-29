@@ -7,7 +7,7 @@
  * - 概率分布按问题、按正反例列出，供复盘定阈值；不据此自动开拦截。
  */
 import { buildA, buildB, interpret, type BEntryView, type Instruction } from "./semantic.js";
-import type { JevCaller } from "./jev-client.js";
+import { safeReason, type JevCaller } from "./jev-client.js";
 import type { Basis } from "./subtitles.js";
 import type { CheckItem, Override } from "./types.js";
 
@@ -109,7 +109,7 @@ async function runOne(c: BenchCase, basis: Basis | undefined, caller: JevCaller)
     const outcome: Outcome = !item || item.result === "unchecked" ? "abstain" : item.result === "warn" ? "warn" : "pass";
     return { ...base, outcome, probability: probabilityOf(c.question, r.answers as never), input_tokens: r.usage.input_tokens };
   } catch (e) {
-    return { ...base, outcome: "not_run", probability: null, reason: e instanceof Error ? e.message : String(e) };
+    return { ...base, outcome: "not_run", probability: null, reason: safeReason(e) };
   }
 }
 

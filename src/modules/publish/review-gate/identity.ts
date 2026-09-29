@@ -42,6 +42,8 @@ export interface FingerprintParts {
   quotes_sha: string;
   overrides_sha: string;
   basis_sha: string;
+  /** Jev A / B 请求的 state + 问题整体哈希：判定依赖的每个输入都在里面 */
+  requests_sha: string;
 }
 
 export function fingerprint(parts: FingerprintParts): string {

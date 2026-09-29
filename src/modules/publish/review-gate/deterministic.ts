@@ -2,6 +2,7 @@
  * 确定性检查（发布前把关 spec §5）：每次 check 都重跑，结论只由代码和盘上字节给出。
  * block 默认可被 §7 例外改判 override；文件缺失 / 读不了、计划形状不对不能例外（没法发）。
  */
+import path from "node:path";
 import { ratioValue } from "../../cover/platform-ratios.js";
 import { validatePublishText } from "../publish-limits.js";
 import type { Registration } from "../../../storage/production-types.js";
@@ -43,8 +44,10 @@ const block = (check: string, rule: string, basis: string, field?: string, plan_
 
 async function loadFile(p: string, root: string, image: boolean, field: string, items: CheckItem[]): Promise<FileFact | null> {
   const resolved = resolveInProject(p, root);
-  if ("error" in resolved) { items.push(block("文件归属", "ownership", resolved.error, field, p)); return null; }
-  const fact = await fileFact(resolved.abs, image);
+  // 归属可以例外，但文件在不在、读不读得了、是不是登记那一份照样要查（不能借归属例外绕过 file_missing）
+  if ("error" in resolved) items.push(block("文件归属", "ownership", resolved.error, field, p));
+  const abs = "error" in resolved ? path.resolve(root, p) : resolved.abs;
+  const fact = await fileFact(abs, image);
   if (!fact.ok) items.push(block("文件", "file_missing", `${p}：${fact.error}`, field, p));
   return fact;
 }

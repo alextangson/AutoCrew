@@ -35,11 +35,11 @@ describe("密钥", () => {
 
 describe("调用", () => {
   it("请求：钉 jev-1.13.0、Bearer 头、state 与 questions 原样", async () => {
-    process.env.TYPESAFE_API_KEY = "k";
+    process.env.TYPESAFE_API_KEY = "k-test-12345678";
     let seen: { url: string; init: RequestInit } | null = null;
     const r = await makeJevCaller({ fetchImpl: (async (url: string, init: RequestInit) => { seen = { url, init }; return res(200, GOOD); }) as unknown as typeof fetch })({ a: 1 }, Q);
     expect(seen!.url).toBe(JEV_ENDPOINT);
-    expect((seen!.init.headers as Record<string, string>).Authorization).toBe("Bearer k");
+    expect((seen!.init.headers as Record<string, string>).Authorization).toBe("Bearer k-test-12345678");
     expect(JSON.parse(String(seen!.init.body))).toEqual({ model: "jev-1.13.0", state: { a: 1 }, questions: Q });
     expect(r.usage.input_tokens).toBe(300);
   });
@@ -57,7 +57,7 @@ describe("调用", () => {
 
   it("没密钥 / 超时 / 连不上 → JevError", async () => {
     await expect(makeJevCaller({ machineDir: dir })({}, Q)).rejects.toMatchObject({ reason: expect.stringMatching(/没配 TypeSafe 密钥/) });
-    process.env.TYPESAFE_API_KEY = "k";
+    process.env.TYPESAFE_API_KEY = "k-test-12345678";
     const slow = (async (_u: string, init: RequestInit) => new Promise((_, reject) => init.signal!.addEventListener("abort", () => reject(Object.assign(new Error("t"), { name: "TimeoutError" }))))) as unknown as typeof fetch;
     await expect(makeJevCaller({ fetchImpl: slow, timeoutMs: 20 })({}, Q)).rejects.toMatchObject({ reason: expect.stringMatching(/超时/) });
     const down = (async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;

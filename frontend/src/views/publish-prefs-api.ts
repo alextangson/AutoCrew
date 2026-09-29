@@ -35,3 +35,8 @@ export function proposalText(p: Proposal, labelOf: (id: string) => string): stri
     ? `${where}封面上传 ${(p.value as string[]).join(" + ")}`
     : `发布规则（${where}）：${p.value as string}`;
 }
+
+/** 「打开 Codex」可以不重存指令的唯一情形：上次复制失败，且编辑框里的文本就是已存（带编号）的那份 */
+export function skipResave(copyFailed: boolean, text: string, savedText: string | null): boolean {
+  return copyFailed && savedText !== null && text === savedText;
+}

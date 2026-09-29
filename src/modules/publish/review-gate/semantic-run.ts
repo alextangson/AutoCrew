@@ -2,7 +2,7 @@
  * 跑一个平台的 Jev A + B（带缓存）：全部成功才缓存；有一次没跑成 → 该部分标「语义把关没跑成：原因」，
  * 已拿到的答案照常判读，但整份不缓存，下次 check 重试（E3、E11）。
  */
-import { JEV_MODEL, JEV_USD_PER_MTOK, JevError, type JevAnswer, type JevCaller } from "./jev-client.js";
+import { JEV_MODEL, JEV_USD_PER_MTOK, safeReason, type JevAnswer, type JevCaller } from "./jev-client.js";
 import { once, readJevCache, writeJevCache, type CachedCall } from "./check-store.js";
 import { interpret, type Instruction, type SemanticRequest } from "./semantic.js";
 import type { Basis } from "./subtitles.js";
@@ -39,7 +39,7 @@ async function callAll(job: SemanticJob): Promise<{ calls: CallRecord[]; fresh: 
       fresh.push(c);
       calls.push(fromCall(req, c));
     } catch (e) {
-      const reason = e instanceof JevError ? e.reason : `调用出错：${e instanceof Error ? e.message : String(e)}`;
+      const reason = safeReason(e);
       failed.push(`${req.kind === "A" ? "语义把关（A）" : "执行对指令（B）"}没跑成：${reason}`);
       calls.push({ kind: req.kind, ok: false, reason, questions: req.questions });
     }

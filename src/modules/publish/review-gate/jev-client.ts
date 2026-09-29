@@ -65,7 +65,20 @@ function validAnswer(q: JevQuestion, a: unknown): a is JevAnswer {
   if (!a || typeof a !== "object") return false;
   const x = a as Record<string, unknown>;
   if (q.type === "noul") return x.type === "noul" && typeof x.noul === "number" && x.noul >= 0 && x.noul <= 1;
-  return x.type === "choice" && typeof x.choice === "string" && Object.hasOwn(q.criteria, x.choice) && !!x.probabilities && typeof x.probabilities === "object";
+  if (x.type !== "choice" || typeof x.choice !== "string" || !Object.hasOwn(q.criteria, x.choice)) return false;
+  return validProbabilities(q.criteria, x.choice, x.probabilities) && (x.confidence === undefined || isProb(x.confidence));
+}
+
+const isProb = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+
+/** 概率表：只含 criteria 里的选项、每个是 [0,1] 的有限数、含被选中项、合计约为 1 */
+function validProbabilities(criteria: Record<string, unknown>, choice: string, raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (!entries.length || !entries.every(([k, v]) => Object.hasOwn(criteria, k) && isProb(v))) return false;
+  if (!Object.hasOwn(raw as object, choice)) return false;
+  const sum = entries.reduce((n, [, v]) => n + (v as number), 0);
+  return Math.abs(sum - 1) <= 0.05;
 }
 
 /** 返回形状逐项核对：少一个答案、类型不对、概率越界都算「返回形状不对」 */
@@ -88,6 +101,14 @@ function httpReason(status: number): string {
   return `TypeSafe 返回 HTTP ${status}`;
 }
 
+/** 密钥只收可打印、无空白的字符：带换行的值会让 fetch 把整个请求头写进异常文字 */
+const KEY_SHAPE = /^[\x21-\x7e]{8,512}$/;
+
+/** 任何异常 → 能安全留档 / 返回的原因：JevError 用它的固定原因，别的一律固定文字（不带原异常内容） */
+export function safeReason(e: unknown): string {
+  return e instanceof JevError ? e.reason : "语义检查内部出错（原因不外露）";
+}
+
 export interface JevDeps { fetchImpl?: typeof fetch; machineDir?: string; timeoutMs?: number }
 
 /** 默认调用器：每次现读密钥；任何失败都抛 JevError（原因是人话，不含密钥） */
@@ -95,6 +116,7 @@ export function makeJevCaller(deps: JevDeps = {}): JevCaller {
   return async (state, questions) => {
     const { key } = await resolveTypesafeKey(deps.machineDir);
     if (!key) throw new JevError("没配 TypeSafe 密钥（环境变量 TYPESAFE_API_KEY 或设置页）");
+    if (!KEY_SHAPE.test(key)) throw new JevError("TypeSafe 密钥格式不对（含空白或控制字符）：到设置页重填");
     const started = Date.now();
     let res: Response;
     try {
@@ -105,8 +127,9 @@ export function makeJevCaller(deps: JevDeps = {}): JevCaller {
         signal: AbortSignal.timeout(deps.timeoutMs ?? JEV_TIMEOUT_MS),
       });
     } catch (e) {
+      // 只给固定原因：底层异常文字可能带请求头（含密钥）、URL 或请求体，一个字都不往外传
       const name = (e as Error)?.name;
-      throw new JevError(name === "TimeoutError" || name === "AbortError" ? `TypeSafe 超时（${(deps.timeoutMs ?? JEV_TIMEOUT_MS) / 1000} 秒）` : `连不上 TypeSafe：${(e as Error)?.message ?? String(e)}`);
+      throw new JevError(name === "TimeoutError" || name === "AbortError" ? `TypeSafe 超时（${(deps.timeoutMs ?? JEV_TIMEOUT_MS) / 1000} 秒）` : "连不上 TypeSafe（网络错误）");
     }
     if (!res.ok) throw new JevError(httpReason(res.status));
     let body: unknown;
