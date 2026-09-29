@@ -167,7 +167,7 @@ describe("启用后的出包（闸门 §11）：走真实 ToolRunner", () => {
 
 describe("record 回执文案", () => {
   // 真机：收件箱里文件名对不上标题 → 记候选（对），但 next_action 说「文件不在可搬入的目录里」——它就在收件箱（可搬入根）里
-  it.skip("BUG: 收件箱里对不上标题的原片，回执不说「不在可搬入的目录里」", async () => {
+  it("收件箱里对不上标题的原片，回执不说「不在可搬入的目录里」", async () => {
     const c = await videoContent(env, "AI 又忘了怎么办");
     await founderApprove(env, c.id);
     const res = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "随便录的一段.mov"), "raw"), request_id: "x" });

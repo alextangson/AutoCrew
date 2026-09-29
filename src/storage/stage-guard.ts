@@ -52,6 +52,10 @@ export const FOUNDER_APPROVAL_ONLY =
   "视频稿的审片通过与封面定稿是创始人的决定，只能由创作者在 AutoCrew 工作台上点，AI 宿主不能代批。把成片 / 封面交给创作者，请创作者在工作台审；有意见照常可以替创作者报打回。";
 
 /** 「剪辑中」只能由交接进入（P6 §13.4-C）：手动切换、改状态、直接建在剪辑中一律拒绝 */
+/** 启用本体后：「剪辑中」由制作事实推导，没有交接这一步 */
+export const EDITING_VIA_ONTOLOGY =
+  "「剪辑中」由制作事实推导，不能手动切换，也不再交接：原片放进「我的内容/0 原片放这里」后用 autocrew_content record kind=aroll 报上来，卡片会自己进剪辑中；进度与下一步看 autocrew_content summary（stage / blockers / next 按本体推导）。";
+
 export const EDITING_VIA_HANDOFF =
   "「剪辑中」只能由交接进入，不能手动切换。录完按标题命名放进 Downloads，在 Codex 里说「剪这条」，由 Codex 认稿后弹窗确认交接（autocrew_video handoff）。";
 

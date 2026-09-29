@@ -10,6 +10,8 @@ import path from "node:path";
 import { readProductionDoc } from "../../storage/production-store.js";
 import { writeEnabledVersion } from "../../storage/production-store.js";
 import { founderDecision } from "./decisions.js";
+import { enableOntology } from "./enable.js";
+import fs from "node:fs/promises";
 import { reconcileContent } from "./reconcile.js";
 import { registeredVideo } from "../publish/review-gate/testkit.js";
 import { makeEnv, png, put, videoContent, type Env } from "./testkit.js";
@@ -56,5 +58,43 @@ describe("P2-3 / P3 回执与决定", () => {
     await enable();
     const r = await registeredVideo(env);
     expect(await founderDecision(r.id, "i_published", { platform: "douyin", url: "javascript:alert(1)" }, env.dir)).toMatchObject({ ok: false, code: "bad_url" });
+  });
+});
+
+describe("P3 #11 原片收件箱", () => {
+  it("启用后建好收件箱（不存在就建）", async () => {
+    await fs.rm(env.inbox, { recursive: true, force: true });
+    expect((await enableOntology(env.dir)).ok).toBe(true);
+    expect((await fs.stat(env.inbox)).isDirectory()).toBe(true);
+  });
+
+});
+
+describe("P2-7 启用后不再指向旧交接流程", () => {
+  it("手动切剪辑中 / codex handoff / codex 越权 / 写稿页提示都指向 record 与 summary；summary 的阶段来自推导", async () => {
+    await enable();
+    const { executeContentSave } = await import("../../tools/content-save.js");
+    const { hostPolicy } = await import("../../../mcp/host-policy.js");
+    const c = await videoContent(env, "AI 又忘了怎么办");
+    const t = await executeContentSave({ _dataDir: env.dir, action: "transition", id: c.id, target_status: "editing" }) as { error?: string };
+    expect(t.error).toContain("record kind=aroll");
+    expect(t.error).not.toContain("剪这条");
+    const { executeVideo } = await import("../../tools/video.js");
+    expect(await executeVideo({ _dataDir: env.dir, action: "handoff", content_id: c.id, aroll_path: "/x.mov", _host: "claude-code" })).toMatchObject({ ok: false, code: "entry_closed" });
+    expect(hostPolicy("codex", "autocrew_video", { action: "handoff" }, true)).toMatchObject({ ok: false, result: { code: "entry_closed" } });
+    expect((hostPolicy("codex", "autocrew_writer", { action: "pack" }, true) as { error: string }).error).toContain("只报事实");
+    const { createElement } = await import("../../../frontend/node_modules/react/index.js") as typeof import("react");
+    const { renderToStaticMarkup } = await import("../../../frontend/node_modules/react-dom/server.node.js") as typeof import("react-dom/server");
+    const { SharedProjectPanel } = await import("../../../frontend/src/views/SharedProjectPanel");
+    expect(renderToStaticMarkup(createElement(SharedProjectPanel, { status: "approved", isVideo: true, ontology: true }))).toContain("0 原片放这里");
+  });
+
+  it("summary：本体稿制作段的 stage / next 来自 explain()", async () => {
+    await enable();
+    const { executeContentSave } = await import("../../tools/content-save.js");
+    const r = await registeredVideo(env);
+    const s = await executeContentSave({ _dataDir: env.dir, action: "summary", id: r.id }) as Record<string, unknown>;
+    expect(s.stage).toBe("待发布");
+    expect(String(s.next)).toContain("check_ids");
   });
 });

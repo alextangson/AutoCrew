@@ -9,6 +9,8 @@
  */
 import type { McpAccessContext, McpPrincipal } from "./access.js";
 import { LOCAL_HOST } from "../src/storage/local-store.js";
+import { isOntologyEnabled } from "../src/storage/production-store.js";
+import { closedResult } from "../src/modules/production/closed.js";
 
 /** `result`：拒绝时要回给宿主的结构化回执（带 code / next_action），没有就只回一句话 */
 export type PolicyDecision = { ok: true } | { ok: false; error: string; result?: Record<string, unknown> };
@@ -34,6 +36,9 @@ const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
 
 const DENIED_MESSAGE: Readonly<Record<string, string>> = { codex: CODEX_EDITOR_DENIED };
 
+/** 启用本体后的剪辑工位：只报事实，不再 match / confirm / handoff */
+export const CODEX_EDITOR_DENIED_ONTOLOGY = "剪辑工位（codex）在本体下只报事实：autocrew_content record（原片 / 成片 / 字幕 / 封面 / ChatCut 工程）、content get / summary、asset add、publish check / propose_preference 与只读查询；审片、选封面、发布只有创始人在卡片上点";
+
 /**
  * 所有命名宿主共用的硬拒（P6-e r3：模型绕开 handoff 的门后，转而用 `autocrew_content adoption`
  * 替创作者记「采纳」——那是采纳率北极星的读数）。采纳是创作者自己的动作：只在工作台记，
@@ -45,7 +50,9 @@ const HOST_DENIED_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = { aut
 export const CODEX_HANDOFF_NEEDS_CONFIRMATION = "剪辑工位发起交接必须带 confirmation_id：先 autocrew_video match、再 confirm 让创始人在 Mac 弹窗里点确认";
 
 /** codex 的 handoff 只在带着确认记录（或撤回）时放行；记录是否有效由 handoff 自己核 */
-function codexHandoff(args: Record<string, unknown>): PolicyDecision {
+function codexHandoff(args: Record<string, unknown>, ontology: boolean): PolicyDecision {
+  // 本体已启用：不再交接，和工具里关掉的旧入口说同一句（不再要求 confirmation_id）
+  if (ontology) { const r = closedResult(typeof args.content_id === "string" ? args.content_id : undefined); return { ok: false, error: r.error, result: r }; }
   const confirmed = typeof args.confirmation_id === "string" && args.confirmation_id.trim() !== "";
   if (confirmed || args.revoke === true) return { ok: true };
   return { ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION, result: {
@@ -54,20 +61,20 @@ function codexHandoff(args: Record<string, unknown>): PolicyDecision {
   } };
 }
 
-export function hostPolicy(host: string, tool: string, args: Record<string, unknown>): PolicyDecision {
+export function hostPolicy(host: string, tool: string, args: Record<string, unknown>, ontology = false): PolicyDecision {
   const action = typeof args.action === "string" ? args.action.trim() : "";
-  if (host === "codex" && tool === "autocrew_video" && action === "handoff") return codexHandoff(args);
+  if (host === "codex" && tool === "autocrew_video" && action === "handoff") return codexHandoff(args, ontology);
   if (host !== LOCAL_HOST && HOST_DENIED_ACTIONS[tool]?.has(action)) return { ok: false, error: ADOPTION_HOST_DENIED };
   const allowlist = HOST_ALLOWLISTS[host];
   if (!allowlist) return { ok: true };
   const allowed = allowlist[tool];
   if (allowed === "*" || (allowed && allowed.has(action))) return { ok: true };
-  return { ok: false, error: DENIED_MESSAGE[host] ?? `宿主 ${host} 不允许调用 ${tool} ${action}` };
+  return { ok: false, error: (ontology && host === "codex" ? CODEX_EDITOR_DENIED_ONTOLOGY : DENIED_MESSAGE[host]) ?? `宿主 ${host} 不允许调用 ${tool} ${action}` };
 }
 
 /** 接到 `McpAccessContext.authorize` 上：宿主名就是命名 token 的主体 */
 export function hostAuthorize(host: string): NonNullable<McpAccessContext["authorize"]> {
-  return async (_principal: McpPrincipal, tool: string, args: Record<string, unknown>) => hostPolicy(host, tool, args);
+  return async (_principal: McpPrincipal, tool: string, args: Record<string, unknown>) => hostPolicy(host, tool, args, await isOntologyEnabled().catch(() => false));
 }
 
 /**

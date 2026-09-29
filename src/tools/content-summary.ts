@@ -9,6 +9,10 @@ import { CONTENT_STATUS_LABEL, getContent, getDataDir, getTopic, type Content, t
 import { activeAngleCard } from "../modules/research/angle-cards.js";
 import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { topicHashOf } from "../modules/research/research-job-store.js";
+import { explainContent } from "../modules/production/read.js";
+import type { Explanation } from "../modules/production/explain.js";
+import { isOntologyActive } from "../storage/production-store.js";
+import { isVideoPlatform } from "../storage/stage-guard.js";
 
 const EMPLOYEE: Record<string, string> = { writer: "写手", cover: "封面师", editor: "剪辑师" };
 const minutesAgo = (iso: string | undefined, now: number): number | null => (iso ? Math.max(0, Math.round((now - Date.parse(iso)) / 60_000)) : null);
@@ -51,6 +55,20 @@ function blockersOf(c: Content, now: number): string[] {
   return out;
 }
 
+/** 按本体走的视频稿、制作段：阶段 / 卡点 / 下一步都取推导结果（explain），不看旧状态表 */
+const ONTOLOGY_NEXT: Record<string, string> = {
+  待录制: "原片放进「我的内容/0 原片放这里」后用 autocrew_content record kind=aroll 报上来",
+  剪辑中: "剪辑工位把成片 / 字幕 / 封面用 autocrew_content record 报上来；成片通过、选封面只能创始人在卡片上点",
+  待发布: "先 autocrew_publish check，再带各平台 check_ids 调 ego_lite_prepare；最终点击前停下问创始人",
+  已发布: "已发布，可看数据回流",
+};
+
+async function productionView(c: Content, dataDir?: string): Promise<Explanation | null> {
+  if (!isVideoPlatform(c.platform) || !(await isOntologyActive(dataDir, c.id))) return null;
+  const exp = await explainContent(c, getDataDir(dataDir));
+  return exp.phase === "production" ? exp : null;
+}
+
 export async function contentSummary(id: string, dataDir?: string, now = Date.now()): Promise<Record<string, unknown>> {
   if (!id) return { ok: false, error: "id is required for summary" };
   const c = await getContent(id, dataDir);
@@ -58,15 +76,21 @@ export async function contentSummary(id: string, dataDir?: string, now = Date.no
   const blockers = blockersOf(c, now);
   const angle = await angleBlocker(c, dataDir);
   if (angle) blockers.unshift(angle);
+  const exp = await productionView(c, dataDir);
+  if (exp) {
+    blockers.unshift(...exp.missing.map((m) => `还差：${m}`), ...exp.alerts.map((a) => clip(a, 80)));
+    if (exp.candidates.length) blockers.push(`有 ${exp.candidates.length} 个候选文件等创始人确认是不是这条`);
+  }
   return {
     ok: true,
     id: c.id,
     title: clip(c.title, 60),
     platform: c.platform ?? "",
     status: c.status ?? null,
-    stage: c.status ? (CONTENT_STATUS_LABEL[c.status] ?? c.status) : "没有记录状态（旧稿或手写导入）",
+    stage: exp?.stage ?? (c.status ? (CONTENT_STATUS_LABEL[c.status] ?? c.status) : "没有记录状态（旧稿或手写导入）"),
+    ...(exp ? { reason: clip(exp.reason, 80) } : {}),
     blockers: blockers.length ? blockers : ["没有进行中的流程"],
-    next: NEXT[c.status] ?? "没有建议的下一步",
+    next: (exp?.stage ? ONTOLOGY_NEXT[exp.stage] : undefined) ?? NEXT[c.status] ?? "没有建议的下一步",
     updatedAt: c.updatedAt,
     words: Array.from((c.body ?? "").replace(/\s+/g, "")).length,
   };

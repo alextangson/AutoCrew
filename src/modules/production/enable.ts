@@ -17,6 +17,7 @@ import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { withLegacyDecisions } from "./explain.js";
 import { importLegacyRegistration } from "./legacy.js";
 import { withFileOwnership } from "./mutex.js";
+import { inboxToCreate } from "./roots.js";
 import { reconcileAll, type ReconcileReport } from "./reconcile.js";
 import { mutateProduction, refreshContent } from "./service.js";
 
@@ -84,6 +85,9 @@ async function run(dataDir: string, exclude: string[]): Promise<EnableResult> {
     return done(false, report);
   }
   await writeEnabledVersion(dataDir, DERIVE_VERSION, exclude);
+  // 原片收件箱「我的内容/0 原片放这里」：启用后就该在（资料库外的旧工作区没有，跳过）
+  const inbox = await inboxToCreate(dataDir);
+  if (inbox) await fs.mkdir(inbox, { recursive: true });
   await pointProjectRules(dataDir, skip);
   await fs.rm(txnFile(dataDir), { force: true });
   return done(true, report);

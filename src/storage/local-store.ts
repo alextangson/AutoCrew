@@ -12,7 +12,7 @@ import { isContentId, isSafeFilename, isTopicId } from "./entity-id.js";
 import { writeJsonAtomic, writeTextAtomic } from "./json-atomic.js";
 import { resolveDataDir } from "./storage-roots.js";
 import { moveFileVerified } from "./move-file.js";
-import { EDITING_VIA_HANDOFF, isVideoPlatform, stageGuardError } from "./stage-guard.js";
+import { EDITING_VIA_HANDOFF, EDITING_VIA_ONTOLOGY, isVideoPlatform, stageGuardError } from "./stage-guard.js";
 // 纯类型 import（编译后擦除，不产生 storage → modules 的运行时依赖）：
 // 审稿结论的形状归审稿模块定义，这里复制一份就是把真相分成两处。
 import type { ReviewMeta } from "../modules/writing/script-review.js";
@@ -1690,11 +1690,18 @@ export async function transitionPreflight(
     return { ok: false, error: `Invalid transition: ${currentStatus} → ${targetStatus}. Allowed: ${(allowed || []).join(", ") || "none"}` };
   }
   const blocked = await stageGuardError(content, currentStatus, targetStatus, () => coverApproved(contentId, dataDir), { viaHandoff: opts?.viaHandoff });
-  if (blocked) return { ok: false, blocked: true, error: blocked, ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
+  if (blocked) return { ok: false, blocked: true, error: await editingMessage(blocked, contentId, dataDir), ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
   // 本体 §2.1 认稿硬门：模型推到认稿及之后一律拒（force 越得过状态图，越不过这里）
   const refused = modelTransitionRefusal(targetStatus, opts?.decidedBy);
   if (refused) return { ok: false, blocked: true, error: refused, code: "founder_decision_required" };
   return { ok: true };
+}
+
+/** 「剪辑中只能交接进」的拒绝说法按这条是否按本体走换：启用后指向 record / summary，不再指向交接 */
+async function editingMessage(blocked: string, contentId: string, dataDir?: string): Promise<string> {
+  if (blocked !== EDITING_VIA_HANDOFF) return blocked;
+  const { isOntologyActive } = await import("./production-store.js");
+  return (await isOntologyActive(dataDir, contentId)) ? EDITING_VIA_ONTOLOGY : blocked;
 }
 
 export async function transitionStatus(
@@ -1751,7 +1758,7 @@ async function transitionStatusLocked(
   const blocked = await stageGuardError(content, currentStatus, targetStatus, () =>
     coverApproved(contentId, dataDir),
   { viaHandoff: opts?.viaHandoff });
-  if (blocked) return { ok: false, blocked: true, error: blocked, ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
+  if (blocked) return { ok: false, blocked: true, error: await editingMessage(blocked, contentId, dataDir), ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
   const refused = modelTransitionRefusal(targetStatus, opts?.decidedBy);
   if (refused) return { ok: false, blocked: true, error: refused, code: "founder_decision_required" };
 

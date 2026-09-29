@@ -1,4 +1,5 @@
 import { SharedProjectPanel } from "./SharedProjectPanel";
+import { useOntologyEnabled } from "./use-ontology";
 /**
  * 稿件编辑器 = **工作台分派点 + 文案工作台**（阶段制 spec §2）。
  *
@@ -424,6 +425,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   };
 
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
+  const ontology = useOntologyEnabled(isVideo);
   const imageSlots = [...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length;
 
   const workspace = workspaceForStatus(c.status);
@@ -509,7 +511,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
       {props.context}
-      <SharedProjectPanel status={c.status} isVideo={isVideo} />
+      <SharedProjectPanel status={c.status} isVideo={isVideo} ontology={ontology} />
 
       <div className="ed-main-row">
       <div className="ed-stage">

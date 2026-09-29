@@ -51,6 +51,11 @@ async function defaultRoots(dataDir: string): Promise<MovableRoots> {
   return { inbox: inboxDir(dataDir), chatcut: CHATCUT_EXPORT_DIR, jianying };
 }
 
+/** 原片收件箱的应有位置（不管在不在）：启用时建出来 */
+export async function inboxToCreate(dataDir: string): Promise<string | null> {
+  return (await (deps.roots ?? defaultRoots)(dataDir)).inbox;
+}
+
 /** 可搬入根（realpath 之后；不存在的根当没有） */
 export async function movableRoots(dataDir: string): Promise<MovableRoots> {
   const raw = await (deps.roots ?? defaultRoots)(dataDir);

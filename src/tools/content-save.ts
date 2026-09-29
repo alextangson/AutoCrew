@@ -24,12 +24,12 @@ import {
   type ContentUpdates,
 } from "../storage/local-store.js";
 import type { AdoptionVerdict, Content } from "../storage/local-store.js";
-import { EDITING_VIA_HANDOFF, isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
+import { EDITING_VIA_HANDOFF, EDITING_VIA_ONTOLOGY, isModelCall, isVideoPlatform } from "../storage/stage-guard.js";
 import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
-import { ScriptFrozenError } from "../storage/production-store.js";
+import { isOntologyEnabled, ScriptFrozenError } from "../storage/production-store.js";
 import { executeRecord } from "../modules/production/record.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
 
@@ -465,7 +465,7 @@ export async function executeContentSave(
 
   const rawStatus = manualImport ? "draft_ready" : (params.status as string) || "draft_ready";
   // 「剪辑中」只能由交接进入（§13.4-C）：直接建在剪辑中和 update/transition 一样拒绝，说清怎么交接
-  if (normalizeLegacyStatus(rawStatus) === "editing") return { ok: false, code: "editing_requires_handoff", error: EDITING_VIA_HANDOFF };
+  if (normalizeLegacyStatus(rawStatus) === "editing") return { ok: false, code: "editing_requires_handoff", error: (await isOntologyEnabled(params._dataDir as string | undefined)) ? EDITING_VIA_ONTOLOGY : EDITING_VIA_HANDOFF };
   const content = await saveContent({
     title,
     body,

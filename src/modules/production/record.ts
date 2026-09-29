@@ -104,7 +104,7 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
 export const ONTOLOGY_NOT_ENABLED =
   "本体还没启用（或这条在启用时被排除了）：record 现在不写事实、不搬文件。请创始人先在看板顶部看差异清单并确认启用；在那之前照旧流程走。";
 
-interface ReceiptCore { fact_id: string; kind: Fact["kind"]; state: Fact["state"]; path?: string }
+interface ReceiptCore { fact_id: string; kind: Fact["kind"]; state: Fact["state"]; path?: string; reason?: string }
 
 // ---- 落位 ----
 
@@ -202,7 +202,7 @@ async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir:
       const fact = reuse ? doc.facts.find((f) => f.id === p.existing!.id)! : upsertFact(doc, { ...factFrom(a, p, doc, rel, moves ? txn.id : undefined), ...(placed ?? {}) }, p.existing);
       // 已有字幕没绑成片、这次报了 for_cut：补上绑定，不丢新信息（Codex 审 P2）
       if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
-      const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}) };
+      const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}), ...(fact.state === "candidate" ? { reason: p.evidence } : {}) };
       doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { ...core } } };
       if (moves) doc.txns = [...(doc.txns ?? []), txn.id];
       return { value: core, events: reuse ? [] : [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
@@ -238,7 +238,7 @@ async function recordChatcut(a: RecordArgs, content: Content, doc: ProductionDoc
 // ---- 回执 ----
 
 function nextAction(core: ReceiptCore, exp: Explanation): string {
-  if (core.state === "candidate") return "已记成候选：文件不在可搬入的目录里，等创始人在卡片上点「是这条」。不要替创始人确认，也不要自己挪文件。";
+  if (core.state === "candidate") return `已记成候选（${core.reason ?? "归属要创始人确认"}），等创始人在卡片上点「是这条」。不要替创始人确认，也不要自己挪文件。`;
   if (core.kind === "aroll") return `原片已在项目里（path）。从这个新路径导入 ChatCut，导入后 record kind=chatcut_project chatcut_project_id=<工程 id> uses_aroll=["${core.fact_id}"]。`;
   if (core.kind === "cut") return `成片已收。把这版的字幕也报上来（record kind=srt for_cut="${core.fact_id}"），然后等创始人审成片——成片通过只能创始人点。`;
   const missing = exp.missing.length ? `还差：${exp.missing.join("、")}。` : "";
