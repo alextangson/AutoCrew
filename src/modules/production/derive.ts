@@ -71,6 +71,11 @@ export function validCutApproval(doc: ProductionDoc, body: string): Decision | n
 export function validCoverApproval(doc: ProductionDoc, body: string): Decision | null {
   const d = selected(doc, "cover_approval");
   if (!d || revokedIds(doc, "approval_revoke").has(d.id) || d.body_hash !== bodyHash(body)) return null;
+  // 批准之后又打回了其中一张（或含它的整批）→ 这组封面失效（Codex 审 seg2 P1）
+  const pair = [d.cover_3x4_sha, d.cover_4x3_sha];
+  const rejected = inRound(doc, doc.decisions).some((r) => r.type === "cover_reject" && r.at > d.at
+    && ((r.sha256 && pair.includes(r.sha256)) || (r.shas ?? []).some((s) => pair.includes(s))));
+  if (rejected) return null;
   return liveFact(doc, "cover", d.cover_3x4_sha, "3:4") && liveFact(doc, "cover", d.cover_4x3_sha, "4:3") ? d : null;
 }
 

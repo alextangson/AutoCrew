@@ -25,7 +25,9 @@ import type { VideoFinalRecord } from "../video/handoff/types.js";
 import { buildChecklist } from "./checklist.js";
 import { matchingRegistration, srtFor, validCoverApproval, validCutApproval } from "./derive.js";
 import { identityOf } from "./files.js";
-import { mutateProduction } from "./service.js";
+import { checkTargetDir } from "./record-plan.js";
+import { isWithin } from "../../storage/storage-roots.js";
+import { mutateProduction, refreshContent } from "./service.js";
 import { dropBackups, dropTxn, isCommitted, rollbackTxn, saveTxn, type Txn, type TxnOp } from "./txn.js";
 
 export type CommitResult = { ok: true; registration?: Registration; noop?: string; warnings?: string[] } | { ok: false; reason: string };
@@ -83,7 +85,17 @@ export function registeredCutName(n: number, sha: string, ext: string): string {
   return `final-r${n}-${sha.slice(0, 16)}${ext}`;
 }
 
+/** 登记目标目录：每级不许是符号链接、真实路径不出项目（Codex 审 seg2 P1，与 record 落位同一套检查） */
+async function safeDir(root: string, rel: string): Promise<void> {
+  const safe = await checkTargetDir(root, rel);
+  if (!safe.ok) throw new Error(safe.error);
+  await fs.mkdir(path.join(root, rel), { recursive: true });
+  if (!isWithin(root, await fs.realpath(path.join(root, rel)))) throw new Error(`登记目标目录出了项目：${rel}`);
+}
+
 async function placeAll(root: string, p: Picked, n: number, txn: Txn, dataDir: string): Promise<void> {
+  await safeDir(root, "07-delivery/registered");
+  await safeDir(root, "05-cover");
   const ext = (f: Fact) => path.extname(f.path!).toLowerCase();
   await cloneTo(txn, dataDir, path.join(root, p.cutFact.path!), path.join(root, "07-delivery/registered", registeredCutName(n, p.cutFact.sha256!, ext(p.cutFact))), p.cutFact.sha256!);
   await cloneTo(txn, dataDir, path.join(root, p.c34.path!), path.join(root, `05-cover/封面-3x4${ext(p.c34)}`), p.c34.sha256!);
@@ -128,7 +140,15 @@ export async function commitRegistration(contentId: string, dataDir: string): Pr
   const picked = pick(doc, content);
   if (picked === null) return { ok: true, noop: "两个批准还没齐" };
   if (typeof picked === "string") { await recordFailure(contentId, dataDir, picked); return { ok: false, reason: picked }; }
-  if (matchingRegistration(doc, content.body, picked.cut, picked.cover)) return { ok: true, noop: "已经登记过这组批准" };
+  const existing = matchingRegistration(doc, content.body, picked.cut, picked.cover);
+  if (existing) {
+    // 登记记录在、稿件上的投影没跟上（上次派生写入失败）：这里补完
+    if (existing.source === "commit" && content.video?.final?.register_hash !== existing.id) {
+      await refreshContent(contentId, dataDir);
+      return { ok: true, noop: "已经登记过这组批准", warnings: ["补完了上次没写完的成片记录投影"] };
+    }
+    return { ok: true, noop: "已经登记过这组批准" };
+  }
   const root = await fs.realpath(contentRoot(contentId, dataDir));
   const bad = await verifyAll(root, picked);
   if (bad) { await recordFailure(contentId, dataDir, bad); return { ok: false, reason: bad }; }
@@ -146,6 +166,7 @@ export async function commitRegistration(contentId: string, dataDir: string): Pr
 
 async function landRegistration(content: Content, root: string, picked: Picked, n: number, txn: Txn, dataDir: string): Promise<CommitResult> {
   let reg: Registration;
+  const warnings: string[] = [];
   try {
     reg = (await mutateProduction(content.id, dataDir, (d) => {
       const r = registrationOf(d, picked, txn.id);
@@ -161,10 +182,12 @@ async function landRegistration(content: Content, root: string, picked: Picked, 
       return { ok: false, reason: `登记记录没写上：${e instanceof Error ? e.message : String(e)}` };
     }
     reg = (await readProductionDocOrEmpty(content.id, dataDir)).registrations.at(-1)!;
+    // 提交点已过（登记记录在），只是投影 / 时间线没写完（Codex 审 seg2 P2）：照实报，下一次投影补完
+    warnings.push(`登记记录已写进制作记录，但稿件上的成片记录（video.final / videoDone）没写完：${e instanceof Error ? e.message : String(e)}。下一轮对账会补完`);
   }
   await dropBackups(txn);
   await dropTxn(dataDir, txn.id);
-  const warnings = await sideProducts(content, root, picked, n, dataDir);
+  warnings.push(...(await sideProducts(content, root, picked, n, dataDir)));
   return { ok: true, registration: reg, ...(warnings.length ? { warnings } : {}) };
 }
 

@@ -11,6 +11,7 @@ import path from "node:path";
 import type { Content } from "../../storage/local-store.js";
 import { contentRoot, projectRelativeFile } from "../../storage/content-project.js";
 import { bodyHash } from "../../storage/production-store.js";
+import { draftHash } from "../../storage/draft-hash.js";
 import type { Decision, Fact, Registration } from "../../storage/production-types.js";
 import { coverPairHash, sha256File } from "../video/handoff/manifest.js";
 import { normalizeApprovals, type CoverSelection } from "../video/handoff/gate-state.js";
@@ -47,6 +48,14 @@ export async function importLegacyRegistration(content: Content, round: number, 
   if (!c34 || !c43 || c34.sha !== selection?.["3:4"]?.sha256 || c43.sha !== selection?.["4:3"]?.sha256) return none("选中的封面文件不在或字节变了");
   if (approvals?.covers?.artifact_sha256 !== coverPairHash(c34.sha, c43.sha)) return none("approvals.json 里没有对得上这对封面的创始人批准");
   if (!srt) return none("登记时的字幕不在了");
+  // 旧批准要仍然有效（Codex 审 seg2 P1）：绑定的是这次登记的交接代次、没被撤回、批准时的稿就是现在的稿。
+  // 字节相同不等于创始人批准了现在的正文——任何一样不对就不迁移，卡片显示需要重新通过
+  for (const gate of ["final_cut", "covers"] as const) {
+    const bound = approvals?.bindings?.[gate];
+    if (!bound || bound.generation !== f.generation || bound.manifest_hash !== f.manifest_hash) return none(`旧的${gate === "final_cut" ? "成片" : "封面"}批准没有绑到这次登记的交接代次`);
+    if (content.video?.revoked?.includes(bound.manifest_hash)) return none("那一代交接已被撤回");
+    if (bound.draft_hash !== draftHash(content)) return none("批准之后稿件改过，旧批准不算现在这一版");
+  }
   const text = decisions?.cover_text?.trim();
   if (!text) return none("没有封面字");
   const bh = bodyHash(content.body);

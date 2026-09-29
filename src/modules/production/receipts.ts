@@ -53,7 +53,9 @@ export async function trustedReceipts(content: Content, dataDir: string): Promis
   }
   for (const b of await bindingsForContent(content.id, dataDir).catch(() => [])) {
     const [platform, ...rest] = b.key.split(":");
-    out.push({ platform, item_id: rest.join(":"), pub_state: "public", verified: true, source: "reconcile", evidence: "数据回流抓到了这条作品", at: b.boundAt });
+    // 只有按作品 id（链接解析）绑上的才算已核实；按标题相似绑上的留给创始人确认（创始人拍板 2026-09-29）
+    const byId = b.via === "url";
+    out.push({ platform, item_id: rest.join(":"), pub_state: "public", verified: byId, source: "reconcile", evidence: byId ? "数据回流按作品 id 对上了这条" : "数据回流按标题猜是这条，等你确认", at: b.boundAt });
   }
   return out;
 }
@@ -67,29 +69,53 @@ export function receiptFact(doc: ProductionDoc, r: ReceiptInput): Fact {
   };
 }
 
+/** 同一件作品：同平台，且共同有的作品身份（链接 / 作品 id）明确一致；都没有身份时才退回来源键（Codex 审 seg2 P1） */
+export function sameWork(a: Pick<Fact, "platform" | "url" | "item_id" | "receipt_key">, b: Pick<Fact, "platform" | "url" | "item_id" | "receipt_key">): boolean {
+  if (a.platform !== b.platform) return false;
+  if ((a.url && b.url && a.url === b.url) || (a.item_id && b.item_id && a.item_id === b.item_id)) return true;
+  return !a.url && !a.item_id && !b.url && !b.item_id && Boolean(a.receipt_key) && a.receipt_key === b.receipt_key;
+}
+
+/** 发布时间落在哪一轮：按每次「重开文稿」的时间切（Codex 审 seg2 P2：首次发现 ≠ 本轮发布） */
+function roundAt(doc: ProductionDoc, at: string): number {
+  const t = Date.parse(at);
+  const ended = doc.decisions.filter((d) => d.type === "reopen" && Date.parse(d.at) <= t).length;
+  return Math.min(doc.round, 1 + ended);
+}
+
+function mergeOne(doc: ProductionDoc, r: ReceiptInput): number {
+  const key = receiptIdentity({ ...r, at: r.at ?? "" });
+  const probe = { platform: r.platform, url: r.url, item_id: r.item_id, receipt_key: key };
+  const same = doc.facts.find((f) => f.kind === "publish" && sameWork(f, probe));
+  if (same) {
+    // 同一件作品补了别名（先有链接后有作品 id）：更新原事实，不新增（Codex 审 seg2 P1）
+    const patch: Partial<Fact> = { ...(r.url && !same.url ? { url: r.url } : {}), ...(r.item_id && !same.item_id ? { item_id: r.item_id } : {}) };
+    if (same.pub_state !== r.pub_state) patch.pub_state = r.pub_state;
+    if (r.verified && !same.verified) patch.verified = true;
+    if (r.reason && r.reason !== same.reason) patch.reason = r.reason;
+    Object.assign(same, patch);
+    return Object.keys(patch).length ? 1 : 0;
+  }
+  // 时间不明又不在第一轮：分不清是哪一轮发的，先记待核让创始人认
+  const round = r.at ? roundAt(doc, r.at) : doc.round;
+  const unsure = !r.at && doc.round > 1;
+  doc.facts.push({ ...receiptFact(doc, { ...r, verified: r.verified && !unsure, ...(unsure ? { evidence: `${r.evidence}（发布时间不明，等你确认是不是这一轮）` } : {}) }), round, receipt_key: key });
+  return 1;
+}
+
 /**
- * 把回执并进 doc（就地改）：同一作品身份任何一轮记过都不再导入，只更新本轮那条的状态（审核中 → 已公开 / 驳回）；
- * 同平台的待核回执遇到可信回执 → 标已核实。返回改了几处。
+ * 把可信回执并进 doc（就地改），再用它们核实本轮的待核声明：作品身份必须明确一致；
+ * 被纠正的可信回执不算；可信回执是驳回 → 声明也同步成驳回（不会因此命中 D1）。返回改了几处。
  */
 export function mergeReceipts(doc: ProductionDoc, inputs: ReceiptInput[]): number {
-  let changed = 0;
-  for (const r of inputs) {
-    const id = receiptIdentity({ ...r, at: r.at ?? "" });
-    const same = doc.facts.find((f) => f.kind === "publish" && (f.receipt_key ?? receiptIdentity(f)) === id);
-    if (same) {
-      if (same.round === doc.round && (same.pub_state !== r.pub_state || (r.verified && !same.verified))) {
-        Object.assign(same, { pub_state: r.pub_state, verified: same.verified || r.verified, ...(r.reason ? { reason: r.reason } : {}) });
-        changed++;
-      }
-      continue;
-    }
-    doc.facts.push({ ...receiptFact(doc, r), receipt_key: id });
+  let changed = inputs.reduce((n, r) => n + mergeOne(doc, r), 0);
+  const corrected = new Set(doc.decisions.filter((d) => d.type === "publish_correction").map((d) => d.target_id));
+  const trusted = doc.facts.filter((f) => f.kind === "publish" && f.verified && f.source !== "record" && !corrected.has(f.id));
+  for (const p of doc.facts.filter((f) => f.kind === "publish" && f.round === doc.round && !f.verified && f.source === "record")) {
+    const t = trusted.find((x) => x.round === p.round && sameWork(x, p));
+    if (!t) continue;
+    Object.assign(p, { verified: true, pub_state: t.pub_state, evidence: `${p.evidence ?? ""}（已由可信回执 ${t.id} 核实）` });
     changed++;
-  }
-  for (const p of doc.facts.filter((f) => f.kind === "publish" && f.round === doc.round && !f.verified)) {
-    const confirmed = doc.facts.some((f) => f.kind === "publish" && f.round === doc.round && f.verified && f.platform === p.platform
-      && (!p.url || !f.url || f.url === p.url) && (!p.item_id || !f.item_id || f.item_id === p.item_id));
-    if (confirmed) { p.verified = true; p.evidence = `${p.evidence ?? ""}（已由可信回执核实）`; changed++; }
   }
   return changed;
 }

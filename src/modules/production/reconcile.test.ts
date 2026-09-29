@@ -14,6 +14,7 @@ import { reconcileAll, readReconcileReport } from "./reconcile.js";
 import { recoverTxns, saveTxn } from "./txn.js";
 import { resetProductionReady } from "./service.js";
 import { sha256File } from "../video/handoff/manifest.js";
+import { draftHash } from "../../storage/draft-hash.js";
 import { exists, founderApprove, makeEnv, setContent, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
@@ -79,6 +80,13 @@ describe("影子模式（§4.1）：只算不写，给差异清单", () => {
     expect((await getContent(reg.id, env.dir))!.status).toBe("editing");
   });
 
+  it.each(["none", "stale_draft"] as const)("[Codex seg2 P1 legacy.ts:52] 旧批准没绑到这次登记 / 批准后稿改过（%s）：不迁移，不进待发布", async (bindings) => {
+    const reg = await legacyRegistered({ bindings });
+    expect((await enableOntology(env.dir)).ok).toBe(true);
+    expect((await getContent(reg.id, env.dir))!.status).toBe("editing");
+    expect((await readProductionDoc(reg.id, env.dir))!.registrations).toEqual([]);
+  });
+
   it("旧登记带齐创始人 gate3/gate4 批准 + 字幕、字节都对：迁成完整的 legacy 组合，留在待发布；新批准顶掉它", async () => {
     const reg = await legacyRegistered();
     const pub = await videoContent(env, "已发布的稿", "published");
@@ -101,7 +109,7 @@ describe("影子模式（§4.1）：只算不写，给差异清单", () => {
 });
 
 /** 一条旧库里「已登记」的稿：registered 成片 + 选中的两张封面 + 字幕 + approvals.json / cover-selection / decisions.json */
-async function legacyRegistered() {
+async function legacyRegistered(opts: { bindings?: "ok" | "none" | "stale_draft" } = {}) {
   const c = await videoContent(env, "已登记的稿", "approved");
   const root = projectRoot(env, c.id);
   const cut = await put(path.join(root, "07-delivery/registered/final-g1.mp4"), "registered-cut");
@@ -111,11 +119,14 @@ async function legacyRegistered() {
   const [sCut, s34, s43] = [await sha256File(cut), await sha256File(c34), await sha256File(c43)];
   const auto = path.join(root, "00-project/autocrew");
   const { coverPairHash } = await import("../video/handoff/manifest.js");
-  await fs.writeFile(path.join(auto, "approvals.json"), JSON.stringify({ schema: 2, source: "founder-workbench", bindings: {}, rejections: [],
+  const dh = draftHash({ title: c.title, body: c.body, platform: c.platform });
+  const bind = { generation: 1, manifest_hash: "m1", draft_hash: opts.bindings === "stale_draft" ? "0".repeat(64) : dh };
+  const bindings = (opts.bindings ?? "ok") === "none" ? {} : { final_cut: bind, covers: bind };
+  await fs.writeFile(path.join(auto, "approvals.json"), JSON.stringify({ schema: 2, source: "founder-workbench", bindings, rejections: [],
     final_cut: { artifact_sha256: sCut, approved_at: "x", user_message: "" }, covers: { artifact_sha256: coverPairHash(s34, s43), approved_at: "x", user_message: "" } }));
   await fs.writeFile(path.join(auto, "cover-selection.json"), JSON.stringify({ "3:4": { sha256: s34, path: "05-cover/v001/a.png", selected_at: "x" }, "4:3": { sha256: s43, path: "05-cover/v001/b.png", selected_at: "x" } }));
   await fs.writeFile(path.join(auto, "decisions.json"), JSON.stringify({ cover_text: "AI 又忘了？" }));
-  return setContent(env, c.id, { status: "publish_ready", video: { final: { sha256: sCut, asset_filename: "final-g1.mp4", srt_path: srt, covers: { "3:4": c34, "4:3": c43 } } } as never });
+  return setContent(env, c.id, { status: "publish_ready", video: { final: { sha256: sCut, asset_filename: "final-g1.mp4", srt_path: srt, covers: { "3:4": c34, "4:3": c43 }, generation: 1, manifest_hash: "m1" } } as never });
 }
 
 describe("对账（§4）：启用之后", () => {

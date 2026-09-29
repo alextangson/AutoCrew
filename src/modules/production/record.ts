@@ -137,7 +137,7 @@ function factFrom(a: RecordArgs, p: FilePlan, doc: ProductionDoc, relPath: strin
 function upsertFact(doc: ProductionDoc, fact: Fact, existing: Fact | undefined): Fact {
   if (!existing) { doc.facts.push(fact); return fact; }
   const target = doc.facts.find((f) => f.id === existing.id)!;
-  Object.assign(target, { state: fact.state, path: fact.path, availability: "present", evidence: fact.evidence, ...(fact.txn_id ? { txn_id: fact.txn_id } : {}) });
+  Object.assign(target, { state: fact.state, path: fact.path, availability: "present", evidence: fact.evidence, size: fact.size, mtime_ms: fact.mtime_ms, ...(fact.txn_id ? { txn_id: fact.txn_id } : {}) });
   return target;
 }
 
@@ -170,14 +170,19 @@ async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir:
   const moves = p.action === "move" || p.action === "clone";
   const txn: Txn = { id: newId("txn"), kind: "record", content_id: content.id, round: 0, ops: [], at: new Date().toISOString() };
   let rel: string | null = p.action === "in_place" && p.location === "project" ? path.relative(p.projectRoot, p.source) : null;
+  let placed: { size: number; mtime_ms: number } | null = null;
   if (moves) {
-    try { rel = await place(p, content, txn, dataDir); }
-    catch (err) { return placeFailed(dataDir, txn, err); }
+    try {
+      rel = await place(p, content, txn, dataDir);
+      // 落位后的文件自己的大小 / 修改时间（克隆会得到新的修改时间；Codex 审 seg2 P1：别拿源文件时间比目标文件）
+      const id = await identityOf(path.join(p.projectRoot, rel));
+      placed = { size: id.size, mtime_ms: id.mtime_ms };
+    } catch (err) { return placeFailed(dataDir, txn, err); }
   }
   let r;
   try {
     r = await mutateProduction(content.id, dataDir, (doc) => {
-      const fact = reuse ? doc.facts.find((f) => f.id === p.existing!.id)! : upsertFact(doc, factFrom(a, p, doc, rel, moves ? txn.id : undefined), p.existing);
+      const fact = reuse ? doc.facts.find((f) => f.id === p.existing!.id)! : upsertFact(doc, { ...factFrom(a, p, doc, rel, moves ? txn.id : undefined), ...(placed ?? {}) }, p.existing);
       // 已有字幕没绑成片、这次报了 for_cut：补上绑定，不丢新信息（Codex 审 P2）
       if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
       const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}) };

@@ -48,7 +48,8 @@ export async function registeredPackage(content: Content, dataDir: string): Prom
   const c34 = await fileOf(root, accepted(doc, "cover", reg.cover_3x4_sha), "3:4 封面");
   const c43 = await fileOf(root, accepted(doc, "cover", reg.cover_4x3_sha), "4:3 封面");
   for (const x of [video, c34, c43]) if (typeof x !== "string") return { ok: false, code: "registered_file_changed", error: x.error };
-  const srtFact = accepted(doc, "srt", reg.srt_sha);
-  const srt = srtFact ? await fileOf(root, srtFact, "字幕") : null;
-  return { ok: true, files: { registration: reg, video: video as string, cover34: c34 as string, cover43: c43 as string, srt: typeof srt === "string" ? srt : null } };
+  // 登记绑的字幕同样不可少（Codex 审 seg2 P2）：缺了或字节变了照样拦
+  const srt = reg.srt_sha ? await fileOf(root, accepted(doc, "srt", reg.srt_sha), "字幕") : null;
+  if (srt && typeof srt !== "string") return { ok: false, code: "registered_file_changed", error: srt.error };
+  return { ok: true, files: { registration: reg, video: video as string, cover34: c34 as string, cover43: c43 as string, srt } };
 }

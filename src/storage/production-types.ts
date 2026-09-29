@@ -95,6 +95,8 @@ export interface Decision {
   cover_3x4_sha?: string;
   cover_4x3_sha?: string;
   cover_text?: string;
+  /** cover_reject：这次打回涉及的封面 sha（整批打回时是当时展示的全部封面） */
+  shas?: string[];
   /** approval_revoke / publish_correction 撤的是哪条决定 */
   target_id?: string;
   platform?: string;

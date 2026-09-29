@@ -90,6 +90,10 @@ export async function workbenchDecision(content: Content, dataDir: string, param
     const f = factFor(doc, "cut", params.artifact_sha256);
     return founderDecision(content.id, "reject_cut", { fact_id: f?.id, sha256: params.artifact_sha256, note: params.note }, dataDir);
   }
-  if (params.action === "reject" && which === "covers") return founderDecision(content.id, "reject_cover", { sha256: params.artifact_sha256, note: params.note }, dataDir);
+  if (params.action === "reject" && which === "covers") {
+    // 整批打回：把当时展示的全部封面 sha 记上，含在里面的已选封面随之失效
+    const shas = executionFromFacts(doc).artifacts.filter((a) => a.role !== "final-cut").map((a) => a.sha256);
+    return founderDecision(content.id, "reject_cover", { sha256: params.artifact_sha256, cover_shas: shas, note: params.note }, dataDir);
+  }
   return { ok: false, error: "这一步在本体下没有对应的决定（粗剪 / 分镜门照旧走交接）" };
 }

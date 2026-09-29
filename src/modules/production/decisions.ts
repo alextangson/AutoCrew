@@ -10,6 +10,7 @@ import { bodyHash, isOntologyActive, newId, readProductionDocOrEmpty } from "../
 import type { Decision, DecisionType, Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isModelCall } from "../../storage/stage-guard.js";
 import { withFileOwnership } from "./mutex.js";
+import { validCoverApproval, validCutApproval } from "./derive.js";
 import { adoptCandidate } from "./record.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
 import { explainContent } from "./read.js";
@@ -63,7 +64,8 @@ async function approveCut(ctx: Ctx): Promise<Result> {
   if (typeof f === "string") return fail("stale", f);
   if (f.state !== "accepted") return fail("not_accepted", "这版成片还是候选：先确认它是这条的成片");
   const bh = bodyHash(ctx.content.body);
-  const same = sameDecision(ctx.doc, "cut_approval", (d) => d.sha256 === f.sha256 && d.body_hash === bh);
+  // 幂等重放只对仍然有效的批准（Codex 审 seg2 P2）：被打回之后再批，要落一条晚于打回的新决定
+  const same = sameDecision(ctx.doc, "cut_approval", (d) => d.sha256 === f.sha256 && d.body_hash === bh && validCutApproval(ctx.doc, ctx.content.body)?.id === d.id);
   return { ok: true, decision: same ?? (await push(ctx, { type: "cut_approval", fact_id: f.id, sha256: f.sha256, body_hash: bh }, "cut_approved")) };
 }
 
@@ -75,7 +77,8 @@ async function rejectWith(ctx: Ctx, type: "cut_reject" | "cover_reject", kind: F
   if (typeof f === "string") return fail("stale", f);
   if (!f.sha256) return fail("stale", "页面上没有可打回的产物，刷新再看");
   const same = sameDecision(ctx.doc, type, (d) => d.sha256 === f.sha256 && d.note === note);
-  return { ok: true, decision: same ?? (await push(ctx, { type, ...(f.id ? { fact_id: f.id } : {}), sha256: f.sha256, note }, type === "cut_reject" ? "cut_rejected" : "cover_rejected")) };
+  const shas = Array.isArray(ctx.params.cover_shas) ? ctx.params.cover_shas.map(String) : f.id ? [f.sha256] : [];
+  return { ok: true, decision: same ?? (await push(ctx, { type, ...(f.id ? { fact_id: f.id } : {}), sha256: f.sha256, note, ...(type === "cover_reject" ? { shas } : {}) }, type === "cut_reject" ? "cut_rejected" : "cover_rejected")) };
 }
 
 /** 用这一版封面：两个比例都得有（E10），封面字当场要有（E9：没写就用报上来的默认字，都没有就要创始人补） */
@@ -87,7 +90,8 @@ async function pickCover(ctx: Ctx): Promise<Result> {
   const text = str(ctx.params.cover_text) || a.text || b.text || "";
   if (!text) return fail("cover_text_required", "选封面时要写封面字");
   const bh = bodyHash(ctx.content.body);
-  const same = sameDecision(ctx.doc, "cover_approval", (d) => d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh);
+  const same = sameDecision(ctx.doc, "cover_approval", (d) => d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh
+    && validCoverApproval(ctx.doc, ctx.content.body)?.id === d.id);
   return { ok: true, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, cover_text: text, body_hash: bh }, "cover_picked")) };
 }
 
