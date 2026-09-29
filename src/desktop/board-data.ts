@@ -28,6 +28,8 @@ export interface BoardItem {
   /** 正文字数（去掉空白），配合 wordsPerMinute 估时长（§29） */
   chars: number;
   finalDurationMs: number | null;
+  /** 当前交接代次的清单哈希：撤回时带上，确认框开着期间换了代次就拒（不误撤新一代） */
+  handoffHash: string | null;
   cover: BoardCover | null;
   /** 只有待发布 / 已发布的稿件才读发布记录 */
   publish: PublishRecord | null;
@@ -117,6 +119,7 @@ async function itemOf(c: Content, column: Exclude<BoardColumn, "选题">, dataDi
     topicId: current.topicId ?? null, column: col, createdAt: current.createdAt, updatedAt: current.updatedAt,
     draftReadyAt: current.draftReadyAt ?? null, chars: countChars(current.body ?? ""),
     finalDurationMs: current.video?.final?.duration_ms ?? null,
+    handoffHash: current.video?.handoff?.hash ?? null,
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,

@@ -93,7 +93,9 @@ export async function markPublished(id: string, platform: string, url: unknown, 
   if (link === null) return { ok: false, code: "bad_request", error: "链接要是 http(s) 地址" };
   const content = await getContent(id, dataDir);
   if (!content) return { ok: false, code: "not_found", error: "找不到这条稿" };
-  if (!MARKABLE.has(content.status)) return { ok: false, code: "wrong_stage", error: "这条还没到发布这一步" };
+  // 非视频稿认过（approved）就在「待发布」列，也能记「我发了」；视频稿仍要走完剪辑与封面
+  const markable = MARKABLE.has(content.status) || (content.status === "approved" && !isVideoPlatform(content.platform));
+  if (!markable) return { ok: false, code: "wrong_stage", error: "这条还没到发布这一步" };
   const mark: ManualPublication = { platform, at: new Date().toISOString(), ...(link ? { url: link } : {}) };
   const patch = (cur: Content) => ({ manualPublications: [...(cur.manualPublications ?? []).filter((m) => m.platform !== platform), mark] });
   const r = content.status === "published"

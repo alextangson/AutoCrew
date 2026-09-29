@@ -15,6 +15,7 @@ import { sha256File, coverPairHash } from "./manifest.js";
 import { readProjectJson, type ProjectDecisions } from "./project-evidence.js";
 import type { RegisterApprovals } from "./types.js";
 import { serializeVideoLine } from "./lock.js";
+import { revokeHandoff } from "./revoke.js";
 import { COVER_ROLES, normalizeExecution } from "./execution-index.js";
 import { scanCoverFolder, withFolderCovers } from "./cover-scan.js";
 import { GATES, approvalInvalidReason, approvalTarget, gateStates, gateView, normalizeApprovals, rejectionTarget,
@@ -50,6 +51,8 @@ export async function verifyStoredApprovals(content: Content, requested: Registe
 }
 
 export async function founderProjectReview(id: string, dataDir: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
+  // 撤回自己排队（全局交接锁 + 这条视频线），不能套在下面的 serializeVideoLine 里，否则自锁
+  if (params?.action === "revoke") return founderRevoke(id, dataDir, params);
   return serializeVideoLine(id, async () => {
     const content = await getContent(id, dataDir), binding = resolveContentProject(id, dataDir);
     if (!content || (!binding && !content.video?.handoff)) return { ok: true, enabled: false, status: content?.status ?? null };
@@ -71,6 +74,19 @@ export async function founderProjectReview(id: string, dataDir: string, params?:
       execution: ctx.execution, cover_selection: ctx.selection, approvals: ctx.approvals, gates: gateStates(ctx) };
   });
 }
+
+/**
+ * 创始人撤回交接（看板「撤回交接」）：浏览器会话本身就是创始人权限，不过认领门；
+ * host 不是交接方，revoke 走「认领释放」分支——同 Codex 撤回，重新交接时另发令牌。
+ */
+async function founderRevoke(id: string, dataDir: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  // 必须带创始人确认时看到的代次：确认框开着期间别处撤了又重交，旧确认不许作废新一代
+  const manifestHash = typeof params.manifest_hash === "string" && params.manifest_hash ? params.manifest_hash : null;
+  if (!manifestHash) return { ok: false, code: "invalid_params", error: "撤回要带交接代次（manifest_hash），刷新看板再撤" };
+  const result = await revokeHandoff({ contentId: id, host: FOUNDER_HOST, manifestHash }, { dataDir, gate: async () => ({ grant: {} }) });
+  return { ...result };
+}
+const FOUNDER_HOST = "founder-workbench";
 
 async function saveDecisions(content: Content, dataDir: string, params: Record<string, unknown>): Promise<void> {
   if (params.draft_hash !== draftHash(content)) throw new Error("稿件已更新，请重新确认");

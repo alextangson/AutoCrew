@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { makeFixture, handedOff, writePng } from "./handoff-testkit.js";
+import { makeFixture, handedOff, seedAccepted, writePng } from "./handoff-testkit.js";
 import { initializeProjectLayout, contentFile } from "../../../storage/content-project.js";
 import { getContent, updateContent } from "../../../storage/local-store.js";
 import { founderProjectReview } from "./founder-review.js";
@@ -114,5 +114,36 @@ describe("gateView 失效条件", () => {
     const legacy = normalizeApprovals({ source: "founder-workbench", generation: 2, manifest_hash: "h2", rough_cut: approval });
     expect(legacy?.bindings.rough_cut).toEqual({ generation: 2, manifest_hash: "h2", draft_hash: "" });
     expect(gateView("rough_cut", ctx({ approvals: legacy })).status).toBe("invalidated");
+  });
+});
+
+describe("创始人撤回交接（看板）", () => {
+  it("跑完整撤回：代次作废、回到 draft_ready、认领释放；再撤是重放", async () => {
+    const v = await handedOff(env.dir, env.aroll);
+    const r = await founderProjectReview(v.id, env.dir, { action: "revoke", manifest_hash: v.manifestHash });
+    expect(r).toMatchObject({ ok: true, status: "revoked", content_status: "draft_ready", manifest_hash: v.manifestHash });
+    const after = (await getContent(v.id, env.dir))!;
+    expect(after.status).toBe("draft_ready");
+    expect(after.video?.revoked).toContain(v.manifestHash);
+    expect(after.claim).toBeUndefined();
+    expect(await founderProjectReview(v.id, env.dir, { action: "revoke", manifest_hash: v.manifestHash })).toMatchObject({ ok: true, replayed: true });
+  });
+
+  it("没交接过：nothing_to_revoke；不在剪辑中：not_editing", async () => {
+    const seeded = await seedAccepted(env.dir);
+    expect(await founderProjectReview(seeded.id, env.dir, { action: "revoke", manifest_hash: "h" })).toMatchObject({ ok: false, code: "nothing_to_revoke" });
+    const v = await handedOff(env.dir, env.aroll);
+    const c = (await getContent(v.id, env.dir))!;
+    await updateContent(v.id, { status: "cover_pending", video: { ...c.video } }, env.dir);
+    expect(await founderProjectReview(v.id, env.dir, { action: "revoke", manifest_hash: v.manifestHash })).toMatchObject({ ok: false, code: "not_editing" });
+  });
+
+  it("不带代次或代次已换：拒绝，不动当前交接", async () => {
+    const v = await handedOff(env.dir, env.aroll);
+    expect(await founderProjectReview(v.id, env.dir, { action: "revoke" })).toMatchObject({ ok: false, code: "invalid_params" });
+    expect(await founderProjectReview(v.id, env.dir, { action: "revoke", manifest_hash: "stale" })).toMatchObject({ ok: false, code: "stale_handoff" });
+    const after = (await getContent(v.id, env.dir))!;
+    expect(after.status).toBe("editing");
+    expect(after.video?.revoked ?? []).not.toContain(v.manifestHash);
   });
 });

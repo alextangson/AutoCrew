@@ -73,11 +73,15 @@ describe("我的内容视图", () => {
 
   it("puts items in columns, writes the guide, and is idempotent", async () => {
     await make("写稿一", "drafting");
+    await make("等认一", "draft_ready");
+    await make("等认公众号", "draft_ready", { platform: "wechat_mp" });
     await make("录制一", "approved");
     await make("公众号一", "approved", { platform: "wechat_mp" });
     const first = await sync();
     expect(first.errors).toEqual([]);
     expect(await fs.readFile(path.join(folder("写稿中", "写稿一"), "口播稿.md"), "utf8")).toBe("写稿一 的正文");
+    expect(await exists(path.join(folder("写稿中", "等认一"), "口播稿.md"))).toBe(true);
+    expect(await exists(path.join(folder("写稿中", "等认公众号"), "口播稿.md"))).toBe(true);
     expect(await exists(path.join(folder("待录制", "录制一"), "口播稿.md"))).toBe(true);
     expect(await exists(path.join(folder("待发布", "公众号一"), "口播稿.md"))).toBe(true);
     expect(await exists(path.join(view, "使用说明.md"))).toBe(true);

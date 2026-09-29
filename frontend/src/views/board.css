@@ -65,3 +65,5 @@
 .prow-more summary { font-size: var(--fs-xs); color: var(--muted); cursor: pointer; margin-top: var(--s1); }
 .prow-more button { display: block; margin: var(--s1) 0; }
 
+.bcard-badge { font-family: inherit; color: var(--ink); }
+.bcol-refuse { font-size: var(--fs-xs); color: var(--danger); margin: var(--s1) 0 0; }
