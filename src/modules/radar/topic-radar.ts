@@ -20,6 +20,8 @@ export interface RadarItem {
   title: string;
   link: string;
   source: string;
+  /** 产出它的源 id(稳定键;source 是显示名、可改)。按间隔沿用上轮条目时靠它认领 */
+  sourceId?: string;
   publishedAt: string;
   /** 源摘要(RSS description 去标签截断)——灵感卡"看得出是什么"的原料(V5.4c) */
   description?: string;
@@ -395,7 +397,7 @@ export async function refreshTopicRadar(
       const last = prev?.sourceFetchedAt?.[src.id];
       const minMs = (src.config.minIntervalHours ?? 0) * 3600_000;
       if (last && minMs > 0 && Date.now() - Date.parse(last) < minMs) {
-        items.push(...(prev?.items.filter((it) => it.source === src.name) ?? []));
+        for (const it of prev?.items ?? []) if (it.sourceId === src.id) items.push({ ...it, source: src.name });
         sourceFetchedAt[src.id] = last;
         return;
       }
@@ -416,7 +418,7 @@ export async function refreshTopicRadar(
             // 对用户就是坏的,宁可在源清单上看见它红着。
             if (parsed.length === 0) throw new Error("解析 0 条,源可能已失效");
             for (const item of parsed) {
-              mine.push({ ...item, source: src.name });
+              mine.push({ ...item, source: src.name, sourceId: src.id });
             }
           } finally {
             clearTimeout(timer);
@@ -430,6 +432,7 @@ export async function refreshTopicRadar(
               title: it.title,
               link: it.url,
               source: src.name,
+              sourceId: src.id,
               publishedAt: scannedAt,
               ...(it.summary ? { description: it.summary } : {}),
               ...(typeof it.heat === "number" ? { heat: it.heat } : {}),
@@ -448,6 +451,16 @@ export async function refreshTopicRadar(
     const dir = getDataDir(dataDir);
     await fs.mkdir(dir, { recursive: true });
     const cache: TopicCache = { fetchedAt: new Date().toISOString(), items, sourceFetchedAt };
+    await fs.writeFile(cachePath(dataDir), JSON.stringify(cache, null, 2) + "\n");
+  } else if (Object.keys(sourceFetchedAt).length > 0) {
+    // 整轮 0 条但有源成功(如只开了 X 且当天没高赞帖):上轮内容与 TTL 不动,只把扫描时间记下,
+    // 否则付费源的间隔永远起不了算
+    await fs.mkdir(getDataDir(dataDir), { recursive: true });
+    const cache: TopicCache = {
+      fetchedAt: prev?.fetchedAt ?? new Date(0).toISOString(),
+      items: prev?.items ?? [],
+      sourceFetchedAt: { ...prev?.sourceFetchedAt, ...sourceFetchedAt },
+    };
     await fs.writeFile(cachePath(dataDir), JSON.stringify(cache, null, 2) + "\n");
   }
   return { ok: items.length > 0, itemCount: items.length, failedSources };

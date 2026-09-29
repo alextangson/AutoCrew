@@ -527,6 +527,30 @@ describe("per-source minIntervalHours (付费源一天一次)", () => {
     expect(calls).toContain("x");
   });
 
+  it("X alone returning nothing still records its clock (no other source to force a cache write)", async () => {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([{ id: "x", kind: "x", name: "X", enabled: true, config: { minIntervalHours: 24 } }], testDir);
+    const calls: string[] = [];
+    const empty = async (kind: string) => { calls.push(kind); return []; };
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: empty });
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: empty });
+    expect(calls).toEqual(["x"]);
+  });
+
+  it("renaming a source keeps its carried items (matched by id, not display name)", async () => {
+    await setup();
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting([]) });
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "x", kind: "x", name: "X 关注清单", enabled: true, config: { minIntervalHours: 24 } },
+      { id: "yt", kind: "youtube", name: "YouTube", enabled: true, config: {} },
+    ], testDir);
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toEqual(["youtube"]);
+    expect((await loadTopicCache(testDir))!.items.filter((i) => i.sourceId === "x")).toHaveLength(1);
+  });
+
   it("a successful but empty X fetch still counts, so a quiet day doesn't trigger paid rescans", async () => {
     await setup();
     await refreshTopicRadar(testDir, globalThis.fetch, {

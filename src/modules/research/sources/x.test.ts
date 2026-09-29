@@ -53,6 +53,16 @@ describe("fetchX (关注清单模式)", () => {
     expect(items.map((i) => i.title)).toEqual(["good 帖"]);
   });
 
+  it("全部账号都失败(如全量 429) → 抛错,不伪装成「成功但没新帖」", async () => {
+    const fetchImpl = vi.fn(async () => new Response("rate limited", { status: 429 })) as unknown as typeof fetch;
+    await expect(fetchX(20, { apiKey: "k", accounts: ["a", "b"], fetchImpl })).rejects.toThrow(/全部拉取失败/);
+  });
+
+  it("拉成功但都是低赞帖 → 返回空列表(是成功,不抛错)", async () => {
+    const fetchImpl = vi.fn(async () => userReply([{ text: "闲聊", url: "u", likeCount: 1 }])) as unknown as typeof fetch;
+    await expect(fetchX(20, { apiKey: "k", accounts: ["quiet"], fetchImpl })).resolves.toEqual([]);
+  });
+
   it("无 key → 抛错(不静默返回空,让上层归入 failedSources)", async () => {
     await expect(fetchX(20, { apiKey: "" })).rejects.toThrow(/key 未配置/);
   });

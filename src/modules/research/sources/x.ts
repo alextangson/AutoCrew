@@ -49,9 +49,9 @@ interface XTweet {
 
 /**
  * 拉单个账号的近期原创帖 → 取高赞前 N 条。
- * 单请求超时(防挂死);限流/错/空重试一次(空多为限流);仍失败吞成 []，不拖垮整体。
+ * 单请求超时(防挂死);限流/错/空重试一次(空多为限流);仍失败返回 null(与「拉到了但没高赞帖」的 [] 区分)。
  */
-async function fetchAccount(handle: string, apiKey: string, fetchFn: typeof fetch): Promise<SourceItem[]> {
+async function fetchAccount(handle: string, apiKey: string, fetchFn: typeof fetch): Promise<SourceItem[] | null> {
   const url = `${ENDPOINT}?userName=${encodeURIComponent(handle)}`;
   for (let attempt = 0; attempt <= RETRY; attempt += 1) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 400));
@@ -85,12 +85,13 @@ async function fetchAccount(handle: string, apiKey: string, fetchFn: typeof fetc
       clearTimeout(timer);
     }
   }
-  return [];
+  return null;
 }
 
 /**
  * 从关注清单顺序拉高信号原创帖,按赞数汇总返回。
  * 无 key → 抛错(由 radar 归入 failedSources,不静默);单账号失败隔离。
+ * 一个账号都没拉成功 → 抛错:否则全量限流会被当成「成功但没新帖」,雷达按一天一次的间隔记了时间就不再重试。
  * 顺序拉(provider 限并发) + 总预算封顶——预算到就停,已收集的照常返回,漏的下轮补。
  */
 export async function fetchX(limit = 10, deps: XDeps = {}): Promise<SourceItem[]> {
@@ -101,9 +102,15 @@ export async function fetchX(limit = 10, deps: XDeps = {}): Promise<SourceItem[]
 
   const deadline = Date.now() + BUDGET_MS;
   const collected: SourceItem[] = [];
+  let succeeded = 0;
   for (const handle of accounts) {
-    collected.push(...(await fetchAccount(handle, apiKey, fetchFn)));
+    const got = await fetchAccount(handle, apiKey, fetchFn);
+    if (got) {
+      succeeded += 1;
+      collected.push(...got);
+    }
     if (Date.now() > deadline) break;
   }
+  if (succeeded === 0) throw new Error("X 关注清单全部拉取失败(限流/网络/超时)");
   return collected.sort((a, b) => (b.heat ?? 0) - (a.heat ?? 0)).slice(0, Math.max(limit, 20));
 }
