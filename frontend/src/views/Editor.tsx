@@ -265,6 +265,9 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     return () => clearTimeout(t);
   }, [editor, persistDraft]);
 
+  // Hook 必须在所有提前返回之前无条件调用（加载中 → 加载完 Hook 数不能变）
+  const ontology = useOntologyEnabled(Boolean(c && VIDEO_PLATFORMS.has(c.platform)));
+
   if (!c) return loadError ? (
     <div className="pad">
       <p role="alert">{loadError}</p>
@@ -425,7 +428,6 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   };
 
   const isVideo = VIDEO_PLATFORMS.has(c.platform);
-  const ontology = useOntologyEnabled(isVideo);
   const imageSlots = [...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length;
 
   const workspace = workspaceForStatus(c.status);
