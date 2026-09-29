@@ -105,7 +105,9 @@ describe("MCP 宿主不能伪造视频稿的创始人批准", () => {
     const host = { _dataDir: dir, _host: "claude", claim_token: token };
     // 真交接会留下交接记录（这里只补上记录本身，形状见 VideoHandoffRecord）
     await updateContent(id, { video: { handoff: { generation: 1, hash: "a".repeat(64) } } } as unknown as ContentUpdates, dir);
-    expect(await executeContentSave({ ...host, action: "transition", id, target_status: "approved" })).toMatchObject({ ok: true });
+    // 本体 §2.1：模型连退回「已过审」也不行（认稿及之后只归创始人）；退回由创始人在工作台做
+    expect(await executeContentSave({ ...host, action: "transition", id, target_status: "approved" })).toMatchObject({ ok: false, code: "founder_decision_required" });
+    expect(await executeContentSave({ _dataDir: dir, claim_token: token, action: "transition", id, target_status: "approved" })).toMatchObject({ ok: true });
     expect(await executeContentSave({ ...host, action: "update", id, platform: "wechat_mp" })).toMatchObject({ ok: false, code: "platform_locked" });
   });
 

@@ -234,7 +234,8 @@ export function buildWorkspaceTools(ctx: WorkspaceToolContext): LoopTool[] {
         }
         let res: Payload;
         try {
-          res = await content({ id: contentId, target_status: target, action: "transition", ...dirParams });
+          // 聊天里的模型推的：按模型调用算（本体 §2.1 认稿只归创始人，这里的白名单本来也到不了认稿）
+          res = await content({ id: contentId, target_status: target, action: "transition", ...dirParams, _modelCall: true });
         } catch (err) {
           return failClean(err);
         }

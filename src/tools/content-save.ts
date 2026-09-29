@@ -5,6 +5,7 @@ import {
   LOCAL_HOST,
   saveContent,
   listContents,
+  getDataDir,
   getContent,
   updateContent,
   updateContentChecked,
@@ -28,6 +29,9 @@ import { recordDiff } from "../modules/learnings/diff-tracker.js";
 import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/style-distiller.js";
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
+import { ScriptFrozenError } from "../storage/production-store.js";
+import { executeRecord } from "../modules/production/record.js";
+import { reconcileContent } from "../modules/production/reconcile.js";
 
 const ALL_STATUSES = [
   "topic_saved", "drafting", "needs_evidence", "draft_ready", "reviewing", "revision",
@@ -37,14 +41,15 @@ const ALL_STATUSES = [
 ] as const;
 
 export const contentSaveSchema = Type.Object({
-  action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore">({
+  action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore" | "record">({
     type: "string",
-    enum: ["save", "list", "get", "summary", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore"],
+    enum: ["save", "list", "get", "summary", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore", "record"],
     description:
       "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
       "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
       "'siblings' list sibling content, 'allowed_transitions' show valid next statuses, " +
-      "'adoption' record adoption verdict (采纳率北极星读数)——仅工作台可用，宿主调用会被服务端拒绝（采纳不能由模型代填）.",
+      "'adoption' record adoption verdict (采纳率北极星读数)——仅工作台可用，宿主调用会被服务端拒绝（采纳不能由模型代填）, " +
+      "'record' 报制作事实（原片 aroll / 成片 cut / 字幕 srt / 封面 cover / ChatCut 工程 chatcut_project）：只报盘上有什么，不带任何批准；认稿、成片通过、选封面只能创始人点.",
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   content_id: Type.Optional(Type.String({ description: "Alias of `id` — other AutoCrew tools call it content_id" })),
@@ -89,6 +94,21 @@ export const contentSaveSchema = Type.Object({
   reason_note: Type.Optional(Type.String({
     description: "Optional free-text rewrite reason for verdict=rewritten (IA v5 V5.0) — user's own words on what went wrong; high-value negative signal for style distillation.",
   })),
+  kind: Type.Optional(Type.Unsafe<string>({
+    type: "string",
+    enum: ["aroll", "cut", "srt", "cover", "chatcut_project", "publish"],
+    description: "record：事实种类。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程（publish 暂未开放）.",
+  })),
+  request_id: Type.Optional(Type.String({ description: "record：这次报告的请求号；重试用同一个，服务端直接重放上次结果." })),
+  path: Type.Optional(Type.String({ description: "record：文件的本机路径（可 ~ 开头）。项目内原地收；原片收件箱、ChatCut / 剪映导出目录会挪 / 克隆进项目；其他位置只记候选." })),
+  ratio: Type.Optional(Type.String({ description: "record kind=cover：3:4 或 4:3（按像素核对）." })),
+  version: Type.Optional(Type.Integer({ minimum: 1, description: "record kind=cover：封面版本号；不填就放新一版." })),
+  cover_text: Type.Optional(Type.String({ description: "record kind=cover：封面上的字（只是默认值，不是批准）." })),
+  for_cut: Type.Optional(Type.String({ description: "record kind=srt：这份字幕属于哪版成片（成片 fact_id 或 sha256）；不填 = 本轮最新成片." })),
+  uses_aroll: Type.Optional(Type.Array(Type.String(), { description: "record kind=chatcut_project：工程里用到的原片 fact_id." })),
+  chatcut_project_id: Type.Optional(Type.String({ description: "record kind=chatcut_project：ChatCut 工程 id." })),
+  timeline_id: Type.Optional(Type.String({ description: "record kind=chatcut_project：时间线 id（可选）." })),
+  note: Type.Optional(Type.String({ description: "record：一句备注（可选）." })),
   claim_token: Type.Optional(Type.String({
     description:
       "认领令牌（写操作回执或 autocrew_desk claim 给的）。这篇有活认领时 update / transition 必须带它，同宿主的另一个会话也一样；没人认领就不用带，写下去会自动认领并回令牌。",
@@ -101,7 +121,8 @@ export const contentSaveSchema = Type.Object({
  * `{...existing, ...updates}` spread and destroy existing values.
  */
 function buildContentUpdates(params: Record<string, unknown>): ContentUpdates {
-  const updates: ContentUpdates = {};
+  // 谁改的正文（本体 §13-C）：工作台人手改 = 创始人，认稿随改稿重绑；模型改 = agent，认稿作废
+  const updates: ContentUpdates = isModelCall(params) ? {} : { _editor: "founder" };
   if (params.title !== undefined) updates.title = params.title as string;
   if (params.body !== undefined) updates.body = params.body as string;
   if (params.platform !== undefined) updates.platform = params.platform as string;
@@ -158,6 +179,11 @@ function gateContentWrite(
   return gateClaimWrite(id, { host, token: token || undefined }, dataDir);
 }
 
+/** 本体 §2.1：模型推 = agent（认稿及之后一律拒），工作台人手推 = 创始人（认稿即写认稿决定） */
+function decidedBy(params: Record<string, unknown>): "agent" | "founder" {
+  return isModelCall(params) ? "agent" : "founder";
+}
+
 function importSource(params: Record<string, unknown>) {
   return { kind: "manual_import" as const, importedAt: new Date().toISOString(), reason: String(params.import_reason).trim() };
 }
@@ -198,13 +224,18 @@ export async function executeContentSave(
   // 只读进度摘要（v1.3）：查「这篇到哪了」不用拉 16KB 的整篇
   if (action === "summary") return contentSummary(String(params.id ?? "").trim(), dataDir);
 
+  // 本体 §3：agent 只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不要认领、不要交接
+  if (action === "record") return executeRecord(params);
+
   if (action === "get") {
     const id = params.id as string;
     if (!id) return { ok: false, error: "id is required for get" };
+    // 本体 §4：get 前对这条做一次项目内快扫（只在启用后写）；扫失败照样给稿，但把原因带出来
+    const scanned = await reconcileContent(id, dataDir ?? getDataDir()).then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
     const content = await getContent(id, dataDir);
     if (!content) return { ok: false, error: `Content ${id} not found` };
     const { resolveContentProject } = await import("../storage/content-project.js");
-    return { ok: true, content: redactClaim(content), project: resolveContentProject(id, dataDir) };
+    return { ok: true, content: redactClaim(content), project: resolveContentProject(id, dataDir), ...(scanned ? { reconcile_warning: `对账没跑完：${scanned}` } : {}) };
   }
 
   if (action === "update") {
@@ -229,7 +260,7 @@ export async function executeContentSave(
     if (platformLock && await platformLock(oldContent)) return { ok: false, code: "platform_locked", error: PLATFORM_LOCKED_ERROR };
     // 带 status 的 update 先预检流转：被拒就原样返回，认领门和正文都不动
     if (params.status) {
-      const pre = await transitionPreflight(id, normalizeLegacyStatus(params.status as string), undefined, dataDir);
+      const pre = await transitionPreflight(id, normalizeLegacyStatus(params.status as string), { decidedBy: decidedBy(params) }, dataDir);
       if (!pre.ok) return rejectedTransition(pre);
     }
     const gate = await gateContentWrite(params, id, dataDir);
@@ -239,11 +270,16 @@ export async function executeContentSave(
     const newBody = params.body as string | undefined;
 
     let updated: Content | null;
-    if (platformLock) {
-      const checked = await updateContentChecked(id, buildContentUpdates(params), platformLock, dataDir);
-      if (checked && !checked.ok) return { ok: false, code: "platform_locked", error: checked.reason, ...grant };
-      updated = checked?.content ?? null;
-    } else updated = await updateContent(id, buildContentUpdates(params), dataDir);
+    try {
+      if (platformLock) {
+        const checked = await updateContentChecked(id, buildContentUpdates(params), platformLock, dataDir);
+        if (checked && !checked.ok) return { ok: false, code: "platform_locked", error: checked.reason, ...grant };
+        updated = checked?.content ?? null;
+      } else updated = await updateContent(id, buildContentUpdates(params), dataDir);
+    } catch (err) {
+      if (err instanceof ScriptFrozenError) return { ok: false, code: err.code, error: err.message, ...grant };
+      throw err;
+    }
     if (!updated) return { ok: false, error: `Content ${id} not found` };
 
     // 带 status 的 update 转成一次真流转：阶段门只有一条通道，直改状态跳阶段的路已封死。
@@ -252,7 +288,7 @@ export async function executeContentSave(
       const target = normalizeLegacyStatus(params.status as string);
       if (target !== updated.status) {
         const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : LOCAL_HOST;
-        const moved = await transitionStatus(id, target, { host }, dataDir);
+        const moved = await transitionStatus(id, target, { host, decidedBy: decidedBy(params) }, dataDir);
         if (!moved.ok) return { ok: false, error: moved.error, ...(moved.blocked ? { blocked: true } : {}), ...(moved.code ? { code: moved.code } : {}), ...grant };
         updated = moved.content ?? updated;
       }
@@ -337,7 +373,7 @@ export async function executeContentSave(
     if (!id) return { ok: false, error: "id is required for transition" };
     if (!targetStatus) return { ok: false, error: "target_status is required for transition" };
     // 状态机和阶段门先于认领门：被拒的流转不新占、不续约认领
-    const pre = await transitionPreflight(id, normalizeLegacyStatus(targetStatus), { force: params.force as boolean }, dataDir);
+    const pre = await transitionPreflight(id, normalizeLegacyStatus(targetStatus), { force: params.force as boolean, decidedBy: decidedBy(params) }, dataDir);
     if (!pre.ok) return rejectedTransition(pre);
     const gate = await gateContentWrite(params, id, dataDir);
     if ("denied" in gate) return gate.denied;
@@ -352,6 +388,7 @@ export async function executeContentSave(
         force: params.force as boolean,
         diffNote: params.diff_note as string,
         host,
+        decidedBy: decidedBy(params),
         ...(from ? { expectedStatus: from } : {}),
       },
       dataDir,

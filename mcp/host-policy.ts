@@ -21,7 +21,8 @@ type Allowlist = Readonly<Record<string, ReadonlySet<string> | "*">>;
 const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
   codex: {
     autocrew_video: new Set(["register", "status", "revoke", "report", "match", "confirm"]),
-    autocrew_content: new Set(["get", "summary"]),
+    // 本体 §3：剪辑工位只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不带任何批准语义
+    autocrew_content: new Set(["get", "summary", "record"]),
     // 素材只写路径（§13.4-F）：库内记相对路径，库外挪进项目再记
     autocrew_asset: new Set(["add"]),
     autocrew_desk: new Set(["inbox", "claim", "release"]),

@@ -23,6 +23,7 @@ import type { AngleCard } from "../modules/research/brief-store.js";
 // 证据账本的落盘形状归账本模块定义（P1 §3.3），这里同样只引用
 import type { EvidenceLedgerSnapshot } from "../modules/research/evidence-ledger.js";
 import type { ContentVideoLink } from "../modules/video/handoff/types.js";
+import { applyScriptEdit, modelTransitionRefusal, planScriptEdit, recordScriptTransition, type Editor } from "./production-hooks.js";
 
 /**
  * 创始人选定的写作角度（角度卡 spec §1.3）。指针 + **生效卡快照**两样都存：
@@ -585,6 +586,17 @@ function contentWrite<T>(id: string, dataDir: string | undefined, fn: () => Prom
   })();
 }
 
+/** ProductionService 用：在稿件写锁里读 + 用不取锁的原语写（锁不可重入，别在里面再调 updateContent） */
+export interface ContentTx {
+  read(): Promise<Content | null>;
+  write(updates: ContentUpdates & { status?: ContentStatus }): Promise<Content | null>;
+}
+
+export function contentTransaction<T>(id: string, dataDir: string | undefined, fn: (tx: ContentTx) => Promise<T>): Promise<T> {
+  if (!isContentId(id)) throw new Error(`Content ${id} not found`);
+  return contentWrite(id, dataDir, () => fn({ read: () => getContent(id, dataDir), write: (u) => updateContentLocked(id, u, dataDir) }));
+}
+
 // --- Topics ---
 
 async function topicsDir(dataDir?: string): Promise<string> {
@@ -868,6 +880,11 @@ export type ContentUpdates = Partial<Omit<Content, "status">> & {
   _versionNote?: string;
   /** 只落到本次新版本上的来源标注，不进 meta 顶层 */
   _versionMeta?: Pick<ContentVersion, "source" | "revisionNote">;
+  /**
+   * 谁改的正文（本体 §13-C）：创始人自己改（工作台、我的内容回写）→ 认稿重绑新正文；
+   * 缺省按 agent 算 → 认稿随正文哈希失效。不进 meta。
+   */
+  _editor?: Editor;
 };
 
 /** 收口通道内部用：全仓只有 `transitionStatusLocked` 能带 status 走这条路 */
@@ -980,6 +997,11 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
   }
   const existing: Content = portableProjectRecord(JSON.parse(raw), projDir, true);
   const now = new Date().toISOString();
+  // 本体钩子（§2.5 冻结、§13-C 认稿去留）：所有写正文的口都从这里过
+  const scriptPlan = updates.body !== undefined
+    ? await planScriptEdit(id, dataDir, existing, updates.body, updates._editor ?? "agent")
+    : null;
+  if (scriptPlan?.status && updates.status === undefined) updates.status = scriptPlan.status;
 
   // 成片审过 = 剪辑师把活交给封面师（§6.1 五处之一）。账记在这里而不是视频线里：
   // `videoDone` 全仓只有这一个落盘口，记在别处早晚会漏掉一个写入方。
@@ -1028,7 +1050,7 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     if (!readProjectRegistry(dataDir)) await writeTextAtomic(projectFile(projDir, "versions", `v${nextVersion}.md`), versionEntry.body);
   }
 
-  const { _versionMeta: _dropVersionMeta, ...fields } = updates;
+  const { _versionMeta: _dropVersionMeta, _editor: _dropEditor, ...fields } = updates;
   const updated: Content = {
     ...existing,
     ...fields,
@@ -1052,12 +1074,12 @@ async function updateContentLocked(id: string, updates: StatusfulUpdates, dataDi
     if (updated.review.source.draftHash !== draftHash) updated.review = { ...updated.review, status: "stale" };
   }
 
-  if (await commitProjectContent(updated, dataDir)) return updated;
-
-  // draft.md 先写、meta.json 最后写 = 提交点：镜像超前可被下次成功写自愈，meta 不留中间态
-  await writeTextAtomic(projectFile(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
-  await writeJsonAtomic(metaPath, updated);
-
+  if (!(await commitProjectContent(updated, dataDir))) {
+    // draft.md 先写、meta.json 最后写 = 提交点：镜像超前可被下次成功写自愈，meta 不留中间态
+    await writeTextAtomic(projectFile(projDir, "draft.md"), `# ${updated.title}\n\n${updated.body}\n`);
+    await writeJsonAtomic(metaPath, updated);
+  }
+  if (scriptPlan) await applyScriptEdit(id, dataDir, scriptPlan);
   return updated;
 }
 
@@ -1599,6 +1621,11 @@ export interface TransitionOptions {
   patch?: ContentUpdates | ((current: Content) => ContentUpdates);
   /** 只有 P6 交接置 true：「剪辑中」只能由交接进入（§13.4-C），其余入口一律被阶段门拒绝 */
   viaHandoff?: boolean;
+  /**
+   * 谁在推（本体 §2.1）：agent 推到认稿及之后一律拒（force 也不行）；founder 认稿即写认稿决定。
+   * 缺省 = 内部流程（写手转正、交接、登记），不写决定也不拦。
+   */
+  decidedBy?: Editor;
 }
 
 /** 封面是否已定稿：复用既有判定（选用即写 approvedLabel，revise 掉它即作废） */
@@ -1642,7 +1669,7 @@ export async function stageBlockReason(
 export async function transitionPreflight(
   contentId: string,
   targetStatus: ContentStatus,
-  opts?: Pick<TransitionOptions, "force" | "viaHandoff">,
+  opts?: Pick<TransitionOptions, "force" | "viaHandoff" | "decidedBy">,
   dataDir?: string,
 ): Promise<Pick<TransitionResult, "ok" | "error" | "blocked" | "code">> {
   const content = isContentId(contentId) ? await getContent(contentId, dataDir) : null;
@@ -1655,6 +1682,9 @@ export async function transitionPreflight(
   }
   const blocked = await stageGuardError(content, currentStatus, targetStatus, () => coverApproved(contentId, dataDir), { viaHandoff: opts?.viaHandoff });
   if (blocked) return { ok: false, blocked: true, error: blocked, ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
+  // 本体 §2.1 认稿硬门：模型推到认稿及之后一律拒（force 越得过状态图，越不过这里）
+  const refused = modelTransitionRefusal(targetStatus, opts?.decidedBy);
+  if (refused) return { ok: false, blocked: true, error: refused, code: "founder_decision_required" };
   return { ok: true };
 }
 
@@ -1713,6 +1743,8 @@ async function transitionStatusLocked(
     coverApproved(contentId, dataDir),
   { viaHandoff: opts?.viaHandoff });
   if (blocked) return { ok: false, blocked: true, error: blocked, ...(blocked === EDITING_VIA_HANDOFF ? { code: "editing_requires_handoff" } : {}) };
+  const refused = modelTransitionRefusal(targetStatus, opts?.decidedBy);
+  if (refused) return { ok: false, blocked: true, error: refused, code: "founder_decision_required" };
 
   const now = new Date().toISOString();
   const patch = typeof opts?.patch === "function" ? opts.patch(content) : opts?.patch;
@@ -1748,6 +1780,7 @@ async function transitionStatusLocked(
 
   const updated = await updateContentLocked(contentId, updates, dataDir);
   if (!updated) return { ok: false, error: "Failed to update content" };
+  await recordScriptTransition(contentId, dataDir, updated, currentStatus, targetStatus, opts?.decidedBy);
 
   return { ok: true, content: updated, autoTriggered };
 }

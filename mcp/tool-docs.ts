@@ -14,7 +14,7 @@ const GUIDE = (name: string) => `完整用法：${TOOL_GUIDE_PREFIX}${name}`;
 export const MCP_TOOL_DOCS: Readonly<Record<string, string>> = {
   autocrew_topic: "选题库。create 建选题；list 列选题；radar_pool 冻结雷达候选池给你打分；radar_score 交分（≥70 入库，同一池重交幂等）；delete 删选题（有稿件时拒绝，需审批）。",
   autocrew_research: "找新选题（不是给写作需求做调研，那个用 autocrew_workflow prepare）。discover 发现并可存选题；session_status 查浏览器登录。",
-  autocrew_content: "管理已有稿件。list 列表；get 读全文；summary 只看进度（阶段、卡在哪、下一步，不带正文）；update 改稿；transition 推进状态；create_variant 派生平台版；siblings 同选题兄弟稿；allowed_transitions 可推进到哪；adoption 仅工作台；delete / restore 删与恢复；save 仅用于手动导入成稿。新 AI 稿走 workflow → writer。",
+  autocrew_content: "管理已有稿件。list 列表；get 读全文；summary 只看进度（阶段、卡在哪、下一步，不带正文）；update 改稿；transition 推进状态；create_variant 派生平台版；siblings 同选题兄弟稿；allowed_transitions 可推进到哪；adoption 仅工作台；delete / restore 删与恢复；save 仅用于手动导入成稿；record 报制作事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程，只报盘上有什么，批准只归创始人）。新 AI 稿走 workflow → writer。",
   autocrew_workflow: "创作统一入口。prepare 准备材料与立意；research 领调研任务；status 查进度；select_angle 选定角度（带 brief_revision）；write / draft 由 next_action 引导；doctor 自检。每步按返回的 next_action 走。",
   autocrew_scout: "宿主执行的调研。prepare / pack 领任务；status 查进度；search 搜索（要搜索 key，没配就用你自己的搜索找网址）；read_page{perspective,url} 抓页；cite 登记逐字引文；claim_offline 登记未核验说法；perspective 交视角；synthesize 综合；angles 交角度候选。prepare 之后都带 topic_id + task_id。",
   autocrew_review_desk: "宿主审稿。pack 领审稿材料；submit 交审稿意见（带 review_pack_id、attempt、issues）。",
@@ -75,6 +75,9 @@ export const PARAM_HINTS: Readonly<Record<string, string>> = {
   force: "明确要重来时才用",
   perspective: "audience / evidence / counter / benchmark 之一；search、read_page 必带",
   user_confirmed: "创作者已明确确认",
+  request_id: "这次报告的请求号，重试用同一个",
+  for_cut: "字幕属于哪版成片（fact_id 或 sha256）",
+  uses_aroll: "工程用到的原片 fact_id",
 };
 
 function shortenDescriptions(schema: unknown): unknown {

@@ -165,11 +165,15 @@
        "allowed_transitions",
        "adoption",
        "delete",
-       "restore"
+       "restore",
+       "record"
       ],
       "type": "string"
      },
      "body": {
+      "type": "string"
+     },
+     "chatcut_project_id": {
       "type": "string"
      },
      "claim_token": {
@@ -178,7 +182,13 @@
      "content_id": {
       "type": "string"
      },
+     "cover_text": {
+      "type": "string"
+     },
      "diff_note": {
+      "type": "string"
+     },
+     "for_cut": {
       "type": "string"
      },
      "force": {
@@ -216,6 +226,23 @@
      "import_reason": {
       "type": "string"
      },
+     "kind": {
+      "enum": [
+       "aroll",
+       "cut",
+       "srt",
+       "cover",
+       "chatcut_project",
+       "publish"
+      ],
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "path": {
+      "type": "string"
+     },
      "performance_data": {
       "patternProperties": {
        "^(.*)$": {
@@ -230,6 +257,9 @@
      "publish_url": {
       "type": "string"
      },
+     "ratio": {
+      "type": "string"
+     },
      "reason": {
       "enum": [
        "style_mismatch",
@@ -239,6 +269,9 @@
       "type": "string"
      },
      "reason_note": {
+      "type": "string"
+     },
+     "request_id": {
       "type": "string"
      },
      "siblings": {
@@ -297,11 +330,20 @@
       ],
       "type": "string"
      },
+     "timeline_id": {
+      "type": "string"
+     },
      "title": {
       "type": "string"
      },
      "topicId": {
       "type": "string"
+     },
+     "uses_aroll": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "verdict": {
       "enum": [
@@ -310,6 +352,10 @@
        "rewritten"
       ],
       "type": "string"
+     },
+     "version": {
+      "minimum": 1,
+      "type": "integer"
      }
     },
     "required": [
@@ -2708,11 +2754,15 @@
        "allowed_transitions",
        "adoption",
        "delete",
-       "restore"
+       "restore",
+       "record"
       ],
       "type": "string"
      },
      "body": {
+      "type": "string"
+     },
+     "chatcut_project_id": {
       "type": "string"
      },
      "claim_token": {
@@ -2721,7 +2771,13 @@
      "content_id": {
       "type": "string"
      },
+     "cover_text": {
+      "type": "string"
+     },
      "diff_note": {
+      "type": "string"
+     },
+     "for_cut": {
       "type": "string"
      },
      "force": {
@@ -2759,6 +2815,23 @@
      "import_reason": {
       "type": "string"
      },
+     "kind": {
+      "enum": [
+       "aroll",
+       "cut",
+       "srt",
+       "cover",
+       "chatcut_project",
+       "publish"
+      ],
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "path": {
+      "type": "string"
+     },
      "performance_data": {
       "patternProperties": {
        "^(.*)$": {
@@ -2773,6 +2846,9 @@
      "publish_url": {
       "type": "string"
      },
+     "ratio": {
+      "type": "string"
+     },
      "reason": {
       "enum": [
        "style_mismatch",
@@ -2782,6 +2858,9 @@
       "type": "string"
      },
      "reason_note": {
+      "type": "string"
+     },
+     "request_id": {
       "type": "string"
      },
      "siblings": {
@@ -2840,11 +2919,20 @@
       ],
       "type": "string"
      },
+     "timeline_id": {
+      "type": "string"
+     },
      "title": {
       "type": "string"
      },
      "topicId": {
       "type": "string"
+     },
+     "uses_aroll": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "verdict": {
       "enum": [
@@ -2853,6 +2941,10 @@
        "rewritten"
       ],
       "type": "string"
+     },
+     "version": {
+      "minimum": 1,
+      "type": "integer"
      }
     },
     "required": [
@@ -4805,11 +4897,15 @@
        "allowed_transitions",
        "adoption",
        "delete",
-       "restore"
+       "restore",
+       "record"
       ],
       "type": "string"
      },
      "body": {
+      "type": "string"
+     },
+     "chatcut_project_id": {
       "type": "string"
      },
      "claim_token": {
@@ -4818,7 +4914,13 @@
      "content_id": {
       "type": "string"
      },
+     "cover_text": {
+      "type": "string"
+     },
      "diff_note": {
+      "type": "string"
+     },
+     "for_cut": {
       "type": "string"
      },
      "force": {
@@ -4856,6 +4958,23 @@
      "import_reason": {
       "type": "string"
      },
+     "kind": {
+      "enum": [
+       "aroll",
+       "cut",
+       "srt",
+       "cover",
+       "chatcut_project",
+       "publish"
+      ],
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "path": {
+      "type": "string"
+     },
      "performance_data": {
       "patternProperties": {
        "^(.*)$": {
@@ -4870,6 +4989,9 @@
      "publish_url": {
       "type": "string"
      },
+     "ratio": {
+      "type": "string"
+     },
      "reason": {
       "enum": [
        "style_mismatch",
@@ -4879,6 +5001,9 @@
       "type": "string"
      },
      "reason_note": {
+      "type": "string"
+     },
+     "request_id": {
       "type": "string"
      },
      "siblings": {
@@ -4937,11 +5062,20 @@
       ],
       "type": "string"
      },
+     "timeline_id": {
+      "type": "string"
+     },
      "title": {
       "type": "string"
      },
      "topicId": {
       "type": "string"
+     },
+     "uses_aroll": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "verdict": {
       "enum": [
@@ -4950,6 +5084,10 @@
        "rewritten"
       ],
       "type": "string"
+     },
+     "version": {
+      "minimum": 1,
+      "type": "integer"
      }
     },
     "required": [

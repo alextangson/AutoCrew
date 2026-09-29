@@ -86,8 +86,11 @@ export async function reserveName(dir: string, fileName: string): Promise<string
   throw new Error(`同名文件太多，占不到名字：${fileName}`);
 }
 
-/** rename；跨卷就复制 → 校验 → 删源。返回 false = 删源失败（两份都在） */
-async function relocate(from: string, to: string, sha256: string, onCopy: () => Promise<void>): Promise<boolean> {
+/**
+ * rename；跨卷就复制 → 校验 → 删源。返回 false = 删源失败（两份都在）。
+ * `beforeUnlink`（本体 record 用，E28）：删源前再核一次源身份，抛错即中止——目标副本由调用方清掉，原件不动。
+ */
+export async function relocate(from: string, to: string, sha256: string, onCopy: () => Promise<void>, beforeUnlink?: () => Promise<void>): Promise<boolean> {
   try {
     await ops.rename(from, to);
     return true;
@@ -97,6 +100,7 @@ async function relocate(from: string, to: string, sha256: string, onCopy: () => 
   await onCopy();
   await ops.copyFile(from, to);
   if (await sha256File(to) !== sha256) throw new Error(`复制后校验不一致：${to}`);
+  if (beforeUnlink) await beforeUnlink();
   try {
     await ops.unlink(from);
     return true;
