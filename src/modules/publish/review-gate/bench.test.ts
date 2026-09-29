@@ -18,7 +18,6 @@ const perfect: JevCaller = async (state, questions) => {
   for (const [id, q] of Object.entries(questions)) {
     const ins = JSON.stringify(q.instructions);
     if (id === "a1") { const ok = /"post_title":"第 (\d) 条/.exec(s)?.[1] === /第 (\d) 条视频中间/.exec(s)?.[1]; answers[id] = { type: "choice", choice: ok ? "准确" : "误导", probabilities: { [ok ? "准确" : "误导"]: 0.9 }, confidence: 0.9 }; }
-    else if (id === "a3") { const ct = /"cover_text":"([^"]*)"/.exec(s)?.[1] ?? ""; const n = /第 (\d) 条视频中间/.exec(s)?.[1]; const ok = ct.includes(`第 ${n} 条视频的标题`); answers[id] = { type: "choice", choice: ok ? "讲清问题或答案" : "与主题无关", probabilities: { [ok ? "讲清问题或答案" : "与主题无关"]: 0.8 }, confidence: 0.8 }; }
     else if (id.startsWith("a2_")) answers[id] = { type: "noul", noul: ins.includes("73%") ? 0.05 : 0.95 };
     else if (id.startsWith("s")) answers[id] = { type: "choice", choice: "封面", probabilities: { 封面: 0.4, 平台集合: 0.3, 排期: 0.3 }, confidence: 0.5 };
     else if (id.startsWith("v")) {
@@ -34,7 +33,7 @@ const perfect: JevCaller = async (state, questions) => {
 describe("评测集", () => {
   it("按视频分组；每个问题正反各 ≥5 例", () => {
     const cases = buildBenchSet(videos);
-    for (const q of ["A1", "A2", "A3", "B", "O"]) {
+    for (const q of ["A1", "A2", "B", "O"]) {
       for (const e of ["positive", "negative"]) expect(cases.filter((c) => c.question === q && c.expect === e).length).toBeGreaterThanOrEqual(5);
     }
     expect(new Set(cases.map((c) => c.video))).toEqual(new Set(videos.map((v) => v.id)));

@@ -123,13 +123,13 @@ async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]):
   const instructions = instructionList(ctx, entry.platform);
   const basis = await ctx.basis();
   const reg = ctx.registration.kind === "ok" ? ctx.registration.registration : null;
-  const a = buildA({ platform: platformLabel(entry.platform), title: entry.title, caption: entry.caption, coverText: reg?.cover_text ?? entry.cover_text, scriptTitle: ctx.content.title, basis });
+  const a = buildA({ platform: platformLabel(entry.platform), title: entry.title, caption: entry.caption, scriptTitle: ctx.content.title, basis });
   const mine = ctx.overrides.filter((o) => o.platform === entry.platform);
   const b = buildB(bView(ctx, entry, det.covers), instructions, mine);
   const parts = {
     payload_hash: payload, registration_id: reg?.id ?? null, approval_ids: [reg?.cut_approval_id ?? "", reg?.cover_approval_id ?? ""], prefs_version: prefsVersion(ctx.prefs),
     instruction_id: ctx.instruction?.id ?? null, srt_sha: reg?.srt_sha ?? null, question_set: QUESTION_SET_VERSION, model: JEV_MODEL,
-    quotes_sha: textSha(ctx.quotes), overrides_sha: textSha(mine), basis_sha: textSha([basis.text, ctx.content.title, entry.cover_text, a.request?.state]),
+    quotes_sha: textSha(ctx.quotes), overrides_sha: textSha(mine), basis_sha: textSha([basis.text, ctx.content.title, a.request?.state]),
     // Jev 的判定只取决于它收到的 state 与问题：两份请求整体进指纹（活动、平台集合、封面文件名、指令列表都在里面）
     requests_sha: textSha([a.request, b].map((r) => (r ? { state: r.state, questions: r.questions } : null))),
   };

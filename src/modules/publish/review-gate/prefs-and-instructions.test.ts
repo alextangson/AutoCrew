@@ -102,7 +102,7 @@ describe("字幕底稿（§8、E9）", () => {
     const b = basisFromSrt(srt, 300);
     expect(b.truncated).toBe(true);
     expect(b.note).toMatch(/只比对了前 \d+ 分钟/);
-    const { request } = buildA({ platform: "抖音", title: "效率提升 80%", caption: "", coverText: null, scriptTitle: "t", basis: b });
+    const { request } = buildA({ platform: "抖音", title: "效率提升 80%", caption: "", scriptTitle: "t", basis: b });
     const items = interpret(request!, { a1: { type: "choice", choice: "准确", probabilities: { 准确: 1 }, confidence: 1 }, a2_0: { type: "noul", noul: 0.1 } }, { basis: b });
     expect(items.find((i) => i.check === "A2 说法有据")).toMatchObject({ result: "unchecked" });
   });

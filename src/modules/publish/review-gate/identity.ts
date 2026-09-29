@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import type { CoverFact } from "./deterministic.js";
 import type { PlanEntry } from "./plan.js";
 
-export const QUESTION_SET_VERSION = "prg-q1";
+export const QUESTION_SET_VERSION = "prg-q2"; // q2：09-29 删掉 A3（封面字是否点题）
 
 const sha = (v: unknown) => crypto.createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
 

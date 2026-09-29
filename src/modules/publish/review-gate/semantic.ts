@@ -11,7 +11,7 @@ import type { CheckItem, Override } from "./types.js";
 
 export interface SemanticRequest { kind: "A" | "B"; state: unknown; questions: Record<string, JevQuestion>; /** 判读用的附加信息（问题 id → 元数据） */ meta: Record<string, QuestionMeta> }
 export type QuestionMeta =
-  | { q: "A1" } | { q: "A3"; cover_text: string } | { q: "A2"; claim: string }
+  | { q: "A1" } | { q: "A2"; claim: string }
   | { q: "Bscope"; n: number } | { q: "Bviol"; n: number; field: string } | { q: "O"; quote: string; rule: string };
 
 // ---- A ----
@@ -21,12 +21,6 @@ const A1_CRITERIA = {
   部分偏离: "大体相关，但有一部分是字幕里没讲的、或被夸大 / 改变了侧重",
   误导: "标题或文案承诺或暗示了字幕里没有的内容，看完会觉得被骗",
   无法判断: "字幕内容不足以判断",
-};
-const A3_CRITERIA = {
-  讲清问题或答案: "封面字点明了视频要解决的问题或给出的答案",
-  "只是开头笑点/噱头": "封面字只是视频开头的一个笑点、梗或噱头，看封面猜不到视频讲什么",
-  与主题无关: "封面字和视频主题没有关系",
-  无法判断: "信息不足以判断",
 };
 
 const NUM_UNIT = /\d+(?:\.\d+)?\s*(?:%|％|倍|万|亿|千|百|个|次|天|小时|分钟|秒|年|月|周|人|元|块|美元|条|步|种|款|家|行|字|[kKwW])/g;
@@ -54,7 +48,7 @@ export function containsWholeNumber(haystack: string, needle: string): boolean {
   return false;
 }
 
-export interface AInput { platform: string; title: string; caption: string; coverText: string | null; scriptTitle: string; basis: Basis }
+export interface AInput { platform: string; title: string; caption: string; scriptTitle: string; basis: Basis }
 
 /** 返回 Jev 请求（可能没有问题可问 → null）与代码直接判掉的数值说法 */
 export function buildA(input: AInput): { request: SemanticRequest | null; codeItems: CheckItem[] } {
@@ -73,11 +67,7 @@ export function buildA(input: AInput): { request: SemanticRequest | null; codeIt
     questions[`a2_${i}`] = { type: "noul", instructions: { claim: c.claim, question: "`subtitles` 是否说过或直接支持 `claim` 这句说法？否定、时间范围、因果关系都要对得上。" }, criteria: { true: "字幕说过，或直接支持这句", false: "字幕没说过，或说的意思不同" } };
     meta[`a2_${i}`] = { q: "A2", claim: c.claim };
   });
-  if (input.coverText) {
-    questions.a3 = { type: "choice", instructions: "`cover_text` 是封面上的大字。它和 `subtitles` 里这条视频的主题是什么关系？", criteria: A3_CRITERIA };
-    meta.a3 = { q: "A3", cover_text: input.coverText };
-  }
-  const state = { subtitles: input.basis.text, platform: input.platform, post_title: input.title, caption: input.caption, cover_text: input.coverText ?? "", script_title: input.scriptTitle };
+  const state = { subtitles: input.basis.text, platform: input.platform, post_title: input.title, caption: input.caption, script_title: input.scriptTitle };
   return { request: { kind: "A", state, questions, meta }, codeItems };
 }
 
@@ -134,10 +124,6 @@ function readA(id: string, m: QuestionMeta, a: JevAnswer, basis: Basis): CheckIt
     const result = supported ? "pass" : basis.truncated ? "unchecked" : "warn";
     const why = supported ? "字幕支持" : basis.truncated ? `未覆盖（${basis.note}，不据此提醒）` : "字幕里没找到支持";
     return { check: "A2 说法有据", result, field: "title/caption", basis: `「${m.claim}」：${why}（支持概率 ${pct(a.noul)}）`, jev: { question: id, answer: a.noul, probability: a.noul } };
-  }
-  if (m.q === "A3" && a.type === "choice") {
-    const result = a.choice === "讲清问题或答案" ? "pass" : a.choice === "无法判断" ? "unchecked" : "warn";
-    return { check: "A3 封面字点题", result, field: "cover_text", basis: `封面字「${m.cover_text}」：Jev 判「${a.choice}」（${pct(choiceProb(a))}）`, jev: { question: id, answer: a.choice, probability: choiceProb(a) } };
   }
   return null;
 }

@@ -13,10 +13,10 @@ import type { CheckItem, Override } from "./types.js";
 
 export interface BenchVideo { id: string; title: string; basis: Basis; entries: Array<{ platform: string; label: string; title: string; caption: string }> }
 
-export type BenchQuestion = "A1" | "A2" | "A3" | "B" | "O";
+export type BenchQuestion = "A1" | "A2" | "B" | "O";
 export interface BenchCase {
   id: string; video: string; question: BenchQuestion; expect: "positive" | "negative"; note: string;
-  /** A 类 */ a?: { title: string; caption: string; coverText: string | null };
+  /** A 类 */ a?: { title: string; caption: string };
   /** B / O 类 */ b?: { entry: BEntryView; instruction?: string; override?: Override };
 }
 
@@ -36,15 +36,11 @@ function aCases(v: BenchVideo, other: BenchVideo): BenchCase[] {
   const e = v.entries[0];
   const o = other.entries[0];
   const c = (q: BenchQuestion, expect: BenchCase["expect"], note: string, a: BenchCase["a"]): BenchCase => ({ id: `${v.id}:${q}:${expect}:${note}`, video: v.id, question: q, expect, note, a });
-  const first = v.basis.text.split("\n")[0]?.slice(0, 16) ?? "";
   return [
-    c("A1", "positive", "真实标题文案", { title: e.title, caption: e.caption, coverText: null }),
-    c("A1", "negative", "换成别条视频的标题文案", { title: o.title, caption: o.caption, coverText: null }),
-    c("A2", "positive", "字幕里说过的话", { title: `「${supportedClaim(v.basis)}」`, caption: "", coverText: null }),
-    c("A2", "negative", "塞一个字幕里没有的数字", { title: OTHER_NUMBER, caption: "", coverText: null }),
-    c("A3", "positive", "稿件标题当封面字", { title: e.title, caption: e.caption, coverText: v.title.slice(0, 24) }),
-    c("A3", "negative", "别条视频的标题当封面字", { title: e.title, caption: e.caption, coverText: other.title.slice(0, 24) }),
-    ...(first ? [c("A3", "negative", "开头第一句当封面字", { title: e.title, caption: e.caption, coverText: first })] : []),
+    c("A1", "positive", "真实标题文案", { title: e.title, caption: e.caption }),
+    c("A1", "negative", "换成别条视频的标题文案", { title: o.title, caption: o.caption }),
+    c("A2", "positive", "字幕里说过的话", { title: `「${supportedClaim(v.basis)}」`, caption: "" }),
+    c("A2", "negative", "塞一个字幕里没有的数字", { title: OTHER_NUMBER, caption: "" }),
   ];
 }
 
@@ -77,14 +73,13 @@ export interface BenchResult { id: string; video: string; question: BenchQuestio
 function pickItem(q: BenchQuestion, items: CheckItem[]): CheckItem | undefined {
   if (q === "A1") return items.find((i) => i.check.startsWith("A1"));
   if (q === "A2") return items.find((i) => i.check.startsWith("A2"));
-  if (q === "A3") return items.find((i) => i.check.startsWith("A3"));
   if (q === "O") return items.find((i) => i.check === "例外原话核对");
   return items.find((i) => i.result === "warn") ?? items.find((i) => i.check.startsWith("B"));
 }
 
-/** 一例的「问题概率」：A1/A3 取模型选中的选项概率；A2/O 取支持概率；B 取最大违反概率 */
+/** 一例的「问题概率」：A1 取模型选中的选项概率；A2/O 取支持概率；B 取最大违反概率 */
 function probabilityOf(q: BenchQuestion, answers: Record<string, { type: string; noul?: number; choice?: string; probabilities?: Record<string, number> }>): number | null {
-  if (q === "A1" || q === "A3") { const a = answers[q === "A1" ? "a1" : "a3"]; return a?.probabilities?.[a.choice ?? ""] ?? null; }
+  if (q === "A1") { const a = answers.a1; return a?.probabilities?.[a.choice ?? ""] ?? null; }
   if (q === "A2") return Object.entries(answers).find(([k]) => k.startsWith("a2_"))?.[1].noul ?? null;
   if (q === "O") return answers.o0?.noul ?? null;
   const v = Object.entries(answers).filter(([k]) => k.startsWith("v")).map(([, a]) => a.noul ?? 0);
@@ -96,7 +91,7 @@ async function runOne(c: BenchCase, basis: Basis | undefined, caller: JevCaller)
   let req, ctx: { basis?: Basis; instructions?: Instruction[] } = {};
   if (c.a) {
     if (!basis) return { ...base, outcome: "not_run", probability: null, reason: "没有比对底稿" };
-    const built = buildA({ platform: "抖音", title: c.a.title, caption: c.a.caption, coverText: c.a.coverText, scriptTitle: "", basis });
+    const built = buildA({ platform: "抖音", title: c.a.title, caption: c.a.caption, scriptTitle: "", basis });
     if (c.question === "A2" && built.codeItems.length && !Object.keys(built.request!.questions).some((k) => k.startsWith("a2_"))) return { ...base, outcome: "pass", probability: 1, reason: "代码逐字判过" };
     req = built.request!; ctx = { basis };
   } else {
@@ -127,7 +122,7 @@ export async function runBench(cases: BenchCase[], videos: BenchVideo[], caller:
 export interface QuestionStats { question: BenchQuestion; positives: number; negatives: number; false_positive: number; false_negative: number; abstain: number; not_run: number; pos_probs: number[]; neg_probs: number[]; by_video: Record<string, { fp: number; fn: number; abstain: number; n: number }> }
 
 export function summarizeBench(results: BenchResult[]): QuestionStats[] {
-  const qs: BenchQuestion[] = ["A1", "A2", "A3", "B", "O"];
+  const qs: BenchQuestion[] = ["A1", "A2", "B", "O"];
   return qs.map((q) => {
     const rs = results.filter((r) => r.question === q);
     const s: QuestionStats = { question: q, positives: 0, negatives: 0, false_positive: 0, false_negative: 0, abstain: 0, not_run: 0, pos_probs: [], neg_probs: [], by_video: {} };
@@ -151,7 +146,7 @@ export function benchMarkdown(stats: QuestionStats[], results: BenchResult[], me
   const lines = [`# 发布前把关 · 上线前评测（${meta.at}）`, "", `模型 ${meta.model}；${meta.videos} 条视频；${results.length} 例；输入 ${meta.tokens} token。`, "",
     "| 问题 | 正例 | 反例 | 误报（正例被提醒） | 漏报（反例被放过） | 弃权 | 没跑成 | 正例概率 | 反例概率 |", "|---|---|---|---|---|---|---|---|---|",
     ...stats.map((s) => `| ${s.question} | ${s.positives} | ${s.negatives} | ${s.false_positive} | ${s.false_negative} | ${s.abstain} | ${s.not_run} | ${fmt(s.pos_probs)} | ${fmt(s.neg_probs)} |`),
-    "", "概率口径：A1/A3 = 模型选中项的概率；A2 = 字幕支持概率；B = 该条指令下各字段最大违反概率；O = 原话在要求这条例外的概率。", "",
+    "", "概率口径：A1 = 模型选中项的概率；A2 = 字幕支持概率；B = 该条指令下各字段最大违反概率；O = 原话在要求这条例外的概率。", "",
     "## 按视频", ""];
   for (const s of stats) {
     lines.push(`### ${s.question}`, "", "| 视频 | 例数 | 误报 | 漏报 | 弃权 |", "|---|---|---|---|---|");

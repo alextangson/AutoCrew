@@ -64,7 +64,7 @@ function fakeJev(overrides: (id: string, q: JevQuestion) => JevAnswer | undefine
       if (forced) { answers[id] = forced; continue; }
       if (q.type === "noul") answers[id] = { type: "noul", noul: id.startsWith("v") ? 0.05 : 0.9 };
       else {
-        const pickKey = id === "a1" ? "准确" : id === "a3" ? "讲清问题或答案" : "不约束发布内容";
+        const pickKey = id === "a1" ? "准确" : "不约束发布内容";
         answers[id] = { type: "choice", choice: pickKey, probabilities: { [pickKey]: 0.9 }, confidence: 0.8 };
       }
     }
