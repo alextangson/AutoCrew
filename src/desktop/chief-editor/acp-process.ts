@@ -102,7 +102,7 @@ function toolTitle(p: acp.RequestPermissionRequest): string {
 }
 
 export const spawnAcpAgent: SpawnAgent = (launch, cwd, handlers) => {
-  const child = spawn(launch.command, launch.args, { cwd, env: cleanAgentEnv(), detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(launch.command, launch.args, { cwd, env: { ...cleanAgentEnv(), ...launch.env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => { stderr = (stderr + d.toString("utf-8")).slice(-8000); });
   const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => {

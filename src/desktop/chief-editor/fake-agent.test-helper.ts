@@ -8,6 +8,7 @@ import path from "node:path";
 import { ApprovalGate } from "../approval-gate.js";
 import { resetActiveTurns } from "../turn-registry.js";
 import type { AgentHandlers, AgentProcess, ConfigOptionInfo, McpServerSpec, SpawnAgent } from "./acp-process.js";
+import type { LaunchSpec } from "./backends.js";
 import { handleAgentMcp } from "./mcp-bridge.js";
 import { initChiefEditor, resetChiefEditor, type ChiefEditor } from "./service.js";
 
@@ -75,6 +76,8 @@ export interface Harness {
   events: Json[];
   mcpCalls: Array<{ request: Json; dataDir: string }>;
   agents: FakeAgent[];
+  /** 每次 spawn 收到的启动参数（看代理环境有没有带上） */
+  launches: LaunchSpec[];
   gate: ApprovalGate;
   contents: Map<string, { title: string; body: string; platform: string; status: string }>;
   /** 下一次 spawn 用的脚本 */
@@ -83,13 +86,14 @@ export interface Harness {
   cleanup(): Promise<void>;
 }
 
-export async function makeHarness(opts: { launchable?: boolean; askTtlMs?: number; mcpResult?: (req: Json) => Json } = {}): Promise<Harness> {
+export async function makeHarness(opts: { launchable?: boolean; askTtlMs?: number; mcpResult?: (req: Json) => Json; claudeSettingsPath?: string } = {}): Promise<Harness> {
   resetActiveTurns();
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "chief-editor-home-"));
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "chief-editor-data-"));
-  const h = { home, dataDir, events: [] as Json[], mcpCalls: [] as Array<{ request: Json; dataDir: string }>, agents: [] as FakeAgent[], gate: new ApprovalGate(), contents: new Map() } as Harness;
+  const h = { home, dataDir, events: [] as Json[], mcpCalls: [] as Array<{ request: Json; dataDir: string }>, agents: [] as FakeAgent[], launches: [] as LaunchSpec[], gate: new ApprovalGate(), contents: new Map() } as Harness;
   h.script = async () => ({ stopReason: "end_turn" });
-  const spawnAgent: SpawnAgent = (_launch, _cwd, handlers) => {
+  const spawnAgent: SpawnAgent = (launch, _cwd, handlers) => {
+    h.launches.push(launch);
     const agent = new FakeAgent((a, t) => h.script(a, t));
     agent.handlers = handlers;
     h.agents.push(agent);
@@ -99,6 +103,8 @@ export async function makeHarness(opts: { launchable?: boolean; askTtlMs?: numbe
     home,
     mcpUrl: "http://127.0.0.1:4317/mcp",
     spawnAgent,
+    // 默认不读这台机器的真 settings：测试不能依赖创始人的代理开没开
+    claudeSettingsPath: opts.claudeSettingsPath ?? path.join(home, "no-settings.json"),
     approvals: h.gate,
     emit: (e) => h.events.push(e),
     killGraceMs: 20,

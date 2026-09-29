@@ -212,3 +212,41 @@ describe("边界 12：适配器崩溃", () => {
     expect(conv?.messages.at(-1)?.content).toContain("⚠️");
   });
 });
+
+describe("线路：必须经过创始人的代理（2026-09-29）", () => {
+  const settingsWith = (body: string) => {
+    const file = path.join(h.home, "settings.json");
+    fs.writeFileSync(file, body);
+    return file;
+  };
+  const withSettings = (body: string) => { h.svc.deps.claudeSettingsPath = settingsWith(body); };
+
+  it("代理开着：ANTHROPIC_BASE_URL 带进 agent 环境，别的令牌不带", async () => {
+    const net = await import("node:net");
+    const server = net.createServer((s) => s.end());
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      withSettings(JSON.stringify({ env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, GITHUB_PERSONAL_ACCESS_TOKEN: "gho_x" } }));
+      const r = await runLocalTurn(h.svc, input());
+      expect(r.ok).toBe(true);
+      expect(h.launches[0].env).toEqual({ ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("代理没开：当场说连不上，不起 agent、不直连", async () => {
+    withSettings(JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:1" } }));
+    const r = await runLocalTurn(h.svc, input());
+    expect(JSON.stringify(r)).toContain("连不上代理");
+    expect(h.agents).toHaveLength(0);
+  });
+
+  it("settings 坏了：报错，不起 agent", async () => {
+    withSettings("{ not json");
+    const r = await runLocalTurn(h.svc, input());
+    expect(JSON.stringify(r)).toContain("不知道该走哪条代理");
+    expect(h.agents).toHaveLength(0);
+  });
+});

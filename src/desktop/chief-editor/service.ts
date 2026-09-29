@@ -29,6 +29,8 @@ export interface ChiefEditorDeps {
   home: string;
   mcpUrl: string;
   spawnAgent: SpawnAgent;
+  /** 读代理配置的 settings 路径（测试注入；缺省 ~/.claude/settings.json） */
+  claudeSettingsPath?: string;
   execMcp: (request: Record<string, unknown>, dataDir: string, turnId: string) => Promise<Record<string, unknown> | null>;
   approvals: {
     issue: (b: ApprovalBinding) => { token: string };

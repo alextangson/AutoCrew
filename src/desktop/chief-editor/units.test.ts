@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createConversation } from "../../storage/conversation-store.js";
 import { cleanAgentEnv } from "./acp-process.js";
 import { AskRegistry } from "./asks.js";
-import { backendStatuses, pickPermissionOption } from "./backends.js";
+import { backendStatuses, claudeRoutingEnv, pickPermissionOption } from "./backends.js";
 import { maybeRunLocalTurn, resolveTurnBackend } from "./ipc-handlers.js";
 import { ensurePersona } from "./persona.js";
 import { classifyPublishAction } from "./publish-gate.js";
@@ -80,6 +80,25 @@ describe("§地基 12：工作目录与人设", () => {
     expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
     expect(env.AUTOCREW_TOKEN).toBeUndefined();
     expect(env.PATH).toContain("/h/.local/bin");
+  });
+});
+
+describe("线路：必须经过创始人的代理（2026-09-29）", () => {
+  const write = (body: string) => {
+    const file = path.join(tmp(), "settings.json");
+    fs.writeFileSync(file, body);
+    return file;
+  };
+  it("只取 settings env 里的 ANTHROPIC_* / CLAUDE_CODE_*，别的令牌不带", () => {
+    const file = write(JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8787", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", GITHUB_PERSONAL_ACCESS_TOKEN: "gho_x" }, model: "opus" }));
+    expect(claudeRoutingEnv(file)).toEqual({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8787", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" } });
+  });
+  it("没有 settings 文件 = 没配代理，不报错", () => {
+    expect(claudeRoutingEnv(path.join(tmp(), "missing.json"))).toEqual({ env: {} });
+  });
+  it("settings 坏了就报错，不静默直连", () => {
+    const r = claudeRoutingEnv(write("{ not json"));
+    expect("error" in r && r.error).toContain("不知道该走哪条代理");
   });
 });
 

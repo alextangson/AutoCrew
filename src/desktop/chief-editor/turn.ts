@@ -9,7 +9,7 @@
 import { createConversation, getConversation, updateConversationAgent } from "../../storage/conversation-store.js";
 import { registerTurn, settleTurn } from "../turn-registry.js";
 import { STATUS_TEXT, type AskView } from "./asks.js";
-import { ADAPTERS, type BackendAdapter, type LocalBackendId } from "./backends.js";
+import { ADAPTERS, proxyUnreachable, type BackendAdapter, type LocalBackendId } from "./backends.js";
 import type { AgentProcess } from "./acp-process.js";
 import { SettingError, type AgentSettings } from "./agent-settings.js";
 import { makeHandlers, type StreamGate } from "./turn-stream.js";
@@ -154,8 +154,13 @@ function replyText(turn: ActiveTurn, out: Outcome): string {
 }
 
 async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, adapter: BackendAdapter, signal: AbortSignal): Promise<Outcome> {
-  const launch = adapter.launch();
-  if (!launch) return { ok: false, reply: `${adapter.label}没装上：在 AutoCrew 目录运行 npm install。不会自动改用内置引擎。` };
+  const base = adapter.launch();
+  if (!base) return { ok: false, reply: `${adapter.label}没装上：在 AutoCrew 目录运行 npm install。不会自动改用内置引擎。` };
+  const routing = adapter.routingEnv?.(svc.deps.claudeSettingsPath) ?? { env: {} };
+  if ("error" in routing) return { ok: false, reply: routing.error };
+  const proxyDown = await proxyUnreachable(routing.env);
+  if (proxyDown) return { ok: false, reply: proxyDown };
+  const launch = { ...base, env: { ...base.env, ...routing.env } };
   const conv = await prepareConversation(input);
   if ("error" in conv) return { ok: false, reply: conv.error };
   turn.conversationId = conv.id;
