@@ -79,7 +79,12 @@ const ENTITY_MAP: Record<string, string> = {
 };
 
 function decodeEntities(s: string): string {
-  return s.replace(/&(?:amp|lt|gt|quot|#39|nbsp);/g, (m) => ENTITY_MAP[m] ?? m);
+  return s
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (m, n: string) => {
+      const code = n[0].toLowerCase() === "x" ? parseInt(n.slice(1), 16) : Number(n);
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    })
+    .replace(/&(?:amp|lt|gt|quot|nbsp);/g, (m) => ENTITY_MAP[m] ?? m);
 }
 
 function field(itemXml: string, tag: string): string {
@@ -88,17 +93,34 @@ function field(itemXml: string, tag: string): string {
   return decodeEntities(m[1].replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "").trim());
 }
 
-/** RSS 2.0 子集解析（零依赖正则；源不规范时安全降级为空数组） */
+/** Atom 的链接在属性里:优先 rel="alternate"(或无 rel),跳过 self/edit/enclosure */
+function atomLink(entryXml: string): string {
+  for (const m of entryXml.matchAll(/<link\b[^>]*>/gi)) {
+    const rel = m[0].match(/\brel=["']([^"']+)["']/i)?.[1];
+    const href = m[0].match(/\bhref=["']([^"']+)["']/i)?.[1];
+    if (href && (!rel || rel === "alternate")) return decodeEntities(href);
+  }
+  return "";
+}
+
+/** 单源最多留最新 N 条:OpenAI/Hugging Face 的 feed 一次吐上千条全量历史,不截会把灵感池撑爆 */
+const MAX_ITEMS_PER_FEED = 30;
+
+/** RSS 2.0 / Atom 子集解析（零依赖正则；源不规范时安全降级为空数组）。按发布时间取最新 N 条 */
 export function parseRssItems(xml: string): Array<Omit<RadarItem, "source">> {
   const items: Array<Omit<RadarItem, "source">> = [];
-  for (const m of xml.matchAll(/<item[\s>][\s\S]*?<\/item>/gi)) {
+  // The Verge、Simon Willison 等只出 Atom(<entry>),只认 <item> 会被当成失效源
+  for (const m of xml.matchAll(/<(item|entry)[\s>][\s\S]*?<\/\1>/gi)) {
+    const isAtom = m[1].toLowerCase() === "entry";
     const title = field(m[0], "title");
-    const link = field(m[0], "link");
+    const link = isAtom ? atomLink(m[0]) : field(m[0], "link");
     if (!title || !link) continue;
-    const pub = field(m[0], "pubDate");
+    const pub = isAtom ? field(m[0], "published") || field(m[0], "updated") : field(m[0], "pubDate");
     const ts = pub ? new Date(pub) : new Date();
     // 摘要:去 HTML 标签、压空白、截 240——灵感库里"看得出这个灵感是什么"靠它
-    const rawDesc = field(m[0], "description");
+    const rawDesc = isAtom
+      ? field(m[0], "summary") || field(m[0], "content")
+      : field(m[0], "description");
     const description = rawDesc
       ? rawDesc.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240)
       : "";
@@ -109,7 +131,9 @@ export function parseRssItems(xml: string): Array<Omit<RadarItem, "source">> {
       ...(description ? { description } : {}),
     });
   }
-  return items;
+  return items
+    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+    .slice(0, MAX_ITEMS_PER_FEED);
 }
 
 export interface ScoredRadarItem {
