@@ -40,7 +40,7 @@ WorkBuddy App 自带 CLI 只有 headless 模式、登录态由 App 内部注入�
   `npx autocrew host workbuddy` 与集成页「宿主」卡上的「连接 WorkBuddy」按钮做同一件事：发令牌，并往 `~/.workbuddy/mcp.json`
   合并写入一条 stdio 条目 `autocrew`（走现有 `bin/autocrew.mjs mcp` 转发器，同 Claude Code）。ChatCut 也是这样把自己写进这份文件的。
 - **复制指令**：稿件页与对话栏各一个「复制给 WorkBuddy」按钮，复制一句话，例如：
-  「通过 autocrew MCP 调用 autocrew_content get 读取《<标题>》（id: <id>），总结这篇现在在哪一步、卡在哪，然后等我指示，先不要改任何东西。」
+  「通过 autocrew MCP 调用 autocrew_content summary 查看《<标题>》（id: <id>），总结这篇现在在哪一步、卡在哪，然后等我指示，先不要改任何东西。」
   （中文，WorkBuddy 用国产模型；措辞待创始人认。）
 - **边界**
   | # | 场景 | 行为 |
@@ -273,3 +273,29 @@ WorkBuddy App 自带 CLI 只有 headless 模式、登录态由 App 内部注入�
 | X7 | 重试时原对话已删 | 新开一段对话接着写，气泡说明「原对话已删除，新开了一段」 |
 | X8 | 重试时本机后端不可用（没登录 / 代理没开） | 报错说明原因和修法，不改走内置引擎 |
 | X9 | 重试时已有 agent 在跑 | 明说「已有一个本机 agent 在跑」，不排队 |
+
+## v1.3 MCP 瘦身（2026-09-29 创始人在 WorkBuddy 实测反馈：步骤多、慢）
+
+### 诊断（有数）
+- WorkBuddy（DeepSeek V4 Pro / Kimi K3）查一篇稿进度：6 次调用、约 30 秒；AutoCrew 服务端每次 2–35ms，慢在模型。
+- 复制指令点名了 `autocrew_desk 打开`，desk 只有 inbox/claim/release，模型翻了 4 次收件箱（3f84345 已改成 `autocrew_content get`）。
+- `tools/list` 共 19 个工具、61,263 字（最大：video 9,103、writer 8,365、editorial 5,237）；initialize instructions 3,434 字。不支持按需加载工具的模型每轮都要全读。
+- `autocrew_content get` 返回 16KB（正文+元数据），「这篇到哪了」用不着。
+
+### 做什么
+1. **`autocrew_content summary`**：只读、只回进度——标题、平台、状态（中文阶段名）、卡在哪（缺角度 / 审稿意见 / 被谁认领 / 哪道门没过）、下一步建议、最后更新时间、字数；不带正文，目标 ≤1.5KB。复制给 WorkBuddy 的指令改用它。
+2. **工具说明瘦身**：每个工具说明只写「做什么 + 每个动作一句话」，参数说明一句话；长篇守则搬进已有的按需读取资源（如 `autocrew://writing-guide`），并靠工具返回里的 `next_action` / 报错引导下一步。`initialize` 的 instructions 压到 1,500 字以内，只说总流程和「动笔前先读写作守则」。
+3. **预算锁**：加测试，`tools/list` 总字数 ≤ 15,000、单个工具 ≤ 2,000、instructions ≤ 1,500，超了测试就红，防止以后又长回去。
+4. **只动说明，不动契约**：工具名、动作名、参数结构一律不变；宿主限权不变；网页内置引擎的工具集不在本轮范围。
+
+### 边界清单（本轮验收）
+| # | 场景 | 行为 |
+|---|---|---|
+| M1 | 已经连着的宿主会话（缓存了旧工具说明） | 照常能调用，参数结构没变；重连后拿到新说明 |
+| M2 | 说明变短后模型漏了流程守则（比如没先领写作包就交稿） | 由工具返回拦住：报错说清缺哪步、`next_action` 指向正确动作；不靠说明兜底 |
+| M3 | summary 查不存在 / 已删除的稿 | 明确报「找不到这篇」，不回空对象 |
+| M4 | summary 查被别的会话认领的稿 | 写明被谁认领、多久前；绝不带认领令牌 |
+| M5 | summary 查没进写作流程的稿（手写导入、旧稿） | 状态照实写，「卡在哪」给出能推断的，推断不了写「没有进行中的流程」 |
+| M6 | 需要正文时 | `autocrew_content get` 照旧返回完整内容 |
+| M7 | 预算测试超标 | 测试失败并列出超标的工具和字数 |
+| M8 | 瘦身后真机回归 | ①WorkBuddy（DeepSeek）按新复制指令查进度：≤2 次调用；②本机 Claude 走一遍 选题→调研→选角度→写稿→审稿；③Codex 查进度。三项都要记录调用次数和用时，和瘦身前对比 |

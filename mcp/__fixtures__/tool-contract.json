@@ -1,0 +1,5314 @@
+{
+ "local-user": [
+  {
+   "name": "autocrew_topic",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "create",
+       "list",
+       "radar_pool",
+       "radar_score",
+       "delete"
+      ],
+      "type": "string"
+     },
+     "description": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "pool_id": {
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "properties": {
+        "angle": {
+         "type": "string"
+        },
+        "candidate_id": {
+         "type": "string"
+        },
+        "score": {
+         "type": "number"
+        },
+        "summary": {
+         "type": "string"
+        },
+        "title": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "candidate_id",
+        "score"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "source": {
+      "type": "string"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_research",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "discover",
+       "session_status"
+      ],
+      "type": "string"
+     },
+     "industry": {
+      "type": "string"
+     },
+     "keyword": {
+      "type": "string"
+     },
+     "mode": {
+      "enum": [
+       "auto",
+       "browser_first",
+       "api_fallback",
+       "free",
+       "manual",
+       "overseas"
+      ],
+      "type": "string"
+     },
+     "platform": {
+      "enum": [
+       "xiaohongshu",
+       "douyin",
+       "wechat_mp",
+       "wechat_video",
+       "bilibili"
+      ],
+      "type": "string"
+     },
+     "save_topics": {
+      "type": "boolean"
+     },
+     "search_results": {
+      "items": {
+       "properties": {
+        "snippet": {
+         "type": "string"
+        },
+        "title": {
+         "type": "string"
+        },
+        "url": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "title",
+        "snippet",
+        "url"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "topic_count": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_content",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "save",
+       "list",
+       "get",
+       "summary",
+       "update",
+       "transition",
+       "create_variant",
+       "siblings",
+       "allowed_transitions",
+       "adoption",
+       "delete",
+       "restore"
+      ],
+      "type": "string"
+     },
+     "body": {
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "diff_note": {
+      "type": "string"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "from_status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "id": {
+      "type": "string"
+     },
+     "import_reason": {
+      "type": "string"
+     },
+     "performance_data": {
+      "patternProperties": {
+       "^(.*)$": {
+        "type": "number"
+       }
+      },
+      "type": "object"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "publish_url": {
+      "type": "string"
+     },
+     "reason": {
+      "enum": [
+       "style_mismatch",
+       "factual_error",
+       "structure_bad"
+      ],
+      "type": "string"
+     },
+     "reason_note": {
+      "type": "string"
+     },
+     "siblings": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "source": {
+      "const": "manual_import",
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "target_status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "topicId": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "adopted",
+       "light_edit",
+       "rewritten"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_workflow",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "prepare",
+       "research",
+       "status",
+       "select_angle",
+       "write",
+       "draft",
+       "doctor"
+      ],
+      "type": "string"
+     },
+     "angle_id": {
+      "type": "string"
+     },
+     "brief_revision": {
+      "type": "integer"
+     },
+     "card": {
+      "additionalProperties": true,
+      "properties": {},
+      "type": "object"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "execution": {
+      "enum": [
+       "host",
+       "engine"
+      ],
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "full",
+       "angles"
+      ],
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "probe": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "type": "string"
+     },
+     "research": {
+      "type": "string"
+     },
+     "research_mode": {
+      "enum": [
+       "auto",
+       "provided",
+       "skip"
+      ],
+      "type": "string"
+     },
+     "research_reason": {
+      "type": "string"
+     },
+     "skip_reason": {
+      "type": "string"
+     },
+     "topic_id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_scout",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "prepare",
+       "pack",
+       "status",
+       "search",
+       "read_page",
+       "cite",
+       "claim_offline",
+       "perspective",
+       "synthesize",
+       "angles"
+      ],
+      "type": "string"
+     },
+     "claim": {
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "confirm_task_change": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "offset": {
+      "minimum": 0,
+      "type": "integer"
+     },
+     "pack_id": {
+      "type": "string"
+     },
+     "payload": {
+      "patternProperties": {
+       "^(.*)$": {}
+      },
+      "type": "object"
+     },
+     "perspective": {
+      "enum": [
+       "audience",
+       "evidence",
+       "counter",
+       "benchmark"
+      ],
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "query": {
+      "type": "string"
+     },
+     "quote": {
+      "type": "string"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "requirements": {
+      "type": "string"
+     },
+     "source_id": {
+      "type": "string"
+     },
+     "task_id": {
+      "type": "string"
+     },
+     "topic_id": {
+      "type": "string"
+     },
+     "url": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action",
+     "topic_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_review_desk",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "pack",
+       "submit"
+      ],
+      "type": "string"
+     },
+     "attempt": {
+      "minimum": 1,
+      "type": "integer"
+     },
+     "audience": {
+      "additionalProperties": false,
+      "properties": {
+       "audienceBasis": {
+        "additionalProperties": false,
+        "properties": {
+         "quote": {
+          "maxLength": 2000,
+          "type": "string"
+         },
+         "source": {
+          "enum": [
+           "current_task",
+           "profile"
+          ],
+          "type": "string"
+         }
+        },
+        "required": [
+         "source",
+         "quote"
+        ],
+        "type": "object"
+       },
+       "suggestions": {
+        "items": {
+         "maxLength": 2000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "maxItems": 4,
+        "type": "array"
+       },
+       "verdicts": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "losesAt": {
+           "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+           },
+           "maxItems": 3,
+           "type": "array"
+          },
+          "name": {
+           "maxLength": 300,
+           "minLength": 1,
+           "type": "string"
+          },
+          "tier": {
+           "enum": [
+            "core",
+            "adjacent",
+            "surprise"
+           ],
+           "type": "string"
+          },
+          "why": {
+           "maxLength": 2000,
+           "minLength": 1,
+           "type": "string"
+          },
+          "wouldStop": {
+           "type": "boolean"
+          }
+         },
+         "required": [
+          "tier",
+          "name",
+          "wouldStop",
+          "why",
+          "losesAt"
+         ],
+         "type": "object"
+        },
+        "maxItems": 3,
+        "minItems": 1,
+        "type": "array"
+       }
+      },
+      "required": [
+       "audienceBasis",
+       "verdicts"
+      ],
+      "type": "object"
+     },
+     "claim_token": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     },
+     "content_id": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "issues": {
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "id": {
+         "maxLength": 100,
+         "type": "string"
+        },
+        "instruction": {
+         "maxLength": 2000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "quote": {
+         "maxLength": 60,
+         "minLength": 6,
+         "type": "string"
+        },
+        "rule": {
+         "maxLength": 200,
+         "minLength": 1,
+         "type": "string"
+        },
+        "severity": {
+         "enum": [
+          "blocker",
+          "advisory"
+         ],
+         "type": "string"
+        }
+       },
+       "required": [
+        "severity",
+        "quote",
+        "rule",
+        "instruction"
+       ],
+       "type": "object"
+      },
+      "maxItems": 40,
+      "type": "array"
+     },
+     "review_pack_id": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "series_review": {
+      "additionalProperties": false,
+      "properties": {
+       "checked": {
+        "items": {
+         "maxLength": 100,
+         "type": "string"
+        },
+        "maxItems": 10,
+        "type": "array"
+       },
+       "findings": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "content_id": {
+           "maxLength": 100,
+           "type": "string"
+          },
+          "disposition": {
+           "enum": [
+            "blocker",
+            "allowed"
+           ],
+           "type": "string"
+          },
+          "issue_id": {
+           "maxLength": 100,
+           "type": "string"
+          },
+          "item_id": {
+           "maxLength": 60,
+           "type": "string"
+          },
+          "quote": {
+           "maxLength": 200,
+           "minLength": 2,
+           "type": "string"
+          },
+          "reason": {
+           "maxLength": 600,
+           "minLength": 1,
+           "type": "string"
+          }
+         },
+         "required": [
+          "content_id",
+          "item_id",
+          "quote",
+          "disposition",
+          "reason"
+         ],
+         "type": "object"
+        },
+        "maxItems": 40,
+        "type": "array"
+       },
+       "insufficient": {
+        "items": {
+         "maxLength": 100,
+         "type": "string"
+        },
+        "maxItems": 10,
+        "type": "array"
+       },
+       "snapshot_id": {
+        "maxLength": 100,
+        "minLength": 1,
+        "type": "string"
+       }
+      },
+      "required": [
+       "snapshot_id",
+       "checked",
+       "insufficient",
+       "findings"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_writer",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "pack",
+       "pack_status",
+       "find_evidence",
+       "submit",
+       "submit_status",
+       "gap",
+       "technique"
+      ],
+      "type": "string"
+     },
+     "attempt": {
+      "type": "integer"
+     },
+     "body": {
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "cta": {
+      "type": "string"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "execution": {
+      "enum": [
+       "host",
+       "engine"
+      ],
+      "type": "string"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "gap": {
+      "additionalProperties": false,
+      "properties": {
+       "available": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string"
+       },
+       "missing": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string"
+       },
+       "questions": {
+        "items": {
+         "maxLength": 600,
+         "minLength": 1,
+         "type": "string"
+        },
+        "maxItems": 10,
+        "minItems": 1,
+        "type": "array"
+       }
+      },
+      "required": [
+       "available",
+       "missing",
+       "questions"
+      ],
+      "type": "object"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "hook": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "need": {
+      "type": "string"
+     },
+     "outline": {
+      "additionalProperties": false,
+      "properties": {
+       "points": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "kind": {
+           "enum": [
+            "case",
+            "cause",
+            "demo",
+            "boundary",
+            "firsthand"
+           ],
+           "type": "string"
+          },
+          "seconds": {
+           "maximum": 3600,
+           "minimum": 0,
+           "type": "number"
+          },
+          "text": {
+           "maxLength": 600,
+           "minLength": 1,
+           "type": "string"
+          }
+         },
+         "required": [
+          "text",
+          "kind",
+          "seconds"
+         ],
+         "type": "object"
+        },
+        "maxItems": 30,
+        "minItems": 1,
+        "type": "array"
+       },
+       "said": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "id": {
+           "pattern": "^[A-Za-z0-9_-]{1,40}$",
+           "type": "string"
+          },
+          "kind": {
+           "enum": [
+            "concept",
+            "judgment",
+            "metaphor",
+            "example"
+           ],
+           "type": "string"
+          },
+          "text": {
+           "maxLength": 200,
+           "minLength": 1,
+           "type": "string"
+          }
+         },
+         "required": [
+          "id",
+          "kind",
+          "text"
+         ],
+         "type": "object"
+        },
+        "maxItems": 40,
+        "type": "array"
+       },
+       "structure": {
+        "additionalProperties": false,
+        "properties": {
+         "ending": {
+          "maxLength": 600,
+          "minLength": 1,
+          "type": "string"
+         },
+         "opening": {
+          "maxLength": 600,
+          "minLength": 1,
+          "type": "string"
+         },
+         "progression": {
+          "maxLength": 600,
+          "minLength": 1,
+          "type": "string"
+         }
+        },
+        "required": [
+         "opening",
+         "progression",
+         "ending"
+        ],
+        "type": "object"
+       },
+       "techniqueNotes": {
+        "maxLength": 600,
+        "minLength": 1,
+        "type": "string"
+       },
+       "thesis": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+       }
+      },
+      "required": [
+       "thesis",
+       "points",
+       "structure",
+       "said"
+      ],
+      "type": "object"
+     },
+     "pack_id": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "requirements": {
+      "type": "string"
+     },
+     "research": {
+      "type": "string"
+     },
+     "research_mode": {
+      "enum": [
+       "auto",
+       "provided",
+       "skip"
+      ],
+      "type": "string"
+     },
+     "research_reason": {
+      "type": "string"
+     },
+     "review": {
+      "enum": [
+       "host",
+       "engine",
+       "none"
+      ],
+      "type": "string"
+     },
+     "revision_note": {
+      "type": "string"
+     },
+     "revision_of": {
+      "type": "string"
+     },
+     "skip_reason": {
+      "type": "string"
+     },
+     "technique_ids": {
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "id": {
+         "maxLength": 80,
+         "minLength": 1,
+         "type": "string"
+        },
+        "version": {
+         "minimum": 1,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "id",
+        "version"
+       ],
+       "type": "object"
+      },
+      "maxItems": 10,
+      "type": "array"
+     },
+     "title": {
+      "type": "string"
+     },
+     "topic_id": {
+      "type": "string"
+     },
+     "version": {
+      "minimum": 1,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_desk",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "inbox",
+       "claim",
+       "release"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "employee": {
+      "enum": [
+       "writer",
+       "cover",
+       "editor"
+      ],
+      "type": "string"
+     },
+     "takeover": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_video",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "status",
+       "start",
+       "transcript",
+       "cut_confirm",
+       "transcript_edit",
+       "cut_preview",
+       "rough_cut_rerun",
+       "transcribe_rerun",
+       "editor_plan",
+       "editor_slot_fill",
+       "editor_slot_remove",
+       "editor_back_to_cut",
+       "editor_confirm",
+       "editor_rerun",
+       "reassemble",
+       "retry",
+       "review",
+       "asr_status",
+       "handoff",
+       "revoke",
+       "register",
+       "report",
+       "citations",
+       "match",
+       "confirm"
+      ],
+      "type": "string"
+     },
+     "approvals": {
+      "properties": {
+       "covers": {
+        "properties": {
+         "approved_at": {
+          "type": "string"
+         },
+         "artifact_sha256": {
+          "type": "string"
+         },
+         "user_message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "artifact_sha256",
+         "approved_at",
+         "user_message"
+        ],
+        "type": "object"
+       },
+       "final_cut": {
+        "properties": {
+         "approved_at": {
+          "type": "string"
+         },
+         "artifact_sha256": {
+          "type": "string"
+         },
+         "user_message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "artifact_sha256",
+         "approved_at",
+         "user_message"
+        ],
+        "type": "object"
+       }
+      },
+      "required": [
+       "final_cut",
+       "covers"
+      ],
+      "type": "object"
+     },
+     "aroll_path": {
+      "type": "string"
+     },
+     "base_clean_revision": {
+      "type": "integer"
+     },
+     "base_cut_revision": {
+      "type": "integer"
+     },
+     "base_transcript_revision": {
+      "type": "integer"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "confirmation_id": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "cover_text": {
+      "type": "string"
+     },
+     "coverage": {},
+     "covers": {
+      "properties": {
+       "3:4": {
+        "type": "string"
+       },
+       "4:3": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "3:4",
+       "4:3"
+      ],
+      "type": "object"
+     },
+     "final_path": {
+      "type": "string"
+     },
+     "flags": {
+      "items": {
+       "properties": {
+        "flag": {
+         "type": "string"
+        },
+        "segment_id": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "segment_id",
+        "flag"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "full": {
+      "type": "boolean"
+     },
+     "jianying_draft": {
+      "type": "string"
+     },
+     "keeps": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "kept_overlay_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "library_id": {
+      "type": "string"
+     },
+     "manifest_hash": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "overlay_id": {
+      "type": "string"
+     },
+     "plan_revision": {
+      "type": "integer"
+     },
+     "project_root": {
+      "type": "string"
+     },
+     "receipt_id": {
+      "type": "string"
+     },
+     "rendered_revision": {
+      "type": "integer"
+     },
+     "report": {},
+     "request_id": {
+      "type": "string"
+     },
+     "revoke": {
+      "type": "boolean"
+     },
+     "srt_path": {
+      "type": "string"
+     },
+     "target": {
+      "enum": [
+       "edit",
+       "cut"
+      ],
+      "type": "string"
+     },
+     "target_seconds": {
+      "type": "number"
+     },
+     "text": {
+      "type": "string"
+     },
+     "timestamp_ms": {
+      "type": "integer"
+     },
+     "unit_id": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "approve",
+       "revise",
+       "reject"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_status",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "overview",
+       "baseline",
+       "compare",
+       "track_performance",
+       "learning_report"
+      ],
+      "type": "string"
+     },
+     "brief": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "metrics": {
+      "patternProperties": {
+       "^(.*)$": {
+        "type": "number"
+       }
+      },
+      "type": "object"
+     },
+     "verbose": {
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_asset",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "add",
+       "list",
+       "remove",
+       "versions",
+       "get_version",
+       "revert"
+      ],
+      "type": "string"
+     },
+     "asset_type": {
+      "enum": [
+       "cover",
+       "broll",
+       "image",
+       "video",
+       "audio",
+       "subtitle",
+       "other"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "description": {
+      "type": "string"
+     },
+     "filename": {
+      "type": "string"
+     },
+     "source_path": {
+      "type": "string"
+     },
+     "version": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_pipeline",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "create",
+       "list",
+       "get",
+       "enable",
+       "disable",
+       "delete",
+       "templates"
+      ],
+      "type": "string"
+     },
+     "description": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "schedule": {
+      "type": "string"
+     },
+     "template": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_publish",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "wechat_mp_draft",
+       "clipboard",
+       "ego_lite_prepare",
+       "confirm_published",
+       "digest"
+      ],
+      "type": "string"
+     },
+     "article_path": {
+      "type": "string"
+     },
+     "author": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "digest": {
+      "type": "string"
+     },
+     "dry_run": {
+      "type": "boolean"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "image_api_key": {
+      "type": "string"
+     },
+     "image_base_url": {
+      "type": "string"
+     },
+     "image_generator_script": {
+      "type": "string"
+     },
+     "image_model": {
+      "type": "string"
+     },
+     "image_size": {
+      "type": "string"
+     },
+     "publish_url": {
+      "type": "string"
+     },
+     "schedule": {
+      "type": "string"
+     },
+     "skip_images": {
+      "type": "boolean"
+     },
+     "theme": {
+      "type": "string"
+     },
+     "wechat_publish_script": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_humanize",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "humanize_zh"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "save_back": {
+      "type": "boolean"
+     },
+     "text": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_rewrite",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "adapt_platform",
+       "batch_adapt"
+      ],
+      "type": "string"
+     },
+     "body": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "execution": {
+      "const": "engine",
+      "type": "string"
+     },
+     "save_as_draft": {
+      "type": "boolean"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "target_platform": {
+      "enum": [
+       "xiaohongshu",
+       "douyin",
+       "wechat_mp",
+       "wechat_video",
+       "bilibili"
+      ],
+      "type": "string"
+     },
+     "target_platforms": {
+      "items": {
+       "enum": [
+        "xiaohongshu",
+        "douyin",
+        "wechat_mp",
+        "wechat_video",
+        "bilibili"
+       ],
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_cover_review",
+   "shape": {
+    "properties": {
+     "_dataDir": {
+      "type": "string"
+     },
+     "_geminiApiKey": {
+      "type": "string"
+     },
+     "_geminiModel": {
+      "type": "string"
+     },
+     "action": {
+      "enum": [
+       "create_candidates",
+       "get",
+       "approve",
+       "revise",
+       "platform_ratios",
+       "draft_ratios",
+       "generate_ratios"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "confirm_paid_api": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "custom_title": {
+      "type": "string"
+     },
+     "edit_mode": {
+      "enum": [
+       "full",
+       "local"
+      ],
+      "type": "string"
+     },
+     "feedback": {
+      "type": "string"
+     },
+     "label": {
+      "enum": [
+       "a",
+       "b",
+       "c"
+      ],
+      "type": "string"
+     },
+     "mask_region": {
+      "properties": {
+       "height": {
+        "maximum": 1,
+        "minimum": 0.02,
+        "type": "number"
+       },
+       "width": {
+        "maximum": 1,
+        "minimum": 0.02,
+        "type": "number"
+       },
+       "x": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+       },
+       "y": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+       }
+      },
+      "required": [
+       "x",
+       "y",
+       "width",
+       "height"
+      ],
+      "type": "object"
+     },
+     "ratio": {
+      "enum": [
+       "3:4",
+       "4:3",
+       "2.35:1"
+      ],
+      "type": "string"
+     },
+     "ratios": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_editorial",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "profile",
+       "update_profile",
+       "inspect",
+       "feedback"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     },
+     "confirm_audience": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "draft_hash": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "event_id": {
+      "pattern": "^[A-Za-z0-9_-]{1,100}$",
+      "type": "string"
+     },
+     "feedback": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "platform": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "profile": {
+      "additionalProperties": false,
+      "properties": {
+       "audiencePersona": {
+        "anyOf": [
+         {
+          "type": "null"
+         },
+         {
+          "additionalProperties": false,
+          "properties": {
+           "adjacent": {
+            "additionalProperties": false,
+            "properties": {
+             "age": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "coreAnxiety": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "job": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "name": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "painPoints": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "scrollStopTriggers": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             }
+            },
+            "required": [
+             "name"
+            ],
+            "type": "object"
+           },
+           "core": {
+            "additionalProperties": false,
+            "properties": {
+             "age": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "coreAnxiety": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "job": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "name": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "painPoints": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "scrollStopTriggers": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             }
+            },
+            "required": [
+             "name"
+            ],
+            "type": "object"
+           },
+           "surprise": {
+            "additionalProperties": false,
+            "properties": {
+             "age": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "coreAnxiety": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "job": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "name": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "painPoints": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "scrollStopTriggers": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             }
+            },
+            "required": [
+             "name"
+            ],
+            "type": "object"
+           }
+          },
+          "required": [
+           "core"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       "contentFormat": {
+        "additionalProperties": false,
+        "properties": {
+         "contentDepth": {
+          "type": "string"
+         },
+         "videoLength": {
+          "type": "string"
+         },
+         "wordCount": {
+          "type": "string"
+         }
+        },
+        "type": "object"
+       },
+       "expressionPersona": {
+        "type": "string"
+       },
+       "industry": {
+        "type": "string"
+       },
+       "platforms": {
+        "items": {
+         "maxLength": 12000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "styleBoundaries": {
+        "additionalProperties": false,
+        "properties": {
+         "always": {
+          "items": {
+           "maxLength": 12000,
+           "minLength": 1,
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "never": {
+          "items": {
+           "maxLength": 12000,
+           "minLength": 1,
+           "type": "string"
+          },
+          "type": "array"
+         }
+        },
+        "required": [
+         "never",
+         "always"
+        ],
+        "type": "object"
+       },
+       "voiceSamples": {
+        "items": {
+         "maxLength": 12000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "maxItems": 5,
+        "type": "array"
+       }
+      },
+      "type": "object"
+     },
+     "scope": {
+      "enum": [
+       "draft",
+       "platform",
+       "voice"
+      ],
+      "type": "string"
+     },
+     "selection": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "user_confirmed": {
+      "type": "boolean"
+     },
+     "verdict": {
+      "enum": [
+       "adopted",
+       "light_edit",
+       "rewritten",
+       "rejected"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_memory",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "capture_feedback",
+       "get_memory"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "feedback": {
+      "type": "string"
+     },
+     "modified_text": {
+      "type": "string"
+     },
+     "original_text": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "signal_type": {
+      "enum": [
+       "approval",
+       "rejection",
+       "edit",
+       "performance",
+       "general"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_review",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "full_review",
+       "scan_only",
+       "quality_score",
+       "auto_fix"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_pre_publish",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "check",
+       "video_kit"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "kit": {
+      "properties": {
+       "caption": {
+        "type": "string"
+       },
+       "cover_text": {
+        "type": "string"
+       },
+       "hashtags": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "post_title": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "post_title",
+       "caption",
+       "cover_text"
+      ],
+      "type": "object"
+     },
+     "platform": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_dashboard",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "overview",
+       "calendar",
+       "pending",
+       "batch_review",
+       "batch_transition"
+      ],
+      "type": "string"
+     },
+     "content_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "days": {
+      "type": "number"
+     },
+     "target_status": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_insights",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "prepare",
+       "submit",
+       "list",
+       "get"
+      ],
+      "type": "string"
+     },
+     "days": {
+      "default": 30,
+      "maximum": 366,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "evidence_hash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+     },
+     "focus": {
+      "maxLength": 500,
+      "type": "string"
+     },
+     "pack_id": {
+      "pattern": "^insights-[a-f0-9-]{36}$",
+      "type": "string"
+     },
+     "platform": {
+      "enum": [
+       "xiaohongshu",
+       "douyin",
+       "wechat_mp",
+       "wechat_video",
+       "bilibili",
+       "twitter",
+       "reddit",
+       "toutiao",
+       "xhs"
+      ],
+      "type": "string"
+     },
+     "report": {
+      "additionalProperties": false,
+      "properties": {
+       "account_summary": {
+        "maxLength": 1200,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+       },
+       "findings": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "confidence": {
+           "enum": [
+            "high",
+            "medium",
+            "low"
+           ],
+           "type": "string"
+          },
+          "evidence_refs": {
+           "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+           },
+           "maxItems": 8,
+           "minItems": 1,
+           "type": "array",
+           "uniqueItems": true
+          },
+          "interpretation": {
+           "maxLength": 700,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "observation": {
+           "maxLength": 1000,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "title": {
+           "maxLength": 100,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          }
+         },
+         "required": [
+          "title",
+          "observation",
+          "interpretation",
+          "confidence",
+          "evidence_refs"
+         ],
+         "type": "object"
+        },
+        "maxItems": 3,
+        "minItems": 1,
+        "type": "array"
+       },
+       "limitations": {
+        "items": {
+         "maxLength": 500,
+         "minLength": 1,
+         "pattern": "\\S",
+         "type": "string"
+        },
+        "maxItems": 6,
+        "minItems": 1,
+        "type": "array"
+       },
+       "team_actions": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "action": {
+           "maxLength": 600,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "deliverable": {
+           "maxLength": 400,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "evidence_refs": {
+           "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+           },
+           "maxItems": 8,
+           "minItems": 1,
+           "type": "array",
+           "uniqueItems": true
+          },
+          "owner": {
+           "enum": [
+            "strategist",
+            "scout",
+            "writer",
+            "editor",
+            "cover",
+            "publisher",
+            "analyst"
+           ],
+           "type": "string"
+          },
+          "prerequisite": {
+           "maxLength": 400,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "priority": {
+           "enum": [
+            "P0",
+            "P1",
+            "P2"
+           ],
+           "type": "string"
+          },
+          "rationale": {
+           "maxLength": 500,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "success_metric": {
+           "maxLength": 400,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "timeframe": {
+           "maxLength": 150,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          }
+         },
+         "required": [
+          "owner",
+          "priority",
+          "action",
+          "rationale",
+          "deliverable",
+          "success_metric",
+          "timeframe",
+          "prerequisite",
+          "evidence_refs"
+         ],
+         "type": "object"
+        },
+        "maxItems": 8,
+        "minItems": 1,
+        "type": "array"
+       }
+      },
+      "required": [
+       "account_summary",
+       "findings",
+       "team_actions",
+       "limitations"
+      ],
+      "type": "object"
+     }
+    },
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_flywheel",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "import_csv",
+       "record",
+       "report"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "csv_path": {
+      "type": "string"
+     },
+     "csv_text": {
+      "type": "string"
+     },
+     "metric_date": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "type": "string"
+     },
+     "metrics": {
+      "patternProperties": {
+       "^(.*)$": {
+        "type": "number"
+       }
+      },
+      "type": "object"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "platform_title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_generate",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "script"
+      ],
+      "type": "string"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "execution": {
+      "const": "engine",
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "requirements": {
+      "type": "string"
+     },
+     "research": {
+      "type": "string"
+     },
+     "research_mode": {
+      "enum": [
+       "auto",
+       "provided",
+       "skip"
+      ],
+      "type": "string"
+     },
+     "research_reason": {
+      "type": "string"
+     },
+     "skip_reason": {
+      "type": "string"
+     },
+     "topic": {
+      "type": "string"
+     },
+     "topic_id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_style",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "distill",
+       "absorb_samples"
+      ],
+      "type": "string"
+     },
+     "execution": {
+      "const": "engine",
+      "type": "string"
+     },
+     "samples": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_revise",
+   "shape": {
+    "properties": {
+     "content_id": {
+      "type": "string"
+     },
+     "execution": {
+      "enum": [
+       "host",
+       "engine"
+      ],
+      "type": "string"
+     },
+     "instruction": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "content_id",
+     "instruction"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_init",
+   "shape": {
+    "properties": {},
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_pro_status",
+   "shape": {
+    "properties": {},
+    "type": "object"
+   }
+  }
+ ],
+ "workbuddy": [
+  {
+   "name": "autocrew_topic",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "create",
+       "list",
+       "radar_pool",
+       "radar_score",
+       "delete"
+      ],
+      "type": "string"
+     },
+     "description": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "pool_id": {
+      "type": "string"
+     },
+     "results": {
+      "items": {
+       "properties": {
+        "angle": {
+         "type": "string"
+        },
+        "candidate_id": {
+         "type": "string"
+        },
+        "score": {
+         "type": "number"
+        },
+        "summary": {
+         "type": "string"
+        },
+        "title": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "candidate_id",
+        "score"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "source": {
+      "type": "string"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_research",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "discover",
+       "session_status"
+      ],
+      "type": "string"
+     },
+     "industry": {
+      "type": "string"
+     },
+     "keyword": {
+      "type": "string"
+     },
+     "mode": {
+      "enum": [
+       "auto",
+       "browser_first",
+       "api_fallback",
+       "free",
+       "manual",
+       "overseas"
+      ],
+      "type": "string"
+     },
+     "platform": {
+      "enum": [
+       "xiaohongshu",
+       "douyin",
+       "wechat_mp",
+       "wechat_video",
+       "bilibili"
+      ],
+      "type": "string"
+     },
+     "save_topics": {
+      "type": "boolean"
+     },
+     "search_results": {
+      "items": {
+       "properties": {
+        "snippet": {
+         "type": "string"
+        },
+        "title": {
+         "type": "string"
+        },
+        "url": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "title",
+        "snippet",
+        "url"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "topic_count": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_content",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "save",
+       "list",
+       "get",
+       "summary",
+       "update",
+       "transition",
+       "create_variant",
+       "siblings",
+       "allowed_transitions",
+       "adoption",
+       "delete",
+       "restore"
+      ],
+      "type": "string"
+     },
+     "body": {
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "diff_note": {
+      "type": "string"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "from_status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "id": {
+      "type": "string"
+     },
+     "import_reason": {
+      "type": "string"
+     },
+     "performance_data": {
+      "patternProperties": {
+       "^(.*)$": {
+        "type": "number"
+       }
+      },
+      "type": "object"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "publish_url": {
+      "type": "string"
+     },
+     "reason": {
+      "enum": [
+       "style_mismatch",
+       "factual_error",
+       "structure_bad"
+      ],
+      "type": "string"
+     },
+     "reason_note": {
+      "type": "string"
+     },
+     "siblings": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "source": {
+      "const": "manual_import",
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "target_status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "topicId": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "adopted",
+       "light_edit",
+       "rewritten"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_workflow",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "prepare",
+       "research",
+       "status",
+       "select_angle",
+       "write",
+       "draft",
+       "doctor"
+      ],
+      "type": "string"
+     },
+     "angle_id": {
+      "type": "string"
+     },
+     "brief_revision": {
+      "type": "integer"
+     },
+     "card": {
+      "additionalProperties": true,
+      "properties": {},
+      "type": "object"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "execution": {
+      "enum": [
+       "host",
+       "engine"
+      ],
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "full",
+       "angles"
+      ],
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "probe": {
+      "type": "boolean"
+     },
+     "requirements": {
+      "type": "string"
+     },
+     "research": {
+      "type": "string"
+     },
+     "research_mode": {
+      "enum": [
+       "auto",
+       "provided",
+       "skip"
+      ],
+      "type": "string"
+     },
+     "research_reason": {
+      "type": "string"
+     },
+     "skip_reason": {
+      "type": "string"
+     },
+     "topic_id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_scout",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "prepare",
+       "pack",
+       "status",
+       "search",
+       "read_page",
+       "cite",
+       "claim_offline",
+       "perspective",
+       "synthesize",
+       "angles"
+      ],
+      "type": "string"
+     },
+     "claim": {
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "confirm_task_change": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "offset": {
+      "minimum": 0,
+      "type": "integer"
+     },
+     "pack_id": {
+      "type": "string"
+     },
+     "payload": {
+      "patternProperties": {
+       "^(.*)$": {}
+      },
+      "type": "object"
+     },
+     "perspective": {
+      "enum": [
+       "audience",
+       "evidence",
+       "counter",
+       "benchmark"
+      ],
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "query": {
+      "type": "string"
+     },
+     "quote": {
+      "type": "string"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "requirements": {
+      "type": "string"
+     },
+     "source_id": {
+      "type": "string"
+     },
+     "task_id": {
+      "type": "string"
+     },
+     "topic_id": {
+      "type": "string"
+     },
+     "url": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action",
+     "topic_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_review_desk",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "pack",
+       "submit"
+      ],
+      "type": "string"
+     },
+     "attempt": {
+      "minimum": 1,
+      "type": "integer"
+     },
+     "audience": {
+      "additionalProperties": false,
+      "properties": {
+       "audienceBasis": {
+        "additionalProperties": false,
+        "properties": {
+         "quote": {
+          "maxLength": 2000,
+          "type": "string"
+         },
+         "source": {
+          "enum": [
+           "current_task",
+           "profile"
+          ],
+          "type": "string"
+         }
+        },
+        "required": [
+         "source",
+         "quote"
+        ],
+        "type": "object"
+       },
+       "suggestions": {
+        "items": {
+         "maxLength": 2000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "maxItems": 4,
+        "type": "array"
+       },
+       "verdicts": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "losesAt": {
+           "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+           },
+           "maxItems": 3,
+           "type": "array"
+          },
+          "name": {
+           "maxLength": 300,
+           "minLength": 1,
+           "type": "string"
+          },
+          "tier": {
+           "enum": [
+            "core",
+            "adjacent",
+            "surprise"
+           ],
+           "type": "string"
+          },
+          "why": {
+           "maxLength": 2000,
+           "minLength": 1,
+           "type": "string"
+          },
+          "wouldStop": {
+           "type": "boolean"
+          }
+         },
+         "required": [
+          "tier",
+          "name",
+          "wouldStop",
+          "why",
+          "losesAt"
+         ],
+         "type": "object"
+        },
+        "maxItems": 3,
+        "minItems": 1,
+        "type": "array"
+       }
+      },
+      "required": [
+       "audienceBasis",
+       "verdicts"
+      ],
+      "type": "object"
+     },
+     "claim_token": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     },
+     "content_id": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "issues": {
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "id": {
+         "maxLength": 100,
+         "type": "string"
+        },
+        "instruction": {
+         "maxLength": 2000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "quote": {
+         "maxLength": 60,
+         "minLength": 6,
+         "type": "string"
+        },
+        "rule": {
+         "maxLength": 200,
+         "minLength": 1,
+         "type": "string"
+        },
+        "severity": {
+         "enum": [
+          "blocker",
+          "advisory"
+         ],
+         "type": "string"
+        }
+       },
+       "required": [
+        "severity",
+        "quote",
+        "rule",
+        "instruction"
+       ],
+       "type": "object"
+      },
+      "maxItems": 40,
+      "type": "array"
+     },
+     "review_pack_id": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "series_review": {
+      "additionalProperties": false,
+      "properties": {
+       "checked": {
+        "items": {
+         "maxLength": 100,
+         "type": "string"
+        },
+        "maxItems": 10,
+        "type": "array"
+       },
+       "findings": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "content_id": {
+           "maxLength": 100,
+           "type": "string"
+          },
+          "disposition": {
+           "enum": [
+            "blocker",
+            "allowed"
+           ],
+           "type": "string"
+          },
+          "issue_id": {
+           "maxLength": 100,
+           "type": "string"
+          },
+          "item_id": {
+           "maxLength": 60,
+           "type": "string"
+          },
+          "quote": {
+           "maxLength": 200,
+           "minLength": 2,
+           "type": "string"
+          },
+          "reason": {
+           "maxLength": 600,
+           "minLength": 1,
+           "type": "string"
+          }
+         },
+         "required": [
+          "content_id",
+          "item_id",
+          "quote",
+          "disposition",
+          "reason"
+         ],
+         "type": "object"
+        },
+        "maxItems": 40,
+        "type": "array"
+       },
+       "insufficient": {
+        "items": {
+         "maxLength": 100,
+         "type": "string"
+        },
+        "maxItems": 10,
+        "type": "array"
+       },
+       "snapshot_id": {
+        "maxLength": 100,
+        "minLength": 1,
+        "type": "string"
+       }
+      },
+      "required": [
+       "snapshot_id",
+       "checked",
+       "insufficient",
+       "findings"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_writer",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "pack",
+       "pack_status",
+       "find_evidence",
+       "submit",
+       "submit_status",
+       "gap",
+       "technique"
+      ],
+      "type": "string"
+     },
+     "attempt": {
+      "type": "integer"
+     },
+     "body": {
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "cta": {
+      "type": "string"
+     },
+     "direction": {
+      "type": "string"
+     },
+     "execution": {
+      "enum": [
+       "host",
+       "engine"
+      ],
+      "type": "string"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "gap": {
+      "additionalProperties": false,
+      "properties": {
+       "available": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string"
+       },
+       "missing": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string"
+       },
+       "questions": {
+        "items": {
+         "maxLength": 600,
+         "minLength": 1,
+         "type": "string"
+        },
+        "maxItems": 10,
+        "minItems": 1,
+        "type": "array"
+       }
+      },
+      "required": [
+       "available",
+       "missing",
+       "questions"
+      ],
+      "type": "object"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "hook": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "need": {
+      "type": "string"
+     },
+     "outline": {
+      "additionalProperties": false,
+      "properties": {
+       "points": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "kind": {
+           "enum": [
+            "case",
+            "cause",
+            "demo",
+            "boundary",
+            "firsthand"
+           ],
+           "type": "string"
+          },
+          "seconds": {
+           "maximum": 3600,
+           "minimum": 0,
+           "type": "number"
+          },
+          "text": {
+           "maxLength": 600,
+           "minLength": 1,
+           "type": "string"
+          }
+         },
+         "required": [
+          "text",
+          "kind",
+          "seconds"
+         ],
+         "type": "object"
+        },
+        "maxItems": 30,
+        "minItems": 1,
+        "type": "array"
+       },
+       "said": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "id": {
+           "pattern": "^[A-Za-z0-9_-]{1,40}$",
+           "type": "string"
+          },
+          "kind": {
+           "enum": [
+            "concept",
+            "judgment",
+            "metaphor",
+            "example"
+           ],
+           "type": "string"
+          },
+          "text": {
+           "maxLength": 200,
+           "minLength": 1,
+           "type": "string"
+          }
+         },
+         "required": [
+          "id",
+          "kind",
+          "text"
+         ],
+         "type": "object"
+        },
+        "maxItems": 40,
+        "type": "array"
+       },
+       "structure": {
+        "additionalProperties": false,
+        "properties": {
+         "ending": {
+          "maxLength": 600,
+          "minLength": 1,
+          "type": "string"
+         },
+         "opening": {
+          "maxLength": 600,
+          "minLength": 1,
+          "type": "string"
+         },
+         "progression": {
+          "maxLength": 600,
+          "minLength": 1,
+          "type": "string"
+         }
+        },
+        "required": [
+         "opening",
+         "progression",
+         "ending"
+        ],
+        "type": "object"
+       },
+       "techniqueNotes": {
+        "maxLength": 600,
+        "minLength": 1,
+        "type": "string"
+       },
+       "thesis": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+       }
+      },
+      "required": [
+       "thesis",
+       "points",
+       "structure",
+       "said"
+      ],
+      "type": "object"
+     },
+     "pack_id": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "requirements": {
+      "type": "string"
+     },
+     "research": {
+      "type": "string"
+     },
+     "research_mode": {
+      "enum": [
+       "auto",
+       "provided",
+       "skip"
+      ],
+      "type": "string"
+     },
+     "research_reason": {
+      "type": "string"
+     },
+     "review": {
+      "enum": [
+       "host",
+       "engine",
+       "none"
+      ],
+      "type": "string"
+     },
+     "revision_note": {
+      "type": "string"
+     },
+     "revision_of": {
+      "type": "string"
+     },
+     "skip_reason": {
+      "type": "string"
+     },
+     "technique_ids": {
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "id": {
+         "maxLength": 80,
+         "minLength": 1,
+         "type": "string"
+        },
+        "version": {
+         "minimum": 1,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "id",
+        "version"
+       ],
+       "type": "object"
+      },
+      "maxItems": 10,
+      "type": "array"
+     },
+     "title": {
+      "type": "string"
+     },
+     "topic_id": {
+      "type": "string"
+     },
+     "version": {
+      "minimum": 1,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_desk",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "inbox",
+       "claim",
+       "release"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "employee": {
+      "enum": [
+       "writer",
+       "cover",
+       "editor"
+      ],
+      "type": "string"
+     },
+     "takeover": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_video",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "status",
+       "start",
+       "transcript",
+       "cut_confirm",
+       "transcript_edit",
+       "cut_preview",
+       "rough_cut_rerun",
+       "transcribe_rerun",
+       "editor_plan",
+       "editor_slot_fill",
+       "editor_slot_remove",
+       "editor_back_to_cut",
+       "editor_confirm",
+       "editor_rerun",
+       "reassemble",
+       "retry",
+       "review",
+       "asr_status",
+       "handoff",
+       "revoke",
+       "register",
+       "report",
+       "citations",
+       "match",
+       "confirm"
+      ],
+      "type": "string"
+     },
+     "approvals": {
+      "properties": {
+       "covers": {
+        "properties": {
+         "approved_at": {
+          "type": "string"
+         },
+         "artifact_sha256": {
+          "type": "string"
+         },
+         "user_message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "artifact_sha256",
+         "approved_at",
+         "user_message"
+        ],
+        "type": "object"
+       },
+       "final_cut": {
+        "properties": {
+         "approved_at": {
+          "type": "string"
+         },
+         "artifact_sha256": {
+          "type": "string"
+         },
+         "user_message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "artifact_sha256",
+         "approved_at",
+         "user_message"
+        ],
+        "type": "object"
+       }
+      },
+      "required": [
+       "final_cut",
+       "covers"
+      ],
+      "type": "object"
+     },
+     "aroll_path": {
+      "type": "string"
+     },
+     "base_clean_revision": {
+      "type": "integer"
+     },
+     "base_cut_revision": {
+      "type": "integer"
+     },
+     "base_transcript_revision": {
+      "type": "integer"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "confirmation_id": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "cover_text": {
+      "type": "string"
+     },
+     "coverage": {},
+     "covers": {
+      "properties": {
+       "3:4": {
+        "type": "string"
+       },
+       "4:3": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "3:4",
+       "4:3"
+      ],
+      "type": "object"
+     },
+     "final_path": {
+      "type": "string"
+     },
+     "flags": {
+      "items": {
+       "properties": {
+        "flag": {
+         "type": "string"
+        },
+        "segment_id": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "segment_id",
+        "flag"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "full": {
+      "type": "boolean"
+     },
+     "jianying_draft": {
+      "type": "string"
+     },
+     "keeps": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "kept_overlay_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "library_id": {
+      "type": "string"
+     },
+     "manifest_hash": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "overlay_id": {
+      "type": "string"
+     },
+     "plan_revision": {
+      "type": "integer"
+     },
+     "project_root": {
+      "type": "string"
+     },
+     "receipt_id": {
+      "type": "string"
+     },
+     "rendered_revision": {
+      "type": "integer"
+     },
+     "report": {},
+     "request_id": {
+      "type": "string"
+     },
+     "revoke": {
+      "type": "boolean"
+     },
+     "srt_path": {
+      "type": "string"
+     },
+     "target": {
+      "enum": [
+       "edit",
+       "cut"
+      ],
+      "type": "string"
+     },
+     "target_seconds": {
+      "type": "number"
+     },
+     "text": {
+      "type": "string"
+     },
+     "timestamp_ms": {
+      "type": "integer"
+     },
+     "unit_id": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "approve",
+       "revise",
+       "reject"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_status",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "overview",
+       "baseline",
+       "compare",
+       "track_performance",
+       "learning_report"
+      ],
+      "type": "string"
+     },
+     "brief": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "metrics": {
+      "patternProperties": {
+       "^(.*)$": {
+        "type": "number"
+       }
+      },
+      "type": "object"
+     },
+     "verbose": {
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_asset",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "add",
+       "list",
+       "remove",
+       "versions",
+       "get_version",
+       "revert"
+      ],
+      "type": "string"
+     },
+     "asset_type": {
+      "enum": [
+       "cover",
+       "broll",
+       "image",
+       "video",
+       "audio",
+       "subtitle",
+       "other"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "description": {
+      "type": "string"
+     },
+     "filename": {
+      "type": "string"
+     },
+     "source_path": {
+      "type": "string"
+     },
+     "version": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_pipeline",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "create",
+       "list",
+       "get",
+       "enable",
+       "disable",
+       "delete",
+       "templates"
+      ],
+      "type": "string"
+     },
+     "description": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "schedule": {
+      "type": "string"
+     },
+     "template": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_publish",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "wechat_mp_draft",
+       "clipboard",
+       "ego_lite_prepare",
+       "confirm_published",
+       "digest"
+      ],
+      "type": "string"
+     },
+     "article_path": {
+      "type": "string"
+     },
+     "author": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "digest": {
+      "type": "string"
+     },
+     "dry_run": {
+      "type": "boolean"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "image_api_key": {
+      "type": "string"
+     },
+     "image_base_url": {
+      "type": "string"
+     },
+     "image_generator_script": {
+      "type": "string"
+     },
+     "image_model": {
+      "type": "string"
+     },
+     "image_size": {
+      "type": "string"
+     },
+     "publish_url": {
+      "type": "string"
+     },
+     "schedule": {
+      "type": "string"
+     },
+     "skip_images": {
+      "type": "boolean"
+     },
+     "theme": {
+      "type": "string"
+     },
+     "wechat_publish_script": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_cover_review",
+   "shape": {
+    "properties": {
+     "_dataDir": {
+      "type": "string"
+     },
+     "_geminiApiKey": {
+      "type": "string"
+     },
+     "_geminiModel": {
+      "type": "string"
+     },
+     "action": {
+      "enum": [
+       "create_candidates",
+       "get",
+       "approve",
+       "revise",
+       "platform_ratios",
+       "draft_ratios",
+       "generate_ratios"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "confirm_paid_api": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "custom_title": {
+      "type": "string"
+     },
+     "edit_mode": {
+      "enum": [
+       "full",
+       "local"
+      ],
+      "type": "string"
+     },
+     "feedback": {
+      "type": "string"
+     },
+     "label": {
+      "enum": [
+       "a",
+       "b",
+       "c"
+      ],
+      "type": "string"
+     },
+     "mask_region": {
+      "properties": {
+       "height": {
+        "maximum": 1,
+        "minimum": 0.02,
+        "type": "number"
+       },
+       "width": {
+        "maximum": 1,
+        "minimum": 0.02,
+        "type": "number"
+       },
+       "x": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+       },
+       "y": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+       }
+      },
+      "required": [
+       "x",
+       "y",
+       "width",
+       "height"
+      ],
+      "type": "object"
+     },
+     "ratio": {
+      "enum": [
+       "3:4",
+       "4:3",
+       "2.35:1"
+      ],
+      "type": "string"
+     },
+     "ratios": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_editorial",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "profile",
+       "update_profile",
+       "inspect",
+       "feedback"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     },
+     "confirm_audience": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "draft_hash": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "event_id": {
+      "pattern": "^[A-Za-z0-9_-]{1,100}$",
+      "type": "string"
+     },
+     "feedback": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "platform": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "profile": {
+      "additionalProperties": false,
+      "properties": {
+       "audiencePersona": {
+        "anyOf": [
+         {
+          "type": "null"
+         },
+         {
+          "additionalProperties": false,
+          "properties": {
+           "adjacent": {
+            "additionalProperties": false,
+            "properties": {
+             "age": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "coreAnxiety": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "job": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "name": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "painPoints": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "scrollStopTriggers": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             }
+            },
+            "required": [
+             "name"
+            ],
+            "type": "object"
+           },
+           "core": {
+            "additionalProperties": false,
+            "properties": {
+             "age": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "coreAnxiety": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "job": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "name": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "painPoints": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "scrollStopTriggers": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             }
+            },
+            "required": [
+             "name"
+            ],
+            "type": "object"
+           },
+           "surprise": {
+            "additionalProperties": false,
+            "properties": {
+             "age": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "coreAnxiety": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "job": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "name": {
+              "maxLength": 12000,
+              "minLength": 1,
+              "type": "string"
+             },
+             "painPoints": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "scrollStopTriggers": {
+              "items": {
+               "maxLength": 12000,
+               "minLength": 1,
+               "type": "string"
+              },
+              "type": "array"
+             }
+            },
+            "required": [
+             "name"
+            ],
+            "type": "object"
+           }
+          },
+          "required": [
+           "core"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       "contentFormat": {
+        "additionalProperties": false,
+        "properties": {
+         "contentDepth": {
+          "type": "string"
+         },
+         "videoLength": {
+          "type": "string"
+         },
+         "wordCount": {
+          "type": "string"
+         }
+        },
+        "type": "object"
+       },
+       "expressionPersona": {
+        "type": "string"
+       },
+       "industry": {
+        "type": "string"
+       },
+       "platforms": {
+        "items": {
+         "maxLength": 12000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "styleBoundaries": {
+        "additionalProperties": false,
+        "properties": {
+         "always": {
+          "items": {
+           "maxLength": 12000,
+           "minLength": 1,
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "never": {
+          "items": {
+           "maxLength": 12000,
+           "minLength": 1,
+           "type": "string"
+          },
+          "type": "array"
+         }
+        },
+        "required": [
+         "never",
+         "always"
+        ],
+        "type": "object"
+       },
+       "voiceSamples": {
+        "items": {
+         "maxLength": 12000,
+         "minLength": 1,
+         "type": "string"
+        },
+        "maxItems": 5,
+        "type": "array"
+       }
+      },
+      "type": "object"
+     },
+     "scope": {
+      "enum": [
+       "draft",
+       "platform",
+       "voice"
+      ],
+      "type": "string"
+     },
+     "selection": {
+      "maxLength": 12000,
+      "minLength": 1,
+      "type": "string"
+     },
+     "user_confirmed": {
+      "type": "boolean"
+     },
+     "verdict": {
+      "enum": [
+       "adopted",
+       "light_edit",
+       "rewritten",
+       "rejected"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_review",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "full_review",
+       "scan_only",
+       "quality_score",
+       "auto_fix"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_pre_publish",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "check",
+       "video_kit"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "kit": {
+      "properties": {
+       "caption": {
+        "type": "string"
+       },
+       "cover_text": {
+        "type": "string"
+       },
+       "hashtags": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "post_title": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "post_title",
+       "caption",
+       "cover_text"
+      ],
+      "type": "object"
+     },
+     "platform": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_dashboard",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "overview",
+       "calendar",
+       "pending",
+       "batch_review",
+       "batch_transition"
+      ],
+      "type": "string"
+     },
+     "content_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "days": {
+      "type": "number"
+     },
+     "target_status": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_insights",
+   "shape": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "enum": [
+       "prepare",
+       "submit",
+       "list",
+       "get"
+      ],
+      "type": "string"
+     },
+     "days": {
+      "default": 30,
+      "maximum": 366,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "evidence_hash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+     },
+     "focus": {
+      "maxLength": 500,
+      "type": "string"
+     },
+     "pack_id": {
+      "pattern": "^insights-[a-f0-9-]{36}$",
+      "type": "string"
+     },
+     "platform": {
+      "enum": [
+       "xiaohongshu",
+       "douyin",
+       "wechat_mp",
+       "wechat_video",
+       "bilibili",
+       "twitter",
+       "reddit",
+       "toutiao",
+       "xhs"
+      ],
+      "type": "string"
+     },
+     "report": {
+      "additionalProperties": false,
+      "properties": {
+       "account_summary": {
+        "maxLength": 1200,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+       },
+       "findings": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "confidence": {
+           "enum": [
+            "high",
+            "medium",
+            "low"
+           ],
+           "type": "string"
+          },
+          "evidence_refs": {
+           "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+           },
+           "maxItems": 8,
+           "minItems": 1,
+           "type": "array",
+           "uniqueItems": true
+          },
+          "interpretation": {
+           "maxLength": 700,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "observation": {
+           "maxLength": 1000,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "title": {
+           "maxLength": 100,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          }
+         },
+         "required": [
+          "title",
+          "observation",
+          "interpretation",
+          "confidence",
+          "evidence_refs"
+         ],
+         "type": "object"
+        },
+        "maxItems": 3,
+        "minItems": 1,
+        "type": "array"
+       },
+       "limitations": {
+        "items": {
+         "maxLength": 500,
+         "minLength": 1,
+         "pattern": "\\S",
+         "type": "string"
+        },
+        "maxItems": 6,
+        "minItems": 1,
+        "type": "array"
+       },
+       "team_actions": {
+        "items": {
+         "additionalProperties": false,
+         "properties": {
+          "action": {
+           "maxLength": 600,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "deliverable": {
+           "maxLength": 400,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "evidence_refs": {
+           "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+           },
+           "maxItems": 8,
+           "minItems": 1,
+           "type": "array",
+           "uniqueItems": true
+          },
+          "owner": {
+           "enum": [
+            "strategist",
+            "scout",
+            "writer",
+            "editor",
+            "cover",
+            "publisher",
+            "analyst"
+           ],
+           "type": "string"
+          },
+          "prerequisite": {
+           "maxLength": 400,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "priority": {
+           "enum": [
+            "P0",
+            "P1",
+            "P2"
+           ],
+           "type": "string"
+          },
+          "rationale": {
+           "maxLength": 500,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "success_metric": {
+           "maxLength": 400,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          },
+          "timeframe": {
+           "maxLength": 150,
+           "minLength": 1,
+           "pattern": "\\S",
+           "type": "string"
+          }
+         },
+         "required": [
+          "owner",
+          "priority",
+          "action",
+          "rationale",
+          "deliverable",
+          "success_metric",
+          "timeframe",
+          "prerequisite",
+          "evidence_refs"
+         ],
+         "type": "object"
+        },
+        "maxItems": 8,
+        "minItems": 1,
+        "type": "array"
+       }
+      },
+      "required": [
+       "account_summary",
+       "findings",
+       "team_actions",
+       "limitations"
+      ],
+      "type": "object"
+     }
+    },
+    "type": "object"
+   }
+  }
+ ],
+ "codex": [
+  {
+   "name": "autocrew_content",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "save",
+       "list",
+       "get",
+       "summary",
+       "update",
+       "transition",
+       "create_variant",
+       "siblings",
+       "allowed_transitions",
+       "adoption",
+       "delete",
+       "restore"
+      ],
+      "type": "string"
+     },
+     "body": {
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "diff_note": {
+      "type": "string"
+     },
+     "force": {
+      "type": "boolean"
+     },
+     "from_status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "hashtags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "id": {
+      "type": "string"
+     },
+     "import_reason": {
+      "type": "string"
+     },
+     "performance_data": {
+      "patternProperties": {
+       "^(.*)$": {
+        "type": "number"
+       }
+      },
+      "type": "object"
+     },
+     "platform": {
+      "type": "string"
+     },
+     "publish_url": {
+      "type": "string"
+     },
+     "reason": {
+      "enum": [
+       "style_mismatch",
+       "factual_error",
+       "structure_bad"
+      ],
+      "type": "string"
+     },
+     "reason_note": {
+      "type": "string"
+     },
+     "siblings": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "source": {
+      "const": "manual_import",
+      "type": "string"
+     },
+     "status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "target_status": {
+      "enum": [
+       "topic_saved",
+       "drafting",
+       "needs_evidence",
+       "draft_ready",
+       "reviewing",
+       "revision",
+       "approved",
+       "editing",
+       "cover_pending",
+       "publish_ready",
+       "publishing",
+       "published",
+       "archived",
+       "draft",
+       "review"
+      ],
+      "type": "string"
+     },
+     "title": {
+      "type": "string"
+     },
+     "topicId": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "adopted",
+       "light_edit",
+       "rewritten"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_desk",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "inbox",
+       "claim",
+       "release"
+      ],
+      "type": "string"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "employee": {
+      "enum": [
+       "writer",
+       "cover",
+       "editor"
+      ],
+      "type": "string"
+     },
+     "takeover": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_video",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "status",
+       "start",
+       "transcript",
+       "cut_confirm",
+       "transcript_edit",
+       "cut_preview",
+       "rough_cut_rerun",
+       "transcribe_rerun",
+       "editor_plan",
+       "editor_slot_fill",
+       "editor_slot_remove",
+       "editor_back_to_cut",
+       "editor_confirm",
+       "editor_rerun",
+       "reassemble",
+       "retry",
+       "review",
+       "asr_status",
+       "handoff",
+       "revoke",
+       "register",
+       "report",
+       "citations",
+       "match",
+       "confirm"
+      ],
+      "type": "string"
+     },
+     "approvals": {
+      "properties": {
+       "covers": {
+        "properties": {
+         "approved_at": {
+          "type": "string"
+         },
+         "artifact_sha256": {
+          "type": "string"
+         },
+         "user_message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "artifact_sha256",
+         "approved_at",
+         "user_message"
+        ],
+        "type": "object"
+       },
+       "final_cut": {
+        "properties": {
+         "approved_at": {
+          "type": "string"
+         },
+         "artifact_sha256": {
+          "type": "string"
+         },
+         "user_message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "artifact_sha256",
+         "approved_at",
+         "user_message"
+        ],
+        "type": "object"
+       }
+      },
+      "required": [
+       "final_cut",
+       "covers"
+      ],
+      "type": "object"
+     },
+     "aroll_path": {
+      "type": "string"
+     },
+     "base_clean_revision": {
+      "type": "integer"
+     },
+     "base_cut_revision": {
+      "type": "integer"
+     },
+     "base_transcript_revision": {
+      "type": "integer"
+     },
+     "claim_token": {
+      "type": "string"
+     },
+     "confirmation_id": {
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "cover_text": {
+      "type": "string"
+     },
+     "coverage": {},
+     "covers": {
+      "properties": {
+       "3:4": {
+        "type": "string"
+       },
+       "4:3": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "3:4",
+       "4:3"
+      ],
+      "type": "object"
+     },
+     "final_path": {
+      "type": "string"
+     },
+     "flags": {
+      "items": {
+       "properties": {
+        "flag": {
+         "type": "string"
+        },
+        "segment_id": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "segment_id",
+        "flag"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "full": {
+      "type": "boolean"
+     },
+     "jianying_draft": {
+      "type": "string"
+     },
+     "keeps": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "kept_overlay_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "library_id": {
+      "type": "string"
+     },
+     "manifest_hash": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "overlay_id": {
+      "type": "string"
+     },
+     "plan_revision": {
+      "type": "integer"
+     },
+     "project_root": {
+      "type": "string"
+     },
+     "receipt_id": {
+      "type": "string"
+     },
+     "rendered_revision": {
+      "type": "integer"
+     },
+     "report": {},
+     "request_id": {
+      "type": "string"
+     },
+     "revoke": {
+      "type": "boolean"
+     },
+     "srt_path": {
+      "type": "string"
+     },
+     "target": {
+      "enum": [
+       "edit",
+       "cut"
+      ],
+      "type": "string"
+     },
+     "target_seconds": {
+      "type": "number"
+     },
+     "text": {
+      "type": "string"
+     },
+     "timestamp_ms": {
+      "type": "integer"
+     },
+     "unit_id": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "approve",
+       "revise",
+       "reject"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_status",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "overview",
+       "baseline",
+       "compare",
+       "track_performance",
+       "learning_report"
+      ],
+      "type": "string"
+     },
+     "brief": {
+      "type": "boolean"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "metrics": {
+      "patternProperties": {
+       "^(.*)$": {
+        "type": "number"
+       }
+      },
+      "type": "object"
+     },
+     "verbose": {
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   }
+  },
+  {
+   "name": "autocrew_asset",
+   "shape": {
+    "properties": {
+     "action": {
+      "enum": [
+       "add",
+       "list",
+       "remove",
+       "versions",
+       "get_version",
+       "revert"
+      ],
+      "type": "string"
+     },
+     "asset_type": {
+      "enum": [
+       "cover",
+       "broll",
+       "image",
+       "video",
+       "audio",
+       "subtitle",
+       "other"
+      ],
+      "type": "string"
+     },
+     "content_id": {
+      "type": "string"
+     },
+     "description": {
+      "type": "string"
+     },
+     "filename": {
+      "type": "string"
+     },
+     "source_path": {
+      "type": "string"
+     },
+     "version": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "action",
+     "content_id"
+    ],
+    "type": "object"
+   }
+  }
+ ]
+}

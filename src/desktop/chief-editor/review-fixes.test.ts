@@ -132,7 +132,7 @@ describe.each(TEST_BACKENDS)("后端 %s", (B) => {
     it("杀不掉就返回 false，记录留待下次启动再清", async () => {
       const rows: ProcRow[] = [{ pid: 501, pgid: 500, command: "sleep 120" }];
       expect(killRecordedGroup(500, "node adapter", () => rows, () => {})).toBe(false);
-      h.svc.runs.put({ turnId: "t1", clientId: "c", conversationId: "conv-1-a", dataDir: h.dataDir, backend: B, message: "m", status: "running", startedAt: "", pid: 500, command: "node adapter" });
+      h.svc.runs.put({ turnId: "t1", clientId: "c", conversationId: "conv-1-a", dataDir: h.dataDir, backend: B, message: "m", status: "running", owner: { pid: 999999, lstart: "已退出的旧服务" }, startedAt: "", pid: 500, command: "node adapter" });
       h.svc.runs.recoverOnStartup(() => false);
       expect(h.svc.runs.get("t1")).toMatchObject({ status: "interrupted", cleanupPending: true });
       const calls: number[] = [];
@@ -175,7 +175,7 @@ describe.each(TEST_BACKENDS)("后端 %s", (B) => {
   describe("P2-10 中断恢复带上已入账的卡片与写动作", () => {
     it("恢复留痕里有卡片和写动作摘要", async () => {
       const conv = await createConversation("x", h.dataDir, undefined, { backend: B });
-      h.svc.runs.put({ turnId: "t2", clientId: "c", conversationId: conv.id, dataDir: h.dataDir, backend: B, message: "写", status: "running", startedAt: "", cards: [{ type: "agent_draft", callId: "k", data: { contentId: "content-1-a" } }], writes: ["autocrew_writer submit"] });
+      h.svc.runs.put({ turnId: "t2", clientId: "c", conversationId: conv.id, dataDir: h.dataDir, backend: B, message: "写", status: "running", owner: { pid: 999999, lstart: "已退出的旧服务" }, startedAt: "", cards: [{ type: "agent_draft", callId: "k", data: { contentId: "content-1-a" } }], writes: ["autocrew_writer submit"] });
       await h.svc.recoverOnStartup(() => true);
       const last = (await getConversation(conv.id, h.dataDir))!.messages.at(-1)!;
       expect(last.content).toContain("中断前已完成的写动作：autocrew_writer submit");

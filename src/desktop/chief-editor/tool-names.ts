@@ -4,7 +4,7 @@
  * 按「工具 + action」翻成一句动作。没收录的退回原标题，不编造。
  */
 const AUTOCREW: Record<string, Record<string, string> | string> = {
-  autocrew_content: { get: "读取稿件", list: "查看稿件列表", update: "修改稿件", save: "保存稿件", transition: "推进稿件状态", delete: "删除稿件", versions: "查看稿件版本", _: "处理稿件" },
+  autocrew_content: { get: "读取稿件", summary: "查看进度", list: "查看稿件列表", update: "修改稿件", save: "保存稿件", transition: "推进稿件状态", delete: "删除稿件", versions: "查看稿件版本", _: "处理稿件" },
   autocrew_topic: { create: "新建选题", list: "查看选题", delete: "删除选题", radar_pool: "取雷达候选", radar_score: "给雷达候选打分", _: "处理选题" },
   autocrew_workflow: { prepare: "准备写稿", select_angle: "选定角度", _: "推进写稿流程" },
   autocrew_writer: { pack: "领写作包", submit: "交稿", find_evidence: "补证据", _: "写稿" },

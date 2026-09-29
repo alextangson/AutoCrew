@@ -5,7 +5,7 @@
 import { toast } from "../ui";
 
 export function workbuddyPrompt(title: string, id: string): string {
-  return `通过 autocrew MCP 调用 autocrew_content get 读取《${title}》（id: ${id}），总结这篇现在在哪一步、卡在哪，然后等我指示，先不要改任何东西。`;
+  return `通过 autocrew MCP 调用 autocrew_content summary 查看《${title}》（id: ${id}），总结这篇现在在哪一步、卡在哪，然后等我指示，先不要改任何东西。`;
 }
 
 /** 复制按钮：指令本身不依赖是否装了 WorkBuddy（W1），剪贴板失败如实说 */

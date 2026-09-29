@@ -8,7 +8,9 @@ import { contentFile } from "../src/storage/content-project.js";
  * 入口是 `bin/autocrew.mjs mcp`，它把 stdin 上的 JSON-RPC 转发到那个端点——本文件
  * 不再自带 stdio 循环，全部宿主经同一个写进程（P3 §3）。
  */
-import { WRITING_INSTRUCTIONS } from "./writing-instructions.js";
+import { WRITING_INSTRUCTIONS, MCP_INSTRUCTIONS } from "./writing-instructions.js";
+import { mcpToolView, TOOL_GUIDE_PREFIX, toolGuideText } from "./tool-docs.js";
+import { withMisuseGuide } from "./misuse-guide.js";
 import { registerAutocrewCapabilities } from "../index.js";
 import { loadProfile } from "../src/modules/profile/creator-profile.js";
 import { createContext } from "../src/runtime/context.js";
@@ -91,6 +93,12 @@ const CONTENT_ID = "content-\\d+-[a-z0-9]+";
 async function readResource(uri: string, runtime: ReturnType<typeof runtimeFor>): Promise<ResourcePayload | null> {
   const json = (value: unknown): ResourcePayload => ({ text: JSON.stringify(value, null, 2), mimeType: "application/json" });
   if (uri === "autocrew://writing-guide") return { text: WRITING_INSTRUCTIONS, mimeType: "text/markdown" };
+  // 工具的完整用法（瘦身前的长说明原文）按需读取（spec v1.3 §2）
+  if (uri.startsWith(TOOL_GUIDE_PREFIX)) {
+    const tool = runtime.runner.getTool(uri.slice(TOOL_GUIDE_PREFIX.length));
+    // 原长说明 + 原参数结构（含每个参数的原说明、嵌套载荷的字段与单位）：tools/list 里删掉的都在这里（评审 v1.3 P2）
+    return tool ? { text: toolGuideText(tool.name, tool.description, toLosslessJson(tool.parameters)), mimeType: "text/markdown" } : null;
+  }
   if (uri === "autocrew://profile") return json(await loadProfile(runtime.ctx.dataDir));
   if (uri === "autocrew://topics") return json(await runtime.runner.execute("autocrew_topic", { action: "list" }));
   if (uri === "autocrew://contents") return json(await runtime.runner.execute("autocrew_content", { action: "list" }));
@@ -188,7 +196,8 @@ async function callTool(
   const startedAt = Date.now();
   try {
     // 会话挂在这次调用的异步上下文上：run-log 与认领/交接账顺手记上它，不经参数层层传
-    const executed = await withCallerSession(session, () => runtime.runner.execute(toolName, toolArgs));
+    // 被拒又没带 next_action 的，补一个指向正确动作的（v1.3 M2：说明变短后流程靠返回兜住）
+    const executed = withMisuseGuide(toolName, rawArgs, await withCallerSession(session, () => runtime.runner.execute(toolName, toolArgs)));
     const note = hiddenToolNote(host, toolName);
     const result = note ? { ...executed, host_note: note } : executed;
     await recordUsage(access, toolName, result.ok !== false, startedAt);
@@ -218,7 +227,7 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
     return resultResponse(id, {
       protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : MCP_PROTOCOL_VERSION,
       capabilities: { tools: { listChanged: false }, resources: { listChanged: false }, prompts: { listChanged: false } },
-      instructions: WRITING_INSTRUCTIONS,
+      instructions: MCP_INSTRUCTIONS,
       serverInfo: { name: "autocrew", version: "0.1.0", description: "Local-first AI content operations crew" },
     });
   }
@@ -229,13 +238,17 @@ export async function handleMcpRequest(req: McpRequest, access?: McpAccessContex
     const listed = runtime.runner.getTools().filter((tool) => hostListsTool(host, tool.name));
     return resultResponse(id, {
       // TypeBox schema 上挂着 own symbol，直接吐出去在传输里会静默丢字段——先过 lossless。
-      tools: toLosslessJson(listed.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.parameters }))),
+      // 给宿主的是瘦身版说明（mcp/tool-docs.ts）；参数结构只做等价压缩，契约不变
+      tools: toLosslessJson(listed.map((tool) => mcpToolView({ name: tool.name, description: tool.description, parameters: toLosslessJson(tool.parameters) }))),
     });
   }
   if (method === "resources/list") {
     return resultResponse(id, {
       resources: [
         { uri: "autocrew://writing-guide", name: "写作默认流程与交付标准", mimeType: "text/markdown" },
+        // 每个本宿主能用的工具一条真实 URI（评审 v1.3 P3：不再挂一个字面的 <工具名> 占位）
+        ...runtime.runner.getTools().filter((tool) => hostListsTool(access?.host ?? DEFAULT_HOST, tool.name))
+          .map((tool) => ({ uri: `${TOOL_GUIDE_PREFIX}${tool.name}`, name: `${tool.name} 的完整用法`, mimeType: "text/markdown" })),
         { uri: "autocrew://profile", name: "创作者档案", mimeType: "application/json" },
         { uri: "autocrew://topics", name: "选题库", mimeType: "application/json" },
         { uri: "autocrew://contents", name: "内容资产", mimeType: "application/json" },

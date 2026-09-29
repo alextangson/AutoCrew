@@ -134,7 +134,7 @@ describe.each(TEST_BACKENDS)("后端 %s", (B) => {
   describe("P2-8 过程块落 run 记录，重启后恢复出「已停止」块", () => {
     it("失败原因与步骤在重启恢复的对话里还在", async () => {
       const conv = await createConversation("x", h.dataDir, undefined, { backend: B });
-      h.svc.runs.put({ turnId: "t-crash", clientId: "c", conversationId: conv.id, dataDir: h.dataDir, backend: B, message: "写", status: "running", startedAt: "", worklog: [{ id: "1", name: "交稿", status: "failed", error: "引文对不上" }, { id: "2", name: "读取稿件", status: "running" }] });
+      h.svc.runs.put({ turnId: "t-crash", clientId: "c", conversationId: conv.id, dataDir: h.dataDir, backend: B, message: "写", status: "running", owner: { pid: 999999, lstart: "已退出的旧服务" }, startedAt: "", worklog: [{ id: "1", name: "交稿", status: "failed", error: "引文对不上" }, { id: "2", name: "读取稿件", status: "running" }] });
       await h.svc.recoverOnStartup(() => true);
       const card = (await getConversation(conv.id, h.dataDir))!.messages.at(-1)!.cards![0] as { type: string; data: { items: Array<Record<string, string>>; stopped: boolean } };
       expect(card.type).toBe("agent_worklog");

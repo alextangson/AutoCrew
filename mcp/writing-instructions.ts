@@ -20,3 +20,18 @@ export const WRITING_INSTRUCTIONS = [
   "后台研究、代写或审稿仅在用户明确选择 execution=engine/review=engine 或已授权的无人值守后台执行时使用；普通 MCP 不要求配置 engine，也不默认调用端点探测。Claude 等宿主的模型额度由宿主提供；第三方搜索、图像与视频仍使用独立服务额度。",
   "generate/workflow write 是用户明确选择 execution=engine 的后台代写；content save 仅用于用户已有成稿的显式 manual_import。不要把新生成稿伪装成人工导入。",
 ].join("\n");
+
+/**
+ * initialize 时给宿主的短版（spec v1.3 §2：≤1,500 字）。只说总流程与「动笔前先读写作守则」；
+ * 完整守则在资源 autocrew://writing-guide，工具细节在 autocrew://tool-guide/<工具名>，漏了步骤由工具返回的 next_action 拦住。
+ */
+export const MCP_INSTRUCTIONS = [
+  "AutoCrew 是创作者的编辑部：调研、立意、写作、审稿由你（当前宿主模型）完成；AutoCrew 负责任务、抓页验引文、确定性检查和保存。",
+  "动笔前先读资源 autocrew://writing-guide（写作守则）；某个工具怎么用，读 autocrew://tool-guide/<工具名>。",
+  "写新稿：autocrew_topic 复用或建选题 → autocrew_workflow prepare{topic_id,platform,requirements} → 按返回的 research_task 用 autocrew_scout 做调研 → 让创作者选角度后 workflow select_angle → autocrew_writer pack 领包写稿 → writer submit → autocrew_review_desk submit 审稿。",
+  "每一步都照返回里的 next_action 走；被拒时读 error 和 next_action 改正后再调，不要绕开。不要直接 content save 新稿或用 generate 代写。",
+  "requirements 保留创作者原话里的提纲、篇幅、口吻、必写和禁写；只用有依据的事实，不编造亲历。",
+  "pack 之后对这篇的每次写都带上 claim_token；被别的会话占着（claim_held）就如实告诉创作者，不要抢。",
+  "只查进度用 autocrew_content summary；要正文才用 get。",
+  "发布、删稿等动作可能需要创作者批准；存盘失败就停下报告原始错误。",
+].join("\n");
