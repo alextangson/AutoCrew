@@ -8,6 +8,10 @@ describe("OpenClaw 模型调用桥", () => {
     expect(p._host).toBeUndefined();
   });
 
+  it("剪辑工具也打上标记：视频稿的审片通过只许创作者点", () => {
+    expect(openclawModelParams("autocrew_video", { action: "review", _modelCall: false })._modelCall).toBe(true);
+  });
+
   it("其它工具参数原样透传", () => {
     const params = { action: "list" };
     expect(openclawModelParams("autocrew_content", params)).toBe(params);

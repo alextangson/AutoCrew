@@ -951,11 +951,13 @@ const autocrewPlugin = {
 };
 
 /**
- * OpenClaw 里模型发起的工具调用：封面工具打上 `_modelCall`（覆盖模型自报的同名值），付费出图护栏才拦得住。
+ * OpenClaw 里模型发起的工具调用：封面与剪辑工具打上 `_modelCall`（覆盖模型自报的同名值），
+ * 付费出图护栏、视频稿的创始人批准（审片通过 / 封面定稿）才拦得住。
  * 只标来源、不动 `_host`，认领归属照旧；用户手敲的 /cover 斜杠命令不经过这里，等同工作台操作。
  */
+const MODEL_CALL_MARKED = new Set(["autocrew_cover_review", "autocrew_video"]);
 export function openclawModelParams(toolName: string, params: Record<string, unknown>): Record<string, unknown> {
-  return toolName === "autocrew_cover_review" ? { ...params, _modelCall: true } : params;
+  return MODEL_CALL_MARKED.has(toolName) ? { ...params, _modelCall: true } : params;
 }
 
 export default autocrewPlugin;
