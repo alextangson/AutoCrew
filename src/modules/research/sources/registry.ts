@@ -13,6 +13,7 @@ import { fetchX } from "./x.js";
 import { fetchYouTube } from "./youtube.js";
 import { fetchYouTubeSearch } from "./youtube-search.js";
 import { fetchReddit } from "./reddit.js";
+import { fetchAihotHot } from "./aihot.js";
 
 export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
   hackernews: (kw, lim) => fetchHackerNews(kw, lim),
@@ -27,9 +28,16 @@ export const SOURCE_REGISTRY: Record<string, SourceFetcher> = {
   youtube_search: (kw, lim) => fetchYouTubeSearch(kw, lim),
   reddit: (_kw, lim, opts) =>
     fetchReddit(lim, { clientId: opts?.redditClientId ?? "", clientSecret: opts?.redditClientSecret ?? "" }),
+  // 清单型:AIHOT 多源聚合热点榜,heat = 独立来源数
+  aihot_hot: (_kw, lim) => fetchAihotHot(lim),
 };
 
 export const ALL_SOURCES = Object.keys(SOURCE_REGISTRY);
+
+/** 只在显式点名时才用的源:aihot.news 数据对外商用需书面授权,不能被「默认全部」悄悄带上 */
+const OPT_IN_SOURCES = new Set(["aihot_hot"]);
+/** 调用方没指定源时的默认集合 */
+export const DEFAULT_SOURCES = ALL_SOURCES.filter((s) => !OPT_IN_SOURCES.has(s));
 
 export interface FetchSourcesDeps {
   registry?: Record<string, SourceFetcher>;

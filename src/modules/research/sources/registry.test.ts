@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fetchFromSources, ALL_SOURCES } from "./registry.js";
+import { fetchFromSources, ALL_SOURCES, DEFAULT_SOURCES } from "./registry.js";
 import type { SourceFetcher } from "./types.js";
 
 describe("fetchFromSources", () => {
@@ -31,5 +31,11 @@ describe("fetchFromSources", () => {
 
   it("exposes the built-in source keys", () => {
     expect(ALL_SOURCES).toEqual(expect.arrayContaining(["hackernews", "producthunt", "github"]));
+  });
+
+  it("keeps AIHOT out of the default set: callable by name, never pulled in by 'all'", () => {
+    expect(ALL_SOURCES).toContain("aihot_hot");
+    expect(DEFAULT_SOURCES).not.toContain("aihot_hot");
+    expect(DEFAULT_SOURCES).toEqual(expect.arrayContaining(["hackernews", "producthunt", "github"]));
   });
 });

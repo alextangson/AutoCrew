@@ -25,17 +25,48 @@ afterEach(async () => {
 
 const RSS = `<?xml version="1.0"?><rss><channel>
 <item><title><![CDATA[OpenAI 发布新模型]]></title><link>https://a.com/1</link><pubDate>Thu, 11 Jun 2026 01:00:00 GMT</pubDate></item>
-<item><title>美食探店指南 &amp; 测评</title><link>https://a.com/2</link><pubDate>Thu, 11 Jun 2026 02:00:00 GMT</pubDate></item>
+<item><title>美食探店指南 &amp; 测评 Nvidia&#039;s &#x2014;</title><link>https://a.com/2</link><pubDate>Thu, 11 Jun 2026 02:00:00 GMT</pubDate></item>
 </channel></rss>`;
 
 describe("parseRssItems", () => {
   it("extracts title (CDATA + entity), link, pubDate", () => {
     const items = parseRssItems(RSS);
     expect(items).toHaveLength(2);
-    expect(items[0].title).toBe("OpenAI 发布新模型");
-    expect(items[0].link).toBe("https://a.com/1");
-    expect(items[1].title).toBe("美食探店指南 & 测评");
-    expect(typeof items[1].publishedAt).toBe("string");
+    // 按发布时间新→旧
+    expect(items[0].title).toBe("美食探店指南 & 测评 Nvidia's —");
+    expect(items[1].title).toBe("OpenAI 发布新模型");
+    expect(items[1].link).toBe("https://a.com/1");
+    expect(items[1].publishedAt).toBe("2026-06-11T01:00:00.000Z");
+  });
+
+  it("parses Atom entries: alternate link over self, published/updated, escaped-HTML summary", () => {
+    const atom = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+<entry><title>Claude Code tips</title><link rel="self" href="https://s.net/api/1"/><link href="https://s.net/2026/Sep/1/"/>
+<published>2026-09-01T10:00:00Z</published><summary type="html">&lt;p&gt;Hands-on notes&lt;/p&gt;</summary></entry>
+<entry><title type="html">Only updated</title><link rel="alternate" type="text/html" href="https://s.net/2"/><updated>2026-09-02T10:00:00Z</updated></entry>
+</feed>`;
+    const items = parseRssItems(atom);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ title: "Only updated", link: "https://s.net/2", publishedAt: "2026-09-02T10:00:00.000Z" });
+    expect(items[1]).toMatchObject({ link: "https://s.net/2026/Sep/1/", description: "Hands-on notes" });
+  });
+
+  it("keeps only the newest 30 items of a full-archive feed", () => {
+    const body = Array.from({ length: 50 }, (_, i) =>
+      `<item><title>t${i}</title><link>https://a.com/${i}</link><pubDate>${new Date(Date.UTC(2026, 0, 1 + i)).toUTCString()}</pubDate></item>`,
+    ).join("");
+    const items = parseRssItems(`<rss><channel>${body}</channel></rss>`);
+    expect(items).toHaveLength(30);
+    expect(items[0].title).toBe("t49");
+    expect(items[29].title).toBe("t20");
+  });
+
+  it("undated feed keeps its own order when capped (head items survive)", () => {
+    const body = Array.from({ length: 1000 }, (_, i) =>
+      `<item><title>u${i}</title><link>https://a.com/u${i}</link></item>`,
+    ).join("");
+    const items = parseRssItems(`<rss><channel>${body}</channel></rss>`);
+    expect(items.map((x) => x.title)).toEqual(Array.from({ length: 30 }, (_, i) => `u${i}`));
   });
 });
 
