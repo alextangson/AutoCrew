@@ -17,6 +17,8 @@ export interface CopyProjectOptions {
   previous?: Map<string, ArchivedFile>;
   /** 本机和 NAS 副本的大小、修改时间都跟上次记录一样才跳过，否则重新哈希核对（增量备份用；归档删本机前不开） */
   skipUnchanged?: boolean;
+  /** 符号链接照原样在 NAS 上建成符号链接（备份用）；其它特殊条目记为出错 */
+  copySymlinks?: boolean;
   /** 不复制的文件（备份自己的记录和状态文件） */
   exclude?: (rel: string) => boolean;
 }
@@ -68,8 +70,7 @@ async function copyVerified(source: string, dest: string, copy: CopyImpl): Promi
   const have = await hashOrNull(dest);
   if (have === want) return want;
   await fs.mkdir(path.dirname(dest), { recursive: true });
-  if (have !== null && (await hashOrNull(keptName(dest, have))) === null) await fs.rename(dest, keptName(dest, have));
-  else await fs.rm(dest, { force: true });
+  if (have !== null) await keepAside(dest, have);
   await copy(source, dest);
   const got = await hashOrNull(dest);
   if (got !== want) {
@@ -77,6 +78,20 @@ async function copyVerified(source: string, dest: string, copy: CopyImpl): Promi
     throw new Error(`校验不一致（本机 ${want.slice(0, 12)}…，NAS ${got?.slice(0, 12) ?? "缺失"}…）`);
   }
   return want;
+}
+
+/**
+ * 把 NAS 上的旧版本挪开留底。只有留底位置已有一份且整份 sha256 等于它，才算重复可删；
+ * 留底名被别的内容占了就加序号（name.<sha8>-2.ext …），绝不在没证据时删。
+ */
+async function keepAside(dest: string, have: string): Promise<void> {
+  const first = keptName(dest, have), ext = path.extname(first);
+  for (let i = 1; ; i++) {
+    const name = i === 1 ? first : `${first.slice(0, first.length - ext.length)}-${i}${ext}`;
+    const kept = await hashOrNull(name);
+    if (kept === null) { await fs.rename(dest, name); return; }
+    if (kept === have) { await fs.rm(dest, { force: true }); return; }
+  }
 }
 
 async function statOrNull(file: string) {
@@ -90,6 +105,28 @@ async function unchangedBoth(f: { size: number; mtimeMs: number }, prev: Archive
   return !!st && st.size === prev.size && st.mtimeMs === prev.destMtimeMs;
 }
 
+async function lstatOrNull(file: string) {
+  try { return await fs.lstat(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
+}
+
+/** 符号链接在 NAS 上照建（目标一样就不动；原位是别的东西先挪开留底）；非链接的特殊条目报出来 */
+async function copySpecials(root: string, target: string, special: string[]): Promise<string[]> {
+  const errors: string[] = [];
+  for (const rel of special) {
+    try {
+      const src = path.join(root, rel), dest = path.join(target, rel);
+      if (!(await fs.lstat(src)).isSymbolicLink()) { errors.push(`${rel}：不是普通文件也不是链接，没法备份`); continue; }
+      const link = await fs.readlink(src), st = await lstatOrNull(dest);
+      if (st?.isSymbolicLink() && (await fs.readlink(dest)) === link) continue;
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      if (st?.isSymbolicLink()) await fs.rm(dest);
+      else if (st) await fs.rename(dest, `${dest}.replaced-${Date.now()}`);
+      await fs.symlink(link, dest);
+    } catch (e) { errors.push(`${rel}：链接没建成（${e instanceof Error ? e.message : String(e)}）`); }
+  }
+  return errors;
+}
+
 /** 整个项目复制 + 逐个核对。任何一个文件出错都记下来，调用方据此决定一律不删本机。 */
 export async function copyProject(
   root: string, target: string, copy: CopyImpl, mediaDirs: readonly string[], opts: CopyProjectOptions = {},
@@ -98,6 +135,7 @@ export async function copyProject(
   // 要删的目录里有链接就不删（复制不了）；其它目录里的链接留在本机，不影响
   const blocking = special.filter((rel) => mediaDirs.some((d) => rel.startsWith(`${d}/`)));
   const out: ArchivedFile[] = [], errors = blocking.map((rel) => `${rel}：不是普通文件（链接等），没法归档`);
+  if (opts.copySymlinks) errors.push(...(await copySpecials(root, target, special.filter((rel) => !opts.exclude?.(rel)))));
   for (const f of files) {
     if (opts.exclude?.(f.rel)) continue;
     const prev = opts.previous?.get(f.rel), dest = path.join(target, f.rel);

@@ -175,6 +175,35 @@ describe("发布即备份 NAS", () => {
     expect(await exists(keptName(cover, garbage))).toBe(false);
   });
 
+  it("never deletes the old NAS version unless an identical kept copy is proven by hash", async () => {
+    const c = await published("稿", 1);
+    await backup();
+    const dest = path.join(nasDir(c), "02-aroll/raw.mov");
+    const v1 = await sha256File(dest);
+    await fs.writeFile(keptName(dest, v1), "别的内容占了这个名");
+    await new Promise((r) => setTimeout(r, 20));
+    await put(c, "02-aroll/raw.mov", "稿-raw-v2");
+    expect((await backup()).backedUp).toEqual(["稿"]);
+    expect(await read(keptName(dest, v1))).toBe("别的内容占了这个名");
+    expect(await read(keptName(dest, v1).replace(/\.mov$/, "-2.mov"))).toBe("稿-raw");
+    // 留底位置已是同一内容（哈希相等）才算重复
+    const v2 = await sha256File(dest);
+    await fs.copyFile(dest, keptName(dest, v2));
+    await new Promise((r) => setTimeout(r, 20));
+    await put(c, "02-aroll/raw.mov", "稿-raw-v3");
+    await backup();
+    expect(await read(keptName(dest, v2))).toBe("稿-raw-v2");
+    expect(await exists(keptName(dest, v2).replace(/\.mov$/, "-2.mov"))).toBe(false);
+  });
+
+  it("copies symlinks in the project as symlinks", async () => {
+    const c = await published("稿", 1);
+    await fs.symlink("../02-aroll/raw.mov", path.join(root(c), "03-broll-link.mov"));
+    const r = await backup();
+    expect(r.backedUp).toEqual(["稿"]);
+    expect(await fs.readlink(path.join(nasDir(c), "03-broll-link.mov"))).toBe("../02-aroll/raw.mov");
+  });
+
   it("marks items unmounted when the NAS is missing, without errors, and catches up once mounted", async () => {
     const a = await published("甲", 1);
     const b = await published("乙", 2);
@@ -233,6 +262,19 @@ describe("7 天腾空间前核对 NAS", () => {
     expect(await read(path.join(nasDir(old), "05-cover/封面-3x4.png"))).toBe("旧稿-cover");
     expect(await read(path.join(nasDir(old), "02-aroll/raw.mov"))).toBe("旧稿-raw");
     expect(await fs.readdir(path.join(root(old), "02-aroll"))).toEqual([]);
+  });
+
+  it("does not report backed_up for an archived project whose NAS-only files are gone", async () => {
+    const old = await oldBackedUp();
+    await archivePublished(data, { now: NOW, archiveRoot: nas, freeSpace: async () => 1e12, marginBytes: 0 });
+    expect((await backup()).backedUp).toContain("旧稿");
+    await fs.rm(nasDir(old), { recursive: true });
+    const r = await backup();
+    expect(r.backedUp).not.toContain("旧稿");
+    const state = (await readBackupState(root(old)))!;
+    expect(state.status).toBe("failed");
+    expect(state.reason).toContain("02-aroll/raw.mov");
+    expect(state.reason).toContain("NAS 上也不见了");
   });
 
   it("deletes nothing when the NAS copy cannot be verified", async () => {

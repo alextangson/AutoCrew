@@ -8,7 +8,7 @@ import path from "node:path";
 import type { Content } from "./local-store.js";
 import { listContents } from "./local-store.js";
 import { readLibraryLocation, getLibraryRoot } from "./storage-roots.js";
-import { readProjectRegistry, resolveContentProject } from "./content-project.js";
+import { readProjectRegistry, resolveContentProject, isMissing } from "./content-project.js";
 import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { copyProject, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
@@ -58,11 +58,33 @@ async function markUnmounted(projectRoot: string, target: string, ctx: Ctx): Pro
   return true;
 }
 
+/**
+ * 归档过的项目：本机素材已删，只有 NAS 上那份。按归档记录核对这些文件还在、大小一致（不每天重算整份哈希，
+ * 与 NAS 侧增量跳过的取舍一致）；缺了或大小不对就报出来，这一轮不算备份完成。
+ */
+async function checkArchivedOnNas(projectRoot: string): Promise<string[]> {
+  const notes = path.join(projectRoot, "00-project/notes");
+  let names: string[] = [];
+  try { names = await fs.readdir(notes); } catch (e) { if (isMissing(e)) return []; throw e; }
+  const problems: string[] = [];
+  for (const name of names.filter((n) => /^archive-.+\.json$/.test(n))) {
+    const record = JSON.parse(await fs.readFile(path.join(notes, name), "utf8")) as { target: string; files: ArchivedFile[] };
+    for (const f of record.files) {
+      if (await fs.stat(path.join(projectRoot, f.rel)).then(() => true, () => false)) continue; // 本机还在，照常备份
+      const st = await fs.stat(path.join(record.target, f.rel)).catch(() => null);
+      if (!st) problems.push(`${f.rel}：本机已归档删除，NAS 上也不见了`);
+      else if (st.size !== f.size) problems.push(`${f.rel}：本机已归档删除，NAS 上那份大小不对（记录 ${f.size}，现在 ${st.size}）`);
+    }
+  }
+  return problems;
+}
+
 async function copyOnce(projectRoot: string, target: string, ctx: Ctx): Promise<ArchivedFile[]> {
   const prev = await latestBackupFiles(projectRoot, target);
   const { files, errors } = await copyProject(projectRoot, target, ctx.copy, [], {
-    previous: prev, skipUnchanged: true, exclude: isBackupBookkeeping,
+    previous: prev, skipUnchanged: true, exclude: isBackupBookkeeping, copySymlinks: true,
   });
+  errors.push(...(await checkArchivedOnNas(projectRoot)));
   if (errors.length) throw new Error(`复制或核对出错：${errors.join("；")}`);
   if (!sameFiles(files, prev)) {
     await writeBackupRecord(projectRoot, { version: 1, backedUpAt: ctx.now.toISOString(), target, files });
