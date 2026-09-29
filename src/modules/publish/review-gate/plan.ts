@@ -171,5 +171,10 @@ export function parsePlan(plan: Obj): ParsedPlan {
     if (entries.some((x) => x.platform === entry.platform)) { problems.push({ platform: entry.platform, field: `platforms[${i}]`, detail: "同一平台出现了两次：一个平台只能有一个条目" }); return; }
     entries.push(entry);
   });
+  // 封面写到计划顶层（selected_covers / covers）不会被读：指明要写进每个平台条目
+  const topCovers = plan.selected_covers !== undefined ? "selected_covers" : plan.covers !== undefined ? "covers" : null;
+  if (topCovers) for (const e of entries.filter((x) => !x.covers.length)) {
+    problems.push({ platform: e.platform, field: "covers", detail: `封面要写在每个平台条目的 covers: [{usage, ratio, path}] 里；计划顶层的 ${topCovers} 不会被读` });
+  }
   return { entries, problems, final_video_path: finalVideo };
 }

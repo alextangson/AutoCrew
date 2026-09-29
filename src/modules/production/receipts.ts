@@ -17,6 +17,7 @@ import type { Content } from "../../storage/local-store.js";
 import { newId } from "../../storage/production-store.js";
 import type { Decision, Fact, GateStamp, ProductionDoc, PublicationState } from "../../storage/production-types.js";
 import { gateStamp } from "./publish-check-link.js";
+import { entryPayloadHash } from "../publish/review-gate/check.js";
 import { readPublishRecord, type PlatformPublication } from "../../storage/publish-record.js";
 import { bindingsForContent } from "../flywheel/platform-items.js";
 import { normalizePlatform } from "../publish/review-gate/platforms.js";
@@ -75,7 +76,11 @@ export async function trustedObservations(content: Content, dataDir: string): Pr
   }
   // 可信观察盖把关结论：按实际提交时间（没有就按现在 = 观察写入时间），从不按定时公开时间；
   // 同槽已经盖过的首次结论由 importObservations 继承，事后补检翻不了案
-  for (const o of out) if (TRUSTED.has(o.source)) o.gate = await gateStamp(content.id, o.platform, o.submitted_at, o.check_id, dataDir, o.published_at);
+  for (const o of out) {
+    if (!TRUSTED.has(o.source)) continue;
+    const payload = o.source === "plan" ? await entryPayloadHash(content.id, o.platform, dataDir).catch(() => null) : null;
+    o.gate = await gateStamp(content.id, o.platform, o.submitted_at, o.check_id, dataDir, o.published_at, payload);
+  }
   return out;
 }
 

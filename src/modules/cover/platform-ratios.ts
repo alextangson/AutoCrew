@@ -15,6 +15,24 @@ export const COVER_RATIOS_BY_PLATFORM: Record<string, string[]> = {
   bilibili: ["4:3"],
 };
 
+/**
+ * 平台上传界面能收的封面比例（设置页 / 偏好提议只能在这里面选；默认表是其中的子集）。
+ * 小红书 3:4 / 4:3 / 1:1；抖音、视频号 3:4 / 4:3；B站 4:3 / 16:9；公众号 2.35:1。
+ */
+export const ALLOWED_COVER_SLOTS: Record<string, string[]> = {
+  wechat_mp: ["2.35:1"],
+  xiaohongshu: ["3:4", "4:3", "1:1"],
+  wechat_video: ["3:4", "4:3"],
+  douyin: ["3:4", "4:3"],
+  bilibili: ["4:3", "16:9"],
+};
+
+/** 不在这个平台上传槽里的比例（空 = 都合法） */
+export function invalidSlotRatios(platform: string, ratios: string[]): string[] {
+  const allowed = ALLOWED_COVER_SLOTS[platform];
+  return allowed ? ratios.filter((r) => !allowed.includes(r)) : [];
+}
+
 /** 平台自己从上传封面裁出的框：不上传，但发布时要在平台弹窗里核对标题没被切掉并截图 */
 export const COVER_CROP_CHECKS: Record<string, string[]> = {
   bilibili: ["16:9 裁切核对：B站封面设置里的 16:9「个人空间封面」框由平台从 4:3 裁出，在该弹窗里确认标题没被切掉并截图留证"],

@@ -77,12 +77,14 @@ describe("§11-2 发布槽引用检查 / §11-3 例外上卡", () => {
     expect((await cardPanel(r.id, env.dir)).alerts).toContain("1 个平台发布前未把关");
   });
 
-  it("创始人「我发了」前跑过有效检查 → 不标未把关；没跑过 → 标", async () => {
+  it("创始人「我发了」：计划里有实际提交时间、检查早于提交且检查的是提交的那份 → 不标；没跑过 → 标", async () => {
     const r = await registeredVideo(env);
     await founderDecision(r.id, "i_published", { platform: "bilibili" }, env.dir);
     expect((await cardPanel(r.id, env.dir)).alerts).toContain("1 个平台发布前未把关");
     await writePlan(r, [planEntry(r, "douyin", ["3:4", "4:3"])]);
-    await check(r);
+    const c = await check(r);
+    // 严格（创始人 09-29）：计划里要有实际提交时间，且检查的就是提交的那份
+    await writePlan(r, [{ ...planEntry(r, "douyin", ["3:4", "4:3"]), check_id: c.douyin.check_id, publication: { status: "submitted", submitted_at: new Date(Date.now() + 1000).toISOString() } }]);
     await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
     const p = await cardPanel(r.id, env.dir);
     // 只剩 B站 那一个

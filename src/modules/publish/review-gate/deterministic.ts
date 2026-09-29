@@ -154,18 +154,22 @@ export async function deterministicChecks(input: DetInput): Promise<DetOutput> {
 }
 
 /** §7：原话例外把对应的可例外 block 改判 override（不是 pass）；没对上任何拦截的例外单列提醒 */
+/** 一句原话例外盖住整条「封面上传槽」规则：缺槽（cover_ratio）与规则外比例（cover_extra_ratio）是同一件事的两面 */
+const RULE_FAMILY: Record<string, string> = { cover_ratio: "cover_slots", cover_extra_ratio: "cover_slots" };
+export const sameRuleFamily = (a: string, b: string) => a === b || (RULE_FAMILY[a] !== undefined && RULE_FAMILY[a] === RULE_FAMILY[b]);
+
 export function applyOverrides(platform: string, items: CheckItem[], overrides: Override[]): CheckItem[] {
   const mine = overrides.filter((o) => o.platform === platform);
   const used = new Set<Override>();
   const out = items.map((i) => {
     if (i.result !== "block" || !i.overridable) return i;
-    const o = mine.find((x) => x.rule === i.rule);
+    const o = mine.find((x) => sameRuleFamily(x.rule, i.rule ?? ""));
     if (!o) return i;
     used.add(o);
     return { ...i, result: "override" as const, override_quote: o.founder_quote };
   });
   for (const o of mine.filter((x) => !used.has(x))) {
-    const locked = items.some((i) => i.rule === o.rule && i.result === "block" && !i.overridable);
+    const locked = items.some((i) => sameRuleFamily(o.rule, i.rule ?? "") && i.result === "block" && !i.overridable);
     out.push({ check: "例外", result: "warn", rule: o.rule, basis: locked ? `「${o.rule}」是没法发的问题（文件缺失 / 计划形状不对），不能例外` : `例外「${o.rule}」没对上本平台任何拦截`, override_quote: o.founder_quote });
   }
   return out;

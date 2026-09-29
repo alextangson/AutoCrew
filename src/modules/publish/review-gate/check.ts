@@ -78,12 +78,24 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promi
   };
 }
 
-function instructionList(ctx: Ctx, platform: string): Instruction[] {
+function allInstructions(ctx: Ctx, platform: string): Instruction[] {
   const list: Instruction[] = [];
   for (const q of ctx.quotes) list.push({ n: list.length + 1, source: "原话", text: q });
   for (const s of ctx.instruction ? splitInstruction(ctx.instruction.text) : []) list.push({ n: list.length + 1, source: "网页指令", text: s });
   for (const r of ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === platform)) list.push({ n: list.length + 1, source: "发布规则", text: r.text });
   return list;
+}
+
+/** 点名了具体平台、但没点这个平台的指令：代码按平台别名表判不适用，不问 Jev（「小红书的标题不要带问号」不问抖音） */
+const appliesTo = (ins: Instruction, platform: string) => { const named = platformsNamedIn(ins.text); return !named.length || named.includes(platform as GatePlatform); };
+
+function instructionList(ctx: Ctx, platform: string): Instruction[] {
+  return allInstructions(ctx, platform).filter((i) => appliesTo(i, platform));
+}
+
+function skippedInstructions(ctx: Ctx, platform: string): CheckItem[] {
+  return allInstructions(ctx, platform).filter((i) => !appliesTo(i, platform)).map((i) => ({ check: "B 执行符合指令", result: "info" as const,
+    basis: `第 ${i.n} 条（${i.source}）「${i.text}」只点名了${platformsNamedIn(i.text).map(platformLabel).join("、")}，不适用${platformLabel(platform)}` }));
 }
 
 function bView(ctx: Ctx, entry: PlanEntry, covers: Awaited<ReturnType<typeof deterministicChecks>>["covers"]): BEntryView {
@@ -143,9 +155,11 @@ const coverRows = (covers: CoverFact[]) => covers.map((c) => ({ usage: c.usage, 
 async function checkPlatform(ctx: Ctx, entry: PlanEntry, named: GatePlatform[]): Promise<Detail> {
   const { det, detItems, payload, instructions, basis, a, b, parts, fp } = await identityFor(ctx, entry, named);
   const sem = await runSemantic({ contentId: ctx.content.id, dataDir: ctx.dataDir, fingerprint: fp, requests: [a.request, b].filter((x): x is NonNullable<typeof x> => x !== null), basis, instructions, caller: ctx.caller });
-  const semItems = [...a.codeItems, ...sem.items];
+  const semItems = [...a.codeItems, ...sem.items, ...skippedInstructions(ctx, entry.platform)];
   if (!instructions.length) semItems.push({ check: "B 执行符合指令", result: "info", basis: "没有可核对的原话 / 规则（不算失败；agent 漏交原话就查不到）" });
-  const items = [...detItems, ...semItems];
+  // 同一条问题只列一次（同检查、同规则、同字段、同依据）
+  const seen = new Set<string>();
+  const items = [...detItems, ...semItems].filter((i) => { const k = JSON.stringify([i.check, i.rule, i.field, i.basis, i.result]); return seen.has(k) ? false : (seen.add(k), true); });
   const result: PlatformResult = { platform: entry.platform, verdict: platformVerdict(items), check_id: newCheckId(entry.platform, fp), payload_hash: payload, fingerprint: fp, items, semantic: { cached: sem.cached, calls: sem.calls.length, failed: sem.failed } };
   await writeRecord(ctx, result, { fingerprint_parts: parts, basis_note: basis.note, covers: coverRows(det.covers), video_sha256: det.video?.sha256 ?? null, jev: { cached: sem.cached, calls: sem.calls satisfies CallRecord[] } });
   return { result, covers: det.covers, account: entry.account };
@@ -215,6 +229,31 @@ export async function verifyCheck(contentId: string, checkId: string, dataDir?: 
   return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers, overrides: record.inputs?.overrides ?? [], video_path: now.det.video?.ok ? now.det.video.abs : null } };
 }
 
+/** 每个被拦平台还拦着哪几条规则（能不能例外）：next_action 指名，不让 agent 猜缺哪条 */
+function blockedDetail(results: PlatformResult[], planBlocked: boolean): string {
+  const parts = results.filter((r) => r.verdict === "block").map((r) => {
+    const rules = [...new Set(r.items.filter((i) => i.result === "block").map((i) => `${i.rule ?? i.check}${i.overridable ? "" : "（不能例外）"}`))];
+    return `${platformLabel(r.platform)}：${rules.join("、")}`;
+  });
+  return [...parts, ...(planBlocked ? ["计划本身：形状问题（不能例外）"] : [])].join("；");
+}
+
+/**
+ * 发布计划里某平台条目（实际提交的那份）的 payload 哈希：发布回执据此认「检查的就是发出去的这份」（闸门 §11，创始人 09-29）。
+ * 计划读不到 / 没这个平台 → null（= 没法证明检查过发出去的内容）。
+ */
+export async function entryPayloadHash(contentId: string, platform: string, dataDir?: string): Promise<string | null> {
+  const ctx = await buildCtx({ _dataDir: dataDir, content_id: contentId, plan: "06-publish/publish-plan.json" }, {}).catch(() => null);
+  if (!ctx || "ok" in ctx) return null;
+  const entry = ctx.plan.entries.find((e) => e.platform === platform);
+  if (!entry) return null;
+  const det = await deterministicChecks({
+    contentId, siblings: ctx.content.siblings ?? [], projectRoot: ctx.root, entry, videoPath: entry.video_path ?? ctx.plan.final_video_path,
+    allowedRatios: effectiveCoverRatios(entry.platform, ctx.prefs.coverRatios), cropChecks: COVER_CROP_CHECKS[entry.platform] ?? [], registration: ctx.registration,
+  });
+  return payloadHash(entry, contentId, det.covers, det.video?.sha256 ?? null);
+}
+
 export async function executePublishCheck(params: Record<string, unknown>, deps: CheckDeps = {}): Promise<Record<string, unknown>> {
   const ctx = await buildCtx(params, deps);
   if ("ok" in ctx) return ctx;
@@ -236,7 +275,7 @@ export async function executePublishCheck(params: Record<string, unknown>, deps:
     semantic: failed.length ? { status: "not_run", reasons: failed } : { status: "ok" },
     blocked_platforms: blocked,
     next_action: blocked.length
-      ? `被拦的平台（${blocked.map((p) => (p === "plan" ? "计划本身" : platformLabel(p))).join("、")}）不得提交：改计划后重跑 check；创始人明确要破例时带 overrides[{platform, rule, founder_quote}] 重跑`
+      ? `被拦的平台不得提交（${blockedDetail(results, planProblems.length > 0)}）：改计划后重跑 check；创始人明确要破例时，对还拦着的规则带 overrides[{platform, rule, founder_quote}] 重跑（没法例外的只能改计划）`
       : "把 summary_table 原样贴进给创始人的一次确认汇总；计划改了就重跑 check；最终点击前逐字段读回页面与发布包比对",
   };
 }

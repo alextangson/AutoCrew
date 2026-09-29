@@ -7,8 +7,8 @@
  */
 import crypto from "node:crypto";
 import { loadProfile, mutateProfile, type PreferenceProposal, type PublishRule } from "../../profile/creator-profile.js";
-import { ratioValue } from "../../cover/platform-ratios.js";
-import { normalizePlatform } from "./platforms.js";
+import { ALLOWED_COVER_SLOTS, invalidSlotRatios, ratioValue } from "../../cover/platform-ratios.js";
+import { normalizePlatform, platformLabel } from "./platforms.js";
 
 export interface PublishPrefs { coverRatios: Record<string, string[]>; publishRules: PublishRule[] }
 
@@ -51,6 +51,8 @@ export async function proposePreference(args: Record<string, unknown>, host: str
     if (!platform) return { ok: false, code: "platform_required", error: "cover_ratio 要带 platform" };
     const ratios = parseRatios(args.value);
     if (!ratios) return { ok: false, code: "bad_value", error: "value 要是比例列表，如 [\"3:4\",\"4:3\"]" };
+    const bad = invalidSlotRatios(platform, ratios);
+    if (bad.length) return { ok: false, code: "bad_value", error: `${platformLabel(platform)}的上传槽不收 ${bad.join("、")}：只能在 ${ALLOWED_COVER_SLOTS[platform].join(" / ")} 里选` };
     value = ratios;
   } else {
     const text = typeof args.value === "string" ? args.value.trim() : "";
@@ -94,6 +96,8 @@ export async function setCoverRatios(platform: string, raw: unknown, dataDir?: s
   const clear = Array.isArray(raw) && raw.length === 0;
   const ratios = clear ? [] : parseRatios(raw);
   if (!ratios) return { ok: false, error: "比例要写成 3:4、4:3 这样，逗号分隔" };
+  const bad = invalidSlotRatios(p, ratios);
+  if (bad.length) return { ok: false, error: `${platformLabel(p)}的上传槽不收 ${bad.join("、")}：只能在 ${ALLOWED_COVER_SLOTS[p].join(" / ")} 里选` };
   await mutateProfile((profile) => {
     const next = { ...(profile.coverRatios ?? {}) };
     if (clear) delete next[p]; else next[p] = ratios;
