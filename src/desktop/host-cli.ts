@@ -16,8 +16,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getHostStateDir } from "../storage/storage-roots.js";
 import { ensureHostToken } from "./host-tokens.js";
+import { connectWorkbuddy } from "./workbuddy-connect.js";
 
-export const KNOWN_HOSTS = ["codex", "claude-code", "dsh"] as const;
+export const KNOWN_HOSTS = ["codex", "claude-code", "dsh", "workbuddy"] as const;
 export type KnownHost = (typeof KNOWN_HOSTS)[number];
 
 /** `--role`：写哪一份人设。 */
@@ -32,6 +33,8 @@ const PERSONA_FILE: Record<KnownHost, string | null> = {
   codex: "AGENTS.md",
   "claude-code": "CLAUDE.md",
   dsh: null,
+  // WorkBuddy 反向接入：人设不落文件，接入由 workbuddy-connect 写它自己的 mcp.json
+  workbuddy: null,
 };
 
 export interface HostCliOptions {
@@ -183,6 +186,7 @@ export function hostInstructions(host: string, options: HostCliOptions = {}): st
     ].join("\n");
   }
 
+  if (host === "workbuddy") return workbuddyLines(dataDir, home);
   const tokenPath = tildify(ensureHostToken(host, dataDir), home);
   const steps = host === "codex"
     ? codexSteps(tokenPath, endpoint)
@@ -200,6 +204,19 @@ export function hostInstructions(host: string, options: HostCliOptions = {}): st
   return lines.join("\n");
 }
 
+/** `autocrew host workbuddy`：与集成页「连接 WorkBuddy」同一件事（spec W1–W8） */
+function workbuddyLines(dataDir: string, home: string): string {
+  const r = connectWorkbuddy({ home, dataDir });
+  if (!r.ok) return String(r.error);
+  const data = r.data as { file: string; backup?: string };
+  return [
+    `宿主 workbuddy 的令牌已就绪（${tildify(path.join(dataDir, "tokens", "workbuddy.token"), home)}）。`,
+    String(r.message),
+    `配置文件：${tildify(data.file, home)}${data.backup ? `（写前备份：${tildify(data.backup, home)}）` : ""}`,
+    "之后在 WorkBuddy 里就能调用 AutoCrew 的工具；撤销令牌后它的调用会 401。",
+  ].join("\n");
+}
+
 /** `--dir` 那一段：写成功报落点与做法，写失败报人话原因——绝不把失败吞掉当没写。 */
 function personaLines(host: KnownHost, options: HostCliOptions, home: string): string[] {
   const dir = options.dir as string;
@@ -207,7 +224,7 @@ function personaLines(host: KnownHost, options: HostCliOptions, home: string): s
   if (!isKnownRole(role)) {
     return [`--role ${role} 不认识。可用：${HOST_ROLES.join(" / ")}`];
   }
-  if (host === "dsh") {
+  if (host === "dsh" || host === "workbuddy") {
     return [
       "dsh 的人设在 preset 里（adapters/dsh/agent-presets/autocrew/agent.cordis.yml），",
       "随插件 apply 一起装，不写工作目录。--dir 这次被忽略。",

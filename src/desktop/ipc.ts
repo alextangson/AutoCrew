@@ -140,6 +140,7 @@ import {
 import { testEngineRoute } from "./settings-probe.js";
 import { getEngineHealth } from "./engine-health.js";
 import { hostsListHandler, hostsRevokeHandler } from "./host-tokens.js";
+import { connectWorkbuddy, workbuddyInstalled, WORKBUDDY_HOST } from "./workbuddy-connect.js";
 import { wechatPullHandler } from "./wechat-pull.js";
 import {
   pullStatusHandler,
@@ -1275,7 +1276,13 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "engine:health": getEngineHealth,
     // 宿主令牌（P3 spec §4.1）：只读清单 + 撤销（撤销 = 删文件，下一次调用 401）
     "hosts:list": hostsListHandler,
-    "hosts:revoke": hostsRevokeHandler,
+    "hosts:revoke": async (p) => {
+      const r = await hostsRevokeHandler(p);
+      // W7：WorkBuddy 的 mcp.json 条目不替人删，只提示可一并删除
+      return r.ok && p.host === WORKBUDDY_HOST ? { ...r, message: `${String(r.message)}。~/.workbuddy/mcp.json 里的 autocrew 条目还在，可一并删除。` } : r;
+    },
+    "hosts:workbuddy_status": async () => ({ ok: true, data: { installed: workbuddyInstalled() } }),
+    "hosts:workbuddy_connect": async () => connectWorkbuddy(),
     "settings:search_get": getSearchSettings,
     "settings:search_set": setSearchSettings,
     "settings:publish_get": getPublishSettings,
