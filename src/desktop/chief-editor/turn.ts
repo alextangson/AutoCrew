@@ -178,7 +178,7 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   turn.conversationId = conv.id;
   turn.bypass = conv.settings.permissionMode === "bypass";
   turn.allowConversation = svc.conversationAllowed(conv.id);
-  svc.runs.put({ turnId: turn.turnId, clientId: turn.clientId, conversationId: conv.id, dataDir: turn.dataDir, backend: turn.backend, message: input.message, status: "running", startedAt: new Date().toISOString() });
+  svc.runs.put({ turnId: turn.turnId, clientId: turn.clientId, conversationId: conv.id, dataDir: turn.dataDir, backend: turn.backend, message: input.message, status: "running", startedAt: new Date().toISOString(), ...(input.contentId ? { contentId: input.contentId } : {}) });
   // 别的标签页 / 看板重试发起的轮：右栏据此挂上来旁观（v1.2）
   svc.deps.emit({ type: "turn", turnId: turn.turnId, conversationId: conv.id, status: "running" });
   ensurePersona(svc.deps.home, turn.backend);
@@ -195,10 +195,12 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
     if (signal.aborted) stopAgent(svc, turn);
     const stopReason = turn.aborted ? "cancelled" : await promptLoop(svc, turn, proc, session.sessionId, `${input.promptContext ?? ""}${input.message}`, gate.flush);
     svc.authFailed.delete(adapter.id);
+    gate.closeThought?.();
     gate.flush?.();
     logUsage(turn);
     return { ok: true, reply: redactText(finalSegment(text, gate)).trim(), stopReason, ...(session.notice ? { notice: session.notice } : {}) };
   } catch (err) {
+    gate.closeThought?.();
     gate.flush?.();
     if (turn.aborted) return { ok: true, reply: redactText(finalSegment(text, gate)).trim(), stopReason: "cancelled" };
     return { ok: false, reply: failureText(adapter, svc, err, proc) };

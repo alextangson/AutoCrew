@@ -32,6 +32,10 @@ export interface RunRecord {
   /** 本轮已入账的卡片（先落这里再推 SSE，刷新/重启后可回放） */
   cards?: Record<string, unknown>[];
   writes?: string[];
+  /** 这一轮是冲着哪篇稿去的（重试接回原对话时，认领里的 session 对不上就按它找） */
+  contentId?: string;
+  /** 过程块（工作记录）：重启恢复时重建「已停止」块 */
+  worklog?: Array<Record<string, unknown>>;
 }
 
 const MAX_RECORDS = 50;

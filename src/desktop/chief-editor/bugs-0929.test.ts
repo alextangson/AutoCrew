@@ -36,7 +36,8 @@ describe("bug A1 派活说明带上工作台已选的角度", () => {
     const topic = await topicWithBrief();
     await updateTopic(topic.id, { selectedAngle: { briefRevision: 1, angleId: "angle-1", card, selectedAt: "" } }, h.dataDir);
     const built = await buildDispatchContext({ kind: "write", title: "测试", platform: "douyin", topicId: topic.id }, h.dataDir, "local");
-    expect(built.ok && built.text).toContain("已在工作台选定角度 angle-1「从工具链换代看裁员」");
+    expect(built.ok && built.text).toContain("已在工作台选定角度 angle-1");
+    expect(built.ok && built.text).toContain("角度：从工具链换代看裁员");
     expect(built.ok && built.text).toContain("不要再让创作者选角度");
   });
   it("简报更新过、选择失效：明说请创作者重选", async () => {

@@ -128,13 +128,12 @@ describe("重试回到原写手（v1.2 §4）", () => {
     expect(r).not.toHaveProperty("conversationId");
     await until(() => h.svc.active === null && h.agents.length === 1);
   });
-  it("X8：本机后端不可用（代理没开 / 没登录）→ 报原因与修法，不改走内置", async () => {
+  it("X8：本机后端不可用（没装 / 代理没开）→ 报原因与修法，不改走内置（「上次未登录」只是提示，见 review-v12 P2-9）", async () => {
     const c = await agentDraft();
-    h.svc.authFailed.add("claude");
+    vi.spyOn(backends.CLAUDE_ADAPTER, "launch").mockReturnValueOnce(null);
     const r = await routeRetryToAgent(c.id, h.dataDir);
     expect(r).toMatchObject({ ok: false });
     expect(String(r?.error)).toContain("不会改用内置引擎");
-    h.svc.authFailed.clear();
     vi.spyOn(backends, "proxyUnreachable").mockResolvedValue("代理 127.0.0.1:8787 连不上");
     expect(String((await routeRetryToAgent(c.id, h.dataDir))?.error)).toContain("连不上");
     expect(h.agents).toHaveLength(0);

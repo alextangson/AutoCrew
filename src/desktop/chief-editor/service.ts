@@ -228,7 +228,10 @@ export class ChiefEditor {
     for (const r of leftovers) {
       const writes = r.writes?.length ? `中断前已完成的写动作：${r.writes.join("；")}。` : "中断前没有记录到完成的写动作。";
       const content = `⚠️ 这一轮被中断了（守护进程重启）。${writes}已完成的写动作不会自动重做；需要的话直接重发，能续上原会话就续，续不上会说一句「已新开」。`;
-      await appendConversation(r.conversationId, { content: r.message }, { content, cards: r.cards ?? [], turnId: r.turnId }, r.dataDir)
+      const log = r.worklog?.length
+        ? [{ type: "agent_worklog", data: { items: r.worklog.map((w) => (w.status === "running" ? { ...w, status: "failed", error: "守护进程重启，这一步没跑完" } : w)), stopped: true } }]
+        : [];
+      await appendConversation(r.conversationId, { content: r.message }, { content, cards: [...log, ...(r.cards ?? [])], turnId: r.turnId }, r.dataDir)
         .catch(() => { /* 对话已删：记录照样标中断 */ });
     }
     return leftovers;

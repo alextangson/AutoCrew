@@ -5,6 +5,11 @@
 import { pickPermissionOption } from "./backends.js";
 import type { AgentHandlers } from "./acp-process.js";
 import { redactAndTruncate, StreamRedactor } from "./redact.js";
+
+function clampText(t: string, max: number): string {
+  const a = Array.from(t.trim());
+  return a.length > max ? `${a.slice(0, max).join("")}…` : a.join("");
+}
 import type { ActiveTurn, ChiefEditor, WorkItem } from "./service.js";
 import { toolDisplayName } from "./tool-names.js";
 
@@ -13,6 +18,8 @@ export const WRITE_KINDS = new Set(["edit", "delete", "move", "execute"]);
 /** session/load 会把历史对话当 update 重放一遍：重放期间的更新一律不算本轮输出 */
 export interface StreamGate {
   replaying: boolean;
+  /** 收尾时把还扣着没发的思考尾巴脱敏后补上 */
+  closeThought?: () => void;
   flush?: () => void;
   /** 当前这段正文从 text 的哪一格开始：工具调用把正文切段，最后一段才是最终回复（v1.2） */
   segStart?: number;
@@ -40,6 +47,8 @@ function upsertWork(svc: ChiefEditor, turn: ActiveTurn, item: WorkItem): void {
   const i = turn.worklog.findIndex((w) => w.id === item.id);
   if (i >= 0) turn.worklog[i] = { ...turn.worklog[i], ...item };
   else turn.worklog.push({ ...item, name: item.name || "工具调用" });
+  // 过程先落 run 记录：守护进程重启后恢复出「已停止」的过程块，失败原因不丢（评审 v1.2 P2-8）
+  try { svc.runs.patch(turn.turnId, { worklog: turn.worklog as unknown as Array<Record<string, unknown>> }); } catch { /* 观测层不影响执行 */ }
   svc.deps.emit({ type: "work", turnId: turn.turnId, conversationId: turn.conversationId, item: turn.worklog[i >= 0 ? i : turn.worklog.length - 1] });
 }
 
@@ -49,23 +58,31 @@ function errorText(u: { content?: unknown; rawOutput?: unknown }): string {
 }
 
 export function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSinks, text: string[], gate: StreamGate): AgentHandlers {
-  const calls = new Map<string, { title: string; kind?: string }>();
+  const calls = new Map<string, { title: string; kind?: string; key?: string }>();
   // agent 可能在正文里复述认领令牌：推 SSE 前脱敏（跨分块也挡得住），落盘另做一次全文脱敏
   const redactor = new StreamRedactor();
   const emit = (t: string) => { if (t) sinks.onDelta?.({ ev: "delta", text: t }); };
   gate.flush = () => emit(redactor.finish());
-  let thought: WorkItem | null = null;
+  // 思考与正文同一套缓冲脱敏：令牌被切在两片之间时，前一片不能先推出去（评审 v1.2 P1-1）
+  let thought: { item: WorkItem; redactor: StreamRedactor; shown: string } | null = null;
+  const closeThought = () => {
+    if (!thought) return;
+    thought.shown += thought.redactor.finish();
+    upsertWork(svc, turn, { ...thought.item, name: clampText(thought.shown, 400) });
+    thought = null;
+  };
+  gate.closeThought = closeThought;
   return {
     onUpdate(u) {
       if (gate.replaying) return;
       if (u.sessionUpdate === "agent_thought_chunk" && u.content?.text) {
-        // 思考收进「已处理」块（v1.2）：连续的思考片段并成一条，脱敏后截断
-        thought = thought ?? { id: `thought-${turn.worklog.length}-${Date.now()}`, name: "", status: "done", kind: "thought" };
-        thought.name = redactAndTruncate(`${thought.name}${u.content.text}`, 400);
-        upsertWork(svc, turn, { ...thought });
+        // 思考收进「已处理」块（v1.2）：连续的思考片段并成一条
+        thought = thought ?? { item: { id: `thought-${turn.worklog.length}-${Date.now()}`, name: "", status: "done", kind: "thought" }, redactor: new StreamRedactor(), shown: "" };
+        thought.shown += thought.redactor.push(u.content.text);
+        if (thought.shown) upsertWork(svc, turn, { ...thought.item, name: clampText(thought.shown, 400) });
         return;
       }
-      thought = null;
+      closeThought();
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text" && u.content.text) {
         text.push(u.content.text);
         emit(redactor.push(u.content.text));
@@ -101,21 +118,31 @@ export function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSi
 
 type Update = Parameters<AgentHandlers["onUpdate"]>[0];
 
-function onToolCall(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSinks, calls: Map<string, { title: string; kind?: string }>, u: Update): void {
+/** 「同一动作」的身份：工具 + action + 目标（稿件 / 选题 / 命令 / 网址），不看中文显示名（评审 v1.2 P2-6） */
+export function actionKey(title: string | undefined, rawInput: unknown): string {
+  const r = (rawInput && typeof rawInput === "object" ? rawInput : {}) as Record<string, unknown>;
+  const target = ["content_id", "id", "topic_id", "task_id", "url", "command", "file_path", "path"].map((k) => r[k]).find((v) => typeof v === "string") ?? "";
+  return [(title ?? "").split(/[\s:：(]/)[0], typeof r.action === "string" ? r.action : "", target].join("|");
+}
+
+type CallMap = Map<string, { title: string; kind?: string; key?: string }>;
+
+function onToolCall(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSinks, calls: CallMap, u: Update): void {
   const id = u.toolCallId!;
   const title = toolLabel(u);
-  calls.set(id, { title, ...(u.kind ? { kind: u.kind } : {}) });
+  calls.set(id, { title, ...(u.kind ? { kind: u.kind } : {}), key: actionKey(u.title, u.rawInput) });
   if (u.kind && WRITE_KINDS.has(u.kind)) turn.inFlight.set(id, title);
   const name = toolDisplayName(u.title, u.rawInput, u.kind);
   sinks.onProgress?.({ phase: "start", label: redactAndTruncate(name, 60) });
   upsertWork(svc, turn, { id, name: redactAndTruncate(name, 80), status: "running" });
 }
 
-function onToolUpdate(svc: ChiefEditor, turn: ActiveTurn, calls: Map<string, { title: string; kind?: string }>, u: Update): void {
+function onToolUpdate(svc: ChiefEditor, turn: ActiveTurn, calls: CallMap, u: Update): void {
   const id = u.toolCallId!;
   const call = calls.get(id);
   // 命令参数常在后续 update 里才到：补进标签
   if (call && u.rawInput) {
+    call.key = actionKey(u.title ?? call.title.split("：")[0], u.rawInput);
     call.title = toolLabel({ title: u.title ?? call.title.split("：")[0], rawInput: u.rawInput });
     upsertWork(svc, turn, { id, name: redactAndTruncate(toolDisplayName(u.title ?? call.title.split("：")[0], u.rawInput, call.kind), 80), status: "running" });
   }
@@ -125,14 +152,14 @@ function onToolUpdate(svc: ChiefEditor, turn: ActiveTurn, calls: Map<string, { t
   const err = u.status === "failed" ? errorText(u as never) : "";
   // 业务审批拦下不是出错：记成「等你批准」，不画红字
   if (err.includes("approval_required")) upsertWork(svc, turn, { id, status: "done", note: "等你批准" } as WorkItem);
-  else upsertWork(svc, turn, { id, status: u.status === "failed" ? "failed" : "done", ...(err ? { error: err } : {}), ...(u.status === "completed" && markRecovered(turn, id) ? { recovered: true } : {}) } as WorkItem);
+  else upsertWork(svc, turn, { id, status: u.status === "failed" ? "failed" : "done", ...(err ? { error: err } : {}), ...(u.status === "completed" && markRecovered(turn, calls, id) ? { recovered: true } : {}) } as WorkItem);
   if (u.status === "completed" && call?.kind && WRITE_KINDS.has(call.kind)) turn.writes.push(redactAndTruncate(call.title, 60));
 }
 
 /** 同一动作先失败、后成功：失败那条标 resolved（外面不再报「未解决」），返回本条是否算「重试成功」（X6） */
-function markRecovered(turn: ActiveTurn, id: string): boolean {
-  const name = turn.worklog.find((w) => w.id === id)?.name;
-  const failed = name ? turn.worklog.filter((w) => w.status === "failed" && !w.resolved && w.name === name && w.id !== id) : [];
+function markRecovered(turn: ActiveTurn, calls: CallMap, id: string): boolean {
+  const key = calls.get(id)?.key;
+  const failed = key ? turn.worklog.filter((w) => w.status === "failed" && !w.resolved && w.id !== id && calls.get(w.id)?.key === key) : [];
   for (const f of failed) f.resolved = true;
   return failed.length > 0;
 }
