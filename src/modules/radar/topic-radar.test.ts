@@ -479,3 +479,61 @@ describe("unified intel layer v2 (adapter kinds + migration)", () => {
     expect(result.failedSources).toContain("Hacker News");
   });
 });
+
+describe("per-source minIntervalHours (付费源一天一次)", () => {
+  async function setup() {
+    const { saveRadarSources } = await import("./topic-radar.js");
+    await saveRadarSources([
+      { id: "x", kind: "x", name: "X", enabled: true, config: { minIntervalHours: 24 } },
+      { id: "yt", kind: "youtube", name: "YouTube", enabled: true, config: {} },
+    ], testDir);
+  }
+  const counting = (calls: string[], fail?: string) => async (kind: string) => {
+    calls.push(kind);
+    if (kind === fail) throw new Error("boom");
+    return [{ title: `${kind} ${calls.length}`, url: `https://${kind}.example/${calls.length}` }];
+  };
+
+  it("within the interval: X is not re-fetched and its last items are carried over", async () => {
+    await setup();
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    const first = (await loadTopicCache(testDir))!.items.find((i) => i.source === "X")!;
+    calls.length = 0;
+    const r = await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toEqual(["youtube"]);
+    expect(r.itemCount).toBe(2);
+    expect((await loadTopicCache(testDir))!.items.find((i) => i.source === "X")).toEqual(first);
+  });
+
+  it("after the interval: X is fetched again", async () => {
+    await setup();
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting([]) });
+    const cache = (await loadTopicCache(testDir))!;
+    cache.sourceFetchedAt!.x = new Date(Date.now() - 25 * 3600_000).toISOString();
+    await fs.writeFile(path.join(testDir, "topic-radar.json"), JSON.stringify(cache));
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls.sort()).toEqual(["x", "youtube"]);
+  });
+
+  it("a failed X fetch records no timestamp, so the next round retries", async () => {
+    await setup();
+    const r1 = await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting([], "x") });
+    expect(r1.failedSources).toEqual(["X"]);
+    expect((await loadTopicCache(testDir))!.sourceFetchedAt?.x).toBeUndefined();
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toContain("x");
+  });
+
+  it("a successful but empty X fetch still counts, so a quiet day doesn't trigger paid rescans", async () => {
+    await setup();
+    await refreshTopicRadar(testDir, globalThis.fetch, {
+      overseasFetch: async (kind: string) => (kind === "x" ? [] : [{ title: "yt", url: "https://yt/1" }]),
+    });
+    const calls: string[] = [];
+    await refreshTopicRadar(testDir, globalThis.fetch, { overseasFetch: counting(calls) });
+    expect(calls).toEqual(["youtube"]);
+  });
+});

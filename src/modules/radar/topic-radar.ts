@@ -30,6 +30,8 @@ export interface RadarItem {
 export interface TopicCache {
   fetchedAt: string;
   items: RadarItem[];
+  /** 源 id → 该源上次真实抓取成功的时间(按次计费源的最短间隔靠它判断) */
+  sourceFetchedAt?: Record<string, string>;
 }
 
 /**
@@ -57,7 +59,11 @@ export interface RadarSource {
   kind: RadarSourceKind;
   name: string;
   enabled: boolean;
-  config: { url?: string; keyword?: string };
+  /**
+   * minIntervalHours:该源两次真实抓取的最短间隔(小时)。没到点就沿用上一轮缓存里它的条目,
+   * 不发请求——给 X 这类按次计费源压频率用(如 24 = 一天一次)。手动扫一轮也遵守。
+   */
+  config: { url?: string; keyword?: string; minIntervalHours?: number };
 }
 
 /** v1 形状（type:"rss"+url 顶层）——用户文件与老内置格式,读取时自动升格 */
@@ -380,9 +386,20 @@ export async function refreshTopicRadar(
   const items: RadarItem[] = [];
   const failedSources: string[] = [];
   const scannedAt = new Date().toISOString();
+  const prev = await loadTopicCache(dataDir);
+  const sourceFetchedAt: Record<string, string> = {};
 
   await Promise.all(
     sources.map(async (src) => {
+      // 没到最短间隔:沿用上轮条目,不打源。只有成功抓取才记时间,所以失败/首次都会照常抓
+      const last = prev?.sourceFetchedAt?.[src.id];
+      const minMs = (src.config.minIntervalHours ?? 0) * 3600_000;
+      if (last && minMs > 0 && Date.now() - Date.parse(last) < minMs) {
+        items.push(...(prev?.items.filter((it) => it.source === src.name) ?? []));
+        sourceFetchedAt[src.id] = last;
+        return;
+      }
+      const mine: RadarItem[] = []; // 并发扫:本源的先收齐,抛错时一条都不并入
       try {
         if (src.kind === "rss") {
           const controller = new AbortController();
@@ -399,7 +416,7 @@ export async function refreshTopicRadar(
             // 对用户就是坏的,宁可在源清单上看见它红着。
             if (parsed.length === 0) throw new Error("解析 0 条,源可能已失效");
             for (const item of parsed) {
-              items.push({ ...item, source: src.name });
+              mine.push({ ...item, source: src.name });
             }
           } finally {
             clearTimeout(timer);
@@ -409,7 +426,7 @@ export async function refreshTopicRadar(
           const keyword = overseasKeyword(src, industry, focusKeywords);
           if (!keyword && !LIST_KINDS.has(src.kind)) throw new Error("no keyword");
           for (const it of await overseasFetch(src.kind, keyword, 10)) {
-            items.push({
+            mine.push({
               title: it.title,
               link: it.url,
               source: src.name,
@@ -419,6 +436,8 @@ export async function refreshTopicRadar(
             });
           }
         }
+        items.push(...mine);
+        sourceFetchedAt[src.id] = scannedAt; // 成功即记,0 条也算——否则付费源没新帖时每轮重扫
       } catch {
         failedSources.push(src.name); // 单源失败不拖垮整体——禁止静默返回空（§6），失败名单上报
       }
@@ -428,7 +447,7 @@ export async function refreshTopicRadar(
   if (items.length > 0) {
     const dir = getDataDir(dataDir);
     await fs.mkdir(dir, { recursive: true });
-    const cache: TopicCache = { fetchedAt: new Date().toISOString(), items };
+    const cache: TopicCache = { fetchedAt: new Date().toISOString(), items, sourceFetchedAt };
     await fs.writeFile(cachePath(dataDir), JSON.stringify(cache, null, 2) + "\n");
   }
   return { ok: items.length > 0, itemCount: items.length, failedSources };
