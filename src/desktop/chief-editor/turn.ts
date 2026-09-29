@@ -169,6 +169,8 @@ function replyText(turn: ActiveTurn, out: Outcome): string {
 async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput, adapter: BackendAdapter, signal: AbortSignal): Promise<Outcome> {
   const base = adapter.launch();
   if (!base) return { ok: false, reply: `${adapter.label}没装上：在 AutoCrew 目录运行 npm install。不会自动改用内置引擎。` };
+  const problem = adapter.launchProblem?.();
+  if (problem) return { ok: false, reply: problem };
   const routing = adapter.routingEnv?.(svc.deps.claudeSettingsPath) ?? { env: {} };
   if ("error" in routing) return { ok: false, reply: routing.error };
   const proxyDown = await proxyUnreachable(routing.env);

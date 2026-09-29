@@ -43,13 +43,15 @@ describe.each(TEST_BACKENDS)("后端 %s", (B) => {
       const r = await runLocalTurn(h.svc, input({ openContentId: "content-1-a" }));
       expect((r.data as { cards: Array<{ type: string }> }).cards.filter((c) => c.type === "agent_draft")).toHaveLength(0);
     });
-    it("迟到的结果同样去重：同一篇同一状态不再追加", async () => {
+    it("迟到的结果去重：同一次调用重复送达只留一张；另一次调用的同状态结果照样追加（评审 P2-10）", async () => {
       const conv = await createConversation("x", h.dataDir, undefined, { backend: B });
       const binding = { token: "t", backend: B, dataDir: h.dataDir, conversationId: conv.id, turnId: "gone" };
       const card = { type: "agent_draft", callId: "c1", data: { contentId: "content-1-a", status: "accepted" } };
       await h.svc.recordCard(null, binding, card);
-      await h.svc.recordCard(null, binding, { ...card, callId: "c2" });
+      await h.svc.recordCard(null, binding, card);
       expect((await getConversation(conv.id, h.dataDir))!.messages.filter((m) => m.cards?.length)).toHaveLength(1);
+      await h.svc.recordCard(null, binding, { ...card, callId: "c2" });
+      expect((await getConversation(conv.id, h.dataDir))!.messages.filter((m) => m.cards?.length)).toHaveLength(2);
     });
   });
 });

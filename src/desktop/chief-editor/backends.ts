@@ -129,6 +129,10 @@ export interface BackendAdapter {
   /** 计费口径（§地基 14）：不笼统承诺走订阅 */
   billing: string;
   launch(): LaunchSpec | null;
+  /** 装了但这次不能安全地起（如 Codex 配置读不懂 / 有关不掉的 MCP）：返回原因，调用方报错不起进程 */
+  launchProblem?(): string | null;
+  /** 会话配置项的 id：模型 / 思考强度在这个适配器里叫什么（Claude：model / effort；Codex：model / reasoning_effort） */
+  configIds?: { model: string; effort: string };
   /** 线路环境（代理等）；读不出来就回 error，调用方不许退回直连 */
   routingEnv?(settingsPath?: string): { env: Record<string, string> } | { error: string };
   /** session/new 与 session/load 的 _meta（强制权限提示等差异适配） */

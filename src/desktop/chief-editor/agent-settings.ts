@@ -41,19 +41,24 @@ const LABEL: Record<string, string> = { model: "模型", effort: "思考强度" 
  * 把对话设置应用到刚打开的会话，返回最终的配置清单。清单里没有 / 适配器拒绝 → 抛错点名（U3），绝不静默换成别的。
  * 没设的项保持适配器默认。
  */
-export async function applySettings(proc: AgentProcess, sessionId: string, initial: ConfigOptionInfo[], s: AgentSettings): Promise<ConfigOptionInfo[]> {
+export type ConfigIds = { model: string; effort: string };
+export const DEFAULT_CONFIG_IDS: ConfigIds = { model: "model", effort: "effort" };
+
+export async function applySettings(proc: AgentProcess, sessionId: string, initial: ConfigOptionInfo[], s: AgentSettings, ids: ConfigIds = DEFAULT_CONFIG_IDS): Promise<ConfigOptionInfo[]> {
   // 先设模型再设强度：换模型后适配器会重算强度清单，后面的校验与上报都用它回的新清单（评审 v1.1 P2-6）
   let options = initial;
   for (const id of ["model", "effort"] as const) {
     const want = s[id];
     if (!want) continue;
-    const opt = options.find((o) => o.id === id);
+    // 每个适配器的配置项 id 不一样（Codex 的强度叫 reasoning_effort，评审 P2-11）
+    const configId = ids[id];
+    const opt = options.find((o) => o.id === configId);
     const allowed = opt?.values.map((v) => v.value) ?? [];
     if (!allowed.includes(want)) {
       throw new SettingError(`选的${LABEL[id]}「${want}」现在不可用（适配器可选：${allowed.join("、") || "无"}）。没有换成别的，请在输入框下方重新选一个再发。`);
     }
     try {
-      options = (await proc.setConfigOption(sessionId, id, want)) ?? options;
+      options = (await proc.setConfigOption(sessionId, configId, want)) ?? options;
     } catch (err) {
       throw new SettingError(`${LABEL[id]}「${want}」设置失败：${err instanceof Error ? err.message : String(err)}。没有换成别的，请重新选一个再发。`);
     }
@@ -64,9 +69,9 @@ export async function applySettings(proc: AgentProcess, sessionId: string, initi
 export class SettingError extends Error {}
 
 /** 切换器要显示的清单：只留模型与强度，且只在适配器真的上报了时才有 */
-export function reportedChoices(options: ConfigOptionInfo[]): { models: ConfigOptionInfo["values"]; efforts: ConfigOptionInfo["values"] } {
+export function reportedChoices(options: ConfigOptionInfo[], ids: ConfigIds = DEFAULT_CONFIG_IDS): { models: ConfigOptionInfo["values"]; efforts: ConfigOptionInfo["values"] } {
   return {
-    models: options.find((o) => o.id === "model")?.values ?? [],
-    efforts: options.find((o) => o.id === "effort")?.values ?? [],
+    models: options.find((o) => o.id === ids.model)?.values ?? [],
+    efforts: options.find((o) => o.id === ids.effort)?.values ?? [],
   };
 }

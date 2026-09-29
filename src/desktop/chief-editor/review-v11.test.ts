@@ -66,13 +66,13 @@ describe.each(TEST_BACKENDS)("后端 %s", (B) => {
         const a = orig(l, c, hd) as unknown as { afterSet: (id: string, v: string) => unknown; configOptions: unknown };
         a.afterSet = (id) => id === "model" ? [
           { id: "model", current: "sonnet", values: [{ value: "default", label: "Default" }, { value: "sonnet", label: "Sonnet" }] },
-          { id: "effort", current: "default", values: [{ value: "default", label: "Default" }, { value: "xhigh", label: "XHigh" }] },
+          { id: B === "codex" ? "reasoning_effort" : "effort", current: "default", values: [{ value: "default", label: "Default" }, { value: "xhigh", label: "XHigh" }] },
         ] : null;
         return a as never;
       };
       const r = await runLocalTurn(h.svc, input({ newSettings: { model: "sonnet", effort: "xhigh" } }));
       expect(r.ok).toBe(true);
-      expect(h.agents[0].configSet).toEqual([["model", "sonnet"], ["effort", "xhigh"]]);
+      expect(h.agents[0].configSet).toEqual([["model", "sonnet"], [B === "codex" ? "reasoning_effort" : "effort", "xhigh"]]);
       expect(h.svc.reported.get(B)?.efforts.map((e) => e.value)).toEqual(["default", "xhigh"]);
     });
   });

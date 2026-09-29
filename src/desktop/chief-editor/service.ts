@@ -207,12 +207,14 @@ export class ChiefEditor {
    * 刷新/重连后的重挂视图。只给本资料库的：别的库里跑着的 agent 只经 statuses().running.otherLibrary 提示，
    * 它的卡不能在这边被批（评审 P2-15）。owner = 请求方就是发起这一轮的标签页；其余标签页只旁观（P2-14）。
    */
-  /** 迟到的稿件卡同样去重：对话最后一条里已有这篇、同一状态的卡就不再追加 */
+  /**
+   * 迟到的稿件卡去重：只丢「同一次调用」重复送达的那张（评审 P2-10）。
+   * 同一篇、同一状态但来自另一次调用的是真的新结果（比如又改了一版），照样追加。
+   */
   private async sameDraftAlreadyShown(binding: TokenBinding, card: Record<string, unknown>): Promise<boolean> {
     const conv = await getConversation(binding.conversationId, binding.dataDir).catch(() => null);
     const last = conv?.messages.at(-1)?.cards ?? [];
-    const data = card.data as { status?: unknown } | undefined;
-    return last.some((x) => isDraft(x) && draftContent(x) === draftContent(card) && (x.data as { status?: unknown } | undefined)?.status === data?.status);
+    return last.some((x) => isDraft(x) && x.sourceCallId !== undefined && x.sourceCallId === card.sourceCallId);
   }
 
   pendingView(opts: { conversationId?: string; dataDir: string; clientId?: string }): { running: Record<string, unknown> | null; asks: AskView[] } {
@@ -276,7 +278,8 @@ function draftContent(c: Record<string, unknown>): string | undefined {
 /** 稿件卡的调用 id 换成按稿件定的键：前端与本轮卡片列表都按它替换成最新状态 */
 function draftKeyed(c: Record<string, unknown>): Record<string, unknown> {
   const id = isDraft(c) ? draftContent(c) : undefined;
-  return id ? { ...c, callId: `draft-${id}` } : c;
+  // 原调用 id 留在 sourceCallId：迟到结果按「是不是同一次调用」去重，不按状态（评审 P2-10）
+  return id ? { ...c, callId: `draft-${id}`, sourceCallId: c.sourceCallId ?? c.callId } : c;
 }
 
 let instance: ChiefEditor | null = null;

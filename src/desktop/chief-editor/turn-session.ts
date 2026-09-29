@@ -57,8 +57,9 @@ export async function openSession(
     await enqueueConversationWrite(turn.conversationId, () => updateConversationAgent(turn.conversationId, { acpSessionId: info.sessionId }, turn.dataDir));
     svc.runs.patch(turn.turnId, { acpSessionId: info.sessionId });
   }
-  if (info.configOptions.length) svc.rememberChoices(adapter.id, reportedChoices(info.configOptions));
-  const finalOptions = await applySettings(proc, info.sessionId, info.configOptions, opts.settings);
-  if (finalOptions.length) svc.rememberChoices(adapter.id, reportedChoices(finalOptions));
+  const ids = adapter.configIds;
+  if (info.configOptions.length) svc.rememberChoices(adapter.id, reportedChoices(info.configOptions, ids));
+  const finalOptions = await applySettings(proc, info.sessionId, info.configOptions, opts.settings, ids);
+  if (finalOptions.length) svc.rememberChoices(adapter.id, reportedChoices(finalOptions, ids));
   return { sessionId: info.sessionId, ...(notice ? { notice } : {}) };
 }
