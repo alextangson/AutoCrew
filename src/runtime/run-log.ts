@@ -146,7 +146,27 @@ async function sweepOld(dir: string, today: string): Promise<void> {
   }
 }
 
-export async function appendRunLog(
+/** 在途的追加:recorder/中间件都 fire-and-forget,调用方返回时记录未必落盘 */
+const pendingWrites = new Set<Promise<void>>();
+
+export function appendRunLog(dataDir: string | undefined, rec: Omit<RunLogRecord, "ts" | "seq" | "truncated">): Promise<void> {
+  const p = writeRunLog(dataDir, rec);
+  pendingWrites.add(p);
+  // 两路都摘:登记本身不许派生出新的未处理拒绝(finally 会把拒绝原样传下去)
+  const untrack = () => void pendingWrites.delete(p);
+  p.then(untrack, untrack);
+  return p;
+}
+
+/**
+ * 等此刻所有在途追加落定(含等待期间新发起的)。写路径照旧不等——这是给「要读自己刚写的日志」
+ * 的一方(测试)的真实同步点,固定延时在负载下不够。恒 resolve:单条写的成败归它自己的调用方。
+ */
+export async function flushRunLogs(): Promise<void> {
+  while (pendingWrites.size > 0) await Promise.allSettled(pendingWrites);
+}
+
+async function writeRunLog(
   dataDir: string | undefined,
   rec: Omit<RunLogRecord, "ts" | "seq" | "truncated">,
 ): Promise<void> {

@@ -14,7 +14,7 @@ import { EngineUnavailableError, trippedReason } from "./breaker.js";
 import { setEngineFallbackSink, setEngineHealthSink, type EngineFallbackRecord, type EngineLiveRecord } from "./health-sink.js";
 import { shutdownObserver } from "./observer.js";
 import { bodyText, openaiSse, sseResponse } from "./sse-fixtures.js";
-import { readRun } from "../runtime/run-log.js";
+import { flushRunLogs, readRun } from "../runtime/run-log.js";
 import type { EngineConfig } from "./config.js";
 
 const PRIMARY = "https://primary.invalid";
@@ -36,6 +36,7 @@ beforeEach(async () => {
 afterEach(async () => {
   setEngineFallbackSink(undefined);
   setEngineHealthSink(undefined);
+  await flushRunLogs(); // 迟到的追加会在 rm 途中重建 logs/runs
   await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
@@ -85,8 +86,8 @@ const rateLimited = () => new Response("rate limited", { status: 429 });
 const deadLive = (at: string) => ({ live: { at, ok: false, role: "writer", error: "写稿专线 newcli 连不上：网络不通或域名解析失败。" } });
 
 async function fallbackRecords(runId: string) {
-  // run-log 是 fire-and-forget 追加：等它落盘
-  await new Promise((r) => setTimeout(r, 30));
+  // run-log 是 fire-and-forget 追加：等在途写落定再读，固定延时在负载下不够
+  await flushRunLogs();
   return (await readRun(dir, runId)).filter((r) => r.kind === "fallback");
 }
 
