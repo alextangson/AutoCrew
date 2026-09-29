@@ -188,7 +188,7 @@ async function execute(svc: ChiefEditor, turn: ActiveTurn, input: LocalTurnInput
   turn.token = svc.issueToken({ backend: turn.backend, dataDir: turn.dataDir, conversationId: conv.id, turnId: turn.turnId });
   const text: string[] = [];
   const gate: StreamGate = { replaying: false };
-  const proc = svc.deps.spawnAgent(launch, svc.deps.home, makeHandlers(svc, turn, input, text, gate));
+  const proc = svc.deps.spawnAgent(launch, svc.deps.home, makeHandlers(svc, turn, { ...input, ...(adapter.cleanText ? { cleanText: adapter.cleanText } : {}), ...(adapter.isOwnMcpCall ? { isOwnMcpCall: adapter.isOwnMcpCall } : {}) }, text, gate));
   turn.process = proc;
   svc.runs.patch(turn.turnId, { ...(proc.pid ? { pid: proc.pid } : {}), command: proc.command });
   signal.addEventListener("abort", () => stopAgent(svc, turn), { once: true });

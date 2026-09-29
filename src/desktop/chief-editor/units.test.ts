@@ -172,13 +172,13 @@ describe("边界 13 / §地基 12：对话后端以服务端记录为准", () =>
 });
 
 describe("边界 14 / §地基 14：就绪状态", () => {
-  it("内置引擎没配置时置灰，本机 Claude 不受影响；Codex / WorkBuddy 即将支持；计费口径分开标", () => {
+  it("内置引擎没配置时置灰，本机 Claude / Codex 不受影响；WorkBuddy 不在切换器里；计费口径分开标", () => {
     const list = backendStatuses({ authFailed: new Set(), builtinConfigured: false });
     const by = Object.fromEntries(list.map((b) => [b.id, b]));
     expect(by.builtin.state).toBe("not_configured");
     expect(by.claude.state).toBe("ready");
     expect(by.claude.billing).toBe("用你的 Claude 订阅");
-    expect(by.codex.state).toBe("coming_soon");
-    expect(by.workbuddy.billing).toBe("用 WorkBuddy 额度");
+    expect(by.codex).toMatchObject({ state: "ready", billing: "用你的 ChatGPT 订阅" });
+    expect(by.workbuddy).toBeUndefined();
   });
 });

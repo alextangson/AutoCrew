@@ -11,8 +11,10 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { StdioMcpSpec } from "./acp-process.js";
+import { CODEX_ADAPTER } from "./codex-adapter.js";
 
-export const LOCAL_BACKENDS = ["claude", "codex", "workbuddy"] as const;
+/** WorkBuddy 不在这里：它反向连 AutoCrew MCP（spec「WorkBuddy：反向接」），不进后端切换器 */
+export const LOCAL_BACKENDS = ["claude", "codex"] as const;
 export type LocalBackendId = (typeof LOCAL_BACKENDS)[number];
 export type BackendId = LocalBackendId | "builtin";
 
@@ -132,6 +134,10 @@ export interface BackendAdapter {
   /** session/new 与 session/load 的 _meta（强制权限提示等差异适配） */
   /** env：线路变量，写进最高优先级的会话 settings，项目 settings 盖不掉 */
   sessionMeta(env?: Record<string, string>): Record<string, unknown>;
+  /** 适配器夹进正文的噪音（如 Codex 的「Model metadata … not found」警告）：推流与落盘前去掉 */
+  cleanText?(chunk: string): string;
+  /** 这次权限请求是不是调 AutoCrew 自己的 MCP：是就直接放行，它的门在服务端（执行前审批、认领、限权） */
+  isOwnMcpCall?(rawInput: unknown): boolean;
   /** 认证失败的认法：命中就标「未登录」并给修法 */
   isAuthError(message: string): boolean;
   loginFix: string;
@@ -187,7 +193,7 @@ export const CLAUDE_ADAPTER: BackendAdapter = {
   loginFix: "在终端运行 `claude` 并按提示登录，再回来重发这条消息",
 };
 
-export const ADAPTERS: Partial<Record<LocalBackendId, BackendAdapter>> = { claude: CLAUDE_ADAPTER };
+export const ADAPTERS: Record<LocalBackendId, BackendAdapter> = { claude: CLAUDE_ADAPTER, codex: CODEX_ADAPTER };
 
 /** 权限选项只留「允许一次 / 拒绝」（v1 不做「本对话都允许」，§地基 3） */
 export function pickPermissionOption(options: PermissionOptionLike[], decision: "allow" | "deny"): string | null {
@@ -206,26 +212,21 @@ export interface BackendStatus {
   detail?: string;
 }
 
-const COMING_SOON: Record<"codex" | "workbuddy", { label: string; billing: string }> = {
-  codex: { label: "本机 Codex", billing: "用你的 ChatGPT 订阅" },
-  workbuddy: { label: "本机 WorkBuddy", billing: "用 WorkBuddy 额度" },
-};
-
 /**
- * 就绪状态。`claude auth status` 实测不可信（登录可用时也回 loggedIn:false），
+ * 就绪状态。`claude auth status` 实测不可信（登录可用时也回 loggedIn:false），Codex 同理不预判，
  * 所以「未登录」只在最近一次真实调用报了认证错误后才标，下一次成功即清。
  */
 export function backendStatuses(opts: { authFailed: ReadonlySet<LocalBackendId>; builtinConfigured: boolean }): BackendStatus[] {
-  const claude = CLAUDE_ADAPTER;
-  const claudeState: BackendState = !claude.launch()
-    ? "not_installed"
-    : opts.authFailed.has("claude") ? "not_logged_in" : "ready";
-  const claudeDetail = claudeState === "not_installed"
-    ? "Claude 适配器没装上：在 AutoCrew 目录运行 npm install"
-    : claudeState === "not_logged_in" ? `上次调用报未登录：${claude.loginFix}` : undefined;
+  const locals = LOCAL_BACKENDS.map((id): BackendStatus => {
+    const a = ADAPTERS[id];
+    const state: BackendState = !a.launch() ? "not_installed" : opts.authFailed.has(id) ? "not_logged_in" : "ready";
+    const detail = state === "not_installed"
+      ? `${a.label}的适配器没装上：在 AutoCrew 目录运行 npm install`
+      : state === "not_logged_in" ? `上次调用报未登录：${a.loginFix}` : undefined;
+    return { id, label: a.label, billing: a.billing, state, ...(detail ? { detail } : {}) };
+  });
   return [
-    { id: "claude", label: claude.label, billing: claude.billing, state: claudeState, ...(claudeDetail ? { detail: claudeDetail } : {}) },
-    ...(["codex", "workbuddy"] as const).map((id): BackendStatus => ({ id, ...COMING_SOON[id], state: "coming_soon", detail: "即将支持" })),
+    ...locals,
     {
       id: "builtin",
       label: "内置引擎（备用）",

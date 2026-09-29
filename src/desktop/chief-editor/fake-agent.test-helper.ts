@@ -14,6 +14,9 @@ import { initChiefEditor, resetChiefEditor, type ChiefEditor } from "./service.j
 
 type Json = Record<string, unknown>;
 
+/** 与后端无关的边界测试对每个本机后端各跑一遍（阶段 2：Claude + Codex） */
+export const TEST_BACKENDS = ["claude", "codex"] as const;
+
 export class FakeAgent implements AgentProcess {
   pid = undefined;
   command = "fake-agent --acp";

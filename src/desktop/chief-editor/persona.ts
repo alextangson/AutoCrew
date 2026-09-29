@@ -28,7 +28,6 @@ export const CHIEF_EDITOR_PERSONA = `# AutoCrew 总编辑
 const PERSONA_FILE: Record<LocalBackendId, string> = {
   claude: "CLAUDE.md",
   codex: "AGENTS.md",
-  workbuddy: "CODEBUDDY.md",
 };
 
 /** AutoCrew 自带技能目录（仓库 skills/） */

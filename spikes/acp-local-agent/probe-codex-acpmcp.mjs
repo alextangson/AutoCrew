@@ -1,0 +1,27 @@
+// 核实：config.toml 里同名 autocrew 被 -c 关掉后，ACP session/new 挂的 autocrew 还在不在
+import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { Readable, Writable } from "node:stream";
+import { homedir } from "node:os";
+import { mkdirSync, readFileSync } from "node:fs";
+import * as acp from "@agentclientprotocol/sdk";
+const hits = [];
+const mcp = createServer(async (req, res) => { let b = ""; for await (const c of req) b += c; const m = JSON.parse(b || "{}"); hits.push(m.method);
+  const reply = (result) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result })); };
+  if (m.method === "initialize") return reply({ protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "spike", version: "0" } });
+  if (m.method === "tools/list") return reply({ tools: [{ name: "spike_ping", description: "Echo", inputSchema: { type: "object", properties: { text: { type: "string" } } } }] });
+  if (m.method === "tools/call") return reply({ content: [{ type: "text", text: "pong" }] });
+  if (m.id === undefined) { res.writeHead(202).end(); return; } reply({}); });
+await new Promise((r) => mcp.listen(0, "127.0.0.1", r));
+const toml = readFileSync(homedir() + "/.codex/config.toml", "utf8");
+const names = [...toml.matchAll(/^\[mcp_servers\.(?:"([^"]+)"|([^\].]+))\]\s*$/gm)].map((m) => m[1] ?? m[2]).filter((n) => process.env.KEEP_AC ? n !== "autocrew" : true);
+const args = [...["approval_policy=\"untrusted\"", "sandbox_mode=\"workspace-write\"", ...names.map((n) => `mcp_servers.${n}.enabled=false`), ...["apps", "plugins", "chronicle", "memories", "computer_use"].map((f) => `features.${f}=false`)].flatMap((o) => ["-c", o])];
+const cwd = homedir() + "/.cache/autocrew-yt/acp-spike/codex-acpmcp"; mkdirSync(cwd, { recursive: true });
+const child = spawn(new URL("./node_modules/.bin/codex-acp", import.meta.url).pathname, args, { cwd, stdio: ["pipe", "pipe", "pipe"] }); let se = ""; child.stderr.on("data", (d) => { se += d; }); process.on("exit", () => console.log("STDERR:", se.slice(-800)));
+const text = [];
+const conn = new acp.ClientSideConnection(() => ({ requestPermission: async (p) => ({ outcome: { outcome: "selected", optionId: p.options[0].optionId } }), sessionUpdate: async (n) => { if (n.update.sessionUpdate === "agent_message_chunk") text.push(n.update.content?.text ?? ""); } }), acp.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout)));
+await conn.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+const s = await conn.newSession({ cwd, mcpServers: [{ type: "http", name: "autocrew", url: `http://127.0.0.1:${mcp.address().port}/mcp`, headers: [{ name: "Authorization", value: "Bearer x" }] }] });
+await conn.prompt({ sessionId: s.sessionId, prompt: [{ type: "text", text: "Call the MCP tool spike_ping on server autocrew, then say done." }] });
+console.log("spike MCP hits:", hits.join(","), "| reply:", text.join("").slice(-120));
+child.kill("SIGKILL"); process.exit(0);

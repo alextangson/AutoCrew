@@ -6,7 +6,7 @@
  * - 不可用的项（没装 / 即将支持 / 内置没配置）不能选，但要显示原因。
  */
 
-export type BackendId = "claude" | "codex" | "workbuddy" | "builtin";
+export type BackendId = "claude" | "codex" | "builtin";
 export type BackendState = "ready" | "not_installed" | "not_logged_in" | "coming_soon" | "not_configured";
 
 export interface BackendStatus {
@@ -28,7 +28,7 @@ export interface RunningAgent {
 
 const KEY = "autocrew.chat.backend";
 const NOTICE_KEY = "autocrew.chat.localAgentNoticeSeen";
-const IDS: readonly string[] = ["claude", "codex", "workbuddy", "builtin"];
+const IDS: readonly string[] = ["claude", "codex", "builtin"];
 
 export const STATE_TEXT: Record<BackendState, string> = {
   ready: "可用",

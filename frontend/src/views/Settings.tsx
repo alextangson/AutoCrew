@@ -91,7 +91,7 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
 
           <Section title="总编辑用本机 agent" status="本机 Claude" on>
             <p className="muted">{TRUST_NOTICE}</p>
-            <p className="muted">在右栏输入框下方切换后端。本机 Claude 用你的 Claude 订阅；Codex、WorkBuddy 即将支持。内置引擎只在你手动选它时用，本机 agent 出错不会自动换过去。</p>
+            <p className="muted">在右栏输入框下方切换后端。本机 Claude 用你的 Claude 订阅，本机 Codex 用你的 ChatGPT 订阅。WorkBuddy 不在这里切换：到「接入更多 · 宿主」连接后，在 WorkBuddy 里直接调用 AutoCrew。内置引擎只在你手动选它时用，本机 agent 出错不会自动换过去。</p>
           </Section>
 
           <Section title="工作区" status={ws ? `当前 ${ws.workspaces.find((w) => w.id === ws.active)?.name ?? ws.active}` : ""} on>
