@@ -15,7 +15,6 @@ import { writeErrorSection } from "./my-content-errors.js";
 import { VIEW_DIR } from "./my-content-view.js";
 import { copyProject, walkProject, type ArchivedFile, type CopyImpl } from "./nas-archive-copy.js";
 import { appendArchiveLog, formatBytes } from "./nas-archive-log.js";
-import { latestBackupFiles } from "./nas-backup-state.js";
 import { KEPT_DIR } from "./nas-kept.js";
 
 export const DEFAULT_ARCHIVE_ROOT = "/Volumes/MacMiniData/01_Lawrence/Account";
@@ -122,8 +121,7 @@ async function archiveOne(c: Content, archiveRoot: string, ctx: Ctx): Promise<Ar
     throw new Error(`NAS 空间不够（要 ${formatBytes(size)} + 预留 ${formatBytes(ctx.margin)}，剩 ${formatBytes(free)}），这次跳过`);
   }
   // 逐文件核对 NAS（发布时已备份的，这里只是核对；缺或不一致先补拷），全部对上才删本机
-  const previous = await latestBackupFiles(projectRoot);
-  const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS, { previous });
+  const { files, errors } = await copyProject(projectRoot, target, ctx.copy, MEDIA_DIRS);
   if (errors.length) throw new Error(`复制或核对出错，本机一个文件都没删，下次重试：${errors.join("；")}`);
   await keepSmallFiles(projectRoot, c, files);
   await writeRecord(projectRoot, target, files, ctx.now);

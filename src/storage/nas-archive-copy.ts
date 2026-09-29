@@ -7,11 +7,15 @@ import { createReadStream } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
-export interface ArchivedFile { rel: string; sha256: string; size: number; mtimeMs?: number }
+export interface ArchivedFile {
+  rel: string; sha256: string; size: number; mtimeMs?: number;
+  /** 核对通过时 NAS 上那份的修改时间：增量跳过前用它确认 NAS 副本没被动过 */
+  destMtimeMs?: number;
+}
 export interface CopyProjectOptions {
-  /** 上次备份记录（rel → 文件）：NAS 上的旧文件是这份记录里的版本，就改名留底而不是覆盖 */
+  /** 上次备份到同一个 target 的记录（rel → 文件）；调用方保证 target 一致 */
   previous?: Map<string, ArchivedFile>;
-  /** 本机大小和修改时间都跟上次备份一样的文件，不再读 NAS 核对（增量备份用；归档删本机前不开） */
+  /** 本机和 NAS 副本的大小、修改时间都跟上次记录一样才跳过，否则重新哈希核对（增量备份用；归档删本机前不开） */
   skipUnchanged?: boolean;
   /** 不复制的文件（备份自己的记录和状态文件） */
   exclude?: (rel: string) => boolean;
@@ -56,19 +60,34 @@ export function keptName(dest: string, sha: string): string {
 
 /**
  * 复制一个文件并核对；返回源文件哈希。目标已是同样内容就不再拷。
- * 目标是另一个版本时：是上次备份过的版本（keepSha）就改名留底，否则（拷到一半的残件）直接换掉。
+ * 目标是另一个版本时一律改名留底（没法证明它只是残件，宁可多留）；同名留底已存在（同一内容）才删掉。
+ * 这次自己拷坏的那份是确定的残件，核对失败时删掉，免得下一轮被当成旧版本留底。
  */
-async function copyVerified(source: string, dest: string, copy: CopyImpl, keepSha?: string): Promise<string> {
+async function copyVerified(source: string, dest: string, copy: CopyImpl): Promise<string> {
   const want = await sha256File(source);
   const have = await hashOrNull(dest);
   if (have === want) return want;
   await fs.mkdir(path.dirname(dest), { recursive: true });
-  if (have !== null && have === keepSha && (await hashOrNull(keptName(dest, have))) === null) await fs.rename(dest, keptName(dest, have));
+  if (have !== null && (await hashOrNull(keptName(dest, have))) === null) await fs.rename(dest, keptName(dest, have));
   else await fs.rm(dest, { force: true });
   await copy(source, dest);
   const got = await hashOrNull(dest);
-  if (got !== want) throw new Error(`校验不一致（本机 ${want.slice(0, 12)}…，NAS ${got?.slice(0, 12) ?? "缺失"}…）`);
+  if (got !== want) {
+    await fs.rm(dest, { force: true });
+    throw new Error(`校验不一致（本机 ${want.slice(0, 12)}…，NAS ${got?.slice(0, 12) ?? "缺失"}…）`);
+  }
   return want;
+}
+
+async function statOrNull(file: string) {
+  try { return await fs.stat(file); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
+}
+
+/** 本机没变，且 NAS 副本还在、大小和修改时间跟记录一致 */
+async function unchangedBoth(f: { size: number; mtimeMs: number }, prev: ArchivedFile | undefined, dest: string): Promise<boolean> {
+  if (!prev || prev.size !== f.size || prev.mtimeMs !== f.mtimeMs || prev.destMtimeMs === undefined) return false;
+  const st = await statOrNull(dest);
+  return !!st && st.size === prev.size && st.mtimeMs === prev.destMtimeMs;
 }
 
 /** 整个项目复制 + 逐个核对。任何一个文件出错都记下来，调用方据此决定一律不删本机。 */
@@ -81,11 +100,11 @@ export async function copyProject(
   const out: ArchivedFile[] = [], errors = blocking.map((rel) => `${rel}：不是普通文件（链接等），没法归档`);
   for (const f of files) {
     if (opts.exclude?.(f.rel)) continue;
-    const prev = opts.previous?.get(f.rel);
-    if (opts.skipUnchanged && prev && prev.size === f.size && prev.mtimeMs === f.mtimeMs) { out.push(prev); continue; }
+    const prev = opts.previous?.get(f.rel), dest = path.join(target, f.rel);
     try {
-      const sha256 = await copyVerified(path.join(root, f.rel), path.join(target, f.rel), copy, prev?.sha256);
-      out.push({ rel: f.rel, size: f.size, mtimeMs: f.mtimeMs, sha256 });
+      if (opts.skipUnchanged && (await unchangedBoth(f, prev, dest))) { out.push(prev!); continue; }
+      const sha256 = await copyVerified(path.join(root, f.rel), dest, copy);
+      out.push({ rel: f.rel, size: f.size, mtimeMs: f.mtimeMs, sha256, destMtimeMs: (await fs.stat(dest)).mtimeMs });
     }
     catch (e) { errors.push(`${f.rel}：${e instanceof Error ? e.message : String(e)}`); }
   }

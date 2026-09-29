@@ -40,9 +40,10 @@ export async function latestBackupRecord(projectRoot: string): Promise<BackupRec
   return JSON.parse(await fs.readFile(path.join(projectRoot, NOTES, latest), "utf8")) as BackupRecord;
 }
 
-export async function latestBackupFiles(projectRoot: string): Promise<Map<string, ArchivedFile>> {
+/** 上次备份到同一个 target 的文件清单；目标换了（或没有记录）就是空的，全部重新核对 */
+export async function latestBackupFiles(projectRoot: string, target: string): Promise<Map<string, ArchivedFile>> {
   const record = await latestBackupRecord(projectRoot);
-  return new Map((record?.files ?? []).map((f) => [f.rel, f]));
+  return new Map(record?.target === target ? record.files.map((f) => [f.rel, f]) : []);
 }
 
 export async function writeBackupRecord(projectRoot: string, record: BackupRecord): Promise<void> {

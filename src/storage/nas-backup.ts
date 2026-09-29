@@ -32,7 +32,10 @@ export function backupCandidates(contents: Content[], now: Date): Content[] {
 }
 
 function sameFiles(a: ArchivedFile[], prev: Map<string, ArchivedFile>): boolean {
-  return a.length === prev.size && a.every((f) => prev.get(f.rel)?.sha256 === f.sha256);
+  return a.length === prev.size && a.every((f) => {
+    const p = prev.get(f.rel);
+    return p?.sha256 === f.sha256 && p.destMtimeMs === f.destMtimeMs;
+  });
 }
 
 /** 本机相对上次备份有没有变化（只比大小和修改时间，不读 NAS） */
@@ -45,7 +48,7 @@ async function changedSinceBackup(projectRoot: string, prev: Map<string, Archive
 }
 
 async function markUnmounted(projectRoot: string, target: string, ctx: Ctx): Promise<boolean> {
-  const prev = await latestBackupFiles(projectRoot);
+  const prev = await latestBackupFiles(projectRoot, target);
   const state = await readBackupState(projectRoot);
   if (state?.status === "backed_up" && !(await changedSinceBackup(projectRoot, prev))) return false;
   await writeBackupState(projectRoot, {
@@ -56,7 +59,7 @@ async function markUnmounted(projectRoot: string, target: string, ctx: Ctx): Pro
 }
 
 async function copyOnce(projectRoot: string, target: string, ctx: Ctx): Promise<ArchivedFile[]> {
-  const prev = await latestBackupFiles(projectRoot);
+  const prev = await latestBackupFiles(projectRoot, target);
   const { files, errors } = await copyProject(projectRoot, target, ctx.copy, [], {
     previous: prev, skipUnchanged: true, exclude: isBackupBookkeeping,
   });

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { initializeProjectLayout, resolveContentProject } from "./content-project.js";
@@ -120,6 +121,58 @@ describe("发布即备份 NAS", () => {
     const third = vi.fn(async (s: string, d: string) => fs.copyFile(s, d));
     await backup({ copyImpl: third });
     expect(third).not.toHaveBeenCalled();
+  });
+
+  it("recopies when the NAS copy was deleted, changed, or the target emptied, instead of trusting the manifest", async () => {
+    const c = await published("稿", 1);
+    await backup();
+    const raw = path.join(nasDir(c), "02-aroll/raw.mov");
+    await fs.rm(raw);
+    expect((await backup()).backedUp).toEqual(["稿"]);
+    expect(await read(raw)).toBe("稿-raw");
+    await fs.writeFile(raw, "稿-rot");
+    await backup();
+    expect(await read(raw)).toBe("稿-raw");
+    await fs.rm(nasDir(c), { recursive: true });
+    const r = await backup();
+    expect(r.backedUp).toEqual(["稿"]);
+    expect(await read(raw)).toBe("稿-raw");
+    expect(await read(path.join(nasDir(c), "05-cover/封面-3x4.png"))).toBe("稿-cover");
+  });
+
+  it("does not reuse a manifest written for a different target", async () => {
+    const c = await published("稿", 1);
+    await backup();
+    const other = path.join(temp, "nas2");
+    await fs.mkdir(other);
+    const r = await backup({ archiveRoot: other });
+    expect(r.backedUp).toEqual(["稿"]);
+    expect(await read(path.join(other, "2026", "September", path.basename(root(c)), "02-aroll/raw.mov"))).toBe("稿-raw");
+    expect((await readBackupState(root(c)))!.target.startsWith(other)).toBe(true);
+  });
+
+  it("keeps a verified NAS version when another file failed and the local file changed again before retry", async () => {
+    const c = await published("稿", 1);
+    await backup();
+    const dest = path.join(nasDir(c), "02-aroll/raw.mov");
+    const v1 = await sha256File(dest);
+    await new Promise((r) => setTimeout(r, 20));
+    await put(c, "02-aroll/raw.mov", "稿-raw-v2");
+    await put(c, "05-cover/封面-3x4.png", "稿-cover-v2");
+    const failCover = async (s: string, d: string) => { await fs.copyFile(s, d); if (s.endsWith(".png")) await fs.writeFile(d, "garbage"); };
+    expect((await backup({ copyImpl: failCover })).backedUp).toEqual([]);
+    const v2 = await sha256File(dest);
+    await new Promise((r) => setTimeout(r, 20));
+    await put(c, "02-aroll/raw.mov", "稿-raw-v3");
+    expect((await backup()).backedUp).toEqual(["稿"]);
+    expect(await read(dest)).toBe("稿-raw-v3");
+    expect(await read(keptName(dest, v2))).toBe("稿-raw-v2");
+    expect(await read(keptName(dest, v1))).toBe("稿-raw");
+    const cover = path.join(nasDir(c), "05-cover/封面-3x4.png");
+    expect(await read(cover)).toBe("稿-cover-v2");
+    // 自己拷坏的那份当场删掉，不会被当旧版本留底
+    const garbage = createHash("sha256").update("garbage").digest("hex");
+    expect(await exists(keptName(cover, garbage))).toBe(false);
   });
 
   it("marks items unmounted when the NAS is missing, without errors, and catches up once mounted", async () => {
