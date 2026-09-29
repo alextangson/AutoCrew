@@ -40,7 +40,7 @@ WorkBuddy App 自带 CLI 只有 headless 模式、登录态由 App 内部注入�
   `npx autocrew host workbuddy` 与集成页「宿主」卡上的「连接 WorkBuddy」按钮做同一件事：发令牌，并往 `~/.workbuddy/mcp.json`
   合并写入一条 stdio 条目 `autocrew`（走现有 `bin/autocrew.mjs mcp` 转发器，同 Claude Code）。ChatCut 也是这样把自己写进这份文件的。
 - **复制指令**：稿件页与对话栏各一个「复制给 WorkBuddy」按钮，复制一句话，例如：
-  「通过 autocrew MCP 调用 autocrew_content get 读取《<标题>》（id: <id>），总结这篇现在在哪一步、卡在哪，然后等我指示，先不要改任何东西。」
+  「通过 autocrew MCP 调用 autocrew_content summary 查看《<标题>》（id: <id>），总结这篇现在在哪一步、卡在哪，然后等我指示，先不要改任何东西。」
   （中文，WorkBuddy 用国产模型；措辞待创始人认。）
 - **边界**
   | # | 场景 | 行为 |

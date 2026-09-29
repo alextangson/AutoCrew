@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { contentSummary } from "./content-summary.js";
 import { gateClaimWrite, redactClaim, type WriteGate } from "../storage/claims.js";
 import {
   LOCAL_HOST,
@@ -34,9 +35,9 @@ const ALL_STATUSES = [
 ] as const;
 
 export const contentSaveSchema = Type.Object({
-  action: Type.Unsafe<"save" | "list" | "get" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore">({
+  action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore">({
     type: "string",
-    enum: ["save", "list", "get", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore"],
+    enum: ["save", "list", "get", "summary", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore"],
     description:
       "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
       "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
@@ -168,6 +169,9 @@ export async function executeContentSave(
     const contents = await listContents(dataDir);
     return { ok: true, contents: contents.map(redactClaim) };
   }
+
+  // 只读进度摘要（v1.3）：查「这篇到哪了」不用拉 16KB 的整篇
+  if (action === "summary") return contentSummary(String(params.id ?? "").trim(), dataDir);
 
   if (action === "get") {
     const id = params.id as string;
