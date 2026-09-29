@@ -49,6 +49,8 @@ export interface WorkItem {
   name: string;
   status: "running" | "done" | "failed";
   error?: string;
+  /** 旁注（如「等你批准」：业务审批拦下不算出错） */
+  note?: string;
   kind?: "compact";
 }
 
@@ -185,7 +187,7 @@ export class ChiefEditor {
     const a = this.active;
     if (!a || a.dataDir !== opts.dataDir) return { running: null, asks: [] };
     const running = !opts.conversationId || a.conversationId === opts.conversationId
-      ? { turnId: a.turnId, conversationId: a.conversationId, status: a.status, backend: a.backend, cards: a.cards, owner: Boolean(opts.clientId) && opts.clientId === a.clientId }
+      ? { turnId: a.turnId, conversationId: a.conversationId, status: a.status, backend: a.backend, cards: a.cards, worklog: a.worklog, owner: Boolean(opts.clientId) && opts.clientId === a.clientId }
       : null;
     return { running, asks: this.asks.pending(opts.conversationId ? { conversationId: opts.conversationId } : undefined) };
   }

@@ -188,9 +188,21 @@ describe("U12 工作记录", () => {
     const log = (r.data as { cards: Array<{ type: string; data: { items: Array<Record<string, string>> } }> }).cards[0];
     expect(log.type).toBe("agent_worklog");
     expect(log.data.items.map((i) => i.name)).toEqual(["读取稿件", "运行命令：ls /nope", "整理了一下上下文"]);
+    // 业务审批拦下不画成出错（真机回归）
+    expect(toolDisplayName("ls /tmp", undefined, "execute")).toBe("运行命令：ls /tmp");
     expect(log.data.items[1]).toMatchObject({ status: "failed", error: expect.stringContaining("No such file") });
     expect(h.events.some((e) => e.type === "work")).toBe(true);
     expect((r.data as { reply: string }).reply).toBe("好了");
+  });
+  it("业务审批拦下记成「等你批准」，不画红字（真机回归）", async () => {
+    h.script = async (a) => {
+      a.handlers.onUpdate({ sessionUpdate: "tool_call", toolCallId: "9", title: "mcp__autocrew__autocrew_topic", rawInput: { action: "delete" } });
+      a.handlers.onUpdate({ sessionUpdate: "tool_call_update", toolCallId: "9", status: "failed", rawOutput: '{"ok":false,"code":"approval_required"}' } as never);
+      return { stopReason: "end_turn" };
+    };
+    const r = await runLocalTurn(h.svc, input());
+    const item = (r.data as { cards: Array<{ data: { items: Array<Record<string, string>> } }> }).cards[0].data.items[0];
+    expect(item).toMatchObject({ name: "删除选题", status: "done", note: "等你批准" });
   });
   it("中文工具名：认不出退回原标题", () => {
     expect(toolDisplayName("mcp__autocrew__autocrew_topic", { action: "delete" })).toBe("删除选题");

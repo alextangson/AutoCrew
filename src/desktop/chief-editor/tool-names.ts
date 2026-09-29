@@ -25,11 +25,13 @@ const AUTOCREW: Record<string, Record<string, string> | string> = {
 
 const BUILTIN: Record<string, string> = {
   Terminal: "运行命令", Bash: "运行命令", Write: "写文件", Edit: "改文件", MultiEdit: "改文件",
-  Read: "读文件", Glob: "找文件", Grep: "搜文件内容", WebFetch: "读网页", WebSearch: "搜网页", TodoWrite: "记待办",
+  Read: "读文件", Glob: "找文件", ToolSearch: "查找可用工具", Grep: "搜文件内容", WebFetch: "读网页", WebSearch: "搜网页", TodoWrite: "记待办",
 };
 
-export function toolDisplayName(title: string | undefined, rawInput?: unknown): string {
+export function toolDisplayName(title: string | undefined, rawInput?: unknown, kind?: string): string {
   const t = (title ?? "").trim();
+  // 适配器常把 shell 的标题直接写成命令本身
+  if (kind === "execute" && !BUILTIN[t.split(/[\s:：(]/)[0]]) return `运行命令：${t}`;
   const mcp = /(?:mcp__autocrew__)?(autocrew_[a-z_]+)/.exec(t);
   if (mcp) {
     const entry = AUTOCREW[mcp[1]];

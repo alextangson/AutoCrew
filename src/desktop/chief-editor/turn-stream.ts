@@ -64,7 +64,7 @@ export function makeHandlers(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSi
     async requestPermission(req) {
       // 本对话都允许 / 全部放行：shell、文件直接放行（记进工作记录）；业务审批不走这里，照样弹卡
       if (turn.bypass || svc.conversationAllowed(turn.conversationId)) {
-        upsertWork(svc, turn, { id: `perm-${req.toolCallId ?? Date.now()}`, name: `自动放行：${redactAndTruncate(req.title, 60)}`, status: "done" });
+        upsertWork(svc, turn, { id: `perm-${req.toolCallId ?? Date.now()}`, name: `自动放行：${redactAndTruncate(req.title.replace(/\s*\{[\s\S]*$/, ""), 60)}`, status: "done" });
         return pickPermissionOption(req.options, "allow");
       }
       const ask = svc.asks.requestPermission({ turnId: turn.turnId, conversationId: turn.conversationId, title: "允许本机 agent 执行？", detail: req.title });
@@ -83,7 +83,7 @@ function onToolCall(svc: ChiefEditor, turn: ActiveTurn, sinks: StreamSinks, call
   const title = toolLabel(u);
   calls.set(id, { title, ...(u.kind ? { kind: u.kind } : {}) });
   if (u.kind && WRITE_KINDS.has(u.kind)) turn.inFlight.set(id, title);
-  const name = toolDisplayName(u.title, u.rawInput);
+  const name = toolDisplayName(u.title, u.rawInput, u.kind);
   sinks.onProgress?.({ phase: "start", label: redactAndTruncate(name, 60) });
   upsertWork(svc, turn, { id, name: redactAndTruncate(name, 80), status: "running" });
 }
@@ -94,11 +94,14 @@ function onToolUpdate(svc: ChiefEditor, turn: ActiveTurn, calls: Map<string, { t
   // 命令参数常在后续 update 里才到：补进标签
   if (call && u.rawInput) {
     call.title = toolLabel({ title: u.title ?? call.title.split("：")[0], rawInput: u.rawInput });
-    upsertWork(svc, turn, { id, name: redactAndTruncate(toolDisplayName(u.title ?? call.title.split("：")[0], u.rawInput), 80), status: "running" });
+    upsertWork(svc, turn, { id, name: redactAndTruncate(toolDisplayName(u.title ?? call.title.split("：")[0], u.rawInput, call.kind), 80), status: "running" });
   }
   if (call && turn.inFlight.has(id)) turn.inFlight.set(id, call.title);
   if (u.status !== "completed" && u.status !== "failed") return;
   turn.inFlight.delete(id);
-  upsertWork(svc, turn, { id, status: u.status === "failed" ? "failed" : "done", ...(u.status === "failed" ? { error: errorText(u as never) } : {}) } as WorkItem);
+  const err = u.status === "failed" ? errorText(u as never) : "";
+  // 业务审批拦下不是出错：记成「等你批准」，不画红字
+  if (err.includes("approval_required")) upsertWork(svc, turn, { id, status: "done", note: "等你批准" } as WorkItem);
+  else upsertWork(svc, turn, { id, status: u.status === "failed" ? "failed" : "done", ...(err ? { error: err } : {}) } as WorkItem);
   if (u.status === "completed" && call?.kind && WRITE_KINDS.has(call.kind)) turn.writes.push(redactAndTruncate(call.title, 60));
 }
