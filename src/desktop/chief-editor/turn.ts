@@ -27,6 +27,8 @@ export interface LocalTurnInput {
   dataDir: string;
   conversationId?: string;
   contentId?: string;
+  /** 编辑器里正开着的那篇（视图上下文）：不为它出稿件卡 */
+  openContentId?: string;
   /** 视图上下文前缀：只拼进发给 agent 的 prompt，对话历史存原话 */
   promptContext?: string;
   /** 新对话的设置（网页选的模型 / 强度 / 权限模式）；已有对话以 meta 为准 */
@@ -52,6 +54,7 @@ function acquire(svc: ChiefEditor, input: LocalTurnInput): { ok: true; turn: Act
     turnId: input.turnId, clientId: input.clientId, conversationId: input.conversationId ?? "",
     dataDir: input.dataDir, backend: input.backend, status: "running", cards: [], writes: [], inFlight: new Map(), aborted: false,
     worklog: [], bypass: false, allowConversation: false, startedAt: Date.now(),
+    ...(input.openContentId ? { openContentId: input.openContentId } : {}),
   };
   svc.active = turn;
   return { ok: true, turn, signal: reg.signal };

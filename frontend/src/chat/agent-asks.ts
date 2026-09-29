@@ -54,8 +54,10 @@ export function mergeCards(list: LiveCard[], incoming: unknown[]): LiveCard[] {
   const out = [...list];
   for (const c of incoming) {
     if (!isCard(c)) continue;
-    if (c.callId && out.some((x) => x.callId === c.callId)) continue;
-    out.push(c);
+    // 同一 callId 用新的替换：稿件卡按稿件定键，同一篇只留一张、显示最新状态
+    const i = c.callId ? out.findIndex((x) => x.callId === c.callId) : -1;
+    if (i >= 0) out[i] = c;
+    else out.push(c);
   }
   return out;
 }
