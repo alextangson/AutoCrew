@@ -27,8 +27,15 @@ export function getConfig(): AutocrewConfig {
 
 let sessionPromise: Promise<void> | null = null;
 
-/** 把地址栏的一次性 boot token 换成 HttpOnly session cookie，并立即清掉 URL 中的 token。 */
-async function ensureSession(): Promise<void> {
+export const SESSION_EXPIRED =
+  "登录过期：在终端运行 autocrew logs，打开最新打印的 http://127.0.0.1:…/?token=… 链接；那条也打开过了，就等手上的稿停下后运行 autocrew restart，用它新打印的链接进来";
+
+/**
+ * 把地址栏的一次性 boot token 换成 HttpOnly session cookie，并立即清掉 URL 中的 token（1b §9）。
+ * token 已失效但会话 cookie 有效 → 服务端回 existing，照样静默去掉 token；两者都无效才报「登录过期」。
+ * 看板和其余首屏请求都先等它（`authedFetch`），不和会话交换赛跑。
+ */
+export async function ensureSession(): Promise<void> {
   if (sessionPromise) return sessionPromise;
   sessionPromise = (async () => {
     const current = new URL(window.location.href);
@@ -40,12 +47,21 @@ async function ensureSession(): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
     });
-    if (!res.ok) throw new Error("本地会话认证失败，请从 server 新打印的链接重新进入");
+    if (!res.ok) {
+      sessionPromise = null;
+      throw new Error(SESSION_EXPIRED);
+    }
     current.searchParams.delete("token");
     const clean = current.pathname + (current.search ? current.search : "") + current.hash;
     window.history.replaceState(null, "", clean);
   })();
   return sessionPromise;
+}
+
+/** 首屏与视图里直接打服务端的请求：先等会话交换完成 */
+export async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
+  await ensureSession();
+  return fetch(url, { credentials: "same-origin", ...init });
 }
 
 export interface InvokeResult {

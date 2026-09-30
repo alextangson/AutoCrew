@@ -4,6 +4,7 @@
  * 页面据此明说「看板更新失败（上次更新 x 分钟前）」，不把旧数据装成新的。
  */
 import { useCallback, useEffect, useState } from "react";
+import { authedFetch } from "../transport";
 import { REFRESH_MS, type ProjectReview } from "./project-board";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -16,7 +17,7 @@ export function useProjectReview(contentId: string, poll: boolean) {
   const [busy, setBusy] = useState(false);
   const url = `/api/project-review?content_id=${encodeURIComponent(contentId)}`;
   const read = useCallback(async (init?: RequestInit) => {
-    const r = await fetch(url, { credentials: "same-origin", ...init });
+    const r = await authedFetch(url, { credentials: "same-origin", ...init });
     const text = await r.text();
     let body: ProjectReview | null = null;
     try { body = text ? JSON.parse(text) : null; } catch { /* 非 JSON 错误页原样显示 */ }

@@ -1,5 +1,6 @@
 /** 看板与数据页的服务端调用：读看板、开始写、我发了 / 撤销；读数据页、关联 / 撤销。失败一律回人话，不抛。 */
 import type { BoardData } from "./board-columns";
+import { authedFetch, SESSION_EXPIRED } from "../transport";
 import type { DataPageData } from "./data-lib";
 
 type Json = Record<string, unknown>;
@@ -8,11 +9,13 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; b
 
 async function call<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
-    const r = await fetch(url, { credentials: "same-origin", ...init });
+    const r = await authedFetch(url, { credentials: "same-origin", ...init });
     const body = await r.json().catch(() => null) as (Json & { ok?: boolean; error?: string; data?: T }) | null;
-    if (!r.ok || !body || body.ok === false) return { ok: false, error: body?.error ?? (r.status === 403 ? "没有权限（登录过期？刷新页面试试）" : `服务没响应（HTTP ${r.status}）`), ...(body ? { body } : {}) };
+    if (!r.ok || !body || body.ok === false) return { ok: false, error: body?.error ?? (r.status === 403 ? SESSION_EXPIRED : `服务没响应（HTTP ${r.status}）`), ...(body ? { body } : {}) };
     return { ok: true, data: (body.data ?? body) as T };
   } catch (e) {
+    // 会话交换失败（地址栏 token 与 cookie 都无效）不是「连不上」：原样给怎么拿新链接
+    if (e instanceof Error && e.message === SESSION_EXPIRED) return { ok: false, error: SESSION_EXPIRED };
     return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };
   }
 }
@@ -33,9 +36,9 @@ export const unmarkPublished = (contentId: string, platform: string) =>
 export interface EnableFailure { id: string; title: string; step: string; error: string }
 export async function enableOntology(exclude: string[] = []): Promise<{ ok: boolean; error?: string; failures: EnableFailure[] }> {
   try {
-    const r = await fetch("/api/board/ontology/enable", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, exclude }) });
+    const r = await authedFetch("/api/board/ontology/enable", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, exclude }) });
     const body = await r.json().catch(() => null) as { ok?: boolean; error?: string; failures?: EnableFailure[] } | null;
-    if (!r.ok || !body) return { ok: false, error: r.status === 403 ? "没有权限（登录过期？刷新页面试试）" : `服务没响应（HTTP ${r.status}）`, failures: [] };
+    if (!r.ok || !body) return { ok: false, error: r.status === 403 ? SESSION_EXPIRED : `服务没响应（HTTP ${r.status}）`, failures: [] };
     return { ok: body.ok === true, ...(body.error ? { error: body.error } : {}), failures: body.failures ?? [] };
   } catch (e) {
     return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}`, failures: [] };

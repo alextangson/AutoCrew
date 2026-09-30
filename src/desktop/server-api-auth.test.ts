@@ -68,8 +68,28 @@ beforeAll(async () => {
     body: JSON.stringify({ token: boot }),
   });
   sessionCookie = (res.headers.get("set-cookie") ?? "").split(";")[0];
-  expect(sessionCookie).toMatch(/^autocrew_session=/);
+  // cookie 名带端口（1b §9）：预览服务不顶掉正式服务的登录
+  expect(sessionCookie).toMatch(new RegExp(`^autocrew_session_${port}=`));
+  bootToken = boot;
 }, 40_000);
+
+let bootToken: string;
+
+describe("登录跨重启（1b §9）", () => {
+  const exchange = (headers: Record<string, string>) => fetch(`${base}/api/session`, {
+    method: "POST", headers: { Origin: origin, "Content-Type": "application/json", ...headers }, body: JSON.stringify({ token: bootToken }),
+  });
+  it("地址栏残留已用过的 token + 有效 cookie → 200 existing，不另发会话；顺手清掉旧名 cookie", async () => {
+    const res = await exchange({ Cookie: `autocrew_session=old; ${sessionCookie}` });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, existing: true });
+    expect(res.headers.get("set-cookie")).toBe("autocrew_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+  });
+  it("token 与 cookie 都无效 → 403；只有旧名 cookie 也不认", async () => {
+    expect((await exchange({})).status).toBe(403);
+    expect((await exchange({ Cookie: sessionCookie.replace(/^autocrew_session_\d+=/, "autocrew_session=") })).status).toBe(403);
+  });
+});
 
 afterAll(() => {
   if (proc?.pid && proc.exitCode === null) {

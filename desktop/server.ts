@@ -31,7 +31,7 @@ import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
 import { resolveServerToken, resolveSessionSecret } from "../src/desktop/server-token.js";
-import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
+import { LocalSessionAuth, LOCAL_SUBJECT, SESSION_COOKIE, sessionCookieName } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
@@ -84,6 +84,8 @@ const AUTH = new LocalSessionAuth(
   (token) => lookupHostToken(token),
   // 会话签名用独立密钥，不用交给自动化客户端的 server-token（否则持 token 者可伪造工作台会话批规则）
   resolveSessionSecret(),
+  // cookie 名带端口（1b §9）：预览服务不再顶掉 4317 的登录
+  sessionCookieName(PORT),
 );
 const APPROVALS = new ApprovalGate();
 // D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
@@ -302,14 +304,17 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
     }
     let parsed: { token?: string };
     try { parsed = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end(JSON.stringify({ ok: false, error: "bad json" })); return; }
-    const issued = AUTH.issueSession(typeof parsed.token === "string" ? parsed.token : "");
-    if (!issued) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad token" })); return; }
+    // 地址栏 token 已失效但会话 cookie 有效（刷新了留着旧 token 的地址）→ 不报错（1b §9）
+    const exchanged = AUTH.exchange(typeof parsed.token === "string" ? parsed.token : "", { cookie: req.headers.cookie });
+    if (!exchanged) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad token" })); return; }
+    const legacy = (req.headers.cookie ?? "").split(";").some((c) => c.trim().startsWith(`${SESSION_COOKIE}=`)) ? [AUTH.clearLegacyCookieHeader()] : [];
+    const cookies = [...(exchanged.status === "issued" ? [AUTH.cookieHeader(exchanged.sessionId)] : []), ...legacy];
     res.writeHead(200, {
       "Content-Type": MIME[".json"],
       "Cache-Control": "no-store",
-      "Set-Cookie": AUTH.cookieHeader(issued.sessionId),
+      ...(cookies.length ? { "Set-Cookie": cookies } : {}),
     });
-    res.end(JSON.stringify({ ok: true, expiresAt: issued.expiresAt }));
+    res.end(JSON.stringify(exchanged.status === "issued" ? { ok: true, expiresAt: exchanged.expiresAt } : { ok: true, existing: true }));
     return;
   }
 
