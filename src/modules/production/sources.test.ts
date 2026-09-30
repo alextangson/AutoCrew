@@ -93,3 +93,21 @@ describe("在访达中显示只认收件箱与监视文件夹", () => {
     expect((await call("/api/board/reveal-source", { path: f }, "bearer")).status).toBe(403);
   });
 });
+
+describe("并发写设置不互相覆盖（Codex 审 segB9 P2）", () => {
+  it("关掉 allow_move 与保存暂停同时发：两个改动都留下", async () => {
+    await call("/api/board/aroll-sources", { op: "add_folder", path: watch, allow_move: true });
+    const real = await fs.realpath(watch);
+    const { setVideoSettings } = await import("../../desktop/settings-video.js");
+    const [a, b, c] = await Promise.all([
+      call("/api/board/aroll-sources", { op: "set_folder", path: real, allow_move: false }),
+      call("/api/board/aroll-sources", { op: "set_paused", paused: true }),
+      setVideoSettings({ _dataDir: env.dir, render_concurrency: 3 }),
+    ]);
+    expect([a.json, b.json, c]).toEqual([expect.objectContaining({ ok: true }), expect.objectContaining({ ok: true }), expect.objectContaining({ ok: true })]);
+    const v = await getVideoSettingsRaw(env.dir);
+    expect(v.arollWatchFolders?.[0].allow_move).toBe(false);
+    expect(v.arollAutoFindPaused).toBe(true);
+    expect(v.renderConcurrency).toBe(3);
+  });
+});
