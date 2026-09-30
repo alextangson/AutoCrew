@@ -278,6 +278,27 @@ describe("§5 监视文件夹只出建议", () => {
     expect(r.warnings.join()).toContain("sidecar 崩了");
   });
 
+  it("没有等原片的稿：监视文件夹里的视频一个都不算完整哈希（Codex 审 segB7 P2）", async () => {
+    asr(heardFrom({}));
+    await addWatch(watch);
+    const big = await put(path.join(watch, "movie.mov"), "x".repeat(4096));
+    await tick();
+    const cache = await fs.readFile(path.join(env.dir, "production", "hash-cache.json"), "utf8").catch(() => "{}");
+    expect(cache).not.toContain(big);
+  });
+
+  it("名字对不上、读不出时长 → 不算哈希；进该行错误和对账警告，不静默（Codex 审 segB7 P2）", async () => {
+    asr(heardFrom({}));
+    await videoContent(env, "甲稿监视探针", "draft_ready", A);
+    await addWatch(watch);
+    const bad = await put(path.join(watch, "clip-broken.mov"), "half");
+    const r = await tick();
+    const cache = await fs.readFile(path.join(env.dir, "production", "hash-cache.json"), "utf8").catch(() => "{}");
+    expect(cache).not.toContain(bad);
+    expect(r.watch?.[0].error).toContain("clip-broken.mov");
+    expect(r.warnings.join()).toContain("clip-broken.mov");
+  });
+
   it("读不了（EACCES）→ 该行给授权提示，看板警告同样列出（E30）", async () => {
     asr(heardFrom({}));
     await addWatch(watch);

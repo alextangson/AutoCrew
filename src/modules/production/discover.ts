@@ -18,7 +18,8 @@ import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
 import { checkDuration, STABLE_MS } from "./files.js";
 import { fileVerdict, type Found, type Verdict } from "./match/background.js";
-import { describeTop3, looksLike, type MatchDecision, type PoolEntry } from "./match/decide.js";
+import { decide, describeTop3, looksLike, type MatchDecision, type PoolEntry } from "./match/decide.js";
+import { matchDeps } from "./match/deps.js";
 import { arollPool, EXPORT_POOL_STATUS, exportPool } from "./match/pool.js";
 import { cachedSha, VIDEO_EXT, type Seen } from "./observe.js";
 import type { InboxStatus, WatchStatus } from "./reconcile.js";
@@ -143,14 +144,27 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
 
 // ---- §5 监视文件夹 ----
 
-async function watchFile(dataDir: string, raw: { file: string; name: string; size: number; mtime: number }, pool: PoolEntry[], waiting: Set<string>): Promise<Verdict> {
-  const f = await found(raw);
-  if (!waiting.size) return fileVerdict(dataDir, f, pool, { transcribe: false, why: "没有等原片的稿，不转写" });
-  if (raw.size > WATCH_MAX_BYTES) return fileVerdict(dataDir, f, pool, { transcribe: false, why: "超过 10 GB，只比了文件名" });
+type Raw = { file: string; name: string; size: number; mtime: number };
+/** 监视文件夹里一个文件的处理结果：出建议（带已算好的哈希）、没核对成（带原因）、或安静跳过 */
+type WatchOutcome = { kind: "suggest"; f: Found; d: MatchDecision } | { kind: "failed"; reason: string } | { kind: "skip" };
+
+/**
+ * 顺序（Codex 审 segB7 P2）：按 stat 的便宜过滤（14 天、10 GB，调用方已过）→ 有没有等原片的稿 → 文件名判 →
+ * 读时长 → 最后才算完整哈希。只有要入队转写或要写候选的文件才读全文件；下载里的大视频不白读。
+ */
+async function watchFile(dataDir: string, raw: Raw, pool: PoolEntry[], waiting: Set<string>): Promise<WatchOutcome> {
+  if (!waiting.size) return { kind: "skip" };
+  const byName = decide({ fileName: raw.name, sha256: "", pool, heard: { text: null, why: "只比了文件名" } }, matchDeps().thresholds);
+  if (byName.winner) return waiting.has(byName.winner) ? { kind: "suggest", f: await found(raw), d: byName } : { kind: "skip" };
+  if (raw.size > WATCH_MAX_BYTES) return { kind: "skip" };
   const dur = await probe(raw.file);
-  if ("error" in dur) return fileVerdict(dataDir, f, pool, { transcribe: false, why: `读不出时长（${dur.error}），只比了文件名` });
-  if (dur.durationMs > WATCH_MAX_MS) return fileVerdict(dataDir, f, pool, { transcribe: false, why: "超过 60 分钟，只比了文件名" });
-  return fileVerdict(dataDir, f, pool);
+  // 读不出时长 = 坏的或还没拷完：进「没核对成」并提示，不静默（Codex 审 segB7 P2）
+  if ("error" in dur) return { kind: "failed", reason: `读不出时长（${dur.error}）` };
+  if (dur.durationMs > WATCH_MAX_MS) return { kind: "skip" };
+  const f = await found(raw);
+  const v = await fileVerdict(dataDir, f, pool);
+  if (v.kind === "failed") return v;
+  return v.kind === "decided" && v.d.winner && waiting.has(v.d.winner) ? { kind: "suggest", f, d: v.d } : { kind: "skip" };
 }
 
 async function discoverWatch(dataDir: string, folder: WatchFolder, pool: PoolEntry[], waiting: Set<string>, out: Discovery): Promise<void> {
@@ -167,13 +181,12 @@ async function discoverWatch(dataDir: string, folder: WatchFolder, pool: PoolEnt
   status.files = recent.length;
   const failed: string[] = [];
   for (const raw of recent) {
-    const v = await watchFile(dataDir, raw, pool, waiting).catch((e: unknown) => ({ kind: "failed" as const, reason: errCode(e) }));
+    const o = await watchFile(dataDir, raw, pool, waiting).catch((e: unknown): WatchOutcome => ({ kind: "failed", reason: errCode(e) }));
     // 没能比完（转写失败到头 / 读不了）与没对上分开：要看得见（Codex 审 segB P2，§14-14）
-    if (v.kind === "failed") { failed.push(`${raw.name}（${v.reason}）`); continue; }
+    if (o.kind === "failed") { failed.push(`${raw.name}（${o.reason}）`); continue; }
     // 只出建议：对上等原片的稿才给候选；对不上静默跳过（下载里大量无关视频，不计入列头）
-    if (v.kind !== "decided" || !v.d.winner || !waiting.has(v.d.winner)) continue;
-    const f = await found(raw);
-    suggest(out, v.d.winner, seen(f, "aroll", `监视文件夹 ${path.basename(folder.path)}：${why(v.d)}`, matchOf(v.d)));
+    if (o.kind !== "suggest") continue;
+    suggest(out, o.d.winner!, seen(o.f, "aroll", `监视文件夹 ${path.basename(folder.path)}：${why(o.d)}`, matchOf(o.d)));
     status.suggested += 1;
   }
   if (failed.length) {
