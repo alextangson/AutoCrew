@@ -19,7 +19,12 @@ async function toolsFor(host: string) {
  * 同日发布前把关给 autocrew_publish 加 check / propose_preference 的参数（已压到最少：overrides、value 不展开嵌套），
  * 实测 27,983 → 28,263，上限随之从 28,000 提到 28,500。
  */
-export const BUDGET = { total: 28_500, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-09-30 等你拍板 2a：autocrew_content 加 ask / answer_ask / withdraw_ask / mark_ready 与它们的参数（review、paths、pair_with、
+ * fact_id、question、options、attachments、ask_id、option_id、founder_quote、asks_offset；kind 加六种请示），参数说明已压到零、
+ * options / attachments 不展开嵌套，工具说明重写后与原来等长；实测 28,498 → 28,978，上限随之从 28,500 提到 29,000。
+ */
+export const BUDGET = { total: 29_000, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

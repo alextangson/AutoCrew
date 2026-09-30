@@ -25,7 +25,8 @@ const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
     autocrew_video: new Set(["register", "status", "revoke", "report", "match", "confirm"]),
     // 本体 §3：剪辑工位只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不带任何批准语义
     // check_slivers：导出前自查抽帧缝，只读（spec 2026-09-30 §7）
-    autocrew_content: new Set(["get", "summary", "record", "check_slivers"]),
+    // 等你拍板 2a：剪辑途中请示创始人（ask / 转述回答 / 撤回）、给成片补标「可以审了」
+    autocrew_content: new Set(["get", "summary", "record", "check_slivers", "ask", "answer_ask", "withdraw_ask", "mark_ready"]),
     // 素材只写路径（§13.4-F）：库内记相对路径，库外挪进项目再记
     autocrew_asset: new Set(["add"]),
     autocrew_desk: new Set(["inbox", "claim", "release"]),
@@ -38,7 +39,7 @@ const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
 const DENIED_MESSAGE: Readonly<Record<string, string>> = { codex: CODEX_EDITOR_DENIED };
 
 /** 启用本体后的剪辑工位：只报事实，不再 match / confirm / handoff */
-export const CODEX_EDITOR_DENIED_ONTOLOGY = "剪辑工位（codex）在本体下只报事实：autocrew_content record（原片 / 成片 / 字幕 / 封面 / ChatCut 工程 / 分镜审阅页）、content get / summary / check_slivers、asset add、publish check / propose_preference 与只读查询；审片、选封面、发布只有创始人在卡片上点";
+export const CODEX_EDITOR_DENIED_ONTOLOGY = "剪辑工位（codex）在本体下只报事实：autocrew_content record（原片 / 成片 / 字幕 / 封面 / ChatCut 工程 / 分镜审阅页）、content get / summary / check_slivers / mark_ready / ask / answer_ask / withdraw_ask、asset add、publish check / propose_preference 与只读查询；审片、选封面、发布只有创始人在「等你拍板」里点";
 
 /**
  * 所有命名宿主共用的硬拒（P6-e r3：模型绕开 handoff 的门后，转而用 `autocrew_content adoption`

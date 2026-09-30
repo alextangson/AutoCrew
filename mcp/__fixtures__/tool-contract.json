@@ -170,13 +170,28 @@
        "delete",
        "restore",
        "record",
-       "check_slivers"
+       "check_slivers",
+       "mark_ready",
+       "ask",
+       "answer_ask",
+       "withdraw_ask"
       ],
       "type": "string"
      },
      "aroll_offset": {
       "minimum": 0,
       "type": "integer"
+     },
+     "ask_id": {
+      "type": "string"
+     },
+     "asks_offset": {
+      "minimum": 0,
+      "type": "integer"
+     },
+     "attachments": {
+      "items": {},
+      "type": "array"
      },
      "body": {
       "type": "string"
@@ -196,11 +211,17 @@
      "diff_note": {
       "type": "string"
      },
+     "fact_id": {
+      "type": "string"
+     },
      "for_cut": {
       "type": "string"
      },
      "force": {
       "type": "boolean"
+     },
+     "founder_quote": {
+      "type": "string"
      },
      "from_status": {
       "enum": [
@@ -245,15 +266,37 @@
        "cover",
        "chatcut_project",
        "publish",
-       "storyboard"
+       "storyboard",
+       "粗剪",
+       "分镜",
+       "样片",
+       "花费",
+       "配乐",
+       "其他"
       ],
       "type": "string"
      },
      "note": {
       "type": "string"
      },
+     "option_id": {
+      "type": "string"
+     },
+     "options": {
+      "items": {},
+      "type": "array"
+     },
+     "pair_with": {
+      "type": "string"
+     },
      "path": {
       "type": "string"
+     },
+     "paths": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "performance_data": {
       "patternProperties": {
@@ -267,6 +310,9 @@
       "type": "string"
      },
      "publish_url": {
+      "type": "string"
+     },
+     "question": {
       "type": "string"
      },
      "ratio": {
@@ -285,6 +331,9 @@
      },
      "request_id": {
       "type": "string"
+     },
+     "review": {
+      "type": "boolean"
      },
      "siblings": {
       "items": {
@@ -2807,13 +2856,28 @@
        "delete",
        "restore",
        "record",
-       "check_slivers"
+       "check_slivers",
+       "mark_ready",
+       "ask",
+       "answer_ask",
+       "withdraw_ask"
       ],
       "type": "string"
      },
      "aroll_offset": {
       "minimum": 0,
       "type": "integer"
+     },
+     "ask_id": {
+      "type": "string"
+     },
+     "asks_offset": {
+      "minimum": 0,
+      "type": "integer"
+     },
+     "attachments": {
+      "items": {},
+      "type": "array"
      },
      "body": {
       "type": "string"
@@ -2833,11 +2897,17 @@
      "diff_note": {
       "type": "string"
      },
+     "fact_id": {
+      "type": "string"
+     },
      "for_cut": {
       "type": "string"
      },
      "force": {
       "type": "boolean"
+     },
+     "founder_quote": {
+      "type": "string"
      },
      "from_status": {
       "enum": [
@@ -2882,15 +2952,37 @@
        "cover",
        "chatcut_project",
        "publish",
-       "storyboard"
+       "storyboard",
+       "粗剪",
+       "分镜",
+       "样片",
+       "花费",
+       "配乐",
+       "其他"
       ],
       "type": "string"
      },
      "note": {
       "type": "string"
      },
+     "option_id": {
+      "type": "string"
+     },
+     "options": {
+      "items": {},
+      "type": "array"
+     },
+     "pair_with": {
+      "type": "string"
+     },
      "path": {
       "type": "string"
+     },
+     "paths": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "performance_data": {
       "patternProperties": {
@@ -2904,6 +2996,9 @@
       "type": "string"
      },
      "publish_url": {
+      "type": "string"
+     },
+     "question": {
       "type": "string"
      },
      "ratio": {
@@ -2922,6 +3017,9 @@
      },
      "request_id": {
       "type": "string"
+     },
+     "review": {
+      "type": "boolean"
      },
      "siblings": {
       "items": {
@@ -4998,13 +5096,28 @@
        "delete",
        "restore",
        "record",
-       "check_slivers"
+       "check_slivers",
+       "mark_ready",
+       "ask",
+       "answer_ask",
+       "withdraw_ask"
       ],
       "type": "string"
      },
      "aroll_offset": {
       "minimum": 0,
       "type": "integer"
+     },
+     "ask_id": {
+      "type": "string"
+     },
+     "asks_offset": {
+      "minimum": 0,
+      "type": "integer"
+     },
+     "attachments": {
+      "items": {},
+      "type": "array"
      },
      "body": {
       "type": "string"
@@ -5024,11 +5137,17 @@
      "diff_note": {
       "type": "string"
      },
+     "fact_id": {
+      "type": "string"
+     },
      "for_cut": {
       "type": "string"
      },
      "force": {
       "type": "boolean"
+     },
+     "founder_quote": {
+      "type": "string"
      },
      "from_status": {
       "enum": [
@@ -5073,15 +5192,37 @@
        "cover",
        "chatcut_project",
        "publish",
-       "storyboard"
+       "storyboard",
+       "粗剪",
+       "分镜",
+       "样片",
+       "花费",
+       "配乐",
+       "其他"
       ],
       "type": "string"
      },
      "note": {
       "type": "string"
      },
+     "option_id": {
+      "type": "string"
+     },
+     "options": {
+      "items": {},
+      "type": "array"
+     },
+     "pair_with": {
+      "type": "string"
+     },
      "path": {
       "type": "string"
+     },
+     "paths": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
      },
      "performance_data": {
       "patternProperties": {
@@ -5095,6 +5236,9 @@
       "type": "string"
      },
      "publish_url": {
+      "type": "string"
+     },
+     "question": {
       "type": "string"
      },
      "ratio": {
@@ -5113,6 +5257,9 @@
      },
      "request_id": {
       "type": "string"
+     },
+     "review": {
+      "type": "boolean"
      },
      "siblings": {
       "items": {
