@@ -96,6 +96,9 @@ export const LEGACY_REGISTERED_RECUT = "按旧流程登记；发布后成片换�
 function legacyRegisteredNote<T extends { rule: string | null; alerts: string[]; badges: string[] }>(r: T, doc: ProductionDoc, content: ExplainInput["content"]): T {
   const final = content.video?.final;
   if (r.rule !== "D1" || !final?.register_hash || !r.alerts.includes(UNREGISTERED_PUBLISH)) return r;
+  // 本体登记提交也会写 video.final（register_hash = 登记记录 id）：那是某一轮的本体登记，不是旧流程；
+  // 重开后新一轮没登记就发了，必须照旧报「未登记就发布」，不能被上一轮的登记盖掉
+  if (doc.registrations.some((g) => g.source === "commit" && g.id === final.register_hash)) return r;
   const after = Date.parse(final.at ?? "");
   const recut = doc.facts.some((f) => f.round === doc.round && f.kind === "cut" && f.state !== "rejected" && f.sha256 && f.sha256 !== final.sha256
     && !Number.isNaN(after) && Date.parse(f.at) > after);

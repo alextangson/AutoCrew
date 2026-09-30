@@ -62,4 +62,23 @@ describe("旧流程登记的已发布稿", () => {
     expect(panel.alerts).not.toContain(UNREGISTERED_PUBLISH);
     expect(item.alerts).toContain(LEGACY_REGISTERED_RECUT);
   });
+
+  it("[Codex P2] video.final 来自上一轮的本体登记：新一轮没登记就发，照旧「未登记就发布」", async () => {
+    const c = await videoContent(env, "重开后再发");
+    await founderApprove(env, c.id);
+    const { mutateProduction } = await import("./service.js");
+    await mutateProduction(c.id, env.dir, (d) => {
+      d.registrations.push({ id: "reg-ont-1", round: d.round, at: REG_AT, source: "commit" } as never);
+      d.round += 1;
+      return { value: null, events: [] };
+    });
+    await updateContent(c.id, { video: { final: { path: "/x/final.mp4", asset_filename: "final.mp4", sha256: "b".repeat(64), duration_ms: 1000, register_hash: "reg-ont-1", at: REG_AT } } } as never, env.dir);
+    await founderApprove(env, c.id);
+    await founderDecision(c.id, "i_published", { platform: "douyin" }, env.dir);
+    const { panel, item } = await views(c.id);
+    expect(panel.stage).toBe("已发布");
+    expect(panel.alerts).toContain(UNREGISTERED_PUBLISH);
+    expect(panel.badges).not.toContain(LEGACY_REGISTERED);
+    expect(item.alerts).toContain(UNREGISTERED_PUBLISH);
+  });
 });
