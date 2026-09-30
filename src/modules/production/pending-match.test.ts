@@ -314,3 +314,24 @@ describe("服务重启：本轮 pending_match 重新入队（B4）", () => {
     expect(await arollFact(a.id)).toMatchObject({ state: "accepted", auto_attached: true });
   });
 });
+
+describe("启动唤醒持久队列（Codex 审 segB P2）", () => {
+  it("盘上排着的作业（没有新入队）在就绪时就被叫醒跑完", async () => {
+    fakeAsr(() => ({ ok: true, text: "开头" }));
+    const src = await put(path.join(env.outside, "q.mov"), "q");
+    const st = await fs.stat(src);
+    const { createHash } = await import("node:crypto");
+    const sha = createHash("sha256").update("q").digest("hex");
+    const file = path.join(env.dir, "cache", "match-jobs.json");
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify({ version: 1, jobs: [{ id: "mjob-boot", key: `${sha}|transcribe_head|head`, purpose: "transcribe_head", priority: "background", sha256: sha, path: src,
+      size: st.size, mtime_ms: Math.trunc(st.mtimeMs), target: "head", payload: {}, state: "running", attempts: 0, next_at: 0, created_at: "t", updated_at: "t" }] }));
+    await import("./match/background.js");
+    resetMatchQueue();
+    resetProductionReady();
+    await ensureProductionReady(env.dir);
+    await new Promise((r) => setTimeout(r, 20));
+    await matchWorkerIdle(env.dir);
+    expect((await listMatchJobs(env.dir)).find((j) => j.id === "mjob-boot")?.state).toBe("done");
+  });
+});

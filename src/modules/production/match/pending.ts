@@ -25,7 +25,7 @@ import { decide, describeTop3, sameSnapshot, snapshotOf, type Heard, type MatchD
 import { hear } from "./hear.js";
 import { matchDeps } from "./deps.js";
 import { arollPool } from "./pool.js";
-import { cancelMatchJob, enqueueMatchJob, registerMatchHandler, type JobResult, type JobSpec, type MatchJob } from "./queue.js";
+import { cancelMatchJob, enqueueMatchJob, kickMatchWorker, registerMatchHandler, type JobResult, type JobSpec, type MatchJob } from "./queue.js";
 import { pendingElsewhere, pendingElsewhereText, type PendingHolder } from "./reservation.js";
 
 export const RECORD_AROLL = "record_aroll";
@@ -165,6 +165,8 @@ export async function requeuePending(dataDir: string): Promise<void> {
       if (doc && f?.match_job && f.sha256 && f.path) await enqueueMatchJob(dataDir, specFor(e.content_id, f, doc.round));
     }
   }
+  // 盘上还排着的作业（卡片挂载核对、退避中的后台转写……）不等新入队：启动就叫醒工人，它跑完会按退避时间重新定时（Codex 审 segB P2）
+  kickMatchWorker(dataDir);
 }
 
 registerReadyHook(requeuePending);
