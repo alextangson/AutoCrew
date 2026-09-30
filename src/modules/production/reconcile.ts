@@ -23,6 +23,7 @@ import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import { readArchiveLog } from "../../storage/nas-archive-log.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
+import { triggerSliverCheck } from "./sliver/check.js";
 import { explain, withLegacyDecisions, type Column } from "./explain.js";
 import { STABLE_MS } from "./files.js";
 import { withFileOwnership } from "./mutex.js";
@@ -168,6 +169,9 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
           // 登记失败 / 警告进对账报告（看板顶部 + 晨报），不静默
           if (!commit.ok) report.warnings.push(`${c.title}（${c.id}）登记没完成：${commit.reason}`);
           for (const w of commit.ok ? commit.warnings ?? [] : []) report.warnings.push(`${c.title}（${c.id}）：${w}`);
+          // 对账发现新成片 / 新工程记录后跑抽帧检查（同指纹的确定结果只算一次）
+          const sliverErr = await triggerSliverCheck(c.id, dataDir);
+          if (sliverErr) report.warnings.push(`${c.title}（${c.id}）：${sliverErr}`);
         }
         const move = enabled || excluded.has(c.id) ? null : await shadowMove(c, doc, dataDir);
         if (move) report.moves.push(move);

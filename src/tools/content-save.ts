@@ -31,6 +31,7 @@ import type { StyleDistillResult } from "../modules/learnings/style-distiller.js
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
 import { isFrozen, isOntologyEnabled, readProductionDoc, ScriptFrozenError } from "../storage/production-store.js";
 import { executeRecord } from "../modules/production/record.js";
+import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
 
 const ALL_STATUSES = [
@@ -41,15 +42,16 @@ const ALL_STATUSES = [
 ] as const;
 
 export const contentSaveSchema = Type.Object({
-  action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore" | "record">({
+  action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore" | "record" | "check_slivers">({
     type: "string",
-    enum: ["save", "list", "get", "summary", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore", "record"],
+    enum: ["save", "list", "get", "summary", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore", "record", "check_slivers"],
     description:
       "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
       "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
       "'siblings' list sibling content, 'allowed_transitions' show valid next statuses, " +
       "'adoption' record adoption verdict (采纳率北极星读数)——仅工作台可用，宿主调用会被服务端拒绝（采纳不能由模型代填）, " +
-      "'record' 报制作事实（原片 aroll / 成片 cut / 字幕 srt / 封面 cover / ChatCut 工程 chatcut_project）：只报盘上有什么，不带任何批准；认稿、成片通过、选封面只能创始人点.",
+      "'record' 报制作事实（原片 aroll / 成片 cut / 字幕 srt / 封面 cover / ChatCut 工程 chatcut_project）：只报盘上有什么，不带任何批准；认稿、成片通过、选封面只能创始人点; " +
+      "'check_slivers' 导出前自查抽帧缝（两段 B-roll / 动效之间露出 <1 秒的真人），只读、不写任何记录，可带 chatcut_project_id / timeline_id.",
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   content_id: Type.Optional(Type.String({ description: "Alias of `id` — other AutoCrew tools call it content_id" })),
@@ -106,8 +108,8 @@ export const contentSaveSchema = Type.Object({
   cover_text: Type.Optional(Type.String({ description: "record kind=cover：封面上的字（只是默认值，不是批准）." })),
   for_cut: Type.Optional(Type.String({ description: "record kind=srt：这份字幕属于哪版成片（成片 fact_id 或 sha256）；不填 = 本轮最新成片." })),
   uses_aroll: Type.Optional(Type.Array(Type.String(), { description: "record kind=chatcut_project：工程里用到的原片 fact_id." })),
-  chatcut_project_id: Type.Optional(Type.String({ description: "record kind=chatcut_project：ChatCut 工程 id." })),
-  timeline_id: Type.Optional(Type.String({ description: "record kind=chatcut_project：时间线 id（可选）." })),
+  chatcut_project_id: Type.Optional(Type.String({ description: "record kind=chatcut_project / check_slivers：ChatCut 工程 id." })),
+  timeline_id: Type.Optional(Type.String({ description: "record kind=chatcut_project / check_slivers：时间线 id（可选）." })),
   note: Type.Optional(Type.String({ description: "record：一句备注（可选）." })),
   account: Type.Optional(Type.String({ description: "record kind=publish：发布账号（可选）." })),
   url: Type.Optional(Type.String({ description: "record kind=publish：作品链接（或填 item_id）." })),
@@ -229,6 +231,8 @@ export async function executeContentSave(
 
   // 本体 §3：agent 只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不要认领、不要交接
   if (action === "record") return executeRecord(params);
+  // 抽帧缝自查（spec 2026-09-30 §7）：只返回结果，不写事实、不影响批准
+  if (action === "check_slivers") return checkSlivers(params);
 
   if (action === "get") {
     const id = params.id as string;

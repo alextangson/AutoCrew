@@ -14,6 +14,8 @@ import { canonPlatform, slotOf, type Slot } from "./receipts.js";
 import type { ProductionDoc } from "../../storage/production-types.js";
 import { explainContent } from "./read.js";
 import { isUngated } from "./publish-check-link.js";
+import { currentCut } from "./sliver/check.js";
+import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
 /** 这个槽的状态由谁定：给创始人看的来源说法 */
 function slotLabel(w: Slot): string {
@@ -35,6 +37,23 @@ function pastSlots(doc: ProductionDoc): Array<{ round: number; platform: string;
     out.push({ round: s.round, platform: s.platform, label: `第 ${s.round} 轮 · ${slotLabel(s)}`, url: s.url ?? null, at: s.at });
   }
   return out.sort((a, b) => b.round - a.round || Date.parse(b.at) - Date.parse(a.at));
+}
+
+/**
+ * 抽帧检查（spec 2026-09-30 §6）：当前成片还没通过时，列每处缝（时间码、前后条目、修法、放没放行）或没跑成的原因，
+ * 以及能不能整条放行。已通过的成片不回溯拦，不再列。
+ */
+function sliverPanel(doc: ProductionDoc, approvedSha: string | undefined): Record<string, unknown> | null {
+  const cut = currentCut(doc);
+  if (!cut?.sha256 || approvedSha === cut.sha256) return null;
+  const v = sliverVerdict(doc, cut.sha256, null);
+  const c = v.check;
+  return {
+    cut_sha: cut.sha256, cut_fact_id: cut.id, status: c?.status ?? "none", reason: c?.reason ?? (c ? null : NO_RESULT), fingerprint: c?.fingerprint ?? null,
+    checked_at: c?.checked_at ?? null, blocked: !v.ok, missing: v.missing ?? null,
+    whole_waivable: v.wholeWaivable && !v.wholeWaived, whole_waived: v.wholeWaived,
+    items: (c?.slivers ?? []).map((s) => ({ ...s, key: sliverKey(s), waived: sliverWaived(doc, cut.sha256!, c!.fingerprint, s) })),
+  };
 }
 
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
@@ -60,6 +79,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     pending_receipts: receipts.pending.map((w) => ({ fact_id: w.fact_id, slot_id: w.id, platform: w.platform, url: w.url ?? (w.item_id ? `作品 ${w.item_id}` : null), host: w.source === "claim" ? w.host ?? "AI" : "数据回流" })),
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
+    slivers: sliverPanel(doc, cut?.sha256),
     checklist,
     // 已发布的也能重开（创始人 09-30），确认框单独说明；published = 这张卡现在是已发布
     can_reopen: doc.facts.some((f) => f.round === doc.round && f.state === "accepted") || doc.decisions.some((d) => d.round === doc.round && d.type === "script_approval"),

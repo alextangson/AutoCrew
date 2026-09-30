@@ -10,6 +10,7 @@ import { bodyHash } from "../../storage/production-store.js";
 import { platformLabel } from "../../desktop/platform-label.js";
 import { receiptsOfRound, type Slot } from "./receipts.js";
 import { isUngated } from "./publish-check-link.js";
+import { sliverVerdict } from "./sliver/verdict.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
@@ -193,7 +194,12 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   const has43 = facts.some((f) => f.kind === "cover" && f.ratio === "4:3");
   if (!has34) missing.push(MISSING.cover34);
   if (!has43) missing.push(MISSING.cover43);
-  if (newest && !cut) missing.push(MISSING.cutReview);
+  if (newest && !cut) {
+    missing.push(MISSING.cutReview);
+    // 抽帧检查（spec 2026-09-30 §6）：没结果 / 有未放行的缝 / 没跑成且没整条放行 → 写进还差什么
+    const v = sliverVerdict(doc, newest.sha256!, null);
+    if (!v.ok && v.missing) missing.push(v.missing);
+  }
   if (has34 && has43 && !cover) missing.push(MISSING.coverPick);
   const approvedCut = cut ? liveFact(doc, "cut", cut.sha256) : null;
   if (approvedCut && newest && newest.sha256 !== approvedCut.sha256 && newest.at > approvedCut.at) badges.push("有新成片待你审");
@@ -239,7 +245,9 @@ export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEv
   const facts = accepted(doc).filter((f) => PRODUCTION_KINDS.has(f.kind));
   if (facts.length) {
     const { missing, badges } = editingMissing(doc, cut, cover);
-    return { ...base, stage: "剪辑中", rule: "D4", missing, badges: [...base.badges, ...badges], evidence: facts.slice(0, 5).map((f) => `事实 ${f.id}（${f.kind}）`), reason: editingReason(missing) };
+    // 有缝 / 检查没跑成是真问题：看板卡上标红（「还没有结果」只是等检查，不标红）
+    const sliverAlerts = missing.filter((m) => m.startsWith("抽帧缝") || m.startsWith("抽帧检查没跑成"));
+    return { ...base, stage: "剪辑中", rule: "D4", missing, alerts: [...base.alerts, ...sliverAlerts], badges: [...base.badges, ...badges], evidence: facts.slice(0, 5).map((f) => `事实 ${f.id}（${f.kind}）`), reason: editingReason(missing) };
   }
   const suspect = candidates.some((c) => c.kind === "aroll");
   return { ...base, stage: "待录制", rule: "D5", missing: [MISSING.aroll], badges: [...base.badges, ...(suspect ? ["发现疑似 A-roll"] : [])], evidence: ["有效认稿，本轮还没有制作事实"],

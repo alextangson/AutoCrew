@@ -169,7 +169,8 @@
        "adoption",
        "delete",
        "restore",
-       "record"
+       "record",
+       "check_slivers"
       ],
       "type": "string"
      },
@@ -2796,7 +2797,8 @@
        "adoption",
        "delete",
        "restore",
-       "record"
+       "record",
+       "check_slivers"
       ],
       "type": "string"
      },
@@ -4977,7 +4979,8 @@
        "adoption",
        "delete",
        "restore",
-       "record"
+       "record",
+       "check_slivers"
       ],
       "type": "string"
      },

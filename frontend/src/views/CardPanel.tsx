@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
-import { chooseFile, decide, loadCard, reopenScript, type CardPanelData } from "./board-api";
+import { chooseFile, decide, loadCard, reopenScript, type CardPanelData, type SliverPanel } from "./board-api";
 
 const KIND_LABEL: Record<string, string> = { aroll: "原片", cut: "成片", srt: "字幕", cover: "封面", publish: "发布回执", chatcut_project: "ChatCut 工程" };
 import { UNDO } from "./board-columns";
@@ -115,6 +115,7 @@ function PanelBody(p: {
       <button disabled={p.busy} onClick={() => void p.act("confirm_receipt", { fact_id: r.fact_id }, "已确认发布")}>是的</button>
       <button disabled={p.busy} onClick={() => void p.act("correct_publish", { target_id: r.fact_id }, "已记为没发")}>没发</button>
     </div>)}</section>}
+    {d.active && d.slivers && <SliverSection s={d.slivers} busy={p.busy} act={p.act} />}
     {d.active && <PublishedSection d={d} busy={p.busy} act={p.act} />}
     {d.active && (d.past_receipts ?? []).length > 0 && <details><summary className="card-panel-note">以前几轮的发布（历史，不算本轮）</summary>
       {d.past_receipts!.map((r) => <p key={`${r.round}-${r.platform}`} className="card-panel-note">{platformName(r.platform)} · {r.label}{r.url ? `：${r.url}` : ""}</p>)}
@@ -142,5 +143,27 @@ function PublishedSection(p: { d: CardPanelData; busy: boolean; act: (a: string,
       <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="作品链接（可不填）" />
       <button disabled={p.busy} onClick={() => void p.act("i_published", { platform: d.platform, ...(url.trim() ? { url: url.trim() } : {}) }, "已记为你发了")}>我发了</button>
     </div>}
+  </section>;
+}
+
+/** 抽帧缝：每处时间码 + 前后条目 + 修法，逐处「这处是故意的」；检查没跑成时才有「这条不查了，放行」 */
+export function SliverSection(p: { s: SliverPanel; busy: boolean; act: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown> }) {
+  const s = p.s;
+  const waiveAll = async () => {
+    if (await confirmDialog({ title: "这条不查抽帧缝了？", body: `抽帧检查没跑成（${s.reason ?? "原因不明"}）。放行后这版成片可以直接通过，缝要你自己看片把关。`, confirmLabel: "不查了，放行" })) {
+      await p.act("waive_sliver_check", { cut_sha: s.cut_sha }, "这版成片不查抽帧缝了");
+    }
+  };
+  return <section><h3>抽帧检查</h3>
+    {s.status === "clean" && <p className="card-panel-note">没有抽帧缝</p>}
+    {s.status === "none" && <p className="card-panel-note">{s.reason ?? "抽帧检查还没有结果"}</p>}
+    {s.status === "unchecked" && <p className="card-panel-alert" role="alert">没跑成：{s.reason}</p>}
+    {s.whole_waived && <p className="card-panel-note">你已放行：这版成片不查抽帧缝</p>}
+    {s.items.map((x) => <div key={x.key} className="card-panel-row">
+      <span>{x.start_tc} 露出真人 {x.frames} 帧（「{x.prev_name ?? "前一段"}」和「{x.next_name ?? "后一段"}」之间）{x.transition ? " · 转场处可能露出" : ""}{x.suggestion ? ` · 建议：${x.suggestion}` : ""}</span>
+      {x.waived ? <span className="card-panel-note">已放行</span>
+        : <button disabled={p.busy} onClick={() => void p.act("waive_sliver", { cut_sha: s.cut_sha, fingerprint: s.fingerprint, sliver_key: x.key }, "记下了：这处是故意的")}>这处是故意的</button>}
+    </div>)}
+    {s.whole_waivable && <div className="card-panel-row"><button disabled={p.busy} onClick={() => void waiveAll()}>这条不查了，放行</button></div>}
   </section>;
 }

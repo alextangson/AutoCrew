@@ -27,6 +27,8 @@ import { commitRegistration } from "./registration.js";
 import { canonPlatform, observationFact } from "./receipts.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type ReleaseOp, type Txn, type TxnOp } from "./txn.js";
 import { applyRelease } from "./release.js";
+import { currentCut, triggerSliverCheck } from "./sliver/check.js";
+import { latestCheck } from "./sliver/verdict.js";
 
 type Receipt = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ ok: false, code, error, ...extra });
@@ -85,11 +87,11 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
     return fail("request_conflict", `request_id「${a.request_id}」已经用来报过另一件东西（${String(replay.receipt.kind)}）：这次的参数不同，换一个新的 request_id 再报`);
   }
   if (replay) return { ...(await receiptFor(content, dataDir, replay.receipt as unknown as ReceiptCore)), replayed: true };
-  if (a.kind === "chatcut_project") return recordChatcut(a, content, doc, dataDir);
+  if (a.kind === "chatcut_project") return withSliverCheck(await recordChatcut(a, content, doc, dataDir), content.id, dataDir);
   if (a.kind === "publish") return recordPublishClaim(content, dataDir, a);
   const plan = await planFileRecord(a, content, doc, dataDir);
   if (!plan.ok) return fail(plan.code, plan.error);
-  const r = await commitFile(a, content, plan.value, dataDir);
+  const r = a.kind === "cut" || a.kind === "srt" ? await withSliverCheck(await commitFile(a, content, plan.value, dataDir), content.id, dataDir) : await commitFile(a, content, plan.value, dataDir);
   // 字幕等后到时，补齐事实就自动完成登记（§5：两个判断已给过，不算替创始人判断）
   if (r.ok) {
     const commit = await commitRegistration(content.id, dataDir);
@@ -100,6 +102,22 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
     if (commit.warnings?.length) return { ...r, ...warnings };
   }
   return r;
+}
+
+/**
+ * 成片 / ChatCut 工程报上来之后跑一次抽帧检查（spec §5）：结果带进回执，让剪辑当场知道有没有缝。
+ * 检查自己的失败落成「未检查」；只有结果写不上才带 warning。
+ */
+async function withSliverCheck(r: Receipt, contentId: string, dataDir: string): Promise<Receipt> {
+  if (!r.ok) return r;
+  const err = await triggerSliverCheck(contentId, dataDir);
+  if (err) return { ...r, warnings: [...((r.warnings as string[] | undefined) ?? []), err] };
+  const doc = await readProductionDocOrEmpty(contentId, dataDir);
+  const cut = currentCut(doc);
+  const check = cut ? latestCheck(doc, cut.sha256!) : null;
+  if (!check) return r;
+  const summary = check.status === "clean" ? "没有抽帧缝" : check.status === "slivers" ? `抽帧缝 ${check.slivers.length} 处（${check.slivers.map((x) => x.start_tc).join("、")}）：修好后重新导出再报，或等创始人逐处放行` : `抽帧检查没跑成：${check.reason ?? ""}`;
+  return { ...r, sliver_check: { status: check.status, slivers: check.slivers.length, ...(check.reason ? { reason: check.reason } : {}), summary } };
 }
 
 export const ONTOLOGY_NOT_ENABLED =
@@ -146,7 +164,7 @@ function factFrom(a: RecordArgs, p: FilePlan, doc: ProductionDoc, relPath: strin
     source: "record", by: { host: a.host, ...(a.session ? { session: a.session } : {}) }, at: new Date().toISOString(),
     request_id: a.request_id, evidence: p.evidence, ...(txnId ? { txn_id: txnId } : {}),
     path: relPath ?? p.source, sha256: p.sha256, size: p.id.size, mtime_ms: p.id.mtime_ms,
-    ...(p.duration_ms ? { duration_ms: p.duration_ms } : {}), ...(p.ratio ? { ratio: p.ratio } : {}), ...(p.version ? { version: p.version } : {}),
+    ...(p.duration_ms ? { duration_ms: p.duration_ms } : {}), ...(p.kind === "cut" ? { export_mtime_ms: p.id.mtime_ms } : {}), ...(p.ratio ? { ratio: p.ratio } : {}), ...(p.version ? { version: p.version } : {}),
     ...(a.cover_text && p.kind === "cover" ? { text: a.cover_text } : {}), ...(p.for_cut ? { for_cut: p.for_cut } : {}), ...(a.note ? { note: a.note } : {}),
   };
 }

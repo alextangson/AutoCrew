@@ -69,6 +69,13 @@ export interface CardPanelData {
   pending_receipts?: Array<{ fact_id: string; platform: string | null; url: string | null; host: string }>;
   published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; work?: string | null; label: string; at: string }>;
   approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };
+  slivers?: SliverPanel | null;
+}
+/** 抽帧检查（spec 2026-09-30 §6）：status none = 还没有结果 */
+export interface SliverItem { key: string; start_frame: number; end_frame: number; frames: number; start_tc: string; prev_name?: string; next_name?: string; transition?: boolean; suggestion?: string; waived: boolean }
+export interface SliverPanel {
+  cut_sha: string; status: "clean" | "slivers" | "unchecked" | "none"; reason: string | null; fingerprint: string | null;
+  blocked: boolean; missing: string | null; whole_waivable: boolean; whole_waived: boolean; items: SliverItem[];
 }
 export const loadCard = (contentId: string) => call<CardPanelData>(`/api/board/card?content_id=${encodeURIComponent(contentId)}`);
 export const decide = (contentId: string, action: string, params: Json = {}) => post<Json>("/api/board/decision", { content_id: contentId, action, ...params });

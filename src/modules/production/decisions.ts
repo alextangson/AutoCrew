@@ -24,14 +24,16 @@ import { adoptCandidate } from "./record.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
 import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
+import { currentCut, runSliverCheck } from "./sliver/check.js";
+import { latestCheck, sliverKey, sliverVerdict, type Verdict } from "./sliver/verdict.js";
 
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
-  | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll";
+  | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
-  "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll",
+  "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll", "waive_sliver", "waive_sliver_check",
 ];
 
 type Result = Record<string, unknown>;
@@ -76,7 +78,46 @@ async function approveCut(ctx: Ctx): Promise<Result> {
   const bh = bodyHash(ctx.content.body);
   // 幂等重放只对仍然有效的批准（Codex 审 seg2 P2）：被打回之后再批，要落一条晚于打回的新决定
   const same = sameDecision(ctx.doc, "cut_approval", (d) => d.sha256 === f.sha256 && d.body_hash === bh && validCutApproval(ctx.doc, ctx.content.body)?.id === d.id);
-  return { ok: true, decision: same ?? (await push(ctx, { type: "cut_approval", fact_id: f.id, sha256: f.sha256, body_hash: bh }, "cut_approved")) };
+  if (same) return { ok: true, decision: same };
+  // 抽帧检查默认拦（spec 2026-09-30 §12-1）：写批准之前在服务端重跑 / 核对指纹，不只靠推导和界面
+  const gate = await sliverGate(ctx, f.sha256!);
+  if (!gate.ok) return fail("sliver_blocked", `成片还不能通过：${gate.missing}。在卡片上看每处缝，修好重新导出，或逐处点「这处是故意的」`);
+  return { ok: true, decision: await push(ctx, { type: "cut_approval", fact_id: f.id, sha256: f.sha256, body_hash: bh }, "cut_approved") };
+}
+
+/** 重跑（同指纹直接用缓存）→ 用重算出的当前指纹判：结果必须对应现在的输入 */
+async function sliverGate(ctx: Ctx, cutSha: string): Promise<Verdict> {
+  const run = await runSliverCheck(ctx.content.id, ctx.dataDir);
+  const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
+  if (currentCut(doc)?.sha256 !== cutSha) return { ok: false, missing: "这版已经不是当前成片", check: null, open: [], wholeWaived: false, wholeWaivable: false };
+  return sliverVerdict(doc, cutSha, run?.fingerprint ?? "\u0000none");
+}
+
+/** 「这处是故意的」：绑 round + 成片 sha + 结果指纹 + 缝身份；只对当前结果里的那一处有效（§12-8、E28） */
+async function waiveSliver(ctx: Ctx): Promise<Result> {
+  const cutSha = str(ctx.params.cut_sha), fingerprint = str(ctx.params.fingerprint), key = str(ctx.params.sliver_key);
+  if (!cutSha || !fingerprint || !key) return fail("bad_request", "要带成片、检查结果和哪一处（刷新再点）");
+  const run = await runSliverCheck(ctx.content.id, ctx.dataDir);
+  const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
+  if (currentCut(doc)?.sha256 !== cutSha) return fail("stale", "成片换过了，放行不继承：刷新看新成片的检查结果");
+  const check = latestCheck(doc, cutSha);
+  if (!run || !check || check.fingerprint !== fingerprint || run.fingerprint !== fingerprint || !check.slivers.some((x) => sliverKey(x) === key)) {
+    return fail("stale", "这处缝已经不在当前的检查结果里了（时间线或成片变过）：刷新再看");
+  }
+  const same = doc.decisions.find((d) => d.type === "sliver_waive" && d.round === doc.round && d.sha256 === cutSha && d.fingerprint === fingerprint && d.sliver_key === key);
+  return { ok: true, decision: same ?? (await push(ctx, { type: "sliver_waive", sha256: cutSha, fingerprint, sliver_key: key }, "sliver_waived")) };
+}
+
+/** 「这条不查了，放行」：只在检查没跑成（或没结果）时有（E13）；绑 round + 成片 sha */
+async function waiveSliverCheck(ctx: Ctx): Promise<Result> {
+  const cutSha = str(ctx.params.cut_sha);
+  await runSliverCheck(ctx.content.id, ctx.dataDir);
+  const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
+  if (!cutSha || currentCut(doc)?.sha256 !== cutSha) return fail("stale", "成片换过了，放行不继承：刷新再看");
+  const check = latestCheck(doc, cutSha);
+  if (check && check.status !== "unchecked") return fail("not_unchecked", check.status === "clean" ? "这版成片查过了、没有缝，不用放行" : "这版成片查出了缝：逐处看，故意的点「这处是故意的」");
+  const same = doc.decisions.find((d) => d.type === "sliver_waive_all" && d.round === doc.round && d.sha256 === cutSha);
+  return { ok: true, decision: same ?? (await push(ctx, { type: "sliver_waive_all", sha256: cutSha, ...(check?.reason ? { note: check.reason } : {}) }, "sliver_check_waived")) };
 }
 
 async function rejectWith(ctx: Ctx, type: "cut_reject" | "cover_reject", kind: Fact["kind"]): Promise<Result> {
@@ -201,7 +242,7 @@ const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   confirm_candidate: (c) => candidate(c, true), reject_candidate: (c) => candidate(c, false),
   approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
   pick_cover: pickCover, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
-  attach_aroll: attachAroll,
+  attach_aroll: attachAroll, waive_sliver: waiveSliver, waive_sliver_check: waiveSliverCheck,
 };
 
 /**

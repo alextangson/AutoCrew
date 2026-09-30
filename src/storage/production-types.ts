@@ -46,6 +46,8 @@ export interface Fact {
   ratio?: CoverRatio;
   version?: number;
   text?: string;
+  /** cut：导出文件落位前自己的修改时间（克隆进项目后 mtime_ms 是落位时间；抽帧检查拿它比时间线保存时间） */
+  export_mtime_ms?: number;
   /** srt：所属成片的 sha */
   for_cut?: string;
   /** chatcut_project */
@@ -102,7 +104,9 @@ export type DecisionType =
   | "reopen" // 重开文稿：结束本轮
   | "i_published"
   | "publish_confirm" // 创始人确认一条待核回执（模型说的「发了」）
-  | "publish_correction";
+  | "publish_correction"
+  | "sliver_waive" // 抽帧缝「这处是故意的」：绑 round + 成片 sha + 结果指纹 + 缝身份
+  | "sliver_waive_all"; // 抽帧检查没跑成「这条不查了，放行」：绑 round + 成片 sha
 
 export interface Decision {
   id: string;
@@ -125,6 +129,42 @@ export interface Decision {
   note?: string;
   /** i_published：点「我发了」时盖的把关结论 */
   gate?: GateStamp;
+  /** sliver_waive：放行时那份检查结果的输入指纹 */
+  fingerprint?: string;
+  /** sliver_waive：缝身份（帧区间 + 前后条目 id） */
+  sliver_key?: string;
+}
+
+/** 抽帧缝（spec 2026-09-30-broll-sliver-check）：A-roll 在两段盖住画面的条目之间露出 < 1 秒 */
+export interface Sliver {
+  /** 时间线帧，[start_frame, end_frame) */
+  start_frame: number;
+  end_frame: number;
+  frames: number;
+  start_tc: string;
+  prev_item: string;
+  next_item: string;
+  prev_name?: string;
+  next_name?: string;
+  /** 缝里有转场帧：转场处可能露出（§12-7） */
+  transition?: true;
+  suggestion?: string;
+}
+
+/** 一次抽帧检查的结果（本轮、针对一版成片）。transient = 没拿到快照或读文件出错：不缓存，下次触发重跑 */
+export interface SliverCheck {
+  id: string;
+  round: number;
+  cut_sha: string;
+  fingerprint: string;
+  snapshot_sha: string | null;
+  aroll_ids: string[];
+  version: string;
+  status: "clean" | "slivers" | "unchecked";
+  slivers: Sliver[];
+  reason?: string;
+  transient?: true;
+  checked_at: string;
 }
 
 /** 登记记录：某一组决定提交成功的不可变凭据（§5）。D2 只认与当前有效批准完全一致的那条 */
@@ -168,6 +208,8 @@ export interface ProductionDoc {
   requests?: Record<string, StoredReceipt>;
   /** 已提交的文件归属事务 id（恢复按它判提交，只留最近 200 条） */
   txns?: string[];
+  /** 抽帧检查结果（最近 30 条） */
+  sliver_checks?: SliverCheck[];
   /** 登记提交最近一次失败的原因（D3 的 missing） */
   commit_failure?: { round: number; reason: string; at: string } | null;
 }
