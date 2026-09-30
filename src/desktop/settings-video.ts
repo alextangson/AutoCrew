@@ -29,6 +29,8 @@ export interface VideoSettings {
    * 不猜缺省值——没设就拒绝项目外的成片候选，并告诉创始人在哪里设。
    */
   jianyingExportDir?: string;
+  /** 「暂停自动找原片」（1b §2）：只停自己去找的转写，agent record 与卡片挂载照常。写口在设置页（1b 段 B） */
+  arollAutoFindPaused?: boolean;
 }
 
 const VIDEO_FILE = "video.json";
@@ -64,6 +66,7 @@ function normalizeVideo(raw: Partial<VideoSettings>): VideoSettings {
     ...(concurrency !== undefined ? { renderConcurrency: concurrency } : {}),
     ...(raw.snapshotCopy === true ? { snapshotCopy: true } : {}),
     ...(typeof raw.jianyingExportDir === "string" && path.isAbsolute(raw.jianyingExportDir) ? { jianyingExportDir: raw.jianyingExportDir } : {}),
+    ...(raw.arollAutoFindPaused === true ? { arollAutoFindPaused: true } : {}),
   };
 }
 
