@@ -91,3 +91,39 @@ describe("Codex 2a-1 第三轮", () => {
     void founderDecision;
   });
 });
+
+describe("Codex 2a-1 第四轮", () => {
+  const agent = (p: Record<string, unknown>) => import("../../tools/content-save.js").then((m) => m.executeContentSave({ _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>);
+
+  it("R4-1 「去剪辑里改」后重新 mark_ready → 闪帧条目开新代次、重新出现", async () => {
+    const c = await editing();
+    const cut = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "三轮回归.mp4"), "cut"), request_id: "c", review: true });
+    const sl = (await items(c.id)).find((i) => i.type === "sliver")!;
+    expect(sl).toBeDefined();
+    expect(await decideItem({ content_id: c.id, item_id: sl.item_id, gen: sl.gen, action: "reject_cut" }, env.dir)).toMatchObject({ ok: true });
+    expect((await items(c.id)).find((i) => i.type === "sliver")).toBeUndefined();
+    await agent({ action: "mark_ready", content_id: c.id, fact_id: cut.fact_id });
+    const again = (await items(c.id)).find((i) => i.type === "sliver");
+    expect(again).toBeDefined();
+    expect(again!.gen).not.toBe(sl.gen);
+  });
+
+  it("R4-2 同一 request_id 换了附件 → request_conflict，不回放", async () => {
+    const c = await editing();
+    const root = projectRoot(env, c.id);
+    const a = await put(path.join(root, "04-edit/a.png"), png(10, 10, "a"));
+    const b = await put(path.join(root, "04-edit/b.png"), png(10, 10, "b"));
+    const base = { action: "ask", content_id: c.id, request_id: "same", kind: "粗剪", question: "看看", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] };
+    expect(await agent({ ...base, attachments: [a] })).toMatchObject({ ok: true });
+    expect(await agent({ ...base, attachments: [a] })).toMatchObject({ ok: true, replayed: true });
+    expect(await agent({ ...base, attachments: [b] })).toMatchObject({ ok: false, code: "request_conflict" });
+  });
+
+  it("R4-3 附件变了，agent 转述的回答也拒", async () => {
+    const c = await editing();
+    const a = await put(path.join(projectRoot(env, c.id), "04-edit/a.png"), png(10, 10, "a"));
+    const q = await agent({ action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "看看", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [a] });
+    await put(a, png(10, 10, "changed"));
+    expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: q.ask_id, option_id: "ok", founder_quote: "可以" })).toMatchObject({ ok: false, code: "attachments_changed", error: expect.stringContaining("附件变过，请重新发请示") });
+  });
+});

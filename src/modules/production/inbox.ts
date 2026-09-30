@@ -232,7 +232,7 @@ function attachItem(f: Fact): Draft {
 function sliverItems(doc: ProductionDoc, content: Content): Draft[] {
   const ok = validCutApproval(doc, content.body);
   const out: Draft[] = [];
-  for (const { fact } of markedCuts(doc)) {
+  for (const { fact, marked_at } of markedCuts(doc)) {
     if (ok?.sha256 === fact.sha256) continue;
     const v = sliverVerdict(doc, fact.sha256!, null);
     const c = v.check;
@@ -247,7 +247,8 @@ function sliverItems(doc: ProductionDoc, content: Content): Draft[] {
       detail: { cut_fact_id: fact.id, cut_sha: fact.sha256, status: c.status, reason: c.reason ?? null, fingerprint: c.fingerprint,
         items: c.slivers.map((s) => ({ key: sliverKey(s), start_tc: s.start_tc, frames: s.frames, prev_name: s.prev_name ?? null, next_name: s.next_name ?? null, suggestion: s.suggestion ?? null, waived: sliverWaived(doc, fact.sha256!, c.fingerprint, s),
           action: { action: "waive_sliver", label: "这处是故意的", role: "secondary", params: { cut_sha: fact.sha256, fingerprint: c.fingerprint, sliver_key: sliverKey(s) } } })) },
-      snapshot: [fact.id, fact.sha256, c.id, c.fingerprint, open.map(sliverKey)],
+      // 重新标「可以审了」= 重新交审，开新代次（Codex 审 2a-1 r4 P2）；检查结果身份也在里面
+      snapshot: [fact.id, fact.sha256, marked_at, c.id, c.fingerprint, c.status, c.checked_at, open.map(sliverKey)],
     });
   }
   return out;
@@ -317,7 +318,8 @@ function draftItem(content: Content): Draft | null {
     item_id: `draft:${content.id}`, type: "draft", summary: "稿子写好了，过一眼", waiting: null, agent_waiting: false, since: content.updatedAt, rank: 3,
     actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required", placeholder: "比如：开头换成客户问的那句话" }],
     detail: { platform: content.platform ?? null, words: Array.from((content.body ?? "").replace(/\s+/g, "")).length },
-    snapshot: [bodyHash(content.body), content.title],
+    // 退回修改后重交（同样的正文也算重交）开新代次
+    snapshot: [bodyHash(content.body), content.title, content.updatedAt],
   };
 }
 

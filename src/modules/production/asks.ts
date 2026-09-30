@@ -95,6 +95,14 @@ function answerable(ask: Ask | undefined, doc: ProductionDoc, content: Content |
   return s.status === "open" ? null : `${ENDED[s.status]}${s.reason ? `（${s.reason}）` : ""}`;
 }
 
+/** 所有回答路径（创始人点、agent 转述）共用的一道检查：请示还开着、每个附件字节没变（Codex 审 2a-1 r4 P2） */
+async function answerBlocked(ask: Ask | undefined, doc: ProductionDoc, content: Content | null, dataDir: string): Promise<Result | null> {
+  const why = answerable(ask, doc, content);
+  if (why) return fail("ask_closed", why);
+  if (content && await attachmentsChanged(content.id, ask!, dataDir)) return fail("attachments_changed", "附件变过，请重新发请示（问你的那份已经不是现在盘上的这份了）");
+  return null;
+}
+
 async function attachmentShas(root: string, ask: Ask): Promise<Array<string | null>> {
   return Promise.all(ask.attachments.map((a) => sha256File(path.join(root, a.path)).catch(() => null)));
 }
@@ -139,7 +147,7 @@ async function storyboardSnapshot(root: string, doc: ProductionDoc, factId: stri
   return { ok: true, value: { fact_id: f.id, sha256: v.value.sha256, receipt_sha256: v.value.receipt_sha256, assets_fp: crypto.createHash("sha256").update(JSON.stringify(media)).digest("hex"), round: doc.round } };
 }
 
-const askArgs = (kind: string, question: string, options: AskOption[], sb: string) => JSON.stringify([kind, question, options, sb]);
+const askArgs = (kind: string, question: string, options: AskOption[], sb: string, atts: Array<{ path: string; sha256: string }>) => JSON.stringify([kind, question, options, sb, atts.map((a) => [a.path, a.sha256])]);
 
 export async function executeAsk(params: Record<string, unknown>): Promise<Result> {
   const ctx = await agentCtx(params);
@@ -160,16 +168,17 @@ export async function executeAsk(params: Record<string, unknown>): Promise<Resul
   const root = contentRoot(content.id, dataDir);
   return withFileOwnership(async () => {
     const doc = await readProductionDocOrEmpty(content.id, dataDir);
-    const prior = (doc.asks ?? []).find((x) => x.request_id === request_id);
-    if (prior) {
-      const same = askArgs(prior.kind, prior.question, prior.options, prior.storyboard?.fact_id ?? "") === askArgs(kind, question, options.value, sbId);
-      return same ? { ok: true, ask_id: prior.id, state: prior.state, replayed: true } : fail("request_conflict", `request_id「${request_id}」已经用来问过另一件事：换一个新的 request_id`);
-    }
+    // 先把附件归一成（项目内路径, sha），再比重放：同一 request_id 换了附件是另一件事（Codex 审 2a-1 r4 P2）
     const attachments: Ask["attachments"] = [];
     for (const input of atts.value) {
       const a = await projectAttachment(root, input);
       if (!a.ok) return fail("attachment_outside", a.error);
       attachments.push({ path: a.rel, sha256: a.sha256 });
+    }
+    const prior = (doc.asks ?? []).find((x) => x.request_id === request_id);
+    if (prior) {
+      const same = askArgs(prior.kind, prior.question, prior.options, prior.storyboard?.fact_id ?? "", prior.attachments) === askArgs(kind, question, options.value, sbId, attachments);
+      return same ? { ok: true, ask_id: prior.id, state: prior.state, replayed: true } : fail("request_conflict", `request_id「${request_id}」已经用来问过另一件事（问题、选项或附件不同）：换一个新的 request_id`);
     }
     let storyboard: Ask["storyboard"];
     if (kind === "分镜") {
@@ -221,8 +230,8 @@ export async function executeAnswerAsk(params: Record<string, unknown>): Promise
     const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
     const ask = (doc.asks ?? []).find((x) => x.id === askId);
     if (ask?.state === "answered" && ask.answer?.via === "agent_reported" && ask.answer.option_id === optionId && ask.answer.quote === quote) return { ok: true, ask_id: askId, state: "answered", replayed: true };
-    const why = answerable(ask, doc, ctx.content);
-    if (why) return fail("ask_closed", why);
+    const blocked = await answerBlocked(ask, doc, ctx.content, ctx.dataDir);
+    if (blocked) return blocked;
     if (NO_REPORTED.has(ask!.kind)) return fail("founder_only", `「${ask!.kind}」请示只认创始人在「等你拍板」里点（或会话窗口的确认框），不收转述`);
     if (!ask!.options.some((o) => o.id === optionId)) return fail("bad_param", `option_id 要是这件请示的选项之一：${ask!.options.map((o) => o.id).join(" / ")}`);
     await mutateProduction(ctx.content.id, ctx.dataDir, (d) => {
@@ -239,12 +248,11 @@ export async function executeAnswerAsk(params: Record<string, unknown>): Promise
 export async function founderAnswer(content: Content, dataDir: string, askId: string, optionId: string, note: string): Promise<Result> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   const ask = (doc.asks ?? []).find((x) => x.id === askId);
-  const why = answerable(ask, doc, content);
-  if (why) return fail("ask_closed", why);
+  // 每个显式附件都核 sha（任何 kind，分镜也一样），和 agent 转述同一道检查；分镜快照再另核
+  const blocked = await answerBlocked(ask, doc, content, dataDir);
+  if (blocked) return blocked;
   if (!ask!.options.some((o) => o.id === optionId)) return fail("bad_request", "这个选项不在这件请示里，刷新再看");
   const root = contentRoot(content.id, dataDir);
-  // 每个显式附件都核 sha（任何 kind，分镜也一样；Codex 审 2a-1 r2 P2），分镜快照再另核
-  if (await attachmentsChanged(content.id, ask!, dataDir)) return fail("attachments_changed", "附件刚变过：重新看一下再答");
   let storyboardApproval: Omit<Decision, "id" | "round" | "at" | "source"> | null = null;
   if (ask!.storyboard) {
     const now = await storyboardSnapshot(root, doc, ask!.storyboard.fact_id);
