@@ -242,6 +242,23 @@ describe("Codex 审 segB6：转写临时没就绪不是终态", () => {
   });
 });
 
+describe("Codex 审 segB13：转写器回「环境不可用」不算失败", () => {
+  it("预检通过、转写时环境没了（unavailable）→ 停在「暂不可用」不计次；环境恢复后按内容认，没被当失败耗尽", async () => {
+    let ok = false, runs = 0;
+    asr(() => { runs += 1; return ok ? { ok: true, text: A.slice(20, 160) } : { ok: false, unavailable: true, reason: "找不到 ffmpeg" }; });
+    const a = await videoContent(env, "甲稿环境不可用测试", "draft_ready", A);
+    await put(path.join(env.inbox, "IMG_env.mov"), "env");
+    for (let i = 0; i < MAX_RETRIES + 1; i++) { clock += RETRY_DELAY_MS; await tick(); }
+    const [job] = await listMatchJobs(env.dir);
+    expect(job).toMatchObject({ state: "unavailable", attempts: 0 });
+    ok = true;
+    await tick();
+    await tick();
+    expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
+    expect(runs).toBeGreaterThan(1);
+  });
+});
+
 describe("Codex 审 segB10：转写期间文件被改名", () => {
   it("转写回来时文件已改名 → 不记成「已缓存」的终态；在新名字下重新发现后照样按内容认", async () => {
     let renamed = false;

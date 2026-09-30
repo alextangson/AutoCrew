@@ -24,6 +24,8 @@ export async function hear(dataDir: string, job: MatchJob, signal: AbortSignal):
   if (notReady) return { text: null, why: `转写环境没装好（${notReady}）` };
   if (!(await sameFile(job))) return { text: null, why: "核对期间文件变了或不见了", failed: true };
   const out = await t.transcribe(job.path, signal).catch((e: unknown) => ({ ok: false as const, unavailable: false, reason: e instanceof Error ? e.message : String(e) }));
+  // 环境问题（ffmpeg 没了、预检之后 ASR 没了）不是这份文件的失败：不带 failed，后台作业停在「暂不可用」不计次（Codex 审 segB13 P2）
+  if (!out.ok && out.unavailable && !signal.aborted) return { text: null, why: `转写环境没装好（${out.reason}）` };
   if (!out.ok) return { text: null, why: signal.aborted ? `转写超时（${out.reason}）` : `转写失败：${out.reason}`, failed: true };
   // 转写期间字节变了：这份文本不能记在旧 sha 名下
   if (!(await sameFile(job))) return { text: out.text, uncached: true };
