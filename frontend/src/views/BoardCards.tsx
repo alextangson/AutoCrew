@@ -11,7 +11,7 @@ import { showCodexPublish } from "./codex-publish";
 import { useProjectReview } from "./use-project-review";
 import { markPublished, revokeHandoff, unmarkPublished } from "./board-api";
 import {
-  backMoves, itemMeta, platformName, publishHeadline, publishLine, topicSourceLabel, writingArollBadge,
+  backMoves, itemMeta, platformName, publishHeadline, publishLine, topicSourceLabel, cardArollBadges,
   type BackMove, type BoardColumn, type BoardItem, type BoardTopic, type PlatformPublication,
 } from "./board-columns";
 
@@ -84,7 +84,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
       <div className="bcard-text">
         <button className="bcard-title" title={item.title} onClick={props.onOpen}>
           {item.status === "draft_ready" && <span className="bcard-score bcard-badge">等你认稿</span>}{item.title || "（无标题）"}</button>
-        {writingArollBadge(item) && <span className="bcard-score bcard-badge">{writingArollBadge(item)}</span>}
+        {cardArollBadges(item).map((b) => <span key={b} className="bcard-score bcard-badge">{b}</span>)}
         {meta && <div className={"bcard-meta" + (item.status === "needs_evidence" ? " bcard-red" : "")}>{meta}</div>}
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
         {(item.alerts ?? []).map((a) => <span key={a} className="bcard-alert">{a}</span>)}

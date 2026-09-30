@@ -100,6 +100,13 @@ export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name:
  * 写稿中卡片的原片提示（1b 预演反馈）：有 pending_match → 「正在核对原片」；有原片候选 → 「发现 N 个疑似原片」。
  * 别的列有自己的阶段说法，不重复。
  */
+/** 看板卡上的原片徽章：自动挂上的（任何列）+ 写稿中的疑似 / 核对中 */
+export function cardArollBadges(item: Pick<BoardItem, "column"> & { badges?: string[]; candidates?: Array<{ kind: string; state?: string }> }): string[] {
+  const auto = (item.badges ?? []).some((b) => b.includes("自动挂上，不对就点"));
+  const writing = writingArollBadge(item);
+  return [...(auto ? ["原片已自动挂上"] : []), ...(writing ? [writing] : [])];
+}
+
 export function writingArollBadge(item: Pick<BoardItem, "column"> & { candidates?: Array<{ kind: string; state?: string }> }): string | null {
   if (item.column !== "写稿中") return null;
   const arolls = (item.candidates ?? []).filter((c) => c.kind === "aroll");

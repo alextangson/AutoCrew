@@ -99,7 +99,7 @@ function PanelBody(p: {
     <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason ? ` · ${d.reason}` : ""}</p>
     {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.join("、")}</p>}
     {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
-    {d.badges.map((b) => <p key={b} className="card-panel-note">{b}</p>)}
+    {d.badges.filter((b) => b !== d.reason).map((b) => <p key={b} className="card-panel-note">{b}</p>)}
     {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
     {d.active && <CardCandidates contentId={d.id} rows={d.candidate_rows ?? []} busy={p.busy} act={p.act} confirm={p.actOrReassign} />}
     {d.active && <CardArolls rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
