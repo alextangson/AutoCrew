@@ -16,13 +16,14 @@ export const notifyWorthy = (i: InboxItem) => i.agent_waiting || i.rank <= 1;
 /**
  * items：这一轮读到的列表（null = 还没读到）。返回：要不要在列表头显示「打开提醒」、点了之后怎么问。
  */
-export function useInboxNotify(items: InboxItem[] | null, openItem: (id: string) => void): { canAsk: boolean; ask: () => void } {
+/** count：创始人看到的行数（合成的行算一件），标签页标题用它 */
+export function useInboxNotify(items: InboxItem[] | null, openItem: (id: string) => void, count = items?.length ?? 0): { canAsk: boolean; ask: () => void } {
   const state = useRef(newNotifyState());
   const seeded = useRef(false);
   const opener = useRef(openItem);
   opener.current = openItem;
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(() => ctor()?.permission ?? "unsupported");
-  useEffect(() => { document.title = tabTitle(items?.length ?? 0); }, [items?.length]);
+  useEffect(() => { document.title = tabTitle(count); }, [count]);
   useEffect(() => {
     if (!items) return;
     // 页面打开时已有的事：算已经提醒过，不一下子弹一串

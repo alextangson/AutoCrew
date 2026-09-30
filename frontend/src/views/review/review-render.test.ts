@@ -377,3 +377,12 @@ describe("卡片：以前的封面文件", () => {
     expect(acts).toEqual(["reject_stray_covers"]);
   });
 });
+
+describe("件数 = 看到的行数", () => {
+  it("一段成片候选 + 9 篇稿子 = 2 行：列表头「2 件」，标签页「(2) AutoCrew」", async () => {
+    await mountInbox([ITEMS[3], ...Array.from({ length: 9 }, (_, i) => draftOf(i + 1))]);
+    expect(el.querySelectorAll(".ri-row").length).toBe(2);
+    expect(el.querySelector(".ri-count")!.textContent).toBe("2 件");
+    expect(document.title).toBe("(2) AutoCrew");
+  });
+});

@@ -58,7 +58,8 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
   const rows = groupRows(list);
   const rowOfItem = (id: string) => rows.find((r) => r.items.some((i) => i.item_id === id)) ?? null;
   const open = useCallback((row: Row | null) => { setOpenKey(row?.key ?? null); setHeld(row); }, []);
-  const notify = useInboxNotify(items, (id) => { setCollapsed(false); open(rowOfItem(id)); });
+  // 件数 = 创始人看到的行数（合成的行算一件），列表头和标签页标题用同一个数
+  const notify = useInboxNotify(items, (id) => { setCollapsed(false); open(rowOfItem(id)); }, rows.length);
   // 卡片 / 工作台的「去『等你拍板』处理」：打开这条稿的那件事
   useEffect(() => {
     const on = (e: Event) => {
@@ -136,7 +137,7 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
   return <section className="ri" aria-label="等你拍板">
     <div className="ri-head">
       {list.length === 0 ? <span className="ri-empty">{error ? `「等你拍板」读不出来：${error}` : items === null ? "等你拍板 · 读取中" : "没有等你拍板的事"}</span>
-        : <><strong>等你拍板</strong><span className="ri-count">{list.length} 件</span>
+        : <><strong>等你拍板</strong><span className="ri-count">{rows.length} 件</span>
           <span className="ri-toggle">{notify.canAsk && <Button variant="quiet" onClick={notify.ask}>打开提醒</Button>}
             <Button variant="quiet" onClick={() => setCollapsed(expanded)}>{expanded ? "收起" : "展开"}</Button></span></>}
     </div>
