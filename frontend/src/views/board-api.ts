@@ -70,7 +70,12 @@ export interface CardPanelData {
   published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; work?: string | null; label: string; at: string }>;
   approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };
   slivers?: SliverPanel | null;
+  storyboard?: StoryboardPanel | null;
 }
+/** 分镜（spec 2026-09-30-storyboard-review-check §4）：最新一版 + 旧版 */
+export interface StoryboardView { fact_id: string; sha256: string; version: string; path: string; at: string }
+export interface StoryboardPanel { latest: StoryboardView & { changed: boolean; missing: boolean; note?: string }; older: StoryboardView[] }
+export const openStoryboard = (contentId: string, factId: string) => post<Json>("/api/board/open-storyboard", { content_id: contentId, fact_id: factId });
 /** 抽帧检查（spec 2026-09-30 §6）：status none = 还没有结果 */
 export interface SliverItem { key: string; start_frame: number; end_frame: number; frames: number; start_tc: string; prev_name?: string; next_name?: string; transition?: boolean; suggestion?: string; waived: boolean }
 export interface SliverPanel {

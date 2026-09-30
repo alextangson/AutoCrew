@@ -76,6 +76,8 @@ export interface BoardItem {
   alerts?: string[];
   badges?: string[];
   reason?: string;
+  /** 最新一版分镜（「v001」） */
+  storyboard?: string | null;
 }
 
 export interface BoardTopic {
@@ -326,5 +328,7 @@ export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date
     // 旧流程登记过的已发布卡：中性说明放在卡片信息行（不标红；换过版本那种在 alerts 里标红）
     if (item.column === "已发布" && item.badges?.includes(LEGACY_REGISTERED)) parts.push(LEGACY_REGISTERED);
   }
+  // 有分镜时带上最新版本（分镜 spec §4）
+  if (item.storyboard) parts.push(`分镜 ${item.storyboard}`);
   return parts.join(" · ");
 }

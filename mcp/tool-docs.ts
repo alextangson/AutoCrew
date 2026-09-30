@@ -101,7 +101,7 @@ export function toolGuideText(name: string, description: string, parameters: unk
  * 说明跟着资料库的启用状态走，不留两套口径。长度不超过原说明（M7 预算）。
  */
 export const ONTOLOGY_TOOL_DOCS: Readonly<Record<string, string>> = {
-  autocrew_content: "管理已有稿件。record 报制作事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程 / 发布回执），只报盘上有什么；summary 看进度与 next_action；check_slivers 导出前自查抽帧缝（只读）；get 读全文；update 改稿；list / siblings 查询。认稿、成片通过、选封面、我发了只归创始人。新 AI 稿走 workflow → writer。",
+  autocrew_content: "管理已有稿件。record 报制作事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程 / 发布回执 / 分镜审阅页），只报盘上有什么；summary 看进度与 next_action；check_slivers 导出前自查抽帧缝（只读）；get 读全文；update 改稿；list / siblings 查询。认稿、成片通过、选封面、我发了只归创始人。新 AI 稿走 workflow → writer。",
   autocrew_video: "剪辑台内置剪辑线（start / transcript / review 等按 status 的 next 做）。交接 / 认稿 / 汇报 / 登记 / 撤回已关：原片、成片、字幕、封面改用 autocrew_content record。",
   autocrew_asset: "稿件素材。add 登记库内素材（封面与库外文件改用 autocrew_content record）；list 列；remove 删（需审批）；versions / get_version / revert 版本。",
 };

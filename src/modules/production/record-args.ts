@@ -5,7 +5,7 @@
  */
 import type { CoverRatio, FactKind } from "../../storage/production-types.js";
 
-export const RECORD_KINDS: readonly FactKind[] = ["aroll", "cut", "srt", "cover", "chatcut_project", "publish"];
+export const RECORD_KINDS: readonly FactKind[] = ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard"];
 
 export interface RecordArgs {
   content_id: string;

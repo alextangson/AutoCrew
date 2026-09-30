@@ -98,8 +98,8 @@ export const contentSaveSchema = Type.Object({
   })),
   kind: Type.Optional(Type.Unsafe<string>({
     type: "string",
-    enum: ["aroll", "cut", "srt", "cover", "chatcut_project", "publish"],
-    description: "record：事实种类。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（记为待核，等创始人确认或数据回流核实）.",
+    enum: ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard"],
+    description: "record：事实种类。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（记为待核，等创始人确认或数据回流核实）、storyboard 分镜（只收 build_material_review.py 生成的 03-broll/review-vNNN/*.html）.",
   })),
   request_id: Type.Optional(Type.String({ description: "record：这次报告的请求号；重试用同一个，服务端直接重放上次结果." })),
   path: Type.Optional(Type.String({ description: "record：文件的本机路径（可 ~ 开头）。项目内原地收；原片收件箱、ChatCut / 剪映导出目录会挪 / 克隆进项目；其他位置只记候选." })),

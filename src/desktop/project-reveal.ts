@@ -15,6 +15,7 @@ import { executionWithCovers } from "../modules/video/handoff/founder-review.js"
 import { executionFromFacts } from "../modules/production/workbench.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../storage/production-store.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
+import { storyboardFile } from "../modules/production/storyboard.js";
 
 export const REVEAL_DIRS = { project_root: "", covers_dir: "05-cover", delivery_dir: "07-delivery" } as const;
 const MISSING = "文件找不到了（可能已挪走）";
@@ -50,6 +51,13 @@ async function locate(id: string, target: string, dataDir: string): Promise<Loca
       ? executionFromFacts(await readProductionDocOrEmpty(content.id, dataDir))
       : await executionWithCovers(content, dataDir, content.video?.handoff?.generation ?? 1);
     const entry = execution?.artifacts.find((a) => a.sha256 === target);
+    // 分镜审阅页（spec 2026-09-30-storyboard-review-check）：按本条 storyboard 事实的 sha 定位
+    const board = !entry && isVideoPlatform(content.platform) && await isOntologyActive(dataDir, content.id)
+      ? (await readProductionDocOrEmpty(content.id, dataDir)).facts.find((f) => f.kind === "storyboard" && f.state === "accepted" && f.sha256 === target) : undefined;
+    if (board) {
+      const file = await storyboardFile(root, board);
+      return file ? { ok: true, path: file, dir: false } : { ok: false, code: "file_missing", error: MISSING };
+    }
     if (!entry) return { ok: false, code: "not_allowed", error: "这件产物不属于这条稿" };
     const at = await resolveReportedFile(entry.path, root, entry.role, dataDir);
     checked = at.ok ? { ok: true as const, value: at.value.file } : at;

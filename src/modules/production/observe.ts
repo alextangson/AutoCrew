@@ -5,6 +5,7 @@
  * 07-delivery/**。旧存法：meta.assets 封面、execution.json 报到产物。它们都导入为 accepted（source=reconcile / legacy）。
  * 每条事实的 availability 按盘上现状更新；同一路径字节被覆盖 → 记 replaced_at（绑它的批准随之失效）。
  */
+import { scanStoryboards } from "./storyboard.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Content } from "../../storage/local-store.js";
@@ -178,6 +179,9 @@ export async function observeProject(content: Content, doc: ProductionDoc, root:
     ...(await scanMedia(root, "04-edit", false, "cut")),
     ...(await scanMedia(root, "07-delivery", true, "cut")),
     ...(await scanCovers(root)),
+    // 分镜审阅页：只导入核验通过的（历史目录里大量中间文件，不合规的静默跳过，E11）
+    ...(await scanStoryboards(root)).map((s): Seen => ({ kind: "storyboard", state: "accepted", source: "reconcile", evidence: `项目 ${path.dirname(s.rel)}`,
+      path: s.rel, sha256: s.sha256, size: s.size, mtime_ms: s.mtime_ms, version: s.version, receipt_sha256: s.receipt_sha256 })),
   ];
   attachForCut(seen, doc);
   return { seen, availability: await availabilityOf(doc, root, archived) };

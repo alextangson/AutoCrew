@@ -5,7 +5,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
-import { chooseFile, decide, loadCard, reopenScript, type CardPanelData, type SliverPanel } from "./board-api";
+import { chooseFile, decide, loadCard, openStoryboard, reopenScript, type CardPanelData, type SliverPanel, type StoryboardPanel } from "./board-api";
+import { RevealLink, when } from "./board-parts";
 
 const KIND_LABEL: Record<string, string> = { aroll: "原片", cut: "成片", srt: "字幕", cover: "封面", publish: "发布回执", chatcut_project: "ChatCut 工程" };
 import { UNDO } from "./board-columns";
@@ -115,6 +116,7 @@ function PanelBody(p: {
       <button disabled={p.busy} onClick={() => void p.act("confirm_receipt", { fact_id: r.fact_id }, "已确认发布")}>是的</button>
       <button disabled={p.busy} onClick={() => void p.act("correct_publish", { target_id: r.fact_id }, "已记为没发")}>没发</button>
     </div>)}</section>}
+    {d.active && d.storyboard && <StoryboardSection contentId={d.id} s={d.storyboard} />}
     {d.active && d.slivers && <SliverSection s={d.slivers} busy={p.busy} act={p.act} />}
     {d.active && <PublishedSection d={d} busy={p.busy} act={p.act} />}
     {d.active && (d.past_receipts ?? []).length > 0 && <details><summary className="card-panel-note">以前几轮的发布（历史，不算本轮）</summary>
@@ -165,5 +167,29 @@ export function SliverSection(p: { s: SliverPanel; busy: boolean; act: (a: strin
         : <button disabled={p.busy} onClick={() => void p.act("waive_sliver", { cut_sha: s.cut_sha, fingerprint: s.fingerprint, sliver_key: x.key }, "记下了：这处是故意的")}>这处是故意的</button>}
     </div>)}
     {s.whole_waivable && <div className="card-panel-row"><button disabled={p.busy} onClick={() => void waiveAll()}>这条不查了，放行</button></div>}
+  </section>;
+}
+
+/** 分镜：最新一版「打开审阅页」+「在访达中显示」，旧版折叠；报上之后被改过就提示 */
+export function StoryboardSection(p: { contentId: string; s: StoryboardPanel }) {
+  const l = p.s.latest;
+  const open = async (factId: string) => {
+    const r = await openStoryboard(p.contentId, factId);
+    if (!r.ok) toast(r.error);
+    else if (r.data.opened === false) toast(`这台机器打不开浏览器，路径：${String(r.data.path ?? "")}`);
+  };
+  return <section><h3>分镜</h3>
+    <div className="card-panel-row">
+      <span>分镜 {l.version} · {when(l.at)} 报上</span>
+      <button className="primary" disabled={l.missing} onClick={() => void open(l.fact_id)}>打开审阅页</button>
+      <RevealLink contentId={p.contentId} target={l.sha256} />
+    </div>
+    {l.note && <p className="card-panel-alert" role="alert">{l.note}</p>}
+    {p.s.older.length > 0 && <details><summary className="card-panel-note">以前的分镜（{p.s.older.length} 版）</summary>
+      {p.s.older.map((o) => <div key={o.fact_id} className="card-panel-row">
+        <span>分镜 {o.version} · {when(o.at)}</span>
+        <button onClick={() => void open(o.fact_id)}>打开审阅页</button>
+      </div>)}
+    </details>}
   </section>;
 }

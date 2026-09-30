@@ -15,6 +15,8 @@ import type { Column } from "../modules/production/explain.js";
 import { isMissing, resolveContentProject } from "../storage/content-project.js";
 import { readPublishRecord, recordTime, type PublishRecord } from "../storage/publish-record.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
+import { readProductionDoc } from "../storage/production-store.js";
+import { storyboards, versionLabel } from "../modules/production/storyboard.js";
 
 export type BoardColumn = "选题" | Column;
 
@@ -44,6 +46,8 @@ export interface BoardItem {
   blockedReason: string | null;
   /** explain()：还差什么、徽章、候选（未启用本体时是影子结果之外的旧列，这三样为空） */
   missing: string[];
+  /** 最新一版分镜的版本号（「v001」）；没有分镜 / 不按本体走 = null */
+  storyboard?: string | null;
   badges: string[];
   /** 真有问题的提示（卡上标红）：未登记就发布、文件不见了、被驳回… */
   alerts: string[];
@@ -114,12 +118,20 @@ export async function wordsPerMinute(contents: Content[], dataDir: string): Prom
   return chars / (last.video!.final!.duration_ms / 60_000);
 }
 
+/** 看板卡片信息行的「分镜 vNNN」：最新一版分镜（spec 2026-09-30-storyboard-review-check §4） */
+async function storyboardVersion(id: string, dataDir: string): Promise<string | null> {
+  const doc = await readProductionDoc(id, dataDir).catch(() => null);
+  const latest = doc ? storyboards(doc)[0] : undefined;
+  return latest ? versionLabel(latest.version) : null;
+}
+
 async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise<BoardItem | null> {
   const current = c;
   const publish: PublishRecord | null = PUBLISH_STATUSES.has(c.status) || c.manualPublications?.length
     ? await readPublishRecord(c.id, c.manualPublications, dataDir) : null;
   const exp = await explainContent(c, dataDir, ctx, publish);
   const col = exp.column;
+  const active = ctx.enabled && !ctx.excluded.has(current.id) && isVideoPlatform(current.platform);
   // 归档 / 未知状态 / 选题占位不进任何列（§6）
   if (!col) return null;
   return {
@@ -131,8 +143,9 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     cover: col === "待发布" || col === "已发布" ? await coverOf(current.id, dataDir).catch(() => null) : null,
     publish, publishTime: publish ? recordTime(publish) ?? current.publishedAt : current.publishedAt,
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
-    active: ctx.enabled && !ctx.excluded.has(current.id) && isVideoPlatform(current.platform),
+    active,
     missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
+    storyboard: active ? await storyboardVersion(current.id, dataDir) : null,
   };
 }
 

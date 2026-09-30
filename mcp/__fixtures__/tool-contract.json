@@ -240,7 +240,8 @@
        "srt",
        "cover",
        "chatcut_project",
-       "publish"
+       "publish",
+       "storyboard"
       ],
       "type": "string"
      },
@@ -2868,7 +2869,8 @@
        "srt",
        "cover",
        "chatcut_project",
-       "publish"
+       "publish",
+       "storyboard"
       ],
       "type": "string"
      },
@@ -5050,7 +5052,8 @@
        "srt",
        "cover",
        "chatcut_project",
-       "publish"
+       "publish",
+       "storyboard"
       ],
       "type": "string"
      },

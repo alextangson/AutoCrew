@@ -38,7 +38,7 @@ const HOST_ALLOWLISTS: Readonly<Record<string, Allowlist>> = {
 const DENIED_MESSAGE: Readonly<Record<string, string>> = { codex: CODEX_EDITOR_DENIED };
 
 /** 启用本体后的剪辑工位：只报事实，不再 match / confirm / handoff */
-export const CODEX_EDITOR_DENIED_ONTOLOGY = "剪辑工位（codex）在本体下只报事实：autocrew_content record（原片 / 成片 / 字幕 / 封面 / ChatCut 工程）、content get / summary / check_slivers、asset add、publish check / propose_preference 与只读查询；审片、选封面、发布只有创始人在卡片上点";
+export const CODEX_EDITOR_DENIED_ONTOLOGY = "剪辑工位（codex）在本体下只报事实：autocrew_content record（原片 / 成片 / 字幕 / 封面 / ChatCut 工程 / 分镜审阅页）、content get / summary / check_slivers、asset add、publish check / propose_preference 与只读查询；审片、选封面、发布只有创始人在卡片上点";
 
 /**
  * 所有命名宿主共用的硬拒（P6-e r3：模型绕开 handoff 的门后，转而用 `autocrew_content adoption`

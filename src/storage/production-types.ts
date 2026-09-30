@@ -6,7 +6,8 @@
  * 而 storage 不能在运行时反向依赖 modules。
  */
 
-export type FactKind = "aroll" | "cut" | "srt" | "cover" | "publish" | "chatcut_project";
+/** storyboard：脚本生成的分镜审阅页，只显示，不参与阶段推导（不在 PRODUCTION_KINDS 里） */
+export type FactKind = "aroll" | "cut" | "srt" | "cover" | "publish" | "chatcut_project" | "storyboard";
 /** 制作事实：本轮有一条 accepted 就进剪辑中（D4） */
 export const PRODUCTION_KINDS: ReadonlySet<FactKind> = new Set(["aroll", "cut", "srt", "cover", "chatcut_project"]);
 
@@ -50,6 +51,8 @@ export interface Fact {
   export_mtime_ms?: number;
   /** aroll：记录 / 挪入之前的原始绝对路径（ChatCut 工程引用的往往是它；抽帧检查按路径认原片） */
   source_path?: string;
+  /** storyboard：同目录脚本回执的 sha256 */
+  receipt_sha256?: string;
   /** srt：所属成片的 sha */
   for_cut?: string;
   /** chatcut_project */

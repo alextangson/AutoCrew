@@ -15,6 +15,7 @@ import type { ProductionDoc } from "../../storage/production-types.js";
 import { explainContent } from "./read.js";
 import { isUngated } from "./publish-check-link.js";
 import { currentCut } from "./sliver/check.js";
+import { storyboardPanel } from "./storyboard.js";
 import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
 /** 这个槽的状态由谁定：给创始人看的来源说法 */
@@ -80,6 +81,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
     slivers: sliverPanel(doc, cut?.sha256),
+    storyboard: await storyboardPanel(contentId, dataDir, doc),
     checklist,
     // 已发布的也能重开（创始人 09-30），确认框单独说明；published = 这张卡现在是已发布
     can_reopen: doc.facts.some((f) => f.round === doc.round && f.state === "accepted") || doc.decisions.some((d) => d.round === doc.round && d.type === "script_approval"),

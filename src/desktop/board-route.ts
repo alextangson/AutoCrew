@@ -13,6 +13,7 @@ import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { founderDecision } from "../modules/production/decisions.js";
 import { cardPanel } from "../modules/production/panel.js";
+import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/production/storyboard.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
 import { isContentId } from "../storage/entity-id.js";
 
@@ -22,6 +23,8 @@ export interface BoardRouteDeps {
   resolveDataDir: () => Promise<string>;
   readBody: (req: http.IncomingMessage) => Promise<string>;
   open?: OpenDeps;
+  /** 测试注入：不真开浏览器 */
+  storyboard?: StoryboardOpenDeps;
 }
 
 const JSON_TYPE = "application/json; charset=utf-8";
@@ -105,6 +108,15 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         // 浏览器请求体里的 _host / _modelCall 不许借来冒充什么：剥掉内部键，决定只认会话本身
         const params = Object.fromEntries(Object.entries(b).filter(([k]) => !k.startsWith("_")));
         return founderDecision(id, String(b.action ?? ""), params, dir);
+      });
+      return true;
+    }
+    // 「打开审阅页」（分镜 spec E10）：浏览器会话 + 同源；只带 fact_id，服务端按事实里的路径打开
+    if (p === "/api/board/open-storyboard" && req.method === "POST") {
+      await post(req, res, async (b, dir) => {
+        const id = String(b.content_id ?? "");
+        if (!isContentId(id)) return { ok: false, code: "bad_request", error: "content_id 不对" };
+        return openStoryboard(id, String(b.fact_id ?? ""), dir, deps.storyboard);
       });
       return true;
     }

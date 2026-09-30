@@ -27,6 +27,7 @@ import { commitRegistration } from "./registration.js";
 import { canonPlatform, observationFact } from "./receipts.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type ReleaseOp, type Txn, type TxnOp } from "./txn.js";
 import { applyRelease } from "./release.js";
+import { STORYBOARD_HINT, validateStoryboard } from "./storyboard.js";
 import { currentCut, triggerSliverCheck } from "./sliver/check.js";
 import { latestCheck } from "./sliver/verdict.js";
 
@@ -89,6 +90,7 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   if (replay) return { ...(await receiptFor(content, dataDir, replay.receipt as unknown as ReceiptCore)), replayed: true };
   if (a.kind === "chatcut_project") return withSliverCheck(await recordChatcut(a, content, doc, dataDir), content.id, dataDir);
   if (a.kind === "publish") return recordPublishClaim(content, dataDir, a);
+  if (a.kind === "storyboard") return recordStoryboard(a, content, dataDir);
   const plan = await planFileRecord(a, content, doc, dataDir);
   if (!plan.ok) return fail(plan.code, plan.error);
   const r = a.kind === "cut" || a.kind === "srt" ? await withSliverCheck(await commitFile(a, content, plan.value, dataDir), content.id, dataDir) : await commitFile(a, content, plan.value, dataDir);
@@ -261,11 +263,33 @@ async function recordChatcut(a: RecordArgs, content: Content, doc: ProductionDoc
   return receipt(r.value, r.explanation, content, null);
 }
 
+// ---- storyboard：脚本生成的审阅页，原地收（不挪、不克隆），只显示不影响阶段 ----
+
+async function recordStoryboard(a: RecordArgs, content: Content, dataDir: string): Promise<Receipt> {
+  if (!a.path) return fail("bad_param", `kind=storyboard 要带 path（审阅页）。${STORYBOARD_HINT}`);
+  const root = contentRoot(content.id, dataDir);
+  const v = await validateStoryboard(root, a.path);
+  if (!v.ok) return fail(v.code, v.error);
+  const r = await mutateProduction(content.id, dataDir, (d) => {
+    // 同一份页面重复报：幂等，不另起一条（E7）
+    const same = d.facts.find((f) => f.round === d.round && f.kind === "storyboard" && f.sha256 === v.value.sha256);
+    const fact: Fact = same ?? { id: newId("fact"), kind: "storyboard", round: d.round, state: "accepted", availability: "present", source: "record",
+      by: { host: a.host, ...(a.session ? { session: a.session } : {}) }, at: new Date().toISOString(), request_id: a.request_id, evidence: "脚本生成的审阅页（回执核对通过）",
+      path: v.value.rel, sha256: v.value.sha256, size: v.value.size, mtime_ms: v.value.mtime_ms, version: v.value.version, receipt_sha256: v.value.receipt_sha256 };
+    if (!same) d.facts.push(fact);
+    const core: ReceiptCore = { fact_id: fact.id, kind: "storyboard", state: fact.state, path: fact.path };
+    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { ...core } } };
+    return { value: core, events: same ? [] : [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: "storyboard", version: fact.version, by: a.host } }] };
+  });
+  return receipt(r.value, r.explanation, content, root);
+}
+
 // ---- 回执 ----
 
 function nextAction(core: ReceiptCore, exp: Explanation): string {
   if (core.state === "candidate") return `已记成候选（${core.reason ?? "归属要创始人确认"}），等创始人在卡片上点「是这条」。不要替创始人确认，也不要自己挪文件。`;
   if (core.kind === "aroll") return `原片已在项目里（path）。从这个新路径导入 ChatCut，导入后 record kind=chatcut_project chatcut_project_id=<工程 id> uses_aroll=["${core.fact_id}"]。`;
+  if (core.kind === "storyboard") return "分镜已收下。告诉创始人：在看板卡片上点「打开审阅页」看分镜（不要再发 MD 或文件路径当分镜）；他在对话里回复意见。";
   if (core.kind === "cut") return `成片已收。把这版的字幕也报上来（record kind=srt for_cut="${core.fact_id}"），然后等创始人审成片——成片通过只能创始人点。`;
   const missing = exp.missing.length ? `还差：${exp.missing.join("、")}。` : "";
   return `${missing}看 autocrew_content summary 取最新进度；批准与选封面只能创始人点。`;
