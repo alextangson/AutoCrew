@@ -474,3 +474,15 @@ describe("整分支审 4", () => {
     expect((await getContent(c.id, env.dir))!.status).toBe("draft_ready");
   });
 });
+
+describe("整分支审 5", () => {
+  it("认稿交来的正文哈希和盘上不同（页面显示的是旧正文）→ 拒", async () => {
+    const d = await videoContent(env, "显示的那一版");
+    const it = (await items(d.id)).find((i) => i.type === "draft")!;
+    const { bodyHash } = await import("../../storage/production-store.js");
+    expect(await decideItem({ content_id: d.id, item_id: it.item_id, gen: it.gen, action: "approve_script", expected_body_hash: bodyHash("旧的正文") }, env.dir))
+      .toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
+    const { getContent } = await import("../../storage/local-store.js");
+    expect((await getContent(d.id, env.dir))!.status).toBe("draft_ready");
+  });
+});

@@ -8,6 +8,7 @@ import { invoke } from "../../transport";
 import { relativeLabel } from "../../time-format";
 import { openStoryboard } from "../board-api";
 import { attachmentUrl, mediaUrl } from "./review-api";
+import { sha256Hex } from "../StageAdvance";
 import { plainWords, type InboxAction, type InboxItem } from "./review-model";
 
 export type Act = (a: InboxAction, extra?: Record<string, unknown>) => Promise<void>;
@@ -103,17 +104,25 @@ function CoverBody(p: { item: InboxItem; act: Act }) {
   </>;
 }
 
+/**
+ * 正文和交上去的东西绑在一起（整分支审 5 P1）：代次一变就重读正文；交的时候带「屏幕上这份正文」的哈希，
+ * 服务端对不上就拒——看到的和认的永远是同一版。正文没读到之前不给按钮。
+ */
 export function DraftBody(p: { item: InboxItem; act: Act }) {
-  const [body, setBody] = useState<string | null>(null);
+  const [body, setBody] = useState<{ text: string; hash: string | null } | null>(null);
   useEffect(() => {
     let live = true;
-    void invoke("content:get", { id: p.item.content_id }).then((r) => { if (live) setBody(((r as unknown as { content?: { body?: string } }).content?.body) ?? "（读不出正文）"); }, () => { if (live) setBody("（读不出正文）"); });
+    setBody(null);
+    void invoke("content:get", { id: p.item.content_id }).then(async (r) => {
+      const text = (r as unknown as { content?: { body?: string } }).content?.body;
+      if (live) setBody(typeof text === "string" ? { text, hash: await sha256Hex(text) } : { text: "（读不出正文）", hash: null });
+    }, () => { if (live) setBody({ text: "（读不出正文）", hash: null }); });
     return () => { live = false; };
-  }, [p.item.content_id]);
+  }, [p.item.content_id, p.item.gen]);
   return <>
     <Props rows={[["稿子", p.item.title], ["写好", relativeLabel(p.item.since)], ["字数", String(p.item.detail.words ?? "")]]} />
-    <Actions item={p.item} act={p.act} />
-    <div className="ri-preview ri-body">{body ?? "读取中…"}</div>
+    {body?.hash ? <Actions item={p.item} act={p.act} extra={() => ({ expected_body_hash: body.hash })} /> : <p className="ri-reason">{body ? "正文读不出来，先别认" : "正文读取中…"}</p>}
+    <div className="ri-preview ri-body">{body?.text ?? "读取中…"}</div>
   </>;
 }
 

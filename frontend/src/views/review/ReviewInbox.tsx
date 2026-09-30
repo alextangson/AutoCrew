@@ -30,7 +30,10 @@ export function Thumb(p: { item: InboxItem }) {
   return <span className="ri-thumb">{k === "cover" ? "图" : k === "video" ? "片" : k === "srt" ? "字" : "稿"}</span>;
 }
 
-export function ReviewInbox(props: { focusContent?: string } = {}) {
+/** 标签页在后台时轮询放慢到 30 秒（不停）：后台标签页也要能弹提醒、更新标题件数（整分支审 5 P2） */
+export const HIDDEN_POLL_MS = 30_000;
+
+export function ReviewInbox(props: { focusContent?: string; hiddenPollMs?: number }) {
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 上一次读成功的时间：读失败时列表停在那一刻，列表头写明（整分支审 3 P2） */
@@ -53,9 +56,15 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
   }, []);
   useEffect(() => {
     void reload();
-    const t = setInterval(() => { if (!document.hidden) void reload(); }, POLL_MS);
+    let last = Date.now();
+    const hiddenMs = props.hiddenPollMs ?? HIDDEN_POLL_MS;
+    const t = setInterval(() => {
+      if (document.hidden && Date.now() - last < hiddenMs) return;
+      last = Date.now();
+      void reload();
+    }, Math.min(POLL_MS, hiddenMs));
     return () => clearInterval(t);
-  }, [reload]);
+  }, [reload, props.hiddenPollMs]);
 
   const list = items ?? [];
   const rows = groupRows(list);

@@ -106,7 +106,9 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
     return t.ok ? { ok: true, decision: d } : fail("transition_failed", `意见记下了，但稿子没退回修改：${String(t.error ?? "")}`, { decision: d });
   }
   // 写锁内再核一次正文：就是创始人看着的那一版（代次里的正文哈希）
-  const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: bodyHash(c.body) }) as Result;
+  // 页面交来的是它屏幕上那份正文的哈希（整分支审 5 P1）；没带就用代次对上那一刻读到的正文
+  const shown = str(ctx.params.expected_body_hash);
+  const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: shown || bodyHash(c.body) }) as Result;
   return t.ok ? { ok: true, status: "approved" } : fail("transition_failed", String(t.error ?? "认稿没成"));
 }
 

@@ -38,7 +38,7 @@ function DraftSteps(p: { row: Row; act: ItemAct }) {
   const cur = items[Math.min(idx, items.length - 1)];
   return <>
     <p className="ri-note">第 {Math.min(idx, items.length - 1) + 1} 篇，共 {items.length} 篇：{cur.title}</p>
-    <DraftBody key={cur.item_id} item={cur} act={(a, extra) => p.act(cur, a, extra)} />
+    <DraftBody key={`${cur.item_id}:${cur.gen}`} item={cur} act={(a, extra) => p.act(cur, a, extra)} />
     {items.length > 1 && <div className="ri-actions"><span className="ri-quiet-slot"><Button variant="quiet" onClick={() => setIdx((idx + 1) % items.length)}>下一篇</Button></span></div>}
   </>;
 }

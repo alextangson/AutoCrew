@@ -23,13 +23,14 @@ vi.mock("./review-api", () => ({
   INBOX_OPEN_EVENT: "autocrew:inbox-open",
   openInboxItem: () => {},
 }));
-vi.mock("../../transport", () => ({ invoke: async () => ({ ok: true, content: { body: "正文第一段。" } }), authedFetch: async () => new Response("{}"), SESSION_EXPIRED: "x" }));
+let draftBody = "正文第一段。";
+vi.mock("../../transport", () => ({ invoke: async () => ({ ok: true, content: { body: draftBody } }), authedFetch: async () => new Response("{}"), SESSION_EXPIRED: "x" }));
 
 let el: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  decided.length = 0; undone.length = 0; decideReply = { ok: true }; inbox = []; failWith = null;
+  decided.length = 0; undone.length = 0; decideReply = { ok: true }; inbox = []; failWith = null; draftBody = "正文第一段。";
   el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el);
   window.localStorage?.clear?.();
 });
@@ -428,5 +429,41 @@ describe("列表读不成（整分支审 3 P2）", () => {
     failWith = "x";
     await poll();
     expect(el.querySelector(".ri-warn")!.textContent).toBe("登录过期，刷新页面");
+  }, 10_000);
+});
+
+describe("整分支审 5", () => {
+  const sha = async (t: string) => (await import("node:crypto")).createHash("sha256").update(t).digest("hex");
+  it("稿子那一行：轮询换了代次就重读正文；认稿交的是新代次 + 屏幕上这份正文的哈希", async () => {
+    await mountInbox([draftOf(1), draftOf(2)]);
+    await openRow("2 篇稿子写好了，过一眼");
+    await tick();
+    expect(el.querySelector(".ri-body")!.textContent).toBe("正文第一段。");
+    draftBody = "别的会话改过的正文。";
+    inbox = [{ ...draftOf(1), gen: "d1-new" }, draftOf(2)];
+    const { POLL_MS } = await import("./ReviewInbox");
+    await act(async () => { await new Promise((r) => setTimeout(r, POLL_MS + 100)); });
+    await tick();
+    expect(el.querySelector(".ri-body")!.textContent).toBe("别的会话改过的正文。");
+    await click(btn("稿子没问题"));
+    expect(decided.at(-1)).toMatchObject({ item_id: "draft:content-1-d", gen: "d1-new", action: "approve_script", expected_body_hash: await sha("别的会话改过的正文。") });
+  }, 15_000);
+  it("标签页在后台：照样慢慢轮询，新来的事照样弹提醒、标题件数更新", async () => {
+    const created: string[] = [];
+    const N = Object.assign(function (this: { onclick: null; close: () => void }, title: string) { created.push(title); this.onclick = null; this.close = () => {}; }, { permission: "granted", requestPermission: vi.fn() });
+    vi.stubGlobal("Notification", N);
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    try {
+      inbox = [ITEMS[0]];
+      const { ReviewInbox } = await import("./ReviewInbox");
+      await act(async () => { root.render(createElement(ReviewInbox, { hiddenPollMs: 300 })); });
+      await tick();
+      expect(created).toEqual([]);
+      const other = { ...ITEMS[1], item_id: "cut:content-9-z:r1", content_id: "content-9-z" };
+      inbox = [ITEMS[0], other];
+      await act(async () => { await new Promise((r) => setTimeout(r, 1200)); });
+      expect(document.title).toBe("(2) AutoCrew");
+      expect(created).toEqual([ITEMS[1].summary]);
+    } finally { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); }
   }, 10_000);
 });
