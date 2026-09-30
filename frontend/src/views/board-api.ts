@@ -64,6 +64,9 @@ export const revokeHandoff = (contentId: string, manifestHash: string) =>
 
 /* 本体卡片面板（spec §10）：读面板、创始人决定、重开文稿 */
 export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean; state?: string; started_at?: string }
+/** 本轮 accepted 原片（1b §4.1 / §7）：自动挂上的可撤；核对说更像别条的可改挂 / 就是这条 */
+export interface ArollCheck { status: "checking" | "ok" | "suggest" | "kept" | "not_ready" | "failed"; other_id?: string; other_title?: string; reason?: string }
+export interface ArollRow { fact_id: string; sha256: string; path: string; auto_attached: boolean; source_path: string | null; check: ArollCheck | null; undo_blocked: string | null; reassign_blocked: string | null }
 export interface CardPanelData {
   id: string; title: string; platform: string | null; status: string; active: boolean;
   column: string | null; stage: string | null; reason?: string; missing: string[]; badges: string[]; alerts?: string[]; candidates: CardCandidate[];
@@ -74,6 +77,7 @@ export interface CardPanelData {
   approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };
   slivers?: SliverPanel | null;
   storyboard?: StoryboardPanel | null;
+  arolls?: ArollRow[];
 }
 /** 分镜（spec 2026-09-30-storyboard-review-check §4）：最新一版 + 旧版 */
 export interface StoryboardView { fact_id: string; sha256: string; version: string; path: string; at: string }
@@ -89,3 +93,11 @@ export const loadCard = (contentId: string) => call<CardPanelData>(`/api/board/c
 export const decide = (contentId: string, action: string, params: Json = {}) => post<Json>("/api/board/decision", { content_id: contentId, action, ...params });
 export const chooseFile = () => post<{ path: string }>("/api/board/choose-file", {});
 export const reopenScript = (contentId: string, round: number) => post<Json>("/api/board/reopen-script", { content_id: contentId, confirm: true, round });
+
+/* 「原片从哪里找」（1b §5）：读 / 写只走浏览器会话 */
+export interface WatchFolderView { path: string; scan: boolean; allow_move: boolean; problem: string | null; last: { at: string; error?: string; files: number; suggested: number } | null }
+export interface ArollSourcesView { inbox: string | null; folders: WatchFolderView[]; paused: boolean; asr: { ready: boolean; reason?: string }; jianyingExportDir: string | null }
+export const loadSources = () => call<ArollSourcesView>("/api/board/aroll-sources");
+export const sourceOp = (op: string, params: Json = {}) => post<Json>("/api/board/aroll-sources", { op, ...params });
+export const chooseFolder = () => post<{ path: string }>("/api/board/choose-folder", {});
+export const revealSource = (path: string) => post<Json>("/api/board/reveal-source", { path });

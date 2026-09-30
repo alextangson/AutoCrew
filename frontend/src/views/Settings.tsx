@@ -15,6 +15,7 @@ import { Section } from "./settings-kit";
 import { EngineSection } from "./SettingsEngine";
 import { SettingsStorage } from "./SettingsStorage";
 import { SettingsJianying } from "./SettingsJianying";
+import { SettingsArollSources } from "./SettingsArollSources";
 import { SettingsAsr } from "./SettingsAsr";
 import { Integrations } from "./Integrations";
 import { SettingsPublishGate } from "./SettingsPublishGate";
@@ -86,6 +87,7 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
         <>
           {props.nav && <MorePages nav={props.nav} />}
           <SettingsStorage />
+          <SettingsArollSources />
           <SettingsJianying />
           <SettingsAsr />
           <EngineSection />

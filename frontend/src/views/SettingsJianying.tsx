@@ -1,7 +1,8 @@
 /** 剪映导出目录（P6 §13.4-F）：成片候选唯一允许在项目外的位置。不猜缺省值，没设就拒收项目外成片。 */
 import { useEffect, useState } from "react";
 import { toast } from "../ui";
-import { videoSettingsGet, videoSettingsSet } from "../lib";
+import { videoSettingsGet } from "../lib";
+import { sourceOp } from "./board-api";
 import { Section } from "./settings-kit";
 
 export function SettingsJianying() {
@@ -19,10 +20,11 @@ export function SettingsJianying() {
   const save = async (value: string | null) => {
     setBusy(true);
     try {
-      const r = await videoSettingsSet({ jianyingExportDir: value });
+      // 剪映导出目录是可搬入根：只走浏览器会话路由（1b §5，§14-7），不走 invoke
+      const r = await sourceOp("set_jianying", { path: value });
       if (!r.ok) return toast(r.error || "保存失败");
-      setSaved(r.data?.jianyingExportDir ?? null);
-      setDraft(r.data?.jianyingExportDir ?? "");
+      setSaved(value);
+      setDraft(value ?? "");
       toast(value ? "剪映导出目录已保存" : "已清空剪映导出目录");
     } finally { setBusy(false); }
   };

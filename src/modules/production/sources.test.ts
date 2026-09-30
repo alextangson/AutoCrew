@@ -78,3 +78,18 @@ describe("allow_move 才让 agent record 直接搬入（§5）", () => {
     expect(await record(env, { content_id: c.id, kind: "aroll", path: deep, request_id: "r3" })).toMatchObject({ ok: true, state: "candidate" });
   });
 });
+
+describe("在访达中显示只认收件箱与监视文件夹", () => {
+  it("收件箱目录、收件箱顶层文件、已加的监视文件夹可以；别的路径拒", async () => {
+    const { revealSourcePath } = await import("./sources-view.js");
+    const deps = { platform: "linux" };
+    const f = await put(path.join(env.inbox, "IMG_1.mov"), "x");
+    expect(await revealSourcePath(f, env.dir, deps)).toMatchObject({ ok: true });
+    expect(await revealSourcePath(env.inbox, env.dir, deps)).toMatchObject({ ok: true });
+    expect(await revealSourcePath(await put(path.join(env.outside, "y.mov"), "y"), env.dir, deps)).toMatchObject({ ok: false, code: "not_allowed" });
+    expect(await revealSourcePath(watch, env.dir, deps)).toMatchObject({ ok: false, code: "not_allowed" });
+    await call("/api/board/aroll-sources", { op: "add_folder", path: watch });
+    expect(await revealSourcePath(watch, env.dir, deps)).toMatchObject({ ok: true });
+    expect((await call("/api/board/reveal-source", { path: f }, "bearer")).status).toBe(403);
+  });
+});

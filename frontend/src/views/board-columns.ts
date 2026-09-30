@@ -90,11 +90,15 @@ export interface BoardTopic {
   renewedAt: string | null;
 }
 
+/** 收件箱（1b §4）：没对上的、没核对成的、还在核对的——待录制列头读它 */
+export interface InboxFileView { name: string; path: string; size: number; mtime_ms: number; guess: string[] }
+export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number }
+
 /** 本体对账报告（服务端 /api/board 的 ontology，spec 2026-09-29 §4.1）：未启用时的「要挪」清单与逐条失败 */
 export interface OntologyMove { id: string; title: string; from: string | null; to: string | null; rule: string | null; evidence: string[] }
 export interface OntologyState {
   enabled: boolean;
-  report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[] } | null;
+  report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[]; inbox?: InboxStatus } | null;
 }
 
 export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null; ontology?: OntologyState }

@@ -10,6 +10,7 @@ import { confirmDialog, toast } from "../ui";
 import { requestDockCollapsed } from "../chat/dock-prefs";
 import { newIdea } from "../new-idea";
 import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting } from "./board-api";
+import { InboxHeader } from "./InboxHeader";
 import { CardPanel } from "./CardPanel";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
@@ -135,6 +136,7 @@ export function Board(props: Nav) {
             </span>}</h2>
           <p title={COLUMN_HINT[col]}>{COLUMN_HINT[col]}</p>
           {refused && <p className="bcol-refuse" role="status">{refused}</p>}
+          {col === "待录制" && ontology && <InboxHeader inbox={data?.ontology?.report?.inbox} targets={(cards?.["待录制"] ?? []).flatMap((c) => (c.kind === "item" ? [{ id: c.item.id, title: c.item.title }] : []))} reload={reload} />}
         </header>
         {cards === null ? <p className="bcol-note">读取中</p>
           : <ColumnBody col={col} cards={cards[col]} data={data!} expanded={expanded.has(col)} allEmpty={allEmpty} starting={starting}

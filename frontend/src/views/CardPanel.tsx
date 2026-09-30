@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
+import { CardArolls } from "./CardArolls";
 import { chooseFile, decide, loadCard, openStoryboard, reopenScript, type CardPanelData, type SliverPanel, type StoryboardPanel } from "./board-api";
 import { RevealLink, when } from "./board-parts";
 
@@ -104,6 +105,7 @@ function PanelBody(p: {
       <button disabled={p.busy} onClick={() => void p.actOrReassign("confirm_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "已确认是这条")}>是这条</button>
       <button disabled={p.busy} onClick={() => void p.act("reject_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "记住了：不是这条")}>不是这条</button>
     </div>)}</section>}
+    {d.active && <CardArolls rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
     {d.active && (d.column === "待录制" || d.missing.includes("A-roll")) && <section><h3>挂 A-roll</h3>
       <div className="card-panel-row">
         <button className="primary" disabled={p.busy} onClick={() => void p.pick()}>选择文件…</button>

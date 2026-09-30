@@ -17,7 +17,7 @@ import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
 import { isContentId } from "../storage/entity-id.js";
 import { applyArollSourceOp } from "../modules/production/sources.js";
-import { arollSourcesView } from "../modules/production/sources-view.js";
+import { arollSourcesView, revealSourcePath, type RevealSourceDeps } from "../modules/production/sources-view.js";
 
 export interface BoardRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
@@ -27,6 +27,8 @@ export interface BoardRouteDeps {
   open?: OpenDeps;
   /** 测试注入：不真开浏览器 */
   storyboard?: StoryboardOpenDeps;
+  /** 测试注入：不真开访达 */
+  reveal?: RevealSourceDeps;
 }
 
 const JSON_TYPE = "application/json; charset=utf-8";
@@ -144,6 +146,10 @@ export function createBoardHandler(deps: BoardRouteDeps) {
     }
     if (p === "/api/board/aroll-sources" && req.method === "POST") {
       await post(req, res, (b, dir) => applyArollSourceOp(String(b.op ?? ""), b, dir));
+      return true;
+    }
+    if (p === "/api/board/reveal-source" && req.method === "POST") {
+      await post(req, res, (b, dir) => revealSourcePath(String(b.path ?? ""), dir, deps.reveal));
       return true;
     }
     if (p === "/api/board/choose-folder" && req.method === "POST") {
