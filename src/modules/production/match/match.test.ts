@@ -164,6 +164,17 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     expect((await listMatchJobs(dir)).filter((j) => j.key === jobKey(bad))).toEqual([expect.objectContaining({ state: "failed" })]);
   });
 
+  it("同一份字节换了位置再被发现：作业改指新路径；因旧路径没了而退避的，安全地重新排上（Codex 审 segB3 P2）", async () => {
+    registerMatchHandler("test_path", async ({ job }): Promise<JobResult> => (job.path === "/new.mov" ? { state: "done", outcome: "ok" } : { state: "retry", error: "文件不见了" }));
+    await enqueueMatchJob(dir, spec({ purpose: "test_path", path: "/old.mov" }));
+    await matchWorkerIdle(dir);
+    expect((await listMatchJobs(dir))[0]).toMatchObject({ state: "queued", attempts: 1 });
+    const moved = await enqueueMatchJob(dir, spec({ purpose: "test_path", path: "/new.mov", size: 2, mtime_ms: 2 }));
+    expect(moved).toMatchObject({ path: "/new.mov", size: 2, next_at: 0 });
+    await matchWorkerIdle(dir);
+    expect((await listMatchJobs(dir))[0]).toMatchObject({ state: "done", path: "/new.mov" });
+  });
+
   it("重启：跑到一半的作业回到排队，持久化在工作区缓存目录", async () => {
     const file = path.join(transcriptCacheDir(dir), "..", "match-jobs.json");
     const job: MatchJob = { id: "mjob-x", key: jobKey(spec()), purpose: "test_ok", priority: "background", sha256: SHA, path: "/x.mov", size: 1, mtime_ms: 1,

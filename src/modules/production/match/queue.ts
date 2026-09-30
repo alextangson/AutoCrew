@@ -120,6 +120,13 @@ export async function enqueueMatchJob(dataDir: string, spec: JobSpec): Promise<M
     const i = jobs.findIndex((j) => j.key === key);
     const existing = i >= 0 ? jobs[i] : null;
     const live = existing && !TERMINAL.has(existing.state);
+    // 同一份字节换了位置（改名 / 从监视文件夹挪进收件箱）：改指新路径；因旧路径没了在退避或失败的，重新排上（Codex 审 segB3 P2）
+    const moved = existing && existing.path !== spec.path;
+    if (existing && moved) Object.assign(existing, { path: spec.path, size: spec.size, mtime_ms: spec.mtime_ms, updated_at: iso() });
+    if (existing && moved && existing.state !== "running" && (existing.state === "failed" || existing.attempts > 0)) {
+      Object.assign(existing, { state: "queued", attempts: 0, next_at: 0, error: undefined });
+      return existing;
+    }
     if (existing && live && (!spec.id || spec.id === existing.id)) return existing;
     if (existing && !live && spec.priority === "background") return existing;
     const next = fresh(spec, key);
