@@ -10,12 +10,13 @@ import { l1Strong, matchL1, type L1Kind } from "./l1.js";
 import { MIN_SPEECH_CHARS, scoreTranscript, speechChars } from "./l2.js";
 
 /**
- * L2 阈值。**未校准**：`scripts/calibrate-aroll-match.mts` 跑出分布、创始人看过之后才定值并翻 `L2_CALIBRATED`
- * （注释写样本量与分布）。在那之前下限 / 差距只用来写候选依据，L2 不自动认。
+ * L2 阈值，2026-09-30 按 `scripts/calibrate-aroll-match.mts` 定值、创始人看过后打开：
+ * 资料库 4 条稿 7 个样本（原片 4、成片 3），对自己稿 0.446–0.679，对最像的别条稿 0.067–0.125，差距 0.360–0.589。
+ * 下限与差距离两侧实测边缘各留约 0.15。同系列近似稿会压小差距 → 过不了差距就退回候选，不会认错。
  */
-export const L2_CALIBRATED = false;
-export const L2_FLOOR = 0.5;
-export const L2_MARGIN = 0.15;
+export const L2_CALIBRATED = true;
+export const L2_FLOOR = 0.3;
+export const L2_MARGIN = 0.2;
 
 export interface PoolEntry { content_id: string; title: string; old_titles: string[]; round: number; body_hash: string; body: string }
 export interface SnapshotEntry { content_id: string; round: number; body_hash: string; title: string }

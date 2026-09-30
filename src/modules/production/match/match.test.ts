@@ -15,6 +15,7 @@ import { enqueueMatchJob, jobKey, listMatchJobs, matchWorkerIdle, MAX_RETRIES, r
 
 const entry = (id: string, title: string, body: string): PoolEntry => ({ content_id: id, title, old_titles: [], round: 1, body_hash: `h-${id}`, body });
 const CAL: Thresholds = { calibrated: true, floor: 0.5, margin: 0.15 };
+const UNCAL: Thresholds = { ...CAL, calibrated: false };
 const SHA = "a".repeat(64);
 
 describe("判定：L1 强命中（统一定义，§2.1 / §14-18）", () => {
@@ -40,7 +41,7 @@ describe("判定：L2（§2.1）", () => {
   const spoken = bodies[1].slice(20, 140);
 
   it("校准前 L2 一律不自动认，只给前三名（B17）", () => {
-    const d = decide({ fileName: "x.mov", sha256: SHA, pool, heard: { text: spoken } });
+    const d = decide({ fileName: "x.mov", sha256: SHA, pool, heard: { text: spoken } }, UNCAL);
     expect(d.winner).toBeNull();
     expect(d.top3[0].content_id).toBe("c1");
     expect(d.reason).toContain("没校准");
