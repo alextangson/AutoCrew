@@ -14,6 +14,9 @@ const KIND_LABEL: Record<string, string> = { aroll: "原片", cut: "成片", srt
 import { UNDO } from "./board-columns";
 import { platformName } from "./board-columns";
 
+/** 有正在核对的时候面板多久重读一次 */
+const POLL_MS = 5000;
+
 type Props = { contentId: string; onClose: () => void; openEditor: (id: string) => void; reload: () => Promise<void> };
 
 export function CardPanel(p: Props) {
@@ -26,6 +29,13 @@ export function CardPanel(p: Props) {
     if (r.ok) { setData(r.data); setError(null); } else setError(r.error);
   }, [p.contentId]);
   useEffect(() => { void refresh(); }, [refresh]);
+  // 有正在核对的（pending_match / 挂载核对 checking）就每 5 秒重读，结果或失败出来就停；面板关了也停（Codex 审 segB6 P2）
+  const checking = Boolean(data && ((data.candidate_rows ?? []).some((c) => c.state === "pending_match") || (data.arolls ?? []).some((r) => r.check?.status === "checking")));
+  useEffect(() => {
+    if (!checking) return;
+    const t = setInterval(() => void refresh(), POLL_MS);
+    return () => clearInterval(t);
+  }, [checking, refresh]);
 
   const act = async (action: string, params: Record<string, unknown>, done: string) => {
     setBusy(true);
