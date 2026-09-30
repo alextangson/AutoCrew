@@ -16,7 +16,7 @@ import { readProductionDoc } from "../../storage/production-store.js";
 import { cardPanel } from "./panel.js";
 import { explainContent } from "./read.js";
 import { reconcileAll } from "./reconcile.js";
-import { openStoryboard, STORYBOARD_HINT } from "./storyboard.js";
+import { openStoryboard, pageRefs, STORYBOARD_HINT } from "./storyboard.js";
 import { reopenScript } from "./reopen.js";
 import { founderApprove, makeEnv, projectRoot, record, videoContent, type Env } from "./testkit.js";
 
@@ -213,6 +213,20 @@ describe("§4 事实与显示（E7–E11）", () => {
 });
 
 describe("Codex 审 storyboard 回归", () => {
+  it("[storyboard2 P2 storyboard.ts:59] 合法引用写法都认：单引号、srcset、CSS url()、poster、数字实体", () => {
+    const dir = "/p/03-broll/review-v001";
+    const html = [
+      "<img src='assets/a.png'>",
+      '<img srcset="assets/b.png 1x, assets/c.png 2x">',
+      '<div style="background:url(assets/d.png)"></div><div style="background:url(\'assets/e.png\')"></div>',
+      '<video poster="assets/f.png" src="assets&#47;g.mp4"></video>',
+      '<img src="assets&#x2F;h%20i.png"><a href="https://x.test/y.png">外链</a><a href="#top">锚点</a>',
+    ].join("");
+    const refs = pageRefs(html, dir);
+    for (const f of ["a.png", "b.png", "c.png", "d.png", "e.png", "f.png", "g.mp4", "h i.png"]) expect(refs.has(path.join(dir, "assets", f))).toBe(true);
+    expect([...refs].some((r) => r.includes("x.test") || r.endsWith("top"))).toBe(false);
+  });
+
   it("[P2 storyboard.ts:87] 页面实际引用的素材不见了，上层目录有同名同 hash 的文件也不算", async () => {
     const { c, pr } = await approved();
     const r = await makeReview(pr, { media: ["assets/shot.svg"] });

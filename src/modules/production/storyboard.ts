@@ -56,15 +56,25 @@ function parseReceipt(raw: string): Receipt | null {
  * 这里反过来还原；带协议的外链和锚点不算。
  */
 export function pageRefs(html: string, pageDir: string): Set<string> {
-  const unesc = (s: string) => s.replace(/&quot;/g, "\"").replace(/&#x27;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  // 命名实体 + 十进制 / 十六进制数字实体（&#47; &#x2F;）；&amp; 最后还原，免得二次解码
+  const unesc = (s: string) => s
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&quot;/g, "\"").replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   const out = new Set<string>();
-  for (const m of html.matchAll(/\b(?:src|href)="([^"]*)"/g)) {
-    const raw = unesc(m[1]);
-    if (!raw || raw.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) continue;
+  const add = (value: string) => {
+    const raw = unesc(value).trim();
+    if (!raw || raw.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return;
     let decoded: string;
-    try { decoded = decodeURIComponent(raw.split(/[?#]/)[0]); } catch { continue; }
+    try { decoded = decodeURIComponent(raw.split(/[?#]/)[0]); } catch { return; }
     out.add(path.resolve(pageDir, decoded));
+  };
+  // 单双引号的 src / href / poster；srcset 按逗号拆、取每段的 URL；CSS url(...)（带不带引号都认）
+  for (const m of html.matchAll(/\b(?:src|href|poster)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) add(m[1] ?? m[2] ?? "");
+  for (const m of html.matchAll(/\bsrcset\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+    for (const part of (m[1] ?? m[2] ?? "").split(",")) add(part.trim().split(/\s+/)[0] ?? "");
   }
+  for (const m of html.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]+))\s*\)/gi)) add(m[1] ?? m[2] ?? m[3] ?? "");
   return out;
 }
 
