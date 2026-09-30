@@ -60,7 +60,7 @@ export const revokeHandoff = (contentId: string, manifestHash: string) =>
   post<RevokeReply>(`/api/project-review?content_id=${encodeURIComponent(contentId)}`, { action: "revoke", manifest_hash: manifestHash });
 
 /* 本体卡片面板（spec §10）：读面板、创始人决定、重开文稿 */
-export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean }
+export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean; state?: string; started_at?: string }
 export interface CardPanelData {
   id: string; title: string; platform: string | null; status: string; active: boolean;
   column: string | null; stage: string | null; reason?: string; missing: string[]; badges: string[]; alerts?: string[]; candidates: CardCandidate[];

@@ -16,7 +16,7 @@ import {
 import type { ProductionDoc, TimelineEvent } from "../../storage/production-types.js";
 import { writeTextAtomicMkdir } from "../../storage/json-atomic.js";
 import { deriveExplanation, POST_APPROVAL, type Explanation } from "./explain.js";
-import { withFileOwnership } from "./mutex.js";
+import { outsideFileOwnership, withFileOwnership } from "./mutex.js";
 import { matchingRegistration, publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import { registrationPatch } from "./registration.js";
 import { rebuildShaIndex, reindexContent, type ShaIndex } from "./sha-index.js";
@@ -28,20 +28,43 @@ type NewEvent = Omit<TimelineEvent, "seq" | "at">;
 
 const ready = new Map<string, Promise<{ recovered: RecoveryOutcome[]; index: ShaIndex }>>();
 
-export function ensureProductionReady(dataDir: string) {
+/** 开放写入之后要跑一次的事（1b §3-5：本轮 pending_match 重新入队）。每个工作区每个钩子只跑一次 */
+type ReadyHook = (dataDir: string) => Promise<void>;
+const readyHooks: ReadyHook[] = [];
+const hooksRan = new Map<string, Set<ReadyHook>>();
+
+export function registerReadyHook(fn: ReadyHook): void {
+  readyHooks.push(fn);
+}
+
+async function runReadyHooks(dataDir: string): Promise<string[]> {
+  const ran = hooksRan.get(dataDir) ?? new Set<ReadyHook>();
+  hooksRan.set(dataDir, ran);
+  const errors: string[] = [];
+  for (const fn of readyHooks.filter((h) => !ran.has(h))) {
+    ran.add(fn);
+    await fn(dataDir).catch((e: unknown) => { ran.delete(fn); errors.push(e instanceof Error ? e.message : String(e)); });
+  }
+  return errors;
+}
+
+export async function ensureProductionReady(dataDir: string) {
   let p = ready.get(dataDir);
   if (!p) {
     p = withFileOwnership(async () => ({ recovered: await recoverTxns(dataDir), index: await rebuildShaIndex(dataDir) }));
     ready.set(dataDir, p);
     p.catch(() => ready.delete(dataDir));
   }
-  return p;
+  const r = await p;
+  // 钩子在锁外跑（重新入队只读事实、写本机队列）；失败下次再试，并带回给调用方看
+  const hookErrors = await outsideFileOwnership(() => runReadyHooks(dataDir));
+  return { ...r, ...(hookErrors.length ? { hookErrors } : {}) };
 }
 
 /** 测试 / 重新挂载资料库时忘掉「已就绪」 */
 export function resetProductionReady(dataDir?: string): void {
-  if (dataDir) ready.delete(dataDir);
-  else ready.clear();
+  if (dataDir) { ready.delete(dataDir); hooksRan.delete(dataDir); }
+  else { ready.clear(); hooksRan.clear(); }
 }
 
 // ---- 投影 ----

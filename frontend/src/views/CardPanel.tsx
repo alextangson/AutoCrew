@@ -38,6 +38,11 @@ export function CardPanel(p: Props) {
   const actOrReassign = async (action: string, params: Record<string, unknown>, done: string) => {
     const r = await act(action, params, done);
     const body = r.ok ? null : r.body;
+    // 别条稿正在核对这个原片（1b §3-7）：先说是哪条，确认后取消那边的核对再挂
+    if (body?.code === "aroll_pending_elsewhere") {
+      if (!(await confirmDialog({ title: "还是挂到这条？", body: String(body.error ?? ""), confirmLabel: "挂到这条", danger: true }))) return r;
+      return act(action, { ...params, cancel_pending: true }, done);
+    }
     if (body?.code !== "aroll_conflict" || body.reassignable !== true) return r;
     const owner = String(body.owner_title ?? body.owner_id ?? "另一条稿");
     if (!(await confirmDialog({ title: "改挂到这条？", body: reassignText(owner), confirmLabel: "改挂到这条", danger: true }))) return r;
@@ -95,7 +100,7 @@ function PanelBody(p: {
     {d.badges.map((b) => <p key={b} className="card-panel-note">{b}</p>)}
     {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
     {d.active && d.candidates.length > 0 && <section><h3>发现的候选</h3>{d.candidates.map((c) => <div key={c.fact_id} className="card-panel-row">
-      <span>{KIND_LABEL[c.kind] ?? c.kind} · {c.path ?? ""}{c.evidence ? `（${c.evidence}）` : ""}</span>
+      <span>{c.state === "pending_match" ? `正在核对原片${c.started_at ? `（${new Date(c.started_at).toLocaleTimeString()} 开始）` : ""} · ` : ""}{KIND_LABEL[c.kind] ?? c.kind} · {c.path ?? ""}{c.evidence ? `（${c.evidence}）` : ""}</span>
       <button disabled={p.busy} onClick={() => void p.actOrReassign("confirm_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "已确认是这条")}>是这条</button>
       <button disabled={p.busy} onClick={() => void p.act("reject_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "记住了：不是这条")}>不是这条</button>
     </div>)}</section>}

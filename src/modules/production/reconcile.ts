@@ -32,6 +32,7 @@ import { publishEvidenceOf } from "./read.js";
 import { movableRoots, now } from "./roots.js";
 import { ensureProductionReady, mutateProduction, refreshContent } from "./service.js";
 import { shaIndex } from "./sha-index.js";
+import { matchWorkerError } from "./match/queue.js";
 
 export interface ExternalFile { file: string; name: string; from: "inbox" | "export"; sha256: string; size: number; mtime_ms: number }
 export interface ShadowMove { id: string; title: string; from: Column | null; to: Column | null; rule: string | null; evidence: string[] }
@@ -147,11 +148,15 @@ export async function readReconcileReport(dataDir: string): Promise<ReconcileRep
  * `write` 只给启用事务用：把尚未启用的库里、未被排除的稿都落盘。报告落在工作区服务目录（不是制作真相）。
  */
 export async function reconcileAll(dataDir: string, opts: { write?: boolean; exclude?: ReadonlySet<string> } = {}): Promise<ReconcileReport> {
-  await ensureProductionReady(dataDir);
+  const started = await ensureProductionReady(dataDir);
   const marker = await readEnabledMarker(dataDir);
   const enabled = marker?.version === DERIVE_VERSION;
   const excluded = new Set([...(marker?.excluded ?? []), ...(opts.exclude ?? [])]);
   const report: ReconcileReport = { at: new Date().toISOString(), enabled, errors: [], moves: [], warnings: [] };
+  // 原片核对的重新入队 / 工人出错：看板顶部与晨报要看得见（1b §2）
+  for (const e of started.hookErrors ?? []) report.warnings.push(`原片核对没能重新排队：${e}`);
+  const workerError = matchWorkerError(dataDir);
+  if (workerError) report.warnings.push(`原片核对工人出错：${workerError}`);
   await loadHashCache(dataDir);
   await withFileOwnership(async () => {
     const externals = await listExternal(dataDir, report.warnings);

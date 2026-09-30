@@ -19,7 +19,7 @@ export type Rule = "D1" | "D2" | "D3" | "D4" | "D5";
 /** D1 的外部输入：AutoCrew 发布器写的 publish-plan / 数据回流 = 已核实回执（§6） */
 export interface PublishEvidence { verified: boolean; badge?: string; /** 最早投出的时间（投影到 published 时盖 publishedAt） */ at?: string }
 
-export interface CandidateView { fact_id: string; kind: Fact["kind"]; path?: string; evidence?: string; post_publish?: boolean; state: Fact["state"]; sha256?: string }
+export interface CandidateView { fact_id: string; kind: Fact["kind"]; path?: string; evidence?: string; post_publish?: boolean; state: Fact["state"]; sha256?: string; started_at?: string }
 
 export interface Derived {
   stage: Stage;
@@ -159,7 +159,7 @@ export function candidatesOf(doc: ProductionDoc): CandidateView[] {
     .filter((f) => f.state === "candidate" || f.state === "pending_match")
     .sort((a, b) => b.at.localeCompare(a.at))
     // 文件名规则得出的候选全列（E4）；只有 1b 的转写打分候选才截前三
-    .map((f) => ({ fact_id: f.id, kind: f.kind, state: f.state, ...(f.sha256 ? { sha256: f.sha256 } : {}), ...(f.path ? { path: f.path } : {}), ...(f.evidence ? { evidence: f.evidence } : {}), ...(f.post_publish ? { post_publish: true } : {}) }));
+    .map((f) => ({ fact_id: f.id, kind: f.kind, state: f.state, ...(f.sha256 ? { sha256: f.sha256 } : {}), ...(f.path ? { path: f.path } : {}), ...(f.evidence ? { evidence: f.evidence } : {}), ...(f.post_publish ? { post_publish: true } : {}), ...(f.state === "pending_match" && f.match_started_at ? { started_at: f.match_started_at } : {}) }));
 }
 
 /**
@@ -249,16 +249,21 @@ export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEv
     const sliverAlerts = missing.filter((m) => m.startsWith("抽帧缝") || m.startsWith("抽帧检查没跑成"));
     return { ...base, stage: "剪辑中", rule: "D4", missing, alerts: [...base.alerts, ...sliverAlerts], badges: [...base.badges, ...badges], evidence: facts.slice(0, 5).map((f) => `事实 ${f.id}（${f.kind}）`), reason: editingReason(missing) };
   }
-  const suspect = candidates.some((c) => c.kind === "aroll");
-  return { ...base, stage: "待录制", rule: "D5", missing: [MISSING.aroll], badges: [...base.badges, ...(suspect ? ["发现疑似 A-roll"] : [])], evidence: ["有效认稿，本轮还没有制作事实"],
-    reason: suspect ? "认过稿，发现了疑似 A-roll 等你确认" : "认过稿，还没有原片" };
+  // 1b §3-8：pending_match 显示「正在核对原片」，别的候选才是「发现疑似 A-roll」
+  const checking = candidates.some((c) => c.kind === "aroll" && c.state === "pending_match");
+  const suspect = candidates.some((c) => c.kind === "aroll" && c.state === "candidate");
+  const badges = [...base.badges, ...(checking ? [PENDING_BADGE] : []), ...(suspect ? ["发现疑似 A-roll"] : [])];
+  return { ...base, stage: "待录制", rule: "D5", missing: [MISSING.aroll], badges, evidence: ["有效认稿，本轮还没有制作事实"],
+    reason: suspect ? "认过稿，发现了疑似 A-roll 等你确认" : checking ? "认过稿，正在核对 agent 报来的原片" : "认过稿，还没有原片" };
 }
+
+export const PENDING_BADGE = "正在核对原片";
 
 /** 写稿段稿件已有制作事实：仍在写稿中，只挂 badge（§2.1） */
 export function writingBadge(doc: ProductionDoc | null): string | null {
   if (!doc) return null;
   const kinds = new Set(accepted(doc).filter((f) => PRODUCTION_KINDS.has(f.kind)).map((f) => f.kind));
-  if (!kinds.size) return null;
+  if (!kinds.size) return inRound(doc, doc.facts).some((f) => f.kind === "aroll" && f.state === "pending_match") ? PENDING_BADGE : null;
   const aroll = kinds.has("aroll"), other = [...kinds].some((k) => k !== "aroll");
   const what = aroll && other ? "A-roll / 剪辑产物" : aroll ? "A-roll" : "剪辑产物";
   return `已有 ${what}，等你认稿`;

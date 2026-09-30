@@ -30,6 +30,8 @@ import { applyRelease } from "./release.js";
 import { STORYBOARD_HINT, validateStoryboard } from "./storyboard.js";
 import { currentCut, triggerSliverCheck } from "./sliver/check.js";
 import { latestCheck } from "./sliver/verdict.js";
+import { pendingElsewhere, pendingElsewhereText, type PendingHolder } from "./match/reservation.js";
+import { cancelPendingFor, startMatchJob } from "./match/pending.js";
 
 type Receipt = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ ok: false, code, error, ...extra });
@@ -159,11 +161,12 @@ async function place(p: FilePlan, content: Content, txn: Txn, dataDir: string): 
   return path.relative(p.projectRoot, target);
 }
 
-function factFrom(a: RecordArgs, p: FilePlan, doc: ProductionDoc, relPath: string | null, txnId: string | undefined): Fact {
-  const accepted = p.action !== "candidate";
+function factFrom(a: RecordArgs, p: FilePlan, doc: ProductionDoc, relPath: string | null, txnId: string | undefined, jobId?: string): Fact {
+  const state: Fact["state"] = p.action === "pending" ? "pending_match" : p.action === "candidate" ? "candidate" : "accepted";
+  const at = new Date().toISOString();
   return {
-    id: newId("fact"), kind: p.kind, round: doc.round, state: accepted ? "accepted" : "candidate", availability: "present",
-    source: "record", by: { host: a.host, ...(a.session ? { session: a.session } : {}) }, at: new Date().toISOString(),
+    id: newId("fact"), kind: p.kind, round: doc.round, state, availability: "present",
+    source: "record", by: { host: a.host, ...(a.session ? { session: a.session } : {}) }, at, ...(jobId ? { match_job: jobId, match_started_at: at } : {}),
     request_id: a.request_id, evidence: p.evidence, ...(txnId ? { txn_id: txnId } : {}),
     path: relPath ?? p.source, sha256: p.sha256, size: p.id.size, mtime_ms: p.id.mtime_ms,
     ...(p.duration_ms ? { duration_ms: p.duration_ms } : {}), ...(p.kind === "cut" ? { export_mtime_ms: p.id.mtime_ms } : {}), ...(p.kind === "aroll" ? { source_path: p.source } : {}), ...(p.ratio ? { ratio: p.ratio } : {}), ...(p.version ? { version: p.version } : {}),
@@ -177,6 +180,7 @@ function upsertFact(doc: ProductionDoc, fact: Fact, existing: Fact | undefined):
   const target = doc.facts.find((f) => f.id === existing.id)!;
   // 导出时间与原始路径随升级带上（Codex 审 sliver P1）：克隆后的 mtime_ms 是落位时间，不能拿来比时间线保存时间
   Object.assign(target, { state: fact.state, path: fact.path, availability: "present", evidence: fact.evidence, size: fact.size, mtime_ms: fact.mtime_ms, ...(fact.txn_id ? { txn_id: fact.txn_id } : {}),
+    ...(fact.match_job ? { match_job: fact.match_job, match_started_at: fact.match_started_at } : {}),
     ...(fact.export_mtime_ms !== undefined ? { export_mtime_ms: target.export_mtime_ms ?? fact.export_mtime_ms } : {}), ...(fact.source_path ? { source_path: target.source_path ?? fact.source_path } : {}) });
   return target;
 }
@@ -206,7 +210,10 @@ async function commitFailed(a: RecordArgs, content: Content, dataDir: string, tx
   return fail("record_uncertain", `结果不确定（读不了制作记录）：事务日志留着，重启时按事务 id 核定。${errMsg(err)}`);
 }
 
-async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir: string, release?: ReleaseOp): Promise<Receipt> {
+/** keepArgs：核对作业落结果时沿用原请求的参数指纹（重放照旧认）；patch：同一次写里给事实补的字段 */
+export interface CommitOpts { keepArgs?: boolean; patch?: Partial<Fact>; event?: string }
+
+export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir: string, release?: ReleaseOp, opts: CommitOpts = {}): Promise<Receipt> {
   const reuse = p.action === "existing" || (p.action === "candidate" && p.existing);
   const moves = p.action === "move" || p.action === "clone";
   // 改挂：释放原稿记进同一份事务日志，接收方提交之后才执行（崩了由启动恢复按提交点补做或放弃）
@@ -223,21 +230,26 @@ async function commitFile(a: RecordArgs, content: Content, p: FilePlan, dataDir:
       placed = { size: id.size, mtime_ms: id.mtime_ms };
     } catch (err) { return placeFailed(dataDir, txn, err); }
   }
+  const jobId = p.action === "pending" ? newId("mjob") : undefined;
   let r;
   try {
     r = await mutateProduction(content.id, dataDir, (doc) => {
-      const fact = reuse ? doc.facts.find((f) => f.id === p.existing!.id)! : upsertFact(doc, { ...factFrom(a, p, doc, rel, moves ? txn.id : undefined), ...(placed ?? {}) }, p.existing);
+      const fact = reuse ? doc.facts.find((f) => f.id === p.existing!.id)! : upsertFact(doc, { ...factFrom(a, p, doc, rel, moves ? txn.id : undefined, jobId), ...(placed ?? {}) }, p.existing);
+      if (opts.patch) Object.assign(fact, opts.patch);
       // 已有字幕没绑成片、这次报了 for_cut：补上绑定，不丢新信息（Codex 审 P2）
       if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
       const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}), ...(fact.state === "candidate" ? { reason: p.evidence } : {}) };
-      doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { ...core } } };
+      const args = opts.keepArgs ? doc.requests?.[a.request_id]?.args ?? requestArgs(a) : requestArgs(a);
+      doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args, receipt: { ...core } } };
       if (journaled) doc.txns = [...(doc.txns ?? []), txn.id];
-      return { value: core, events: reuse ? [] : [{ type: "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
+      return { value: core, events: reuse ? [] : [{ type: opts.event ?? "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
     });
   } catch (err) { return commitFailed(a, content, dataDir, txn, journaled, err); }
   if (release) await applyRelease(dataDir, release);
   if (journaled) await dropTxn(dataDir, txn.id);
-  return receipt(r.value, r.explanation, content, p.projectRoot, reuse ? "同一文件已经记过，这次没有新动作" : undefined);
+  const queued = jobId ? await startMatchJob(dataDir, content.id, r.value.fact_id, jobId, r.doc.round, p) : null;
+  const rc = receipt(r.value, r.explanation, content, p.projectRoot, reuse ? "同一文件已经记过，这次没有新动作" : undefined);
+  return queued ? { ...rc, warnings: [queued] } : rc;
 }
 
 // ---- chatcut_project：不带文件，只记工程与它显式引用的原片 ----
@@ -287,7 +299,10 @@ async function recordStoryboard(a: RecordArgs, content: Content, dataDir: string
 
 // ---- 回执 ----
 
+export const PENDING_NEXT = "正在核对这段原片是不是这条（约 2 分钟）：对上了会自动挪进项目，之后用 autocrew_content summary（带 since_seq）取 aroll[] 里的新路径导入 ChatCut；对不上会转成候选等创始人在卡片上点。";
+
 function nextAction(core: ReceiptCore, exp: Explanation): string {
+  if (core.state === "pending_match") return PENDING_NEXT;
   if (core.state === "candidate") return `已记成候选（${core.reason ?? "归属要创始人确认"}），等创始人在卡片上点「是这条」。不要替创始人确认，也不要自己挪文件。`;
   if (core.kind === "aroll") return `原片已在项目里（path）。从这个新路径导入 ChatCut，导入后 record kind=chatcut_project chatcut_project_id=<工程 id> uses_aroll=["${core.fact_id}"]。`;
   if (core.kind === "storyboard") return "分镜已收下。告诉创始人：在看板卡片上点「打开审阅页」看分镜（不要再发 MD 或文件路径当分镜）；他在对话里回复意见。";
@@ -334,7 +349,11 @@ async function arollOwnership(content: Content, sha: string, dataDir: string, re
   return { release: { owner, sha256: sha, to: content.id } };
 }
 
-export async function adoptCandidate(content: Content, fact: Fact, dataDir: string, opts: { reassign?: boolean } = {}): Promise<Receipt> {
+/**
+ * `cancelPending`：别条稿正在核对这份原片（pending 预留，1b §3-7）时，创始人看过提示仍确认挂到这条 → 挂上之后取消那边的核对
+ * （那边的事实转 rejected，evidence「创始人挂到了《这条》」）。没带就拒，说是哪条。
+ */
+export async function adoptCandidate(content: Content, fact: Fact, dataDir: string, opts: { reassign?: boolean; cancelPending?: boolean } = {}): Promise<Receipt> {
   const a: RecordArgs = { content_id: content.id, kind: fact.kind, request_id: `confirm-${fact.id}`, host: "founder", ...(fact.path ? { path: fact.path } : {}), ...(fact.ratio ? { ratio: fact.ratio } : {}) };
   if (!fact.path || !fact.sha256) return fail("bad_request", "这条候选没有文件");
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
@@ -346,10 +365,15 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "候选文件在发现之后被改过，刷新再看");
   let release: ReleaseOp | undefined;
+  let held: PendingHolder | null = null;
   if (fact.kind === "aroll") {
     const own = await arollOwnership(content, fact.sha256, dataDir, opts.reassign === true);
     if ("block" in own) return own.block;
     release = own.release;
+    held = await pendingElsewhere(dataDir, fact.sha256, content.id);
+    if (held && !opts.cancelPending) {
+      return fail("aroll_pending_elsewhere", `${pendingElsewhereText(held.title)}；挂到这条会取消那边的核对`, { holder_id: held.content_id, holder_title: held.title });
+    }
   }
   const referenced = doc.facts.some((f) => f.round === doc.round && f.kind === "chatcut_project" && f.uses_aroll?.includes(fact.id));
   const inProject = isWithin(projectRoot, checked.value);
@@ -361,5 +385,7 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
     const safe = await checkTargetDir(projectRoot, targetDirOf(fact.kind, version));
     if (!safe.ok) return fail(safe.code, safe.error);
   }
-  return commitFile(a, content, plan, dataDir, release);
+  const r = await commitFile(a, content, plan, dataDir, release);
+  if (r.ok && held) await cancelPendingFor(dataDir, held, content.title);
+  return r;
 }

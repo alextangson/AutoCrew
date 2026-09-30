@@ -51,6 +51,13 @@ export interface Fact {
   export_mtime_ms?: number;
   /** aroll：记录 / 挪入之前的原始绝对路径（ChatCut 工程引用的往往是它；抽帧检查按路径认原片） */
   source_path?: string;
+  /** aroll pending_match（1b §3）：核对作业代号、开始时间；落结果时锁内按它认「还是同一次核对」 */
+  match_job?: string;
+  match_started_at?: string;
+  /** aroll：核对结果（前三名与原因）；只存稿件 id / 标题 / 分数，不存转写文本 */
+  match?: { winner: string | null; reason: string; top3: Array<{ content_id: string; title: string; l1: string; l2?: number }> };
+  /** aroll：系统自动挂上（pending_match 核对认出 / 1b 段 B 收件箱自动挪），「不是这条」可撤（§4.1） */
+  auto_attached?: true;
   /** storyboard：同目录脚本回执的 sha256 */
   receipt_sha256?: string;
   /** srt：所属成片的 sha */
