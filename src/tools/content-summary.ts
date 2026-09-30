@@ -13,6 +13,7 @@ import { explainContent } from "../modules/production/read.js";
 import type { Explanation } from "../modules/production/explain.js";
 import { isOntologyActive } from "../storage/production-store.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
+import { productionPart, SUMMARY_BUDGET, type ProductionPart } from "./content-summary-production.js";
 
 const EMPLOYEE: Record<string, string> = { writer: "写手", cover: "封面师", editor: "剪辑师" };
 const minutesAgo = (iso: string | undefined, now: number): number | null => (iso ? Math.max(0, Math.round((now - Date.parse(iso)) / 60_000)) : null);
@@ -63,25 +64,41 @@ const ONTOLOGY_NEXT: Record<string, string> = {
   已发布: "已发布，可看数据回流",
 };
 
-async function productionView(c: Content, dataDir?: string): Promise<Explanation | null> {
+async function ontologyView(c: Content, dataDir?: string): Promise<Explanation | null> {
   if (!isVideoPlatform(c.platform) || !(await isOntologyActive(dataDir, c.id))) return null;
-  const exp = await explainContent(c, getDataDir(dataDir));
-  return exp.phase === "production" ? exp : null;
+  return explainContent(c, getDataDir(dataDir));
 }
 
-export async function contentSummary(id: string, dataDir?: string, now = Date.now()): Promise<Record<string, unknown>> {
+/** since_seq 可能被中转端点当字符串传来：数字串照收，别的明确拒 */
+function parseSinceSeq(raw: unknown): { ok: true; value: number | undefined } | { ok: false } {
+  if (raw === undefined || raw === null || raw === "") return { ok: true, value: undefined };
+  const n = typeof raw === "number" ? raw : typeof raw === "string" && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+  return Number.isInteger(n) && n >= 0 ? { ok: true, value: n } : { ok: false };
+}
+
+function fitBudget(out: Record<string, unknown>, part: ProductionPart | null): Record<string, unknown> {
+  const size = () => Buffer.byteLength(JSON.stringify({ ...out, ...part?.fields }));
+  while (part && size() > SUMMARY_BUDGET && part.shrink()) { /* 先截 changes，再截候选依据 */ }
+  return { ...out, ...part?.fields };
+}
+
+export async function contentSummary(id: string, dataDir?: string, now = Date.now(), sinceSeqRaw?: unknown): Promise<Record<string, unknown>> {
   if (!id) return { ok: false, error: "id is required for summary" };
+  const since = parseSinceSeq(sinceSeqRaw);
+  if (!since.ok) return { ok: false, code: "bad_param", error: "since_seq 要是非负整数（用上次 summary 回的 next_since_seq）" };
   const c = await getContent(id, dataDir);
   if (!c || c.deletedAt) return { ok: false, code: "not_found", error: `找不到这篇稿（${id}）：不存在或已删除`, next_action: "用 autocrew_content list 看现有稿件" };
   const blockers = blockersOf(c, now);
   const angle = await angleBlocker(c, dataDir);
   if (angle) blockers.unshift(angle);
-  const exp = await productionView(c, dataDir);
+  const view = await ontologyView(c, dataDir);
+  const exp = view?.phase === "production" ? view : null;
+  const part = view ? await productionPart(c, view, getDataDir(dataDir), since.value) : null;
   if (exp) {
     blockers.unshift(...exp.missing.map((m) => `还差：${m}`), ...exp.alerts.map((a) => clip(a, 80)));
     if (exp.candidates.length) blockers.push(`有 ${exp.candidates.length} 个候选文件等创始人确认是不是这条`);
   }
-  return {
+  return fitBudget({
     ok: true,
     id: c.id,
     title: clip(c.title, 60),
@@ -93,5 +110,5 @@ export async function contentSummary(id: string, dataDir?: string, now = Date.no
     next: (exp?.stage ? ONTOLOGY_NEXT[exp.stage] : undefined) ?? NEXT[c.status] ?? "没有建议的下一步",
     updatedAt: c.updatedAt,
     words: Array.from((c.body ?? "").replace(/\s+/g, "")).length,
-  };
+  }, part);
 }

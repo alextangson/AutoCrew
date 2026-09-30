@@ -102,6 +102,7 @@ export const contentSaveSchema = Type.Object({
     description: "record：事实种类。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（记为待核，等创始人确认或数据回流核实）、storyboard 分镜（只收 build_material_review.py 生成的 03-broll/review-vNNN/*.html）.",
   })),
   request_id: Type.Optional(Type.String({ description: "record：这次报告的请求号；重试用同一个，服务端直接重放上次结果." })),
+  since_seq: Type.Optional(Type.Integer({ minimum: 0, description: "summary：只要这个时间线序号之后的变化；翻页用上次回的 next_since_seq（has_more=true 就接着翻）." })),
   path: Type.Optional(Type.String({ description: "record：文件的本机路径（可 ~ 开头）。项目内原地收；原片收件箱、ChatCut / 剪映导出目录会挪 / 克隆进项目；其他位置只记候选." })),
   ratio: Type.Optional(Type.String({ description: "record kind=cover：3:4 或 4:3（按像素核对）." })),
   version: Type.Optional(Type.Integer({ minimum: 1, description: "record kind=cover：封面版本号；不填就放新一版." })),
@@ -227,7 +228,7 @@ export async function executeContentSave(
   }
 
   // 只读进度摘要（v1.3）：查「这篇到哪了」不用拉 16KB 的整篇
-  if (action === "summary") return contentSummary(String(params.id ?? "").trim(), dataDir);
+  if (action === "summary") return contentSummary(String(params.id ?? "").trim(), dataDir, Date.now(), params.since_seq);
 
   // 本体 §3：agent 只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不要认领、不要交接
   if (action === "record") return executeRecord(params);

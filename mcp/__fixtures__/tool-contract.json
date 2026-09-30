@@ -288,6 +288,10 @@
       },
       "type": "array"
      },
+     "since_seq": {
+      "minimum": 0,
+      "type": "integer"
+     },
      "source": {
       "const": "manual_import",
       "type": "string"
@@ -2917,6 +2921,10 @@
       },
       "type": "array"
      },
+     "since_seq": {
+      "minimum": 0,
+      "type": "integer"
+     },
      "source": {
       "const": "manual_import",
       "type": "string"
@@ -5099,6 +5107,10 @@
        "type": "string"
       },
       "type": "array"
+     },
+     "since_seq": {
+      "minimum": 0,
+      "type": "integer"
      },
      "source": {
       "const": "manual_import",
