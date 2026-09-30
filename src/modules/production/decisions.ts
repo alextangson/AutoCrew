@@ -167,7 +167,8 @@ async function pickCover(ctx: Ctx): Promise<Result> {
   const text = str(ctx.params.cover_text) || g.text;
   if (!text) return fail("cover_text_required", "选封面时要写封面字");
   const bh = bodyHash(ctx.content.body);
-  const same = sameDecision(view, "cover_approval", (d) => d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh
+  // 幂等键带组身份（Codex 审 2a-1 r6 P2）：同一对图的另一组 = 新批准，作废保护跟着当前批准走
+  const same = sameDecision(view, "cover_approval", (d) => d.group_id === g!.group.id && d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh
     && validCoverApproval(view, ctx.content.body)?.id === d.id);
   return { ok: true, group_id: g.group.id, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, cover_text: text, body_hash: bh, group_id: g.group.id }, "cover_picked")) };
 }

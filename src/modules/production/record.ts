@@ -11,7 +11,7 @@ import { getContent, getDataDir, type Content } from "../../storage/local-store.
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc, ReadyMark } from "../../storage/production-types.js";
-import { addMember, admittedGroupKey, ensureGroup, nextCoverVersion, versionLabelOf, withCoverGroups } from "./cover-groups.js";
+import { addMember, admittedGroupKey, ensureGroup, groupOfVersion, nextCoverVersion, retiredGroupOfLabel, slotTaken, versionLabelOf, withCoverGroups } from "./cover-groups.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { Explanation } from "./explain.js";
 import { checkDuration, cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./files.js";
@@ -495,8 +495,11 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   // 封面统一准入：项目里不在 vNNN/ 或 final/ 的候选封面确认后克隆进新一组（review-inbox §6.2）
   const coverOutside = fact.kind === "cover" && inProject && !admittedGroupKey(path.relative(projectRoot, checked.value));
   const action = (inProject && !coverOutside) || (fact.kind === "aroll" && (referenced || hold.project)) ? "in_place" : fact.kind === "aroll" ? "move" : "clone";
-  // 确认的候选封面自成新一组（不猜它和谁成对，review-inbox §6.1）
-  const version = fact.kind === "cover" ? nextCoverVersion(doc) : undefined;
+  // 确认的候选封面：record 时显式成对（paths / pair_with）记下的版本号沿用——一对的两张确认后仍在同一组；
+  // 没有显式成对（对账找到的零散图）、那一版已作废或这个比例已被占，才自成新一组（Codex 审 2a-1 r6 P2）
+  const keep = fact.kind === "cover" && fact.version && fact.ratio && fact.source === "record" && !retiredGroupOfLabel(doc, versionLabelOf(fact.version))
+    && !(groupOfVersion(doc, fact.version) && slotTaken(doc, groupOfVersion(doc, fact.version)!, fact.ratio, fact.id));
+  const version = fact.kind === "cover" ? (keep ? fact.version! : nextCoverVersion(doc)) : undefined;
   const plan: FilePlan = { action, kind: fact.kind, source: checked.value, sha256: fact.sha256, id: fp.value.id, projectRoot, location: inProject ? "project" : "other",
     evidence: hold.project ? `创始人确认是这条；${inUseEvidence(hold.project)}` : `创始人确认是这条${hold.note}`, existing: fact, ...(fact.ratio ? { ratio: fact.ratio } : {}), ...(version ? { version, group: { label: versionLabelOf(version), version } } : {}), ...(fact.for_cut ? { for_cut: fact.for_cut } : {}) };
   if (action !== "in_place") {

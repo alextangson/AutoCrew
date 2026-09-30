@@ -182,3 +182,48 @@ describe("Codex 2a-1 第五轮", () => {
     expect(asks.filter((a) => a.state === "open").map((a) => a.id)).toEqual([neu.ask_id]);
   });
 });
+
+describe("Codex 2a-1 第六轮", () => {
+  it("R6-1 一次记的一对落成候选：逐张确认后仍是同一组，出「挑一张」", async () => {
+    const c = await editing();
+    const r = await record(env, { content_id: c.id, kind: "cover", paths: [await put(path.join(env.outside, "a.png"), png(900, 1200, "a")), await put(path.join(env.outside, "b.png"), png(1200, 900, "b"))], cover_text: "字", request_id: "g" });
+    const facts = r.facts as Array<{ fact_id: string; state: string }>;
+    expect(facts.every((f) => f.state === "candidate")).toBe(true);
+    const d = await doc(c.id);
+    for (const f of facts) expect(await founderDecision(c.id, "confirm_candidate", { fact_id: f.fact_id, sha256: d.facts.find((x) => x.id === f.fact_id)!.sha256 }, env.dir)).toMatchObject({ ok: true });
+    const groups = validCoverGroups(await doc(c.id));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].complete).toBe(true);
+    expect((await items(c.id)).some((i) => i.type === "cover_pick")).toBe(true);
+  });
+
+  it("R6-1 一对候选确认一张、否掉一张：组不完整、写还差哪个比例、不出错", async () => {
+    const c = await editing();
+    const r = await record(env, { content_id: c.id, kind: "cover", paths: [await put(path.join(env.outside, "a.png"), png(900, 1200, "a")), await put(path.join(env.outside, "b.png"), png(1200, 900, "b"))], request_id: "g" });
+    const [f34, f43] = r.facts as Array<{ fact_id: string }>;
+    const d = await doc(c.id);
+    const sha = (id: string) => d.facts.find((x) => x.id === id)!.sha256;
+    expect(await founderDecision(c.id, "confirm_candidate", { fact_id: f34.fact_id, sha256: sha(f34.fact_id) }, env.dir)).toMatchObject({ ok: true });
+    expect(await founderDecision(c.id, "reject_candidate", { fact_id: f43.fact_id, sha256: sha(f43.fact_id) }, env.dir)).toMatchObject({ ok: true });
+    const groups = validCoverGroups(await doc(c.id));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].complete).toBe(false);
+    const { explainContent } = await import("./read.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    expect((await explainContent((await getContent(c.id, env.dir))!, env.dir)).missing).toContain("封面(4:3)");
+  });
+
+  it("R6-2 同一对图的两个组：选第二组是新批准（绑第二组），作废保护跟着当前批准走", async () => {
+    const c = await editing();
+    const a = await img("a.png", 900, 1200), b = await img("b.png", 1200, 900);
+    const g1 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g1" });
+    const g2 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g2" });
+    expect(g2.group_id).not.toBe(g1.group_id);
+    const p1 = await founderDecision(c.id, "pick_cover", { group_id: g1.group_id }, env.dir);
+    const p2 = await founderDecision(c.id, "pick_cover", { group_id: g2.group_id }, env.dir);
+    expect((p2.decision as { id: string; group_id: string }).group_id).toBe(g2.group_id);
+    expect((p2.decision as { id: string }).id).not.toBe((p1.decision as { id: string }).id);
+    expect(await founderDecision(c.id, "retire_cover_group", { group_id: g2.group_id }, env.dir)).toMatchObject({ ok: false, code: "cover_group_approved" });
+    expect(await founderDecision(c.id, "retire_cover_group", { group_id: g1.group_id }, env.dir)).toMatchObject({ ok: true });
+  });
+});
