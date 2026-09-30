@@ -105,9 +105,9 @@ export function groupOfVersion(doc: ProductionDoc, version: number): CoverGroup 
   return (doc.cover_groups ?? []).find((g) => g.round === doc.round && g.version === version && !retired.has(g.id)) ?? null;
 }
 
-/** 本轮某事实所在的有效组（最近加入的那个） */
-export function groupOfFact(doc: ProductionDoc, factId: string): GroupView | null {
-  return [...validCoverGroups(doc)].reverse().find((g) => g.slots["3:4"].some((f) => f.id === factId) || g.slots["4:3"].some((f) => f.id === factId)) ?? null;
+/** 本轮含某事实的全部有效组（同一张图可以在几组里） */
+export function groupsOfFact(doc: ProductionDoc, factId: string): GroupView[] {
+  return validCoverGroups(doc).filter((g) => g.slots["3:4"].some((f) => f.id === factId) || g.slots["4:3"].some((f) => f.id === factId));
 }
 
 export function ensureGroup(doc: ProductionDoc, key: GroupKey, init: Pick<CoverGroup, "source" | "by" | "evidence">, at = new Date().toISOString(), id?: string): CoverGroup {

@@ -19,7 +19,7 @@ import type { Override } from "../publish/review-gate/types.js";
 import { founderAnswer, undoReportedAnswer } from "./asks.js";
 import { DECISION_ACTIONS, FOUNDER_ONLY, founderDecision } from "./decisions.js";
 import type { InboxAction, InboxItem } from "./inbox.js";
-import { readInbox } from "./inbox-read.js";
+import { currentChecks, readInbox } from "./inbox-read.js";
 import { withFileOwnership } from "./mutex.js";
 import { mutateProduction } from "./service.js";
 
@@ -77,7 +77,7 @@ async function publishOverride(ctx: Ctx): Promise<Result> {
   const quote = noteOf(ctx);
   if (!quote) return fail("note_required", "写一句你的原话：为什么这次破例");
   const checkId = String(ctx.item.detail.check_id);
-  const rec = await readCheckRecord(ctx.content!.id, checkId, ctx.dataDir) as (Record<string, unknown> & { platform?: string; items?: Array<{ result?: string; rule?: string; overridable?: boolean }>;
+  const rec = await readCheckRecord(ctx.content!.id, checkId, ctx.dataDir) as (Record<string, unknown> & { platform?: string; input_at?: string; checked_at?: string; items?: Array<{ result?: string; rule?: string; overridable?: boolean }>;
     inputs?: { plan_source?: string; plan_snapshot?: unknown; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } }) | null;
   if (!rec) return fail("stale", "这次检查的留档不见了，刷新再看");
   const rules = [...new Set((rec.items ?? []).filter((i) => i.result === "block" && i.overridable && i.rule).map((i) => i.rule!))];
@@ -87,7 +87,7 @@ async function publishOverride(ctx: Ctx): Promise<Result> {
   const plan = inputs.plan_source === "inline" ? inputs.plan_snapshot : inputs.plan_source || "06-publish/publish-plan.json";
   // 留档不可变：用原来的输入 + 你的原话重跑，得到一次新的检查（新 check_id），不改旧检查
   const r = await executePublishCheck({ _dataDir: ctx.dataDir, content_id: ctx.content!.id, plan, founder_quotes: inputs.founder_quotes ?? [], overrides: inputs.overrides ?? [], ...(inputs.instruction_id ? { instruction_id: inputs.instruction_id } : {}) },
-    { ...(ctx.deps.jev ? { jev: ctx.deps.jev } : {}), founderOverrides, rerunOf: checkId });
+    { ...(ctx.deps.jev ? { jev: ctx.deps.jev } : {}), founderOverrides, rerunOf: checkId, ...(rec.input_at ?? rec.checked_at ? { inputAt: rec.input_at ?? rec.checked_at } : {}) });
   if (r.ok !== true) return fail(String(r.code ?? "check_failed"), `重跑检查没成：${String(r.error ?? "")}`);
   const mine = (r.platforms as Array<{ platform: string; check_id: string; verdict: string }>).find((p) => p.platform === rec.platform);
   return { ok: true, rerun_of: checkId, check_id: mine?.check_id ?? null, verdict: mine?.verdict ?? null, ...(r.semantic ? { semantic: r.semantic } : {}) };
@@ -222,11 +222,19 @@ export async function decideItem(req: Record<string, unknown>, dataDir = getData
   let result: Result;
   try { result = await run(ctx); } catch (e) { result = fail("failed", `没做成：${e instanceof Error ? e.message : String(e)}`); }
   // 回锁里落定：成功 → 占位换成结果；失败 → 释放占位（看得见原因，之后能再点）
-  await withFileOwnership(() => mutateProduction(logId!, dataDir, (d) => {
+  await withFileOwnership(async () => {
+    // 等模型期间来了新计划的检查：这次重跑留档但不算当前（输入代次排在后面），告诉创始人按新计划重看（Codex 审 2a-1 r3 P2）
+    if (result.ok === true && result.check_id) {
+      const content = await getContent(ctx.content!.id, dataDir);
+      const current = content ? (await currentChecks(content, await readProductionDocOrEmpty(content.id, dataDir), dataDir)).find((x) => x.platform === ctx.item.detail.platform) : null;
+      if (current?.check_id !== result.check_id) result = fail("plan_changed", "这期间计划变了，按新计划重新看一眼", { superseded_check_id: result.check_id, current_check_id: current?.check_id ?? null });
+    }
+    await mutateProduction(logId!, dataDir, (d) => {
     const log = (d.inbox_log ?? []).filter((e) => !(e.item_id === itemId && e.gen === gen && e.pending));
     d.inbox_log = result.ok === true ? [...log, { item_id: itemId, gen, action, fp, at: new Date().toISOString(), result: slim(result) }].slice(-KEEP) : log;
     return { value: null, events: [{ type: result.ok === true ? "inbox_decided" : "inbox_decide_failed", detail: { item_id: itemId, action, ...(result.ok === true ? {} : { error: result.error }) } }] };
-  }));
+    });
+  });
   return { ...result, item_id: itemId, gen };
 }
 
@@ -266,7 +274,13 @@ export async function decide(contentId: string, action: string, params: Record<s
   const item = view.items.find((x) => legacyMatch(x, action, params));
   if (!item) return founderDecision(contentId, action, params, dataDir);
   // 旧页面：按它带来的具体对象选动作参数（哪一版 / 哪一组 / 哪一处）
-  const pinned = action === "pick_cover" && !params.group_id
-    ? { group_id: (item.detail.groups as Array<{ group_id: string; "3:4": { fact_id: string } | null }>).find((g) => g["3:4"]?.fact_id === params.cover_3x4_fact_id)?.group_id } : {};
+  // 选封面：按 3:4 + 4:3 两张一起认组，恰好一组对得上才行；不按单张取最新一组（Codex 审 2a-1 r3 P1）
+  let pinned: Record<string, unknown> = {};
+  if (action === "pick_cover" && !params.group_id) {
+    const exact = (item.detail.groups as Array<{ group_id: string; "3:4": { fact_id: string } | null; "4:3": { fact_id: string } | null }>)
+      .filter((g) => g["3:4"]?.fact_id === params.cover_3x4_fact_id && g["4:3"]?.fact_id === params.cover_4x3_fact_id);
+    if (exact.length !== 1) return fail("stale", "这件事刚变过（这两张对不上唯一的一组），重新看一下");
+    pinned = { group_id: exact[0].group_id };
+  }
   return decideItem({ ...params, ...pinned, action, content_id: contentId, item_id: item.item_id, gen: item.gen }, dataDir, deps);
 }

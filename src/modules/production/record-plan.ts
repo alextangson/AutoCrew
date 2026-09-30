@@ -11,7 +11,7 @@ import { contentRoot } from "../../storage/content-project.js";
 import { readLibraryLocation } from "../../storage/storage-roots.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { l1Strong } from "./match/l1.js";
-import { admittedGroupKey, retiredGroupOfLabel, groupOfFact, groupOfVersion, MAX_COVER_GROUPS, nextCoverVersion, slotTaken, validCoverGroups, versionLabelOf, type GroupKey } from "./cover-groups.js";
+import { admittedGroupKey, retiredGroupOfLabel, groupsOfFact, groupOfVersion, MAX_COVER_GROUPS, nextCoverVersion, slotTaken, validCoverGroups, versionLabelOf, type GroupKey } from "./cover-groups.js";
 import { matchDeps } from "./match/deps.js";
 import { arollPool } from "./match/pool.js";
 import { pendingElsewhere, pendingElsewhereText } from "./match/reservation.js";
@@ -99,7 +99,10 @@ function coverTarget(a: RecordArgs, doc: ProductionDoc, ratio: Fact["ratio"]): P
   const full = () => validCoverGroups(doc).length >= MAX_COVER_GROUPS
     ? deny<never>("cover_limit", `这条已经有 ${MAX_COVER_GROUPS} 组封面了，先让创始人挑一组或在「等你拍板」里点「这组不要了」`) : null;
   if (a.pair_with) {
-    const g = groupOfFact(doc, a.pair_with);
+    // 单张认组只在它恰好属于一组时成立：同一张图在几组里就说不清配哪组，不猜（Codex 审 2a-1 r3 P1）
+    const hits = groupsOfFact(doc, a.pair_with);
+    if (hits.length > 1) return deny("pair_ambiguous", "这张封面在几组里都有，说不清配哪一组：用 paths 一次记一对");
+    const g = hits[0];
     if (!g) return deny("pair_not_found", `pair_with 对不上本轮任何一组有效封面：${a.pair_with}（用 record 回执里的封面 fact_id）`);
     if (!g.group.version) return deny("pair_not_found", "那一组在 05-cover/final/ 里：把另一张直接放进 final/ 让对账收");
     if (ratio && slotTaken(doc, g.group, ratio)) return deny("cover_slot_taken", `那一组已经有 ${ratio} 了：换一组，或不带 pair_with 自成一组`);

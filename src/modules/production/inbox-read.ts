@@ -20,7 +20,13 @@ import { readReconcileReport } from "./reconcile.js";
 import { approvedCoverShas } from "./service.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 
-interface CheckRec { check_id?: string; content_id?: string; platform?: string; checked_at?: string; verdict?: string; round?: number; items?: unknown[] }
+interface CheckRec { check_id?: string; content_id?: string; platform?: string; checked_at?: string; input_at?: string; verdict?: string; round?: number; items?: unknown[] }
+
+/** 谁更新：先比输入代次（开始读计划的时间，破例重跑沿用原检查的），再比完成时间，最后比 id */
+const newer = (a: CheckRec, b: CheckRec) => {
+  const ka = a.input_at ?? a.checked_at!, kb = b.input_at ?? b.checked_at!;
+  return ka !== kb ? ka > kb : a.checked_at !== b.checked_at ? a.checked_at! > b.checked_at! : a.check_id! > b.check_id!;
+};
 
 /**
  * 每个平台当前有效的一组检查（§7-4）：本轮、同平台最新的那一次；更早的算「已被新检查取代」，不出条目。
@@ -40,7 +46,7 @@ export async function currentChecks(content: Content, doc: ProductionDoc | null,
     if (!inRound) continue;
     const p = canonPlatform(r.platform);
     const prev = latest.get(p);
-    if (!prev || r.checked_at > prev.checked_at! || (r.checked_at === prev.checked_at && r.check_id > prev.check_id!)) latest.set(p, r);
+    if (!prev || newer(r, prev)) latest.set(p, r);
   }
   const confirmed = new Set((doc?.decisions ?? []).filter((d) => d.type === "publish_check_confirm" && d.check_id).map((d) => d.check_id!));
   return [...latest.entries()].filter(([, r]) => !confirmed.has(r.check_id!))

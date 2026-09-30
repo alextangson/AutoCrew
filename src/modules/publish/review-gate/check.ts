@@ -31,7 +31,9 @@ import { platformVerdict, type CheckItem, type Override, type SummaryRow, type V
  * overrideSource：创始人在「等你拍板」里亲手写的破例（review-inbox §7-6）→ 重跑出新的检查，
  * 留档里例外标 source=founder、rerun_of=原检查；不在旧检查上改。只能由服务端调用方给，模型传不进来。
  */
-export interface CheckDeps { jev?: JevCaller; founderOverrides?: Override[]; rerunOf?: string }
+export interface CheckDeps { jev?: JevCaller; founderOverrides?: Override[]; rerunOf?: string;
+  /** 输入代次（review-inbox §7-4）：检查开始读输入的时间；破例重跑沿用原检查的，所以晚完成的重跑排不到新计划的检查前面 */
+  inputAt?: string }
 
 interface Ctx {
   content: Content; dataDir: string; root: string; quotes: string[]; overrides: Override[];
@@ -58,6 +60,7 @@ async function registrationState(content: Content, dataDir: string): Promise<Reg
 }
 
 async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promise<Ctx | Fail> {
+  const startedAt = new Date().toISOString();
   const dataDir = getDataDir((params._dataDir as string) || undefined);
   const id = typeof params.content_id === "string" ? params.content_id.trim() : "";
   if (!id) return { ok: false, code: "missing_content_id", error: "content_id 必填" };
@@ -82,7 +85,7 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promi
     content, dataDir, root, quotes: quotes.value, overrides: [...overrides.value, ...(deps.founderOverrides ?? [])], instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
     prefs: await readPublishPrefs(dataDir), registration, caller: deps.jev ?? makeJevCaller(),
     basis: () => (basis ??= loadBasis(registration.kind === "ok" ? registration.srt : null, content.body ?? "")),
-    round: (await readProductionDocOrEmpty(id, dataDir).catch(() => null))?.round ?? 1, deps,
+    round: (await readProductionDocOrEmpty(id, dataDir).catch(() => null))?.round ?? 1, deps: { ...deps, inputAt: deps.inputAt ?? startedAt },
   };
 }
 
@@ -123,7 +126,7 @@ function shapeItems(ctx: Ctx, platform: string, named: GatePlatform[]): CheckIte
 
 async function writeRecord(ctx: Ctx, r: PlatformResult, extra: Record<string, unknown>): Promise<void> {
   await writeCheckRecord(ctx.content.id, r.check_id, {
-    check_id: r.check_id, content_id: ctx.content.id, platform: r.platform, checked_at: new Date().toISOString(), round: ctx.round,
+    check_id: r.check_id, content_id: ctx.content.id, platform: r.platform, checked_at: new Date().toISOString(), round: ctx.round, input_at: ctx.deps.inputAt,
     ...(ctx.deps.rerunOf ? { rerun_of: ctx.deps.rerunOf } : {}),
     inputs: { plan_source: ctx.planSource, ...(ctx.planSource === "inline" ? { plan_snapshot: ctx.planRaw } : {}), founder_quotes: ctx.quotes, instruction_id: ctx.instruction?.id ?? null,
       overrides: ctx.overrides.filter((o) => o.platform === r.platform).map((o) => (ctx.deps.founderOverrides?.some((f) => f.platform === o.platform && f.rule === o.rule && f.founder_quote === o.founder_quote) ? { ...o, source: "founder" } : o)), publish_rules: ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === r.platform) },

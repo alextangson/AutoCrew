@@ -216,19 +216,33 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
     if (a.restored && f.replaced_at) { delete f.replaced_at; f.size = a.restored.size; f.mtime_ms = a.restored.mtime_ms; changed++; }
   }
   const added: Fact[] = [];
+  const formal: Array<{ fact: Fact; path: string; first?: boolean }> = [];
   for (const s of obs.seen) {
     // 任何一轮记过都算：重开文稿后旧轮的成片 / 封面还在盘上，它们属于历史，不再导进新一轮
     const dup = doc.facts.find((f) => f.kind === s.kind && f.sha256 === s.sha256);
     // 去重时不丢新信息（Codex 审 P2）：本轮已有字幕没绑成片，这次算出了绑定就补上
     if (dup && dup.kind === "srt" && dup.round === doc.round && !dup.for_cut && s.for_cut) { dup.for_cut = s.for_cut; changed++; }
-    // 同一 sha 出现在另一个 vNNN/ 里 = 新成员关系，旧组不动（review-inbox §6.1）
-    if (dup && dup.kind === "cover" && dup.round === doc.round && dup.state === "accepted" && s.state === "accepted") changed += groupSeenCover(doc, dup, s.path, at);
-    if (dup || added.some((f) => f.kind === s.kind && f.sha256 === s.sha256)) continue;
+    const prior = dup ?? added.find((f) => f.kind === s.kind && f.sha256 === s.sha256);
+    // 封面：事实按 sha 去重，但每一处正式目录（vNNN/ final/）的观察都要记成员关系——本批里后见到的、盘上已有的都算（Codex 审 2a-1 r3 P2）
+    if (prior && s.kind === "cover" && s.state === "accepted" && admittedGroupKey(s.path) && prior.round === doc.round) formal.push({ fact: prior, path: s.path! });
+    if (prior) continue;
     const state = s.kind === "aroll" && s.state === "accepted" && arollOwned(s.sha256!) ? "candidate" : s.state;
-    added.push({ ...s, state, id: newId("fact"), round: doc.round, at, availability: "present" });
+    const fact: Fact = { ...s, state, id: newId("fact"), round: doc.round, at, availability: "present" };
+    added.push(fact);
+    if (fact.kind === "cover" && fact.state === "accepted") formal.push({ fact, path: fact.path!, first: true });
   }
   doc.facts.push(...added);
-  for (const f of added) if (f.kind === "cover" && f.state === "accepted") groupSeenCover(doc, f, f.path, at, true);
+  for (const o of formal) {
+    const key = admittedGroupKey(o.path)!;
+    // 先只做候选的图，之后在正式目录里见到同样字节 → 按 §6.2 收进那一组（只因正式目录，不因别处有同 sha 的 accepted）
+    if (o.fact.state === "candidate" && o.fact.kind === "cover" && !retiredGroupOfLabel(doc, key.label)) {
+      o.fact.state = "accepted";
+      o.fact.path = o.path;
+      o.fact.evidence = `项目 05-cover/${key.label}（先前只做候选，现在在正式目录里见到同样的图）`;
+      changed++;
+    }
+    if (o.fact.state === "accepted") changed += groupSeenCover(doc, o.fact, o.path, at, o.first === true);
+  }
   return { added, changed: changed + added.length };
 }
 
