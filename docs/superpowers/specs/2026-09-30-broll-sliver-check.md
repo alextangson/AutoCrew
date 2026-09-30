@@ -15,7 +15,7 @@ B-roll 放完后，两段 B-roll（或动效）之间露出不到 1 秒的真人
 - 时间线来源：AutoCrew **直接读 ChatCut 存在本机的工程文件**（一次读全、不靠 agent 配合）；格式认不出就明说「读不了」，不悄悄放行。
 - 默认项照准：铺满 + 不透明才算盖住；淡入淡出期间真人若隐若现算露出；片头第一段 B-roll 之前、片尾最后一段之后不算；修法按原片那段声音判（无声→剪气口，有声→拖长前一段 B-roll）；agent 导出前可先自查。
 
-## 3 数据来源（09-30 实测，纠正AI 工程 c1c04984）
+## 3 数据来源（09-30 实测，一条真实的 ChatCut 工程）
 
 - 工程目录：`~/Library/Application Support/ChatCut/projects/<projectId>/project.chatcutproject/`；时间线在 `timelines/Timeline_<hash>.json`（文件名不是时间线 id，要读文件内的 id 对上）；`project.json` 有工程元数据；内部格式 `schemaVersion 4`，不是公开接口。
 - 轨道：`{id, order, type, name, hidden, locked, muted}`，order 大的画在上面。条目分 `videoItems / imageItems / motionGraphicItems / pixelEffectItems / pixelTransitionItems / audioItems / audioTransitionItems / text… `；时间单位是时间线帧（`startFrame / durationFrames`），`sourceIn` 是微秒；fps 在工程或素材元数据里（时间线文件本身没有，需确认来源）。
