@@ -114,6 +114,33 @@ describe("summary 的制作段字段", () => {
     expect([...ids].every((id) => seen.has(id))).toBe(true);
   }
 
+  it("原片按 (at, id) 稳定集合只用 aroll_offset 翻：每条恰好出现一次，中途落定的那条不丢（Codex 审 segB8 P2）", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => { await gate; return { ok: false, unavailable: false, reason: "中途落定" }; } } });
+    try {
+      const c = await videoContent(env, "原片稳定翻页的稿");
+      const ids: string[] = [];
+      const first = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_pending.mov"), "p"), request_id: "rp" });
+      ids.push(String(first.fact_id));
+      for (let i = 0; i < 8; i++) {
+        const r = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.outside, `${"很长很长的原片文件名字".repeat(3)}-${i}.mov`), `x${i}`), request_id: `r${i}` });
+        ids.push(String(r.fact_id));
+      }
+      const seen: string[] = [];
+      let offset: unknown = undefined;
+      for (let page = 0; page < 30; page++) {
+        const r = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
+        expect(bytes(r)).toBeLessThanOrEqual(1536);
+        seen.push(...(r.aroll as Array<{ fact_id: string }>).map((a) => a.fact_id));
+        if (page === 0) { release(); await matchWorkerIdle(env.dir); }
+        if (r.aroll_next_offset === undefined) break;
+        offset = r.aroll_next_offset;
+      }
+      expect([...seen].sort()).toEqual([...ids].sort());
+    } finally { release(); }
+  });
+
   it("没有制作事实的写稿段稿件不带这些字段", async () => {
     const c = await videoContent(env, "干净的稿");
     const r = await summary(c.id);

@@ -103,7 +103,7 @@ export const contentSaveSchema = Type.Object({
   })),
   request_id: Type.Optional(Type.String({ description: "record：这次报告的请求号；重试用同一个，服务端直接重放上次结果." })),
   since_seq: Type.Optional(Type.Integer({ minimum: 0, description: "summary：只要这个时间线序号之后的变化；翻页用上次回的 next_since_seq（has_more=true 就接着翻）." })),
-  aroll_offset: Type.Optional(Type.Integer({ minimum: 0, description: "summary：原片行放不下时，用上次回的 aroll_next_offset 接着读." })),
+  aroll_offset: Type.Optional(Type.Integer({ minimum: 0, description: "summary：原片列表（本轮全部原片，按时间排）的游标，和 since_seq 各管各的；aroll_has_more=true 时用上次回的 aroll_next_offset 接着读." })),
   path: Type.Optional(Type.String({ description: "record：文件的本机路径（可 ~ 开头）。项目内原地收；原片收件箱、ChatCut / 剪映导出目录会挪 / 克隆进项目；其他位置只记候选." })),
   ratio: Type.Optional(Type.String({ description: "record kind=cover：3:4 或 4:3（按像素核对）." })),
   version: Type.Optional(Type.Integer({ minimum: 1, description: "record kind=cover：封面版本号；不填就放新一版." })),
