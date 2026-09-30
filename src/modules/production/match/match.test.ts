@@ -233,6 +233,26 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     expect(matchWorkerError(dir)).toBeNull();
   });
 
+  it("终态失败的回调抛错：不丢，错误一直在，每次叫醒重试回调，送达后才清（Codex 审 segB12 P2）", async () => {
+    const { kickMatchWorker, matchWorkerError } = await import("./queue.js");
+    let hookCalls = 0;
+    registerMatchHandler("test_hook", async (): Promise<JobResult> => ({ state: "failed", error: "坏了" }), async () => {
+      hookCalls += 1;
+      if (hookCalls === 1) throw new Error("制作记录暂时写不了");
+    });
+    await enqueueMatchJob(dir, spec({ purpose: "test_hook" }));
+    await matchWorkerIdle(dir);
+    expect(hookCalls).toBe(1);
+    expect(matchWorkerError(dir)).toContain("制作记录暂时写不了");
+    kickMatchWorker(dir);
+    await matchWorkerIdle(dir);
+    expect(hookCalls).toBe(2);
+    expect(matchWorkerError(dir)).toBeNull();
+    kickMatchWorker(dir);
+    await matchWorkerIdle(dir);
+    expect(hookCalls).toBe(2);
+  });
+
   it("重启：跑到一半的作业回到排队，持久化在工作区缓存目录", async () => {
     const file = path.join(transcriptCacheDir(dir), "..", "match-jobs.json");
     const job: MatchJob = { id: "mjob-x", key: jobKey(spec()), purpose: "test_ok", priority: "background", sha256: SHA, path: "/x.mov", size: 1, mtime_ms: 1,

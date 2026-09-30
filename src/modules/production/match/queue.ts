@@ -217,8 +217,9 @@ async function claimNext(dataDir: string): Promise<MatchJob | null> {
   });
 }
 
-async function settle(dataDir: string, id: string, r: JobResult): Promise<void> {
-  const failed = await mutate(dataDir, (jobs): MatchJob | null => {
+/** 把结果写进队列；终于失败时回那份作业（要送给失败回调），否则 null */
+async function settle(dataDir: string, id: string, r: JobResult): Promise<MatchJob | null> {
+  return mutate(dataDir, (jobs): MatchJob | null => {
     const j = jobs.find((x) => x.id === id);
     if (!j || j.state !== "running") return null;
     j.updated_at = iso();
@@ -230,26 +231,32 @@ async function settle(dataDir: string, id: string, r: JobResult): Promise<void> 
     Object.assign(j, { state: "queued", next_at: matchDeps().now() + RETRY_DELAY_MS });
     return null;
   });
-  const hook = failed ? failedHooks.get(failed.purpose) : undefined;
-  if (failed && hook) await hook(dataDir, failed, failed.error ?? "核对失败");
 }
 
 /**
  * 跑完了、结果没写上盘的作业（写盘失败）：结果留在内存等补写。工人每次醒来（对账 tick 也会叫醒）先补写它们，
  * 不重跑；写上之前队列错误一直在。进程在补写前重启 → 加载时「跑到一半」回排队重跑，处理器靠作业代号幂等落结果。
  */
-const unsettled = new Map<string, Map<string, JobResult>>();
+/**
+ * 「结果写上盘」与「失败回调送达」分开记（Codex 审 segB12 P2）：作业已落成 failed、但回调（把事实转候选 / failed）抛错时，
+ * 条目留着、错误留着，每次叫醒只重试回调；两步都成了才删。
+ */
+interface Unsettled { r: JobResult; written: boolean; failed: MatchJob | null }
+const unsettled = new Map<string, Map<string, Unsettled>>();
 
 async function settleOrKeep(dataDir: string, id: string, r: JobResult): Promise<void> {
-  const map = unsettled.get(dataDir) ?? new Map<string, JobResult>();
+  const map = unsettled.get(dataDir) ?? new Map<string, Unsettled>();
   unsettled.set(dataDir, map);
-  map.set(id, r);
-  await settle(dataDir, id, r);
+  const entry = map.get(id) ?? { r, written: false, failed: null };
+  map.set(id, entry);
+  if (!entry.written) { entry.failed = await settle(dataDir, id, entry.r); entry.written = true; }
+  const hook = entry.failed ? failedHooks.get(entry.failed.purpose) : undefined;
+  if (entry.failed && hook) await hook(dataDir, entry.failed, entry.failed.error ?? "核对失败");
   map.delete(id);
 }
 
 async function flushUnsettled(dataDir: string): Promise<void> {
-  for (const [id, r] of [...(unsettled.get(dataDir) ?? new Map<string, JobResult>())]) await settleOrKeep(dataDir, id, r);
+  for (const [id, e] of [...(unsettled.get(dataDir) ?? new Map<string, Unsettled>())]) await settleOrKeep(dataDir, id, e.r);
 }
 
 async function runJob(dataDir: string, job: MatchJob): Promise<void> {
