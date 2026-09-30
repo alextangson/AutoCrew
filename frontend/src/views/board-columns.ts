@@ -306,6 +306,9 @@ export function estimateText(chars: number, wpm: number | null): string | null {
 }
 
 /** 卡片副标题 */
+/** 与后端 explain.ts 的 LEGACY_REGISTERED 同值 */
+export const LEGACY_REGISTERED = "按旧流程登记";
+
 export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date.now()): string {
   const parts: string[] = [];
   if (item.column === "写稿中" && item.status === "draft_ready") parts.push(`写完 ${relativeLabel(item.draftReadyAt ?? item.updatedAt, now)}`);
@@ -320,6 +323,8 @@ export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date
     if (item.finalDurationMs) parts.push(durationText(item.finalDurationMs));
     const days = item.publishTime ? Math.ceil((Date.parse(item.publishTime) - now) / 86_400_000) : 0;
     if (item.column === "已发布" && days > 0) parts.push(`还有 ${days} 天公开`);
+    // 旧流程登记过的已发布卡：中性说明放在卡片信息行（不标红；换过版本那种在 alerts 里标红）
+    if (item.column === "已发布" && item.badges?.includes(LEGACY_REGISTERED)) parts.push(LEGACY_REGISTERED);
   }
   return parts.join(" · ");
 }

@@ -1,9 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { handleMcpRequest, normalizeSession, runner, DEFAULT_HOST, HOST_PARAM, SESSION_PARAM, UNKNOWN_SESSION } from "./server.js";
 import { CODEX_EDITOR_DENIED, HOST_HIDDEN_TOOLS, hostAuthorize, hostPolicy } from "./host-policy.js";
+
+// 宿主限权会读「资料库启用了没有」：别读到这台机器上真实资料库的状态（本机已启用本体时话术会变），指向空的本机目录
+beforeAll(() => { vi.stubEnv("AUTOCREW_LOCAL_DIR", mkdtempSync(path.join(os.tmpdir(), "autocrew-mcp-test-machine-"))); });
 
 const LOCAL: { principal: { subject: string; plan: "local" }; host: string } = {
   principal: { subject: DEFAULT_HOST, plan: "local" },

@@ -9,7 +9,7 @@ import { bodyHash, scriptApprovalFor } from "../../storage/production-store.js";
 import { emptyProductionDoc, type ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { LegacyImport } from "./legacy.js";
-import { candidatesOf, deriveStage, writingBadge, type CandidateView, type PublishEvidence, type Rule, type Stage } from "./derive.js";
+import { candidatesOf, deriveStage, UNREGISTERED_PUBLISH, writingBadge, type CandidateView, type PublishEvidence, type Rule, type Stage } from "./derive.js";
 
 export type Column = "写稿中" | "待录制" | "剪辑中" | "待发布" | "已发布";
 
@@ -86,6 +86,23 @@ function nonProduction(column: Column | null, phase: Explanation["phase"], badge
   return { column, phase, stage: null, rule: null, status: null, missing: [], badges: badge ? [badge] : [], alerts: [], reason: phase === "writing" ? badge ?? "还没认稿" : "", candidates: [], publishable: false, evidence: [] };
 }
 
+export const LEGACY_REGISTERED = "按旧流程登记";
+export const LEGACY_REGISTERED_RECUT = "按旧流程登记；发布后成片换过版本";
+
+/**
+ * 已发布、本轮没有本体登记记录，但稿件上有旧流程的登记（video.final.register_hash）：不是「未登记就发布」（创始人 09-30）。
+ * 只改说法，不放宽旧登记导入规则。登记之后本轮又出现了另一版成片（含发布后导出的候选）→ 加「发布后成片换过版本」（提醒）。
+ */
+function legacyRegisteredNote<T extends { rule: string | null; alerts: string[]; badges: string[] }>(r: T, doc: ProductionDoc, content: ExplainInput["content"]): T {
+  const final = content.video?.final;
+  if (r.rule !== "D1" || !final?.register_hash || !r.alerts.includes(UNREGISTERED_PUBLISH)) return r;
+  const after = Date.parse(final.at ?? "");
+  const recut = doc.facts.some((f) => f.round === doc.round && f.kind === "cut" && f.state !== "rejected" && f.sha256 && f.sha256 !== final.sha256
+    && !Number.isNaN(after) && Date.parse(f.at) > after);
+  const alerts = r.alerts.filter((a) => a !== UNREGISTERED_PUBLISH);
+  return recut ? { ...r, alerts: [LEGACY_REGISTERED_RECUT, ...alerts] } : { ...r, alerts, badges: [LEGACY_REGISTERED, ...r.badges] };
+}
+
 /** 本体规则下的结果（不管启没启用） */
 export function deriveExplanation(input: ExplainInput): Explanation {
   const { content, doc, publish } = input;
@@ -94,7 +111,7 @@ export function deriveExplanation(input: ExplainInput): Explanation {
   const d = doc ?? emptyProductionDoc();
   // 写稿段也把候选带出来：认稿前发现的疑似 A-roll 要在卡上看得见（E4）
   if (!scriptApprovalFor(d, content.body ?? "")) return { ...nonProduction("写稿中", "writing", writingBadge(d)), candidates: candidatesOf(d) };
-  const r = deriveStage(d, content.body ?? "", publish);
+  const r = legacyRegisteredNote(deriveStage(d, content.body ?? "", publish), d, content);
   const badges = content.status === "publishing" && r.stage !== "已发布" ? [...r.badges, "发布中"] : r.badges;
   return { column: r.stage, phase: "production", stage: r.stage, rule: r.rule, status: STAGE_STATUS[r.stage], missing: r.missing, badges, alerts: r.alerts, reason: r.reason, candidates: r.candidates, publishable: r.publishable, evidence: r.evidence };
 }
