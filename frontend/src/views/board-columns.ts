@@ -75,6 +75,8 @@ export interface BoardItem {
   /** 真有问题的提示（卡上标红）；中性信息在 badges */
   alerts?: string[];
   badges?: string[];
+  /** 本轮候选 / 核对中的事实（本体 explain 给的；写稿段也带） */
+  candidates?: Array<{ kind: string; state?: string }>;
   reason?: string;
   /** 最新一版分镜（「v001」） */
   storyboard?: string | null;
@@ -93,6 +95,17 @@ export interface BoardTopic {
 /** 收件箱（1b §4）：没对上的、没核对成的、还在核对的——待录制列头读它 */
 export interface InboxFileView { name: string; path: string; size: number; mtime_ms: number; guess: string[] }
 export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number }
+
+/**
+ * 写稿中卡片的原片提示（1b 预演反馈）：有 pending_match → 「正在核对原片」；有原片候选 → 「发现 N 个疑似原片」。
+ * 别的列有自己的阶段说法，不重复。
+ */
+export function writingArollBadge(item: Pick<BoardItem, "column"> & { candidates?: Array<{ kind: string; state?: string }> }): string | null {
+  if (item.column !== "写稿中") return null;
+  const arolls = (item.candidates ?? []).filter((c) => c.kind === "aroll");
+  if (arolls.some((c) => c.state === "pending_match")) return "正在核对原片";
+  return arolls.length ? `发现 ${arolls.length} 个疑似原片` : null;
+}
 
 /** 本体对账报告（服务端 /api/board 的 ontology，spec 2026-09-29 §4.1）：未启用时的「要挪」清单与逐条失败 */
 export interface OntologyMove { id: string; title: string; from: string | null; to: string | null; rule: string | null; evidence: string[] }
