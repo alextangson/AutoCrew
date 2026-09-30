@@ -482,3 +482,18 @@ describe("提醒：打开页面时已有的事只压住那几件", () => {
     expect(created).toEqual([ITEMS[1].summary]);
   }, 10_000);
 });
+
+describe("整分支审 8：新的一组封面", () => {
+  it("已批 A、新做好 B：打开就显示并选中 B，回车批的是 B", async () => {
+    const g = (id: string, approved: boolean) => ({ group_id: id, label: approved ? "上一组" : "最新一组", at: new Date().toISOString(), text: "字", approved,
+      "3:4": { fact_id: `${id}-34`, sha256: "a" }, "4:3": { fact_id: `${id}-43`, sha256: "b" } });
+    const item = { ...ITEMS[2], summary: "新的一组封面做好了，要不要换", detail: { groups: [g("cg-A", true), g("cg-B", false)], incomplete: [] },
+      actions: [{ action: "pick_cover", label: "用这组", role: "primary" as const, params: { group_id: "cg-B", cover_text: "字" } }] };
+    await mountInbox([item]);
+    await openRow("新的一组封面做好了，要不要换");
+    expect(el.querySelector(".ri-pill-on")!.textContent).toBe("最新一组");
+    expect(el.querySelector(".ri-peek .ri-covers img")!.getAttribute("src")).toContain("cg-B-34");
+    await key("Enter");
+    expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-B" });
+  });
+});

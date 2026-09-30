@@ -88,7 +88,9 @@ function CutBody(p: { item: InboxItem; act: Act }) {
 
 function CoverBody(p: { item: InboxItem; act: Act }) {
   const groups = (p.item.detail.groups as Group[]) ?? [];
-  const [idx, setIdx] = useState(0);
+  // 一打开就选中这件事要你看的那一组（主按钮绑的组），不是列表第一组（整分支审 8 P2）
+  const wanted = p.item.actions.find((a) => a.action === "pick_cover")?.params?.group_id;
+  const [idx, setIdx] = useState(() => Math.max(0, groups.findIndex((g) => g.group_id === wanted)));
   const g = groups[idx];
   const [text, setText] = useState(g?.text ?? "");
   useEffect(() => { setText(g?.text ?? ""); }, [g?.group_id, g?.text]);

@@ -8,7 +8,8 @@ import path from "node:path";
 import { contentRoot } from "../../storage/content-project.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { isWithin } from "../../storage/storage-roots.js";
-import { sha256File } from "../video/handoff/manifest.js";
+/** 按文件身份（dev、ino、大小、修改时间）缓存的 sha：拖一次进度不再整份重读（整分支审 8 P2） */
+import { cachedSha } from "./observe.js";
 
 const TYPES: Record<string, string> = {
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
@@ -33,7 +34,7 @@ export async function openAttachment(contentId: string, askId: string, index: nu
   if (!real || !isWithin(root, real)) return { ok: false, status: 404, error: "附件不在项目里了" };
   const st = await fs.promises.lstat(file);
   if (!st.isFile()) return { ok: false, status: 404, error: "附件不是普通文件" };
-  if ((await sha256File(real)) !== a.sha256) return { ok: false, status: 409, error: "附件刚变过：和 agent 问你时的那份不一样了" };
+  if ((await cachedSha(real)).sha256 !== a.sha256) return { ok: false, status: 409, error: "附件刚变过：和 agent 问你时的那份不一样了" };
   return { ok: true, file: real, size: st.size, type };
 }
 
@@ -54,6 +55,6 @@ export async function openFactMedia(contentId: string, factId: string, dataDir: 
   if (!real || (!path.isAbsolute(f.path) && !isWithin(root, real))) return { ok: false, status: 404, error: "文件不在了" };
   const st = await fs.promises.stat(real);
   if (!st.isFile()) return { ok: false, status: 404, error: "不是普通文件" };
-  if ((await sha256File(real)) !== f.sha256) return { ok: false, status: 409, error: "文件变过了" };
+  if ((await cachedSha(real)).sha256 !== f.sha256) return { ok: false, status: 409, error: "文件变过了" };
   return { ok: true, file: real, size: st.size, type };
 }
