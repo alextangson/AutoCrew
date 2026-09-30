@@ -13,7 +13,7 @@ import { getContent, type Content } from "../../storage/local-store.js";
 import { isOntologyActive, readProductionDoc, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
-import { stableFingerprint } from "./files.js";
+import { checkDuration, stableFingerprint } from "./files.js";
 import { chatcutHold } from "./chatcut-refs.js";
 import { decide, describeTop3 } from "./match/decide.js";
 import { matchDeps } from "./match/deps.js";
@@ -24,7 +24,7 @@ import { enqueueMatchJob, listMatchJobs, registerMatchHandler, type JobResult, t
 import { pendingElsewhere, pendingElsewhereText } from "./match/reservation.js";
 import { checkTargetDir, type FilePlan } from "./record-plan.js";
 import { commitFile } from "./record.js";
-import { now } from "./roots.js";
+import { now, probe } from "./roots.js";
 import { mutateProduction, registerReadyHook } from "./service.js";
 import { arollOwnerElsewhere, shaIndex } from "./sha-index.js";
 import { chatcutInUse, factFile, IN_EDIT_REASSIGN, undoBlocker } from "./undo-attach.js";
@@ -142,6 +142,8 @@ export async function reassignAroll(content: Content, doc: ProductionDoc, fact: 
   const fp = await stableFingerprint(source, now());
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "项目里的原片被改过，刷新再看");
+  const dur = await checkDuration(source, probe);
+  if (!dur.ok) return fail(dur.code, dur.error);
   const plan: FilePlan = { action: inPlace ? "in_place" : "move", kind: "aroll", source, sha256: fact.sha256!, id: fp.value.id, projectRoot: await fs.realpath(contentRoot(to!.id, dataDir)), location: "other",
     evidence: `创始人从《${content.title}》改挂过来（内容核对：${fact.attach_check?.reason ?? "—"}）`, ...(fact.duration_ms ? { duration_ms: fact.duration_ms } : {}) };
   const a = { content_id: to!.id, kind: "aroll" as const, request_id: `reassign-${fact.id}`, host: "founder" };

@@ -13,7 +13,8 @@ import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { Explanation } from "./explain.js";
-import { cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./files.js";
+import { checkDuration, cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./files.js";
+import { probe } from "./roots.js";
 import { withFileOwnership } from "./mutex.js";
 import { normalizeRecordArgs, type RecordArgs } from "./record-args.js";
 import { checkTargetDir, planFileRecord, targetDirOf, type FilePlan } from "./record-plan.js";
@@ -379,6 +380,11 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   const fp = await stableFingerprint(checked.value, Date.now());
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "候选文件在发现之后被改过，刷新再看");
+  // 完整性（Codex 审 segB12 P2）：原片 / 成片要读得出时长——名字对上的坏文件、没拷完的文件不收，原处不动，原因回给创始人
+  if (fact.kind === "aroll" || fact.kind === "cut") {
+    const dur = await checkDuration(checked.value, probe);
+    if (!dur.ok) return fail(dur.code, `${dur.error}（文件留在原处：${checked.value}）`);
+  }
   let release: ReleaseOp | undefined;
   let held: PendingHolder | null = null;
   if (fact.kind === "aroll") {

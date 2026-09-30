@@ -220,3 +220,27 @@ describe("审计补漏：重开文稿也不挪 ChatCut 按路径在用的原片"
     expect(await exists(inProject)).toBe(true);
   });
 });
+
+describe("收下原片 / 成片时也查完整性（Codex 审 segB12 P2）", () => {
+  it("名字对上的坏文件做了候选：点「是这条」被拒、原因看得见，文件留原处，事实仍是候选", async () => {
+    const TITLE = "坏文件候选测试的稿";
+    const c = await videoContent(env, TITLE);
+    await founderApprove(env, c.id);
+    const src = await put(path.join(env.outside, `${TITLE}-broken.mp4`), "corrupt");
+    await record(env, { content_id: c.id, kind: "aroll", path: src, request_id: "r0" }).catch(() => undefined);
+    const { withFileOwnership } = await import("./mutex.js");
+    const { mutateProduction } = await import("./service.js");
+    const { cachedSha } = await import("./observe.js");
+    const h = await cachedSha(src);
+    await withFileOwnership(() => mutateProduction(c.id, env.dir, (doc) => {
+      if (!doc.facts.some((f) => f.sha256 === h.sha256)) doc.facts.push({ id: "fact-bad-1", kind: "aroll", round: doc.round, state: "candidate", availability: "present", source: "reconcile", at: new Date().toISOString(), path: src, sha256: h.sha256, size: h.size, mtime_ms: h.mtime_ms, evidence: "监视文件夹：文件名对上" });
+      return { value: null, events: [] };
+    }));
+    const f = (await aroll(c.id))!;
+    const r = await founderDecision(c.id, "confirm_candidate", { fact_id: f.id, sha256: f.sha256 }, env.dir);
+    expect(r).toMatchObject({ ok: false, code: "file_unstable" });
+    expect(String(r.error)).toContain("读不出时长");
+    expect(await exists(src)).toBe(true);
+    expect((await aroll(c.id))?.state).toBe("candidate");
+  });
+});
