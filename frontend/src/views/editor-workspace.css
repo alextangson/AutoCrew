@@ -210,3 +210,6 @@
 /* 让 Codex 发布：沿用 .pb-viewer/.pp-body 浮层 */
 .cx-body { margin-top: 8vh; }
 .cx-text { width: 100%; box-sizing: border-box; font: var(--fs-sm)/1.6 var(--mono, ui-monospace, monospace); resize: vertical; }
+
+/* 1b 验收：稿件页标题下一行——在哪一步、下一步、回看板那张卡 */
+.ed-production-banner { padding: 6px 16px; font-size: 13px; border-bottom: 1px solid var(--line, #e5e5e5); }

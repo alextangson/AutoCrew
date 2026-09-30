@@ -278,6 +278,6 @@ export function writingBadge(doc: ProductionDoc | null): string | null {
   const kinds = new Set(accepted(doc).filter((f) => PRODUCTION_KINDS.has(f.kind)).map((f) => f.kind));
   if (!kinds.size) return inRound(doc, doc.facts).some((f) => f.kind === "aroll" && f.state === "pending_match") ? PENDING_BADGE : null;
   const aroll = kinds.has("aroll"), other = [...kinds].some((k) => k !== "aroll");
-  const what = aroll && other ? "A-roll / 剪辑产物" : aroll ? "A-roll" : "剪辑产物";
-  return `已有 ${what}，等你认稿`;
+  const what = aroll && other ? "原片 / 剪辑产物" : aroll ? "原片" : "剪辑产物";
+  return `已有${what}，等你认稿`;
 }

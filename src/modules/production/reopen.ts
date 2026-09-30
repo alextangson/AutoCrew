@@ -24,13 +24,16 @@ function arollsToRetire(doc: ProductionDoc): Fact[] {
     && f.path && !path.isAbsolute(f.path) && f.path.startsWith("02-aroll/") && !f.path.startsWith("02-aroll/_作废-") && !referenced.has(f.id) && f.sha256);
 }
 
-async function moveRetired(contentId: string, dataDir: string, doc: ProductionDoc, txn: Txn): Promise<Map<string, string>> {
+async function moveRetired(contentId: string, dataDir: string, doc: ProductionDoc, txn: Txn, kept: string[] = []): Promise<Map<string, string>> {
   const root = contentRoot(contentId, dataDir);
   const moved = new Map<string, string>();
   for (const fact of arollsToRetire(doc)) {
     const source = path.join(root, fact.path!);
     // 本机 ChatCut 工程按路径在用的原片也不挪（§13-A 隐式引用）：挪进 _作废 会断它的素材链接
-    if ((await chatcutHold(source)).project) continue;
+    const hold = await chatcutHold(source);
+    if (hold.project) continue;
+    // 核不了 ChatCut 引用：这段先留在 02-aroll 不挪，回执里说原因（Codex 审 segB18 P2）
+    if (hold.unverified) { kept.push(`${path.basename(source)}：${hold.unverified}`); continue; }
     const ext = path.extname(source);
     const safe = await checkTargetDir(root, `02-aroll/_作废-${doc.round}`);
     if (!safe.ok) throw new Error(safe.error);
@@ -81,7 +84,8 @@ export async function reopenScript(contentId: string, dataDir: string, note?: st
     // 已发布的也能重开（创始人 09-30：少见，原地重做）：本轮的发布槽随这一轮转入历史，不算进新一轮
     const txn: Txn = { id: newId("txn"), kind: "reopen", content_id: contentId, round: doc.round, ops: [], at: new Date().toISOString() };
     let moved: Map<string, string>;
-    try { moved = await moveRetired(contentId, dataDir, doc, txn); }
+    const kept: string[] = [];
+    try { moved = await moveRetired(contentId, dataDir, doc, txn, kept); }
     catch (err) {
       await rollbackTxn(dataDir, txn).catch(() => undefined);
       return { ok: false, code: "reopen_failed", error: `重开失败，原片没动：${err instanceof Error ? err.message : String(err)}` };
@@ -102,6 +106,6 @@ export async function reopenScript(contentId: string, dataDir: string, note?: st
     try { round = (await commit()).value; }
     catch (err) { return commitFailed(contentId, dataDir, txn, doc.round, moved, err); }
     await dropTxn(dataDir, txn.id);
-    return { ok: true, round, moved: [...moved.values()] };
+    return { ok: true, round, moved: [...moved.values()], ...(kept.length ? { warning: `这些原片留在 02-aroll 没挪进作废：${kept.join("；")}` } : {}) };
   });
 }

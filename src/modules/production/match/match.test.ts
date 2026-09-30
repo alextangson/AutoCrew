@@ -253,6 +253,20 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     expect(hookCalls).toBe(2);
   });
 
+  it("「暂不可用」退避也认拷贝：旧路径还在同一份字节时换路径不重排，一小时内不重复跑（Codex 审 segB15 P2）", async () => {
+    const a = path.join(dir, "inbox-u.mov"), b = path.join(dir, "watch-u.mov");
+    await fs.writeFile(a, "same"); await fs.writeFile(b, "same");
+    const t = new Date(1_700_000_000_000);
+    await fs.utimes(a, t, t); await fs.utimes(b, t, t);
+    const meta = { size: 4, mtime_ms: t.getTime() };
+    let runs = 0;
+    registerMatchHandler("test_unavail", async (): Promise<JobResult> => { runs += 1; return { state: "unavailable", reason: "找不到 ffmpeg" }; });
+    await enqueueMatchJob(dir, spec({ purpose: "test_unavail", path: a, ...meta }));
+    await matchWorkerIdle(dir);
+    for (const p of [b, a, b]) { await enqueueMatchJob(dir, spec({ purpose: "test_unavail", path: p, ...meta })); await matchWorkerIdle(dir); }
+    expect(runs).toBe(1);
+  });
+
   it("重启：跑到一半的作业回到排队，持久化在工作区缓存目录", async () => {
     const file = path.join(transcriptCacheDir(dir), "..", "match-jobs.json");
     const job: MatchJob = { id: "mjob-x", key: jobKey(spec()), purpose: "test_ok", priority: "background", sha256: SHA, path: "/x.mov", size: 1, mtime_ms: 1,

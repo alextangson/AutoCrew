@@ -33,12 +33,12 @@ describe("explain：写稿段与制作段的边界（§2.1）", () => {
   it("写稿段稿件已有 A-roll：仍在写稿中，只挂 badge，不越过认稿", () => {
     const d = { ...emptyProductionDoc(), facts: [fact("aroll", SHA.aroll)] };
     const r = explain({ content: video({ status: "draft_ready" }), doc: d, enabled: true, publish: { verified: false } });
-    expect(r).toMatchObject({ column: "写稿中", phase: "writing", stage: null, badges: ["已有 A-roll，等你认稿"] });
+    expect(r).toMatchObject({ column: "写稿中", phase: "writing", stage: null, badges: ["已有原片，等你认稿"] });
   });
 
   it("A-roll 与成片都在、没认稿：badge 说两样都有", () => {
     const d = { ...emptyProductionDoc(), facts: [fact("aroll", SHA.aroll), fact("cut", SHA.cut)] };
-    expect(explain({ content: video({ status: "draft_ready" }), doc: d, enabled: true, publish: { verified: false } }).badges).toEqual(["已有 A-roll / 剪辑产物，等你认稿"]);
+    expect(explain({ content: video({ status: "draft_ready" }), doc: d, enabled: true, publish: { verified: false } }).badges).toEqual(["已有原片 / 剪辑产物，等你认稿"]);
   });
 
   it("status 写着 approved 但没有有效认稿决定：推导回写稿中（制作段资格只来自认稿决定）", () => {

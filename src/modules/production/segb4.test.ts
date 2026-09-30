@@ -125,16 +125,48 @@ describe("守卫：本机 ChatCut 工程按绝对路径在用的原片不挪（�
     expect(await aroll(c.id)).toMatchObject({ state: "accepted", path: src });
   });
 
-  it("ChatCut 工程目录读不了 → 不挡搬运，照常挪，但依据里写出没读到", async () => {
+  it("ChatCut 工程目录读不了 → 核不了就先不挪：记候选、写原因，文件留原处（Codex 审 segB18 P2 取代 segB4 的「照常挪」）", async () => {
     await fs.mkdir(cc, { recursive: true });
     await fs.chmod(cc, 0o000);
     try {
       const c = await videoContent(env, TITLE);
       const src = await put(path.join(env.inbox, `${TITLE}-原片.mov`), "move-me");
       const r = await record(env, { content_id: c.id, kind: "aroll", path: src, request_id: "r1" });
-      expect(r).toMatchObject({ ok: true, state: "accepted", path: `02-aroll/${TITLE}-原片.mov` });
-      expect((await aroll(c.id))?.evidence).toContain("没读到 ChatCut 工程目录");
+      expect(r).toMatchObject({ ok: true, state: "candidate" });
+      expect(await exists(src)).toBe(true);
+      expect((await aroll(c.id))?.evidence).toContain("没读到 ChatCut 工程信息");
     } finally { await fs.chmod(cc, 0o755); }
+  });
+
+  it("某个工程的素材 JSON 写了一半（读不出）→ 不当成「没引用」：record 不挪；收件箱自动挪这轮先不挪、写警告，修好后下一轮再挪", async () => {
+    const c = await videoContent(env, TITLE);
+    const bad = path.join(cc, "p-x", "project.chatcutproject", "assets", "video");
+    await fs.mkdir(bad, { recursive: true });
+    await fs.writeFile(path.join(bad, "a0.json"), "{\"path\": \"/half");
+    const src = await put(path.join(env.inbox, `${TITLE}-原片.mov`), "auto");
+    let r = await reconcileAll(env.dir);
+    expect(await exists(src)).toBe(true);
+    expect(r.warnings.join()).toContain("没读到 ChatCut 工程信息");
+    expect(r.warnings.join()).toContain("先不挪，稍后再试");
+    await fs.writeFile(path.join(bad, "a0.json"), JSON.stringify({ id: "a0", type: "video", path: "/somewhere/else.mov" }));
+    r = await reconcileAll(env.dir);
+    expect(await exists(src)).toBe(false);
+    expect(await aroll(c.id)).toMatchObject({ state: "accepted", auto_attached: true });
+  });
+
+  it("核不了 ChatCut 时，撤销也不挪：拒并说原因", async () => {
+    const c = await videoContent(env, TITLE);
+    await founderApprove(env, c.id);
+    await put(path.join(env.inbox, `${TITLE}-原片.mov`), "undo-me");
+    await reconcileAll(env.dir);
+    const f = (await aroll(c.id))!;
+    const bad = path.join(cc, "p-y", "project.chatcutproject", "assets", "video");
+    await fs.mkdir(bad, { recursive: true });
+    await fs.writeFile(path.join(bad, "a0.json"), "not json");
+    const r = await founderDecision(c.id, "undo_auto_attach", { fact_id: f.id, sha256: f.sha256 }, env.dir);
+    expect(r).toMatchObject({ ok: false });
+    expect(String(r.error)).toContain("没读到 ChatCut 工程信息");
+    expect((await aroll(c.id))?.state).toBe("accepted");
   });
 
   it("没装 ChatCut（目录不存在）是正常情况：照常挪，不提示", async () => {

@@ -39,7 +39,7 @@ async function facts(id: string, kind: Fact["kind"] = "aroll"): Promise<Fact[]> 
 }
 
 describe("§4 收件箱自动挪", () => {
-  it("开头转写对上等原片的稿 → 自动挂上、挪进项目、标 auto_attached，badge 说不对就点「不是这条」", async () => {
+  it("开头转写对上等原片的稿 → 自动挂上、挪进项目、标 auto_attached，badge 说不对就点「不是」", async () => {
     asr(heardFrom({ "IMG_1.mov": A.slice(20, 160) }));
     const a = await videoContent(env, "甲稿收件箱测试", "draft_ready", A);
     await videoContent(env, "乙稿收件箱测试", "draft_ready", B);
@@ -259,6 +259,20 @@ describe("Codex 审 segB13：转写器回「环境不可用」不算失败", () 
     expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
     expect(runs).toBeGreaterThan(1);
   });
+});
+
+describe("Codex 审 segB18 P2：待审 / 修订中的稿也在比对池里", () => {
+  for (const status of ["reviewing", "revision"] as const) {
+    it(`${status}：收件箱里文件名正好对上 → 自动挂上，不是「没对上」`, async () => {
+      asr(heardFrom({}));
+      const a = await videoContent(env, `${status}状态的一条稿`, status, A);
+      const src = await put(path.join(env.inbox, `${status}状态的一条稿-原片.mov`), "x");
+      const r = await tick();
+      expect(r.inbox?.unmatched ?? []).toEqual([]);
+      expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
+      expect(await exists(src)).toBe(false);
+    });
+  }
 });
 
 describe("Codex 审 segB14：持续「暂不可用」要给结论、露原因、不挡批次", () => {

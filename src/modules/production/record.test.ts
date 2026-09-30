@@ -283,7 +283,7 @@ describe("record 与阶段：只报事实，不带批准", () => {
     await writeEnabledVersion(env.dir);
     const c = await videoContent(env, TITLE);
     const r = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "x"), request_id: "r1" });
-    expect(r).toMatchObject({ ok: true, stage: "写稿中", badges: ["已有 A-roll，等你认稿"] });
+    expect(r).toMatchObject({ ok: true, stage: "写稿中", badges: ["已有原片，等你认稿"] });
     expect((await getContent(c.id, env.dir))!.status).toBe("draft_ready");
   });
 });

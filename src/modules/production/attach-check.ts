@@ -67,6 +67,11 @@ async function handle({ dataDir, job, signal }: { dataDir: string; job: MatchJob
   const fact = doc?.facts.find((f) => f.id === fact_id && f.state === "accepted" && f.attach_check?.job === job.id);
   if (!content || content.deletedAt || !fact) return { state: "cancelled", outcome: "这条原片已经不在了" };
   const h = await hear(dataDir, job, signal);
+  // 转写回来但文件在这期间变了：文本绑不上这份字节，不能拿它下结论（Codex 审 segB15 P2）
+  if (h.text !== null && h.uncached) {
+    await settle(dataDir, content_id, fact_id, job.id, { status: "failed", reason: "核对失败：文件在核对时变了，没下结论；确认文件后重新挂一次" });
+    return { state: "done", outcome: "文件在核对时变了" };
+  }
   if (h.text === null) {
     await settle(dataDir, content_id, fact_id, job.id, { status: h.failed ? "failed" : "not_ready", reason: h.failed ? `核对失败：${h.why}` : `没做内容核对：${h.why}` });
     return { state: "done", outcome: h.why };
@@ -137,6 +142,7 @@ export async function reassignAroll(content: Content, doc: ProductionDoc, fact: 
   const source = await factFile(content, fact, dataDir);
   const hold = await chatcutHold(source);
   if (hold.project) return fail("reassign_blocked", chatcutInUse(hold.project));
+  if (hold.unverified) return fail("reassign_blocked", hold.unverified);
   // 原地收下的原片（绝对路径）改挂：同样不挪文件，《X》原地收下（Codex 审 segB5 P2）
   const inPlace = path.isAbsolute(fact.path!);
   const fp = await stableFingerprint(source, now());

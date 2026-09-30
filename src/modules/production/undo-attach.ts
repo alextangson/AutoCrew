@@ -75,6 +75,20 @@ async function reserveHome(fact: Fact, dataDir: string): Promise<{ target: strin
   return { target, fallback: home.fallback };
 }
 
+export const NO_HOME = "这段原片没有原来的位置可以挪回，要换原片请重开文稿";
+
+/**
+ * 「不是」能不能撤这段（1b 验收）：系统自动挂上的，或有项目外原位置（source_path）的——创始人自己确认 / 挂上的，撤回是他自己的事。
+ * 原位置就在项目里的（一开始就在项目里原地收的）没有可挪回的地方。null = 可以。
+ */
+export async function noOriginalPlace(content: Content, fact: Fact, dataDir: string): Promise<string | null> {
+  if (fact.auto_attached) return null;
+  if (!fact.source_path) return NO_HOME;
+  const root = await fs.realpath(contentRoot(content.id, dataDir)).catch(() => contentRoot(content.id, dataDir));
+  const rel = path.relative(root, fact.source_path);
+  return rel.startsWith("..") || path.isAbsolute(rel) ? null : NO_HOME;
+}
+
 /** 事实里的文件：原地收下的存绝对路径，挪进项目的存项目内相对路径（Codex 审 segB5 P2） */
 export async function factFile(content: Content, fact: Fact, dataDir: string): Promise<string> {
   return path.isAbsolute(fact.path!) ? fact.path! : path.join(await fs.realpath(contentRoot(content.id, dataDir)), fact.path!);
@@ -95,7 +109,8 @@ async function commitUndo(content: Content, fact: Fact, txn: Txn | null, target:
 
 /** 调用方持有文件归属锁（founderDecision） */
 export async function undoAutoAttach(content: Content, doc: ProductionDoc, fact: Fact, dataDir: string): Promise<Result> {
-  if (!fact.auto_attached) return fail("not_auto", "这条原片是人确认挂上的，不是系统自动挂的；要换原片请重开文稿");
+  const noHome = await noOriginalPlace(content, fact, dataDir);
+  if (noHome) return fail("not_auto", noHome);
   const blocked = undoBlocker(content, doc, fact);
   if (blocked) return fail("undo_blocked", blocked);
   const source = await factFile(content, fact, dataDir);
@@ -104,6 +119,7 @@ export async function undoAutoAttach(content: Content, doc: ProductionDoc, fact:
   // 本机 ChatCut 工程按路径在用（还没有 uses_aroll 事实也算，Codex 审 segB5 P1）：挪走会断它的素材链接
   const hold = await chatcutHold(source);
   if (hold.project) return fail("undo_blocked", chatcutInUse(hold.project));
+  if (hold.unverified) return fail("undo_blocked", hold.unverified);
   // 先核完整哈希、再占名 / 挪（Codex 审 segB3 P1）：被外部改过的字节一旦挪出去，撤回会因哈希对不上拒绝放回，文件两头都不在
   const fp = await stableFingerprint(source, now());
   if (!fp.ok || fp.value.sha256 !== fact.sha256) return fail("undo_blocked", CHANGED);

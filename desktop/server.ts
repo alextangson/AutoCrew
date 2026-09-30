@@ -31,6 +31,7 @@ import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
 import { resolveServerToken, resolveSessionSecret } from "../src/desktop/server-token.js";
+import { MIME, serveApp as serveAppFrom } from "../src/desktop/serve-app.js";
 import { LocalSessionAuth, LOCAL_SUBJECT, SESSION_COOKIE, sessionCookieName } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
@@ -135,31 +136,9 @@ function setSecurityHeaders(res: http.ServerResponse): void {
 }
 
 // ── 静态资源 ──────────────────────────────────────────────────────────────────
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  ".cjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
-  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon",
-};
-/** React 前端静态托管:SPA 回退到 index.html;dist 缺失给出构建指引而非裸 404 */
-async function serveApp(res: http.ServerResponse, rel: string): Promise<void> {
-  const clean = rel.replace(/\.\.+/g, "").replace(/^\/+/, "");
-  let file = path.join(FRONTEND_DIST, clean || "index.html");
-  if (!file.startsWith(FRONTEND_DIST)) { res.writeHead(403).end("forbidden"); return; }
-  try {
-    await fs.access(file);
-  } catch {
-    file = path.join(FRONTEND_DIST, "index.html");
-    try {
-      await fs.access(file);
-    } catch {
-      res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" })
-        .end("前端未构建：先执行 npm run fe:build 再刷新");
-      return;
-    }
-  }
-  res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" });
-  createReadStream(file).pipe(res);
+// 托管与缓存策略在 src/desktop/serve-app.ts（外壳 no-cache、带哈希的 assets 长缓存）
+function serveApp(res: http.ServerResponse, rel: string): Promise<void> {
+  return serveAppFrom(FRONTEND_DIST, res, rel);
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {

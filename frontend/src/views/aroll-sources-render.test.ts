@@ -77,15 +77,15 @@ describe("卡片上已挂的原片", () => {
   async function render(rows: unknown[]) {
     const acts: Array<[string, Record<string, unknown>]> = [];
     const { CardArolls } = await import("./CardArolls");
-    await act(async () => { root.render(createElement(CardArolls, { rows: rows as never, busy: false, act: async (a: string, p: Record<string, unknown>) => { acts.push([a, p]); } })); });
+    await act(async () => { root.render(createElement(CardArolls, { contentId: "content-1-a", rows: rows as never, busy: false, act: async (a: string, p: Record<string, unknown>) => { acts.push([a, p]); } })); });
     return acts;
   }
 
-  it("自动挂上的给「不是这条」（确认后撤）；推导回不去的只给原因", async () => {
+  it("能撤的给「不是」（确认后撤）；推导回不去的只给原因", async () => {
     const acts = await render([row({ auto_attached: true }), row({ fact_id: "fact-2", auto_attached: true, undo_blocked: "这条已经在剪了，要换原片请重开文稿" })]);
     expect(el.textContent).toContain("这条已经在剪了，要换原片请重开文稿");
-    expect([...el.querySelectorAll("button")].filter((b) => b.textContent === "不是这条")).toHaveLength(1);
-    await click(button("不是这条"));
+    expect([...el.querySelectorAll("button")].filter((b) => b.textContent === "不是")).toHaveLength(1);
+    await click(button("不是"));
     expect(acts).toEqual([["undo_auto_attach", { fact_id: "fact-1", sha256: "s" }]]);
   });
 
