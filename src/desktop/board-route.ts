@@ -16,6 +16,8 @@ import { cardPanel } from "../modules/production/panel.js";
 import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/production/storyboard.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
 import { isContentId } from "../storage/entity-id.js";
+import { applyArollSourceOp } from "../modules/production/sources.js";
+import { arollSourcesView } from "../modules/production/sources-view.js";
 
 export interface BoardRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
@@ -130,6 +132,29 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         if (r.kind === "cancel") return { ok: false, code: "cancelled", error: "没选文件" };
         if (r.kind === "timeout") return { ok: false, code: "timeout", error: "选择窗等太久关掉了，再点一次" };
         return { ok: false, code: "unavailable", error: `弹不出选择文件的窗口（${r.reason}），请把路径贴进来` };
+      });
+      return true;
+    }
+    // 「原片从哪里找」（1b §5）：读只要会话；写只收同源浏览器会话（这些是可搬入根，§14-7）
+    if (p === "/api/board/aroll-sources" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      try { send(res, 200, await arollSourcesView(await deps.resolveDataDir())); }
+      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    if (p === "/api/board/aroll-sources" && req.method === "POST") {
+      await post(req, res, (b, dir) => applyArollSourceOp(String(b.op ?? ""), b, dir));
+      return true;
+    }
+    if (p === "/api/board/choose-folder" && req.method === "POST") {
+      await post(req, res, async () => {
+        const chooser = pullDeps().dialog.chooseFolder;
+        if (!chooser) return { ok: false, code: "unavailable", error: "这台机器上弹不出选择文件夹的窗口，请把路径贴进来" };
+        const r = await chooser({ prompt: "选一个放原片的文件夹", timeoutSec: 300 });
+        if (r.kind === "ok") return { ok: true, path: r.value };
+        if (r.kind === "cancel") return { ok: false, code: "cancelled", error: "没选文件夹" };
+        if (r.kind === "timeout") return { ok: false, code: "timeout", error: "选择窗等太久关掉了，再点一次" };
+        return { ok: false, code: "unavailable", error: `弹不出选择文件夹的窗口（${r.reason}），请把路径贴进来` };
       });
       return true;
     }

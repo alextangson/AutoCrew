@@ -97,14 +97,15 @@ async function rescored(dataDir: string, job: MatchJob, first: MatchDecision, he
   return decide({ fileName: path.basename(job.path), sha256: job.sha256, pool, heard: again }, matchDeps().thresholds);
 }
 
-type Check = { ok: true; source: string; projectRoot: string } | { ok: false; gone: boolean; why: string };
+type Check = { ok: true; source: string; projectRoot: string; location: "inbox" | "watch" } | { ok: false; gone: boolean; why: string };
 
 /** 重跑原 spec §3 的落位检查（B27）：全部只读 */
 async function placementCheck(w: Waiting, dataDir: string): Promise<Check> {
   const at = await resolveLocalFile(w.fact.path!, "原片");
   if (!at.ok) return { ok: false, gone: at.code === "path_missing", why: at.error };
   const projectRoot = await fs.realpath(contentRoot(w.content.id, dataDir));
-  if (classify(at.value, projectRoot, await movableRoots(dataDir)) !== "inbox") return { ok: false, gone: false, why: "原片所在目录现在不允许直接搬入" };
+  const where = classify(at.value, projectRoot, await movableRoots(dataDir));
+  if (where !== "inbox" && where !== "watch") return { ok: false, gone: false, why: "原片所在目录现在不允许直接搬入" };
   const owner = await arollOwnerElsewhere(dataDir, w.fact.sha256!, w.content.id);
   if (owner) return { ok: false, gone: false, why: `这个原片已经是《${(await getContent(owner, dataDir))?.title ?? owner}》的 A-roll` };
   const held = await pendingElsewhere(dataDir, w.fact.sha256!, w.content.id);
@@ -112,12 +113,12 @@ async function placementCheck(w: Waiting, dataDir: string): Promise<Check> {
   if (referencedByChatcut(w.doc, w.fact)) return { ok: false, gone: false, why: "原片已被 ChatCut 工程引用，不挪" };
   const safe = await checkTargetDir(projectRoot, "02-aroll");
   if (!safe.ok) return { ok: false, gone: false, why: safe.error };
-  return { ok: true, source: at.value, projectRoot };
+  return { ok: true, source: at.value, projectRoot, location: where };
 }
 
 async function accept(dataDir: string, w: Waiting, job: MatchJob, d: MatchDecision, c: Extract<Check, { ok: true }>, id: FilePlan["id"]): Promise<JobResult> {
   const a: RecordArgs = { content_id: w.content.id, kind: "aroll", request_id: w.fact.request_id ?? `match-${job.id}`, host: w.fact.by?.host ?? "autocrew" };
-  const plan: FilePlan = { action: "move", kind: "aroll", source: c.source, sha256: job.sha256, id, projectRoot: c.projectRoot, location: "inbox",
+  const plan: FilePlan = { action: "move", kind: "aroll", source: c.source, sha256: job.sha256, id, projectRoot: c.projectRoot, location: c.location,
     evidence: `核对认出：${d.reason}`, existing: w.fact, ...(w.fact.duration_ms ? { duration_ms: w.fact.duration_ms } : {}) };
   const r = await commitFile(a, w.content, plan, dataDir, undefined, { keepArgs: true, patch: { auto_attached: true, match: summaryOf(d) }, event: "aroll_match_accepted" });
   if (!r.ok) return resolveTo(dataDir, w, job, "candidate", `对上了，但挪进项目失败：${String(r.error)}`, d);

@@ -134,7 +134,8 @@ export const ONTOLOGY_NOT_ENABLED =
 function currentCore(doc: ProductionDoc, stored: ReceiptCore): ReceiptCore {
   const f = stored.fact_id ? doc.facts.find((x) => x.id === stored.fact_id) : undefined;
   if (!f) return stored;
-  const { reason: _old, ...rest } = stored;
+  const rest: ReceiptCore = { ...stored };
+  delete rest.reason;
   return { ...rest, state: f.state, ...(f.path ? { path: f.path } : {}), ...(f.state === "candidate" || f.state === "rejected" ? { reason: f.evidence ?? stored.reason } : {}) };
 }
 

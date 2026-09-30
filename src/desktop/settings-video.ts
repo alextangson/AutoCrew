@@ -31,11 +31,25 @@ export interface VideoSettings {
   jianyingExportDir?: string;
   /** 「暂停自动找原片」（1b §2）：只停自己去找的转写，agent record 与卡片挂载照常。写口在设置页（1b 段 B） */
   arollAutoFindPaused?: boolean;
+  /**
+   * 原片监视文件夹（1b §5）：存 realpath + 目录身份（dev/ino），使用时复核。scan = 给建议；allow_move = 允许 agent record 直接搬入。
+   * 只收同源浏览器会话的写入（`production/sources.ts`），`video:settings_set` 一律拒。
+   */
+  arollWatchFolders?: WatchFolder[];
+}
+
+export interface WatchFolder { path: string; scan: boolean; allow_move: boolean; dev: number; ino: number }
+
+function watchFolders(raw: unknown): WatchFolder[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ok = raw.filter((f): f is WatchFolder => Boolean(f) && typeof f.path === "string" && path.isAbsolute(f.path)
+    && typeof f.dev === "number" && typeof f.ino === "number").map((f) => ({ path: f.path, scan: f.scan === true, allow_move: f.allow_move === true, dev: f.dev, ino: f.ino }));
+  return ok.length ? ok : undefined;
 }
 
 const VIDEO_FILE = "video.json";
 const VIDEO_FIELDS = ["render_concurrency", "snapshot_copy", "jianying_export_dir"];
-const KNOWN_KEYS = ["renderConcurrency", "snapshotCopy", "jianyingExportDir"];
+const KNOWN_KEYS = ["renderConcurrency", "snapshotCopy", "jianyingExportDir", "arollAutoFindPaused", "arollWatchFolders"];
 /** 单机渲染，超过这个数只会互相抢 CPU；上限是防呆不是性能建议 */
 const MAX_RENDER_CONCURRENCY = 16;
 
@@ -67,6 +81,7 @@ function normalizeVideo(raw: Partial<VideoSettings>): VideoSettings {
     ...(raw.snapshotCopy === true ? { snapshotCopy: true } : {}),
     ...(typeof raw.jianyingExportDir === "string" && path.isAbsolute(raw.jianyingExportDir) ? { jianyingExportDir: raw.jianyingExportDir } : {}),
     ...(raw.arollAutoFindPaused === true ? { arollAutoFindPaused: true } : {}),
+    ...(watchFolders(raw.arollWatchFolders) ? { arollWatchFolders: watchFolders(raw.arollWatchFolders) } : {}),
   };
 }
 
@@ -127,6 +142,36 @@ async function applyVideoUpdates(next: VideoSettings, payload: Record<string, un
     else delete next.snapshotCopy;
   }
   return null;
+}
+
+/** 只能由浏览器会话改的键（1b §5，§14-7）：它们决定「可搬入根」，是服务端凭据，模型 / bearer / invoke 都改不了 */
+export const BROWSER_ONLY_VIDEO_FIELDS = ["jianying_export_dir", "aroll_watch_folders", "aroll_auto_find_paused", "arollWatchFolders", "arollAutoFindPaused", "jianyingExportDir"];
+
+/** `video:settings_set` 的 IPC 入口（/api/invoke、MCP 都走这里）：浏览器专属的键一律拒，别的照旧 */
+export async function setVideoSettingsViaInvoke(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const hit = payload && typeof payload === "object" ? BROWSER_ONLY_VIDEO_FIELDS.filter((k) => (payload as Record<string, unknown>)[k] !== undefined) : [];
+  if (hit.length) return { ok: false, code: "browser_session_only", error: `${hit.join("、")} 只能在设置页「原片从哪里找」里改（浏览器会话），这里不收` };
+  return setVideoSettings(payload);
+}
+
+/** 浏览器会话路由用：读改写整份 video.json（保留别的模块的键），600 权限 */
+export async function mutateVideoSettings(dataDir: string | undefined, fn: (next: VideoSettings) => Promise<string | null> | string | null): Promise<{ ok: true; settings: VideoSettings } | { ok: false; error: string }> {
+  const raw = await readVideoJson(dataDir);
+  const next = normalizeVideo(raw);
+  const error = await fn(next);
+  if (error) return { ok: false, error };
+  const filePath = videoFilePath(dataDir);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const others = Object.fromEntries(Object.entries(raw).filter(([k]) => !KNOWN_KEYS.includes(k)));
+  await fs.writeFile(filePath, JSON.stringify({ ...others, ...next }, null, 2) + "\n", { mode: 0o600 });
+  await fs.chmod(filePath, 0o600);
+  notifyVideoSettingsChanged(next);
+  return { ok: true, settings: next };
+}
+
+/** 剪映导出目录的校验（浏览器会话路由复用） */
+export async function jianyingDirError(v: unknown): Promise<string | null> {
+  return exportDirError(v);
 }
 
 /** 设置页写：落工作区 video.json（600 权限），成功且有实变更才广播 */

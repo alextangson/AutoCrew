@@ -113,11 +113,11 @@ async function arollNameMiss(file: string, content: Content, dataDir: string): P
 }
 
 /** 收件箱原片名字没对上：转写就绪 → pending_match 后台核对；没就绪 → 只记候选并说原因（1b §3-2/3，E29） */
-async function arollNotByName(miss: string, dataDir: string): Promise<{ action: Action; evidence: string }> {
+async function arollNotByName(miss: string, dataDir: string, from: string): Promise<{ action: Action; evidence: string }> {
   const t = matchDeps().transcriber;
   const notReady = t.notReady ? await t.notReady(dataDir).catch((e: unknown) => `检查转写环境失败：${e instanceof Error ? e.message : String(e)}`) : null;
-  if (notReady) return { action: "candidate", evidence: `原片收件箱：${miss}；转写环境没装好（${notReady}），只比了文件名，等创始人在卡片上确认是不是这条` };
-  return { action: "pending", evidence: `原片收件箱：${miss}，正在核对开头转写` };
+  if (notReady) return { action: "candidate", evidence: `${from}：${miss}；转写环境没装好（${notReady}），只比了文件名，等创始人在卡片上确认是不是这条` };
+  return { action: "pending", evidence: `${from}：${miss}，正在核对开头转写` };
 }
 
 /**
@@ -126,11 +126,12 @@ async function arollNotByName(miss: string, dataDir: string): Promise<{ action: 
  */
 async function decideAction(a: RecordArgs, content: Content, doc: ProductionDoc, file: string, location: Location, existing: Fact | undefined, dataDir: string): Promise<Parsed<{ action: Action; evidence: string }>> {
   if (location === "project") return { ok: true, value: { action: "in_place", evidence: "已在本条项目里" } };
-  const movable = location === "inbox" || (location === "export" && a.kind !== "aroll");
+  const movable = location === "inbox" || (location === "export" && a.kind !== "aroll") || (location === "watch" && a.kind === "aroll");
   if (!movable) return { ok: true, value: { action: "candidate", evidence: `在可搬入目录之外（${path.dirname(file)}），等创始人确认` } };
   if (a.kind === "aroll") {
     const miss = await arollNameMiss(file, content, dataDir);
-    if (miss) return { ok: true, value: await arollNotByName(miss, dataDir) };
+    const from = location === "watch" ? "监视文件夹（允许直接搬入）" : "原片收件箱";
+    if (miss) return { ok: true, value: await arollNotByName(miss, dataDir, from) };
     if (referencedByChatcut(doc, existing)) return { ok: true, value: { action: "in_place", evidence: "收件箱原片对上标题；已被 ChatCut 工程引用，留原位不挪" } };
     return { ok: true, value: { action: "move", evidence: "收件箱里的原片，文件名对上标题" } };
   }
