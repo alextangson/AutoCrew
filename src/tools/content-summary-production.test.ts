@@ -6,6 +6,7 @@ import { withFileOwnership } from "../modules/production/mutex.js";
 import { mutateProduction } from "../modules/production/service.js";
 import { setMatchDeps } from "../modules/production/match/deps.js";
 import { matchWorkerIdle } from "../modules/production/match/queue.js";
+import { synth } from "../modules/production/match/synth-fixture.js";
 import { founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "../modules/production/testkit.js";
 
 let env: Env;
@@ -46,6 +47,34 @@ describe("summary 的制作段字段", () => {
     expect(r.aroll).toEqual([expect.objectContaining({ state: "pending_match" })]);
     expect(r.badges).toContain("正在核对原片");
     release();
+  });
+
+  it("写稿段唯一的核对转成候选后，摘要仍给终态与原因，并翻得到落定事件（Codex 审 segA P2）", async () => {
+    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => ({ ok: false, unavailable: false, reason: "假失败" }) } });
+    const c = await videoContent(env, "还在写的另一条稿");
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_2.mov"), "b2"), request_id: "r1" });
+    const before = await summary(c.id);
+    await matchWorkerIdle(env.dir);
+    const r = await summary(c.id, before.next_since_seq);
+    expect(r.aroll).toEqual([expect.objectContaining({ state: "candidate", reason: expect.stringContaining("假失败") })]);
+    expect((r.changes as Array<{ type: string }>).map((x) => x.type)).toContain("aroll_match_candidate");
+  });
+
+  it("本轮原片超过 5 条：较早的 pending 落定后，翻到那条变化时一定带上它的新路径（Codex 审 segA P2）", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const title = "很多原片的一条测试稿";
+    const c = await videoContent(env, title, "draft_ready", synth(7, 400));
+    setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => null, transcribe: async () => { await gate; return { ok: true, text: synth(7, 400).slice(10, 150) }; } } });
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "IMG_old.mov"), "old"), request_id: "old" });
+    for (let i = 0; i < 6; i++) await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${title}-${i}.mov`), `t${i}`), request_id: `n${i}` });
+    const since = (await summary(c.id)).latest_seq as number;
+    release();
+    await matchWorkerIdle(env.dir);
+    const r = await summary(c.id, since);
+    const done = (r.changes as Array<{ type: string; fact_id?: string }>).find((x) => x.type === "aroll_match_accepted");
+    expect(done).toBeTruthy();
+    expect(r.aroll).toEqual(expect.arrayContaining([expect.objectContaining({ fact_id: done!.fact_id, state: "accepted", path: expect.stringContaining("02-aroll") })]));
   });
 
   it("没有制作事实的写稿段稿件不带这些字段", async () => {

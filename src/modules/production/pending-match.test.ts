@@ -139,6 +139,19 @@ describe("pending_match：agent 报名字对不上的收件箱原片（§3）", 
     expect((await listMatchJobs(env.dir)).length).toBe(1);
   });
 
+  it("r1、r2 两个请求号报同一文件：核对落定后两个重放都回当前状态与新路径（Codex 审 segA P2）", async () => {
+    const gate = deferred();
+    fakeAsr(async () => { await gate.promise; return { ok: true, text: BODY_A.slice(30, 160) }; });
+    const { a, src } = await setup();
+    await record(env, { content_id: a.id, kind: "aroll", path: src, request_id: "r1" });
+    await record(env, { content_id: a.id, kind: "aroll", path: src, request_id: "r2" });
+    gate.resolve();
+    await matchWorkerIdle(env.dir);
+    for (const rid of ["r1", "r2"]) {
+      expect(await record(env, { content_id: a.id, kind: "aroll", path: src, request_id: rid })).toMatchObject({ ok: true, state: "accepted", replayed: true, path: "02-aroll/甲稿讲的是一件事-原片.mov" });
+    }
+  });
+
   it("转写按完整 sha 缓存：同一份字节只转写一次（B34）", async () => {
     fakeAsr(() => ({ ok: true, text: BODY_B.slice(30, 160) }));
     const { a, src } = await setup();

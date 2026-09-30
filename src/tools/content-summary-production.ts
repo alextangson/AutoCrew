@@ -24,9 +24,12 @@ function changeOf(e: TimelineEvent): Change {
   return { seq: e.seq, at: e.at, type: e.type, ...(typeof d.fact_id === "string" ? { fact_id: d.fact_id } : {}), ...(typeof d.state === "string" ? { state: d.state } : {}) };
 }
 
-/** 写稿段稿件也给：本轮有 accepted 制作事实或 pending_match */
+/**
+ * 写稿段稿件也给：本轮有 accepted 制作事实，或有过核对（pending_match 或它的结果，靠 match_job 认）。
+ * 核对结束转成候选 / 作废之后也照给，轮询的 agent 才看得到终态和原因、能停下来（Codex 审 segA P2）。
+ */
 export function hasProductionTrace(doc: ProductionDoc): boolean {
-  return doc.facts.some((f) => f.round === doc.round && ((f.state === "accepted" && PRODUCTION_KINDS.has(f.kind)) || f.state === "pending_match"));
+  return doc.facts.some((f) => f.round === doc.round && ((f.state === "accepted" && PRODUCTION_KINDS.has(f.kind)) || f.state === "pending_match" || Boolean(f.match_job)));
 }
 
 export interface ProductionPart {
@@ -35,8 +38,15 @@ export interface ProductionPart {
   shrink: () => boolean;
 }
 
-function arollView(doc: ProductionDoc, root: string, reasonMax: number) {
-  return doc.facts.filter((f) => f.round === doc.round && f.kind === "aroll").slice(-5).map((f) => ({
+/**
+ * 本轮原片：pending 的、本页 changes 提到的一律给（刚落定的新路径靠它取，Codex 审 segA P2）；
+ * 其余只顺带给最近 `extra` 条，预算紧时先缩它。放不下的靠翻页（changes 截尾 → has_more）。
+ */
+function arollView(doc: ProductionDoc, root: string, reasonMax: number, referenced: ReadonlySet<string>, extra: number) {
+  const round = doc.facts.filter((f) => f.round === doc.round && f.kind === "aroll");
+  const must = new Set(round.filter((f) => f.state === "pending_match" || referenced.has(f.id)).map((f) => f.id));
+  for (const f of round.filter((x) => !must.has(x.id)).slice(-extra)) must.add(f.id);
+  return round.filter((f) => must.has(f.id)).map((f) => ({
     fact_id: f.id, state: f.state, round: f.round,
     ...(f.path ? { path: path.isAbsolute(f.path) ? f.path : path.join(root, f.path) } : {}),
     ...(f.state === "candidate" || f.state === "rejected" ? { reason: clip(f.evidence ?? "", reasonMax) } : {}),
@@ -59,6 +69,7 @@ export async function productionPart(c: Content, exp: Explanation, dataDir: stri
   const candidates = candidatesView(doc, exp);
   let evidenceMax = 60;
   let reasonMax = 60;
+  let extra = 5;
   const fields: Record<string, unknown> = {};
   const render = () => {
     const changes = window.slice(0, shown);
@@ -67,7 +78,7 @@ export async function productionPart(c: Content, exp: Explanation, dataDir: stri
       missing: exp.missing, badges: exp.badges,
       candidates: candidates.map((x) => ({ ...x, evidence: clip(x.evidence, evidenceMax) })),
       pending: doc.facts.filter((f) => f.round === doc.round && f.state === "pending_match").map((f) => ({ fact_id: f.id, started_at: f.match_started_at ?? f.at })),
-      aroll: arollView(doc, contentRoot(c.id, dataDir), reasonMax),
+      aroll: arollView(doc, contentRoot(c.id, dataDir), reasonMax, new Set(changes.flatMap((x) => (x.fact_id ? [x.fact_id] : []))), extra),
       changes, latest_seq: doc.seq, next_since_seq: last ?? sinceSeq ?? doc.seq,
       has_more: shown < window.length || (sinceSeq !== undefined && all.length > window.length),
     });
@@ -75,6 +86,7 @@ export async function productionPart(c: Content, exp: Explanation, dataDir: stri
   render();
   // 至少留一条变化：一条都不给会让翻页原地打转
   const shrink = () => {
+    if (extra > 0) { extra = 0; render(); return true; }
     if (shown > 1) { shown -= 1; render(); return true; }
     if (evidenceMax > 0) { evidenceMax = evidenceMax > 20 ? 20 : 0; render(); return true; }
     // 最后手段：原片的候选 / 作废原因也截短（路径与状态留着，agent 要靠它们）

@@ -89,7 +89,7 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   if (replay && (replay.args ? replay.args !== requestArgs(a) : replay.receipt.kind !== a.kind)) {
     return fail("request_conflict", `request_id「${a.request_id}」已经用来报过另一件东西（${String(replay.receipt.kind)}）：这次的参数不同，换一个新的 request_id 再报`);
   }
-  if (replay) return { ...(await receiptFor(content, dataDir, replay.receipt as unknown as ReceiptCore)), replayed: true };
+  if (replay) return { ...(await receiptFor(content, dataDir, currentCore(doc, replay.receipt as unknown as ReceiptCore))), replayed: true };
   if (a.kind === "chatcut_project") return withSliverCheck(await recordChatcut(a, content, doc, dataDir), content.id, dataDir);
   if (a.kind === "publish") return recordPublishClaim(content, dataDir, a);
   if (a.kind === "storyboard") return recordStoryboard(a, content, dataDir);
@@ -126,6 +126,17 @@ async function withSliverCheck(r: Receipt, contentId: string, dataDir: string): 
 
 export const ONTOLOGY_NOT_ENABLED =
   "本体还没启用（或这条在启用时被排除了）：record 现在不写事实、不搬文件。请创始人先在看板顶部看差异清单并确认启用；在那之前照旧流程走。";
+
+/**
+ * 重放按事实的当前状态回（Codex 审 segA P2）：同一文件用 r1、r2 两个 request_id 报过，核对落定后
+ * 两个都要回落定后的状态与路径，不能一个停在 pending_match / 旧路径。
+ */
+function currentCore(doc: ProductionDoc, stored: ReceiptCore): ReceiptCore {
+  const f = stored.fact_id ? doc.facts.find((x) => x.id === stored.fact_id) : undefined;
+  if (!f) return stored;
+  const { reason: _old, ...rest } = stored;
+  return { ...rest, state: f.state, ...(f.path ? { path: f.path } : {}), ...(f.state === "candidate" || f.state === "rejected" ? { reason: f.evidence ?? stored.reason } : {}) };
+}
 
 interface ReceiptCore { fact_id: string; kind: Fact["kind"]; state: Fact["state"]; path?: string; reason?: string }
 
