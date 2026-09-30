@@ -63,11 +63,33 @@ export async function cancelPendingFor(dataDir: string, held: PendingHolder, byT
   if (held.fact.match_job) await cancelMatchJob(dataDir, held.fact.match_job, `创始人挂到了《${byTitle}》`);
 }
 
+const GONE_ARCHIVED = "稿已归档，这次核对作废";
+const GONE_DELETED = "稿已删除，这次核对作废";
+
+/**
+ * 核对中稿被归档 / 删除（Codex 审 segB8 P2）：只取消作业不够——事实会一直 pending、预留一直占着。
+ * 锁内核对事实仍属于这个作业，转成候选并写原因、记时间线、更新回执；预留随之放掉。重开文稿另有处理（事实进历史），不走这里。
+ */
+async function settleGone(dataDir: string, job: MatchJob, why: string): Promise<JobResult> {
+  const { content_id, fact_id } = job.payload as unknown as Payload;
+  const evidence = why === GONE_ARCHIVED ? "核对取消：稿已归档" : "核对取消：稿已删除";
+  if (await getContent(content_id, dataDir)) {
+    await mutateProduction(content_id, dataDir, (doc) => {
+      const f = doc.facts.find((x) => x.id === fact_id && x.round === doc.round && x.state === "pending_match" && x.match_job === job.id);
+      if (!f) return { value: null, events: [] };
+      Object.assign(f, { state: "candidate", evidence });
+      settleRequest(doc, f);
+      return { value: null, events: [{ type: "aroll_match_candidate", detail: { fact_id: f.id, job: job.id, reason: evidence } }] };
+    });
+  }
+  return { state: "cancelled", outcome: evidence };
+}
+
 async function waiting(dataDir: string, job: MatchJob): Promise<Waiting | string> {
   const { content_id, fact_id } = job.payload as unknown as Payload;
   const content = await getContent(content_id, dataDir);
-  if (!content || content.deletedAt) return "稿已删除，这次核对作废";
-  if (content.status === "archived") return "稿已归档，这次核对作废";
+  if (!content || content.deletedAt) return GONE_DELETED;
+  if (content.status === "archived") return GONE_ARCHIVED;
   if (!(await isOntologyActive(dataDir, content_id))) return "本体没启用，这次核对作废";
   const doc = await readProductionDocOrEmpty(content_id, dataDir);
   const fact = doc.facts.find((f) => f.id === fact_id);
@@ -133,6 +155,7 @@ async function accept(dataDir: string, w: Waiting, job: MatchJob, d: MatchDecisi
 
 async function commitJob(dataDir: string, job: MatchJob, first: MatchDecision, heard: Heard): Promise<JobResult> {
   const w = await waiting(dataDir, job);
+  if (w === GONE_ARCHIVED || w === GONE_DELETED) return settleGone(dataDir, job, w);
   if (typeof w === "string") return { state: "cancelled", outcome: w };
   const d = await rescored(dataDir, job, first, heard, w.content.id);
   const check = await placementCheck(w.content, w.doc, w.fact.path!, w.fact.sha256!, w.fact, dataDir);
@@ -149,6 +172,7 @@ async function commitJob(dataDir: string, job: MatchJob, first: MatchDecision, h
 async function handleRecordJob(ctx: { dataDir: string; job: MatchJob; signal: AbortSignal }): Promise<JobResult> {
   const { dataDir, job, signal } = ctx;
   const pre = await waiting(dataDir, job);
+  if (pre === GONE_ARCHIVED || pre === GONE_DELETED) return withFileOwnership(() => settleGone(dataDir, job, pre));
   if (typeof pre === "string") return { state: "cancelled", outcome: pre };
   const heard = await hear(dataDir, job, signal);
   const first = decide({ fileName: path.basename(job.path), sha256: job.sha256, pool: await arollPool(dataDir, pre.content.id), heard }, matchDeps().thresholds);

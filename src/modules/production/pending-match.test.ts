@@ -14,7 +14,8 @@ import { setMatchDeps } from "./match/deps.js";
 import { listMatchJobs, matchWorkerIdle, resetMatchQueue } from "./match/queue.js";
 import type { TranscribeOutcome } from "./match/transcribe.js";
 import { synth } from "./match/synth-fixture.js";
-import { exists, founderApprove, makeEnv, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
+import { exists, founderApprove, makeEnv, projectRoot, put, record, setContent, videoContent, type Env } from "./testkit.js";
+import { softDeleteContent } from "../../storage/local-store.js";
 
 let env: Env;
 let calls: string[];
@@ -334,4 +335,28 @@ describe("启动唤醒持久队列（Codex 审 segB P2）", () => {
     await matchWorkerIdle(env.dir);
     expect((await listMatchJobs(env.dir)).find((j) => j.id === "mjob-boot")?.state).toBe("done");
   });
+});
+
+describe("核对中稿被归档 / 删除（Codex 审 segB8 P2）", () => {
+  for (const [label, act, text] of [
+    ["归档", async (id: string) => { await setContent(env, id, { status: "archived" }); }, "核对取消：稿已归档"],
+    ["删除", async (id: string) => { await softDeleteContent(id, env.dir); }, "核对取消：稿已删除"],
+  ] as const) {
+    it(`${label}：事实转候选并写原因、记时间线、放掉预留；重放回当前状态`, async () => {
+      const gate = deferred();
+      fakeAsr(async () => { await gate.promise; return { ok: true, text: BODY_A.slice(30, 160) }; });
+      const { a, b, src } = await setup();
+      await record(env, { content_id: a.id, kind: "aroll", path: src, request_id: "r1" });
+      await act(a.id);
+      gate.resolve();
+      await matchWorkerIdle(env.dir);
+      const doc = await readProductionDocOrEmpty(a.id, env.dir);
+      const f = doc.facts.find((x) => x.kind === "aroll")!;
+      expect(f).toMatchObject({ state: "candidate", evidence: text });
+      expect(doc.requests?.r1?.receipt).toMatchObject({ state: "candidate" });
+      const { readTimeline } = await import("../../storage/production-store.js");
+      expect((await readTimeline(a.id, env.dir)).some((e) => e.type === "aroll_match_candidate")).toBe(true);
+      expect(await record(env, { content_id: b.id, kind: "aroll", path: src, request_id: "rb" })).not.toMatchObject({ code: "aroll_pending_elsewhere" });
+    });
+  }
 });
