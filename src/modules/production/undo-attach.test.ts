@@ -103,6 +103,18 @@ describe("§4.1 「不是这条」撤销自动挂上", () => {
     expect(await decide(a.id, "undo_auto_attach", { fact_id: f.id, sha256: f.sha256 })).toMatchObject({ ok: false, code: "not_auto" });
   });
 
+  it("项目里的原片挂上之后被改过 → 拒，什么都不动：文件还在项目里、事实仍 accepted、不留事务日志（Codex 审 segB3 P1）", async () => {
+    const { id, src, fact } = await autoAttached();
+    const inProject = path.join(projectRoot(env, id), fact.path!);
+    await put(inProject, "edited-after-attach");
+    const r = await decide(id, "undo_auto_attach", { fact_id: fact.id, sha256: fact.sha256 });
+    expect(r).toMatchObject({ ok: false, error: "项目里的原片在挂上之后被改过，不能自动撤销；要换原片请重开文稿" });
+    expect(await fs.readFile(inProject, "utf8")).toBe("edited-after-attach");
+    expect(await exists(src)).toBe(false);
+    expect((await aroll(id)).state).toBe("accepted");
+    expect(await fs.readdir(path.join(env.dir, "production", "txns")).catch(() => [])).toEqual([]);
+  });
+
   it("挪回之后、提交之前崩了：重启恢复按事务日志把原片放回项目", async () => {
     const { id, fact } = await autoAttached();
     const inProject = path.join(projectRoot(env, id), fact.path!);

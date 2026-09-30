@@ -15,8 +15,8 @@ import type { Content } from "../../storage/local-store.js";
 import { newId } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { deriveExplanation } from "./explain.js";
-import { identityOf, reserveTarget, sameIdentity } from "./files.js";
-import { movableRoots } from "./roots.js";
+import { identityOf, reserveTarget, sameIdentity, stableFingerprint } from "./files.js";
+import { movableRoots, now } from "./roots.js";
 import { mutateProduction } from "./service.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn } from "./txn.js";
 
@@ -25,6 +25,7 @@ const fail = (code: string, error: string): Result => ({ ok: false, code, error 
 
 export const IN_EDIT = "这条已经在剪了，要换原片请重开文稿";
 export const IN_EDIT_REASSIGN = "这条已经在剪了，要改挂请先重开文稿";
+export const CHANGED = "项目里的原片在挂上之后被改过，不能自动撤销；要换原片请重开文稿";
 export const CHATCUT_USES = "ChatCut 工程在用这个原片，先在 ChatCut 里换掉";
 
 const DEPENDENT: ReadonlySet<string> = new Set(["cut_approval", "cover_approval", "i_published", "publish_confirm"]);
@@ -92,6 +93,9 @@ export async function undoAutoAttach(content: Content, doc: ProductionDoc, fact:
   const source = path.join(await fs.realpath(contentRoot(content.id, dataDir)), fact.path!);
   const id = await identityOf(source).catch(() => null);
   if (!id) return fail("file_missing", `项目里的原片不见了（${fact.path}），没法挪回`);
+  // 先核完整哈希、再占名 / 挪（Codex 审 segB3 P1）：被外部改过的字节一旦挪出去，撤回会因哈希对不上拒绝放回，文件两头都不在
+  const fp = await stableFingerprint(source, now());
+  if (!fp.ok || fp.value.sha256 !== fact.sha256) return fail("undo_blocked", CHANGED);
   const home = await reserveHome(fact, dataDir);
   if (typeof home === "string") return fail("undo_blocked", home);
   const txn: Txn = { id: newId("txn"), kind: "undo", content_id: content.id, round: doc.round, ops: [{ op: "move", source, target: home.target, sha256: fact.sha256!, step: "planned" }], at: new Date().toISOString() };
