@@ -77,6 +77,16 @@ describe("summary 的制作段字段", () => {
     expect(r.aroll).toEqual(expect.arrayContaining([expect.objectContaining({ fact_id: done!.fact_id, state: "accepted", path: expect.stringContaining("02-aroll") })]));
   });
 
+  it("本轮原片很多、路径很长：摘要仍 ≤ 1.5KB（extra 缩到 0 时不能回成全部；Codex 审 segB P2）", async () => {
+    const c = await videoContent(env, "很多长路径原片的稿");
+    await founderApprove(env, c.id);
+    for (let i = 0; i < 9; i++) {
+      await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.outside, `${"很长很长的原片文件名".repeat(4)}-${i}.mov`), `x${i}`), request_id: `r${i}` });
+    }
+    const r = await summary(c.id);
+    expect(bytes(r)).toBeLessThanOrEqual(1536);
+  });
+
   it("没有制作事实的写稿段稿件不带这些字段", async () => {
     const c = await videoContent(env, "干净的稿");
     const r = await summary(c.id);

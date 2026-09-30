@@ -45,7 +45,8 @@ export interface ProductionPart {
 function arollView(doc: ProductionDoc, root: string, reasonMax: number, referenced: ReadonlySet<string>, extra: number) {
   const round = doc.facts.filter((f) => f.round === doc.round && f.kind === "aroll");
   const must = new Set(round.filter((f) => f.state === "pending_match" || referenced.has(f.id)).map((f) => f.id));
-  for (const f of round.filter((x) => !must.has(x.id)).slice(-extra)) must.add(f.id);
+  // extra=0 时不能 slice(-0)（那是全部）：预算缩到底就一条都不顺带（Codex 审 segB P2）
+  if (extra > 0) for (const f of round.filter((x) => !must.has(x.id)).slice(-extra)) must.add(f.id);
   return round.filter((f) => must.has(f.id)).map((f) => ({
     fact_id: f.id, state: f.state, round: f.round,
     ...(f.path ? { path: path.isAbsolute(f.path) ? f.path : path.join(root, f.path) } : {}),
