@@ -51,10 +51,32 @@ function parseReceipt(raw: string): Receipt | null {
 }
 
 /** 素材以 base 为根都对得上：相对路径、真实路径在项目里、是普通文件、sha 一致 */
-async function mediaMatch(realRoot: string, base: string, media: Receipt["media"]): Promise<boolean> {
+/**
+ * 页面里实际引用的本地资源（src / href，相对页面所在目录解析成绝对路径）。脚本按 relpath 写、再做 URL 与 HTML 转义，
+ * 这里反过来还原；带协议的外链和锚点不算。
+ */
+export function pageRefs(html: string, pageDir: string): Set<string> {
+  const unesc = (s: string) => s.replace(/&quot;/g, "\"").replace(/&#x27;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  const out = new Set<string>();
+  for (const m of html.matchAll(/\b(?:src|href)="([^"]*)"/g)) {
+    const raw = unesc(m[1]);
+    if (!raw || raw.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) continue;
+    let decoded: string;
+    try { decoded = decodeURIComponent(raw.split(/[?#]/)[0]); } catch { continue; }
+    out.add(path.resolve(pageDir, decoded));
+  }
+  return out;
+}
+
+/**
+ * 素材以 base 为根都对得上：相对路径、就是页面实际引用的那个文件（Codex 审 storyboard P2：别让上层目录里
+ * 同名同 hash 的文件顶替页面真正加载的素材）、真实路径在项目里、是普通文件、sha 一致
+ */
+async function mediaMatch(realRoot: string, base: string, media: Receipt["media"], refs: Set<string>): Promise<boolean> {
   for (const m of media) {
     if (path.isAbsolute(m.path)) return false;
     const abs = path.resolve(base, m.path);
+    if (!refs.has(abs)) return false;
     if (!isWithin(realRoot, abs)) return false;
     const real = await fs.realpath(abs).catch(() => null);
     if (!real || !isWithin(realRoot, real)) return false;
@@ -84,8 +106,9 @@ export async function validateStoryboard(projectRoot: string, input: string): Pr
   const st = await fs.stat(path.join(realRoot, rel));
   if (sha256(html) !== receipt.html_sha256) return deny("storyboard_edited", "审阅页被手改过，请用脚本重新生成");
   let ok = false;
+  const refs = pageRefs(html.toString("utf8"), path.dirname(path.join(realRoot, rel)));
   for (let base = path.dirname(path.join(realRoot, rel)); isWithin(realRoot, base); base = path.dirname(base)) {
-    if (await mediaMatch(realRoot, base, receipt.media)) { ok = true; break; }
+    if (await mediaMatch(realRoot, base, receipt.media, refs)) { ok = true; break; }
     if (base === realRoot) break;
   }
   if (!ok) return deny("storyboard_media_changed", "审阅页引用的素材不见了 / 变了");
@@ -129,12 +152,17 @@ export async function openStoryboard(contentId: string, factId: string, dataDir:
   const file = await storyboardFile(contentRoot(contentId, dataDir), fact);
   if (!file) return { ok: false, code: "file_missing", error: "审阅页找不到了，或路径里多了符号链接" };
   if ((deps.platform ?? process.platform) !== "darwin") return { ok: true, path: file, opened: false };
+  // 等 open 真正跑完再回话（Codex 审 storyboard P2）：启动失败 / 非零退出都要让创始人看见，不回成功
+  const failed = (why: string) => ({ ok: false, code: "open_failed", error: `浏览器没打开：${why}`, path: file });
   try {
-    const child = (deps.spawnImpl ?? spawn)("open", [file], { detached: true, stdio: "ignore" });
-    child.unref?.();
-    return { ok: true, path: file, opened: true };
+    const child = (deps.spawnImpl ?? spawn)("open", [file], { stdio: "ignore" });
+    return await new Promise<Record<string, unknown>>((resolve) => {
+      child.once("error", (e: Error) => resolve(failed(e.message)));
+      child.once("exit", (code: number | null, signal: NodeJS.Signals | null) =>
+        resolve(code === 0 ? { ok: true, path: file, opened: true } : failed(signal ? `被信号 ${signal} 中断` : `open 退出码 ${String(code)}`)));
+    });
   } catch (e) {
-    return { ok: false, code: "open_failed", error: `浏览器没打开：${e instanceof Error ? e.message : String(e)}` };
+    return failed(e instanceof Error ? e.message : String(e));
   }
 }
 

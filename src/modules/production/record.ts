@@ -272,7 +272,8 @@ async function recordStoryboard(a: RecordArgs, content: Content, dataDir: string
   if (!v.ok) return fail(v.code, v.error);
   const r = await mutateProduction(content.id, dataDir, (d) => {
     // 同一份页面重复报：幂等，不另起一条（E7）
-    const same = d.facts.find((f) => f.round === d.round && f.kind === "storyboard" && f.sha256 === v.value.sha256);
+    // 不分轮次（Codex 审 storyboard P2）：重开文稿后重报同一份页面也不另起一条，与对账去重一致
+    const same = d.facts.find((f) => f.kind === "storyboard" && f.sha256 === v.value.sha256);
     const fact: Fact = same ?? { id: newId("fact"), kind: "storyboard", round: d.round, state: "accepted", availability: "present", source: "record",
       by: { host: a.host, ...(a.session ? { session: a.session } : {}) }, at: new Date().toISOString(), request_id: a.request_id, evidence: "脚本生成的审阅页（回执核对通过）",
       path: v.value.rel, sha256: v.value.sha256, size: v.value.size, mtime_ms: v.value.mtime_ms, version: v.value.version, receipt_sha256: v.value.receipt_sha256 };

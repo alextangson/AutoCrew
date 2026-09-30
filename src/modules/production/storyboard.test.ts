@@ -4,6 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import crypto from "node:crypto";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type http from "node:http";
@@ -15,7 +16,8 @@ import { readProductionDoc } from "../../storage/production-store.js";
 import { cardPanel } from "./panel.js";
 import { explainContent } from "./read.js";
 import { reconcileAll } from "./reconcile.js";
-import { STORYBOARD_HINT } from "./storyboard.js";
+import { openStoryboard, STORYBOARD_HINT } from "./storyboard.js";
+import { reopenScript } from "./reopen.js";
 import { founderApprove, makeEnv, projectRoot, record, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
@@ -32,14 +34,17 @@ async function makeReview(pr: string, o: { ver?: string; name?: string; html?: s
   const dir = path.join(pr, "03-broll", `review-${o.ver ?? "v001"}`);
   const name = o.name ?? "review";
   const root = o.rootRel ? path.join(pr, o.rootRel) : dir;
-  const html = o.html ?? `<html><body>分镜 ${o.ver ?? "v001"}</body></html>`;
   const media = [];
+  const tags: string[] = [];
   for (const m of o.media ?? ["opus/boards/B01.svg"]) {
     await fs.mkdir(path.dirname(path.join(root, m)), { recursive: true });
     const bytes = `<svg>${m}</svg>`;
     await fs.writeFile(path.join(root, m), bytes);
     media.push({ item: "B01", path: m, sha256: sha(bytes) });
+    // 与脚本一样：src = 相对页面目录的路径，再做 URL 转义
+    tags.push(`<img src="${encodeURI(path.relative(dir, path.join(root, m)).split(path.sep).join("/"))}" alt="B01">`);
   }
+  const html = o.html ?? `<html><body>分镜 ${o.ver ?? "v001"}${tags.join("")}</body></html>`;
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, `${name}.html`), html);
   await fs.writeFile(path.join(dir, `${name}.receipt.json`), JSON.stringify({ manifest: "/gone/display.json", manifest_sha256: "m", media, html_sha256: sha(html), approval_created: false }));
@@ -51,6 +56,12 @@ async function approved(title = "AI 又忘了怎么办") {
   await founderApprove(env, c.id);
   return { c, pr: projectRoot(env, c.id) };
 }
+/** 假子进程：下一拍发 error 或 exit */
+function fakeChild(o: { exit?: number; error?: string }) {
+  const child = new EventEmitter();
+  setImmediate(() => (o.error ? child.emit("error", Object.assign(new Error(o.error), { code: "ENOENT" })) : child.emit("exit", o.exit ?? 0, null)));
+  return child;
+}
 const report = (id: string, p: string, rid = "sb1") => record(env, { content_id: id, kind: "storyboard", path: p, request_id: rid });
 
 describe("§3 只收脚本生成的审阅页（E1–E6）", () => {
@@ -60,7 +71,7 @@ describe("§3 只收脚本生成的审阅页（E1–E6）", () => {
     const res = await report(c.id, r.file);
     expect(res).toMatchObject({ ok: true, kind: "storyboard", state: "accepted", path: "03-broll/review-v001/review.html", next_action: expect.stringContaining("打开审阅页") });
     const f = (await readProductionDoc(c.id, env.dir))!.facts.find((x) => x.kind === "storyboard")!;
-    expect(f).toMatchObject({ version: 1, sha256: sha("<html><body>分镜 v001</body></html>"), receipt_sha256: sha(await fs.readFile(r.receipt)) });
+    expect(f).toMatchObject({ version: 1, sha256: sha(await fs.readFile(r.file)), receipt_sha256: sha(await fs.readFile(r.receipt)) });
     expect((await explainContent((await getContent(c.id, env.dir))!, env.dir)).stage).toBe("待录制");
   });
 
@@ -173,7 +184,7 @@ describe("§4 事实与显示（E7–E11）", () => {
     const opened: string[][] = [];
     const call = async (body: unknown, auth: "session" | "bearer" = "session") => {
       const handler = createBoardHandler({ authorize: () => auth, originAllowed: () => true, resolveDataDir: async () => env.dir, readBody: async () => JSON.stringify(body),
-        storyboard: { platform: "darwin", spawnImpl: ((cmd: string, args: string[]) => { opened.push([cmd, ...args]); return { unref: () => undefined }; }) as never } });
+        storyboard: { platform: "darwin", spawnImpl: ((cmd: string, args: string[]) => { opened.push([cmd, ...args]); return fakeChild({ exit: 0 }); }) as never } });
       let status = 0, text = "";
       const res = { writeHead: (s: number) => { status = s; return res; }, end: (t?: string) => { text = t ?? ""; } } as unknown as http.ServerResponse;
       await handler({ method: "POST" } as http.IncomingMessage, res, new URL("http://x/api/board/open-storyboard"));
@@ -198,5 +209,37 @@ describe("§4 事实与显示（E7–E11）", () => {
     expect(rep.errors).toEqual([]);
     const boards = (await readProductionDoc(c.id, env.dir))!.facts.filter((f) => f.kind === "storyboard");
     expect(boards.map((f) => [f.path, f.source])).toEqual([["03-broll/review-v001/review.html", "reconcile"]]);
+  });
+});
+
+describe("Codex 审 storyboard 回归", () => {
+  it("[P2 storyboard.ts:87] 页面实际引用的素材不见了，上层目录有同名同 hash 的文件也不算", async () => {
+    const { c, pr } = await approved();
+    const r = await makeReview(pr, { media: ["assets/shot.svg"] });
+    await fs.mkdir(path.join(pr, "03-broll", "assets"), { recursive: true });
+    await fs.rename(path.join(r.dir, "assets", "shot.svg"), path.join(pr, "03-broll", "assets", "shot.svg"));
+    expect(await report(c.id, r.file)).toMatchObject({ ok: false, code: "storyboard_media_changed" });
+    await reconcileAll(env.dir);
+    expect((await readProductionDoc(c.id, env.dir))!.facts.filter((f) => f.kind === "storyboard")).toEqual([]);
+  });
+
+  it("[P2 record.ts:275] 重开文稿后重报同一份页面：不跨轮次重复记，最新 / 历史里只出现一次", async () => {
+    const { c, pr } = await approved();
+    const r = await makeReview(pr);
+    const a = await report(c.id, r.file, "a");
+    expect(await reopenScript(c.id, env.dir, undefined, 1)).toMatchObject({ ok: true, round: 2 });
+    const b = await report(c.id, r.file, "b");
+    expect(b.fact_id).toBe(a.fact_id);
+    const panel = await cardPanel(c.id, env.dir) as { storyboard: { latest: { fact_id: string }; older: unknown[] } };
+    expect(panel.storyboard).toMatchObject({ latest: { fact_id: a.fact_id }, older: [] });
+  });
+
+  it("[P2 storyboard.ts:133] open 启动失败 / 非零退出：回失败并说原因，不回成功", async () => {
+    const { c, pr } = await approved();
+    const fact = await report(c.id, (await makeReview(pr)).file);
+    const run = (o: { exit?: number; error?: string }) => openStoryboard(c.id, String(fact.fact_id), env.dir, { platform: "darwin", spawnImpl: (() => fakeChild(o)) as never });
+    expect(await run({ error: "spawn open ENOENT" })).toMatchObject({ ok: false, code: "open_failed", error: expect.stringContaining("ENOENT") });
+    expect(await run({ exit: 1 })).toMatchObject({ ok: false, code: "open_failed", error: expect.stringContaining("退出码 1") });
+    expect(await run({ exit: 0 })).toMatchObject({ ok: true, opened: true });
   });
 });
