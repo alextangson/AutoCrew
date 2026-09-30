@@ -94,10 +94,13 @@ function prune(jobs: MatchJob[]): MatchJob[] {
 
 async function mutate<T>(dataDir: string, fn: (jobs: MatchJob[]) => T): Promise<T> {
   const store = await storeOf(dataDir);
+  // 改在副本上、写盘成功才换进内存（Codex 审 segB11 P2）：写失败时内存不能先变成「跑到一半」，不然盘好了也再没人认领
   const run = store.chain.catch(() => undefined).then(async () => {
-    const value = fn(store.jobs);
-    store.jobs = prune(store.jobs);
-    await writeJsonAtomicMkdir(queueFile(dataDir), { version: 1, jobs: store.jobs });
+    const draft = structuredClone(store.jobs);
+    const value = fn(draft);
+    const next = prune(draft);
+    await writeJsonAtomicMkdir(queueFile(dataDir), { version: 1, jobs: next });
+    store.jobs = next;
     return value;
   });
   store.chain = run.catch(() => undefined);
@@ -256,7 +259,11 @@ async function armTimer(dataDir: string, w: Worker): Promise<void> {
 async function drain(dataDir: string, w: Worker): Promise<void> {
   do {
     w.again = false;
-    for (let job = await claimNext(dataDir); job; job = await claimNext(dataDir)) await runJob(dataDir, job);
+    for (let job = await claimNext(dataDir); job; job = await claimNext(dataDir)) {
+      await runJob(dataDir, job);
+      // 真跑完一个作业（认领与落结果都写上盘了）才算从队列错误里恢复；空转一轮不清错误
+      delete w.error;
+    }
   } while (w.again);
   await armTimer(dataDir, w);
 }
@@ -268,7 +275,7 @@ export function kickMatchWorker(dataDir: string): void {
   outsideFileOwnership(() => {
     w.run = new Promise<void>((resolve) => setImmediate(resolve))
       .then(() => drain(dataDir, w))
-      .then(() => { delete w.error; }, (e: unknown) => { w.error = e instanceof Error ? e.message : String(e); })
+      .catch((e: unknown) => { w.error = e instanceof Error ? e.message : String(e); })
       .finally(() => { w.run = null; });
   });
 }

@@ -190,6 +190,29 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     expect((await listMatchJobs(dir))[0]).toMatchObject({ attempts: 1, next_at: clock + RETRY_DELAY_MS });
   });
 
+  it("认领作业时落盘失败：内存里不留「跑到一半」，错误看得见；盘恢复后作业照跑，错误这才清掉（Codex 审 segB11 P2）", async () => {
+    const { kickMatchWorker, matchWorkerError } = await import("./queue.js");
+    let paused = true;
+    setMatchDeps({ now: () => clock, paused: async () => paused });
+    registerMatchHandler("test_ok", async () => ({ state: "done", outcome: "ok" }));
+    await enqueueMatchJob(dir, spec());
+    await matchWorkerIdle(dir);
+    const cacheDir = path.dirname(path.join(transcriptCacheDir(dir), "x"));
+    const qdir = path.dirname(cacheDir);
+    await fs.chmod(qdir, 0o555);
+    try {
+      paused = false;
+      kickMatchWorker(dir);
+      await matchWorkerIdle(dir);
+      expect(matchWorkerError(dir)).toBeTruthy();
+      expect((await listMatchJobs(dir))[0].state).toBe("queued");
+    } finally { await fs.chmod(qdir, 0o755); }
+    kickMatchWorker(dir);
+    await matchWorkerIdle(dir);
+    expect((await listMatchJobs(dir))[0].state).toBe("done");
+    expect(matchWorkerError(dir)).toBeNull();
+  });
+
   it("重启：跑到一半的作业回到排队，持久化在工作区缓存目录", async () => {
     const file = path.join(transcriptCacheDir(dir), "..", "match-jobs.json");
     const job: MatchJob = { id: "mjob-x", key: jobKey(spec()), purpose: "test_ok", priority: "background", sha256: SHA, path: "/x.mov", size: 1, mtime_ms: 1,
