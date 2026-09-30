@@ -510,3 +510,32 @@ describe("整分支审 6", () => {
     expect((await doc(target.id)).facts.some((f) => f.kind === "aroll" && f.state === "accepted")).toBe(false);
   });
 });
+
+describe("整分支审 7", () => {
+  it("组里一张被覆盖、补进新图后再选：批准有效（只看这条批准绑的那一对）", async () => {
+    const c = await editing();
+    const g = await record(env, { content_id: c.id, kind: "cover", paths: [await img("a.png", 900, 1200), await img("b.png", 1200, 900)], cover_text: "字", request_id: "g" });
+    const f34 = (g.facts as Array<{ path: string }>)[0];
+    await put(path.join(projectRoot(env, c.id), f34.path), png(900, 1200, "overwritten"));
+    await reconcileAll(env.dir);
+    await record(env, { content_id: c.id, kind: "cover", path: await img("c.png", 900, 1200), version: 1, request_id: "patch" });
+    const group = validCoverGroups(await doc(c.id)).find((x) => x.group.id === g.group_id)!;
+    expect(group.complete).toBe(true);
+    expect(await founderDecision(c.id, "pick_cover", { group_id: g.group_id }, env.dir)).toMatchObject({ ok: true });
+    const { getContent } = await import("../../storage/local-store.js");
+    expect(validCoverApproval(await doc(c.id), (await getContent(c.id, env.dir))!.body)).not.toBeNull();
+  });
+
+  it("一对封面重放：两张后来被确认收进组，重放回现在的状态、路径、组", async () => {
+    const c = await editing();
+    const args = { content_id: c.id, kind: "cover", paths: [await put(path.join(env.outside, "a.png"), png(900, 1200, "a")), await put(path.join(env.outside, "b.png"), png(1200, 900, "b"))], request_id: "pp" };
+    const first = await record(env, args);
+    expect(first).toMatchObject({ group_id: null, facts: [{ state: "candidate" }, { state: "candidate" }] });
+    const d = await doc(c.id);
+    for (const f of first.facts as Array<{ fact_id: string }>) await founderDecision(c.id, "confirm_candidate", { fact_id: f.fact_id, sha256: d.facts.find((x) => x.id === f.fact_id)!.sha256 }, env.dir);
+    const again = await record(env, args);
+    expect(again).toMatchObject({ replayed: true, facts: [{ state: "accepted" }, { state: "accepted" }] });
+    expect(again.group_id).toBeTruthy();
+    expect(String((again.facts as Array<{ path: string }>)[0].path)).toMatch(/^05-cover\//);
+  });
+});

@@ -91,7 +91,8 @@ export function validCoverApproval(doc: ProductionDoc, body: string): Decision |
       : (r.sha256 && pair.includes(r.sha256)) || (r.shas ?? []).some((s) => pair.includes(s))));
   if (rejected) return null;
   // 按组绑定的批准：只看这一组自己那几份文件有没有被覆盖（同一张图在别的组被覆盖不算，整分支审 4 P2）
-  if (d.group_id && (doc.cover_members ?? []).some((m) => m.group_id === d.group_id && m.replaced_at)) return null;
+  // 只看这条批准绑的那一对（整分支审 7 P2）：组里以前被换掉、后来补过新图的旧成员不算
+  if (d.group_id && (doc.cover_members ?? []).some((m) => m.group_id === d.group_id && m.replaced_at && pair.includes(m.sha256))) return null;
   return liveFact(doc, "cover", d.cover_3x4_sha, "3:4") && liveFact(doc, "cover", d.cover_4x3_sha, "4:3") ? d : null;
 }
 

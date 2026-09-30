@@ -11,7 +11,7 @@ import { getContent, getDataDir, type Content } from "../../storage/local-store.
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc, ReadyMark } from "../../storage/production-types.js";
-import { addMember, admittedGroupKey, ensureGroup, groupOfVersion, nextCoverVersion, retiredGroupOfLabel, slotTaken, versionLabelOf, withCoverGroups } from "./cover-groups.js";
+import { addMember, admittedGroupKey, ensureGroup, groupOfVersion, groupsOfFact, nextCoverVersion, retiredGroupOfLabel, slotTaken, versionLabelOf, withCoverGroups } from "./cover-groups.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { Explanation } from "./explain.js";
 import { checkDuration, cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./files.js";
@@ -94,7 +94,7 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   if (replay && (replay.args ? replay.args !== requestArgs(a) : replay.receipt.kind !== a.kind)) {
     return fail("request_conflict", `request_id「${a.request_id}」已经用来报过另一件东西（${String(replay.receipt.kind)}）：这次的参数不同，换一个新的 request_id 再报`);
   }
-  if (replay?.receipt.pair) return { ...(replay.receipt.pair as Receipt), replayed: true };
+  if (replay?.receipt.pair) return { ...(await pairReceiptNow(content, doc, dataDir, replay.receipt.pair as Receipt)), replayed: true };
   if (replay) return { ...(await receiptFor(content, dataDir, currentCore(doc, replay.receipt as unknown as ReceiptCore))), replayed: true };
   if (a.kind === "chatcut_project") return withSliverCheck(await recordChatcut(a, content, doc, dataDir), content.id, dataDir);
   if (a.kind === "publish") return recordPublishClaim(content, dataDir, a);
@@ -325,6 +325,23 @@ export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, d
   const queued = jobId ? await startMatchJob(dataDir, content.id, r.value.fact_id, jobId, r.doc.round, p) : null;
   const rc = receipt(r.value, r.explanation, content, p.projectRoot, reuse ? "同一文件已经记过，这次没有新动作" : undefined);
   return queued ? { ...rc, warnings: [queued] } : rc;
+}
+
+/**
+ * 一对封面的重放按现在的样子回（整分支审 7 P2）：两张后来被确认收进组了，就回现在的状态、路径、组、阶段，
+ * 和单张重放一样，不回当初缓存的那份。
+ */
+async function pairReceiptNow(content: Content, doc: ProductionDoc, dataDir: string, stored: Receipt): Promise<Receipt> {
+  const facts = ((stored.facts as Array<{ fact_id: string; ratio?: string }>) ?? []).map((x) => {
+    const f = doc.facts.find((y) => y.id === x.fact_id);
+    return { fact_id: x.fact_id, ratio: f?.ratio ?? x.ratio, state: f?.state ?? "rejected", path: f?.path };
+  });
+  const groups = facts.map((f) => groupsOfFact(doc, f.fact_id).map((g) => g.group.id));
+  const shared = groups[0]?.find((id) => groups.every((g) => g.includes(id))) ?? null;
+  const exp = await explainContent(content, dataDir);
+  const view = exp.shadow ?? exp;
+  return { ok: true, content_id: content.id, kind: "cover", facts, group_id: shared, stage: view.stage ?? view.column, missing: view.missing,
+    next_action: shared ? "这一组封面已记下（3:4 + 4:3）。挑哪组只能创始人在「等你拍板」里点。" : "这一对还没成组（候选等创始人确认，或其中一张没收下）：看「等你拍板」。" };
 }
 
 // ---- 封面一次记一组（review-inbox §6.1）：两张都先核完再落位；同一组、同一版本号 ----
