@@ -23,7 +23,7 @@ import "./board.css";
 
 const POLL_MS = 3000;
 
-type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void };
+type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void; card?: string };
 
 /** 读看板 + 3 秒轮询；拖动中 / 菜单开着时暂停，结束后补一次（§7） */
 function useBoardData() {
@@ -67,7 +67,7 @@ export function Board(props: Nav) {
   const drag = useRef<{ from: BoardColumn; id: string; item: BoardItem | null } | null>(null);
   const [moving, setMoving] = useState<Set<string>>(new Set());
   const [over, setOver] = useState<BoardColumn | null>(null);
-  const [panel, setPanel] = useState<string | null>(null);
+  const [panel, setPanel] = useState<string | null>(props.card ?? null);
   const ontology = Boolean(data?.ontology?.enabled);
   const cards = useMemo(() => (data ? boardCards(data) : null), [data]);
   // 看板默认收起总编辑（§28），离开回到偏好

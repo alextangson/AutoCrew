@@ -66,7 +66,7 @@ export const revokeHandoff = (contentId: string, manifestHash: string) =>
 export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean; state?: string; started_at?: string }
 /** 本轮 accepted 原片（1b §4.1 / §7）：自动挂上的可撤；核对说更像别条的可改挂 / 就是这条 */
 export interface ArollCheck { status: "checking" | "ok" | "suggest" | "kept" | "not_ready" | "failed"; other_id?: string; other_title?: string; reason?: string }
-export interface ArollRow { fact_id: string; sha256: string; path: string; auto_attached: boolean; source_path: string | null; check: ArollCheck | null; undo_blocked: string | null; reassign_blocked: string | null }
+export interface ArollRow { fact_id: string; sha256: string; path: string; name?: string; origin?: string; duration_ms?: number | null; at?: string; auto_attached: boolean; source_path: string | null; check: ArollCheck | null; undo_blocked: string | null; reassign_blocked: string | null }
 export interface CardPanelData {
   id: string; title: string; platform: string | null; status: string; active: boolean;
   column: string | null; stage: string | null; reason?: string; missing: string[]; badges: string[]; alerts?: string[]; candidates: CardCandidate[];

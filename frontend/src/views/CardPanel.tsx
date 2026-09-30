@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
 import { CardArolls } from "./CardArolls";
+import { CardNext } from "./CardNext";
 import { CardCandidates } from "./CardCandidates";
 import { chooseFile, decide, loadCard, openStoryboard, reopenScript, type CardPanelData, type SliverPanel, type StoryboardPanel } from "./board-api";
 import { RevealLink, when } from "./board-parts";
@@ -89,7 +90,7 @@ export function CardPanel(p: Props) {
     <div className="card-panel">
       <header className="card-panel-head"><h2>{data?.title ?? "读取中"}</h2><button className="bcard-link card-panel-close" onClick={p.onClose}>关闭</button></header>
       {error && <p className="board2-stale" role="alert">{error}</p>}
-      {data && <PanelBody data={data} busy={busy} act={act} actOrReassign={actOrReassign} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} openEditor={() => p.openEditor(p.contentId)} />}
+      {data && <PanelBody data={data} busy={busy} act={act} actOrReassign={actOrReassign} arollPath={arollPath} setArollPath={setArollPath} attach={() => attach(arollPath)} pick={pick} reopen={reopen} openEditor={() => p.openEditor(p.contentId)} refresh={async () => { await Promise.all([refresh(), p.reload()]); }} />}
     </div>
   </div>;
 }
@@ -103,16 +104,18 @@ function PanelBody(p: {
   data: CardPanelData; busy: boolean; act: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
   actOrReassign: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
   arollPath: string; setArollPath: (v: string) => void; attach: () => Promise<void>; pick: () => Promise<void>; reopen: () => Promise<void>; openEditor: () => void;
+  refresh: () => Promise<void>;
 }) {
   const d = p.data;
   return <>
+    <CardNext d={d} busy={p.busy} act={p.act} openEditor={p.openEditor} refresh={p.refresh} />
     <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason ? ` · ${d.reason}` : ""}</p>
     {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.join("、")}</p>}
     {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
     {d.badges.filter((b) => b !== d.reason).map((b) => <p key={b} className="card-panel-note">{b}</p>)}
     {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
     {d.active && <CardCandidates contentId={d.id} rows={d.candidate_rows ?? []} busy={p.busy} act={p.act} confirm={p.actOrReassign} />}
-    {d.active && <CardArolls rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
+    {d.active && <CardArolls contentId={d.id} rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
     {d.active && (d.column === "待录制" || d.missing.includes("A-roll")) && <section><h3>挂 A-roll</h3>
       <div className="card-panel-row">
         <button className="primary" disabled={p.busy} onClick={() => void p.pick()}>选择文件…</button>

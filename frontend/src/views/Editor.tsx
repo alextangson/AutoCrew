@@ -33,6 +33,8 @@ import { EditingWorkspace } from "./EditingWorkspace";
 import { CoverWorkspace } from "./CoverWorkspace";
 import { PublishWorkspace } from "./PublishWorkspace";
 import { StageAdvance } from "./StageAdvance";
+import { ProductionBanner } from "./ProductionBanner";
+import { loadCard } from "./board-api";
 import {
   platformLabel,
   videoStatus,
@@ -465,6 +467,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
             transitions={VIDEO_PLATFORMS.has(c.platform) ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
             dirty={workspace === "draft" && (dirty || saving)}
             reload={load}
+            isVideo={isVideo}
+            landedStage={async () => { const r = await loadCard(props.id); return r.ok ? r.data.stage ?? r.data.column : null; }}
           />
           {workspace === "draft" && <button
             className={"ed-save-action" + (dirty ? " primary" : " is-saved")}
@@ -497,6 +501,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     return (
       <div className="editor editor-workspace">
         {stageBar}
+      {isVideo && <ProductionBanner contentId={props.id} refreshKey={c.status} />}
+        {isVideo && <ProductionBanner contentId={props.id} refreshKey={c.status} />}
         {props.context}
         <div className="ed-main-row">
           {/* 视频稿的封面在剪辑看板里挑 Codex 交的版本（见上），这里只剩公众号稿的封面台 */}

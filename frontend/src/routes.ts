@@ -2,7 +2,7 @@
 export type EditorPanel = "cover" | "images" | "video";
 
 export type Route =
-  | { view: "board" }
+  | { view: "board"; card?: string }
   | { view: "topic"; key: string }
   | { view: "editor"; id: string; panel?: EditorPanel }
   | { view: "calibration" }
@@ -46,6 +46,8 @@ export function parseRouteHash(hash: string): Route {
     const tab = query.get("tab");
     return { view: "settings", ...(tab === "models" || tab === "integrations" || tab === "data" ? { tab } : {}) };
   }
+  // 看板深链到某张卡（1b 验收：稿件页「回看板看这张卡」）
+  if (path === "board" && query.get("card")) return { view: "board", card: query.get("card")! };
   if (PAGES.has(path)) return { view: path } as Route;
   // 坏深链回到可操作的看板，不带空 id 请求编辑器。
   return { view: "board" };
@@ -57,6 +59,7 @@ export function routeHash(route: Route): string {
     return `#/editor/${encodeURIComponent(route.id)}${route.panel ? `?panel=${route.panel}` : ""}`;
   }
   if (route.view === "settings" && route.tab) return `#/settings?tab=${route.tab}`;
+  if (route.view === "board" && route.card) return `#/board?card=${encodeURIComponent(route.card)}`;
   return `#/${route.view}`;
 }
 
