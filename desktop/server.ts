@@ -38,6 +38,8 @@ import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { migratePlaintextClaims } from "../src/storage/claims.js";
 import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
 import { ensureProductionReady } from "../src/modules/production/service.js";
+// 原片核对作业的处理器与「重启后 pending_match 重新入队」钩子（1b §3-5）：在首次 ensureProductionReady 之前注册
+import "../src/modules/production/match/pending.js";
 import { reconcileAll } from "../src/modules/production/reconcile.js";
 import { resumeEnable } from "../src/modules/production/enable.js";
 import { pullDeps } from "../src/modules/video/handoff/pull-deps.js";
@@ -544,6 +546,7 @@ try {
     });
     for (const o of r?.recovered ?? []) console.log(`  [production] 事务 ${o.id}(${o.content_id}) → ${o.outcome}`);
     for (const c of r?.index.conflicts ?? []) console.error(`  [production] 字节索引冲突:${c}`);
+    for (const e of r?.hookErrors ?? []) console.error(`  [production] 原片核对没能重新排队:${e}`);
     // 上次启用本体做到一半进程退了:按同一份排除清单续跑(开关只在全部投影冻结完成后才写)
     const resumed = r ? await resumeEnable(dir).catch((err) => { console.error(`[production] 续跑启用失败(${dir}):`, err instanceof Error ? err.message : err); return null; }) : null;
     if (resumed) console.log(`  [production] 续跑启用本体:${resumed.ok ? "完成" : `没完成,${resumed.errors.length} 条失败`}`);
