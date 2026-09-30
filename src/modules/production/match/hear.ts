@@ -8,7 +8,8 @@ import { readTranscript, writeTranscript } from "./cache.js";
 import { matchDeps } from "./deps.js";
 import type { MatchJob } from "./queue.js";
 
-export type Heard2 = Heard & { failed?: true };
+/** uncached：转写回来了，但这期间文件被挪 / 改名 / 改了，文本没记进缓存（Codex 审 segB10 P2） */
+export type Heard2 = Heard & { failed?: true; uncached?: true };
 
 async function sameFile(job: MatchJob): Promise<boolean> {
   const st = await fs.stat(job.path).catch(() => null);
@@ -25,6 +26,7 @@ export async function hear(dataDir: string, job: MatchJob, signal: AbortSignal):
   const out = await t.transcribe(job.path, signal).catch((e: unknown) => ({ ok: false as const, unavailable: false, reason: e instanceof Error ? e.message : String(e) }));
   if (!out.ok) return { text: null, why: signal.aborted ? `转写超时（${out.reason}）` : `转写失败：${out.reason}`, failed: true };
   // 转写期间字节变了：这份文本不能记在旧 sha 名下
-  if (await sameFile(job)) await writeTranscript(dataDir, job.sha256, out.text);
+  if (!(await sameFile(job))) return { text: out.text, uncached: true };
+  await writeTranscript(dataDir, job.sha256, out.text);
   return { text: out.text };
 }

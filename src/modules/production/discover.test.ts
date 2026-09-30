@@ -242,6 +242,22 @@ describe("Codex 审 segB6：转写临时没就绪不是终态", () => {
   });
 });
 
+describe("Codex 审 segB10：转写期间文件被改名", () => {
+  it("转写回来时文件已改名 → 不记成「已缓存」的终态；在新名字下重新发现后照样按内容认", async () => {
+    let renamed = false;
+    asr(async (f) => {
+      if (!renamed && path.basename(f) === "IMG_a.mov") { renamed = true; await fs.rename(f, path.join(env.inbox, "IMG_b.mov")); }
+      return { ok: true, text: A.slice(20, 160) };
+    });
+    const a = await videoContent(env, "甲稿改名测试", "draft_ready", A);
+    await put(path.join(env.inbox, "IMG_a.mov"), "take");
+    await tick();
+    await tick();
+    await tick();
+    expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
+  });
+});
+
 describe("§5 监视文件夹只出建议", () => {
   let watch: string;
   beforeEach(async () => { watch = path.join(path.dirname(env.dir), "downloads"); await fs.mkdir(watch); });

@@ -165,6 +165,18 @@ export async function listMatchJobs(dataDir: string): Promise<MatchJob[]> {
   return structuredClone((await storeOf(dataDir)).jobs);
 }
 
+/** 把一个已判的作业重新排上（调用方已确认它当初的产出不在了）；不重置失败次数。成功回 true */
+export async function requeueMatchJob(dataDir: string, id: string): Promise<boolean> {
+  const ok = await mutate(dataDir, (jobs) => {
+    const j = jobs.find((x) => x.id === id);
+    if (!j || j.state !== "done") return false;
+    Object.assign(j, { state: "queued", next_at: 0, outcome: undefined, updated_at: iso() });
+    return true;
+  });
+  if (ok) kickMatchWorker(dataDir);
+  return ok;
+}
+
 /** 取消一个作业（事实已被创始人定了 / 稿被删）：它还没跑就不跑了；在跑的，结果落地时锁内复核会作废 */
 export async function cancelMatchJob(dataDir: string, id: string, why: string): Promise<void> {
   await mutate(dataDir, (jobs) => {

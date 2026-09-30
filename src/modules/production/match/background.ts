@@ -9,12 +9,14 @@ import { readTranscript } from "./cache.js";
 import { decide, type Heard, type MatchDecision, type PoolEntry } from "./decide.js";
 import { matchDeps } from "./deps.js";
 import { hear } from "./hear.js";
-import { enqueueMatchJob, registerMatchHandler, type Priority } from "./queue.js";
+import { enqueueMatchJob, registerMatchHandler, requeueMatchJob, type Priority } from "./queue.js";
 
 export const TRANSCRIBE = "transcribe_head";
 
 registerMatchHandler(TRANSCRIBE, async ({ dataDir, job, signal }) => {
   const h = await hear(dataDir, job, signal);
+  // 转写期间文件被挪 / 改名：没进缓存就不是「已缓存」——停在可重来的状态，不计次；新路径上再发现时重新排上
+  if (h.text !== null && h.uncached) return { state: "unavailable", reason: "转写期间文件被挪了或改名了，等重新发现" };
   if (h.text !== null) return { state: "done", outcome: "转写已缓存" };
   if (h.failed) return { state: "retry", error: h.why };
   // 转写临时没就绪：不是终态，恢复后再来（Codex 审 segB6 P2）
@@ -45,6 +47,8 @@ export async function fileVerdict(dataDir: string, f: Found, pool: readonly Pool
   if (notReady) return nameOnly(`转写环境没装好（${notReady}）`);
   const job = await enqueueMatchJob(dataDir, { purpose: TRANSCRIBE, priority: opts.priority ?? "background", sha256: f.sha256, path: f.file, size: f.size, mtime_ms: f.mtime_ms, target: "head", payload: {} });
   if (job.state === "failed") return { kind: "failed", reason: job.error ?? "转写失败" };
-  if (job.state === "done") return nameOnly(job.outcome === "转写已缓存" || !job.outcome ? "转写缓存不见了" : job.outcome);
+  // 已判但缓存里没有（缓存被清 / 当初没写上）：重新排，不让「只比了文件名」变成永久结论（Codex 审 segB10 P2）
+  if (job.state === "done" && (await requeueMatchJob(dataDir, job.id))) return { kind: "checking" };
+  if (job.state === "done") return nameOnly(job.outcome ?? "没转写");
   return { kind: "checking" };
 }
