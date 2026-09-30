@@ -27,7 +27,7 @@ import { commitFile } from "./record.js";
 import { now } from "./roots.js";
 import { mutateProduction } from "./service.js";
 import { arollOwnerElsewhere } from "./sha-index.js";
-import { IN_EDIT_REASSIGN, undoBlocker } from "./undo-attach.js";
+import { chatcutInUse, factFile, IN_EDIT_REASSIGN, undoBlocker } from "./undo-attach.js";
 import { newId } from "../../storage/production-store.js";
 
 export const ATTACH_CHECK = "attach_check";
@@ -112,13 +112,15 @@ export async function reassignAroll(content: Content, doc: ProductionDoc, fact: 
   const to = await getContent(toId, dataDir);
   const problem = await receiverProblem(to, fact, content, dataDir);
   if (problem) return fail("reassign_blocked", problem);
-  const source = path.join(await fs.realpath(contentRoot(content.id, dataDir)), fact.path!);
+  const source = await factFile(content, fact, dataDir);
   const hold = await chatcutHold(source);
-  if (hold.project) return fail("reassign_blocked", `ChatCut 工程《${hold.project}》在用这个文件，改挂会挪走它：先在 ChatCut 里换掉`);
+  if (hold.project) return fail("reassign_blocked", chatcutInUse(hold.project));
+  // 原地收下的原片（绝对路径）改挂：同样不挪文件，《X》原地收下（Codex 审 segB5 P2）
+  const inPlace = path.isAbsolute(fact.path!);
   const fp = await stableFingerprint(source, now());
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "项目里的原片被改过，刷新再看");
-  const plan: FilePlan = { action: "move", kind: "aroll", source, sha256: fact.sha256!, id: fp.value.id, projectRoot: await fs.realpath(contentRoot(to!.id, dataDir)), location: "other",
+  const plan: FilePlan = { action: inPlace ? "in_place" : "move", kind: "aroll", source, sha256: fact.sha256!, id: fp.value.id, projectRoot: await fs.realpath(contentRoot(to!.id, dataDir)), location: "other",
     evidence: `创始人从《${content.title}》改挂过来（内容核对：${fact.attach_check?.reason ?? "—"}）`, ...(fact.duration_ms ? { duration_ms: fact.duration_ms } : {}) };
   const a = { content_id: to!.id, kind: "aroll" as const, request_id: `reassign-${fact.id}`, host: "founder" };
   const r = await commitFile(a, to!, plan, dataDir, { owner: content.id, sha256: fact.sha256!, to: to!.id, undo: { fact_id: fact.id, to_title: to!.title } },

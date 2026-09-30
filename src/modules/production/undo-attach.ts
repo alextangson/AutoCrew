@@ -17,6 +17,7 @@ import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { deriveExplanation } from "./explain.js";
 import { identityOf, reserveTarget, sameIdentity, stableFingerprint } from "./files.js";
 import { movableRoots, now } from "./roots.js";
+import { chatcutHold } from "./chatcut-refs.js";
 import { mutateProduction } from "./service.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type Txn } from "./txn.js";
 
@@ -74,13 +75,20 @@ async function reserveHome(fact: Fact, dataDir: string): Promise<{ target: strin
   return { target, fallback: home.fallback };
 }
 
-async function commitUndo(content: Content, fact: Fact, txn: Txn, target: string, dataDir: string): Promise<void> {
+/** 事实里的文件：原地收下的存绝对路径，挪进项目的存项目内相对路径（Codex 审 segB5 P2） */
+export async function factFile(content: Content, fact: Fact, dataDir: string): Promise<string> {
+  return path.isAbsolute(fact.path!) ? fact.path! : path.join(await fs.realpath(contentRoot(content.id, dataDir)), fact.path!);
+}
+
+export const chatcutInUse = (project: string) => `ChatCut 工程《${project}》在用这个原片，先在 ChatCut 里换掉再点`;
+
+async function commitUndo(content: Content, fact: Fact, txn: Txn | null, target: string, dataDir: string): Promise<void> {
   await mutateProduction(content.id, dataDir, (doc) => {
     const f = doc.facts.find((x) => x.id === fact.id)!;
-    Object.assign(f, { state: "rejected", path: target, availability: "present", evidence: `创始人说不是这条（撤销自动挂上），已挪回 ${target}` });
+    Object.assign(f, { state: "rejected", path: target, availability: "present", evidence: txn ? `创始人说不是这条（撤销自动挂上），已挪回 ${target}` : "创始人说不是这条（撤销自动挂上）；原片本来就留在原处，没挪" });
     doc.decisions.push({ id: newId("dec"), type: "auto_attach_undo", round: doc.round, at: new Date().toISOString(), source: "founder", fact_id: f.id, sha256: f.sha256, note: target });
     doc.frozen = null; // 冻结副本文件留作历史
-    doc.txns = [...(doc.txns ?? []), txn.id];
+    if (txn) doc.txns = [...(doc.txns ?? []), txn.id];
     return { value: null, events: [{ type: "auto_attach_undone", detail: { fact_id: f.id, to: target } }] };
   });
 }
@@ -90,12 +98,20 @@ export async function undoAutoAttach(content: Content, doc: ProductionDoc, fact:
   if (!fact.auto_attached) return fail("not_auto", "这条原片是人确认挂上的，不是系统自动挂的；要换原片请重开文稿");
   const blocked = undoBlocker(content, doc, fact);
   if (blocked) return fail("undo_blocked", blocked);
-  const source = path.join(await fs.realpath(contentRoot(content.id, dataDir)), fact.path!);
+  const source = await factFile(content, fact, dataDir);
   const id = await identityOf(source).catch(() => null);
-  if (!id) return fail("file_missing", `项目里的原片不见了（${fact.path}），没法挪回`);
+  if (!id) return fail("file_missing", `原片不见了（${fact.path}），没法撤`);
+  // 本机 ChatCut 工程按路径在用（还没有 uses_aroll 事实也算，Codex 审 segB5 P1）：挪走会断它的素材链接
+  const hold = await chatcutHold(source);
+  if (hold.project) return fail("undo_blocked", chatcutInUse(hold.project));
   // 先核完整哈希、再占名 / 挪（Codex 审 segB3 P1）：被外部改过的字节一旦挪出去，撤回会因哈希对不上拒绝放回，文件两头都不在
   const fp = await stableFingerprint(source, now());
   if (!fp.ok || fp.value.sha256 !== fact.sha256) return fail("undo_blocked", CHANGED);
+  // 原地收下的（绝对路径，当初就没挪进项目，Codex 审 segB5 P2）：不动任何文件，只记决定、拒事实、解冻
+  if (path.isAbsolute(fact.path!)) {
+    await commitUndo(content, fact, null, source, dataDir);
+    return { ok: true, fact_id: fact.id, moved_to: null, note: `原片本来就留在原处（${source}），没挪` };
+  }
   const home = await reserveHome(fact, dataDir);
   if (typeof home === "string") return fail("undo_blocked", home);
   const txn: Txn = { id: newId("txn"), kind: "undo", content_id: content.id, round: doc.round, ops: [{ op: "move", source, target: home.target, sha256: fact.sha256!, step: "planned" }], at: new Date().toISOString() };

@@ -145,3 +145,78 @@ describe("守卫：本机 ChatCut 工程按绝对路径在用的原片不挪（�
     expect(await exists(path.join(projectRoot(env, c.id), `02-aroll/${TITLE}-原片.mov`))).toBe(true);
   });
 });
+
+describe("Codex 审 segB5：撤销 / 改挂也守 ChatCut 引用；原地收下的事实路径是绝对的", () => {
+  const TITLE = "撤销守卫测试的一条稿";
+  async function autoMoved(): Promise<{ id: string; fact: Fact; inProject: string }> {
+    const c = await videoContent(env, TITLE, "draft_ready", A);
+    await founderApprove(env, c.id);
+    await put(path.join(env.inbox, `${TITLE}-原片.mov`), "auto");
+    await reconcileAll(env.dir);
+    const fact = (await aroll(c.id))!;
+    expect(fact).toMatchObject({ state: "accepted", auto_attached: true, path: `02-aroll/${TITLE}-原片.mov` });
+    return { id: c.id, fact, inProject: path.join(projectRoot(env, c.id), fact.path!) };
+  }
+
+  it("[P1] 自动挂上后被 ChatCut 工程按路径引用（还没有 uses_aroll 事实）→ 撤销被拒，文件不动", async () => {
+    const { id, fact, inProject } = await autoMoved();
+    await ccProject("后来导入的工程", [inProject]);
+    const r = await founderDecision(id, "undo_auto_attach", { fact_id: fact.id, sha256: fact.sha256 }, env.dir);
+    expect(r).toMatchObject({ ok: false, error: "ChatCut 工程《后来导入的工程》在用这个原片，先在 ChatCut 里换掉再点" });
+    expect(await exists(inProject)).toBe(true);
+    expect((await aroll(id))?.state).toBe("accepted");
+  });
+
+  it("[P2] 原地收下的自动挂上（绝对路径）：工程不再引用后撤销 → 不挪任何文件，只记决定、拒事实、解冻", async () => {
+    const c = await videoContent(env, TITLE, "draft_ready", A);
+    await founderApprove(env, c.id);
+    const src = await put(path.join(env.inbox, `${TITLE}-原片.mov`), "in-place");
+    await ccProject("临时工程", [src]);
+    await reconcileAll(env.dir);
+    const fact = (await aroll(c.id))!;
+    expect(fact).toMatchObject({ state: "accepted", auto_attached: true, path: src });
+    await fs.rm(cc, { recursive: true, force: true });
+    const r = await founderDecision(c.id, "undo_auto_attach", { fact_id: fact.id, sha256: fact.sha256 }, env.dir);
+    expect(r).toMatchObject({ ok: true, stage: "待录制" });
+    expect(await fs.readFile(src, "utf8")).toBe("in-place");
+    const doc = await readProductionDocOrEmpty(c.id, env.dir);
+    expect(doc.facts.find((f) => f.id === fact.id)).toMatchObject({ state: "rejected", path: src });
+    expect(doc.frozen).toBeNull();
+    expect(doc.decisions.some((d) => d.type === "auto_attach_undo")).toBe(true);
+  });
+
+  it("[P2] 原地收下的原片改挂 → 不挪文件，《X》原地收下，这条撤下", async () => {
+    const B = synth(42, 500);
+    setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => null, transcribe: async () => ({ ok: true, text: B.slice(20, 160) }) } });
+    const a = await videoContent(env, "改挂原地甲稿", "draft_ready", A);
+    const b = await videoContent(env, "改挂原地乙稿", "draft_ready", B);
+    await founderApprove(env, a.id);
+    const src = await put(path.join(env.outside, "shared.mov"), "shared");
+    await ccProject("挂载时在用", [src]);
+    await founderDecision(a.id, "attach_aroll", { path: src }, env.dir);
+    await matchWorkerIdle(env.dir);
+    const fact = (await aroll(a.id))!;
+    expect(fact).toMatchObject({ state: "accepted", path: src, attach_check: { status: "suggest" } });
+    await fs.rm(cc, { recursive: true, force: true });
+    const r = await founderDecision(a.id, "reassign_aroll", { fact_id: fact.id, sha256: fact.sha256, to: b.id }, env.dir);
+    expect(r).toMatchObject({ ok: true, reassigned_to: b.id });
+    expect(await fs.readFile(src, "utf8")).toBe("shared");
+    expect(await aroll(b.id)).toMatchObject({ state: "accepted", path: src });
+    expect((await aroll(a.id))?.state).toBe("rejected");
+  });
+});
+
+describe("审计补漏：重开文稿也不挪 ChatCut 按路径在用的原片", () => {
+  it("本轮原片被 ChatCut 工程按路径引用 → 重开时留在 02-aroll，不进 _作废", async () => {
+    const { reopenScript } = await import("./reopen.js");
+    const TITLE = "重开守卫测试的一条稿";
+    const c = await videoContent(env, TITLE);
+    await founderApprove(env, c.id);
+    await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${TITLE}-原片.mov`), "r"), request_id: "r1" });
+    const inProject = path.join(projectRoot(env, c.id), `02-aroll/${TITLE}-原片.mov`);
+    expect(await exists(inProject)).toBe(true);
+    await ccProject("重开前导入的工程", [inProject]);
+    expect(await reopenScript(c.id, env.dir)).toMatchObject({ ok: true, round: 2 });
+    expect(await exists(inProject)).toBe(true);
+  });
+});

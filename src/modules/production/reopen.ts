@@ -11,6 +11,7 @@ import { isOntologyActive, newId, readProductionDoc, readProductionDocOrEmpty } 
 import { checkTargetDir } from "./record-plan.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { reserveTarget } from "./files.js";
+import { chatcutHold } from "./chatcut-refs.js";
 import { withFileOwnership } from "./mutex.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { dropTxn, rollbackTxn, runMove, saveTxn, type Txn } from "./txn.js";
@@ -28,6 +29,8 @@ async function moveRetired(contentId: string, dataDir: string, doc: ProductionDo
   const moved = new Map<string, string>();
   for (const fact of arollsToRetire(doc)) {
     const source = path.join(root, fact.path!);
+    // 本机 ChatCut 工程按路径在用的原片也不挪（§13-A 隐式引用）：挪进 _作废 会断它的素材链接
+    if ((await chatcutHold(source)).project) continue;
     const ext = path.extname(source);
     const safe = await checkTargetDir(root, `02-aroll/_作废-${doc.round}`);
     if (!safe.ok) throw new Error(safe.error);
