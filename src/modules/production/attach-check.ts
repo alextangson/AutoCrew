@@ -66,8 +66,9 @@ async function handle({ dataDir, job, signal }: { dataDir: string; job: MatchJob
     await settle(dataDir, content_id, fact_id, job.id, { status: h.failed ? "failed" : "not_ready", reason: h.failed ? `核对失败：${h.why}` : `没做内容核对：${h.why}` });
     return { state: "done", outcome: h.why };
   }
-  // 用挂载前的原文件名：项目里的名字是按这条标题改过的，拿它比 L1 永远对上这条
-  const d = decide({ fileName: path.basename(fact.source_path ?? job.path), sha256: job.sha256, pool: await arollPool(dataDir, content_id), heard: h }, matchDeps().thresholds);
+  // 只按转写分数与差距判（Codex 审 segB P2）：文件名不参与——创始人挂的时候已经看过名字，
+  // 这一步要回答的是「听起来是不是这条」；带文件名进去，L1 强命中会在打分前就定了 winner
+  const d = decide({ fileName: "", sha256: job.sha256, pool: await arollPool(dataDir, content_id), heard: h }, matchDeps().thresholds);
   const other = d.winner && d.winner !== content_id ? d.top3.find((r) => r.content_id === d.winner) : undefined;
   await settle(dataDir, content_id, fact_id, job.id, other ? { status: "suggest", other_id: other.content_id, other_title: other.title, reason: `${d.reason}；前三名：${describeTop3(d.top3)}` } : { status: "ok", reason: d.reason });
   return { state: "done", outcome: other ? `更像《${other.title}》` : "对上这条" };

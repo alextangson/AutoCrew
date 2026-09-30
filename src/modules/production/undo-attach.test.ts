@@ -166,6 +166,16 @@ describe("§7 卡片挂载核对 + 改挂", () => {
     expect(await decide(a, "reassign_aroll", { fact_id: fact.id, sha256: fact.sha256, to: b })).toMatchObject({ ok: false, error: IN_EDIT_REASSIGN });
   });
 
+  it("文件名对上这条、转写却明显是别条 → 仍提示更像别条（按转写分数判，不被文件名短路；Codex 审 segB P2）", async () => {
+    asr(() => ({ ok: true, text: B.slice(20, 160) }));
+    const a = await videoContent(env, "甲稿文件名陷阱", "draft_ready", A);
+    await videoContent(env, "乙稿文件名陷阱", "draft_ready", B);
+    await founderApprove(env, a.id);
+    await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "甲稿文件名陷阱.mov"), "trap") });
+    await matchWorkerIdle(env.dir);
+    expect((await aroll(a.id)).attach_check).toMatchObject({ status: "suggest", other_title: "乙稿文件名陷阱" });
+  });
+
   it("转写没就绪 → 卡片小字「没做内容核对：转写环境没装好…」", async () => {
     asr(() => ({ ok: true, text: "" }), "ASR 依赖环境还没装好");
     const a = await videoContent(env, "甲稿没就绪核对", "draft_ready", A);
