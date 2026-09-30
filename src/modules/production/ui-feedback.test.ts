@@ -15,13 +15,16 @@ afterEach(async () => { setPullDeps(null); await env.cleanup(); });
 
 const KEYS = /douyin|xiaohongshu|bilibili|wechat_video|D[1-5]/;
 
+// 定时要落在未来，「已定时投出」才成立；写死日期到点就变成「应已公开」
+const LATER = new Date(Date.now() + 7 * 86_400_000).toISOString();
+
 async function publishedByAgent() {
   const c = await videoContent(env, "客户问你们用AI吗");
   await founderApprove(env, c.id);
   await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "客户问你们用AI吗-原片.mov"), "raw"), request_id: "a" });
   await put(path.join(projectRoot(env, c.id), "06-publish/publish-plan.json"), JSON.stringify({ platforms: [
-    { platform: "douyin", publication: { status: "scheduled", scheduled_at: "2026-09-30T20:00:00+08:00" } },
-    { platform: "bilibili", publication: { status: "scheduled", scheduled_at: "2026-09-30T20:00:00+08:00" } },
+    { platform: "douyin", publication: { status: "scheduled", scheduled_at: LATER } },
+    { platform: "bilibili", publication: { status: "scheduled", scheduled_at: LATER } },
   ] }));
   await reconcileAll(env.dir);
   return c;
