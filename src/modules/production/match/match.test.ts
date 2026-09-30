@@ -151,6 +151,19 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     expect(calls).toBe(MAX_RETRIES + 1);
   });
 
+  it("失败的去重记录不被终态历史挤掉：超过 200 条已判之后，同一文件仍停在失败、不重新计次（Codex 审 segB2 P2）", async () => {
+    registerMatchHandler("test_fail2", async (): Promise<JobResult> => ({ state: "failed", error: "坏了" }));
+    registerMatchHandler("test_ok", async () => ({ state: "done", outcome: "ok" }));
+    const bad = spec({ purpose: "test_fail2" });
+    await enqueueMatchJob(dir, bad);
+    await matchWorkerIdle(dir);
+    for (let i = 0; i < 205; i++) { clock += 1000; await enqueueMatchJob(dir, spec({ sha256: i.toString(16).padStart(64, "0"), target: `t${i}` })); await matchWorkerIdle(dir); }
+    const again = await enqueueMatchJob(dir, bad);
+    expect(again.state).toBe("failed");
+    await matchWorkerIdle(dir);
+    expect((await listMatchJobs(dir)).filter((j) => j.key === jobKey(bad))).toEqual([expect.objectContaining({ state: "failed" })]);
+  });
+
   it("重启：跑到一半的作业回到排队，持久化在工作区缓存目录", async () => {
     const file = path.join(transcriptCacheDir(dir), "..", "match-jobs.json");
     const job: MatchJob = { id: "mjob-x", key: jobKey(spec()), purpose: "test_ok", priority: "background", sha256: SHA, path: "/x.mov", size: 1, mtime_ms: 1,

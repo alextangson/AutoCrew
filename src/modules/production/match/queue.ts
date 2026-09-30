@@ -74,10 +74,14 @@ function storeOf(dataDir: string): Promise<Store> {
   return s;
 }
 
+/**
+ * 只裁「已判 / 取消」的展示历史。失败的记录是去重凭据（Codex 审 segB2 P2）：裁掉它，还在原处的坏文件会被当新作业重排、
+ * 退避次数归零。失败记录留到文件内容变了（sha 变 → 新键）或有人明确要重试（显式入队顶掉它）。
+ */
 function prune(jobs: MatchJob[]): MatchJob[] {
-  const done = jobs.filter((j) => TERMINAL.has(j.state)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, KEEP_TERMINAL);
+  const done = jobs.filter((j) => j.state === "done" || j.state === "cancelled").sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, KEEP_TERMINAL);
   const keep = new Set(done.map((j) => j.id));
-  return jobs.filter((j) => !TERMINAL.has(j.state) || keep.has(j.id));
+  return jobs.filter((j) => j.state === "failed" || !TERMINAL.has(j.state) || keep.has(j.id));
 }
 
 async function mutate<T>(dataDir: string, fn: (jobs: MatchJob[]) => T): Promise<T> {
