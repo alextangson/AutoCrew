@@ -174,4 +174,13 @@ export function toNotify(items: InboxItem[], state: NotifyState, now: number): I
 }
 
 /** 标签页标题：「(3) AutoCrew」；没事时就是「AutoCrew」 */
-export const tabTitle = (n: number) => (n > 0 ? `(${n}) AutoCrew` : "AutoCrew");
+/** stale：列表没刷新成（连不上 / 登录过期）——保留上次的件数、加问号「(2?) AutoCrew」 */
+export const tabTitle = (n: number, stale = false) => (n > 0 ? `(${n}${stale ? "?" : ""}) AutoCrew` : stale ? "(?) AutoCrew" : "AutoCrew");
+
+/** 列表停住时列表头的那句：登录过期 → 刷新页面；其他 → 连不上、停在几点几分 */
+export function staleLine(error: string, lastOkAt: number | null, expired: boolean): string {
+  if (expired) return "登录过期，刷新页面";
+  const t = lastOkAt ? new Date(lastOkAt) : null;
+  const hm = t ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "";
+  return hm ? `连不上 AutoCrew，列表停在 ${hm}` : `连不上 AutoCrew：${error}`;
+}

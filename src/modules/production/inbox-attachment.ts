@@ -37,9 +37,6 @@ export async function openAttachment(contentId: string, askId: string, index: nu
   return { ok: true, file: real, size: st.size, type };
 }
 
-export function attachmentStream(file: string): fs.ReadStream {
-  return fs.createReadStream(file);
-}
 
 /**
  * 条目预览（成片、封面、候选）：按 fact_id 取文件，页面拿不到路径（条目里不放路径）。只读、sandbox + nosniff、

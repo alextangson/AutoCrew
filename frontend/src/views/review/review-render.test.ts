@@ -12,8 +12,9 @@ const decided: Array<Record<string, unknown>> = [];
 const undone: Array<[string, string, Record<string, unknown>]> = [];
 let inbox: InboxItem[] = [];
 let decideReply: Record<string, unknown> = { ok: true };
+let failWith: string | null = null;
 vi.mock("./review-api", () => ({
-  loadInbox: async () => ({ ok: true, data: { items: inbox, count: inbox.length, agent_waiting: 0, generated_at: "" } }),
+  loadInbox: async () => (failWith ? { ok: false, error: failWith } : { ok: true, data: { items: inbox, count: inbox.length, agent_waiting: 0, generated_at: "" } }),
   decideItem: async (p: Record<string, unknown>) => { decided.push(p); return decideReply.ok === false ? { ok: false, error: String(decideReply.error) } : { ok: true, data: decideReply }; },
   undoDecision: async (c: string, a: string, p: Record<string, unknown>) => { undone.push([c, a, p]); return { ok: true, data: {} }; },
   attachmentUrl: () => "/att",
@@ -28,7 +29,7 @@ let el: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  decided.length = 0; undone.length = 0; decideReply = { ok: true }; inbox = [];
+  decided.length = 0; undone.length = 0; decideReply = { ok: true }; inbox = []; failWith = null;
   el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el);
   window.localStorage?.clear?.();
 });
@@ -402,4 +403,30 @@ describe("两条稿同一轮的成片、封面（整分支审 2）", () => {
     await click(btn("就用这版"));
     expect(decided.at(-1)).toMatchObject({ content_id: cid, item_id: `cut:${cid}:r1`, fact_id: `f-${cid}` });
   });
+});
+
+describe("列表读不成（整分支审 3 P2）", () => {
+  const poll = async () => { const { POLL_MS } = await import("./ReviewInbox"); await act(async () => { await new Promise((r) => setTimeout(r, POLL_MS + 100)); }); };
+  it("连不上：旧列表留着，列表头写「连不上 AutoCrew，列表停在 HH:MM」，标题「(N?) AutoCrew」；主按钮明说没记上；下一次读成就恢复", async () => {
+    await mountInbox([ITEMS[6]]);
+    failWith = "连不上 AutoCrew 服务：fetch failed";
+    await poll();
+    expect(el.querySelectorAll(".ri-row").length).toBe(1);
+    expect(el.querySelector(".ri-warn")!.textContent).toMatch(/^连不上 AutoCrew，列表停在 \d\d:\d\d$/);
+    expect(document.title).toBe("(1?) AutoCrew");
+    await openRow("发之前再看一眼（抖音）");
+    await click(btn("没问题"));
+    expect(decided).toEqual([]);
+    expect(el.querySelector(".ri-toast")!.textContent).toContain("这次没记上");
+    failWith = null;
+    await poll();
+    expect(el.querySelector(".ri-warn")).toBeNull();
+    expect(document.title).toBe("(1) AutoCrew");
+  }, 15_000);
+  it("登录过期：列表头写「登录过期，刷新页面」", async () => {
+    await mountInbox([ITEMS[6]]);
+    failWith = "x";
+    await poll();
+    expect(el.querySelector(".ri-warn")!.textContent).toBe("登录过期，刷新页面");
+  }, 10_000);
 });

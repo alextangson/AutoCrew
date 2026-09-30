@@ -13,7 +13,7 @@ import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { decide, decideItem, type DecideDeps } from "../modules/production/inbox-decide.js";
 import { readInbox } from "../modules/production/inbox-read.js";
-import { ATTACHMENT_HEADERS, attachmentStream, openAttachment, openFactMedia } from "../modules/production/inbox-attachment.js";
+import { ATTACHMENT_HEADERS, openAttachment, openFactMedia, type AttachmentOpen } from "../modules/production/inbox-attachment.js";
 import { createReadStream } from "node:fs";
 import { parseRangeHeader } from "./video-media.js";
 import { cardPanel } from "../modules/production/panel.js";
@@ -47,6 +47,19 @@ async function jsonBody(req: http.IncomingMessage, readBody: BoardRouteDeps["rea
   const parsed = JSON.parse(await readBody(req)) as unknown;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("请求体要是对象");
   return parsed as Record<string, unknown>;
+}
+
+/**
+ * 请示附件与条目预览共用的发送（整分支审 3 P2）：只读、sandbox + nosniff、只认绑定的 sha（打开时已核）；
+ * 支持 Range（拖动进度、moov 在尾部的视频预读），越界回 416。
+ */
+function sendMedia(req: http.IncomingMessage, res: http.ServerResponse, r: AttachmentOpen): void {
+  if (!r.ok) { res.writeHead(r.status, { "Content-Type": "application/json; charset=utf-8", ...ATTACHMENT_HEADERS }).end(JSON.stringify({ ok: false, error: r.error })); return; }
+  const range = parseRangeHeader(req.headers?.range, r.size);
+  if (range === "unsatisfiable") { res.writeHead(416, { "Content-Range": `bytes */${r.size}`, ...ATTACHMENT_HEADERS }).end(); return; }
+  res.writeHead(range ? 206 : 200, { "Content-Type": r.type, "Accept-Ranges": "bytes", "Content-Length": String(range ? range.end - range.start + 1 : r.size),
+    ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${r.size}` } : {}), ...ATTACHMENT_HEADERS });
+  createReadStream(r.file, range ?? undefined).pipe(res);
 }
 
 export function createBoardHandler(deps: BoardRouteDeps) {
@@ -96,10 +109,7 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       const id = url.searchParams.get("content_id") ?? "", ask = url.searchParams.get("ask_id") ?? "", index = Number(url.searchParams.get("index") ?? "-1");
       if (!isContentId(id) || !/^ask-[\w-]+$/.test(ask) || !Number.isInteger(index) || index < 0) { send(res, 400, { ok: false, error: "参数不对" }); return true; }
       try {
-        const r = await openAttachment(id, ask, index, await deps.resolveDataDir());
-        if (!r.ok) { res.writeHead(r.status, { "Content-Type": "application/json; charset=utf-8", ...ATTACHMENT_HEADERS }).end(JSON.stringify({ ok: false, error: r.error })); return true; }
-        res.writeHead(200, { "Content-Type": r.type, "Content-Length": String(r.size), ...ATTACHMENT_HEADERS });
-        attachmentStream(r.file).pipe(res);
+        sendMedia(req, res, await openAttachment(id, ask, index, await deps.resolveDataDir()));
       } catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }
@@ -109,13 +119,7 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       const id = url.searchParams.get("content_id") ?? "", fid = url.searchParams.get("fact_id") ?? "";
       if (!isContentId(id) || !/^[\w-]{1,80}$/.test(fid)) { send(res, 400, { ok: false, error: "参数不对" }); return true; }
       try {
-        const r = await openFactMedia(id, fid, await deps.resolveDataDir());
-        if (!r.ok) { res.writeHead(r.status, { "Content-Type": "application/json; charset=utf-8", ...ATTACHMENT_HEADERS }).end(JSON.stringify({ ok: false, error: r.error })); return true; }
-        const range = parseRangeHeader(req.headers?.range, r.size);
-        if (range === "unsatisfiable") { res.writeHead(416, { "Content-Range": `bytes */${r.size}` }).end(); return true; }
-        res.writeHead(range ? 206 : 200, { "Content-Type": r.type, "Accept-Ranges": "bytes", "Content-Length": String(range ? range.end - range.start + 1 : r.size),
-          ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${r.size}` } : {}), ...ATTACHMENT_HEADERS });
-        createReadStream(r.file, range ?? undefined).pipe(res);
+        sendMedia(req, res, await openFactMedia(id, fid, await deps.resolveDataDir()));
       } catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }

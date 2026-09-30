@@ -9,7 +9,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
 import { decideItem, INBOX_OPEN_EVENT, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
-import { DONE_TEXT, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
+import { SESSION_EXPIRED } from "../../transport";
+import { DONE_TEXT, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
 import { PrimaryContext, ReviewPanel } from "./ReviewPanel";
 import { GroupPanel } from "./ReviewGroup";
 import { useInboxNotify } from "./review-notify";
@@ -32,6 +33,8 @@ export function Thumb(p: { item: InboxItem }) {
 export function ReviewInbox(props: { focusContent?: string } = {}) {
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 上一次读成功的时间：读失败时列表停在那一刻，列表头写明（整分支审 3 P2） */
+  const [lastOkAt, setLastOkAt] = useState<number | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [held, setHeld] = useState<Row | null>(null);
   const [collapsed, setCollapsed] = useState<boolean | null>(null);
@@ -45,7 +48,7 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
     const r = await loadInbox();
     if (!r.ok) { setError(r.error); return null; }
     const sorted = sortItems(r.data.items);
-    setItems(sorted); setError(null);
+    setItems(sorted); setError(null); setLastOkAt(Date.now());
     return sorted;
   }, []);
   useEffect(() => {
@@ -59,7 +62,9 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
   const rowOfItem = (id: string) => rows.find((r) => r.items.some((i) => i.item_id === id)) ?? null;
   const open = useCallback((row: Row | null) => { setOpenKey(row?.key ?? null); setHeld(row); }, []);
   // 件数 = 创始人看到的行数（合成的行算一件），列表头和标签页标题用同一个数
-  const notify = useInboxNotify(items, (id) => { setCollapsed(false); open(rowOfItem(id)); }, rows.length);
+  const stale = Boolean(error && items);
+  const staleText = stale ? staleLine(error!, lastOkAt, error === SESSION_EXPIRED) : null;
+  const notify = useInboxNotify(items, (id) => { setCollapsed(false); open(rowOfItem(id)); }, rows.length, stale);
   // 卡片 / 工作台的「去『等你拍板』处理」：打开这条稿的那件事
   useEffect(() => {
     const on = (e: Event) => {
@@ -88,6 +93,8 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
 
   const act = async (item: InboxItem, a: InboxAction, extra: Record<string, unknown> = {}, quiet = false) => {
     if (busy.current) return false;
+    // 列表停住了（连不上 / 登录过期）：不在旧列表上悄悄点，明说为什么没记上
+    if (stale) { showToast({ text: `${staleText ?? "连不上 AutoCrew"}：这次没记上，等连上再点`, undo: null, left: rows.length }); return false; }
     busy.current = true;
     try {
       const r = await decideItem({ content_id: item.content_id ?? undefined, item_id: item.item_id, gen: item.gen, action: a.action, ...(a.params ?? {}), ...extra });
@@ -138,6 +145,7 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
     <div className="ri-head">
       {list.length === 0 ? <span className="ri-empty">{error ? `「等你拍板」读不出来：${error}` : items === null ? "等你拍板 · 读取中" : "没有等你拍板的事"}</span>
         : <><strong>等你拍板</strong><span className="ri-count">{rows.length} 件</span>
+          {staleText && <span className="ri-warn" role="alert">{staleText}</span>}
           <span className="ri-toggle">{notify.canAsk && <Button variant="quiet" onClick={notify.ask}>打开提醒</Button>}
             <Button variant="quiet" onClick={() => setCollapsed(expanded)}>{expanded ? "收起" : "展开"}</Button></span></>}
     </div>

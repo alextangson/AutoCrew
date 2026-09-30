@@ -404,3 +404,29 @@ describe("item_id 全局唯一（整分支审 2）", () => {
     expect((await readInbox(env.dir)).items.find((i) => i.type === "cut_review" && i.content_id === a.id)).toBeDefined();
   });
 });
+
+describe("整分支审 3", () => {
+  it("请示附件（视频）支持 Range：206 + Content-Range，越界 416；sandbox / nosniff 照带", async () => {
+    const c = await editing();
+    const { executeContentSave } = await import("../../tools/content-save.js");
+    const vid = await put(path.join(projectRoot(env, c.id), "04-edit/样片.mp4"), "0123456789");
+    const q = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "样片", question: "看看", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }], attachments: [vid] }) as Record<string, unknown>;
+    const { createBoardHandler } = await import("../../desktop/board-route.js");
+    const { PassThrough } = await import("node:stream");
+    const get = async (range?: string) => {
+      const handler = createBoardHandler({ authorize: () => "session", originAllowed: () => true, resolveDataDir: async () => env.dir, readBody: async () => "" });
+      const out = new PassThrough();
+      let status = 0; let headers: Record<string, string> = {};
+      const chunks: Buffer[] = [];
+      out.on("data", (b: Buffer) => chunks.push(b));
+      const res = Object.assign(out, { writeHead: (s: number, h: Record<string, string>) => { status = s; headers = h ?? {}; return res; } });
+      await handler({ method: "GET", headers: range ? { range } : {} } as never, res as never, new URL(`http://x/api/inbox/attachment?content_id=${c.id}&ask_id=${String(q.ask_id)}&index=0`));
+      await new Promise((ok) => setTimeout(ok, 30));
+      return { status, headers, body: Buffer.concat(chunks).toString() };
+    };
+    const part = await get("bytes=2-5");
+    expect(part).toMatchObject({ status: 206, body: "2345", headers: { "Content-Range": "bytes 2-5/10", "Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff" } });
+    expect((await get("bytes=50-60")).status).toBe(416);
+    expect((await get()).status).toBe(200);
+  });
+});
