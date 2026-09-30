@@ -182,8 +182,10 @@ async function retireCoverGroup(ctx: Ctx): Promise<Result> {
   const g = groupById(view, id);
   if (!g) return fail("stale", "这组封面不在了，刷新再看");
   const ok = validCoverApproval(view, ctx.content.body);
-  const shas = [...g.slots["3:4"], ...g.slots["4:3"]].map((f) => f.sha256);
-  if (ok && (shas.includes(ok.cover_3x4_sha) || shas.includes(ok.cover_4x3_sha))) return fail("cover_group_approved", "这组已经定了：先撤回封面批准，再说这组不要了");
+  // 按批准的组身份保护（Codex 审 2a-1 r2 P2）；旧批准没有 group_id 时按整对比，不按共用的一张图
+  const isApproved = ok && (ok.group_id ? ok.group_id === id
+    : g.complete && g.slots["3:4"][0].sha256 === ok.cover_3x4_sha && g.slots["4:3"][0].sha256 === ok.cover_4x3_sha);
+  if (isApproved) return fail("cover_group_approved", "这组已经定了：先撤回封面批准，再说这组不要了");
   return { ok: true, decision: await push(ctx, { type: "cover_group_retire", group_id: id, ...(str(ctx.params.note) ? { note: str(ctx.params.note) } : {}) }, "cover_group_retired") };
 }
 

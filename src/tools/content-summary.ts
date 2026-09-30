@@ -82,43 +82,70 @@ function parseSinceSeq(raw: unknown): { ok: true; value: number | undefined } | 
  * 总长 ≤ 1.5 KB 一定成立（Codex 审 segB7 P2）：先让制作段自己缩（changes、依据、原因、原片行分页），
  * 还超就缩通用字段（卡点只留第一条、截短、去掉候选依据），最后只留最小形状。
  */
-export function fitBudget(out: Record<string, unknown>, part: ProductionPart | null): Record<string, unknown> {
-  const merged = () => ({ ...out, ...part?.fields });
+/** 请示那一段（review-inbox §5.2）：自己的截短与翻页（先截回答原话，再少给几行），和 changes / 原片游标互不相干 */
+export interface AsksPart { fields: Record<string, unknown>; shrink: () => boolean; minimal: () => Record<string, unknown> }
+
+export function fitBudget(out: Record<string, unknown>, part: ProductionPart | null, asks: AsksPart | null = null): Record<string, unknown> {
+  const merged = () => ({ ...out, ...part?.fields, ...asks?.fields });
   const size = () => Buffer.byteLength(JSON.stringify(merged()));
   while (part && size() > SUMMARY_BUDGET && part.shrink()) { /* 先截 changes，再截候选依据，再给原片行分页 */ }
+  while (asks && size() > SUMMARY_BUDGET && asks.shrink()) { /* 请示：截回答原话，再少给几行（游标跟着退） */ }
   if (size() > SUMMARY_BUDGET && Array.isArray(out.blockers)) out.blockers = (out.blockers as string[]).slice(0, 1).map((b) => clip(b, 40));
   if (size() > SUMMARY_BUDGET && part) part.fields.candidates = [];
   if (size() > SUMMARY_BUDGET) { out.reason = clip(String(out.reason ?? ""), 20); out.next = clip(String(out.next ?? ""), 40); }
   if (size() <= SUMMARY_BUDGET) return merged();
-  return minimalShape(out, part);
+  return minimalShape(out, part, asks);
 }
 
 /**
- * 最后手段（Codex 审 segB11 P2）：只留 ok / id / stage、必需的那一行原片（全路径，agent 要原样用）和翻页游标。
+ * 最后手段（Codex 审 segB11 P2）：只留 ok / id / stage、必需的那一行原片（全路径，agent 要原样用）和翻页游标；
+ * 请示也至少留一行（已答的在前）和它的游标（Codex 审 2a-1 r2 P2）。
  * 必需路径本身就超预算时照样返回并标 oversize——上限的唯一例外，路径不截。
  */
-function minimalShape(out: Record<string, unknown>, part: ProductionPart | null): Record<string, unknown> {
+function minimalShape(out: Record<string, unknown>, part: ProductionPart | null, asks: AsksPart | null = null): Record<string, unknown> {
   const f = part?.fields ?? {};
   const row = (f.aroll as Array<{ fact_id: string; state: string; round: number; path?: string }> | undefined)?.[0];
   const keep = ["changes", "has_more", "next_since_seq", "latest_seq", "aroll_has_more", "aroll_next_offset"];
   const minimal: Record<string, unknown> = { ok: out.ok, id: out.id, stage: out.stage, ...(out.inbox ? { inbox: { count: (out.inbox as { count: number }).count } } : {}),
     ...(row ? { aroll: [{ fact_id: row.fact_id, state: row.state, round: row.round, ...(row.path ? { path: row.path } : {}) }] } : {}),
-    ...Object.fromEntries(keep.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])) };
+    ...Object.fromEntries(keep.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])), ...asks?.minimal() };
   return Buffer.byteLength(JSON.stringify(minimal)) > SUMMARY_BUDGET ? { ...minimal, oversize: true } : minimal;
 }
 
 /** 请示一页最多几件（asks[] 用独立游标 asks_offset，不与 since_seq 混用，review-inbox §5.2 / R17） */
 const ASKS_PAGE = 3;
 
-async function asksAndInbox(c: Content, dataDir: string, offset: number): Promise<Record<string, unknown>> {
-  const doc = await readProductionDoc(c.id, dataDir).catch(() => null);
-  const rows = doc ? askRows(doc, c) : [];
-  const page = rows.slice(offset, offset + ASKS_PAGE).map((r) => ({ ...r, ...(r.note ? { note: clip(r.note, 30) } : {}) }));
+async function inboxOf(c: Content, dataDir: string): Promise<Record<string, unknown>> {
   const view = await readInbox(dataDir, { contentId: c.id }).catch(() => null);
-  return {
-    ...(view ? { inbox: { count: view.count, item_ids: view.items.slice(0, 5).map((i) => i.item_id), where: "等你拍板" } } : {}),
-    ...(rows.length ? { asks: page, ...(offset + ASKS_PAGE < rows.length ? { asks_next_offset: offset + ASKS_PAGE } : {}) } : {}),
+  return view ? { inbox: { count: view.count, item_ids: view.items.slice(0, 5).map((i) => i.item_id), where: "等你拍板" } } : {};
+}
+
+/** 请示行：已答的在前（agent 最要的是答复），同组按发起时间；按 asks_offset 翻页 */
+async function asksPart(c: Content, dataDir: string, offset: number): Promise<AsksPart | null> {
+  const doc = await readProductionDoc(c.id, dataDir).catch(() => null);
+  const all = doc ? askRows(doc, c) : [];
+  if (!all.length) return null;
+  const rows = [...all.filter((r) => r.state === "answered"), ...all.filter((r) => r.state !== "answered")];
+  let n = ASKS_PAGE, noteMax = 30;
+  const fields: Record<string, unknown> = {};
+  const render = () => {
+    const page = rows.slice(offset, offset + n).map((r) => ({ ...r, ...(r.note ? { note: clip(r.note, noteMax) } : {}) }));
+    fields.asks = page;
+    if (offset + page.length < rows.length) fields.asks_next_offset = offset + page.length;
+    else delete fields.asks_next_offset;
   };
+  render();
+  const shrink = () => {
+    if (noteMax > 10) { noteMax = 10; render(); return true; }
+    if (n > 1) { n -= 1; render(); return true; }
+    return false;
+  };
+  const minimal = () => {
+    const first = rows[offset];
+    if (!first) return {};
+    return { asks: [{ ask_id: first.ask_id, kind: first.kind, state: first.state, ...(first.option_id ? { option_id: first.option_id } : {}) }], ...(offset + 1 < rows.length ? { asks_next_offset: offset + 1 } : {}) };
+  };
+  return { fields, shrink, minimal };
 }
 
 export async function contentSummary(id: string, dataDir?: string, now = Date.now(), sinceSeqRaw?: unknown, arollOffsetRaw?: unknown, asksOffsetRaw?: unknown): Promise<Record<string, unknown>> {
@@ -153,6 +180,6 @@ export async function contentSummary(id: string, dataDir?: string, now = Date.no
     next: (exp?.stage ? ONTOLOGY_NEXT[exp.stage] : undefined) ?? NEXT[c.status] ?? "没有建议的下一步",
     updatedAt: c.updatedAt,
     words: Array.from((c.body ?? "").replace(/\s+/g, "")).length,
-    ...(await asksAndInbox(c, getDataDir(dataDir), asksOffset.value ?? 0)),
-  }, part);
+    ...(await inboxOf(c, getDataDir(dataDir))),
+  }, part, await asksPart(c, getDataDir(dataDir), asksOffset.value ?? 0));
 }

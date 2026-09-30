@@ -243,7 +243,8 @@ export async function founderAnswer(content: Content, dataDir: string, askId: st
   if (why) return fail("ask_closed", why);
   if (!ask!.options.some((o) => o.id === optionId)) return fail("bad_request", "这个选项不在这件请示里，刷新再看");
   const root = contentRoot(content.id, dataDir);
-  if (ask!.kind !== "分镜" && await attachmentsChanged(content.id, ask!, dataDir)) return fail("attachments_changed", "附件刚变过：重新看一下再答");
+  // 每个显式附件都核 sha（任何 kind，分镜也一样；Codex 审 2a-1 r2 P2），分镜快照再另核
+  if (await attachmentsChanged(content.id, ask!, dataDir)) return fail("attachments_changed", "附件刚变过：重新看一下再答");
   let storyboardApproval: Omit<Decision, "id" | "round" | "at" | "source"> | null = null;
   if (ask!.storyboard) {
     const now = await storyboardSnapshot(root, doc, ask!.storyboard.fact_id);

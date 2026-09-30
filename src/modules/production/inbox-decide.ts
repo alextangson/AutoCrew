@@ -27,6 +27,8 @@ type Result = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
 const KEEP = 200;
+/** 请求里允许改的字段；其余（fact_id / sha / 平台 / 选项…）一律取自条目 */
+const EDITABLE = ["note", "cover_text", "url", "to"];
 /** 同一决定正在锁外跑时，等它的上限与轮询间隔 */
 const WAIT_MS = 10 * 60_000;
 const POLL_MS = 50;
@@ -107,7 +109,18 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
 async function run(ctx: Ctx): Promise<Result> {
   const { item, dataDir, params, spec } = ctx;
   const c = ctx.content;
-  const merged = { ...spec.params, ...params };
+  // 对象身份只取自条目（Codex 审 2a-1 r2 P2）：请求只能改可编辑的字段（一句话、封面字、链接、指定给哪条）；
+  // 挑哪一版 / 哪一组要在这个条目自己的清单里，下面逐个核
+  const merged: Record<string, unknown> = { ...spec.params, ...Object.fromEntries(EDITABLE.filter((k) => params[k] !== undefined).map((k) => [k, params[k]])) };
+  const chosenVersion = () => {
+    if (params.fact_id === undefined) return spec.params?.fact_id ? { fact_id: spec.params.fact_id, sha256: spec.params.sha256 } : null;
+    const v = ((item.detail.versions as Array<{ fact_id: string; sha256: string }> | undefined) ?? []).find((x) => x.fact_id === params.fact_id);
+    return v ? { fact_id: v.fact_id, sha256: v.sha256 } : null;
+  };
+  const chosenGroup = () => {
+    const id = params.group_id ?? spec.params?.group_id;
+    return ((item.detail.groups as Array<{ group_id: string }> | undefined) ?? []).some((g) => g.group_id === id) ? String(id) : null;
+  };
   switch (spec.action) {
     case "answer_ask": return founderAnswer(c!, dataDir, String(spec.params!.ask_id), String(spec.params!.option_id), noteOf(ctx));
     case "undo_ask_answer": return undoReportedAnswer(c!, dataDir, String(spec.params!.ask_id), ctx.deps.now);
@@ -126,7 +139,16 @@ async function run(ctx: Ctx): Promise<Result> {
       if (!to) return fail("bad_request", "选一条稿：指定给哪条");
       return founderDecision(to, "attach_aroll", { path: item.detail.path, confirm_other: true }, dataDir);
     }
-    case "reject_cut": return founderDecision(c!.id, "reject_cut", { ...merged, note: noteOf(ctx) || (item.type === "sliver" ? "画面有闪帧，去剪辑里改" : "") }, dataDir);
+    case "reject_cut": {
+      const v = chosenVersion();
+      if (!v) return fail("stale", "这一版不在这件事的成片清单里，刷新再看");
+      return founderDecision(c!.id, "reject_cut", { ...v, note: noteOf(ctx) || (item.type === "sliver" ? "画面有闪帧，去剪辑里改" : "") }, dataDir);
+    }
+    case "retire_cover_group": {
+      const g = chosenGroup();
+      if (!g) return fail("stale", "这组不在这件事的封面清单里，刷新再看");
+      return founderDecision(c!.id, "retire_cover_group", { group_id: g }, dataDir);
+    }
     case "reject_cover": {
       // 只打回面板上还没定的那几组：已批的那组不跟着失效
       const groups = (item.detail.groups as Array<{ group_id: string; approved: boolean; "3:4": { sha256: string } | null; "4:3": { sha256: string } | null }>).filter((g) => !g.approved);
@@ -135,15 +157,14 @@ async function run(ctx: Ctx): Promise<Result> {
       return founderDecision(c!.id, "reject_cover", { sha256: `inbox:${item.gen}`, cover_shas: shas, group_ids: groups.map((g) => g.group_id), note: noteOf(ctx) }, dataDir);
     }
     case "approve_cut": {
-      const versions = item.detail.versions as Array<{ fact_id: string; sha256: string }>;
-      const pick = versions.find((v) => v.fact_id === str(merged.fact_id));
+      const pick = chosenVersion();
       if (!pick) return fail("stale", "这一版不在本轮的成片里，刷新再看");
       return founderDecision(c!.id, "approve_cut", { fact_id: pick.fact_id, sha256: pick.sha256 }, dataDir);
     }
     case "pick_cover": {
-      const groups = item.detail.groups as Array<{ group_id: string }>;
-      if (!groups.some((g) => g.group_id === str(merged.group_id))) return fail("stale", "这组不在面板上了，刷新再看");
-      return founderDecision(c!.id, "pick_cover", { group_id: merged.group_id, ...(str(merged.cover_text) ? { cover_text: str(merged.cover_text) } : {}) }, dataDir);
+      const g = chosenGroup();
+      if (!g) return fail("stale", "这组不在面板上了，刷新再看");
+      return founderDecision(c!.id, "pick_cover", { group_id: g, ...(str(merged.cover_text) ? { cover_text: str(merged.cover_text) } : {}) }, dataDir);
     }
     case "i_published": return founderDecision(c!.id, "i_published", { platform: spec.params!.platform, ...(noteOf(ctx) ? { url: noteOf(ctx) } : str(params.url) ? { url: str(params.url) } : {}) }, dataDir);
     default:
