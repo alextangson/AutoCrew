@@ -39,7 +39,7 @@ async function facts(id: string, kind: Fact["kind"] = "aroll"): Promise<Fact[]> 
 }
 
 describe("§4 收件箱自动挪", () => {
-  it("开头转写对上等原片的稿 → 自动挂上、挪进项目、标 auto_attached，badge 说不对就点「不是这条」", async () => {
+  it("开头转写对上等原片的稿 → 自动挂上、挪进项目、标 auto_attached，badge 说不对就点「不是」", async () => {
     asr(heardFrom({ "IMG_1.mov": A.slice(20, 160) }));
     const a = await videoContent(env, "甲稿收件箱测试", "draft_ready", A);
     await videoContent(env, "乙稿收件箱测试", "draft_ready", B);

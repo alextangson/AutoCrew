@@ -7,6 +7,10 @@ import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
 import { CardArolls } from "./CardArolls";
 import { CardNext } from "./CardNext";
+import { nextStep } from "./card-next";
+
+/** 屏幕上不出现「A-roll」（1b 验收）：内部字段照旧，显示时说「原片」 */
+const onScreen = (s: string) => s.replace(/A-roll/g, "原片");
 import { CardCandidates } from "./CardCandidates";
 import { chooseFile, decide, loadCard, openStoryboard, reopenScript, type CardPanelData, type SliverPanel, type StoryboardPanel } from "./board-api";
 import { RevealLink, when } from "./board-parts";
@@ -107,16 +111,19 @@ function PanelBody(p: {
   refresh: () => Promise<void>;
 }) {
   const d = p.data;
+  // 「下一步」已经说了的，下面不再重复（1b 验收）：原因句、「已有原片…」、「…自动挂上，不对就点…」（原片行里有来源和「不是」）
+  const next = nextStep(d);
+  const covered = (b: string) => Boolean(next) && (b === d.reason || b.startsWith("已有") || b.includes("自动挂上，不对就点"));
   return <>
     <CardNext d={d} busy={p.busy} act={p.act} openEditor={p.openEditor} refresh={p.refresh} />
-    <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason ? ` · ${d.reason}` : ""}</p>
-    {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.join("、")}</p>}
+    <p className="card-panel-stage"><strong>{d.stage ?? d.column ?? "—"}</strong>{d.reason && !next ? ` · ${d.reason}` : ""}</p>
+    {d.missing.length > 0 && <p className="card-panel-note">还差：{d.missing.map(onScreen).join("、")}</p>}
     {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
-    {d.badges.filter((b) => b !== d.reason).map((b) => <p key={b} className="card-panel-note">{b}</p>)}
+    {d.badges.filter((b) => b !== d.reason && !covered(b)).map((b) => <p key={b} className="card-panel-note">{onScreen(b)}</p>)}
     {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
     {d.active && <CardCandidates contentId={d.id} rows={d.candidate_rows ?? []} busy={p.busy} act={p.act} confirm={p.actOrReassign} />}
     {d.active && <CardArolls contentId={d.id} rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
-    {d.active && (d.column === "待录制" || d.missing.includes("A-roll")) && <section><h3>挂 A-roll</h3>
+    {d.active && (d.column === "待录制" || d.missing.includes("A-roll")) && <section><h3>挂原片</h3>
       <div className="card-panel-row">
         <button className="primary" disabled={p.busy} onClick={() => void p.pick()}>选择文件…</button>
         <span className="card-panel-note">在访达里选原片，选好就挂到这条</span>

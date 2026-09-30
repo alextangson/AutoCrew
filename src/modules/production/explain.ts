@@ -110,7 +110,7 @@ function legacyRegisteredNote<T extends { rule: string | null; alerts: string[];
 export function arollBadges(doc: ProductionDoc): string[] {
   const out: string[] = [];
   for (const f of doc.facts.filter((x) => x.round === doc.round && x.kind === "aroll" && x.state === "accepted")) {
-    if (f.auto_attached) out.push(f.source === "reconcile" ? "从收件箱自动挂上，不对就点「不是这条」" : "核对后自动挂上，不对就点「不是这条」");
+    if (f.auto_attached) out.push(f.source === "reconcile" ? "从收件箱自动挂上，不对就点「不是」" : "核对后自动挂上，不对就点「不是」");
     const c = f.attach_check;
     if (c?.status === "suggest" && c.other_title) out.push(`这段原片听起来更像《${c.other_title}》`);
     if ((c?.status === "not_ready" || c?.status === "failed") && c.reason) out.push(c.reason);

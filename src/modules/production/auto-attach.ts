@@ -20,7 +20,7 @@ import { commitFile } from "./record.js";
 import { now, probe } from "./roots.js";
 import { mutateProduction } from "./service.js";
 
-export const AUTO_ATTACHED_BADGE = "从收件箱自动挂上，不对就点「不是这条」";
+export const AUTO_ATTACHED_BADGE = "从收件箱自动挂上，不对就点「不是」";
 
 async function candidateNow(dataDir: string, m: AutoMove, reason: string): Promise<void> {
   await mutateProduction(m.content_id, dataDir, (doc) => {
