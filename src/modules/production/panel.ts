@@ -21,6 +21,8 @@ import { explainContent } from "./read.js";
 import { isUngated } from "./publish-check-link.js";
 import { currentCut } from "./sliver/check.js";
 import { storyboardPanel } from "./storyboard.js";
+import { markedCuts } from "./ready.js";
+import { hostLabel } from "./host-label.js";
 import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
 /** 这个槽的状态由谁定：给创始人看的来源说法 */
@@ -101,6 +103,17 @@ async function candidateRows(contentId: string, doc: ProductionDoc, dataDir: str
     .sort((a, b) => b.at.localeCompare(a.at)).map((f) => candidateRow(f, contentId, dirs));
 }
 
+/**
+ * B7：本轮有收下的成片、却没有一版被 agent 标「可以审了」（也还没通过）→ 卡上说「有 N 个导出，X 还没说可以审了」，
+ * 给创始人「我现在就要审」。
+ */
+function unreviewedExports(doc: ProductionDoc, approvedSha: string | undefined): { count: number; editor_label: string } | null {
+  if (approvedSha || markedCuts(doc).length) return null;
+  const cuts = doc.facts.filter((f) => f.round === doc.round && f.kind === "cut" && f.state === "accepted" && !f.replaced_at);
+  if (!cuts.length) return null;
+  return { count: cuts.length, editor_label: hostLabel(cuts.map((f) => f.by?.host).filter(Boolean).at(-1)) };
+}
+
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
@@ -125,6 +138,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
     slivers: sliverPanel(doc, cut?.sha256),
+    unreviewed: unreviewedExports(doc, cut?.sha256),
     storyboard: await storyboardPanel(contentId, dataDir, doc),
     checklist,
     // 已发布的也能重开（创始人 09-30），确认框单独说明；published = 这张卡现在是已发布

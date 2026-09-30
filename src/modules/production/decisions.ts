@@ -20,25 +20,25 @@ import { withFileOwnership } from "./mutex.js";
 import { validCoverApproval, validCutApproval } from "./derive.js";
 import { canonPlatform, normSlotId, slotGate, slotId, slotOf } from "./receipts.js";
 import { gateFromPlan, isUngated } from "./publish-check-link.js";
-import { adoptCandidate } from "./record.js";
+import { addReadyMark, adoptCandidate } from "./record.js";
 import { undoAutoAttach } from "./undo-attach.js";
 import { keepAttach, reassignAroll, startAttachCheck } from "./attach-check.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
 import { explainContent } from "./read.js";
 import { approvedCoverShas, ensureProductionReady, mutateProduction } from "./service.js";
 import { groupById, groupOfPair, isRetired, withCoverGroups, type GroupView } from "./cover-groups.js";
-import { cutOf, runSliverCheck } from "./sliver/check.js";
+import { currentCut, cutOf, runSliverCheck } from "./sliver/check.js";
 import { latestCheck, sliverKey, sliverVerdict, type Verdict } from "./sliver/verdict.js";
 
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
   | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check"
-  | "undo_auto_attach" | "keep_attach" | "reassign_aroll" | "retire_cover_group";
+  | "undo_auto_attach" | "keep_attach" | "reassign_aroll" | "retire_cover_group" | "review_now";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
   "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll", "waive_sliver", "waive_sliver_check",
-  "undo_auto_attach", "keep_attach", "reassign_aroll", "retire_cover_group",
+  "undo_auto_attach", "keep_attach", "reassign_aroll", "retire_cover_group", "review_now",
 ];
 
 type Result = Record<string, unknown>;
@@ -291,10 +291,25 @@ async function arollDecision(ctx: Ctx, run: (f: Fact) => Promise<Result>): Promi
   return run(f);
 }
 
+/**
+ * 「我现在就要审」（review-inbox B7）：agent 一直没标「可以审了」、创始人要审——创始人自己标本轮最新一版成片。
+ * 之后「成片剪好了，看一遍」条目出现，通过照常走「等你拍板」。
+ */
+async function reviewNow(ctx: Ctx): Promise<Result> {
+  const cut = currentCut(ctx.doc);
+  if (!cut) return fail("no_cut", "这条本轮还没有收下的成片");
+  const r = await mutateProduction(ctx.content.id, ctx.dataDir, (d) => {
+    const f = d.facts.find((x) => x.id === cut.id)!;
+    const events = addReadyMark(d, f, { host: "founder" });
+    return { value: events.length > 0, events };
+  });
+  return { ok: true, fact_id: cut.id, marked: r.value };
+}
+
 const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   confirm_candidate: (c) => candidate(c, true), reject_candidate: (c) => candidate(c, false),
   approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
-  pick_cover: pickCover, retire_cover_group: retireCoverGroup, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
+  pick_cover: pickCover, retire_cover_group: retireCoverGroup, review_now: reviewNow, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
   attach_aroll: attachAroll, waive_sliver: waiveSliver, waive_sliver_check: waiveSliverCheck,
   undo_auto_attach: (c) => arollDecision(c, (f) => undoAutoAttach(c.content, c.doc, f, c.dataDir)),
   keep_attach: (c) => arollDecision(c, (f) => keepAttach(c.content, f, c.dataDir)),

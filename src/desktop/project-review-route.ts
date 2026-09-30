@@ -34,12 +34,12 @@ export function createProjectReviewHandler(deps: ProjectReviewRouteDeps) {
       const checked = await resolveProjectFile(path.join(binding.project_root, relative), binding.project_root, "审阅产物");
       if (!checked.ok) { res.writeHead(403).end(); return true; }
       const ext = path.extname(checked.value).toLowerCase();
-      if (![".mp4", ".png", ".jpg", ".jpeg"].includes(ext)) { res.writeHead(415).end(); return true; }
+      if (![".mp4", ".mov", ".m4v", ".png", ".jpg", ".jpeg"].includes(ext)) { res.writeHead(415).end(); return true; }
       if (await sha256File(checked.value) !== url.searchParams.get("sha256")) { res.writeHead(409).end("产物已变化"); return true; }
       const size = (await fs.stat(checked.value)).size;
       const range = parseRangeHeader(req.headers.range, size);
       if (range === "unsatisfiable") { res.writeHead(416, { "Content-Range": `bytes */${size}` }).end(); return true; }
-      res.writeHead(range ? 206 : 200, { "Content-Type": ext === ".mp4" ? "video/mp4" : MIME[ext], "Cache-Control": "no-store", "Accept-Ranges": "bytes",
+      res.writeHead(range ? 206 : 200, { "Content-Type": ext === ".mp4" || ext === ".m4v" ? "video/mp4" : ext === ".mov" ? "video/quicktime" : MIME[ext], "Cache-Control": "no-store", "Accept-Ranges": "bytes",
         "Content-Length": range ? range.end - range.start + 1 : size, ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${size}` } : {}) });
       createReadStream(checked.value, range ?? undefined).pipe(res);
     } catch { res.writeHead(404).end(); }

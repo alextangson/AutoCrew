@@ -295,3 +295,21 @@ describe("Codex 2a-1 第七轮", () => {
     expect(it!.actions[0].params!.group_id).toBe(g2.group_id);
   });
 });
+
+describe("B7 agent 没标可以审了，创始人要审", () => {
+  it("卡片说有几个导出还没说可以审；「我现在就要审」后条目出现，通过照常走「等你拍板」", async () => {
+    const c = await editing();
+    const cut = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "三轮回归.mp4"), "cut"), request_id: "c" }, "claude-code");
+    const { cardPanel } = await import("./panel.js");
+    expect(await cardPanel(c.id, env.dir)).toMatchObject({ unreviewed: { count: 1, editor_label: "Claude" } });
+    expect((await items(c.id)).some((i) => i.type === "cut_review")).toBe(false);
+    expect(await decide(c.id, "review_now", {}, env.dir)).toMatchObject({ ok: true, fact_id: cut.fact_id, marked: true });
+    const it = (await items(c.id)).find((i) => i.type === "cut_review")!;
+    expect(it).toBeDefined();
+    expect((await cardPanel(c.id, env.dir)).unreviewed).toBeNull();
+    const sha = (await doc(c.id)).facts.find((f) => f.id === cut.fact_id)!.sha256!;
+    await (await import("./testkit.js")).waiveSliverCheck(env, c.id, sha);
+    const fresh = (await items(c.id)).find((i) => i.type === "cut_review")!;
+    expect(await decideItem({ content_id: c.id, item_id: fresh.item_id, gen: fresh.gen, action: "approve_cut", ...fresh.actions[0].params }, env.dir)).toMatchObject({ ok: true });
+  });
+});
