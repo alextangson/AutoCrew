@@ -27,6 +27,14 @@ import { triggerSliverCheck } from "./sliver/check.js";
 import { explain, withLegacyDecisions, type Column } from "./explain.js";
 import { STABLE_MS } from "./files.js";
 import { withFileOwnership } from "./mutex.js";
+import { migrateCoverGroups } from "./cover-groups.js";
+import { validCoverApproval } from "./derive.js";
+
+/** 当前有效封面批准的两张 sha（迁移时它们不动） */
+function approvedCoverShas(doc: ProductionDoc, content: Content): Set<string> {
+  const d = validCoverApproval(doc, content.body ?? "");
+  return new Set([d?.cover_3x4_sha, d?.cover_4x3_sha].filter((x): x is string => Boolean(x)));
+}
 import { applyObservations, cachedSha, loadHashCache, observeProject, saveHashCache, VIDEO_EXT, type Observations, type Seen } from "./observe.js";
 import { publishEvidenceOf } from "./read.js";
 import { movableRoots, now } from "./roots.js";
@@ -93,13 +101,15 @@ async function ownedElsewhere(dataDir: string, contentId: string): Promise<(sha:
 }
 
 /** 单条对账：写模式经 ProductionService 落盘；影子模式返回合并后的内存 doc */
-export async function reconcileOne(content: Content, dataDir: string, opts: { write: boolean; externals: ExternalFile[] | null; archived: Set<string>; suggestions?: Seen[] }): Promise<ProductionDoc> {
+export async function reconcileOne(content: Content, dataDir: string, opts: { write: boolean; externals: ExternalFile[] | null; archived: Set<string>; suggestions?: Seen[]; warnings?: string[] }): Promise<ProductionDoc> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   const obs = await observe(content, doc, dataDir, opts.externals, opts.archived, opts.suggestions);
+  for (const w of obs.warnings ?? []) opts.warnings?.push(`${content.title}（${content.id}）：${w}`);
   const owned = await ownedElsewhere(dataDir, content.id);
   const receipts = opts.write ? await trustedObservations(content, dataDir) : [];
   const preview = structuredClone(doc);
-  const changed = applyObservations(preview, obs, owned).changed + importObservations(preview, receipts);
+  const approved = approvedCoverShas(preview, content);
+  const changed = migrateCoverGroups(preview, approved).length + (doc.cover_schema === 1 ? 0 : 1) + applyObservations(preview, obs, owned).changed + importObservations(preview, receipts);
   if (!opts.write) return preview;
   if (!changed) {
     // 事实没变也补一次投影（认稿之类在别处落的决定，保证 status 与冻结跟上推导）
@@ -107,6 +117,7 @@ export async function reconcileOne(content: Content, dataDir: string, opts: { wr
     return preview;
   }
   const r = await mutateProduction(content.id, dataDir, (d) => {
+    // §6.2 迁移只改标签：不在 vNNN/ final/、又不属于有效批准的正式封面转候选并写原因；文件不动
     const { added, changed: n } = applyObservations(d, obs, owned);
     const before = d.facts.length;
     importObservations(d, receipts);
@@ -186,7 +197,7 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
       try {
         await syncSubmitted(c, dataDir, enabled && !excluded.has(c.id));
         if (!isVideoPlatform(c.platform)) continue;
-        let doc = await reconcileOne(c, dataDir, { write: active, externals, archived, suggestions: found?.suggestions.get(c.id) ?? [] });
+        let doc = await reconcileOne(c, dataDir, { write: active, externals, archived, suggestions: found?.suggestions.get(c.id) ?? [], warnings: report.warnings });
         if (active && enabled) {
           const commit = await commitRegistration(c.id, dataDir);
           if (commit.ok && commit.registration) doc = await readProductionDocOrEmpty(c.id, dataDir);

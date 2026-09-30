@@ -134,12 +134,17 @@ const sameResult = (a: SliverCheck, b: Omit<SliverCheck, "id" | "checked_at">) =
   a.fingerprint === b.fingerprint && a.status === b.status && (a.reason ?? "") === (b.reason ?? "") && JSON.stringify(a.slivers) === JSON.stringify(b.slivers);
 
 /** 这条稿现在该不该查：未启用 / 图文 / 已发布 / 当前成片已通过 → 不查（E16） */
-async function eligible(contentId: string, dataDir: string): Promise<{ content: Content; doc: ProductionDoc; cut: Fact } | null> {
+/** 本轮某一版成片（accepted、字节没被替换）：创始人可以挑任一版审（review-inbox §7-2） */
+export function cutOf(doc: ProductionDoc, sha: string): Fact | null {
+  return inRound(doc).find((f) => f.kind === "cut" && f.sha256 === sha && !f.replaced_at) ?? null;
+}
+
+async function eligible(contentId: string, dataDir: string, cutSha?: string): Promise<{ content: Content; doc: ProductionDoc; cut: Fact } | null> {
   if (!(await isOntologyActive(dataDir, contentId))) return null;
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt || !isVideoPlatform(content.platform)) return null;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
-  const cut = currentCut(doc);
+  const cut = cutSha ? cutOf(doc, cutSha) : currentCut(doc);
   if (!cut || publishReceipts(doc).live.length || content.status === "published") return null;
   if (validCutApproval(doc, content.body)?.sha256 === cut.sha256) return null;
   return { content, doc, cut };
@@ -151,8 +156,8 @@ export interface CheckRun { check: SliverCheck; fingerprint: string }
  * 跑一次（有同指纹的确定结果就直接用）。返回当前指纹与对应结果；不该查返回 null。
  * 结果写入按条件落：轮次、成片、工程记录、A-roll 在跑的途中变了就丢掉。
  */
-export async function runSliverCheck(contentId: string, dataDir: string): Promise<CheckRun | null> {
-  const ctx = await eligible(contentId, dataDir);
+export async function runSliverCheck(contentId: string, dataDir: string, cutSha?: string): Promise<CheckRun | null> {
+  const ctx = await eligible(contentId, dataDir, cutSha);
   if (!ctx) return null;
   const { content, doc, cut } = ctx;
   let inputs: Inputs;
@@ -166,7 +171,7 @@ export async function runSliverCheck(contentId: string, dataDir: string): Promis
   // 同指纹的确定结果：结论不重算，只刷新修法建议（字幕后到时，§12-9）
   const refresh = prev && !prev.transient && prev.fingerprint === inputs.fingerprint && prev.status === next.status ? prev.id : null;
   const r = await mutateProduction(contentId, dataDir, (d) => {
-    const stale = d.round !== doc.round || currentCut(d)?.sha256 !== cut.sha256 || (chatcutFact(d)?.id ?? null) !== (chatcutFact(doc)?.id ?? null)
+    const stale = d.round !== doc.round || !cutOf(d, cut.sha256!) || (chatcutFact(d)?.id ?? null) !== (chatcutFact(doc)?.id ?? null)
       || arollFacts(d).map((f) => f.id).sort().join() !== arollFacts(doc).map((f) => f.id).sort().join();
     if (stale) return { value: null, events: [] };
     const kept = refresh ? d.sliver_checks?.find((c) => c.id === refresh) : undefined;

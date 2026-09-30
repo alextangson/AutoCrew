@@ -11,6 +11,8 @@ import { platformLabel } from "../../desktop/platform-label.js";
 import { receiptsOfRound, type Slot } from "./receipts.js";
 import { isUngated } from "./publish-check-link.js";
 import { sliverVerdict } from "./sliver/verdict.js";
+import { validCoverGroups, withCoverGroups } from "./cover-groups.js";
+import { latestMarkedCut } from "./ready.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
@@ -190,19 +192,25 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   const badges: string[] = [];
   if (!newest) missing.push(MISSING.cut);
   else if (!srtFor(doc, (cut && liveFact(doc, "cut", cut.sha256)?.sha256) ?? newest.sha256)) missing.push(MISSING.srt);
-  const has34 = facts.some((f) => f.kind === "cover" && f.ratio === "3:4");
-  const has43 = facts.some((f) => f.kind === "cover" && f.ratio === "4:3");
-  if (!has34) missing.push(MISSING.cover34);
-  if (!has43) missing.push(MISSING.cover43);
-  if (newest && !cut) {
+  // 封面按有效组算（review-inbox §6）：不凭「最新一版缺哪个比例」猜配对
+  const groups = validCoverGroups(doc);
+  const complete = groups.filter((g) => g.complete);
+  if (!complete.length) {
+    const last = groups.at(-1);
+    if (!last?.slots["3:4"].length) missing.push(MISSING.cover34);
+    if (!last?.slots["4:3"].length) missing.push(MISSING.cover43);
+  }
+  // 成片待你审只认 agent 标过「可以审了」的（§7-1）：对账自动收的导出不算
+  const review = latestMarkedCut(doc)?.fact ?? null;
+  if (review && !cut) {
     missing.push(MISSING.cutReview);
     // 抽帧检查（spec 2026-09-30 §6）：没结果 / 有未放行的缝 / 没跑成且没整条放行 → 写进还差什么
-    const v = sliverVerdict(doc, newest.sha256!, null);
+    const v = sliverVerdict(doc, review.sha256!, null);
     if (!v.ok && v.missing) missing.push(v.missing);
   }
-  if (has34 && has43 && !cover) missing.push(MISSING.coverPick);
+  if (complete.length && !cover) missing.push(MISSING.coverPick);
   const approvedCut = cut ? liveFact(doc, "cut", cut.sha256) : null;
-  if (approvedCut && newest && newest.sha256 !== approvedCut.sha256 && newest.at > approvedCut.at) badges.push("有新成片待你审");
+  if (approvedCut && review && review.sha256 !== approvedCut.sha256 && review.at > approvedCut.at) badges.push("有新成片待你审");
   return { missing, badges };
 }
 
@@ -213,7 +221,10 @@ function editingReason(missing: string[]): string {
 }
 
 /** 调用方保证：视频平台 + 有效认稿（`scriptApprovalFor`） */
-export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEvidence): Derived {
+export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEvidence): Derived {
+  // 还没按 §6.2 迁移的 doc：内存里按同一条规则迁移（对账写盘后是同一个结果）
+  const pre = validCoverApproval(raw, body);
+  const doc = withCoverGroups(raw, new Set([pre?.cover_3x4_sha, pre?.cover_4x3_sha].filter((x): x is string => Boolean(x))));
   const candidates = candidatesOf(doc);
   const base = { candidates, publishable: false, badges: [] as string[], missing: [] as string[], alerts: [] as string[] };
   const receipts = publishReceipts(doc);

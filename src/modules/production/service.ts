@@ -19,6 +19,13 @@ import { deriveExplanation, POST_APPROVAL, type Explanation } from "./explain.js
 import { outsideFileOwnership, withFileOwnership } from "./mutex.js";
 import { matchingRegistration, publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import { registrationPatch } from "./registration.js";
+import { migrateCoverGroups } from "./cover-groups.js";
+
+/** 当前有效封面批准的两张 sha（§6.2 迁移时它们不动） */
+export function approvedCoverShas(doc: ProductionDoc, body: string): Set<string> {
+  const d = validCoverApproval(doc, body ?? "");
+  return new Set([d?.cover_3x4_sha, d?.cover_4x3_sha].filter((x): x is string => Boolean(x)));
+}
 import { rebuildShaIndex, reindexContent, type ShaIndex } from "./sha-index.js";
 import { recoverTxns, type RecoveryOutcome } from "./txn.js";
 
@@ -146,7 +153,10 @@ export async function mutateProduction<T>(
     if (!content) throw new Error(`Content ${contentId} not found`);
     const doc = await readProductionDocOrEmpty(contentId, dataDir);
     const next = structuredClone(doc);
-    const { value, events } = await fn(next, content);
+    // 封面统一准入的迁移（review-inbox §6.2）随第一次写落盘：只改标签，不动文件
+    const migrated = migrateCoverGroups(next, approvedCoverShas(next, content.body));
+    const { value, events: own } = await fn(next, content);
+    const events = [...migrated.filter((m) => m.to === "candidate").map((m) => ({ type: "cover_demoted", detail: { fact_id: m.fact_id, state: "candidate", reason: m.reason } })), ...own];
     const stamped = stampEvents(next, events);
     const saved = await writeProductionDoc(contentId, dataDir, next, doc.revision);
     const refreshed = await refreshProductionProjection(tx, content, saved, dataDir);

@@ -18,6 +18,7 @@ import { COVER_ROLES, normalizeExecution } from "../video/handoff/execution-inde
 import { sha256File } from "../video/handoff/manifest.js";
 import { readProjectJson } from "../video/handoff/project-evidence.js";
 import { coverRatioOf } from "./files.js";
+import { addMember, admittedGroupKey, ensureGroup } from "./cover-groups.js";
 
 export const VIDEO_EXT = new Set([".mp4", ".mov", ".m4v"]);
 const SRT_EXT = new Set([".srt", ".vtt"]);
@@ -25,7 +26,7 @@ const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg"]);
 const VERSION_DIR = /^v0*(\d+)$/i;
 
 export type Seen = Omit<Fact, "id" | "round" | "at" | "state" | "availability"> & { state: Fact["state"] };
-export interface Observations { seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number } }> }
+export interface Observations { warnings?: string[]; seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number } }> }
 
 /**
  * 哈希缓存：按（dev, ino, 大小, 修改时间）认同一份字节。落盘到工作区服务目录的 hash-cache.json，
@@ -92,10 +93,13 @@ async function scanMedia(root: string, rel: string, recursive: boolean, videoKin
   return out;
 }
 
-/** 05-cover：vNNN 走 cover-manifest（沿用 cover-scan），其余子目录与顶层按像素比例认 */
-async function scanCovers(root: string): Promise<Seen[]> {
+/**
+ * 05-cover（review-inbox §6.2 统一准入）：vNNN/（有清单按清单，清单坏了报错、不退回全目录扫描）与 final/ 收为正式组；
+ * 其余目录与顶层按比例找到的只做候选。
+ */
+async function scanCovers(root: string, warnings: string[]): Promise<Seen[]> {
   const out: Seen[] = [];
-  for (const a of await scanCoverFolder(root, 0)) {
+  for (const a of await scanCoverFolder(root, 0, { strict: true, errors: warnings })) {
     const ratio = a.role === COVER_ROLES["3:4"] ? "3:4" : "4:3";
     out.push({ kind: "cover", state: "accepted", source: "reconcile", evidence: `项目 ${path.dirname(a.path)}`, path: a.path, sha256: a.sha256, size: a.size, mtime_ms: a.mtime_ms, ratio, ...(a.version ? { version: a.version } : {}) });
   }
@@ -103,9 +107,19 @@ async function scanCovers(root: string): Promise<Seen[]> {
   for (const file of await listFiles(path.join(root, "05-cover"), true, skip)) {
     if (!IMAGE_EXT.has(ext(file))) continue;
     const ratio = await coverRatioOf(file).catch(() => null);
-    if (ratio) out.push(await fileSeen(root, file, "cover", "reconcile", `项目 ${path.relative(root, path.dirname(file))}`, { ratio }));
+    if (!ratio) continue;
+    const rel = path.relative(root, file);
+    const admitted = admittedGroupKey(rel);
+    // 登记时拷出的「封面-3x4.*」在 05-cover 顶层：它们的字节就是已批的那张，按 sha 去重，不另记
+    out.push(await fileSeen(root, file, "cover", "reconcile", admitted ? `项目 ${path.dirname(rel)}` : `项目 ${path.dirname(rel)}（不在 vNNN/ 或 final/，只做候选）`, { ratio, ...(admitted ? {} : { state: "candidate" as const }) }));
   }
   return out;
+}
+
+/** 其他来源（execution.json、meta.assets）的封面按同一条准入：路径不在 vNNN/ 或 final/ → 候选 */
+function admitCover(s: Seen): Seen {
+  if (s.kind !== "cover" || s.state !== "accepted" || admittedGroupKey(s.path)) return s;
+  return { ...s, state: "candidate", evidence: `${s.evidence ?? ""}（不在 05-cover/vNNN/ 或 final/，只做候选）` };
 }
 
 /** 旧存法一：execution.json 报到的产物 */
@@ -172,19 +186,20 @@ async function availabilityOf(doc: ProductionDoc, root: string, archived: boolea
 }
 
 export async function observeProject(content: Content, doc: ProductionDoc, root: string, dataDir: string, archived: boolean): Promise<Observations> {
+  const warnings: string[] = [];
   const seen = [
-    ...(await executionSeen(content, root, dataDir)),
-    ...(await assetCoversSeen(content, root, dataDir)),
+    ...(await executionSeen(content, root, dataDir)).map(admitCover),
+    ...(await assetCoversSeen(content, root, dataDir)).map(admitCover),
     ...(await scanMedia(root, "02-aroll", false, "aroll")),
     ...(await scanMedia(root, "04-edit", false, "cut")),
     ...(await scanMedia(root, "07-delivery", true, "cut")),
-    ...(await scanCovers(root)),
+    ...(await scanCovers(root, warnings)),
     // 分镜审阅页：只导入核验通过的（历史目录里大量中间文件，不合规的静默跳过，E11）
     ...(await scanStoryboards(root)).map((s): Seen => ({ kind: "storyboard", state: "accepted", source: "reconcile", evidence: `项目 ${path.dirname(s.rel)}`,
       path: s.rel, sha256: s.sha256, size: s.size, mtime_ms: s.mtime_ms, version: s.version, receipt_sha256: s.receipt_sha256 })),
   ];
   attachForCut(seen, doc);
-  return { seen, availability: await availabilityOf(doc, root, archived) };
+  return { seen, warnings, availability: await availabilityOf(doc, root, archived) };
 }
 
 /**
@@ -206,10 +221,20 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
     const dup = doc.facts.find((f) => f.kind === s.kind && f.sha256 === s.sha256);
     // 去重时不丢新信息（Codex 审 P2）：本轮已有字幕没绑成片，这次算出了绑定就补上
     if (dup && dup.kind === "srt" && dup.round === doc.round && !dup.for_cut && s.for_cut) { dup.for_cut = s.for_cut; changed++; }
+    // 同一 sha 出现在另一个 vNNN/ 里 = 新成员关系，旧组不动（review-inbox §6.1）
+    if (dup && dup.kind === "cover" && dup.round === doc.round && dup.state === "accepted" && s.state === "accepted") changed += groupSeenCover(doc, dup, s.path, at);
     if (dup || added.some((f) => f.kind === s.kind && f.sha256 === s.sha256)) continue;
     const state = s.kind === "aroll" && s.state === "accepted" && arollOwned(s.sha256!) ? "candidate" : s.state;
     added.push({ ...s, state, id: newId("fact"), round: doc.round, at, availability: "present" });
   }
   doc.facts.push(...added);
+  for (const f of added) if (f.kind === "cover" && f.state === "accepted") groupSeenCover(doc, f, f.path, at);
   return { added, changed: changed + added.length };
+}
+
+/** 对账收下的正式封面按所在目录记进组；返回新加成员数 */
+function groupSeenCover(doc: ProductionDoc, fact: Fact, rel: string | undefined, at: string): number {
+  const key = admittedGroupKey(rel);
+  if (!key) return 0;
+  return addMember(doc, ensureGroup(doc, key, { source: "reconcile", evidence: `项目 05-cover/${key.label}` }, at), fact, at) ? 1 : 0;
 }

@@ -25,19 +25,20 @@ import { undoAutoAttach } from "./undo-attach.js";
 import { keepAttach, reassignAroll, startAttachCheck } from "./attach-check.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
 import { explainContent } from "./read.js";
-import { ensureProductionReady, mutateProduction } from "./service.js";
-import { currentCut, runSliverCheck } from "./sliver/check.js";
+import { approvedCoverShas, ensureProductionReady, mutateProduction } from "./service.js";
+import { groupById, groupOfPair, isRetired, withCoverGroups, type GroupView } from "./cover-groups.js";
+import { cutOf, runSliverCheck } from "./sliver/check.js";
 import { latestCheck, sliverKey, sliverVerdict, type Verdict } from "./sliver/verdict.js";
 
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
   | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check"
-  | "undo_auto_attach" | "keep_attach" | "reassign_aroll";
+  | "undo_auto_attach" | "keep_attach" | "reassign_aroll" | "retire_cover_group";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
   "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll", "waive_sliver", "waive_sliver_check",
-  "undo_auto_attach", "keep_attach", "reassign_aroll",
+  "undo_auto_attach", "keep_attach", "reassign_aroll", "retire_cover_group",
 ];
 
 type Result = Record<string, unknown>;
@@ -91,9 +92,10 @@ async function approveCut(ctx: Ctx): Promise<Result> {
 
 /** 重跑（同指纹直接用缓存）→ 用重算出的当前指纹判：结果必须对应现在的输入 */
 async function sliverGate(ctx: Ctx, cutSha: string): Promise<Verdict> {
-  const run = await runSliverCheck(ctx.content.id, ctx.dataDir);
+  // 按所选的那一版查（review-inbox §7-2）：不改「最新」指针
+  const run = await runSliverCheck(ctx.content.id, ctx.dataDir, cutSha);
   const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
-  if (currentCut(doc)?.sha256 !== cutSha) return { ok: false, missing: "这版已经不是当前成片", check: null, open: [], wholeWaived: false, wholeWaivable: false };
+  if (!cutOf(doc, cutSha)) return { ok: false, missing: "这版成片已经不在了", check: null, open: [], wholeWaived: false, wholeWaivable: false };
   return sliverVerdict(doc, cutSha, run?.fingerprint ?? "\u0000none");
 }
 
@@ -101,9 +103,9 @@ async function sliverGate(ctx: Ctx, cutSha: string): Promise<Verdict> {
 async function waiveSliver(ctx: Ctx): Promise<Result> {
   const cutSha = str(ctx.params.cut_sha), fingerprint = str(ctx.params.fingerprint), key = str(ctx.params.sliver_key);
   if (!cutSha || !fingerprint || !key) return fail("bad_request", "要带成片、检查结果和哪一处（刷新再点）");
-  const run = await runSliverCheck(ctx.content.id, ctx.dataDir);
+  const run = await runSliverCheck(ctx.content.id, ctx.dataDir, cutSha);
   const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
-  if (currentCut(doc)?.sha256 !== cutSha) return fail("stale", "成片换过了，放行不继承：刷新看新成片的检查结果");
+  if (!cutOf(doc, cutSha)) return fail("stale", "这版成片不在了，放行不继承：刷新看成片的检查结果");
   const check = latestCheck(doc, cutSha);
   if (!run || !check || check.fingerprint !== fingerprint || run.fingerprint !== fingerprint || !check.slivers.some((x) => sliverKey(x) === key)) {
     return fail("stale", "这处缝已经不在当前的检查结果里了（时间线或成片变过）：刷新再看");
@@ -115,9 +117,9 @@ async function waiveSliver(ctx: Ctx): Promise<Result> {
 /** 「这条不查了，放行」：只在检查没跑成（或没结果）时有（E13）；绑 round + 成片 sha */
 async function waiveSliverCheck(ctx: Ctx): Promise<Result> {
   const cutSha = str(ctx.params.cut_sha);
-  await runSliverCheck(ctx.content.id, ctx.dataDir);
+  if (cutSha) await runSliverCheck(ctx.content.id, ctx.dataDir, cutSha);
   const doc = await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir);
-  if (!cutSha || currentCut(doc)?.sha256 !== cutSha) return fail("stale", "成片换过了，放行不继承：刷新再看");
+  if (!cutSha || !cutOf(doc, cutSha)) return fail("stale", "这版成片不在了，放行不继承：刷新再看");
   const check = latestCheck(doc, cutSha);
   if (check && check.status !== "unchecked") return fail("not_unchecked", check.status === "clean" ? "这版成片查过了、没有缝，不用放行" : "这版成片查出了缝：逐处看，故意的点「这处是故意的」");
   const same = doc.decisions.find((d) => d.type === "sliver_waive_all" && d.round === doc.round && d.sha256 === cutSha);
@@ -136,20 +138,53 @@ async function rejectWith(ctx: Ctx, type: "cut_reject" | "cover_reject", kind: F
   return { ok: true, decision: same ?? (await push(ctx, { type, ...(f.id ? { fact_id: f.id } : {}), sha256: f.sha256, note, ...(type === "cover_reject" ? { shas } : {}) }, type === "cut_reject" ? "cut_rejected" : "cover_rejected")) };
 }
 
-/** 用这一版封面：两个比例都得有（E10），封面字当场要有（E9：没写就用报上来的默认字，都没有就要创始人补） */
+/** 封面组按 §6.2 迁移后的样子（没落盘的迁移在内存里做） */
+function coverView(ctx: Ctx): ProductionDoc {
+  return withCoverGroups(ctx.doc, approvedCoverShas(ctx.doc, ctx.content.body));
+}
+
+/**
+ * 用这一组封面（review-inbox §6.1，Codex 10）：服务端校验两张属于同一有效组、没作废、每个比例恰好一张；
+ * 封面字没写就用这组报上来的默认字（与面板展示的一致），都没有就要创始人补（E9）。
+ * 带 group_id；旧工作台带两张的 fact id + sha，也必须同属一组。
+ */
 async function pickCover(ctx: Ctx): Promise<Result> {
-  const a = factBy(ctx.doc, { fact_id: ctx.params.cover_3x4_fact_id, sha256: ctx.params.cover_3x4_sha }, "cover");
-  const b = factBy(ctx.doc, { fact_id: ctx.params.cover_4x3_fact_id, sha256: ctx.params.cover_4x3_sha }, "cover");
-  if (typeof a === "string" || typeof b === "string") return fail("both_ratios_required", "两个比例（3:4 和 4:3）都选了才能用这一版封面");
-  if (a.ratio !== "3:4" || b.ratio !== "4:3" || a.state !== "accepted" || b.state !== "accepted") return fail("both_ratios_required", "要一张 3:4、一张 4:3，且都已确认是这条的封面");
-  // 被覆盖过（字节已不是这张）的封面选了也不会生效：直接说，不回「成功」
-  if (a.replaced_at || b.replaced_at) return fail("cover_replaced", "这张封面的文件被覆盖过，盘上已经不是这张图了：刷新看现在的封面再选");
-  const text = str(ctx.params.cover_text) || a.text || b.text || "";
+  const view = coverView(ctx);
+  let g: GroupView | null;
+  if (str(ctx.params.group_id)) {
+    g = groupById(view, str(ctx.params.group_id));
+    if (!g) return fail("stale", isRetired(view, str(ctx.params.group_id)) ? "这组已经点过「这组不要了」" : "这组封面不在了（换过或作废了），刷新再看");
+  } else {
+    const a = factBy(view, { fact_id: ctx.params.cover_3x4_fact_id, sha256: ctx.params.cover_3x4_sha }, "cover");
+    const b = factBy(view, { fact_id: ctx.params.cover_4x3_fact_id, sha256: ctx.params.cover_4x3_sha }, "cover");
+    if (typeof a === "string" || typeof b === "string") return fail("both_ratios_required", "两个比例（3:4 和 4:3）都选了才能用这一组封面");
+    if (a.replaced_at || b.replaced_at) return fail("cover_replaced", "这张封面的文件被覆盖过，盘上已经不是这张图了：刷新看现在的封面再选");
+    g = groupOfPair(view, a, b);
+    if (!g) return fail("not_same_group", "这两张不是同一组封面（成对只认 agent 显式记的一组）：挑同一组里的 3:4 和 4:3");
+  }
+  if (!g.complete) return fail("both_ratios_required", g.ambiguous ? `${g.group.label} 里同一个比例不止一张，说不清用哪张：让 agent 重新成对记一组` : `${g.group.label} 还差${g.slots["3:4"].length ? " 4:3" : " 3:4"}`);
+  const a = g.slots["3:4"][0], b = g.slots["4:3"][0];
+  const text = str(ctx.params.cover_text) || g.text;
   if (!text) return fail("cover_text_required", "选封面时要写封面字");
   const bh = bodyHash(ctx.content.body);
-  const same = sameDecision(ctx.doc, "cover_approval", (d) => d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh
-    && validCoverApproval(ctx.doc, ctx.content.body)?.id === d.id);
-  return { ok: true, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, cover_text: text, body_hash: bh }, "cover_picked")) };
+  const same = sameDecision(view, "cover_approval", (d) => d.cover_3x4_sha === a.sha256 && d.cover_4x3_sha === b.sha256 && d.cover_text === text && d.body_hash === bh
+    && validCoverApproval(view, ctx.content.body)?.id === d.id);
+  return { ok: true, group_id: g.group.id, decision: same ?? (await push(ctx, { type: "cover_approval", cover_3x4_sha: a.sha256, cover_4x3_sha: b.sha256, cover_text: text, body_hash: bh, group_id: g.group.id }, "cover_picked")) };
+}
+
+/** 「这组不要了」（§6.3）：已批的那组不能作废，先撤回批准；文件不删 */
+async function retireCoverGroup(ctx: Ctx): Promise<Result> {
+  const id = str(ctx.params.group_id);
+  if (!id) return fail("bad_request", "要带 group_id（刷新再点）");
+  const view = coverView(ctx);
+  const done = view.decisions.find((d) => d.type === "cover_group_retire" && d.group_id === id);
+  if (done) return { ok: true, decision: done };
+  const g = groupById(view, id);
+  if (!g) return fail("stale", "这组封面不在了，刷新再看");
+  const ok = validCoverApproval(view, ctx.content.body);
+  const shas = [...g.slots["3:4"], ...g.slots["4:3"]].map((f) => f.sha256);
+  if (ok && (shas.includes(ok.cover_3x4_sha) || shas.includes(ok.cover_4x3_sha))) return fail("cover_group_approved", "这组已经定了：先撤回封面批准，再说这组不要了");
+  return { ok: true, decision: await push(ctx, { type: "cover_group_retire", group_id: id, ...(str(ctx.params.note) ? { note: str(ctx.params.note) } : {}) }, "cover_group_retired") };
 }
 
 async function revoke(ctx: Ctx): Promise<Result> {
@@ -256,7 +291,7 @@ async function arollDecision(ctx: Ctx, run: (f: Fact) => Promise<Result>): Promi
 const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   confirm_candidate: (c) => candidate(c, true), reject_candidate: (c) => candidate(c, false),
   approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
-  pick_cover: pickCover, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
+  pick_cover: pickCover, retire_cover_group: retireCoverGroup, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
   attach_aroll: attachAroll, waive_sliver: waiveSliver, waive_sliver_check: waiveSliverCheck,
   undo_auto_attach: (c) => arollDecision(c, (f) => undoAutoAttach(c.content, c.doc, f, c.dataDir)),
   keep_attach: (c) => arollDecision(c, (f) => keepAttach(c.content, f, c.dataDir)),

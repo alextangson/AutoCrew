@@ -10,7 +10,8 @@ import path from "node:path";
 import { getContent, getDataDir, type Content } from "../../storage/local-store.js";
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
-import type { Fact, ProductionDoc } from "../../storage/production-types.js";
+import type { Fact, ProductionDoc, ReadyMark } from "../../storage/production-types.js";
+import { addMember, admittedGroupKey, ensureGroup, nextCoverVersion, versionLabelOf, withCoverGroups } from "./cover-groups.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { Explanation } from "./explain.js";
 import { checkDuration, cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./files.js";
@@ -23,7 +24,7 @@ import { arollOwnerElsewhere } from "./sha-index.js";
 import { isWithin } from "../../storage/storage-roots.js";
 import fs from "node:fs/promises";
 import { explainContent } from "./read.js";
-import { ensureProductionReady, mutateProduction } from "./service.js";
+import { approvedCoverShas, ensureProductionReady, mutateProduction } from "./service.js";
 import { commitRegistration } from "./registration.js";
 import { canonPlatform, observationFact } from "./receipts.js";
 import { dropTxn, isCommitted, rollbackTxn, runMove, saveTxn, type ReleaseOp, type Txn, type TxnOp } from "./txn.js";
@@ -68,7 +69,7 @@ export async function recordPublishClaim(content: Content, dataDir: string, a: P
 /** 请求参数指纹（kind / 路径 / 比例 / 平台 / 链接…）：同一 request_id 换了参数不是重试 */
 function requestArgs(a: RecordArgs): string {
   return JSON.stringify([a.kind, a.path ?? "", a.ratio ?? "", a.version ?? "", a.for_cut ?? "", a.platform ?? "", a.url ?? "", a.item_id ?? "",
-    a.chatcut_project_id ?? "", a.timeline_id ?? "", [...(a.uses_aroll ?? [])].sort()]);
+    a.chatcut_project_id ?? "", a.timeline_id ?? "", [...(a.uses_aroll ?? [])].sort(), ...(a.review ? ["review"] : []), ...(a.paths ? [a.paths] : []), ...(a.pair_with ? [a.pair_with] : [])]);
 }
 
 export async function executeRecord(params: Record<string, unknown>): Promise<Receipt> {
@@ -86,15 +87,19 @@ async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   if (!isVideoPlatform(content.platform)) return fail("not_video", "图文稿不走制作段，没有原片 / 成片可报");
   // 影子模式边界（§4.1，Codex 审 P1）：没启用（或这条被排除）之前不写事实、不搬文件
   if (!(await isOntologyActive(dataDir, content.id))) return fail("ontology_not_enabled", ONTOLOGY_NOT_ENABLED);
-  const doc = await readProductionDocOrEmpty(content.id, dataDir);
+  // 封面组按 §6.2 迁移后的样子规划（还没落盘的迁移在内存里做，写入时 mutateProduction 落同一个结果）
+  const raw = await readProductionDocOrEmpty(content.id, dataDir);
+  const doc = withCoverGroups(raw, approvedCoverShas(raw, content.body));
   const replay = doc.requests?.[a.request_id];
   if (replay && (replay.args ? replay.args !== requestArgs(a) : replay.receipt.kind !== a.kind)) {
     return fail("request_conflict", `request_id「${a.request_id}」已经用来报过另一件东西（${String(replay.receipt.kind)}）：这次的参数不同，换一个新的 request_id 再报`);
   }
+  if (replay?.receipt.pair) return { ...(replay.receipt.pair as Receipt), replayed: true };
   if (replay) return { ...(await receiptFor(content, dataDir, currentCore(doc, replay.receipt as unknown as ReceiptCore))), replayed: true };
   if (a.kind === "chatcut_project") return withSliverCheck(await recordChatcut(a, content, doc, dataDir), content.id, dataDir);
   if (a.kind === "publish") return recordPublishClaim(content, dataDir, a);
   if (a.kind === "storyboard") return recordStoryboard(a, content, dataDir);
+  if (a.kind === "cover" && a.paths) return recordCoverPair(a, content, doc, dataDir);
   const plan = await planFileRecord(a, content, doc, dataDir);
   if (!plan.ok) return fail(plan.code, plan.error);
   const r = a.kind === "cut" || a.kind === "srt" ? await withSliverCheck(await commitFile(a, content, plan.value, dataDir), content.id, dataDir) : await commitFile(a, content, plan.value, dataDir);
@@ -126,6 +131,37 @@ async function withSliverCheck(r: Receipt, contentId: string, dataDir: string): 
   return { ...r, sliver_check: { status: check.status, slivers: check.slivers.length, ...(check.reason ? { reason: check.reason } : {}), summary } };
 }
 
+/**
+ * `autocrew_content action=mark_ready`（review-inbox §7-1）：给已收的成片补标「可以审了」。独立、幂等的事件，
+ * 绑 fact / sha / round；只 agent 标（网页没有这个动作）。BGM 和混音都好了才标。
+ */
+export async function executeMarkReady(params: Record<string, unknown>): Promise<Receipt> {
+  const contentId = typeof params.content_id === "string" ? params.content_id.trim() : typeof params.id === "string" ? params.id.trim() : "";
+  const factId = typeof params.fact_id === "string" ? params.fact_id.trim() : "";
+  if (!contentId || !factId) return fail("bad_param", "mark_ready 要带 content_id 和成片的 fact_id（record 回执或 summary 里的）");
+  const host = typeof params._host === "string" && params._host.trim() ? params._host.trim() : "local-user";
+  const session = typeof params._session === "string" ? params._session : undefined;
+  const dataDir = getDataDir(params._dataDir as string | undefined);
+  if (!(await isOntologyActive(dataDir, contentId))) return fail("ontology_not_enabled", ONTOLOGY_NOT_ENABLED);
+  await ensureProductionReady(dataDir);
+  return withFileOwnership(async () => {
+    const content = await getContent(contentId, dataDir);
+    if (!content || content.deletedAt) return fail("not_found", `找不到这篇稿（${contentId}）`);
+    const doc = await readProductionDocOrEmpty(contentId, dataDir);
+    const f = doc.facts.find((x) => x.id === factId && x.round === doc.round);
+    if (!f || f.kind !== "cut") return fail("not_found", `本轮没有这版成片：${factId}（用 record kind=cut 的回执或 summary 里的成片 fact_id）`);
+    if (f.state !== "accepted") return fail("not_accepted", "这版成片还是候选：等创始人确认它是这条的成片再标");
+    if (f.replaced_at) return fail("cut_replaced", "这版成片的文件被覆盖过：重新导出后 record kind=cut review=true");
+    const r = await mutateProduction(contentId, dataDir, (d) => {
+      const fact = d.facts.find((x) => x.id === factId)!;
+      const events = addReadyMark(d, fact, { host, ...(session ? { session } : {}) });
+      return { value: events.length > 0, events };
+    });
+    return { ok: true, content_id: contentId, fact_id: factId, marked: true, ...(r.value ? {} : { note: "这版之前已经标过，这次没有新动作" }),
+      next_action: "已标「可以审了」：创始人会在「等你拍板」里看到它。不要替创始人通过；用 autocrew_content summary 看结果。" };
+  });
+}
+
 export const ONTOLOGY_NOT_ENABLED =
   "本体还没启用（或这条在启用时被排除了）：record 现在不写事实、不搬文件。请创始人先在看板顶部看差异清单并确认启用；在那之前照旧流程走。";
 
@@ -141,7 +177,26 @@ function currentCore(doc: ProductionDoc, stored: ReceiptCore): ReceiptCore {
   return { ...rest, state: f.state, ...(f.path ? { path: f.path } : {}), ...(f.state === "candidate" || f.state === "rejected" ? { reason: f.evidence ?? stored.reason } : {}) };
 }
 
-interface ReceiptCore { fact_id: string; kind: Fact["kind"]; state: Fact["state"]; path?: string; reason?: string }
+interface ReceiptCore { fact_id: string; kind: Fact["kind"]; state: Fact["state"]; path?: string; reason?: string; group_id?: string }
+
+type NewEvent = { type: string; detail: Record<string, unknown> };
+
+function joinCoverGroup(doc: ProductionDoc, fact: Fact, p: FilePlan, a: RecordArgs): NewEvent[] {
+  const explicit = Boolean(a.paths || a.pair_with || a.version);
+  const key = p.action === "in_place" && !explicit ? admittedGroupKey(fact.path) ?? p.group : p.group ?? admittedGroupKey(fact.path);
+  if (!key) return [];
+  const g = ensureGroup(doc, key, { source: a.host === "founder" ? "founder" : "record", by: { host: a.host, ...(a.session ? { session: a.session } : {}) } });
+  const added = addMember(doc, g, fact);
+  return [{ type: added ? "cover_grouped" : "cover_group_same", detail: { group_id: g.id, label: g.label, fact_id: fact.id, ratio: fact.ratio } }];
+}
+
+/** 「可以审了」：同一轮同一 fact + sha 只记一次（幂等） */
+export function addReadyMark(doc: ProductionDoc, fact: Fact, a: Pick<RecordArgs, "host" | "session">): NewEvent[] {
+  if ((doc.ready_marks ?? []).some((m) => m.round === doc.round && m.fact_id === fact.id && m.sha256 === fact.sha256)) return [];
+  const mark: ReadyMark = { id: newId("rdy"), fact_id: fact.id, sha256: fact.sha256!, round: doc.round, at: new Date().toISOString(), by: { host: a.host, ...(a.session ? { session: a.session } : {}) } };
+  doc.ready_marks = [...(doc.ready_marks ?? []), mark];
+  return [{ type: "cut_ready", detail: { fact_id: fact.id, mark_id: mark.id, by: a.host } }];
+}
 
 // ---- 落位 ----
 
@@ -250,13 +305,17 @@ export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, d
     r = await mutateProduction(content.id, dataDir, (doc) => {
       const fact = reuse ? doc.facts.find((f) => f.id === p.existing!.id)! : upsertFact(doc, { ...factFrom(a, p, doc, rel, moves ? txn.id : undefined, jobId), ...(placed ?? {}) }, p.existing);
       if (opts.patch) Object.assign(fact, opts.patch);
+      // 封面记进组（review-inbox §6.1）：项目内原地收的按所在目录；其余按计划的组。同 sha 进新组 = 新成员关系
+      const coverEvents = fact.kind === "cover" && fact.state === "accepted" ? joinCoverGroup(doc, fact, p, a) : [];
       // 已有字幕没绑成片、这次报了 for_cut：补上绑定，不丢新信息（Codex 审 P2）
       if (reuse && p.for_cut && fact.kind === "srt" && !fact.for_cut) fact.for_cut = p.for_cut;
       const core: ReceiptCore = { fact_id: fact.id, kind: fact.kind, state: fact.state, ...(fact.path ? { path: fact.path } : {}), ...(fact.state === "candidate" ? { reason: p.evidence } : {}) };
       const args = opts.keepArgs ? doc.requests?.[a.request_id]?.args ?? requestArgs(a) : requestArgs(a);
       doc.requests = { ...(doc.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args, receipt: { ...core } } };
       if (journaled) doc.txns = [...(doc.txns ?? []), txn.id];
-      return { value: core, events: reuse ? [] : [{ type: opts.event ?? "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }] };
+      if (coverEvents.length) core.group_id = coverEvents[0].detail.group_id as string;
+      if (a.review && fact.kind === "cut" && fact.state === "accepted") coverEvents.push(...addReadyMark(doc, fact, a));
+      return { value: core, events: [...(reuse ? [] : [{ type: opts.event ?? "fact_recorded", detail: { fact_id: fact.id, kind: fact.kind, state: fact.state, by: a.host } }]), ...coverEvents] };
     });
   } catch (err) { return commitFailed(a, content, dataDir, txn, journaled, err); }
   if (release) await applyRelease(dataDir, release);
@@ -264,6 +323,36 @@ export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, d
   const queued = jobId ? await startMatchJob(dataDir, content.id, r.value.fact_id, jobId, r.doc.round, p) : null;
   const rc = receipt(r.value, r.explanation, content, p.projectRoot, reuse ? "同一文件已经记过，这次没有新动作" : undefined);
   return queued ? { ...rc, warnings: [queued] } : rc;
+}
+
+// ---- 封面一次记一组（review-inbox §6.1）：两张都先核完再落位；同一组、同一版本号 ----
+
+async function recordCoverPair(a: RecordArgs, content: Content, doc: ProductionDoc, dataDir: string): Promise<Receipt> {
+  const version = a.version ?? nextCoverVersion(doc);
+  const parts = a.paths!.map((p, i): RecordArgs => ({ ...a, path: p, paths: a.paths, request_id: `${a.request_id}#${i}`, version }));
+  const plans: FilePlan[] = [];
+  for (const part of parts) {
+    const plan = await planFileRecord(part, content, doc, dataDir);
+    if (!plan.ok) return fail(plan.code, `${part.path}：${plan.error}`);
+    plans.push(plan.value);
+  }
+  const ratios = plans.map((p) => p.ratio).sort().join(",");
+  if (ratios !== "3:4,4:3") return fail("both_ratios_required", `paths 要一张 3:4、一张 4:3（按像素认），收到的是 ${plans.map((p) => p.ratio ?? "?").join(" + ")}`);
+  const receipts: Receipt[] = [];
+  for (const [i, plan] of plans.entries()) {
+    const r = await commitFile(parts[i], content, plan, dataDir);
+    receipts.push(r);
+    if (!r.ok) return i === 0 ? r : { ...r, error: `第一张（${plans[0].ratio}）已记下，第二张没记上：${String(r.error)}`, first: receipts[0] };
+  }
+  const facts = receipts.map((r) => ({ fact_id: r.fact_id, ratio: plans[receipts.indexOf(r)].ratio, state: r.state, path: r.path }));
+  const groupId = (receipts.find((r) => r.group_id)?.group_id as string | undefined) ?? null;
+  const out = { ok: true, content_id: content.id, kind: "cover", facts, group_id: groupId, stage: receipts[1].stage, missing: receipts[1].missing,
+    next_action: groupId ? "这一组封面已记下（3:4 + 4:3）。挑哪组只能创始人在「等你拍板」里点。" : "两张都只记成了候选（不在可搬入目录），等创始人在「等你拍板」里确认。" };
+  await mutateProduction(content.id, dataDir, (d) => {
+    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { kind: "cover", pair: out } } };
+    return { value: null, events: [] };
+  });
+  return out;
 }
 
 // ---- chatcut_project：不带文件，只记工程与它显式引用的原片 ----
@@ -319,12 +408,13 @@ function nextAction(core: ReceiptCore, exp: Explanation): string {
   if (core.state === "pending_match") return PENDING_NEXT;
   // 被拒的（核对期间文件变了 / 创始人说不是这条…）：给原因，别再提示导入（Codex 审 segB4 P2）
   if (core.state === "rejected") return `这个文件没收下${core.reason ? `：${core.reason}` : ""}。换一个文件重新 record（新的 request_id）；不要导入这个文件。`;
-  if (core.state === "candidate") return `已记成候选（${core.reason ?? "归属要创始人确认"}），等创始人在卡片上点「是这条」。不要替创始人确认，也不要自己挪文件。`;
+  if (core.state === "candidate") return `已记成候选（${core.reason ?? "归属要创始人确认"}），等创始人在「等你拍板」里点「对，就是它」。不要替创始人确认，也不要自己挪文件。`;
   if (core.kind === "aroll") return `原片已在项目里（path）。从这个新路径导入 ChatCut，导入后 record kind=chatcut_project chatcut_project_id=<工程 id> uses_aroll=["${core.fact_id}"]。`;
   if (core.kind === "storyboard") return "分镜已收下。告诉创始人：在看板卡片上点「打开审阅页」看分镜（不要再发 MD 或文件路径当分镜）；他在对话里回复意见。";
-  if (core.kind === "cut") return `成片已收。把这版的字幕也报上来（record kind=srt for_cut="${core.fact_id}"），然后等创始人审成片——成片通过只能创始人点。`;
+  if (core.kind === "cut") return `成片已收。把这版的字幕也报上来（record kind=srt for_cut="${core.fact_id}"）。配乐和混音都好了才算可以审：那时 mark_ready fact_id="${core.fact_id}"（或 record 时带 review=true），创始人在「等你拍板」里审——成片通过只能创始人点。`;
+  if (core.kind === "cover") return "封面已记下。一组要 3:4 + 4:3：下次用 paths 一次记一对，或第二张带 pair_with=<第一张 fact_id>。挑哪组只能创始人在「等你拍板」里点。";
   const missing = exp.missing.length ? `还差：${exp.missing.join("、")}。` : "";
-  return `${missing}看 autocrew_content summary 取最新进度；批准与选封面只能创始人点。`;
+  return `${missing}看 autocrew_content summary 取最新进度；批准与选封面只能创始人在「等你拍板」里点。`;
 }
 
 async function receiptFor(content: Content, dataDir: string, core: ReceiptCore): Promise<Receipt> {
@@ -400,10 +490,13 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   const inProject = isWithin(projectRoot, checked.value);
   // 本机 ChatCut 工程按绝对路径在用的原片也不挪（§13-A 隐式引用）
   const hold = fact.kind === "aroll" && !inProject && !referenced ? await chatcutHold(checked.value) : { project: null, note: "" };
-  const action = inProject || (fact.kind === "aroll" && (referenced || hold.project)) ? "in_place" : fact.kind === "aroll" ? "move" : "clone";
-  const version = fact.kind === "cover" ? fact.version ?? Math.max(0, ...doc.facts.filter((f) => f.kind === "cover" && f.version).map((f) => f.version!)) + 1 : undefined;
+  // 封面统一准入：项目里不在 vNNN/ 或 final/ 的候选封面确认后克隆进新一组（review-inbox §6.2）
+  const coverOutside = fact.kind === "cover" && inProject && !admittedGroupKey(path.relative(projectRoot, checked.value));
+  const action = (inProject && !coverOutside) || (fact.kind === "aroll" && (referenced || hold.project)) ? "in_place" : fact.kind === "aroll" ? "move" : "clone";
+  // 确认的候选封面自成新一组（不猜它和谁成对，review-inbox §6.1）
+  const version = fact.kind === "cover" ? nextCoverVersion(doc) : undefined;
   const plan: FilePlan = { action, kind: fact.kind, source: checked.value, sha256: fact.sha256, id: fp.value.id, projectRoot, location: inProject ? "project" : "other",
-    evidence: hold.project ? `创始人确认是这条；${inUseEvidence(hold.project)}` : `创始人确认是这条${hold.note}`, existing: fact, ...(fact.ratio ? { ratio: fact.ratio } : {}), ...(version ? { version } : {}), ...(fact.for_cut ? { for_cut: fact.for_cut } : {}) };
+    evidence: hold.project ? `创始人确认是这条；${inUseEvidence(hold.project)}` : `创始人确认是这条${hold.note}`, existing: fact, ...(fact.ratio ? { ratio: fact.ratio } : {}), ...(version ? { version, group: { label: versionLabelOf(version), version } } : {}), ...(fact.for_cut ? { for_cut: fact.for_cut } : {}) };
   if (action !== "in_place") {
     const safe = await checkTargetDir(projectRoot, targetDirOf(fact.kind, version));
     if (!safe.ok) return fail(safe.code, safe.error);

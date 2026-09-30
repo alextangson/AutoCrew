@@ -66,7 +66,7 @@ describe("影子模式（§4.1）：只算不写，给差异清单", () => {
     expect(doc.facts.map((f) => f.kind).sort()).toEqual(["aroll", "cover", "cover", "cut", "srt"]);
     expect(doc.facts.find((f) => f.kind === "srt")!.for_cut).toBe(doc.facts.find((f) => f.kind === "cut")!.sha256);
     const board = await boardData(env.dir);
-    expect(board.items.find((i) => i.id === c.id)).toMatchObject({ column: "剪辑中", missing: ["成片待你审", "抽帧检查还没有结果", "封面待你选"] });
+    expect(board.items.find((i) => i.id === c.id)).toMatchObject({ column: "剪辑中", missing: ["封面(4:3)"] }); // 对账收的导出不算待审；exports/ 里的图只做候选（review-inbox §6.2、§7-1）
     expect((await reconcileAll(env.dir)).moves).toEqual([]);
   });
 

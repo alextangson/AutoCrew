@@ -30,7 +30,7 @@ import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/styl
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
 import { isFrozen, isOntologyEnabled, readProductionDoc, ScriptFrozenError } from "../storage/production-store.js";
-import { executeRecord } from "../modules/production/record.js";
+import { executeMarkReady, executeRecord } from "../modules/production/record.js";
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
 
@@ -233,6 +233,7 @@ export async function executeContentSave(
 
   // 本体 §3：agent 只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不要认领、不要交接
   if (action === "record") return executeRecord(params);
+  if (action === "mark_ready") return executeMarkReady(params);
   // 抽帧缝自查（spec 2026-09-30 §7）：只返回结果，不写事实、不影响批准
   if (action === "check_slivers") return checkSlivers(params);
 
