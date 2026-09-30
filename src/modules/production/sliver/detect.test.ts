@@ -113,6 +113,19 @@ describe("Codex 审 sliver 回归", () => {
     expect(spans(r)).toEqual([[85, 115]]);
     expect(r.slivers[0].transition).toBe(true);
   });
+  it("[sliver2 P2 detect.ts:175] 转场放大落在本来就露着的段里：不扣帧，40 帧露出不误报", () => {
+    const half = { opacity: 0.5 };
+    const tl = timeline({
+      videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 140, 60)],
+      imageItems: [image("p1", 100, 20, half), image("p2", 120, 20, half)],
+      pixelTransitionItems: [{ id: "tr", trackId: "v1", durationFrames: 15, incomingItemId: "p2", outgoingItemId: "p1" }],
+    });
+    expect(run(tl).status).toBe("clean");
+  });
+  it("[sliver2 P2 detect.ts:175] 15 万帧的长露出段不会撑爆参数上限", () => {
+    const r = run(timeline({ videoItems: [aroll("ar", 0, 150100), broll("b1", 0, 50), broll("b2", 150050, 50)] }), { cutFrames: null });
+    expect(r.status).toBe("clean");
+  });
   it("[P2 cover-rules.ts:82] 像素格式按白名单：vuya / uyva 带 alpha 不算盖住；不认识的格式读不准", () => {
     const hold = (fmt: string) => run(timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 105, 95)], imageItems: [image("h", 100, 5)] }), { assets: { ...ASSETS, I: { ...ASSETS.I, pix_fmt: fmt } } });
     expect(spans(hold("vuya"))).toEqual([[100, 105]]);

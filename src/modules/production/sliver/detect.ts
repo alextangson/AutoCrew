@@ -100,6 +100,8 @@ interface Frames {
   transition: Uint8Array;
   /** 转场对齐方式不明时多算的帧数：判「不足 1 秒」时扣掉，免得区间放大后越过阈值漏报 */
   slack: Int32Array;
+  /** 这一帧本来被盖住（或读不准），只因转场放大才算露出：扣帧只扣这些，不缩短本来就露着的段 */
+  added: Uint8Array;
   why: Map<number, string>;
 }
 
@@ -137,7 +139,7 @@ function markItems(input: DetectInput, parsed: Parsed, arolls: Placed[], f: Fram
 function buildFrames(input: DetectInput, parsed: Parsed, arolls: Placed[]): Frames | string {
   const { items } = parsed;
   const end = Math.max(...items.map((p) => p.end));
-  const f: Frames = { end, aroll: new Float64Array(end).fill(-Infinity), cover: new Int32Array(end).fill(-1), unknown: new Array(end), transition: new Uint8Array(end), slack: new Int32Array(end), why: new Map() };
+  const f: Frames = { end, aroll: new Float64Array(end).fill(-Infinity), cover: new Int32Array(end).fill(-1), unknown: new Array(end), transition: new Uint8Array(end), slack: new Int32Array(end), added: new Uint8Array(end), why: new Map() };
   for (const a of arolls) for (let i = a.start; i < a.end; i++) f.aroll[i] = Math.max(f.aroll[i], a.order);
   markItems(input, parsed, arolls, f);
   for (const e of parsed.effects) {
@@ -156,6 +158,7 @@ function buildFrames(input: DetectInput, parsed: Parsed, arolls: Placed[]): Fram
     const order = parsed.orders.get(String(t.trackId)) ?? -Infinity;
     for (let i = Math.max(0, r.range[0]); i < Math.min(end, r.range[1]); i++) {
       if (order <= f.aroll[i]) continue; // A-roll 轨自己的转场被上面的 B-roll 挡着
+      if (r.slack > 0 && (f.cover[i] >= 0 || (f.unknown[i]?.length ?? 0) > 0)) f.added[i] = 1;
       f.transition[i] = 1; f.cover[i] = -1; f.unknown[i] = undefined; f.slack[i] = Math.max(f.slack[i], r.slack);
     }
   }
@@ -172,8 +175,11 @@ function findSlivers(f: Frames, parsed: Parsed, fps: Fps, on: ReadonlySet<number
     if (state(i) !== "exp") { i++; continue; }
     let j = i;
     while (j < f.end && state(j) === "exp") j++;
-    const n = j - i, slack = Math.max(0, ...f.slack.subarray(i, j));
-    if (i > 0 && j < f.end && state(i - 1) === "cov" && state(j) === "cov" && Math.max(1, n - slack) * fps.den < fps.num) {
+    // 逐帧累计（不展开成参数：长露出段会超过函数参数上限）。只扣转场放大新增的帧，最多扣到多算的 slack
+    let slack = 0, added = 0;
+    for (let k = i; k < j; k++) { if (f.slack[k] > slack) slack = f.slack[k]; added += f.added[k]; }
+    const n = j - i;
+    if (i > 0 && j < f.end && state(i - 1) === "cov" && state(j) === "cov" && Math.max(1, n - Math.min(slack, added)) * fps.den < fps.num) {
       const prev = parsed.items[coverAt(i - 1)], next = parsed.items[coverAt(j)];
       const transition = f.transition.subarray(i, j).some((x) => x === 1);
       out.push({ start_frame: i, end_frame: j, frames: n, start_tc: timecode(i, fps), prev_item: prev.id, next_item: next.id, prev_name: prev.name, next_name: next.name, ...(transition ? { transition: true as const } : {}) });
