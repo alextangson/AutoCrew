@@ -42,12 +42,16 @@ export interface ProductionPart {
  * 本轮原片：pending 的、本页 changes 提到的一律给（刚落定的新路径靠它取，Codex 审 segA P2）；
  * 其余只顺带给最近 `extra` 条，预算紧时先缩它。放不下的靠翻页（changes 截尾 → has_more）。
  */
-function arollView(doc: ProductionDoc, root: string, reasonMax: number, referenced: ReadonlySet<string>, extra: number) {
+function arollFacts(doc: ProductionDoc, referenced: ReadonlySet<string>, extra: number) {
   const round = doc.facts.filter((f) => f.round === doc.round && f.kind === "aroll");
   const must = new Set(round.filter((f) => f.state === "pending_match" || referenced.has(f.id)).map((f) => f.id));
   // extra=0 时不能 slice(-0)（那是全部）：预算缩到底就一条都不顺带（Codex 审 segB P2）
   if (extra > 0) for (const f of round.filter((x) => !must.has(x.id)).slice(-extra)) must.add(f.id);
-  return round.filter((f) => must.has(f.id)).map((f) => ({
+  return round.filter((f) => must.has(f.id));
+}
+
+function arollView(facts: ReturnType<typeof arollFacts>, root: string, reasonMax: number) {
+  return facts.map((f) => ({
     fact_id: f.id, state: f.state, round: f.round,
     ...(f.path ? { path: path.isAbsolute(f.path) ? f.path : path.join(root, f.path) } : {}),
     ...(f.state === "candidate" || f.state === "rejected" ? { reason: clip(f.evidence ?? "", reasonMax) } : {}),
@@ -61,7 +65,11 @@ function candidatesView(doc: ProductionDoc, exp: Explanation) {
   });
 }
 
-export async function productionPart(c: Content, exp: Explanation, dataDir: string, sinceSeq: number | undefined): Promise<ProductionPart | null> {
+/**
+ * `arollOffset`（Codex 审 segB7 P2）：pending 与必给的原片行也可能放不下——放得下多少给多少，
+ * 回 `aroll_next_offset` 让 agent 接着读（带 `aroll_offset` 再调 summary），直到没有这个字段。
+ */
+export async function productionPart(c: Content, exp: Explanation, dataDir: string, sinceSeq: number | undefined, arollOffset = 0): Promise<ProductionPart | null> {
   const doc = await readProductionDoc(c.id, dataDir).catch(() => null);
   if (!doc || (exp.phase !== "production" && !hasProductionTrace(doc))) return null;
   const all = await readTimeline(c.id, dataDir, sinceSeq ?? 0).catch(() => [] as TimelineEvent[]);
@@ -71,6 +79,7 @@ export async function productionPart(c: Content, exp: Explanation, dataDir: stri
   let evidenceMax = 60;
   let reasonMax = 60;
   let extra = 5;
+  let rowsMax = Infinity;
   const fields: Record<string, unknown> = {};
   const render = () => {
     const changes = window.slice(0, shown);
@@ -78,11 +87,18 @@ export async function productionPart(c: Content, exp: Explanation, dataDir: stri
     Object.assign(fields, {
       missing: exp.missing, badges: exp.badges,
       candidates: candidates.map((x) => ({ ...x, evidence: clip(x.evidence, evidenceMax) })),
-      pending: doc.facts.filter((f) => f.round === doc.round && f.state === "pending_match").map((f) => ({ fact_id: f.id, started_at: f.match_started_at ?? f.at })),
-      aroll: arollView(doc, contentRoot(c.id, dataDir), reasonMax, new Set(changes.flatMap((x) => (x.fact_id ? [x.fact_id] : []))), extra),
-      changes, latest_seq: doc.seq, next_since_seq: last ?? sinceSeq ?? doc.seq,
-      has_more: shown < window.length || (sinceSeq !== undefined && all.length > window.length),
     });
+    const rows = arollFacts(doc, new Set(changes.flatMap((x) => (x.fact_id ? [x.fact_id] : []))), extra).slice(arollOffset);
+    const page = rows.slice(0, rowsMax);
+    const more = page.length < rows.length;
+    Object.assign(fields, {
+      pending: page.filter((f) => f.state === "pending_match").map((f) => ({ fact_id: f.id, started_at: f.match_started_at ?? f.at })),
+      aroll: arollView(page, contentRoot(c.id, dataDir), reasonMax),
+      changes, latest_seq: doc.seq, next_since_seq: last ?? sinceSeq ?? doc.seq,
+      has_more: more || shown < window.length || (sinceSeq !== undefined && all.length > window.length),
+    });
+    if (more) fields.aroll_next_offset = arollOffset + page.length;
+    else delete fields.aroll_next_offset;
   };
   render();
   // 至少留一条变化：一条都不给会让翻页原地打转
@@ -92,6 +108,9 @@ export async function productionPart(c: Content, exp: Explanation, dataDir: stri
     if (evidenceMax > 0) { evidenceMax = evidenceMax > 20 ? 20 : 0; render(); return true; }
     // 最后手段：原片的候选 / 作废原因也截短（路径与状态留着，agent 要靠它们）
     if (reasonMax > 20) { reasonMax = 20; render(); return true; }
+    // 再放不下就给原片行分页（至少留一行，翻页才有进展）
+    const n = (fields.aroll as unknown[]).length;
+    if (n > 1) { rowsMax = n - 1; render(); return true; }
     return false;
   };
   return { fields, shrink };

@@ -87,6 +87,33 @@ describe("summary 的制作段字段", () => {
     expect(bytes(r)).toBeLessThanOrEqual(1536);
   });
 
+  it("很多条 pending、路径很长：每页都 ≤ 1.5KB，按 aroll_next_offset 翻页能拿到每一条（Codex 审 segB7 P2）", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    setMatchDeps({ transcriber: { notReady: async () => null, transcribe: async () => { await gate; return { ok: false, unavailable: false, reason: "测试结束" }; } } });
+    try { await manyPending(); } finally { release(); }
+  });
+
+  async function manyPending(): Promise<void> {
+    const c = await videoContent(env, "很多核对中原片的稿");
+    const ids = new Set<string>();
+    for (let i = 0; i < 8; i++) {
+      const r = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${"很长很长的收件箱原片文件名".repeat(3)}-${i}.mov`), `p${i}`), request_id: `r${i}` });
+      ids.add(String(r.fact_id));
+    }
+    const seen = new Set<string>();
+    let offset: unknown = undefined;
+    for (let page = 0; page < 20; page++) {
+      const r = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "summary", id: c.id, ...(offset !== undefined ? { aroll_offset: offset } : {}) }) as Record<string, unknown>;
+      expect(bytes(r)).toBeLessThanOrEqual(1536);
+      for (const a of r.aroll as Array<{ fact_id: string }>) seen.add(a.fact_id);
+      for (const p of r.pending as Array<{ fact_id: string }>) expect(ids.has(p.fact_id)).toBe(true);
+      if (r.aroll_next_offset === undefined) break;
+      offset = r.aroll_next_offset;
+    }
+    expect([...ids].every((id) => seen.has(id))).toBe(true);
+  }
+
   it("没有制作事实的写稿段稿件不带这些字段", async () => {
     const c = await videoContent(env, "干净的稿");
     const r = await summary(c.id);

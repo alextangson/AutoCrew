@@ -76,16 +76,26 @@ function parseSinceSeq(raw: unknown): { ok: true; value: number | undefined } | 
   return Number.isInteger(n) && n >= 0 ? { ok: true, value: n } : { ok: false };
 }
 
+/**
+ * 总长 ≤ 1.5 KB 一定成立（Codex 审 segB7 P2）：先让制作段自己缩（changes、依据、原因、原片行分页），
+ * 还超就缩通用字段（卡点只留第一条、截短、去掉候选依据），最后只留最小形状。
+ */
 function fitBudget(out: Record<string, unknown>, part: ProductionPart | null): Record<string, unknown> {
-  const size = () => Buffer.byteLength(JSON.stringify({ ...out, ...part?.fields }));
-  while (part && size() > SUMMARY_BUDGET && part.shrink()) { /* 先截 changes，再截候选依据 */ }
-  return { ...out, ...part?.fields };
+  const merged = () => ({ ...out, ...part?.fields });
+  const size = () => Buffer.byteLength(JSON.stringify(merged()));
+  while (part && size() > SUMMARY_BUDGET && part.shrink()) { /* 先截 changes，再截候选依据，再给原片行分页 */ }
+  if (size() > SUMMARY_BUDGET && Array.isArray(out.blockers)) out.blockers = (out.blockers as string[]).slice(0, 1).map((b) => clip(b, 40));
+  if (size() > SUMMARY_BUDGET && part) part.fields.candidates = [];
+  if (size() > SUMMARY_BUDGET) { out.reason = clip(String(out.reason ?? ""), 20); out.next = clip(String(out.next ?? ""), 40); }
+  return merged();
 }
 
-export async function contentSummary(id: string, dataDir?: string, now = Date.now(), sinceSeqRaw?: unknown): Promise<Record<string, unknown>> {
+export async function contentSummary(id: string, dataDir?: string, now = Date.now(), sinceSeqRaw?: unknown, arollOffsetRaw?: unknown): Promise<Record<string, unknown>> {
   if (!id) return { ok: false, error: "id is required for summary" };
   const since = parseSinceSeq(sinceSeqRaw);
   if (!since.ok) return { ok: false, code: "bad_param", error: "since_seq 要是非负整数（用上次 summary 回的 next_since_seq）" };
+  const offset = parseSinceSeq(arollOffsetRaw);
+  if (!offset.ok) return { ok: false, code: "bad_param", error: "aroll_offset 要是非负整数（用上次 summary 回的 aroll_next_offset）" };
   const c = await getContent(id, dataDir);
   if (!c || c.deletedAt) return { ok: false, code: "not_found", error: `找不到这篇稿（${id}）：不存在或已删除`, next_action: "用 autocrew_content list 看现有稿件" };
   const blockers = blockersOf(c, now);
@@ -93,7 +103,7 @@ export async function contentSummary(id: string, dataDir?: string, now = Date.no
   if (angle) blockers.unshift(angle);
   const view = await ontologyView(c, dataDir);
   const exp = view?.phase === "production" ? view : null;
-  const part = view ? await productionPart(c, view, getDataDir(dataDir), since.value) : null;
+  const part = view ? await productionPart(c, view, getDataDir(dataDir), since.value, offset.value ?? 0) : null;
   if (exp) {
     blockers.unshift(...exp.missing.map((m) => `还差：${m}`), ...exp.alerts.map((a) => clip(a, 80)));
     if (exp.candidates.length) blockers.push(`有 ${exp.candidates.length} 个候选文件等创始人确认是不是这条`);
