@@ -234,6 +234,24 @@ async function settle(dataDir: string, id: string, r: JobResult): Promise<void> 
   if (failed && hook) await hook(dataDir, failed, failed.error ?? "核对失败");
 }
 
+/**
+ * 跑完了、结果没写上盘的作业（写盘失败）：结果留在内存等补写。工人每次醒来（对账 tick 也会叫醒）先补写它们，
+ * 不重跑；写上之前队列错误一直在。进程在补写前重启 → 加载时「跑到一半」回排队重跑，处理器靠作业代号幂等落结果。
+ */
+const unsettled = new Map<string, Map<string, JobResult>>();
+
+async function settleOrKeep(dataDir: string, id: string, r: JobResult): Promise<void> {
+  const map = unsettled.get(dataDir) ?? new Map<string, JobResult>();
+  unsettled.set(dataDir, map);
+  map.set(id, r);
+  await settle(dataDir, id, r);
+  map.delete(id);
+}
+
+async function flushUnsettled(dataDir: string): Promise<void> {
+  for (const [id, r] of [...(unsettled.get(dataDir) ?? new Map<string, JobResult>())]) await settleOrKeep(dataDir, id, r);
+}
+
 async function runJob(dataDir: string, job: MatchJob): Promise<void> {
   const handler = handlers.get(job.purpose);
   const ctl = new AbortController();
@@ -245,7 +263,7 @@ async function runJob(dataDir: string, job: MatchJob): Promise<void> {
     r = { state: "retry", error: e instanceof Error ? e.message : String(e) };
   } finally { clearTimeout(timer); }
   if (ctl.signal.aborted && r.state === "retry") r = { state: "retry", error: `比对超过 ${JOB_LIMIT_MS / 60_000} 分钟：${r.error}` };
-  await settle(dataDir, job.id, r);
+  await settleOrKeep(dataDir, job.id, r);
 }
 
 /** 下一个退避到期的作业：到点再叫醒工人（不挡进程退出） */
@@ -257,6 +275,8 @@ async function armTimer(dataDir: string, w: Worker): Promise<void> {
 }
 
 async function drain(dataDir: string, w: Worker): Promise<void> {
+  // 先补写上次没落盘的结果；补写失败就抛出去（错误保留），不认领新活
+  if (unsettled.get(dataDir)?.size) { await flushUnsettled(dataDir); delete w.error; }
   do {
     w.again = false;
     for (let job = await claimNext(dataDir); job; job = await claimNext(dataDir)) {
@@ -295,4 +315,5 @@ export function resetMatchQueue(): void {
   for (const w of workers.values()) clearTimeout(w.timer);
   workers.clear();
   stores.clear();
+  unsettled.clear();
 }

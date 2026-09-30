@@ -32,7 +32,7 @@ import { publishEvidenceOf } from "./read.js";
 import { movableRoots, now } from "./roots.js";
 import { ensureProductionReady, mutateProduction, refreshContent } from "./service.js";
 import { shaIndex } from "./sha-index.js";
-import { matchWorkerError } from "./match/queue.js";
+import { kickMatchWorker, matchWorkerError } from "./match/queue.js";
 import { discoverExternal } from "./discover.js";
 import { autoAttach } from "./auto-attach.js";
 
@@ -165,6 +165,8 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
   const report: ReconcileReport = { at: new Date().toISOString(), enabled, errors: [], moves: [], warnings: [] };
   // 原片核对的重新入队 / 工人出错：看板顶部与晨报要看得见（1b §2）
   for (const e of started.hookErrors ?? []) report.warnings.push(`原片核对没能重新排队：${e}`);
+  // 每轮对账叫醒一次工人：补写没落盘的作业结果、接着跑到期的退避作业
+  kickMatchWorker(dataDir);
   const workerError = matchWorkerError(dataDir);
   if (workerError) report.warnings.push(`原片核对工人出错：${workerError}`);
   await loadHashCache(dataDir);

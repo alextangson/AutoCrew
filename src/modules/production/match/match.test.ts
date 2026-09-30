@@ -213,6 +213,26 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     expect(matchWorkerError(dir)).toBeNull();
   });
 
+  it("作业跑完、落结果时写盘失败：结果留在内存待写，下次叫醒先补写、不重跑；写上之前错误一直在", async () => {
+    const { kickMatchWorker, matchWorkerError } = await import("./queue.js");
+    const qdir = path.dirname(transcriptCacheDir(dir));
+    let runs = 0;
+    registerMatchHandler("test_settle", async () => { runs += 1; await fs.chmod(qdir, 0o555); return { state: "done", outcome: "ok" }; });
+    try {
+      await enqueueMatchJob(dir, spec({ purpose: "test_settle" }));
+      await matchWorkerIdle(dir);
+      expect(matchWorkerError(dir)).toBeTruthy();
+      kickMatchWorker(dir);
+      await matchWorkerIdle(dir);
+      expect(matchWorkerError(dir)).toBeTruthy();
+    } finally { await fs.chmod(qdir, 0o755); }
+    kickMatchWorker(dir);
+    await matchWorkerIdle(dir);
+    expect(runs).toBe(1);
+    expect((await listMatchJobs(dir))[0]).toMatchObject({ state: "done", outcome: "ok" });
+    expect(matchWorkerError(dir)).toBeNull();
+  });
+
   it("重启：跑到一半的作业回到排队，持久化在工作区缓存目录", async () => {
     const file = path.join(transcriptCacheDir(dir), "..", "match-jobs.json");
     const job: MatchJob = { id: "mjob-x", key: jobKey(spec()), purpose: "test_ok", priority: "background", sha256: SHA, path: "/x.mov", size: 1, mtime_ms: 1,
