@@ -4,7 +4,8 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getContent } from "../../storage/local-store.js";
+import { getContent, type Content } from "../../storage/local-store.js";
+import { CHATCUT_USES, IN_EDIT_REASSIGN, undoBlocker } from "./undo-attach.js";
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
@@ -57,6 +58,18 @@ function sliverPanel(doc: ProductionDoc, approvedSha: string | undefined): Recor
   };
 }
 
+/**
+ * 本轮 accepted 原片（1b §4.1 / §7）：自动挂上的给「不是这条」，核对说更像别条的给「改挂到《X》」/「就是这条」；
+ * 前提不满足时不给按钮，给原因（「这条已经在剪了…」）。
+ */
+function arollRows(content: Content, doc: ProductionDoc): Array<Record<string, unknown>> {
+  return doc.facts.filter((f) => f.round === doc.round && f.kind === "aroll" && f.state === "accepted").map((f) => {
+    const blocked = undoBlocker(content, doc, f);
+    return { fact_id: f.id, sha256: f.sha256, path: f.path, auto_attached: f.auto_attached === true, source_path: f.source_path ?? null,
+      check: f.attach_check ?? null, undo_blocked: blocked, reassign_blocked: blocked ? (blocked === CHATCUT_USES ? blocked : IN_EDIT_REASSIGN) : null };
+  });
+}
+
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
@@ -76,7 +89,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   const checklist = checklistRel && (await fs.stat(path.join(contentRoot(contentId, dataDir), checklistRel)).then(() => true, () => false)) ? checklistRel : null;
   const cut = validCutApproval(doc, content.body), cover = validCoverApproval(doc, content.body);
   return {
-    ...base, round: doc.round,
+    ...base, round: doc.round, arolls: arollRows(content, doc),
     pending_receipts: receipts.pending.map((w) => ({ fact_id: w.fact_id, slot_id: w.id, platform: w.platform, url: w.url ?? (w.item_id ? `作品 ${w.item_id}` : null), host: w.source === "claim" ? w.host ?? "AI" : "数据回流" })),
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },

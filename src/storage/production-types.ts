@@ -56,6 +56,8 @@ export interface Fact {
   match_started_at?: string;
   /** aroll：核对结果（前三名与原因）；只存稿件 id / 标题 / 分数，不存转写文本 */
   match?: { winner: string | null; reason: string; top3: Array<{ content_id: string; title: string; l1: string; l2?: number }> };
+  /** aroll：卡片挂载后的内容核对（1b §7）。suggest = 听起来更像别条；kept = 创始人点过「就是这条」 */
+  attach_check?: { status: "checking" | "ok" | "suggest" | "kept" | "not_ready" | "failed"; job?: string; other_id?: string; other_title?: string; reason?: string; at: string };
   /** aroll：系统自动挂上（pending_match 核对认出 / 1b 段 B 收件箱自动挪），「不是这条」可撤（§4.1） */
   auto_attached?: true;
   /** storyboard：同目录脚本回执的 sha256 */
@@ -118,7 +120,10 @@ export type DecisionType =
   | "publish_confirm" // 创始人确认一条待核回执（模型说的「发了」）
   | "publish_correction"
   | "sliver_waive" // 抽帧缝「这处是故意的」：绑 round + 成片 sha + 结果指纹 + 缝身份
-  | "sliver_waive_all"; // 抽帧检查没跑成「这条不查了，放行」：绑 round + 成片 sha
+  | "sliver_waive_all" // 抽帧检查没跑成「这条不查了，放行」：绑 round + 成片 sha
+  | "auto_attach_undo" // 1b §4.1：撤销系统自动挂上的原片（挪回原处、解冻、回待录制）
+  | "attach_check_keep" // 1b §7：卡片挂载核对说「更像别条」，创始人点「就是这条」（记住）
+  | "aroll_reassign"; // 1b §7：当前轮原片改挂到别条（双内容事务的释放一方）
 
 export interface Decision {
   id: string;

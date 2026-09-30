@@ -21,6 +21,8 @@ import { validCoverApproval, validCutApproval } from "./derive.js";
 import { canonPlatform, normSlotId, slotGate, slotId, slotOf } from "./receipts.js";
 import { gateFromPlan, isUngated } from "./publish-check-link.js";
 import { adoptCandidate } from "./record.js";
+import { undoAutoAttach } from "./undo-attach.js";
+import { keepAttach, reassignAroll, startAttachCheck } from "./attach-check.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
 import { explainContent } from "./read.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
@@ -29,11 +31,13 @@ import { latestCheck, sliverKey, sliverVerdict, type Verdict } from "./sliver/ve
 
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
-  | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check";
+  | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check"
+  | "undo_auto_attach" | "keep_attach" | "reassign_aroll";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
   "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll", "waive_sliver", "waive_sliver_check",
+  "undo_auto_attach", "keep_attach", "reassign_aroll",
 ];
 
 type Result = Record<string, unknown>;
@@ -235,7 +239,18 @@ async function attachAroll(ctx: Ctx): Promise<Result> {
   })).value;
   const adopted = await adoptCandidate(ctx.content, fact, ctx.dataDir, { reassign: ctx.params.reassign === true, cancelPending: ctx.params.cancel_pending === true });
   if (!adopted.ok) return adopted;
-  return { ...adopted, decision: await push(ctx, { type: "candidate_confirm", fact_id: fact.id, sha256: fact.sha256, note: "卡片挂载" }, "aroll_attached") };
+  const decision = await push(ctx, { type: "candidate_confirm", fact_id: fact.id, sha256: fact.sha256, note: "卡片挂载" }, "aroll_attached");
+  // 挂上之后入队核对开头转写（1b §7）：结果只出提示，不改挂载
+  const placed = (await readProductionDocOrEmpty(ctx.content.id, ctx.dataDir)).facts.find((f) => f.id === fact.id && f.state === "accepted");
+  if (placed) await startAttachCheck(ctx.dataDir, ctx.content.id, placed);
+  return { ...adopted, decision };
+}
+
+/** 1b §4.1 / §7：对本轮一条 accepted 原片的三个决定（撤销自动挂上、就是这条、改挂到《X》） */
+async function arollDecision(ctx: Ctx, run: (f: Fact) => Promise<Result>): Promise<Result> {
+  const f = factBy(ctx.doc, ctx.params, "aroll");
+  if (typeof f === "string") return fail("stale", f);
+  return run(f);
 }
 
 const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
@@ -243,6 +258,9 @@ const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
   pick_cover: pickCover, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
   attach_aroll: attachAroll, waive_sliver: waiveSliver, waive_sliver_check: waiveSliverCheck,
+  undo_auto_attach: (c) => arollDecision(c, (f) => undoAutoAttach(c.content, c.doc, f, c.dataDir)),
+  keep_attach: (c) => arollDecision(c, (f) => keepAttach(c.content, f, c.dataDir)),
+  reassign_aroll: (c) => arollDecision(c, (f) => reassignAroll(c.content, c.doc, f, str(c.params.to), c.dataDir)),
 };
 
 /**

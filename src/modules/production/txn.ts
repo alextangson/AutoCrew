@@ -30,7 +30,7 @@ export interface TxnOp {
 
 export interface Txn {
   id: string;
-  kind: "record" | "reopen" | "register";
+  kind: "record" | "reopen" | "register" | "undo";
   content_id: string;
   round: number;
   ops: TxnOp[];
@@ -39,7 +39,11 @@ export interface Txn {
   release?: ReleaseOp;
 }
 
-export interface ReleaseOp { owner: string; sha256: string; to: string }
+/**
+ * owner 的那份原片转给 to。`undo`（1b §7 改挂当前轮）：owner 本轮那条 accepted 事实转 rejected、写 aroll_reassign 决定、解冻；
+ * 没有 undo = 历史轮归属转移（记 released_to）。
+ */
+export interface ReleaseOp { owner: string; sha256: string; to: string; undo?: { fact_id: string; to_title: string } }
 
 function txnFile(dataDir: string, id: string): string {
   if (!/^txn-[a-z0-9-]+$/.test(id)) throw new Error(`事务 id 不合法：${id}`);

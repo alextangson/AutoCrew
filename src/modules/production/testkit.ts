@@ -15,7 +15,7 @@ import { writeEnabledVersion } from "../../storage/production-store.js";
 import { resetProductionReady } from "./service.js";
 import { forgetShaIndex } from "./sha-index.js";
 import { setMatchDeps } from "./match/deps.js";
-import { resetMatchQueue } from "./match/queue.js";
+import { matchWorkerIdle, resetMatchQueue } from "./match/queue.js";
 
 export interface Env { dir: string; inbox: string; chatcut: string; jianying: string; outside: string; cleanup: () => Promise<void> }
 
@@ -37,7 +37,7 @@ export async function makeEnv(opts: { enabled?: boolean } = {}): Promise<Env> {
     now: () => Date.now(),
   });
   if (opts.enabled) await writeEnabledVersion(dir);
-  return { dir, inbox, chatcut, jianying, outside, cleanup: async () => { setProductionDeps(null); setMatchDeps(null); resetMatchQueue(); resetProductionReady(); forgetShaIndex(); await fs.rm(temp, { recursive: true, force: true }); } };
+  return { dir, inbox, chatcut, jianying, outside, cleanup: async () => { await matchWorkerIdle(dir); setProductionDeps(null); setMatchDeps(null); resetMatchQueue(); resetProductionReady(); forgetShaIndex(); await fs.rm(temp, { recursive: true, force: true }); } };
 }
 
 /** 写文件并把修改时间拨到 60 秒前（过「10 秒内不变」门）；fresh=true 保留刚写的时间 */

@@ -106,6 +106,18 @@ function legacyRegisteredNote<T extends { rule: string | null; alerts: string[];
   return recut ? { ...r, alerts: [LEGACY_REGISTERED_RECUT, ...alerts] } : { ...r, alerts, badges: [LEGACY_REGISTERED, ...r.badges] };
 }
 
+/** 本轮原片的提示（1b §4 自动挂上、§7 卡片挂载核对）：只加 badge，不影响阶段 */
+export function arollBadges(doc: ProductionDoc): string[] {
+  const out: string[] = [];
+  for (const f of doc.facts.filter((x) => x.round === doc.round && x.kind === "aroll" && x.state === "accepted")) {
+    if (f.auto_attached) out.push(f.source === "reconcile" ? "从收件箱自动挂上，不对就点「不是这条」" : "核对后自动挂上，不对就点「不是这条」");
+    const c = f.attach_check;
+    if (c?.status === "suggest" && c.other_title) out.push(`这段原片听起来更像《${c.other_title}》`);
+    if ((c?.status === "not_ready" || c?.status === "failed") && c.reason) out.push(c.reason);
+  }
+  return out;
+}
+
 /** 本体规则下的结果（不管启没启用） */
 export function deriveExplanation(input: ExplainInput): Explanation {
   const { content, doc, publish } = input;
@@ -113,9 +125,12 @@ export function deriveExplanation(input: ExplainInput): Explanation {
   if (!isVideoPlatform(content.platform)) return nonProduction(legacyColumn(content, publish), "other", null);
   const d = doc ?? emptyProductionDoc();
   // 写稿段也把候选带出来：认稿前发现的疑似 A-roll 要在卡上看得见（E4）
-  if (!scriptApprovalFor(d, content.body ?? "")) return { ...nonProduction("写稿中", "writing", writingBadge(d)), candidates: candidatesOf(d) };
+  if (!scriptApprovalFor(d, content.body ?? "")) {
+    const w = nonProduction("写稿中", "writing", writingBadge(d));
+    return { ...w, badges: [...w.badges, ...arollBadges(d)], candidates: candidatesOf(d) };
+  }
   const r = legacyRegisteredNote(deriveStage(d, content.body ?? "", publish), d, content);
-  const badges = content.status === "publishing" && r.stage !== "已发布" ? [...r.badges, "发布中"] : r.badges;
+  const badges = [...(content.status === "publishing" && r.stage !== "已发布" ? [...r.badges, "发布中"] : r.badges), ...(r.stage === "已发布" ? [] : arollBadges(d))];
   return { column: r.stage, phase: "production", stage: r.stage, rule: r.rule, status: STAGE_STATUS[r.stage], missing: r.missing, badges, alerts: r.alerts, reason: r.reason, candidates: r.candidates, publishable: r.publishable, evidence: r.evidence };
 }
 
