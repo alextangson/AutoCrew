@@ -4,7 +4,7 @@ import { getContent } from "../../../storage/local-store.js";
 import { readProductionDoc } from "../../../storage/production-store.js";
 import { founderDecision } from "../../production/decisions.js";
 import { registeredPackage } from "../../production/publish-gate.js";
-import { founderApprove, png, projectRoot, put, record, videoContent, type Env } from "../../production/testkit.js";
+import { founderApprove, png, projectRoot, put, record, videoContent, type Env, waiveSliverCheck } from "../../production/testkit.js";
 import type { JevAnswer, JevCaller, JevQuestion } from "./jev-client.js";
 
 export const SRT_TEXT = "1\n00:00:00,000 --> 00:00:05,000\nAI 老是忘事，我试了 3 个办法，效率提升了 73%\n\n2\n00:00:05,000 --> 00:00:10,000\n第一个办法是把规则写进文件\n";
@@ -20,6 +20,7 @@ export async function registeredVideo(env: Env, coverText = "AI 又忘了？") {
   const c43 = await record(env, { content_id: c.id, kind: "cover", path: await put(path.join(env.chatcut, "c43.png"), png(1200, 900)), version: 1, request_id: "p2" });
   const doc = (await readProductionDoc(c.id, env.dir))!;
   const sha = (id: unknown) => doc.facts.find((f) => f.id === id)!.sha256!;
+  await waiveSliverCheck(env, c.id, sha(cut.fact_id));
   await founderDecision(c.id, "approve_cut", { fact_id: cut.fact_id, sha256: sha(cut.fact_id) }, env.dir);
   await founderDecision(c.id, "pick_cover", { cover_3x4_fact_id: c34.fact_id, cover_3x4_sha: sha(c34.fact_id), cover_4x3_fact_id: c43.fact_id, cover_4x3_sha: sha(c43.fact_id), cover_text: coverText }, env.dir);
   const gate = await registeredPackage((await getContent(c.id, env.dir))!, env.dir);

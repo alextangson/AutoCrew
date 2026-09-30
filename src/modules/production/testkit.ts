@@ -94,3 +94,13 @@ export function record(env: Env, params: Record<string, unknown>, host = "codex"
 export async function exists(p: string): Promise<boolean> {
   return fs.lstat(p).then(() => true, () => false);
 }
+
+/**
+ * 抽帧检查默认拦「成片通过」（spec 2026-09-30 §12-1）：与抽帧无关的测试里，临时库没有 ChatCut 工程记录，
+ * 检查必然「没跑成」——先替创始人点「这条不查了，放行」，再测别的。
+ */
+export async function waiveSliverCheck(env: Env, contentId: string, cutSha: string): Promise<void> {
+  const { founderDecision } = await import("./decisions.js");
+  const r = await founderDecision(contentId, "waive_sliver_check", { cut_sha: cutSha }, env.dir);
+  if (!(r as { ok: boolean }).ok) throw new Error(`整条放行失败：${JSON.stringify(r)}`);
+}

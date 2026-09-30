@@ -79,7 +79,7 @@ export const DERIVE_CASES: DeriveCase[] = [
   { name: "D3- 封面批准被撤销 → 不命中 D3", build: () => { const v = coverOk(); return { doc: doc(fullFacts(), [cutOk(), v, decision("approval_revoke", { target_id: v.id, at: t(6) })]) }; }, expect: { stage: "剪辑中", rule: "D4", missingIncludes: ["封面待你选"] } },
   // D4
   { name: "D4+ 只有原片 → 剪辑中，缺成片与两张封面", build: () => ({ doc: doc([fact("aroll", SHA.aroll)], []) }), expect: { stage: "剪辑中", rule: "D4", missing: ["成片", "封面(3:4)", "封面(4:3)"] } },
-  { name: "D4+ 全套产物无批准 → 成片待你审 / 封面待你选（pzey0m 形状）", build: () => ({ doc: doc(fullFacts(), []) }), expect: { stage: "剪辑中", rule: "D4", missing: ["成片待你审", "封面待你选"] } },
+  { name: "D4+ 全套产物无批准 → 成片待你审 / 封面待你选（pzey0m 形状）", build: () => ({ doc: doc(fullFacts(), []) }), expect: { stage: "剪辑中", rule: "D4", missing: ["成片待你审", "抽帧检查还没有结果", "封面待你选"] } },
   { name: "D4+ 成片没字幕 → 缺字幕", build: () => ({ doc: doc([fact("cut", SHA.cut)], []) }), expect: { stage: "剪辑中", rule: "D4", missingIncludes: ["字幕", "成片待你审"] } },
   { name: "D4+ 文件缺失（availability=missing）不倒退", build: () => ({ doc: doc([fact("aroll", SHA.aroll, { availability: "missing" })], []) }), expect: { stage: "剪辑中", rule: "D4" } },
   { name: "D4+ 只有 ChatCut 工程也算制作事实", build: () => ({ doc: doc([fact("chatcut_project", undefined, { project_id: "p1" })], []) }), expect: { stage: "剪辑中", rule: "D4" } },

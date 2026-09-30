@@ -13,14 +13,18 @@ import { revealProjectPath } from "../../desktop/project-reveal.js";
 import { founderDecision } from "./decisions.js";
 import { publishReceipts } from "./derive.js";
 import { registeredPackage } from "./publish-gate.js";
-import { exists, founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
+import { exists, founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env, waiveSliverCheck } from "./testkit.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); });
 
 const TITLE = "AI 又忘了怎么办";
-const decide = (id: string, a: string, p: Record<string, unknown> = {}) => founderDecision(id, a, p, env.dir);
+/** 与抽帧无关的用例：批成片前先整条放行抽帧检查（临时库没有 ChatCut 工程，检查必然没跑成） */
+const decide = async (id: string, action: string, p: Record<string, unknown> = {}) => {
+  if (action === "approve_cut" && typeof p.sha256 === "string") await waiveSliverCheck(env, id, p.sha256);
+  return founderDecision(id, action, p, env.dir);
+};
 
 async function edited() {
   const c = await videoContent(env, TITLE);

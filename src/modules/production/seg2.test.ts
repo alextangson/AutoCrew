@@ -13,7 +13,7 @@ import { founderDecision } from "./decisions.js";
 import { registeredPackage } from "./publish-gate.js";
 import { reconcileAll } from "./reconcile.js";
 import { reopenScript } from "./reopen.js";
-import { exists, founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
+import { exists, founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env, waiveSliverCheck } from "./testkit.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
@@ -35,7 +35,11 @@ async function edited(opts: { srt?: boolean; coverText?: string } = {}) {
   return { c, cut: { fact_id: cut.fact_id, sha256: sha(cut.fact_id) }, c34: { fact_id: c34.fact_id, sha: sha(c34.fact_id) }, c43: { fact_id: c43.fact_id, sha: sha(c43.fact_id) } };
 }
 
-const decide = (id: string, action: string, p: Record<string, unknown> = {}) => founderDecision(id, action, p, env.dir);
+/** 与抽帧无关的用例：批成片前先整条放行抽帧检查（临时库没有 ChatCut 工程，检查必然没跑成） */
+const decide = async (id: string, action: string, p: Record<string, unknown> = {}) => {
+  if (action === "approve_cut" && typeof p.sha256 === "string") await waiveSliverCheck(env, id, p.sha256);
+  return founderDecision(id, action, p, env.dir);
+};
 const pick = (s: Awaited<ReturnType<typeof edited>>, text?: string) => decide(s.c.id, "pick_cover", {
   cover_3x4_fact_id: s.c34.fact_id, cover_3x4_sha: s.c34.sha, cover_4x3_fact_id: s.c43.fact_id, cover_4x3_sha: s.c43.sha, ...(text ? { cover_text: text } : {}),
 });
@@ -229,6 +233,7 @@ describe("工作台适配（§8）", () => {
     await put(path.join(projectRoot(env, s.c.id), "00-project/autocrew/decisions.json"), JSON.stringify({ cover_text: "工作台封面字" }));
     const view = await founderProjectReview(s.c.id, env.dir);
     expect(view).toMatchObject({ ok: true, ontology: true, handoff_valid: true });
+    await waiveSliverCheck(env, s.c.id, s.cut.sha256);
     await founderProjectReview(s.c.id, env.dir, { action: "approve", which: "final_cut", files: [{ path: "04-edit/AI又忘了怎么办.mp4", sha256: s.cut.sha256 }] });
     const after = await founderProjectReview(s.c.id, env.dir, { action: "approve", which: "covers", files: [{ sha256: s.c34.sha }, { sha256: s.c43.sha }] });
     expect((after.gates as Record<string, { status: string }>).gate3.status).toBe("approved");

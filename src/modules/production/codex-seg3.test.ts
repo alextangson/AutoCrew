@@ -15,14 +15,18 @@ import { enableOntology } from "./enable.js";
 import { cardPanel } from "./panel.js";
 import { reconcileAll } from "./reconcile.js";
 import { reopenScript } from "./reopen.js";
-import { founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env } from "./testkit.js";
+import { founderApprove, makeEnv, png, projectRoot, put, record, SRT, videoContent, type Env, waiveSliverCheck } from "./testkit.js";
 
 let env: Env;
 beforeEach(async () => { env = await makeEnv({ enabled: true }); });
 afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); });
 
 const TITLE = "AI 又忘了怎么办";
-const decide = (id: string, a: string, p: Record<string, unknown> = {}) => founderDecision(id, a, p, env.dir);
+/** 与抽帧无关的用例：批成片前先整条放行抽帧检查（临时库没有 ChatCut 工程，检查必然没跑成） */
+const decide = async (id: string, a: string, p: Record<string, unknown> = {}) => {
+  if (a === "approve_cut" && typeof p.sha256 === "string") await waiveSliverCheck(env, id, p.sha256);
+  return founderDecision(id, a, p, env.dir);
+};
 
 describe("Codex 审 seg3", () => {
   it("[P1 asset.ts:66] 库内路径夹着指向库外的符号链接：按真实路径算库外，关闭、不搬", async () => {
