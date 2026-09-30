@@ -11,7 +11,9 @@ import { addDecision, removeDecision, type LinkOp } from "../modules/flywheel/ou
 import { markPublished, startWriting, unmarkPublished, type OpenDeps } from "./board-actions.js";
 import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
-import { founderDecision } from "../modules/production/decisions.js";
+import { decide, decideItem, type DecideDeps } from "../modules/production/inbox-decide.js";
+import { readInbox } from "../modules/production/inbox-read.js";
+import { ATTACHMENT_HEADERS, attachmentStream, openAttachment } from "../modules/production/inbox-attachment.js";
 import { cardPanel } from "../modules/production/panel.js";
 import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/production/storyboard.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
@@ -29,6 +31,8 @@ export interface BoardRouteDeps {
   storyboard?: StoryboardOpenDeps;
   /** 测试注入：不真开访达 */
   reveal?: RevealSourceDeps;
+  /** 测试注入：发布检查重跑用的 Jev、时钟 */
+  inbox?: DecideDeps;
 }
 
 const JSON_TYPE = "application/json; charset=utf-8";
@@ -67,6 +71,34 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       if (!isContentId(id)) { send(res, 400, { ok: false, code: "bad_request", error: "content_id 不对" }); return true; }
       try { send(res, 200, await cardPanel(id, await deps.resolveDataDir())); }
       catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    // 等你拍板（review-inbox §3）：列表只读推导；决定只有一个入口（带 item_id + gen，锁内 CAS）
+    if (p === "/api/inbox" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      try { send(res, 200, await readInbox(await deps.resolveDataDir())); }
+      catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    if (p === "/api/inbox/decide" && req.method === "POST") {
+      await post(req, res, async (b, dir) => {
+        const params = Object.fromEntries(Object.entries(b).filter(([k]) => !k.startsWith("_")));
+        if (params.content_id !== undefined && !isContentId(String(params.content_id))) return { ok: false, code: "bad_request", error: "content_id 不对" };
+        return decideItem(params, dir, deps.inbox);
+      });
+      return true;
+    }
+    // 请示附件（§5.4）：只读、sandbox + nosniff、只认绑定时的 sha；HTML 不从这里给
+    if (p === "/api/inbox/attachment" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      const id = url.searchParams.get("content_id") ?? "", ask = url.searchParams.get("ask_id") ?? "", index = Number(url.searchParams.get("index") ?? "-1");
+      if (!isContentId(id) || !/^ask-[\w-]+$/.test(ask) || !Number.isInteger(index) || index < 0) { send(res, 400, { ok: false, error: "参数不对" }); return true; }
+      try {
+        const r = await openAttachment(id, ask, index, await deps.resolveDataDir());
+        if (!r.ok) { res.writeHead(r.status, { "Content-Type": "application/json; charset=utf-8", ...ATTACHMENT_HEADERS }).end(JSON.stringify({ ok: false, error: r.error })); return true; }
+        res.writeHead(200, { "Content-Type": r.type, "Content-Length": String(r.size), ...ATTACHMENT_HEADERS });
+        attachmentStream(r.file).pipe(res);
+      } catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }
     if (p === "/api/data" && req.method === "GET") {
@@ -111,7 +143,8 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         if (!isContentId(id)) return { ok: false, code: "bad_request", error: "content_id 不对" };
         // 浏览器请求体里的 _host / _modelCall 不许借来冒充什么：剥掉内部键，决定只认会话本身
         const params = Object.fromEntries(Object.entries(b).filter(([k]) => !k.startsWith("_")));
-        return founderDecision(id, String(b.action ?? ""), params, dir);
+        // 等你拍板 R18：卡片上的旧决定也走同一个入口（带代次则 CAS，旧页面按指纹找条目取代次）
+        return decide(id, String(b.action ?? ""), params, dir, deps.inbox);
       });
       return true;
     }

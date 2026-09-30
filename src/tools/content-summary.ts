@@ -11,7 +11,9 @@ import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { topicHashOf } from "../modules/research/research-job-store.js";
 import { explainContent } from "../modules/production/read.js";
 import type { Explanation } from "../modules/production/explain.js";
-import { isOntologyActive } from "../storage/production-store.js";
+import { isOntologyActive, readProductionDoc } from "../storage/production-store.js";
+import { askRows } from "../modules/production/asks.js";
+import { readInbox } from "../modules/production/inbox-read.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { productionPart, SUMMARY_BUDGET, type ProductionPart } from "./content-summary-production.js";
 
@@ -59,7 +61,7 @@ function blockersOf(c: Content, now: number): string[] {
 /** 按本体走的视频稿、制作段：阶段 / 卡点 / 下一步都取推导结果（explain），不看旧状态表 */
 const ONTOLOGY_NEXT: Record<string, string> = {
   待录制: "原片放进「我的内容/0 原片放这里」后用 autocrew_content record kind=aroll 报上来",
-  剪辑中: "剪辑工位把成片 / 字幕 / 封面用 autocrew_content record 报上来；成片通过、选封面只能创始人在卡片上点",
+  剪辑中: "剪辑工位把成片 / 字幕 / 封面用 autocrew_content record 报上来；成片通过、选封面只能创始人在「等你拍板」里点",
   待发布: "先 autocrew_publish check，再带各平台 check_ids 调 ego_lite_prepare；最终点击前停下问创始人",
   已发布: "已发布，可看数据回流",
 };
@@ -99,18 +101,34 @@ function minimalShape(out: Record<string, unknown>, part: ProductionPart | null)
   const f = part?.fields ?? {};
   const row = (f.aroll as Array<{ fact_id: string; state: string; round: number; path?: string }> | undefined)?.[0];
   const keep = ["changes", "has_more", "next_since_seq", "latest_seq", "aroll_has_more", "aroll_next_offset"];
-  const minimal: Record<string, unknown> = { ok: out.ok, id: out.id, stage: out.stage,
+  const minimal: Record<string, unknown> = { ok: out.ok, id: out.id, stage: out.stage, ...(out.inbox ? { inbox: { count: (out.inbox as { count: number }).count } } : {}),
     ...(row ? { aroll: [{ fact_id: row.fact_id, state: row.state, round: row.round, ...(row.path ? { path: row.path } : {}) }] } : {}),
     ...Object.fromEntries(keep.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])) };
   return Buffer.byteLength(JSON.stringify(minimal)) > SUMMARY_BUDGET ? { ...minimal, oversize: true } : minimal;
 }
 
-export async function contentSummary(id: string, dataDir?: string, now = Date.now(), sinceSeqRaw?: unknown, arollOffsetRaw?: unknown): Promise<Record<string, unknown>> {
+/** 请示一页最多几件（asks[] 用独立游标 asks_offset，不与 since_seq 混用，review-inbox §5.2 / R17） */
+const ASKS_PAGE = 3;
+
+async function asksAndInbox(c: Content, dataDir: string, offset: number): Promise<Record<string, unknown>> {
+  const doc = await readProductionDoc(c.id, dataDir).catch(() => null);
+  const rows = doc ? askRows(doc, c) : [];
+  const page = rows.slice(offset, offset + ASKS_PAGE).map((r) => ({ ...r, ...(r.note ? { note: clip(r.note, 30) } : {}) }));
+  const view = await readInbox(dataDir, { contentId: c.id }).catch(() => null);
+  return {
+    ...(view ? { inbox: { count: view.count, item_ids: view.items.slice(0, 5).map((i) => i.item_id), where: "等你拍板" } } : {}),
+    ...(rows.length ? { asks: page, ...(offset + ASKS_PAGE < rows.length ? { asks_next_offset: offset + ASKS_PAGE } : {}) } : {}),
+  };
+}
+
+export async function contentSummary(id: string, dataDir?: string, now = Date.now(), sinceSeqRaw?: unknown, arollOffsetRaw?: unknown, asksOffsetRaw?: unknown): Promise<Record<string, unknown>> {
   if (!id) return { ok: false, error: "id is required for summary" };
   const since = parseSinceSeq(sinceSeqRaw);
   if (!since.ok) return { ok: false, code: "bad_param", error: "since_seq 要是非负整数（用上次 summary 回的 next_since_seq）" };
   const offset = parseSinceSeq(arollOffsetRaw);
   if (!offset.ok) return { ok: false, code: "bad_param", error: "aroll_offset 要是非负整数（用上次 summary 回的 aroll_next_offset）" };
+  const asksOffset = parseSinceSeq(asksOffsetRaw);
+  if (!asksOffset.ok) return { ok: false, code: "bad_param", error: "asks_offset 要是非负整数（用上次 summary 回的 asks_next_offset）" };
   const c = await getContent(id, dataDir);
   if (!c || c.deletedAt) return { ok: false, code: "not_found", error: `找不到这篇稿（${id}）：不存在或已删除`, next_action: "用 autocrew_content list 看现有稿件" };
   const blockers = blockersOf(c, now);
@@ -135,5 +153,6 @@ export async function contentSummary(id: string, dataDir?: string, now = Date.no
     next: (exp?.stage ? ONTOLOGY_NEXT[exp.stage] : undefined) ?? NEXT[c.status] ?? "没有建议的下一步",
     updatedAt: c.updatedAt,
     words: Array.from((c.body ?? "").replace(/\s+/g, "")).length,
+    ...(await asksAndInbox(c, getDataDir(dataDir), asksOffset.value ?? 0)),
   }, part);
 }

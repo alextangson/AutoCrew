@@ -1,0 +1,231 @@
+/**
+ * 「等你拍板」的单一决定入口（spec 2026-09-30-review-inbox §3.1，R1 / R2 / R18）。
+ *
+ * 每个动作都带条目的 `item_id` + 审阅代次 `gen`；服务端在文件归属锁内重新推导这件事、比对代次后消费：
+ * - 代次不符 → 「这件事刚变过，重新看一下」，不写；
+ * - 同一件事同一代次已被消费：同一决定 → 回放原结果；不同决定 → 拒。
+ * 网页的旧决定路由（卡片 / 工作台）也走这里：没带代次时按页面带来的指纹找到对应条目、取它当前的代次；
+ * 找不到条目的动作（撤销批准、纠正发布、挂原片…）不在列表里，直接交给创始人决定。
+ */
+import { getContent, getDataDir, type Content } from "../../storage/local-store.js";
+import { newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import type { Decision, InboxConsumption } from "../../storage/production-types.js";
+import { isModelCall } from "../../storage/stage-guard.js";
+import { executeContentSave } from "../../tools/content-save.js";
+import { executePublishCheck } from "../publish/review-gate/check.js";
+import { readCheckRecord } from "../publish/review-gate/check-store.js";
+import type { JevCaller } from "../publish/review-gate/jev-client.js";
+import type { Override } from "../publish/review-gate/types.js";
+import { founderAnswer, undoReportedAnswer } from "./asks.js";
+import { DECISION_ACTIONS, FOUNDER_ONLY, founderDecision } from "./decisions.js";
+import type { InboxAction, InboxItem } from "./inbox.js";
+import { readInbox } from "./inbox-read.js";
+import { withFileOwnership } from "./mutex.js";
+import { mutateProduction } from "./service.js";
+
+type Result = Record<string, unknown>;
+const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
+const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
+const KEEP = 200;
+
+export interface DecideDeps { jev?: JevCaller; now?: number }
+
+/** 条目允许的动作（闪帧的「这处是故意的」挂在每一处缝上） */
+function allowed(item: InboxItem): InboxAction[] {
+  const per = item.type === "sliver" ? (item.detail.items as Array<{ action: InboxAction }>).map((x) => x.action) : [];
+  return [...item.actions, ...per];
+}
+
+/** 决定的指纹：动作 + 创始人给的参数（不含条目 / 代次本身） */
+function fingerprint(action: string, params: Record<string, unknown>): string {
+  const keys = Object.keys(params).filter((k) => !["item_id", "gen", "content_id", "action"].includes(k) && !k.startsWith("_")).sort();
+  return JSON.stringify([action, keys.map((k) => [k, params[k]])]);
+}
+
+async function logOf(contentId: string, dataDir: string): Promise<InboxConsumption[]> {
+  return (await readProductionDocOrEmpty(contentId, dataDir)).inbox_log ?? [];
+}
+
+async function consume(contentId: string, dataDir: string, entry: InboxConsumption): Promise<void> {
+  await mutateProduction(contentId, dataDir, (d) => {
+    d.inbox_log = [...(d.inbox_log ?? []), entry].slice(-KEEP);
+    return { value: null, events: [{ type: "inbox_decided", detail: { item_id: entry.item_id, action: entry.action } }] };
+  });
+}
+
+async function pushDecision(contentId: string, dataDir: string, d: Omit<Decision, "id" | "round" | "at" | "source">, event: string): Promise<Decision> {
+  return (await mutateProduction(contentId, dataDir, (doc) => {
+    const full: Decision = { id: newId("dec"), round: doc.round, at: new Date().toISOString(), source: "founder", ...d };
+    doc.decisions.push(full);
+    return { value: full, events: [{ type: event, detail: { decision_id: full.id, ...d } }] };
+  })).value;
+}
+
+// ---- 各类条目的动作 ----
+
+interface Ctx { item: InboxItem; content: Content | null; dataDir: string; params: Record<string, unknown>; spec: InboxAction; deps: DecideDeps }
+
+const noteOf = (ctx: Ctx) => str(ctx.params.note);
+
+async function publishOverride(ctx: Ctx): Promise<Result> {
+  const quote = noteOf(ctx);
+  if (!quote) return fail("note_required", "写一句你的原话：为什么这次破例");
+  const checkId = String(ctx.item.detail.check_id);
+  const rec = await readCheckRecord(ctx.content!.id, checkId, ctx.dataDir) as (Record<string, unknown> & { platform?: string; items?: Array<{ result?: string; rule?: string; overridable?: boolean }>;
+    inputs?: { plan_source?: string; plan_snapshot?: unknown; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } }) | null;
+  if (!rec) return fail("stale", "这次检查的留档不见了，刷新再看");
+  const rules = [...new Set((rec.items ?? []).filter((i) => i.result === "block" && i.overridable && i.rule).map((i) => i.rule!))];
+  if (!rules.length) return fail("not_overridable", "这次检查没有能破例的拦截项：只能改计划后重跑");
+  const founderOverrides = rules.map((rule) => ({ platform: rec.platform!, rule, founder_quote: quote }));
+  const inputs = rec.inputs ?? {};
+  const plan = inputs.plan_source === "inline" ? inputs.plan_snapshot : inputs.plan_source || "06-publish/publish-plan.json";
+  // 留档不可变：用原来的输入 + 你的原话重跑，得到一次新的检查（新 check_id），不改旧检查
+  const r = await executePublishCheck({ _dataDir: ctx.dataDir, content_id: ctx.content!.id, plan, founder_quotes: inputs.founder_quotes ?? [], overrides: inputs.overrides ?? [], ...(inputs.instruction_id ? { instruction_id: inputs.instruction_id } : {}) },
+    { ...(ctx.deps.jev ? { jev: ctx.deps.jev } : {}), founderOverrides, rerunOf: checkId });
+  if (r.ok !== true) return fail(String(r.code ?? "check_failed"), `重跑检查没成：${String(r.error ?? "")}`);
+  const mine = (r.platforms as Array<{ platform: string; check_id: string; verdict: string }>).find((p) => p.platform === rec.platform);
+  return { ok: true, rerun_of: checkId, check_id: mine?.check_id ?? null, verdict: mine?.verdict ?? null, ...(r.semantic ? { semantic: r.semantic } : {}) };
+}
+
+async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
+  const c = ctx.content!;
+  if (!approve) {
+    const note = noteOf(ctx);
+    if (!note) return fail("note_required", "写一句要改哪里");
+    const d = await pushDecision(c.id, ctx.dataDir, { type: "script_revise", note }, "script_revise_requested");
+    const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "revision", from_status: "draft_ready", force: true }) as Result;
+    return t.ok ? { ok: true, decision: d } : fail("transition_failed", `意见记下了，但稿子没退回修改：${String(t.error ?? "")}`, { decision: d });
+  }
+  const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true }) as Result;
+  return t.ok ? { ok: true, status: "approved" } : fail("transition_failed", String(t.error ?? "认稿没成"));
+}
+
+async function run(ctx: Ctx): Promise<Result> {
+  const { item, dataDir, params, spec } = ctx;
+  const c = ctx.content;
+  const merged = { ...spec.params, ...params };
+  switch (spec.action) {
+    case "answer_ask": return founderAnswer(c!, dataDir, String(spec.params!.ask_id), String(spec.params!.option_id), noteOf(ctx));
+    case "undo_ask_answer": return undoReportedAnswer(c!, dataDir, String(spec.params!.ask_id), ctx.deps.now);
+    case "ack": return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "inbox_ack", item_id: item.item_id }, "inbox_acked") };
+    case "nudge": return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "inbox_ack", item_id: item.item_id, note: `创始人让你补：${String(item.detail.reason ?? "")}` }, "founder_nudged") };
+    case "publish_check_confirm": return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "publish_check_confirm", check_id: String(item.detail.check_id), platform: String(item.detail.platform) }, "publish_check_confirmed") };
+    case "publish_check_revise": {
+      if (!noteOf(ctx)) return fail("note_required", "写一句哪几处要改");
+      return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "publish_check_revise", check_id: String(item.detail.check_id), platform: String(item.detail.platform), note: noteOf(ctx) }, "publish_check_revise") };
+    }
+    case "publish_check_override": return publishOverride(ctx);
+    case "approve_script": return scriptDecision(ctx, true);
+    case "revise_script": return scriptDecision(ctx, false);
+    case "assign": {
+      const to = str(params.to);
+      if (!to) return fail("bad_request", "选一条稿：指定给哪条");
+      return founderDecision(to, "attach_aroll", { path: item.detail.path, confirm_other: true }, dataDir);
+    }
+    case "reject_cut": return founderDecision(c!.id, "reject_cut", { ...merged, note: noteOf(ctx) || (item.type === "sliver" ? "画面有闪帧，去剪辑里改" : "") }, dataDir);
+    case "reject_cover": {
+      // 只打回面板上还没定的那几组：已批的那组不跟着失效
+      const groups = (item.detail.groups as Array<{ approved: boolean; "3:4": { sha256: string } | null; "4:3": { sha256: string } | null }>).filter((g) => !g.approved);
+      const shas = groups.flatMap((g) => [g["3:4"]?.sha256, g["4:3"]?.sha256]).filter((x): x is string => Boolean(x));
+      return founderDecision(c!.id, "reject_cover", { sha256: `inbox:${item.gen}`, cover_shas: shas, note: noteOf(ctx) }, dataDir);
+    }
+    case "approve_cut": {
+      const versions = item.detail.versions as Array<{ fact_id: string; sha256: string }>;
+      const pick = versions.find((v) => v.fact_id === str(merged.fact_id));
+      if (!pick) return fail("stale", "这一版不在本轮的成片里，刷新再看");
+      return founderDecision(c!.id, "approve_cut", { fact_id: pick.fact_id, sha256: pick.sha256 }, dataDir);
+    }
+    case "pick_cover": {
+      const groups = item.detail.groups as Array<{ group_id: string }>;
+      if (!groups.some((g) => g.group_id === str(merged.group_id))) return fail("stale", "这组不在面板上了，刷新再看");
+      return founderDecision(c!.id, "pick_cover", { group_id: merged.group_id, ...(str(merged.cover_text) ? { cover_text: str(merged.cover_text) } : {}) }, dataDir);
+    }
+    case "i_published": return founderDecision(c!.id, "i_published", { platform: spec.params!.platform, ...(noteOf(ctx) ? { url: noteOf(ctx) } : str(params.url) ? { url: str(params.url) } : {}) }, dataDir);
+    default:
+      if ((DECISION_ACTIONS as readonly string[]).includes(spec.action)) return founderDecision(c!.id, spec.action, merged, dataDir);
+      return fail("bad_request", `不认识的动作：${spec.action}`);
+  }
+}
+
+/** 这件事在哪条稿上记消费（收件箱里的视频记在被指定的那条） */
+const logContentOf = (item: InboxItem, params: Record<string, unknown>) => item.content_id ?? (str(params.to) || null);
+
+/** 带代次的决定（R1 / R2）：锁内推导、比对、消费 */
+export async function decideItem(req: Record<string, unknown>, dataDir = getDataDir(), deps: DecideDeps = {}): Promise<Result> {
+  if (isModelCall(req)) return fail("founder_only", FOUNDER_ONLY);
+  const itemId = str(req.item_id), gen = str(req.gen), action = str(req.action), contentId = str(req.content_id);
+  if (!itemId || !gen || !action) return fail("bad_request", "要带 item_id、gen 和 action（刷新再点）");
+  const fp = fingerprint(action, req);
+  const locked = () => withFileOwnership(async () => {
+    const view = await readInbox(dataDir, { ...(contentId ? { contentId } : {}), ...(deps.now ? { now: deps.now } : {}) });
+    const item = view.items.find((x) => x.item_id === itemId);
+    const logId = item ? logContentOf(item, req) : contentId || str(req.to) || null;
+    const prior = logId ? (await logOf(logId, dataDir)).find((e) => e.item_id === itemId && e.gen === gen) : undefined;
+    if (prior) return prior.fp === fp && prior.action === action ? { phase: "done" as const, result: { ...prior.result, replayed: true } }
+      : { phase: "done" as const, result: fail("already_decided", "这件事已经在别处处理过了（做的是另一个决定），刷新看现在的样子") };
+    if (!item) return { phase: "done" as const, result: fail("gone", "这件事已在别处处理，或已经关了：刷新再看") };
+    if (item.gen !== gen) return { phase: "done" as const, result: fail("stale", "这件事刚变过，重新看一下") };
+    // 同一动作可能有几个（每个选项、每一处缝）：选项 / 缝必须和请求一致，不许落到第一个
+    const chosen = allowed(item).filter((a) => a.action === action).find((a) => ["option_id", "sliver_key"].every((k) => a.params?.[k] === undefined || a.params[k] === req[k]));
+    if (!chosen) return { phase: "done" as const, result: fail("bad_request", "这件事没有这个动作") };
+    if (chosen.note === "required" && !str(req.note)) return { phase: "done" as const, result: fail("note_required", "写一句话再发") };
+    const content = item.content_id ? await getContent(item.content_id, dataDir) : null;
+    const ctx: Ctx = { item, content, dataDir, params: req, spec: chosen, deps };
+    // 破例重跑要调外部模型：不占着锁跑，跑完回锁里再核一次代次
+    if (chosen.action === "publish_check_override") return { phase: "outside" as const, ctx, logId };
+    const result = await run(ctx);
+    if (result.ok === true && logId) await consume(logId, dataDir, { item_id: itemId, gen, action, fp, at: new Date().toISOString(), result: slim(result) });
+    return { phase: "done" as const, result };
+  });
+  const first = await locked();
+  if (first.phase === "done") return { ...first.result, item_id: itemId, gen };
+  const result = await run(first.ctx);
+  if (result.ok === true && first.logId) {
+    await withFileOwnership(async () => {
+      const again = (await logOf(first.logId!, dataDir)).find((e) => e.item_id === itemId && e.gen === gen);
+      if (!again) await consume(first.logId!, dataDir, { item_id: itemId, gen, action, fp, at: new Date().toISOString(), result: slim(result) });
+    });
+  }
+  return { ...result, item_id: itemId, gen };
+}
+
+/** 消费记录只留回放要的：别把整份回执塞进制作记录 */
+function slim(r: Result): Result {
+  const keep = ["ok", "decision", "stage", "missing", "registration", "registration_failed", "check_id", "rerun_of", "verdict", "status", "storyboard_approved", "group_id"];
+  return Object.fromEntries(Object.entries(r).filter(([k]) => keep.includes(k)));
+}
+
+// ---- 旧路由（卡片 / 工作台）：按页面带来的指纹找条目 ----
+
+function legacyMatch(item: InboxItem, action: string, p: Record<string, unknown>): boolean {
+  const d = item.detail;
+  switch (action) {
+    case "approve_cut": case "reject_cut":
+      return (item.type === "cut_review" && (d.versions as Array<{ fact_id: string }>).some((v) => v.fact_id === p.fact_id)) || (item.type === "sliver" && d.cut_fact_id === p.fact_id && action === "reject_cut");
+    case "pick_cover": return item.type === "cover_pick" && (d.groups as Array<{ group_id: string; "3:4": { fact_id: string } | null; "4:3": { fact_id: string } | null }>)
+      .some((g) => g.group_id === p.group_id || (g["3:4"]?.fact_id === p.cover_3x4_fact_id && g["4:3"]?.fact_id === p.cover_4x3_fact_id));
+    case "confirm_candidate": case "reject_candidate": return item.type === "candidate" && d.fact_id === p.fact_id;
+    case "undo_auto_attach": return item.type === "auto_attached" && d.fact_id === p.fact_id;
+    case "keep_attach": case "reassign_aroll": return item.type === "attach_check" && d.fact_id === p.fact_id;
+    case "waive_sliver": case "waive_sliver_check": return item.type === "sliver" && d.cut_sha === p.cut_sha;
+    case "i_published": return item.type === "published_ask" && d.platform === p.platform;
+    case "confirm_receipt": return item.type === "publish_claim" && item.actions[0].params?.fact_id === p.fact_id;
+    default: return false;
+  }
+}
+
+/**
+ * 网页决定的唯一入口：带 item_id + gen → 走 CAS；旧页面（没带代次）→ 按指纹找到条目、用它当前的代次走同一个 CAS；
+ * 不在列表里的动作（撤销批准、纠正已发布、挂原片…）直接交给创始人决定。
+ */
+export async function decide(contentId: string, action: string, params: Record<string, unknown>, dataDir = getDataDir(), deps: DecideDeps = {}): Promise<Result> {
+  if (isModelCall(params)) return fail("founder_only", FOUNDER_ONLY);
+  if (str(params.item_id)) return decideItem({ ...params, action, content_id: contentId }, dataDir, deps);
+  const view = await readInbox(dataDir, { contentId });
+  const item = view.items.find((x) => legacyMatch(x, action, params));
+  if (!item) return founderDecision(contentId, action, params, dataDir);
+  // 旧页面：按它带来的具体对象选动作参数（哪一版 / 哪一组 / 哪一处）
+  const pinned = action === "pick_cover" && !params.group_id
+    ? { group_id: (item.detail.groups as Array<{ group_id: string; "3:4": { fact_id: string } | null }>).find((g) => g["3:4"]?.fact_id === params.cover_3x4_fact_id)?.group_id } : {};
+  return decideItem({ ...params, ...pinned, action, content_id: contentId, item_id: item.item_id, gen: item.gen }, dataDir, deps);
+}

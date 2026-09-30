@@ -10,6 +10,7 @@
 import { getContent, getDataDir, type Content } from "../../../storage/local-store.js";
 import { contentRoot } from "../../../storage/content-project.js";
 import { registeredPackage } from "../../production/publish-gate.js";
+import { readProductionDocOrEmpty } from "../../../storage/production-store.js";
 import { COVER_CROP_CHECKS, effectiveCoverRatios } from "../../cover/platform-ratios.js";
 import { applyOverrides, deterministicChecks, type CoverFact, type RegistrationState } from "./deterministic.js";
 import { makeJevCaller, JEV_MODEL, type JevCaller } from "./jev-client.js";
@@ -26,12 +27,18 @@ import { newCheckId, readCheckRecord, writeCheckRecord } from "./check-store.js"
 import { summaryMarkdown, summaryRows } from "./summary.js";
 import { platformVerdict, type CheckItem, type Override, type SummaryRow, type Verdict } from "./types.js";
 
-export interface CheckDeps { jev?: JevCaller }
+/**
+ * overrideSource：创始人在「等你拍板」里亲手写的破例（review-inbox §7-6）→ 重跑出新的检查，
+ * 留档里例外标 source=founder、rerun_of=原检查；不在旧检查上改。只能由服务端调用方给，模型传不进来。
+ */
+export interface CheckDeps { jev?: JevCaller; founderOverrides?: Override[]; rerunOf?: string }
 
 interface Ctx {
   content: Content; dataDir: string; root: string; quotes: string[]; overrides: Override[];
   instruction: StoredInstruction | null; plan: ParsedPlan; planSource: string; planRaw: Record<string, unknown>; prefs: PublishPrefs;
   registration: RegistrationState; basis: () => Promise<Basis>; caller: JevCaller;
+  /** 启动检查时的制作轮次（review-inbox §7-4：检查绑轮次 / 平台 / 输入指纹） */
+  round: number; deps: CheckDeps;
 }
 
 interface Detail { result: PlatformResult; covers: CoverFact[]; account: string | null }
@@ -72,9 +79,10 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promi
   const registration = await registrationState(content, dataDir);
   let basis: Promise<Basis> | null = null;
   return {
-    content, dataDir, root, quotes: quotes.value, overrides: overrides.value, instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
+    content, dataDir, root, quotes: quotes.value, overrides: [...overrides.value, ...(deps.founderOverrides ?? [])], instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
     prefs: await readPublishPrefs(dataDir), registration, caller: deps.jev ?? makeJevCaller(),
     basis: () => (basis ??= loadBasis(registration.kind === "ok" ? registration.srt : null, content.body ?? "")),
+    round: (await readProductionDocOrEmpty(id, dataDir).catch(() => null))?.round ?? 1, deps,
   };
 }
 
@@ -115,8 +123,10 @@ function shapeItems(ctx: Ctx, platform: string, named: GatePlatform[]): CheckIte
 
 async function writeRecord(ctx: Ctx, r: PlatformResult, extra: Record<string, unknown>): Promise<void> {
   await writeCheckRecord(ctx.content.id, r.check_id, {
-    check_id: r.check_id, content_id: ctx.content.id, platform: r.platform, checked_at: new Date().toISOString(),
-    inputs: { plan_source: ctx.planSource, ...(ctx.planSource === "inline" ? { plan_snapshot: ctx.planRaw } : {}), founder_quotes: ctx.quotes, instruction_id: ctx.instruction?.id ?? null, overrides: ctx.overrides.filter((o) => o.platform === r.platform), publish_rules: ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === r.platform) },
+    check_id: r.check_id, content_id: ctx.content.id, platform: r.platform, checked_at: new Date().toISOString(), round: ctx.round,
+    ...(ctx.deps.rerunOf ? { rerun_of: ctx.deps.rerunOf } : {}),
+    inputs: { plan_source: ctx.planSource, ...(ctx.planSource === "inline" ? { plan_snapshot: ctx.planRaw } : {}), founder_quotes: ctx.quotes, instruction_id: ctx.instruction?.id ?? null,
+      overrides: ctx.overrides.filter((o) => o.platform === r.platform).map((o) => (ctx.deps.founderOverrides?.some((f) => f.platform === o.platform && f.rule === o.rule && f.founder_quote === o.founder_quote) ? { ...o, source: "founder" } : o)), publish_rules: ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === r.platform) },
     payload_hash: r.payload_hash, fingerprint: r.fingerprint, verdict: r.verdict, items: r.items, plan_problems: planLevelProblems(ctx), ...extra,
   }, ctx.dataDir);
 }
