@@ -26,7 +26,7 @@ registerMatchHandler(TRANSCRIBE, async ({ dataDir, job, signal }) => {
 export interface Found { file: string; name: string; sha256: string; size: number; mtime_ms: number }
 
 export type Verdict =
-  | { kind: "decided"; d: MatchDecision }
+  | { kind: "decided"; d: MatchDecision; note?: string }
   | { kind: "checking" }
   | { kind: "failed"; reason: string };
 
@@ -45,8 +45,11 @@ export async function fileVerdict(dataDir: string, f: Found, pool: readonly Pool
   const tr = matchDeps().transcriber;
   const notReady = tr.notReady ? await tr.notReady(dataDir) : null;
   if (notReady) return nameOnly(`转写环境没装好（${notReady}）`);
-  const job = await enqueueMatchJob(dataDir, { purpose: TRANSCRIBE, priority: opts.priority ?? "background", sha256: f.sha256, path: f.file, size: f.size, mtime_ms: f.mtime_ms, target: "head", payload: {} });
+  const prev = await enqueueMatchJob(dataDir, { purpose: TRANSCRIBE, priority: opts.priority ?? "background", sha256: f.sha256, path: f.file, size: f.size, mtime_ms: f.mtime_ms, target: "head", payload: {} });
+  const job = prev;
   if (job.state === "failed") return { kind: "failed", reason: job.error ?? "转写失败" };
+  // 持续暂不可用（Codex 审 segB14 P2）：这一批先按文件名判、把原因带出去，不挡整批；一小时后再试
+  if (job.state === "unavailable") return { ...nameOnly(job.error ?? "转写环境没装好"), note: job.error ?? "转写环境没装好" } as Verdict;
   // 已判但缓存里没有（缓存被清 / 当初没写上）：重新排，不让「只比了文件名」变成永久结论（Codex 审 segB10 P2）
   if (job.state === "done" && (await requeueMatchJob(dataDir, job.id))) return { kind: "checking" };
   if (job.state === "done") return nameOnly(job.outcome ?? "没转写");

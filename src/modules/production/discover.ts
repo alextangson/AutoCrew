@@ -130,6 +130,7 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
     const v: Verdict = await fileVerdict(dataDir, f, pool);
     if (v.kind === "checking") out.inbox.checking += 1;
     else if (v.kind === "failed") out.inbox.failed.push({ name: f.name, path: f.file, reason: v.reason });
+    else if (v.note) out.warnings.push(`收件箱里的 ${f.name} ${v.note}，这次只比了文件名（一小时后再试转写）`);
     seen.push({ f, v });
   }
   if (out.inbox.failed.length) out.warnings.push(`收件箱里 ${out.inbox.failed.length} 个视频没核对成：${out.inbox.failed.map((x) => `${x.name}（${x.reason}）`).join("；")}`);
@@ -146,7 +147,7 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
 
 type Raw = { file: string; name: string; size: number; mtime: number };
 /** 监视文件夹里一个文件的处理结果：出建议（带已算好的哈希）、没核对成（带原因）、或安静跳过 */
-type WatchOutcome = { kind: "suggest"; f: Found; d: MatchDecision } | { kind: "failed"; reason: string } | { kind: "skip" };
+type WatchOutcome = { kind: "suggest"; f: Found; d: MatchDecision; note?: string } | { kind: "failed"; reason: string } | { kind: "skip"; note?: string };
 
 /**
  * 顺序（Codex 审 segB7 P2）：按 stat 的便宜过滤（14 天、10 GB，调用方已过）→ 有没有等原片的稿 → 文件名判 →
@@ -164,7 +165,8 @@ async function watchFile(dataDir: string, raw: Raw, pool: PoolEntry[], waiting: 
   const f = await found(raw);
   const v = await fileVerdict(dataDir, f, pool);
   if (v.kind === "failed") return v;
-  return v.kind === "decided" && v.d.winner && waiting.has(v.d.winner) ? { kind: "suggest", f, d: v.d } : { kind: "skip" };
+  const note = v.kind === "decided" ? v.note : undefined;
+  return v.kind === "decided" && v.d.winner && waiting.has(v.d.winner) ? { kind: "suggest", f, d: v.d, ...(note ? { note } : {}) } : { kind: "skip", ...(note ? { note } : {}) };
 }
 
 async function discoverWatch(dataDir: string, folder: WatchFolder, pool: PoolEntry[], waiting: Set<string>, out: Discovery): Promise<void> {
@@ -184,6 +186,7 @@ async function discoverWatch(dataDir: string, folder: WatchFolder, pool: PoolEnt
     const o = await watchFile(dataDir, raw, pool, waiting).catch((e: unknown): WatchOutcome => ({ kind: "failed", reason: errCode(e) }));
     // 没能比完（转写失败到头 / 读不了）与没对上分开：要看得见（Codex 审 segB P2，§14-14）
     if (o.kind === "failed") { failed.push(`${raw.name}（${o.reason}）`); continue; }
+    if (o.note) out.warnings.push(`监视文件夹 ${folder.path} 里的 ${raw.name} ${o.note}，这次只比了文件名`);
     // 只出建议：对上等原片的稿才给候选；对不上静默跳过（下载里大量无关视频，不计入列头）
     if (o.kind !== "suggest") continue;
     suggest(out, o.d.winner!, seen(o.f, "aroll", `监视文件夹 ${path.basename(folder.path)}：${why(o.d)}`, matchOf(o.d)));
@@ -217,6 +220,7 @@ async function discoverExport(dataDir: string, dir: string, contents: Content[],
     if (!targets.length) {
       const v = await fileVerdict(dataDir, f, pool);
       if (v.kind === "failed") { out.warnings.push(`剪辑软件导出 ${f.name} 没核对成：${v.reason}`); continue; }
+      if (v.kind === "decided" && v.note) out.warnings.push(`剪辑软件导出 ${f.name} ${v.note}，这次只比了文件名`);
       if (v.kind !== "decided") continue;
       const ids = v.d.winner ? [v.d.winner] : v.d.top3.filter((r) => looksLike(r)).map((r) => r.content_id);
       targets = ids.map((id) => ({ id, evidence: `剪辑软件导出：${why(v.d)}`, match: v.d }));

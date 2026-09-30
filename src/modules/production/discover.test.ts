@@ -236,6 +236,7 @@ describe("Codex 审 segB6：转写临时没就绪不是终态", () => {
     const r = await reconcileAll(env.dir);
     expect(r.inbox?.unmatched[0]?.reason).toContain("转写环境没装好");
     ready = true;
+    clock += RETRY_DELAY_MS; // 环境不可用一小时最多重试一次（Codex 审 segB14）
     await tick();
     expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
     expect(await exists(src)).toBe(false);
@@ -252,10 +253,32 @@ describe("Codex 审 segB13：转写器回「环境不可用」不算失败", () 
     const [job] = await listMatchJobs(env.dir);
     expect(job).toMatchObject({ state: "unavailable", attempts: 0 });
     ok = true;
+    clock += RETRY_DELAY_MS; // 环境不可用一小时最多重试一次（Codex 审 segB14）
     await tick();
     await tick();
     expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
     expect(runs).toBeGreaterThan(1);
+  });
+});
+
+describe("Codex 审 segB14：持续「暂不可用」要给结论、露原因、不挡批次", () => {
+  it("转写一直不可用：这一批按文件名判并写原因，名字唯一对上的兄弟文件照样挪；一小时内不重复转写", async () => {
+    let runs = 0;
+    asr((f) => { if (path.basename(f) === "IMG_env2.mov") runs += 1; return { ok: false, unavailable: true, reason: "找不到 ffmpeg" }; });
+    const a = await videoContent(env, "甲稿批次不被环境挡住", "draft_ready", A);
+    const named = await put(path.join(env.inbox, "甲稿批次不被环境挡住-原片.mov"), "named");
+    await put(path.join(env.inbox, "IMG_env2.mov"), "env");
+    let r = await tick();
+    r = await tick();
+    expect(await exists(named)).toBe(false);
+    expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
+    expect(r.inbox?.checking).toBe(0);
+    expect(r.warnings.join()).toContain("转写环境没装好");
+    expect(r.warnings.join()).toContain("IMG_env2.mov");
+    expect(runs).toBe(1);
+    clock += RETRY_DELAY_MS;
+    await tick();
+    expect(runs).toBe(2);
   });
 });
 

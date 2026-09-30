@@ -142,9 +142,11 @@ export async function enqueueMatchJob(dataDir: string, spec: JobSpec): Promise<M
     const existing = i >= 0 ? jobs[i] : null;
     const live = existing && !TERMINAL.has(existing.state);
     // 同一份字节换了位置（改名 / 从监视文件夹挪进收件箱）：改指新路径；因旧路径没了在退避或失败的，重新排上（Codex 审 segB3 P2）
-    // 转写临时没就绪而停下的：调用方此刻已核过转写就绪，重新排上（不计次）
+    // 转写临时没就绪而停下的：到了重试时间（一小时一次，Codex 审 segB14 P2）才重新排上（不计次）；原因留着，真转写成功才清
     if (existing && existing.state === "unavailable") {
-      Object.assign(existing, { state: "queued", next_at: 0, error: undefined, path: spec.path, size: spec.size, mtime_ms: spec.mtime_ms, updated_at: iso() });
+      // 同一份字节在新路径上出现（转写期间被改名 / 挪走）不是环境问题：立刻重排
+      if (matchDeps().now() < existing.next_at && existing.path === spec.path) return existing;
+      Object.assign(existing, { state: "queued", next_at: 0, path: spec.path, size: spec.size, mtime_ms: spec.mtime_ms, updated_at: iso() });
       return existing;
     }
     const moved = existing && existing.path !== spec.path;
@@ -223,8 +225,8 @@ async function settle(dataDir: string, id: string, r: JobResult): Promise<MatchJ
     const j = jobs.find((x) => x.id === id);
     if (!j || j.state !== "running") return null;
     j.updated_at = iso();
-    if ("reason" in r) { Object.assign(j, { state: "unavailable", error: r.reason }); return null; }
-    if ("outcome" in r) { Object.assign(j, { state: r.state, outcome: r.outcome }); return null; }
+    if ("reason" in r) { Object.assign(j, { state: "unavailable", error: r.reason, next_at: matchDeps().now() + RETRY_DELAY_MS }); return null; }
+    if ("outcome" in r) { Object.assign(j, { state: r.state, outcome: r.outcome, ...(r.state === "done" ? { error: undefined } : {}) }); return null; }
     j.attempts += 1;
     j.error = r.error;
     if (r.state === "failed" || j.attempts > MAX_RETRIES) { j.state = "failed"; return structuredClone(j); }
