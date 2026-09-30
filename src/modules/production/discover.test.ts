@@ -221,6 +221,27 @@ describe("Codex 审 segB2 与真实数据预演", () => {
   });
 });
 
+describe("Codex 审 segB6：转写临时没就绪不是终态", () => {
+  it("入队时就绪、跑的时候没就绪 → 作业停在「暂不可用」不计次；期间只比文件名并写原因；恢复后重新排上并按内容认", async () => {
+    let calls = 0, ready = false;
+    setMatchDeps({ thresholds: CAL, now: () => clock, paused: async () => false, transcriber: {
+      notReady: async () => { calls += 1; return calls === 1 || ready ? null : "ASR 模型正在预热"; },
+      transcribe: async () => ({ ok: true, text: A.slice(20, 160) }) } });
+    const a = await videoContent(env, "甲稿暂不可用测试", "draft_ready", A);
+    const src = await put(path.join(env.inbox, "IMG_warm.mov"), "warm");
+    await reconcileAll(env.dir);
+    await matchWorkerIdle(env.dir);
+    const [job] = await listMatchJobs(env.dir);
+    expect(job).toMatchObject({ state: "unavailable", attempts: 0 });
+    const r = await reconcileAll(env.dir);
+    expect(r.inbox?.unmatched[0]?.reason).toContain("转写环境没装好");
+    ready = true;
+    await tick();
+    expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
+    expect(await exists(src)).toBe(false);
+  });
+});
+
 describe("§5 监视文件夹只出建议", () => {
   let watch: string;
   beforeEach(async () => { watch = path.join(path.dirname(env.dir), "downloads"); await fs.mkdir(watch); });

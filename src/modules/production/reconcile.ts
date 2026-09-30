@@ -39,7 +39,7 @@ import { autoAttach } from "./auto-attach.js";
 export interface ExternalFile { file: string; name: string; from: "inbox" | "export"; sha256: string; size: number; mtime_ms: number }
 export interface ShadowMove { id: string; title: string; from: Column | null; to: Column | null; rule: string | null; evidence: string[] }
 /** 1b §4 / §5：收件箱里没对上 / 没核对成的视频（待录制列头读它）、每个监视文件夹最近一次扫描 */
-export interface InboxFileView { name: string; path: string; size: number; mtime_ms: number; guess: string[] }
+export interface InboxFileView { name: string; path: string; size: number; mtime_ms: number; guess: string[]; reason?: string }
 export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number }
 export interface WatchStatus { path: string; at: string; error?: string; files: number; suggested: number }
 export interface ReconcileReport {

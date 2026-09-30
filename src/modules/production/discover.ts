@@ -95,7 +95,7 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
     }
     const likes = d.top3.filter(looksLike);
     for (const r of likes) suggest(out, r.content_id, seen(f, "aroll", `原片收件箱：${why(d)}`, matchOf(d)));
-    if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.map((r) => r.title) });
+    if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.map((r) => r.title), reason: d.reason });
   }
 }
 

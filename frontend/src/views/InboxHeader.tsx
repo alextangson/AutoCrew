@@ -32,7 +32,7 @@ export function InboxHeader(p: { inbox: InboxStatus | undefined; targets: Array<
     {open && <ul className="bcol-inbox-list">{inbox.unmatched.map((f) => <li key={f.path}>
       <strong title={f.path}>{f.name}</strong> <span className="muted">· 收件箱 · {mb(f.size)} · {when(f.mtime_ms)}</span>
       <p className="card-panel-note">{f.guess.length ? `哪条都不够像，最接近《${f.guess[0]}》` : "哪条都不像"}</p>
-      <details><summary className="card-panel-note">依据</summary><pre className="card-panel-detail">{[f.path, f.guess.length ? `猜测：${f.guess.join("、")}` : ""].filter(Boolean).join("\n")}</pre></details>
+      <details><summary className="card-panel-note">依据</summary><pre className="card-panel-detail">{[f.path, f.reason ?? "", f.guess.length ? `猜测：${f.guess.join("、")}` : ""].filter(Boolean).join("\n")}</pre></details>
       <div className="card-panel-row">
         <select aria-label={`把 ${f.name} 指定给`} disabled={busy || !p.targets.length} defaultValue="" onChange={(e) => void assign(f.path, e.target.value)}>
           <option value="">{p.targets.length ? "指定给…" : "没有等原片的稿"}</option>

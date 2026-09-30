@@ -20,7 +20,11 @@ export const MAX_RETRIES = 3;
 export const JOB_LIMIT_MS = 5 * 60_000;
 const KEEP_TERMINAL = 200;
 
-export type JobState = "queued" | "running" | "done" | "failed" | "cancelled";
+/**
+ * unavailable（Codex 审 segB6 P2）：跑的时候转写临时没就绪（重新预热等）。非终态、不计重试次数；
+ * 下次有人在转写就绪时再来要这份字节（对账 tick 的发现），就重新排上。
+ */
+export type JobState = "queued" | "running" | "done" | "failed" | "cancelled" | "unavailable";
 export type Priority = "explicit" | "background";
 
 export interface MatchJob {
@@ -34,7 +38,7 @@ export interface MatchJob {
 }
 
 export interface JobContext { dataDir: string; job: MatchJob; signal: AbortSignal }
-export type JobResult = { state: "done" | "cancelled"; outcome: string } | { state: "retry" | "failed"; error: string };
+export type JobResult = { state: "done" | "cancelled"; outcome: string } | { state: "retry" | "failed"; error: string } | { state: "unavailable"; reason: string };
 export type JobHandler = (ctx: JobContext) => Promise<JobResult>;
 
 export type JobSpec = Pick<MatchJob, "purpose" | "priority" | "sha256" | "path" | "size" | "mtime_ms" | "target" | "payload"> & { id?: string };
@@ -135,6 +139,11 @@ export async function enqueueMatchJob(dataDir: string, spec: JobSpec): Promise<M
     const existing = i >= 0 ? jobs[i] : null;
     const live = existing && !TERMINAL.has(existing.state);
     // 同一份字节换了位置（改名 / 从监视文件夹挪进收件箱）：改指新路径；因旧路径没了在退避或失败的，重新排上（Codex 审 segB3 P2）
+    // 转写临时没就绪而停下的：调用方此刻已核过转写就绪，重新排上（不计次）
+    if (existing && existing.state === "unavailable") {
+      Object.assign(existing, { state: "queued", next_at: 0, error: undefined, path: spec.path, size: spec.size, mtime_ms: spec.mtime_ms, updated_at: iso() });
+      return existing;
+    }
     const moved = existing && existing.path !== spec.path;
     if (existing && moved) Object.assign(existing, { path: spec.path, size: spec.size, mtime_ms: spec.mtime_ms, updated_at: iso() });
     if (existing && moved && !copy && existing.state !== "running" && (existing.state === "failed" || existing.attempts > 0)) {
@@ -198,6 +207,7 @@ async function settle(dataDir: string, id: string, r: JobResult): Promise<void> 
     const j = jobs.find((x) => x.id === id);
     if (!j || j.state !== "running") return null;
     j.updated_at = iso();
+    if ("reason" in r) { Object.assign(j, { state: "unavailable", error: r.reason }); return null; }
     if ("outcome" in r) { Object.assign(j, { state: r.state, outcome: r.outcome }); return null; }
     j.attempts += 1;
     j.error = r.error;

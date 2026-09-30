@@ -17,7 +17,8 @@ registerMatchHandler(TRANSCRIBE, async ({ dataDir, job, signal }) => {
   const h = await hear(dataDir, job, signal);
   if (h.text !== null) return { state: "done", outcome: "转写已缓存" };
   if (h.failed) return { state: "retry", error: h.why };
-  return { state: "done", outcome: h.why };
+  // 转写临时没就绪：不是终态，恢复后再来（Codex 审 segB6 P2）
+  return { state: "unavailable", reason: h.why };
 });
 
 export interface Found { file: string; name: string; sha256: string; size: number; mtime_ms: number }
