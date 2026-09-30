@@ -6,7 +6,7 @@ import type { Json, Snapshot, SnapshotAsset } from "./snapshot-types.js";
 
 export const FPS = { num: 30, den: 1 };
 export const AROLL_PATH = "/fake/aroll.mov";
-export const AROLL = { shas: ["sha-aroll"], paths: [AROLL_PATH], durationsUs: [] as number[] };
+export const AROLL = { facts: [{ id: "fact-aroll", label: "原片.mov", paths: [AROLL_PATH] }] };
 
 type Item = Json & { id: string; startFrame: number; durationFrames: number };
 

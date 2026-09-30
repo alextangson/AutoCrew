@@ -4,7 +4,7 @@
  * 1 先建 A-roll 实际显示的帧区间（按 A-roll 素材身份，可跨轨、多段）；没有 A-roll 的空洞（黑帧）不算缝（§12-6）
  * 2 每帧看 A-roll 之上的条目：cover / unknown / 淡入淡出（算露出，E7）；转场期间一律按可能露出（§12-7）
  * 3 露出段长度 1 帧到不足 1 秒（frames × den < num），且前后紧邻的帧都被盖住 → 缝；片头片尾不算（E10）
- * 4 读不准的条目（unknown）分别按「盖住」「没盖住」各算一遍：两种结果一样就是结论，不一样 → 未检查并点名是哪一条（§12-4）
+ * 4 读不准的条目（unknown）：每个没被确定盖住的区段里逐一组合「盖 / 不盖」，结果都一样才是结论，否则未检查并点名（§12-4）
  */
 import type { Sliver } from "../../../storage/production-types.js";
 import { classifyCover, COVER_TYPES, type Cover } from "./cover-rules.js";
@@ -15,8 +15,6 @@ export interface DetectOutcome { status: "clean" | "slivers" | "unchecked"; sliv
 
 const VISUAL = ["videoItems", "imageItems", "motionGraphicItems", "gifItems", "svgItems", "solidItems", "textItems"];
 const HANDLED = new Set([...VISUAL, "audioItems", "audioTransitionItems", "audioEffectItems", "pixelEffectItems", "pixelTransitionItems", "timelineItems"]);
-/** A-roll 身份按时长兜底时的容差（微秒）：ChatCut 素材时长与 ffprobe 读数的舍入差 */
-const DURATION_TOLERANCE_US = 20_000;
 
 interface Placed { group: string; it: Json; id: string; start: number; end: number; order: number; name: string }
 interface Parsed { items: Placed[]; effects: Json[]; transitions: Json[]; orders: Map<string, number> }
@@ -75,43 +73,50 @@ function parse(snap: Snapshot): Parsed | string {
   return { items, effects: effects.filter(live), transitions: transitions.filter(live), orders };
 }
 
-/** A-roll 条目：sha 或路径对上优先；都对不上时按时长兜底（素材唯一才认） */
+/**
+ * A-roll 条目：逐份原片按路径认（真实路径或记录前的原始路径）。任何一份在时间线里认不出 → 未检查——
+ * 认不出的那份占着的区间不能当成「没有 A-roll」（Codex 审 sliver P1）。时长、ChatCut 的 sha 都不作数（创始人 09-30）。
+ */
 function arollItems(items: Placed[], snap: Snapshot, id: ArollIdentity): Placed[] | string {
+  if (!id.facts.length) return "认不出哪条是原片：本轮没有确认的原片";
   const videos = items.filter((p) => p.group === "videoItems");
-  const assetOf = (p: Placed) => (typeof p.it.assetId === "string" ? snap.assets[p.it.assetId] : undefined);
-  const direct = videos.filter((p) => {
-    const a = assetOf(p);
-    return Boolean(a && ((a.contentSha256 && id.shas.includes(a.contentSha256)) || (a.path && id.paths.includes(a.path))));
-  });
-  if (direct.length) return direct;
-  const byDuration = videos.filter((p) => {
-    const d = assetOf(p)?.duration;
-    return typeof d === "number" && id.durationsUs.some((x) => Math.abs(x - d) <= DURATION_TOLERANCE_US);
-  });
-  const assets = new Set(byDuration.map((p) => String(p.it.assetId)));
-  if (assets.size > 1) return "认不出 A-roll：有几个素材的时长都和原片一样";
-  return byDuration.length ? byDuration : "认不出 A-roll：时间线里没有和本条原片对得上的素材";
+  const pathOf = (p: Placed) => {
+    const a = typeof p.it.assetId === "string" ? snap.assets[p.it.assetId] : undefined;
+    return a ? [a.real_path, a.path].filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+  };
+  const out: Placed[] = [];
+  for (const fact of id.facts) {
+    const hit = videos.filter((p) => pathOf(p).some((x) => fact.paths.includes(x)));
+    if (!hit.length) return `认不出哪条是原片：「${fact.label}」在时间线里对不上任何素材（按文件路径认）`;
+    out.push(...hit.filter((p) => !out.includes(p)));
+  }
+  return out;
 }
 
-interface Frames { end: number; aroll: Float64Array; cover: Int32Array; unknown: Int32Array; transition: Uint8Array; why: Map<number, string> }
+interface Frames {
+  end: number; aroll: Float64Array; cover: Int32Array;
+  /** 每帧上读不准的条目（按层级从高到低） */
+  unknown: Array<number[] | undefined>;
+  transition: Uint8Array;
+  /** 转场对齐方式不明时多算的帧数：判「不足 1 秒」时扣掉，免得区间放大后越过阈值漏报 */
+  slack: Int32Array;
+  why: Map<number, string>;
+}
 
-function transitionRange(t: Json, items: Placed[]): [number, number] | string {
+function transitionRange(t: Json, items: Placed[]): { range: [number, number]; slack: number } | string {
   const d = int(t.durationFrames);
   if (d === null || d <= 0) return "转场的时长读不出";
   const start = int(t.startFrame);
-  if (start !== null) return [start, start + d];
+  if (start !== null) return { range: [start, start + d], slack: 0 };
   const incoming = items.find((p) => p.id === t.incomingItemId), outgoing = items.find((p) => p.id === t.outgoingItemId);
   if (!incoming && !outgoing) return "转场找不到两端的条目";
-  // 转场与剪切点的对齐方式没有公开：按剪切点前后各一个转场长度保守算「可能露出」
+  // 转场与剪切点怎么对齐没有公开：剪切点前后各一个转场长度都算「可能露出」，实际只占其中 d 帧
   const cut = incoming ? incoming.start : outgoing!.end;
-  return [cut - d, cut + d];
+  return { range: [cut - d, cut + d], slack: d };
 }
 
-function buildFrames(input: DetectInput, parsed: Parsed, arolls: Placed[]): Frames | string {
+function markItems(input: DetectInput, parsed: Parsed, arolls: Placed[], f: Frames): void {
   const { items } = parsed;
-  const end = Math.max(...items.map((p) => p.end));
-  const f: Frames = { end, aroll: new Float64Array(end).fill(-Infinity), cover: new Int32Array(end).fill(-1), unknown: new Int32Array(end).fill(-1), transition: new Uint8Array(end), why: new Map() };
-  for (const a of arolls) for (let i = a.start; i < a.end; i++) f.aroll[i] = Math.max(f.aroll[i], a.order);
   const targeted = new Set(parsed.effects.map((e) => e.targetItemId).filter((x): x is string => typeof x === "string"));
   const arollIds = new Set(arolls.map((a) => a.id));
   items.forEach((p, idx) => {
@@ -120,34 +125,46 @@ function buildFrames(input: DetectInput, parsed: Parsed, arolls: Placed[]): Fram
     if (c.kind === "none") return;
     if (c.kind === "unknown") f.why.set(idx, c.why);
     const fi = int(p.it.fadeInDurationFrames) ?? 0, fo = int(p.it.fadeOutDurationFrames) ?? 0;
-    for (let i = p.start; i < Math.min(p.end, end); i++) {
+    for (let i = p.start; i < Math.min(p.end, f.end); i++) {
       if (p.order <= f.aroll[i]) continue; // 在 A-roll 之下（或同层），盖不到
       if (i < p.start + fi || i >= p.end - fo) continue; // E7：淡入淡出期间真人若隐若现，算露出
-      const slot = c.kind === "cover" ? f.cover : f.unknown;
-      if (slot[i] < 0 || items[slot[i]].order < p.order) slot[i] = idx;
+      if (c.kind === "cover") { if (f.cover[i] < 0 || items[f.cover[i]].order < p.order) f.cover[i] = idx; }
+      else (f.unknown[i] ??= []).push(idx);
     }
   });
+}
+
+function buildFrames(input: DetectInput, parsed: Parsed, arolls: Placed[]): Frames | string {
+  const { items } = parsed;
+  const end = Math.max(...items.map((p) => p.end));
+  const f: Frames = { end, aroll: new Float64Array(end).fill(-Infinity), cover: new Int32Array(end).fill(-1), unknown: new Array(end), transition: new Uint8Array(end), slack: new Int32Array(end), why: new Map() };
+  for (const a of arolls) for (let i = a.start; i < a.end; i++) f.aroll[i] = Math.max(f.aroll[i], a.order);
+  markItems(input, parsed, arolls, f);
   for (const e of parsed.effects) {
     if (typeof e.targetItemId === "string") continue;
     const s = int(e.startFrame), d = int(e.durationFrames), order = parsed.orders.get(String(e.trackId)) ?? -Infinity;
     if (s === null || d === null) return "特效的帧位置读不出";
     // 不挂在条目上的整轨特效：压在 A-roll 之上时，这几帧盖没盖住读不准
-    for (let i = Math.max(0, s); i < Math.min(end, s + d); i++) if (order > f.aroll[i] && f.cover[i] >= 0) { f.unknown[i] = f.cover[i]; f.cover[i] = -1; f.why.set(f.unknown[i], "上面压着整轨特效"); }
+    for (let i = Math.max(0, s); i < Math.min(end, s + d); i++) {
+      if (!(order > f.aroll[i]) || f.cover[i] < 0) continue;
+      (f.unknown[i] ??= []).push(f.cover[i]); f.why.set(f.cover[i], "上面压着整轨特效"); f.cover[i] = -1;
+    }
   }
   for (const t of parsed.transitions) {
     const r = transitionRange(t, items);
     if (typeof r === "string") return r;
     const order = parsed.orders.get(String(t.trackId)) ?? -Infinity;
-    for (let i = Math.max(0, r[0]); i < Math.min(end, r[1]); i++) {
+    for (let i = Math.max(0, r.range[0]); i < Math.min(end, r.range[1]); i++) {
       if (order <= f.aroll[i]) continue; // A-roll 轨自己的转场被上面的 B-roll 挡着
-      f.transition[i] = 1; f.cover[i] = -1; f.unknown[i] = -1;
+      f.transition[i] = 1; f.cover[i] = -1; f.unknown[i] = undefined; f.slack[i] = Math.max(f.slack[i], r.slack);
     }
   }
   return f;
 }
 
-function findSlivers(f: Frames, parsed: Parsed, fps: Fps, optimistic: boolean): Sliver[] {
-  const coverAt = (i: number) => (f.cover[i] >= 0 ? f.cover[i] : optimistic && f.unknown[i] >= 0 ? f.unknown[i] : -1);
+/** `on` = 这一种假设下当作盖住的读不准条目 */
+function findSlivers(f: Frames, parsed: Parsed, fps: Fps, on: ReadonlySet<number>): Sliver[] {
+  const coverAt = (i: number) => (f.cover[i] >= 0 ? f.cover[i] : (f.unknown[i] ?? []).filter((x) => on.has(x)).sort((a, b) => parsed.items[b].order - parsed.items[a].order)[0] ?? -1);
   // 被盖住优先；没盖住时有 A-roll = 露出，没有 = 黑帧空洞（不算缝，§12-6）
   const state = (i: number) => (coverAt(i) >= 0 ? "cov" : f.aroll[i] === -Infinity ? "black" : "exp");
   const out: Sliver[] = [];
@@ -155,8 +172,8 @@ function findSlivers(f: Frames, parsed: Parsed, fps: Fps, optimistic: boolean): 
     if (state(i) !== "exp") { i++; continue; }
     let j = i;
     while (j < f.end && state(j) === "exp") j++;
-    const n = j - i;
-    if (i > 0 && j < f.end && state(i - 1) === "cov" && state(j) === "cov" && n * fps.den < fps.num) {
+    const n = j - i, slack = Math.max(0, ...f.slack.subarray(i, j));
+    if (i > 0 && j < f.end && state(i - 1) === "cov" && state(j) === "cov" && Math.max(1, n - slack) * fps.den < fps.num) {
       const prev = parsed.items[coverAt(i - 1)], next = parsed.items[coverAt(j)];
       const transition = f.transition.subarray(i, j).some((x) => x === 1);
       out.push({ start_frame: i, end_frame: j, frames: n, start_tc: timecode(i, fps), prev_item: prev.id, next_item: next.id, prev_name: prev.name, next_name: next.name, ...(transition ? { transition: true as const } : {}) });
@@ -166,15 +183,30 @@ function findSlivers(f: Frames, parsed: Parsed, fps: Fps, optimistic: boolean): 
   return out;
 }
 
-/** 两种算法结果不一样：点名是哪条读不准的条目让结论悬着 */
-function undecided(f: Frames, parsed: Parsed, fps: Fps, a: Sliver[], b: Sliver[]): string {
-  const keys = new Set(a.map((s) => `${s.start_frame}-${s.end_frame}`));
-  const diff = [...a.filter((s) => !new Set(b.map((x) => `${x.start_frame}-${x.end_frame}`)).has(`${s.start_frame}-${s.end_frame}`)), ...b.filter((s) => !keys.has(`${s.start_frame}-${s.end_frame}`))];
-  const s = diff[0];
-  let idx = -1;
-  for (let i = Math.max(0, s.start_frame - 1); i <= Math.min(f.end - 1, s.end_frame) && idx < 0; i++) idx = f.unknown[i];
-  const item = idx >= 0 ? parsed.items[idx] : null;
-  return item ? `判断不了 ${timecode(s.start_frame, fps)} 附近是不是缝：「${item.name}」${f.why.get(idx) ?? "读不准"}` : `判断不了 ${timecode(s.start_frame, fps)} 附近是不是缝`;
+const MAX_UNKNOWN_PER_REGION = 8;
+const keyOf = (xs: Sliver[]) => xs.map((s) => `${s.start_frame}-${s.end_frame}`).join(",");
+
+/**
+ * 读不准的条目：按「没盖住」得出结论，但要证明结论不依赖它们（Codex 审 sliver P1：遮盖对缝不单调，只比两个极端会漏）。
+ * 在每个没被确定盖住的区段里，把其中读不准的条目逐一组合成「盖 / 不盖」都算一遍；有一种组合结果不同 → 返回原因。
+ */
+function undecided(f: Frames, parsed: Parsed, fps: Fps, base: Sliver[]): string | null {
+  const baseKey = keyOf(base);
+  for (let i = 0; i < f.end;) {
+    if (f.cover[i] >= 0) { i++; continue; }
+    const items = new Set<number>();
+    let j = i;
+    while (j < f.end && f.cover[j] < 0) { for (const x of f.unknown[j] ?? []) items.add(x); j++; }
+    const list = [...items];
+    const name = (idx: number) => `「${parsed.items[idx].name}」${f.why.get(idx) ?? "读不准"}`;
+    if (list.length > MAX_UNKNOWN_PER_REGION) return `判断不了 ${timecode(i, fps)} 附近是不是缝：读不准的条目太多（${name(list[0])} 等 ${list.length} 条）`;
+    for (let mask = 1; mask < 1 << list.length; mask++) {
+      const on = new Set(list.filter((_, b) => mask & (1 << b)));
+      if (keyOf(findSlivers(f, parsed, fps, on)) !== baseKey) return `判断不了 ${timecode(i, fps)} 附近是不是缝：${name(list.find((_, b) => mask & (1 << b))!)}`;
+    }
+    i = j;
+  }
+  return null;
 }
 
 export function detectSlivers(input: DetectInput): DetectOutcome {
@@ -190,8 +222,8 @@ export function detectSlivers(input: DetectInput): DetectOutcome {
   if (input.cutFrames !== null && Math.abs(frames.end - input.cutFrames) > 1) {
     return { ...unchecked(`时间线总长 ${frames.end} 帧和成片 ${input.cutFrames} 帧对不上：导出后时间线改过，或这版成片不是从这条时间线整段导出的`), timeline_frames: frames.end };
   }
-  const strict = findSlivers(frames, parsed, fps, false), loose = findSlivers(frames, parsed, fps, true);
-  const same = strict.length === loose.length && strict.every((s, i) => s.start_frame === loose[i].start_frame && s.end_frame === loose[i].end_frame);
-  if (!same) return { ...unchecked(undecided(frames, parsed, fps, strict, loose)), timeline_frames: frames.end };
-  return { status: strict.length ? "slivers" : "clean", slivers: strict, timeline_frames: frames.end };
+  const base = findSlivers(frames, parsed, fps, new Set());
+  const why = undecided(frames, parsed, fps, base);
+  if (why) return { ...unchecked(why), timeline_frames: frames.end };
+  return { status: base.length ? "slivers" : "clean", slivers: base, timeline_frames: frames.end };
 }

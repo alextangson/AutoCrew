@@ -20,8 +20,10 @@ const KNOWN_KEYS = new Set([
   "sourceIn", "decibelAdjustment", "audioFadeInDurationFrames", "audioFadeOutDurationFrames", "playbackRate", "muted", "volume",
 ]);
 
-/** 带 alpha 通道（或调色板可能带透明）的像素格式 */
-const ALPHA_FMT = /^(a|ya|yuva|gbrap|rgba|bgra|argb|abgr|pal8)/;
+/** 已确认不带 alpha 的像素格式（白名单）：只有这些算不透明；不认识的格式当读不准（Codex 审 sliver P2） */
+const OPAQUE_FMT = /^(yuvj?4[0-4][0-4]p(9|10|12|14|16)?(le|be)?|nv(12|16|21|24|42)|p0(10|12|16)(le|be)|p2(10|16)(le|be)|p4(10|16)(le|be)|rgb24|bgr24|rgb48(le|be)|bgr48(le|be)|0rgb|rgb0|0bgr|bgr0|gbrp(9|10|12|14|16)?(le|be)?|gray(9|10|12|14|16)?(le|be)?|uyvy422|yuyv422|yvyu422|x2rgb10(le|be)|x2bgr10(le|be))$/;
+/** 已知带 alpha（或调色板可能带透明）的像素格式：确定盖不住 */
+const ALPHA_FMT = /^(a|ya|yuva|gbrap|rgba|bgra|argb|abgr|pal8|vuya|uyva)/;
 const EPS = 0.5;
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -81,7 +83,8 @@ function motionGraphic(it: Json, asset: SnapshotAsset): Cover {
 /** 图片 / 视频：素材必须确认没有 alpha 通道 */
 function raster(asset: SnapshotAsset): Cover {
   if (asset.pix_fmt === undefined || asset.pix_fmt === null) return { kind: "unknown", why: "读不出素材是否带透明通道" };
-  return ALPHA_FMT.test(asset.pix_fmt) ? { kind: "none", why: `素材带透明通道（${asset.pix_fmt}）` } : { kind: "cover" };
+  if (ALPHA_FMT.test(asset.pix_fmt)) return { kind: "none", why: `素材带透明通道（${asset.pix_fmt}）` };
+  return OPAQUE_FMT.test(asset.pix_fmt) ? { kind: "cover" } : { kind: "unknown", why: `素材像素格式 ${asset.pix_fmt} 不认识，不知道有没有透明通道` };
 }
 
 /** `targeted` = 有特效挂在这个条目上（遮罩、马赛克…都走特效，一律当读不准） */

@@ -23,6 +23,10 @@ export interface SnapshotAsset {
   properties?: Array<{ key: string; defaultValue?: unknown; type?: string }>;
   /** 图片 / 视频：ffprobe 的 pix_fmt；null = 文件读不到或探针失败 */
   pix_fmt?: string | null;
+  /** 拍快照时素材文件的真实路径（realpath）；文件不在了 = null。认原片按它比 */
+  real_path?: string | null;
+  /** 像素格式探针临时失败：可重试，重用快照时再探一次 */
+  probe_failed?: true;
 }
 
 export interface Snapshot {
@@ -35,5 +39,8 @@ export interface Snapshot {
 
 export interface Fps { num: number; den: number }
 
-/** 本条 accepted A-roll 事实的素材身份：sha、绝对路径、时长（微秒，按文件探出） */
-export interface ArollIdentity { shas: string[]; paths: string[]; durationsUs: number[] }
+/**
+ * 本条 accepted A-roll 事实的素材身份（逐份）：只认路径——项目里那份文件的真实路径，或记录 / 挪入前的原始路径。
+ * ChatCut 的 contentSha256 不是文件的完整 sha256，时长相同也证明不了身份（创始人 09-30 定）。
+ */
+export interface ArollIdentity { facts: Array<{ id: string; label: string; paths: string[] }> }

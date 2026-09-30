@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { detectSlivers, timecode } from "./detect.js";
-import { AROLL, ASSETS, FPS, aroll, broll, fiveGapScene, image, mg, snap, timeline } from "./fixtures.js";
+import { AROLL, AROLL_PATH, ASSETS, FPS, aroll, broll, fiveGapScene, image, mg, snap, timeline } from "./fixtures.js";
 import type { Json, SnapshotAsset } from "./snapshot-types.js";
 
 const run = (tl: Json, o: { assets?: Record<string, SnapshotAsset>; cutFrames?: number | null; fps?: typeof FPS | null; id?: typeof AROLL } = {}) =>
@@ -101,6 +101,27 @@ describe("盖住的判定（E6–E9、E22）", () => {
   });
 });
 
+describe("Codex 审 sliver 回归", () => {
+  it("[P1 detect.ts:193] 读不准的条目不能只比两个极端：40 帧空档里两段各 20 帧的未知条目 → 未检查", () => {
+    const noFmt = { ...ASSETS, I: { ...ASSETS.I, pix_fmt: null } };
+    const tl = timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 140, 60)], imageItems: [image("u1", 100, 20), image("u2", 120, 20)] });
+    expect(run(tl, { assets: noFmt })).toMatchObject({ status: "unchecked", reason: expect.stringContaining("「定格」读不出素材是否带透明通道") });
+  });
+  it("[P1 detect.ts:105] 没有起点的 15 帧转场：放大后的 30 帧区间扣掉不确定量仍 < 1 秒 → 报缝", () => {
+    const tl = timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 100, 100)], pixelTransitionItems: [{ id: "tr", trackId: "v1", durationFrames: 15, incomingItemId: "b2", outgoingItemId: "b1" }] });
+    const r = run(tl);
+    expect(spans(r)).toEqual([[85, 115]]);
+    expect(r.slivers[0].transition).toBe(true);
+  });
+  it("[P2 cover-rules.ts:82] 像素格式按白名单：vuya / uyva 带 alpha 不算盖住；不认识的格式读不准", () => {
+    const hold = (fmt: string) => run(timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 105, 95)], imageItems: [image("h", 100, 5)] }), { assets: { ...ASSETS, I: { ...ASSETS.I, pix_fmt: fmt } } });
+    expect(spans(hold("vuya"))).toEqual([[100, 105]]);
+    expect(spans(hold("uyva"))).toEqual([[100, 105]]);
+    expect(hold("some_new_fmt").status).toBe("unchecked");
+    expect(hold("yuvj420p").status).toBe("clean");
+  });
+});
+
 describe("边界（E10、E19/E26、E24、E25、E5、E17）", () => {
   it("E10 片头第一段 B-roll 之前、片尾最后一段之后的露出不算", () => {
     expect(run(timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 5, 90), broll("b2", 100, 195)] })).slivers.map((s) => s.start_frame)).toEqual([95]);
@@ -125,12 +146,22 @@ describe("边界（E10、E19/E26、E24、E25、E5、E17）", () => {
     expect(run(timeline({ videoItems: [aroll("ar", 0, 300), broll("b1", 30, 70), broll("b2", 90, 50)] })).reason).toContain("重叠");
     expect(run(timeline({ videoItems: [aroll("ar", 0, 300)] }, { lottieItems: [{ id: "x" }] })).reason).toContain("lottieItems");
   });
-  it("E17 认不出 A-roll → 未检查；sha / 路径都对不上时按时长唯一兜底", () => {
-    expect(run(gapScene(5), { id: { shas: [], paths: ["/elsewhere.mov"], durationsUs: [] } })).toMatchObject({ status: "unchecked", reason: expect.stringContaining("认不出 A-roll") });
-    expect(run(gapScene(5), { id: { shas: [], paths: [], durationsUs: [60_005_000] } }).status).toBe("slivers");
-    expect(run(gapScene(5), { id: { shas: ["chatcut-own-hash"], paths: [], durationsUs: [] } }).status).toBe("slivers");
-    const twins = { ...ASSETS, B: { ...ASSETS.B, duration: 60_000_000 } };
-    expect(run(gapScene(5), { id: { shas: [], paths: [], durationsUs: [60_000_000] }, assets: twins }).reason).toContain("时长都和原片一样");
+  it("E17 认不出 A-roll → 未检查；只按路径认（真实路径或原始路径），ChatCut 的 sha 与时长都不作数", () => {
+    const facts = (paths: string[]) => ({ facts: [{ id: "f1", label: "原片.mov", paths }] });
+    expect(run(gapScene(5), { id: facts(["/elsewhere.mov"]) })).toMatchObject({ status: "unchecked", reason: expect.stringContaining("认不出哪条是原片") });
+    expect(run(gapScene(5), { assets: { ...ASSETS, A: { ...ASSETS.A, path: "/link/raw.mov", real_path: AROLL_PATH } } }).status).toBe("slivers");
+  });
+  it("[Codex sliver P1 detect.ts:87] 原片元数据缺失、某段 B-roll 恰好和原片一样长：不再按时长认成原片 → 未检查", () => {
+    const { A: _gone, ...rest } = ASSETS;
+    const r = run(gapScene(5), { assets: { ...rest, B: { ...ASSETS.B, duration: 60_000_000 } } });
+    expect(r).toMatchObject({ status: "unchecked", reason: expect.stringContaining("认不出哪条是原片") });
+  });
+  it("[Codex sliver P1 detect.ts:82] 多份原片：有一份在时间线里认不出 → 未检查，不把它的区间当黑帧", () => {
+    const tl = timeline({ videoItems: [aroll("ar", 0, 100), aroll("ar2", 100, 200, { assetId: "A2" }), broll("b1", 30, 70), broll("b2", 105, 95)] });
+    const assets = { ...ASSETS, A2: { id: "A2", type: "video", name: "第二段原片", path: "/fake/moved-raw2.mov", pix_fmt: "yuv420p" } };
+    const two = (p2: string) => ({ facts: [...AROLL.facts, { id: "f2", label: "原片2.mov", paths: [p2] }] });
+    expect(run(tl, { assets, id: two("/project/02-aroll/原片2.mov") })).toMatchObject({ status: "unchecked", reason: expect.stringContaining("原片2.mov") });
+    expect(spans(run(tl, { assets, id: two("/fake/moved-raw2.mov") }))).toEqual([[100, 105]]);
   });
   it("E5 时间线总长与成片帧数差 > 1 帧 → 未检查；差 1 帧内照查", () => {
     expect(run(gapScene(5), { cutFrames: 280 })).toMatchObject({ status: "unchecked", reason: expect.stringContaining("对不上") });

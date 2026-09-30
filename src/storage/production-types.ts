@@ -48,6 +48,8 @@ export interface Fact {
   text?: string;
   /** cut：导出文件落位前自己的修改时间（克隆进项目后 mtime_ms 是落位时间；抽帧检查拿它比时间线保存时间） */
   export_mtime_ms?: number;
+  /** aroll：记录 / 挪入之前的原始绝对路径（ChatCut 工程引用的往往是它；抽帧检查按路径认原片） */
+  source_path?: string;
   /** srt：所属成片的 sha */
   for_cut?: string;
   /** chatcut_project */

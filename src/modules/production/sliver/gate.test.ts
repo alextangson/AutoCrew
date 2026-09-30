@@ -34,15 +34,16 @@ beforeEach(async () => {
 });
 afterEach(async () => { setChatcutDeps(null); await env.cleanup(); });
 
-/** 原片素材时长 = 假探针给的 12 秒：路径 / sha 对不上时按时长唯一认（与真实工程一样，原片被挪进项目后路径变了） */
-const CC_ASSETS: Record<string, SnapshotAsset> = { ...ASSETS, A: { ...ASSETS.A, path: "/elsewhere/raw.mov", duration: 12_000_000 } };
+/** ChatCut 工程引用的是原片挪进项目之前的原始路径（收件箱里那份）：按 aroll 事实记下的 source_path 认 */
+const RAW_NAME = "AI又忘了怎么办-原片.mov";
+const ccAssets = (): Record<string, SnapshotAsset> => ({ ...ASSETS, A: { ...ASSETS.A, path: path.join(env.inbox, RAW_NAME) } });
 
 /** 在假 ChatCut 目录写一个工程；mtimeAgoMs = 时间线文件的修改时间离现在多久 */
 async function writeProject(tls: Json[], o: { schema?: number; mtimeAgoMs?: number; assets?: Record<string, SnapshotAsset> } = {}): Promise<void> {
   const dir = path.join(ccRoot, PID, "project.chatcutproject");
   await fs.mkdir(path.join(dir, "timelines"), { recursive: true });
   await fs.mkdir(path.join(dir, "assets"), { recursive: true });
-  const assets = o.assets ?? CC_ASSETS;
+  const assets = o.assets ?? ccAssets();
   const entries = [];
   for (const [i, tl] of tls.entries()) {
     const rel = `timelines/Timeline_${i}abc.json`;
@@ -68,7 +69,7 @@ const decide = (id: string, action: string, p: Record<string, unknown> = {}) => 
 async function setup(o: { chatcut?: boolean; srt?: string | null; cutBytes?: string; timelineId?: string } = {}) {
   const c = await videoContent(env, "AI 又忘了怎么办");
   await founderApprove(env, c.id);
-  const ar = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, "AI又忘了怎么办-原片.mov"), "raw"), request_id: "a" });
+  const ar = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, RAW_NAME), "raw"), request_id: "a" });
   if (o.chatcut !== false) await record(env, { content_id: c.id, kind: "chatcut_project", chatcut_project_id: PID, uses_aroll: [ar.fact_id], ...(o.timelineId ? { timeline_id: o.timelineId } : {}), request_id: "cc" });
   const cut = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "抽帧测试.mp4"), o.cutBytes ?? "cut-v1"), request_id: "c" });
   if (o.srt !== null) await record(env, { content_id: c.id, kind: "srt", path: await put(path.join(env.chatcut, "抽帧测试.srt"), o.srt ?? "1\n00:00:01,000 --> 00:00:02,000\n你好\n"), for_cut: cut.fact_id, request_id: "s" });
@@ -194,8 +195,8 @@ describe("没跑成：拦、写原因、整条放行（§8、E1–E5、E14、E17
   });
 
   it("E17 认不出 A-roll → 未检查", async () => {
-    await writeProject([gapTimeline(5)], { assets: { ...CC_ASSETS, A: { ...CC_ASSETS.A, duration: 99_000_000 } } });
-    expect(await reasonOf((await setup()).c.id)).toMatchObject({ status: "unchecked", reason: expect.stringContaining("认不出 A-roll") });
+    await writeProject([gapTimeline(5)], { assets: { ...ccAssets(), A: { ...ccAssets().A, path: "/somewhere/else.mov" } } });
+    expect(await reasonOf((await setup()).c.id)).toMatchObject({ status: "unchecked", reason: expect.stringContaining("认不出哪条是原片") });
   });
 
   it("E14 帧率读取出错 → 未检查（临时，不缓存）；修好后下次触发重试出结论；从不当 clean", async () => {
@@ -206,6 +207,66 @@ describe("没跑成：拦、写原因、整条放行（§8、E1–E5、E14、E17
     media = defaultMedia;
     await runSliverCheck(s.c.id, env.dir);
     expect(await reasonOf(s.c.id)).toMatchObject({ status: "slivers" });
+  });
+});
+
+describe("Codex 审 sliver 回归", () => {
+  it("[P1 check.ts:57] 候选成片转正：保留导出时间，导出后又改过的时间线照样判未检查", async () => {
+    await writeProject([gapTimeline(30)], { mtimeAgoMs: 30_000 }); // 时间线 30 秒前保存；成片 60 秒前导出
+    const c = await videoContent(env, "AI 又忘了怎么办");
+    await founderApprove(env, c.id);
+    const ar = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, RAW_NAME), "raw"), request_id: "a" });
+    await record(env, { content_id: c.id, kind: "chatcut_project", chatcut_project_id: PID, uses_aroll: [ar.fact_id], request_id: "cc" });
+    const cand = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.outside, "别的名字.mp4"), "cut-x"), request_id: "c" });
+    expect(cand.state).toBe("candidate");
+    const sha = (await readProductionDoc(c.id, env.dir))!.facts.find((f) => f.id === cand.fact_id)!.sha256!;
+    expect(await decide(c.id, "confirm_candidate", { fact_id: cand.fact_id, sha256: sha })).toMatchObject({ ok: true });
+    const fact = (await readProductionDoc(c.id, env.dir))!.facts.find((f) => f.id === cand.fact_id)!;
+    expect(fact.export_mtime_ms).toBeLessThan(fact.mtime_ms!);
+    expect(await decide(c.id, "approve_cut", { fact_id: cand.fact_id, sha256: sha })).toMatchObject({ ok: false, code: "sliver_blocked", error: expect.stringContaining("导出后时间线又保存过") });
+  });
+
+  it("[创始人 09-30] 原片按路径认：aroll 事实记下原始路径（source_path），ChatCut 引用原始路径也认得出", async () => {
+    await writeProject([gapTimeline(5)]);
+    const s = await setup();
+    const ar = (await readProductionDoc(s.c.id, env.dir))!.facts.find((f) => f.kind === "aroll")!;
+    expect(ar.source_path).toBe(path.join(env.inbox, RAW_NAME));
+    expect(ar.path).not.toContain(env.inbox);
+    expect((await checks(s.c.id)).at(-1)).toMatchObject({ status: "slivers" });
+  });
+
+  it("[P2 chatcut-read.ts:137] 素材探针临时失败：不缓存，下次重用快照时再探，恢复后出结论", async () => {
+    await writeProject([gapTimeline(5)]);
+    let calls = 0;
+    media = async (f) => (f === "/fake/b.mp4" ? (calls++, calls === 1 ? { error: "busy" } : defaultMedia(f)) : defaultMedia(f));
+    const s = await setup({ srt: null });
+    expect((await checks(s.c.id)).at(-1)).toMatchObject({ status: "unchecked", transient: true });
+    await runSliverCheck(s.c.id, env.dir);
+    expect(calls).toBe(2);
+    expect((await checks(s.c.id)).at(-1)).toMatchObject({ status: "slivers" });
+  });
+
+  it("[P2 check.ts:61] 快照目录是指向项目外的符号链接：不写快照、判未检查，项目外没有新文件", async () => {
+    await writeProject([gapTimeline(5)]);
+    const c = await videoContent(env, "AI 又忘了怎么办");
+    const edit = path.join(projectRoot(env, c.id), "04-edit");
+    await fs.mkdir(edit, { recursive: true });
+    await fs.symlink(env.outside, path.join(edit, "chatcut-snapshots"));
+    await founderApprove(env, c.id);
+    const ar = await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, RAW_NAME), "raw"), request_id: "a" });
+    await record(env, { content_id: c.id, kind: "chatcut_project", chatcut_project_id: PID, uses_aroll: [ar.fact_id], request_id: "cc" });
+    await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "AI又忘了怎么办.mp4"), "cut-v1"), request_id: "c" });
+    expect((await checks(c.id)).at(-1)).toMatchObject({ status: "unchecked", reason: expect.stringContaining("符号链接") });
+    expect(await fs.readdir(env.outside)).toEqual([]);
+  });
+
+  it("[P2 chatcut-read.ts:72] 时间线文件链到工程外：不读，判未检查", async () => {
+    await writeProject([gapTimeline(5)]);
+    const tlFile = path.join(ccRoot, PID, "project.chatcutproject", "timelines", "Timeline_0abc.json");
+    const outsideTl = path.join(env.outside, "other.json");
+    await fs.rename(tlFile, outsideTl);
+    await fs.symlink(outsideTl, tlFile);
+    expect((await checks((await setup()).c.id)).at(-1)).toMatchObject({ status: "unchecked", reason: expect.stringContaining("工程目录以外") });
   });
 });
 

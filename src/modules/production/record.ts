@@ -164,7 +164,7 @@ function factFrom(a: RecordArgs, p: FilePlan, doc: ProductionDoc, relPath: strin
     source: "record", by: { host: a.host, ...(a.session ? { session: a.session } : {}) }, at: new Date().toISOString(),
     request_id: a.request_id, evidence: p.evidence, ...(txnId ? { txn_id: txnId } : {}),
     path: relPath ?? p.source, sha256: p.sha256, size: p.id.size, mtime_ms: p.id.mtime_ms,
-    ...(p.duration_ms ? { duration_ms: p.duration_ms } : {}), ...(p.kind === "cut" ? { export_mtime_ms: p.id.mtime_ms } : {}), ...(p.ratio ? { ratio: p.ratio } : {}), ...(p.version ? { version: p.version } : {}),
+    ...(p.duration_ms ? { duration_ms: p.duration_ms } : {}), ...(p.kind === "cut" ? { export_mtime_ms: p.id.mtime_ms } : {}), ...(p.kind === "aroll" ? { source_path: p.source } : {}), ...(p.ratio ? { ratio: p.ratio } : {}), ...(p.version ? { version: p.version } : {}),
     ...(a.cover_text && p.kind === "cover" ? { text: a.cover_text } : {}), ...(p.for_cut ? { for_cut: p.for_cut } : {}), ...(a.note ? { note: a.note } : {}),
   };
 }
@@ -173,7 +173,9 @@ function factFrom(a: RecordArgs, p: FilePlan, doc: ProductionDoc, relPath: strin
 function upsertFact(doc: ProductionDoc, fact: Fact, existing: Fact | undefined): Fact {
   if (!existing) { doc.facts.push(fact); return fact; }
   const target = doc.facts.find((f) => f.id === existing.id)!;
-  Object.assign(target, { state: fact.state, path: fact.path, availability: "present", evidence: fact.evidence, size: fact.size, mtime_ms: fact.mtime_ms, ...(fact.txn_id ? { txn_id: fact.txn_id } : {}) });
+  // 导出时间与原始路径随升级带上（Codex 审 sliver P1）：克隆后的 mtime_ms 是落位时间，不能拿来比时间线保存时间
+  Object.assign(target, { state: fact.state, path: fact.path, availability: "present", evidence: fact.evidence, size: fact.size, mtime_ms: fact.mtime_ms, ...(fact.txn_id ? { txn_id: fact.txn_id } : {}),
+    ...(fact.export_mtime_ms !== undefined ? { export_mtime_ms: target.export_mtime_ms ?? fact.export_mtime_ms } : {}), ...(fact.source_path ? { source_path: target.source_path ?? fact.source_path } : {}) });
   return target;
 }
 

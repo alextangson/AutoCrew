@@ -18,9 +18,10 @@ import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../../stor
 import type { Fact, ProductionDoc, SliverCheck } from "../../../storage/production-types.js";
 import { isVideoPlatform } from "../../../storage/stage-guard.js";
 import { publishReceipts, srtFor, validCutApproval } from "../derive.js";
-import { probe } from "../roots.js";
+import { checkTargetDir } from "../record-plan.js";
+import { isWithin } from "../../../storage/storage-roots.js";
 import { mutateProduction } from "../service.js";
-import { buildSnapshot, readTimeline, videoTiming, type Read } from "./chatcut-read.js";
+import { buildSnapshot, probePixFmt, readTimeline, videoTiming, type Read } from "./chatcut-read.js";
 import { detectSlivers, type DetectOutcome } from "./detect.js";
 import { CHECKER_VERSION, type ArollIdentity, type Fps, type Snapshot } from "./snapshot-types.js";
 import { withSuggestions } from "./suggest.js";
@@ -41,17 +42,45 @@ export const snapshotRel = (cutSha: string) => path.join("04-edit", "chatcut-sna
 
 interface SnapshotFile { meta: { cut_sha: string; project_id: string; timeline_id: string; timeline_mtime_ms: number; taken_at: string }; snapshot: Snapshot }
 
-/** 已有快照（且对应当前工程记录）→ 用它；否则按需拍一张 */
-async function snapshotFor(root: string, cut: Fact, cc: Fact, take: boolean): Promise<Read<{ snap: Snapshot; sha: string }>> {
-  const file = path.join(root, snapshotRel(cut.sha256!));
+interface Snap { snap: Snapshot; sha: string; /** 还有素材探针临时失败：结果不缓存，下次重试 */ retry: boolean }
+
+/**
+ * 写快照：目录逐段不许是符号链接、最终位置必须仍在项目里，快照文件本身不许是链接（Codex 审 sliver P2，同 record 落位的防线）。
+ */
+async function writeSnapshot(root: string, rel: string, body: SnapshotFile): Promise<Read<string>> {
+  const realRoot = await fs.realpath(root);
+  const dirRel = path.dirname(rel);
+  const bad = { ok: false as const, reason: "项目里的快照目录是符号链接或不是目录，快照不写：请先改回普通文件夹" };
+  if (!(await checkTargetDir(realRoot, dirRel)).ok) return bad;
+  const dir = path.join(realRoot, dirRel);
+  await fs.mkdir(dir, { recursive: true });
+  if (!isWithin(realRoot, await fs.realpath(dir)) || !(await checkTargetDir(realRoot, dirRel)).ok) return bad;
+  const file = path.join(dir, path.basename(rel));
+  if ((await fs.lstat(file).catch(() => null))?.isSymbolicLink()) return bad;
+  await writeJsonAtomicMkdir(file, body);
+  return { ok: true, value: sha256(await fs.readFile(file)) };
+}
+
+async function readSnapshot(root: string, rel: string): Promise<{ raw: Buffer; j: SnapshotFile } | null> {
+  const file = path.join(root, rel);
+  const st = await fs.lstat(file).catch(() => null);
+  if (!st?.isFile()) return null; // 符号链接 / 不存在：当没有
   const raw = await fs.readFile(file).catch(() => null);
-  if (raw) {
-    try {
-      const j = JSON.parse(raw.toString("utf8")) as SnapshotFile;
-      if (j.meta.cut_sha === cut.sha256 && j.meta.project_id === cc.project_id && (!cc.timeline_id || cc.timeline_id === j.meta.timeline_id)) return { ok: true, value: { snap: j.snapshot, sha: sha256(raw) } };
-    } catch { /* 坏快照：当没有，重拍 */ }
+  try { return raw ? { raw, j: JSON.parse(raw.toString("utf8")) as SnapshotFile } : null; } catch { return null; }
+}
+
+const retryable = (s: Snapshot) => Object.values(s.assets).some((a) => a.probe_failed);
+
+/** 已有快照（且对应当前工程记录）→ 用它，上次探针失败的素材再探一次；否则拍一张 */
+async function snapshotFor(root: string, cut: Fact, cc: Fact): Promise<Read<Snap>> {
+  const rel = snapshotRel(cut.sha256!);
+  const old = await readSnapshot(root, rel);
+  if (old && old.j.meta?.cut_sha === cut.sha256 && old.j.meta.project_id === cc.project_id && (!cc.timeline_id || cc.timeline_id === old.j.meta.timeline_id)) {
+    if (!retryable(old.j.snapshot)) return { ok: true, value: { snap: old.j.snapshot, sha: sha256(old.raw), retry: false } };
+    for (const a of Object.values(old.j.snapshot.assets)) if (a.probe_failed) await probePixFmt(a);
+    const w = await writeSnapshot(root, rel, old.j);
+    return w.ok ? { ok: true, value: { snap: old.j.snapshot, sha: w.value, retry: retryable(old.j.snapshot) } } : w;
   }
-  if (!take) return { ok: false, reason: "这版成片还没有时间线快照", transient: true };
   const live = await readTimeline(cc.project_id!, cc.timeline_id);
   if (!live.ok) return live;
   const cutMtime = cut.export_mtime_ms ?? cut.mtime_ms;
@@ -59,18 +88,22 @@ async function snapshotFor(root: string, cut: Fact, cc: Fact, take: boolean): Pr
   const snap = await buildSnapshot(live.value, cc.project_id!);
   if (!snap.ok) return snap;
   const body: SnapshotFile = { meta: { cut_sha: cut.sha256!, project_id: cc.project_id!, timeline_id: live.value.timeline_id, timeline_mtime_ms: live.value.mtime_ms, taken_at: new Date().toISOString() }, snapshot: snap.value };
-  await writeJsonAtomicMkdir(file, body);
-  return { ok: true, value: { snap: snap.value, sha: sha256(await fs.readFile(file)) } };
+  const w = await writeSnapshot(root, rel, body);
+  return w.ok ? { ok: true, value: { snap: snap.value, sha: w.value, retry: retryable(snap.value) } } : w;
 }
 
+const realOr = async (p: string) => fs.realpath(p).catch(() => path.resolve(p));
+
+/** 逐份原片的路径身份：项目里那份文件的真实路径 + 记录 / 挪入前的原始路径（创始人 09-30：只按路径认） */
 export async function arollIdentity(root: string, facts: Fact[]): Promise<ArollIdentity> {
-  const paths = facts.filter((f) => f.path).map((f) => abs(root, f.path!));
-  const durationsUs: number[] = [];
-  for (const p of paths) {
-    const r = await probe(p).catch(() => ({ error: "probe" }));
-    if ("durationMs" in r && r.durationMs > 0) durationsUs.push(Math.round(r.durationMs * 1000));
+  const out: ArollIdentity = { facts: [] };
+  for (const f of facts) {
+    const paths = new Set<string>();
+    if (f.path) { const a = abs(root, f.path); paths.add(a); paths.add(await realOr(a)); }
+    if (f.source_path) { paths.add(f.source_path); paths.add(await realOr(f.source_path)); }
+    out.facts.push({ id: f.id, label: f.path ? path.basename(f.path) : f.id, paths: [...paths] });
   }
-  return { shas: facts.map((f) => f.sha256!), paths, durationsUs };
+  return out;
 }
 
 interface Inputs { fingerprint: string; snapshotSha: string | null; arollIds: string[]; ccId: string | null; outcome: DetectOutcome; transient: boolean; fps: Fps | null }
@@ -83,13 +116,13 @@ async function evaluate(content: Content, doc: ProductionDoc, cut: Fact, dataDir
   const early = (reason: string, transient = true, snapSha: string | null = null): Inputs =>
     ({ fingerprint: fp(snapSha), snapshotSha: snapSha, arollIds, ccId: cc?.id ?? null, outcome: { status: "unchecked", slivers: [], reason }, transient, fps: null });
   if (!cc?.project_id) return early("没有 ChatCut 工程记录（剪辑没报 chatcut_project，或不是 ChatCut 剪的）");
-  if (!arolls.length) return early("认不出 A-roll：本轮没有确认的原片");
-  const snap = await snapshotFor(root, cut, cc, true);
+  if (!arolls.length) return early("认不出哪条是原片：本轮没有确认的原片");
+  const snap = await snapshotFor(root, cut, cc);
   if (!snap.ok) return early(snap.reason);
   const timing = await videoTiming(abs(root, cut.path!));
   if (!timing.ok) return early(timing.reason, true, snap.value.sha);
   const outcome = detectSlivers({ snap: snap.value.snap, fps: timing.value.fps, aroll: await arollIdentity(root, arolls), cutFrames: timing.value.frames });
-  return { fingerprint: fp(snap.value.sha), snapshotSha: snap.value.sha, arollIds, ccId: cc.id, outcome, transient: false, fps: timing.value.fps };
+  return { fingerprint: fp(snap.value.sha), snapshotSha: snap.value.sha, arollIds, ccId: cc.id, outcome, transient: snap.value.retry, fps: timing.value.fps };
 }
 
 async function srtText(content: Content, doc: ProductionDoc, cutSha: string, dataDir: string): Promise<string | null> {
