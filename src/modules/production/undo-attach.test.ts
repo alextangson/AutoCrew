@@ -199,3 +199,30 @@ describe("§7 卡片挂载核对 + 改挂", () => {
     expect(badges).toContain("转写环境没装好");
   });
 });
+
+describe("卡片挂载核对：写了 checking、作业没落盘就崩了（Codex 审 segB10 P2）", () => {
+  it("重启就绪时按事实上的 checking 重新入队，跑完落结果，不会永远转圈", async () => {
+    const { withFileOwnership } = await import("./mutex.js");
+    const { mutateProduction, resetProductionReady, ensureProductionReady } = await import("./service.js");
+    const { resetMatchQueue } = await import("./match/queue.js");
+    asr(() => ({ ok: true, text: B.slice(20, 160) }), "暂不转写");
+    const a = await videoContent(env, "甲稿崩溃核对", "draft_ready", A);
+    await videoContent(env, "乙稿崩溃核对", "draft_ready", B);
+    await founderApprove(env, a.id);
+    await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "crash.mov"), "c") });
+    await matchWorkerIdle(env.dir);
+    // 模拟崩溃窗口：事实写成 checking（新作业代号），队列里没有这个作业
+    await withFileOwnership(() => mutateProduction(a.id, env.dir, (doc) => {
+      const f = doc.facts.find((x) => x.kind === "aroll" && x.state === "accepted")!;
+      f.attach_check = { status: "checking", job: "mjob-lost-1", at: new Date().toISOString() };
+      return { value: null, events: [] };
+    }));
+    resetMatchQueue();
+    resetProductionReady();
+    asr(() => ({ ok: true, text: B.slice(20, 160) }));
+    await ensureProductionReady(env.dir);
+    await new Promise((r) => setTimeout(r, 20));
+    await matchWorkerIdle(env.dir);
+    expect((await aroll(a.id)).attach_check).toMatchObject({ status: "suggest", other_title: "乙稿崩溃核对" });
+  });
+});

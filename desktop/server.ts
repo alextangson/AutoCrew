@@ -40,6 +40,7 @@ import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
 import { ensureProductionReady } from "../src/modules/production/service.js";
 // 原片核对作业的处理器与「重启后 pending_match 重新入队」钩子（1b §3-5）：在首次 ensureProductionReady 之前注册
 import "../src/modules/production/match/pending.js";
+import "../src/modules/production/attach-check.js";
 import { reconcileAll } from "../src/modules/production/reconcile.js";
 import { resumeEnable } from "../src/modules/production/enable.js";
 import { pullDeps } from "../src/modules/video/handoff/pull-deps.js";

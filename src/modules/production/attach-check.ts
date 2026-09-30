@@ -10,7 +10,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { contentRoot } from "../../storage/content-project.js";
 import { getContent, type Content } from "../../storage/local-store.js";
-import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { isOntologyActive, readProductionDoc, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { stableFingerprint } from "./files.js";
@@ -20,13 +20,13 @@ import { matchDeps } from "./match/deps.js";
 import { hear } from "./match/hear.js";
 import { withFileOwnership } from "./mutex.js";
 import { arollPool } from "./match/pool.js";
-import { enqueueMatchJob, registerMatchHandler, type JobResult, type MatchJob } from "./match/queue.js";
+import { enqueueMatchJob, listMatchJobs, registerMatchHandler, type JobResult, type JobSpec, type MatchJob } from "./match/queue.js";
 import { pendingElsewhere, pendingElsewhereText } from "./match/reservation.js";
 import { checkTargetDir, type FilePlan } from "./record-plan.js";
 import { commitFile } from "./record.js";
 import { now } from "./roots.js";
-import { mutateProduction } from "./service.js";
-import { arollOwnerElsewhere } from "./sha-index.js";
+import { mutateProduction, registerReadyHook } from "./service.js";
+import { arollOwnerElsewhere, shaIndex } from "./sha-index.js";
 import { chatcutInUse, factFile, IN_EDIT_REASSIGN, undoBlocker } from "./undo-attach.js";
 import { newId } from "../../storage/production-store.js";
 
@@ -35,6 +35,11 @@ type Result = Record<string, unknown>;
 const fail = (code: string, error: string): Result => ({ ok: false, code, error });
 
 /** 挂上之后入队；调用方持锁（founderDecision）。入队失败写进事实，卡片上看得见 */
+function checkSpec(dataDir: string, contentId: string, fact: Fact, job: string): JobSpec {
+  return { id: job, purpose: ATTACH_CHECK, priority: "explicit", sha256: fact.sha256!, path: fact.path && path.isAbsolute(fact.path) ? fact.path : path.join(contentRoot(contentId, dataDir), fact.path ?? ""),
+    size: fact.size ?? 0, mtime_ms: fact.mtime_ms ?? 0, target: `${contentId}:${fact.id}`, payload: { content_id: contentId, fact_id: fact.id } };
+}
+
 export async function startAttachCheck(dataDir: string, contentId: string, fact: Fact): Promise<void> {
   const job = newId("mjob");
   const at = new Date().toISOString();
@@ -43,8 +48,7 @@ export async function startAttachCheck(dataDir: string, contentId: string, fact:
     if (f) f.attach_check = { status: "checking", job, at };
     return { value: null, events: [] };
   });
-  await enqueueMatchJob(dataDir, { id: job, purpose: ATTACH_CHECK, priority: "explicit", sha256: fact.sha256!, path: fact.path && path.isAbsolute(fact.path) ? fact.path : path.join(contentRoot(contentId, dataDir), fact.path ?? ""),
-    size: fact.size ?? 0, mtime_ms: fact.mtime_ms ?? 0, target: `${contentId}:${fact.id}`, payload: { content_id: contentId, fact_id: fact.id } })
+  await enqueueMatchJob(dataDir, checkSpec(dataDir, contentId, fact, job))
     .catch((e: unknown) => settle(dataDir, contentId, fact.id, job, { status: "failed", reason: `核对没排上：${e instanceof Error ? e.message : String(e)}` }));
 }
 
@@ -74,6 +78,24 @@ async function handle({ dataDir, job, signal }: { dataDir: string; job: MatchJob
   await settle(dataDir, content_id, fact_id, job.id, other ? { status: "suggest", other_id: other.content_id, other_title: other.title, reason: `${d.reason}；前三名：${describeTop3(d.top3)}` } : { status: "ok", reason: d.reason });
   return { state: "done", outcome: other ? `更像《${other.title}》` : "对上这条" };
 }
+
+/**
+ * 重启恢复（Codex 审 segB10 P2）：事实写成 checking 之后、作业落盘之前崩了 → 就绪时按事实重新入队（同作业代号：
+ * 还活着的作业直接复用，终态的重排）。否则卡片会永远「正在核对内容」。
+ */
+export async function requeueAttachChecks(dataDir: string): Promise<void> {
+  const live = new Set((await listMatchJobs(dataDir)).filter((j) => j.purpose === ATTACH_CHECK && (j.state === "queued" || j.state === "running")).map((j) => j.id));
+  for (const list of Object.values((await shaIndex(dataDir)).entries)) {
+    for (const e of list) {
+      if (e.kind !== "aroll" || e.state !== "accepted") continue;
+      const doc = await readProductionDoc(e.content_id, dataDir).catch(() => null);
+      const f = doc?.facts.find((x) => x.id === e.fact_id && x.round === doc.round && x.attach_check?.status === "checking");
+      if (f?.attach_check?.job && f.sha256 && !live.has(f.attach_check.job)) await enqueueMatchJob(dataDir, checkSpec(dataDir, e.content_id, f, f.attach_check.job));
+    }
+  }
+}
+
+registerReadyHook(requeueAttachChecks);
 
 registerMatchHandler(ATTACH_CHECK, handle, async (dataDir, job, error) => {
   const { content_id, fact_id } = job.payload as { content_id: string; fact_id: string };
