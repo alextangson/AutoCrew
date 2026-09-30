@@ -77,6 +77,23 @@ describe("§4 收件箱自动挪", () => {
     expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
   });
 
+  it("批次成员固定：批里的都有结果就提交，之后新到、还在核对的文件进下一批，不挡这一批（Codex 审 segB3 P2）", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    asr(async (f) => { if (path.basename(f) === "IMG_late.mov") await gate; return { ok: true, text: synth(99, 200) }; });
+    const a = await videoContent(env, "甲稿批次成员测试", "draft_ready", A);
+    const named = await put(path.join(env.inbox, "甲稿批次成员测试-原片.mov"), "named");
+    await put(path.join(env.inbox, "IMG_early.mov"), "early");
+    await reconcileAll(env.dir);
+    await put(path.join(env.inbox, "IMG_late.mov"), "late");
+    try {
+      await new Promise((r) => setTimeout(r, 100)); // IMG_early 转完；IMG_late 卡在转写里
+      await reconcileAll(env.dir);
+      expect(await exists(named)).toBe(false);
+      expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
+    } finally { release(); }
+  });
+
   it("这条已有本轮原片 → 后来的只做候选（E25）；点过「不是这条」的字节不再自动挪回来（B10）", async () => {
     asr(heardFrom({ "IMG_1.mov": A.slice(20, 160), "IMG_2.mov": A.slice(250, 390) }));
     const a = await videoContent(env, "甲稿已有原片测试", "draft_ready", A);

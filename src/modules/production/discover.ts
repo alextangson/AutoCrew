@@ -13,6 +13,8 @@ import { listContents, type Content } from "../../storage/local-store.js";
 import { isOntologyActive, readProductionDoc } from "../../storage/production-store.js";
 import type { Fact } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
+import { getWorkspaceCacheDir } from "../../storage/storage-roots.js";
+import { writeJsonAtomicMkdir } from "../../storage/json-atomic.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
 import { checkDuration, STABLE_MS } from "./files.js";
 import { fileVerdict, type Found, type Verdict } from "./match/background.js";
@@ -97,10 +99,27 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
   }
 }
 
+/**
+ * 收件箱批次成员持久化（Codex 审 segB3 P2，spec §4 / §14-5）：一批 = 开批时收件箱里的文件（按 sha）。
+ * 只等这批的都有结果（已判 / 失败）就提交；之后新到的文件进下一批，挡不住这一批。离开收件箱的成员自然出批。
+ */
+function batchFile(dataDir: string): string {
+  return path.join(getWorkspaceCacheDir(dataDir), "inbox-batch.json");
+}
+
+async function readBatch(dataDir: string): Promise<string[]> {
+  try { const v = JSON.parse(await fs.readFile(batchFile(dataDir), "utf8")) as { members?: unknown }; return Array.isArray(v.members) ? v.members.filter((x): x is string => typeof x === "string") : []; }
+  catch { return []; }
+}
+
+async function writeBatch(dataDir: string, members: string[]): Promise<void> {
+  await writeJsonAtomicMkdir(batchFile(dataDir), { members });
+}
+
 async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], waiting: Set<string>, out: Discovery): Promise<void> {
   const listed = await listTop(dir, isVideo);
   if (listed.error) { out.warnings.push(`读不了原片收件箱 ${dir}（${listed.error}）`); return; }
-  const decided: Array<{ f: Found; d: MatchDecision }> = [];
+  const seen: Array<{ f: Found; v: Verdict }> = [];
   for (const raw of listed.files) {
     const f = await found(raw).catch(() => null);
     if (!f) { out.inbox.failed.push({ name: raw.name, path: raw.file, reason: "读不了这个文件" }); continue; }
@@ -110,11 +129,16 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
     const v: Verdict = await fileVerdict(dataDir, f, pool);
     if (v.kind === "checking") out.inbox.checking += 1;
     else if (v.kind === "failed") out.inbox.failed.push({ name: f.name, path: f.file, reason: v.reason });
-    else decided.push({ f, d: v.d });
+    seen.push({ f, v });
   }
   if (out.inbox.failed.length) out.warnings.push(`收件箱里 ${out.inbox.failed.length} 个视频没核对成：${out.inbox.failed.map((x) => `${x.name}（${x.reason}）`).join("；")}`);
-  // 按批判定：还有在核对的就整批等下一轮（之后新到的文件进下一批）
-  if (out.inbox.checking === 0) judgeInbox(out, decided, waiting);
+  const present = new Set(seen.map((x) => x.f.sha256));
+  let members = (await readBatch(dataDir)).filter((sha) => present.has(sha));
+  if (!members.length) members = [...present];
+  const batch = seen.filter((x) => members.includes(x.f.sha256));
+  if (batch.some((x) => x.v.kind === "checking")) { await writeBatch(dataDir, members); return; }
+  judgeInbox(out, batch.flatMap((x) => (x.v.kind === "decided" ? [{ f: x.f, d: x.v.d }] : [])), waiting);
+  await writeBatch(dataDir, []);
 }
 
 // ---- §5 监视文件夹 ----
