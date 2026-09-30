@@ -19,7 +19,7 @@ export const COLUMN_HINT: Record<BoardColumn, string> = {
   选题: "雷达 · 收件箱 · 你建的",
   写稿中: "AI 在写 / 审 · 写完等你认稿",
   待录制: "按上一条语速估时长 · 点开看稿",
-  剪辑中: "Codex 在剪",
+  剪辑中: "AI 在剪",
   待发布: "成片、封面都过了",
   已发布: "按发布时间 · 更早的去数据页",
 };
@@ -29,7 +29,7 @@ export const EMPTY_NOTE: Record<BoardColumn, string> = {
   选题: "雷达找到的、你记下的想法会出现在这",
   写稿中: "点选题的「开始写」，稿子会出现在这",
   待录制: "你认过的稿会出现在这，等你录",
-  剪辑中: "Codex 在剪的会出现在这",
+  剪辑中: "在剪的会出现在这",
   待发布: "成片和封面都过了会出现在这",
   已发布: "发出去的会出现在这",
 };
@@ -80,6 +80,8 @@ export interface BoardItem {
   reason?: string;
   /** 最新一版分镜（「v001」） */
   storyboard?: string | null;
+  /** 谁在剪（后端按事实的宿主给：Claude / Codex / WorkBuddy / 你 / agent） */
+  editorLabel?: string;
 }
 
 export interface BoardTopic {
@@ -344,7 +346,7 @@ export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date
     if (est) parts.push(est);
     parts.push(`定稿 ${relativeLabel(item.draftReadyAt ?? item.updatedAt, now)}`);
   }
-  if (item.column === "剪辑中") parts.push(item.status === "cover_pending" ? "等挑封面" : "Codex 在剪", `更新 ${relativeLabel(item.updatedAt, now)}`);
+  if (item.column === "剪辑中") parts.push(item.status === "cover_pending" ? "等挑封面" : `${item.editorLabel ?? "agent"} 在剪`, `更新 ${relativeLabel(item.updatedAt, now)}`);
   if (item.column === "待发布" || item.column === "已发布") {
     if (item.finalDurationMs) parts.push(durationText(item.finalDurationMs));
     const days = item.publishTime ? Math.ceil((Date.parse(item.publishTime) - now) / 86_400_000) : 0;
@@ -353,6 +355,6 @@ export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date
     if (item.column === "已发布" && item.badges?.includes(LEGACY_REGISTERED)) parts.push(LEGACY_REGISTERED);
   }
   // 有分镜时带上最新版本（分镜 spec §4）
-  if (item.storyboard) parts.push(`分镜 ${item.storyboard}`);
+  if (item.storyboard) parts.push("有分镜");
   return parts.join(" · ");
 }

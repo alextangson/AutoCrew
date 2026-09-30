@@ -12,6 +12,7 @@ import { newIdea } from "../new-idea";
 import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting } from "./board-api";
 import { InboxHeader } from "./InboxHeader";
 import { CardPanel } from "./CardPanel";
+import { ReviewInbox } from "./review/ReviewInbox";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
@@ -23,7 +24,7 @@ import "./board.css";
 
 const POLL_MS = 3000;
 
-type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void; card?: string };
+type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void; card?: string; inbox?: string };
 
 /** 读看板 + 3 秒轮询；拖动中 / 菜单开着时暂停，结束后补一次（§7） */
 function useBoardData() {
@@ -118,6 +119,7 @@ export function Board(props: Nav) {
 
   const allEmpty = cards !== null && COLUMNS.every((c) => cards[c].length === 0);
   return <div className="board2 page-board">
+    <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} />
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
       {data && <OntologyBanner ontology={data.ontology} reload={reload} />}

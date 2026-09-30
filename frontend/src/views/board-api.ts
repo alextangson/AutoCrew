@@ -76,6 +76,8 @@ export interface CardPanelData {
   published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; work?: string | null; label: string; at: string }>;
   approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };
   slivers?: SliverPanel | null;
+  /** B7：有导出但 agent 还没说可以审（没有就是 null） */
+  unreviewed?: { count: number; editor_label: string } | null;
   storyboard?: StoryboardPanel | null;
   arolls?: ArollRow[];
   candidate_rows?: CandidateRowView[];

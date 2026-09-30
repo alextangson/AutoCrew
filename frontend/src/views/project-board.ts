@@ -33,6 +33,10 @@ export type ProjectReview = {
   cover_selection?: Partial<Record<CoverRatio, CoverPick>> | null;
   gates?: Record<"gate1" | "gate2" | "gate3" | "gate4", GateView>;
   final_cut?: FinalCutCard | null;
+  /** 按本体走的稿（工作台只看详情，review-inbox §10） */
+  ontology?: boolean;
+  /** 谁在剪：按事实的宿主给（Claude / Codex / WorkBuddy / 你 / agent） */
+  editor_label?: string;
 };
 
 type CoverRatio = "3:4" | "4:3";

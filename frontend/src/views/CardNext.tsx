@@ -6,7 +6,7 @@ import { nextStep } from "./card-next";
 
 type Act = (action: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
 
-export function CardNext(p: { d: CardPanelData; busy: boolean; act: Act; openEditor: () => void; refresh: () => Promise<void> }) {
+export function CardNext(p: { d: CardPanelData; busy: boolean; act: Act; openEditor: () => void; refresh: () => Promise<void>; goInbox?: (types?: string[]) => void }) {
   const n = nextStep(p.d);
   if (!n) return null;
   const approve = async () => {
@@ -18,7 +18,8 @@ export function CardNext(p: { d: CardPanelData; busy: boolean; act: Act; openEdi
   };
   const run = () => {
     if (n.action === "approve_script") return void approve();
-    if (n.action === "open_cut" || n.action === "open_cover") return p.openEditor();
+    // 看成片 / 挑封面在「等你拍板」里（review-inbox §10）；没接列表的地方照旧去工作台
+    if (n.action === "open_cut" || n.action === "open_cover") return p.goInbox ? p.goInbox(n.action === "open_cut" ? ["cut_review", "sliver"] : ["cover_pick"]) : p.openEditor();
     if (n.action === "i_published") return void p.act("i_published", { platform: p.d.platform ?? "" }, "已记为发出去了");
   };
   return <section className="card-panel-next" aria-label="下一步">

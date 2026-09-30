@@ -1,0 +1,268 @@
+// @vitest-environment happy-dom
+/**
+ * 「等你拍板」前端（review-inbox 2a-2）：每类面板、三种按钮、空 / 收起、键盘、提示与撤回、版本切换、B7、提醒合并，
+ * 以及「每类条目的每个按钮都按后端给的 params 原样交到 /api/inbox/decide」。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import type { InboxItem } from "./review-model";
+
+const decided: Array<Record<string, unknown>> = [];
+const undone: Array<[string, string, Record<string, unknown>]> = [];
+let inbox: InboxItem[] = [];
+let decideReply: Record<string, unknown> = { ok: true };
+vi.mock("./review-api", () => ({
+  loadInbox: async () => ({ ok: true, data: { items: inbox, count: inbox.length, agent_waiting: 0, generated_at: "" } }),
+  decideItem: async (p: Record<string, unknown>) => { decided.push(p); return decideReply.ok === false ? { ok: false, error: String(decideReply.error) } : { ok: true, data: decideReply }; },
+  undoDecision: async (c: string, a: string, p: Record<string, unknown>) => { undone.push([c, a, p]); return { ok: true, data: {} }; },
+  attachmentUrl: () => "/att",
+  inboxHref: (id: string) => `#/board?inbox=${id}`,
+  INBOX_OPEN_EVENT: "autocrew:inbox-open",
+  openInboxItem: () => {},
+}));
+vi.mock("../../transport", () => ({ invoke: async () => ({ ok: true, content: { body: "正文第一段。" } }), authedFetch: async () => new Response("{}"), SESSION_EXPIRED: "x" }));
+
+let el: HTMLDivElement;
+let root: Root;
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  decided.length = 0; undone.length = 0; decideReply = { ok: true }; inbox = [];
+  el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el);
+  window.localStorage?.clear?.();
+});
+afterEach(async () => { await act(async () => { root.unmount(); }); el.remove(); vi.unstubAllGlobals(); });
+const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+const btn = (t: string) => [...el.querySelectorAll("button")].find((b) => b.textContent === t) as HTMLButtonElement | undefined;
+const click = async (b: Element | undefined) => { expect(b, "按钮在").toBeTruthy(); await act(async () => { (b as HTMLElement).click(); }); await tick(); };
+const key = async (k: string) => { await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); }); await tick(); };
+
+const base = (over: Partial<InboxItem>): InboxItem => ({ item_id: "x", gen: "g", type: "draft", content_id: "content-1-a", title: "测试稿", summary: "", waiting: null, agent_waiting: false,
+  since: new Date(Date.now() - 5 * 60_000).toISOString(), rank: 1, actions: [], detail: {}, ...over });
+
+export const ITEMS: InboxItem[] = [
+  base({ item_id: "ask:ask-1", type: "ask", rank: 0, agent_waiting: true, waiting: { host: "claude-code", label: "Claude" }, summary: "Claude想问你：粗剪这样行吗？",
+    actions: [{ action: "answer_ask", label: "可以", role: "secondary", params: { ask_id: "ask-1", option_id: "ok" }, note: "optional" }, { action: "answer_ask", label: "再改改", role: "secondary", params: { ask_id: "ask-1", option_id: "redo" }, note: "optional" }],
+    detail: { ask_id: "ask-1", kind: "粗剪", question: "粗剪这样行吗？", options: [], attachments: [], attachments_changed: false } }),
+  base({ item_id: "cut:r1", type: "cut_review", summary: "成片剪好了，看一遍", waiting: { host: "codex", label: "Codex" },
+    actions: [{ action: "approve_cut", label: "就用这版", role: "primary", params: { fact_id: "f2", sha256: "s2" } }, { action: "reject_cut", label: "还要改…", role: "secondary", params: { fact_id: "f2", sha256: "s2" }, note: "required", placeholder: "比如：开头有点拖，前 10 秒再紧一点" }],
+    detail: { review_fact_id: "f2", editor_label: "Codex", versions: [{ fact_id: "f2", sha256: "s2", path: "04-edit/b.mp4", at: new Date().toISOString(), label: "最新一版", ready: true, has_srt: true }, { fact_id: "f1", sha256: "s1", path: "04-edit/a.mp4", at: new Date(Date.now() - 3600_000).toISOString(), label: "上一版", ready: true }] } }),
+  base({ item_id: "cover:r1", type: "cover_pick", summary: "封面做好了，挑一张",
+    actions: [{ action: "pick_cover", label: "用这组", role: "primary", params: { group_id: "cg-2", cover_text: "字" } }, { action: "reject_cover", label: "还要改…", role: "secondary", note: "required" }, { action: "retire_cover_group", label: "这组不要了", role: "quiet", params: { group_id: "cg-2" } }],
+    detail: { groups: [{ group_id: "cg-2", label: "最新一组", at: new Date().toISOString(), text: "字", approved: false, "3:4": { path: "05-cover/v002/a.png", sha256: "c1" }, "4:3": { path: "05-cover/v002/b.png", sha256: "c2" } }], incomplete: [] } }),
+  base({ item_id: "cand:f9", type: "candidate", summary: "找到一段成片，是这条的吗", actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: { fact_id: "f9", sha256: "s9" } }, { action: "reject_candidate", label: "不是", role: "secondary", params: { fact_id: "f9", sha256: "s9" } }], detail: { fact_id: "f9", name: "x.mp4", evidence: "文件名对上" } }),
+  base({ item_id: "sliver:f2", type: "sliver", summary: "画面有闪帧（1 处）", actions: [{ action: "reject_cut", label: "去剪辑里改", role: "primary", params: { fact_id: "f2", sha256: "s2" }, note: "optional" }],
+    detail: { status: "slivers", items: [{ key: "k1", start_tc: "00:00:03", frames: 5, prev_name: "空镜", next_name: "动效", suggestion: null, waived: false, action: { action: "waive_sliver", label: "这处是故意的", role: "secondary", params: { cut_sha: "s2", fingerprint: "fp", sliver_key: "k1" } } }] } }),
+  base({ item_id: "register:r1", type: "register_blocked", summary: "还差一步才能发：缺这版成片的字幕", actions: [{ action: "nudge", label: "让 Codex 补", role: "primary" }], detail: { reason: "缺这版成片的字幕" } }),
+  base({ item_id: "pubcheck:r1:douyin", type: "publish_check", rank: 2, summary: "发之前再看一眼（抖音）", actions: [{ action: "publish_check_confirm", label: "没问题", role: "primary", params: { check_id: "chk-1" } }, { action: "publish_check_revise", label: "有几处要改…", role: "secondary", params: { check_id: "chk-1" }, note: "required" }], detail: { platform: "douyin", verdict: "pass", items: [] } }),
+  base({ item_id: "published:r1:douyin", type: "published_ask", rank: 2, summary: "发了吗（抖音）", actions: [{ action: "i_published", label: "已经发出去了", role: "primary", params: { platform: "douyin" }, note: "optional" }], detail: { platform: "douyin" } }),
+  base({ item_id: "claim:r1:douyin", type: "publish_claim", rank: 2, summary: "Claude说已经发了（抖音）", actions: [{ action: "confirm_receipt", label: "对，发了", role: "primary", params: { fact_id: "p1" } }, { action: "correct_publish", label: "没发", role: "secondary", params: { target_id: "slot:1:douyin" } }], detail: { platform: "douyin" } }),
+  base({ item_id: "draft:content-2-b", content_id: "content-2-b", type: "draft", rank: 3, summary: "稿子写好了，过一眼", actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required" }], detail: { words: 300 } }),
+];
+
+async function mountInbox(items: InboxItem[]) {
+  inbox = items;
+  const { ReviewInbox } = await import("./ReviewInbox");
+  await act(async () => { root.render(createElement(ReviewInbox)); });
+  await tick();
+}
+const openRow = async (label: string) => click([...el.querySelectorAll(".ri-row")].find((r) => r.getAttribute("aria-label") === label));
+
+describe("三种按钮（§4.2）", () => {
+  it("primary / secondary / quiet 各有一个样子；旧名 ghost / danger 不是第四种", async () => {
+    const { btnClass } = await import("../../components/Button");
+    expect(btnClass("primary")).toBe("primary");
+    expect(btnClass("secondary")).toBe("");
+    expect(btnClass("quiet")).toBe("btn-ghost");
+    expect(btnClass("ghost")).toBe("btn-ghost");
+  });
+});
+
+describe("列表：空 / 收起 / 展开（§2）", () => {
+  it("没事时收成一行「没有等你拍板的事」", async () => {
+    await mountInbox([]);
+    expect(el.textContent).toContain("没有等你拍板的事");
+    expect(el.querySelector(".ri-list")).toBeNull();
+  });
+  it("有事自动展开；可以收起；有 agent 在等的行首有小蓝点", async () => {
+    await mountInbox(ITEMS);
+    expect(el.querySelectorAll(".ri-row").length).toBe(ITEMS.length);
+    expect(el.querySelectorAll(".ri-dot").length).toBe(1);
+    expect(el.querySelector(".ri-row")!.textContent).toContain("测试稿 · Claude在等");
+    expect(el.querySelector(".ri-row")!.textContent).toContain("5 分钟前");
+    await click(btn("收起"));
+    expect(el.querySelector(".ri-list")).toBeNull();
+    expect(document.title).toBe(`(${ITEMS.length}) AutoCrew`);
+  });
+});
+
+describe("每类面板（§3.1）", () => {
+  it.each(ITEMS.map((i) => [i.type, i] as const))("%s：标题、属性行和后端给的按钮", async (_t, item) => {
+    await mountInbox([item]);
+    await openRow(item.summary);
+    const peek = el.querySelector(".ri-peek")!;
+    expect(peek.querySelector("h2")!.textContent).toBe(item.summary);
+    if (item.type !== "sliver" && item.type !== "register_blocked") expect(peek.querySelector(".ri-props")).toBeTruthy();
+    for (const a of item.actions) expect([...peek.querySelectorAll("button")].some((b) => b.textContent === a.label)).toBe(true);
+    const primaries = [...peek.querySelectorAll("button.primary")].filter((b) => b.textContent !== "发送");
+    expect(primaries.length).toBeLessThanOrEqual(1);
+    expect(peek.textContent).not.toMatch(/sha|fact|B-roll|A-roll|LUFS/);
+  });
+  it("成片：视频播放器；封面：3:4 + 4:3 并排；稿子：只读正文", async () => {
+    await mountInbox([ITEMS[1], ITEMS[2], ITEMS[9]]);
+    await openRow("成片剪好了，看一遍");
+    expect(el.querySelector(".ri-peek video")).toBeTruthy();
+    await openRow("封面做好了，挑一张");
+    expect(el.querySelectorAll(".ri-peek .ri-covers img").length).toBe(2);
+    await openRow("稿子写好了，过一眼");
+    expect(el.querySelector(".ri-peek .ri-body")!.textContent).toContain("正文第一段");
+  });
+});
+
+describe("版本切换（安静的分段胶囊）", () => {
+  it("按时间标「最新一版 / 上一版」，切到上一版后「就用这版」交的是那一版", async () => {
+    await mountInbox([ITEMS[1]]);
+    await openRow("成片剪好了，看一遍");
+    const tabs = [...el.querySelectorAll(".ri-pill span")].map((s) => s.textContent);
+    expect(tabs).toEqual(["最新一版", "上一版"]);
+    await click([...el.querySelectorAll(".ri-pill span")][1]);
+    await click(btn("就用这版"));
+    expect(decided.at(-1)).toMatchObject({ item_id: "cut:r1", gen: "g", action: "approve_cut", fact_id: "f1" });
+  });
+});
+
+describe("「…」动作就地展开输入框，回车发送", () => {
+  it("还要改… → 输入框（真实例子做提示）→ 回车发", async () => {
+    await mountInbox([ITEMS[1]]);
+    await openRow("成片剪好了，看一遍");
+    await click(btn("还要改…"));
+    const ta = el.querySelector(".ri-inline textarea") as HTMLTextAreaElement;
+    expect(ta.placeholder).toBe("比如：开头有点拖，前 10 秒再紧一点");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(ta, "前 10 秒再紧一点");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    await tick();
+    expect(decided.at(-1)).toMatchObject({ action: "reject_cut", note: "前 10 秒再紧一点", fact_id: "f2" });
+  });
+});
+
+describe("做完之后：提示 · 撤回 · 还有 N 件，自动打开下一件；键盘", () => {
+  it("就用这版 → 「这版定了 · 撤回 · 还有 N 件」，点撤回 = 撤销这条批准；下一件自动打开", async () => {
+    decideReply = { ok: true, decision: { id: "dec-9" } };
+    await mountInbox([ITEMS[1], ITEMS[2]]);
+    await openRow("成片剪好了，看一遍");
+    inbox = [ITEMS[2]];
+    await click(btn("就用这版"));
+    const t = el.querySelector(".ri-toast")!;
+    expect(t.textContent).toContain("这版定了");
+    expect(t.textContent).toContain("还有 1 件");
+    expect(el.querySelector(".ri-peek h2")!.textContent).toBe("封面做好了，挑一张");
+    await click(btn("撤回"));
+    expect(undone).toEqual([["content-1-a", "revoke_approval", { decision_id: "dec-9" }]]);
+  });
+  it("撤不回的（候选确认）不给「撤回」", async () => {
+    await mountInbox([ITEMS[3]]);
+    await openRow("找到一段成片，是这条的吗");
+    inbox = [];
+    await click(btn("对，就是它"));
+    expect(el.querySelector(".ri-toast")!.textContent).toContain("都处理完了");
+    expect(btn("撤回")).toBeUndefined();
+  });
+  it("↓ / ↑ 切换条目，回车 = 主按钮", async () => {
+    await mountInbox([ITEMS[1], ITEMS[6]]);
+    await key("ArrowDown");
+    expect(el.querySelector(".ri-peek h2")!.textContent).toBe("成片剪好了，看一遍");
+    await key("ArrowDown");
+    expect(el.querySelector(".ri-peek h2")!.textContent).toBe("发之前再看一眼（抖音）");
+    await key("ArrowUp");
+    await key("ArrowDown");
+    await key("Enter");
+    expect(decided.at(-1)).toMatchObject({ action: "publish_check_confirm", check_id: "chk-1", item_id: "pubcheck:r1:douyin" });
+  });
+  it("别处处理掉了：面板提示「已在别处处理」，不再给按钮", async () => {
+    await mountInbox([ITEMS[3]]);
+    await openRow("找到一段成片，是这条的吗");
+    inbox = [];
+    const { POLL_MS } = await import("./ReviewInbox");
+    await act(async () => { await new Promise((r) => setTimeout(r, POLL_MS + 100)); });
+    expect(el.querySelector(".ri-peek")!.textContent).toContain("已在别处处理");
+    expect(btn("对，就是它")).toBeUndefined();
+  }, 10_000);
+});
+
+describe("每类条目的每个按钮：原样交到 /api/inbox/decide", () => {
+  it.each(ITEMS.flatMap((i) => i.actions.map((a, n) => [`${i.type}·${a.label}`, i, n] as const)))("%s", async (_n, item, n) => {
+    await mountInbox([item]);
+    await openRow(item.summary);
+    const a = item.actions[n];
+    const b = [...el.querySelectorAll(".ri-peek button")].filter((x) => x.textContent === a.label)[a.params?.option_id === "redo" ? 0 : 0];
+    await click(b);
+    if (a.note === "required") {
+      const ta = el.querySelector(".ri-inline textarea") as HTMLTextAreaElement;
+      await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "改一下"); ta.dispatchEvent(new Event("input", { bubbles: true })); });
+      await click(btn("发送"));
+    }
+    const sent = decided.at(-1)!;
+    expect(sent).toMatchObject({ content_id: item.content_id, item_id: item.item_id, gen: item.gen, action: a.action, ...(a.params ?? {}) });
+    if (a.note === "required") expect(sent.note).toBe("改一下");
+  });
+  it("闪帧的「这处是故意的」交的是那一处的 params", async () => {
+    await mountInbox([ITEMS[4]]);
+    await openRow("画面有闪帧（1 处）");
+    await click(btn("这处是故意的"));
+    expect(decided.at(-1)).toMatchObject({ action: "waive_sliver", cut_sha: "s2", fingerprint: "fp", sliver_key: "k1", item_id: "sliver:f2" });
+  });
+});
+
+describe("B7：agent 没说可以审，创始人要审", () => {
+  it("卡上写「有 N 个导出，X 还没说可以审了」；「我现在就要审」= review_now，然后打开列表里那件", async () => {
+    const acts: string[] = [];
+    let went = false;
+    const { UnreviewedCut } = await import("../CardPanel");
+    await act(async () => { root.render(createElement(UnreviewedCut, { u: { count: 2, editor_label: "Claude" }, busy: false, act: async (a: string) => { acts.push(a); }, goInbox: () => { went = true; } })); });
+    expect(el.textContent).toContain("有 2 个导出，Claude还没说可以审了");
+    const b = btn("我现在就要审")!;
+    expect(b.className).toBe("btn-ghost");
+    await click(b);
+    expect(acts).toEqual(["review_now"]);
+    expect(went).toBe(true);
+  });
+});
+
+describe("网页提醒（§9）", () => {
+  it("只提醒 agent 在等 / 挡住推进的；同一条稿 10 分钟内合并；同一件不重复", async () => {
+    const { newNotifyState, toNotify, COALESCE_MS } = await import("./review-model");
+    const s = newNotifyState();
+    const a = ITEMS[0], b = ITEMS[1], draft = ITEMS[9];
+    expect(toNotify([a, b, draft], s, 0).map((i) => i.item_id)).toEqual([a.item_id]);
+    expect(toNotify([a, b], s, 1000)).toEqual([]);
+    const later = { ...ITEMS[2], gen: "g2" };
+    expect(toNotify([later], s, 2000)).toEqual([]);
+    const other = { ...ITEMS[2], item_id: "cover:r2", gen: "g3" };
+    expect(toNotify([other], s, COALESCE_MS + 5000).map((i) => i.item_id)).toEqual(["cover:r2"]);
+  });
+  it("第一次有事问一次授权；拒了只显示件数、不再问；允许后弹，点了打开那一件", async () => {
+    const created: Array<{ title: string; onclick: (() => void) | null; close: () => void }> = [];
+    const N = Object.assign(function (this: { title: string; onclick: (() => void) | null; close: () => void }, title: string) { this.title = title; this.onclick = null; this.close = () => {}; created.push(this); },
+      { permission: "default" as NotificationPermission, requestPermission: vi.fn(async () => "denied") });
+    vi.stubGlobal("Notification", N);
+    await mountInbox([ITEMS[0]]);
+    expect(N.requestPermission).toHaveBeenCalledTimes(1);
+    N.permission = "denied";
+    await act(async () => { root.unmount(); }); root = createRoot(el);
+    await mountInbox([ITEMS[0], ITEMS[1]]);
+    expect(N.requestPermission).toHaveBeenCalledTimes(1);
+    expect(created).toHaveLength(0);
+    expect(document.title).toBe("(2) AutoCrew");
+    N.permission = "granted";
+    await act(async () => { root.unmount(); }); root = createRoot(el);
+    await mountInbox([ITEMS[0]]);
+    expect(created.map((c) => c.title)).toEqual([ITEMS[0].summary]);
+    await act(async () => { created[0].onclick!(); });
+    await tick();
+    expect(el.querySelector(".ri-peek h2")!.textContent).toBe(ITEMS[0].summary);
+  });
+});

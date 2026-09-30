@@ -16,16 +16,18 @@ const html = (s: StoryboardPanel) => renderToStaticMarkup(createElement(Storyboa
 describe("分镜段", () => {
   it("最新一版：版本号、打开审阅页、在访达中显示；旧版在折叠里", () => {
     const h = html(panel);
-    expect(h).toContain("分镜 v002");
+    // 屏幕上不出现版本号（review-inbox §4.1）：说「最新的分镜」和报上时间
+    expect(h).toContain("最新的分镜");
+    expect(h).not.toContain("v002");
     expect(h).toContain("打开审阅页");
     expect(h).toContain("在访达中显示");
-    expect(h).toMatch(/<details>.*以前的分镜（1 版）.*分镜 v001.*<\/details>/s);
+    expect(h).toMatch(/<details>.*以前的分镜（1 版）.*<\/details>/s);
   });
   it("报上之后被改过：提示", () => {
     expect(html({ ...panel, latest: { ...panel.latest, changed: true, note: "审阅页在报上之后被改过" } })).toContain("审阅页在报上之后被改过");
   });
-  it("看板信息行带「分镜 v002」", () => {
+  it("看板信息行带「有分镜」（不写版本号）", () => {
     const item = { id: "content-1-a", column: "剪辑中", status: "editing", updatedAt: new Date().toISOString(), storyboard: "v002" } as unknown as BoardItem;
-    expect(itemMeta(item, null)).toContain("分镜 v002");
+    expect(itemMeta(item, null)).toContain("有分镜");
   });
 });
