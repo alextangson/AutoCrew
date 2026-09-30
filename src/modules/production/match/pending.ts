@@ -97,20 +97,24 @@ async function rescored(dataDir: string, job: MatchJob, first: MatchDecision, he
   return decide({ fileName: path.basename(job.path), sha256: job.sha256, pool, heard: again }, matchDeps().thresholds);
 }
 
-type Check = { ok: true; source: string; projectRoot: string; location: "inbox" | "watch" } | { ok: false; gone: boolean; why: string };
+export type Check = { ok: true; source: string; projectRoot: string; location: "inbox" | "watch" } | { ok: false; gone: boolean; why: string };
 
-/** 重跑原 spec §3 的落位检查（B27）：全部只读 */
-async function placementCheck(w: Waiting, dataDir: string): Promise<Check> {
-  const at = await resolveLocalFile(w.fact.path!, "原片");
+/**
+ * 重跑原 spec §3 的落位检查（B27）：全部只读。pending_match 落结果、收件箱自动挪（§4）共用。
+ * `fact`：已有的 pending 事实（查它有没有被 ChatCut 工程引用）；收件箱新文件没有。
+ */
+export async function placementCheck(content: Content, doc: ProductionDoc, file: string, sha: string, fact: Fact | undefined, dataDir: string, allow: ReadonlyArray<"inbox" | "watch"> = ["inbox", "watch"]): Promise<Check> {
+  const at = await resolveLocalFile(file, "原片");
   if (!at.ok) return { ok: false, gone: at.code === "path_missing", why: at.error };
-  const projectRoot = await fs.realpath(contentRoot(w.content.id, dataDir));
+  const projectRoot = await fs.realpath(contentRoot(content.id, dataDir));
   const where = classify(at.value, projectRoot, await movableRoots(dataDir));
   if (where !== "inbox" && where !== "watch") return { ok: false, gone: false, why: "原片所在目录现在不允许直接搬入" };
-  const owner = await arollOwnerElsewhere(dataDir, w.fact.sha256!, w.content.id);
+  if (!allow.includes(where)) return { ok: false, gone: false, why: "这个目录只给建议，不自动挪" };
+  const owner = await arollOwnerElsewhere(dataDir, sha, content.id);
   if (owner) return { ok: false, gone: false, why: `这个原片已经是《${(await getContent(owner, dataDir))?.title ?? owner}》的 A-roll` };
-  const held = await pendingElsewhere(dataDir, w.fact.sha256!, w.content.id);
+  const held = await pendingElsewhere(dataDir, sha, content.id);
   if (held) return { ok: false, gone: false, why: pendingElsewhereText(held.title) };
-  if (referencedByChatcut(w.doc, w.fact)) return { ok: false, gone: false, why: "原片已被 ChatCut 工程引用，不挪" };
+  if (referencedByChatcut(doc, fact)) return { ok: false, gone: false, why: "原片已被 ChatCut 工程引用，不挪" };
   const safe = await checkTargetDir(projectRoot, "02-aroll");
   if (!safe.ok) return { ok: false, gone: false, why: safe.error };
   return { ok: true, source: at.value, projectRoot, location: where };
@@ -129,7 +133,7 @@ async function commitJob(dataDir: string, job: MatchJob, first: MatchDecision, h
   const w = await waiting(dataDir, job);
   if (typeof w === "string") return { state: "cancelled", outcome: w };
   const d = await rescored(dataDir, job, first, heard, w.content.id);
-  const check = await placementCheck(w, dataDir);
+  const check = await placementCheck(w.content, w.doc, w.fact.path!, w.fact.sha256!, w.fact, dataDir);
   if (!check.ok && check.gone) return resolveTo(dataDir, w, job, "rejected", "核对期间文件不见了，没挪", d);
   const source = check.ok ? check.source : w.fact.path!;
   const fp = await stableFingerprint(source, now());

@@ -168,7 +168,7 @@ describe("对账（§4）：启用之后", () => {
     expect(cuts[1].replaced_at).toBeUndefined();
   });
 
-  it("外部候选：收件箱原片对上认过稿的标题 → aroll 候选；ChatCut 导出对上已发布稿 → post_publish 候选；不动阶段", async () => {
+  it("外部：收件箱原片文件名唯一对上等原片的稿 → 自动挂上（1b §4）；ChatCut 导出对上已发布稿 → post_publish 候选；不动已发布阶段", async () => {
     const waiting = await videoContent(env, TITLE, "draft_ready");
     const done = await videoContent(env, "已经发布的那条视频", "published");
     await enableOntology(env.dir);
@@ -176,10 +176,10 @@ describe("对账（§4）：启用之后", () => {
     await put(path.join(env.chatcut, "已经发布的那条视频-v2.mp4"), "new-export");
     await put(path.join(env.chatcut, "毫不相干.mp4"), "other");
     await reconcileAll(env.dir);
-    expect((await readProductionDoc(waiting.id, env.dir))!.facts).toMatchObject([{ kind: "aroll", state: "candidate", source: "reconcile" }]);
+    expect((await readProductionDoc(waiting.id, env.dir))!.facts).toMatchObject([{ kind: "aroll", state: "accepted", source: "reconcile", auto_attached: true, source_path: path.join(env.inbox, "AI又忘了怎么办-原片.mov") }]);
     expect((await readProductionDoc(done.id, env.dir))!.facts).toMatchObject([{ kind: "cut", state: "candidate", post_publish: true }]);
     expect((await getContent(done.id, env.dir))!.status).toBe("published");
-    expect(await exists(path.join(env.inbox, "AI又忘了怎么办-原片.mov"))).toBe(true);
+    expect(await exists(path.join(env.inbox, "AI又忘了怎么办-原片.mov"))).toBe(false);
   });
 
   it("逐条隔离：一条的制作记录坏了，别条照常对账，失败进报告与看板", async () => {

@@ -33,6 +33,8 @@ import { movableRoots, now } from "./roots.js";
 import { ensureProductionReady, mutateProduction, refreshContent } from "./service.js";
 import { shaIndex } from "./sha-index.js";
 import { matchWorkerError } from "./match/queue.js";
+import { discoverExternal } from "./discover.js";
+import { autoAttach } from "./auto-attach.js";
 
 export interface ExternalFile { file: string; name: string; from: "inbox" | "export"; sha256: string; size: number; mtime_ms: number }
 export interface ShadowMove { id: string; title: string; from: Column | null; to: Column | null; rule: string | null; evidence: string[] }
@@ -78,9 +80,10 @@ function externalSeen(content: Content, externals: ExternalFile[]): Seen[] {
   }));
 }
 
-async function observe(content: Content, doc: ProductionDoc, dataDir: string, externals: ExternalFile[] | null, archived: Set<string>): Promise<Observations> {
+async function observe(content: Content, doc: ProductionDoc, dataDir: string, externals: ExternalFile[] | null, archived: Set<string>, suggestions: Seen[] = []): Promise<Observations> {
   const obs = await observeProject(content, doc, await fs.realpath(contentRoot(content.id, dataDir)), dataDir, archived.has(content.id));
   if (externals) obs.seen.push(...externalSeen(content, externals));
+  obs.seen.push(...suggestions);
   return obs;
 }
 
@@ -90,9 +93,9 @@ async function ownedElsewhere(dataDir: string, contentId: string): Promise<(sha:
 }
 
 /** 单条对账：写模式经 ProductionService 落盘；影子模式返回合并后的内存 doc */
-export async function reconcileOne(content: Content, dataDir: string, opts: { write: boolean; externals: ExternalFile[] | null; archived: Set<string> }): Promise<ProductionDoc> {
+export async function reconcileOne(content: Content, dataDir: string, opts: { write: boolean; externals: ExternalFile[] | null; archived: Set<string>; suggestions?: Seen[] }): Promise<ProductionDoc> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
-  const obs = await observe(content, doc, dataDir, opts.externals, opts.archived);
+  const obs = await observe(content, doc, dataDir, opts.externals, opts.archived, opts.suggestions);
   const owned = await ownedElsewhere(dataDir, content.id);
   const receipts = opts.write ? await trustedObservations(content, dataDir) : [];
   const preview = structuredClone(doc);
@@ -165,8 +168,15 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
   const workerError = matchWorkerError(dataDir);
   if (workerError) report.warnings.push(`原片核对工人出错：${workerError}`);
   await loadHashCache(dataDir);
+  // 启用后：收件箱 / 监视文件夹 / 导出目录在锁外发现、入队转写（1b §2：对账 tick 只发现与入队）；影子模式照旧只按文件名前缀
+  const found = enabled ? await discoverExternal(dataDir).catch((e: unknown) => { report.warnings.push(`外部目录没扫成：${e instanceof Error ? e.message : String(e)}`); return null; }) : null;
+  if (found) Object.assign(report, { inbox: found.inbox, watch: found.watch, warnings: [...report.warnings, ...found.warnings] });
   await withFileOwnership(async () => {
-    const externals = await listExternal(dataDir, report.warnings);
+    const externals = enabled ? null : await listExternal(dataDir, report.warnings);
+    for (const m of found?.autoMoves ?? []) {
+      const w = await autoAttach(dataDir, m).catch((e: unknown) => `收件箱自动挂原片出错（${path.basename(m.file.file)}）：${e instanceof Error ? e.message : String(e)}`);
+      if (w) report.warnings.push(w);
+    }
     const archived = new Set((await readArchiveLog(dataDir).catch(() => [])).map((e) => e.contentId));
     for (const c of await listContents(dataDir)) {
       if (c.deletedAt) continue;
@@ -174,7 +184,7 @@ export async function reconcileAll(dataDir: string, opts: { write?: boolean; exc
       try {
         await syncSubmitted(c, dataDir, enabled && !excluded.has(c.id));
         if (!isVideoPlatform(c.platform)) continue;
-        let doc = await reconcileOne(c, dataDir, { write: active, externals, archived });
+        let doc = await reconcileOne(c, dataDir, { write: active, externals, archived, suggestions: found?.suggestions.get(c.id) ?? [] });
         if (active && enabled) {
           const commit = await commitRegistration(c.id, dataDir);
           if (commit.ok && commit.registration) doc = await readProductionDocOrEmpty(c.id, dataDir);

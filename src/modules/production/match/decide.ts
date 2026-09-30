@@ -17,6 +17,15 @@ import { MIN_SPEECH_CHARS, scoreTranscript, speechChars } from "./l2.js";
 export const L2_CALIBRATED = true;
 export const L2_FLOOR = 0.3;
 export const L2_MARGIN = 0.2;
+/**
+ * 没有 winner 时，前三名里够得上「像」才给候选（1b §4 / §6）：文件名至少弱命中，或开头转写 ≥ 这个分。
+ * 校准里别条稿的最高分 0.125（7 个样本），取略高于它；更低的算「一个也不像」（收件箱计入列头，别处静默跳过）。
+ */
+export const SUGGEST_MIN = 0.15;
+
+export function looksLike(r: Ranked): boolean {
+  return r.l1 !== "none" || (r.l2 ?? 0) >= SUGGEST_MIN;
+}
 
 export interface PoolEntry { content_id: string; title: string; old_titles: string[]; round: number; body_hash: string; body: string }
 export interface SnapshotEntry { content_id: string; round: number; body_hash: string; title: string }
