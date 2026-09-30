@@ -9,6 +9,7 @@ import { executePublishCheck } from "../publish/review-gate/check.js";
 import { fakeJev, planEntry, planOf, registeredVideo } from "../publish/review-gate/testkit.js";
 import type { JevCaller } from "../publish/review-gate/jev-client.js";
 import { validCoverGroups } from "./cover-groups.js";
+import { validCoverApproval } from "./derive.js";
 import { founderDecision } from "./decisions.js";
 import { decide, decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
@@ -428,5 +429,48 @@ describe("整分支审 3", () => {
     expect(part).toMatchObject({ status: 206, body: "2345", headers: { "Content-Range": "bytes 2-5/10", "Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff" } });
     expect((await get("bytes=50-60")).status).toBe(416);
     expect((await get()).status).toBe(200);
+  });
+});
+
+describe("整分支审 4", () => {
+  it("v001、v002 共用同一张 3:4：覆盖 v001 那份 → v002 仍完整、批准仍有效；v001 不完整并写原因", async () => {
+    const c = await editing();
+    const root = projectRoot(env, c.id);
+    const shared = png(900, 1200, "shared");
+    await put(path.join(root, "05-cover/v001/a.png"), shared);
+    await put(path.join(root, "05-cover/v001/b.png"), png(1200, 900, "b1"));
+    await put(path.join(root, "05-cover/v002/a.png"), shared);
+    await put(path.join(root, "05-cover/v002/b.png"), png(1200, 900, "b2"));
+    await reconcileAll(env.dir);
+    const g2 = validCoverGroups(await doc(c.id)).find((g) => g.group.label === "v002")!;
+    expect(await founderDecision(c.id, "pick_cover", { group_id: g2.group.id, cover_text: "字" }, env.dir)).toMatchObject({ ok: true });
+    await put(path.join(root, "05-cover/v001/a.png"), png(900, 1200, "overwritten"));
+    await reconcileAll(env.dir);
+    const d = await doc(c.id);
+    const groups = validCoverGroups(d);
+    expect(groups.find((g) => g.group.label === "v002")).toMatchObject({ complete: true, broken: null });
+    expect(groups.find((g) => g.group.label === "v001")).toMatchObject({ complete: false, broken: expect.stringContaining("3:4 文件被换过了") });
+    const { getContent } = await import("../../storage/local-store.js");
+    expect(validCoverApproval(d, (await getContent(c.id, env.dir))!.body)).not.toBeNull();
+  });
+
+  it("三个认稿入口带着载入时那一版：别的会话改过正文 → 「稿子刚改过，重新看一眼」", async () => {
+    const { executeContentSave } = await import("../../tools/content-save.js");
+    const { cardPanel } = await import("./panel.js");
+    const { boardData } = await import("../../desktop/board-data.js");
+    const { bodyHash } = await import("../../storage/production-store.js");
+    const c = await videoContent(env, "认稿入口");
+    const card = await cardPanel(c.id, env.dir) as { draft_item: { item_id: string; gen: string } };
+    const boardItem = (await boardData(env.dir)).items.find((i) => i.id === c.id)!;
+    const loaded = c.body;
+    await executeContentSave({ _dataDir: env.dir, action: "update", id: c.id, body: `${loaded}\n别的会话加了一句。` });
+    const fromCard = await decideItem({ content_id: c.id, ...card.draft_item, action: "approve_script" }, env.dir);
+    expect(fromCard).toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
+    const fromBoard = await decideItem({ content_id: c.id, ...boardItem.draftRef!, action: "approve_script" }, env.dir);
+    expect(fromBoard).toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
+    const fromEditor = await executeContentSave({ _dataDir: env.dir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: bodyHash(loaded) }) as Record<string, unknown>;
+    expect(fromEditor).toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
+    const { getContent } = await import("../../storage/local-store.js");
+    expect((await getContent(c.id, env.dir))!.status).toBe("draft_ready");
   });
 });

@@ -8,7 +8,7 @@
  * 找不到条目的动作（撤销批准、纠正发布、挂原片…）不在列表里，直接交给创始人决定。
  */
 import { getContent, getDataDir, type Content } from "../../storage/local-store.js";
-import { newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { bodyHash, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Decision, InboxConsumption } from "../../storage/production-types.js";
 import { isModelCall } from "../../storage/stage-guard.js";
 import { executeContentSave } from "../../tools/content-save.js";
@@ -105,7 +105,8 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
     const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "revision", from_status: "draft_ready", force: true }) as Result;
     return t.ok ? { ok: true, decision: d } : fail("transition_failed", `意见记下了，但稿子没退回修改：${String(t.error ?? "")}`, { decision: d });
   }
-  const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true }) as Result;
+  // 写锁内再核一次正文：就是创始人看着的那一版（代次里的正文哈希）
+  const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "approved", from_status: "draft_ready", force: true, expected_body_hash: bodyHash(c.body) }) as Result;
   return t.ok ? { ok: true, status: "approved" } : fail("transition_failed", String(t.error ?? "认稿没成"));
 }
 
@@ -199,7 +200,7 @@ export async function decideItem(req: Record<string, unknown>, dataDir = getData
     if (prior?.pending) return { phase: "wait" as const };
     if (prior) return { phase: "done" as const, result: { ...prior.result, replayed: true } };
     if (!item) return { phase: "done" as const, result: fail("gone", "这件事已在别处处理，或已经关了：刷新再看") };
-    if (item.gen !== gen) return { phase: "done" as const, result: fail("stale", "这件事刚变过，重新看一下") };
+    if (item.gen !== gen) return { phase: "done" as const, result: fail("stale", item.type === "draft" ? "稿子刚改过，重新看一眼" : "这件事刚变过，重新看一下") };
     // 同一动作可能有几个（每个选项、每一处缝）：选项 / 缝必须和请求一致，不许落到第一个
     const chosen = allowed(item).filter((a) => a.action === action).find((a) => ["option_id", "sliver_key"].every((k) => a.params?.[k] === undefined || a.params[k] === req[k]));
     if (!chosen) return { phase: "done" as const, result: fail("bad_request", "这件事没有这个动作") };

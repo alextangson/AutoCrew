@@ -44,11 +44,15 @@ export interface GroupView {
   at: string;
   /** 这组的默认封面字（成员事实报上来的字） */
   text: string;
+  /** 这组有文件被覆盖了（说给创始人听的原因）；没有 = null */
+  broken: string | null;
 }
 
+/** 成员活着：事实 accepted、sha 没换；这一组自己那份文件没被覆盖（有自己路径的成员按自己的，旧成员按事实的） */
 function liveCover(doc: ProductionDoc, m: CoverMember): Fact | null {
   const f = doc.facts.find((x) => x.id === m.fact_id);
-  return f && f.kind === "cover" && f.state === "accepted" && !f.replaced_at && f.sha256 === m.sha256 && f.ratio === m.ratio ? f : null;
+  if (!f || f.kind !== "cover" || f.state !== "accepted" || f.sha256 !== m.sha256 || f.ratio !== m.ratio) return null;
+  return (m.path ? m.replaced_at : f.replaced_at) ? null : f;
 }
 
 function viewOf(doc: ProductionDoc, g: CoverGroup, members: CoverMember[]): GroupView | null {
@@ -62,7 +66,9 @@ function viewOf(doc: ProductionDoc, g: CoverGroup, members: CoverMember[]): Grou
   }
   if (!slots["3:4"].length && !slots["4:3"].length) return null;
   const text = [...slots["3:4"], ...slots["4:3"]].map((f) => f.text ?? "").find(Boolean) ?? "";
-  return { group: g, slots, complete: slots["3:4"].length === 1 && slots["4:3"].length === 1, ambiguous: slots["3:4"].length > 1 || slots["4:3"].length > 1, at, text };
+  const gone = members.filter((m) => m.group_id === g.id && m.path && m.replaced_at).map((m) => m.ratio);
+  const broken = gone.length ? `这组的 ${[...new Set(gone)].join("、")} 文件被换过了，这组不完整了` : null;
+  return { group: g, slots, complete: slots["3:4"].length === 1 && slots["4:3"].length === 1, ambiguous: slots["3:4"].length > 1 || slots["4:3"].length > 1, at, text, broken };
 }
 
 /** 唯一的「有效组」选择器：本轮、没作废、至少一张活成员；按时间从旧到新 */
@@ -121,10 +127,13 @@ export function ensureGroup(doc: ProductionDoc, key: GroupKey, init: Pick<CoverG
 }
 
 /** 加成员关系（同组同事实只记一次）；返回是否新加 */
-export function addMember(doc: ProductionDoc, group: CoverGroup, fact: Fact, at = new Date().toISOString()): boolean {
+export function addMember(doc: ProductionDoc, group: CoverGroup, fact: Fact, at = new Date().toISOString(), memberPath?: string): boolean {
   if (!fact.sha256 || !fact.ratio) return false;
   if ((doc.cover_members ?? []).some((m) => m.group_id === group.id && m.fact_id === fact.id)) return false;
-  doc.cover_members = [...(doc.cover_members ?? []), { group_id: group.id, fact_id: fact.id, sha256: fact.sha256, ratio: fact.ratio, at }];
+  const p = memberPath ?? fact.path;
+  // 这一组这个位置的文件被覆盖过：不拿新字节补位（这组就是缺这张，等重新成组）
+  if (p && (doc.cover_members ?? []).some((m) => m.group_id === group.id && m.path === p && m.replaced_at)) return false;
+  doc.cover_members = [...(doc.cover_members ?? []), { group_id: group.id, fact_id: fact.id, sha256: fact.sha256, ratio: fact.ratio, at, ...(p ? { path: p } : {}) }];
   return true;
 }
 

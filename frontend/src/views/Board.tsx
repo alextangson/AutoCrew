@@ -13,6 +13,7 @@ import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting 
 import { InboxHeader } from "./InboxHeader";
 import { CardPanel } from "./CardPanel";
 import { ReviewInbox } from "./review/ReviewInbox";
+import { decideItem } from "./review/review-api";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
@@ -187,7 +188,7 @@ async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: stri
   switch (act.kind) {
     case "panel": return openPanel(item.id);
     case "undo": return runUndo(act.undo, item, reload);
-    case "approve": return runTransition(item, "approved", "已认稿", reload, true);
+    case "approve": return approveDraft(item, reload);
     case "back": return confirmBackMove(item, act.move, reload);
     case "publish": {
       if (!item.platform) return toast("这条没定平台，在卡片上对应平台点「我发了」");
@@ -238,4 +239,16 @@ async function runStart(topicId: string, openEditor: (id: string) => void): Prom
   try { if (r.data.prompt) { await navigator.clipboard.writeText(r.data.prompt); copied = true; } } catch { /* 下面明说 */ }
   const why = r.data.open_error ?? "Claude 没打开";
   toast(copied ? `已建稿，但${why}。指令已复制，去 Claude 新会话粘贴发送` : `已建稿，但${why}。请把这句发给 Claude：${r.data.prompt ?? ""}`);
+}
+
+/**
+ * 拖「写稿中 → 待录制」= 认稿：走「等你拍板」的单一入口，带看板载入时那一版稿的代次；
+ * 别的会话改过正文就拒「稿子刚改过，重新看一眼」（整分支审 4 P1）
+ */
+export async function approveDraft(item: BoardItem, reload: () => Promise<void>): Promise<void> {
+  try {
+    if (!item.draftRef) { toast("稿子刚改过，重新看一眼"); return; }
+    const r = await decideItem({ content_id: item.id, item_id: item.draftRef.item_id, gen: item.draftRef.gen, action: "approve_script" });
+    toast(r.ok ? "已认稿" : r.error);
+  } finally { await reload(); }
 }

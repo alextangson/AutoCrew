@@ -27,7 +27,9 @@ const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg"]);
 const VERSION_DIR = /^v0*(\d+)$/i;
 
 export type Seen = Omit<Fact, "id" | "round" | "at" | "state" | "availability"> & { state: Fact["state"] };
-export interface Observations { warnings?: string[]; seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number } }> }
+export interface Observations { warnings?: string[]; seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number }; moved?: { path: string; size: number; mtime_ms: number } }>;
+  /** 封面组成员各自那份文件的状态（键：组 id + 事实 id） */
+  members?: Map<string, "replaced" | "ok"> }
 
 /**
  * 哈希缓存：按（dev, ino, 大小, 修改时间）认同一份字节。落盘到工作区服务目录的 hash-cache.json，
@@ -165,20 +167,43 @@ function attachForCut(seen: Seen[], doc: ProductionDoc): void {
 }
 
 /** availability：缺失 / 读不了 / 已归档；字节被覆盖记 replaced */
+/** 封面在别的组文件夹里还有一份字节没变的：事实改指那一份，不算被覆盖（同一张图在几个组里，整分支审 4 P2） */
+async function intactCopy(doc: ProductionDoc, f: Fact, root: string): Promise<{ path: string; size: number; mtime_ms: number } | null> {
+  if (f.kind !== "cover") return null;
+  for (const m of (doc.cover_members ?? []).filter((x) => x.fact_id === f.id && x.path && x.path !== f.path)) {
+    const h = await cachedSha(path.join(root, m.path!)).catch(() => null);
+    if (h && h.sha256 === f.sha256) return { path: m.path!, size: h.size, mtime_ms: h.mtime_ms };
+  }
+  return null;
+}
+
+/** 每个封面组成员自己那份文件：字节变了 → replaced；改回原字节 → ok */
+async function memberStates(doc: ProductionDoc, root: string): Promise<Map<string, "replaced" | "ok">> {
+  const out = new Map<string, "replaced" | "ok">();
+  for (const m of (doc.cover_members ?? []).filter((x) => x.path && !path.isAbsolute(x.path))) {
+    const h = await cachedSha(path.join(root, m.path!)).catch(() => null);
+    out.set(`${m.group_id}\u0000${m.fact_id}`, h?.sha256 === m.sha256 ? "ok" : "replaced");
+  }
+  return out;
+}
+
 async function availabilityOf(doc: ProductionDoc, root: string, archived: boolean): Promise<Observations["availability"]> {
   const out: Observations["availability"] = new Map();
   for (const f of doc.facts.filter((x) => x.path && x.sha256 && x.state !== "rejected")) {
     const file = path.isAbsolute(f.path!) ? f.path! : path.join(root, f.path!);
+    const other = await intactCopy(doc, f, root);
     try {
       await fs.access(file, fs.constants.R_OK);
       const st = await fs.stat(file);
       const same = st.size === f.size && Math.trunc(st.mtimeMs) === f.mtime_ms;
       const now = same ? f.sha256 : (await cachedSha(file)).sha256;
+      if (now !== f.sha256 && other) { out.set(f.id, { availability: "present", moved: other }); continue; }
       const replaced = !f.replaced_at && now !== f.sha256;
       // 覆盖后又改回原字节（ABA）：这条事实恢复可用，绑它的批准按原样有效
       const restored = f.replaced_at && now === f.sha256 ? { size: st.size, mtime_ms: Math.trunc(st.mtimeMs) } : undefined;
       out.set(f.id, { availability: "present", ...(replaced ? { replaced: true as const } : {}), ...(restored ? { restored } : {}) });
     } catch (e) {
+      if (other) { out.set(f.id, { availability: "present", moved: other }); continue; }
       const code = (e as NodeJS.ErrnoException).code;
       out.set(f.id, { availability: code === "ENOENT" ? (archived ? "archived" : "missing") : "unreadable" });
     }
@@ -200,7 +225,7 @@ export async function observeProject(content: Content, doc: ProductionDoc, root:
       path: s.rel, sha256: s.sha256, size: s.size, mtime_ms: s.mtime_ms, version: s.version, receipt_sha256: s.receipt_sha256 })),
   ];
   attachForCut(seen, doc);
-  return { seen, warnings, availability: await availabilityOf(doc, root, archived) };
+  return { seen, warnings, availability: await availabilityOf(doc, root, archived), members: await memberStates(doc, root) };
 }
 
 /**
@@ -215,6 +240,12 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
     if (a.availability !== f.availability) { f.availability = a.availability; changed++; }
     if (a.replaced && !f.replaced_at) { f.replaced_at = at; changed++; }
     if (a.restored && f.replaced_at) { delete f.replaced_at; f.size = a.restored.size; f.mtime_ms = a.restored.mtime_ms; changed++; }
+    if (a.moved) { f.path = a.moved.path; f.size = a.moved.size; f.mtime_ms = a.moved.mtime_ms; if (f.replaced_at) delete f.replaced_at; changed++; }
+  }
+  for (const m of doc.cover_members ?? []) {
+    const st = obs.members?.get(`${m.group_id}\u0000${m.fact_id}`);
+    if (st === "replaced" && !m.replaced_at) { m.replaced_at = at; changed++; }
+    if (st === "ok" && m.replaced_at) { delete m.replaced_at; changed++; }
   }
   const added: Fact[] = [];
   const formal: Array<{ fact: Fact; path: string; first?: boolean }> = [];
@@ -259,5 +290,5 @@ function groupSeenCover(doc: ProductionDoc, fact: Fact, rel: string | undefined,
     if (isNew) { fact.state = "candidate"; fact.evidence = `${fact.evidence ?? ""}（05-cover/${key.label} 那组已点过「这组不要了」，新放进来的图只做候选）`; }
     return 0;
   }
-  return addMember(doc, ensureGroup(doc, key, { source: "reconcile", evidence: `项目 05-cover/${key.label}` }, at), fact, at) ? 1 : 0;
+  return addMember(doc, ensureGroup(doc, key, { source: "reconcile", evidence: `项目 05-cover/${key.label}` }, at), fact, at, rel) ? 1 : 0;
 }

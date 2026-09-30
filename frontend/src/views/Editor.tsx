@@ -468,6 +468,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
             currentStatus={c.status}
             transitions={VIDEO_PLATFORMS.has(c.platform) ? transitions.filter((t) => !VIDEO_SKIP_AHEAD.has(t.status)) : transitions}
             dirty={workspace === "draft" && (dirty || saving)}
+            loadedBody={c.body ?? ""}
             reload={load}
             isVideo={isVideo}
             landedStage={async () => { const r = await loadCard(props.id); return r.ok ? r.data.stage ?? r.data.column : null; }}

@@ -422,6 +422,7 @@ export async function executeContentSave(
         host,
         decidedBy: decidedBy(params),
         ...(from ? { expectedStatus: from } : {}),
+        ...(typeof params.expected_body_hash === "string" && params.expected_body_hash ? { expectedBodyHash: params.expected_body_hash } : {}),
       },
       dataDir,
     );

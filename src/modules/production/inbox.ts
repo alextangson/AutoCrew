@@ -332,6 +332,14 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
   return out;
 }
 
+/** 「稿子写好了」这件事的身份与代次（卡片、看板拖动认稿要带它，别的会话改过正文就对不上） */
+export function draftRef(content: Content): { item_id: string; gen: string } | null {
+  const d = draftItem(content);
+  if (!d) return null;
+  const item_id = scopedId(content.id, d.item_id);
+  return { item_id, gen: genOf([item_id, d.snapshot]) };
+}
+
 function draftItem(content: Content): Draft | null {
   if (content.status !== "draft_ready") return null;
   return {

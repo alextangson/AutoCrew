@@ -18,6 +18,7 @@ import { isVideoPlatform } from "../storage/stage-guard.js";
 import { readProductionDoc } from "../storage/production-store.js";
 import { storyboards, versionLabel } from "../modules/production/storyboard.js";
 import { editorLabel } from "../modules/production/workbench.js";
+import { draftRef } from "../modules/production/inbox.js";
 
 export type BoardColumn = "选题" | Column;
 
@@ -51,6 +52,8 @@ export interface BoardItem {
   storyboard?: string | null;
   /** 谁在剪：Claude / Codex / WorkBuddy / 你 / agent */
   editorLabel?: string;
+  /** 「稿子写好了」这件事的身份与代次（稿子在 draft_ready 时有） */
+  draftRef?: { item_id: string; gen: string };
   badges: string[];
   /** 真有问题的提示（卡上标红）：未登记就发布、文件不见了、被驳回… */
   alerts: string[];
@@ -150,6 +153,8 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     active,
     missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
     ...(active ? await productionInfo(current.id, dataDir) : { storyboard: null }),
+    // 看板拖「写稿中 → 待录制」认稿要带它（整分支审 4 P1）
+    ...(draftRef(current) ? { draftRef: draftRef(current)! } : {}),
   };
 }
 

@@ -82,6 +82,8 @@ export interface BoardItem {
   storyboard?: string | null;
   /** 谁在剪（后端按事实的宿主给：Claude / Codex / WorkBuddy / 你 / agent） */
   editorLabel?: string;
+  /** 「稿子写好了」这件事的身份与代次：拖「写稿中 → 待录制」认稿要带它 */
+  draftRef?: { item_id: string; gen: string };
 }
 
 export interface BoardTopic {

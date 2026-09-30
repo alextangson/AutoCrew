@@ -22,6 +22,7 @@ import { isUngated } from "./publish-check-link.js";
 import { currentCut } from "./sliver/check.js";
 import { storyboardPanel } from "./storyboard.js";
 import { markedCuts } from "./ready.js";
+import { draftRef } from "./inbox.js";
 import { isStrayCover } from "./plain-reason.js";
 import { hostLabel } from "./host-label.js";
 import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
@@ -125,7 +126,9 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
   const active = isVideoPlatform(content.platform) && (await isOntologyActive(dataDir, contentId));
   const exp = await explainContent(content, dataDir);
-  const base = { ok: true, id: content.id, title: content.title, platform: content.platform ?? null, status: content.status, active,
+  // 卡片上「稿子没问题」要带它：创始人看到的那一版（别的会话改过正文就对不上，服务端拒）
+  const draft = draftRef(content);
+  const base = { ok: true, ...(draft ? { draft_item: draft } : {}), id: content.id, title: content.title, platform: content.platform ?? null, status: content.status, active,
     column: exp.column, stage: exp.stage, reason: exp.reason, missing: exp.missing, badges: exp.badges, alerts: exp.alerts, candidates: exp.candidates };
   if (!active) return base;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);

@@ -9,10 +9,12 @@ const confirms: string[] = [];
 vi.mock("../transport", () => ({ invoke: async (channel: string, payload: Record<string, unknown>) => { invokes.push({ channel, ...payload }); return { ok: true }; } }));
 vi.mock("../ui", () => ({ toast: () => {}, confirmDialog: async (d: { title: string }) => { confirms.push(d.title); return true; }, openDialog: async () => null }));
 vi.mock("./board-api", () => ({ revealFact: async () => ({ ok: true, data: {} }) }));
+const decided: Array<Record<string, unknown>> = [];
+vi.mock("./review/review-api", () => ({ decideItem: async (p: Record<string, unknown>) => { decided.push(p); return { ok: true, data: {} }; } }));
 
 let el: HTMLDivElement;
 let root: Root;
-beforeEach(() => { (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true; invokes.length = 0; confirms.length = 0; el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el); });
+beforeEach(() => { (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true; invokes.length = 0; confirms.length = 0; decided.length = 0; el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el); });
 afterEach(async () => { await act(async () => { root.unmount(); }); el.remove(); });
 const click = async (b: Element) => { await act(async () => { (b as HTMLElement).click(); await new Promise((r) => setTimeout(r, 10)); }); };
 const button = (t: string) => [...el.querySelectorAll("button")].find((b) => b.textContent === t);
@@ -28,11 +30,18 @@ describe("卡片面板「下一步」", () => {
     return { acts, opened: () => opened };
   }
 
-  it("写稿中、稿写好了、还没原片 →「稿子没问题」+ 点了进待录制；点了走认稿", async () => {
-    await render(card({}));
+  it("写稿中、稿写好了、还没原片 →「稿子没问题」+ 点了进待录制；点了走「等你拍板」的认稿，带卡片载入时那一版的代次", async () => {
+    await render(card({ draft_item: { item_id: "draft:content-1-a", gen: "g-loaded" } }));
     expect(el.textContent).toContain("点了进待录制，等你录");
     await click(button("稿子没问题")!);
-    expect(invokes).toEqual([{ channel: "content:transition", id: "content-1-a", from_status: "draft_ready", target_status: "approved", force: true }]);
+    expect(invokes).toEqual([]);
+    expect(decided).toEqual([{ content_id: "content-1-a", item_id: "draft:content-1-a", gen: "g-loaded", action: "approve_script" }]);
+  });
+  it("卡片没有那一版的代次（稿子刚改过）：不认稿", async () => {
+    await render(card({}));
+    await click(button("稿子没问题")!);
+    expect(decided).toEqual([]);
+    expect(invokes).toEqual([]);
   });
 
   it("写稿中、已经有原片 → 说点了就进剪辑中", async () => {
@@ -93,13 +102,15 @@ describe("稿件页的阶段按钮一步到位", () => {
   const T = [{ status: "reviewing" }, { status: "approved" }, { status: "archived" }];
   async function render(currentStatus = "draft_ready") {
     const { StageAdvance } = await import("./StageAdvance");
-    await act(async () => { root.render(createElement(StageAdvance, { contentId: "content-1-a", currentStatus, transitions: T as never, reload: async () => {}, isVideo: true, landedStage: async () => "剪辑中" })); });
+    await act(async () => { root.render(createElement(StageAdvance, { contentId: "content-1-a", currentStatus, transitions: T as never, reload: async () => {}, isVideo: true, landedStage: async () => "剪辑中", loadedBody: "载入时的正文" })); });
   }
 
   it("写好 / 审过的稿默认就是「稿子没问题，进入制作」，一点就认稿", async () => {
     await render("reviewing");
     await click(button("稿子没问题，进入制作")!);
-    expect(invokes).toEqual([{ channel: "content:transition", id: "content-1-a", target_status: "approved", from_status: "reviewing" }]);
+    // 认稿带页面载入那一版正文的哈希：别的会话改过就被服务端拒（整分支审 4 P1）
+    const { createHash } = await import("node:crypto");
+    expect(invokes).toEqual([{ channel: "content:transition", id: "content-1-a", target_status: "approved", from_status: "reviewing", expected_body_hash: createHash("sha256").update("载入时的正文").digest("hex") }]);
   });
 
   it("菜单里点哪项就执行哪项（不用再点顶部按钮）；「让 AI 再审一遍」是审稿；归档仍要确认", async () => {

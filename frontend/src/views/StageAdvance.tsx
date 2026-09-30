@@ -48,6 +48,8 @@ export function StageAdvance(props: {
   isVideo?: boolean;
   /** 进制作之后去哪一列（待录制 / 剪辑中）：由调用方按卡片面板数据给出 */
   landedStage?: () => Promise<string | null>;
+  /** 页面载入的那一版正文：认稿时带它的哈希，别的会话改过就拒「稿子刚改过，重新看一眼」（整分支审 4 P1） */
+  loadedBody?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
@@ -111,6 +113,7 @@ export function StageAdvance(props: {
         id: props.contentId,
         target_status: to.status,
         from_status: props.currentStatus,
+        ...(to.status === "approved" && props.loadedBody !== undefined ? { expected_body_hash: await sha256Hex(props.loadedBody) } : {}),
       });
       if (!r.ok) return toast(r.error ?? "阶段切换失败");
       await props.reload();
@@ -156,4 +159,10 @@ export function StageAdvance(props: {
       </div>}
     </div>
   );
+}
+
+/** 正文的 sha256（十六进制），和服务端 bodyHash 同一算法 */
+export async function sha256Hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

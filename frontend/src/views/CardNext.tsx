@@ -1,8 +1,8 @@
 /** 卡片面板顶上的「下一步」一行（1b 验收）：一句话 + 需要你拍板时的按钮 */
-import { invoke } from "../transport";
 import { toast } from "../ui";
 import type { CardPanelData } from "./board-api";
 import { nextStep } from "./card-next";
+import { decideItem } from "./review/review-api";
 
 type Act = (action: string, params: Record<string, unknown>, done: string) => Promise<unknown>;
 
@@ -10,9 +10,10 @@ export function CardNext(p: { d: CardPanelData; busy: boolean; act: Act; openEdi
   const n = nextStep(p.d);
   if (!n) return null;
   const approve = async () => {
-    // 与看板把卡从「写稿中」拖到「待录制」同一条认稿路径（浏览器会话）
-    const r = await invoke("content:transition", { id: p.d.id, from_status: p.d.status, target_status: "approved", force: true });
-    if (!r.ok) return toast(r.error ?? "没改成，刷新一下再试");
+    // 走「等你拍板」的单一入口，带卡片载入时那一版稿的代次：别的会话改过正文就拒（整分支审 4 P1）
+    if (!p.d.draft_item) return toast("稿子刚改过，重新看一眼");
+    const r = await decideItem({ content_id: p.d.id, item_id: p.d.draft_item.item_id, gen: p.d.draft_item.gen, action: "approve_script" });
+    if (!r.ok) return toast(r.error);
     toast((p.d.arolls ?? []).length ? "已进剪辑中" : "已进待录制");
     await p.refresh();
   };

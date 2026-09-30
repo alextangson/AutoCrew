@@ -232,7 +232,11 @@ export interface CoverGroup {
   by?: { host: string; session?: string };
   evidence?: string;
 }
-export interface CoverMember { group_id: string; fact_id: string; sha256: string; ratio: CoverRatio; at: string }
+/**
+ * path：这一组文件夹里的那个文件（同一张图可能在几个组里各有一份）；replaced_at：这一份被覆盖了——
+ * 只让这一组缺这张，不连累同一张图的别的组（整分支审 4 P2）
+ */
+export interface CoverMember { group_id: string; fact_id: string; sha256: string; ratio: CoverRatio; at: string; path?: string; replaced_at?: string }
 
 /** 「等你拍板」的 CAS 消费记录（§3.1 R1/R2）：同一条目的同一代次只消费一次，回放按原结果 */
 export interface InboxConsumption { item_id: string; gen: string; action: string; fp: string; at: string; result: Record<string, unknown>; /** 锁外还在跑（破例重跑等模型）：这一代已被占住 */ pending?: true }
