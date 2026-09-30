@@ -146,8 +146,10 @@ export async function placementCheck(content: Content, doc: ProductionDoc, file:
 async function accept(dataDir: string, w: Waiting, job: MatchJob, d: MatchDecision, c: Extract<Check, { ok: true }>, id: FilePlan["id"]): Promise<JobResult> {
   const a: RecordArgs = { content_id: w.content.id, kind: "aroll", request_id: w.fact.request_id ?? `match-${job.id}`, host: w.fact.by?.host ?? "autocrew" };
   const hold = await chatcutHold(c.source);
+  // 核不了 ChatCut 引用：先不挪，转候选并写原因；创始人点「是这条」时会再核一次
+  if (hold.unverified) return resolveTo(dataDir, w, job, "candidate", `对上了，但${hold.unverified}`, d);
   const plan: FilePlan = { action: hold.project ? "in_place" : "move", kind: "aroll", source: c.source, sha256: job.sha256, id, projectRoot: c.projectRoot, location: c.location,
-    evidence: hold.project ? `核对认出：${d.reason}；${inUseEvidence(hold.project)}` : `核对认出：${d.reason}${hold.note}`, existing: w.fact, ...(w.fact.duration_ms ? { duration_ms: w.fact.duration_ms } : {}) };
+    evidence: hold.project ? `核对认出：${d.reason}；${inUseEvidence(hold.project)}` : `核对认出：${d.reason}`, existing: w.fact, ...(w.fact.duration_ms ? { duration_ms: w.fact.duration_ms } : {}) };
   const r = await commitFile(a, w.content, plan, dataDir, undefined, { keepArgs: true, patch: { auto_attached: true, match: summaryOf(d) }, event: "aroll_match_accepted" });
   if (!r.ok) return resolveTo(dataDir, w, job, "candidate", `对上了，但挪进项目失败：${String(r.error)}`, d);
   return { state: "done", outcome: `accepted：${String(r.path ?? "")}` };

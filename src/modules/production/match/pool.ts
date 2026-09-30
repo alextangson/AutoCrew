@@ -8,10 +8,11 @@ import { isVideoPlatform } from "../../../storage/stage-guard.js";
 import { frozenCopy } from "../service.js";
 import type { PoolEntry } from "./decide.js";
 
-export const AROLL_POOL_STATUS: ReadonlySet<ContentStatus> = new Set(["draft_ready", "approved", "editing", "cover_pending"]);
+/** 「draft_ready 起」包括审稿中 / 修订中：写稿段、已有正文、还能被认稿（Codex 审 segB18 P2） */
+export const AROLL_POOL_STATUS: ReadonlySet<ContentStatus> = new Set(["draft_ready", "reviewing", "revision", "approved", "editing", "cover_pending"]);
 
 /** 导出目录的新版本（§6）：draft_ready 起全部视频稿（含已发布） */
-export const EXPORT_POOL_STATUS: ReadonlySet<ContentStatus> = new Set(["draft_ready", "approved", "editing", "cover_pending", "publish_ready", "publishing", "published"]);
+export const EXPORT_POOL_STATUS: ReadonlySet<ContentStatus> = new Set(["draft_ready", "reviewing", "revision", "approved", "editing", "cover_pending", "publish_ready", "publishing", "published"]);
 
 export async function exportPool(dataDir: string): Promise<PoolEntry[]> {
   const all = await listContents(dataDir);

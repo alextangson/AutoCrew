@@ -142,6 +142,7 @@ export async function reassignAroll(content: Content, doc: ProductionDoc, fact: 
   const source = await factFile(content, fact, dataDir);
   const hold = await chatcutHold(source);
   if (hold.project) return fail("reassign_blocked", chatcutInUse(hold.project));
+  if (hold.unverified) return fail("reassign_blocked", hold.unverified);
   // 原地收下的原片（绝对路径）改挂：同样不挪文件，《X》原地收下（Codex 审 segB5 P2）
   const inPlace = path.isAbsolute(fact.path!);
   const fp = await stableFingerprint(source, now());

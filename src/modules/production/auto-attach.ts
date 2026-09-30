@@ -74,9 +74,11 @@ export async function autoAttach(dataDir: string, move: AutoMove): Promise<strin
   const dur = await checkDuration(check.source, probe);
   if (!dur.ok) return `收件箱里的 ${path.basename(m.file.file)} 没自动挂上：${dur.error}`;
   const hold = await chatcutHold(check.source);
+  // 核不了 ChatCut 引用：这轮不挪，文件留在收件箱，下一轮对账再试（Codex 审 segB18 P2）
+  if (hold.unverified) return `收件箱里的 ${path.basename(m.file.file)} 没自动挂上：${hold.unverified}`;
   const plan: FilePlan = { action: hold.project ? "in_place" : "move", kind: "aroll", source: check.source, sha256: m.file.sha256, id: fp.value.id, projectRoot: check.projectRoot, location: "inbox",
     ...(legacy ? { existing: legacy } : {}), duration_ms: dur.value,
-    evidence: `从收件箱自动挂上：${m.d.reason}${m.d.top3.length > 1 ? `；前三名：${describeTop3(m.d.top3)}` : ""}${hold.project ? `；${inUseEvidence(hold.project)}` : hold.note}` };
+    evidence: `从收件箱自动挂上：${m.d.reason}${m.d.top3.length > 1 ? `；前三名：${describeTop3(m.d.top3)}` : ""}${hold.project ? `；${inUseEvidence(hold.project)}` : ""}` };
   const a = { content_id: content.id, kind: "aroll" as const, request_id: `auto-${m.file.sha256.slice(0, 24)}-${doc.round}`, host: "autocrew" };
   const match = { winner: m.d.winner, reason: m.d.reason, top3: m.d.top3.map((r) => ({ ...r })) };
   const r = await commitFile(a, content, plan, dataDir, undefined, { patch: { source: "reconcile", auto_attached: true, match, by: { host: "autocrew" } }, event: "aroll_auto_attached" });

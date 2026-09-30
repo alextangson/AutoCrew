@@ -119,6 +119,7 @@ export async function undoAutoAttach(content: Content, doc: ProductionDoc, fact:
   // 本机 ChatCut 工程按路径在用（还没有 uses_aroll 事实也算，Codex 审 segB5 P1）：挪走会断它的素材链接
   const hold = await chatcutHold(source);
   if (hold.project) return fail("undo_blocked", chatcutInUse(hold.project));
+  if (hold.unverified) return fail("undo_blocked", hold.unverified);
   // 先核完整哈希、再占名 / 挪（Codex 审 segB3 P1）：被外部改过的字节一旦挪出去，撤回会因哈希对不上拒绝放回，文件两头都不在
   const fp = await stableFingerprint(source, now());
   if (!fp.ok || fp.value.sha256 !== fact.sha256) return fail("undo_blocked", CHANGED);

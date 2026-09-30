@@ -136,7 +136,9 @@ async function decideAction(a: RecordArgs, content: Content, doc: ProductionDoc,
     if (referencedByChatcut(doc, existing)) return { ok: true, value: { action: "in_place", evidence: "收件箱原片对上标题；已被 ChatCut 工程引用，留原位不挪" } };
     const hold = await chatcutHold(file);
     if (hold.project) return { ok: true, value: { action: "in_place", evidence: inUseEvidence(hold.project) } };
-    return { ok: true, value: { action: "move", evidence: `收件箱里的原片，文件名对上标题${hold.note}` } };
+    // 核不了 ChatCut 引用（Codex 审 segB18 P2）：不挪，记候选并写原因
+    if (hold.unverified) return { ok: true, value: { action: "candidate", evidence: `${from}：文件名对上标题，但${hold.unverified}` } };
+    return { ok: true, value: { action: "move", evidence: "收件箱里的原片，文件名对上标题" } };
   }
   return { ok: true, value: { action: "clone", evidence: location === "inbox" ? "收件箱" : "剪辑软件导出目录" } };
 }

@@ -261,6 +261,20 @@ describe("Codex 审 segB13：转写器回「环境不可用」不算失败", () 
   });
 });
 
+describe("Codex 审 segB18 P2：待审 / 修订中的稿也在比对池里", () => {
+  for (const status of ["reviewing", "revision"] as const) {
+    it(`${status}：收件箱里文件名正好对上 → 自动挂上，不是「没对上」`, async () => {
+      asr(heardFrom({}));
+      const a = await videoContent(env, `${status}状态的一条稿`, status, A);
+      const src = await put(path.join(env.inbox, `${status}状态的一条稿-原片.mov`), "x");
+      const r = await tick();
+      expect(r.inbox?.unmatched ?? []).toEqual([]);
+      expect(await facts(a.id)).toMatchObject([{ state: "accepted", auto_attached: true }]);
+      expect(await exists(src)).toBe(false);
+    });
+  }
+});
+
 describe("Codex 审 segB14：持续「暂不可用」要给结论、露原因、不挡批次", () => {
   it("转写一直不可用：这一批按文件名判并写原因，名字唯一对上的兄弟文件照样挪；一小时内不重复转写", async () => {
     let runs = 0;
