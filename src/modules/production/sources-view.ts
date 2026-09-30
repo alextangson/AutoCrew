@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { matchDeps } from "./match/deps.js";
 import { readProductionDocOrEmpty } from "../../storage/production-store.js";
+import { contentRoot } from "../../storage/content-project.js";
 import { readReconcileReport } from "./reconcile.js";
 import { inboxToCreate, movableRoots } from "./roots.js";
 import { folderProblem, readArollSources } from "./sources.js";
@@ -28,9 +29,11 @@ export interface RevealSourceDeps { spawnImpl?: (cmd: string, args: string[], op
 /** 卡片候选的「在访达中显示」：只显示这条稿本轮这条候选 / 核对中事实自己的文件 */
 export async function revealFactPath(contentId: string, factId: string, dataDir: string, deps: RevealSourceDeps = {}): Promise<Record<string, unknown>> {
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
-  const f = doc.facts.find((x) => x.id === factId && x.round === doc.round && (x.state === "candidate" || x.state === "pending_match"));
-  if (!f?.path || !path.isAbsolute(f.path)) return { ok: false, code: "not_allowed", error: "这条候选没有可显示的文件，刷新再看" };
-  const real = await fs.realpath(f.path).catch(() => null);
+  // 候选 / 核对中的，和本轮已挂的原片（1b 验收：原片行也要「在访达中显示」）
+  const f = doc.facts.find((x) => x.id === factId && x.round === doc.round && (x.state === "candidate" || x.state === "pending_match" || (x.state === "accepted" && x.kind === "aroll")));
+  if (!f?.path) return { ok: false, code: "not_allowed", error: "这条没有可显示的文件，刷新再看" };
+  const abs = path.isAbsolute(f.path) ? f.path : path.join(contentRoot(contentId, dataDir), f.path);
+  const real = await fs.realpath(abs).catch(() => null);
   if (!real) return { ok: false, code: "file_missing", error: "文件不在了（可能已经挪走），刷新再看" };
   return openInFinder(real, false, deps);
 }

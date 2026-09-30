@@ -93,14 +93,14 @@ describe("§4.1 「不是这条」撤销自动挂上", () => {
     expect((await cardPanel(other.id, env.dir)).arolls).toEqual([expect.objectContaining({ undo_blocked: IN_EDIT, reassign_blocked: IN_EDIT_REASSIGN })]);
   });
 
-  it("人确认挂上的原片不走这条（只撤系统自己挂错的）", async () => {
+  it("创始人在卡片上挂的原片也能点「不是」：挪回原处（1b 验收：自己挂的，撤回是自己的事）", async () => {
     asr(() => ({ ok: true, text: A.slice(0, 100) }));
     const a = await videoContent(env, "甲稿人挂测试", "draft_ready", A);
     await founderApprove(env, a.id);
     const r = await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "x.mov"), "x") });
     const f = await aroll(a.id);
     expect(r).toMatchObject({ ok: true });
-    expect(await decide(a.id, "undo_auto_attach", { fact_id: f.id, sha256: f.sha256 })).toMatchObject({ ok: false, code: "not_auto" });
+    expect(await decide(a.id, "undo_auto_attach", { fact_id: f.id, sha256: f.sha256 })).toMatchObject({ ok: true, moved_to: path.join(env.outside, "x.mov") });
   });
 
   it("项目里的原片挂上之后被改过 → 拒，什么都不动：文件还在项目里、事实仍 accepted、不留事务日志（Codex 审 segB3 P1）", async () => {
@@ -240,5 +240,35 @@ describe("挂载核对：转写期间文件变了（Codex 审 segB15 P2）", () 
     const check = (await aroll(a.id)).attach_check;
     expect(check?.status).not.toBe("suggest");
     expect(check).toMatchObject({ status: "failed", reason: expect.stringContaining("文件在核对时变了") });
+  });
+});
+
+describe("「不是」也能撤创始人自己确认的原片（1b 验收）", () => {
+  it("从监视文件夹确认进来的原片：同一个 §4.1 事务挪回原处、拒事实、解冻；面板行写明来源", async () => {
+    const watch = path.join(path.dirname(env.dir), "watch-test");
+    await fs.mkdir(watch);
+    const a = await videoContent(env, "甲稿确认后撤回", "draft_ready", A);
+    await founderApprove(env, a.id);
+    const src = await put(path.join(watch, "IMG_0421.MOV"), "confirmed");
+    const { withFileOwnership } = await import("./mutex.js");
+    const { mutateProduction } = await import("./service.js");
+    const { cachedSha } = await import("./observe.js");
+    const { setProductionDeps } = await import("./roots.js");
+    setProductionDeps({ roots: async () => ({ inbox: env.inbox, chatcut: env.chatcut, jianying: env.jianying, watch: [await fs.realpath(watch)] }) });
+    const h = await cachedSha(src);
+    await withFileOwnership(() => mutateProduction(a.id, env.dir, (doc) => {
+      doc.facts.push({ id: "fact-watch-1", kind: "aroll", round: doc.round, state: "candidate", availability: "present", source: "reconcile", at: new Date().toISOString(), path: src, sha256: h.sha256, size: h.size, mtime_ms: h.mtime_ms, evidence: "监视文件夹 watch-test：文件名对上" });
+      return { value: null, events: [] };
+    }));
+    expect(await decide(a.id, "confirm_candidate", { fact_id: "fact-watch-1", sha256: h.sha256 })).toMatchObject({ ok: true, state: "accepted" });
+    expect(await exists(src)).toBe(false);
+    const row = ((await cardPanel(a.id, env.dir)).arolls as Array<Record<string, unknown>>)[0];
+    expect(row).toMatchObject({ name: "IMG_0421.MOV", origin: "你从监视文件夹「watch-test」确认的", undo_blocked: null });
+    const r = await decide(a.id, "undo_auto_attach", { fact_id: "fact-watch-1", sha256: h.sha256 });
+    expect(r).toMatchObject({ ok: true, moved_to: src, stage: "待录制" });
+    expect(await fs.readFile(src, "utf8")).toBe("confirmed");
+    const doc = await readProductionDocOrEmpty(a.id, env.dir);
+    expect(doc.facts.find((f) => f.id === "fact-watch-1")?.state).toBe("rejected");
+    expect(doc.frozen).toBeNull();
   });
 });
