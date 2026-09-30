@@ -137,13 +137,20 @@ async function discoverWatch(dataDir: string, folder: WatchFolder, pool: PoolEnt
   }
   const recent = listed.files.filter((x) => now() - x.mtime <= WATCH_MAX_AGE_MS);
   status.files = recent.length;
+  const failed: string[] = [];
   for (const raw of recent) {
     const v = await watchFile(dataDir, raw, pool, waiting).catch((e: unknown) => ({ kind: "failed" as const, reason: errCode(e) }));
+    // 没能比完（转写失败到头 / 读不了）与没对上分开：要看得见（Codex 审 segB P2，§14-14）
+    if (v.kind === "failed") { failed.push(`${raw.name}（${v.reason}）`); continue; }
     // 只出建议：对上等原片的稿才给候选；对不上静默跳过（下载里大量无关视频，不计入列头）
     if (v.kind !== "decided" || !v.d.winner || !waiting.has(v.d.winner)) continue;
     const f = await found(raw);
     suggest(out, v.d.winner, seen(f, "aroll", `监视文件夹 ${path.basename(folder.path)}：${why(v.d)}`));
     status.suggested += 1;
+  }
+  if (failed.length) {
+    status.error = `${failed.length} 个视频没核对成：${failed.join("；")}`;
+    out.warnings.push(`监视文件夹 ${folder.path}：${status.error}`);
   }
 }
 
@@ -168,6 +175,7 @@ async function discoverExport(dataDir: string, dir: string, contents: Content[],
     let targets: Array<{ id: string; evidence: string }> = byName.map((c) => ({ id: c.id, evidence: "文件名前缀对上标题（剪辑软件导出）" }));
     if (!targets.length) {
       const v = await fileVerdict(dataDir, f, pool);
+      if (v.kind === "failed") { out.warnings.push(`剪辑软件导出 ${f.name} 没核对成：${v.reason}`); continue; }
       if (v.kind !== "decided") continue;
       const ids = v.d.winner ? [v.d.winner] : v.d.top3.filter((r) => looksLike(r)).map((r) => r.content_id);
       targets = ids.map((id) => ({ id, evidence: `剪辑软件导出：${why(v.d)}` }));

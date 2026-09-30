@@ -9,7 +9,10 @@ import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage
 import type { Fact } from "../../storage/production-types.js";
 import type { AutoMove } from "./discover.js";
 import { stableFingerprint } from "./files.js";
-import { describeTop3 } from "./match/decide.js";
+import { decide, describeTop3, sameSnapshot, snapshotOf, type MatchDecision } from "./match/decide.js";
+import { readTranscript } from "./match/cache.js";
+import { matchDeps } from "./match/deps.js";
+import { arollPool } from "./match/pool.js";
 import { placementCheck } from "./match/pending.js";
 import type { FilePlan } from "./record-plan.js";
 import { commitFile } from "./record.js";
@@ -28,14 +31,27 @@ async function candidateNow(dataDir: string, m: AutoMove, reason: string): Promi
   });
 }
 
+async function currentDecision(dataDir: string, m: AutoMove): Promise<MatchDecision> {
+  const pool = await arollPool(dataDir);
+  if (sameSnapshot(snapshotOf(m.file.sha256, pool), m.d.snapshot)) return m.d;
+  const cached = await readTranscript(dataDir, m.file.sha256);
+  const heard = cached ? { text: cached.text } : { text: null, why: "池变了、没有缓存转写" };
+  return decide({ fileName: m.file.name, sha256: m.file.sha256, pool, heard }, matchDeps().thresholds);
+}
+
 /** 调用方持有文件归属锁。返回要进对账警告的一句（null = 没事） */
-export async function autoAttach(dataDir: string, m: AutoMove): Promise<string | null> {
+export async function autoAttach(dataDir: string, move: AutoMove): Promise<string | null> {
+  let m = move;
   const content = await getContent(m.content_id, dataDir);
   if (!content || content.deletedAt || content.status === "archived" || !(await isOntologyActive(dataDir, content.id))) return null;
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   // 点过「不是这条」的字节不再自动挪到这条（B10）
   if (doc.facts.some((f) => f.kind === "aroll" && f.sha256 === m.file.sha256)) return null;
   if (doc.facts.some((f) => f.round === doc.round && f.kind === "aroll" && f.state === "accepted")) { await candidateNow(dataDir, m, "这条已经有本轮原片了，后来的只做候选"); return null; }
+  // 发现在锁外：池（round / 正文哈希 / 标题）变了就用缓存转写按当前池重判，不用旧 winner（Codex 审 segB P1，同 §3-4）
+  const d = await currentDecision(dataDir, m);
+  if (d.winner !== m.content_id) return null;
+  m = { ...m, d };
   const check = await placementCheck(content, doc, m.file.file, m.file.sha256, undefined, dataDir, ["inbox"]);
   if (!check.ok) {
     if (!check.gone) await candidateNow(dataDir, m, `${check.why}，没挪`);

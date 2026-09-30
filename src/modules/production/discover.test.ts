@@ -130,6 +130,26 @@ async function addWatch(dir: string, opts: Record<string, unknown> = {}): Promis
   expect(JSON.parse(text)).toMatchObject({ ok: true });
 }
 
+describe("Codex 审 segB P1：锁外发现、锁内提交之间池变了", () => {
+  it("扫描后标题 / 正文改了 → 提交时按当前池用缓存转写重判，不按旧 winner 搬、不按新标题改名", async () => {
+    const { autoAttach } = await import("./auto-attach.js");
+    const { discoverExternal } = await import("./discover.js");
+    const { withFileOwnership } = await import("./mutex.js");
+    const { setContent } = await import("./testkit.js");
+    asr(heardFrom({ "IMG_s.mov": A.slice(20, 160) }));
+    const a = await videoContent(env, "甲稿快照测试", "draft_ready", A);
+    const src = await put(path.join(env.inbox, "IMG_s.mov"), "take-s");
+    await discoverExternal(env.dir);
+    await matchWorkerIdle(env.dir);
+    const found = await discoverExternal(env.dir);
+    expect(found.autoMoves).toHaveLength(1);
+    await setContent(env, a.id, { title: "改过的标题完全不同", body: synth(88, 500) });
+    await withFileOwnership(() => autoAttach(env.dir, found.autoMoves[0]));
+    expect(await exists(src)).toBe(true);
+    expect((await facts(a.id)).filter((f) => f.state === "accepted")).toEqual([]);
+  });
+});
+
 describe("§5 监视文件夹只出建议", () => {
   let watch: string;
   beforeEach(async () => { watch = path.join(path.dirname(env.dir), "downloads"); await fs.mkdir(watch); });
@@ -153,6 +173,17 @@ describe("§5 监视文件夹只出建议", () => {
     await put(path.join(watch, "clip.mov"), "c");
     await tick();
     expect(calls).toEqual([]);
+  });
+
+  it("转写退避到头还失败 → 该行与对账警告写原因，不和「没对上」一起静默（Codex 审 segB P2）", async () => {
+    asr(() => ({ ok: false, unavailable: false, reason: "sidecar 崩了" }));
+    await videoContent(env, "甲稿监视失败", "draft_ready", A);
+    await addWatch(watch);
+    await put(path.join(watch, "clip.mov"), "c");
+    let r = await tick();
+    for (let i = 0; i < MAX_RETRIES; i++) { clock += RETRY_DELAY_MS; r = await tick(); }
+    expect(r.watch?.[0].error).toContain("sidecar 崩了");
+    expect(r.warnings.join()).toContain("sidecar 崩了");
   });
 
   it("读不了（EACCES）→ 该行给授权提示，看板警告同样列出（E30）", async () => {
@@ -179,6 +210,16 @@ describe("§6 导出目录的新版本", () => {
     expect(c).toMatchObject({ state: "candidate", post_publish: true, path: cut });
     expect(await facts(done.id, "srt")).toMatchObject([{ state: "candidate", for_cut: c.sha256 }]);
     expect(calls).toEqual([]);
+  });
+
+  it("导出文件转写退避到头还失败 → 对账警告写原因（Codex 审 segB P2）", async () => {
+    asr(() => ({ ok: false, unavailable: false, reason: "sidecar 崩了" }));
+    await videoContent(env, "甲稿导出失败", "editing", A);
+    await put(path.join(env.jianying, "export_x.mp4"), "e");
+    let r = await tick();
+    for (let i = 0; i < MAX_RETRIES; i++) { clock += RETRY_DELAY_MS; r = await tick(); }
+    expect(r.warnings.join()).toContain("export_x.mp4");
+    expect(r.warnings.join()).toContain("sidecar 崩了");
   });
 
   it("认不出名字 → 转写兜底（低优先级）；对上 → 成片候选；都不像 → 跳过", async () => {
