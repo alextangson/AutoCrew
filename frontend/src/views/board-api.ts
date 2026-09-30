@@ -78,6 +78,8 @@ export interface CardPanelData {
   slivers?: SliverPanel | null;
   /** B7：有导出但 agent 还没说可以审（没有就是 null） */
   unreviewed?: { count: number; editor_label: string } | null;
+  /** 正式封面文件夹以外的封面图（多半是中间文件）：只在制作中的稿卡上收成一行 */
+  stray_covers?: { count: number } | null;
   storyboard?: StoryboardPanel | null;
   arolls?: ArollRow[];
   candidate_rows?: CandidateRowView[];

@@ -2,21 +2,26 @@
  * 「等你拍板」右侧面板（review-inbox §3.1、§4）：Notion 页面预览式——大标题、2–4 行属性、预览、按钮。
  * 只放处理这件事要的东西。按钮全是后端给的 actions（params 原样交回）；带「…」的动作就地展开输入框，回车发送。
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Button } from "../../components/Button";
 import { invoke } from "../../transport";
 import { relativeLabel } from "../../time-format";
-import { artifactUrl } from "../board-parts";
 import { openStoryboard } from "../board-api";
-import { attachmentUrl } from "./review-api";
+import { attachmentUrl, mediaUrl } from "./review-api";
 import { plainWords, type InboxAction, type InboxItem } from "./review-model";
 
 export type Act = (a: InboxAction, extra?: Record<string, unknown>) => Promise<void>;
 
+/**
+ * 回车 = 面板上的主按钮（整分支审 P1）：面板把「现在点主按钮会交什么」登记上来——正在看的那一版、选的那一组、改过的封面字都在里面，
+ * 键盘和鼠标交的是同一个东西。
+ */
+export const PrimaryContext = createContext<(fn: (() => void) | null) => void>(() => {});
+
 const variant = (r: InboxAction["role"]) => (r === "primary" ? "primary" : r === "quiet" ? "quiet" : "secondary");
 
-interface Version { fact_id: string; sha256: string; path?: string; at: string; label: string; ready?: boolean; approved?: boolean; has_srt?: boolean }
-interface Group { group_id: string; label: string; at: string; text: string; approved: boolean; "3:4": { path?: string; sha256: string } | null; "4:3": { path?: string; sha256: string } | null }
+interface Version { fact_id: string; sha256: string; at: string; label: string; ready?: boolean; approved?: boolean; has_srt?: boolean }
+interface Group { group_id: string; label: string; at: string; text: string; approved: boolean; "3:4": { fact_id: string; sha256: string } | null; "4:3": { fact_id: string; sha256: string } | null }
 
 /** 安静的分段胶囊：只切「看哪一版」，不是动作；标签是时间，不写版本号 */
 export function VersionPill<T extends { label: string; at: string }>(p: { list: T[]; index: number; onPick: (i: number) => void }) {
@@ -42,10 +47,18 @@ function Inline(p: { a: InboxAction; onSend: (note: string) => void; onCancel: (
 }
 
 /** 按钮行：主 / 次 / 少用（少用放右侧）；条件不够时按钮位置写原因，不放灰按钮 */
-export function Actions(p: { item: InboxItem; act: Act; extra?: () => Record<string, unknown>; only?: (a: InboxAction) => boolean }) {
+export function Actions(p: { item: InboxItem; act: Act; extra?: () => Record<string, unknown>; only?: (a: InboxAction) => boolean; noEnter?: boolean }) {
   const [open, setOpen] = useState<InboxAction | null>(null);
   const list = p.item.actions.filter(p.only ?? (() => true));
   const run = (a: InboxAction, note?: string) => void p.act(a, { ...(p.extra?.() ?? {}), ...(note ? { note } : {}) });
+  const register = useContext(PrimaryContext);
+  const primary = !p.item.blocked_reason && !open ? list.find((a) => a.role === "primary" && a.note !== "required") : undefined;
+  // 每次渲染都重新登记：闭包里是这一刻面板上的选择
+  useEffect(() => {
+    if (p.noEnter) return;
+    register(primary ? () => run(primary) : null);
+    return () => register(null);
+  });
   if (open) return <Inline a={open} onSend={(n) => { setOpen(null); run(open, n); }} onCancel={() => setOpen(null)} />;
   const loud = list.filter((a) => a.role !== "quiet"), quiet = list.filter((a) => a.role === "quiet");
   const click = (a: InboxAction) => (a.note === "required" ? setOpen(a) : run(a));
@@ -66,7 +79,7 @@ function CutBody(p: { item: InboxItem; act: Act }) {
   return <>
     <Props rows={[["稿子", p.item.title], ["剪好", v ? relativeLabel(v.at) : null], ["谁剪的", String(p.item.detail.editor_label ?? "")], ["字幕", v ? (v.has_srt ? "这版有字幕" : "这版还没有字幕") : null]]} />
     <VersionPill list={versions} index={idx} onPick={setIdx} />
-    {v?.path && p.item.content_id && <div className="ri-preview"><video controls preload="metadata" src={artifactUrl(p.item.content_id, { path: v.path, sha256: v.sha256 })} /></div>}
+    {v && p.item.content_id && <div className="ri-preview"><video controls preload="metadata" src={mediaUrl(p.item.content_id, v.fact_id)} /></div>}
     {v?.approved && <p className="ri-note">这一版现在是定下的那版</p>}
     <Actions item={p.item} act={p.act} extra={() => (v ? { fact_id: v.fact_id } : {})} />
   </>;
@@ -79,7 +92,7 @@ function CoverBody(p: { item: InboxItem; act: Act }) {
   const [text, setText] = useState(g?.text ?? "");
   useEffect(() => { setText(g?.text ?? ""); }, [g?.group_id, g?.text]);
   const incomplete = (p.item.detail.incomplete as Array<{ group_id: string; note: string }>) ?? [];
-  const img = (x: Group["3:4"]) => (x?.path && p.item.content_id ? <img alt="" src={artifactUrl(p.item.content_id, { path: x.path, sha256: x.sha256 })} /> : null);
+  const img = (x: Group["3:4"]) => (x?.fact_id && p.item.content_id ? <img alt="" src={mediaUrl(p.item.content_id, x.fact_id)} /> : null);
   return <>
     <Props rows={[["稿子", p.item.title], ["做好", g ? relativeLabel(g.at) : null], ["谁做的", p.item.waiting?.label ?? ""]]} />
     <VersionPill list={groups} index={idx} onPick={setIdx} />
@@ -90,7 +103,7 @@ function CoverBody(p: { item: InboxItem; act: Act }) {
   </>;
 }
 
-function DraftBody(p: { item: InboxItem; act: Act }) {
+export function DraftBody(p: { item: InboxItem; act: Act }) {
   const [body, setBody] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -143,12 +156,31 @@ function CheckBody(p: { item: InboxItem; act: Act }) {
   </>;
 }
 
+/** 候选的样子：封面是图、成片 / 原片是播放器；一句人话的「为什么」和文件名 */
+export function CandidatePreview(p: { item: InboxItem }) {
+  const d = p.item.detail, cid = p.item.content_id;
+  if (!cid || !d.preview) return null;
+  if (d.kind === "cover") return <div className="ri-preview"><img alt={String(d.name ?? "")} src={mediaUrl(cid, String(d.fact_id))} style={{ maxWidth: "100%", maxHeight: 320, borderRadius: 8 }} /></div>;
+  if (d.kind === "cut" || d.kind === "aroll") return <div className="ri-preview"><video controls preload="metadata" src={mediaUrl(cid, String(d.fact_id))} /></div>;
+  return null;
+}
+
+function CandidateBody(p: { item: InboxItem; act: Act }) {
+  const d = p.item.detail;
+  return <>
+    <Props rows={[["稿子", p.item.title], ["为什么", d.reason ? String(d.reason) : null], ["文件", d.name ? String(d.name) : null]]} />
+    <CandidatePreview item={p.item} />
+    <Actions item={p.item} act={p.act} />
+  </>;
+}
+
 function Generic(p: { item: InboxItem; act: Act }) {
   const d = p.item.detail;
-  const rows: Array<[string, ReactNode]> = [["稿子", p.item.content_id ? p.item.title : null], ["为什么", d.evidence ? plainWords(String(d.evidence)) : null], ["文件", d.name ? String(d.name) : null],
-    ["平台", d.platform ? String(d.platform) : null], ["原因", d.reason ? String(d.reason) : null], ["原话", d.quote ? `『${String(d.quote)}』` : null]];
+  const rows: Array<[string, ReactNode]> = [["稿子", p.item.content_id ? p.item.title : null], ["为什么", d.reason ? String(d.reason) : null], ["文件", d.name ? String(d.name) : null],
+    ["平台", d.platform ? String(d.platform) : null], ["原话", d.quote ? `『${String(d.quote)}』` : null]];
   return <>
     <Props rows={rows} />
+    <CandidatePreview item={p.item} />
     {p.item.type === "inbox_file" ? <AssignPicker item={p.item} act={p.act} /> : <Actions item={p.item} act={p.act} />}
   </>;
 }
@@ -166,7 +198,7 @@ function AssignPicker(p: { item: InboxItem; act: Act }) {
 
 export function ReviewPanel(p: { item: InboxItem; act: Act; gone: boolean; onClose: () => void }) {
   const it = p.item;
-  const Body = it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody : it.type === "draft" ? DraftBody
+  const Body = it.type === "candidate" ? CandidateBody : it.type === "cut_review" ? CutBody : it.type === "cover_pick" ? CoverBody : it.type === "draft" ? DraftBody
     : it.type === "ask" ? AskBody : it.type === "sliver" ? SliverBody : it.type === "publish_check" ? CheckBody : Generic;
   return <aside className="ri-peek" role="dialog" aria-label={it.summary}>
     <div className="ri-peek-top"><Button variant="quiet" onClick={p.onClose}>关闭</Button></div>

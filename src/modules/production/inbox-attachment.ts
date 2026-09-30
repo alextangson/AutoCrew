@@ -40,3 +40,23 @@ export async function openAttachment(contentId: string, askId: string, index: nu
 export function attachmentStream(file: string): fs.ReadStream {
   return fs.createReadStream(file);
 }
+
+/**
+ * 条目预览（成片、封面、候选）：按 fact_id 取文件，页面拿不到路径（条目里不放路径）。只读、sandbox + nosniff、
+ * 只认事实记下的 sha；被否掉的不给。项目内的要真在项目里，库外候选按记下的绝对路径。
+ */
+export async function openFactMedia(contentId: string, factId: string, dataDir: string): Promise<AttachmentOpen> {
+  const doc = await readProductionDocOrEmpty(contentId, dataDir);
+  const f = doc.facts.find((x) => x.id === factId);
+  if (!f || f.state === "rejected" || !f.path || !f.sha256 || !["cut", "cover", "aroll"].includes(f.kind)) return { ok: false, status: 404, error: "没有这个文件" };
+  const type = TYPES[path.extname(f.path).toLowerCase()];
+  if (!type) return { ok: false, status: 415, error: "这种文件不能在网页里预览" };
+  const root = await fs.promises.realpath(contentRoot(contentId, dataDir));
+  const file = path.isAbsolute(f.path) ? f.path : path.join(root, f.path);
+  const real = await fs.promises.realpath(file).catch(() => null);
+  if (!real || (!path.isAbsolute(f.path) && !isWithin(root, real))) return { ok: false, status: 404, error: "文件不在了" };
+  const st = await fs.promises.stat(real);
+  if (!st.isFile()) return { ok: false, status: 404, error: "不是普通文件" };
+  if ((await sha256File(real)) !== f.sha256) return { ok: false, status: 409, error: "文件变过了" };
+  return { ok: true, file: real, size: st.size, type };
+}

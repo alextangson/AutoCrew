@@ -27,6 +27,10 @@ export const decideItem = (payload: Json) =>
 export const undoDecision = (contentId: string, action: string, params: Json) =>
   call<Json>("/api/board/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content_id: contentId, action, ...params }) });
 
+/** 条目预览（成片 / 封面 / 候选）：按 fact_id 取，条目里不带路径 */
+export const mediaUrl = (contentId: string, factId: string) =>
+  `/api/inbox/media?content_id=${encodeURIComponent(contentId)}&fact_id=${encodeURIComponent(factId)}`;
+
 export const attachmentUrl = (contentId: string, askId: string, index: number) =>
   `/api/inbox/attachment?content_id=${encodeURIComponent(contentId)}&ask_id=${encodeURIComponent(askId)}&index=${index}`;
 

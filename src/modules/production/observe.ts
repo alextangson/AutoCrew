@@ -19,6 +19,7 @@ import { sha256File } from "../video/handoff/manifest.js";
 import { readProjectJson } from "../video/handoff/project-evidence.js";
 import { coverRatioOf } from "./files.js";
 import { addMember, admittedGroupKey, ensureGroup, retiredGroupOfLabel } from "./cover-groups.js";
+import { strayCoverReason } from "./plain-reason.js";
 
 export const VIDEO_EXT = new Set([".mp4", ".mov", ".m4v"]);
 const SRT_EXT = new Set([".srt", ".vtt"]);
@@ -111,7 +112,7 @@ async function scanCovers(root: string, warnings: string[]): Promise<Seen[]> {
     const rel = path.relative(root, file);
     const admitted = admittedGroupKey(rel);
     // 登记时拷出的「封面-3x4.*」在 05-cover 顶层：它们的字节就是已批的那张，按 sha 去重，不另记
-    out.push(await fileSeen(root, file, "cover", "reconcile", admitted ? `项目 ${path.dirname(rel)}` : `项目 ${path.dirname(rel)}（不在 vNNN/ 或 final/，只做候选）`, { ratio, ...(admitted ? {} : { state: "candidate" as const }) }));
+    out.push(await fileSeen(root, file, "cover", "reconcile", admitted ? `项目 ${path.dirname(rel)}` : strayCoverReason(rel), { ratio, ...(admitted ? {} : { state: "candidate" as const }) }));
   }
   return out;
 }
@@ -119,7 +120,7 @@ async function scanCovers(root: string, warnings: string[]): Promise<Seen[]> {
 /** 其他来源（execution.json、meta.assets）的封面按同一条准入：路径不在 vNNN/ 或 final/ → 候选 */
 function admitCover(s: Seen): Seen {
   if (s.kind !== "cover" || s.state !== "accepted" || admittedGroupKey(s.path)) return s;
-  return { ...s, state: "candidate", evidence: `${s.evidence ?? ""}（不在 05-cover/vNNN/ 或 final/，只做候选）` };
+  return { ...s, state: "candidate", evidence: s.path && !path.isAbsolute(s.path) ? strayCoverReason(s.path) : "放在 AutoCrew 不会自动收的文件夹里，要你确认" };
 }
 
 /** 旧存法一：execution.json 报到的产物 */

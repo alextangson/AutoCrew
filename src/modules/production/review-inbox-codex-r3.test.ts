@@ -313,3 +313,71 @@ describe("B7 agent 没标可以审了，创始人要审", () => {
     expect(await decideItem({ content_id: c.id, item_id: fresh.item_id, gen: fresh.gen, action: "approve_cut", ...fresh.actions[0].params }, env.dir)).toMatchObject({ ok: true });
   });
 });
+
+describe("整分支审（2a vs main）", () => {
+  const byType = async (id: string, t: string) => (await items(id)).find((i) => i.type === t);
+
+  it("撤回成片批准：条目换新代次回来；拿旧代次重交只回放，不复活已撤的批准", async () => {
+    const c = await editing();
+    const cut = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "三轮回归.mp4"), "cut"), request_id: "c", review: true });
+    const sha = (await doc(c.id)).facts.find((f) => f.id === cut.fact_id)!.sha256!;
+    await (await import("./testkit.js")).waiveSliverCheck(env, c.id, sha);
+    const it0 = (await byType(c.id, "cut_review"))!;
+    const req = { content_id: c.id, item_id: it0.item_id, gen: it0.gen, action: "approve_cut", ...it0.actions[0].params };
+    const ok = await decideItem(req, env.dir);
+    expect(await decide(c.id, "revoke_approval", { decision_id: (ok.decision as { id: string }).id }, env.dir)).toMatchObject({ ok: true });
+    const back = await byType(c.id, "cut_review");
+    expect(back).toBeDefined();
+    expect(back!.gen).not.toBe(it0.gen);
+    expect(await decideItem(req, env.dir)).toMatchObject({ ok: true, replayed: true });
+    const { validCutApproval } = await import("./derive.js");
+    const { getContent } = await import("../../storage/local-store.js");
+    expect(validCutApproval(await doc(c.id), (await getContent(c.id, env.dir))!.body)).toBeNull();
+  });
+
+  it("撤回封面批准：条目换新代次回来", async () => {
+    const c = await editing();
+    await record(env, { content_id: c.id, kind: "cover", paths: [await img("a.png", 900, 1200), await img("b.png", 1200, 900)], cover_text: "字", request_id: "g" });
+    const it0 = (await byType(c.id, "cover_pick"))!;
+    const ok = await decideItem({ content_id: c.id, item_id: it0.item_id, gen: it0.gen, action: "pick_cover", ...it0.actions[0].params }, env.dir);
+    await decide(c.id, "revoke_approval", { decision_id: (ok.decision as { id: string }).id }, env.dir);
+    const back = await byType(c.id, "cover_pick");
+    expect(back).toBeDefined();
+    expect(back!.gen).not.toBe(it0.gen);
+  });
+
+  it("认稿之后退回：「稿子写好了」换新代次回来", async () => {
+    const d = await videoContent(env, "退回的稿");
+    const it0 = (await items(d.id)).find((i) => i.type === "draft")!;
+    await decideItem({ content_id: d.id, item_id: it0.item_id, gen: it0.gen, action: "approve_script" }, env.dir);
+    const { executeContentSave } = await import("../../tools/content-save.js");
+    await executeContentSave({ _dataDir: env.dir, action: "transition", id: d.id, target_status: "reviewing", force: true });
+    await executeContentSave({ _dataDir: env.dir, action: "transition", id: d.id, target_status: "draft_ready", force: true });
+    const back = (await items(d.id)).find((i) => i.type === "draft");
+    expect(back).toBeDefined();
+    expect(back!.gen).not.toBe(it0.gen);
+  });
+
+  it("「已经发出去了」之后纠正：「发了吗」换新代次回来", async () => {
+    const r = await registeredVideo(env);
+    await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ final_video: { path: r.video }, platforms: [{ platform: "douyin" }] }));
+    const it0 = (await byType(r.id, "published_ask"))!;
+    expect(await decideItem({ content_id: r.id, item_id: it0.item_id, gen: it0.gen, action: "i_published", ...it0.actions[0].params }, env.dir)).toMatchObject({ ok: true });
+    expect(await decide(r.id, "correct_publish", { target_id: "slot:1:douyin" }, env.dir)).toMatchObject({ ok: true });
+    const back = await byType(r.id, "published_ask");
+    expect(back).toBeDefined();
+    expect(back!.gen).not.toBe(it0.gen);
+  });
+
+  it("「指定给…」用服务端给的路径，不从页面取", async () => {
+    const target = await videoContent(env, "等原片的稿");
+    await founderApprove(env, target.id);
+    await put(path.join(env.inbox, "IMG_7777.mov"), "unmatched-video");
+    await reconcileAll(env.dir);
+    const it = (await readInbox(env.dir)).items.find((i) => i.type === "inbox_file")!;
+    expect(it).toBeDefined();
+    const out = await decideItem({ item_id: it.item_id, gen: it.gen, action: "assign", to: target.id, path: "/etc/passwd" }, env.dir);
+    expect(out).toMatchObject({ ok: true });
+    expect((await doc(target.id)).facts.some((f) => f.kind === "aroll" && f.state === "accepted")).toBe(true);
+  });
+});

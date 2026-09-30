@@ -86,7 +86,7 @@ async function inboxFileItems(dataDir: string, contents: Content[]): Promise<Inb
       item_id, gen: genOf([item_id, snapshot]), type: "inbox_file" as const, content_id: null, title: f.name, summary: `收件箱里有个视频没对上：${f.name}`,
       waiting: null, agent_waiting: false, since: new Date(f.mtime_ms).toISOString(), rank: 1 as const,
       actions: [{ action: "assign", label: "指定给…", role: "primary" as const, params: { path: f.path } }],
-      detail: { name: f.name, path: f.path, size: f.size, guess: f.guess, choices: waiting },
+      detail: { name: f.name, size: f.size, guess: f.guess, choices: waiting },
     };
   });
 }

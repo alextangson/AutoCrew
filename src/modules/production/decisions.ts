@@ -21,6 +21,7 @@ import { validCoverApproval, validCutApproval } from "./derive.js";
 import { canonPlatform, normSlotId, slotGate, slotId, slotOf } from "./receipts.js";
 import { gateFromPlan, isUngated } from "./publish-check-link.js";
 import { addReadyMark, adoptCandidate } from "./record.js";
+import { isStrayCover } from "./plain-reason.js";
 import { undoAutoAttach } from "./undo-attach.js";
 import { keepAttach, reassignAroll, startAttachCheck } from "./attach-check.js";
 import { commitRegistration, type CommitResult } from "./registration.js";
@@ -33,12 +34,12 @@ import { latestCheck, sliverKey, sliverVerdict, type Verdict } from "./sliver/ve
 export type DecisionAction =
   | "confirm_candidate" | "reject_candidate" | "approve_cut" | "reject_cut" | "pick_cover" | "reject_cover"
   | "revoke_approval" | "i_published" | "confirm_receipt" | "correct_publish" | "attach_aroll" | "waive_sliver" | "waive_sliver_check"
-  | "undo_auto_attach" | "keep_attach" | "reassign_aroll" | "retire_cover_group" | "review_now";
+  | "undo_auto_attach" | "keep_attach" | "reassign_aroll" | "retire_cover_group" | "review_now" | "reject_stray_covers";
 
 export const DECISION_ACTIONS: readonly DecisionAction[] = [
   "confirm_candidate", "reject_candidate", "approve_cut", "reject_cut", "pick_cover", "reject_cover",
   "revoke_approval", "i_published", "confirm_receipt", "correct_publish", "attach_aroll", "waive_sliver", "waive_sliver_check",
-  "undo_auto_attach", "keep_attach", "reassign_aroll", "retire_cover_group", "review_now",
+  "undo_auto_attach", "keep_attach", "reassign_aroll", "retire_cover_group", "review_now", "reject_stray_covers",
 ];
 
 type Result = Record<string, unknown>;
@@ -306,10 +307,20 @@ async function reviewNow(ctx: Ctx): Promise<Result> {
   return { ok: true, fact_id: cut.id, marked: r.value };
 }
 
+/** 卡片「以前的封面文件 N 张」→「都不要」：本轮正式封面文件夹以外的封面候选一次否掉（文件不动） */
+async function rejectStrayCovers(ctx: Ctx): Promise<Result> {
+  const ids = ctx.doc.facts.filter((f) => f.round === ctx.doc.round && isStrayCover(f)).map((f) => f.id);
+  if (!ids.length) return { ok: true, rejected: 0 };
+  await push(ctx, { type: "candidate_reject", note: `以前的封面文件 ${ids.length} 张都不要` }, "stray_covers_rejected", (doc) => {
+    for (const f of doc.facts) if (ids.includes(f.id)) f.state = "rejected";
+  });
+  return { ok: true, rejected: ids.length };
+}
+
 const HANDLERS: Record<DecisionAction, (ctx: Ctx) => Promise<Result>> = {
   confirm_candidate: (c) => candidate(c, true), reject_candidate: (c) => candidate(c, false),
   approve_cut: approveCut, reject_cut: (c) => rejectWith(c, "cut_reject", "cut"), reject_cover: (c) => rejectWith(c, "cover_reject", "cover"),
-  pick_cover: pickCover, retire_cover_group: retireCoverGroup, review_now: reviewNow, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
+  pick_cover: pickCover, retire_cover_group: retireCoverGroup, review_now: reviewNow, reject_stray_covers: rejectStrayCovers, revoke_approval: revoke, i_published: published, confirm_receipt: confirmReceipt, correct_publish: correct,
   attach_aroll: attachAroll, waive_sliver: waiveSliver, waive_sliver_check: waiveSliverCheck,
   undo_auto_attach: (c) => arollDecision(c, (f) => undoAutoAttach(c.content, c.doc, f, c.dataDir)),
   keep_attach: (c) => arollDecision(c, (f) => keepAttach(c.content, f, c.dataDir)),

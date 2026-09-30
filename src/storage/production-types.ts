@@ -14,7 +14,8 @@ export const PRODUCTION_KINDS: ReadonlySet<FactKind> = new Set(["aroll", "cut", 
 export type FactState = "accepted" | "candidate" | "pending_match" | "rejected";
 /** 业务状态与文件可用性分开（Codex P1-9）：可用性只影响发布资格和告警 */
 export type Availability = "present" | "missing" | "unreadable" | "archived";
-export type FactSource = "record" | "reconcile" | "founder" | "legacy";
+/** migration：§6.2 统一准入时从 accepted 转成候选的封面（只改了标签；它们不是创始人要拍板的事） */
+export type FactSource = "record" | "reconcile" | "founder" | "legacy" | "migration";
 export type CoverRatio = "3:4" | "4:3";
 
 export interface Fact {

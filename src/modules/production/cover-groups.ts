@@ -9,6 +9,7 @@
  */
 import path from "node:path";
 import { newId } from "../../storage/production-store.js";
+import { strayCoverReason } from "./plain-reason.js";
 import type { CoverGroup, CoverMember, CoverRatio, Fact, ProductionDoc } from "../../storage/production-types.js";
 
 export const MAX_COVER_GROUPS = 30;
@@ -154,9 +155,10 @@ export function migrateCoverGroups(doc: ProductionDoc, approvedShas: ReadonlySet
       continue;
     }
     if (f.sha256 && approvedShas.has(f.sha256) && !f.replaced_at) { approved.push(f); continue; }
-    const where = f.path ? (path.isAbsolute(f.path) ? "库外" : path.dirname(f.path)) : "未知位置";
+    // 只改标签（source=migration）：它们不进「等你拍板」，只在卡片上收成一行「以前的封面文件」
     f.state = "candidate";
-    f.evidence = `迁移：${where} 不是 05-cover/vNNN/ 或 final/，转成候选（封面统一准入）${f.evidence ? `；原依据：${f.evidence}` : ""}`;
+    f.source = "migration";
+    f.evidence = strayCoverReason(f.path);
     out.push({ fact_id: f.id, to: "candidate", reason: f.evidence });
   }
   if (approved.length) {

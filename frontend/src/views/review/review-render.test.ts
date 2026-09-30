@@ -17,6 +17,7 @@ vi.mock("./review-api", () => ({
   decideItem: async (p: Record<string, unknown>) => { decided.push(p); return decideReply.ok === false ? { ok: false, error: String(decideReply.error) } : { ok: true, data: decideReply }; },
   undoDecision: async (c: string, a: string, p: Record<string, unknown>) => { undone.push([c, a, p]); return { ok: true, data: {} }; },
   attachmentUrl: () => "/att",
+  mediaUrl: (c: string, f: string) => `/media/${c}/${f}`,
   inboxHref: (id: string) => `#/board?inbox=${id}`,
   INBOX_OPEN_EVENT: "autocrew:inbox-open",
   openInboxItem: () => {},
@@ -46,11 +47,11 @@ export const ITEMS: InboxItem[] = [
     detail: { ask_id: "ask-1", kind: "粗剪", question: "粗剪这样行吗？", options: [], attachments: [], attachments_changed: false } }),
   base({ item_id: "cut:r1", type: "cut_review", summary: "成片剪好了，看一遍", waiting: { host: "codex", label: "Codex" },
     actions: [{ action: "approve_cut", label: "就用这版", role: "primary", params: { fact_id: "f2", sha256: "s2" } }, { action: "reject_cut", label: "还要改…", role: "secondary", params: { fact_id: "f2", sha256: "s2" }, note: "required", placeholder: "比如：开头有点拖，前 10 秒再紧一点" }],
-    detail: { review_fact_id: "f2", editor_label: "Codex", versions: [{ fact_id: "f2", sha256: "s2", path: "04-edit/b.mp4", at: new Date().toISOString(), label: "最新一版", ready: true, has_srt: true }, { fact_id: "f1", sha256: "s1", path: "04-edit/a.mp4", at: new Date(Date.now() - 3600_000).toISOString(), label: "上一版", ready: true }] } }),
+    detail: { review_fact_id: "f2", editor_label: "Codex", versions: [{ fact_id: "f2", sha256: "s2", at: new Date().toISOString(), label: "最新一版", ready: true, has_srt: true }, { fact_id: "f1", sha256: "s1", at: new Date(Date.now() - 3600_000).toISOString(), label: "上一版", ready: true }] } }),
   base({ item_id: "cover:r1", type: "cover_pick", summary: "封面做好了，挑一张",
     actions: [{ action: "pick_cover", label: "用这组", role: "primary", params: { group_id: "cg-2", cover_text: "字" } }, { action: "reject_cover", label: "还要改…", role: "secondary", note: "required" }, { action: "retire_cover_group", label: "这组不要了", role: "quiet", params: { group_id: "cg-2" } }],
-    detail: { groups: [{ group_id: "cg-2", label: "最新一组", at: new Date().toISOString(), text: "字", approved: false, "3:4": { path: "05-cover/v002/a.png", sha256: "c1" }, "4:3": { path: "05-cover/v002/b.png", sha256: "c2" } }], incomplete: [] } }),
-  base({ item_id: "cand:f9", type: "candidate", summary: "找到一段成片，是这条的吗", actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: { fact_id: "f9", sha256: "s9" } }, { action: "reject_candidate", label: "不是", role: "secondary", params: { fact_id: "f9", sha256: "s9" } }], detail: { fact_id: "f9", name: "x.mp4", evidence: "文件名对上" } }),
+    detail: { groups: [{ group_id: "cg-2", label: "最新一组", at: new Date().toISOString(), text: "字", approved: false, "3:4": { fact_id: "fc1", sha256: "c1" }, "4:3": { fact_id: "fc2", sha256: "c2" } }], incomplete: [] } }),
+  base({ item_id: "cand:f9", type: "candidate", summary: "找到一段成片，是这条的吗", actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: { fact_id: "f9", sha256: "s9" } }, { action: "reject_candidate", label: "不是", role: "secondary", params: { fact_id: "f9", sha256: "s9" } }], detail: { fact_id: "f9", kind: "cut", name: "x.mp4", reason: "文件名和标题对上了", preview: true } }),
   base({ item_id: "sliver:f2", type: "sliver", summary: "画面有闪帧（1 处）", actions: [{ action: "reject_cut", label: "去剪辑里改", role: "primary", params: { fact_id: "f2", sha256: "s2" }, note: "optional" }],
     detail: { status: "slivers", items: [{ key: "k1", start_tc: "00:00:03", frames: 5, prev_name: "空镜", next_name: "动效", suggestion: null, waived: false, action: { action: "waive_sliver", label: "这处是故意的", role: "secondary", params: { cut_sha: "s2", fingerprint: "fp", sliver_key: "k1" } } }] } }),
   base({ item_id: "register:r1", type: "register_blocked", summary: "还差一步才能发：缺这版成片的字幕", actions: [{ action: "nudge", label: "让 Codex 补", role: "primary" }], detail: { reason: "缺这版成片的字幕" } }),
@@ -286,4 +287,93 @@ describe("网页提醒（§9）", () => {
     await tick();
     expect(el.querySelector(".ri-peek h2")!.textContent).toBe(fresh.summary);
   }, 15_000);
+});
+
+const candCover = (n: number): InboxItem => base({ item_id: `cand:c${n}`, gen: `g${n}`, type: "candidate", summary: "找到一张封面，是这条的吗",
+  actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: { fact_id: `c${n}`, sha256: `s${n}` } }, { action: "reject_candidate", label: "不是", role: "secondary", params: { fact_id: `c${n}`, sha256: `s${n}` } }],
+  detail: { fact_id: `c${n}`, kind: "cover", name: `${n}.png`, reason: "放在 AutoCrew 不会自动收的文件夹里，要你确认", preview: true } });
+const draftOf = (n: number): InboxItem => base({ item_id: `draft:content-${n}-d`, content_id: `content-${n}-d`, gen: `d${n}`, title: `稿子${n}`, type: "draft", rank: 3, summary: "稿子写好了，过一眼",
+  actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required" }], detail: { words: 100 } });
+
+describe("合成的行（2a 真实数据验收）", () => {
+  it("同一条稿的 3 张候选封面 = 一行「找到 3 张封面，看看是不是这条的」；面板里逐张有图、对 / 不是，另有「都不是」", async () => {
+    await mountInbox([candCover(1), candCover(2), candCover(3)]);
+    expect(el.querySelectorAll(".ri-row").length).toBe(1);
+    await openRow("找到 3 张封面，看看是不是这条的");
+    expect(el.querySelectorAll(".ri-peek img").length).toBe(3);
+    inbox = [candCover(1), candCover(3)];
+    await click([...el.querySelectorAll(".ri-peek button")].filter((b) => b.textContent === "不是")[1]);
+    expect(decided.at(-1)).toMatchObject({ item_id: "cand:c2", gen: "g2", action: "reject_candidate", fact_id: "c2" });
+    decided.length = 0;
+    await click(btn("都不是"));
+    expect(decided.map((d) => d.item_id)).toEqual(["cand:c1", "cand:c3"]);
+  });
+  it("9 篇稿子 = 一行「9 篇稿子写好了，过一眼」；面板一篇一篇过，「下一篇」换一篇", async () => {
+    await mountInbox(Array.from({ length: 9 }, (_, i) => draftOf(i + 1)));
+    expect(el.querySelectorAll(".ri-row").length).toBe(1);
+    await openRow("9 篇稿子写好了，过一眼");
+    expect(el.querySelector(".ri-peek")!.textContent).toContain("第 1 篇，共 9 篇：稿子1");
+    await click(btn("下一篇"));
+    expect(el.querySelector(".ri-peek")!.textContent).toContain("第 2 篇，共 9 篇：稿子2");
+    await click(btn("稿子没问题"));
+    expect(decided.at(-1)).toMatchObject({ item_id: "draft:content-2-d", gen: "d2", action: "approve_script" });
+  });
+  it("缩略图：候选封面是图、候选成片是视频帧、稿子才是「稿」", async () => {
+    await mountInbox([candCover(1), ITEMS[3], ITEMS[9]]);
+    const thumb = (label: string) => [...el.querySelectorAll(".ri-row")].find((r) => r.getAttribute("aria-label") === label)!.querySelector(".ri-thumb")!;
+    expect(thumb("找到一张封面，是这条的吗").querySelector("img")).toBeTruthy();
+    expect(thumb("找到一段成片，是这条的吗").querySelector("video")).toBeTruthy();
+    expect(thumb("稿子写好了，过一眼").textContent).toBe("稿");
+    await openRow("找到一段成片，是这条的吗");
+    expect(el.querySelector(".ri-peek video")).toBeTruthy();
+    expect(el.querySelector(".ri-peek")!.textContent).toContain("文件名和标题对上了");
+  });
+});
+
+describe("回车（整分支审 P1）", () => {
+  it("回车交的是面板上正在看的那一版（切到上一版后回车 = 就用上一版）", async () => {
+    await mountInbox([ITEMS[1]]);
+    await openRow("成片剪好了，看一遍");
+    await click([...el.querySelectorAll(".ri-pill span")][1]);
+    await key("Enter");
+    expect(decided.at(-1)).toMatchObject({ action: "approve_cut", fact_id: "f1" });
+  });
+  it("回车交的是改过的封面字", async () => {
+    await mountInbox([ITEMS[2]]);
+    await openRow("封面做好了，挑一张");
+    const input = el.querySelector(".ri-peek input") as HTMLInputElement;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "新的字"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await key("Enter");
+    expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-2", cover_text: "新的字" });
+  });
+  it("焦点在次按钮（「没发」）上按回车：不跑主按钮；那个按钮自己的动作照常", async () => {
+    await mountInbox([ITEMS[8]]);
+    await openRow("Claude说已经发了（抖音）");
+    const no = btn("没发")!;
+    no.focus();
+    await act(async () => { no.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    await tick();
+    expect(decided).toEqual([]);
+    await click(no);
+    expect(decided.at(-1)).toMatchObject({ action: "correct_publish", target_id: "slot:1:douyin" });
+  });
+  it("焦点在版本切换上按回车：不跑主按钮", async () => {
+    await mountInbox([ITEMS[1]]);
+    await openRow("成片剪好了，看一遍");
+    const tab = el.querySelector(".ri-pill span") as HTMLElement;
+    await act(async () => { tab.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    await tick();
+    expect(decided).toEqual([]);
+  });
+});
+
+describe("卡片：以前的封面文件", () => {
+  it("收成一行「以前的封面文件 N 张（不在正式封面文件夹里）」，「都不要」一次否掉", async () => {
+    const acts: string[] = [];
+    const { StrayCovers } = await import("../CardPanel");
+    await act(async () => { root.render(createElement(StrayCovers, { n: 39, busy: false, act: async (a: string) => { acts.push(a); } })); });
+    expect(el.textContent).toContain("以前的封面文件 39 张（不在正式封面文件夹里）");
+    await click(btn("都不要"));
+    expect(acts).toEqual(["reject_stray_covers"]);
+  });
 });

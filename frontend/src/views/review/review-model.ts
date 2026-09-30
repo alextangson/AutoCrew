@@ -39,11 +39,63 @@ export function sortItems(items: InboxItem[]): InboxItem[] {
   return [...items].sort((a, b) => a.rank - b.rank || a.since.localeCompare(b.since) || a.item_id.localeCompare(b.item_id));
 }
 
-/** 行首缩略图的种类：封面 / 视频帧 / 文档 */
-export function thumbKind(t: InboxType): "cover" | "video" | "doc" {
-  if (t === "cover_pick") return "cover";
-  if (t === "cut_review" || t === "sliver" || t === "inbox_file") return "video";
+/** 行首缩略图的种类：封面图 / 视频帧 / 字幕 / 文档。「稿」只给文档类，封面和成片永远有图（2a 真实数据验收） */
+export function thumbKind(item: Pick<InboxItem, "type" | "detail">): "cover" | "video" | "srt" | "doc" {
+  const t = item.type, kind = item.detail.kind;
+  if (t === "cover_pick" || (t === "candidate" && kind === "cover")) return "cover";
+  if (t === "cut_review" || t === "sliver" || t === "inbox_file" || t === "auto_attached" || t === "attach_check" || (t === "candidate" && (kind === "cut" || kind === "aroll"))) return "video";
+  if (t === "candidate" && kind === "srt") return "srt";
   return "doc";
+}
+
+/** 预览用的事实 id：封面取 3:4，成片取最新一版，候选取它自己 */
+export function previewFact(item: Pick<InboxItem, "type" | "detail">): string | null {
+  const d = item.detail;
+  if (item.type === "cover_pick") return (d.groups as Array<{ "3:4": { fact_id: string } | null }> | undefined)?.[0]?.["3:4"]?.fact_id ?? null;
+  if (item.type === "cut_review") return (d.versions as Array<{ fact_id: string }> | undefined)?.[0]?.fact_id ?? null;
+  if (item.type === "sliver") return String(d.cut_fact_id ?? "") || null;
+  if ((item.type === "candidate" || item.type === "auto_attached" || item.type === "attach_check") && d.preview) return String(d.fact_id);
+  return null;
+}
+
+// ---- 行：同一条稿同种候选合成一行、稿子合成一行（只是显示；决定仍按每件自己的 item_id + gen） ----
+
+export interface Row { key: string; items: InboxItem[]; title: string; sub: string; since: string; rank: number; agent_waiting: boolean }
+
+const MEASURE: Record<string, string> = { cover: "张", srt: "份", cut: "段", aroll: "段" };
+const KIND: Record<string, string> = { cover: "封面", srt: "字幕", cut: "成片", aroll: "原片" };
+
+export function groupRows(items: InboxItem[]): Row[] {
+  const byKey = new Map<string, InboxItem[]>();
+  const keyOf = (i: InboxItem) => (i.type === "candidate" ? `group:cand:${i.content_id}:${String(i.detail.kind)}` : i.type === "draft" ? "group:draft" : i.item_id);
+  for (const i of items) byKey.set(keyOf(i), [...(byKey.get(keyOf(i)) ?? []), i]);
+  const rows: Row[] = [];
+  for (const [key, group] of byKey) {
+    const first = group[0];
+    const single = group.length === 1;
+    let title = plainWords(first.summary);
+    if (!single && first.type === "candidate") { const k = String(first.detail.kind); title = `找到 ${group.length} ${MEASURE[k] ?? "个"}${KIND[k] ?? "文件"}，看看是不是这条的`; }
+    if (!single && first.type === "draft") title = `${group.length} 篇稿子写好了，过一眼`;
+    const sub = single ? secondLine(first) : first.type === "draft" ? group.map((g) => g.title).slice(0, 3).join("、") + (group.length > 3 ? " …" : "") : secondLine(first);
+    rows.push({ key: single ? first.item_id : key, items: group, title, sub, since: group.map((g) => g.since).sort()[0], rank: Math.min(...group.map((g) => g.rank)), agent_waiting: group.some((g) => g.agent_waiting) });
+  }
+  return rows.sort((a, b) => a.rank - b.rank || a.since.localeCompare(b.since) || a.key.localeCompare(b.key));
+}
+
+/** 做完一件后下一个打开的行：原来那行还有剩就留在那行，否则原位置的下一行 */
+export function nextRowAfter(rows: Row[], doneKey: string, previous: Row[]): Row | null {
+  const same = rows.find((r) => r.key === doneKey);
+  if (same) return same;
+  const idx = previous.findIndex((r) => r.key === doneKey);
+  const after = previous.slice(idx + 1).map((p) => rows.find((r) => r.key === p.key)).find(Boolean);
+  return after ?? rows[Math.min(Math.max(idx, 0), rows.length - 1)] ?? null;
+}
+
+export function stepRow(rows: Row[], currentKey: string | null, dir: 1 | -1): Row | null {
+  if (!rows.length) return null;
+  const idx = rows.findIndex((r) => r.key === currentKey);
+  if (idx < 0) return rows[dir === 1 ? 0 : rows.length - 1];
+  return rows[Math.min(rows.length - 1, Math.max(0, idx + dir))];
 }
 
 /** 第二行：稿名 + 谁在等（§3.1） */

@@ -17,6 +17,7 @@ import { validCoverGroups, type GroupView } from "./cover-groups.js";
 import { publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import type { Explanation } from "./explain.js";
 import { hostLabel } from "./host-label.js";
+import { fileName, isStrayCover, KIND_NAME, measure, plainReason } from "./plain-reason.js";
 import { markedCuts } from "./ready.js";
 import { sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
@@ -60,6 +61,12 @@ export interface InboxItem {
   detail: Record<string, unknown>;
 }
 
+/** 本轮撤回过的某类批准（撤回决定的 id）：进代次，撤回之后条目以新一代回来 */
+function revokesOf(doc: ProductionDoc, type: "cut_approval" | "cover_approval"): string[] {
+  const targets = new Set(doc.decisions.filter((d) => d.type === type).map((d) => d.id));
+  return doc.decisions.filter((d) => d.round === doc.round && d.type === "approval_revoke" && d.target_id && targets.has(d.target_id)).map((d) => d.id);
+}
+
 export const genOf = (snapshot: unknown): string => crypto.createHash("sha256").update(JSON.stringify(snapshot)).digest("hex").slice(0, 16);
 
 // ---- 每条稿的输入（I/O 在 inbox-read 里收集） ----
@@ -84,7 +91,6 @@ export interface ContentInput {
 
 type Draft = Omit<InboxItem, "gen" | "content_id" | "title"> & { snapshot: unknown };
 
-const kindName: Record<string, string> = { aroll: "原片", cut: "成片", srt: "字幕", cover: "封面" };
 const who = (host?: string) => (host ? { host, label: hostLabel(host) } : null);
 const NOTE_CUT = "比如：开头有点拖，前 10 秒再紧一点";
 
@@ -106,7 +112,7 @@ function openAsk(a: Ask, attachmentsChanged: boolean): Draft {
     item_id: `ask:${a.id}`, type: "ask", summary: `${label}想问你：${a.question}`, waiting: who(a.by?.host), agent_waiting: true, since: a.at, rank: 0,
     actions: a.options.map((o) => ({ action: "answer_ask", label: o.label, role: "secondary" as const, params: { ask_id: a.id, option_id: o.id }, note: "optional" as const, placeholder: "比如：就这样，但配乐再轻一点" })),
     ...(attachmentsChanged ? { blocked_reason: "附件刚变过，重新看一下再答" } : {}),
-    detail: { ask_id: a.id, kind: a.kind, question: a.question, options: a.options, attachments: a.attachments.map((x, i) => ({ index: i, name: path.basename(x.path), path: x.path, html: /\.html?$/i.test(x.path) })),
+    detail: { ask_id: a.id, kind: a.kind, question: a.question, options: a.options, attachments: a.attachments.map((x, i) => ({ index: i, name: path.basename(x.path), html: /\.html?$/i.test(x.path) })),
       attachments_changed: attachmentsChanged, ...(a.storyboard ? { storyboard_fact_id: a.storyboard.fact_id } : {}), reported_allowed: a.kind !== "花费" && a.kind !== "分镜" },
     snapshot: [a.id, a.state, a.options, a.attachments, attachmentsChanged, a.storyboard ?? null],
   };
@@ -129,7 +135,7 @@ function cutVersions(doc: ProductionDoc, approvedSha?: string) {
   const marked = new Map(markedCuts(doc).map((m) => [m.fact.id, m]));
   const cuts = doc.facts.filter((f) => f.round === doc.round && f.kind === "cut" && f.state === "accepted" && !f.replaced_at && f.sha256).sort((a, b) => b.at.localeCompare(a.at));
   return cuts.map((f, i) => ({
-    fact_id: f.id, sha256: f.sha256!, path: f.path, at: f.at, label: i === 0 ? "最新一版" : i === 1 ? "上一版" : `往前第 ${i} 版`,
+    fact_id: f.id, sha256: f.sha256!, at: f.at, label: i === 0 ? "最新一版" : i === 1 ? "上一版" : `往前第 ${i} 版`,
     ready: marked.has(f.id), approved: f.sha256 === approvedSha, host_label: hostLabel(f.by?.host),
     has_srt: doc.facts.some((s) => s.round === doc.round && s.kind === "srt" && s.state === "accepted" && s.for_cut === f.sha256),
   }));
@@ -151,7 +157,8 @@ function cutItem(doc: ProductionDoc, content: Content): Draft | null {
       { action: "reject_cut", label: "还要改…", role: "secondary", params: { fact_id: review.fact.id, sha256: review.fact.sha256 }, note: "required", placeholder: NOTE_CUT },
     ],
     detail: { versions: cutVersions(doc, ok?.sha256), review_fact_id: review.fact.id, approved_fact_id: ok ? doc.facts.find((f) => f.kind === "cut" && f.sha256 === ok.sha256)?.id ?? null : null, editor_label: label },
-    snapshot: [doc.round, bodyHash(content.body), review.fact.id, review.fact.sha256, review.marked_at, ok?.id ?? null, marked.map((m) => m.fact.id)],
+    // 撤回过批准 = 新的一代（整分支审 P2）：旧代次重交只回放，复活不了已撤的批准
+    snapshot: [doc.round, bodyHash(content.body), review.fact.id, review.fact.sha256, review.marked_at, ok?.id ?? null, marked.map((m) => m.fact.id), revokesOf(doc, "cut_approval")],
   };
 }
 
@@ -159,8 +166,8 @@ function cutItem(doc: ProductionDoc, content: Content): Draft | null {
 
 const groupView = (g: GroupView, i: number, approved: boolean) => ({
   group_id: g.group.id, label: i === 0 ? "最新一组" : i === 1 ? "上一组" : `往前第 ${i} 组`, at: g.at, text: g.text, approved, host_label: hostLabel(g.group.by?.host ?? g.slots["3:4"][0]?.by?.host),
-  "3:4": g.slots["3:4"][0] ? { fact_id: g.slots["3:4"][0].id, sha256: g.slots["3:4"][0].sha256, path: g.slots["3:4"][0].path } : null,
-  "4:3": g.slots["4:3"][0] ? { fact_id: g.slots["4:3"][0].id, sha256: g.slots["4:3"][0].sha256, path: g.slots["4:3"][0].path } : null,
+  "3:4": g.slots["3:4"][0] ? { fact_id: g.slots["3:4"][0].id, sha256: g.slots["3:4"][0].sha256 } : null,
+  "4:3": g.slots["4:3"][0] ? { fact_id: g.slots["4:3"][0].id, sha256: g.slots["4:3"][0].sha256 } : null,
 });
 
 function coverItem(doc: ProductionDoc, content: Content): Draft | null {
@@ -183,7 +190,7 @@ function coverItem(doc: ProductionDoc, content: Content): Draft | null {
       { action: "retire_cover_group", label: "这组不要了", role: "quiet", params: { group_id: top.group.id } },
     ],
     detail: { groups: complete.map((g, i) => groupView(g, i, isApproved(g))), incomplete },
-    snapshot: [doc.round, bodyHash(content.body), complete.map((g) => [g.group.id, g.slots["3:4"][0].sha256, g.slots["4:3"][0].sha256, g.text]), ok?.id ?? null],
+    snapshot: [doc.round, bodyHash(content.body), complete.map((g) => [g.group.id, g.slots["3:4"][0].sha256, g.slots["4:3"][0].sha256, g.text]), ok?.id ?? null, revokesOf(doc, "cover_approval")],
   };
 }
 
@@ -192,7 +199,8 @@ function coverItem(doc: ProductionDoc, content: Content): Draft | null {
 function candidateItems(doc: ProductionDoc): Draft[] {
   const out: Draft[] = [];
   for (const f of doc.facts.filter((x) => x.round === doc.round)) {
-    if (f.state === "candidate") out.push(candidateItem(f));
+    // 发布之后的新导出留在卡片上；正式封面文件夹以外的封面图（多半是中间文件）只在卡片收成一行，都不进列表
+    if (f.state === "candidate" && !f.post_publish && !isStrayCover(f)) out.push(candidateItem(f));
     else if (f.kind === "aroll" && f.state === "accepted" && f.auto_attached && f.attach_check?.status !== "kept") out.push(autoItem(f));
     if (f.kind === "aroll" && f.state === "accepted" && f.attach_check?.status === "suggest" && f.attach_check.other_id) out.push(attachItem(f));
   }
@@ -203,9 +211,9 @@ const factParams = (f: Fact) => ({ fact_id: f.id, sha256: f.sha256 });
 
 function candidateItem(f: Fact): Draft {
   return {
-    item_id: `cand:${f.id}`, type: "candidate", summary: `找到一段${kindName[f.kind] ?? "文件"}${f.post_publish ? "（发布之后的新导出）" : ""}，是这条的吗`, waiting: null, agent_waiting: false, since: f.at, rank: 1,
+    item_id: `cand:${f.id}`, type: "candidate", summary: `找到${measure(f.kind)}${KIND_NAME[f.kind] ?? "文件"}，是这条的吗`, waiting: null, agent_waiting: false, since: f.at, rank: 1,
     actions: [{ action: "confirm_candidate", label: "对，就是它", role: "primary", params: factParams(f) }, { action: "reject_candidate", label: "不是", role: "secondary", params: factParams(f) }],
-    detail: { fact_id: f.id, kind: f.kind, path: f.path, name: f.path ? path.basename(f.path) : null, evidence: f.evidence ?? "", ratio: f.ratio ?? null, source: f.source },
+    detail: { fact_id: f.id, kind: f.kind, name: fileName(f.path) || null, reason: plainReason(f), ratio: f.ratio ?? null, preview: Boolean(f.sha256) },
     snapshot: [f.id, f.sha256, f.state, f.path],
   };
 }
@@ -214,7 +222,7 @@ function autoItem(f: Fact): Draft {
   return {
     item_id: `auto:${f.id}`, type: "auto_attached", summary: f.source === "reconcile" ? "从收件箱自动挂上了一段原片，对吗" : "核对后自动挂上了一段原片，对吗", waiting: null, agent_waiting: false, since: f.at, rank: 1,
     actions: [{ action: "ack", label: "对，就是它", role: "primary" }, { action: "undo_auto_attach", label: "不是", role: "secondary", params: factParams(f) }],
-    detail: { fact_id: f.id, path: f.path, source_path: f.source_path ?? null, evidence: f.evidence ?? "" },
+    detail: { fact_id: f.id, kind: "aroll", name: fileName(f.source_path ?? f.path), reason: f.source === "reconcile" ? "在原片收件箱里找到的，文件名和标题对上了" : "开头说的话和这条稿对上了", preview: Boolean(f.sha256) },
     snapshot: [f.id, f.sha256, "auto"],
   };
 }
@@ -224,7 +232,7 @@ function attachItem(f: Fact): Draft {
   return {
     item_id: `attach:${f.id}`, type: "attach_check", summary: `这段原片听起来更像《${c.other_title ?? ""}》`, waiting: null, agent_waiting: false, since: c.at, rank: 1,
     actions: [{ action: "keep_attach", label: "对，就是它", role: "primary", params: factParams(f) }, { action: "reassign_aroll", label: `改挂到《${c.other_title ?? ""}》`, role: "secondary", params: { ...factParams(f), to: c.other_id } }],
-    detail: { fact_id: f.id, path: f.path, other_id: c.other_id, other_title: c.other_title ?? "", reason: c.reason ?? "" },
+    detail: { fact_id: f.id, kind: "aroll", name: fileName(f.path), other_id: c.other_id, other_title: c.other_title ?? "", reason: "开头说的话更像另一条稿", preview: Boolean(f.sha256) },
     snapshot: [f.id, f.sha256, c.job ?? c.at, c.other_id],
   };
 }
@@ -310,7 +318,8 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
       item_id: `published:r${doc.round}:${p}`, type: "published_ask", summary: `发了吗（${platformLabel(p)}）`, waiting: null, agent_waiting: false, since: content.updatedAt, rank: 2,
       actions: [{ action: "i_published", label: "已经发出去了", role: "primary", params: { platform: p }, note: "optional", placeholder: "作品链接（可不填）" }],
       detail: { platform: p },
-      snapshot: [doc.round, p],
+      // 纠正过这个平台的发布 = 新的一代
+      snapshot: [doc.round, p, doc.decisions.filter((x) => x.type === "publish_correction" && x.target_id === `slot:${doc.round}:${p}`).map((x) => x.id)],
     });
   }
   return out;
@@ -334,6 +343,12 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
   const { content, doc, exp } = input;
   if (content.deletedAt || content.status === "archived") return [];
   const drafts: Draft[] = [];
+  // 已发布的稿：只剩发布相关的事（Claude 说已经发了 / 发了吗，按平台槽）；候选、封面、成片、闪帧、还差一步都不再出（2a 真实数据验收）
+  const published = exp?.stage === "已发布" || content.status === "published";
+  if (published) {
+    drafts.push(...publishItems(doc, input).filter((x) => x.type === "publish_claim" || x.type === "published_ask"));
+    return finish(drafts, input, now);
+  }
   const d = draftItem(content);
   if (d) drafts.push(d);
   if (doc && exp?.phase === "production") {
@@ -344,8 +359,12 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc));
   }
   drafts.push(...publishItems(doc, input));
+  return finish(drafts, input, now);
+}
+
+function finish(drafts: Draft[], input: ContentInput, now: number): InboxItem[] {
   const consumed = new Set(input.log.filter((e) => !e.pending || now - Date.parse(e.at) <= 10 * 60_000).map((c) => `${c.item_id}\u0000${c.gen}`));
-  return drafts.map(({ snapshot, ...x }) => ({ ...x, gen: genOf([x.item_id, snapshot]), content_id: content.id, title: content.title }))
+  return drafts.map(({ snapshot, ...x }) => ({ ...x, gen: genOf([x.item_id, snapshot]), content_id: input.content.id, title: input.content.title }))
     .filter((x) => !consumed.has(`${x.item_id}\u0000${x.gen}`));
 }
 

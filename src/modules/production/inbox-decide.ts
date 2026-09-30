@@ -142,7 +142,8 @@ async function run(ctx: Ctx): Promise<Result> {
     case "assign": {
       const to = str(params.to);
       if (!to) return fail("bad_request", "选一条稿：指定给哪条");
-      return founderDecision(to, "attach_aroll", { path: item.detail.path, confirm_other: true }, dataDir);
+      // 路径只取服务端给这个条目的动作参数，不从页面取（整分支审 P2）
+      return founderDecision(to, "attach_aroll", { path: spec.params?.path, confirm_other: true }, dataDir);
     }
     case "reject_cut": {
       const v = chosenVersion();

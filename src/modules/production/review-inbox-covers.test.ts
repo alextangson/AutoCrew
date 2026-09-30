@@ -125,7 +125,7 @@ describe("§6.2 统一准入与迁移", () => {
     await reconcileAll(env.dir);
     const after = await doc(c.id);
     expect(after.cover_schema).toBe(1);
-    expect(after.facts.find((f) => f.id === "fc")).toMatchObject({ state: "candidate", evidence: expect.stringContaining("转成候选") });
+    expect(after.facts.find((f) => f.id === "fc")).toMatchObject({ state: "candidate", source: "migration", evidence: "在『审阅』文件夹里找到的，不在正式封面文件夹" });
     expect(after.facts.find((f) => f.id === "fa")!.state).toBe("accepted");
     expect(after.facts.find((f) => f.id === "fb")!.state).toBe("accepted");
     expect(await exists(stray)).toBe(true);

@@ -13,7 +13,9 @@ import { reopenScript } from "../modules/production/reopen.js";
 import { enableOntology } from "../modules/production/enable.js";
 import { decide, decideItem, type DecideDeps } from "../modules/production/inbox-decide.js";
 import { readInbox } from "../modules/production/inbox-read.js";
-import { ATTACHMENT_HEADERS, attachmentStream, openAttachment } from "../modules/production/inbox-attachment.js";
+import { ATTACHMENT_HEADERS, attachmentStream, openAttachment, openFactMedia } from "../modules/production/inbox-attachment.js";
+import { createReadStream } from "node:fs";
+import { parseRangeHeader } from "./video-media.js";
 import { cardPanel } from "../modules/production/panel.js";
 import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/production/storyboard.js";
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
@@ -98,6 +100,22 @@ export function createBoardHandler(deps: BoardRouteDeps) {
         if (!r.ok) { res.writeHead(r.status, { "Content-Type": "application/json; charset=utf-8", ...ATTACHMENT_HEADERS }).end(JSON.stringify({ ok: false, error: r.error })); return true; }
         res.writeHead(200, { "Content-Type": r.type, "Content-Length": String(r.size), ...ATTACHMENT_HEADERS });
         attachmentStream(r.file).pipe(res);
+      } catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
+      return true;
+    }
+    // 条目预览（成片 / 封面 / 候选）：按 fact_id 取，条目里不放路径；支持拖动进度（Range）
+    if (p === "/api/inbox/media" && req.method === "GET") {
+      if (deps.authorize(req) !== "session") { res.writeHead(403).end(); return true; }
+      const id = url.searchParams.get("content_id") ?? "", fid = url.searchParams.get("fact_id") ?? "";
+      if (!isContentId(id) || !/^[\w-]{1,80}$/.test(fid)) { send(res, 400, { ok: false, error: "参数不对" }); return true; }
+      try {
+        const r = await openFactMedia(id, fid, await deps.resolveDataDir());
+        if (!r.ok) { res.writeHead(r.status, { "Content-Type": "application/json; charset=utf-8", ...ATTACHMENT_HEADERS }).end(JSON.stringify({ ok: false, error: r.error })); return true; }
+        const range = parseRangeHeader(req.headers?.range, r.size);
+        if (range === "unsatisfiable") { res.writeHead(416, { "Content-Range": `bytes */${r.size}` }).end(); return true; }
+        res.writeHead(range ? 206 : 200, { "Content-Type": r.type, "Accept-Ranges": "bytes", "Content-Length": String(range ? range.end - range.start + 1 : r.size),
+          ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${r.size}` } : {}), ...ATTACHMENT_HEADERS });
+        createReadStream(r.file, range ?? undefined).pipe(res);
       } catch (e) { send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
       return true;
     }

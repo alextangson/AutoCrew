@@ -125,6 +125,7 @@ function PanelBody(p: {
     {d.badges.filter((b) => b !== d.reason && !covered(b)).map((b) => <p key={b} className="card-panel-note">{onScreen(b)}</p>)}
     {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
     {d.active && <CardCandidates contentId={d.id} rows={d.candidate_rows ?? []} busy={p.busy} act={p.act} confirm={p.actOrReassign} inbox={() => p.goInbox(["candidate"])} />}
+    {d.active && d.stray_covers && <StrayCovers n={d.stray_covers.count} busy={p.busy} act={p.act} />}
     {d.active && <CardArolls contentId={d.id} rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
     {d.active && (d.column === "待录制" || d.missing.includes("A-roll")) && <section><h3>挂原片</h3>
       <div className="card-panel-row">
@@ -237,5 +238,13 @@ export function UnreviewedCut(p: { u: { count: number; editor_label: string }; b
   return <section className="card-panel-row" aria-label="还没说可以审">
     <span className="card-panel-note">有 {p.u.count} 个导出，{p.u.editor_label}还没说可以审了</span>
     <button className="btn-ghost" disabled={p.busy} onClick={() => void now()}>我现在就要审</button>
+  </section>;
+}
+
+/** 以前的封面文件（不在正式封面文件夹里）：收成一行，给「都不要」；它们不是要逐张拍板的事 */
+export function StrayCovers(p: { n: number; busy: boolean; act: (a: string, params: Record<string, unknown>, done: string) => Promise<unknown> }) {
+  return <section className="card-panel-row" aria-label="以前的封面文件">
+    <span className="card-panel-note">以前的封面文件 {p.n} 张（不在正式封面文件夹里）</span>
+    <button className="btn-ghost" disabled={p.busy} onClick={() => void p.act("reject_stray_covers", {}, "这些以前的封面文件都不要了")}>都不要</button>
   </section>;
 }

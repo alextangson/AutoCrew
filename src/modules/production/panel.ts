@@ -22,6 +22,7 @@ import { isUngated } from "./publish-check-link.js";
 import { currentCut } from "./sliver/check.js";
 import { storyboardPanel } from "./storyboard.js";
 import { markedCuts } from "./ready.js";
+import { isStrayCover } from "./plain-reason.js";
 import { hostLabel } from "./host-label.js";
 import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
@@ -99,7 +100,7 @@ async function sourceDirs(dataDir: string): Promise<SourceDirs> {
 
 async function candidateRows(contentId: string, doc: ProductionDoc, dataDir: string): Promise<CandidateRow[]> {
   const dirs = await sourceDirs(dataDir);
-  return doc.facts.filter((f) => f.round === doc.round && (f.state === "candidate" || f.state === "pending_match"))
+  return doc.facts.filter((f) => f.round === doc.round && (f.state === "candidate" || f.state === "pending_match") && !isStrayCover(f))
     .sort((a, b) => b.at.localeCompare(a.at)).map((f) => candidateRow(f, contentId, dirs));
 }
 
@@ -112,6 +113,11 @@ function unreviewedExports(doc: ProductionDoc, approvedSha: string | undefined):
   const cuts = doc.facts.filter((f) => f.round === doc.round && f.kind === "cut" && f.state === "accepted" && !f.replaced_at);
   if (!cuts.length) return null;
   return { count: cuts.length, editor_label: hostLabel(cuts.map((f) => f.by?.host).filter(Boolean).at(-1)) };
+}
+
+function strayCovers(doc: ProductionDoc): { count: number } | null {
+  const n = doc.facts.filter((f) => f.round === doc.round && isStrayCover(f)).length;
+  return n ? { count: n } : null;
 }
 
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
@@ -139,6 +145,8 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
     slivers: sliverPanel(doc, cut?.sha256),
     unreviewed: unreviewedExports(doc, cut?.sha256),
+    // 正式封面文件夹以外的封面图（多半是中间文件）：只在制作中的稿卡上收成一行，给「都不要」；已发布的不提
+    stray_covers: exp.stage && exp.stage !== "已发布" ? strayCovers(doc) : null,
     storyboard: await storyboardPanel(contentId, dataDir, doc),
     checklist,
     // 已发布的也能重开（创始人 09-30），确认框单独说明；published = 这张卡现在是已发布
