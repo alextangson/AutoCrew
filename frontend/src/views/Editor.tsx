@@ -433,6 +433,8 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   const imageSlots = [...body.matchAll(/\[IMAGE:\s*(.+?)\]/g)].length;
 
   const workspace = workspaceForStatus(c.status);
+  // 标题下那一行（1b 验收）：写稿 / 剪辑 / 封面 / 发布各工作台都挂一次，视频稿才有
+  const productionBanner = isVideo ? <ProductionBanner contentId={props.id} refreshKey={c.status} /> : null;
   const stageBar = (
     <div className="ed-topbar ed-workspace-header">
       <div className="ed-header-context">
@@ -492,6 +494,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
           <strong className="pb-header-title">{c.title || "无标题"}</strong>
           <span className="muted">{platformLabel(c.platform)}</span>
         </div>
+        {productionBanner}
         <div className="ed-main-row"><EditingWorkspace content={c} reload={load} /></div>
       </div>
     );
@@ -501,8 +504,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
     return (
       <div className="editor editor-workspace">
         {stageBar}
-      {isVideo && <ProductionBanner contentId={props.id} refreshKey={c.status} />}
-        {isVideo && <ProductionBanner contentId={props.id} refreshKey={c.status} />}
+        {productionBanner}
         {props.context}
         <div className="ed-main-row">
           {/* 视频稿的封面在剪辑看板里挑 Codex 交的版本（见上），这里只剩公众号稿的封面台 */}
@@ -518,6 +520,7 @@ export function Editor(props: { id: string; back: () => void; panel?: EditorPane
   return (
     <div className={"editor editor-workspace" + (drawerOpen ? " ed-with-drawer" : "")}>
       {stageBar}
+      {productionBanner}
       {props.context}
       <SharedProjectPanel status={c.status} isVideo={isVideo} ontology={ontology} />
 
