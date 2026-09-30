@@ -59,7 +59,7 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
 
   const list = items ?? [];
   const open = useCallback((id: string | null) => { setOpenId(id); setHeld(id ? list.find((i) => i.item_id === id) ?? null : null); }, [list]);
-  useInboxNotify(list, (id) => { setCollapsed(false); open(id); });
+  const notify = useInboxNotify(items, (id) => { setCollapsed(false); open(id); });
   // 卡片 / 工作台的「去『等你拍板』处理」：打开这条稿的那件事
   useEffect(() => {
     const on = (e: Event) => {
@@ -124,7 +124,8 @@ export function ReviewInbox(props: { focusContent?: string } = {}) {
     <div className="ri-head">
       {list.length === 0 ? <span className="ri-empty">{error ? `「等你拍板」读不出来：${error}` : items === null ? "等你拍板 · 读取中" : "没有等你拍板的事"}</span>
         : <><strong>等你拍板</strong><span className="ri-count">{list.length} 件</span>
-          <span className="ri-toggle"><Button variant="quiet" onClick={() => setCollapsed(expanded)}>{expanded ? "收起" : "展开"}</Button></span></>}
+          <span className="ri-toggle">{notify.canAsk && <Button variant="quiet" onClick={notify.ask}>打开提醒</Button>}
+            <Button variant="quiet" onClick={() => setCollapsed(expanded)}>{expanded ? "收起" : "展开"}</Button></span></>}
     </div>
     {expanded && list.length > 0 && <ul className="ri-list">{list.map((i) => <li key={i.item_id} tabIndex={0} className={"ri-row" + (i.item_id === openId ? " ri-on" : "")}
       aria-label={plainWords(i.summary)} onClick={() => open(i.item_id)}>

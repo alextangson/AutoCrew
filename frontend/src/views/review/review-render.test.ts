@@ -244,25 +244,46 @@ describe("网页提醒（§9）", () => {
     const other = { ...ITEMS[2], item_id: "cover:r2", gen: "g3" };
     expect(toNotify([other], s, COALESCE_MS + 5000).map((i) => i.item_id)).toEqual(["cover:r2"]);
   });
-  it("第一次有事问一次授权；拒了只显示件数、不再问；允许后弹，点了打开那一件", async () => {
+  function fakeNotification(permission: NotificationPermission, answer: NotificationPermission = "granted") {
     const created: Array<{ title: string; onclick: (() => void) | null; close: () => void }> = [];
     const N = Object.assign(function (this: { title: string; onclick: (() => void) | null; close: () => void }, title: string) { this.title = title; this.onclick = null; this.close = () => {}; created.push(this); },
-      { permission: "default" as NotificationPermission, requestPermission: vi.fn(async () => "denied") });
+      { permission, requestPermission: vi.fn(async () => { N.permission = answer; return answer; }) });
     vi.stubGlobal("Notification", N);
+    return { N, created };
+  }
+  const nextPoll = async () => { const { POLL_MS } = await import("./ReviewInbox"); await act(async () => { await new Promise((r) => setTimeout(r, POLL_MS + 100)); }); };
+
+  it("加载时不问授权；有值得提醒的事时列表头给「打开提醒」，点了才问", async () => {
+    const { N } = fakeNotification("default");
     await mountInbox([ITEMS[0]]);
+    expect(N.requestPermission).not.toHaveBeenCalled();
+    await click(btn("打开提醒"));
     expect(N.requestPermission).toHaveBeenCalledTimes(1);
-    N.permission = "denied";
-    await act(async () => { root.unmount(); }); root = createRoot(el);
+    expect(btn("打开提醒")).toBeUndefined();
+  });
+  it("没有值得提醒的事（只有稿子）：不给「打开提醒」", async () => {
+    fakeNotification("default");
+    await mountInbox([ITEMS[9]]);
+    expect(btn("打开提醒")).toBeUndefined();
+  });
+  it("拒了：不给按钮、不再问，只在标签页标题显示件数", async () => {
+    const { N, created } = fakeNotification("denied");
     await mountInbox([ITEMS[0], ITEMS[1]]);
-    expect(N.requestPermission).toHaveBeenCalledTimes(1);
+    expect(btn("打开提醒")).toBeUndefined();
+    expect(N.requestPermission).not.toHaveBeenCalled();
     expect(created).toHaveLength(0);
     expect(document.title).toBe("(2) AutoCrew");
-    N.permission = "granted";
-    await act(async () => { root.unmount(); }); root = createRoot(el);
-    await mountInbox([ITEMS[0]]);
-    expect(created.map((c) => c.title)).toEqual([ITEMS[0].summary]);
+  });
+  it("已授权：页面打开时已有的事不弹；之后新来的才弹，点了打开那一件", async () => {
+    const { created } = fakeNotification("granted");
+    await mountInbox([ITEMS[0], ITEMS[1]]);
+    expect(created).toHaveLength(0);
+    const fresh = { ...ITEMS[2], content_id: "content-9-z", item_id: "cover:r9" };
+    inbox = [ITEMS[0], ITEMS[1], fresh];
+    await nextPoll();
+    expect(created.map((c) => c.title)).toEqual([fresh.summary]);
     await act(async () => { created[0].onclick!(); });
     await tick();
-    expect(el.querySelector(".ri-peek h2")!.textContent).toBe(ITEMS[0].summary);
-  });
+    expect(el.querySelector(".ri-peek h2")!.textContent).toBe(fresh.summary);
+  }, 15_000);
 });
