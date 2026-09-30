@@ -226,3 +226,19 @@ describe("卡片挂载核对：写了 checking、作业没落盘就崩了（Code
     expect((await aroll(a.id)).attach_check).toMatchObject({ status: "suggest", other_title: "乙稿崩溃核对" });
   });
 });
+
+describe("挂载核对：转写期间文件变了（Codex 审 segB15 P2）", () => {
+  it("转写回来的文本绑不上原来的字节 → 不下「更像别条」的结论，标「文件在核对时变了」", async () => {
+    const a = await videoContent(env, "甲稿核对中变了", "draft_ready", A);
+    await videoContent(env, "乙稿核对中变了", "draft_ready", B);
+    await founderApprove(env, a.id);
+    setMatchDeps({ thresholds: { calibrated: true, floor: 0.3, margin: 0.2 }, transcriber: { notReady: async () => null, transcribe: async (f) => {
+      await fs.writeFile(f, "changed-while-listening"); const t = new Date(Date.now() - 60_000); await fs.utimes(f, t, t);
+      return { ok: true, text: B.slice(20, 160) }; } } });
+    await decide(a.id, "attach_aroll", { path: await put(path.join(env.outside, "chg.mov"), "orig") });
+    await matchWorkerIdle(env.dir);
+    const check = (await aroll(a.id)).attach_check;
+    expect(check?.status).not.toBe("suggest");
+    expect(check).toMatchObject({ status: "failed", reason: expect.stringContaining("文件在核对时变了") });
+  });
+});

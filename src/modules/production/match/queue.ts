@@ -145,7 +145,8 @@ export async function enqueueMatchJob(dataDir: string, spec: JobSpec): Promise<M
     // 转写临时没就绪而停下的：到了重试时间（一小时一次，Codex 审 segB14 P2）才重新排上（不计次）；原因留着，真转写成功才清
     if (existing && existing.state === "unavailable") {
       // 同一份字节在新路径上出现（转写期间被改名 / 挪走）不是环境问题：立刻重排
-      if (matchDeps().now() < existing.next_at && existing.path === spec.path) return existing;
+      // 真搬走了（旧路径上已没有这份字节）才立刻重排；另一份拷贝照旧等退避（Codex 审 segB15 P2）
+      if (matchDeps().now() < existing.next_at && (existing.path === spec.path || copy)) return existing;
       Object.assign(existing, { state: "queued", next_at: 0, path: spec.path, size: spec.size, mtime_ms: spec.mtime_ms, updated_at: iso() });
       return existing;
     }
