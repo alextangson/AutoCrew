@@ -12,6 +12,7 @@ import { readPublishRecord } from "../../storage/publish-record.js";
 import { loadProfile, ruleStatus } from "../profile/creator-profile.js";
 import { pendingProposals } from "../publish/review-gate/preferences.js";
 import { checksDir } from "../publish/review-gate/check-store.js";
+import { checkInputsNow } from "../publish/review-gate/check.js";
 import { canonPlatform } from "./receipts.js";
 import { attachmentsChanged } from "./asks.js";
 import { withCoverGroups } from "./cover-groups.js";
@@ -50,7 +51,9 @@ export async function currentChecks(content: Content, doc: ProductionDoc | null,
   }
   const confirmed = new Set((doc?.decisions ?? []).filter((d) => d.type === "publish_check_confirm" && d.check_id).map((d) => d.check_id!));
   return [...latest.entries()].filter(([, r]) => !confirmed.has(r.check_id!))
-    .map(([p, r]) => ({ check_id: r.check_id!, platform: p, verdict: r.verdict ?? "pass", checked_at: r.checked_at!, items: r.items ?? [] }));
+    .map(([p, r]) => ({ check_id: r.check_id!, platform: p, verdict: r.verdict ?? "pass", checked_at: r.checked_at!, items: r.items ?? [] }))
+    .map(async (v) => ({ ...v, input: await checkInputsNow(content.id, v.check_id, dataDir).catch(() => ({ same: false, fp: "unreadable" })) }))
+    .reduce(async (acc, x) => [...(await acc), await x], Promise.resolve([] as CheckView[]));
 }
 
 async function plannedPlatforms(content: Content, dataDir: string): Promise<string[]> {

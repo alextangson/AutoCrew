@@ -284,8 +284,10 @@ export async function undoReportedAnswer(content: Content, dataDir: string, askI
     const x = d.asks!.find((y) => y.id === askId)!;
     x.history = [...(x.history ?? []), x.answer!];
     delete x.answer;
-    delete x.ended_at;
-    x.state = "open";
+    // 这期间已有新的同类请示：旧的不重开，标取代（Codex 审 2a-1 r5 P2）
+    const newer = (d.asks ?? []).filter((y) => y.id !== x.id && y.kind === x.kind && y.round === x.round && y.at > x.at).sort((a, b) => b.at.localeCompare(a.at))[0];
+    if (newer) { x.state = "superseded"; x.superseded_by = newer.id; x.ended_at = new Date().toISOString(); }
+    else { delete x.ended_at; x.state = "open"; }
     return { value: dec, events: [{ type: "ask_answer_undone", detail: { ask_id: askId, decision_id: dec.id } }] };
   });
   return { ok: true, decision: r.value };

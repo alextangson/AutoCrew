@@ -85,10 +85,12 @@ describe("Codex 2a-1 P2", () => {
     const it = (await items(r.id)).find((i) => i.type === "publish_check")!;
     await fs.rm(planFile);
     const req = { content_id: r.id, item_id: it.item_id, gen: it.gen, action: "publish_check_override", note: "破例" };
+    // 计划文件没了：条目代次随计划输入变了（r5 P1），这次直接拒、不占位；锁外失败后释放占位由 r3 的 plan_changed 用例覆盖
     const failed = await decideItem(req, env.dir, { jev: fakeJev().caller });
-    expect(failed).toMatchObject({ ok: false, error: expect.stringContaining("重跑检查没成") });
+    expect(failed).toMatchObject({ ok: false });
     expect((await doc(r.id)).inbox_log?.some((e) => e.item_id === it.item_id)).toBeFalsy();
-    expect(await decideItem({ ...req, action: "publish_check_confirm", note: undefined }, env.dir)).toMatchObject({ ok: true });
+    const fresh = (await items(r.id)).find((i) => i.type === "publish_check")!;
+    expect(await decideItem({ content_id: r.id, item_id: fresh.item_id, gen: fresh.gen, action: "publish_check_confirm" }, env.dir)).toMatchObject({ ok: true });
   });
 
   it("P2-4 打回后对同一版重新 mark_ready → 开新代次，条目回来", async () => {

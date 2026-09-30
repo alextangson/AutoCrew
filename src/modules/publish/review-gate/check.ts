@@ -242,6 +242,21 @@ export async function verifyCheck(contentId: string, checkId: string, dataDir?: 
   return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers, overrides: record.inputs?.overrides ?? [], video_path: now.det.video?.ok ? now.det.video.abs : null } };
 }
 
+/**
+ * 这次检查的输入现在还一样吗（review-inbox §7-6，Codex 审 2a-1 r5 P1）：按留档输入重建、重算 payload 与指纹，不看结论。
+ * 破例只能作用在创始人看到的那份上；计划改过就要先按新计划重新检查。fp 进「发之前再看一眼」条目的代次。
+ */
+export async function checkInputsNow(contentId: string, checkId: string, dataDir?: string): Promise<{ same: boolean; fp: string }> {
+  const record = await readCheckRecord(contentId, checkId, dataDir) as Rec | null;
+  if (!record) return { same: false, fp: "missing" };
+  const ctx = await rebuild(contentId, record, dataDir).catch(() => ({ ok: false as const }));
+  if ("ok" in ctx) return { same: false, fp: "unreadable" };
+  const entry = ctx.plan.entries.find((e) => e.platform === record.platform);
+  if (!entry) return { same: !record.payload_hash, fp: "no-entry" };
+  const now = await identityFor(ctx, entry, namedPlatforms(ctx));
+  return { same: now.payload === record.payload_hash && now.fp === record.fingerprint, fp: `${now.payload ?? ""}:${now.fp}` };
+}
+
 /** 每个被拦平台还拦着哪几条规则（能不能例外）：next_action 指名，不让 agent 猜缺哪条 */
 function blockedDetail(results: PlatformResult[], planBlocked: boolean): string {
   const parts = results.filter((r) => r.verdict === "block").map((r) => {

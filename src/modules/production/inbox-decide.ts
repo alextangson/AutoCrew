@@ -12,7 +12,7 @@ import { newId, readProductionDocOrEmpty } from "../../storage/production-store.
 import type { Decision, InboxConsumption } from "../../storage/production-types.js";
 import { isModelCall } from "../../storage/stage-guard.js";
 import { executeContentSave } from "../../tools/content-save.js";
-import { executePublishCheck } from "../publish/review-gate/check.js";
+import { checkInputsNow, executePublishCheck } from "../publish/review-gate/check.js";
 import { readCheckRecord } from "../publish/review-gate/check-store.js";
 import type { JevCaller } from "../publish/review-gate/jev-client.js";
 import type { Override } from "../publish/review-gate/types.js";
@@ -77,6 +77,8 @@ async function publishOverride(ctx: Ctx): Promise<Result> {
   const quote = noteOf(ctx);
   if (!quote) return fail("note_required", "写一句你的原话：为什么这次破例");
   const checkId = String(ctx.item.detail.check_id);
+  // 破例只作用在创始人看到的那份计划上：输入变了就拒，不在新内容上破例（Codex 审 2a-1 r5 P1）
+  if (!(await checkInputsNow(ctx.content!.id, checkId, ctx.dataDir)).same) return fail("plan_changed", "计划刚改过，按新计划重新检查后再看");
   const rec = await readCheckRecord(ctx.content!.id, checkId, ctx.dataDir) as (Record<string, unknown> & { platform?: string; input_at?: string; checked_at?: string; items?: Array<{ result?: string; rule?: string; overridable?: boolean }>;
     inputs?: { plan_source?: string; plan_snapshot?: unknown; founder_quotes?: string[]; overrides?: Override[]; instruction_id?: string | null } }) | null;
   if (!rec) return fail("stale", "这次检查的留档不见了，刷新再看");
@@ -113,6 +115,8 @@ async function run(ctx: Ctx): Promise<Result> {
   // 挑哪一版 / 哪一组要在这个条目自己的清单里，下面逐个核
   const merged: Record<string, unknown> = { ...spec.params, ...Object.fromEntries(EDITABLE.filter((k) => params[k] !== undefined).map((k) => [k, params[k]])) };
   const chosenVersion = () => {
+    // 闪帧条目只绑它自己那一版成片（Codex 审 2a-1 r5 P2）
+    if (item.type === "sliver") return params.fact_id === undefined || params.fact_id === item.detail.cut_fact_id ? { fact_id: item.detail.cut_fact_id, sha256: item.detail.cut_sha } : null;
     if (params.fact_id === undefined) return spec.params?.fact_id ? { fact_id: spec.params.fact_id, sha256: spec.params.sha256 } : null;
     const v = ((item.detail.versions as Array<{ fact_id: string; sha256: string }> | undefined) ?? []).find((x) => x.fact_id === params.fact_id);
     return v ? { fact_id: v.fact_id, sha256: v.sha256 } : null;

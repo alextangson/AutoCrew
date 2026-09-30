@@ -64,7 +64,8 @@ export const genOf = (snapshot: unknown): string => crypto.createHash("sha256").
 
 // ---- 每条稿的输入（I/O 在 inbox-read 里收集） ----
 
-export interface CheckView { check_id: string; platform: string; verdict: string; checked_at: string; items: unknown[] }
+/** input：按留档输入重算的现在的指纹，same = 计划与文件没改过 */
+export interface CheckView { check_id: string; platform: string; verdict: string; checked_at: string; items: unknown[]; input?: { same: boolean; fp: string } }
 
 export interface ContentInput {
   content: Content;
@@ -286,8 +287,10 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
         { action: "publish_check_revise", label: "有几处要改…", role: "secondary", params: { check_id: c.check_id }, note: "required", placeholder: "比如：标题别用问号，话题加上 #AI工具" },
         ...(blocked ? [{ action: "publish_check_override", label: "这条我破例…", role: "quiet" as const, params: { check_id: c.check_id }, note: "required" as const, placeholder: "写你的原话，比如：这次封面字小一点没关系" }] : []),
       ],
-      detail: { check_id: c.check_id, platform: c.platform, verdict: c.verdict, items: c.items },
-      snapshot: [c.check_id, c.verdict],
+      ...(c.input && !c.input.same ? { blocked_reason: "计划刚改过，按新计划重新检查后再看" } : {}),
+      detail: { check_id: c.check_id, platform: c.platform, verdict: c.verdict, items: c.items, plan_changed: c.input ? !c.input.same : false },
+      // 计划输入的指纹进代次：agent 改了计划文件，旧条目就失效（Codex 审 2a-1 r5 P1）
+      snapshot: [c.check_id, c.verdict, c.input?.fp ?? null],
     });
   }
   if (!doc || !exp) return out;

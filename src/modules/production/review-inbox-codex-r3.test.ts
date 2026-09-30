@@ -127,3 +127,58 @@ describe("Codex 2a-1 第四轮", () => {
     expect(await agent({ action: "answer_ask", content_id: c.id, ask_id: q.ask_id, option_id: "ok", founder_quote: "可以" })).toMatchObject({ ok: false, code: "attachments_changed", error: expect.stringContaining("附件变过，请重新发请示") });
   });
 });
+
+describe("Codex 2a-1 第五轮", () => {
+  const agent = (p: Record<string, unknown>) => import("../../tools/content-save.js").then((m) => m.executeContentSave({ _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>);
+
+  it("R5-1 检查之后 agent 改了计划文件：破例拒（不作用在新内容上），条目代次也跟着变", async () => {
+    const r = await registeredVideo(env);
+    const planFile = path.join(r.root, "06-publish/publish-plan.json");
+    await put(planFile, JSON.stringify(planOf(r, [planEntry(r, "xiaohongshu", ["4:3"])])));
+    await executePublishCheck({ _dataDir: env.dir, content_id: r.id, plan: "06-publish/publish-plan.json" }, { jev: fakeJev().caller });
+    const it0 = (await items(r.id)).find((i) => i.type === "publish_check")!;
+    await put(planFile, JSON.stringify(planOf(r, [planEntry(r, "xiaohongshu", ["4:3"], { title: "偷偷改了标题" })])));
+    const it1 = (await items(r.id)).find((i) => i.type === "publish_check")!;
+    expect(it1.gen).not.toBe(it0.gen);
+    const out = await decideItem({ content_id: r.id, item_id: it1.item_id, gen: it1.gen, action: "publish_check_override", note: "破例" }, env.dir, { jev: fakeJev().caller });
+    expect(out).toMatchObject({ ok: false, error: expect.stringContaining("计划刚改过，按新计划重新检查后再看") });
+  });
+
+  it("R5-2 每种条目：把 actions[i].params 原样交回去，不会因为参数本身被拒（stale / bad_request）", async () => {
+    const c = await editing();
+    await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "三轮回归.mp4"), "cut"), request_id: "c", review: true });
+    await record(env, { content_id: c.id, kind: "cover", paths: [await img("a.png", 900, 1200), await img("b.png", 1200, 900)], cover_text: "字", request_id: "g" });
+    await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.outside, "x.mp4"), "cand"), request_id: "cand" });
+    await agent({ action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] });
+    await videoContent(env, "另一篇稿");
+    const r = await registeredVideo(env);
+    await executePublishCheck({ _dataDir: env.dir, content_id: r.id, plan: planOf(r, [planEntry(r, "douyin", ["3:4"])]) }, { jev: fakeJev().caller });
+    const all = (await readInbox(env.dir)).items;
+    const types = new Set(all.map((i) => i.type));
+    for (const t of ["cut_review", "sliver", "cover_pick", "candidate", "ask", "draft", "publish_check"]) expect(types.has(t as never)).toBe(true);
+    for (const it0 of all) {
+      for (const [i] of it0.actions.entries()) {
+        const cur = (await readInbox(env.dir)).items.find((x) => x.item_id === it0.item_id);
+        if (!cur) break;
+        const a = cur.actions[i];
+        if (!a) continue;
+        const res = await decideItem({ content_id: cur.content_id ?? undefined, item_id: cur.item_id, gen: cur.gen, action: a.action, ...a.params, ...(a.note ? { note: "测试" } : {}) }, env.dir, { jev: fakeJev().caller });
+        expect([`${cur.type}:${a.action}`, res.code]).not.toEqual([`${cur.type}:${a.action}`, "stale"]);
+        expect(res.code, `${cur.type}:${a.action} ${String(res.error)}`).not.toBe("bad_request");
+      }
+    }
+  });
+
+  it("R5-3 撤回转述的回答时，若已有新的同类请示 → 旧的标取代，不重开", async () => {
+    const c = await editing();
+    const opts = [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }];
+    const old = await agent({ action: "ask", content_id: c.id, request_id: "o", kind: "粗剪", question: "行吗", options: opts });
+    await agent({ action: "answer_ask", content_id: c.id, ask_id: old.ask_id, option_id: "ok", founder_quote: "可以" });
+    const neu = await agent({ action: "ask", content_id: c.id, request_id: "n", kind: "粗剪", question: "新版行吗", options: opts });
+    const it = (await items(c.id)).find((x) => x.item_id === `ask:${old.ask_id}`)!;
+    expect(await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "undo_ask_answer" }, env.dir)).toMatchObject({ ok: true });
+    const asks = (await doc(c.id)).asks!;
+    expect(asks.find((a) => a.id === old.ask_id)).toMatchObject({ state: "superseded", superseded_by: neu.ask_id, history: [{ via: "agent_reported" }] });
+    expect(asks.filter((a) => a.state === "open").map((a) => a.id)).toEqual([neu.ask_id]);
+  });
+});
