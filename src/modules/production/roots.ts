@@ -13,6 +13,7 @@ import { isWithin, readLibraryLocation, resolveDataDir } from "../../storage/sto
 import { CHATCUT_EXPORT_DIR } from "../video/unregistered-cut.js";
 import { ffprobeDuration, type Probe } from "./files.js";
 import { movableWatchFolders } from "./sources.js";
+import type { Fact } from "../../storage/production-types.js";
 
 export const INBOX_DIR = "0 原片放这里";
 /** 「我的内容」视图目录名（与 my-content-view.VIEW_DIR 同值；那边会 import 本模块链，这里不反向引） */
@@ -67,10 +68,15 @@ export async function movableRoots(dataDir: string): Promise<MovableRoots> {
 
 export type Location = "project" | "inbox" | "export" | "watch" | "other";
 
-export function classify(file: string, projectRoot: string, roots: MovableRoots): Location {
+/**
+ * `kind`：导出目录同时被加成允许搬入的监视文件夹时，权限取并集、不降级（Codex 审 segB4 P2）——
+ * A-roll 按监视文件夹认，成片 / 字幕 / 封面按导出目录认。
+ */
+export function classify(file: string, projectRoot: string, roots: MovableRoots, kind: Fact["kind"] = "aroll"): Location {
   if (isWithin(projectRoot, file)) return "project";
   if (roots.inbox && isWithin(roots.inbox, file)) return "inbox";
-  if ((roots.watch ?? []).includes(path.dirname(file))) return "watch";
+  const inExport = Boolean((roots.chatcut && isWithin(roots.chatcut, file)) || (roots.jianying && isWithin(roots.jianying, file)));
+  if ((roots.watch ?? []).includes(path.dirname(file)) && (kind === "aroll" || !inExport)) return "watch";
   if ((roots.chatcut && isWithin(roots.chatcut, file)) || (roots.jianying && isWithin(roots.jianying, file))) return "export";
   return "other";
 }

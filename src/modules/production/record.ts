@@ -32,6 +32,7 @@ import { currentCut, triggerSliverCheck } from "./sliver/check.js";
 import { latestCheck } from "./sliver/verdict.js";
 import { pendingElsewhere, pendingElsewhereText, type PendingHolder } from "./match/reservation.js";
 import { cancelPendingFor, startMatchJob } from "./match/pending.js";
+import { chatcutHold, inUseEvidence } from "./chatcut-refs.js";
 
 type Receipt = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Receipt = {}): Receipt => ({ ok: false, code, error, ...extra });
@@ -315,6 +316,8 @@ export const PENDING_NEXT = "正在核对这段原片是不是这条（约 2 分
 
 function nextAction(core: ReceiptCore, exp: Explanation): string {
   if (core.state === "pending_match") return PENDING_NEXT;
+  // 被拒的（核对期间文件变了 / 创始人说不是这条…）：给原因，别再提示导入（Codex 审 segB4 P2）
+  if (core.state === "rejected") return `这个文件没收下${core.reason ? `：${core.reason}` : ""}。换一个文件重新 record（新的 request_id）；不要导入这个文件。`;
   if (core.state === "candidate") return `已记成候选（${core.reason ?? "归属要创始人确认"}），等创始人在卡片上点「是这条」。不要替创始人确认，也不要自己挪文件。`;
   if (core.kind === "aroll") return `原片已在项目里（path）。从这个新路径导入 ChatCut，导入后 record kind=chatcut_project chatcut_project_id=<工程 id> uses_aroll=["${core.fact_id}"]。`;
   if (core.kind === "storyboard") return "分镜已收下。告诉创始人：在看板卡片上点「打开审阅页」看分镜（不要再发 MD 或文件路径当分镜）；他在对话里回复意见。";
@@ -389,10 +392,12 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   }
   const referenced = doc.facts.some((f) => f.round === doc.round && f.kind === "chatcut_project" && f.uses_aroll?.includes(fact.id));
   const inProject = isWithin(projectRoot, checked.value);
-  const action = inProject || (fact.kind === "aroll" && referenced) ? "in_place" : fact.kind === "aroll" ? "move" : "clone";
+  // 本机 ChatCut 工程按绝对路径在用的原片也不挪（§13-A 隐式引用）
+  const hold = fact.kind === "aroll" && !inProject && !referenced ? await chatcutHold(checked.value) : { project: null, note: "" };
+  const action = inProject || (fact.kind === "aroll" && (referenced || hold.project)) ? "in_place" : fact.kind === "aroll" ? "move" : "clone";
   const version = fact.kind === "cover" ? fact.version ?? Math.max(0, ...doc.facts.filter((f) => f.kind === "cover" && f.version).map((f) => f.version!)) + 1 : undefined;
   const plan: FilePlan = { action, kind: fact.kind, source: checked.value, sha256: fact.sha256, id: fp.value.id, projectRoot, location: inProject ? "project" : "other",
-    evidence: "创始人确认是这条", existing: fact, ...(fact.ratio ? { ratio: fact.ratio } : {}), ...(version ? { version } : {}), ...(fact.for_cut ? { for_cut: fact.for_cut } : {}) };
+    evidence: hold.project ? `创始人确认是这条；${inUseEvidence(hold.project)}` : `创始人确认是这条${hold.note}`, existing: fact, ...(fact.ratio ? { ratio: fact.ratio } : {}), ...(version ? { version } : {}), ...(fact.for_cut ? { for_cut: fact.for_cut } : {}) };
   if (action !== "in_place") {
     const safe = await checkTargetDir(projectRoot, targetDirOf(fact.kind, version));
     if (!safe.ok) return fail(safe.code, safe.error);

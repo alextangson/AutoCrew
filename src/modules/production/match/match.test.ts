@@ -175,6 +175,21 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     expect((await listMatchJobs(dir))[0]).toMatchObject({ state: "done", path: "/new.mov" });
   });
 
+  it("同一份字节的另一份拷贝（旧路径还在）交替出现：不清退避、不重计次（Codex 审 segB4 P2）", async () => {
+    const a = path.join(dir, "inbox-copy.mov"), b = path.join(dir, "watch-copy.mov");
+    await fs.writeFile(a, "same"); await fs.writeFile(b, "same");
+    const t = new Date(1_700_000_000_000);
+    await fs.utimes(a, t, t); await fs.utimes(b, t, t);
+    const meta = { size: 4, mtime_ms: t.getTime() };
+    let runs = 0;
+    registerMatchHandler("test_copy", async (): Promise<JobResult> => { runs += 1; return { state: "retry", error: "ASR 坏了" }; });
+    await enqueueMatchJob(dir, spec({ purpose: "test_copy", path: a, ...meta }));
+    await matchWorkerIdle(dir);
+    for (const p of [b, a, b, a]) { await enqueueMatchJob(dir, spec({ purpose: "test_copy", path: p, ...meta })); await matchWorkerIdle(dir); }
+    expect(runs).toBe(1);
+    expect((await listMatchJobs(dir))[0]).toMatchObject({ attempts: 1, next_at: clock + RETRY_DELAY_MS });
+  });
+
   it("重启：跑到一半的作业回到排队，持久化在工作区缓存目录", async () => {
     const file = path.join(transcriptCacheDir(dir), "..", "match-jobs.json");
     const job: MatchJob = { id: "mjob-x", key: jobKey(spec()), purpose: "test_ok", priority: "background", sha256: SHA, path: "/x.mov", size: 1, mtime_ms: 1,

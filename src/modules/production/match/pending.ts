@@ -23,6 +23,7 @@ import { arollOwnerElsewhere, shaIndex } from "../sha-index.js";
 import { readTranscript } from "./cache.js";
 import { decide, describeTop3, sameSnapshot, snapshotOf, type Heard, type MatchDecision } from "./decide.js";
 import { hear } from "./hear.js";
+import { chatcutHold, inUseEvidence } from "../chatcut-refs.js";
 import { matchDeps } from "./deps.js";
 import { arollPool } from "./pool.js";
 import { cancelMatchJob, enqueueMatchJob, kickMatchWorker, registerMatchHandler, type JobResult, type JobSpec, type MatchJob } from "./queue.js";
@@ -77,11 +78,11 @@ async function waiting(dataDir: string, job: MatchJob): Promise<Waiting | string
 
 const summaryOf = (d: MatchDecision): NonNullable<Fact["match"]> => ({ winner: d.winner, reason: d.reason, top3: d.top3.map((r) => ({ ...r })) });
 
-async function resolveTo(dataDir: string, w: Waiting, job: MatchJob, state: "candidate" | "rejected", evidence: string, d: MatchDecision): Promise<JobResult> {
+async function resolveTo(dataDir: string, w: Waiting, job: MatchJob, state: "candidate" | "rejected", evidence: string, d?: MatchDecision): Promise<JobResult> {
   await mutateProduction(w.content.id, dataDir, (doc) => {
     const f = doc.facts.find((x) => x.id === w.fact.id && x.state === "pending_match" && x.match_job === job.id);
     if (!f) return { value: null, events: [] };
-    Object.assign(f, { state, evidence, match: summaryOf(d) });
+    Object.assign(f, { state, evidence, ...(d ? { match: summaryOf(d) } : {}) });
     settleRequest(doc, f);
     return { value: null, events: [{ type: `aroll_match_${state}`, detail: { fact_id: f.id, job: job.id, reason: evidence } }] };
   });
@@ -122,8 +123,9 @@ export async function placementCheck(content: Content, doc: ProductionDoc, file:
 
 async function accept(dataDir: string, w: Waiting, job: MatchJob, d: MatchDecision, c: Extract<Check, { ok: true }>, id: FilePlan["id"]): Promise<JobResult> {
   const a: RecordArgs = { content_id: w.content.id, kind: "aroll", request_id: w.fact.request_id ?? `match-${job.id}`, host: w.fact.by?.host ?? "autocrew" };
-  const plan: FilePlan = { action: "move", kind: "aroll", source: c.source, sha256: job.sha256, id, projectRoot: c.projectRoot, location: c.location,
-    evidence: `核对认出：${d.reason}`, existing: w.fact, ...(w.fact.duration_ms ? { duration_ms: w.fact.duration_ms } : {}) };
+  const hold = await chatcutHold(c.source);
+  const plan: FilePlan = { action: hold.project ? "in_place" : "move", kind: "aroll", source: c.source, sha256: job.sha256, id, projectRoot: c.projectRoot, location: c.location,
+    evidence: hold.project ? `核对认出：${d.reason}；${inUseEvidence(hold.project)}` : `核对认出：${d.reason}${hold.note}`, existing: w.fact, ...(w.fact.duration_ms ? { duration_ms: w.fact.duration_ms } : {}) };
   const r = await commitFile(a, w.content, plan, dataDir, undefined, { keepArgs: true, patch: { auto_attached: true, match: summaryOf(d) }, event: "aroll_match_accepted" });
   if (!r.ok) return resolveTo(dataDir, w, job, "candidate", `对上了，但挪进项目失败：${String(r.error)}`, d);
   return { state: "done", outcome: `accepted：${String(r.path ?? "")}` };
@@ -153,7 +155,15 @@ async function handleRecordJob(ctx: { dataDir: string; job: MatchJob; signal: Ab
   return withFileOwnership(() => commitJob(dataDir, job, first, heard));
 }
 
-registerMatchHandler(RECORD_AROLL, handleRecordJob);
+/** 作业重试到头还失败（Codex 审 segB4 P2，§3-4「失败 → candidate」）：事实别再永远「正在核对」，也别一直占着预留 */
+async function recordJobFailed(dataDir: string, job: MatchJob, error: string): Promise<void> {
+  await withFileOwnership(async () => {
+    const w = await waiting(dataDir, job);
+    if (typeof w !== "string") await resolveTo(dataDir, w, job, "candidate", `核对没做成：${error}；等你在卡片上确认是不是这条`);
+  });
+}
+
+registerMatchHandler(RECORD_AROLL, handleRecordJob, recordJobFailed);
 
 /** 服务重启（1b §3-5）：恢复事务、重建索引之后，本轮所有 pending_match 重新入队（同代号的活作业不重复排） */
 export async function requeuePending(dataDir: string): Promise<void> {

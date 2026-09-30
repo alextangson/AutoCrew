@@ -11,6 +11,7 @@ import { commitProjectContent } from "../../storage/project-commit.js";
 import { executeContentSave } from "../../tools/content-save.js";
 import { setProductionDeps } from "./roots.js";
 import { movableWatchFolders } from "./sources.js";
+import { setChatcutDeps } from "./sliver/chatcut-read.js";
 import { writeEnabledVersion } from "../../storage/production-store.js";
 import { resetProductionReady } from "./service.js";
 import { forgetShaIndex } from "./sha-index.js";
@@ -30,6 +31,8 @@ export async function makeEnv(opts: { enabled?: boolean } = {}): Promise<Env> {
   forgetShaIndex();
   resetMatchQueue();
   setMatchDeps(null);
+  // 隐式 ChatCut 引用守卫：测试一律读临时目录（默认不存在 = 没装 ChatCut），绝不读本机真实工程
+  setChatcutDeps({ projectsRoot: () => path.join(temp, "chatcut-projects") });
   setProductionDeps({
     roots: async (d) => ({ inbox, chatcut, jianying, watch: await movableWatchFolders(d) }),
     // 假探针：文件名带 broken 的读不出时长，其余 12 秒
@@ -37,7 +40,7 @@ export async function makeEnv(opts: { enabled?: boolean } = {}): Promise<Env> {
     now: () => Date.now(),
   });
   if (opts.enabled) await writeEnabledVersion(dir);
-  return { dir, inbox, chatcut, jianying, outside, cleanup: async () => { await matchWorkerIdle(dir); setProductionDeps(null); setMatchDeps(null); resetMatchQueue(); resetProductionReady(); forgetShaIndex(); await fs.rm(temp, { recursive: true, force: true }); } };
+  return { dir, inbox, chatcut, jianying, outside, cleanup: async () => { await matchWorkerIdle(dir); setProductionDeps(null); setChatcutDeps(null); setMatchDeps(null); resetMatchQueue(); resetProductionReady(); forgetShaIndex(); await fs.rm(temp, { recursive: true, force: true }); } };
 }
 
 /** 写文件并把修改时间拨到 60 秒前（过「10 秒内不变」门）；fresh=true 保留刚写的时间 */

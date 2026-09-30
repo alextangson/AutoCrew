@@ -14,6 +14,7 @@ import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/produc
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { stableFingerprint } from "./files.js";
+import { chatcutHold } from "./chatcut-refs.js";
 import { decide, describeTop3 } from "./match/decide.js";
 import { matchDeps } from "./match/deps.js";
 import { hear } from "./match/hear.js";
@@ -74,7 +75,10 @@ async function handle({ dataDir, job, signal }: { dataDir: string; job: MatchJob
   return { state: "done", outcome: other ? `更像《${other.title}》` : "对上这条" };
 }
 
-registerMatchHandler(ATTACH_CHECK, handle);
+registerMatchHandler(ATTACH_CHECK, handle, async (dataDir, job, error) => {
+  const { content_id, fact_id } = job.payload as { content_id: string; fact_id: string };
+  await settle(dataDir, content_id, fact_id, job.id, { status: "failed", reason: `核对没做成：${error}` });
+});
 
 /** 「就是这条」：记住，不再提示 */
 export async function keepAttach(content: Content, fact: Fact, dataDir: string): Promise<Result> {
@@ -109,6 +113,8 @@ export async function reassignAroll(content: Content, doc: ProductionDoc, fact: 
   const problem = await receiverProblem(to, fact, content, dataDir);
   if (problem) return fail("reassign_blocked", problem);
   const source = path.join(await fs.realpath(contentRoot(content.id, dataDir)), fact.path!);
+  const hold = await chatcutHold(source);
+  if (hold.project) return fail("reassign_blocked", `ChatCut 工程《${hold.project}》在用这个文件，改挂会挪走它：先在 ChatCut 里换掉`);
   const fp = await stableFingerprint(source, now());
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "项目里的原片被改过，刷新再看");

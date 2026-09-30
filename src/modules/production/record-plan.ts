@@ -14,6 +14,7 @@ import { l1Strong } from "./match/l1.js";
 import { matchDeps } from "./match/deps.js";
 import { arollPool } from "./match/pool.js";
 import { pendingElsewhere, pendingElsewhereText } from "./match/reservation.js";
+import { chatcutHold, inUseEvidence } from "./chatcut-refs.js";
 import { checkCover, checkDuration, resolveLocalFile, stableFingerprint, type FileIdentity } from "./files.js";
 import type { Parsed, RecordArgs } from "./record-args.js";
 import { classify, movableRoots, now, probe, type Location } from "./roots.js";
@@ -133,7 +134,9 @@ async function decideAction(a: RecordArgs, content: Content, doc: ProductionDoc,
     const from = location === "watch" ? "监视文件夹（允许直接搬入）" : "原片收件箱";
     if (miss) return { ok: true, value: await arollNotByName(miss, dataDir, from) };
     if (referencedByChatcut(doc, existing)) return { ok: true, value: { action: "in_place", evidence: "收件箱原片对上标题；已被 ChatCut 工程引用，留原位不挪" } };
-    return { ok: true, value: { action: "move", evidence: "收件箱里的原片，文件名对上标题" } };
+    const hold = await chatcutHold(file);
+    if (hold.project) return { ok: true, value: { action: "in_place", evidence: inUseEvidence(hold.project) } };
+    return { ok: true, value: { action: "move", evidence: `收件箱里的原片，文件名对上标题${hold.note}` } };
   }
   return { ok: true, value: { action: "clone", evidence: location === "inbox" ? "收件箱" : "剪辑软件导出目录" } };
 }
@@ -178,7 +181,7 @@ export async function planFileRecord(a: RecordArgs, content: Content, doc: Produ
     const pending = await pendingElsewhere(dataDir, file.value.sha256, content.id);
     if (pending) return deny("aroll_pending_elsewhere", `${pendingElsewhereText(pending.title)}：等那边核对完，对不上会转成候选`);
   }
-  const location = classify(file.value.source, projectRoot, await movableRoots(dataDir));
+  const location = classify(file.value.source, projectRoot, await movableRoots(dataDir), a.kind);
   if (existing?.state === "accepted") return { ok: true, value: { ...base, location, action: "existing", evidence: "同一文件已经记过" } };
   if (existing?.state === "pending_match") return { ok: true, value: { ...base, location, action: "existing", evidence: "这个原片正在核对，返回当前状态" } };
   const decided = await decideAction(a, content, doc, file.value.source, location, existing, dataDir);

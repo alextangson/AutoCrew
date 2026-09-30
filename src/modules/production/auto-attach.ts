@@ -9,6 +9,7 @@ import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage
 import type { Fact } from "../../storage/production-types.js";
 import type { AutoMove } from "./discover.js";
 import { checkDuration, stableFingerprint } from "./files.js";
+import { chatcutHold, inUseEvidence } from "./chatcut-refs.js";
 import { decide, describeTop3, sameSnapshot, snapshotOf, type MatchDecision } from "./match/decide.js";
 import { readTranscript } from "./match/cache.js";
 import { matchDeps } from "./match/deps.js";
@@ -72,9 +73,10 @@ export async function autoAttach(dataDir: string, move: AutoMove): Promise<strin
   // 完整性（Codex 审 segB2 P1）：与 record / 卡片挂载同一道门，读不出时长的不挪、不冻结
   const dur = await checkDuration(check.source, probe);
   if (!dur.ok) return `收件箱里的 ${path.basename(m.file.file)} 没自动挂上：${dur.error}`;
-  const plan: FilePlan = { action: "move", kind: "aroll", source: check.source, sha256: m.file.sha256, id: fp.value.id, projectRoot: check.projectRoot, location: "inbox",
+  const hold = await chatcutHold(check.source);
+  const plan: FilePlan = { action: hold.project ? "in_place" : "move", kind: "aroll", source: check.source, sha256: m.file.sha256, id: fp.value.id, projectRoot: check.projectRoot, location: "inbox",
     ...(legacy ? { existing: legacy } : {}), duration_ms: dur.value,
-    evidence: `从收件箱自动挂上：${m.d.reason}${m.d.top3.length > 1 ? `；前三名：${describeTop3(m.d.top3)}` : ""}` };
+    evidence: `从收件箱自动挂上：${m.d.reason}${m.d.top3.length > 1 ? `；前三名：${describeTop3(m.d.top3)}` : ""}${hold.project ? `；${inUseEvidence(hold.project)}` : hold.note}` };
   const a = { content_id: content.id, kind: "aroll" as const, request_id: `auto-${m.file.sha256.slice(0, 24)}-${doc.round}`, host: "autocrew" };
   const match = { winner: m.d.winner, reason: m.d.reason, top3: m.d.top3.map((r) => ({ ...r })) };
   const r = await commitFile(a, content, plan, dataDir, undefined, { patch: { source: "reconcile", auto_attached: true, match, by: { host: "autocrew" } }, event: "aroll_auto_attached" });

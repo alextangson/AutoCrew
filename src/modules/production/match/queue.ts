@@ -41,9 +41,13 @@ export type JobSpec = Pick<MatchJob, "purpose" | "priority" | "sha256" | "path" 
 
 const TERMINAL: ReadonlySet<JobState> = new Set(["done", "failed", "cancelled"]);
 const handlers = new Map<string, JobHandler>();
+/** 作业终于失败（重试到头 / 直接 failed）时回调：把等它的事实落到看得见的终态（Codex 审 segB4 P2） */
+export type FailedHook = (dataDir: string, job: MatchJob, error: string) => Promise<void>;
+const failedHooks = new Map<string, FailedHook>();
 
-export function registerMatchHandler(purpose: string, handler: JobHandler): void {
+export function registerMatchHandler(purpose: string, handler: JobHandler, onFailed?: FailedHook): void {
   handlers.set(purpose, handler);
+  if (onFailed) failedHooks.set(purpose, onFailed);
 }
 
 // ---- 持久化（同一工作区的读改写串行） ----
@@ -114,8 +118,18 @@ function fresh(spec: JobSpec, key: string): MatchJob {
  * 同键有活作业 → 返回它（带了新作业代号的明确请求会顶掉旧的：旧代号已经没有事实在等它）。
  * 同键已到终态：明确请求重新排；自己去找的不再排（失败停在可见的失败态，已判的不重转）。
  */
+/** 旧路径上还是同一份字节（大小、修改时间都没变）= 这是另一份拷贝，不是搬走了 */
+async function stillHolds(job: MatchJob | undefined): Promise<boolean> {
+  if (!job) return false;
+  const st = await fs.stat(job.path).catch(() => null);
+  return Boolean(st && st.size === job.size && Math.trunc(st.mtimeMs) === job.mtime_ms);
+}
+
 export async function enqueueMatchJob(dataDir: string, spec: JobSpec): Promise<MatchJob> {
   const key = jobKey(spec);
+  const before = (await storeOf(dataDir)).jobs.find((j) => j.key === key);
+  // 同一份字节同时在收件箱和监视文件夹：交替看到两条路径不算搬走，不清退避、不重计次（Codex 审 segB4 P2）
+  const copy = before && before.path !== spec.path ? await stillHolds(before) : false;
   const job = await mutate(dataDir, (jobs) => {
     const i = jobs.findIndex((j) => j.key === key);
     const existing = i >= 0 ? jobs[i] : null;
@@ -123,7 +137,7 @@ export async function enqueueMatchJob(dataDir: string, spec: JobSpec): Promise<M
     // 同一份字节换了位置（改名 / 从监视文件夹挪进收件箱）：改指新路径；因旧路径没了在退避或失败的，重新排上（Codex 审 segB3 P2）
     const moved = existing && existing.path !== spec.path;
     if (existing && moved) Object.assign(existing, { path: spec.path, size: spec.size, mtime_ms: spec.mtime_ms, updated_at: iso() });
-    if (existing && moved && existing.state !== "running" && (existing.state === "failed" || existing.attempts > 0)) {
+    if (existing && moved && !copy && existing.state !== "running" && (existing.state === "failed" || existing.attempts > 0)) {
       Object.assign(existing, { state: "queued", attempts: 0, next_at: 0, error: undefined });
       return existing;
     }
@@ -180,16 +194,19 @@ async function claimNext(dataDir: string): Promise<MatchJob | null> {
 }
 
 async function settle(dataDir: string, id: string, r: JobResult): Promise<void> {
-  await mutate(dataDir, (jobs) => {
+  const failed = await mutate(dataDir, (jobs): MatchJob | null => {
     const j = jobs.find((x) => x.id === id);
-    if (!j || j.state !== "running") return;
+    if (!j || j.state !== "running") return null;
     j.updated_at = iso();
-    if ("outcome" in r) { Object.assign(j, { state: r.state, outcome: r.outcome }); return; }
+    if ("outcome" in r) { Object.assign(j, { state: r.state, outcome: r.outcome }); return null; }
     j.attempts += 1;
     j.error = r.error;
-    if (r.state === "failed" || j.attempts > MAX_RETRIES) { j.state = "failed"; return; }
+    if (r.state === "failed" || j.attempts > MAX_RETRIES) { j.state = "failed"; return structuredClone(j); }
     Object.assign(j, { state: "queued", next_at: matchDeps().now() + RETRY_DELAY_MS });
+    return null;
   });
+  const hook = failed ? failedHooks.get(failed.purpose) : undefined;
+  if (failed && hook) await hook(dataDir, failed, failed.error ?? "核对失败");
 }
 
 async function runJob(dataDir: string, job: MatchJob): Promise<void> {

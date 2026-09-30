@@ -24,6 +24,8 @@ export function setChatcutDeps(patch: ChatcutDeps | null): void { deps = patch ?
 
 export const defaultProjectsRoot = () => path.join(os.homedir(), "Library", "Application Support", "ChatCut", "projects");
 const projectsRoot = () => (deps.projectsRoot ?? defaultProjectsRoot)();
+/** 本机 ChatCut 工程目录（测试注入假的） */
+export const chatcutProjectsRoot = (): string => projectsRoot();
 
 const ffprobeMedia: MediaProbe = async (file) => {
   const r = await runProcess({ command: "ffprobe", args: ["-v", "error", "-select_streams", "v:0", "-print_format", "json", "-show_streams", "-show_format", file], timeoutMs: 30_000 });
