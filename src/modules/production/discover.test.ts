@@ -12,7 +12,7 @@ import { listMatchJobs, matchWorkerIdle, MAX_RETRIES, RETRY_DELAY_MS } from "./m
 import type { TranscribeOutcome } from "./match/transcribe.js";
 import { synth } from "./match/synth-fixture.js";
 import { reconcileAll } from "./reconcile.js";
-import { exists, makeEnv, put, videoContent, type Env } from "./testkit.js";
+import { exists, makeEnv, put, record, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
 let calls: string[];
@@ -147,6 +147,60 @@ describe("Codex 审 segB P1：锁外发现、锁内提交之间池变了", () =>
     await withFileOwnership(() => autoAttach(env.dir, found.autoMoves[0]));
     expect(await exists(src)).toBe(true);
     expect((await facts(a.id)).filter((f) => f.state === "accepted")).toEqual([]);
+  });
+});
+
+describe("Codex 审 segB2 与真实数据预演", () => {
+  it("[P1] 读不出时长的视频（坏的 / 没拷完）不自动挪：留原处，进「没核对成」、列头与对账警告", async () => {
+    asr(heardFrom({ "IMG_broken.mov": A.slice(20, 160) }));
+    const a = await videoContent(env, "甲稿完整性测试", "draft_ready", A);
+    const src = await put(path.join(env.inbox, "IMG_broken.mov"), "half");
+    const r = await tick();
+    expect(await exists(src)).toBe(true);
+    expect(await facts(a.id)).toEqual([]);
+    expect(r.inbox?.failed).toEqual([expect.objectContaining({ name: "IMG_broken.mov", reason: expect.stringContaining("moov atom not found") })]);
+    expect(r.warnings.join()).toContain("IMG_broken.mov");
+  });
+
+  it("1a 留下的收件箱候选（对账建的、还在原处、字节没变、没被拒）→ 进 §4 批判定，原地升级同一条事实，不另建", async () => {
+    const { withFileOwnership } = await import("./mutex.js");
+    const { mutateProduction } = await import("./service.js");
+    const { newId } = await import("../../storage/production-store.js");
+    const { cachedSha } = await import("./observe.js");
+    asr(heardFrom({}));
+    const a = await videoContent(env, "一期留下的候选稿", "draft_ready", A);
+    const src = await put(path.join(env.inbox, "一期留下的候选稿-原片.mov"), "old-candidate");
+    const h = await cachedSha(src);
+    const id = newId("fact");
+    await withFileOwnership(() => mutateProduction(a.id, env.dir, (doc) => {
+      doc.facts.push({ id, kind: "aroll", round: doc.round, state: "candidate", availability: "present", source: "reconcile", at: new Date().toISOString(),
+        path: src, sha256: h.sha256, size: h.size, mtime_ms: h.mtime_ms, evidence: "文件名前缀对上标题（原片收件箱）" });
+      return { value: null, events: [] };
+    }));
+    await tick();
+    const fs1 = await facts(a.id);
+    expect(fs1).toHaveLength(1);
+    expect(fs1[0]).toMatchObject({ id, state: "accepted", auto_attached: true, path: "02-aroll/一期留下的候选稿-原片.mov" });
+    expect(await exists(src)).toBe(false);
+  });
+
+  it("创始人 / agent 建的候选不在此列：照旧等人点", async () => {
+    asr(heardFrom({}));
+    const a = await videoContent(env, "人建候选的稿子", "draft_ready", A);
+    const src = await put(path.join(env.inbox, "人建候选的稿子-原片.mov"), "x");
+    await record(env, { content_id: a.id, kind: "aroll", path: await put(path.join(env.outside, "别处.mov"), "y"), request_id: "r0" });
+    const { withFileOwnership } = await import("./mutex.js");
+    const { mutateProduction } = await import("./service.js");
+    const { cachedSha } = await import("./observe.js");
+    const h = await cachedSha(src);
+    await withFileOwnership(() => mutateProduction(a.id, env.dir, (doc) => {
+      doc.facts.push({ id: "fact-agent-1", kind: "aroll", round: doc.round, state: "candidate", availability: "present", source: "record", at: new Date().toISOString(),
+        path: src, sha256: h.sha256, size: h.size, mtime_ms: h.mtime_ms, evidence: "agent 报的" });
+      return { value: null, events: [] };
+    }));
+    await tick();
+    expect((await facts(a.id)).find((f) => f.id === "fact-agent-1")?.state).toBe("candidate");
+    expect(await exists(src)).toBe(true);
   });
 });
 

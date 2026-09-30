@@ -14,7 +14,7 @@ import { isOntologyActive, readProductionDoc } from "../../storage/production-st
 import type { Fact } from "../../storage/production-types.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import { exportMatchesTitle } from "../video/unregistered-cut.js";
-import { STABLE_MS } from "./files.js";
+import { checkDuration, STABLE_MS } from "./files.js";
 import { fileVerdict, type Found, type Verdict } from "./match/background.js";
 import { describeTop3, looksLike, type MatchDecision, type PoolEntry } from "./match/decide.js";
 import { arollPool, EXPORT_POOL_STATUS, exportPool } from "./match/pool.js";
@@ -103,6 +103,9 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
   for (const raw of listed.files) {
     const f = await found(raw).catch(() => null);
     if (!f) { out.inbox.failed.push({ name: raw.name, path: raw.file, reason: "读不了这个文件" }); continue; }
+    // 完整性与其他挂载入口一致（Codex 审 segB2 P1）：读不出时长 = 坏的或还没拷完，不判、不挪，列进「没核对成」
+    const dur = await checkDuration(f.file, probe);
+    if (!dur.ok) { out.inbox.failed.push({ name: f.name, path: f.file, reason: dur.error }); continue; }
     const v: Verdict = await fileVerdict(dataDir, f, pool);
     if (v.kind === "checking") out.inbox.checking += 1;
     else if (v.kind === "failed") out.inbox.failed.push({ name: f.name, path: f.file, reason: v.reason });

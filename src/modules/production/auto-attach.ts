@@ -8,7 +8,7 @@ import { getContent } from "../../storage/local-store.js";
 import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact } from "../../storage/production-types.js";
 import type { AutoMove } from "./discover.js";
-import { stableFingerprint } from "./files.js";
+import { checkDuration, stableFingerprint } from "./files.js";
 import { decide, describeTop3, sameSnapshot, snapshotOf, type MatchDecision } from "./match/decide.js";
 import { readTranscript } from "./match/cache.js";
 import { matchDeps } from "./match/deps.js";
@@ -16,7 +16,7 @@ import { arollPool } from "./match/pool.js";
 import { placementCheck } from "./match/pending.js";
 import type { FilePlan } from "./record-plan.js";
 import { commitFile } from "./record.js";
-import { now } from "./roots.js";
+import { now, probe } from "./roots.js";
 import { mutateProduction } from "./service.js";
 
 export const AUTO_ATTACHED_BADGE = "从收件箱自动挂上，不对就点「不是这条」";
@@ -39,14 +39,24 @@ async function currentDecision(dataDir: string, m: AutoMove): Promise<MatchDecis
   return decide({ fileName: m.file.name, sha256: m.file.sha256, pool, heard }, matchDeps().thresholds);
 }
 
+/**
+ * 1a 留下的收件箱候选（真实数据预演：上线前放进收件箱的文件被 1a 记成候选，1b 发现时按 sha 去重就再也不判）：
+ * 对账建的（不是创始人、不是 agent、不是监视文件夹）、还是候选、本轮、文件还在同一个收件箱路径（发现时已核过 sha）。
+ */
+function inboxCandidate(f: Fact, doc: { round: number }, m: AutoMove): boolean {
+  return f.state === "candidate" && f.source === "reconcile" && f.round === doc.round && f.path === m.file.file;
+}
+
 /** 调用方持有文件归属锁。返回要进对账警告的一句（null = 没事） */
 export async function autoAttach(dataDir: string, move: AutoMove): Promise<string | null> {
   let m = move;
   const content = await getContent(m.content_id, dataDir);
   if (!content || content.deletedAt || content.status === "archived" || !(await isOntologyActive(dataDir, content.id))) return null;
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
-  // 点过「不是这条」的字节不再自动挪到这条（B10）
-  if (doc.facts.some((f) => f.kind === "aroll" && f.sha256 === m.file.sha256)) return null;
+  // 点过「不是这条」的字节不再自动挪到这条（B10）；已记过的也不另起一条——只有 1a 对账留下的收件箱候选可以原地升级（真实数据预演）
+  const same = doc.facts.filter((f) => f.kind === "aroll" && f.sha256 === m.file.sha256);
+  const legacy = same.length === 1 && inboxCandidate(same[0], doc, m) ? same[0] : undefined;
+  if (same.length && !legacy) return null;
   if (doc.facts.some((f) => f.round === doc.round && f.kind === "aroll" && f.state === "accepted")) { await candidateNow(dataDir, m, "这条已经有本轮原片了，后来的只做候选"); return null; }
   // 发现在锁外：池（round / 正文哈希 / 标题）变了就用缓存转写按当前池重判，不用旧 winner（Codex 审 segB P1，同 §3-4）
   const d = await currentDecision(dataDir, m);
@@ -59,7 +69,11 @@ export async function autoAttach(dataDir: string, move: AutoMove): Promise<strin
   }
   const fp = await stableFingerprint(check.source, now());
   if (!fp.ok || fp.value.sha256 !== m.file.sha256) return null;
+  // 完整性（Codex 审 segB2 P1）：与 record / 卡片挂载同一道门，读不出时长的不挪、不冻结
+  const dur = await checkDuration(check.source, probe);
+  if (!dur.ok) return `收件箱里的 ${path.basename(m.file.file)} 没自动挂上：${dur.error}`;
   const plan: FilePlan = { action: "move", kind: "aroll", source: check.source, sha256: m.file.sha256, id: fp.value.id, projectRoot: check.projectRoot, location: "inbox",
+    ...(legacy ? { existing: legacy } : {}), duration_ms: dur.value,
     evidence: `从收件箱自动挂上：${m.d.reason}${m.d.top3.length > 1 ? `；前三名：${describeTop3(m.d.top3)}` : ""}` };
   const a = { content_id: content.id, kind: "aroll" as const, request_id: `auto-${m.file.sha256.slice(0, 24)}-${doc.round}`, host: "autocrew" };
   const match = { winner: m.d.winner, reason: m.d.reason, top3: m.d.top3.map((r) => ({ ...r })) };
