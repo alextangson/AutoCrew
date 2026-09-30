@@ -141,6 +141,29 @@ describe("summary 的制作段字段", () => {
     } finally { release(); }
   });
 
+  it("原片路径很长（中文目录名）：缩到最小形状仍给全路径，总长 ≤ 1.5KB（Codex 审 segB11 P2）", async () => {
+    const c = await videoContent(env, "长路径最小形状的稿");
+    await founderApprove(env, c.id);
+    let dir = env.outside;
+    for (let i = 0; i < 25; i++) dir = path.join(dir, `很长的中文目录名字第${i}层`);
+    const file = await put(path.join(dir, "原片.mov"), "long");
+    await record(env, { content_id: c.id, kind: "aroll", path: file, request_id: "r1" });
+    const r = await summary(c.id);
+    expect(bytes(r)).toBeLessThanOrEqual(1536);
+    expect(r).toMatchObject({ ok: true, id: c.id });
+    expect((r.aroll as Array<{ path: string }>)[0].path).toBe(file);
+    expect(r.oversize).toBeUndefined();
+  });
+
+  it("单条必需路径本身就超预算：给最小形状并标 oversize，不截路径", async () => {
+    const { fitBudget } = await import("./content-summary.js");
+    const huge = `/x/${"很长".repeat(400)}.mov`;
+    const part = { fields: { aroll: [{ fact_id: "f1", state: "pending_match", round: 1, path: huge }], changes: [], has_more: false, aroll_has_more: false, next_since_seq: 3, latest_seq: 3, candidates: [] }, shrink: () => false };
+    const r = fitBudget({ ok: true, id: "content-1-a", stage: "写稿中", blockers: ["x"], next: "y" }, part);
+    expect(r).toMatchObject({ ok: true, id: "content-1-a", stage: "写稿中", oversize: true, aroll: [{ fact_id: "f1", path: huge }] });
+    expect(r).not.toHaveProperty("blockers");
+  });
+
   it("没有制作事实的写稿段稿件不带这些字段", async () => {
     const c = await videoContent(env, "干净的稿");
     const r = await summary(c.id);

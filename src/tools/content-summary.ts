@@ -80,14 +80,29 @@ function parseSinceSeq(raw: unknown): { ok: true; value: number | undefined } | 
  * 总长 ≤ 1.5 KB 一定成立（Codex 审 segB7 P2）：先让制作段自己缩（changes、依据、原因、原片行分页），
  * 还超就缩通用字段（卡点只留第一条、截短、去掉候选依据），最后只留最小形状。
  */
-function fitBudget(out: Record<string, unknown>, part: ProductionPart | null): Record<string, unknown> {
+export function fitBudget(out: Record<string, unknown>, part: ProductionPart | null): Record<string, unknown> {
   const merged = () => ({ ...out, ...part?.fields });
   const size = () => Buffer.byteLength(JSON.stringify(merged()));
   while (part && size() > SUMMARY_BUDGET && part.shrink()) { /* 先截 changes，再截候选依据，再给原片行分页 */ }
   if (size() > SUMMARY_BUDGET && Array.isArray(out.blockers)) out.blockers = (out.blockers as string[]).slice(0, 1).map((b) => clip(b, 40));
   if (size() > SUMMARY_BUDGET && part) part.fields.candidates = [];
   if (size() > SUMMARY_BUDGET) { out.reason = clip(String(out.reason ?? ""), 20); out.next = clip(String(out.next ?? ""), 40); }
-  return merged();
+  if (size() <= SUMMARY_BUDGET) return merged();
+  return minimalShape(out, part);
+}
+
+/**
+ * 最后手段（Codex 审 segB11 P2）：只留 ok / id / stage、必需的那一行原片（全路径，agent 要原样用）和翻页游标。
+ * 必需路径本身就超预算时照样返回并标 oversize——上限的唯一例外，路径不截。
+ */
+function minimalShape(out: Record<string, unknown>, part: ProductionPart | null): Record<string, unknown> {
+  const f = part?.fields ?? {};
+  const row = (f.aroll as Array<{ fact_id: string; state: string; round: number; path?: string }> | undefined)?.[0];
+  const keep = ["changes", "has_more", "next_since_seq", "latest_seq", "aroll_has_more", "aroll_next_offset"];
+  const minimal: Record<string, unknown> = { ok: out.ok, id: out.id, stage: out.stage,
+    ...(row ? { aroll: [{ fact_id: row.fact_id, state: row.state, round: row.round, ...(row.path ? { path: row.path } : {}) }] } : {}),
+    ...Object.fromEntries(keep.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])) };
+  return Buffer.byteLength(JSON.stringify(minimal)) > SUMMARY_BUDGET ? { ...minimal, oversize: true } : minimal;
 }
 
 export async function contentSummary(id: string, dataDir?: string, now = Date.now(), sinceSeqRaw?: unknown, arollOffsetRaw?: unknown): Promise<Record<string, unknown>> {
