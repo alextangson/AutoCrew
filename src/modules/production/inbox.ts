@@ -168,7 +168,8 @@ function coverItem(doc: ProductionDoc, content: Content): Draft | null {
   const complete = groups.filter((g) => g.complete).reverse();
   if (!complete.length) return null;
   const ok = validCoverApproval(doc, content.body);
-  const isApproved = (g: GroupView) => Boolean(ok && g.slots["3:4"][0].sha256 === ok.cover_3x4_sha && g.slots["4:3"][0].sha256 === ok.cover_4x3_sha);
+  // 按组身份认「已批」；旧批准没有组 id 才按整对图比（Codex 审 2a-1 r7 P2）
+  const isApproved = (g: GroupView) => Boolean(ok && (ok.group_id ? ok.group_id === g.group.id : g.slots["3:4"][0].sha256 === ok.cover_3x4_sha && g.slots["4:3"][0].sha256 === ok.cover_4x3_sha));
   const newer = ok ? complete.filter((g) => !isApproved(g) && g.at > ok.at) : [];
   if (ok && !newer.length) return null;
   const top = ok ? newer[0] : complete[0];

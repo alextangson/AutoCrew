@@ -22,6 +22,7 @@ import type { InboxAction, InboxItem } from "./inbox.js";
 import { currentChecks, readInbox } from "./inbox-read.js";
 import { withFileOwnership } from "./mutex.js";
 import { mutateProduction } from "./service.js";
+import { canonPlatform } from "./receipts.js";
 
 type Result = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
@@ -254,7 +255,7 @@ function legacyMatch(item: InboxItem, action: string, p: Record<string, unknown>
   const d = item.detail;
   switch (action) {
     case "approve_cut": case "reject_cut":
-      return (item.type === "cut_review" && (d.versions as Array<{ fact_id: string }>).some((v) => v.fact_id === p.fact_id)) || (item.type === "sliver" && d.cut_fact_id === p.fact_id && action === "reject_cut");
+      return (item.type === "cut_review" && (d.versions as Array<{ fact_id: string }>).some((v) => v.fact_id === p.fact_id));
     case "pick_cover": return item.type === "cover_pick" && (d.groups as Array<{ group_id: string; "3:4": { fact_id: string } | null; "4:3": { fact_id: string } | null }>)
       .some((g) => g.group_id === p.group_id || (g["3:4"]?.fact_id === p.cover_3x4_fact_id && g["4:3"]?.fact_id === p.cover_4x3_fact_id));
     case "confirm_candidate": case "reject_candidate": return item.type === "candidate" && d.fact_id === p.fact_id;
@@ -268,6 +269,53 @@ function legacyMatch(item: InboxItem, action: string, p: Record<string, unknown>
 }
 
 /**
+ * 列表里的那类事（Codex 审 2a-1 r7 P1）：没有条目时不能直接落到创始人决定——它可能刚被消费（打回之后旧页面又点通过）。
+ * 找这件事的消费记录：相反的决定拒，同样的回放，都没有 = 刚变过。只有本来就不在列表里的动作（撤销批准、纠正发布、
+ * 挂原片、重开…）直接交给创始人决定；「我发了」在卡片上对任何平台都能点，没有记录时照旧放行。
+ */
+const INBOX_ACTIONS: ReadonlySet<string> = new Set(["approve_cut", "reject_cut", "pick_cover", "reject_cover", "retire_cover_group", "confirm_candidate", "reject_candidate",
+  "undo_auto_attach", "keep_attach", "reassign_aroll", "waive_sliver", "waive_sliver_check", "confirm_receipt", "i_published", "approve_script", "revise_script", "answer_ask", "publish_check_confirm"]);
+const PASS_WITHOUT_RECORD: ReadonlySet<string> = new Set(["i_published"]);
+const OBJ_KEYS = ["fact_id", "group_id", "cover_3x4_fact_id", "cover_4x3_fact_id", "platform", "option_id", "cut_sha", "sliver_key", "check_id", "ask_id"];
+
+async function objectItemIds(contentId: string, action: string, p: Record<string, unknown>, dataDir: string): Promise<string[]> {
+  const doc = await readProductionDocOrEmpty(contentId, dataDir);
+  const r = doc.round;
+  const factBySha = (sha: unknown) => doc.facts.find((f) => f.sha256 === sha && f.kind === "cut" && f.round === r)?.id;
+  switch (action) {
+    case "approve_cut": case "reject_cut": return [`cut:r${r}`, `sliver:${String(p.fact_id)}`];
+    case "pick_cover": case "reject_cover": case "retire_cover_group": return [`cover:r${r}`];
+    case "confirm_candidate": case "reject_candidate": return [`cand:${String(p.fact_id)}`];
+    case "undo_auto_attach": return [`auto:${String(p.fact_id)}`];
+    case "keep_attach": case "reassign_aroll": return [`attach:${String(p.fact_id)}`];
+    case "waive_sliver": case "waive_sliver_check": return [`sliver:${String(factBySha(p.cut_sha))}`];
+    case "confirm_receipt": {
+      const f = doc.facts.find((x) => x.id === p.fact_id);
+      return f?.platform ? [`claim:r${r}:${canonPlatform(f.platform)}`] : [];
+    }
+    case "i_published": return p.platform ? [`published:r${r}:${canonPlatform(String(p.platform))}`, `claim:r${r}:${canonPlatform(String(p.platform))}`] : [];
+    case "approve_script": case "revise_script": return [`draft:${contentId}`];
+    case "answer_ask": return [`ask:${String(p.ask_id)}`];
+    default: return [];
+  }
+}
+
+async function legacyWithoutItem(contentId: string, action: string, params: Record<string, unknown>, dataDir: string): Promise<Result> {
+  if (!INBOX_ACTIONS.has(action)) return founderDecision(contentId, action, params, dataDir);
+  const ids = await objectItemIds(contentId, action, params, dataDir);
+  const last = (await logOf(contentId, dataDir)).filter((e) => ids.includes(e.item_id) && !e.pending).at(-1);
+  if (last) {
+    const logged = (JSON.parse(last.fp) as [string, Array<[string, unknown]>])[1];
+    const key = (pairs: Array<[string, unknown]>) => JSON.stringify(pairs.filter(([k]) => OBJ_KEYS.includes(k)).map(([k, v]) => [k, String(v)]).sort());
+    const mine = key(Object.entries(params));
+    const same = last.action === action && (key(logged) === "[]" || mine === "[]" || key(logged) === mine);
+    return same ? { ...last.result, replayed: true, item_id: last.item_id, gen: last.gen } : fail("already_decided", "这件事已经在别处定了，刷新再看", { item_id: last.item_id });
+  }
+  if (PASS_WITHOUT_RECORD.has(action)) return founderDecision(contentId, action, params, dataDir);
+  return fail("stale", "这件事刚变过（列表里已经没有它了），刷新再看");
+}
+
+/**
  * 网页决定的唯一入口：带 item_id + gen → 走 CAS；旧页面（没带代次）→ 按指纹找到条目、用它当前的代次走同一个 CAS；
  * 不在列表里的动作（撤销批准、纠正已发布、挂原片…）直接交给创始人决定。
  */
@@ -276,7 +324,7 @@ export async function decide(contentId: string, action: string, params: Record<s
   if (str(params.item_id)) return decideItem({ ...params, action, content_id: contentId }, dataDir, deps);
   const view = await readInbox(dataDir, { contentId });
   const item = view.items.find((x) => legacyMatch(x, action, params));
-  if (!item) return founderDecision(contentId, action, params, dataDir);
+  if (!item) return legacyWithoutItem(contentId, action, params, dataDir);
   // 旧页面：按它带来的具体对象选动作参数（哪一版 / 哪一组 / 哪一处）
   // 选封面：按 3:4 + 4:3 两张一起认组，恰好一组对得上才行；不按单张取最新一组（Codex 审 2a-1 r3 P1）
   let pinned: Record<string, unknown> = {};

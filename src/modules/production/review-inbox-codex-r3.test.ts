@@ -227,3 +227,71 @@ describe("Codex 2a-1 第六轮", () => {
     expect(await founderDecision(c.id, "retire_cover_group", { group_id: g1.group_id }, env.dir)).toMatchObject({ ok: true });
   });
 });
+
+describe("Codex 2a-1 第七轮", () => {
+  const agent = (p: Record<string, unknown>) => import("../../tools/content-save.js").then((m) => m.executeContentSave({ _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>);
+  const via = async (c: string, type: string, action: string, extra: Record<string, unknown> = {}) => {
+    const it = (await items(c)).find((i) => i.type === type || i.item_id === type)!;
+    const a = it.actions.find((x) => x.action === action)!;
+    return decideItem({ content_id: c, item_id: it.item_id, gen: it.gen, action, ...a.params, ...(a.note ? { note: "改" } : {}), ...extra }, env.dir);
+  };
+  const CONFLICT = { ok: false, code: "already_decided", error: expect.stringContaining("这件事已经在别处定了，刷新再看") };
+
+  it("R7-1 成片：打回之后旧页面再点通过 → 拒；同样的打回 → 回放；没条目也没记录 → 刚变过", async () => {
+    const c = await editing();
+    const cut = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "三轮回归.mp4"), "cut"), request_id: "c", review: true });
+    const sha = (await doc(c.id)).facts.find((f) => f.id === cut.fact_id)!.sha256;
+    expect(await via(c.id, "cut_review", "reject_cut")).toMatchObject({ ok: true });
+    expect(await decide(c.id, "approve_cut", { fact_id: cut.fact_id, sha256: sha }, env.dir)).toMatchObject(CONFLICT);
+    expect(await decide(c.id, "reject_cut", { fact_id: cut.fact_id, sha256: sha, note: "改" }, env.dir)).toMatchObject({ ok: true, replayed: true });
+    expect((await doc(c.id)).decisions.some((d) => d.type === "cut_approval")).toBe(false);
+    const other = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.jianying, "三轮回归-2.mp4"), "cut2"), request_id: "c2" });
+    const sha2 = (await doc(c.id)).facts.find((f) => f.id === other.fact_id)!.sha256;
+    expect(await decide(c.id, "approve_cut", { fact_id: other.fact_id, sha256: sha2 }, env.dir)).toMatchObject({ ok: false });
+  });
+
+  it("R7-1 封面、候选、闪帧、请示、稿子：条目消费后旧入口的相反决定一律拒", async () => {
+    const c = await editing();
+    const g = await record(env, { content_id: c.id, kind: "cover", paths: [await img("a.png", 900, 1200), await img("b.png", 1200, 900)], cover_text: "字", request_id: "g" });
+    expect(await via(c.id, "cover_pick", "reject_cover")).toMatchObject({ ok: true });
+    expect(await decide(c.id, "pick_cover", { group_id: g.group_id }, env.dir)).toMatchObject(CONFLICT);
+    expect(await decide(c.id, "retire_cover_group", { group_id: g.group_id }, env.dir)).toMatchObject(CONFLICT);
+    const cand = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.outside, "x.mp4"), "cand"), request_id: "x" });
+    const candSha = (await doc(c.id)).facts.find((f) => f.id === cand.fact_id)!.sha256;
+    expect(await via(c.id, `cand:${String(cand.fact_id)}`, "reject_candidate")).toMatchObject({ ok: true });
+    expect(await decide(c.id, "confirm_candidate", { fact_id: cand.fact_id, sha256: candSha }, env.dir)).toMatchObject(CONFLICT);
+    const cut = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, "三轮回归.mp4"), "cut"), request_id: "c", review: true });
+    const cutSha = (await doc(c.id)).facts.find((f) => f.id === cut.fact_id)!.sha256;
+    expect(await via(c.id, "sliver", "reject_cut")).toMatchObject({ ok: true });
+    expect(await decide(c.id, "waive_sliver_check", { cut_sha: cutSha }, env.dir)).toMatchObject(CONFLICT);
+    const q = await agent({ action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] });
+    const ask = (await items(c.id)).find((i) => i.item_id === `ask:${q.ask_id}`)!;
+    await decideItem({ content_id: c.id, item_id: ask.item_id, gen: ask.gen, action: "answer_ask", option_id: "ok" }, env.dir);
+    expect(await decide(c.id, "answer_ask", { ask_id: q.ask_id, option_id: "no" }, env.dir)).toMatchObject(CONFLICT);
+    const d = await videoContent(env, "稿子三");
+    expect(await via(d.id, "draft", "revise_script")).toMatchObject({ ok: true });
+    expect(await decide(d.id, "approve_script", {}, env.dir)).toMatchObject(CONFLICT);
+  });
+
+  it("R7-1 发布：点了「没发」之后，旧入口再确认 AI 的说法 → 拒", async () => {
+    const r = await registeredVideo(env);
+    await record(env, { content_id: r.id, kind: "publish", platform: "douyin", url: "https://example.com/v/1", request_id: "pub" }, "claude-code");
+    const claim = (await items(r.id)).find((i) => i.type === "publish_claim")!;
+    const factId = claim.actions[0].params!.fact_id;
+    const target = claim.actions[1].params!.target_id;
+    expect(await via(r.id, "publish_claim", "correct_publish")).toMatchObject({ ok: true });
+    expect(await decide(r.id, "confirm_receipt", { fact_id: factId }, env.dir)).toMatchObject(CONFLICT);
+    void target;
+  });
+
+  it("R7-2 同样图片的新一组不算已批：出「新的一组封面」条目", async () => {
+    const c = await editing();
+    const a = await img("a.png", 900, 1200), b = await img("b.png", 1200, 900);
+    const g1 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g1" });
+    await founderDecision(c.id, "pick_cover", { group_id: g1.group_id }, env.dir);
+    const g2 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g2" });
+    const it = (await items(c.id)).find((i) => i.type === "cover_pick");
+    expect(it).toMatchObject({ summary: "新的一组封面做好了，要不要换" });
+    expect(it!.actions[0].params!.group_id).toBe(g2.group_id);
+  });
+});
