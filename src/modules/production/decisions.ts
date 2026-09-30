@@ -135,7 +135,7 @@ async function rejectWith(ctx: Ctx, type: "cut_reject" | "cover_reject", kind: F
   if (!f.sha256) return fail("stale", "页面上没有可打回的产物，刷新再看");
   const same = sameDecision(ctx.doc, type, (d) => d.sha256 === f.sha256 && d.note === note);
   const shas = Array.isArray(ctx.params.cover_shas) ? ctx.params.cover_shas.map(String) : f.id ? [f.sha256] : [];
-  return { ok: true, decision: same ?? (await push(ctx, { type, ...(f.id ? { fact_id: f.id } : {}), sha256: f.sha256, note, ...(type === "cover_reject" ? { shas } : {}) }, type === "cut_reject" ? "cut_rejected" : "cover_rejected")) };
+  return { ok: true, decision: same ?? (await push(ctx, { type, ...(f.id ? { fact_id: f.id } : {}), sha256: f.sha256, note, ...(type === "cover_reject" ? { shas, ...(Array.isArray(ctx.params.group_ids) ? { group_ids: ctx.params.group_ids.map(String) } : {}) } : {}) }, type === "cut_reject" ? "cut_rejected" : "cover_rejected")) };
 }
 
 /** 封面组按 §6.2 迁移后的样子（没落盘的迁移在内存里做） */

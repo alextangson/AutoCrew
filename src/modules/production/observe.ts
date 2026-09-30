@@ -18,7 +18,7 @@ import { COVER_ROLES, normalizeExecution } from "../video/handoff/execution-inde
 import { sha256File } from "../video/handoff/manifest.js";
 import { readProjectJson } from "../video/handoff/project-evidence.js";
 import { coverRatioOf } from "./files.js";
-import { addMember, admittedGroupKey, ensureGroup } from "./cover-groups.js";
+import { addMember, admittedGroupKey, ensureGroup, retiredGroupOfLabel } from "./cover-groups.js";
 
 export const VIDEO_EXT = new Set([".mp4", ".mov", ".m4v"]);
 const SRT_EXT = new Set([".srt", ".vtt"]);
@@ -228,13 +228,21 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
     added.push({ ...s, state, id: newId("fact"), round: doc.round, at, availability: "present" });
   }
   doc.facts.push(...added);
-  for (const f of added) if (f.kind === "cover" && f.state === "accepted") groupSeenCover(doc, f, f.path, at);
+  for (const f of added) if (f.kind === "cover" && f.state === "accepted") groupSeenCover(doc, f, f.path, at, true);
   return { added, changed: changed + added.length };
 }
 
 /** 对账收下的正式封面按所在目录记进组；返回新加成员数 */
-function groupSeenCover(doc: ProductionDoc, fact: Fact, rel: string | undefined, at: string): number {
+/**
+ * 作废过的组所在目录：文件留在盘上，对账不按目录复活那组（成员关系历史还在，不另起新组）；
+ * 之后新放进这个目录的图不自动成组，只做候选，等创始人确认（确认后自成新一组）。
+ */
+function groupSeenCover(doc: ProductionDoc, fact: Fact, rel: string | undefined, at: string, isNew = false): number {
   const key = admittedGroupKey(rel);
   if (!key) return 0;
+  if (retiredGroupOfLabel(doc, key.label)) {
+    if (isNew) { fact.state = "candidate"; fact.evidence = `${fact.evidence ?? ""}（05-cover/${key.label} 那组已点过「这组不要了」，新放进来的图只做候选）`; }
+    return 0;
+  }
   return addMember(doc, ensureGroup(doc, key, { source: "reconcile", evidence: `项目 05-cover/${key.label}` }, at), fact, at) ? 1 : 0;
 }

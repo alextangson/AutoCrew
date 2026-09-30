@@ -4,6 +4,7 @@
  * 修引号再试、最后按逗号拆；只有真解析不了才拒——绝不把解析失败当成空数组。
  */
 import type { CoverRatio, FactKind } from "../../storage/production-types.js";
+import { repairQuotes } from "../publish/review-gate/plan.js";
 
 export const RECORD_KINDS: readonly FactKind[] = ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard"];
 
@@ -85,7 +86,7 @@ export function parsePaths(v: unknown): Parsed<string[] | undefined> {
   if (v === undefined || v === null || v === "") return { ok: true, value: undefined };
   if (Array.isArray(v)) return { ok: true, value: v.map((x) => String(x).trim()).filter(Boolean) };
   if (typeof v !== "string") return { ok: false, code: "bad_param", error: `paths 要是路径数组，收到的是 ${typeof v}` };
-  for (const attempt of [v.trim(), v.trim().replace(/'/g, '"'), v.trim().replace(/\\"/g, '"')]) {
+  for (const attempt of [v.trim(), repairQuotes(v.trim()), v.trim().replace(/'/g, '"')]) {
     try { const j = JSON.parse(attempt) as unknown; if (Array.isArray(j)) return { ok: true, value: j.map((x) => String(x).trim()).filter(Boolean) }; } catch { /* 换下一种 */ }
   }
   return { ok: false, code: "bad_param", error: `paths 解析不了（要是 ["3:4 路径","4:3 路径"]）：${v.slice(0, 80)}` };

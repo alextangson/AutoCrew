@@ -338,7 +338,7 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
     drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc));
   }
   drafts.push(...publishItems(doc, input));
-  const consumed = new Set(input.log.map((c) => `${c.item_id}\u0000${c.gen}`));
+  const consumed = new Set(input.log.filter((e) => !e.pending || now - Date.parse(e.at) <= 10 * 60_000).map((c) => `${c.item_id}\u0000${c.gen}`));
   return drafts.map(({ snapshot, ...x }) => ({ ...x, gen: genOf([x.item_id, snapshot]), content_id: content.id, title: content.title }))
     .filter((x) => !consumed.has(`${x.item_id}\u0000${x.gen}`));
 }

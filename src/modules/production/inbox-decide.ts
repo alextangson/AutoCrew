@@ -27,6 +27,10 @@ type Result = Record<string, unknown>;
 const fail = (code: string, error: string, extra: Result = {}): Result => ({ ok: false, code, error, ...extra });
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
 const KEEP = 200;
+/** 同一决定正在锁外跑时，等它的上限与轮询间隔 */
+const WAIT_MS = 10 * 60_000;
+const POLL_MS = 50;
+export const stalePending = (e: InboxConsumption, now = Date.now()) => Boolean(e.pending) && now - Date.parse(e.at) > WAIT_MS;
 
 export interface DecideDeps { jev?: JevCaller; now?: number }
 
@@ -125,9 +129,10 @@ async function run(ctx: Ctx): Promise<Result> {
     case "reject_cut": return founderDecision(c!.id, "reject_cut", { ...merged, note: noteOf(ctx) || (item.type === "sliver" ? "画面有闪帧，去剪辑里改" : "") }, dataDir);
     case "reject_cover": {
       // 只打回面板上还没定的那几组：已批的那组不跟着失效
-      const groups = (item.detail.groups as Array<{ approved: boolean; "3:4": { sha256: string } | null; "4:3": { sha256: string } | null }>).filter((g) => !g.approved);
+      const groups = (item.detail.groups as Array<{ group_id: string; approved: boolean; "3:4": { sha256: string } | null; "4:3": { sha256: string } | null }>).filter((g) => !g.approved);
       const shas = groups.flatMap((g) => [g["3:4"]?.sha256, g["4:3"]?.sha256]).filter((x): x is string => Boolean(x));
-      return founderDecision(c!.id, "reject_cover", { sha256: `inbox:${item.gen}`, cover_shas: shas, note: noteOf(ctx) }, dataDir);
+      // 打回绑组身份（group_ids）：只作废这几组，不按共用的图牵连已批的组
+      return founderDecision(c!.id, "reject_cover", { sha256: `inbox:${item.gen}`, cover_shas: shas, group_ids: groups.map((g) => g.group_id), note: noteOf(ctx) }, dataDir);
     }
     case "approve_cut": {
       const versions = item.detail.versions as Array<{ fact_id: string; sha256: string }>;
@@ -160,9 +165,12 @@ export async function decideItem(req: Record<string, unknown>, dataDir = getData
     const view = await readInbox(dataDir, { ...(contentId ? { contentId } : {}), ...(deps.now ? { now: deps.now } : {}) });
     const item = view.items.find((x) => x.item_id === itemId);
     const logId = item ? logContentOf(item, req) : contentId || str(req.to) || null;
-    const prior = logId ? (await logOf(logId, dataDir)).find((e) => e.item_id === itemId && e.gen === gen) : undefined;
-    if (prior) return prior.fp === fp && prior.action === action ? { phase: "done" as const, result: { ...prior.result, replayed: true } }
-      : { phase: "done" as const, result: fail("already_decided", "这件事已经在别处处理过了（做的是另一个决定），刷新看现在的样子") };
+    // 占位超过等待上限（服务中途重启、没落定）算作废，不永久卡住这件事
+    const prior = logId ? (await logOf(logId, dataDir)).find((e) => e.item_id === itemId && e.gen === gen && !stalePending(e)) : undefined;
+    if (prior && (prior.fp !== fp || prior.action !== action)) return { phase: "done" as const, result: fail("already_decided", prior.pending ? "这件事正在别处处理（做的是另一个决定），刷新看现在的样子" : "这件事已经在别处处理过了（做的是另一个决定），刷新看现在的样子") };
+    // 同一个决定正在锁外跑：等它的结果回放，不再跑一遍
+    if (prior?.pending) return { phase: "wait" as const };
+    if (prior) return { phase: "done" as const, result: { ...prior.result, replayed: true } };
     if (!item) return { phase: "done" as const, result: fail("gone", "这件事已在别处处理，或已经关了：刷新再看") };
     if (item.gen !== gen) return { phase: "done" as const, result: fail("stale", "这件事刚变过，重新看一下") };
     // 同一动作可能有几个（每个选项、每一处缝）：选项 / 缝必须和请求一致，不许落到第一个
@@ -172,20 +180,32 @@ export async function decideItem(req: Record<string, unknown>, dataDir = getData
     const content = item.content_id ? await getContent(item.content_id, dataDir) : null;
     const ctx: Ctx = { item, content, dataDir, params: req, spec: chosen, deps };
     // 破例重跑要调外部模型：不占着锁跑，跑完回锁里再核一次代次
-    if (chosen.action === "publish_check_override") return { phase: "outside" as const, ctx, logId };
+    // 离开锁之前先把这一代占住（持久记录，带动作与指纹）：相反的决定拒、同样的请求等结果回放（Codex 审 2a-1 P2）
+    if (chosen.action === "publish_check_override") {
+      if (!logId) return { phase: "done" as const, result: fail("bad_request", "这件事没有可记的稿") };
+      await consume(logId, dataDir, { item_id: itemId, gen, action, fp, at: new Date().toISOString(), result: {}, pending: true });
+      return { phase: "outside" as const, ctx, logId };
+    }
     const result = await run(ctx);
     if (result.ok === true && logId) await consume(logId, dataDir, { item_id: itemId, gen, action, fp, at: new Date().toISOString(), result: slim(result) });
     return { phase: "done" as const, result };
   });
-  const first = await locked();
-  if (first.phase === "done") return { ...first.result, item_id: itemId, gen };
-  const result = await run(first.ctx);
-  if (result.ok === true && first.logId) {
-    await withFileOwnership(async () => {
-      const again = (await logOf(first.logId!, dataDir)).find((e) => e.item_id === itemId && e.gen === gen);
-      if (!again) await consume(first.logId!, dataDir, { item_id: itemId, gen, action, fp, at: new Date().toISOString(), result: slim(result) });
-    });
+  let first = await locked();
+  for (let waited = 0; first.phase === "wait" && waited < WAIT_MS; waited += POLL_MS) {
+    await new Promise((ok) => setTimeout(ok, POLL_MS));
+    first = await locked();
   }
+  if (first.phase === "wait") return fail("in_progress", "这件事还在处理（在等模型），过一会儿刷新再看", { item_id: itemId, gen });
+  if (first.phase === "done") return { ...first.result, item_id: itemId, gen };
+  const { ctx, logId } = first;
+  let result: Result;
+  try { result = await run(ctx); } catch (e) { result = fail("failed", `没做成：${e instanceof Error ? e.message : String(e)}`); }
+  // 回锁里落定：成功 → 占位换成结果；失败 → 释放占位（看得见原因，之后能再点）
+  await withFileOwnership(() => mutateProduction(logId!, dataDir, (d) => {
+    const log = (d.inbox_log ?? []).filter((e) => !(e.item_id === itemId && e.gen === gen && e.pending));
+    d.inbox_log = result.ok === true ? [...log, { item_id: itemId, gen, action, fp, at: new Date().toISOString(), result: slim(result) }].slice(-KEEP) : log;
+    return { value: null, events: [{ type: result.ok === true ? "inbox_decided" : "inbox_decide_failed", detail: { item_id: itemId, action, ...(result.ok === true ? {} : { error: result.error }) } }] };
+  }));
   return { ...result, item_id: itemId, gen };
 }
 

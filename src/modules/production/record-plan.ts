@@ -11,7 +11,7 @@ import { contentRoot } from "../../storage/content-project.js";
 import { readLibraryLocation } from "../../storage/storage-roots.js";
 import type { Fact, ProductionDoc } from "../../storage/production-types.js";
 import { l1Strong } from "./match/l1.js";
-import { admittedGroupKey, groupOfFact, groupOfVersion, MAX_COVER_GROUPS, nextCoverVersion, slotTaken, validCoverGroups, versionLabelOf, type GroupKey } from "./cover-groups.js";
+import { admittedGroupKey, retiredGroupOfLabel, groupOfFact, groupOfVersion, MAX_COVER_GROUPS, nextCoverVersion, slotTaken, validCoverGroups, versionLabelOf, type GroupKey } from "./cover-groups.js";
 import { matchDeps } from "./match/deps.js";
 import { arollPool } from "./match/pool.js";
 import { pendingElsewhere, pendingElsewhereText } from "./match/reservation.js";
@@ -106,6 +106,7 @@ function coverTarget(a: RecordArgs, doc: ProductionDoc, ratio: Fact["ratio"]): P
     return { ok: true, value: { version: g.group.version, group: { label: g.group.label, version: g.group.version } } };
   }
   if (a.version) {
+    if (retiredGroupOfLabel(doc, versionLabelOf(a.version))) return deny("cover_group_retired", `${versionLabelOf(a.version)} 那组已作废（「这组不要了」）：不带 version 放新一组`);
     const g = groupOfVersion(doc, a.version);
     if (g && ratio && slotTaken(doc, g, ratio)) return deny("cover_slot_taken", `${versionLabelOf(a.version)} 已经有 ${ratio} 了：换一个版本号，或用 paths 一次记一组`);
     if (!g) { const f = full(); if (f) return f; }

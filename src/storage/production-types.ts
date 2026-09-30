@@ -168,6 +168,8 @@ export interface Decision {
   check_id?: string;
   /** storyboard_approval：回执 sha（页面 sha 在 sha256） */
   receipt_sha256?: string;
+  /** cover_reject（等你拍板）：打回的是哪几组；有它时只作废这几组的批准，不按共用的图连带别的组 */
+  group_ids?: string[];
   /** inbox_ack：确认的是哪个条目 */
   item_id?: string;
 }
@@ -232,7 +234,7 @@ export interface CoverGroup {
 export interface CoverMember { group_id: string; fact_id: string; sha256: string; ratio: CoverRatio; at: string }
 
 /** 「等你拍板」的 CAS 消费记录（§3.1 R1/R2）：同一条目的同一代次只消费一次，回放按原结果 */
-export interface InboxConsumption { item_id: string; gen: string; action: string; fp: string; at: string; result: Record<string, unknown> }
+export interface InboxConsumption { item_id: string; gen: string; action: string; fp: string; at: string; result: Record<string, unknown>; /** 锁外还在跑（破例重跑等模型）：这一代已被占住 */ pending?: true }
 
 /** 抽帧缝（spec 2026-09-30-broll-sliver-check）：A-roll 在两段盖住画面的条目之间露出 < 1 秒 */
 export interface Sliver {

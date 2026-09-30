@@ -192,7 +192,9 @@ function joinCoverGroup(doc: ProductionDoc, fact: Fact, p: FilePlan, a: RecordAr
 
 /** 「可以审了」：同一轮同一 fact + sha 只记一次（幂等） */
 export function addReadyMark(doc: ProductionDoc, fact: Fact, a: Pick<RecordArgs, "host" | "session">): NewEvent[] {
-  if ((doc.ready_marks ?? []).some((m) => m.round === doc.round && m.fact_id === fact.id && m.sha256 === fact.sha256)) return [];
+  // 只对「还在等审」的标记去重：这版被打回（还要改…）之后再标 = 重新交审，开新代次（Codex 审 2a-1 P2）
+  const rejectedAfter = (at: string) => doc.decisions.some((d) => d.round === doc.round && d.type === "cut_reject" && d.sha256 === fact.sha256 && d.at >= at);
+  if ((doc.ready_marks ?? []).some((m) => m.round === doc.round && m.fact_id === fact.id && m.sha256 === fact.sha256 && !rejectedAfter(m.at))) return [];
   const mark: ReadyMark = { id: newId("rdy"), fact_id: fact.id, sha256: fact.sha256!, round: doc.round, at: new Date().toISOString(), by: { host: a.host, ...(a.session ? { session: a.session } : {}) } };
   doc.ready_marks = [...(doc.ready_marks ?? []), mark];
   return [{ type: "cut_ready", detail: { fact_id: fact.id, mark_id: mark.id, by: a.host } }];

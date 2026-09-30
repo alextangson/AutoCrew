@@ -77,6 +77,13 @@ export function groupById(doc: ProductionDoc, id: string): GroupView | null {
   return validCoverGroups(doc).find((g) => g.group.id === id) ?? null;
 }
 
+/** 本轮同一目录（label）里被「这组不要了」作废过的组：对账不能按目录把它复活（Codex 审 2a-1 P2） */
+export function retiredGroupOfLabel(doc: ProductionDoc, label: string): CoverGroup | null {
+  const retired = retiredIds(doc);
+  const live = (doc.cover_groups ?? []).some((g) => g.round === doc.round && g.label === label && !retired.has(g.id));
+  return live ? null : (doc.cover_groups ?? []).find((g) => g.round === doc.round && g.label === label && retired.has(g.id)) ?? null;
+}
+
 export function isRetired(doc: ProductionDoc, groupId: string): boolean {
   return retiredIds(doc).has(groupId);
 }

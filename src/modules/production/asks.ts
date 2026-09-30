@@ -16,6 +16,7 @@ import { ASK_KINDS, type Ask, type AskAnswer, type AskKind, type AskOption, type
 import { isWithin } from "../../storage/storage-roots.js";
 import { sha256File } from "../video/handoff/manifest.js";
 import { resolveLocalFile } from "./files.js";
+import { repairQuotes } from "../publish/review-gate/plan.js";
 import { withFileOwnership } from "./mutex.js";
 import { ensureProductionReady, mutateProduction } from "./service.js";
 import { validateStoryboard } from "./storyboard.js";
@@ -33,9 +34,11 @@ const NO_REPORTED: ReadonlySet<AskKind> = new Set(["花费", "分镜"]);
 
 // ---- 参数正规化（中转端点会把数组 / 对象序列化成字符串） ----
 
+/** 字符串里的 JSON：先原样解析，再修中转端点留下的没转义内层引号（与发布检查同一个 repairQuotes） */
 function maybeJson(v: unknown): unknown {
   if (typeof v !== "string") return v;
-  for (const attempt of [v.trim(), v.trim().replace(/'/g, '"'), v.trim().replace(/\\"/g, '"')]) {
+  const t = v.trim();
+  for (const attempt of [t, repairQuotes(t), t.replace(/'/g, '"')]) {
     try { return JSON.parse(attempt) as unknown; } catch { /* 换下一种修法 */ }
   }
   return v;
