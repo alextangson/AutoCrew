@@ -79,3 +79,7 @@
 .bcard-alert { display: block; font-size: var(--fs-xs); color: var(--danger); }
 .card-panel-row { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .card-panel-actions { display: flex; gap: var(--s3); flex-wrap: wrap; margin-top: auto; }
+
+/* 1b：卡片候选 / 收件箱列表的「依据」——分数与完整路径只在这里 */
+.card-panel-cand { padding: 6px 0; border-bottom: 1px solid var(--line, #e5e5e5); }
+.card-panel-detail { white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 4px 0; }

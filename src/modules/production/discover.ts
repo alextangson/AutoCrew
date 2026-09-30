@@ -75,6 +75,7 @@ async function waitingSet(dataDir: string, pool: readonly PoolEntry[]): Promise<
   return out;
 }
 
+const matchOf = (d: MatchDecision): Partial<Seen> => ({ match: { winner: d.winner, reason: d.reason, top3: d.top3.map((r) => ({ ...r })) } });
 const why = (d: MatchDecision) => `${d.reason}${d.top3.length ? `；前三名：${describeTop3(d.top3)}` : ""}`;
 
 // ---- §4 收件箱 ----
@@ -87,11 +88,11 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
       const many = byTarget.get(d.winner)! > 1;
       if (waiting.has(d.winner) && !many) { out.autoMoves.push({ content_id: d.winner, file: f, d }); continue; }
       const note = many ? `同一批有 ${byTarget.get(d.winner)} 个视频都像这条（多 take），不自动认` : "这条已经有本轮原片了，后来的只做候选";
-      suggest(out, d.winner, seen(f, "aroll", `原片收件箱：${note}；${why(d)}`));
+      suggest(out, d.winner, seen(f, "aroll", `原片收件箱：${note}；${why(d)}`, matchOf(d)));
       continue;
     }
     const likes = d.top3.filter(looksLike);
-    for (const r of likes) suggest(out, r.content_id, seen(f, "aroll", `原片收件箱：${why(d)}`));
+    for (const r of likes) suggest(out, r.content_id, seen(f, "aroll", `原片收件箱：${why(d)}`, matchOf(d)));
     if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.map((r) => r.title) });
   }
 }
@@ -148,7 +149,7 @@ async function discoverWatch(dataDir: string, folder: WatchFolder, pool: PoolEnt
     // 只出建议：对上等原片的稿才给候选；对不上静默跳过（下载里大量无关视频，不计入列头）
     if (v.kind !== "decided" || !v.d.winner || !waiting.has(v.d.winner)) continue;
     const f = await found(raw);
-    suggest(out, v.d.winner, seen(f, "aroll", `监视文件夹 ${path.basename(folder.path)}：${why(v.d)}`));
+    suggest(out, v.d.winner, seen(f, "aroll", `监视文件夹 ${path.basename(folder.path)}：${why(v.d)}`, matchOf(v.d)));
     status.suggested += 1;
   }
   if (failed.length) {
@@ -175,18 +176,18 @@ async function discoverExport(dataDir: string, dir: string, contents: Content[],
   for (const raw of listed.files.filter((x) => isVideo(x.name))) {
     const f = await found(raw);
     const byName = exportTargets(f.name, contents);
-    let targets: Array<{ id: string; evidence: string }> = byName.map((c) => ({ id: c.id, evidence: "文件名前缀对上标题（剪辑软件导出）" }));
+    let targets: Array<{ id: string; evidence: string; match?: MatchDecision }> = byName.map((c) => ({ id: c.id, evidence: "文件名前缀对上标题（剪辑软件导出）" }));
     if (!targets.length) {
       const v = await fileVerdict(dataDir, f, pool);
       if (v.kind === "failed") { out.warnings.push(`剪辑软件导出 ${f.name} 没核对成：${v.reason}`); continue; }
       if (v.kind !== "decided") continue;
       const ids = v.d.winner ? [v.d.winner] : v.d.top3.filter((r) => looksLike(r)).map((r) => r.content_id);
-      targets = ids.map((id) => ({ id, evidence: `剪辑软件导出：${why(v.d)}` }));
+      targets = ids.map((id) => ({ id, evidence: `剪辑软件导出：${why(v.d)}`, match: v.d }));
     }
     const srt = targets.length ? await srtNextTo(f.file, srts) : null;
     for (const t of targets) {
       const published = contents.find((c) => c.id === t.id)?.status === "published";
-      suggest(out, t.id, seen(f, "cut", t.evidence, published ? { post_publish: true } : {}));
+      suggest(out, t.id, seen(f, "cut", t.evidence, { ...(published ? { post_publish: true as const } : {}), ...(t.match ? matchOf(t.match) : {}) }));
       if (srt) suggest(out, t.id, seen(srt, "srt", "和成片同名的字幕（剪辑软件导出）", { for_cut: f.sha256, ...(published ? { post_publish: true } : {}) }));
     }
   }

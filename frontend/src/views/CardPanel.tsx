@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { confirmDialog, toast } from "../ui";
 import { CardArolls } from "./CardArolls";
+import { CardCandidates } from "./CardCandidates";
 import { chooseFile, decide, loadCard, openStoryboard, reopenScript, type CardPanelData, type SliverPanel, type StoryboardPanel } from "./board-api";
 import { RevealLink, when } from "./board-parts";
 
@@ -100,11 +101,7 @@ function PanelBody(p: {
     {(d.alerts ?? []).map((a) => <p key={a} className="card-panel-alert" role="alert">{a}</p>)}
     {d.badges.map((b) => <p key={b} className="card-panel-note">{b}</p>)}
     {!d.active && <p className="bcol-note">这条还按旧流程走（本体没启用或被排除），只看不改。</p>}
-    {d.active && d.candidates.length > 0 && <section><h3>发现的候选</h3>{d.candidates.map((c) => <div key={c.fact_id} className="card-panel-row">
-      <span>{c.state === "pending_match" ? `正在核对原片${c.started_at ? `（${new Date(c.started_at).toLocaleTimeString()} 开始）` : ""} · ` : ""}{KIND_LABEL[c.kind] ?? c.kind} · {c.path ?? ""}{c.evidence ? `（${c.evidence}）` : ""}</span>
-      <button disabled={p.busy} onClick={() => void p.actOrReassign("confirm_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "已确认是这条")}>是这条</button>
-      <button disabled={p.busy} onClick={() => void p.act("reject_candidate", { fact_id: c.fact_id, sha256: c.sha256 }, "记住了：不是这条")}>不是这条</button>
-    </div>)}</section>}
+    {d.active && <CardCandidates contentId={d.id} rows={d.candidate_rows ?? []} busy={p.busy} act={p.act} confirm={p.actOrReassign} />}
     {d.active && <CardArolls rows={d.arolls ?? []} busy={p.busy} act={p.act} />}
     {d.active && (d.column === "待录制" || d.missing.includes("A-roll")) && <section><h3>挂 A-roll</h3>
       <div className="card-panel-row">

@@ -78,7 +78,11 @@ export interface CardPanelData {
   slivers?: SliverPanel | null;
   storyboard?: StoryboardPanel | null;
   arolls?: ArollRow[];
+  candidate_rows?: CandidateRowView[];
 }
+/** 「发现的候选」一行（服务端已翻成人话；完整路径与分数只在 detail 里） */
+export interface CandidateRowView { fact_id: string; kind: string; state: string; sha256?: string; started_at?: string; name: string; origin: string; reason: string; detail: string; path: string | null }
+export const revealFact = (contentId: string, factId: string) => post<Json>("/api/board/reveal-source", { content_id: contentId, fact_id: factId });
 /** 分镜（spec 2026-09-30-storyboard-review-check §4）：最新一版 + 旧版 */
 export interface StoryboardView { fact_id: string; sha256: string; version: string; path: string; at: string }
 export interface StoryboardPanel { latest: StoryboardView & { changed: boolean; missing: boolean; note?: string }; older: StoryboardView[] }

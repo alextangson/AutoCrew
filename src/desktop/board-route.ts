@@ -17,7 +17,7 @@ import { openStoryboard, type OpenDeps as StoryboardOpenDeps } from "../modules/
 import { pullDeps } from "../modules/video/handoff/pull-deps.js";
 import { isContentId } from "../storage/entity-id.js";
 import { applyArollSourceOp } from "../modules/production/sources.js";
-import { arollSourcesView, revealSourcePath, type RevealSourceDeps } from "../modules/production/sources-view.js";
+import { arollSourcesView, revealFactPath, revealSourcePath, type RevealSourceDeps } from "../modules/production/sources-view.js";
 
 export interface BoardRouteDeps {
   authorize: (req: http.IncomingMessage) => "session" | "bearer" | null;
@@ -149,7 +149,9 @@ export function createBoardHandler(deps: BoardRouteDeps) {
       return true;
     }
     if (p === "/api/board/reveal-source" && req.method === "POST") {
-      await post(req, res, (b, dir) => revealSourcePath(String(b.path ?? ""), dir, deps.reveal));
+      await post(req, res, (b, dir) => (typeof b.fact_id === "string" && isContentId(String(b.content_id ?? ""))
+        ? revealFactPath(String(b.content_id), b.fact_id, dir, deps.reveal)
+        : revealSourcePath(String(b.path ?? ""), dir, deps.reveal)));
       return true;
     }
     if (p === "/api/board/choose-folder" && req.method === "POST") {

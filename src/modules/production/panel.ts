@@ -6,6 +6,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getContent, type Content } from "../../storage/local-store.js";
 import { CHATCUT_USES, IN_EDIT_REASSIGN, undoBlocker } from "./undo-attach.js";
+import { candidateRow, type CandidateRow } from "./candidate-view.js";
+import { movableRoots } from "./roots.js";
+import { readArollSources } from "./sources.js";
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
@@ -70,6 +73,14 @@ function arollRows(content: Content, doc: ProductionDoc): Array<Record<string, u
   });
 }
 
+async function candidateRows(contentId: string, doc: ProductionDoc, dataDir: string): Promise<CandidateRow[]> {
+  const roots = await movableRoots(dataDir);
+  const watch = (await readArollSources(dataDir).catch(() => ({ folders: [] as Array<{ path: string }> }))).folders.map((f) => f.path);
+  const dirs = { inbox: roots.inbox, chatcut: roots.chatcut, jianying: roots.jianying, watch };
+  return doc.facts.filter((f) => f.round === doc.round && (f.state === "candidate" || f.state === "pending_match"))
+    .sort((a, b) => b.at.localeCompare(a.at)).map((f) => candidateRow(f, contentId, dirs));
+}
+
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
@@ -89,7 +100,7 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   const checklist = checklistRel && (await fs.stat(path.join(contentRoot(contentId, dataDir), checklistRel)).then(() => true, () => false)) ? checklistRel : null;
   const cut = validCutApproval(doc, content.body), cover = validCoverApproval(doc, content.body);
   return {
-    ...base, round: doc.round, arolls: arollRows(content, doc),
+    ...base, round: doc.round, arolls: arollRows(content, doc), candidate_rows: await candidateRows(content.id, doc, dataDir),
     pending_receipts: receipts.pending.map((w) => ({ fact_id: w.fact_id, slot_id: w.id, platform: w.platform, url: w.url ?? (w.item_id ? `作品 ${w.item_id}` : null), host: w.source === "claim" ? w.host ?? "AI" : "数据回流" })),
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
