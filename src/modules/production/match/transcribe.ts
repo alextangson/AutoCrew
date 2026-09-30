@@ -6,7 +6,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ASR_SIDECAR_DIR, effectiveAsrStatus, extractAsrWav, runAsr } from "../../video/asr.js";
+import { ASR_SIDECAR_DIR, ASR_WARMUP_WHERE, effectiveAsrStatus, extractAsrWav, runAsr } from "../../video/asr.js";
 import { commandExists, type VideoDeps } from "../../video/proc.js";
 import { CLIP_SECONDS, MATCH_ASR_TIMEOUT_MS, MATCH_FFMPEG_TIMEOUT_MS } from "./l2.js";
 
@@ -64,4 +64,11 @@ export async function funasrNotReady(dataDir: string, deps?: VideoDeps): Promise
   if (status.status === "ready") return null;
   const label = { absent: "ASR 模型还没下载（约 1GB）", warming: "ASR 模型正在预热", failed: "ASR 模型上次预热失败" }[status.status];
   return status.detail ? `${label}：${status.detail}` : label;
+}
+
+/** doctor 用：没就绪的原因 → 一句怎么装（1b §10） */
+export function notReadyFix(reason: string): string {
+  if (reason.includes("uv")) return "装 uv：curl -LsSf https://astral.sh/uv/install.sh | sh";
+  if (reason.includes("依赖环境")) return `装转写依赖：uv sync --project ${ASR_SIDECAR_DIR}`;
+  return `下载 / 预热转写模型：${ASR_WARMUP_WHERE}（约 1GB）`;
 }

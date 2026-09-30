@@ -444,6 +444,12 @@ switch (command) {
       asrStatus = JSON.parse(fs.readFileSync(path.join(contentDir, "video", "asr-status.json"), "utf-8")).status || "absent";
     } catch {}
     const asrSidecarOk = fs.existsSync(path.join(ROOT, "sidecars", "asr", "asr.py"));
+    // 原片内容比对要的转写环境（1b §10）：uv / .venv / 模型，与比对器同一个判定（notReady）
+    let asrEnv = { ready: false, reason: "资料库不可用，没法查转写模型状态", fix: "先让 autocrew storage status 显示已连接" };
+    if (contentDir) {
+      const asrResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "asr-doctor.mts"), contentDir], { encoding: "utf8", env: process.env, timeout: 30_000 });
+      try { asrEnv = JSON.parse((asrResult.stdout || "").trim().split("\n").pop() || "{}"); } catch { asrEnv = { ready: false, reason: "检查脚本没跑成", fix: "重跑 autocrew doctor；还不行看 autocrew logs" }; }
+    }
     // 生图就绪:配了中转(原生 HTTP 生图,自包含)→ 封面/正文图不依赖 ~/.openclaw 外部脚本。
     let imageRelay = false;
     let apiProxySet = false;
@@ -476,6 +482,7 @@ switch (command) {
       ffprobe: binOk("ffprobe"),
       asrSidecar: asrSidecarOk,
       asrModelReady: asrStatus === "ready",
+      asrMatchReady: asrEnv.ready === true,
       typesafeKey: typesafe.configured === true,
       typesafeReachable: typesafe.reachable === true,
     };
@@ -496,6 +503,7 @@ switch (command) {
       + (apiProxySet ? "\n  公众号 API 代理已配（固定出口 IP，动态 IP 变动免疫 40164）" : "")
       + (checks.ffmpeg && checks.ffprobe ? "" : "\n  → 成片渲染需要 ffmpeg/ffprobe：brew install ffmpeg")
       + (checks.asrSidecar ? "" : "\n  → 缺 ASR sidecar(sidecars/asr/asr.py)：仓库不完整，重新拉取")
+      + (asrEnv.ready ? "" : `\n  → 原片内容比对的转写环境没就绪（${asrEnv.reason}）：${asrEnv.fix}。没就绪时原片只比文件名，对不上的记成候选等你在卡片上点`)
       + (typesafe.configured
         ? (typesafe.reachable ? `\n  发布前把关语义检查（TypeSafe，密钥来自 ${typesafe.source === "env" ? "环境变量" : "本机设置"}）可用` : `\n  → TypeSafe 调不通：${typesafe.error ?? "未知原因"}（发布前把关的语义检查会标「没跑成」，确定性检查照常）`)
         : "\n  → 发布前把关的语义检查需要 TypeSafe 密钥：设置→接入更多 填，或设环境变量 TYPESAFE_API_KEY（不配也能发，语义检查会标「没跑成」）")

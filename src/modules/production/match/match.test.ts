@@ -10,6 +10,7 @@ import { l1Strong } from "./l1.js";
 import { readTranscript, transcriptCacheDir, writeTranscript } from "./cache.js";
 import { setMatchDeps } from "./deps.js";
 import { synth } from "./synth-fixture.js";
+import { notReadyFix } from "./transcribe.js";
 import { enqueueMatchJob, jobKey, listMatchJobs, matchWorkerIdle, MAX_RETRIES, registerMatchHandler, resetMatchQueue, RETRY_DELAY_MS, type JobResult, type JobSpec, type MatchJob } from "./queue.js";
 
 const entry = (id: string, title: string, body: string): PoolEntry => ({ content_id: id, title, old_titles: [], round: 1, body_hash: `h-${id}`, body });
@@ -159,5 +160,13 @@ describe("转写缓存与作业队列（§2，B34 / B36）", () => {
     await enqueueMatchJob(dir, spec({ target: "other" }));
     await matchWorkerIdle(dir);
     expect((await listMatchJobs(dir)).find((j) => j.id === "mjob-x")?.state).toBe("done");
+  });
+});
+
+describe("doctor 的转写环境提示（§10）", () => {
+  it("没就绪的三种原因各给一句怎么装", () => {
+    expect(notReadyFix("未装 uv（ASR 的运行器）")).toContain("astral.sh/uv");
+    expect(notReadyFix("ASR 依赖环境还没装好")).toMatch(/uv sync --project .*sidecars\/asr/);
+    expect(notReadyFix("ASR 模型还没下载（约 1GB）")).toContain("预热");
   });
 });
