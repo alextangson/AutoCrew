@@ -5,7 +5,7 @@
  * 拒了就什么按钮都不给，只显示件数。页面打开时已有的事算「已经提醒过」，只提醒之后新来的。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { newNotifyState, tabTitle, toNotify, type InboxItem } from "./review-model";
+import { newNotifyState, seedNotified, tabTitle, toNotify, type InboxItem } from "./review-model";
 
 type NotificationCtor = typeof Notification;
 const ctor = (): NotificationCtor | null => (globalThis as { Notification?: NotificationCtor }).Notification ?? null;
@@ -27,7 +27,7 @@ export function useInboxNotify(items: InboxItem[] | null, openItem: (id: string)
   useEffect(() => {
     if (!items) return;
     // 页面打开时已有的事：算已经提醒过，不一下子弹一串
-    if (!seeded.current) { seeded.current = true; toNotify(items, state.current, Date.now()); return; }
+    if (!seeded.current) { seeded.current = true; seedNotified(items, state.current); return; }
     const N = ctor();
     if (!N || N.permission !== "granted") return;
     for (const i of toNotify(items, state.current, Date.now())) {

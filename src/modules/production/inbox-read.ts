@@ -18,6 +18,7 @@ import { attachmentsChanged } from "./asks.js";
 import { withCoverGroups } from "./cover-groups.js";
 import { explainContent, explainContext } from "./read.js";
 import { readReconcileReport } from "./reconcile.js";
+import { cachedSha } from "./observe.js";
 import { approvedCoverShas } from "./service.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 
@@ -79,16 +80,26 @@ async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType
 async function inboxFileItems(dataDir: string, contents: Content[]): Promise<InboxItem[]> {
   const report = await readReconcileReport(dataDir);
   const waiting = contents.filter((c) => isVideoPlatform(c.platform) && !c.deletedAt && ["draft_ready", "approved"].includes(c.status)).map((c) => ({ id: c.id, title: c.title }));
-  return (report?.inbox?.unmatched ?? []).map((f) => {
-    const snapshot = [f.path, f.size, f.mtime_ms];
+  // 已经指定出去的（消费记录记在接收的那条稿上）：下一次读就不再列，不等下一轮对账（整分支审 6 P2）
+  const consumed = new Set<string>();
+  for (const c of contents) for (const e of (await readProductionDoc(c.id, dataDir).catch(() => null))?.inbox_log ?? []) if (e.item_id.startsWith("inbox_file:") && !e.pending) consumed.add(`${e.item_id}\u0000${e.gen}`);
+  const out: InboxItem[] = [];
+  for (const f of report?.inbox?.unmatched ?? []) {
+    // 文件身份（字节）进代次：对账之间文件被换了，旧代次就指定不了新字节（整分支审 6 P2）
+    const now = await cachedSha(f.path).catch(() => null);
+    if (!now) continue;
+    const snapshot = [f.path, now.sha256, now.size, now.mtime_ms];
     const item_id = `inbox_file:${genOf(f.path)}`;
-    return {
-      item_id, gen: genOf([item_id, snapshot]), type: "inbox_file" as const, content_id: null, title: f.name, summary: `收件箱里有个视频没对上：${f.name}`,
-      waiting: null, agent_waiting: false, since: new Date(f.mtime_ms).toISOString(), rank: 1 as const,
-      actions: [{ action: "assign", label: "指定给…", role: "primary" as const, params: { path: f.path } }],
-      detail: { name: f.name, size: f.size, guess: f.guess, choices: waiting },
-    };
-  });
+    const gen = genOf([item_id, snapshot]);
+    if (consumed.has(`${item_id}\u0000${gen}`)) continue;
+    out.push({
+      item_id, gen, type: "inbox_file" as const, content_id: null, title: f.name, summary: `收件箱里有个视频没对上：${f.name}`,
+      waiting: null, agent_waiting: false, since: new Date(now.mtime_ms).toISOString(), rank: 1 as const,
+      actions: [{ action: "assign", label: "指定给…", role: "primary" as const, params: { path: f.path, expect_sha: now.sha256 } }],
+      detail: { name: f.name, size: now.size, guess: f.guess, choices: waiting },
+    });
+  }
+  return out;
 }
 
 /** 其他（默认收起）：写作规则提案、发布偏好提案——原界面、原动作，这里只列出来 */

@@ -467,3 +467,18 @@ describe("整分支审 5", () => {
     } finally { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); }
   }, 10_000);
 });
+
+describe("提醒：打开页面时已有的事只压住那几件", () => {
+  it("同一条稿紧接着来的新事照样提醒（不因为打开页面就开 10 分钟合并窗口）", async () => {
+    const created: string[] = [];
+    const N = Object.assign(function (this: { onclick: null; close: () => void }, title: string) { created.push(title); this.onclick = null; this.close = () => {}; }, { permission: "granted", requestPermission: vi.fn() });
+    vi.stubGlobal("Notification", N);
+    await mountInbox([ITEMS[0]]);
+    expect(created).toEqual([]);
+    inbox = [ITEMS[0], ITEMS[1]];
+    const { POLL_MS } = await import("./ReviewInbox");
+    await act(async () => { await new Promise((r) => setTimeout(r, POLL_MS + 100)); });
+    expect(ITEMS[1].content_id).toBe(ITEMS[0].content_id);
+    expect(created).toEqual([ITEMS[1].summary]);
+  }, 10_000);
+});

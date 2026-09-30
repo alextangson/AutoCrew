@@ -259,6 +259,8 @@ async function attachAroll(ctx: Ctx): Promise<Result> {
   if (!at.ok) return fail(at.code, at.error);
   const fp = await stableFingerprint(at.value, Date.now());
   if (!fp.ok) return fail(fp.code, fp.error);
+  // 「指定给…」绑着列表里那份字节：锁内再核，文件换过就不挂（整分支审 6 P2）
+  if (str(ctx.params.expect_sha) && fp.value.sha256 !== str(ctx.params.expect_sha)) return fail("stale", "收件箱里这个视频刚换过，重新看一眼");
   // 与 record 同一套完整性核验（Codex 审 seg3 P2）：读不出时长的不收，不挪、不冻结
   const dur = await checkDuration(at.value, probe);
   if (!dur.ok) return fail(dur.code, dur.error);

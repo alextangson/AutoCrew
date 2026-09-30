@@ -155,6 +155,11 @@ export interface NotifyState { notified: Set<string>; lastByContent: Map<string,
 
 export const newNotifyState = (): NotifyState => ({ notified: new Set(), lastByContent: new Map() });
 
+/** 页面打开时已有的事：只把这几件记成「提醒过」，不开 10 分钟合并窗口（同一条稿紧接着来的新事照样提醒） */
+export function seedNotified(items: InboxItem[], state: NotifyState): void {
+  for (const i of items) state.notified.add(`${i.item_id}\u0000${i.gen}`);
+}
+
 /** 这一轮要弹哪几件（每条稿至多一件；已弹过的不再弹）。会改 state */
 export function toNotify(items: InboxItem[], state: NotifyState, now: number): InboxItem[] {
   const out: InboxItem[] = [];

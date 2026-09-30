@@ -486,3 +486,27 @@ describe("整分支审 5", () => {
     expect((await getContent(d.id, env.dir))!.status).toBe("draft_ready");
   });
 });
+
+describe("整分支审 6", () => {
+  async function setup() {
+    const target = await videoContent(env, "等原片的稿");
+    await founderApprove(env, target.id);
+    const file = await put(path.join(env.inbox, "IMG_8888.mov"), "bytes-one");
+    await reconcileAll(env.dir);
+    const it = (await readInbox(env.dir)).items.find((i) => i.type === "inbox_file")!;
+    return { target, file, it };
+  }
+  it("指定给… 成功后，下一次读列表就没有它了；同样的请求重发 = 回放", async () => {
+    const { target, it } = await setup();
+    const req = { item_id: it.item_id, gen: it.gen, action: "assign", to: target.id };
+    expect(await decideItem(req, env.dir)).toMatchObject({ ok: true });
+    expect((await readInbox(env.dir)).items.filter((i) => i.type === "inbox_file")).toEqual([]);
+    expect(await decideItem(req, env.dir)).toMatchObject({ ok: true, replayed: true });
+  });
+  it("对账之间收件箱里的文件被换了（同名同大小）：旧代次指定不了新字节", async () => {
+    const { target, file, it } = await setup();
+    await put(file, "bytes-two");
+    expect(await decideItem({ item_id: it.item_id, gen: it.gen, action: "assign", to: target.id }, env.dir)).toMatchObject({ ok: false, code: "stale" });
+    expect((await doc(target.id)).facts.some((f) => f.kind === "aroll" && f.state === "accepted")).toBe(false);
+  });
+});
