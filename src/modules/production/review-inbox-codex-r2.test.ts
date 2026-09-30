@@ -61,7 +61,7 @@ describe("Codex 2a-1 第二轮 P2", () => {
     const s = await agent({ action: "summary", id: c.id });
     expect(Buffer.byteLength(JSON.stringify(s))).toBeLessThanOrEqual(1536);
     expect((s.asks as Array<{ state: string }>).length).toBeGreaterThanOrEqual(1);
-    expect((s.asks as Array<{ state: string }>)[0].state).toBe("answered");
+    expect((s.asks as Array<{ state: string; option_id?: string }>)[0]).toMatchObject({ state: "answered", option_id: "ok" });
     const seen = new Set((s.asks as Array<{ ask_id: string }>).map((x) => x.ask_id));
     let next = s.asks_next_offset as number | undefined;
     while (next !== undefined) {
@@ -71,6 +71,35 @@ describe("Codex 2a-1 第二轮 P2", () => {
     }
     expect(seen.size).toBe(3);
     void projectRoot;
+  });
+
+  it("R2-2 翻页途中有请示被答复：每件恰好出现一次（稳定顺序 = 发起时间 + id）", async () => {
+    const c = await editing();
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const q = await agent({ action: "ask", content_id: c.id, request_id: `w${i}`, kind: ["粗剪", "样片", "配乐", "花费", "其他"][i], question: `第${i}件`, options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] });
+      ids.push(q.ask_id as string);
+    }
+    const seen: string[] = [];
+    let offset: number | undefined = 0;
+    let answered = false;
+    while (offset !== undefined) {
+      const p = await agent({ action: "summary", id: c.id, asks_offset: offset });
+      for (const x of p.asks as Array<{ ask_id: string }>) seen.push(x.ask_id);
+      if (!answered) {
+        const last = ids[4];
+        const it = (await items(c.id)).find((x) => x.item_id === `ask:${last}`)!;
+        await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "ok" }, env.dir);
+        answered = true;
+      }
+      offset = p.asks_next_offset as number | undefined;
+    }
+    expect(seen.sort()).toEqual([...ids].sort());
+    const s = await agent({ action: "summary", id: c.id, asks_offset: 3 });
+    expect((s.asks as Array<{ ask_id: string; state: string }>).at(-1)).toMatchObject({ ask_id: ids[4], state: "answered" });
+    await agent({ action: "answer_ask", content_id: c.id, ask_id: ids[0], option_id: "ok", founder_quote: "行" });
+    const s0 = await agent({ action: "summary", id: c.id });
+    expect((s0.asks as Array<{ state: string }>)[0].state).toBe("reported");
   });
 
   it("R2-3 已批 [A,B] 时，新组 [A,C] 可以作废（按批准的组保护，不按共用的一张图）", async () => {

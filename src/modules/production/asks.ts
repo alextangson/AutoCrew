@@ -285,11 +285,12 @@ export async function undoReportedAnswer(content: Content, dataDir: string, askI
 
 // ---- summary 的 asks[]（独立游标 asks_offset，不与 since_seq 混用） ----
 
-export interface AskRow { ask_id: string; kind: AskKind; state: AskStatus; option_id?: string; note?: string; via?: AskAnswer["via"]; reason?: string }
+/** reported = agent 转述的回答（24 小时内创始人可撤回） */
+export interface AskRow { ask_id: string; kind: AskKind; state: AskStatus | "reported"; option_id?: string; note?: string; via?: AskAnswer["via"]; reason?: string }
 
 export function askRows(doc: ProductionDoc, content: Content): AskRow[] {
   return [...(doc.asks ?? [])].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)).map((a) => {
     const s = askStatus(a, doc, content);
-    return { ask_id: a.id, kind: a.kind, state: s.status, ...(a.answer ? { option_id: a.answer.option_id, via: a.answer.via, ...(a.answer.note ? { note: a.answer.note } : {}) } : {}), ...(s.reason ? { reason: s.reason } : {}) };
+    return { ask_id: a.id, kind: a.kind, state: s.status === "answered" && a.answer?.via === "agent_reported" ? "reported" : s.status, ...(a.answer ? { option_id: a.answer.option_id, via: a.answer.via, ...(a.answer.note ? { note: a.answer.note } : {}) } : {}), ...(s.reason ? { reason: s.reason } : {}) };
   });
 }

@@ -120,12 +120,13 @@ async function inboxOf(c: Content, dataDir: string): Promise<Record<string, unkn
   return view ? { inbox: { count: view.count, item_ids: view.items.slice(0, 5).map((i) => i.item_id), where: "等你拍板" } } : {};
 }
 
-/** 请示行：已答的在前（agent 最要的是答复），同组按发起时间；按 asks_offset 翻页 */
+/** 请示行：稳定顺序，每行带状态与答复；按 asks_offset 翻页 */
 async function asksPart(c: Content, dataDir: string, offset: number): Promise<AsksPart | null> {
   const doc = await readProductionDoc(c.id, dataDir).catch(() => null);
   const all = doc ? askRows(doc, c) : [];
   if (!all.length) return null;
-  const rows = [...all.filter((r) => r.state === "answered"), ...all.filter((r) => r.state !== "answered")];
+  // 固定集合 = 这条稿全部请示，按（发起时间, id）排、只用 asks_offset 翻页：状态在两页之间会变，但不会挪位置（Codex 审 2a-1）
+  const rows = all;
   let n = ASKS_PAGE, noteMax = 30;
   const fields: Record<string, unknown> = {};
   const render = () => {
@@ -143,7 +144,7 @@ async function asksPart(c: Content, dataDir: string, offset: number): Promise<As
   const minimal = () => {
     const first = rows[offset];
     if (!first) return {};
-    return { asks: [{ ask_id: first.ask_id, kind: first.kind, state: first.state, ...(first.option_id ? { option_id: first.option_id } : {}) }], ...(offset + 1 < rows.length ? { asks_next_offset: offset + 1 } : {}) };
+    return { asks: [{ ask_id: first.ask_id, kind: first.kind, state: first.state, ...(first.option_id ? { option_id: first.option_id, via: first.via } : {}) }], ...(offset + 1 < rows.length ? { asks_next_offset: offset + 1 } : {}) };
   };
   return { fields, shrink, minimal };
 }
