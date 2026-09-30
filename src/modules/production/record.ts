@@ -402,7 +402,7 @@ async function recordStoryboard(a: RecordArgs, content: Content, dataDir: string
 
 // ---- 回执 ----
 
-export const PENDING_NEXT = "正在核对这段原片是不是这条（约 2 分钟）：对上了会自动挪进项目，之后用 autocrew_content summary（带 since_seq）取 aroll[] 里的新路径导入 ChatCut；对不上会转成候选等创始人在卡片上点。";
+export const PENDING_NEXT = "正在核对这段原片是不是这条（约 2 分钟）：对上了会自动挪进项目，之后用 autocrew_content summary（带 since_seq）取 aroll[] 里的新路径导入 ChatCut；对不上会转成候选等创始人在「等你拍板」里点。";
 
 function nextAction(core: ReceiptCore, exp: Explanation): string {
   if (core.state === "pending_match") return PENDING_NEXT;
@@ -410,7 +410,7 @@ function nextAction(core: ReceiptCore, exp: Explanation): string {
   if (core.state === "rejected") return `这个文件没收下${core.reason ? `：${core.reason}` : ""}。换一个文件重新 record（新的 request_id）；不要导入这个文件。`;
   if (core.state === "candidate") return `已记成候选（${core.reason ?? "归属要创始人确认"}），等创始人在「等你拍板」里点「对，就是它」。不要替创始人确认，也不要自己挪文件。`;
   if (core.kind === "aroll") return `原片已在项目里（path）。从这个新路径导入 ChatCut，导入后 record kind=chatcut_project chatcut_project_id=<工程 id> uses_aroll=["${core.fact_id}"]。`;
-  if (core.kind === "storyboard") return "分镜已收下。告诉创始人：在看板卡片上点「打开审阅页」看分镜（不要再发 MD 或文件路径当分镜）；他在对话里回复意见。";
+  if (core.kind === "storyboard") return `分镜已收下。要创始人拍板就用 ask kind=分镜 fact_id="${core.fact_id}"（选项里放 id=approve 表示通过），它会进「等你拍板」；不要再发 MD 或文件路径当分镜，也别在聊天里问。`;
   if (core.kind === "cut") return `成片已收。把这版的字幕也报上来（record kind=srt for_cut="${core.fact_id}"）。配乐和混音都好了才算可以审：那时 mark_ready fact_id="${core.fact_id}"（或 record 时带 review=true），创始人在「等你拍板」里审——成片通过只能创始人点。`;
   if (core.kind === "cover") return "封面已记下。一组要 3:4 + 4:3：下次用 paths 一次记一对，或第二张带 pair_with=<第一张 fact_id>。挑哪组只能创始人在「等你拍板」里点。";
   const missing = exp.missing.length ? `还差：${exp.missing.join("、")}。` : "";
