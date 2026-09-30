@@ -18,7 +18,7 @@ import type { JevCaller } from "../publish/review-gate/jev-client.js";
 import type { Override } from "../publish/review-gate/types.js";
 import { founderAnswer, undoReportedAnswer } from "./asks.js";
 import { DECISION_ACTIONS, FOUNDER_ONLY, founderDecision } from "./decisions.js";
-import type { InboxAction, InboxItem } from "./inbox.js";
+import { scopedId, type InboxAction, type InboxItem } from "./inbox.js";
 import { currentChecks, readInbox } from "./inbox-read.js";
 import { withFileOwnership } from "./mutex.js";
 import { mutateProduction } from "./service.js";
@@ -280,6 +280,10 @@ const PASS_WITHOUT_RECORD: ReadonlySet<string> = new Set(["i_published"]);
 const OBJ_KEYS = ["fact_id", "group_id", "cover_3x4_fact_id", "cover_4x3_fact_id", "platform", "option_id", "cut_sha", "sliver_key", "check_id", "ask_id"];
 
 async function objectItemIds(contentId: string, action: string, p: Record<string, unknown>, dataDir: string): Promise<string[]> {
+  return (await localItemIds(contentId, action, p, dataDir)).map((id) => scopedId(contentId, id));
+}
+
+async function localItemIds(contentId: string, action: string, p: Record<string, unknown>, dataDir: string): Promise<string[]> {
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
   const r = doc.round;
   const factBySha = (sha: unknown) => doc.facts.find((f) => f.sha256 === sha && f.kind === "cut" && f.round === r)?.id;

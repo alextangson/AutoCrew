@@ -18,6 +18,7 @@ import { fakeJev, planEntry, planOf, registeredVideo } from "../publish/review-g
 import { founderProjectReview } from "../video/handoff/founder-review.js";
 import { decide, decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
+import { scopedId } from "./inbox.js";
 import { reopenScript } from "./reopen.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, waiveSliverCheck, type Env } from "./testkit.js";
 
@@ -28,7 +29,7 @@ afterEach(async () => { await env.cleanup(); });
 const TITLE = "测试用短视频";
 const agent = (p: Record<string, unknown>, host = "claude-code") => executeContentSave({ _dataDir: env.dir, _host: host, ...p }) as Promise<Record<string, unknown>>;
 const items = async (contentId?: string) => (await readInbox(env.dir, contentId ? { contentId } : {})).items;
-const itemOf = async (id: string, contentId?: string) => (await items(contentId)).find((i) => i.item_id === id || i.item_id.startsWith(id));
+const itemOf = async (id: string, contentId?: string) => (await items(contentId)).find((i) => i.item_id === id || i.item_id === scopedId(i.content_id ?? "", id));
 const doc = async (id: string) => (await readProductionDoc(id, env.dir))!;
 
 async function editing() {
@@ -118,7 +119,7 @@ describe("单一决定入口：CAS（§3.1）", () => {
     await waiveSliverCheck(env, c.id, cut.sha);
     const r = await founderProjectReview(c.id, env.dir, { action: "approve", which: "final_cut", files: [{ path: "x", sha256: cut.sha }] }) as Record<string, unknown>;
     expect(r).toMatchObject({ ok: true, editor_label: "Codex" });
-    expect((await doc(c.id)).inbox_log).toMatchObject([{ item_id: "cut:r1", action: "approve_cut" }]);
+    expect((await doc(c.id)).inbox_log).toMatchObject([{ item_id: scopedId(c.id, "cut:r1"), action: "approve_cut" }]);
     expect(await itemOf("cut:r1", c.id)).toBeUndefined();
   });
 

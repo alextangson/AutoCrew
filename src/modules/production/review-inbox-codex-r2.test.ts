@@ -8,6 +8,7 @@ import { executeContentSave } from "../../tools/content-save.js";
 import { founderDecision } from "./decisions.js";
 import { decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
+import { scopedId } from "./inbox.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
 
 let env: Env;
@@ -32,7 +33,7 @@ describe("Codex 2a-1 第二轮 P2", () => {
     const b = await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.outside, "b.mp4"), "cut-b"), request_id: "cb" });
     const d = await doc(c.id);
     const shaB = d.facts.find((f) => f.id === b.fact_id)!.sha256;
-    const itA = (await items(c.id)).find((i) => i.item_id === `cand:${a.fact_id}`)!;
+    const itA = (await items(c.id)).find((i) => i.item_id === scopedId(i.content_id ?? "", `cand:${a.fact_id}`))!;
     const r = await decideItem({ content_id: c.id, item_id: itA.item_id, gen: itA.gen, action: "reject_candidate", fact_id: b.fact_id, sha256: shaB }, env.dir);
     expect(r).toMatchObject({ ok: true });
     const after = await doc(c.id);
@@ -55,7 +56,7 @@ describe("Codex 2a-1 第二轮 P2", () => {
     const c = await editing(title);
     for (let i = 0; i < 3; i++) {
       const q = await agent({ action: "ask", content_id: c.id, request_id: `q${i}`, kind: ["粗剪", "样片", "配乐"][i], question: "问一下".repeat(40), options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] });
-      const it = (await items(c.id)).find((x) => x.item_id === `ask:${q.ask_id}`)!;
+      const it = (await items(c.id)).find((x) => x.item_id === scopedId(x.content_id ?? "", `ask:${q.ask_id}`))!;
       await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "ok", note: "回答".repeat(30) }, env.dir);
     }
     const s = await agent({ action: "summary", id: c.id });
@@ -88,7 +89,7 @@ describe("Codex 2a-1 第二轮 P2", () => {
       for (const x of p.asks as Array<{ ask_id: string }>) seen.push(x.ask_id);
       if (!answered) {
         const last = ids[4];
-        const it = (await items(c.id)).find((x) => x.item_id === `ask:${last}`)!;
+        const it = (await items(c.id)).find((x) => x.item_id === scopedId(x.content_id ?? "", `ask:${last}`))!;
         await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "ok" }, env.dir);
         answered = true;
       }
@@ -125,7 +126,7 @@ describe("Codex 2a-1 第二轮 P2", () => {
     const extra = await put(path.join(projectRoot(env, c.id), "04-edit/note.png"), png(10, 10));
     const q = await agent({ action: "ask", content_id: c.id, request_id: "q", kind: "分镜", question: "分镜行吗", fact_id: sb.fact_id, attachments: [extra], options: [{ id: "approve", label: "通过" }, { id: "no", label: "不行" }] });
     await put(extra, png(10, 10, "changed"));
-    const it = (await items(c.id)).find((x) => x.item_id === `ask:${q.ask_id}`)!;
+    const it = (await items(c.id)).find((x) => x.item_id === scopedId(x.content_id ?? "", `ask:${q.ask_id}`))!;
     expect(await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "approve" }, env.dir)).toMatchObject({ ok: false, code: "attachments_changed" });
   });
 });

@@ -9,6 +9,7 @@ import { executeContentSave } from "../../tools/content-save.js";
 import { registeredVideo } from "../publish/review-gate/testkit.js";
 import { founderDecision } from "./decisions.js";
 import { readInbox } from "./inbox-read.js";
+import { scopedId } from "./inbox.js";
 import { cardPanel } from "./panel.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
@@ -55,7 +56,7 @@ describe("已发布的稿：只剩发布相关的事", () => {
     const r = await registeredVideo(env);
     await put(path.join(r.root, "06-publish/publish-plan.json"), JSON.stringify({ final_video: { path: r.video }, platforms: [{ platform: "douyin" }, { platform: "bilibili" }] }));
     await founderDecision(r.id, "i_published", { platform: "douyin" }, env.dir);
-    expect((await items(r.id)).map((i) => i.item_id)).toEqual(["published:r1:bilibili"]);
+    expect((await items(r.id)).map((i) => i.item_id)).toEqual([scopedId(r.id, "published:r1:bilibili")]);
   });
 });
 

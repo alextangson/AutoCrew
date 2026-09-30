@@ -12,6 +12,7 @@ import { validCoverGroups } from "./cover-groups.js";
 import { founderDecision } from "./decisions.js";
 import { decide, decideItem } from "./inbox-decide.js";
 import { readInbox } from "./inbox-read.js";
+import { scopedId } from "./inbox.js";
 import { reconcileAll } from "./reconcile.js";
 import { founderApprove, makeEnv, png, projectRoot, put, record, videoContent, type Env } from "./testkit.js";
 
@@ -175,7 +176,7 @@ describe("Codex 2a-1 第五轮", () => {
     const old = await agent({ action: "ask", content_id: c.id, request_id: "o", kind: "粗剪", question: "行吗", options: opts });
     await agent({ action: "answer_ask", content_id: c.id, ask_id: old.ask_id, option_id: "ok", founder_quote: "可以" });
     const neu = await agent({ action: "ask", content_id: c.id, request_id: "n", kind: "粗剪", question: "新版行吗", options: opts });
-    const it = (await items(c.id)).find((x) => x.item_id === `ask:${old.ask_id}`)!;
+    const it = (await items(c.id)).find((x) => x.item_id === scopedId(x.content_id ?? "", `ask:${old.ask_id}`))!;
     expect(await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "undo_ask_answer" }, env.dir)).toMatchObject({ ok: true });
     const asks = (await doc(c.id)).asks!;
     expect(asks.find((a) => a.id === old.ask_id)).toMatchObject({ state: "superseded", superseded_by: neu.ask_id, history: [{ via: "agent_reported" }] });
@@ -231,7 +232,7 @@ describe("Codex 2a-1 第六轮", () => {
 describe("Codex 2a-1 第七轮", () => {
   const agent = (p: Record<string, unknown>) => import("../../tools/content-save.js").then((m) => m.executeContentSave({ _dataDir: env.dir, _host: "codex", ...p }) as Promise<Record<string, unknown>>);
   const via = async (c: string, type: string, action: string, extra: Record<string, unknown> = {}) => {
-    const it = (await items(c)).find((i) => i.type === type || i.item_id === type)!;
+    const it = (await items(c)).find((i) => i.type === type || i.item_id === scopedId(c, type))!;
     const a = it.actions.find((x) => x.action === action)!;
     return decideItem({ content_id: c, item_id: it.item_id, gen: it.gen, action, ...a.params, ...(a.note ? { note: "改" } : {}), ...extra }, env.dir);
   };
@@ -265,7 +266,7 @@ describe("Codex 2a-1 第七轮", () => {
     expect(await via(c.id, "sliver", "reject_cut")).toMatchObject({ ok: true });
     expect(await decide(c.id, "waive_sliver_check", { cut_sha: cutSha }, env.dir)).toMatchObject(CONFLICT);
     const q = await agent({ action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] });
-    const ask = (await items(c.id)).find((i) => i.item_id === `ask:${q.ask_id}`)!;
+    const ask = (await items(c.id)).find((i) => i.item_id === scopedId(i.content_id ?? "", `ask:${q.ask_id}`))!;
     await decideItem({ content_id: c.id, item_id: ask.item_id, gen: ask.gen, action: "answer_ask", option_id: "ok" }, env.dir);
     expect(await decide(c.id, "answer_ask", { ask_id: q.ask_id, option_id: "no" }, env.dir)).toMatchObject(CONFLICT);
     const d = await videoContent(env, "稿子三");
@@ -379,5 +380,27 @@ describe("整分支审（2a vs main）", () => {
     const out = await decideItem({ item_id: it.item_id, gen: it.gen, action: "assign", to: target.id, path: "/etc/passwd" }, env.dir);
     expect(out).toMatchObject({ ok: true });
     expect((await doc(target.id)).facts.some((f) => f.kind === "aroll" && f.state === "accepted")).toBe(true);
+  });
+});
+
+describe("item_id 全局唯一（整分支审 2）", () => {
+  it("两条稿同一轮都有成片、封面：4 件各自独立，决定落到各自的稿", async () => {
+    const mk = async (title: string, seed: string) => {
+      const c = await videoContent(env, title);
+      await founderApprove(env, c.id);
+      await record(env, { content_id: c.id, kind: "aroll", path: await put(path.join(env.inbox, `${title}-原片.mov`), `raw-${seed}`), request_id: "a" });
+      await record(env, { content_id: c.id, kind: "cut", path: await put(path.join(env.chatcut, `${title}.mp4`), `cut-${seed}`), request_id: "c", review: true });
+      await record(env, { content_id: c.id, kind: "cover", paths: [await put(path.join(env.chatcut, `${seed}a.png`), png(900, 1200, `${seed}a`)), await put(path.join(env.chatcut, `${seed}b.png`), png(1200, 900, `${seed}b`))], cover_text: "字", request_id: "g" });
+      return c;
+    };
+    const a = await mk("第一条同轮稿", "1"), b = await mk("第二条同轮稿", "2");
+    const all = (await readInbox(env.dir)).items.filter((i) => i.type === "cut_review" || i.type === "cover_pick");
+    expect(all).toHaveLength(4);
+    expect(new Set(all.map((i) => i.item_id)).size).toBe(4);
+    const cutB = all.find((i) => i.type === "cut_review" && i.content_id === b.id)!;
+    expect(await decideItem({ item_id: cutB.item_id, gen: cutB.gen, action: "reject_cut", note: "改", ...cutB.actions[1].params }, env.dir)).toMatchObject({ ok: true });
+    expect((await doc(b.id)).decisions.some((d) => d.type === "cut_reject")).toBe(true);
+    expect((await doc(a.id)).decisions.some((d) => d.type === "cut_reject")).toBe(false);
+    expect((await readInbox(env.dir)).items.find((i) => i.type === "cut_review" && i.content_id === a.id)).toBeDefined();
   });
 });

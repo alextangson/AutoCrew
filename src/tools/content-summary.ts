@@ -89,6 +89,9 @@ export function fitBudget(out: Record<string, unknown>, part: ProductionPart | n
   const merged = () => ({ ...out, ...part?.fields, ...asks?.fields });
   const size = () => Buffer.byteLength(JSON.stringify(merged()));
   while (part && size() > SUMMARY_BUDGET && part.shrink()) { /* 先截 changes，再截候选依据，再给原片行分页 */ }
+  // 条目 id 只是提示（总数照给）：放不下先少给几个，再动请示
+  const ids = (out.inbox as { item_ids?: string[] } | undefined)?.item_ids;
+  while (ids && ids.length && size() > SUMMARY_BUDGET) ids.pop();
   while (asks && size() > SUMMARY_BUDGET && asks.shrink()) { /* 请示：截回答原话，再少给几行（游标跟着退） */ }
   if (size() > SUMMARY_BUDGET && Array.isArray(out.blockers)) out.blockers = (out.blockers as string[]).slice(0, 1).map((b) => clip(b, 40));
   if (size() > SUMMARY_BUDGET && part) part.fields.candidates = [];

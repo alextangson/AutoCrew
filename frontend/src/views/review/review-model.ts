@@ -133,7 +133,7 @@ export function step(items: InboxItem[], currentId: string | null, dir: 1 | -1):
 export function undoFor(item: InboxItem, action: string, result: Record<string, unknown>): { action: string; params: Record<string, unknown> } | null {
   const decision = result.decision as { id?: string } | undefined;
   if ((action === "approve_cut" || action === "pick_cover") && decision?.id) return { action: "revoke_approval", params: { decision_id: decision.id } };
-  const m = /^(?:published|claim):r(\d+):(.+)$/.exec(item.item_id);
+  const m = /^(?:published|claim):[^:]+:r(\d+):(.+)$/.exec(item.item_id);
   if ((action === "i_published" || action === "confirm_receipt") && m) return { action: "correct_publish", params: { target_id: `slot:${m[1]}:${m[2]}` } };
   return null;
 }

@@ -67,6 +67,13 @@ function revokesOf(doc: ProductionDoc, type: "cut_approval" | "cover_approval"):
   return doc.decisions.filter((d) => d.round === doc.round && d.type === "approval_revoke" && d.target_id && targets.has(d.target_id)).map((d) => d.id);
 }
 
+/** 条目 id 带上稿件 id：cut:r1 → cut:<content_id>:r1；draft:<content_id> 本身就带 */
+export function scopedId(contentId: string, local: string): string {
+  const [type, ...rest] = local.split(":");
+  const tail = rest.join(":");
+  return tail === contentId ? `${type}:${contentId}` : `${type}:${contentId}:${tail}`;
+}
+
 export const genOf = (snapshot: unknown): string => crypto.createHash("sha256").update(JSON.stringify(snapshot)).digest("hex").slice(0, 16);
 
 // ---- 每条稿的输入（I/O 在 inbox-read 里收集） ----
@@ -364,7 +371,8 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
 
 function finish(drafts: Draft[], input: ContentInput, now: number): InboxItem[] {
   const consumed = new Set(input.log.filter((e) => !e.pending || now - Date.parse(e.at) <= 10 * 60_000).map((c) => `${c.item_id}\u0000${c.gen}`));
-  return drafts.map(({ snapshot, ...x }) => ({ ...x, gen: genOf([x.item_id, snapshot]), content_id: input.content.id, title: input.content.title }))
+  // item_id 全局唯一（整分支审 2 P1）：「类型:稿件 id:这条稿里的身份」，两条稿同一轮的 cut:r1 不再撞
+  return drafts.map(({ snapshot, ...x }) => ({ ...x, item_id: scopedId(input.content.id, x.item_id), gen: genOf([scopedId(input.content.id, x.item_id), snapshot]), content_id: input.content.id, title: input.content.title }))
     .filter((x) => !consumed.has(`${x.item_id}\u0000${x.gen}`));
 }
 

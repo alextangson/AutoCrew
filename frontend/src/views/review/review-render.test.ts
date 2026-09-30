@@ -56,8 +56,8 @@ export const ITEMS: InboxItem[] = [
     detail: { status: "slivers", items: [{ key: "k1", start_tc: "00:00:03", frames: 5, prev_name: "空镜", next_name: "动效", suggestion: null, waived: false, action: { action: "waive_sliver", label: "这处是故意的", role: "secondary", params: { cut_sha: "s2", fingerprint: "fp", sliver_key: "k1" } } }] } }),
   base({ item_id: "register:r1", type: "register_blocked", summary: "还差一步才能发：缺这版成片的字幕", actions: [{ action: "nudge", label: "让 Codex 补", role: "primary" }], detail: { reason: "缺这版成片的字幕" } }),
   base({ item_id: "pubcheck:r1:douyin", type: "publish_check", rank: 2, summary: "发之前再看一眼（抖音）", actions: [{ action: "publish_check_confirm", label: "没问题", role: "primary", params: { check_id: "chk-1" } }, { action: "publish_check_revise", label: "有几处要改…", role: "secondary", params: { check_id: "chk-1" }, note: "required" }], detail: { platform: "douyin", verdict: "pass", items: [] } }),
-  base({ item_id: "published:r1:douyin", type: "published_ask", rank: 2, summary: "发了吗（抖音）", actions: [{ action: "i_published", label: "已经发出去了", role: "primary", params: { platform: "douyin" }, note: "optional" }], detail: { platform: "douyin" } }),
-  base({ item_id: "claim:r1:douyin", type: "publish_claim", rank: 2, summary: "Claude说已经发了（抖音）", actions: [{ action: "confirm_receipt", label: "对，发了", role: "primary", params: { fact_id: "p1" } }, { action: "correct_publish", label: "没发", role: "secondary", params: { target_id: "slot:1:douyin" } }], detail: { platform: "douyin" } }),
+  base({ item_id: "published:content-1-a:r1:douyin", type: "published_ask", rank: 2, summary: "发了吗（抖音）", actions: [{ action: "i_published", label: "已经发出去了", role: "primary", params: { platform: "douyin" }, note: "optional" }], detail: { platform: "douyin" } }),
+  base({ item_id: "claim:content-1-a:r1:douyin", type: "publish_claim", rank: 2, summary: "Claude说已经发了（抖音）", actions: [{ action: "confirm_receipt", label: "对，发了", role: "primary", params: { fact_id: "p1" } }, { action: "correct_publish", label: "没发", role: "secondary", params: { target_id: "slot:1:douyin" } }], detail: { platform: "douyin" } }),
   base({ item_id: "draft:content-2-b", content_id: "content-2-b", type: "draft", rank: 3, summary: "稿子写好了，过一眼", actions: [{ action: "approve_script", label: "稿子没问题", role: "primary" }, { action: "revise_script", label: "还要改…", role: "secondary", note: "required" }], detail: { words: 300 } }),
 ];
 
@@ -384,5 +384,22 @@ describe("件数 = 看到的行数", () => {
     expect(el.querySelectorAll(".ri-row").length).toBe(2);
     expect(el.querySelector(".ri-count")!.textContent).toBe("2 件");
     expect(document.title).toBe("(2) AutoCrew");
+  });
+});
+
+describe("两条稿同一轮的成片、封面（整分支审 2）", () => {
+  it("4 件 = 4 行；每个面板的预览、决定都是自己那条稿的", async () => {
+    const cutOf = (cid: string, t: string): InboxItem => ({ ...ITEMS[1], item_id: `cut:${cid}:r1`, content_id: cid, title: t, detail: { ...ITEMS[1].detail, review_fact_id: `f-${cid}`, versions: [{ fact_id: `f-${cid}`, sha256: "s", at: new Date().toISOString(), label: "最新一版" }] },
+      actions: [{ action: "approve_cut", label: "就用这版", role: "primary", params: { fact_id: `f-${cid}`, sha256: "s" } }] });
+    const coverOf = (cid: string, t: string): InboxItem => ({ ...ITEMS[2], item_id: `cover:${cid}:r1`, content_id: cid, title: t });
+    await mountInbox([cutOf("content-1-a", "甲"), cutOf("content-2-b", "乙"), coverOf("content-1-a", "甲"), coverOf("content-2-b", "乙")]);
+    expect(el.querySelectorAll(".ri-row").length).toBe(4);
+    const rowsOf = [...el.querySelectorAll(".ri-row")].filter((r) => r.getAttribute("aria-label") === "成片剪好了，看一遍");
+    await click(rowsOf[1]);
+    const title = el.querySelector(".ri-peek .ri-props dd")!.textContent;
+    const cid = title === "甲" ? "content-1-a" : "content-2-b";
+    expect(el.querySelector(".ri-peek video")!.getAttribute("src")).toBe(`/media/${cid}/f-${cid}`);
+    await click(btn("就用这版"));
+    expect(decided.at(-1)).toMatchObject({ content_id: cid, item_id: `cut:${cid}:r1`, fact_id: `f-${cid}` });
   });
 });
