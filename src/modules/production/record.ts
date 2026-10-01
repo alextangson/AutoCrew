@@ -362,27 +362,32 @@ async function pairReceiptNow(content: Content, doc: ProductionDoc, dataDir: str
 // ---- 封面一次记一组（review-inbox §6.1）：两张都先核完再落位；同一组、同一版本号 ----
 
 async function recordCoverPair(a: RecordArgs, content: Content, doc: ProductionDoc, dataDir: string): Promise<Receipt> {
-  const version = a.version ?? nextCoverVersion(doc);
+  // 上次只记上了一半（第二张落位 / 写入失败）：同一 request_id 重试接着那一版补另一半，不另起一版、不撞自己占的槽（整分支审 9 P2）
+  const done = a.paths!.map((_, i) => doc.requests?.[`${a.request_id}#${i}`]?.receipt as unknown as ReceiptCore | undefined);
+  const doneFacts = done.map((r) => (r ? doc.facts.find((f) => f.id === r.fact_id) : undefined));
+  const version = a.version ?? doneFacts.find((f) => f?.version)?.version ?? nextCoverVersion(doc);
   const parts = a.paths!.map((p, i): RecordArgs => ({ ...a, path: p, paths: a.paths, request_id: `${a.request_id}#${i}`, version }));
-  const plans: FilePlan[] = [];
-  for (const part of parts) {
+  const plans: Array<FilePlan | null> = [];
+  for (const [i, part] of parts.entries()) {
+    if (done[i]) { plans.push(null); continue; }
     const plan = await planFileRecord(part, content, doc, dataDir);
     if (!plan.ok) return fail(plan.code, `${part.path}：${plan.error}`);
     plans.push(plan.value);
   }
-  const ratios = plans.map((p) => p.ratio).sort().join(",");
-  if (ratios !== "3:4,4:3") return fail("both_ratios_required", `paths 要一张 3:4、一张 4:3（按像素认），收到的是 ${plans.map((p) => p.ratio ?? "?").join(" + ")}`);
+  const ratioOf = (i: number) => plans[i]?.ratio ?? doneFacts[i]?.ratio;
+  const ratios = parts.map((_, i) => ratioOf(i)).sort().join(",");
+  if (ratios !== "3:4,4:3") return fail("both_ratios_required", `paths 要一张 3:4、一张 4:3（按像素认），收到的是 ${parts.map((_, i) => ratioOf(i) ?? "?").join(" + ")}`);
   // 这一对已经是一组了（最常见：对账先收了 05-cover/vNNN，agent 再报同两张）：并进那一组、补上封面字，不另起一组（verifier 2a P2）
-  // 显式带了版本号 = agent 要另起那一版，不并
-  const joined = a.version ? null : await joinExistingPair(a, content, doc, plans, dataDir);
+  // 显式带了版本号 = agent 要另起那一版，不并；续记半组也不并
+  const joined = a.version || done.some(Boolean) ? null : await joinExistingPair(a, content, doc, plans as FilePlan[], dataDir);
   if (joined) return joined;
   const receipts: Receipt[] = [];
   for (const [i, plan] of plans.entries()) {
-    const r = await commitFile(parts[i], content, plan, dataDir);
+    const r = plan ? await commitFile(parts[i], content, plan, dataDir) : await receiptFor(content, dataDir, currentCore(doc, done[i]!));
     receipts.push(r);
-    if (!r.ok) return i === 0 ? r : { ...r, error: `第一张（${plans[0].ratio}）已记下，第二张没记上：${String(r.error)}`, first: receipts[0] };
+    if (!r.ok) return i === 0 ? r : { ...r, error: `第一张（${ratioOf(0)}）已记下，第二张没记上：${String(r.error)}。用同一个 request_id 重试会接着这一组补上`, first: receipts[0] };
   }
-  const facts = receipts.map((r) => ({ fact_id: r.fact_id, ratio: plans[receipts.indexOf(r)].ratio, state: r.state, path: r.path }));
+  const facts = receipts.map((r, i) => ({ fact_id: r.fact_id, ratio: ratioOf(i), state: r.state, path: r.path }));
   const groupId = (receipts.find((r) => r.group_id)?.group_id as string | undefined) ?? null;
   const out = { ok: true, content_id: content.id, kind: "cover", facts, group_id: groupId, stage: receipts[1].stage, missing: receipts[1].missing,
     next_action: groupId ? "这一组封面已记下（3:4 + 4:3）。挑哪组只能创始人在「等你拍板」里点。" : "两张都只记成了候选（不在可搬入目录），等创始人在「等你拍板」里确认。" };

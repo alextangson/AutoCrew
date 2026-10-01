@@ -7,6 +7,7 @@ import type { Heard } from "./decide.js";
 import { readTranscript, writeTranscript } from "./cache.js";
 import { matchDeps } from "./deps.js";
 import type { MatchJob } from "./queue.js";
+import { sha256File } from "../../video/handoff/manifest.js";
 
 /** uncached：转写回来了，但这期间文件被挪 / 改名 / 改了，文本没记进缓存（Codex 审 segB10 P2） */
 export type Heard2 = Heard & { failed?: true; uncached?: true };
@@ -28,7 +29,8 @@ export async function hear(dataDir: string, job: MatchJob, signal: AbortSignal):
   if (!out.ok && out.unavailable && !signal.aborted) return { text: null, why: `转写环境没装好（${out.reason}）` };
   if (!out.ok) return { text: null, why: signal.aborted ? `转写超时（${out.reason}）` : `转写失败：${out.reason}`, failed: true };
   // 转写期间字节变了：这份文本不能记在旧 sha 名下
-  if (!(await sameFile(job))) return { text: out.text, uncached: true };
+  // 大小 + 修改时间不够：同样大、保住了修改时间的替换会把文本记到旧 sha 名下（整分支审 9 P2）。记缓存前对转写完的字节真算一遍 sha
+  if (!(await sameFile(job)) || (await sha256File(job.path).catch(() => null)) !== job.sha256) return { text: out.text, uncached: true };
   await writeTranscript(dataDir, job.sha256, out.text);
   return { text: out.text };
 }
