@@ -165,7 +165,7 @@ describe("预检", () => {
   it("服务不是启动器起的：不动手", async () => {
     await fetchFirst();
     const r = await preflight(user, machine, "v0.5.0", { git: git(), ...noBusy, launcher: async () => ({ running: true, managed: false }) });
-    expect(r).toMatchObject({ ok: false, code: "unmanaged" });
+    expect(r).toMatchObject({ ok: false, code: "unmanaged", reason: "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。在 AutoCrew 文件夹里运行 npm run restart，之后再点更新。" });
   });
 
   it("锁：活进程持锁 → 正在更新；死进程的旧锁清掉重拿；令牌对上才交接", async () => {

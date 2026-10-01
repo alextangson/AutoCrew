@@ -10,6 +10,7 @@ import { getMachineDir } from "../../storage/storage-roots.js";
 import { RunStore, chiefEditorHome, ownerAlive, agentStillThere, type RunRecord } from "../../desktop/chief-editor/run-store.js";
 
 export const RUNNING_MESSAGE = "正在更新，等它跑完";
+export const UNMANAGED_MESSAGE = "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。在 AutoCrew 文件夹里运行 npm run restart，之后再点更新。";
 export const UPDATING_MESSAGE = "AutoCrew 正在更新，稍后再试";
 
 /** 更新锁在手时，新的对话轮、本机 agent 轮、发布动作一律不开（已经在跑的不碰） */
@@ -67,7 +68,7 @@ export async function preflight(root: string, machineDir: string, tag: string, d
     if (remote) return no("busy", remote);
   }
   const launcher = deps.launcher ? await deps.launcher() : { running: false, managed: true };
-  if (launcher.running && !launcher.managed) return no("unmanaged", "AutoCrew 不是用 npm start 启动的，没法自动重启；请按 README 手动更新");
+  if (launcher.running && !launcher.managed) return no("unmanaged", UNMANAGED_MESSAGE);
   return { ok: true };
 }
 
