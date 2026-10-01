@@ -6,9 +6,16 @@ import fs from "node:fs";
 import { firstLine, type GitRunner } from "./git.js";
 import { isGitInstall, NOT_GIT } from "./check.js";
 import { files } from "./state.js";
+import { getMachineDir } from "../../storage/storage-roots.js";
 import { RunStore, chiefEditorHome, ownerAlive, agentStillThere, type RunRecord } from "../../desktop/chief-editor/run-store.js";
 
 export const RUNNING_MESSAGE = "正在更新，等它跑完";
+export const UPDATING_MESSAGE = "AutoCrew 正在更新，稍后再试";
+
+/** 更新锁在手时，新的对话轮、本机 agent 轮、发布动作一律不开（已经在跑的不碰） */
+export function updatingRefusal(machineDir = getMachineDir()): string | null {
+  return lockHeld(machineDir) ? UPDATING_MESSAGE : null;
+}
 
 export interface PreflightDeps {
   git: GitRunner;
@@ -18,6 +25,8 @@ export interface PreflightDeps {
   runAlive?: (r: RunRecord) => boolean;
   /** 服务是不是由启动器（npm start）管着：不是就没法自动重启 */
   launcher?: () => Promise<{ running: boolean; managed: boolean }>;
+  /** 命令行里问正在跑的服务有没有轮在跑（null = 空闲；抛 = 问不到） */
+  remoteBusy?: () => Promise<string | null>;
 }
 
 export type Preflight = { ok: true } | { ok: false; code: string; reason: string };
@@ -51,6 +60,12 @@ export async function preflight(root: string, machineDir: string, tag: string, d
   if (!ancestor.ok) return no("not_ancestor", `本地程序比 ${tag} 新或者已经分叉，不能自动更新`);
   const busy = busyWork(machineDir, deps);
   if (busy) return no("busy", busy);
+  if (deps.remoteBusy) {
+    let remote: string | null;
+    try { remote = await deps.remoteBusy(); }
+    catch (e) { return no("busy_unknown", `没法确认 AutoCrew 现在空闲（${e instanceof Error ? e.message : String(e)}），稍后再试或先停掉服务`); }
+    if (remote) return no("busy", remote);
+  }
   const launcher = deps.launcher ? await deps.launcher() : { running: false, managed: true };
   if (launcher.running && !launcher.managed) return no("unmanaged", "AutoCrew 不是用 npm start 启动的，没法自动重启；请按 README 手动更新");
   return { ok: true };

@@ -20,7 +20,7 @@ export function UpdateResultDialog(props: { initial?: UpdateResult | null }) {
     const r = await ackResult();
     if (r.ok) setResult(null); else setError(r.error);
   };
-  const title = result.ok ? `已更新到 ${result.to}` : result.outcome === "stuck" ? "更新失败，需要你手动恢复" : `更新失败，已退回 ${result.from}`;
+  const title = result.ok ? `已更新到 ${result.to}` : result.outcome === "not_started" ? "更新没能开始" : result.outcome === "stuck" ? "更新失败，需要你手动恢复" : `更新失败，已退回 ${result.from}`;
   return <div className="upd-overlay" role="dialog" aria-label={title}>
     <div className="upd-overlay-card upd-result">
       <h3>{title}</h3>

@@ -7,7 +7,7 @@ import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { getMachineDir } from "../src/storage/storage-roots.js";
-import { readFileSync } from "node:fs";
+import { launchedByLauncher } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
@@ -194,11 +194,8 @@ const updateRoute = createUpdateHandler({
   authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,
   root: programRoot(), machineDir: getMachineDir(), port: PORT,
   inProcessTurns: activeTurnCount,
-  launcher: async () => {
-    let pid = 0;
-    try { pid = Number(readFileSync(path.join(getMachineDir(), "autocrew.pid"), "utf-8").trim()); } catch { /* 没 pid 文件 = 不是启动器起的 */ }
-    return { running: true, managed: pid === process.pid };
-  },
+  // 启动器记的是 tsx 的 pid，跑本文件的是 tsx 拉起的另一个 node：比启动器发给这一次启动的标记，不比 pid
+  launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()) }),
 });
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {

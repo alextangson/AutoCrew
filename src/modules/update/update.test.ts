@@ -197,7 +197,7 @@ describe("更新执行", () => {
       calls.push(name);
       if (fail[name] && seen[name] <= fail[name]!) throw new Error(`${name} 坏了`);
     };
-    return { install: step("install"), build: step("build"), restart: step("restart"), health: step("health") };
+    return { quiesce: step("quiesce"), install: step("install"), build: step("build"), restart: step("restart"), health: step("health") };
   };
   beforeEach(async () => {
     calls = [];
@@ -211,7 +211,7 @@ describe("更新执行", () => {
     const r = await runUpdate(job(steps()));
     expect(r).toMatchObject({ ok: true, outcome: "updated" });
     expect(sh(user, "rev-parse", "HEAD")).toBe(tagCommit);
-    expect(calls).toEqual(["install", "build", "restart", "health"]);
+    expect(calls).toEqual(["install", "build", "quiesce", "restart", "health"]);
     expect(readResult(machine)).toMatchObject({ ok: true, to: "0.5.0" });
     expect(updateView(user, machine, false)).toMatchObject({ current: "0.5.0", banner: null, result: { ok: true } });
     expect(fs.readFileSync(r.log, "utf-8")).toContain("merge --ff-only");

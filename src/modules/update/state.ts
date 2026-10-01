@@ -25,7 +25,7 @@ export interface UpdateStatus {
 export interface UpdateResult {
   ok: boolean;
   /** 「rolled_back」= 失败已退回；「stuck」= 退回也失败，要手动恢复 */
-  outcome: "updated" | "rolled_back" | "stuck";
+  outcome: "updated" | "rolled_back" | "stuck" | "not_started";
   from: string;
   to: string;
   at: string;

@@ -18,6 +18,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
+import { updatingRefusal } from "../modules/update/preflight.js";
 
 const FILE = "recent-turns.json";
 const RING_MAX = 50;
@@ -55,6 +56,9 @@ export function registerTurn(
   clientId: string,
   opts?: { conversationId?: string },
 ): RegisterTurnResult {
+  // 一键更新进行中（self-update §3）：不开新轮，免得重启时把它掐断
+  const updating = updatingRefusal();
+  if (updating) return { ok: false, error: updating };
   if (active.has(turnId)) {
     return { ok: false, error: "这一轮已经在跑了，别重复发（turn 重复）" };
   }

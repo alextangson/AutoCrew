@@ -4,7 +4,7 @@
  */
 import type http from "node:http";
 import { checkForUpdate, updateView, type UpdateView } from "../modules/update/check.js";
-import { lockHeld, type PreflightDeps } from "../modules/update/preflight.js";
+import { busyWork, lockHeld, type PreflightDeps } from "../modules/update/preflight.js";
 import { markResultSeen, writeSettings } from "../modules/update/state.js";
 import { prepareUpdate, spawnDetachedUpdater, type Prepared } from "../modules/update/start.js";
 import type { GitRunner } from "../modules/update/git.js";
@@ -21,7 +21,7 @@ export interface UpdateRouteDeps {
   /** 测试注入 */
   git?: GitRunner;
   runAlive?: PreflightDeps["runAlive"];
-  spawnUpdater?: (job: Prepared) => { ok: true; log: string } | { ok: false; reason: string };
+  spawnUpdater?: (job: Prepared) => Promise<{ ok: true; log: string } | { ok: false; reason: string }>;
 }
 
 const JSON_TYPE = "application/json; charset=utf-8";
@@ -45,13 +45,19 @@ export function createUpdateHandler(deps: UpdateRouteDeps) {
       ...(deps.launcher ? { launcher: deps.launcher } : {}),
     });
     if (!prep.ok) return { ok: false, code: prep.code, error: prep.reason };
-    const spawned = (deps.spawnUpdater ?? ((j: Prepared) => spawnDetachedUpdater(deps.root, deps.machineDir, deps.port, j)))(prep);
+    const spawned = await (deps.spawnUpdater ?? ((j: Prepared) => spawnDetachedUpdater(deps.root, deps.machineDir, deps.port, j)))(prep);
     if (!spawned.ok) return { ok: false, code: "spawn_failed", error: spawned.reason };
     return { ok: true, from: prep.from, to: prep.to, log: spawned.log };
   };
   return async (req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> => {
     const p = url.pathname;
     if (!p.startsWith("/api/update")) return false;
+    // 「有没有轮在跑」：命令行 autocrew update 与独立的更新进程用本机 server-token 来问（只读，不触发任何动作）
+    if (p === "/api/update/busy" && req.method === "GET") {
+      if (deps.authorize(req) === null) { res.writeHead(403).end(); return true; }
+      send(res, 200, { ok: true, busy: busyWork(deps.machineDir, { inProcessTurns: deps.inProcessTurns ?? (() => 0), ...(deps.runAlive ? { runAlive: deps.runAlive } : {}) }) });
+      return true;
+    }
     const isGet = p === "/api/update" && req.method === "GET";
     if (isGet ? !session(req) : !writeOk(req)) { res.writeHead(403).end(); return true; }
     try {

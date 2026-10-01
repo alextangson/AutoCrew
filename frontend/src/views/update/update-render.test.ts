@@ -6,9 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import type { UpdateView } from "./update-api";
 
 const calls: string[] = [];
+let loaded: unknown = { running: false };
 let startReply: { ok: true; data: unknown } | { ok: false; error: string } = { ok: true, data: {} };
 vi.mock("./update-api", () => ({
-  loadUpdate: async () => ({ ok: true, data: { running: false } }),
+  loadUpdate: async () => ({ ok: true, data: loaded }),
   checkNow: async () => { calls.push("check"); return { ok: true, data: VIEW({ status: { checkedAt: new Date().toISOString(), current: "0.4.0", available: false, error: "连不上 GitHub（超时）" } }) }; },
   saveUpdateSettings: async (p: Record<string, unknown>) => { calls.push(`settings:${JSON.stringify(p)}`); return { ok: true, data: VIEW({ banner: null }) }; },
   ackResult: async () => { calls.push("ack"); return { ok: true, data: {} }; },
@@ -26,7 +27,7 @@ function VIEW(over: Partial<UpdateView> = {}): UpdateView {
 let el: HTMLDivElement, root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  calls.length = 0; startReply = { ok: true, data: {} };
+  calls.length = 0; loaded = { running: false }; startReply = { ok: true, data: {} };
   el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el);
 });
 afterEach(async () => { await act(async () => root.unmount()); el.remove(); });
@@ -79,6 +80,15 @@ describe("看板横幅", () => {
     expect(el.querySelector(".upd-overlay")).toBeNull();
   });
 
+  it("后台检查后来才查到新版本：切回标签页时横幅自己冒出来，不用手动刷新", async () => {
+    await mount("./UpdateBanner", "UpdateBanner", { initial: VIEW({ banner: null }) });
+    expect(el.textContent).toBe("");
+    loaded = VIEW();
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    await tick();
+    expect(el.textContent).toContain("有新版本 0.5.0");
+  });
+
   it("别处已在更新：直接显示更新中", async () => {
     await mount("./UpdateBanner", "UpdateBanner", { initial: VIEW({ running: true }), reload: () => {} });
     expect(calls).toContain("wait");
@@ -101,6 +111,14 @@ describe("更新后的说明", () => {
     expect(el.textContent).toContain("需要你手动恢复");
     expect(el.textContent).toContain("完整记录在 /l");
     expect(el.querySelector(".upd-cmds")?.textContent).toContain("git reset --hard abc");
+  });
+});
+
+describe("更新没能开始", () => {
+  it("结果弹窗写明「更新没能开始」和原因", async () => {
+    await mount("./UpdateResultDialog", "UpdateResultDialog", { initial: { ok: false, outcome: "not_started", from: "0.4.0", to: "0.5.0", message: "更新没能开始：spawn ENOENT", log: "/l" } });
+    expect(el.textContent).toContain("更新没能开始");
+    expect(el.querySelector("[role=alert]")?.textContent).toContain("spawn ENOENT");
   });
 });
 

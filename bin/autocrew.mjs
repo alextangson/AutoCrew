@@ -2,6 +2,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -237,11 +238,14 @@ async function start() {
   const logOffset = fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE).size : 0;
   const logFd = fs.openSync(LOG_FILE, "a", 0o600);
   fs.chmodSync(LOG_FILE, 0o600);
+  // 一次性启动标记：服务凭它确认「我是启动器起的」，一键更新才敢重启它（pid 文件里是 tsx 的 pid，不是服务本身）
+  const launchNonce = randomBytes(16).toString("hex");
+  await fsp.writeFile(path.join(DATA_DIR, "autocrew.launch"), `${launchNonce}\n`, { mode: 0o600 });
   const child = spawn(tsx, [path.join(ROOT, "desktop", "server.ts")], {
     cwd: ROOT,
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    env: { ...process.env, AUTOCREW_LAUNCH_NONCE: launchNonce },
   });
   fs.closeSync(logFd);
   child.unref();

@@ -32,9 +32,14 @@ export function UpdateBanner(props: { initial?: UpdateView | null; reload?: () =
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [updating, setUpdating] = useState<"no" | "yes" | "stalled">("no");
+  // 后台检查（启动 1 分钟后、之后每天）的结果要自己冒出来：每分钟重读一次本机状态，切回这个标签页时也读（Codex 审 P2）
   useEffect(() => {
-    if (props.initial !== undefined) return;
-    void loadUpdate().then((r) => { if (r.ok) setView(r.data); });
+    const read = () => void loadUpdate().then((r) => { if (r.ok) setView(r.data); });
+    if (props.initial === undefined) read();
+    const timer = window.setInterval(read, 60_000);
+    const onVisible = () => { if (document.visibilityState === "visible") read(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [props.initial]);
   const watch = async () => {
     setUpdating("yes");

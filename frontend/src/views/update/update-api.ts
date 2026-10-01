@@ -3,7 +3,7 @@ import { authedFetch, SESSION_EXPIRED } from "../../transport";
 
 export interface ReleaseNotes { version: string; date: string; news: string[]; fixes: string[]; todo: string[] }
 export interface UpdateStatus { checkedAt: string; current: string; latest?: string; available: boolean; reason?: string; error?: string }
-export interface UpdateResult { ok: boolean; outcome: "updated" | "rolled_back" | "stuck"; from: string; to: string; message: string; log: string; manualCommands?: string[]; notes?: ReleaseNotes[] }
+export interface UpdateResult { ok: boolean; outcome: "updated" | "rolled_back" | "stuck" | "not_started"; from: string; to: string; message: string; log: string; manualCommands?: string[]; notes?: ReleaseNotes[] }
 export interface UpdateView {
   current: string;
   currentDate: string | null;
