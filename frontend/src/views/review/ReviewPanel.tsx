@@ -22,7 +22,7 @@ export const PrimaryContext = createContext<(fn: (() => void) | null) => void>((
 
 const variant = (r: InboxAction["role"]) => (r === "primary" ? "primary" : r === "quiet" ? "quiet" : "secondary");
 
-interface Version { fact_id: string; sha256: string; at: string; label: string; ready?: boolean; approved?: boolean; has_srt?: boolean }
+interface Version { fact_id: string; sha256: string; at: string; label: string; ready?: boolean; approved?: boolean; has_srt?: boolean; blocked_reason?: string }
 interface Group { group_id: string; label: string; at: string; text: string; approved: boolean; "3:4": { fact_id: string; sha256: string } | null; "4:3": { fact_id: string; sha256: string } | null }
 
 /** 安静的分段胶囊：只切「看哪一版」，不是动作；标签是时间，不写版本号 */
@@ -84,7 +84,8 @@ function CutBody(p: { item: InboxItem; act: Act }) {
     <VersionPill list={versions} index={idx} onPick={setIdx} />
     {v && p.item.content_id && <div className="ri-preview"><video controls preload="metadata" src={mediaUrl(p.item.content_id, v.fact_id)} /></div>}
     {v?.approved && <p className="ri-note">这一版现在是定下的那版</p>}
-    <Actions item={p.item} act={p.act} extra={() => (v ? { fact_id: v.fact_id } : {})} />
+    {/* 拦不拦按正在看的这一版算（整分支审 10 P2）：最新一版被拦不连累上一版 */}
+    <Actions item={v ? { ...p.item, blocked_reason: v.blocked_reason ?? (v.fact_id === reviewId ? p.item.blocked_reason : undefined) } : p.item} act={p.act} extra={() => (v ? { fact_id: v.fact_id } : {})} />
   </>;
 }
 
@@ -95,7 +96,14 @@ function CoverBody(p: { item: InboxItem; act: Act }) {
   const [idx, setIdx] = useState(() => Math.max(0, groups.findIndex((g) => g.group_id === wanted)));
   const g = groups[idx];
   const [text, setText] = useState(g?.text ?? "");
-  useEffect(() => { setText(g?.text ?? ""); }, [g?.group_id, g?.text]);
+  useEffect(() => { setText(g?.text ?? ""); setNoText(false); }, [g?.group_id, g?.text]);
+  // 封面字总是照输入框原样交（空的也交），不让条目默认参数里别的组的字顶上（整分支审 10 P2）
+  const [noText, setNoText] = useState(false);
+  const guarded: Act = async (a, extra) => {
+    if (a.action === "pick_cover" && !String(extra?.cover_text ?? "").trim()) { setNoText(true); return; }
+    setNoText(false);
+    return p.act(a, extra);
+  };
   const incomplete = (p.item.detail.incomplete as Array<{ group_id: string; note: string }>) ?? [];
   const img = (x: Group["3:4"]) => (x?.fact_id && p.item.content_id ? <img alt="" src={mediaUrl(p.item.content_id, x.fact_id)} /> : null);
   return <>
@@ -104,7 +112,8 @@ function CoverBody(p: { item: InboxItem; act: Act }) {
     {g && <div className="ri-preview ri-covers"><figure>{img(g["3:4"])}<figcaption>竖版 3:4</figcaption></figure><figure>{img(g["4:3"])}<figcaption>横版 4:3</figcaption></figure></div>}
     <input className="ri-textline" aria-label="封面上的字" value={text} onChange={(e) => setText(e.target.value)} placeholder="封面上的字" />
     {incomplete.map((x) => <p key={x.group_id} className="ri-note">{x.note}</p>)}
-    <Actions item={p.item} act={p.act} extra={() => (g ? { group_id: g.group_id, ...(text.trim() ? { cover_text: text.trim() } : {}) } : {})} />
+    {noText && <p className="ri-reason">封面上的字还没写</p>}
+    <Actions item={p.item} act={guarded} extra={() => (g ? { group_id: g.group_id, cover_text: text.trim() } : {})} />
   </>;
 }
 

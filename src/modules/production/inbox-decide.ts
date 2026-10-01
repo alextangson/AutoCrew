@@ -174,7 +174,8 @@ async function run(ctx: Ctx): Promise<Result> {
     case "pick_cover": {
       const g = chosenGroup();
       if (!g) return fail("stale", "这组不在面板上了，刷新再看");
-      return founderDecision(c!.id, "pick_cover", { group_id: g, ...(str(merged.cover_text) ? { cover_text: str(merged.cover_text) } : {}) }, dataDir);
+      // 封面字只取这次交上来的；没给就由所选那一组自己的字兜底，不拿条目默认参数里别的组的字（整分支审 10 P2）
+      return founderDecision(c!.id, "pick_cover", { group_id: g, ...(str(params.cover_text) ? { cover_text: str(params.cover_text) } : {}) }, dataDir);
     }
     case "i_published": return founderDecision(c!.id, "i_published", { platform: spec.params!.platform, ...(noteOf(ctx) ? { url: noteOf(ctx) } : str(params.url) ? { url: str(params.url) } : {}) }, dataDir);
     default:

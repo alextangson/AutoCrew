@@ -142,6 +142,11 @@ function reportedAsk(a: Ask): Draft {
 
 // ---- 成片 ----
 
+function sliverBlocked(doc: ProductionDoc, sha: string): string | undefined {
+  const gate = sliverVerdict(doc, sha, null);
+  return gate.ok ? undefined : `画面检查没过（${gate.missing ?? "还没有结果"}），先在「最新一版画面有闪帧」那件里处理`;
+}
+
 function cutVersions(doc: ProductionDoc, approvedSha?: string) {
   const marked = new Map(markedCuts(doc).map((m) => [m.fact.id, m]));
   const cuts = doc.facts.filter((f) => f.round === doc.round && f.kind === "cut" && f.state === "accepted" && !f.replaced_at && f.sha256).sort((a, b) => b.at.localeCompare(a.at));
@@ -149,6 +154,8 @@ function cutVersions(doc: ProductionDoc, approvedSha?: string) {
     fact_id: f.id, sha256: f.sha256!, at: f.at, label: i === 0 ? "最新一版" : i === 1 ? "上一版" : `往前第 ${i} 版`,
     ready: marked.has(f.id), approved: f.sha256 === approvedSha, host_label: hostLabel(f.by?.host),
     has_srt: doc.facts.some((s) => s.round === doc.round && s.kind === "srt" && s.state === "accepted" && s.for_cut === f.sha256),
+    // 抽帧检查按这一版自己算（整分支审 10 P2）：最新一版被拦，上一版过了 / 放行了照样能点「就用这版」
+    ...(sliverBlocked(doc, f.sha256!) ? { blocked_reason: sliverBlocked(doc, f.sha256!) } : {}),
   }));
 }
 
@@ -161,8 +168,7 @@ function cutItem(doc: ProductionDoc, content: Content): Draft | null {
   if (ok && !newer) return null;
   const label = hostLabel(review.host ?? review.fact.by?.host);
   // 抽帧检查没过：「就用这版」注定被拒——按钮位置写原因，指到「画面有闪帧」那件（verifier 2a P2）
-  const gate = sliverVerdict(doc, review.fact.sha256!, null);
-  const blocked = gate.ok ? undefined : `画面检查没过（${gate.missing ?? "还没有结果"}），先在「最新一版画面有闪帧」那件里处理`;
+  const blocked = sliverBlocked(doc, review.fact.sha256!);
   return {
     item_id: `cut:r${doc.round}`, type: "cut_review", summary: newer ? "新的一版剪好了，要不要换" : "成片剪好了，看一遍", ...(blocked ? { blocked_reason: blocked } : {}),
     waiting: who(review.host ?? review.fact.by?.host), agent_waiting: false, since: review.marked_at, rank: 1,

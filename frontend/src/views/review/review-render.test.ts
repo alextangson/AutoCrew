@@ -554,3 +554,35 @@ describe("verifier 2a（前端）", () => {
     expect(decided.at(-1)).toMatchObject({ action: "ask_resend", ask_id: "ask-1" });
   });
 });
+
+describe("整分支审 10：按选中的那一版 / 那一组交", () => {
+  it("最新一版被闪帧拦住、上一版干净 → 切到上一版给「就用这版」，交的是上一版", async () => {
+    const cut = ITEMS[1];
+    const versions = (cut.detail.versions as Array<Record<string, unknown>>).map((v, i) => (i === 0 ? { ...v, blocked_reason: "画面检查没过（闪帧）" } : v));
+    await mountInbox([{ ...cut, blocked_reason: "画面检查没过（闪帧）", detail: { ...cut.detail, versions } }]);
+    await openRow("成片剪好了，看一遍");
+    expect(btn("就用这版")).toBeUndefined();
+    await click([...el.querySelectorAll(".ri-pill span")][1]);
+    await click(btn("就用这版"));
+    expect(decided.at(-1)).toMatchObject({ action: "approve_cut", fact_id: "f1" });
+  });
+
+  it("旧组没写字 → 输入框空，点「用这组」就地说「封面上的字还没写」不交；写了字交的就是写的那句", async () => {
+    const cover = ITEMS[2];
+    const old = { group_id: "cg-1", label: "上一组", at: new Date(Date.now() - 3600_000).toISOString(), text: "", approved: false, "3:4": { fact_id: "fo1", sha256: "o1" }, "4:3": { fact_id: "fo2", sha256: "o2" } };
+    await mountInbox([{ ...cover, detail: { ...cover.detail, groups: [...(cover.detail.groups as unknown[]), old] } }]);
+    await openRow("封面做好了，挑一张");
+    await click([...el.querySelectorAll(".ri-pill span")][1]);
+    const input = el.querySelector(".ri-textline") as HTMLInputElement;
+    expect(input.value).toBe("");
+    await click(btn("用这组"));
+    expect(decided).toHaveLength(0);
+    expect(el.textContent).toContain("封面上的字还没写");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "新的字");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(btn("用这组"));
+    expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-1", cover_text: "新的字" });
+  });
+});
