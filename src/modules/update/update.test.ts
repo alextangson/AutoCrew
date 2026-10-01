@@ -197,7 +197,7 @@ describe("更新执行", () => {
       calls.push(name);
       if (fail[name] && seen[name] <= fail[name]!) throw new Error(`${name} 坏了`);
     };
-    return { quiesce: step("quiesce"), install: step("install"), build: step("build"), restart: step("restart"), health: step("health") };
+    return { serviceDown: async () => false, quiesce: step("quiesce"), install: step("install"), build: step("build"), restart: step("restart"), health: step("health") };
   };
   beforeEach(async () => {
     calls = [];

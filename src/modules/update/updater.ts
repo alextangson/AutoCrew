@@ -15,6 +15,8 @@ export type Log = (line: string) => void;
 export interface UpdateSteps {
   /** 重启前最后一道：确认没有任务在跑；等到上限还在跑就抛 QuiesceError（不重启、退回旧版本） */
   quiesce: (log: Log) => Promise<void>;
+  /** 服务确实不在了（端口没人听）：更新已经停过它时，退回直接把旧版启动起来，不再问忙不忙 */
+  serviceDown: () => Promise<boolean>;
   install: (log: Log) => Promise<void>;
   build: (log: Log) => Promise<void>;
   restart: (log: Log) => Promise<void>;
@@ -68,23 +70,30 @@ export function manualCommands(root: string, oldHead: string): string[] {
   ];
 }
 
-async function forward(job: UpdateJob, log: Log): Promise<void> {
+/** 这次更新有没有动过服务（进了重启那一步就算：旧服务可能已经停了） */
+interface Progress { touchedService: boolean }
+
+async function forward(job: UpdateJob, log: Log, progress: Progress): Promise<void> {
   await gitStep(job.git, ["merge", "--ff-only", job.commit], log);
   log("== 安装依赖"); await job.steps.install(log);
   log("== 构建前端"); await job.steps.build(log);
   log("== 确认没有任务在跑"); await job.steps.quiesce(log);
+  progress.touchedService = true;
   log("== 重启服务"); await job.steps.restart(log);
   log("== 健康检查"); await job.steps.health(log);
 }
 
-async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: boolean): Promise<"kept" | "restarted" | "not_restarted"> {
+async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: boolean, progress: Progress): Promise<"kept" | "restarted" | "not_restarted"> {
   await gitStep(job.git, ["reset", "--hard", oldHead], log);
   log("== 退回：安装依赖"); await job.steps.install(log);
   log("== 退回：构建前端"); await job.steps.build(log);
   // 因为有任务在跑而取消：旧服务一直没停，不重启（绝不掐断在跑的轮）
   if (!restart) { log("服务没有重启过，保持运行"); return "kept"; }
-  // 退回路径也要先确认没人在跑（Codex 审第 2 轮 P1）：确认不了就让旧服务继续跑，代码已经退回
-  try { log("== 退回：确认没有任务在跑"); await job.steps.quiesce(log); }
+  // 更新已经动过服务、而服务现在确实不在（新版没起来）：没有谁的活会被掐，直接把旧版启动（Codex 审第 3 轮 P1）
+  const down = progress.touchedService && await job.steps.serviceDown().catch(() => false);
+  // 否则先确认没人在跑（Codex 审第 2 轮 P1）：只有「服务在、而且说忙」才挡住重启，代码已经退回
+  if (down) log("服务已经不在了：直接启动旧版本");
+  else try { log("== 退回：确认没有任务在跑"); await job.steps.quiesce(log); }
   catch (e) {
     if (!(e instanceof QuiesceError)) throw e;
     log(`服务没有重启：${e.message}`);
@@ -108,15 +117,16 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base, message: `更新没开始：${errText(e)}，完整记录在 ${job.logFile}` }, log);
   }
   log(`旧版本提交：${oldHead}`);
+  const progress: Progress = { touchedService: false };
   try {
-    await forward(job, log);
+    await forward(job, log, progress);
     return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}` }, log);
   } catch (e) {
     const reason = errText(e);
     const busy = e instanceof QuiesceError;
     log(`!! 更新${busy ? "取消" : "失败"}：${reason}；开始退回 ${oldHead}`);
     try {
-      const how = await rollback(job, oldHead, log, !busy);
+      const how = await rollback(job, oldHead, log, !busy, progress);
       return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base,
         message: how === "not_restarted"
           ? `更新失败，已退回代码；服务没有重启（有任务在跑），等它们结束后运行 npm run restart。原因：${reason}，完整记录在 ${job.logFile}`
@@ -170,6 +180,10 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   return {
     quiesce: (log) => waitIdle(opts.busy, { timeoutMs: 120_000, intervalMs: 2_000, log }),
+    serviceDown: async () => {
+      try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) }); return false; }
+      catch { return true; }
+    },
     install: async (log) => {
       await runCommand(npm, ["ci", "--no-audit", "--no-fund"], root, log);
       await runCommand(npm, ["ci", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);

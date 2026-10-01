@@ -118,7 +118,7 @@ describe("P1 更新中不开新活，重启前再确认", () => {
     const old = g(user, "rev-parse", "HEAD");
     const calls: string[] = [];
     const step = (name: string, fail = false) => async () => { calls.push(name); if (fail) throw new QuiesceError("等了 120 秒还有任务在跑：有 1 个任务正在跑"); };
-    const steps: UpdateSteps = { quiesce: step("quiesce", true), install: step("install"), build: step("build"), restart: step("restart"), health: step("health") };
+    const steps: UpdateSteps = { serviceDown: async () => false, quiesce: step("quiesce", true), install: step("install"), build: step("build"), restart: step("restart"), health: step("health") };
     const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", commit: g(user, "rev-parse", "v0.5.0^{commit}"), from: "0.4.0", to: "0.5.0", git: gitRunner(user), steps, logFile: path.join(machine, "u.log") });
     expect(r).toMatchObject({ ok: false, outcome: "rolled_back" });
     expect(r.message).toMatch(/更新取消了.*没有重启，仍是 0\.4\.0/);

@@ -20,7 +20,11 @@ export function parseChangelog(markdown: string): ReleaseNotes[] {
   const out: ReleaseNotes[] = [];
   let current: ReleaseNotes | null = null;
   let bucket: Bucket | null = null;
+  let fenced = false;
   for (const line of markdown.split(/\r?\n/)) {
+    // 代码块里的是格式示例，不是发布记录（Codex 审第 3 轮 P2）
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+    if (fenced) continue;
     const head = HEADING.exec(line.trim());
     if (head) {
       current = { version: head[1], date: head[2], news: [], fixes: [], todo: [] };

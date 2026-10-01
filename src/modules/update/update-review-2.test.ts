@@ -80,6 +80,7 @@ describe("P1 退回路径重启前也要确认空闲", () => {
     const calls: string[] = [];
     let installs = 0;
     const steps: UpdateSteps = {
+      serviceDown: async () => false,
       install: async () => { calls.push("install"); if (++installs === 1) throw new Error("npm ci 坏了"); },
       build: async () => { calls.push("build"); },
       quiesce: async () => { calls.push("quiesce"); throw new QuiesceError("有 1 个任务正在跑"); },

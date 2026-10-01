@@ -75,6 +75,7 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  *   today:summary       {}
  */
 import { beginWork } from "../modules/update/active-work.js";
+import { LONG_RUNNING_CHANNELS } from "../modules/update/long-running.js";
 import { getChiefEditor } from "./chief-editor/service.js";
 import { routeRetryToAgent } from "./chief-editor/retry-route.js";
 import { buildDispatchContext, parseDispatch } from "./dispatch-context.js";
@@ -1228,12 +1229,7 @@ async function dashboardSummaryHandler(payload: Record<string, unknown>): Promis
  * 在请求里跑很久的通道（模型调用、外网推送 / 抓取、长任务编排）：一键更新时（self-update，Codex 审第 2 轮 P1）
  * 它们在跑就不重启，锁在手时不开新的。后台起跑、请求先回的入口（写稿、封面、配图）在各自的 start 函数里登记。
  */
-export const LONG_RUNNING_CHANNELS: ReadonlySet<string> = new Set([
-  "publish:wechat_draft", "publish:request_wechat", "retro:generate", "persona:generate", "style:distill", "style:absorb",
-  "draft:rewrite_selection", "radar:refresh", "radar:more", "radar:rescore", "flywheel:wechat_pull", "flywheel:pull_now",
-  "campaign:plan_team", "campaign:run_ready", "campaign:retry_task", "campaign:replan",
-  "inbox:retry", "inbox:reingest", "inbox:digest_send_now",
-]);
+export { LONG_RUNNING_CHANNELS };
 
 function trackLongRunning(handlers: Record<IpcChannel, IpcHandler>): Record<IpcChannel, IpcHandler> {
   const out = { ...handlers };
