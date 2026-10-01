@@ -22,6 +22,7 @@ import {
   DOCK_PAGE_EVENT, DOCK_WIDTH_DEFAULT, clampDockWidth, readDockOpen, readDockWidth, requestDockCollapsed, writeDockOpen, writeDockWidth,
 } from "./chat/dock-prefs";
 import { ToastHost, DialogHost } from "./ui";
+import { UpdateResultDialog } from "./views/update/UpdateResultDialog";
 import { newIdea } from "./new-idea";
 import { invoke } from "./transport";
 import { useRevisionFocus } from "./revision";
@@ -218,6 +219,7 @@ export function App() {
       </div>
       <ToastHost />
       <DialogHost />
+      <UpdateResultDialog />
     </div>
   );
 }

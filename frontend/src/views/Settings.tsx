@@ -20,6 +20,7 @@ import { SettingsAsr } from "./SettingsAsr";
 import { Integrations } from "./Integrations";
 import { SettingsPublishGate } from "./SettingsPublishGate";
 import { SettingsData } from "./SettingsData";
+import { SettingsUpdate } from "./SettingsUpdate";
 import { TRUST_NOTICE } from "../chat/backend-choice";
 import type { Route } from "../routes";
 
@@ -86,6 +87,7 @@ export function Settings(props: { tab?: SettingsTab; onTab?: (tab: SettingsTab) 
       {tab === "models" && (
         <>
           {props.nav && <MorePages nav={props.nav} />}
+          <SettingsUpdate />
           <SettingsStorage />
           <SettingsArollSources />
           <SettingsJianying />

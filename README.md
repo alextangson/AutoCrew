@@ -55,6 +55,14 @@ npm ci
 npm run restart
 ```
 
+### 更新
+
+有新版本时，看板最上方会出现「有新版本 X · 看看更新了什么 · 更新」。点「更新」即一键更新：AutoCrew 会切到这个发布版、重新安装依赖、构建并重启，大约 1 分钟；任一步失败会自动退回原来的版本，并告诉你原因和日志位置。也可以在终端运行 `autocrew update`（`npm link` 之后）或 `node bin/autocrew.mjs update`。
+
+一键更新只在这些条件下动手：用 `git clone` 安装、在 `main` 分支、程序文件没有本地改动、没有正在跑的写稿/剪辑/发布任务、服务是 `npm run start` 起的；不满足时会说明原因，请按上面的 `git pull` 步骤手动更新。每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md)。
+
+想收到新版本邮件：在 GitHub 仓库页点 Watch → Custom → Releases。
+
 > Git 只同步程序。通过「设置 → 用户资料库」迁移历史稿件或打开已有资料库；同一资料库同时由一台电脑运行 AutoCrew 服务。本机的模型、发布连接与访问令牌分别配置，不随资料库同步，也不要提交到仓库。
 
 ## 用户资料库
