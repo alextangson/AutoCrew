@@ -55,7 +55,23 @@ export const LONG_RUNNING_TOOL_ACTIONS: Readonly<Record<string, "*" | ReadonlySe
 };
 
 
+/**
+ * 不带 action 时各工具实际执行的默认动作（与各工具 execute 里的缺省一致；Codex 审第 6 轮 P2）。
+ * 先按它补齐再分类，否则「省略 action」就能绕过长动作登记。
+ */
+export const TOOL_DEFAULT_ACTIONS: Readonly<Record<string, string>> = {
+  autocrew_research: "discover",
+  autocrew_insights: "prepare",
+  autocrew_topic: "create",
+  autocrew_review: "full_review",
+};
+
+export function effectiveAction(tool: string, action: unknown): unknown {
+  return action === undefined || action === null || action === "" ? TOOL_DEFAULT_ACTIONS[tool] : action;
+}
+
 export function isLongRunningTool(tool: string, action: unknown): boolean {
   const entry = LONG_RUNNING_TOOL_ACTIONS[tool];
-  return entry === "*" || Boolean(entry && typeof action === "string" && entry.has(action));
+  const a = effectiveAction(tool, action);
+  return entry === "*" || Boolean(entry && typeof a === "string" && entry.has(a));
 }

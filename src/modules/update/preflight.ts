@@ -3,6 +3,7 @@
  * 「有没有人在跑」复用总编辑的轮次记录（runs.json）与它判断「主人还活着」的同一套逻辑。
  */
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 import { firstLine, type GitRunner } from "./git.js";
 import { isGitInstall, NOT_GIT } from "./check.js";
 import { files } from "./state.js";
@@ -96,7 +97,11 @@ export function lockHeld(machineDir: string): boolean {
   return Boolean(body && pidAlive(body.pid));
 }
 
-/** 拿锁：已被活进程持有就返回 false；持锁进程死了的旧锁清掉重拿 */
+/**
+ * 拿锁：已被活进程持有就返回 false；持锁进程死了的旧锁收回重拿。
+ * 收回走原子 rename（Codex 审第 6 轮 P2）：先认准看到的那把死锁（令牌），把它改名成本进程独有的墓碑——
+ * 两个进程同时收回，只有一个 rename 成功；改名后再核对墓碑里还是那把死锁，不是就原样放回（别人刚拿的新锁绝不删）。
+ */
 export function acquireLock(machineDir: string, token: string, pid = process.pid): boolean {
   const file = files(machineDir).lock;
   fs.mkdirSync(machineDir, { recursive: true });
@@ -106,11 +111,28 @@ export function acquireLock(machineDir: string, token: string, pid = process.pid
       return true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      if (lockHeld(machineDir)) return false;
-      fs.rmSync(file, { force: true });
+      const seen = readLock(machineDir);
+      if (seen && pidAlive(seen.pid)) return false;
+      if (!reclaimStale(file, seen?.token ?? null)) return false;
     }
   }
   return false;
+}
+
+function reclaimStale(file: string, staleToken: string | null): boolean {
+  const tomb = `${file}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+  try { fs.renameSync(file, tomb); }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return true; throw e; }
+  let moved: LockBody | null = null;
+  try { moved = JSON.parse(fs.readFileSync(tomb, "utf-8")) as LockBody; } catch { /* 半截文件当死锁 */ }
+  if (moved && moved.token !== staleToken && pidAlive(moved.pid)) {
+    // 改名前一瞬别人已经收回并拿了新锁：放回去（目标被占就说明又有人拿了，这把留给它）
+    try { fs.linkSync(tomb, file); } catch { /* 已有新锁 */ }
+    fs.rmSync(tomb, { force: true });
+    return false;
+  }
+  fs.rmSync(tomb, { force: true });
+  return true;
 }
 
 /**

@@ -9,7 +9,7 @@ import { contentFile } from "../src/storage/content-project.js";
  * 不再自带 stdio 循环，全部宿主经同一个写进程（P3 §3）。
  */
 import { beginWork } from "../src/modules/update/active-work.js";
-import { isLongRunningTool } from "../src/modules/update/long-running.js";
+import { effectiveAction, isLongRunningTool } from "../src/modules/update/long-running.js";
 import { WRITING_INSTRUCTIONS, MCP_INSTRUCTIONS } from "./writing-instructions.js";
 import { mcpToolView, TOOL_GUIDE_PREFIX, toolGuideText } from "./tool-docs.js";
 import { isOntologyEnabled } from "../src/storage/production-store.js";
@@ -197,7 +197,7 @@ async function callTool(
     }
   }
   // 一键更新（Codex 审第 3 轮 P1）：长动作在跑就不重启，更新中不开新的——宿主走 /mcp 也一样
-  const work = isLongRunningTool(toolName, rawArgs.action) ? beginWork(`${toolName}:${String(rawArgs.action ?? "")}`) : null;
+  const work = isLongRunningTool(toolName, rawArgs.action) ? beginWork(`${toolName}:${String(effectiveAction(toolName, rawArgs.action) ?? "")}`) : null;
   if (work && !work.ok) return resultResponse(id, { content: [{ type: "text", text: work.error }], structuredContent: { ok: false, code: "updating", error: work.error }, isError: true });
   const startedAt = Date.now();
   try {
