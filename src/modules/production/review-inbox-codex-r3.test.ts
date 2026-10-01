@@ -540,3 +540,60 @@ describe("整分支审 7", () => {
     expect(String((again.facts as Array<{ path: string }>)[0].path)).toMatch(/^05-cover\//);
   });
 });
+
+describe("verifier 2a 修复（第二批）", () => {
+  it("被拦的发布检查：不给「没问题」主按钮，按钮位置写拦的原因", async () => {
+    const r = await registeredVideo(env);
+    await executePublishCheck({ _dataDir: env.dir, content_id: r.id, plan: planOf(r, [planEntry(r, "xiaohongshu", ["4:3"])]) }, { jev: fakeJev().caller });
+    const it = (await items(r.id)).find((i) => i.type === "publish_check")!;
+    expect(it.detail.verdict).toBe("block");
+    expect(it.actions.map((a) => a.action)).not.toContain("publish_check_confirm");
+    expect(it.blocked_reason).toMatch(/^被拦了：/);
+  });
+
+  it("创始人答请示写的一句话，agent 在 asks[] 里拿到全文（不再截成 10 个字）", async () => {
+    const c = await editing();
+    const { executeContentSave } = await import("../../tools/content-save.js");
+    const q = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "ask", content_id: c.id, request_id: "q", kind: "粗剪", question: "行吗", options: [{ id: "ok", label: "可以" }, { id: "no", label: "不行" }] }) as Record<string, unknown>;
+    const it = (await items(c.id)).find((i) => i.type === "ask")!;
+    const note = "开头那段客户问话留着，后面两段重复的解释删掉一段，结尾那句金句前面停半拍。";
+    await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "no", note }, env.dir);
+    const s = await executeContentSave({ _dataDir: env.dir, _host: "codex", action: "summary", id: c.id }) as Record<string, unknown>;
+    expect((s.asks as Array<{ note?: string }>)[0].note).toBe(note);
+    void q;
+  });
+});
+
+describe("verifier 2a 修复（第三批）", () => {
+  it("剪映导出目录和资料库重叠 → 拒（与监视文件夹同一规矩）", async () => {
+    const fsp = await import("node:fs/promises");
+    const os = await import("node:os");
+    const tmp = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "jy-")));
+    const lib = path.join(tmp, "lib"), machine = path.join(tmp, "machine"), outside = path.join(tmp, "exports");
+    for (const d of [path.join(lib, "inner"), machine, outside]) await fsp.mkdir(d, { recursive: true });
+    await fsp.writeFile(path.join(machine, "storage.json"), JSON.stringify({ version: 1, id: "lib-abc", root: lib }));
+    const old = process.env.AUTOCREW_LOCAL_DIR;
+    process.env.AUTOCREW_LOCAL_DIR = machine;
+    try {
+      const { jianyingDirError } = await import("../../desktop/settings-video.js");
+      expect(await jianyingDirError(path.join(lib, "inner"))).toContain("和资料库重叠");
+      expect(await jianyingDirError(tmp)).toContain("和资料库重叠");
+      expect(await jianyingDirError(outside)).toBeNull();
+    } finally {
+      if (old === undefined) delete process.env.AUTOCREW_LOCAL_DIR; else process.env.AUTOCREW_LOCAL_DIR = old;
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("被「不是」挪回收件箱的原片：列头「收件箱里没对上」里看得见", async () => {
+    const c = await videoContent(env, "挪回收件箱测试稿");
+    await founderApprove(env, c.id);
+    await put(path.join(env.inbox, "挪回收件箱测试稿.mov"), "take-x");
+    await reconcileAll(env.dir);
+    const f = (await doc(c.id)).facts.find((x) => x.kind === "aroll" && x.state === "accepted")!;
+    expect(f).toBeDefined();
+    expect(await founderDecision(c.id, "undo_auto_attach", { fact_id: f.id, sha256: f.sha256 }, env.dir)).toMatchObject({ ok: true });
+    const report = await reconcileAll(env.dir);
+    expect(report.inbox?.unmatched.map((u) => u.name)).toContain("挪回收件箱测试稿.mov");
+  });
+});

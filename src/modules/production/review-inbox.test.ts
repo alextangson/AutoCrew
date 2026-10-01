@@ -169,9 +169,13 @@ describe("请示（§5）", () => {
     const it0 = (await itemOf(`ask:${r.ask_id}`, c.id))!;
     await put(file, png(10, 10, "changed"));
     const it1 = (await itemOf(`ask:${r.ask_id}`, c.id))!;
-    expect(it1).toMatchObject({ blocked_reason: expect.stringContaining("附件刚变过"), detail: { attachments_changed: true } });
+    expect(it1).toMatchObject({ summary: expect.stringContaining("附件变过，请重新发请示"), detail: { attachments_changed: true }, actions: [{ action: "ask_resend" }] });
     expect(await decideItem({ content_id: c.id, item_id: it0.item_id, gen: it0.gen, action: "answer_ask", option_id: "ok" }, env.dir)).toMatchObject({ ok: false, code: "stale" });
-    expect(await decideItem({ content_id: c.id, item_id: it1.item_id, gen: it1.gen, action: "answer_ask", option_id: "ok" }, env.dir)).toMatchObject({ ok: false, code: "attachments_changed" });
+    expect(await decideItem({ content_id: c.id, item_id: it1.item_id, gen: it1.gen, action: "answer_ask", option_id: "ok" }, env.dir)).toMatchObject({ ok: false });
+    // 让 agent 重发：记一笔决定，agent 在 asks[] 里看到 stale_attachment
+    expect(await decideItem({ content_id: c.id, item_id: it1.item_id, gen: it1.gen, action: "ask_resend" }, env.dir)).toMatchObject({ ok: true });
+    const s = await agent({ action: "summary", id: c.id });
+    expect(s.asks).toMatchObject([{ ask_id: r.ask_id, state: "stale_attachment", reason: "附件变过，请重新发请示" }]);
   });
 
   it("创始人答：选项 + 一句话；agent 从 summary 的 asks[] 取答复", async () => {

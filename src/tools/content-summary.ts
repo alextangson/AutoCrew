@@ -12,7 +12,7 @@ import { topicHashOf } from "../modules/research/research-job-store.js";
 import { explainContent } from "../modules/production/read.js";
 import type { Explanation } from "../modules/production/explain.js";
 import { isOntologyActive, readProductionDoc } from "../storage/production-store.js";
-import { askRows } from "../modules/production/asks.js";
+import { askRows, attachmentsChanged } from "../modules/production/asks.js";
 import { readInbox } from "../modules/production/inbox-read.js";
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { productionPart, SUMMARY_BUDGET, type ProductionPart } from "./content-summary-production.js";
@@ -148,8 +148,13 @@ async function asksPart(c: Content, dataDir: string, offset: number): Promise<As
   const all = doc ? askRows(doc, c) : [];
   if (!all.length) return null;
   // 固定集合 = 这条稿全部请示，按（发起时间, id）排、只用 asks_offset 翻页：状态在两页之间会变，但不会挪位置（Codex 审 2a-1）
-  const rows = all;
-  let n = ASKS_PAGE, noteMax = 30;
+  // 附件在请示之后变过：这件请示答不了，agent 要重发（verifier 2a P2）
+  const rows = await Promise.all(all.map(async (r) => {
+    const ask = doc!.asks!.find((x) => x.id === r.ask_id)!;
+    return r.state === "open" && ask.attachments.length && await attachmentsChanged(c.id, ask, dataDir) ? { ...r, state: "stale_attachment", reason: "附件变过，请重新发请示" } : r;
+  }));
+  // 回答原话给全（verifier 2a P2），放不下才截：80 → 30 → 10
+  let n = ASKS_PAGE, noteMax = Infinity;
   const fields: Record<string, unknown> = {};
   const render = () => {
     const page = rows.slice(offset, offset + n).map((r) => ({ ...r, ...(r.note ? { note: clip(r.note, noteMax) } : {}) }));
@@ -159,6 +164,8 @@ async function asksPart(c: Content, dataDir: string, offset: number): Promise<As
   };
   render();
   const shrink = () => {
+    if (noteMax > 80) { noteMax = 80; render(); return true; }
+    if (noteMax > 30) { noteMax = 30; render(); return true; }
     if (noteMax > 10) { noteMax = 10; render(); return true; }
     if (n > 1) { n -= 1; render(); return true; }
     return false;

@@ -271,7 +271,7 @@ describe("收下原片 / 成片时也查完整性（Codex 审 segB12 P2）", () 
     const f = (await aroll(c.id))!;
     const r = await founderDecision(c.id, "confirm_candidate", { fact_id: f.id, sha256: f.sha256 }, env.dir);
     expect(r).toMatchObject({ ok: false, code: "file_unstable" });
-    expect(String(r.error)).toContain("读不出时长");
+    expect(String(r.error)).toContain("读不出这个视频的时长");
     expect(await exists(src)).toBe(true);
     expect((await aroll(c.id))?.state).toBe("candidate");
   });

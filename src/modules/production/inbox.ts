@@ -119,8 +119,10 @@ function openAsk(a: Ask, attachmentsChanged: boolean): Draft {
   const label = hostLabel(a.by?.host);
   return {
     item_id: `ask:${a.id}`, type: "ask", summary: `${label}想问你：${a.question}`, waiting: who(a.by?.host), agent_waiting: true, since: a.at, rank: 0,
-    actions: a.options.map((o) => ({ action: "answer_ask", label: o.label, role: "secondary" as const, params: { ask_id: a.id, option_id: o.id }, note: "optional" as const, placeholder: "比如：就这样，但配乐再轻一点" })),
-    ...(attachmentsChanged ? { blocked_reason: "附件刚变过，重新看一下再答" } : {}),
+    // 附件变过（verifier 2a P2）：这件请示答不了，给「让 X 重发」，agent 在 asks[] 里看到 stale_attachment
+    actions: attachmentsChanged ? [{ action: "ask_resend", label: `让 ${label} 重发`, role: "primary" as const, params: { ask_id: a.id } }]
+      : a.options.map((o) => ({ action: "answer_ask", label: o.label, role: "secondary" as const, params: { ask_id: a.id, option_id: o.id }, note: "optional" as const, placeholder: "比如：就这样，但配乐再轻一点" })),
+    ...(attachmentsChanged ? { summary: `附件变过，请重新发请示（${label}问的：${a.question}）` } : {}),
     detail: { ask_id: a.id, kind: a.kind, question: a.question, options: a.options, attachments: a.attachments.map((x, i) => ({ index: i, name: path.basename(x.path), html: /\.html?$/i.test(x.path) })),
       attachments_changed: attachmentsChanged, ...(a.storyboard ? { storyboard_fact_id: a.storyboard.fact_id } : {}), reported_allowed: a.kind !== "花费" && a.kind !== "分镜" },
     snapshot: [a.id, a.state, a.options, a.attachments, attachmentsChanged, a.storyboard ?? null],
@@ -303,14 +305,16 @@ function publishItems(doc: ProductionDoc | null, input: ContentInput): Draft[] {
   for (const c of input.checks) {
     if (live.has(c.platform)) continue;
     const blocked = c.verdict === "block";
+    // 被拦的检查不给「没问题」主按钮，按钮位置写拦的原因（verifier 2a P2）
+    const reasons = (c.items as Array<{ result?: string; basis?: string }>).filter((x) => x.result === "block").map((x) => x.basis ?? "").filter(Boolean).slice(0, 2);
     out.push({
       item_id: `pubcheck:r${doc?.round ?? 1}:${c.platform}`, type: "publish_check", summary: `发之前再看一眼（${platformLabel(c.platform)}）`, waiting: null, agent_waiting: false, since: c.checked_at, rank: 2,
       actions: [
-        { action: "publish_check_confirm", label: "没问题", role: "primary", params: { check_id: c.check_id } },
+        ...(blocked ? [] : [{ action: "publish_check_confirm", label: "没问题", role: "primary" as const, params: { check_id: c.check_id } }]),
         { action: "publish_check_revise", label: "有几处要改…", role: "secondary", params: { check_id: c.check_id }, note: "required", placeholder: "比如：标题别用问号，话题加上 #AI工具" },
         ...(blocked ? [{ action: "publish_check_override", label: "这条我破例…", role: "quiet" as const, params: { check_id: c.check_id }, note: "required" as const, placeholder: "写你的原话，比如：这次封面字小一点没关系" }] : []),
       ],
-      ...(c.input && !c.input.same ? { blocked_reason: "计划刚改过，按新计划重新检查后再看" } : {}),
+      ...(c.input && !c.input.same ? { blocked_reason: "计划刚改过，按新计划重新检查后再看" } : blocked ? { blocked_reason: `被拦了：${reasons.join("；") || "有规则没过"}` } : {}),
       detail: { check_id: c.check_id, platform: c.platform, verdict: c.verdict, items: c.items, plan_changed: c.input ? !c.input.same : false },
       // 计划输入的指纹进代次：agent 改了计划文件，旧条目就失效（Codex 审 2a-1 r5 P1）
       snapshot: [c.check_id, c.verdict, c.input?.fp ?? null],

@@ -148,7 +148,7 @@ async function ontologyMark(content: Content, platform: string, link: string | u
 async function ontologyUnmark(content: Content, platform: string, dataDir: string): Promise<MarkResult> {
   const doc = await readProductionDocOrEmpty(content.id, dataDir);
   const target = [...doc.decisions].reverse().find((d) => d.round === doc.round && d.type === "i_published" && d.platform === platform);
-  if (!target) return { ok: false, code: "not_found", error: "这个平台本轮没有「我发了」可撤" };
+  if (!target) return { ok: false, code: "not_found", error: "这个平台本轮没有「已经发出去了」可撤" };
   const r = await founderDecision(content.id, "correct_publish", { target_id: target.id }, dataDir);
   if (r.ok) await updateContent(content.id, { manualPublications: (content.manualPublications ?? []).filter((m) => m.platform !== platform) }, dataDir);
   return done(r, content.id, dataDir);

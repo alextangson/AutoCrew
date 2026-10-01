@@ -512,7 +512,7 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   // 完整性（Codex 审 segB12 P2）：原片 / 成片要读得出时长——名字对上的坏文件、没拷完的文件不收，原处不动，原因回给创始人
   if (fact.kind === "aroll" || fact.kind === "cut") {
     const dur = await checkDuration(checked.value, probe);
-    if (!dur.ok) return fail(dur.code, `${dur.error}（文件留在原处：${checked.value}）`);
+    if (!dur.ok) return fail(dur.code, `${dur.error}（文件留在原处：${path.basename(checked.value)}）`);
   }
   let release: ReleaseOp | undefined;
   let held: PendingHolder | null = null;

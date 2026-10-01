@@ -135,7 +135,8 @@ export const ffprobeDuration: Probe = async (file) => {
 /** 视频（aroll / cut）：ffprobe 读得出时长 > 0，否则当没导完 */
 export async function checkDuration(file: string, probe: Probe): Promise<Checked<number>> {
   const r = await probe(file);
-  if ("error" in r) return fail("file_unstable", `读不出时长（${r.error}）：多半还在导出 / 拷贝，等它写完再报；这次什么都没写`);
+  // 不把 ffprobe 的原文给人看（verifier 2a P3）
+  if ("error" in r) return fail("file_unstable", "读不出这个视频的时长：多半还在导出 / 拷贝，或者文件坏了；等它写完再报，这次什么都没写");
   if (!(r.durationMs > 0)) return fail("file_unstable", "读出的时长是 0：多半还在导出 / 拷贝，等它写完再报；这次什么都没写");
   return { ok: true, value: r.durationMs };
 }

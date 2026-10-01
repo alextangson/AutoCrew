@@ -1,3 +1,4 @@
+import { isWithin, readLibraryLocation } from "../storage/storage-roots.js";
 /**
  * 视频线配置（设计 spec §8.1）——`<dataDir>/video.json`（600 权限）。
  *
@@ -114,7 +115,14 @@ export async function getVideoSettings(payload: Record<string, unknown>): Promis
 async function exportDirError(v: unknown): Promise<string | null> {
   if (typeof v !== "string" || !path.isAbsolute(v.trim())) return "jianying_export_dir 必须是完整的绝对路径（清空传 null）";
   const st = await fs.stat(v.trim()).catch(() => null);
-  return st?.isDirectory() ? null : `剪映导出目录不存在或不是文件夹：${v.trim()}`;
+  if (!st?.isDirectory()) return `剪映导出目录不存在或不是文件夹：${v.trim()}`;
+  // 和监视文件夹同一条规矩（verifier 2a P3）：与资料库重叠（在库内或是库的祖先）就拒——它是可搬入根
+  const lib = readLibraryLocation()?.root;
+  if (lib) {
+    const [real, libReal] = await Promise.all([fs.realpath(v.trim()).catch(() => v.trim()), fs.realpath(lib).catch(() => lib)]);
+    if (isWithin(libReal, real) || isWithin(real, libReal)) return `剪映导出目录和资料库重叠（${libReal}），换一个文件夹`;
+  }
+  return null;
 }
 
 /** 增量应用到 next（就地改），返回错误串或 null。清空 = 传 null / 0 / 空串 */

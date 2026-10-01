@@ -176,7 +176,7 @@ describe("Codex 审 segB2 与真实数据预演", () => {
     const r = await tick();
     expect(await exists(src)).toBe(true);
     expect(await facts(a.id)).toEqual([]);
-    expect(r.inbox?.failed).toEqual([expect.objectContaining({ name: "IMG_broken.mov", reason: expect.stringContaining("moov atom not found") })]);
+    expect(r.inbox?.failed).toEqual([expect.objectContaining({ name: "IMG_broken.mov", reason: expect.stringContaining("读不出这个视频的时长") })]);
     expect(r.warnings.join()).toContain("IMG_broken.mov");
   });
 

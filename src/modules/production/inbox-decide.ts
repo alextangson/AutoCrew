@@ -133,6 +133,7 @@ async function run(ctx: Ctx): Promise<Result> {
     case "answer_ask": return founderAnswer(c!, dataDir, String(spec.params!.ask_id), String(spec.params!.option_id), noteOf(ctx));
     case "undo_ask_answer": return undoReportedAnswer(c!, dataDir, String(spec.params!.ask_id), ctx.deps.now);
     case "ack": return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "inbox_ack", item_id: item.item_id }, "inbox_acked") };
+    case "ask_resend": return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "inbox_ack", item_id: item.item_id, ask_id: String(spec.params?.ask_id ?? ""), note: "附件变过，请重新发请示" }, "ask_resend_requested") };
     case "nudge": return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "inbox_ack", item_id: item.item_id, note: `创始人让你补：${String(item.detail.reason ?? "")}` }, "founder_nudged") };
     case "publish_check_confirm": return { ok: true, decision: await pushDecision(c!.id, dataDir, { type: "publish_check_confirm", check_id: String(item.detail.check_id), platform: String(item.detail.platform) }, "publish_check_confirmed") };
     case "publish_check_revise": {
@@ -279,7 +280,7 @@ function legacyMatch(item: InboxItem, action: string, p: Record<string, unknown>
  */
 const INBOX_ACTIONS: ReadonlySet<string> = new Set(["approve_cut", "reject_cut", "pick_cover", "reject_cover", "retire_cover_group", "confirm_candidate", "reject_candidate",
   "undo_auto_attach", "keep_attach", "reassign_aroll", "waive_sliver", "waive_sliver_check", "confirm_receipt", "i_published", "approve_script", "revise_script", "answer_ask", "publish_check_confirm"]);
-const PASS_WITHOUT_RECORD: ReadonlySet<string> = new Set(["i_published"]);
+const PASS_WITHOUT_RECORD: ReadonlySet<string> = new Set(["i_published", "undo_auto_attach"]);
 const OBJ_KEYS = ["fact_id", "group_id", "cover_3x4_fact_id", "cover_4x3_fact_id", "platform", "option_id", "cut_sha", "sliver_key", "check_id", "ask_id"];
 
 async function objectItemIds(contentId: string, action: string, p: Record<string, unknown>, dataDir: string): Promise<string[]> {

@@ -90,7 +90,8 @@ describe("Codex 2a-1 P2", () => {
     expect(failed).toMatchObject({ ok: false });
     expect((await doc(r.id)).inbox_log?.some((e) => e.item_id === it.item_id)).toBeFalsy();
     const fresh = (await items(r.id)).find((i) => i.type === "publish_check")!;
-    expect(await decideItem({ content_id: r.id, item_id: fresh.item_id, gen: fresh.gen, action: "publish_check_confirm" }, env.dir)).toMatchObject({ ok: true });
+    // 被拦的检查只给「有几处要改…」/ 破例（verifier 2a P2）
+    expect(await decideItem({ content_id: r.id, item_id: fresh.item_id, gen: fresh.gen, action: "publish_check_revise", note: "改" }, env.dir)).toMatchObject({ ok: true });
   });
 
   it("P2-4 打回后对同一版重新 mark_ready → 开新代次，条目回来", async () => {

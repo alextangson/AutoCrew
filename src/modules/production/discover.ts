@@ -83,10 +83,26 @@ const why = (d: MatchDecision) => `${d.reason}${d.top3.length ? `；前三名：
 
 // ---- §4 收件箱 ----
 
-function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision }>, waiting: ReadonlySet<string>): void {
+/** 创始人对哪条稿点过「不是」的原片字节（稿件 id|sha） */
+async function rejectedPairs(pool: readonly PoolEntry[], dataDir: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const p of pool) {
+    const doc = await readProductionDoc(p.content_id, dataDir).catch(() => null);
+    for (const f of doc?.facts ?? []) if (f.kind === "aroll" && f.state === "rejected" && f.sha256) out.add(`${p.content_id}|${f.sha256}`);
+  }
+  return out;
+}
+
+function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision }>, waiting: ReadonlySet<string>, rejected: ReadonlySet<string> = new Set()): void {
   const byTarget = new Map<string, number>();
   for (const { d } of decided) if (d.winner) byTarget.set(d.winner, (byTarget.get(d.winner) ?? 0) + 1);
   for (const { f, d } of decided) {
+    // 创始人对那条稿点过「不是」、被挪回收件箱的文件：不再往那条凑，算「没对上」列进列头（verifier 2a P3）
+    const no = (id: string) => rejected.has(`${id}|${f.sha256}`);
+    if (d.winner && no(d.winner)) {
+      out.inbox.unmatched.push({ name: f.name, path: f.file, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.filter((r) => !no(r.content_id)).map((r) => r.title), reason: "你说过不是那条" });
+      continue;
+    }
     if (d.winner) {
       const many = byTarget.get(d.winner)! > 1;
       if (waiting.has(d.winner) && !many) { out.autoMoves.push({ content_id: d.winner, file: f, d }); continue; }
@@ -94,7 +110,7 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
       suggest(out, d.winner, seen(f, "aroll", `原片收件箱：${note}；${why(d)}`, matchOf(d)));
       continue;
     }
-    const likes = d.top3.filter(looksLike);
+    const likes = d.top3.filter(looksLike).filter((r) => !no(r.content_id));
     for (const r of likes) suggest(out, r.content_id, seen(f, "aroll", `原片收件箱：${why(d)}`, matchOf(d)));
     if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.map((r) => r.title), reason: d.reason });
   }
@@ -139,7 +155,7 @@ async function discoverInbox(dataDir: string, dir: string, pool: PoolEntry[], wa
   if (!members.length) members = [...present];
   const batch = seen.filter((x) => members.includes(x.f.sha256));
   if (batch.some((x) => x.v.kind === "checking")) { await writeBatch(dataDir, members); return; }
-  judgeInbox(out, batch.flatMap((x) => (x.v.kind === "decided" ? [{ f: x.f, d: x.v.d }] : [])), waiting);
+  judgeInbox(out, batch.flatMap((x) => (x.v.kind === "decided" ? [{ f: x.f, d: x.v.d }] : [])), waiting, await rejectedPairs(pool, dataDir));
   await writeBatch(dataDir, []);
 }
 

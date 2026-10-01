@@ -127,6 +127,8 @@ describe("Codex 2a-1 第二轮 P2", () => {
     const q = await agent({ action: "ask", content_id: c.id, request_id: "q", kind: "分镜", question: "分镜行吗", fact_id: sb.fact_id, attachments: [extra], options: [{ id: "approve", label: "通过" }, { id: "no", label: "不行" }] });
     await put(extra, png(10, 10, "changed"));
     const it = (await items(c.id)).find((x) => x.item_id === scopedId(x.content_id ?? "", `ask:${q.ask_id}`))!;
-    expect(await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "approve" }, env.dir)).toMatchObject({ ok: false, code: "attachments_changed" });
+    expect(await decideItem({ content_id: c.id, item_id: it.item_id, gen: it.gen, action: "answer_ask", option_id: "approve" }, env.dir)).toMatchObject({ ok: false });
+    // verifier 2a P2：附件变过的请示只给「让 X 重发」
+    expect(it.actions.map((a) => a.action)).toEqual(["ask_resend"]);
   });
 });
