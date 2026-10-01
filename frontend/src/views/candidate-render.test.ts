@@ -47,7 +47,7 @@ describe("卡片「发现的候选」", () => {
 describe("收件箱列表同样处理", () => {
   it("文件名 + 收件箱 + 一句话；完整路径只在「依据」和悬停里", async () => {
     const { InboxHeader } = await import("./InboxHeader");
-    await act(async () => { root.render(createElement(InboxHeader, { inbox: { checking: 0, failed: [], unmatched: [{ name: "IMG_1.mov", path: "/Users/x/lib/inbox/IMG_1.mov", size: 1, mtime_ms: 0, guess: ["甲稿"] }] }, targets: [], reload: async () => {} })); });
+    await act(async () => { root.render(createElement(InboxHeader, { inbox: { checking: 0, failed: [], unmatched: [{ name: "IMG_1.mov", path: "/Users/x/lib/inbox/IMG_1.mov", sha256: "s1", size: 1, mtime_ms: 0, guess: ["甲稿"] }] }, targets: [], reload: async () => {} })); });
     await click(button("收件箱里有 1 个视频没对上"));
     const li = el.querySelector("li")!;
     const visible = [...li.childNodes].filter((n) => (n as Element).tagName !== "DETAILS").map((n) => n.textContent).join("|");

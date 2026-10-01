@@ -53,14 +53,14 @@ describe("待录制列头的收件箱提示", () => {
   it("「收件箱里有 N 个视频没对上」点开：猜测、指定给…（= 挂载决定）、在访达中显示；没核对成的单列原因", async () => {
     const { InboxHeader } = await import("./InboxHeader");
     const inbox = { checking: 0, failed: [{ name: "bad.mov", path: "/i/bad.mov", reason: "转写失败：sidecar 崩了" }],
-      unmatched: [{ name: "IMG_1.mov", path: "/i/IMG_1.mov", size: 2 * 1024 * 1024, mtime_ms: 0, guess: ["甲稿"] }, { name: "IMG_2.mov", path: "/i/IMG_2.mov", size: 1, mtime_ms: 0, guess: [] }] };
+      unmatched: [{ name: "IMG_1.mov", path: "/i/IMG_1.mov", sha256: "sh1", size: 2 * 1024 * 1024, mtime_ms: 0, guess: ["甲稿"] }, { name: "IMG_2.mov", path: "/i/IMG_2.mov", sha256: "sh2", size: 1, mtime_ms: 0, guess: [] }] };
     await act(async () => { root.render(createElement(InboxHeader, { inbox, targets: [{ id: "content-1-a", title: "甲稿" }], reload: async () => {} })); });
     expect(el.textContent).toContain("1 个视频没核对成：bad.mov（转写失败：sidecar 崩了）");
     await click(button("收件箱里有 2 个视频没对上"));
     expect(el.textContent).toContain("猜测：甲稿");
     const select = el.querySelector("select")!;
     await act(async () => { select.value = "content-1-a"; select.dispatchEvent(new Event("change", { bubbles: true })); await new Promise((r) => setTimeout(r, 10)); });
-    expect(calls.find((c) => c.fn === "decide")!.args).toEqual(["content-1-a", "attach_aroll", { path: "/i/IMG_1.mov" }]);
+    expect(calls.find((c) => c.fn === "decide")!.args).toEqual(["content-1-a", "attach_aroll", { path: "/i/IMG_1.mov", expect_sha: "sh1" }]);
     await click(button("在访达中显示"));
     expect(calls.find((c) => c.fn === "revealSource")!.args).toEqual(["/i/IMG_1.mov"]);
   });

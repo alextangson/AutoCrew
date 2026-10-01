@@ -100,7 +100,7 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
     // 创始人对那条稿点过「不是」、被挪回收件箱的文件：不再往那条凑，算「没对上」列进列头（verifier 2a P3）
     const no = (id: string) => rejected.has(`${id}|${f.sha256}`);
     if (d.winner && no(d.winner)) {
-      out.inbox.unmatched.push({ name: f.name, path: f.file, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.filter((r) => !no(r.content_id)).map((r) => r.title), reason: "你说过不是那条" });
+      out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.filter((r) => !no(r.content_id)).map((r) => r.title), reason: "你说过不是那条" });
       continue;
     }
     if (d.winner) {
@@ -112,7 +112,7 @@ function judgeInbox(out: Discovery, decided: Array<{ f: Found; d: MatchDecision 
     }
     const likes = d.top3.filter(looksLike).filter((r) => !no(r.content_id));
     for (const r of likes) suggest(out, r.content_id, seen(f, "aroll", `原片收件箱：${why(d)}`, matchOf(d)));
-    if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.map((r) => r.title), reason: d.reason });
+    if (!likes.length) out.inbox.unmatched.push({ name: f.name, path: f.file, sha256: f.sha256, size: f.size, mtime_ms: f.mtime_ms, guess: d.top3.map((r) => r.title), reason: d.reason });
   }
 }
 

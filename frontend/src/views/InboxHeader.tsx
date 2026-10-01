@@ -15,11 +15,12 @@ export function InboxHeader(p: { inbox: InboxStatus | undefined; targets: Array<
   const [busy, setBusy] = useState(false);
   const inbox = p.inbox;
   if (!inbox || (!inbox.unmatched.length && !inbox.failed.length && !inbox.checking)) return null;
-  const assign = async (file: string, id: string) => {
+  // 绑着列表里那份字节（整分支审 11 P2）：文件之后被换了，服务端回 stale，不挪新字节
+  const assign = async (file: string, sha: string, id: string) => {
     if (!id) return;
     setBusy(true);
     try {
-      const r = await decide(id, "attach_aroll", { path: file });
+      const r = await decide(id, "attach_aroll", { path: file, expect_sha: sha });
       toast(r.ok ? "已挂上、挪进项目" : r.error);
       if (r.ok) await p.reload();
     } finally { setBusy(false); }
@@ -34,7 +35,7 @@ export function InboxHeader(p: { inbox: InboxStatus | undefined; targets: Array<
       <p className="card-panel-note">{f.guess.length ? `哪条都不够像，最接近《${f.guess[0]}》` : "哪条都不像"}</p>
       <details><summary className="card-panel-note">依据</summary><pre className="card-panel-detail">{[f.path, f.reason ?? "", f.guess.length ? `猜测：${f.guess.join("、")}` : ""].filter(Boolean).join("\n")}</pre></details>
       <div className="card-panel-row">
-        <select aria-label={`把 ${f.name} 指定给`} disabled={busy || !p.targets.length} defaultValue="" onChange={(e) => void assign(f.path, e.target.value)}>
+        <select aria-label={`把 ${f.name} 指定给`} disabled={busy || !p.targets.length} defaultValue="" onChange={(e) => void assign(f.path, f.sha256, e.target.value)}>
           <option value="">{p.targets.length ? "指定给…" : "没有等原片的稿"}</option>
           {p.targets.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
         </select>

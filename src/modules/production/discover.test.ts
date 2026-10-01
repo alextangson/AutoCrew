@@ -117,6 +117,21 @@ describe("§4 收件箱自动挪", () => {
     expect(await exists(src)).toBe(true);
   });
 
+  it("列头「指定给…」绑着列表里那份字节：列出来之后文件被换了 → stale，什么都不挪（整分支审 11 P2）", async () => {
+    asr(heardFrom({ "IMG_y.mov": synth(78, 200) }));
+    const c = await videoContent(env, "甲稿换字节测试", "draft_ready", A);
+    const src = await put(path.join(env.inbox, "IMG_y.mov"), "first-bytes");
+    const r = await tick();
+    const shown = r.inbox!.unmatched[0];
+    expect(shown.sha256).toBeTruthy();
+    await fs.writeFile(src, "other-bytes");
+    const old = new Date(Date.now() - 3600_000);
+    await fs.utimes(src, old, old);
+    expect(await founderDecision(c.id, "attach_aroll", { path: shown.path, expect_sha: shown.sha256 }, env.dir)).toMatchObject({ ok: false, code: "stale" });
+    expect(await exists(src)).toBe(true);
+    expect(await facts(c.id)).toEqual([]);
+  });
+
   it("没能比完（转写一直失败）与没对上分开：退避到头后进「没核对成」并进对账警告（B36、§14-14）", async () => {
     asr(() => ({ ok: false, unavailable: false, reason: "sidecar 崩了" }));
     await videoContent(env, "甲稿失败测试", "draft_ready", A);

@@ -97,7 +97,7 @@ export interface BoardTopic {
 }
 
 /** 收件箱（1b §4）：没对上的、没核对成的、还在核对的——待录制列头读它 */
-export interface InboxFileView { name: string; path: string; size: number; mtime_ms: number; guess: string[]; reason?: string }
+export interface InboxFileView { name: string; path: string; sha256: string; size: number; mtime_ms: number; guess: string[]; reason?: string }
 export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number }
 
 /**
