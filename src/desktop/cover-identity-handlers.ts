@@ -6,6 +6,8 @@ import {
   uploadIdentitySource,
   type IdentityAssetKind,
 } from "../modules/cover/identity-library.js";
+import { trackWork } from "../modules/update/active-work.js";
+import { updatingRefusal } from "../modules/update/preflight.js";
 import { generateIdentityPortraitCandidates } from "../modules/cover/identity-generator.js";
 import { emitEngineEvent } from "./event-hub.js";
 
@@ -23,13 +25,15 @@ function dataDirOf(payload: Payload): string | undefined {
 
 export function startIdentityPortraitJob(payload: Payload): StartedIdentityPortraitJob {
   const dataDir = dataDirOf(payload);
+  const updating = updatingRefusal();
+  if (updating) return { response: { ok: false, error: updating }, completion: Promise.resolve() };
   const runId = `run-portrait-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const emit = (kind: "work" | "run_done" | "run_failed", label: string) =>
     void emitEngineEvent({ role: "publisher", kind, label, contentId: "cover-identity", runId }, dataDir).catch(
       () => {},
     );
   emit("work", "正在基于真实照片生成 3 张个人形象备选…");
-  const completion = (async () => {
+  const completion = trackWork("个人形象生图", (async () => {
     try {
       const result = await generateIdentityPortraitCandidates(dataDir);
       if (result.generated > 0) {
@@ -43,7 +47,7 @@ export function startIdentityPortraitJob(payload: Payload): StartedIdentityPortr
     } catch (err) {
       emit("run_failed", `个人形象生成失败：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
     }
-  })();
+  })());
   return { response: { ok: true, pending: true, runId }, completion };
 }
 

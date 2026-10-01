@@ -204,7 +204,7 @@ describe("更新执行", () => {
     release("0.5.0", [["0.5.0", "2026-10-01", "跑一次迁移"], ["0.4.0", "2026-09-01", "无"]]);
     await checkForUpdate(user, machine, { git: git() });
   });
-  const job = (s: UpdateSteps) => ({ root: user, machineDir: machine, tag: "v0.5.0", from: "0.4.0", to: "0.5.0", git: git(), steps: s, logFile: path.join(machine, "update-logs", "u.log") });
+  const job = (s: UpdateSteps) => ({ root: user, machineDir: machine, tag: "v0.5.0", commit: sh(user, "rev-parse", "v0.5.0^{commit}"), from: "0.4.0", to: "0.5.0", git: git(), steps: s, logFile: path.join(machine, "update-logs", "u.log") });
 
   it("成功：ff-only 到 tag，依次装 / 建 / 重启 / 健康检查，结果给页面", async () => {
     const tagCommit = sh(user, "rev-parse", "v0.5.0^{commit}");
@@ -223,7 +223,7 @@ describe("更新执行", () => {
     expect(r).toMatchObject({ ok: false, outcome: "rolled_back" });
     expect(r.message).toMatch(/更新失败，已退回 0\.4\.0，原因：install 坏了，完整记录在 .*u\.log/);
     expect(sh(user, "rev-parse", "HEAD")).toBe(oldHead);
-    expect(calls).toEqual(["install", "install", "build", "restart", "health"]);
+    expect(calls).toEqual(["install", "install", "build", "quiesce", "restart", "health"]);
     expect(updateView(user, machine, false).result?.outcome).toBe("rolled_back");
   });
 

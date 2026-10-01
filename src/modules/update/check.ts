@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { firstLine, gitRunner, type GitRunner } from "./git.js";
-import { highestTag, isNewer } from "./semver.js";
+import { compareSemver, formatSemver, isNewer, parseSemver } from "./semver.js";
 import { notesBetween, parseChangelog, shortDate, type ReleaseNotes } from "./changelog.js";
 import { readResult, readSettings, readStatus, writeStatus, type UpdateResult, type UpdateSettings, type UpdateStatus } from "./state.js";
 
@@ -62,24 +62,55 @@ export async function checkForUpdate(root: string, machineDir: string, deps: Che
   if (!(await isGitInstall(root, git))) return fail(NOT_GIT);
   const fetchError = await fetchTags(git);
   if (fetchError) return fail(fetchError);
-  const tags = await git(["tag", "--merged", "refs/remotes/origin/main", "--list", "v*"]);
-  if (!tags.ok) return fail(`读不出 GitHub 上的发布版本（${firstLine(tags.stderr)}）`);
-  const best = highestTag(tags.stdout.split("\n"));
-  const base = { checkedAt, current, ...(best ? { latest: best.version, tag: best.tag } : {}) };
+  const remote = await originReleases(git);
+  if ("error" in remote) return fail(remote.error);
+  const best = remote.best;
+  const base = { checkedAt, current, ...(best ? { latest: best.version, tag: best.tag, commit: best.commit } : {}) };
   if (!best || !isNewer(best.version, current)) {
     const s: UpdateStatus = { ...base, available: false, reason: "up_to_date" };
     writeStatus(machineDir, s);
     return s;
   }
-  const ancestor = await git(["merge-base", "--is-ancestor", "HEAD", `${best.tag}^{commit}`]);
+  const ancestor = await git(["merge-base", "--is-ancestor", "HEAD", best.commit]);
   if (!ancestor.ok) {
     const s: UpdateStatus = { ...base, available: false, reason: "local_ahead" };
     writeStatus(machineDir, s);
     return s;
   }
-  const s: UpdateStatus = { ...base, available: true, notes: await readNotesAt(git, best.tag, current, best.version) };
+  const s: UpdateStatus = { ...base, available: true, notes: await readNotesAt(git, best.commit, current, best.version) };
   writeStatus(machineDir, s);
   return s;
+}
+
+/** `git ls-remote --tags` 的输出 → tag 名 → 提交（附注 tag 取 `^{}` 剥开后的提交） */
+export function parseLsRemoteTags(out: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of out.split("\n")) {
+    const m = /^([0-9a-f]{40,64})\s+refs\/tags\/(.+?)(\^\{\})?$/.exec(line.trim());
+    if (!m) continue;
+    if (m[3] || !map.has(m[2])) map.set(m[2], m[1]);
+  }
+  return map;
+}
+
+/**
+ * origin 上真实存在、且在 origin/main 历史上的最高发布版（Codex 审第 2 轮 P2）。
+ * 不看本地 tag：本地自己打的、或 origin 已经删掉的 tag 都不算发布版；目标钉在 origin 公布的那个提交上。
+ */
+async function originReleases(git: GitRunner): Promise<{ best: { tag: string; version: string; commit: string } | null } | { error: string }> {
+  const r = await git(["ls-remote", "--tags", "origin"], { timeoutMs: FETCH_TIMEOUT_MS });
+  if (!r.ok) return { error: r.timedOut ? "连 GitHub 超过 30 秒没回应，稍后再查" : `读不出 GitHub 上的发布版本（${firstLine(r.stderr)}）` };
+  const tags = parseLsRemoteTags(r.stdout);
+  const ordered = [...tags.keys()]
+    .map((tag) => ({ tag, v: tag.startsWith("v") ? parseSemver(tag) : null }))
+    .filter((x): x is { tag: string; v: NonNullable<ReturnType<typeof parseSemver>> } => x.v !== null)
+    .sort((a, b) => compareSemver(b.v, a.v));
+  for (const { tag, v } of ordered) {
+    const commit = tags.get(tag)!;
+    const onMain = await git(["merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"]);
+    if (onMain.ok) return { best: { tag, version: formatSemver(v), commit } };
+  }
+  return { best: null };
 }
 
 /** 看板横幅：有更新、比本地新（更新完 package.json 变了自然消失）、不是「先不更新」的那一版 */

@@ -119,7 +119,7 @@ describe("P1 更新中不开新活，重启前再确认", () => {
     const calls: string[] = [];
     const step = (name: string, fail = false) => async () => { calls.push(name); if (fail) throw new QuiesceError("等了 120 秒还有任务在跑：有 1 个任务正在跑"); };
     const steps: UpdateSteps = { quiesce: step("quiesce", true), install: step("install"), build: step("build"), restart: step("restart"), health: step("health") };
-    const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", from: "0.4.0", to: "0.5.0", git: gitRunner(user), steps, logFile: path.join(machine, "u.log") });
+    const r = await runUpdate({ root: user, machineDir: machine, tag: "v0.5.0", commit: g(user, "rev-parse", "v0.5.0^{commit}"), from: "0.4.0", to: "0.5.0", git: gitRunner(user), steps, logFile: path.join(machine, "u.log") });
     expect(r).toMatchObject({ ok: false, outcome: "rolled_back" });
     expect(r.message).toMatch(/更新取消了.*没有重启，仍是 0\.4\.0/);
     expect(g(user, "rev-parse", "HEAD")).toBe(old);
@@ -131,7 +131,7 @@ describe("P1 更新中不开新活，重启前再确认", () => {
 describe("P2 更新进程起不来要如实报", () => {
   it("tsx 不在：等到 error 才回答，放锁，写「更新没能开始」给页面", async () => {
     expect(acquireLock(tmp, "tok")).toBe(true);
-    const r = await spawnDetachedUpdater(tmp, tmp, 1, { ok: true, tag: "v0.5.0", from: "0.4.0", to: "0.5.0", notes: [], token: "tok" });
+    const r = await spawnDetachedUpdater(tmp, tmp, 1, { ok: true, tag: "v0.5.0", commit: "a".repeat(40), from: "0.4.0", to: "0.5.0", notes: [], token: "tok" });
     expect(r).toMatchObject({ ok: false, reason: expect.stringContaining("更新没能开始") });
     expect(lockHeld(tmp)).toBe(false);
     expect(readResult(tmp)).toMatchObject({ ok: false, outcome: "not_started", message: expect.stringContaining("更新没能开始") });

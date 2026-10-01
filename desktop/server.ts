@@ -6,6 +6,7 @@ import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
+import { activeWorkCount } from "../src/modules/update/active-work.js";
 import { getMachineDir } from "../src/storage/storage-roots.js";
 import { launchedByLauncher } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
@@ -193,7 +194,8 @@ const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originA
 const updateRoute = createUpdateHandler({
   authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,
   root: programRoot(), machineDir: getMachineDir(), port: PORT,
-  inProcessTurns: activeTurnCount,
+  // 对话轮 + 后台写稿 / 生图 / 推送等长任务（self-update，Codex 审第 2 轮 P1）
+  inProcessTurns: () => activeTurnCount() + activeWorkCount(),
   // 启动器记的是 tsx 的 pid，跑本文件的是 tsx 拉起的另一个 node：比启动器发给这一次启动的标记，不比 pid
   launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()) }),
 });

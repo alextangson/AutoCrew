@@ -25,6 +25,8 @@ export interface UpdateJob {
   root: string;
   machineDir: string;
   tag: string;
+  /** origin 公布的 tag 所指提交：只合到它 */
+  commit: string;
   from: string;
   to: string;
   notes?: ReleaseNotes[];
@@ -67,7 +69,7 @@ export function manualCommands(root: string, oldHead: string): string[] {
 }
 
 async function forward(job: UpdateJob, log: Log): Promise<void> {
-  await gitStep(job.git, ["merge", "--ff-only", `${job.tag}^{commit}`], log);
+  await gitStep(job.git, ["merge", "--ff-only", job.commit], log);
   log("== 安装依赖"); await job.steps.install(log);
   log("== 构建前端"); await job.steps.build(log);
   log("== 确认没有任务在跑"); await job.steps.quiesce(log);
@@ -75,14 +77,22 @@ async function forward(job: UpdateJob, log: Log): Promise<void> {
   log("== 健康检查"); await job.steps.health(log);
 }
 
-async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: boolean): Promise<void> {
+async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: boolean): Promise<"kept" | "restarted" | "not_restarted"> {
   await gitStep(job.git, ["reset", "--hard", oldHead], log);
   log("== 退回：安装依赖"); await job.steps.install(log);
   log("== 退回：构建前端"); await job.steps.build(log);
   // 因为有任务在跑而取消：旧服务一直没停，不重启（绝不掐断在跑的轮）
-  if (!restart) { log("服务没有重启过，保持运行"); return; }
+  if (!restart) { log("服务没有重启过，保持运行"); return "kept"; }
+  // 退回路径也要先确认没人在跑（Codex 审第 2 轮 P1）：确认不了就让旧服务继续跑，代码已经退回
+  try { log("== 退回：确认没有任务在跑"); await job.steps.quiesce(log); }
+  catch (e) {
+    if (!(e instanceof QuiesceError)) throw e;
+    log(`服务没有重启：${e.message}`);
+    return "not_restarted";
+  }
   log("== 退回：重启服务"); await job.steps.restart(log);
   log("== 退回：健康检查"); await job.steps.health(log);
+  return "restarted";
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -106,9 +116,11 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     const busy = e instanceof QuiesceError;
     log(`!! 更新${busy ? "取消" : "失败"}：${reason}；开始退回 ${oldHead}`);
     try {
-      await rollback(job, oldHead, log, !busy);
+      const how = await rollback(job, oldHead, log, !busy);
       return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base,
-        message: busy
+        message: how === "not_restarted"
+          ? `更新失败，已退回代码；服务没有重启（有任务在跑），等它们结束后运行 npm run restart。原因：${reason}，完整记录在 ${job.logFile}`
+          : busy
           ? `更新取消了：${reason}。没有重启，仍是 ${job.from}，完整记录在 ${job.logFile}`
           : `更新失败，已退回 ${job.from}，原因：${reason}，完整记录在 ${job.logFile}` }, log);
     } catch (e2) {

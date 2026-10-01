@@ -37,13 +37,13 @@ function launcherPidAlive(): boolean {
 const busyNow = (serverRunning: boolean) => async () => busyWork(MACHINE) ?? (serverRunning ? await serverBusy(PORT) : null);
 
 async function fromServer(): Promise<number> {
-  const tag = arg("tag"), token = arg("lock-token"), log = arg("log");
-  if (!tag || !token || !log) { console.error("缺参数"); return 2; }
+  const tag = arg("tag"), commit = arg("commit"), token = arg("lock-token"), log = arg("log");
+  if (!tag || !commit || !/^[0-9a-f]{40,64}$/.test(commit) || !token || !log) { console.error("缺参数"); return 2; }
   if (!adoptLock(MACHINE, token)) { console.error("锁不是交给这个进程的，不动手"); return 2; }
   try {
     const status = readStatus(MACHINE);
     const result = await runUpdate({
-      root: ROOT, machineDir: MACHINE, tag, from: localVersion(ROOT), to: tag.replace(/^v/, ""),
+      root: ROOT, machineDir: MACHINE, tag, commit, from: localVersion(ROOT), to: tag.replace(/^v/, ""),
       ...(status?.tag === tag && status.notes ? { notes: status.notes } : {}),
       git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: true, busy: busyNow(true) }), logFile: log,
     });
@@ -63,7 +63,7 @@ async function fromCli(): Promise<number> {
   const log = newLogFile(MACHINE);
   console.log(`开始更新 ${prep.from} → ${prep.to}，大约 1 分钟；记录写在 ${log}`);
   try {
-    const result = await runUpdate({ root: ROOT, machineDir: MACHINE, tag: prep.tag, from: prep.from, to: prep.to, notes: prep.notes,
+    const result = await runUpdate({ root: ROOT, machineDir: MACHINE, tag: prep.tag, commit: prep.commit, from: prep.from, to: prep.to, notes: prep.notes,
       git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: running, busy: busyNow(running) }), logFile: log });
     console.log(result.message);
     if (result.manualCommands) console.log(result.manualCommands.join("\n"));

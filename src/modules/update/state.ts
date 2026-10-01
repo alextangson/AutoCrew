@@ -14,6 +14,8 @@ export interface UpdateStatus {
   /** origin/main 上最高的发布版（tag 去掉 v） */
   latest?: string;
   tag?: string;
+  /** origin 公布的这个 tag 指向的提交：更新只合到它（不认本地 tag） */
+  commit?: string;
   available: boolean;
   /** available=false 的原因：已是最新 / 本地比发布版新或分叉 */
   reason?: "up_to_date" | "local_ahead";

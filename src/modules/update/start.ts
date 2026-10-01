@@ -5,15 +5,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { checkForUpdate, localVersion } from "./check.js";
-import { acquireLock, preflight, releaseLock, RUNNING_MESSAGE, lockHeld, type PreflightDeps } from "./preflight.js";
+import { acquireLock, preflight, releaseLock, RUNNING_MESSAGE, lockHeld, lockOwner, type PreflightDeps } from "./preflight.js";
 import { gitRunner } from "./git.js";
 import { newLogFile } from "./updater.js";
-import { writeResult } from "./state.js";
+import { readResult, writeResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 
-export interface Prepared { ok: true; tag: string; from: string; to: string; notes: ReleaseNotes[]; token: string }
+export interface Prepared { ok: true; tag: string; commit: string; from: string; to: string; notes: ReleaseNotes[]; token: string }
 export type PrepareResult = Prepared | { ok: false; code: string; reason: string };
 
 export async function prepareUpdate(root: string, machineDir: string, deps: Omit<PreflightDeps, "git"> & { git?: PreflightDeps["git"] }): Promise<PrepareResult> {
@@ -21,14 +21,29 @@ export async function prepareUpdate(root: string, machineDir: string, deps: Omit
   const git = deps.git ?? gitRunner(root);
   const status = await checkForUpdate(root, machineDir, { git });
   if (status.error) return { ok: false, code: "check_failed", reason: status.error };
-  if (!status.available || !status.tag || !status.latest) {
+  if (!status.available || !status.tag || !status.latest || !status.commit) {
     return { ok: false, code: "no_update", reason: status.reason === "local_ahead" ? "本地程序比最新发布版还新，不用更新" : `已经是最新版 ${status.current}` };
   }
-  const pre = await preflight(root, machineDir, status.tag, { ...deps, git });
+  const pre = await preflight(root, machineDir, status.commit, { ...deps, git });
   if (!pre.ok) return pre;
   const token = randomBytes(16).toString("hex");
   if (!acquireLock(machineDir, token)) return { ok: false, code: "running", reason: RUNNING_MESSAGE };
-  return { ok: true, tag: status.tag, from: localVersion(root), to: status.latest, notes: status.notes ?? [], token };
+  return { ok: true, tag: status.tag, commit: status.commit, from: localVersion(root), to: status.latest, notes: status.notes ?? [], token };
+}
+
+function waitAdopted(machineDir: string, child: ChildProcess, timeoutMs: number): Promise<true | "timeout" | string> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: true | "timeout" | string) => { if (done) return; done = true; clearInterval(poll); clearTimeout(timer); child.off("exit", onExit); resolve(v); };
+    const since = Date.now();
+    // 接手后很快跑完（比如第一步就失败并退回）也算接手过：它自己写了结果，不能拿「没能开始」盖掉
+    const wroteResult = () => { const r = readResult(machineDir); return Boolean(r && Date.parse(r.at) >= since - 1_000); };
+    const onExit = (code: number | null, signal: string | null) =>
+      finish(lockOwner(machineDir) === child.pid || wroteResult() ? true : signal ? `信号 ${signal}` : `退出码 ${code}`);
+    child.on("exit", onExit);
+    const poll = setInterval(() => { if (lockOwner(machineDir) === child.pid) finish(true); }, 50);
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+  });
 }
 
 /**
@@ -37,7 +52,7 @@ export async function prepareUpdate(root: string, machineDir: string, deps: Omit
  * 起不来：放锁，并写一份「更新没能开始」的结果给页面。
  */
 export async function spawnDetachedUpdater(root: string, machineDir: string, port: number, job: Prepared,
-  spawnImpl: typeof spawn = spawn): Promise<{ ok: true; log: string } | { ok: false; reason: string }> {
+  spawnImpl: typeof spawn = spawn, adoptTimeoutMs = 20_000): Promise<{ ok: true; log: string } | { ok: false; reason: string }> {
   const log = newLogFile(machineDir);
   const fail = (e: unknown) => {
     releaseLock(machineDir, job.token);
@@ -52,7 +67,7 @@ export async function spawnDetachedUpdater(root: string, machineDir: string, por
     fd = fs.openSync(log, "a", 0o600);
     const tsx = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
     const child = spawnImpl(tsx, [path.join(root, "scripts", "update.mts"), "--from-server",
-      "--tag", job.tag, "--lock-token", job.token, "--log", log, "--port", String(port)], {
+      "--tag", job.tag, "--commit", job.commit, "--lock-token", job.token, "--log", log, "--port", String(port)], {
       cwd: root, detached: true, stdio: ["ignore", fd, fd],
       env: { ...process.env, AUTOCREW_LOCAL_DIR: machineDir, AUTOCREW_PORT: String(port) },
     });
@@ -61,6 +76,13 @@ export async function spawnDetachedUpdater(root: string, machineDir: string, por
       child.once("error", (e) => resolve(e));
     });
     if (started) return fail(started);
+    // 起来了不等于接手了：脚本可能在 adoptLock 之前就因为依赖缺失退出（Codex 审第 2 轮 P2）。
+    // 等锁的主人变成它；它先退出或超时 → 放锁、写「没能开始」，超时的那个结束掉
+    const adopted = await waitAdopted(machineDir, child, adoptTimeoutMs);
+    if (adopted !== true) {
+      if (adopted === "timeout") { try { process.kill(-child.pid!, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* 已经不在 */ } } }
+      return fail(new Error(adopted === "timeout" ? `更新进程 ${Math.round(adoptTimeoutMs / 1000)} 秒内没接手` : `更新进程刚起来就退出了（${adopted}），看日志 ${log}`));
+    }
     child.unref();
     return { ok: true, log };
   } catch (e) {

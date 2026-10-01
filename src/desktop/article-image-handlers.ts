@@ -1,4 +1,6 @@
 /** 正文配图 IPC：生成是分钟级后台任务，读取/移除同步返回。 */
+import { trackWork } from "../modules/update/active-work.js";
+import { updatingRefusal } from "../modules/update/preflight.js";
 import {
   attachUploadedArticleImage,
   generateArticleImages,
@@ -45,6 +47,8 @@ const noJob = (response: HandlerResult): StartedArticleImagesJob => ({ response,
 export function startArticleImagesJob(payload: Payload, single: boolean): StartedArticleImagesJob {
   const checked = valid(payload);
   if (!checked.ok) return noJob(checked);
+  const updating = updatingRefusal();
+  if (updating) return noJob({ ok: false, error: updating });
   const index = single ? Number(payload.index) : undefined;
   if (single && (!Number.isInteger(index) || (index as number) < 0)) {
     return noJob({ ok: false, error: "需要合法 index" });
@@ -57,7 +61,7 @@ export function startArticleImagesJob(payload: Payload, single: boolean): Starte
     void emitEngineEvent({ role: "publisher", kind, label, contentId: checked.contentId, runId }, checked.dataDir).catch(() => {});
   emit("work", single ? `正在重做正文配图 ${(index as number) + 1}…` : "正在生成缺失的正文配图…");
 
-  const completion = (async () => {
+  const completion = trackWork("正文配图", (async () => {
     try {
       const result = await generateArticleImages({
         contentId: checked.contentId,
@@ -80,7 +84,7 @@ export function startArticleImagesJob(payload: Payload, single: boolean): Starte
     } catch (err) {
       emit("run_failed", `正文配图失败：${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`);
     }
-  })();
+  })());
   return { response: { ok: true, pending: true, runId }, completion };
 }
 

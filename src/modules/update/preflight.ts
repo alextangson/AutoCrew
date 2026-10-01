@@ -46,7 +46,8 @@ export function busyWork(machineDir: string, deps: Pick<PreflightDeps, "inProces
   return `有 ${running.length + turns} 个任务正在跑（写稿、剪辑或发布），等它们停下再更新`;
 }
 
-export async function preflight(root: string, machineDir: string, tag: string, deps: PreflightDeps): Promise<Preflight> {
+/** target = 要合到的提交（origin 公布的 tag 所指），不是本地 tag 名 */
+export async function preflight(root: string, machineDir: string, target: string, deps: PreflightDeps): Promise<Preflight> {
   const { git } = deps;
   const no = (code: string, reason: string): Preflight => ({ ok: false, code, reason });
   if (lockHeld(machineDir)) return no("running", RUNNING_MESSAGE);
@@ -57,8 +58,8 @@ export async function preflight(root: string, machineDir: string, tag: string, d
   const dirty = await git(["status", "--porcelain", "--untracked-files=no"]);
   if (!dirty.ok) return no("git_failed", `读不出本地改动（${firstLine(dirty.stderr)}）`);
   if (dirty.stdout.trim()) return no("dirty", "程序文件有本地改动，自动更新会覆盖它们；先提交或撤掉这些改动再更新");
-  const ancestor = await git(["merge-base", "--is-ancestor", "HEAD", `${tag}^{commit}`]);
-  if (!ancestor.ok) return no("not_ancestor", `本地程序比 ${tag} 新或者已经分叉，不能自动更新`);
+  const ancestor = await git(["merge-base", "--is-ancestor", "HEAD", target]);
+  if (!ancestor.ok) return no("not_ancestor", "本地程序比要更新到的发布版还新，或者已经分叉，不能自动更新");
   const busy = busyWork(machineDir, deps);
   if (busy) return no("busy", busy);
   if (deps.remoteBusy) {
@@ -82,6 +83,11 @@ function pidAlive(pid: number): boolean {
 
 function readLock(machineDir: string): LockBody | null {
   try { return JSON.parse(fs.readFileSync(files(machineDir).lock, "utf-8")) as LockBody; } catch { return null; }
+}
+
+/** 持锁进程的 pid（没有锁就是 null） */
+export function lockOwner(machineDir: string): number | null {
+  return readLock(machineDir)?.pid ?? null;
 }
 
 /** 锁在、且持锁进程还活着 */

@@ -5,6 +5,8 @@
  * provider 解析在 server 端(cover.json + publish.json);gemini 分支注入 key
  * (renderer 永远拿不到原文),relay 分支工具自行解析凭证。
  */
+import { trackWork } from "../modules/update/active-work.js";
+import { updatingRefusal } from "../modules/update/preflight.js";
 import { executeCoverReview } from "../tools/cover-review.js";
 import {
   loadCoverSettings,
@@ -63,6 +65,8 @@ export async function startCoverJob(
   labels: { work: string; done: string },
 ): Promise<StartedCoverJob> {
   const dataDir = (payload._dataDir as string) || undefined;
+  const updating = updatingRefusal();
+  if (updating) return { response: { ok: false, error: updating }, completion: Promise.resolve() };
   const prep = await providerInjection(dataDir);
   if ("error" in prep) {
     return { response: { ok: false, error: prep.error, hint: prep.hint }, completion: Promise.resolve() };
@@ -77,7 +81,7 @@ export async function startCoverJob(
   const onPhase = (label: string) => emit("work", label);
   const onVariant = (p: { done: number; total: number; label: string; ok: boolean }) =>
     emit("work", `封面 ${p.label.toUpperCase()} ${p.ok ? "已出" : "失败"}（${p.done}/${p.total}）`);
-  const completion = (async () => {
+  const completion = trackWork(labels.work, (async () => {
     try {
       const result = (await executeCoverReview({
         ...payload,
@@ -107,7 +111,7 @@ export async function startCoverJob(
     } catch (err) {
       emit("run_failed", `封面任务失败:${(err instanceof Error ? err.message : String(err)).slice(0, 60)}`);
     }
-  })();
+  })());
   return { response: { ok: true, pending: true, runId }, completion };
 }
 

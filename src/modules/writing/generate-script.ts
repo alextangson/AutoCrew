@@ -12,6 +12,7 @@ import { inheritCreativeTask, createCreativeTask, creativeTaskHash, creativeTask
  * 组装 + humanizeZh 只做一次（审稿 spec §2.1：审稿必须看到终稿形态），
  * 审稿产出直接进转正——同一段文本不许算两遍。
  */
+import { assertNotUpdating, trackWork } from "../update/active-work.js";
 import {
   ENGINE_UNCONFIGURED,
   hostOf,
@@ -1141,7 +1142,8 @@ function runInBackground(
   const runId = `run-bg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const emit = (e: BackgroundGenEvent) => { try { deps?.onEvent?.(e); } catch { /* 观测层吞错 */ } };
 
-  const completion = (async () => {
+  // 一键更新的忙碌计数（self-update）：后台写稿跑完之前，更新不会重启服务
+  const completion = trackWork(workLabel, (async () => {
     emit({ role: "writer", kind: "work", label: workLabel, contentId, runId });
     try {
       const result = await runGeneration(contentId, req, dataDir, deps, runId);
@@ -1158,7 +1160,7 @@ function runInBackground(
       const msg = await writeFailureText(err, dataDir);
       emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 80)}`, contentId, runId });
     }
-  })();
+  })());
   return { contentId, runId, completion };
 }
 
@@ -1172,6 +1174,7 @@ export function startGenerateScript(
   dataDir?: string,
   deps?: BackgroundDeps,
 ): Promise<StartedGeneration> {
+  try { assertNotUpdating(); } catch (e) { return Promise.reject(e); }
   return createPlaceholder(req, dataDir).then((contentId) =>
     runInBackground(contentId, req, `编剧开写《${req.topic.slice(0, 24)}》`, dataDir, deps),
   );
@@ -1197,6 +1200,7 @@ export async function retryGenerateScript(
    */
   override?: Partial<ScriptRequest>,
 ): Promise<StartedGeneration> {
+  assertNotUpdating();
   const content = await getContent(contentId, dataDir);
   if (!content) throw new Error(`稿件不存在（${contentId}）`);
   // 「缺证据」和「写崩了」是同一类可重写态（P1 §4.4）：两者都是**没写成**的稿，
