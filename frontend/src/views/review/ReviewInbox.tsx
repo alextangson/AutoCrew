@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/Button";
 import { relativeLabel } from "../../time-format";
 import { decideItem, INBOX_OPEN_EVENT, loadInbox, mediaUrl, undoDecision, type InboxOpenDetail } from "./review-api";
-import { SESSION_EXPIRED } from "../../transport";
+import { invoke, SESSION_EXPIRED } from "../../transport";
 import { DONE_TEXT, staleLine, groupRows, nextRowAfter, previewFact, sortItems, stepRow, thumbKind, undoFor, type InboxAction, type InboxItem, type Row } from "./review-model";
 import { PrimaryContext, ReviewPanel } from "./ReviewPanel";
 import { GroupPanel } from "./ReviewGroup";
@@ -78,8 +78,14 @@ export function ReviewInbox(props: { focusContent?: string; hiddenPollMs?: numbe
   useEffect(() => {
     const on = (e: Event) => {
       const d = (e as CustomEvent<InboxOpenDetail>).detail;
-      const hit = list.find((i) => i.content_id === d.content_id && (!d.types || d.types.includes(i.type)));
-      if (hit) { setCollapsed(false); open(rowOfItem(hit.item_id)); }
+      const pick = (xs: InboxItem[]) => xs.find((i) => i.content_id === d.content_id && (!d.types || d.types.includes(i.type)));
+      const hit = pick(list);
+      if (hit) { setCollapsed(false); open(rowOfItem(hit.item_id)); return; }
+      // 刚做的决定刚生出这件事（「我现在就要审」）：先读一遍再打开（verifier 2a P3）
+      void reload().then((fresh) => {
+        const h = fresh ? pick(fresh) : undefined;
+        if (h) { setCollapsed(false); open(groupRows(fresh!).find((r) => r.items.some((i) => i.item_id === h.item_id)) ?? null); }
+      });
     };
     window.addEventListener(INBOX_OPEN_EVENT, on);
     return () => window.removeEventListener(INBOX_OPEN_EVENT, on);
@@ -109,14 +115,21 @@ export function ReviewInbox(props: { focusContent?: string; hiddenPollMs?: numbe
       const r = await decideItem({ content_id: item.content_id ?? undefined, item_id: item.item_id, gen: item.gen, action: a.action, ...(a.params ?? {}), ...extra });
       const before = rows;
       const fresh = (await reload()) ?? list;
-      if (!r.ok) { showToast({ text: r.error, undo: null, left: fresh.length }); return false; }
+      // 「还有 N 件」数的是看到的行（verifier 2a P3），和列表头一致
+      const leftRows = groupRows(fresh).length;
+      if (!r.ok) { showToast({ text: r.error, undo: null, left: leftRows }); return false; }
       if (quiet) return true;
       const u = item.content_id ? undoFor(item, a.action, r.data) : null;
       const cid = item.content_id!;
       const doneKey = before.find((row) => row.items.some((i) => i.item_id === item.item_id))?.key ?? item.item_id;
       const next = nextRowAfter(groupRows(fresh), doneKey, before);
-      showToast({ text: DONE_TEXT[a.action] ?? "记下了", left: fresh.length,
-        undo: u ? async () => { const x = await undoDecision(cid, u.action, u.params); setToast(null); showToast({ text: x.ok ? "撤回了" : x.error, undo: null, left: (await reload())?.length ?? 0 }); } : null });
+      showToast({ text: DONE_TEXT[a.action] ?? "记下了", left: leftRows,
+        undo: u ? async () => {
+          const x = u.transition ? await invoke("content:transition", { id: cid, ...u.params }).then((y) => (y.ok ? { ok: true as const } : { ok: false as const, error: y.error ?? "没撤回成" }))
+            : await undoDecision(cid, u.action, u.params);
+          setToast(null);
+          showToast({ text: x.ok ? "撤回了" : x.error, undo: null, left: groupRows((await reload()) ?? []).length });
+        } : null });
       open(next);
       return true;
     } finally { busy.current = false; }
@@ -130,7 +143,7 @@ export function ReviewInbox(props: { focusContent?: string; hiddenPollMs?: numbe
       if (a && await act(i, a, {}, true)) n++;
     }
     const fresh = (await reload()) ?? list;
-    showToast({ text: `记下了，${n} 件都不是`, undo: null, left: fresh.length });
+    showToast({ text: `记下了，${n} 件都不是`, undo: null, left: groupRows(fresh).length });
     open(nextRowAfter(groupRows(fresh), shown?.key ?? "", rows));
   };
 

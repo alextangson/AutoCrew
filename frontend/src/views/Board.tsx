@@ -191,7 +191,7 @@ async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: stri
     case "approve": return approveDraft(item, reload);
     case "back": return confirmBackMove(item, act.move, reload);
     case "publish": {
-      if (!item.platform) return toast("这条没定平台，在卡片上对应平台点「我发了」");
+      if (!item.platform) return toast("这条没定平台，在卡片上对应平台点「已经发出去了」");
       const yes = await confirmDialog({ title: "标记为已发布？", body: `记为你在${platformName(item.platform)}手动发了。不会推送到平台，只改状态。`, confirmLabel: "标记已发布" });
       if (!yes) return;
       try { const r = await markPublished(item.id, item.platform); toast(r.ok ? "已标记为已发布" : r.error); } finally { await reload(); }

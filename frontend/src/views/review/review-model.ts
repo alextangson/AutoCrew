@@ -130,8 +130,11 @@ export function step(items: InboxItem[], currentId: string | null, dir: 1 | -1):
  * 做完一件能不能撤回、撤回调哪个决定（10 秒内）。只有真有撤销决定的才给「撤回」：
  * 就用这版 / 用这组 → 撤销批准；已经发出去了 / 对，发了 → 纠正这个平台的发布槽。
  */
-export function undoFor(item: InboxItem, action: string, result: Record<string, unknown>): { action: string; params: Record<string, unknown> } | null {
+export function undoFor(item: InboxItem, action: string, result: Record<string, unknown>): { action: string; params: Record<string, unknown>; transition?: true } | null {
   const decision = result.decision as { id?: string } | undefined;
+  // 「对，就是它」（原片）：挪回原来的地方；「稿子没问题」：撤回认稿（与看板往回拖同一条路）（verifier 2a P3）
+  if (action === "confirm_candidate" && item.detail.kind === "aroll") return { action: "undo_auto_attach", params: { fact_id: item.detail.fact_id, sha256: item.actions.find((a) => a.action === action)?.params?.sha256 } };
+  if (action === "approve_script") return { action: "unapprove", params: { target_status: "reviewing", from_status: "approved" }, transition: true };
   if ((action === "approve_cut" || action === "pick_cover") && decision?.id) return { action: "revoke_approval", params: { decision_id: decision.id } };
   const m = /^(?:published|claim):[^:]+:r(\d+):(.+)$/.exec(item.item_id);
   if ((action === "i_published" || action === "confirm_receipt") && m) return { action: "correct_publish", params: { target_id: `slot:${m[1]}:${m[2]}` } };

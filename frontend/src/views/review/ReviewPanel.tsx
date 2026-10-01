@@ -8,6 +8,7 @@ import { invoke } from "../../transport";
 import { relativeLabel } from "../../time-format";
 import { openStoryboard } from "../board-api";
 import { attachmentUrl, mediaUrl } from "./review-api";
+import { platformName } from "../board-columns";
 import { sha256Hex } from "../StageAdvance";
 import { plainWords, type InboxAction, type InboxItem } from "./review-model";
 
@@ -63,9 +64,10 @@ export function Actions(p: { item: InboxItem; act: Act; extra?: () => Record<str
   if (open) return <Inline a={open} onSend={(n) => { setOpen(null); run(open, n); }} onCancel={() => setOpen(null)} />;
   const loud = list.filter((a) => a.role !== "quiet"), quiet = list.filter((a) => a.role === "quiet");
   const click = (a: InboxAction) => (a.note === "required" ? setOpen(a) : run(a));
+  // 条件不够时：主按钮的位置写原因（不放灰按钮），次按钮照给（verifier 2a P2：「还要改…」要留着）
   return <div className="ri-actions">
-    {p.item.blocked_reason ? <span className="ri-reason">{p.item.blocked_reason}</span>
-      : loud.map((a, i) => <Button key={`${a.action}-${i}`} variant={variant(a.role)} onClick={() => click(a)}>{a.label}</Button>)}
+    {p.item.blocked_reason && <span className="ri-reason">{p.item.blocked_reason}</span>}
+    {loud.filter((a) => !(p.item.blocked_reason && a.role === "primary")).map((a, i) => <Button key={`${a.action}-${i}`} variant={variant(a.role)} onClick={() => click(a)}>{a.label}</Button>)}
     {quiet.length > 0 && <span className="ri-quiet-slot">{quiet.map((a, i) => <Button key={`${a.action}-q${i}`} variant="quiet" onClick={() => click(a)}>{a.label}</Button>)}</span>}
   </div>;
 }
@@ -140,10 +142,11 @@ function AskBody(p: { item: InboxItem; act: Act }) {
     <Props rows={[["稿子", p.item.title], ["谁问的", p.item.waiting?.label ?? ""], ["问的时候", relativeLabel(p.item.since)]]} />
     <p className="ri-question">{String(d.question ?? "")}</p>
     {Boolean(d.storyboard_fact_id) && <p><Button variant="secondary" onClick={() => void openStoryboard(cid, String(d.storyboard_fact_id))}>在浏览器里打开分镜</Button></p>}
-    {atts.map((a) => <div key={a.index} className="ri-preview">{a.html ? <p className="ri-note">{a.name}：网页附件请到项目文件夹里用浏览器打开</p> : media(a)}</div>)}
+    {d.attachments_changed ? <p className="ri-warn">附件变过，请重新发请示：问你的那份已经不是现在盘上的这份了</p>
+      : atts.map((a) => <div key={a.index} className="ri-preview">{a.html ? <p className="ri-note">{a.name}：网页附件请到项目文件夹里用浏览器打开</p> : media(a)}</div>)}
     {talk && <textarea className="ri-textline" autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder="比如：就这样，但配乐再轻一点" />}
     <Actions item={p.item} act={p.act} extra={() => (note.trim() ? { note: note.trim() } : {})} />
-    {!talk && !p.item.blocked_reason && <Button variant="quiet" onClick={() => setTalk(true)}>说一句…</Button>}
+    {!talk && !p.item.blocked_reason && !d.attachments_changed && <Button variant="quiet" onClick={() => setTalk(true)}>说一句…</Button>}
   </>;
 }
 
@@ -157,11 +160,20 @@ function SliverBody(p: { item: InboxItem; act: Act }) {
   </>;
 }
 
+/** 检查结论说人话（verifier 2a P2）：被拦 → 不能发；有提醒 / 有没查成的 → 说哪些没查；都过才说「都没问题」 */
+export function checkLine(verdict: string, rows: Array<{ check?: string; result?: string; basis?: string }>): string {
+  if (verdict === "block") return "被拦了，现在不能发";
+  const notRun = rows.filter((r) => r.result === "warn" && /没跑|没查|not_run|未运行/.test(`${r.basis ?? ""}${r.check ?? ""}`));
+  if (notRun.length) return `有 ${notRun.length} 项没查成（比如内容复核没跑），自己再看一眼`;
+  if (verdict === "warn" || rows.some((r) => r.result === "warn")) return "有几处要留意";
+  return "都没问题";
+}
+
 function CheckBody(p: { item: InboxItem; act: Act }) {
   const rows = (p.item.detail.items as Array<{ check?: string; result?: string; basis?: string }>) ?? [];
   const shown = rows.filter((r) => r.result === "block" || r.result === "warn");
   return <>
-    <Props rows={[["稿子", p.item.title], ["平台", String(p.item.detail.platform ?? "")], ["检查", p.item.detail.verdict === "block" ? "有几处被拦了" : shown.length ? "有几处要留意" : "都没问题"]]} />
+    <Props rows={[["稿子", p.item.title], ["平台", platformName(String(p.item.detail.platform ?? ""))], ["检查", checkLine(String(p.item.detail.verdict ?? ""), rows)]]} />
     <ul className="ri-check">{shown.map((r, i) => <li key={i}>{r.result === "block" ? "要改：" : "留意："}{plainWords(r.basis ?? r.check ?? "")}</li>)}</ul>
     <Actions item={p.item} act={p.act} />
   </>;
@@ -188,7 +200,7 @@ function CandidateBody(p: { item: InboxItem; act: Act }) {
 function Generic(p: { item: InboxItem; act: Act }) {
   const d = p.item.detail;
   const rows: Array<[string, ReactNode]> = [["稿子", p.item.content_id ? p.item.title : null], ["为什么", d.reason ? String(d.reason) : null], ["文件", d.name ? String(d.name) : null],
-    ["平台", d.platform ? String(d.platform) : null], ["原话", d.quote ? `『${String(d.quote)}』` : null]];
+    ["平台", d.platform ? platformName(String(d.platform)) : null], ["原话", d.quote ? `『${String(d.quote)}』` : null]];
   return <>
     <Props rows={rows} />
     <CandidatePreview item={p.item} />

@@ -37,6 +37,9 @@ export function nextStep(d: NextInput): NextStep | null {
   }
   if (col === "待录制") return { text: "等你录原片：录好放进收件箱会自动挂上，也可以在下面「挂原片」选文件" };
   if (col === "剪辑中") {
+    // 你点过「还要改…」：说你的那句话、等 AI 交新版（verifier 2a P1）
+    const ask = d.missing.find((m) => m.startsWith("你说"));
+    if (ask) return { text: `${ask}；等 AI 交新版，暂时不用你操作` };
     if (d.missing.includes("成片待你审")) return { text: "成片出来了，等你看", action: "open_cut", label: "去看成片" };
     if (d.missing.includes("封面待你选")) return { text: "封面出来了，等你挑", action: "open_cover", label: "去挑封面" };
     return { text: "AI 在剪，暂时不用你操作" };

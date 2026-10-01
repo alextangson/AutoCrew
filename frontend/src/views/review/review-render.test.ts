@@ -24,13 +24,14 @@ vi.mock("./review-api", () => ({
   openInboxItem: () => {},
 }));
 let draftBody = "正文第一段。";
-vi.mock("../../transport", () => ({ invoke: async () => ({ ok: true, content: { body: draftBody } }), authedFetch: async () => new Response("{}"), SESSION_EXPIRED: "x" }));
+const invoked: Array<[string, Record<string, unknown>]> = [];
+vi.mock("../../transport", () => ({ invoke: async (ch: string, p: Record<string, unknown>) => { invoked.push([ch, p]); return { ok: true, content: { body: draftBody } }; }, authedFetch: async () => new Response("{}"), SESSION_EXPIRED: "x" }));
 
 let el: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  decided.length = 0; undone.length = 0; decideReply = { ok: true }; inbox = []; failWith = null; draftBody = "正文第一段。";
+  decided.length = 0; undone.length = 0; decideReply = { ok: true }; inbox = []; failWith = null; draftBody = "正文第一段。"; invoked.length = 0;
   el = document.createElement("div"); document.body.appendChild(el); root = createRoot(el);
   window.localStorage?.clear?.();
 });
@@ -495,5 +496,61 @@ describe("整分支审 8：新的一组封面", () => {
     expect(el.querySelector(".ri-peek .ri-covers img")!.getAttribute("src")).toContain("cg-B-34");
     await key("Enter");
     expect(decided.at(-1)).toMatchObject({ action: "pick_cover", group_id: "cg-B" });
+  });
+});
+
+describe("verifier 2a（前端）", () => {
+  it("抽帧没过的成片：主按钮位置写原因，「还要改…」照给", async () => {
+    await mountInbox([{ ...ITEMS[1], blocked_reason: "画面检查没过（抽帧缝 2 处），先在「最新一版画面有闪帧」那件里处理" }]);
+    await openRow("成片剪好了，看一遍");
+    expect(btn("就用这版")).toBeUndefined();
+    expect(el.querySelector(".ri-peek .ri-reason")!.textContent).toContain("画面检查没过");
+    expect(btn("还要改…")).toBeTruthy();
+  });
+  it("发布检查的结论说人话：被拦 → 不能发；内容复核没跑 → 说没查成", async () => {
+    const { checkLine } = await import("./ReviewPanel");
+    expect(checkLine("block", [])).toBe("被拦了，现在不能发");
+    expect(checkLine("warn", [{ result: "warn", basis: "内容复核没跑成" }])).toMatch(/没查成/);
+    expect(checkLine("pass", [])).toBe("都没问题");
+  });
+  it("提示里的「还有 N 件」数的是看到的行", async () => {
+    await mountInbox([candCover(1), candCover(2), candCover(3), ITEMS[6]]);
+    await openRow("发之前再看一眼（抖音）");
+    inbox = [candCover(1), candCover(2), candCover(3)];
+    await click(btn("没问题"));
+    expect(el.querySelector(".ri-toast")!.textContent).toContain("还有 1 件");
+  });
+  it("「对，就是它」（原片）可以撤回 = 挪回原处；「稿子没问题」可以撤回 = 撤回认稿", async () => {
+    const aroll: InboxItem = { ...ITEMS[3], detail: { ...ITEMS[3].detail, kind: "aroll" } };
+    await mountInbox([aroll]);
+    await openRow("找到一段成片，是这条的吗");
+    inbox = [];
+    await click(btn("对，就是它"));
+    await click(btn("撤回"));
+    expect(undone.at(-1)).toEqual(["content-1-a", "undo_auto_attach", { fact_id: "f9", sha256: "s9" }]);
+    await act(async () => { root.unmount(); }); root = createRoot(el);
+    await mountInbox([ITEMS[9]]);
+    await openRow("稿子写好了，过一眼");
+    await tick();
+    inbox = [];
+    await click(btn("稿子没问题"));
+    await click(btn("撤回"));
+    expect(invoked.at(-1)).toEqual(["content:transition", { id: "content-2-b", target_status: "reviewing", from_status: "approved" }]);
+  });
+  it("「我现在就要审」之后：列表里刚生出来的那件自动打开", async () => {
+    await mountInbox([]);
+    inbox = [ITEMS[1]];
+    await act(async () => { window.dispatchEvent(new CustomEvent("autocrew:inbox-open", { detail: { content_id: "content-1-a", types: ["cut_review"] } })); });
+    await tick();
+    expect(el.querySelector(".ri-peek h2")!.textContent).toBe("成片剪好了，看一遍");
+  });
+  it("附件变过的请示：写明「附件变过，请重新发请示」，只给「让 Claude 重发」", async () => {
+    const stale: InboxItem = { ...ITEMS[0], summary: "附件变过，请重新发请示（Claude问的：粗剪这样行吗？）", detail: { ...ITEMS[0].detail, attachments_changed: true },
+      actions: [{ action: "ask_resend", label: "让 Claude 重发", role: "primary", params: { ask_id: "ask-1" } }] };
+    await mountInbox([stale]);
+    await openRow(stale.summary);
+    expect(el.querySelector(".ri-peek .ri-warn")!.textContent).toContain("附件变过，请重新发请示");
+    await click(btn("让 Claude 重发"));
+    expect(decided.at(-1)).toMatchObject({ action: "ask_resend", ask_id: "ask-1" });
   });
 });
