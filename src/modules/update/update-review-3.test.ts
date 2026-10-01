@@ -98,7 +98,7 @@ describe("P1 宿主走 /mcp 的长动作也算在跑", () => {
       expect(LONG_RUNNING_CHANNELS.has(ch), ch).toBe(true);
       expect(isLongRunningTool(tool, action), `${tool} ${action}`).toBe(true);
     }
-    expect(isLongRunningTool("autocrew_publish", "check")).toBe(false);
+    expect(isLongRunningTool("autocrew_publish", "clipboard")).toBe(false);
     expect(isLongRunningTool("autocrew_status", undefined)).toBe(false);
   });
 });

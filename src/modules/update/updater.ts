@@ -70,11 +70,44 @@ export function manualCommands(root: string, oldHead: string): string[] {
   ];
 }
 
-/** 这次更新有没有动过服务（进了重启那一步就算：旧服务可能已经停了） */
-interface Progress { touchedService: boolean }
+/** 工作区里有别的改动时的手动步骤：先看清、另存，再退回——不替用户丢东西 */
+export function dirtyManualCommands(root: string, oldHead: string): string[] {
+  return [
+    `cd "${root}"`,
+    "git status    # 先看清哪些是你自己的改动，把要留的另存一份",
+    `git reset --hard ${oldHead}    # 另存好之后再退回（这一步会丢掉未提交的改动）`,
+    "npm ci",
+    "(cd frontend && npm ci)",
+    "npm run fe:build",
+    "npm run restart",
+  ];
+}
 
-async function forward(job: UpdateJob, log: Log, progress: Progress): Promise<void> {
-  await gitStep(job.git, ["merge", "--ff-only", job.commit], log);
+/**
+ * 这次更新做到哪了：
+ * - movedTo：这次真的把 HEAD 从旧提交挪到了这里（没挪就绝不 reset，用户的东西一个字不碰）；
+ * - touchedService：进了重启那一步（旧服务可能已经停了）。
+ */
+interface Progress { touchedService: boolean; movedTo?: string }
+
+/** 没动手就停下的原因（合并前发现改动、合并没挪 HEAD）：不退回、不碰工作区 */
+export class NotStartedError extends Error {}
+
+async function trackedChanges(git: GitRunner): Promise<string> {
+  const r = await git(["status", "--porcelain", "--untracked-files=no"]);
+  if (!r.ok) throw new Error(`读不出本地改动（${firstLine(r.stderr)}）`);
+  return r.stdout.trim();
+}
+
+async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Progress): Promise<void> {
+  // 预检之后到这里可能有人改了程序文件：合并前再查一次（Codex 审第 5 轮 P1）
+  const dirty = await trackedChanges(job.git);
+  if (dirty) throw new NotStartedError(`程序文件刚刚有了本地改动（${firstLine(dirty)}…），自动更新会覆盖它们`);
+  try { await gitStep(job.git, ["merge", "--ff-only", job.commit], log); }
+  catch (e) { throw new NotStartedError(errText(e)); }
+  const head = await gitStep(job.git, ["rev-parse", "HEAD"], log);
+  if (head === oldHead) throw new NotStartedError("合并后版本没有变化");
+  progress.movedTo = head;
   log("== 安装依赖"); await job.steps.install(log);
   log("== 构建前端"); await job.steps.build(log);
   log("== 确认没有任务在跑"); await job.steps.quiesce(log);
@@ -83,7 +116,16 @@ async function forward(job: UpdateJob, log: Log, progress: Progress): Promise<vo
   log("== 健康检查"); await job.steps.health(log);
 }
 
+/** 退回前发现工作区里有不是这次更新带来的改动：不 reset，给手动步骤 */
+export class DirtyRollbackError extends Error {}
+
 async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: boolean, progress: Progress): Promise<"kept" | "restarted" | "not_restarted"> {
+  // reset --hard 只在「这次真的把 HEAD 挪到了 movedTo、HEAD 还在那、而且相对它没有任何已跟踪改动」时才做：
+  // 那时工作区里只有这次更新自己的东西，丢掉它不会丢用户的字（Codex 审第 5 轮 P1）
+  const head = await gitStep(job.git, ["rev-parse", "HEAD"], log);
+  if (!progress.movedTo || head !== progress.movedTo) throw new DirtyRollbackError(`当前版本不是这次更新合进来的那一版（${head.slice(0, 8)}），不自动退回`);
+  const dirty = await trackedChanges(job.git);
+  if (dirty) throw new DirtyRollbackError(`程序文件有不是这次更新带来的改动（${firstLine(dirty)}…），不自动退回，免得覆盖它们`);
   await gitStep(job.git, ["reset", "--hard", oldHead], log);
   log("== 退回：安装依赖"); await job.steps.install(log);
   log("== 退回：构建前端"); await job.steps.build(log);
@@ -119,10 +161,15 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
   log(`旧版本提交：${oldHead}`);
   const progress: Progress = { touchedService: false };
   try {
-    await forward(job, log, progress);
+    await forward(job, oldHead, log, progress);
     return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}` }, log);
   } catch (e) {
     const reason = errText(e);
+    if (e instanceof NotStartedError || !progress.movedTo) {
+      log(`!! 更新没做：${reason}；没有动任何文件`);
+      return finish(job, { ok: false, outcome: "not_started", at: at(), ...base,
+        message: `更新没做：${reason}。没有动你的文件，仍是 ${job.from}，完整记录在 ${job.logFile}` }, log);
+    }
     const busy = e instanceof QuiesceError;
     log(`!! 更新${busy ? "取消" : "失败"}：${reason}；开始退回 ${oldHead}`);
     try {
@@ -134,7 +181,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
           ? `更新取消了：${reason}。没有重启，仍是 ${job.from}，完整记录在 ${job.logFile}`
           : `更新失败，已退回 ${job.from}，原因：${reason}，完整记录在 ${job.logFile}` }, log);
     } catch (e2) {
-      const cmds = manualCommands(job.root, oldHead);
+      const cmds = e2 instanceof DirtyRollbackError ? dirtyManualCommands(job.root, oldHead) : manualCommands(job.root, oldHead);
       log(`!! 退回也失败：${errText(e2)}。请在终端手动恢复：\n${cmds.join("\n")}`);
       return finish(job, { ok: false, outcome: "stuck", at: at(), ...base, manualCommands: cmds,
         message: `更新失败，自动退回也失败了（${errText(e2)}）。请在终端依次执行下面的命令恢复到 ${job.from}，完整记录在 ${job.logFile}` }, log);
