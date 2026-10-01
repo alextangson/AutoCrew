@@ -173,7 +173,7 @@ describe("预检", () => {
     expect(acquireLock(machine, "b")).toBe(false);
     expect(lockHeld(machine)).toBe(true);
     expect(await prepareUpdate(user, machine, { git: git(), ...noBusy })).toMatchObject({ ok: false, code: "running", reason: "正在更新，等它跑完" });
-    expect(adoptLock(machine, "wrong", 4242)).toBe(false);
+    expect(adoptLock(machine, "wrong", "n", 4242)).toBe(false);
     releaseLock(machine, "a");
     fs.writeFileSync(path.join(machine, "update.lock"), JSON.stringify({ pid: 99999999, token: "dead" }));
     expect(acquireLock(machine, "c")).toBe(true);

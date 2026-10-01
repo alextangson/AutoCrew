@@ -40,6 +40,19 @@ export function assertNotUpdating(): void {
   if (refused) throw new Error(refused);
 }
 
+/**
+ * 服务里的定时周期用：正在更新就跳过这一拍（记一句日志，下一拍照常），否则登记成在跑直到这一拍结束。
+ * 返回 null = 跳过了。
+ */
+export async function runUnlessUpdating<T>(label: string, fn: () => Promise<T>, log: (msg: string) => void = console.log): Promise<T | null> {
+  const refused = updatingRefusal();
+  if (refused) { log(`[update] 正在更新，这一拍「${label}」跳过，更新完下一拍照常跑`); return null; }
+  // 先登记再起跑：fn 同步部分里看到的计数也已经包括自己
+  const id = ++seq;
+  works.set(id, label);
+  try { return await fn(); } finally { works.delete(id); }
+}
+
 /** 只给测试 */
 export function resetActiveWork(): void {
   works.clear();

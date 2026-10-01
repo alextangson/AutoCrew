@@ -37,9 +37,9 @@ function launcherPidAlive(): boolean {
 const busyNow = (serverRunning: boolean) => async () => busyWork(MACHINE) ?? (serverRunning ? await serverBusy(PORT) : null);
 
 async function fromServer(): Promise<number> {
-  const tag = arg("tag"), commit = arg("commit"), token = arg("lock-token"), log = arg("log");
-  if (!tag || !commit || !/^[0-9a-f]{40,64}$/.test(commit) || !token || !log) { console.error("缺参数"); return 2; }
-  if (!adoptLock(MACHINE, token)) { console.error("锁不是交给这个进程的，不动手"); return 2; }
+  const tag = arg("tag"), commit = arg("commit"), token = arg("lock-token"), nonce = arg("adopt-nonce"), log = arg("log");
+  if (!tag || !commit || !/^[0-9a-f]{40,64}$/.test(commit) || !token || !nonce || !log) { console.error("缺参数"); return 2; }
+  if (!adoptLock(MACHINE, token, nonce)) { console.error("锁不是交给这个进程的，不动手"); return 2; }
   try {
     const status = readStatus(MACHINE);
     const result = await runUpdate({

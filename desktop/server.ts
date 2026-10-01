@@ -6,7 +6,7 @@ import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
-import { activeWorkCount } from "../src/modules/update/active-work.js";
+import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
 import { getMachineDir } from "../src/storage/storage-roots.js";
 import { launchedByLauncher } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
@@ -654,8 +654,9 @@ server.listen(PORT, HOST, () => {
   // 选题雷达:启动跑一轮 + 每 30 分钟一轮(进程内调度,详见 radar-cycle.ts)。
   // 一轮 = TTL 门刷新 → 真刷新了才入库与清理;缓存新鲜就整轮跳过,不烧付费源也不重评。
   const runRadarCycle = createRadarCycle();
+  // 一键更新：更新中跳过这一拍，跑的时候算在跑（决定清单见 src/modules/update/long-running.ts）
   const tickRadar = () =>
-    void runRadarCycle().catch((err) => {
+    void runUnlessUpdating("选题雷达周期", runRadarCycle).catch((err) => {
       console.error("[topic-radar] 雷达周期失败:", err instanceof Error ? err.message : err);
     });
   tickRadar();
@@ -669,15 +670,15 @@ server.listen(PORT, HOST, () => {
     if (myContentRunning) return;
     myContentRunning = true;
     // 先对账再排文件夹(本体 §4):未启用本体时对账只算影子差异、不写
-    void runExclusive(async () => {
+    void runUnlessUpdating("我的内容对账", () => runExclusive(async () => {
       const r = await reconcileAll(getDataDir()).catch((err) => {
         console.error("[production] 对账失败:", err instanceof Error ? err.message : err);
         return null;
       });
       if (r?.errors.length) console.error(`[production] 对账有 ${r.errors.length} 条失败:${r.errors[0].title} ${r.errors[0].error}`);
       return syncMyContentView();
-    })
-      .then((r) => { if (r.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
+    }))
+      .then((r) => { if (r?.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
       .catch((err) => console.error("[my-content] 对账失败:", err instanceof Error ? err.message : err))
       .finally(() => { myContentRunning = false; });
   };
@@ -692,13 +693,14 @@ server.listen(PORT, HOST, () => {
   const tickArchive = () => {
     if (archiveRunning) return;
     archiveRunning = true;
-    void runExclusive(async () => {
+    void runUnlessUpdating("NAS 备份与归档", () => runExclusive(async () => {
       const b = await backupPublished();
       if (b.backedUp.length) console.log(`[nas-backup] 备份 ${b.backedUp.length} 条`);
       if (b.errors.length) console.error(`[nas-backup] ${b.errors.length} 处问题:${b.errors[0]}`);
       return archivePublished();
-    })
+    }))
       .then((r) => {
+        if (!r) return;
         if (r.archived.length) console.log(`[nas-archive] 归档 ${r.archived.length} 条`);
         if (r.errors.length) console.error(`[nas-archive] ${r.errors.length} 处问题:${r.errors[0]}`);
       })

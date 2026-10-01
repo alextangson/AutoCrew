@@ -7,7 +7,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { checkForUpdate, localVersion } from "./check.js";
-import { acquireLock, preflight, releaseLock, RUNNING_MESSAGE, lockHeld, lockOwner, type PreflightDeps } from "./preflight.js";
+import { acquireLock, preflight, releaseLock, RUNNING_MESSAGE, lockHeld, lockAdoptedBy, type PreflightDeps } from "./preflight.js";
 import { gitRunner } from "./git.js";
 import { newLogFile } from "./updater.js";
 import { readResult, writeResult } from "./state.js";
@@ -31,18 +31,22 @@ export async function prepareUpdate(root: string, machineDir: string, deps: Omit
   return { ok: true, tag: status.tag, commit: status.commit, from: localVersion(root), to: status.latest, notes: status.notes ?? [], token };
 }
 
-function waitAdopted(machineDir: string, child: ChildProcess, timeoutMs: number): Promise<true | "timeout" | string> {
+/**
+ * 等更新进程按暗号接手锁。接手之后就不再管它：它自己写的结果文件才是准话，绝不再结束它（Codex 审第 4 轮 P1）。
+ */
+function waitAdopted(machineDir: string, child: ChildProcess, nonce: string, timeoutMs: number): Promise<true | "timeout" | string> {
   return new Promise((resolve) => {
     let done = false;
     const finish = (v: true | "timeout" | string) => { if (done) return; done = true; clearInterval(poll); clearTimeout(timer); child.off("exit", onExit); resolve(v); };
     const since = Date.now();
-    // 接手后很快跑完（比如第一步就失败并退回）也算接手过：它自己写了结果，不能拿「没能开始」盖掉
+    const adopted = () => lockAdoptedBy(machineDir) === nonce;
+    // 接手后很快跑完（比如第一步就失败并退回、锁已放掉）也算接手过：它自己写了结果，不能拿「没能开始」盖掉
     const wroteResult = () => { const r = readResult(machineDir); return Boolean(r && Date.parse(r.at) >= since - 1_000); };
     const onExit = (code: number | null, signal: string | null) =>
-      finish(lockOwner(machineDir) === child.pid || wroteResult() ? true : signal ? `信号 ${signal}` : `退出码 ${code}`);
+      finish(adopted() || wroteResult() ? true : signal ? `信号 ${signal}` : `退出码 ${code}`);
     child.on("exit", onExit);
-    const poll = setInterval(() => { if (lockOwner(machineDir) === child.pid) finish(true); }, 50);
-    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    const poll = setInterval(() => { if (adopted()) finish(true); }, 50);
+    const timer = setTimeout(() => finish(adopted() || wroteResult() ? true : "timeout"), timeoutMs);
   });
 }
 
@@ -61,13 +65,14 @@ export async function spawnDetachedUpdater(root: string, machineDir: string, por
     writeResult(machineDir, { ok: false, outcome: "not_started", from: job.from, to: job.to, at: new Date().toISOString(), message: reason, log });
     return { ok: false as const, reason };
   };
+  const nonce = randomBytes(16).toString("hex");
   let fd: number | null = null;
   try {
     fs.mkdirSync(path.dirname(log), { recursive: true });
     fd = fs.openSync(log, "a", 0o600);
     const tsx = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
     const child = spawnImpl(tsx, [path.join(root, "scripts", "update.mts"), "--from-server",
-      "--tag", job.tag, "--commit", job.commit, "--lock-token", job.token, "--log", log, "--port", String(port)], {
+      "--tag", job.tag, "--commit", job.commit, "--lock-token", job.token, "--adopt-nonce", nonce, "--log", log, "--port", String(port)], {
       cwd: root, detached: true, stdio: ["ignore", fd, fd],
       env: { ...process.env, AUTOCREW_LOCAL_DIR: machineDir, AUTOCREW_PORT: String(port) },
     });
@@ -77,10 +82,15 @@ export async function spawnDetachedUpdater(root: string, machineDir: string, por
     });
     if (started) return fail(started);
     // 起来了不等于接手了：脚本可能在 adoptLock 之前就因为依赖缺失退出（Codex 审第 2 轮 P2）。
-    // 等锁的主人变成它；它先退出或超时 → 放锁、写「没能开始」，超时的那个结束掉
-    const adopted = await waitAdopted(machineDir, child, adoptTimeoutMs);
+    // 等它按暗号接手；它先退出或超时 → 放锁、写「没能开始」。超时的那个先放锁（它再接手会失败）再结束掉——
+    // 只有确认没接手才结束它，接手了的更新进程绝不碰
+    const adopted = await waitAdopted(machineDir, child, nonce, adoptTimeoutMs);
     if (adopted !== true) {
-      if (adopted === "timeout") { try { process.kill(-child.pid!, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* 已经不在 */ } } }
+      if (adopted === "timeout") {
+        if (lockAdoptedBy(machineDir) === nonce) { child.unref(); return { ok: true, log }; }
+        releaseLock(machineDir, job.token);
+        try { process.kill(-child.pid!, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* 已经不在 */ } }
+      }
       return fail(new Error(adopted === "timeout" ? `更新进程 ${Math.round(adoptTimeoutMs / 1000)} 秒内没接手` : `更新进程刚起来就退出了（${adopted}），看日志 ${log}`));
     }
     child.unref();

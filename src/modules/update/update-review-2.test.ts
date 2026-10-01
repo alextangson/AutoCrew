@@ -112,7 +112,7 @@ describe("P2 更新进程要真的接手锁才算开始", () => {
   it("接手了（锁的主人换成它）：才报开始", async () => {
     expect(acquireLock(tmp, "tok")).toBe(true);
     const lock = JSON.stringify(path.join(tmp, "update.lock"));
-    const script = `const fs=require("fs");const f=${lock};const b=JSON.parse(fs.readFileSync(f,"utf8"));fs.writeFileSync(f,JSON.stringify({...b,pid:process.pid}));setTimeout(()=>{fs.rmSync(f,{force:true})},1500);`;
+    const script = `const fs=require("fs");const f=${lock};const b=JSON.parse(fs.readFileSync(f,"utf8"));const n=process.argv[process.argv.indexOf("--adopt-nonce")+1];fs.writeFileSync(f,JSON.stringify({...b,pid:process.pid,adopted:n}));setTimeout(()=>{fs.rmSync(f,{force:true})},1500);`;
     const r = await spawnDetachedUpdater(tmp, tmp, 1, job(), fake(script), 5_000);
     expect(r).toMatchObject({ ok: true });
     expect(readResult(tmp)).toBeNull();

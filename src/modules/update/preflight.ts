@@ -75,7 +75,7 @@ export async function preflight(root: string, machineDir: string, target: string
 
 /* ── 锁 ───────────────────────────────────────────────────────────── */
 
-interface LockBody { pid: number; token: string; at: string }
+interface LockBody { pid: number; token: string; at: string; adopted?: string }
 
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
@@ -113,12 +113,20 @@ export function acquireLock(machineDir: string, token: string, pid = process.pid
   return false;
 }
 
-/** 服务拿锁后交给它拉起的更新进程：令牌对上才接 */
-export function adoptLock(machineDir: string, token: string, pid = process.pid): boolean {
+/**
+ * 服务拿锁后交给它拉起的更新进程：令牌对上才接，并写下服务给的接手暗号。
+ * 服务按暗号确认接手，不比 pid——服务拿到的是 tsx 启动器的 pid，跑脚本的是 tsx 拉起的另一个 node（Codex 审第 4 轮 P1）。
+ */
+export function adoptLock(machineDir: string, token: string, nonce: string, pid = process.pid): boolean {
   const body = readLock(machineDir);
   if (!body || body.token !== token) return false;
-  fs.writeFileSync(files(machineDir).lock, JSON.stringify({ ...body, pid }));
+  fs.writeFileSync(files(machineDir).lock, JSON.stringify({ ...body, pid, adopted: nonce }));
   return true;
+}
+
+/** 锁上写着的接手暗号（还没接手 / 没有锁就是 null） */
+export function lockAdoptedBy(machineDir: string): string | null {
+  return readLock(machineDir)?.adopted ?? null;
 }
 
 export function releaseLock(machineDir: string, token: string): void {
