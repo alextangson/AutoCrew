@@ -3,6 +3,11 @@ import { createPublishPrefsHandler } from "../src/desktop/publish-prefs-route.js
 import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock.js";
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
+import { createUpdateHandler } from "../src/desktop/update-route.js";
+import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
+import { activeTurnCount } from "../src/desktop/turn-registry.js";
+import { getMachineDir } from "../src/storage/storage-roots.js";
+import { readFileSync } from "node:fs";
 import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
@@ -184,6 +189,17 @@ const projectReview = createProjectReviewHandler({ authorize, originAllowed: req
 const ruleApproval = createRuleApprovalHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const publishPrefs = createPublishPrefsHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+// 一键更新（self-update §3）：只有用 npm start（启动器写了 pid 文件、就是本进程）起的服务才能被自动重启
+const updateRoute = createUpdateHandler({
+  authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,
+  root: programRoot(), machineDir: getMachineDir(), port: PORT,
+  inProcessTurns: activeTurnCount,
+  launcher: async () => {
+    let pid = 0;
+    try { pid = Number(readFileSync(path.join(getMachineDir(), "autocrew.pid"), "utf-8").trim()); } catch { /* 没 pid 文件 = 不是启动器起的 */ }
+    return { running: true, managed: pid === process.pid };
+  },
+});
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
@@ -380,6 +396,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
 
   if (await projectReview(req, res, url)) return;
   if (await board(req, res, url)) return;
+  if (await updateRoute(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
   if (await publishPrefs(req, res, url)) return;
 
@@ -699,6 +716,9 @@ server.listen(PORT, HOST, () => {
   // 三平台自动回流(回流 spec §4.3):启动跑一轮 + 每 30 分钟一轮。真正的节奏由每平台的
   // TTL(12h)与退避状态机决定——tick 只是把"到点了自动抓"补上;三平台默认全关,
   // 人在数据回流页自己开(不替人做碰后台的决定)。
+  // 版本检查（self-update §2）：启动 1 分钟后一次、之后每 24 小时；失败只记进状态（设置页看得见）
+  startUpdateScheduler(programRoot(), getMachineDir());
+
   stopMetricsPull = startMetricsPullCycle({
     resolveDataDir: async () => activeWorkspaceDataDir(),
   });

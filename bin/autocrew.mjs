@@ -43,6 +43,7 @@ function printHelp() {
                           --role editor-writer|cover 选哪一份人设
   autocrew storage        资料库位置、预览和迁移（status|cancel|preview|create|open|migrate）
   autocrew doctor         检查本地运行环境
+  autocrew update         更新到最新发布版（失败自动退回）
 
 选项:
   --no-open               启动后不打开浏览器
@@ -301,7 +302,7 @@ async function statusBrief() {
   const fetchImpl = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(5_000) });
   const reply = await forwardMessage(call, { url: `${BASE_URL}mcp`, token: resolveForwarderToken(DATA_DIR), fetchImpl });
   const result = reply?.result?.structuredContent;
-  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}`);
+  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}${result.update ? `\nAutoCrew ${result.update}` : ""}`);
   const failure = reply?.error?.message ?? (reply?.result?.isError ? reply.result.content?.[0]?.text : null);
   console.log(failure ? `AutoCrew 待办读取失败（${failure}）` : "AutoCrew 运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
 }
@@ -513,6 +514,18 @@ switch (command) {
     );
     if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
       || !checks.uv || !checks.wechatPublishScript || inbox.failed) process.exitCode = 1;
+    break;
+  }
+  case "update": {
+    // 一键更新（self-update §3）：和看板上「更新」走同一个执行进程，只是在前台跑
+    const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+    if (!fs.existsSync(tsx)) {
+      console.error(`缺少依赖。请先在 ${ROOT} 执行 npm ci`);
+      process.exitCode = 1;
+      break;
+    }
+    const child = spawn(tsx, [path.join(ROOT, "scripts", "update.mts")], { cwd: ROOT, stdio: "inherit", env: { ...process.env, AUTOCREW_PORT: String(PORT) } });
+    process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
     break;
   }
   case "storage": {

@@ -104,6 +104,11 @@ export function hasActiveTurnForConversation(conversationId: string): boolean {
   return false;
 }
 
+/** 本进程里还没收尾的对话轮数（一键更新的预检用：有人在跑就不重启） */
+export function activeTurnCount(): number {
+  return active.size;
+}
+
 /** 记下本轮落在哪个会话（首轮建会话后回填，turn_status 的 running 态也能给出会话） */
 export function noteTurnConversation(turnId: string, conversationId: string): void {
   const entry = active.get(turnId);
