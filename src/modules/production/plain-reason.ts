@@ -30,7 +30,8 @@ export const strayCoverReason = (rel: string | undefined) => `在『${folderName
 /** 候选「为什么」的一句人话 */
 export function plainReason(f: Fact): string {
   if (f.kind === "cover" && f.path && !path.isAbsolute(f.path) && !admittedGroupKey(f.path)) return strayCoverReason(f.path);
-  const e = f.evidence ?? "";
+  // 只看依据的第一句（这条为什么是候选）；后面「前三名」里别条稿的标题不能拿来判（verifier 2a P3）
+  const e = (f.evidence ?? "").split(/[；;]|前三名/)[0];
   if (/转写|开头说|听起来/.test(e)) return "开头说的话和这条稿对上了";
   if (/文件名|前缀|对上标题/.test(e)) return "文件名和标题对上了";
   if (/可搬入目录之外|不会自动/.test(e)) return "放在 AutoCrew 不会自动收的文件夹里，要你确认";

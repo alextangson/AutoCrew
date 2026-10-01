@@ -92,6 +92,8 @@ export function fitBudget(out: Record<string, unknown>, part: ProductionPart | n
   // 条目 id 只是提示（总数照给）：放不下先少给几个，再动请示
   const ids = (out.inbox as { item_ids?: string[] } | undefined)?.item_ids;
   while (ids && ids.length && size() > SUMMARY_BUDGET) ids.pop();
+  // 修改意见放不下：原话截到 80 字（agent 至少看得到意思和时间）
+  for (const r of (out.rejections as Array<{ note: string }> | undefined) ?? []) if (size() > SUMMARY_BUDGET) r.note = clip(r.note, 80);
   while (asks && size() > SUMMARY_BUDGET && asks.shrink()) { /* 请示：截回答原话，再少给几行（游标跟着退） */ }
   if (size() > SUMMARY_BUDGET && Array.isArray(out.blockers)) out.blockers = (out.blockers as string[]).slice(0, 1).map((b) => clip(b, 40));
   if (size() > SUMMARY_BUDGET && part) part.fields.candidates = [];
@@ -109,14 +111,31 @@ function minimalShape(out: Record<string, unknown>, part: ProductionPart | null,
   const f = part?.fields ?? {};
   const row = (f.aroll as Array<{ fact_id: string; state: string; round: number; path?: string }> | undefined)?.[0];
   const keep = ["changes", "has_more", "next_since_seq", "latest_seq", "aroll_has_more", "aroll_next_offset"];
+  const rej = (out.rejections as Array<{ kind: string; note: string; at: string }> | undefined)?.map((r) => ({ kind: r.kind, note: clip(r.note, 40), at: r.at }));
   const minimal: Record<string, unknown> = { ok: out.ok, id: out.id, stage: out.stage, ...(out.inbox ? { inbox: { count: (out.inbox as { count: number }).count } } : {}),
     ...(row ? { aroll: [{ fact_id: row.fact_id, state: row.state, round: row.round, ...(row.path ? { path: row.path } : {}) }] } : {}),
-    ...Object.fromEntries(keep.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])), ...asks?.minimal() };
+    ...Object.fromEntries(keep.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])), ...asks?.minimal(), ...(rej?.length ? { rejections: rej } : {}) };
   return Buffer.byteLength(JSON.stringify(minimal)) > SUMMARY_BUDGET ? { ...minimal, oversize: true } : minimal;
 }
 
 /** 请示一页最多几件（asks[] 用独立游标 asks_offset，不与 since_seq 混用，review-inbox §5.2 / R17） */
 const ASKS_PAGE = 3;
+
+/**
+ * 创始人的修改意见（verifier 2a P1）：每类最近一次「还要改…」——原话、时间、针对哪一版（成片 fact_id）/ 哪几组封面。
+ * agent 交新版前要先读这里。原话不截，预算紧时由 fitBudget 截短。
+ */
+async function rejectionsOf(c: Content, dataDir: string): Promise<Record<string, unknown>> {
+  const doc = await readProductionDoc(c.id, dataDir).catch(() => null);
+  if (!doc) return {};
+  const last = (type: "cut_reject" | "cover_reject") => doc.decisions.filter((d) => d.round === doc.round && d.type === type).at(-1);
+  const cut = last("cut_reject"), cover = last("cover_reject");
+  const rows = [
+    ...(cut ? [{ kind: "cut", note: cut.note ?? "", at: cut.at, ...(cut.fact_id ? { fact_id: cut.fact_id } : {}) }] : []),
+    ...(cover ? [{ kind: "cover", note: cover.note ?? "", at: cover.at, ...(cover.group_ids ? { group_ids: cover.group_ids } : {}) }] : []),
+  ];
+  return rows.length ? { rejections: rows } : {};
+}
 
 async function inboxOf(c: Content, dataDir: string): Promise<Record<string, unknown>> {
   const view = await readInbox(dataDir, { contentId: c.id }).catch(() => null);
@@ -185,5 +204,6 @@ export async function contentSummary(id: string, dataDir?: string, now = Date.no
     updatedAt: c.updatedAt,
     words: Array.from((c.body ?? "").replace(/\s+/g, "")).length,
     ...(await inboxOf(c, getDataDir(dataDir))),
+    ...(await rejectionsOf(c, getDataDir(dataDir))),
   }, part, await asksPart(c, getDataDir(dataDir), asksOffset.value ?? 0));
 }

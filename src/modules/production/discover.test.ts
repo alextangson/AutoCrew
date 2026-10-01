@@ -122,7 +122,8 @@ describe("§4 收件箱自动挪", () => {
     await videoContent(env, "甲稿失败测试", "draft_ready", A);
     await put(path.join(env.inbox, "IMG_f.mov"), "bad");
     let r = await tick();
-    expect(r.inbox).toMatchObject({ checking: 1, failed: [] });
+    // verifier 2a P2：第一次失败、在退避等重试就算「没核对成」（看得见原因），不再显示「正在核对」一小时
+    expect(r.inbox).toMatchObject({ checking: 0, failed: [expect.objectContaining({ name: "IMG_f.mov", reason: expect.stringContaining("稍后自动再试") })] });
     for (let i = 0; i < MAX_RETRIES; i++) { clock += RETRY_DELAY_MS; r = await tick(); }
     expect(r.inbox?.failed).toEqual([expect.objectContaining({ name: "IMG_f.mov", reason: expect.stringContaining("sidecar 崩了") })]);
     expect(r.warnings.join()).toContain("1 个视频没核对成");

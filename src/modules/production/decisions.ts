@@ -87,7 +87,7 @@ async function approveCut(ctx: Ctx): Promise<Result> {
   if (same) return { ok: true, decision: same };
   // 抽帧检查默认拦（spec 2026-09-30 §12-1）：写批准之前在服务端重跑 / 核对指纹，不只靠推导和界面
   const gate = await sliverGate(ctx, f.sha256!);
-  if (!gate.ok) return fail("sliver_blocked", `成片还不能通过：${gate.missing}。在卡片上看每处缝，修好重新导出，或逐处点「这处是故意的」`);
+  if (!gate.ok) return fail("sliver_blocked", `成片还不能通过：${gate.missing}。在「等你拍板」的「画面有闪帧」那件里看每处缝，修好重新导出，或逐处点「这处是故意的」`);
   return { ok: true, decision: await push(ctx, { type: "cut_approval", fact_id: f.id, sha256: f.sha256, body_hash: bh }, "cut_approved") };
 }
 

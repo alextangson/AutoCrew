@@ -19,6 +19,7 @@ import { withCoverGroups } from "./cover-groups.js";
 import { explainContent, explainContext } from "./read.js";
 import { readReconcileReport } from "./reconcile.js";
 import { cachedSha } from "./observe.js";
+import { arollOwnerElsewhere } from "./sha-index.js";
 import { approvedCoverShas } from "./service.js";
 import { contentItems, genOf, sortItems, type CheckView, type ContentInput, type InboxItem } from "./inbox.js";
 
@@ -73,7 +74,12 @@ async function contentInput(c: Content, dataDir: string, ctx: Awaited<ReturnType
   const askAttachmentsChanged: Record<string, boolean> = {};
   for (const a of (doc?.asks ?? []).filter((x) => x.state === "open" && x.attachments.length)) askAttachmentsChanged[a.id] = await attachmentsChanged(c.id, a, dataDir);
   const needsPlan = exp?.stage === "待发布" || exp?.stage === "已发布";
-  return { content: c, doc: active ? doc ?? null : null, exp, askAttachmentsChanged, checks: video ? await currentChecks(c, raw, dataDir) : [], planned: needsPlan ? await plannedPlatforms(c, dataDir) : [], log: raw?.inbox_log ?? [] };
+  // 同一段原片已经归了别条稿（比如创始人在那条卡上挂了它）：这条上的候选是过期的（verifier 2a P2）
+  const ownedElsewhere = new Set<string>();
+  for (const f of (doc?.facts ?? []).filter((x) => x.round === doc!.round && x.kind === "aroll" && x.state === "candidate" && x.sha256)) {
+    if (await arollOwnerElsewhere(dataDir, f.sha256!, c.id).catch(() => null)) ownedElsewhere.add(f.id);
+  }
+  return { content: c, doc: active ? doc ?? null : null, exp, askAttachmentsChanged, checks: video ? await currentChecks(c, raw, dataDir) : [], planned: needsPlan ? await plannedPlatforms(c, dataDir) : [], log: raw?.inbox_log ?? [], ownedElsewhere };
 }
 
 /** 收件箱里没对上的视频（1b §4）：「指定给…」= 挂到那条稿（卡片挂载决定） */

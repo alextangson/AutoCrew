@@ -219,7 +219,8 @@ describe("Codex 2a-1 第六轮", () => {
     const c = await editing();
     const a = await img("a.png", 900, 1200), b = await img("b.png", 1200, 900);
     const g1 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g1" });
-    const g2 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g2" });
+    // 同两张图不带版本号会并进已有那一组（verifier 2a P2）；要另起一组得显式带版本号
+    const g2 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", version: 9, request_id: "g2" });
     expect(g2.group_id).not.toBe(g1.group_id);
     const p1 = await founderDecision(c.id, "pick_cover", { group_id: g1.group_id }, env.dir);
     const p2 = await founderDecision(c.id, "pick_cover", { group_id: g2.group_id }, env.dir);
@@ -291,7 +292,7 @@ describe("Codex 2a-1 第七轮", () => {
     const a = await img("a.png", 900, 1200), b = await img("b.png", 1200, 900);
     const g1 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g1" });
     await founderDecision(c.id, "pick_cover", { group_id: g1.group_id }, env.dir);
-    const g2 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", request_id: "g2" });
+    const g2 = await record(env, { content_id: c.id, kind: "cover", paths: [a, b], cover_text: "字", version: 9, request_id: "g2" });
     const it = (await items(c.id)).find((i) => i.type === "cover_pick");
     expect(it).toMatchObject({ summary: "新的一组封面做好了，要不要换" });
     expect(it!.actions[0].params!.group_id).toBe(g2.group_id);

@@ -11,7 +11,7 @@ import { getContent, getDataDir, type Content } from "../../storage/local-store.
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, newId, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import type { Fact, ProductionDoc, ReadyMark } from "../../storage/production-types.js";
-import { addMember, admittedGroupKey, ensureGroup, groupOfVersion, groupsOfFact, nextCoverVersion, retiredGroupOfLabel, slotTaken, versionLabelOf, withCoverGroups } from "./cover-groups.js";
+import { addMember, admittedGroupKey, ensureGroup, groupOfVersion, groupsOfFact, validCoverGroups, nextCoverVersion, retiredGroupOfLabel, slotTaken, versionLabelOf, withCoverGroups } from "./cover-groups.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
 import type { Explanation } from "./explain.js";
 import { checkDuration, cloneInto, identityOf, reserveTarget, safeStem, sameIdentity } from "./files.js";
@@ -327,6 +327,21 @@ export async function commitFile(a: RecordArgs, content: Content, p: FilePlan, d
   return queued ? { ...rc, warnings: [queued] } : rc;
 }
 
+async function joinExistingPair(a: RecordArgs, content: Content, doc: ProductionDoc, plans: FilePlan[], dataDir: string): Promise<Receipt | null> {
+  const facts = plans.map((p) => p.existing);
+  if (!facts.every((f) => f?.state === "accepted")) return null;
+  const f34 = facts.find((f) => f!.ratio === "3:4")!, f43 = facts.find((f) => f!.ratio === "4:3")!;
+  const group = validCoverGroups(doc).find((g) => g.complete && g.slots["3:4"][0].id === f34.id && g.slots["4:3"][0].id === f43.id);
+  if (!group) return null;
+  await mutateProduction(content.id, dataDir, (d) => {
+    for (const f of d.facts.filter((x) => x.id === f34.id || x.id === f43.id)) if (a.cover_text && !f.text) f.text = a.cover_text;
+    d.requests = { ...(d.requests ?? {}), [a.request_id]: { at: new Date().toISOString(), args: requestArgs(a), receipt: { kind: "cover", pair: { facts: [{ fact_id: f34.id, ratio: "3:4" }, { fact_id: f43.id, ratio: "4:3" }] } } } };
+    return { value: null, events: [{ type: "cover_pair_joined", detail: { group_id: group.group.id, by: a.host } }] };
+  });
+  const fresh = await readProductionDocOrEmpty(content.id, dataDir);
+  return pairReceiptNow(content, withCoverGroups(fresh, approvedCoverShas(fresh, content.body)), dataDir, { facts: [{ fact_id: f34.id }, { fact_id: f43.id }] });
+}
+
 /**
  * 一对封面的重放按现在的样子回（整分支审 7 P2）：两张后来被确认收进组了，就回现在的状态、路径、组、阶段，
  * 和单张重放一样，不回当初缓存的那份。
@@ -357,6 +372,10 @@ async function recordCoverPair(a: RecordArgs, content: Content, doc: ProductionD
   }
   const ratios = plans.map((p) => p.ratio).sort().join(",");
   if (ratios !== "3:4,4:3") return fail("both_ratios_required", `paths 要一张 3:4、一张 4:3（按像素认），收到的是 ${plans.map((p) => p.ratio ?? "?").join(" + ")}`);
+  // 这一对已经是一组了（最常见：对账先收了 05-cover/vNNN，agent 再报同两张）：并进那一组、补上封面字，不另起一组（verifier 2a P2）
+  // 显式带了版本号 = agent 要另起那一版，不并
+  const joined = a.version ? null : await joinExistingPair(a, content, doc, plans, dataDir);
+  if (joined) return joined;
   const receipts: Receipt[] = [];
   for (const [i, plan] of plans.entries()) {
     const r = await commitFile(parts[i], content, plan, dataDir);
@@ -485,7 +504,8 @@ export async function adoptCandidate(content: Content, fact: Fact, dataDir: stri
   const projectRoot = await fs.realpath(contentRoot(content.id, dataDir));
   const abs = path.isAbsolute(fact.path) ? fact.path : path.join(projectRoot, fact.path);
   const checked = await resolveLocalFile(abs, "候选文件");
-  if (!checked.ok) return fail(checked.code, checked.error);
+  // 报错不给绝对路径（verifier 2a P2）：只说文件名和怎么回事
+  if (!checked.ok) return fail(checked.code, `「${path.basename(abs)}」已经不在原来的位置了（可能挂到了别条稿，或被挪走 / 删掉了）`);
   const fp = await stableFingerprint(checked.value, Date.now());
   if (!fp.ok) return fail(fp.code, fp.error);
   if (fp.value.sha256 !== fact.sha256) return fail("stale", "候选文件在发现之后被改过，刷新再看");

@@ -200,26 +200,47 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   // 封面按有效组算（review-inbox §6）：不凭「最新一版缺哪个比例」猜配对
   const groups = validCoverGroups(doc);
   const complete = groups.filter((g) => g.complete);
+  const coverAsk = coverRejectNote(doc, complete.at(-1)?.at);
   if (!complete.length) {
     const last = groups.at(-1);
     if (!last?.slots["3:4"].length) missing.push(MISSING.cover34);
     if (!last?.slots["4:3"].length) missing.push(MISSING.cover43);
   }
   // 成片待你审只认 agent 标过「可以审了」的（§7-1）：对账自动收的导出不算
-  const review = latestMarkedCut(doc)?.fact ?? null;
-  if (review && !cut) {
+  const marked = latestMarkedCut(doc);
+  const review = marked?.fact ?? null;
+  // 创始人点了「还要改…」：在 agent 交新版 / 重新标可以审之前，说的是那句话，不再是「成片待你审」（verifier 2a P1）
+  const cutAsk = marked ? cutRejectNote(doc, marked.fact.sha256!, marked.marked_at) : null;
+  if (review && !cut && cutAsk) missing.push(`你说还要改：${cutAsk}`);
+  else if (review && !cut) {
     missing.push(MISSING.cutReview);
     // 抽帧检查（spec 2026-09-30 §6）：没结果 / 有未放行的缝 / 没跑成且没整条放行 → 写进还差什么
     const v = sliverVerdict(doc, review.sha256!, null);
     if (!v.ok && v.missing) missing.push(v.missing);
   }
-  if (complete.length && !cover) missing.push(MISSING.coverPick);
+  if (complete.length && !cover) missing.push(coverAsk ? `你说封面还要改：${coverAsk}` : MISSING.coverPick);
   const approvedCut = cut ? liveFact(doc, "cut", cut.sha256) : null;
   if (approvedCut && review && review.sha256 !== approvedCut.sha256 && review.at > approvedCut.at) badges.push("有新成片待你审");
   return { missing, badges };
 }
 
+const clipNote = (s: string) => (Array.from(s).length > 40 ? `${Array.from(s).slice(0, 40).join("")}…` : s);
+
+/** 这版成片在「可以审了」之后被打回的那句话（之后又标过就不算） */
+export function cutRejectNote(doc: ProductionDoc, sha: string, markedAt: string): string | null {
+  const r = inRound(doc, doc.decisions).filter((d) => d.type === "cut_reject" && d.sha256 === sha && d.at >= markedAt).at(-1);
+  return r ? clipNote(r.note ?? "") : null;
+}
+
+/** 最新一组完整封面之后的打回（之后又交了新的一组就不算） */
+export function coverRejectNote(doc: ProductionDoc, newestGroupAt: string | undefined): string | null {
+  const r = inRound(doc, doc.decisions).filter((d) => d.type === "cover_reject" && (!newestGroupAt || d.at >= newestGroupAt)).at(-1);
+  return r ? clipNote(r.note ?? "") : null;
+}
+
 function editingReason(missing: string[]): string {
+  const ask = missing.find((m) => m.startsWith("你说"));
+  if (ask) return `${ask}，等 AI 交新版`;
   if (missing.includes(MISSING.cutReview)) return "有成片待你审";
   if (missing.includes(MISSING.coverPick)) return "有封面待你选";
   return missing.length ? `剪辑中，还差：${missing.join("、")}` : "剪辑中";

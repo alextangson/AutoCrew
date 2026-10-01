@@ -53,5 +53,7 @@ export async function fileVerdict(dataDir: string, f: Found, pool: readonly Pool
   // 已判但缓存里没有（缓存被清 / 当初没写上）：重新排，不让「只比了文件名」变成永久结论（Codex 审 segB10 P2）
   if (job.state === "done" && (await requeueMatchJob(dataDir, job.id))) return { kind: "checking" };
   if (job.state === "done") return nameOnly(job.outcome ?? "没转写");
+  // 失败过、在退避等重试（冷启动第一次转写超时最常见）：这一小时算「没核对成」，看得见原因，不挡整批（verifier 2a P2）
+  if (job.state === "queued" && job.attempts > 0 && job.error) return { kind: "failed", reason: `转写没成（${job.error}），只比了文件名，稍后自动再试` };
   return { kind: "checking" };
 }

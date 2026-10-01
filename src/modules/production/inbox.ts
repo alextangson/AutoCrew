@@ -14,7 +14,7 @@ import type { Ask, Fact, InboxConsumption, ProductionDoc } from "../../storage/p
 import { platformLabel } from "../../desktop/platform-label.js";
 import { askStatus, REPORTED_UNDO_MS } from "./asks.js";
 import { validCoverGroups, type GroupView } from "./cover-groups.js";
-import { publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
+import { cutRejectNote, publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import type { Explanation } from "./explain.js";
 import { hostLabel } from "./host-label.js";
 import { fileName, isStrayCover, KIND_NAME, measure, plainReason } from "./plain-reason.js";
@@ -94,6 +94,8 @@ export interface ContentInput {
   planned: string[];
   /** CAS 消费记录（非本体稿也可能有：发布检查、认稿） */
   log: InboxConsumption[];
+  /** 已经归了别条稿的原片候选（同一份字节被挂到了别处）：不再出「对，就是它」 */
+  ownedElsewhere?: ReadonlySet<string>;
 }
 
 type Draft = Omit<InboxItem, "gen" | "content_id" | "title"> & { snapshot: unknown };
@@ -156,8 +158,11 @@ function cutItem(doc: ProductionDoc, content: Content): Draft | null {
   const newer = ok && review.fact.sha256 !== ok.sha256 && review.marked_at > ok.at;
   if (ok && !newer) return null;
   const label = hostLabel(review.host ?? review.fact.by?.host);
+  // 抽帧检查没过：「就用这版」注定被拒——按钮位置写原因，指到「画面有闪帧」那件（verifier 2a P2）
+  const gate = sliverVerdict(doc, review.fact.sha256!, null);
+  const blocked = gate.ok ? undefined : `画面检查没过（${gate.missing ?? "还没有结果"}），先在「最新一版画面有闪帧」那件里处理`;
   return {
-    item_id: `cut:r${doc.round}`, type: "cut_review", summary: newer ? "新的一版剪好了，要不要换" : "成片剪好了，看一遍",
+    item_id: `cut:r${doc.round}`, type: "cut_review", summary: newer ? "新的一版剪好了，要不要换" : "成片剪好了，看一遍", ...(blocked ? { blocked_reason: blocked } : {}),
     waiting: who(review.host ?? review.fact.by?.host), agent_waiting: false, since: review.marked_at, rank: 1,
     actions: [
       { action: "approve_cut", label: "就用这版", role: "primary", params: { fact_id: review.fact.id, sha256: review.fact.sha256 } },
@@ -203,9 +208,9 @@ function coverItem(doc: ProductionDoc, content: Content): Draft | null {
 
 // ---- 候选 / 自动挂上 / 挂载核对 ----
 
-function candidateItems(doc: ProductionDoc): Draft[] {
+function candidateItems(doc: ProductionDoc, skip: ReadonlySet<string> = new Set()): Draft[] {
   const out: Draft[] = [];
-  for (const f of doc.facts.filter((x) => x.round === doc.round)) {
+  for (const f of doc.facts.filter((x) => x.round === doc.round && !skip.has(x.id))) {
     // 发布之后的新导出留在卡片上；正式封面文件夹以外的封面图（多半是中间文件）只在卡片收成一行，都不进列表
     if (f.state === "candidate" && !f.post_publish && !isStrayCover(f)) out.push(candidateItem(f));
     else if (f.kind === "aroll" && f.state === "accepted" && f.auto_attached && f.attach_check?.status !== "kept") out.push(autoItem(f));
@@ -249,14 +254,16 @@ function attachItem(f: Fact): Draft {
 function sliverItems(doc: ProductionDoc, content: Content): Draft[] {
   const ok = validCutApproval(doc, content.body);
   const out: Draft[] = [];
-  for (const { fact, marked_at } of markedCuts(doc)) {
-    if (ok?.sha256 === fact.sha256) continue;
+  // 只给正在审的那一版（最新标「可以审了」、没定、没被打回）：没选的、打回的版本不挂闪帧行（verifier 2a P2）
+  const review = markedCuts(doc).at(-1);
+  const under = review && (!ok || (review.fact.sha256 !== ok.sha256 && review.marked_at > ok.at)) && !cutRejectNote(doc, review.fact.sha256!, review.marked_at) ? [review] : [];
+  for (const { fact, marked_at } of under) {
     const v = sliverVerdict(doc, fact.sha256!, null);
     const c = v.check;
     if (v.ok || !c || (c.status !== "slivers" && c.status !== "unchecked")) continue;
     const open = c.slivers.filter((s) => !sliverWaived(doc, fact.sha256!, c.fingerprint, s));
     out.push({
-      item_id: `sliver:${fact.id}`, type: "sliver", summary: c.status === "slivers" ? `画面有闪帧（${open.length} 处）` : "画面闪帧检查没跑成", waiting: null, agent_waiting: false, since: c.checked_at, rank: 1,
+      item_id: `sliver:${fact.id}`, type: "sliver", summary: c.status === "slivers" ? `最新一版画面有闪帧（${open.length} 处）` : "最新一版的画面闪帧检查没跑成", waiting: null, agent_waiting: false, since: c.checked_at, rank: 1,
       actions: [
         { action: "reject_cut", label: "去剪辑里改", role: "primary", params: factParams(fact), note: "optional", placeholder: "比如：这几处补一帧 B-roll" },
         ...(c.status === "unchecked" && v.wholeWaivable ? [{ action: "waive_sliver_check", label: "这条不查了", role: "quiet" as const, params: { cut_sha: fact.sha256 } }] : []),
@@ -367,11 +374,11 @@ export function contentItems(input: ContentInput, now = Date.now()): InboxItem[]
   const d = draftItem(content);
   if (d) drafts.push(d);
   if (doc && exp?.phase === "production") {
-    drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc), ...sliverItems(doc, content));
+    drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere), ...sliverItems(doc, content));
     for (const x of [cutItem(doc, content), coverItem(doc, content), registerItem(doc, content, exp)]) if (x) drafts.push(x);
   } else if (doc) {
     // 写稿段也可能有候选（认稿前发现的疑似原片）和请示
-    drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc));
+    drafts.push(...askItems(doc, content, input.askAttachmentsChanged, now), ...candidateItems(doc, input.ownedElsewhere));
   }
   drafts.push(...publishItems(doc, input));
   return finish(drafts, input, now);
