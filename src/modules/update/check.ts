@@ -56,7 +56,12 @@ export async function checkForUpdate(root: string, machineDir: string, deps: Che
   const current = localVersion(root);
   const checkedAt = (deps.now?.() ?? new Date()).toISOString();
   const fail = (error: string): UpdateStatus => {
-    const s: UpdateStatus = { checkedAt, current, available: false, error };
+    // 检查失败不抹掉已知的新版本（规格 S2）：看板上的提示留着，失败原因只写在设置页
+    const prev = readStatus(machineDir);
+    const keep = prev?.available && prev.latest && isNewer(prev.latest, current)
+      ? { available: true, latest: prev.latest, ...(prev.tag ? { tag: prev.tag } : {}), ...(prev.commit ? { commit: prev.commit } : {}), ...(prev.notes ? { notes: prev.notes } : {}) }
+      : { available: false };
+    const s: UpdateStatus = { checkedAt, current, ...keep, error };
     writeStatus(machineDir, s);
     return s;
   };
@@ -142,8 +147,12 @@ export function currentDate(root: string, version: string): string | null {
   } catch { return null; }
 }
 
-export function updateView(root: string, machineDir: string, running: boolean): UpdateView {
-  const current = localVersion(root);
+/**
+ * runningVersion：正在跑的这个进程启动时的版本（e2e 1002 P2-C）。磁盘上的 package.json 可能已经被一次没跑完的更新换成新的，
+ * 设置页要显示的是真正在跑的那一版。
+ */
+export function updateView(root: string, machineDir: string, running: boolean, runningVersion?: string): UpdateView {
+  const current = runningVersion ?? localVersion(root);
   const settings = readSettings(machineDir);
   const status = readStatus(machineDir);
   const result = readResult(machineDir);

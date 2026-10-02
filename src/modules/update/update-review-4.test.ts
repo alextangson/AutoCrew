@@ -29,6 +29,7 @@ describe("P1 接手锁按暗号确认，不比 pid（真 tsx 启动器）", () =
     fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true });
     fs.mkdirSync(path.join(root, "scripts"));
     fs.symlinkSync(fs.realpathSync(path.join(REPO, "node_modules", ".bin", "tsx")), path.join(root, "node_modules", ".bin", "tsx"));
+    fs.symlinkSync(path.join(REPO, "node_modules", "tsx"), path.join(root, "node_modules", "tsx")); // 更新进程用 node --import tsx 起
     const mod = (f: string) => JSON.stringify(pathToFileURL(path.join(REPO, "src/modules/update", f)).href);
     fs.writeFileSync(path.join(root, "scripts", "update.mts"), [
       `import { adoptLock, releaseLock } from ${mod("preflight.ts")};`,

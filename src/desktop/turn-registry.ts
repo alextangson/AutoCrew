@@ -19,6 +19,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
 import { updatingRefusal } from "../modules/update/preflight.js";
+import { insideCountedRequest } from "../modules/update/active-work.js";
 
 const FILE = "recent-turns.json";
 const RING_MAX = 50;
@@ -39,6 +40,8 @@ interface ActiveTurn {
   conversationId?: string;
   status: ActiveTurnStatus;
   startedAt: number;
+  /** 登记在一次已经整体计入忙碌的浏览器请求里：不再单独计数（e2e 1002 P3-G） */
+  countedByRequest?: boolean;
 }
 
 const active = new Map<string, ActiveTurn>();
@@ -76,6 +79,7 @@ export function registerTurn(
     ...(opts?.conversationId ? { conversationId: opts.conversationId } : {}),
     status: "running",
     startedAt: Date.now(),
+    ...(insideCountedRequest() ? { countedByRequest: true } : {}),
   });
   return { ok: true, signal: controller.signal };
 }
@@ -110,7 +114,9 @@ export function hasActiveTurnForConversation(conversationId: string): boolean {
 
 /** 本进程里还没收尾的对话轮数（一键更新的预检用：有人在跑就不重启） */
 export function activeTurnCount(): number {
-  return active.size;
+  let n = 0;
+  for (const t of active.values()) if (!t.countedByRequest) n++;
+  return n;
 }
 
 /** 记下本轮落在哪个会话（首轮建会话后回填，turn_status 的 running 态也能给出会话） */

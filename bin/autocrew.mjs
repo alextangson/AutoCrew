@@ -262,8 +262,9 @@ async function start() {
     process.exit(1);
   }
 
+  // 上次更新中断、安装不一致：只打恢复步骤就停，不接着去构建（否则一串 tsc 报错把步骤盖住，e2e 1002 P3-F）
   const help = interruptedUpdateHelp();
-  if (help) console.error(help);
+  if (help) { console.error(help); process.exit(1); }
   const stalePid = readPid();
   if (stalePid && !processAlive(stalePid)) await fsp.rm(PID_FILE, { force: true });
   // 测试钩子：AUTOCREW_SERVER_SCRIPT 换成一个假服务脚本（不构建前端、不碰资料库）；正常使用不设
@@ -371,7 +372,10 @@ async function runDetachedUpdate(tsx) {
   await fsp.mkdir(logDir, { recursive: true });
   const out = path.join(logDir, `cli-${new Date().toISOString().replace(/[:.]/g, "-")}.out`);
   const fd = fs.openSync(out, "a", 0o600);
-  const child = spawn(tsx, [path.join(ROOT, "scripts", "update.mts")], {
+  // 不经 tsx 命令行外壳：外壳收到 Ctrl-C 只等子进程几十毫秒就强杀它，而更新进程可能正忙着删目录（e2e 1002 P1-A）。
+  // 直接一个 node 进程、用 --import tsx 载入 TypeScript，信号只到更新进程自己，由它在安全点处理
+  void tsx;
+  const child = spawn(process.execPath, ["--import", "tsx", path.join(ROOT, "scripts", "update.mts")], {
     cwd: ROOT, detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AUTOCREW_PORT: String(PORT) },
   });
   fs.closeSync(fd);
@@ -393,9 +397,16 @@ async function runDetachedUpdate(tsx) {
     } catch { /* 还没写 */ }
   };
   const timer = setInterval(pump, 200);
+  const startedAt = Date.now();
   const code = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)));
   clearInterval(timer);
   pump();
+  // 更新进程意外没了（被杀、崩了）：没留下这一次的结果，前台要说一声（e2e 1002 P3-E）
+  if (code !== 0) {
+    let at = 0;
+    try { at = Date.parse(JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-result.json"), "utf-8")).at); } catch { /* 没有结果 */ }
+    if (!(at >= startedAt - 1000)) console.error("更新进程意外退出了，没来得及写下结果。再运行一次 autocrew update，它会告诉你现在的状态和怎么恢复。");
+  }
   return code;
 }
 
@@ -426,18 +437,27 @@ function interruptedUpdateHelp() {
   let inflight;
   try { inflight = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-inflight.json"), "utf-8")); } catch { return null; }
   if (!inflight?.oldHead || liveUpdateLock()) return null;
-  const back = [];
+  // 安装一致（当前版本是更新前或要更新到的那一版、两份依赖都在）：能用，交给服务启动时清掉记录，不打扰（e2e 1002 P2-B）
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf-8" }).stdout?.trim();
+  const depsOk = (rel) => fs.existsSync(path.join(ROOT, rel === "node_modules" ? "node_modules/.bin/tsx" : "frontend/node_modules/.bin/vite"));
+  if ((head === inflight.oldHead || head === inflight.commit) && depsOk("node_modules") && depsOk("frontend/node_modules")) return null;
+  // 与 src/modules/update/interrupted.ts 的 recoveryCommands 同一条规则：有完整备份就改名换回；没备份但现在完整的不动；都没有才重装
+  const steps = [];
   for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
     const dir = path.dirname(path.join(ROOT, rel));
     const base = path.basename(rel);
     let prev = [];
-    try { prev = fs.readdirSync(dir).filter((n) => n.startsWith(`${base}.prev-`)).sort(); } catch { /* 目录不在 */ }
+    // 只认完整的 `.prev-<数字>`；删到一半的已经改名成 .trash-…（与 deps-swap.ts 的 PREV_NAME 同一条）
+    const prevName = new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
+    try { prev = fs.readdirSync(dir).filter((n) => prevName.test(n)).sort(); } catch { /* 目录不在 */ }
     const latest = prev[prev.length - 1];
-    if (latest) back.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`);
+    if (latest) { steps.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`); continue; }
+    if (rel === "frontend/dist") continue;
+    if (!depsOk(rel)) steps.push(rel === "node_modules" ? "npm ci" : "(cd frontend && npm ci)");
   }
-  const deps = back.some((c) => c.includes("node_modules")) ? back : ["npm ci", "(cd frontend && npm ci)", "npm run fe:build"];
+  if (!steps.some((c) => c.includes("frontend/dist"))) steps.push("npm run fe:build");
   return [`上次一键更新中断了（没跑完，也没有自动退回）。请依次执行下面的命令恢复到 ${inflight.from}：`,
-    `cd "${ROOT}"`, `git reset --hard ${inflight.oldHead}`, ...deps, "npm run restart"].join("\n");
+    `cd "${ROOT}"`, `git reset --hard ${inflight.oldHead}`, ...steps, "npm run restart"].join("\n");
 }
 
 /**
@@ -697,6 +717,12 @@ switch (command) {
   }
   case "update": {
     // 一键更新（self-update §3）：和看板上「更新」走同一个执行进程，只是在前台跑
+    // 先看有没有更新正在跑（纯 JS，不依赖 node_modules）：装依赖那几十秒里 tsx 暂时不在，不能叫人去 npm ci（e2e 1002 P2-D）
+    if (liveUpdateLock()) {
+      console.error("AutoCrew 正在更新，等它跑完；跑完会自动重启好。进度记录在 " + path.join(DATA_DIR, "update-logs") + " 里最新的那份。");
+      process.exitCode = 1;
+      break;
+    }
     const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
     if (!fs.existsSync(tsx)) {
       console.error(interruptedUpdateHelp() ?? `缺少依赖。请先在 ${ROOT} 执行 npm ci`);

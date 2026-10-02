@@ -5,7 +5,7 @@
  * 请求返回之后还在后台跑的活（写稿、生图…）照旧在各自的入口登记，这里只管请求本身。
  */
 import type http from "node:http";
-import { beginWork } from "../modules/update/active-work.js";
+import { beginWork, markRequestCounted } from "../modules/update/active-work.js";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -25,5 +25,6 @@ export function admitMutation(req: http.IncomingMessage, res: http.ServerRespons
     return false;
   }
   res.once("close", work.end);
+  markRequestCounted(); // 这次请求里面再登记的同一件事不重复计数
   return true;
 }

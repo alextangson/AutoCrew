@@ -78,6 +78,7 @@ function fakeInstall(updateScript: string | null): string {
   if (updateScript !== null) {
     fs.mkdirSync(path.join(root, "node_modules", ".bin"), { recursive: true });
     fs.symlinkSync(TSX, path.join(root, "node_modules", ".bin", "tsx"));
+    fs.symlinkSync(path.join(REPO, "node_modules", "tsx"), path.join(root, "node_modules", "tsx")); // 更新进程用 node --import tsx 起
     fs.writeFileSync(path.join(root, "scripts", "update.mts"), updateScript);
   }
   return root;
@@ -123,6 +124,9 @@ setInterval(() => {}, 1000);
   it("依赖装到一半、连 tsx 都没有：启动器按磁盘现状给出恢复命令（有旧依赖就改名换回）", () => {
     const root = fakeInstall(null);
     fs.mkdirSync(path.join(root, "node_modules.prev-123"));
+    // 前端依赖是完整的：恢复命令不该去动它（e2e 1002 P2-B）
+    fs.mkdirSync(path.join(root, "frontend", "node_modules", ".bin"), { recursive: true });
+    fs.writeFileSync(path.join(root, "frontend", "node_modules", ".bin", "vite"), "");
     const m = path.join(tmp, "m");
     fs.mkdirSync(m, { recursive: true });
     fs.writeFileSync(path.join(m, "update-inflight.json"), JSON.stringify({ at: "", from: "0.4.0", to: "0.5.0", log: "/l", oldHead: "abc123" }));
