@@ -10,8 +10,9 @@ import { firstLine, type GitRunner } from "./git.js";
 import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 import { fetchLaunchInfo, launcherNonce, managedBy } from "./remote.js";
-import { DepsSwap } from "./deps-swap.js";
-import { clearInflight, writeInflight } from "./interrupted.js";
+import { DepsSwap, sweepTrash } from "./deps-swap.js";
+import { markFinishing } from "./abort.js";
+import { clearInflight, markInflightVerified, writeInflight } from "./interrupted.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
 
 export type Log = (line: string) => void;
@@ -168,6 +169,9 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   progress.touchedService = true;
   log("== 重启服务"); await job.steps.restart(log);
   log("== 健康检查"); await job.steps.health(log);
+  // 新版过了检查：之后就算被打断（比如在清理旧依赖时），停在新版也算安装一致，不再叫人退回（第 15 轮 P2-1）
+  try { markInflightVerified(job.machineDir); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
+  markFinishing();
 }
 
 /**
@@ -265,6 +269,8 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base, message: `更新没开始：${errText(e)}，完整记录在 ${job.logFile}` }, log);
   }
   log(`旧版本提交：${oldHead}`);
+  try { const swept = await sweepTrash(job.root); if (swept.length) log(`清掉上次留下的垃圾目录：${swept.join("、")}`); }
+  catch (e) { log(`!! 清不掉上次留下的垃圾目录（不影响更新）：${errText(e)}`); }
   // 在途记录：被硬杀时下次能认出「上次更新中断了」；finish 时删掉
   try { writeInflight(job.machineDir, { at: at(), from: job.from, to: job.to, log: job.logFile, oldHead, commit: job.commit }); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
   const progress: Progress = { touchedService: false };
@@ -291,14 +297,16 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     log(`!! 更新${busy ? "取消" : "失败"}：${reason}；开始退回 ${oldHead}`);
     try {
       const how = await rollback(job, oldHead, log, !busy, progress);
+      // 服务本来没开、退回时把原来的版本起起来了：和成功时一样说一声（e2e 1002b N6）
+      const startedNote = how === "restarted" && job.steps.startedService?.() ? "，AutoCrew 已经启动" : "";
       return finish(job, { ok: false, outcome: how !== "not_restarted" && busy ? "cancelled" : how !== "not_restarted" && aborted ? "aborted" : "rolled_back", at: at(), ...base,
         message: how === "not_restarted"
           ? `更新失败，已退回代码；服务没有重启（有任务在跑），等它们结束后运行 npm run restart。原因：${reason}，完整记录在 ${job.logFile}`
           : busy
           ? `更新取消了：${reason}。没有重启，仍是 ${job.from}，完整记录在 ${job.logFile}`
           : aborted
-          ? `更新中止了：${reason}。已退回 ${job.from}，完整记录在 ${job.logFile}`
-          : `更新失败，已退回 ${job.from}，原因：${reason}，完整记录在 ${job.logFile}` }, log);
+          ? `更新中止了：${reason}。已退回 ${job.from}${startedNote}，完整记录在 ${job.logFile}`
+          : `更新失败，已退回 ${job.from}${startedNote}，原因：${reason}，完整记录在 ${job.logFile}` }, log);
     } catch (e2) {
       const restoreCmds = job.steps.manualRestore?.();
       const cmds = e2 instanceof DirtyRollbackError ? dirtyManualCommands(job.root, oldHead, restoreCmds) : manualCommands(job.root, oldHead, restoreCmds);

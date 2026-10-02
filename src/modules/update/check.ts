@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { firstLine, gitRunner, type GitRunner } from "./git.js";
 import { compareSemver, formatSemver, isNewer, parseSemver } from "./semver.js";
 import { notesBetween, parseChangelog, shortDate, type ReleaseNotes } from "./changelog.js";
+import { stillInterrupted } from "./interrupted.js";
 import { files, readResult, readSettings, readStatus, writeStatus, type UpdateResult, type UpdateSettings, type UpdateStatus } from "./state.js";
 
 export const FETCH_TIMEOUT_MS = 30_000;
@@ -152,14 +153,18 @@ export function currentDate(root: string, version: string): string | null {
  * 设置页要显示的是真正在跑的那一版。
  */
 export function updateView(root: string, machineDir: string, running: boolean, runningVersion?: string): UpdateView {
-  const current = runningVersion ?? localVersion(root);
+  const onDisk = localVersion(root);
+  const current = runningVersion ?? onDisk;
   const settings = readSettings(machineDir);
   const status = readStatus(machineDir);
   const result = readResult(machineDir);
   return {
     current, currentDate: currentDate(root, current), settings, status,
-    banner: bannerFor(status, settings, current), running,
-    result: result && !result.seen ? result : null,
+    // 磁盘上已经是那一版（没跑完的更新留下的）：不再提示「有新版本」，点了也只会回「已经是最新版」——显示中断的结果（e2e 1002b N5）
+    banner: (() => { const b = bannerFor(status, settings, current); return b && isNewer(b.version, onDisk) && !stillInterrupted(machineDir) ? b : null; })(),
+    running,
+    // 「上次更新中断」在恢复好之前一直显示：点过「知道了」也不消失（e2e 1002b N2）
+    result: result && (!result.seen || stillInterrupted(machineDir)) ? result : null,
     logDir: files(machineDir).logDir,
   };
 }

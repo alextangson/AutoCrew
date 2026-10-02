@@ -12,6 +12,20 @@ import fsp from "node:fs/promises";
 /** 恢复用的旧目录只认这个名字：`node_modules.prev-<数字>`；垃圾名（.trash-…）不算 */
 export const PREV_NAME = (base: string) => new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
 
+/** 上次删到一半就被打断留下的垃圾目录（`*.trash-<pid>-<时间>`）：下次更新开始 / 服务启动时清掉（第 15 轮 P3） */
+export async function sweepTrash(root: string): Promise<string[]> {
+  const removed: string[] = [];
+  for (const dir of [root, path.join(root, "frontend")]) {
+    let names: string[] = [];
+    try { names = await fsp.readdir(dir); } catch { continue; }
+    for (const n of names.filter((x) => /\.trash-\d+-\d+$/.test(x))) {
+      await fsp.rm(path.join(dir, n), { recursive: true, force: true });
+      removed.push(path.relative(root, path.join(dir, n)));
+    }
+  }
+  return removed;
+}
+
 /** 先改名成垃圾名（原子），再异步删：原名下的目录要么完整、要么不在；删的时候不卡事件循环 */
 export async function discard(dir: string): Promise<void> {
   const trash = `${dir}.trash-${process.pid}-${Date.now()}`;

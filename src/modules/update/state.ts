@@ -36,6 +36,8 @@ export interface UpdateResult {
   manualCommands?: string[];
   notes?: ReleaseNotes[];
   seen?: boolean;
+  /** 「上次更新中断」的结果：对应的在途记录时刻（恢复好之前一直显示） */
+  interruptedAt?: string;
 }
 
 export const files = (machineDir: string) => ({

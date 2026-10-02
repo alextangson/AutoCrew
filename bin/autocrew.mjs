@@ -367,20 +367,25 @@ async function statusBrief() {
  * - 关终端窗口 / ssh 断线：前台走了，更新照常跑完（成功或退回），结果在页面和下一次 autocrew update 里看得见；
  * - Ctrl-C：转给更新进程请求中止，前台继续等到退回跑完、拿到结果才把提示符还给你；再按只提示「正在退回，请稍等」。
  */
+/** 更新进程的退出码：预检没过、什么都没动（与 scripts/update.mts 的 REFUSED 同一个值） */
+const UPDATE_REFUSED = 3;
+
 async function runDetachedUpdate(tsx) {
   const logDir = path.join(DATA_DIR, "update-logs");
   await fsp.mkdir(logDir, { recursive: true });
   const out = path.join(logDir, `cli-${new Date().toISOString().replace(/[:.]/g, "-")}.out`);
   const fd = fs.openSync(out, "a", 0o600);
   // 不经 tsx 命令行外壳：外壳收到 Ctrl-C 只等子进程几十毫秒就强杀它，而更新进程可能正忙着删目录（e2e 1002 P1-A）。
-  // 直接一个 node 进程、用 --import tsx 载入 TypeScript，信号只到更新进程自己，由它在安全点处理
+  // 直接一个 node 进程、用 --import tsx 载入 TypeScript。前台转发信号时只发给这一个进程（child.kill，不发整个进程组），
+  // 它自己的 git / npm 子进程不会跟着死在半路，由它在安全点中止（第 15 轮）
   void tsx;
   const child = spawn(process.execPath, ["--import", "tsx", path.join(ROOT, "scripts", "update.mts")], {
     cwd: ROOT, detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AUTOCREW_PORT: String(PORT) },
   });
   fs.closeSync(fd);
   let aborting = false;
-  const toChild = (sig) => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* 已经结束 */ } } };
+  // 只发给更新进程本身：发给整个进程组会把它正在跑的 git merge 一起杀掉，留下写了一半的工作区（第 15 轮）
+  const toChild = (sig) => { try { child.kill(sig); } catch { /* 已经结束 */ } };
   process.on("SIGINT", () => {
     if (aborting) { console.log("正在退回，请稍等"); return; }
     aborting = true;
@@ -398,16 +403,18 @@ async function runDetachedUpdate(tsx) {
   };
   const timer = setInterval(pump, 200);
   const startedAt = Date.now();
-  const code = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)));
+  const { code, signal } = await new Promise((resolve) => child.on("exit", (c, s) => resolve({ code: c, signal: s })));
   clearInterval(timer);
   pump();
-  // 更新进程意外没了（被杀、崩了）：没留下这一次的结果，前台要说一声（e2e 1002 P3-E）
-  if (code !== 0) {
-    let at = 0;
-    try { at = Date.parse(JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-result.json"), "utf-8")).at); } catch { /* 没有结果 */ }
-    if (!(at >= startedAt - 1000)) console.error("更新进程意外退出了，没来得及写下结果。再运行一次 autocrew update，它会告诉你现在的状态和怎么恢复。");
+  // 更新进程意外没了（被信号杀掉、崩了）：没留下这一次的结果，前台要说一声（e2e 1002 P3-E）。
+  // 0 = 好了 / 不用更新；3 = 预检没过、什么都没动（原因已经打印，第 15 轮 P2）；1 = 更新失败但结果写好了
+  let at = 0;
+  try { at = Date.parse(JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-result.json"), "utf-8")).at); } catch { /* 没有结果 */ }
+  const wroteResult = at >= startedAt - 1000;
+  if (signal || (code !== 0 && code !== UPDATE_REFUSED && !wroteResult)) {
+    console.error("更新进程意外退出了，没来得及写下结果。再运行一次 autocrew update，它会告诉你现在的状态和怎么恢复。");
   }
-  return code;
+  return code ?? 1;
 }
 
 /** 进程启动时刻（UTC 秒）；进程不在就是 null。与 src/modules/update/process-start.ts 的 startEpoch 同一种读法 */
@@ -437,10 +444,25 @@ function interruptedUpdateHelp() {
   let inflight;
   try { inflight = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-inflight.json"), "utf-8")); } catch { return null; }
   if (!inflight?.oldHead || liveUpdateLock()) return null;
-  // 安装一致（当前版本是更新前或要更新到的那一版、两份依赖都在）：能用，交给服务启动时清掉记录，不打扰（e2e 1002 P2-B）
+  // 与 src/modules/update/interrupted.ts 的 installState 同一条规则（第 15 轮 P2-1）：
+  // 在新版且新版过了健康检查（verified）、或在旧版且没有留着的完整旧依赖、程序文件没改动——能用，不打扰；
+  // 版本既不是旧的也不是新的、工作区干净——用户自己换了版本，清掉记录、说一句就放行
   const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf-8" }).stdout?.trim();
   const depsOk = (rel) => fs.existsSync(path.join(ROOT, rel === "node_modules" ? "node_modules/.bin/tsx" : "frontend/node_modules/.bin/vite"));
-  if ((head === inflight.oldHead || head === inflight.commit) && depsOk("node_modules") && depsOk("frontend/node_modules")) return null;
+  const prevName = (base) => new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
+  const hasPrev = ["node_modules", "frontend/node_modules", "frontend/dist"].some((rel) => {
+    try { return fs.readdirSync(path.dirname(path.join(ROOT, rel))).some((n) => prevName(path.basename(rel)).test(n)); } catch { return false; }
+  });
+  const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: ROOT, encoding: "utf-8" });
+  const clean = status.status === 0 && status.stdout.trim() === "";
+  const allDeps = depsOk("node_modules") && depsOk("frontend/node_modules");
+  if (head && head === inflight.commit && inflight.verified && allDeps) return null;
+  if (head && head === inflight.oldHead && allDeps && !hasPrev && clean) return null;
+  if (head && head !== inflight.commit && head !== inflight.oldHead && clean) {
+    console.error("上次一键更新中断后，程序已经换成别的版本（像是自己 git pull 过），不再提示恢复。");
+    try { fs.rmSync(path.join(DATA_DIR, "update-inflight.json"), { force: true }); } catch { /* 删不掉下次再说 */ }
+    return null;
+  }
   // 与 src/modules/update/interrupted.ts 的 recoveryCommands 同一条规则：有完整备份就改名换回；没备份但现在完整的不动；都没有才重装
   const steps = [];
   for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
@@ -448,8 +470,7 @@ function interruptedUpdateHelp() {
     const base = path.basename(rel);
     let prev = [];
     // 只认完整的 `.prev-<数字>`；删到一半的已经改名成 .trash-…（与 deps-swap.ts 的 PREV_NAME 同一条）
-    const prevName = new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
-    try { prev = fs.readdirSync(dir).filter((n) => prevName.test(n)).sort(); } catch { /* 目录不在 */ }
+    try { prev = fs.readdirSync(dir).filter((n) => prevName(base).test(n)).sort(); } catch { /* 目录不在 */ }
     const latest = prev[prev.length - 1];
     if (latest) { steps.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`); continue; }
     if (rel === "frontend/dist") continue;

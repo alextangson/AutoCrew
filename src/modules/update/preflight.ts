@@ -38,7 +38,8 @@ export type Preflight = { ok: true } | { ok: false; code: string; reason: string
 export function busyWork(_machineDir: string, deps: Pick<PreflightDeps, "inProcessTurns"> = {}): string | null {
   const turns = deps.inProcessTurns?.() ?? 0;
   if (turns === 0) return null;
-  return `有 ${turns} 个任务正在跑（写稿或发布），等它们停下再更新`;
+  // 不报个数：同一件事可能在请求、通道、对话轮几处各算一次，数字会虚高（e2e 1002 P3-G）；去重会漏算后台活，宁可不说数
+  return "有任务正在跑（写稿、对话、发布或剪辑），等它们停下再更新";
 }
 
 /** target = 要合到的提交（origin 公布的 tag 所指），不是本地 tag 名 */
