@@ -8,6 +8,8 @@ import { contentFile } from "../src/storage/content-project.js";
  * 入口是 `bin/autocrew.mjs mcp`，它把 stdin 上的 JSON-RPC 转发到那个端点——本文件
  * 不再自带 stdio 循环，全部宿主经同一个写进程（P3 §3）。
  */
+import { beginWork } from "../src/modules/update/active-work.js";
+import { effectiveAction, isLongRunningTool } from "../src/modules/update/long-running.js";
 import { WRITING_INSTRUCTIONS, MCP_INSTRUCTIONS } from "./writing-instructions.js";
 import { mcpToolView, TOOL_GUIDE_PREFIX, toolGuideText } from "./tool-docs.js";
 import { isOntologyEnabled } from "../src/storage/production-store.js";
@@ -194,6 +196,9 @@ async function callTool(
         : { content: [{ type: "text", text: permission.error }], isError: true });
     }
   }
+  // 一键更新（Codex 审第 3 轮 P1）：长动作在跑就不重启，更新中不开新的——宿主走 /mcp 也一样
+  const work = isLongRunningTool(toolName, rawArgs.action) ? beginWork(`${toolName}:${String(effectiveAction(toolName, rawArgs.action) ?? "")}`) : null;
+  if (work && !work.ok) return resultResponse(id, { content: [{ type: "text", text: work.error }], structuredContent: { ok: false, code: "updating", error: work.error }, isError: true });
   const startedAt = Date.now();
   try {
     // 会话挂在这次调用的异步上下文上：run-log 与认领/交接账顺手记上它，不经参数层层传
@@ -211,6 +216,8 @@ async function callTool(
   } catch (err) {
     await recordUsage(access, toolName, false, startedAt);
     return resultResponse(id, { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true });
+  } finally {
+    if (work?.ok) work.end();
   }
 }
 

@@ -2,6 +2,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -43,6 +44,7 @@ function printHelp() {
                           --role editor-writer|cover 选哪一份人设
   autocrew storage        资料库位置、预览和迁移（status|cancel|preview|create|open|migrate）
   autocrew doctor         检查本地运行环境
+  autocrew update         更新到最新发布版（失败自动退回）
 
 选项:
   --no-open               启动后不打开浏览器
@@ -190,8 +192,38 @@ function ensureBuild() {
   if (newestSrc > distAt) runBuild();
 }
 
+const LAUNCH_FILE = path.join(DATA_DIR, "autocrew.launch");
+/** 新版本起得慢也给够时间；超时就结束它，绝不留一个没人管的进程（e2e P1-1） */
+const LAUNCH_TIMEOUT_MS = Number(process.env.AUTOCREW_LAUNCH_TIMEOUT_MS) || 60_000;
+
+/** 端口上那个服务报的启动标记（不是 AutoCrew、或旧版本没有这个端点 → null） */
+async function launchInfo() {
+  try {
+    const r = await fetch(`${BASE_URL}__autocrew/launch`, { signal: AbortSignal.timeout(1_500) });
+    if (!r.ok) return null;
+    const body = await r.json();
+    return body && typeof body === "object" ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 「由 npm start 管着」的唯一定义：端口上的服务报的标记 = 启动器这次写下的标记（服务端同一条规则见 src/modules/update/remote.ts） */
+async function ourServerUp() {
+  const info = await launchInfo();
+  let mine = "";
+  try { mine = fs.readFileSync(LAUNCH_FILE, "utf-8").trim(); } catch { /* 没有标记文件 */ }
+  return Boolean(mine && info?.nonce && info.nonce === mine);
+}
+
+function killLaunched(pid) {
+  for (const sig of ["SIGTERM", "SIGKILL"]) {
+    try { process.kill(process.platform === "win32" ? pid : -pid, sig); } catch { try { process.kill(pid, sig); } catch { /* 已经不在 */ } }
+  }
+}
+
 async function waitForLaunch(logOffset, pid) {
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (!processAlive(pid)) break;
     let chunk = "";
@@ -215,14 +247,26 @@ async function start() {
   await fsp.chmod(DATA_DIR, 0o700).catch(() => {});
 
   if (await serverUp()) {
-    console.log(`AutoCrew 已在运行: ${BASE_URL}`);
-    openBrowser(BASE_URL);
-    return;
+    // 端口有人应答 ≠ 是我们起的那个 AutoCrew（e2e P1-1）：只有标记对上才算已在运行
+    if (await ourServerUp()) {
+      console.log(`AutoCrew 已在运行: ${BASE_URL}`);
+      openBrowser(BASE_URL);
+      return;
+    }
+    const info = await launchInfo();
+    console.error(info?.via === "serve"
+      ? `端口 ${PORT} 上已在运行的 AutoCrew 是用 npm run serve 启动的，不归启动器管，没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`
+      : `端口 ${PORT} 上已在运行的不是这个启动器起的 AutoCrew（或是别的程序），没有启动新的。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
+    process.exit(1);
   }
 
+  const help = interruptedUpdateHelp();
+  if (help) console.error(help);
   const stalePid = readPid();
   if (stalePid && !processAlive(stalePid)) await fsp.rm(PID_FILE, { force: true });
-  ensureBuild();
+  // 测试钩子：AUTOCREW_SERVER_SCRIPT 换成一个假服务脚本（不构建前端、不碰资料库）；正常使用不设
+  const testScript = process.env.AUTOCREW_SERVER_SCRIPT;
+  if (!testScript) ensureBuild();
 
   const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
   if (!fs.existsSync(tsx)) {
@@ -230,26 +274,35 @@ async function start() {
     process.exit(1);
   }
 
-  const storageApply = spawnSync(tsx, [path.join(ROOT, "scripts", "storage.mts"), "apply"], { stdio: "inherit", env: process.env });
-  if (storageApply.status !== 0) throw new Error("资料库准备失败；未启动服务，原资料保持不变");
+  if (!testScript) {
+    const storageApply = spawnSync(tsx, [path.join(ROOT, "scripts", "storage.mts"), "apply"], { stdio: "inherit", env: process.env });
+    if (storageApply.status !== 0) throw new Error("资料库准备失败；未启动服务，原资料保持不变");
+  }
 
   const logOffset = fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE).size : 0;
   const logFd = fs.openSync(LOG_FILE, "a", 0o600);
   fs.chmodSync(LOG_FILE, 0o600);
-  const child = spawn(tsx, [path.join(ROOT, "desktop", "server.ts")], {
+  // 一次性启动标记：服务凭它确认「我是启动器起的」，一键更新才敢重启它（pid 文件里是 tsx 的 pid，不是服务本身）
+  const launchNonce = randomBytes(16).toString("hex");
+  await fsp.writeFile(LAUNCH_FILE, `${launchNonce}\n`, { mode: 0o600 });
+  const child = spawn(tsx, [testScript || path.join(ROOT, "desktop", "server.ts")], {
     cwd: ROOT,
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    env: { ...process.env, AUTOCREW_LAUNCH_NONCE: launchNonce },
   });
   fs.closeSync(logFd);
   child.unref();
   await fsp.writeFile(PID_FILE, `${child.pid}\n`, { mode: 0o600 });
 
   const url = await waitForLaunch(logOffset, child.pid);
-  if (!url) {
+  // 打印了地址还不够：端口上应答的必须是这一次起的进程（标记对上），否则可能是别的进程占着端口
+  if (!url || !(await ourServerUp())) {
+    killLaunched(child.pid);
     await fsp.rm(PID_FILE, { force: true });
-    console.error(`AutoCrew 启动失败。查看日志: ${LOG_FILE}`);
+    console.error(url
+      ? `AutoCrew 启动失败：端口 ${PORT} 上应答的不是这次启动的进程，已结束它。查看日志: ${LOG_FILE}`
+      : `AutoCrew ${Math.round(LAUNCH_TIMEOUT_MS / 1000)} 秒内没起来，已结束这次启动的进程。查看日志: ${LOG_FILE}`);
     process.exit(1);
   }
   console.log(`AutoCrew 已启动（PID ${child.pid}）`);
@@ -301,9 +354,100 @@ async function statusBrief() {
   const fetchImpl = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(5_000) });
   const reply = await forwardMessage(call, { url: `${BASE_URL}mcp`, token: resolveForwarderToken(DATA_DIR), fetchImpl });
   const result = reply?.result?.structuredContent;
-  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}`);
+  if (typeof result?.brief === "string") return printResult(result, () => `AutoCrew 待办：${result.brief}${result.update ? `\nAutoCrew ${result.update}` : ""}`);
   const failure = reply?.error?.message ?? (reply?.result?.isError ? reply.result.content?.[0]?.text : null);
   console.log(failure ? `AutoCrew 待办读取失败（${failure}）` : "AutoCrew 运行中，但服务是旧版本、不认 --brief（autocrew restart 后重试）");
+}
+
+/**
+ * `autocrew update`（第 12 轮 P1）：更新进程脱离终端在后台跑，前台只跟它的输出。
+ * - 关终端窗口 / ssh 断线：前台走了，更新照常跑完（成功或退回），结果在页面和下一次 autocrew update 里看得见；
+ * - Ctrl-C：转给更新进程请求中止，前台继续等到退回跑完、拿到结果才把提示符还给你；再按只提示「正在退回，请稍等」。
+ */
+async function runDetachedUpdate(tsx) {
+  const logDir = path.join(DATA_DIR, "update-logs");
+  await fsp.mkdir(logDir, { recursive: true });
+  const out = path.join(logDir, `cli-${new Date().toISOString().replace(/[:.]/g, "-")}.out`);
+  const fd = fs.openSync(out, "a", 0o600);
+  const child = spawn(tsx, [path.join(ROOT, "scripts", "update.mts")], {
+    cwd: ROOT, detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AUTOCREW_PORT: String(PORT) },
+  });
+  fs.closeSync(fd);
+  let aborting = false;
+  const toChild = (sig) => { try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* 已经结束 */ } } };
+  process.on("SIGINT", () => {
+    if (aborting) { console.log("正在退回，请稍等"); return; }
+    aborting = true;
+    toChild("SIGINT");
+  });
+  process.on("SIGTERM", () => toChild("SIGTERM"));
+  // 终端没了：不再往屏幕写，直接走；更新进程不在这个终端的进程组里，会自己跑完
+  process.on("SIGHUP", () => process.exit(0));
+  let offset = 0;
+  const pump = () => {
+    try {
+      const buf = fs.readFileSync(out);
+      if (buf.length > offset) { process.stdout.write(buf.subarray(offset)); offset = buf.length; }
+    } catch { /* 还没写 */ }
+  };
+  const timer = setInterval(pump, 200);
+  const code = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)));
+  clearInterval(timer);
+  pump();
+  return code;
+}
+
+/** 进程启动时刻（UTC 秒）；进程不在就是 null。与 src/desktop/chief-editor/run-store.ts 的 startEpoch 同一种读法 */
+function startEpoch(pid) {
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8", env: { ...process.env, TZ: "UTC", LC_ALL: "C" } });
+  const t = r.stdout?.trim() ? Date.parse(`${r.stdout.trim()} GMT`) : NaN;
+  return Number.isFinite(t) ? Math.round(t / 1000) : null;
+}
+
+/** 有一个活着的更新进程拿着更新锁吗（pid 在、记了启动时刻的话也要对得上） */
+function liveUpdateLock() {
+  let body;
+  try { body = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update.lock"), "utf-8")); } catch { return null; }
+  if (!body?.pid || !processAlive(body.pid)) return null;
+  if (typeof body.start === "number" && body.start > 0) {
+    const now = startEpoch(body.pid);
+    if (now === null || Math.abs(now - body.start) > 1) return null;
+  }
+  return body;
+}
+
+/**
+ * 上次一键更新被硬生生打断（第 12 轮 P1）：在途记录还在、却没有活的更新进程。依赖可能装到一半、连 tsx 都没有，
+ * 所以这里用纯 JS 按磁盘现状算恢复命令（与 src/modules/update/interrupted.ts 同一条规则：有留着的旧依赖就改名换回，不需要网络）。
+ */
+function interruptedUpdateHelp() {
+  let inflight;
+  try { inflight = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "update-inflight.json"), "utf-8")); } catch { return null; }
+  if (!inflight?.oldHead || liveUpdateLock()) return null;
+  const back = [];
+  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
+    const dir = path.dirname(path.join(ROOT, rel));
+    const base = path.basename(rel);
+    let prev = [];
+    try { prev = fs.readdirSync(dir).filter((n) => n.startsWith(`${base}.prev-`)).sort(); } catch { /* 目录不在 */ }
+    const latest = prev[prev.length - 1];
+    if (latest) back.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`);
+  }
+  const deps = back.some((c) => c.includes("node_modules")) ? back : ["npm ci", "(cd frontend && npm ci)", "npm run fe:build"];
+  return [`上次一键更新中断了（没跑完，也没有自动退回）。请依次执行下面的命令恢复到 ${inflight.from}：`,
+    `cd "${ROOT}"`, `git reset --hard ${inflight.oldHead}`, ...deps, "npm run restart"].join("\n");
+}
+
+/**
+ * 更新进行中不许手动启动 / 停止 / 重启（第 12 轮 P2）：会打断更新、在依赖换到一半时去构建，把服务弄停。
+ * 更新进程自己调启动器时带 AUTOCREW_UPDATER=1，不受这条限制。
+ */
+if (["start", "stop", "restart"].includes(command) && process.env.AUTOCREW_UPDATER !== "1") {
+  const lock = liveUpdateLock();
+  if (lock) {
+    console.error(`AutoCrew 正在更新，先别${command === "stop" ? "停止" : command === "start" ? "启动" : "重启"}——等它跑完会自动重启好。进度记录在 ${path.join(DATA_DIR, "update-logs")} 里最新的那份。`);
+    process.exit(1);
+  }
 }
 
 switch (command) {
@@ -315,6 +459,11 @@ switch (command) {
     break;
   case "restart":
     await stop();
+    // 停完端口上还有人应答：旧的没停下来（pid 记录丢了 / 不是启动器起的）。这不是「已在运行」，是重启失败（Codex 审第 10 轮 P1）
+    if (await serverUp()) {
+      console.error(`AutoCrew 重启失败：端口 ${PORT} 上已在运行的旧服务停不下来（找不到它的进程记录）。先在运行它的终端里按 Ctrl-C 停掉，再运行 npm start`);
+      process.exit(1);
+    }
     await start();
     break;
   case "status":
@@ -513,6 +662,17 @@ switch (command) {
     );
     if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
       || !checks.uv || !checks.wechatPublishScript || inbox.failed) process.exitCode = 1;
+    break;
+  }
+  case "update": {
+    // 一键更新（self-update §3）：和看板上「更新」走同一个执行进程，只是在前台跑
+    const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+    if (!fs.existsSync(tsx)) {
+      console.error(interruptedUpdateHelp() ?? `缺少依赖。请先在 ${ROOT} 执行 npm ci`);
+      process.exitCode = 1;
+      break;
+    }
+    process.exitCode = await runDetachedUpdate(tsx);
     break;
   }
   case "storage": {

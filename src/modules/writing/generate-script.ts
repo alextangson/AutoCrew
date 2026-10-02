@@ -12,6 +12,7 @@ import { inheritCreativeTask, createCreativeTask, creativeTaskHash, creativeTask
  * 组装 + humanizeZh 只做一次（审稿 spec §2.1：审稿必须看到终稿形态），
  * 审稿产出直接进转正——同一段文本不许算两遍。
  */
+import { beginWork } from "../update/active-work.js";
 import {
   ENGINE_UNCONFIGURED,
   hostOf,
@@ -1137,10 +1138,13 @@ function runInBackground(
   workLabel: string,
   dataDir?: string,
   deps?: BackgroundDeps,
+  /** 入口在第一个 await 之前就登记的忙碌计数（Codex 审第 5 轮 P2）：后台跑完才释放 */
+  endWork: () => void = () => {},
 ): StartedGeneration {
   const runId = `run-bg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const emit = (e: BackgroundGenEvent) => { try { deps?.onEvent?.(e); } catch { /* 观测层吞错 */ } };
 
+  // 一键更新的忙碌计数（self-update）：后台写稿跑完之前，更新不会重启服务
   const completion = (async () => {
     emit({ role: "writer", kind: "work", label: workLabel, contentId, runId });
     try {
@@ -1158,7 +1162,7 @@ function runInBackground(
       const msg = await writeFailureText(err, dataDir);
       emit({ role: "writer", kind: "run_failed", label: `编剧写稿中断：${msg.slice(0, 80)}`, contentId, runId });
     }
-  })();
+  })().finally(endWork);
   return { contentId, runId, completion };
 }
 
@@ -1172,8 +1176,12 @@ export function startGenerateScript(
   dataDir?: string,
   deps?: BackgroundDeps,
 ): Promise<StartedGeneration> {
-  return createPlaceholder(req, dataDir).then((contentId) =>
-    runInBackground(contentId, req, `编剧开写《${req.topic.slice(0, 24)}》`, dataDir, deps),
+  // 第一个 await 之前就拿到忙碌登记：查锁与登记是同一步，中间不留更新钻进来的缝（Codex 审第 5 轮 P2）
+  const work = beginWork("后台写稿");
+  if (!work.ok) return Promise.reject(new Error(work.error));
+  return createPlaceholder(req, dataDir).then(
+    (contentId) => runInBackground(contentId, req, `编剧开写《${req.topic.slice(0, 24)}》`, dataDir, deps, work.end),
+    (err) => { work.end(); throw err; },
   );
 }
 
@@ -1196,6 +1204,23 @@ export async function retryGenerateScript(
    * 带 undefined 进来等于把原请求那一格擦掉。
    */
   override?: Partial<ScriptRequest>,
+): Promise<StartedGeneration> {
+  const work = beginWork("后台重写");
+  if (!work.ok) throw new Error(work.error);
+  try {
+    return await prepareRetry(contentId, dataDir, deps, override, work.end);
+  } catch (err) {
+    work.end();
+    throw err;
+  }
+}
+
+async function prepareRetry(
+  contentId: string,
+  dataDir: string | undefined,
+  deps: BackgroundDeps | undefined,
+  override: Partial<ScriptRequest> | undefined,
+  endWork: () => void,
 ): Promise<StartedGeneration> {
   const content = await getContent(contentId, dataDir);
   if (!content) throw new Error(`稿件不存在（${contentId}）`);
@@ -1223,7 +1248,7 @@ export async function retryGenerateScript(
     const back = await transitionStatus(contentId, "drafting", {}, dataDir);
     if (!back.ok) throw new Error(`稿件退回写作中失败（${contentId}）：${back.error ?? "状态未推进"}`);
   }
-  return runInBackground(contentId, req, `编剧重写《${req.topic.slice(0, 24)}》`, dataDir, deps);
+  return runInBackground(contentId, req, `编剧重写《${req.topic.slice(0, 24)}》`, dataDir, deps, endWork);
 }
 
 /** 转正与拦下两条路共用的一份上下文 */

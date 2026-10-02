@@ -9,6 +9,8 @@ import { engineFallbackStats } from "../runtime/run-log.js";
 import { explainAll } from "../modules/production/read.js";
 import { readReconcileReport } from "../modules/production/reconcile.js";
 import { isOntologyEnabled } from "../storage/production-store.js";
+import { briefLine, programRoot } from "../modules/update/check.js";
+import { getMachineDir } from "../storage/storage-roots.js";
 
 export const statusSchema = Type.Object({
   action: Type.Optional(Type.Unsafe<"overview" | "baseline" | "compare" | "track_performance" | "learning_report">({
@@ -59,7 +61,12 @@ export async function executeStatus(params: Record<string, unknown>) {
   }
 
   // Default: overview
-  if (params.brief === true) return briefStatus(dataDir, cutOpts(params));
+  if (params.brief === true) {
+    const result = await briefStatus(dataDir, cutOpts(params));
+    // 有新版本时晨报带一句（self-update §2-5）；读的是本机目录里最近一次检查的结果，不现查网络
+    const update = briefLine(programRoot(), getMachineDir(params._machineDir as string | undefined));
+    return update ? { ...result, update } : result;
+  }
   const [topics, contents, engine] = await Promise.all([listTopics(dataDir), listContents(dataDir), engineFallbackStats(dataDir)]);
 
   const byStatus: Record<string, number> = {};

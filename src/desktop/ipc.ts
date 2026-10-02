@@ -74,6 +74,8 @@ import { getStorageSettings, previewStorageSettings, setStorageSettings, cancelS
  *   content:asset_remove { content_id, filename }
  *   today:summary       {}
  */
+import { beginWork } from "../modules/update/active-work.js";
+import { LONG_RUNNING_CHANNELS } from "../modules/update/long-running.js";
 import { getChiefEditor } from "./chief-editor/service.js";
 import { routeRetryToAgent } from "./chief-editor/retry-route.js";
 import { buildDispatchContext, parseDispatch } from "./dispatch-context.js";
@@ -1223,6 +1225,26 @@ async function dashboardSummaryHandler(payload: Record<string, unknown>): Promis
   }
 }
 
+/**
+ * 在请求里跑很久的通道（模型调用、外网推送 / 抓取、长任务编排）：一键更新时（self-update，Codex 审第 2 轮 P1）
+ * 它们在跑就不重启，锁在手时不开新的。后台起跑、请求先回的入口（写稿、封面、配图）在各自的 start 函数里登记。
+ */
+export { LONG_RUNNING_CHANNELS };
+
+function trackLongRunning(handlers: Record<IpcChannel, IpcHandler>): Record<IpcChannel, IpcHandler> {
+  const out = { ...handlers };
+  for (const ch of Object.keys(out) as IpcChannel[]) {
+    if (!LONG_RUNNING_CHANNELS.has(ch)) continue;
+    const inner = out[ch];
+    out[ch] = async (payload, ctx) => {
+      const work = beginWork(ch);
+      if (!work.ok) return { ok: false, code: "updating", error: work.error };
+      try { return await (ctx === undefined ? inner(payload) : inner(payload, ctx)); } finally { work.end(); }
+    };
+  }
+  return out;
+}
+
 // ── buildIpcHandlers ──────────────────────────────────────────────────────────
 
 /**
@@ -1443,8 +1465,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     };
   }
 
-  if (!deps) return defaults;
-  return { ...defaults, ...deps };
+  return trackLongRunning(deps ? { ...defaults, ...deps } : defaults);
 }
 
 // ── workspace:* — 多工作区（一人多 IP,dataDir 只由 server 端从注册表解析） ────

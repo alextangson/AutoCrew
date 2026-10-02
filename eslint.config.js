@@ -19,6 +19,8 @@ export default tseslint.config(
         AbortController: "readonly",
         AbortSignal: "readonly",
         clearTimeout: "readonly",
+        clearInterval: "readonly",
+        setInterval: "readonly",
         console: "readonly",
         fetch: "readonly",
         process: "readonly",

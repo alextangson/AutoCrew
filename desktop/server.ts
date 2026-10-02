@@ -3,6 +3,14 @@ import { createPublishPrefsHandler } from "../src/desktop/publish-prefs-route.js
 import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock.js";
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
+import { createUpdateHandler } from "../src/desktop/update-route.js";
+import { admitMutation } from "../src/desktop/http-busy-guard.js";
+import { detectInterrupted } from "../src/modules/update/interrupted.js";
+import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
+import { activeTurnCount } from "../src/desktop/turn-registry.js";
+import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
+import { getMachineDir } from "../src/storage/storage-roots.js";
+import { launchedByLauncher, launchVia } from "../src/modules/update/remote.js";
 import { contentFile } from "../src/storage/content-project.js";
 import { acquireLibraryLock } from "../src/storage/library-lock.js";
 import { assertLibraryAvailable } from "../src/storage/storage-roots.js";
@@ -51,7 +59,7 @@ import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { startDigestScheduler, stopDigestScheduler } from "../src/desktop/digest-scheduler.js";
 import { getInboxSettingsRaw } from "../src/desktop/settings-inbox.js";
-import { startResearchRuntime } from "../src/desktop/research-runtime.js";
+import { researchBusyCount, startResearchRuntime } from "../src/desktop/research-runtime.js";
 import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
 import { serveCoverIdentityAsset } from "../src/desktop/cover-identity-asset-route.js";
 import { setVideoService } from "../src/desktop/video-handlers.js";
@@ -184,6 +192,22 @@ const projectReview = createProjectReviewHandler({ authorize, originAllowed: req
 const ruleApproval = createRuleApprovalHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const publishPrefs = createPublishPrefsHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
+// 上次更新被硬生生打断（进程被杀 / 机器重启）：启动时认出来，写一份「上次更新中断」结果给页面（第 12 轮 P1）
+try {
+  const interrupted = detectInterrupted(programRoot(), getMachineDir());
+  if (interrupted) console.error(`[update] ${interrupted.message}`);
+} catch (err) { console.error("[update] 检查上次更新是否中断失败:", err instanceof Error ? err.message : err); }
+
+// 一键更新（self-update §3）：只有用 npm start（启动器写了 pid 文件、就是本进程）起的服务才能被自动重启
+const updateRoute = createUpdateHandler({
+  authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,
+  root: programRoot(), machineDir: getMachineDir(), port: PORT,
+  // 对话轮 + 后台写稿 / 生图 / 推送等长任务（self-update，Codex 审第 2 轮 P1）
+  // 剪辑与深调研的 runner 在跑也算（第 12 轮 P2：重启后它们要等 10 / 30 分钟才会被捡回，不能被重启打断）
+  inProcessTurns: () => activeTurnCount() + activeWorkCount() + (videoService?.busyCount() ?? 0) + researchBusyCount(),
+  // 启动器记的是 tsx 的 pid，跑本文件的是 tsx 拉起的另一个 node：比启动器发给这一次启动的标记，不比 pid
+  launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()), via: launchVia() }),
+});
 
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
@@ -199,9 +223,17 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
   }
+  // 一键更新（Codex 审第 11 轮 P1）：浏览器的每个写请求在处理完之前都算在跑；更新中直接回 503「正在更新，稍后再试」
+  if (!admitMutation(req, res, p)) return;
   if ((p === "/mcp" || p.startsWith("/api/")) && !["/api/session", "/api/invoke", "/api/events"].includes(p) && authorize(req)) assertLibraryAvailable();
 
   if (p === "/favicon.ico") { res.writeHead(204).end(); return; }
+  // 启动标记（e2e P1-1）：启动器与更新进程凭它确认端口上应答的就是自己起的那一个；不带任何资料，无需登录
+  if (p === "/__autocrew/launch" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-store" })
+      .end(JSON.stringify({ ok: true, nonce: process.env.AUTOCREW_LAUNCH_NONCE ?? null, via: launchVia() }));
+    return;
+  }
 
   // React 前端:/ 为主,/v2 为书签兼容别名(D 期清场后同一份 dist)
   if (p === "/v2" || p.startsWith("/v2/")) {
@@ -380,6 +412,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
 
   if (await projectReview(req, res, url)) return;
   if (await board(req, res, url)) return;
+  if (await updateRoute(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
   if (await publishPrefs(req, res, url)) return;
 
@@ -638,8 +671,9 @@ server.listen(PORT, HOST, () => {
   // 选题雷达:启动跑一轮 + 每 30 分钟一轮(进程内调度,详见 radar-cycle.ts)。
   // 一轮 = TTL 门刷新 → 真刷新了才入库与清理;缓存新鲜就整轮跳过,不烧付费源也不重评。
   const runRadarCycle = createRadarCycle();
+  // 一键更新：更新中跳过这一拍，跑的时候算在跑（决定清单见 src/modules/update/long-running.ts）
   const tickRadar = () =>
-    void runRadarCycle().catch((err) => {
+    void runUnlessUpdating("选题雷达周期", runRadarCycle).catch((err) => {
       console.error("[topic-radar] 雷达周期失败:", err instanceof Error ? err.message : err);
     });
   tickRadar();
@@ -653,15 +687,15 @@ server.listen(PORT, HOST, () => {
     if (myContentRunning) return;
     myContentRunning = true;
     // 先对账再排文件夹(本体 §4):未启用本体时对账只算影子差异、不写
-    void runExclusive(async () => {
+    void runUnlessUpdating("我的内容对账", () => runExclusive(async () => {
       const r = await reconcileAll(getDataDir()).catch((err) => {
         console.error("[production] 对账失败:", err instanceof Error ? err.message : err);
         return null;
       });
       if (r?.errors.length) console.error(`[production] 对账有 ${r.errors.length} 条失败:${r.errors[0].title} ${r.errors[0].error}`);
       return syncMyContentView();
-    })
-      .then((r) => { if (r.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
+    }))
+      .then((r) => { if (r?.errors.length) console.error(`[my-content] 对账有 ${r.errors.length} 处出错:${r.errors[0]}`); })
       .catch((err) => console.error("[my-content] 对账失败:", err instanceof Error ? err.message : err))
       .finally(() => { myContentRunning = false; });
   };
@@ -676,13 +710,14 @@ server.listen(PORT, HOST, () => {
   const tickArchive = () => {
     if (archiveRunning) return;
     archiveRunning = true;
-    void runExclusive(async () => {
+    void runUnlessUpdating("NAS 备份与归档", () => runExclusive(async () => {
       const b = await backupPublished();
       if (b.backedUp.length) console.log(`[nas-backup] 备份 ${b.backedUp.length} 条`);
       if (b.errors.length) console.error(`[nas-backup] ${b.errors.length} 处问题:${b.errors[0]}`);
       return archivePublished();
-    })
+    }))
       .then((r) => {
+        if (!r) return;
         if (r.archived.length) console.log(`[nas-archive] 归档 ${r.archived.length} 条`);
         if (r.errors.length) console.error(`[nas-archive] ${r.errors.length} 处问题:${r.errors[0]}`);
       })
@@ -699,6 +734,9 @@ server.listen(PORT, HOST, () => {
   // 三平台自动回流(回流 spec §4.3):启动跑一轮 + 每 30 分钟一轮。真正的节奏由每平台的
   // TTL(12h)与退避状态机决定——tick 只是把"到点了自动抓"补上;三平台默认全关,
   // 人在数据回流页自己开(不替人做碰后台的决定)。
+  // 版本检查（self-update §2）：启动 1 分钟后一次、之后每 24 小时；失败只记进状态（设置页看得见）
+  startUpdateScheduler(programRoot(), getMachineDir());
+
   stopMetricsPull = startMetricsPullCycle({
     resolveDataDir: async () => activeWorkspaceDataDir(),
   });

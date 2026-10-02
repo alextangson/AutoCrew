@@ -140,6 +140,8 @@ export interface VideoService {
   warmupAsr(): Promise<{ status: string }>;
   asrStatus(): Promise<{ status: string; detail?: string }>;
   shutdown(): Promise<void>;
+  /** 正在跑 + 排着的剪辑任务数（一键更新的忙碌判断用） */
+  busyCount(): number;
 }
 
 export interface VideoServiceOptions {
@@ -410,5 +412,6 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
       return { status: record.status, ...(record.detail ? { detail: record.detail } : {}) };
     },
     shutdown: () => runner.shutdown(),
+    busyCount: () => runner.busyCount(),
   };
 }

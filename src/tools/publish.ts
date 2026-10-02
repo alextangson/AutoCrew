@@ -7,6 +7,7 @@ import { writeTextAtomic } from "../storage/json-atomic.js";
 import { contentFile, resolveContentProject } from "../storage/content-project.js";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { updatingRefusal } from "../modules/update/preflight.js";
 import { Type } from "@sinclair/typebox";
 import { getContent, updateContent, transitionStatus, getDataDir, getCoverReview } from "../storage/local-store.js";
 import { publishWechatMpDraft } from "../modules/publish/wechat-mp.js";
@@ -146,6 +147,10 @@ export async function executePublish(
     const output = formatForClipboard(platform, content.title, content.body, hashtags);
     return { ok: true, data: output };
   }
+
+  // 一键更新进行中（self-update §3）：发布类动作不开新的，免得重启时掐断
+  const updating = updatingRefusal();
+  if (updating) return { ok: false, code: "updating", error: updating };
 
   // --- ego_lite_prepare：从不点发布。资料库启用本体之后（发布技能改口补丁在同一时刻套上）按平台出包、每个平台必须带当前有效的
   // check_id（发布前把关 spec §11）；启用之前旧调用方不变：单包出，带了 check_ids 也照新契约出 ---

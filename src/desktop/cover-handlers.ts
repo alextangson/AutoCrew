@@ -5,6 +5,7 @@
  * provider 解析在 server 端(cover.json + publish.json);gemini 分支注入 key
  * (renderer 永远拿不到原文),relay 分支工具自行解析凭证。
  */
+import { beginWork } from "../modules/update/active-work.js";
 import { executeCoverReview } from "../tools/cover-review.js";
 import {
   loadCoverSettings,
@@ -63,8 +64,13 @@ export async function startCoverJob(
   labels: { work: string; done: string },
 ): Promise<StartedCoverJob> {
   const dataDir = (payload._dataDir as string) || undefined;
-  const prep = await providerInjection(dataDir);
+  // 第一个 await 之前登记（Codex 审第 5 轮 P2）：查锁与登记同一步；准备失败或任务结束时释放
+  const work = beginWork(labels.work);
+  if (!work.ok) return { response: { ok: false, error: work.error }, completion: Promise.resolve() };
+  let prep: Awaited<ReturnType<typeof providerInjection>>;
+  try { prep = await providerInjection(dataDir); } catch (e) { work.end(); throw e; }
   if ("error" in prep) {
+    work.end();
     return { response: { ok: false, error: prep.error, hint: prep.hint }, completion: Promise.resolve() };
   }
   const contentId = String(payload.content_id ?? "");
@@ -107,7 +113,7 @@ export async function startCoverJob(
     } catch (err) {
       emit("run_failed", `封面任务失败:${(err instanceof Error ? err.message : String(err)).slice(0, 60)}`);
     }
-  })();
+  })().finally(work.end);
   return { response: { ok: true, pending: true, runId }, completion };
 }
 

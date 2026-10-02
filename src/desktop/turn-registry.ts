@@ -18,6 +18,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getDataDir } from "../storage/local-store.js";
+import { updatingRefusal } from "../modules/update/preflight.js";
 
 const FILE = "recent-turns.json";
 const RING_MAX = 50;
@@ -55,6 +56,9 @@ export function registerTurn(
   clientId: string,
   opts?: { conversationId?: string },
 ): RegisterTurnResult {
+  // 一键更新进行中（self-update §3）：不开新轮，免得重启时把它掐断
+  const updating = updatingRefusal();
+  if (updating) return { ok: false, error: updating };
   if (active.has(turnId)) {
     return { ok: false, error: "这一轮已经在跑了，别重复发（turn 重复）" };
   }
@@ -102,6 +106,11 @@ export function hasActiveTurnForConversation(conversationId: string): boolean {
     if (entry.conversationId === conversationId) return true;
   }
   return false;
+}
+
+/** 本进程里还没收尾的对话轮数（一键更新的预检用：有人在跑就不重启） */
+export function activeTurnCount(): number {
+  return active.size;
 }
 
 /** 记下本轮落在哪个会话（首轮建会话后回填，turn_status 的 running 态也能给出会话） */

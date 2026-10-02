@@ -3,6 +3,7 @@ import {
   listCampaigns,
   recordCampaignHostedCycle,
 } from "../../storage/campaign-store.js";
+import { runUnlessUpdating } from "../update/active-work.js";
 import { replanCampaign } from "./replanner.js";
 import {
   runCampaignReadyTasks,
@@ -180,15 +181,19 @@ export async function runManagedCampaignHostTick(
   deps: ManagedCampaignHostDeps = {},
   now = new Date(),
 ): Promise<CampaignHostCycleResult[]> {
-  const campaigns = await (deps.list ?? listCampaigns)(dataDir);
-  const due = campaigns.filter((campaign) => dueAt(campaign, now));
-  const results: CampaignHostCycleResult[] = [];
-  // Deliberately sequential: a local user's campaigns should not create an
-  // unbounded burst of model calls when AutoCrew restarts after being offline.
-  for (const campaign of due) {
-    results.push(await runOneCycle(campaign, dataDir, deps, now));
-  }
-  return results;
+  // 一键更新（Codex 审第 4 轮 P1）：更新中跳过这一拍（下一拍照常），跑的时候算在跑，更新会等它跑完再重启
+  const ran = await runUnlessUpdating("campaign 托管周期", async () => {
+    const campaigns = await (deps.list ?? listCampaigns)(dataDir);
+    const due = campaigns.filter((campaign) => dueAt(campaign, now));
+    const results: CampaignHostCycleResult[] = [];
+    // Deliberately sequential: a local user's campaigns should not create an
+    // unbounded burst of model calls when AutoCrew restarts after being offline.
+    for (const campaign of due) {
+      results.push(await runOneCycle(campaign, dataDir, deps, now));
+    }
+    return results;
+  });
+  return ran ?? [];
 }
 
 export function startManagedCampaignHost(

@@ -85,6 +85,8 @@ export interface ResearchRunner {
   idle(): Promise<void>;
   /** 停止投递；在途的 runJob 不打断 */
   stop(): void;
+  /** 正在跑 + 排着的调研数：一键更新据此判断「深调研在跑」，跑完才重启（第 12 轮 P2） */
+  busyCount(): number;
 }
 
 function errText(err: unknown): string {
@@ -171,6 +173,10 @@ class SerialResearchRunner implements ResearchRunner {
   private readonly renewTopic: NonNullable<ResearchRunnerDeps["renewTopic"]>;
   private running = false;
   private stopped = false;
+
+  busyCount(): number {
+    return (this.running ? 1 : 0) + this.queue.length;
+  }
 
   constructor(private readonly deps: ResearchRunnerDeps) {
     this.now = deps.now ?? (() => Date.now());

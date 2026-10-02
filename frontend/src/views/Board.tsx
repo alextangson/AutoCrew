@@ -13,6 +13,7 @@ import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting 
 import { InboxHeader } from "./InboxHeader";
 import { CardPanel } from "./CardPanel";
 import { ReviewInbox } from "./review/ReviewInbox";
+import { UpdateBanner } from "./update/UpdateBanner";
 import { decideItem } from "./review/review-api";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
@@ -120,6 +121,7 @@ export function Board(props: Nav) {
 
   const allEmpty = cards !== null && COLUMNS.every((c) => cards[c].length === 0);
   return <div className="board2 page-board">
+    <UpdateBanner />
     <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} />
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
