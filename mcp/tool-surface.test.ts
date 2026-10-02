@@ -24,7 +24,11 @@ async function toolsFor(host: string) {
  * fact_id、question、options、attachments、ask_id、option_id、founder_quote、asks_offset；kind 加六种请示），参数说明已压到零、
  * options / attachments 不展开嵌套，工具说明重写后与原来等长；实测 28,498 → 28,978，上限随之从 28,500 提到 29,000。
  */
-export const BUDGET = { total: 29_000, perTool: 4_000, instructions: 1_500 };
+/*
+ * 2026-10-02 合 0.5.0：main 的选题会给 autocrew_insights 加 meeting_* 动作与参数（2,727 → 2,847），与 2a 各自都在预算内，
+ * 合起来实测 28,968 → 29,088，上限随之从 29,000 提到 29,200。
+ */
+export const BUDGET = { total: 29_200, perTool: 4_000, instructions: 1_500 };
 
 describe("M7 预算：外部宿主看到的 tools/list 与 initialize", () => {
   it.each(["workbuddy", "claude-code"])("%s：总量、单个工具、instructions 都在预算内；超了列出谁超、多少字", async (host) => {

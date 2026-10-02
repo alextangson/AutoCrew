@@ -10,9 +10,16 @@ import { detectHosts, findClaudeCli } from "./detect.js";
 import { classifyClaudeFailure, probeHost } from "./probe.js";
 import { makeSandbox, type Sandbox } from "./test-fakes.js";
 
-// 真实配置文件：整套测试前后只 stat（不读内容），证明一个字节没被改
+// 真实配置文件：整套测试前后比对其中的 autocrew 条目，证明测试没碰它们。
+// 不比整文件的 size/mtime：别的 Claude Code / Codex 会话随时在写这些文件，比整文件会误报。
 const REAL = [".claude.json", ".codex/config.toml", ".workbuddy/mcp.json"].map((f) => path.join(os.homedir(), f));
-const stamp = () => REAL.map((f) => { try { const s = fs.statSync(f); return `${s.size}:${s.mtimeMs}`; } catch { return "absent"; } });
+function autocrewEntries(file: string, text: string): string {
+  if (file.endsWith(".toml")) return (text.match(/^\[mcp_servers\.autocrew[\]. ][\s\S]*?(?=^\[(?!mcp_servers\.autocrew[\]. ])|(?![\s\S]))/gm) ?? []).join("\n");
+  const j = JSON.parse(text) as { mcpServers?: Record<string, unknown>; projects?: Record<string, { mcpServers?: Record<string, unknown> }> };
+  const projects = Object.entries(j.projects ?? {}).map(([k, v]) => [k, v?.mcpServers?.autocrew ?? null]).filter(([, v]) => v);
+  return JSON.stringify({ top: j.mcpServers?.autocrew ?? null, projects });
+}
+const stamp = () => REAL.map((f) => { try { return autocrewEntries(f, fs.readFileSync(f, "utf8")); } catch { return "absent-or-unreadable"; } });
 let before: string[];
 beforeAll(() => { before = stamp(); });
 afterAll(() => { expect(stamp()).toEqual(before); });
