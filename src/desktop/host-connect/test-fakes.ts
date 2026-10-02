@@ -116,7 +116,7 @@ export async function makeSandbox(opts: { claude?: boolean; codex?: boolean; ext
   if (opts.codex !== false) writeFake(bin, "codex", FAKE_CODEX);
   const server = await fakeServer(dataDir);
   const port = (server.address() as { port: number }).port;
-  const childEnv: NodeJS.ProcessEnv = { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, CODEX_HOME: path.join(home, ".codex"), AUTOCREW_LOCAL_DIR: dataDir, ...opts.extraEnv };
+  const childEnv: NodeJS.ProcessEnv = { PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, CODEX_HOME: path.join(home, ".codex"), ...opts.extraEnv };
   const env: HostEnv = {
     home, dataDir, binDirs: [bin], appDirs: [path.join(home, "Applications")],
     claudeConfig: path.join(home, ".claude.json"), codexHome: path.join(home, ".codex"),

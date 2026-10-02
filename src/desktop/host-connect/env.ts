@@ -59,16 +59,20 @@ export function defaultHostEnv(env: NodeJS.ProcessEnv = process.env): HostEnv {
   const home = env.HOME || os.homedir();
   const binDirs = [...(env.PATH ?? "").split(path.delimiter).filter(Boolean),
     path.join(home, ".local", "bin"), path.join(home, ".claude", "local"), "/opt/homebrew/bin", "/usr/local/bin"];
-  const childEnv: NodeJS.ProcessEnv = { ...env, HOME: home };
-  delete childEnv.AUTOCREW_TOKEN; // 继承来的通用令牌不该跟进宿主进程
+  // 子进程（claude / codex / 核对用的转发器）不带服务自己的 AUTOCREW_*：宿主真启动时只有条目里写的那几个，
+  // 核对要测的就是这个（Codex 评审 P2-1）
+  const childEnv: NodeJS.ProcessEnv = Object.fromEntries(Object.entries({ ...env, HOME: home }).filter(([k]) => !k.startsWith("AUTOCREW_")));
   const entry = autocrewEntry(repoRoot(), stableNodePath(), env, "placeholder");
+  // 状态目录与端口总是写明：只设了 AUTOCREW_DATA_DIR 时宿主从桌面起的转发器会去默认目录找令牌，结果 401
+  const stateDir = path.resolve(env.AUTOCREW_LOCAL_DIR || env.AUTOCREW_DATA_DIR || path.join(home, ".autocrew"));
+  const forwarderEnv = { AUTOCREW_LOCAL_DIR: stateDir, AUTOCREW_PORT: String(Number(env.AUTOCREW_PORT) || 4317) };
   return {
     home,
     binDirs: [...new Set(binDirs)],
     appDirs: ["/Applications", path.join(home, "Applications")],
     claudeConfig: env.CLAUDE_CONFIG_DIR ? path.join(env.CLAUDE_CONFIG_DIR, ".claude.json") : path.join(home, ".claude.json"),
     codexHome: env.CODEX_HOME || path.join(home, ".codex"),
-    forwarder: { command: entry.command as string, args: entry.args as string[], env: Object.fromEntries(Object.entries(entry.env as Record<string, string>).filter(([k]) => k !== "AUTOCREW_HOST")) },
+    forwarder: { command: entry.command as string, args: entry.args as string[], env: forwarderEnv },
     childEnv,
     run: makeRunner(childEnv),
     runWith: makeRunner,
