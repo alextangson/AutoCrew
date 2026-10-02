@@ -2,7 +2,7 @@
  * 第 1 步「你想让哪个 AI 来写稿？」（spec §2.2）：本机 AI 卡片（可多选）+ DeepSeek 钥匙 + 收起来的「高级」。
  * 平时只显示不花额度的检测结果；「检测登录」只在点的时候真调一次。
  */
-import { useState } from "react";
+import { useState, type KeyboardEvent, type MouseEvent } from "react";
 import { invoke } from "../../transport";
 import { initialForm, runOnboardingSave } from "../onboarding-lib";
 import { AdvancedEndpoint } from "./AdvancedEndpoint";
@@ -28,17 +28,21 @@ function HostCard(props: { h: HostStatus; picked: boolean; onPick: (on: boolean)
     setProbing(false);
   };
   return (
-    <div className={`ob-card${props.picked ? " on" : ""}${usable ? "" : " off"}`} data-host={h.host}>
-      <label className="ob-card-main">
-        {usable ? <input type="checkbox" checked={props.picked} onChange={(e) => props.onPick(e.target.checked)} /> : <span className="ob-dot" />}
+    // 整张卡就是开关（role=checkbox），不用浏览器原生的蓝色勾选框；空格 / 回车切换
+    <div className={`ob-card${props.picked ? " on" : ""}${usable ? "" : " off"}`} data-host={h.host}
+      {...(usable ? { role: "checkbox", "aria-checked": props.picked, tabIndex: 0,
+        onClick: (e: MouseEvent) => { if (!(e.target as HTMLElement).closest("button, a")) props.onPick(!props.picked); },
+        onKeyDown: (e: KeyboardEvent) => { if ((e.key === " " || e.key === "Enter") && e.target === e.currentTarget) { e.preventDefault(); props.onPick(!props.picked); } } } : {})}>
+      <div className="ob-card-main">
+        {usable ? <span className={`ob-check${props.picked ? " on" : ""}`} aria-hidden="true">{props.picked ? "✓" : ""}</span> : <span className="ob-dot" />}
         <span className="ob-card-name">{h.label}</span>
         {h.host === "claude" && <span className="ob-tag">推荐</span>}
         {h.connected && <span className="ob-tag ok">已接上</span>}
-      </label>
+      </div>
       <p className="ob-card-what">{WHAT[h.host]}</p>
       <p className={`ob-card-state${usable ? "" : " warn"}`}>{probe ? (probe.ok ? probe.detail : probe.error) : h.detail}</p>
       {h.found && h.host !== "workbuddy" && (
-        <button className="btn-ghost" disabled={probing} onClick={() => void check()}>{probing ? "正在检测…" : "检测登录"}</button>
+        <button className="btn-ghost" disabled={probing} onClick={(e) => { e.stopPropagation(); void check(); }}>{probing ? "正在检测…" : "检测登录"}</button>
       )}
     </div>
   );
