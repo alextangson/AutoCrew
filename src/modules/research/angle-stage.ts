@@ -23,6 +23,16 @@ import type { CreatorProfile } from "../profile/creator-profile.js";
 import { renderCreativeTask, type CreativeTask } from "../writing/creative-task.js";
 import { checkDistinct } from "./angle-cards.js";
 import {
+  HOOK_TYPES,
+  PERSONA_TIERS,
+  checkMeetingConformance,
+  emptyPayoffReason,
+  readForPersona,
+  readHookType,
+  renderMeetingSlotBlock,
+  type MeetingAngleSlot,
+} from "./angle-meeting.js";
+import {
   ANGLE_ELEMENTS,
   ANGLE_STRUCTURES,
   evidenceByRef,
@@ -107,6 +117,10 @@ export interface RunAngleStageInput {
   profile: CreatorProfile | null;
   /** 本次要求高于账号默认规划，贯穿调研与立意。 */
   creativeTask?: CreativeTask;
+  /** 选题会会议位（选题会 spec §7）：有就注入并要求卡服从；没有照旧 */
+  meetingSlot?: MeetingAngleSlot;
+  /** 简报里的形式表现摘要（带 n），只当参考 */
+  formatSummary?: string;
   engineConfig?: EngineConfig;
   dataDir?: string;
   runLoopImpl?: typeof runLoop;
@@ -321,6 +335,7 @@ function readCard(
   brief: ResearchBrief,
   ownMaterial: OwnMaterial | undefined,
   problems: string[],
+  meetingSlot?: MeetingAngleSlot,
 ): AngleCardV3 {
   const tag = `候选 ${index + 1}`;
   const pick = (snake: string, camel: string): string => str(item[snake] ?? item[camel]);
@@ -354,9 +369,21 @@ function readCard(
     ...(anchor ? { firsthandAnchor: anchor } : {}),
     evidenceNeeds: strList(item.evidence_needs ?? item.evidenceNeeds),
     structure: str(item.structure) as AngleStructure,
+    ...meetingFieldsOf(item, tag, problems),
   };
   validateAngleCardV3(card, brief, tag, problems);
+  const emptyPayoff = emptyPayoffReason(card.payoff);
+  if (emptyPayoff) problems.push(`${tag}：${emptyPayoff}`);
+  checkMeetingConformance(card, meetingSlot, tag, problems);
   return card;
+}
+
+/** 可选画像/开头类型/偏离理由（选题会 spec §7）：缺省不落字段 */
+function meetingFieldsOf(item: Record<string, unknown>, tag: string, problems: string[]): Partial<AngleCardV3> {
+  const forPersona = readForPersona(item.for_persona ?? item.forPersona, tag, problems);
+  const hookType = readHookType(item.hook_type ?? item.hookType, tag, problems);
+  const deviation = str(item.meeting_deviation ?? item.meetingDeviation);
+  return { ...(forPersona ? { forPersona } : {}), ...(hookType ? { hookType } : {}), ...(deviation ? { meetingDeviation: deviation } : {}) };
 }
 
 function readMisconceptions(raw: unknown): Record<PersonaKey, string[]> {
@@ -372,12 +399,13 @@ export function validateAngles(
   args: Record<string, unknown>,
   brief: ResearchBrief,
   ownMaterial?: OwnMaterial,
+  meetingSlot?: MeetingAngleSlot,
 ): Checked<AngleStagePayload> {
   const problems: string[] = [];
   const misconceptions = readMisconceptions(args.misconceptions);
   const items = objList(args.candidates ?? args.cards).slice(0, CARD_MAX);
   if (items.length < CARD_MIN) problems.push(`候选需 ${CARD_MIN}-${CARD_MAX} 个，当前 ${items.length} 个`);
-  const cards = items.map((item, i) => readCard(item, i, brief, ownMaterial, problems));
+  const cards = items.map((item, i) => readCard(item, i, brief, ownMaterial, problems, meetingSlot));
   // 差异性沿用角度卡 spec 的字面粗筛（thesis+antiScope 的 bigram Jaccard）——一套口径，不另起
   if (problems.length === 0) checkDistinct(cards, problems);
   if (problems.length > 0) return { ok: false, problems };
@@ -408,7 +436,8 @@ export function buildAngleSystemPrompt(profile: CreatorProfile | null, creativeT
     "2. 区分媒介与目的：公众号按阅读逻辑和内容深度策划；口播考虑听懂和口语节奏；自然叙事保留具体场景、过程和真实感；实用说明优先讲清步骤和适用边界。没有指定平台或体裁就明确未设，不替用户决定。",
     "3. 方法按需：有真实误区且纠偏符合要求才用 myth-busting；叙事、解释、经验分享不强造误区、冲突或反转。情绪和网感元素可用也可不用，elements 可以为空，不凑数量。",
     "4. primaryPersona 保留 grow/trust/convert 目标标签，仅选本次最相关的一项；personaGains 只需说明该目标下的读者收益，其余留空，不编造三种人群或同时满足三种目的。",
-    "5. mechanism 说明主张依据、事情如何发展或建议为何有效；材料不足以支持因果时标明未知，不把相关性写成因果。payoff 写读者能获得的理解、感受或实际帮助；nextAction 可以是读后的理解与判断，不必是行动号召。",
+    "5. mechanism 说明主张依据、事情如何发展或建议为何有效；材料不足以支持因果时标明未知，不把相关性写成因果。payoff 写清给谁、看完能做的一件事或能下的一个判断；「看懂 X」「了解 X」「认识 X」这类空话会被拒收。nextAction 可以是读后的理解与判断，不必是行动号召。",
+    "5b. forPersona 写这张卡给档案里哪一层受众（core/adjacent/surprise + 该层名字），hookType 写开头类型（亲历/观点/反常识/教学/案例）；给了会议位时两项必填、要服从会上定的画像与形式，偏离就在 meeting_deviation 写理由。",
     "6. counterResponse 说明合理异议或适用边界；没有可支持的反方就说明尚无材料，不制造稻草人。misconception 仅在适合纠偏时填写，其余为空；misconceptions 的三个数组都允许为空。",
     "7. 证据级别：主张有简报证据撑着就写 evidenceLevel=grounded 并给 coreEvidenceIds（ev-N）；材料里确实没有就写 overview，并在 evidenceNeeds 里写够 2 条「去找什么」——不要为了凑 grounded 硬引一条不相干的证据。",
     "8. 第一手锚点：优先引创作者自己的材料（kind=transcript / approved_draft，chunk_id 写材料块里的 om:… 片段 id）；没有合适的就引简报证据（kind=brief_evidence，chunk_id 写 ev-N）。quote 一律从被引正文里逐字复制，引用会被代码逐字校验；实在没有合适的就不要给锚点。",
@@ -475,12 +504,17 @@ export function buildAngleUserMessage(input: RunAngleStageInput): string {
     `描述：${clampChars(input.topic.description.trim(), 600) || "(无描述)"}`,
     "",
     renderCreativeTask(input.creativeTask),
+    ...(meetingBlock(input) ? [meetingBlock(input), ""] : []),
     "调研简报的事实部分：",
     briefFacts(input.brief),
     ...(own ? ["", "我自己的材料（第一手，锚点优先引这里）：", own] : []),
     "",
     "依据共同任务书的受众、目的和明确方向提出候选；只在适用时写误区，最后调用 submit_angles 一次交齐。",
   ].join("\n");
+}
+
+function meetingBlock(input: RunAngleStageInput): string {
+  return renderMeetingSlotBlock(input.meetingSlot, input.formatSummary);
 }
 
 // ─── 工具 schema ─────────────────────────────────────────────────────────────
@@ -491,7 +525,7 @@ const CARD_TEXT_FIELDS: Record<string, string> = {
   thesis: "符合用户方向的核心判断、问题解释或叙事发现，不是材料复述",
   misconception: "真实受众误区；非纠偏结构可留空，不编造错误认知",
   mechanism: "说明判断依据、事件发展或建议为何有效；因果未证实时明确不确定性",
-  payoff: "读者获得的理解、感受、判断或实际帮助",
+  payoff: "给谁、看完能做的一件事或能下的一个判断；不要写「看懂/了解/认识 X」",
   next_action: "读后的理解、判断或可选行动，不要求关注/成交口号",
   counter_response: "合理异议或适用边界；没有材料支持时说明未知，不制造稻草人",
   hook_draft: "适合本次平台与表达方式的开头草稿，不强制钩子套路",
@@ -537,6 +571,14 @@ const CARD_SCHEMA = {
     },
     evidence_needs: { type: "array", items: { type: "string" }, minItems: 1, maxItems: EVIDENCE_NEEDS_MAX },
     structure: { type: "string", enum: [...ANGLE_STRUCTURES] },
+    for_persona: {
+      type: "object",
+      description: "给谁看：档案受众层；有会议位时必填",
+      required: ["key", "name"],
+      properties: { key: { type: "string", enum: [...PERSONA_TIERS] }, name: { type: "string" } },
+    },
+    hook_type: { type: "string", enum: [...HOOK_TYPES], description: "开头类型；有会议位时必填" },
+    meeting_deviation: { type: "string", description: "偏离会上定的画像/形式时写理由；不偏离就省略" },
   },
 };
 
@@ -562,6 +604,7 @@ function buildSubmitTool(
   brief: ResearchBrief,
   ownMaterial: OwnMaterial | undefined,
   state: RunState,
+  meetingSlot?: MeetingAngleSlot,
 ): LoopTool {
   return {
     name: SUBMIT_TOOL_NAME,
@@ -570,7 +613,7 @@ function buildSubmitTool(
     execute(args) {
       // 超时后晚到的提交一律丢弃：那一轮的结果已经作废，收下等于让墙钟形同虚设
       if (state.abandoned) return "Error: 本轮立意已超时作废，不要再调用任何工具。";
-      return captureSubmit(capture, validateAngles(args, brief, ownMaterial), SUBMIT_TOOL_NAME);
+      return captureSubmit(capture, validateAngles(args, brief, ownMaterial, meetingSlot), SUBMIT_TOOL_NAME);
     },
   };
 }
@@ -644,7 +687,7 @@ export async function runAngleStage(input: RunAngleStageInput): Promise<AngleSta
     model: scout.model,
     systemPrompt: buildAngleSystemPrompt(input.profile, input.creativeTask),
     userMessage: buildAngleUserMessage(input),
-    tools: [buildSubmitTool(capture, input.brief, input.ownMaterial, state)],
+    tools: [buildSubmitTool(capture, input.brief, input.ownMaterial, state, input.meetingSlot)],
     maxTurns: MAX_TURNS,
     maxTotalTokens: MAX_TOTAL_TOKENS,
     logMeta: { agent: "angle" },

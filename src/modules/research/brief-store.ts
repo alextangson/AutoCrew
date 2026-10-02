@@ -191,6 +191,12 @@ export interface AngleCardV3 {
   /** 这个主张要落地还缺什么证据（1–3 条），写稿前定向补证按它去找 */
   evidenceNeeds: string[];
   structure: AngleStructure;
+  /** 给谁看（档案受众层 + 名字快照，选题会 spec §7）；可选，存量卡没有照常通过 */
+  forPersona?: { key: "core" | "adjacent" | "surprise"; name: string };
+  /** 开头/叙事类型：亲历/观点/反常识/教学/案例；可选 */
+  hookType?: "亲历" | "观点" | "反常识" | "教学" | "案例";
+  /** 有会议位时偏离会上定的画像/形式的理由（由创始人选） */
+  meetingDeviation?: string;
   /** 证据支撑分，不代表传播潜力；永不自动写 selectedAngle */
   score?: number;
   scoreReasons?: string[];

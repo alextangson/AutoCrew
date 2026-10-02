@@ -27,6 +27,7 @@ import {
   type ResearchBrief,
 } from "./brief-store.js";
 import { DEFAULT_PERSONAS, type PersonaKey } from "./personas.js";
+import { emptyPayoffReason, readForPersona, readHookType } from "./angle-meeting.js";
 import { objList, str, strList } from "./research-prompt-kit.js";
 
 /** 候选张数（§1.2）：少于 2 张等于没得选，多于 4 张是让人做阅读理解 */
@@ -194,13 +195,38 @@ function parseRewrittenV3(
   delete card.scoreReasons;
 
   const problems: string[] = [];
+  rewriteMeetingFields(card, src, problems);
   validateAngleCardV3(card, brief, "card", problems);
+  // payoff 收紧只管新写的：存量卡原样改写别的字段不被回溯拒收（选题会 spec §7）
+  const emptyPayoff = card.payoff !== original.payoff ? emptyPayoffReason(card.payoff) : null;
+  if (emptyPayoff) problems.push(`card：${emptyPayoff}`);
   if (problems.length > 0) return problems.join("；");
   if (card.firsthandAnchor && !isAnchorValid(card, brief)) {
     return "card.firsthandAnchor.quote 必须仍是被引证据里的逐字片段——改了引文就得重新命中";
   }
   const { score, reasons } = scoreAngleCard(card, brief);
   return { ...card, score, scoreReasons: reasons };
+}
+
+/**
+ * forPersona / hookType / meetingDeviation：提交了就按形状校验，没提交就继承原卡。
+ * 画像名字不与档案现值比对——档案改名后改写旧卡不该失败（名字是快照）。
+ */
+function rewriteMeetingFields(card: AngleCardV3, src: Record<string, unknown>, problems: string[]): void {
+  if (src.forPersona !== undefined) {
+    const persona = readForPersona(src.forPersona, "card", problems);
+    if (persona) card.forPersona = persona;
+    else delete card.forPersona;
+  }
+  if (src.hookType !== undefined) {
+    const hook = readHookType(src.hookType, "card", problems);
+    if (hook) card.hookType = hook;
+    else delete card.hookType;
+  }
+  if (typeof src.meetingDeviation === "string") {
+    if (src.meetingDeviation.trim()) card.meetingDeviation = src.meetingDeviation.trim();
+    else delete card.meetingDeviation;
+  }
 }
 
 /** 锚点：kind/引用/指纹原样继承，只有 quote 可改（改了在上层重新逐字命中） */

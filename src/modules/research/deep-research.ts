@@ -20,6 +20,7 @@ import { describeEngineFailure, isEngineFailure } from "../../engine/failure-tex
 import type { LoopFallbackInfo, runLoop } from "../../engine/loop.js";
 import { loadProfile } from "../profile/creator-profile.js";
 import { createCreativeTask, creativeTaskMatches, renderCreativeTask, type CreativeTask } from "../writing/creative-task.js";
+import { meetingAngleContext } from "../meetings/meeting-angle.js";
 import { runAngleStage } from "./angle-stage.js";
 import { resolveEffectiveBrief } from "./brief-snapshot.js";
 import {
@@ -330,6 +331,7 @@ async function withDownloadedAssets(
  * 写稿走无卡路径，原因写进 gaps 让人看得见（§5 边界行为）。
  */
 async function withAngleCards(
+  topicId: string,
   payload: SynthesisPayload,
   outputs: PerspectiveOutput[],
   topic: ResearchTopicRef,
@@ -352,9 +354,13 @@ async function withAngleCards(
     revision: 0,
     topicHash: "",
   };
+  const meeting = await meetingAngleContext(topicId, deps.dataDir);
+  for (const problem of meeting.problems) warn(problem);
   const result = await runAngleStage({
     brief: factBrief,
     topic,
+    ...(meeting.meetingSlot ? { meetingSlot: meeting.meetingSlot } : {}),
+    ...(meeting.formatSummary ? { formatSummary: meeting.formatSummary } : {}),
     profile,
     ownMaterial,
     creativeTask,
@@ -363,7 +369,7 @@ async function withAngleCards(
   });
   if (result.status === "succeeded") {
     return {
-      payload: { ...payload, angleCards: result.cards },
+      payload: { ...payload, angleCards: result.cards, gaps: [...payload.gaps, ...meeting.problems] },
       ...(result.usedFallback ? { usedFallback: result.usedFallback } : {}),
     };
   }
@@ -372,7 +378,7 @@ async function withAngleCards(
   // full job 只记 gaps（简报照出，写稿走无卡路径）；angles job 拿 failure 让整轮失败——
   // 一份「只换了卡、卡还没换成」的新 revision 没有任何意义。
   return {
-    payload: { ...payload, gaps: [...payload.gaps, `立意未产出：${result.reason}`] },
+    payload: { ...payload, gaps: [...payload.gaps, ...meeting.problems, `立意未产出：${result.reason}`] },
     failure: { errorCode: result.errorCode, reason: result.reason },
   };
 }
@@ -438,6 +444,7 @@ async function runAnglesOnly(
   };
   const ownMaterial = await collectOwn(job.topicId, topic, deps, warn, creativeTask);
   const { payload, failure, usedFallback } = await withAngleCards(
+    job.topicId,
     facts,
     brief.perspectives,
     topicRef,
@@ -550,7 +557,7 @@ export function createDeepResearchRunJob(deps: DeepResearchDeps): (job: Research
     }
     const payload = await withDownloadedAssets(synthesis.payload, job.topicId, deps, warn);
     // full job：立意失败只记 gaps（failure 忽略），简报照出——写稿走无卡路径（§5 边界行为）
-    const withAngles = await withAngleCards(payload, outputs, topicRef, profile, ownMaterial, creativeTask, deps, warn);
+    const withAngles = await withAngleCards(job.topicId, payload, outputs, topicRef, profile, ownMaterial, creativeTask, deps, warn);
     if (withAngles.usedFallback) ctx.usedFallback = withAngles.usedFallback;
     const done = await publishBrief(job, topic, outputs, perspectives, withAngles.payload, ownMaterial, deps.dataDir);
     return ctx.usedFallback ? { ...done, usedFallback: ctx.usedFallback } : done;
