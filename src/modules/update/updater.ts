@@ -10,6 +10,7 @@ import { firstLine, type GitRunner } from "./git.js";
 import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 import { fetchLaunchInfo, managedBy } from "./remote.js";
+import { DepsSwap } from "./deps-swap.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
 
 export type Log = (line: string) => void;
@@ -20,6 +21,14 @@ export interface UpdateSteps {
   /** 服务确实不在了（端口没人听）：更新已经停过它时，退回直接把旧版启动起来，不再问忙不忙 */
   serviceDown: () => Promise<boolean>;
   install: (log: Log) => Promise<void>;
+  /** 确认没人在跑、马上重启前：把新构建的前端换上（没有就跳过） */
+  activate?: (log: Log) => Promise<void>;
+  /** 退回时不靠网络换回旧依赖 / 旧前端；有它就不再跑 install + build（e2e P1-2） */
+  restore?: (log: Log) => Promise<void>;
+  /** 健康检查通过后：删掉留着的旧依赖 / 旧前端 */
+  cleanup?: (log: Log) => Promise<void>;
+  /** 手动恢复时换回旧依赖的命令（不需要网络） */
+  manualRestore?: () => string[];
   build: (log: Log) => Promise<void>;
   restart: (log: Log) => Promise<void>;
   health: (log: Log) => Promise<void>;
@@ -61,26 +70,22 @@ async function gitStep(git: GitRunner, args: string[], log: Log): Promise<string
   return r.stdout.trim();
 }
 
-export function manualCommands(root: string, oldHead: string): string[] {
-  return [
-    `cd "${root}"`,
-    `git reset --hard ${oldHead}`,
-    "npm ci",
-    "(cd frontend && npm ci)",
-    "npm run fe:build",
-    "npm run restart",
-  ];
+/** 有留着的旧依赖就用它换回（不需要网络），没有才重新装 */
+function depsCommands(restore?: string[]): string[] {
+  return restore && restore.length ? restore : ["npm ci", "(cd frontend && npm ci)", "npm run fe:build"];
+}
+
+export function manualCommands(root: string, oldHead: string, restore?: string[]): string[] {
+  return [`cd "${root}"`, `git reset --hard ${oldHead}`, ...depsCommands(restore), "npm run restart"];
 }
 
 /** 工作区里有别的改动时的手动步骤：先看清、另存，再退回——不替用户丢东西 */
-export function dirtyManualCommands(root: string, oldHead: string): string[] {
+export function dirtyManualCommands(root: string, oldHead: string, restore?: string[]): string[] {
   return [
     `cd "${root}"`,
     "git status    # 先看清哪些是你自己的改动，把要留的另存一份",
     `git reset --hard ${oldHead}    # 另存好之后再退回（这一步会丢掉未提交的改动）`,
-    "npm ci",
-    "(cd frontend && npm ci)",
-    "npm run fe:build",
+    ...depsCommands(restore),
     "npm run restart",
   ];
 }
@@ -113,6 +118,7 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   log("== 安装依赖"); await job.steps.install(log);
   log("== 构建前端"); await job.steps.build(log);
   log("== 确认没有任务在跑"); await job.steps.quiesce(log);
+  if (job.steps.activate) { log("== 换上新前端"); await job.steps.activate(log); }
   progress.touchedService = true;
   log("== 重启服务"); await job.steps.restart(log);
   log("== 健康检查"); await job.steps.health(log);
@@ -153,8 +159,8 @@ async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: bool
   const clash = await restoreConflicts(job, oldHead, head);
   if (clash.length) throw new DirtyRollbackError(`退回会覆盖这些不归 git 管的文件：${clash.slice(0, 5).join("、")}${clash.length > 5 ? ` 等 ${clash.length} 个` : ""}，不自动退回`);
   await gitStep(job.git, ["reset", "--hard", oldHead], log);
-  log("== 退回：安装依赖"); await job.steps.install(log);
-  log("== 退回：构建前端"); await job.steps.build(log);
+  if (job.steps.restore) { log("== 退回：换回旧依赖与旧前端（不需要网络）"); await job.steps.restore(log); }
+  else { log("== 退回：安装依赖"); await job.steps.install(log); log("== 退回：构建前端"); await job.steps.build(log); }
   // 因为有任务在跑而取消：旧服务一直没停，不重启（绝不掐断在跑的轮）
   if (!restart) { log("服务没有重启过，保持运行"); return "kept"; }
   // 更新已经动过服务、而服务现在确实不在（新版没起来）：没有谁的活会被掐，直接把旧版启动（Codex 审第 3 轮 P1）
@@ -188,6 +194,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
   const progress: Progress = { touchedService: false };
   try {
     await forward(job, oldHead, log, progress);
+    if (job.steps.cleanup) await job.steps.cleanup(log).catch((e) => log(`!! 删旧依赖没删成（不影响使用，可手动删 *.prev-* 目录）：${errText(e)}`));
     return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}` }, log);
   } catch (e) {
     const reason = errText(e);
@@ -207,7 +214,8 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
           ? `更新取消了：${reason}。没有重启，仍是 ${job.from}，完整记录在 ${job.logFile}`
           : `更新失败，已退回 ${job.from}，原因：${reason}，完整记录在 ${job.logFile}` }, log);
     } catch (e2) {
-      const cmds = e2 instanceof DirtyRollbackError ? dirtyManualCommands(job.root, oldHead) : manualCommands(job.root, oldHead);
+      const restoreCmds = job.steps.manualRestore?.();
+      const cmds = e2 instanceof DirtyRollbackError ? dirtyManualCommands(job.root, oldHead, restoreCmds) : manualCommands(job.root, oldHead, restoreCmds);
       log(`!! 退回也失败：${errText(e2)}。请在终端手动恢复：\n${cmds.join("\n")}`);
       return finish(job, { ok: false, outcome: "stuck", at: at(), ...base, manualCommands: cmds,
         message: `更新失败，自动退回也失败了（${errText(e2)}）。请在终端依次执行下面的命令恢复到 ${job.from}，完整记录在 ${job.logFile}` }, log);
@@ -249,19 +257,33 @@ export async function waitIdle(check: () => Promise<string | null>, opts: { time
   }
 }
 
-export function realSteps(root: string, port: number, opts: { serverWasRunning: boolean; busy: () => Promise<string | null>; machineDir?: string; healthTimeoutMs?: number }): UpdateSteps {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+export function realSteps(root: string, port: number, opts: { serverWasRunning: boolean; busy: () => Promise<string | null>; machineDir?: string; healthTimeoutMs?: number; npm?: string }): UpdateSteps {
+  const npm = opts.npm ?? (process.platform === "win32" ? "npm.cmd" : "npm");
+  const swap = new DepsSwap(root);
   return {
+    activate: async (log) => swap.activateDist(log),
+    restore: async (log) => {
+      if (swap.hasBackup) return swap.restore(log);
+      // 本来就没有依赖目录可留（全新安装）：只能重新装，尽量用本机缓存
+      swap.restore(log);
+      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log);
+      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);
+      await runCommand(npm, ["run", "fe:build"], root, log);
+    },
+    cleanup: async (log) => swap.cleanup(log),
+    manualRestore: () => swap.manualRestore(),
     quiesce: (log) => waitIdle(opts.busy, { timeoutMs: 120_000, intervalMs: 2_000, log }),
     serviceDown: async () => {
       try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) }); return false; }
       catch { return true; }
     },
     install: async (log) => {
-      await runCommand(npm, ["ci", "--no-audit", "--no-fund"], root, log);
-      await runCommand(npm, ["ci", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);
+      swap.backupDeps(log);
+      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log);
+      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);
     },
-    build: (log) => runCommand(npm, ["run", "fe:build"], root, log),
+    // 构建进 dist.next：等待期间旧进程照旧服务旧前端，确认没人在跑才换上（activate）
+    build: (log) => runCommand(npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log),
     restart: async (log) => {
       if (!opts.serverWasRunning) { log("服务本来没在跑：不启动，之后用 npm start 启动"); return; }
       await runCommand(process.execPath, [path.join(root, "bin", "autocrew.mjs"), "restart", "--no-open"], root, log,
