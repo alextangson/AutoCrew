@@ -2,7 +2,7 @@
 .ob { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 64px 20px; background: #faf9f6; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; color: #1f1e1b; }
 .ob-panel { width: min(640px, 100%); }
 .ob-brand { font-size: 13px; color: #8a877f; letter-spacing: 0.04em; margin-bottom: 28px; }
-.ob-title { font-size: 26px; font-weight: 650; margin: 0 0 8px; }
+.ob-title { font-size: 28px; font-weight: 650; margin: 0 0 8px; }
 .ob-sub { color: #5f5c55; margin: 0 0 20px; line-height: 1.6; }
 .ob-note { background: #f3f2ee; border-radius: 8px; padding: 10px 14px; color: #5f5c55; line-height: 1.6; font-size: 14px; }
 .ob-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
