@@ -101,9 +101,10 @@ async function scriptDecision(ctx: Ctx, approve: boolean): Promise<Result> {
   if (!approve) {
     const note = noteOf(ctx);
     if (!note) return fail("note_required", "写一句要改哪里");
-    const d = await pushDecision(c.id, ctx.dataDir, { type: "script_revise", note }, "script_revise_requested");
-    const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "revision", from_status: "draft_ready", force: true }) as Result;
-    return t.ok ? { ok: true, decision: d } : fail("transition_failed", `意见记下了，但稿子没退回修改：${String(t.error ?? "")}`, { decision: d });
+    // 和认稿一样在写锁内核正文（整分支审 12 P2）：旧页面上的「还要改…」不能把更新的正文退回修改；先核再记意见，拒了什么都不记
+    const t = await executeContentSave({ _dataDir: ctx.dataDir, action: "transition", id: c.id, target_status: "revision", from_status: "draft_ready", force: true, expected_body_hash: str(ctx.params.expected_body_hash) || bodyHash(c.body) }) as Result;
+    if (!t.ok) return fail(t.staleDraft ? "stale_draft" : "transition_failed", t.staleDraft ? "稿子刚改过，重新看一眼" : `稿子没退回修改：${String(t.error ?? "")}`);
+    return { ok: true, decision: await pushDecision(c.id, ctx.dataDir, { type: "script_revise", note }, "script_revise_requested") };
   }
   // 写锁内再核一次正文：就是创始人看着的那一版（代次里的正文哈希）
   // 页面交来的是它屏幕上那份正文的哈希（整分支审 5 P1）；没带就用代次对上那一刻读到的正文

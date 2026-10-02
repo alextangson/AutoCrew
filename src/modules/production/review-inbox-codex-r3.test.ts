@@ -488,6 +488,19 @@ describe("整分支审 5", () => {
   });
 });
 
+describe("整分支审 12", () => {
+  it("「还要改…」也按页面上那份正文核：正文刚改过 → 拒，稿子不退回、意见不记", async () => {
+    const d = await videoContent(env, "旧页面打回");
+    const it = (await items(d.id)).find((i) => i.type === "draft")!;
+    const { bodyHash, readProductionDoc } = await import("../../storage/production-store.js");
+    expect(await decideItem({ content_id: d.id, item_id: it.item_id, gen: it.gen, action: "revise_script", note: "再改改", expected_body_hash: bodyHash("旧的正文") }, env.dir))
+      .toMatchObject({ ok: false, error: "稿子刚改过，重新看一眼" });
+    const { getContent } = await import("../../storage/local-store.js");
+    expect((await getContent(d.id, env.dir))!.status).toBe("draft_ready");
+    expect(((await readProductionDoc(d.id, env.dir))?.decisions ?? []).filter((x) => x.type === "script_revise")).toEqual([]);
+  });
+});
+
 describe("整分支审 6", () => {
   async function setup() {
     const target = await videoContent(env, "等原片的稿");

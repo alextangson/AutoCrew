@@ -59,7 +59,10 @@ function sendMedia(req: http.IncomingMessage, res: http.ServerResponse, r: Attac
   if (range === "unsatisfiable") { res.writeHead(416, { "Content-Range": `bytes */${r.size}`, ...ATTACHMENT_HEADERS }).end(); return; }
   res.writeHead(range ? 206 : 200, { "Content-Type": r.type, "Accept-Ranges": "bytes", "Content-Length": String(range ? range.end - range.start + 1 : r.size),
     ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${r.size}` } : {}), ...ATTACHMENT_HEADERS });
-  createReadStream(r.file, range ?? undefined).pipe(res);
+  // 核过之后文件被挪 / 删：读流报错只断这一个响应，不让未处理的 error 把整个服务带倒（整分支审 12 P2）
+  const stream = createReadStream(r.file, range ?? undefined);
+  stream.on("error", () => res.destroy());
+  stream.pipe(res);
 }
 
 export function createBoardHandler(deps: BoardRouteDeps) {

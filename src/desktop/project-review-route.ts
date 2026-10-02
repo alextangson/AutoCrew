@@ -41,7 +41,9 @@ export function createProjectReviewHandler(deps: ProjectReviewRouteDeps) {
       if (range === "unsatisfiable") { res.writeHead(416, { "Content-Range": `bytes */${size}` }).end(); return true; }
       res.writeHead(range ? 206 : 200, { "Content-Type": ext === ".mp4" || ext === ".m4v" ? "video/mp4" : ext === ".mov" ? "video/quicktime" : MIME[ext], "Cache-Control": "no-store", "Accept-Ranges": "bytes",
         "Content-Length": range ? range.end - range.start + 1 : size, ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${size}` } : {}) });
-      createReadStream(checked.value, range ?? undefined).pipe(res);
+      const stream = createReadStream(checked.value, range ?? undefined);
+      stream.on("error", () => res.destroy()); // 核过之后文件没了：只断这个响应
+      stream.pipe(res);
     } catch { res.writeHead(404).end(); }
     return true;
   }
