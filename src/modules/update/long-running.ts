@@ -17,11 +17,68 @@
  *   版本检查本身（只读）。
  */
 export const LONG_RUNNING_CHANNELS: ReadonlySet<string> = new Set([
-  "publish:wechat_draft", "publish:request_wechat", "publish:digest",
-  "retro:generate", "persona:generate", "style:distill", "style:absorb",
-  "draft:rewrite_selection", "radar:refresh", "radar:more", "radar:rescore", "flywheel:wechat_pull", "flywheel:pull_now",
+  // 发布：推送、出包、摘要（模型）、发布前检查（语义把关走外网）
+  "publish:wechat_draft", "publish:request_wechat", "publish:digest", "publish:preflight", "publish:pre_check",
+  // 模型调用
+  "retro:generate", "persona:generate", "style:distill", "style:absorb", "draft:rewrite_selection",
+  "draft:adopt_revision", // 采纳改稿顺带蒸馏文风（Codex 审第 8 轮 P2）
+  "topic:create", // 超过 30 字的想法会先蒸馏成选题（Codex 审第 8 轮 P2）
+  "article_images:suggest", "onboarding:init", "flywheel:report", "settings:test_route",
+  // 外网抓取 / 雷达 / 数据回流
+  "radar:refresh", "radar:more", "radar:rescore", "flywheel:wechat_pull", "flywheel:pull_now", "research:import_asset",
+  // 长任务编排
   "campaign:plan_team", "campaign:run_ready", "campaign:retry_task", "campaign:replan",
   "inbox:retry", "inbox:reingest", "inbox:digest_send_now",
+  // 素材入库会探测媒体（ffprobe）
+  "library:add",
+]);
+
+/** 先回请求、后台接着跑的：在各自 start 函数 / 对话轮登记里算在跑（不在 IPC 包装层） */
+export const BACKGROUND_TRACKED_CHANNELS: ReadonlySet<string> = new Set([
+  "generate:script", "generate:retry", "chat:turn",
+  "cover:create", "cover:revise", "cover:ratios", "cover:identity", "cover:approve",
+  "article_images:generate", "article_images:regenerate",
+]);
+
+/** 交给持久队列跑、服务重启后自己回收重跑的：重启不丢活，不登记 */
+export const RECOVERABLE_CHANNELS: ReadonlySet<string> = new Set([
+  "research:deep_dive", "research:regenerate_angles",
+  "video:build_start", "video:rough_cut_rerun", "video:transcribe_rerun", "video:editor_rerun", "video:cut_preview",
+  "video:reassemble", "video:retry", "video:asr_warmup",
+]);
+
+/**
+ * 逐个看过、请求里不调模型 / 外网 / 长子进程的通道（读写本地文件、改设置、读状态）。
+ * 新加的 IPC 通道必须进上面四张表之一，否则测试不过——长调用不会悄悄漏掉（Codex 审第 8 轮 P2）。
+ */
+export const SHORT_CHANNELS: ReadonlySet<string> = new Set([
+  "storage:status", "storage:preview", "storage:configure", "storage:cancel",
+  "style:rules", "style:update_rule", "style:record_edit",
+  "content:list", "content:get", "content:update", "content:transition", "content:allowed_transitions", "content:versions",
+  "content:revert", "content:asset_add", "content:asset_remove", "content:adoption", "content:delete", "content:restore", "content:open_folder",
+  "publish:clipboard", "publish:confirm",
+  "article_images:get", "article_images:remove", "article_images:add_slot", "article_images:remove_slot", "article_images:upload",
+  "chat:abort", "chat:turn_status", "chat:model_options",
+  "agent:backends", "agent:pending", "agent:answer", "agent:settings", "conversations:rename",
+  "settings:get", "settings:set", "settings:open_config", "engine:health",
+  "hosts:list", "hosts:revoke", "hosts:workbuddy_status", "hosts:workbuddy_connect",
+  "settings:search_get", "settings:search_set", "settings:publish_get", "settings:publish_set",
+  "persona:save", "cover:get", "settings:cover_get", "settings:cover_set",
+  "logs:list", "logs:get_run", "skills:list", "goal:get", "goal:set", "retro:list", "retro:get", "onboarding:status",
+  "flywheel:import_csv", "flywheel:record", "flywheel:pull_status", "flywheel:pull_toggle", "flywheel:hypotheses_list",
+  "dialog:pick_file", "dialog:pick_media", "knowledge:status", "radar:status", "radar:sources_set", "profile:update",
+  "conversations:list", "conversations:get", "conversations:delete",
+  "library:list", "library:update", "library:remove", "library:folder_create", "library:folder_remove", "library:set_reusable",
+  "today:summary", "dashboard:summary", "events:recent", "workspace:list", "workspace:create", "workspace:switch",
+  "campaign:list", "campaign:get", "campaign:create", "campaign:transition", "campaign:artifact_get", "campaign:set_autonomy",
+  "campaign:patch_propose", "campaign:patch_decide",
+  "topics:list", "topic:update", "topic:delete", "topic:restore", "topic:select_angle", "topic:clear_angle", "trash:list",
+  "doctor:inbox", "inbox:list", "inbox:delete", "inbox:settings_get", "inbox:settings_set", "inbox:status",
+  "patterns:list", "patterns:update", "patterns:delete",
+  "research:status", "research:brief_get", "research:list_assets",
+  "video:status", "video:transcript_get", "video:cut_confirm", "video:transcript_text_edit", "video:editor_plan_get",
+  "video:editor_confirm", "video:editor_slot_fill", "video:editor_slot_remove", "video:editor_back_to_cut",
+  "video:review_confirm", "video:asr_status", "video:settings_get", "video:settings_set",
 ]);
 
 /**
@@ -43,6 +100,8 @@ export const LONG_RUNNING_TOOL_ACTIONS: Readonly<Record<string, "*" | ReadonlySe
   // 写稿：领包备料、查证据（外网）、交稿审稿（模型）
   autocrew_writer: new Set(["pack", "find_evidence", "submit"]),
   autocrew_review: "*",
+  autocrew_review_desk: new Set(["submit"]),
+  autocrew_init: "*",
   autocrew_insights: new Set(["prepare"]),
   autocrew_flywheel: new Set(["report"]),
   // 视频：转写、粗剪、渲染、交接搬文件、原片比对
@@ -65,6 +124,15 @@ export const TOOL_DEFAULT_ACTIONS: Readonly<Record<string, string>> = {
   autocrew_topic: "create",
   autocrew_review: "full_review",
 };
+
+/**
+ * 逐个看过、不调模型 / 外网 / 渲染的 MCP 工具（或只有上表列出的动作是长的）。新注册的工具必须进 LONG_RUNNING_TOOL_ACTIONS
+ * 或这张表，否则测试不过。上表里按动作列的工具，没列出的动作就是看过、判定为短的。
+ */
+export const SHORT_TOOLS: ReadonlySet<string> = new Set([
+  "autocrew_content", "autocrew_desk", "autocrew_status", "autocrew_asset", "autocrew_pipeline", "autocrew_editorial",
+  "autocrew_memory", "autocrew_dashboard", "autocrew_pro_status",
+]);
 
 export function effectiveAction(tool: string, action: unknown): unknown {
   return action === undefined || action === null || action === "" ? TOOL_DEFAULT_ACTIONS[tool] : action;
