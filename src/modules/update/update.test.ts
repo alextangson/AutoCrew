@@ -88,7 +88,7 @@ describe("检查", () => {
     fs.writeFileSync(path.join(user, "local.txt"), "mine");
     sh(user, "add", "local.txt"); sh(user, "commit", "-q", "-m", "local work");
     const s = await checkForUpdate(user, machine, { git: git() });
-    expect(s).toMatchObject({ available: false, reason: "local_ahead" });
+    expect(s).toMatchObject({ available: false, reason: "diverged" });
     expect(updateView(user, machine, false).banner).toBeNull();
     expect(briefLine(user, machine)).toBeNull();
   });

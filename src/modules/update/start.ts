@@ -13,6 +13,9 @@ import { newLogFile } from "./updater.js";
 import { readResult, writeResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 
+export const DIVERGED_MESSAGE = (latest: string) =>
+  `本地程序和最新发布版 ${latest} 分叉了（本地有发布版里没有的提交），没法自动更新；请按 README 手动更新`;
+
 export interface Prepared { ok: true; tag: string; commit: string; from: string; to: string; notes: ReleaseNotes[]; token: string }
 export type PrepareResult = Prepared | { ok: false; code: string; reason: string };
 
@@ -22,6 +25,8 @@ export async function prepareUpdate(root: string, machineDir: string, deps: Omit
   const status = await checkForUpdate(root, machineDir, { git });
   if (status.error) return { ok: false, code: "check_failed", reason: status.error };
   if (!status.available || !status.tag || !status.latest || !status.commit) {
+    // 分叉不是「没什么可更新」，是「更新不了」：命令行要以非 0 退出（e2e P2-1）
+    if (status.reason === "diverged") return { ok: false, code: "diverged", reason: DIVERGED_MESSAGE(status.latest ?? "") };
     return { ok: false, code: "no_update", reason: status.reason === "local_ahead" ? "本地程序比最新发布版还新，不用更新" : `已经是最新版 ${status.current}` };
   }
   const pre = await preflight(root, machineDir, status.commit, { ...deps, git });

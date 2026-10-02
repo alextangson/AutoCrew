@@ -12,6 +12,7 @@ export function statusLine(v: UpdateView): string {
   if (v.banner) return `上次检查 ${at}：有新版本 ${v.banner.version}，看板顶上可以更新`;
   if (s.available && v.settings.skipVersion === s.latest) return `上次检查 ${at}：${s.latest} 你选了先不更新`;
   if (s.reason === "local_ahead") return `上次检查 ${at}：本地程序比最新发布版还新，不提示更新`;
+  if (s.reason === "diverged") return `上次检查 ${at}：本地程序和最新发布版 ${s.latest ?? ""} 分叉了（本地有发布版里没有的提交），没法自动更新；请按 README 手动更新`;
   return `上次检查 ${at}：已经是最新版`;
 }
 

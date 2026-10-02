@@ -122,6 +122,15 @@ describe("更新没能开始", () => {
   });
 });
 
+describe("设置页「更新」一栏：分叉", () => {
+  it("本地和发布版分叉：说分叉、说手动更新，不说「比最新发布版还新」", async () => {
+    await mount("../SettingsUpdate", "SettingsUpdate", { initial: VIEW({ banner: null, status: { checkedAt: new Date().toISOString(), current: "0.4.9", latest: "0.5.0", available: false, reason: "diverged" } }) });
+    expect(el.textContent).toContain("分叉");
+    expect(el.textContent).toContain("手动更新");
+    expect(el.textContent).not.toContain("还新");
+  });
+});
+
 describe("设置页「更新」一栏", () => {
   it("版本带日期、上次检查、检查更新、自动检查开关；检查失败原因只写在这里", async () => {
     await mount("../SettingsUpdate", "SettingsUpdate", { initial: VIEW() });

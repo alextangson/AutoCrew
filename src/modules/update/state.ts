@@ -18,7 +18,7 @@ export interface UpdateStatus {
   commit?: string;
   available: boolean;
   /** available=false 的原因：已是最新 / 本地比发布版新或分叉 */
-  reason?: "up_to_date" | "local_ahead";
+  reason?: "up_to_date" | "local_ahead" | "diverged";
   /** 检查失败的人话原因（只在设置页显示） */
   error?: string;
   notes?: ReleaseNotes[];

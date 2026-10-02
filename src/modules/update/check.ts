@@ -73,7 +73,9 @@ export async function checkForUpdate(root: string, machineDir: string, deps: Che
   }
   const ancestor = await git(["merge-base", "--is-ancestor", "HEAD", best.commit]);
   if (!ancestor.ok) {
-    const s: UpdateStatus = { ...base, available: false, reason: "local_ahead" };
+    // 发布版是本地的祖先 = 本地比它新；两边都不是对方的祖先 = 分叉（本地有发布版里没有的提交，又落后于发布版）
+    const ahead = await git(["merge-base", "--is-ancestor", best.commit, "HEAD"]);
+    const s: UpdateStatus = { ...base, available: false, reason: ahead.ok ? "local_ahead" : "diverged" };
     writeStatus(machineDir, s);
     return s;
   }

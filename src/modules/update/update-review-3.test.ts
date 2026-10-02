@@ -104,8 +104,20 @@ describe("P1 宿主走 /mcp 的长动作也算在跑", () => {
 });
 
 describe("P2 更新记录里的格式示例不是发布记录", () => {
-  it("仓库里现在的 CHANGELOG.md 解析出 0 个版本", () => {
-    expect(parseChangelog(fs.readFileSync(path.join(programRoot(), "CHANGELOG.md"), "utf-8"))).toEqual([]);
+  it("仓库里的 CHANGELOG.md：解析出的每一版都来自代码块外的真标题，没有示例内容（发版后照样成立）", () => {
+    const md = fs.readFileSync(path.join(programRoot(), "CHANGELOG.md"), "utf-8");
+    const lines = md.split(/\r?\n/);
+    let fenced = false;
+    const realHeadings = new Set<string>();
+    for (const line of lines) {
+      if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+      const m = /^##\s+v?(\d+\.\d+\.\d+)\s*[·•-]/.exec(line.trim());
+      if (m && !fenced) realHeadings.add(m[1]);
+    }
+    for (const n of parseChangelog(md)) {
+      expect(realHeadings.has(n.version), n.version).toBe(true);
+      expect([...n.news, ...n.fixes, ...n.todo].join("\n")).not.toMatch(/一行一条|说人话|示例/);
+    }
   });
 
   it("代码块里的示例跳过，块外的真记录照读", () => {

@@ -12,6 +12,7 @@ export interface ReleaseNotes {
   todo: string[];
 }
 
+const EMPTY_ITEM = /^(无|没有|暂无|无需|不需要|none|n\/a|-+)[。.！!]?$/i;
 type Bucket = keyof Pick<ReleaseNotes, "news" | "fixes" | "todo">;
 const HEADING = /^##\s+v?(\d+\.\d+\.\d+)\s*[·•-]\s*(\d{4}-\d{2}-\d{2})\s*$/;
 const SUBSECTIONS: Record<string, Bucket> = { "新东西": "news", "修好的": "fixes", "需要你做的": "todo" };
@@ -37,7 +38,8 @@ export function parseChangelog(markdown: string): ReleaseNotes[] {
     const sub = /^###\s+(.+?)\s*$/.exec(line);
     if (sub) { bucket = SUBSECTIONS[sub[1]] ?? null; continue; }
     const item = /^\s*[-*]\s+(.+?)\s*$/.exec(line);
-    if (item && bucket) current[bucket].push(item[1]);
+    // 「无」「没有」这类占位不是一条（e2e P3）：不进清单，「需要你做的」就不会被高亮
+    if (item && bucket && !EMPTY_ITEM.test(item[1])) current[bucket].push(item[1]);
   }
   return out;
 }
