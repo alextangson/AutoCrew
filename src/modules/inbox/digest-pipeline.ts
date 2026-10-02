@@ -46,7 +46,7 @@ import {
   type DouyinVideoContent,
   type JustoneapiClient,
 } from "./justoneapi.js";
-import { findByCanonicalUrl, findByTextHash, updateItem, type InboxItem } from "./inbox-store.js";
+import { findByCanonicalUrl, findByTextHash, TEXT_NOTE_DEDUPE_DAYS, updateItem, type InboxItem } from "./inbox-store.js";
 import { type ProcessResult } from "./inbox-worker.js";
 import { sendTelegramReceipt, type TelegramClientOptions } from "./telegram-api.js";
 import {
@@ -136,10 +136,10 @@ function clampChars(value: string, max: number): string {
  */
 async function digestText(ctx: Ctx, item: InboxItem, progress: Progress): Promise<Outcome> {
   const text = item.text ?? "";
-  const twin = await findByTextHash(normalizeTextForHash(text), ctx.dataDir);
+  const twin = await findByTextHash(normalizeTextForHash(text), ctx.dataDir, TEXT_NOTE_DEDUPE_DAYS, item.id);
   // 与链接路径同口径：只有**落过点**的孪生记录才算「已收录过」，
   // 前一条 failed/rejected 时说这句等于把两条都悄悄丢掉
-  if (twin && twin.id !== item.id && twin.status === "digested") {
+  if (twin && twin.status === "digested") {
     return duplicateOutcome(twin.targetIds?.join("、") || twin.id, twin.targetIds ?? [], "inspiration");
   }
   const title = clampChars(text, TEXT_TITLE_CHARS);
@@ -181,8 +181,8 @@ async function findDuplicate(ctx: Ctx, item: InboxItem, canonicalUrl: string): P
       receipt: DIGEST_RECEIPTS.tombstone,
     };
   }
-  const twin = await findByCanonicalUrl(canonicalUrl, ctx.dataDir);
-  if (twin && twin.id !== item.id && twin.status === "digested") {
+  const twin = await findByCanonicalUrl(canonicalUrl, ctx.dataDir, item.id);
+  if (twin && twin.status === "digested") {
     return duplicateOutcome(twin.targetIds?.join("、") || twin.id, twin.targetIds ?? [], twin.verdict);
   }
   if (foreignCard) return duplicateOutcome(`拆解卡《${foreignCard.title}》`, [foreignCard.id], "exemplar");

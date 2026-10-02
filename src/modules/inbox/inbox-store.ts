@@ -195,25 +195,31 @@ export async function getItem(id: string, dataDir: string): Promise<InboxItem | 
   return null;
 }
 
-/** 查重命中返回**最早**收录的那条——回执要指向原件，不是后来的重复件 */
+/**
+ * 查重命中返回**最早**收录的那条——回执要指向原件，不是后来的重复件。
+ * excludeId 是正在消化的那条：它的键已先落账，同一毫秒入账时按 id 可能排在原件前面，必须跳过自己。
+ */
 export async function findByCanonicalUrl(
   canonicalUrl: string,
   dataDir: string,
+  excludeId?: string,
 ): Promise<InboxItem | null> {
   if (!canonicalUrl) return null;
   const items = await listItems(dataDir);
-  return items.find((it) => it.canonicalUrl === canonicalUrl) ?? null;
+  return items.find((it) => it.id !== excludeId && it.canonicalUrl === canonicalUrl) ?? null;
 }
 
 /**
  * 纯文字笔记查重：hash 由 normalizeTextForHash 现算，不在 item 上冗余存字段
  * （归一化规则一旦改，冗余字段会变成对不上的历史包袱）。
  * receivedAt 解析不出来的记录视为落在窗口外——宁可重复一次，不可错判为重复。
+ * excludeId 同 findByCanonicalUrl：跳过正在消化的那条自己。
  */
 export async function findByTextHash(
   textHash: string,
   dataDir: string,
   windowDays: number = TEXT_NOTE_DEDUPE_DAYS,
+  excludeId?: string,
 ): Promise<InboxItem | null> {
   if (!textHash) return null;
   const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
@@ -221,6 +227,7 @@ export async function findByTextHash(
   return (
     items.find(
       (it) =>
+        it.id !== excludeId &&
         typeof it.text === "string" &&
         Date.parse(it.receivedAt) >= cutoff &&
         normalizeTextForHash(it.text) === textHash,

@@ -199,4 +199,15 @@ describe("dedupe lookups", () => {
     await appendItem({ ...tgItem, note: "顺手记一句" }, dataDir);
     expect(await findByTextHash(normalizeTextForHash("顺手记一句"), dataDir)).toBeNull();
   });
+
+  // 同一毫秒入账时按 id 排序，正在消化的这条可能排在原件前面；它自己已带同样的键，不能挡住原件
+  it("skips the excluded item even when it ties with the original and sorts first", async () => {
+    const receivedAt = new Date().toISOString();
+    const url = "https://x.com/i/status/7";
+    const original = await appendItem({ ...tgItem, id: "inbox-b-orig", canonicalUrl: url, text: "同一句", receivedAt }, dataDir);
+    const self = await appendItem({ ...tgItem, id: "inbox-a-self", canonicalUrl: url, text: "同一句", receivedAt }, dataDir);
+    expect((await findByCanonicalUrl(url, dataDir, self.id))?.id).toBe(original.id);
+    expect((await findByTextHash(normalizeTextForHash("同一句"), dataDir, 7, self.id))?.id).toBe(original.id);
+    expect(await findByCanonicalUrl(url, dataDir, original.id)).toMatchObject({ id: self.id });
+  });
 });

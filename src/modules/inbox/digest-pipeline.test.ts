@@ -153,6 +153,17 @@ describe("digest pipeline · 纯文字", () => {
     expect(first.id).not.toBe(item.id);
   });
 
+  it("同文孪生与这条同一毫秒入账、这条的 id 排在前面 → 照样认出已收录过", async () => {
+    const text = "同一毫秒的随手记";
+    const receivedAt = new Date().toISOString();
+    await seed({ id: "inbox-b-orig", receivedAt, text, status: "digested", targetIds: ["topic-old"] });
+    const item = await seed({ id: "inbox-a-self", receivedAt, text });
+    const { processItem, gateCalls } = makePipeline();
+
+    expect(await processItem(item)).toMatchObject({ status: "digested", targetIds: ["topic-old"] });
+    expect(gateCalls).toHaveLength(0);
+  });
+
   it("孪生记录没落过点（failed）→ 不当重复，照常入库", async () => {
     const text = "上次没处理成功的随手记";
     await seed({ text, status: "failed", attempts: 1 });
@@ -540,6 +551,19 @@ describe("digest pipeline · 抖音路由", () => {
     expect(douyin.calls.resolve).toHaveLength(1); // 短链得先换标准链才知道是不是重复
     expect(douyin.calls.detail).toEqual([]);
     expect(receipts[0]).toContain("已收录过");
+  });
+
+  it("与原件同一毫秒入账、这条的 id 排在前面 → 照样认出已收录过", async () => {
+    const receivedAt = new Date().toISOString();
+    await seed({ id: "inbox-b-orig", receivedAt, url: DOUYIN_CANONICAL, canonicalUrl: DOUYIN_CANONICAL, status: "digested", targetIds: ["topic-old"] });
+    const item = await seed({ id: "inbox-a-self", receivedAt, url: DOUYIN_SHORT });
+    const douyin = fakeDouyin();
+    const { processItem } = makePipeline({
+      parsers: { justoneapiKey: "k-live", justoneapiImpl: douyin.client },
+    });
+
+    expect(await processItem(item)).toMatchObject({ status: "digested", targetIds: ["topic-old"] });
+    expect(douyin.calls.detail).toEqual([]);
   });
 
   it("抠不到 videoId 的抖音链接（主页/合集）→ rejected", async () => {
