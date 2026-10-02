@@ -23,6 +23,7 @@ import { currentCut } from "./sliver/check.js";
 import { storyboardPanel } from "./storyboard.js";
 import { markedCuts } from "./ready.js";
 import { draftRef } from "./inbox.js";
+import { readInbox } from "./inbox-read.js";
 import { isStrayCover } from "./plain-reason.js";
 import { hostLabel } from "./host-label.js";
 import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
@@ -101,8 +102,10 @@ async function sourceDirs(dataDir: string): Promise<SourceDirs> {
 
 async function candidateRows(contentId: string, doc: ProductionDoc, dataDir: string): Promise<CandidateRow[]> {
   const dirs = await sourceDirs(dataDir);
+  // 列表列不列它由「等你拍板」自己说了算（整分支审 16 P2）：不在这里重抄一遍规则
+  const listed = new Set((await readInbox(dataDir, { contentId })).items.filter((i) => i.type === "candidate").map((i) => String(i.detail.fact_id)));
   return doc.facts.filter((f) => f.round === doc.round && (f.state === "candidate" || f.state === "pending_match") && !isStrayCover(f))
-    .sort((a, b) => b.at.localeCompare(a.at)).map((f) => candidateRow(f, contentId, dirs));
+    .sort((a, b) => b.at.localeCompare(a.at)).map((f) => ({ ...candidateRow(f, contentId, dirs), in_inbox: listed.has(f.id) }));
 }
 
 /**

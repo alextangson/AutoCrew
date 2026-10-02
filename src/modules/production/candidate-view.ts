@@ -10,6 +10,8 @@ export interface SourceDirs { inbox: string | null; chatcut: string | null; jian
 export interface CandidateRow {
   fact_id: string; kind: Fact["kind"]; state: Fact["state"]; sha256?: string; started_at?: string;
   name: string; origin: string; reason: string; detail: string; path: string | null;
+  /** 「等你拍板」列着它：卡片只给「去『等你拍板』处理」；不列的（发布后导出、已发布、归了别条）卡片上直接定 */
+  in_inbox?: boolean;
 }
 
 const KIND: Partial<Record<Fact["kind"], string>> = { aroll: "原片", cut: "成片", srt: "字幕", cover: "封面" };

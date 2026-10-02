@@ -73,3 +73,19 @@ describe("写稿中卡片的原片提示", () => {
     expect(await render(item([{ kind: "aroll", state: "candidate" }], "待录制"))).toEqual([]);
   });
 });
+
+describe("整分支审 16：列表不列的候选在卡片上直接定", () => {
+  it("列表列着 → 去『等你拍板』；列表不列 → 是这条 / 不是这条", async () => {
+    const acts: string[] = [];
+    const act2 = async (a: string) => { acts.push(a); };
+    const { CardCandidates } = await import("./CardCandidates");
+    const goInbox = () => { acts.push("inbox"); };
+    await act(async () => { root.render(createElement(CardCandidates, { contentId: "content-1-a", rows: [{ ...ROW, state: "candidate", in_inbox: true }], busy: false, act: act2, confirm: act2, inbox: goInbox })); });
+    const labels = () => [...el.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels()).toContain("去『等你拍板』处理");
+    await act(async () => { root.render(createElement(CardCandidates, { contentId: "content-1-a", rows: [{ ...ROW, state: "candidate", in_inbox: false }], busy: false, act: act2, confirm: act2, inbox: goInbox })); });
+    expect(labels()).not.toContain("去『等你拍板』处理");
+    await act(async () => { ([...el.querySelectorAll("button")].find((b) => b.textContent === "是这条") as HTMLElement).click(); });
+    expect(acts).toEqual(["confirm_candidate"]);
+  });
+});

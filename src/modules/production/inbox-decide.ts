@@ -311,6 +311,13 @@ async function localItemIds(contentId: string, action: string, p: Record<string,
   }
 }
 
+/** 这条候选还在、字节对得上，而且「等你拍板」现在不列它（调用方已确认没有对应条目） */
+async function hiddenCandidate(contentId: string, params: Record<string, unknown>, dataDir: string): Promise<boolean> {
+  const doc = await readProductionDocOrEmpty(contentId, dataDir);
+  const f = doc.facts.find((x) => x.id === params.fact_id && x.round === doc.round);
+  return Boolean(f && f.state === "candidate" && (!f.sha256 || f.sha256 === params.sha256));
+}
+
 async function legacyWithoutItem(contentId: string, action: string, params: Record<string, unknown>, dataDir: string): Promise<Result> {
   if (!INBOX_ACTIONS.has(action)) return founderDecision(contentId, action, params, dataDir);
   const ids = await objectItemIds(contentId, action, params, dataDir);
@@ -323,6 +330,9 @@ async function legacyWithoutItem(contentId: string, action: string, params: Reco
     return same ? { ...last.result, replayed: true, item_id: last.item_id, gen: last.gen } : fail("already_decided", "这件事已经在别处定了，刷新再看", { item_id: last.item_id });
   }
   if (PASS_WITHOUT_RECORD.has(action)) return founderDecision(contentId, action, params, dataDir);
+  // 列表故意不列的候选（发布后的新导出、已发布的稿、字节已归别条）：卡片上直接定，不然哪儿都定不了（整分支审 16 P2）。
+  // 新鲜度照核：founderDecision 按 fact_id + sha 锁内认，文件换过 / 已定过都不会误记
+  if ((action === "confirm_candidate" || action === "reject_candidate") && (await hiddenCandidate(contentId, params, dataDir))) return founderDecision(contentId, action, params, dataDir);
   return fail("stale", "这件事刚变过（列表里已经没有它了），刷新再看");
 }
 
