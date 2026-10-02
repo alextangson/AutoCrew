@@ -3,6 +3,7 @@
  * 它们不登记对话轮、也不写 runs.json，所以要有一个统一的计数：每个长任务入口登记、结束释放；
  * 一键更新的预检、`/api/update/busy`、重启前确认都看它。更新锁在手时，新的长任务一律不开。
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { updatingRefusal } from "./preflight.js";
 
 const works = new Map<number, string>();
@@ -16,10 +17,19 @@ export function activeWorkLabels(): string[] {
   return [...works.values()];
 }
 
+/**
+ * 一次浏览器写请求已经整体算作「一件在跑的事」时，它里面再登记的同一件事（IPC 长通道、对话轮）不重复计数，
+ * 否则一个对话轮会被说成「有 3 个任务正在跑」（e2e 1002 P3-G）。请求返回后还在后台跑的（trackWork）照常单算。
+ */
+const requestCtx = new AsyncLocalStorage<{ counted: true }>();
+export function markRequestCounted(): void { requestCtx.enterWith({ counted: true }); }
+export function insideCountedRequest(): boolean { return requestCtx.getStore()?.counted === true; }
+
 /** 开一个长任务：正在更新就拒；返回 end（多次调用安全） */
 export function beginWork(label: string): { ok: true; end: () => void } | { ok: false; error: string } {
   const refused = updatingRefusal();
   if (refused) return { ok: false, error: refused };
+  if (insideCountedRequest()) return { ok: true, end: () => {} };
   const id = ++seq;
   works.set(id, label);
   return { ok: true, end: () => { works.delete(id); } };

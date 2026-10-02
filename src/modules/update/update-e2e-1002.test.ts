@@ -207,3 +207,36 @@ describe("P3-E 更新进程意外退出", () => {
     expect(r.stderr).toContain("autocrew update");
   });
 });
+
+import { admitMutation } from "../../desktop/http-busy-guard.js";
+import { activeWorkCount, beginWork, resetActiveWork } from "./active-work.js";
+import { activeTurnCount, registerTurn, resetActiveTurns } from "../../desktop/turn-registry.js";
+
+describe("P3-G 一个对话轮只算一件事", () => {
+  it("浏览器发来的对话轮：请求本身、IPC 长通道、对话轮登记合起来只算 1", async () => {
+    resetActiveWork(); resetActiveTurns();
+    let seen = -1, release!: () => void;
+    const server = http.createServer((req, res) => {
+      if (!admitMutation(req, res, "/api/invoke")) return;
+      void (async () => {
+        await Promise.resolve();
+        const w = beginWork("chat:turn"); // IPC 长通道
+        const t = registerTurn("turn-g", "client-g"); // 对话轮登记
+        seen = activeWorkCount() + activeTurnCount();
+        await new Promise<void>((r) => { release = r; });
+        if (w.ok) w.end();
+        void t;
+        res.writeHead(200).end("{}");
+      })();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const pending = fetch(`http://127.0.0.1:${port}/api/invoke`, { method: "POST", body: "{}" });
+      expect(await until(() => seen >= 0)).toBe(true);
+      expect(seen).toBe(1);
+      release();
+      await pending;
+    } finally { await new Promise((r) => server.close(r)); resetActiveTurns(); resetActiveWork(); }
+  });
+});
