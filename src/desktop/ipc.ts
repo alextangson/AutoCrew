@@ -1239,7 +1239,7 @@ function trackLongRunning(handlers: Record<IpcChannel, IpcHandler>): Record<IpcC
     out[ch] = async (payload, ctx) => {
       const work = beginWork(ch);
       if (!work.ok) return { ok: false, code: "updating", error: work.error };
-      try { return await inner(payload, ctx); } finally { work.end(); }
+      try { return await (ctx === undefined ? inner(payload) : inner(payload, ctx)); } finally { work.end(); }
     };
   }
   return out;
