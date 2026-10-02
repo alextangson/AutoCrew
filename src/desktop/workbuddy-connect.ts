@@ -7,18 +7,11 @@
  * 已有 autocrew 就原地更新（仓库挪了位置也能修好）；别的条目（ChatCut 等）一个字不动。
  */
 import { existsSync, realpathSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureHostToken } from "./host-tokens.js";
-import { mergeMcpJson, type MergeOutcome, type MergeResult } from "./host-connect/mcp-json-file.js";
+import { mergeMcpJson, type MergeResult } from "./host-connect/mcp-json-file.js";
 
 export const WORKBUDDY_HOST = "workbuddy";
-export const WORKBUDDY_APP_PATHS = ["/Applications/WorkBuddy.app", path.join(os.homedir(), "Applications", "WorkBuddy.app")];
-
-export function workbuddyInstalled(paths: string[] = WORKBUDDY_APP_PATHS): boolean {
-  return paths.some((p) => existsSync(p));
-}
 
 export function repoRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -46,26 +39,6 @@ export type { MergeOutcome } from "./host-connect/mcp-json-file.js";
 /** 合并逻辑在 host-connect/mcp-json-file（三个宿主共用同一套备份 / 原子写 / 不跟软链纪律） */
 export function mergeWorkbuddyMcp(home: string, entry = autocrewEntry(), hooks: { beforeRename?: () => void } = {}): MergeResult {
   return mergeMcpJson(path.join(home, ".workbuddy", "mcp.json"), entry, hooks);
-}
-
-const OUTCOME_TEXT: Record<MergeOutcome, string> = {
-  created: "新建了 WorkBuddy 的 MCP 配置，里面只有 autocrew 一条",
-  added: "在 WorkBuddy 的 MCP 配置里加了 autocrew 一条，别的条目原样保留",
-  updated: "更新了 WorkBuddy 配置里已有的 autocrew 条目（指向当前的 AutoCrew）",
-  unchanged: "WorkBuddy 配置里已经是这一条 autocrew，没有改动",
-};
-
-/** 「连接 WorkBuddy」：没装就不写（W1）；发令牌 + 合并配置；提示重启（W6） */
-export function connectWorkbuddy(opts: { home?: string; dataDir?: string; installed?: boolean; entry?: Record<string, unknown> } = {}): Record<string, unknown> {
-  if (!(opts.installed ?? workbuddyInstalled())) return { ok: false, error: "没找到 WorkBuddy（/Applications/WorkBuddy.app）。装好后再点连接；「复制给 WorkBuddy」不受影响。" };
-  const merged = mergeWorkbuddyMcp(opts.home ?? os.homedir(), opts.entry ?? autocrewEntry());
-  if (!merged.ok) return merged;
-  ensureHostToken(WORKBUDDY_HOST, opts.dataDir);
-  return {
-    ok: true,
-    data: { file: merged.file, outcome: merged.outcome, ...(merged.backup ? { backup: merged.backup } : {}) },
-    message: `${OUTCOME_TEXT[merged.outcome]}。重启 WorkBuddy 后生效。`,
-  };
 }
 
 /** 「复制给 WorkBuddy」的那句话（创始人认过的措辞） */
