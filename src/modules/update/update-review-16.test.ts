@@ -153,3 +153,41 @@ describe("P3 R1 Ctrl-C 按更新走到哪一步来说", () => {
     expect(fn).not.toContain("正在退回，请稍等");
   });
 });
+
+import { protectedStamps } from "./interrupted.js";
+import { writeResult } from "./state.js";
+import { DepsSwap } from "./deps-swap.js";
+import { markRollingBack } from "./abort.js";
+
+describe("第 17 轮 P3-1：自动退回也失败（stuck）之后，这次的备份还是恢复来源", () => {
+  it("在途记录已清、结果里记着这一戳：孤儿清理不删它；手动恢复命令可以重复跑", async () => {
+    // 结果文件：自动退回失败，记着这次的戳；在途记录已经被收尾清掉
+    writeResult(m, { ok: false, outcome: "stuck", from: "0.4.9", to: "0.5.0", at: new Date().toISOString(), log: "/l", backupStamp: STAMP, message: "x" });
+    const keep = protectedStamps(m);
+    expect(keep).toEqual([STAMP]);
+    await sweepOrphanPrev(root, keep!);
+    expect(fs.existsSync(path.join(root, `node_modules.prev-${STAMP}`))).toBe(true);
+    // 手动恢复命令那一行跑两遍：不会删掉已经换回来的依赖
+    const swap = new DepsSwap(path.join(tmp, "x"), "5");
+    fs.mkdirSync(path.join(tmp, "x", "node_modules", ".bin"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "x", "node_modules", ".bin", "tsx"), "");
+    swap.backupDeps(() => {});
+    fs.mkdirSync(path.join(tmp, "x", "node_modules"));
+    const line = swap.manualRestore()[0]!;
+    for (let i = 0; i < 2; i++) spawnSync("sh", ["-c", line], { cwd: path.join(tmp, "x") });
+    expect(fs.existsSync(path.join(tmp, "x", "node_modules", ".bin", "tsx"))).toBe(true);
+  });
+});
+
+describe("第 17 轮 P3-3：退回开始之后 Ctrl-C 说「正在退回」", () => {
+  it("健康检查失败、开始退回：不再说新版在启动", () => {
+    const said: string[] = [];
+    markRestarting();
+    markRollingBack();
+    try {
+      const h = createAbortHandle((x) => said.push(x));
+      h.onSignal();
+      expect(said[0]).toBe("正在退回，请稍等");
+    } finally { resetFinishing(); }
+  });
+});

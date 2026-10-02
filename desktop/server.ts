@@ -5,7 +5,7 @@ import { createProjectReviewHandler } from "../src/desktop/project-review-route.
 import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
-import { detectInterrupted, readInflight } from "../src/modules/update/interrupted.js";
+import { detectInterrupted, protectedStamps } from "../src/modules/update/interrupted.js";
 import { createConnectHandler } from "../src/desktop/connect-route.js";
 import { sweepOrphanPrev, sweepTrash } from "../src/modules/update/deps-swap.js";
 import { lockHeld } from "../src/modules/update/preflight.js";
@@ -201,10 +201,11 @@ try {
   // 上次删到一半被打断留下的垃圾目录：顺手清掉（第 15 轮 P3）；更新正在跑时不碰
   // 不再被在途记录引用的旧备份（别的戳）也一并清掉；在途记录没写戳（老版本留下的）就不碰备份（第 16 轮 P2-2）
   if (!lockHeld(getMachineDir())) {
-    const inflight = readInflight(getMachineDir());
+    // 在途记录那一戳、自动退回失败结果里那一戳都还是恢复来源，不碰（第 17 轮 P3-1）
+    const keep = protectedStamps(getMachineDir());
     void (async () => {
       await sweepTrash(programRoot());
-      if (!inflight || inflight.stamp) await sweepOrphanPrev(programRoot(), inflight?.stamp ?? null);
+      if (keep) await sweepOrphanPrev(programRoot(), keep);
     })().catch((err) => console.error("[update] 清垃圾目录 / 旧备份失败:", err instanceof Error ? err.message : err));
   }
   if (interrupted) console.error(`[update] ${interrupted.message}`);
