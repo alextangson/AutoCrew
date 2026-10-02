@@ -637,3 +637,16 @@ describe("整分支审 15：发布认领看得见依据；可写可不写的动�
     expect(decided.at(-1)).toMatchObject({ action: "reject_cut", note: "第三秒那个缝补上" });
   });
 });
+
+describe("整分支审 16 P1：请示选项不给「补一句…」", () => {
+  it("花费请示两个选项：没有任何「补一句…」，只有请示自己的「说一句…」", async () => {
+    const spend = base({ item_id: "ask:ask-9", type: "ask", rank: 0, agent_waiting: true, waiting: { host: "claude-code", label: "Claude" }, summary: "Claude想问你：这笔花费行吗？",
+      actions: [{ action: "answer_ask", label: "花吧", role: "secondary", params: { ask_id: "ask-9", option_id: "yes" }, note: "optional" }, { action: "answer_ask", label: "别花", role: "secondary", params: { ask_id: "ask-9", option_id: "no" }, note: "optional" }],
+      detail: { ask_id: "ask-9", kind: "花费", question: "这笔花费行吗？", options: [], attachments: [], attachments_changed: false } });
+    await mountInbox([spend]);
+    await openRow(spend.summary);
+    const labels = [...el.querySelectorAll(".ri-peek button")].map((b) => b.textContent);
+    expect(labels).not.toContain("补一句…");
+    expect(labels).toEqual(expect.arrayContaining(["花吧", "别花"]));
+  });
+});

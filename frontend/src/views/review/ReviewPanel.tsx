@@ -83,7 +83,9 @@ export function Actions(p: { item: InboxItem; act: Act; extra?: () => Record<str
   if (open) return <Inline a={open} onSend={(n) => { setOpen(null); run(open, n); }} onCancel={() => setOpen(null)} />;
   const loud = list.filter((a) => a.role !== "quiet"), quiet = list.filter((a) => a.role === "quiet");
   const click = (a: InboxAction) => (a.note === "required" ? setOpen(a) : run(a));
-  const optional = loud.filter((a) => a.note === "optional" && !(p.item.blocked_reason && a.role === "primary"));
+  // 只给「一件事一个可补一句的动作」开这个入口（整分支审 16 P1）：请示的每个选项都带 note，多个同名「补一句…」会悄悄替创始人选了某个选项；请示有自己的「说一句…」
+  const optionalAll = loud.filter((a) => a.note === "optional" && a.action !== "answer_ask" && !(p.item.blocked_reason && a.role === "primary"));
+  const optional = optionalAll.length === 1 ? optionalAll : [];
   // 条件不够时：主按钮的位置写原因（不放灰按钮），次按钮照给（verifier 2a P2：「还要改…」要留着）
   return <div className="ri-actions">
     {p.item.blocked_reason && <span className="ri-reason">{p.item.blocked_reason}</span>}
