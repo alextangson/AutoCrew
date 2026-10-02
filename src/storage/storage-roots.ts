@@ -95,9 +95,8 @@ export function assertManagedPathAvailable(filePath: string): void {
   }
 }
 
-/** Rebuildable search indexes/proxies live on this machine, never in the library. */
+/** Rebuildable search indexes/proxies live on this machine, never in the library.
+ * Without a library an explicit directory keeps its own cache, like every other root here. */
 export function getWorkspaceCacheDir(customDir?: string): string {
-  const config = getConfigDir(customDir);
-  const location = readLibraryLocation();
-  return path.join(location ? config : getMachineDir(), "cache");
+  return path.join(getConfigDir(customDir), "cache");
 }
