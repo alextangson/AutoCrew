@@ -240,3 +240,23 @@ describe("P3-G 一个对话轮只算一件事", () => {
     } finally { await new Promise((r) => server.close(r)); resetActiveTurns(); resetActiveWork(); }
   });
 });
+
+import { bannerFor, checkForUpdate } from "./check.js";
+import { gitRunner } from "./git.js";
+import { readSettings, readStatus } from "./state.js";
+
+describe("S2 检查失败不抹掉已知的新版本", () => {
+  it("先查到 0.5.0，再查一次连不上：看板上的提示还在，失败原因写在状态里（设置页显示）", async () => {
+    const origin = path.join(tmp, "o.git"), dev = path.join(tmp, "d"), user = path.join(tmp, "u"), m = path.join(tmp, "m");
+    const g = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, env: ENV, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    g(tmp, "init", "-q", "--bare", "-b", "main", origin); g(tmp, "clone", "-q", origin, dev); g(dev, "checkout", "-q", "-b", "main");
+    const rel = (v: string) => { fs.writeFileSync(path.join(dev, "package.json"), JSON.stringify({ version: v })); g(dev, "add", "package.json"); g(dev, "commit", "-q", "-m", v); g(dev, "tag", "-a", `v${v}`, "-m", v); g(dev, "push", "-q", "origin", "main", "--tags"); };
+    rel("0.4.9"); g(tmp, "clone", "-q", origin, user); rel("0.5.0");
+    fs.mkdirSync(m);
+    expect((await checkForUpdate(user, m, { git: gitRunner(user) })).available).toBe(true);
+    g(user, "remote", "set-url", "origin", path.join(tmp, "gone.git"));
+    const s = await checkForUpdate(user, m, { git: gitRunner(user) });
+    expect(s.error).toMatch(/连不上 GitHub/);
+    expect(bannerFor(readStatus(m), readSettings(m), "0.4.9")?.version).toBe("0.5.0");
+  });
+});

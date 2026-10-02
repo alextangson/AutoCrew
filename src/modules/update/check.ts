@@ -56,7 +56,12 @@ export async function checkForUpdate(root: string, machineDir: string, deps: Che
   const current = localVersion(root);
   const checkedAt = (deps.now?.() ?? new Date()).toISOString();
   const fail = (error: string): UpdateStatus => {
-    const s: UpdateStatus = { checkedAt, current, available: false, error };
+    // 检查失败不抹掉已知的新版本（规格 S2）：看板上的提示留着，失败原因只写在设置页
+    const prev = readStatus(machineDir);
+    const keep = prev?.available && prev.latest && isNewer(prev.latest, current)
+      ? { available: true, latest: prev.latest, ...(prev.tag ? { tag: prev.tag } : {}), ...(prev.commit ? { commit: prev.commit } : {}), ...(prev.notes ? { notes: prev.notes } : {}) }
+      : { available: false };
+    const s: UpdateStatus = { checkedAt, current, ...keep, error };
     writeStatus(machineDir, s);
     return s;
   };
