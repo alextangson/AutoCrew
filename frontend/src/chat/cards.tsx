@@ -402,7 +402,7 @@ export function ChatCard({ card, nav }: { card: ChatCardShape; nav?: (route: Rou
     case "versions": return <VersionsCard data={card.data} />;
     case "angle_cards": return <AngleCardsCard data={card.data} />;
     case "focus_cleared": return <FocusClearedCard />;
-    // 本机 agent 的 v1 卡片（agent-cards.tsx）
+    // 旧对话里本机 agent 的卡片（agent-cards.tsx，只为让旧对话照常显示）
     case "agent_draft": return <AgentDraftCard data={card.data} nav={nav} background={Boolean((card as { background?: unknown }).background)} />;
     case "agent_task": return <AgentTaskCard data={card.data} />;
     case "agent_worklog": return <WorkLog items={parseWorkItems(card.data.items)} meta={card.data as WorkMeta} />;

@@ -3,7 +3,7 @@
  *
  * v1.1：气泡只显示人话（「写抖音稿 ·《测试》」）；选题编号、复用源稿、手写角度、「直接写」
  * 作为结构化 dispatch 随轮次传，服务端（src/desktop/dispatch-context.ts）拼成给模型的那段话——
- * 内置引擎和本机 agent 都吃同一份。原来拼在前端的提示词原样搬到了服务端。
+ * 内置引擎吃这一份。原来拼在前端的提示词原样搬到了服务端。
  */
 import { platformLabel, type Content, type Topic } from "../lib";
 

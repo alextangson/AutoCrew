@@ -202,8 +202,6 @@ export function App() {
             contentContext={route.view === "editor" ? { contentId: route.id } : undefined}
             view={{ route: route.view === "topic" ? "board" : route.view, ...(route.view === "campaigns" && campaignId ? { campaignId } : {}) }}
             nav={setRoute}
-            // 聊天回 needsSetup = 引擎压根没配（不是这条线坏了）：直接把引导请回来（用户主动要的，不看「先不配」）
-            onNeedsSetup={() => setGate("onboarding")}
           />
         </aside>
         <button
