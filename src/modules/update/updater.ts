@@ -68,12 +68,14 @@ function fileLogger(logFile: string): Log {
   return (line) => fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${line}\n`);
 }
 
+const GIT_STEP_WORDS: Record<string, string> = { merge: "切到新版本", reset: "退回旧版本", "rev-parse": "读当前版本", "ls-tree": "读文件清单" };
+
 async function gitStep(git: GitRunner, args: string[], log: Log): Promise<string> {
   log(`$ git ${args.join(" ")}`);
   const r = await git(args, { timeoutMs: 120_000 });
   if (r.stdout.trim()) log(r.stdout.trim());
   if (r.stderr.trim()) log(r.stderr.trim());
-  if (!r.ok) throw new Error(`git ${args[0]} 失败：${firstLine(r.stderr) || "没有输出"}`);
+  if (!r.ok) throw new Error(`${GIT_STEP_WORDS[args[0]] ?? "读写程序版本"}没成功，详情见日志`);
   return r.stdout.trim();
 }
 
@@ -218,7 +220,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     log(`!! 更新${busy ? "取消" : "失败"}：${reason}；开始退回 ${oldHead}`);
     try {
       const how = await rollback(job, oldHead, log, !busy, progress);
-      return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base,
+      return finish(job, { ok: false, outcome: how !== "not_restarted" && busy ? "cancelled" : how !== "not_restarted" && aborted ? "aborted" : "rolled_back", at: at(), ...base,
         message: how === "not_restarted"
           ? `更新失败，已退回代码；服务没有重启（有任务在跑），等它们结束后运行 npm run restart。原因：${reason}，完整记录在 ${job.logFile}`
           : busy

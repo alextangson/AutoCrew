@@ -8,7 +8,7 @@ import { firstLine, type GitRunner } from "./git.js";
 import { isGitInstall, NOT_GIT } from "./check.js";
 import { files } from "./state.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
-import { RunStore, chiefEditorHome, ownerAlive, agentStillThere, type RunRecord } from "../../desktop/chief-editor/run-store.js";
+import { RunStore, chiefEditorHome, ownerAlive, agentStillThere, startEpoch, type RunRecord } from "../../desktop/chief-editor/run-store.js";
 
 export const RUNNING_MESSAGE = "正在更新，等它跑完";
 export const UNMANAGED_MESSAGE = "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
@@ -77,7 +77,13 @@ export async function preflight(root: string, machineDir: string, target: string
 
 /* ── 锁 ───────────────────────────────────────────────────────────── */
 
-interface LockBody { pid: number; token: string; at: string; adopted?: string }
+interface LockBody { pid: number; token: string; at: string; adopted?: string; /** 持锁进程的启动时刻（UTC 秒）：pid 会被复用，两样都对上才算同一个进程 */ start?: number }
+
+/** 持锁进程还在：pid 在，且（记了启动时刻的话）启动时刻对得上——pid 被别的进程复用不算（e2e P3） */
+function ownerLive(body: LockBody, lookup: (pid: number) => number | null = startEpoch): boolean {
+  if (!pidAlive(body.pid)) return false;
+  return typeof body.start === "number" && body.start > 0 ? ownerAlive({ pid: body.pid, start: body.start }, lookup) : true;
+}
 
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
@@ -98,7 +104,7 @@ function lockState(machineDir: string, now = Date.now()): LockState {
   try { mtime = fs.statSync(file).mtimeMs; } catch { return { kind: "none" }; }
   const body = readLock(machineDir);
   if (!body) return now - mtime < UNREADABLE_LOCK_GRACE_MS ? { kind: "live", body: null } : { kind: "dead", token: null };
-  return pidAlive(body.pid) ? { kind: "live", body } : { kind: "dead", token: body.token };
+  return ownerLive(body) ? { kind: "live", body } : { kind: "dead", token: body.token };
 }
 
 /** 持锁进程的 pid（没有锁就是 null） */
@@ -132,7 +138,7 @@ export function acquireLock(machineDir: string, token: string, pid = process.pid
   const file = files(machineDir).lock;
   fs.mkdirSync(machineDir, { recursive: true });
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (publishLock(file, { pid, token, at: new Date().toISOString() })) return true;
+    if (publishLock(file, { pid, token, at: new Date().toISOString(), start: startEpoch(pid) ?? 0 })) return true;
     const state = lockState(machineDir);
     if (state.kind === "live") return false;
     if (state.kind === "dead" && !reclaimStale(file, state.token)) return false;
@@ -146,7 +152,7 @@ function reclaimStale(file: string, staleToken: string | null): boolean {
   catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return true; throw e; }
   let moved: LockBody | null = null;
   try { moved = JSON.parse(fs.readFileSync(tomb, "utf-8")) as LockBody; } catch { /* 读不出：改名前已核过它过了宽限期 */ }
-  if (moved && moved.token !== staleToken && pidAlive(moved.pid)) {
+  if (moved && moved.token !== staleToken && ownerLive(moved)) {
     // 改名前一瞬别人已经收回并拿了新锁：放回去（目标被占就说明又有人拿了，这把留给它）
     try { fs.linkSync(tomb, file); } catch { /* 已有新锁 */ }
     fs.rmSync(tomb, { force: true });
@@ -166,7 +172,7 @@ export function adoptLock(machineDir: string, token: string, nonce: string, pid 
   // 整份写进临时文件再 rename 覆盖（原子替换），不截断重写——别人任何时刻读到的都是完整的锁
   const file = files(machineDir).lock;
   const tmp = `${file}.adopt-${process.pid}-${randomBytes(6).toString("hex")}`;
-  fs.writeFileSync(tmp, JSON.stringify({ ...body, pid, adopted: nonce }));
+  fs.writeFileSync(tmp, JSON.stringify({ ...body, pid, start: startEpoch(pid) ?? 0, adopted: nonce }));
   try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
   return true;
 }

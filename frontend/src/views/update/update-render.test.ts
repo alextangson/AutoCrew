@@ -122,6 +122,15 @@ describe("更新没能开始", () => {
   });
 });
 
+describe("结果标题", () => {
+  it("有任务在跑而取消：标题是「更新取消了」，不是「更新失败」；中止：说中止", async () => {
+    await mount("./UpdateResultDialog", "UpdateResultDialog", { initial: { ok: false, outcome: "cancelled", from: "0.4.0", to: "0.5.0", message: "更新取消了：有 1 个任务正在跑。没有重启，仍是 0.4.0", log: "/l" } });
+    expect(el.querySelector("h3")?.textContent).toBe("更新取消了");
+    const { resultTitle } = await import("./UpdateResultDialog");
+    expect(resultTitle({ ok: false, outcome: "aborted", from: "0.4.0", to: "0.5.0", message: "", log: "" })).toBe("更新中止了，已退回 0.4.0");
+  });
+});
+
 describe("设置页「更新」一栏：分叉", () => {
   it("本地和发布版分叉：说分叉、说手动更新，不说「比最新发布版还新」", async () => {
     await mount("../SettingsUpdate", "SettingsUpdate", { initial: VIEW({ banner: null, status: { checkedAt: new Date().toISOString(), current: "0.4.9", latest: "0.5.0", available: false, reason: "diverged" } }) });

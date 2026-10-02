@@ -72,8 +72,8 @@ describe("装依赖时按 Ctrl-C", () => {
     process.kill(-child.pid!, "SIGINT"); // 和终端里按 Ctrl-C 一样：发给整个前台进程组
     await exited;
     expect(out).toContain("收到中止");
-    expect(out).toContain("RESULT rolled_back");
-    expect(readResult(machine)).toMatchObject({ ok: false, outcome: "rolled_back", message: expect.stringContaining("中止") });
+    expect(out).toContain("RESULT aborted");
+    expect(readResult(machine)).toMatchObject({ ok: false, outcome: "aborted", message: expect.stringContaining("中止") });
     expect(g(user, "rev-parse", "HEAD")).toBe(old);
     expect(fs.readFileSync(path.join(user, "node_modules", "marker"), "utf-8")).toBe("old");
     expect(lockHeld(machine)).toBe(false);

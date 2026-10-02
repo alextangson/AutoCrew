@@ -8,6 +8,17 @@ import { ackResult, loadUpdate, type UpdateResult } from "./update-api";
 import { NotesList } from "./UpdateBanner";
 import "./update.css";
 
+export function resultTitle(r: UpdateResult): string {
+  if (r.ok) return `已更新到 ${r.to}`;
+  switch (r.outcome) {
+    case "not_started": return "更新没能开始";
+    case "stuck": return "更新失败，需要你手动恢复";
+    case "cancelled": return "更新取消了";
+    case "aborted": return `更新中止了，已退回 ${r.from}`;
+    default: return `更新失败，已退回 ${r.from}`;
+  }
+}
+
 export function UpdateResultDialog(props: { initial?: UpdateResult | null }) {
   const [result, setResult] = useState<UpdateResult | null>(props.initial ?? null);
   const [error, setError] = useState("");
@@ -20,7 +31,7 @@ export function UpdateResultDialog(props: { initial?: UpdateResult | null }) {
     const r = await ackResult();
     if (r.ok) setResult(null); else setError(r.error);
   };
-  const title = result.ok ? `已更新到 ${result.to}` : result.outcome === "not_started" ? "更新没能开始" : result.outcome === "stuck" ? "更新失败，需要你手动恢复" : `更新失败，已退回 ${result.from}`;
+  const title = resultTitle(result);
   return <div className="upd-overlay" role="dialog" aria-label={title}>
     <div className="upd-overlay-card upd-result">
       <h3>{title}</h3>
