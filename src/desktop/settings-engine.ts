@@ -19,6 +19,7 @@ import {
   migrateEngineConfig,
   normalizeProviderBaseUrl,
   readEngineFile,
+  resolveEngineConfigPath,
   validateEngineGraph,
   type EngineAssignments,
   type EngineGraphDraft,
@@ -115,7 +116,9 @@ export async function getEngineSettings(payload: Record<string, unknown>): Promi
   }
   try {
     const dataDir = (payload._dataDir as string) || undefined;
-    const raw = await readEngineFile(path.join(getConfigDir(dataDir), "engine.json"));
+    // 与 loadEngineConfig 同一条回落：子工作区没有自己的 engine.json 时读默认工作区那份，
+    // 否则子工作区里引擎明明能用，设置页却说「没配」并误弹首次引导
+    const raw = await readEngineFile(await resolveEngineConfigPath(dataDir));
     const migrated = migrateEngineConfig(raw, engineEnv());
     const outcome = validateEngineGraph(migrated.draft);
     const cfg = outcome.config;

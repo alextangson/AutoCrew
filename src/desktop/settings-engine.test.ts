@@ -37,6 +37,15 @@ afterEach(async () => {
 });
 
 describe("getEngineSettings", () => {
+  it("子工作区没有自己的 engine.json：与 loadEngineConfig 一样读默认工作区那份，不误报未配置", async () => {
+    vi.stubEnv("AUTOCREW_DATA_DIR", testDir);
+    await fs.writeFile(enginePath(), JSON.stringify({ apiKey: "sk-shared-0001", baseUrl: "https://api.deepseek.com" }));
+    const sub = path.join(testDir, "workspaces", "ws-muse");
+    await fs.mkdir(sub, { recursive: true });
+    const res = await getEngineSettings({ _dataDir: sub });
+    expect((res.data as Record<string, unknown>).configured).toBe(true);
+  });
+
   it("没有文件也没有环境变量 → 未配置", async () => {
     const res = await getEngineSettings({ _dataDir: testDir });
     expect(res.ok).toBe(true);
