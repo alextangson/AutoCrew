@@ -72,8 +72,6 @@ import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.j
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
 import { handleMcpRequest, MCP_PROTOCOL_VERSION, normalizeSession } from "../mcp/server.js";
 import { hostAuthorize } from "../mcp/host-policy.js";
-import { startChiefEditor } from "../src/desktop/chief-editor/boot.js";
-import { serveAgentMcp } from "../src/desktop/chief-editor/mcp-route.js";
 
 const releaseLibraryLock = acquireLibraryLock();
 process.once("exit", releaseLibraryLock);
@@ -248,8 +246,6 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   // 2026-09-06 抓包实测：两家客户端都不要 `Mcp-Session-Id`、都容忍 `GET` 的 405，故不加会话/SSE。
   // 本地版沿用现有 Bearer/session 鉴权；商业远程部署可在此前置 OAuth 资源服务器。
   if (p === "/mcp") {
-    // 总编辑本机 agent 的会话令牌：资料库/归属/执行前审批都按服务端绑定走（chief-editor/mcp-route.ts）
-    if (await serveAgentMcp(req, res, readBody)) return;
     // identify 而非 authorize：401 判定与「这是谁」是同一次查表，分两次等于把 token 目录读两遍。
     const identity = AUTH.identify({ authorization: req.headers.authorization, cookie: req.headers.cookie });
     const authMethod = identity?.method;
@@ -496,9 +492,6 @@ server.on("close", () => {
   setVideoService(null);
   void running?.shutdown().catch((err) => console.error("[video] 停机失败:", err instanceof Error ? err.message : err));
 });
-
-// 总编辑本机 agent（2026-09-28 spec）：残留轮标中断、清孤儿进程组，再开门
-await startChiefEditor({ port: PORT, approvals: APPROVALS, broadcast: (data) => broadcast("agent", data) });
 
 // 先清孤儿再开门(SESSION-8 §3.1):上次崩溃遗留的「生成中」占位稿在接收任何
 // 新请求前标记为中断——listen 前执行,与本进程的新生成零竞态;失败不阻断启动。

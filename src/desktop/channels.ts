@@ -42,12 +42,7 @@ export const IPC_CHANNELS = [
   "chat:turn_status",
   // 右栏模型切换器的只读数据源：模型名 + 档位字，绝不含 apiKey/baseUrl
   "chat:model_options",
-  // 总编辑接本机 agent（2026-09-28 spec）：切换器就绪状态 / 刷新后重挂进行中轮次与待处理卡 / 审批与权限卡应答
-  "agent:backends",
-  "agent:pending",
-  "agent:answer",
-  // v1.1：对话级模型 / 思考强度 / 权限模式；对话改名
-  "agent:settings",
+  // v1.1：对话改名
   "conversations:rename",
   "settings:get",
   "settings:set",

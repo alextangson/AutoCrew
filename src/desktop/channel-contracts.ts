@@ -50,10 +50,6 @@ export const REQUIRED_FIELDS: Record<IpcChannel, readonly string[]> = {
   "chat:abort": ["turn_id", "client_id"],
   "chat:turn_status": ["turn_id"],
   "chat:model_options": [],
-  "agent:backends": [],
-  "agent:pending": [],
-  "agent:answer": ["ask_id", "decision"],
-  "agent:settings": ["conversation_id"],
   "conversations:rename": ["id", "title"],
   "settings:get": [],
   // providers 是可选数组（字段存在性判定：未提交保留、空数组清空、有数组走 merge）

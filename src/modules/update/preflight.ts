@@ -15,7 +15,7 @@ export const UNMANAGED_MESSAGE = "这次 AutoCrew 不是用 npm start 启动的�
 export const SERVE_MESSAGE = "这次 AutoCrew 是用 npm run serve 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
 export const UPDATING_MESSAGE = "AutoCrew 正在更新，稍后再试";
 
-/** 更新锁在手时，新的对话轮、本机 agent 轮、发布动作一律不开（已经在跑的不碰） */
+/** 更新锁在手时，新的对话轮、发布动作一律不开（已经在跑的不碰） */
 export function updatingRefusal(machineDir = getMachineDir()): string | null {
   return lockHeld(machineDir) ? UPDATING_MESSAGE : null;
 }

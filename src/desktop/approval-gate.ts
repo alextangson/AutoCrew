@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 /**
- * 发布类动作。`wechat_mp_draft` 是网页发布按钮那条；其余是总编辑本机 agent 经 MCP 调用时
- * 在执行前拦下的动作（chief-editor/publish-gate.ts 的枚举），键形如 `<工具>.<action>`。
+ * 发布类动作。`wechat_mp_draft` 是网页发布按钮那条；`<工具>.<action>` 形状留给别的执行前审批。
  */
 export type ApprovalAction = "wechat_mp_draft" | `${string}.${string}`;
 

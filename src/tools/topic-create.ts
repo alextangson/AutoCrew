@@ -76,7 +76,6 @@ export async function executeTopicCreate(params: Record<string, unknown>) {
 
 /**
  * 删选题（移入回收站，可恢复）。选题下还有稿件就拒绝并列出来：先处理稿件，血缘不能悬空。
- * 本机 agent 调用时还要先过总编辑的执行前审批（chief-editor/publish-gate.ts）。
  */
 async function deleteTopic(id: string, dataDir?: string) {
   if (!id) return { ok: false, error: "id is required for delete" };
