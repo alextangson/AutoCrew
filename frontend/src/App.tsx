@@ -15,6 +15,7 @@ import { Logs } from "./views/Logs";
 import { Campaigns } from "./views/Campaigns";
 import { Inbox } from "./views/Inbox";
 import { Onboarding } from "./views/Onboarding";
+import { loadConnect, shouldOnboard } from "./views/onboarding/connect-api";
 import { EngineDot } from "./views/EngineBanner";
 import { PreferenceBanner } from "./views/PreferenceBanner";
 import { ChatDock } from "./chat/ChatDock";
@@ -79,10 +80,11 @@ export function App() {
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const r = await invoke("settings:get");
+      // 引导出现的条件（onboarding-connect §2.1）：没配引擎、没接任何宿主、没点过「先不配」
+      const [r, connect] = await Promise.all([invoke("settings:get"), loadConnect()]);
       if (!alive) return;
       const data = r.ok ? (r.data as { configured?: boolean } | undefined) : undefined;
-      setGate(data?.configured === false ? "onboarding" : "ready");
+      setGate(data?.configured === false && shouldOnboard(false, connect) ? "onboarding" : "ready");
     })();
     return () => {
       alive = false;
@@ -92,12 +94,12 @@ export function App() {
   if (gate === "checking") {
     return (
       <div className="onboard">
-        <span className="mono muted">正在检查引擎配置…</span>
+        <span className="mono muted">正在准备…</span>
       </div>
     );
   }
   if (gate === "onboarding") {
-    return <Onboarding onDone={() => setGate("ready")} />;
+    return <Onboarding onDone={() => setGate("ready")} onOpenSettings={() => { setGate("ready"); setRoute({ view: "settings", tab: "models" }); }} />;
   }
 
   return (
@@ -200,8 +202,6 @@ export function App() {
             contentContext={route.view === "editor" ? { contentId: route.id } : undefined}
             view={{ route: route.view === "topic" ? "board" : route.view, ...(route.view === "campaigns" && campaignId ? { campaignId } : {}) }}
             nav={setRoute}
-            // 聊天回 needsSetup = 引擎压根没配（不是这条线坏了）：直接把首次开机卡请回来
-            onNeedsSetup={() => setGate("onboarding")}
           />
         </aside>
         <button

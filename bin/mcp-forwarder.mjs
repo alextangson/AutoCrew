@@ -66,6 +66,14 @@ export function newSessionNonce(now = Date.now(), random = Math.random) {
   return `sess-${now}-${random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * 点名了宿主、本机却还没有它的令牌：还没接上。直接在本地回一句怎么接（与「服务没有运行」同一条路传到宿主界面），
+ * 不发请求、更不回落到 server-token（仓库 .mcp.json 也带 AUTOCREW_HOST=claude-code，2026-10-02）。
+ */
+export function notConnectedMessage(host) {
+  return `${host} 还没接上 AutoCrew：在终端运行 autocrew connect ${host}，或在 AutoCrew 工作台的引导页（或 设置 → 接入更多 → 宿主）点「一键接上」，然后新开一个会话`;
+}
+
 function jsonRpcError(id, code, message) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
@@ -73,9 +81,10 @@ function jsonRpcError(id, code, message) {
 /**
  * 转发一条已解析的 JSON-RPC 消息，返回该写回 stdout 的对象（通知与 202 返回 null）。
  */
-export async function forwardMessage(message, { url, token, session, host = "claude-code", fetchImpl = fetch }) {
+export async function forwardMessage(message, { url, token, session, host = "claude-code", fetchImpl = fetch, requireToken = false }) {
   const id = message?.id;
   const isNotification = id === undefined || id === null;
+  if (requireToken && !token) return isNotification ? null : jsonRpcError(id, -32000, notConnectedMessage(host));
   let response;
   try {
     response = await fetchImpl(url, {
@@ -97,7 +106,7 @@ export async function forwardMessage(message, { url, token, session, host = "cla
   if (!response.ok) {
     // 401 是撤销 token 后的正常结局；其它非 2xx 一律照实说，不静默降级。
     const hint = response.status === 401
-      ? `AutoCrew 拒绝了这个令牌（可能已被撤销），重新执行 autocrew host ${host}`
+      ? `AutoCrew 拒绝了这个令牌（可能已被撤销或断开），重新执行 autocrew connect ${host}`
       : `AutoCrew 服务返回 HTTP ${response.status}`;
     return jsonRpcError(id, -32000, hint);
   }
@@ -130,7 +139,7 @@ export function runForwarder({
       return;
     }
     inflight.push(
-      forwardMessage(message, { url, token, session, host: env.AUTOCREW_HOST || "claude-code", fetchImpl }).then((reply) => {
+      forwardMessage(message, { url, token, session, host: env.AUTOCREW_HOST || "claude-code", fetchImpl, requireToken: Boolean(env.AUTOCREW_HOST) }).then((reply) => {
         if (reply) output.write(`${JSON.stringify(reply)}\n`);
       }),
     );

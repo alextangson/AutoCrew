@@ -27,7 +27,7 @@ describe("不带 id 的对话轮", () => {
     const pending = h["chat:turn"](CLI_TURN);
     await new Promise((r) => setTimeout(r, 10));
     expect(seen).toBe(1);
-    expect(busyWork(tmp, { runAlive: () => false, inProcessTurns: activeWorkCount })).toMatch(/正在跑/);
+    expect(busyWork(tmp, { inProcessTurns: activeWorkCount })).toMatch(/正在跑/);
     release();
     await pending;
     expect(activeWorkCount()).toBe(0);

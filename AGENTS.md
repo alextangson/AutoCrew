@@ -16,7 +16,7 @@ Several sessions run on this machine at once, each in its own worktree under `.c
 
 - `npm run check` = typecheck + lint + vitest. `npm run smoke` for end-to-end.
 - The local service runs on :4317 (`npm start` / `npm run restart`). `npm start` builds the frontend first; in a fresh worktree run `npm install` inside `frontend/` or it fails with a wall of TS7026 and never starts.
-- Before restarting :4317, check that no agent turn is running (`~/.autocrew/chief-editor/runs.json` entries with `status: running`, or recent work events). A restart kills an in-progress draft the founder is using; if something is running, ask first.
+- Before restarting :4317, check that nothing is running (recent work events, or `GET /api/update/busy`). A restart kills an in-progress draft the founder is using; if something is running, ask first.
 - Some changes (e.g. pending editorial-experiment files) only take effect after a :4317 restart — say so when you hand over instead of reporting them as live.
 - A memory or old doc claiming "fixed / landed" is not evidence; confirm with `git log --all -S '<key code>'` before building on it.
 

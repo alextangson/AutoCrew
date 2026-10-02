@@ -5,7 +5,10 @@
       "args": [
         "${CLAUDE_PLUGIN_ROOT:-.}/bin/autocrew.mjs",
         "mcp"
-      ]
+      ],
+      "env": {
+        "AUTOCREW_HOST": "claude-code"
+      }
     }
   }
 }

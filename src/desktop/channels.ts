@@ -42,12 +42,7 @@ export const IPC_CHANNELS = [
   "chat:turn_status",
   // 右栏模型切换器的只读数据源：模型名 + 档位字，绝不含 apiKey/baseUrl
   "chat:model_options",
-  // 总编辑接本机 agent（2026-09-28 spec）：切换器就绪状态 / 刷新后重挂进行中轮次与待处理卡 / 审批与权限卡应答
-  "agent:backends",
-  "agent:pending",
-  "agent:answer",
-  // v1.1：对话级模型 / 思考强度 / 权限模式；对话改名
-  "agent:settings",
+  // v1.1：对话改名
   "conversations:rename",
   "settings:get",
   "settings:set",
@@ -62,9 +57,6 @@ export const IPC_CHANNELS = [
   // 只出宿主名与时间戳，token 值一个字节都不进这条通道
   "hosts:list",
   "hosts:revoke",
-  // WorkBuddy 反向接入（spec W1–W8）：是否装了 / 一键连接（发令牌 + 合并 ~/.workbuddy/mcp.json）
-  "hosts:workbuddy_status",
-  "hosts:workbuddy_connect",
   "settings:search_get",
   "settings:search_set",
   "settings:publish_get",

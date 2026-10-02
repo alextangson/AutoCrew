@@ -21,7 +21,7 @@ import { registerAutocrewCapabilities } from "../../index.js";
 import { createContext } from "../runtime/context.js";
 import { EventBus } from "../runtime/events.js";
 import { ToolRunner } from "../runtime/tool-runner.js";
-import { ADOPTION_HOST_DENIED, CODEX_EDITOR_DENIED, CODEX_HANDOFF_NEEDS_CONFIRMATION, hostPolicy } from "../../mcp/host-policy.js";
+import { ADOPTION_HOST_DENIED, hostPolicy } from "../../mcp/host-policy.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -140,39 +140,16 @@ describe("persona ↔ capability consistency", () => {
  * 服务端按宿主限权（P6 §3.4）：人设文本挡不住模型照调，这张表挡得住。
  * 断言的是 `hostPolicy` 的放行结果，而不是人设里写了什么。
  */
-describe("host policy: codex editing station is register/status + read-only", () => {
-  const TABLE: Array<[host: string, tool: string, action: string | undefined, allowed: boolean]> = [
-    ["codex", "autocrew_video", "register", true],
-    ["codex", "autocrew_video", "status", true],
-    ["codex", "autocrew_video", "revoke", true],
-    ["codex", "autocrew_video", "match", true],
-    ["codex", "autocrew_video", "confirm", true],
-    ["codex", "autocrew_video", "start", false],
-    ["codex", "autocrew_video", "review", false],
-    ["codex", "autocrew_content", "get", true],
-    ["codex", "autocrew_content", "save", false],
-    ["codex", "autocrew_content", "transition", false],
-    ["codex", "autocrew_desk", "inbox", true],
-    ["codex", "autocrew_desk", "claim", true],
-    ["codex", "autocrew_desk", "release", true],
-    ["codex", "autocrew_status", undefined, true],
-    ["codex", "autocrew_status", "overview", true],
-    ["codex", "autocrew_writer", "submit", false],
-    ["codex", "autocrew_review_desk", "submit", false],
-    ["codex", "autocrew_editorial", "feedback", false],
-    ["codex", "autocrew_pre_publish", "check", false],
-    ["codex", "autocrew_publish", "publish", false],
-    ["codex", "autocrew_cover_review", "approve", false],
-    ["claude-code", "autocrew_writer", "submit", true],
-    ["claude-code", "autocrew_video", "handoff", true],
-    ["dsh", "autocrew_writer", "pack", true],
-    ["local-user", "autocrew_publish", "publish", true],
+describe("host policy: every named host has the same capabilities; only founder decisions are refused", () => {
+  // 2026-10-02 创始人：codex 与 claude-code 能力一样（写稿、封面、剪辑、发布准备）；「Claude 写、Codex 剪」只是习惯
+  const ACTIONS: Array<[tool: string, action: string]> = [
+    ["autocrew_workflow", "write"], ["autocrew_scout", "prepare"], ["autocrew_writer", "submit"], ["autocrew_review_desk", "submit"],
+    ["autocrew_cover_review", "create"], ["autocrew_video", "register"], ["autocrew_video", "handoff"], ["autocrew_content", "record"],
+    ["autocrew_publish", "check"], ["autocrew_publish", "ego_lite_prepare"], ["autocrew_asset", "add"],
   ];
-
-  it.each(TABLE)("%s · %s %s → allowed=%s", (host, tool, action, allowed) => {
-    const decision = hostPolicy(host, tool, action === undefined ? {} : { action });
-    expect(decision.ok).toBe(allowed);
-    if (!decision.ok) expect(decision.error).toBe(CODEX_EDITOR_DENIED);
+  it.each(ACTIONS)("codex 与 claude-code 一样放行 %s %s", (tool, action) => {
+    expect(hostPolicy("codex", tool, { action })).toEqual({ ok: true });
+    expect(hostPolicy("claude-code", tool, { action })).toEqual({ ok: true });
   });
 
   it("采纳不能由宿主代填：命名宿主调 autocrew_content adoption 一律拒，工作台放行（P6-e r3）", () => {
@@ -183,18 +160,6 @@ describe("host policy: codex editing station is register/status + read-only", ()
     }
     expect(hostPolicy("local-user", "autocrew_content", { action: "adoption" }).ok).toBe(true);
     expect(hostPolicy("claude-code", "autocrew_content", { action: "get" }).ok).toBe(true);
-  });
-
-  it("codex 的 handoff 只在带 confirmation_id（或撤回）时放行", () => {
-    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", content_id: "c" })).toMatchObject({ ok: false, error: CODEX_HANDOFF_NEEDS_CONFIRMATION, result: { code: "confirmation_required" } });
-    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", confirmation_id: "cfm-1" }).ok).toBe(true);
-    expect(hostPolicy("codex", "autocrew_video", { action: "handoff", revoke: true }).ok).toBe(true);
-  });
-
-  it("action 带空白照样按原词判；缺 action 的受限工具一律拒", () => {
-    expect(hostPolicy("codex", "autocrew_video", { action: " register " }).ok).toBe(true);
-    expect(hostPolicy("codex", "autocrew_video", {}).ok).toBe(false);
-    expect(hostPolicy("codex", "autocrew_content", { action: 1 }).ok).toBe(false);
   });
 
   it("剪辑工位人设点名的每个工具动作，服务端都放行（人设不许许诺被拒的能力）", () => {

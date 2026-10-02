@@ -17,6 +17,7 @@ import { executePublishCheck } from "../publish/review-gate/check.js";
 import { fakeJev, planEntry, planOf, registeredVideo } from "../publish/review-gate/testkit.js";
 import { founderProjectReview } from "../video/handoff/founder-review.js";
 import { decide, decideItem } from "./inbox-decide.js";
+import { founderDecision } from "./decisions.js";
 import { readInbox } from "./inbox-read.js";
 import { scopedId } from "./inbox.js";
 import { reopenScript } from "./reopen.js";
@@ -139,6 +140,15 @@ describe("单一决定入口：CAS（§3.1）", () => {
     await markedCut(c.id);
     const it0 = (await itemOf("cut:r1", c.id))!;
     expect(await decideItem({ content_id: c.id, item_id: it0.item_id, gen: it0.gen, action: "approve_cut", _host: "codex" }, env.dir)).toMatchObject({ ok: false, code: "founder_only" });
+  });
+
+  it("创始人的决定（审片、认稿、选封面、「我发了」）任何模型宿主都代替不了——codex 放开写稿后也一样", async () => {
+    const c = await editing();
+    for (const host of ["claude-code", "codex", "workbuddy", "dsh"]) {
+      for (const action of ["cut_approval", "approve_script", "cover_approval", "i_published"]) {
+        expect(await founderDecision(c.id, action, { _host: host, platform: "douyin" }, env.dir), `${host} ${action}`).toMatchObject({ ok: false, code: "founder_only" });
+      }
+    }
   });
 });
 
@@ -294,7 +304,7 @@ describe("请示（§5）", () => {
   });
 
   it("Codex allowlist：ask / answer_ask / withdraw_ask / mark_ready 放行", () => {
-    for (const action of ["ask", "answer_ask", "withdraw_ask", "mark_ready"]) expect(hostPolicy("codex", "autocrew_content", { action }, true)).toEqual({ ok: true });
+    for (const action of ["ask", "answer_ask", "withdraw_ask", "mark_ready"]) expect(hostPolicy("codex", "autocrew_content", { action })).toEqual({ ok: true });
   });
 });
 

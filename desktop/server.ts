@@ -6,6 +6,7 @@ import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
 import { detectInterrupted } from "../src/modules/update/interrupted.js";
+import { createConnectHandler } from "../src/desktop/connect-route.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
@@ -73,8 +74,6 @@ import { startManagedCampaignHost } from "../src/modules/campaign/managed-host.j
 import { startMetricsPullCycle } from "../src/desktop/metrics-pull-cycle.js";
 import { handleMcpRequest, MCP_PROTOCOL_VERSION, normalizeSession } from "../mcp/server.js";
 import { hostAuthorize } from "../mcp/host-policy.js";
-import { startChiefEditor } from "../src/desktop/chief-editor/boot.js";
-import { serveAgentMcp } from "../src/desktop/chief-editor/mcp-route.js";
 
 const releaseLibraryLock = acquireLibraryLock();
 process.once("exit", releaseLibraryLock);
@@ -209,6 +208,9 @@ const updateRoute = createUpdateHandler({
   launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()), via: launchVia() }),
 });
 
+// 一键接入宿主（onboarding-connect §3）：写宿主用户配置，只认同源浏览器会话
+const connectRoute = createConnectHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody });
+
 const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
   setSecurityHeaders(res);
   if (!hostAllowed(req)) { res.writeHead(403).end("bad host"); return; }
@@ -255,8 +257,6 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   // 2026-09-06 抓包实测：两家客户端都不要 `Mcp-Session-Id`、都容忍 `GET` 的 405，故不加会话/SSE。
   // 本地版沿用现有 Bearer/session 鉴权；商业远程部署可在此前置 OAuth 资源服务器。
   if (p === "/mcp") {
-    // 总编辑本机 agent 的会话令牌：资料库/归属/执行前审批都按服务端绑定走（chief-editor/mcp-route.ts）
-    if (await serveAgentMcp(req, res, readBody)) return;
     // identify 而非 authorize：401 判定与「这是谁」是同一次查表，分两次等于把 token 目录读两遍。
     const identity = AUTH.identify({ authorization: req.headers.authorization, cookie: req.headers.cookie });
     const authMethod = identity?.method;
@@ -285,7 +285,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
     try { request = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end("bad json"); return; }
     const mcpDataDir = await activeDataDir();
     const host = identity?.subject ?? LOCAL_SUBJECT;
-    // 按宿主限权（P6 §3.4）：codex 剪辑工位只放行登记与只读查询，其余宿主不受限。
+    // 按宿主限权（P6 §3.4）：命名宿主能力一样，只拒创始人自己的决定（见 mcp/host-policy.ts）。
     // 会话归因（P6 §3.8）：转发器每进程一个 nonce，Codex 直连可带可不带——只做诊断，缺省 unknown
     const response = await handleMcpRequest(request, {
       principal: { subject: host, plan: "local" },
@@ -413,6 +413,7 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
   if (await projectReview(req, res, url)) return;
   if (await board(req, res, url)) return;
   if (await updateRoute(req, res, url)) return;
+  if (await connectRoute(req, res, url)) return;
   if (await ruleApproval(req, res, url)) return;
   if (await publishPrefs(req, res, url)) return;
 
@@ -502,9 +503,6 @@ server.on("close", () => {
   setVideoService(null);
   void running?.shutdown().catch((err) => console.error("[video] 停机失败:", err instanceof Error ? err.message : err));
 });
-
-// 总编辑本机 agent（2026-09-28 spec）：残留轮标中断、清孤儿进程组，再开门
-await startChiefEditor({ port: PORT, approvals: APPROVALS, broadcast: (data) => broadcast("agent", data) });
 
 // 先清孤儿再开门(SESSION-8 §3.1):上次崩溃遗留的「生成中」占位稿在接收任何
 // 新请求前标记为中断——listen 前执行,与本进程的新生成零竞态;失败不阻断启动。

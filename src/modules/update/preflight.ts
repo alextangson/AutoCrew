@@ -1,6 +1,6 @@
 /**
  * 更新前的预检（self-update §3-8）与防重复的锁（§3-11）。任一不满足就不动手，回一句人话。
- * 「有没有人在跑」复用总编辑的轮次记录（runs.json）与它判断「主人还活着」的同一套逻辑。
+ * 「有没有人在跑」看本进程里的对话轮与长任务（总编辑本机 agent 删掉后，没有别的进程再写 runs.json）。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -10,14 +10,14 @@ import { firstLine, type GitRunner } from "./git.js";
 import { isGitInstall, NOT_GIT } from "./check.js";
 import { files } from "./state.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
-import { RunStore, chiefEditorHome, ownerAlive, agentStillThere, startEpoch, type RunRecord } from "../../desktop/chief-editor/run-store.js";
+import { ownerAlive, startEpoch } from "./process-start.js";
 
 export const RUNNING_MESSAGE = "正在更新，等它跑完";
 export const UNMANAGED_MESSAGE = "这次 AutoCrew 不是用 npm start 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
 export const SERVE_MESSAGE = "这次 AutoCrew 是用 npm run serve 启动的，没法自动重启。先在运行 AutoCrew 的终端里按 Ctrl-C 停掉，再运行 npm start，之后再点更新。";
 export const UPDATING_MESSAGE = "AutoCrew 正在更新，稍后再试";
 
-/** 更新锁在手时，新的对话轮、本机 agent 轮、发布动作一律不开（已经在跑的不碰） */
+/** 更新锁在手时，新的对话轮、发布动作一律不开（已经在跑的不碰） */
 export function updatingRefusal(machineDir = getMachineDir()): string | null {
   return lockHeld(machineDir) ? UPDATING_MESSAGE : null;
 }
@@ -26,8 +26,6 @@ export interface PreflightDeps {
   git: GitRunner;
   /** 本进程里的活跃对话轮（服务里传 activeTurnCount；命令行没有就是 0） */
   inProcessTurns?: () => number;
-  /** 轮次记录的「还在跑」判断，测试注入 */
-  runAlive?: (r: RunRecord) => boolean;
   /** 服务是不是由启动器（npm start）管着：不是就没法自动重启 */
   launcher?: () => Promise<{ running: boolean; managed: boolean; via?: "launcher" | "serve" | "other" }>;
   /** 命令行里问正在跑的服务有没有轮在跑（null = 空闲；抛 = 问不到） */
@@ -36,18 +34,11 @@ export interface PreflightDeps {
 
 export type Preflight = { ok: true } | { ok: false; code: string; reason: string };
 
-function defaultRunAlive(r: RunRecord): boolean {
-  return r.owner ? ownerAlive(r.owner) : agentStillThere(r.pid, r.command);
-}
-
-/** 正在跑的写稿 / 剪辑 / 发布轮（总编辑本机 agent 的记录 + 本进程的对话轮） */
-export function busyWork(machineDir: string, deps: Pick<PreflightDeps, "inProcessTurns" | "runAlive"> = {}): string | null {
-  const alive = deps.runAlive ?? defaultRunAlive;
-  const running = new RunStore(chiefEditorHome(machineDir), { pid: process.pid }).list()
-    .filter((r) => (r.status === "running" || r.status === "awaiting_approval") && alive(r));
+/** 正在跑的写稿 / 发布等任务（本进程的对话轮 + 后台长任务）。machineDir 留着给调用方保持签名不变 */
+export function busyWork(_machineDir: string, deps: Pick<PreflightDeps, "inProcessTurns"> = {}): string | null {
   const turns = deps.inProcessTurns?.() ?? 0;
-  if (running.length === 0 && turns === 0) return null;
-  return `有 ${running.length + turns} 个任务正在跑（写稿、剪辑或发布），等它们停下再更新`;
+  if (turns === 0) return null;
+  return `有 ${turns} 个任务正在跑（写稿或发布），等它们停下再更新`;
 }
 
 /** target = 要合到的提交（origin 公布的 tag 所指），不是本地 tag 名 */

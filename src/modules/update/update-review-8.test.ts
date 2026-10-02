@@ -92,7 +92,7 @@ describe("P2 长调用清单不许悄悄漏项", () => {
 
 import lockfile from "proper-lockfile";
 import { vi } from "vitest";
-import { startEpoch } from "../../desktop/chief-editor/run-store.js";
+import { startEpoch } from "./process-start.js";
 
 describe("P2 收回死锁时绝不挪开活锁（三方交错，确定性重放）", () => {
   it("B 看到死锁后、动手前，A 已收回并拿到新锁，C 正等着空位：A 的锁留着，B、C 都拿不到", () => {

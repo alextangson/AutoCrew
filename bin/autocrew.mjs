@@ -39,6 +39,8 @@ function printHelp() {
   autocrew runs           查看最近任务事件
   autocrew call           调用任意内部能力（channel --payload JSON）
   autocrew mcp            stdio ↔ 守护进程 /mcp 转发器（Claude Code 用）
+  autocrew connect        一键接上宿主（claude|codex|workbuddy）；--list 看谁接上了、上次使用时间
+  autocrew disconnect     断开宿主：删配置条目 + 撤销令牌
   autocrew host           接入宿主（codex|claude-code|dsh|workbuddy），打印接入步骤
                           --dir <path> 把人设写进该目录的 AGENTS.md/CLAUDE.md
                           --role editor-writer|cover 选哪一份人设
@@ -397,7 +399,7 @@ async function runDetachedUpdate(tsx) {
   return code;
 }
 
-/** 进程启动时刻（UTC 秒）；进程不在就是 null。与 src/desktop/chief-editor/run-store.ts 的 startEpoch 同一种读法 */
+/** 进程启动时刻（UTC 秒）；进程不在就是 null。与 src/modules/update/process-start.ts 的 startEpoch 同一种读法 */
 function startEpoch(pid) {
   const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8", env: { ...process.env, TZ: "UTC", LC_ALL: "C" } });
   const t = r.stdout?.trim() ? Date.parse(`${r.stdout.trim()} GMT`) : NaN;
@@ -567,6 +569,20 @@ switch (command) {
     process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
     break;
   }
+  case "connect":
+  case "disconnect": {
+    // 一键接入（onboarding-connect §3）：与引导页、设置页同一套实现
+    const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+    if (!fs.existsSync(tsx)) {
+      console.error(`缺少依赖。请先在 ${ROOT} 执行 npm install`);
+      process.exitCode = 1;
+      break;
+    }
+    const args = [path.join(ROOT, "scripts", "host-connect.mts"), command, ...process.argv.slice(process.argv.indexOf(command) + 1)];
+    const child = spawn(tsx, args, { cwd: ROOT, stdio: "inherit", env: process.env });
+    process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
+    break;
+  }
   case "doctor": {
     // 公众号发布依赖：脚本已收进仓库(vendor/wechat-format)，经 uv 运行。
     const vendorWechat = path.join(ROOT, "vendor", "wechat-format");
@@ -613,6 +629,13 @@ switch (command) {
     const tsResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "typesafe-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
     try { typesafe = JSON.parse((tsResult.stdout || "").trim().split("\n").pop() || "{}"); } catch { typesafe = { configured: false, reachable: false, error: "检查脚本没跑成" }; }
 
+    // 宿主接没接（与 autocrew connect --list 同一套检测，不花额度）；查不了就如实写「查不了」
+    let hosts = [];
+    let hostsError = "";
+    const hostsResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "host-connect.mts"), "connect", "--list", "--json"], { encoding: "utf8", env: process.env, timeout: 30_000 });
+    try { hosts = JSON.parse(hostsResult.stdout || "[]"); } catch { hostsError = "宿主检测脚本没跑成"; }
+    const hostConnected = (h) => hosts.find((x) => x.host === h)?.connected === true;
+
     const checks = {
       node: process.version,
       server: await serverUp(),
@@ -623,6 +646,9 @@ switch (command) {
       storageConnected: storage.connected === true,
       engineConfigured: Boolean(configDir && fs.existsSync(path.join(configDir, "engine.json"))),
       mcpServer: fs.existsSync(path.join(ROOT, "mcp", "server.ts")),
+      hostClaude: hostConnected("claude"),
+      hostCodex: hostConnected("codex"),
+      hostWorkbuddy: hostConnected("workbuddy"),
       uv: uvOk,
       wechatPublishScript: fs.existsSync(wechatScript),
       wechatConfig: fs.existsSync(wechatConfig),
@@ -646,6 +672,10 @@ switch (command) {
     printResult({ ...checks, inbox: inbox.checks ?? [] }, () =>
       Object.entries(checks).map(([key, value]) => `${value ? "✓" : "✕"} ${key}: ${value}`).join("\n")
       + `\n${inbox.text}`
+      + (checks.engineConfigured ? "" : "\n  没配钥匙：深调研、选题雷达、复盘、人设、每日摘要暂时不可用；在接上的 Claude Code / Codex / WorkBuddy 里写稿不受影响（设置→模型 里随时补）")
+      + (hostsError ? `\n  → ${hostsError}，宿主接没接未知（autocrew connect --list 重查）` : "")
+      + hosts.filter((h) => h.unverified).map((h) => `\n  → ${h.label} 写进去了但没连上：${h.unverified}（再试一次：autocrew connect ${h.host}）`).join("")
+      + (checks.hostClaude || checks.hostCodex || checks.hostWorkbuddy ? "" : "\n  → 还没接任何宿主：autocrew connect claude（或 codex / workbuddy），也可以在 设置→接入更多→宿主 里点「接上」")
       + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
       + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh")
       + (imageRelay ? "" : "\n  → 生图(封面/正文图)建议配中转：设置→发布 填生图 Key/端点(OpenAI 兼容)，原生生图不依赖外部脚本")
@@ -660,7 +690,8 @@ switch (command) {
         ? ""
         : `\n  → ASR 模型未就绪(当前 ${asrStatus})：设置页点「预热 ASR 模型」或调 video:asr_warmup，首跑约 1GB 下载${uvOk ? "" : "；它也要 uv"}`),
     );
-    if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
+    // 没配引擎不算失败（onboarding-connect §4）：本机 AI 写稿不需要钥匙
+    if (!checks.frontendBuilt || !checks.dependencies
       || !checks.uv || !checks.wechatPublishScript || inbox.failed) process.exitCode = 1;
     break;
   }

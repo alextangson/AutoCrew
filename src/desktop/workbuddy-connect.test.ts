@@ -5,8 +5,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hostPolicy, hostListsTool, ADOPTION_HOST_DENIED } from "../../mcp/host-policy.js";
 import { KNOWN_HOSTS } from "./host-cli.js";
-import { lookupHostToken, revokeHostToken } from "./host-tokens.js";
-import { autocrewEntry, connectWorkbuddy, mergeWorkbuddyMcp, stableNodePath, workbuddyInstalled, workbuddyPrompt } from "./workbuddy-connect.js";
+import { ensureHostToken, lookupHostToken, revokeHostToken } from "./host-tokens.js";
+import { autocrewEntry, mergeWorkbuddyMcp, stableNodePath, workbuddyPrompt } from "./workbuddy-connect.js";
 import { forwardMessage, resolveForwarderToken } from "../../bin/mcp-forwarder.mjs";
 
 let home: string;
@@ -28,11 +28,12 @@ describe("WorkBuddy 接入：mcp.json 合并", () => {
     fs.mkdirSync(path.dirname(file()), { recursive: true });
     const before = { mcpServers: { chatcut_desktop: { command: "/x/chatcut-mcp", env: { K: "v" } } }, other: 1 };
     fs.writeFileSync(file(), JSON.stringify(before));
-    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: true, outcome: "added" });
+    const r = mergeWorkbuddyMcp(home, entry);
+    expect(r).toMatchObject({ ok: true, outcome: "added" });
     const after = JSON.parse(fs.readFileSync(file(), "utf-8"));
     expect(after.mcpServers.chatcut_desktop).toEqual(before.mcpServers.chatcut_desktop);
     expect(after.other).toBe(1);
-    expect(JSON.parse(fs.readFileSync(`${file()}.autocrew-bak`, "utf-8"))).toEqual(before);
+    expect(JSON.parse(fs.readFileSync((r as { backup: string }).backup, "utf-8"))).toEqual(before);
   });
   it("W4 解析失败：不写、报错说在哪、绝不覆盖", () => {
     fs.mkdirSync(path.dirname(file()), { recursive: true });
@@ -42,7 +43,7 @@ describe("WorkBuddy 接入：mcp.json 合并", () => {
     expect(!r.ok && r.error).toMatch(/第 \d+ 行附近/);
     expect(!r.ok && r.error).not.toContain("sk-123");
     expect(fs.readFileSync(file(), "utf-8")).toContain("sk-123");
-    expect(fs.existsSync(`${file()}.autocrew-bak`)).toBe(false);
+    expect(fs.readdirSync(path.dirname(file())).filter((f) => f.includes(".autocrew-bak"))).toEqual([]);
   });
   it("W5 已有 autocrew：原地更新成当前路径，不重复加", () => {
     mergeWorkbuddyMcp(home, autocrewEntry("/old/place", "/usr/bin/node"));
@@ -55,16 +56,8 @@ describe("WorkBuddy 接入：mcp.json 合并", () => {
 });
 
 describe("WorkBuddy 接入：连接动作与宿主身份", () => {
-  it("W1 没装：不写、说没找到；装了：发令牌 + 合并 + 提示重启（W6）", () => {
-    expect(connectWorkbuddy({ home, dataDir, installed: false, entry })).toMatchObject({ ok: false, error: expect.stringContaining("没找到 WorkBuddy") });
-    expect(fs.existsSync(file())).toBe(false);
-    const r = connectWorkbuddy({ home, dataDir, installed: true, entry });
-    expect(r).toMatchObject({ ok: true, message: expect.stringContaining("重启 WorkBuddy 后生效") });
-    expect(fs.existsSync(path.join(dataDir, "tokens", "workbuddy.token"))).toBe(true);
-    expect(workbuddyInstalled(["/nonexistent/WorkBuddy.app"])).toBe(false);
-  });
   it("W7 撤销：转发器只认 workbuddy 的令牌，撤销后不回落到本机全能令牌", () => {
-    connectWorkbuddy({ home, dataDir, installed: true, entry });
+    ensureHostToken("workbuddy", dataDir);
     fs.writeFileSync(path.join(dataDir, "server-token"), "local-all-powerful");
     const env = { AUTOCREW_HOST: "workbuddy" };
     const token = resolveForwarderToken(dataDir, env);
@@ -72,7 +65,7 @@ describe("WorkBuddy 接入：连接动作与宿主身份", () => {
     expect(lookupHostToken(token, dataDir)).toBe("workbuddy");
     revokeHostToken("workbuddy", dataDir);
     expect(resolveForwarderToken(dataDir, env)).toBe("");
-    // 没点名宿主的老路径（Claude Code 的 .mcp.json）照旧回落
+    // 没点名宿主的老路径（autocrew status --brief 等本机命令）照旧回落
     expect(resolveForwarderToken(dataDir, {})).toBe("local-all-powerful");
   });
   it("权限同 claude-code：不限工具，但采纳硬拒照旧", () => {
@@ -95,9 +88,9 @@ describe("WorkBuddy 接入：连接动作与宿主身份", () => {
 });
 
 describe("W7 撤销后的提示按宿主", () => {
-  it("401 提示「重新执行 autocrew host workbuddy」", async () => {
+  it("401 提示「重新执行 autocrew connect workbuddy」", async () => {
     const r = await forwardMessage({ jsonrpc: "2.0", id: 1, method: "ping" }, { url: "http://x", token: "t", host: "workbuddy", fetchImpl: async () => new Response("", { status: 401 }) });
-    expect(JSON.stringify(r)).toContain("autocrew host workbuddy");
+    expect(JSON.stringify(r)).toContain("autocrew connect workbuddy");
   });
 });
 
@@ -106,14 +99,14 @@ describe("评审 WorkBuddy P1-3 / P2-6 / P2-7 / P2-9 / P2-8", () => {
     mergeWorkbuddyMcp(home, entry);
     expect(fs.statSync(file()).mode & 0o777).toBe(0o600);
     fs.chmodSync(file(), 0o600);
-    mergeWorkbuddyMcp(home, entry);
+    const r = mergeWorkbuddyMcp(home, autocrewEntry("/moved", "/usr/bin/node"));
     expect(fs.statSync(file()).mode & 0o777).toBe(0o600);
-    expect(fs.statSync(`${file()}.autocrew-bak`).mode & 0o777).toBe(0o600);
+    expect(fs.statSync((r as { backup: string }).backup).mode & 0o777).toBe(0o600);
     fs.chmodSync(file(), 0o640);
     mergeWorkbuddyMcp(home, entry);
     expect(fs.statSync(file()).mode & 0o777).toBe(0o640);
   });
-  it("P2-6：mcp.json 或备份是软链接 → 拒绝，不跟着链接写", () => {
+  it("P2-6：mcp.json 是软链接 → 拒绝；旧的固定备份名是软链接也不跟着写（备份现在按时间戳另起新文件）", () => {
     const victim = path.join(home, "victim.txt");
     fs.writeFileSync(victim, "untouched");
     fs.mkdirSync(path.dirname(file()), { recursive: true });
@@ -123,7 +116,7 @@ describe("评审 WorkBuddy P1-3 / P2-6 / P2-7 / P2-9 / P2-8", () => {
     fs.rmSync(file());
     fs.writeFileSync(file(), "{}");
     fs.symlinkSync(victim, `${file()}.autocrew-bak`);
-    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: false });
+    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: true });
     expect(fs.readFileSync(victim, "utf-8")).toBe("untouched");
     expect(fs.readdirSync(path.dirname(file())).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
@@ -140,8 +133,8 @@ describe("评审 WorkBuddy P1-3 / P2-6 / P2-7 / P2-9 / P2-8", () => {
     expect(e.env).toEqual({ AUTOCREW_HOST: "workbuddy", AUTOCREW_PORT: "4327", AUTOCREW_LOCAL_DIR: "/data" });
     expect(autocrewEntry("/repo", "/usr/bin/node", {}).env).toEqual({ AUTOCREW_HOST: "workbuddy" });
   });
-  it("P2-8：点名宿主时继承来的 AUTOCREW_TOKEN 不作数；Claude Code 的老路径（没点名）照旧优先用它", () => {
-    connectWorkbuddy({ home, dataDir, installed: true, entry });
+  it("P2-8：点名宿主时继承来的 AUTOCREW_TOKEN 不作数；没点名宿主的老路径照旧优先用它", () => {
+    ensureHostToken("workbuddy", dataDir);
     revokeHostToken("workbuddy", dataDir);
     expect(resolveForwarderToken(dataDir, { AUTOCREW_HOST: "workbuddy", AUTOCREW_TOKEN: "generic" })).toBe("");
     expect(resolveForwarderToken(dataDir, { AUTOCREW_TOKEN: "generic" })).toBe("generic");

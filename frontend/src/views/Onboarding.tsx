@@ -1,146 +1,102 @@
 /**
- * 首次开机（P2 spec §5.1）——一张卡问完：端点 + Key +（可选）搜索 Key，
- * 按钮「测试并进入」当场发一次极小调用。
- *
- * 两条产品决定（§9 创始人已确认）：
- * 1. **探针不通也放人进去**。锁在门外的人修不了配置；进去之后顶栏横幅接着说这条线还坏着。
- * 2. **搜索 Key 同屏但明确可选**，且一句话说清不配会怎样——它不是必填项，
- *    但等到深调研点不动才知道要它，就太晚了。
+ * 新引导（onboarding-connect §2）：两步 + 完成页。
+ *   1. 你想让哪个 AI 来写稿？（本机 AI 卡片 / DeepSeek 钥匙 / 高级）
+ *   2. 接上（每个选中的宿主一键接上，核对真连上）
+ *   完成：去哪开工 + 哪几样暂时还要一把 DeepSeek 钥匙。
+ * 「先不配」存本机目录（O1），刷新、重启都不再弹。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "../transport";
-import {
-  ENDPOINT_PRESETS,
-  applyPreset,
-  initialForm,
-  presetOf,
-  runOnboardingSave,
-  type EndpointKind,
-  type OnboardingSaveResult,
-} from "./onboarding-lib";
+import { loadConnect, skipOnboarding, type ConnectResult, type HostId, type HostStatus } from "./onboarding/connect-api";
+import { PickStep } from "./onboarding/PickStep";
+import { ConnectStep } from "./onboarding/ConnectStep";
+import "./onboarding/onboarding.css";
 
-export function Onboarding(props: { onDone: () => void }) {
-  const [form, setForm] = useState(initialForm);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<OnboardingSaveResult | null>(null);
-  const preset = presetOf(form.kind);
+type Step = "pick" | "connect" | "done";
 
-  const submit = async () => {
-    setBusy(true);
-    const r = await runOnboardingSave(invoke, form);
-    setResult(r);
-    setBusy(false);
-    if (r.engineSaved && !r.probeError) props.onDone();
-  };
+/** 开工提示按能力查表，不按宿主名写死：能力来自服务端的 host-policy（canWrite），以后放开谁写稿不用改这里 */
+const START_HINT = { write: "帮我写一条……", edit: "把这条视频的成片登记到 AutoCrew" } as const;
 
+export function DonePage(props: { connected: HostStatus[]; engineReady: boolean; onEnter: () => void; onOpenSettings: () => void }) {
+  const first = props.connected[0];
+  const anyWriter = props.connected.some((h) => h.canWrite);
   return (
-    <div className="onboard">
-      <div className="onboard-card onboard-wide">
-        <div className="onboard-brand serif">AutoCrew 编辑部</div>
-        <p className="onboard-welcome muted">
-          欢迎。跑通「调研 → 立意 → 写稿」只要一把模型钥匙——选一个端点，粘一把 Key，就能开工。
+    <>
+      <h1 className="ob-title">{first ? "接好了" : props.engineReady ? "钥匙存好了" : "先进去看看"}</h1>
+      {first
+        ? props.connected.map((h) => <p key={h.host} className="ob-sub">去 {h.label} 里说「{START_HINT[h.canWrite ? "write" : "edit"]}」{h.canWrite ? "就能开工。" : "。"}</p>)
+        : <p className="ob-sub">{props.engineReady ? "在右边的总编辑里说「帮我写一条……」就能开工。" : "之后在「设置 · 接入更多 · 宿主」里随时接上本机 AI。"}</p>}
+      {first && !anyWriter && !props.engineReady && (
+        <p className="ob-sub">写稿要接 Claude Code 或 WorkBuddy，或者在 设置 → 模型 里填钥匙用内置引擎。</p>
+      )}
+      {!props.engineReady && (
+        <p className="ob-note">
+          深调研、选题雷达、复盘、人设、每日摘要这几样要用你自己的模型钥匙（DeepSeek 最省事）。现在可以先跳过，以后在设置里补。{" "}
+          <button className="btn-ghost ob-inline" onClick={props.onOpenSettings}>去设置里填钥匙</button>
         </p>
+      )}
+      <div className="ob-actions"><button className="primary" onClick={props.onEnter}>进入 AutoCrew</button></div>
+    </>
+  );
+}
 
-        <div className="onboard-kinds">
-          {ENDPOINT_PRESETS.map((p) => (
-            <label key={p.kind} className={form.kind === p.kind ? "onboard-kind on" : "onboard-kind"}>
-              <input
-                type="radio"
-                name="endpoint-kind"
-                checked={form.kind === p.kind}
-                onChange={() => setForm((f) => applyPreset(f, p.kind as EndpointKind))}
-              />
-              <span>{p.label}</span>
-            </label>
-          ))}
-        </div>
-        <p className="onboard-hint mono muted">{preset.hint}</p>
+export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => void }) {
+  const [step, setStep] = useState<Step>("pick");
+  const [hosts, setHosts] = useState<HostStatus[] | null>(null);
+  const [loadError, setLoadError] = useState<string | undefined>();
+  const [picked, setPicked] = useState<HostId[]>([]);
+  const [results, setResults] = useState<Partial<Record<HostId, ConnectResult>>>({});
+  const [engineReady, setEngineReady] = useState(false);
+  const [skipError, setSkipError] = useState<string | null>(null);
+  const [afterSkipError, setAfterSkipError] = useState<() => void>(() => props.onDone);
 
-        {preset.needsAddress && (
-          <label className="field">
-            <span className="field-label">端点地址</span>
-            <input
-              type="text"
-              value={form.baseUrl}
-              placeholder="https://code.newcli.com/claude/ultra"
-              onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))}
-            />
-          </label>
+  const load = async () => {
+    const r = await loadConnect();
+    if (!r.ok) { setLoadError(r.error); setHosts((h) => h ?? []); return; }
+    setLoadError(undefined);
+    setHosts(r.data.hosts);
+    // 默认勾上找到且能用的 Claude（推荐）
+    setPicked((p) => (p.length ? p : r.data.hosts.filter((h) => h.host === "claude" && h.found).map((h) => h.host)));
+  };
+  useEffect(() => { void load(); }, []);
+
+  const engineSaved = async () => {
+    const r = await invoke("settings:get");
+    setEngineReady(Boolean(r.ok && (r.data as { configured?: boolean } | undefined)?.configured));
+  };
+  /** 离开引导：没接上任何宿主、也没存钥匙，就记下「先不配」，刷新不再弹（O1，Codex 评审 P2-5） */
+  const leave = async (then: () => void) => {
+    const anyConnected = Object.values(results).some((r) => r?.verified);
+    if (!anyConnected && !engineReady) {
+      const r = await skipOnboarding();
+      if (!r.ok) {
+        setSkipError(`没记住「先不配」：${r.error}。这次先放你进去，下次打开可能还会看到这一页。`);
+        setAfterSkipError(() => then);
+        return;
+      }
+    }
+    then();
+  };
+  const skip = () => leave(props.onDone);
+
+  if (!hosts) return <div className="ob"><span className="ob-sub">正在看这台电脑上装了哪些 AI…</span></div>;
+  const connected = hosts.filter((h) => results[h.host]?.verified);
+  return (
+    <div className="ob">
+      <div className="ob-panel">
+        <div className="ob-brand">AutoCrew</div>
+        {step === "pick" && (
+          <PickStep hosts={hosts} picked={picked} setPicked={setPicked} onRefresh={() => void load()} onHostUpdate={(host, patch) => setHosts((list) => list?.map((h) => (h.host === host ? { ...h, ...patch } : h)) ?? list)} onNext={() => setStep("connect")}
+            onSkip={() => void skip()} onEngineSaved={() => void engineSaved()} engineReady={engineReady} onFinish={() => setStep("done")}
+            {...(loadError ? { loadError } : {})} />
         )}
-        <label className="field">
-          <span className="field-label">API Key</span>
-          <input
-            type="password"
-            value={form.apiKey}
-            placeholder="粘贴端点给你的 key"
-            onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
-          />
-        </label>
-        <div className="onboard-pair">
-          <label className="field">
-            <span className="field-label">强模型</span>
-            <input
-              type="text"
-              value={form.strong}
-              placeholder="写稿、审稿用的那档"
-              onChange={(e) => setForm((f) => ({ ...f, strong: e.target.value }))}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">快模型</span>
-            <input
-              type="text"
-              value={form.fast}
-              placeholder="对话、打分用的那档"
-              onChange={(e) => setForm((f) => ({ ...f, fast: e.target.value }))}
-            />
-          </label>
-        </div>
-        <p className="onboard-hint mono muted">协议（OpenAI / Anthropic）按 key 前缀与域名自动识别，不用选。</p>
-
-        <div className="onboard-optional">
-          <div className="mono muted">搜索 Key · 可选</div>
-          <p className="muted">不填也能写，但深调研不可用、稿子不会补证据。之后在「设置 · 接入更多」里随时补。</p>
-          <div className="onboard-pair">
-            <label className="field">
-              <span className="field-label">来源</span>
-              <select
-                value={form.searchProvider}
-                onChange={(e) => setForm((f) => ({ ...f, searchProvider: e.target.value as "bocha" | "tavily" }))}
-              >
-                <option value="bocha">博查 bocha（中文优先）</option>
-                <option value="tavily">Tavily（英文圈）</option>
-              </select>
-            </label>
-            <label className="field">
-              <span className="field-label">搜索 Key</span>
-              <input
-                type="password"
-                value={form.searchKey}
-                placeholder="留空跳过"
-                onChange={(e) => setForm((f) => ({ ...f, searchKey: e.target.value }))}
-              />
-            </label>
-          </div>
-        </div>
-
-        {result?.engineError && <p className="set-test-fail mono">✗ {result.engineError}</p>}
-        {result?.probeError && <p className="set-test-fail mono">✗ {result.probeError}</p>}
-        {result?.searchError && <p className="set-test-fail mono">✗ 搜索 Key 没保存成功：{result.searchError}（引擎已保存，不影响写稿）</p>}
-
-        <button className="primary" disabled={busy} onClick={() => void submit()}>
-          {busy ? "测试中…" : "测试并进入"}
-        </button>
-        {result?.probeError ? (
-          // 不锁门（§9 第 2 条）：进去之后顶栏横幅会一直说这条线还坏着
-          <button className="onboard-skip" onClick={props.onDone}>
-            先进去再说
-          </button>
-        ) : (
-          // 内置引擎没配置不挡本机 agent（总编辑接本机 agent 边界 14）：总编辑可以直接用本机 Claude
-          <button className="onboard-skip" onClick={props.onDone}>
-            先不配，用本机 Claude 当总编辑
-          </button>
+        {step === "connect" && (
+          <ConnectStep hosts={hosts} picked={picked} results={results} onResult={(r) => setResults((x) => ({ ...x, [r.host]: r }))}
+            onBack={() => setStep("pick")} onNext={() => setStep("done")} />
+        )}
+        {step === "done" && <DonePage connected={connected} engineReady={engineReady} onEnter={() => void leave(props.onDone)} onOpenSettings={() => void leave(props.onOpenSettings ?? props.onDone)} />}
+        {skipError && (
+          <div className="ob-actions"><p className="ob-fail">{skipError}</p><button onClick={afterSkipError}>进去</button></div>
         )}
       </div>
     </div>

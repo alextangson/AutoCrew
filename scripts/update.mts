@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { getMachineDir } from "../src/storage/storage-roots.js";
 import { gitRunner } from "../src/modules/update/git.js";
 import { readStatus } from "../src/modules/update/state.js";
-import { adoptLock, busyWork, releaseLock } from "../src/modules/update/preflight.js";
+import { adoptLock, releaseLock } from "../src/modules/update/preflight.js";
 import { launcherState, serverBusy } from "../src/modules/update/remote.js";
 import { prepareUpdate } from "../src/modules/update/start.js";
 import { newLogFile, realSteps, runUpdate } from "../src/modules/update/updater.js";
@@ -27,8 +27,8 @@ async function serverUp(): Promise<boolean> {
   try { const r = await fetch(`http://127.0.0.1:${PORT}/`, { signal: AbortSignal.timeout(1_000) }); return r.status < 500; } catch { return false; }
 }
 
-/** 重启前的「还有没有任务在跑」：本机 agent 轮次记录 + 服务进程里的对话轮（服务在跑才问） */
-const busyNow = (serverRunning: boolean) => async () => busyWork(MACHINE) ?? (serverRunning ? await serverBusy(PORT) : null);
+/** 重启前的「还有没有任务在跑」：只有服务进程里有对话轮与长任务（服务在跑才问） */
+const busyNow = (serverRunning: boolean) => async () => (serverRunning ? await serverBusy(PORT) : null);
 
 async function fromServer(): Promise<number> {
   const tag = arg("tag"), commit = arg("commit"), token = arg("lock-token"), nonce = arg("adopt-nonce"), log = arg("log");

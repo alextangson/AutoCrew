@@ -20,8 +20,7 @@
  * 环里每一处引用都在函数体内、没有模块求值期的调用，ESM 的实时绑定能正常解开——
  * **别在本模块的顶层做任何会立即执行的事**（顺手加一句 `await`/自启动就会踩进 TDZ）。
  */
-import { appendTurn, getConversation } from "../storage/conversation-store.js";
-import { isLocalBackend } from "./chief-editor/backends.js";
+import { getConversation } from "../storage/conversation-store.js";
 import { getTopic } from "../storage/local-store.js";
 import type { AngleCard } from "../modules/research/brief-store.js";
 import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
@@ -32,7 +31,7 @@ import {
   type ResearchJobKind,
 } from "../modules/research/research-job-store.js";
 import { PERSPECTIVE_TASK_BOOKS } from "../modules/research/research-perspectives.js";
-import { enqueueConversationWrite, runPersistedChatTurn } from "./chat-persist.js";
+import { runPersistedChatTurn } from "./chat-persist.js";
 import { emitEngineEvent } from "./event-hub.js";
 import { hasActiveTurnForConversation } from "./turn-registry.js";
 
@@ -206,8 +205,6 @@ export async function runResearchFollowup(job: ResearchJob, deps: FollowupDeps):
     // 会话已删就静默放弃：回收站里的对话不值得为一条回报复活
     const conv = await getConversation(conversationId, deps.dataDir);
     if (!conv) return "skipped";
-    // 本机 agent 的对话（总编辑接本机 agent spec §地基 11）：只追加确定性的结果卡，不自动启动模型轮
-    if (isLocalBackend(conv.meta.backend)) return await appendResultCard(job, conversationId, deps);
     if (!(await waitUntilFree(conversationId, deps))) {
       warn(`会话 ${conversationId} 十分钟内一直在忙,放弃回报（简报仍在选题卡上）：${job.topicId}`);
       return "skipped";
@@ -232,16 +229,6 @@ export async function runResearchFollowup(job: ResearchJob, deps: FollowupDeps):
   } finally {
     inFlight.delete(job.topicId);
   }
-}
-
-/** 本机后端对话的回流：一张调研结果卡，落盘即告知前端；不经任何模型 */
-async function appendResultCard(job: ResearchJob, conversationId: string, deps: FollowupDeps): Promise<FollowupOutcome> {
-  const card = { type: "agent_task", data: { tool: "autocrew_research", action: "deep_dive", taskId: job.topicId, status: "调研已完成，简报在选题卡上" } };
-  const meta = await enqueueConversationWrite(conversationId, () => appendTurn(conversationId, { content: "【调研回报】", origin: "system" }, { content: `选题 ${job.topicId} 的调研已完成。需要继续的话直接跟我说。`, cards: [card] }, deps.dataDir));
-  if (!meta) return "skipped";
-  await markJobFollowedUp(job.topicId, new Date().toISOString(), deps.dataDir);
-  deps.onDelivered?.({ conversationId, topicId: job.topicId });
-  return "delivered";
 }
 
 /** 回流轮自己失败：日志 + 工作日志各留一份，不重试。事实（简报）没丢，只是没人来说 */

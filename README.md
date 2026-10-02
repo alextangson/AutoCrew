@@ -63,11 +63,11 @@ npm run restart
 
 想收到新版本邮件：在 GitHub 仓库页点 Watch → Custom → Releases。
 
-> Git 只同步程序。通过「设置 → 用户资料库」迁移历史稿件或打开已有资料库；同一资料库同时由一台电脑运行 AutoCrew 服务。本机的模型、发布连接与访问令牌分别配置，不随资料库同步，也不要提交到仓库。
+> Git 只同步程序。通过「设置 → 模型 → 用户资料库」迁移历史稿件或打开已有资料库；同一资料库同时由一台电脑运行 AutoCrew 服务。本机的模型、发布连接与访问令牌分别配置，不随资料库同步，也不要提交到仓库。
 
 ## 用户资料库
 
-在「设置 → 用户资料库」选择本地文件夹或已挂载的 NAS 路径。程序、用户运营资料和本机连接配置分开保存；迁移先复制和校验，重启后才切换，原资料保留。
+在「设置 → 模型 → 用户资料库」选择本地文件夹或已挂载的 NAS 路径。程序、用户运营资料和本机连接配置分开保存；迁移先复制和校验，重启后才切换，原资料保留。
 
 未设置资料库的老用户继续使用原数据位置。新资料库中的定位、选题、稿件、素材、制作工程、发布记录和复盘归属独立运营主体；密钥和服务访问令牌留在本机。NAS 断连会明确报错，同一资料库只允许一个守护服务写入。
 
@@ -77,30 +77,17 @@ npm run restart
 
 **通过 Claude Desktop、Claude Code 或 Codex 的 MCP 写作不需要配置后台模型。** 默认使用当前宿主的模型能力与额度，AutoCrew 保存任务、资料与稿件，并执行引文和格式检查。下面的配置仅供 AutoCrew 工作台、显式 `execution=engine` / `review=engine` 或已授权的无人值守后台任务使用。第三方搜索及图像、视频服务仍有各自的额度和计费，不包含在宿主模型订阅中。
 
-### 用本机 Claude 或 Codex 当总编辑（不配端点也能用）
+### 工作台里的对话用你自己的钥匙
 
-工作台右栏的总编辑可以直接交给你电脑上的 Claude Code 或 Codex 来跑：用你自己的订阅，设置页一个端点都不用填。
-
-1. 装好并登录：Claude Code 在终端运行 `claude` 按提示登录；Codex 运行 `codex login`。两个都装也行，按对话切换。
-2. 在 AutoCrew 目录运行 `npm install`（会装上 ACP 适配器 `@agentclientprotocol/claude-agent-acp` 和 `@zed-industries/codex-acp`），再 `npm start`。
-3. 首次开机卡点「先不配，用本机 Claude 当总编辑」；之后在右栏输入框下方的后端切换器里选「本机 Claude」或「本机 Codex」。第一次使用会先弹一段权限说明。
-
-须知：
-
-- **怎么跑**：每轮在本机起一个 agent，通过 AutoCrew 的 MCP 调工具。工作目录是 `~/.autocrew/chief-editor/`，只挂 AutoCrew 的 MCP，不加载你全局配置的其他 MCP 和插件；Claude 还会带上仓库自带技能。
-- **按对话设置**：输入框下方可以选模型、思考强度和权限模式（每次问 / 本对话都允许 / 全部放行），改了下一轮生效。
-- **权限**：本机 agent 和你自己开 Claude Code 一样，能读写文件、跑 shell。AutoCrew 只防误操作：跑命令、写文件先弹卡问你；发布、删稿、删选题在任何权限模式下都要你在卡片上批准。它防不住网页或资料里的恶意指令诱导。
-- **代理**：如果 `~/.claude/settings.json` 的 `env` 里配了 `ANTHROPIC_BASE_URL`，本机 agent 也走这个代理（只带 `ANTHROPIC_*` 和 `CLAUDE_CODE_*` 两类变量）。代理没开会直接报错，不会绕过它直连。代理是 Headroom 时，会自动挂上它的 MCP，让 agent 能取回被压缩的原文。
-- **Codex 的额外约束**：不管 `~/.codex/config.toml` 怎么写，每个会话都强制「跑命令前先问」和「只能写工作目录、shell 不联网」；`config.toml` 里的 MCP 服务一个都不启动，登录和模型提供方照常使用；AutoCrew 只用启动参数覆盖，不改你的配置文件。
-- **Codex 的已知限制**：当前适配器版本不上报思考强度，这一项显示「默认」；`~/.codex/AGENTS.md` 仍会加载；`config.toml` 里有名字带点号、空格或引号的 MCP 服务时会拒绝启动并说明原因（没法可靠地关掉它们）。
-- **出问题时**：没装、没登录会在切换器上标出来，发送时给修法；绝不自动改用内置引擎。
-- **WorkBuddy**：不在切换器里，走反方向接入——让 WorkBuddy 自己连 AutoCrew，见下文「接宿主」。
+工作台右栏的总编辑只跑在内置引擎上，用你自己的模型钥匙（DeepSeek 最省事）；没配钥匙时会话列表和旧对话照常能看，只有输入框换成一句「在 设置 → 模型 里填」。
+想用 Claude Code、Codex 或 WorkBuddy，就把它们接上 AutoCrew（见下文「接宿主」），在它们自己的窗口里说「帮我写一条……」。
+2026-10-02 前用「本机 Claude / 本机 Codex」聊过的对话照常能打开和阅读，接着聊会走内置引擎。
 
 ### 内置引擎：端点表
 
 配置只有**一张端点表**：填过的每个端点（地址 + Key + 模型清单）在里面存一份，主端点、备用端点、四个岗位、对话里的模型切换器全部指向它——同一把 Key 不用填四遍。
 
-要用内置引擎，打开工作台的「设置 → 引擎 · 模型服务」，最少填一个端点：主端点必填，其余全可缺省。只用本机 Claude 当总编辑可以一个都不填。
+要用内置引擎，打开工作台的「设置 → 模型 → 模型 · 端点与岗位」，最少填一个端点：主端点必填，其余全可缺省。只靠接上的 Claude Code / Codex / WorkBuddy 写稿可以一个都不填（但工作台右栏的对话要用它）；深调研、选题雷达、复盘、人设、每日摘要要用你自己的钥匙（DeepSeek 最省事）。
 
 | 位置 | 作用 | 缺省 |
 |---|---|---|
@@ -175,7 +162,7 @@ npm run restart
 - 手改文件时：某条端点配错了只丢那一条（启动 warn 一行），**同一个 id 出现多次则该 id 全部失效**（首赢末赢都是静默换端点，最贵的那种错）。
 - 「打开配置文件」按钮会用系统默认应用打开当前实际生效的 `engine.json`。
 
-正文配图与公众号草稿箱还需要在「设置 → 发布」配置图像服务，以及公众号 AppID/AppSecret（如果要实际推草稿箱）。密钥不会回显到页面。
+正文配图与公众号草稿箱还需要在「设置 → 接入更多」的「生图 · 封面」「公众号发布」两张卡里配置图像服务，以及公众号 AppID/AppSecret（如果要实际推草稿箱）。密钥不会回显到页面。
 
 
 ## 推荐工作流
@@ -239,8 +226,13 @@ autocrew call topics:list --payload '{}'
 # Claude Code 用的 stdio 转发器（把 JSON-RPC 转发给守护进程，不另起服务）
 autocrew mcp
 
-# 接一个宿主：建命名令牌 + 打印接入步骤
-autocrew host codex
+# 一键接上宿主（与工作台按钮同一套实现）
+autocrew connect claude        # 或 codex / workbuddy
+autocrew connect --list        # 谁接上了、上次使用时间
+autocrew disconnect codex      # 删配置条目 + 撤销令牌
+
+# 打印某个宿主的接入说明（dsh 等）；--dir 把人设写进工作目录
+autocrew host dsh
 ```
 
 ## MCP 与 OpenClaw
@@ -253,7 +245,7 @@ AutoCrew 的网页、CLI、OpenClaw 和 MCP 使用同一套能力注册表。
 
 `autocrew_insights prepare` 读取并冻结现有定位、内容样本、生产进度、分平台数据和开放假设；当前宿主分析后调用 `submit`，得到完整报告与本地文件。报告包含证据、数据缺口、最多3项关键判断，以及负责岗位、优先级、具体动作、交付物、验证指标与前提。`list/get` 可回看或恢复。普通洞察不调用后台模型、不自动抓新数据，也不自动派工、改稿或发布；执行建议仍走原工作流。
 
-默认观察30天，可传 `days`（1—366）、`platform`、`focus`。累计值与期间增量分开，缺失字段不补0，待复核数据不进入基线，只有正好第7天的日快照才计入D+7。现有Codex剪辑工位权限不扩大。更新后需在安全重启服务、宿主刷新MCP工具列表后使用。详见 [账号洞察设计与验收](docs/account-insights-design.md)。
+默认观察30天，可传 `days`（1—366）、`platform`、`focus`。累计值与期间增量分开，缺失字段不补0，待复核数据不进入基线，只有正好第7天的日快照才计入D+7。更新后需在安全重启服务、宿主刷新MCP工具列表后使用。详见 [账号洞察设计与验收](docs/account-insights-design.md)。
 
 ### 宿主写稿
 
@@ -286,28 +278,38 @@ MCP 初始化自带流程说明，亦可读取 `autocrew://writing-guide` 或使
 
 ### 接宿主（Claude Code / Codex / WorkBuddy / dsh）
 
-**只有一个进程写盘。** `http://127.0.0.1:4317/mcp` 是唯一的 MCP 传输：Codex 的远端客户端直连它，
-Claude Code 的 `autocrew mcp` 只是一个 stdio 转发器（把 JSON-RPC 原样转发到同一个端点）。
-守护进程没起，转发器就报「AutoCrew 服务没有运行，先在仓库里执行 npm start」——不会有第二个进程
-在背后改同一批稿子。
+**只有一个进程写盘。** `http://127.0.0.1:4317/mcp` 是唯一的 MCP 传输；宿主里登记的 `autocrew mcp` 只是一个 stdio 转发器，
+把 JSON-RPC 原样转发到这个端点。守护进程没起，转发器就报「AutoCrew 服务没有运行，先在仓库里执行 npm start」——
+不会有第二个进程在背后改同一批稿子。
 
-每个宿主一把命名令牌：
+#### 一键接入
+
+首次打开工作台的引导会列出这台电脑上找到的 Claude Code、Codex、WorkBuddy，选好后点「一键接上」；之后在
+「设置 → 接入更多 → 宿主」里每个宿主一行，可以接上、断开、看上次使用时间。命令行是同一套实现：
 
 ```bash
-npm start                 # 先起服务（令牌目录由它创建）
-autocrew host codex       # 或 claude-code / workbuddy / dsh
+npm start                      # 先起服务
+autocrew connect claude        # 或 codex / workbuddy
+autocrew connect --list
+autocrew disconnect claude
 ```
 
-命令会建好 `~/.autocrew/tokens/<host>.token`（0600）并打印接入步骤。**这个文件等于你的编辑部钥匙**
-——能读到它的人能调用全部 AutoCrew 工具；撤销就是删掉它，宿主下一次调用立刻 401。
-服务端按令牌文件名认出是哪个宿主，稿子上记的「谁写的」就来自它。
+接入做三件事：发这个宿主自己的令牌（`~/.autocrew/tokens/<host>.token`，0600，不写进宿主配置）；把 `autocrew`
+登记进宿主的**用户级**配置；再核对真的连上了（宿主自己的列表命令说连上，且 AutoCrew 收到了它的调用）才打勾。
+改任何配置文件前先整份备份到 `<文件>.autocrew-bak-<时间>`（每次一份新的，不覆盖旧的）；原来已有别的用户级 `autocrew` 条目会直接替换，结果里写明备份位置；已经是 AutoCrew 自己那一条就不动。
+仓库里的 `.mcp.json`（项目级，也是 Claude Code 插件的 MCP 配置）同样带 `AUTOCREW_HOST=claude-code`，和用户级那一条用同一把令牌：
+在仓库目录里开 Claude Code、或装了插件，也要**先接一次**（`autocrew connect claude-code` 或点「一键接上」），否则会提示还没接上；
+断开 Claude Code 后两条一起连不上。
 
-| 宿主 | 怎么接 |
+| 宿主 | 一键接入实际做的事 |
 | --- | --- |
-| Claude Code | 仓库里的 `.mcp.json` 已经指向转发器，起了服务就能用 |
-| Codex | `export AUTOCREW_MCP_TOKEN=$(cat ~/.autocrew/tokens/codex.token)`，再 `codex mcp add autocrew --url http://127.0.0.1:4317/mcp --bearer-token-env-var AUTOCREW_MCP_TOKEN` |
-| WorkBuddy | `autocrew host workbuddy`，或工作台「设置 → 接入更多」的宿主卡上点「连接 WorkBuddy」：发令牌，并把一条 `autocrew` 合并进 `~/.workbuddy/mcp.json`（写前备份到 `mcp.json.autocrew-bak`，别的条目原样保留，文件读不懂就不写）。重启 WorkBuddy 后生效。之后在稿件页或对话栏点「复制给 WorkBuddy」，把那句话粘进 WorkBuddy 就能接着处理这篇稿 |
-| dsh | 走进程内工具桥，见 `adapters/dsh/README.md` |
+| Claude Code | `claude mcp add --scope user autocrew -e AUTOCREW_HOST=claude-code -- <node> <仓库>/bin/autocrew.mjs mcp`。命令行和 **Claude 桌面版的 Code 页**都读这份用户级配置，新开一个会话就能用。PATH 上没有 `claude` 时用桌面版自带的那个；都找不到才直接改 `~/.claude.json`（先备份），此时要新开会话，Claude 开着时可能把改动盖掉 |
+| Codex | `codex mcp add autocrew --env AUTOCREW_HOST=codex -- <node> <仓库>/bin/autocrew.mjs mcp`，不再需要 export 环境变量。Codex 和 Claude Code 能力一样：写稿、审稿、剪辑、发布准备都能做；审片、认稿、选封面、「我发了」只有你在工作台点 |
+| WorkBuddy | 把一条 `autocrew` 合并进 `~/.workbuddy/mcp.json`（别的条目原样保留，文件读不懂就不写）。重启 WorkBuddy 后生效。之后在稿件页或对话栏点「复制给 WorkBuddy」，把那句话粘进 WorkBuddy 就能接着处理这篇稿 |
+| dsh | 走进程内工具桥，见 `adapters/dsh/README.md`；`autocrew host dsh` 打印步骤 |
+
+断开 = 从宿主配置里删掉 `autocrew`（同样先备份）+ 撤销令牌。登记时带了 `AUTOCREW_HOST` 的转发器只认这个宿主的令牌，
+撤销后就连不上，不会回落到老的 `server-token`。服务端按令牌认出是哪个宿主，稿子上记的「谁写的」就来自它。
 
 Codex 提醒：`codex exec`（非交互）会自动取消 MCP 工具调用，除非加
 `--dangerously-bypass-approvals-and-sandbox`（openai/codex #24135、#16685）。日常用交互式会话。

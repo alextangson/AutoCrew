@@ -164,7 +164,7 @@ describe("P2 服务本来没开：也要起一次新版做健康检查", () => {
   }, 40_000);
 });
 
-import { startEpoch } from "../../desktop/chief-editor/run-store.js";
+import { startEpoch } from "./process-start.js";
 import { QuiesceError } from "./updater.js";
 
 describe("P2 更新进行中，启动器不许启动 / 停止 / 重启", () => {

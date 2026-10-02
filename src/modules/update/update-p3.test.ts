@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireLock, lockHeld } from "./preflight.js";
-import { startEpoch } from "../../desktop/chief-editor/run-store.js";
+import { startEpoch } from "./process-start.js";
 import { realSteps } from "./updater.js";
 
 let tmp: string;
