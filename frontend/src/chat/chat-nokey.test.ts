@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-/** 右栏只走内置引擎（2026-10-02）：没配钥匙只显示一句「去设置里填」；配了就是普通对话，没有后端切换器。 */
+/** 右栏只走内置引擎（2026-10-02）：没配钥匙时旧对话照常能看，只有输入框换成「去设置里填钥匙」；配了就是普通对话，没有后端切换器。 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -10,7 +10,8 @@ vi.mock("../transport", () => ({
   invoke: async (ch: string) => {
     calls.push(ch);
     if (ch === "settings:get") return { ok: true, data: { configured } };
-    if (ch === "conversations:list") return { ok: true, data: { conversations: [] } };
+    if (ch === "conversations:list") return { ok: true, data: { conversations: [{ id: "conv-1-old", title: "本机 Claude 聊过的那段", updatedAt: "2026-09-30T00:00:00Z", turns: 1 }] } };
+    if (ch === "conversations:get") return { ok: true, data: { messages: [{ role: "user", content: "帮我写一条" }, { role: "assistant", content: "写好了，在编辑器里打开" }] } };
     if (ch === "chat:model_options") return { ok: true, data: { options: [] } };
     return { ok: true, data: {} };
   },
@@ -34,12 +35,14 @@ async function mount(nav = vi.fn()) {
 }
 
 describe("右栏", () => {
-  it("没配钥匙：只有一句话和一个去设置的链接，别的都不出", async () => {
+  it("没配钥匙：会话列表和旧对话照常能看，只有输入框换成去设置填钥匙的那句话", async () => {
     configured = false;
     const nav = await mount();
-    expect(el.textContent?.replace(/\s+/g, "")).toBe("聊天用你自己的模型钥匙，在设置→模型里填");
+    expect(el.textContent).toContain("写好了，在编辑器里打开");
+    expect(el.textContent).toContain("本机 Claude 聊过的那段");
     expect(el.querySelector("textarea")).toBeNull();
-    await act(async () => (el.querySelector("a") as HTMLAnchorElement).click());
+    expect(el.querySelector(".chat-nokey")?.textContent?.replace(/\s+/g, "")).toBe("聊天用你自己的模型钥匙，在设置→模型里填");
+    await act(async () => (el.querySelector(".chat-nokey a") as HTMLAnchorElement).click());
     expect(nav).toHaveBeenCalledWith({ view: "settings", tab: "models" });
   });
 
@@ -47,7 +50,7 @@ describe("右栏", () => {
     configured = true;
     await mount();
     expect(el.querySelector("textarea")).toBeTruthy();
-    expect(el.textContent).not.toMatch(/本机|内置引擎|后端/);
+    expect(el.textContent).not.toMatch(/内置引擎|后端|本机 agent/);
     expect(calls.some((c) => c.startsWith("agent:"))).toBe(false);
   });
 });

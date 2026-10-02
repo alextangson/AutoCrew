@@ -529,18 +529,6 @@ export function ChatDock(props: {
     ? (convs.find((c) => c.id === activeConversationId)?.title ?? "当前会话")
     : "新会话";
 
-  if (keyMissing) {
-    return (
-      <div className="chat chat-nokey">
-        <p className="muted">
-          聊天用你自己的模型钥匙，在{" "}
-          <a href="#" onClick={(e) => { e.preventDefault(); props.nav?.({ view: "settings", tab: "models" }); }}>设置 → 模型</a>
-          {" "}里填
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="chat">
       <div className="chat-head mono">
@@ -635,60 +623,71 @@ export function ChatDock(props: {
           </div>
         )}
       </div>
-      <div className="chat-compose">
-        <textarea
-          className="chat-input"
-          value={input}
-          rows={2}
-          placeholder={props.contentContext
-            ? "说修改要求，如：开头更直接，删掉第三段（Enter 发送）"
-            : "跟总编辑说…修改某篇稿前请先在看板打开它"}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            // 输入法合成中(拼音未上屏)时回车只上屏候选,不发送——isComposing 拦住。
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              void send(input);
-            }
-          }}
-        />
-        <div className="chat-compose-bar">
-          <div className="chat-controls">
-          {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置；但读取失败要留着并说原因 */}
-          {(modelOptions.length > 1 || modelError) && (
-            <PickerButton
-              className="chat-model-picker"
-              label={modelError ? "模型清单读不到" : modelTriggerLabel(modelOptions, modelChoice)}
-              title={modelError || "这一轮对话用哪个模型"}
-              disabled={busy}
-              placement="up"
-              groups={modelGroups}
-              value={modelChoice}
-              onPick={(id) => {
-                setModelChoice(id);
-                writeModelChoice(id);
-              }}
-              searchPlaceholder="搜模型…"
-              error={modelError}
-              footer="只影响总编辑对话；写稿 / 调研 / 复盘各走自己的专线"
-            />
-          )}
-          </div>
-          {busy ? (
-            <button
-              title="停止这一轮（已投递的后台任务会继续跑）"
-              disabled={stopping || !turnIdRef.current}
-              onClick={() => void stopTurn()}
-            >
-              {stopping ? "正在停…" : "停止"}
-            </button>
-          ) : (
-            <button className="primary" onClick={() => void send(input)}>
-              发送
-            </button>
-          )}
+      {keyMissing ? (
+        // 没配钥匙：旧对话照常能看（spec §2.4），只把输入框换成去设置填钥匙
+        <div className="chat-compose chat-nokey">
+          <p className="muted">
+            聊天用你自己的模型钥匙，在{" "}
+            <a href="#" onClick={(e) => { e.preventDefault(); props.nav?.({ view: "settings", tab: "models" }); }}>设置 → 模型</a>
+            {" "}里填
+          </p>
         </div>
-      </div>
+      ) : (
+      <div className="chat-compose">
+          <textarea
+            className="chat-input"
+            value={input}
+            rows={2}
+            placeholder={props.contentContext
+              ? "说修改要求，如：开头更直接，删掉第三段（Enter 发送）"
+              : "跟总编辑说…修改某篇稿前请先在看板打开它"}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              // 输入法合成中(拼音未上屏)时回车只上屏候选,不发送——isComposing 拦住。
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void send(input);
+              }
+            }}
+          />
+          <div className="chat-compose-bar">
+            <div className="chat-controls">
+            {/* 只有一档（或引擎没配）时不出现——没得选就不该占位置；但读取失败要留着并说原因 */}
+            {(modelOptions.length > 1 || modelError) && (
+              <PickerButton
+                className="chat-model-picker"
+                label={modelError ? "模型清单读不到" : modelTriggerLabel(modelOptions, modelChoice)}
+                title={modelError || "这一轮对话用哪个模型"}
+                disabled={busy}
+                placement="up"
+                groups={modelGroups}
+                value={modelChoice}
+                onPick={(id) => {
+                  setModelChoice(id);
+                  writeModelChoice(id);
+                }}
+                searchPlaceholder="搜模型…"
+                error={modelError}
+                footer="只影响总编辑对话；写稿 / 调研 / 复盘各走自己的专线"
+              />
+            )}
+            </div>
+            {busy ? (
+              <button
+                title="停止这一轮（已投递的后台任务会继续跑）"
+                disabled={stopping || !turnIdRef.current}
+                onClick={() => void stopTurn()}
+              >
+                {stopping ? "正在停…" : "停止"}
+              </button>
+            ) : (
+              <button className="primary" onClick={() => void send(input)}>
+                发送
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
