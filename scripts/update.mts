@@ -13,10 +13,14 @@ import { launcherState, serverBusy } from "../src/modules/update/remote.js";
 import { prepareUpdate } from "../src/modules/update/start.js";
 import { newLogFile, realSteps, runUpdate } from "../src/modules/update/updater.js";
 import { localVersion } from "../src/modules/update/check.js";
+import { installAbortHandlers } from "../src/modules/update/abort.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MACHINE = getMachineDir();
 const arg = (name: string) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined; };
+// Ctrl-C / SIGTERM：中止并正常退回，写完结果、放了锁再退出（e2e P1-3）
+const abort = installAbortHandlers();
+const ABORT = abort.signal;
 const PORT = Number(arg("port") ?? process.env.AUTOCREW_PORT) || 4317;
 
 async function serverUp(): Promise<boolean> {
@@ -35,7 +39,7 @@ async function fromServer(): Promise<number> {
     const result = await runUpdate({
       root: ROOT, machineDir: MACHINE, tag, commit, from: localVersion(ROOT), to: tag.replace(/^v/, ""),
       ...(status?.tag === tag && status.notes ? { notes: status.notes } : {}),
-      git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: true, busy: busyNow(true) }), logFile: log,
+      git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: true, busy: busyNow(true) }), logFile: log, signal: ABORT,
     });
     return result.ok ? 0 : 1;
   } finally { releaseLock(MACHINE, token); }
@@ -55,7 +59,7 @@ async function fromCli(): Promise<number> {
   console.log(`开始更新 ${prep.from} → ${prep.to}，大约 1 分钟；记录写在 ${log}`);
   try {
     const result = await runUpdate({ root: ROOT, machineDir: MACHINE, tag: prep.tag, commit: prep.commit, from: prep.from, to: prep.to, notes: prep.notes,
-      git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: running, busy: busyNow(running) }), logFile: log });
+      git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: running, busy: busyNow(running) }), logFile: log, signal: ABORT });
     console.log(result.message);
     if (result.manualCommands) console.log(result.manualCommands.join("\n"));
     for (const n of result.ok ? prep.notes : []) for (const t of n.todo) console.log(`需要你做的（${n.version}）：${t}`);
@@ -63,4 +67,8 @@ async function fromCli(): Promise<number> {
   } finally { releaseLock(MACHINE, prep.token); }
 }
 
-process.exitCode = process.argv.includes("--from-server") ? await fromServer() : await fromCli();
+try {
+  process.exitCode = process.argv.includes("--from-server") ? await fromServer() : await fromCli();
+} finally {
+  abort.dispose();
+}

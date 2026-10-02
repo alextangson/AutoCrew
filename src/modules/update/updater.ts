@@ -20,7 +20,8 @@ export interface UpdateSteps {
   quiesce: (log: Log) => Promise<void>;
   /** 服务确实不在了（端口没人听）：更新已经停过它时，退回直接把旧版启动起来，不再问忙不忙 */
   serviceDown: () => Promise<boolean>;
-  install: (log: Log) => Promise<void>;
+  /** 第二个参数：中止信号（Ctrl-C）——装依赖、构建这种长步骤收到就结束子进程 */
+  install: (log: Log, signal?: AbortSignal) => Promise<void>;
   /** 确认没人在跑、马上重启前：把新构建的前端换上（没有就跳过） */
   activate?: (log: Log) => Promise<void>;
   /** 退回时不靠网络换回旧依赖 / 旧前端；有它就不再跑 install + build（e2e P1-2） */
@@ -29,7 +30,7 @@ export interface UpdateSteps {
   cleanup?: (log: Log) => Promise<void>;
   /** 手动恢复时换回旧依赖的命令（不需要网络） */
   manualRestore?: () => string[];
-  build: (log: Log) => Promise<void>;
+  build: (log: Log, signal?: AbortSignal) => Promise<void>;
   restart: (log: Log) => Promise<void>;
   health: (log: Log) => Promise<void>;
 }
@@ -47,9 +48,15 @@ export interface UpdateJob {
   steps: UpdateSteps;
   logFile: string;
   now?: () => Date;
+  /** Ctrl-C / SIGTERM：在关键步骤之间检查，收到就走正常退回（e2e P1-3） */
+  signal?: AbortSignal;
 }
 
 export class QuiesceError extends Error {}
+
+/** 用户中止（Ctrl-C / SIGTERM）：走正常退回 */
+export class AbortedError extends Error {}
+export const ABORT_REASON = "你中止了更新（Ctrl-C）";
 
 export function newLogFile(machineDir: string, now = new Date()): string {
   const stamp = now.toISOString().replace(/[:.]/g, "-");
@@ -107,6 +114,8 @@ async function trackedChanges(git: GitRunner): Promise<string> {
 }
 
 async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Progress): Promise<void> {
+  const checkpoint = () => { if (job.signal?.aborted) throw new AbortedError(ABORT_REASON); };
+  checkpoint();
   // 预检之后到这里可能有人改了程序文件：合并前再查一次（Codex 审第 5 轮 P1）
   const dirty = await trackedChanges(job.git);
   if (dirty) throw new NotStartedError(`程序文件刚刚有了本地改动（${firstLine(dirty)}…），自动更新会覆盖它们`);
@@ -115,9 +124,9 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   const head = await gitStep(job.git, ["rev-parse", "HEAD"], log);
   if (head === oldHead) throw new NotStartedError("合并后版本没有变化");
   progress.movedTo = head;
-  log("== 安装依赖"); await job.steps.install(log);
-  log("== 构建前端"); await job.steps.build(log);
-  log("== 确认没有任务在跑"); await job.steps.quiesce(log);
+  log("== 安装依赖"); await job.steps.install(log, job.signal); checkpoint();
+  log("== 构建前端"); await job.steps.build(log, job.signal); checkpoint();
+  log("== 确认没有任务在跑"); await job.steps.quiesce(log); checkpoint();
   if (job.steps.activate) { log("== 换上新前端"); await job.steps.activate(log); }
   progress.touchedService = true;
   log("== 重启服务"); await job.steps.restart(log);
@@ -197,7 +206,9 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     if (job.steps.cleanup) await job.steps.cleanup(log).catch((e) => log(`!! 删旧依赖没删成（不影响使用，可手动删 *.prev-* 目录）：${errText(e)}`));
     return finish(job, { ok: true, outcome: "updated", at: at(), ...base, message: `已更新到 ${job.to}` }, log);
   } catch (e) {
-    const reason = errText(e);
+    // 子进程被中止信号结束时，报的是「中止」而不是「装依赖失败」
+    const aborted = e instanceof AbortedError || Boolean(job.signal?.aborted);
+    const reason = aborted ? ABORT_REASON : errText(e);
     if (e instanceof NotStartedError || !progress.movedTo) {
       log(`!! 更新没做：${reason}；没有动任何文件`);
       return finish(job, { ok: false, outcome: "not_started", at: at(), ...base,
@@ -212,6 +223,8 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
           ? `更新失败，已退回代码；服务没有重启（有任务在跑），等它们结束后运行 npm run restart。原因：${reason}，完整记录在 ${job.logFile}`
           : busy
           ? `更新取消了：${reason}。没有重启，仍是 ${job.from}，完整记录在 ${job.logFile}`
+          : aborted
+          ? `更新中止了：${reason}。已退回 ${job.from}，完整记录在 ${job.logFile}`
           : `更新失败，已退回 ${job.from}，原因：${reason}，完整记录在 ${job.logFile}` }, log);
     } catch (e2) {
       const restoreCmds = job.steps.manualRestore?.();
@@ -231,15 +244,27 @@ function finish(job: UpdateJob, result: UpdateResult, log: Log): UpdateResult {
 
 /* ── 真实的四步（测试注入假的） ─────────────────────────────────────── */
 
-function runCommand(cmd: string, args: string[], cwd: string, log: Log, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+/**
+ * 跑一条命令。子进程放在自己的进程组：终端里的 Ctrl-C 只到更新进程，由它决定怎么收（中止就结束这一组）。
+ * 失败原因只写人话（「装依赖没成功」），完整命令和输出留在日志里（e2e P3）。
+ */
+function runCommand(label: string, cmd: string, args: string[], cwd: string, log: Log, opts: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {}): Promise<void> {
   log(`$ (${cwd}) ${cmd} ${args.join(" ")}`);
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    if (opts.signal?.aborted) return reject(new AbortedError(ABORT_REASON));
+    const child = spawn(cmd, args, { cwd, env: opts.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const onAbort = () => { try { process.kill(-child.pid!, "SIGTERM"); } catch { /* 已经不在 */ } };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
     const pipe = (chunk: Buffer) => { for (const l of chunk.toString("utf-8").split("\n")) if (l.trim()) log(l); };
     child.stdout.on("data", pipe);
     child.stderr.on("data", pipe);
-    child.on("error", (e) => reject(new Error(`${cmd} 起不来：${e.message}`)));
-    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} ${args.join(" ")} 退出码 ${code}`))));
+    child.on("error", (e) => { log(`起不来：${e.message}`); reject(new Error(`${label}没开始（找不到要用的程序），详情见日志`)); });
+    child.on("exit", (code, sig) => {
+      opts.signal?.removeEventListener("abort", onAbort);
+      if (code === 0) return resolve();
+      if (opts.signal?.aborted) return reject(new AbortedError(ABORT_REASON));
+      reject(new Error(`${label}没成功${sig ? "（被结束了）" : `（退出码 ${code}）`}，详情见日志`));
+    });
   });
 }
 
@@ -266,9 +291,9 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
       if (swap.hasBackup) return swap.restore(log);
       // 本来就没有依赖目录可留（全新安装）：只能重新装，尽量用本机缓存
       swap.restore(log);
-      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log);
-      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);
-      await runCommand(npm, ["run", "fe:build"], root, log);
+      await runCommand("重新安装依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log);
+      await runCommand("重新安装前端依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);
+      await runCommand("重新构建前端", npm, ["run", "fe:build"], root, log);
     },
     cleanup: async (log) => swap.cleanup(log),
     manualRestore: () => swap.manualRestore(),
@@ -277,17 +302,17 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
       try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) }); return false; }
       catch { return true; }
     },
-    install: async (log) => {
+    install: async (log, signal) => {
       swap.backupDeps(log);
-      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log);
-      await runCommand(npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log);
+      await runCommand("装依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], root, log, { signal });
+      await runCommand("装前端依赖", npm, ["ci", "--prefer-offline", "--no-audit", "--no-fund"], path.join(root, "frontend"), log, { signal });
     },
     // 构建进 dist.next：等待期间旧进程照旧服务旧前端，确认没人在跑才换上（activate）
-    build: (log) => runCommand(npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log),
+    build: (log, signal) => runCommand("构建前端", npm, ["run", "build", "--", "--outDir", "dist.next", "--emptyOutDir"], path.join(root, "frontend"), log, { signal }),
     restart: async (log) => {
       if (!opts.serverWasRunning) { log("服务本来没在跑：不启动，之后用 npm start 启动"); return; }
-      await runCommand(process.execPath, [path.join(root, "bin", "autocrew.mjs"), "restart", "--no-open"], root, log,
-        { ...process.env, AUTOCREW_PORT: String(port) });
+      await runCommand("重启服务", process.execPath, [path.join(root, "bin", "autocrew.mjs"), "restart", "--no-open"], root, log,
+        { env: { ...process.env, AUTOCREW_PORT: String(port) } });
     },
     health: async (log) => {
       if (!opts.serverWasRunning) return;
