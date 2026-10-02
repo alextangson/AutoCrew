@@ -372,3 +372,88 @@ describe("第 15 轮 P3：上次留下的垃圾目录", () => {
     expect(fs.existsSync(path.join(root, "node_modules.prev-2"))).toBe(true);
   });
 });
+
+import { createAbortHandle, markFinishing, resetFinishing } from "./abort.js";
+import { updateView } from "./check.js";
+import { markResultSeen, writeStatus } from "./state.js";
+import { runUpdate, type UpdateSteps } from "./updater.js";
+
+describe("e2e 1002b", () => {
+  function gitInstall(at: "old" | "new") {
+    const root = path.join(tmp, "r");
+    const old = consistentInstall(root);
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "0.5.7" }));
+    execFileSync("git", ["commit", "-q", "-am", "new"], { cwd: root, env: ENV });
+    const neu = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf-8" }).trim();
+    if (at === "old") execFileSync("git", ["reset", "-q", "--hard", old], { cwd: root });
+    return { root, old, neu };
+  }
+
+  it("N2：页面认出中断、点了「知道了」之后，恢复步骤还在（页面、命令行、npm start 都拿得到），直到真的恢复好", async () => {
+    const { root, old, neu } = gitInstall("new");
+    const m = path.join(tmp, "m"); fs.mkdirSync(m);
+    writeInflight(m, { at: new Date(Date.now() - 60_000).toISOString(), from: "0.5.5", to: "0.5.7", log: "/l", oldHead: old, commit: neu });
+    expect(detectInterrupted(root, m, { trustInstall: true, processStartedAt: Date.now() - 120_000 })?.outcome).toBe("stuck");
+    markResultSeen(m);
+    expect(readInflight(m)).not.toBeNull();
+    expect(updateView(root, m, false, "0.5.5").result?.interruptedAt).toBeTruthy();
+    expect((await prepareUpdateFor(root, m)).code).toBe("interrupted");
+    fs.mkdirSync(path.join(root, "bin"), { recursive: true });
+    fs.copyFileSync(path.join(REPO, "bin", "autocrew.mjs"), path.join(root, "bin", "autocrew.mjs"));
+    fs.writeFileSync(path.join(root, ".gitignore"), "bin/\nnode_modules/\nfrontend/\n");
+    const start = runBin(root, "start", m);
+    expect(start.status).toBe(1);
+    expect(start.stderr).toContain("上次一键更新中断了");
+  });
+
+  it("N3：新版过了健康检查之后按 Ctrl-C：说「正在收尾，不会退回」，也不请求中止", () => {
+    const said: string[] = [];
+    markFinishing();
+    try {
+      const h = createAbortHandle((m) => said.push(m));
+      h.onSignal();
+      expect(said[0]).toContain("正在收尾，不会退回");
+      expect(h.signal.aborted).toBe(false);
+    } finally { resetFinishing(); }
+  });
+
+  it("N5：磁盘上已经是那一版（中断留下的）：不再提示「有新版本」", () => {
+    const { root } = gitInstall("new");
+    const m = path.join(tmp, "m"); fs.mkdirSync(m);
+    writeStatus(m, { checkedAt: new Date().toISOString(), current: "0.5.5", latest: "0.5.7", tag: "v0.5.7", commit: "c".repeat(40), available: true });
+    expect(updateView(root, m, false, "0.5.5").banner).toBeNull();
+  });
+
+  it("N6：服务本来没开、更新失败后退回时把原来的版本起起来了：说「AutoCrew 已经启动」", async () => {
+    const origin = path.join(tmp, "o.git"), dev = path.join(tmp, "d"), user = path.join(tmp, "u"), m = path.join(tmp, "m");
+    const g = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, env: ENV, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    g(tmp, "init", "-q", "--bare", "-b", "main", origin); g(tmp, "clone", "-q", origin, dev); g(dev, "checkout", "-q", "-b", "main");
+    const rel = (v: string) => { fs.writeFileSync(path.join(dev, "package.json"), JSON.stringify({ version: v })); g(dev, "add", "package.json"); g(dev, "commit", "-q", "-m", v); g(dev, "tag", "-a", `v${v}`, "-m", v); g(dev, "push", "-q", "origin", "main", "--tags"); };
+    rel("0.5.2"); g(tmp, "clone", "-q", origin, user); rel("0.5.3");
+    fs.mkdirSync(m);
+    await checkForUpdate(user, m, { git: gitRunner(user) });
+    let healths = 0;
+    const s = async () => {};
+    const steps: UpdateSteps = { install: s, build: s, quiesce: s, serviceDown: async () => false, restart: s,
+      health: async () => { if (++healths === 1) throw new Error("服务 60 秒内没回来"); }, startedService: () => true };
+    const r = await runUpdate({ root: user, machineDir: m, tag: "v0.5.3", commit: g(user, "rev-parse", "v0.5.3^{commit}"), from: "0.5.2", to: "0.5.3", git: gitRunner(user), steps, logFile: path.join(m, "u.log") });
+    expect(r.outcome).toBe("rolled_back");
+    expect(r.message).toContain("已退回 0.5.2，AutoCrew 已经启动");
+  });
+
+  it("N7：安装已经一致（新版过了检查）：留着的完整旧依赖不再是恢复来源，删掉", async () => {
+    const { root, old, neu } = gitInstall("new");
+    fs.mkdirSync(path.join(root, "node_modules.prev-5"));
+    fs.mkdirSync(path.join(root, "frontend", "dist.prev-5"), { recursive: true });
+    const m = path.join(tmp, "m"); fs.mkdirSync(m);
+    writeInflight(m, { at: "", from: "0.5.5", to: "0.5.7", log: "/l", oldHead: old, commit: neu, verified: true });
+    expect(detectInterrupted(root, m, { trustInstall: true })).toBeNull();
+    expect(await until(() => !fs.existsSync(path.join(root, "node_modules.prev-5")) && !fs.existsSync(path.join(root, "frontend", "dist.prev-5")), 5_000)).toBe(true);
+  });
+});
+
+import { prepareUpdate } from "./start.js";
+const prepareUpdateFor = async (root: string, m: string) => {
+  const r = await prepareUpdate(root, m, {});
+  return r.ok ? { code: "ok" } : r;
+};

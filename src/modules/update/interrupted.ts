@@ -7,9 +7,9 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { files, writeResult, type UpdateResult } from "./state.js";
+import { files, readResult, writeResult, type UpdateResult } from "./state.js";
 import { lockHeld } from "./preflight.js";
-import { PREV_NAME } from "./deps-swap.js";
+import { discard, PREV_NAME } from "./deps-swap.js";
 
 export interface Inflight {
   at: string; from: string; to: string; log: string; oldHead: string;
@@ -77,6 +77,22 @@ export function installConsistent(root: string, inflight: Inflight): boolean {
   return installState(root, inflight) === "consistent";
 }
 
+/** 删掉留着的完整旧依赖 / 旧前端（先改名成垃圾名再删）：只在它们不再是恢复来源时调 */
+export async function discardPrevDirs(root: string): Promise<void> {
+  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
+    const dir = path.dirname(path.join(root, rel));
+    let names: string[] = [];
+    try { names = fs.readdirSync(dir).filter((n) => PREV_NAME(path.basename(rel)).test(n)); } catch { continue; }
+    for (const n of names) await discard(path.join(dir, n));
+  }
+}
+
+/** 中断的结果在恢复好之前一直算「没看过」：页面每次打开都还在，点「知道了」也不会让恢复步骤消失 */
+export function stillInterrupted(machineDir: string): boolean {
+  const r = readResult(machineDir), inflight = readInflight(machineDir);
+  return Boolean(r?.interruptedAt && inflight && r.interruptedAt === inflight.at);
+}
+
 /** 新版过了健康检查：在途记录标上 verified——之后再被打断，停在新版也算安装一致 */
 export function markInflightVerified(machineDir: string): void {
   const cur = readInflight(machineDir);
@@ -116,19 +132,23 @@ export function detectInterrupted(root: string, machineDir: string, opts: { trus
   if (!inflight || lockHeld(machineDir)) return null;
   const startedAfter = opts.processStartedAt === undefined || opts.processStartedAt > Date.parse(inflight.at);
   const state = opts.trustInstall && startedAfter ? installState(root, inflight) : "inconsistent";
+  fs.rmSync(files(machineDir).lock, { force: true }); // 锁的主人已经不在，留着的死锁一并清掉
   if (state !== "inconsistent") {
     if (state === "moved_on") console.error("[update] 上次一键更新中断后，程序已经换成别的版本（像是自己 git pull 过），不再提示恢复");
     clearInflight(machineDir);
-    fs.rmSync(files(machineDir).lock, { force: true });
+    // 安装已经一致：留着的旧依赖 / 旧前端不再是恢复来源了，删掉（约 500 MB，e2e 1002b N7）
+    void discardPrevDirs(root).catch((err) => console.error("[update] 删留着的旧依赖失败:", err instanceof Error ? err.message : err));
     return null;
   }
+  // 在途记录留着，直到真的恢复好（e2e 1002b N2）：页面认出来、点了「知道了」，命令行和 npm start 照样能拿到恢复步骤
+  const existing = readResult(machineDir);
+  if (existing?.interruptedAt === inflight.at) return existing;
   const cmds = recoveryCommands(root, inflight.oldHead);
   const result: UpdateResult = {
     ok: false, outcome: "stuck", from: inflight.from, to: inflight.to, at: new Date().toISOString(), log: inflight.log, manualCommands: cmds,
+    interruptedAt: inflight.at,
     message: `上次更新中断了（更新进程被关掉或机器重启了），没有跑完也没有自动退回。请在终端依次执行下面的命令恢复到 ${inflight.from}，记录在 ${inflight.log}`,
   };
   writeResult(machineDir, result);
-  clearInflight(machineDir);
-  fs.rmSync(files(machineDir).lock, { force: true }); // 锁的主人已经不在，留着的死锁一并清掉
   return result;
 }
