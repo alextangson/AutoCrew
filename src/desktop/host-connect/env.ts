@@ -62,6 +62,9 @@ export function defaultHostEnv(env: NodeJS.ProcessEnv = process.env): HostEnv {
   // 子进程（claude / codex / 核对用的转发器）不带服务自己的 AUTOCREW_*：宿主真启动时只有条目里写的那几个，
   // 核对要测的就是这个（Codex 评审 P2-1）
   const childEnv: NodeJS.ProcessEnv = Object.fromEntries(Object.entries({ ...env, HOME: home }).filter(([k]) => !k.startsWith("AUTOCREW_")));
+  // 检测时从补充目录找到的 codex / claude 常是 `#!/usr/bin/env node` 脚本：子进程 PATH 也得有这些目录和当前 node，
+  // 否则 env 找不到 node、退出 127（Codex 评审第 2 轮 P2-a）
+  childEnv.PATH = [...new Set([...binDirs, path.dirname(process.execPath)])].join(path.delimiter);
   const entry = autocrewEntry(repoRoot(), stableNodePath(), env, "placeholder");
   // 状态目录与端口总是写明：只设了 AUTOCREW_DATA_DIR 时宿主从桌面起的转发器会去默认目录找令牌，结果 401
   const stateDir = path.resolve(env.AUTOCREW_LOCAL_DIR || env.AUTOCREW_DATA_DIR || path.join(home, ".autocrew"));

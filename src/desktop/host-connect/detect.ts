@@ -78,6 +78,8 @@ async function detectCodex(env: HostEnv): Promise<Pick<HostStatus, "found" | "lo
   const r = await env.run(cli, ["login", "status"], { timeoutMs: 8_000 });
   const text = `${r.stdout}\n${r.stderr}`;
   if (r.failure) return { found: true, loggedIn: null, detail: `查不了 Codex 登录状态（${r.failure === "timeout" ? "超时" : r.failure}），可以先接上再说` };
+  // 127 = 命令本身跑不起来（多半找不到 node），和「没登录」是两回事
+  if (r.code === 127 || r.code === 126) return { found: true, loggedIn: null, detail: `找到了 codex，但它起不来（退出码 ${r.code}，多半是找不到 node）：在终端运行 codex --version 看看` };
   const loggedIn = r.code === 0 && /logged in/i.test(text) && !/not logged in/i.test(text);
   return { found: true, loggedIn, detail: loggedIn ? "已登录" : "Codex 还没登录：在终端运行 codex login，再回来点一下" };
 }
