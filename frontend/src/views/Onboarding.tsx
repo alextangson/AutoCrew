@@ -14,7 +14,7 @@ import "./onboarding/onboarding.css";
 
 type Step = "pick" | "connect" | "done";
 
-export function DonePage(props: { connected: HostStatus[]; engineReady: boolean; onEnter: () => void }) {
+export function DonePage(props: { connected: HostStatus[]; engineReady: boolean; onEnter: () => void; onOpenSettings: () => void }) {
   const first = props.connected[0];
   return (
     <>
@@ -26,7 +26,8 @@ export function DonePage(props: { connected: HostStatus[]; engineReady: boolean;
       </p>
       {!props.engineReady && (
         <p className="ob-note">
-          深调研、选题雷达、复盘、人设、每日摘要这几样暂时还要一把 DeepSeek 钥匙；「本机 AI 直接跑这些」在做。可以先跳过，以后在设置里补。
+          深调研、选题雷达、复盘、人设、每日摘要这几样要用你自己的模型钥匙（DeepSeek 最省事）。现在可以先跳过，以后在设置里补。{" "}
+          <button className="btn-ghost ob-inline" onClick={props.onOpenSettings}>去设置里填钥匙</button>
         </p>
       )}
       <div className="ob-actions"><button className="primary" onClick={props.onEnter}>进入 AutoCrew</button></div>
@@ -34,7 +35,7 @@ export function DonePage(props: { connected: HostStatus[]; engineReady: boolean;
   );
 }
 
-export function Onboarding(props: { onDone: () => void }) {
+export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => void }) {
   const [step, setStep] = useState<Step>("pick");
   const [hosts, setHosts] = useState<HostStatus[] | null>(null);
   const [loadError, setLoadError] = useState<string | undefined>();
@@ -78,7 +79,7 @@ export function Onboarding(props: { onDone: () => void }) {
           <ConnectStep hosts={hosts} picked={picked} results={results} onResult={(r) => setResults((x) => ({ ...x, [r.host]: r }))}
             onBack={() => setStep("pick")} onNext={() => setStep("done")} />
         )}
-        {step === "done" && <DonePage connected={connected} engineReady={engineReady} onEnter={props.onDone} />}
+        {step === "done" && <DonePage connected={connected} engineReady={engineReady} onEnter={props.onDone} onOpenSettings={props.onOpenSettings ?? props.onDone} />}
         {skipError && (
           <div className="ob-actions"><p className="ob-fail">{skipError}</p><button onClick={props.onDone}>进去</button></div>
         )}

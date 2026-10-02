@@ -99,7 +99,7 @@ export function App() {
     );
   }
   if (gate === "onboarding") {
-    return <Onboarding onDone={() => setGate("ready")} />;
+    return <Onboarding onDone={() => setGate("ready")} onOpenSettings={() => { setGate("ready"); setRoute({ view: "settings", tab: "models" }); }} />;
   }
 
   return (

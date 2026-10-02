@@ -37,3 +37,4 @@
 .ob-row-spacer { flex: 1; }
 .ob-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 28px; }
 .ob-why { color: #8a877f; font-size: 14px; }
+.ob-inline { padding: 0 4px; height: auto; vertical-align: baseline; }

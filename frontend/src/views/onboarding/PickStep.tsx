@@ -59,7 +59,7 @@ function DeepseekCard(props: { onSaved: () => void }) {
   return (
     <div className="ob-card ob-deepseek" data-host="deepseek">
       <div className="ob-card-main"><span className="ob-card-name">DeepSeek</span></div>
-      <p className="ob-card-what">没有本机 AI 也能写；深调研、选题雷达、复盘、人设、每日摘要现在都靠它</p>
+      <p className="ob-card-what">可选：深调研、选题雷达、复盘、人设、每日摘要要用你自己的模型钥匙，DeepSeek 最省事</p>
       <div className="ob-key">
         <input type="password" value={key} placeholder="粘贴 DeepSeek 的钥匙" onChange={(e) => setKey(e.target.value)} />
         <button disabled={busy || !key.trim()} onClick={() => void save()}>{busy ? "正在试…" : "保存钥匙"}</button>
