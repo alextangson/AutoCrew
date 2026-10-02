@@ -16,15 +16,20 @@ const WHAT: Record<HostId, string> = {
 
 export const DEEPSEEK_KEY_URL = "https://platform.deepseek.com/api_keys";
 
-function HostCard(props: { h: HostStatus; picked: boolean; onPick: (on: boolean) => void }) {
+function HostCard(props: { h: HostStatus; picked: boolean; onPick: (on: boolean) => void; onDetected: (patch: Partial<HostStatus>) => void }) {
   const { h } = props;
   const [probing, setProbing] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
-  const usable = h.found && h.loggedIn !== false && !(probe && !probe.ok && probe.code === "not_logged_in");
+  const usable = h.found && h.loggedIn !== false;
   const check = async () => {
     setProbing(true);
     const r = await probeHost(h.host);
-    setProbe(r.ok ? r.data : { ok: false, code: "failed", error: r.error });
+    const result: ProbeResult = r.ok ? r.data : { ok: false, code: "failed", error: r.error };
+    setProbe(result);
+    // 检测结果回写到上层的宿主状态：之前没登录、现在登录了的卡片当场变成可选（Codex 评审 P2-4）
+    if (result.ok) props.onDetected({ loggedIn: true, detail: result.detail });
+    else if (result.code === "not_logged_in") props.onDetected({ loggedIn: false, detail: result.error });
+    else if (result.code === "not_installed") props.onDetected({ found: false, detail: result.error });
     setProbing(false);
   };
   return (
@@ -80,6 +85,7 @@ export function PickStep(props: {
   picked: HostId[];
   setPicked: (p: HostId[]) => void;
   onRefresh: () => void;
+  onHostUpdate: (host: HostId, patch: Partial<HostStatus>) => void;
   onNext: () => void;
   onSkip: () => void;
   onEngineSaved: () => void;
@@ -96,10 +102,10 @@ export function PickStep(props: {
       <p className="ob-sub">用你电脑上已经装好的 AI 就行，不用另外准备钥匙。可以选好几个。</p>
       {props.loadError && <p className="ob-fail">没查到这台电脑上装了哪些 AI：{props.loadError}</p>}
       <div className="ob-cards">
-        {props.hosts.map((h) => <HostCard key={h.host} h={h} picked={props.picked.includes(h.host)} onPick={(on) => toggle(h.host, on)} />)}
+        {props.hosts.map((h) => <HostCard key={h.host} h={h} picked={props.picked.includes(h.host)} onPick={(on) => toggle(h.host, on)} onDetected={(patch) => props.onHostUpdate(h.host, patch)} />)}
         <DeepseekCard onSaved={props.onEngineSaved} />
       </div>
-      {missing && <button className="btn-ghost ob-refresh" onClick={props.onRefresh}>装好了，再找一次</button>}
+      <button className="btn-ghost ob-refresh" onClick={props.onRefresh}>{missing ? "装好了，再找一次" : "再找一次"}</button>
       <button className="btn-ghost ob-advanced-toggle" onClick={() => setAdvanced((v) => !v)}>{advanced ? "收起高级" : "高级：其他中转或 OpenAI 兼容"}</button>
       {advanced && <AdvancedEndpoint onSaved={props.onEngineSaved} />}
       <div className="ob-actions">

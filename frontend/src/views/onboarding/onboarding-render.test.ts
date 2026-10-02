@@ -192,3 +192,21 @@ describe("Codex 评审 P2-3：写进去但没核对上", () => {
     expect(shouldOnboard(false, { ok: true, data: { hosts: [H("claude", { unverified: "x", lastUsedAt: "2026-10-01T00:00:00Z" })], skipped: false } })).toBe(true);
   });
 });
+
+describe("Codex 评审 P2-4：检测登录成功后卡片能选；再找一次不用刷新页面", () => {
+  it("一开始没登录的 Codex，点「检测登录」成功后变成可选", async () => {
+    store.view = { hosts: [H("codex", { found: true, loggedIn: false, detail: "Codex 还没登录" }), H("claude"), H("workbuddy")], skipped: false };
+    store.probe = { ok: true, detail: "已登录" };
+    await mount();
+    expect(card("codex").getAttribute("role")).toBeNull();
+    await act(async () => (card("codex").querySelector("button") as HTMLButtonElement).click()); await tick();
+    expect(card("codex").getAttribute("role")).toBe("checkbox");
+  });
+  it("「再找一次」重新做便宜检测，装好的宿主直接出现", async () => {
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了" }), H("codex"), H("workbuddy")], skipped: false };
+    await mount();
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了" }), H("codex"), H("workbuddy", { found: true, detail: "找到了 WorkBuddy" })], skipped: false };
+    await click("再找一次");
+    expect(card("workbuddy").getAttribute("role")).toBe("checkbox");
+  });
+});

@@ -71,7 +71,7 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
       <div className="ob-panel">
         <div className="ob-brand">AutoCrew</div>
         {step === "pick" && (
-          <PickStep hosts={hosts} picked={picked} setPicked={setPicked} onRefresh={() => void load()} onNext={() => setStep("connect")}
+          <PickStep hosts={hosts} picked={picked} setPicked={setPicked} onRefresh={() => void load()} onHostUpdate={(host, patch) => setHosts((list) => list?.map((h) => (h.host === host ? { ...h, ...patch } : h)) ?? list)} onNext={() => setStep("connect")}
             onSkip={() => void skip()} onEngineSaved={() => void engineSaved()} engineReady={engineReady} onFinish={() => setStep("done")}
             {...(loadError ? { loadError } : {})} />
         )}
