@@ -41,7 +41,7 @@ describe("P1 接手锁按暗号确认，不比 pid（真 tsx 启动器）", () =
       `releaseLock(dir, arg("lock-token"));`,
     ].join("\n"));
     expect(acquireLock(tmp, "tok")).toBe(true);
-    const job: Prepared = { ok: true, tag: "v0.5.0", commit: "a".repeat(40), from: "0.4.0", to: "0.5.0", notes: [], token: "tok" };
+    const job: Prepared = { ok: true, tag: "v0.5.0", commit: "a".repeat(40), head: "b".repeat(40), from: "0.4.0", to: "0.5.0", notes: [], token: "tok" };
     const r = await spawnDetachedUpdater(root, tmp, 1, job, undefined, 15_000);
     expect(r).toMatchObject({ ok: true });
     expect(lockAdoptedBy(tmp)).not.toBeNull();

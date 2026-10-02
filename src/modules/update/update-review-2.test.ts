@@ -96,7 +96,7 @@ describe("P1 退回路径重启前也要确认空闲", () => {
 });
 
 describe("P2 更新进程要真的接手锁才算开始", () => {
-  const job = (): Prepared => ({ ok: true, tag: "v0.5.0", commit: "a".repeat(40), from: "0.4.0", to: "0.5.0", notes: [], token: "tok" });
+  const job = (): Prepared => ({ ok: true, tag: "v0.5.0", commit: "a".repeat(40), head: "b".repeat(40), from: "0.4.0", to: "0.5.0", notes: [], token: "tok" });
   /** 不管给的命令，起一个 node 小脚本代替 tsx（不跑真更新） */
   const fake = (script: string) => ((_c: string, args: readonly string[], opts: object) =>
     spawn(process.execPath, ["-e", script, ...args], opts as never)) as unknown as typeof spawn;

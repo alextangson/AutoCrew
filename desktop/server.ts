@@ -4,6 +4,7 @@ import { acquireWriterLock, releaseWriterLock } from "../src/storage/writer-lock
 import { createProjectReviewHandler } from "../src/desktop/project-review-route.js";
 import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
+import { admitMutation } from "../src/desktop/http-busy-guard.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
@@ -214,6 +215,8 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
   }
+  // 一键更新（Codex 审第 11 轮 P1）：浏览器的每个写请求在处理完之前都算在跑；更新中直接回 503「正在更新，稍后再试」
+  if (!admitMutation(req, res, p)) return;
   if ((p === "/mcp" || p.startsWith("/api/")) && !["/api/session", "/api/invoke", "/api/events"].includes(p) && authorize(req)) assertLibraryAvailable();
 
   if (p === "/favicon.ico") { res.writeHead(204).end(); return; }

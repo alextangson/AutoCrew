@@ -131,7 +131,7 @@ describe("P1 更新中不开新活，重启前再确认", () => {
 describe("P2 更新进程起不来要如实报", () => {
   it("tsx 不在：等到 error 才回答，放锁，写「更新没能开始」给页面", async () => {
     expect(acquireLock(tmp, "tok")).toBe(true);
-    const r = await spawnDetachedUpdater(tmp, tmp, 1, { ok: true, tag: "v0.5.0", commit: "a".repeat(40), from: "0.4.0", to: "0.5.0", notes: [], token: "tok" });
+    const r = await spawnDetachedUpdater(tmp, tmp, 1, { ok: true, tag: "v0.5.0", commit: "a".repeat(40), head: "b".repeat(40), from: "0.4.0", to: "0.5.0", notes: [], token: "tok" });
     expect(r).toMatchObject({ ok: false, reason: expect.stringContaining("更新没能开始") });
     expect(lockHeld(tmp)).toBe(false);
     expect(readResult(tmp)).toMatchObject({ ok: false, outcome: "not_started", message: expect.stringContaining("更新没能开始") });

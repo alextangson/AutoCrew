@@ -48,6 +48,8 @@ export interface UpdateJob {
   steps: UpdateSteps;
   logFile: string;
   now?: () => Date;
+  /** 预检时看到的 HEAD：动手前再核一次，不一样就不动（Codex 审第 11 轮 P2） */
+  expectHead?: string;
   /** Ctrl-C / SIGTERM：在关键步骤之间检查，收到就走正常退回（e2e P1-3） */
   signal?: AbortSignal;
 }
@@ -113,6 +115,15 @@ interface Progress { touchedService: boolean; movedTo?: string }
 /** 没动手就停下的原因（合并前发现改动、合并没挪 HEAD）：不退回、不碰工作区 */
 export class NotStartedError extends Error {}
 
+/** 还在 main、HEAD 还是预检时那个？不是就返回人话原因 */
+async function branchOrHeadChanged(job: UpdateJob, head: string): Promise<string | null> {
+  const b = await job.git(["symbolic-ref", "--short", "-q", "HEAD"]);
+  const branch = firstLine(b.stdout);
+  if (branch !== "main") return `预检之后切到了别的分支（${branch || "没有分支"}），只更新 main`;
+  if (job.expectHead && head !== job.expectHead) return "预检之后版本被挪动过，为了安全没动手";
+  return null;
+}
+
 async function trackedChanges(git: GitRunner): Promise<string> {
   const r = await git(["status", "--porcelain", "--untracked-files=no"]);
   if (!r.ok) throw new Error(`读不出本地改动（${firstLine(r.stderr)}）`);
@@ -122,6 +133,9 @@ async function trackedChanges(git: GitRunner): Promise<string> {
 async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Progress): Promise<void> {
   const checkpoint = () => { if (job.signal?.aborted) throw new AbortedError(ABORT_REASON); };
   checkpoint();
+  // 预检之后到这里可能有人切了分支、挪了 HEAD（Codex 审第 11 轮 P2）：动手前再核一次
+  const moved = await branchOrHeadChanged(job, oldHead);
+  if (moved) throw new NotStartedError(moved);
   // 预检之后到这里可能有人改了程序文件：合并前再查一次（Codex 审第 5 轮 P1）
   const dirty = await trackedChanges(job.git);
   if (dirty) throw new NotStartedError(`程序文件刚刚有了本地改动（${firstLine(dirty)}…），自动更新会覆盖它们`);
@@ -198,6 +212,8 @@ async function rollback(job: UpdateJob, oldHead: string, log: Log, restart: bool
   // 那时工作区里只有这次更新自己的东西，丢掉它不会丢用户的字（Codex 审第 5 轮 P1）
   const head = await gitStep(job.git, ["rev-parse", "HEAD"], log);
   if (!progress.movedTo || head !== progress.movedTo) throw new DirtyRollbackError(`当前版本不是这次更新合进来的那一版（${head.slice(0, 8)}），不自动退回`);
+  const offBranch = await branchOrHeadChanged({ ...job, expectHead: undefined }, head);
+  if (offBranch) throw new DirtyRollbackError(`${offBranch}，不自动退回`);
   const dirty = await trackedChanges(job.git);
   if (dirty) throw new DirtyRollbackError(`程序文件有不是这次更新带来的改动（${firstLine(dirty)}…），不自动退回，免得覆盖它们`);
   const clash = await restoreConflicts(job, oldHead, head);

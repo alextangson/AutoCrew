@@ -37,7 +37,7 @@ async function fromServer(): Promise<number> {
   try {
     const status = readStatus(MACHINE);
     const result = await runUpdate({
-      root: ROOT, machineDir: MACHINE, tag, commit, from: localVersion(ROOT), to: tag.replace(/^v/, ""),
+      root: ROOT, machineDir: MACHINE, tag, commit, ...(arg("head") ? { expectHead: arg("head") } : {}), from: localVersion(ROOT), to: tag.replace(/^v/, ""),
       ...(status?.tag === tag && status.notes ? { notes: status.notes } : {}),
       git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: true, busy: busyNow(true) }), logFile: log, signal: ABORT,
     });
@@ -58,7 +58,7 @@ async function fromCli(): Promise<number> {
   const log = newLogFile(MACHINE);
   console.log(`开始更新 ${prep.from} → ${prep.to}，大约 1 分钟；记录写在 ${log}`);
   try {
-    const result = await runUpdate({ root: ROOT, machineDir: MACHINE, tag: prep.tag, commit: prep.commit, from: prep.from, to: prep.to, notes: prep.notes,
+    const result = await runUpdate({ root: ROOT, machineDir: MACHINE, tag: prep.tag, commit: prep.commit, expectHead: prep.head, from: prep.from, to: prep.to, notes: prep.notes,
       git: gitRunner(ROOT), steps: realSteps(ROOT, PORT, { serverWasRunning: running, busy: busyNow(running) }), logFile: log, signal: ABORT });
     console.log(result.message);
     if (result.manualCommands) console.log(result.manualCommands.join("\n"));

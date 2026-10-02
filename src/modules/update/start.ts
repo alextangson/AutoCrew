@@ -16,7 +16,7 @@ import type { ReleaseNotes } from "./changelog.js";
 export const DIVERGED_MESSAGE = (latest: string) =>
   `本地程序和最新发布版 ${latest} 分叉了（本地有发布版里没有的提交），没法自动更新；请按 README 手动更新`;
 
-export interface Prepared { ok: true; tag: string; commit: string; from: string; to: string; notes: ReleaseNotes[]; token: string }
+export interface Prepared { ok: true; tag: string; commit: string; head: string; from: string; to: string; notes: ReleaseNotes[]; token: string }
 export type PrepareResult = Prepared | { ok: false; code: string; reason: string };
 
 export async function prepareUpdate(root: string, machineDir: string, deps: Omit<PreflightDeps, "git"> & { git?: PreflightDeps["git"] }): Promise<PrepareResult> {
@@ -31,9 +31,13 @@ export async function prepareUpdate(root: string, machineDir: string, deps: Omit
   }
   const pre = await preflight(root, machineDir, status.commit, { ...deps, git });
   if (!pre.ok) return pre;
+  // 记下预检时的 HEAD：更新进程动手前再核一次
+  const headR = await git(["rev-parse", "HEAD"]);
+  if (!headR.ok) return { ok: false, code: "git_failed", reason: "读不出当前版本，没动手" };
+  const head = headR.stdout.trim();
   const token = randomBytes(16).toString("hex");
   if (!acquireLock(machineDir, token)) return { ok: false, code: "running", reason: RUNNING_MESSAGE };
-  return { ok: true, tag: status.tag, commit: status.commit, from: localVersion(root), to: status.latest, notes: status.notes ?? [], token };
+  return { ok: true, tag: status.tag, commit: status.commit, head, from: localVersion(root), to: status.latest, notes: status.notes ?? [], token };
 }
 
 /**
@@ -77,7 +81,7 @@ export async function spawnDetachedUpdater(root: string, machineDir: string, por
     fd = fs.openSync(log, "a", 0o600);
     const tsx = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
     const child = spawnImpl(tsx, [path.join(root, "scripts", "update.mts"), "--from-server",
-      "--tag", job.tag, "--commit", job.commit, "--lock-token", job.token, "--adopt-nonce", nonce, "--log", log, "--port", String(port)], {
+      "--tag", job.tag, "--commit", job.commit, "--head", job.head, "--lock-token", job.token, "--adopt-nonce", nonce, "--log", log, "--port", String(port)], {
       cwd: root, detached: true, stdio: ["ignore", fd, fd],
       env: { ...process.env, AUTOCREW_LOCAL_DIR: machineDir, AUTOCREW_PORT: String(port) },
     });
