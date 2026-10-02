@@ -10,7 +10,7 @@ vi.mock("../transport", () => ({
   invoke: async (ch: string) => {
     calls.push(ch);
     if (ch === "settings:get") return { ok: true, data: { configured } };
-    if (ch === "conversations:list") return { ok: true, data: { conversations: [{ id: "conv-1-old", title: "本机 Claude 聊过的那段", updatedAt: "2026-09-30T00:00:00Z", turns: 1 }] } };
+    if (ch === "conversations:list") return { ok: true, data: { conversations: [{ id: "conv-1-old", title: "上周聊过的那段", updatedAt: "2026-09-30T00:00:00Z", turns: 1 }] } };
     if (ch === "conversations:get") return { ok: true, data: { messages: [{ role: "user", content: "帮我写一条" }, { role: "assistant", content: "写好了，在编辑器里打开" }] } };
     if (ch === "chat:model_options") return { ok: true, data: { options: [] } };
     return { ok: true, data: {} };
@@ -39,7 +39,7 @@ describe("右栏", () => {
     configured = false;
     const nav = await mount();
     expect(el.textContent).toContain("写好了，在编辑器里打开");
-    expect(el.textContent).toContain("本机 Claude 聊过的那段");
+    expect(el.textContent).toContain("上周聊过的那段");
     expect(el.querySelector("textarea")).toBeNull();
     expect(el.querySelector(".chat-nokey")?.textContent?.replace(/\s+/g, "")).toBe("聊天用你自己的模型钥匙，在设置→模型里填");
     await act(async () => (el.querySelector(".chat-nokey a") as HTMLAnchorElement).click());
@@ -50,7 +50,7 @@ describe("右栏", () => {
     configured = true;
     await mount();
     expect(el.querySelector("textarea")).toBeTruthy();
-    expect(el.textContent).not.toMatch(/内置引擎|后端|本机 agent/);
+    expect(el.textContent).not.toMatch(/本机|内置引擎|后端/);
     expect(calls.some((c) => c.startsWith("agent:"))).toBe(false);
   });
 });

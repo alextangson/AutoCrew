@@ -3,7 +3,7 @@
  * 的合并 / 删除 / 整文件备份。从 workbuddy-connect 抽出来，三个宿主共用同一套文件纪律（spec O6）：
  *
  * - 解析失败绝不覆盖，报错让人手修；软链一律拒绝（跟着链接写会改到别处的文件）；
- * - 写前把整份原文件备份到 `<file>.autocrew-bak`（权限与原文件一致）；
+ * - 写前把整份原文件备份到 `<file>.autocrew-bak-<本地时间>`（每次新建一份、从不覆盖，权限与原文件一致）；
  * - 同目录临时文件 + rename 原子落盘；读到换名之间文件被宿主自己改过就不覆盖，如实说。
  * - 别的条目一个字不动。
  */
@@ -76,7 +76,10 @@ export function sameEntry(a: unknown, b: unknown): boolean {
 export function backupFile(file: string): string | null {
   if (!existsSync(file)) return null;
   if (isSymlink(file)) throw new Error(`${file} 是软链接，没有改它（跟着链接写可能改到别的文件）。`);
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").replace(/\..*/, "");
+  const d = new Date();
+  const two = (n: number) => String(n).padStart(2, "0");
+  // 本地时间：用户在访达里按自己的钟找备份（UTC 会差几个小时）
+  const stamp = `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
   const mode = statSync(file).mode & 0o777;
   let backup = `${file}.autocrew-bak-${stamp}`;
   // 同一秒里第二份：加随机尾巴；wx 独占创建，碰上同名（含软链）就失败而不是覆盖
