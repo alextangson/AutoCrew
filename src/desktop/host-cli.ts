@@ -16,7 +16,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getHostStateDir } from "../storage/storage-roots.js";
 import { ensureHostToken } from "./host-tokens.js";
-import { connectWorkbuddy } from "./workbuddy-connect.js";
 
 export const KNOWN_HOSTS = ["codex", "claude-code", "dsh", "workbuddy"] as const;
 export type KnownHost = (typeof KNOWN_HOSTS)[number];
@@ -128,13 +127,13 @@ function tildify(target: string, home: string): string {
   return home && target.startsWith(`${home}${path.sep}`) ? `~${target.slice(home.length)}` : target;
 }
 
-function codexSteps(tokenPath: string, endpoint: string): string[] {
+function codexSteps(): string[] {
   return [
-    "1) 把令牌读进环境变量（值不进命令历史，只进这个 shell）：",
-    `   export AUTOCREW_MCP_TOKEN=$(cat ${tokenPath})`,
-    "2) 注册远端 MCP：",
-    `   codex mcp add autocrew --url ${endpoint} --bearer-token-env-var AUTOCREW_MCP_TOKEN`,
-    "3) 交互式 Codex 会话里，工具调用逐次弹审批，点同意即可。",
+    "一键接上（注册成 Codex 的 stdio MCP，令牌自动读，不用 export 环境变量）：",
+    "   npx autocrew connect codex",
+    "",
+    "Codex 在这里是剪辑工位：登记原片 / 成片 / 字幕 / 封面、记素材、发布前检查，其余只读；",
+    "写稿、审稿、发布在 Claude Code 里做（服务端按宿主限权，见 mcp/host-policy.ts）。",
     "",
     "注意：`codex exec`（非交互）会自动取消 MCP 工具调用，除非加",
     "  --dangerously-bypass-approvals-and-sandbox",
@@ -144,14 +143,11 @@ function codexSteps(tokenPath: string, endpoint: string): string[] {
 
 function claudeCodeSteps(tokenPath: string, endpoint: string): string[] {
   return [
-    "已经接好了，不用再配：仓库里的 `.mcp.json` 指向 `bin/autocrew.mjs mcp`，",
-    `它是一个转发器——把 stdio 上的 JSON-RPC 转发到 ${endpoint}，`,
-    `令牌自动读 ${tokenPath}。`,
+    "一键接上（注册到 Claude Code 的用户级配置，命令行和 Claude 桌面版的 Code 页都能用）：",
+    "   npx autocrew connect claude",
     "",
-    "1) 确保 AutoCrew 在跑：npm start",
-    "2) 在仓库目录里启动 Claude Code，`/mcp` 应该能看到 autocrew。",
-    "",
-    "守护进程没起时，工具调用会回一条「AutoCrew 服务没有运行」——不会有第二个进程偷偷写盘。",
+    `接上的是转发器 bin/autocrew.mjs mcp：把 stdio 上的 JSON-RPC 转发到 ${endpoint}，令牌读 ${tokenPath}。`,
+    "AutoCrew 要在跑（npm start）；守护进程没起时工具调用会回一条「AutoCrew 服务没有运行」。",
   ];
 }
 
@@ -186,10 +182,10 @@ export function hostInstructions(host: string, options: HostCliOptions = {}): st
     ].join("\n");
   }
 
-  if (host === "workbuddy") return workbuddyLines(dataDir, home);
+  if (host === "workbuddy") return workbuddyLines(options, home);
   const tokenPath = tildify(ensureHostToken(host, dataDir), home);
   const steps = host === "codex"
-    ? codexSteps(tokenPath, endpoint)
+    ? codexSteps()
     : host === "claude-code"
       ? claudeCodeSteps(tokenPath, endpoint)
       : dshSteps(tokenPath);
@@ -204,17 +200,15 @@ export function hostInstructions(host: string, options: HostCliOptions = {}): st
   return lines.join("\n");
 }
 
-/** `autocrew host workbuddy`：与集成页「连接 WorkBuddy」同一件事（spec W1–W8） */
-function workbuddyLines(dataDir: string, home: string): string {
-  const r = connectWorkbuddy({ home, dataDir });
-  if (!r.ok) return String(r.error);
-  const data = r.data as { file: string; backup?: string };
-  return [
-    `宿主 workbuddy 的令牌已就绪（${tildify(path.join(dataDir, "tokens", "workbuddy.token"), home)}）。`,
-    String(r.message),
-    `配置文件：${tildify(data.file, home)}${data.backup ? `（写前备份：${tildify(data.backup, home)}）` : ""}`,
-    "之后在 WorkBuddy 里就能调用 AutoCrew 的工具；撤销令牌后它的调用会 401。",
-  ].join("\n");
+/** `autocrew host workbuddy`：接入只有一套实现（onboarding-connect O4），这里只指路 */
+function workbuddyLines(options: HostCliOptions, home: string): string {
+  const lines = [
+    "接上 WorkBuddy 用一键接入（写它的 ~/.workbuddy/mcp.json，写前备份，接完核对能连上）：",
+    "   npx autocrew connect workbuddy",
+    "也可以在 AutoCrew 的「设置 · 接入更多 · 宿主」里点「接上」。",
+  ];
+  if (options.dir) lines.push("", ...personaLines("workbuddy", options, home));
+  return lines.join("\n");
 }
 
 /** `--dir` 那一段：写成功报落点与做法，写失败报人话原因——绝不把失败吞掉当没写。 */
@@ -224,7 +218,10 @@ function personaLines(host: KnownHost, options: HostCliOptions, home: string): s
   if (!isKnownRole(role)) {
     return [`--role ${role} 不认识。可用：${HOST_ROLES.join(" / ")}`];
   }
-  if (host === "dsh" || host === "workbuddy") {
+  if (host === "workbuddy") {
+    return ["WorkBuddy 不读工作目录里的人设文件，--dir 这次被忽略。人设随 AutoCrew 的工具说明一起给它。"];
+  }
+  if (host === "dsh") {
     return [
       "dsh 的人设在 preset 里（adapters/dsh/agent-presets/autocrew/agent.cordis.yml），",
       "随插件 apply 一起装，不写工作目录。--dir 这次被忽略。",

@@ -97,7 +97,7 @@ export async function forwardMessage(message, { url, token, session, host = "cla
   if (!response.ok) {
     // 401 是撤销 token 后的正常结局；其它非 2xx 一律照实说，不静默降级。
     const hint = response.status === 401
-      ? `AutoCrew 拒绝了这个令牌（可能已被撤销），重新执行 autocrew host ${host}`
+      ? `AutoCrew 拒绝了这个令牌（可能已被撤销或断开），重新执行 autocrew connect ${host === "claude-code" ? "claude" : host}`
       : `AutoCrew 服务返回 HTTP ${response.status}`;
     return jsonRpcError(id, -32000, hint);
   }

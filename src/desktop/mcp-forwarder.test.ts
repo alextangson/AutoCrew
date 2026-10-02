@@ -85,7 +85,7 @@ describe("mcp stdio forwarder", () => {
       fetchImpl,
     })) as { error: { code: number; message: string } };
     expect(reply.error.code).toBe(-32000);
-    expect(reply.error.message).toContain("autocrew host claude-code");
+    expect(reply.error.message).toContain("autocrew connect claude");
   });
 
   it("prefers the named host token over the legacy server-token", () => {

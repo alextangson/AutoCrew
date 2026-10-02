@@ -95,9 +95,9 @@ describe("WorkBuddy 接入：连接动作与宿主身份", () => {
 });
 
 describe("W7 撤销后的提示按宿主", () => {
-  it("401 提示「重新执行 autocrew host workbuddy」", async () => {
+  it("401 提示「重新执行 autocrew connect workbuddy」", async () => {
     const r = await forwardMessage({ jsonrpc: "2.0", id: 1, method: "ping" }, { url: "http://x", token: "t", host: "workbuddy", fetchImpl: async () => new Response("", { status: 401 }) });
-    expect(JSON.stringify(r)).toContain("autocrew host workbuddy");
+    expect(JSON.stringify(r)).toContain("autocrew connect workbuddy");
   });
 });
 

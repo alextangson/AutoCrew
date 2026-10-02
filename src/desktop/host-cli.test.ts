@@ -22,12 +22,11 @@ beforeEach(() => {
 });
 
 describe("autocrew host", () => {
-  it("prints the exact codex registration line and never the token value", () => {
+  it("points codex at the one-click connect, says it is the editing station, never prints the token", () => {
     const out = hostInstructions("codex", { dataDir: booted(), port: 4317 });
-    expect(out).toContain(
-      "codex mcp add autocrew --url http://127.0.0.1:4317/mcp --bearer-token-env-var AUTOCREW_MCP_TOKEN",
-    );
-    expect(out).toContain("export AUTOCREW_MCP_TOKEN=$(cat ");
+    expect(out).toContain("npx autocrew connect codex");
+    expect(out).not.toContain("export AUTOCREW_MCP_TOKEN");
+    expect(out).toContain("剪辑工位");
     expect(out).toContain(path.join("tokens", "codex.token"));
     expect(out).not.toMatch(TOKEN_VALUE);
   });
@@ -38,11 +37,18 @@ describe("autocrew host", () => {
     expect(out).toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
-  it("tells Claude Code it is already wired to the forwarder", () => {
+  it("points Claude Code at the one-click connect via the forwarder", () => {
     const out = hostInstructions("claude-code", { dataDir: booted() });
-    expect(out).toContain(".mcp.json");
+    expect(out).toContain("npx autocrew connect claude");
     expect(out).toContain("bin/autocrew.mjs mcp");
     expect(out).not.toMatch(TOKEN_VALUE);
+  });
+
+  it("workbuddy points at the one-click connect; --dir says WorkBuddy ignores it (not the dsh copy)", () => {
+    const out = hostInstructions("workbuddy", { dataDir: booted(), dir: dataDir });
+    expect(out).toContain("npx autocrew connect workbuddy");
+    expect(out).toContain("WorkBuddy 不读工作目录里的人设文件");
+    expect(out).not.toContain("dsh");
   });
 
   it("points dsh at its own README", () => {

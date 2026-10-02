@@ -39,6 +39,8 @@ function printHelp() {
   autocrew runs           查看最近任务事件
   autocrew call           调用任意内部能力（channel --payload JSON）
   autocrew mcp            stdio ↔ 守护进程 /mcp 转发器（Claude Code 用）
+  autocrew connect        一键接上宿主（claude|codex|workbuddy）；--list 看谁接上了、上次使用时间
+  autocrew disconnect     断开宿主：删配置条目 + 撤销令牌
   autocrew host           接入宿主（codex|claude-code|dsh|workbuddy），打印接入步骤
                           --dir <path> 把人设写进该目录的 AGENTS.md/CLAUDE.md
                           --role editor-writer|cover 选哪一份人设
@@ -465,6 +467,20 @@ switch (command) {
       ...(dir ? ["--dir", dir] : []),
       ...(role ? ["--role", role] : []),
     ];
+    const child = spawn(tsx, args, { cwd: ROOT, stdio: "inherit", env: process.env });
+    process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
+    break;
+  }
+  case "connect":
+  case "disconnect": {
+    // 一键接入（onboarding-connect §3）：与引导页、设置页同一套实现
+    const tsx = path.join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+    if (!fs.existsSync(tsx)) {
+      console.error(`缺少依赖。请先在 ${ROOT} 执行 npm install`);
+      process.exitCode = 1;
+      break;
+    }
+    const args = [path.join(ROOT, "scripts", "host-connect.mts"), command, ...process.argv.slice(process.argv.indexOf(command) + 1)];
     const child = spawn(tsx, args, { cwd: ROOT, stdio: "inherit", env: process.env });
     process.exitCode = await new Promise((resolve) => child.on("exit", (code) => resolve(code ?? 1)));
     break;
