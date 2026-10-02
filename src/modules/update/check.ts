@@ -39,7 +39,8 @@ export async function isGitInstall(root: string, git: GitRunner): Promise<boolea
 }
 
 async function fetchTags(git: GitRunner): Promise<string | null> {
-  const r = await git(["fetch", "--tags", "origin"], { timeoutMs: FETCH_TIMEOUT_MS });
+  // --force：发布 tag 被重新指向（重打 tag 再强推）时，普通 fetch 会因「会覆盖已有 tag」整体失败；目标只认 ls-remote 给的提交，本地 tag 跟着 origin 走就行（第 12 轮 P2）
+  const r = await git(["fetch", "--force", "--tags", "origin"], { timeoutMs: FETCH_TIMEOUT_MS });
   if (r.ok) return null;
   if (r.timedOut) return "连 GitHub 超过 30 秒没回应，稍后再查";
   return `连不上 GitHub（${firstLine(r.stderr) || "git fetch 失败"}）`;
