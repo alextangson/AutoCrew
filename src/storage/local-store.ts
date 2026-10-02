@@ -71,6 +71,8 @@ export interface Topic {
   renewedAt?: string;
   /** 软删除时间戳(回收站语义,qingmo 设计细节);null/缺省 = 活跃 */
   deletedAt?: string | null;
+  /** 选题会片单位（选题会 spec §4）：选中≠开工，只是进本周片单；会议记录在 meetings/<meetingDate>.json */
+  meetingSlot?: { meetingDate: string; slotId: string };
 }
 
 /**

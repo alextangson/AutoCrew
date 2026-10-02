@@ -2246,8 +2246,15 @@
        "prepare",
        "submit",
        "list",
-       "get"
+       "get",
+       "meeting_brief",
+       "meeting_get",
+       "meeting_save",
+       "meeting_tag"
       ],
+      "type": "string"
+     },
+     "date": {
       "type": "string"
      },
      "days": {
@@ -2264,6 +2271,7 @@
       "maxLength": 500,
       "type": "string"
      },
+     "meeting": {},
      "pack_id": {
       "pattern": "^insights-[a-f0-9-]{36}$",
       "type": "string"
@@ -2456,7 +2464,8 @@
        "limitations"
       ],
       "type": "object"
-     }
+     },
+     "tag": {}
     },
     "type": "object"
    }
@@ -4743,8 +4752,15 @@
        "prepare",
        "submit",
        "list",
-       "get"
+       "get",
+       "meeting_brief",
+       "meeting_get",
+       "meeting_save",
+       "meeting_tag"
       ],
+      "type": "string"
+     },
+     "date": {
       "type": "string"
      },
      "days": {
@@ -4761,6 +4777,7 @@
       "maxLength": 500,
       "type": "string"
      },
+     "meeting": {},
      "pack_id": {
       "pattern": "^insights-[a-f0-9-]{36}$",
       "type": "string"
@@ -4953,7 +4970,8 @@
        "limitations"
       ],
       "type": "object"
-     }
+     },
+     "tag": {}
     },
     "type": "object"
    }

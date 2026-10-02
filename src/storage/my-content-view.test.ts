@@ -160,6 +160,15 @@ describe("我的内容视图", () => {
     expect(missing).toContain("成片");
   });
 
+  it("选题会纪要从 meetings/ 渲染进「选题会」只读副本（同复盘栏做法）", async () => {
+    const { saveMeetingCas } = await import("../modules/meetings/meeting-store.js");
+    await saveMeetingCas({ date: "2026-10-02", slots: [], rejected: [{ title: "凑数题", reason: "没新东西" }], reviews: [] }, 0, data);
+    await sync();
+    const md = await fs.readFile(path.join(view, "选题会", "2026-10-02 选题会.md"), "utf8");
+    expect(md).toContain("# 2026-10-02 选题会纪要");
+    expect(md).toContain("凑数题：没新东西");
+  });
+
   it("publish copy prefers the publish plan's per-platform text over the video kit", async () => {
     const { c } = await withFinal(await make("有计划", "publish_ready"));
     await fs.mkdir(path.join(root(c), "06-publish"), { recursive: true });

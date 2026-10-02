@@ -19,7 +19,7 @@ const LOCAL_DIRS = new Set(["tokens", "bridge", "libraries", "cache", "migration
 // Unknown files stay at the source and are reported; a newly added secret can never silently go to NAS.
 const DATA_DIRS = new Set(["assets", "brand-intros", "campaigns", "competitors", "contents", "conversations", "covers",
   "editorial-feedback", "exports", "inbox", "learnings", "library", "logs", "memory", "patterns", "pipeline", "pipelines",
-  "reports", "research", "sensitive-words", "topics", "video", "workflows", "projects", "imports", ".obsidian"]);
+  "reports", "research", "sensitive-words", "topics", "video", "workflows", "projects", "imports", ".obsidian", "meetings"]);
 const DATA_FILES = new Set(["STYLE.md", "cover-style.json", "creator-profile.json", "digest-state.json", "editorial-experiments.json",
   "events.jsonl", "hypotheses.jsonl", "outcomes.jsonl", "radar-rejects.json", "radar-sources.json", "recent-actions.json",
   "recent-turns.json", "topic-radar.json", "platform-items.json", "hooks.json"]);
