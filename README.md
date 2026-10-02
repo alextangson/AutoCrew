@@ -77,30 +77,17 @@ npm run restart
 
 **通过 Claude Desktop、Claude Code 或 Codex 的 MCP 写作不需要配置后台模型。** 默认使用当前宿主的模型能力与额度，AutoCrew 保存任务、资料与稿件，并执行引文和格式检查。下面的配置仅供 AutoCrew 工作台、显式 `execution=engine` / `review=engine` 或已授权的无人值守后台任务使用。第三方搜索及图像、视频服务仍有各自的额度和计费，不包含在宿主模型订阅中。
 
-### 用本机 Claude 或 Codex 当总编辑（不配端点也能用）
+### 工作台里的对话用你自己的钥匙
 
-工作台右栏的总编辑可以直接交给你电脑上的 Claude Code 或 Codex 来跑：用你自己的订阅，设置页一个端点都不用填。
-
-1. 装好并登录：Claude Code 在终端运行 `claude` 按提示登录；Codex 运行 `codex login`。两个都装也行，按对话切换。
-2. 在 AutoCrew 目录运行 `npm install`（会装上 ACP 适配器 `@agentclientprotocol/claude-agent-acp` 和 `@zed-industries/codex-acp`），再 `npm start`。
-3. 之后在右栏输入框下方的后端切换器里选「本机 Claude」或「本机 Codex」。第一次使用会先弹一段权限说明。
-
-须知：
-
-- **怎么跑**：每轮在本机起一个 agent，通过 AutoCrew 的 MCP 调工具。工作目录是 `~/.autocrew/chief-editor/`，只挂 AutoCrew 的 MCP，不加载你全局配置的其他 MCP 和插件；Claude 还会带上仓库自带技能。
-- **按对话设置**：输入框下方可以选模型、思考强度和权限模式（每次问 / 本对话都允许 / 全部放行），改了下一轮生效。
-- **权限**：本机 agent 和你自己开 Claude Code 一样，能读写文件、跑 shell。AutoCrew 只防误操作：跑命令、写文件先弹卡问你；发布、删稿、删选题在任何权限模式下都要你在卡片上批准。它防不住网页或资料里的恶意指令诱导。
-- **代理**：如果 `~/.claude/settings.json` 的 `env` 里配了 `ANTHROPIC_BASE_URL`，本机 agent 也走这个代理（只带 `ANTHROPIC_*` 和 `CLAUDE_CODE_*` 两类变量）。代理没开会直接报错，不会绕过它直连。代理是 Headroom 时，会自动挂上它的 MCP，让 agent 能取回被压缩的原文。
-- **Codex 的额外约束**：不管 `~/.codex/config.toml` 怎么写，每个会话都强制「跑命令前先问」和「只能写工作目录、shell 不联网」；`config.toml` 里的 MCP 服务一个都不启动，登录和模型提供方照常使用；AutoCrew 只用启动参数覆盖，不改你的配置文件。
-- **Codex 的已知限制**：当前适配器版本不上报思考强度，这一项显示「默认」；`~/.codex/AGENTS.md` 仍会加载；`config.toml` 里有名字带点号、空格或引号的 MCP 服务时会拒绝启动并说明原因（没法可靠地关掉它们）。
-- **出问题时**：没装、没登录会在切换器上标出来，发送时给修法；绝不自动改用内置引擎。
-- **WorkBuddy**：不在切换器里，走反方向接入——让 WorkBuddy 自己连 AutoCrew，见下文「接宿主」。
+工作台右栏的总编辑只跑在内置引擎上，用你自己的模型钥匙（DeepSeek 最省事）；没配钥匙时右栏只显示一句「在 设置 → 模型 里填」。
+想用 Claude Code、Codex 或 WorkBuddy，就把它们接上 AutoCrew（见下文「接宿主」），在它们自己的窗口里说「帮我写一条……」。
+2026-10-02 前用「本机 Claude / 本机 Codex」聊过的对话照常能打开和阅读，接着聊会走内置引擎。
 
 ### 内置引擎：端点表
 
 配置只有**一张端点表**：填过的每个端点（地址 + Key + 模型清单）在里面存一份，主端点、备用端点、四个岗位、对话里的模型切换器全部指向它——同一把 Key 不用填四遍。
 
-要用内置引擎，打开工作台的「设置 → 模型 → 模型 · 端点与岗位」，最少填一个端点：主端点必填，其余全可缺省。只靠接上的 Claude Code / Codex / WorkBuddy 写稿可以一个都不填；深调研、选题雷达、复盘、人设、每日摘要要用你自己的钥匙（DeepSeek 最省事）。
+要用内置引擎，打开工作台的「设置 → 模型 → 模型 · 端点与岗位」，最少填一个端点：主端点必填，其余全可缺省。只靠接上的 Claude Code / Codex / WorkBuddy 写稿可以一个都不填（但工作台右栏的对话要用它）；深调研、选题雷达、复盘、人设、每日摘要要用你自己的钥匙（DeepSeek 最省事）。
 
 | 位置 | 作用 | 缺省 |
 |---|---|---|
