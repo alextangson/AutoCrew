@@ -6,7 +6,7 @@
  * - 离群 = 最新播放 > 同平台作品中位数 5 倍，单列，不进分组与基线；
  * - n < 5 只列数，不给中位数（insufficient）。
  */
-import type { OutcomeMetrics } from "../flywheel/outcome-schema.js";
+import { outcomeKey, type OutcomeMetrics } from "../flywheel/outcome-schema.js";
 import { median, metricsNearAge, ageInDays, type AtAgeSnapshot, type EntityGroup } from "../flywheel/metrics-window.js";
 import { MIN_BASELINE_SAMPLE } from "../retro/hypothesis-judge.js";
 import { PULLABLE_METRICS, isUnverified } from "../insights/metric-review.js";
@@ -43,6 +43,18 @@ export function statOf(values: number[]): Stat {
 const reading = (at: AtAgeSnapshot | null): WorkReading | null =>
   at ? { metricDate: at.metricDate, ageDays: at.ageDays, metrics: at.metrics } : null;
 
+/**
+ * 作品标签的键：有平台作品 id 用 id（标题改了、绑定了都不变），没有才用 标题@北京日期。
+ * 读的时候三把键都认（id 键、标题键、旧的作品键），绑定或补上 id 后旧标签不失联。
+ */
+export function workTagKeys(g: EntityGroup): { primary: string; all: string[] } {
+  const itemId = [...g.snapshots].reverse().find((s) => s.platformItemId)?.platformItemId;
+  const last = g.snapshots[g.snapshots.length - 1];
+  const titleKey = outcomeKey({ ...last, contentId: null, metricDate: "" });
+  const itemKey = itemId ? `${g.platform}:item:${itemId}` : null;
+  return { primary: itemKey ?? titleKey, all: [...new Set([itemKey, titleKey, g.entityKey].filter((k): k is string => !!k))] };
+}
+
 export type MeetingTagLookup = (contentId: string | null) => { format: string; personaKey: string } | null;
 
 export function buildWorkRows(
@@ -52,10 +64,11 @@ export function buildWorkRows(
 ): WorkRow[] {
   const rows = groups.map((g): WorkRow => {
     const last = g.snapshots[g.snapshots.length - 1];
-    const manual = tags[g.entityKey];
+    const keys = workTagKeys(g);
+    const manual = keys.all.map((k) => tags[k]).find(Boolean);
     const fromMeeting = meetingTag(g.contentId);
     return {
-      key: g.entityKey, platform: g.platform, title: g.title, contentId: g.contentId, boundVia: g.boundVia,
+      key: keys.primary, platform: g.platform, title: g.title, contentId: g.contentId, boundVia: g.boundVia,
       publishedAt: g.publishedAt,
       d3: reading(metricsNearAge(g.snapshots, g.publishedAt, 3)),
       d7: reading(metricsNearAge(g.snapshots, g.publishedAt, 7)),

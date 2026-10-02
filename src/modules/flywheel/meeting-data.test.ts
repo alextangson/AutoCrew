@@ -91,22 +91,67 @@ describe("发布计划按平台绑定（§5.2）+ 作品标签（§5.4）", () =
   beforeEach(async () => { f = await makeFixture(); });
   afterEach(async () => { await dropFixture(f); });
 
-  it("一条稿三平台不同标题，按各自 title + 北京日期都绑上", async () => {
+  it("一条稿三平台不同标题：简报按各自 title + 北京日期都绑上；日期对不上的不认", async () => {
     const c = await makeContent(f.data, "稿件内部标题");
     await writePlan(f.data, c.id, [
       { platform: "douyin", title: "抖音：AI 越强你越忙", scheduled_at: "2026-09-30T18:00:00+08:00" },
       { platform: "xhs", title: "小红书版标题", scheduled_at: "2026-09-30T18:00:00+08:00" },
       { platform: "wechat_video", title: "视频号版标题", scheduled_at: "2026-09-30T18:00:00+08:00" },
     ]);
-    const opts = { source: "auto" as const, metricDate: "2026-10-01", dataDir: f.data };
-    await importPerformanceRows("douyin", [{ title: "抖音：AI 越强你越忙", publishedAt: "2026-09-30T10:00:00Z", metrics: { views: 10 } }], opts);
-    await importPerformanceRows("xiaohongshu", [{ title: "小红书版标题", publishedAt: "2026-09-30T10:00:00Z", metrics: { views: 5 } }], opts);
-    await importPerformanceRows("wechat_video", [{ title: "视频号版标题", publishedAt: "2026-09-30T10:00:00Z", metrics: { views: 3 } }], opts);
-    // 日期对不上的同名作品不认
-    await importPerformanceRows("douyin", [{ title: "抖音：AI 越强你越忙", publishedAt: "2026-08-01T10:00:00Z", metrics: { views: 1 } }], opts);
-    const rows = await listOutcomes(f.data);
-    expect(rows.filter((r) => r.contentId === c.id).map((r) => r.platform).sort()).toEqual(["douyin", "wechat_video", "xiaohongshu"]);
-    expect(rows.filter((r) => r.contentId === null)).toHaveLength(1);
+    await appendOutcomes([
+      row({ platformTitle: "抖音：AI 越强你越忙", publishedAt: "2026-09-30T10:00:00Z", metricDate: "2026-10-01", source: "auto" }),
+      row({ platform: "xiaohongshu", platformTitle: "小红书版标题", publishedAt: "2026-09-30T10:00:00Z", metricDate: "2026-10-01", source: "auto" }),
+      row({ platform: "wechat_video", platformTitle: "视频号版标题", publishedAt: "2026-09-30T10:00:00Z", metricDate: "2026-10-01", source: "auto" }),
+      row({ platformTitle: "抖音：AI 越强你越忙", publishedAt: "2026-08-01T10:00:00Z", metricDate: "2026-10-01", source: "auto" }),
+    ], f.data);
+    const { buildMeetingBrief } = await import("../meetings/meeting-brief.js");
+    const works = (await buildMeetingBrief(f.data, new Date("2026-10-02T04:00:00Z"))).works;
+    expect(works.filter((w) => w.contentId === c.id).map((w) => [w.platform, w.boundVia]).sort()).toEqual([["douyin", "plan"], ["wechat_video", "plan"], ["xiaohongshu", "plan"]]);
+    expect(works.filter((w) => w.contentId === null)).toHaveLength(1);
+  });
+
+  it("回归 P1：加了发布计划之后再回流，早期未绑定快照和标签都还在（绑定只在内存里做）", async () => {
+    const c = await makeContent(f.data, "稿件内部标题");
+    const pull = (metricDate: string, views: number) => importPerformanceRows("xiaohongshu",
+      [{ title: "小红书版", publishedAt: "2026-09-01T02:00:00Z", metrics: { views } }], { source: "auto", metricDate, dataDir: f.data });
+    await pull("2026-09-04", 10);
+    await pull("2026-09-08", 20);
+    const { buildMeetingBrief } = await import("../meetings/meeting-brief.js");
+    const now = new Date("2026-09-21T04:00:00Z");
+    const key = (await buildMeetingBrief(f.data, now)).works[0].key;
+    await setWorkTag(key, { format: "教学" }, f.data);
+    await writePlan(f.data, c.id, [{ platform: "xhs", title: "小红书版", scheduled_at: "2026-09-01T10:00:00+08:00" }]);
+    await pull("2026-09-20", 30);
+    expect((await listOutcomes(f.data)).map((r) => r.metricDate).sort()).toEqual(["2026-09-04", "2026-09-08", "2026-09-20"]);
+    const [w] = (await buildMeetingBrief(f.data, now)).works;
+    expect(w).toMatchObject({ contentId: c.id, boundVia: "plan", format: "教学", d3: { ageDays: 3 }, d7: { ageDays: 7 } });
+  });
+
+  it("发布计划里实际公开时间优先于计划时间", async () => {
+    const { planEntriesOf } = await import("./plan-binding.js");
+    const raw = JSON.stringify({ platforms: [{ platform: "douyin", title: "T", scheduled_at: "2026-09-30T18:00:00+08:00", publication: { published_at: "2026-10-01T09:00:00+08:00" } }] });
+    expect(planEntriesOf("c", raw)[0].date).toBe("2026-10-01");
+  });
+
+  it("回归 P2b：有平台作品 id 的作品按 id 打标签，后来绑定到稿件也不失联", async () => {
+    const c = await makeContent(f.data, "稿");
+    await appendOutcomes([row({ platformTitle: "改过名之前", platformItemId: "777", publishedAt: "2026-09-01T02:00:00Z", metricDate: "2026-09-04" })], f.data);
+    const { buildMeetingBrief } = await import("../meetings/meeting-brief.js");
+    const now = new Date("2026-09-21T04:00:00Z");
+    const key = (await buildMeetingBrief(f.data, now)).works[0].key;
+    expect(key).toBe("douyin:item:777");
+    await setWorkTag(key, { personaKey: "core" }, f.data);
+    await appendOutcomes([row({ contentId: c.id, platformTitle: "改过名之后", platformItemId: "777", publishedAt: "2026-09-01T02:00:00Z", metricDate: "2026-09-08" })], f.data);
+    const [w] = (await buildMeetingBrief(f.data, now)).works;
+    expect(w).toMatchObject({ contentId: c.id, persona: "core", key: "douyin:item:777" });
+  });
+
+  it("回归 P2b：meeting_tag 拒收简报里没有的 work_key", async () => {
+    const { executeInsights } = await import("../../tools/insights.js");
+    const res = await executeInsights({ action: "meeting_tag", tag: { work_key: "douyin:不存在@2026-01-01", format: "教学" }, _dataDir: f.data });
+    expect(res).toMatchObject({ ok: false });
+    expect(String(res.error)).toContain("不在当前简报的作品里");
+    expect(await readWorkTags(f.data)).toEqual({});
   });
 
   it("标签与绑定共用 platform-items.json，谁写都不抹掉对方", async () => {

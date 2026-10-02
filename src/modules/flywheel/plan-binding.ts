@@ -5,6 +5,9 @@
  * 只有一个平台认得上。发布计划 `06-publish/publish-plan.json` 里**每个平台各自**写了 title +
  * scheduled_at：同平台、归一化标题相等、且计划时间与作品发布时间是同一个北京日期 → 认这篇稿。
  * 多篇稿同时命中 = 有歧义，不认（宁可列「未绑定」让人确认，也不张冠李戴）。
+ *
+ * **只在内存里用（简报 / 下注对账），不写回 outcomes**：写回会让作品换成 contentId 键，
+ * listOutcomes 随即丢掉它所有未绑定的早期快照（D+3/D+7 就没了），按旧键打的标签也跟着失联。
  */
 import { getDataDir, listContents, type Content } from "../../storage/local-store.js";
 import { readPublishPlanRaw } from "../../storage/publish-record.js";
@@ -25,7 +28,8 @@ export function planEntriesOf(contentId: string, raw: string | null): PlanEntry[
   return json.platforms.flatMap((entry) => {
     if (!isObj(entry)) return [];
     const pub = isObj(entry.publication) ? entry.publication : {};
-    const when = text(entry.scheduled_at) || text(pub.scheduled_at) || text(pub.published_at);
+    // 实际公开时间优先于计划时间：定时被改过时 scheduled_at 会对不上作品真实发布日
+    const when = text(pub.published_at) || text(entry.scheduled_at) || text(pub.scheduled_at);
     const platform = text(entry.platform);
     const title = text(entry.title);
     if (!platform || !title || !when || Number.isNaN(Date.parse(when))) return [];

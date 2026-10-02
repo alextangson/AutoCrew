@@ -29,6 +29,10 @@ async function tag(raw: unknown, dir: string) {
   if (!format && !personaKey) return { ok: false, error: "meeting_tag 至少给 format 或 persona_key 之一" };
   if (format && !(MEETING_FORMATS as readonly string[]).includes(format)) return { ok: false, error: `format 只能是 ${MEETING_FORMATS.join("/")}` };
   if (personaKey && !(PERSONA_TIER_KEYS as readonly string[]).includes(personaKey)) return { ok: false, error: "persona_key 只能是 core/adjacent/surprise" };
+  const brief = await buildMeetingBrief(dir);
+  if (![...brief.works, ...brief.outliers].some((w) => w.key === key)) {
+    return { ok: false, error: `work_key「${key}」不在当前简报的作品里——用 meeting_brief 返回的 works/outliers/untagged 里的 key` };
+  }
   const saved = await setWorkTag(key, { ...(format ? { format } : {}), ...(personaKey ? { personaKey } : {}) }, dir);
   return { ok: true, work_key: key, tag: saved };
 }

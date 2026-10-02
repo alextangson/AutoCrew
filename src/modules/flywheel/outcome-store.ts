@@ -21,7 +21,6 @@ import {
   type BindingVia,
 } from "./platform-items.js";
 import { parsePublishUrl } from "./publish-url.js";
-import { loadPlanEntries, matchPlanEntry } from "./plan-binding.js";
 import { listContents, getContent, getDataDir, type Content } from "../../storage/local-store.js";
 
 const OUTCOMES_FILE = "outcomes.jsonl";
@@ -244,15 +243,10 @@ export async function matchDraft(
   );
   const target = normalizeTitle(platformTitle);
   if (!target) return null; // 标题归一化后为空：没有匹配依据
-  const direct = matchByTitle(candidates, target, publishedAt);
-  if (direct) return direct;
-  // 多平台稿：发布计划里每个平台各自的标题 + 北京日期（选题会 spec §5.2）
-  const planned = matchPlanEntry(await loadPlanEntries(dataDir, contents), platform, platformTitle, publishedAt);
-  return planned ? contents.find((c) => c.id === planned) ?? null : null;
+  return matchByTitle(candidates, target, publishedAt);
 }
 
 function matchByTitle(candidates: Content[], target: string, publishedAt: string | null): Content | null {
-
   let best: { content: Content; score: number } | null = null;
   for (const c of candidates) {
     const normalized = normalizeTitle(c.title);
