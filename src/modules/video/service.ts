@@ -408,7 +408,8 @@ export function createVideoService(opts: VideoServiceOptions): VideoService {
       return { status: record.status };
     },
     asrStatus: async () => {
-      const record: AsrStatusRecord = await effectiveAsrStatus(dataDir);
+      // 服务自己读：只有这里可以把「上一个进程留下、没人认领的预热中」当中断改写（第 14 轮 P2）
+      const record: AsrStatusRecord = await effectiveAsrStatus(dataDir, process.env, { recoverInterrupted: true });
       return { status: record.status, ...(record.detail ? { detail: record.detail } : {}) };
     },
     shutdown: () => runner.shutdown(),

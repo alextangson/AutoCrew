@@ -290,11 +290,19 @@ export async function asrModelsCached(env: NodeJS.ProcessEnv = process.env): Pro
 }
 
 /** 状态文件说了算，除非它没说 ready 而模型其实已在共享缓存里 */
-export async function effectiveAsrStatus(dataDir: string, env: NodeJS.ProcessEnv = process.env): Promise<AsrStatusRecord> {
+export async function effectiveAsrStatus(
+  dataDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+  /**
+   * 只有服务自己读状态（VideoService.asrStatus）才可以把「没人认领的预热中」当中断改写。
+   * doctor 等别的进程看不见服务进程里的预热，改写会把正在下载的预热误判成失败 / 就绪（第 14 轮 P2）：它们只读、照实报 warming。
+   */
+  opts: { recoverInterrupted?: boolean } = {},
+): Promise<AsrStatusRecord> {
   const record = await readAsrStatus(dataDir);
   if (record.status === "ready") return record;
   if (record.status === "warming") {
-    if (warmingUp.has(dataDir)) return record;
+    if (!opts.recoverInterrupted || warmingUp.has(dataDir)) return record;
     // 盘上写着「预热中」，本进程却没在预热：上一个进程（比如一键更新重启）把它打断了，写结果的那一步跟着没了。
     // 不能永远停在「预热中」（第 13 轮 P2）：模型其实到了就算就绪，没到就说清楚、让人再点一次
     return (await asrModelsCached(env))
@@ -324,7 +332,10 @@ export async function warmupAsr(dataDir: string, deps?: VideoDeps): Promise<AsrS
     return writeAsrStatus(dataDir, { status: "failed", detail: blocked.reason }, deps);
   }
   warmingUp.add(dataDir);
-  const pending = await writeAsrStatus(dataDir, { status: "warming", detail: "正在下载/加载模型（约 1GB），可以先干别的" }, deps);
+  let pending: AsrStatusRecord;
+  // 写不了状态（资料库断开等）：别让计数卡在 1，否则每次更新都报「有任务在跑」（第 14 轮 P3）
+  try { pending = await writeAsrStatus(dataDir, { status: "warming", detail: "正在下载/加载模型（约 1GB），可以先干别的" }, deps); }
+  catch (err) { warmingUp.delete(dataDir); throw err; }
   void runProcess({
     command: "uv",
     args: sidecarArgs(["--warmup"]),
