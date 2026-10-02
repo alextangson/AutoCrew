@@ -142,15 +142,17 @@ describe("P2 服务本来没开：也要起一次新版做健康检查", () => {
   });
   const answers = async (port: number) => { try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1_000) }); return true; } catch { return false; } };
 
-  it("新版能起来：起一次、检查通过、再停掉（和更新前一样不在运行）", async () => {
+  it("新版能起来：起起来、检查通过、让它接着跑（第 13 轮：不再起了又停）", async () => {
     const port = await freePort();
     Object.assign(process.env, { AUTOCREW_LOCAL_DIR: tmp, AUTOCREW_SERVER_SCRIPT: fakeServer(false) });
     const lines: string[] = [];
     const steps = realSteps(REPO, port, { serverWasRunning: false, busy: async () => null, machineDir: tmp, healthTimeoutMs: 10_000 });
     await steps.restart((l) => lines.push(l));
     await steps.health((l) => lines.push(l));
-    expect(lines.join("\n")).toContain("检查通过，已停掉");
-    expect(await answers(port)).toBe(false);
+    expect(lines.join("\n")).toContain("检查通过，AutoCrew 已经启动");
+    expect(steps.startedService?.()).toBe(true);
+    expect(await answers(port)).toBe(true);
+    spawnSync(process.execPath, [path.join(REPO, "bin", "autocrew.mjs"), "stop"], { env: { ...process.env, AUTOCREW_PORT: String(port) } });
   }, 40_000);
 
   it("新版起不来：重启 / 健康检查失败（交给退回），不报成功", async () => {

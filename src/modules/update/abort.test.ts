@@ -58,7 +58,7 @@ describe("装依赖时按 Ctrl-C", () => {
       `acquireLock(${JSON.stringify(machine)}, "cli");`,
       `try {`,
       `  const r = await runUpdate({ root: ${JSON.stringify(user)}, machineDir: ${JSON.stringify(machine)}, tag: "v0.5.0", commit: ${JSON.stringify(g(user, "rev-parse", "v0.5.0^{commit}"))}, from: "0.4.0", to: "0.5.0",`,
-      `    git: gitRunner(${JSON.stringify(user)}), steps: { ...realSteps(${JSON.stringify(user)}, 1, { serverWasRunning: false, busy: async () => null, npm: ${JSON.stringify(npm)} }), restart: async () => {}, health: async () => {} }, logFile: ${JSON.stringify(path.join(machine, "u.log"))}, signal: abort.signal });`,
+      `    git: gitRunner(${JSON.stringify(user)}), steps: realSteps(${JSON.stringify(user)}, 1, { serverWasRunning: false, busy: async () => null, npm: ${JSON.stringify(npm)} }), logFile: ${JSON.stringify(path.join(machine, "u.log"))}, signal: abort.signal });`,
       `  console.log("RESULT " + r.outcome);`,
       `} finally { releaseLock(${JSON.stringify(machine)}, "cli"); abort.dispose(); }`,
     ].join("\n"));

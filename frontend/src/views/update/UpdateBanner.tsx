@@ -17,15 +17,16 @@ export function NotesList(props: { notes: ReleaseNotes[] }) {
   </div>)}</>;
 }
 
-export function UpdatingOverlay(props: { stalled: boolean; log?: string }) {
-  // 卡住了也不叫人重启：重启会打断还在跑的更新（第 12 轮 P2）；页面照样接着等，服务回来就自动刷新
+export function UpdatingOverlay(props: { stalled: boolean; log?: string; logDir?: string }) {
+  // 卡住时给一条安全的出路（第 13 轮 P2）：更新进程活着时启动器会拒绝 start，不会打断它；更新已经结束就把服务起来
+  const where = props.log || props.logDir;
   return <div className="upd-overlay" role="alertdialog" aria-label="正在更新">
     <div className="upd-overlay-card">
       <h3>AutoCrew 正在更新，大约 1 分钟</h3>
       <p className="muted">{props.stalled
-        ? "服务已经 5 分钟连不上了。更新可能还在进行，先别手动重启，这一页会一直等它回来。"
+        ? "服务已经 5 分钟连不上了。可以在终端运行 npm start：更新还在跑的话它会拒绝，不会打断更新；更新已经结束的话它会把 AutoCrew 起来，这一页随后显示更新结果和下一步。"
         : "更新完会自动刷新这一页，不用动。网慢时装依赖要多等几分钟。"}</p>
-      {props.log && <p className="muted">完整记录：{props.log}</p>}
+      {where && <p className="muted">{props.log ? "完整记录" : "更新记录在这个文件夹里"}：{where}</p>}
     </div>
   </div>;
 }
@@ -52,7 +53,7 @@ export function UpdateBanner(props: { initial?: UpdateView | null; reload?: () =
     (props.reload ?? (() => window.location.reload()))();
   };
   useEffect(() => { if (view?.running && updating === "no") void watch(); }, [view?.running]);
-  if (updating !== "no") return <UpdatingOverlay stalled={updating === "stalled"} {...(log ? { log } : {})} />;
+  if (updating !== "no") return <UpdatingOverlay stalled={updating === "stalled"} {...(log ? { log } : {})} {...(view?.logDir ? { logDir: view.logDir } : {})} />;
   const banner = view?.banner;
   if (!banner) return null;
   const go = async () => {

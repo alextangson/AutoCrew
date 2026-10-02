@@ -7,6 +7,7 @@ import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
 import { detectInterrupted } from "../src/modules/update/interrupted.js";
 import { createConnectHandler } from "../src/desktop/connect-route.js";
+import { asrWarmupCount } from "../src/modules/video/asr.js";
 import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
@@ -203,7 +204,7 @@ const updateRoute = createUpdateHandler({
   root: programRoot(), machineDir: getMachineDir(), port: PORT,
   // 对话轮 + 后台写稿 / 生图 / 推送等长任务（self-update，Codex 审第 2 轮 P1）
   // 剪辑与深调研的 runner 在跑也算（第 12 轮 P2：重启后它们要等 10 / 30 分钟才会被捡回，不能被重启打断）
-  inProcessTurns: () => activeTurnCount() + activeWorkCount() + (videoService?.busyCount() ?? 0) + researchBusyCount(),
+  inProcessTurns: () => activeTurnCount() + activeWorkCount() + (videoService?.busyCount() ?? 0) + researchBusyCount() + asrWarmupCount(),
   // 启动器记的是 tsx 的 pid，跑本文件的是 tsx 拉起的另一个 node：比启动器发给这一次启动的标记，不比 pid
   launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()), via: launchVia() }),
 });

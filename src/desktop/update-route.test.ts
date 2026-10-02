@@ -52,3 +52,8 @@ it("手动检查失败：原因写在状态里", async () => {
   expect(r.data.status.error).toMatch(/README/);
   expect(r.data.banner).toBeNull();
 });
+
+it("读状态时带上更新记录的文件夹（页面刷新后也能告诉人日志在哪）", async () => {
+  const r = await (await fetch(`${base}/api/update`, { headers: { cookie: "s" } })).json();
+  expect(r.data.logDir).toBe(path.join(dir, "update-logs"));
+});
