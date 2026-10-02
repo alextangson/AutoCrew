@@ -11,7 +11,7 @@ import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 import { fetchLaunchInfo, launcherNonce, managedBy } from "./remote.js";
 import { DepsSwap, sweepOrphanPrev, sweepTrash } from "./deps-swap.js";
-import { markFinishing } from "./abort.js";
+import { markFinishing, markRestarting } from "./abort.js";
 import { clearInflight, markInflightVerified, writeInflight } from "./interrupted.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
 
@@ -169,6 +169,7 @@ async function forward(job: UpdateJob, oldHead: string, log: Log, progress: Prog
   log("== 确认没有任务在跑"); await job.steps.quiesce(log); checkpoint();
   if (job.steps.activate) { log("== 换上新前端"); await job.steps.activate(log); }
   progress.touchedService = true;
+  markRestarting();
   log("== 重启服务"); await job.steps.restart(log);
   log("== 健康检查"); await job.steps.health(log);
   // 新版过了检查：之后就算被打断（比如在清理旧依赖时），停在新版也算安装一致，不再叫人退回（第 15 轮 P2-1）

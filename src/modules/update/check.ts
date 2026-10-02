@@ -10,6 +10,7 @@ import { firstLine, gitRunner, type GitRunner } from "./git.js";
 import { compareSemver, formatSemver, isNewer, parseSemver } from "./semver.js";
 import { notesBetween, parseChangelog, shortDate, type ReleaseNotes } from "./changelog.js";
 import { stillInterrupted } from "./interrupted.js";
+import { lockHeld } from "./preflight.js";
 import { files, readResult, readSettings, readStatus, writeStatus, type UpdateResult, type UpdateSettings, type UpdateStatus } from "./state.js";
 
 export const FETCH_TIMEOUT_MS = 30_000;
@@ -53,6 +54,9 @@ export async function readNotesAt(git: GitRunner, tag: string, from: string, to:
 }
 
 export async function checkForUpdate(root: string, machineDir: string, deps: CheckDeps = {}): Promise<UpdateStatus> {
+  // 更新正在跑：不检查。新版在健康检查那 60 秒里起的定时检查会把自己的版本写成「当前」，退回之后设置页就误报「已经是最新版」（第 16 轮 R3）
+  const prevStatus = readStatus(machineDir);
+  if (lockHeld(machineDir)) return prevStatus ?? { checkedAt: new Date().toISOString(), current: localVersion(root), available: false };
   const git = deps.git ?? gitRunner(root);
   const current = localVersion(root);
   const checkedAt = (deps.now?.() ?? new Date()).toISOString();

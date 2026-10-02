@@ -384,8 +384,8 @@ async function runDetachedUpdate(tsx) {
   let aborting = false;
   // 只发给更新进程本身：发给整个进程组会把它正在跑的 git merge 一起杀掉，留下写了一半的工作区（第 15 轮）
   const toChild = (sig) => { try { child.kill(sig); } catch { /* 已经结束 */ } };
+  // 每次 Ctrl-C 都转给更新进程，由它按自己走到哪一步来说（正在退回 / 新版正在检查 / 正在收尾），前台不自己编一句（第 16 轮 R1）
   process.on("SIGINT", () => {
-    if (aborting) { console.log("正在退回，请稍等"); return; }
     aborting = true;
     toChild("SIGINT");
   });

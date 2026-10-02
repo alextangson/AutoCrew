@@ -117,3 +117,39 @@ describe("P3 中断状态下 npm run restart", () => {
     expect(`${r.stdout}${r.stderr}`).not.toContain("当前未由快速启动器运行"); // stop() 的输出：没走到停服务那一步
   });
 });
+
+import { checkForUpdate } from "./check.js";
+import { readStatus, writeStatus } from "./state.js";
+import { acquireLock, releaseLock } from "./preflight.js";
+import { createAbortHandle, markRestarting, resetFinishing } from "./abort.js";
+import { gitRunner } from "./git.js";
+
+describe("P3 R3 更新进行中不检查", () => {
+  it("更新锁在手：检查不跑、不改写状态（坏版在健康检查期间起的定时检查不能把自己写成「当前」）", async () => {
+    writeStatus(m, { checkedAt: "2026-10-02T00:00:00Z", current: "0.4.9", latest: "0.5.0", tag: "v0.5.0", commit: neu, available: true });
+    expect(acquireLock(m, "t")).toBe(true);
+    try {
+      await checkForUpdate(root, m, { git: gitRunner(root) });
+      expect(readStatus(m)).toMatchObject({ checkedAt: "2026-10-02T00:00:00Z", current: "0.4.9", available: true });
+    } finally { releaseLock(m, "t"); }
+  });
+});
+
+describe("P3 R1 Ctrl-C 按更新走到哪一步来说", () => {
+  it("新版正在启动和检查：说这一步不打断，不请求中止", () => {
+    const said: string[] = [];
+    markRestarting();
+    try {
+      const h = createAbortHandle((x) => said.push(x));
+      h.onSignal(); h.onSignal();
+      expect(said.every((x) => x.includes("新版正在启动和检查"))).toBe(true);
+      expect(h.signal.aborted).toBe(false);
+    } finally { resetFinishing(); }
+  });
+
+  it("前台不自己编「正在退回」：第二次 Ctrl-C 也只转给更新进程，由它来说", () => {
+    const src = fs.readFileSync(path.join(REPO, "bin", "autocrew.mjs"), "utf-8");
+    const fn = src.slice(src.indexOf("async function runDetachedUpdate"), src.indexOf("/** 进程启动时刻"));
+    expect(fn).not.toContain("正在退回，请稍等");
+  });
+});
