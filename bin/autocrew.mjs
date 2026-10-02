@@ -447,37 +447,42 @@ function interruptedUpdateHelp() {
   // 版本既不是旧的也不是新的、工作区干净——用户自己换了版本，清掉记录、说一句就放行
   const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf-8" }).stdout?.trim();
   const depsOk = (rel) => fs.existsSync(path.join(ROOT, rel === "node_modules" ? "node_modules/.bin/tsx" : "frontend/node_modules/.bin/vite"));
-  const prevName = (base) => new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`);
-  const hasPrev = ["node_modules", "frontend/node_modules", "frontend/dist"].some((rel) => {
-    try { return fs.readdirSync(path.dirname(path.join(ROOT, rel))).some((n) => prevName(path.basename(rel)).test(n)); } catch { return false; }
-  });
+  // 只认这次在途记录那一戳的完整备份 `.prev-<戳>`（第 16 轮 P2-2）；老记录没戳才认任意 `.prev-<数字>`；删到一半的 .trash-… 不认
+  const prevOf = (base) => inflight.stamp ? (n) => n === `${base}.prev-${inflight.stamp}` : (n) => new RegExp(`^${base.replace(".", "\\.")}\\.prev-\\d+$`).test(n);
+  const backups = new Map();
+  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
+    let names = [];
+    try { names = fs.readdirSync(path.dirname(path.join(ROOT, rel))).filter(prevOf(path.basename(rel))).sort(); } catch { /* 目录不在 */ }
+    const latest = names[names.length - 1];
+    if (latest) backups.set(rel, path.join(path.dirname(rel), latest).replace(/^\.\//, ""));
+  }
   const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: ROOT, encoding: "utf-8" });
   const clean = status.status === 0 && status.stdout.trim() === "";
   const allDeps = depsOk("node_modules") && depsOk("frontend/node_modules");
   if (head && head === inflight.commit && inflight.verified && allDeps) return null;
-  if (head && head === inflight.oldHead && allDeps && !hasPrev && clean) return null;
+  if (head && head === inflight.oldHead && allDeps && backups.size === 0 && clean) return null;
   if (head && head !== inflight.commit && head !== inflight.oldHead && clean) {
     console.error("上次一键更新中断后，程序已经换成别的版本（像是自己 git pull 过），不再提示恢复。");
+    // 这次的旧备份不再是恢复来源：先改名走（原名立刻不在）再清记录，不留孤儿；垃圾目录下次启动 / 更新时清
+    for (const prev of backups.values()) {
+      try { fs.renameSync(path.join(ROOT, prev), `${path.join(ROOT, prev)}.trash-${process.pid}-${Date.now()}`); } catch { /* 下次再清 */ }
+    }
     try { fs.rmSync(path.join(DATA_DIR, "update-inflight.json"), { force: true }); } catch { /* 删不掉下次再说 */ }
     return null;
   }
-  // 与 src/modules/update/interrupted.ts 的 recoveryCommands 同一条规则：有完整备份就改名换回；没备份但现在完整的不动；都没有才重装
+  // 与 src/modules/update/interrupted.ts 的 recoveryCommands 逐字同一套输出（第 16 轮 P2-1）：换回那一行可以重复跑
   const steps = [];
   for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
-    const dir = path.dirname(path.join(ROOT, rel));
-    const base = path.basename(rel);
-    let prev = [];
-    // 只认完整的 `.prev-<数字>`；删到一半的已经改名成 .trash-…（与 deps-swap.ts 的 PREV_NAME 同一条）
-    try { prev = fs.readdirSync(dir).filter((n) => prevName(base).test(n)).sort(); } catch { /* 目录不在 */ }
-    const latest = prev[prev.length - 1];
-    if (latest) { steps.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest)}" "${rel}"`); continue; }
+    const prev = backups.get(rel);
+    if (prev) { steps.push(`[ -d "${prev}" ] && { rm -rf "${rel}" && mv "${prev}" "${rel}"; }`); continue; }
     if (rel === "frontend/dist") continue;
     if (!depsOk(rel)) steps.push(rel === "node_modules" ? "npm ci" : "(cd frontend && npm ci)");
   }
-  if (!steps.some((c) => c.includes("frontend/dist"))) steps.push("npm run fe:build");
+  if (!backups.has("frontend/dist")) steps.push("npm run fe:build");
   return [`上次一键更新中断了（没跑完，也没有自动退回）。请依次执行下面的命令恢复到 ${inflight.from}：`,
     `cd "${ROOT}"`, `git reset --hard ${inflight.oldHead}`, ...steps, "npm run restart"].join("\n");
 }
+
 
 /**
  * 更新进行中不许手动启动 / 停止 / 重启（第 12 轮 P2）：会打断更新、在依赖换到一半时去构建，把服务弄停。
@@ -498,7 +503,10 @@ switch (command) {
   case "stop":
     await stop();
     break;
-  case "restart":
+  case "restart": {
+    // 上次更新中断、安装不一致：先拒绝再停——停了之后才发现起不来，等于把还在跑的服务白白停掉（第 16 轮 P3）
+    const help = interruptedUpdateHelp();
+    if (help) { console.error(help); process.exit(1); }
     await stop();
     // 停完端口上还有人应答：旧的没停下来（pid 记录丢了 / 不是启动器起的）。这不是「已在运行」，是重启失败（Codex 审第 10 轮 P1）
     if (await serverUp()) {
@@ -507,6 +515,7 @@ switch (command) {
     }
     await start();
     break;
+  }
   case "status":
     if (process.argv.includes("--brief")) await statusBrief();
     else await status();

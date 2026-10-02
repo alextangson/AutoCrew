@@ -9,12 +9,32 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { files, readResult, writeResult, type UpdateResult } from "./state.js";
 import { lockHeld } from "./preflight.js";
-import { discard, PREV_NAME } from "./deps-swap.js";
+import { discardSoon, PREV_NAME, PREV_TARGETS } from "./deps-swap.js";
 
 export interface Inflight {
   at: string; from: string; to: string; log: string; oldHead: string;
   /** 要更新到的提交 */ commit?: string;
   /** 新版已经过了健康检查（第 15 轮 P2-1） */ verified?: boolean;
+  /** 这次留旧依赖备份用的时间戳：只认 `*.prev-<戳>`，别的戳都是孤儿（第 16 轮 P2-2） */ stamp?: string;
+}
+
+/** 这次在途记录对应的备份名（有戳只认那一戳；老记录没戳就认任意 `.prev-<数字>`） */
+function prevMatcher(inflight: Pick<Inflight, "stamp">, base: string): (n: string) => boolean {
+  return inflight.stamp ? (n) => n === `${base}.prev-${inflight.stamp}` : (n) => PREV_NAME(base).test(n);
+}
+
+/** 这次留下、还在的完整备份：[相对目标路径, 相对备份路径] */
+function prevDirs(root: string, inflight: Pick<Inflight, "stamp">): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const rel of PREV_TARGETS) {
+    const dir = path.dirname(path.join(root, rel));
+    const base = path.basename(rel);
+    let names: string[] = [];
+    try { names = fs.readdirSync(dir).filter(prevMatcher(inflight, base)).sort(); } catch { continue; }
+    const latest = names[names.length - 1];
+    if (latest) out.push([rel, path.join(path.dirname(rel), latest).replace(/^\.\//, "")]);
+  }
+  return out;
 }
 
 const inflightFile = (machineDir: string) => path.join(machineDir, "update-inflight.json");
@@ -44,11 +64,8 @@ function headOf(root: string): string | null {
   try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; }
 }
 
-function hasCompletePrev(root: string): boolean {
-  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
-    try { if (fs.readdirSync(path.dirname(path.join(root, rel))).some((n) => PREV_NAME(path.basename(rel)).test(n))) return true; } catch { /* 目录不在 */ }
-  }
-  return false;
+function hasCompletePrev(root: string, inflight: Pick<Inflight, "stamp">): boolean {
+  return prevDirs(root, inflight).length > 0;
 }
 
 function trackedClean(root: string): boolean {
@@ -69,7 +86,7 @@ export function installState(root: string, inflight: Inflight): InstallState {
   if (head === null) return "inconsistent";
   const depsOk = depsComplete(root, "node_modules") && depsComplete(root, "frontend/node_modules");
   if (inflight.commit !== undefined && head === inflight.commit) return inflight.verified && depsOk ? "consistent" : "inconsistent";
-  if (head === inflight.oldHead) return depsOk && !hasCompletePrev(root) && trackedClean(root) ? "consistent" : "inconsistent";
+  if (head === inflight.oldHead) return depsOk && !hasCompletePrev(root, inflight) && trackedClean(root) ? "consistent" : "inconsistent";
   return trackedClean(root) ? "moved_on" : "inconsistent";
 }
 
@@ -77,17 +94,12 @@ export function installConsistent(root: string, inflight: Inflight): boolean {
   return installState(root, inflight) === "consistent";
 }
 
-/** 删掉留着的完整旧依赖 / 旧前端（先改名成垃圾名再删）：只在它们不再是恢复来源时调 */
-export async function discardPrevDirs(root: string): Promise<void> {
-  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
-    const dir = path.dirname(path.join(root, rel));
-    let names: string[] = [];
-    try { names = fs.readdirSync(dir).filter((n) => PREV_NAME(path.basename(rel)).test(n)); } catch { continue; }
-    for (const n of names) await discard(path.join(dir, n));
-  }
+/** 删掉这次留着的完整旧依赖 / 旧前端：同步改名成垃圾名（返回时原名已不在），垃圾稍后异步删。只在它们不再是恢复来源时调 */
+export function discardPrevDirs(root: string, inflight: Pick<Inflight, "stamp">): void {
+  for (const [, prev] of prevDirs(root, inflight)) discardSoon(path.join(root, prev));
 }
 
-/** 中断的结果在恢复好之前一直算「没看过」：页面每次打开都还在，点「知道了」也不会让恢复步骤消失 */
+/** 这份结果是「上次更新中断」吗：是的话只在还中断着时显示（恢复好了就不显示，不管点没点过「知道了」，第 16 轮 P2-1） */
 export function stillInterrupted(machineDir: string): boolean {
   const r = readResult(machineDir), inflight = readInflight(machineDir);
   return Boolean(r?.interruptedAt && inflight && r.interruptedAt === inflight.at);
@@ -100,24 +112,22 @@ export function markInflightVerified(machineDir: string): void {
 }
 
 /**
- * 按磁盘现状算恢复命令（第 12 轮 P1、e2e 1002 P2-B）：
- * - 有完整的 `.prev-<数字>`：改名换回（不需要网络）；删到一半的已经改名成 .trash-…，绝不拿来恢复；
+ * 按磁盘现状算恢复命令（第 12 轮 P1、e2e 1002 P2-B、第 16 轮 P2-1/P2-2）：
+ * - 这次留着的完整备份 `.prev-<戳>`：改名换回（不需要网络）。这一行可以重复跑：备份已经换回去了就什么都不做；
  * - 没有备份、但现在的依赖是完整的：不动它（绝不叫人删掉 / 重装一份能用的依赖）；
  * - 两样都没有：才需要联网重装。
+ * bin/autocrew.mjs 的纯 JS 版逐字同一套输出（启动器、命令行、页面给出的步骤必须一样）。
  */
-export function recoveryCommands(root: string, oldHead: string): string[] {
+export function recoveryCommands(root: string, oldHead: string, inflight: Pick<Inflight, "stamp"> = {}): string[] {
   const steps: string[] = [];
-  for (const rel of ["node_modules", "frontend/node_modules", "frontend/dist"]) {
-    const dir = path.dirname(path.join(root, rel));
-    const base = path.basename(rel);
-    let prev: string[] = [];
-    try { prev = fs.readdirSync(dir).filter((n) => PREV_NAME(base).test(n)).sort(); } catch { /* 目录不在 */ }
-    const latest = prev[prev.length - 1];
-    if (latest) { steps.push(`rm -rf "${rel}" && mv "${path.join(path.dirname(rel), latest).replace(/^\.\//, "")}" "${rel}"`); continue; }
+  const backups = new Map(prevDirs(root, inflight));
+  for (const rel of PREV_TARGETS) {
+    const prev = backups.get(rel);
+    if (prev) { steps.push(`[ -d "${prev}" ] && { rm -rf "${rel}" && mv "${prev}" "${rel}"; }`); continue; }
     if (rel === "frontend/dist") continue;
     if (!depsComplete(root, rel)) steps.push(rel === "node_modules" ? "npm ci" : "(cd frontend && npm ci)");
   }
-  if (!steps.some((c) => c.includes("frontend/dist"))) steps.push("npm run fe:build");
+  if (!backups.has("frontend/dist")) steps.push("npm run fe:build");
   return [`cd "${root}"`, `git reset --hard ${oldHead}`, ...steps, "npm run restart"];
 }
 
@@ -135,15 +145,15 @@ export function detectInterrupted(root: string, machineDir: string, opts: { trus
   fs.rmSync(files(machineDir).lock, { force: true }); // 锁的主人已经不在，留着的死锁一并清掉
   if (state !== "inconsistent") {
     if (state === "moved_on") console.error("[update] 上次一键更新中断后，程序已经换成别的版本（像是自己 git pull 过），不再提示恢复");
+    // 安装已经一致：这次留着的旧依赖 / 旧前端不再是恢复来源了，先删（改名走）再清记录，不留孤儿（e2e 1002b N7、第 16 轮 P2-2）
+    try { discardPrevDirs(root, inflight); } catch (err) { console.error("[update] 删留着的旧依赖失败:", err instanceof Error ? err.message : err); }
     clearInflight(machineDir);
-    // 安装已经一致：留着的旧依赖 / 旧前端不再是恢复来源了，删掉（约 500 MB，e2e 1002b N7）
-    void discardPrevDirs(root).catch((err) => console.error("[update] 删留着的旧依赖失败:", err instanceof Error ? err.message : err));
     return null;
   }
-  // 在途记录留着，直到真的恢复好（e2e 1002b N2）：页面认出来、点了「知道了」，命令行和 npm start 照样能拿到恢复步骤
+  // 在途记录留着，直到真的恢复好（e2e 1002b N2）。步骤每次按磁盘现状重算：恢复做了一半，给的就是剩下的那几步（第 16 轮 P2-1）
+  const cmds = recoveryCommands(root, inflight.oldHead, inflight);
   const existing = readResult(machineDir);
-  if (existing?.interruptedAt === inflight.at) return existing;
-  const cmds = recoveryCommands(root, inflight.oldHead);
+  if (existing?.interruptedAt === inflight.at && JSON.stringify(existing.manualCommands) === JSON.stringify(cmds)) return existing;
   const result: UpdateResult = {
     ok: false, outcome: "stuck", from: inflight.from, to: inflight.to, at: new Date().toISOString(), log: inflight.log, manualCommands: cmds,
     interruptedAt: inflight.at,

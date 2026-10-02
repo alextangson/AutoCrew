@@ -10,7 +10,7 @@ import { firstLine, type GitRunner } from "./git.js";
 import { writeResult, files, type UpdateResult } from "./state.js";
 import type { ReleaseNotes } from "./changelog.js";
 import { fetchLaunchInfo, launcherNonce, managedBy } from "./remote.js";
-import { DepsSwap, sweepTrash } from "./deps-swap.js";
+import { DepsSwap, sweepOrphanPrev, sweepTrash } from "./deps-swap.js";
 import { markFinishing } from "./abort.js";
 import { clearInflight, markInflightVerified, writeInflight } from "./interrupted.js";
 import { getMachineDir } from "../../storage/storage-roots.js";
@@ -32,6 +32,8 @@ export interface UpdateSteps {
   cleanup?: (log: Log) => Promise<void>;
   /** 手动恢复时换回旧依赖的命令（不需要网络） */
   manualRestore?: () => string[];
+  /** 这次留旧依赖备份用的时间戳（`*.prev-<戳>`）：写进在途记录，恢复与清理只认这一戳（第 16 轮 P2-2） */
+  backupStamp?: string;
   /** 取消（没重启）之后：服务本来在跑、现在却不在了（比如被人手动停了），把它起回来（第 12 轮 P2） */
   ensureUp?: (log: Log) => Promise<void>;
   build: (log: Log, signal?: AbortSignal) => Promise<void>;
@@ -269,10 +271,13 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
     return finish(job, { ok: false, outcome: "rolled_back", at: at(), ...base, message: `更新没开始：${errText(e)}，完整记录在 ${job.logFile}` }, log);
   }
   log(`旧版本提交：${oldHead}`);
-  try { const swept = await sweepTrash(job.root); if (swept.length) log(`清掉上次留下的垃圾目录：${swept.join("、")}`); }
+  try {
+    const swept = [...await sweepTrash(job.root), ...await sweepOrphanPrev(job.root, null)];
+    if (swept.length) log(`清掉上次留下的垃圾目录 / 不再用得上的旧备份：${swept.join("、")}`);
+  }
   catch (e) { log(`!! 清不掉上次留下的垃圾目录（不影响更新）：${errText(e)}`); }
   // 在途记录：被硬杀时下次能认出「上次更新中断了」；finish 时删掉
-  try { writeInflight(job.machineDir, { at: at(), from: job.from, to: job.to, log: job.logFile, oldHead, commit: job.commit }); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
+  try { writeInflight(job.machineDir, { at: at(), from: job.from, to: job.to, log: job.logFile, oldHead, commit: job.commit, ...(job.steps.backupStamp ? { stamp: job.steps.backupStamp } : {}) }); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
   const progress: Progress = { touchedService: false };
   try {
     await forward(job, oldHead, log, progress);
@@ -391,6 +396,7 @@ export function realSteps(root: string, port: number, opts: { serverWasRunning: 
       await runCommand("重新构建前端", npm, ["run", "fe:build"], root, log);
     },
     cleanup: (log) => swap.cleanup(log),
+    backupStamp: swap.stamp,
     ensureUp: async (log) => {
       if (!opts.serverWasRunning) return;
       const down = await (async () => { try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) }); return false; } catch { return true; } })();

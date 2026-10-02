@@ -164,7 +164,8 @@ export function updateView(root: string, machineDir: string, running: boolean, r
     banner: (() => { const b = bannerFor(status, settings, current); return b && isNewer(b.version, onDisk) && !stillInterrupted(machineDir) ? b : null; })(),
     running,
     // 「上次更新中断」在恢复好之前一直显示：点过「知道了」也不消失（e2e 1002b N2）
-    result: result && (!result.seen || stillInterrupted(machineDir)) ? result : null,
+    // 「上次更新中断」只在还中断着时显示（恢复好了就收起，不管点没点「知道了」，第 16 轮 P2-1）；别的结果按看没看过
+    result: result && (result.interruptedAt ? stillInterrupted(machineDir) : !result.seen) ? result : null,
     logDir: files(machineDir).logDir,
   };
 }
