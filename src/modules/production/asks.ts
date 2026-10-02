@@ -167,6 +167,10 @@ export async function executeAsk(params: Record<string, unknown>): Promise<Resul
   const { content, dataDir } = ctx;
   const root = contentRoot(content.id, dataDir);
   return withFileOwnership(async () => {
+    // 锁内重读稿件状态（整分支审 13 P2）：「等你拍板」不列归档 / 删掉的稿，请示发进去没人看得见、也答不了
+    const now = await getContent(content.id, dataDir);
+    if (!now || now.deletedAt) return fail("not_found", `找不到这篇稿（${content.id}）`);
+    if (now.status === "archived") return fail("archived", "这条稿已经归档了，请示发不出去");
     const doc = await readProductionDocOrEmpty(content.id, dataDir);
     // 先把附件归一成（项目内路径, sha），再比重放：同一 request_id 换了附件是另一件事（Codex 审 2a-1 r4 P2）
     const attachments: Ask["attachments"] = [];

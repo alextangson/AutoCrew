@@ -84,6 +84,8 @@ export async function executeRecord(params: Record<string, unknown>): Promise<Re
 async function recordLocked(a: RecordArgs, dataDir: string): Promise<Receipt> {
   const content = await getContent(a.content_id, dataDir);
   if (!content || content.deletedAt) return fail("not_found", `找不到这篇稿（${a.content_id}）：不存在或已删除`);
+  // 归档的稿不进「等你拍板」：报上来的候选 / 封面没人能确认（整分支审 13 P2）
+  if (content.status === "archived") return fail("archived", "这条稿已经归档了，不再收原片、成片和封面");
   if (!isVideoPlatform(content.platform)) return fail("not_video", "图文稿不走制作段，没有原片 / 成片可报");
   // 影子模式边界（§4.1，Codex 审 P1）：没启用（或这条被排除）之前不写事实、不搬文件
   if (!(await isOntologyActive(dataDir, content.id))) return fail("ontology_not_enabled", ONTOLOGY_NOT_ENABLED);
@@ -147,6 +149,8 @@ export async function executeMarkReady(params: Record<string, unknown>): Promise
   return withFileOwnership(async () => {
     const content = await getContent(contentId, dataDir);
     if (!content || content.deletedAt) return fail("not_found", `找不到这篇稿（${contentId}）`);
+    // 归档的稿不进「等你拍板」：标了也没人看得见（整分支审 13 P2）
+    if (content.status === "archived") return fail("archived", "这条稿已经归档了，标「可以审了」创始人也看不到");
     const doc = await readProductionDocOrEmpty(contentId, dataDir);
     const f = doc.facts.find((x) => x.id === factId && x.round === doc.round);
     if (!f || f.kind !== "cut") return fail("not_found", `本轮没有这版成片：${factId}（用 record kind=cut 的回执或 summary 里的成片 fact_id）`);
