@@ -96,11 +96,17 @@ describe("看板横幅", () => {
 });
 
 describe("更新中遮罩", () => {
-  it("卡住了也不叫人手动重启（重启会打断还在跑的更新）", async () => {
+  it("卡住了：给安全的出路 npm start（更新还在跑时它会拒绝），并显示日志", async () => {
     await mount("./UpdateBanner", "UpdatingOverlay", { stalled: true, log: "/x/update-1.log" });
-    expect(el.textContent).not.toContain("restart");
-    expect(el.textContent).toContain("先别手动重启");
+    expect(el.textContent).toContain("npm start");
+    expect(el.textContent).toContain("不会打断更新");
+    expect(el.textContent).not.toContain("先别手动重启");
     expect(el.textContent).toContain("/x/update-1.log");
+  });
+
+  it("刷新过页面、不知道这次的日志文件名：显示日志文件夹", async () => {
+    await mount("./UpdateBanner", "UpdatingOverlay", { stalled: true, logDir: "/m/update-logs" });
+    expect(el.textContent).toContain("/m/update-logs");
   });
 });
 

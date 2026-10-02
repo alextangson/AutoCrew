@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { firstLine, gitRunner, type GitRunner } from "./git.js";
 import { compareSemver, formatSemver, isNewer, parseSemver } from "./semver.js";
 import { notesBetween, parseChangelog, shortDate, type ReleaseNotes } from "./changelog.js";
-import { readResult, readSettings, readStatus, writeStatus, type UpdateResult, type UpdateSettings, type UpdateStatus } from "./state.js";
+import { files, readResult, readSettings, readStatus, writeStatus, type UpdateResult, type UpdateSettings, type UpdateStatus } from "./state.js";
 
 export const FETCH_TIMEOUT_MS = 30_000;
 export const FIRST_CHECK_DELAY_MS = 60_000;
@@ -131,6 +131,8 @@ export interface UpdateView {
   banner: { version: string; notes: ReleaseNotes[] } | null;
   running: boolean;
   result: UpdateResult | null;
+  /** 更新记录所在的目录：页面卡住时给人看（刷新过页面就不知道这一次的日志文件名了） */
+  logDir: string;
 }
 
 export function currentDate(root: string, version: string): string | null {
@@ -149,6 +151,7 @@ export function updateView(root: string, machineDir: string, running: boolean): 
     current, currentDate: currentDate(root, current), settings, status,
     banner: bannerFor(status, settings, current), running,
     result: result && !result.seen ? result : null,
+    logDir: files(machineDir).logDir,
   };
 }
 

@@ -12,6 +12,7 @@ export interface UpdateView {
   banner: { version: string; notes: ReleaseNotes[] } | null;
   running: boolean;
   result: UpdateResult | null;
+  logDir?: string;
 }
 export type Reply<T> = { ok: true; data: T } | { ok: false; error: string };
 
