@@ -58,7 +58,7 @@ import { expireStaleTopics } from "../src/desktop/topic-expiry.js";
 import { startInboxRuntime } from "../src/desktop/inbox-runtime.js";
 import { startDigestScheduler, stopDigestScheduler } from "../src/desktop/digest-scheduler.js";
 import { getInboxSettingsRaw } from "../src/desktop/settings-inbox.js";
-import { startResearchRuntime } from "../src/desktop/research-runtime.js";
+import { researchBusyCount, startResearchRuntime } from "../src/desktop/research-runtime.js";
 import { serveResearchAsset } from "../src/desktop/research-asset-route.js";
 import { serveCoverIdentityAsset } from "../src/desktop/cover-identity-asset-route.js";
 import { setVideoService } from "../src/desktop/video-handlers.js";
@@ -196,7 +196,8 @@ const updateRoute = createUpdateHandler({
   authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,
   root: programRoot(), machineDir: getMachineDir(), port: PORT,
   // 对话轮 + 后台写稿 / 生图 / 推送等长任务（self-update，Codex 审第 2 轮 P1）
-  inProcessTurns: () => activeTurnCount() + activeWorkCount(),
+  // 剪辑与深调研的 runner 在跑也算（第 12 轮 P2：重启后它们要等 10 / 30 分钟才会被捡回，不能被重启打断）
+  inProcessTurns: () => activeTurnCount() + activeWorkCount() + (videoService?.busyCount() ?? 0) + researchBusyCount(),
   // 启动器记的是 tsx 的 pid，跑本文件的是 tsx 拉起的另一个 node：比启动器发给这一次启动的标记，不比 pid
   launcher: async () => ({ running: true, managed: launchedByLauncher(getMachineDir()), via: launchVia() }),
 });

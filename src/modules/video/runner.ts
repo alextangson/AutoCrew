@@ -76,6 +76,8 @@ export interface VideoRunner {
   recoverExpired(): Promise<number>;
   /** 队列跑空（测试与 shutdown 用） */
   whenIdle(): Promise<void>;
+  /** 正在跑 + 排着的任务数：一键更新据此判断「剪辑在跑」，跑完才重启（第 12 轮 P2） */
+  busyCount(): number;
   shutdown(): Promise<void>;
 }
 
@@ -505,6 +507,7 @@ export function createVideoRunner(opts: VideoRunnerOptions): VideoRunner {
 
   return {
     leaseOwner,
+    busyCount: () => (running ? 1 : 0) + order.length,
     enqueue,
     enqueuePreview,
     enqueueCleanup,

@@ -50,7 +50,7 @@ describe("P1 合并不许覆盖本地被忽略的文件", () => {
 });
 
 import { IPC_CHANNELS } from "../../desktop/channels.js";
-import { BACKGROUND_TRACKED_CHANNELS, isLongRunningTool, LONG_RUNNING_CHANNELS, LONG_RUNNING_TOOL_ACTIONS, RECOVERABLE_CHANNELS, SHORT_CHANNELS, SHORT_TOOLS } from "./long-running.js";
+import { BACKGROUND_TRACKED_CHANNELS, isLongRunningTool, LONG_RUNNING_CHANNELS, LONG_RUNNING_TOOL_ACTIONS, RUNNER_TRACKED_CHANNELS, SHORT_CHANNELS, SHORT_TOOLS } from "./long-running.js";
 import { acquireLock, releaseLock, UPDATING_MESSAGE } from "./preflight.js";
 import { buildIpcHandlers } from "../../desktop/ipc.js";
 
@@ -71,7 +71,7 @@ describe("P2 长调用清单不许悄悄漏项", () => {
   });
 
   it("每个 IPC 通道都归了类，而且只归一类", () => {
-    const tables = [LONG_RUNNING_CHANNELS, BACKGROUND_TRACKED_CHANNELS, RECOVERABLE_CHANNELS, SHORT_CHANNELS];
+    const tables = [LONG_RUNNING_CHANNELS, BACKGROUND_TRACKED_CHANNELS, RUNNER_TRACKED_CHANNELS, SHORT_CHANNELS];
     const unclassified = IPC_CHANNELS.filter((ch) => !tables.some((t) => t.has(ch)));
     const twice = IPC_CHANNELS.filter((ch) => tables.filter((t) => t.has(ch)).length > 1);
     expect(unclassified, "新通道要先判断会不会在请求里调模型 / 外网").toEqual([]);

@@ -3,7 +3,8 @@
  * - IPC 通道（工作台页面）：在请求里跑很久的；
  * - MCP 工具动作（Claude Code / Codex / WorkBuddy 等宿主走 /mcp）：同一类能力的工具入口。
  * 先回请求、后台接着跑的（写稿、封面、配图、个人形象）在各自 start 函数里用 trackWork 登记，不在这两张表。
- * 不登记的：深调研队列、视频渲染、写作包备料与审稿——它们重启后由服务自己回收重跑，重启不丢活。
+ * 剪辑与深调研交给各自的 runner 跑：runner 正在跑 / 排着的任务数直接计入忙碌（第 12 轮 P2——重启后它们要等
+ * 10 / 30 分钟才会被捡回，不能指望「重启后自动回收」）。写作包备料与审稿重启后由服务自己按状态重跑，不登记。
  *
  * desktop/server.ts 里的定时周期（Codex 审第 4 轮 P1 的逐个决定）：
  * - 登记 + 更新中跳过这一拍（runUnlessUpdating）：
@@ -13,7 +14,7 @@
  *   数据回流（先入库后写状态，崩在中间下一拍按 TTL 重抓、幂等键去重）、
  *   每日摘要（按本地日期幂等，启动补发当天那份）、
  *   收件箱 worker（启动先回收崩在 fetching 的条目重排）、
- *   深调研 runner 与视频服务（启动回收中断任务重排）、
+ *   （深调研 runner 与视频服务不在这里：它们在跑的任务直接计入忙碌，见上）
  *   版本检查本身（只读）。
  */
 export const LONG_RUNNING_CHANNELS: ReadonlySet<string> = new Set([
@@ -43,8 +44,8 @@ export const BACKGROUND_TRACKED_CHANNELS: ReadonlySet<string> = new Set([
   "article_images:generate", "article_images:regenerate",
 ]);
 
-/** 交给持久队列跑、服务重启后自己回收重跑的：重启不丢活，不登记 */
-export const RECOVERABLE_CHANNELS: ReadonlySet<string> = new Set([
+/** 交给剪辑 / 深调研 runner 跑的：请求先回，runner 在跑 / 排着的任务数计入忙碌（server.ts 的 inProcessTurns） */
+export const RUNNER_TRACKED_CHANNELS: ReadonlySet<string> = new Set([
   "research:deep_dive", "research:regenerate_angles",
   "video:build_start", "video:rough_cut_rerun", "video:transcribe_rerun", "video:editor_rerun", "video:cut_preview",
   "video:reassemble", "video:retry", "video:asr_warmup",

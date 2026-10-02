@@ -230,6 +230,11 @@ export function triggerRegenerateAngles(topicId: string, dataDir?: string): Prom
 }
 
 /** doctor / 状态查询读口 */
+/** 深调研正在跑 + 排着的数量（一键更新的忙碌判断用；运行时没起就是 0） */
+export function researchBusyCount(): number {
+  return runner?.busyCount() ?? 0;
+}
+
 export function getResearchRuntimeStatus(): ResearchRuntimeStatus {
   return { ...status };
 }

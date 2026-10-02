@@ -74,3 +74,42 @@ describe("P2 文件名只改了大小写", () => {
     expect(g(user, "ls-files")).toContain("README.md");
   });
 });
+
+import { createVideoRunner } from "../video/runner.js";
+import { createResearchRunner } from "../research/research-runner.js";
+import { saveTopic } from "../../storage/local-store.js";
+
+describe("P2 剪辑与深调研在跑算忙", () => {
+  it("剪辑 runner：投递后到跑完之前 busyCount > 0", async () => {
+    const runner = createVideoRunner({ dataDir: tmp, deps: {}, launchId: "t", onError: () => {} });
+    expect(runner.busyCount()).toBe(0);
+    runner.enqueue("content-1-a");
+    expect(runner.busyCount()).toBeGreaterThan(0);
+    await runner.whenIdle();
+    expect(runner.busyCount()).toBe(0);
+    await runner.shutdown();
+  });
+
+  it("深调研 runner：跑的时候 busyCount = 1，跑完 0", async () => {
+    let release!: () => void;
+    const runner = createResearchRunner({ dataDir: tmp, onError: () => {},
+      runJob: async () => { await new Promise<void>((r) => { release = r; }); return { status: "succeeded", perspectives: [], briefRevision: 1 }; } });
+    const topic = await saveTopic({ title: "测试选题", description: "", tags: [] }, tmp);
+    expect((await runner.trigger(topic.id)).accepted).toBe(true);
+    while (!release) await new Promise((r) => setTimeout(r, 5));
+    expect(runner.busyCount()).toBe(1);
+    release();
+    await runner.idle();
+    expect(runner.busyCount()).toBe(0);
+    runner.stop();
+  });
+});
+
+describe("P2 服务把剪辑 / 深调研的在跑数交给更新判断", () => {
+  it("desktop/server.ts 的 inProcessTurns 计入两个 runner", () => {
+    const src = fs.readFileSync(path.resolve(__dirname, "..", "..", "..", "desktop", "server.ts"), "utf-8");
+    const line = src.split("\n").find((l) => l.includes("inProcessTurns:")) ?? "";
+    expect(line).toContain("videoService?.busyCount()");
+    expect(line).toContain("researchBusyCount()");
+  });
+});
