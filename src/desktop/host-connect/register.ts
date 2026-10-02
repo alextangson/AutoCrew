@@ -9,7 +9,7 @@
  */
 import { findOnPath, type HostEnv, type RunResult } from "./env.js";
 import { codexConfigFile, codexHasEntry, findClaudeCli, TOKEN_HOST, workbuddyConfigFile, type ConnectHost } from "./detect.js";
-import { backupFile, mergeMcpJson, readMcpEntry, removeMcpJson, SERVER_NAME } from "./mcp-json-file.js";
+import { backupFile, mergeMcpJson, readMcpEntry, removeMcpJson, sameEntry, SERVER_NAME } from "./mcp-json-file.js";
 
 export type Method = "claude-cli" | "claude-file" | "codex-cli" | "workbuddy-file";
 
@@ -55,6 +55,8 @@ async function registerClaude(env: HostEnv): Promise<RegisterResult> {
   }
   const existing = readMcpEntry(env.claudeConfig);
   if ("error" in existing) return { ok: false, code: "config_unreadable", error: existing.error };
+  // 已经是这一条（比如核对没过后点「再试一次」）：不删不加、不备份，也不算替换
+  if (sameEntry(existing.entry, { type: "stdio", ...entry })) return { ok: true, method: "claude-cli", file: env.claudeConfig, replaced: false, cliPath: cli.path };
   const b = safeBackup(env.claudeConfig);
   if ("error" in b) return { ok: false, code: "backup_failed", error: b.error };
   if (existing.entry !== undefined) {
@@ -88,13 +90,15 @@ async function registerCodex(env: HostEnv): Promise<RegisterResult> {
   if ("error" in listed) return { ok: false, code: "cli_failed", error: listed.error };
   const existed = listed.entry !== undefined || codexHasEntry(env);
   const file = codexConfigFile(env);
+  const entry = hostEntry("codex", env);
+  const t = (listed.entry?.transport ?? {}) as Record<string, unknown>;
+  if (listed.entry && sameEntry({ command: t.command, args: t.args, env: t.env }, entry)) return { ok: true, method: "codex-cli", file, replaced: false, cliPath: cli };
   const b = safeBackup(file);
   if ("error" in b) return { ok: false, code: "backup_failed", error: b.error };
   if (existed) {
     const rm = await env.run(cli, ["mcp", "remove", SERVER_NAME], { cwd: env.home, timeoutMs: 20_000 });
     if (rm.code !== 0 || rm.failure) return { ok: false, code: "cli_failed", error: `${cliFailure("codex", rm)}。原来的配置没动${b.backup ? `（备份在 ${b.backup}）` : ""}。` };
   }
-  const entry = hostEntry("codex", env);
   const add = await env.run(cli, ["mcp", "add", SERVER_NAME, ...envFlags("--env", entry.env), "--", entry.command, ...entry.args], { cwd: env.home, timeoutMs: 20_000 });
   if (add.code !== 0 || add.failure) {
     return { ok: false, code: "cli_failed", error: `${cliFailure("codex", add)}。${existed ? `原来的 autocrew 条目已删，备份在 ${b.backup}` : "没有写进去"}。` };

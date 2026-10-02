@@ -100,7 +100,7 @@ describe("接上 Claude Code", () => {
     const r = await connectHost("claude", sb.env);
     expect(r).toMatchObject({ ok: true, replaced: true, verified: true });
     expect(r.message).toContain("已替换原来的 autocrew 配置（备份在");
-    expect(r.backup).toBe(path.join(sb.home, ".claude.json.autocrew-bak"));
+    expect(r.backup).toMatch(/\.claude\.json\.autocrew-bak-\d{8}-\d{6}/);
     expect(JSON.parse(fs.readFileSync(r.backup!, "utf-8")).mcpServers.autocrew.url).toBe("http://old");
     expect(claudeJson().mcpServers!.other).toBeTruthy();
     expect(sb.argv("claude").map((a) => a.slice(0, 2).join(" "))).toEqual(["mcp remove", "mcp add", "mcp list"]);
@@ -129,7 +129,7 @@ describe("接上 Claude Code", () => {
     expect(r).toMatchObject({ ok: true, verified: true });
     expect(r.message).toContain("新开一个会话");
     expect(claudeJson()).toMatchObject({ numStartups: 3, mcpServers: { autocrew: { type: "stdio" } } });
-    expect(fs.existsSync(path.join(sb.home, ".claude.json.autocrew-bak"))).toBe(true);
+    expect(fs.existsSync(r.backup!)).toBe(true);
   });
 
   it("O6：~/.claude.json 坏了 → 拒绝，文件原样", async () => {
@@ -147,7 +147,7 @@ describe("接上 Codex", () => {
     fs.writeFileSync(path.join(sb.home, ".codex", "config.toml"), '[mcp_servers.autocrew]\nurl = "http://127.0.0.1:4317/mcp"\n');
     const r = await connectHost("codex", sb.env);
     expect(r).toMatchObject({ ok: true, verified: true, replaced: true });
-    expect(fs.readFileSync(path.join(sb.home, ".codex", "config.toml.autocrew-bak"), "utf-8")).toContain("4317");
+    expect(fs.readFileSync(r.backup!, "utf-8")).toContain("4317");
     const add = sb.argv("codex").find((a) => a[1] === "add")!;
     expect(add.slice(0, 3)).toEqual(["mcp", "add", "autocrew"]);
     expect(add[add.indexOf("--env") + 1]).toBe("AUTOCREW_HOST=codex");
@@ -216,5 +216,57 @@ describe("Codex 评审第 2 轮 P2-c：开工提示按宿主权限（来自 host
   it("能不能写稿直接取自 host-policy：2026-10-02 起三家都能写", async () => {
     const hosts = await detectHosts(sb.env);
     expect(Object.fromEntries(hosts.map((h) => [h.host, h.canWrite]))).toEqual({ claude: true, codex: true, workbuddy: true });
+  });
+});
+
+describe("第 3 轮评审 P2：备份不被覆盖；重接自己的条目不算替换", () => {
+  const backups = (file: string) => fs.readdirSync(path.dirname(file)).filter((f) => f.startsWith(`${path.basename(file)}.autocrew-bak`)).map((f) => fs.readFileSync(path.join(path.dirname(file), f), "utf-8"));
+  const ORIGINAL = "MY-OWN-AUTOCREW-DEFINITION";
+
+  async function twice(host: "claude" | "codex" | "workbuddy", file: string, env = sb.env) {
+    await sb.stopServer(); // 核对没过 → 用户点「再试一次」
+    const first = await connectHost(host, env);
+    const second = await connectHost(host, env);
+    expect(first).toMatchObject({ registered: true, replaced: true });
+    expect(first.message).toContain("已替换原来的 autocrew 配置");
+    expect(second.replaced).toBe(false);
+    expect(second.message).not.toContain("已替换");
+    expect(backups(file).some((b) => b.includes(ORIGINAL))).toBe(true);
+  }
+
+  it("WorkBuddy", async () => {
+    fs.mkdirSync(path.join(sb.home, "Applications", "WorkBuddy.app"));
+    const file = path.join(sb.home, ".workbuddy", "mcp.json");
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { autocrew: { command: ORIGINAL } } }));
+    await twice("workbuddy", file);
+  });
+  it("Claude 命令行", async () => {
+    const file = path.join(sb.home, ".claude.json");
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { autocrew: { type: "stdio", command: ORIGINAL, args: [], env: {} } } }));
+    await twice("claude", file);
+  });
+  it("直写 ~/.claude.json", async () => {
+    fs.rmSync(path.join(sb.bin, "claude"));
+    fs.mkdirSync(path.join(sb.home, "Applications", "Claude.app"));
+    fs.mkdirSync(path.join(sb.home, ".claude"));
+    const file = path.join(sb.home, ".claude.json");
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { autocrew: { command: ORIGINAL } } }));
+    await twice("claude", file);
+  });
+  it("Codex config.toml", async () => {
+    const dir = path.join(sb.home, ".codex");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({ autocrew: { command: ORIGINAL, args: [], env: {} } }));
+    fs.writeFileSync(path.join(dir, "config.toml"), `[mcp_servers.autocrew]\ncommand = "${ORIGINAL}"\n`);
+    await twice("codex", path.join(dir, "config.toml"));
+  });
+  it("Claude 命令行删成功、加失败，用户重试：原定义仍在某份备份里", async () => {
+    const file = path.join(sb.home, ".claude.json");
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { autocrew: { type: "stdio", command: ORIGINAL, args: [], env: {} } } }));
+    const failing = { ...sb.env, run: sb.env.runWith({ ...sb.env.childEnv, FAKE_CLAUDE_ADD_FAIL: "1" }) };
+    expect(await connectHost("claude", failing)).toMatchObject({ ok: false });
+    expect(await connectHost("claude", sb.env)).toMatchObject({ ok: true, verified: true });
+    expect(backups(file).some((b) => b.includes(ORIGINAL))).toBe(true);
   });
 });

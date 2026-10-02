@@ -13,7 +13,7 @@ import path from "node:path";
 
 export const SERVER_NAME = "autocrew";
 
-export type MergeOutcome = "created" | "added" | "updated";
+export type MergeOutcome = "created" | "added" | "updated" | "unchanged";
 export type MergeResult = { ok: true; file: string; outcome: MergeOutcome; backup?: string } | { ok: false; error: string };
 export type RemoveResult = { ok: true; file: string; removed: boolean; backup?: string } | { ok: false; error: string };
 
@@ -57,17 +57,30 @@ export function readMcpEntry(file: string): { entry?: unknown } | { error: strin
   return { entry: parsed.servers[SERVER_NAME] };
 }
 
+/** 键排序后的 JSON：判断「现有条目和要写的一样」用，不受键顺序影响 */
+export function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
+
+export function sameEntry(a: unknown, b: unknown): boolean {
+  return a !== undefined && canonical(a) === canonical(b);
+}
+
 /**
- * 整份文件备份到 `<file>.autocrew-bak`（存在就换成这一次的原件）。文件不存在 = 没什么可备份，回 null。
- * 抛错（软链、写不了）由调用方变成可见的失败。
+ * 整份文件备份到 `<file>.autocrew-bak-<时间戳>`。每次一份新文件、从不覆盖、也不清理：
+ * 重试或断开时再备份，第一次替换前存下的用户原定义也还在（第 3 轮评审 P2，spec O7）。
+ * 文件不存在 = 没什么可备份，回 null。抛错（软链、写不了）由调用方变成可见的失败。
  */
 export function backupFile(file: string): string | null {
   if (!existsSync(file)) return null;
   if (isSymlink(file)) throw new Error(`${file} 是软链接，没有改它（跟着链接写可能改到别的文件）。`);
-  const backup = `${file}.autocrew-bak`;
-  if (isSymlink(backup)) throw new Error(`${backup} 是软链接，没有写入。删掉它再试一次。`);
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").replace(/\..*/, "");
   const mode = statSync(file).mode & 0o777;
-  rmSync(backup, { force: true });
+  let backup = `${file}.autocrew-bak-${stamp}`;
+  // 同一秒里第二份：加随机尾巴；wx 独占创建，碰上同名（含软链）就失败而不是覆盖
+  if (existsSync(backup) || isSymlink(backup)) backup = `${backup}-${randomBytes(3).toString("hex")}`;
   writeFileSync(backup, readFileSync(file), { flag: "wx", mode });
   chmodSync(backup, mode);
   return backup;
@@ -114,6 +127,8 @@ export function mergeMcpJson(file: string, entry: Record<string, unknown>, hooks
     const raw = readFileSync(file, "utf-8");
     const parsed = parseMcpDoc(file, raw);
     if ("error" in parsed) return { ok: false, error: parsed.error };
+    // 现有条目就是要写的这一条：不是替换，不备份、不写盘
+    if (sameEntry(parsed.servers[SERVER_NAME], entry)) return { ok: true, file, outcome: "unchanged" };
     const outcome: MergeOutcome = parsed.servers[SERVER_NAME] ? "updated" : "added";
     parsed.servers[SERVER_NAME] = entry;
     const backup = backupFile(file) as string;

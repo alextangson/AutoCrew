@@ -28,11 +28,12 @@ describe("WorkBuddy 接入：mcp.json 合并", () => {
     fs.mkdirSync(path.dirname(file()), { recursive: true });
     const before = { mcpServers: { chatcut_desktop: { command: "/x/chatcut-mcp", env: { K: "v" } } }, other: 1 };
     fs.writeFileSync(file(), JSON.stringify(before));
-    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: true, outcome: "added" });
+    const r = mergeWorkbuddyMcp(home, entry);
+    expect(r).toMatchObject({ ok: true, outcome: "added" });
     const after = JSON.parse(fs.readFileSync(file(), "utf-8"));
     expect(after.mcpServers.chatcut_desktop).toEqual(before.mcpServers.chatcut_desktop);
     expect(after.other).toBe(1);
-    expect(JSON.parse(fs.readFileSync(`${file()}.autocrew-bak`, "utf-8"))).toEqual(before);
+    expect(JSON.parse(fs.readFileSync((r as { backup: string }).backup, "utf-8"))).toEqual(before);
   });
   it("W4 解析失败：不写、报错说在哪、绝不覆盖", () => {
     fs.mkdirSync(path.dirname(file()), { recursive: true });
@@ -42,7 +43,7 @@ describe("WorkBuddy 接入：mcp.json 合并", () => {
     expect(!r.ok && r.error).toMatch(/第 \d+ 行附近/);
     expect(!r.ok && r.error).not.toContain("sk-123");
     expect(fs.readFileSync(file(), "utf-8")).toContain("sk-123");
-    expect(fs.existsSync(`${file()}.autocrew-bak`)).toBe(false);
+    expect(fs.readdirSync(path.dirname(file())).filter((f) => f.includes(".autocrew-bak"))).toEqual([]);
   });
   it("W5 已有 autocrew：原地更新成当前路径，不重复加", () => {
     mergeWorkbuddyMcp(home, autocrewEntry("/old/place", "/usr/bin/node"));
@@ -106,14 +107,14 @@ describe("评审 WorkBuddy P1-3 / P2-6 / P2-7 / P2-9 / P2-8", () => {
     mergeWorkbuddyMcp(home, entry);
     expect(fs.statSync(file()).mode & 0o777).toBe(0o600);
     fs.chmodSync(file(), 0o600);
-    mergeWorkbuddyMcp(home, entry);
+    const r = mergeWorkbuddyMcp(home, autocrewEntry("/moved", "/usr/bin/node"));
     expect(fs.statSync(file()).mode & 0o777).toBe(0o600);
-    expect(fs.statSync(`${file()}.autocrew-bak`).mode & 0o777).toBe(0o600);
+    expect(fs.statSync((r as { backup: string }).backup).mode & 0o777).toBe(0o600);
     fs.chmodSync(file(), 0o640);
     mergeWorkbuddyMcp(home, entry);
     expect(fs.statSync(file()).mode & 0o777).toBe(0o640);
   });
-  it("P2-6：mcp.json 或备份是软链接 → 拒绝，不跟着链接写", () => {
+  it("P2-6：mcp.json 是软链接 → 拒绝；旧的固定备份名是软链接也不跟着写（备份现在按时间戳另起新文件）", () => {
     const victim = path.join(home, "victim.txt");
     fs.writeFileSync(victim, "untouched");
     fs.mkdirSync(path.dirname(file()), { recursive: true });
@@ -123,7 +124,7 @@ describe("评审 WorkBuddy P1-3 / P2-6 / P2-7 / P2-9 / P2-8", () => {
     fs.rmSync(file());
     fs.writeFileSync(file(), "{}");
     fs.symlinkSync(victim, `${file()}.autocrew-bak`);
-    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: false });
+    expect(mergeWorkbuddyMcp(home, entry)).toMatchObject({ ok: true });
     expect(fs.readFileSync(victim, "utf-8")).toBe("untouched");
     expect(fs.readdirSync(path.dirname(file())).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });

@@ -3,7 +3,7 @@
  *
  * 做两件事：发 `workbuddy` 命名令牌；往 `~/.workbuddy/mcp.json` 合并一条 stdio 条目 `autocrew`
  * （走现有 `bin/autocrew.mjs mcp` 转发器，带 AUTOCREW_HOST=workbuddy，只认这个宿主的令牌——撤销后 401，不回落到本机全能令牌）。
- * 文件纪律：不存在就新建；解析失败绝不覆盖，报错让人手修；写前备份到 `mcp.json.autocrew-bak`；
+ * 文件纪律：不存在就新建；解析失败绝不覆盖，报错让人手修；写前备份到 `mcp.json.autocrew-bak-<时间>`（不覆盖旧备份）；
  * 已有 autocrew 就原地更新（仓库挪了位置也能修好）；别的条目（ChatCut 等）一个字不动。
  */
 import { existsSync, realpathSync } from "node:fs";
@@ -52,6 +52,7 @@ const OUTCOME_TEXT: Record<MergeOutcome, string> = {
   created: "新建了 WorkBuddy 的 MCP 配置，里面只有 autocrew 一条",
   added: "在 WorkBuddy 的 MCP 配置里加了 autocrew 一条，别的条目原样保留",
   updated: "更新了 WorkBuddy 配置里已有的 autocrew 条目（指向当前的 AutoCrew）",
+  unchanged: "WorkBuddy 配置里已经是这一条 autocrew，没有改动",
 };
 
 /** 「连接 WorkBuddy」：没装就不写（W1）；发令牌 + 合并配置；提示重启（W6） */
