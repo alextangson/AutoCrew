@@ -210,3 +210,25 @@ describe("Codex 评审 P2-4：检测登录成功后卡片能选；再找一次�
     expect(card("workbuddy").getAttribute("role")).toBe("checkbox");
   });
 });
+
+describe("Codex 评审 P2-5：没接上、没钥匙就离开引导，也要记住「先不配」", () => {
+  it("第 2 步先跳过 → 完成页进入：记下跳过", async () => {
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了" }), H("codex"), H("workbuddy")], skipped: false };
+    await mount();
+    await click("下一步");
+    await click("先跳过，进去看看");
+    await click("进入 AutoCrew");
+    expect(store.calls).toContain("skip");
+    expect(done).toBe(1);
+  });
+  it("接上了就不记跳过", async () => {
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了" }), H("codex"), H("workbuddy")], skipped: false };
+    store.connect = (h) => ({ ok: true, host: h as "claude", registered: true, verified: true, message: "已接上" });
+    await mount();
+    await click("下一步");
+    await click("一键接上");
+    await click("好了，进去看看");
+    await click("进入 AutoCrew");
+    expect(store.calls).not.toContain("skip");
+  });
+});

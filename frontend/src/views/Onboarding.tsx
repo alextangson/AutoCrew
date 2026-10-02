@@ -43,6 +43,7 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
   const [results, setResults] = useState<Partial<Record<HostId, ConnectResult>>>({});
   const [engineReady, setEngineReady] = useState(false);
   const [skipError, setSkipError] = useState<string | null>(null);
+  const [afterSkipError, setAfterSkipError] = useState<() => void>(() => props.onDone);
 
   const load = async () => {
     const r = await loadConnect();
@@ -58,11 +59,20 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
     const r = await invoke("settings:get");
     setEngineReady(Boolean(r.ok && (r.data as { configured?: boolean } | undefined)?.configured));
   };
-  const skip = async () => {
-    const r = await skipOnboarding();
-    if (!r.ok) return setSkipError(`没记住「先不配」：${r.error}。这次先放你进去，下次打开可能还会看到这一页。`);
-    props.onDone();
+  /** 离开引导：没接上任何宿主、也没存钥匙，就记下「先不配」，刷新不再弹（O1，Codex 评审 P2-5） */
+  const leave = async (then: () => void) => {
+    const anyConnected = Object.values(results).some((r) => r?.verified);
+    if (!anyConnected && !engineReady) {
+      const r = await skipOnboarding();
+      if (!r.ok) {
+        setSkipError(`没记住「先不配」：${r.error}。这次先放你进去，下次打开可能还会看到这一页。`);
+        setAfterSkipError(() => then);
+        return;
+      }
+    }
+    then();
   };
+  const skip = () => leave(props.onDone);
 
   if (!hosts) return <div className="ob"><span className="ob-sub">正在看这台电脑上装了哪些 AI…</span></div>;
   const connected = hosts.filter((h) => results[h.host]?.verified);
@@ -79,9 +89,9 @@ export function Onboarding(props: { onDone: () => void; onOpenSettings?: () => v
           <ConnectStep hosts={hosts} picked={picked} results={results} onResult={(r) => setResults((x) => ({ ...x, [r.host]: r }))}
             onBack={() => setStep("pick")} onNext={() => setStep("done")} />
         )}
-        {step === "done" && <DonePage connected={connected} engineReady={engineReady} onEnter={props.onDone} onOpenSettings={props.onOpenSettings ?? props.onDone} />}
+        {step === "done" && <DonePage connected={connected} engineReady={engineReady} onEnter={() => void leave(props.onDone)} onOpenSettings={() => void leave(props.onOpenSettings ?? props.onDone)} />}
         {skipError && (
-          <div className="ob-actions"><p className="ob-fail">{skipError}</p><button onClick={props.onDone}>进去</button></div>
+          <div className="ob-actions"><p className="ob-fail">{skipError}</p><button onClick={afterSkipError}>进去</button></div>
         )}
       </div>
     </div>
