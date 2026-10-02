@@ -6,7 +6,20 @@
 
 发布规矩：tag 一旦推到 GitHub 就不再重打（不 `git tag -f`、不强推 tag）。说明写错了或者代码有问题，就发下一个小版本。
 
-## 未发布（草稿，发版时改成版本号）
+## 0.5.0 · 2026-10-02
+
+### 新东西
+- 看板最上方多了「等你拍板」：要你确认的粗剪、封面、agent 的提问都集中在这里，点一下就能定。
+- AutoCrew 会自己找原片：下载文件夹和你加的监视文件夹里的新视频，按说话内容认出是哪条稿，自动挂上；挂错了可以撤回、改挂到别的稿。
+- 剪映导出的新成片也会被自动认出来，放进对应稿件的候选里。
+- 第一次打开有两步引导，直接接上这台电脑上已有的 AI（Claude Code、Codex、WorkBuddy）；设置页每个 AI 一行，随时接上或断开。
+- 在 Codex 里能做的事和 Claude Code 一样了。
+- 以后有新版本，看板上方会提示，点「更新」就能升级，出问题会自动退回原来的版本。
+
+### 修好的
+- 同一条链接或同一段随手记几乎同时转发两次时，偶尔会被重复收录。
 
 ### 需要你做的
-- 用 Claude Code 插件、或在 AutoCrew 仓库目录里开 Claude Code 的：更新后先接一次——运行 `autocrew connect claude-code`，或在 AutoCrew 的引导页点「一键接上」。没接之前 Claude Code 里会提示「还没接上 AutoCrew」。
+- 这次要手动更新一次：在 AutoCrew 目录按 README「更新」一节运行 git pull、npm install、npm run restart；从下个版本起就能在看板上一键更新。
+- AutoCrew 需要 Node 22.19 或更新的版本，`node -v` 比这个低的先升级 Node。
+- 用 Claude Code 插件、或在 AutoCrew 仓库目录里开 Claude Code 的：更新后先接一次——运行 `autocrew connect claude-code`，或在引导页点「一键接上」。
