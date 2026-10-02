@@ -531,6 +531,14 @@ switch (command) {
     const tsResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "typesafe-doctor.mts")], { encoding: "utf8", env: process.env, timeout: 30_000 });
     try { typesafe = JSON.parse((tsResult.stdout || "").trim().split("\n").pop() || "{}"); } catch { typesafe = { configured: false, reachable: false, error: "检查脚本没跑成" }; }
 
+    // 宿主接没接（与 autocrew connect --list 同一套检测，不花额度）；查不了就如实写「查不了」
+    let hosts = [];
+    let hostsError = "";
+    const hostsResult = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "host-connect.mts"), "connect", "--list", "--json"], { encoding: "utf8", env: process.env, timeout: 30_000 });
+    try { hosts = JSON.parse(hostsResult.stdout || "[]"); } catch { hostsError = "宿主检测脚本没跑成"; }
+    const hostConnected = (h) => hosts.find((x) => x.host === h)?.connected === true;
+    const acp = (pkg) => fs.existsSync(path.join(ROOT, "node_modules", ...pkg.split("/"), "package.json"));
+
     const checks = {
       node: process.version,
       server: await serverUp(),
@@ -541,6 +549,11 @@ switch (command) {
       storageConnected: storage.connected === true,
       engineConfigured: Boolean(configDir && fs.existsSync(path.join(configDir, "engine.json"))),
       mcpServer: fs.existsSync(path.join(ROOT, "mcp", "server.ts")),
+      hostClaude: hostConnected("claude"),
+      hostCodex: hostConnected("codex"),
+      hostWorkbuddy: hostConnected("workbuddy"),
+      acpClaudeAdapter: acp("@agentclientprotocol/claude-agent-acp"),
+      acpCodexAdapter: acp("@zed-industries/codex-acp"),
       uv: uvOk,
       wechatPublishScript: fs.existsSync(wechatScript),
       wechatConfig: fs.existsSync(wechatConfig),
@@ -564,6 +577,10 @@ switch (command) {
     printResult({ ...checks, inbox: inbox.checks ?? [] }, () =>
       Object.entries(checks).map(([key, value]) => `${value ? "✓" : "✕"} ${key}: ${value}`).join("\n")
       + `\n${inbox.text}`
+      + (checks.engineConfigured ? "" : "\n  没配钥匙：深调研、选题雷达、复盘、人设、每日摘要暂时不可用；用本机 Claude / Codex / WorkBuddy 写稿不受影响（设置→模型 里随时补）")
+      + (hostsError ? `\n  → ${hostsError}，宿主接没接未知（autocrew connect --list 重查）` : "")
+      + (checks.hostClaude || checks.hostCodex || checks.hostWorkbuddy ? "" : "\n  → 还没接任何宿主：autocrew connect claude（或 codex / workbuddy），也可以在 设置→接入更多→宿主 里点「接上」")
+      + (checks.acpClaudeAdapter && checks.acpCodexAdapter ? "" : "\n  → 总编辑用本机 Claude / Codex 需要的适配器没装全：在 AutoCrew 目录运行 npm install")
       + (wechatConfigCreated ? `\n  已从 config.example.json 生成 ${wechatConfig}（占位凭证；真实凭证在「设置→发布」填写）` : "")
       + (uvOk ? "" : "\n  → 公众号发布需要 uv：curl -LsSf https://astral.sh/uv/install.sh | sh")
       + (imageRelay ? "" : "\n  → 生图(封面/正文图)建议配中转：设置→发布 填生图 Key/端点(OpenAI 兼容)，原生生图不依赖外部脚本")
@@ -578,7 +595,8 @@ switch (command) {
         ? ""
         : `\n  → ASR 模型未就绪(当前 ${asrStatus})：设置页点「预热 ASR 模型」或调 video:asr_warmup，首跑约 1GB 下载${uvOk ? "" : "；它也要 uv"}`),
     );
-    if (!checks.frontendBuilt || !checks.dependencies || !checks.engineConfigured
+    // 没配引擎不算失败（onboarding-connect §4）：本机 AI 写稿不需要钥匙
+    if (!checks.frontendBuilt || !checks.dependencies
       || !checks.uv || !checks.wechatPublishScript || inbox.failed) process.exitCode = 1;
     break;
   }
