@@ -29,13 +29,16 @@ export const LONG_RUNNING_CHANNELS: ReadonlySet<string> = new Set([
   // 长任务编排
   "campaign:plan_team", "campaign:run_ready", "campaign:retry_task", "campaign:replan",
   "inbox:retry", "inbox:reingest", "inbox:digest_send_now",
+  // 对话轮：不管带没带 turn_id / client_id 都算在跑（`autocrew revise` 走内置引擎就不带；Codex 审第 9 轮 P1）。
+  // 带了 id 的另在 registerTurn 登记（可以停止），这里多算一次不影响「有没有活在跑」的判断
+  "chat:turn",
   // 素材入库会探测媒体（ffprobe）
   "library:add",
 ]);
 
 /** 先回请求、后台接着跑的：在各自 start 函数 / 对话轮登记里算在跑（不在 IPC 包装层） */
 export const BACKGROUND_TRACKED_CHANNELS: ReadonlySet<string> = new Set([
-  "generate:script", "generate:retry", "chat:turn",
+  "generate:script", "generate:retry",
   "cover:create", "cover:revise", "cover:ratios", "cover:identity", "cover:approve",
   "article_images:generate", "article_images:regenerate",
 ]);
