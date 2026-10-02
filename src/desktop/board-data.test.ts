@@ -40,6 +40,18 @@ it("列沿用「我的内容」口径：没认的稿留写稿中；认过的视�
   expect(col[gone.id]).toBeUndefined();
 });
 
+it("选题会片单：会议位指向最近一次会议才算本周片单（选题会 §0.3）", async () => {
+  const { saveMeetingCas } = await import("../modules/meetings/meeting-store.js");
+  const { updateTopic } = await import("../storage/local-store.js");
+  const now = await saveTopic({ title: "本周", tags: [] }, dir);
+  const old = await saveTopic({ title: "上周", tags: [] }, dir);
+  await updateTopic(now.id, { meetingSlot: { meetingDate: "2026-10-02", slotId: "s1" } }, dir);
+  await updateTopic(old.id, { meetingSlot: { meetingDate: "2026-09-25", slotId: "s1" } }, dir);
+  await saveMeetingCas({ date: "2026-10-02", slots: [], rejected: [], reviews: [] }, 0, dir);
+  const slate = Object.fromEntries((await boardData(dir)).topics.map((t) => [t.id, t.inSlate]));
+  expect(slate).toEqual({ [now.id]: true, [old.id]: false });
+});
+
 it("已开写的选题不再出现在选题列", async () => {
   const t = await saveTopic({ title: "开写了", tags: [] }, dir);
   const idle = await saveTopic({ title: "还没写", tags: [], source: "radar:爱范儿", score: 71 }, dir);

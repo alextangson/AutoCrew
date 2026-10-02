@@ -88,6 +88,8 @@ export interface BoardTopic {
   score: number | null;
   createdAt: string;
   renewedAt: string | null;
+  /** 本周片单（选题会选中）：置顶 + 标签；选中≠开工 */
+  inSlate?: boolean;
 }
 
 /** 本体对账报告（服务端 /api/board 的 ontology，spec 2026-09-29 §4.1）：未启用时的「要挪」清单与逐条失败 */
@@ -127,7 +129,7 @@ export function topicSourceLabel(source: string | null | undefined): string {
 }
 
 function sortTopics(topics: BoardTopic[]): BoardTopic[] {
-  return [...topics].sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || time(b.renewedAt ?? b.createdAt) - time(a.renewedAt ?? a.createdAt));
+  return [...topics].sort((a, b) => Number(!!b.inSlate) - Number(!!a.inSlate) || (b.score ?? -1) - (a.score ?? -1) || time(b.renewedAt ?? b.createdAt) - time(a.renewedAt ?? a.createdAt));
 }
 
 function itemKey(item: BoardItem): number {

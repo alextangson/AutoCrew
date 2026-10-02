@@ -12,6 +12,7 @@ import { listTopics, listContents, softDeleteTopic, type Topic } from "../storag
 import { resolveEffectiveBrief } from "../modules/research/brief-snapshot.js";
 import { angleCardsOf } from "../modules/research/angle-cards.js";
 import { emitEngineEvent } from "./event-hub.js";
+import { inCurrentSlate, latestMeetingDate } from "../modules/meetings/meeting-store.js";
 
 export const TOPIC_TTL_MS = 3 * 24 * 3600_000;
 
@@ -59,7 +60,10 @@ export async function expireStaleTopics(
     try {
       const [topics, contents] = await Promise.all([listTopics(ws.dataDir), listContents(ws.dataDir)]);
       const usedTopicIds = new Set(contents.map((c) => c.topicId).filter((id): id is string => Boolean(id)));
+      const latestMeeting = await latestMeetingDate(ws.dataDir).catch(() => null);
       for (const t of topics) {
+        // 会议位豁免（选题会 spec 边界 8）：只豁免到下次开会；下次没再选中就恢复正常过期
+        if (inCurrentSlate(t, latestMeeting)) continue;
         // 续期锚：有动作(如启动深调研)就从那一刻重新计时,没有才回落 createdAt
         if (!(now - new Date(t.renewedAt ?? t.createdAt).getTime() > ttlMs)) continue; // 未到期(坏时间戳 NaN 同理不误删)
         // 到期了才去读简报：sweep 是启动全量扫,没到期的那批一次盘都不该多读

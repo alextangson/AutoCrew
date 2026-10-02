@@ -63,7 +63,7 @@ export function TopicCard(props: DragProps & { topic: BoardTopic; busy: boolean;
         </div>
       </details>
     </div>
-    <div className="bcard-meta">{meta}</div>
+    <div className="bcard-meta">{t.inSlate && <span className="bcard-slate">本周片单</span>}{meta}</div>
     <div className="bcard-actions">
       <Button size="sm" className="bcard-start" disabled={props.busy} onClick={props.onStart}>{props.busy ? "正在开始…" : "开始写"}</Button>
     </div>

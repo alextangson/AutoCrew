@@ -39,6 +39,18 @@ async function ageTopic(id: string, daysAgo: number, dataDir?: string): Promise<
 }
 
 describe("expireStaleTopics", () => {
+  it("会议位选题豁免到下次开会为止；下次没再选中就恢复正常过期（选题会边界 8）", async () => {
+    const { saveMeetingCas } = await import("../modules/meetings/meeting-store.js");
+    const slotted = await saveTopic({ title: "本周片单", description: "d", tags: [] });
+    await ageTopic(slotted.id, 5);
+    await updateTopic(slotted.id, { meetingSlot: { meetingDate: "2026-09-25", slotId: "s1" } });
+    await saveMeetingCas({ date: "2026-09-25", slots: [], rejected: [], reviews: [] }, 0, tmpHome);
+    expect((await expireStaleTopics()).total).toBe(0);
+    await saveMeetingCas({ date: "2026-10-02", slots: [], rejected: [], reviews: [] }, 0, tmpHome);
+    expect((await expireStaleTopics()).total).toBe(1);
+    expect((await listTopics()).map((t) => t.id)).not.toContain(slotted.id);
+  });
+
   it("超过 3 天未选用 → 移入回收站(软删可恢复);3 天内的不动", async () => {
     const stale = await saveTopic({ title: "过期灵感", description: "d", tags: [] });
     const fresh = await saveTopic({ title: "新鲜灵感", description: "d", tags: [] });

@@ -23,6 +23,11 @@ describe("boardCards", () => {
     expect(cards.剪辑中).toEqual([]);
   });
 
+  it("本周片单的选题置顶，压过分数", () => {
+    const cards = boardCards({ topics: [topic("a", { score: 90 }), topic("b", { score: 10, inSlate: true })], items: [], wordsPerMinute: null });
+    expect(cards.选题.map((c) => (c.kind === "topic" ? c.topic.id : ""))).toEqual(["b", "a"]);
+  });
+
   it("列里超过 8 张：先给 8 张 + 剩余条数；展开后全给", () => {
     const cards = Array.from({ length: 11 }, (_, i) => ({ kind: "item" as const, item: item(`d${i}`) }));
     expect(visibleCards(cards, false)).toMatchObject({ hidden: 3 });

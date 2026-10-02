@@ -79,3 +79,4 @@
 .bcard-alert { display: block; font-size: var(--fs-xs); color: var(--danger); }
 .card-panel-row { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .card-panel-actions { display: flex; gap: var(--s3); flex-wrap: wrap; margin-top: auto; }
+.bcard-slate { font-size: var(--fs-xs); color: var(--accent, var(--fg)); border: 1px solid currentColor; padding: 0 var(--s1); margin-right: var(--s2); }

@@ -17,6 +17,7 @@ import { readPublishRecord, recordTime, type PublishRecord } from "../storage/pu
 import { isVideoPlatform } from "../storage/stage-guard.js";
 import { readProductionDoc } from "../storage/production-store.js";
 import { storyboards, versionLabel } from "../modules/production/storyboard.js";
+import { inCurrentSlate, latestMeetingDate } from "../modules/meetings/meeting-store.js";
 
 export type BoardColumn = "选题" | Column;
 
@@ -66,6 +67,8 @@ export interface BoardTopic {
   score: number | null;
   createdAt: string;
   renewedAt: string | null;
+  /** 在本周片单里（选题会 spec §0.3）：会议位指向最近一次会议 → 选题列置顶 + 标签；选中≠开工 */
+  inSlate: boolean;
 }
 
 export interface BoardData {
@@ -149,8 +152,9 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
   };
 }
 
-function topicOf(t: Topic): BoardTopic {
-  return { id: t.id, title: t.title, source: t.source ?? null, link: t.link ?? null, score: typeof t.score === "number" ? t.score : null, createdAt: t.createdAt, renewedAt: t.renewedAt ?? null };
+function topicOf(t: Topic, latestMeeting: string | null): BoardTopic {
+  return { id: t.id, title: t.title, source: t.source ?? null, link: t.link ?? null, score: typeof t.score === "number" ? t.score : null, createdAt: t.createdAt, renewedAt: t.renewedAt ?? null,
+    inSlate: inCurrentSlate(t, latestMeeting) };
 }
 
 export async function boardData(dataDir: string): Promise<BoardData> {
@@ -161,9 +165,10 @@ export async function boardData(dataDir: string): Promise<BoardData> {
     if (item) items.push(item);
   }
   const started = new Set(contents.filter((c) => c.topicId).map((c) => c.topicId!));
+  const latestMeeting = await latestMeetingDate(dataDir);
   return {
     items,
-    topics: topics.filter((t) => !started.has(t.id)).map(topicOf),
+    topics: topics.filter((t) => !started.has(t.id)).map((t) => topicOf(t, latestMeeting)),
     wordsPerMinute: await wordsPerMinute(contents, dataDir),
     ontology: { enabled: ctx.enabled, report: await readReconcileReport(dataDir) },
   };
