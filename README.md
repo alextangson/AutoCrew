@@ -297,7 +297,9 @@ autocrew disconnect claude
 接入做三件事：发这个宿主自己的令牌（`~/.autocrew/tokens/<host>.token`，0600，不写进宿主配置）；把 `autocrew`
 登记进宿主的**用户级**配置；再核对真的连上了（宿主自己的列表命令说连上，且 AutoCrew 收到了它的调用）才打勾。
 改任何配置文件前先整份备份到 `<文件>.autocrew-bak-<时间>`（每次一份新的，不覆盖旧的）；原来已有别的用户级 `autocrew` 条目会直接替换，结果里写明备份位置；已经是 AutoCrew 自己那一条就不动。
-仓库里的 `.mcp.json`（开发用、项目级）不动。
+仓库里的 `.mcp.json`（项目级，也是 Claude Code 插件的 MCP 配置）同样带 `AUTOCREW_HOST=claude-code`，和用户级那一条用同一把令牌：
+在仓库目录里开 Claude Code、或装了插件，也要**先接一次**（`autocrew connect claude-code` 或点「一键接上」），否则会提示还没接上；
+断开 Claude Code 后两条一起连不上。
 
 | 宿主 | 一键接入实际做的事 |
 | --- | --- |

@@ -151,3 +151,45 @@ describe("/api/* rejects named host tokens", () => {
     expect(((await denied.json()) as { result: { isError?: boolean } }).result.isError).toBe(true);
   });
 });
+
+/**
+ * 仓库 .mcp.json（也是 Claude Code 插件的 MCP 配置）带 AUTOCREW_HOST=claude-code（2026-10-02 创始人定）：
+ * 用 claude-code 的令牌、身份就是 claude-code；还没接上时说清怎么接，绝不回落到 server-token 当 local-user。
+ */
+describe("repo .mcp.json entry identifies as claude-code", () => {
+  const entry = JSON.parse(readFileSync(path.join(REPO_ROOT, ".mcp.json"), "utf-8")).mcpServers.autocrew as { command: string; args: string[]; env?: Record<string, string> };
+  function runEntry(messages: unknown[]): Promise<Array<Record<string, any>>> {
+    const args = entry.args.map((a) => a.replace("${CLAUDE_PLUGIN_ROOT:-.}", REPO_ROOT));
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: path.join(dir, "home"), AUTOCREW_LOCAL_DIR: path.join(dir, "data"), AUTOCREW_PORT: new URL(base).port, ...entry.env };
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, args, { env, stdio: ["pipe", "pipe", "ignore"] });
+      let out = "";
+      child.stdout!.on("data", (c) => { out += c; });
+      child.on("close", () => resolve(out.split("\n").filter(Boolean).map((l) => JSON.parse(l))));
+      child.stdin!.end(messages.map((m) => JSON.stringify(m)).join("\n") + "\n");
+    });
+  }
+
+  it("the entry names the claude-code host", () => {
+    expect(entry.env).toEqual({ AUTOCREW_HOST: "claude-code" });
+  });
+
+  it("no claude-code token yet: a plain message on initialize says how to connect, no server-token fallback", async () => {
+    const [reply] = await runEntry([{ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }]);
+    expect(reply.error.message).toContain("autocrew connect claude-code");
+    expect(reply.error.message).toContain("一键接上");
+  });
+
+  it("with the claude-code token: works as claude-code — adoption refused, hidden tools hidden", async () => {
+    ensureHostToken("claude-code", path.join(dir, "data"));
+    const [list, adopt] = await runEntry([
+      { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "autocrew_content", arguments: { action: "adoption", content_id: "content-1-abc" } } },
+    ].map((m) => m)).then((r) => [r.find((x) => x.id === 1)!, r.find((x) => x.id === 2)!]);
+    const names = (list.result.tools as Array<{ name: string }>).map((t) => t.name);
+    expect(names).toContain("autocrew_writer");
+    expect(names).not.toContain("autocrew_generate");
+    expect(adopt.result.isError).toBe(true);
+    expect(JSON.stringify(adopt.result)).toContain("宿主不能代填");
+  });
+});
