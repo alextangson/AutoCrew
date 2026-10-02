@@ -8,6 +8,7 @@ import { listHostTokens } from "../host-tokens.js";
 import { appInstalled, findDesktopClaude, findOnPath, type HostEnv } from "./env.js";
 import { readMcpEntry } from "./mcp-json-file.js";
 import { readVerifyState } from "./verify-state.js";
+import { hostCanWrite } from "../../../mcp/host-policy.js";
 
 export const CONNECT_HOSTS = ["claude", "codex", "workbuddy"] as const;
 export type ConnectHost = (typeof CONNECT_HOSTS)[number];
@@ -47,6 +48,8 @@ export interface HostStatus {
   /** 宿主配置里有 autocrew 条目 / 有这个宿主的令牌——任一为真就该能断开（不看核对结果） */
   hasEntry: boolean;
   hasToken: boolean;
+  /** 按 mcp/host-policy 的限权表，这个宿主能不能写稿（Codex 是剪辑工位：不能） */
+  canWrite: boolean;
   lastUsedAt?: string;
 }
 
@@ -107,7 +110,7 @@ export async function detectHost(host: ConnectHost, env: HostEnv): Promise<HostS
   const record = readVerifyState(env.dataDir)[host];
   const connected = registered && record?.verified === true;
   const unverified = registered && !connected ? (record?.reason ?? "还没核对过能不能连上") : undefined;
-  return { host, label: HOST_LABEL[host], ...base, connected, hasEntry: entry, hasToken: Boolean(token), ...(unverified ? { unverified } : {}), ...(token?.lastUsedAt ? { lastUsedAt: token.lastUsedAt } : {}) };
+  return { host, label: HOST_LABEL[host], ...base, connected, hasEntry: entry, hasToken: Boolean(token), canWrite: hostCanWrite(TOKEN_HOST[host]), ...(unverified ? { unverified } : {}), ...(token?.lastUsedAt ? { lastUsedAt: token.lastUsedAt } : {}) };
 }
 
 /** 找到且（已知）已登录的排前面；其余保持 Claude → Codex → WorkBuddy */

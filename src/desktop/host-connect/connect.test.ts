@@ -211,3 +211,10 @@ describe("Codex 评审 P2-3：写进去但没核对上，下次检测也不能�
     expect(after.unverified).toBeUndefined();
   });
 });
+
+describe("Codex 评审第 2 轮 P2-c：开工提示按宿主权限（来自 host-policy）", () => {
+  it("Codex 是剪辑工位不能写稿；Claude Code / WorkBuddy 能", async () => {
+    const hosts = await detectHosts(sb.env);
+    expect(Object.fromEntries(hosts.map((h) => [h.host, h.canWrite]))).toEqual({ claude: true, codex: false, workbuddy: true });
+  });
+});

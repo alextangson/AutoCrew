@@ -91,7 +91,7 @@ describe("第 1 步", () => {
 
 describe("第 2 步与完成页", () => {
   beforeEach(() => {
-    store.view = { hosts: [H("claude", { found: true, detail: "找到了 Claude Code" }), H("codex", { found: true, loggedIn: true, detail: "已登录" }), H("workbuddy")], skipped: false };
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了 Claude Code", canWrite: true }), H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: false }), H("workbuddy")], skipped: false };
   });
 
   it("接上成功：打勾，完成页说去 Claude Code 里开工，并说清哪几样还要 DeepSeek 钥匙", async () => {
@@ -246,5 +246,30 @@ describe("Codex 评审第 2 轮 P2-b：没核对上 / 只剩令牌也能断开",
     expect(card("claude").textContent).toContain("断开");
     expect(card("codex").textContent).toContain("断开");
     expect(card("workbuddy").textContent).not.toContain("断开");
+  });
+});
+
+describe("Codex 评审第 2 轮 P2-c：完成页提示按宿主权限", () => {
+  it("只接了 Codex：让它登记成片，并说写稿要接 Claude Code / WorkBuddy 或填钥匙", async () => {
+    store.view = { hosts: [H("codex", { found: true, loggedIn: true, detail: "已登录", canWrite: false }), H("claude"), H("workbuddy")], skipped: false };
+    store.connect = (h) => ({ ok: true, host: h as "codex", registered: true, verified: true, message: "已接上" });
+    await mount();
+    await act(async () => card("codex").click()); await tick();
+    await click("下一步");
+    await click("一键接上");
+    await click("好了，进去看看");
+    expect(el.textContent).toContain("去 Codex 里说「把这条视频的成片登记到 AutoCrew」");
+    expect(el.textContent).not.toContain("去 Codex 里说「帮我写一条");
+    expect(el.textContent).toContain("写稿要接 Claude Code 或 WorkBuddy，或者在 设置 → 模型 里填钥匙用内置引擎");
+  });
+  it("接了能写的 Claude Code：提示写稿，没有那句补充", async () => {
+    store.view = { hosts: [H("claude", { found: true, detail: "找到了", canWrite: true }), H("codex"), H("workbuddy")], skipped: false };
+    store.connect = (h) => ({ ok: true, host: h as "claude", registered: true, verified: true, message: "已接上" });
+    await mount();
+    await click("下一步");
+    await click("一键接上");
+    await click("好了，进去看看");
+    expect(el.textContent).toContain("去 Claude Code 里说「帮我写一条……」");
+    expect(el.textContent).not.toContain("写稿要接");
   });
 });

@@ -13,6 +13,8 @@ export interface HostStatus {
   unverified?: string;
   hasEntry?: boolean;
   hasToken?: boolean;
+  /** 服务端按 host-policy 算的：能不能写稿 */
+  canWrite?: boolean;
   lastUsedAt?: string;
 }
 export interface ConnectView { hosts: HostStatus[]; skipped: boolean }

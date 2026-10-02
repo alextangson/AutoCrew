@@ -14,16 +14,21 @@ import "./onboarding/onboarding.css";
 
 type Step = "pick" | "connect" | "done";
 
+/** 开工提示按能力查表，不按宿主名写死：能力来自服务端的 host-policy（canWrite），以后放开谁写稿不用改这里 */
+const START_HINT = { write: "帮我写一条……", edit: "把这条视频的成片登记到 AutoCrew" } as const;
+
 export function DonePage(props: { connected: HostStatus[]; engineReady: boolean; onEnter: () => void; onOpenSettings: () => void }) {
   const first = props.connected[0];
+  const anyWriter = props.connected.some((h) => h.canWrite);
   return (
     <>
       <h1 className="ob-title">{first ? "接好了" : props.engineReady ? "钥匙存好了" : "先进去看看"}</h1>
-      <p className="ob-sub">
-        {first
-          ? `去 ${first.label} 里说「帮我写一条……」就能开工。`
-          : props.engineReady ? "在右边的总编辑里说「帮我写一条……」就能开工。" : "之后在「设置 · 接入更多 · 宿主」里随时接上本机 AI。"}
-      </p>
+      {first
+        ? props.connected.map((h) => <p key={h.host} className="ob-sub">去 {h.label} 里说「{START_HINT[h.canWrite ? "write" : "edit"]}」{h.canWrite ? "就能开工。" : "。"}</p>)
+        : <p className="ob-sub">{props.engineReady ? "在右边的总编辑里说「帮我写一条……」就能开工。" : "之后在「设置 · 接入更多 · 宿主」里随时接上本机 AI。"}</p>}
+      {first && !anyWriter && !props.engineReady && (
+        <p className="ob-sub">写稿要接 Claude Code 或 WorkBuddy，或者在 设置 → 模型 里填钥匙用内置引擎。</p>
+      )}
       {!props.engineReady && (
         <p className="ob-note">
           深调研、选题雷达、复盘、人设、每日摘要这几样要用你自己的模型钥匙（DeepSeek 最省事）。现在可以先跳过，以后在设置里补。{" "}

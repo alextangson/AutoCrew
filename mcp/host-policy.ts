@@ -74,6 +74,14 @@ export function hostPolicy(host: string, tool: string, args: Record<string, unkn
   return { ok: false, error: (ontology && host === "codex" ? CODEX_EDITOR_DENIED_ONTOLOGY : DENIED_MESSAGE[host]) ?? `宿主 ${host} 不允许调用 ${tool} ${action}` };
 }
 
+/**
+ * 这个宿主能不能写稿：直接问上面的限权表（备料 + 交稿两步都放行才算）。
+ * 引导完成页的开工提示靠它——以后放开 Codex 写稿只改限权表，提示自动跟着变。
+ */
+export function hostCanWrite(host: string): boolean {
+  return hostPolicy(host, "autocrew_workflow", { action: "write" }).ok && hostPolicy(host, "autocrew_writer", { action: "submit" }).ok;
+}
+
 /** 接到 `McpAccessContext.authorize` 上：宿主名就是命名 token 的主体 */
 export function hostAuthorize(host: string): NonNullable<McpAccessContext["authorize"]> {
   return async (_principal: McpPrincipal, tool: string, args: Record<string, unknown>) => hostPolicy(host, tool, args, await isOntologyEnabled().catch(() => false));
