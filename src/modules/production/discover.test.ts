@@ -165,6 +165,8 @@ describe("§4 收件箱自动挪", () => {
     expect(calls).toEqual([]);
     expect(r.inbox).toMatchObject({ checking: 0, paused: true });
     expect(r.inbox?.unmatched.map((f) => f.name)).toEqual(["IMG_p.mov"]);
+    expect(r.inbox?.unmatched[0].reason).toContain("暂停了自动找原片");
+    expect(r.inbox?.unmatched[0].reason).not.toMatch(/只比了文件名.*只比了文件名/);
   });
 });
 

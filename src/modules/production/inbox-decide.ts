@@ -313,6 +313,9 @@ async function localItemIds(contentId: string, action: string, p: Record<string,
 
 /** 这条候选还在、字节对得上，而且「等你拍板」现在不列它（调用方已确认没有对应条目） */
 async function hiddenCandidate(contentId: string, params: Record<string, unknown>, dataDir: string): Promise<boolean> {
+  // 归档的稿不收（与 record 一致，整分支审 17）：不放行，照旧 stale
+  const content = await getContent(contentId, dataDir);
+  if (!content || content.deletedAt || content.status === "archived") return false;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
   const f = doc.facts.find((x) => x.id === params.fact_id && x.round === doc.round);
   return Boolean(f && f.state === "candidate" && (!f.sha256 || f.sha256 === params.sha256));
