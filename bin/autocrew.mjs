@@ -381,14 +381,10 @@ async function runDetachedUpdate(tsx) {
     cwd: ROOT, detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, AUTOCREW_PORT: String(PORT) },
   });
   fs.closeSync(fd);
-  let aborting = false;
   // 只发给更新进程本身：发给整个进程组会把它正在跑的 git merge 一起杀掉，留下写了一半的工作区（第 15 轮）
   const toChild = (sig) => { try { child.kill(sig); } catch { /* 已经结束 */ } };
   // 每次 Ctrl-C 都转给更新进程，由它按自己走到哪一步来说（正在退回 / 新版正在检查 / 正在收尾），前台不自己编一句（第 16 轮 R1）
-  process.on("SIGINT", () => {
-    aborting = true;
-    toChild("SIGINT");
-  });
+  process.on("SIGINT", () => toChild("SIGINT"));
   process.on("SIGTERM", () => toChild("SIGTERM"));
   // 终端没了：不再往屏幕写，直接走；更新进程不在这个终端的进程组里，会自己跑完
   process.on("SIGHUP", () => process.exit(0));
