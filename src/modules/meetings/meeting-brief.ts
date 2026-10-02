@@ -45,7 +45,9 @@ function reconcileLast(inputs: BriefInputs, rows: WorkRow[], health: PlatformHea
     const h = health.find((x) => x.platform === platform);
     return h?.status === "正常" ? { ok: true, reason: "" } : { ok: false, reason: `${h?.label ?? platform}回流${h?.status ?? "不在自动回流范围"}，读数不可靠` };
   };
-  const bets = inputs.hypotheses.filter((h) => h.meetingDate === previous.date)
+  // 以会议记录的片单为准：同日重存拿掉的位（已 withdrawn）不再对账
+  const ids = new Set(previous.slots.map((s) => s.hypothesisId));
+  const bets = inputs.hypotheses.filter((h) => ids.has(h.id) && h.status !== "withdrawn")
     .map((h) => reconcileBet(h, { groups, contents: inputs.contents, plans: inputs.plans, pullHealthy, today }));
   return { meetingDate: previous.date, bets };
 }

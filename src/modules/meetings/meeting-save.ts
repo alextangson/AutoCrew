@@ -11,7 +11,7 @@ import { appendHypotheses, listHypotheses, type Hypothesis, type MetricFocus } f
 import { applyJudgement } from "../retro/hypothesis-judge.js";
 import { shanghaiDate } from "../flywheel/outcome-schema.js";
 import { listArg, readRejected, readReviews, readSlot } from "./meeting-args.js";
-import { readMeeting, saveMeetingCas, type MeetingRecord, type MeetingSlot } from "./meeting-store.js";
+import { assertMeetingDate, readMeeting, saveMeetingCas, type MeetingRecord, type MeetingSlot } from "./meeting-store.js";
 import { buildMeetingBrief } from "./meeting-brief.js";
 
 export interface SaveMeetingArgs {
@@ -51,6 +51,28 @@ async function readSlots(raw: unknown, date: string, dataDir?: string) {
   const ids = slots.map((s) => s.slotId);
   if (new Set(ids).size !== ids.length) errors.push("slot_id 重复");
   return { slots, errors };
+}
+
+/**
+ * 同日重存时 slotId 跟着选题走，不跟着顺序走：[A,B] 重存成 [B]，B 仍是原来的位，
+ * 不会把 A 的下注改写成 B、也不会留下一条指向 B 的孤儿下注。新题取一个没用过的位号。
+ */
+function stabilizeSlotIds(slots: MeetingSlot[], previous: MeetingRecord | null, date: string): MeetingSlot[] {
+  const byTopic = new Map((previous?.slots ?? []).map((s) => [s.topicId, s.slotId]));
+  const taken = new Set(byTopic.values());
+  let n = 0;
+  const nextFree = () => { do n += 1; while (taken.has(`s${n}`)); taken.add(`s${n}`); return `s${n}`; };
+  const out = slots.map((s) => ({ s, id: byTopic.get(s.topicId) }));
+  for (const o of out) if (!o.id) o.id = taken.has(o.s.slotId) ? nextFree() : (taken.add(o.s.slotId), o.s.slotId);
+  return out.map(({ s, id }) => ({ ...s, slotId: id!, hypothesisId: `hyp-meeting-${date}-${id}` }));
+}
+
+/** 上一版片单里有、这一版拿掉的位：下注标 withdrawn，不再对账 */
+async function withdrawnBets(previous: MeetingRecord | null, slots: MeetingSlot[], dataDir?: string): Promise<Hypothesis[]> {
+  const kept = new Set(slots.map((s) => s.hypothesisId));
+  const gone = new Set((previous?.slots ?? []).map((s) => s.hypothesisId).filter((id) => !kept.has(id)));
+  if (!gone.size) return [];
+  return (await listHypotheses(dataDir)).filter((h) => gone.has(h.id) && h.status === "open").map((h) => ({ ...h, status: "withdrawn" as const }));
 }
 
 function betOf(slot: MeetingSlot, date: string, contents: Content[], now: string): Hypothesis {
@@ -104,16 +126,20 @@ async function syncTopicSlots(record: MeetingRecord, previous: MeetingRecord | n
 }
 
 export async function saveMeeting(args: SaveMeetingArgs, dataDir?: string, now = new Date()) {
-  const date = typeof args.date === "string" && args.date ? args.date : shanghaiDate(now.toISOString());
+  // 日期先过校验再碰任何路径或 id
+  const date = args.date === undefined || args.date === "" ? shanghaiDate(now.toISOString()) : assertMeetingDate(args.date);
   const expected = expectedRevision(args.expected_revision);
-  const { slots, errors } = await readSlots(args.slots, date, dataDir);
+  const read = await readSlots(args.slots, date, dataDir);
+  const errors = read.errors;
+  const slots = stabilizeSlotIds(read.slots, await readMeeting(date, dataDir), date);
   const rejected = readRejected(listArg(args.rejected, "rejected"));
   if (errors.length) return { ok: false as const, error: errors.join("；"), next_action: "按错误逐条问创始人补齐后重新 meeting_save；什么都还没写入" };
   const reviews = await reviewRows(args.reviews, dataDir, now);
   const notes = typeof args.notes === "string" && args.notes.trim() ? { notes: args.notes.trim() } : {};
   const { record, previous } = await saveMeetingCas({ date, slots, rejected, reviews: reviews.rows, ...notes }, expected, dataDir);
   const contents = await listContents(dataDir);
-  await appendHypotheses([...slots.map((s) => betOf(s, date, contents, now.toISOString())), ...reviews.updates], dataDir);
+  const withdrawn = await withdrawnBets(previous, slots, dataDir);
+  await appendHypotheses([...slots.map((s) => betOf(s, date, contents, now.toISOString())), ...withdrawn, ...reviews.updates], dataDir);
   const failedTopics = await syncTopicSlots(record, previous, dataDir);
   return {
     ok: failedTopics.length === 0, record,
@@ -123,7 +149,7 @@ export async function saveMeeting(args: SaveMeetingArgs, dataDir?: string, now =
 }
 
 export async function getMeeting(date: string | undefined, dataDir?: string, now = new Date()) {
-  const day = date || shanghaiDate(now.toISOString());
+  const day = date ? assertMeetingDate(date) : shanghaiDate(now.toISOString());
   const record = await readMeeting(day, dataDir);
   return record ? { ok: true as const, record } : { ok: true as const, record: null, expected_revision: 0, note: `${day} 还没开过会；新会 expected_revision 传 0` };
 }

@@ -50,6 +50,28 @@ describe("meeting_save 落库", () => {
     ])).rejects.toThrow(/revision/);
   });
 
+  it("回归 P2a：[A,B] 重存成 [B]：B 保住原位号，A 的下注撤回，对账只剩 B", async () => {
+    const [a, b] = await Promise.all([makeTopic(f.data, "A"), makeTopic(f.data, "B")]);
+    await save({ expected_revision: 0, slots: [slot(a.id), slot(b.id)] });
+    const res = await save({ expected_revision: 1, slots: [slot(b.id)] });
+    expect(res).toMatchObject({ ok: true, record: { slots: [{ topicId: b.id, slotId: "s2", hypothesisId: "hyp-meeting-2026-10-02-s2" }] } });
+    const byId = Object.fromEntries((await listHypotheses(f.data)).map((h) => [h.id, h]));
+    expect(byId["hyp-meeting-2026-10-02-s1"]).toMatchObject({ topicId: a.id, status: "withdrawn" });
+    expect(byId["hyp-meeting-2026-10-02-s2"]).toMatchObject({ topicId: b.id, status: "open" });
+    const { buildMeetingBrief } = await import("./meeting-brief.js");
+    const pending = (await buildMeetingBrief(f.data, new Date("2026-10-09T04:00:00Z"))).pendingBets.bets;
+    expect(pending.map((p) => p.hypothesisId)).toEqual(["hyp-meeting-2026-10-02-s2"]);
+  });
+
+  it("回归 P2c：不合法的日期在碰任何路径之前就被拒", async () => {
+    const res = await executeInsights({ action: "meeting_save", date: "/../../x", meeting: { expected_revision: 0, slots: [] }, _dataDir: f.data });
+    expect(res).toMatchObject({ ok: false });
+    expect(String(res.error)).toContain("YYYY-MM-DD");
+    expect(await fs.readdir(f.data)).not.toContain("meetings");
+    await expect(saveMeetingCas({ date: "../escape", slots: [], rejected: [], reviews: [] }, 0, f.data)).rejects.toThrow(/YYYY-MM-DD/);
+    expect(await fs.readdir(f.data)).not.toContain("meetings");
+  });
+
   it("同日重存把拿掉的题清出片单", async () => {
     const [a, b] = await Promise.all([makeTopic(f.data, "A"), makeTopic(f.data, "B")]);
     await save({ expected_revision: 0, slots: [slot(a.id), slot(b.id, { slot_id: "s2" })] });

@@ -58,8 +58,16 @@ export function meetingsDir(dataDir?: string): string {
   return path.join(getDataDir(dataDir), "meetings");
 }
 
+/** 日期进路径前必须先过这一关（模型给的 date 可能是 "/../../x"） */
+export function assertMeetingDate(date: unknown): string {
+  if (typeof date !== "string" || !DATE_RE.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+    throw new Error(`会议日期必须是 YYYY-MM-DD：${String(date).slice(0, 40)}`);
+  }
+  return date;
+}
+
 function meetingFile(date: string, dataDir?: string): string {
-  if (!DATE_RE.test(date)) throw new Error(`会议日期必须是 YYYY-MM-DD：${date}`);
+  assertMeetingDate(date);
   return path.join(meetingsDir(dataDir), `${date}.json`);
 }
 
@@ -101,6 +109,7 @@ export async function latestMeetingDate(dataDir?: string): Promise<string | null
 
 /** 跨进程互斥：mkdir 是原子的；锁超过 30 秒视为崩溃残留 */
 async function withLock<T>(date: string, dataDir: string | undefined, fn: () => Promise<T>): Promise<T> {
+  assertMeetingDate(date);
   const lock = path.join(meetingsDir(dataDir), `.${date}.lock`);
   await fs.mkdir(meetingsDir(dataDir), { recursive: true });
   for (let attempt = 0; ; attempt += 1) {

@@ -103,7 +103,8 @@ describe("上次下注对账", () => {
       row({ contentId: c2.id, platform: "wechat_video", platformTitle: "过期的稿", publishedAt: "2026-09-24T02:00:00Z", metricDate: "2026-10-01", metrics: { views: 10 }, source: "auto" }),
     ], f.data);
     await appendHypotheses([await bet(t1.id, "s1", "douyin"), await bet(t2.id, "s2", "wechat_video"), await bet(t3.id, "s3", "douyin"), await bet(t4.id, "s4", "douyin")], f.data);
-    await saveMeetingCas({ date: "2026-09-25", slots: [], rejected: [], reviews: [] }, 0, f.data);
+    const slots = [t1, t2, t3, t4].map((t, i) => ({ slotId: `s${i + 1}`, topicId: t.id, hypothesisId: `hyp-meeting-2026-09-25-s${i + 1}` }));
+    await saveMeetingCas({ date: "2026-09-25", slots: slots as never, rejected: [], reviews: [] }, 0, f.data);
     const { pendingBets } = await buildMeetingBrief(f.data, NOW);
     expect(pendingBets.meetingDate).toBe("2026-09-25");
     const v = Object.fromEntries(pendingBets.bets.map((b) => [b.slotId, b]));

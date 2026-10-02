@@ -32,7 +32,8 @@ export const METRIC_FOCUS_KEYS = [
 ] as const;
 export type MetricFocus = keyof OutcomeMetrics | "engagementRate";
 
-export type HypothesisStatus = "open" | "supported" | "refuted" | "inconclusive";
+/** withdrawn = 选题会同日重存时从片单拿掉的下注：不再对账 */
+export type HypothesisStatus = "open" | "supported" | "refuted" | "inconclusive" | "withdrawn";
 export type HypothesisDirection = "up" | "down";
 
 /** 裁决证据：全是代码算出来的数，模型不得改写 */
@@ -151,7 +152,7 @@ export function validateHypothesis(input: unknown): Validated<Hypothesis> {
   if (!retroRunId) errors.push("retroRunId 必填");
   if (!/^\d{4}-\d{2}-\d{2}T/.test(proposedAt)) errors.push("proposedAt 必须是 ISO 时间");
   const status = str(raw.status) || "open";
-  if (!["open", "supported", "refuted", "inconclusive"].includes(status)) errors.push(`status ${status} 非法`);
+  if (!["open", "supported", "refuted", "inconclusive", "withdrawn"].includes(status)) errors.push(`status ${status} 非法`);
   const contentIds = Array.isArray(raw.contentIds)
     ? raw.contentIds.filter((c): c is string => typeof c === "string" && c.trim().length > 0)
     : [];
