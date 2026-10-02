@@ -5,6 +5,7 @@
 import type http from "node:http";
 import { checkForUpdate, updateView, type UpdateView } from "../modules/update/check.js";
 import { busyWork, lockHeld, type PreflightDeps } from "../modules/update/preflight.js";
+import { detectInterrupted } from "../modules/update/interrupted.js";
 import { markResultSeen, writeSettings } from "../modules/update/state.js";
 import { prepareUpdate, spawnDetachedUpdater, type Prepared } from "../modules/update/start.js";
 import type { GitRunner } from "../modules/update/git.js";
@@ -16,6 +17,9 @@ export interface UpdateRouteDeps {
   root: string;
   machineDir: string;
   port: number;
+  /** 这个服务进程启动时的版本与时刻：设置页显示真正在跑的版本；判断「更新在我启动之后才断掉」（e2e 1002 P2-C） */
+  runningVersion?: string;
+  processStartedAt?: number;
   inProcessTurns?: () => number;
   launcher?: PreflightDeps["launcher"];
   /** 测试注入 */
@@ -29,7 +33,12 @@ const send = (res: http.ServerResponse, status: number, body: unknown) =>
   res.writeHead(status, { "Content-Type": JSON_TYPE, "Cache-Control": "no-store" }).end(JSON.stringify(body));
 
 export function createUpdateHandler(deps: UpdateRouteDeps) {
-  const view = (): UpdateView => updateView(deps.root, deps.machineDir, lockHeld(deps.machineDir));
+  const view = (): UpdateView => {
+    // 更新进程死了、这个旧服务还在跑：读状态时就认出「上次更新中断」，不等下次启动（e2e 1002 P2-C）
+    try { detectInterrupted(deps.root, deps.machineDir, { trustInstall: true, ...(deps.processStartedAt !== undefined ? { processStartedAt: deps.processStartedAt } : {}) }); }
+    catch { /* 认不出来就照常显示，不挡读状态 */ }
+    return updateView(deps.root, deps.machineDir, lockHeld(deps.machineDir), deps.runningVersion);
+  };
   const session = (req: http.IncomingMessage) => deps.authorize(req) === "session";
   const writeOk = (req: http.IncomingMessage) => session(req) && deps.originAllowed(req);
   const body = async (req: http.IncomingMessage): Promise<Record<string, unknown>> => {

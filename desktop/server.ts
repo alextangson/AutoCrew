@@ -7,7 +7,7 @@ import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
 import { detectInterrupted } from "../src/modules/update/interrupted.js";
 import { asrWarmupCount } from "../src/modules/video/asr.js";
-import { programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
+import { localVersion, programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
 import { activeTurnCount } from "../src/desktop/turn-registry.js";
 import { activeWorkCount, runUnlessUpdating } from "../src/modules/update/active-work.js";
 import { getMachineDir } from "../src/storage/storage-roots.js";
@@ -195,14 +195,19 @@ const publishPrefs = createPublishPrefsHandler({ authorize, originAllowed: req =
 const board = createBoardHandler({ authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), resolveDataDir: activeDataDir, readBody });
 // 上次更新被硬生生打断（进程被杀 / 机器重启）：启动时认出来，写一份「上次更新中断」结果给页面（第 12 轮 P1）
 try {
-  const interrupted = detectInterrupted(programRoot(), getMachineDir());
+  // 新起的服务、安装一致：上次虽然断了，现在能用，清掉记录不报（e2e 1002 P2-B）
+  const interrupted = detectInterrupted(programRoot(), getMachineDir(), { trustInstall: true });
   if (interrupted) console.error(`[update] ${interrupted.message}`);
 } catch (err) { console.error("[update] 检查上次更新是否中断失败:", err instanceof Error ? err.message : err); }
 
 // 一键更新（self-update §3）：只有用 npm start（启动器写了 pid 文件、就是本进程）起的服务才能被自动重启
+// 这个进程启动时的版本与时刻（e2e 1002 P2-C）：设置页显示真正在跑的版本，磁盘上的 package.json 可能已被没跑完的更新换掉
+const RUNNING_VERSION = localVersion(programRoot());
+const PROCESS_STARTED_AT = Date.now();
 const updateRoute = createUpdateHandler({
   authorize, originAllowed: req => AUTH.originAllowed(req.headers.origin), readBody,
   root: programRoot(), machineDir: getMachineDir(), port: PORT,
+  runningVersion: RUNNING_VERSION, processStartedAt: PROCESS_STARTED_AT,
   // 对话轮 + 后台写稿 / 生图 / 推送等长任务（self-update，Codex 审第 2 轮 P1）
   // 剪辑与深调研的 runner 在跑也算（第 12 轮 P2：重启后它们要等 10 / 30 分钟才会被捡回，不能被重启打断）
   inProcessTurns: () => activeTurnCount() + activeWorkCount() + (videoService?.busyCount() ?? 0) + researchBusyCount() + asrWarmupCount(),

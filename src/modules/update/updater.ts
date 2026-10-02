@@ -266,7 +266,7 @@ export async function runUpdate(job: UpdateJob): Promise<UpdateResult> {
   }
   log(`旧版本提交：${oldHead}`);
   // 在途记录：被硬杀时下次能认出「上次更新中断了」；finish 时删掉
-  try { writeInflight(job.machineDir, { at: at(), from: job.from, to: job.to, log: job.logFile, oldHead }); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
+  try { writeInflight(job.machineDir, { at: at(), from: job.from, to: job.to, log: job.logFile, oldHead, commit: job.commit }); } catch (e) { log(`!! 写不了在途记录：${errText(e)}`); }
   const progress: Progress = { touchedService: false };
   try {
     await forward(job, oldHead, log, progress);
