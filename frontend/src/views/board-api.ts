@@ -1,5 +1,6 @@
 /** 看板与数据页的服务端调用：读看板、开始写、我发了 / 撤销；读数据页、关联 / 撤销。失败一律回人话，不抛。 */
 import type { BoardData } from "./board-columns";
+import { authedFetch, SESSION_EXPIRED } from "../transport";
 import type { DataPageData } from "./data-lib";
 
 type Json = Record<string, unknown>;
@@ -8,11 +9,13 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; b
 
 async function call<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
-    const r = await fetch(url, { credentials: "same-origin", ...init });
+    const r = await authedFetch(url, { credentials: "same-origin", ...init });
     const body = await r.json().catch(() => null) as (Json & { ok?: boolean; error?: string; data?: T }) | null;
-    if (!r.ok || !body || body.ok === false) return { ok: false, error: body?.error ?? (r.status === 403 ? "没有权限（登录过期？刷新页面试试）" : `服务没响应（HTTP ${r.status}）`), ...(body ? { body } : {}) };
+    if (!r.ok || !body || body.ok === false) return { ok: false, error: body?.error ?? (r.status === 403 ? SESSION_EXPIRED : `服务没响应（HTTP ${r.status}）`), ...(body ? { body } : {}) };
     return { ok: true, data: (body.data ?? body) as T };
   } catch (e) {
+    // 会话交换失败（地址栏 token 与 cookie 都无效）不是「连不上」：原样给怎么拿新链接
+    if (e instanceof Error && e.message === SESSION_EXPIRED) return { ok: false, error: SESSION_EXPIRED };
     return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}` };
   }
 }
@@ -33,9 +36,9 @@ export const unmarkPublished = (contentId: string, platform: string) =>
 export interface EnableFailure { id: string; title: string; step: string; error: string }
 export async function enableOntology(exclude: string[] = []): Promise<{ ok: boolean; error?: string; failures: EnableFailure[] }> {
   try {
-    const r = await fetch("/api/board/ontology/enable", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, exclude }) });
+    const r = await authedFetch("/api/board/ontology/enable", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, exclude }) });
     const body = await r.json().catch(() => null) as { ok?: boolean; error?: string; failures?: EnableFailure[] } | null;
-    if (!r.ok || !body) return { ok: false, error: r.status === 403 ? "没有权限（登录过期？刷新页面试试）" : `服务没响应（HTTP ${r.status}）`, failures: [] };
+    if (!r.ok || !body) return { ok: false, error: r.status === 403 ? SESSION_EXPIRED : `服务没响应（HTTP ${r.status}）`, failures: [] };
     return { ok: body.ok === true, ...(body.error ? { error: body.error } : {}), failures: body.failures ?? [] };
   } catch (e) {
     return { ok: false, error: `连不上 AutoCrew 服务：${e instanceof Error ? e.message : String(e)}`, failures: [] };
@@ -60,7 +63,10 @@ export const revokeHandoff = (contentId: string, manifestHash: string) =>
   post<RevokeReply>(`/api/project-review?content_id=${encodeURIComponent(contentId)}`, { action: "revoke", manifest_hash: manifestHash });
 
 /* 本体卡片面板（spec §10）：读面板、创始人决定、重开文稿 */
-export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean }
+export interface CardCandidate { fact_id: string; kind: string; path?: string; evidence?: string; sha256?: string; post_publish?: boolean; state?: string; started_at?: string }
+/** 本轮 accepted 原片（1b §4.1 / §7）：自动挂上的可撤；核对说更像别条的可改挂 / 就是这条 */
+export interface ArollCheck { status: "checking" | "ok" | "suggest" | "kept" | "not_ready" | "failed"; other_id?: string; other_title?: string; reason?: string }
+export interface ArollRow { fact_id: string; sha256: string; path: string; name?: string; origin?: string; duration_ms?: number | null; at?: string; auto_attached: boolean; source_path: string | null; check: ArollCheck | null; undo_blocked: string | null; reassign_blocked: string | null }
 export interface CardPanelData {
   id: string; title: string; platform: string | null; status: string; active: boolean;
   column: string | null; stage: string | null; reason?: string; missing: string[]; badges: string[]; alerts?: string[]; candidates: CardCandidate[];
@@ -70,8 +76,19 @@ export interface CardPanelData {
   published?: Array<{ id: string; kind: string; platform: string | null; url: string | null; work?: string | null; label: string; at: string }>;
   approvals?: { cut: { id: string; sha256?: string } | null; cover: { id: string } | null };
   slivers?: SliverPanel | null;
+  /** B7：有导出但 agent 还没说可以审（没有就是 null） */
+  unreviewed?: { count: number; editor_label: string } | null;
+  /** 「稿子写好了」这件事的身份与代次：认稿要带它 */
+  draft_item?: { item_id: string; gen: string };
+  /** 正式封面文件夹以外的封面图（多半是中间文件）：只在制作中的稿卡上收成一行 */
+  stray_covers?: { count: number } | null;
   storyboard?: StoryboardPanel | null;
+  arolls?: ArollRow[];
+  candidate_rows?: CandidateRowView[];
 }
+/** 「发现的候选」一行（服务端已翻成人话；完整路径与分数只在 detail 里） */
+export interface CandidateRowView { fact_id: string; kind: string; state: string; sha256?: string; started_at?: string; name: string; origin: string; reason: string; detail: string; path: string | null; in_inbox?: boolean }
+export const revealFact = (contentId: string, factId: string) => post<Json>("/api/board/reveal-source", { content_id: contentId, fact_id: factId });
 /** 分镜（spec 2026-09-30-storyboard-review-check §4）：最新一版 + 旧版 */
 export interface StoryboardView { fact_id: string; sha256: string; version: string; path: string; at: string }
 export interface StoryboardPanel { latest: StoryboardView & { changed: boolean; missing: boolean; note?: string }; older: StoryboardView[] }
@@ -86,3 +103,11 @@ export const loadCard = (contentId: string) => call<CardPanelData>(`/api/board/c
 export const decide = (contentId: string, action: string, params: Json = {}) => post<Json>("/api/board/decision", { content_id: contentId, action, ...params });
 export const chooseFile = () => post<{ path: string }>("/api/board/choose-file", {});
 export const reopenScript = (contentId: string, round: number) => post<Json>("/api/board/reopen-script", { content_id: contentId, confirm: true, round });
+
+/* 「原片从哪里找」（1b §5）：读 / 写只走浏览器会话 */
+export interface WatchFolderView { path: string; scan: boolean; allow_move: boolean; problem: string | null; last: { at: string; error?: string; files: number; suggested: number } | null }
+export interface ArollSourcesView { inbox: string | null; folders: WatchFolderView[]; paused: boolean; asr: { ready: boolean; reason?: string }; jianyingExportDir: string | null }
+export const loadSources = () => call<ArollSourcesView>("/api/board/aroll-sources");
+export const sourceOp = (op: string, params: Json = {}) => post<Json>("/api/board/aroll-sources", { op, ...params });
+export const chooseFolder = () => post<{ path: string }>("/api/board/choose-folder", {});
+export const revealSource = (path: string) => post<Json>("/api/board/reveal-source", { path });

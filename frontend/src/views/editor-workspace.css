@@ -55,14 +55,8 @@
 .editor-workspace summary:focus-visible { outline: 2px solid var(--hot); outline-offset: 3px; }
 .editor-workspace button:disabled { cursor: default; }
 .editor-workspace .ed-tool-action:disabled,
-.editor-workspace .ed-next-action-button:disabled { opacity: .5; }
 
 .ed-stage-action { position: relative; font-size: var(--fs-sm); }
-.ed-stage-action-buttons { display: flex; align-items: stretch; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
-.editor-workspace .ed-stage-action-buttons button { border: none; border-radius: 0; background: transparent; }
-.editor-workspace .ed-next-action-button { padding: var(--btn-pad); white-space: nowrap; }
-.editor-workspace .ed-stage-menu-button { width: 30px; border-left: 1px solid var(--border); padding: var(--s1); font-size: var(--fs-lg); line-height: 1; }
-.editor-workspace .ed-stage-action-buttons button:hover:not(:disabled) { background: var(--surface); }
 .ed-stage-menu { position: absolute; right: 0; top: calc(100% + 8px); width: 264px; z-index: 30; padding: var(--s2); border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 0 12px 32px #16150f24; }
 .ed-stage-menu-heading { color: #746f62; font-size: var(--fs-xs); padding: var(--s1) var(--s2) var(--s2); }
 .editor-workspace .ed-stage-menu > button { width: 100%; display: flex; gap: var(--s2); flex-wrap: wrap; justify-content: space-between; text-align: left; padding: var(--s2) var(--s3); border: none; border-radius: var(--radius); background: transparent; }
@@ -210,3 +204,15 @@
 /* 让 Codex 发布：沿用 .pb-viewer/.pp-body 浮层 */
 .cx-body { margin-top: 8vh; }
 .cx-text { width: 100%; box-sizing: border-box; font: var(--fs-sm)/1.6 var(--mono, ui-monospace, monospace); resize: vertical; }
+
+/* 1b 验收：稿件页标题下一行——在哪一步、下一步、回看板那张卡 */
+.ed-production-banner { padding: 6px 16px; font-size: 13px; border-bottom: 1px solid var(--line, #e5e5e5); }
+
+/* 稿件页顶上的「稿子没问题，进入制作」（review-inbox §4.2）：主按钮单独一个（黑底、圆角 8、高 36），
+   旁边的「⌄」是少用按钮，不拼成分段按钮条 */
+.ed-stage-action-buttons { display: flex; align-items: center; gap: var(--s1); }
+.editor-workspace .ed-next-action-button { background: var(--accent); color: var(--accent-text); border-color: var(--accent); white-space: nowrap; }
+.editor-workspace .ed-next-action-button:hover:not(:disabled) { background: #000; border-color: #000; }
+.editor-workspace .ed-next-action-button:disabled { opacity: .5; }
+.editor-workspace .ed-stage-menu-button { border-color: transparent; background: none; color: var(--muted); padding: var(--btn-pad); padding-left: var(--s2); padding-right: var(--s2); font-size: var(--fs-lg); line-height: 20px; }
+.editor-workspace .ed-stage-menu-button:hover:not(:disabled) { background: var(--lane); color: var(--ink); }

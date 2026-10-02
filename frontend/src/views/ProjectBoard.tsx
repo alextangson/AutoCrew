@@ -12,7 +12,9 @@ import { FinalCutStep, NowTitle } from "./FinalCutStep";
 import { ScriptPeek } from "./ScriptPeek";
 import { CodexPublishButton } from "./CodexPublish";
 import { showCodexPublish } from "./codex-publish";
-import { RevealLink, when } from "./board-parts";
+import { artifactUrl, RevealLink, when } from "./board-parts";
+import { coverVersions } from "./cover-board";
+import { inboxHref, loadInbox } from "./review/review-api";
 import { boardFiles, codexLine, nowKind, refreshFailedLine, stepperStates, type NowKind } from "./board-view";
 import { boardAnomalies, fileName, type ProjectReview } from "./project-board";
 
@@ -34,6 +36,8 @@ export function ProjectBoardView(props: { content: BoardContent; reload: () => P
   const { review, error, refreshError, lastOkAt, busy, submit, now } = props;
   const kind = nowKind(status, review);
   const live = review?.enabled && review.handoff_valid ? review : null;
+  // 本体下工作台只看详情（review-inbox §10）：历史、全部版本、文件；拍板都在「等你拍板」
+  if (live?.ontology) return <ReadOnlyWorkbench review={live} content={props.content} error={error} />;
   return <div className="pb-board">
     <Stepper kind={kind} />
     {boardAnomalies(status, review).includes("draft_changed") && <p className="pb-warn">交接之后稿子又改过，和 Codex 手里那版不一致</p>}
@@ -131,4 +135,38 @@ function NoHandoff(props: { contentId: string; status: string; reload: () => Pro
     <NowTitle title="这篇在剪辑中，但找不到有效的交接" sub="退回待交接后，在 Codex 里说「剪这条」重新交接。" />
     <div className="pb-actions"><button disabled={busy} onClick={() => void back()}>退回待交接</button></div>
   </>;
+}
+
+/**
+ * 本体下的工作台（review-inbox §10，R18）：只看——本轮全部成片（最新一版 / 上一版…按剪好时间）、全部封面组、文件、文案。
+ * 不放审核按钮；这条有要你拍板的事时给一个「去『等你拍板』处理」。
+ */
+export function ReadOnlyWorkbench(p: { review: ProjectReview; content: BoardContent; error?: string | null }) {
+  const id = p.content.id, arts = p.review.execution?.artifacts ?? [];
+  const [pending, setPending] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    void loadInbox().then((r) => { if (live && r.ok) setPending(r.data.items.filter((i) => i.content_id === id).length); });
+    return () => { live = false; };
+  }, [id]);
+  const cuts = arts.filter((a) => a.role === "final-cut").sort((a, b) => b.reported_at.localeCompare(a.reported_at));
+  const covers = coverVersions(arts).sort((a, b) => b.at.localeCompare(a.at));
+  const label = (i: number) => (i === 0 ? "最新一版" : i === 1 ? "上一版" : `往前第 ${i} 版`);
+  return <div className="pb-board">
+    <section className="pb-now" aria-label="这条在哪">
+      <h3 className="pb-now-title">{p.review.editor_label ?? "agent"} 在剪；要你拍板的事都在「等你拍板」</h3>
+      {pending ? <p><a href={inboxHref(id)}>去『等你拍板』处理（{pending} 件）</a></p> : <p className="pb-now-sub">现在没有要你拍板的事。</p>}
+      {p.error && <p role="alert" className="pb-inline-error">{p.error}</p>}
+    </section>
+    <details className="pb-section" open={cuts.length > 0}><summary>成片（{cuts.length}）</summary>
+      <ul className="pb-files">{cuts.map((a, i) => <li key={a.sha256}><span className="pb-files-label">{label(i)} · {when(a.reported_at)}</span>
+        <video controls preload="metadata" style={{ width: "100%", maxWidth: 480 }} src={artifactUrl(id, a)} /><RevealLink contentId={id} target={a.sha256} /></li>)}</ul>
+    </details>
+    <details className="pb-section" open={covers.length > 0}><summary>封面（{covers.length} 组）</summary>
+      <ul className="pb-files">{covers.map((v, i) => <li key={`${v.version}-${v.at}`}><span className="pb-files-label">{i === 0 ? "最新一组" : i === 1 ? "上一组" : `往前第 ${i} 组`} · {when(v.at)}</span>
+        {(["3:4", "4:3"] as const).map((r) => v.pair[r] ? <img key={r} alt={r} style={{ height: 120, marginRight: 8, borderRadius: 8 }} src={artifactUrl(id, v.pair[r]!)} /> : <span key={r} className="muted">还差 {r} </span>)}</li>)}</ul>
+    </details>
+    <FilesSection review={p.review} contentId={id} />
+    <ScriptPeek title={p.content.title} body={p.content.body} summary="文案" hint="只读；剪辑阶段不改字。" />
+  </div>;
 }

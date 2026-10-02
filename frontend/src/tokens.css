@@ -30,7 +30,9 @@
   --h-sm: 28px;    /* 卡片内控件 */
   --h-md: 36px;    /* 默认控件 */
   --btn-pad: calc((var(--h-md) - 22px) / 2) var(--s4);
-  --btn-sm-pad: calc((var(--h-sm) - 22px) / 2) var(--s3);
+  /* 小按钮不再另有尺寸（review-inbox §4.2）：卡片里的按钮也是 36 高 */
+  --btn-sm-pad: var(--btn-pad);
+  --radius-btn: 8px;
   --radius: 4px;
   --radius-card: 4px;
   --radius-dialog: 6px;
@@ -58,21 +60,23 @@ body {
   background: var(--bg);
 }
 
-/* 裸 button / input 默认就是样张里的「次按钮 36」「输入框 36」。
-   高度靠 行高 20 + 上下内边距 + 1px 边框 凑出 36/28，不设 min-height：
-   链接式按钮（padding: 0、无边框）自然缩回文字高度，文字对齐也照旧可用 text-align。 */
+/* 全站只有三种按钮（review-inbox §4.2，对标 YouMind）：
+   primary = 黑底白字；secondary（裸 button）= 白底细边；quiet（.btn-ghost）= 灰字、悬停才显底色。
+   三种同尺寸：圆角 8、高 36（行高 20 + 上下内边距 7 + 1px 边框）。.btn-danger / .btn-sm 是旧名，样子跟 secondary 一样。
+   链接式按钮（padding: 0、无边框）自然缩回文字高度。 */
 button {
   font: inherit; font-size: var(--fs-md); line-height: 20px; cursor: pointer; color: var(--ink);
   padding: var(--btn-pad);
-  border: 1px solid var(--border); background: var(--card); border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--card); border-radius: var(--radius-btn);
 }
-button:hover { border-color: var(--ink); }
+button:hover { border-color: var(--line-2); background: var(--card); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.primary:hover { background: #000; border-color: #000; }
 button.btn-ghost { border-color: transparent; background: none; color: var(--muted); }
-button.btn-ghost:hover { color: var(--ink); }
-button.btn-danger { color: var(--hot); border-color: var(--danger-line); background: var(--card); }
-button.btn-danger:hover { border-color: var(--hot); }
-button.btn-sm { padding: var(--btn-sm-pad); font-size: var(--fs-sm); }
+button.btn-ghost:hover { background: var(--lane); color: var(--ink); border-color: transparent; }
+button.btn-danger { color: var(--ink); border-color: var(--border); background: var(--card); }
+button.btn-danger:hover { border-color: var(--line-2); }
+button.btn-sm { padding: var(--btn-pad); font-size: var(--fs-md); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 input, textarea, select {

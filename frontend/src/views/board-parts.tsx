@@ -1,5 +1,6 @@
 /** 看板各步共用的小件：时间、产物地址（哈希校验）、在访达中显示、就地打回 */
 import { useState } from "react";
+import { authedFetch } from "../transport";
 import { clockLabel } from "../time-format";
 import { rejectNoteError } from "./board-view";
 
@@ -13,7 +14,7 @@ export function artifactUrl(contentId: string, a: { path: string; sha256: string
 /** 只传稿件 id + 目标名/产物指纹，路径由服务端按本条稿解析；失败原因在链接旁边明说 */
 async function reveal(contentId: string, target: string): Promise<string | null> {
   try {
-    const r = await fetch("/api/project-reveal", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+    const r = await authedFetch("/api/project-reveal", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content_id: contentId, target }) });
     const body = await r.json().catch(() => null) as { ok?: boolean; opened?: boolean; path?: string; error?: string } | null;
     if (!r.ok || !body?.ok) return body?.error ?? `没打开（HTTP ${r.status}）`;

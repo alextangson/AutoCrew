@@ -35,8 +35,10 @@ describe("本体稿的工作台（P1-1）", () => {
         content: { id: c.id, status: "editing", title: c.title, body: c.body ?? "" }, reload: async () => {}, now: Date.now(),
         review: review as never, error: "", refreshError: "", lastOkAt: null, busy: false, submit: async () => true,
       }));
-      expect(html).toContain("交接详情");
-      expect(html).toContain(withAroll ? "原片.mov" : "还没有收到原片");
+      // 等你拍板 2a（§10）：工作台只看详情，不放审核按钮；拍板去「等你拍板」
+      expect(html).toContain("要你拍板的事都在「等你拍板」");
+      expect(html).toContain(withAroll ? "原片.mov" : "还没交接原片");
+      expect(html).not.toContain("通过成片");
     });
   }
 });

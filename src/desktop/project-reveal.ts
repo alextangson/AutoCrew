@@ -48,7 +48,7 @@ async function locate(id: string, target: string, dataDir: string): Promise<Loca
   } else if (/^[0-9a-f]{64}$/.test(target)) {
     // 本体下工作台展示的产物来自制作记录（Codex 审 seg2 P2）：定位读同一份索引
     const execution = isVideoPlatform(content.platform) && await isOntologyActive(dataDir, content.id)
-      ? executionFromFacts(await readProductionDocOrEmpty(content.id, dataDir))
+      ? executionFromFacts(await readProductionDocOrEmpty(content.id, dataDir), content.body)
       : await executionWithCovers(content, dataDir, content.video?.handoff?.generation ?? 1);
     const entry = execution?.artifacts.find((a) => a.sha256 === target);
     // 分镜审阅页（spec 2026-09-30-storyboard-review-check）：按本条 storyboard 事实的 sha 定位

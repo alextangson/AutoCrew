@@ -21,3 +21,11 @@ export function withFileOwnership<T>(fn: () => Promise<T>): Promise<T> {
   tail = next.catch(() => undefined);
   return next;
 }
+
+/**
+ * 在归属锁之外起一段异步工作（1b §3-9）：后台比对工人必须在干净的异步上下文里跑，
+ * 否则它从 record 的锁里继承 `owner` 标记，落结果时的 `withFileOwnership` 会当成重入、不排队。
+ */
+export function outsideFileOwnership<T>(fn: () => T): T {
+  return owner.exit(fn);
+}

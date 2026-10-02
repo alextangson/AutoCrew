@@ -11,7 +11,7 @@ import { showCodexPublish } from "./codex-publish";
 import { useProjectReview } from "./use-project-review";
 import { markPublished, revokeHandoff, unmarkPublished } from "./board-api";
 import {
-  backMoves, itemMeta, platformName, publishHeadline, publishLine, topicSourceLabel,
+  backMoves, itemMeta, platformName, publishHeadline, publishLine, topicSourceLabel, cardArollBadges,
   type BackMove, type BoardColumn, type BoardItem, type BoardTopic, type PlatformPublication,
 } from "./board-columns";
 
@@ -84,6 +84,7 @@ export function ItemCard(props: DragProps & { item: BoardItem; wpm: number | nul
       <div className="bcard-text">
         <button className="bcard-title" title={item.title} onClick={props.onOpen}>
           {item.status === "draft_ready" && <span className="bcard-score bcard-badge">等你认稿</span>}{item.title || "（无标题）"}</button>
+        {cardArollBadges(item).map((b) => <span key={b} className="bcard-score bcard-badge">{b}</span>)}
         {meta && <div className={"bcard-meta" + (item.status === "needs_evidence" ? " bcard-red" : "")}>{meta}</div>}
         {(item.blockedReason || item.lastError) && <div className="bcard-meta bcard-red">{item.blockedReason || "生成中断，打开稿件查看"}</div>}
         {(item.alerts ?? []).map((a) => <span key={a} className="bcard-alert">{a}</span>)}
@@ -150,7 +151,7 @@ function PublishRow(props: { item: BoardItem; p: PlatformPublication; reload: ()
     <span className="prow-side">
       {p.campaigns.length > 0 && <span className="prow-camp">{p.campaigns.join("、")}</span>}
       {p.manual && <button className="bcard-link" onClick={() => void undoMark(item, p.platform, props.reload)}>撤销</button>}
-      {!p.submitted && <button className="bcard-link" onClick={() => void askMark(item, p.platform, props.reload)}>我发了</button>}
+      {!p.submitted && <button className="bcard-link" onClick={() => void askMark(item, p.platform, props.reload)}>已经发出去了</button>}
     </span>
   </div>;
 }
@@ -166,7 +167,7 @@ function PublishRows(props: { item: BoardItem; reload: () => Promise<void> }) {
     {listed.map((p) => <PublishRow key={p.platform} item={props.item} p={p} reload={props.reload} />)}
     {unlisted.length > 0 && <details className="prow-more">
       <summary>在别的平台发了？</summary>
-      {unlisted.map((p) => <button key={p} className="bcard-link" onClick={() => void askMark(props.item, p, props.reload)}>{platformName(p)} · 我发了</button>)}
+      {unlisted.map((p) => <button key={p} className="bcard-link" onClick={() => void askMark(props.item, p, props.reload)}>{platformName(p)} · 已经发出去了</button>)}
     </details>}
   </div>;
 }

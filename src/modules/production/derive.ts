@@ -11,6 +11,8 @@ import { platformLabel } from "../../desktop/platform-label.js";
 import { receiptsOfRound, type Slot } from "./receipts.js";
 import { isUngated } from "./publish-check-link.js";
 import { sliverVerdict } from "./sliver/verdict.js";
+import { validCoverGroups, withCoverGroups } from "./cover-groups.js";
+import { latestMarkedCut } from "./ready.js";
 import { PRODUCTION_KINDS, type Decision, type Fact, type ProductionDoc, type Registration } from "../../storage/production-types.js";
 
 export type Stage = "待录制" | "剪辑中" | "待发布" | "已发布";
@@ -19,7 +21,7 @@ export type Rule = "D1" | "D2" | "D3" | "D4" | "D5";
 /** D1 的外部输入：AutoCrew 发布器写的 publish-plan / 数据回流 = 已核实回执（§6） */
 export interface PublishEvidence { verified: boolean; badge?: string; /** 最早投出的时间（投影到 published 时盖 publishedAt） */ at?: string }
 
-export interface CandidateView { fact_id: string; kind: Fact["kind"]; path?: string; evidence?: string; post_publish?: boolean; state: Fact["state"]; sha256?: string }
+export interface CandidateView { fact_id: string; kind: Fact["kind"]; path?: string; evidence?: string; post_publish?: boolean; state: Fact["state"]; sha256?: string; started_at?: string }
 
 export interface Derived {
   stage: Stage;
@@ -83,9 +85,14 @@ export function validCoverApproval(doc: ProductionDoc, body: string): Decision |
   if (!d || revokedIds(doc, "approval_revoke").has(d.id) || d.body_hash !== bodyHash(body)) return null;
   // 批准之后又打回了其中一张（或含它的整批）→ 这组封面失效（Codex 审 seg2 P1）
   const pair = [d.cover_3x4_sha, d.cover_4x3_sha];
+  // 按组打回（等你拍板）只作废那几组的批准：同一张图被用进新组又被打回，不连带已批的组（Codex 审 2a-1 P2）
   const rejected = inRound(doc, doc.decisions).some((r) => r.type === "cover_reject" && r.at > d.at
-    && ((r.sha256 && pair.includes(r.sha256)) || (r.shas ?? []).some((s) => pair.includes(s))));
+    && (r.group_ids ? Boolean(d.group_id) && r.group_ids.includes(d.group_id!)
+      : (r.sha256 && pair.includes(r.sha256)) || (r.shas ?? []).some((s) => pair.includes(s))));
   if (rejected) return null;
+  // 按组绑定的批准：只看这一组自己那几份文件有没有被覆盖（同一张图在别的组被覆盖不算，整分支审 4 P2）
+  // 只看这条批准绑的那一对（整分支审 7 P2）：组里以前被换掉、后来补过新图的旧成员不算
+  if (d.group_id && (doc.cover_members ?? []).some((m) => m.group_id === d.group_id && m.replaced_at && pair.includes(m.sha256))) return null;
   return liveFact(doc, "cover", d.cover_3x4_sha, "3:4") && liveFact(doc, "cover", d.cover_4x3_sha, "4:3") ? d : null;
 }
 
@@ -159,7 +166,7 @@ export function candidatesOf(doc: ProductionDoc): CandidateView[] {
     .filter((f) => f.state === "candidate" || f.state === "pending_match")
     .sort((a, b) => b.at.localeCompare(a.at))
     // 文件名规则得出的候选全列（E4）；只有 1b 的转写打分候选才截前三
-    .map((f) => ({ fact_id: f.id, kind: f.kind, state: f.state, ...(f.sha256 ? { sha256: f.sha256 } : {}), ...(f.path ? { path: f.path } : {}), ...(f.evidence ? { evidence: f.evidence } : {}), ...(f.post_publish ? { post_publish: true } : {}) }));
+    .map((f) => ({ fact_id: f.id, kind: f.kind, state: f.state, ...(f.sha256 ? { sha256: f.sha256 } : {}), ...(f.path ? { path: f.path } : {}), ...(f.evidence ? { evidence: f.evidence } : {}), ...(f.post_publish ? { post_publish: true } : {}), ...(f.state === "pending_match" && f.match_started_at ? { started_at: f.match_started_at } : {}) }));
 }
 
 /**
@@ -190,30 +197,60 @@ function editingMissing(doc: ProductionDoc, cut: Decision | null, cover: Decisio
   const badges: string[] = [];
   if (!newest) missing.push(MISSING.cut);
   else if (!srtFor(doc, (cut && liveFact(doc, "cut", cut.sha256)?.sha256) ?? newest.sha256)) missing.push(MISSING.srt);
-  const has34 = facts.some((f) => f.kind === "cover" && f.ratio === "3:4");
-  const has43 = facts.some((f) => f.kind === "cover" && f.ratio === "4:3");
-  if (!has34) missing.push(MISSING.cover34);
-  if (!has43) missing.push(MISSING.cover43);
-  if (newest && !cut) {
+  // 封面按有效组算（review-inbox §6）：不凭「最新一版缺哪个比例」猜配对
+  const groups = validCoverGroups(doc);
+  const complete = groups.filter((g) => g.complete);
+  const coverAsk = coverRejectNote(doc, complete.at(-1)?.at);
+  if (!complete.length) {
+    const last = groups.at(-1);
+    if (!last?.slots["3:4"].length) missing.push(MISSING.cover34);
+    if (!last?.slots["4:3"].length) missing.push(MISSING.cover43);
+  }
+  // 成片待你审只认 agent 标过「可以审了」的（§7-1）：对账自动收的导出不算
+  const marked = latestMarkedCut(doc);
+  const review = marked?.fact ?? null;
+  // 创始人点了「还要改…」：在 agent 交新版 / 重新标可以审之前，说的是那句话，不再是「成片待你审」（verifier 2a P1）
+  const cutAsk = marked ? cutRejectNote(doc, marked.fact.sha256!, marked.marked_at) : null;
+  if (review && !cut && cutAsk) missing.push(`你说还要改：${cutAsk}`);
+  else if (review && !cut) {
     missing.push(MISSING.cutReview);
     // 抽帧检查（spec 2026-09-30 §6）：没结果 / 有未放行的缝 / 没跑成且没整条放行 → 写进还差什么
-    const v = sliverVerdict(doc, newest.sha256!, null);
+    const v = sliverVerdict(doc, review.sha256!, null);
     if (!v.ok && v.missing) missing.push(v.missing);
   }
-  if (has34 && has43 && !cover) missing.push(MISSING.coverPick);
+  if (complete.length && !cover) missing.push(coverAsk ? `你说封面还要改：${coverAsk}` : MISSING.coverPick);
   const approvedCut = cut ? liveFact(doc, "cut", cut.sha256) : null;
-  if (approvedCut && newest && newest.sha256 !== approvedCut.sha256 && newest.at > approvedCut.at) badges.push("有新成片待你审");
+  if (approvedCut && review && review.sha256 !== approvedCut.sha256 && review.at > approvedCut.at) badges.push("有新成片待你审");
   return { missing, badges };
 }
 
+const clipNote = (s: string) => (Array.from(s).length > 40 ? `${Array.from(s).slice(0, 40).join("")}…` : s);
+
+/** 这版成片在「可以审了」之后被打回的那句话（之后又标过就不算） */
+export function cutRejectNote(doc: ProductionDoc, sha: string, markedAt: string): string | null {
+  const r = inRound(doc, doc.decisions).filter((d) => d.type === "cut_reject" && d.sha256 === sha && d.at >= markedAt).at(-1);
+  return r ? clipNote(r.note ?? "") : null;
+}
+
+/** 最新一组完整封面之后的打回（之后又交了新的一组就不算） */
+export function coverRejectNote(doc: ProductionDoc, newestGroupAt: string | undefined): string | null {
+  const r = inRound(doc, doc.decisions).filter((d) => d.type === "cover_reject" && (!newestGroupAt || d.at >= newestGroupAt)).at(-1);
+  return r ? clipNote(r.note ?? "") : null;
+}
+
 function editingReason(missing: string[]): string {
+  const ask = missing.find((m) => m.startsWith("你说"));
+  if (ask) return `${ask}，等 AI 交新版`;
   if (missing.includes(MISSING.cutReview)) return "有成片待你审";
   if (missing.includes(MISSING.coverPick)) return "有封面待你选";
   return missing.length ? `剪辑中，还差：${missing.join("、")}` : "剪辑中";
 }
 
 /** 调用方保证：视频平台 + 有效认稿（`scriptApprovalFor`） */
-export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEvidence): Derived {
+export function deriveStage(raw: ProductionDoc, body: string, publish: PublishEvidence): Derived {
+  // 还没按 §6.2 迁移的 doc：内存里按同一条规则迁移（对账写盘后是同一个结果）
+  const pre = validCoverApproval(raw, body);
+  const doc = withCoverGroups(raw, new Set([pre?.cover_3x4_sha, pre?.cover_4x3_sha].filter((x): x is string => Boolean(x))));
   const candidates = candidatesOf(doc);
   const base = { candidates, publishable: false, badges: [] as string[], missing: [] as string[], alerts: [] as string[] };
   const receipts = publishReceipts(doc);
@@ -249,17 +286,22 @@ export function deriveStage(doc: ProductionDoc, body: string, publish: PublishEv
     const sliverAlerts = missing.filter((m) => m.startsWith("抽帧缝") || m.startsWith("抽帧检查没跑成"));
     return { ...base, stage: "剪辑中", rule: "D4", missing, alerts: [...base.alerts, ...sliverAlerts], badges: [...base.badges, ...badges], evidence: facts.slice(0, 5).map((f) => `事实 ${f.id}（${f.kind}）`), reason: editingReason(missing) };
   }
-  const suspect = candidates.some((c) => c.kind === "aroll");
-  return { ...base, stage: "待录制", rule: "D5", missing: [MISSING.aroll], badges: [...base.badges, ...(suspect ? ["发现疑似 A-roll"] : [])], evidence: ["有效认稿，本轮还没有制作事实"],
-    reason: suspect ? "认过稿，发现了疑似 A-roll 等你确认" : "认过稿，还没有原片" };
+  // 1b §3-8：pending_match 显示「正在核对原片」，别的候选才是「发现疑似 A-roll」
+  const checking = candidates.some((c) => c.kind === "aroll" && c.state === "pending_match");
+  const suspect = candidates.some((c) => c.kind === "aroll" && c.state === "candidate");
+  const badges = [...base.badges, ...(checking ? [PENDING_BADGE] : []), ...(suspect ? ["发现疑似 A-roll"] : [])];
+  return { ...base, stage: "待录制", rule: "D5", missing: [MISSING.aroll], badges, evidence: ["有效认稿，本轮还没有制作事实"],
+    reason: suspect ? "认过稿，发现了疑似 A-roll 等你确认" : checking ? "认过稿，正在核对 agent 报来的原片" : "认过稿，还没有原片" };
 }
+
+export const PENDING_BADGE = "正在核对原片";
 
 /** 写稿段稿件已有制作事实：仍在写稿中，只挂 badge（§2.1） */
 export function writingBadge(doc: ProductionDoc | null): string | null {
   if (!doc) return null;
   const kinds = new Set(accepted(doc).filter((f) => PRODUCTION_KINDS.has(f.kind)).map((f) => f.kind));
-  if (!kinds.size) return null;
+  if (!kinds.size) return inRound(doc, doc.facts).some((f) => f.kind === "aroll" && f.state === "pending_match") ? PENDING_BADGE : null;
   const aroll = kinds.has("aroll"), other = [...kinds].some((k) => k !== "aroll");
-  const what = aroll && other ? "A-roll / 剪辑产物" : aroll ? "A-roll" : "剪辑产物";
-  return `已有 ${what}，等你认稿`;
+  const what = aroll && other ? "原片 / 剪辑产物" : aroll ? "原片" : "剪辑产物";
+  return `已有${what}，等你认稿`;
 }

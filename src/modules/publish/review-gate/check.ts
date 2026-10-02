@@ -10,6 +10,7 @@
 import { getContent, getDataDir, type Content } from "../../../storage/local-store.js";
 import { contentRoot } from "../../../storage/content-project.js";
 import { registeredPackage } from "../../production/publish-gate.js";
+import { readProductionDocOrEmpty } from "../../../storage/production-store.js";
 import { COVER_CROP_CHECKS, effectiveCoverRatios } from "../../cover/platform-ratios.js";
 import { applyOverrides, deterministicChecks, type CoverFact, type RegistrationState } from "./deterministic.js";
 import { makeJevCaller, JEV_MODEL, type JevCaller } from "./jev-client.js";
@@ -26,12 +27,20 @@ import { newCheckId, readCheckRecord, writeCheckRecord } from "./check-store.js"
 import { summaryMarkdown, summaryRows } from "./summary.js";
 import { platformVerdict, type CheckItem, type Override, type SummaryRow, type Verdict } from "./types.js";
 
-export interface CheckDeps { jev?: JevCaller }
+/**
+ * overrideSource：创始人在「等你拍板」里亲手写的破例（review-inbox §7-6）→ 重跑出新的检查，
+ * 留档里例外标 source=founder、rerun_of=原检查；不在旧检查上改。只能由服务端调用方给，模型传不进来。
+ */
+export interface CheckDeps { jev?: JevCaller; founderOverrides?: Override[]; rerunOf?: string;
+  /** 输入代次（review-inbox §7-4）：检查开始读输入的时间；破例重跑沿用原检查的，所以晚完成的重跑排不到新计划的检查前面 */
+  inputAt?: string }
 
 interface Ctx {
   content: Content; dataDir: string; root: string; quotes: string[]; overrides: Override[];
   instruction: StoredInstruction | null; plan: ParsedPlan; planSource: string; planRaw: Record<string, unknown>; prefs: PublishPrefs;
   registration: RegistrationState; basis: () => Promise<Basis>; caller: JevCaller;
+  /** 启动检查时的制作轮次（review-inbox §7-4：检查绑轮次 / 平台 / 输入指纹） */
+  round: number; deps: CheckDeps;
 }
 
 interface Detail { result: PlatformResult; covers: CoverFact[]; account: string | null }
@@ -51,6 +60,7 @@ async function registrationState(content: Content, dataDir: string): Promise<Reg
 }
 
 async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promise<Ctx | Fail> {
+  const startedAt = new Date().toISOString();
   const dataDir = getDataDir((params._dataDir as string) || undefined);
   const id = typeof params.content_id === "string" ? params.content_id.trim() : "";
   if (!id) return { ok: false, code: "missing_content_id", error: "content_id 必填" };
@@ -72,9 +82,10 @@ async function buildCtx(params: Record<string, unknown>, deps: CheckDeps): Promi
   const registration = await registrationState(content, dataDir);
   let basis: Promise<Basis> | null = null;
   return {
-    content, dataDir, root, quotes: quotes.value, overrides: overrides.value, instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
+    content, dataDir, root, quotes: quotes.value, overrides: [...overrides.value, ...(deps.founderOverrides ?? [])], instruction, plan: parsePlan(loaded.plan), planSource: loaded.source, planRaw: loaded.plan,
     prefs: await readPublishPrefs(dataDir), registration, caller: deps.jev ?? makeJevCaller(),
     basis: () => (basis ??= loadBasis(registration.kind === "ok" ? registration.srt : null, content.body ?? "")),
+    round: (await readProductionDocOrEmpty(id, dataDir).catch(() => null))?.round ?? 1, deps: { ...deps, inputAt: deps.inputAt ?? startedAt },
   };
 }
 
@@ -115,8 +126,10 @@ function shapeItems(ctx: Ctx, platform: string, named: GatePlatform[]): CheckIte
 
 async function writeRecord(ctx: Ctx, r: PlatformResult, extra: Record<string, unknown>): Promise<void> {
   await writeCheckRecord(ctx.content.id, r.check_id, {
-    check_id: r.check_id, content_id: ctx.content.id, platform: r.platform, checked_at: new Date().toISOString(),
-    inputs: { plan_source: ctx.planSource, ...(ctx.planSource === "inline" ? { plan_snapshot: ctx.planRaw } : {}), founder_quotes: ctx.quotes, instruction_id: ctx.instruction?.id ?? null, overrides: ctx.overrides.filter((o) => o.platform === r.platform), publish_rules: ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === r.platform) },
+    check_id: r.check_id, content_id: ctx.content.id, platform: r.platform, checked_at: new Date().toISOString(), round: ctx.round, input_at: ctx.deps.inputAt,
+    ...(ctx.deps.rerunOf ? { rerun_of: ctx.deps.rerunOf } : {}),
+    inputs: { plan_source: ctx.planSource, ...(ctx.planSource === "inline" ? { plan_snapshot: ctx.planRaw } : {}), founder_quotes: ctx.quotes, instruction_id: ctx.instruction?.id ?? null,
+      overrides: ctx.overrides.filter((o) => o.platform === r.platform).map((o) => (ctx.deps.founderOverrides?.some((f) => f.platform === o.platform && f.rule === o.rule && f.founder_quote === o.founder_quote) ? { ...o, source: "founder" } : o)), publish_rules: ctx.prefs.publishRules.filter((x) => !x.platform || x.platform === r.platform) },
     payload_hash: r.payload_hash, fingerprint: r.fingerprint, verdict: r.verdict, items: r.items, plan_problems: planLevelProblems(ctx), ...extra,
   }, ctx.dataDir);
 }
@@ -227,6 +240,21 @@ export async function verifyCheck(contentId: string, checkId: string, dataDir?: 
   // 返回的封面就是这次重新核过的文件（路径 + 字节），不是留档里当时的路径
   const covers = coverRows(now.det.covers) as CheckedPlatform["covers"];
   return { ok: true, checked: { check_id: checkId, platform: entry.platform, checked_at: record.checked_at ?? "", verdict: record.verdict ?? "pass", entry, covers, overrides: record.inputs?.overrides ?? [], video_path: now.det.video?.ok ? now.det.video.abs : null } };
+}
+
+/**
+ * 这次检查的输入现在还一样吗（review-inbox §7-6，Codex 审 2a-1 r5 P1）：按留档输入重建、重算 payload 与指纹，不看结论。
+ * 破例只能作用在创始人看到的那份上；计划改过就要先按新计划重新检查。fp 进「发之前再看一眼」条目的代次。
+ */
+export async function checkInputsNow(contentId: string, checkId: string, dataDir?: string): Promise<{ same: boolean; fp: string }> {
+  const record = await readCheckRecord(contentId, checkId, dataDir) as Rec | null;
+  if (!record) return { same: false, fp: "missing" };
+  const ctx = await rebuild(contentId, record, dataDir).catch(() => ({ ok: false as const }));
+  if ("ok" in ctx) return { same: false, fp: "unreadable" };
+  const entry = ctx.plan.entries.find((e) => e.platform === record.platform);
+  if (!entry) return { same: !record.payload_hash, fp: "no-entry" };
+  const now = await identityFor(ctx, entry, namedPlatforms(ctx));
+  return { same: now.payload === record.payload_hash && now.fp === record.fingerprint, fp: `${now.payload ?? ""}:${now.fp}` };
 }
 
 /** 每个被拦平台还拦着哪几条规则（能不能例外）：next_action 指名，不让 agent 猜缺哪条 */

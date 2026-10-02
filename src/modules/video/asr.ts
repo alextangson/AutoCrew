@@ -58,6 +58,8 @@ export interface AsrRequest {
   hotwords?: string[];
   timeoutMs?: number;
   abortSignal?: AbortSignal;
+  /** 后台比对用 nice 10 跑（1b §2） */
+  niceness?: number;
 }
 
 function sidecarArgs(extra: readonly string[]): string[] {
@@ -74,6 +76,8 @@ export interface ExtractOptions {
   maxSeconds?: number;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
+  /** 后台比对用 nice 10 跑（1b §2） */
+  niceness?: number;
 }
 
 export async function extractAsrWav(
@@ -89,6 +93,7 @@ export async function extractAsrWav(
     args: ["-y", "-hide_banner", "-nostdin", "-v", "error", "-i", source, ...clip, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out],
     timeoutMs: opts.timeoutMs ?? 10 * 60_000,
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.niceness ? { niceness: opts.niceness } : {}),
     ...(deps?.spawnImpl ? { spawnImpl: deps.spawnImpl } : {}),
   });
   if (result.spawnError) {
@@ -188,6 +193,7 @@ export async function runAsr(req: AsrRequest, deps?: VideoDeps): Promise<AsrOutc
     cwd: REPO_ROOT,
     timeoutMs,
     ...(req.abortSignal ? { abortSignal: req.abortSignal } : {}),
+    ...(req.niceness ? { niceness: req.niceness } : {}),
     ...(deps?.spawnImpl ? { spawnImpl: deps.spawnImpl } : {}),
   });
   if (result.spawnError) {

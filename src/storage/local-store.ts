@@ -1622,6 +1622,8 @@ export interface TransitionOptions {
   expectedStatus?: ContentStatus;
   /** 在状态写锁内再次核对正文，避免审稿落盘后编辑器改稿再被旧结论推进。 */
   expectedDraft?: Pick<Content, "title" | "body" | "platform">;
+  /** 认稿时创始人看着的那一版正文的哈希（等你拍板 2a 整分支审 4 P1）：写锁内核对，别的会话改过就拒 */
+  expectedBodyHash?: string;
   diffNote?: string;
   /** 记这次交接的宿主（§4.1）。缺省时回落到当前认领人，再回落 `local-user` */
   host?: string;
@@ -1730,6 +1732,9 @@ async function transitionStatusLocked(
   const currentStatus = normalizeLegacyStatus(content.status);
   const label = (s: ContentStatus) => CONTENT_STATUS_LABEL[s] ?? s;
 
+  if (opts?.expectedBodyHash && createHash("sha256").update(content.body ?? "").digest("hex") !== opts.expectedBodyHash) {
+    return { ok: false, staleDraft: true, error: "稿子刚改过，重新看一眼" };
+  }
   if (opts?.expectedDraft && (content.title !== opts.expectedDraft.title || content.body !== opts.expectedDraft.body || content.platform !== opts.expectedDraft.platform)) {
     return { ok: false, staleDraft: true, error: "稿件已变化，本次状态推进未应用；请重新审阅当前稿" };
   }

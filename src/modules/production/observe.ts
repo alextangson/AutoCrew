@@ -18,6 +18,8 @@ import { COVER_ROLES, normalizeExecution } from "../video/handoff/execution-inde
 import { sha256File } from "../video/handoff/manifest.js";
 import { readProjectJson } from "../video/handoff/project-evidence.js";
 import { coverRatioOf } from "./files.js";
+import { addMember, admittedGroupKey, ensureGroup, retiredGroupOfLabel } from "./cover-groups.js";
+import { strayCoverReason } from "./plain-reason.js";
 
 export const VIDEO_EXT = new Set([".mp4", ".mov", ".m4v"]);
 const SRT_EXT = new Set([".srt", ".vtt"]);
@@ -25,7 +27,9 @@ const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg"]);
 const VERSION_DIR = /^v0*(\d+)$/i;
 
 export type Seen = Omit<Fact, "id" | "round" | "at" | "state" | "availability"> & { state: Fact["state"] };
-export interface Observations { seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number } }> }
+export interface Observations { warnings?: string[]; seen: Seen[]; availability: Map<string, { availability: Availability; replaced?: true; restored?: { size: number; mtime_ms: number }; moved?: { path: string; size: number; mtime_ms: number } }>;
+  /** 封面组成员各自那份文件的状态（键：组 id + 事实 id） */
+  members?: Map<string, "replaced" | "ok"> }
 
 /**
  * 哈希缓存：按（dev, ino, 大小, 修改时间）认同一份字节。落盘到工作区服务目录的 hash-cache.json，
@@ -92,10 +96,13 @@ async function scanMedia(root: string, rel: string, recursive: boolean, videoKin
   return out;
 }
 
-/** 05-cover：vNNN 走 cover-manifest（沿用 cover-scan），其余子目录与顶层按像素比例认 */
-async function scanCovers(root: string): Promise<Seen[]> {
+/**
+ * 05-cover（review-inbox §6.2 统一准入）：vNNN/（有清单按清单，清单坏了报错、不退回全目录扫描）与 final/ 收为正式组；
+ * 其余目录与顶层按比例找到的只做候选。
+ */
+async function scanCovers(root: string, warnings: string[]): Promise<Seen[]> {
   const out: Seen[] = [];
-  for (const a of await scanCoverFolder(root, 0)) {
+  for (const a of await scanCoverFolder(root, 0, { strict: true, errors: warnings })) {
     const ratio = a.role === COVER_ROLES["3:4"] ? "3:4" : "4:3";
     out.push({ kind: "cover", state: "accepted", source: "reconcile", evidence: `项目 ${path.dirname(a.path)}`, path: a.path, sha256: a.sha256, size: a.size, mtime_ms: a.mtime_ms, ratio, ...(a.version ? { version: a.version } : {}) });
   }
@@ -103,9 +110,19 @@ async function scanCovers(root: string): Promise<Seen[]> {
   for (const file of await listFiles(path.join(root, "05-cover"), true, skip)) {
     if (!IMAGE_EXT.has(ext(file))) continue;
     const ratio = await coverRatioOf(file).catch(() => null);
-    if (ratio) out.push(await fileSeen(root, file, "cover", "reconcile", `项目 ${path.relative(root, path.dirname(file))}`, { ratio }));
+    if (!ratio) continue;
+    const rel = path.relative(root, file);
+    const admitted = admittedGroupKey(rel);
+    // 登记时拷出的「封面-3x4.*」在 05-cover 顶层：它们的字节就是已批的那张，按 sha 去重，不另记
+    out.push(await fileSeen(root, file, "cover", "reconcile", admitted ? `项目 ${path.dirname(rel)}` : strayCoverReason(rel), { ratio, ...(admitted ? {} : { state: "candidate" as const }) }));
   }
   return out;
+}
+
+/** 其他来源（execution.json、meta.assets）的封面按同一条准入：路径不在 vNNN/ 或 final/ → 候选 */
+function admitCover(s: Seen): Seen {
+  if (s.kind !== "cover" || s.state !== "accepted" || admittedGroupKey(s.path)) return s;
+  return { ...s, state: "candidate", evidence: s.path && !path.isAbsolute(s.path) ? strayCoverReason(s.path) : "放在 AutoCrew 不会自动收的文件夹里，要你确认" };
 }
 
 /** 旧存法一：execution.json 报到的产物 */
@@ -150,20 +167,43 @@ function attachForCut(seen: Seen[], doc: ProductionDoc): void {
 }
 
 /** availability：缺失 / 读不了 / 已归档；字节被覆盖记 replaced */
+/** 封面在别的组文件夹里还有一份字节没变的：事实改指那一份，不算被覆盖（同一张图在几个组里，整分支审 4 P2） */
+async function intactCopy(doc: ProductionDoc, f: Fact, root: string): Promise<{ path: string; size: number; mtime_ms: number } | null> {
+  if (f.kind !== "cover") return null;
+  for (const m of (doc.cover_members ?? []).filter((x) => x.fact_id === f.id && x.path && x.path !== f.path)) {
+    const h = await cachedSha(path.join(root, m.path!)).catch(() => null);
+    if (h && h.sha256 === f.sha256) return { path: m.path!, size: h.size, mtime_ms: h.mtime_ms };
+  }
+  return null;
+}
+
+/** 每个封面组成员自己那份文件：字节变了 → replaced；改回原字节 → ok */
+async function memberStates(doc: ProductionDoc, root: string): Promise<Map<string, "replaced" | "ok">> {
+  const out = new Map<string, "replaced" | "ok">();
+  for (const m of (doc.cover_members ?? []).filter((x) => x.path && !path.isAbsolute(x.path))) {
+    const h = await cachedSha(path.join(root, m.path!)).catch(() => null);
+    out.set(`${m.group_id}\u0000${m.fact_id}`, h?.sha256 === m.sha256 ? "ok" : "replaced");
+  }
+  return out;
+}
+
 async function availabilityOf(doc: ProductionDoc, root: string, archived: boolean): Promise<Observations["availability"]> {
   const out: Observations["availability"] = new Map();
   for (const f of doc.facts.filter((x) => x.path && x.sha256 && x.state !== "rejected")) {
     const file = path.isAbsolute(f.path!) ? f.path! : path.join(root, f.path!);
+    const other = await intactCopy(doc, f, root);
     try {
       await fs.access(file, fs.constants.R_OK);
       const st = await fs.stat(file);
       const same = st.size === f.size && Math.trunc(st.mtimeMs) === f.mtime_ms;
       const now = same ? f.sha256 : (await cachedSha(file)).sha256;
+      if (now !== f.sha256 && other) { out.set(f.id, { availability: "present", moved: other }); continue; }
       const replaced = !f.replaced_at && now !== f.sha256;
       // 覆盖后又改回原字节（ABA）：这条事实恢复可用，绑它的批准按原样有效
       const restored = f.replaced_at && now === f.sha256 ? { size: st.size, mtime_ms: Math.trunc(st.mtimeMs) } : undefined;
       out.set(f.id, { availability: "present", ...(replaced ? { replaced: true as const } : {}), ...(restored ? { restored } : {}) });
     } catch (e) {
+      if (other) { out.set(f.id, { availability: "present", moved: other }); continue; }
       const code = (e as NodeJS.ErrnoException).code;
       out.set(f.id, { availability: code === "ENOENT" ? (archived ? "archived" : "missing") : "unreadable" });
     }
@@ -172,19 +212,20 @@ async function availabilityOf(doc: ProductionDoc, root: string, archived: boolea
 }
 
 export async function observeProject(content: Content, doc: ProductionDoc, root: string, dataDir: string, archived: boolean): Promise<Observations> {
+  const warnings: string[] = [];
   const seen = [
-    ...(await executionSeen(content, root, dataDir)),
-    ...(await assetCoversSeen(content, root, dataDir)),
+    ...(await executionSeen(content, root, dataDir)).map(admitCover),
+    ...(await assetCoversSeen(content, root, dataDir)).map(admitCover),
     ...(await scanMedia(root, "02-aroll", false, "aroll")),
     ...(await scanMedia(root, "04-edit", false, "cut")),
     ...(await scanMedia(root, "07-delivery", true, "cut")),
-    ...(await scanCovers(root)),
+    ...(await scanCovers(root, warnings)),
     // 分镜审阅页：只导入核验通过的（历史目录里大量中间文件，不合规的静默跳过，E11）
     ...(await scanStoryboards(root)).map((s): Seen => ({ kind: "storyboard", state: "accepted", source: "reconcile", evidence: `项目 ${path.dirname(s.rel)}`,
       path: s.rel, sha256: s.sha256, size: s.size, mtime_ms: s.mtime_ms, version: s.version, receipt_sha256: s.receipt_sha256 })),
   ];
   attachForCut(seen, doc);
-  return { seen, availability: await availabilityOf(doc, root, archived) };
+  return { seen, warnings, availability: await availabilityOf(doc, root, archived), members: await memberStates(doc, root) };
 }
 
 /**
@@ -199,17 +240,55 @@ export function applyObservations(doc: ProductionDoc, obs: Observations, arollOw
     if (a.availability !== f.availability) { f.availability = a.availability; changed++; }
     if (a.replaced && !f.replaced_at) { f.replaced_at = at; changed++; }
     if (a.restored && f.replaced_at) { delete f.replaced_at; f.size = a.restored.size; f.mtime_ms = a.restored.mtime_ms; changed++; }
+    if (a.moved) { f.path = a.moved.path; f.size = a.moved.size; f.mtime_ms = a.moved.mtime_ms; if (f.replaced_at) delete f.replaced_at; changed++; }
+  }
+  for (const m of doc.cover_members ?? []) {
+    const st = obs.members?.get(`${m.group_id}\u0000${m.fact_id}`);
+    if (st === "replaced" && !m.replaced_at) { m.replaced_at = at; changed++; }
+    if (st === "ok" && m.replaced_at) { delete m.replaced_at; changed++; }
   }
   const added: Fact[] = [];
+  const formal: Array<{ fact: Fact; path: string; first?: boolean }> = [];
   for (const s of obs.seen) {
     // 任何一轮记过都算：重开文稿后旧轮的成片 / 封面还在盘上，它们属于历史，不再导进新一轮
     const dup = doc.facts.find((f) => f.kind === s.kind && f.sha256 === s.sha256);
     // 去重时不丢新信息（Codex 审 P2）：本轮已有字幕没绑成片，这次算出了绑定就补上
     if (dup && dup.kind === "srt" && dup.round === doc.round && !dup.for_cut && s.for_cut) { dup.for_cut = s.for_cut; changed++; }
-    if (dup || added.some((f) => f.kind === s.kind && f.sha256 === s.sha256)) continue;
+    const prior = dup ?? added.find((f) => f.kind === s.kind && f.sha256 === s.sha256);
+    // 封面：事实按 sha 去重，但每一处正式目录（vNNN/ final/）的观察都要记成员关系——本批里后见到的、盘上已有的都算（Codex 审 2a-1 r3 P2）
+    if (prior && s.kind === "cover" && s.state === "accepted" && admittedGroupKey(s.path) && prior.round === doc.round) formal.push({ fact: prior, path: s.path! });
+    if (prior) continue;
     const state = s.kind === "aroll" && s.state === "accepted" && arollOwned(s.sha256!) ? "candidate" : s.state;
-    added.push({ ...s, state, id: newId("fact"), round: doc.round, at, availability: "present" });
+    const fact: Fact = { ...s, state, id: newId("fact"), round: doc.round, at, availability: "present" };
+    added.push(fact);
+    if (fact.kind === "cover" && fact.state === "accepted") formal.push({ fact, path: fact.path!, first: true });
   }
   doc.facts.push(...added);
+  for (const o of formal) {
+    const key = admittedGroupKey(o.path)!;
+    // 先只做候选的图，之后在正式目录里见到同样字节 → 按 §6.2 收进那一组（只因正式目录，不因别处有同 sha 的 accepted）
+    if (o.fact.state === "candidate" && o.fact.kind === "cover" && !retiredGroupOfLabel(doc, key.label)) {
+      o.fact.state = "accepted";
+      o.fact.path = o.path;
+      o.fact.evidence = `项目 05-cover/${key.label}（先前只做候选，现在在正式目录里见到同样的图）`;
+      changed++;
+    }
+    if (o.fact.state === "accepted") changed += groupSeenCover(doc, o.fact, o.path, at, o.first === true);
+  }
   return { added, changed: changed + added.length };
+}
+
+/** 对账收下的正式封面按所在目录记进组；返回新加成员数 */
+/**
+ * 作废过的组所在目录：文件留在盘上，对账不按目录复活那组（成员关系历史还在，不另起新组）；
+ * 之后新放进这个目录的图不自动成组，只做候选，等创始人确认（确认后自成新一组）。
+ */
+function groupSeenCover(doc: ProductionDoc, fact: Fact, rel: string | undefined, at: string, isNew = false): number {
+  const key = admittedGroupKey(rel);
+  if (!key) return 0;
+  if (retiredGroupOfLabel(doc, key.label)) {
+    if (isNew) { fact.state = "candidate"; fact.evidence = `${fact.evidence ?? ""}（05-cover/${key.label} 那组已点过「这组不要了」，新放进来的图只做候选）`; }
+    return 0;
+  }
+  return addMember(doc, ensureGroup(doc, key, { source: "reconcile", evidence: `项目 05-cover/${key.label}` }, at), fact, at, rel) ? 1 : 0;
 }

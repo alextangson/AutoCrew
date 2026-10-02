@@ -10,9 +10,13 @@ import { getContent, saveContent, type Content, type ContentStatus } from "../..
 import { commitProjectContent } from "../../storage/project-commit.js";
 import { executeContentSave } from "../../tools/content-save.js";
 import { setProductionDeps } from "./roots.js";
+import { movableWatchFolders } from "./sources.js";
+import { setChatcutDeps } from "./sliver/chatcut-read.js";
 import { writeEnabledVersion } from "../../storage/production-store.js";
 import { resetProductionReady } from "./service.js";
 import { forgetShaIndex } from "./sha-index.js";
+import { setMatchDeps } from "./match/deps.js";
+import { matchWorkerIdle, resetMatchQueue } from "./match/queue.js";
 
 export interface Env { dir: string; inbox: string; chatcut: string; jianying: string; outside: string; cleanup: () => Promise<void> }
 
@@ -25,14 +29,18 @@ export async function makeEnv(opts: { enabled?: boolean } = {}): Promise<Env> {
   await initializeProjectLayout(dir, "lib-deadbeef", "default");
   resetProductionReady();
   forgetShaIndex();
+  resetMatchQueue();
+  setMatchDeps(null);
+  // 隐式 ChatCut 引用守卫：测试一律读临时目录（默认不存在 = 没装 ChatCut），绝不读本机真实工程
+  setChatcutDeps({ projectsRoot: () => path.join(temp, "chatcut-projects") });
   setProductionDeps({
-    roots: async () => ({ inbox, chatcut, jianying }),
+    roots: async (d) => ({ inbox, chatcut, jianying, watch: await movableWatchFolders(d) }),
     // 假探针：文件名带 broken 的读不出时长，其余 12 秒
     probe: async (file) => (path.basename(file).includes("broken") ? { error: "moov atom not found" } : { durationMs: 12_000 }),
     now: () => Date.now(),
   });
   if (opts.enabled) await writeEnabledVersion(dir);
-  return { dir, inbox, chatcut, jianying, outside, cleanup: async () => { setProductionDeps(null); resetProductionReady(); forgetShaIndex(); await fs.rm(temp, { recursive: true, force: true }); } };
+  return { dir, inbox, chatcut, jianying, outside, cleanup: async () => { await matchWorkerIdle(dir); setProductionDeps(null); setChatcutDeps(null); setMatchDeps(null); resetMatchQueue(); resetProductionReady(); forgetShaIndex(); await fs.rm(temp, { recursive: true, force: true }); } };
 }
 
 /** 写文件并把修改时间拨到 60 秒前（过「10 秒内不变」门）；fresh=true 保留刚写的时间 */

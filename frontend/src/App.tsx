@@ -130,6 +130,8 @@ export function App() {
         <main className={boardRoute ? "main main-board" : "main"}>
           {route.view === "board" && (
             <Board
+              {...(route.card ? { card: route.card } : {})}
+              {...(route.inbox ? { inbox: route.inbox } : {})}
               openTopic={(key) => setRoute({ view: "topic", key })}
               openEditor={(id) => setRoute({ view: "editor", id })}
               openData={() => setRoute({ view: "report" })}

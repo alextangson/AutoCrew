@@ -11,11 +11,13 @@ export type PublishPrefsView = {
   proposals: Proposal[];
 };
 
+import { authedFetch } from "../transport";
+
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 async function call<T>(url: string, body?: unknown): Promise<Result<T>> {
   try {
-    const r = await fetch(url, body === undefined
+    const r = await authedFetch(url, body === undefined
       ? { credentials: "same-origin" }
       : { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const json = await r.json().catch(() => null) as ({ ok?: boolean; error?: string } & T) | null;

@@ -13,6 +13,7 @@
  *    调用方要把它翻成人话指引，所以 `spawnError` 走返回值而不是 throw。
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { runLoop } from "../../engine/loop.js";
@@ -122,6 +123,8 @@ export interface RunProcessOptions {
   onStdoutLine?: (line: string) => void;
   stderrLimitBytes?: number;
   spawnImpl?: typeof spawn;
+  /** 起来后把子进程调低优先级（等同 `nice -n N`；子孙进程继承）。后台转写用，别抢前台 */
+  niceness?: number;
 }
 
 export interface RunProcessResult {
@@ -193,6 +196,9 @@ export function runProcess(opts: RunProcessOptions): Promise<RunProcessResult> {
       return;
     }
 
+    if (opts.niceness && child.pid) {
+      try { os.setPriority(child.pid, opts.niceness); } catch { /* 进程已退出：没有可调的 */ }
+    }
     const feedLine = opts.onStdoutLine ? createLineSplitter(opts.onStdoutLine) : null;
     child.stdout?.on("data", (chunk: unknown) => {
       const text = String(chunk);

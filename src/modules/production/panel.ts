@@ -4,7 +4,12 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getContent } from "../../storage/local-store.js";
+import { getContent, type Content } from "../../storage/local-store.js";
+import { CHATCUT_USES, IN_EDIT_REASSIGN, noOriginalPlace, undoBlocker } from "./undo-attach.js";
+import { candidateRow, originOf, type CandidateRow, type SourceDirs } from "./candidate-view.js";
+import type { Fact } from "../../storage/production-types.js";
+import { movableRoots } from "./roots.js";
+import { readArollSources } from "./sources.js";
 import { contentRoot } from "../../storage/content-project.js";
 import { isOntologyActive, readProductionDocOrEmpty } from "../../storage/production-store.js";
 import { isVideoPlatform } from "../../storage/stage-guard.js";
@@ -16,6 +21,11 @@ import { explainContent } from "./read.js";
 import { isUngated } from "./publish-check-link.js";
 import { currentCut } from "./sliver/check.js";
 import { storyboardPanel } from "./storyboard.js";
+import { markedCuts } from "./ready.js";
+import { draftRef } from "./inbox.js";
+import { readInbox } from "./inbox-read.js";
+import { isStrayCover } from "./plain-reason.js";
+import { hostLabel } from "./host-label.js";
 import { NO_RESULT, sliverKey, sliverVerdict, sliverWaived } from "./sliver/verdict.js";
 
 /** 这个槽的状态由谁定：给创始人看的来源说法 */
@@ -57,12 +67,71 @@ function sliverPanel(doc: ProductionDoc, approvedSha: string | undefined): Recor
   };
 }
 
+/**
+ * 本轮 accepted 原片（1b §4.1 / §7）：自动挂上的给「不是这条」，核对说更像别条的给「改挂到《X》」/「就是这条」；
+ * 前提不满足时不给按钮，给原因（「这条已经在剪了…」）。
+ */
+/** 这段原片是怎么来的（人话）：自动挂的、创始人从哪儿确认的、agent 报的、创始人挂的 */
+function arollOrigin(f: Fact, doc: ProductionDoc, dirs: SourceDirs): string {
+  if (f.auto_attached) return f.source === "reconcile" ? "收件箱自动挂上" : "核对后自动挂上";
+  if (f.source === "founder") return "你挂的";
+  if (f.source === "record") return "agent 报的";
+  const confirmed = doc.decisions.some((d) => d.type === "candidate_confirm" && d.fact_id === f.id);
+  const where = originOf({ ...f, path: f.source_path ?? f.path }, dirs);
+  const known = where === "收件箱" || where.startsWith("监视文件夹") || where.endsWith("导出");
+  return confirmed ? (known ? `你从${where}确认的` : "你确认的") : where;
+}
+
+async function arollRows(content: Content, doc: ProductionDoc, dataDir: string, dirs: SourceDirs): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const f of doc.facts.filter((x) => x.round === doc.round && x.kind === "aroll" && x.state === "accepted")) {
+    const blocked = undoBlocker(content, doc, f);
+    const noHome = await noOriginalPlace(content, f, dataDir);
+    out.push({ fact_id: f.id, sha256: f.sha256, path: f.path, name: path.basename(f.source_path ?? f.path ?? ""), origin: arollOrigin(f, doc, dirs),
+      duration_ms: f.duration_ms ?? null, at: f.at, auto_attached: f.auto_attached === true, source_path: f.source_path ?? null,
+      check: f.attach_check ?? null, undo_blocked: noHome ?? blocked, reassign_blocked: blocked ? (blocked === CHATCUT_USES ? blocked : IN_EDIT_REASSIGN) : null });
+  }
+  return out;
+}
+
+async function sourceDirs(dataDir: string): Promise<SourceDirs> {
+  const roots = await movableRoots(dataDir);
+  const folders = (await readArollSources(dataDir).catch(() => ({ folders: [] as Array<{ path: string }> }))).folders.map((f) => f.path);
+  return { inbox: roots.inbox, chatcut: roots.chatcut, jianying: roots.jianying, watch: [...new Set([...(roots.watch ?? []), ...folders])] };
+}
+
+async function candidateRows(contentId: string, doc: ProductionDoc, dataDir: string): Promise<CandidateRow[]> {
+  const dirs = await sourceDirs(dataDir);
+  // 列表列不列它由「等你拍板」自己说了算（整分支审 16 P2）：不在这里重抄一遍规则
+  const listed = new Set((await readInbox(dataDir, { contentId })).items.filter((i) => i.type === "candidate").map((i) => String(i.detail.fact_id)));
+  return doc.facts.filter((f) => f.round === doc.round && (f.state === "candidate" || f.state === "pending_match") && !isStrayCover(f))
+    .sort((a, b) => b.at.localeCompare(a.at)).map((f) => ({ ...candidateRow(f, contentId, dirs), in_inbox: listed.has(f.id) }));
+}
+
+/**
+ * B7：本轮有收下的成片、却没有一版被 agent 标「可以审了」（也还没通过）→ 卡上说「有 N 个导出，X 还没说可以审了」，
+ * 给创始人「我现在就要审」。
+ */
+function unreviewedExports(doc: ProductionDoc, approvedSha: string | undefined): { count: number; editor_label: string } | null {
+  if (approvedSha || markedCuts(doc).length) return null;
+  const cuts = doc.facts.filter((f) => f.round === doc.round && f.kind === "cut" && f.state === "accepted" && !f.replaced_at);
+  if (!cuts.length) return null;
+  return { count: cuts.length, editor_label: hostLabel(cuts.map((f) => f.by?.host).filter(Boolean).at(-1)) };
+}
+
+function strayCovers(doc: ProductionDoc): { count: number } | null {
+  const n = doc.facts.filter((f) => f.round === doc.round && isStrayCover(f)).length;
+  return n ? { count: n } : null;
+}
+
 export async function cardPanel(contentId: string, dataDir: string): Promise<Record<string, unknown>> {
   const content = await getContent(contentId, dataDir);
   if (!content || content.deletedAt) return { ok: false, code: "not_found", error: "这条稿不在了" };
   const active = isVideoPlatform(content.platform) && (await isOntologyActive(dataDir, contentId));
   const exp = await explainContent(content, dataDir);
-  const base = { ok: true, id: content.id, title: content.title, platform: content.platform ?? null, status: content.status, active,
+  // 卡片上「稿子没问题」要带它：创始人看到的那一版（别的会话改过正文就对不上，服务端拒）
+  const draft = draftRef(content);
+  const base = { ok: true, ...(draft ? { draft_item: draft } : {}), id: content.id, title: content.title, platform: content.platform ?? null, status: content.status, active,
     column: exp.column, stage: exp.stage, reason: exp.reason, missing: exp.missing, badges: exp.badges, alerts: exp.alerts, candidates: exp.candidates };
   if (!active) return base;
   const doc = await readProductionDocOrEmpty(contentId, dataDir);
@@ -76,11 +145,14 @@ export async function cardPanel(contentId: string, dataDir: string): Promise<Rec
   const checklist = checklistRel && (await fs.stat(path.join(contentRoot(contentId, dataDir), checklistRel)).then(() => true, () => false)) ? checklistRel : null;
   const cut = validCutApproval(doc, content.body), cover = validCoverApproval(doc, content.body);
   return {
-    ...base, round: doc.round,
+    ...base, round: doc.round, arolls: await arollRows(content, doc, dataDir, await sourceDirs(dataDir)), candidate_rows: await candidateRows(content.id, doc, dataDir),
     pending_receipts: receipts.pending.map((w) => ({ fact_id: w.fact_id, slot_id: w.id, platform: w.platform, url: w.url ?? (w.item_id ? `作品 ${w.item_id}` : null), host: w.source === "claim" ? w.host ?? "AI" : "数据回流" })),
     published,
     approvals: { cut: cut ? { id: cut.id, sha256: cut.sha256 } : null, cover: cover ? { id: cover.id } : null },
     slivers: sliverPanel(doc, cut?.sha256),
+    unreviewed: unreviewedExports(doc, cut?.sha256),
+    // 正式封面文件夹以外的封面图（多半是中间文件）：只在制作中的稿卡上收成一行，给「都不要」；已发布的不提
+    stray_covers: exp.stage && exp.stage !== "已发布" ? strayCovers(doc) : null,
     storyboard: await storyboardPanel(contentId, dataDir, doc),
     checklist,
     // 已发布的也能重开（创始人 09-30），确认框单独说明；published = 这张卡现在是已发布

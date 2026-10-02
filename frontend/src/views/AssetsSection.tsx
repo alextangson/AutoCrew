@@ -12,7 +12,7 @@ import { UploadDrop } from "./UploadDrop";
 /** 角色决定这条素材在成片里怎么用：口播底轨只能有一条，BGM 多于一条组装会报错要你选 */
 const ASSET_ROLES: Array<[string, string]> = [
   ["aroll", "口播底轨"],
-  ["broll", "B-roll(屏录/图版)"],
+  ["broll", "画面素材（屏录 / 图版）"],
   ["bgm", "背景音乐"],
   ["other", "其他"],
 ];

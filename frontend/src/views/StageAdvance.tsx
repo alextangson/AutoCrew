@@ -20,7 +20,7 @@ const ACTION_LABELS: Record<string, string> = {
   drafting: "开始写作",
   needs_evidence: "补充证据",
   draft_ready: "回到文案",
-  reviewing: "提交审核",
+  reviewing: "让 AI 再审一遍",
   revision: "返回修订",
   approved: "进入制作",
   cover_pending: "去封面",
@@ -30,8 +30,10 @@ const ACTION_LABELS: Record<string, string> = {
   archived: "归档稿件",
 };
 
-function actionFor(status: string, currentStatus: string): string {
+function actionFor(status: string, currentStatus: string, isVideo = false): string {
   if (status === "draft_ready" && ["topic_saved", "drafting", "needs_evidence"].includes(currentStatus)) return "完成初稿";
+  // 1b 验收：认稿就是「稿子没问题」——视频稿随后进制作
+  if (status === "approved") return isVideo ? "稿子没问题，进入制作" : "稿子没问题";
   return ACTION_LABELS[status] ?? (VARIANT_STATUS[status] ?? status);
 }
 
@@ -42,8 +44,13 @@ export function StageAdvance(props: {
   /** 有未保存改动时不许推进——先落库再换阶段,否则改的字会留在上一个阶段的界面里 */
   dirty?: boolean;
   reload: () => Promise<void>;
+  /** 视频稿：认稿后进制作，成功后说清进了哪一列 */
+  isVideo?: boolean;
+  /** 进制作之后去哪一列（待录制 / 剪辑中）：由调用方按卡片面板数据给出 */
+  landedStage?: () => Promise<string | null>;
+  /** 页面载入的那一版正文：认稿时带它的哈希，别的会话改过就拒「稿子刚改过，重新看一眼」（整分支审 4 P1） */
+  loadedBody?: string;
 }) {
-  const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -70,45 +77,49 @@ export function StageAdvance(props: {
   const transitions = props.transitions.filter((t) => t.status !== "editing");
   if (transitions.length === 0) return null;
 
-  // 默认指向管线前进方向——表序第一位在「待审」恰好是「修订」,推进按钮默认后退是真机踩过的陷阱
-  const fallback = defaultAdvanceTarget(props.currentStatus, transitions);
-  const chosen =
-    transitions.find((t) => t.status === target) ??
-    transitions.find((t) => t.status === fallback) ??
-    transitions[0];
+  // 默认指向管线前进方向——表序第一位在「待审」恰好是「修订」,推进按钮默认后退是真机踩过的陷阱。
+  // 写好 / 审过的稿默认就是「稿子没问题」（1b 验收：创始人选了「进入审核」以为进了制作，其实只到待审）
+  const approve = ["draft_ready", "reviewing"].includes(props.currentStatus) ? transitions.find((t) => t.status === "approved" && !t.blockedReason) : undefined;
+  const fallback = approve?.status ?? defaultAdvanceTarget(props.currentStatus, transitions);
+  const chosen = transitions.find((t) => t.status === fallback) ?? transitions[0];
   const blocked = chosen.blockedReason;
-  const actionLabel = actionFor(chosen.status, props.currentStatus);
+  const actionLabel = actionFor(chosen.status, props.currentStatus, props.isVideo);
   const disabledReason = props.dirty ? "先保存修改，再进入下一阶段" : blocked;
 
-  const advance = async () => {
+  /** 一步执行（1b 验收）：点哪一项就做哪一项；只有发布中 / 已发布 / 归档要确认 */
+  const advance = async (to: AllowedTransition = chosen) => {
+    const label = actionFor(to.status, props.currentStatus, props.isVideo);
     if (busyRef.current) return;
     if (props.dirty) return toast("先保存修改，再进入下一阶段");
-    if (blocked) return toast(blocked);
+    if (to.blockedReason) return toast(to.blockedReason);
     busyRef.current = true;
     setBusy(true);
     setOpen(false);
     try {
-      if (["publishing", "published", "archived"].includes(chosen.status)) {
+      if (["publishing", "published", "archived"].includes(to.status)) {
         const yes = await confirmDialog({
-          title: `${actionLabel}？`,
-          body: chosen.status === "published"
+          title: `${label}？`,
+          body: to.status === "published"
             ? "请确认这篇稿件已经在平台发布。此操作只记录发布状态。"
-            : chosen.status === "archived"
+            : to.status === "archived"
               ? "归档后这篇稿件会离开当前管线，内容与版本记录会保留。"
               : "将稿件标记为发布中。平台发布仍需在发布工作台继续操作。",
-          confirmLabel: actionLabel,
-          danger: chosen.status === "archived",
+          confirmLabel: label,
+          danger: to.status === "archived",
         });
         if (!yes) return;
       }
       const r = await invoke("content:transition", {
         id: props.contentId,
-        target_status: chosen.status,
+        target_status: to.status,
         from_status: props.currentStatus,
+        ...(to.status === "approved" && props.loadedBody !== undefined ? { expected_body_hash: await sha256Hex(props.loadedBody) } : {}),
       });
       if (!r.ok) return toast(r.error ?? "阶段切换失败");
-      toast("已进入「" + (VARIANT_STATUS[chosen.status] ?? chosen.status) + "」");
       await props.reload();
+      // 进了制作就说清在哪一列，看板上那张卡就在那里
+      const landed = to.status === "approved" && props.isVideo && props.landedStage ? await props.landedStage() : null;
+      toast(landed ? `已进${landed}（看板上能看到这张卡）` : "已进入「" + (VARIANT_STATUS[to.status] ?? to.status) + "」");
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -118,7 +129,7 @@ export function StageAdvance(props: {
   return (
     <div className="ed-stage-action" ref={rootRef}>
       <div className="ed-stage-action-buttons" title={disabledReason ?? ""}>
-        <button className="ed-next-action-button" disabled={busy || !!disabledReason} onClick={() => void advance()}>
+        <button className="ed-next-action-button" disabled={busy || !!disabledReason} onClick={() => void advance(chosen)}>
           {busy ? "处理中…" : actionLabel}
         </button>
         <button
@@ -138,14 +149,20 @@ export function StageAdvance(props: {
           className={transition.status === chosen.status ? "is-selected" : ""}
           disabled={!!transition.blockedReason}
           aria-pressed={transition.status === chosen.status}
-          onClick={() => { setTarget(transition.status); setOpen(false); menuButtonRef.current?.focus(); }}
+          onClick={() => void advance(transition)}
         >
-          <span>{actionFor(transition.status, props.currentStatus)}</span>
+          <span>{actionFor(transition.status, props.currentStatus, props.isVideo)}</span>
           {transition.status === chosen.status && <span aria-hidden="true">✓</span>}
           {transition.blockedReason && <small>{transition.blockedReason}</small>}
         </button>)}
-        <p>{props.dirty ? "保存修改后，才能执行下一步。" : "选好后，点击顶部动作按钮执行。"}</p>
+        <p>{props.dirty ? "保存修改后，才能执行下一步。" : "点一下就执行。"}</p>
       </div>}
     </div>
   );
+}
+
+/** 正文的 sha256（十六进制），和服务端 bodyHash 同一算法 */
+export async function sha256Hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

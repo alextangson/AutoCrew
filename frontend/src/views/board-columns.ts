@@ -19,7 +19,7 @@ export const COLUMN_HINT: Record<BoardColumn, string> = {
   选题: "雷达 · 收件箱 · 你建的",
   写稿中: "AI 在写 / 审 · 写完等你认稿",
   待录制: "按上一条语速估时长 · 点开看稿",
-  剪辑中: "Codex 在剪",
+  剪辑中: "AI 在剪",
   待发布: "成片、封面都过了",
   已发布: "按发布时间 · 更早的去数据页",
 };
@@ -29,7 +29,7 @@ export const EMPTY_NOTE: Record<BoardColumn, string> = {
   选题: "雷达找到的、你记下的想法会出现在这",
   写稿中: "点选题的「开始写」，稿子会出现在这",
   待录制: "你认过的稿会出现在这，等你录",
-  剪辑中: "Codex 在剪的会出现在这",
+  剪辑中: "在剪的会出现在这",
   待发布: "成片和封面都过了会出现在这",
   已发布: "发出去的会出现在这",
 };
@@ -75,9 +75,15 @@ export interface BoardItem {
   /** 真有问题的提示（卡上标红）；中性信息在 badges */
   alerts?: string[];
   badges?: string[];
+  /** 本轮候选 / 核对中的事实（本体 explain 给的；写稿段也带） */
+  candidates?: Array<{ kind: string; state?: string }>;
   reason?: string;
   /** 最新一版分镜（「v001」） */
   storyboard?: string | null;
+  /** 谁在剪（后端按事实的宿主给：Claude / Codex / WorkBuddy / 你 / agent） */
+  editorLabel?: string;
+  /** 「稿子写好了」这件事的身份与代次：拖「写稿中 → 待录制」认稿要带它 */
+  draftRef?: { item_id: string; gen: string };
 }
 
 export interface BoardTopic {
@@ -92,11 +98,35 @@ export interface BoardTopic {
   inSlate?: boolean;
 }
 
+/** 收件箱（1b §4）：没对上的、没核对成的、还在核对的——待录制列头读它 */
+export interface InboxFileView { name: string; path: string; sha256: string; size: number; mtime_ms: number; guess: string[]; reason?: string }
+export interface InboxStatus { unmatched: InboxFileView[]; failed: Array<{ name: string; path: string; reason: string }>; checking: number;
+  /** 暂停了自动找原片：这一轮收件箱只按文件名对 */
+  paused?: boolean }
+
+/**
+ * 写稿中卡片的原片提示（1b 预演反馈）：有 pending_match → 「正在核对原片」；有原片候选 → 「发现 N 个疑似原片」。
+ * 别的列有自己的阶段说法，不重复。
+ */
+/** 看板卡上的原片徽章：自动挂上的（任何列）+ 写稿中的疑似 / 核对中 */
+export function cardArollBadges(item: Pick<BoardItem, "column"> & { badges?: string[]; candidates?: Array<{ kind: string; state?: string }> }): string[] {
+  const auto = (item.badges ?? []).some((b) => b.includes("自动挂上，不对就点"));
+  const writing = writingArollBadge(item);
+  return [...(auto ? ["原片已自动挂上"] : []), ...(writing ? [writing] : [])];
+}
+
+export function writingArollBadge(item: Pick<BoardItem, "column"> & { candidates?: Array<{ kind: string; state?: string }> }): string | null {
+  if (item.column !== "写稿中") return null;
+  const arolls = (item.candidates ?? []).filter((c) => c.kind === "aroll");
+  if (arolls.some((c) => c.state === "pending_match")) return "正在核对原片";
+  return arolls.length ? `发现 ${arolls.length} 个疑似原片` : null;
+}
+
 /** 本体对账报告（服务端 /api/board 的 ontology，spec 2026-09-29 §4.1）：未启用时的「要挪」清单与逐条失败 */
 export interface OntologyMove { id: string; title: string; from: string | null; to: string | null; rule: string | null; evidence: string[] }
 export interface OntologyState {
   enabled: boolean;
-  report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[] } | null;
+  report: { at: string; enabled: boolean; moves: OntologyMove[]; errors: Array<{ id: string; title: string; error: string }>; warnings: string[]; inbox?: InboxStatus } | null;
 }
 
 export interface BoardData { items: BoardItem[]; topics: BoardTopic[]; wordsPerMinute: number | null; ontology?: OntologyState }
@@ -322,7 +352,7 @@ export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date
     if (est) parts.push(est);
     parts.push(`定稿 ${relativeLabel(item.draftReadyAt ?? item.updatedAt, now)}`);
   }
-  if (item.column === "剪辑中") parts.push(item.status === "cover_pending" ? "等挑封面" : "Codex 在剪", `更新 ${relativeLabel(item.updatedAt, now)}`);
+  if (item.column === "剪辑中") parts.push(item.status === "cover_pending" ? "等挑封面" : `${item.editorLabel ?? "agent"} 在剪`, `更新 ${relativeLabel(item.updatedAt, now)}`);
   if (item.column === "待发布" || item.column === "已发布") {
     if (item.finalDurationMs) parts.push(durationText(item.finalDurationMs));
     const days = item.publishTime ? Math.ceil((Date.parse(item.publishTime) - now) / 86_400_000) : 0;
@@ -331,6 +361,6 @@ export function itemMeta(item: BoardItem, wpm: number | null, now: number = Date
     if (item.column === "已发布" && item.badges?.includes(LEGACY_REGISTERED)) parts.push(LEGACY_REGISTERED);
   }
   // 有分镜时带上最新版本（分镜 spec §4）
-  if (item.storyboard) parts.push(`分镜 ${item.storyboard}`);
+  if (item.storyboard) parts.push("有分镜");
   return parts.join(" · ");
 }

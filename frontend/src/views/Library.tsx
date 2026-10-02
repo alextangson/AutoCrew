@@ -127,7 +127,7 @@ export function Library() {
           onClick={async () => {
             const v = await openDialog({
               title: "新建文件夹",
-              fields: [{ key: "name", label: "名称", placeholder: "如:B-roll 素材", required: true }],
+              fields: [{ key: "name", label: "名称", placeholder: "如：画面素材", required: true }],
               confirmLabel: "创建",
             });
             if (!v) return;

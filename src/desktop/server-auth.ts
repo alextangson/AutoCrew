@@ -2,6 +2,14 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE = "autocrew_session";
 
+/**
+ * 会话 cookie 名带端口（1b §9）：浏览器按主机存 cookie、不分端口，同名时预览服务（4318–4321）
+ * 的登录会顶掉 4317 的。每个端口一个名字，各认各的。
+ */
+export function sessionCookieName(port: number): string {
+  return `${SESSION_COOKIE}_${port}`;
+}
+
 /** 浏览器会话与老 `server-token` 的主体名（P3 §4.1：命名 token 之外的一切都算它）。 */
 export const LOCAL_SUBJECT = "local-user";
 
@@ -69,6 +77,8 @@ export class LocalSessionAuth {
      * 缺省是本进程随机值（重启后旧会话失效）；服务端从 host 状态目录读一份持久的独立密钥注入。
      */
     private readonly sessionSecret: string = randomBytes(32).toString("hex"),
+    /** 这个服务认的 cookie 名（服务端传 `sessionCookieName(port)`）；旧的不带端口的名字不再认 */
+    private readonly cookieName: string = SESSION_COOKIE,
   ) {}
 
   originAllowed(origin: string | undefined): boolean {
@@ -85,6 +95,21 @@ export class LocalSessionAuth {
     const signature = this.sign(payload);
     const sessionId = `${payload}.${signature}`;
     return { sessionId, expiresAt: new Date(expires).toISOString() };
+  }
+
+  /**
+   * 地址栏 token 换会话（1b §9）：token 有效 → 发新会话；token 已失效但请求带着有效会话 cookie
+   * （刷新了一个还留着旧 token 的地址）→ `existing`，不报错、不另发；两者都无效 → null。
+   */
+  exchange(token: string, headers: SessionHeaders): ({ status: "issued" } & { sessionId: string; expiresAt: string }) | { status: "existing" } | null {
+    const issued = this.issueSession(token);
+    if (issued) return { status: "issued", ...issued };
+    return this.identify({ cookie: headers.cookie })?.method === "session" ? { status: "existing" } : null;
+  }
+
+  /** 清掉旧的不带端口的会话 cookie（它不再被认，留着只会让人以为还登录着） */
+  clearLegacyCookieHeader(): string {
+    return `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
   }
 
   /**
@@ -108,7 +133,7 @@ export class LocalSessionAuth {
       if (host && host !== LOCAL_SUBJECT) return { method: "bearer", subject: host };
     }
 
-    const sessionId = readCookie(headerValue(headers.cookie), SESSION_COOKIE);
+    const sessionId = readCookie(headerValue(headers.cookie), this.cookieName);
     if (!sessionId) return null;
     const parts = sessionId.split(".");
     if (parts.length !== 3) return null;
@@ -122,7 +147,7 @@ export class LocalSessionAuth {
 
   cookieHeader(sessionId: string): string {
     const maxAge = Math.max(1, Math.floor(this.ttlMs / 1000));
-    return `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
+    return `${this.cookieName}=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
   }
 
   private sign(payload: string): string {

@@ -2,7 +2,7 @@
  * 「可扫描」与「可搬入」分开（spec §3-5，Codex P1-7）。本段只有三类可搬入根：
  * - 原片收件箱「我的内容/0 原片放这里/」：自家目录，默认可搬（任何 kind）；
  * - ChatCut 导出目录、剪映导出目录：只搬 cut / srt / cover。
- * 监视文件夹（1b）还没有：它们的路径现在按「其他路径」只记候选。
+ * - 开了「允许 agent 直接搬入」的监视文件夹（1b §5）：只搬 A-roll、只认顶层文件；没开的按「其他路径」只记候选。
  *
  * 测试一律用 `setProductionDeps` 注入根与探针，不碰真实 ~/Movies 与资料库。
  */
@@ -12,12 +12,15 @@ import { getVideoSettingsRaw } from "../../desktop/settings-video.js";
 import { isWithin, readLibraryLocation, resolveDataDir } from "../../storage/storage-roots.js";
 import { CHATCUT_EXPORT_DIR } from "../video/unregistered-cut.js";
 import { ffprobeDuration, type Probe } from "./files.js";
+import { movableWatchFolders } from "./sources.js";
+import type { Fact } from "../../storage/production-types.js";
 
 export const INBOX_DIR = "0 原片放这里";
 /** 「我的内容」视图目录名（与 my-content-view.VIEW_DIR 同值；那边会 import 本模块链，这里不反向引） */
 const VIEW_DIR = "我的内容";
 
-export interface MovableRoots { inbox: string | null; chatcut: string | null; jianying: string | null }
+/** watch：开了「允许 agent 直接搬入」、复核通过的监视文件夹（1b §5；只认顶层文件，只收 A-roll） */
+export interface MovableRoots { inbox: string | null; chatcut: string | null; jianying: string | null; watch?: string[] }
 
 export interface ProductionDeps {
   roots?: (dataDir: string) => Promise<MovableRoots>;
@@ -48,7 +51,7 @@ async function real(dir: string | null | undefined): Promise<string | null> {
 
 async function defaultRoots(dataDir: string): Promise<MovableRoots> {
   const jianying = (await getVideoSettingsRaw(dataDir).catch(() => ({}) as { jianyingExportDir?: string })).jianyingExportDir ?? null;
-  return { inbox: inboxDir(dataDir), chatcut: CHATCUT_EXPORT_DIR, jianying };
+  return { inbox: inboxDir(dataDir), chatcut: CHATCUT_EXPORT_DIR, jianying, watch: await movableWatchFolders(dataDir) };
 }
 
 /** 原片收件箱的应有位置（不管在不在）：启用时建出来 */
@@ -59,14 +62,21 @@ export async function inboxToCreate(dataDir: string): Promise<string | null> {
 /** 可搬入根（realpath 之后；不存在的根当没有） */
 export async function movableRoots(dataDir: string): Promise<MovableRoots> {
   const raw = await (deps.roots ?? defaultRoots)(dataDir);
-  return { inbox: await real(raw.inbox), chatcut: await real(raw.chatcut), jianying: await real(raw.jianying) };
+  const watch = (await Promise.all((raw.watch ?? []).map(real))).filter((d): d is string => Boolean(d));
+  return { inbox: await real(raw.inbox), chatcut: await real(raw.chatcut), jianying: await real(raw.jianying), watch };
 }
 
-export type Location = "project" | "inbox" | "export" | "other";
+export type Location = "project" | "inbox" | "export" | "watch" | "other";
 
-export function classify(file: string, projectRoot: string, roots: MovableRoots): Location {
+/**
+ * `kind`：导出目录同时被加成允许搬入的监视文件夹时，权限取并集、不降级（Codex 审 segB4 P2）——
+ * A-roll 按监视文件夹认，成片 / 字幕 / 封面按导出目录认。
+ */
+export function classify(file: string, projectRoot: string, roots: MovableRoots, kind: Fact["kind"] = "aroll"): Location {
   if (isWithin(projectRoot, file)) return "project";
   if (roots.inbox && isWithin(roots.inbox, file)) return "inbox";
+  const inExport = Boolean((roots.chatcut && isWithin(roots.chatcut, file)) || (roots.jianying && isWithin(roots.jianying, file)));
+  if ((roots.watch ?? []).includes(path.dirname(file)) && (kind === "aroll" || !inExport)) return "watch";
   if ((roots.chatcut && isWithin(roots.chatcut, file)) || (roots.jianying && isWithin(roots.jianying, file))) return "export";
   return "other";
 }

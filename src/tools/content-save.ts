@@ -30,7 +30,8 @@ import { shouldDistillStyle, distillStyleRules } from "../modules/learnings/styl
 import type { StyleDistillResult } from "../modules/learnings/style-distiller.js";
 import { deriveAndRecordAdoption } from "../modules/learnings/adoption-derive.js";
 import { isFrozen, isOntologyEnabled, readProductionDoc, ScriptFrozenError } from "../storage/production-store.js";
-import { executeRecord } from "../modules/production/record.js";
+import { executeMarkReady, executeRecord } from "../modules/production/record.js";
+import { executeAnswerAsk, executeAsk, executeWithdrawAsk } from "../modules/production/asks.js";
 import { checkSlivers } from "../modules/production/sliver/self-check.js";
 import { reconcileContent } from "../modules/production/reconcile.js";
 
@@ -42,16 +43,17 @@ const ALL_STATUSES = [
 ] as const;
 
 export const contentSaveSchema = Type.Object({
-  action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore" | "record" | "check_slivers">({
+  action: Type.Unsafe<"save" | "list" | "get" | "summary" | "update" | "transition" | "create_variant" | "siblings" | "allowed_transitions" | "adoption" | "delete" | "restore" | "record" | "check_slivers" | "mark_ready" | "ask" | "answer_ask" | "withdraw_ask">({
     type: "string",
-    enum: ["save", "list", "get", "summary", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore", "record", "check_slivers"],
+    enum: ["save", "list", "get", "summary", "update", "transition", "create_variant", "siblings", "allowed_transitions", "adoption", "delete", "restore", "record", "check_slivers", "mark_ready", "ask", "answer_ask", "withdraw_ask"],
     description:
       "Action: 'save' new content, 'list' all, 'get' by id, 'update' existing, " +
       "'transition' change status via state machine, 'create_variant' create platform variant from topic, " +
       "'siblings' list sibling content, 'allowed_transitions' show valid next statuses, " +
       "'adoption' record adoption verdict (采纳率北极星读数)——仅工作台可用，宿主调用会被服务端拒绝（采纳不能由模型代填）, " +
       "'record' 报制作事实（原片 aroll / 成片 cut / 字幕 srt / 封面 cover / ChatCut 工程 chatcut_project）：只报盘上有什么，不带任何批准；认稿、成片通过、选封面只能创始人点; " +
-      "'check_slivers' 导出前自查抽帧缝（两段 B-roll / 动效之间露出 <1 秒的真人），只读、不写任何记录，可带 chatcut_project_id / timeline_id.",
+      "'check_slivers' 导出前自查抽帧缝（两段 B-roll / 动效之间露出 <1 秒的真人），只读、不写任何记录，可带 chatcut_project_id / timeline_id; " +
+      "'mark_ready' 成片可以审了（配乐、混音都好了才标）; 'ask' 剪辑途中请示创始人（进「等你拍板」，别在聊天里问）; 'answer_ask' 逐字转述创始人在聊天里的回答（花费 / 分镜不收）; 'withdraw_ask' 撤回请示.",
   }),
   id: Type.Optional(Type.String({ description: "Content id (for get/update/transition/siblings/allowed_transitions)" })),
   content_id: Type.Optional(Type.String({ description: "Alias of `id` — other AutoCrew tools call it content_id" })),
@@ -98,10 +100,12 @@ export const contentSaveSchema = Type.Object({
   })),
   kind: Type.Optional(Type.Unsafe<string>({
     type: "string",
-    enum: ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard"],
-    description: "record：事实种类。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（记为待核，等创始人确认或数据回流核实）、storyboard 分镜（只收 build_material_review.py 生成的 03-broll/review-vNNN/*.html）.",
+    enum: ["aroll", "cut", "srt", "cover", "chatcut_project", "publish", "storyboard", "粗剪", "分镜", "样片", "花费", "配乐", "其他"],
+    description: "record：事实种类；ask：请示种类（粗剪 / 分镜 / 样片 / 花费 / 配乐 / 其他）。aroll 原片、cut 成片、srt 字幕、cover 封面、chatcut_project ChatCut 工程、publish 发布回执（记为待核，等创始人确认或数据回流核实）、storyboard 分镜（只收 build_material_review.py 生成的 03-broll/review-vNNN/*.html）.",
   })),
   request_id: Type.Optional(Type.String({ description: "record：这次报告的请求号；重试用同一个，服务端直接重放上次结果." })),
+  since_seq: Type.Optional(Type.Integer({ minimum: 0, description: "summary：只要这个时间线序号之后的变化；翻页用上次回的 next_since_seq（has_more=true 就接着翻）." })),
+  aroll_offset: Type.Optional(Type.Integer({ minimum: 0, description: "summary：原片列表（本轮全部原片，按时间排）的游标，和 since_seq 各管各的；aroll_has_more=true 时用上次回的 aroll_next_offset 接着读." })),
   path: Type.Optional(Type.String({ description: "record：文件的本机路径（可 ~ 开头）。项目内原地收；原片收件箱、ChatCut / 剪映导出目录会挪 / 克隆进项目；其他位置只记候选." })),
   ratio: Type.Optional(Type.String({ description: "record kind=cover：3:4 或 4:3（按像素核对）." })),
   version: Type.Optional(Type.Integer({ minimum: 1, description: "record kind=cover：封面版本号；不填就放新一版." })),
@@ -111,6 +115,17 @@ export const contentSaveSchema = Type.Object({
   chatcut_project_id: Type.Optional(Type.String({ description: "record kind=chatcut_project / check_slivers：ChatCut 工程 id." })),
   timeline_id: Type.Optional(Type.String({ description: "record kind=chatcut_project / check_slivers：时间线 id（可选）." })),
   note: Type.Optional(Type.String({ description: "record：一句备注（可选）." })),
+  review: Type.Optional(Type.Boolean({ description: "record kind=cut：这版可以审了." })),
+  paths: Type.Optional(Type.Array(Type.String(), { description: "record kind=cover：一组 [3:4, 4:3]." })),
+  pair_with: Type.Optional(Type.String({ description: "record kind=cover：和这张封面 fact_id 成对." })),
+  fact_id: Type.Optional(Type.String({ description: "mark_ready：成片 fact_id；ask kind=分镜：分镜 fact_id." })),
+  question: Type.Optional(Type.String({ description: "ask：问什么." })),
+  options: Type.Optional(Type.Array(Type.Unknown(), { description: "ask：2–4 个 {id,label}；分镜要有 id=approve." })),
+  attachments: Type.Optional(Type.Array(Type.Unknown(), { description: "ask：项目内附件 [{path}]." })),
+  ask_id: Type.Optional(Type.String({ description: "answer_ask / withdraw_ask：请示 id." })),
+  option_id: Type.Optional(Type.String({ description: "answer_ask：选项 id." })),
+  founder_quote: Type.Optional(Type.String({ description: "answer_ask：创始人原话，逐字." })),
+  asks_offset: Type.Optional(Type.Integer({ minimum: 0, description: "summary：请示翻页游标（asks_next_offset）." })),
   account: Type.Optional(Type.String({ description: "record kind=publish：发布账号（可选）." })),
   url: Type.Optional(Type.String({ description: "record kind=publish：作品链接（或填 item_id）." })),
   item_id: Type.Optional(Type.String({ description: "record kind=publish：平台作品 id（或填 url）." })),
@@ -227,10 +242,15 @@ export async function executeContentSave(
   }
 
   // 只读进度摘要（v1.3）：查「这篇到哪了」不用拉 16KB 的整篇
-  if (action === "summary") return contentSummary(String(params.id ?? "").trim(), dataDir);
+  if (action === "summary") return contentSummary(String(params.id ?? "").trim(), dataDir, Date.now(), params.since_seq, params.aroll_offset, params.asks_offset);
 
   // 本体 §3：agent 只报事实（原片 / 成片 / 字幕 / 封面 / ChatCut 工程），不要认领、不要交接
   if (action === "record") return executeRecord(params);
+  if (action === "mark_ready") return executeMarkReady(params);
+  // 等你拍板 §5：剪辑途中的请示（agent 发起 / 撤回 / 转述创始人在聊天里的回答）
+  if (action === "ask") return executeAsk(params);
+  if (action === "answer_ask") return executeAnswerAsk(params);
+  if (action === "withdraw_ask") return executeWithdrawAsk(params);
   // 抽帧缝自查（spec 2026-09-30 §7）：只返回结果，不写事实、不影响批准
   if (action === "check_slivers") return checkSlivers(params);
 
@@ -402,6 +422,7 @@ export async function executeContentSave(
         host,
         decidedBy: decidedBy(params),
         ...(from ? { expectedStatus: from } : {}),
+        ...(typeof params.expected_body_hash === "string" && params.expected_body_hash ? { expectedBodyHash: params.expected_body_hash } : {}),
       },
       dataDir,
     );

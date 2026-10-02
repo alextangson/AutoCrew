@@ -172,7 +172,7 @@ import {
   inboxDigestSendNowHandler,
 } from "./inbox-handlers.js";
 import { getInboxSettings, setInboxSettings } from "./settings-inbox.js";
-import { getVideoSettings, setVideoSettings } from "./settings-video.js";
+import { getVideoSettings, setVideoSettingsViaInvoke } from "./settings-video.js";
 import {
   videoAsrStatusHandler,
   videoAsrWarmupHandler,
@@ -1422,7 +1422,7 @@ export function buildIpcHandlers(deps?: Partial<Record<IpcChannel, IpcHandler>>)
     "video:asr_warmup": videoAsrWarmupHandler,
     "video:asr_status": videoAsrStatusHandler,
     "video:settings_get": getVideoSettings,
-    "video:settings_set": setVideoSettings,
+    "video:settings_set": setVideoSettingsViaInvoke,
   };
 
   // 引擎事件桥（P1 一期）：把值得进工作日志的结果映射为事件。

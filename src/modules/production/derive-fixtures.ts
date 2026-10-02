@@ -16,7 +16,7 @@ const t = (i: number) => `2026-09-29T0${Math.min(i, 9)}:00:00.000Z`;
 
 export function fact(kind: Fact["kind"], shaV: string | undefined, extra: Partial<Fact> = {}): Fact {
   n++;
-  return { id: `f-${kind}-${n}`, kind, round: 1, state: "accepted", availability: "present", source: "record", at: t(1), ...(shaV ? { sha256: shaV, path: `x/${kind}-${n}` } : {}), ...extra };
+  return { id: `f-${kind}-${n}`, kind, round: 1, state: "accepted", availability: "present", source: "record", at: t(1), ...(shaV ? { sha256: shaV, path: kind === "cover" ? `05-cover/v001/cover-${n}.png` : `x/${kind}-${n}` } : {}), ...extra };
 }
 export function decision(type: Decision["type"], extra: Partial<Decision> = {}): Decision {
   n++;
@@ -27,8 +27,10 @@ export const script = (hash = BH) => decision("script_approval", { body_hash: ha
 export const cutOk = (s = SHA.cut, extra: Partial<Decision> = {}) => decision("cut_approval", { sha256: s, body_hash: BH, at: t(3), ...extra });
 export const coverOk = (extra: Partial<Decision> = {}) => decision("cover_approval", { cover_3x4_sha: SHA.c34, cover_4x3_sha: SHA.c43, cover_text: "AI 又忘了？", body_hash: BH, at: t(3), ...extra });
 
-export function doc(facts: Fact[], decisions: Decision[], registrations: Registration[] = []): ProductionDoc {
-  return { ...emptyProductionDoc(), facts, decisions: [script(), ...decisions], registrations };
+/** 夹具里的成片默认都被 agent 标过「可以审了」（review-inbox §7-1）；unmarked=true 模拟对账自动收的导出 */
+export function doc(facts: Fact[], decisions: Decision[], registrations: Registration[] = [], opts: { unmarked?: boolean } = {}): ProductionDoc {
+  const ready_marks = opts.unmarked ? [] : facts.filter((f) => f.kind === "cut" && f.sha256).map((f) => ({ id: `rm-${f.id}`, fact_id: f.id, sha256: f.sha256!, round: f.round, at: f.at }));
+  return { ...emptyProductionDoc(), facts, decisions: [script(), ...decisions], registrations, ready_marks };
 }
 
 /** 全套产物：原片、成片、它的字幕、两张封面 */
@@ -80,6 +82,8 @@ export const DERIVE_CASES: DeriveCase[] = [
   // D4
   { name: "D4+ 只有原片 → 剪辑中，缺成片与两张封面", build: () => ({ doc: doc([fact("aroll", SHA.aroll)], []) }), expect: { stage: "剪辑中", rule: "D4", missing: ["成片", "封面(3:4)", "封面(4:3)"] } },
   { name: "D4+ 全套产物无批准 → 成片待你审 / 封面待你选（pzey0m 形状）", build: () => ({ doc: doc(fullFacts(), []) }), expect: { stage: "剪辑中", rule: "D4", missing: ["成片待你审", "抽帧检查还没有结果", "封面待你选"] } },
+  { name: "D4+ 对账自动收的成片（没标可以审了）不算待你审（review-inbox §7-1）", build: () => ({ doc: doc(fullFacts(), [], [], { unmarked: true }) }), expect: { stage: "剪辑中", rule: "D4", missing: ["封面待你选"] } },
+  { name: "D4+ 一组只有 3:4 → 还差 4:3，不出封面待你选（review-inbox §6.1）", build: () => ({ doc: doc([fact("cut", SHA.cut), fact("srt", SHA.srt, { for_cut: SHA.cut }), fact("cover", SHA.c34, { ratio: "3:4", path: "05-cover/v001/a.png" }), fact("cover", SHA.c43, { ratio: "4:3", path: "05-cover/v002/b.png", at: t(5) })], []) }), expect: { stage: "剪辑中", rule: "D4", missing: ["封面(3:4)", "成片待你审", "抽帧检查还没有结果"] } },
   { name: "D4+ 成片没字幕 → 缺字幕", build: () => ({ doc: doc([fact("cut", SHA.cut)], []) }), expect: { stage: "剪辑中", rule: "D4", missingIncludes: ["字幕", "成片待你审"] } },
   { name: "D4+ 文件缺失（availability=missing）不倒退", build: () => ({ doc: doc([fact("aroll", SHA.aroll, { availability: "missing" })], []) }), expect: { stage: "剪辑中", rule: "D4" } },
   { name: "D4+ 只有 ChatCut 工程也算制作事实", build: () => ({ doc: doc([fact("chatcut_project", undefined, { project_id: "p1" })], []) }), expect: { stage: "剪辑中", rule: "D4" } },

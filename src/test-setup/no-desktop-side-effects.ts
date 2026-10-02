@@ -11,3 +11,13 @@ vi.mock("../modules/video/handoff/desktop-open.js", () => ({
   benchReachable: async () => false,
   mediaDuration: async () => null,
 }));
+
+// 原片内容比对（1b §2）：默认转写器在测试里永远「没就绪」，绝不真跑 ffmpeg / FunASR。
+// 要测核对流程的测试用 setMatchDeps 注入自己的假转写器。
+vi.mock("../modules/production/match/transcribe.js", async (importActual) => ({
+  ...(await importActual<typeof import("../modules/production/match/transcribe.js")>()),
+  funasrTranscriber: () => ({
+    transcribe: async () => ({ ok: false, unavailable: true, reason: "测试里不跑转写" }),
+    notReady: async () => "测试里不跑转写",
+  }),
+}));

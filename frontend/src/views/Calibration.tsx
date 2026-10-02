@@ -3,7 +3,7 @@
  * 规则是"越用越像你"的可视面——每条都能溯源(来源+置信度)、能关掉。
  */
 import { useEffect, useState } from "react";
-import { invoke } from "../transport";
+import { authedFetch, invoke } from "../transport";
 import { toast, openDialog } from "../ui";
 import { useChatSend } from "../chat/ChatDock";
 import { PLATFORM_CATALOG } from "../lib";
@@ -152,7 +152,7 @@ export function Calibration() {
     }
     setBusyRule(rule.id);
     try {
-      const response = await fetch("/api/rules/decision", {
+      const response = await authedFetch("/api/rules/decision", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ruleId: rule.id, revision: rule.revision, decision, eventId: crypto.randomUUID() }),
       });

@@ -80,3 +80,11 @@
 .card-panel-row { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .card-panel-actions { display: flex; gap: var(--s3); flex-wrap: wrap; margin-top: auto; }
 .bcard-slate { font-size: var(--fs-xs); color: var(--accent, var(--fg)); border: 1px solid currentColor; padding: 0 var(--s1); margin-right: var(--s2); }
+
+/* 1b：卡片候选 / 收件箱列表的「依据」——分数与完整路径只在这里 */
+.card-panel-cand { padding: 6px 0; border-bottom: 1px solid var(--line, #e5e5e5); }
+.card-panel-detail { white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 4px 0; }
+
+/* 1b 验收：卡片面板顶上的「下一步」 */
+.card-panel-next { padding: 8px 10px; margin-bottom: 8px; border-radius: 6px; background: var(--surface-2, #f6f6f4); }
+.card-panel-next p { margin: 0 0 6px; }

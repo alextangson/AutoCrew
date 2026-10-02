@@ -10,7 +10,10 @@ import { confirmDialog, toast } from "../ui";
 import { requestDockCollapsed } from "../chat/dock-prefs";
 import { newIdea } from "../new-idea";
 import { decide, loadBoard, loadCard, markPublished, reopenScript, startWriting } from "./board-api";
+import { InboxHeader } from "./InboxHeader";
 import { CardPanel } from "./CardPanel";
+import { ReviewInbox } from "./review/ReviewInbox";
+import { decideItem } from "./review/review-api";
 import { BoardTrash } from "./BoardTrash";
 import { OntologyBanner } from "./OntologyBanner";
 import { ItemCard, TopicCard, confirmBackMove, runTransition } from "./BoardCards";
@@ -22,7 +25,7 @@ import "./board.css";
 
 const POLL_MS = 3000;
 
-type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void };
+type Nav = { openTopic: (key: string) => void; openEditor: (id: string) => void; openData: () => void; card?: string; inbox?: string };
 
 /** 读看板 + 3 秒轮询；拖动中 / 菜单开着时暂停，结束后补一次（§7） */
 function useBoardData() {
@@ -66,7 +69,7 @@ export function Board(props: Nav) {
   const drag = useRef<{ from: BoardColumn; id: string; item: BoardItem | null } | null>(null);
   const [moving, setMoving] = useState<Set<string>>(new Set());
   const [over, setOver] = useState<BoardColumn | null>(null);
-  const [panel, setPanel] = useState<string | null>(null);
+  const [panel, setPanel] = useState<string | null>(props.card ?? null);
   const ontology = Boolean(data?.ontology?.enabled);
   const cards = useMemo(() => (data ? boardCards(data) : null), [data]);
   // 看板默认收起总编辑（§28），离开回到偏好
@@ -117,6 +120,7 @@ export function Board(props: Nav) {
 
   const allEmpty = cards !== null && COLUMNS.every((c) => cards[c].length === 0);
   return <div className="board2 page-board">
+    <ReviewInbox {...(props.inbox ? { focusContent: props.inbox } : {})} />
     <div className="board2-tools">
       {error && <span className="board2-stale" role="alert">刷新失败：{error} <button className="bcard-link" onClick={() => void reload()}>重试</button></span>}
       {data && <OntologyBanner ontology={data.ontology} reload={reload} />}
@@ -135,6 +139,7 @@ export function Board(props: Nav) {
             </span>}</h2>
           <p title={COLUMN_HINT[col]}>{COLUMN_HINT[col]}</p>
           {refused && <p className="bcol-refuse" role="status">{refused}</p>}
+          {col === "待录制" && ontology && <InboxHeader inbox={data?.ontology?.report?.inbox} targets={(cards?.["待录制"] ?? []).flatMap((c) => (c.kind === "item" ? [{ id: c.item.id, title: c.item.title }] : []))} reload={reload} />}
         </header>
         {cards === null ? <p className="bcol-note">读取中</p>
           : <ColumnBody col={col} cards={cards[col]} data={data!} expanded={expanded.has(col)} allEmpty={allEmpty} starting={starting}
@@ -183,10 +188,10 @@ async function applyDrop(act: DropAction, item: BoardItem, openEditor: (id: stri
   switch (act.kind) {
     case "panel": return openPanel(item.id);
     case "undo": return runUndo(act.undo, item, reload);
-    case "approve": return runTransition(item, "approved", "已认稿", reload, true);
+    case "approve": return approveDraft(item, reload);
     case "back": return confirmBackMove(item, act.move, reload);
     case "publish": {
-      if (!item.platform) return toast("这条没定平台，在卡片上对应平台点「我发了」");
+      if (!item.platform) return toast("这条没定平台，在卡片上对应平台点「已经发出去了」");
       const yes = await confirmDialog({ title: "标记为已发布？", body: `记为你在${platformName(item.platform)}手动发了。不会推送到平台，只改状态。`, confirmLabel: "标记已发布" });
       if (!yes) return;
       try { const r = await markPublished(item.id, item.platform); toast(r.ok ? "已标记为已发布" : r.error); } finally { await reload(); }
@@ -234,4 +239,16 @@ async function runStart(topicId: string, openEditor: (id: string) => void): Prom
   try { if (r.data.prompt) { await navigator.clipboard.writeText(r.data.prompt); copied = true; } } catch { /* 下面明说 */ }
   const why = r.data.open_error ?? "Claude 没打开";
   toast(copied ? `已建稿，但${why}。指令已复制，去 Claude 新会话粘贴发送` : `已建稿，但${why}。请把这句发给 Claude：${r.data.prompt ?? ""}`);
+}
+
+/**
+ * 拖「写稿中 → 待录制」= 认稿：走「等你拍板」的单一入口，带看板载入时那一版稿的代次；
+ * 别的会话改过正文就拒「稿子刚改过，重新看一眼」（整分支审 4 P1）
+ */
+export async function approveDraft(item: BoardItem, reload: () => Promise<void>): Promise<void> {
+  try {
+    if (!item.draftRef) { toast("稿子刚改过，重新看一眼"); return; }
+    const r = await decideItem({ content_id: item.id, item_id: item.draftRef.item_id, gen: item.draftRef.gen, action: "approve_script" });
+    toast(r.ok ? "已认稿" : r.error);
+  } finally { await reload(); }
 }

@@ -16,9 +16,16 @@ import {
 import type { ProductionDoc, TimelineEvent } from "../../storage/production-types.js";
 import { writeTextAtomicMkdir } from "../../storage/json-atomic.js";
 import { deriveExplanation, POST_APPROVAL, type Explanation } from "./explain.js";
-import { withFileOwnership } from "./mutex.js";
+import { outsideFileOwnership, withFileOwnership } from "./mutex.js";
 import { matchingRegistration, publishReceipts, validCoverApproval, validCutApproval } from "./derive.js";
 import { registrationPatch } from "./registration.js";
+import { migrateCoverGroups } from "./cover-groups.js";
+
+/** 当前有效封面批准的两张 sha（§6.2 迁移时它们不动） */
+export function approvedCoverShas(doc: ProductionDoc, body: string): Set<string> {
+  const d = validCoverApproval(doc, body ?? "");
+  return new Set([d?.cover_3x4_sha, d?.cover_4x3_sha].filter((x): x is string => Boolean(x)));
+}
 import { rebuildShaIndex, reindexContent, type ShaIndex } from "./sha-index.js";
 import { recoverTxns, type RecoveryOutcome } from "./txn.js";
 
@@ -28,20 +35,43 @@ type NewEvent = Omit<TimelineEvent, "seq" | "at">;
 
 const ready = new Map<string, Promise<{ recovered: RecoveryOutcome[]; index: ShaIndex }>>();
 
-export function ensureProductionReady(dataDir: string) {
+/** 开放写入之后要跑一次的事（1b §3-5：本轮 pending_match 重新入队）。每个工作区每个钩子只跑一次 */
+type ReadyHook = (dataDir: string) => Promise<void>;
+const readyHooks: ReadyHook[] = [];
+const hooksRan = new Map<string, Set<ReadyHook>>();
+
+export function registerReadyHook(fn: ReadyHook): void {
+  readyHooks.push(fn);
+}
+
+async function runReadyHooks(dataDir: string): Promise<string[]> {
+  const ran = hooksRan.get(dataDir) ?? new Set<ReadyHook>();
+  hooksRan.set(dataDir, ran);
+  const errors: string[] = [];
+  for (const fn of readyHooks.filter((h) => !ran.has(h))) {
+    ran.add(fn);
+    await fn(dataDir).catch((e: unknown) => { ran.delete(fn); errors.push(e instanceof Error ? e.message : String(e)); });
+  }
+  return errors;
+}
+
+export async function ensureProductionReady(dataDir: string) {
   let p = ready.get(dataDir);
   if (!p) {
     p = withFileOwnership(async () => ({ recovered: await recoverTxns(dataDir), index: await rebuildShaIndex(dataDir) }));
     ready.set(dataDir, p);
     p.catch(() => ready.delete(dataDir));
   }
-  return p;
+  const r = await p;
+  // 钩子在锁外跑（重新入队只读事实、写本机队列）；失败下次再试，并带回给调用方看
+  const hookErrors = await outsideFileOwnership(() => runReadyHooks(dataDir));
+  return { ...r, ...(hookErrors.length ? { hookErrors } : {}) };
 }
 
 /** 测试 / 重新挂载资料库时忘掉「已就绪」 */
 export function resetProductionReady(dataDir?: string): void {
-  if (dataDir) ready.delete(dataDir);
-  else ready.clear();
+  if (dataDir) { ready.delete(dataDir); hooksRan.delete(dataDir); }
+  else { ready.clear(); hooksRan.clear(); }
 }
 
 // ---- 投影 ----
@@ -123,7 +153,10 @@ export async function mutateProduction<T>(
     if (!content) throw new Error(`Content ${contentId} not found`);
     const doc = await readProductionDocOrEmpty(contentId, dataDir);
     const next = structuredClone(doc);
-    const { value, events } = await fn(next, content);
+    // 封面统一准入的迁移（review-inbox §6.2）随第一次写落盘：只改标签，不动文件
+    const migrated = migrateCoverGroups(next, approvedCoverShas(next, content.body));
+    const { value, events: own } = await fn(next, content);
+    const events = [...migrated.filter((m) => m.to === "candidate").map((m) => ({ type: "cover_demoted", detail: { fact_id: m.fact_id, state: "candidate", reason: m.reason } })), ...own];
     const stamped = stampEvents(next, events);
     const saved = await writeProductionDoc(contentId, dataDir, next, doc.revision);
     const refreshed = await refreshProductionProjection(tx, content, saved, dataDir);

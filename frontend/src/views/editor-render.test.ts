@@ -20,7 +20,10 @@ vi.mock("../transport", () => ({
   invoke: vi.fn(async (channel: string) => channel === "content:get" ? { ok: true, content: CONTENT } : { ok: true, data: { entries: [], versions: [] }, transitions: [] }),
   subscribeEvents: () => () => {},
 }));
-vi.mock("./board-api", () => ({ loadBoard: async () => ({ ok: true, data: { items: [], topics: [], wordsPerMinute: null, ontology: { enabled: true, report: null } } }) }));
+vi.mock("./board-api", () => ({
+  loadBoard: async () => ({ ok: true, data: { items: [], topics: [], wordsPerMinute: null, ontology: { enabled: true, report: null } } }),
+  loadCard: async () => ({ ok: false, error: "测试里不读卡片" }),
+}));
 
 describe("Editor 挂载", () => {
   it("加载中 → 加载完不白屏（Hook 顺序不变），启用后写稿页提示换成收件箱", async () => {

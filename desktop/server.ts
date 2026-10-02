@@ -31,13 +31,17 @@ import { sanitizePayload } from "../src/desktop/ipc-guard.js";
 import { validatePayload } from "../src/desktop/channel-contracts.js";
 import { activeWorkspaceDataDir } from "../src/desktop/workspace-store.js";
 import { resolveServerToken, resolveSessionSecret } from "../src/desktop/server-token.js";
-import { LocalSessionAuth, LOCAL_SUBJECT } from "../src/desktop/server-auth.js";
+import { MIME, serveApp as serveAppFrom } from "../src/desktop/serve-app.js";
+import { LocalSessionAuth, LOCAL_SUBJECT, SESSION_COOKIE, sessionCookieName } from "../src/desktop/server-auth.js";
 import { lookupHostToken } from "../src/desktop/host-tokens.js";
 import { ApprovalGate } from "../src/desktop/approval-gate.js";
 import { reconcileOrphanDrafts } from "../src/desktop/orphan-reconcile.js";
 import { migratePlaintextClaims } from "../src/storage/claims.js";
 import { recoverArollMoves } from "../src/modules/video/handoff/aroll-move.js";
 import { ensureProductionReady } from "../src/modules/production/service.js";
+// 原片核对作业的处理器与「重启后 pending_match 重新入队」钩子（1b §3-5）：在首次 ensureProductionReady 之前注册
+import "../src/modules/production/match/pending.js";
+import "../src/modules/production/attach-check.js";
 import { reconcileAll } from "../src/modules/production/reconcile.js";
 import { resumeEnable } from "../src/modules/production/enable.js";
 import { pullDeps } from "../src/modules/video/handoff/pull-deps.js";
@@ -84,6 +88,8 @@ const AUTH = new LocalSessionAuth(
   (token) => lookupHostToken(token),
   // 会话签名用独立密钥，不用交给自动化客户端的 server-token（否则持 token 者可伪造工作台会话批规则）
   resolveSessionSecret(),
+  // cookie 名带端口（1b §9）：预览服务不再顶掉 4317 的登录
+  sessionCookieName(PORT),
 );
 const APPROVALS = new ApprovalGate();
 // D 期已清场(frontend-v2 契约):React 是唯一前端,/ 与 /v2(书签兼容别名)都服务它
@@ -130,31 +136,9 @@ function setSecurityHeaders(res: http.ServerResponse): void {
 }
 
 // ── 静态资源 ──────────────────────────────────────────────────────────────────
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  ".cjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
-  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon",
-};
-/** React 前端静态托管:SPA 回退到 index.html;dist 缺失给出构建指引而非裸 404 */
-async function serveApp(res: http.ServerResponse, rel: string): Promise<void> {
-  const clean = rel.replace(/\.\.+/g, "").replace(/^\/+/, "");
-  let file = path.join(FRONTEND_DIST, clean || "index.html");
-  if (!file.startsWith(FRONTEND_DIST)) { res.writeHead(403).end("forbidden"); return; }
-  try {
-    await fs.access(file);
-  } catch {
-    file = path.join(FRONTEND_DIST, "index.html");
-    try {
-      await fs.access(file);
-    } catch {
-      res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" })
-        .end("前端未构建：先执行 npm run fe:build 再刷新");
-      return;
-    }
-  }
-  res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" });
-  createReadStream(file).pipe(res);
+// 托管与缓存策略在 src/desktop/serve-app.ts（外壳 no-cache、带哈希的 assets 长缓存）
+function serveApp(res: http.ServerResponse, rel: string): Promise<void> {
+  return serveAppFrom(FRONTEND_DIST, res, rel);
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -302,14 +286,17 @@ const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse
     }
     let parsed: { token?: string };
     try { parsed = JSON.parse(await readBody(req)); } catch { res.writeHead(400).end(JSON.stringify({ ok: false, error: "bad json" })); return; }
-    const issued = AUTH.issueSession(typeof parsed.token === "string" ? parsed.token : "");
-    if (!issued) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad token" })); return; }
+    // 地址栏 token 已失效但会话 cookie 有效（刷新了留着旧 token 的地址）→ 不报错（1b §9）
+    const exchanged = AUTH.exchange(typeof parsed.token === "string" ? parsed.token : "", { cookie: req.headers.cookie });
+    if (!exchanged) { res.writeHead(403).end(JSON.stringify({ ok: false, error: "bad token" })); return; }
+    const legacy = (req.headers.cookie ?? "").split(";").some((c) => c.trim().startsWith(`${SESSION_COOKIE}=`)) ? [AUTH.clearLegacyCookieHeader()] : [];
+    const cookies = [...(exchanged.status === "issued" ? [AUTH.cookieHeader(exchanged.sessionId)] : []), ...legacy];
     res.writeHead(200, {
       "Content-Type": MIME[".json"],
       "Cache-Control": "no-store",
-      "Set-Cookie": AUTH.cookieHeader(issued.sessionId),
+      ...(cookies.length ? { "Set-Cookie": cookies } : {}),
     });
-    res.end(JSON.stringify({ ok: true, expiresAt: issued.expiresAt }));
+    res.end(JSON.stringify(exchanged.status === "issued" ? { ok: true, expiresAt: exchanged.expiresAt } : { ok: true, existing: true }));
     return;
   }
 
@@ -539,6 +526,7 @@ try {
     });
     for (const o of r?.recovered ?? []) console.log(`  [production] 事务 ${o.id}(${o.content_id}) → ${o.outcome}`);
     for (const c of r?.index.conflicts ?? []) console.error(`  [production] 字节索引冲突:${c}`);
+    for (const e of r?.hookErrors ?? []) console.error(`  [production] 原片核对没能重新排队:${e}`);
     // 上次启用本体做到一半进程退了:按同一份排除清单续跑(开关只在全部投影冻结完成后才写)
     const resumed = r ? await resumeEnable(dir).catch((err) => { console.error(`[production] 续跑启用失败(${dir}):`, err instanceof Error ? err.message : err); return null; }) : null;
     if (resumed) console.log(`  [production] 续跑启用本体:${resumed.ok ? "完成" : `没完成,${resumed.errors.length} 条失败`}`);

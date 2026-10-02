@@ -203,7 +203,7 @@ async function ontologyReview(content: Content, dataDir: string, params?: Record
   const projectRoot = binding?.project_root ?? "";
   return { ok: true, enabled: true, ontology: true, final_cut: projectRoot ? await finalCutCard(overlay.execution, projectRoot, dataDir) : null, ...(decision ? { decision } : {}),
     project: binding, status: fresh.status, draft_hash: legacy.draftHash, title: fresh.title, platform: fresh.platform,
-    generation: overlay.handoff.generation, handoff: overlay.handoff, handoff_valid: true, manifest_hash: overlay.handoff.hash,
+    generation: overlay.handoff.generation, handoff: overlay.handoff, editor_label: overlay.editor_label, handoff_valid: true, manifest_hash: overlay.handoff.hash,
     decisions: await readProjectJson(content.id, "decisions.json", dataDir), execution: overlay.execution, cover_selection: overlay.selection,
     approvals: null, gates: { ...gateStates(legacy), ...overlay.gates } };
 }

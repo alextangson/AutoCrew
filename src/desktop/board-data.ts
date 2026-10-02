@@ -18,6 +18,8 @@ import { isVideoPlatform } from "../storage/stage-guard.js";
 import { readProductionDoc } from "../storage/production-store.js";
 import { storyboards, versionLabel } from "../modules/production/storyboard.js";
 import { inCurrentSlate, latestMeetingDate } from "../modules/meetings/meeting-store.js";
+import { editorLabel } from "../modules/production/workbench.js";
+import { draftRef } from "../modules/production/inbox.js";
 
 export type BoardColumn = "选题" | Column;
 
@@ -49,6 +51,10 @@ export interface BoardItem {
   missing: string[];
   /** 最新一版分镜的版本号（「v001」）；没有分镜 / 不按本体走 = null */
   storyboard?: string | null;
+  /** 谁在剪：Claude / Codex / WorkBuddy / 你 / agent */
+  editorLabel?: string;
+  /** 「稿子写好了」这件事的身份与代次（稿子在 draft_ready 时有） */
+  draftRef?: { item_id: string; gen: string };
   badges: string[];
   /** 真有问题的提示（卡上标红）：未登记就发布、文件不见了、被驳回… */
   alerts: string[];
@@ -122,10 +128,11 @@ export async function wordsPerMinute(contents: Content[], dataDir: string): Prom
 }
 
 /** 看板卡片信息行的「分镜 vNNN」：最新一版分镜（spec 2026-09-30-storyboard-review-check §4） */
-async function storyboardVersion(id: string, dataDir: string): Promise<string | null> {
+async function productionInfo(id: string, dataDir: string): Promise<{ storyboard: string | null; editorLabel: string }> {
   const doc = await readProductionDoc(id, dataDir).catch(() => null);
   const latest = doc ? storyboards(doc)[0] : undefined;
-  return latest ? versionLabel(latest.version) : null;
+  // 谁在剪（review-inbox §10）：按事实的 by.host 显示真实 agent，不写死「Codex」
+  return { storyboard: latest ? versionLabel(latest.version) : null, editorLabel: doc ? editorLabel(doc) : "agent" };
 }
 
 async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise<BoardItem | null> {
@@ -148,7 +155,9 @@ async function itemOf(c: Content, dataDir: string, ctx: ExplainContext): Promise
     lastError: current.lastError ?? null, blockedReason: current.blockedReason ?? null,
     active,
     missing: exp.missing, badges: exp.badges, alerts: exp.alerts, reason: exp.reason, candidates: exp.candidates,
-    storyboard: active ? await storyboardVersion(current.id, dataDir) : null,
+    ...(active ? await productionInfo(current.id, dataDir) : { storyboard: null }),
+    // 看板拖「写稿中 → 待录制」认稿要带它（整分支审 4 P1）
+    ...(draftRef(current) ? { draftRef: draftRef(current)! } : {}),
   };
 }
 

@@ -1,0 +1,60 @@
+/* 「等你拍板」（review-inbox §4.3，创始人定样式 A）：整块按 Notion 收件箱 / 页面预览 + YouMind 按钮做——
+   无衬线、浅灰分隔、属性行；看板其余部分（衬线标题、米色纸感）不动。 */
+.ri { --ri-line: #ECEBE7; --ri-gray: #787774; --ri-hover: #F7F7F5; --ri-blue: #2383E2;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #FFFFFF; border: 1px solid var(--ri-line); border-radius: 10px; margin: 0 0 var(--s4); color: #37352F; }
+.ri-head { display: flex; align-items: center; gap: var(--s2); padding: 10px 14px; font-size: var(--fs-md); }
+.ri-head strong { font-weight: 600; }
+.ri-head .ri-count { color: var(--ri-gray); }
+.ri-head .ri-toggle { margin-left: auto; }
+.ri-empty { color: var(--ri-gray); }
+.ri-list { list-style: none; border-top: 1px solid var(--ri-line); }
+.ri-row { display: grid; grid-template-columns: 10px 40px 1fr auto; align-items: center; gap: 12px; padding: 10px 14px; min-height: 60px;
+  border-bottom: 1px solid var(--ri-line); cursor: pointer; outline: none; }
+.ri-row:last-child { border-bottom: none; }
+.ri-row:hover, .ri-row.ri-on { background: var(--ri-hover); }
+.ri-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ri-blue); }
+.ri-thumb { width: 40px; height: 40px; border-radius: 6px; background: #F1F1EF; display: grid; place-items: center; overflow: hidden; color: var(--ri-gray); font-size: var(--fs-xs); }
+.ri-thumb img, .ri-thumb video { width: 100%; height: 100%; object-fit: cover; }
+.ri-text { min-width: 0; }
+.ri-title { font-size: var(--fs-md); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-sub { font-size: var(--fs-xs); color: var(--ri-gray); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-time { font-size: var(--fs-xs); color: var(--ri-gray); white-space: nowrap; }
+
+/* 右侧面板：Notion 页面预览 */
+.ri-peek { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: #FFFFFF; border-left: 1px solid var(--ri-line);
+  box-shadow: -12px 0 32px rgba(15, 15, 15, 0.08); overflow-y: auto; z-index: 40; padding: 20px 28px 32px;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; color: #37352F; }
+.ri-peek-top { display: flex; justify-content: flex-end; }
+.ri-peek h2 { font-size: var(--fs-2xl); line-height: 1.3; font-weight: 700; margin: 8px 0 16px; font-family: inherit; }
+.ri-props { display: grid; grid-template-columns: 96px 1fr; row-gap: 6px; column-gap: 12px; font-size: var(--fs-md); margin-bottom: 18px; }
+.ri-props dt { color: var(--ri-gray); }
+.ri-props dd { margin: 0; overflow-wrap: anywhere; }
+.ri-preview { margin: 0 0 18px; }
+.ri-preview video { width: 100%; border-radius: 8px; background: #000; }
+.ri-covers { display: grid; grid-template-columns: 3fr 4fr; gap: 12px; align-items: start; }
+.ri-covers img { width: 100%; border-radius: 8px; border: 1px solid var(--ri-line); display: block; }
+.ri-covers figcaption { font-size: var(--fs-xs); color: var(--ri-gray); margin-top: 4px; }
+.ri-body { white-space: pre-wrap; font-size: var(--fs-md); line-height: 1.8; max-height: 50vh; overflow-y: auto; border-top: 1px solid var(--ri-line); padding-top: 12px; }
+.ri-check { list-style: none; font-size: var(--fs-sm); }
+.ri-check li { padding: 6px 0; border-bottom: 1px solid var(--ri-line); }
+.ri-question { font-size: var(--fs-lg); margin: 0 0 12px; }
+.ri-note { font-size: var(--fs-sm); color: var(--ri-gray); margin: 6px 0; }
+.ri-warn { font-size: var(--fs-sm); color: var(--danger); margin: 6px 0; }
+/* 版本切换：安静的分段胶囊（只在切看哪一版，不是动作按钮） */
+.ri-pill { display: inline-flex; background: #F1F1EF; border-radius: 999px; padding: 3px; gap: 2px; margin: 0 0 12px; }
+.ri-pill span { font-size: var(--fs-sm); padding: 3px 12px; border-radius: 999px; color: var(--ri-gray); cursor: pointer; user-select: none; }
+.ri-pill span.ri-pill-on { background: #FFFFFF; color: #37352F; box-shadow: 0 1px 2px rgba(15, 15, 15, 0.1); }
+.ri-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.ri-actions .ri-quiet-slot { margin-left: auto; }
+.ri-reason { font-size: var(--fs-sm); color: var(--ri-gray); }
+.ri-inline { margin-top: 10px; }
+.ri-inline textarea { width: 100%; min-height: 72px; border-radius: 8px; }
+.ri-inline .ri-actions { margin-top: 6px; }
+.ri-textline { width: 100%; margin: 0 0 10px; }
+
+/* 底部深色小提示：结果 · 撤回 · 还有 N 件 */
+.ri-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: #2F2F2F; color: #FFFFFF; border-radius: 8px;
+  padding: 10px 16px; display: flex; gap: 14px; align-items: center; font-size: var(--fs-md); z-index: 60; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
+.ri-toast button { background: none; border: none; color: #FFFFFF; text-decoration: underline; padding: 0; }
+.ri-toast .ri-left { color: #B8B8B8; }

@@ -14,7 +14,8 @@ export const PRODUCTION_KINDS: ReadonlySet<FactKind> = new Set(["aroll", "cut", 
 export type FactState = "accepted" | "candidate" | "pending_match" | "rejected";
 /** 业务状态与文件可用性分开（Codex P1-9）：可用性只影响发布资格和告警 */
 export type Availability = "present" | "missing" | "unreadable" | "archived";
-export type FactSource = "record" | "reconcile" | "founder" | "legacy";
+/** migration：§6.2 统一准入时从 accepted 转成候选的封面（只改了标签；它们不是创始人要拍板的事） */
+export type FactSource = "record" | "reconcile" | "founder" | "legacy" | "migration";
 export type CoverRatio = "3:4" | "4:3";
 
 export interface Fact {
@@ -51,6 +52,15 @@ export interface Fact {
   export_mtime_ms?: number;
   /** aroll：记录 / 挪入之前的原始绝对路径（ChatCut 工程引用的往往是它；抽帧检查按路径认原片） */
   source_path?: string;
+  /** aroll pending_match（1b §3）：核对作业代号、开始时间；落结果时锁内按它认「还是同一次核对」 */
+  match_job?: string;
+  match_started_at?: string;
+  /** aroll：核对结果（前三名与原因）；只存稿件 id / 标题 / 分数，不存转写文本 */
+  match?: { winner: string | null; reason: string; top3: Array<{ content_id: string; title: string; l1: string; l2?: number }> };
+  /** aroll：卡片挂载后的内容核对（1b §7）。suggest = 听起来更像别条；kept = 创始人点过「就是这条」 */
+  attach_check?: { status: "checking" | "ok" | "suggest" | "kept" | "not_ready" | "failed"; job?: string; other_id?: string; other_title?: string; reason?: string; at: string };
+  /** aroll：系统自动挂上（pending_match 核对认出 / 1b 段 B 收件箱自动挪），「不是这条」可撤（§4.1） */
+  auto_attached?: true;
   /** storyboard：同目录脚本回执的 sha256 */
   receipt_sha256?: string;
   /** srt：所属成片的 sha */
@@ -111,7 +121,19 @@ export type DecisionType =
   | "publish_confirm" // 创始人确认一条待核回执（模型说的「发了」）
   | "publish_correction"
   | "sliver_waive" // 抽帧缝「这处是故意的」：绑 round + 成片 sha + 结果指纹 + 缝身份
-  | "sliver_waive_all"; // 抽帧检查没跑成「这条不查了，放行」：绑 round + 成片 sha
+  | "sliver_waive_all" // 抽帧检查没跑成「这条不查了，放行」：绑 round + 成片 sha
+  | "auto_attach_undo" // 1b §4.1：撤销系统自动挂上的原片（挪回原处、解冻、回待录制）
+  | "attach_check_keep" // 1b §7：卡片挂载核对说「更像别条」，创始人点「就是这条」（记住）
+  | "aroll_reassign" // 1b §7：当前轮原片改挂到别条（双内容事务的释放一方）
+  // ---- 等你拍板（spec 2026-09-30-review-inbox）----
+  | "ask_answer" // 创始人答请示（网页 / 会话窗口）：绑 ask_id + option_id
+  | "ask_answer_undo" // 撤回 agent 转述的回答（24 小时内）
+  | "storyboard_approval" // 分镜请示答「通过」：只批准请示绑定的那份快照
+  | "cover_group_retire" // 「这组不要了」：该组作废，文件不删
+  | "publish_check_confirm" // 「发之前再看一眼」点「没问题」：只记一笔，不是硬门
+  | "publish_check_revise" // 「有几处要改…」：一句话给 agent
+  | "script_revise" // 「稿子还要改…」：一句话给 agent
+  | "inbox_ack"; // 只确认、不改事实的条目（「对，就是它」自动挂上的原片、「让 agent 补」）
 
 export interface Decision {
   id: string;
@@ -138,7 +160,86 @@ export interface Decision {
   fingerprint?: string;
   /** sliver_waive：缝身份（帧区间 + 前后条目 id） */
   sliver_key?: string;
+  /** ask_answer / ask_answer_undo / storyboard_approval */
+  ask_id?: string;
+  option_id?: string;
+  /** cover_group_retire */
+  group_id?: string;
+  /** publish_check_confirm / publish_check_revise */
+  check_id?: string;
+  /** storyboard_approval：回执 sha（页面 sha 在 sha256） */
+  receipt_sha256?: string;
+  /** cover_reject（等你拍板）：打回的是哪几组；有它时只作废这几组的批准，不按共用的图连带别的组 */
+  group_ids?: string[];
+  /** inbox_ack：确认的是哪个条目 */
+  item_id?: string;
 }
+
+// ---- 等你拍板（spec 2026-09-30-review-inbox）----
+
+export type AskKind = "粗剪" | "分镜" | "样片" | "花费" | "配乐" | "其他";
+export const ASK_KINDS: readonly AskKind[] = ["粗剪", "分镜", "样片", "花费", "配乐", "其他"];
+
+export interface AskOption { id: string; label: string }
+/** 附件：项目内相对路径 + 创建时的 sha */
+export interface AskAttachment { path: string; sha256: string }
+/** 分镜请示绑定的快照（Codex 4）：页面 sha、回执 sha、素材指纹、轮次 */
+export interface AskStoryboard { fact_id: string; sha256: string; receipt_sha256: string; assets_fp: string; round: number }
+export interface AskAnswer {
+  option_id: string;
+  note?: string;
+  /** founder = 网页 / 会话窗口；agent_reported = agent 转述创始人在聊天里说的（可撤回 24 小时） */
+  via: "founder" | "agent_reported";
+  /** agent 转述时创始人的原话（逐字） */
+  quote?: string;
+  host?: string;
+  at: string;
+  decision_id?: string;
+}
+
+/** 剪辑途中的请示（§5）。state 只存 agent / 创始人动作的结果；稿重开 / 归档 / 删除时的「关闭」由读方按轮次与稿件状态推出 */
+export interface Ask {
+  id: string;
+  request_id: string;
+  round: number;
+  kind: AskKind;
+  question: string;
+  options: AskOption[];
+  attachments: AskAttachment[];
+  storyboard?: AskStoryboard;
+  at: string;
+  by?: { host: string; session?: string };
+  state: "open" | "answered" | "superseded" | "withdrawn";
+  answer?: AskAnswer;
+  /** 被撤回的转述回答 */
+  history?: AskAnswer[];
+  superseded_by?: string;
+  ended_at?: string;
+}
+
+/** agent 标「可以审了」（§7-1）：独立、幂等的事件，绑 fact / sha / round */
+export interface ReadyMark { id: string; fact_id: string; sha256: string; round: number; at: string; by?: { host: string; session?: string } }
+
+/** 封面组 = 一个版本（§6.1）；成员关系单独存（组 ↔ 事实，带历史，不删） */
+export interface CoverGroup {
+  id: string;
+  round: number;
+  /** vNNN 的 NNN；final/ 目录的组没有版本号 */
+  version?: number;
+  label: string;
+  at: string;
+  source: FactSource | "migration";
+  by?: { host: string; session?: string };
+  evidence?: string;
+}
+/**
+ * path：这一组文件夹里的那个文件（同一张图可能在几个组里各有一份）；replaced_at：这一份被覆盖了——
+ * 只让这一组缺这张，不连累同一张图的别的组（整分支审 4 P2）
+ */
+export interface CoverMember { group_id: string; fact_id: string; sha256: string; ratio: CoverRatio; at: string; path?: string; replaced_at?: string }
+
+/** 「等你拍板」的 CAS 消费记录（§3.1 R1/R2）：同一条目的同一代次只消费一次，回放按原结果 */
+export interface InboxConsumption { item_id: string; gen: string; action: string; fp: string; at: string; result: Record<string, unknown>; /** 锁外还在跑（破例重跑等模型）：这一代已被占住 */ pending?: true }
 
 /** 抽帧缝（spec 2026-09-30-broll-sliver-check）：A-roll 在两段盖住画面的条目之间露出 < 1 秒 */
 export interface Sliver {
@@ -192,7 +293,9 @@ export interface Registration {
 }
 
 /** args：这次请求的参数指纹；同一 request_id 只在参数一致时回放 */
-export interface StoredReceipt { at: string; receipt: Record<string, unknown>; args?: string }
+export interface StoredReceipt { at: string; receipt: Record<string, unknown>; args?: string;
+  /** 一对封面里的单张：整对请求的参数指纹，重试续记前核对（整分支审 14 P2） */
+  pair_args?: string }
 
 export interface ProductionDoc {
   schema: 1;
@@ -217,6 +320,16 @@ export interface ProductionDoc {
   sliver_checks?: SliverCheck[];
   /** 登记提交最近一次失败的原因（D3 的 missing） */
   commit_failure?: { round: number; reason: string; at: string } | null;
+  /** 剪辑途中的请示（§5） */
+  asks?: Ask[];
+  /** 「可以审了」标记（§7-1） */
+  ready_marks?: ReadyMark[];
+  /** 封面组与成员关系（§6.1）；cover_schema=1 表示已按 §6.2 统一准入迁移过 */
+  cover_groups?: CoverGroup[];
+  cover_members?: CoverMember[];
+  cover_schema?: 1;
+  /** 「等你拍板」CAS 消费记录（最近 200 条） */
+  inbox_log?: InboxConsumption[];
 }
 
 export interface TimelineEvent {

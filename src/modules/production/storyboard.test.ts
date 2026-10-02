@@ -69,7 +69,7 @@ describe("§3 只收脚本生成的审阅页（E1–E6）", () => {
     const { c, pr } = await approved();
     const r = await makeReview(pr);
     const res = await report(c.id, r.file);
-    expect(res).toMatchObject({ ok: true, kind: "storyboard", state: "accepted", path: "03-broll/review-v001/review.html", next_action: expect.stringContaining("打开审阅页") });
+    expect(res).toMatchObject({ ok: true, kind: "storyboard", state: "accepted", path: "03-broll/review-v001/review.html", next_action: expect.stringContaining("ask kind=分镜") });
     const f = (await readProductionDoc(c.id, env.dir))!.facts.find((x) => x.kind === "storyboard")!;
     expect(f).toMatchObject({ version: 1, sha256: sha(await fs.readFile(r.file)), receipt_sha256: sha(await fs.readFile(r.receipt)) });
     expect((await explainContent((await getContent(c.id, env.dir))!, env.dir)).stage).toBe("待录制");

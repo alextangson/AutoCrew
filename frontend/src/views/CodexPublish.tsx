@@ -1,6 +1,6 @@
 /** 「让 Codex 发布」：准备发布指令 → 复制 → 打开这条视频的 Codex 对话。发送由创始人自己按（规则见 codex-publish.ts） */
 import { useRef, useState } from "react";
-import { invoke } from "../transport";
+import { authedFetch, invoke } from "../transport";
 import { codexTargetLine, publishMessage, publishPlatforms } from "./codex-publish";
 import { profilePlatformsOf } from "./platform-preview";
 import { saveInstruction, skipResave } from "./publish-prefs-api";
@@ -48,7 +48,7 @@ export function CodexPublishButton(props: Props) {
 
 async function openCodex(contentId: string): Promise<string | null> {
   try {
-    const r = await fetch("/api/open-codex", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+    const r = await authedFetch("/api/open-codex", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content_id: contentId }) });
     const body = await r.json().catch(() => null) as { ok?: boolean; opened?: boolean; link?: string; error?: string } | null;
     if (!r.ok || !body?.ok) return `${body?.error ?? `没打开（HTTP ${r.status}）`}${body?.link ? `。链接：${body.link}` : ""}`;
