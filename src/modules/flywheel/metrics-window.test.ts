@@ -224,6 +224,8 @@ describe("小工具", () => {
   it("median 空样本给 null;ageInDays 按整天算", () => {
     expect(median([])).toBeNull();
     expect(median([1, 3, 2])).toBe(2);
-    expect(ageInDays("2026-08-01T23:00:00.000Z", "2026-08-08")).toBe(7);
+    // 选题会 spec §5.3：发布日按北京时间取——UTC 08-01 23:00 = 北京 08-02 07:00
+    expect(ageInDays("2026-08-01T23:00:00.000Z", "2026-08-08")).toBe(6);
+    expect(ageInDays("2026-08-01T15:00:00.000Z", "2026-08-08")).toBe(7);
   });
 });

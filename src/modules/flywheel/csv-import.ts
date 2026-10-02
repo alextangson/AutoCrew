@@ -176,9 +176,15 @@ function normalizeMetricDate(raw: string | undefined, defaultDate: string): stri
   return `${d[1]}-${d[2].padStart(2, "0")}-${d[3].padStart(2, "0")}`;
 }
 
-function applyRatioConversion(metrics: OutcomeMetrics, ratioMetrics: Array<"completionRate" | "completion5s"> | undefined): void {
+function applyRatioConversion(
+  metrics: OutcomeMetrics,
+  ratioMetrics: Array<"completionRate" | "completion5s"> | undefined,
+  percentCells: Set<string>,
+): void {
   if (!ratioMetrics) return;
   for (const key of ratioMetrics) {
+    // 单元格自带 % 的已经是百分比：长视频「0.63%」完播率不能再 ×100 成 63%
+    if (percentCells.has(key)) continue;
     const v = metrics[key];
     // 平台声明为小数比例时 ×100；>1 的值视为已是百分比（如 "32.5%" 解析结果），不重复转换
     if (v !== undefined && v <= 1) {
@@ -204,7 +210,8 @@ function rowToTypedRow(
     favorites: parseMetricNumber(pick(row, mapping.favorites)),
     follows: parseMetricNumber(pick(row, mapping.follows)),
   };
-  applyRatioConversion(metrics, mapping.ratioMetrics);
+  const percentCells = new Set((["completionRate", "completion5s"] as const).filter((k) => /%\s*$/.test(pick(row, mapping[k]) ?? "")));
+  applyRatioConversion(metrics, mapping.ratioMetrics, percentCells);
   return {
     title: pick(row, mapping.title) || "",
     publishedAt: parsePublishTime(pick(row, mapping.publishedAt)),

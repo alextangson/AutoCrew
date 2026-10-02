@@ -119,6 +119,18 @@ describe("封面点击率（09-27 真实接口字段 metrics.cover_click_rate，
   });
 });
 
+describe("完播率比例换算（真实接口里抖音率类是比例字符串，同 cover_click_rate）", () => {
+  it("0.0063 → 0.63%（长视频真实完播率），不会被当成 63%", () => {
+    const body = JSON.stringify({ items: [
+      { id: "1", item_title: "6 分钟长视频", create_time: 1783600000, metrics: { view_count: "900", completion_rate: "0.0063", completion_rate_5s: "0.2656" } },
+    ], has_more: false });
+    const parsed = parseDouyinItemList(body);
+    if (parsed.kind !== "ok") throw new Error("应解析成功");
+    expect(parsed.rows[0].metrics.completionRate).toBeCloseTo(0.63, 4);
+    expect(parsed.rows[0].metrics.completion5s).toBeCloseTo(26.56, 4);
+  });
+});
+
 describe("parseDouyinItemList(fixture 锚定)", () => {
   it("现行主路:字符串数值转数字,率类归一到 0-100,标题优先 item_title", () => {
     const parsed = parseDouyinItemList(ITEM_LIST);

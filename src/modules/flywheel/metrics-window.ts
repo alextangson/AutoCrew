@@ -11,10 +11,10 @@
  * `byPlatform` 下，**结构里没有全局合计**；率类（完播率/互动率）才可跨平台。
  * impressions 与 views 永远分列，不合并、不互相 fallback（曝光 ≠ 播放，codex #4）。
  *
- * 日期口径：metricDate 是 YYYY-MM-DD；publishedAt 取 ISO 的 UTC 日期段。两者时区可能差
- * 一天 —— 龄期误差 ≤1 天，不做时区推算（推算需要创作者所在时区，那是编数据）。
+ * 日期口径：metricDate 是 YYYY-MM-DD（本地日）；publishedAt 统一按 Asia/Shanghai 取日
+ * （shanghaiDate，选题会 spec §5.3）——否则北京时间 0–8 点发的作品龄期差一天。
  */
-import { outcomeKey, type OutcomeMetrics, type PerformanceOutcome } from "./outcome-schema.js";
+import { outcomeKey, shanghaiDate, type OutcomeMetrics, type PerformanceOutcome } from "./outcome-schema.js";
 
 /** 绝对量（计数类）：只在同平台内聚合 */
 export const COUNTER_METRICS = [
@@ -43,7 +43,7 @@ export const DEFAULT_BASELINE_GRACE_DAYS = 7;
 const DAY_MS = 86_400_000;
 
 function dayStamp(iso: string): number {
-  return Date.parse(`${iso.slice(0, 10)}T00:00:00.000Z`);
+  return Date.parse(`${shanghaiDate(iso)}T00:00:00.000Z`);
 }
 
 /** 发布 → 数据日期 的整天数；任一不可解析 → null */
@@ -189,7 +189,7 @@ function pickBaseline(
   graceDays: number,
 ): { basis: DeltaBasis; base: OutcomeMetrics | null; baseDate: string | null; end: PerformanceOutcome } | string {
   const end = inWindow[inWindow.length - 1];
-  const pubDate = g.publishedAt ? g.publishedAt.slice(0, 10) : null;
+  const pubDate = g.publishedAt ? shanghaiDate(g.publishedAt) : null;
   if (pubDate && pubDate >= from) {
     return { basis: "published_in_window", base: null, baseDate: null, end };
   }
@@ -325,7 +325,7 @@ export function publishCohort(
 
   const items: CohortItem[] = [];
   for (const c of contents) {
-    const pubDate = c.publishedAt ? c.publishedAt.slice(0, 10) : null;
+    const pubDate = c.publishedAt ? shanghaiDate(c.publishedAt) : null;
     if (!pubDate || pubDate < from || pubDate > to) continue;
     const g = byContent.get(c.id);
     const latest = g ? g.snapshots[g.snapshots.length - 1] : undefined;
@@ -432,4 +432,39 @@ export function readMetric(at: AtAgeSnapshot, metric: keyof OutcomeMetrics | "en
   if (metric === "engagementRate") return at.rates.engagementRate;
   const v = at.metrics[metric];
   return typeof v === "number" ? v : undefined;
+}
+
+/** 选题会下注的读数容差（spec §5.3）：日抓 ≤2 次下正日子可能没有快照，±1 天内取最近的 */
+export const NEAR_AGE_TOLERANCE_DAYS = 1;
+
+/**
+ * 近龄读数：|实际龄期 − N| ≤ 容差的快照里取最接近的（平局取较早的），标实际龄期。
+ * 与 metricsAtAge 不同：不拿「龄期 ≥N 的首个」——D+7 的会上比较不该混进 D+20 的累计值。
+ */
+export function metricsNearAge(
+  outcomes: PerformanceOutcome[],
+  publishedAt: string | null,
+  ageDays: number,
+  tolerance = NEAR_AGE_TOLERANCE_DAYS,
+): AtAgeSnapshot | null {
+  if (!publishedAt) return null;
+  let best: { s: PerformanceOutcome; age: number } | null = null;
+  for (const s of outcomes) {
+    const age = ageInDays(publishedAt, s.metricDate);
+    if (age === null || Math.abs(age - ageDays) > tolerance) continue;
+    const closer = !best || Math.abs(age - ageDays) < Math.abs(best.age - ageDays)
+      || (Math.abs(age - ageDays) === Math.abs(best.age - ageDays) && age < best.age);
+    if (closer) best = { s, age };
+  }
+  return best ? { metricDate: best.s.metricDate, ageDays: best.age, metrics: best.s.metrics, rates: computeRates(best.s.metrics) } : null;
+}
+
+/** 全账号近龄读数（judge 的 aggregates 用这个喂，即同平台同龄 ±1 天） */
+export function metricsNearAgeAll(groups: EntityGroup[], ageDays: number): AgeCohortEntry[] {
+  return groups.flatMap((g) => {
+    const at = metricsNearAge(g.snapshots, g.publishedAt, ageDays);
+    return at && g.publishedAt
+      ? [{ entityKey: g.entityKey, platform: g.platform, contentId: g.contentId, title: g.title, publishedAt: g.publishedAt, at }]
+      : [];
+  });
 }

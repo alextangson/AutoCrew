@@ -61,15 +61,23 @@ const RATE_METRICS = [
   ["coverClickRate", "封面点击率"],
 ] as const;
 
-/** 完播类指标检查：超出 0-100 拒收，(0,1) 疑似小数比例转人工 */
-function rateMetricIssues(m: OutcomeMetrics): { rejects: string[]; reviews: string[] } {
+/**
+ * 抖音完播率低于 1% 是真实值，不是量纲错（2026-10-02 创始人后台截图：6 分 14 秒长视频完播率 0.63%，
+ * 同一条 5 秒完播 26.56%）——长视频的完播率天然很低，不再按「疑似小数比例」转人工。
+ */
+function subOneIsReal(platform: string | undefined, key: string): boolean {
+  return key === "completionRate" && !!platform && normalizePlatform(platform) === "douyin";
+}
+
+/** 完播类指标检查：超出 0-100 拒收，(0,1) 疑似小数比例转人工（抖音完播率除外，见 subOneIsReal） */
+function rateMetricIssues(m: OutcomeMetrics, platform?: string): { rejects: string[]; reviews: string[] } {
   const rejects: string[] = [];
   const reviews: string[] = [];
   for (const [key, label] of RATE_METRICS) {
     const v = m[key];
     if (v === undefined) continue;
     if (v < 0 || v > 100) rejects.push(`${label} ${v} 超出 0-100`);
-    else if (v > 0 && v < 1) reviews.push(`${label} ${v} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
+    else if (v > 0 && v < 1 && !subOneIsReal(platform, key)) reviews.push(`${label} ${v} 低于 1%，确认导出值不是小数比例（如 0.325 = 32.5%）`);
   }
   return { rejects, reviews };
 }
@@ -81,6 +89,21 @@ export function normalizePlatform(platform: string): string {
   return PLATFORM_ALIASES[platform] ?? platform;
 }
 
+const SHANGHAI_OFFSET_MS = 8 * 3600_000;
+
+/**
+ * 发布时间 → Asia/Shanghai 日历日（YYYY-MM-DD）。回流的 publishedAt 是 UTC（pull-shared），
+ * metricDate 是本地日期：直接截前 10 位，北京时间 0–8 点发的作品会差一天，
+ * CSV 行与自动行也会分裂成两个作品。带时区（Z / ±hh:mm）的按北京时间取日；
+ * 只有日期、或没写时区的原样截前 10 位（不猜时区）。已是 +08:00 的行结果不变。
+ */
+export function shanghaiDate(value: string): string {
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim()) || !/T|\s\d/.test(value)) return value.slice(0, 10);
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return value.slice(0, 10);
+  return new Date(ms + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
@@ -88,6 +111,8 @@ export function normalizeTitle(title: string): string {
 }
 
 export function validateOutcome(input: {
+  /** 有平台时才能认出平台特有的真实小值（抖音完播率 <1%）；缺省按通用规则 */
+  platform?: string;
   metrics: OutcomeMetrics;
   publishedAt: string | null;
   metricDate: string;
@@ -116,10 +141,10 @@ export function validateOutcome(input: {
   if (m.impressions !== undefined && Number.isFinite(m.impressions) && !Number.isInteger(m.impressions)) {
     reasons.push(`曝光量 ${m.impressions} 不是整数`);
   }
-  const rate = rateMetricIssues(m);
+  const rate = rateMetricIssues(m, input.platform);
   reasons.push(...rate.rejects);
   if (input.publishedAt) {
-    const pubDate = input.publishedAt.slice(0, 10);
+    const pubDate = shanghaiDate(input.publishedAt);
     if (input.metricDate < pubDate) {
       reasons.push(`数据日期 ${input.metricDate} 早于发布日期 ${pubDate}`);
     }
@@ -149,6 +174,6 @@ export function outcomeKey(o: {
   const norm = normalizeTitle(o.platformTitle) || o.platformTitle;
   const item = o.contentId
     ? o.contentId
-    : `${norm}@${o.publishedAt ? o.publishedAt.slice(0, 10) : "unknown"}`;
+    : `${norm}@${o.publishedAt ? shanghaiDate(o.publishedAt) : "unknown"}`;
   return `${normalizePlatform(o.platform)}:${item}:${o.metricDate}`;
 }

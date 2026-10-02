@@ -30,7 +30,15 @@ export interface PlatformItemBinding {
 export interface PlatformItemsFile {
   schemaVersion: number;
   items: Record<string, PlatformItemBinding>;
+  /**
+   * 作品手工标签（选题会 spec §5.4）：键 = 作品键（metrics-window entityKey，历史作品没有平台 id 也能标）。
+   * 可选字段，旧文件没有 = 全部未标。
+   */
+  tags?: Record<string, WorkTag>;
 }
+
+/** 形式：教学/观点/亲历/案例/测评；画像：档案受众层 core/adjacent/surprise */
+export interface WorkTag { format?: string; personaKey?: string; taggedAt: string }
 
 /** 待登记的绑定：解析阶段产出，落盘成功后由调用方提交 */
 export interface PendingBinding {
@@ -139,9 +147,43 @@ export async function commitBindings(pending: PendingBinding[], dataDir?: string
     }
     if (written === 0) return 0;
     await fs.mkdir(getDataDir(dataDir), { recursive: true });
-    const file: PlatformItemsFile = { schemaVersion: SCHEMA_VERSION, items };
+    const file: PlatformItemsFile = { schemaVersion: SCHEMA_VERSION, items, ...await tagsBlock(dataDir) };
     await writeJsonAtomic(itemsPath(dataDir), file);
     return written;
+  });
+}
+
+/** 写绑定时原样带上标签，反之亦然：两类写入共用一个文件，谁也不能把对方抹掉 */
+async function tagsBlock(dataDir?: string): Promise<{ tags?: Record<string, WorkTag> }> {
+  // 文件整个坏掉时标签本来就读不出，按旧行为重建绑定表即可
+  const tags = await readWorkTags(dataDir).catch(() => ({}));
+  return Object.keys(tags).length ? { tags } : {};
+}
+
+/** 读作品标签。文件坏 → 抛（标签是人补的，不能像绑定缓存那样当空表静默重建后覆盖掉） */
+export async function readWorkTags(dataDir?: string): Promise<Record<string, WorkTag>> {
+  let raw: string;
+  try { raw = await fs.readFile(itemsPath(dataDir), "utf-8"); } catch (err) {
+    if ((err as { code?: string }).code === "ENOENT") return {};
+    throw err;
+  }
+  let parsed: PlatformItemsFile | null = null;
+  try { parsed = JSON.parse(raw) as PlatformItemsFile; } catch { parsed = null; }
+  if (!parsed || typeof parsed !== "object") throw new Error("platform-items.json 损坏，作品标签读不出——请人工检查后再补标");
+  const tags = parsed.tags && typeof parsed.tags === "object" ? parsed.tags : {};
+  return Object.fromEntries(Object.entries(tags).filter(([, t]) => !!t && typeof t === "object"));
+}
+
+/** 补标签（合并：只改传入的字段）。与绑定共用写队列 */
+export async function setWorkTag(key: string, patch: { format?: string; personaKey?: string }, dataDir?: string): Promise<WorkTag> {
+  return serializeBindingWrite(dataDir, async () => {
+    const tags = await readWorkTags(dataDir);
+    const items = await readPlatformItems(dataDir);
+    const tag: WorkTag = { ...tags[key], ...patch, taggedAt: new Date().toISOString() };
+    tags[key] = tag;
+    await fs.mkdir(getDataDir(dataDir), { recursive: true });
+    await writeJsonAtomic(itemsPath(dataDir), { schemaVersion: SCHEMA_VERSION, items, tags } satisfies PlatformItemsFile);
+    return tag;
   });
 }
 
