@@ -4,6 +4,9 @@
   "description": "AI content operations crew — automated research, writing, and publishing pipeline.",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "author": "alextangson",
   "repository": {
     "type": "git",
