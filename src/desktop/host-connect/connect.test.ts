@@ -270,3 +270,14 @@ describe("第 3 轮评审 P2：备份不被覆盖；重接自己的条目不算�
     expect(backups(file).some((b) => b.includes(ORIGINAL))).toBe(true);
   });
 });
+
+it("备份文件名用本地时间（不是 UTC）；同一秒第二份加尾巴、不覆盖", async () => {
+  const { backupFile } = await import("./mcp-json-file.js");
+  const f = path.join(sb.home, "x.json");
+  fs.writeFileSync(f, "{}");
+  const d = new Date();
+  const two = (n: number) => String(n).padStart(2, "0");
+  const a = backupFile(f)!, b = backupFile(f)!;
+  expect(path.basename(a)).toContain(`${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}`);
+  expect(a).not.toBe(b);
+});

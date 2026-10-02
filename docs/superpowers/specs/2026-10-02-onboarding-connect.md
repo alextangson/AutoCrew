@@ -24,10 +24,10 @@
   - PATH 上没有 `claude` 时，找桌面版自带的 claude 可执行文件；都找不到才直接写 `~/.claude.json`（先备份、原子写），并提示「接好后新开一个会话生效」。
 - **Codex**：同样注册 stdio 服务器（`codex mcp add`，`AUTOCREW_HOST=codex`），不再用临时环境变量。
 - **WorkBuddy**：沿用现有写 `~/.workbuddy/mcp.json` 的合并逻辑（先备份）；开发完在创始人机器上实测能连上才算完成。
-- **重名**：已有同名 `autocrew` 配置（用户级）→ 直接替换，替换前备份原定义，结果里说「已替换原来的 autocrew 配置（备份在 …）」。项目级（仓库里的 .mcp.json，开发用）不动。
+- **重名**：已有同名 `autocrew` 配置（用户级）→ 直接替换，替换前备份原定义，结果里说「已替换原来的 autocrew 配置（备份在 …）」。项目级（仓库里的 .mcp.json，也是 Claude Code 插件的配置）不动它的位置，但它带 `AUTOCREW_HOST=claude-code`（见下）。
 - **核对**：接完用宿主自己的列表命令（`claude mcp list` / `codex mcp list`）确认 autocrew 状态是连上，且服务端看到该宿主令牌被用过，才打勾；否则给原因。
 - **断开**：从宿主配置里删掉 autocrew 条目（同样先备份）+ 撤销该宿主令牌。
-- **撤销必须生效**：转发器在设置了 `AUTOCREW_HOST` 时只认该宿主令牌，令牌没了就连不上，不回落到 server-token（开发用的仓库 .mcp.json 不设 AUTOCREW_HOST，保持现状）。
+- **撤销必须生效**：转发器在设置了 `AUTOCREW_HOST` 时只认该宿主令牌，令牌没了就连不上，不回落到 server-token（2026-10-02 变更：仓库 / 插件的 .mcp.json 也带 `AUTOCREW_HOST=claude-code`，与用户级条目共用 claude-code 令牌；没令牌时转发器在本地回「还没接上，运行 autocrew connect claude-code 或点一键接上」，所以这批用户更新后要先接一次）。
 - 宿主能力说明与服务端放行一致（按 host-policy 实际），界面与命令行文案改正。（2026-10-02 变更：创始人放开 Codex，与 Claude Code 能力一样——写稿、审稿、剪辑、发布准备；审片、认稿、选封面、「我发了」对所有模型宿主都拒。「Claude 写、Codex 剪」只是习惯，不做限制。完成页开工提示按 host-policy 查表。）
 
 ## 4 顺手修

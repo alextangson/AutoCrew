@@ -112,7 +112,7 @@ export function ChatDock(props: {
   // view 每次 App 渲染都是新对象:用 ref 拿最新值，别把它塞进 sendImpl 的依赖里反复重注册
   const viewRef = useRef(props.view);
   viewRef.current = props.view;
-  /** 没配模型钥匙：右栏只显示一句「去设置里填」，别的都不出（对话只走内置引擎，用你自己的钥匙） */
+  /** 没配模型钥匙：旧对话照常能看，只把输入框换成「去设置里填」（对话只走内置引擎，用你自己的钥匙） */
   const [keyMissing, setKeyMissing] = useState(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
