@@ -152,7 +152,7 @@ describe("被硬杀之后下次能认出「上次更新中断了」", () => {
     writeInflight(m, { at: "", from: "0.4.0", to: "0.5.0", log: "/l", oldHead: "abc123" });
     const r = detectInterrupted(root, m);
     expect(r).toMatchObject({ ok: false, outcome: "stuck", message: expect.stringContaining("上次更新中断了") });
-    expect(r!.manualCommands).toContain('rm -rf "frontend/node_modules" && mv "frontend/node_modules.prev-9" "frontend/node_modules"');
+    expect(r!.manualCommands).toContain('[ -d "frontend/node_modules.prev-9" ] && { rm -rf "frontend/node_modules" && mv "frontend/node_modules.prev-9" "frontend/node_modules"; }');
     expect(readResult(m)?.outcome).toBe("stuck");
     // 恢复好之前在途记录一直留着（e2e 1002b N2）：命令行、npm start、页面都还能拿到恢复步骤
     expect(readInflight(m)).not.toBeNull();

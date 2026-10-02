@@ -5,9 +5,12 @@
  */
 /** 更新进程走到「新版已过健康检查、只剩收尾」：之后的 Ctrl-C 不再说「退回」 */
 let finishing = false;
+let restarting = false;
 export function markFinishing(): void { finishing = true; }
+/** 走到重启 / 健康检查：这一段不打断（检查不过本来就会自动退回），Ctrl-C 只说明情况 */
+export function markRestarting(): void { restarting = true; }
 /** 只给测试 */
-export function resetFinishing(): void { finishing = false; }
+export function resetFinishing(): void { finishing = false; restarting = false; }
 
 export interface AbortHandle { signal: AbortSignal; onSignal: () => void; dispose: () => void }
 
@@ -18,6 +21,7 @@ export function createAbortHandle(write: (msg: string) => void = (m) => process.
   const onSignal = () => {
     // 新版已经过了健康检查：没有可退回的了，接着收尾（e2e 1002b N3）
     if (finishing) { say("已经更新好了，正在收尾，不会退回，请稍等"); return; }
+    if (restarting) { say("新版正在启动和检查，这一步不打断；检查不过会自动退回，请稍等"); return; }
     if (controller.signal.aborted) { say("正在退回，请稍等"); return; }
     say("收到中止：停下更新、退回原来的版本，别关窗口");
     controller.abort();

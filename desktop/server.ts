@@ -5,9 +5,9 @@ import { createProjectReviewHandler } from "../src/desktop/project-review-route.
 import { createBoardHandler } from "../src/desktop/board-route.js";
 import { createUpdateHandler } from "../src/desktop/update-route.js";
 import { admitMutation } from "../src/desktop/http-busy-guard.js";
-import { detectInterrupted } from "../src/modules/update/interrupted.js";
+import { detectInterrupted, readInflight } from "../src/modules/update/interrupted.js";
 import { createConnectHandler } from "../src/desktop/connect-route.js";
-import { sweepTrash } from "../src/modules/update/deps-swap.js";
+import { sweepOrphanPrev, sweepTrash } from "../src/modules/update/deps-swap.js";
 import { lockHeld } from "../src/modules/update/preflight.js";
 import { asrWarmupCount } from "../src/modules/video/asr.js";
 import { localVersion, programRoot, startUpdateScheduler } from "../src/modules/update/check.js";
@@ -199,7 +199,14 @@ try {
   // 新起的服务、安装一致：上次虽然断了，现在能用，清掉记录不报（e2e 1002 P2-B）
   const interrupted = detectInterrupted(programRoot(), getMachineDir(), { trustInstall: true });
   // 上次删到一半被打断留下的垃圾目录：顺手清掉（第 15 轮 P3）；更新正在跑时不碰
-  if (!lockHeld(getMachineDir())) void sweepTrash(programRoot()).catch((err) => console.error("[update] 清垃圾目录失败:", err instanceof Error ? err.message : err));
+  // 不再被在途记录引用的旧备份（别的戳）也一并清掉；在途记录没写戳（老版本留下的）就不碰备份（第 16 轮 P2-2）
+  if (!lockHeld(getMachineDir())) {
+    const inflight = readInflight(getMachineDir());
+    void (async () => {
+      await sweepTrash(programRoot());
+      if (!inflight || inflight.stamp) await sweepOrphanPrev(programRoot(), inflight?.stamp ?? null);
+    })().catch((err) => console.error("[update] 清垃圾目录 / 旧备份失败:", err instanceof Error ? err.message : err));
+  }
   if (interrupted) console.error(`[update] ${interrupted.message}`);
 } catch (err) { console.error("[update] 检查上次更新是否中断失败:", err instanceof Error ? err.message : err); }
 

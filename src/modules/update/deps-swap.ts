@@ -26,6 +26,34 @@ export async function sweepTrash(root: string): Promise<string[]> {
   return removed;
 }
 
+/** 先改名成垃圾名（同步、原子：返回时原名已经不在了），垃圾目录稍后异步删 */
+export function discardSoon(dir: string): void {
+  const trash = `${dir}.trash-${process.pid}-${Date.now()}`;
+  try { fs.renameSync(dir, trash); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return; throw e; }
+  void fsp.rm(trash, { recursive: true, force: true }).catch(() => { /* 下次启动 / 更新时 sweepTrash 再清 */ });
+}
+
+/**
+ * 旧的孤儿备份（第 16 轮 P2-2）：`*.prev-<数字>` 里不是这次在途记录那一戳的，都是早先留下、不再是恢复来源的。
+ * 下次更新开始 / 服务启动时清掉；keepStamp = 在途记录里的那一戳（它还可能是恢复来源，绝不碰）。
+ */
+export async function sweepOrphanPrev(root: string, keepStamp: string | null): Promise<string[]> {
+  const removed: string[] = [];
+  for (const rel of PREV_TARGETS) {
+    const dir = path.dirname(path.join(root, rel));
+    let names: string[] = [];
+    try { names = await fsp.readdir(dir); } catch { continue; }
+    for (const n of names.filter((x) => PREV_NAME(path.basename(rel)).test(x) && x !== `${path.basename(rel)}.prev-${keepStamp}`)) {
+      await discard(path.join(dir, n));
+      removed.push(path.relative(root, path.join(dir, n)));
+    }
+  }
+  return removed;
+}
+
+/** 留备份的三个目录（相对程序根） */
+export const PREV_TARGETS = ["node_modules", "frontend/node_modules", "frontend/dist"] as const;
+
 /** 先改名成垃圾名（原子），再异步删：原名下的目录要么完整、要么不在；删的时候不卡事件循环 */
 export async function discard(dir: string): Promise<void> {
   const trash = `${dir}.trash-${process.pid}-${Date.now()}`;
@@ -40,7 +68,7 @@ export interface Swap { current: string; prev: string }
 export class DepsSwap {
   private swaps: Swap[] = [];
   private distSwap: Swap | null = null;
-  constructor(private readonly root: string, private readonly stamp = String(Date.now())) {}
+  constructor(private readonly root: string, readonly stamp = String(Date.now())) {}
 
   get nextDist(): string { return path.join(this.root, "frontend", "dist.next"); }
 
