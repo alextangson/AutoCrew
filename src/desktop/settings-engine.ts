@@ -368,7 +368,9 @@ export async function setEngineSettings(payload: Record<string, unknown>): Promi
   try {
     const dataDir = (payload._dataDir as string) || undefined;
     const filePath = path.join(getConfigDir(dataDir), "engine.json");
-    const raw = await readEngineFile(filePath); // 1. 读原文件
+    // 1. 读原文件：和读取同一条回落——子工作区还没有自己的 engine.json 时从默认工作区那份起草，
+    //    写回本工作区（否则只改一个模型名也会被要求重填钥匙，Codex 评审 P2-2）
+    const raw = await readEngineFile(await resolveEngineConfigPath(dataDir));
     const { draft } = migrateEngineConfig(raw, engineEnv()); // 2. 迁移成 v2
     const previous = draft.providers.map((p) => ({ ...p })); // 保存后要知道哪几条被改了（探针只探它们）
     let touched = false;

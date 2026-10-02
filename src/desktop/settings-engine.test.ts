@@ -37,6 +37,18 @@ afterEach(async () => {
 });
 
 describe("getEngineSettings", () => {
+  it("子工作区只改模型就能保存：从继承来的配置起草，写进本工作区，不再要钥匙（Codex 评审 P2-2）", async () => {
+    vi.stubEnv("AUTOCREW_DATA_DIR", testDir);
+    await fs.writeFile(enginePath(), JSON.stringify({ apiKey: "sk-shared-0001", baseUrl: "https://api.deepseek.com" }));
+    const sub = path.join(testDir, "workspaces", "ws-muse");
+    await fs.mkdir(sub, { recursive: true });
+    const res = await setEngineSettings({ _dataDir: sub, strong_model: "deepseek-v4-pro-2" });
+    expect(res.ok).toBe(true);
+    const saved = JSON.parse(await fs.readFile(path.join(sub, "engine.json"), "utf-8"));
+    expect(saved.main.strong).toBe("deepseek-v4-pro-2");
+    expect(JSON.parse(await fs.readFile(enginePath(), "utf-8")).apiKey).toBe("sk-shared-0001");
+  });
+
   it("子工作区没有自己的 engine.json：与 loadEngineConfig 一样读默认工作区那份，不误报未配置", async () => {
     vi.stubEnv("AUTOCREW_DATA_DIR", testDir);
     await fs.writeFile(enginePath(), JSON.stringify({ apiKey: "sk-shared-0001", baseUrl: "https://api.deepseek.com" }));
